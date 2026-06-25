@@ -1148,7 +1148,10 @@ fn PARSE_FACTOR(S): i64 {
         S64(_fnt_params + clfi * 8, clpc);
         if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
         STI(S, GTI(S) + 1);  # consume closing |
-        ESUBRSP(S, GFLC(S));
+        # v6.2.41 — drop the spurious 2nd arg (ESUBRSP takes only S; the frame
+        # size is patched later via EPATCHFRAME). `GFLC(S)` was a no-op leftover
+        # the new call-arity check surfaced; removing it is output-identical.
+        ESUBRSP(S);
         # Parse body: { stmts } or single expression
         if (PEEKT(S) == 13) {
             STI(S, GTI(S) + 1);

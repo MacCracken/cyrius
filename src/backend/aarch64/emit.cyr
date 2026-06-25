@@ -1285,7 +1285,14 @@ fn EF64_CMP(S, tok): i64 {
     if (tok == 18) { EW(S, 0x9A9F07E0); }  # !=  cset ne
     if (tok == 19) { EW(S, 0x9A9F57E0); }  # <   cset mi
     if (tok == 20) { EW(S, 0x9A9FD7E0); }  # >   cset gt
-    if (tok == 21) { EW(S, 0x9A9FC7E0); }  # <=  cset le
+    # v6.2.41 IEEE-754 NaN-correctness (issue 2026-06-24-f64-le-nan-comparison).
+    # `cset le` is true on unordered (LE = Z==1 || N!=V; fcmp NaN sets N=0,V=1 →
+    # N!=V → fires), so `NaN <= x` wrongly returned 1. `cset ls` (C clear || Z set)
+    # is false on unordered (fcmp NaN sets C=1,Z=0) while matching le on ordered
+    # operands. The other five conditions (eq/ne/mi/gt/ge) are already unordered-
+    # safe on aarch64, and the lt/gt/eq builtins use mi/gt/eq → f64_le/f64_ge in
+    # lib/math.cyr were already NaN-correct here; only the operator `<=` was wrong.
+    if (tok == 21) { EW(S, 0x9A9F87E0); }  # <=  cset ls  (was cset le — NaN bug)
     if (tok == 22) { EW(S, 0x9A9FB7E0); }  # >=  cset ge
     return 0;
 }

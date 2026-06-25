@@ -295,7 +295,14 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                     var cfi = FINDFN(S, cnoff2);
                     if (cfi >= 0) {
                         S64(_fnt_offsets + cfi * 8, GCP(S));
-                        S64(_fnt_params + cfi * 8, 1);
+                        # v6.2.41 — register the constructor's REAL arity (was a
+                        # hardcoded 1 — a dead sentinel; _fnt_params' only reader
+                        # is the inline-replay path, which ctors never take). The
+                        # accurate count lets the call-site arity check validate
+                        # multi-field variants (Pair/Triple) instead of exempting
+                        # them. Byte-identical: arity-1 ctors are unchanged, and
+                        # arity-2+ differ only in a value no codegen path reads.
+                        S64(_fnt_params + cfi * 8, ctor_arity);
                         EFNPRO(S);
                         var ctor_frame = ESUBRSP(S);
                         # v5.8.21 bite: store each incoming param into its

@@ -1,4 +1,19 @@
-# Call-site argument-count mismatch is silently accepted (no arity check) — binds garbage / shifts args
+# Call-site argument-count mismatch is silently accepted (no arity check) — binds garbage / shifts args — RESOLVED
+
+> **RESOLVED v6.2.41** (CHANGELOG [6.2.41]). A shared `_CHECK_ARITY` helper in
+> `src/frontend/parse_fn.cyr` emits a non-fatal `warning: 'f' expects N
+> arguments, got M` from all three call-emit paths (normal `PARSE_FNCALL`,
+> `return f(args);` tail-call, inline-replay). Carve-outs implemented per the
+> scope below: backward-refs-only (offset `>= 0`), variadics (new `GFVA`
+> getter), syscall/`fncallN` structurally exempt; variant constructors now
+> register their real arity. The verbatim repro emits
+> `'add3' expects 3 arguments, got 2`. The probe surfaced + this slot fixed
+> the `ESUBRSP` latent bug (cycc self-compiles arity-clean) plus the
+> `cyml.tcyr` / `v5104_inference.tcyr` test bugs. The sigil `run_capture`
+> finding (2-vs-5) was a deeper signature mismatch and is filed separately as
+> `2026-06-24-sigil-certpin-run-capture-signature-mismatch.md`. Hard-error /
+> `--strict-arity` escalation (incl. the struct-return / multi-return paths)
+> remains a later scope.
 
 **Filed:** 2026-06-23 (by a tentib consumer — tentib 0.4.0 M3c, the matmul-free kernel
 gained a bias param and three call sites went stale)

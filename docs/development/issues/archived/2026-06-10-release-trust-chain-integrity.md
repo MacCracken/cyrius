@@ -1,4 +1,11 @@
-# Release / trust-chain integrity — CVE-20/21 (extends CVE-12/13)
+# Release / trust-chain integrity — CVE-20/21 (extends CVE-12/13) — RESOLVED
+
+> **RESOLVED** (archived at the v6.2.41 slot close; housekeeping — the fixes
+> shipped earlier). CVE-21 closed by v6.2.30/.31 (fail-closed installers, dep
+> commit-pins in `cyrius.lock`, SHA-pinned Actions, sovereign Ed25519 signing
+> via `cyrsign` / sigil; CVE-13 closed). CVE-20 closed 2026-06-20 by the
+> seed→cybs→cycc byte-identical derivation (`scripts/seed-derive-cycc.sh` +
+> `trust-root-attest` CI). No outstanding gaps.
 
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High

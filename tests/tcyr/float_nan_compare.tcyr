@@ -1,0 +1,77 @@
+# float_nan_compare.tcyr — IEEE-754 unordered semantics for f64 comparisons.
+# Regression for issue 2026-06-24-f64-le-nan-comparison-returns-true (v6.2.41).
+#
+# IEEE rule: any comparison with a NaN operand is *unordered* — every ordered
+# compare (< <= > >= ==) returns FALSE, and only != returns TRUE. ±Inf is
+# ordered (normal results). Before v6.2.41 the x86 backend read CF/ZF without
+# the parity (unordered) flag, so f64_lt/f64_eq builtins, f64_le/f64_ge (built
+# from them in lib/math.cyr), and the `< <= == !=` operator sugar all gave the
+# wrong answer on NaN; aarch64's `<=` operator (cset le) had the same bug.
+# Covers builtins, the lib/math.cyr inclusive helpers, and operator sugar on
+# both arches (verified x86 native + aarch64 under qemu-user / pi).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+include "lib/math.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    var nan: f64 = 0.0 / 0.0;
+    var inf: f64 = 1.0 / 0.0;
+    var five: f64 = 5.0;
+
+    test_group("f64 builtins on NaN (IEEE: all 0)");
+    assert_eq(f64_lt(nan, five), 0, "f64_lt(NaN,5)");
+    assert_eq(f64_gt(nan, five), 0, "f64_gt(NaN,5)");
+    assert_eq(f64_eq(nan, five), 0, "f64_eq(NaN,5)");
+    assert_eq(f64_eq(nan, nan), 0, "f64_eq(NaN,NaN)");
+    assert_eq(f64_lt(five, nan), 0, "f64_lt(5,NaN)");
+    assert_eq(f64_gt(five, nan), 0, "f64_gt(5,NaN)");
+    assert_eq(f64_eq(five, nan), 0, "f64_eq(5,NaN)");
+
+    test_group("f64_le / f64_ge on NaN (IEEE: 0)");
+    assert_eq(f64_le(nan, five), 0, "f64_le(NaN,5)");
+    assert_eq(f64_ge(nan, five), 0, "f64_ge(NaN,5)");
+    assert_eq(f64_le(five, nan), 0, "f64_le(5,NaN)");
+    assert_eq(f64_ge(five, nan), 0, "f64_ge(5,NaN)");
+
+    test_group("f64 comparison operators on NaN");
+    assert_eq(nan <  five, 0, "NaN < 5");
+    assert_eq(nan <= five, 0, "NaN <= 5");
+    assert_eq(nan >  five, 0, "NaN > 5");
+    assert_eq(nan >= five, 0, "NaN >= 5");
+    assert_eq(nan == five, 0, "NaN == 5");
+    assert_eq(nan != five, 1, "NaN != 5 (IEEE: true)");
+    assert_eq(nan == nan, 0, "NaN == NaN");
+    assert_eq(nan != nan, 1, "NaN != NaN (IEEE: true)");
+    assert_eq(five <  nan, 0, "5 < NaN");
+    assert_eq(five <= nan, 0, "5 <= NaN");
+    assert_eq(five >  nan, 0, "5 > NaN");
+    assert_eq(five >= nan, 0, "5 >= NaN");
+
+    test_group("ordered + Inf regression (must stay correct)");
+    assert_eq(2.0 < five, 1, "2 < 5");
+    assert_eq(five < 2.0, 0, "5 < 2");
+    assert_eq(five <= five, 1, "5 <= 5");
+    assert_eq(five >= five, 1, "5 >= 5");
+    assert_eq(five > 2.0, 1, "5 > 2");
+    assert_eq(five == five, 1, "5 == 5");
+    assert_eq(five != five, 0, "5 != 5");
+    assert_eq(2.0 <= five, 1, "2 <= 5");
+    assert_eq(inf > five, 1, "Inf > 5");
+    assert_eq(inf >= five, 1, "Inf >= 5");
+    assert_eq(inf < five, 0, "Inf < 5");
+    assert_eq(inf <= five, 0, "Inf <= 5");
+    assert_eq(inf == inf, 1, "Inf == Inf");
+    assert_eq(five < inf, 1, "5 < Inf");
+    assert_eq(f64_le(five, inf), 1, "f64_le(5,Inf)");
+    assert_eq(f64_lt(2.0, five), 1, "f64_lt(2,5)");
+    assert_eq(f64_gt(five, 2.0), 1, "f64_gt(5,2)");
+    assert_eq(f64_eq(five, five), 1, "f64_eq(5,5)");
+
+    var r = assert_summary();
+    return r;
+}

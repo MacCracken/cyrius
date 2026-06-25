@@ -277,6 +277,9 @@ fn SFRS(S, fi, v): i64 { S64(S + 0x15A000 + fi * 8, v); return 0; }
 # v5.5.36 Phase 3 — per-fn variadic marker. 0 = fixed-arity;
 # 1 = `fn f(a, ...)` (ellipsis terminator on the param list).
 fn SFVA(S, fi, v): i64 { S64(S + 0x16A000 + fi * 8, v); return 0; }
+# v6.2.41 — getter for the variadic marker (was write-only). Read by the
+# call-site arity check in PARSE_FNCALL to exempt variadic callees.
+fn GFVA(S, fi): i64 { return L64(S + 0x16A000 + fi * 8); }
 # Per-fn #regalloc flag (v4.8.4-alpha4). 0 = default ABI, 1 = opt-in
 # to callee-saved hot-local allocation. Set when `#regalloc` precedes
 # a `fn` definition; read by codegen in subsequent alphas.

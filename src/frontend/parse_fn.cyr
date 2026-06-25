@@ -355,6 +355,8 @@ fn PARSE_RETURN(S): i64 {
                         if (tc_is_tail == 1) {
                             # Tail call: return fn(args); → evaluate args, epilogue, jmp fn
                             var tcnoff = PEEKV(S);
+                            # v6.2.41 — capture call-site line for the arity check.
+                            var _tc_line = GTLINE(S, GTI(S));
                             STI(S, GTI(S) + 1);
                             # Parse args (same as PARSE_FNCALL arg handling)
                             STI(S, GTI(S) + 1);  # consume (
@@ -398,6 +400,11 @@ fn PARSE_RETURN(S): i64 {
                                     syscall(SYS_WRITE, 2, "'\n", 2);
                                 }
                             }
+                            # v6.2.41 — arity check on the tail-call path
+                            # (`return f(args);`). Mutually exclusive with
+                            # PARSE_FNCALL (no double-fire); the most common call
+                            # form, so covering it closes the bulk of the hole.
+                            _CHECK_ARITY(S, _tc_line, tcnoff, tcfi, tcargc, 1);
                             if (tcargc > 6) {
                                 # >6 args: normal call (stack args clobbered by tail call epilogue)
                                 var foff2 = L64(_fnt_offsets + tcfi * 8);
@@ -770,6 +777,48 @@ fn _TYPE_CHECK_ENABLED(): i64 {
 # from `_str` / `_int` / `_cstr` suffixes on sibling fns.
 # See `_OVERLOAD_SUFFIX` + REGFN's auto-register block.
 
+# v6.2.41 — shared call-site arity check (issue 2026-06-23-call-arity-no-check).
+# cyrius has no overloading and no default args, so a positional arg-count
+# mismatch is never intentional — the canonical free catch a compiler owes, and
+# the worst footgun in a no-bounds-checking language (a stale call binds garbage
+# / shifts args; tentib M3c shipped a mis-bound kernel that built `OK`). Emitted
+# as a non-fatal WARNING (hard-error / --strict-arity escalation is a separate
+# later scope). Shared by all three call-emit paths — PARSE_FNCALL's normal +
+# inline-replay paths and the `return f(args);` tail-call path — so the
+# diagnostic is uniform and covers the common call forms. Carve-outs:
+#   - BACKWARD refs only (offset >= 0): a forward-declared callee has offset -1
+#     and pc not yet known → checking would 556-false-positive building main.cyr.
+#   - VARIADICS `fn f(a, ...)` (GFVA==1) take a flexible tail.
+#   - `syscall` never reaches here (own path); fncallN are fixed-arity.
+#   - Variant constructors register their real arity (parse_types.cyr), so they
+#     validate here rather than needing an exemption.
+# NOT yet covered (documented gap for the hard-error escalation): struct-return-
+# by-value assignment (hidden retptr arg0) and `return (a, b)` multi-return.
+# `need_off`: 1 = require the backward-ref offset gate (normal + tail-call paths,
+# where a forward-ref callee has offset -1 and pc=0 → must skip). 0 = skip the
+# gate (inline-replay path: the callee is provably backward — inlining requires
+# its body — and pc is reliable there; the gate would otherwise wrongly skip an
+# inlined-only fn that was DCE'd to no standalone body, e.g. a small backend
+# helper, which still has offset -1 despite being defined).
+fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
+    if (need_off == 1) { if (L64(_fnt_offsets + fi * 8) < 0) { return 0; } }
+    if (GFVA(S, fi) != 0) { return 0; }
+    var pc = L64(_fnt_params + fi * 8);
+    if (argc == pc) { return 0; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    FM_LOOKUP(S, line);
+    syscall(SYS_WRITE, 2, ": '", 3);
+    PRSTR(S + 0x60000 + noff);
+    syscall(SYS_WRITE, 2, "' expects ", 10);
+    PRNUM(pc);
+    syscall(SYS_WRITE, 2, " argument", 9);
+    if (pc != 1) { syscall(SYS_WRITE, 2, "s", 1); }
+    syscall(SYS_WRITE, 2, ", got ", 6);
+    PRNUM(argc);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    return 0;
+}
+
 # Parse fn call args and emit call (as expression)
 fn PARSE_FNCALL(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume (
@@ -943,6 +992,8 @@ fn PARSE_FNCALL(S, noff): i64 {
                 var p1_slot = saved_flc + 1;
                 # Evaluate args and store to param slots
                 var iargc = 0;
+                # v6.2.41 — capture call-site line for the arity warning below.
+                var _iar_line = GTLINE(S, GTI(S));
                 if (PEEKT(S) != 11) {
                     var iago = 1;
                     while (iago == 1) {
@@ -956,6 +1007,11 @@ fn PARSE_FNCALL(S, noff): i64 {
                 }
                 if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
                 STI(S, GTI(S) + 1);
+                # v6.2.41 — arity check on the INLINE-replay path. Inline
+                # candidates are small fixed-arity fns (≤2 param slots), so a
+                # 1-param helper called with extra args lands HERE, not on the
+                # normal path — the normal-path check alone would miss it.
+                _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0);
                 # Set local count past the param slots
                 SFLC(S, saved_flc + pc);
                 # Register callee param names as temporary locals (packed in fn_inline)
@@ -993,6 +1049,9 @@ fn PARSE_FNCALL(S, noff): i64 {
     # ESTORESTACKPARM compensates for the reversed register assignment.
     # Auto-coerce string literals to Str for params annotated : Str.
     var argc = 0;
+    # v6.2.41 — capture the call-site line before the arg loop advances GTI,
+    # so the arity warning below points at the call, not the token after `)`.
+    var _ar_line = GTLINE(S, GTI(S));
     var smask = L64(_fnt_strmask + fi * 8);
     # v5.10.38 — caller-side SIMD-arg routing. Read the callee's
     # per-fn SIMD mask (2 bits per param: 00 int, 01 f64v2, 10 f64v4).
@@ -1169,6 +1228,8 @@ fn PARSE_FNCALL(S, noff): i64 {
     }
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
+    # v6.2.41 — normal-path call-site arity check (see _CHECK_ARITY above).
+    _CHECK_ARITY(S, _ar_line, noff, fi, argc, 1);
     # v5.10.38 — SysV split-counter: ECALLPOPS only pops the int-class
     # arg count from the stack into RDI/RSI/RDX/RCX/R8/R9. SIMD args
     # haven't been pushed (they were recorded for the second pass

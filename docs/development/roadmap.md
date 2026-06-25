@@ -99,36 +99,20 @@ features", user 2026-06-10).
 Not yet pinned to a slot; land on a bug-bandwidth line or fold into an
 adjacent compiler change.
 
-- **PINNED — own focused slot, next (deferred from v6.2.38, user 2026-06-23):
-  call-site arity check.** `2026-06-23-call-arity-no-check.md` (P2 silent-miscompile,
-  filed by tentib M3c — a kernel grew an 8th→9th param, three stale call sites bound
-  garbage, build said `OK`). Premise-**confirmed** this review: the repro returns 30
-  with no diagnostic; `PARSE_FNCALL` (`src/frontend/parse_fn.cyr` ~774–1200) counts
-  `argc` but never compares it to the callee's `pc = L64(_fnt_params + fi*8)`. **Ship
-  as a non-fatal WARNING, not a hard error** (a packed unit per one-bug-one-complete-fix;
-  the hard-error/`--strict-arity` escalation is a legitimately separate later scope).
-  **Carve-outs (all mandatory — the filing under-scoped these):** (1) **backward
-  references only** — fns are REGFN'd lazily in pass-2, so a forward-ref callee has
-  `pc=0`; gate the check on callee body offset `L64(_fnt_offsets+fi*8) >= 0`, else
-  **556 false positives building `main.cyr`**; (2) exempt **enum/sum-type variant
-  constructors** (`Pair`/`Triple` route through `PARSE_FNCALL` but track arity
-  separately); (3) exempt user **variadics** `fn f(a,...)` — the `SFVA` flag (S+0x16A000)
-  is currently **write-only**, needs a new `GFVA` getter in `src/common/util.cyr`;
-  (4) `syscall` is already a separate path (never reaches `PARSE_FNCALL`); `fncallN`
-  are fixed-arity (not carve-outs). Read `pc` **after** the overload-reroute logic at
-  the top of `PARSE_FNCALL` (it can change `fi`). **4 real latent arity bugs the probe
-  surfaced** (fix in-slot so cycc self-compiles warning-clean): `lib/sigil.cyr:735
-  run_capture(cmd,argv)` [2-vs-5 — **upstream sigil fix + refold**, not a hand-edit of
-  the vendored copy], compiler-internal `src/frontend/parse_expr.cyr:1151
-  ESUBRSP(S,GFLC(S))` [2-vs-1], `tests/tcyr/cyml.tcyr assert_eq` [2-vs-3],
-  `tests/tcyr/v5104_inference.tcyr str_builder_new` [1-vs-0]. Shared frontend →
-  self-hosts byte-identical, but it touches codegen-adjacent parse → full cross-arch
-  (x86/aarch64/macho/win) + ecb/cass cross-OS self-host verify is the gate. **Other
-  call paths to audit before any hard-error escalation** (the warning won't double-fire
-  there, but a strict error leaves them unchecked): `parse_decl.cyr:1496` struct-valued
-  assignment (hidden retptr arg0), `parse_fn.cyr:359/382` return-helper, the `GFINL`
-  inline-replay path (`parse_fn.cyr` ~937–988). ~half a day. See
-  [[project_call_arity_check_warning_first]].
+- **SHIPPED v6.2.41 — call-site arity check** (`2026-06-23-call-arity-no-check.md`,
+  RESOLVED+archived). Non-fatal warning via a shared `_CHECK_ARITY` helper across all
+  three call-emit paths (normal `PARSE_FNCALL`, the `return f(args);` tail-call path,
+  and the inline-replay path — broader than the originally-pinned PARSE_FNCALL-only
+  scope, which alone would have missed the inline `ESUBRSP` and every `return f(args)`).
+  Carve-outs as planned: backward-refs-only (`_fnt_offsets >= 0`; inline path skips the
+  gate since `pc` is reliable there), variadics (new `GFVA` getter), syscall/`fncallN`
+  structurally exempt; variant ctors register their real arity instead of being exempted.
+  Surfaced+fixed in-slot: the `ESUBRSP` latent bug (cycc self-compiles arity-clean) +
+  the `cyml.tcyr`/`v5104_inference.tcyr` test bugs. The sigil `run_capture` finding was
+  a deeper signature mismatch → filed as
+  `2026-06-24-sigil-certpin-run-capture-signature-mismatch.md` (follow-up). Still-open
+  hard-error/`--strict-arity` escalation (+ the struct-return / `return (a,b)` paths)
+  is the documented later scope. See [[project_call_arity_check_warning_first]].
 - **DRY the four pass-1/pass-2 top-level scanners** (`main.cyr`,
   `main_aarch64.cyr`, `main_aarch64_macho.cyr`, `main_x86_macho.cyr`). The
   v6.2.2 `unexpected enum` fix was the **3rd instance** of an annotation

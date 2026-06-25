@@ -2347,6 +2347,27 @@ fn EF64_CMP(S, tok): i64 {
     if (tok == 20) { EB(S, 0x0F); EB(S, 0x97); EB(S, 0xC0); }  # >   seta
     if (tok == 21) { EB(S, 0x0F); EB(S, 0x96); EB(S, 0xC0); }  # <=  setbe
     if (tok == 22) { EB(S, 0x0F); EB(S, 0x93); EB(S, 0xC0); }  # >=  setae
+    # v6.2.41 IEEE-754 NaN-correctness (issue 2026-06-24-f64-le-nan-comparison).
+    # ucomisd sets PF (parity) when either operand is NaN (unordered); it ALSO
+    # sets CF=ZF=1, so the CF/ZF-reading conditions (setb/sete/setbe/setne) fire
+    # on NaN when IEEE says every ordered compare must be false (and != true).
+    # Fold the parity flag in: ordered compares (==,<,<=, and the eq/lt builtins)
+    # AND with !PF → forced 0 on NaN; != ORs with PF → forced 1 on NaN. seta/setae
+    # (>,>=,gt-builtin) read CF and are already 0 on NaN, so they're left alone.
+    var nan_and = 0;
+    if (tok == 68) { nan_and = 1; }   # eq builtin
+    if (tok == 69) { nan_and = 1; }   # lt builtin
+    if (tok == 17) { nan_and = 1; }   # ==
+    if (tok == 19) { nan_and = 1; }   # <
+    if (tok == 21) { nan_and = 1; }   # <=
+    if (nan_and == 1) {
+        EB(S, 0x0F); EB(S, 0x9B); EB(S, 0xC1);  # setnp cl
+        EB(S, 0x20); EB(S, 0xC8);               # and al, cl
+    }
+    if (tok == 18) {                            # != is true on unordered
+        EB(S, 0x0F); EB(S, 0x9A); EB(S, 0xC1);  # setp cl
+        EB(S, 0x08); EB(S, 0xC8);               # or al, cl
+    }
     EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);  # movzx eax, al
     return 0;
 }

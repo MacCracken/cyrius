@@ -29,7 +29,7 @@ fn main() {
     assert_eq(str_len(d), 2, "inferred Str from str_clone");
 
     # Builder build returns Str.
-    var sb = str_builder_new(64);
+    var sb = str_builder_new();
     str_builder_add(sb, str_from("xyz"));
     var built = str_builder_build(sb);
     assert_eq(str_len(built), 3, "inferred Str from str_builder_build");

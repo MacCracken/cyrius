@@ -1,4 +1,10 @@
-# Roadmap drift + stale governance docs — RM-01…05
+# Roadmap drift + stale governance docs — RM-01…05 — RESOLVED
+
+> **RESOLVED** (archived at the v6.2.41 slot close; housekeeping). All five RM
+> items were addressed by the 2026-06-19 internal doc-state sweep (see the
+> UPDATE note below): phantom-TLS-arc deleted, threat-model.md corrected
+> (v6.2.30), AGNOS-goal tracking home set, rv64-hardware note, cc3-drop
+> contradiction fixed. No outstanding doc-drift items.
 
 > **UPDATE 2026-06-19 (v6.2.25 internal doc-state sweep):** the recurring
 > internal half is freshly addressed — **state.md trimmed 1,015 → ~185 lines**

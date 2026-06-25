@@ -18,37 +18,37 @@ fn main() {
     test_group("single-entry");
     var s1 = "[meta]\nname = \"test\"\n\n---\n\nHello world.\n";
     var d1 = bayan_cyml_parse(s1, strlen(s1));
-    assert_eq(bayan_cyml_doc_entry_count(d1), 1);
+    assert_eq(bayan_cyml_doc_entry_count(d1), 1, "single-entry count");
     var e1 = bayan_cyml_doc_entry(d1, 0);
     assert(bayan_cyml_entry_header_len(e1) > 0, "header has content");
     assert(bayan_cyml_entry_body_len(e1) > 0, "body has content");
     # Body should be "Hello world." (trimmed)
-    assert_eq(bayan_cyml_entry_body_len(e1), 12);
+    assert_eq(bayan_cyml_entry_body_len(e1), 12, "single-entry body len");
     assert(memeq(bayan_cyml_entry_body(e1), "Hello world.", 12), "body content");
 
     # === Single-entry, no body ===
     test_group("no-body");
     var s2 = "[meta]\nname = \"headeronly\"\n";
     var d2 = bayan_cyml_parse(s2, strlen(s2));
-    assert_eq(bayan_cyml_doc_entry_count(d2), 0);
+    assert_eq(bayan_cyml_doc_entry_count(d2), 0, "no-body entry count");
     assert(bayan_cyml_doc_header_len(d2) > 0, "file header exists");
 
     # === Multi-entry file ===
     test_group("multi-entry");
     var s3 = "[topic]\nid = \"test\"\n\n[[entries]]\nname = \"first\"\n\n---\n\nFirst body.\n\n[[entries]]\nname = \"second\"\n\n---\n\nSecond body.\n";
     var d3 = bayan_cyml_parse(s3, strlen(s3));
-    assert_eq(bayan_cyml_doc_entry_count(d3), 2);
+    assert_eq(bayan_cyml_doc_entry_count(d3), 2, "multi-entry count");
     # File header
     assert(bayan_cyml_doc_header_len(d3) > 0, "file header");
     # Entry 0
     var e3a = bayan_cyml_doc_entry(d3, 0);
     assert(bayan_cyml_entry_header_len(e3a) > 0, "entry 0 header");
-    assert_eq(bayan_cyml_entry_body_len(e3a), 11);
+    assert_eq(bayan_cyml_entry_body_len(e3a), 11, "entry 0 body len");
     assert(memeq(bayan_cyml_entry_body(e3a), "First body.", 11), "entry 0 body");
     # Entry 1
     var e3b = bayan_cyml_doc_entry(d3, 1);
     assert(bayan_cyml_entry_header_len(e3b) > 0, "entry 1 header");
-    assert_eq(bayan_cyml_entry_body_len(e3b), 12);
+    assert_eq(bayan_cyml_entry_body_len(e3b), 12, "entry 1 body len");
     assert(memeq(bayan_cyml_entry_body(e3b), "Second body.", 12), "entry 1 body");
 
     # === bayan_cyml_split convenience ===
@@ -56,19 +56,19 @@ fn main() {
     var s4 = "key = \"val\"\n\n---\n\nMarkdown here.\n";
     var hp = 0; var hl = 0; var bp = 0; var bl = 0;
     var ok = bayan_cyml_split(s4, strlen(s4), &hp, &hl, &bp, &bl);
-    assert_eq(ok, 1);
+    assert_eq(ok, 1, "split ok");
     assert(hl > 0, "split header");
-    assert_eq(bl, 14);
+    assert_eq(bl, 14, "split body len");
     assert(memeq(bp, "Markdown here.", 14), "split body");
 
     # === Multi-entry, entry without body ===
     test_group("entry-no-body");
     var s5 = "[[entries]]\nname = \"nodelim\"\ntags = [\"a\"]\n";
     var d5 = bayan_cyml_parse(s5, strlen(s5));
-    assert_eq(bayan_cyml_doc_entry_count(d5), 1);
+    assert_eq(bayan_cyml_doc_entry_count(d5), 1, "entry-no-body count");
     var e5 = bayan_cyml_doc_entry(d5, 0);
     assert(bayan_cyml_entry_header_len(e5) > 0, "header-only entry");
-    assert_eq(bayan_cyml_entry_body_len(e5), 0);
+    assert_eq(bayan_cyml_entry_body_len(e5), 0, "entry-no-body body len");
 
     # === Many entries — OOB stack-write regression (.79) ===
     # entry_starts is written at 8-byte stride; before the [256]→[2048] fix it
@@ -88,7 +88,7 @@ fn main() {
         mk = mk + 1;
     }
     var dm = bayan_cyml_parse(mbuf, mp);
-    assert_eq(bayan_cyml_doc_entry_count(dm), 50);
+    assert_eq(bayan_cyml_doc_entry_count(dm), 50, "50 entries count");
 
     syscall(60, assert_summary());
 }

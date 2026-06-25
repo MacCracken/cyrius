@@ -1,4 +1,15 @@
-# `f64_le(NaN, x)` returns true — float `<=` is wrong on NaN operands (likely `>=` too)
+# `f64_le(NaN, x)` returns true — float `<=` is wrong on NaN operands (likely `>=` too) — RESOLVED
+
+> **RESOLVED v6.2.41** (CHANGELOG [6.2.41]). Premise-checking the mechanism
+> found the defect broader than filed: on x86 the `setb`/`sete`/`setbe`/`setne`
+> conditions ignored the parity (unordered) flag, so `f64_lt`/`f64_eq`
+> builtins, the `f64_le`/`f64_ge` helpers built from them, and the
+> `<`/`<=`/`==`/`!=` operator sugar were all wrong on NaN (`>=` via `setae` and
+> `>` via `seta` were already correct). Fixed in `EF64_CMP` by folding
+> `setnp`/`setp` into the x86 sequences; aarch64 needed `<=` `cset le` →
+> `cset ls` (its only unordered-unsafe condition). New
+> `tests/tcyr/float_nan_compare.tcyr` (41 assertions) passes on x86 and real
+> ARM (pi); verified byte-identical on all four self-host hosts.
 
 **Filed:** 2026-06-24 (discovered during the prajna 0.6.0 hardening pass; reproduced on cycc 6.2.40).
 **Severity:** MEDIUM — silent wrong result in a core numeric comparison. No crash, but it defeats

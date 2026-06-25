@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.41] — 2026-06-24
+
+**v6.2.41 — silent-correctness hardening: call-site arity check + IEEE-754
+NaN comparison fix.** Two "compiles clean, wrong result, no diagnostic" bugs
+— the exact failure class a no-bounds-checking language can least afford —
+fixed together. **`src/` codegen + frontend changed → cycc 1,071,936 →
+1,073,560 B; self-hosts byte-identical; check.sh 92/92 + boot gate; 4-host
+byte-identical self-host (x86 + ecb macOS + cass Windows + pi ARM); NaN probe
+41/41 on x86 AND real ARM; bench-history.sh self_compile 505 → 519 ms (+3.9%;
+manual median-of-5 = 507 ms — within the wide ±~25 ms single-run jitter band;
+the per-call-site arity check is expected growth-tax, not a regression per
+`feedback_perf_deltas_growth_tax_default`).**
+
+### Fixed
+- **f64 comparison NaN semantics now IEEE-754-correct (`EF64_CMP`, x86 +
+  aarch64).** Filed as `f64_le(NaN,x)→true` (issue
+  `2026-06-24-f64-le-nan-comparison-returns-true`), but premise-checking the
+  *mechanism* showed the defect was broader than reported: on x86 the
+  `setb`/`sete`/`setbe`/`setne` conditions read CF/ZF without the parity
+  (unordered) flag, so `f64_lt`/`f64_eq` builtins, the `f64_le`/`f64_ge`
+  stdlib helpers built from them (whose "NaN-correct by construction" comment
+  was *false*), and the `<`/`<=`/`==`/`!=` operator sugar all gave the wrong
+  answer on a NaN operand. Fixed by folding `setnp`/`setp` into the affected
+  x86 sequences (ordered compares AND `!PF`; `!=` ORs `PF`); aarch64 needed
+  one condition swap — `<=` `cset le` → `cset ls` (the only unordered-unsafe
+  aarch64 condition; the rest were already correct). IEEE rule restored:
+  every ordered compare is false on NaN, only `!=` is true. New
+  `tests/tcyr/float_nan_compare.tcyr` (41 assertions: builtins, helpers,
+  operators on NaN/±Inf + ordered regression). Verified byte-identical on all
+  four self-host hosts; NaN probe 41/41 on x86 and on real ARM (pi).
+- **`ESUBRSP(S, GFLC(S))` → `ESUBRSP(S)` (parse_expr.cyr).** Spurious 2nd arg
+  (a no-op leftover; `ESUBRSP` takes only `S`, frame size patched later) the
+  new arity check surfaced; removal is output-identical (closure codegen
+  byte-identical, verified). cycc now self-compiles arity-warning-clean.
+- **Test-corpus arity bugs the new check surfaced:** `cyml.tcyr` (11
+  `assert_eq(a,b)` calls missing the `name` arg → now 3-arg) and
+  `v5104_inference.tcyr` (`str_builder_new(64)` → `str_builder_new()`, which
+  takes no args). Both pass clean.
+
+### Added
+- **Call-site argument-count check — non-fatal warning (issue
+  `2026-06-23-call-arity-no-check`, tentib M3c; roadmap-pinned).** cyrius has
+  no overloading and no default args, so a positional arg-count mismatch is
+  never intentional — it silently binds garbage / shifts args while the build
+  reports `OK` (how tentib shipped a mis-bound kernel). A shared `_CHECK_ARITY`
+  helper (`src/frontend/parse_fn.cyr`) emits
+  `warning: 'f' expects N arguments, got M` from all three call-emit paths —
+  the normal `PARSE_FNCALL` path, the `return f(args);` tail-call path, and the
+  inline-replay path — so the common call forms are uniformly covered.
+  Carve-outs: **backward references only** (a forward-declared callee has
+  offset `-1` / unknown arity — gating on `_fnt_offsets >= 0` avoids 556 false
+  positives building `main.cyr`; the inline path skips this gate since its
+  callee is provably backward and `pc` is reliable); **variadics** (`fn f(a,
+  ...)`, via the new `GFVA` getter for the previously write-only `SFVA` flag);
+  `syscall` (separate path) and fixed-arity `fncallN` are structurally exempt.
+  Variant constructors now register their **real** arity
+  (`parse_types.cyr`; was a dead `1` sentinel whose only reader was the inline
+  path, which ctors never take — byte-identical) so they validate here instead
+  of needing an exemption. Not yet covered (documented for the later
+  hard-error / `--strict-arity` escalation): struct-return-by-value assignment
+  (hidden retptr arg0) and `return (a, b)` multi-return.
+
+### Changed
+- `lib/math.cyr` `f64_le`/`f64_ge` comment corrected: the "NaN-correct by
+  construction" invariant only became *true* at v6.2.41 (the underlying
+  builtins were the bug); do not revert these to operator `<=`/`>=`.
+
 ## [6.2.40] — 2026-06-24
 
 **v6.2.40 — `cyrius init` + `cyrius port` go FULLY native; both bash shims
