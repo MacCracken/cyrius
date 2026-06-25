@@ -161,7 +161,7 @@ platform work (bottom-to-top priority) takes v6.2.x.
 > 2026-06-10 "urgent now in v6.1.x, rest spread" direction; the urgent set
 > lands in the v6.1.x hardening tail (Phase F).
 
-### Shipped so far (v6.2.0 → v6.2.25 — representative; see [CHANGELOG.md](../../CHANGELOG.md) + state.md for the full per-patch detail)
+### Shipped so far (v6.2.0 → v6.2.43 — representative; see [CHANGELOG.md](../../CHANGELOG.md) + state.md for the full per-patch detail)
 
 - **v6.2.0** ✅ — Phase 0 growable-region foundation (fixup_tbl / fn-tables /
   codebuf → relocatable-base + 2×-grow) + `cyrius init` CI/release alignment.
@@ -179,11 +179,22 @@ platform work (bottom-to-top priority) takes v6.2.x.
   wrapper, per-connection arena/flat-RSS + sigil 3.9.1), Darwin/Windows platform
   surface, stdlib folds, aarch64 imm12-mask codegen (.21), and CLI tooling
   (`cyrius audit` project sweep, .25). Per-slot detail in
-  [CHANGELOG.md](../../CHANGELOG.md) + [state.md](state.md). **api-surface now
-  4939 fns**, cycc 1,069,688 B, check.sh 89/89.
+  [CHANGELOG.md](../../CHANGELOG.md) + [state.md](state.md).
+- **v6.2.26 → .43** ✅ — continued long: agnos-fs ABI substrate (.26);
+  **bare-metal target formalization** — `--target=…-bare-metal-elf` triple +
+  `#naked` + QEMU boot gate (.27 frontend / .28 runtime); VR-01/02 verification
+  fold + full aarch64-native tcyr (.29); **CVE-20/21 trust-chain** — fail-closed
+  installers, dep SHA-pins, sovereign `cyrsign` Ed25519 signing, and the
+  **seed→cybs→cycc byte-identical derivation** (the real CVE-20 fix, no bridge)
+  (.30–.31); `cyrius init`+`port` go fully native (.40); and the
+  **silent-correctness + stdlib-refold arc** — call-arity check + IEEE-754 NaN
+  fix (.41), sigil certpin (.42), agnos-clock + ERR_* namespacing + agnos
+  landmine gates (.43). Note: `agnosys` retired at .37 (decomposed), dropping
+  api-surface from ~5035 to **4343 fns**. **Current @ v6.2.43: cycc 1,073,560 B
+  (+ at .41), check.sh 92/92 + boot gate, api-surface 4343, tests 192 `.tcyr`.**
 
-Remaining v6.2.x arcs: **bare-metal target formalization** (then) **RISC-V rv64**
-— see the active [roadmap.md](roadmap.md) pinned sequence.
+Remaining v6.2.x arc: **RISC-V rv64** (bare-metal already landed at .27–.28) —
+see the active [roadmap.md](roadmap.md) pinned sequence.
 
 ### Frontend / DX hardening (v6.2.x later line — pulled in 2026-06-12)
 

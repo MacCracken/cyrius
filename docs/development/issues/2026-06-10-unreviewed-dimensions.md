@@ -1,5 +1,12 @@
 # Unreviewed dimensions (completeness critic) — LEGAL-01, CVE-28/29, DX/AGNOS/LSP
 
+> **STATUS (v6.2.43): partially closed.** CVE-28 (atomic acquire/release ordering)
+> RESOLVED v6.1.38 (`ldaxr`/`stlxr` + `atomic_fence` before the default_alloc
+> vtable publish). **STILL OPEN:** CVE-29 (thread-stack `PROT_NONE` guard page —
+> `lib/thread.cyr` mmap_stack is unguarded), LEGAL-01 (GPL-3.0-only vs sigil's
+> dual-BSD/GPLv2 GPL-leg — a v7-release blocker needing legal sign-off), DX-01
+> (no DWARF emission), DX-02 (LSP editor-coverage untested), SEC-AGNOS-01.
+
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** Mixed (LEGAL-01 is a v7 blocker; CVE-28 is a real concurrency bug)
 **Affects:** licensing, debug-info, atomics, thread stacks, the AGNOS security

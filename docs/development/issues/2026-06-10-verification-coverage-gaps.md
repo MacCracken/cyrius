@@ -1,5 +1,11 @@
 # Verification coverage gaps (the found-by-consumers class) — VR-01/02/03/04
 
+> **STATUS (v6.2.43): VR-01 + VR-02 SHIPPED v6.2.29** — the full `.tcyr` corpus now
+> runs on real arm64 (aarch64-native CI job; surfaced + fixed a stale-fork + 9-bug
+> debt in-slot), and `cyrius fuzz` is wired into check.sh + ci.yml. **VR-03**
+> (differential corpus gate, pinned v6.4.x) + **VR-04** (ELF/PE/Mach-O structural
+> lint, bug-bandwidth) remain OPEN. See roadmap.
+
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High
 **Affects:** tests/fuzz/CI infra 6.1.31. This is the systemic root behind

@@ -43,14 +43,17 @@ two-arc platform minor (bare-metal first — it carries the
 kernel-freestanding-TLS deliverable the AGNOS-kernel goal needs — then
 RISC-V, now hardware-unblocked). Substantial new-code minor.
 
-**Realized shape (through v6.2.25):** neither named arc has landed yet —
-the minor has instead flexed long (per the window-flex note below) into a
-broad **platform / stdlib / native-TLS** line: AGNOS syscall completeness,
-native-float math (`f64` type + operators), TLS hardening (server wrapper,
-ALPN, per-connection arena), Darwin/Windows platform surface, stdlib folds,
-aarch64 imm12-mask codegen, and CLI tooling. See the shipped-summary row
-below + [CHANGELOG.md](../../CHANGELOG.md); bare-metal + RISC-V remain the
-pinned next arcs.
+**Realized shape (through v6.2.43):** the minor flexed long into a broad
+**platform / stdlib / security / verification** line. Shipped: AGNOS syscall
+completeness + portability, native-float math (`f64` type + operators), TLS
+hardening (server wrapper, ALPN, per-connection arena), Darwin/Windows surface,
+stdlib folds, aarch64 imm12-mask codegen, CLI tooling (.0–.25); **bare-metal
+target formalization (.27 frontend + .28 runtime/boot)**; CVE-20/21 trust-chain
++ sovereign signing + the seed→cybs→cycc derivation (.30–.31); the
+silent-correctness + stdlib-refold arc (.41 call-arity check + IEEE-754 NaN fix,
+.42 sigil certpin, .43 agnos-clock + ERR_* namespacing + agnos landmine gates).
+See the shipped-summary row below + [CHANGELOG.md](../../CHANGELOG.md). **RISC-V
+rv64 is the one remaining pinned arc** (bare-metal already landed).
 
 Per cycle discipline: premise-check each arc at slot entry
 ([[feedback_premise_check_at_slot_entry]]); cross-arch propagation is
