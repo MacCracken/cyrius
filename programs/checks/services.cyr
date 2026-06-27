@@ -837,6 +837,64 @@ fn _pie_exec_gate(): i64 {
     return 1;
 }
 
+fn _kernel_pie_struct_gate(): i64 {
+    var label = "kernel --pie emits position-independent ET_DYN (p_vaddr=0)";
+    if (file_exists(CC_PATH) != 1) {
+        _p("  skip: "); _p(CC_PATH); println(" not present");
+        _check(label, 0);
+        return 0;
+    }
+    # STRUCTURAL ONLY: a slid-base kernel BOOT is consumer-gated on an AGNOS
+    # gnoboot --pie harness (CHANGELOG [6.1.7]); this guards the EMIT SHAPE so a
+    # future un-_IS_OBJ-gated absolute site can't silently revert the kernel-PIE
+    # wrapper to a fixed-base image. Kernel mode comes from the fixture's
+    # `kernel;` directive, so only CYRIUS_PIE=1 is needed through the single-env
+    # helper. The userland _pie_exec_gate (which RUNS pie_smoke) covers the
+    # emit-helper correctness; this covers the kernel ELF wrapper shape.
+    var src = _root_path("tests/fixtures/pie/kernel_pie_smoke.cyr");
+    var out = _tmp_path("audit_kpie_");
+    var rc = _self_host_pipe_env(src, CC_PATH, out, "CYRIUS_PIE=1");
+    if (rc != 0) {
+        sys_unlink(out);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": cycc kernel; CYRIUS_PIE=1 compile failed (rc="); print_num(rc); println(")");
+        _check(label, 1);
+        return 1;
+    }
+    # ELF64: e_type @16 (ET_DYN==3), e_phoff @32; first Elf64_Phdr's p_vaddr is
+    # at phoff+16. Read enough to cover the ehdr + the first phdr.
+    var hb[256];
+    var hf = sys_open(out, 0, 0);
+    var hn = sys_read(hf, &hb, 256);
+    sys_close(hf);
+    sys_unlink(out);
+    var etype = load8(&hb + 16);
+    if (hn < 64 || etype != 3) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": kernel --pie not ET_DYN (e_type="); print_num(etype); println(")");
+        _check(label, 1);
+        return 1;
+    }
+    var phoff = load64(&hb + 32);
+    if (phoff + 24 > hn) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": kernel --pie phdr out of range (phoff="); print_num(phoff); println(")");
+        _check(label, 1);
+        return 1;
+    }
+    var pvaddr = load64(&hb + phoff + 16);
+    if (pvaddr != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": kernel --pie PT_LOAD p_vaddr != 0 (got "); print_num(pvaddr); println(") — fixed-base bake?");
+        _check(label, 1);
+        return 1;
+    }
+    _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+    println(": kernel; --pie emits ET_DYN + p_vaddr=0 (slid-base boot consumer-gated on AGNOS gnoboot)");
+    _check(label, 0);
+    return 0;
+}
+
 fn _tls_live_gate(): i64 {
     var label = "libssl via fdlopen: full TLS round-trip on 1.1.1.1:443 (pin v5.6.37)";
     if (file_exists(CC_PATH) != 1) {

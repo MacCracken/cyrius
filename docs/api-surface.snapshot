@@ -1386,6 +1386,7 @@ mabda::rg_schedule_fence_consumer_queue/2
 mabda::rg_schedule_fence_count/1
 mabda::rg_schedule_fence_producer_node/2
 mabda::rg_schedule_fence_producer_queue/2
+mabda::rg_to_dot/3
 mabda::rg_transient_count/1
 mabda::rg_transient_first_use/2
 mabda::rg_transient_handle/2
@@ -1758,6 +1759,7 @@ patra::patra_hdr_write_nosync/2
 patra::patra_init/0
 patra::patra_insert_returning/3
 patra::patra_insert_row/10
+patra::patra_insert_row_or_ignore/10
 patra::patra_json_build/6
 patra::patra_last_insert_id/1
 patra::patra_lock_ex/1
@@ -2500,11 +2502,13 @@ sankoch::deflate_compress/4
 sankoch::deflate_compress_level/5
 sankoch::deflate_dec_finish/1
 sankoch::deflate_dec_init/2
+sankoch::deflate_dec_init_capped/4
 sankoch::deflate_dec_init_dict/4
 sankoch::deflate_dec_reset/1
 sankoch::deflate_dec_write/3
 sankoch::deflate_decompress/4
 sankoch::deflate_decompress_dict/6
+sankoch::deflate_decompress_with_ratio_cap/5
 sankoch::deflate_enc_finish/1
 sankoch::deflate_enc_init/3
 sankoch::deflate_enc_init_dict/5
@@ -2514,8 +2518,10 @@ sankoch::gzip_compress/4
 sankoch::gzip_compress_level/5
 sankoch::gzip_dec_finish/1
 sankoch::gzip_dec_init/2
+sankoch::gzip_dec_init_capped/4
 sankoch::gzip_dec_write/3
 sankoch::gzip_decompress/4
+sankoch::gzip_decompress_with_ratio_cap/5
 sankoch::gzip_enc_finish/1
 sankoch::gzip_enc_init/3
 sankoch::gzip_enc_init_dict/5
@@ -2562,10 +2568,12 @@ sankoch::zlib_compress/4
 sankoch::zlib_compress_level/5
 sankoch::zlib_dec_finish/1
 sankoch::zlib_dec_init/2
+sankoch::zlib_dec_init_capped/4
 sankoch::zlib_dec_init_dict/4
 sankoch::zlib_dec_write/3
 sankoch::zlib_decompress/4
 sankoch::zlib_decompress_dict/6
+sankoch::zlib_decompress_with_ratio_cap/5
 sankoch::zlib_enc_finish/1
 sankoch::zlib_enc_init/3
 sankoch::zlib_enc_init_dict/5

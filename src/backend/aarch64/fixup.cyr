@@ -17,6 +17,12 @@
 # to the pre-v6.0.89 inline ladder.
 fn _entry_base(S): i64 {
     if (_emit_fmt(S) == 2) { return 0x100004000; }   # Mach-O ARM64: TEXT_BASE + 16384
+    # --pie: ET_DYN base=0 (see the FIXUP PIE branch); match the base-0 entry so
+    # absolute fixups stay consistent with the slid wrapper. Inert today — PIE
+    # fixups are PC-relative (adrp/add), so `entry` cancels — but removes the
+    # same landmine fixed on x86. aarch64 kernel-PIE stays the consumer-gated
+    # follow-on; this is consistency only. CHANGELOG [6.2.45].
+    if (_pie_mode == 1) { return 0x78; }
     if (L64(S + 0x18FCA0) == 1) { return 0x40000078; }   # kernel
     return 0x400078;
 }

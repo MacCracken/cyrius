@@ -162,6 +162,15 @@ landing on consumer pressure or explicit user direction
   boot harness (won't ship blind); the harness ask is filed
   (`agnos/.../2026-06-10-cyrius-pie-boot-harness-ask.md`). AGNOS isn't
   pulling yet (data-only KASLR @ v1.28.0). [[project_v616_bugband_then_full_pie]].
+  **Update (v6.2.45):** a ground-truth review added a structural CI gate
+  (`_kernel_pie_struct_gate` — `kernel; --pie` → ET_DYN + `p_vaddr=0`) and a
+  latent `_entry_base` fix. It also surfaced the one concrete cyrius-side item
+  the live boot will force: the `--pie` `.text` is fully PIC but the emitted
+  boot metadata still targets the link base (`p_paddr=0` + an **absolute**
+  multiboot2 `ENTRY_ADDRESS_EFI64` tag; no `ADDRESS` tag, no relocations) — so
+  a slide needs gnoboot to bias manually OR cyrius to emit slide-aware metadata.
+  Filed `2026-06-27-kernel-pie-boot-metadata-slide-readiness`; the kernel team
+  is actively wiring the gnoboot `--pie` boot test (2026-06-27).
 - **x86-macOS usable-toolchain arc tail.** Phase 1 (argv prologue) shipped
   v6.1.30; remaining `ach`-gated layers: env reading (`HOME`/uname), the
   wrapper's macOS arch-default (detect x86 on Intel), cycc-finding, the

@@ -6,6 +6,78 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.45] — 2026-06-27
+
+**v6.2.45 — kernel-PIE latent-landmine + structural-gate hardening, plus a
+3-lib stdlib refold.** The cyrius-side gap fixes a 2026-06-27 kernel-PIE
+ground-truth review surfaced (built + byte-inspected the live `kernel; --pie`
+emit). The live slid-base **boot** stays consumer-gated on the in-flight AGNOS
+`gnoboot --pie` harness — deliberately NOT touched here (see *Held*). **x86
+compiler `src/` changed (`_entry_base` PIE-awareness) → cycc 1,073,560 →
+1,073,672 B (+112 B); self-hosts byte-identical; check.sh 93/93
+(+`_kernel_pie_struct_gate`) + boot gate; 4-host byte-identical self-host
+(x86 + ecb + pi + cass all SELFHOST_OK); self_compile 509 ms; api-surface
+4344 → 4352 (+8, all non-breaking fold additions).**
+
+### Fixed
+- **`_entry_base` is now `_pie_mode`-aware (x86 + aarch64).** Under `kernel; --pie`
+  the ELF wrapper lays out base=0 / ET_DYN / base-relative `e_entry`, but
+  `_entry_base` (`src/backend/{x86,aarch64}/fixup.cyr`) still returned the fixed
+  non-PIE entry (x86 `0x1000A8`, aarch64 `0x40000078`). It feeds `dbase = entry
+  + acp` for *absolute* fixups — so a future absolute-under-`--pie` fixup would
+  have consumed the wrong (link-base) entry and garbled at a slid base. **Inert
+  today** — under `_pie_mode` every fixup takes the rel32/`adrp` branch where
+  `entry` algebraically cancels (proven byte-identical: pie_smoke + all four
+  self-host fixpoints unchanged) — but removes the landmine. x86: kernel-PIE →
+  `0xA8`, userland-PIE → `0x78`; aarch64: both PIE paths → `0x78`. aarch64
+  kernel-PIE remains the consumer-gated follow-on; this is consistency only.
+
+### Added
+- **`_kernel_pie_struct_gate` (check.sh 92 → 93 gates)** + the
+  `tests/fixtures/pie/kernel_pie_smoke.cyr` fixture. Compiles a `kernel; --pie`
+  program (kernel mode via the source directive, so only `CYRIUS_PIE=1` rides
+  the single-env `_self_host_pipe_env` helper) and asserts a position-independent
+  kernel: **ET_DYN + first PT_LOAD `p_vaddr=0`**. Closes the "kernel-PIE has no
+  test" gap — a future un-`_IS_OBJ`-gated absolute emit that reverts the wrapper
+  to a fixed-base bake now fails CI. Pairs with the userland `_pie_exec_gate`
+  (which *runs* pie_smoke to catch a mis-gated emit helper); together they
+  enforce PIE codegen end to end. STRUCTURAL ONLY — the live slid-base **boot**
+  remains consumer-gated (see *Held*), not shipped blind.
+
+### Changed
+- **Stdlib refold — 3 libs, all non-breaking, lib-only (cycc byte-identical aside
+  from the `_entry_base` change):**
+  - **sankoch 2.4.4 → 2.4.6** — decompression-bomb ratio caps:
+    `*_decompress_with_ratio_cap` (2.4.5, batch) + `*_dec_init_capped` (2.4.6,
+    streaming, +6 public fns). Uncapped paths byte-identical; decoder ctx +1 slot.
+  - **patra 1.12.4 → 1.12.6** — additive `patra_insert_row_or_ignore` (BYTES-path
+    `OR IGNORE`, ~26× faster dup-hit object insert for sit) + an INT-indexed
+    `OR IGNORE`-after-`DELETE` tombstone fix.
+  - **mabda 3.4.2 → 3.4.4** — P(-1) hardening (security audit clean, 0 dead code) +
+    `rg_to_dot` render-graph debug viz (3.4.3, additive). No struct/ABI change.
+- **api-surface snapshot 4344 → 4352** (`docs/api-surface.snapshot`) — the 8 new
+  public fns above (`sankoch::{zlib,deflate,gzip}_{dec_init_capped,decompress_with_ratio_cap}`,
+  `patra::patra_insert_row_or_ignore`, `mabda::rg_to_dot`); 0 removed.
+
+### Docs
+- **Archived PIE proposal `2026-05-11-pie-support.md` gets a `SUPERSEDED` banner.**
+  Its frozen v6.1.6 "Still open: kernel-PIE wrapper NOT shipped" snapshot
+  contradicted CHANGELOG [6.1.7] (wrapper shipped) and was misread by a 2026-06
+  review as hidden work. The banner records: item 1 (kernel-PIE ELF wrapper)
+  shipped v6.1.7 (structural; boot consumer-gated); item 2 (aarch64 PIE) userland
+  shipped v6.1.8 (aarch64 kernel-PIE still the follow-on).
+
+### Held (NOT in this release — owned by the in-flight gnoboot boot test)
+- **Kernel-PIE boot-metadata slide-readiness.** The `--pie` kernel `.text` is
+  fully position-independent (verified on a globals/switch/`&fn` kernel: 0
+  `movabs`, RIP-relative globals/strings/`&fn`, PIC switch table), but the emitted
+  boot metadata still targets the link base — `p_paddr=0`, an *absolute*
+  multiboot2 `ENTRY_ADDRESS_EFI64` tag (`0xA8`), no `MULTIBOOT_HEADER_TAG_ADDRESS`,
+  no relocations. Sliding it needs gnoboot's `--pie` loader to bias manually OR
+  cyrius to emit slide-aware metadata — a decision the in-flight AGNOS gnoboot
+  boot test forces. Deferred deliberately: shipping it un-boot-tested would be the
+  "structural ≠ verified" placebo this slot exists to avoid.
+
 ## [6.2.44] — 2026-06-25
 
 **v6.2.44 — CVE-29 thread-stack guard page + cross-arch `_PE`/Mach-O stub

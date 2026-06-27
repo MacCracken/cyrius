@@ -24,10 +24,18 @@ fn _entry_base(S): i64 {
     if (fmt == 2) { return 0x100004000; }   # Mach-O ARM64: TEXT_BASE + 16384
     var kmode = L64(S + 0x18FCA0);
     if (kmode == 1) {
+        # --pie kernel always routes through EMITELF64_KERNEL (ET_DYN, base=0);
+        # match its base-0 entry so absolute fixups (dbase = entry + acp) stay
+        # consistent with the slid wrapper. Inert today — under _pie_mode every
+        # fixup takes the rel32 branch where `entry` cancels (proven byte-
+        # identical) — but removes the landmine for any future absolute fixup
+        # added under --pie. See CHANGELOG [6.2.45].
+        if (_pie_mode == 1) { return 120 + 48; }   # 0xA8 = hdrsz(120) + mb_sz(48)
         if (_TARGET_ELF64_KERNEL == 1) { return 0x100000 + 120 + 48; }
         return 0x100000 + 84 + 12;
     }
     if (kmode == 2) { return 232; }
+    if (_pie_mode == 1) { return 0x78; }   # userland --pie: EMITELF_USER base-0 entry
     return 0x400078;
 }
 

@@ -1,0 +1,27 @@
+# Kernel-PIE structural fixture (v6.2.45). Compiled with CYRIUS_PIE=1 by
+# programs/checks/services.cyr::_kernel_pie_struct_gate. The `kernel;` directive
+# selects kernel mode (kmode==1) at SOURCE level, so the gate needs only the
+# single CYRIUS_PIE=1 env var through _self_host_pipe_env (which appends one
+# envp entry). Exercises the three address-emit sites --pie converts from
+# absolute `mov reg, imm64` to RIP-relative `lea reg, [rip+disp32]`: a global
+# (ftype-0), a string literal (ftype-1), and a function address `&fn`
+# (ftype-3) — so a future un-_IS_OBJ-gated absolute bake would surface as a
+# non-PIC kernel image. The gate asserts the output is a position-independent
+# kernel (ET_DYN + first PT_LOAD p_vaddr=0) — the EMIT SHAPE full-binary AGNOS
+# KASLR needs. It is NOT executed: a slid-base BOOT is consumer-gated on an
+# AGNOS gnoboot --pie harness (CHANGELOG [6.1.7]). No includes — self-contained
+# so the gate's `cat | cycc` compile has no dep-resolution surface.
+kernel;
+var kg = 30;
+fn kbump(x: i64): i64 { return x + 2; }
+fn kbody(): i64 {
+    var ks = "kpie";         # ftype-1: string address (lea [rip+disp32] under PIE)
+    var kfp = &kbump;        # ftype-3: function address (must be PIC, not a baked VA)
+    kg = kbump(kg);          # ftype-0: global read/write + a direct rel32 call
+    if (load8(ks) != 107) { return 1; }   # 'k' — string addressing resolved
+    if (kfp == 0) { return 2; }           # &fn produced a (non-zero) address
+    return kg;
+}
+kbody();
+asm { cli; }
+asm { hlt; }

@@ -151,6 +151,22 @@ byte-identical.
 
 **Still open (deferred from v6.1.6):**
 
+> **SUPERSEDED (added 2026-06-27).** This is a frozen v6.1.6 snapshot kept for the
+> design rationale; both items below have since landed and the "Still open"
+> framing is stale:
+> - **Item 1 — kernel-PIE ELF wrapper: SHIPPED v6.1.7.** `EMITELF64_KERNEL` emits
+>   ET_DYN + `p_vaddr=0` + base-relative `e_entry` (`0xA8`) under `--pie`. The
+>   "current kernel path is ET_EXEC at a fixed `0x100000`" wording is true only of
+>   a **non-`--pie`** build; a `kernel; --pie` build is position-independent,
+>   guarded since v6.2.45 by `_kernel_pie_struct_gate` (check.sh). What genuinely
+>   remains is the *live slid-base boot*, consumer-gated on an AGNOS `gnoboot
+>   --pie` harness — see CHANGELOG [6.1.7] and `roadmap.md` "Kernel-PIE ELF
+>   boot-test". (This stale "NOT shipped" line is what a 2026-06 review misread as
+>   hidden work; the wrapper was always present — only the boot test is owed.)
+> - **Item 2 — aarch64 PIE: userland SHIPPED v6.1.8** (`adrp`+`add` codegen under
+>   `_pie_mode`, ET_DYN, `e_entry 0x78`, pi-validated). aarch64 *kernel*-PIE
+>   remains the consumer-gated follow-on.
+
 1. **Kernel-PIE ELF for AGNOS KASLR** (the proposal's original Option-A motivation).
    The codegen is done; only the ELF *wrapper* remains — an ET_DYN + multiboot2
    variant of `EMITELF64_KERNEL` with a real `_start` and `p_vaddr=0` (the current

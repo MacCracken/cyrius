@@ -274,6 +274,7 @@ fn _run_regression_gates(): i64 {
 
     _section("PIE executable");
     _pie_exec_gate();
+    _kernel_pie_struct_gate();
     println("");
 
     _section("Linker");
