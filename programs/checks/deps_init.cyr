@@ -90,6 +90,80 @@ fn _lk_path(base, suffix): i64 {
     return str_data(str_builder_build(sb));
 }
 
+# v6.2.46 (dependency-model arc, lever 1 / Phase A): a named dep may
+# declare the stdlib leaves it needs in scope via `requires = [...]`;
+# `cyrius deps` auto-resolves them (recursive stdlib resolver, ahead of
+# the dep's own modules so the include order is topological), dedups a
+# leaf shared by two deps, and FAILS LOUD when a required leaf is missing
+# — converting the old hand-ordered "ct/keccak MUST precede sigil" chain
+# and its omit-one → runtime ud2/SIGILL trap into a build-time error.
+# Leaf-only deps keep the gate hermetic (no network / real fold);
+# fnptr/ct/keccak are pure leaves (0 transitive includes) so the fixture
+# lib/ holds exactly three files for a clean rmdir.
+fn _deps_requires_gate(): i64 {
+    var label = "cyrius deps resolves a named dep's `requires` stdlib leaves (transitive auto-resolve + dedup + fail-loud on missing) — v6.2.46 dependency-model lever 1 Phase A";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Case 1 — positive + dedup. "fnptr" is required by BOTH folds (must
+    # resolve once); "ct"/"keccak" once each.
+    var fx = _tmp_path("audit_deps_requires_");
+    sys_mkdir(fx, 0x1ED);
+    _write_file(_lk_path(fx, "/cyrius.cyml"),
+        "[package]\nname = \"requires_gate\"\n\n[deps.fold_a]\nrequires = [\"fnptr\", \"ct\"]\n\n[deps.fold_b]\nrequires = [\"fnptr\", \"keccak\"]\n");
+    var out1 = _tmp_path("audit_deps_requires_out1_");
+    var ec1 = _exec_in_dir(fx, cyrius_bin, "deps", out1);
+    var got_fnptr = file_exists(_lk_path(fx, "/lib/fnptr.cyr"));
+    var got_ct = file_exists(_lk_path(fx, "/lib/ct.cyr"));
+    var got_keccak = file_exists(_lk_path(fx, "/lib/keccak.cyr"));
+
+    # Case 2 — a missing required leaf must FAIL LOUD (non-zero exit).
+    var fx2 = _tmp_path("audit_deps_requires_bad_");
+    sys_mkdir(fx2, 0x1ED);
+    _write_file(_lk_path(fx2, "/cyrius.cyml"),
+        "[package]\nname = \"requires_bad\"\n\n[deps.fold_bad]\nrequires = [\"this_leaf_does_not_exist_xyz\"]\n");
+    var out2 = _tmp_path("audit_deps_requires_out2_");
+    var ec2 = _exec_in_dir(fx2, cyrius_bin, "deps", out2);
+
+    # Cleanup before reporting so a failed assertion still cleans up.
+    sys_unlink(out1);
+    sys_unlink(out2);
+    sys_unlink(_lk_path(fx, "/lib/fnptr.cyr"));
+    sys_unlink(_lk_path(fx, "/lib/ct.cyr"));
+    sys_unlink(_lk_path(fx, "/lib/keccak.cyr"));
+    sys_unlink(_lk_path(fx, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(fx, "/lib"));
+    sys_rmdir(fx);
+    sys_unlink(_lk_path(fx2, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(fx2, "/lib"));
+    sys_rmdir(fx2);
+
+    var fail = 0;
+    if (ec1 != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": positive requires-resolve exited "); print_num(ec1); println(" (expected 0)");
+        fail = 1;
+    } elif (got_fnptr != 1 || got_ct != 1 || got_keccak != 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": requires leaves not all materialized (fnptr/ct/keccak) in fixture lib/");
+        fail = 1;
+    } elif (ec2 == 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": a missing required leaf did NOT fail loud (cyrius deps exited 0)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": requires resolves+dedups stdlib leaves; missing leaf fails the build");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _deps_lock_gate(): i64 {
     var label = "cyrius deps --lock writes a non-empty recursive lock + --verify round-trips (v6.0.2; empty-lock-since-v5.11.8 regression)";
 

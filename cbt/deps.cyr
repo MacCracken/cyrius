@@ -588,6 +588,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             var dep_git = 0;
             var dep_tag = 0;
             var dep_modules = 0;
+            var dep_requires = 0;
             # CVE-21 (v6.2.30): cleared if a tagged dep's resolved commit
             # disagrees with the lock — gates the module copy so poisoned
             # content never lands in lib/.
@@ -645,8 +646,54 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 if (memeq(buf + si, "modules", 7) == 1 && (load8(buf + si + 7) == 32 || load8(buf + si + 7) == 61)) {
                     dep_modules = _parse_toml_str_array(buf, n, si);
                 }
+                # v6.2.46 (dependency-model arc, lever 1 / Phase A): a fold/dep
+                # may declare the stdlib leaves it needs in scope, e.g.
+                # `requires = ["ct", "keccak", "thread_local"]`. Parsed like
+                # `modules` (key-boundary checked: space/`=` after `requires`);
+                # pulled below, after the key loop, ahead of this dep's modules.
+                if (memeq(buf + si, "requires", 8) == 1 && (load8(buf + si + 8) == 32 || load8(buf + si + 8) == 61)) {
+                    dep_requires = _parse_toml_str_array(buf, n, si);
+                }
                 while (si < n && load8(buf + si) != 10) { si = si + 1; }
                 si = si + 1;
+            }
+            # v6.2.46 (dependency-model arc, lever 1 / Phase A): resolve this
+            # dep's declared `requires` stdlib leaves BEFORE its own modules,
+            # so each leaf's `include "lib/<leaf>"` lands ahead of this dep's
+            # include in `_dep_includes` — topological emit falls out of
+            # resolution order, no separate sort. Reuses the recursive stdlib
+            # resolver + its `_dep_stdlib_seen` dedup, so a leaf already pulled
+            # (by `[deps].stdlib` or another fold's `requires`) is not
+            # re-included. Converts the hand-ordered "ct/keccak MUST precede
+            # the sigil include" consumer chain — and its omit-one → runtime
+            # `ud2`/SIGILL trap — into a declared, fail-loud, resolve-time-
+            # ordered requirement. Init the seen-set if the `[deps].stdlib`
+            # phase didn't (a requires-only consumer) so `_dep_stdlib_seen_add`
+            # doesn't vec_push into a null set.
+            if (dep_requires != 0) {
+                if (_dep_stdlib_seen == 0) { _dep_stdlib_seen_init(); }
+                var rq_dir = _dep_find_stdlib_dir();
+                if (rq_dir == 0) {
+                    sys_write(STDERR_FD, "error: dep ", 11);
+                    sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                    sys_write(STDERR_FD, " declares requires but the cyrius stdlib was not found\n", 55);
+                    errors += 1;
+                } else {
+                    var rqi = 0;
+                    while (rqi < vec_len(dep_requires)) {
+                        var rq_leaf = vec_get(dep_requires, rqi);
+                        var rqr = _dep_copy_stdlib_recursive(rq_dir, rq_leaf, 1);
+                        if (rqr == 1) {
+                            sys_write(STDERR_FD, "error: dep ", 11);
+                            sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                            sys_write(STDERR_FD, " requires '", 11);
+                            sys_write(STDERR_FD, rq_leaf, strlen(rq_leaf));
+                            sys_write(STDERR_FD, "' but it is not in the cyrius stdlib\n", 37);
+                            errors += 1;
+                        }
+                        rqi = rqi + 1;
+                    }
+                }
             }
             var need_clone = 0;
             if (dep_git != 0 && dep_modules != 0) {

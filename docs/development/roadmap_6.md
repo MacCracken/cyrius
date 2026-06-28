@@ -401,13 +401,21 @@ its cascading downstream win — on the table. The foundation is the payoff.
 bites; the heavier Phase C may take the 2nd release — a decision made
 *now*, not a reactive split):
 
-- **Phase A — transitive auto-resolve + topological ordering (lead; cheap;
-  kills the live pain).** Each fold declares its stdlib-leaf + sibling-dep
-  requirements (dep metadata / index); `cyrius deps` merges and emits the
-  prepend in **dependency order**. Consumers declare *what they need*, not a
-  hand-ordered chain — the SIGILL-on-omission trap dies. CLI-only
-  (`cbt/deps.cyr`), self-host untouched. **This is the highest value-per-
-  effort move and should ship first.**
+- **Phase A — transitive auto-resolve + topological ordering — ✅ SHIPPED
+  v6.2.46.** A named dep declares its stdlib-leaf requirements via a
+  `requires = [...]` key on `[deps.<name>]`; `cyrius deps` pulls each through
+  the existing recursive stdlib resolver *ahead of* the dep's own modules, so
+  the prepend is in **dependency order** and consumers declare *what they need*,
+  not a hand-ordered chain — the SIGILL-on-omission trap becomes a **fail-loud
+  build error**. **Premise-check reshape:** the defect was an *asymmetry* (raw
+  `[deps].stdlib` already self-heals via the recursive include-follower +
+  `#ifdef` dispatchers; folded named-deps had none, and distlib strips includes
+  at fold time) — so **topological order falls out of resolution order and the
+  planned Kahn sort was unnecessary** (smaller, byte-identical). CLI-only
+  (`cbt/deps.cyr`), cycc self-host byte-identical, check.sh 94/94. The
+  *producer sidecar* (`dist/<pkg>.deps`, so folds self-declare and consumers
+  need no hand-authored `requires`) was deferred to **v6.2.47** (it touches the
+  `cyrius distlib` producer, scoped out of Phase A by user choice 2026-06-27).
 - **Phase B — named module groupings.** A `[groups]` section
   (`crypto = ["sigil:ed25519", "sigil:sha256", "sigil:keccak"]`), expanded
   at resolve time. Makes the de-facto bayan/ganita/sandhi/sigil bundles an

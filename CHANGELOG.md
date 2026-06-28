@@ -6,6 +6,69 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.46] — 2026-06-27
+
+**v6.2.46 — dependency-model arc, lever 1 / Phase A: `requires` transitive
+auto-resolve + topological ordering.** A named dep (`[deps.<name>]`) may now
+declare the stdlib leaves it needs in scope via `requires = ["ct", "keccak",
+…]`; `cyrius deps` resolves each — through the existing recursive stdlib
+resolver, *ahead of* that dep's own modules — dedups a leaf shared by two deps,
+and **fails loud at resolve time** when a required leaf is missing. This
+converts a consumer's hand-ordered "ct/keccak/random MUST precede the sigil
+include" chain — and its omit-one → runtime `ud2`/SIGILL trap — into a declared,
+build-time-checked, correctly-ordered requirement. First lever-1 bite; opens the
+arc the user un-parked 2026-06-27. **CLI-only (`cbt/deps.cyr`) → cycc
+byte-identical 1,073,672 B; self-hosts byte-identical; check.sh 93/93 → 94/94
+(+`_deps_requires_gate`) + boot gate; ecb + cass `SELFHOST_OK`; bench
+self_compile 505 ms (flat vs .45's 509 ms jitter band).**
+
+### Added
+- **`requires = [...]` key on `[deps.<name>]` blocks** (`cbt/deps.cyr`
+  `_process_named_deps`). Parsed like `modules` (key-boundary checked,
+  lenient-parser-safe → 100 % backward-compatible: a manifest without `requires`
+  resolves byte-identical to today — the whole change is guarded behind
+  `if (dep_requires != 0)`, and `"requires"` doesn't prefix-collide with
+  path/git/tag/modules). Each declared leaf is pulled via
+  `_dep_copy_stdlib_recursive(stdlib_dir, leaf, 1)` *before* the dep's own module
+  push, so each leaf's `include "lib/<leaf>"` lands ahead of the dep's in
+  `_dep_includes` — **topological emit falls out of resolution order; no separate
+  sort.** Reuses the existing `_dep_stdlib_seen` dedup, so a leaf already pulled
+  (by `[deps].stdlib` or another dep's `requires`) is not re-included. An
+  init-if-zero guard on the seen-set covers a `requires`-only consumer (no
+  `[deps].stdlib` section).
+- **Fail-loud on a missing required leaf** — a `requires` entry that doesn't
+  resolve in the stdlib dir reports `error: dep <name> requires '<leaf>' but it
+  is not in the cyrius stdlib` and increments the error count (non-zero exit).
+  The omit-one defect is now a build error, not a runtime crash.
+- **`_deps_requires_gate`** (`programs/checks/deps_init.cyr`; check.sh 93 → 94) —
+  hermetic: two leaf-only folds (one leaf shared → dedup proof) resolve, and a
+  missing-leaf fixture fails loud.
+
+### Premise-check finding (reshaped the design)
+- The 6-day-old plan assumed "pure manifest list-order, add a topological sort."
+  The actual defect is an **asymmetry**: raw `[deps].stdlib` modules *already*
+  self-heal — `_dep_copy_stdlib_recursive` recursively follows each module's own
+  `include "lib/X.cyr"` and the `#ifdef` arch-dispatchers re-order at parse time.
+  Folded named-deps (`[deps.<name>] modules=`) have **none** of that (whole-file
+  copy + straight push), and `cyrius distlib` **strips every `include` at fold
+  time** (`commands.cyr`), so a fold cannot recover its requirements by scanning
+  — they must be *declared*. Phase A gives the named-dep path the self-healing the
+  stdlib path already had, driven by `requires`. Because the recursive resolver
+  pushes in resolution order, **no Kahn topological sort was needed** — a smaller,
+  lower-risk change than the plan feared, with zero perturbation of the
+  byte-identical stdlib prepend.
+
+### Carry-forward → v6.2.47
+- **Consumer migrations** — descent off its 29-entry hand-ordered `stdlib` list +
+  its 15-line "omit one → SIGILL" contract comment (the end-to-end ordering
+  acceptance proof), then the other consumers.
+- **Producer sidecar** — `cyrius distlib` emits `dist/<pkg>.deps` so a fold
+  self-declares its leaves and consumers need no hand-authored `requires`.
+- **Phase B — named `[groups]`** (the addressable sub-units lever 2 will gate).
+- **Undefined-fn reachable-call hard-error default-on** — safe once the ecosystem
+  migration is complete (cross-module refs resolved); a separate slot, not folded
+  in (`issues/2026-06-25-undefined-fn-reachable-call-hard-error.md`).
+
 ## [6.2.45] — 2026-06-27
 
 **v6.2.45 — kernel-PIE latent-landmine + structural-gate hardening, plus a
