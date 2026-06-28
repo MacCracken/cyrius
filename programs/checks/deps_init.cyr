@@ -186,6 +186,10 @@ fn _deps_sidecar_gate(): i64 {
     sys_mkdir(fd, 0x1ED);
     _write_file(_lk_path(fd, "/mymod.cyr"),
         "include \"lib/fnptr.cyr\"\ninclude \"lib/ct.cyr\"\ninclude \"src/self.cyr\"\n\nfn _sc_thing(): i64 { return 1; }\n");
+    # Umbrella include-hub (v6.2.48): declares a leaf (keccak) that NO folded
+    # module includes directly — proves the umbrella scan captures it.
+    sys_mkdir(_lk_path(fd, "/src"), 0x1ED);
+    _write_file(_lk_path(fd, "/src/lib.cyr"), "include \"lib/keccak.cyr\"\n");
     _write_file(_lk_path(fd, "/cyrius.cyml"),
         "[package]\nname = \"scfold\"\nversion = \"0.0.1\"\n\n[lib]\nmodules = [\"mymod.cyr\"]\n");
     var pout = _tmp_path("audit_deps_sidecar_pout_");
@@ -194,6 +198,7 @@ fn _deps_sidecar_gate(): i64 {
     var got_sidecar = file_exists(sidecar);
     # Sidecar must list fnptr (lib/) and NOT self (src/ skipped).
     var has_fnptr = 0;
+    var has_keccak = 0;
     var has_self = 1;
     if (got_sidecar == 1) {
         var sb = alloc(8192);
@@ -201,6 +206,7 @@ fn _deps_sidecar_gate(): i64 {
         if (sn > 0) {
             store8(sb + sn, 0);
             if (_find_str_from(sb, sn, 0, "fnptr", 5) >= 0) { has_fnptr = 1; }
+            if (_find_str_from(sb, sn, 0, "keccak", 6) >= 0) { has_keccak = 1; }
             if (_find_str_from(sb, sn, 0, "self", 4) < 0) { has_self = 0; }
         }
     }
@@ -218,6 +224,7 @@ fn _deps_sidecar_gate(): i64 {
     var cec = _exec_in_dir(cd, cyrius_bin, "deps", cout);
     var got_fnptr = file_exists(_lk_path(cd, "/lib/fnptr.cyr"));
     var got_ct = file_exists(_lk_path(cd, "/lib/ct.cyr"));
+    var got_keccak = file_exists(_lk_path(cd, "/lib/keccak.cyr"));
 
     # Cleanup before reporting so a failed assertion still cleans up.
     sys_unlink(pout);
@@ -226,10 +233,13 @@ fn _deps_sidecar_gate(): i64 {
     sys_unlink(_lk_path(fd, "/dist/scfold.cyr"));
     sys_rmdir(_lk_path(fd, "/dist"));
     sys_unlink(_lk_path(fd, "/mymod.cyr"));
+    sys_unlink(_lk_path(fd, "/src/lib.cyr"));
+    sys_rmdir(_lk_path(fd, "/src"));
     sys_unlink(_lk_path(fd, "/cyrius.cyml"));
     sys_rmdir(fd);
     sys_unlink(_lk_path(cd, "/lib/fnptr.cyr"));
     sys_unlink(_lk_path(cd, "/lib/ct.cyr"));
+    sys_unlink(_lk_path(cd, "/lib/keccak.cyr"));
     sys_unlink(_lk_path(cd, "/lib/scfold.cyr"));
     sys_unlink(_lk_path(cd, "/cyrius.lock"));
     sys_unlink(_lk_path(cd, "/cyrius.cyml"));
@@ -241,21 +251,21 @@ fn _deps_sidecar_gate(): i64 {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
         _p(": distlib did not emit dist/scfold.deps (exit "); print_num(pec); println(")");
         fail = 1;
-    } elif (has_fnptr != 1 || has_self != 0) {
+    } elif (has_fnptr != 1 || has_keccak != 1 || has_self != 0) {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": sidecar wrong (must list lib/ leaf 'fnptr', must NOT list src/ self-ref 'self')");
+        println(": sidecar wrong (needs folded leaf 'fnptr' + umbrella-only 'keccak', NOT src/ 'self')");
         fail = 1;
     } elif (cec != 0) {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
         _p(": consumer deps (no requires) exited "); print_num(cec); println(" (expected 0)");
         fail = 1;
-    } elif (got_fnptr != 1 || got_ct != 1) {
+    } elif (got_fnptr != 1 || got_ct != 1 || got_keccak != 1) {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": sidecar did not auto-pull fnptr+ct into the consumer's lib/");
+        println(": sidecar did not auto-pull fnptr+ct+keccak (umbrella) into the consumer's lib/");
         fail = 1;
     } else {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
-        println(": distlib sidecar (lib/ leaves only) auto-resolves into a consumer with no `requires`");
+        println(": distlib sidecar (folded + umbrella src/lib.cyr leaves) auto-resolves with no `requires`");
     }
     _check(label, fail);
     return fail;

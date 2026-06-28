@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.48] — 2026-06-27
+
+**v6.2.48 — dependency-model arc, lever 1: distlib sidecar captures the umbrella
+include-hub + excludes named deps; the ecosystem migration shipped.** The v6.2.47
+sidecar captured only the `lib/` includes the folded modules *directly* declared —
+but real folds keep their stdlib requirements in the **non-folded umbrella** (sigil →
+`src/lib.cyr`, libro → `src/main.cyr`): sigil's 60 crypto modules USE ct/keccak but
+it's the umbrella that `include`s them, so the sidecar came out **incomplete** (8 of
+sigil's 24 leaves). `cyrius distlib` now (a) scans the umbrella convention(s) so the
+fold's FULL requirement set is captured, and (b) **excludes a producer's own
+`[deps.NAME]` named-dep folds** from the sidecar (they resolve transitively — listing
+them would double-include `lib/NAME.cyr` → duplicate-fn errors). **Proven end-to-end:**
+sigil 3.9.5 + libro 2.7.8 re-fold via `cyrius distlib` (dropping sigil's bash
+`regen-dist.sh`) and ship sidecars; **descent 1.1.4 dropped its 29-element hand-ordered
+`stdlib` list and `cyrius build` compiles CLEAN** (no undefined-fn warnings — every
+crypto/store leaf auto-resolves via libro's sidecar). **CLI-only (`cbt/commands.cyr`)
+→ cycc byte-identical 1,073,672 B; self-hosts byte-identical; check.sh 95/95; ecb +
+cass `SELFHOST_OK`.**
+
+### Fixed
+- **distlib sidecar scans the umbrella include-hub** (`cbt/commands.cyr`
+  `_distlib_scan_umbrella` over `src/lib.cyr` + `src/main.cyr`) in addition to the
+  folded modules. A fold whose modules rely on the umbrella for their `lib/` deps
+  (the common pattern) now gets a COMPLETE `dist/<pkg>.deps`; without it a consumer
+  dropping its hand-ordered stdlib list for the sidecar would silently miss the
+  umbrella-only leaves → runtime SIGILL.
+- **distlib sidecar excludes the producer's `[deps.NAME]` named deps** — a captured
+  `lib/NAME` that matches a `[deps.NAME]` block is a fold (resolved transitively), not
+  a stdlib leaf; emitting it would make the consumer double-write `lib/NAME.cyr`.
+- **`_deps_sidecar_gate` extended** (`programs/checks/deps_init.cyr`) — the fixture
+  fold now declares a leaf (`keccak`) ONLY in `src/lib.cyr` (no folded module includes
+  it); the gate asserts the sidecar captures it AND the consumer auto-pulls it.
+
+### Ecosystem migration (shipped, cross-repo)
+- **sigil 3.9.5** — re-fold via `cyrius distlib`, ships `dist/sigil.deps` (23 leaves);
+  the bash `scripts/regen-dist.sh` retired (cyrius distlib is the sovereign fold tool).
+- **libro 2.7.8** — ships `dist/libro.deps` (22 leaves, named deps excluded); sigil pin
+  3.9.0 → 3.9.5.
+- **descent 1.1.4** — dropped the 29-element hand-ordered list → 18 M1 leaves; `cyrius
+  build` clean (the acceptance proof the lever-1 arc was for).
+
 ## [6.2.47] — 2026-06-27
 
 **v6.2.47 — dependency-model arc, lever 1 / Phase A producer sidecar.** `cyrius
