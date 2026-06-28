@@ -1,10 +1,17 @@
 # Kernel-PIE boot metadata targets the link base, not a slid base
 
-> **OPEN — HELD, gnoboot-coupled.** Surfaced by the 2026-06-27 kernel-PIE
-> ground-truth review. Deliberately NOT fixed in v6.2.45 (which shipped the
-> structural gate + the `_entry_base` landmine fix): the correct fix depends on
-> a decision the in-flight AGNOS `gnoboot --pie` boot test forces, and shipping
-> it un-boot-tested would be the "structural ≠ verified" placebo.
+> **RESOLVED 2026-06-27 — Option 1 (gnoboot biases manually); NO cyrius change
+> needed.** Full-binary KASLR shipped + validated end-to-end the same day.
+> gnoboot reads the relocation-free ET_DYN, picks an RDRAND-slid, 2 MB-aligned
+> base in [32 MB, 254 MB), and jumps to `base + e_entry` — ignoring `p_paddr` /
+> the EFI64 entry tag exactly as Option 1 below describes. The slide sits above
+> the 16 MB PMM ceiling + below the 256 MB per-proc-CR3 identity window → no
+> kernel memory rework, no relocation walk, no page-table surgery. **cyrius's
+> contribution — a relocation-free PIE `.text` + ET_DYN/`p_vaddr=0` wrapper —
+> was necessary AND sufficient; the boot metadata did NOT need to become
+> slide-aware.** Non-PIE ET_EXEC kernel byte-identical (KASLR is build-time
+> opt-in). Validated by a real slid boot, not structurally. Original analysis
+> retained below for the record.
 
 **Filed:** 2026-06-27 · **Severity:** P2 (blocks live full-binary KASLR; no
 consumer is mid-boot on it yet). **Owner split:** cyrius (metadata emit) +

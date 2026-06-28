@@ -169,8 +169,13 @@ landing on consumer pressure or explicit user direction
   boot metadata still targets the link base (`p_paddr=0` + an **absolute**
   multiboot2 `ENTRY_ADDRESS_EFI64` tag; no `ADDRESS` tag, no relocations) — so
   a slide needs gnoboot to bias manually OR cyrius to emit slide-aware metadata.
-  Filed `2026-06-27-kernel-pie-boot-metadata-slide-readiness`; the kernel team
-  is actively wiring the gnoboot `--pie` boot test (2026-06-27).
+  **RESOLVED 2026-06-27 — full-binary KASLR shipped + validated end-to-end.**
+  gnoboot took Option 1 (biases manually: reads the relocation-free ET_DYN,
+  picks an RDRAND-slid 2 MB-aligned base in [32 MB, 254 MB), jumps to
+  `base + e_entry`) — **no cyrius metadata change needed**; the relocation-free
+  PIE `.text` + ET_DYN/`p_vaddr=0` wrapper was necessary AND sufficient. Issue
+  archived. This carry-in (open since v6.1.7) is **complete** — migrate to
+  completed-phases.md at the next closeout.
 - **x86-macOS usable-toolchain arc tail.** Phase 1 (argv prologue) shipped
   v6.1.30; remaining `ach`-gated layers: env reading (`HOME`/uname), the
   wrapper's macOS arch-default (detect x86 on Intel), cycc-finding, the
