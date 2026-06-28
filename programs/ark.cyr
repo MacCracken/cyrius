@@ -19,6 +19,10 @@ include "lib/vec.cyr"
 include "lib/args.cyr"
 include "lib/syscalls.cyr"
 
+# v6.3.2: nous resolver + pkg API is aspirational (not yet implemented).
+# Stub surface keeps ark compiling clean with zero --allow-undef.
+include "programs/nous_stub.cyr"
+
 var ARK_VERSION = "0.9.0";
 var ARK_DB_PATH = "/var/lib/ark/packages.db";
 var ARK_LOG_PATH = "/var/lib/ark/transactions.log";

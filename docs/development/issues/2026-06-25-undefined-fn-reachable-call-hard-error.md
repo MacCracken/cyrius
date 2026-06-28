@@ -8,8 +8,19 @@
 > Pick this up as part of the dependency-model arc (the lever-1 work), where
 > cross-module refs become resolvable/declarable.
 
-**Filed:** 2026-06-25 · **Status:** DEFERRED → **v6.3.2 (its OWN slot)**
-**Pinned in:** [roadmap.md](../roadmap.md) v6.3.x release workflow, slot v6.3.2.
+**Filed:** 2026-06-25 · **Status:** ✅ **RESOLVED — shipped v6.3.2 (2026-06-28)**
+**Pinned in:** [roadmap.md](../roadmap.md) v6.3.x release workflow, slot v6.3.2 (SHIPPED).
+
+> **RESOLVED v6.3.2.** Default-on hard-error landed (fixup gates flip from `_strict_mode` →
+> `_allow_undef`; `--allow-undef`/`--al` downgrades; all 6 forks wired). The full blast radius
+> was made clean with **ZERO `--allow-undef`** in the repo's own builds — NOT the "switch the
+> harness to `cyrius build`" path (which proved non-trivial: tcyr carry repo-relative includes).
+> Instead: 18 tcyr include-completed; 3 mabda tcyr via mabda-3.4.5 source-gating
+> (`#ifdef MABDA_LOGIND`/`MABDA_PNG`) + re-fold; cx fork's 47 `*_PE`/`*_ARM` cross-arch refs
+> stubbed; CLI→PE's 11 POSIX refs stubbed in `lib/syscalls_windows.cyr`; ark's external `nous`
+> refs stubbed; TLS-probe + hmtest/bench/fuzz include-completed. check.sh 101/101; self-host +
+> seed-derive byte-identical; ecb+cass+pi SELFHOST_OK; pi native-fixpoint OK. The cx
+> annotation-desync fold (F) rode along. Ready to `git mv` to `issues/archived/`.
 
 > **Re-pinned 2026-06-28 (user) — un-bundled from lever 2 into its OWN slot.** Lever 2
 > (deps optional/features/target) **shipped as v6.3.1** on its own; B gets v6.3.2. The

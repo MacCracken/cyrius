@@ -1,0 +1,53 @@
+# v6.3.2: stub surface for the not-yet-implemented `nous` resolver. ark references
+# this API; until real nous lands these are no-ops so ark compiles clean (zero --allow-undef).
+# Replace with the real nous dep when available.
+
+# resolver_new(marketplace_dir, cache_dir) -> resolver handle (0 = unavailable)
+fn resolver_new(mkt_dir, cache_dir): i64 {
+    return 0;
+}
+
+# nous_resolve(resolver, name) -> package handle (0 = not found / unavailable)
+fn nous_resolve(resolver, name): i64 {
+    return 0;
+}
+
+# nous_search(resolver, query) -> vec of package handles (0 = unavailable)
+fn nous_search(resolver, query): i64 {
+    return 0;
+}
+
+# pkg_print(pkg) -> 0; would print a one-line package summary
+fn pkg_print(pkg): i64 {
+    return 0;
+}
+
+# pkg_name(pkg) -> name string (0 = unavailable)
+fn pkg_name(pkg): i64 {
+    return 0;
+}
+
+# pkg_version(pkg) -> version string (0 = unavailable)
+fn pkg_version(pkg): i64 {
+    return 0;
+}
+
+# pkg_source(pkg) -> source handle (0 = unavailable)
+fn pkg_source(pkg): i64 {
+    return 0;
+}
+
+# pkg_desc(pkg) -> description string (0 = unavailable)
+fn pkg_desc(pkg): i64 {
+    return 0;
+}
+
+# pkg_trusted(pkg) -> 1 if trusted, 0 otherwise (0 = unavailable)
+fn pkg_trusted(pkg): i64 {
+    return 0;
+}
+
+# source_print(source) -> 0; would print the source name
+fn source_print(source): i64 {
+    return 0;
+}

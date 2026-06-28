@@ -896,3 +896,59 @@ fn ESTOREREGPARM(S, pidx, disp): i64 {
 }
 fn EMULH(S): i64 { return 0; }
 fn _read_env(name): i64 { return 0; }
+
+# ============================================================================
+# v6.3.2: cross-arch emit stubs. The cyrius-x (cx) bytecode target shares the
+# frontend/dispatch with the x86/PE + Mach-O backends, which reference these
+# *_PE (Windows) / *_ARM (Mach-O) emitters. They are DEAD on cx (it emits
+# bytecode, never PE/Mach-O) but reachable-per-DCE, so the v6.3.2 default
+# undefined-fn hard error needs them defined. No-op (return 0); the aarch64
+# fork stubs the *_PE family the same way (see src/backend/aarch64/emit.cyr).
+# ============================================================================
+fn EACQSRW_PE(S): i64 { return 0; }
+fn ECALLPTR_PE(S, n): i64 { return 0; }
+fn ECLOSE_PE(S): i64 { return 0; }
+fn ECMDTOARGV_PE(S): i64 { return 0; }
+fn ECREATEDIR_PE(S): i64 { return 0; }
+fn ECREATEDXGI_PE(S): i64 { return 0; }
+fn ECREATEPIPE_PE(S): i64 { return 0; }
+fn ECREATEPROC_PE(S): i64 { return 0; }
+fn ECREATETHREAD_PE(S): i64 { return 0; }
+fn EDELETEF_PE(S): i64 { return 0; }
+fn EFINDCLOSE_PE(S): i64 { return 0; }
+fn EFINDFIRST_PE(S): i64 { return 0; }
+fn EFINDNEXT_PE(S): i64 { return 0; }
+fn EFLADDR_X8(S, lli): i64 { return 0; }
+fn EGETCMDLINE_PE(S): i64 { return 0; }
+fn EGETCURTID_PE(S): i64 { return 0; }
+fn EGETENV_PE(S): i64 { return 0; }
+fn EGETEXIT_PE(S): i64 { return 0; }
+fn EGETFATTR_PE(S): i64 { return 0; }
+fn EGETMODH_PE(S): i64 { return 0; }
+fn EGETPROC_PE(S): i64 { return 0; }
+fn EGETSYSTIME_PE(S): i64 { return 0; }
+fn EGETTICKS_PE(S): i64 { return 0; }
+fn EINITSRW_PE(S): i64 { return 0; }
+fn ELOCALFREE_PE(S): i64 { return 0; }
+fn ELSEEK_PE(S): i64 { return 0; }
+fn EMACHO_CLOCK_ARM(S): i64 { return 0; }
+fn EMACHO_EXIT_ARM(S): i64 { return 0; }
+fn EMACHO_READ_ARM(S): i64 { return 0; }
+fn EMACHO_WRITE_ARM(S): i64 { return 0; }
+fn EMMAP_PE(S): i64 { return 0; }
+fn ENANOSLEEP_PE(S): i64 { return 0; }
+fn EOPEN_PE(S): i64 { return 0; }
+fn EPE_SYSCALL_DYNAMIC(S, argc): i64 { return 0; }
+fn EPROCPRNG_PE(S): i64 { return 0; }
+fn EREAD_PE(S): i64 { return 0; }
+fn ERELSRW_PE(S): i64 { return 0; }
+fn ESETHANDLE_PE(S): i64 { return 0; }
+fn ESHLIMM(S, n): i64 { return 0; }
+fn ESLEEP_PE(S): i64 { return 0; }
+fn ETLSALLOC_PE(S): i64 { return 0; }
+fn ETLSGET_PE(S): i64 { return 0; }
+fn ETLSSET_PE(S): i64 { return 0; }
+fn EWAIT_PE(S): i64 { return 0; }
+fn EWRITE_PE(S): i64 { return 0; }
+fn _macho_arm_routes(n): i64 { return 0; }
+fn _pe_pending_imp_add(S, name): i64 { return 0; }

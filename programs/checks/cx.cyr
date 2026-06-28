@@ -133,7 +133,11 @@ fn _cx_syscall_run(cc_cx, cxvm, v): i64 {
     var fd = sys_open(src_path, 577, 420);
     if (fd < 0) { return 0 - 1; }
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "syscall(60, ");
+    # v6.3.2: prepend a top-level `#pure fn` so every cx run also exercises the
+    # pass-1 annotation-token consume that the cx fork was missing (the
+    # v6.2.2-class desync). If pass-1 terminated early on `#pure`, the syscall
+    # below would be unreachable and cxvm's exit would not match v.
+    str_builder_add_cstr(sb, "#pure fn _cx_annot(): i64 { return 0; }\nsyscall(60, ");
     str_builder_add_int(sb, v);
     str_builder_add_cstr(sb, ");\n");
     var s = str_builder_build(sb);

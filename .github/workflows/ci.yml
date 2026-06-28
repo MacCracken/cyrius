@@ -51,10 +51,7 @@ jobs:
           cat programs/cyrlint.cyr | ./build/cycc > ./build/cyrlint && chmod +x ./build/cyrlint
           cat programs/cyrdoc.cyr | ./build/cycc > ./build/cyrdoc && chmod +x ./build/cyrdoc
           cat programs/cyaudit.cyr | ./build/cycc > ./build/cyaudit && chmod +x ./build/cyaudit
-          # ark targets the not-yet-in-repo `nous` resolver (external), so it has
-          # intentionally-unresolved refs. --allow-undef downgrades the v6.3.2 default
-          # reachable-undef hard error (ark is built for structural verification, not run).
-          cat programs/ark.cyr | ./build/cycc --allow-undef > ./build/ark && chmod +x ./build/ark
+          cat programs/ark.cyr | ./build/cycc > ./build/ark && chmod +x ./build/ark
 
   # ── CVE-20: trust-root attestation (seed-derivable — resolved 2026-06-20) ──
   # CLOSURE leg: given the committed bootstrap/asm binary, build/cycc descends

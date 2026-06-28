@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.2] — 2026-06-28
+
+**v6.3.2 — undefined-fn reachable-call hard-error, default-on (+ cx annotation-desync fold).**
+A call to a reachable undefined fn now hard-errors at compile time by **default** (was `--strict`-only
+since v5.4.19); `--allow-undef` downgrades it to a warning. Closes the "ships a successful build of a
+crashing binary" class — the emitted `ud2`/`UDF` SIGILLs at runtime, repeatedly misdiagnosed as a
+toolchain bug. The flip's blast radius (everything that compiles, not just the test corpus) was made
+clean with **ZERO `--allow-undef` in the repo's own builds**: every reachable undef is now a real fn
+(via includes) or a documented stub/guard.
+
+### Changed — the gate flip (B)
+- **`src/backend/x86/fixup.cyr` + `src/backend/aarch64/fixup.cyr`** — the reachability-filtered undef
+  check gates on a new `_allow_undef` global (default 0 = hard error) instead of `_strict_mode`.
+  Byte-identical wording across both arches. Dead-host (DCE-unreachable) refs stay filtered/warn-only.
+- **All 6 forks** declare `var _allow_undef = 0;`; the 5 with an argv parse add a `--al`
+  (`--allow-undef`) match mirroring `--strict` (`main_win.cyr` in both its Linux + UTF-16 Windows
+  paths). `main_x86_macho.cyr` has no argv parse → always hard-errors (Intel-EOL, self-compile HELD).
+- **cycc 1,075,136 → 1,075,616 B** (the `_allow_undef` decls + `--al` parse across forks). Self-hosts
+  byte-identical; **seed → cybs → cycc derivation byte-identical** (`seed-derive-cycc.sh`).
+
+### Changed — corpus made clean (zero `--allow-undef`)
+- **18 stdlib include-gap `.tcyr`** + the TLS-live probe (`programs/checks/services.cyr`) + `hmtest` +
+  `bench_hashmap.bcyr` + `fuzz/hashmap.fcyr` — completed their `include`s (str/vec/tagged/chrono/
+  random/dynlib/mmap/thread_local) so the real stdlib fns they reference resolve.
+- **3 `mabda`-fold `.tcyr`** (`large_input`, `large_source`, `preprocessor_past_cap`) — `lib/mabda.cyr`
+  referenced external `samvada_*` / `chitra_*` (the "mabda-but-not-samvada" optional-feature case).
+  Fixed at **mabda's source** (mabda **3.4.5**): the samvada/logind + chitra/PNG calls are guarded
+  `#ifdef MABDA_LOGIND` / `#ifdef MABDA_PNG` (opt-in, matching mabda's existing best-effort design),
+  re-folded into `lib/mabda.cyr`.
+- **cx compiler fork** (`src/main_cx.cyr`, 47 reachable undefs) — the shared frontend references the
+  `*_PE` (Windows) + `*_ARM` (Mach-O) emitters, dead on the cx bytecode target. Added no-op stubs to
+  `src/backend/cx/emit.cyr` (the aarch64 fork stubs the `*_PE` family the same way).
+- **CLI → PE cross** (`cbt/cyrius.cyr` under `CYRIUS_TARGET_WIN`, 11 POSIX undefs) — `WEXITSTATUS`/
+  `WIFEXITED`/`WIFSIGNALED`/`WTERMSIG`/`sys_fork`/`sys_execve`/`sys_waitpid`/`sys_chmod`/`sys_dup2`/
+  `sys_mkdir`/`sys_unlink` are POSIX-only, dead on Windows (the CLI spawns via CreateProcessW). Added
+  documented PE stubs to `lib/syscalls_windows.cyr`; x86-native build stays byte-clean.
+- **`programs/ark.cyr`** (AGNOS package manager, targets the not-yet-in-repo `nous` resolver) — added
+  `programs/nous_stub.cyr` (no-op `nous_*`/`pkg_*` surface) so ark compiles structurally; reverted the
+  interim `--allow-undef` from `.github/workflows/ci.yml`.
+- **`docs/api-surface.snapshot`** +11 (the new Windows POSIX stubs); the stubs are cyrdoc-documented.
+
+### Fixed — cx annotation-desync fold (F)
+- **`src/main_cx.cyr`** — the cx fork's pass-1 top-level scan was the one fork missing the
+  annotation-token consume cases (109/122/124/125/126/127/133), so a `#pure`/`#regalloc`/… annotated
+  fn at cx top level fell into `else { scan = 0; }` and terminated the scan early (the v6.2.2-class
+  parallel-scanner desync, 3rd instance). Added the consume cases (incl. `#deprecated`'s string arg).
+  New cx-gate regression: `_cx_syscall_run` now prepends a top-level `#pure fn`.
+
+### Note
+- check.sh 101/101 (incl. the cx-annotation regression); ecb + cass + pi `SELFHOST_OK`; bench
+  self_compile 505 ms (vs .1's 508 — within jitter; cycc +480 B). The `--al`/`--allow-undef` flag is
+  the user-facing downgrade; the repo's
+  own builds use **zero** `--allow-undef`. mabda 3.4.5 is independently releasable (it only uses
+  `#ifdef`, present since v5.6.1; v6.3.2 vendors its gated fold).
+
 ## [6.3.1] — 2026-06-28
 
 **v6.3.1 — dependency-model lever 2: required vs optional deps.** The scoping layer
