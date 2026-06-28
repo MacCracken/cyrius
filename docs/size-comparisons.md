@@ -66,8 +66,8 @@
 
 ## Cyrius self-host context
 
-For perspective, the Cyrius compiler itself (cycc) is **1,075,136 B**
-(~1,048 KB / ~1.02 MB) on Linux ELF at v6.3.0. It compiles itself byte-identically.
+For perspective, the Cyrius compiler itself (cycc) is **1,075,616 B**
+(~1,048 KB / ~1.02 MB) on Linux ELF at v6.3.2. It compiles itself byte-identically.
 At v5.5.10 it also compiles itself byte-identically on Windows
 (cycc_win.exe native → out.exe matches Linux cross-build md5).
 That's the whole self-hosting compiler — TLS / atomics / dynlib /
@@ -77,8 +77,8 @@ kernel emit (v5.11.43) / DCE-aware reachability filter cross-arch
 (v5.11.59) / Windows process/thread/TLS/env/file-I-O/directory-enumeration
 (v6.1.16–v6.1.18) — in less disk than Rust's stripped debug exit42.
 
-- Cyrius cycc (Linux ELF): **1,075,136 B** (v6.3.0)
-- cycc_aarch64 (Linux aarch64 cross): **627,376 B** (v6.3.0; the
+- Cyrius cycc (Linux ELF): **1,075,616 B** (v6.3.2)
+- cycc_aarch64 (Linux aarch64 cross): **627,376 B** (v6.3.2; the
   v5.11.59 full DCE bitmap pass for aarch64 fixup.cyr — mirroring the
   x86 path since v5.10.x — accounts for the bulk over earlier v5.11.x)
 - cycc_win (Windows PE cross): **851,968 B** (v6.3.0; PE format

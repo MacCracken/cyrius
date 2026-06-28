@@ -15,7 +15,7 @@ The core type is the 64-bit integer (see ADR-002): strings are pointers (which a
 Type annotations (`var x: i64 = 42`) are documentation. Generics (`fn foo<T>()`) are parsed but not enforced. The compiler warns on pointer/scalar mismatches at assignment. Full type checking is on the roadmap.
 
 ### Is it fast?
-The compiler self-compiles in ~512 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.07 MB output, measured at v6.2.43 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~480–500 ms as growth-tax over the v6.0.x–v6.2.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
+The compiler self-compiles in ~505 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.07 MB output, measured at v6.3.2 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~480–510 ms as growth-tax over the v6.0.x–v6.3.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables, the v6.3 deps-model + undef-hard-error — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
 
 ---
 
