@@ -18,18 +18,28 @@ gvar_initval (0x1EC000), var_enum_id (0x204000) — that must grow in lockstep (
 unmigrated one silently overflows once the family grows past 8192). All seven migrated
 to relocatable bases behind a single `_var_cap`; `SVCNT` grows the family 2× the moment
 the count would reach the cap (ceiling 1 048 576), ending the last fixed compile-time
-cap. **Codegen change → cycc 1,073,672 → 1,074,832 B (+1,160; var access gains a `_base`
-global-load indirection) — but bases start AT the original offsets, so under the old cap
-behavior is byte-identical: self-hosts byte-identical (two-step bootstrap gen1==gen2);
-check.sh 99/99; a 9000-global program now compiles + runs (was "variable table full
-(8192)"); all 6 forks compile; ecb + cass + pi `SELFHOST_OK`; bench self_compile 505 ms
+cap. **Codegen change → cycc 1,073,672 → 1,075,136 B (var access gains a `_base`
+global-load indirection + the chained grow helpers) — but bases start AT the original
+offsets, so under the old cap behavior is byte-identical: self-hosts byte-identical;
+**seed → cybs → cycc derivation byte-identical** (`seed-derive-cycc.sh`); check.sh
+100/100 (incl. an 8300-global grow gate that compiles + RUNS, was "variable table full
+(8192)"); all 6 forks compile; ecb + cass + pi `SELFHOST_OK`; bench self_compile 511 ms
 (no regression — var access isn't hot).**
 
 ### Changed
 - **`src/common/util.cyr`** — 7 var-family base globals (`_varn_base`, `_vars_base`,
   `_vart_base`, `_vgoff_base`, `_vecv_base`, `_vgsi_base`, `_venid_base`) + `_var_cap` +
-  `_var_grow(S)` (allocs 7 new regions, copies the used slots, repoints all bases,
-  ceiling 1 048 576). `SVCNT` replaces the fixed-8192 error with a grow-check.
+  `_grow_one` + `_var_grow(S)` (ceiling 1 048 576). `SVCNT` replaces the fixed-8192
+  error with a grow-check.
+- **The grow is CHAINED one-table-per-function** (`_grow_g1`…`_grow_g7`, each
+  growing one table with the current cap and making a regular call to the next; the
+  last bumps `_var_cap`). This is NOT a style choice: **cybs (the hand-asm bootstrap
+  compiler that the seed→cybs→cycc chain runs) silently mis-compiles a function with
+  too many global/call references and mis-compiles tail calls** — the first cut grew
+  all 7 tables inline in one `_var_grow`, which broke the seed (cybs produced a gen1
+  that SIGSEGV'd compiling main.cyr). Keeping each grow fn small + tail-call-free
+  restores the chain. (Lesson: the cycc self-host fixpoint does NOT cover the seed
+  chain — run `seed-derive-cycc.sh` after every compiler change.)
 - **All var-family access routed through the bases** — ~60 inline `S + 0xNN000 + idx*8`
   sites + the `GVTYPE`/`SVTYPE`/`GVOFF`/`GVSI`/`GVENUMID`/`SVENUMID` accessor bodies,
   across 11 files (frontend `parse_*`, backend x86/aarch64 `fixup`, `pe/emit`,

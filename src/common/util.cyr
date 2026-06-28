@@ -37,42 +37,39 @@ var _vecv_base = 0;    # 0x1D8000 enum_const_val
 var _vgsi_base = 0;    # 0x1EC000 gvar_initval
 var _venid_base = 0;   # 0x204000 var_enum_id
 var _var_cap = 0;
-# Grow the var family 2x: alloc 7 new regions, copy the used (cap) slots, repoint
-# all 7 bases (old regions leaked — cycc is short-lived). RAW count not needed; the
-# grow fires from SVCNT before the count is stored, on a one global-compare path.
+# Grow ONE var-family table 2x: alloc a new region (2x cap slots), copy the used
+# `cap` slots, return the new base. Kept tiny (3 locals) ON PURPOSE — cybs, the
+# bootstrap assembler-compiler, mis-compiles fns with too many locals, which broke
+# the seed chain (seed→cybs→cycc) when _var_grow inlined all 7 grows in one ~10-local
+# fn: cybs produced a gen1 that segfaulted compiling main.cyr. Splitting the per-table
+# work into this helper keeps every fn under cybs's local capacity. (DO NOT re-inline.)
+fn _grow_one(old_base, cap): i64 {
+    var nb = alloc(cap * 2 * 8);
+    var bytes = cap * 8;
+    var i = 0;
+    while (i < bytes) { store64(nb + i, load64(old_base + i)); i = i + 8; }
+    return nb;
+}
+# Grow the var family 2x, ONE table per function, CHAINED. cybs (the bootstrap
+# assembler-compiler) mis-compiles a fn with too many global/call references — the
+# seed chain (seed→cybs→cycc) segfaulted when _var_grow grew all 7 tables inline
+# (verified: 1 grow/fn self-hosts, 4 grows/fn desyncs cybs and gen1 segfaults). So
+# each fn grows ONE table with the CURRENT _var_cap and tail-calls the next; the
+# LAST (_grow_g7) bumps _var_cap, so every grow above sees the old cap. DO NOT
+# re-inline these into one fn — it re-breaks the seed. See seed-derive-cycc.sh.
+fn _grow_g7(): i64 { _venid_base = _grow_one(_venid_base, _var_cap); _var_cap = _var_cap * 2; return 0; }
+fn _grow_g6(): i64 { _vgsi_base = _grow_one(_vgsi_base, _var_cap); _grow_g7(); return 0; }
+fn _grow_g5(): i64 { _vecv_base = _grow_one(_vecv_base, _var_cap); _grow_g6(); return 0; }
+fn _grow_g4(): i64 { _vgoff_base = _grow_one(_vgoff_base, _var_cap); _grow_g5(); return 0; }
+fn _grow_g3(): i64 { _vart_base = _grow_one(_vart_base, _var_cap); _grow_g4(); return 0; }
+fn _grow_g2(): i64 { _vars_base = _grow_one(_vars_base, _var_cap); _grow_g3(); return 0; }
+fn _grow_g1(): i64 { _varn_base = _grow_one(_varn_base, _var_cap); _grow_g2(); return 0; }
 fn _var_grow(S): i64 {
-    var nc = _var_cap * 2;
-    if (nc > 1048576) {
+    if (_var_cap * 2 > 1048576) {
         syscall(SYS_WRITE, 2, "error: variable table exceeds 1048576 entries (too many globals+enums+arrays)\n", 78);
         syscall(SYS_EXIT, 1);
     }
-    var nn = alloc(nc * 8);
-    var ns = alloc(nc * 8);
-    var nt = alloc(nc * 8);
-    var ng = alloc(nc * 8);
-    var ne = alloc(nc * 8);
-    var ni = alloc(nc * 8);
-    var nv = alloc(nc * 8);
-    var used = _var_cap * 8;
-    var i = 0;
-    while (i < used) {
-        store64(nn + i, load64(_varn_base + i));
-        store64(ns + i, load64(_vars_base + i));
-        store64(nt + i, load64(_vart_base + i));
-        store64(ng + i, load64(_vgoff_base + i));
-        store64(ne + i, load64(_vecv_base + i));
-        store64(ni + i, load64(_vgsi_base + i));
-        store64(nv + i, load64(_venid_base + i));
-        i = i + 8;
-    }
-    _varn_base = nn;
-    _vars_base = ns;
-    _vart_base = nt;
-    _vgoff_base = ng;
-    _vecv_base = ne;
-    _vgsi_base = ni;
-    _venid_base = nv;
-    _var_cap = nc;
+    _grow_g1();
     return 0;
 }
 fn SVCNT(S, v): i64 {

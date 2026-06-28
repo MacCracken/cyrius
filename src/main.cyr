@@ -700,7 +700,14 @@ _fnt_cap = 8192;
 # cap 3145728 (byte-identical under the old cap; EB grows + relocates off-heap
 # when cp nears it). The cx backend's own 0x54A000 codebuf is separate + fixed.
 _codebuf_base = S + 0x41A000;
-_varn_base = S + 0x11A000; _vars_base = S + 0x12A000; _vart_base = S + 0x13A000; _vgoff_base = S + 0x1B0000; _vecv_base = S + 0x1D8000; _vgsi_base = S + 0x1EC000; _venid_base = S + 0x204000; _var_cap = 8192;
+_varn_base = S + 0x11A000;
+_vars_base = S + 0x12A000;
+_vart_base = S + 0x13A000;
+_vgoff_base = S + 0x1B0000;
+_vecv_base = S + 0x1D8000;
+_vgsi_base = S + 0x1EC000;
+_venid_base = S + 0x204000;
+_var_cap = 8192;
 _codebuf_cap = 3145728;
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
