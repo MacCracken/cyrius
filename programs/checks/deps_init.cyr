@@ -413,6 +413,66 @@ fn _deps_modular_gate(): i64 {
     return fail;
 }
 
+# v6.2.51 (closeout — CVE-32 regression): a malicious/compromised dependency
+# controls its dist/<pkg>/index.cyml; a sibling name that escapes lib/ (contains
+# `/` or `..`) must be REJECTED before any fs op. Pre-fix, _dep_pull_submodule
+# sys_unlink'd `lib/<pkg>_<submod>.cyr` on the unsanitized name → arbitrary .cyr
+# deletion during automatic `cyrius deps`. This gate feeds a traversal sibling and
+# asserts deps fails (non-zero) instead of silently doing the unsafe write.
+fn _deps_modular_traversal_gate(): i64 {
+    var label = "cyrius deps REJECTS a path-traversal sub-module name from a malicious dist/<pkg>/index.cyml — v6.2.51 closeout CVE-32 regression";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Hand-crafted malicious modular dist: module "m" whose index dep escapes lib/.
+    var fd = _tmp_path("audit_cve32_dep_");
+    sys_mkdir(fd, 0x1ED);
+    sys_mkdir(_lk_path(fd, "/dist"), 0x1ED);
+    sys_mkdir(_lk_path(fd, "/dist/cve"), 0x1ED);
+    _write_file(_lk_path(fd, "/dist/cve/m.cyr"), "fn _cve_m(): i64 { return 0; }\n");
+    _write_file(_lk_path(fd, "/dist/cve/index.cyml"), "[modular]\nm = [\"a/../../../cve32_evil\"]\n");
+
+    var cd = _tmp_path("audit_cve32_cons_");
+    sys_mkdir(cd, 0x1ED);
+    var ccyml = str_builder_new();
+    str_builder_add_cstr(ccyml, "[package]\nname = \"cve32c\"\n\n[deps.cve]\npath = \"");
+    str_builder_add_cstr(ccyml, fd);
+    str_builder_add_cstr(ccyml, "\"\nmodular = [\"m\"]\n");
+    _write_file(_lk_path(cd, "/cyrius.cyml"), str_data(str_builder_build(ccyml)));
+    var out = _tmp_path("audit_cve32_out_");
+    var ec = _exec_in_dir(cd, cyrius_bin, "deps", out);
+
+    # Cleanup before reporting.
+    sys_unlink(out);
+    sys_unlink(_lk_path(fd, "/dist/cve/m.cyr"));
+    sys_unlink(_lk_path(fd, "/dist/cve/index.cyml"));
+    sys_rmdir(_lk_path(fd, "/dist/cve"));
+    sys_rmdir(_lk_path(fd, "/dist"));
+    sys_rmdir(fd);
+    sys_unlink(_lk_path(cd, "/lib/cve_m.cyr"));
+    sys_unlink(_lk_path(cd, "/cyrius.lock"));
+    sys_unlink(_lk_path(cd, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(cd, "/lib"));
+    sys_rmdir(cd);
+
+    var fail = 0;
+    if (ec == 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": deps accepted a traversal sub-module name from index.cyml (CVE-32 unguarded)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": traversal sub-module name rejected (deps non-zero), no fs op before the guard");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _deps_lock_gate(): i64 {
     var label = "cyrius deps --lock writes a non-empty recursive lock + --verify round-trips (v6.0.2; empty-lock-since-v5.11.8 regression)";
 

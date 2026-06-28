@@ -10,7 +10,7 @@
 # HEAP MAP — Authoritative offset registry
 # ================================================================
 # Check here FIRST before allocating new state.
-# Last full audit: v5.8.61 — monotonic layout shipped, 84 regions
+# Last full audit: v6.2.x closeout — monotonic layout, 96 regions
 # (0 overlaps, 0 warnings) verified by tests/heapmap.sh. The
 # auditor's parser was last fixed in v5.5.40 (regex required 2+
 # spaces after hex offset, silently dropped every region past

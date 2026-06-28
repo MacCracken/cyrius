@@ -6,6 +6,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.51] — 2026-06-27
+
+**v6.2.51 — v6.2.x end-of-minor closeout (pre-v6.3.0).** Mechanical gates + a
+6-dimension judgment-pass audit over the minor; one real security finding (CVE-32)
++ two hardening/consolidation fixes land, the rest of the surface is clean or
+deferred to v6.3.x. **CLI + test + one comment only → cycc byte-identical
+1,073,672 B; self-hosts byte-identical; check.sh 97/97 → 98/98 (+CVE-32 gate);
+bootstrap closure (seed→cybs→cycc) byte-identical; ecb + cass + pi `SELFHOST_OK`.**
+
+### Security
+- **CVE-32 (P1) — path traversal in the Phase C modular resolver.** `_dep_pull_submodule`
+  (cbt/deps.cyr) ran `sys_unlink` on `lib/<pkg>_<submod>.cyr` using a dep-/index-controlled,
+  unsanitized sub-module name BEFORE `_dep_copy_file`'s CVE-04 guard — a malicious
+  `dist/<pkg>/index.cyml` sibling like `a/../../../x` could delete/overwrite an arbitrary
+  `.cyr` during automatic `cyrius deps`. Same dep-resolver injection class hardened at
+  v6.1.33 (CVE-14/15/16) that the new .50 modular path failed to replicate. Fix: a shared
+  `_dep_reject_unsafe_name` (rejects any `/` or `..`) at EVERY ingestion point — the
+  sub-module name (top of `_dep_pull_submodule`, before any fs op), each index-returned
+  `lib:<leaf>`, and the producer-side `pkg_name` in `_distlib_modular_emit`. Regression
+  gate `_deps_modular_traversal_gate` (check.sh 97 → 98).
+
+### Fixed
+- **distlib loud-fail on >256KB module truncation** (cbt/commands.cyr, BOTH the flat and
+  `--modular` per-module read paths) — a module source exceeding the 262143-byte read cap
+  was silently truncated, dropping trailing `include`s from the bundle / index leaf list →
+  reintroducing missing-dep SIGILL. Now `_err_ctx` + non-zero exit. (mabda's backend is
+  already 168KB and growing toward the cap.)
+
+### Changed (closeout refactor / cleanup)
+- **Shared `_distlib_named_deps(mbuf, mlen)`** (cbt/commands.cyr) — the named-dep exclude
+  scan was duplicated in the sidecar emit + `_distlib_modular_emit`; extracted to one helper
+  (CLI-only → cycc byte-identical).
+- **Heap-map doc refresh** — `src/main.cyr` HEAP MAP header (v5.8.61 / 84 regions → v6.2.x
+  closeout / 96 regions; comment-only → cycc byte-identical) + `docs/adr/003-fixed-heap-layout.md`
+  (84 → 96 regions). v6.2.x added ZERO fixed heap regions (the deps lever-1 arc is entirely
+  runtime-alloc / CLI); `tests/heapmap.sh` PASS, 96 regions, 0 overlaps.
+
+### Closeout audit (recorded)
+- **Dead-code floor: 62 unreachable fns / 26001 bytes** (x86 self-host) — unchanged; all
+  are cross-arch encoders / CLI mode-flag / scaffold fns unreachable in the x86 build but
+  live in their forks (not removable per the dead-code-audit-scope rule).
+- **Mechanical**: self-host byte-identical; bootstrap closure (seed→cybs→cycc) byte-identical;
+  check.sh 98/98; cross-OS ecb (macOS) + cass (Windows) + pi (aarch64) `SELFHOST_OK`.
+- **Deferred to v6.3.x** (filed as issues): finish the var-table growable migration (changes
+  codegen → breaks byte-identical, not closeout-safe); `distlib --modular` basename-collision
+  guard (no live consumers yet); a cosmetic ~4-byte heap over-read on the manifest `[deps.`/name
+  prefix scans near the 32KB buffer tail (bump-arena → no fault). One open question raised to
+  the user: should `distlib` exit non-zero when a `modules=` entry is missing (producer/consumer
+  exit-code asymmetry — a behavior change that could trip lenient CI).
+
 ## [6.2.50] — 2026-06-27
 
 **v6.2.50 — dependency-model arc, lever 1 / Phase C: module-granular extraction

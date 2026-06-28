@@ -1450,23 +1450,10 @@ fn _distlib_scan_umbrella(leaves, path): i64 {
 
 var _distlib_modular = 0;   # v6.2.50 Phase C: `--modular` → per-module dist + index
 
-# v6.2.50 (deps lever 1 / Phase C — module-granular extraction): emit each
-# `[lib].modules` entry as its own `dist/<pkg>/<module>.cyr` (src/ self-refs
-# stripped → recorded as sibling deps in the index; lib/ kept inline) plus
-# `dist/<pkg>/index.cyml` — a `[modular]` map `<module> = [siblings…, "lib:<leaf>"…]`
-# giving the resolver each sub-unit's transitive deps in topological order. So a
-# consumer (or a v6.3.x lever-2 profile) can pull EXACT sub-modules instead of the
-# whole monolith. The flat single-file `cyrius distlib` is unchanged (default).
-fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
-    sys_mkdir("dist", 0x1ED);
-    var dir_sb = str_builder_new();
-    str_builder_add_cstr(dir_sb, "dist/");
-    str_builder_add_cstr(dir_sb, pkg_name);
-    var moddir = str_data(str_builder_build(dir_sb));
-    sys_mkdir(moddir, 0x1ED);
-
-    # named-dep exclude set — a captured `lib/X` matching a `[deps.X]` block is a
-    # fold (resolved transitively), not a stdlib leaf (mirrors the sidecar).
+# v6.2.51 (closeout refactor): the named-dep exclude set — a captured `lib/X`
+# matching a `[deps.X]` block is a fold (resolved transitively), not a stdlib
+# leaf. Shared by the sidecar emit + the `--modular` index emit (was duplicated).
+fn _distlib_named_deps(mbuf, mlen): i64 {
     var named_deps = vec_new();
     var ndi = 0;
     while (ndi < mlen) {
@@ -1484,6 +1471,26 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
             ndi = nne;
         } else { ndi = ndi + 1; }
     }
+    return named_deps;
+}
+
+# v6.2.50 (deps lever 1 / Phase C — module-granular extraction): emit each
+# `[lib].modules` entry as its own `dist/<pkg>/<module>.cyr` (src/ self-refs
+# stripped → recorded as sibling deps in the index; lib/ kept inline) plus
+# `dist/<pkg>/index.cyml` — a `[modular]` map `<module> = [siblings…, "lib:<leaf>"…]`
+# giving the resolver each sub-unit's transitive deps in topological order. So a
+# consumer (or a v6.3.x lever-2 profile) can pull EXACT sub-modules instead of the
+# whole monolith. The flat single-file `cyrius distlib` is unchanged (default).
+fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
+    if (_dep_reject_unsafe_name(pkg_name) == 1) { return 1; }   # CVE-32: producer-side pkg name (no `/`/`..` in dist/<pkg>)
+    sys_mkdir("dist", 0x1ED);
+    var dir_sb = str_builder_new();
+    str_builder_add_cstr(dir_sb, "dist/");
+    str_builder_add_cstr(dir_sb, pkg_name);
+    var moddir = str_data(str_builder_build(dir_sb));
+    sys_mkdir(moddir, 0x1ED);
+
+    var named_deps = _distlib_named_deps(mbuf, mlen);
 
     var idx = str_builder_new();
     str_builder_add_cstr(idx, "# cyrius distlib --modular index (v6.2.50 Phase C)\n");
@@ -1528,6 +1535,13 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         var fbuf = alloc(262144);
         var flen = file_read_all(mod_path, fbuf, 262143);
         if (flen <= 0) { sys_close(mfd); mi = mi + 1; continue; }
+        # v6.2.51 (closeout): fail loud on a >256KB module — a silent truncation
+        # would drop trailing `include`s from the index leaf list → missing-dep SIGILL.
+        if (flen >= 262143 && _file_size(mod_path) > 262143) {
+            _err_ctx("distlib --modular: module exceeds 256KB read cap (truncated)", mod_path);
+            sys_close(mfd);
+            return 1;
+        }
         store8(fbuf + flen, 0);
 
         str_builder_add_cstr(idx, base);
@@ -1826,6 +1840,13 @@ fn cmd_distlib(profile): i64 {
         var fbuf = alloc(262144);
         var flen = file_read_all(mod_path, fbuf, 262143);
         if (flen <= 0) { mi = mi + 1; continue; }
+        # v6.2.51 (closeout): fail loud on a >256KB module rather than silently
+        # truncating the bundle + dropping its trailing include/leaf lines.
+        if (flen >= 262143 && _file_size(mod_path) > 262143) {
+            _err_ctx("distlib: module exceeds 256KB read cap (truncated)", mod_path);
+            sys_close(ofd);
+            return 1;
+        }
         store8(fbuf + flen, 0);
 
         var pos = 0;
@@ -1885,25 +1906,7 @@ fn cmd_distlib(profile): i64 {
     # resolution. Listing it in the sidecar would double-include `lib/X.cyr`
     # (once transitively, once as a bogus stdlib pull) → duplicate-fn errors.
     # Collect the named-dep names so they're EXCLUDED from the sidecar below.
-    var named_deps = vec_new();
-    var ndi = 0;
-    while (ndi < mlen) {
-        if (memeq(mbuf + ndi, "[deps.", 6) == 1) {
-            var nns = ndi + 6;
-            var nne = nns;
-            while (nne < mlen && load8(mbuf + nne) != 93) { nne = nne + 1; }
-            var nnl = nne - nns;
-            if (nnl > 0) {
-                var nd = alloc(nnl + 1);
-                memcpy(nd, mbuf + nns, nnl);
-                store8(nd + nnl, 0);
-                vec_push(named_deps, nd);
-            }
-            ndi = nne;
-        } else {
-            ndi = ndi + 1;
-        }
-    }
+    var named_deps = _distlib_named_deps(mbuf, mlen);   # v6.2.51 closeout: shared helper (was duplicated here + in _distlib_modular_emit)
 
     # v6.2.47 (deps lever 1, Phase A producer side): emit the dep sidecar
     # `dist/<pkg>.deps` — one stdlib leaf per line — capturing the

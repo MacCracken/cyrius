@@ -702,6 +702,28 @@ fn _dep_parse_groups(buf, n): i64 {
     return 0;
 }
 
+# v6.2.51 (closeout — CVE-32, path-traversal hardening of the Phase C modular
+# resolver): reject a dep-/index-controlled sub-module / leaf name that could
+# escape lib/ (any `/` or `..` component). The .50 `_dep_pull_submodule` ran
+# `sys_unlink` on `lib/<pkg>_<submod>.cyr` BEFORE `_dep_copy_file`'s CVE-04 guard,
+# so a malicious `dist/<pkg>/index.cyml` sibling like `../../../x` could delete an
+# arbitrary `.cyr` during automatic `cyrius deps`. Returns 1 = unsafe (reject).
+fn _dep_reject_unsafe_name(name): i64 {
+    var i = 0;
+    var c = load8(name);
+    while (c != 0) {
+        if (c == 47 || (c == 46 && load8(name + i + 1) == 46)) {   # '/' or '..'
+            sys_write(STDERR_FD, "  error: unsafe dep name (path traversal rejected): ", 52);
+            sys_write(STDERR_FD, name, strlen(name));
+            sys_write(STDERR_FD, "\n", 1);
+            return 1;
+        }
+        i = i + 1;
+        c = load8(name + i);
+    }
+    return 0;
+}
+
 # v6.2.50 (deps lever 1 / Phase C — module-granular extraction): read a module's
 # dep line `<mod> = [...]` from a `dist/<pkg>/index.cyml`, returning the dep vec
 # (sibling-module names + `lib:<leaf>` entries) or 0 if absent.
@@ -736,6 +758,7 @@ fn _dep_read_index_deps(index_path, submod): i64 {
 # sibling sub-modules (recursed). `seen` dedups + breaks cycles. Deps are pulled
 # BEFORE the module so its `include` lands after theirs in `_dep_includes`.
 fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
+    if (_dep_reject_unsafe_name(submod) == 1) { return 1; }   # CVE-32: traversal guard, BEFORE any fs op
     if (_dep_list_has(seen, submod) == 1) { return 0; }
     vec_push(seen, submod);
     var errs = 0;
@@ -750,7 +773,9 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
         while (di < vec_len(deps)) {
             var d = vec_get(deps, di);
             if (strlen(d) > 4 && memeq(d, "lib:", 4) == 1) {
-                if (stdlib_dir != 0) {
+                if (_dep_reject_unsafe_name(d + 4) == 1) {   # CVE-32: index-controlled leaf name
+                    errs = errs + 1;
+                } elif (stdlib_dir != 0) {
                     if (_dep_copy_stdlib_recursive(stdlib_dir, d + 4, 1) == 1) { errs = errs + 1; }
                 }
             } else {
