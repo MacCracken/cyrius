@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.47] — 2026-06-27
+
+**v6.2.47 — dependency-model arc, lever 1 / Phase A producer sidecar.** `cyrius
+distlib` now emits a `dist/<pkg>.deps` sidecar — one stdlib leaf per line —
+capturing the `include "lib/X"` requirements it strips at fold time; `cyrius deps`
+reads the sidecar next to a resolved fold module and **auto-pulls those leaves**,
+so a consumer declaring just `[deps.<pkg>]` (no hand-authored `requires`) gets the
+fold's stdlib in scope, in topological order. Completes the "declare what you need"
+end-state begun by the v6.2.46 `requires` key — folds destroy their includes at
+fold time, so the sidecar is the only record of what they need. **CLI-only
+(`cbt/commands.cyr` + `cbt/deps.cyr`) → cycc byte-identical 1,073,672 B; self-hosts
+byte-identical; check.sh 94/94 → 95/95 (+`_deps_sidecar_gate`) + boot; ecb + cass
+`SELFHOST_OK`; bench self_compile 516 ms (jitter — cycc untouched).**
+
+### Added
+- **`cyrius distlib` emits `dist/<pkg>.deps`** (`cbt/commands.cyr` `cmd_distlib`) —
+  during the include-strip pass, each stripped `include "lib/<leaf>.cyr"` is
+  captured (deduped) via the new `_distlib_capture_lib_leaf` helper; `src/`
+  self-refs are skipped. After the fold is written, the deduped leaf list is
+  written to the sidecar (out_path `.cyr` → `.deps`), one leaf per line + a header.
+  No sidecar is written for a fold with no `lib/` deps.
+- **`cyrius deps` reads the sidecar** (`cbt/deps.cyr` `_process_named_deps`) — for
+  each resolved fold module `<src>/dist/<pkg>.cyr`, the resolver checks for
+  `<src>/dist/<pkg>.deps`; if present, its leaves are pulled (via the existing
+  recursive stdlib resolver, deduped by `_dep_stdlib_seen`) **before** the fold's
+  own include is pushed onto `_dep_includes` — same topological-by-resolution-order
+  placement as a hand-authored `requires` key, but the consumer needn't author it.
+  New `_dep_read_sidecar` parses the file (`#` comments + blank lines ignored,
+  trailing CR/space trimmed).
+- **`_deps_sidecar_gate`** (`programs/checks/deps_init.cyr`; check.sh 94 → 95) —
+  hermetic, end-to-end: `distlib` on a fold (with a `src/` self-ref to prove it's
+  not captured) asserts the sidecar lists the `lib/` leaf and NOT the `src/` ref;
+  then a consumer with **no `requires`** resolves and the leaves land in its `lib/`.
+
+### Changed
+- **`_dep_pull_leaves` helper** (`cbt/deps.cyr`) factors the v6.2.46 requires-pull
+  loop (fail-loud on a missing leaf) so the `requires` key and the `.deps` sidecar
+  share one resolver path. Logic-preserving (the v6.2.46 `_deps_requires_gate` stays
+  green).
+
+### Carry-forward → v6.2.48
+- **descent migration** (the end-to-end ordering acceptance proof): re-fold sigil
+  with the new distlib so it ships `dist/sigil.deps`, then descent declares
+  `[deps.sigil]` and drops its 29-element hand-ordered `stdlib` list + contract
+  comment. Cross-repo (sigil source patch + descent).
+- **Phase B — named `[groups]`**; and the **undefined-fn reachable-call hard-error
+  default-on** (after the ecosystem migration resolves cross-module refs).
+
 ## [6.2.46] — 2026-06-27
 
 **v6.2.46 — dependency-model arc, lever 1 / Phase A: `requires` transitive

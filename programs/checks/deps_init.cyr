@@ -164,6 +164,103 @@ fn _deps_requires_gate(): i64 {
     return fail;
 }
 
+# v6.2.47 (deps lever 1, Phase A producer-side): `cyrius distlib` emits a
+# `dist/<pkg>.deps` sidecar listing the `lib/` stdlib leaves it stripped at
+# fold time; `cyrius deps` reads it next to a resolved fold module and
+# auto-pulls those leaves — so a consumer declaring just `[deps.<pkg>]` (no
+# hand-authored `requires`) gets them in scope, in topological order. This
+# gate proves the full producer→sidecar→consumer chain end-to-end.
+fn _deps_sidecar_gate(): i64 {
+    var label = "cyrius distlib emits dist/<pkg>.deps + cyrius deps auto-resolves its leaves with no hand-authored `requires` — v6.2.47 dependency-model lever 1 Phase A (producer sidecar)";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # --- Producer: a fold whose module includes lib/fnptr + lib/ct (captured)
+    #     and a src/ self-ref (NOT captured). `cyrius distlib` → sidecar.
+    var fd = _tmp_path("audit_deps_sidecar_fold_");
+    sys_mkdir(fd, 0x1ED);
+    _write_file(_lk_path(fd, "/mymod.cyr"),
+        "include \"lib/fnptr.cyr\"\ninclude \"lib/ct.cyr\"\ninclude \"src/self.cyr\"\n\nfn _sc_thing(): i64 { return 1; }\n");
+    _write_file(_lk_path(fd, "/cyrius.cyml"),
+        "[package]\nname = \"scfold\"\nversion = \"0.0.1\"\n\n[lib]\nmodules = [\"mymod.cyr\"]\n");
+    var pout = _tmp_path("audit_deps_sidecar_pout_");
+    var pec = _exec_in_dir(fd, cyrius_bin, "distlib", pout);
+    var sidecar = _lk_path(fd, "/dist/scfold.deps");
+    var got_sidecar = file_exists(sidecar);
+    # Sidecar must list fnptr (lib/) and NOT self (src/ skipped).
+    var has_fnptr = 0;
+    var has_self = 1;
+    if (got_sidecar == 1) {
+        var sb = alloc(8192);
+        var sn = file_read_all(sidecar, sb, 8191);
+        if (sn > 0) {
+            store8(sb + sn, 0);
+            if (_find_str_from(sb, sn, 0, "fnptr", 5) >= 0) { has_fnptr = 1; }
+            if (_find_str_from(sb, sn, 0, "self", 4) < 0) { has_self = 0; }
+        }
+    }
+
+    # --- Consumer: declares [deps.scfold] with NO `requires`; the sidecar
+    #     auto-pulls fnptr + ct into the consumer's lib/.
+    var cd = _tmp_path("audit_deps_sidecar_consumer_");
+    sys_mkdir(cd, 0x1ED);
+    var ccyml = str_builder_new();
+    str_builder_add_cstr(ccyml, "[package]\nname = \"scconsumer\"\n\n[deps.scfold]\npath = \"");
+    str_builder_add_cstr(ccyml, fd);
+    str_builder_add_cstr(ccyml, "\"\nmodules = [\"dist/scfold.cyr\"]\n");
+    _write_file(_lk_path(cd, "/cyrius.cyml"), str_data(str_builder_build(ccyml)));
+    var cout = _tmp_path("audit_deps_sidecar_cout_");
+    var cec = _exec_in_dir(cd, cyrius_bin, "deps", cout);
+    var got_fnptr = file_exists(_lk_path(cd, "/lib/fnptr.cyr"));
+    var got_ct = file_exists(_lk_path(cd, "/lib/ct.cyr"));
+
+    # Cleanup before reporting so a failed assertion still cleans up.
+    sys_unlink(pout);
+    sys_unlink(cout);
+    sys_unlink(sidecar);
+    sys_unlink(_lk_path(fd, "/dist/scfold.cyr"));
+    sys_rmdir(_lk_path(fd, "/dist"));
+    sys_unlink(_lk_path(fd, "/mymod.cyr"));
+    sys_unlink(_lk_path(fd, "/cyrius.cyml"));
+    sys_rmdir(fd);
+    sys_unlink(_lk_path(cd, "/lib/fnptr.cyr"));
+    sys_unlink(_lk_path(cd, "/lib/ct.cyr"));
+    sys_unlink(_lk_path(cd, "/lib/scfold.cyr"));
+    sys_unlink(_lk_path(cd, "/cyrius.lock"));
+    sys_unlink(_lk_path(cd, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(cd, "/lib"));
+    sys_rmdir(cd);
+
+    var fail = 0;
+    if (pec != 0 || got_sidecar != 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": distlib did not emit dist/scfold.deps (exit "); print_num(pec); println(")");
+        fail = 1;
+    } elif (has_fnptr != 1 || has_self != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": sidecar wrong (must list lib/ leaf 'fnptr', must NOT list src/ self-ref 'self')");
+        fail = 1;
+    } elif (cec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": consumer deps (no requires) exited "); print_num(cec); println(" (expected 0)");
+        fail = 1;
+    } elif (got_fnptr != 1 || got_ct != 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": sidecar did not auto-pull fnptr+ct into the consumer's lib/");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": distlib sidecar (lib/ leaves only) auto-resolves into a consumer with no `requires`");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _deps_lock_gate(): i64 {
     var label = "cyrius deps --lock writes a non-empty recursive lock + --verify round-trips (v6.0.2; empty-lock-since-v5.11.8 regression)";
 

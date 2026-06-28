@@ -494,6 +494,10 @@ fn _run_regression_gates(): i64 {
     _deps_requires_gate();
     println("");
 
+    _section("cyrius distlib emits dist/<pkg>.deps sidecar + cyrius deps auto-resolves it (v6.2.47 dependency-model lever 1 Phase A)");
+    _deps_sidecar_gate();
+    println("");
+
     _section("CVE-05 tok_names mangle-path guard (no magic-256 NPOS_GUARD)");
     _cve05_guard_gate();
     println("");

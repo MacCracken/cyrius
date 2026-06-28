@@ -414,8 +414,14 @@ bites; the heavier Phase C may take the 2nd release — a decision made
   planned Kahn sort was unnecessary** (smaller, byte-identical). CLI-only
   (`cbt/deps.cyr`), cycc self-host byte-identical, check.sh 94/94. The
   *producer sidecar* (`dist/<pkg>.deps`, so folds self-declare and consumers
-  need no hand-authored `requires`) was deferred to **v6.2.47** (it touches the
-  `cyrius distlib` producer, scoped out of Phase A by user choice 2026-06-27).
+  need no hand-authored `requires`) **✅ SHIPPED v6.2.47** — `cyrius distlib`
+  captures the stripped `lib/` includes into the sidecar; `cyrius deps` reads it
+  next to a resolved fold module and auto-pulls the leaves ahead of the fold
+  (shared `_dep_pull_leaves` resolver + `_dep_stdlib_seen` dedup); check.sh 95/95
+  (+`_deps_sidecar_gate`). **Still open → v6.2.48:** descent migration (the
+  cross-repo end-to-end acceptance proof — re-fold sigil so it ships
+  `dist/sigil.deps`, then descent drops its 29-element hand-ordered `stdlib`
+  list), Phase B named `[groups]`, and the undefined-fn hard-error default-on.
 - **Phase B — named module groupings.** A `[groups]` section
   (`crypto = ["sigil:ed25519", "sigil:sha256", "sigil:keccak"]`), expanded
   at resolve time. Makes the de-facto bayan/ganita/sandhi/sigil bundles an

@@ -526,6 +526,77 @@ fn _parse_toml_str_array(buf, len, pos): i64 {
     return result;
 }
 
+# v6.2.46/.47 (deps lever 1, Phase A): pull a vec of stdlib-leaf names into
+# scope via the recursive stdlib resolver (is_top=1 → each leaf's
+# `include "lib/<leaf>"` is pushed onto `_dep_includes`), deduped by
+# `_dep_stdlib_seen`. FAIL-LOUD: a leaf that doesn't resolve returns the error
+# count. Shared by the `requires` key (.46) and the `.deps` sidecar (.47).
+# Caller must have inited `_dep_stdlib_seen` + resolved a non-0 `stdlib_dir`.
+fn _dep_pull_leaves(stdlib_dir, dep_name, leaves): i64 {
+    var errs = 0;
+    var i = 0;
+    while (i < vec_len(leaves)) {
+        var leaf = vec_get(leaves, i);
+        var r = _dep_copy_stdlib_recursive(stdlib_dir, leaf, 1);
+        if (r == 1) {
+            sys_write(STDERR_FD, "error: dep ", 11);
+            sys_write(STDERR_FD, dep_name, strlen(dep_name));
+            sys_write(STDERR_FD, " requires '", 11);
+            sys_write(STDERR_FD, leaf, strlen(leaf));
+            sys_write(STDERR_FD, "' but it is not in the cyrius stdlib\n", 37);
+            errs = errs + 1;
+        }
+        i = i + 1;
+    }
+    return errs;
+}
+
+# v6.2.47 (deps lever 1, Phase A producer-side consumed): read a `cyrius
+# distlib` sidecar (`dist/<pkg>.deps`) — one stdlib leaf per line, `#` comments
+# + blank lines ignored, trailing CR/space trimmed — into a vec of leaf cstrs.
+# Returns 0 (not a vec) when the file is absent/empty. Lets a consumer that
+# declares just `[deps.<pkg>]` auto-pull the fold's leaves with no hand-authored
+# `requires` key.
+fn _dep_read_sidecar(path): i64 {
+    if (file_exists(path) == 0) { return 0; }
+    var sz = _file_size(path);
+    if (sz <= 0) { return 0; }
+    var buf = alloc(sz + 1);
+    var n = file_read_all(path, buf, sz);
+    if (n <= 0) { return 0; }
+    store8(buf + n, 0);
+    var leaves = vec_new();
+    var pos = 0;
+    while (pos < n) {
+        var ls = pos;
+        while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+        var le = pos;
+        if (pos < n) { pos = pos + 1; }
+        var lp = ls;
+        while (lp < le) {
+            var c = load8(buf + lp);
+            if (c != 32 && c != 9) { break; }
+            lp = lp + 1;
+        }
+        if (lp < le && load8(buf + lp) != 35) {
+            var ep = le;
+            while (ep > lp) {
+                var c2 = load8(buf + ep - 1);
+                if (c2 != 32 && c2 != 9 && c2 != 13) { break; }
+                ep = ep - 1;
+            }
+            var nl = ep - lp;
+            if (nl > 0) {
+                var leaf = alloc(nl + 1);
+                memcpy(leaf, buf + lp, nl);
+                store8(leaf + nl, 0);
+                vec_push(leaves, leaf);
+            }
+        }
+    }
+    return leaves;
+}
+
 # v5.7.14: returns 1 if `name` is already in _dep_visited, else 0.
 fn _dep_name_visited(name): i64 {
     if (_dep_visited == 0) { return 0; }
@@ -679,20 +750,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     sys_write(STDERR_FD, " declares requires but the cyrius stdlib was not found\n", 55);
                     errors += 1;
                 } else {
-                    var rqi = 0;
-                    while (rqi < vec_len(dep_requires)) {
-                        var rq_leaf = vec_get(dep_requires, rqi);
-                        var rqr = _dep_copy_stdlib_recursive(rq_dir, rq_leaf, 1);
-                        if (rqr == 1) {
-                            sys_write(STDERR_FD, "error: dep ", 11);
-                            sys_write(STDERR_FD, dep_name, strlen(dep_name));
-                            sys_write(STDERR_FD, " requires '", 11);
-                            sys_write(STDERR_FD, rq_leaf, strlen(rq_leaf));
-                            sys_write(STDERR_FD, "' but it is not in the cyrius stdlib\n", 37);
-                            errors += 1;
-                        }
-                        rqi = rqi + 1;
-                    }
+                    errors = errors + _dep_pull_leaves(rq_dir, dep_name, dep_requires);
                 }
             }
             var need_clone = 0;
@@ -905,6 +963,33 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         errors = errors + 1;
                         mi = mi + 1;
                         continue;
+                    }
+                    # v6.2.47 (deps lever 1, Phase A producer-side consumed):
+                    # if the dep ships a `.deps` sidecar next to this module
+                    # (emitted by `cyrius distlib`), auto-resolve the fold's
+                    # declared stdlib leaves BEFORE the fold's own include is
+                    # pushed — same topological-by-resolution-order placement as
+                    # a hand-authored `requires` key, but the consumer needn't
+                    # author it. Shared resolver + `_dep_stdlib_seen` dedup (a leaf
+                    # also in `[deps].stdlib`/`requires` won't repeat).
+                    var _src_l = strlen(src);
+                    if (_src_l > 4 && memeq(src + _src_l - 4, ".cyr", 4) == 1) {
+                        var _sc_sb = str_builder_new();
+                        var _sc_stem = alloc(_src_l - 3);
+                        memcpy(_sc_stem, src, _src_l - 4);
+                        store8(_sc_stem + _src_l - 4, 0);
+                        str_builder_add_cstr(_sc_sb, _sc_stem);
+                        str_builder_add_cstr(_sc_sb, ".deps");
+                        var _sc_leaves = _dep_read_sidecar(str_data(str_builder_build(_sc_sb)));
+                        if (_sc_leaves != 0) {
+                            if (vec_len(_sc_leaves) > 0) {
+                                if (_dep_stdlib_seen == 0) { _dep_stdlib_seen_init(); }
+                                var _sc_dir = _dep_find_stdlib_dir();
+                                if (_sc_dir != 0) {
+                                    errors = errors + _dep_pull_leaves(_sc_dir, dep_name, _sc_leaves);
+                                }
+                            }
+                        }
                     }
                     var base = mod_path;
                     var bi = 0;
