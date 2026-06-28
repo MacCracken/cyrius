@@ -1,8 +1,22 @@
-# Cyrius Development Roadmap — v6.2.x (active minor)
+# Cyrius Development Roadmap — v6.3.x (active minor)
 
-**Scope** — the **current active minor only** (v6.2.x — Platform
-Expansion), opened at the v6.1.x → v6.2.0 cut (2026-06-12). This is the
-slot-pinning working artifact. The rest of the v6.x cycle (framing,
+**Scope** — the **current active minor only** (v6.3.x — Language /
+Required-Optional Deps (lever 2)), opened at the v6.2.x → v6.3.0 cut
+(2026-06-28). This is the slot-pinning working artifact.
+
+> **v6.2.x is CLOSED** (Platform Expansion; shipped v6.2.0 → v6.2.52 — the
+> dependency-model lever-1 arc `requires`/sidecar/`[groups]`/`--modular` .46–.50,
+> the CVE-32 closeout + distlib fail-loud .51/.52). Per-slot detail is canonical in
+> [`CHANGELOG.md`](../../CHANGELOG.md); the closed-minor summary is in
+> [roadmap_6.md](roadmap_6.md). **v6.3.0 shipped** the var-family growable migration
+> (the last fixed compile-time cap). **Open v6.3.x items** (framing in roadmap_6.md;
+> detailed slot-pinning is the next planning pass): **lever-2 Required/Optional deps**
+> (features / profiles / target scoping), the **undefined-fn reachable-call hard-error**
+> (bundled with lever-2, safe there), and the **bare-metal design deliverables #5
+> `[sections]` / #6 inline-asm primitives / #7 freestanding-TLS link**.
+>
+> The v6.2.x slot detail below is RETAINED as the closed-minor record until the next
+> v6.3.x re-pin. The rest of the v6.x cycle (framing,
 budgeting, minors v6.2.x → v6.5.x, and the closed v6.0.x/v6.1.x
 summaries) lives in [roadmap_6.md](roadmap_6.md); items beyond the cycle
 (v7.0+ aspirations, unpinned language refinements, speculative work) live

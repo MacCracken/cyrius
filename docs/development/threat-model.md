@@ -7,7 +7,9 @@
 > bridge to system libraries (libssl, libc) via the v5.6.37
 > fdlopen-bootstrapped helper — see Trust Boundaries below.
 >
-> **Last reviewed**: 2026-06-19 (v6.2.30) — RM-02 correction: native TLS is the
+> **Last reviewed**: 2026-06-28 (v6.3.0) — seed boundary updated: `seed → cybs → cycc`
+> is now byte-identical-derivable (CVE-20 resolved 2026-06-20), enforced every release
+> via `scripts/release-gate.sh` (step 2). RM-02: native TLS is the
 > *default* backend (since v6.1.21, not opt-in), PIE/ASLR ships (since v6.1.6),
 > the input buffer is 1 MB (not 131 KB), and the binary-release trust root is
 > the committed `build/cycc` (CVE-20).
@@ -16,7 +18,7 @@
 
 | Boundary | Trust Level |
 |----------|-------------|
-| 29KB seed binary (bootstrap/asm) | **Source-level** root of trust — auditable, committed, byte-exact. **(CVE-20)** the seed verifies the asm↔cybs closure but does not yet rebuild `cycc`, so the trust root for *binary releases* is the committed `build/cycc`; a seed→cybs→cycc reconstruction CI (v6.2.31) makes it machine-derivable. |
+| 29KB seed binary (bootstrap/asm) | **Source-level** root of trust — auditable, committed, byte-exact. **(CVE-20, RESOLVED 2026-06-20)** the seed assembles `cybs`, which compiles `src/main.cyr` to a `cycc` that self-hosts byte-identical to the committed `build/cycc` — so `build/cycc` is now **machine-derivable from the 29 KB seed** (no bridge). Enforced every release by `seed-derive-cycc.sh` (= `release-gate.sh` step 2). NOTE: the cycc self-host fixpoint does NOT cover this chain — cybs is far more limited (v6.3.0 seed break). |
 | Source code (src/, lib/, programs/) | Trusted — developer-controlled |
 | User input (compiled programs) | Untrusted — may contain arbitrary code |
 | Syscall interface (Linux kernel) | Trusted — OS provides memory isolation |

@@ -17,6 +17,11 @@ Capabilities (current):
 - `textDocument/didOpen` — compile, return diagnostics
 - `textDocument/didSave` — recompile, return diagnostics
 - `textDocument/didChange` — recompile, return diagnostics
+- `textDocument/definition` — go-to-definition
+- `textDocument/hover` — symbol kind + definition site
+- `textDocument/documentSymbol` — file outline
+- `textDocument/references` — find all uses
+- `textDocument/semanticTokens/full` — keyword / fn / var / type / param coloring
 - `shutdown` — exit cleanly
 
 Diagnostics are produced by invoking the in-tree compiler (`cycc`) and
@@ -100,10 +105,10 @@ for the full rationale (drift, scaffold gaps, single edit point).
 
 ## Highlighting
 
-`cyrius-lsp` does not yet provide semantic-tokens. For syntax
-highlighting today, fall back to the editor's TextMate / regex grammar
-(or treat as plain text). A `cyrius.tmLanguage` grammar slot is on the
-roadmap; track it in [`docs/development/roadmap.md`](../development/roadmap.md).
+`cyrius-lsp` provides `textDocument/semanticTokens/full` (keyword / fn /
+var / type / param coloring) for editors that consume LSP semantic
+tokens. The TextMate / regex grammar is only a fallback for editors that
+don't speak LSP semantic tokens.
 
 ## Troubleshooting
 

@@ -1,6 +1,6 @@
 # Standard Library — Module Index
 
-> Categorized inventory of the Cyrius standard library: **95 `lib/*.cyr`
+> Categorized inventory of the Cyrius standard library: **98 `lib/*.cyr`
 > modules** (vendored sibling distfiles folded byte-identical, sandhi-pattern)
 > with **0 git deps**. This is the *what-exists* map; for per-function
 > signatures see [`stdlib-reference.md`](stdlib-reference.md).

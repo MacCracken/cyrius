@@ -2,8 +2,8 @@
 
 **Scope** — the **whole v6.x cycle** (cycle-open 2026-05-19). This is
 the cycle-level reference: framing, per-minor budgeting, and the
-remaining minors v6.2.x → v6.5.x. The **current active minor** is
-broken out in detail in [roadmap.md](roadmap.md); items beyond the
+remaining minors v6.3.x → v6.6.x (v6.2.x CLOSED — shipped .0 → .52). The
+**current active minor (v6.3.x)** is broken out in detail in [roadmap.md](roadmap.md); items beyond the
 cycle (v7.0+ aspirations, unpinned language refinements, speculative
 work) live in [roadmap-future.md](roadmap-future.md). v5.x history and
 the now-closed v6.0.x detail are canonical in
@@ -103,7 +103,7 @@ consolidation).
 > **Closed minor.** Shipped to v6.1.41; v6.2.0 opened the cut 2026-06-12.
 > The section below is the cycle-level summary; per-patch detail is the
 > [`CHANGELOG.md`](../../CHANGELOG.md) source of truth. The active minor is
-> now **v6.2.x** ([roadmap.md](roadmap.md)).
+> now **v6.3.x** ([roadmap.md](roadmap.md)); v6.2.x CLOSED (.0 → .52).
 
 **Theme**: position-independent codegen + dynamic-link migration +
 v6.0.x back-compat retirement + the v6.0.x → v6.1.x carry-ins. Pinned
@@ -135,7 +135,7 @@ landing as packed releases before the cycle-close. Full slot detail lives in
 
 ---
 
-## v6.2.x — Platform Expansion (Bare-metal + Dependency Model)
+## v6.2.x — Platform Expansion (Bare-metal + Dependency Model) — ✅ COMPLETE (v6.2.0 → v6.2.52)
 
 **Theme**: bare-metal target codification + the **dependency-model
 foundation** (modules + module groupings, lever 1 of 2). RISC-V rv64 —
@@ -195,8 +195,9 @@ platform work (bottom-to-top priority) takes v6.2.x.
   **silent-correctness + stdlib-refold arc** — call-arity check + IEEE-754 NaN
   fix (.41), sigil certpin (.42), agnos-clock + ERR_* namespacing + agnos
   landmine gates (.43). Note: `agnosys` retired at .37 (decomposed), dropping
-  api-surface from ~5035 to **4343 fns**. **Current @ v6.2.43: cycc 1,073,560 B
-  (+ at .41), check.sh 92/92 + boot gate, api-surface 4343, tests 192 `.tcyr`.**
+  api-surface from ~5035 to **4343 fns** (now 4352 @ v6.3.0). **Current metrics live
+  in [state.md](state.md)** (avoid re-rotting an inline snapshot here): as of v6.3.0 —
+  cycc 1,075,136 B, check.sh 100/100 + boot gate, api-surface 4352, tests 192 `.tcyr`.
 
 Remaining v6.2.x arc: the **dependency-model foundation (lever 1)** — the
 active committed arc — plus the **open bare-metal/kernel reactive window**

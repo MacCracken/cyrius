@@ -32,7 +32,21 @@ Any compiler change that modifies heap offsets, token array sizes, or buffer loc
 - Every heap change requires explicit verification
 - The committed build/cycc must always be the SECOND-generation binary
 - Multi-backend changes (aarch64) must sync ALL offset references
+- **The cycc self-host fixpoint does NOT cover the full seed chain.** Trust descends
+  `seed (bootstrap/asm) → cybs → cycc`, and `cybs` (the hand-assembly bootstrap compiler
+  the 29 KB seed assembles) is far more limited than `build/cycc` — it fails **silently**
+  on constructs `build/cycc` compiles fine (too many global/call references in one
+  function, tail calls). So a `src/` change can pass the cycc self-host fixpoint yet break
+  `seed → cybs → cycc`. **`seed-derive-cycc.sh` is a mandatory EVERY-release gate** (not
+  closeout-only); see the v6.3.0 seed break (the var-family migration grew all 7 tables
+  inline in one function) and `feedback_seed_derive_mandatory_cybs_limits`.
 
 ## Tooling
 
-The canonical verifier was formalized at v5.11.67 as `scripts/build-cycc-verify.sh`. It enforces the three byte-identity invariants above plus a third check (stage_a == build/cycc) that surfaces stale build artifacts.
+The consolidated pre-tag verifier is `scripts/release-gate.sh` (canonical as of v6.3.0):
+step 1/5 = the cycc self-host fixpoint, step 2/5 = `seed-derive-cycc.sh` (the
+`seed → cybs → cycc` byte-identity), then check.sh + cross-OS + bench, fail-fast.
+`version-bump.sh` also runs the seed-derive gate after its cycc rebuild. The older
+`scripts/build-cycc-verify.sh` (v5.11.67) is now a SUBSET — it enforces the cycc
+byte-identity invariants but does NOT exercise the seed chain. See the CLAUDE.md
+"Release Gate" section.

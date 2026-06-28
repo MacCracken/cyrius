@@ -14,16 +14,16 @@
 
 | | |
 |---|---|
-| **Version** | **6.3.0** (v6.3.x cycle — **Language / Required-Optional Deps (lever 2)**; OPENS with the **var-family growable migration** (Phase-0 tail — the last fixed compile-time cap). Premise-check found the var tables aren't 3 but a **FAMILY of SEVEN** vcnt-indexed 8 B/slot tables — var_noffs (0x11A000), var_sizes (0x12A000), var_types (0x13A000), gvar_byte_off (0x1B0000), enum_const_val (0x1D8000), gvar_initval (0x1EC000), var_enum_id (0x204000) — all 8192-capped, that must grow in LOCKSTEP (any unmigrated one silently overflows past 8192). All 7 → relocatable bases behind `_var_cap`; `SVCNT` grows the family 2× past the cap (ceiling 1 048 576), ending the last fixed compile-time cap (closes the v6.2.0 Phase-0 / AR-03 arc). `src/common/util.cyr` `_var_grow` + ~60 inline-access sites swept to `_base` + per-fork init in all 7 drivers. **Codegen change → cycc 1,073,672→1,075,136 B (var `_base` global-load indirection + chained grow helpers); byte-identical UNDER the cap → self-hosts byte-identical AND seed→cybs→cycc derivation byte-identical (`seed-derive-cycc.sh`); check.sh 100/100 (8300-var grow gate compiles+RUNS); all 6 forks compile; ecb+cass+pi SELFHOST_OK; heapmap 96 PASS; bench self_compile 511 ms.** **SEED BREAK + FIX (2026-06-28, user FURIOUS — CI caught it, I'd only run the cycc fixpoint not seed-derive):** the first cut grew all 7 tables INLINE in one `_var_grow` → cybs (the seed's hand-asm bootstrap compiler) silently mis-compiles fns with too many global/call refs (→SIGSEGV) + tail calls (→SIGILL) → gen1 broke the seed chain. Fix: grow CHAINED `_grow_g1.._grow_g7` (1 table/fn, regular calls, no tail call); per-fork init one-stmt-per-line. **gen1 being ~72KB < build/cycc is NORMAL (red herring — only gen2==build/cycc matters). RUN seed-derive after EVERY src/ compiler change.** See `feedback_seed_derive_mandatory_cybs_limits`. See CHANGELOG [6.3.0].) PRIOR: **6.2.52** (v6.2.x cycle — **Platform Expansion**; **closeout-deferred cleanup** — the v6.2.51 audit's filed items, minus the var-table migration (→ v6.3.0). Three CLI-only distlib-hardening fixes: (1) `distlib --modular` fails loud on a DUPLICATE module basename (two `[lib].modules` in different `src/` subdirs → same `dist/<pkg>/<base>.cyr` overwrite + dup index keys → resolver first-match-wins lost deps); (2) distlib fails loud on a MISSING `modules=` entry, BOTH flat + `--modular` (user 2026-06-28 "make it fail-loud" — was warn+exit 0, a producer/consumer exit-code asymmetry since `cyrius deps` is fail-loud); (3) bounded the `[deps.`/`name` manifest prefix scans (`ndi+6<=mlen`/`pi+4<=mlen` — cosmetic tail over-read, bump-arena never faulted). New `_distlib_failloud_gate`. **var-table growable migration → v6.3.0 opener** (last fixed compile-time table; changes codegen → not closeout-safe; user 2026-06-28). **CLI-only (`cbt/commands.cyr`); `src/` untouched → cycc byte-identical 1,073,672 B; self-host fixpoint; check.sh 98/98→**99/99** (+`_distlib_failloud_gate`); ecb+cass SELFHOST_OK; bench 517 ms (jitter).** See CHANGELOG [6.2.52].) PRIOR: **6.2.51** (v6.2.x cycle — **Platform Expansion**; **v6.2.x END-OF-MINOR CLOSEOUT (pre-v6.3.0)**. Mechanical gates (self-host byte-identical; bootstrap closure seed→cybs→cycc byte-identical; check.sh; ecb+cass+pi SELFHOST_OK) + a 6-dimension judgment-pass audit (workflow) over the minor. One real finding: **CVE-32 (P1) — path traversal in the .50 Phase C modular resolver**: `_dep_pull_submodule` `sys_unlink`'d `lib/<pkg>_<submod>.cyr` on a dep-/index-controlled unsanitized name BEFORE `_dep_copy_file`'s CVE-04 guard (a malicious `dist/<pkg>/index.cyml` sibling like `a/../../../x` → arbitrary `.cyr` delete during automatic `cyrius deps`; same CVE-14/15/16 class the new path failed to replicate). Fixed: shared `_dep_reject_unsafe_name` (reject any `/` or `..`) at EVERY ingestion — submod (before any fs op), index `lib:<leaf>`, producer `pkg_name` — + regression gate `_deps_modular_traversal_gate`. Also: distlib loud-fail on >256KB module truncation (both flat + `--modular` reads → drop trailing includes = SIGILL); refactor `_distlib_named_deps` (dedup the named-dep scan across sidecar + modular emit); heap-doc refresh (84→96 regions; v6.2.x added ZERO fixed heap regions — deps arc is all runtime-alloc/CLI). Dead-code floor 62/26001 (all cross-arch/CLI/scaffold — not removable). Deferred → v6.3.x (filed `2026-06-27-v62x-closeout-deferred`): var-table growable migration, `--modular` basename-collision guard, prefix-scan over-read; **open Q to user**: should distlib exit non-zero on a missing `modules=` entry. **CLI + test + one comment → cycc byte-identical 1,073,672 B; self-host fixpoint; check.sh 97/97→**98/98** (+`_deps_modular_traversal_gate`); ecb+cass+pi SELFHOST_OK.** See CHANGELOG [6.2.51].) PRIOR: **6.2.50** (v6.2.x cycle — **Platform Expansion**; **dependency-model arc, lever 1 / Phase C — module-granular extraction (`distlib --modular`); LEVER 1 COMPLETE**. `cyrius distlib --modular` emits per-module `dist/<pkg>/<mod>.cyr` + an `index.cyml` dep graph (`<mod> = [siblings, "lib:<leaf>"…]`, named-dep-excluded); a consumer's `[deps.<name>] modular = ["ed25519", …]` pulls EXACT sub-modules + their transitive index deps (recursing siblings, pulling leaves via the stdlib resolver, topo order) into `lib/<pkg>_<mod>.cyr` — NOT the whole monolith. The addressable sub-units **lever 2 (v6.3.x)** gates. Lever 1 shipped: .46 `requires` → .47 sidecar → .48 umbrella/migration → .49 `[groups]` → .50 `--modular`. **Undefined-fn hard-error default-on re-pinned to v6.3.x** (user 2026-06-27 — bundles with lever-2 optional deps where it's fully safe; lever-1 alone would force `--allow-undef` on optional-feature consumer configs). **CLI-only (`cbt/commands.cyr` + `cbt/deps.cyr`); `src/` untouched → cycc byte-identical 1,073,672 B; self-host fixpoint; check.sh 96/96→**97/97** (+`_deps_modular_gate`); ecb + cass SELFHOST_OK; bench self_compile 503 ms (jitter — cycc byte-identical).** See CHANGELOG [6.2.50].) PRIOR: **6.2.49** (v6.2.x cycle — **Platform Expansion**; **dependency-model arc, lever 1 / Phase B — named module groupings (`[groups]`)**. A `[groups]` section in `cyrius.cyml` expands at resolve time wherever named in `[deps].stdlib` or a `[deps.NAME] requires` (nested groups, deduped, self/mutual cycles skipped). Name a recurring leaf/dep set once (`crypto = ["ct","keccak","random"]`) + reference by name. The **addressable-grouping foundation** lever 2 (v6.3.x) gates; members are whole leaf/dep names (`pkg:submodule` awaits Phase C). **Lever 1 essentially complete** (.46 `requires` → .47 sidecar → .48 umbrella/migration → .49 `[groups]`); only the **undefined-fn hard-error default-on** tail remains (now safe). **CLI-only (`cbt/deps.cyr`); `src/` untouched → cycc byte-identical 1,073,672 B; self-host fixpoint; check.sh 95/95→**96/96** (+`_deps_groups_gate`); ecb + cass SELFHOST_OK; bench self_compile 511 ms (jitter — cycc byte-identical).** See CHANGELOG [6.2.49].) PRIOR: **6.2.48** (v6.2.x cycle — **Platform Expansion**; **dependency-model arc, lever 1 — distlib sidecar umbrella-scan + named-dep exclusion; the ecosystem migration SHIPPED**. The .47 sidecar's auto-capture was incomplete for real folds (sigil's crypto leaves live in the non-folded umbrella `src/lib.cyr`; libro's in `src/main.cyr`); `cyrius distlib` now scans the umbrella convention(s) (`_distlib_scan_umbrella`) AND excludes the producer's own `[deps.NAME]` named-dep folds (which resolve transitively — else the consumer double-includes `lib/NAME.cyr`). **Proven end-to-end:** sigil 3.9.5 + libro 2.7.8 re-fold via `cyrius distlib` (sigil's bash `scripts/regen-dist.sh` retired) + ship `dist/*.deps` sidecars; **descent 1.1.4 dropped its 29-element hand-ordered `stdlib` list → `cyrius build` CLEAN** (every crypto/store leaf auto-resolves via libro's sidecar; the omit-one→SIGILL trap is gone). **CLI-only (`cbt/commands.cyr` + the sidecar gate); `src/` untouched → cycc byte-identical 1,073,672 B; self-host fixpoint; check.sh 95/95; ecb + cass SELFHOST_OK; bench self_compile 500 ms (jitter — cycc byte-identical).** See CHANGELOG [6.2.48].) PRIOR: **6.2.47** (v6.2.x cycle — **Platform Expansion**; **dependency-model arc, lever 1 / Phase A — producer sidecar (`dist/<pkg>.deps`)**. `cyrius distlib` now writes a `dist/<pkg>.deps` sidecar capturing the `lib/` stdlib leaves it strips at fold time (`src/` self-refs skipped); `cyrius deps` reads it next to a resolved fold module and **auto-pulls those leaves** ahead of the fold, so a consumer declaring just `[deps.<pkg>]` (no hand-authored `requires`) gets the fold's stdlib in scope, in topological order. Completes the "declare what you need" end-state begun by the .46 `requires` key (folds destroy their includes at fold time → the sidecar is the only record). New `_distlib_capture_lib_leaf` (producer) + `_dep_read_sidecar` (resolver); shared `_dep_pull_leaves` helper DRYs the requires-key + sidecar resolver paths. **CLI-only (`cbt/commands.cyr` + `cbt/deps.cyr`); `src/` untouched → cycc byte-identical 1,073,672 B; self-host fixpoint; check.sh 94/94→**95/95** (+`_deps_sidecar_gate`) + boot; ecb + cass SELFHOST_OK; bench self_compile 516 ms (jitter — cycc untouched).** descent migration (cross-repo acceptance proof: re-fold sigil → `dist/sigil.deps`, descent drops its 29-element list) + Phase B `[groups]` + undefined-fn hard-error → **v6.2.48**. See CHANGELOG [6.2.47].) PRIOR: **6.2.46** (v6.2.x cycle — **Platform Expansion**; **dependency-model arc, lever 1 / Phase A — `requires` transitive auto-resolve + topological ordering**. A named dep `[deps.<name>]` declares the stdlib leaves it needs via `requires = [...]`; `cyrius deps` pulls each through the existing recursive stdlib resolver *ahead of* the dep's own modules (include prepend is topological **by resolution order** — the asymmetry premise-check found raw `[deps].stdlib` already self-heals via the recursive include-follower while folded named-deps don't + distlib strips includes at fold time, so **no Kahn sort was needed**, byte-identical), dedups a shared leaf, and **fails loud** on a missing leaf — converting a consumer's hand-ordered "ct/keccak MUST precede sigil" chain + its omit-one → runtime `ud2`/SIGILL trap into a build error. Opens the arc the user un-parked 2026-06-27. **CLI-only (`cbt/deps.cyr`); `src/` untouched → cycc byte-identical 1,073,672 B (modulo version string); self-hosts byte-identical fixpoint; check.sh 93/93→**94/94** (+`_deps_requires_gate`) + boot; ecb + cass SELFHOST_OK; bench self_compile 505 ms (flat vs .45's 509 ms).** Phase B (named `[groups]`) / C (distlib per-module) / D (dissolve stdlib + migrate descent) + consumer migrations + producer sidecar (`dist/<pkg>.deps`) + undefined-fn hard-error default-on → **v6.2.47**. See CHANGELOG [6.2.46].) PRIOR: **6.2.45** (v6.2.x cycle — **Platform Expansion**; **kernel-PIE latent-landmine + structural-gate hardening + 3-lib stdlib refold** — the cyrius-side gaps a 2026-06-27 kernel-PIE ground-truth review surfaced (built + byte-inspected the live `kernel; --pie` emit; the live slid-base **boot** stays consumer-gated on the in-flight AGNOS `gnoboot --pie` harness — deliberately NOT touched). **(1)** `_entry_base` made `_pie_mode`-aware on x86 + aarch64 (`src/backend/{x86,aarch64}/fixup.cyr`): under `kernel; --pie` it returned the fixed non-PIE entry (x86 `0x1000A8` / aarch64 `0x40000078`) while the wrapper lays out base-0/ET_DYN — **inert today** (PIE fixups take the rel32/`adrp` branch where `entry` cancels, proven byte-identical) but removes the landmine for any future absolute-under-`--pie` fixup. **(2)** new `_kernel_pie_struct_gate` (check.sh 92→93) + `tests/fixtures/pie/kernel_pie_smoke.cyr` — asserts `kernel; --pie` emits **ET_DYN + PT_LOAD `p_vaddr=0`**; closes 'kernel-PIE has no test', pairs with the userland `_pie_exec_gate` (which *runs* pie_smoke). **(3)** stdlib refold (all non-breaking, lib-only): **sankoch 2.4.4→2.4.6** (ratio-cap decompress, +6 fns), **patra 1.12.4→1.12.6** (`insert_row_or_ignore` + INT-index OR-IGNORE tombstone fix), **mabda 3.4.2→3.4.4** (P(-1) hardening + `rg_to_dot`). **(4)** SUPERSEDED banner on the stale archived PIE proposal (the doc misread as hidden work). **HELD (gnoboot-coupled):** kernel-PIE boot-metadata slide-readiness (`p_paddr=0` + absolute multiboot2 `ENTRY_ADDRESS_EFI64` tag) — deferred to the in-flight boot test, not shipped un-boot-tested. **x86 `src/` changed (`_entry_base`) → cycc 1,073,560→1,073,672 B (+112); self-hosts byte-identical; check.sh 93/93 + boot; 4-host self-host (x86+ecb+pi+cass SELFHOST_OK); self_compile 509 ms; api-surface 4344→4352 (+8, all non-breaking fold additions).** PRIOR: **6.2.44** (v6.2.x cycle — **Platform Expansion**; **CVE-29 thread-stack guard page + cross-arch `_PE`/Mach-O stub completeness** — a small reactive slot. **(1) CVE-29**: thread stacks get a `PROT_NONE` guard page (`lib/thread.cyr` over-maps +1 page, `cyr_mprotect`s the low/overflow end) so a stack overflow SIGSEGVs instead of silently scribbling the adjacent allocator chunk; x86+aarch64-Linux only (serial fallback on WIN/AGNOS); 5 thread suites/39 assertions pass, pi-verified. **(2) 3 cross-arch stub gaps** a deferred undef-hard-error spike surfaced: `EPROCPRNG_PE`+`EGETSYSTIME_PE` aarch64 stubs (completes the `_PE` cohort 36→38) + `EMITMACHO_ARM64` native-fork stub — dead-branch dangling refs latent since v6.2.12/.13 (warned on every aarch64 cross-build, FATAL under `--strict`). **(3) DEFERRED**: the undefined-fn reachable-call hard-error (designed + implemented across all 6 forks + verified, hard-error default + `--allow-undef`) → the **dependency-model arc** — a *default* hard-error breaks 21/192 tcyr AND loosely-coupled consumer builds (mabda-sans-samvada) until cross-module refs resolve (lever-1 transitive auto-resolve); filed `2026-06-25-undefined-fn-reachable-call-hard-error` + pinned to the deps slot; 2 follow-on lint/gate issues filed. **x86 `src/` untouched → cycc byte-identical 1,073,560 B (modulo version string); self-hosts byte-identical; check.sh 92/92 + boot; 4-host self-host (x86+pi+ecb+cass SELFHOST_OK); self_compile 513 ms; api-surface 4343→4344.** PRIOR: **6.2.43** — stdlib-refold arc close — agnos clock + ERR_* collision namespacing + agnos landmine gates. Closes the two remaining refold issues: (1) **sakshi 2.4.2** fold — agnos reads `uptime_ms` (#40) directly (was running the x86 TSC path's `syscall(228)`/`syscall(35)` → garbage on agnos); (2) **sigil 3.9.4** (`SIGIL_ERR_*`, 15) + **yukti 2.2.7** (`YUKTI_ERR_*`, 16) — namespaced the bare `ERR_*` (sigil `ERR_IO=6` vs yukti `ERR_IO=14`) collision (patra `SQLT_*`/net `NSYS_*` already done; CHKDUPVAL guardrail shipped .11); (3) native **agnos landmine gates** — `#ifdef CYRIUS_TARGET_AGNOS` fail-closed on `lib/{mmap,dynlib,fdlopen}.cyr` raw Linux syscalls. **lib-only → `src/` untouched → cycc byte-identical 1,073,560 B; check.sh 92/92 + boot; agnos compiles clean (no mis-dispatch); 4-host self-host green (ecb/cass/pi SELFHOST_OK).** cyrius references neither lib's ERR_* directly so the fold is non-breaking here. Closes `2026-06-23-agnos-portability-sweep-residuals` + `2026-06-14-stdlib-constant-value-collisions` → 9 active issues. PRIOR: **6.2.42** sigil 3.9.3 fold — certpin `run_capture` signature fix. First of the stdlib-refold issues the v6.2.41 arity check surfaced: sigil's `certpin_compute_spki_pin` called the obsolete 2-arg `run_capture(cmd,argv)` (vs the 5-arg API) → cert-pin-via-openssl silently broken. Fixed upstream in **sigil 3.9.3** (released + tagged), folded byte-identical into `lib/sigil.cyr`. **lib-only → `src/` untouched → cycc byte-identical 1,073,560 B; check.sh 92/92 + boot; fold compiles arity-clean + cross-compiles PE/aarch64; 4-host self-host green (ecb/cass/pi SELFHOST_OK).** Closes `2026-06-24-sigil-certpin-run-capture-signature-mismatch`; sakshi agnos-clock + ERR_*/SYS_* collision namespacing scoped to v6.2.43. 11 active issues. PRIOR: **6.2.41** silent-correctness hardening — call-site arity check + IEEE-754 NaN comparison fix. Two "compiles clean, wrong result, no diagnostic" bugs fixed together. (1) **Arity check** (roadmap-pinned, tentib M3c `2026-06-23-call-arity-no-check` RESOLVED): non-fatal `warning: 'f' expects N arguments, got M` via a shared `_CHECK_ARITY` helper across all three call-emit paths (normal `PARSE_FNCALL` + `return f(args);` tail-call + inline-replay) — broader than the pinned PARSE_FNCALL-only scope (which alone misses inlined + every `return f()`). Carve-outs: backward-refs-only (`_fnt_offsets>=0`; inline path trusts `pc`), variadics (new `GFVA` getter), syscall/`fncallN` exempt, variant ctors register real arity. Surfaced+fixed in-slot: `ESUBRSP` 2-vs-1 (cycc self-compiles arity-clean) + `cyml.tcyr`/`v5104_inference.tcyr` test bugs. (2) **f64 NaN** (prajna `2026-06-24-f64-le-nan-comparison` RESOLVED): premise-check found it broader than filed — x86 `setb`/`sete`/`setbe`/`setne` ignored the parity/unordered flag, so `f64_lt`/`f64_eq` builtins + `f64_le`/`f64_ge` + `<`/`<=`/`==`/`!=` were all wrong on NaN; `EF64_CMP` now folds `setnp`/`setp` (x86) + `cset le`→`ls` (aarch64). New `float_nan_compare.tcyr` 41/41 on x86 AND real ARM (pi). **codegen+frontend changed → cycc 1,071,936→1,073,560 B; self-hosts byte-identical; check.sh 92/92 + boot; 4-host byte-identical self-host (x86+ecb+cass+pi); bench-history.sh self_compile 505→519 ms (+3.9%; manual median 507 ms, in the 500–549 jitter band; per-call-site arity-check growth-tax, not a regression).** The arity check also surfaced a real (already-broken) sigil certpin `run_capture` 2-vs-5 signature bug → filed `2026-06-24-sigil-certpin-run-capture-signature-mismatch` as a follow-up. Also archived 2 stale-resolved issues (trust-chain CVE-20/21, roadmap-drift) as housekeeping → 12 active issues. See CHANGELOG [6.2.41]; PRIOR: **6.2.40** `cyrius init`+`port` go FULLY native — both bash shims deleted. Completes the half-done v5.9.28 port (which slid the easy path into `programs/cyrius-init.cyr` + punted in-place/flag-matrix/all-of-port back to bash, and wasn't even in `[release].bins`). One native scaffolder serves the whole surface; `scripts/shims/cyrius-{init,port}.sh` `git rm`'d, no fallback. Packed: **sandhi 1.6.13** fold + **`cyrius lib sync` scopes to declared `[deps].stdlib`** (thoth filing RESOLVED; `--full` opt-in + dry-run counter fix) + a **found-by-ports** Apple-Silicon `sys_rename` fix (`AT_FDCWD` is −2 on Darwin, not Linux's −100 — arm64 port-move was a no-op on ecb). **`src/` untouched → cycc byte-identical 1,071,936 B; check.sh 92/92 + boot; `cyrius init`+`port` verified on REAL Darwin arm64 (ecb); api-surface unchanged (init/port are programs + cbt, not lib/src).** See CHANGELOG [6.2.40]; PRIOR: **6.2.39** agnos syscall-peer wrappers + fail-OPEN safety fix. Bottom-priority agnos batch, kernel-verified vs `agnos/kernel/core/syscall.cyr`: net_config #61 (`sys_net_config` + 4 getters; unblocks taar/yo/whirl/dig) + **winsize #60** (`sys_winsize`; agnsh/darshana/kii/desktop) + signal constants/sigset wrappers (`SIGHUP…SIGPWR`, `1<<sig` agnos convention; unblocks thoth/t-ron `--agnos` link). **Plus the sweep's real find:** `result`/`bounds`/`overflow` aborted via unguarded `syscall(60)` → no-op'd on agnos → core safety checks silently **fail-OPEN**; now target-aware guarded. **Gate fix (not feature drop):** #60==Linux-exit number false-positived `_agnos_emit_gate` — fixed by making its emit probe peer-independent (no syscall-peer include) so the compiler EEXIT is the sole `mov eax,60` source. **lib + gate only — `src/` untouched → cycc byte-identical; api-surface 4334→4343 (+9, non-breaking).** See CHANGELOG [6.2.39]) |
-| **cycc** (x86_64 ELF) | **1,073,672 B** (unchanged @ 6.2.46–.50 — CLI-only deps-resolver changes (`cbt/commands.cyr` + `cbt/deps.cyr`), `src/` untouched → byte-identical modulo version string; +112 B @ 6.2.45 — x86 `_entry_base` `_pie_mode`-aware branches; inert, self-hosts byte-identical fixpoint, seed-derivable from `bootstrap/asm`. PRIOR +1,624 B @ 6.2.41 — `EF64_CMP` parity-flag NaN fix + `_CHECK_ARITY` ×3 call-emit paths + `GFVA`) |
-| **cycc_aarch64** (x86-host cross, emits aarch64) | **625,888 B** (rebuilt @ 6.2.45 version-bump — +64 B from the aarch64 `_entry_base` `_pie_mode` branch; pi SELFHOST_OK) |
-| **cycc-native-aarch64** (aarch64-native, tracked) | 787,248 B (refreshed @ 6.1.8 — PIE-enabled; **NOTE: predates the 6.2.10–.32 compiler changes (incl. the .29 aarch64 fixes) — refresh via `cyrius pulsar` when next on ARM hw; not a gate, the pi self-host rebuilds from source (✅ SELFHOST_OK @ .32)**) |
-| **cycc_win** (PE32+ cross) | **850,432 B** (rebuilt @ 6.2.45 version-bump — size stable (the `_entry_base` branch fits existing PE `.text` 512-byte padding); cass SELFHOST_OK) |
+| **Version** | **6.3.0** (v6.3.x cycle — **Language / Required-Optional Deps (lever 2)**; OPENS with the **var-family growable migration** (Phase-0 tail — the last fixed compile-time cap). Premise-check found the var tables aren't 3 but a **FAMILY of SEVEN** vcnt-indexed 8 B/slot tables — var_noffs (0x11A000), var_sizes (0x12A000), var_types (0x13A000), gvar_byte_off (0x1B0000), enum_const_val (0x1D8000), gvar_initval (0x1EC000), var_enum_id (0x204000) — all 8192-capped, that must grow in LOCKSTEP (any unmigrated one silently overflows past 8192). All 7 → relocatable bases behind `_var_cap`; `SVCNT` grows the family 2× past the cap (ceiling 1 048 576), ending the last fixed compile-time cap (closes the v6.2.0 Phase-0 / AR-03 arc). `src/common/util.cyr` `_var_grow` + ~60 inline-access sites swept to `_base` + per-fork init in all 7 drivers. **Codegen change → cycc 1,073,672→1,075,136 B (var `_base` global-load indirection + chained grow helpers); byte-identical UNDER the cap → self-hosts byte-identical AND seed→cybs→cycc derivation byte-identical (`seed-derive-cycc.sh`); check.sh 100/100 (8300-var grow gate compiles+RUNS); all 6 forks compile; ecb+cass+pi SELFHOST_OK; heapmap 96 PASS; bench self_compile 511 ms.** **SEED BREAK + FIX (2026-06-28, user FURIOUS — CI caught it, I'd only run the cycc fixpoint not seed-derive):** the first cut grew all 7 tables INLINE in one `_var_grow` → cybs (the seed's hand-asm bootstrap compiler) silently mis-compiles fns with too many global/call refs (→SIGSEGV) + tail calls (→SIGILL) → gen1 broke the seed chain. Fix: grow CHAINED `_grow_g1.._grow_g7` (1 table/fn, regular calls, no tail call); per-fork init one-stmt-per-line. **gen1 being ~72KB < build/cycc is NORMAL (red herring — only gen2==build/cycc matters). RUN seed-derive after EVERY src/ compiler change.** See `feedback_seed_derive_mandatory_cybs_limits`. See CHANGELOG [6.3.0].) PRIOR: **6.2.52** (v6.2.x cycle — **Platform Expansion**; **closeout-deferred cleanup** — the v6.2.51 audit's filed items, minus the var-table migration (→ v6.3.0). Three CLI-only distlib-hardening fixes: (1) `distlib --modular` fails loud on a DUPLICATE module basename (two `[lib].modules` in different `src/` subdirs → same `dist/<pkg>/<base>.cyr` overwrite + dup index keys → resolver first-match-wins lost deps); (2) distlib fails loud on a MISSING `modules=` entry, BOTH flat + `--modular` (user 2026-06-28 "make it fail-loud" — was warn+exit 0, a producer/consumer exit-code asymmetry since `cyrius deps` is fail-loud); (3) bounded the `[deps.`/`name` manifest prefix scans (`ndi+6<=mlen`/`pi+4<=mlen` — cosmetic tail over-read, bump-arena never faulted). New `_distlib_failloud_gate`. **var-table growable migration → v6.3.0 opener** (last fixed compile-time table; changes codegen → not closeout-safe; user 2026-06-28). **CLI-only (`cbt/commands.cyr`); `src/` untouched → cycc byte-identical 1,073,672 B; self-host fixpoint; check.sh 98/98→**99/99** (+`_distlib_failloud_gate`); ecb+cass SELFHOST_OK; bench 517 ms (jitter).** See CHANGELOG [6.2.52].) **Earlier releases (6.2.51 back to v5.x): see CHANGELOG.md** — the per-slot history was trimmed from here 2026-06-28 (it duplicated CHANGELOG; state.md is current-cycle volatile only). |
+| **cycc** (x86_64 ELF) | **1,075,136 B** (@6.3.0 — var-family growable migration: `_base` global-load indirection + chained grow helpers; self-hosts byte-identical AND **seed→cybs→cycc derivable byte-identical**. Was 1,073,672 B @ 6.2.46–.52.) |
+| **cycc_aarch64** (x86-host cross, emits aarch64) | **627,376 B** (rebuilt @ 6.3.0 version-bump; pi SELFHOST_OK) |
+| **cycc-native-aarch64** (aarch64-native, tracked) | **947,280 B** (regenerated @ 6.3.0 — built x86-host (main_aarch64.cyr → aarch64-emitter → native cycc), verified self-hosts byte-identical + own fixpoint on REAL pi; refresh by cross-compiling main_aarch64.cyr or `cyrius pulsar`) |
+| **cycc_win** (PE32+ cross) | **851,968 B** (rebuilt @ 6.3.0 version-bump; cass SELFHOST_OK) |
 | **cyrius-lsp** (language server) | **108,600 B** (@.43 — corrected from a long-stale 531,688 B doc value; rebuilt from `programs/cyrius-lsp.cyr` with the current cycc) |
 | **cc5** (prior-major v5.11.69, tracked) | 874,232 B |
 | **cybs** (bootstrap compiler) | **21,066 B** (@2026-06-20 — grew from 12,344 B to compile ALL of `src/main.cyr`; **seed→cybs→cycc now reproduces build/cycc byte-identical** — the CVE-20 self-host restoration. cybs(main.cyr)=gen1, gen1(main.cyr)=gen2=build/cycc, fixpoint holds) |
 | **seed** (`bootstrap/asm`, root of trust) | **29,024 B** (@2026-06-20 — +8 B from the cybs string-lexer NUL-terminator fix that completed the self-host; regenerated as cybs(asm.cyr), Rust-seed-verified via `bootstrap/verify.sh`, `bootstrap/SHA256SUMS` updated) |
-| check.sh gates | **99/99 + the D7 boot gate** (+1 @.52 — `_distlib_failloud_gate`: `distlib --modular` exits non-zero on a duplicate module basename + on a missing `modules=` entry (was warn+exit 0); +1 @.51 — `_deps_modular_traversal_gate`: CVE-32 — a malicious `dist/<pkg>/index.cyml` sibling with `/`/`..` is rejected (deps non-zero) before any fs op, no arbitrary `.cyr` delete; +1 @.50 — `_deps_modular_gate`: distlib `--modular` per-module dist + index.cyml dep graph, consumer `modular=[...]` pulls EXACT sub-modules + transitive deps (sibling + leaves), excludes the independent module; +1 @.49 — `_deps_groups_gate`: `[groups]` expands in `[deps].stdlib` (nested + cycle-guarded → members resolve); +1 @.47 — `_deps_sidecar_gate`: distlib `dist/<pkg>.deps` sidecar emit (lib/ leaves only) + consumer auto-resolve end-to-end; +1 @.46 — `_deps_requires_gate`: `requires` transitive auto-resolve + dedup + fail-loud-on-missing, hermetic leaf-only fixture; +1 @.45 — `_kernel_pie_struct_gate`: `kernel; --pie` → ET_DYN + PT_LOAD `p_vaddr=0`, structural-only (live boot consumer-gated); +2 @.29 — `_cli_cross_compile_gate` (CLI cbt/cyrius.cyr → PE/Mach-O/aarch64) + `_fuzz_harness_gate`; both also per-PR ci.yml steps. + the D7 boot gate post-step @.28) |
+| check.sh gates | **100/100 + the D7 boot gate** (+1 @6.3.0 — `_var_grow_gate`: an 8300-global program compiles + RUNS, exercising the var-family grow past the old fixed 8192 cap; +1 @.52 — `_distlib_failloud_gate`: `distlib --modular` exits non-zero on a duplicate module basename + on a missing `modules=` entry (was warn+exit 0); +1 @.51 — `_deps_modular_traversal_gate`: CVE-32 — a malicious `dist/<pkg>/index.cyml` sibling with `/`/`..` is rejected (deps non-zero) before any fs op, no arbitrary `.cyr` delete; +1 @.50 — `_deps_modular_gate`: distlib `--modular` per-module dist + index.cyml dep graph, consumer `modular=[...]` pulls EXACT sub-modules + transitive deps (sibling + leaves), excludes the independent module; +1 @.49 — `_deps_groups_gate`: `[groups]` expands in `[deps].stdlib` (nested + cycle-guarded → members resolve); +1 @.47 — `_deps_sidecar_gate`: distlib `dist/<pkg>.deps` sidecar emit (lib/ leaves only) + consumer auto-resolve end-to-end; +1 @.46 — `_deps_requires_gate`: `requires` transitive auto-resolve + dedup + fail-loud-on-missing, hermetic leaf-only fixture; +1 @.45 — `_kernel_pie_struct_gate`: `kernel; --pie` → ET_DYN + PT_LOAD `p_vaddr=0`, structural-only (live boot consumer-gated); +2 @.29 — `_cli_cross_compile_gate` (CLI cbt/cyrius.cyr → PE/Mach-O/aarch64) + `_fuzz_harness_gate`; both also per-PR ci.yml steps. + the D7 boot gate post-step @.28) |
 | aarch64 native tcyr | **189 pass / 0 fail / 0 xfail / 1 skip** (@.29 VR-01 — the aarch64-native CI job runs the FULL tcyr corpus on real arm64. It surfaced a stale-native-fork + 9-bug debt; **all fixed in-slot** (`2026-06-19-aarch64-tcyr-failures.md` RESOLVED), gate HARD + GREEN. `math_pack_integration` skip = x86-only f64_sin; pi-verified) |
 | sigil fold | **3.9.4** (@6.2.43 — `ERR_*` → `SIGIL_ERR_*` namespacing, 15 consts, drops bare names that collided with yukti's `ERR_IO`; @6.2.42 — certpin `run_capture(cmd,argv)` → 5-arg API + output buffer; @6.2.31 — luks raw `getrandom` → `_sigil_random_fill` portable boundary) |
 | stdlib fold | ~~agnosys~~ **RETIRED @.37** (the stale pre-decomposition 1.4.3 snapshot deleted — its surviving uname/sysinfo role is native in `lib/sys.cyr`; the rest decomposed → agnodrm/sigil/kavach/aegis/sakshi) · **sandhi 1.6.13** · sankoch 2.4.4 · niyama 1.0.5 · **bayan 1.0.3** · ganita 1.0.1 · **patra 1.12.4** · **yukti 2.2.7** · vani 0.9.5 · **sigil 3.9.4** · **mabda 3.4.2** · **sakshi 2.4.2** · **yantra 1.0.0** (**@.43 — refold arc: sakshi 2.4.1→2.4.2 (agnos `uptime_ms` clock), sigil 3.9.3→3.9.4 (`SIGIL_ERR_*`), yukti 2.2.6→2.2.7 (`YUKTI_ERR_*`); + native agnos gates on mmap/dynlib/fdlopen; all lib-only, cycc byte-identical**; **@.38 — patra 1.12.3→1.12.4 (Win `_wal_gen_salts` getrandom ABI), sandhi 1.6.8→1.6.12 (per-call reqctx thread-safety + tls.cyr-contract server handshake + 2-socket mDNS), bayan 1.0.2→1.0.3 (reentrant JSON value+streaming parsers, +5 public `_ctx` fns) — all non-breaking; @.30 — mabda 3.3.0→3.4.2 (array textures + cubemaps, BC tiled arrays, F64_*→MABDA_F64_* math-collision fix, render-target 64 KiB VA-map align + per-context RT VA bump); @.26 — mabda 3.2.14→3.3.0 (asset/png + native/wgpu backends); + yantra 1.0.0 NEW fold — UI/E2E testing (WebDriver/Appium/CDP), OPT-IN, requires net/ws/bayan/sandhi/tls/sakshi/sigil dep chain**) |
@@ -31,8 +31,26 @@
 | stdlib | **98** `lib/*.cyr` (−1 @.37 — `agnosys.cyr` retired) · 79 programs · api-surface **4352 fns** (+8 @.45 — sankoch ratio-cap (6) + `patra::patra_insert_row_or_ignore` + `mabda::rg_to_dot`, all non-breaking fold additions; +1 @.44 — `main_aarch64_native::EMITMACHO_ARM64/1` native-fork stub; +9 @.39 — agnos peer `sigset_new/add/has` + `sys_net_config` + 4 net getters + `sys_winsize`; all non-breaking, 0 removals) |
 | heap | `output_buf` 16 MB @ `S+0x4D9D000` (relocated heap-top, 2MB→16MB @ .27); `file_map` relocated to freed `0x71A000` band @ .35; 4 per-fn local tables relocated to heap-top `0x5D9D000`+ (4×128 KB, 16384 slots) @ .40 (CVE-24); brk-final `0x5E1D000` (~94.1 MB virtual, +512 KB @ .40) |
 | agnos gate | **9/9** (+probe **1h** @.39 — signal constants + sigset wrappers (`1<<sig`) + `net_config` #61 + `winsize` #60: asserts all *defined* (not ud2 stubs) + `SYS_NET_CONFIG==61`/`0x3d` + `SYS_WINSIZE==60`/`0x3c` emitted + `SIGCHLD==17`; `_agnos_emit_gate` reworked peer-independent so #60 doesn't false-positive; +probe **1g** @.36 — `io.cyr` file-lock helpers via `xflock` (`SYS_FLOCK` #59); +probe **1f** @.35 — `sync.cyr` no-op mutex + `sys_access` stub; +probe **x*** @.26 — io.cyr emit-inspect getdents #29; +probe 1e @.23 — fs dir-listing AO_DIRECTORY 0x800) |
-| bench (every-release gate) | self_compile **503 ms** @ 6.2.50 (bench-history.sh; within the 500–549 ms jitter band — .46–.50 are all CLI-only + cycc byte-identical, so the variation is pure measurement jitter, not a delta); x86 cycc **1,073,672 B** (unchanged @ .46–.50; +112 B @ .45) |
+| bench (every-release gate) | self_compile **508 ms** @ 6.3.0 (bench-history.sh; within the 500–549 ms jitter band — the var-family `_base` indirection added no measurable cost, var access isn't hot); x86 cycc **1,075,136 B** (@6.3.0 var-family migration; was 1,073,672 B @ 6.2.46–.52) |
 
+> **Handoff (2026-06-28):** **v6.3.0 CUT — var-family growable migration (opens v6.3.x);
+> + a SEED BREAK + FIX + a release-gate consolidation.** The migration (7-table
+> vcnt-indexed family → growable; detail in the Version cell + CHANGELOG [6.3.0]) is
+> shipped + verified (seed-derive, check.sh 100/100, ecb+cass+pi, native ARM binary
+> regenerated). **The drama:** the first cut grew all 7 tables INLINE in one `_var_grow`
+> → cybs (the seed's hand-asm bootstrap compiler) silently mis-compiles fns with too many
+> global/call refs (→SIGSEGV) + tail calls (→SIGILL) → broke the seed→cybs→cycc chain. I'd
+> run only the cycc self-host fixpoint, NOT `seed-derive-cycc.sh` (CI caught it, not me).
+> Fix: CHAINED `_grow_g1.._grow_g7` (1 table/fn, regular calls). **Process hardening so it
+> can't recur:** `scripts/release-gate.sh` (the single fail-fast pre-tag gate: self-host +
+> seed-derive + check.sh + cross-OS + bench), `version-bump.sh` runs seed-derive after its
+> rebuild (safety net), CLAUDE.md "## Release Gate" section. KEY: the cycc fixpoint does NOT
+> cover the seed chain — `feedback_seed_derive_mandatory_cybs_limits`. **To commit:** the
+> seed fix (util.cyr + 7 fork inits + build/cycc + cycc-native-aarch64) + the gate tooling +
+> CHANGELOG/state. VERSION stays 6.3.0 (completes the broken committed a9d031bd). **NEXT:
+> v6.3.x = lever-2 (Required/Optional deps: features/profiles/target scoping) + the
+> undefined-fn hard-error (bundled, safe there) + bare-metal D5-7.**
+>
 > **Handoff (2026-06-28):** **v6.2.52 CUT — closeout-deferred cleanup.** User: "complete
 > deferred as 6.2.52 and with var-table being 6.3.0." Landed the v6.2.51 audit's filed
 > items EXCEPT the var-table migration: (1) `_distlib_modular_emit` fails loud on a
@@ -75,234 +93,12 @@
 > missing `modules=` entry** (producer/consumer exit-code asymmetry — CI-behavior change).
 > **NEXT: v6.3.x = lever-2 (Required vs Optional deps: features/profiles/target scoping)
 > + the undefined-fn hard-error default-on (bundled, fully safe there) + bare-metal D5-7.**
->
-> **Handoff (2026-06-27):** **v6.2.50 CUT — dependency-model lever 1 / Phase C:
-> module-granular extraction (`distlib --modular`); LEVER 1 COMPLETE.** User: "lets do
-> 1 and 2 as .50"; on premise-check, item 1 (undefined-fn hard-error) was re-pinned to
-> **v6.3.x** (lever-1 alone doesn't make loosely-coupled *consumer* configs clean
-> without `--allow-undef` — that needs lever-2 optional deps; user chose "Defer item 1
-> to v6.3.x"), so .50 = item 2 / Phase C only. **Producer** (`cbt/commands.cyr`
-> `_distlib_modular_emit` + `--modular` dispatch flag): each `[lib].modules` entry →
-> `dist/<pkg>/<mod>.cyr` (strip `src/` siblings → record, keep `lib/` inline) +
-> `dist/<pkg>/index.cyml` `[modular]` dep graph (`<mod> = [siblings, "lib:<leaf>"…]`,
-> named-dep-excluded). **Resolver** (`cbt/deps.cyr` `_dep_pull_submodule` +
-> `_dep_read_index_deps`; `modular = [...]` key on `[deps.<name>]`): pulls EXACT
-> sub-modules + transitive index deps (recurse siblings, pull `lib:` leaves via the
-> stdlib resolver, topo order, dedup/cycle-guard) → `lib/<pkg>_<mod>.cyr`. NOTE: `mod`
-> is a RESERVED keyword — params are `submod`. Bare sub-module names this slot; cross-pkg
-> `pkg:submodule` group form → lever-2. New `_deps_modular_gate` (gb→sibling ga; gc
-> independent excluded; check.sh 96→97). **VERIFIED:** cycc byte-identical 1,073,672 B +
-> self-host fixpoint; check.sh 97/97; ecb + cass SELFHOST_OK; bench 503 ms. User
-> pushes/tags after CI. **Lever 1 COMPLETE** (.46 `requires` → .47 sidecar → .48
-> umbrella/migration → .49 `[groups]` → .50 `--modular`). **NEXT: the v6.2.x END-OF-MINOR
-> closeout arc** (user: "then we can work the end of minor arc of work") — the pre-v6.3.0
-> closeout pass (mechanical gates, heap/dead-code/refactor/code-review/cleanup judgment
-> passes, security re-scan, downstream check, doc+vidya sync). Lever 2 + undefined-fn
-> hard-error = v6.3.x.
->
-> **Handoff (2026-06-27):** **v6.2.49 CUT — dependency-model lever 1 / Phase B: named
-> module groupings (`[groups]`).** User: "6.2.49 - phase B". A `[groups]` section
-> (`crypto = ["ct","keccak","random"]`) expands at resolve time wherever named in
-> `[deps].stdlib` or a `[deps.NAME] requires` (`cbt/deps.cyr`: `_dep_parse_groups`
-> scans the section; `_dep_expand_groups`/`_dep_expand_one` expand refs into a flat
-> deduped leaf list — recursing for nested groups, skipping self/mutual cycles via a
-> `seen` guard). Hooked at the stdlib parse (:1153) + the requires parse (:726).
-> Passthrough (same vec) when no `[groups]` → byte-identical for existing manifests.
-> New `_deps_groups_gate` (nested core→crypto→ct/keccak + a self-cycle → no hang;
-> check.sh 95→96). Members are whole leaf/dep names — `pkg:submodule` awaits Phase C.
-> **The addressable-grouping foundation lever 2 (v6.3.x feature/profile scoping) builds
-> on.** **VERIFIED:** cycc byte-identical 1,073,672 B + self-host fixpoint; check.sh
-> 96/96; ecb + cass SELFHOST_OK; bench 511 ms. User pushes/tags after CI. **Lever 1
-> (module granularity + groupings) is now COMPLETE** (.46 `requires` → .47 sidecar →
-> .48 umbrella/migration → .49 `[groups]`); the only arc tail is the **undefined-fn
-> reachable-call hard-error default-on** (now safe — cross-module refs resolve via the
-> sidecar). Lever 2 = v6.3.x. NEXT (user's call): undefined-fn hard-error, Phase C
-> (per-module distlib extraction), or the bare-metal #5/#6/#7 deliverables.
->
-> **Handoff (2026-06-27):** **v6.2.48 CUT — dependency-model lever 1: distlib sidecar
-> umbrella-scan + named-dep exclusion; ecosystem migration SHIPPED.** Continuing the
-> .48 carry (user: "continue with the .48 items" / "fix the libs for refold" / "bump
-> descent after migration"). The .47 sidecar's auto-capture from folded modules was
-> INCOMPLETE — real folds keep their `lib/` requirements in a non-folded umbrella
-> (sigil → `src/lib.cyr`, libro → `src/main.cyr`); sigil's sidecar came out 8 of 24
-> leaves. And naively scanning the umbrella grabbed the producer's `[deps.NAME]`
-> named-dep folds (sigil/patra), which resolve transitively → would double-include.
-> **Fixed in cyrius distlib** (`cbt/commands.cyr`): (1) `_distlib_scan_umbrella` over
-> `src/lib.cyr` + `src/main.cyr`; (2) exclude `[deps.NAME]` matches. Sidecar gate
-> extended to prove umbrella capture. **Ecosystem migration (cross-repo, user-authorized
-> "fix the libs"):** **sigil 3.9.5** re-folds via cyrius distlib (bash `regen-dist.sh`
-> retired) → 23-leaf sidecar; **libro 2.7.8** → 22-leaf sidecar (sigil/patra excluded),
-> sigil pin → 3.9.5; **descent 1.1.4** dropped its 29-element hand-ordered list → 18 M1
-> leaves. **PROVEN: `cyrius build descent` compiles CLEAN** (no undefined-fn warnings —
-> all M6 crypto/store leaves auto-resolve transitively via libro's sidecar). The
-> omit-one→runtime-SIGILL trap descent's contract warned about is GONE. **VERIFIED
-> (cyrius):** cycc byte-identical 1,073,672 B + self-host fixpoint; check.sh 95/95; ecb +
-> cass SELFHOST_OK; bench 500 ms. **User pushes/tags cyrius 6.2.48 + releases sigil 3.9.5
-> / libro 2.7.8 / descent 1.1.4.** The lever-1 arc (.46 `requires` key → .47 sidecar →
-> .48 umbrella/exclusion + migration) is the **acceptance-proven end-state**. NEXT:
-> Phase B `[groups]` + undefined-fn hard-error.
->
-> **Handoff (2026-06-27):** **v6.2.47 CUT — dependency-model arc lever 1 / Phase A:
-> producer sidecar (`dist/<pkg>.deps`).** Continues the arc (user: "6.2.46 is out;
-> please continue"). Completes the "declare what you need" end-state begun by the
-> .46 `requires` key. **Shipped:** `cyrius distlib` captures each stripped
-> `include "lib/X"` (the `_distlib_capture_lib_leaf` helper; `src/` self-refs
-> skipped) and writes `dist/<pkg>.deps` (one leaf per line) after the fold; `cyrius
-> deps` (`_process_named_deps`) reads `<src>/dist/<pkg>.deps` next to each resolved
-> fold module (`_dep_read_sidecar`) and auto-pulls the leaves **ahead of** the fold
-> via the shared `_dep_pull_leaves` (which also DRYs the .46 requires-key path).
-> So a consumer declaring just `[deps.<pkg>]` — no hand-authored `requires` — gets
-> the fold's stdlib in scope, in topological order. New `_deps_sidecar_gate` proves
-> the full distlib→sidecar→deps chain end-to-end (check.sh 94→95). **User decision
-> (2026-06-27):** cut .47 with the sidecar; descent migration + Phase B `[groups]`
-> + undefined-fn hard-error → **v6.2.48**. **VERIFIED:** cycc byte-identical
-> 1,073,672 B (modulo version string; `src/` untouched) + self-host fixpoint;
-> check.sh 95/95 + boot; ecb + cass SELFHOST_OK (`_cli_cross_compile_gate` covers
-> cbt → PE/Mach-O/aarch64; pi determined — cycc unchanged); bench self_compile
-> 516 ms (jitter). User pushes/tags after CI. **NEXT: v6.2.48** — descent migration
-> (the cross-repo end-to-end ordering proof: re-fold sigil → `dist/sigil.deps`,
-> descent drops its 29-element hand-ordered list), then Phase B; bare-metal/kernel
-> reactive window stays open alongside.
->
-> **Handoff (2026-06-27):** **v6.2.46 CUT — dependency-model arc lever 1 / Phase A:
-> `requires` transitive auto-resolve + topological ordering.** The user un-parked the
-> deps arc ("open the dependency arc … kernel agent doesn't need anything for a
-> while"). A ground-truth premise-check workflow (5 readers + synth) found the plan's
-> "pure list-order, add a topo sort" model imprecise: the real defect is an
-> **asymmetry** — raw `[deps].stdlib` already self-heals (`_dep_copy_stdlib_recursive`
-> follows each module's own includes + `#ifdef` dispatchers reorder at parse time)
-> while folded named-deps get NO transitive resolution, and `cyrius distlib` strips
-> includes at fold time (so a fold can't be scanned — its requirements must be
-> *declared*). **Shipped:** a `requires = [...]` key on `[deps.<name>]`
-> (`cbt/deps.cyr` `_process_named_deps`), each leaf pulled via the existing recursive
-> resolver *ahead of* the dep's modules → topological emit falls out of resolution
-> order (**no Kahn sort** — smaller + byte-identical), deduped via `_dep_stdlib_seen`,
-> **fail-loud** on a missing leaf (omit-one is now a build error, not a runtime
-> SIGILL). Guarded behind `if (dep_requires != 0)` → manifests without `requires`
-> resolve byte-identical. New `_deps_requires_gate` (check.sh 93→94). **Decisions
-> (user 2026-06-27):** consumer `requires` key this slot; producer sidecar + descent
-> migration + Phase B/C/D + undefined-fn-hard-error → **v6.2.47**. **VERIFIED:** cycc
-> byte-identical 1,073,672 B (modulo version string; `src/` untouched) + self-host
-> fixpoint; check.sh 94/94 + boot; ecb + cass `SELFHOST_OK` (the `_cli_cross_compile_gate`
-> covers cbt/cyrius.cyr → PE/Mach-O/aarch64; pi determined — cycc unchanged); bench
-> self_compile 505 ms (flat). User pushes/tags after CI. **NEXT: v6.2.47** — the
-> deps-arc carry items, with the bare-metal/kernel reactive window staying open
-> alongside.
->
-> **Handoff (2026-06-27):** **v6.2.45 CUT — kernel-PIE landmine + structural-gate
-> hardening + 3-lib stdlib refold.** Triggered by a kernel-team review that flagged
-> kernel-PIE as "hidden/half-done work." A ground-truth workflow (built + byte-
-> inspected the live `kernel; --pie` emit, walked AGNOS/gnoboot, reconciled docs)
-> found the wrapper genuinely **SHIPPED v6.1.7** — the alarm was a stale archived
-> doc, not hidden code. But the review surfaced real cyrius-side gaps, fixed here:
-> **(1)** `_entry_base` `_pie_mode`-aware (x86 + aarch64) — latent landmine, inert
-> + byte-identical; **(2)** `_kernel_pie_struct_gate` + `kernel_pie_smoke.cyr`
-> fixture (check.sh 92→93; asserts ET_DYN + `p_vaddr=0`); **(3)** SUPERSEDED banner
-> on the archived PIE proposal; **(4)** stdlib refold sankoch 2.4.6 / patra 1.12.6
-> / mabda 3.4.4 (non-breaking). **HELD (gnoboot-coupled, NOT shipped):** kernel-PIE
-> boot-metadata slide-readiness (`p_paddr=0` + absolute multiboot2 `ENTRY_ADDRESS_
-> EFI64` tag) — the `.text` is fully PIC (0 movabs, verified on a globals/switch/
-> `&fn` kernel) but the boot metadata still targets the link base; the fix depends
-> on whether the in-flight gnoboot `--pie` boot test biases manually or wants
-> slide-aware metadata from cyrius. **VERIFIED:** self-host byte-identical;
-> check.sh 93/93 + boot; 4-host self-host (x86 + ecb + pi + cass SELFHOST_OK);
-> self_compile 509 ms; api-surface 4344→4352 (+8 non-breaking). **NEXT:** standby
-> for the gnoboot boot-test result (compiler-side fixes) before the
-> dependency-model arc.
->
-> **Handoff (2026-06-25):** **v6.2.44 CUT — CVE-29 thread-stack guard page +
-> cross-arch `_PE`/Mach-O stub completeness.** A small reactive slot (user:
-> "cut 6.2.44 and we go into dependency arc after released"). **What shipped:**
-> (1) **CVE-29** — `lib/thread.cyr` `mmap_stack` now over-maps one page and
-> `cyr_mprotect(…, PROT_NONE)`s it at the low (downward-growing/overflow) end;
-> a thread-stack overflow SIGSEGVs at a defined boundary instead of silently
-> corrupting the adjacent allocator chunk. `munmap_stack` widened. x86+aarch64-
-> Linux only (WIN/AGNOS never call `mmap_stack` — serial fallback). 5 thread
-> suites/39 assertions unchanged, pi-verified. (2) **3 cross-arch stub gaps** —
-> `EPROCPRNG_PE`+`EGETSYSTIME_PE` (`src/backend/aarch64/emit.cyr`, completes the
-> `_PE` cohort 36→38) + `EMITMACHO_ARM64` (`src/main_aarch64_native.cyr` native-
-> only) — dead-branch dangling refs latent since v6.2.12/.13 (warned every
-> aarch64 cross-build, FATAL under `--strict`). **The big find — DEFERRED:** the
-> undefined-fn reachable-call hard-error was designed (hard-error default +
-> `--allow-undef`), implemented across all 6 native forks, and verified working
-> — then pulled back out because a *default* hard-error breaks 21/192 tcyr **and
-> loosely-coupled consumer builds** (mabda-without-samvada) since the stdlib's
-> cross-module refs aren't always resolved. That is exactly what the
-> **dependency-model arc** (next, per the user) fixes via transitive
-> auto-resolve, so the hard-error lands *with* it. The 3 stubs above are this
-> spike's surfaced byproduct. Filed + pinned to the deps slot:
-> `2026-06-25-undefined-fn-reachable-call-hard-error`; 2 follow-on lint/gate
-> issues filed (`…-syscall-write-byte-length-gate`, `…-bare-local-array-slot-
-> write-lint` — both medium with documented false-positive exposure, not the
-> small bites first estimated). **VERIFIED:** x86 `src/` untouched → cycc
-> byte-identical **1,073,560 B** (modulo version string) + self-host fixpoint ·
-> check.sh **92/92** + boot gate · **4-host self-host: x86 + pi + ecb + cass all
-> SELFHOST_OK** (aarch64 codegen changed → ran the dedicated cross-OS gate
-> sequentially) · bench self_compile **513 ms** · api-surface 4343→4344 (the
-> `EMITMACHO_ARM64` native stub; `_PE` names dedup against x86). **NEXT: the
-> dependency-model arc (lever 1).** User pushes/tags after CI.
->
-> **Handoff (2026-06-25):** **v6.2.43 CUT — stdlib-refold arc close: agnos
-> clock + ERR_* collision namespacing + agnos landmine gates.** Closes the two
-> remaining stdlib-refold issues (the v6.2.41 arity check / v6.2.39 agnos sweep
-> surfaced these; user scoped them to .43). **Workflow honored:** patched +
-> bumped all three upstream repos, **paused for the user to release+tag all
-> three** (sakshi 2.4.2 / sigil 3.9.4 / yukti 2.2.7 — confirmed), then folded
-> byte-identical + added the native gates. **(1) sakshi 2.4.2** — `clock.cyr`
-> ran the x86 TSC calibration on agnos (`CYRIUS_ARCH_X86` predefined there) via
-> `syscall(228)`/`syscall(35)` (undefined / = sysinfo on agnos → garbage freq);
-> now reads `uptime_ms` (#40) directly, skipping the rdtsc TSC (10 ms-coarse
-> uptime can't calibrate a GHz counter) — mirrors `chrono.cyr`. **(2) sigil
-> 3.9.4 + yukti 2.2.7** — namespaced the bare `ERR_*` collision (sigil
-> `ERR_IO=6` vs yukti `ERR_IO=14`) → `SIGIL_ERR_*` (15) / `YUKTI_ERR_*` (16),
-> bare names dropped (no compat alias — it would re-introduce the colliding
-> name). **CI catch:** the first sigil push failed fuzz CI — my rename's `find`
-> missed the `.fcyr` extension, leaving `fuzz_revocation.fcyr` on bare
-> `ERR_INVALID_INPUT` (COMPILE FAIL); fixed + re-scanned every extension in both
-> repos. **(3) native agnos gates** — `#ifdef CYRIUS_TARGET_AGNOS` fail-closed
-> on `lib/{mmap,dynlib,fdlopen}.cyr` raw Linux syscalls (mmap #9 → mkdir
-> mis-dispatch class); LOW/defensive, not agnos-reachable, purely additive.
-> patra `TK_*`→`SQLT_*` + net `SYS_*`→`NSYS_*` were already resolved (the latter
-> deliberately, for ESYSXLAT — left alone). **VERIFIED:** `src/` untouched →
-> cycc byte-identical **1,073,560 B** + self-host fixpoint · check.sh **92/92** +
-> boot gate · the agnos gates + folds compile clean on agnos (no mis-dispatch)
-> and x86 byte-identical · **4-host self-host: ecb + cass + pi all SELFHOST_OK**
-> (ran per `feedback_cross_os_verify_always_even_lib` even though lib-only —
-> cycc byte-identical so it reconfirms the .42 compiler). cyrius references
-> neither lib's `ERR_*` directly (uses them as opaque libs) so the breaking
-> rename doesn't touch cyrius; downstream consumers update per each lib's
-> CHANGELOG. Both issues RESOLVED+archived → **9 active issues**. User
-> pushes/tags after CI. **The v6.2.x stdlib-refold arc (.41→.42→.43) is now
-> complete.**
->
-> **Handoff (2026-06-25):** **v6.2.42 CUT — sigil 3.9.3 fold: certpin
-> `run_capture` signature fix.** First of the stdlib-refold issues the v6.2.41
-> arity check surfaced. sigil's `certpin_compute_spki_pin` called the obsolete
-> 2-arg `run_capture(cmd, argv)` (mis-binding 2 of 5 args + treating
-> `Ok(bytes_read)` as an output ptr) → openssl SPKI-pin computation silently
-> broken. **Workflow honored (user 2026-06-25):** patched upstream in
-> `~/Repos/sigil` (5-arg `run_capture(cmd, arg1, arg2, buf, buflen)` + dedicated
-> output buffer), bumped sigil 3.9.2→**3.9.3**, **paused for the user to release
-> it** (tag `3.9.3` confirmed), THEN folded byte-identical into `lib/sigil.cyr`
-> (sole delta = the certpin fn; verified via diff). **VERIFIED:** `src/`
-> untouched → cycc byte-identical **1,073,560 B** + self-host fixpoint · the fold
-> compiles **arity-clean** (the `run_capture` 2-vs-5 warning is gone) +
-> cross-compiles to PE + aarch64 · check.sh **92/92** + boot gate · **4-host
-> self-host: ecb + cass + pi all SELFHOST_OK** (ran the dedicated cross-OS gate
-> per `feedback_cross_os_verify_always_even_lib`, even though lib-only — cycc is
-> byte-identical so it reconfirms the .41-verified compiler on each target).
-> macho-sigil compile NOT re-run on ecb (the macho fork compiler can't run on
-> Linux, and ecb's checkout is stale 6.0.1) — covered by the fix's portability
-> (run_capture/alloc/store8, zero macho-specific code), the 3 verified backends,
-> and sigil's own 3.9.3 CI. Issue `2026-06-24-sigil-certpin-...` RESOLVED+archived
-> → **11 active issues**. **Remaining stdlib-refold arc:** sakshi agnos-clock
-> guard + ERR_*/SYS_* constant-collision namespacing → **v6.2.43**. User
-> pushes/tags after CI.
 
-**Prior v6.2.x handoffs (.40 ← .6) trimmed 2026-06-25** — per-slot narrative is
-canonical in [CHANGELOG.md](../../CHANGELOG.md); arc retrospectives in
-[completed-phases.md](completed-phases.md). state.md keeps only the active head
-(the 3 most recent slots above) per the canonical-source discipline.
+**Older handoffs trimmed** (.50 ← v6.2.6 on 2026-06-28; .40 ← .6 earlier) — per-slot
+narrative is canonical in [CHANGELOG.md](../../CHANGELOG.md); arc retrospectives in
+[completed-phases.md](completed-phases.md). state.md keeps only the **active head**
+(the 3 most recent slots above) per the canonical-source discipline — when this grows
+past ~3 handoffs (or the version cell past ~1 prior), trim again; it's a booklet smell.
 
 ## Open carry-ins
 

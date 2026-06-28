@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~1.07 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 98 stdlib modules + 0 git deps (folded sibling distfiles: sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; mabda 3.4.2; **bayan 1.0.3 at v6.1.25** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.1 at v6.1.26** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`; **yantra 1.0.0 at v6.2.26** — UI/E2E testing into `lib/yantra.cyr`). 192 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 92 check.sh gates + QEMU boot gate.
+~1.07 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 98 stdlib modules + 0 git deps (folded sibling distfiles: sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; mabda 3.4.4; **bayan 1.0.3 at v6.1.25** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.1 at v6.1.26** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`; **yantra 1.0.0 at v6.2.26** — UI/E2E testing into `lib/yantra.cyr`). 192 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 100 check.sh gates + QEMU boot gate.
 
 ## Install
 
@@ -91,19 +91,19 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **1,073,560 B** (~1.07 MB) x86_64 at v6.2.43 |
-| Cross compilers | `cycc_aarch64` 625,680 B, `cycc_win` 850,432 B (cross-built) |
+| Compiler (`cycc`) | **1,075,136 B** (~1.07 MB) x86_64 at v6.3.0 |
+| Cross compilers | `cycc_aarch64` 627,376 B, `cycc_win` 851,968 B (cross-built) |
 | Seed binary (`asm`) | **29,024 B** (committed binary root of trust; re-derivable from `archive/seed/` via `bootstrap/verify.sh`) |
 | Bootstrap compiler (`cybs`) | **21,066 B** (compiles all of `src/main.cyr`) |
 | LSP server (`cyrius-lsp`) | **108,600 B** (definition / documentSymbol / references / semanticTokens / hover) |
 | Linker (`cyrld`) | **907,792 B** |
-| External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded, now 3.4.2) |
+| External dependencies | **0** at the compiler level (0 git deps at stdlib level: mabda folded, now 3.4.4) |
 | Tests | **192** .tcyr + **5** .fcyr fuzz + **15** .bcyr bench + 1 .scyr soak + 1 .smcyr smoke |
-| Gates (`scripts/check.sh`) | **92** structural + runtime gates (incl. OVMF UEFI boot smoke at v5.11.49, CVE-05 mangle guard at v5.11.65, PIE exec gate at v6.1.6, TS→JS emit/round-trip gate at v6.1.11, QEMU kernel boot gate at v6.2.28) |
+| Gates (`scripts/check.sh`) | **100** structural + runtime gates (incl. PIE exec gate at v6.1.6, QEMU kernel boot gate at v6.2.28, deps-resolver gates `_deps_requires`/`_deps_sidecar`/`_deps_groups`/`_deps_modular` @ v6.2.46–.50, CVE-32 modular-traversal gate @ v6.2.51, the 8300-var `_var_grow_gate` @ v6.3.0) |
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit, cyrius-x bytecode |
 | Stdlib modules | **98** (distfiles folded byte-identical; bayan 1.0.0 @ v6.1.25 → `lib/bayan.cyr`, ganita 1.0.0 @ v6.1.26 → `lib/ganita.cyr`, `lib/sys.cyr` system-introspection @ v6.1.28; see [docs/stdlib-modules.md](docs/stdlib-modules.md)) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS + Windows 11 PE, all SSH-wired |
-| Heap layout | 99 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000); backed by an anonymous-mmap **chunk** bump allocator since v6.1.19 (was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge), `alloc_init()` idempotent since v6.1.23 |
+| Heap layout | 96 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000); the var-family + fn/fixup/codebuf tables are growable (relocatable bases) as of the v6.2.0/v6.3.0 Phase-0 migration; backed by an anonymous-mmap **chunk** bump allocator since v6.1.19 (was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge), `alloc_init()` idempotent since v6.1.23 |
 
 ### Toolchain size comparison
 
