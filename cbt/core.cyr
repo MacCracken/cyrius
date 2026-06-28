@@ -80,6 +80,15 @@ var _js_target = 0;
 # `_aa` variant routes to the aarch64 cross-compiler. See roadmap .27 (D1).
 var _baremetal_target = 0;
 var _baremetal_aa = 0;
+# v6.3.1 (dependency-model arc, lever 2 — required vs optional deps):
+# `cyrius build --features a,b` populates _cli_features (vec<cstr> of requested
+# feature names); `--no-default-features` sets _cli_no_default. The dep resolver
+# (cbt/deps.cyr) reads these to decide which `optional = true` deps to fetch and
+# whether to apply the `[features]` `default = [...]` set. Parsed by a pre-scan in
+# cyrius.cyr BEFORE _auto_deps runs — the resolver fires ahead of each subcommand's
+# own flag loop. 0/0 = today's behavior (no optional dep activated unless named).
+var _cli_features = 0;
+var _cli_no_default = 0;
 
 # ================================================================
 # Output helpers — consistent error/warn/info/status

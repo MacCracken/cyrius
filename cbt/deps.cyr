@@ -311,6 +311,8 @@ fn _dep_find_stdlib_dir(): i64 {
 var _dep_stdlib_seen = 0;
 var _dep_group_names = 0;     # v6.2.49 Phase B: [groups] names (parallel to members)
 var _dep_group_members = 0;   # v6.2.49 Phase B: [groups] member lists
+var _dep_feature_names = 0;   # v6.3.1 lever 2: [features] feature names (parallel to deps)
+var _dep_feature_deps = 0;    # v6.3.1 lever 2: per-feature member lists (deps and/or features)
 
 fn _dep_stdlib_seen_init(): i64 {
     _dep_stdlib_seen = vec_new();
@@ -528,6 +530,31 @@ fn _parse_toml_str_array(buf, len, pos): i64 {
     return result;
 }
 
+# v6.3.1 (dependency-model arc, lever 2): split a comma-separated CLI value
+# ("gpu,win-shell") into a vec<cstr> of feature names. Empty segments are
+# dropped, so a trailing/leading comma is tolerated. Used by the cyrius.cyr
+# pre-scan to parse `--features <list>` ahead of the dep resolver.
+fn _split_csv(s): i64 {
+    var out = vec_new();
+    var sl = strlen(s);
+    var i = 0;
+    var start = 0;
+    while (i <= sl) {
+        if (i == sl || load8(s + i) == 44) {
+            var seg = i - start;
+            if (seg > 0) {
+                var d = alloc(seg + 1);
+                memcpy(d, s + start, seg);
+                store8(d + seg, 0);
+                vec_push(out, d);
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 # v6.2.46/.47 (deps lever 1, Phase A): pull a vec of stdlib-leaf names into
 # scope via the recursive stdlib resolver (is_top=1 → each leaf's
 # `include "lib/<leaf>"` is pushed onto `_dep_includes`), deduped by
@@ -698,6 +725,137 @@ fn _dep_parse_groups(buf, n): i64 {
         }
         while (i < n && load8(buf + i) != 10) { i = i + 1; }
         if (i < n) { i = i + 1; }
+    }
+    return 0;
+}
+
+# v6.3.1 (dependency-model arc, lever 2 — required vs optional deps): parse a
+# `[features]` table into `_dep_feature_names` / `_dep_feature_deps` (parallel
+# vecs), structurally identical to `_dep_parse_groups`. Each `name = ["dep", ...]`
+# line declares a feature whose members are optional-dep names and/or other
+# feature names (recursively expanded by `_dep_feature_expand` at resolve time).
+# The reserved `default = [...]` line is the set activated unless
+# `--no-default-features` is passed. Section ends at the next `[...]` header.
+# Absent `[features]` → empty vecs → no optional dep is ever activated (every
+# pre-existing manifest resolves byte-identical). Parse-only here; the active-set
+# computation + the skip gate live with the resolver (`_dep_feature_active`).
+fn _dep_parse_features(buf, n): i64 {
+    _dep_feature_names = vec_new();
+    _dep_feature_deps = vec_new();
+    var i = 0;
+    var in_features = 0;
+    while (i < n) {
+        var ls = i;
+        while (ls < n && (load8(buf + ls) == 32 || load8(buf + ls) == 9)) { ls = ls + 1; }
+        if (ls < n && load8(buf + ls) == 91) {   # '[' section header
+            in_features = 0;
+            if (memeq(buf + ls, "[features]", 10) == 1) { in_features = 1; }
+        } elif (in_features == 1 && ls < n && load8(buf + ls) != 35 && load8(buf + ls) != 10) {
+            var ne = ls;
+            while (ne < n && load8(buf + ne) != 32 && load8(buf + ne) != 9 && load8(buf + ne) != 61 && load8(buf + ne) != 10) { ne = ne + 1; }
+            var nl = ne - ls;
+            if (nl > 0) {
+                var bi = ne;
+                while (bi < n && load8(buf + bi) != 91 && load8(buf + bi) != 10) { bi = bi + 1; }
+                if (bi < n && load8(buf + bi) == 91) {
+                    var fname = alloc(nl + 1);
+                    memcpy(fname, buf + ls, nl);
+                    store8(fname + nl, 0);
+                    var fmembers = _parse_toml_str_array(buf, n, ne);
+                    vec_push(_dep_feature_names, fname);
+                    vec_push(_dep_feature_deps, fmembers);
+                }
+            }
+        }
+        while (i < n && load8(buf + i) != 10) { i = i + 1; }
+        if (i < n) { i = i + 1; }
+    }
+    return 0;
+}
+
+# v6.3.1 lever 2: look up a `[features]` name → its member vec, or 0 if `name`
+# is not a declared feature (then it's treated as a bare dep name by the caller).
+fn _dep_feature_lookup(name): i64 {
+    if (_dep_feature_names == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(_dep_feature_names)) {
+        var fnm = vec_get(_dep_feature_names, i);
+        if (strlen(fnm) == nl) { if (memeq(fnm, name, nl) == 1) { return vec_get(_dep_feature_deps, i); } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v6.3.1 lever 2: expand `name` into the active-dep set `out`. If `name` is a
+# declared feature, recurse over its members (features may name other features);
+# otherwise it's a dep name → append (deduped). Self/mutual cycles skip via the
+# `seen` guard. Mirrors `_dep_expand_one` (the [groups] analog).
+fn _dep_feature_expand(out, name, seen): i64 {
+    var members = _dep_feature_lookup(name);
+    if (members == 0) {
+        if (_dep_list_has(out, name) == 0) { vec_push(out, name); }
+        return 0;
+    }
+    if (_dep_list_has(seen, name) == 1) { return 0; }   # cycle — skip
+    vec_push(seen, name);
+    var j = 0;
+    while (j < vec_len(members)) {
+        _dep_feature_expand(out, vec_get(members, j), seen);
+        j = j + 1;
+    }
+    return 0;
+}
+
+# v6.3.1 lever 2: is the optional dep `dep_name` activated by the current feature
+# selection? Active set = the `[features]` `default = [...]` list (unless
+# `--no-default-features`) ∪ the `--features` request list, each fully expanded.
+# A `--features wgpu` naming an optional dep directly (no `[features]` entry)
+# activates it too (Cargo-style implicit feature). With no `[features]` table and
+# no `--features`, an optional dep is INACTIVE — it never resolves unless named.
+fn _dep_feature_active(dep_name): i64 {
+    var active = vec_new();
+    var seen = vec_new();
+    if (_cli_no_default == 0) {
+        var defs = _dep_feature_lookup("default");
+        if (defs != 0) {
+            var i = 0;
+            while (i < vec_len(defs)) {
+                _dep_feature_expand(active, vec_get(defs, i), seen);
+                i = i + 1;
+            }
+        }
+    }
+    if (_cli_features != 0) {
+        var k = 0;
+        while (k < vec_len(_cli_features)) {
+            _dep_feature_expand(active, vec_get(_cli_features, k), seen);
+            k = k + 1;
+        }
+    }
+    return _dep_list_has(active, dep_name);
+}
+
+# v6.3.1 lever 2: does a dep's `target = "<arch|os>"` key match the current build
+# target? Arch axis reads `_arch` (0=x86_64, 1=aarch64); OS axis reads the
+# `_win_target` / `_agnos_target` / `_baremetal_target` flags the cyrius.cyr
+# pre-scan set before resolution. "linux" means a native userland build (not
+# windows/agnos/bare-metal) — note it also matches a native macOS host today
+# (no separate macOS target flag yet; a follow-up if a consumer needs it). An
+# unrecognized target string never matches (a typo skips the dep, doesn't pull it
+# everywhere). Callers only invoke this when dep_target != 0.
+fn _dep_target_matches(t): i64 {
+    var tl = strlen(t);
+    if (tl == 7 && memeq(t, "aarch64", 7) == 1) { if (_arch == 1) { return 1; } return 0; }
+    if (tl == 5 && memeq(t, "arm64", 5) == 1) { if (_arch == 1) { return 1; } return 0; }
+    if (tl == 6 && memeq(t, "x86_64", 6) == 1) { if (_arch == 0) { return 1; } return 0; }
+    if (tl == 3 && memeq(t, "x86", 3) == 1) { if (_arch == 0) { return 1; } return 0; }
+    if (tl == 7 && memeq(t, "windows", 7) == 1) { if (_win_target == 1) { return 1; } return 0; }
+    if (tl == 5 && memeq(t, "agnos", 5) == 1) { if (_agnos_target == 1) { return 1; } return 0; }
+    if (tl == 10 && memeq(t, "bare-metal", 10) == 1) { if (_baremetal_target == 1) { return 1; } return 0; }
+    if (tl == 5 && memeq(t, "linux", 5) == 1) {
+        if (_win_target == 0 && _agnos_target == 0 && _baremetal_target == 0) { return 1; }
+        return 0;
     }
     return 0;
 }
@@ -879,6 +1037,8 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             var dep_modules = 0;
             var dep_requires = 0;
             var dep_modular = 0;   # v6.2.50 Phase C: sub-modules from dist/<name>/
+            var dep_optional = 0;  # v6.3.1 lever 2: resolve only when an active feature names this dep
+            var dep_target = 0;    # v6.3.1 lever 2: resolve only on a matching build target
             # CVE-21 (v6.2.30): cleared if a tagged dep's resolved commit
             # disagrees with the lock — gates the module copy so poisoned
             # content never lands in lib/.
@@ -952,8 +1112,61 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 if (memeq(buf + si, "modular", 7) == 1 && (load8(buf + si + 7) == 32 || load8(buf + si + 7) == 61)) {
                     dep_modular = _parse_toml_str_array(buf, n, si);
                 }
+                # v6.3.1 (dependency-model arc, lever 2 — required vs optional deps):
+                # `optional = true` marks a dep that resolves only when an active
+                # `[features]` set names it (see `_dep_feature_active`). Bareword
+                # value, so read the first non-space char after `=` (`t` of `true`).
+                # Key-boundary checked (space/`=` after `optional`) like the siblings.
+                if (memeq(buf + si, "optional", 8) == 1 && (load8(buf + si + 8) == 32 || load8(buf + si + 8) == 61)) {
+                    var oi = si + 8;
+                    while (oi < n && load8(buf + oi) != 61) { oi = oi + 1; }
+                    oi = oi + 1;
+                    while (oi < n && (load8(buf + oi) == 32 || load8(buf + oi) == 9)) { oi = oi + 1; }
+                    if (oi < n && load8(buf + oi) == 116) { dep_optional = 1; }
+                }
+                # v6.3.1 lever 2: `target = "<arch|os>"` resolves this dep only when
+                # the current build target matches (see `_dep_target_matches`).
+                # Scalar string, parsed like `tag`. Key-boundary checked.
+                if (memeq(buf + si, "target", 6) == 1 && (load8(buf + si + 6) == 32 || load8(buf + si + 6) == 61)) {
+                    var tgi = si + 6;
+                    while (tgi < n && load8(buf + tgi) != 34) { tgi = tgi + 1; }
+                    tgi = tgi + 1;
+                    var tgs = tgi;
+                    while (tgi < n && load8(buf + tgi) != 34) { tgi = tgi + 1; }
+                    var tglen = tgi - tgs;
+                    dep_target = alloc(tglen + 1);
+                    memcpy(dep_target, buf + tgs, tglen);
+                    store8(dep_target + tglen, 0);
+                }
                 while (si < n && load8(buf + si) != 10) { si = si + 1; }
                 si = si + 1;
+            }
+            # v6.3.1 (dependency-model arc, lever 2 — required vs optional deps):
+            # gate this dep on the active feature set and the build target. An
+            # `optional = true` dep resolves only when an active feature names it;
+            # a `target = "..."` dep resolves only on a matching build target. The
+            # axes COMBINE — a miss on EITHER skips the dep entirely (no requires
+            # pull, no clone, no module copy, no `_dep_includes` push). Absent keys
+            # → dep_optional 0 / dep_target 0 → never gated, so every pre-existing
+            # manifest resolves the identical include set + order (byte-identical).
+            # A skipped dep is NOT marked visited, so a later (transitive)
+            # *required* reference can still resolve it. `continue` re-enters the
+            # outer scan at the next section header the key loop left `si` on.
+            if (dep_optional == 1 && _dep_feature_active(dep_name) == 0) {
+                if (_verbose == 1) {
+                    sys_write(STDERR_FD, "  skip optional dep (no active feature): ", 41);
+                    sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                    sys_write(STDERR_FD, "\n", 1);
+                }
+                continue;
+            }
+            if (dep_target != 0 && _dep_target_matches(dep_target) == 0) {
+                if (_verbose == 1) {
+                    sys_write(STDERR_FD, "  skip dep (target mismatch): ", 30);
+                    sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                    sys_write(STDERR_FD, "\n", 1);
+                }
+                continue;
             }
             # v6.2.46 (dependency-model arc, lever 1 / Phase A): resolve this
             # dep's declared `requires` stdlib leaves BEFORE its own modules,
@@ -1342,6 +1555,7 @@ fn cmd_deps(): i64 {
     _dep_queue = vec_new();
     _dep_commit_lines = vec_new();   # CVE-21 (v6.2.30): git-dep commit pins
     _dep_parse_groups(buf, n);       # v6.2.49 Phase B: [groups] (buf is the TOML header, CYML body already stripped)
+    _dep_parse_features(buf, n);     # v6.3.1 lever 2: [features] table (populates _dep_feature_names/_deps; gating happens in _process_named_deps)
 
     # === Phase 1: stdlib deps ===
     # Find: stdlib = ["string", "fmt", ...]

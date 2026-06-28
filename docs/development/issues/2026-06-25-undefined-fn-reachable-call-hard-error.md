@@ -8,8 +8,50 @@
 > Pick this up as part of the dependency-model arc (the lever-1 work), where
 > cross-module refs become resolvable/declarable.
 
-**Filed:** 2026-06-25 · **Status:** DEFERRED → **v6.3.x (bundled with lever-2 optional deps)**
-**Pinned in:** [roadmap_6.md](../roadmap_6.md) v6.3.x "Required vs Optional Dependencies" (lever 2).
+**Filed:** 2026-06-25 · **Status:** DEFERRED → **v6.3.2 (its OWN slot)**
+**Pinned in:** [roadmap.md](../roadmap.md) v6.3.x release workflow, slot v6.3.2.
+
+> **Re-pinned 2026-06-28 (user) — un-bundled from lever 2 into its OWN slot.** Lever 2
+> (deps optional/features/target) **shipped as v6.3.1** on its own; B gets v6.3.2. The
+> decision was made *after* A landed and B's blast radius was **measured** at slot entry
+> (below) — the bundle's combined risk (a default-behavior flip + a 21-file corpus
+> cleanup + a cross-repo mabda change) was clearer once A was green. See the v6.3.1
+> premise-check section below for the ground-truth that informs the v6.3.2 work.
+
+## v6.3.1 premise-check — measured blast radius + the fix plan (2026-06-28)
+
+Ran the **whole corpus under `build/cycc --strict`** (the exact gate B makes default-on)
+from the repo root: **21 / 192 tcyr fail.** This matches the v6.2.44 spike count exactly.
+The 21 split into two categories:
+
+- **18 stdlib include-gaps** — the tcyr reference a real stdlib fn (`str_*`, `vec_*`,
+  `str_builder_*`, `clock_epoch_secs`, `random_bytes`, `dynlib_auxv_get`/`dynlib_read_auxv`,
+  `cyr_munmap`, and `payload` from `lib/result.cyr`) that a module they DO include calls,
+  but the tcyr never `include`s the providing module. The fns exist; the compilation unit
+  is incomplete. Fix: **surgically complete each tcyr's includes** so it is self-contained.
+  Files: `fdlopen_trusted`, `hashmap_ext`, `http_crlf`, `tls12_{ciphersuites,handshake,
+  handshake_msgs,keysched,record}`, `tls_native_{alpn,ed25519,entropy_vtable,mtls_client,
+  realpeer,scaffold,server_arena_flat_rss,transport_vtable}`, `tls_wrapper_native`, `trait`.
+- **3 `lib/mabda.cyr` → external `samvada_*` / `chitra_*`** (`large_input`, `large_source`,
+  `preprocessor_past_cap` — they pull mabda for compile-*size*, and mabda references
+  `samvada_session_take_device`/`_release_device` + `chitra_png_decode_rgba8`, which are
+  **not in this repo**). This is the literal "mabda-but-not-samvada" optional-feature case
+  the bug class describes — a **real-world** hard-error, not just a test artifact. Fix
+  (user 2026-06-28): **at mabda's SOURCE repo** — declare `samvada`/`chitra` `optional = true`
+  + guard the device/PNG calls so they are not DCE-reachable when the optional dep is absent,
+  then re-fold mabda into this repo (the proper lever-2 dogfood). Cross-repo; mabda source,
+  NOT the vendored `lib/mabda.cyr` ([[feedback_ecosystem_libs_are_language_stdlibs_not_upstream]]).
+
+**Harness note (correction to the "switch to `cyrius build`" secondary finding):** the
+tcyr harness compiles each file via raw `cat | cycc` from the repo root (`_self_host_pipe`).
+A blanket switch to `cyrius build` resolution is **non-trivial** — many tcyr carry
+*repo-relative* includes (e.g. `src/frontend/ts/lex.cyr`) that only resolve from the repo
+root, and they also already `include "lib/X.cyr"` explicitly, so a manifest stdlib-prepend
+both breaks the relative includes (when run from a project dir) and risks dup-definitions.
+The surgical per-tcyr include completion is the lower-risk path; revisit the harness switch
+separately if desired. The fixup gate flip itself (`_strict_mode` → `_allow_undef`) + the
+per-fork `--al` additions are unchanged from the design below — but they touch `src/`, so
+**seed-derive is mandatory** after them ([[feedback_seed_derive_mandatory_cybs_limits]]).
 **Re-pinned 2026-06-27 (user):** lever 1 (v6.2.46–.49: `requires`/sidecar/umbrella/`[groups]`)
 made *declared/transitive* refs resolve, but the issue's acceptance — "loosely-coupled
 *consumer* configs build clean WITHOUT `--allow-undef`" — needs refs declarable-*optional*

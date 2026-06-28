@@ -6,6 +6,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.1] — 2026-06-28
+
+**v6.3.1 — dependency-model lever 2: required vs optional deps.** The scoping layer
+on top of the v6.2.x modules/groupings foundation (lever 1). Adds, to the `cyrius.cyml`
+manifest + the `cyrius` CLI: an `optional = true` key on `[deps.<name>]` blocks, a
+Cargo-style `[features]` table (`default = [...]` + named feature → dep/feature lists,
+recursively expanded), `cyrius build --features <list>` / `--no-default-features`, and a
+platform-conditional `target = "<arch|os>"` key. The axes **combine** — a dep gated on
+either an inactive feature OR a non-matching build target is skipped entirely (no clone,
+no requires-pull, no module copy, no `_dep_includes` push). **100 % cbt-side — touches
+zero `src/`, so cycc is byte-identical (1,075,136 B, unchanged); self-host + seed-derive
+trivially hold.** A manifest with no `[features]`/`optional`/`target` resolves the
+identical include set + order as v6.2.x (the lever-1 deps gates are the regression wall).
+check.sh **100 → 101** (`_deps_features_gate`); ecb + cass + pi `SELFHOST_OK`; bench
+self_compile 508 ms (vs .0's 511 ms — within jitter) + cycc size 1,075,136 B (identical
+to .0 — cbt-only, cycc untouched).
+B (undefined-fn hard-error) was **un-bundled into its own slot v6.3.2** after this landed
+and its 21/192 blast radius was measured.
+
+### Added
+- **`cbt/deps.cyr`** — `optional` + `target` key recognizers in `_process_named_deps`
+  (same key-boundary guard as path/git/tag/modules/requires/modular); `_dep_parse_features`
+  (the `[features]` table parser, cloned from `_dep_parse_groups`); `_dep_feature_lookup`
+  / `_dep_feature_expand` / `_dep_feature_active` (active-dep-set computation: `default`
+  unless `--no-default-features`, ∪ `--features`, recursively expanded; a `--features X`
+  naming an optional dep directly activates it); `_dep_target_matches` (arch axis via
+  `_arch`, OS axis via `_win_target`/`_agnos_target`/`_baremetal_target`; "linux" = native
+  userland; unknown string never matches); `_split_csv`; the skip-gate after the key loop
+  (a skipped dep is NOT marked visited, so a later transitive *required* reference can
+  still resolve it).
+- **`cbt/core.cyr`** — `_cli_features` / `_cli_no_default` flag-state globals.
+- **`cbt/cyrius.cyr`** — `--features` / `--no-default-features` parsing in a **pre-scan
+  that runs before `_auto_deps`** (the resolver fires ahead of each subcommand's flag
+  loop — the ordering hazard the premise-check surfaced; the pre-scan also reads the
+  target flags so `target=` filtering sees them, idempotent with the subcommand loops);
+  literal-flag recognition in the build/run/test/tests loops; usage strings.
+- **`programs/checks/deps_init.cyr` / `main.cyr`** — `_deps_features_gate`: one fixture
+  proves all four transitions (optional skip + feature-activate, target skip +
+  target-activate) and that the axes are independent.
+
+### Note (scope)
+- `feature` unification across transitive deps stays out of scope (the consumer
+  manifest's `[features]` table drives the process-global active set; transitive
+  `[features]` tables are not parsed) — deferred per the lever-2 design.
+- Consumer-manifest migration to `optional`/`target` is opt-in; omitted keys default to
+  required + always-resolve, preserving today's behavior exactly.
+
 ## [6.3.0] — 2026-06-28
 
 **v6.3.0 — var-family growable migration (Phase-0 tail; the last fixed compile-time

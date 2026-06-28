@@ -486,6 +486,87 @@ fn _distlib_failloud_gate(): i64 {
     return fail;
 }
 
+# v6.3.1 (dependency-model arc, lever 2 — required vs optional deps): an
+# `optional = true` dep resolves only when an active `[features]` set names it; a
+# `target = "<arch|os>"` dep resolves only on a matching build target; the axes are
+# independent. Proves all four transitions in one fixture: optional skip + feature
+# activate, target skip + target activate. The byte-identical "no new keys → resolve
+# unchanged" property is the regression wall covered by the lever-1 gates above
+# (requires/sidecar/groups/modular all use plain deps and must still pass).
+fn _deps_features_gate(): i64 {
+    var label = "cyrius deps gates `optional = true` deps behind active [features] + `target = \"...\"` deps behind the build target (axes independent) — v6.3.1 dependency-model lever 2";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fx = _tmp_path("audit_deps_features_");
+    sys_mkdir(fx, 0x1ED);
+    # fold_opt: optional, activated by the `extra` feature → pulls fnptr.
+    # fold_tgt: target=windows → resolves only under --win (skipped on this host).
+    _write_file(_lk_path(fx, "/cyrius.cyml"),
+        "[package]\nname = \"features_gate\"\n\n[features]\nextra = [\"fold_opt\"]\n\n[deps.fold_opt]\nrequires = [\"fnptr\"]\noptional = true\n\n[deps.fold_tgt]\nrequires = [\"ct\"]\ntarget = \"windows\"\n");
+
+    var libf = _lk_path(fx, "/lib/fnptr.cyr");
+    var libc = _lk_path(fx, "/lib/ct.cyr");
+    var lock = _lk_path(fx, "/cyrius.lock");
+
+    # Run 1 — plain: optional inactive (no fnptr), target=windows skipped (no ct).
+    var o1 = _tmp_path("audit_deps_features_o1_");
+    var ec1 = _exec_in_dir(fx, cyrius_bin, "deps", o1);
+    var r1_fnptr = file_exists(libf);
+    var r1_ct = file_exists(libc);
+    sys_unlink(libf); sys_unlink(libc); sys_unlink(lock);
+
+    # Run 2 — --features extra: fold_opt activates (fnptr); fold_tgt still skipped (no ct).
+    var o2 = _tmp_path("audit_deps_features_o2_");
+    var ec2 = _exec_in_dir3(fx, cyrius_bin, "deps", "--features", "extra", o2);
+    var r2_fnptr = file_exists(libf);
+    var r2_ct = file_exists(libc);
+    sys_unlink(libf); sys_unlink(libc); sys_unlink(lock);
+
+    # Run 3 — --win: fold_tgt matches (ct); fold_opt still inactive (no fnptr).
+    var o3 = _tmp_path("audit_deps_features_o3_");
+    var ec3 = _exec_in_dir3(fx, cyrius_bin, "deps", "--win", 0, o3);
+    var r3_fnptr = file_exists(libf);
+    var r3_ct = file_exists(libc);
+
+    # Cleanup before reporting so a failed assertion still cleans up.
+    sys_unlink(libf); sys_unlink(libc); sys_unlink(lock);
+    sys_unlink(o1); sys_unlink(o2); sys_unlink(o3);
+    sys_unlink(_lk_path(fx, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(fx, "/lib"));
+    sys_rmdir(fx);
+
+    var fail = 0;
+    if (ec1 != 0 || ec2 != 0 || ec3 != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": a deps run exited non-zero (");
+        print_num(ec1); _p("/"); print_num(ec2); _p("/"); print_num(ec3); println(")");
+        fail = 1;
+    } elif (r1_fnptr != 0 || r1_ct != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": plain deps pulled a gated dep (optional + target=windows should both skip)");
+        fail = 1;
+    } elif (r2_fnptr != 1 || r2_ct != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": --features extra did not activate fold_opt (fnptr), or wrongly pulled the windows-only dep");
+        fail = 1;
+    } elif (r3_ct != 1 || r3_fnptr != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": --win did not resolve target=windows fold_tgt (ct), or wrongly pulled the optional dep");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": optional deps gate on [features]; target deps gate on build target; axes independent");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # v6.2.51 (closeout — CVE-32 regression): a malicious/compromised dependency
 # controls its dist/<pkg>/index.cyml; a sibling name that escapes lib/ (contains
 # `/` or `..`) must be REJECTED before any fs op. Pre-fix, _dep_pull_submodule
