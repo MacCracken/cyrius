@@ -136,6 +136,32 @@ if [ -x scripts/install.sh ]; then
         echo "  warning: install-snapshot refresh failed (non-fatal)" >&2
 fi
 
+# 6b. SEED-DERIVE GATE (v6.3.0 lesson — never tag a broken seed). The cycc
+# self-host fixpoint does NOT cover the seed -> cybs -> cycc chain: cybs (the
+# hand-assembly bootstrap compiler) is far more limited than build/cycc and fails
+# SILENTLY on things build/cycc compiles fine. version-bump runs at EVERY slot, so
+# wiring the critical gate here makes it impossible to miss. Verifies the
+# just-rebuilt build/cycc is still machine-derivable from the 29KB seed. Set
+# CYRIUS_SKIP_SEED_GATE=1 only for a KNOWN doc/lib-only bump (src/ untouched).
+# See: scripts/release-gate.sh, feedback_seed_derive_mandatory_cybs_limits.
+if [ "${CYRIUS_SKIP_SEED_GATE:-0}" != "1" ] && [ -x scripts/seed-derive-cycc.sh -o -f scripts/seed-derive-cycc.sh ]; then
+    echo "  > seed-derive gate (seed -> cybs -> cycc)..."
+    if sh scripts/seed-derive-cycc.sh > /tmp/_vb_seed.out 2>&1 && grep -q "machine-derivable from the" /tmp/_vb_seed.out; then
+        echo "  > seed-derive OK (build/cycc is machine-derivable from the seed)"
+    else
+        tail -6 /tmp/_vb_seed.out >&2
+        echo "" >&2
+        echo "  ************************************************************" >&2
+        echo "  SEED DERIVE FAILED after the $NEW rebuild — DO NOT TAG $NEW." >&2
+        echo "  cybs cannot reproduce build/cycc from the seed: a src/ change" >&2
+        echo "  broke the seed chain (the cycc self-host fixpoint misses this)." >&2
+        echo "  Fix, then re-run version-bump (same-version regenerate path)." >&2
+        echo "  See feedback_seed_derive_mandatory_cybs_limits." >&2
+        echo "  ************************************************************" >&2
+        exit 1
+    fi
+fi
+
 echo "$OLD -> $NEW"
 echo ""
 echo "Updated:"

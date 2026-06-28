@@ -105,15 +105,47 @@ Before starting new work on a release, run this audit phase:
 6. **Post-audit benchmarks** — compare against baseline
 7. **Document** — update CHANGELOG, roadmap, vidya
 
+## Release Gate — `sh scripts/release-gate.sh` GREEN before EVERY `.NN` tag
+
+**The single consolidated pre-tag check. Run it and get GREEN before
+`version-bump.sh` + tag + handoff.** It exists so no individual gate is run à la
+carte and skipped — the way the v6.3.0 seed break happened: a compiler change
+passed the cycc self-host fixpoint + check.sh + cross-OS, so it *looked* done, but
+`seed-derive-cycc.sh` wasn't run (it had only ever been framed as a *closeout*
+check), and the change broke the `seed → cybs → cycc` chain. CI caught it, not us.
+
+Gates, fail-fast:
+1. **Self-host fixpoint** — `build/cycc` reproduces itself AND == `cycc(src)`.
+2. **Seed derive** — `seed → cybs → cycc` byte-identical. **The most important
+   test, and the one v6.3.0 missed.** The cycc self-host fixpoint (1) does NOT
+   cover it: **cybs** (the hand-assembly bootstrap compiler the 29 KB seed
+   assembles) is far more limited than `build/cycc` and fails **SILENTLY** on
+   things `build/cycc` compiles fine — too many global/call references in one
+   function, tail calls. **Mandatory for ANY `src/` change, on EVERY release — not
+   only at minor/major closeouts.** (`gen1`, cybs's output, being ~72 KB smaller
+   than `build/cycc` is NORMAL — it's the bootstrap intermediate, only `gen2 ==
+   build/cycc` matters; don't chase it.) See
+   `feedback_seed_derive_mandatory_cybs_limits`.
+3. **check.sh** — all gates green.
+4. **Cross-OS self-host** — ecb (macOS) + cass (Windows) + pi (aarch64), REAL
+   hardware, sequential. A green CI check is NOT this.
+5. **Bench** — record self_compile + cycc size in the CHANGELOG (non-blocking).
+
+`version-bump.sh` ALSO runs the seed-derive gate after its cycc rebuild — a safety
+net on every real `.NN` bump, since version-bump is always run at slot close
+(`CYRIUS_SKIP_SEED_GATE=1` only for a known doc/lib-only bump). `release-gate.sh
+--quick` runs steps 1-3 (fast local iteration — NOT release-ready). **NEVER tag
+with the gate RED. Losing the seed costs days of repair.**
+
 ## Closeout Pass (before every minor/major bump)
 
 Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the current minor (e.g. 4.2.5 before 4.3.0). **Mechanical checks first, then the judgment-call passes (refactor / code review / cleanup), then the doc sync.**
 
-### Mechanical (automated, fast-fail)
+### Mechanical (automated, fast-fail) — this IS `scripts/release-gate.sh` (run it)
 1. **Self-host verify** — cycc compiles itself byte-identical
-2. **Bootstrap closure** — seed → cybs → asm → cybs byte-identical
+2. **Bootstrap closure (seed-derive)** — `seed → cybs → cycc` byte-identical (`seed-derive-cycc.sh`). NOT covered by the cycc self-host fixpoint — see the Release Gate above; this is item 2 of the gate and is mandatory EVERY release, not just at closeout.
 3. **Full check.sh** — all gates green (count grows per minor; record the number)
-3b. **Cross-OS self-host (NON-NEGOTIABLE — added v6.0.x after the macOS rot incident)** — cycc must build from the correct per-target source AND **self-host byte-identical on real macOS (ecb) + Windows (cass)**, not just x86_64 Linux. Hello-world/exit-code smoke is NOT self-host — the macOS port rotted v5.3.13→v6.0.31 precisely because the `macho-arm64-native`/`windows-native` CI jobs only ran tiny programs, never the compiler. Verify via the `macos-14`/`windows-latest` CI jobs (once extended to self-host) AND/OR SSH to ecb/cass. A minor does NOT close with macOS/Windows self-host unverified or red. See [reference: verification hosts, `feedback_macos_windows_ci_gate_mandatory`].
+3b. **Cross-OS self-host (NON-NEGOTIABLE — added v6.0.x after the macOS rot incident)** — cycc must build from the correct per-target source AND **self-host byte-identical on real macOS (ecb) + Windows (cass) + aarch64 (pi)**, not just x86_64 Linux. Hello-world/exit-code smoke is NOT self-host — the macOS port rotted v5.3.13→v6.0.31 precisely because the `macho-arm64-native`/`windows-native` CI jobs only ran tiny programs, never the compiler. Verify via the `macos-14`/`windows-latest` CI jobs (once extended to self-host) AND/OR SSH to ecb/cass/pi. A minor does NOT close with macOS/Windows self-host unverified or red. See [reference: verification hosts, `feedback_macos_windows_ci_gate_mandatory`].
 
 ### Judgment-call passes (where bugs hide)
 4. **Heap map audit** — beyond "verify the map matches usage", evaluate:
@@ -177,10 +209,13 @@ Periodically (before major releases, after significant changes), run a security 
 3. TEST        — After EACH change:
                  ☐ Basic: 'var x = 42;' → 42
                  ☐ Self-hosting: cycc==cycc byte-identical
+                 ☐ SEED (any src/ change): sh scripts/seed-derive-cycc.sh
+                   — the cycc fixpoint does NOT cover the seed→cybs→cycc chain
                  ☐ Full suite: sh scripts/check.sh
 4. IF BROKEN   — Revert, apply ONE change, test, repeat
                  If stuck, STOP and ASK the user — never defer on your own
-5. AUDIT       — Full chain: bootstrap, all suites, self-hosting
+5. AUDIT/GATE  — sh scripts/release-gate.sh GREEN (self-host + seed-derive +
+                 check.sh + cross-OS + bench) before version-bump + tag
 6. DOCUMENT    — Update: CHANGELOG, roadmap, benchmarks, vidya
 ```
 
