@@ -702,6 +702,94 @@ fn _dep_parse_groups(buf, n): i64 {
     return 0;
 }
 
+# v6.2.50 (deps lever 1 / Phase C — module-granular extraction): read a module's
+# dep line `<mod> = [...]` from a `dist/<pkg>/index.cyml`, returning the dep vec
+# (sibling-module names + `lib:<leaf>` entries) or 0 if absent.
+fn _dep_read_index_deps(index_path, submod): i64 {
+    if (file_exists(index_path) == 0) { return 0; }
+    var sz = _file_size(index_path);
+    if (sz <= 0) { return 0; }
+    var buf = alloc(sz + 1);
+    var nn = file_read_all(index_path, buf, sz);
+    if (nn <= 0) { return 0; }
+    store8(buf + nn, 0);
+    var ml = strlen(submod);
+    var i = 0;
+    while (i < nn) {
+        var ls = i;
+        while (ls < nn && (load8(buf + ls) == 32 || load8(buf + ls) == 9)) { ls = ls + 1; }
+        if (ls + ml < nn && memeq(buf + ls, submod, ml) == 1) {
+            var c = load8(buf + ls + ml);
+            if (c == 32 || c == 61) {   # key boundary: `<mod> ` or `<mod>=`
+                return _parse_toml_str_array(buf, nn, ls + ml);
+            }
+        }
+        while (i < nn && load8(buf + i) != 10) { i = i + 1; }
+        if (i < nn) { i = i + 1; }
+    }
+    return 0;
+}
+
+# v6.2.50 Phase C: pull ONE modular sub-module `<dep_src>/dist/<pkg>/<mod>.cyr` +
+# its transitive deps (from the index) into the consumer's lib/, in topological
+# order. `lib:<leaf>` index entries resolve as stdlib leaves; bare names are
+# sibling sub-modules (recursed). `seen` dedups + breaks cycles. Deps are pulled
+# BEFORE the module so its `include` lands after theirs in `_dep_includes`.
+fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
+    if (_dep_list_has(seen, submod) == 1) { return 0; }
+    vec_push(seen, submod);
+    var errs = 0;
+    var ip_sb = str_builder_new();
+    str_builder_add_cstr(ip_sb, dep_src);
+    str_builder_add_cstr(ip_sb, "/dist/");
+    str_builder_add_cstr(ip_sb, pkg);
+    str_builder_add_cstr(ip_sb, "/index.cyml");
+    var deps = _dep_read_index_deps(str_data(str_builder_build(ip_sb)), submod);
+    if (deps != 0) {
+        var di = 0;
+        while (di < vec_len(deps)) {
+            var d = vec_get(deps, di);
+            if (strlen(d) > 4 && memeq(d, "lib:", 4) == 1) {
+                if (stdlib_dir != 0) {
+                    if (_dep_copy_stdlib_recursive(stdlib_dir, d + 4, 1) == 1) { errs = errs + 1; }
+                }
+            } else {
+                errs = errs + _dep_pull_submodule(dep_src, pkg, d, stdlib_dir, seen);
+            }
+            di = di + 1;
+        }
+    }
+    # copy `<dep_src>/dist/<pkg>/<mod>.cyr` → `lib/<pkg>_<mod>.cyr`
+    var src_sb = str_builder_new();
+    str_builder_add_cstr(src_sb, dep_src);
+    str_builder_add_cstr(src_sb, "/dist/");
+    str_builder_add_cstr(src_sb, pkg);
+    str_builder_add_cstr(src_sb, "/");
+    str_builder_add_cstr(src_sb, submod);
+    str_builder_add_cstr(src_sb, ".cyr");
+    var src = str_data(str_builder_build(src_sb));
+    var df_sb = str_builder_new();
+    str_builder_add_cstr(df_sb, "lib/");
+    str_builder_add_cstr(df_sb, pkg);
+    str_builder_add_cstr(df_sb, "_");
+    str_builder_add_cstr(df_sb, submod);
+    str_builder_add_cstr(df_sb, ".cyr");
+    var dst_full = str_data(str_builder_build(df_sb));
+    sys_unlink(dst_full);
+    var cr = _dep_copy_file(src, dst_full);
+    if (cr == 0 || cr == 2) {
+        vec_push(_dep_includes, dst_full);
+    } elif (cr == 1) {
+        sys_write(STDERR_FD, "error: modular sub-module ", 26);
+        sys_write(STDERR_FD, pkg, strlen(pkg));
+        sys_write(STDERR_FD, ":", 1);
+        sys_write(STDERR_FD, submod, strlen(submod));
+        sys_write(STDERR_FD, " not found in dist/\n", 20);
+        errs = errs + 1;
+    }
+    return errs;
+}
+
 # v5.7.14: returns 1 if `name` is already in _dep_visited, else 0.
 fn _dep_name_visited(name): i64 {
     if (_dep_visited == 0) { return 0; }
@@ -765,6 +853,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             var dep_tag = 0;
             var dep_modules = 0;
             var dep_requires = 0;
+            var dep_modular = 0;   # v6.2.50 Phase C: sub-modules from dist/<name>/
             # CVE-21 (v6.2.30): cleared if a tagged dep's resolved commit
             # disagrees with the lock — gates the module copy so poisoned
             # content never lands in lib/.
@@ -830,6 +919,13 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 if (memeq(buf + si, "requires", 8) == 1 && (load8(buf + si + 8) == 32 || load8(buf + si + 8) == 61)) {
                     dep_requires = _parse_toml_str_array(buf, n, si);
                     dep_requires = _dep_expand_groups(dep_requires);   # v6.2.49 Phase B: expand [groups] refs
+                }
+                # v6.2.50 Phase C: `modular = ["ed25519", ...]` pulls individual
+                # sub-modules from the dep's `dist/<name>/` (each + its transitive
+                # index deps + lib leaves) instead of the whole-fold `modules`.
+                # Bare sub-module names (the dep IS the pkg). Key-boundary checked.
+                if (memeq(buf + si, "modular", 7) == 1 && (load8(buf + si + 7) == 32 || load8(buf + si + 7) == 61)) {
+                    dep_modular = _parse_toml_str_array(buf, n, si);
                 }
                 while (si < n && load8(buf + si) != 10) { si = si + 1; }
                 si = si + 1;
@@ -1030,6 +1126,19 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             }
                         }
                     }
+                }
+            }
+            # v6.2.50 Phase C: pull declared modular sub-modules from the dep's
+            # `dist/<name>/` (each + its transitive index deps + lib leaves, in
+            # topological order). A per-dep `seen` set dedups + breaks cycles.
+            if (dep_modular != 0 && dep_path != 0 && dep_pin_ok == 1) {
+                if (_dep_stdlib_seen == 0) { _dep_stdlib_seen_init(); }
+                var sm_dir = _dep_find_stdlib_dir();
+                var sm_seen = vec_new();
+                var smi = 0;
+                while (smi < vec_len(dep_modular)) {
+                    errors = errors + _dep_pull_submodule(dep_path, dep_name, vec_get(dep_modular, smi), sm_dir, sm_seen);
+                    smi = smi + 1;
                 }
             }
             var dep_had_success = 0;

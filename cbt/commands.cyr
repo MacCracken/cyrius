@@ -1448,6 +1448,172 @@ fn _distlib_scan_umbrella(leaves, path): i64 {
     return 0;
 }
 
+var _distlib_modular = 0;   # v6.2.50 Phase C: `--modular` → per-module dist + index
+
+# v6.2.50 (deps lever 1 / Phase C — module-granular extraction): emit each
+# `[lib].modules` entry as its own `dist/<pkg>/<module>.cyr` (src/ self-refs
+# stripped → recorded as sibling deps in the index; lib/ kept inline) plus
+# `dist/<pkg>/index.cyml` — a `[modular]` map `<module> = [siblings…, "lib:<leaf>"…]`
+# giving the resolver each sub-unit's transitive deps in topological order. So a
+# consumer (or a v6.3.x lever-2 profile) can pull EXACT sub-modules instead of the
+# whole monolith. The flat single-file `cyrius distlib` is unchanged (default).
+fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
+    sys_mkdir("dist", 0x1ED);
+    var dir_sb = str_builder_new();
+    str_builder_add_cstr(dir_sb, "dist/");
+    str_builder_add_cstr(dir_sb, pkg_name);
+    var moddir = str_data(str_builder_build(dir_sb));
+    sys_mkdir(moddir, 0x1ED);
+
+    # named-dep exclude set — a captured `lib/X` matching a `[deps.X]` block is a
+    # fold (resolved transitively), not a stdlib leaf (mirrors the sidecar).
+    var named_deps = vec_new();
+    var ndi = 0;
+    while (ndi < mlen) {
+        if (memeq(mbuf + ndi, "[deps.", 6) == 1) {
+            var nns = ndi + 6;
+            var nne = nns;
+            while (nne < mlen && load8(mbuf + nne) != 93) { nne = nne + 1; }
+            var nnl = nne - nns;
+            if (nnl > 0) {
+                var nd = alloc(nnl + 1);
+                memcpy(nd, mbuf + nns, nnl);
+                store8(nd + nnl, 0);
+                vec_push(named_deps, nd);
+            }
+            ndi = nne;
+        } else { ndi = ndi + 1; }
+    }
+
+    var idx = str_builder_new();
+    str_builder_add_cstr(idx, "# cyrius distlib --modular index (v6.2.50 Phase C)\n");
+    str_builder_add_cstr(idx, "# <module> = [sibling-modules, \"lib:<leaf>\"...] — topological resolve order.\n");
+    str_builder_add_cstr(idx, "[modular]\n");
+
+    var count = 0;
+    var mi = 0;
+    while (mi < vec_len(modules)) {
+        var mod_path = vec_get(modules, mi);
+        if (file_exists(mod_path) == 0) {
+            sys_write(STDERR_FD, "  warning: module not found: ", 29);
+            sys_write(STDERR_FD, mod_path, strlen(mod_path));
+            sys_write(STDERR_FD, "\n", 1);
+            mi = mi + 1;
+            continue;
+        }
+        # basename (last path component, strip `.cyr`)
+        var bn = mod_path;
+        var bi = 0;
+        while (load8(mod_path + bi) != 0) {
+            if (load8(mod_path + bi) == 47) { bn = mod_path + bi + 1; }
+            bi = bi + 1;
+        }
+        var bnl = strlen(bn);
+        if (bnl > 4 && memeq(bn + bnl - 4, ".cyr", 4) == 1) { bnl = bnl - 4; }
+        var base = alloc(bnl + 1);
+        memcpy(base, bn, bnl);
+        store8(base + bnl, 0);
+
+        var of_sb = str_builder_new();
+        str_builder_add_cstr(of_sb, moddir);
+        str_builder_add_cstr(of_sb, "/");
+        str_builder_add_cstr(of_sb, base);
+        str_builder_add_cstr(of_sb, ".cyr");
+        var mfd = sys_open(str_data(str_builder_build(of_sb)), O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+        if (mfd < 0) { mi = mi + 1; continue; }
+        sys_write(mfd, "# ", 2);
+        sys_write(mfd, base, strlen(base));
+        sys_write(mfd, " (cyrius distlib --modular)\n\n", 29);
+
+        var fbuf = alloc(262144);
+        var flen = file_read_all(mod_path, fbuf, 262143);
+        if (flen <= 0) { sys_close(mfd); mi = mi + 1; continue; }
+        store8(fbuf + flen, 0);
+
+        str_builder_add_cstr(idx, base);
+        str_builder_add_cstr(idx, " = [");
+        var first = 1;
+
+        var pos = 0;
+        while (pos < flen) {
+            var ls = pos;
+            while (pos < flen && load8(fbuf + pos) != 10) { pos = pos + 1; }
+            var le = pos;
+            if (pos < flen) { pos = pos + 1; }
+            var ll = le - ls;
+            if (ll >= 8 && memeq(fbuf + ls, "include ", 8) == 1) {
+                # src/ sibling-module include → record as a dep + strip
+                if (ll >= 13 && memeq(fbuf + ls, "include \"src/", 13) == 1) {
+                    var ss = ls + 13;
+                    var se = ss;
+                    while (se < le && load8(fbuf + se) != 34) { se = se + 1; }
+                    var xb = ss;
+                    var xi = ss;
+                    while (xi < se) { if (load8(fbuf + xi) == 47) { xb = xi + 1; } xi = xi + 1; }
+                    var xl = se - xb;
+                    if (xl > 4 && memeq(fbuf + se - 4, ".cyr", 4) == 1) { xl = xl - 4; }
+                    if (xl > 0) {
+                        if (first == 0) { str_builder_add_cstr(idx, ", "); }
+                        var xs = alloc(xl + 1); memcpy(xs, fbuf + xb, xl); store8(xs + xl, 0);
+                        str_builder_add_cstr(idx, "\"");
+                        str_builder_add_cstr(idx, xs);
+                        str_builder_add_cstr(idx, "\"");
+                        first = 0;
+                    }
+                    continue;
+                }
+                # lib/ leaf include → record (unless a named-dep) + KEEP the line
+                if (ll >= 13 && memeq(fbuf + ls, "include \"lib/", 13) == 1) {
+                    var ks = ls + 13;
+                    var ke = ks;
+                    while (ke < le && load8(fbuf + ke) != 34) { ke = ke + 1; }
+                    var kl = ke - ks;
+                    if (kl > 4 && memeq(fbuf + ke - 4, ".cyr", 4) == 1) { kl = kl - 4; }
+                    if (kl > 0) {
+                        var leaf = alloc(kl + 1); memcpy(leaf, fbuf + ks, kl); store8(leaf + kl, 0);
+                        var is_nd = 0;
+                        var ci = 0;
+                        while (ci < vec_len(named_deps)) {
+                            var ndn = vec_get(named_deps, ci);
+                            if (strlen(ndn) == kl) { if (memeq(ndn, leaf, kl) == 1) { is_nd = 1; } }
+                            ci = ci + 1;
+                        }
+                        if (is_nd == 0) {
+                            if (first == 0) { str_builder_add_cstr(idx, ", "); }
+                            str_builder_add_cstr(idx, "\"lib:");
+                            str_builder_add_cstr(idx, leaf);
+                            str_builder_add_cstr(idx, "\"");
+                            first = 0;
+                        }
+                    }
+                }
+            }
+            sys_write(mfd, fbuf + ls, ll);
+            sys_write(mfd, "\n", 1);
+        }
+        sys_close(mfd);
+        str_builder_add_cstr(idx, "]\n");
+        count = count + 1;
+        mi = mi + 1;
+    }
+
+    var idx_sb = str_builder_new();
+    str_builder_add_cstr(idx_sb, moddir);
+    str_builder_add_cstr(idx_sb, "/index.cyml");
+    var ifd = sys_open(str_data(str_builder_build(idx_sb)), O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    if (ifd >= 0) {
+        var idx_str = str_data(str_builder_build(idx));
+        sys_write(ifd, idx_str, strlen(idx_str));
+        sys_close(ifd);
+    }
+
+    sys_write(STDOUT_FD, moddir, strlen(moddir));
+    sys_write(STDOUT_FD, "/: ", 3);
+    fmt_int(count);
+    println(" modules + index.cyml");
+    return 0;
+}
+
 fn cmd_distlib(profile): i64 {
     if (_distlib_valid_profile(profile) == 0) {
         _err("invalid profile name (allowed: [a-zA-Z0-9_-]{1,32})");
@@ -1558,6 +1724,12 @@ fn cmd_distlib(profile): i64 {
             println("  Add modules = [\"src/types.cyr\", \"src/lib.cyr\", ...] to your manifest.");
         }
         return 1;
+    }
+
+    # v6.2.50 Phase C: --modular → per-module `dist/<pkg>/<mod>.cyr` + index.cyml
+    # (the flat single-file path below is unchanged for default `cyrius distlib`).
+    if (_distlib_modular == 1) {
+        return _distlib_modular_emit(pkg_name, modules, mbuf, mlen);
     }
 
     # Create dist/ directory

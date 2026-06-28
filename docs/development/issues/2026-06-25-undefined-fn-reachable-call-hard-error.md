@@ -8,8 +8,15 @@
 > Pick this up as part of the dependency-model arc (the lever-1 work), where
 > cross-module refs become resolvable/declarable.
 
-**Filed:** 2026-06-25 · **Status:** DEFERRED → dependency-model arc
-**Pinned in:** [roadmap.md](../roadmap.md) (the "Dependency model — modules + module groupings" pinned slot).
+**Filed:** 2026-06-25 · **Status:** DEFERRED → **v6.3.x (bundled with lever-2 optional deps)**
+**Pinned in:** [roadmap_6.md](../roadmap_6.md) v6.3.x "Required vs Optional Dependencies" (lever 2).
+**Re-pinned 2026-06-27 (user):** lever 1 (v6.2.46–.49: `requires`/sidecar/umbrella/`[groups]`)
+made *declared/transitive* refs resolve, but the issue's acceptance — "loosely-coupled
+*consumer* configs build clean WITHOUT `--allow-undef`" — needs refs declarable-*optional*
+(e.g. `mabda-but-not-samvada`), which is **lever 2 (v6.3.x)**. So the hard-error default
+ships *with* lever 2 in v6.3.x, where it's fully safe; flipping it default-on under lever-1
+alone would force `--allow-undef` on legit optional-feature consumer configs. The harness
+switch (`cat | cycc` → `cyrius build`) lands with it.
 **Supersedes the "Next items" bullet** in roadmap.md for undefined-fn hard-error.
 
 ## The bug class

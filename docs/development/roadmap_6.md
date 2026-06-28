@@ -430,12 +430,16 @@ bites; the heavier Phase C may take the 2nd release — a decision made
   the v6.3.x feature layer (`gpu = [...]`) gates. **Members are whole leaf/dep
   names** — the `pkg:submodule` form (e.g. `sigil:ed25519`) awaits Phase C's
   per-module extraction. Gate: `_deps_groups_gate` (check.sh 96/96).
-- **Phase C — module-granular extraction (heavier; the bloat lever).**
-  `cyrius distlib --modular` emits `dist/<pkg>/<module>.cyr` per module +
-  an `index.cyml` (capturing the `include` lines currently stripped); the
-  resolver pulls exact sub-modules in topological order. Keep the flat
-  single-file mode for back-compat. This is the producer-rework that the
-  "pull part of a monolith" question requires; **may be its own release.**
+- **Phase C — module-granular extraction — ✅ SHIPPED v6.2.50.**
+  `cyrius distlib --modular` emits `dist/<pkg>/<module>.cyr` per module + an
+  `index.cyml` `[modular]` dep graph (each module's sibling-modules + `lib:<leaf>`
+  deps; named deps excluded; `src/` stripped → recorded, `lib/` kept inline). A
+  consumer's `[deps.<name>] modular = ["ed25519", …]` pulls EXACT sub-modules + their
+  transitive index deps (recursing siblings, pulling leaves via the stdlib resolver,
+  topo order) into `lib/<pkg>_<mod>.cyr` — NOT the whole monolith. Flat single-file
+  mode unchanged (default). Bare sub-module names this slot; the cross-pkg
+  `pkg:submodule` group form lands with lever-2. Gate: `_deps_modular_gate`
+  (check.sh 97/97). **This completes lever 1.**
 - **Phase D — dissolve the "stdlib" category + migrate the flagship.**
   Reframe `[deps].stdlib` as a default group (`std = [...]`, `stdlib`
   aliases for back-compat). Migrate **descent** off its 29-element hand

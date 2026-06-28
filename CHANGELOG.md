@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.50] — 2026-06-27
+
+**v6.2.50 — dependency-model arc, lever 1 / Phase C: module-granular extraction
+(`distlib --modular`).** `cyrius distlib --modular` emits each `[lib].modules` entry
+as its own `dist/<pkg>/<module>.cyr` (src/ self-refs stripped, lib/ kept) + a
+`dist/<pkg>/index.cyml` dep graph (`<module> = [siblings…, "lib:<leaf>"…]`). A
+consumer's `[deps.<name>] modular = ["ed25519", …]` then pulls EXACT sub-modules +
+their transitive index deps (sibling modules + lib leaves) in topological order —
+NOT the whole monolith. Completes lever 1 and creates the addressable sub-units the
+v6.3.x feature/profile layer (lever 2) gates. **CLI-only (`cbt/commands.cyr` +
+`cbt/deps.cyr`) → cycc byte-identical 1,073,672 B; self-hosts byte-identical;
+check.sh 96/96 → 97/97 (+`_deps_modular_gate`); ecb + cass `SELFHOST_OK`; bench
+self_compile 503 ms (jitter — cycc byte-identical).**
+
+### Added
+- **`cyrius distlib --modular`** (`cbt/commands.cyr` `_distlib_modular_emit`) —
+  per-module `dist/<pkg>/<mod>.cyr` (strip `src/` siblings → record in the index,
+  keep `lib/` inline) + `dist/<pkg>/index.cyml` (`[modular]` map of each module's
+  sibling-module + `lib:<leaf>` deps, named-dep-excluded). The flat single-file
+  `cyrius distlib` is unchanged (default).
+- **`modular = [...]` key on `[deps.<name>]`** (`cbt/deps.cyr` `_dep_pull_submodule` +
+  `_dep_read_index_deps`) — pulls the named sub-modules + their transitive index deps
+  (recursing siblings, pulling `lib:` leaves via the stdlib resolver, deduped +
+  cycle-guarded), each copied to `lib/<pkg>_<mod>.cyr` in topological order. Bare
+  sub-module names (the dep is the pkg); the cross-pkg `pkg:submodule` group form
+  lands with lever-2.
+- **`_deps_modular_gate`** (`programs/checks/deps_init.cyr`; check.sh 96 → 97) —
+  `--modular` on a 3-module fold (gb→sibling ga; gc independent) + a consumer
+  `modular=[gb]` asserts gb + ga (+ leaves) come in but the independent gc does NOT.
+
+### Lever-1 COMPLETE
+- The dependency-model lever 1 (module granularity + groupings) is shipped: `requires`
+  key (.46) → sidecar (.47) → umbrella/named-dep/keep-lib + ecosystem migration (.48)
+  → `[groups]` (.49) → `--modular` per-module extraction (.50). The **undefined-fn
+  reachable-call hard-error default-on** is re-pinned to **v6.3.x** (bundles with
+  lever-2 optional deps — fully safe there). Lever 2 (profile/feature/target scoping)
+  is v6.3.x and builds on `[groups]` + `--modular`.
+
 ## [6.2.49] — 2026-06-27
 
 **v6.2.49 — dependency-model arc, lever 1 / Phase B: named module groupings

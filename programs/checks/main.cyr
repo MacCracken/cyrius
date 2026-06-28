@@ -502,6 +502,10 @@ fn _run_regression_gates(): i64 {
     _deps_groups_gate();
     println("");
 
+    _section("cyrius distlib --modular + consumer modular=[...] pulls exact sub-modules (v6.2.50 dependency-model lever 1 Phase C)");
+    _deps_modular_gate();
+    println("");
+
     _section("CVE-05 tok_names mangle-path guard (no magic-256 NPOS_GUARD)");
     _cve05_guard_gate();
     println("");

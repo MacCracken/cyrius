@@ -235,8 +235,17 @@ fn main(): i64 {
 
     # --- Build commands ---
     if (streq(cmd, "distlib") == 1) {
+        # v6.2.50 Phase C: scan args for `--modular` (per-module dist + index);
+        # the first non-flag arg is the profile.
+        _distlib_modular = 0;
         var dprof = 0;
-        if (argc() > cmd_idx + 1) { dprof = argv(cmd_idx + 1); }
+        var _di = cmd_idx + 1;
+        while (_di < argc()) {
+            var _a = argv(_di);
+            if (streq(_a, "--modular") == 1) { _distlib_modular = 1; }
+            elif (dprof == 0 && load8(_a) != 45) { dprof = _a; }
+            _di = _di + 1;
+        }
         return cmd_distlib(dprof);
     }
 

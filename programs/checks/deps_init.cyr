@@ -325,6 +325,94 @@ fn _deps_groups_gate(): i64 {
     return fail;
 }
 
+# v6.2.50 (deps lever 1 / Phase C — module-granular extraction): `cyrius distlib
+# --modular` emits per-module `dist/<pkg>/<mod>.cyr` + an index.cyml dep graph; a
+# consumer's `modular = [...]` pulls EXACT sub-modules + their transitive index
+# deps (sibling modules + lib leaves), NOT the whole fold. Proves both halves
+# end-to-end: gb depends on sibling ga; gc is independent and must NOT come in.
+fn _deps_modular_gate(): i64 {
+    var label = "cyrius distlib --modular + consumer `modular=[...]` pulls EXACT sub-modules + transitive deps, not the whole fold — v6.2.50 dependency-model lever 1 Phase C";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # --- Producer: distlib --modular on a 3-module fold (gb → sibling ga + lib:ct;
+    #     ga → lib:fnptr; gc independent → lib:keccak).
+    var fd = _tmp_path("audit_deps_modular_fold_");
+    sys_mkdir(fd, 0x1ED);
+    sys_mkdir(_lk_path(fd, "/src"), 0x1ED);
+    _write_file(_lk_path(fd, "/src/ga.cyr"), "include \"lib/fnptr.cyr\"\nfn _gm_a(): i64 { return 1; }\n");
+    _write_file(_lk_path(fd, "/src/gb.cyr"), "include \"src/ga.cyr\"\ninclude \"lib/ct.cyr\"\nfn _gm_b(): i64 { return _gm_a(); }\n");
+    _write_file(_lk_path(fd, "/src/gc.cyr"), "include \"lib/keccak.cyr\"\nfn _gm_c(): i64 { return 3; }\n");
+    _write_file(_lk_path(fd, "/cyrius.cyml"), "[package]\nname = \"gmod\"\n\n[lib]\nmodules = [\"src/ga.cyr\", \"src/gb.cyr\", \"src/gc.cyr\"]\n");
+    var pout = _tmp_path("audit_deps_modular_pout_");
+    var pec = _exec_in_dir3(fd, cyrius_bin, "distlib", "--modular", 0, pout);
+    var got_index = file_exists(_lk_path(fd, "/dist/gmod/index.cyml"));
+    var got_gb = file_exists(_lk_path(fd, "/dist/gmod/gb.cyr"));
+
+    # --- Consumer: pull ONLY sub-module gb.
+    var cd = _tmp_path("audit_deps_modular_cons_");
+    sys_mkdir(cd, 0x1ED);
+    var ccyml = str_builder_new();
+    str_builder_add_cstr(ccyml, "[package]\nname = \"gmcons\"\n\n[deps.gmod]\npath = \"");
+    str_builder_add_cstr(ccyml, fd);
+    str_builder_add_cstr(ccyml, "\"\nmodular = [\"gb\"]\n");
+    _write_file(_lk_path(cd, "/cyrius.cyml"), str_data(str_builder_build(ccyml)));
+    var cout = _tmp_path("audit_deps_modular_cout_");
+    var cec = _exec_in_dir(cd, cyrius_bin, "deps", cout);
+    var got_gb_lib = file_exists(_lk_path(cd, "/lib/gmod_gb.cyr"));
+    var got_ga_lib = file_exists(_lk_path(cd, "/lib/gmod_ga.cyr"));   # sibling, pulled
+    var got_gc_lib = file_exists(_lk_path(cd, "/lib/gmod_gc.cyr"));   # independent, must NOT come in
+
+    # Cleanup before reporting.
+    sys_unlink(pout);
+    sys_unlink(cout);
+    sys_unlink(_lk_path(fd, "/dist/gmod/ga.cyr"));
+    sys_unlink(_lk_path(fd, "/dist/gmod/gb.cyr"));
+    sys_unlink(_lk_path(fd, "/dist/gmod/gc.cyr"));
+    sys_unlink(_lk_path(fd, "/dist/gmod/index.cyml"));
+    sys_rmdir(_lk_path(fd, "/dist/gmod"));
+    sys_rmdir(_lk_path(fd, "/dist"));
+    sys_unlink(_lk_path(fd, "/src/ga.cyr"));
+    sys_unlink(_lk_path(fd, "/src/gb.cyr"));
+    sys_unlink(_lk_path(fd, "/src/gc.cyr"));
+    sys_rmdir(_lk_path(fd, "/src"));
+    sys_unlink(_lk_path(fd, "/cyrius.cyml"));
+    sys_rmdir(fd);
+    sys_unlink(_lk_path(cd, "/lib/gmod_gb.cyr"));
+    sys_unlink(_lk_path(cd, "/lib/gmod_ga.cyr"));
+    sys_unlink(_lk_path(cd, "/lib/ct.cyr"));
+    sys_unlink(_lk_path(cd, "/lib/fnptr.cyr"));
+    sys_unlink(_lk_path(cd, "/cyrius.lock"));
+    sys_unlink(_lk_path(cd, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(cd, "/lib"));
+    sys_rmdir(cd);
+
+    var fail = 0;
+    if (pec != 0 || got_index != 1 || got_gb != 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": distlib --modular did not emit dist/gmod/{gb.cyr,index.cyml} (exit "); print_num(pec); println(")");
+        fail = 1;
+    } elif (cec != 0 || got_gb_lib != 1 || got_ga_lib != 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": consumer modular=[gb] did not pull gb + its sibling ga into lib/");
+        fail = 1;
+    } elif (got_gc_lib == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": independent sub-module gc was pulled — modular resolution is not exact");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": --modular + modular=[gb] pulls gb+ga (+leaves), excludes the independent gc");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _deps_lock_gate(): i64 {
     var label = "cyrius deps --lock writes a non-empty recursive lock + --verify round-trips (v6.0.2; empty-lock-since-v5.11.8 regression)";
 
