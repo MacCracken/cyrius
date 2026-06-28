@@ -135,12 +135,17 @@ landing as packed releases before the cycle-close. Full slot detail lives in
 
 ---
 
-## v6.2.x — Platform Expansion (Bare-metal + RISC-V rv64)
+## v6.2.x — Platform Expansion (Bare-metal + Dependency Model)
 
-**Theme**: 4th platform peer (RISC-V rv64) + bare-metal target
-codification. Substantial new-code minor; substrate prerequisites
-all landed in v5.11.x close (parser-to-emit named-op refactor,
-heap-map full reorg) + v6.1.x backend codegen.
+**Theme**: bare-metal target codification + the **dependency-model
+foundation** (modules + module groupings, lever 1 of 2). RISC-V rv64 —
+originally this minor's second platform arc — was **re-homed to v6.6.x**
+(user 2026-06-27: *"don't want to worry about another platform until some
+of the other items in the minors get ironed out"*; full scope re-homed to
+the [v6.6.x section below](#v66x--platform-risc-v-rv64)). Substantial
+new-code minor; substrate prerequisites all landed in v5.11.x close
+(parser-to-emit named-op refactor, heap-map full reorg) + v6.1.x backend
+codegen.
 
 Per user direction 2026-05-19: "previous C items lets break up
 logically into prioritized proposals into 6.2.x and 6.3.x" —
@@ -193,8 +198,14 @@ platform work (bottom-to-top priority) takes v6.2.x.
   api-surface from ~5035 to **4343 fns**. **Current @ v6.2.43: cycc 1,073,560 B
   (+ at .41), check.sh 92/92 + boot gate, api-surface 4343, tests 192 `.tcyr`.**
 
-Remaining v6.2.x arc: **RISC-V rv64** (bare-metal already landed at .27–.28) —
-see the active [roadmap.md](roadmap.md) pinned sequence.
+Remaining v6.2.x arc: the **dependency-model foundation (lever 1)** — the
+active committed arc — plus the **open bare-metal/kernel reactive window**
+for incidental kickbacks (the bare-metal core landed at .27–.28). The three
+open *design* deliverables (#5 `[sections]`, #6 inline-asm primitives, #7
+kernel-freestanding TLS link — see the bare-metal section below) are
+**pinned to v6.3.x for revisit/fix** (user 2026-06-27). **RISC-V rv64
+re-homed to v6.6.x** (user 2026-06-27). See the active
+[roadmap.md](roadmap.md) pinned sequence.
 
 ### Frontend / DX hardening (v6.2.x later line — pulled in 2026-06-12)
 
@@ -254,7 +265,7 @@ vec-backed `rp_vec` storage, using the recipe **proven byte-identical at v6.0.7*
 and allocation order is input-deterministic, so self-host stays byte-identical).
 
 **Why now, why first:**
-- **Ahead of backend #7.** RISC-V (below) is the 7th backend; landing growable
+- **Ahead of backend #7.** RISC-V (now v6.6.x) is the 7th backend; landing growable
   tables *before* it means the new backend inherits the vec-backed pattern
   instead of re-duplicating the fixed-cap pattern that would then need a second
   migration. Pay the structural cost once.
@@ -304,6 +315,21 @@ Seven deliverables:
    **AGNOS-kernel goal's tracking home** in the active cycle (it was
    previously tracked only inside the now-deleted TLS arc — finding RM-03).
 
+> **Shipped vs open (2026-06-27).** Deliverables **#1–#3 shipped** (.27
+> triple / no-libc ELF / `#naked`; .28 runtime), plus the .28
+> entropy/load-base/boot-gate work (note: the .27/.28 CHANGELOG used a
+> *separate* internal "D5–D7" slot-numbering for entropy/load-base/boot-gate —
+> do NOT confuse it with the **design** deliverables #5–#7 numbered in the list
+> above). **The three open *design* deliverables — #5 `[sections]` linker block,
+> #6 inline-asm primitive completion (`cli`/`sti`/`hlt`, port I/O, barriers,
+> `cpuid` — beyond the `asm{}`/`iretq`/`eret` that shipped), #7 the
+> kernel-freestanding TLS link + in-kernel handshake smoke — are pinned to
+> v6.3.x for revisit/fix** (user 2026-06-27; see the v6.3.x "Bare-metal
+> deliverable completion" item). The kernel load-base settability tail
+> (`issues/2026-06-19-kernel-load-base-settable.md`) + the kernel-PIE live boot
+> (gnoboot-gated) ride alongside; v6.2.x retains only the open *reactive*
+> window for incidental kernel/agnos kickbacks.
+
 **Acceptance**: rebuilding the agnos kernel with `--target
 bare-metal-x86_64-elf` produces a byte-identical artifact to the
 current ad-hoc build; forbidden-module check errors clearly when
@@ -326,42 +352,6 @@ consumers (firmware, alt-kernels, embedded).
 > wrapper (`EMITELF64_KERNEL`, v6.1.7); the harness ask is filed at
 > `agnos/docs/development/issues/2026-06-10-cyrius-pie-boot-harness-ask.md`.
 > Lands when the kernel team wires it; not v6.2.x-gating.
-
-### v6.2.x — RISC-V rv64 backend
-
-First-class RISC-V 64-bit target. The 4th platform peer after
-x86_64 / aarch64 / PE-x86_64. Substrate prerequisites already
-landed: typed-simd ABI (v5.x), REAL TYPE SYSTEM (v5.10.x),
-struct-byval ABI (v5.10.x), parser-to-emit named-op refactor
-(v5.11.x close).
-
-> **Hardware is in hand** (user 2026-06-10: *"I have a bunch of hardware
-> already; was waiting for RISC-V to do it"*). The rv64 box is the gating
-> resource the original plan flagged as a procurement risk (finding RM-04)
-> — it's already available, so the **real-hardware self-host gate is live
-> from the start** (no QEMU-only interim, no purchase decision blocking arc
-> entry). Wire it into the SSH verification fleet alongside pi/ecb/ach/cass
-> at arc open.
-
-**Scope**:
-- New backend: `src/backend/riscv64/{emit,jump,fixup}.cyr`
-- New stdlib syscall peer: `lib/syscalls_riscv64_linux.cyr`
-- New cross-entry: `src/main_riscv64.cyr`
-- New test runner: `qemu-riscv64-static` for the bring-up probes +
-  the **in-hand rv64 hardware over SSH** for the self-host verify
-- New CI matrix arm
-
-**Acceptance gates**:
-1. Cross-compiler `build/cycc_riscv64` emits valid rv64 ELF
-   that `file(1)` identifies.
-2. Single-syscall "exit 42" probe runs under
-   `qemu-riscv64-static`.
-3. Hello-world via `sys_write` + `sys_exit` runs under QEMU.
-4. Self-host byte-identical on the **in-hand real rv64 hardware**
-   (hardware-gated over SSH like the aarch64 ssh-pi check) — the
-   non-negotiable cross-OS self-host gate, on real silicon.
-5. `[release].cross_bins` in `cyrius.cyml` gets a
-   `cycc_riscv64` entry.
 
 ### v6.2.x — Dependency model: modules + module groupings (the granularity foundation)
 
@@ -492,26 +482,30 @@ Memory pin: [[project_native_tls_arc_v6_2_x]] (now an arc retrospective).
 | Cluster | Indicative size |
 |---|---|
 | **Phase 0 — growable-region foundation** (fn-tables / fixup_tbl / codebuf → rp_vec; lands first, before backend #7) | ~5–7 |
-| Bare-metal target formalization (7 deliverables incl. kernel-freestanding TLS link) | ~9–10 |
-| RISC-V rv64 backend (new emit/jump/fixup + syscalls peer + real-hardware gate) | ~12–14 |
+| Bare-metal target formalization (7 deliverables; design #1–#3 shipped .27/.28; the open design **#5 `[sections]` / #6 inline-asm / #7 freestanding-TLS link → pinned to v6.3.x**, user 2026-06-27) | ~9–10 (#5/#6/#7 land in v6.3.x) |
 | **Dependency model — modules + module groupings** (lever 1 foundation: Phase A transitive-resolve/ordering + B groupings ≈ 1 release; Phase C distlib per-module extraction may be a 2nd) | ~6–10 |
-| Cross-arch test harness + CI matrix + rv64 SSH-host wiring | ~3–4 |
+| Cross-arch test harness + CI matrix | ~3–4 |
+| _(RISC-V rv64 backend, ~12–14 — **moved to v6.6.x**, user 2026-06-27)_ | — |
 | Deep-dive hardening riding bug-bandwidth (supply-chain, verification, atomics, thread-stacks) | as surfaced |
 
 Sizes are indicative, **not a budget cap** — minors flex long (**v6.0.x
 ran to 91**) and the working rule (user 2026-06-10) is *"no worries about
-patch size, just hardening and adding features."* Removing the phantom
-native-TLS arc (~12–15 slots) makes this a **two-arc platform minor**
-(bare-metal + RISC-V), not the three-arc giant the stale plan described.
+patch size, just hardening and adding features."*
 
-**Priority within the minor** (revised 2026-06-10): native TLS already
-shipped, so the old "native TLS > RISC-V / RISC-V is the split-out
-candidate" call is **retired** — the budget pressure that made RISC-V a
-split risk is gone. Both arcs stay: **bare-metal first** (it carries the
-kernel-freestanding-TLS deliverable the AGNOS-kernel goal needs, and is
-the compile prerequisite for any in-kernel crypto), then **RISC-V** (the
-4th platform peer, now hardware-unblocked). No split planned;
-premise-check at arc entry per [[feedback_premise_check_at_slot_entry]].
+**Priority within the minor** (revised 2026-06-27): the bare-metal core
+shipped (.27 frontend / .28 runtime); **RISC-V was re-homed to v6.6.x**
+(user: keep v6.2.x from taking on a second platform until the v6.3.x–v6.5.x
+items iron out — a deferral of *worry*, not intent; hardware is in-hand).
+So the remaining shape is the **dependency-model foundation (lever 1)** as
+the active committed arc, with the **bare-metal/kernel reactive window
+staying open after it** for incidental kernel/agnos kickbacks, serviced as
+they surface per [[feedback_bare_metal_open_reactive_window]]. The
+*structured* bare-metal design deliverables — **#5 `[sections]`, #6 inline-asm
+primitives, #7 kernel-freestanding TLS link — are pinned to v6.3.x for
+revisit/fix** (user 2026-06-27); they carry the kernel-freestanding-TLS
+capability the AGNOS-kernel goal needs and the compile prerequisite for any
+in-kernel crypto. Premise-check at arc entry per
+[[feedback_premise_check_at_slot_entry]].
 
 ---
 
@@ -523,6 +517,15 @@ explicitly (per 2026-05-12 tight-close).
 
 Per user direction 2026-05-19: language work (mid-priority,
 above ABI/perf) takes v6.3.x.
+
+> **Pulled in 2026-06-27:** the three open bare-metal *design* deliverables
+> (#5 `[sections]`, #6 inline-asm primitives, #7 kernel-freestanding TLS link)
+> are scheduled here for revisit/fix — see *[Bare-metal deliverable
+> completion](#bare-metal-deliverable-completion-567--pulled-in-from-v62x)*
+> below. They rode out of v6.2.x (where RISC-V was simultaneously re-homed to
+> v6.6.x); v6.2.x keeps only the open *reactive* kernel window for incidental
+> kickbacks. This is a platform-completion rider on the language minor, not a
+> theme change.
 
 ### Phase 0 — substrate prerequisites (added 2026-06-10, deep-dive)
 
@@ -746,7 +749,7 @@ platform axes):
      `target = "aarch64"`, `target = "bare-metal"`)
    - Matches existing cross-arch story (`_TARGET_PE` / aarch64
      emit paths). Bare-metal target (v6.2.x) and RISC-V backend
-     (v6.2.x) immediately benefit — kernel objects skip
+     (v6.6.x) immediately benefit — kernel objects skip
      non-applicable userland deps without `#ifdef` gymnastics
 3. **Axes combine** — a dep can be both feature-gated AND
    platform-conditional: `optional = true` + `target = "windows"`
@@ -803,6 +806,36 @@ transitive deps (Cargo's hardest semantic — defer to v6.4.x or
 later if pressure surfaces); per-feature CHANGELOG/version
 constraints; cross-package feature exports.
 
+### Bare-metal deliverable completion (#5/#6/#7) — pulled in from v6.2.x
+
+Added 2026-06-27 (user: *"in terms of D5–7 lets make sure we revisit / fix
+them during 6.3.x"*). The bare-metal target's design deliverables **#1–#3
+shipped** in v6.2.27/.28; the **three open design deliverables are pinned
+here** for revisit/fix (numbered per the [v6.2.x bare-metal seven-deliverable
+list](#v62x--bare-metal-target-formalization) — NOT the .27/.28 shipped-slot
+"D5–D7" labels, which reused those for entropy/load-base/boot-gate):
+
+- **#5 — `[sections]` linker-script / section-placement block** in
+  `cyrius.cyml`. Lets a kernel/firmware object place sections at fixed VAs
+  without an external linker script. Never shipped.
+- **#6 — inline-asm primitive completion.** `cli`/`sti`/`hlt`, port I/O
+  (`in`/`out`), memory barriers (`mfence`/`lfence`/`sfence`), `cpuid` —
+  beyond the `asm{}` block + `iretq`/`eret` mnemonics that shipped at .28
+  (`issues/2026-06-19-naked-fn-safety-and-inline-asm.md`).
+- **#7 — kernel-freestanding TLS link + in-kernel handshake smoke.** A kernel
+  object links `lib/tls_native` freestanding (no libssl/dlopen/ld.so) and a
+  freestanding handshake smoke runs in-kernel. The **cyrius-side link + smoke
+  are schedulable here**; the *live* in-kernel boot stays AGNOS-consumer-gated
+  (the kernel plugs its own TCP send/recv via the v6.2.4 transport vtable).
+  This is the AGNOS-kernel goal's in-kernel-crypto prerequisite.
+
+Riding alongside: the kernel **load-base settability** tail
+(`issues/2026-06-19-kernel-load-base-settable.md`) and the kernel-PIE live boot
+(gnoboot-gated). Premise-check each at slot entry
+([[feedback_premise_check_at_slot_entry]]); cross-arch propagation + 4-host
+self-host as for any emit change. The v6.2.x *reactive* window handles
+incidental kickbacks; this is the *structured* completion pass.
+
 ### Scope shape (v6.3.x)
 
 | Cluster | Indicative size |
@@ -813,6 +846,7 @@ constraints; cross-package feature exports.
 | Language-level async/await syntax | ~5 |
 | **Native float arithmetic (f64/f32, Tier A)** — 5 bites across releases (type+literals → arith → cmp → aarch64 NEON → f32/conversions) | ~5 |
 | Required vs Optional Dependencies | ~5 |
+| **Bare-metal deliverable completion** (#5 `[sections]` / #6 inline-asm / #7 freestanding-TLS link; pulled in from v6.2.x, user 2026-06-27) | ~4–6 |
 | Cross-feature integration + tcyr suite | ~3 |
 
 **Phase 0 is non-negotiable groundwork** — the deep-dive proved the
@@ -902,8 +936,8 @@ more dispatch checks, more cross-arch propagation), not output
 bloat.
 
 **v6.x adds its own growth-creating surfaces**: PIE codegen
-(v6.1.x), bare-metal + RISC-V rv64 (v6.2.x), language
-refinements (v6.3.x), Class B FFI + cross-BB regalloc (v6.4.x).
+(v6.1.x), bare-metal (v6.2.x), language refinements (v6.3.x),
+Class B FFI + cross-BB regalloc (v6.4.x), RISC-V rv64 (v6.6.x).
 By v6.5.x the new baseline is established and a dedicated
 perf-refactor minor can land without bumping capability work.
 
@@ -935,13 +969,68 @@ to 40+ if the perf-refactor surface is wider than expected.
 
 ---
 
+## v6.6.x — Platform: RISC-V rv64
+
+**Theme**: the 4th platform peer — first-class RISC-V 64-bit. **Re-homed
+here from v6.2.x** (user 2026-06-27: *"6.6 is where we put it for now …
+[I] don't want to worry about another platform until some of the other
+items in the minors get ironed out"*). A **deferral of worry, not intent**
+— the rv64 hardware is in-hand; the point is to keep v6.2.x's bare-metal
+reactive window unblocked and let the v6.3.x–v6.5.x arcs (language /
+ABI+perf / perf-refactor) settle before adding a 7th backend. Slots in
+after v6.5.x; the cycle is explicitly allowed to grow past 6 minors (see
+"What comes after v6.x" below).
+
+First-class RISC-V 64-bit target — the 4th platform peer after
+x86_64 / aarch64 / PE-x86_64. Substrate prerequisites already landed:
+typed-simd ABI (v5.x), REAL TYPE SYSTEM (v5.10.x), struct-byval ABI
+(v5.10.x), parser-to-emit named-op refactor (v5.11.x close), and the
+**v6.2.0 growable-region foundation** (backend #7 inherits the vec-backed
+pattern — no fixed-cap re-duplication, which is exactly why growable
+landed first in v6.2.x).
+
+> **Hardware is in hand** (user 2026-06-10: *"I have a bunch of hardware
+> already; was waiting for RISC-V to do it"*). The rv64 box is the gating
+> resource the original plan flagged as a procurement risk (finding RM-04)
+> — it's already available, so the **real-hardware self-host gate is live
+> from the start** (no QEMU-only interim, no purchase decision blocking arc
+> entry). Wire it into the SSH verification fleet alongside pi/ecb/ach/cass
+> at arc open.
+
+**Scope**:
+- New backend: `src/backend/riscv64/{emit,jump,fixup}.cyr`
+- New stdlib syscall peer: `lib/syscalls_riscv64_linux.cyr`
+- New cross-entry: `src/main_riscv64.cyr`
+- New test runner: `qemu-riscv64-static` for the bring-up probes +
+  the **in-hand rv64 hardware over SSH** for the self-host verify
+- New CI matrix arm + the rv64 SSH-host wiring
+
+**Acceptance gates**:
+1. Cross-compiler `build/cycc_riscv64` emits valid rv64 ELF
+   that `file(1)` identifies.
+2. Single-syscall "exit 42" probe runs under `qemu-riscv64-static`.
+3. Hello-world via `sys_write` + `sys_exit` runs under QEMU.
+4. Self-host byte-identical on the **in-hand real rv64 hardware**
+   (hardware-gated over SSH like the aarch64 ssh-pi check) — the
+   non-negotiable cross-OS self-host gate, on real silicon.
+5. `[release].cross_bins` in `cyrius.cyml` gets a `cycc_riscv64` entry.
+
+> **Sequencing note**: v6.6.x is the *current tail pin* — the v6.3.x–v6.5.x
+> arcs may surface consumer pressure or perf findings that re-order what
+> lands first, and only the user pivots focus
+> ([[feedback_priority_bottom_to_top]] / slot discipline). Premise-check the
+> rv64 substrate at arc entry per [[feedback_premise_check_at_slot_entry]].
+
+---
+
 ## What comes after v6.x
 
 **v6.x is not capped at 6 minors.** Per user direction 2026-06-11, the cycle
-**grows further before any major bump** — v6.2.x–v6.5.x are pinned, but more
-v6.x minors can follow (consumer pressure, language refinements, platform work)
-before v7.0.0. v7 is *further out* than the original "6 minors" framing implied;
-don't treat v6.5.x as the cycle's hard end.
+**grows further before any major bump** — v6.2.x–v6.5.x plus **v6.6.x (RISC-V
+rv64, pinned here 2026-06-27 when RISC-V was re-homed out of v6.2.x)** are the
+current pins, and more v6.x minors can still follow (consumer pressure, language
+refinements, platform work) before v7.0.0. v7 is *further out* than the original
+"6 minors" framing implied; don't treat the tail as the cycle's hard end.
 
 v7.x scope is open. Known commitments per CLAUDE.md "Version
 lives in `VERSION` + `--version`, never in binary names":

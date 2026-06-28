@@ -37,13 +37,19 @@ in [roadmap-future.md](roadmap-future.md).
 
 ## v6.2.x — Platform Expansion
 
-**Theme**: 4th platform peer (RISC-V rv64) + bare-metal target
-codification, opened onto a growable-region compiler foundation. A
-two-arc platform minor (bare-metal first — it carries the
-kernel-freestanding-TLS deliverable the AGNOS-kernel goal needs — then
-RISC-V, now hardware-unblocked). Substantial new-code minor.
+**Theme**: bare-metal target codification + the **dependency-model
+foundation** (modules + module groupings, lever 1 of 2), opened onto a
+growable-region compiler foundation. RISC-V rv64 — originally this
+minor's second platform arc — was **re-homed to v6.6.x** (user
+2026-06-27: *"don't want to worry about another platform until some of
+the other items in the minors get ironed out"*). So v6.2.x's remaining
+committed work is the dependency-model arc, with the **bare-metal/kernel
+reactive window staying open after it** (the `.39`–`.45` mode — incidental
+kernel/agnos kickbacks). The *structured* bare-metal deliverable tail (the
+three open design deliverables, below) is **pinned to v6.3.x for
+revisit/fix** (user 2026-06-27). Substantial new-code minor.
 
-**Realized shape (through v6.2.43):** the minor flexed long into a broad
+**Realized shape (through v6.2.45):** the minor flexed long into a broad
 **platform / stdlib / security / verification** line. Shipped: AGNOS syscall
 completeness + portability, native-float math (`f64` type + operators), TLS
 hardening (server wrapper, ALPN, per-connection arena), Darwin/Windows surface,
@@ -51,9 +57,27 @@ stdlib folds, aarch64 imm12-mask codegen, CLI tooling (.0–.25); **bare-metal
 target formalization (.27 frontend + .28 runtime/boot)**; CVE-20/21 trust-chain
 + sovereign signing + the seed→cybs→cycc derivation (.30–.31); the
 silent-correctness + stdlib-refold arc (.41 call-arity check + IEEE-754 NaN fix,
-.42 sigil certpin, .43 agnos-clock + ERR_* namespacing + agnos landmine gates).
-See the shipped-summary row below + [CHANGELOG.md](../../CHANGELOG.md). **RISC-V
-rv64 is the one remaining pinned arc** (bare-metal already landed).
+.42 sigil certpin, .43 agnos-clock + ERR_* namespacing + agnos landmine gates);
+CVE-29 thread-stack guard page + cross-arch `_PE`/Mach-O stub completeness (.44);
+kernel-PIE landmine + structural-gate hardening + 3-lib refold (.45).
+See the shipped-summary row below + [CHANGELOG.md](../../CHANGELOG.md). **The one
+remaining committed arc *here in v6.2.x* is the dependency-model foundation
+(lever 1)** — see the pinned row below. The bare-metal target's core shipped
+(.27 frontend / .28 runtime), but **three of the seven design deliverables remain
+open and are pinned to v6.3.x for revisit/fix** (user 2026-06-27; numbered per
+the [roadmap_6.md](roadmap_6.md) seven-deliverable design list — NOT the .27/.28
+shipped-slot D-labels, which reused D5–D7 for entropy/load-base/boot-gate):
+**#5** the `[sections]` linker-script / section-placement block; **#6** inline-asm
+primitive completion (`cli`/`sti`/`hlt`, port I/O, memory barriers, `cpuid` —
+beyond the `asm{}`/`iretq`/`eret` that shipped;
+`2026-06-19-naked-fn-safety-and-inline-asm.md`); **#7** the kernel-freestanding
+TLS link + in-kernel handshake smoke (cyrius-side link + smoke schedulable; the
+live in-kernel boot stays AGNOS-consumer-gated). The kernel load-base settability
+tail (`2026-06-19-kernel-load-base-settable.md`) and the kernel-PIE live boot
+(gnoboot-gated) ride alongside. Meanwhile v6.2.x keeps the **open bare-metal/kernel
+reactive window** for incidental kickbacks (the `.39`–`.45` mode); the structured
+deliverable work is the pinned v6.3.x set. **RISC-V rv64 is re-homed to v6.6.x**
+([roadmap_6.md](roadmap_6.md)).
 
 Per cycle discipline: premise-check each arc at slot entry
 ([[feedback_premise_check_at_slot_entry]]); cross-arch propagation is
@@ -88,11 +112,19 @@ features", user 2026-06-10).
 | **v6.2.31** ✅ | **CVE-20/21 trust-chain integrity — PART 2: sovereign signing + reproducibility attestation** (user 2026-06-19/20). (a) **Sovereign** detached signing — `cyrsign` (a standalone tool over sigil's in-tree ed25519: keypair/sign/verify) signs `SHA256SUMS`; pubkey committed in-repo + SECURITY.md; `install.sh`/`ci.sh`/`install.ps1` verify with the cyrius verifier on the upgrade/CI path (no external `minisign` — sovereignty). Closes CVE-13. (b) **Self-host-fixpoint attestation CI** (NOT the literal seed→cycc — see the bridge arc below): a `trust-root-attest` job (`build-cycc-verify.sh`) asserts the committed `cycc` compiles its own source → fixpoint → equals the committed binary. **Interim** CVE-20 mitigation: catches accidental artifact **drift** + non-self-reproducing tampers — it does NOT defeat a self-reproducing (trusting-trust) tamper (the committed binary is its own root → a self-perpetuating backdoor is a stable fixpoint), and is NOT diverse double compilation. Real anti-tamper / machine-*derivability* is the bridge arc. **SHIPPED:** cyrsign sovereign Ed25519 (sigil 3.9.2 fold) builds+signs+verifies on all 4 targets; release CI signs+self-verifies fail-closed; 3 installers verify on upgrade/CI; cyrsign in all 5 tarballs; CVE-13 closed. cycc byte-identical 1,071,936 B · check.sh 92/92 · cross-OS pi/ecb/cass `SELFHOST_OK` · 2-round adversarial review (33 agents, 10 fixed; anti-downgrade floor filed). | security |
 | **v6.2.x** ✅ | **Seed→cycc derivation — the REAL CVE-20 fix — SHIPPED 2026-06-20** (user-prioritized 2026-06-20). **Achieved with NO bridge rung** — rather than restoring `src/bridge.cyr`, `cybs` (`bootstrap/cybs.cyr`, the asm-source bootstrap compiler) was grown brick-by-brick to compile ALL of modern `src/main.cyr` directly: recursive `include` + `#ifdef` preprocessor, 3-pass driver, fn↔global resolution, compound assignment, comparisons-as-values, bare-truthy conditions, fn-pointers (`&fn` + indirect call), find-or-reuse locals, and the completing fix — a missing string-NUL-terminator in cybs's lexer (had broken the preprocessor macro-hash → dropped the Linux `#ifdef` block → undefined `alloc` → `ud2` trap). Chain, no bridge: seed assembles cybs → cybs compiles `src/main.cyr`→gen1 → gen1 compiles `src/main.cyr`→gen2 == `build/cycc` (self-host fixpoint, gen2==gen3). Enforced by `scripts/seed-derive-cycc.sh` + the `trust-root-attest` CI job; supersedes the .31 attestation interim. **Fewer rungs than "the way we did it before"** — the sovereignty win. seed 29,016→29,024 B (NUL fix), cybs 12,344→21,066 B, Rust-seed-verified via `bootstrap/verify.sh`, `bootstrap/SHA256SUMS` updated. | security / bootstrap |
 | **post-v6.2.33** ✅ | **Deleted `bootstrap/scaffold/bridge.cyr`** (2026-06-20, after the v6.2.33 tag). The readable-cyrius proof-of-concept that de-risked the seed→cybs→cycc derivation had served its purpose — cybs now stands alone. Recovery point preserved: `git checkout v6.2.33 -- bootstrap/scaffold/bridge.cyr` restores it if the chain ever regresses. Removal verified byte-identical (nothing included it; cycc self-hosts unchanged). | cleanup / bootstrap |
-| **v6.2.x** ⏳ | **Dependency model — modules + module groupings (the granularity foundation; LEVER 1 of 2)** (user-added 2026-06-19; plan-of-attack grounded + sequenced 2026-06-21 — full framing + verified facts + the two-lever rationale in [roadmap_6.md § "Dependency model: modules + module groupings"](roadmap_6.md)). Dissolve the flat `[deps] stdlib = [list]` into module-granular **standard deps** + named **module groupings**, so a consumer pulls exactly the modules it needs instead of `include`-ing a vendored monolith whole + hand-ordering its chain. **Why lever 1 first (user 2026-06-21, "right over fast"):** granularity shrinks *what* each project pulls, profile-scoping (lever 2, v6.3.x) restricts *which contexts* pull it — they compound, so a smaller cyrius/sigil/mabda makes every downstream consumer smaller+faster recursively. **Sequenced (pre-planned 1–2 release arc):** **Phase A** transitive auto-resolve + topological include ordering (lead — cheap, CLI-only, kills descent's live "omit one → runtime SIGILL" hand-ordered-chain pain; the 8 MB cap means bloat is latent not live, so the ordering fix is the urgent half); **Phase B** named `[groups]` (the addressable sub-units lever 2 will gate); **Phase C** distlib per-module emit + index → true sub-module extraction (heavier producer-rework — folds are flat non-sub-includable concats today; may be its own release); **Phase D** dissolve "stdlib" + migrate descent as the proof. Self-host byte-identical (cycc has no folds); pre-existing manifests byte-identical. Profiles/optional/features = **v6.3.x lever 2**, built on this. **Folds in:** the **undefined-fn reachable-call hard-error** ([`issues/2026-06-25-undefined-fn-reachable-call-hard-error.md`](issues/2026-06-25-undefined-fn-reachable-call-hard-error.md)) — designed + verified in a v6.2.44 spike but deferred here because a *default* hard-error needs cross-module refs resolved/declared-optional first (else loosely-coupled consumer builds break). Once transitive resolution lands (Phase A), the hard-error becomes safe to default-on. | deps/packaging |
-| **v6.2.x** ⏳ | **RISC-V rv64 backend** — 4th platform peer (hardware in-hand). New `backend/riscv/{emit,jump,fixup}.cyr` + syscalls peer + real-hardware self-host gate (SSH-host wiring). Inherits the v6.2.0 growable-region pattern (no fixed-cap re-duplication). | RISC-V |
+| **v6.2.x** ⏳ | **Dependency model — modules + module groupings (the granularity foundation; LEVER 1 of 2)** — **ACTIVE next arc** (window opened 2026-06-27; the bare-metal/kernel reactive work continues *after* it, still in v6.2.x). (user-added 2026-06-19; plan-of-attack grounded + sequenced 2026-06-21 — full framing + verified facts + the two-lever rationale in [roadmap_6.md § "Dependency model: modules + module groupings"](roadmap_6.md)). Dissolve the flat `[deps] stdlib = [list]` into module-granular **standard deps** + named **module groupings**, so a consumer pulls exactly the modules it needs instead of `include`-ing a vendored monolith whole + hand-ordering its chain. **Why lever 1 first (user 2026-06-21, "right over fast"):** granularity shrinks *what* each project pulls, profile-scoping (lever 2, v6.3.x) restricts *which contexts* pull it — they compound, so a smaller cyrius/sigil/mabda makes every downstream consumer smaller+faster recursively. **Sequenced (pre-planned 1–2 release arc):** **Phase A** transitive auto-resolve + topological include ordering (lead — cheap, CLI-only, kills descent's live "omit one → runtime SIGILL" hand-ordered-chain pain; the 8 MB cap means bloat is latent not live, so the ordering fix is the urgent half); **Phase B** named `[groups]` (the addressable sub-units lever 2 will gate); **Phase C** distlib per-module emit + index → true sub-module extraction (heavier producer-rework — folds are flat non-sub-includable concats today; may be its own release); **Phase D** dissolve "stdlib" + migrate descent as the proof. Self-host byte-identical (cycc has no folds); pre-existing manifests byte-identical. Profiles/optional/features = **v6.3.x lever 2**, built on this. **Folds in:** the **undefined-fn reachable-call hard-error** ([`issues/2026-06-25-undefined-fn-reachable-call-hard-error.md`](issues/2026-06-25-undefined-fn-reachable-call-hard-error.md)) — designed + verified in a v6.2.44 spike but deferred here because a *default* hard-error needs cross-module refs resolved/declared-optional first (else loosely-coupled consumer builds break). Once transitive resolution lands (Phase A), the hard-error becomes safe to default-on. | deps/packaging |
 
-> **Indicative sizes** (roadmap_6.md, not a budget cap): bare-metal ~9–10,
-> RISC-V ~12–14, cross-arch harness/CI ~3–4. Deep-dive hardening rides
+> **RISC-V rv64 moved to v6.6.x** (user 2026-06-27) — the 4th platform
+> peer (`backend/riscv/{emit,jump,fixup}.cyr` + syscalls peer +
+> real-hardware self-host gate) is parked at a new tail minor so v6.2.x
+> doesn't take on a second platform while the v6.3.x–v6.5.x items iron
+> out. Hardware is in-hand; it's a deferral of *worry*, not of intent.
+> Full scope lives in [roadmap_6.md § v6.6.x](roadmap_6.md).
+
+> **Indicative sizes** (roadmap_6.md, not a budget cap): dependency-model
+> lever 1 ~6–10; bare-metal reactive window as surfaced (the structured
+> #5/#6/#7 deliverable tail is pinned to v6.3.x); cross-arch harness/CI
+> ~3–4. RISC-V (~12–14) moved to v6.6.x. Deep-dive hardening rides
 > bug-bandwidth as surfaced.
 
 ---

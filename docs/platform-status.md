@@ -17,8 +17,8 @@ section tracks the per-release add history; this file is the
 | Compiler optimization (O1–O6) | — | **✅ Closed** (v5.6.5 + v5.6.7–v5.6.27). |
 | AGNOS userspace | ELF (ring-3, agnos ABI) | **✅ Shipped** — `CYRIUS_TARGET_AGNOS` ring-3 target (.48–.49; boot-to-prompt .55–.56). `getenv`/envp (.87) verified on the real agnos 1.43.2 kernel under QEMU. Cross-build rot gate: `scripts/agnos-crossbuild-gate.sh`. Distinct from the bare-metal KERNEL target below. |
 | UEFI Application | PE32+ (Subsystem 10) | **✅ Shipped** — `_TARGET_EFI_APPLICATION` emit mode (PE32+ container + Subsystem 10 + EFI-variant EEXIT + zeroed Data Dirs [1]/[12]), landed across the v5.11.47–v5.11.49 gnoboot arc. OVMF runtime smoke proven; structural gate in `programs/checks/platform_efi.cyr`. Consumer: gnoboot. |
-| RISC-V (rv64) | ELF | Queued — **v6.2.x** (Platform Expansion minor). |
-| Bare-metal | ELF (no-libc) | Queued — **v6.2.0**. AGNOS kernel target (not the userspace target above). |
+| RISC-V (rv64) | ELF | Queued — **v6.6.x** (re-homed from v6.2.x, user 2026-06-27; hardware in-hand, deferred to keep v6.2.x from taking on a 2nd platform). |
+| Bare-metal | ELF (no-libc) | **✅ Partial** — design deliverables #1–#3 shipped (target triple / no-libc ELF / `#naked`, v6.2.27–.28; QEMU boot gate + freestanding-TLS entropy .28). Open #5 `[sections]` / #6 inline-asm primitives / #7 freestanding-TLS link **pinned to v6.3.x** (user 2026-06-27). AGNOS kernel target (not the userspace target above). |
 
 ## Verification hosts (cross-arch SSH-wired)
 

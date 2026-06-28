@@ -100,7 +100,7 @@ at each cycle-open per [`feedback_premise_check_at_slot_entry`].
 | **Hardware 128-bit div-mod** | Medium | Stays unpinned. abaco / sigil work around via u128 shifts; not blocking. Pull forward if a real perf regression surfaces. |
 | **Phase 3-full varargs** (`va_arg` for structs-by-value + nested) | Medium | Phase 3-min shipped v5.5.36. Stays unpinned — niche. Most consumers use array-of-args pattern instead. |
 | **cycc per-block scoping** | Medium | Stays unpinned. Function-scope works for current consumer base; promote when a real refactor surfaces the pain point. |
-| **Incremental compilation** | High | Stays **watching**. Whole-program self-host is fast (~500 ms @ v6.1.x). Reconsider when cycc self-host crosses ~2 sec — and per user 2026-06-11, **the next few arcs (v6.2.x–v6.4.x) will inform the timing**: PIE/RISC-V/generics growth plus the (currently blind, PF-01) bench harness once fixed will show whether self-host is approaching the threshold. Don't pin now; let those arcs report. Same posture for the **bus-factor / institutional-memory** question (vidya + memory-pins live outside the repo) — revisit as those arcs land. |
+| **Incremental compilation** | High | Stays **watching**. Whole-program self-host is fast (~500 ms @ v6.1.x). Reconsider when cycc self-host crosses ~2 sec — and per user 2026-06-11, **the next few arcs will inform the timing**: PIE/generics growth (v6.1.x–v6.3.x) + RISC-V (now v6.6.x) plus the (currently blind, PF-01) bench harness once fixed will show whether self-host is approaching the threshold. Don't pin now; let those arcs report. Same posture for the **bus-factor / institutional-memory** question (vidya + memory-pins live outside the repo) — revisit as those arcs land. |
 
 ---
 
