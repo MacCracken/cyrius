@@ -1665,10 +1665,20 @@ fn cmd_distlib(profile): i64 {
 
             var ll = le - ls;
             if (ll >= 8 && memeq(fbuf + ls, "include ", 8) == 1) {
-                # v6.2.47: capture the stripped `lib/` requirement for the
-                # sidecar before dropping the line (folds destroy includes).
+                # v6.2.47: capture the `lib/` requirement for the sidecar.
                 _distlib_capture_lib_leaf(req_leaves, fbuf + ls, ll);
-                continue;
+                # v6.2.48: strip `src/` self-refs (those files are absent at the
+                # consumer) but KEEP `lib/` includes so the bundle stays
+                # self-contained for RAW-include consumers (e.g. a test that does
+                # `include "dist/pkg.cyr"` directly — sigil's tcyr suite). A
+                # cyrius-deps consumer dedupes the redundant include against the
+                # sidecar prepend via include-once. This makes cyrius distlib a
+                # superset of the bash regen-dist.sh it replaces (which kept lib/,
+                # stripped src/) — moving sigil back to distlib was breaking its
+                # tcyr suite precisely because distlib used to strip lib/ too.
+                if (ll >= 13 && memeq(fbuf + ls, "include \"src/", 13) == 1) {
+                    continue;
+                }
             }
             # v6.0.9 — collapse consecutive blanks. A line is blank
             # iff ll == 0. Skip a blank if the previous emitted line

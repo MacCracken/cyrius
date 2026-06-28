@@ -26,6 +26,13 @@ crypto/store leaf auto-resolves via libro's sidecar). **CLI-only (`cbt/commands.
 cass `SELFHOST_OK`.**
 
 ### Fixed
+- **distlib keeps `lib/` includes, strips only `src/` self-refs** (`cbt/commands.cyr`) —
+  the bundle stays self-contained for RAW-include consumers (a test that
+  `include "dist/pkg.cyr"` directly — e.g. sigil's tcyr suite, which broke when the
+  bundle lost its `lib/slice.cyr` include); cyrius-deps consumers dedupe the redundant
+  include against the sidecar prepend. distlib previously stripped ALL includes — the
+  exact reason sigil had moved to a bash `regen-dist.sh` that kept `lib/`; distlib is
+  now a **superset** of that script, so sigil returns to the sovereign tool.
 - **distlib sidecar scans the umbrella include-hub** (`cbt/commands.cyr`
   `_distlib_scan_umbrella` over `src/lib.cyr` + `src/main.cyr`) in addition to the
   folded modules. A fold whose modules rely on the umbrella for their `lib/` deps
