@@ -413,6 +413,79 @@ fn _deps_modular_gate(): i64 {
     return fail;
 }
 
+# v6.2.52 (closeout-deferred): `cyrius distlib --modular` must FAIL LOUD (non-zero)
+# on (a) a duplicate module basename across src/ subdirs — two `<base>.cyr` would
+# overwrite + the resolver is first-match-wins → silently lost deps; and (b) a
+# missing `modules=` entry (user 2026-06-28: producer/consumer exit-code asymmetry
+# fixed — distlib joins `cyrius deps` in failing loud, was warn + exit 0).
+fn _distlib_failloud_gate(): i64 {
+    var label = "cyrius distlib --modular fails loud (non-zero) on duplicate basename + missing module — v6.2.52 closeout-deferred";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Case A: two modules with the same basename in different src/ subdirs.
+    var fa = _tmp_path("audit_distlib_dup_");
+    sys_mkdir(fa, 0x1ED);
+    sys_mkdir(_lk_path(fa, "/src"), 0x1ED);
+    sys_mkdir(_lk_path(fa, "/src/a"), 0x1ED);
+    sys_mkdir(_lk_path(fa, "/src/b"), 0x1ED);
+    _write_file(_lk_path(fa, "/src/a/x.cyr"), "fn _da(): i64 { return 1; }\n");
+    _write_file(_lk_path(fa, "/src/b/x.cyr"), "fn _db(): i64 { return 2; }\n");
+    _write_file(_lk_path(fa, "/cyrius.cyml"), "[package]\nname = \"dup\"\n\n[lib]\nmodules = [\"src/a/x.cyr\", \"src/b/x.cyr\"]\n");
+    var oa = _tmp_path("audit_distlib_dup_out_");
+    var eca = _exec_in_dir3(fa, cyrius_bin, "distlib", "--modular", 0, oa);
+
+    # Case B: a missing modules= entry.
+    var fb = _tmp_path("audit_distlib_miss_");
+    sys_mkdir(fb, 0x1ED);
+    sys_mkdir(_lk_path(fb, "/src"), 0x1ED);
+    _write_file(_lk_path(fb, "/cyrius.cyml"), "[package]\nname = \"miss\"\n\n[lib]\nmodules = [\"src/nope.cyr\"]\n");
+    var ob = _tmp_path("audit_distlib_miss_out_");
+    var ecb = _exec_in_dir3(fb, cyrius_bin, "distlib", "--modular", 0, ob);
+
+    # Cleanup (the dup case may have written dist/dup/x.cyr for the first module
+    # before failing; the miss case makes only the empty dist/miss/ dir).
+    sys_unlink(oa);
+    sys_unlink(ob);
+    sys_unlink(_lk_path(fa, "/dist/dup/x.cyr"));
+    sys_unlink(_lk_path(fa, "/dist/dup/index.cyml"));
+    sys_rmdir(_lk_path(fa, "/dist/dup"));
+    sys_rmdir(_lk_path(fa, "/dist"));
+    sys_unlink(_lk_path(fa, "/src/a/x.cyr"));
+    sys_unlink(_lk_path(fa, "/src/b/x.cyr"));
+    sys_rmdir(_lk_path(fa, "/src/a"));
+    sys_rmdir(_lk_path(fa, "/src/b"));
+    sys_rmdir(_lk_path(fa, "/src"));
+    sys_unlink(_lk_path(fa, "/cyrius.cyml"));
+    sys_rmdir(fa);
+    sys_rmdir(_lk_path(fb, "/dist/miss"));
+    sys_rmdir(_lk_path(fb, "/dist"));
+    sys_rmdir(_lk_path(fb, "/src"));
+    sys_unlink(_lk_path(fb, "/cyrius.cyml"));
+    sys_rmdir(fb);
+
+    var fail = 0;
+    if (eca == 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": duplicate module basename did not fail loud (would silently overwrite)");
+        fail = 1;
+    } elif (ecb == 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": missing modules= entry did not fail loud (still warn + exit 0)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": duplicate basename + missing module both fail loud (non-zero)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 # v6.2.51 (closeout — CVE-32 regression): a malicious/compromised dependency
 # controls its dist/<pkg>/index.cyml; a sibling name that escapes lib/ (contains
 # `/` or `..`) must be REJECTED before any fs op. Pre-fix, _dep_pull_submodule

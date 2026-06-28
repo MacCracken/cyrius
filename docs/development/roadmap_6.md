@@ -287,6 +287,16 @@ the in-hand rv64 self-host reverify. Issues:
 (AR-02) + [`2026-06-10-memory-safety-parity-gaps.md`](issues/2026-06-10-memory-safety-parity-gaps.md)
 (AR-03).
 
+**v6.3.0 opener — the var-table tail (closeout-deferred).** The v6.2.0 Phase-0
+migration moved fn-tables / `fixup_tbl` / codebuf to growable storage but left the
+**var tables** (`var_noffs` / `var_sizes` / `var_types`, `SVCNT` cap 8192 at
+`src/common/util.cyr`) fixed — the last compile-time table on the old scheme. The
+v6.2.51 closeout audit flagged it; the user pinned it to **open v6.3.0** as the
+minor's first slot (2026-06-28). It changes codegen → breaks byte-identical
+self-host, so it can't be a v6.2.x closeout patch; verify byte-identical across
+ecb/cass/pi per the v6.0.7 `ret_patches` recipe. See
+[`2026-06-27-v62x-closeout-deferred.md`](issues/2026-06-27-v62x-closeout-deferred.md).
+
 ### v6.2.x — Bare-metal target formalization
 
 Codify the ad-hoc bare-metal mode that agnos has been using

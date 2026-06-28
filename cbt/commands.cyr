@@ -1457,7 +1457,7 @@ fn _distlib_named_deps(mbuf, mlen): i64 {
     var named_deps = vec_new();
     var ndi = 0;
     while (ndi < mlen) {
-        if (memeq(mbuf + ndi, "[deps.", 6) == 1) {
+        if (ndi + 6 <= mlen && memeq(mbuf + ndi, "[deps.", 6) == 1) {   # v6.2.52: bound the tail read
             var nns = ndi + 6;
             var nne = nns;
             while (nne < mlen && load8(mbuf + nne) != 93) { nne = nne + 1; }
@@ -1498,15 +1498,15 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
     str_builder_add_cstr(idx, "[modular]\n");
 
     var count = 0;
+    var seen_bases = vec_new();   # v6.2.52: per-pkg basename collision guard
     var mi = 0;
     while (mi < vec_len(modules)) {
         var mod_path = vec_get(modules, mi);
         if (file_exists(mod_path) == 0) {
-            sys_write(STDERR_FD, "  warning: module not found: ", 29);
-            sys_write(STDERR_FD, mod_path, strlen(mod_path));
-            sys_write(STDERR_FD, "\n", 1);
-            mi = mi + 1;
-            continue;
+            # v6.2.52 (user: make it fail-loud): a missing module is a HARD ERROR,
+            # not a warning — a partial dist silently drops a sub-unit + its index entry.
+            _err_ctx("distlib --modular: module not found", mod_path);
+            return 1;
         }
         # basename (last path component, strip `.cyr`)
         var bn = mod_path;
@@ -1520,6 +1520,15 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         var base = alloc(bnl + 1);
         memcpy(base, bn, bnl);
         store8(base + bnl, 0);
+        # v6.2.52 (closeout-deferred): two `[lib].modules` with the same basename in
+        # different src/ dirs would overwrite each other's dist/<pkg>/<base>.cyr +
+        # emit duplicate index keys (resolver is first-match-wins → silently lost
+        # transitive deps). Fail loud instead.
+        if (_dep_list_has(seen_bases, base) == 1) {
+            _err_ctx("distlib --modular: duplicate module basename collides in dist/", base);
+            return 1;
+        }
+        vec_push(seen_bases, base);
 
         var of_sb = str_builder_new();
         str_builder_add_cstr(of_sb, moddir);
@@ -1649,7 +1658,7 @@ fn cmd_distlib(profile): i64 {
     var pkg_name = 0;
     var pi = 0;
     while (pi < mlen) {
-        if (memeq(mbuf + pi, "name", 4) == 1) {
+        if (pi + 4 <= mlen && memeq(mbuf + pi, "name", 4) == 1) {   # v6.2.52: bound the tail read
             if (pi + 4 < mlen && (load8(mbuf + pi + 4) == 32 || load8(mbuf + pi + 4) == 61)) {
                 var qi = pi + 4;
                 while (qi < mlen && load8(mbuf + qi) != 34) { qi = qi + 1; }
@@ -1802,11 +1811,11 @@ fn cmd_distlib(profile): i64 {
     while (mi < vec_len(modules)) {
         var mod_path = vec_get(modules, mi);
         if (file_exists(mod_path) == 0) {
-            sys_write(STDERR_FD, "  warning: module not found: ", 29);
-            sys_write(STDERR_FD, mod_path, strlen(mod_path));
-            sys_write(STDERR_FD, "\n", 1);
-            mi = mi + 1;
-            continue;
+            # v6.2.52 (user: make it fail-loud): a missing module is a HARD ERROR,
+            # not a warning — a partial bundle silently drops a module.
+            _err_ctx("distlib: module not found", mod_path);
+            sys_close(ofd);
+            return 1;
         }
 
         # Module separator. The leading \n is the single blank

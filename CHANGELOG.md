@@ -6,6 +6,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.52] — 2026-06-28
+
+**v6.2.52 — closeout-deferred cleanup** (the v6.2.51 audit's filed items, minus the
+var-table migration → v6.3.0). Three CLI-only distlib-hardening fixes. **cycc
+byte-identical 1,073,672 B; self-hosts byte-identical; check.sh 98/98 → 99/99
+(+`_distlib_failloud_gate`); ecb + cass `SELFHOST_OK`; bench self_compile 517 ms (jitter).**
+
+### Fixed
+- **`distlib --modular` fails loud on a duplicate module basename** (cbt/commands.cyr
+  `_distlib_modular_emit`) — two `[lib].modules` with the same basename in different `src/`
+  subdirs would overwrite each other's `dist/<pkg>/<base>.cyr` + emit duplicate index keys
+  (the resolver is first-match-wins → silently lost transitive deps). Now `_err_ctx` +
+  non-zero.
+- **`distlib` fails loud on a missing `modules=` entry** (BOTH the flat and `--modular`
+  paths) — was a warning + exit 0, a producer/consumer exit-code asymmetry (`cyrius deps`
+  is fail-loud). User-decided (2026-06-28: "make it fail-loud"). A partial bundle silently
+  dropped a module.
+- **Bounded the manifest `[deps.` / `name` prefix scans** (cbt/commands.cyr
+  `_distlib_named_deps` + the name scan) with `ndi + 6 <= mlen` / `pi + 4 <= mlen` — a
+  cosmetic ~few-byte over-read near the 32KB buffer tail (bump-arena → never faulted).
+- New gate `_distlib_failloud_gate` (check.sh 98 → 99) — asserts both fail-loud cases.
+
+### Deferred → v6.3.0
+- The **var-table growable migration** (`var_noffs` / `var_sizes` / `var_types`, `SVCNT`
+  cap 8192 at src/common/util.cyr) — the last fixed compile-time table from the v6.2.0
+  Phase-0 growable work. It **changes codegen → breaks byte-identical self-host**, so it is
+  NOT a closeout patch; it opens **v6.3.0** as the minor's first slot (user 2026-06-28). See
+  `2026-06-27-v62x-closeout-deferred`.
+
 ## [6.2.51] — 2026-06-27
 
 **v6.2.51 — v6.2.x end-of-minor closeout (pre-v6.3.0).** Mechanical gates + a
