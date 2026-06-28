@@ -422,11 +422,14 @@ bites; the heavier Phase C may take the 2nd release — a decision made
   cross-repo end-to-end acceptance proof — re-fold sigil so it ships
   `dist/sigil.deps`, then descent drops its 29-element hand-ordered `stdlib`
   list), Phase B named `[groups]`, and the undefined-fn hard-error default-on.
-- **Phase B — named module groupings.** A `[groups]` section
-  (`crypto = ["sigil:ed25519", "sigil:sha256", "sigil:keccak"]`), expanded
-  at resolve time. Makes the de-facto bayan/ganita/sandhi/sigil bundles an
-  *explicit* grouping mechanism — and creates the **addressable sub-units**
-  the v6.3.x feature layer (`gpu = [...]`) needs to name.
+- **Phase B — named module groupings — ✅ SHIPPED v6.2.49.** A `[groups]`
+  section (`crypto = ["ct", "keccak", "random"]`) expands at resolve time
+  wherever named in `[deps].stdlib` or a `[deps.NAME] requires` (nested groups,
+  deduped, cycle-guarded; byte-identical without `[groups]`). Makes the de-facto
+  bundles an *explicit* grouping mechanism + creates the **addressable sub-units**
+  the v6.3.x feature layer (`gpu = [...]`) gates. **Members are whole leaf/dep
+  names** — the `pkg:submodule` form (e.g. `sigil:ed25519`) awaits Phase C's
+  per-module extraction. Gate: `_deps_groups_gate` (check.sh 96/96).
 - **Phase C — module-granular extraction (heavier; the bloat lever).**
   `cyrius distlib --modular` emits `dist/<pkg>/<module>.cyr` per module +
   an `index.cyml` (capturing the `include` lines currently stripped); the

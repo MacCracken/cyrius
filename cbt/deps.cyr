@@ -309,6 +309,8 @@ fn _dep_find_stdlib_dir(): i64 {
 # repeat-copies are skipped. Visited set is per-`cmd_deps`
 # invocation; reset at every call.
 var _dep_stdlib_seen = 0;
+var _dep_group_names = 0;     # v6.2.49 Phase B: [groups] names (parallel to members)
+var _dep_group_members = 0;   # v6.2.49 Phase B: [groups] member lists
 
 fn _dep_stdlib_seen_init(): i64 {
     _dep_stdlib_seen = vec_new();
@@ -597,6 +599,109 @@ fn _dep_read_sidecar(path): i64 {
     return leaves;
 }
 
+# v6.2.49 (deps lever 1 / Phase B — named module groupings): generic membership.
+fn _dep_list_has(list, name): i64 {
+    if (list == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(list)) {
+        var v = vec_get(list, i);
+        if (strlen(v) == nl) { if (memeq(v, name, nl) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v6.2.49 Phase B: look up a `[groups]` name → its member vec, or 0 if not a group.
+fn _dep_group_lookup(name): i64 {
+    if (_dep_group_names == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(_dep_group_names)) {
+        var gn = vec_get(_dep_group_names, i);
+        if (strlen(gn) == nl) { if (memeq(gn, name, nl) == 1) { return vec_get(_dep_group_members, i); } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v6.2.49 Phase B: expand one name into `out`. If it names a `[groups]` group,
+# recurse over its members (groups may reference groups); else append the bare
+# name (deduped). A self/mutual cycle is skipped via the `seen` guard.
+fn _dep_expand_one(out, name, seen): i64 {
+    var members = _dep_group_lookup(name);
+    if (members == 0) {
+        if (_dep_list_has(out, name) == 0) { vec_push(out, name); }
+        return 0;
+    }
+    if (_dep_list_has(seen, name) == 1) { return 0; }   # cycle — skip
+    vec_push(seen, name);
+    var j = 0;
+    while (j < vec_len(members)) {
+        _dep_expand_one(out, vec_get(members, j), seen);
+        j = j + 1;
+    }
+    return 0;
+}
+
+# v6.2.49 Phase B: expand any `[groups]` references in a name list (`[deps].stdlib`
+# or a `[deps.NAME] requires`) into a flat, deduped list of leaf/dep names.
+# Passthrough (returns the SAME vec) when no groups are defined, so non-`[groups]`
+# manifests resolve byte-identical to before.
+fn _dep_expand_groups(names): i64 {
+    if (_dep_group_names == 0) { return names; }
+    if (vec_len(_dep_group_names) == 0) { return names; }
+    var out = vec_new();
+    var seen = vec_new();
+    var i = 0;
+    while (i < vec_len(names)) {
+        _dep_expand_one(out, vec_get(names, i), seen);
+        i = i + 1;
+    }
+    return out;
+}
+
+# v6.2.49 Phase B: parse a `[groups]` section into `_dep_group_names` /
+# `_dep_group_members` (parallel vecs). Each `name = ["a", "b", ...]` line defines
+# a group that expands at resolve time wherever it's named in `[deps].stdlib` or a
+# `[deps.NAME] requires` list. Members are whole stdlib-leaf / dep names (the
+# `pkg:submodule` sub-unit form awaits Phase C). The section ends at the next
+# `[...]` header. Multi-line arrays are handled — continuation lines carry no `[`
+# so they're skipped; `_parse_toml_str_array` already consumed the whole array.
+fn _dep_parse_groups(buf, n): i64 {
+    _dep_group_names = vec_new();
+    _dep_group_members = vec_new();
+    var i = 0;
+    var in_groups = 0;
+    while (i < n) {
+        var ls = i;
+        while (ls < n && (load8(buf + ls) == 32 || load8(buf + ls) == 9)) { ls = ls + 1; }
+        if (ls < n && load8(buf + ls) == 91) {   # '[' section header
+            in_groups = 0;
+            if (memeq(buf + ls, "[groups]", 8) == 1) { in_groups = 1; }
+        } elif (in_groups == 1 && ls < n && load8(buf + ls) != 35 && load8(buf + ls) != 10) {
+            var ne = ls;
+            while (ne < n && load8(buf + ne) != 32 && load8(buf + ne) != 9 && load8(buf + ne) != 61 && load8(buf + ne) != 10) { ne = ne + 1; }
+            var nl = ne - ls;
+            if (nl > 0) {
+                var bi = ne;
+                while (bi < n && load8(buf + bi) != 91 && load8(buf + bi) != 10) { bi = bi + 1; }
+                if (bi < n && load8(buf + bi) == 91) {
+                    var gname = alloc(nl + 1);
+                    memcpy(gname, buf + ls, nl);
+                    store8(gname + nl, 0);
+                    var gmembers = _parse_toml_str_array(buf, n, ne);
+                    vec_push(_dep_group_names, gname);
+                    vec_push(_dep_group_members, gmembers);
+                }
+            }
+        }
+        while (i < n && load8(buf + i) != 10) { i = i + 1; }
+        if (i < n) { i = i + 1; }
+    }
+    return 0;
+}
+
 # v5.7.14: returns 1 if `name` is already in _dep_visited, else 0.
 fn _dep_name_visited(name): i64 {
     if (_dep_visited == 0) { return 0; }
@@ -724,6 +829,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 # pulled below, after the key loop, ahead of this dep's modules.
                 if (memeq(buf + si, "requires", 8) == 1 && (load8(buf + si + 8) == 32 || load8(buf + si + 8) == 61)) {
                     dep_requires = _parse_toml_str_array(buf, n, si);
+                    dep_requires = _dep_expand_groups(dep_requires);   # v6.2.49 Phase B: expand [groups] refs
                 }
                 while (si < n && load8(buf + si) != 10) { si = si + 1; }
                 si = si + 1;
@@ -1101,6 +1207,7 @@ fn cmd_deps(): i64 {
     _dep_visited = vec_new();
     _dep_queue = vec_new();
     _dep_commit_lines = vec_new();   # CVE-21 (v6.2.30): git-dep commit pins
+    _dep_parse_groups(buf, n);       # v6.2.49 Phase B: [groups] (buf is the TOML header, CYML body already stripped)
 
     # === Phase 1: stdlib deps ===
     # Find: stdlib = ["string", "fmt", ...]
@@ -1151,6 +1258,7 @@ fn cmd_deps(): i64 {
                     # for the include-chain follower below.
                     _dep_stdlib_seen_init();
                     var mods = _parse_toml_str_array(buf, n, si);
+                    mods = _dep_expand_groups(mods);   # v6.2.49 Phase B: expand [groups] refs → leaves
                     var mi = 0;
                     while (mi < vec_len(mods)) {
                         var mod_name = vec_get(mods, mi);

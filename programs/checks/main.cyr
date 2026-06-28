@@ -498,6 +498,10 @@ fn _run_regression_gates(): i64 {
     _deps_sidecar_gate();
     println("");
 
+    _section("cyrius deps expands [groups] in [deps].stdlib, nested + cycle-guarded (v6.2.49 dependency-model lever 1 Phase B)");
+    _deps_groups_gate();
+    println("");
+
     _section("CVE-05 tok_names mangle-path guard (no magic-256 NPOS_GUARD)");
     _cve05_guard_gate();
     println("");

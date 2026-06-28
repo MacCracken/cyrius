@@ -271,6 +271,60 @@ fn _deps_sidecar_gate(): i64 {
     return fail;
 }
 
+# v6.2.49 (deps lever 1 / Phase B — named module groupings): a `[groups]`
+# section defines named lists that expand at resolve time wherever named in
+# `[deps].stdlib` or a `[deps.NAME] requires`. This gate proves nested
+# expansion (`core` → `crypto` → ct/keccak) + cycle-safety (`selfref` →
+# `selfref` skips without hanging).
+fn _deps_groups_gate(): i64 {
+    var label = "cyrius deps expands [groups] in [deps].stdlib (nested + cycle-guarded) → members resolve — v6.2.49 dependency-model lever 1 Phase B";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var fx = _tmp_path("audit_deps_groups_");
+    sys_mkdir(fx, 0x1ED);
+    # core → [crypto, fnptr] → [ct, keccak, fnptr]; selfref → selfref (pure cycle,
+    # contributes nothing, must not hang).
+    _write_file(_lk_path(fx, "/cyrius.cyml"),
+        "[package]\nname = \"groups_gate\"\n\n[groups]\ncrypto = [\"ct\", \"keccak\"]\ncore = [\"crypto\", \"fnptr\"]\nselfref = [\"selfref\"]\n\n[deps]\nstdlib = [\"core\", \"selfref\"]\n");
+    var out = _tmp_path("audit_deps_groups_out_");
+    var ec = _exec_in_dir(fx, cyrius_bin, "deps", out);
+    var got_ct = file_exists(_lk_path(fx, "/lib/ct.cyr"));
+    var got_keccak = file_exists(_lk_path(fx, "/lib/keccak.cyr"));
+    var got_fnptr = file_exists(_lk_path(fx, "/lib/fnptr.cyr"));
+
+    # Cleanup before reporting so a failed assertion still cleans up.
+    sys_unlink(out);
+    sys_unlink(_lk_path(fx, "/lib/ct.cyr"));
+    sys_unlink(_lk_path(fx, "/lib/keccak.cyr"));
+    sys_unlink(_lk_path(fx, "/lib/fnptr.cyr"));
+    sys_unlink(_lk_path(fx, "/cyrius.lock"));
+    sys_unlink(_lk_path(fx, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(fx, "/lib"));
+    sys_rmdir(fx);
+
+    var fail = 0;
+    if (ec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": deps with [groups] exited "); print_num(ec); println(" (expected 0)");
+        fail = 1;
+    } elif (got_ct != 1 || got_keccak != 1 || got_fnptr != 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": nested group did not expand to ct+keccak+fnptr in the fixture lib/");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": [groups] expands (nested) into stdlib; self-cycle skipped without hanging");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _deps_lock_gate(): i64 {
     var label = "cyrius deps --lock writes a non-empty recursive lock + --verify round-trips (v6.0.2; empty-lock-since-v5.11.8 regression)";
 

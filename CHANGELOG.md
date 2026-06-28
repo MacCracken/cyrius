@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.2.49] — 2026-06-27
+
+**v6.2.49 — dependency-model arc, lever 1 / Phase B: named module groupings
+(`[groups]`).** A `[groups]` section in `cyrius.cyml` defines named lists that
+expand at resolve time wherever named in `[deps].stdlib` or a `[deps.NAME] requires`
+— so a consumer names a recurring set of leaves/deps once
+(`crypto = ["ct", "keccak", "random"]`) and references it by name. Groups may
+reference groups (nested), expansion is deduped, and self/mutual cycles are skipped
+(no hang). This is the **addressable-grouping foundation** the v6.3.x feature/profile
+layer (lever 2) builds on. **CLI-only (`cbt/deps.cyr`) → cycc byte-identical
+1,073,672 B; self-hosts byte-identical; check.sh 95/95 → 96/96 (+`_deps_groups_gate`);
+ecb + cass `SELFHOST_OK`; bench self_compile 511 ms (jitter — cycc byte-identical).**
+
+### Added
+- **`[groups]` section** (`cbt/deps.cyr` `_dep_parse_groups`) — each
+  `name = ["a", "b", …]` line defines a group. `_dep_expand_groups` expands group
+  references in `[deps].stdlib` and `[deps.NAME] requires` into a flat, deduped list
+  of leaf/dep names before resolution (`_dep_expand_one` recurses for nested groups;
+  a `seen`-set skips cycles). Members are whole stdlib-leaf / dep names; the
+  `pkg:submodule` sub-unit form awaits Phase C.
+- **`_deps_groups_gate`** (`programs/checks/deps_init.cyr`; check.sh 95 → 96) — a
+  fixture with a nested group (`core` → `crypto` → ct/keccak) + a self-cycle group
+  asserts the members resolve into the consumer's lib/ and the cycle doesn't hang.
+
+### Compatibility
+- A manifest with no `[groups]` resolves **byte-identical** — `_dep_expand_groups`
+  returns the input vec untouched when no groups are defined.
+
+### Lever-1 status
+- Lever 1 (module granularity + groupings) is now **complete**: `requires` key (.46)
+  → sidecar (.47) → umbrella/named-dep/strip + ecosystem migration (.48) → `[groups]`
+  (.49). Remaining arc tail: the **undefined-fn reachable-call hard-error default-on**
+  (now safe — cross-module refs resolve via the sidecar). Lever 2 (profile/feature/
+  target scoping) is pinned to v6.3.x and builds on `[groups]`.
+
 ## [6.2.48] — 2026-06-27
 
 **v6.2.48 — dependency-model arc, lever 1: distlib sidecar captures the umbrella
