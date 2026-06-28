@@ -2,6 +2,7 @@
 # Tier 2: data structure performance
 
 include "lib/string.cyr"
+include "lib/str.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/vec.cyr"

@@ -12,6 +12,9 @@
 # routing site (alloc → global bump instead of the arena) would shrink the
 # measured per-connection footprint, so first_peak > base also guards coverage.
 
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
 include "lib/tls_native.cyr"
 include "lib/assert.cyr"
 

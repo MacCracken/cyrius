@@ -10,6 +10,9 @@
 # See CHANGELOG [6.0.74].
 
 include "lib/tls_native.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
 include "lib/assert.cyr"
 
 test_group("TLS 1.2 end-to-end handshake (.74)");

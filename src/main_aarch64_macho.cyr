@@ -133,6 +133,7 @@ include "src/backend/aarch64/fixup.cyr"
 # fixup.cyr reads `_strict_mode` after the patch loop. See CHANGELOG
 # [5.11.63].
 var _strict_mode = 0;
+var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (aarch64/fixup.cyr gates on `_allow_undef == 0`)
 var _vbuf[256];
 var _vfd = 0;
 if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
@@ -147,6 +148,14 @@ if (_vn > 0) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 116) {
                     _strict_mode = 1;
+                }
+            }
+        }
+        # "--al" (--allow-undef, v6.3.2) — downgrade the default reachable-undef hard error to a warning. chars a(97) l(108).
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 97 && load8(&_vbuf + _vi + 3) == 108) {
+                    _allow_undef = 1;
                 }
             }
         }

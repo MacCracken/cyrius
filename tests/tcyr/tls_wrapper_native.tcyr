@@ -8,6 +8,10 @@
 # verbs route to native. (Live external HTTPS awaits server-flight
 # reassembly; this is the our-client ↔ our-server proof.) See CHANGELOG [6.0.80].
 #define CYRIUS_TLS_NATIVE
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/dynlib.cyr"
 include "lib/fdlopen.cyr"
 include "lib/tls_native.cyr"
 include "lib/tls.cyr"

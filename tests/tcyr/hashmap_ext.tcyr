@@ -1,5 +1,6 @@
 # Test: hashmap extended + hashmap_fast
 include "lib/alloc.cyr"
+include "lib/str.cyr"
 include "lib/vec.cyr"
 include "lib/assert.cyr"
 include "lib/hashmap.cyr"

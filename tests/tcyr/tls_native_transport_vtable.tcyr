@@ -8,6 +8,9 @@
 # the check.sh TLS live round-trip (this test only proves the indirection).
 
 include "lib/assert.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
 include "lib/tls_native.cyr"
 
 # --- in-memory capture transport (handle arg is ignored) ---

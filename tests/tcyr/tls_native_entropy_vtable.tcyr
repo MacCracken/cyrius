@@ -8,6 +8,9 @@
 # getrandom path. The default path itself is covered by the TLS live round-trips.
 
 include "lib/assert.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
 include "lib/tls_native.cyr"
 
 # custom rand(buf, n): fill with a known ramp (byte i == i & 0xFF), return n.

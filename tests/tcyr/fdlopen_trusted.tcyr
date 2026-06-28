@@ -17,6 +17,8 @@ include "lib/fmt.cyr"
 include "lib/vec.cyr"
 include "lib/assert.cyr"
 include "lib/fdlopen.cyr"
+include "lib/mmap.cyr"
+include "lib/dynlib.cyr"
 
 alloc_init();
 

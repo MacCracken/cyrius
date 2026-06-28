@@ -9,6 +9,10 @@
 # skips cleanly when there is no network (sys_connect fails). Robust to leaf
 # rotation (verification roots at the stable OS-trusted root). See CHANGELOG [6.0.81].
 #define CYRIUS_TLS_NATIVE
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/dynlib.cyr"
 include "lib/fdlopen.cyr"
 include "lib/tls_native.cyr"
 include "lib/tls.cyr"

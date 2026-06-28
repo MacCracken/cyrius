@@ -2,6 +2,7 @@
 # Tests insert, lookup, delete, re-insert, probe chain integrity
 
 include "lib/string.cyr"
+include "lib/str.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/vec.cyr"

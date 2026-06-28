@@ -214,6 +214,7 @@ include "src/backend/x86/fixup.cyr"
 # whether undefined-function warnings should hard-fail the compile
 # (vs the default: warn and continue into a known-to-crash binary).
 var _strict_mode = 0;
+var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (x86/fixup.cyr gates on `_allow_undef == 0`)
 var _vbuf[256];
 var _vfd = 0;
 # v5.5.9: --version / --strict parsing uses /proc/self/cmdline, a
@@ -250,6 +251,14 @@ if (_vn > 0) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 116) {
                     _strict_mode = 1;
+                }
+            }
+        }
+        # "--al" (--allow-undef, v6.3.2) — downgrade the default reachable-undef hard error to a warning. chars a(97) l(108).
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 97 && load8(&_vbuf + _vi + 3) == 108) {
+                    _allow_undef = 1;
                 }
             }
         }
@@ -297,6 +306,12 @@ if (_vw != 0) {
                             if (load8(_vw + _wi + 4) == 115) {
                                 if (load8(_vw + _wi + 6) == 116) {
                                     _strict_mode = 1;
+                                }
+                            }
+                            # "--al" (--allow-undef, v6.3.2): UTF-16 a(97) l(108)
+                            if (load8(_vw + _wi + 4) == 97) {
+                                if (load8(_vw + _wi + 6) == 108) {
+                                    _allow_undef = 1;
                                 }
                             }
                         }

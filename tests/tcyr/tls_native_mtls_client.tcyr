@@ -10,6 +10,10 @@
 # same pair serves as both the server cert and the client cert here).
 #define CYRIUS_TLS_NATIVE
 include "lib/fdlopen.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/dynlib.cyr"
 include "lib/tls_native.cyr"
 include "lib/tls.cyr"
 include "lib/assert.cyr"

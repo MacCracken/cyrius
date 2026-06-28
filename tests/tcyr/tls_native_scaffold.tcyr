@@ -22,6 +22,9 @@
 # `assert_eq(..., TLS_ERR_NOT_IMPLEMENTED, ...)` to the real
 # expected behavior.
 
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
 include "lib/tls_native.cyr"
 include "lib/assert.cyr"
 

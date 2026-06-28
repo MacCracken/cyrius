@@ -8,6 +8,10 @@
 # Cert/key are openssl-generated Ed25519 (cert DER 320 B, PKCS#8 key DER 48 B).
 #define CYRIUS_TLS_NATIVE
 include "lib/fdlopen.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/dynlib.cyr"
 include "lib/tls_native.cyr"
 include "lib/tls.cyr"
 include "lib/assert.cyr"

@@ -2,6 +2,7 @@
 # Exercises map_new/set/get/delete/has with edge cases
 include "lib/alloc.cyr"
 include "lib/string.cyr"
+include "lib/str.cyr"
 include "lib/fmt.cyr"
 include "lib/vec.cyr"
 include "lib/hashmap.cyr"

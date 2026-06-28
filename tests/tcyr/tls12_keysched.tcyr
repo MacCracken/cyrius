@@ -10,6 +10,9 @@
 # key_block partitioning and that the derived material protects a .72 record.
 # See CHANGELOG [6.0.73].
 
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
 include "lib/tls_native.cyr"
 include "lib/assert.cyr"
 

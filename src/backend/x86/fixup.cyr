@@ -682,14 +682,14 @@ fn FIXUP(S): i64 {
         }
         u59_ufi = u59_ufi + 1;
     }
-    # --strict mode (v5.4.19): refuse to emit a binary with reachable
-    # undefined-fn fixups. Note that filtered-out (dead-host) refs
-    # do NOT count toward `undef_count`, so strict mode only fires
-    # on real bugs.
-    if (_strict_mode == 1 && undef_count > 0) {
-        syscall(SYS_WRITE, 2, "error: --strict: refusing to emit binary with ", 46);
+    # v6.3.2: a REACHABLE undefined-fn call is a hard error by DEFAULT
+    # (was --strict-only since v5.4.19). Filtered-out (dead-host) refs do
+    # NOT count toward `undef_count`, so this fires only on real reachable
+    # refs. `--allow-undef` (sets `_allow_undef`) downgrades it to a warning.
+    if (_allow_undef == 0 && undef_count > 0) {
+        syscall(SYS_WRITE, 2, "error: refusing to emit binary with ", 36);
         PRNUM(undef_count);
-        syscall(SYS_WRITE, 2, " undefined function(s)\n", 23);
+        syscall(SYS_WRITE, 2, " reachable undefined function(s) (pass --allow-undef to downgrade)\n", 67);
         syscall(SYS_EXIT, 1);
     }
 

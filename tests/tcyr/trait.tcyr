@@ -1,6 +1,8 @@
 # Test: trait objects and dynamic dispatch
 include "lib/alloc.cyr"
 include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
 include "lib/fmt.cyr"
 include "lib/fnptr.cyr"
 include "lib/trait.cyr"

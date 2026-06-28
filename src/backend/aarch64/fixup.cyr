@@ -504,10 +504,13 @@ fn FIXUP(S): i64 {
     # undef_count, so strict mode only fires on reachable undef refs
     # — matching x86's exit-on-strict semantics exactly. `_strict_mode`
     # is declared + cmdline-parsed in `src/main_aarch64.cyr`.
-    if (_strict_mode == 1 && undef_count > 0) {
-        syscall(SYS_WRITE, 2, "error: --strict: refusing to emit binary with ", 46);
+    # v6.3.2: REACHABLE undefined-fn call → hard error by DEFAULT (was
+    # --strict-only). `--allow-undef` (`_allow_undef`) downgrades to a warning.
+    # Byte-identical wording with x86/fixup.cyr (cross-arch parity).
+    if (_allow_undef == 0 && undef_count > 0) {
+        syscall(SYS_WRITE, 2, "error: refusing to emit binary with ", 36);
         PRNUM(undef_count);
-        syscall(SYS_WRITE, 2, " undefined function(s)\n", 23);
+        syscall(SYS_WRITE, 2, " reachable undefined function(s) (pass --allow-undef to downgrade)\n", 67);
         syscall(SYS_EXIT, 1);
     }
     S64(S + 0x18FCD0, totvar);

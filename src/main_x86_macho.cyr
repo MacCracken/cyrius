@@ -62,6 +62,9 @@ include "src/backend/x86/fixup.cyr"
 # isn't reachable until the entry-prologue follow-up lands, so default
 # off. (Kept as a var so fixup.cyr's read of _strict_mode resolves.)
 var _strict_mode = 0;
+# v6.3.2: stub decl — no argv parse on this fork, so _allow_undef stays 0 →
+# reachable undefs always hard-error here (self-compile HELD; Intel-EOL).
+var _allow_undef = 0;
 
 # Allocate heap via mmap — macOS has no brk. Linux syscall number 9 is
 # translated to BSD 197 by EMACHO_SYSXLAT at emit; flags 0x1002

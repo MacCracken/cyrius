@@ -10,6 +10,10 @@
 # Self-signed Ed25519 leaf (CN=127.0.0.1) reused from tls_native_ed25519.tcyr;
 # the client defaults to TLS_VERIFY_NONE so only the ALPN path is under test.
 #define CYRIUS_TLS_NATIVE
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/dynlib.cyr"
 include "lib/fdlopen.cyr"
 include "lib/tls_native.cyr"
 include "lib/tls.cyr"

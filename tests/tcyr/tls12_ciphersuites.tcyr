@@ -8,6 +8,9 @@
 # exactly {0xC02C, 0xCCA9}, the reverse map, and unknown-id rejection.
 # See CHANGELOG [6.0.74].
 
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
 include "lib/tls_native.cyr"
 include "lib/assert.cyr"
 
