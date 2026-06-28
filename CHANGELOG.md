@@ -6,6 +6,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.0] — 2026-06-28
+
+**v6.3.0 — var-family growable migration (Phase-0 tail; the last fixed compile-time
+cap).** Opens the v6.3.x minor. The v6.2.0 Phase-0 migration moved fn-tables /
+fixup_tbl / codebuf to growable storage but left the **var tables** fixed + hard-capped
+at 8192 (`SVCNT` errored). Premise-check found this is not 3 tables but a **family of
+SEVEN** parallel vcnt-indexed 8 B/slot tables — var_noffs (0x11A000), var_sizes
+(0x12A000), var_types (0x13A000), gvar_byte_off (0x1B0000), enum_const_val (0x1D8000),
+gvar_initval (0x1EC000), var_enum_id (0x204000) — that must grow in lockstep (any
+unmigrated one silently overflows once the family grows past 8192). All seven migrated
+to relocatable bases behind a single `_var_cap`; `SVCNT` grows the family 2× the moment
+the count would reach the cap (ceiling 1 048 576), ending the last fixed compile-time
+cap. **Codegen change → cycc 1,073,672 → 1,074,832 B (+1,160; var access gains a `_base`
+global-load indirection) — but bases start AT the original offsets, so under the old cap
+behavior is byte-identical: self-hosts byte-identical (two-step bootstrap gen1==gen2);
+check.sh 99/99; a 9000-global program now compiles + runs (was "variable table full
+(8192)"); all 6 forks compile; ecb + cass + pi `SELFHOST_OK`; bench self_compile 505 ms
+(no regression — var access isn't hot).**
+
+### Changed
+- **`src/common/util.cyr`** — 7 var-family base globals (`_varn_base`, `_vars_base`,
+  `_vart_base`, `_vgoff_base`, `_vecv_base`, `_vgsi_base`, `_venid_base`) + `_var_cap` +
+  `_var_grow(S)` (allocs 7 new regions, copies the used slots, repoints all bases,
+  ceiling 1 048 576). `SVCNT` replaces the fixed-8192 error with a grow-check.
+- **All var-family access routed through the bases** — ~60 inline `S + 0xNN000 + idx*8`
+  sites + the `GVTYPE`/`SVTYPE`/`GVOFF`/`GVSI`/`GVENUMID`/`SVENUMID` accessor bodies,
+  across 11 files (frontend `parse_*`, backend x86/aarch64 `fixup`, `pe/emit`,
+  `common/runtime`, `main_cx`).
+- **Per-fork init** — all 7 driver forks (main.cyr + main_win + 3× aarch64 + x86_macho
+  + cx) set the 7 bases + `_var_cap = 8192` after the heap is up.
+
+### Resolved
+- `2026-06-27-v62x-closeout-deferred` item 1 (the var-table tail) — the last fixed
+  compile-time table is now growable. Closes the v6.2.0 Phase-0 / AR-03 migration arc.
+
+### Note (scope)
+- The deferred issue scoped this as "3 tables"; the premise-check found the true
+  vcnt-indexed family is **7 tables**. Migrating fewer would have left a silent-overflow
+  landmine (an unmigrated table read past 8192 while the family grew).
+
 ## [6.2.52] — 2026-06-28
 
 **v6.2.52 — closeout-deferred cleanup** (the v6.2.51 audit's filed items, minus the

@@ -196,7 +196,7 @@ fn PARSE_FACTOR(S): i64 {
                     # the idx is out of the 1024-slot cap.
                     STI(S, GTI(S) + 1);
                     if (vi < 1024) {
-                        var _ecvq = L64(S + 0x1D8000 + vi * 8);
+                        var _ecvq = L64(_vecv_base + vi * 8);
                         if (_ecvq < 0) {
                             var _evq = _ecvq & 0x7FFFFFFFFFFFFFFF;
                             _cfp = GCP(S);
@@ -289,7 +289,7 @@ fn PARSE_FACTOR(S): i64 {
         if (vt > 0) {
             # Disambiguate scalar types from struct IDs using var_sizes:
             # Scalar i8/i16/i32 have var_sizes 1/2/4. Structs have var_sizes >= 8.
-            var gvsz = L64(S + 0x12A000 + idx * 8);
+            var gvsz = L64(_vars_base + idx * 8);
             if (gvsz < 8) {
                 SEXW(S, gvsz);
                 EVLOAD_W(S, idx, gvsz);
@@ -305,7 +305,7 @@ fn PARSE_FACTOR(S): i64 {
         # gvar whose slot has bit 63 set is a fold candidate. Same
         # 1024-slot cap as the qualified path.
         if (idx < 1024) {
-            var _ecv = L64(S + 0x1D8000 + idx * 8);
+            var _ecv = L64(_vecv_base + idx * 8);
             if (_ecv < 0) {
                 var _ev = _ecv & 0x7FFFFFFFFFFFFFFF;
                 _cfp = GCP(S);
@@ -1607,8 +1607,8 @@ fn PARSE_TERM(S): i64 {
         # Hidden temp slot to hold the Result ptr across the
         # tag-check / unwrap branches (same idiom as PARSE_MATCH).
         var qidx = GVCNT(S);
-        S64(S + 0x11A000 + qidx * 8, 0);
-        S64(S + 0x12A000 + qidx * 8, 8);
+        S64(_varn_base + qidx * 8, 0);
+        S64(_vars_base + qidx * 8, 8);
         SVCNT(S, qidx + 1);
         EVSTORE(S, qidx);                 # save result_ptr
         # Load tag and compare to 0 (Ok = 0, Err = 1)

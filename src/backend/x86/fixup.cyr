@@ -57,8 +57,8 @@ fn FIXUP(S): i64 {
             # (no m128 alignment padding); .data symbols come out of the
             # symtab the linker reads, so values land at the same offset
             # the consumer's relocation resolves to.
-            S64(S + 0x1B0000 + vi * 8, totvar);
-            totvar = totvar + L64(S + 0x12A000 + vi * 8);
+            S64(_vgoff_base + vi * 8, totvar);
+            totvar = totvar + L64(_vars_base + vi * 8);
             vi = vi + 1;
         }
         S64(S + 0x18FCD0, totvar);
@@ -87,7 +87,7 @@ fn FIXUP(S): i64 {
     # overwritten). The two writes are kept side-by-side; the scratch
     # copy stays the hot reader for the fixup loop below.
     while (vi < vcnt) {
-        var vsize = L64(S + 0x12A000 + vi * 8);
+        var vsize = L64(_vars_base + vi * 8);
         # v5.5.21: arrays (size > 8) used as SSE m128 memory operands —
         # PXOR xmm, m128 / MOVDQA / MOVAPS / AESENC m128 form / etc. —
         # require 16-byte alignment of the memory operand. 8-byte-aligned
@@ -115,7 +115,7 @@ fn FIXUP(S): i64 {
             totvar = totvar + ((0 - va) & 15);
         }
         S64(pfx + vi * 8, totvar);
-        S64(S + 0x1B0000 + vi * 8, totvar);
+        S64(_vgoff_base + vi * 8, totvar);
         totvar = totvar + vsize;
         vi = vi + 1;
     }
@@ -1108,7 +1108,7 @@ fn EMITELF_USER(S, etype): i64 {
         var top3_sz = 0; var top3_ix = 0 - 1;
         var vi = 0;
         while (vi < vcount) {
-            var vsz = L64(S + 0x12A000 + vi * 8);
+            var vsz = L64(_vars_base + vi * 8);
             if (vsz > top1_sz) {
                 top3_sz = top2_sz; top3_ix = top2_ix;
                 top2_sz = top1_sz; top2_ix = top1_ix;
@@ -1125,7 +1125,7 @@ fn EMITELF_USER(S, etype): i64 {
             syscall(SYS_WRITE, 2, "\n  largest vars:\n    ", 21);
             PRNUM(top1_sz);
             syscall(SYS_WRITE, 2, " bytes: ", 8);
-            var nptr = S + 0x60000 + L64(S + 0x11A000 + top1_ix * 8);
+            var nptr = S + 0x60000 + L64(_varn_base + top1_ix * 8);
             var nlen = 0;
             while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
             syscall(SYS_WRITE, 2, nptr, nlen);
@@ -1133,7 +1133,7 @@ fn EMITELF_USER(S, etype): i64 {
                 syscall(SYS_WRITE, 2, "\n    ", 5);
                 PRNUM(top2_sz);
                 syscall(SYS_WRITE, 2, " bytes: ", 8);
-                nptr = S + 0x60000 + L64(S + 0x11A000 + top2_ix * 8);
+                nptr = S + 0x60000 + L64(_varn_base + top2_ix * 8);
                 nlen = 0;
                 while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
                 syscall(SYS_WRITE, 2, nptr, nlen);
@@ -1142,7 +1142,7 @@ fn EMITELF_USER(S, etype): i64 {
                 syscall(SYS_WRITE, 2, "\n    ", 5);
                 PRNUM(top3_sz);
                 syscall(SYS_WRITE, 2, " bytes: ", 8);
-                nptr = S + 0x60000 + L64(S + 0x11A000 + top3_ix * 8);
+                nptr = S + 0x60000 + L64(_varn_base + top3_ix * 8);
                 nlen = 0;
                 while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
                 syscall(SYS_WRITE, 2, nptr, nlen);
@@ -1798,7 +1798,7 @@ fn EMITELF_OBJ(S): i64 {
             var cumul = 0;
             var vi = 0;
             while (vi < idx) {
-                cumul = cumul + L64(S + 0x12A000 + vi * 8);
+                cumul = cumul + L64(_vars_base + vi * 8);
                 vi = vi + 1;
             }
             S64(rp, coff);

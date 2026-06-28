@@ -26,7 +26,7 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
             var as_noff = PEEKV(S);
             var as_idx = FINDVAR(S, as_noff);
             if (as_idx >= 0 && as_idx < 1024) {
-                var as_ecv = L64(S + 0x1D8000 + as_idx * 8);
+                var as_ecv = L64(_vecv_base + as_idx * 8);
                 if (as_ecv < 0) {
                     asz = as_ecv & 0x7FFFFFFFFFFFFFFF;
                     STI(S, GTI(S) + 1);
@@ -49,7 +49,7 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     # a NEW global even if one with the same name exists. FINDVAR returns
     # the last match, so the current function's array shadows previous ones.
     var vcnt = GVCNT(S);
-    S64(S + 0x11A000 + vcnt * 8, noff);
+    S64(_varn_base + vcnt * 8, noff);
     # v6.2.1: element-typed fixed array `var a: T[N]` reserves
     # N elements of T. `ew` is the element width in bytes (from the
     # `: T` annotation: i8/u8=1 … i64/u64=8, u128=16). ew==0 is the
@@ -60,7 +60,7 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     # from this 0x12A000 table. See CHANGELOG [6.2.1].
     var aligned = (asz + 7) & (0 - 8);
     if (ew > 0) { aligned = (asz * ew + 7) & (0 - 8); }
-    S64(S + 0x12A000 + vcnt * 8, aligned);
+    S64(_vars_base + vcnt * 8, aligned);
     SVCNT(S, vcnt + 1);
     # v5.11.62: accumulate the array's byte cost into the current fn's
     # attribution slot at 0x1C8000. Top-level `var foo[N]` (no enclosing
@@ -443,8 +443,8 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     STI(S, GTI(S) + 1);
     var sz = STRUCTSZ(S, si);
     var vcnt = GVCNT(S);
-    S64(S + 0x11A000 + vcnt * 8, noff);
-    S64(S + 0x12A000 + vcnt * 8, sz);
+    S64(_varn_base + vcnt * 8, noff);
+    S64(_vars_base + vcnt * 8, sz);
     SVTYPE(S, vcnt, sid);
     var fc = GETFCOUNT(S, si);
     # Detect named-field syntax: next token is IDENT (2) followed by ':' (49).
@@ -563,7 +563,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
             var gas_noff = PEEKV(S);
             var gas_idx = FINDVAR(S, gas_noff);
             if (gas_idx >= 0 && gas_idx < 1024) {
-                var gas_ecv = L64(S + 0x1D8000 + gas_idx * 8);
+                var gas_ecv = L64(_vecv_base + gas_idx * 8);
                 if (gas_ecv < 0) {
                     sz_raw = gas_ecv & 0x7FFFFFFFFFFFFFFF;
                     STI(S, GTI(S) + 1);
@@ -590,8 +590,8 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
     STI(S, GTI(S) + 1);
     var vc = GVCNT(S);
-    S64(S + 0x11A000 + vc * 8, noff);
-    S64(S + 0x12A000 + vc * 8, sz);
+    S64(_varn_base + vc * 8, noff);
+    S64(_vars_base + vc * 8, sz);
     SLVAR(S, vc);
     SVCNT(S, vc + 1);
     # v5.11.51: optional byte-list initializer
@@ -780,29 +780,29 @@ fn PARSE_GVAR_REG(S): i64 {
     if (chk_has == 1 && sit_shadow == 1) { CHKDUPVAL(S, noff, chk_lit); }
     # Register
     var vcnt = GVCNT(S);
-    S64(S + 0x11A000 + vcnt * 8, noff);
+    S64(_varn_base + vcnt * 8, noff);
     if (is_struct == 1) {
-        S64(S + 0x12A000 + vcnt * 8, STRUCTSZ(S, ssid - 1));
+        S64(_vars_base + vcnt * 8, STRUCTSZ(S, ssid - 1));
         SVTYPE(S, vcnt, ssid);
     } else {
         if (ann_float != 0) {
             # f64/f32: 8-byte slot (f64 bit pattern, or f32 bits in the low 32);
             # SVTYPE marks it so PEXPR/PARSE_TERM route operators to EMIT_F64_BINOP.
-            S64(S + 0x12A000 + vcnt * 8, 8);
+            S64(_vars_base + vcnt * 8, 8);
             SVTYPE(S, vcnt, ann_float);
         } elif (ann_scalar > 0) {
             if (ann_scalar < 8) {
-                S64(S + 0x12A000 + vcnt * 8, ann_scalar);
+                S64(_vars_base + vcnt * 8, ann_scalar);
                 SVTYPE(S, vcnt, ann_scalar);
             } else {
                 # 8 (i64) or 16 (u128) — allocate the full width.
                 # No type marker for now: u128 bytes live in the slot,
                 # scalar ops touch the low 64 bits until alpha3 lands
                 # proper arithmetic.
-                S64(S + 0x12A000 + vcnt * 8, ann_scalar);
+                S64(_vars_base + vcnt * 8, ann_scalar);
             }
         } else {
-            S64(S + 0x12A000 + vcnt * 8, 8);
+            S64(_vars_base + vcnt * 8, 8);
             if (ann_sid > 0) { SVTYPE(S, vcnt, ann_sid); }
             elif (psc > 0) { SVTYPE(S, vcnt, 0 - psc); }
         }
@@ -823,7 +823,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # and the binary would exit with whatever rax held — exit-code
     # corruption the runtime-store path can't reproduce.
     if (sit_lit == 1) {
-        S64(S + 0x1EC000 + vcnt * 8, sit_val);
+        S64(_vgsi_base + vcnt * 8, sit_val);
         SLVAR(S, vcnt);
     } else {
         # Save token index for deferred init
@@ -1813,16 +1813,16 @@ fn PARSE_VAR(S): i64 {
         }
     } else {
         var vcnt = GVCNT(S);
-        S64(S + 0x11A000 + vcnt * 8, noff);
+        S64(_varn_base + vcnt * 8, noff);
         if (lfloat != 0) {
             # f64/f32 local: 8-byte slot + float type marker → PEXPR/PARSE_TERM
             # route operators to EMIT_F64_BINOP (f32 type-only, converted via f32_*).
-            S64(S + 0x12A000 + vcnt * 8, 8);
+            S64(_vars_base + vcnt * 8, 8);
             SVTYPE(S, vcnt, lfloat);
             EVSTORE(S, vcnt);
         } elif (scalar_type > 0) {
             if (scalar_type < 8) {
-                S64(S + 0x12A000 + vcnt * 8, scalar_type);
+                S64(_vars_base + vcnt * 8, scalar_type);
                 SVTYPE(S, vcnt, scalar_type);
                 EVSTORE_W(S, vcnt, scalar_type);
             } else {
@@ -1831,11 +1831,11 @@ fn PARSE_VAR(S): i64 {
                 # declared in the PARSE_PROG path (e.g. after a top-level
                 # expression statement like `alloc_init();` that stops
                 # pass 1 — see main.cyr's pass-1 loop termination).
-                S64(S + 0x12A000 + vcnt * 8, scalar_type);
+                S64(_vars_base + vcnt * 8, scalar_type);
                 EVSTORE(S, vcnt);
             }
         } else {
-            S64(S + 0x12A000 + vcnt * 8, 8);
+            S64(_vars_base + vcnt * 8, 8);
             if (pscale > 0) { SVTYPE(S, vcnt, 0 - pscale); }
             EVSTORE(S, vcnt);
         }

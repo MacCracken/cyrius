@@ -1,14 +1,20 @@
 # v6.2.x closeout — deferred items (→ v6.3.x)
 
-**Filed:** 2026-06-27 (v6.2.51 closeout audit) · **Status:** RESOLVED in v6.2.52
-EXCEPT the var-table migration → **v6.3.0** (user 2026-06-28).
+**Filed:** 2026-06-27 (v6.2.51 closeout audit) · **Status:** FULLY RESOLVED
+(items 2 + 3 + exit-code in v6.2.52; the var-table migration in **v6.3.0**).
 
-The pre-v6.3.0 closeout's 6-dimension judgment-pass audit surfaced these. **v6.2.52
-landed items 2 + 3 + the exit-code question (fail-loud); item 1 (var-table) opens
-v6.3.0 — it changes codegen, can't be a byte-identical closeout patch.** The one P1
+The pre-v6.3.0 closeout's 6-dimension judgment-pass audit surfaced these. The one P1
 the audit found (CVE-32 modular path-traversal) was fixed in v6.2.51.
 
-## 1. Finish the var-table growable migration — → **v6.3.0** (the minor opener; user 2026-06-28)
+## 1. Finish the var-table growable migration — ✅ RESOLVED v6.3.0
+**Premise-check finding: it was NOT 3 tables but a FAMILY of SEVEN** vcnt-indexed
+8 B/slot tables — var_noffs (0x11A000), var_sizes (0x12A000), var_types (0x13A000),
+gvar_byte_off (0x1B0000), enum_const_val (0x1D8000), gvar_initval (0x1EC000),
+var_enum_id (0x204000) — all 8192-capped, which must grow in lockstep (any unmigrated
+one silently overflows once the family grows past 8192). All seven migrated to
+relocatable bases behind `_var_cap`; `SVCNT` grows the family 2× past the old cap
+(ceiling 1 048 576). Self-hosts byte-identical (two-step bootstrap), check.sh 99/99,
+9000-global program compiles+runs, ecb/cass/pi `SELFHOST_OK`. See CHANGELOG [6.3.0].
 The v6.2.0 Phase-0 growable migration left the var tables fixed: `var_noffs` /
 `var_sizes` / `var_types` (0x11A000 / 0x12A000 / 0x13A000, `SVCNT` cap 8192 at
 `src/common/util.cyr:24`) are the last compile-time tables not migrated to the

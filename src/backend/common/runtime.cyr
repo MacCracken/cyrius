@@ -281,7 +281,7 @@ fn _check_output_cap(S, filesz): i64 {
         var top3_sz = 0; var top3_ix = 0 - 1;
         var vi = 0;
         while (vi < vcount) {
-            var vsz = L64(S + 0x12A000 + vi * 8);
+            var vsz = L64(_vars_base + vi * 8);
             if (vsz > top1_sz) {
                 top3_sz = top2_sz; top3_ix = top2_ix;
                 top2_sz = top1_sz; top2_ix = top1_ix;
@@ -298,7 +298,7 @@ fn _check_output_cap(S, filesz): i64 {
             syscall(SYS_WRITE, 2, "\n  largest vars:\n    ", 21);
             PRNUM(top1_sz);
             syscall(SYS_WRITE, 2, " bytes: ", 8);
-            var nptr = S + 0x60000 + L64(S + 0x11A000 + top1_ix * 8);
+            var nptr = S + 0x60000 + L64(_varn_base + top1_ix * 8);
             var nlen = 0;
             while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
             syscall(SYS_WRITE, 2, nptr, nlen);
@@ -306,7 +306,7 @@ fn _check_output_cap(S, filesz): i64 {
                 syscall(SYS_WRITE, 2, "\n    ", 5);
                 PRNUM(top2_sz);
                 syscall(SYS_WRITE, 2, " bytes: ", 8);
-                nptr = S + 0x60000 + L64(S + 0x11A000 + top2_ix * 8);
+                nptr = S + 0x60000 + L64(_varn_base + top2_ix * 8);
                 nlen = 0;
                 while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
                 syscall(SYS_WRITE, 2, nptr, nlen);
@@ -315,7 +315,7 @@ fn _check_output_cap(S, filesz): i64 {
                 syscall(SYS_WRITE, 2, "\n    ", 5);
                 PRNUM(top3_sz);
                 syscall(SYS_WRITE, 2, " bytes: ", 8);
-                nptr = S + 0x60000 + L64(S + 0x11A000 + top3_ix * 8);
+                nptr = S + 0x60000 + L64(_varn_base + top3_ix * 8);
                 nlen = 0;
                 while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
                 syscall(SYS_WRITE, 2, nptr, nlen);

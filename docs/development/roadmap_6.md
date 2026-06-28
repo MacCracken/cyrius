@@ -287,14 +287,16 @@ the in-hand rv64 self-host reverify. Issues:
 (AR-02) + [`2026-06-10-memory-safety-parity-gaps.md`](issues/2026-06-10-memory-safety-parity-gaps.md)
 (AR-03).
 
-**v6.3.0 opener — the var-table tail (closeout-deferred).** The v6.2.0 Phase-0
+**v6.3.0 opener — the var-table tail — ✅ SHIPPED v6.3.0.** The v6.2.0 Phase-0
 migration moved fn-tables / `fixup_tbl` / codebuf to growable storage but left the
-**var tables** (`var_noffs` / `var_sizes` / `var_types`, `SVCNT` cap 8192 at
-`src/common/util.cyr`) fixed — the last compile-time table on the old scheme. The
-v6.2.51 closeout audit flagged it; the user pinned it to **open v6.3.0** as the
-minor's first slot (2026-06-28). It changes codegen → breaks byte-identical
-self-host, so it can't be a v6.2.x closeout patch; verify byte-identical across
-ecb/cass/pi per the v6.0.7 `ret_patches` recipe. See
+**var tables** fixed (`SVCNT` cap 8192). Premise-check found it was a **family of
+SEVEN** vcnt-indexed tables (not 3): var_noffs / var_sizes / var_types + gvar_byte_off
+(0x1B0000) / enum_const_val (0x1D8000) / gvar_initval (0x1EC000) / var_enum_id
+(0x204000). All migrated to relocatable bases behind `_var_cap`; `SVCNT` grows the
+family 2× past the cap (ceiling 1 048 576). Codegen change (cycc +1,160 B) but
+byte-identical under the cap — self-hosts byte-identical (two-step bootstrap), check.sh
+99/99, 9000-global program compiles+runs, ecb/cass/pi `SELFHOST_OK`. Closes the v6.2.0
+Phase-0 / AR-03 migration arc — the last fixed compile-time cap is gone. See
 [`2026-06-27-v62x-closeout-deferred.md`](issues/2026-06-27-v62x-closeout-deferred.md).
 
 ### v6.2.x — Bare-metal target formalization

@@ -655,6 +655,7 @@ fn main(): i64 {
     println("");
 
     _self_host_gate();
+    _var_grow_gate();
     _heapmap_gate();
     _testsuite_gate();
     _run_regression_gates();

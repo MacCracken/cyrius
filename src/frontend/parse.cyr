@@ -229,8 +229,8 @@ fn PARSE_SWITCH(S): i64 {
     if (_TARGET_CX == 1) { use_table = 0; }
     # Allocate hidden global to hold switch value
     var swidx = GVCNT(S);
-    S64(S + 0x11A000 + swidx * 8, 0);
-    S64(S + 0x12A000 + swidx * 8, 8);
+    S64(_varn_base + swidx * 8, 0);
+    S64(_vars_base + swidx * 8, 8);
     SVCNT(S, swidx + 1);
     EVSTORE(S, swidx);
     if (use_table == 1) {
@@ -375,8 +375,8 @@ fn PARSE_MATCH(S): i64 {
     STI(S, GTI(S) + 1);
     # Store match value in hidden temp var
     var midx = GVCNT(S);
-    S64(S + 0x11A000 + midx * 8, 0);
-    S64(S + 0x12A000 + midx * 8, 8);
+    S64(_varn_base + midx * 8, 0);
+    S64(_vars_base + midx * 8, 8);
     SVCNT(S, midx + 1);
     EVSTORE(S, midx);
     var ends: i64[256];   # v6.2.1: 256 match-arm jump-end slots (was [256]=32 slots → OOB at >32 arms)
@@ -687,7 +687,7 @@ fn PARSE_STMT(S): i64 {
             ERR_MSG(S, "secret requires array declaration: secret var buf[N];", 52);
         }
         var sidx = vcnt_pre;
-        var ssz = L64(S + 0x12A000 + sidx * 8);
+        var ssz = L64(_vars_base + sidx * 8);
         # Flag local (initialized to 0 in prologue; set to 1 when this
         # declaration is reached at runtime).
         var sflag = GFLC(S);
@@ -985,8 +985,8 @@ fn PARSE_STMT(S): i64 {
                     ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 56);
                 }
                 var qsidx = GVCNT(S);
-                S64(S + 0x11A000 + qsidx * 8, 0);
-                S64(S + 0x12A000 + qsidx * 8, 8);
+                S64(_varn_base + qsidx * 8, 0);
+                S64(_vars_base + qsidx * 8, 8);
                 SVCNT(S, qsidx + 1);
                 EVSTORE(S, qsidx);
                 EVLOAD(S, qsidx);
@@ -1116,7 +1116,7 @@ fn PARSE_STMT(S): i64 {
             if (vt < 0) {
                 if (aps == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); }
             }
-            var avsz = L64(S + 0x12A000 + idx * 8);
+            var avsz = L64(_vars_base + idx * 8);
             var ew = GEXW(S);
             if (avsz < 8) {
                 if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 45); }

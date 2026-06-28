@@ -31,8 +31,8 @@ fn SSTC(S, v): i64 { S64(S + 0x18F830, v); return 0; }
 # type-only — converted via f32_from/f32_to, no f32 arithmetic).
 var F64_TYID = 0x40000001;
 var F32_TYID = 0x40000002;
-fn GVTYPE(S, vi): i64 { return L64(S + 0x13A000 + vi * 8); }
-fn SVTYPE(S, vi, v): i64 { S64(S + 0x13A000 + vi * 8, v); return 0; }
+fn GVTYPE(S, vi): i64 { return L64(_vart_base + vi * 8); }
+fn SVTYPE(S, vi, v): i64 { S64(_vart_base + vi * 8, v); return 0; }
 
 # v5.7.17: dump every registered struct name to stderr. Called from
 # REGSTRUCT before the cap-overflow ERR_MSG so the user sees WHICH
@@ -354,8 +354,8 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 # (issue 2026-06-14) BEFORE registering it, so FINDVAR sees only
                 # prior defs. Pass-1-only (emit_code==0) → no double-warn.
                 CHKDUPVAL(S, vnoff, val);
-                S64(S + 0x11A000 + vcnt * 8, vnoff);
-                S64(S + 0x12A000 + vcnt * 8, 8);
+                S64(_varn_base + vcnt * 8, vnoff);
+                S64(_vars_base + vcnt * 8, 8);
                 # v5.5.2: record enum variant's compile-time value in the
                 # enum_const_val table at 0x1D8000 (1024 entries × 8 B).
                 # Bit 63 = "is enum const" marker; low 63 bits = value.
@@ -365,7 +365,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 # Variants registered at idx >= 1024 fall through to the
                 # existing EVLOAD path (correct but not folded).
                 if (vcnt < 1024) {
-                    S64(S + 0x1D8000 + vcnt * 8, (1 << 63) | val);
+                    S64(_vecv_base + vcnt * 8, (1 << 63) | val);
                 }
                 # v5.8.22 bite #1 — tag variant with parent enum-id +
                 # bump per-enum variant count. Both keyed for the future
@@ -542,7 +542,7 @@ fn FINDVAR(S, noff): i64 {
     var vcnt = GVCNT(S);
     var vi = vcnt - 1;
     while (vi >= 0) {
-        var stored = L64(S + 0x11A000 + vi * 8);
+        var stored = L64(_varn_base + vi * 8);
         if (STREQ(S, stored, noff) == 1) { return vi; }
         vi = vi - 1;
     }
@@ -581,14 +581,14 @@ fn CHKDUPVAL(S, noff, newval): i64 {
     var pi = FINDVAR(S, noff);
     if (pi < 0) { return 0; }
     if (pi >= 1024) { return 0; }   # beyond the enum-const fold table; skip
-    var pecv = L64(S + 0x1D8000 + pi * 8);
+    var pecv = L64(_vecv_base + pi * 8);
     var pval = 0;
     var phas = 0;
     if (pecv < 0) {                   # sign bit set → prior is an enum const
         pval = pecv & 0x7FFFFFFFFFFFFFFF;
         phas = 1;
     } else {
-        var plit = L64(S + 0x1EC000 + pi * 8);   # prior literal-init global
+        var plit = L64(_vgsi_base + pi * 8);   # prior literal-init global
         if (plit != 0) { pval = plit; phas = 1; }
     }
     if (phas == 1) {

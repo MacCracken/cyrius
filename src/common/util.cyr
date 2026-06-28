@@ -20,11 +20,65 @@ fn SBL(S, v): i64 { S64(S + 0x18C100, v); return 0; }
 fn GCP(S): i64 { return L64(S + 0x18C108); }
 fn SCP(S, v): i64 { S64(S + 0x18C108, v); return 0; }
 fn GVCNT(S): i64 { return L64(S + 0x18C110); }
-fn SVCNT(S, v): i64 {
-    if (v >= 8192) {
-        syscall(SYS_WRITE, 2, "error: variable table full (8192) — too many globals+enums+arrays\n", 68);
+# Phase 0 tail (v6.3.0): growable var-family. SEVEN parallel 8 B/slot tables —
+# var_noffs (0x11A000), var_sizes (0x12A000), var_types (0x13A000), gvar_byte_off
+# (0x1B0000), enum_const_val (0x1D8000), gvar_initval (0x1EC000), var_enum_id
+# (0x204000) — were all FIXED, indexed by the var count, hard-capped at 8192
+# (SVCNT errored). They are grown as one family: bases start AT the original
+# offsets + _var_cap at 8192, so under the old cap nothing changes (byte-identical
+# fixpoint); SVCNT grows the whole family 2x the moment the count would reach the
+# cap, ending the last fixed compile-time cap (the var tail the v6.2.0 Phase-0
+# migration left). Inited per-driver after the heap is up.
+var _varn_base = 0;    # 0x11A000 var_noffs
+var _vars_base = 0;    # 0x12A000 var_sizes
+var _vart_base = 0;    # 0x13A000 var_types
+var _vgoff_base = 0;   # 0x1B0000 gvar_byte_off
+var _vecv_base = 0;    # 0x1D8000 enum_const_val
+var _vgsi_base = 0;    # 0x1EC000 gvar_initval
+var _venid_base = 0;   # 0x204000 var_enum_id
+var _var_cap = 0;
+# Grow the var family 2x: alloc 7 new regions, copy the used (cap) slots, repoint
+# all 7 bases (old regions leaked — cycc is short-lived). RAW count not needed; the
+# grow fires from SVCNT before the count is stored, on a one global-compare path.
+fn _var_grow(S): i64 {
+    var nc = _var_cap * 2;
+    if (nc > 1048576) {
+        syscall(SYS_WRITE, 2, "error: variable table exceeds 1048576 entries (too many globals+enums+arrays)\n", 78);
         syscall(SYS_EXIT, 1);
     }
+    var nn = alloc(nc * 8);
+    var ns = alloc(nc * 8);
+    var nt = alloc(nc * 8);
+    var ng = alloc(nc * 8);
+    var ne = alloc(nc * 8);
+    var ni = alloc(nc * 8);
+    var nv = alloc(nc * 8);
+    var used = _var_cap * 8;
+    var i = 0;
+    while (i < used) {
+        store64(nn + i, load64(_varn_base + i));
+        store64(ns + i, load64(_vars_base + i));
+        store64(nt + i, load64(_vart_base + i));
+        store64(ng + i, load64(_vgoff_base + i));
+        store64(ne + i, load64(_vecv_base + i));
+        store64(ni + i, load64(_vgsi_base + i));
+        store64(nv + i, load64(_venid_base + i));
+        i = i + 8;
+    }
+    _varn_base = nn;
+    _vars_base = ns;
+    _vart_base = nt;
+    _vgoff_base = ng;
+    _vecv_base = ne;
+    _vgsi_base = ni;
+    _venid_base = nv;
+    _var_cap = nc;
+    return 0;
+}
+fn SVCNT(S, v): i64 {
+    # v6.3.0: grow the var family 2x when the count would reach the cap, instead
+    # of erroring at the old fixed 8192. _var_cap==0 guards any pre-init call.
+    if (_var_cap != 0 && v >= _var_cap) { _var_grow(S); }
     S64(S + 0x18C110, v);
     return 0;
 }
@@ -48,8 +102,8 @@ fn SVCNT(S, v): i64 {
 # enum_name[] moved 0x214808 → 0x216008. var_enum_id[8192] stays
 # at 0x204000 (variant-keyed; the 8192 cap is the variant cap,
 # not the enum cap — different bucket).
-fn GVENUMID(S, vi): i64 { return L64(S + 0x204000 + vi * 8); }
-fn SVENUMID(S, vi, v): i64 { S64(S + 0x204000 + vi * 8, v); return 0; }
+fn GVENUMID(S, vi): i64 { return L64(_venid_base + vi * 8); }
+fn SVENUMID(S, vi, v): i64 { S64(_venid_base + vi * 8, v); return 0; }
 fn GENUMC(S): i64 { return L64(S + 0x214000); }
 fn SENUMC(S, v): i64 {
     if (v >= 1024) {
@@ -294,13 +348,13 @@ fn SFRA(S, fi, v): i64 { S64(S + 0x14A000 + fi * 8, v); return 0; }
 # Zero == not statically initialized (BSS-zero already correct, so
 # leave the runtime emit path in place — observable behavior is
 # identical, no need to fork).
-fn GVSI(S, vi): i64 { return L64(S + 0x1EC000 + vi * 8); }
+fn GVSI(S, vi): i64 { return L64(_vgsi_base + vi * 8); }
 # v5.11.64 — stable mirror of FIXUP's prefix-sum table. Each entry
 # is the byte offset of var vi within the var area (post m128
 # alignment padding for size > 8 vars). Written in lockstep with
 # the codebuf-fixup `pfx` scratch at 0x4D9D000+131072 (latter gets
 # clobbered once output writing passes 128 KB into output_buf).
-fn GVOFF(S, vi): i64 { return L64(S + 0x1B0000 + vi * 8); }
+fn GVOFF(S, vi): i64 { return L64(_vgoff_base + vi * 8); }
 
 # v5.11.64 — apply gvar static-init values to the var area at the
 # given output offset `bss_o`. Called by each EMIT_* emit fn after
@@ -318,7 +372,7 @@ fn _EMIT_GVAR_STATIC_INITS(S, O, bss_o): i64 {
     while (gvi < gvc) {
         var siv = GVSI(S, gvi);
         if (siv != 0) {
-            var vsize = L64(S + 0x12A000 + gvi * 8);
+            var vsize = L64(_vars_base + gvi * 8);
             if (vsize == 8) {
                 S64(O + bss_o + GVOFF(S, gvi), siv);
             }

@@ -285,10 +285,15 @@
 #                                        scans (seed pass + propagate
 #                                        fixpoint loop). v5.10.41.
 #
-# --- Variable tables ---
-#   0x11A000 var_noffs     [65536]       8192 variable name offsets
-#   0x12A000 var_sizes     [65536]       8192 variable sizes
-#   0x13A000 var_types     [65536]       8192 variable type IDs
+# --- Variable tables (v6.3.0: GROWABLE var-family; see util.cyr `_var_grow`) ---
+#   These offsets are now the INITIAL bases of 7 growable parallel tables, all
+#   vcnt-indexed: var_noffs/var_sizes/var_types (below) + gvar_byte_off (0x1B0000),
+#   enum_const_val (0x1D8000), gvar_initval (0x1EC000), var_enum_id (0x204000).
+#   SVCNT grows the whole family 2x past the old 8192 cap (the bases relocate off
+#   these offsets; the offsets remain the under-cap home, so heapmap stays valid).
+#   0x11A000 var_noffs     [65536]       8192 var name offsets (initial base)
+#   0x12A000 var_sizes     [65536]       8192 var sizes (initial base)
+#   0x13A000 var_types     [65536]       8192 var type IDs (initial base)
 #
 # --- String literal data ---
 #   0x21A000 str_data     [2097152]     2MB string literal bytes. Sized for the
@@ -695,6 +700,7 @@ _fnt_cap = 8192;
 # cap 3145728 (byte-identical under the old cap; EB grows + relocates off-heap
 # when cp nears it). The cx backend's own 0x54A000 codebuf is separate + fixed.
 _codebuf_base = S + 0x41A000;
+_varn_base = S + 0x11A000; _vars_base = S + 0x12A000; _vart_base = S + 0x13A000; _vgoff_base = S + 0x1B0000; _vecv_base = S + 0x1D8000; _vgsi_base = S + 0x1EC000; _venid_base = S + 0x204000; _var_cap = 8192;
 _codebuf_cap = 3145728;
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever

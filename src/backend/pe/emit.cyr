@@ -983,7 +983,7 @@ fn _pe_layout(S): i64 {
     var totvar = 0;
     var rvi = 0;
     while (rvi < vcnt) {
-        var vsize = L64(S + 0x12A000 + rvi * 8);
+        var vsize = L64(_vars_base + rvi * 8);
         # Mirror FIXUP's m128 padding (arrays > 8 bytes 16-align their VA).
         if (vsize > 8) {
             var va = 0x140000000 + _pe_rdata_rva + totvar;

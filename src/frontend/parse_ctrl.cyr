@@ -269,8 +269,8 @@ fn PARSE_FOR(S): i64 {
                 # rax has the collection (vec pointer)
                 # Store collection in hidden var
                 var ficol = GVCNT(S);
-                S64(S + 0x11A000 + ficol * 8, 0);
-                S64(S + 0x12A000 + ficol * 8, 8);
+                S64(_varn_base + ficol * 8, 0);
+                S64(_vars_base + ficol * 8, 8);
                 SVCNT(S, ficol + 1);
                 EVSTORE(S, ficol);
                 # Get length: call vec_len(collection)
@@ -293,8 +293,8 @@ fn PARSE_FOR(S): i64 {
                 ECALLCLEAN(S, 1);
                 # Store length in hidden var
                 var filen = GVCNT(S);
-                S64(S + 0x11A000 + filen * 8, 0);
-                S64(S + 0x12A000 + filen * 8, 8);
+                S64(_varn_base + filen * 8, 0);
+                S64(_vars_base + filen * 8, 8);
                 SVCNT(S, filen + 1);
                 EVSTORE(S, filen);
                 # Index var (starts at 0)
@@ -398,8 +398,8 @@ fn PARSE_FOR(S): i64 {
             # End value into hidden global
             PCMPE(S);
             var fiend = GVCNT(S);
-            S64(S + 0x11A000 + fiend * 8, 0);
-            S64(S + 0x12A000 + fiend * 8, 8);
+            S64(_varn_base + fiend * 8, 0);
+            S64(_vars_base + fiend * 8, 8);
             SVCNT(S, fiend + 1);
             EVSTORE(S, fiend);
             # Loop setup

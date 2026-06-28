@@ -193,6 +193,47 @@ fn _compile_run_get_exit(fixture_path): i64 {
     return ec;
 }
 
+# v6.3.0: the var-family is growable (was fixed-capped at 8192). cycc itself is
+# well under 8192 vars, so self-host + the corpus never exercise the grow — this
+# gate does: it generates 8300 distinct globals (forces vcnt past the old cap →
+# _var_grow fires) and reads the last one back through the grown table. Pre-v6.3.0
+# this errored "variable table full (8192)"; a broken grow miscompiles/crashes it.
+fn _var_grow_gate(): i64 {
+    var label = "cyrius compiles + RUNS a >8192-var program (8300 globals) — the var-family grows past the old fixed 8192 cap (v6.3.0 _var_grow)";
+
+    var sb = str_builder_new();
+    var nb[24];
+    var i = 0;
+    while (i < 8300) {
+        str_builder_add_cstr(sb, "var g");
+        fmt_int_buf(i, &nb);
+        str_builder_add_cstr(sb, &nb);
+        str_builder_add_cstr(sb, " = ");
+        fmt_int_buf(i, &nb);
+        str_builder_add_cstr(sb, &nb);
+        str_builder_add_cstr(sb, ";\n");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "fn main(): i64 { return g8299 - 8299; }\n");
+
+    var fx = _tmp_path("audit_vargrow_");
+    _write_file(fx, str_data(str_builder_build(sb)));
+    var ec = _compile_run_get_exit(fx);
+    sys_unlink(fx);
+
+    var fail = 0;
+    if (ec != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": >8192-var program exited "); print_num(ec); println(" (expected 0 — _var_grow broken or cap still fixed)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": 8300-global program compiles + runs (g8299 read back through the grown var-family)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
     var src_cap = 2000000;
     var src_buf = alloc(src_cap);
