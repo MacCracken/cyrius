@@ -6,6 +6,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.4] — 2026-06-28
+
+**v6.3.4 — bare-metal deliverable #7: kernel-freestanding `lib/tls_native` link + in-kernel handshake
+smoke.** Completes the last of the three open bare-metal *design* deliverables (#5/#6 shipped v6.3.3).
+Proves the native TLS stack — the libssl-free in-kernel-TLS capability the AGNOS kernel needs, which the
+libssl wrapper structurally cannot provide — links into a freestanding kernel object AND completes a full
+TLS 1.3 handshake using ONLY the pluggable hooks (no socket / getrandom / clock syscalls on the TLS
+path). Test/gate-only → **cycc codegen byte-identical**. The *live* in-kernel boot stays AGNOS-consumer-gated.
+
+### Premise-check (the roadmap undersold #7)
+- The freestanding **infrastructure already existed**: the transport vtable (read/write/now hooks, v6.2.4)
+  + the entropy hook (v6.2.28) are the documented "freestanding-TLS / bare-metal kernel hook," and
+  `tls_native` already **compiles under the bare-metal kernel target**. The gap was the PROOF — every
+  existing handshake e2e drives client↔server over `sys_socketpair` + `sys_fork` + `sys_getrandom`, none
+  over the hooks alone. Deliverable #4 (the "forbidden-module check" the arc acceptance references) was
+  **never built** — flagged as a separate finding, out of the #7 row's scope.
+
+### Added — freestanding handshake smoke
+- **`tests/tcyr/tls_native_freestanding.tcyr`** — a full TLS 1.3 client↔server handshake + bidirectional
+  app-data driven entirely over an in-memory `MAP_SHARED` loopback (transport vtable) + a deterministic
+  entropy hook + a clock hook: **zero socket / getrandom / clock syscalls on the TLS path**. The two
+  endpoints run in separate address spaces (fork → isolated crypto state — sigil's racing scratch
+  (HKDF/AES-NI/SHA-NI banks, lazy table + cpuid-probe init) is not built for two concurrent in-memory
+  endpoints); the channel is an mmap page the vtable `memcpy`s, not a kernel socket. Lock-step SPSC
+  streams synchronized with the v6.3.3 #6 mfence/dmb. Verified on x86_64 + real aarch64 (pi); 5/5 no flakiness.
+- **`tests/fixtures/freestanding_tls/kernel_link.cyr`** + **`_tls_freestanding_link_gate`**
+  (`programs/checks/platform_efi.cyr`) — compiles a `kernel;` program that pulls the whole native stack
+  (record layer / key schedule / AEAD / x25519 / ed25519) into a bare-metal kernel object and asserts a
+  valid freestanding ELF (~1.2 MB → the crypto actually linked; no libssl/PT_INTERP). check.sh **102 → 103**.
+
+### Findings (filed, not fixed here)
+- **Bare-metal deliverable #4 (the "forbidden-module check") was never built** —
+  `issues/2026-06-28-bare-metal-forbidden-module-check-unbuilt.md` (P3). The arc acceptance references
+  it ("a kernel object links tls_native freestanding AND passes the forbidden-module check"), but no
+  kernel-mode module restriction exists in the compiler. It didn't bite #7 (tls_native is self-contained
+  + hook-abstracted), but it's a DX guard rail future bare-metal consumers want. So #7 completes the
+  three OPEN design deliverables (#5/#6/#7); #4 is the one remaining bare-metal gap.
+- **`tls_native_get_version` returns 0 on a connected 1.3 SERVER ctx** (the 1.2 server + the 1.3 client
+  track it correctly) — `issues/2026-06-28-tls13-server-get-version-zero.md` (P3 cosmetic). The smoke is
+  the first test to check the server's post-1.3 version; it asserts the negotiated 1.3-only AEAD suite
+  (`get_cipher == 0x1302`) instead.
+
+### Verified
+- check.sh **103/103** + qemu boot gate green; the handshake tcyr passes in the testsuite walk on x86_64
+  AND real pi (aarch64). cycc codegen **byte-identical** (test/fixture/gate-only — no `src/` change) →
+  self-host + seed→cybs→cycc derivation trivially hold; bench unchanged (no codegen delta). ecb+cass+pi
+  SELFHOST_OK.
+
+### Carried (not folded — #7 packed the slot)
+- The **syscall-write byte-length gate (DOTALL)** rider stays on the bug-bandwidth line — a separate
+  standing-audit item; #7's handshake + link work is a full slot. (The load-base-settability rider
+  shipped in v6.3.3 #5.)
+
 ## [6.3.3] — 2026-06-28
 
 **v6.3.3 — bare-metal deliverables #5 (`[sections]` settable kernel load base) + #6 (inline-asm

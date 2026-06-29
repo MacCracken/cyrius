@@ -268,6 +268,53 @@ fn _sections_base_override_gate(): i64 {
     return 0;
 }
 
+# v6.3.4 #7: lib/tls_native links FREESTANDING into a bare-metal kernel object.
+# Compiles tests/fixtures/freestanding_tls/kernel_link.cyr (a `kernel;` program that
+# references the TLS 1.3 handshake API + the freestanding hooks so the full native
+# stack — record layer / key schedule / AEAD / x25519 / ed25519 — is reachable) and
+# asserts it produces a valid freestanding kernel ELF. The native stack is
+# libssl-free (no dlopen / no ld.so / no glibc TCB), which is the whole reason
+# in-kernel TLS is structurally possible where the libssl wrapper isn't. The
+# RUNNING proof (a full handshake over the hooks, zero socket/getrandom syscalls)
+# is tests/tcyr/tls_native_freestanding.tcyr in the testsuite walk.
+fn _tls_freestanding_link_gate(): i64 {
+    var label = "v6.3.4 #7: lib/tls_native links freestanding into a bare-metal kernel object (no libssl / dlopen / ld.so)";
+    var src_path = _root_path("tests/fixtures/freestanding_tls/kernel_link.cyr");
+    var bin_path = _tmp_path("audit_tlsfree_bin_");
+    var rc = _self_host_pipe(src_path, CC_PATH, bin_path);
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": tls_native kernel-link compile (rc="); print_num(rc); println(")");
+        _check(label, 1);
+        return 1;
+    }
+    var cap = 4194304;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) { _check(label, 1); return 1; }
+    if (load8(buf) != 0x7F || load8(buf + 1) != 0x45 || load8(buf + 2) != 0x4C || load8(buf + 3) != 0x46) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": kernel-link output is not an ELF");
+        _check(label, 1);
+        return 1;
+    }
+    # The whole native TLS 1.3 + sigil crypto stack is ~1.2 MB; require >= 600 KB so
+    # a regression that drops the crypto/handshake link (DCE'd to a stub) fails loud.
+    if (n < 600000) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": kernel ELF only "); print_num(n); println(" bytes — the TLS stack did not link");
+        _check(label, 1);
+        return 1;
+    }
+    _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+    _p(": tls_native (record/keysched/AEAD/x25519/ed25519) links into a freestanding kernel ELF (");
+    print_num(n); println(" bytes, no libssl/PT_INTERP)");
+    _check(label, 0);
+    return 0;
+}
+
 fn _efi_emit_gate(): i64 {
     var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
     var cap = 262144;

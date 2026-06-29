@@ -1,0 +1,23 @@
+# Freestanding-TLS link fixture (v6.3.4 #7). A `kernel;` program that pulls the
+# whole native TLS 1.3 stack + sigil crypto into a bare-metal kernel object,
+# proving lib/tls_native links FREESTANDING — no libssl, no dlopen, no ld.so/glibc
+# TCB (which the libssl wrapper structurally requires). Compiled (not run) by
+# programs/checks/platform_efi.cyr::_tls_freestanding_link_gate under the kernel
+# target. References the handshake API + the v6.2.x freestanding hooks so the full
+# TLS path (record layer, key schedule, AEAD, x25519, ed25519) is reachable → linked.
+kernel;
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/tls_native.cyr"
+
+fn _k_tls_entry(): i64 {
+    tls_native_set_transport(0, 0, 0);
+    tls_native_set_entropy(0);
+    var c = tls_native_new_client("h", 1);
+    var s = tls_native_new_server(0, 0, 0, 0);
+    return tls_native_connect(c, 0 - 1) + tls_native_accept(s, 0 - 1);
+}
+
+var _r = _k_tls_entry();
+syscall(60, _r & 0xFF);

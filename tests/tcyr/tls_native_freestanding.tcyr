@@ -1,0 +1,165 @@
+# tls_native_freestanding.tcyr — v6.3.4 bare-metal #7
+#
+# A full TLS 1.3 client <-> server handshake driven ENTIRELY over the pluggable
+# transport vtable (v6.2.4) + entropy hook (v6.2.28) + clock hook — NO
+# sys_socketpair, NO sys_getrandom, NO sys_read/sys_write/clock_gettime on the TLS
+# path. This is the freestanding / in-kernel-TLS capability the libssl wrapper
+# structurally cannot provide: a kernel installs its own transport (its net driver)
+# + CSPRNG via these hooks and the native stack runs with zero host-OS coupling.
+#
+# The two endpoints run in separate address spaces (fork) so each keeps its own
+# crypto state — the same isolation the socketpair e2e tests rely on, EXCEPT the
+# channel here is an in-memory MAP_SHARED region the transport vtable reads/writes
+# (memcpy), not a kernel socket. So the only thing crossing a syscall boundary is
+# the harness (fork + the one mmap that sets up the shared page + waitpid); the TLS
+# code path itself issues zero network / entropy / clock syscalls. The full 1.3
+# handshake is strictly lock-step, so the directional byte streams are
+# single-producer/single-consumer and need only a memory fence — the v6.3.3 #6
+# mfence/dmb — for publish/acquire visibility across the shared page. cyrius
+# re-reads memory every loop iteration (no register caching) so the blocking-read
+# spin observes the peer's length bump.
+
+include "lib/tls_native.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/assert.cyr"
+
+# --- publish / acquire fence (the v6.3.3 #6 primitives; arch-conditional) ---
+fn _lb_fence(): i64 {
+#ifdef CYRIUS_ARCH_AARCH64
+    asm { dmb }
+#endif
+#ifndef CYRIUS_ARCH_AARCH64
+    asm { mfence }
+#endif
+    return 0;
+}
+
+# --- shared in-memory loopback (mmap MAP_SHARED, inherited across fork; NO socket) ---
+# Layout in _shm: [0]=c2s_len  [8]=s2c_len  [16 .. 16+CAP)=c2s  [16+CAP .. )=s2c.
+# c2s = client->server stream, s2c = server->client. handle 1 = client (parent),
+# handle 2 = server (child). The read cursors are per-process (private after fork).
+var LB_CAP = 65536;
+var _shm = 0;
+var _c2s_rd = 0;
+var _s2c_rd = 0;
+
+fn _lb_write(handle, buf, n): i64 {
+    if (handle == 1) {
+        var len = load64(_shm + 0);
+        memcpy(_shm + 16 + len, buf, n);
+        _lb_fence();
+        store64(_shm + 0, len + n);
+    } else {
+        var len2 = load64(_shm + 8);
+        memcpy(_shm + 16 + LB_CAP + len2, buf, n);
+        _lb_fence();
+        store64(_shm + 8, len2 + n);
+    }
+    return n;
+}
+
+# blocking read: spin until >=1 byte (lock-step → never deadlocks), fence (acquire),
+# then copy up to n bytes. Matches the sys_read contract _tn_sock_read_full expects.
+fn _lb_read(handle, buf, n): i64 {
+    if (handle == 1) {                          # client reads s2c
+        while (load64(_shm + 8) <= _s2c_rd) { }
+        _lb_fence();
+        var avail = load64(_shm + 8) - _s2c_rd;
+        var take = n; if (take > avail) { take = avail; }
+        memcpy(buf, _shm + 16 + LB_CAP + _s2c_rd, take);
+        _s2c_rd = _s2c_rd + take;
+        return take;
+    }
+    while (load64(_shm + 0) <= _c2s_rd) { }      # server reads c2s
+    _lb_fence();
+    var avail2 = load64(_shm + 0) - _c2s_rd;
+    var take2 = n; if (take2 > avail2) { take2 = avail2; }
+    memcpy(buf, _shm + 16 + _c2s_rd, take2);
+    _c2s_rd = _c2s_rd + take2;
+    return take2;
+}
+
+# fixed wall-clock (NO clock syscall). Cert validity isn't checked under
+# TLS_VERIFY_NONE, but provide it so the now-hook is the only clock source.
+fn _lb_now(): i64 { return 1781000000; }   # mid-2026, after the test cert notBefore
+
+# --- deterministic entropy hook (NO getrandom) ---
+# SplitMix64. Generates the client/server randoms + X25519 ephemeral privates. A
+# real kernel installs a CSPRNG here; the point proven is that the HOOK is the only
+# entropy source on the TLS path. The child reseeds after fork so the two endpoints
+# get distinct randoms (independent ECDHE shares).
+var _rng = 0x243F6A8885A308D3;
+fn _lb_rand(buf, n): i64 {
+    var i = 0;
+    while (i < n) {
+        _rng = _rng + 0x9E3779B97F4A7C15;
+        var z = _rng;
+        z = (z ^ ((z >> 30) & 0x3FFFFFFFF)) * 0xBF58476D1CE4E5B9;
+        z = (z ^ ((z >> 27) & 0x1FFFFFFFFFF)) * 0x94D049BB133111EB;
+        z = z ^ ((z >> 31) & 0x1FFFFFFFF);
+        var j = 0;
+        while (j < 8 && i < n) {
+            store8(buf + i, (z >> (j * 8)) & 0xFF);
+            i = i + 1; j = j + 1;
+        }
+    }
+    return n;
+}
+
+# Ed25519 self-signed test cert (320 B) + PKCS#8 key (48 B) — from tls_native_alpn.
+var fs_cert = hex_decode("3082013c3081efa00302010202146f270712a3903ffd2c16beb02b1ddac6d8ec2e31300506032b657030143112301006035504030c093132372e302e302e31301e170d3236303631313034333035395a170d3236303631323034333035395a30143112301006035504030c093132372e302e302e31302a300506032b6570032100b83296da752a714efff5d1ac23384bd55e1d3e7a09b52d9f5aa3b248cb52388fa3533051301d0603551d0e04160414da1359a574f0e44c08a2c4a0953feb245e258069301f0603551d23041830168014da1359a574f0e44c08a2c4a0953feb245e258069300f0603551d130101ff040530030101ff300506032b6570034100e37e115584d6d72ae3adf09fff610f2ee2771691b853b5e3be1558e3738cf032fa239b682be3faf4b4d2ef30e31da3729de0913837f93ef3b5cc305c35c3380a", 640);
+var fs_key = hex_decode("302e020100300506032b657004220420ea5da8171db67e4e169e246d8f7223ee88110129914478f8b49ffc898780df10", 96);
+
+test_group("TLS 1.3 freestanding handshake over hooks (no socket / no getrandom / no clock)");
+
+# shared loopback page (MAP_SHARED|MAP_ANONYMOUS, prot RW) — inherited by the fork.
+_shm = syscall(9, 0, 16 + 2 * LB_CAP, 3, 0x21, 0 - 1, 0);
+assert(_shm > 65536, "mmap MAP_SHARED loopback region");
+assert_eq(tls_native_set_transport(&_lb_read, &_lb_write, &_lb_now), TLS_OK, "install in-memory transport (read/write/now hooks)");
+assert_eq(tls_native_set_entropy(&_lb_rand), TLS_OK, "install deterministic entropy hook");
+
+var pid = sys_fork();
+if (pid == 0) {
+    # CHILD: server — separate address space → isolated crypto state.
+    _rng = 0x9E3779B97F4A7C15;                  # reseed so server randoms differ from client's
+    var srv = tls_native_new_server(fs_cert, 320, fs_key, 48);
+    tls_native_server_load_creds(srv);
+    if (tls_native_accept(srv, 2) != TLS_OK) { sys_exit(20); }
+    if (tls_native_get_state(srv) != TLS_STATE_CONNECTED) { sys_exit(21); }
+    # The client asserts get_version==1.3 (authoritative). The 1.3 server-side ctx
+    # leaves get_version at 0 (unlike the 1.2 server, which tracks it) — see
+    # issues/2026-06-28-tls13-server-get-version-zero.md. Assert the negotiated 1.3
+    # AEAD suite instead: AES-256-GCM-SHA384 (0x1302) is TLS-1.3-only, so its
+    # selection proves a 1.3 handshake reached key agreement.
+    if (tls_native_get_cipher(srv) != TLS_AES_256_GCM_SHA384) { sys_exit(22); }
+    var sb[64];
+    if (tls_native_read(srv, &sb, 64) != 17) { sys_exit(23); }
+    if (_tn_ct_eq(&sb, "ping-freestanding", 17) != 1) { sys_exit(24); }
+    if (tls_native_write(srv, "pong-freestanding", 17) != 17) { sys_exit(25); }
+    sys_exit(0);
+}
+
+# PARENT: client, over handle 1.
+var cli = tls_native_new_client("localhost", 9);
+tls_native_set_verify(cli, TLS_VERIFY_NONE);    # self-signed test cert, no trust anchor
+assert_eq(tls_native_connect(cli, 1), TLS_OK, "client connect() — full 1.3 handshake over the mmap loopback → TLS_OK");
+assert_eq(tls_native_get_state(cli), TLS_STATE_CONNECTED, "client CONNECTED");
+assert_eq(tls_native_get_version(cli), TLS_VERSION_1_3, "negotiated TLS 1.3");
+assert_eq(tls_native_get_cipher(cli), TLS_AES_256_GCM_SHA384, "negotiated AES-256-GCM-SHA384 (1.3 AEAD over the hooks)");
+assert_eq(tls_native_write(cli, "ping-freestanding", 17), 17, "client writes app data over the loopback");
+var crb[64];
+assert_eq(tls_native_read(cli, &crb, 64), 17, "client reads the server reply (17 B)");
+assert_eq(_tn_ct_eq(&crb, "pong-freestanding", 17), 1, "server reply decrypts on the client");
+
+var stbuf[4];
+sys_waitpid(pid, &stbuf, 0);
+var code = (load64(&stbuf) >> 8) & 0xFF;
+assert_eq(code, 0, "server child: accept()+handshake+app-data over the loopback succeeded (exit 0)");
+
+# restore the default transport/entropy — the corpus shares these module globals.
+tls_native_set_transport(0, 0, 0);
+tls_native_set_entropy(0);
+
+var r = assert_summary();

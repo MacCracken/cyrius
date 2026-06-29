@@ -1,0 +1,45 @@
+# Bare-metal deliverable #4 (forbidden-module check) was never built
+
+**Filed:** 2026-06-28 (surfaced during the v6.3.4 #7 premise-check).
+**Severity:** P3 (DX / safety-rail; no consumer is blocked — agnos builds its
+kernel today without it).
+
+## What
+
+The v6.x bare-metal-target arc (roadmap_6.md § "Bare-metal target formalization")
+lists **seven** deliverables. Deliverable **#4** is:
+
+> *Kernel-mode stdlib subset (forbidden-module check errors when bare-metal code
+> pulls host-OS modules).*
+
+and the arc **acceptance** says "forbidden-module check errors clearly when
+bare-metal code pulls host-OS modules" + (for #7) "a kernel object links
+tls_native freestanding **and passes the forbidden-module check**."
+
+The v6.3.4 #7 premise-check found **no such check exists** in the compiler. A
+`--target=<arch>-bare-metal-elf` build sets `CYRIUS_KERNEL` + `CYRIUS_ELF64_KERNEL`
+(+ now `CYRIUS_KERNEL_BASE`) and does NOT restrict which `lib/*.cyr` modules an
+`include` can pull. So a kernel build that pulls a host-OS-only module (e.g.
+`lib/fs.cyr`, a `sys_open`-on-`/proc` path) compiles silently and faults only at
+runtime in the kernel. The roadmap claimed deliverables #1–#3 shipped (.27/.28)
+and pinned the OPEN design deliverables as #5/#6/#7 — #4 was never explicitly
+marked shipped *or* pinned, so it fell through.
+
+## Why it didn't bite
+
+`tls_native` (the #7 target) happens to be self-contained crypto/state-machine
+code; its host-OS coupling (sockets/entropy/clock) is already abstracted behind
+the v6.2.x hooks, so it links freestanding cleanly without the check. The check is
+a *guard rail* for future bare-metal consumers, not a blocker for the current
+agnos kernel or for #7.
+
+## Fix (when picked up)
+
+A compile-time forbidden-module check under `CYRIUS_KERNEL`: maintain a small
+deny-list of host-OS-only stdlib modules (or, better, mark each `lib/*.cyr` with
+a `#kernel_ok` / `#host_only` annotation) and have the preprocessor/`include`
+resolver error with a clear message when a kernel build pulls a `#host_only`
+module. Then the #7 fixture (`tests/fixtures/freestanding_tls/kernel_link.cyr`)
+becomes a positive case (it passes the check) and a negative fixture (a kernel
+program that pulls `lib/fs.cyr`) becomes the gate. This completes the bare-metal
+arc's stated acceptance.
