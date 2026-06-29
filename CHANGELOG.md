@@ -6,6 +6,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.5] — 2026-06-28
+
+**v6.3.5 — Phase-0 language substrate: order-independent forward-call ABI (CO-01) + a revived
+token-replay monomorphization substrate (AR-01, gated proof).** Lands the two prerequisites the
+v6.3.x generics plan *assumed existed* (filed at the 2026-06-10 deep-dive review). CO-01 makes call
+ABI metadata order-independent the way structs already are; AR-01 proves the inline value-replay
+substrate generics will build on is alive and byte-correct cross-arch — behind an opt-in flag, with
+**zero default codegen change**. Default self-host byte-identical on x86 + aarch64 (pi) + macOS (ecb)
++ Windows (cass).
+
+### CO-01 — forward calls now get the correct ABI (was: silent mask-0 miscompile)
+- A call lexically BEFORE its callee's definition used to auto-register the callee with mask 0 —
+  silently dropping `: Str` auto-coercion, SIMD-arg routing, and the struct-return retptr ABI. A new
+  **pass-1 fn-signature prescan** (`_prescan_fn_sig`, wired into all 7 forks' pass-1 in place of the
+  old inline fn-skip) registers every top-level fn AND records its param masks / count / variadic flag
+  / struct-or-scalar return BEFORE pass-2 emits any call. Forward calls now resolve the same ABI a
+  backward call does. Structs / enums / globals were already pass-1 order-independent; this extends the
+  same treatment to fn signatures.
+- Shared classifiers **`_classify_param_type` / `_classify_return_type`** extracted from PARSE_FN_DEF
+  (each a logic-preserving refactor, differential-verified byte-identical) keep the prescan and the
+  pass-2 definition in lockstep. The prescan extracts metadata on a throwaway cursor then resets and
+  replays the verbatim pre-CO-01 skip, so pass-1's net token-cursor advance is unchanged — the only new
+  effect is the early registration + masks.
+- Covers calls to `: Str` / cstring / Result / Option / Tagged / SIMD-param fns and to `: Struct`-
+  returning fns with an explicit local annotation (`var p: T = mk()`). Like structs / globals, the
+  prescan reaches declarations before the first top-level statement (pass 1 stops there) — the standard
+  decls-before-statements order. GOTCHA fixed mid-flight: `_prescan_params` must consume the closing
+  `)` or `: Struct` returns never classify and the struct-return mask stays 0 (→ segfault).
+- **`tests/tcyr/forward_call_abi.tcyr`** — every callee called-before-defined; passes on the new cycc,
+  fails (garbage length + struct-return segfault) on the old one.
+
+### AR-01 — token-replay monomorphization substrate revived (gated proof, NO default change)
+- The emit-time replay path (PARSE_FNCALL `GFINL != 0` branch — eval args → store to param slots →
+  re-seat the cursor to the body → re-emit → patch returns) was always INTACT; only the body-token
+  CAPTURE was gated off (`_INLINE_OK = 0` per backend — x86 disabled for code SIZE at v1.11.3, aarch64
+  for a metadata overlap since relocated). The roadmap's fear the substrate was un-revivable was wrong.
+- New opt-in **`_MONOMORPH_OK`** flag (`util.cyr`, default 0; `CYRIUS_MONOMORPH=1` sets it in all 7
+  drivers) ORs into the two capture gates. Flag OFF → byte-identical codegen (the per-backend
+  `_INLINE_OK = 0` default-off is untouched). Flag ON → capture fires and the intact replay emits
+  per-call-site value-substituted code.
+- **`_monomorph_substrate_gate`** (`programs/checks/`, check.sh **103 → 104**) compiles
+  `tests/fixtures/monomorph/inline_proof.cyr` with and without the flag: both exit 42 (BYTE-CORRECT)
+  and the binaries DIFFER (ACTIVE — a no-op flag can't pass silently). Confirmed byte-correct on **real
+  pi aarch64** too — the old aarch64 capture corruption is gone (tables long since relocated to the
+  S+0x9EA000 fn-table family).
+- Deferred to **v6.3.7**: TYPE substitution (generics bind the type parameter + emit per-instance),
+  forward-ref instantiation, and generalizing past the inliner's ≤2-param / ≤16-token ceiling.
+
+### Findings (filed, not fixed here)
+- **`var p = mk()` (inferred local type from a struct-returning call) segfaults** — even with the
+  callee defined first, so it is a pre-existing var-decl / retptr defect, NOT a forward-call issue
+  (`issues/2026-06-28-inferred-struct-local-from-call-segfaults.md`, P2). The explicit form
+  `var p: T = mk()` works (and is exactly what CO-01's struct-return forward case now fixes).
+  Workaround: annotate the local.
+
+### Verified
+- Self-host fixpoint byte-identical; **seed → cybs → cycc** derivation green (cybs compiles the prescan
+  + classifiers + flag/gate — kept small, no tail calls); check.sh **104/104**; tcyr **195/195** (incl.
+  the new forward-call test). Every behavior change is differential-verified byte-identical where it
+  must be — the classifier refactors reproduce the v6.3.4 compiler's output exactly, and the AR-01
+  compiler emits the same self-host binary as the pre-AR-01 one with the flag off. Cross-OS self-host
+  on REAL hardware — **ecb (macOS) + cass (Windows) + pi (aarch64)** all SELFHOST_OK; local
+  qemu-aarch64 / wine-PE / cxvm proxies green.
+- Bench: self_compile **509 ms** (flat — was ~506 ms, inside the 500–549 band); cycc **1,077,136 →
+  1,079,440 B** (+2,304: the two shared classifiers + the three prescan helpers + the monomorph
+  flag/gate — a feature window, growth-tax by default).
+
 ## [6.3.4] — 2026-06-28
 
 **v6.3.4 — bare-metal deliverable #7: kernel-freestanding `lib/tls_native` link + in-kernel handshake
