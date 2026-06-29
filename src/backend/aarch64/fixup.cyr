@@ -15,6 +15,17 @@
 # ARM64 overrides kmode; the 16-byte kernel preamble stays a FIXUP-local
 # modifier (added to dbase there, not part of the entry base). Byte-identical
 # to the pre-v6.0.89 inline ladder.
+# v6.3.3 #5: single source of truth for the kernel ELF load/link base (aarch64).
+# Default 0x40000000 (the canonical AArch64 kernel base); a `[sections] base = "0x.."`
+# manifest key (or CYRIUS_KERNEL_BASE env) overrides via state cell 0x18FCE8. Mirrors
+# the x86 accessor so _entry_base + EMITELF_KERNEL read ONE base — no partial-edit
+# garble. Byte-identical when the cell is 0. See issues/2026-06-19-kernel-load-base-settable.md.
+fn _kernel_load_base(S): i64 {
+    var b = L64(S + 0x18FCE8);
+    if (b != 0) { return b; }
+    return 0x40000000;
+}
+
 fn _entry_base(S): i64 {
     if (_emit_fmt(S) == 2) { return 0x100004000; }   # Mach-O ARM64: TEXT_BASE + 16384
     # --pie: ET_DYN base=0 (see the FIXUP PIE branch); match the base-0 entry so
@@ -23,7 +34,7 @@ fn _entry_base(S): i64 {
     # same landmine fixed on x86. aarch64 kernel-PIE stays the consumer-gated
     # follow-on; this is consistency only. CHANGELOG [6.2.45].
     if (_pie_mode == 1) { return 0x78; }
-    if (L64(S + 0x18FCA0) == 1) { return 0x40000078; }   # kernel
+    if (L64(S + 0x18FCA0) == 1) { return _kernel_load_base(S) + 0x78; }   # kernel
     return 0x400078;
 }
 
@@ -776,7 +787,7 @@ fn EMITELF_KERNEL(S): i64 {
     var filesz = 120 + preamble_sz + cp + totvar + spos;
     filesz = (filesz + 7) & (0 - 8);
     var memsz = filesz + 65536;
-    var base = 0x40000000;
+    var base = _kernel_load_base(S);   # v6.3.3 #5: settable load base (default 0x40000000)
     var entry = base + 120;
 
     # Section layout (loaded segment unchanged):

@@ -56,6 +56,7 @@
 #   0x18FCC0  scope_depth   [8]
 #   0x18FCC8  str_pos       [8]           string write position (moved from 0x70000 in v4.6.2)
 #   0x18FCD0  data_size     [8]           total variable data bytes (moved from 0x70008 in v4.6.2)
+#   0x18FCE8  kernel_load_base [8]        v6.3.3 #5: settable kernel ELF base (0 = built-in default)
 #   0x18FEC8  current_module [8]
 #   0x18FED0  pub_flags     [256]
 #   0x18FFD0  use_from      [512]         64 use alias source names
@@ -1087,6 +1088,15 @@ if (_kern_env != 0) {
     if (load8(_kern_env) == 49 && load8(_kern_env + 1) == 0) {
         S64(S + 0x18FCA0, 1);
     }
+}
+# v6.3.3 #5: CYRIUS_KERNEL_BASE=0x<hex> sets the kernel load/link base — the
+# `[sections] base` manifest key flows in through this env (cbt appends it). Default
+# unset -> cell 0x18FCE8 stays 0 -> _kernel_load_base() returns the built-in 0x100000
+# -> cycc byte-identical. Resolves issues/2026-06-19-kernel-load-base-settable.md.
+var _kbase_env = _read_env("CYRIUS_KERNEL_BASE");
+if (_kbase_env != 0) {
+    var _kb = _parse_hex_env(_kbase_env);
+    if (_kb != 0) { S64(S + 0x18FCE8, _kb); }
 }
 S64(S + 0x18FCB8, 1);       # cur_line (starts at 1)
 S64(S + 0x18FCC0, 0);       # scope_depth

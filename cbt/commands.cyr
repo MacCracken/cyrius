@@ -79,11 +79,26 @@ fn cmd_build(source, output): i64 {
         # drift between this line and the real e_entry fails D7. A non-canonical
         # load base (env-settable) is deferred — 1 MiB / 0x40000000 are the
         # canonical multiboot/AArch64 bases and no consumer needs another yet.
+        # v6.3.3 #5: the base may be overridden by `[sections] base` — print the REAL
+        # entry/base (canonical literal when unset) so the D6 report never drifts from
+        # the emitted e_entry. entry = base + 0xA8 (x86 ELF64) / base + 0x78 (aarch64).
         if (_baremetal_target == 1) {
             if (_baremetal_aa == 1) {
-                println("  kernel: entry 0x40000078, load base 0x40000000 (aarch64 ELF64)");
+                var ab = _section_base_val;
+                if (ab == 0) { ab = 0x40000000; }
+                sys_write(STDOUT_FD, "  kernel: entry ", 16);
+                fmt_hex0x(ab + 0x78);
+                sys_write(STDOUT_FD, ", load base ", 12);
+                fmt_hex0x(ab);
+                sys_write(STDOUT_FD, " (aarch64 ELF64)\n", 17);
             } else {
-                println("  kernel: entry 0x1000a8, load base 0x100000 (x86_64 ELF64 multiboot2)");
+                var xb = _section_base_val;
+                if (xb == 0) { xb = 0x100000; }
+                sys_write(STDOUT_FD, "  kernel: entry ", 16);
+                fmt_hex0x(xb + 0xA8);
+                sys_write(STDOUT_FD, ", load base ", 12);
+                fmt_hex0x(xb);
+                sys_write(STDOUT_FD, " (x86_64 ELF64 multiboot2)\n", 27);
             }
         }
     } else {

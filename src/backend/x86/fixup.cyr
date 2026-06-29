@@ -18,6 +18,20 @@
 # pre-v6.0.89 inline ladder; this value feeds EVERY absolute fixup
 # (dbase = entry + acp), so a wrong result shifts all loads into the wrong
 # section ("garbled output post-boot", per the FIXUP warning).
+# v6.3.3 #5: the SINGLE source of truth for the kernel ELF load/link base (x86).
+# Default 0x100000 (1 MiB — the multiboot / agnos base); a `[sections] base = "0x.."`
+# manifest key (or CYRIUS_KERNEL_BASE env) overrides via state cell 0x18FCE8. This
+# de-dups the literal that was repeated across _entry_base + EMITELF_KERNEL +
+# EMITELF64_KERNEL — the issue's warned hazard was a partial edit leaving an
+# emitter's p_vaddr disagreeing with the fixups' base (boots to garbage). Reading
+# one accessor everywhere makes that impossible. Byte-identical when the cell is 0.
+# Resolves issues/2026-06-19-kernel-load-base-settable.md.
+fn _kernel_load_base(S): i64 {
+    var b = L64(S + 0x18FCE8);
+    if (b != 0) { return b; }
+    return 0x100000;
+}
+
 fn _entry_base(S): i64 {
     var fmt = _emit_fmt(S);
     if (fmt == 1) { return 0x100001000; }   # Mach-O x86_64: TEXT_BASE + 4096
@@ -31,8 +45,8 @@ fn _entry_base(S): i64 {
         # identical) — but removes the landmine for any future absolute fixup
         # added under --pie. See CHANGELOG [6.2.45].
         if (_pie_mode == 1) { return 120 + 48; }   # 0xA8 = hdrsz(120) + mb_sz(48)
-        if (_TARGET_ELF64_KERNEL == 1) { return 0x100000 + 120 + 48; }
-        return 0x100000 + 84 + 12;
+        if (_TARGET_ELF64_KERNEL == 1) { return _kernel_load_base(S) + 120 + 48; }
+        return _kernel_load_base(S) + 84 + 12;
     }
     if (kmode == 2) { return 232; }
     if (_pie_mode == 1) { return 0x78; }   # userland --pie: EMITELF_USER base-0 entry
@@ -718,8 +732,9 @@ fn EMITELF_KERNEL(S): i64 {
     var filesz = hdrsz + mb_sz + cp + totvar + spos;
     filesz = (filesz + 3) & (0 - 4);
     var memsz = filesz + 65536;
+    var kbase = _kernel_load_base(S);   # v6.3.3 #5: settable load base (default 0x100000)
     # Entry = base + headers + pad + multiboot header
-    var entry = 0x100000 + hdrsz + mb_sz;
+    var entry = kbase + hdrsz + mb_sz;
 
     # Section header table layout (loaded segment is unchanged):
     #   .text     file 84       addr 0x100054   size = 12 + cp (incl mb1)
@@ -727,13 +742,13 @@ fn EMITELF_KERNEL(S): i64 {
     #   .rodata   file 96+cp+totvar             size = spos
     #   .shstrtab follows PT_LOAD (non-allocated metadata)
     var text_foff = hdrsz;
-    var text_addr = 0x100000 + hdrsz;
+    var text_addr = kbase + hdrsz;
     var text_size = mb_sz + cp;
     var bss_foff = hdrsz + mb_sz + cp;
-    var bss_addr = 0x100000 + bss_foff;
+    var bss_addr = kbase + bss_foff;
     var bss_size = totvar;
     var rod_foff = bss_foff + totvar;
-    var rod_addr = 0x100000 + rod_foff;
+    var rod_addr = kbase + rod_foff;
     var rod_size = spos;
     # .shstrtab contents: "\0.text\0.rodata\0.bss\0.shstrtab\0" = 30 bytes
     #   names at offsets 1, 7, 15, 20 (must match sh_name fields below)
@@ -778,8 +793,8 @@ fn EMITELF_KERNEL(S): i64 {
     # ---- Program header (32 bytes) ----
     store32(O + op, 1); op = op + 4;             # p_type = PT_LOAD
     store32(O + op, 0); op = op + 4;             # p_offset
-    store32(O + op, 0x100000); op = op + 4;      # p_vaddr
-    store32(O + op, 0x100000); op = op + 4;      # p_paddr
+    store32(O + op, kbase); op = op + 4;         # p_vaddr
+    store32(O + op, kbase); op = op + 4;         # p_paddr
     store32(O + op, filesz); op = op + 4;        # p_filesz
     store32(O + op, memsz); op = op + 4;         # p_memsz
     store32(O + op, 7); op = op + 4;             # p_flags = RWX
@@ -925,7 +940,7 @@ fn EMITELF64_KERNEL(S): i64 {
     # + the fixup rel32 branches that fire for _pie_mode), so it runs correctly
     # at whatever base the loader picks. Non-PIE kernels keep base=0x100000 +
     # etype=2 → byte-identical. See CHANGELOG [6.1.7].
-    var base = 0x100000;
+    var base = _kernel_load_base(S);   # v6.3.3 #5: settable load base (default 0x100000)
     var etype = 2;
     if (_pie_mode == 1) { base = 0; etype = 3; }
     # Entry = base + headers + multiboot2 (kernel's first 64-bit instruction)

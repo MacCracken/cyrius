@@ -205,6 +205,31 @@ fn _read_env(name): i64 {
     return 0;
 }
 
+# v6.3.3 #5: parse a "0x<hex>" env string -> i64 (0 on empty / missing 0x / a bad
+# digit). The only 0x-hex env parser in the compiler (CYRIUS_DCE_CAP is decimal);
+# CYRIUS_KERNEL_BASE (and the `[sections] base` manifest key that funnels into it)
+# uses it to set the kernel load/link base. Loads + arithmetic only — no fn calls,
+# no tail call — so cybs derives it cleanly (seed-derive gate).
+fn _parse_hex_env(p): i64 {
+    if (load8(p) != 48) { return 0; }       # '0'
+    if (load8(p + 1) != 120) { return 0; }   # 'x'
+    var v = 0;
+    var i = 2;
+    var c = load8(p + i);
+    if (c == 0) { return 0; }                 # "0x" with no digits
+    while (c != 0) {
+        var d = 0 - 1;
+        if (c >= 48 && c <= 57) { d = c - 48; }          # 0-9
+        elif (c >= 97 && c <= 102) { d = c - 97 + 10; }  # a-f
+        elif (c >= 65 && c <= 70) { d = c - 65 + 10; }   # A-F
+        else { return 0; }
+        v = v * 16 + d;
+        i = i + 1;
+        c = load8(p + i);
+    }
+    return v;
+}
+
 # Nanosecond wall clock for CYRIUS_PROF (v5.6.5 O1 + v5.6.6).
 # Linux x86_64: clock_gettime(CLOCK_MONOTONIC=1) via syscall 228.
 # Linux aarch64: clock_gettime(CLOCK_MONOTONIC=1) via syscall 113

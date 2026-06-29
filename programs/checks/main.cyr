@@ -455,6 +455,7 @@ fn _run_regression_gates(): i64 {
 
     _section("ELF64 kernel entry agreement (FIXUP ↔ EMITELF64_KERNEL)");
     _elf64_kernel_entry_gate();
+    _sections_base_override_gate();   # v6.3.3 #5: settable [sections] base
     println("");
 
     _section("EFI Application PE emit (gnoboot MVP unblocker)");

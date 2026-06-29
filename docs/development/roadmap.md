@@ -13,7 +13,12 @@ and the closed-minor summaries live in [roadmap_6.md](roadmap_6.md).
 > (`optional`/`[features]`/`--features`/`target=`); cbt-only, cycc byte-identical.
 > **v6.3.2 shipped** the **undefined-fn reachable-call hard-error** (default-on,
 > `--allow-undef` to downgrade) + the cx annotation-desync fold — the flip's full
-> blast radius treated with ZERO `--allow-undef`. See [CHANGELOG.md](../../CHANGELOG.md).
+> blast radius treated with ZERO `--allow-undef`.
+> **v6.3.3 shipped** bare-metal **#5** (`[sections] base` settable kernel load base —
+> de-dup'd `_kernel_load_base` accessor + `CYRIUS_KERNEL_BASE` env; resolves the
+> kernel-load-base-settable issue) + **#6** (x86 inline-asm fences `mfence`/`lfence`/`sfence`
+> — the last gap; the rest of #6 shipped .27/.28). check.sh 101→102; byte-identical default.
+> See [CHANGELOG.md](../../CHANGELOG.md).
 
 > **v6.2.x is CLOSED** (Platform Expansion — bare-metal core + dependency-model
 > lever 1; shipped .0 → .52). **v6.1.x CLOSED** (Backend Codegen multi-arc,
@@ -60,8 +65,9 @@ workflow below, in order):
 2. **Undefined-fn reachable-call hard-error** — its own slot. **[v6.3.2 — SHIPPED]**
    (default-on flip + `--allow-undef`; full blast radius cleaned with ZERO `--allow-undef`;
    cx annotation-desync folded in.)
-3. **Bare-metal deliverable completion (#5/#6/#7)** — **NEXT.** The structured pass over
-   the three open bare-metal *design* deliverables, split #5+#6 then #7. [v6.3.3–.4]
+3. **Bare-metal deliverable completion (#5/#6/#7)** — the structured pass over the three open
+   bare-metal *design* deliverables, split #5+#6 then #7. **#5+#6 SHIPPED [v6.3.3]**; **#7
+   (kernel-freestanding TLS link) is NEXT [v6.3.4].**
 
 Per cycle discipline: premise-check each arc at slot entry
 ([[feedback_premise_check_at_slot_entry]]); cross-arch propagation is
@@ -98,7 +104,7 @@ reactive pull-ins follow the bare-metal open-window pattern
 | **v6.3.0** ✅ | **var-family growable migration** — SEVEN `vcnt`-indexed tables → `_base` + chained `_var_grow` (byte-identical under cap). Closes the v6.2.0 Phase-0 / AR-03 arc — last fixed compile-time cap. | — | shipped |
 | **v6.3.1** ✅ | **Deps lever 2 (A)** — `optional = true` + `[features]` table + `--features`/`--no-default-features` + platform-conditional `target=` keys (axes combine; builds on lever 1). cbt-only → cycc byte-identical; check.sh 100→101 (`_deps_features_gate`). [[project_v6_3_x_required_optional_deps]] | — | shipped |
 | **v6.3.2** ✅ | **Undefined-fn reachable-call hard-error (B), default-on** + `--allow-undef` downgrade — **SHIPPED** (+ the cx annotation-desync fold **F**). Treated the flip's full blast radius with **ZERO `--allow-undef`** in the repo's own builds: 18 tcyr include-completed; 3 mabda tcyr via **source-gating** (**mabda 3.4.5** `#ifdef MABDA_LOGIND`/`MABDA_PNG`, re-folded); cx fork 47 `*_PE`/`*_ARM` stubs (`backend/cx/emit.cyr`); CLI→PE 11 POSIX stubs (`lib/syscalls_windows.cyr`); ark `nous` stubs (`programs/nous_stub.cyr`); TLS-probe includes. check.sh 101/101; ecb+cass+pi SELFHOST_OK; bench 505 ms; cycc 1,075,616 B; seed-derive OK; pi native-fixpoint OK. *(Original plan:)* Its OWN slot (un-bundled from A, user 2026-06-28). Flip the x86/aarch64 fixup gate from `_strict_mode` → `_allow_undef`; add `--al` to the 5 argv forks (`main_x86_macho` stub always-hard-errors). **Blast radius MEASURED at slot entry: 21/192 tcyr fail under the flip** — **18 are stdlib include-gaps** (real `str_*`/`vec_*`/`str_builder_*`/`payload`/`dynlib_*` refs; surgically complete each tcyr's includes — the raw-`cat\|cycc` harness has a repo-relative-include dedup subtlety that makes a blanket `cyrius build` switch non-trivial), **3 are `lib/mabda.cyr`→external `samvada_*`/`chitra_*`** (not in-repo; **fix at mabda's SOURCE**: declare optional + guard the device/PNG calls so they're not DCE-reachable when absent, then re-fold — the proper lever-2 dogfood, user 2026-06-28). [`issues/…undefined-fn-reachable-call-hard-error.md`](issues/2026-06-25-undefined-fn-reachable-call-hard-error.md). | DRY-4-scanners **dropped** (byte-identity + cybs-limit hostile per the v6.3.1 premise-check — stays on the carry-in line); the cx annotation-desync fix (the one real bug the rider targeted) folds here | ~6 |
-| **v6.3.3** | **Bare-metal #5 + #6 (C-1)** — `#5` `[sections]` linker/section-placement block in `cyrius.cyml`; `#6` inline-asm primitive completion (`cli`/`sti`/`hlt`, port I/O, `mfence`/`lfence`/`sfence`, `cpuid` — beyond `asm{}`+`iretq`/`eret` shipped .28). `issues/2026-06-19-naked-fn-safety-and-inline-asm.md`. | opt-in bounds-checked `store*`/`load*` (`CYRIUS_BOUNDS=1`, OFF) | ~5 |
+| **v6.3.3** ✅ | **Bare-metal #5 + #6 (C-1)** — `#5` `[sections] base` settable kernel ELF load base in `cyrius.cyml` (de-dup'd `_kernel_load_base` accessor + `CYRIUS_KERNEL_BASE` env + base-aware D6 report; resolves the kernel-load-base-settable issue); `#6` x86 inline-asm fences `mfence`/`lfence`/`sfence` (the only gap — `cli`/`sti`/`hlt`/`cpuid`/port-I/O shipped .27/.28; aarch64 `dmb`/`dsb`/`isb` already complete). check.sh 101→102 (`_sections_base_override_gate`); byte-identical default; pi+ecb+cass SELFHOST_OK; bench 504 ms; cycc 1,077,136 B. **Premise-check found the roadmap stale on #6.** | opt-in bounds-checked `store*`/`load*` **carried to bug-bandwidth** (not folded — #5+#6 packed the slot) | shipped |
 | **v6.3.4** | **Bare-metal #7 (C-2)** — kernel-freestanding `lib/tls_native` link + in-kernel handshake smoke (cyrius-side link + smoke; *live* in-kernel boot stays AGNOS-consumer-gated). | syscall-write byte-length gate (DOTALL); kernel load-base settability rider (`issues/2026-06-19-kernel-load-base-settable.md`) | ~5 |
 | **v6.3.5** | **Phase 0 substrate (D)** — AR-01 monomorphization token-replay revival (`_INLINE_OK=0` dead; **root-cause the ARM metadata corruption**, harden) + CO-01 order-independent call ABI (pass-1 fn-signature prescan). AR-02 growable tables already in place. Non-negotiable groundwork before generics. [`issues/…monomorphization-substrate-prereqs.md`](issues/2026-06-10-monomorphization-substrate-prereqs.md). | local-array bare `var a[N]` slot-write lint (prescan territory) | ~7 |
 | **v6.3.6** | **Closures with lexical capture (E)** — closure literals + lexical-capture analysis + closure-env lowering (allocate-on-construct, vtable-shaped indirect call). The capture substrate async (G) reuses. | — | ~7 |

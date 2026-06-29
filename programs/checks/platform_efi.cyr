@@ -216,6 +216,58 @@ fn _elf64_kernel_entry_gate(): i64 {
     return 0;
 }
 
+# v6.3.3 #5: settable kernel load base via `[sections] base` (CYRIUS_KERNEL_BASE
+# env). Builds the same kernel with the base overridden to 0x200000 and asserts the
+# e_entry AND the PT_LOAD p_vaddr both shift in lockstep — the exact property the
+# kernel-load-base-settable issue warned a partial edit would break (fixups vs
+# PT_LOAD disagreeing → boots to garbage). Resolves
+# issues/2026-06-19-kernel-load-base-settable.md.
+fn _sections_base_override_gate(): i64 {
+    var label = "v6.3.3 #5: CYRIUS_KERNEL_BASE override shifts kernel e_entry (0x2000A8) + PT_LOAD p_vaddr (0x200000) in lockstep";
+    var src_path = _root_path("programs/kernel_hello.cyr");
+    var bin_path = _tmp_path("audit_sectbase_bin_");
+    var rc = _self_host_pipe_elf64k_base(src_path, CC_PATH, bin_path, "CYRIUS_KERNEL_BASE=0x200000");
+    if (rc != 0) {
+        sys_unlink(bin_path);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": elf64-kernel base-override compile (rc="); print_num(rc); println(")");
+        _check(label, 1);
+        return 1;
+    }
+    var cap = 524288;
+    var buf = alloc(cap);
+    var n = file_read_all(bin_path, buf, cap);
+    sys_unlink(bin_path);
+    if (n <= 0) { _check(label, 1); return 1; }
+    if (load64(buf) != 0x00010102464C457F) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": base-override output is not a valid ELF64 LSB binary");
+        _check(label, 1);
+        return 1;
+    }
+    var e_entry = load64(buf + 24);
+    if (e_entry != 0x2000A8) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": e_entry = "); print_num(e_entry);
+        println(" (expected 2097320 = 0x2000A8 = 0x200000 + 168 — override did not flow)");
+        _check(label, 1);
+        return 1;
+    }
+    var phoff = load64(buf + 32);
+    var p_vaddr = load64(buf + phoff + 16);
+    if (p_vaddr != 0x200000) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": PT_LOAD p_vaddr = "); print_num(p_vaddr);
+        println(" (expected 0x200000 — header disagrees with e_entry: fixups would garble)");
+        _check(label, 1);
+        return 1;
+    }
+    _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+    println(": kernel base override 0x200000 — e_entry + p_vaddr agree (settable [sections] base)");
+    _check(label, 0);
+    return 0;
+}
+
 fn _efi_emit_gate(): i64 {
     var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
     var cap = 262144;

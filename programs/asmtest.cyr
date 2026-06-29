@@ -19,8 +19,11 @@ fn test_mov_rax_cr3(): i64 { asm { mov rax, cr3; } return 0; }
 fn test_mov_cr0(): i64 { asm { mov cr0, rax; } return 0; }
 fn test_int(): i64 { asm { int 3; } return 0; }
 fn test_invlpg(): i64 { asm { invlpg [rax]; } return 0; }
+fn test_mfence(): i64 { asm { mfence; } return 0; }   # v6.3.3 #6 — memory barriers (unprivileged)
+fn test_lfence(): i64 { asm { lfence; } return 0; }
+fn test_sfence(): i64 { asm { sfence; } return 0; }
 fn test_mixed(): i64 { asm { cli; } asm { mov cr3, rax; } asm { sti; } return 0; }
 
 # Can't execute privileged instructions in user mode — just verify compilation
-var r = 18;
+var r = 21;
 syscall(60, r);

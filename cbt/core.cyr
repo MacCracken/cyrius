@@ -80,6 +80,18 @@ var _js_target = 0;
 # `_aa` variant routes to the aarch64 cross-compiler. See roadmap .27 (D1).
 var _baremetal_target = 0;
 var _baremetal_aa = 0;
+# v6.3.3 #5: a `[sections] base = "0x.."` key in cyrius.cyml sets the kernel ELF
+# load/link base. compile() parses it (bare-metal builds only) into this env-string
+# pointer ("CYRIUS_KERNEL_BASE=0x..", or 0 when absent) and appends it to the cycc
+# env alongside CYRIUS_KERNEL — cycc's _parse_hex_env folds it into _kernel_load_base.
+# Absent block -> 0 -> built-in base -> byte-identical. The manifest surface of
+# issues/2026-06-19-kernel-load-base-settable.md.
+var _section_base_env_ptr = 0;
+# v6.3.3 #5: the numeric kernel base parsed from `[sections] base` (0 = default /
+# absent). Drives the D6 build-report line so an overridden build prints its REAL
+# entry/base instead of the canonical literal — the whole point of the D6 report
+# (surface the true e_entry, no drift).
+var _section_base_val = 0;
 # v6.3.1 (dependency-model arc, lever 2 — required vs optional deps):
 # `cyrius build --features a,b` populates _cli_features (vec<cstr> of requested
 # feature names); `--no-default-features` sets _cli_no_default. The dep resolver

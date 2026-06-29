@@ -1,6 +1,20 @@
 # Settable kernel load base (env/flag) — deferred from v6.2.28 D6
 
-> **OPEN — deferred follow-on to v6.2.28 D6.** v6.2.28 *exposed* the kernel
+> **RESOLVED in v6.3.3** — folded into bare-metal deliverable **#5** (`[sections]`),
+> which IS this feature viewed at the manifest level. Implemented exactly the
+> recommended path below: (1) de-dup'd the base into ONE `_kernel_load_base(S)`
+> accessor (x86 + aarch64 `fixup.cyr`), used by `_entry_base` + all three kernel
+> emitters — byte-identical (ELF32 + ELF64 kernels `cmp`-identical pre/post, self-host
+> + seed-derive hold); (2) added the knob — `CYRIUS_KERNEL_BASE=0x<hex>` env
+> (`_parse_hex_env` in `runtime.cyr`, read in `main.cyr` + `main_aarch64.cyr` into cell
+> `0x18FCE8`) AND the `[sections] base = "0x.."` manifest surface (cbt appends the env);
+> (3) verified — a `0x200000` build shifts e_entry + p_vaddr in lockstep
+> (`_sections_base_override_gate`, check.sh 101→102) AND **BOOTS under QEMU emitting
+> "AGNOS"** (fixups followed the base). The D6 build-report is now base-aware (prints the
+> real entry/base, no drift). See CHANGELOG [6.3.3]. Original deferral notes preserved
+> below.
+>
+> **OPEN (historical) — deferred follow-on to v6.2.28 D6.** v6.2.28 *exposed* the kernel
 > entry/load-base VA via the triple (the build prints `kernel: entry 0x1000a8,
 > load base 0x100000`, and the qemu-boot-gate asserts it). It did NOT make the
 > load base *settable* — that is this item.

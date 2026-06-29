@@ -3179,6 +3179,9 @@ fn ASM_MNEMONIC(S): i64 {
     elif (mnem & 0xFFFFFFFFFF == 0x72736D7277) { EB(S, 0x0F); EB(S, 0x30); }   # wrmsr
     elif (mnem & 0xFFFFFFFFFF == 0x72736D6472) { EB(S, 0x0F); EB(S, 0x32); }   # rdmsr
     elif (mnem & 0xFFFFFFFFFF == 0x6469757063) { EB(S, 0x0F); EB(S, 0xA2); }   # cpuid
+    elif (mnem & 0xFFFFFFFFFFFF == 0x65636E65666D) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF0); }   # mfence (v6.3.3 #6 — full memory barrier)
+    elif (mnem & 0xFFFFFFFFFFFF == 0x65636E65666C) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xE8); }   # lfence (v6.3.3 #6 — load barrier)
+    elif (mnem & 0xFFFFFFFFFFFF == 0x65636E656673) { EB(S, 0x0F); EB(S, 0xAE); EB(S, 0xF8); }   # sfence (v6.3.3 #6 — store barrier)
     elif (mnem & 0xFFFFFFFFFFFF == 0x716668737570) { EB(S, 0x9C); }            # pushfq
     elif (mnem & 0xFFFFFFFFFF == 0x7166706F70) { EB(S, 0x9D); }                # popfq
     elif (mnem & 0xFFFFFFFF == 0x7464676C) { ASM_LGDT(S); }                    # lgdt

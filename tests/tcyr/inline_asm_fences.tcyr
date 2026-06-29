@@ -1,0 +1,36 @@
+# inline_asm_fences.tcyr — v6.3.3 (bare-metal #6): memory-barrier asm primitives.
+#
+# Covers the inline-asm memory fences completed at v6.3.3 #6. Unlike cli/sti/hlt
+# (privileged — compile-only in programs/asmtest.cyr), the fences are UNPRIVILEGED,
+# so this tcyr EXECUTES them and exits past them — a real proof the encoding is a
+# valid, non-faulting instruction, not just that it assembles. Arch-conditional
+# because ASM_MNEMONIC is per-backend: x86 emits mfence/lfence/sfence
+# (0F AE F0 / E8 / F8), aarch64 its native barrier trio dmb/dsb/isb (shipped
+# pre-.28). The aarch64-native CI gate runs this on real arm64, so a missed or
+# garbled encoding faults there rather than passing silently.
+
+include "lib/assert.cyr"
+
+fn barrier_probe(): i64 {
+#ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        dmb
+        dsb
+        isb
+    }
+#endif
+#ifndef CYRIUS_ARCH_AARCH64
+    asm {
+        mfence
+        lfence
+        sfence
+    }
+#endif
+    return 42;
+}
+
+fn main(): i64 {
+    var v = barrier_probe();
+    assert_eq(v, 42, "memory-barrier asm block executes and returns past the fences");
+    return assert_summary();
+}

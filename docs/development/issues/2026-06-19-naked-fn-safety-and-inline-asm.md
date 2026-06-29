@@ -25,6 +25,12 @@
 > Only the **part-3** cosmetic residuals below remain (macho/PE no-op,
 > ELF64-inert-on-aarch64) — low priority; archive this issue once those are
 > addressed or explicitly deferred.
+>
+> **v6.3.3 update (deliverable #6 — primitive completion):** the x86 memory fences
+> `mfence`/`lfence`/`sfence` (`0F AE F0`/`E8`/`F8`) were added to `ASM_MNEMONIC` — the
+> last missing x86 inline-asm primitive (`cli`/`sti`/`hlt`/`cpuid`/port-I/O/`wrmsr`/… all
+> shipped .27/.28; aarch64 `dmb`/`dsb`/`isb` already present). `tests/tcyr/inline_asm_fences.tcyr`
+> executes them. The part-3 cosmetic residuals below are still open.
 
 **Filed:** 2026-06-19 · **Resolved (parts 1+2):** v6.2.28
 **Parent:** v6.2.27 D3 (`#naked`).

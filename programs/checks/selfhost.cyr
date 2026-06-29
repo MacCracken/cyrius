@@ -426,7 +426,14 @@ fn _input_rejects_subcase(case_label, src_str, expect_substr): i64 {
     return 0;
 }
 
+# v6.3.3 #5: existing callers want the canonical base — delegate with base_env=0
+# (byte-identical behavior). The _base variant adds an optional CYRIUS_KERNEL_BASE
+# env so the sections-override gate can exercise a settable kernel load base.
 fn _self_host_pipe_elf64k(src_path, compiler_path, out_path): i64 {
+    return _self_host_pipe_elf64k_base(src_path, compiler_path, out_path, 0);
+}
+
+fn _self_host_pipe_elf64k_base(src_path, compiler_path, out_path, base_env): i64 {
     var src_cap = 2000000;
     var src_buf = alloc(src_cap);
     var src_n = file_read_all(src_path, src_buf, src_cap);
@@ -459,10 +466,15 @@ fn _self_host_pipe_elf64k(src_path, compiler_path, out_path): i64 {
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     compiler_path);
         store64(&argv + 8, 0);
-        var envp[24];   # 3 env ptrs need 24 B (was envp[4]=8 B → overlapped argv[1])
+        var envp[32];   # up to 4 env ptrs: KERNEL, ELF64, optional KERNEL_BASE, NUL
         store64(&envp,      "CYRIUS_KERNEL=1");
         store64(&envp + 8,  "CYRIUS_ELF64_KERNEL=1");
-        store64(&envp + 16, 0);
+        if (base_env != 0) {
+            store64(&envp + 16, base_env);
+            store64(&envp + 24, 0);
+        } else {
+            store64(&envp + 16, 0);
+        }
         sys_execve(compiler_path, &argv, &envp);
         sys_exit(127);
     }

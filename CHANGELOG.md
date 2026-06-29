@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.3] — 2026-06-28
+
+**v6.3.3 — bare-metal deliverables #5 (`[sections]` settable kernel load base) + #6 (inline-asm
+memory fences).** Completes two of the three open bare-metal *design* deliverables (the v6.2.x
+formalization tail; #7 freestanding-TLS link remains for v6.3.4). Slot-entry premise-check found the
+roadmap **stale on #6** — most of its listed primitives shipped at .27/.28; only the x86 memory
+fences were missing. #5 makes the kernel ELF load base settable from `cyrius.cyml`, folding in and
+resolving `issues/2026-06-19-kernel-load-base-settable.md` (same feature). Every cycc-side change is
+inert for non-kernel compilation → self-host + seed → cybs → cycc byte-identical.
+
+### Added — #6 inline-asm memory fences
+- **`src/backend/x86/emit.cyr` `ASM_MNEMONIC`** — `mfence` (`0F AE F0`), `lfence` (`0F AE E8`),
+  `sfence` (`0F AE F8`), the only x86 primitives still missing from deliverable #6's list
+  (`cli`/`sti`/`hlt`/`cpuid`/`in`/`out`/`wrmsr`/`rdmsr`/`lgdt`/`lidt`/… already shipped .27/.28).
+  aarch64's barrier trio (`dmb`/`dsb`/`isb`) + `eret` was already complete — no aarch64 emit change.
+- **`tests/tcyr/inline_asm_fences.tcyr`** — EXECUTES the fences (unprivileged, unlike `cli`/`sti`/`hlt`
+  which are compile-only in `programs/asmtest.cyr`) and returns past them — real proof the encoding is
+  a valid, non-faulting instruction. Arch-conditional (x86 fences / aarch64 `dmb`/`dsb`/`isb`); the
+  aarch64-native CI gate runs it on real arm64. `programs/asmtest.cyr` extended (exit 18 → 21).
+
+### Added — #5 settable kernel load base (`[sections]` manifest block)
+- **`[sections] base = "0x.."` in `cyrius.cyml`** — sets the kernel ELF load/link base for a
+  `--target=<arch>-bare-metal-elf` build. cbt parses it (`cbt/build.cyr` `_sections_base_env`,
+  bare-metal builds only) → appends `CYRIUS_KERNEL_BASE=0x..` to the cycc spawn env. Absent block →
+  built-in `0x100000` (x86) / `0x40000000` (aarch64) → byte-identical.
+- **`CYRIUS_KERNEL_BASE=0x<hex>` env** — `src/backend/common/runtime.cyr` `_parse_hex_env` (the
+  compiler's only 0x-hex env parser; loads + arithmetic only → cybs-derivable); read in `src/main.cyr`
+  + `src/main_aarch64.cyr` into state cell `0x18FCE8` (0 = built-in default).
+
+### Changed — #5 kernel-base de-duplication (the safe refactor the issue prescribed)
+- **`_kernel_load_base(S)`** — single source of truth for the kernel base (x86 + aarch64 `fixup.cyr`),
+  replacing the literal repeated across `_entry_base` + `EMITELF_KERNEL` (ELF32) + `EMITELF64_KERNEL`
+  (x86) + `EMITELF_KERNEL` (aarch64). The issue's warned hazard — a partial edit leaving an emitter's
+  `p_vaddr` disagreeing with the fixups' base → boots to garbage — is now structurally impossible.
+  Inert when the cell is 0 → ELF32 **and** ELF64 kernels byte-identical pre/post (proven by `cmp`).
+- **`cbt/commands.cyr`** D6 build-report is base-aware — an overridden build prints its REAL
+  entry/base (`fmt_hex0x`) instead of the canonical literal, so the report never drifts from the
+  emitted `e_entry` (the report's whole reason for existing). Default text byte-identical.
+
+### Verified
+- Self-host fixpoint + **seed → cybs → cycc byte-identical** (cybs-safe: small fns, regular calls).
+- check.sh **101 → 102** — new `_sections_base_override_gate` (`CYRIUS_KERNEL_BASE=0x200000` shifts
+  `e_entry` to `0x2000A8` AND PT_LOAD `p_vaddr` to `0x200000` **in lockstep**); the fence tcyr runs in
+  the testsuite walk.
+- **qemu-boot-gate** green at the default base; an OVERRIDE kernel built at `0x200000` BOOTS under QEMU
+  and emits "AGNOS" — fixups followed the base (the kernel-load-base-settable issue's verify-step-3,
+  for real, not just a header check).
+- Cross-OS self-host: **pi + ecb + cass SELFHOST_OK** (real hardware — aarch64 `fixup.cyr` de-dup
+  self-hosts byte-identical on real ARM).
+- Bench: self_compile **504 ms** (flat, 500–549 ms jitter band — undef/fence/base code isn't hot);
+  cycc **1,075,616 → 1,077,136 B** (+1,520 B: fences + `_kernel_load_base` ×2 + `_parse_hex_env` +
+  fork env reads). cbt growth is CLI-only (not in cycc).
+- Resolves `issues/2026-06-19-kernel-load-base-settable.md` (folded into #5 — `[sections]` *is* the
+  settable-base feature).
+
 ## [6.3.2] — 2026-06-28
 
 **v6.3.2 — undefined-fn reachable-call hard-error, default-on (+ cx annotation-desync fold).**

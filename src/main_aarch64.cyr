@@ -302,6 +302,13 @@ if (_kern_env_a != 0) {
         S64(S + 0x18FCA0, 1);
     }
 }
+# v6.3.3 #5: CYRIUS_KERNEL_BASE=0x<hex> -> kernel load base (cell 0x18FCE8). Mirrors
+# the x86 fork; default unset -> _kernel_load_base() returns 0x40000000 byte-identical.
+var _kbase_env_a = _read_env("CYRIUS_KERNEL_BASE");
+if (_kbase_env_a != 0) {
+    var _kb_a = _parse_hex_env(_kbase_env_a);
+    if (_kb_a != 0) { S64(S + 0x18FCE8, _kb_a); }
+}
 if (_is_macho_arm_build == 1) {
     PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
 } else {
