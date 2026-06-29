@@ -171,21 +171,8 @@ while (scan == 1) {
                 else { if (PEEKT(S) == 101) { PARSE_UNION_DEF(S); }
                     else { if (PEEKT(S) == 3) { PARSE_GVAR_REG(S); }
                         else { if (PEEKT(S) == 32) {
-                                # Skip fn definition (just advance past it)
-                                STI(S, GTI(S) + 1);  # consume FN
-                                STI(S, GTI(S) + 1);  # consume name
-                                # Skip generic params <T> if present
-                                if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
-                                # Skip to matching }
-                                var dep = 0;
-                                var fsk = 1;
-                                while (fsk == 1) {
-                                    var ft = PEEKT(S);
-                                    if (ft == 13) { dep = dep + 1; }
-                                    if (ft == 14) { dep = dep - 1; if (dep == 0) { fsk = 0; } }
-                                    if (ft == 12) { fsk = 0; }
-                                    STI(S, GTI(S) + 1);
-                                }
+                                # v6.3.5 CO-01 — pass-1 fn-signature prescan (see _prescan_fn_sig in parse_fn.cyr).
+                                _prescan_fn_sig(S);
                             }
                             else { if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 0); }
                                 else { if (_TOK_IS_KERNEL(S) == 1) {
@@ -246,6 +233,14 @@ while (dce_ti < dce_tc) {
     }
     dce_prev = dce_tt;
     dce_ti = dce_ti + 1;
+}
+
+# v6.3.5 AR-01 — opt-in monomorphization substrate (CYRIUS_MONOMORPH=1; default off; see util.cyr).
+var _mono_env = _read_env("CYRIUS_MONOMORPH");
+if (_mono_env != 0) {
+    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
+        _MONOMORPH_OK = 1;
+    }
 }
 
 # Pass 2: Parse struct and fn definitions (vars already registered)

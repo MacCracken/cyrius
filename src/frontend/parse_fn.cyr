@@ -1369,6 +1369,227 @@ fn IS_JUMP_TARGET(S, off): i64 {
     return 0;
 }
 
+# v6.3.5 CO-01 — single source of truth for param-type-name classification.
+# Returns the param-type class for a type name at tok_names offset `tnoff`:
+#   0 = int / struct / other (no special ABI mask)
+#   1 = Str       2 = cstring   3 = Result   4 = Option
+#   5 = Tagged    6 = f64v2     7 = f64v4
+# Pure byte-compares over the name pool (S+0x60000); zero global-var refs and
+# no calls beyond the L64/load8 memory builtins → cybs-safe by construction.
+# Extracted verbatim from the PARSE_FN_DEF param loop so the pass-1 signature
+# prescan (_prescan_fn_sig) and the pass-2 definition agree byte-for-byte.
+fn _classify_param_type(S, tnoff): i64 {
+    # Str → "Str\0" (low 32 bits = 0x00727453, little-endian)
+    if (L64(S + 0x60000 + tnoff) & 0xFFFFFFFF == 0x00727453) { return 1; }
+    var b0 = load8(S + 0x60000 + tnoff);
+    var b1 = load8(S + 0x60000 + tnoff + 1);
+    var b2 = load8(S + 0x60000 + tnoff + 2);
+    var b3 = load8(S + 0x60000 + tnoff + 3);
+    var b4 = load8(S + 0x60000 + tnoff + 4);
+    var b5 = load8(S + 0x60000 + tnoff + 5);
+    var b6 = load8(S + 0x60000 + tnoff + 6);
+    var b7 = load8(S + 0x60000 + tnoff + 7);
+    # cstring → 'c','s','t','r','i','n','g',0
+    if (b0 == 99) { if (b1 == 115) { if (b2 == 116) { if (b3 == 114) {
+        if (b4 == 105) { if (b5 == 110) { if (b6 == 103) { if (b7 == 0) {
+            return 2;
+        } } } } } } } }
+    # Result → 'R','e','s','u','l','t',0
+    if (b0 == 82) { if (b1 == 101) { if (b2 == 115) { if (b3 == 117) {
+        if (b4 == 108) { if (b5 == 116) { if (b6 == 0) {
+            return 3;
+        } } } } } } }
+    # Option → 'O','p','t','i','o','n',0
+    if (b0 == 79) { if (b1 == 112) { if (b2 == 116) { if (b3 == 105) {
+        if (b4 == 111) { if (b5 == 110) { if (b6 == 0) {
+            return 4;
+        } } } } } } }
+    # Tagged → 'T','a','g','g','e','d',0
+    if (b0 == 84) { if (b1 == 97) { if (b2 == 103) { if (b3 == 103) {
+        if (b4 == 101) { if (b5 == 100) { if (b6 == 0) {
+            return 5;
+        } } } } } } }
+    # f64v2 / f64v4 → 'f','6','4','v', '2'|'4', 0
+    if (b0 == 102) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) {
+        if (b4 == 50) { if (b5 == 0) { return 6; } }
+        if (b4 == 52) { if (b5 == 0) { return 7; } }
+    } } } }
+    return 0;
+}
+
+# v6.3.5 CO-01 — single source of truth for return-type classification.
+# Returns the fn_ret_sid encoding for a return-type name at `rt_noff`:
+#   > 0  : struct sid (FINDSTRUCT)
+#   -1/-2/-4/-8        : scalar i8 / i16 / i32 / i64
+#   -16/-17/-18/-19    : Result / Option / Tagged / cstring
+#   -20/-21            : f64v2 / f64v4
+#   0    : unrecognized (caller raises the "return type must be ..." error)
+# Mirrors the param classifier (one FINDSTRUCT call + byte-compares, no other
+# global-var refs → cybs-safe). Extracted verbatim from PARSE_FN_DEF so the
+# pass-1 _prescan_fn_sig writes the same struct-return / scalar ABI that the
+# pass-2 definition does — forward calls to struct-returning fns then emit the
+# hidden retptr correctly instead of reading SFRS=0.
+fn _classify_return_type(S, rt_noff): i64 {
+    var rt_sid = FINDSTRUCT(S, rt_noff);
+    if (rt_sid > 0) { return rt_sid; }
+    var b0 = load8(S + 0x60000 + rt_noff);
+    var b1 = load8(S + 0x60000 + rt_noff + 1);
+    var b2 = load8(S + 0x60000 + rt_noff + 2);
+    var b3 = load8(S + 0x60000 + rt_noff + 3);
+    var b4 = load8(S + 0x60000 + rt_noff + 4);
+    var b5 = load8(S + 0x60000 + rt_noff + 5);
+    var b6 = load8(S + 0x60000 + rt_noff + 6);
+    var b7 = load8(S + 0x60000 + rt_noff + 7);
+    # scalars: i8 / i16 / i32 / i64 ('i' = 105)
+    if (b0 == 105) {
+        if (b1 == 56) { if (b2 == 0) { return 0 - 1; } }
+        if (b1 == 49) { if (b2 == 54) { if (b3 == 0) { return 0 - 2; } } }
+        if (b1 == 51) { if (b2 == 50) { if (b3 == 0) { return 0 - 4; } } }
+        if (b1 == 54) { if (b2 == 52) { if (b3 == 0) { return 0 - 8; } } }
+    }
+    # Result → 'R','e','s','u','l','t',0
+    if (b0 == 82) { if (b1 == 101) { if (b2 == 115) { if (b3 == 117) {
+        if (b4 == 108) { if (b5 == 116) { if (b6 == 0) { return 0 - 16; } } } } } } }
+    # Option → 'O','p','t','i','o','n',0
+    if (b0 == 79) { if (b1 == 112) { if (b2 == 116) { if (b3 == 105) {
+        if (b4 == 111) { if (b5 == 110) { if (b6 == 0) { return 0 - 17; } } } } } } }
+    # Tagged → 'T','a','g','g','e','d',0
+    if (b0 == 84) { if (b1 == 97) { if (b2 == 103) { if (b3 == 103) {
+        if (b4 == 101) { if (b5 == 100) { if (b6 == 0) { return 0 - 18; } } } } } } }
+    # cstring → 'c','s','t','r','i','n','g',0
+    if (b0 == 99) { if (b1 == 115) { if (b2 == 116) { if (b3 == 114) {
+        if (b4 == 105) { if (b5 == 110) { if (b6 == 103) { if (b7 == 0) { return 0 - 19; } } } } } } } }
+    # f64v2 / f64v4 → 'f','6','4','v', '2'|'4', 0
+    if (b0 == 102) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) {
+        if (b4 == 50) { if (b5 == 0) { return 0 - 20; } }
+        if (b4 == 52) { if (b5 == 0) { return 0 - 21; } }
+    } } } }
+    return 0;
+}
+
+# v6.3.5 CO-01 — pass-1 fn-signature prescan. Three small helpers that, when
+# called from a fork's pass-1 loop in place of the old inline fn-skip, register
+# every top-level fn AND record its ABI metadata (param masks, param count,
+# variadic flag, struct/scalar return) BEFORE pass-2 emits any call. That makes
+# forward calls — a call lexically before its definition — read the correct
+# Str / cstring / Result / Option / Tagged / SIMD masks and struct-return ABI
+# instead of the mask-0 an auto-registered bare name used to get (the silent
+# miscompile CO-01 describes). Structs / enums / globals were already pass-1
+# order-independent; this extends the same treatment to fn signatures.
+#
+# _prescan_skip_fn is the verbatim pre-CO-01 body-skip, so pass-1's TOKEN CURSOR
+# advances exactly as it did before. _prescan_fn_sig extracts metadata on a
+# throwaway cursor then RESETS and replays this — registration/mask writes are
+# the only new effect, never a change in where pass-1 leaves the cursor.
+fn _prescan_skip_fn(S): i64 {
+    STI(S, GTI(S) + 1);  # consume FN
+    STI(S, GTI(S) + 1);  # consume name
+    if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    var dep = 0;
+    var fsk = 1;
+    while (fsk == 1) {
+        var ft = PEEKT(S);
+        if (ft == 13) { dep = dep + 1; }
+        if (ft == 14) { dep = dep - 1; if (dep == 0) { fsk = 0; } }
+        if (ft == 12) { fsk = 0; }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+
+# Scan the param list `( ... )` for fn `fi`, computing the per-fn ABI masks the
+# same way PARSE_FN_DEF's param loop does (shared _classify_param_type → first
+# match sets one mask at bit `pc`; SIMD uses 2 bits at pc*2), plus the param
+# count and variadic flag. No slot allocation / no ESTOREPARM — pass-1 records
+# metadata only. Leaves the cursor just past `)` (throwaway; caller resets).
+fn _prescan_params(S, fi): i64 {
+    if (PEEKT(S) != 10) { return 0; }   # no '(' — malformed; pass-2 will ERR
+    STI(S, GTI(S) + 1);                 # consume '('
+    var pc = 0;
+    var str_mask = 0;
+    var cstring_mask = 0;
+    var result_mask = 0;
+    var option_mask = 0;
+    var tagged_mask = 0;
+    var simd_mask = 0;
+    if (PEEKT(S) != 11) {
+        var pgo = 1;
+        while (pgo == 1) {
+            if (PEEKT(S) == 112) {          # variadic '...'
+                STI(S, GTI(S) + 1);
+                SFVA(S, fi, 1);
+                pgo = 0;
+            } else {
+                if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }   # param name
+                if (PEEKT(S) == 49) {                        # ': Type'
+                    STI(S, GTI(S) + 1);                      # consume ':'
+                    if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }   # skip '*' (pointer)
+                    if (PEEKT(S) == 2) {
+                        var c = _classify_param_type(S, PEEKV(S));
+                        if (c == 1) { str_mask = str_mask | (1 << pc); }
+                        elif (c == 2) { cstring_mask = cstring_mask | (1 << pc); }
+                        elif (c == 3) { result_mask = result_mask | (1 << pc); }
+                        elif (c == 4) { option_mask = option_mask | (1 << pc); }
+                        elif (c == 5) { tagged_mask = tagged_mask | (1 << pc); }
+                        elif (c == 6) { simd_mask = simd_mask | (1 << (pc * 2)); }
+                        elif (c == 7) { simd_mask = simd_mask | (2 << (pc * 2)); }
+                        STI(S, GTI(S) + 1);                  # consume type name
+                        SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
+                    }
+                }
+                pc = pc + 1;
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }  # comma → next param
+                else { pgo = 0; }
+            }
+        }
+    }
+    # Consume the closing ')' so the caller's return-type scan sees the ':' (or
+    # '{') next — without this the cursor sits on ')' and `: Struct` returns are
+    # never classified (struct-return forward calls would keep the mask-0 ABI).
+    if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+    S64(_fnt_params + fi * 8, pc);
+    S64(_fnt_strmask + fi * 8, str_mask);
+    S64(_fnt_cstrmask + fi * 8, cstring_mask);
+    S64(_fnt_resmask + fi * 8, result_mask);
+    S64(_fnt_optmask + fi * 8, option_mask);
+    S64(_fnt_tagmask + fi * 8, tagged_mask);
+    S64(_fnt_simdmask + fi * 8, simd_mask);
+    return 0;
+}
+
+# Register a top-level fn and record its ABI metadata in pass-1. Cursor enters at
+# the FN token. Extraction runs on a throwaway cursor (it may advance through the
+# signature however _prescan_params / the return-type scan need to); afterward the
+# cursor is RESET to the FN token and _prescan_skip_fn replays the canonical skip,
+# guaranteeing pass-1's net cursor advancement is byte-identical to the old inline
+# skip. Module-scoped fns (GMOD != 0) keep the pass-2-only registration — the name
+# mangling PARSE_FN_DEF does mutates the name pool, and `mod` is unused in-tree, so
+# prescan only the common top-level case here.
+fn _prescan_fn_sig(S): i64 {
+    var start_ti = GTI(S);
+    STI(S, GTI(S) + 1);                 # consume FN
+    if (PEEKT(S) == 2) {
+        var noff = PEEKV(S);
+        STI(S, GTI(S) + 1);             # consume name
+        if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+        if (GMOD(S) == 0) {
+            var fi = FINDFN(S, noff);
+            if (fi < 0) { fi = REGFN(S, noff); }
+            _prescan_params(S, fi);
+            if (PEEKT(S) == 49) {       # optional `: ReturnType`
+                STI(S, GTI(S) + 1);     # consume ':'
+                if (PEEKT(S) == 2) {
+                    var rtc = _classify_return_type(S, PEEKV(S));
+                    if (rtc != 0) { SFRS(S, fi, rtc); }
+                }
+            }
+        }
+    }
+    STI(S, start_ti);
+    _prescan_skip_fn(S);
+    return 0;
+}
+
 fn PARSE_FN_DEF(S): i64 {
     STI(S, GTI(S) + 1);  # consume FN
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -1944,113 +2165,25 @@ fn PARSE_FN_DEF(S): i64 {
                 if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }  # skip * for pointer types
                 if (PEEKT(S) == 2) {
                     var tnoff = PEEKV(S);
-                    # Check if type name is "Str" (0x00727453 = "Str\0")
-                    if (L64(S + 0x60000 + tnoff) & 0xFFFFFFFF == 0x00727453) {
-                        str_mask = str_mask | (1 << pc);
-                    }
-                    # v5.10.24 — REAL TYPE SYSTEM Phase 2 — extended param-
-                    # type recognition. Mirror of the return-type vocab
-                    # added at v5.10.23 in this same file: cstring /
-                    # Result / Option / Tagged. Each gets its own per-fn
-                    # bitmask in a parallel heap region (0x93A000+).
-                    # PARSE_FNCALL consults the masks for call-site
-                    # type-mismatch warnings.
-                    var _pt_b0 = load8(S + 0x60000 + tnoff);
-                    var _pt_b1 = load8(S + 0x60000 + tnoff + 1);
-                    var _pt_b2 = load8(S + 0x60000 + tnoff + 2);
-                    var _pt_b3 = load8(S + 0x60000 + tnoff + 3);
-                    # cstring → 'c','s','t','r','i','n','g',0
-                    if (_pt_b0 == 99) {
-                        if (_pt_b1 == 115) {
-                            if (_pt_b2 == 116) {
-                                if (_pt_b3 == 114) {
-                                    if (load8(S + 0x60000 + tnoff + 4) == 105) {
-                                        if (load8(S + 0x60000 + tnoff + 5) == 110) {
-                                            if (load8(S + 0x60000 + tnoff + 6) == 103) {
-                                                if (load8(S + 0x60000 + tnoff + 7) == 0) {
-                                                    cstring_mask = cstring_mask | (1 << pc);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    # Result → 'R','e','s','u','l','t',0
-                    if (_pt_b0 == 82) {
-                        if (_pt_b1 == 101) {
-                            if (_pt_b2 == 115) {
-                                if (_pt_b3 == 117) {
-                                    if (load8(S + 0x60000 + tnoff + 4) == 108) {
-                                        if (load8(S + 0x60000 + tnoff + 5) == 116) {
-                                            if (load8(S + 0x60000 + tnoff + 6) == 0) {
-                                                result_mask = result_mask | (1 << pc);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    # Option → 'O','p','t','i','o','n',0
-                    if (_pt_b0 == 79) {
-                        if (_pt_b1 == 112) {
-                            if (_pt_b2 == 116) {
-                                if (_pt_b3 == 105) {
-                                    if (load8(S + 0x60000 + tnoff + 4) == 111) {
-                                        if (load8(S + 0x60000 + tnoff + 5) == 110) {
-                                            if (load8(S + 0x60000 + tnoff + 6) == 0) {
-                                                option_mask = option_mask | (1 << pc);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    # Tagged → 'T','a','g','g','e','d',0
-                    if (_pt_b0 == 84) {
-                        if (_pt_b1 == 97) {
-                            if (_pt_b2 == 103) {
-                                if (_pt_b3 == 103) {
-                                    if (load8(S + 0x60000 + tnoff + 4) == 101) {
-                                        if (load8(S + 0x60000 + tnoff + 5) == 100) {
-                                            if (load8(S + 0x60000 + tnoff + 6) == 0) {
-                                                tagged_mask = tagged_mask | (1 << pc);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    # v5.10.38 — detect f64v2 / f64v4 type annotation
-                    # on this param. Sets pt_simd_class (hoisted at
-                    # outer scope) to 1 (f64v2) or 2 (f64v4);
-                    # subsequent allocation block branches on it to do
-                    # multi-slot alloc + register-pair store at fn
-                    # entry. Byte compares mirror the return-type
-                    # vocab. Must stay inside the `if (PEEKT == 2)`
-                    # block where _pt_b0..3 + tnoff are in scope.
-                    if (_pt_b0 == 102) {  # 'f'
-                        if (_pt_b1 == 54) {  # '6'
-                            if (_pt_b2 == 52) {  # '4'
-                                if (_pt_b3 == 118) {  # 'v'
-                                    if (load8(S + 0x60000 + tnoff + 4) == 50) {  # '2'
-                                        if (load8(S + 0x60000 + tnoff + 5) == 0) {
-                                            pt_simd_class = 1;
-                                        }
-                                    }
-                                    if (load8(S + 0x60000 + tnoff + 4) == 52) {  # '4'
-                                        if (load8(S + 0x60000 + tnoff + 5) == 0) {
-                                            pt_simd_class = 2;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    # v6.3.5 CO-01 — classify the param type-name once via the
+                    # shared _classify_param_type, then fold the class into the
+                    # per-fn masks. Identical behavior to the prior inline byte-
+                    # compares (the type vocab — Str / cstring / Result / Option /
+                    # Tagged / f64v2 / f64v4 — is mutually exclusive, so first-
+                    # match == set-one-mask). Sharing the classifier keeps this
+                    # pass-2 definition byte-identical with the pass-1
+                    # _prescan_fn_sig signature scan (CO-01). Each class gets its
+                    # own per-fn bitmask in a parallel heap region (0x93A000+);
+                    # PARSE_FNCALL consults the masks for call-site type checks
+                    # and value-form SIMD-arg routing.
+                    var _ptc = _classify_param_type(S, tnoff);
+                    if (_ptc == 1) { str_mask = str_mask | (1 << pc); }
+                    elif (_ptc == 2) { cstring_mask = cstring_mask | (1 << pc); }
+                    elif (_ptc == 3) { result_mask = result_mask | (1 << pc); }
+                    elif (_ptc == 4) { option_mask = option_mask | (1 << pc); }
+                    elif (_ptc == 5) { tagged_mask = tagged_mask | (1 << pc); }
+                    elif (_ptc == 6) { pt_simd_class = 1; }
+                    elif (_ptc == 7) { pt_simd_class = 2; }
                     pt_sid = FINDSTRUCT(S, tnoff);
                 }
                 # Win64 PE doesn't support f64v2/f64v4 value-form
@@ -2198,157 +2331,21 @@ fn PARSE_FN_DEF(S): i64 {
         STI(S, GTI(S) + 1);                         # consume ':'
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         var rt_noff = PEEKV(S);
-        var rt_sid = FINDSTRUCT(S, rt_noff);
-        if (rt_sid > 0) {
-            SFRS(S, fi, rt_sid);
-            _cur_fn_ret_sid = rt_sid;
+        # v6.3.5 CO-01 — classify the return type via the shared
+        # _classify_return_type so the pass-1 _prescan_fn_sig records the
+        # identical struct-return / scalar ABI. Positive = struct sid;
+        # negative = scalar/extended encoding; 0 = unrecognized.
+        var _rtc = _classify_return_type(S, rt_noff);
+        if (_rtc == 0) {
+            ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64v2/f64v4", 93);
+        }
+        SFRS(S, fi, _rtc);
+        if (_rtc > 0) {
+            _cur_fn_ret_sid = _rtc;
             STI(S, GTI(S) + 1);
             SKIP_GENERICS(S);
         } else {
-            # v5.10.5 — scalar return-type annotation (`: i8/i16/i32/i64`).
-            # Encoded as a NEGATIVE value in fn_ret_sid: -8 = i64,
-            # -4 = i32, -2 = i16, -1 = i8. All existing struct-only
-            # callers gate on `> 0`, so negative values are invisible
-            # to them.
-            var _rt_b0 = load8(S + 0x60000 + rt_noff);
-            var _rt_b1 = load8(S + 0x60000 + rt_noff + 1);
-            var _rt_b2 = load8(S + 0x60000 + rt_noff + 2);
-            var _rt_b3 = load8(S + 0x60000 + rt_noff + 3);
-            var _rt_scalar = 0;
-            if (_rt_b0 == 105) {
-                if (_rt_b1 == 56) {
-                    if (_rt_b2 == 0) { _rt_scalar = 0 - 1; }
-                }
-                if (_rt_b1 == 49) {
-                    if (_rt_b2 == 54) {
-                        if (_rt_b3 == 0) { _rt_scalar = 0 - 2; }
-                    }
-                }
-                if (_rt_b1 == 51) {
-                    if (_rt_b2 == 50) {
-                        if (_rt_b3 == 0) { _rt_scalar = 0 - 4; }
-                    }
-                }
-                if (_rt_b1 == 54) {
-                    if (_rt_b2 == 52) {
-                        if (_rt_b3 == 0) { _rt_scalar = 0 - 8; }
-                    }
-                }
-            }
-            # v5.10.23 — extended return-type vocabulary for REAL TYPE
-            # SYSTEM Phase 1B. Accepts `Result` / `Option` / `Tagged`
-            # / `cstring` as named return types. Each encodes as a
-            # distinct negative value alongside the i8/i16/i32/i64
-            # scalars (-1/-2/-4/-8). At Phase 1B these are stored but
-            # treated as i64-shape at runtime (Result/Option/Tagged
-            # are tagged-union heap pointers; cstring is a raw null-
-            # terminated byte ptr — all i64 in width). Phase 3 (over-
-            # load dispatch, v5.10.25) consumes the tag via
-            # FRS / GFRS to dispatch by callee signature.
-            #
-            # Encodings:
-            #   -16 = Result   (tagged union, lib/result.cyr)
-            #   -17 = Option   (tagged union, lib/tagged.cyr)
-            #   -18 = Tagged   (raw tagged_new pointer, lib/tagged.cyr)
-            #   -19 = cstring  (null-terminated byte pointer)
-            if (_rt_scalar == 0) {
-                # `Result` — bytes 'R','e','s','u','l','t',0
-                if (_rt_b0 == 82) {
-                    if (_rt_b1 == 101) {
-                        if (_rt_b2 == 115) {
-                            if (_rt_b3 == 117) {
-                                if (load8(S + 0x60000 + rt_noff + 4) == 108) {
-                                    if (load8(S + 0x60000 + rt_noff + 5) == 116) {
-                                        if (load8(S + 0x60000 + rt_noff + 6) == 0) {
-                                            _rt_scalar = 0 - 16;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                # `Option` — bytes 'O','p','t','i','o','n',0
-                if (_rt_b0 == 79) {
-                    if (_rt_b1 == 112) {
-                        if (_rt_b2 == 116) {
-                            if (_rt_b3 == 105) {
-                                if (load8(S + 0x60000 + rt_noff + 4) == 111) {
-                                    if (load8(S + 0x60000 + rt_noff + 5) == 110) {
-                                        if (load8(S + 0x60000 + rt_noff + 6) == 0) {
-                                            _rt_scalar = 0 - 17;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                # `Tagged` — bytes 'T','a','g','g','e','d',0
-                if (_rt_b0 == 84) {
-                    if (_rt_b1 == 97) {
-                        if (_rt_b2 == 103) {
-                            if (_rt_b3 == 103) {
-                                if (load8(S + 0x60000 + rt_noff + 4) == 101) {
-                                    if (load8(S + 0x60000 + rt_noff + 5) == 100) {
-                                        if (load8(S + 0x60000 + rt_noff + 6) == 0) {
-                                            _rt_scalar = 0 - 18;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                # `cstring` — bytes 'c','s','t','r','i','n','g',0
-                if (_rt_b0 == 99) {
-                    if (_rt_b1 == 115) {
-                        if (_rt_b2 == 116) {
-                            if (_rt_b3 == 114) {
-                                if (load8(S + 0x60000 + rt_noff + 4) == 105) {
-                                    if (load8(S + 0x60000 + rt_noff + 5) == 110) {
-                                        if (load8(S + 0x60000 + rt_noff + 6) == 103) {
-                                            if (load8(S + 0x60000 + rt_noff + 7) == 0) {
-                                                _rt_scalar = 0 - 19;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                # v5.10.28 — `f64v2` value type, encoding -20.
-                # Multi-register pair return ABI (rax+rdx on x86 SysV).
-                # bytes 'f','6','4','v','2',0 (5 chars + nul)
-                # v5.10.37 — `f64v4` value type, encoding -21.
-                # 32-byte composite; pair-quad return ABI
-                # (xmm0+xmm1 on x86 / q0+q1 on aarch64 / r0..r3 on cx).
-                # bytes 'f','6','4','v','4',0 (5 chars + nul)
-                if (_rt_b0 == 102) {
-                    if (_rt_b1 == 54) {
-                        if (_rt_b2 == 52) {
-                            if (_rt_b3 == 118) {
-                                if (load8(S + 0x60000 + rt_noff + 4) == 50) {
-                                    if (load8(S + 0x60000 + rt_noff + 5) == 0) {
-                                        _rt_scalar = 0 - 20;
-                                    }
-                                }
-                                if (load8(S + 0x60000 + rt_noff + 4) == 52) {
-                                    if (load8(S + 0x60000 + rt_noff + 5) == 0) {
-                                        _rt_scalar = 0 - 21;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if (_rt_scalar == 0) {
-                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64v2/f64v4", 93);
-            }
-            SFRS(S, fi, _rt_scalar);
-            _cur_fn_ret_scalar = _rt_scalar;
+            _cur_fn_ret_scalar = _rtc;
             STI(S, GTI(S) + 1);
         }
     }
@@ -2367,12 +2364,14 @@ fn PARSE_FN_DEF(S): i64 {
     # Emit jmp placeholder for defer flag init (backpatched after body)
     var defer_init_jmp = EJMP0(S);
     var body_cp = GCP(S);
-    # Record body start for inline replay (x86 only)
-    if (_INLINE_OK == 1) { SFBS(S, fi, GTI(S)); }
+    # Record body start for inline replay (x86 only; v6.3.5 AR-01: also under the
+    # opt-in CYRIUS_MONOMORPH gate so the replay substrate can be proven byte-correct
+    # without re-enabling _INLINE_OK by default).
+    if (_INLINE_OK == 1 || _MONOMORPH_OK == 1) { SFBS(S, fi, GTI(S)); }
     PARSE_PROG(S);
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    # Record body end and classify inline candidate (x86 only)
-    if (_INLINE_OK == 1) {
+    # Record body end and classify inline candidate (x86 only; AR-01 monomorph gate)
+    if (_INLINE_OK == 1 || _MONOMORPH_OK == 1) {
         SFBE(S, fi, GTI(S));
         var btokens = GTI(S) - GFBS(S, fi);
         var can_inline = 1;

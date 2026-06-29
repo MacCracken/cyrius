@@ -315,6 +315,74 @@ fn _tls_freestanding_link_gate(): i64 {
     return 0;
 }
 
+# v6.3.5 AR-01: the revived monomorphization substrate. Compiles the same fixture
+# WITHOUT and WITH CYRIUS_MONOMORPH=1. The flag re-enables the inline body-token
+# capture so the (always-intact) emit-time replay path fires for the in-fn calls.
+# Two properties: (1) BYTE-CORRECT — both binaries must exit 42 (the inlined value
+# replay gives the same result as the normal call); (2) ACTIVE — the two binaries
+# must DIFFER, so a no-op flag can't pass silently. Proves the substrate is alive
+# without changing default codegen (_MONOMORPH_OK defaults 0). Type substitution
+# (generics) builds on this in v6.3.7.
+fn _monomorph_substrate_gate(): i64 {
+    var label = "v6.3.5 AR-01: CYRIUS_MONOMORPH=1 replays an in-fn inline byte-correct (exit 42 both, binaries differ)";
+    var src = _root_path("tests/fixtures/monomorph/inline_proof.cyr");
+    var bin_off = _tmp_path("audit_mono_off_");
+    var bin_on  = _tmp_path("audit_mono_on_");
+    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    var rc_on  = _self_host_pipe_env(src, CC_PATH, bin_on, "CYRIUS_MONOMORPH=1");
+    if (rc_off != 0 || rc_on != 0) {
+        sys_unlink(bin_off); sys_unlink(bin_on);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": monomorph fixture compile (off rc="); print_num(rc_off);
+        _p(", on rc="); print_num(rc_on); println(")");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin_off, 493);
+    sys_chmod(bin_on, 493);
+    var fail = 0;
+    # (1) byte-correctness: both exit 42.
+    var ec_off = _pipe_file_to_bin(bin_off, src);
+    var ec_on  = _pipe_file_to_bin(bin_on, src);
+    if (ec_off != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-off exit "); print_num(ec_off); println(" (expected 42)");
+        fail = fail + 1;
+    }
+    if (ec_on != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON (inlined) exit "); print_num(ec_on); println(" (expected 42 — inline replay is NOT byte-correct)");
+        fail = fail + 1;
+    }
+    # (2) substrate active: the inlined binary must differ from the normal-call one.
+    var cap = 262144;
+    var boff = alloc(cap);
+    var bon  = alloc(cap);
+    var noff = file_read_all(bin_off, boff, cap);
+    var non  = file_read_all(bin_on,  bon,  cap);
+    sys_unlink(bin_off); sys_unlink(bin_on);
+    var same = 0;
+    if (noff == non) {
+        same = 1;
+        var i = 0;
+        while (i < noff) {
+            if (load8(boff + i) != load8(bon + i)) { same = 0; i = noff; }
+            i = i + 1;
+        }
+    }
+    if (same == 1) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        println(": flag-ON binary identical to flag-off — inline capture did not fire (substrate inert)");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": monomorph token-replay substrate is byte-correct (exit 42 both) and active (binaries differ)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _efi_emit_gate(): i64 {
     var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
     var cap = 262144;

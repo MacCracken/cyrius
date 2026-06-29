@@ -1,0 +1,22 @@
+# Fixture for _monomorph_substrate_gate (v6.3.5 AR-01).
+#
+# add1 / twice are inline-able (<= 2 params, <= 16 body tokens, no control-flow
+# tokens), and caller() calls them IN-BODY (the inline replay only fires inside a
+# fn, GINFN == 1). Under CYRIUS_MONOMORPH=1 the captured bodies replay at each
+# call site (value substitution); with the flag off they are ordinary calls.
+#
+# The exit code MUST be identical with and without the flag (42) — the
+# byte-correctness proof of the revived token-replay substrate. The gate also
+# asserts the two binaries DIFFER, so a no-op flag can't pass silently.
+fn add1(x): i64 { return x + 1; }
+fn twice(x): i64 { return x + x; }
+
+fn caller(): i64 {
+    var a = add1(41);    # 42
+    var b = twice(21);   # 42
+    var c = a + b;       # 84
+    return c - 42;       # 42
+}
+
+var r = caller();
+syscall(60, r);

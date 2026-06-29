@@ -1210,21 +1210,17 @@ while (scan == 1) {
                                         else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
                                             else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }
                             else { if (PEEKT(S) == 32) {
-                                    # Skip fn definition (just advance past it)
-                                    STI(S, GTI(S) + 1);  # consume FN
-                                    STI(S, GTI(S) + 1);  # consume name
-                                    # Skip generic params <T> if present
-                                    if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
-                                    # Skip to matching }
-                                    var dep = 0;
-                                    var fsk = 1;
-                                    while (fsk == 1) {
-                                        var ft = PEEKT(S);
-                                        if (ft == 13) { dep = dep + 1; }
-                                        if (ft == 14) { dep = dep - 1; if (dep == 0) { fsk = 0; } }
-                                        if (ft == 12) { fsk = 0; }
-                                        STI(S, GTI(S) + 1);
-                                    }
+                                    # v6.3.5 CO-01 — prescan the fn signature:
+                                    # register the fn + record its ABI metadata
+                                    # (param masks / count / variadic / return
+                                    # type) so a forward call (lexically before
+                                    # the definition) resolves the correct Str /
+                                    # cstring / SIMD / struct-return ABI instead
+                                    # of mask 0. Cursor advancement is byte-
+                                    # identical to the prior inline skip — the
+                                    # only new effect is the pass-1 registration
+                                    # (see _prescan_fn_sig in parse_fn.cyr).
+                                    _prescan_fn_sig(S);
                                 }
                                 else { if (PEEKT(S) == 60) { PARSE_ENUM_DEF(S, 0); }
                                     else { if (_TOK_IS_KERNEL(S) == 1) {
@@ -1317,6 +1313,17 @@ var _pe_env = _read_env("CYRIUS_TARGET_WIN");
 if (_pe_env != 0) {
     if (load8(_pe_env) == 49 && load8(_pe_env + 1) == 0) {
         _TARGET_PE = 1;
+    }
+}
+
+# v6.3.5 AR-01 — opt-in monomorphization substrate (gated proof). CYRIUS_MONOMORPH=1
+# re-enables the inline body-token capture so the intact emit-time replay path
+# fires; default off keeps codegen byte-identical. Set before pass 2 (capture runs
+# in PARSE_FN_DEF). See util.cyr `_MONOMORPH_OK`.
+var _mono_env = _read_env("CYRIUS_MONOMORPH");
+if (_mono_env != 0) {
+    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
+        _MONOMORPH_OK = 1;
     }
 }
 

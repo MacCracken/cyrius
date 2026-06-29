@@ -211,6 +211,16 @@ var _fnt_namehash = 0;    # 0x110000 fn_name_hash (2 B/slot, name -> fi+1)
 var _fnt_starthash = 0;   # 0x114000 fn_start_hash (2 B/slot, start -> fi+1)
 var _fnt_hash_mask = 0;   # _fnt_cap - 1 (both hashes; cap is power-of-2)
 var _fnt_cap = 0;
+# v6.3.5 AR-01 — monomorphization substrate (gated proof). Opt-in flag that
+# re-enables the inline body-token CAPTURE (SFBS/SFBE/SFINL in PARSE_FN_DEF) so
+# the still-intact emit-time replay path (PARSE_FNCALL, GFINL!=0 branch) fires.
+# Default 0: the per-backend `_INLINE_OK` default-off (x86 size regression v1.11.3;
+# aarch64 metadata overlap, since relocated) stays untouched, so default codegen
+# is byte-identical. Each driver sets this to 1 when CYRIUS_MONOMORPH=1. The
+# capture gates OR `_INLINE_OK == 1 || _MONOMORPH_OK == 1`. Type substitution
+# (generics) builds on this in v6.3.7; v6.3.5 only proves the value-replay
+# substrate is byte-correct cross-arch behind the flag.
+var _MONOMORPH_OK = 0;
 # Copy an 8 B/slot table's live oc entries into a fresh nc-slot buffer. The tail
 # (oc..nc) is zeroed by alloc's fresh mmap pages — new fn slots default 0, which is
 # exactly what REGFN's mask/overload/body tables expect (they're only written when

@@ -1,0 +1,64 @@
+# forward_call_abi.tcyr - CO-01 (v6.3.5): a call lexically BEFORE the callee's
+# definition must resolve the callee's ABI metadata - param masks and return
+# type - now recorded by the pass-1 fn-signature prescan (_prescan_fn_sig).
+#
+# Pre-fix, PARSE_FNCALL auto-registered an unseen callee with mask 0, so a
+# forward call silently dropped:
+#   - Str auto-coercion: a string literal passed to a `: Str` param stayed a raw
+#     cstr pointer; str_len then read the pointer bytes as a length (garbage / 0).
+#   - the struct-return retptr ABI: a `: Struct`-returning callee was called as
+#     if it returned a scalar in rax, so the caller read a wild value.
+#
+# Each `*_caller` below is emitted (pass 2) BEFORE its callee's definition, so the
+# in-body forward call only resolves the right ABI when the prescan recorded it
+# first. On a pre-v6.3.5 cycc these return garbage. Like structs and globals, the
+# prescan covers declarations that appear before the first top-level statement
+# (pass 1 stops there) - the standard cyrius decls-before-statements order, which
+# is why all definitions sit above alloc_init() here.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+# ---- definitions first (each caller forward-references the callee below it) ----
+struct Co01Pt { x: i64; y: i64; }
+
+fn co01_caller_str(): i64 {
+    var n = co01_callee_str("hello");   # forward call to a `: Str`-param fn
+    return n;
+}
+fn co01_callee_str(s: Str): i64 { return str_len(s); }
+
+fn co01_caller_two(): i64 {
+    var n = co01_callee_two("ab", "cdef");   # forward call, two `: Str` params
+    return n;
+}
+fn co01_callee_two(a: Str, b: Str): i64 { return str_len(a) + str_len(b); }
+
+fn co01_caller_pt(): i64 {
+    var p: Co01Pt = co01_mkpt();         # forward call to a `: Struct`-returning fn
+    return p.x + p.y;
+}
+fn co01_mkpt(): Co01Pt {
+    var p: Co01Pt;
+    p.x = 10;
+    p.y = 20;
+    return p;
+}
+
+# ---- top-level statements (pass 1 stops here; everything above is prescanned) --
+alloc_init();
+
+test_group("forward call to a `: Str`-param fn auto-coerces a string literal");
+assert_eq(co01_caller_str(), 5, "str_len of coerced literal via forward call == 5");
+
+test_group("forward call coerces both `: Str` params (mask bits 0 and 1)");
+assert_eq(co01_caller_two(), 6, "two coerced literals: 2 + 4 == 6");
+
+test_group("forward call to a `: Struct`-returning fn uses the retptr ABI");
+assert_eq(co01_caller_pt(), 30, "struct-return forward call: 10 + 20 == 30");
+
+var r = assert_summary();
