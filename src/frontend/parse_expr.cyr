@@ -108,6 +108,112 @@ fn _cl_restore_locals(S, buf, n): i64 {
     return 0;
 }
 
+# v6.3.8 — lexical-capture helpers. The enclosing-locals NAME snapshot is the
+# first segment of the v6.3.7 snapshot buffer (buf[0..n)); `_cl_snap_find` returns
+# the enclosing slot whose name matches `noff`, searching backward so an inner
+# scope shadows an outer (same convention as FINDLOCAL). -1 if not an enclosing
+# local.
+fn _cl_snap_find(S, noff): i64 {
+    if (_cl_snap == 0) { return 0 - 1; }
+    var i = _cl_snap_n - 1;
+    while (i >= 0) {
+        var sn = L64(_cl_snap + i * 8);
+        if (sn >= 0) { if (STREQ(S, sn, noff) == 1) { return i; } }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+# Capture index of enclosing slot `esl`, or -1 if not yet captured.
+fn _cl_cap_find(esl): i64 {
+    var i = 0;
+    while (i < _cl_ncap) {
+        if (L64(&_cl_cap_slots + i * 8) == esl) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# Record enclosing slot `esl` as a capture (dedup); returns its capture index.
+fn _cl_cap_add(esl): i64 {
+    var c = _cl_cap_find(esl);
+    if (c >= 0) { return c; }
+    if (_cl_ncap >= 64) { return 0 - 1; }
+    S64(&_cl_cap_slots + _cl_ncap * 8, esl);
+    var idx = _cl_ncap;
+    _cl_ncap = _cl_ncap + 1;
+    return idx;
+}
+fn _cl_shadow_add(S, noff): i64 {
+    if (_cl_nshadow >= 64) { return 0; }
+    S64(&_cl_shadow + _cl_nshadow * 8, noff);
+    _cl_nshadow = _cl_nshadow + 1;
+    return 0;
+}
+fn _cl_shadow_find(S, noff): i64 {
+    var i = 0;
+    while (i < _cl_nshadow) {
+        if (STREQ(S, L64(&_cl_shadow + i * 8), noff) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# Pre-scan the closure body (cursor at the body start: `{` for a block, else the
+# expression) to collect which enclosing locals it references as free variables.
+# A free var is an identifier that is NOT a closure param/local (FINDLOCAL), NOT a
+# body-local `var` (the shadow set), NOT a call name (`IDENT(`), and IS an
+# enclosing local (in the snapshot). Restores the cursor; populates _cl_cap_slots
+# + sets _cl_capturing. This runs BEFORE the closure prologue so the env-param
+# decision (capturing → hidden arg0) can be made in one pass.
+fn _cl_prescan_captures(S): i64 {
+    _cl_ncap = 0;
+    _cl_nshadow = 0;
+    var save_ti = GTI(S);
+    var is_block = 0;
+    if (PEEKT(S) == 13) { is_block = 1; STI(S, GTI(S) + 1); }
+    var depth = 0;
+    var prev_var = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { go = 0; }
+        elif (is_block == 1) {
+            if (t == 13) { depth = depth + 1; }
+            elif (t == 14) { if (depth == 0) { go = 0; } else { depth = depth - 1; } }
+        }
+        else {
+            if (t == 10 || t == 28) { depth = depth + 1; }
+            elif (t == 11 || t == 29) { if (depth == 0) { go = 0; } else { depth = depth - 1; } }
+            elif (t == 5 && depth == 0) { go = 0; }
+            elif (t == 31 && depth == 0) { go = 0; }
+            elif (t == 14 && depth == 0) { go = 0; }
+        }
+        if (go == 1) {
+            if (t == 3) { prev_var = 1; }
+            elif (t == 2) {
+                var noff = PEEKV(S);
+                if (prev_var == 1) { _cl_shadow_add(S, noff); prev_var = 0; }
+                else {
+                    var is_call = 0;
+                    if (TOKTYP(S, GTI(S) + 1) == 10) { is_call = 1; }
+                    if (is_call == 0) {
+                        if (FINDLOCAL(S, noff) < 0) {
+                            if (_cl_shadow_find(S, noff) < 0) {
+                                var esl = _cl_snap_find(S, noff);
+                                if (esl >= 0) { _cl_cap_add(esl); }
+                            }
+                        }
+                    }
+                }
+            }
+            else { prev_var = 0; }
+            STI(S, GTI(S) + 1);
+        }
+    }
+    STI(S, save_ti);
+    _cl_capturing = 0;
+    if (_cl_ncap > 0) { _cl_capturing = 1; }
+    return 0;
+}
+
 fn PARSE_FACTOR(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -1223,6 +1329,8 @@ fn PARSE_FACTOR(S): i64 {
             if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
             STI(S, GTI(S) + 1);  # consume closing |
         }
+        _cl_snap = cl_locsnap;
+        _cl_snap_n = cl_saved_flc;
         # v6.2.41 dropped ESUBRSP's 2nd arg and claimed the frame "is patched
         # later via EPATCHFRAME" — but the closure path NEVER called EPATCHFRAME
         # (closures were untested), so `sub rsp, imm32` kept its 0 placeholder. The

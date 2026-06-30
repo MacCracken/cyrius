@@ -67,6 +67,21 @@ var _cur_fn_regalloc = 0;
 # A fn that emits a closure therefore skips the regalloc post-pass (it keeps a
 # correct, un-reallocated frame; the only cost is losing the optimization).
 var _cur_fn_has_closure = 0;
+# v6.3.8 — lexical-capture state for the closure currently being parsed. A closure
+# whose body references an enclosing local (a free variable) captures it BY VALUE
+# into a heap env object `[fn_ptr, cap0, cap1, …]`; the closure value is that
+# object (vtable-shaped, fn_ptr at offset 0), dispatched via callptr. `_cl_snap`
+# / `_cl_snap_n` point at the enclosing-locals name snapshot (taken in the closure
+# setup); `_cl_cap_slots[0.._cl_ncap)` holds the enclosing slot index of each
+# capture (capture index = position in this array); `_cl_shadow` tracks body-local
+# `var` names so they shadow enclosing names during the pre-scan.
+var _cl_capturing = 0;
+var _cl_ncap = 0;
+var _cl_snap = 0;
+var _cl_snap_n = 0;
+var _cl_nshadow = 0;
+var _cl_cap_slots[64];
+var _cl_shadow[64];
 # v5.5.36 Phase 2b — nonzero (= 8) when the current fn returns a
 # struct by value. Reserves one 8-byte frame slot for the hidden
 # retptr stash, living immediately after the regalloc save area
