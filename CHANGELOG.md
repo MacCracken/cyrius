@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.11] — 2026-06-30
+
+**v6.3.11 — async / await (first-class Futures over the cooperative runtime).** The language trio's
+third member: `async fn` and `await` as sugar over the existing epoll runtime (`lib/async.cyr`). An
+`async fn` call builds a **Future** (a deferred computation); `await` forces it to its value. Gated
+behind `_ASYNC_OK` (`CYRIUS_ASYNC=1`, default off) → **cycc self-host byte-identical** (differential vs
+v6.3.10 confirms default codegen unchanged on x86 + aarch64; cycc uses no async/await). The
+native-float **Tier A tail (H)** is already complete (f64 type + operators + NaN on x86/aarch64 shipped
+.18/.19/.41; f32 conversions .18); the one remaining piece — f32 *scalar arithmetic* — is consumer-less
+(mabda deleted its shims at v6.2.19) and pinned as an optional follow-on, not bundled here.
+
+### Added — async / await
+- **`async fn` / `await` keywords** (lexer tokens 134/135). Lexed unconditionally — no bare
+  `async`/`await` identifier exists in `src/` or `lib/`, so cycc's token stream is unchanged
+  (byte-identical self-host); the *feature* is gated in pass 2.
+- **First-class Futures.** `async fn f(p0..pn): T { body }` compiles to a constructor that allocates a
+  heap Future `[ &f$impl, argc, args… ]` and returns its pointer (the body becomes a hidden `f$impl`,
+  reached only by pointer); the call does **not** run the body. `await fut` lowers to
+  `future_force(fut)` — calls the bundled impl with the bundled args via `fncallN` and returns its
+  value. The Future object reuses the closure-env heap construction (alloc + fn-addr fixup + field
+  stores); `await` is a tight factor-level prefix. Futures are spawnable (`async_spawn_future`) and
+  forced cooperatively by `async_run`. 0–6 params; needs `include "lib/alloc.cyr"` + `lib/async.cyr`.
+- **Runtime `future_force` + `async_spawn_future`** (`lib/async.cyr`, shared across all targets — pure
+  `fncallN` dispatch, no new syscalls). A v1 Future re-runs its body on each force; force-once
+  memoization is a follow-on.
+- **`tests/fixtures/async/async_await.cyr`** + **`_async_await_gate`** (check.sh **106 → 107**): 0/1/3-param
+  async fns, `await` on a call, a stored Future awaited later, and spawn + run → exit 42 under
+  `CYRIUS_ASYNC=1`, REJECTED off.
+
+### Implementation notes
+- **`_IS_FN_KW` dispatch + lazy `_ensure_async_gate`.** The top-level dispatch in all 7 driver forks
+  routes a leading `async` (token 134) to the fn path via a shared `_IS_FN_KW`; pass-1
+  `_prescan_fn_sig` consumes the prefix and registers `f` with the normal (constructor) ABI. The
+  feature gate resolves lazily from `CYRIUS_ASYNC` on first async/await in pass 2 — no per-fork driver
+  env-read edit, and unreachable for cycc's own (async-free) source.
+- **DCE name-read fix.** The pass-2 dispatch reads the fn name at `GTI+1` for its DCE reachability
+  pre-check, which assumes the cursor is at `fn`. The async prefix shifted it by one, mis-marking the
+  async fn unreachable and stubbing it (`add` undefined). Fix: consume `async` *inside* the
+  fn-dispatch block (cursor → `fn`, all DCE/stub logic stays correct) and arm `_pending_async` only on
+  the reachable path, so a DCE-stubbed async fn can't leak the flag.
+
+### Verified
+- Self-host fixpoint + **differential vs v6.3.10 byte-identical** (x86 + aarch64 emit unchanged for
+  non-async code); seed → cybs → cycc byte-identical (the large new `_async_emit_constructor` compiles
+  through cybs); check.sh **107/107**; async runs on **x86 + aarch64 (qemu)**; gated off → clear
+  rejection. **ecb (macOS) + cass (Windows) + pi (aarch64) SELFHOST_OK.** Bench self_compile **533 ms**
+  (v6.3.10: 523); cycc **1,101,944 → 1,107,280 B** (+5,336).
+
+### Deferred (documented)
+- True **stackless coroutines** that suspend/resume *mid-body* across an `await` (a poll-driven state
+  machine, without bundling the whole call) — needs a poll-based runtime rework; the current
+  deferred-then-forced model matches the run-to-completion runtime. Also: force-once Future
+  memoization, `async` generic fns, struct-returning `async fn`s, and **f32 scalar arithmetic**
+  (native-float Tier A tail; consumer-less).
+
 ## [6.3.10] — 2026-06-30
 
 **v6.3.10 — non-i64 generics: instances, structs, explicit syntax.** The second half of the generics

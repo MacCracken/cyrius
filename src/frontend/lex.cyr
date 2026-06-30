@@ -1018,6 +1018,15 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFFFF == 0x6B61657262) { ADDTOK(S, 51, 0); return p; }
         # "match" = 0x686374616D
         if (kw & 0xFFFFFFFFFF == 0x686374616D) { ADDTOK(S, 75, 0); return p; }
+        # v6.3.11 (G): "async" = 0x636E797361 → token 134 (async-fn modifier,
+        # consumed before `fn`). "await" = 0x7469617761 → token 135 (await-expr
+        # prefix). Lexed unconditionally — no bare `async`/`await` identifier
+        # exists in src/ or lib/, so cycc's token stream is unchanged (the words
+        # never appear), keeping self-host byte-identical. The FEATURE is gated in
+        # pass 2 (PARSE_FN_DEF / PEXPR via _ensure_async_gate / _ASYNC_OK); a
+        # default build errors loud on async/await rather than miscompiling.
+        if (kw & 0xFFFFFFFFFF == 0x636E797361) { ADDTOK(S, 134, 0); return p; }
+        if (kw & 0xFFFFFFFFFF == 0x7469617761) { ADDTOK(S, 135, 0); return p; }
     }
     if (klen == 6) {
         # "return" = 0x006E7275746572

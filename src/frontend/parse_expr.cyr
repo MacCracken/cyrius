@@ -1362,6 +1362,23 @@ fn PARSE_FACTOR(S): i64 {
         ENOTR(S);
         return 0;
     }
+    if (typ == 135) {
+        # v6.3.11 (G): await e — force a Future to its value. Lowers to
+        # future_force(e): eval the operand factor (→ rax = the Future object built
+        # by an async-fn constructor), then call the runtime forcer. Binds tightly
+        # (factor-level prefix), so `await f() + 1` is `(await f()) + 1`. Gated on
+        # _ASYNC_OK; needs lib/async.cyr (future_force).
+        _ensure_async_gate(S);
+        if (_ASYNC_OK == 0) { ERR_MSG(S, "await requires CYRIUS_ASYNC=1 (async/await are gated)", 53); }
+        STI(S, GTI(S) + 1);                       # consume `await`
+        var _aw_ff = _FINDFN_CSTR(S, "future_force", 12);
+        if (_aw_ff < 0) { ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force", 50); }
+        PARSE_FACTOR(S);                          # rax = the Future object
+        EPUSHR(S);                                # push the future as the sole arg
+        ECALLPOPS(S, 1);                          # marshal into arg-reg 0
+        ECALLFIX(S, _aw_ff);                      # rax = future_force(future)
+        return 0;
+    }
     # |params| body / || body — closure/lambda. v6.3.7 makes the non-capturing
     # base actually work (param passing, zero-param, unique naming); lexical
     # capture is the follow-up slot.

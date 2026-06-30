@@ -1793,6 +1793,7 @@ fn _prescan_params(S, fi): i64 {
 # mangling PARSE_FN_DEF does mutates the name pool, and `mod` is unused in-tree, so
 # prescan only the common top-level case here.
 fn _prescan_fn_sig(S): i64 {
+    if (PEEKT(S) == 134) { STI(S, GTI(S) + 1); }   # v6.3.11: consume optional `async` prefix
     var start_ti = GTI(S);
     STI(S, GTI(S) + 1);                 # consume FN
     if (PEEKT(S) == 2) {
@@ -1818,7 +1819,152 @@ fn _prescan_fn_sig(S): i64 {
     return 0;
 }
 
+# v6.3.11 (G): mint `base$impl` — the hidden body-fn name for an `async fn`. The
+# user-facing name `base` becomes the Future constructor; `base$impl` holds the
+# actual body and is only ever reached by pointer (future_force), never by name.
+fn _mint_impl_name(S, base_noff): i64 {
+    var blen = 0;
+    while (load8(S + 0x60000 + base_noff + blen) != 0) { blen = blen + 1; }
+    NPOS_GUARD(S, blen + 8);
+    var wp = GNPOS(S);
+    var noff = wp;
+    var i = 0;
+    while (i < blen) { store8(S + 0x60000 + wp, load8(S + 0x60000 + base_noff + i)); wp = wp + 1; i = i + 1; }
+    store8(S + 0x60000 + wp, 36); wp = wp + 1;    # '$'
+    store8(S + 0x60000 + wp, 105); wp = wp + 1;   # 'i'
+    store8(S + 0x60000 + wp, 109); wp = wp + 1;   # 'm'
+    store8(S + 0x60000 + wp, 112); wp = wp + 1;   # 'p'
+    store8(S + 0x60000 + wp, 108); wp = wp + 1;   # 'l'
+    store8(S + 0x60000 + wp, 0); wp = wp + 1;
+    SNPOS(S, wp);
+    return noff;
+}
+
+# v6.3.11 (G): emit the Future constructor for an `async fn`. The body has already
+# been emitted (as `f$impl`, fi_impl, with pc params); this synthesizes the
+# user-named fn `f(p0..p{pc-1})` whose body allocates a Future heap object
+# `[ &f$impl, pc, p0, … ]` and returns its pointer. Calls to `f` therefore build a
+# deferred Future instead of running the body; `await fut` forces it (future_force).
+# Mirrors the closure env construction (alloc + fn-addr fixup + field stores), but
+# the captured values are the call's actual arguments and the dispatch is fncallN
+# (future_force) rather than the hidden-env callptr convention. Needs lib/alloc.cyr.
+fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
+    var alloc_fi = _FINDFN_CSTR(S, "alloc", 5);
+    if (alloc_fi < 0) {
+        ERR_MSG(S, "an async fn needs include \"lib/alloc.cyr\" for its Future heap object", 67);
+    }
+    var fi_f = FINDFN(S, noff_f);
+    if (fi_f < 0) { fi_f = REGFN(S, noff_f); }
+    SFAS(S, fi_f, 1);
+    S64(_fnt_params + fi_f * 8, pc);
+    # --- save enclosing (top-level) state; the constructor is its own fn ---
+    var sv_lv = GLVAR(S);
+    var sv_infn = GINFN(S);
+    var sv_flc = GFLC(S);
+    var sv_rpc = vec_len(rp_vec);
+    var sv_sdep = GSDEP(S);
+    var sv_regalloc = _cur_fn_regalloc;
+    var sv_stash = _cur_fn_ret_stash;
+    var sv_sid = _cur_fn_ret_sid;
+    var sv_scalar = _cur_fn_ret_scalar;
+    var sv_naked = _cur_fn_naked;
+    var sv_ix = _cur_fn_ix;
+    SINFN(S, 1);
+    SFLC(S, 0);
+    vec_truncate(rp_vec, 0);
+    SSDEP(S, 0);
+    _cur_fn_regalloc = 0;
+    _cur_fn_ret_stash = 0;
+    _cur_fn_ret_sid = 0;
+    _cur_fn_ret_scalar = 0;
+    _cur_fn_naked = 0;
+    _cur_fn_ix = fi_f;
+    var jmp = EJMP0(S);
+    S64(_fnt_offsets + fi_f * 8, GCP(S));
+    EFNPRO(S);
+    # params p0..p{pc-1} → anonymous local slots 0..pc-1 (capped at the 6 arg-regs)
+    var i = 0;
+    while (i < pc) {
+        S64(S + 0x5D9D000 + i * 8, 0 - 1);
+        SLDEP(S, i, 0);
+        if (i < 6) { ESTOREPARM(S, i, i, 0); }
+        SFLC(S, i + 1);
+        i = i + 1;
+    }
+    var frame_patch = ESUBRSP(S);
+    # obj = alloc((2 + pc) * 8)  → [fp, argc, args…]
+    EMOVI(S, (2 + pc) * 8);
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, alloc_fi);
+    var obj_slot = pc;
+    S64(S + 0x5D9D000 + obj_slot * 8, 0 - 1);
+    SLDEP(S, obj_slot, 0);
+    EFLSTORE(S, obj_slot);
+    SFLC(S, obj_slot + 1);
+    # obj[0] = &f$impl  (fixup-resolved code address)
+    EFLLOAD(S, obj_slot);
+    EPUSHR(S);
+    var fc = GFCNT(S);
+    if (fc >= 1048576) {
+        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+        syscall(SYS_EXIT, 1);
+    }
+    ELOAD_FN_ADDR(S, _fixup_base + fc * 16, fc, fi_impl);
+    EPOPC(S);
+    ESTORE64(S);
+    # obj[8] = argc (pc)
+    EFLLOAD(S, obj_slot);
+    EADDRA_IMM(S, 8);
+    EPUSHR(S);
+    EMOVI(S, pc);
+    EPOPC(S);
+    ESTORE64(S);
+    # obj[16 + i*8] = arg i (the constructor's param, captured by value)
+    i = 0;
+    while (i < pc) {
+        EFLLOAD(S, obj_slot);
+        EADDRA_IMM(S, 16 + i * 8);
+        EPUSHR(S);
+        EFLLOAD(S, i);
+        EPOPC(S);
+        ESTORE64(S);
+        i = i + 1;
+    }
+    # return obj
+    EFLLOAD(S, obj_slot);
+    EFNEPI(S);
+    var fsz = (GFLC(S) * 8 + 15) & (0 - 16);
+    EPATCHFRAME(S, frame_patch, fsz);
+    SFNE(S, fi_f, GCP(S));
+    EPATCH(S, jmp);
+    # --- restore enclosing state ---
+    SINFN(S, sv_infn);
+    SFLC(S, sv_flc);
+    vec_truncate(rp_vec, sv_rpc);
+    SSDEP(S, sv_sdep);
+    SLVAR(S, sv_lv);
+    _cur_fn_regalloc = sv_regalloc;
+    _cur_fn_ret_stash = sv_stash;
+    _cur_fn_ret_sid = sv_sid;
+    _cur_fn_ret_scalar = sv_scalar;
+    _cur_fn_naked = sv_naked;
+    _cur_fn_ix = sv_ix;
+    return 0;
+}
+
 fn PARSE_FN_DEF(S): i64 {
+    var _is_async = 0;
+    var _async_noff_f = 0;
+    # v6.3.11 (G): the pass-2 dispatch already consumed the leading `async` (token
+    # 134) and set _pending_async, so the cursor is at `fn` here. (The async token is
+    # consumed in the dispatch, not here, so the DCE pre-check reads the real fn name.)
+    if (_pending_async == 1) {
+        _pending_async = 0;
+        _ensure_async_gate(S);
+        if (_ASYNC_OK == 0) { ERR_MSG(S, "async fn requires CYRIUS_ASYNC=1 (async/await are gated)", 56); }
+        _is_async = 1;
+    }
     var _defstart_ti = GTI(S);   # v6.3.10: the `fn`-keyword token, for instance re-emit
     STI(S, GTI(S) + 1);  # consume FN
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -1852,6 +1998,14 @@ fn PARSE_FN_DEF(S): i64 {
         store8(S + 0x60000 + mwp, 0); mwp = mwp + 1;
         SNPOS(S, mwp);
         noff = mnoff;
+    }
+    # v6.3.11 (G): async fn — the user name `f` becomes a Future constructor
+    # (synthesized after the body, below); the body itself is emitted under `f$impl`.
+    # Generic async (`async fn f<T>`) is deferred — error rather than miscompile.
+    if (_is_async == 1) {
+        if (_gtp != 0) { ERR_MSG(S, "async generic fns not yet supported", 35); }
+        _async_noff_f = noff;
+        noff = _mint_impl_name(S, noff);
     }
     # Register or find fn.
     # v5.7.9: detect duplicate fn definitions across translation
@@ -3347,5 +3501,11 @@ fn PARSE_FN_DEF(S): i64 {
     # `var foo[N]` declarations between fn defs don't get attributed to
     # the previous fn.
     _cur_fn_ix = 0 - 1;
+    # v6.3.11 (G): async fn — the body emitted above as `f$impl` (fi). Now synthesize
+    # the user-named Future constructor `f`, which bundles the args + &f$impl into a
+    # heap Future and returns it. pc is the body's recorded param count.
+    if (_is_async == 1) {
+        _async_emit_constructor(S, _async_noff_f, fi, L64(_fnt_params + fi * 8));
+    }
     return 0;
 }

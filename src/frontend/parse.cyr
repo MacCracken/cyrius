@@ -148,6 +148,32 @@ var _ra_auto_count = 0;
 # hosts. See CHANGELOG [5.11.62].
 var _cur_fn_ix = 0 - 1;
 
+# v6.3.11 (G) — async/await. `_IS_FN_KW` lets the top-level dispatch in every
+# driver fork route a leading `async` (token 134) to the same fn path as `fn`
+# (token 32) without 7×2 bespoke branches: the dispatch checks `_IS_FN_KW(S)==1`
+# instead of `PEEKT(S)==32`, and the shared _prescan_fn_sig / PARSE_FN_DEF consume
+# the optional `async` prefix. Token 134 only exists when source has `async`
+# (cycc has none → byte-identical self-host), so no _ASYNC_OK guard is needed here.
+fn _IS_FN_KW(S): i64 {
+    var t = PEEKT(S);
+    if (t == 32) { return 1; }
+    if (t == 134) { return 1; }
+    return 0;
+}
+
+# Lazily resolve the async feature gate from CYRIUS_ASYNC the first time an
+# `async`/`await` token reaches pass 2 (PARSE_FN_DEF / PEXPR). Default off → the
+# gated lowering is unreachable and cycc self-host is byte-identical (async/await
+# never appear in cycc src, so this is never called during self-host). Same opt-in
+# contract as _MONOMORPH_OK, but lazy — avoids a per-fork driver env-read edit.
+fn _ensure_async_gate(S): i64 {
+    if (_async_gate_init == 1) { return _ASYNC_OK; }
+    _async_gate_init = 1;
+    var e = _read_env("CYRIUS_ASYNC");
+    if (e != 0) { if (load8(e) == 49) { if (load8(e + 1) == 0) { _ASYNC_OK = 1; } } }
+    return _ASYNC_OK;
+}
+
 
 # v5.5.38: struct/enum/union + shared-helper fns extracted.
 include "src/frontend/parse_types.cyr"

@@ -961,6 +961,58 @@ parameter is the well-tested case; multi-parameter (`Pair<T, U>` with distinct
 `T`/`U`) maps both to the first argument for now. Enum generic params
 (`<T, E>`) remain syntactically accepted but type-erased.
 
+## Async / Await
+
+`async fn` and `await` are sugar over the cooperative epoll runtime
+(`lib/async.cyr`). Calling an `async fn` builds a **Future** — a deferred
+computation — rather than running the body immediately; `await` forces the
+Future to its value.
+
+```
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+
+async fn add(a, b): i64 { return a + b; }
+
+fn main(): i64 {
+    alloc_init();
+    var f = add(40, 2);        # builds a Future — the body has NOT run yet
+    return await f;            # forces it → 40 + 2 = 42
+}
+```
+
+`await` can also be applied directly to a call (`await add(40, 2)`), and Futures
+can be scheduled on a runtime and forced cooperatively:
+
+```
+var rt = async_new();
+async_spawn_future(rt, fetch(url));   # schedule a Future as a task
+async_run(rt);                        # drives spawned Futures to completion
+```
+
+**Lowering.** An `async fn f(args)` compiles to a constructor that allocates a
+heap Future `[ &f$impl, argc, args… ]` (the body is emitted as a hidden `f$impl`)
+and returns its pointer. `await fut` lowers to `future_force(fut)`, which calls
+the bundled impl with the bundled args (via `fncallN`) and returns its value.
+The Future object reuses the same heap construction as a closure env. Requires
+`include "lib/alloc.cyr"` (the Future is heap-allocated) and `lib/async.cyr`
+(for `future_force`); `alloc_init()` must run before the first `async`-fn call.
+
+**Gating.** `async`/`await` are opt-in: compile with `CYRIUS_ASYNC=1`. A default
+build rejects them with a clear error (so default codegen — which has no
+async — stays byte-identical). Enable via the env var or `cyrius build` flags.
+
+**Status & limits (v6.3.11).** `async fn` (0–6 params) + `await` build and force
+first-class, spawnable Futures over the existing runtime — same cooperative
+semantics, sugarier surface. A Future re-runs its body on each `await`
+(force-once memoization is a follow-on). True stackless coroutines that *suspend
+and resume mid-body across an `await`* (a poll-driven state machine, without
+bundling the whole call) are a planned follow-on requiring a poll-based runtime;
+the current model is deferred-then-forced, which matches the run-to-completion
+runtime. `async` generic fns and struct-returning `async fn`s are not yet
+supported.
+
 ## Global Initializers
 
 Variables can be declared among function definitions:

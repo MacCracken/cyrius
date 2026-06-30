@@ -1,0 +1,42 @@
+# Fixture for _async_await_gate (v6.3.11 G — async/await).
+#
+# `async fn` / `await` desugar to first-class Futures over the cooperative epoll
+# runtime (lib/async.cyr). An `async fn f(args)` compiles to a constructor that
+# builds a heap Future `[ &f$impl, argc, args… ]` (deferred — the body does NOT run
+# at the call); `await fut` forces it (future_force → fncallN dispatch → the body's
+# value). Futures are spawnable on a runtime (async_spawn_future) and forced by
+# async_run. The Future object reuses the closure-env construction (alloc + fn-addr
+# fixup + field stores); the body emits as a normal hidden fn.
+#
+# Exercised here: 0/1/3-param async fns, await directly on a call, a stored Future
+# awaited later, and spawn + run on the cooperative runtime.
+#
+# Compiles + runs ONLY under CYRIUS_ASYNC=1 (gated; default codegen byte-identical).
+# MUST exit 42.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+
+async fn answer(): i64 { return 42; }                # 0 params
+async fn dbl(x): i64 { return x + x; }               # 1 param
+async fn add3(a, b, c): i64 { return a + b + c; }    # 3 params
+
+fn main(): i64 {
+    alloc_init();
+    var total = 0;
+
+    total = total + await answer();                  # 42  (await directly on a call)
+
+    var f = dbl(10);                                 # build a Future (deferred)
+    total = total + await f;                         # +20 = 62  (stored, awaited later)
+
+    total = total + await add3(1, 2, 3);             # +6  = 68  (multi-arg)
+
+    var rt = async_new();                            # cooperative runtime
+    async_spawn_future(rt, answer());                # schedule a Future
+    async_run(rt);                                   # force it (result discarded)
+
+    return total - 26;                               # 68 - 26 = 42
+}

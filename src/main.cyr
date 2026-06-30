@@ -1209,7 +1209,7 @@ while (scan == 1) {
                                     else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
                                         else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
                                             else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }
-                            else { if (PEEKT(S) == 32) {
+                            else { if (_IS_FN_KW(S) == 1) {
                                     # v6.3.5 CO-01 — prescan the fn signature:
                                     # register the fn + record its ABI metadata
                                     # (param masks / count / variadic / return
@@ -1444,7 +1444,13 @@ while (topgo == 1) {
                                         else { if (PEEKT(S) == 125) { _pure_pending = 1; STI(S, GTI(S) + 1); }
                                             else { if (PEEKT(S) == 126) { _io_pending = 1; STI(S, GTI(S) + 1); }
                                                 else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { if (PEEKT(S) == 133) { _naked_pending = 1; } else { _alloc_pending = 1; } STI(S, GTI(S) + 1); }
-                                else { if (PEEKT(S) == 32) {
+                                else { if (_IS_FN_KW(S) == 1) {
+                                        # v6.3.11 (G): consume a leading `async` here (cursor → `fn`) so the
+                                        # DCE name-read + match-peek + stub paths below all see the real fn
+                                        # name, not `async`. _pending_async is armed only on the reachable
+                                        # path (below), so a DCE-stubbed async fn can't leak the flag.
+                                        var _blk_async = 0;
+                                        if (PEEKT(S) == 134) { _blk_async = 1; STI(S, GTI(S) + 1); }
                                         # DCE: check bitmap for reference to this function name.
                                         # Skip DCE for module-scoped or underscore-named functions.
                                         # Also skip in object mode — externally-referenced functions
@@ -1552,6 +1558,7 @@ while (topgo == 1) {
                                             STI(S, _mp_save_ti);
                                         }
                                         if (dce_reachable == 1) {
+                                            if (_blk_async == 1) { _pending_async = 1; }   # v6.3.11 (G): arm async lowering for PARSE_FN_DEF
                                             PARSE_FN_DEF(S);
                                         } else {
                                             # Emit stub: set fn_offsets, emit xor eax,eax; ret, skip body

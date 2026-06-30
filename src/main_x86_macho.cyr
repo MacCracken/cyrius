@@ -237,7 +237,7 @@ while (scan == 1) {
                                     else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
                                         else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
                                             else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }   # v6.2.27: +128 #naked (consume-and-ignore)
-                        else { if (PEEKT(S) == 32) {
+                        else { if (_IS_FN_KW(S) == 1) {
                                 # v6.3.5 CO-01 — pass-1 fn-signature prescan (see _prescan_fn_sig in parse_fn.cyr).
                                 _prescan_fn_sig(S);
                             }
@@ -369,7 +369,9 @@ while (topgo == 1) {
                                         else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
                                             else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
                                                 else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }   # v6.2.27: +128 #naked (consume-and-ignore)
-                            else { if (PEEKT(S) == 32) {
+                            else { if (_IS_FN_KW(S) == 1) {
+                                    var _blk_async = 0;   # v6.3.11 (G): consume `async` (cursor→`fn`) before the DCE name-read
+                                    if (PEEKT(S) == 134) { _blk_async = 1; STI(S, GTI(S) + 1); }
                                     # DCE: stub unreferenced top-level fns to `xor eax,eax;
                                     # ret`. IDENTICAL to main.cyr (1247-1375) — keeps this
                                     # driver byte-for-byte with the shared driver so cycc
@@ -444,6 +446,7 @@ while (topgo == 1) {
                                         STI(S, _mp_save_ti);
                                     }
                                     if (dce_reachable == 1) {
+                                        if (_blk_async == 1) { _pending_async = 1; }   # v6.3.11 (G)
                                         PARSE_FN_DEF(S);
                                     } else {
                                         STI(S, GTI(S) + 1);

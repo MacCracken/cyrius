@@ -35,6 +35,11 @@ var F32_TYID = 0x40000002;
 # on such a local auto-dispatch: load the fn pointer from [obj+0] and pass obj as
 # the hidden first (env) arg. Non-capturing closures stay bare fn pointers (no tag).
 var CLOSURE_TYID = 0x40000003;
+# v6.3.11 (G) — a value holding an async Future object `[impl_ptr, argc, args…]`
+# (built by an `async fn`'s synthesized constructor). `await fut` forces it via the
+# runtime's future_force. The tag is informational in v1 (await calls future_force
+# on its operand directly); reserved for future await-type checking.
+var FUTURE_TYID = 0x40000004;
 fn GVTYPE(S, vi): i64 { return L64(_vart_base + vi * 8); }
 fn SVTYPE(S, vi, v): i64 { S64(_vart_base + vi * 8, v); return 0; }
 

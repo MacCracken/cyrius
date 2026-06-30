@@ -225,6 +225,26 @@ var _fnt_defstart = 0;
 var _inst_name = 0;
 var _inst_conc0 = 0;
 var _inst_conc1 = 0;
+# v6.3.11 (G): per-fn async flag (1 = `async fn`, else 0). Lazy-alloc'd (max fn
+# cap) like _fnt_tparams; stays 0 (unallocated) for the default self-host (cycc
+# has no async fn) → zero overhead, byte-identical. A call to a flagged fn builds
+# a Future object `[impl_ptr, argc, args…]` (synthesized constructor) instead of
+# calling directly; `await fut` forces it via the runtime's future_force.
+var _fnt_is_async = 0;
+# v6.3.11 (G): async/await feature gate. Default 0 (off) → cycc self-host
+# byte-identical (async/await tokens never appear in cycc src; the gated lowering
+# is unreachable). Lazily set to 1 by _ensure_async_gate when CYRIUS_ASYNC=1, the
+# first time an `async`/`await` token reaches pass 2 (PARSE_FN_DEF / PEXPR). Same
+# opt-in shape as _MONOMORPH_OK, but lazy (no per-fork driver edit) — see parse_fn.cyr.
+var _ASYNC_OK = 0;
+var _async_gate_init = 0;
+# v6.3.11 (G): set by the pass-2 top-level dispatch when it consumes a leading
+# `async` (token 134) before routing to PARSE_FN_DEF — the consume happens IN the
+# dispatch (not PARSE_FN_DEF) so the fn-name the cursor points at for the DCE
+# reachability pre-check is the real name, not `async`. PARSE_FN_DEF reads + clears
+# it at entry. Only set on the reachable (real-emit) path, so an unreachable async
+# fn that gets DCE-stubbed can't leak the flag to the next fn.
+var _pending_async = 0;
 var _fnt_namehash = 0;    # 0x110000 fn_name_hash (2 B/slot, name -> fi+1)
 var _fnt_starthash = 0;   # 0x114000 fn_start_hash (2 B/slot, start -> fi+1)
 var _fnt_hash_mask = 0;   # _fnt_cap - 1 (both hashes; cap is power-of-2)
@@ -346,6 +366,9 @@ fn SFTP(S, fi, v): i64 { if (_fnt_tparams == 0) { _fnt_tparams = alloc(32768 * 8
 # v6.3.10 (instantiate-once): the base fn's `fn`-keyword token index (lazy-alloc'd).
 fn GFDS(S, fi): i64 { if (_fnt_defstart == 0) { return 0; } return L64(_fnt_defstart + fi * 8); }
 fn SFDS(S, fi, v): i64 { if (_fnt_defstart == 0) { _fnt_defstart = alloc(32768 * 8); } S64(_fnt_defstart + fi * 8, v); return 0; }
+# v6.3.11 (G): per-fn async flag (lazy-alloc'd, 0 = not async / table unallocated).
+fn GFAS(S, fi): i64 { if (_fnt_is_async == 0) { return 0; } return L64(_fnt_is_async + fi * 8); }
+fn SFAS(S, fi, v): i64 { if (_fnt_is_async == 0) { _fnt_is_async = alloc(32768 * 8); } S64(_fnt_is_async + fi * 8, v); return 0; }
 # v6.3.10 (generic structs): per-struct (0-based si) type-params (packed, like
 # _fnt_tparams) + the `struct`-keyword token (defstart+1; 0=unrecorded). Lazy-alloc'd
 # at 1024 slots (the struct cap). Used to instantiate `Box<Point>` by re-invoking

@@ -473,6 +473,43 @@ fn _generics_full_gate(): i64 {
     return fail;
 }
 
+fn _async_await_gate(): i64 {
+    var label = "v6.3.11 G: async fn / await → first-class Futures over the epoll runtime, run under CYRIUS_ASYNC=1 (exit 42), gated off";
+    var src = _root_path("tests/fixtures/async/async_await.cyr");
+    var fail = 0;
+    var bin_on = _tmp_path("audit_async_on_");
+    var rc_on = _self_host_pipe_env(src, CC_PATH, bin_on, "CYRIUS_ASYNC=1");
+    if (rc_on != 0) {
+        sys_unlink(bin_on);
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON async/await compile failed rc="); print_num(rc_on); println("");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin_on, 493);
+    var ec_on = _pipe_file_to_bin(bin_on, src);
+    sys_unlink(bin_on);
+    if (ec_on != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON async/await program exit "); print_num(ec_on); println(" (expected 42)");
+        fail = fail + 1;
+    }
+    var bin_off = _tmp_path("audit_async_off_");
+    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    sys_unlink(bin_off);
+    if (rc_off == 0) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        println(": flag-OFF compiled async/await — the feature is NOT gated");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": async fn / await (Futures: 0/1/3-param, await-on-call, stored, spawn+run) execute under the flag (exit 42), gated off");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _efi_emit_gate(): i64 {
     var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
     var cap = 262144;
