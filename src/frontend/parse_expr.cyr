@@ -163,10 +163,21 @@ fn _cl_shadow_find(S, noff): i64 {
 # enclosing local (in the snapshot). Restores the cursor; populates _cl_cap_slots
 # + sets _cl_capturing. This runs BEFORE the closure prologue so the env-param
 # decision (capturing → hidden arg0) can be made in one pass.
-fn _cl_prescan_captures(S): i64 {
+fn _cl_prescan_captures(S, cl_zero): i64 {
     _cl_ncap = 0;
     _cl_nshadow = 0;
     var save_ti = GTI(S);
+    # The pre-scan runs BEFORE the param loop registers the params, so the params
+    # aren't in the live local table yet — seed the shadow set with them (closure
+    # params are not free variables). The cursor enters at the first param.
+    if (cl_zero == 0) {
+        while (PEEKT(S) != 35) {
+            if (PEEKT(S) == 12) { break; }
+            if (PEEKT(S) == 2) { _cl_shadow_add(S, PEEKV(S)); }
+            STI(S, GTI(S) + 1);
+        }
+        if (PEEKT(S) == 35) { STI(S, GTI(S) + 1); }   # consume closing |
+    }
     var is_block = 0;
     if (PEEKT(S) == 13) { is_block = 1; STI(S, GTI(S) + 1); }
     var depth = 0;
@@ -414,6 +425,24 @@ fn PARSE_FACTOR(S): i64 {
                 return 0;
             }
         }
+        # v6.3.8 — captured free variable. Inside a capturing closure body, an
+        # identifier that is NOT a closure local (FINDLOCAL failed above) but IS an
+        # enclosing local reads from the heap env object — the hidden first param at
+        # slot `_cl_env_lidx`, captured value at env[1 + capture_index].
+        if (_cl_capturing == 1) {
+            if (_cl_env_lidx >= 0) {
+                var cl_esl = _cl_snap_find(S, noff);
+                if (cl_esl >= 0) {
+                    var cl_capi = _cl_cap_find(cl_esl);
+                    if (cl_capi >= 0) {
+                        EFLLOAD(S, _cl_env_lidx);          # rax = env object
+                        EADDRA_IMM(S, (1 + cl_capi) * 8);  # rax = &env[1+capi]
+                        ELOAD64(S);                        # rax = captured value
+                        return 0;
+                    }
+                }
+            }
+        }
         var idx = FINDVAR(S, noff);
         if (idx < 0) {
             syscall(SYS_WRITE, 2, "error:", 6);
@@ -547,20 +576,51 @@ fn PARSE_FACTOR(S): i64 {
         STI(S, GTI(S) + 1);                     # consume 'callptr'
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
         STI(S, GTI(S) + 1);                     # consume '('
-        PCMPE(S);                               # eval callee → rax
+        # v6.3.8 — detect a CAPTURING-closure callee (a CLOSURE_TYID local): the
+        # value is the heap env object, so dispatch as (*obj)(obj, args…) — load the
+        # fn pointer from [obj+0] and pass obj as the hidden first (env) arg.
+        var cp_is_closure = 0;
+        if (PEEKT(S) == 2) {
+            var cp_cli = FINDLOCAL(S, PEEKV(S));
+            if (cp_cli >= 0) { if (GLTYPE(S, cp_cli) == CLOSURE_TYID) { cp_is_closure = 1; } }
+        }
+        if (cp_is_closure == 1) {
+            if (_TARGET_PE == 1) {
+                ERR_MSG(S, "capturing closures not yet supported on Windows PE — use a non-capturing closure + explicit args", 100);
+            }
+        }
+        PCMPE(S);                               # eval callee → rax (the env object if closure)
         # v6.0.86: on PE the callee goes on the STACK (pushed FIRST, below the
         # args), NOT a frame slot — a GFLC slot could alias a `&`-taken local
         # (the COM-out-param AV; see ECALLPTR_PE). Non-PE keeps the frame-slot
         # spill (its ECALLPOPS shadow would otherwise bury a stack-pushed callee).
         var cp_idx = 0;
-        if (_TARGET_PE == 1) {
-            EPUSHR(S);                          # push callee (consumed by ECALLPTR_PE)
-        } else {
-            cp_idx = GFLC(S);                   # fresh frame slot for the callee ptr
-            SFLC(S, cp_idx + 1);
-            EFLSTORE(S, cp_idx);                # spill callee → [rbp-disp(cp_idx)]
-        }
         var cp_argc = 0;
+        if (cp_is_closure == 1) {
+            var cp_obj_slot = GFLC(S);
+            S64(S + 0x5D9D000 + cp_obj_slot * 8, 0 - 1);   # anonymous (stale-name guard)
+            SLDEP(S, cp_obj_slot, 0);
+            SFLC(S, cp_obj_slot + 1);
+            EFLSTORE(S, cp_obj_slot);           # spill the env object
+            EFLLOAD(S, cp_obj_slot);            # rax = obj
+            ELOAD64(S);                         # rax = [obj+0] = closure fn pointer
+            cp_idx = GFLC(S);
+            S64(S + 0x5D9D000 + cp_idx * 8, 0 - 1);
+            SLDEP(S, cp_idx, 0);
+            SFLC(S, cp_idx + 1);
+            EFLSTORE(S, cp_idx);                # spill fn pointer (the callee)
+            EFLLOAD(S, cp_obj_slot);            # rax = obj
+            EPUSHR(S);                          # push obj as arg 1 (env)
+            cp_argc = 1;
+        } else {
+            if (_TARGET_PE == 1) {
+                EPUSHR(S);                      # push callee (consumed by ECALLPTR_PE)
+            } else {
+                cp_idx = GFLC(S);               # fresh frame slot for the callee ptr
+                SFLC(S, cp_idx + 1);
+                EFLSTORE(S, cp_idx);            # spill callee → [rbp-disp(cp_idx)]
+            }
+        }
         while (PEEKT(S) == 31) {                # ',' → another arg
             STI(S, GTI(S) + 1);                 # consume ','
             PCMPE(S);                           # eval arg → rax
@@ -577,7 +637,7 @@ fn PARSE_FACTOR(S): i64 {
         # call with an rbx-anchored `and rsp,-16` (the kernel32-reroute pattern),
         # so the callee is entered ABI-correct regardless of caller alignment.
         # See issue 2026-06-05-windows-com-vtable-real-callee-frame-corruption.md.
-        if (_TARGET_PE == 1) {
+        if (_TARGET_PE == 1 && cp_is_closure == 0) {
             ECALLPTR_PE(S, cp_argc);            # pop args + pop callee (rax) + call rax
         } else {
             ECALLPOPS(S, cp_argc);              # marshal args into arg regs (+ Win64 shadow)
@@ -1300,10 +1360,36 @@ fn PARSE_FACTOR(S): i64 {
         _cur_fn_ret_scalar = 0;
         _cur_fn_naked = 0;
         _cur_fn_ix = clfi;
+        # v6.3.8 — save capture state and run the free-var pre-scan BEFORE the
+        # prologue/params, so the env-param decision is made in one pass. The
+        # cursor is at the first param (the opening `|` was consumed above); the
+        # pre-scan seeds the shadow set with params, collects captured enclosing
+        # slots, and restores the cursor.
+        var cl_saved_capturing = _cl_capturing;
+        var cl_saved_env_lidx = _cl_env_lidx;
+        var cl_saved_snap = _cl_snap;
+        var cl_saved_snap_n = _cl_snap_n;
+        _cl_snap = cl_locsnap;
+        _cl_snap_n = cl_saved_flc;
+        _cl_prescan_captures(S, cl_zero);
+        var cl_cap_shift = 0;
+        if (_cl_capturing == 1) { cl_cap_shift = 1; }
         # Emit function prologue
         var cl_jmp = EJMP0(S);
         S64(_fnt_offsets + clfi * 8, GCP(S));
         EFNPRO(S);
+        # v6.3.8 — a capturing closure takes the heap env object as a hidden first
+        # param (arg-reg 0 → slot 0, anonymous); user params shift to arg-reg 1+.
+        # Captured-var reads in the body load from this slot (see PARSE_FACTOR).
+        _cl_env_lidx = 0 - 1;
+        if (_cl_capturing == 1) {
+            var cl_env_slot = GFLC(S);
+            S64(S + 0x5D9D000 + cl_env_slot * 8, 0 - 1);
+            SLDEP(S, cl_env_slot, 0);
+            ESTOREPARM(S, 0, cl_env_slot, 0);
+            SFLC(S, cl_env_slot + 1);
+            _cl_env_lidx = cl_env_slot;
+        }
         # Parse params until | (a zero-param `||` closure has no param list)
         var clpc = 0;
         if (cl_zero == 0 && PEEKT(S) != 35) {
@@ -1315,22 +1401,20 @@ fn PARSE_FACTOR(S): i64 {
                 var cpli = GFLC(S);
                 S64(S + 0x5D9D000 + cpli * 8, cpnoff);
                 SLDEP(S, cpli, 0);
-                if (clpc < 6) { ESTOREPARM(S, clpc, cpli, 0); }
+                if (clpc + cl_cap_shift < 6) { ESTOREPARM(S, clpc + cl_cap_shift, cpli, 0); }
                 SFLC(S, cpli + 1);
                 clpc = clpc + 1;
                 if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                 else { cpgo = 0; }
             }
         }
-        S64(_fnt_params + clfi * 8, clpc);
+        S64(_fnt_params + clfi * 8, clpc + cl_cap_shift);
         # A `||` zero-param closure already consumed both bars as one token 54;
         # only the `|params|` form has a separate closing bar to consume.
         if (cl_zero == 0) {
             if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
             STI(S, GTI(S) + 1);  # consume closing |
         }
-        _cl_snap = cl_locsnap;
-        _cl_snap_n = cl_saved_flc;
         # v6.2.41 dropped ESUBRSP's 2nd arg and claimed the frame "is patched
         # later via EPATCHFRAME" — but the closure path NEVER called EPATCHFRAME
         # (closures were untested), so `sub rsp, imm32` kept its 0 placeholder. The
@@ -1376,19 +1460,72 @@ fn PARSE_FACTOR(S): i64 {
         _cur_fn_ix = cl_saved_ix;
         # Restore the enclosing fn's local tables clobbered by the closure's slots.
         _cl_restore_locals(S, cl_locsnap, cl_saved_flc);
-        # Emit address of closure function (like &fn_name) — mirrors
-        # the `&fn_name` dispatch in PARSE_FACTOR (lines ~297-321).
-        # Pre-v5.6.0 only had the x86 branches; aarch64 closures spliced
-        # x86 `lea`/`movabs` bytes into ARM code.
-        var clfc = GFCNT(S);
-        if (clfc >= 1048576) {
-            syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
-            syscall(SYS_EXIT, 1);
+        # v6.3.8 — restore capture state so the enclosing context resolves
+        # identifiers normally again (and nested closures see their own state).
+        _cl_capturing = cl_saved_capturing;
+        _cl_env_lidx = cl_saved_env_lidx;
+        _cl_snap = cl_saved_snap;
+        _cl_snap_n = cl_saved_snap_n;
+        if (cl_cap_shift == 1) {
+            # v6.3.8 — CAPTURING closure: build the heap env object (the closure
+            # value) — a (1+ncap)-word block with the fn pointer at [0] and the
+            # captured-by-value locals at [1..]. The object pointer is left in rax.
+            # Requires lib/alloc.cyr. (Dispatched via callptr: load64(obj) → fn,
+            # obj passed as the hidden first arg — see the callptr handler.)
+            var cl_alloc_fi = _FINDFN_CSTR(S, "alloc", 5);
+            if (cl_alloc_fi < 0) {
+                ERR_MSG(S, "a capturing closure needs include \"lib/alloc.cyr\" for its heap env", 64);
+            }
+            EMOVI(S, (1 + _cl_ncap) * 8);   # rax = size
+            EPUSHR(S);
+            ECALLPOPS(S, 1);                 # → rdi
+            ECALLFIX(S, cl_alloc_fi);        # rax = obj
+            var cl_obj_slot = GFLC(S);
+            # Anonymous scratch — the name table isn't cleared per-fn, so an unnamed
+            # slot would keep a STALE name from a prior fn and a later `var` with that
+            # name would falsely trip the duplicate-var check.
+            S64(S + 0x5D9D000 + cl_obj_slot * 8, 0 - 1);
+            SLDEP(S, cl_obj_slot, 0);
+            EFLSTORE(S, cl_obj_slot);        # spill the object pointer
+            SFLC(S, cl_obj_slot + 1);
+            # obj[0] = closure fn address
+            EFLLOAD(S, cl_obj_slot);
+            EPUSHR(S);                       # push dest = obj + 0
+            var clfc = GFCNT(S);
+            if (clfc >= 1048576) {
+                syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+                syscall(SYS_EXIT, 1);
+            }
+            ELOAD_FN_ADDR(S, _fixup_base + clfc * 16, clfc, clfi);   # rax = fn addr
+            EPOPC(S);                        # rcx = dest
+            ESTORE64(S);                     # [obj+0] = fn addr
+            # obj[1+i] = captured enclosing local (cap_slots[i]); state is restored,
+            # so EFLLOAD reads the enclosing fn's local — capture BY VALUE.
+            var cl_ci = 0;
+            while (cl_ci < _cl_ncap) {
+                EFLLOAD(S, cl_obj_slot);
+                EADDRA_IMM(S, (1 + cl_ci) * 8);   # rax = obj + (1+ci)*8 (dest)
+                EPUSHR(S);
+                EFLLOAD(S, L64(&_cl_cap_slots + cl_ci * 8));   # rax = captured value
+                EPOPC(S);                          # rcx = dest
+                ESTORE64(S);
+                cl_ci = cl_ci + 1;
+            }
+            EFLLOAD(S, cl_obj_slot);          # closure value = the object pointer
+        } else {
+            # Non-capturing closure: a bare fn pointer (same fixup-type-3 op as
+            # `&fn_name`). v6.3.7-stable path.
+            var clfc = GFCNT(S);
+            if (clfc >= 1048576) {
+                syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+                syscall(SYS_EXIT, 1);
+            }
+            var clfaddr = _fixup_base + clfc * 16;
+            ELOAD_FN_ADDR(S, clfaddr, clfc, clfi);
         }
-        var clfaddr = _fixup_base + clfc * 16;
-        # v5.11.36 path-A: closure-fn-addr uses the same named op
-        # as `&fn_name` — identical emit shape, same fixup type.
-        ELOAD_FN_ADDR(S, clfaddr, clfc, clfi);
+        # v6.3.8 — flag a capturing closure so the enclosing var-decl tags the var
+        # CLOSURE_TYID (callptr auto-dispatch). Non-capturing → 0 (bare fn pointer).
+        _expr_closure_obj = cl_cap_shift;
         return 0;
     }
     ERR(S);

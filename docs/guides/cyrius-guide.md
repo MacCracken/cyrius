@@ -876,17 +876,37 @@ Parameters and any locals declared inside the closure are its own; the
 enclosing function's locals are untouched (so a closure declared after a local
 doesn't clobber it).
 
-**Non-capturing (v6.3.7).** A closure body cannot yet reference a variable from
-the enclosing scope — pass everything it needs as a parameter. Lexical capture
-(reading enclosing locals) is a planned follow-up. Until then this is an error:
+**Lexical capture by value (v6.3.8).** A closure body may reference a variable
+from the enclosing scope (a *free variable*). Each such variable is captured
+**by value** at the point the closure is constructed — copied into a small
+heap environment object `[fn_ptr, cap0, cap1, …]`; the closure value *is* that
+object. `callptr` auto-detects a captured closure and dispatches it (loads the
+fn pointer from the object and passes the object itself as the hidden first
+argument), so call sites look identical to the non-capturing case:
 
 ```
-fn run() {
+fn run(): i64 {
     var base = 40;
-    var f = |x| base + x;            # ERROR: `base` is not a parameter (no capture yet)
-    var g = |b, x| b + x;            # OK: pass `base` in — callptr(g, base, 2)
+    var f = |x| base + x;            # captures `base` by value
+    return callptr(f, 2);            # 42
 }
 ```
+
+A non-capturing closure stays a bare function pointer (no allocation); only
+closures that actually read an enclosing local build an environment object.
+
+Capture is **by value**: the closure sees the value the variable held at
+construction. Mutating the original afterward does not change what the closure
+returns, and the closure cannot write back to the enclosing variable.
+
+Because the environment is heap-allocated, a translation unit that constructs a
+capturing closure must `include "lib/alloc.cyr"` and call `alloc_init()` before
+the closure is built. (A non-capturing closure needs neither.)
+
+**Limitations.** Capturing closures are not yet supported on the Windows PE
+target — constructing one there is a compile error; pass the needed values as
+parameters instead. Captured closures are flat (no capture of a capture across
+two nested closure levels).
 
 ## Global Initializers
 

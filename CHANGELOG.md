@@ -6,6 +6,71 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.8] — 2026-06-30
+
+**v6.3.8 — closures capture by value.** The planned v6.3.7 follow-up: a closure body may now reference an
+enclosing local (a *free variable*), captured **by value** into a heap environment object at the point the
+closure is constructed. Built directly on the v6.3.7 local-table snapshot/restore foundation. All work is on
+the closure parse/emit path → **cycc self-host byte-identical** (cycc uses no closures); a differential vs
+v6.3.7 confirms closure-free compilation is unchanged.
+
+### Added — lexical capture
+- **Free-variable pre-scan** (`_cl_prescan_captures`, `parse_expr.cyr`): before a closure emits its prologue,
+  its body is walked on a throwaway cursor. A name that fails `FINDLOCAL` in the closure's own scope, isn't a
+  param/shadow, isn't an `IDENT(`-shaped call name, and *is* present in the enclosing-fn local-table snapshot
+  is recorded as a capture (`_cl_cap_slots`). Non-capturing closures are detected as such and stay on the
+  v6.3.7 path.
+- **Heap env object** `[fn_ptr, cap0, cap1, …]`: a capturing closure emits `alloc((1+ncap)*8)`, stores the fn
+  address at `obj[0]` and each captured value (read by value from the enclosing local) at `obj[1+i]`; the
+  closure *value* is the object. A capturing closure therefore requires `include "lib/alloc.cyr"` +
+  `alloc_init()` — `ERR_MSG` fails loud if `alloc` is unresolved. Non-capturing closures stay bare fn
+  pointers (no allocation).
+- **Hidden env parameter**: a capturing closure fn gains an env parameter at arg-reg 0 / local slot 0; user
+  params shift up by one (`ESTOREPARM(S, clpc+1, …)`, the fn's stored param count bumped). A captured read in
+  the body compiles to `load64(env + (1+capidx)*8)`.
+- **`callptr` auto-dispatch**: when the callee local carries the new `CLOSURE_TYID` (`0x40000003`) var
+  type-tag, `callptr` loads the fn pointer from `[obj]` and passes the object itself as the hidden first
+  (env) argument — so call sites are identical whether or not the closure captured (`callptr(f, 2)` either
+  way). The calling convention chosen (user 2026-06-29) over a separate `callclosure` builtin.
+- **`tests/tcyr/closures_capture.tcyr`** — 7 cases via `callptr`: single capture, two captures,
+  1-capture + 2-params, by-value independence (mutating the original after construction doesn't change the
+  closure's result), zero-param `||` thunk that captures, capture inside a fn with locals before *and* after,
+  and two independent capturing closures with different captured values.
+
+### Fixed
+- **Stale-name scratch slot → false "duplicate variable"**: env construction borrows a shared local-table
+  slot to hold the freshly-`alloc`'d object, and those tables aren't cleared between fns — the slot could
+  still hold a name from a previous fn, so a later same-named `var` tripped the duplicate-decl check (two
+  same-name capturing closures in one fn hit it every time). The scratch slot — and `callptr`'s obj / fn-ptr
+  spill slots — are now anonymized the instant they're claimed (`name = -1`).
+
+### Platform
+- **Capturing closures error on Windows PE** (`ERR_MSG "capturing closures not yet supported on Windows PE"`):
+  the env build + `ECALLPTR_PE` 16-byte-align interaction is unverified, so it fails loud rather than risk a
+  miscompile. Non-capturing closures continue to work on PE. (Both PE guards verified under wine: the
+  alloc-missing guard fires without the include, the PE-not-supported guard fires with it.)
+
+### Verified
+- Self-host fixpoint byte-identical (`1,089,248 B`); a differential vs v6.3.7 confirms closure-free
+  compilation is unchanged (all new code runs only on the `|closure|` parse path); seed → cybs → cycc
+  derivation green; check.sh **104/104**. Capture runs correctly on **x86_64 + aarch64**
+  (`closures_capture.tcyr` 7/7 on x86 and under qemu; the regenerated `build/cycc-native-aarch64`
+  self-hosts byte-identical *and* compiles+runs the capture suite 7/7), and on **Windows PE** the
+  non-capturing path runs (wine, exit 42) while capturing fails loud. Non-capturing regression
+  `closures.tcyr` 8/8. Cross-OS self-host **ecb + cass + pi SELFHOST_OK** (real hardware). Bench
+  self_compile **507 ms** (v6.3.7: 501 — within the 500–549 band, growth-tax for the capture path); cycc
+  **1,081,696 → 1,089,248 B** (+7,552: pre-scan + env-build + captured-read + callptr dispatch +
+  capture-state globals).
+- `build/cycc-native-aarch64` regenerated post-bump in lockstep (929,424 B, carries `cycc 6.3.8`).
+- Guide **Closures** section updated (capture semantics, by-value rule, `lib/alloc.cyr` requirement, PE +
+  flat-capture limitations); vidya field note `closure_lexical_capture_by_value_env_object` (incl. the
+  stale-name scratch-slot landmine).
+
+### Roadmap
+- v6.3.8 = **lexical capture (E-capture)** shipped, completing the closures arc (E-base v6.3.7 +
+  E-capture v6.3.8). Next: **v6.3.9 = real generic instantiation / monomorphization** on the Phase-0
+  substrate (`_MONOMORPH_OK` + `_prescan_fn_sig`).
+
 ## [6.3.7] — 2026-06-29
 
 **v6.3.7 — non-capturing closures actually work.** Slot-entry premise-check found that `|params| body`

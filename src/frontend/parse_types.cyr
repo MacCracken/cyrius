@@ -31,6 +31,10 @@ fn SSTC(S, v): i64 { S64(S + 0x18F830, v); return 0; }
 # type-only — converted via f32_from/f32_to, no f32 arithmetic).
 var F64_TYID = 0x40000001;
 var F32_TYID = 0x40000002;
+# v6.3.8 — a local holding a CAPTURING closure's heap env object. callptr/fncallN
+# on such a local auto-dispatch: load the fn pointer from [obj+0] and pass obj as
+# the hidden first (env) arg. Non-capturing closures stay bare fn pointers (no tag).
+var CLOSURE_TYID = 0x40000003;
 fn GVTYPE(S, vi): i64 { return L64(_vart_base + vi * 8); }
 fn SVTYPE(S, vi, v): i64 { S64(_vart_base + vi * 8, v); return 0; }
 

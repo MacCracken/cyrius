@@ -1687,6 +1687,7 @@ fn PARSE_VAR(S): i64 {
         }
     } }
     # parse expression (scalar) — use PCMPE for comparisons and &&/||
+    _expr_closure_obj = 0;   # v6.3.8 — fresh; the RHS closure sets it if capturing
     PCMPE(S);
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
@@ -1800,7 +1801,11 @@ fn PARSE_VAR(S): i64 {
                 # `CYRIUS_TYPE_CHECK` default-on flip — same root
                 # cause (need scalar-vs-pointer per-param distinction
                 # before tracking i64-as-i64 vs i64-as-pointer).
-                if (_ti_inferred_sid > 0) {
+                if (_expr_closure_obj == 1) {
+                    # v6.3.8 — RHS is a capturing closure object; tag so callptr
+                    # auto-dispatches (load fn_ptr from [obj], pass obj as env).
+                    SLTYPE(S, li, CLOSURE_TYID);
+                } elif (_ti_inferred_sid > 0) {
                     SLTYPE(S, li, 0 - _ti_inferred_sid);
                 } else {
                     SLTYPE(S, li, pscale);

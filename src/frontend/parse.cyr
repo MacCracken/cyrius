@@ -80,6 +80,11 @@ var _cl_ncap = 0;
 var _cl_snap = 0;
 var _cl_snap_n = 0;
 var _cl_nshadow = 0;
+var _cl_env_lidx = 0;
+# v6.3.8 — set to 1 by the closure expression when it built a CAPTURING closure
+# object, so the enclosing `var f = |…| …` decl can tag `f` as CLOSURE_TYID.
+# PARSE_VAR clears it before the RHS and reads it after.
+var _expr_closure_obj = 0;
 var _cl_cap_slots[64];
 var _cl_shadow[64];
 # v5.5.36 Phase 2b — nonzero (= 8) when the current fn returns a

@@ -1,0 +1,86 @@
+# closures_capture.tcyr — v6.3.8 LEXICAL CAPTURE. A closure body that references
+# an enclosing local (a free variable) captures it BY VALUE into a heap env object
+# `[fn_ptr, cap0, …]` at construction; the closure value is that object, dispatched
+# via `callptr` (auto: load fn_ptr from [obj], pass obj as the hidden env arg).
+# Non-capturing closures stay bare fn pointers (see closures.tcyr).
+#
+# Requires lib/alloc.cyr (the env is heap-allocated) + alloc_init() before use.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+# ---- capturing-closure fns (decls before the top-level statements) ----
+fn cap_one(): i64 {
+    var base = 40;
+    var f = |x| base + x;            # captures `base`
+    return callptr(f, 2);            # 40 + 2
+}
+
+fn cap_two(): i64 {
+    var a = 10;
+    var b = 20;
+    var f = |x| a + b + x;           # captures `a` and `b`
+    return callptr(f, 12);           # 10 + 20 + 12
+}
+
+fn cap_param_mix(): i64 {
+    var base = 30;
+    var f = |x, y| base + x + y;     # 1 capture + 2 params
+    return callptr(f, 5, 7);         # 30 + 5 + 7
+}
+
+# By value: mutating-after isn't possible, but the captured copy is independent —
+# `base` keeps its value and the closure saw the value at construction.
+fn cap_by_value(): i64 {
+    var base = 40;
+    var f = |x| base + x;
+    var r = callptr(f, 2);           # 42
+    return base + r - 40;            # base still 40 → 40 + 42 - 40 = 42
+}
+
+# Zero-param thunk that captures.
+fn cap_thunk(): i64 {
+    var k = 42;
+    var f = || k;                    # captures `k`, no params
+    return callptr(f);
+}
+
+# Capture inside a fn with locals before AND after (the enclosing fn auto-regalloc's;
+# the capture object + the closure inline-emit must coexist with it).
+fn cap_with_locals(): i64 {
+    var a0 = 1;
+    var base = 38;
+    var f = |x| base + x;
+    var b0 = 1;
+    return a0 + b0 + callptr(f, 2);  # 1 + 1 + (38 + 2) = 42
+}
+
+# Two independent capturing closures with different captured values.
+fn cap_two_closures(): i64 {
+    var p = 30;
+    var q = 8;
+    var f = |x| p + x;
+    var g = |x| q + x;
+    return callptr(f, 0) + callptr(g, 4);   # (30+0) + (8+4) = 42
+}
+
+# ---- top-level statements ----
+alloc_init();
+
+test_group("lexical capture by value (single / multiple / with params)");
+assert_eq(cap_one(), 42, "|x| base+x captures base=40, applied to 2 == 42");
+assert_eq(cap_two(), 42, "|x| a+b+x captures a=10,b=20, applied to 12 == 42");
+assert_eq(cap_param_mix(), 42, "|x,y| base+x+y: 1 capture + 2 params == 42");
+
+test_group("capture semantics + edge forms");
+assert_eq(cap_by_value(), 42, "captured value is an independent by-value copy");
+assert_eq(cap_thunk(), 42, "|| k zero-param thunk captures k == 42");
+assert_eq(cap_with_locals(), 42, "capture inside a fn with locals before+after == 42");
+assert_eq(cap_two_closures(), 42, "two independent capturing closures == 42");
+
+var r = assert_summary();
