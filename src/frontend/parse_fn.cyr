@@ -992,11 +992,17 @@ fn PARSE_FNCALL(S, noff): i64 {
                 var p1_slot = saved_flc + 1;
                 # Evaluate args and store to param slots
                 var iargc = 0;
+                # v6.3.9 (F-fns): positional generic inference — capture each arg's
+                # concrete type BEFORE PCMPE consumes it (default i64 = -8).
+                var _ginf0 = 0 - 8;
+                var _ginf1 = 0 - 8;
                 # v6.2.41 — capture call-site line for the arity warning below.
                 var _iar_line = GTLINE(S, GTI(S));
                 if (PEEKT(S) != 11) {
                     var iago = 1;
                     while (iago == 1) {
+                        if (iargc == 0) { _ginf0 = _infer_conc_at_cursor(S); }
+                        if (iargc == 1) { _ginf1 = _infer_conc_at_cursor(S); }
                         PCMPE(S);
                         if (iargc == 0) { EFLSTORE(S, p0_slot); }
                         if (iargc == 1) { EFLSTORE(S, p1_slot); }
@@ -1023,6 +1029,14 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # Save state and replay body tokens
                 var saved_ti = GTI(S);
                 var saved_rpc = vec_len(rp_vec);
+                # v6.3.9 (F-fns): bind T->concrete for the body replay (the bite-4
+                # consults read it). Save the enclosing binding first so a generic
+                # body that itself inline-calls restores correctly. _bind_generic_call
+                # is a no-op for non-generic callees → default path is just the saves
+                # (4 reads, restored verbatim) → byte-identical.
+                var _gsv_n0 = _tp_n0; var _gsv_c0 = _tp_c0;
+                var _gsv_n1 = _tp_n1; var _gsv_c1 = _tp_c1;
+                _bind_generic_call(S, fi, _ginf0, _ginf1);
                 SIDEP(S, GIDEP(S) + 1);
                 STI(S, GFBS(S, fi));
                 PARSE_PROG(S);
@@ -1035,6 +1049,9 @@ fn PARSE_FNCALL(S, noff): i64 {
                 }
                 vec_truncate(rp_vec, saved_rpc);
                 SIDEP(S, GIDEP(S) - 1);
+                # v6.3.9 (F-fns): restore the enclosing generic binding.
+                _tp_n0 = _gsv_n0; _tp_c0 = _gsv_c0;
+                _tp_n1 = _gsv_n1; _tp_c1 = _gsv_c1;
                 # Restore token index
                 STI(S, saved_ti);
                 # Invalidate temporary param locals
@@ -1336,6 +1353,46 @@ fn _capture_tparams(S): i64 {
     }
     STI(S, GTI(S) + 1);  # consume >
     return off0 | (off1 << 32);
+}
+
+# v6.3.9 (F-fns): infer the CANONICAL concrete-type token of the arg expression at
+# the current cursor, WITHOUT consuming it. Encoding matches _tp_resolve: >0 struct
+# sid, <0 -scalarwidth. `IDENT(` → callee GFRS (whose >0-sid / <0-width encoding is
+# already canonical); a struct local (GLTYPE = -sid) → +sid; everything else (plain
+# int, literal, complex expr) → i64 (-8). Narrow-scalar args infer as i64 — explicit
+# `foo<i32>(x)` (the wired-up call form) pins those precisely.
+fn _infer_conc_at_cursor(S): i64 {
+    if (PEEKT(S) == 2) {
+        var _ic_noff = PEEKV(S);
+        if (TOKTYP(S, GTI(S) + 1) == 10) {
+            var _ic_fi = FINDFN(S, _ic_noff);
+            if (_ic_fi >= 0) {
+                var _ic_ret = GFRS(S, _ic_fi);
+                if (_ic_ret != 0) { return _ic_ret; }
+            }
+        } else {
+            var _ic_lli = FINDLOCAL(S, _ic_noff);
+            if (_ic_lli >= 0) {
+                var _ic_lt = GLTYPE(S, _ic_lli);
+                if (_ic_lt < 0) { return 0 - _ic_lt; }
+            }
+        }
+    }
+    return 0 - 8;
+}
+
+# v6.3.9 (F-fns): populate the active T->concrete binding for a generic call.
+# Unpacks the callee's packed tparam names (GFTP) and binds tparam i <- inf_i (the
+# positional inference: param_i is type tparam_i). Caller _tp_clear()s after the
+# instantiation/replay. No-op when the callee has no tparams.
+fn _bind_generic_call(S, fi, inf0, inf1): i64 {
+    var _bg = GFTP(S, fi);
+    if (_bg == 0) { return 0; }
+    var _bg0 = _bg & 0xFFFFFFFF;
+    if (_bg0 != 0) { _tp_bind(S, 0, _bg0 - 1, inf0); }
+    var _bg1 = (_bg >> 32) & 0xFFFFFFFF;
+    if (_bg1 != 0) { _tp_bind(S, 1, _bg1 - 1, inf1); }
+    return 0;
 }
 
 # Parse fn name<T>(params) { body }
