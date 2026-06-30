@@ -225,6 +225,36 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
     return 0;
 }
 
+# v6.3.10 (F-structs/explicit): non-consuming lookahead from a `<` (token 19) at the
+# current cursor. Returns 1 iff the `<...>` is a TYPE-ARGUMENT list immediately
+# followed by `(` — i.e. the `foo<T,...>(` shape. Depth-tracks `<`/`>`; bails (→ 0,
+# meaning "this is a comparison, not type-args") on `;`(5), `{`(13), or `(`(10) seen
+# INSIDE the brackets (those mark a comparison like `a < foo()`). Bounded 64-token
+# scan; never mutates GTI. The caller additionally gates on the flag + a generic-fn
+# callee, so `a < b` and non-generic `<` are never misread.
+fn LOOKAHEAD_IS_TYPE_ARG_CALL(S): i64 {
+    var i = GTI(S);
+    var n = GTCNT(S);
+    var cap = i + 64;
+    if (cap > n) { cap = n; }
+    var depth = 0;
+    while (i < cap) {
+        var t = TOKTYP(S, i);
+        if (t == 19) { depth = depth + 1; }
+        elif (t == 20) {
+            depth = depth - 1;
+            if (depth == 0) {
+                if (i + 1 < n) { if (TOKTYP(S, i + 1) == 10) { return 1; } }
+                return 0;
+            }
+        } elif (t == 5) { return 0; }
+        elif (t == 13) { return 0; }
+        elif (t == 10) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn PARSE_FACTOR(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -327,6 +357,34 @@ fn PARSE_FACTOR(S): i64 {
         # IDENT — variable load or function call
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);
+        # v6.3.10 (explicit): `foo<i64>(x)` explicit type-arguments. Gated on the
+        # monomorph flag AND a generic-fn callee AND the `foo<...>(` lookahead shape,
+        # so `a < b`, chained comparisons, and calls to non-generic fns are never
+        # misread (flag-off / non-generic → byte-identical default path). v6.3.10
+        # bite-1 supports i64 type-args (the base IS the i64 instance → normal call);
+        # non-i64 type-args (instantiate-once) land in a follow-on bite.
+        if (_MONOMORPH_OK == 1) { if (PEEKT(S) == 19) {
+            var _eta_fi = FINDFN(S, noff);
+            if (_eta_fi >= 0) { if (GFTP(S, _eta_fi) != 0) {
+                if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) == 1) {
+                    STI(S, GTI(S) + 1);                 # consume `<`
+                    var _ta_conc = _classify_return_type(S, PEEKV(S));
+                    var _ta_d = 1;                      # consume the type-arg list incl. matching `>`
+                    while (_ta_d > 0) {
+                        var _tat = PEEKT(S);
+                        if (_tat == 19) { _ta_d = _ta_d + 1; }
+                        if (_tat == 20) { _ta_d = _ta_d - 1; }
+                        STI(S, GTI(S) + 1);
+                    }
+                    if (_ta_conc != 0 - 8) {
+                        ERR_MSG(S, "non-i64 explicit generic type arguments are not yet supported (v6.3.10 follow-on)", 76);
+                    }
+                    PARSE_FNCALL(S, noff);              # i64: call the base (the i64 instance)
+                    _cfo = 0;
+                    return 0;
+                }
+            } }
+        } }
         # Check for function call
         if (PEEKT(S) == 10) {
             PARSE_FNCALL(S, noff);
