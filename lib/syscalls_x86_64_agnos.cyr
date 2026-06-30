@@ -63,6 +63,11 @@ enum SysNrAgnos {
     SYS_WINSIZE = 60;             # winsize() → (cols<<16)|rows / -1; no args, live FB char grid (agnos 1.45.13).
     #   NOTE: #60 == the Linux exit number, so `_agnos_emit_gate` was reworked to verify
     #   the actual program-exit syscall (#0) rather than scan for any `mov eax,60`.
+    SYS_SYMLINK = 63;             # symlink(target, targetlen, linkpath, linkpathlen) → 0 / -1 (a4=r10).
+    #   target/targetlen = the link's TEXT contents (1..4096 B; NOT a path the kernel resolves);
+    #   linkpath/linkpathlen = where the link is created (ext2 only). agnos #63 — the next free
+    #   number after WINSIZE (#0–62 taken), kernel `symlink`#63 landed at agnos 1.51.0. Mirrors
+    #   SYS_LINK=32's 4-arg ABI exactly. (issue 2026-06-29-agnos-sys-symlink-peer.)
 }
 
 # ================================================================
@@ -411,6 +416,14 @@ fn sys_rename(old, oldlen, new, newlen): i64 { return syscall(SYS_RENAME, old, o
 # Hard-link `target`→`linkpath` (4-arg, a4 in r10; ext2 only initially).
 fn sys_link(target, targetlen, linkpath, linkpathlen): i64 {
     return syscall(SYS_LINK, target, targetlen, linkpath, linkpathlen);
+}
+
+# Create a symbolic link at `linkpath` whose TEXT contents are `target` (4-arg, a4 in r10; ext2
+# only). `target` is the link body — it may point at a nonexistent or relative path; the kernel
+# validates it as a 1..4096-byte user buffer and does NOT resolve it. Returns 0 / -1. Unblocks
+# `--agnos` programs (ark `.so → .so.N` install, agnova, kriya `ln -s`). (issue 2026-06-29.)
+fn sys_symlink(target, targetlen, linkpath, linkpathlen): i64 {
+    return syscall(SYS_SYMLINK, target, targetlen, linkpath, linkpathlen);
 }
 
 # Map `length` bytes (anonymous, zero-filled, 2 MB-granular). Returns

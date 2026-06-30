@@ -6,6 +6,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.6] — 2026-06-29
+
+**v6.3.6 — ecosystem refold + AGNOS `sys_symlink` peer.** A lib-only maintenance cut: four stale
+vendored stdlib folds brought current from their upstream sibling repos (each reproducible
+byte-identical via `cyrius distlib`), plus the AGNOS `sys_symlink` #63 syscall peer the ark M3
+install needs. **No compiler change — cycc self-host byte-identical** (only the version string moved).
+
+### Refolded stdlib (vendored byte-identical from the upstream `cyrius distlib` output)
+- **sigil 3.9.4 → 3.9.7** — SECURITY: the concurrent-TLS-handshake race is eliminated (per-thread
+  crypto banking across 64 lanes for the HKDF/HMAC/AEAD/ed25519/ECDSA racing scratch), allocation-free
+  one-shot sha2, a streaming Poly1305 API (`poly1305_init`/`_update`/`_finalize`), streaming
+  ChaCha20-Poly1305, per-lane RSA secret-residue zeroize, CAS-guarded NI-probe self-tests. Adds
+  `ecdsa_p256_warm` / `ecdsa_p384_warm` main-thread prewarm prims. (64-lane banking grows `.bss`
+  ~14 MB of lazy zero-pages; irrelevant to cyrius's single-threaded crypto consumers.)
+- **patra 1.12.6 → 1.12.7** — per-handle tail-page cache (moves `_tbl_lp_idx`/`_page` from
+  process-global into the db handle, fixing a connection-per-thread cache race; handle 64 → 88 B).
+  The internal `tbl_insert` gains the cache pointer (`/5 → /6`) — no consumer calls it directly.
+- **sandhi 1.6.13 → 1.7.0** — h2-promote IPv6 arity bug fix (a missing per-call request-ctx arg) +
+  doc/test corrections.
+- **vani 0.9.5 → 0.9.6** — toolchain/dep pin bumps + a `lib/chrono.cyr` include.
+
+### Added — AGNOS `sys_symlink` peer
+- **`sys_symlink` + `SYS_SYMLINK = 63`** in `lib/syscalls_x86_64_agnos.cyr` — the userland peer for
+  the agnos kernel `symlink`#63 (landed agnos 1.51.0). Mirrors `sys_link`#32's 4-arg ABI (a4 in r10);
+  `target` is the link's TEXT contents (1..4096 B, NOT a path the kernel resolves). Unblocks `--agnos`
+  programs that create symlinks — ark M3's `.so → .so.N` install, agnova, kriya `ln -s`. Verified on
+  the agnos target: resolves clean and emits `syscall #63`. (`issues/2026-06-29-agnos-sys-symlink-peer.md`;
+  the on-agnos round-trip is the downstream ark M3 exerciser.)
+
+### Verified
+- **cycc self-host byte-identical** (lib-only — only the version string changed; `1,079,440 B`);
+  seed → cybs → cycc derivation green; check.sh **104/104**; the api-surface snapshot regenerated with
+  an additions-only delta (5 sigil crypto symbols + `sys_symlink/4` + the internal `patra::tbl_insert`
+  arity — **no consumer-facing removals**); ecb + cass + pi SELFHOST_OK (real hardware); bench
+  self_compile **502 ms** (flat, no codegen delta — same band as v6.3.5).
+
+### Roadmap
+- Landed as the v6.3.6 ecosystem/maintenance cut; the language slots shift down (closures → v6.3.7,
+  generics → v6.3.8, async/float → v6.3.9). Appended three **gate slots** at the back of the v6.3.x
+  line for the held compiler/linker items that each need the full release gate: W^X `cyrld`
+  segment-split, str_builder concurrent-corruption root-cause, and the var-decl codegen pair
+  (inferred-struct retptr + string-literal global init).
+
 ## [6.3.5] — 2026-06-28
 
 **v6.3.5 — Phase-0 language substrate: order-independent forward-call ABI (CO-01) + a revived

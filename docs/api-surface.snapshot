@@ -1802,7 +1802,7 @@ patra::tbl_create/8
 patra::tbl_delete/7
 patra::tbl_drop/3
 patra::tbl_find/3
-patra::tbl_insert/5
+patra::tbl_insert/6
 patra::tbl_scan/5
 patra::tbl_scan_where/8
 patra::tbl_update/7
@@ -2806,10 +2806,12 @@ sigil::ecdsa_p256_sign/4
 sigil::ecdsa_p256_sign_der/5
 sigil::ecdsa_p256_verify/4
 sigil::ecdsa_p256_verify_der/5
+sigil::ecdsa_p256_warm/0
 sigil::ecdsa_p384_privkey_from_der/3
 sigil::ecdsa_p384_sign/4
 sigil::ecdsa_p384_sign_der/5
 sigil::ecdsa_p384_verify/4
+sigil::ecdsa_p384_warm/0
 sigil::ed25519_generate_keypair/2
 sigil::ed25519_init/0
 sigil::ed25519_keypair/3
@@ -3148,7 +3150,10 @@ sigil::policy_set_verify_on_install/2
 sigil::policy_verify_on_boot/1
 sigil::policy_verify_on_execute/1
 sigil::policy_verify_on_install/1
+sigil::poly1305_finalize/1
+sigil::poly1305_init/1
 sigil::poly1305_mac/4
+sigil::poly1305_update/2
 sigil::poly1305_verify/4
 sigil::pt384_add/3
 sigil::pt384_alloc/0
@@ -3881,6 +3886,7 @@ syscalls_x86_64_agnos::sys_sock_recv/3
 syscalls_x86_64_agnos::sys_sock_send/3
 syscalls_x86_64_agnos::sys_spawn/2
 syscalls_x86_64_agnos::sys_stat/3
+syscalls_x86_64_agnos::sys_symlink/4
 syscalls_x86_64_agnos::sys_sync/0
 syscalls_x86_64_agnos::sys_time_unix/0
 syscalls_x86_64_agnos::sys_timerfd_create/0
