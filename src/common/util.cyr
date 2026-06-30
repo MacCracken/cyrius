@@ -207,6 +207,13 @@ var _fnt_bodyend = 0;     # 0x9FA000 fn_body_end
 var _fnt_inline = 0;      # 0xA0A000 fn_inline
 var _fnt_strmask = 0;     # 0xA1A000 fn_param_str_mask
 var _fnt_codeend = 0;     # 0xA2A000 fn_code_end
+# v6.3.9 (F-fns): per-fn generic type-param names, packed (off0+1) | ((off1+1)<<32),
+# 0 = non-generic fn. LAZY-alloc'd at the first generic capture (SFTP) to the MAX fn
+# cap (32768 slots × 8 B = 256 KB) so it never needs to ride _fnt_grow; stays 0
+# (unallocated) for the entire default (_MONOMORPH_OK=0) self-host → zero overhead,
+# byte-identical. No fixed heap slot exists after the fn-table family (0xA3A000 is
+# ir_nodes on x86), so this is alloc-backed, not fixed-offset.
+var _fnt_tparams = 0;
 var _fnt_namehash = 0;    # 0x110000 fn_name_hash (2 B/slot, name -> fi+1)
 var _fnt_starthash = 0;   # 0x114000 fn_start_hash (2 B/slot, start -> fi+1)
 var _fnt_hash_mask = 0;   # _fnt_cap - 1 (both hashes; cap is power-of-2)
@@ -319,6 +326,12 @@ fn SFBS(S, fi, v): i64 { S64(_fnt_bodystart + fi * 8, v); return 0; }
 fn SFBE(S, fi, v): i64 { S64(_fnt_bodyend + fi * 8, v); return 0; }
 fn GFINL(S, fi): i64 { return L64(_fnt_inline + fi * 8); }
 fn SFINL(S, fi, v): i64 { S64(_fnt_inline + fi * 8, v); return 0; }
+# v6.3.9 (F-fns): per-fn generic type-param accessors. GFTP returns 0 (no tparams)
+# when the table is unallocated (the non-generic default), so callers never special-
+# case. SFTP lazy-allocs the table (max fn cap) on first use — only ever reached under
+# _MONOMORPH_OK with a `fn foo<T>` definition present.
+fn GFTP(S, fi): i64 { if (_fnt_tparams == 0) { return 0; } return L64(_fnt_tparams + fi * 8); }
+fn SFTP(S, fi, v): i64 { if (_fnt_tparams == 0) { _fnt_tparams = alloc(32768 * 8); } S64(_fnt_tparams + fi * 8, v); return 0; }
 # Fn code-end offset (v4.4.0 DCE). Set at end of PARSE_FN_DEF to the GCP
 # where the fn body finishes. Paired with fn code starts at 0x1C4000.
 # 0 means "not recorded" (fn was registered but never defined, or emitted

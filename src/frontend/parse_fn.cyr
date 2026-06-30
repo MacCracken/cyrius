@@ -1309,6 +1309,35 @@ fn SKIP_GENERICS(S): i64 {
     return 0;
 }
 
+# v6.3.9 (F-fns): capture a generic param list `<T, U>` at a fn signature, returning
+# the names PACKED as (off0+1) | ((off1+1) << 32) (0 = no `<...>`). Consumes EXACTLY
+# the tokens SKIP_GENERICS would (`<` through `>`), so the cursor advances identically.
+# Default path (_MONOMORPH_OK == 0): delegates to SKIP_GENERICS verbatim and returns 0
+# — byte-identical to the pre-v6.3.9 skip. Only ≤2 params are captured (the inline
+# replay's pc≤2 ceiling); extra params are consumed but not recorded.
+fn _capture_tparams(S): i64 {
+    if (_MONOMORPH_OK == 0) { SKIP_GENERICS(S); return 0; }
+    if (PEEKT(S) != 19) { return 0; }
+    STI(S, GTI(S) + 1);  # consume <
+    var off0 = 0;
+    var off1 = 0;
+    var n = 0;
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) == 20) { go = 0; }
+        else {
+            if (PEEKT(S) == 2) {
+                if (n == 0) { off0 = PEEKV(S) + 1; }
+                if (n == 1) { off1 = PEEKV(S) + 1; }
+                n = n + 1;
+            }
+            STI(S, GTI(S) + 1);
+        }
+    }
+    STI(S, GTI(S) + 1);  # consume >
+    return off0 | (off1 << 32);
+}
+
 # Parse fn name<T>(params) { body }
 # Dead store elimination: scan codebuf for consecutive stores to the same
 # [rbp-N] offset, NOP out the first store when redundant.
@@ -1571,10 +1600,11 @@ fn _prescan_fn_sig(S): i64 {
     if (PEEKT(S) == 2) {
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);             # consume name
-        if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+        var _ptp = _capture_tparams(S);   # v6.3.9: capture <T> (flag-off = old skip)
         if (GMOD(S) == 0) {
             var fi = FINDFN(S, noff);
             if (fi < 0) { fi = REGFN(S, noff); }
+            if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
             _prescan_params(S, fi);
             if (PEEKT(S) == 49) {       # optional `: ReturnType`
                 STI(S, GTI(S) + 1);     # consume ':'
@@ -1596,7 +1626,10 @@ fn PARSE_FN_DEF(S): i64 {
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);
     # Skip generic parameters if present: fn foo<T, U>(...)
-    SKIP_GENERICS(S);
+    # v6.3.9 (F-fns): capture <T> names (flag-off = old SKIP_GENERICS skip); stored
+    # into _fnt_tparams[fi] once fi is resolved below (fi isn't known until the name
+    # is mangled + registered, so the packed names ride _gtp until then).
+    var _gtp = _capture_tparams(S);
     # Mangle name if inside a module: mod_fn
     var mmod = GMOD(S);
     if (mmod != 0) {
@@ -1641,6 +1674,7 @@ fn PARSE_FN_DEF(S): i64 {
             syscall(SYS_WRITE, 2, "' (last definition wins)\n", 25);
         }
     }
+    if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
     # v5.11.62: track the current fn for per-fn array-byte attribution.
     # Initialize the slot to 0 — fn body may have been touched by an earlier
     # forward-decl scan; this is the start of the body parse proper.
@@ -2377,7 +2411,12 @@ fn PARSE_FN_DEF(S): i64 {
         var btokens = GTI(S) - GFBS(S, fi);
         var can_inline = 1;
         if (pc > 2) { can_inline = 0; }
-        if (btokens > 16) { can_inline = 0; }
+        # v6.3.9 (F-fns): ceiling 16->32 — admits slightly larger straight-line
+        # generic/inline bodies. pc<=2 (above) + the forbidden-token scan below
+        # (no control-flow / var-decl) are UNCHANGED, so inl_packed (2 param
+        # offsets) capacity is untouched. Only fires under _INLINE_OK/_MONOMORPH_OK
+        # (this whole block is gated) → default cycc self-host is byte-identical.
+        if (btokens > 32) { can_inline = 0; }
         if (can_inline == 1) {
             var sci = GFBS(S, fi);
             while (sci < GTI(S)) {
