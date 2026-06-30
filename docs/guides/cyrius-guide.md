@@ -857,6 +857,37 @@ include "lib/fnptr.cyr"
 var result = fncall2(&add, 20, 22);  # result = 42
 ```
 
+## Closures
+
+A closure literal `|params| body` is an anonymous function; its value is a
+function pointer, so you call it the same way — `callptr` or `fncallN`:
+
+```
+fn run() {                           # closures live inside a function
+    var add = |a, b| a + b;          # body is an expression …
+    var dbl = |x| { var y = x * 2; return y; };   # … or a { block }
+    var ans = || 42;                 # zero-param thunk (`||`)
+    var r = callptr(add, 40, 2);     # 42  (or fncall2(add, 40, 2))
+}
+```
+
+The body may be a single expression or a `{ … }` block (with `return`).
+Parameters and any locals declared inside the closure are its own; the
+enclosing function's locals are untouched (so a closure declared after a local
+doesn't clobber it).
+
+**Non-capturing (v6.3.7).** A closure body cannot yet reference a variable from
+the enclosing scope — pass everything it needs as a parameter. Lexical capture
+(reading enclosing locals) is a planned follow-up. Until then this is an error:
+
+```
+fn run() {
+    var base = 40;
+    var f = |x| base + x;            # ERROR: `base` is not a parameter (no capture yet)
+    var g = |b, x| b + x;            # OK: pass `base` in — callptr(g, base, 2)
+}
+```
+
 ## Global Initializers
 
 Variables can be declared among function definitions:
@@ -964,7 +995,9 @@ offsets past the params.
 - Exit codes truncated to 0-255 (Linux limitation)
 - Max ~64 global vars with initializers (use enums for constants)
 - `default`, `match`, `in`, `shared` are keywords
-- Block closures (`|x| { ... }`) only work inside functions
+- Closures (`|x| body`) are non-capturing — the body can't reference enclosing
+  locals yet (pass them as parameters); lexical capture is a planned follow-up.
+  Closures must be written inside a function. See the **Closures** section.
 
 ## Gotchas
 

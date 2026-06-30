@@ -75,6 +75,39 @@ fn _STR_FROM_NOFF(S): i64 {
     return 0 - 1;
 }
 
+# v6.3.7 — closure local-table isolation. A closure is its own fn but reuses the
+# SHARED per-fn local tables (names 0x5D9D000 / depths 0x5DBD000 / types 0x5DDD000
+# / slice-widths 0x5DFD000), starting at slot 0 after SFLC(0). Its params/locals
+# therefore OVERWRITE the enclosing fn's locals at slots [0, closure_flc) — so an
+# enclosing `var c0` shadowed by a later closure's `|x|` param became "undefined".
+# Snapshot the enclosing range before the closure and restore it after, so the
+# enclosing fn's locals survive. (n is the enclosing fn's GFLC at the closure site.)
+fn _cl_save_locals(S, n): i64 {
+    if (n <= 0) { return 0; }
+    var buf = alloc(n * 32);
+    var i = 0;
+    while (i < n) {
+        S64(buf + i * 8,          L64(S + 0x5D9D000 + i * 8));
+        S64(buf + n * 8 + i * 8,  L64(S + 0x5DBD000 + i * 8));
+        S64(buf + n * 16 + i * 8, L64(S + 0x5DDD000 + i * 8));
+        S64(buf + n * 24 + i * 8, L64(S + 0x5DFD000 + i * 8));
+        i = i + 1;
+    }
+    return buf;
+}
+fn _cl_restore_locals(S, buf, n): i64 {
+    if (n <= 0) { return 0; }
+    var i = 0;
+    while (i < n) {
+        S64(S + 0x5D9D000 + i * 8, L64(buf + i * 8));
+        S64(S + 0x5DBD000 + i * 8, L64(buf + n * 8 + i * 8));
+        S64(S + 0x5DDD000 + i * 8, L64(buf + n * 16 + i * 8));
+        S64(S + 0x5DFD000 + i * 8, L64(buf + n * 24 + i * 8));
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn PARSE_FACTOR(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -1094,20 +1127,37 @@ fn PARSE_FACTOR(S): i64 {
         ENOTR(S);
         return 0;
     }
-    # |params| expr — closure/lambda (no captures for now)
-    if (typ == 35) {
-        STI(S, GTI(S) + 1);  # consume |
-        # Generate anonymous function name __closure_N
+    # |params| body / || body — closure/lambda. v6.3.7 makes the non-capturing
+    # base actually work (param passing, zero-param, unique naming); lexical
+    # capture is the follow-up slot.
+    if (typ == 35 || typ == 54) {
+        # token 54 is `||`. At a factor position (no left operand) it is a
+        # zero-param closure `|| body`; binary `a || b` is consumed at the
+        # expression level and never reaches here as a leading token.
+        var cl_zero = 0;
+        if (typ == 54) { cl_zero = 1; }
+        # Mark the ENCLOSING fn as containing a closure so its regalloc post-pass
+        # is skipped (it would byte-scan + corrupt the inline closure code). This
+        # global is NOT in the save/reset set below, so it persists past the
+        # closure to the enclosing fn's PARSE_FN_DEF end.
+        _cur_fn_has_closure = 1;
+        STI(S, GTI(S) + 1);  # consume `|` (or the whole `||` for a zero-param closure)
+        # Generate a UNIQUE anonymous name __clNNNNN (5 zero-padded decimal digits
+        # of the fn count). The old `__cl<clid%10>` was single-digit, so the 11th
+        # closure reused __cl0 and REGFN silently MERGED it with the first.
         NPOS_GUARD(S, 16);
         var clid = GFNC(S);
         var clnoff = GNPOS(S);
         var cwp = clnoff;
-        # Write "__cl" + digit
-        store8(S + 0x60000 + cwp, 95); cwp = cwp + 1;
-        store8(S + 0x60000 + cwp, 95); cwp = cwp + 1;
-        store8(S + 0x60000 + cwp, 99); cwp = cwp + 1;
-        store8(S + 0x60000 + cwp, 108); cwp = cwp + 1;
-        store8(S + 0x60000 + cwp, 48 + (clid % 10)); cwp = cwp + 1;
+        store8(S + 0x60000 + cwp, 95); cwp = cwp + 1;    # _
+        store8(S + 0x60000 + cwp, 95); cwp = cwp + 1;    # _
+        store8(S + 0x60000 + cwp, 99); cwp = cwp + 1;    # c
+        store8(S + 0x60000 + cwp, 108); cwp = cwp + 1;   # l
+        store8(S + 0x60000 + cwp, 48 + (clid / 10000) % 10); cwp = cwp + 1;
+        store8(S + 0x60000 + cwp, 48 + (clid / 1000) % 10); cwp = cwp + 1;
+        store8(S + 0x60000 + cwp, 48 + (clid / 100) % 10); cwp = cwp + 1;
+        store8(S + 0x60000 + cwp, 48 + (clid / 10) % 10); cwp = cwp + 1;
+        store8(S + 0x60000 + cwp, 48 + clid % 10); cwp = cwp + 1;
         store8(S + 0x60000 + cwp, 0); cwp = cwp + 1;
         SNPOS(S, cwp);
         # Register the closure function
@@ -1118,18 +1168,39 @@ fn PARSE_FACTOR(S): i64 {
         var cl_saved_flc = GFLC(S);
         var cl_saved_rpc = vec_len(rp_vec);
         var cl_saved_sdep = GSDEP(S);
+        # v6.3.7 — the closure is its OWN fn, so save + reset the enclosing fn's
+        # per-fn codegen state or the closure inherits it. The regalloc leak was the
+        # param bug: an enclosing regalloc'd fn left `_cur_fn_regalloc` > 0, so the
+        # closure's ESTOREPARM shifted param slots past phantom callee-saved saves
+        # AND the closure's locals got register-allocated to stale callee regs
+        # (|a,b| a+b loaded `a` from an unloaded rbx → 0). Closures take no
+        # #regalloc / struct-ret / #naked, so reset all of it to 0.
+        var cl_saved_regalloc = _cur_fn_regalloc;
+        var cl_saved_ret_stash = _cur_fn_ret_stash;
+        var cl_saved_ret_sid = _cur_fn_ret_sid;
+        var cl_saved_ret_scalar = _cur_fn_ret_scalar;
+        var cl_saved_naked = _cur_fn_naked;
+        var cl_saved_ix = _cur_fn_ix;
+        # Snapshot the enclosing local tables before the closure overwrites slot 0+.
+        var cl_locsnap = _cl_save_locals(S, cl_saved_flc);
         # Set up closure function
         SINFN(S, 1);
         SFLC(S, 0);
         vec_truncate(rp_vec, 0);
         SSDEP(S, 0);
+        _cur_fn_regalloc = 0;
+        _cur_fn_ret_stash = 0;
+        _cur_fn_ret_sid = 0;
+        _cur_fn_ret_scalar = 0;
+        _cur_fn_naked = 0;
+        _cur_fn_ix = clfi;
         # Emit function prologue
         var cl_jmp = EJMP0(S);
         S64(_fnt_offsets + clfi * 8, GCP(S));
         EFNPRO(S);
-        # Parse params until |
+        # Parse params until | (a zero-param `||` closure has no param list)
         var clpc = 0;
-        if (PEEKT(S) != 35) {
+        if (cl_zero == 0 && PEEKT(S) != 35) {
             var cpgo = 1;
             while (cpgo == 1) {
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -1146,12 +1217,20 @@ fn PARSE_FACTOR(S): i64 {
             }
         }
         S64(_fnt_params + clfi * 8, clpc);
-        if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
-        STI(S, GTI(S) + 1);  # consume closing |
-        # v6.2.41 — drop the spurious 2nd arg (ESUBRSP takes only S; the frame
-        # size is patched later via EPATCHFRAME). `GFLC(S)` was a no-op leftover
-        # the new call-arity check surfaced; removing it is output-identical.
-        ESUBRSP(S);
+        # A `||` zero-param closure already consumed both bars as one token 54;
+        # only the `|params|` form has a separate closing bar to consume.
+        if (cl_zero == 0) {
+            if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
+            STI(S, GTI(S) + 1);  # consume closing |
+        }
+        # v6.2.41 dropped ESUBRSP's 2nd arg and claimed the frame "is patched
+        # later via EPATCHFRAME" — but the closure path NEVER called EPATCHFRAME
+        # (closures were untested), so `sub rsp, imm32` kept its 0 placeholder. The
+        # closure then ran on a 0-byte frame: the first push in the body wrote at
+        # [rsp-8] == [rbp-8], clobbering param slot 0, so `|x| x` returned garbage.
+        # v6.3.7 — capture the patch handle and patch the real frame size below
+        # (mirrors PARSE_FN_DEF's prologue ESUBRSP → EPATCHFRAME).
+        var cl_frame_patch = ESUBRSP(S);
         # Parse body: { stmts } or single expression
         if (PEEKT(S) == 13) {
             STI(S, GTI(S) + 1);
@@ -1167,6 +1246,11 @@ fn PARSE_FACTOR(S): i64 {
             EPATCH(S, vec_get(rp_vec, clri));
         }
         EFNEPI(S);
+        # v6.3.7 — patch the closure frame size now that GFLC is final (param +
+        # body local count). Closures take no `#regalloc`/struct-ret stash, so the
+        # size is just the slot count rounded to 16 — same formula as PARSE_FN_DEF.
+        var cl_fsz = (GFLC(S) * 8 + 15) & (0 - 16);
+        EPATCHFRAME(S, cl_frame_patch, cl_fsz);
         EPATCH(S, cl_jmp);
         # Restore state
         SINFN(S, cl_saved_infn);
@@ -1174,6 +1258,16 @@ fn PARSE_FACTOR(S): i64 {
         vec_truncate(rp_vec, cl_saved_rpc);
         SSDEP(S, cl_saved_sdep);
         SLVAR(S, cl_saved_lv);
+        # v6.3.7 — restore the enclosing fn's per-fn codegen state so its remaining
+        # body (after the closure expression) emits with the right regalloc/frame.
+        _cur_fn_regalloc = cl_saved_regalloc;
+        _cur_fn_ret_stash = cl_saved_ret_stash;
+        _cur_fn_ret_sid = cl_saved_ret_sid;
+        _cur_fn_ret_scalar = cl_saved_ret_scalar;
+        _cur_fn_naked = cl_saved_naked;
+        _cur_fn_ix = cl_saved_ix;
+        # Restore the enclosing fn's local tables clobbered by the closure's slots.
+        _cl_restore_locals(S, cl_locsnap, cl_saved_flc);
         # Emit address of closure function (like &fn_name) — mirrors
         # the `&fn_name` dispatch in PARSE_FACTOR (lines ~297-321).
         # Pre-v5.6.0 only had the x86 branches; aarch64 closures spliced

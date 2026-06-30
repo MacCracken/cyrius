@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.7] — 2026-06-29
+
+**v6.3.7 — non-capturing closures actually work.** Slot-entry premise-check found that `|params| body`
+closures were a **scaffolded-but-non-functional, untested, unused** feature — not "working closures
+missing capture" as the roadmap assumed (every "closure" hit in the corpus was `|x|` math abs-value
+notation; the parse code existed but mis-emitted). Per a planned base-first split (user 2026-06-29),
+this slot makes the non-capturing base correct + tested; **lexical capture is the v6.3.8 follow-up**.
+All fixes are closure-path-only → **cycc self-host byte-identical** (cycc uses no closures).
+
+### Fixed — closure codegen (all rooted in the closure being an anonymous fn emitted INLINE in the enclosing fn while sharing its mutable state)
+- **Param passing** (`|x| x` returned 0): the closure inherited `_cur_fn_regalloc` from an
+  auto-regalloc'd enclosing fn, so `ESTOREPARM` stored params past phantom callee-saved slots and the
+  body read them from stale callee registers (disasm: `mov [rbp-0x30],rdi` + `mov rax,rbx`). Now
+  save/reset/restore the full per-fn codegen state (`_cur_fn_regalloc` / `ret_stash` / `ret_sid` /
+  `ret_scalar` / `naked` / `ix`).
+- **Frame size never patched**: the closure called `ESUBRSP` but never `EPATCHFRAME`, leaving
+  `sub rsp, 0` — a 0-byte frame whose first body push clobbered param slot 0. (The v6.2.41 change that
+  dropped `ESUBRSP`'s size arg claimed "patched later via EPATCHFRAME"; the closure path never called
+  it, and there were no closure tests to catch it.) Now captures the patch handle + patches the real
+  frame size, mirroring `PARSE_FN_DEF`.
+- **Zero-param `||`**: lexed as logical-or (token 54) and never reached the closure parser. Now
+  accepted as an empty-param closure at a factor position (binary `a || b` is consumed at the
+  expression level, so it never collides).
+- **Enclosing-local clobbering**: the closure reset `SFLC(0)` and wrote its params/locals into the
+  **shared** local-slot tables (names/depths/types/slice at `S+0x5D9D000`/`5DBD000`/`5DDD000`/`5DFD000`)
+  from slot 0, overwriting the enclosing fn's locals (`var c0` shadowed by a later `|x|` → "undefined
+  variable"). Now snapshots + restores the enclosing range of all four tables.
+- **Regalloc corrupts inline closures → SIGILL**: the enclosing fn's regalloc post-pass (a byte-scan
+  that NOP-patches + reallocates) rewrote the inline closure instructions. A new `_cur_fn_has_closure`
+  flag skips the post-pass for any fn that emits a closure — a correct, un-reallocated frame (the
+  prologue's callee-saved saves go unused); only that fn's optimization is lost.
+- **Unique naming**: `__cl<clid % 10>` was single-digit, so the 11th closure aliased the 1st in
+  `REGFN`. Now `__clNNNNN` (5 zero-padded digits of the fn count).
+
+### Added
+- **`tests/tcyr/closures.tcyr`** — the **first-ever closure tests** (8 cases: single / two / three
+  params, zero-param `||`, `{ block }` body, enclosing-local survival, and a 12-closure regalloc'd fn
+  with locals before+after). Closures had ZERO tests, which is exactly why all of the above survived.
+- Guide **Closures** section (syntax, `callptr` / `fncallN` invocation, the no-capture limitation);
+  vidya field note `closure_inline_emit_shares_enclosing_fn_state`.
+
+### Verified
+- Self-host fixpoint byte-identical (`1,081,696 B`); a differential vs v6.3.6 confirms closure-free
+  compilation is unchanged (the changes only run on the `|closure|` parse path); seed → cybs → cycc
+  derivation green; check.sh **104/104**. Closures run correctly on **x86_64 + aarch64 (qemu) +
+  Windows PE (wine)**; cross-OS self-host **ecb + cass + pi SELFHOST_OK** (real hardware). Bench
+  self_compile **501 ms** (flat — was 502); cycc **1,079,440 → 1,081,696 B** (+2,256: per-fn-state
+  save/restore + the local-table snapshot helpers + the `_cur_fn_has_closure` gate).
+
+### Roadmap
+- v6.3.7 reframed to **non-capturing closures (base)**; inserted **v6.3.8 = lexical capture** (the
+  follow-up — a closure body reading enclosing locals via a heap env; the enclosing-name-table
+  snapshot mechanism added here is the foundation). The downstream slots shift: generics → v6.3.9,
+  async/float → v6.3.10, the three gate slots → v6.3.11–13, closeout → v6.3.14.
+
 ## [6.3.6] — 2026-06-29
 
 **v6.3.6 — ecosystem refold + AGNOS `sys_symlink` peer.** A lib-only maintenance cut: four stale

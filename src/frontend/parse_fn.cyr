@@ -1805,6 +1805,7 @@ fn PARSE_FN_DEF(S): i64 {
     # codegen (EFNEPI, ETAILJMP) can emit rbx save/restore. Reset at
     # the end of PARSE_FN_DEF.
     _cur_fn_regalloc = GFRA(S, fi);
+    _cur_fn_has_closure = 0;   # v6.3.7 — set by PARSE_FACTOR when this fn emits a closure
     # v5.5.36 Phase 2b — look ahead past the param list to see whether
     # the fn signature carries a `: StructName` return annotation. We
     # need the answer BEFORE param parse begins so local-disp shifts
@@ -2503,7 +2504,7 @@ fn PARSE_FN_DEF(S): i64 {
     #      byte/word/dword store, loop-var r12 cache), since those
     #      still hit the stack slot and would diverge from rbx.
     # The `&local` abort (lea [rbp+hot_disp]) also stays in effect.
-    if (_cur_fn_regalloc > 0) {
+    if (_cur_fn_regalloc > 0 && _cur_fn_has_closure == 0) {
         var ra_flc = GFLC(S);
         if (pc < ra_flc) {
             var ra_start = fn_start;

@@ -1,0 +1,70 @@
+# closures.tcyr — non-capturing closure/lambda literals (`|params| body` and the
+# zero-param `|| body`), invoked via lib/fnptr.cyr's fncallN. v6.3.7 made the base
+# actually work; before it, `|params| body` was a scaffolded-but-non-functional,
+# untested feature. Lexical capture (a closure body referencing an enclosing
+# local) is the FOLLOW-UP slot — these closures take their inputs as params only.
+#
+# Each bug this guards:
+#   - param passing: an enclosing regalloc'd fn leaked `_cur_fn_regalloc`, so the
+#     closure's params were stored past phantom callee-saved slots and read from
+#     stale registers (`|x| x` returned 0). Also the closure frame size was never
+#     EPATCHFRAME'd (0-byte frame clobbered param slot 0 on the first body push).
+#   - zero-param `||`: lexed as logical-or; never reached the closure parser.
+#   - unique naming: `__cl<clid % 10>` was single-digit → the 11th closure aliased
+#     the 1st in REGFN.
+#   - enclosing-local isolation: the closure reuses the shared local-slot tables
+#     from slot 0, overwriting the enclosing fn's locals — now snapshot/restored.
+#   - regalloc post-pass: closures are emitted INLINE in the enclosing fn, whose
+#     regalloc byte-scan would rewrite + corrupt them (SIGILL) — now skipped for
+#     any fn that emits a closure.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+# ---- closure-using fns first (decls before the top-level statements) ----
+fn cl_single(): i64 { var f = |x| x + 1; return fncall1(f, 41); }
+fn cl_identity(): i64 { var f = |x| x; return fncall1(f, 42); }
+fn cl_two(): i64 { var f = |a, b| a + b; return fncall2(f, 40, 2); }
+fn cl_three(): i64 { var f = |a, b, c| a + b + c; return fncall3(f, 10, 20, 12); }
+fn cl_zero(): i64 { var f = || 42; return fncall0(f); }
+fn cl_body(): i64 { var f = |x| { var y = x * 2; return y; }; return fncall1(f, 21); }
+
+# An enclosing local must survive a closure declared after it (the closure reuses
+# slot 0 internally; the snapshot/restore keeps `base` intact).
+fn cl_enclosing(): i64 { var base = 40; var f = |x| x; return base + fncall1(f, 2); }
+
+# >10 distinct closures with enclosing locals before AND after, two of them called
+# — exercises unique naming + local-table isolation + the regalloc post-pass skip
+# (the enclosing fn auto-regalloc's; pre-fix this SIGILL'd).
+fn cl_many(): i64 {
+    var a0 = 5;
+    var c0 = |x| x + 0;  var c1 = |x| x + 1;  var c2 = |x| x + 2;  var c3 = |x| x + 3;
+    var c4 = |x| x + 4;  var c5 = |x| x + 5;  var c6 = |x| x + 6;  var c7 = |x| x + 7;
+    var c8 = |x| x + 8;  var c9 = |x| x + 9;  var c10 = |y| y + 30; var c11 = |z| z + 11;
+    var b0 = 7;
+    return a0 + b0 + fncall1(c0, 0) + fncall1(c11, 0);   # 5 + 7 + 0 + 11 = 23
+}
+
+# ---- top-level statements ----
+alloc_init();
+
+test_group("non-capturing closure params + invocation via fncallN");
+assert_eq(cl_single(), 42, "|x| x + 1 applied to 41 == 42");
+assert_eq(cl_identity(), 42, "|x| x applied to 42 == 42");
+assert_eq(cl_two(), 42, "|a,b| a + b applied to (40,2) == 42");
+assert_eq(cl_three(), 42, "|a,b,c| a + b + c applied to (10,20,12) == 42");
+
+test_group("zero-param and block-body closures");
+assert_eq(cl_zero(), 42, "|| 42 (zero-param thunk) == 42");
+assert_eq(cl_body(), 42, "|x| { var y = x*2; return y; } applied to 21 == 42");
+
+test_group("enclosing locals + many closures stay correct");
+assert_eq(cl_enclosing(), 42, "enclosing `base` survives a closure declared after it");
+assert_eq(cl_many(), 23, "12 closures + locals + regalloc'd enclosing fn (no SIGILL, no aliasing)");
+
+var r = assert_summary();
