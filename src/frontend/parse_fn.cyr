@@ -1451,11 +1451,11 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var mangled = _mint_generic_name(S, base_noff, conc0);
     var spec = FINDFN(S, mangled);
     if (spec >= 0) { return spec; }                 # dedup hit
-    if (L64(_fnt_params + base_fi * 8) != 0) { return 0 - 2; }   # pc>0: follow-on
-    spec = REGFN(S, mangled);
-    S64(_fnt_params + spec * 8, 0);
-    SFRS(S, spec, GFRS(S, base_fi));
-    # --- save enclosing fn state ---
+    var defstart = GFDS(S, base_fi);
+    if (defstart == 0) { return 0 - 2; }            # 0 = no recorded def-start
+    defstart = defstart - 1;                        # stored +1 (token index 0 is valid)
+    # --- save the ENCLOSING fn's state (the fn currently being emitted) ---
+    var sv_lv = GLVAR(S);
     var sv_infn = GINFN(S);
     var sv_flc = GFLC(S);
     var sv_rpc = vec_len(rp_vec);
@@ -1469,38 +1469,25 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var sv_ix = _cur_fn_ix;
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
     var locsnap = _cl_save_locals(S, sv_flc);
-    # --- set up the specialized fn ---
-    SINFN(S, 1);
-    SFLC(S, 0);
-    SSDEP(S, 0);
-    _cur_fn_regalloc = 0;
-    _cur_fn_ret_stash = 0;
-    _cur_fn_ret_sid = 0;
-    _cur_fn_ret_scalar = GFRS(S, base_fi);
-    _cur_fn_naked = 0;
-    _cur_fn_ix = spec;
-    _cur_fn_has_closure = 1;                         # skip the enclosing fn's regalloc post-pass
-    _bind_generic_call(S, base_fi, conc0, conc1);
-    # --- emit: jump-over + prologue + body replay + epilogue ---
+    # --- jump over the instance, then re-invoke PARSE_FN_DEF on the BASE's verbatim
+    # tokens with the name + concrete-type overrides. PARSE_FN_DEF re-parses the full
+    # signature (params/masks/return) + body and emits the specialized fn with T bound
+    # to the concretes — full fidelity (params, struct args, masks) for free. ---
     var jmp = EJMP0(S);
-    S64(_fnt_offsets + spec * 8, GCP(S));
-    EFNPRO(S);
-    var fp = ESUBRSP(S);
-    SIDEP(S, GIDEP(S) + 1);
-    STI(S, GFBS(S, base_fi));
-    PARSE_PROG(S);
-    SIDEP(S, GIDEP(S) - 1);
-    var new_rpc = vec_len(rp_vec);
-    var ri = sv_rpc;
-    while (ri < new_rpc) { EPATCH(S, vec_get(rp_vec, ri)); ri = ri + 1; }
-    vec_truncate(rp_vec, sv_rpc);
-    EFNEPI(S);
-    var fsz = (GFLC(S) * 8 + 15) & (0 - 16);
-    EPATCHFRAME(S, fp, fsz);
+    STI(S, defstart);
+    _inst_name = mangled;
+    _inst_conc0 = conc0;
+    _inst_conc1 = conc1;
+    PARSE_FN_DEF(S);
+    _inst_name = 0;
+    _inst_conc0 = 0;
+    _inst_conc1 = 0;
     EPATCH(S, jmp);
-    # --- restore enclosing fn state ---
+    # --- restore the enclosing fn's state ---
+    SLVAR(S, sv_lv);
     SINFN(S, sv_infn);
     SFLC(S, sv_flc);
+    vec_truncate(rp_vec, sv_rpc);
     SSDEP(S, sv_sdep);
     _cur_fn_regalloc = sv_regalloc;
     _cur_fn_ret_stash = sv_stash;
@@ -1508,10 +1495,45 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _cur_fn_ret_scalar = sv_rscal;
     _cur_fn_naked = sv_naked;
     _cur_fn_ix = sv_ix;
+    # The instance is emitted INLINE in the enclosing fn's code range (jumped over),
+    # so mark the enclosing fn to skip its regalloc byte-scan post-pass (it would
+    # rewrite + corrupt the instance) — same guard closures use.
+    _cur_fn_has_closure = 1;
     _cl_restore_locals(S, locsnap, sv_flc);
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
+    spec = FINDFN(S, mangled);                       # now registered by PARSE_FN_DEF
     return spec;
+}
+
+# v6.3.10 (generic structs): instantiate `Box<conc>` → a deduped specialized struct.
+# Mints `Box$ty`; FINDSTRUCT is the dedup index. On a miss, re-invokes PARSE_STRUCT_DEF
+# on the base struct's verbatim tokens with the name + binding overrides so each `: T`
+# field resolves to the concrete type via the field consult. No codegen (struct
+# registration only) → far simpler than the fn instance: just save/restore the cursor
+# + binding. Returns the 1-based instance sid, or 0 if `base_si` isn't a generic struct.
+fn _instantiate_generic_struct(S, base_si, conc0): i64 {
+    var base_noff = L64(S + 0x1A6018 + base_si * 8);
+    var mangled = _mint_generic_name(S, base_noff, conc0);
+    var existing = FINDSTRUCT(S, mangled);
+    if (existing > 0) { return existing; }           # dedup hit (1-based)
+    var ds = GSDS(S, base_si);
+    if (ds == 0) { return 0; }                       # not a generic struct
+    ds = ds - 1;
+    var stp = GSTP(S, base_si);
+    var sv_ti = GTI(S);
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    STI(S, ds);
+    _inst_name = mangled;
+    var t0 = stp & 0xFFFFFFFF;
+    if (t0 != 0) { _tp_bind(S, 0, t0 - 1, conc0); }
+    var t1 = (stp >> 32) & 0xFFFFFFFF;
+    if (t1 != 0) { _tp_bind(S, 1, t1 - 1, conc0); }
+    PARSE_STRUCT_DEF(S);
+    _inst_name = 0;
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    STI(S, sv_ti);
+    return FINDSTRUCT(S, mangled);                   # 1-based instance sid
 }
 
 # Parse fn name<T>(params) { body }
@@ -1797,6 +1819,7 @@ fn _prescan_fn_sig(S): i64 {
 }
 
 fn PARSE_FN_DEF(S): i64 {
+    var _defstart_ti = GTI(S);   # v6.3.10: the `fn`-keyword token, for instance re-emit
     STI(S, GTI(S) + 1);  # consume FN
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
@@ -1808,6 +1831,10 @@ fn PARSE_FN_DEF(S): i64 {
     var _gtp = _capture_tparams(S);
     # Mangle name if inside a module: mod_fn
     var mmod = GMOD(S);
+    # v6.3.10 (instantiate-once): re-emitting a specialized instance — the mangled
+    # name `foo$ty` is already fully formed, so use it verbatim and skip module
+    # mangling. (_inst_name is set only by the instantiate trigger's re-invoke.)
+    if (_inst_name != 0) { noff = _inst_name; mmod = 0; }
     if (mmod != 0) {
         # v5.11.65 (CVE-05): walk source lengths before NPOS_GUARD;
         # replaces magic-256 pessimistic budget. See CHANGELOG [5.11.65].
@@ -1851,6 +1878,7 @@ fn PARSE_FN_DEF(S): i64 {
         }
     }
     if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
+    if (_gtp != 0) { SFDS(S, fi, _defstart_ti + 1); }   # v6.3.10: def-start +1 (0 = unrecorded; token 0 is valid)
     # v5.11.62: track the current fn for per-fn array-byte attribution.
     # Initialize the slot to 0 — fn body may have been touched by an earlier
     # forward-decl scan; this is the start of the body parse proper.
@@ -2612,7 +2640,10 @@ fn PARSE_FN_DEF(S): i64 {
     # _MONOMORPH_OK && GFTP!=0 → non-generic / flag-off path is byte-identical.
     var _gen_base = 0;
     if (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) {
-        _bind_generic_call(S, fi, 0 - 8, 0 - 8);
+        # v6.3.10: a specialized instance binds T to its concrete type(s); the base
+        # binds T->i64 (base-as-i64). _inst_conc0 is set only during an instance re-emit.
+        if (_inst_conc0 != 0) { _bind_generic_call(S, fi, _inst_conc0, _inst_conc1); }
+        else { _bind_generic_call(S, fi, 0 - 8, 0 - 8); }
         _gen_base = 1;
     }
     PARSE_PROG(S);

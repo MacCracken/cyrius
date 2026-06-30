@@ -214,6 +214,17 @@ var _fnt_codeend = 0;     # 0xA2A000 fn_code_end
 # byte-identical. No fixed heap slot exists after the fn-table family (0xA3A000 is
 # ir_nodes on x86), so this is alloc-backed, not fixed-offset.
 var _fnt_tparams = 0;
+# v6.3.10 (instantiate-once): per-fn `fn`-keyword token index, so a non-i64 generic
+# instance can re-invoke PARSE_FN_DEF on the base's verbatim tokens. Lazy-alloc'd
+# (max fn cap) like _fnt_tparams; 0 = not a generic fn / unrecorded.
+var _fnt_defstart = 0;
+# v6.3.10: PARSE_FN_DEF overrides when emitting a specialized instance. _inst_name
+# (0 = normal) replaces the parsed fn name with the mangled `foo$ty`; _inst_conc0/1
+# (0 = base-as-i64) bind the type-params to the concrete instance types instead of
+# the default i64. Cleared by the instantiate trigger after the re-invoke returns.
+var _inst_name = 0;
+var _inst_conc0 = 0;
+var _inst_conc1 = 0;
 var _fnt_namehash = 0;    # 0x110000 fn_name_hash (2 B/slot, name -> fi+1)
 var _fnt_starthash = 0;   # 0x114000 fn_start_hash (2 B/slot, start -> fi+1)
 var _fnt_hash_mask = 0;   # _fnt_cap - 1 (both hashes; cap is power-of-2)
@@ -332,6 +343,19 @@ fn SFINL(S, fi, v): i64 { S64(_fnt_inline + fi * 8, v); return 0; }
 # _MONOMORPH_OK with a `fn foo<T>` definition present.
 fn GFTP(S, fi): i64 { if (_fnt_tparams == 0) { return 0; } return L64(_fnt_tparams + fi * 8); }
 fn SFTP(S, fi, v): i64 { if (_fnt_tparams == 0) { _fnt_tparams = alloc(32768 * 8); } S64(_fnt_tparams + fi * 8, v); return 0; }
+# v6.3.10 (instantiate-once): the base fn's `fn`-keyword token index (lazy-alloc'd).
+fn GFDS(S, fi): i64 { if (_fnt_defstart == 0) { return 0; } return L64(_fnt_defstart + fi * 8); }
+fn SFDS(S, fi, v): i64 { if (_fnt_defstart == 0) { _fnt_defstart = alloc(32768 * 8); } S64(_fnt_defstart + fi * 8, v); return 0; }
+# v6.3.10 (generic structs): per-struct (0-based si) type-params (packed, like
+# _fnt_tparams) + the `struct`-keyword token (defstart+1; 0=unrecorded). Lazy-alloc'd
+# at 1024 slots (the struct cap). Used to instantiate `Box<Point>` by re-invoking
+# PARSE_STRUCT_DEF on the base's tokens with T bound.
+var _struct_tparams = 0;
+var _struct_defstart = 0;
+fn GSTP(S, si): i64 { if (_struct_tparams == 0) { return 0; } return L64(_struct_tparams + si * 8); }
+fn SSTP(S, si, v): i64 { if (_struct_tparams == 0) { _struct_tparams = alloc(1024 * 8); } S64(_struct_tparams + si * 8, v); return 0; }
+fn GSDS(S, si): i64 { if (_struct_defstart == 0) { return 0; } return L64(_struct_defstart + si * 8); }
+fn SSDS(S, si, v): i64 { if (_struct_defstart == 0) { _struct_defstart = alloc(1024 * 8); } S64(_struct_defstart + si * 8, v); return 0; }
 # v6.3.9 (F-fns): the ACTIVE generic-instantiation binding — up to 2 type-params,
 # each {name-offset -> CANONICAL concrete-type token}. The token: <0 = scalar of
 # width -tok (i64=-8, i32=-4, i16=-2, i8=-1); >0 = struct sid (1-based, FINDSTRUCT

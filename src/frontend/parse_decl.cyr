@@ -1137,6 +1137,7 @@ fn PARSE_VAR(S): i64 {
                 if (PEEKT(S) == 20) { STI(S, GTI(S) + 1); }  # consume >
             }
         } else {
+            var _gs_sid = 0;   # v6.3.10: base sid if `: StructName` resolved (for generic-struct instantiation below)
             if (PEEKT(S) == 2) {
                 var lann = PEEKV(S);
                 # Check scalar types: i8/u8, i16/u16, i32/u32, i64/u64.
@@ -1189,11 +1190,31 @@ fn PARSE_VAR(S): i64 {
                 elif (ltname & 0xFFFFFF == 0x323366) { lfloat = F32_TYID; }
                 else {
                     var lsid = FINDSTRUCT(S, lann);
-                    if (lsid > 0) { pscale = 0 - lsid; }
+                    if (lsid > 0) { pscale = 0 - lsid; _gs_sid = lsid; }
                 }
             }
             STI(S, GTI(S) + 1);
-            SKIP_GENERICS(S);
+            # v6.3.10 (generic structs): `var x: Box<conc>` — if Box is a generic
+            # struct and `<...>` follows with a non-i64 type-arg, instantiate `Box$ty`
+            # (deduped) and retarget the local to the instance sid. i64 / non-generic
+            # → the existing SKIP_GENERICS (the base struct IS the i64 instance).
+            if (_MONOMORPH_OK == 1 && _gs_sid > 0 && PEEKT(S) == 19 && GSTP(S, _gs_sid - 1) != 0) {
+                STI(S, GTI(S) + 1);                 # consume `<`
+                var _gstc = _classify_return_type(S, PEEKV(S));
+                var _gsd = 1;                       # consume the type-arg list incl. `>`
+                while (_gsd > 0) {
+                    var _gst = PEEKT(S);
+                    if (_gst == 19) { _gsd = _gsd + 1; }
+                    if (_gst == 20) { _gsd = _gsd - 1; }
+                    STI(S, GTI(S) + 1);
+                }
+                if (_gstc != 0 - 8) {
+                    var _ginst = _instantiate_generic_struct(S, _gs_sid - 1, _gstc);
+                    if (_ginst > 0) { pscale = 0 - _ginst; }
+                }
+            } else {
+                SKIP_GENERICS(S);
+            }
         }
     }
     # v5.5.36 Phase 2: `var p: StructName;` — stack-local struct

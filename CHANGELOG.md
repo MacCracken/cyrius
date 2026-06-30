@@ -6,6 +6,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.10] — 2026-06-30
+
+**v6.3.10 — non-i64 generics: instances, structs, explicit syntax.** The second half of the generics
+arc completes the surface: generic *functions* and *structs* over **non-i64** types (narrow scalars +
+struct type-args), explicit call-site type arguments, and the instantiate-once engine that powers both —
+all on the v6.3.5 AR-01 substrate, gated behind `_MONOMORPH_OK` (default off) → **cycc self-host
+byte-identical** (differential vs v6.3.9 confirms default codegen unchanged; cycc uses no generics).
+
+### Added — instantiate-once engine
+- **Explicit type arguments** `foo<i64>(x)` / `foo<i32>(x)` — a non-consuming `<`-disambiguation
+  lookahead (`LOOKAHEAD_IS_TYPE_ARG_CALL`, borrowed from the TS parser) gated on the flag AND a
+  generic-fn callee AND the `foo<…>(` shape, so `a < b`, chained comparisons, and non-generic `<` are
+  never misread (verified: `a < b` still compares; default path byte-identical).
+- **Non-i64 function instances** (`add<i32>(a, b)`) — mint `foo$ty` into the name pool (`$` separator,
+  unforgeable), `FINDFN` is the dedup index, and on a miss the instance is emitted by **re-invoking
+  `PARSE_FN_DEF`** on the base's verbatim tokens (`_fnt_defstart`) with name (`_inst_name`) +
+  concrete-binding (`_inst_conc0/1`) overrides — full fidelity (params, ABI masks, struct args, return,
+  regalloc) for free, jumped over (`EJMP0`/`EPATCH`) with enclosing-state save/restore and a
+  `_cur_fn_has_closure` regalloc-skip. Handles all param counts.
+- **Generic structs** (`Pair<i32>`, `Holder<Point>`) — the base struct IS the i64 instance (`val: T`
+  registers as an untyped 8-byte field, so `Pair<i64>`/`Tri<i64>` already worked); a non-i64 use
+  re-invokes **`PARSE_STRUCT_DEF`** (registration only, no codegen) with the same overrides, and the
+  field `: T` parse gained a `_tp_resolve` consult so `Box$Point` lays its field out at the concrete
+  size. Wired at the `var x: Box<conc>` type-resolution site; `FINDSTRUCT` dedups.
+- **`tests/fixtures/monomorph/generics_full.cyr`** + **`_generics_full_gate`** (check.sh **105 → 106**):
+  `add<i32>` + `Pair<i32>` + `Holder<Point>` (struct-type-arg, `tag` read correctly past a 16-byte
+  `Point` field — proving the specialized layout) → exit 42 under the flag, REJECTED off.
+
+### Fixed
+- **Def-start sentinel collision**: the base fn's `fn`-keyword token index is stored `+1` (read back
+  `-1`) because token index 0 is valid (a generic fn can be the first token in a no-include file) and 0
+  is the table's "unrecorded" sentinel — storing the raw 0 made every instance in such a file fall to a
+  clean error. Same `+1` for struct def-start.
+
+### Verified
+- Self-host fixpoint byte-identical (`1,101,944 B`); differential vs v6.3.9 confirms default codegen
+  unchanged; seed → cybs → cycc green; check.sh **106/106**. The full non-i64 surface runs correctly on
+  **x86_64 + aarch64 (qemu)**: `add<i32>` (params + dedup), `Pair<i32>`, `Holder<Point>`/`W<Point>`
+  (struct-type-args, field offsets correct), and generic-fn × generic-struct mixing — all exit-correct.
+  Cross-OS self-host **ecb + cass + pi SELFHOST_OK** (real hardware). Bench self_compile **523 ms**
+  (v6.3.9: 520 — flat); cycc **1,094,000 → 1,101,944 B** (+7,944). Guide **Generic Functions / Generic
+  structs** sections; vidya `generic_instantiate_once_reinvoke`.
+- Filed the pre-existing **single-field-struct segfault** (P2, reproduces non-generic flag-off) —
+  `docs/development/issues/2026-06-30-single-field-struct-segfaults.md`; independent of generics.
+
+### Roadmap
+- v6.3.10 = generic structs + non-i64 fn instances + explicit syntax shipped — the generics arc
+  (v6.3.5 substrate → v6.3.9 i64 fns → v6.3.10 non-i64 + structs) is **complete**. **Deferred** (not
+  yet): nested `Outer<Inner<T>>`, distinct multi-type-params (`Pair<T, U>`), control-flow in generic-fn
+  bodies. **Next: v6.3.11 — async/await + native-float Tier A.**
+
 ## [6.3.9] — 2026-06-30
 
 **v6.3.9 — generic functions (i64 monomorphization).** `fn foo<T>(...)` over **i64**, the first

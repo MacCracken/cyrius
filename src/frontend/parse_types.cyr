@@ -431,14 +431,19 @@ fn FINDFIELD(S, si, fnoff): i64 {
 
 # Parse: struct Name<T> { field; field; ... }
 fn PARSE_STRUCT_DEF(S): i64 {
+    var _sdefstart = GTI(S);   # v6.3.10: the `struct` token, for generic instance re-emit
     STI(S, GTI(S) + 1);  # consume STRUCT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);
     # Skip generic parameters if present: struct Foo<T, U>
-    SKIP_GENERICS(S);
+    # v6.3.10 (generic structs): capture <T> (flag-off / non-generic = old SKIP_GENERICS).
+    var _stp = _capture_tparams(S);
+    # v6.3.10: re-emitting a `Box$ty` instance uses the mangled name verbatim.
+    if (_inst_name != 0) { noff = _inst_name; }
     var sid = REGSTRUCT(S, noff);
     var si = sid - 1;
+    if (_stp != 0) { SSTP(S, si, _stp); SSDS(S, si, _sdefstart + 1); }   # record for instantiation
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);  # consume {
     var go = 1;
@@ -453,21 +458,37 @@ fn PARSE_STRUCT_DEF(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 var tnoff = PEEKV(S);
-                # Check scalar types first
-                var ftname = L64(S + 0x60000 + tnoff);
-                var fscalar = 0;
-                if (ftname & 0xFFFF == 0x3869) { fscalar = 1; }
-                elif (ftname & 0xFFFFFF == 0x363169) { fscalar = 2; }
-                elif (ftname & 0xFFFFFF == 0x323369) { fscalar = 4; }
-                elif (ftname & 0xFFFFFF == 0x343669) { fscalar = 8; }
-                STI(S, GTI(S) + 1);
-                if (fscalar > 0) {
-                    # Store as negative width for sized scalars, 0 for i64 (default)
-                    if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
-                    else { ADDFIELD(S, si, fnoff); }
+                # v6.3.10 (generic structs): a field `: T` under an active instance
+                # binding resolves to the concrete type — canonical token <0 = scalar
+                # -width, >0 = struct sid. Inert (no binding) → the normal field parse.
+                var _ftc = 0;
+                if (_tp_c0 != 0) { _ftc = _tp_resolve(S, tnoff); }
+                if (_ftc != 0) {
+                    STI(S, GTI(S) + 1);   # consume the type name
+                    if (_ftc < 0) {
+                        var _fw = 0 - _ftc;
+                        if (_fw < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - _fw); }
+                        else { ADDFIELD(S, si, fnoff); }
+                    } else {
+                        ADDFIELDTYPED(S, si, fnoff, _ftc);
+                    }
                 } else {
-                    var fsid = FINDSTRUCT(S, tnoff);
-                    ADDFIELDTYPED(S, si, fnoff, fsid);
+                    # Check scalar types first
+                    var ftname = L64(S + 0x60000 + tnoff);
+                    var fscalar = 0;
+                    if (ftname & 0xFFFF == 0x3869) { fscalar = 1; }
+                    elif (ftname & 0xFFFFFF == 0x363169) { fscalar = 2; }
+                    elif (ftname & 0xFFFFFF == 0x323369) { fscalar = 4; }
+                    elif (ftname & 0xFFFFFF == 0x343669) { fscalar = 8; }
+                    STI(S, GTI(S) + 1);
+                    if (fscalar > 0) {
+                        # Store as negative width for sized scalars, 0 for i64 (default)
+                        if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
+                        else { ADDFIELD(S, si, fnoff); }
+                    } else {
+                        var fsid = FINDSTRUCT(S, tnoff);
+                        ADDFIELDTYPED(S, si, fnoff, fsid);
+                    }
                 }
             } else {
                 ADDFIELD(S, si, fnoff);

@@ -1,0 +1,27 @@
+# Fixture for _generics_full_gate (v6.3.10 F-structs).
+#
+# The full non-i64 generics surface, all via the instantiate-once engine:
+#   - a non-i64 generic FUNCTION instance with params (add<i32>) — re-invokes
+#     PARSE_FN_DEF on the base tokens with T->i32 bound, deduped by FINDFN
+#   - a non-i64 generic STRUCT instance (Pair<i32>) — narrow-scalar fields
+#   - a generic struct over a STRUCT type-arg (Holder<Point>) — the `v` field is a
+#     real 16-byte Point, so `tag` lives at offset 16 (not 8 as in the i64 base);
+#     reading it back proves the specialized layout, not a fallback to the base
+#
+# Compiles + runs ONLY under CYRIUS_MONOMORPH=1 (gated; default codegen byte-identical).
+# MUST exit 42.
+
+fn add<T>(a: T, b: T): T { return a + b; }
+struct Pair<T> { a: T; b: T; }
+struct Point { x: i64; y: i64; }
+struct Holder<T> { v: T; tag: i64; }
+
+fn main(): i64 {
+    var r = 0;
+    r = r + add<i32>(10, 5);                          # 15  (non-i64 fn instance, params)
+    var p: Pair<i32>; p.a = 8; p.b = 4;               # non-i64 struct instance
+    r = r + p.a + p.b;                                # +12 = 27
+    var h: Holder<Point>; h.tag = 15;                 # struct-type-arg instance (Point field)
+    r = r + h.tag;                                    # +15 = 42
+    return r;
+}

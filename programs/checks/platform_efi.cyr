@@ -430,6 +430,49 @@ fn _generics_fn_i64_gate(): i64 {
     return fail;
 }
 
+# v6.3.10 F-structs: the full non-i64 generics surface via the instantiate-once
+# engine — a non-i64 generic FN instance (add<i32>, params + dedup), a non-i64
+# generic STRUCT (Pair<i32>), and a generic struct over a STRUCT type-arg
+# (Holder<Point>, proving the specialized field layout). Compiles + runs the fixture
+# under CYRIUS_MONOMORPH=1 (must exit 42) and asserts it's REJECTED with the flag
+# off (the feature can't touch default codegen).
+fn _generics_full_gate(): i64 {
+    var label = "v6.3.10 F-structs: non-i64 generic fns + structs + struct-type-args run under CYRIUS_MONOMORPH=1 (exit 42), gated off";
+    var src = _root_path("tests/fixtures/monomorph/generics_full.cyr");
+    var fail = 0;
+    var bin_on = _tmp_path("audit_genfull_on_");
+    var rc_on = _self_host_pipe_env(src, CC_PATH, bin_on, "CYRIUS_MONOMORPH=1");
+    if (rc_on != 0) {
+        sys_unlink(bin_on);
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON non-i64 generics compile failed rc="); print_num(rc_on); println("");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin_on, 493);
+    var ec_on = _pipe_file_to_bin(bin_on, src);
+    sys_unlink(bin_on);
+    if (ec_on != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON non-i64 generics program exit "); print_num(ec_on); println(" (expected 42)");
+        fail = fail + 1;
+    }
+    var bin_off = _tmp_path("audit_genfull_off_");
+    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    sys_unlink(bin_off);
+    if (rc_off == 0) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        println(": flag-OFF compiled non-i64 generics — the feature is NOT gated");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": non-i64 generic fns + structs (incl. struct-type-args) execute under the flag (exit 42), gated off");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _efi_emit_gate(): i64 {
     var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
     var cap = 262144;
