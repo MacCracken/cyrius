@@ -6,6 +6,79 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.14] — 2026-06-30
+
+**v6.3.14 — AGNOS syscall peer: the 8 missing wrappers (lib-only).** The agnos kernel implements all 64
+syscalls (`0–63` contiguous), but `lib/syscalls_x86_64_agnos.cyr` exposed `SYS_*`/`sys_*` only for
+`0–35, 40–41, 45–61, 63` — **omitting 8 numbers the kernel dispatches**. Filed proactively (same shape as
+the lseek + signal-constant + `sys_symlink` gaps) so the wrappers exist *before* the AGNOS base stack
+(kavach, bote, t-ron, thoth, phylax, aegis) ports to `--agnos` and hits one-at-a-time link errors / the
+raw-`syscall(N,…)` Linux-number mis-dispatch landmine. [`issues/2026-06-30-agnos-syscall-peer-incomplete-8-wrappers.md`](docs/development/issues/2026-06-30-agnos-syscall-peer-incomplete-8-wrappers.md).
+
+### Added — `lib/syscalls_x86_64_agnos.cyr` (new `SysNrAgnosProc` enum + 8 wrappers)
+- **`sys_klug`#36** `(buf, len)` — copy the unified klug log ring (dmesg tail) into a user buffer
+  (aegis/phylax/sakshi). *(It's `klug`, not `klog` — the subsystem is `core/klug.cyr`.)*
+- **Process / exec band:** **`sys_execwait`#37** `(path, pathlen)` (load + run a static ELF64 to
+  completion → exit code), **`sys_spawn_path`#43** `(path, len)` (non-blocking from-disk spawn → pid),
+  **`sys_exec_redirect`#62** `(src_fd, dst_fd)` (arm a one-shot fd redirect before exec/spawn — capture a
+  child's stdout/stderr) — bote/daimon/t-ron/thoth.
+- **Framebuffer:** **`sys_fbinfo`#38** `(buf, len)` (24-byte FB geometry), **`sys_blit`#39**
+  `(src, w, h, dstxy)` (copy a w×h 32bpp block; 4-arg, a4=r10) — chakshu/kii/aethersafha.
+- **Input / sched:** **`sys_kbscan`#42** `(buf, max)` (non-blocking scancode drain),
+  **`sys_sched_yield`#44** `()` (cooperative yield).
+
+### Verified
+- cycc **byte-identical** (lib-only — no compiler change). A `--agnos` program calling all 8 wrappers
+  compiles and emits the correct `syscall #N` for each (36/37/38/39/42/43/44/62). api-surface +8
+  (additions-only). check.sh 109/109; **ecb + cass + pi SELFHOST_OK**; bench self_compile 533 ms.
+  Closes the cyrius half of the agnos peer request.
+
+## [6.3.13] — 2026-06-30
+
+**v6.3.13 — str_builder concurrency ROOT-CAUSED (it's array locals, not str_builder) + per-thread
+array-local fix (opt-in).** The "str_builder is not thread-safe / a miscompile of specific `lib/str.cyr`
+fns" diagnosis was wrong. The real, FUNDAMENTAL cause: **`var arr[N]` LOCALS (declared inside a
+function) are allocated at a fixed global/BSS address shared by every thread.** Scalar locals already
+stack-allocate per-thread (`lea [rbp-N]`); array locals went through the *global* var table
+(`dbase + offset` → `movabs`). So any concurrent path using an array-local aliases one global buffer →
+~87% cross-thread byte splice. This is the root of the str_builder corruption, the multi-worker-TLS
+`BAD_SIGNATURE`, and the sandhi/json corruption. [`issues/2026-06-28-str-builder-not-thread-safe.md`](docs/development/issues/2026-06-28-str-builder-not-thread-safe.md).
+
+### Investigation (ultracode workflow)
+- Reproduced on 6.3.12 (`sb_fail` 279959/87%, replica 0). Bisected to the append's nested calls; a
+  generic params-live-across-call test was clean (cyrius spills params to the stack fine). A 3-agent
+  workflow (disasm / minimal-reduction / emit-source) — the **minimal-reduction agent** found it by
+  varying the byte source: `app(a,sb,&ch)` with `var ch[2]` corrupts 87%; the same fn with an int param
+  is clean. Disasm: array `&ch` → `movabs $0x600658` (fixed BSS); scalar `&x` → `lea -0x30(%rbp)`.
+  Independently confirmed: `&array-local` = identical `0x600C18` across all 8 threads. The "clean
+  hand-rolled replica" was clean only because it wrote a per-thread int, never dereferencing an array.
+
+### Added — per-thread array locals (opt-in `CYRIUS_STACK_ARRAYS=1`)
+- **`PARSE_ARRAY` routes array LOCALS to per-thread STACK slots** (the struct-local multi-slot
+  mechanism: `ceil(size/8)` fn-local slots — anonymous fillers + one named slot at the deepest offset,
+  so `&arr` = `lea [rbp-disp]` points at `arr[0]`). The existing `&arr` / `arr[i]` / array-store paths
+  already check `FINDLOCAL` → `ELOAD_LOCAL_ADDR` before the global fallback, so **no per-backend emit
+  change was needed** — one shared-frontend change covers x86 + aarch64 + all 7 forks. Gated
+  (`_ensure_stack_arrays`, parse.cyr) → default codegen byte-identical.
+- **`THREAD_STACK_SIZE` 64 KB → 2 MB** (`lib/thread.cyr`, ungated) so large array-locals fit on a
+  spawned thread's stack (the largest is 256 KB; the CVE-29 guard page turns overflow into a loud
+  SIGSEGV). A per-call heap path was rejected — the bump allocator has no `free()`.
+- **`tests/fixtures/concurrency/array_local_threadsafe.cyr`** + **`_array_local_threadsafe_gate`**
+  (check.sh **108 → 109**): 8-thread test exits 0 under `CYRIUS_STACK_ARRAYS=1`, corrupts (exit 1) by
+  default — verifying the opt-in fix AND that the test detects the bug.
+
+### Verified
+- Opt-in: str_builder `sb_fail 0`; array-locals per-thread on **x86 + aarch64 (qemu)**; cycc self-hosts
+  with the flag (binary SHRANK 1,111,576 → 1,023,464 B as arrays left BSS); fixpoint + seed → cybs →
+  cycc byte-identical. Default (gated-off): **flag-off differential byte-identical** to v6.3.12;
+  check.sh **109/109**; **ecb + cass + pi SELFHOST_OK**; bench self_compile 547 ms; cycc 1,111,616 B.
+
+### Not yet default-on (tracked)
+- Flipping per-thread array locals to DEFAULT hit **SSE m128 16-byte alignment** regressions (inline-asm
+  AES-NI / crypto / TLS use arrays as `xmm` operands needing 16-aligned addresses; global arrays got it
+  via the v5.5.21 totvar pad, stack slots are only 8-aligned) + a TLS-probe compile failure. Reverted to
+  opt-in; default-on is the **v6.3.14 arc** (16-align array stack slots): [`array-locals default-on`](docs/development/issues/2026-06-30-array-locals-stack-default-on-m128-align.md).
+
 ## [6.3.12] — 2026-06-30
 
 **v6.3.12 — W^X: userland ELF emits separate code / data PT_LOAD segments.** `cyrld` now lays out every

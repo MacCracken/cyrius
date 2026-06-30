@@ -1,5 +1,15 @@
 # `str_builder` (lib/str.cyr) is not thread-safe — concurrent builders corrupt each other
 
+> **Status (v6.3.13): ROOT-CAUSED + fixed OPT-IN; default-on tracked separately.**
+> NOT a str_builder bug at all — the real cause is that **`var arr[N]` LOCALS are
+> allocated at a shared global/BSS address** (thread-shared); str_builder corrupts
+> because its callers/formatting use array-locals (and the repro's own `var ch[2]`
+> is thread-shared). Fixed by routing array locals to per-thread stack slots,
+> shipped opt-in as `CYRIUS_STACK_ARRAYS=1` in v6.3.13. Making it **default-on** is
+> blocked on SSE m128 16-byte alignment of stack slots — tracked in
+> [`2026-06-30-array-locals-stack-default-on-m128-align`](2026-06-30-array-locals-stack-default-on-m128-align.md).
+> The "Component" line below (blaming str_builder fns) is the original mis-diagnosis.
+
 **Filed:** 2026-06-28 (by the `yeo-cy-test` consumer — SecureYeoman → Cyrius
 full-stack viability probe; cyrius 6.3.1 wrapper / 6.3.0 pin)
 **Severity:** **HIGH / blocker for concurrency.** `str_builder` is the core
@@ -114,3 +124,28 @@ Any concurrent `str_builder` use corrupts. Confirmed via sandhi's HTTP server
 (every `sandhi_server_send_response_c` frames through `str_builder`) and the
 probe's `json_v_build`. Fixing this is the precondition for a correct cyrius
 concurrent server.
+
+## Second manifestation — this gate also unblocks multi-worker server TLS (2026-06-30)
+
+Tracking note so the v6.3.13 fixer verifies both paths. With **sigil 3.9.7**
+(concurrent-TLS crypto crash fixed — auto-banking; folded in 6.3.12), a
+multi-worker HTTPS server (`sandhi_server_run_pooled_tls`, `max_conns ≥ 2`) no
+longer crashes but **every concurrent request fails with `SSL: BAD_SIGNATURE`**.
+Cause is this same str_builder bug, surfacing differently over TLS: two workers'
+`str_builder`-built response buffers **overlap** (the race), so one worker mutates
+its buffer *while* `tls_native_write` is encrypting + MAC-ing it → the record MAC
+no longer matches the transmitted ciphertext → the client rejects it as
+`BAD_SIGNATURE`. Ruled out as a TLS bug: `tls_native_hs13` has **zero**
+module-global scratch (per-ctx), and sigil's own `concurrent_tls_handshake` /
+`banking_concurrent` / `ecdsa_concurrent` tests pass 18/18.
+
+- **Reproduction:** `yeo-cy-test` (consistent 6.3.12 via `cyrius lib sync --full`),
+  TLS pool `max_conns=4`: concurrency 1 → ok; ≥2 → `SSL: BAD_SIGNATURE`, server
+  stays alive. At `max_conns=1` (serialized response building) HTTPS is clean.
+- **When fixing this gate, add a multi-worker-TLS regression test** (concurrent
+  HTTPS over `run_pooled_tls`, `max_conns>1`, asserting clean handshakes + bodies),
+  not just the HTTP/`str_builder` repro above — they fail differently
+  (HTTP: garbled-but-decryptable JSON; HTTPS: `BAD_SIGNATURE`).
+- **Consumer status:** `yeo-cy-test` keeps its TLS pool at `max_conns=1` until this
+  lands; the plan is to bump it to 4 the moment v6.3.13 ships. Tracked probe-side in
+  `yeo-cy-test/FINDINGS.md` + the `src/main.cyr` serve-loop comment.

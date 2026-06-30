@@ -462,6 +462,7 @@ fn _run_regression_gates(): i64 {
     _generics_full_gate();            # v6.3.10 F-structs: non-i64 fns + structs + struct-type-args, gated off
     _async_await_gate();              # v6.3.11 G: async fn / await → Futures over the epoll runtime, gated off
     _wx_segments_gate();              # v6.3.12: userland ELF W^X — separate text R+E / data R+W PT_LOADs (default), CYRIUS_WX=0 opts out
+    _array_local_threadsafe_gate();   # v6.3.13: `var arr[N]` locals are per-thread (default), CYRIUS_STACK_ARRAYS=0 opts out to shared-global
     println("");
 
     _section("EFI Application PE emit (gnoboot MVP unblocker)");

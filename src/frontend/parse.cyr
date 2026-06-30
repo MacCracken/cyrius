@@ -174,6 +174,30 @@ fn _ensure_async_gate(S): i64 {
     return _ASYNC_OK;
 }
 
+# v6.3.13 (thread-safe array locals): a `var arr[N]` declared INSIDE a function is
+# historically allocated in the global/BSS data region at a FIXED address — shared
+# by every thread, so concurrent code that uses an array-local corrupts (root cause
+# of the str_builder concurrency bug). When this gate is on, small array locals are
+# registered as multi-slot per-thread STACK locals (the struct-local mechanism) and
+# large ones are heap-allocated per call — so &arr / arr[i] resolve via FINDLOCAL to
+# a per-thread address. Default OFF during the v6.3.13 dev cycle (flipped ON at slot
+# close via a two-step bootstrap). Lazy-init from CYRIUS_STACK_ARRAYS — no per-fork edit.
+fn _ensure_stack_arrays(S): i64 {
+    if (_sa_init == 1) { return _STACK_ARRAYS; }
+    _sa_init = 1;
+    # v6.3.13: OPT-IN (CYRIUS_STACK_ARRAYS=1). Per-thread array locals fix the
+    # str_builder concurrency root cause, but flipping default-on hit SSE m128
+    # alignment regressions (AES-NI / crypto / TLS use arrays as 16-byte-aligned `xmm`
+    # operands; global arrays were 16-aligned via the v5.5.21 totvar pad, stack slots
+    # are only 8-aligned) + a TLS-probe compile gap. Default-on is gated on a follow-up
+    # that 16-aligns array stack slots. Until then this stays opt-in so default codegen
+    # is byte-identical. See the str_builder issue + CHANGELOG.
+    var e = _read_env("CYRIUS_STACK_ARRAYS");
+    if (e == 0) { return 0; }
+    if (load8(e) == 49) { if (load8(e + 1) == 0) { _STACK_ARRAYS = 1; } }
+    return _STACK_ARRAYS;
+}
+
 
 # v5.5.38: struct/enum/union + shared-helper fns extracted.
 include "src/frontend/parse_types.cyr"

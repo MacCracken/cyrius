@@ -3844,13 +3844,17 @@ syscalls_x86_64_agnos::sigset_add/2
 syscalls_x86_64_agnos::sigset_has/2
 syscalls_x86_64_agnos::sigset_new/0
 syscalls_x86_64_agnos::sys_access/2
+syscalls_x86_64_agnos::sys_blit/4
 syscalls_x86_64_agnos::sys_chmod/2
 syscalls_x86_64_agnos::sys_close/1
 syscalls_x86_64_agnos::sys_dup/1
 syscalls_x86_64_agnos::sys_epoll_create/0
 syscalls_x86_64_agnos::sys_epoll_ctl/3
 syscalls_x86_64_agnos::sys_epoll_wait/3
+syscalls_x86_64_agnos::sys_exec_redirect/2
+syscalls_x86_64_agnos::sys_execwait/2
 syscalls_x86_64_agnos::sys_exit/1
+syscalls_x86_64_agnos::sys_fbinfo/2
 syscalls_x86_64_agnos::sys_flock/2
 syscalls_x86_64_agnos::sys_getdents/3
 syscalls_x86_64_agnos::sys_geteuid/0
@@ -3858,7 +3862,9 @@ syscalls_x86_64_agnos::sys_getpid/0
 syscalls_x86_64_agnos::sys_getrandom/3
 syscalls_x86_64_agnos::sys_getuid/0
 syscalls_x86_64_agnos::sys_icmp_echo/1
+syscalls_x86_64_agnos::sys_kbscan/2
 syscalls_x86_64_agnos::sys_kill/2
+syscalls_x86_64_agnos::sys_klug/2
 syscalls_x86_64_agnos::sys_link/4
 syscalls_x86_64_agnos::sys_lseek/3
 syscalls_x86_64_agnos::sys_mkdir/2
@@ -3877,6 +3883,7 @@ syscalls_x86_64_agnos::sys_read/3
 syscalls_x86_64_agnos::sys_reboot/0
 syscalls_x86_64_agnos::sys_rename/4
 syscalls_x86_64_agnos::sys_rmdir/2
+syscalls_x86_64_agnos::sys_sched_yield/0
 syscalls_x86_64_agnos::sys_signalfd/3
 syscalls_x86_64_agnos::sys_sigprocmask/3
 syscalls_x86_64_agnos::sys_sleep_ms/1
@@ -3887,6 +3894,7 @@ syscalls_x86_64_agnos::sys_sock_listen/1
 syscalls_x86_64_agnos::sys_sock_recv/3
 syscalls_x86_64_agnos::sys_sock_send/3
 syscalls_x86_64_agnos::sys_spawn/2
+syscalls_x86_64_agnos::sys_spawn_path/2
 syscalls_x86_64_agnos::sys_stat/3
 syscalls_x86_64_agnos::sys_symlink/4
 syscalls_x86_64_agnos::sys_sync/0

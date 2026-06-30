@@ -1,0 +1,50 @@
+# Fixture for _array_local_threadsafe_gate (v6.3.13).
+#
+# Regression for the str_builder concurrency root cause: a `var arr[N]` LOCAL used to
+# be allocated at a fixed GLOBAL/BSS address shared by every thread, so concurrent code
+# that touched an array-local spliced bytes across threads (~87% corruption). The fix
+# routes array locals to per-thread STACK slots. This test: 8 threads each repeatedly
+# fill a 16-byte array-local with a thread-unique byte and re-verify it — if the array
+# is per-thread, every byte always reads back its own value (exit 0); if it's a shared
+# global, other threads clobber it (exit 1).
+#
+# Default build (stack arrays) → exit 0. CYRIUS_STACK_ARRAYS=0 (opt-out) → exit 1.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/atomic.cyr"
+include "lib/thread.cyr"
+
+var N = 8;  var ITERS = 20000;
+var g_fail = 0;  var g_done = 0;
+
+fn worker(arg): i64 {
+    var id = load64(arg);
+    var buf[16];                 # array LOCAL — must be per-thread
+    var b = 65 + id;
+    var i = 0;
+    while (i < ITERS) {
+        var j = 0;
+        while (j < 16) { store8(&buf + j, b); j = j + 1; }
+        j = 0;
+        while (j < 16) {
+            if (load8(&buf + j) != b) { atomic_fetch_add(&g_fail, 1); j = 16; }
+            else { j = j + 1; }
+        }
+        i = i + 1;
+    }
+    atomic_fetch_add(&g_done, 1);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var args = alloc(N * 8);
+    var k = 0;
+    while (k < N) { store64(args + k * 8, k + 1); thread_create(&worker, args + k * 8); k = k + 1; }
+    while (load64(&g_done) < N) { syscall(24, 0, 0, 0, 0); }
+    if (load64(&g_fail) > 0) { return 1; }
+    return 0;
+}
+var rc = main(); syscall(SYS_EXIT, rc);

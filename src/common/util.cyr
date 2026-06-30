@@ -238,6 +238,11 @@ var _fnt_is_async = 0;
 # opt-in shape as _MONOMORPH_OK, but lazy (no per-fork driver edit) — see parse_fn.cyr.
 var _ASYNC_OK = 0;
 var _async_gate_init = 0;
+# v6.3.13: thread-safe array locals — route `var arr[N]` (inside a fn) to a per-thread
+# stack/heap slot instead of the shared global/BSS data region. Default off (lazy-init
+# from CYRIUS_STACK_ARRAYS); flipped on at slot close. See parse.cyr `_ensure_stack_arrays`.
+var _STACK_ARRAYS = 0;
+var _sa_init = 0;
 # v6.3.11 (G): set by the pass-2 top-level dispatch when it consumes a leading
 # `async` (token 134) before routing to PARSE_FN_DEF — the consume happens IN the
 # dispatch (not PARSE_FN_DEF) so the fn-name the cursor points at for the DCE

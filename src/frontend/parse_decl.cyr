@@ -48,8 +48,6 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     # functions (e.g. two functions both with `var buf[N]`), always register
     # a NEW global even if one with the same name exists. FINDVAR returns
     # the last match, so the current function's array shadows previous ones.
-    var vcnt = GVCNT(S);
-    S64(_varn_base + vcnt * 8, noff);
     # v6.2.1: element-typed fixed array `var a: T[N]` reserves
     # N elements of T. `ew` is the element width in bytes (from the
     # `: T` annotation: i8/u8=1 … i64/u64=8, u128=16). ew==0 is the
@@ -60,6 +58,36 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     # from this 0x12A000 table. See CHANGELOG [6.2.1].
     var aligned = (asz + 7) & (0 - 8);
     if (ew > 0) { aligned = (asz * ew + 7) & (0 - 8); }
+    # v6.3.13 (thread-safe array locals): a `var arr[N]` INSIDE a function goes to a
+    # per-thread STACK slot block (the struct-local mechanism) instead of the shared
+    # global/BSS data region, so concurrent code can't alias one global buffer. Reserve
+    # ceil(aligned/8) fn-local slots: anonymous fillers (name -1) at the shallow end +
+    # one NAMED slot at the deepest offset, so &arr (FINDLOCAL → ELOAD_LOCAL_ADDR =
+    # `lea [rbp-disp]`) points at arr[0] and arr[i] indexes upward. Gated; default off →
+    # the legacy global path below stays byte-identical. (Large arrays → heap: follow-on.)
+    if (_ensure_stack_arrays(S) == 1 && GINFN(S) == 1) {
+        var sa_nslots = aligned / 8;
+        if (sa_nslots < 1) { sa_nslots = 1; }
+        var sa_existing = FINDLOCAL(S, noff);
+        if (sa_existing >= 0) { if (GLDEP(S, sa_existing) == GSDEP(S)) { ERRDUPVAR(S); } }
+        var sa_j = 0;
+        while (sa_j < sa_nslots - 1) {
+            var sa_li = GFLC(S);
+            S64(S + 0x5D9D000 + sa_li * 8, 0 - 1);
+            SLDEP(S, sa_li, GSDEP(S));
+            SLTYPE(S, sa_li, 0);
+            SFLC(S, sa_li + 1);
+            sa_j = sa_j + 1;
+        }
+        var sa_named = GFLC(S);
+        S64(S + 0x5D9D000 + sa_named * 8, noff);
+        SLDEP(S, sa_named, GSDEP(S));
+        SLTYPE(S, sa_named, 0);
+        SFLC(S, sa_named + 1);
+        return 0;
+    }
+    var vcnt = GVCNT(S);
+    S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
     SVCNT(S, vcnt + 1);
     # v5.11.62: accumulate the array's byte cost into the current fn's
