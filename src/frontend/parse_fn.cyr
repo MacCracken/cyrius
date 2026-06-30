@@ -2147,6 +2147,12 @@ fn PARSE_FN_DEF(S): i64 {
                             }
                         }
                     }
+                    # v6.3.9 (F-fns): a `: T` return where T is a captured type-param
+                    # is i64-shaped (scalar) for the base instance — recognize it here
+                    # so the rough-scan does NOT default to the retptr/stash ABI, which
+                    # would reserve arg-reg 0 for a hidden retptr and shift user params
+                    # by one (the `id<T>(x:T):T` → x lands in rsi, reads 0 bug).
+                    if (_rs_is_scalar == 0) { if (_is_tparam_of(S, fi, _rs_rt_noff) == 1) { _rs_is_scalar = 1; } }
                     if (_rs_is_scalar == 0) {
                         _cur_fn_ret_stash = 8;
                     }
@@ -2515,14 +2521,20 @@ fn PARSE_FN_DEF(S): i64 {
     # opt-in CYRIUS_MONOMORPH gate so the replay substrate can be proven byte-correct
     # without re-enabling _INLINE_OK by default).
     if (_INLINE_OK == 1 || _MONOMORPH_OK == 1) { SFBS(S, fi, GTI(S)); }
-    # v6.3.9 (F-fns): a generic fn's body references unbound `T`s, so it CANNOT be
-    # emitted at definition — only its token range is captured (SFBS above / SFBE
-    # below), and the body is emitted per-instantiation (inline-replay with T bound).
-    # The base fn's emitted code is just prologue+epilogue (never called — generic
-    # calls always replay), so deferring the body is safe. Non-generic fns (GFTP==0,
-    # always so when _MONOMORPH_OK==0) take the normal PARSE_PROG → byte-identical.
-    if (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) { _skip_body_tokens(S); }
-    else { PARSE_PROG(S); }
+    # v6.3.9 (F-fns): a generic fn's body references type-param `T`s that are unbound
+    # at definition. In an i64-everywhere language the dominant instantiation is i64,
+    # so the BASE fn IS the i64 monomorphization: bind every `T -> i64` for the base
+    # body emission (the bite-4 consults then resolve `var y: T` / sizeof(T) / `: T`
+    # to i64). i64-typed calls are plain normal calls to this base; non-i64 type-args
+    # mint a separate instance on demand at their call sites (bites 6-7). Gated on
+    # _MONOMORPH_OK && GFTP!=0 → non-generic / flag-off path is byte-identical.
+    var _gen_base = 0;
+    if (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) {
+        _bind_generic_call(S, fi, 0 - 8, 0 - 8);
+        _gen_base = 1;
+    }
+    PARSE_PROG(S);
+    if (_gen_base == 1) { _tp_clear(S); }
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     # Record body end and classify inline candidate (x86 only; AR-01 monomorph gate)
     if (_INLINE_OK == 1 || _MONOMORPH_OK == 1) {
