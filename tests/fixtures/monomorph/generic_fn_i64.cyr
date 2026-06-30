@@ -1,0 +1,21 @@
+# Fixture for _generics_fn_i64_gate (v6.3.9 F-fns).
+#
+# Generic FUNCTIONS, i64 monomorphization. In an i64-everywhere language the base
+# `fn id<T>(...)` IS the i64 instantiation: its body is emitted with `T -> i64`
+# bound, so i64-typed calls are plain normal calls to the base. This exercises:
+#   - a 1-param identity generic + a 2-param arithmetic generic
+#   - a `: T` generic return type (accepted, treated as i64 for the base)
+#   - positional type inference from the args
+#   - nested generic calls (id inside add)
+#
+# Compiles + runs ONLY under CYRIUS_MONOMORPH=1 (the `: T` return type is rejected
+# with the flag off — the whole feature is gated, default codegen byte-identical).
+# MUST exit 42.
+
+fn id<T>(x: T): T { return x; }
+fn add<T>(a: T, b: T): T { return a + b; }
+fn dbl<T>(x: T): T { return x + x; }
+
+fn main(): i64 {
+    return add(id(20), dbl(11));   # add(20, 22) = 42
+}

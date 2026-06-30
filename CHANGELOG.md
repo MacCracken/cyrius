@@ -6,6 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.9] — 2026-06-30
+
+**v6.3.9 — generic functions (i64 monomorphization).** `fn foo<T>(...)` over **i64**, the first
+half of the 2-release generics arc (user 2026-06-30: generic structs + non-i64 + explicit syntax →
+v6.3.10, where they share one instantiate-once engine). Built on the proven v6.3.5 AR-01 token-replay
+substrate and gated entirely behind `_MONOMORPH_OK` (default off) → **cycc self-host byte-identical**;
+a differential vs v6.3.8 confirms default codegen is unchanged (cycc itself uses no generics).
+
+### Added — generic functions
+- **Type-param capture** (`_capture_tparams`, replacing `SKIP_GENERICS` at the fn signature, gated):
+  records a `<T, U>` list into a lazy-allocated `_fnt_tparams` table (`0` = non-generic; allocated only
+  on the first generic capture, so non-generic compiles pay nothing and need no heap-map slot).
+- **Scoped `T → concrete` binding + substitution**: a binding (`_tp_n0/_tp_c0/_tp_n1/_tp_c1`, canonical
+  token `<0` = scalar `-width` / `>0` = struct sid) is consulted by `_tp_resolve` at the four
+  type-resolution sites — param type, local `: T`, `slice<T>`/`[T]` element, and `sizeof(T)` — each a
+  guarded prefix (`if (_tp_c0 != 0)`) that defaults to the existing behavior, so it's inert until bound.
+- **Base-as-i64 monomorphization**: in an i64-everywhere language the base fn *is* its own i64
+  instantiation — the body is emitted once with `T → i64` bound (`_bind_generic_call(fi, -8, -8)` right
+  before `PARSE_PROG`), so i64-typed calls are ordinary direct calls to the base (dedup by construction,
+  no instantiate-once machinery for the dominant case). `T` is resolved entirely at compile time.
+- **Positional type inference** at the call site (`_infer_conc_at_cursor` reusing the existing
+  overload-dispatch arg-type reads — `GFRS`/`GLTYPE`, whose encodings are already canonical).
+- **`: T` generic return type** accepted (treated as i64-scalar for the base).
+- **Inline-candidate ceiling 16 → 32** tokens (pure constant inside the `_INLINE_OK || _MONOMORPH_OK`
+  gate; `pc ≤ 2` + no-control-flow gates unchanged).
+- **`tests/fixtures/monomorph/generic_fn_i64.cyr`** + **`_generics_fn_i64_gate`** (check.sh **104 → 105**):
+  compiles the fixture under `CYRIUS_MONOMORPH=1` (must exit 42) and asserts it is REJECTED with the flag
+  off (the `: T` return is gate-only) — so the feature provably cannot affect default codegen.
+
+### Fixed
+- **`: T` return triggered the struct-retptr ABI → param shift** (the load-bearing bug): the
+  pre-param-loop return-type rough-scan that sets `_cur_fn_ret_stash` saw `: T` as neither a known scalar
+  nor a struct (`FINDSTRUCT(T) = 0`) and fell through to the default `stash = 8`, reserving arg-reg 0 for
+  a hidden retptr and shifting every user param by one — so `id<T>(x: T): T { return x }` stored `x` into
+  rsi's slot and read 0. Disasm-confirmed (two param stores for a one-param fn). Fixed by recognizing a
+  captured type-param as i64-shaped (`_is_tparam_of`) in the rough-scan so it does not set the stash.
+
+### Verified
+- Self-host fixpoint byte-identical (`1,094,000 B`); differential vs v6.3.8 confirms default codegen
+  unchanged (all new code runs only under the flag); seed → cybs → cycc derivation green; check.sh
+  **105/105**. Generic functions run correctly on **x86_64 + aarch64** (the fixture + `id`/`add`/`fst`/
+  `sub` all exit-correct under qemu — codegen is shared `parse_*.cyr`, no per-fork change). Cross-OS
+  self-host **ecb + cass + pi SELFHOST_OK** (real hardware). Bench self_compile **520 ms** (v6.3.8: 507 —
+  growth-tax for the per-fn capture + the four substitution-site guards); cycc **1,089,248 → 1,094,000 B**
+  (+4,752). Guide **Generic Functions** section; vidya `generic_fn_i64_base_and_ret_stash`.
+- Removed the dead `_skip_body_tokens` helper (a body-deferral approach superseded by base-as-i64).
+
+### Roadmap
+- v6.3.9 = **generic FUNCTIONS, i64** shipped. **v6.3.10** absorbs the deferred non-i64 type-args
+  (`foo<i32>`/`foo<Struct>`) + explicit `foo<i64>(x)` syntax alongside **generic structs** — all three
+  share the closure-style instantiate-once engine (mint `foo$ty` / `Box$ty`, `FINDFN`/`FINDSTRUCT` dedup,
+  emit specialized body once + normal call). Later language slots shift: async/float → v6.3.11, gates →
+  v6.3.12–.14, closeout → v6.3.15.
+
 ## [6.3.8] — 2026-06-30
 
 **v6.3.8 — closures capture by value.** The planned v6.3.7 follow-up: a closure body may now reference an

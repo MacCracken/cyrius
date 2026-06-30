@@ -908,6 +908,37 @@ target — constructing one there is a compile error; pass the needed values as
 parameters instead. Captured closures are flat (no capture of a capture across
 two nested closure levels).
 
+## Generic Functions
+
+A function may be parameterized over a type with `<T>`:
+
+```
+fn id<T>(x: T): T { return x; }
+fn add<T>(a: T, b: T): T { return a + b; }
+fn run(): i64 {
+    return add(id(20), id(22));   # 42
+}
+```
+
+The type parameter `T` may appear in parameter types (`x: T`), the return type
+(`: T`), and inside the body (`var y: T`, `sizeof(T)`, `slice<T>`). At a call,
+the concrete type is **inferred** positionally from the arguments.
+
+**Monomorphization (v6.3.9 — i64).** Cyrius is i64-everywhere (ADR-002), so a
+generic function's base definition *is* its i64 instantiation: the body is
+emitted once with `T → i64`, and i64-typed calls are ordinary direct calls to
+it. There is no runtime type dispatch — `T` is resolved entirely at compile
+time.
+
+**Status & limits (v6.3.9).** Generic *functions* over **i64** are supported
+today. Bodies follow the inline-candidate shape (≤2 type-bearing params,
+straight-line — no `if`/`while`/`var`-decl control flow). **Not yet** in
+v6.3.9 — these land in **v6.3.10** alongside generic structs (they share the
+same instantiate-once machinery): non-i64 type arguments (`foo<i32>`,
+`foo<SomeStruct>`), explicit call-site type arguments (`foo<i64>(x)`), and
+generic structs (`struct Box<T>`). Enum generic params (`<T, E>`) remain
+syntactically accepted but type-erased.
+
 ## Global Initializers
 
 Variables can be declared among function definitions:

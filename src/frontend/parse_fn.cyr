@@ -1408,30 +1408,6 @@ fn _is_tparam_of(S, fi, noff): i64 {
     return 0;
 }
 
-# v6.3.9 (F-fns): advance the cursor past a `{ ... }` body to its matching `}`
-# WITHOUT emitting — leaves GTI ON the closing `}` (the caller's `PEEKT==14` check
-# then passes). Used to DEFER a generic fn's body emission: its `T`s are unbound at
-# definition, so the body is only emitted (with T bound) at each instantiation /
-# inline-replay. Assumes the opening `{` was already consumed (depth starts at 1).
-fn _skip_body_tokens(S): i64 {
-    var depth = 1;
-    var go = 1;
-    while (go == 1) {
-        var t = PEEKT(S);
-        if (t == 14) {
-            depth = depth - 1;
-            if (depth == 0) { go = 0; }
-            else { STI(S, GTI(S) + 1); }
-        } elif (t == 13) {
-            depth = depth + 1;
-            STI(S, GTI(S) + 1);
-        } else {
-            STI(S, GTI(S) + 1);
-        }
-    }
-    return 0;
-}
-
 # Parse fn name<T>(params) { body }
 # Dead store elimination: scan codebuf for consecutive stores to the same
 # [rbp-N] offset, NOP out the first store when redundant.

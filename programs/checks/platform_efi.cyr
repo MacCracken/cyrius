@@ -383,6 +383,53 @@ fn _monomorph_substrate_gate(): i64 {
     return fail;
 }
 
+# v6.3.9 F-fns: i64 generic FUNCTIONS execute. Compiles a generic-fn fixture
+# (id/add/dbl with `: T` returns + nested generic calls) under CYRIUS_MONOMORPH=1
+# and runs it — must exit 42, proving the base-as-i64 monomorphization is correct.
+# Also asserts the fixture is REJECTED with the flag off (the `: T` return type is
+# only accepted under the gate), so the feature provably can't touch default codegen.
+# Non-i64 instantiation + explicit `foo<i64>(x)` syntax land in v6.3.10 (where the
+# instantiate-once machinery is shared with generic structs).
+fn _generics_fn_i64_gate(): i64 {
+    var label = "v6.3.9 F-fns: i64 generic functions run under CYRIUS_MONOMORPH=1 (exit 42), gated off by default";
+    var src = _root_path("tests/fixtures/monomorph/generic_fn_i64.cyr");
+    var fail = 0;
+    # (1) flag-ON: compiles + the program exits 42 (generic fns execute correctly).
+    var bin_on = _tmp_path("audit_genfn_on_");
+    var rc_on = _self_host_pipe_env(src, CC_PATH, bin_on, "CYRIUS_MONOMORPH=1");
+    if (rc_on != 0) {
+        sys_unlink(bin_on);
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON generic-fn compile failed rc="); print_num(rc_on); println("");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin_on, 493);
+    var ec_on = _pipe_file_to_bin(bin_on, src);
+    sys_unlink(bin_on);
+    if (ec_on != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON generic-fn program exit "); print_num(ec_on); println(" (expected 42)");
+        fail = fail + 1;
+    }
+    # (2) gated: flag-OFF must REJECT the `: T` generic return — proves the feature
+    # cannot affect default codegen (the release-gate differential confirms the rest).
+    var bin_off = _tmp_path("audit_genfn_off_");
+    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    sys_unlink(bin_off);
+    if (rc_off == 0) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        println(": flag-OFF compiled a generic fn — the feature is NOT gated");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": i64 generic functions execute under the flag (exit 42) and are gated off by default");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _efi_emit_gate(): i64 {
     var label = "EFI Application PE emit produces correct PE32+ headers (v5.11.48; gnoboot MVP unblocker)";
     var cap = 262144;

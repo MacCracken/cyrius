@@ -458,6 +458,7 @@ fn _run_regression_gates(): i64 {
     _sections_base_override_gate();   # v6.3.3 #5: settable [sections] base
     _tls_freestanding_link_gate();    # v6.3.4 #7: tls_native links freestanding into a kernel object
     _monomorph_substrate_gate();      # v6.3.5 AR-01: CYRIUS_MONOMORPH inline replay byte-correct + active
+    _generics_fn_i64_gate();          # v6.3.9 F-fns: i64 generic functions execute (exit 42), gated off
     println("");
 
     _section("EFI Application PE emit (gnoboot MVP unblocker)");
