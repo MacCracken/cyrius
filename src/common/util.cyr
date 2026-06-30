@@ -332,6 +332,30 @@ fn SFINL(S, fi, v): i64 { S64(_fnt_inline + fi * 8, v); return 0; }
 # _MONOMORPH_OK with a `fn foo<T>` definition present.
 fn GFTP(S, fi): i64 { if (_fnt_tparams == 0) { return 0; } return L64(_fnt_tparams + fi * 8); }
 fn SFTP(S, fi, v): i64 { if (_fnt_tparams == 0) { _fnt_tparams = alloc(32768 * 8); } S64(_fnt_tparams + fi * 8, v); return 0; }
+# v6.3.9 (F-fns): the ACTIVE generic-instantiation binding — up to 2 type-params,
+# each {name-offset -> CANONICAL concrete-type token}. The token: <0 = scalar of
+# width -tok (i64=-8, i32=-4, i16=-2, i8=-1); >0 = struct sid (1-based, FINDSTRUCT
+# form); 0 = unbound (so `_tp_cN != 0` is the live-slot test, cheap-guarding the 4
+# resolution-site consults). Scoped: bound right before a generic body replay,
+# cleared after. Default (_MONOMORPH_OK=0) leaves all four at 0 → every consult is
+# a no-op → byte-identical.
+var _tp_n0 = 0;
+var _tp_c0 = 0;
+var _tp_n1 = 0;
+var _tp_c1 = 0;
+fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
+fn _tp_bind(S, slot, noff, conc): i64 {
+    if (slot == 0) { _tp_n0 = noff; _tp_c0 = conc; }
+    if (slot == 1) { _tp_n1 = noff; _tp_c1 = conc; }
+    return 0;
+}
+# Resolve a type-name offset against the active binding → canonical token, or 0 if
+# noff isn't a bound type-param. Callers cheap-guard with `if (_tp_c0 != 0)` first.
+fn _tp_resolve(S, noff): i64 {
+    if (_tp_c0 != 0) { if (noff == _tp_n0) { return _tp_c0; } }
+    if (_tp_c1 != 0) { if (noff == _tp_n1) { return _tp_c1; } }
+    return 0;
+}
 # Fn code-end offset (v4.4.0 DCE). Set at end of PARSE_FN_DEF to the GCP
 # where the fn body finishes. Paired with fn code starts at 0x1C4000.
 # 0 means "not recorded" (fn was registered but never defined, or emitted
