@@ -2220,6 +2220,16 @@ fn PARSE_FN_DEF(S): i64 {
                     elif (_ptc == 6) { pt_simd_class = 1; }
                     elif (_ptc == 7) { pt_simd_class = 2; }
                     pt_sid = FINDSTRUCT(S, tnoff);
+                    # v6.3.9 (F-fns): param `: T` under an active generic binding.
+                    # A struct-bound tparam makes this a struct param (pt_sid);
+                    # scalar-bound tparams correctly stay int params (register-width;
+                    # narrowing is value-side via `var y: T`). Str-param ABI
+                    # classification rides the struct-interaction work (v6.3.10).
+                    # Inert when _tp_c0==0 → byte-identical default path.
+                    if (_tp_c0 != 0) {
+                        var _ptpc = _tp_resolve(S, tnoff);
+                        if (_ptpc > 0) { pt_sid = _ptpc; }
+                    }
                 }
                 # Win64 PE doesn't support f64v2/f64v4 value-form
                 # params in v5.10.38 (MS x64 ABI passes >8B aggregates

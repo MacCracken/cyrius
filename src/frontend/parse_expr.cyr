@@ -272,7 +272,12 @@ fn PARSE_FACTOR(S): i64 {
                 var szn = PEEKV(S);
                 STI(S, GTI(S) + 1);
                 var szname = L64(S + 0x60000 + szn);
-                if (szname & 0xFFFF == 0x3869) { szval = 1; }
+                # v6.3.9 (F-fns): sizeof(T) under a generic binding → canonical token
+                # → size (<0 -width, >0 STRUCTSZ). Inert when _tp_c0==0 (byte-identical).
+                var _szc = 0;
+                if (_tp_c0 != 0) { _szc = _tp_resolve(S, szn); }
+                if (_szc != 0) { if (_szc < 0) { szval = 0 - _szc; } else { szval = STRUCTSZ(S, _szc - 1); } }
+                elif (szname & 0xFFFF == 0x3869) { szval = 1; }
                 elif (szname & 0xFFFFFF == 0x363169) { szval = 2; }
                 elif (szname & 0xFFFFFF == 0x323369) { szval = 4; }
                 elif (szname & 0xFFFFFF == 0x343669) { szval = 8; }

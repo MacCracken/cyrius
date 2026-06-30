@@ -1064,7 +1064,11 @@ fn PARSE_VAR(S): i64 {
                 # Scalar/struct element: [u8], [i32], [Foo]
                 var elt_noff = PEEKV(S);
                 var elt_name = L64(S + 0x60000 + elt_noff);
-                if (elt_name & 0xFFFF == 0x3875)        { slice_elt_w = 1; }   # u8
+                # v6.3.9 (F-fns): `[T]` element under a generic binding (inert default).
+                var _etc = 0;
+                if (_tp_c0 != 0) { _etc = _tp_resolve(S, elt_noff); }
+                if (_etc != 0) { if (_etc < 0) { slice_elt_w = 0 - _etc; } else { slice_elt_w = STRUCTSZ(S, _etc - 1); } }
+                elif (elt_name & 0xFFFF == 0x3875)        { slice_elt_w = 1; }   # u8
                 elif (elt_name & 0xFFFF == 0x3869)      { slice_elt_w = 1; }   # i8
                 elif (elt_name & 0xFFFFFF == 0x363175)  { slice_elt_w = 2; }   # u16
                 elif (elt_name & 0xFFFFFF == 0x363169)  { slice_elt_w = 2; }   # i16
@@ -1107,7 +1111,12 @@ fn PARSE_VAR(S): i64 {
                 } elif (PEEKT(S) == 2) {
                     var gtt_noff = PEEKV(S);
                     var gtt_name = L64(S + 0x60000 + gtt_noff);
-                    if (gtt_name & 0xFFFF == 0x3875)        { slice_elt_w = 1; }   # u8
+                    # v6.3.9 (F-fns): `slice<T>` element under a generic binding —
+                    # canonical token → width (<0 -width, >0 STRUCTSZ). Inert default.
+                    var _gtc = 0;
+                    if (_tp_c0 != 0) { _gtc = _tp_resolve(S, gtt_noff); }
+                    if (_gtc != 0) { if (_gtc < 0) { slice_elt_w = 0 - _gtc; } else { slice_elt_w = STRUCTSZ(S, _gtc - 1); } }
+                    elif (gtt_name & 0xFFFF == 0x3875)        { slice_elt_w = 1; }   # u8
                     elif (gtt_name & 0xFFFF == 0x3869)      { slice_elt_w = 1; }   # i8
                     elif (gtt_name & 0xFFFFFF == 0x363175)  { slice_elt_w = 2; }   # u16
                     elif (gtt_name & 0xFFFFFF == 0x363169)  { slice_elt_w = 2; }   # i16
@@ -1138,7 +1147,15 @@ fn PARSE_VAR(S): i64 {
                 # u64=0x343675 (LE name load; see the slice-elt detector
                 # above). Zero existing u-scalar usage → self-host neutral.
                 var ltname = L64(S + 0x60000 + lann);
-                if (ltname & 0xFFFF == 0x3869) { scalar_type = 1; }
+                # v6.3.9 (F-fns): generic `: T` substitution. When a binding is
+                # active and `lann` is a bound type-param, the canonical token
+                # drives scalar_type (<0 → -width) or pscale (>0 → -sid), skipping
+                # the scalar/struct chain. Inert when _tp_c0==0 (_ltc stays 0) →
+                # byte-identical default path.
+                var _ltc = 0;
+                if (_tp_c0 != 0) { _ltc = _tp_resolve(S, lann); }
+                if (_ltc != 0) { if (_ltc < 0) { scalar_type = 0 - _ltc; } else { pscale = 0 - _ltc; } }
+                elif (ltname & 0xFFFF == 0x3869) { scalar_type = 1; }
                 elif (ltname & 0xFFFF == 0x3875) { scalar_type = 1; }
                 elif (ltname & 0xFFFFFF == 0x363169) { scalar_type = 2; }
                 elif (ltname & 0xFFFFFF == 0x363175) { scalar_type = 2; }
