@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.12] — 2026-06-30
+
+**v6.3.12 — W^X: userland ELF emits separate code / data PT_LOAD segments.** `cyrld` now lays out every
+userland ELF executable as **two permission-separated, page-aligned `PT_LOAD` segments** — a text segment
+`R E` (read+execute, **not writable**) and a data segment `RW ` (read+write, **not executable**) — instead
+of the historical single `RWE` segment. On agnos (1.50.6 loader is already `PF_X`-aware → zero kernel work)
+this delivers full segment-level **W^X**: code can't be overwritten, data can't be executed. Closes the
+last writable-executable surface in the agnos userland. [`proposals/2026-06-29-elf-wx-separate-code-data-segments.md`](docs/development/proposals/2026-06-29-elf-wx-separate-code-data-segments.md).
+
+### Changed — ELF layout (every userland binary)
+- **Two PT_LOADs.** The text segment covers the ELF header + program headers + `.text` (`R E`); the data
+  segment covers `.data` + `.rodata` + `.bss` (`RW `, `MemSiz > FileSiz` for the zero-fill tail). The data
+  segment's vaddr is rounded up to a fresh **2 MB page** (agnos huge-page granularity, so the split can't be
+  lost to a shared page); the file offset only needs the ELF `p_align` (4 KB on x86, 64 KB on aarch64), so
+  `p_vaddr ≡ p_offset (mod p_align)` holds and the ≤2 MB virtual gap costs near-zero file bytes. The 2nd
+  program header pushes `.text` from file offset 120 → 176, so `e_entry` and `_entry_base` shift to match.
+- **Default ON; `CYRIUS_WX=0` opts out** to the historical single `RWE` segment (for a future consumer that
+  genuinely needs W+X). Mach-O / PE / kernel / shared-`.so` / object paths are unaffected (`_emit_fmt`/kmode
+  guard). x86 + aarch64 both ported (separate backends).
+- **FIXUP ↔ EMITELF_USER in lockstep.** The data base `dbase` feeds every absolute/PC-relative var + string
+  relocation; both FIXUP and EMITELF_USER derive it from the shared `_wx_data_vaddr(base + text_foff, cp)`,
+  so the patched code lands on the relocated data segment. `_wx_active` gates the whole thing.
+
+### Added
+- **`tests/fixtures/wx/wx_probe.cyr`** + **`_wx_segments_gate`** (check.sh **107 → 108**): inspects the
+  emitted ELF program headers — default build has `e_phnum == 2` with PH0 `p_flags == 5` (R E) and PH1
+  `p_flags == 6` (R W) and the program runs (exit 42); `CYRIUS_WX=0` falls back to one `p_flags == 7` (RWX).
+
+### Verified
+- Default-on flip via a **two-step bootstrap** (the old single-segment cycc can't emit W^X, so cc1 is the
+  transition intermediate, cc2 the stable W^X fixpoint): **cc2 == cc3** (W^X self-host fixpoint). seed → cybs
+  → gen2 == build/cycc with the W^X default (cybs emits the single-segment intermediate gen1; gen2 is W^X —
+  the new `_wx_*` fns compile through cybs). check.sh **108/108**; **ecb (macOS, Mach-O) + cass (Windows, PE)
+  + pi (aarch64 Linux, W^X) SELFHOST_OK** — the W^X cycc self-hosts on real aarch64 hardware; macOS/Windows
+  unaffected. `readelf -lW` confirms text `R E` / data `RW ` on x86, aarch64, and the **`CYRIUS_TARGET_AGNOS`**
+  target. `CYRIUS_WX=0` differential byte-identical to v6.3.11 (opt-out codegen unchanged). Bench self_compile
+  **538 ms** (v6.3.11: 533); cycc **1,107,280 → 1,111,576 B** (+4,296, the `_wx_*` code + layout padding).
+
 ## [6.3.11] — 2026-06-30
 
 **v6.3.11 — async / await (first-class Futures over the cooperative runtime).** The language trio's

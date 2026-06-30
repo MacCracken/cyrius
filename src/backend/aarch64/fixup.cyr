@@ -33,9 +33,35 @@ fn _entry_base(S): i64 {
     # fixups are PC-relative (adrp/add), so `entry` cancels — but removes the
     # same landmine fixed on x86. aarch64 kernel-PIE stays the consumer-gated
     # follow-on; this is consistency only. CHANGELOG [6.2.45].
+    # v6.3.12 (W^X): a 2nd PT_LOAD adds one 56-byte program header, pushing .text from
+    # file offset 120 to 176. entry follows so absolute fn/var/string fixups stay correct.
+    if (_wx_active(S) == 1) {
+        if (_pie_mode == 1) { return 0xB0; }   # base-0 PIE entry, 176
+        return 0x4000B0;                        # 0x400000 + 176
+    }
     if (_pie_mode == 1) { return 0x78; }
     if (L64(S + 0x18FCA0) == 1) { return _kernel_load_base(S) + 0x78; }   # kernel
     return 0x400078;
+}
+
+# v6.3.12 (W^X): segment-level W^X for the userland ELF-executable path (EMITELF_USER):
+# ELF format (_emit_fmt==0) + kmode 0 (not kernel / shared / object). Opt-out CYRIUS_WX=0;
+# default OFF during the v6.3.12 dev cycle (flipped ON at slot close). Mirror of
+# src/backend/x86/fixup.cyr — the aarch64 backend is a separate compile.
+fn _wx_active(S): i64 {
+    if (_emit_fmt(S) != 0) { return 0; }
+    if (L64(S + 0x18FCA0) != 0) { return 0; }
+    var e = _read_env("CYRIUS_WX");
+    if (e == 0) { return 1; }                       # default ON — segment-level W^X for every userland ELF
+    if (load8(e) == 48) { if (load8(e + 1) == 0) { return 0; } }   # CYRIUS_WX=0 → opt out (explicit RWE)
+    return 1;
+}
+
+# Data-segment vaddr: round the code-area end up to a fresh 2 MB page so .data lands on
+# a different (huge) page than .text. The data file offset only needs the ELF p_align
+# (64 KB on aarch64) — 2 MB is a multiple of 64 KB, so p_vaddr ≡ p_offset (mod p_align).
+fn _wx_data_vaddr(S, entry, cp): i64 {
+    return (entry + cp + 0x1FFFFF) & (0 - 0x200000);
 }
 
 fn FIXUP(S): i64 {
@@ -73,6 +99,9 @@ fn FIXUP(S): i64 {
     var entry = _entry_base(S);
     var preamble = 0;
     if (kmode == 1) { preamble = 16; }
+    # v6.3.12 (W^X): pad the code area so the data base lands on a fresh 2 MB page.
+    # Userland only (preamble == 0 here), matching EMITELF_USER's _wx_data_vaddr.
+    if (_wx_active(S) == 1) { acp = _wx_data_vaddr(S, entry, cp) - entry; }
     var dbase = entry + preamble + acp;
     var vcnt = GVCNT(S);
     var totvar = 0;
@@ -622,7 +651,24 @@ fn EMITELF(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
     var spos = GSPOS(S);
-    var filesz = 120 + cp + totvar + spos;
+    # v6.3.12 (W^X): layout — mirror of x86 EMITELF_USER. aarch64 p_align is 64 KB
+    # (0x10000), so the data file offset aligns to 64 KB; the 2 MB data vaddr is a
+    # multiple of 64 KB, so p_vaddr ≡ p_offset (mod p_align). dbase MUST equal FIXUP's
+    # _wx_data_vaddr(base + text_foff, cp).
+    var base = 0x400000;
+    var etype = 2;
+    if (_pie_mode == 1) { base = 0; etype = 3; }
+    var wx = _wx_active(S);
+    var nph = 1;
+    if (wx == 1) { nph = 2; }
+    var text_foff = 64 + nph * 56;          # 120 (1 PH) or 176 (2 PHs)
+    var data_foff = text_foff + cp;
+    var dbase = base + data_foff;
+    if (wx == 1) {
+        data_foff = (text_foff + cp + 0xFFFF) & (0 - 0x10000);   # 64 KB-align file offset
+        dbase = _wx_data_vaddr(S, base + text_foff, cp);          # 2 MB-align vaddr
+    }
+    var filesz = data_foff + totvar + spos;
     filesz = (filesz + 7) & (0 - 8);
     var memsz = filesz + 4096;
 
@@ -633,17 +679,14 @@ fn EMITELF(S): i64 {
     # the adrp/add codegen (via _pie_mode + FIXUP_ADRP_ADD) is PC-relative so it
     # runs at any base. Non-PIE keeps the fixed 0x400000 ET_EXEC layout, so it
     # stays byte-identical. Mirror of x86 EMITELF_USER. See CHANGELOG [6.1.8].
-    var base = 0x400000;
-    var etype = 2;
-    if (_pie_mode == 1) { base = 0; etype = 3; }
-    var text_foff = 120;
-    var text_addr = base + 120;
+    # base / etype / text_foff / data_foff / dbase computed at the top (W^X-aware).
+    var text_addr = base + text_foff;
     var text_size = cp;
-    var bss_foff = 120 + cp;
-    var bss_addr = base + bss_foff;
+    var bss_foff = data_foff;
+    var bss_addr = dbase;
     var bss_size = totvar;
-    var rod_foff = bss_foff + totvar;
-    var rod_addr = base + rod_foff;
+    var rod_foff = data_foff + totvar;
+    var rod_addr = dbase + totvar;
     var rod_size = spos;
     # .shstrtab: "\0.text\0.rodata\0.bss\0.shstrtab\0" = 30 bytes
     var shstrtab_size = 30;
@@ -663,28 +706,49 @@ fn EMITELF(S): i64 {
     S64(O + op, 0x0000000000000000); op = op + 8;
     # e_type=etype (EXEC(2); DYN(3) for PIE) + e_machine=AARCH64(0xB7=183)
     S64(O + op, 0x0000000100B70000 | etype); op = op + 8;
-    # e_entry = base + 0x78 (base-relative for PIE)
-    S64(O + op, base + 0x78); op = op + 8;
+    # e_entry = base + text_foff (W^X shifts .text 120 → 176)
+    S64(O + op, base + text_foff); op = op + 8;
     # e_phoff = 64
     S64(O + op, 0x0000000000000040); op = op + 8;
     # e_shoff (v5.11.34 — was 0)
     S64(O + op, shdr_off); op = op + 8;
-    # e_flags=0, e_ehsize=64, e_phentsize=56, e_phnum=1
+    # e_flags=0, e_ehsize=64, e_phentsize=56, e_phnum
     S64(O + op, 0x0038004000000000); op = op + 8;
-    # e_phnum=1, e_shentsize=64, e_shnum=5, e_shstrndx=4
-    # LE byte layout 56..63: 01 00 40 00 05 00 04 00
-    S64(O + op, 0x0004000500400001); op = op + 8;
-    # Program header (56 bytes)
-    S64(O + op, 0x0000000700000001); op = op + 8;
-    S64(O + op, 0x0000000000000000); op = op + 8;
-    S64(O + op, base); op = op + 8;                 # p_vaddr (0 for PIE)
-    S64(O + op, base); op = op + 8;                 # p_paddr
-    S64(O + op, filesz); op = op + 8;
-    S64(O + op, memsz); op = op + 8;
-    S64(O + op, 0x0000000000010000); op = op + 8;
+    # e_phnum=nph, e_shentsize=64, e_shnum=5, e_shstrndx=4
+    S64(O + op, 0x0004000500400000 | nph); op = op + 8;
+    if (wx == 1) {
+        # v6.3.12 (W^X): two PT_LOADs — code R+X, data R+W+NX (p_align 64 KB).
+        var tseg = text_foff + cp;
+        S64(O + op, 0x0000000500000001); op = op + 8;   # PT_LOAD, p_flags=R|X
+        S64(O + op, 0);          op = op + 8;            # p_offset
+        S64(O + op, base);       op = op + 8;            # p_vaddr
+        S64(O + op, base);       op = op + 8;            # p_paddr
+        S64(O + op, tseg);       op = op + 8;            # p_filesz
+        S64(O + op, tseg);       op = op + 8;            # p_memsz
+        S64(O + op, 0x10000);    op = op + 8;            # p_align
+        var dseg = filesz - data_foff;
+        S64(O + op, 0x0000000600000001); op = op + 8;   # PT_LOAD, p_flags=R|W
+        S64(O + op, data_foff);  op = op + 8;            # p_offset
+        S64(O + op, dbase);      op = op + 8;            # p_vaddr
+        S64(O + op, dbase);      op = op + 8;            # p_paddr
+        S64(O + op, dseg);       op = op + 8;            # p_filesz
+        S64(O + op, dseg + 4096); op = op + 8;           # p_memsz
+        S64(O + op, 0x10000);    op = op + 8;            # p_align
+    } else {
+        # Single PT_LOAD RWX (7) — historical layout.
+        S64(O + op, 0x0000000700000001); op = op + 8;
+        S64(O + op, 0x0000000000000000); op = op + 8;
+        S64(O + op, base); op = op + 8;                 # p_vaddr (0 for PIE)
+        S64(O + op, base); op = op + 8;                 # p_paddr
+        S64(O + op, filesz); op = op + 8;
+        S64(O + op, memsz); op = op + 8;
+        S64(O + op, 0x0000000000010000); op = op + 8;
+    }
     # Code
     var i = 0;
     while (i < cp) { store8(O + op, load8(_codebuf_base + i)); op = op + 1; i = i + 1; }
+    # v6.3.12 (W^X): pad to the 64 KB-aligned data file offset (inert when W^X off).
+    while (op < data_foff) { store8(O + op, 0); op = op + 1; }
     # Variable data
     var bss_o = op;
     i = 0;

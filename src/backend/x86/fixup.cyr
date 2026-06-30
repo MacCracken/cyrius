@@ -49,8 +49,41 @@ fn _entry_base(S): i64 {
         return _kernel_load_base(S) + 84 + 12;
     }
     if (kmode == 2) { return 232; }
+    # v6.3.12 (W^X): a 2nd PT_LOAD adds one 56-byte program header, pushing .text from
+    # file offset 120 (64 ELF hdr + 1 PH) to 176 (+ 2nd PH). entry follows so every
+    # absolute fn / var / string fixup lands on the real code. Non-W^X keeps 120.
+    if (_wx_active(S) == 1) {
+        if (_pie_mode == 1) { return 0xB0; }   # base-0 PIE entry, 176
+        return 0x4000B0;                        # 0x400000 + 176
+    }
     if (_pie_mode == 1) { return 0x78; }   # userland --pie: EMITELF_USER base-0 entry
     return 0x400078;
+}
+
+# v6.3.12 (W^X): is segment-level W^X active for this output? Only the userland
+# ELF-executable path (EMITELF_USER) — ELF format (_emit_fmt==0, not Mach-O/PE) and
+# kmode 0 (not kernel / shared `.so` / object). Opt-out via CYRIUS_WX=0; default ON
+# (the agnos loader maps PF_X segments executable / non-PF_X NX, so separate
+# text/data PT_LOADs deliver full W^X with zero kernel work). The kernel / `.so` /
+# Mach-O / PE paths keep their own header logic. Read fresh each emit (cheap).
+fn _wx_active(S): i64 {
+    if (_emit_fmt(S) != 0) { return 0; }
+    if (L64(S + 0x18FCA0) != 0) { return 0; }
+    var e = _read_env("CYRIUS_WX");
+    if (e == 0) { return 1; }                       # default ON — segment-level W^X for every userland ELF
+    if (load8(e) == 48) { if (load8(e + 1) == 0) { return 0; } }   # CYRIUS_WX=0 → opt out (explicit RWE)
+    return 1;
+}
+
+# The data segment's vaddr for the W^X split: round the end of the code area up to a
+# fresh 2 MB boundary so .data lands on a different (huge) page than .text — the
+# agnos loader uses 2 MB pages, so 2 MB alignment guarantees the permission split
+# isn't lost to a shared page. The file offset only needs 4 KB alignment (p_align
+# 0x1000): p_vaddr ≡ p_offset (mod 0x1000) holds since both are ≥4 KB-aligned, so the
+# virtual gap (≤2 MB) costs near-zero file bytes. entry = base + 120 (== _entry_base
+# for userland), so FIXUP and EMITELF_USER compute the SAME dbase.
+fn _wx_data_vaddr(S, entry, cp): i64 {
+    return (entry + cp + 0x1FFFFF) & (0 - 0x200000);
 }
 
 fn FIXUP(S): i64 {
@@ -88,6 +121,12 @@ fn FIXUP(S): i64 {
     # `_pe_*` RVAs in the patch loop below.
     var entry = _entry_base(S);
     if (_TARGET_PE == 1) { _pe_layout(S); }
+    # v6.3.12 (W^X): pad the code area so the data base lands on a fresh 2 MB page.
+    # dbase = entry + acp feeds every absolute/PC-relative var+string fixup below, and
+    # EMITELF_USER derives the SAME dbase from _wx_data_vaddr — so the 2nd PT_LOAD's
+    # vaddr matches what the code was patched against. Only the .text segment keeps
+    # the original [entry, entry+cp) range; the gap is unmapped virtual space.
+    if (_wx_active(S) == 1) { acp = _wx_data_vaddr(S, entry, cp) - entry; }
     var dbase = entry + acp;
     # Precompute cumulative var offsets (prefix sum — O(n) instead of O(n²) per fixup)
     var vcnt = GVCNT(S);
@@ -1098,7 +1137,23 @@ fn EMITELF_USER(S, etype): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
     var spos = GSPOS(S);
-    var filesz = 120 + cp + totvar + spos;
+    # v6.3.12 (W^X): layout. Non-W^X = the historical single-RWX layout (1 PH, .text at
+    # file 120, data right after). W^X = 2 PHs (.text at 176), data page-aligned onto a
+    # fresh 2 MB vaddr page with a ≤4 KB file gap. `dbase` MUST equal FIXUP's
+    # _wx_data_vaddr(base + text_foff, cp) so the patched var/string fixups resolve.
+    var base = 0x400000;
+    if (_pie_mode == 1) { base = 0; }
+    var wx = _wx_active(S);
+    var nph = 1;
+    if (wx == 1) { nph = 2; }
+    var text_foff = 64 + nph * 56;          # 120 (1 PH) or 176 (2 PHs)
+    var data_foff = text_foff + cp;         # non-W^X: data immediately follows code
+    var dbase = base + data_foff;
+    if (wx == 1) {
+        data_foff = (text_foff + cp + 0xFFF) & (0 - 0x1000);   # 4 KB-align data file offset
+        dbase = _wx_data_vaddr(S, base + text_foff, cp);        # 2 MB-align data vaddr
+    }
+    var filesz = data_foff + totvar + spos;
     filesz = (filesz + 7) & (0 - 8);
     # CVE-23 (v6.1.35 follow-up): cap-check the TRUE on-disk size — the 30-byte
     # .shstrtab + 5×64 ELF64 section-header table sit past filesz (see shdr_off
@@ -1196,16 +1251,14 @@ fn EMITELF_USER(S, etype): i64 {
     # rel32s are base-independent regardless (entry cancels in the fixup math),
     # so a --pie .text is byte-identical to the proven shared-mode codegen — the
     # ELF wrapper (e_type/p_vaddr/e_entry) is the only delta. See CHANGELOG [6.1.6].
-    var base = 0x400000;
-    if (_pie_mode == 1) { base = 0; }
-    var text_foff = 120;
-    var text_addr = base + 120;
+    # base / text_foff / data_foff / dbase computed at the top (W^X-aware).
+    var text_addr = base + text_foff;
     var text_size = cp;
-    var bss_foff = 120 + cp;
-    var bss_addr = base + bss_foff;
+    var bss_foff = data_foff;
+    var bss_addr = dbase;
     var bss_size = totvar;
-    var rod_foff = bss_foff + totvar;
-    var rod_addr = base + rod_foff;
+    var rod_foff = data_foff + totvar;
+    var rod_addr = dbase + totvar;
     var rod_size = spos;
     # .shstrtab: "\0.text\0.rodata\0.bss\0.shstrtab\0" = 30 bytes
     var shstrtab_size = 30;
@@ -1220,24 +1273,49 @@ fn EMITELF_USER(S, etype): i64 {
     S64(O + op, 0x0000000000000000); op = op + 8;
     # e_type=etype, e_machine=0x3E, e_version=1
     S64(O + op, 0x00000001003E0000 | etype); op = op + 8;
-    S64(O + op, base + 0x78); op = op + 8;          # e_entry (base-relative for PIE)
+    S64(O + op, base + text_foff); op = op + 8;     # e_entry (W^X shifts .text 120→176)
     S64(O + op, 0x0000000000000040); op = op + 8;
     S64(O + op, shdr_off); op = op + 8;
     S64(O + op, 0x0038004000000000); op = op + 8;
-    # e_phnum=1, e_shentsize=64, e_shnum=5, e_shstrndx=4
-    # LE byte layout 56..63: 01 00 40 00 05 00 04 00
-    S64(O + op, 0x0004000500400001); op = op + 8;
-    # Program header (56 bytes): p_type=1, p_flags=7 (RWX)
-    S64(O + op, 0x0000000700000001); op = op + 8;
-    S64(O + op, 0x0000000000000000); op = op + 8;
-    S64(O + op, base); op = op + 8;                 # p_vaddr (0 for PIE → loader biases)
-    S64(O + op, base); op = op + 8;                 # p_paddr
-    S64(O + op, filesz); op = op + 8;
-    S64(O + op, memsz); op = op + 8;
-    S64(O + op, 0x0000000000001000); op = op + 8;
+    # e_phnum=nph, e_shentsize=64, e_shnum=5, e_shstrndx=4
+    # LE byte layout 56..63: <nph> 00 40 00 05 00 04 00
+    S64(O + op, 0x0004000500400000 | nph); op = op + 8;
+    if (wx == 1) {
+        # v6.3.12 (W^X): two PT_LOADs so the agnos loader maps code R+X and data R+W+NX.
+        # PH 1 — text: R E (5), [0, text_foff+cp) = ELF hdr + PHs + .text (read-only code).
+        var tseg = text_foff + cp;
+        S64(O + op, 0x0000000500000001); op = op + 8;   # p_type=PT_LOAD, p_flags=R|X
+        S64(O + op, 0);                 op = op + 8;     # p_offset
+        S64(O + op, base);              op = op + 8;     # p_vaddr
+        S64(O + op, base);              op = op + 8;     # p_paddr
+        S64(O + op, tseg);              op = op + 8;     # p_filesz
+        S64(O + op, tseg);              op = op + 8;     # p_memsz (no .bss in text)
+        S64(O + op, 0x1000);            op = op + 8;     # p_align
+        # PH 2 — data: R W (6), [data_foff, filesz) = .data + .rodata, + a 4 KB runtime tail.
+        var dseg = filesz - data_foff;
+        S64(O + op, 0x0000000600000001); op = op + 8;   # p_type=PT_LOAD, p_flags=R|W
+        S64(O + op, data_foff);         op = op + 8;     # p_offset
+        S64(O + op, dbase);             op = op + 8;     # p_vaddr
+        S64(O + op, dbase);             op = op + 8;     # p_paddr
+        S64(O + op, dseg);              op = op + 8;     # p_filesz
+        S64(O + op, dseg + 4096);       op = op + 8;     # p_memsz
+        S64(O + op, 0x1000);            op = op + 8;     # p_align
+    } else {
+        # Single PT_LOAD RWX (7) covering the whole file — historical layout.
+        S64(O + op, 0x0000000700000001); op = op + 8;
+        S64(O + op, 0x0000000000000000); op = op + 8;
+        S64(O + op, base); op = op + 8;                 # p_vaddr (0 for PIE → loader biases)
+        S64(O + op, base); op = op + 8;                 # p_paddr
+        S64(O + op, filesz); op = op + 8;
+        S64(O + op, memsz); op = op + 8;
+        S64(O + op, 0x0000000000001000); op = op + 8;
+    }
     # Code
     var i = 0;
     while (i < cp) { store8(O + op, load8(_codebuf_base + i)); op = op + 1; i = i + 1; }
+    # v6.3.12 (W^X): pad from end-of-code up to the 4 KB-aligned data file offset so the
+    # data PT_LOAD's p_offset ≡ p_vaddr (mod page). Inert when W^X off (data_foff == op).
+    while (op < data_foff) { store8(O + op, 0); op = op + 1; }
     # Variable data (zeroed)
     var bss_o = op;
     i = 0;

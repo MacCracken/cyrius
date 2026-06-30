@@ -1,0 +1,9 @@
+# Fixture for _wx_segments_gate (v6.3.12 W^X).
+# A trivial userland program — the gate inspects the EMITTED ELF's program headers,
+# not the program's behavior. Default build → two PT_LOADs (text R E + data RW);
+# CYRIUS_WX=0 → the historical single RWX PT_LOAD. Exits 42 either way.
+fn main(): i64 {
+    var x = 40;
+    var y = 2;
+    return x + y;
+}
