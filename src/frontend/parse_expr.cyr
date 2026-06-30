@@ -376,10 +376,16 @@ fn PARSE_FACTOR(S): i64 {
                         if (_tat == 20) { _ta_d = _ta_d - 1; }
                         STI(S, GTI(S) + 1);
                     }
-                    if (_ta_conc != 0 - 8) {
-                        ERR_MSG(S, "non-i64 explicit generic type arguments are not yet supported (v6.3.10 follow-on)", 76);
+                    if (_ta_conc == 0 - 8) {
+                        PARSE_FNCALL(S, noff);          # i64: call the base (the i64 instance)
+                    } else {
+                        # non-i64: monomorphize on demand + call the specialized fn.
+                        var _spec = _instantiate_generic_fn(S, _eta_fi, _ta_conc, 0);
+                        if (_spec == 0 - 2) {
+                            ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 92);
+                        }
+                        PARSE_FNCALL(S, L64(_fnt_names + _spec * 8));
                     }
-                    PARSE_FNCALL(S, noff);              # i64: call the base (the i64 instance)
                     _cfo = 0;
                     return 0;
                 }

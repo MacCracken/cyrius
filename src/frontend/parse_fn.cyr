@@ -1408,6 +1408,112 @@ fn _is_tparam_of(S, fi, noff): i64 {
     return 0;
 }
 
+# v6.3.10 (instantiate-once): mint a deduped specialized name `base$<tyname>` into
+# tok_names for a concrete-type token, returning its noff. '$' (36) is not a legal
+# identifier byte, so the name is unforgeable from source. Scalar tokens → i8/i16/
+# i32/i64; a struct sid (>0) → the struct's name.
+fn _mint_generic_name(S, base_noff, conc): i64 {
+    var blen = 0;
+    while (load8(S + 0x60000 + base_noff + blen) != 0) { blen = blen + 1; }
+    NPOS_GUARD(S, blen + 40);
+    var wp = GNPOS(S);
+    var noff = wp;
+    var i = 0;
+    while (i < blen) { store8(S + 0x60000 + wp, load8(S + 0x60000 + base_noff + i)); wp = wp + 1; i = i + 1; }
+    store8(S + 0x60000 + wp, 36); wp = wp + 1;   # '$'
+    if (conc < 0) {
+        store8(S + 0x60000 + wp, 105); wp = wp + 1;   # 'i'
+        if (conc == 0 - 8) { store8(S + 0x60000 + wp, 54); wp = wp + 1; store8(S + 0x60000 + wp, 52); wp = wp + 1; }
+        elif (conc == 0 - 4) { store8(S + 0x60000 + wp, 51); wp = wp + 1; store8(S + 0x60000 + wp, 50); wp = wp + 1; }
+        elif (conc == 0 - 2) { store8(S + 0x60000 + wp, 49); wp = wp + 1; store8(S + 0x60000 + wp, 54); wp = wp + 1; }
+        elif (conc == 0 - 1) { store8(S + 0x60000 + wp, 56); wp = wp + 1; }
+    } else {
+        var snoff = L64(S + 0x1A6018 + (conc - 1) * 8);
+        var j = 0;
+        while (load8(S + 0x60000 + snoff + j) != 0) { store8(S + 0x60000 + wp, load8(S + 0x60000 + snoff + j)); wp = wp + 1; j = j + 1; }
+    }
+    store8(S + 0x60000 + wp, 0); wp = wp + 1;
+    SNPOS(S, wp);
+    return noff;
+}
+
+# v6.3.10 (instantiate-once): emit a deduped, monomorphized instance of generic fn
+# `base_fi` for concrete-type token `conc0` (and `conc1`). Mints `base$ty`; FINDFN is
+# the dedup index (hit → return the existing fi). On a miss, emits the specialized
+# body ONCE — closure-style (jump-over): save the enclosing fn's per-fn codegen +
+# binding state, reset, bind `T→conc`, `EJMP0` over the instance, record its offset,
+# `EFNPRO`/`ESUBRSP`, replay the base body tokens (`GFBS`..) with the binding active so
+# the bite-4 consults substitute, patch returns + epilogue + frame, `EPATCH` the jump,
+# restore. Returns the specialized fi, or -2 for the not-yet-handled pc>0 case (the
+# caller errors). pc=0 only this bite (param re-emission is the follow-on).
+fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
+    var base_noff = L64(_fnt_names + base_fi * 8);
+    var mangled = _mint_generic_name(S, base_noff, conc0);
+    var spec = FINDFN(S, mangled);
+    if (spec >= 0) { return spec; }                 # dedup hit
+    if (L64(_fnt_params + base_fi * 8) != 0) { return 0 - 2; }   # pc>0: follow-on
+    spec = REGFN(S, mangled);
+    S64(_fnt_params + spec * 8, 0);
+    SFRS(S, spec, GFRS(S, base_fi));
+    # --- save enclosing fn state ---
+    var sv_infn = GINFN(S);
+    var sv_flc = GFLC(S);
+    var sv_rpc = vec_len(rp_vec);
+    var sv_sdep = GSDEP(S);
+    var sv_ti = GTI(S);
+    var sv_regalloc = _cur_fn_regalloc;
+    var sv_stash = _cur_fn_ret_stash;
+    var sv_rsid = _cur_fn_ret_sid;
+    var sv_rscal = _cur_fn_ret_scalar;
+    var sv_naked = _cur_fn_naked;
+    var sv_ix = _cur_fn_ix;
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    var locsnap = _cl_save_locals(S, sv_flc);
+    # --- set up the specialized fn ---
+    SINFN(S, 1);
+    SFLC(S, 0);
+    SSDEP(S, 0);
+    _cur_fn_regalloc = 0;
+    _cur_fn_ret_stash = 0;
+    _cur_fn_ret_sid = 0;
+    _cur_fn_ret_scalar = GFRS(S, base_fi);
+    _cur_fn_naked = 0;
+    _cur_fn_ix = spec;
+    _cur_fn_has_closure = 1;                         # skip the enclosing fn's regalloc post-pass
+    _bind_generic_call(S, base_fi, conc0, conc1);
+    # --- emit: jump-over + prologue + body replay + epilogue ---
+    var jmp = EJMP0(S);
+    S64(_fnt_offsets + spec * 8, GCP(S));
+    EFNPRO(S);
+    var fp = ESUBRSP(S);
+    SIDEP(S, GIDEP(S) + 1);
+    STI(S, GFBS(S, base_fi));
+    PARSE_PROG(S);
+    SIDEP(S, GIDEP(S) - 1);
+    var new_rpc = vec_len(rp_vec);
+    var ri = sv_rpc;
+    while (ri < new_rpc) { EPATCH(S, vec_get(rp_vec, ri)); ri = ri + 1; }
+    vec_truncate(rp_vec, sv_rpc);
+    EFNEPI(S);
+    var fsz = (GFLC(S) * 8 + 15) & (0 - 16);
+    EPATCHFRAME(S, fp, fsz);
+    EPATCH(S, jmp);
+    # --- restore enclosing fn state ---
+    SINFN(S, sv_infn);
+    SFLC(S, sv_flc);
+    SSDEP(S, sv_sdep);
+    _cur_fn_regalloc = sv_regalloc;
+    _cur_fn_ret_stash = sv_stash;
+    _cur_fn_ret_sid = sv_rsid;
+    _cur_fn_ret_scalar = sv_rscal;
+    _cur_fn_naked = sv_naked;
+    _cur_fn_ix = sv_ix;
+    _cl_restore_locals(S, locsnap, sv_flc);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    STI(S, sv_ti);
+    return spec;
+}
+
 # Parse fn name<T>(params) { body }
 # Dead store elimination: scan codebuf for consecutive stores to the same
 # [rbp-N] offset, NOP out the first store when redundant.
