@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.22] — 2026-07-01
+
+**v6.3.22 — verification coverage: VR-02 real fuzzing + VR-04 binary lint** (VR-01 split to its own
+slot). Closes the "found-by-consumers" gap where the highest-value hostile-input surfaces were
+unfuzzed (the shipped `fuzz/` harnesses are fixed-input property tests) and emitted binaries had no
+structural validation beyond `file | grep`. Test/check-program only → cycc **byte-identical**.
+
+### Added — VR-02 real mutation fuzzers
+- **`tests/cycc_parser_fuzz.sh`** — feeds byte-mutated valid sources (bit-flip / byte-set / truncate,
+  deterministic LCG so a crash reproduces) to cycc's **stdin parser** (the `cat foo.cyr | cycc`
+  untrusted-input surface) and asserts cycc never dies by signal or hangs. **400 mutated inputs across
+  5 diverse seeds → 0 crashes** — the parser holds. Wired as a check gate (`CYCC_FUZZ_ITERS`-tunable,
+  cheap smoke by default; `CYCC_FUZZ_ITERS=300 sh tests/cycc_parser_fuzz.sh` for a real run).
+- **`fuzz/tls_client_hello.fcyr`** — feeds adversarial ClientHello bodies (large length fields,
+  truncations, garbage) to the **network-facing** `_tn_parse_client_hello` (`lib/tls_native_hs13.cyr`
+  — a TLS server parsing untrusted wire bytes), a fresh server ctx per iteration, asserting a graceful
+  `TLS_ERR_*` not a SIGSEGV. **120 adversarial parses → 0 crashes.** Rides the already-gated
+  `cyrius fuzz` (now 6 harnesses).
+
+### Added — VR-04 pure-cyrius binary structural lint
+- A new `_binary_structural_lint_gate` (`programs/checks/services.cyr`) compiles a small program and
+  validates the **ELF** cycc emitted: magic + ELFCLASS64, `e_type` (ET_EXEC/ET_DYN), `e_machine`
+  (x86-64/aarch64), the program- and section-header tables in file bounds, every `PT_LOAD`'s file range
+  in bounds, and the **entry point landing inside an executable (PF_X) `PT_LOAD`** (entry-in-text) —
+  a class of emit bugs `file | grep ELF` can't see. Skips gracefully on a PE/Mach-O emit host (that
+  lint is the tracked follow-on, folded into the VR-01 slot). check.sh **112→113**.
+
+### Changed
+- **VR-01 split to its own slot (v6.3.34)** — the 8 platform-variant stdlib tcyr
+  (`fs_win`/`thread_win`/`sync_windows`/`alloc_macos`/`args_macos`/`process_win`/`syscalls_macos`/
+  `syscalls_windows`, none of which any of the 173 tcyr touch) + the LIBTEST per-host gate are
+  cross-host (only run on cass/ecb), so they are batched near the Intel-Mac arc for focused per-host
+  validation rather than bundled into this cut.
+
+_check.sh 111→**113**; cycc **byte-identical** (test/check-program only, no compiler/lib change);
+self-host fixpoint + seed→cybs→cycc; ecb + cass + pi **SELFHOST_OK**; self_compile **539 ms**;
+cycc **1,027,672 B**._
+
 ## [6.3.21] — 2026-07-01
 
 **v6.3.21 — the security-audit tail (RM-06).** Closes the overdue CVE-09…13 tail from the

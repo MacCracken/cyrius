@@ -321,6 +321,14 @@ fn _run_regression_gates(): i64 {
     _gate("x86 jump-target overflow hard-errors past 1023, compiles under it (CVE-09, v6.3.21)", "tests/jump_target_cap.sh");
     println("");
 
+    _section("Parser fuzz (VR-02)");
+    _gate("cycc stdin-parser survives byte-mutated hostile input, no crash (VR-02, v6.3.22)", "tests/cycc_parser_fuzz.sh");
+    println("");
+
+    _section("Binary structural lint (VR-04)");
+    _binary_structural_lint_gate();
+    println("");
+
     # v5.9.25 (per v5.9.6 pin): the 6 _tcyr_relay_gate calls
     # previously here (shadow_pam / fdlopen / thread_local /
     # atomics / thread_safety / flags) are removed — each tcyr is

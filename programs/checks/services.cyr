@@ -895,6 +895,100 @@ fn _kernel_pie_struct_gate(): i64 {
     return 0;
 }
 
+# VR-04 (v6.3.22): pure-cyrius structural lint of an EMITTED binary. Compiles a
+# small program with cycc, then validates the ELF64 the compiler produced —
+# magic + ELFCLASS64, e_type (ET_EXEC/ET_DYN), e_machine (x86-64/aarch64), the
+# PH + SH tables in file bounds, every PT_LOAD's file range in bounds, and the
+# entry point landing inside an EXECUTABLE (PF_X) PT_LOAD (entry-in-text). This
+# catches a whole class of emit bugs that `file | grep ELF` cannot see. ELF is
+# the primary target (Linux/agnos x86-64 + aarch64); PE/Mach-O structural lint is
+# partially covered by platform_efi.cyr + the cross-OS funcgate magic checks and
+# is tracked as a follow-on.
+fn _binary_structural_lint_gate(): i64 {
+    var label = "pure-cyrius ELF structural lint — header + PH/SH bounds + entry-in-text on an emitted binary (VR-04, v6.3.22)";
+    var src = _root_path("programs/collatz.cyr");
+    if (file_exists(src) != 1) { _check(label, 0); return 0; }
+    var out = _tmp_path("audit_binlint_");
+    if (_self_host_pipe(src, CC_PATH, out) != 0) {
+        sys_unlink(out);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": VR-04 test program failed to compile");
+        _check(label, 1);
+        return 1;
+    }
+    var cap = 4000000;
+    var buf = alloc(cap);
+    var fsz = file_read_all(out, buf, cap);
+    sys_unlink(out);
+    var fail = 0;
+    if (fsz < 64) { fail = 1; }
+    # On a Windows/macOS host cycc emits PE/Mach-O — skip (ELF is the primary
+    # target; PE/Mach-O structural lint is the tracked follow-on). The gate suite
+    # runs on x86_64 Linux, so this validates ELF there.
+    if (fail == 0) {
+        if (load8(buf) != 127) {
+            _p("  skip: non-ELF emit host (PE/Mach-O lint is a VR-04 follow-on)");
+            println("");
+            _check(label, 0);
+            return 0;
+        }
+    }
+    if (fail == 0) {
+        if (load8(buf + 1) != 69) { fail = 1; }     # 'E'
+        if (load8(buf + 2) != 76) { fail = 1; }     # 'L'
+        if (load8(buf + 3) != 70) { fail = 1; }     # 'F'
+        if (load8(buf + 4) != 2)  { fail = 1; }     # ELFCLASS64
+    }
+    var entry = 0; var phoff = 0; var phnum = 0; var phent = 0; var shoff = 0; var shnum = 0; var shent = 0;
+    if (fail == 0) {
+        var etype = load8(buf + 16) | (load8(buf + 17) << 8);
+        var emach = load8(buf + 18) | (load8(buf + 19) << 8);
+        entry = load64(buf + 24);
+        phoff = load64(buf + 32);
+        shoff = load64(buf + 40);
+        phent = load8(buf + 54) | (load8(buf + 55) << 8);
+        phnum = load8(buf + 56) | (load8(buf + 57) << 8);
+        shent = load8(buf + 58) | (load8(buf + 59) << 8);
+        shnum = load8(buf + 60) | (load8(buf + 61) << 8);
+        if (etype != 2) { if (etype != 3) { fail = 1; } }       # ET_EXEC / ET_DYN
+        if (emach != 62) { if (emach != 183) { fail = 1; } }    # 0x3E x86-64 / 0xB7 aarch64
+        if (phoff + phnum * phent > fsz) { fail = 1; }          # PH table in bounds
+        if (shoff + shnum * shent > fsz) { fail = 1; }          # SH table in bounds
+    }
+    var entry_in_x = 0;
+    if (fail == 0) {
+        var i = 0;
+        while (i < phnum) {
+            var ph = buf + phoff + i * phent;
+            var ptype = load32(ph);                             # p_type  @0
+            var pflags = load32(ph + 4);                        # p_flags @4
+            var poff = load64(ph + 8);                          # p_offset @8
+            var pvaddr = load64(ph + 16);                       # p_vaddr @16
+            var pfilesz = load64(ph + 32);                      # p_filesz @32
+            var pmemsz = load64(ph + 40);                       # p_memsz @40
+            if (ptype == 1) {                                   # PT_LOAD
+                if (poff + pfilesz > fsz) { fail = 1; }         # segment file range in bounds
+                if (entry >= pvaddr) {
+                    if (entry < pvaddr + pmemsz) {
+                        if ((pflags & 1) == 1) { entry_in_x = 1; }   # PF_X
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        if (entry_in_x == 0) { fail = 1; }                      # entry must be in an R+E segment
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": emitted ELF valid — magic/class/type/machine, PH+SH in bounds, entry-in-text");
+    } else {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": emitted ELF failed structural lint (VR-04)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _tls_live_gate(): i64 {
     var label = "libssl via fdlopen: full TLS round-trip on 1.1.1.1:443 (pin v5.6.37)";
     if (file_exists(CC_PATH) != 1) {
