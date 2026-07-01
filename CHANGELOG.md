@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.19] — 2026-06-30
+
+**v6.3.19 — two more consumer-filed stdlib fixes (AGNOS base-stack migration to 6.3.15, cont'd) +
+sankoch zlib triage.** Both cyrius fixes are **lib-only → cycc byte-identical**. The third
+consumer issue (sankoch `zlib_compress` SIGSEGV) was root-caused to a **test-harness** footgun in
+sankoch and fixed at the sankoch source — cyrius codegen exonerated.
+
+### Fixed
+- **`lib/ws_server.cyr` called `http_find_header`, defined nowhere** (missed by the `http_*` →
+  `sandhi_server_*` rename). `ws_server_handshake` called the dangling name 4× → any consumer that
+  reached the WS upgrade path got a reachable-undefined hard error the moment its handshake ran
+  (bote 2.7.7 surfaced it downstream). Renamed the 4 calls (+1 comment) to the real
+  `sandhi_server_find_header` — identical `(buf, blen, name)` contract, no logic change. Added the
+  **first-ever ws test**, `tests/tcyr/ws_server_handshake.tcyr` (reject-path coverage; compiles
+  ws_server so a stale helper name is now a *local* reachable-undefined error — proven: reverting
+  the rename fails the test with "1 reachable undefined function"). bote's forwarding-shim
+  workaround can now be dropped (DCE-prunes to dead). [`ws-server-http-find-header-dangling`](docs/development/issues/2026-06-30-stdlib-ws-server-http-find-header-dangling.md).
+- **AGNOS had no `sys_fstat` peer** — `lib/syscalls_x86_64_agnos.cyr` is standalone (no
+  `syscalls_linux_common.cyr`) and exposed only path-based `sys_stat`#33, so a `--agnos` consumer
+  calling fd-based `sys_fstat` (aegis's TOCTOU-safe `O_NOFOLLOW`-then-fstat path) hit an undefined
+  symbol → `ud2`/SIGILL. Verified the **agnos kernel (1.51.2) dispatches no fstat-by-fd syscall**
+  (`grep -riw fstat kernel/` empty; the 0–63 table is full) — a real wrapper would be agnos-kernel
+  work in a separate repo. Shipped the **fail-closed peer** `fn sys_fstat(fd, statbuf): i64 {
+  return 0 - 1; }`, mirroring the sibling `sys_access` stub: the symbol now resolves (a `--agnos`
+  probe compiles clean, no `ud2`) and returns a defined "unsupported" −1, which consumers treat as
+  deny — exactly like `sys_access`. Upgrade path preserved in-source (swap the body for
+  `syscall(SYS_FSTAT, …)` + a const if agnos ever gains the syscall).
+  [`agnos-sys-fstat-peer`](docs/development/issues/2026-06-30-agnos-sys-fstat-peer.md).
+
+### Changed
+- **api-surface snapshot regenerated** — one additions-only delta, `syscalls_x86_64_agnos::sys_fstat/2`;
+  no removals (the ws rename touches call sites, not public definitions).
+
+### Triaged (sankoch-side fix, cyrius exonerated)
+- **sankoch `zlib_compress.tcyr` SIGSEGV under cycc 6.3.13+** was **not** a cyrius codegen bug and
+  **not** a sankoch *library* bug. A workflow array-audit of the whole compress path
+  (zlib/deflate/huffman/bitwriter/lz77/stream/checksum, adversarially verified) found every
+  `var X[N]` correctly sized. The crash was the **test's own** `var chunks[4]` — a bare **4-byte**
+  slot taking `store64(&chunks + i*8)` for `i = 0..3` = **32 bytes** (24-byte frame overrun) — the
+  daimon footgun, benign in `.bss`, frame-corrupting once array locals moved to the stack (6.3.13).
+  Fixed in the sankoch repo (`var chunks: i64[4]`) + pinned sankoch `cyrius.cyml` 6.2.44 → 6.3.18;
+  the full sankoch suite (20 tiers) now passes 0-failed on 6.3.18. sankoch library unchanged → no
+  re-vendor.
+
+_Self-host + seed→cybs→cycc byte-identical; check.sh **109/109**; ecb + cass + pi **SELFHOST_OK**;
+self_compile **537 ms**; cycc **1,027,664 B** (byte-identical to 6.3.18 — both fixes are
+consumer-lib-only, not compiler-included)._
+
 ## [6.3.18] — 2026-06-30
 
 **v6.3.18 — stdlib undersized-array-locals hardening sweep (consumer-filed).** Completes the v6.3.13

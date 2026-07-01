@@ -423,6 +423,19 @@ fn sys_getdents(dir_fd, buf, bufsize): i64 { return syscall(SYS_GETDENTS, dir_fd
 # Returns 0, or -1.
 fn sys_stat(path, pathlen, statbuf): i64 { return syscall(SYS_STAT, path, pathlen, statbuf); }
 
+# agnos has NO fstat-by-fd syscall — the kernel exposes only path-based
+# `sys_stat`#33 (there is no fstat number in the 0–63 table). fd→stat in
+# ring 3 cannot be synthesized portably, so this peer fails closed (-1),
+# mirroring `sys_access` below. A --agnos consumer linking `sys_fstat`
+# then gets a defined "unsupported" answer instead of a `ud2`/SIGILL.
+#   TOCTOU note: aegis's O_NOFOLLOW-then-fstat path returns -1 here; on
+#   --agnos it must gate that path (#ifndef CYRIUS_TARGET_AGNOS) or fall
+#   back to path-based `sys_stat` with the race documented.
+#   UPGRADE PATH: if agnos ever dispatches an fstat-by-fd syscall, replace
+#   the body with `syscall(SYS_FSTAT, fd, statbuf)` + a SYS_FSTAT const.
+# (issue 2026-06-30-agnos-sys-fstat-peer.md.)
+fn sys_fstat(fd, statbuf): i64 { return 0 - 1; }
+
 # agnos has no access(2). sigil's ~20 call sites all probe TPM / IMA /
 # secureboot / cert paths with mode=0 (F_OK), none of which exist on
 # agnos, and treat !=0 as absent — so report absent for every probe.

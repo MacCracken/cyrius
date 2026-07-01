@@ -1,5 +1,15 @@
 # stdlib — `lib/ws_server.cyr` calls `http_find_header`, which no `6.x` snapshot defines (missed by the `http_*` → `sandhi_server_*` rename)
 
+**Status**: ✅ **RESOLVED (v6.3.19, 2026-06-30)** — the four `http_find_header(` calls in
+`lib/ws_server.cyr:ws_server_handshake` (plus the one stale reference in a comment) are renamed to
+`sandhi_server_find_header(` — a pure rename, identical `(buf, blen, name)` contract, no logic
+change. New regression `tests/tcyr/ws_server_handshake.tcyr` compiles ws_server and reaches the
+handshake (a stale name is now a REACHABLE-undefined hard error, proven: reverting the rename fails
+the test with "1 reachable undefined function"). cyrius shipped no ws test before — this closes that
+gap. bote 2.7.7's forwarding shim can now be dropped (it DCE-prunes to dead once ws_server calls the
+real name directly).
+> Original filing below.
+
 **Status**: ⏳ **OPEN — surfaced by the base-stack 6.3.15 migration (bote 2.7.7).**
 **Date**: 2026-06-30
 **Priority**: **Medium** — any consumer that includes `lib/ws_server.cyr` (WebSocket server upgrade path) gets a *reachable-undefined* link error the moment its WS handshake is exercised. Currently worked around consumer-side (a forwarding shim in bote); the stdlib should own the fix.

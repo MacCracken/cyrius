@@ -3856,6 +3856,7 @@ syscalls_x86_64_agnos::sys_execwait/2
 syscalls_x86_64_agnos::sys_exit/1
 syscalls_x86_64_agnos::sys_fbinfo/2
 syscalls_x86_64_agnos::sys_flock/2
+syscalls_x86_64_agnos::sys_fstat/2
 syscalls_x86_64_agnos::sys_getdents/3
 syscalls_x86_64_agnos::sys_geteuid/0
 syscalls_x86_64_agnos::sys_getpid/0

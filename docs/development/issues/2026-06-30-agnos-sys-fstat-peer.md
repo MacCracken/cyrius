@@ -1,5 +1,17 @@
 # stdlib — no AGNOS peer for fd-based `sys_fstat(fd, buf)` (agnos exposes only path-based `sys_stat`#33)
 
+**Status**: ✅ **RESOLVED (v6.3.19, 2026-06-30)** — shipped **option 2 (fail-closed peer)**:
+`fn sys_fstat(fd, statbuf): i64 { return 0 - 1; }` added to `lib/syscalls_x86_64_agnos.cyr`,
+mirroring the sibling `sys_access` stub. The agnos kernel (1.51.2) dispatches **no** fstat-by-fd
+syscall — verified `grep -riw fstat kernel/` is empty; only path-based `stat`#33 exists, and the
+0–63 table is full — so a real wrapper would be agnos-**kernel** work (a separate repo), not a
+cyrius stdlib change. The symbol now resolves on `--agnos` (a probe calling `sys_fstat` compiles
+clean, no `ud2`) and returns a defined "unsupported" −1. Consumers (aegis TOCTOU path) treat −1 as
+unsupported/deny, exactly like `sys_access`. **UPGRADE PATH preserved**: if agnos ever gains an
+fstat syscall, swap the body for `syscall(SYS_FSTAT, fd, statbuf)` + a `SYS_FSTAT` const (noted in
+the source comment).
+> Original filing below.
+
 **Status**: ⏳ **OPEN — surfaced by the base-stack 6.3.15 migration (aegis 1.1.1).**
 **Date**: 2026-06-30
 **Priority**: **Medium — proactive, before the base stack runs on `--agnos`.** aegis's TOCTOU-safe stat path uses **fd-based `fstat`** by design (open with `O_NOFOLLOW`, then `fstat` the fd — closes the race between the stat and the consumer's action), so switching it to path-based `stat` would reintroduce the very TOCTOU it exists to avoid.
