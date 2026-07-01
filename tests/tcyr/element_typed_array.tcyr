@@ -3,30 +3,60 @@
 # (8N bytes) both in-fn and top-level, fixing the address-taken-local
 # slot-idiom footgun (issue 2026-06-11, daimon: a per-slot
 # `store64(&parts + i*8)` into a byte-sized `var parts[4]` ran off the
-# 8-byte backing into the next static object). Bare `var a[N]` keeps its
-# documented behavior (in-fn: N bytes; top-level: N slots).
+# 8-byte backing). Bare `var a[N]` keeps its documented behavior
+# (in-fn: N bytes; top-level: N slots).
 #
-# Method: locals are laid out sequentially in static storage, so the
-# byte gap between an array and the next-declared array == the first
-# array's reserved byte size. That gap is the deterministic proof of the
-# reserved capacity (independent of incidental neighbor placement).
+# Method (v6.3.15): in-fn array locals now live on the per-thread STACK
+# (not sequential .bss), so the old "byte gap to the next local == byte
+# size" probe no longer holds — the stack layout is reversed/padded. We
+# instead prove reserved capacity the layout-independent way: write EVERY
+# element in-bounds and read it back, with a neighbouring sentinel that
+# must survive. If `T[N]` under-allocated, the Nth-element write would
+# clobber the sentinel and the readback would be wrong. Top-level arrays
+# still lay out sequentially in .bss, so their byte gap is still checked.
 
 include "lib/assert.cyr"
 
-# --- in-fn reserved sizes (gap == byte capacity) ---
-fn gap_i64()  { var a: i64[4]; var z[1]; return &z - &a; }   # 4 slots  -> 32
-fn gap_bare() { var a[4];      var z[1]; return &z - &a; }   # legacy bytes -> 8
-fn gap_i32()  { var a: i32[4]; var z[1]; return &z - &a; }   # 4 * 4    -> 16
-fn gap_i16()  { var a: i16[4]; var z[1]; return &z - &a; }   # 4 * 2    -> 8
-fn gap_u8()   { var a: u8[16]; var z[1]; return &z - &a; }   # 16 bytes -> 16
-fn gap_u32()  { var a: u32[4]; var z[1]; return &z - &a; }   # 4 * 4    -> 16
-fn gap_u64()  { var a: u64[3]; var z[1]; return &z - &a; }   # 3 * 8    -> 24
+# --- in-fn element-typed capacity: write all N elements + a sentinel;
+#     sentinel intact (999) proves no under-allocation, all elements
+#     readable proves the reserved element count. Layout-independent. ---
+fn cap_i64(): i64 {
+    var a: i64[4]; var s: i64[1]; store64(&s, 999);
+    store64(&a, 1); store64(&a + 8, 2); store64(&a + 16, 3); store64(&a + 24, 4);
+    return load64(&a) + load64(&a + 8) + load64(&a + 16) + load64(&a + 24) + load64(&s);  # 10+999
+}
+fn cap_i32(): i64 {
+    var a: i32[4]; var s: i64[1]; store64(&s, 999);
+    store32(&a, 1); store32(&a + 4, 2); store32(&a + 8, 3); store32(&a + 12, 4);
+    return load32(&a) + load32(&a + 4) + load32(&a + 8) + load32(&a + 12) + load64(&s);  # 10+999
+}
+fn cap_i16(): i64 {
+    var a: i16[4]; var s: i64[1]; store64(&s, 999);
+    store16(&a, 1); store16(&a + 2, 2); store16(&a + 4, 3); store16(&a + 6, 4);
+    return load16(&a) + load16(&a + 2) + load16(&a + 4) + load16(&a + 6) + load64(&s);  # 10+999
+}
+fn cap_u8(): i64 {
+    var a: u8[16]; var s: i64[1]; store64(&s, 999);
+    var i = 0; while (i < 16) { store8(&a + i, i + 1); i = i + 1; }        # 1..16
+    var sum = 0; var j = 0; while (j < 16) { sum = sum + load8(&a + j); j = j + 1; }  # 136
+    return sum + load64(&s);                                              # 136+999
+}
+fn cap_u32(): i64 {
+    var a: u32[4]; var s: i64[1]; store64(&s, 999);
+    store32(&a, 1); store32(&a + 4, 2); store32(&a + 8, 3); store32(&a + 12, 4);
+    return load32(&a) + load32(&a + 4) + load32(&a + 8) + load32(&a + 12) + load64(&s);  # 10+999
+}
+fn cap_u64(): i64 {
+    var a: u64[3]; var s: i64[1]; store64(&s, 999);
+    store64(&a, 1); store64(&a + 8, 2); store64(&a + 16, 3);
+    return load64(&a) + load64(&a + 8) + load64(&a + 16) + load64(&s);   # 6+999
+}
 
 # --- daimon class: all 4 slots of an i64[4] are in-bounds; a sentinel
 #     declared immediately after must survive every slot write ---
 fn slot_roundtrip() {
     var a: i64[4];
-    var sentinel[1];
+    var sentinel: i64[1];
     store64(&sentinel, 999);
     store64(&a + 0, 11);
     store64(&a + 8, 22);
@@ -44,7 +74,7 @@ fn byte_buffer() {
     return load8(&b + 0) + load8(&b + 7);   # 16
 }
 
-# --- top-level element-typed arrays ---
+# --- top-level element-typed arrays (still .bss-sequential; gap probe valid) ---
 var g_i64: i64[4];
 var g_i64_after = 55;
 var g_u8: u8[16];
@@ -53,14 +83,13 @@ var g_u8_after = 66;
 fn top_i64_gap() { return &g_i64_after - &g_i64; }   # 4 slots -> 32
 fn top_u8_gap()  { return &g_u8_after - &g_u8; }      # 16 bytes -> 16
 
-test_group("in-fn element-typed array reserved sizes");
-assert_eq(gap_i64(), 32, "i64[4] reserves 4 slots (32 bytes)");
-assert_eq(gap_bare(), 8, "bare [4] keeps legacy byte sizing (8 bytes)");
-assert_eq(gap_i32(), 16, "i32[4] reserves 16 bytes");
-assert_eq(gap_i16(), 8, "i16[4] reserves 8 bytes");
-assert_eq(gap_u8(), 16, "u8[16] reserves 16 bytes");
-assert_eq(gap_u32(), 16, "u32[4] reserves 16 bytes");
-assert_eq(gap_u64(), 24, "u64[3] reserves 24 bytes");
+test_group("in-fn element-typed array capacity (write-all + sentinel roundtrip)");
+assert_eq(cap_i64(), 1009, "i64[4]: 4 slots writable, sentinel intact");
+assert_eq(cap_i32(), 1009, "i32[4]: 4 i32 elements writable, sentinel intact");
+assert_eq(cap_i16(), 1009, "i16[4]: 4 i16 elements writable, sentinel intact");
+assert_eq(cap_u8(), 1135, "u8[16]: 16 bytes writable, sentinel intact");
+assert_eq(cap_u32(), 1009, "u32[4]: 4 u32 elements writable, sentinel intact");
+assert_eq(cap_u64(), 1005, "u64[3]: 3 u64 elements writable, sentinel intact");
 
 test_group("daimon class fixed via slot spelling");
 assert_eq(slot_roundtrip(), 1109, "all 4 i64[4] slots in-bounds; neighbor intact");
@@ -68,7 +97,7 @@ assert_eq(slot_roundtrip(), 1109, "all 4 i64[4] slots in-bounds; neighbor intact
 test_group("bare local byte buffer unchanged");
 assert_eq(byte_buffer(), 16, "byte-granularity buffer still works");
 
-test_group("top-level element-typed arrays");
+test_group("top-level element-typed arrays (.bss gap)");
 assert_eq(top_i64_gap(), 32, "top-level i64[4] reserves 32 bytes");
 assert_eq(top_u8_gap(), 16, "top-level u8[16] reserves 16 bytes");
 

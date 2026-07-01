@@ -72,7 +72,7 @@ fn run_indexing_tests() {
     # ---- Width 4 (u32/i32) ----
 
     test_group("§7 width-4 subscript (u32 element)");
-    var d4[3];
+    var d4: u32[3];   # 3 u32 (12 B) — was bare [3]=8 B; store32 at +8 overflowed the frame (v6.3.15 stack)
     store32(&d4, 100000); store32(&d4 + 4, 200000); store32(&d4 + 8, 300000);
     var s4: [u32] = 0;
     slice_set(&s4, &d4, 3);
@@ -83,7 +83,7 @@ fn run_indexing_tests() {
     # ---- Width 8 (i64/u64/ptr) ----
 
     test_group("§7 width-8 subscript (i64 element)");
-    var d8[3];
+    var d8: i64[3];   # 3 i64 (24 B) — was bare [3]=8 B; store64 at +8/+16 overflowed the frame (v6.3.15 stack)
     store64(&d8, 11111111111);
     store64(&d8 + 8, 22222222222);
     store64(&d8 + 16, 33333333333);
@@ -119,7 +119,7 @@ fn run_indexing_tests() {
     # ---- Width-16 (u128 — returns POINTER to slot) ----
 
     test_group("§7 width-16 subscript (u128 element — returns pointer)");
-    var d16[6];   # 6 i64 slots = 3 u128 elements (16 bytes each)
+    var d16: i64[6];   # 6 i64 slots (48 B) = 3 u128 elements — was bare [6]=8 B, overflowed on v6.3.15 stack
     store64(&d16, 0xAAAAAAAAAAAAAAAA); store64(&d16 + 8, 0xBBBBBBBBBBBBBBBB);
     store64(&d16 + 16, 0xCCCCCCCCCCCCCCCC); store64(&d16 + 24, 0xDDDDDDDDDDDDDDDD);
     var s16: [u128] = 0;

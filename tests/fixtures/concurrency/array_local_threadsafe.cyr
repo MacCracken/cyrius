@@ -1,4 +1,4 @@
-# Fixture for _array_local_threadsafe_gate (v6.3.13).
+# Fixture for _array_local_threadsafe_gate (added v6.3.13; per-thread default-on v6.3.15).
 #
 # Regression for the str_builder concurrency root cause: a `var arr[N]` LOCAL used to
 # be allocated at a fixed GLOBAL/BSS address shared by every thread, so concurrent code

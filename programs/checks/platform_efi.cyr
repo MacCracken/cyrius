@@ -588,16 +588,16 @@ fn _wx_segments_gate(): i64 {
 }
 
 fn _array_local_threadsafe_gate(): i64 {
-    var label = "v6.3.13: CYRIUS_STACK_ARRAYS=1 makes `var arr[N]` locals PER-THREAD (8-thread concurrency clean) — the str_builder root-cause fix (opt-in pending the m128-alignment work for default-on)";
+    var label = "v6.3.15: `var arr[N]` locals are PER-THREAD by DEFAULT (8-thread concurrency clean) — str_builder root-cause fix, now default-on; CYRIUS_STACK_ARRAYS=0 opts back to shared-global .bss arrays";
     var src = _root_path("tests/fixtures/concurrency/array_local_threadsafe.cyr");
     var fail = 0;
-    # OPT-IN (CYRIUS_STACK_ARRAYS=1): per-thread stack arrays → thread-safe → exit 0.
+    # DEFAULT (no env): per-thread stack arrays → thread-safe → exit 0.
     var bin = _tmp_path("audit_arrtls_");
-    var rc = _self_host_pipe_env(src, CC_PATH, bin, "CYRIUS_STACK_ARRAYS=1");
+    var rc = _self_host_pipe(src, CC_PATH, bin);
     if (rc != 0) {
         sys_unlink(bin);
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
-        _p(": CYRIUS_STACK_ARRAYS=1 array-local concurrency test compile failed rc="); print_num(rc); println("");
+        _p(": default array-local concurrency test compile failed rc="); print_num(rc); println("");
         _check(label, 1);
         return 1;
     }
@@ -606,26 +606,26 @@ fn _array_local_threadsafe_gate(): i64 {
     sys_unlink(bin);
     if (ec != 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
-        _p(": CYRIUS_STACK_ARRAYS=1 8-thread test exit "); print_num(ec); println(" (expected 0 = per-thread / thread-safe)");
+        _p(": default 8-thread test exit "); print_num(ec); println(" (expected 0 = per-thread / thread-safe)");
         fail = fail + 1;
     }
-    # Default (shared-global arrays) → cross-thread splice → exit 1. Proves the test
-    # detects the bug AND documents the still-default-buggy behavior (pending default-on).
+    # Opt-out (CYRIUS_STACK_ARRAYS=0): shared-global arrays → cross-thread splice → exit 1.
+    # Proves the test detects the bug AND documents the escape hatch's legacy behavior.
     var binD = _tmp_path("audit_arrtlsD_");
-    var rcD = _self_host_pipe(src, CC_PATH, binD);
+    var rcD = _self_host_pipe_env(src, CC_PATH, binD, "CYRIUS_STACK_ARRAYS=0");
     if (rcD == 0) {
         sys_chmod(binD, 493);
         var ecD = _pipe_file_to_bin(binD, src);
         if (ecD == 0) {
             _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
-            println(": default (shared-global arrays) did NOT corrupt — the test isn't detecting the bug");
+            println(": CYRIUS_STACK_ARRAYS=0 (shared-global arrays) did NOT corrupt — the test isn't detecting the bug");
             fail = fail + 1;
         }
     }
     sys_unlink(binD);
     if (fail == 0) {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
-        println(": CYRIUS_STACK_ARRAYS=1 → array-locals per-thread (8-thread concurrency clean); default shared-global still corrupts (pending m128-alignment for default-on)");
+        println(": default array-locals per-thread (8-thread concurrency clean); CYRIUS_STACK_ARRAYS=0 shared-global still corrupts");
     }
     _check(label, fail);
     return fail;

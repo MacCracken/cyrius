@@ -55,7 +55,8 @@ assert_eq(fncall8(&add8, 5, 13, 21, 29, 37, 41, 53, 59),     258, "fncall8 order
 # than a leaf function.
 test_group("fncall7/8 — callee with stack");
 fn add7_stack(a, b, c, d, e, f, g) {
-    var scratch[7];
+    var scratch: i64[7];    # 7 i64 slots (56 B) — slot-indexed store64 below (bare [7]=8 B would
+                            # overflow the frame on v6.3.15 stack; benign only in the old .bss layout)
     store64(&scratch,      a); store64(&scratch + 8,  b);
     store64(&scratch + 16, c); store64(&scratch + 24, d);
     store64(&scratch + 32, e); store64(&scratch + 40, f);
@@ -67,7 +68,8 @@ fn add7_stack(a, b, c, d, e, f, g) {
     return sum;
 }
 fn add8_stack(a, b, c, d, e, f, g, h) {
-    var scratch[8];
+    var scratch: i64[8];    # 8 i64 slots (64 B) — slot-indexed store64 below (bare [8]=8 B would
+                            # overflow the frame on v6.3.15 stack; benign only in the old .bss layout)
     store64(&scratch,      a); store64(&scratch + 8,  b);
     store64(&scratch + 16, c); store64(&scratch + 24, d);
     store64(&scratch + 32, e); store64(&scratch + 40, f);

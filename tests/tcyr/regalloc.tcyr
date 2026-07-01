@@ -107,7 +107,8 @@ assert_eq(hot_loop(), 155, "cold + hot");
 
 #regalloc
 fn addr_of_test(a) {
-    var buf[4];
+    var buf: i64[4];        # 4 i64 slots (32 B) — slot-indexed store64 below. Was bare [4]=8 B,
+                            # benign only while array locals lived in shared .bss (v6.3.15: stack).
     store64(&buf,       a);
     store64(&buf + 8,   a * 2);
     store64(&buf + 16,  a * 3);

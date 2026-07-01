@@ -185,16 +185,17 @@ fn _ensure_async_gate(S): i64 {
 fn _ensure_stack_arrays(S): i64 {
     if (_sa_init == 1) { return _STACK_ARRAYS; }
     _sa_init = 1;
-    # v6.3.13: OPT-IN (CYRIUS_STACK_ARRAYS=1). Per-thread array locals fix the
-    # str_builder concurrency root cause, but flipping default-on hit SSE m128
-    # alignment regressions (AES-NI / crypto / TLS use arrays as 16-byte-aligned `xmm`
-    # operands; global arrays were 16-aligned via the v5.5.21 totvar pad, stack slots
-    # are only 8-aligned) + a TLS-probe compile gap. Default-on is gated on a follow-up
-    # that 16-aligns array stack slots. Until then this stays opt-in so default codegen
-    # is byte-identical. See the str_builder issue + CHANGELOG.
+    # v6.3.15: DEFAULT-ON. `var arr[N]` LOCALS route to per-thread STACK slots (fixes the
+    # str_builder concurrency root cause — v6.3.13: array locals used to share one global
+    # .bss buffer across all threads). The two v6.3.13 default-on blockers are resolved:
+    # (1) SSE m128 16-alignment — array stack slots whose `&arr` disp would be 8 (mod 16)
+    # get a one-slot parity pad so `pxor/aesenc xmm,[arr]` stays #GP-free (see PARSE_ARRAY);
+    # (2) `secret var` zeroise now addresses the LOCAL (ELOAD_LOCAL_ADDR), not the global.
+    # CYRIUS_STACK_ARRAYS=0 opts back to legacy global (.bss) arrays. See CHANGELOG [6.3.15].
+    _STACK_ARRAYS = 1;
     var e = _read_env("CYRIUS_STACK_ARRAYS");
-    if (e == 0) { return 0; }
-    if (load8(e) == 49) { if (load8(e + 1) == 0) { _STACK_ARRAYS = 1; } }
+    if (e == 0) { return _STACK_ARRAYS; }
+    if (load8(e) == 48) { if (load8(e + 1) == 0) { _STACK_ARRAYS = 0; } }
     return _STACK_ARRAYS;
 }
 
@@ -757,14 +758,32 @@ fn PARSE_STMT(S): i64 {
         }
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 3) { ERR_EXPECT(S, 3); }
+        # v6.3.15: when array locals are per-thread STACK (CYRIUS_STACK_ARRAYS), the
+        # `var buf[N]` here is registered as fn-LOCAL slots, not a global var — so detect
+        # the array via FINDLOCAL + a slot-delta size and zeroise through the local
+        # address (`lea [rbp-disp]`) instead of the global `EVADDR`. Off (legacy global
+        # array) keeps the original VCNT/`_vars_base`/`EVADDR` path byte-identical.
+        var s_name = TOKVAL(S, GTI(S) + 1);   # the array's name token (after `var`)
+        var s_stack = _ensure_stack_arrays(S);
+        var s_flc_pre = GFLC(S);
         var vcnt_pre = GVCNT(S);
         PARSE_VAR(S);
-        var vcnt_post = GVCNT(S);
-        if (vcnt_post != vcnt_pre + 1) {
-            ERR_MSG(S, "secret requires array declaration: secret var buf[N];", 52);
+        var sidx = 0;
+        var ssz = 0;
+        var s_lidx = 0;
+        if (s_stack == 1) {
+            s_lidx = FINDLOCAL(S, s_name);
+            if (s_lidx < 0) {
+                ERR_MSG(S, "secret requires array declaration: secret var buf[N];", 52);
+            }
+            ssz = (GFLC(S) - s_flc_pre) * 8;   # array slot count (incl. any 16-align pad) × 8
+        } else {
+            if (GVCNT(S) != vcnt_pre + 1) {
+                ERR_MSG(S, "secret requires array declaration: secret var buf[N];", 52);
+            }
+            sidx = vcnt_pre;
+            ssz = L64(_vars_base + sidx * 8);
         }
-        var sidx = vcnt_pre;
-        var ssz = L64(_vars_base + sidx * 8);
         # Flag local (initialized to 0 in prologue; set to 1 when this
         # declaration is reached at runtime).
         var sflag = GFLC(S);
@@ -777,7 +796,16 @@ fn PARSE_STMT(S): i64 {
         var sjmp = EJMP0(S);
         var ssbody = GCP(S);
         # Zeroise body: load &buf once, then unroll `store64 [ptr], 0; ptr += 8`.
-        EVADDR(S, sidx);
+        # Stack array (flag on): rbp-relative `lea` of the local; global array
+        # (flag off, legacy): absolute `EVADDR`. Both leave the base in rax.
+        if (s_stack == 1) {
+            var s_disp = 0 - ((s_lidx + 1) * 8);
+            if (_cur_fn_regalloc > 0) { s_disp = s_disp - _cur_fn_regalloc * 8; }
+            if (_cur_fn_ret_stash > 0) { s_disp = s_disp - _cur_fn_ret_stash; }
+            ELOAD_LOCAL_ADDR(S, s_disp);
+        } else {
+            EVADDR(S, sidx);
+        }
         EMOVCA(S);
         EXORAA(S);
         var sqw = ssz / 8;

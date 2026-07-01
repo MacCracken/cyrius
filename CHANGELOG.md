@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.15] — 2026-06-30
+
+**v6.3.15 — array locals are per-thread by DEFAULT (str_builder concurrency root-cause fix, default-on).**
+The v6.3.13 fix — routing `var arr[N]` LOCALS to per-thread STACK slots instead of a fixed shared global
+`.bss` buffer aliased by every thread — flips from opt-in to **DEFAULT-ON**. `CYRIUS_STACK_ARRAYS=0` opts
+back to legacy global arrays. Both v6.3.13 default-on blockers are resolved, an auto-fallback covers the one
+pathological oversized array, and the whole ecosystem was audited clean (295 bare-array locals across 11
+`lib/` files, **0 over-runs**) — the stdlib needed **zero** changes.
+
+### Fixed — the two v6.3.13 default-on blockers
+- **SSE m128 16-alignment** — an array stack slot whose `&arr` displacement would land at `8 (mod 16)` now
+  gets a one-slot parity pad, so `pxor` / `aesenc xmm, [arr]` (AES-NI / sigil crypto / TLS) stays `#GP`-free.
+  Global arrays got 16-alignment from the v5.5.21 totvar pad; stack slots were only 8-aligned. `rbp` is
+  16-aligned by the frame ABI, so `&arr = [rbp - disp]` is 16-aligned iff `disp ≡ 0 (mod 16)`; every disp
+  term is a multiple of 8, so one filler fixes the `disp % 16 == 8` case. (`PARSE_ARRAY`, arrays ≥ 16 B.)
+- **`secret var buf[N]` zeroise** — the zeroise-on-return now addresses the **local** slot
+  (`ELOAD_LOCAL_ADDR` = `lea [rbp-disp]`), detected via `FINDLOCAL` + a slot-delta size, instead of the
+  global `EVADDR`. Flag-off keeps the original global `VCNT`/`_vars_base`/`EVADDR` path byte-identical.
+
+### Added — auto-fallback for oversized array locals
+- An array whose slots would push a function past the per-fn frame-slot budget (`SFLC` caps at 16384 slots)
+  stays in the legacy shared-global data region (with a `note:`) rather than overflowing the slot table.
+  Only pathological cases hit this — `sigil hash_file_into`'s 256 KB I/O scratch buffer is the sole
+  ecosystem instance, and it was already global before v6.3.15, so it is **not** a regression. Every
+  concurrency-relevant crypto fn (≤ ~5000 slots) still routes per-thread.
+
+### Fixed — test suite (daimon under-declared-array idiom; NOT the stdlib)
+- Six `.tcyr` suites used the daimon slot-idiom — a bare `var scratch[7]` (7 **bytes**) written as 56 bytes
+  of `store64` slots — benign only while array locals lived in shared `.bss`, but frame-corrupting on the
+  stack. Corrected to element-typed decls (`var scratch: i64[7]`): **fncall_ceiling, regalloc,
+  slices_field_access, slices_indexing, parser_cosmetics**. `secret.tcyr` (its `return &key` + read-after was
+  a use-after-return on the stack) and `element_typed_array.tcyr` (its in-fn byte-gap probes were
+  `.bss`-sequential-layout-specific) were **rewritten to verify the invariants layout-independently** — a
+  stack-scan scrub probe with a plain-var control, and write-all-elements + sentinel roundtrips.
+- The stdlib itself needed **zero** changes: a precise width-aware + element-typed-aware scan found no
+  literal over-accesses in `lib/`/`programs/`, and an 11-file agent audit confirmed 295 bare-array locals
+  are all in-bounds.
+
+### Changed
+- `_array_local_threadsafe_gate` polarity flipped — **default** (no env) is now the 8-thread-clean
+  per-thread path; `CYRIUS_STACK_ARRAYS=0` is the still-corrupting shared-global control.
+- Default-on needed the standard two-step bootstrap (the old single-behavior cycc can't emit the stable
+  stack-array fixpoint in one step): cc1 transition (its own arrays still global, but emits default-on) →
+  cc2 stable (stack arrays) → `cc2 == cc3`. **cycc SHRANK `1,111,616 → 1,027,664 B`** as array locals left
+  `.bss`.
+
+### Verified
+- Self-host fixpoint byte-identical; **seed → cybs → cycc** derivable; check.sh **109/109**; **ecb + cass +
+  pi SELFHOST_OK** (real hardware, sequential); `CYRIUS_STACK_ARRAYS=0` opt-out restores the legacy global
+  path; bench **self_compile 544 ms**; **cycc 1,111,616 → 1,027,664 B** (−83,952). Closes
+  [`issues/2026-06-30-array-locals-stack-default-on-m128-align.md`](docs/development/issues/2026-06-30-array-locals-stack-default-on-m128-align.md).
+
 ## [6.3.14] — 2026-06-30
 
 **v6.3.14 — AGNOS syscall peer: the 8 missing wrappers (lib-only).** The agnos kernel implements all 64

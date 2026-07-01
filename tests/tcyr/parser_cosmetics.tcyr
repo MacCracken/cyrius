@@ -26,7 +26,8 @@ var small_buf[SMALL];      # top-level — PARSE_GVAR_ARR path
 # PARSE_ARRAY accepted the SMALL ident correctly, the array is
 # the right size and all slots are addressable.
 fn fn_local_buf(): i64 {
-    var local_b[SMALL];
+    var local_b: i64[SMALL];   # 8 i64 slots (64 B) — slot-indexed store64 below. Bare [SMALL]=8 B
+                               # in-fn overflowed the frame on v6.3.15 stack (top-level bare stays slot-sized).
     var i = 0;
     while (i < 8) {
         store64(&local_b + i * 8, i + 100);

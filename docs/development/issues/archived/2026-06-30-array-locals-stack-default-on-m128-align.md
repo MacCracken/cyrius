@@ -3,9 +3,20 @@
 **Filed:** 2026-06-30 (v6.3.13 — follow-on to the str_builder concurrency fix)
 **Severity:** **P1 — concurrency correctness.** Array locals are thread-unsafe by
 default; the fix exists but is opt-in until the alignment work below lands.
-**Status:** ⏳ **OPEN — the full-fix arc.** v6.3.13 shipped the root cause + the
-opt-in fix (`CYRIUS_STACK_ARRAYS=1`) + the regression gate. This issue tracks
-landing it **default-on**.
+**Status:** ✅ **RESOLVED — v6.3.15 (default-on).** Per-thread array locals are now
+the DEFAULT (`CYRIUS_STACK_ARRAYS=0` opts back to legacy global). Both default-on
+blockers landed: (1) **m128 16-alignment** — a one-slot parity pad when `&arr` disp
+≡ 8 (mod 16), so `pxor`/`aesenc xmm,[arr]` stays `#GP`-free; (2) **`secret var`
+zeroise** addresses the local slot (`ELOAD_LOCAL_ADDR`), not global `EVADDR`. Plus
+an **auto-fallback** (an array exceeding the per-fn 16384-slot budget stays global
+with a `note:` — sole case: sigil `hash_file_into`'s 256 KB buffer, already global →
+no regression). The feared "ecosystem footgun" was a FALSE ALARM from a buggy scan
+that mis-flagged element-typed `var x: i64[N]` as bare: a precise width+element-
+typed-aware audit (11-file agent workflow) confirmed **295 bare-array locals, 0
+over-runs — ZERO stdlib changes**. Six `.tcyr` suites using the daimon under-
+declared-array idiom were corrected to element-typed decls. Two-step bootstrap;
+cycc SHRANK 1,111,616→1,027,664 B. Release gate GREEN (check.sh 109/109; seed→cybs→
+cycc; ecb+cass+pi SELFHOST_OK; bench 544 ms). See CHANGELOG [6.3.15].
 
 ## Background (root cause — fixed opt-in in v6.3.13)
 

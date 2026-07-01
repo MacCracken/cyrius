@@ -65,11 +65,50 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     # one NAMED slot at the deepest offset, so &arr (FINDLOCAL → ELOAD_LOCAL_ADDR =
     # `lea [rbp-disp]`) points at arr[0] and arr[i] indexes upward. Gated; default off →
     # the legacy global path below stays byte-identical. (Large arrays → heap: follow-on.)
-    if (_ensure_stack_arrays(S) == 1 && GINFN(S) == 1) {
+    # v6.3.15 auto-fallback: an array that would push this fn past the per-fn frame-slot
+    # budget (SFLC hard-caps at 16384; leave headroom for scalars) stays in the legacy
+    # shared global data region rather than overflowing the slot table. Only pathological
+    # cases hit this (>~120 KB of array in ONE fn — e.g. sigil hash_file_into's 256 KB I/O
+    # scratch buffer); such arrays were global before v6.3.15 too, so it is NOT a
+    # regression — every concurrency-relevant crypto fn (≤ ~5000 slots) still goes
+    # per-thread. Emit a note so the dev knows this specific buffer isn't per-thread.
+    var sa_on = 0;
+    if (_ensure_stack_arrays(S) == 1) { if (GINFN(S) == 1) { sa_on = 1; } }
+    if (sa_on == 1) {
+        var sa_need = aligned / 8;
+        if (sa_need < 1) { sa_need = 1; }
+        if (GFLC(S) + sa_need + 1 >= 15360) {
+            sa_on = 0;
+            syscall(SYS_WRITE, 2, "note: oversized array local kept in shared global (not per-thread) - exceeds per-fn stack budget; use alloc()\n", 110);
+        }
+    }
+    if (sa_on == 1) {
         var sa_nslots = aligned / 8;
         if (sa_nslots < 1) { sa_nslots = 1; }
         var sa_existing = FINDLOCAL(S, noff);
         if (sa_existing >= 0) { if (GLDEP(S, sa_existing) == GSDEP(S)) { ERRDUPVAR(S); } }
+        # v6.3.15: 16-align the array base for SSE m128 operands — `pxor`/`aesenc`
+        # `xmm, [arr]` (AES-NI / sigil crypto / TLS) FAULT (#GP) on an 8-aligned address.
+        # Global arrays got 16-alignment via the v5.5.21 totvar pad; stack slots are only
+        # 8-aligned. rbp is 16-aligned by the frame ABI, so &arr = [rbp - disp] is
+        # 16-aligned iff disp ≡ 0 mod 16. The named (deepest) slot lands at
+        # disp = (named+1)*8 + regalloc*8 + retstash — mirroring the &arr / arr[i]
+        # FINDLOCAL disp math (parse_expr / parse_decl). Every term is a multiple of 8,
+        # so disp % 16 ∈ {0, 8}; if 8, one extra anonymous filler shifts the whole array
+        # 8 B deeper → 16-aligned. Only for arrays ≥ 16 B (the m128-operand candidates).
+        if (aligned >= 16) {
+            var sa_named0 = GFLC(S) + sa_nslots - 1;
+            var sa_disp = (sa_named0 + 1) * 8;
+            if (_cur_fn_regalloc > 0) { sa_disp = sa_disp + _cur_fn_regalloc * 8; }
+            if (_cur_fn_ret_stash > 0) { sa_disp = sa_disp + _cur_fn_ret_stash; }
+            if (sa_disp % 16 == 8) {
+                var sa_pad = GFLC(S);
+                S64(S + 0x5D9D000 + sa_pad * 8, 0 - 1);
+                SLDEP(S, sa_pad, GSDEP(S));
+                SLTYPE(S, sa_pad, 0);
+                SFLC(S, sa_pad + 1);
+            }
+        }
         var sa_j = 0;
         while (sa_j < sa_nslots - 1) {
             var sa_li = GFLC(S);

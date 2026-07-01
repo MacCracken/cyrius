@@ -98,7 +98,7 @@ fn run_field_access_tests() {
     # ---- Width-aware: .len on different-width slices ----
 
     test_group("§8 .len value is element COUNT, not byte size");
-    var d4[4];
+    var d4: u32[4];   # 4 u32 (16 B) — was bare [4]=8 B; store32 at +12 overflowed the frame on v6.3.15 stack
     store32(&d4, 100); store32(&d4+4, 200); store32(&d4+8, 300); store32(&d4+12, 400);
     var s4: [u32] = 0;
     slice_set(&s4, &d4, 4);
