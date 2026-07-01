@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.21] — 2026-07-01
+
+**v6.3.21 — the security-audit tail (RM-06).** Closes the overdue CVE-09…13 tail from the
+2026-06-10 deep-dive audit: one real codegen fix + a trust-chain completion + a threat-model
+refresh, with a per-item premise-check that caught two stale roadmap/doc claims. cycc changes only
+via CVE-09 (x86 jump.cyr); the rest is docs + install script.
+
+### Fixed
+- **CVE-09 — x86 jump-target table overflow now HARD-ERRORS instead of silently mis-eliminating.**
+  `src/backend/x86/jump.cyr`'s per-fn jump-target table holds 1023 entries (the count eats the first
+  8 B of the 8 KB budget). Past 1023, `EJMP`/`EPATCH` silently dropped targets → `ir_build_bbs` missed
+  a basic-block boundary → **LASE** (Load-After-Store Elim, `CYRIUS_IR=3`) could eliminate a load that
+  is live via the unrecorded target → wrong codegen. Both sites now hard-error (`exit 1`, "function
+  exceeds 1023 jump targets — split the function"). **Byte-identical for every real program**: 0 hits
+  across cycc self-host + the entire differential corpus, and the v6.3.20 `scripts/differential.sh`
+  proved the change logic-preserving (**304/304 identical, OLD vs NEW**) — the gate's first real use.
+  Regression `tests/jump_target_cap.sh` (a >1023-branch fn hard-errors; a 1000-branch fn compiles) →
+  check.sh **110→111**. x86-only (the table + LASE are x86-only).
+
+### Security / Changed
+- **CVE-11 — stack canaries ACCEPTED-WITH-RATIONALE** (not emitted). The `PROT_NONE` guard page below
+  every thread stack (CVE-29, v6.2.44) + W^X code/data separation (v6.3.12) + opt-in PIE/ASLR (v6.1.6)
+  supersede per-call canaries for a bare-metal-first sovereign language; a stack overflow is caught as
+  a loud SIGSEGV, not silent. Documented in `threat-model.md` Known Limitations.
+- **CVE-21 anti-downgrade floor** (`scripts/install.sh`) — completes the release trust chain: v6.2.31
+  signs releases, but a client still accepted an unsigned same-or-newer version if `SHA256SUMS.sig` was
+  stripped. Now a successful signed verify TOFU-pins `~/.cyrius/signed-since` (highest signed version);
+  a later UNSIGNED install at/above that floor is refused fail-closed unless `CYRIUS_ALLOW_UNSIGNED=1`.
+  Legit downgrades to a pre-signing version stay allowed. `_version_ge` + floor logic unit-tested (7
+  version cases + 4 floor cases); E2E upgrade path rides the cass/ecb install gates.
+- **CVE-10 — tmp-file race paper-closed** (vector fixed v4.10.0, never ticked).
+- **RM-02 — `threat-model.md` refreshed**: the **16 MB output-buffer cap** added (was omitted), the
+  CVE-09 jump cap recorded, CVE-09/10/11 status stamped, "last reviewed" → v6.3.21. (The roadmap's claim
+  that the doc "misstates the TLS backend / PIE / input cap" was itself STALE — those were accurate.)
+- **Audit cadence PINNED**: next FULL security audit at the **v6.4.0 boundary** (CLAUDE.md §9).
+
+### Docs (premise-check catches)
+- The v6.3.23 roadmap row listed **CVE-29 as pending**, but the `PROT_NONE` thread-stack guard shipped
+  **v6.2.44** — corrected. The `lib/tls_native.cyr` "KNOWN HOLES" header (`set_alpn` / `set_version_range`
+  / `close`) is also stale — all three are implemented (verified in-tree) — flagged for cleanup.
+
+_Self-host fixpoint + seed→cybs→cycc byte-identical; check.sh **111/111**; ecb + cass + pi
+**SELFHOST_OK** (the x86 codegen change self-hosts on all real hardware); differential.sh **304/304
+identical** (CVE-09 logic-preserving); self_compile **539 ms**; cycc **1,027,672 B** (+8 B, the
+hard-error path)._
+
 ## [6.3.20] — 2026-07-01
 
 **v6.3.20 — the differential-corpus gate (VR-03), the perf-arc prerequisite.** Codifies the

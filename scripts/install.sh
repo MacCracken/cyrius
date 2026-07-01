@@ -112,6 +112,44 @@ _verify_signature() {
     return 0
 }
 
+# CVE-21 anti-downgrade floor (v6.3.21): once a signed release has been verified on
+# this machine, a later install AT OR ABOVE that version MUST also be signed — an
+# absent/stripped SHA256SUMS.sig at/above the floor is a downgrade attack (v6.2.31
+# signs releases, but the pre-floor code accepted an unsigned same-or-newer version).
+# The floor is TOFU-pinned in $CYRIUS_HOME/signed-since (highest version verified
+# signed). Legit downgrades to a pre-signing version (< floor) stay allowed.
+_SIGNED_FLOOR_FILE="$CYRIUS_HOME/signed-since"
+
+# _version_ge A B → true iff A >= B (dotted major.minor.patch, numeric per field).
+_version_ge() {
+    [ "$1" = "$2" ] && return 0
+    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$1" ]
+}
+
+# After a SUCCESSFUL signed verify: advance the floor to VERSION (never lower it).
+_signed_floor_pin() {
+    if [ -f "$_SIGNED_FLOOR_FILE" ]; then
+        _cur=$(cat "$_SIGNED_FLOOR_FILE" 2>/dev/null)
+        [ -n "$_cur" ] && { _version_ge "$VERSION" "$_cur" || return 0; }
+    fi
+    mkdir -p "$CYRIUS_HOME" 2>/dev/null
+    printf '%s\n' "$VERSION" > "$_SIGNED_FLOOR_FILE"
+}
+
+# When a release is UNSIGNED (sig skipped/absent): refuse if VERSION >= the floor.
+_signed_floor_enforce() {
+    [ -f "$_SIGNED_FLOOR_FILE" ] || return 0
+    _floor=$(cat "$_SIGNED_FLOOR_FILE" 2>/dev/null)
+    [ -n "$_floor" ] || return 0
+    if _version_ge "$VERSION" "$_floor"; then
+        if [ "${CYRIUS_ALLOW_UNSIGNED:-0}" = "1" ]; then
+            info "anti-downgrade: $VERSION >= signed floor $_floor but UNSIGNED — allowed via CYRIUS_ALLOW_UNSIGNED=1 (NOT recommended)"
+        else
+            err "anti-downgrade (CVE-21): refusing UNSIGNED $VERSION — a signed release ($_floor) was previously verified on this machine, so an absent/stripped signature at or above that version is a downgrade attack. Set CYRIUS_ALLOW_UNSIGNED=1 only if you genuinely trust this unsigned build."
+        fi
+    fi
+}
+
 # ── Detect platform ──
 
 case "$ARCH" in
@@ -470,11 +508,15 @@ else
         # manual `cyrsign verify`.
         if _verify_signature; then
             info "signature verified (Ed25519)"
+            _signed_floor_pin
         else
             _vs=$?
             if [ "$_vs" -eq 1 ]; then
                 err "release signature verification FAILED for ${VERSION} — refusing (tampered SHA256SUMS or wrong key)."
             else
+                # CVE-21 anti-downgrade: an unsigned release at/above a previously-verified
+                # signed floor is refused (fail-closed) unless CYRIUS_ALLOW_UNSIGNED=1.
+                _signed_floor_enforce
                 info "signature check skipped (no prior cyrsign / unsigned release; integrity is HTTPS + SHA256)"
             fi
         fi

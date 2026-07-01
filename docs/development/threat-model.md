@@ -7,12 +7,14 @@
 > bridge to system libraries (libssl, libc) via the v5.6.37
 > fdlopen-bootstrapped helper — see Trust Boundaries below.
 >
-> **Last reviewed**: 2026-06-28 (v6.3.0) — seed boundary updated: `seed → cybs → cycc`
-> is now byte-identical-derivable (CVE-20 resolved 2026-06-20), enforced every release
-> via `scripts/release-gate.sh` (step 2). RM-02: native TLS is the
-> *default* backend (since v6.1.21, not opt-in), PIE/ASLR ships (since v6.1.6),
-> the input buffer is 1 MB (not 131 KB), and the binary-release trust root is
-> the committed `build/cycc` (CVE-20).
+> **Last reviewed**: 2026-07-01 (v6.3.21 — security-audit tail; RM-02 refresh + CVE-09/11 closed).
+> Seed boundary: `seed → cybs → cycc` is byte-identical-derivable (CVE-20 resolved 2026-06-20),
+> enforced every release via `scripts/release-gate.sh` (step 2). Current facts: native TLS is the
+> *default* backend (since v6.1.21, not opt-in), PIE/ASLR ships (since v6.1.6), the input buffer is
+> 1 MB **and the output buffer 16 MB** (both raised v6.1.27), and the binary-release trust root is
+> the committed `build/cycc` (CVE-20). **CVE-09** (x86 jump-target overflow) now HARD-ERRORS past
+> 1023 targets/fn instead of silently mis-eliminating (v6.3.21); **CVE-11** (stack canaries) is
+> accepted-with-rationale (see Known Limitations); **CVE-10** (tmp-file race) fixed v4.10.0.
 
 ## Trust Boundaries
 
@@ -35,7 +37,7 @@
 | **Preprocessor path traversal** | `include "../../../etc/passwd"` reads arbitrary files | `READFILE` in `lib/lex.cyr` rejects `..` path components by default; `CYRIUS_ALLOW_PARENT_INCLUDES=1` env override exists for sibling-dep projects (bote pattern) and is auto-set by `cyrius build` when resolving relative-path deps. CVE-02 hardening, shipped v5.x. |
 | **Integer overflow in alloc** | Large allocation wraps to small size | brk return value checked; returns 0 on failure |
 | **Code injection via inline asm** | `asm { ... }` emits arbitrary bytes | By design — asm is a power tool, not a vulnerability |
-| **Denial of service** | Extremely large source files | Input buffer capped at 1 MB (v3.6.7); preprocess-out 8 MB (v5.11.33); token array at 1,048,576 (v5.8.46) |
+| **Denial of service** | Extremely large source files | Input buffer capped at 1 MB (raised 512 KB → 1 MB, v6.1.27); output buffer capped at 16 MB (raised 2 MB → 16 MB, v6.1.27); preprocess-out 8 MB (v5.11.33); token array at 1,048,576 (v5.8.46); x86 jump-target table capped at 1023/fn — **hard-error past it** (CVE-09, v6.3.21) rather than silent LASE mis-elimination |
 | **Supply chain** | Compromised compiler binary | **Narrow-scope self-hosting verification**: the compiler must produce byte-identical output when recompiling its own source (3-step fixpoint `cc_a → cc_b → cc_c; b == c`; pre-v5 this was `cc3 == cc3`, now `cycc → cycc_b → cycc_c`). This invariant is check.sh-enforced on every commit across all active targets. **Note on scope**: this mitigates trusting-trust attacks against the compiler's own codegen only. It does NOT address platform-loader tolerance of the emitted binary (a separate "broad-scope" property — see `docs/architecture/cyrius.md` §"Self-hosting: two scopes of byte-identity"). |
 | **Bootstrap trust** | Trusting the committed 29KB seed | Diverse double compilation possible; seed is auditable |
 
@@ -44,7 +46,7 @@
 | Limitation | Impact | Planned Fix |
 |-----------|--------|-------------|
 | No memory safety | Buffer overflows in user programs possible | Ownership/borrow checker (v1.0+) |
-| No stack canaries | Stack smashing undetected | Compiler-inserted canaries (future) |
+| No stack canaries (**accepted — CVE-11, v6.3.21**) | Stack smashing on a thread stack is caught, not silent | **Accept-with-rationale:** canaries are not emitted. A `PROT_NONE` guard page below every thread stack (**CVE-29, v6.2.44**) turns a stack overflow into a loud SIGSEGV — the same detect-and-crash outcome a canary gives. **W^X** code/data separation (v6.3.12) makes injected stack data non-executable (blocks ROP/JOP payloads), and opt-in **PIE/ASLR** (v6.1.6) removes address predictability. For a bare-metal-first sovereign systems language, this multi-layer defense is preferred to per-call canary overhead. Revisit if a consumer profiles a real canary-shaped gap (e.g. a non-thread stack without a guard page). |
 | PIE/ASLR is opt-in | Non-PIE binaries have a predictable layout | **PIE codegen shipped v6.1.6** — `--pie` / `CYRIUS_PIE=1` emits `ET_DYN` so the loader applies ASLR (x86_64 + aarch64 userland). Default output is still non-PIE `ET_EXEC`; pass `--pie` for ASLR. |
 | No sandboxing | Generated binaries have full syscall access | Sandbox-aware borrow checker (post-v1.0) |
 | Fixed-size arrays | Compiler crashes on capacity overflow | Dynamic allocation or larger fixed sizes |

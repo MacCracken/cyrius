@@ -317,6 +317,10 @@ fn _run_regression_gates(): i64 {
     _gate("differential-corpus harness smoke — the logic-preserving perf-arc gate (scripts/differential.sh --smoke)", "scripts/differential-smoke.sh");
     println("");
 
+    _section("Jump-target cap (CVE-09)");
+    _gate("x86 jump-target overflow hard-errors past 1023, compiles under it (CVE-09, v6.3.21)", "tests/jump_target_cap.sh");
+    println("");
+
     # v5.9.25 (per v5.9.6 pin): the 6 _tcyr_relay_gate calls
     # previously here (shadow_pam / fdlopen / thread_local /
     # atomics / thread_safety / flags) are removed — each tcyr is

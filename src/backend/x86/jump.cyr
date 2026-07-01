@@ -50,9 +50,16 @@ fn EJMP(S, target): i64 {
     if (jtc < 1023) {
         S64(S + 0x19E008 + jtc * 8, target);
         S64(S + 0x19E000, jtc + 1);
-    } elif (jtc == 1023) {
-        syscall(SYS_WRITE, 2, "warning: jump target table full (1023) — LASE disabled for this function\n", 75);
-        S64(S + 0x19E000, jtc + 1);
+    } else {
+        # CVE-09 (v6.3.21): the table holds only 1023 slots (the count eats the
+        # first 8 B of the 8 KB budget). Past 1023, targets go UNRECORDED, so
+        # ir_build_bbs misses a BB boundary and LASE (Load-After-Store Elim, x86,
+        # CYRIUS_IR=3) can eliminate a load that is live via the unrecorded target
+        # → silent wrong codegen. HARD-ERROR now, not the old silent warn: no real
+        # function comes near 1023 targets (0 hits across cycc self-host + the whole
+        # differential corpus), so this is byte-identical for every real program.
+        syscall(SYS_WRITE, 2, "error: function exceeds 1023 jump targets (x86 LASE cap) - split the function\n", 78);
+        syscall(SYS_EXIT, 1);
     }
     return 0;
 }
@@ -94,8 +101,13 @@ fn EPATCH(S, off): i64 {
     if (jtc < 1023) {
         S64(S + 0x19E008 + jtc * 8, cp);
         S64(S + 0x19E000, jtc + 1);
+    } else {
+        # CVE-09 (v6.3.21): same 1023 cap as EJMP — hard-error rather than silently
+        # drop the landing pad (which would let LASE mis-eliminate). Shared count, so
+        # whichever of EJMP/EPATCH reaches the cap first errors.
+        syscall(SYS_WRITE, 2, "error: function exceeds 1023 jump targets (x86 LASE cap) - split the function\n", 78);
+        syscall(SYS_EXIT, 1);
     }
-    # Overflow already warned by EJMP — no duplicate warning needed
     return 0;
 }
 
