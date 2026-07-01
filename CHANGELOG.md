@@ -6,6 +6,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.18] — 2026-06-30
+
+**v6.3.18 — stdlib undersized-array-locals hardening sweep (consumer-filed).** Completes the v6.3.13
+sweep: since array locals became stack-allocated (v6.3.13, `THREAD_STACK_SIZE` 64 KB→2 MB + `PROT_NONE`
+guard page), a bare `var X[N]` written past `ceil(N/8)*8` bytes smashes the stack frame. Filed by the
+**AGNOS base-stack migration to 6.3.15**. A precise 17-file agent audit (max-write-width vs the 8-byte-rounded
+slot per site) drove the fix. Lib-only — cycc **byte-identical**. Closes
+[`stdlib-undersized-array-locals-stack-smash`](docs/development/issues/archived/2026-06-30-stdlib-undersized-array-locals-stack-smash.md).
+
+### Fixed — 2 genuine stack-smashes (both `lib/sankoch.cyr` bzip2; NOT in the 7 files the issue listed)
+- **`_bz_decode_block` `var pos[6]`** (8-byte slot) — the MTF-undo loop `store64(&pos + i*8)` for
+  `i < n_groups` (up to 6) writes **48 bytes** → `var pos[48]`. The daimon footgun (author meant 6 i64
+  **slots**, declared 6 **bytes**).
+- **`_bze_emit_block` `var present[16]`** (16-byte slot) — the symbol-map loop `store64(&present + i*8)`
+  for `i < 16` writes **128 bytes** → `var present[128]`.
+- Both were **missed by the v6.3.13 sweep AND the v6.3.15 "0 over-runs" audit** (loop bound not resolved).
+  Covered by a new **`tests/tcyr/sankoch_bzip2_roundtrip.tcyr`** (compress↔decompress byte-identical under
+  default-on stack locals — pre-fix the roundtrip smashes the frame).
+- **Fixed durably at the source, not just the fold.** sankoch is vendored byte-identical into
+  `lib/sankoch.cyr`, so a fix only to cyrius's copy would evaporate on the next re-vendor. The fix landed in
+  the **sankoch repo** (`src/bzip2.cyr`, bumped **2.4.6 → 2.4.7**, `cyrius distlib`-regenerated), verified
+  against sankoch's own suite (bzip2 compress/decompress roundtrips pass), and **re-vendored** into
+  `lib/sankoch.cyr` byte-identical to the 2.4.7 dist (sankoch's commit/tag is a separate repo action). cyrius
+  `.cyml` vendor comment updated to `sankoch 2.4.7`.
+
+### Changed — 33 latent-benign cyrius-native sites sized correctly (byte-identical codegen)
+- The sites this issue named were confirmed **latent-benign** — each writes ≤ 8 bytes, which fits its
+  8-byte-rounded 1-slot allocation (exactly why the v6.3.15 audit reported 0 over-runs) — but the
+  **33 in cyrius-native stdlib** (`process`/`regression`/`pam`/`shadow`/`net`/`tls`/`ws`/`syscalls_*`) were
+  **sized to the bytes actually written** anyway (`var stbuf[1]`→`[4]` for the 4-byte `wait4` status,
+  `soff_store[1]`→`[8]`, `pfd[1]`→`[8]`, etc.). The slot count is unchanged, so codegen is **byte-identical**.
+- The **1 vendored site** — `yukti.cyr`'s `src_len[1]` (a 4-byte `recvfrom` socklen into an 8-byte slot) —
+  was **reverted to byte-identity with the yukti 2.2.7 dist** rather than diverging the fold: it's benign and
+  doesn't warrant a yukti patch. (Filed as a cosmetic backlog item for yukti's own timeline.)
+
+### Verified
+- cycc byte-identical (consumer-lib-only); **seed → cybs → cycc**; check.sh **109/109** (incl. the new
+  bzip2 roundtrip + the existing sankoch-deflate fsck test); bzip2 roundtrip 3/3; **ecb + cass + pi
+  SELFHOST_OK**; bench self_compile **540 ms**; cycc **1,027,664 B** (unchanged). Install snapshot refreshed
+  for the edited libs (snapshot-ping-pong guard). cycc byte-identical (sankoch/yukti aren't in the compiler).
+  The AGNOS base stack picks up **sankoch 2.4.7** on its next `cyrius lib sync`. **Separately surfaced** (not
+  fixed here): `sankoch`'s `zlib_compress.tcyr` **segfaults under cycc 6.3.18** — pre-existing (identical with
+  and without this fix; sankoch's `cyrius.cyml` still pins 6.2.44), likely another 6.3.13-stack-locals footgun
+  in the zlib/deflate path, filed for a follow-up sankoch patch.
+
 ## [6.3.17] — 2026-06-30
 
 **v6.3.17 — bench harness un-blind (PF-02 + PF-03).** Opens the **v6.3.x EXPANSION** (user 2026-06-30:

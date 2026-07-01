@@ -610,7 +610,7 @@ fn timerspec_new(interval_sec, initial_sec): i64 {
 
 # timerfd_drain syscall wrapper.
 fn timerfd_drain(fd): i64 {
-    var buf[1];
+    var buf[8];
     var n = sys_read(fd, &buf, 8);
     if (n == 8) { return load64(&buf); }
     return 0;

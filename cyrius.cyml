@@ -78,7 +78,7 @@ stdlib = [
 # unblocks TLS Mini-arc A.4 — adds hmac_sha384 + hkdf_extract_sha384 +
 # hkdf_expand_sha384 + hkdf_sha384 for the TLS_AES_256_GCM_SHA384
 # ciphersuite key schedule; pure additive, no removals), vani 0.9.2,
-# yukti 2.2.2, sankoch 2.2.4 are vendored byte-identical into `lib/<name>.cyr`
+# yukti 2.2.7, sankoch 2.4.7 are vendored byte-identical into `lib/<name>.cyr`
 # from their patched dist files at the tags listed above. They are
 # **NOT** added to the [deps].stdlib auto-prepend list — consumers
 # pull them via explicit `include "lib/<name>.cyr"` (the sandhi

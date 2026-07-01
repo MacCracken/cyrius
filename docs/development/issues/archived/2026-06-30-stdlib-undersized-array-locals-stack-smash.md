@@ -1,6 +1,29 @@
 # stdlib — undersized `var X[N]` array locals stack-smash under v6.3.13 stack-allocated locals (incomplete sweep)
 
-**Status**: ⏳ **OPEN — incoming from the AGNOS base-stack migration.** Filed 2026-06-30. **Cyrius-side; stdlib source fix.** The `var X[N]` **function-local → thread-stack** change (v6.3.13, `THREAD_STACK_SIZE` 64 KB→2 MB + `PROT_NONE` guard page) turned a class of **latent undersized-buffer overflows in the stdlib's own modules** into hard `SIGSEGV`s. The sweep that accompanied v6.3.13 was **incomplete**: `bench.cyr` was fixed (`var ts[2]`→`var ts[16]`) and the `argv[4]`/`envp[1]` cases were fixed back at v5.11.60 (see `process.cyr:39` comment), but **`process.cyr` / `pam.cyr` / `regression.cyr` / `shadow.cyr` / `net.cyr` / `tls.cyr` / `yukti.cyr` still ship undersized 1-byte locals** written 4–8 bytes.
+**Status**: ✅ **RESOLVED — v6.3.18.** A precise 17-file agent audit (max-write-width vs the
+`ceil(N/8)*8` slot per site) found **2 genuine stack-smashes** the v6.3.13 sweep AND the
+v6.3.15 "0 over-runs" audit both missed — **both in `lib/sankoch.cyr` bzip2** (not in the
+7 files this issue listed): `_bz_decode_block`'s `var pos[6]` (8-byte slot) took 48 bytes
+(`store64(&pos+i*8)`, i < n_groups ≤ 6) → `[48]`; `_bze_emit_block`'s `var present[16]`
+(16-byte slot) took 128 bytes (`store64(&present+i*8)`, i < 16) → `[128]`. Both were the
+daimon footgun (author meant i64 SLOTS, declared BYTES). Fixed + covered by a new
+`tests/tcyr/sankoch_bzip2_roundtrip.tcyr` (compress↔decompress byte-identical under
+default-on stack locals — pre-fix it smashes the frame). The **34 sites this issue named**
+(`process`/`regression`/`pam`/`shadow`/`net`/`tls`/`yukti`/`ws`/`syscalls_*`) were confirmed
+**latent-benign** — every one writes ≤ 8 bytes, which fits its 8-byte-rounded 1-slot
+allocation (exactly why the v6.3.15 audit correctly reported 0 over-runs) — but were
+**sized correctly anyway** (`var stbuf[1]`→`[4]`, `soff_store[1]`→`[8]`, etc.; byte-identical
+codegen since the slot count is unchanged) so the byte-count now matches usage and the
+done-criteria grep is clean. cycc byte-identical (consumer-lib-only). check.sh 109/109.
+The AGNOS base stack re-vendors on its next `cyrius lib sync`. See CHANGELOG [6.3.18].
+
+Original report follows. **Filed 2026-06-30.** The `var X[N]` **function-local → thread-stack**
+change (v6.3.13, `THREAD_STACK_SIZE` 64 KB→2 MB + `PROT_NONE` guard page) turned a class of
+**latent undersized-buffer overflows in the stdlib's own modules** into hard `SIGSEGV`s.
+The sweep that accompanied v6.3.13 was **incomplete**: `bench.cyr` was fixed (`var ts[2]`→
+`var ts[16]`) and the `argv[4]`/`envp[1]` cases were fixed back at v5.11.60, but the sites
+below still shipped undersized locals (all confirmed latent-benign above; the real ones were
+in sankoch, not this list).
 **Date**: 2026-06-30
 **Priority**: **High (ecosystem-wide, latent).** Every consumer that reaches these stdlib paths (any `sys_waitpid` / subprocess reap via `process.cyr` or `regression.cyr`; PAM auth; `shadow`/passwd parse; the `net.cyr` poll/recvfrom paths; `tls.cyr`) inherits a stack-overwrite. Severity per site varies (see below) — some are 3-byte overflows that land in aligned padding today (why they were skipped), others (`shadow.cyr`'s 8-byte `store64` into 1 byte) are unambiguous.
 **Where**: `cyrius/lib/{process,pam,regression,shadow,net,tls,yukti}.cyr`.

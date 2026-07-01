@@ -1,0 +1,42 @@
+# sankoch bzip2 compress↔decompress roundtrip — v6.3.18 hardening regression.
+#
+# `lib/sankoch.cyr` had two daimon-footgun stack-smashes exposed by the v6.3.13
+# stack-allocated array locals: `var pos[6]` (8-byte slot) in `_bz_decode_block`'s
+# MTF-undo wrote up to 48 bytes (`store64(&pos + i*8)`, i < n_groups ≤ 6), and
+# `var present[16]` (16-byte slot) in `_bze_emit_block`'s symbol map wrote 128 bytes
+# (`store64(&present + i*8)`, i < 16). Both were the author meaning i64 SLOTS but
+# declaring BYTES. Fixed to `[48]` / `[128]`. This roundtrip drives both paths (block
+# encode with multiple selector groups + decode) under default-on stack locals — pre-fix
+# it corrupts the frame; post-fix it must reconstruct the input byte-for-byte.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/atomic.cyr"
+include "lib/sync.cyr"
+include "lib/assert.cyr"
+include "lib/sankoch.cyr"
+
+fn roundtrip(n): i64 {
+    var src = alloc(8192);
+    var i = 0;
+    while (i < n) { store8(src + i, 32 + ((i * 37 + (i / 7) * 11) % 90)); i = i + 1; }
+    var comp = alloc(16384);
+    var clen = bzip2_compress(src, n, comp, 16384);
+    if (clen <= 0) { return 0 - 1; }
+    var decomp = alloc(8192);
+    var dlen = bzip2_decompress(comp, clen, decomp, 8192);
+    if (dlen != n) { return 0 - 2; }
+    i = 0;
+    while (i < n) { if (load8(decomp + i) != load8(src + i)) { return 0 - 3; } i = i + 1; }
+    return n;
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("sankoch bzip2 roundtrip (pos[48] + present[128] stack-smash fix)");
+    assert_eq(roundtrip(260), 260, "260-byte varied input roundtrips (multi-group block)");
+    assert_eq(roundtrip(64), 64, "64-byte input roundtrips");
+    assert_eq(roundtrip(700), 700, "700-byte input roundtrips (larger symbol map)");
+    return assert_summary();
+}
+var rc = main(); syscall(SYS_EXIT, rc);

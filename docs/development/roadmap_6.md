@@ -896,7 +896,8 @@ cap; minors flex long.
 > FFI / `fncall6` ABI + cross-BB regalloc/liveness + copy-prop + cross-BB DSE + float
 > peephole now land as **v6.3.22 → v6.3.26** ([roadmap.md](roadmap.md)); the
 > bench-harness un-blind (PF) + differential-corpus gate (VR-03) prerequisites land
-> first as **v6.3.17 / v6.3.18**. **v6.4.x now reopens as an EMPTY staging minor** —
+> first as **v6.3.17 / v6.3.19** (a consumer-filed stdlib hardening sweep took v6.3.18).
+> **v6.4.x now reopens as an EMPTY staging minor** —
 > the landing zone for work that surfaces during the long v6.3.x runway (closeout-swept
 > residuals, new consumer/agnos requests). The v6.5.x perf-refactor + v6.6.x RISC-V
 > minors are unchanged. The original arc plan is preserved below for reference.
