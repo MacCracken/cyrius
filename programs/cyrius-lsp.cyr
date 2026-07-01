@@ -78,6 +78,12 @@ fn read_header(): i64 {
                 num = num * 10 + load8(&buf + j) - 48;
                 j += 1;
             }
+            # v6.3.23 (DX-02): reject an out-of-range Content-Length from an
+            # untrusted / malformed editor message. Without this a huge value
+            # reaches read_body's alloc(n+1) (0 on > ALLOC_MAX) → read() into a
+            # NULL page. Cap at 16 MB (no real LSP message approaches it) so the
+            # framing rejects rather than faults; the main loop treats -1 as EOF.
+            if (num > 16777216) { return -1; }
             return num;
         }
         i += 1;
@@ -88,6 +94,9 @@ fn read_header(): i64 {
 # Read exactly n bytes from stdin
 fn read_body(n): i64 {
     var buf = alloc(n + 1);
+    # v6.3.23 (DX-02): alloc returns 0 on failure (e.g. n+1 > ALLOC_MAX); never
+    # read() into a NULL page — treat as EOF so the main loop shuts down cleanly.
+    if (buf == 0) { return 0; }
     var total = 0;
     while (total < n) {
         var got = syscall(0, 0, buf + total, n - total);
@@ -168,20 +177,50 @@ fn json_get_id(body): i64 {
 }
 
 # Convert file:// URI to local path
+# v6.3.23 (DX-02): does `path` contain a ".." path component? A component is a
+# run between '/' separators (or string start/end). Detects "../", "/..", a
+# leading "..", or a trailing "/.." — the workspace-traversal vectors — without
+# false-positiving on names like "foo..bar" or "..." that merely contain dots.
+fn _lsp_path_has_dotdot(path): i64 {
+    var i = 0;
+    while (load8(path + i) != 0) {
+        var at_start = 0;
+        if (i == 0) { at_start = 1; }
+        elif (load8(path + i - 1) == 47) { at_start = 1; }   # previous char '/'
+        if (at_start == 1) {
+            if (load8(path + i) == 46 && load8(path + i + 1) == 46) {   # ".."
+                var after = load8(path + i + 2);
+                if (after == 0) { return 1; }        # trailing ".."
+                if (after == 47) { return 1; }       # ".." followed by '/'
+            }
+        }
+        i += 1;
+    }
+    return 0;
+}
+
 fn uri_to_path(uri): i64 {
     var ulen = strlen(uri);
+    var path = 0;
     # Strip file:// prefix (7 chars)
     if (ulen > 7 && memeq(uri, "file://", 7) == 1) {
         var plen = ulen - 7;
-        var path = alloc(plen + 1);
+        path = alloc(plen + 1);
         memcpy(path, uri + 7, plen);
         store8(path + plen, 0);
-        return path;
+    } else {
+        # No prefix, return as-is
+        path = alloc(ulen + 1);
+        memcpy(path, uri, ulen);
+        store8(path + ulen, 0);
     }
-    # No prefix, return as-is
-    var path = alloc(ulen + 1);
-    memcpy(path, uri, ulen);
-    store8(path + ulen, 0);
+    # v6.3.23 (DX-02): untrusted-workspace-input guard. A well-behaved editor
+    # sends normalized absolute URIs; a ".." component is a traversal attempt to
+    # read/index a file outside the workspace. Soft-fail to an empty string so
+    # every caller's strlen/`.cyr`-suffix check rejects it without a NULL deref.
+    if (_lsp_path_has_dotdot(path) == 1) {
+        store8(path, 0);
+    }
     return path;
 }
 
@@ -889,7 +928,7 @@ fn _build_envp_from_proc(): i64 {
 # class. Returns stderr buffer (never NULL except on pipe failure
 # upstream of fork).
 fn _compile_via_wrapper(filepath, project_root): i64 {
-    var pipe_fds[2];
+    var pipe_fds[16];
     var pr = sys_pipe(&pipe_fds);
     if (pr < 0) { return 0; }
     var pipe_read = load32(&pipe_fds);
@@ -931,7 +970,7 @@ fn _compile_via_wrapper(filepath, project_root): i64 {
     }
     store8(errbuf + total, 0);
     sys_close(pipe_read);
-    var status_buf[1];
+    var status_buf[16];
     sys_waitpid(pid, &status_buf, 0);
     return errbuf;
 }
@@ -955,7 +994,7 @@ fn compile_and_capture(filepath): i64 {
     if (_cycc_path == 0) { return 0; }
 
     # Create pipe for stderr capture
-    var pipe_fds[2];
+    var pipe_fds[16];
     var pr = sys_pipe(&pipe_fds);
     if (pr < 0) { return 0; }
     var pipe_read = load32(&pipe_fds);
@@ -1006,7 +1045,7 @@ fn compile_and_capture(filepath): i64 {
     sys_close(pipe_read);
 
     # Wait for child
-    var status_buf[1];
+    var status_buf[16];
     sys_waitpid(pid, &status_buf, 0);
 
     return errbuf;

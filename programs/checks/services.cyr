@@ -596,12 +596,45 @@ fn _lsp_definition_gate(): i64 {
     fail = fail + _lsp_check_substr(out3, n3, "\"data\":[0,0,2,5,0",
         "test8: /semanticTokens data did not start with 'fn' keyword token tuple");
 
+    # ─ Phase 4 (v6.3.23, DX-02): untrusted-input survival + traversal guard.
+    #   Two hostile messages — a didOpen with a `..` traversal URI (which the
+    #   uri_to_path guard must neutralize rather than open outside the workspace)
+    #   and a malformed didOpen with no `uri` field — must NOT crash the server:
+    #   a subsequent VALID documentSymbol on the real fixture still answers. If
+    #   either hostile body faulted the server, test9b's foo_bar would vanish.
+    var sb4 = str_builder_new();
+    _lsp_frame(sb4, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}");
+    var trav_sb = str_builder_new();
+    str_builder_add_cstr(trav_sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(trav_sb, decl_path);
+    str_builder_add_cstr(trav_sb, "/../../../../../../etc/evil.cyr\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}");
+    _lsp_frame(sb4, str_data(str_builder_build(trav_sb)));
+    _lsp_frame(sb4, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"languageId\":\"cyrius\"}}}");
+    var open4_sb = str_builder_new();
+    str_builder_add_cstr(open4_sb, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(open4_sb, decl_path);
+    str_builder_add_cstr(open4_sb, "\",\"languageId\":\"cyrius\",\"version\":1,\"text\":\"\"}}}");
+    _lsp_frame(sb4, str_data(str_builder_build(open4_sb)));
+    var sym4_sb = str_builder_new();
+    str_builder_add_cstr(sym4_sb, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/documentSymbol\",\"params\":{\"textDocument\":{\"uri\":\"file://");
+    str_builder_add_cstr(sym4_sb, decl_path);
+    str_builder_add_cstr(sym4_sb, "\"}}}");
+    _lsp_frame(sb4, str_data(str_builder_build(sym4_sb)));
+    _lsp_frame(sb4, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"shutdown\"}");
+    var reqs4 = str_builder_build(sb4);
+    var out4 = alloc(out_cap);
+    var n4 = _ipc_session(lsp_path, str_data(reqs4), str_len(reqs4), out4, out_cap);
+    fail = fail + _lsp_check_substr(out4, n4, "\"definitionProvider\":true",
+        "test9: server did not answer initialize under adversarial input");
+    fail = fail + _lsp_check_substr(out4, n4, "\"name\":\"foo_bar\"",
+        "test9b: server did not survive a hostile didOpen (traversal `..` URI + missing-uri) — documentSymbol lost");
+
     if (fail == 0) {
         _p("  ");
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": cyrius-lsp definitionProvider + documentSymbolProvider + referencesProvider + semanticTokensProvider/full + cross-file indexing (v5.7.39 + v5.9.10)");
+        println(": cyrius-lsp definitionProvider + documentSymbolProvider + referencesProvider + semanticTokensProvider/full + cross-file indexing + untrusted-input survival (v5.7.39 + v5.9.10 + v6.3.23)");
     }
     _check(label, fail);
     return fail;

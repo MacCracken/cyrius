@@ -183,41 +183,15 @@ fn FIXUP(S): i64 {
     # `_strict_mode` exit (still after the patch loop) can read it.
     var undef_count = 0;
     var fcnt_pre = GFCNT(S);
-    # Symbol dump — opt-in via CYRIUS_SYMS env var (value = output path)
-    # Writes "VA name" per line to the given file. Used for crash localization:
-    # map RIP from coredumpctl to function+offset. See docs/diagnosis-symbols.md.
-    var sym_fnc = GFNC(S);
-    var sym_path = _read_env("CYRIUS_SYMS");
-    if (sym_path != 0) {
-        var symfd = syscall(2, sym_path, 0x241, 0x1A4);
-        if (symfd >= 0) {
-            var sfi = 0;
-            while (sfi < sym_fnc) {
-                var foff = L64(_fnt_offsets + sfi * 8);
-                if (foff >= 0) {
-                    var vabuf[20];
-                    var va = entry + foff;
-                    var vi2 = 15;
-                    while (vi2 >= 0) {
-                        var hd = va & 15;
-                        if (hd < 10) { store8(&vabuf + vi2, 48 + hd); }
-                        else { store8(&vabuf + vi2, 87 + hd); }
-                        va = va >> 4;
-                        vi2 = vi2 - 1;
-                    }
-                    syscall(1, symfd, &vabuf, 16);
-                    syscall(1, symfd, " ", 1);
-                    var nptr = S + 0x60000 + L64(_fnt_names + sfi * 8);
-                    var nlen = 0;
-                    while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
-                    syscall(1, symfd, nptr, nlen);
-                    syscall(1, symfd, "\n", 1);
-                }
-                sfi = sfi + 1;
-            }
-            syscall(3, symfd);
-        }
-    }
+    # Symbol dump — opt-in via CYRIUS_SYMS env var (value = output path). Used for
+    # crash localization: map RIP from coredumpctl to function+offset. See
+    # docs/diagnosis-symbols.md. v6.3.23 (DX-01): the emit loop moved to the shared
+    # _emit_sym_dump in runtime.cyr so aarch64 reaches parity; the base VA is
+    # target-specific — PE function bodies live at ImageBase + text RVA, not the
+    # ELF `entry` this block used to (wrongly) format for the PE crash reporter.
+    var sym_base = entry;
+    if (_TARGET_PE == 1) { sym_base = 0x140000000 + _pe_text_rva; }
+    _emit_sym_dump(S, sym_base);
 
     # Walk fixup table
     var fcnt = GFCNT(S);

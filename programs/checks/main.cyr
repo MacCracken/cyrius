@@ -325,6 +325,10 @@ fn _run_regression_gates(): i64 {
     _gate("cycc stdin-parser survives byte-mutated hostile input, no crash (VR-02, v6.3.22)", "tests/cycc_parser_fuzz.sh");
     println("");
 
+    _section("Symbol-dump parity (DX-01)");
+    _gate("CYRIUS_SYMS function-symbol dump emits on x86 + aarch64 (DX-01 parity, v6.3.23)", "tests/dx01_syms_parity.sh");
+    println("");
+
     _section("Binary structural lint (VR-04)");
     _binary_structural_lint_gate();
     println("");

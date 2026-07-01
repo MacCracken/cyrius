@@ -205,6 +205,55 @@ fn _read_env(name): i64 {
     return 0;
 }
 
+# v6.3.23 (DX-01): shared function-symbol dump — opt-in via the CYRIUS_SYMS env
+# var (value = output path). Writes "<16-hex VA> <name>\n" per emitted function so
+# a RIP captured by coredumpctl (or the AGNOS/Windows/macOS crash reporter) maps
+# back to function+offset. Hoisted here from the x86-only inline block that lived
+# in x86/fixup.cyr since v5.x so all backends reach crash-localization parity, not
+# just x86-ELF (issue 2026-06-10-unreviewed-dimensions DX-01). The VA base is
+# passed in because it is target-specific: ELF entry (x86/aarch64), the Mach-O
+# TEXT base (via _entry_base's fmt branch), or the PE ImageBase+text RVA — the
+# caller resolves it. Portable syscalls: SYS_OPEN==2 is the x86 raw `open`; every
+# other arch (aarch64) has no bare open, so mirror _read_env's openat(AT_FDCWD)
+# shim. Flags 0x241 = O_WRONLY|O_CREAT|O_TRUNC, mode 0x1A4 = 0644. Entirely behind
+# the `sym_path != 0` guard → zero effect (byte-identical emitted programs) unless
+# CYRIUS_SYMS is set. cx keeps its own no-op _read_env stub, so this is inert there.
+fn _emit_sym_dump(S, base): i64 {
+    var sym_path = _read_env("CYRIUS_SYMS");
+    if (sym_path == 0) { return 0; }
+    var symfd = 0;
+    if (SYS_OPEN == 2) { symfd = syscall(SYS_OPEN, sym_path, 0x241, 0x1A4); }
+    else { symfd = syscall(SYS_OPEN, 0 - 100, sym_path, 0x241, 0x1A4); }
+    if (symfd < 0) { return 0; }
+    var sym_fnc = GFNC(S);
+    var sfi = 0;
+    while (sfi < sym_fnc) {
+        var foff = L64(_fnt_offsets + sfi * 8);
+        if (foff >= 0) {
+            var vabuf[20];
+            var va = base + foff;
+            var vi2 = 15;
+            while (vi2 >= 0) {
+                var hd = va & 15;
+                if (hd < 10) { store8(&vabuf + vi2, 48 + hd); }
+                else { store8(&vabuf + vi2, 87 + hd); }
+                va = va >> 4;
+                vi2 = vi2 - 1;
+            }
+            syscall(SYS_WRITE, symfd, &vabuf, 16);
+            syscall(SYS_WRITE, symfd, " ", 1);
+            var nptr = S + 0x60000 + L64(_fnt_names + sfi * 8);
+            var nlen = 0;
+            while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
+            syscall(SYS_WRITE, symfd, nptr, nlen);
+            syscall(SYS_WRITE, symfd, "\n", 1);
+        }
+        sfi = sfi + 1;
+    }
+    syscall(SYS_CLOSE, symfd);
+    return 0;
+}
+
 # v6.3.3 #5: parse a "0x<hex>" env string -> i64 (0 on empty / missing 0x / a bad
 # digit). The only 0x-hex env parser in the compiler (CYRIUS_DCE_CAP is decimal);
 # CYRIUS_KERNEL_BASE (and the `[sections] base` manifest key that funnels into it)

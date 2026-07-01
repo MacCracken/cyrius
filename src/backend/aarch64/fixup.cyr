@@ -45,9 +45,11 @@ fn _entry_base(S): i64 {
 }
 
 # v6.3.12 (W^X): segment-level W^X for the userland ELF-executable path (EMITELF_USER):
-# ELF format (_emit_fmt==0) + kmode 0 (not kernel / shared / object). Opt-out CYRIUS_WX=0;
-# default OFF during the v6.3.12 dev cycle (flipped ON at slot close). Mirror of
-# src/backend/x86/fixup.cyr — the aarch64 backend is a separate compile.
+# ELF format (_emit_fmt==0) + kmode 0 (not kernel / shared / object). Default ON since
+# v6.3.12 shipped (the body returns 1 when CYRIUS_WX is unset); opt out with CYRIUS_WX=0.
+# This applies to the AGNOS userspace target too (it is ELF, kmode 0) — see the v6.3.23
+# SEC-AGNOS-01 assessment. Mirror of src/backend/x86/fixup.cyr — the aarch64 backend is a
+# separate compile.
 fn _wx_active(S): i64 {
     if (_emit_fmt(S) != 0) { return 0; }
     if (L64(S + 0x18FCA0) != 0) { return 0; }
@@ -124,6 +126,11 @@ fn FIXUP(S): i64 {
     # opcodes. See CHANGELOG [5.11.59].
     var undef_count = 0;
     var fcnt_pre = GFCNT(S);
+    # v6.3.23 (DX-01): function-symbol dump for crash localization — parity with
+    # x86 (was x86-ELF-only). Shared _emit_sym_dump in runtime.cyr; base VA is the
+    # aarch64 `entry` (ELF entry, or the Mach-O TEXT base via _entry_base's fmt
+    # branch). Behind the CYRIUS_SYMS env guard → byte-identical when unset.
+    _emit_sym_dump(S, entry);
     # Warning only — don't abort (partial includes are common in test files)
     var fcnt = GFCNT(S);
     var fi = 0;

@@ -597,9 +597,13 @@ if (_vn > 0) {
             }
         }
         # "--pie" (v6.1.6) — position-independent codegen. chars p(112) i(105)
-        # e(101) disambiguate from --parse-ts (--pa). Effective only with
-        # `kernel;` (kmode==1); ignored otherwise. Also honored via CYRIUS_PIE=1
-        # env (set below) for the cyrius-build wrapper + cross/test harnesses.
+        # e(101) disambiguate from --parse-ts (--pa). Effective for BOTH kernel
+        # (`kernel;`, kmode==1 → ET_DYN via EMITELF64_KERNEL) AND userland (kmode 0
+        # → ET_DYN via EMITELF_USER(S,3), base-0 entry, RIP-relative). Real ASLR
+        # then depends on the loader randomizing the ET_DYN base (e.g. the AGNOS
+        # kernel for the userspace target — see the v6.3.23 SEC-AGNOS-01 note).
+        # Also honored via CYRIUS_PIE=1 env (set below) for the cyrius-build
+        # wrapper + cross/test harnesses.
         if (_vi + 5 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 112 && load8(&_vbuf + _vi + 3) == 105 && load8(&_vbuf + _vi + 4) == 101) {

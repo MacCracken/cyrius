@@ -6,6 +6,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.23] — 2026-07-01
+
+**v6.3.23 — unreviewed dimensions (DX-01 + DX-02 + SEC-AGNOS-01).** Closes the "completeness critic"
+cluster from the 2026-06-10 deep-dive — the DX / AGNOS / LSP dimensions no analyst owned
+([`unreviewed-dimensions`](docs/development/issues/2026-06-10-unreviewed-dimensions.md)). CVE-29
+(thread-stack guard page) already shipped v6.2.44; LEGAL-01 alone remains, deferred to v7. cycc
+changes only via DX-01 — a shared symbol-dump helper behind the `CYRIUS_SYMS` env guard, so every
+emitted program stays byte-identical.
+
+### Added — DX-01 crash-localization symbol parity across backends
+- **`CYRIUS_SYMS` now emits on aarch64, not just x86.** The opt-in function-symbol dump
+  ("`<16-hex VA> <name>`" per emitted fn — maps a coredump RIP back to fn+offset) lived inline in
+  `src/backend/x86/fixup.cyr`, and the aarch64 backend wrote **nothing**: a silent x86-ELF-only gap,
+  the same "found-by-ports" rot class as the macOS incident. Hoisted to a shared
+  **`_emit_sym_dump(S, base)`** in `src/backend/common/runtime.cyr`, called from both the x86 and
+  aarch64 fixup passes with the target-correct base VA (portable `SYS_OPEN`/`SYS_WRITE`/`SYS_CLOSE`
+  + the aarch64 `openat` shim). Fixes a latent x86 bug in passing: the PE crash-reporter base is now
+  `ImageBase + text RVA`, not the ELF `entry` the old block formatted. cx is N/A (bytecode VM; its
+  `_read_env` is a stub → the dump is structurally inert there). DWARF `.debug_line` stays the v7 ask.
+  New rot-guard gate `tests/dx01_syms_parity.sh` asserts both arches emit (check.sh 113→**114**).
+
+### Fixed — DX-02 LSP correctness + untrusted-workspace-input hardening
+- **Out-of-bounds stack write in `programs/cyrius-lsp.cyr` (the v6.3.18 undersized-array sweep missed
+  `programs/`).** `var pipe_fds[2]` (2 bytes; `sys_pipe` writes 8, and the code reads `+4`) and
+  `var status_buf[1]` (1 byte; `waitpid` writes a 4-byte int) — the lone undersized bare-local arrays
+  left in the repo — grown to `[16]` to match every other caller (`lib/process.cyr`, `lib/pam.cyr`,
+  …). A genuine 6-/3-byte out-of-bounds frame write on every diagnostic run.
+- **Unbounded `Content-Length` from an untrusted editor message** now capped at 16 MB in
+  `read_header` (was uncapped → a huge value drove `alloc(n+1)` to 0, then a `read()` into the NULL
+  page), and `read_body` null-checks the alloc before reading.
+- **Workspace-traversal read/index closed**: `uri_to_path` rejects any resolved path containing a
+  `..` component (soft-fail to an empty string, which every caller's `strlen`/`.cyr`-suffix check
+  then drops — no NULL deref). A normalized editor URI never contains `..`.
+
+### Added — DX-02 adversarial gate coverage
+- The happy-path-only LSP gate (`programs/checks/services.cyr`) gained an adversarial **Phase 4**: a
+  session with a traversal-`..`-URI didOpen + a malformed missing-`uri` didOpen must not crash the
+  server — a following valid `documentSymbol` on the real fixture still answers `foo_bar`. Locks in
+  all three DX-02 fixes.
+
+### Assessed — SEC-AGNOS-01 (no cyrius-side code change needed)
+- Reviewed the AGNOS userspace target's security posture against function bodies (not comments):
+  **entropy** SAFE (all native-TLS randomness → `_tn_rand_bytes` → real `sys_getrandom` #45,
+  fail-closed, no fixed-seed / counter fallback — CVE-19 lineage closed for AGNOS); **W^X** emitted by
+  default (agnos is ELF `_emit_fmt==0` kmode-0 → the 2-PT_LOAD text-`R E`/data-`RW ` split; loader
+  enforcement is an agnos-kernel property); **PIE/ASLR** non-PIE ET_EXEC at fixed 0x400078 by default
+  (userland PIE is wired via `EMITELF_USER(S,3)` but real ASLR needs the agnos kernel to randomize the
+  ET_DYN base — cross-repo, filed upstream); **`alloc_agnos`** shares the CVE-24/25/26 overflow guards
+  at full parity. Two stale comments corrected in passing (`aarch64/fixup.cyr` W^X "default OFF" →
+  default ON; `main.cyr` `--pie` "ignored outside kernel" → userland PIE is wired). Full write-up in
+  the issue doc's Resolution section.
+
+_check.sh 113→**114**; cycc self-host fixpoint + seed→cybs→cycc **byte-identical** (DX-01 behind the
+`CYRIUS_SYMS` guard; comment-only elsewhere); ecb + cass + pi **SELFHOST_OK**; self_compile **539 ms**
+(flat vs .22); cycc **1,027,672 B** (unchanged — DX-01 is env-gated, LSP is a separate program)._
+
 ## [6.3.22] — 2026-07-01
 
 **v6.3.22 — verification coverage: VR-02 real fuzzing + VR-04 binary lint** (VR-01 split to its own
