@@ -49,5 +49,11 @@ Annotate the local: `var p: Pt = mk();`.
 
 ## Status
 
-Filed 2026-06-28. Not blocking CO-01 (covered the explicit-type retptr ABI). Triage
-for a v6.3.x front-end slot.
+✅ **RESOLVED — v6.3.16.** `parse_decl.cyr` asv detection: broadened the gate to
+`pscale <= 0` and, for an inferred `var p = mk();` whose callee returns a struct,
+**inferred `pscale = -callee_sid`** so the existing explicit-annotation codegen runs
+— `asv_try` (>16 B → retptr / X8) or `asv_pair` (9-16 B non-Str → rax:rdx). Str /
+≤8 B returns keep the scalar/pointer-mode inferred path (byte-identical). Verified:
+`var p = mk()` (16 B) = 30, `var t = mk3()` (24 B) = 21, inferred i64 call = 4,
+inferred Str = 5 — x86 + aarch64 (qemu). Fixpoint + seed-derive OK. See
+`tests/tcyr/struct_local_codegen.tcyr`, CHANGELOG [6.3.16].

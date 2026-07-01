@@ -344,6 +344,17 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         if (lf_lli > 0) {
             if (L64(S + 0x5D9D000 + (lf_lli - 1) * 8) == 0 - 1) { lf_is_ptr = 0; }
         }
+        # v6.3.16: a struct-local whose type fits in <= 8 bytes occupies exactly ONE
+        # slot that HOLDS THE VALUE (inline) — never a pointer — so it must use
+        # `lea &slot`, not `mov [slot]`. The sentinel-predecessor test above can't see
+        # this: a single-slot inline struct has no -1 filler, so it was mislabelled a
+        # pointer-to-struct → `mov [slot]` dereferenced the garbage value → SIGSEGV on
+        # x86 + aarch64 (cx was already correct). Only STRUCTSZ > 8 single-slot locals
+        # are genuine pointers (Str, 16 B via rax). Closes single-field-struct-segfaults.
+        # NOT on cx: the cx backend BOXES structs (the slot always holds a pointer, even
+        # for uninit / by-value ≤8B), so pointer mode is correct there — forcing inline
+        # would break the cx struct-byval parity test. Gate on the inline-struct targets.
+        if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { lf_is_ptr = 0; } } }
         if (lf_is_ptr == 1) {
             # Pointer-to-struct: load the slot's value into rax,
             # then move into rcx as the struct's base pointer.
@@ -456,6 +467,11 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
         if (fs_lli > 0) {
             if (L64(S + 0x5D9D000 + (fs_lli - 1) * 8) == 0 - 1) { fs_is_ptr = 0; }
         }
+        # v6.3.16: <=8-byte struct-local is inline (holds the value in its one slot),
+        # never a pointer → lea &slot, not mov [slot]. Mirror of PARSE_FIELD_LOAD; see
+        # there. Fixes single-field struct field STORE segfault on x86 + aarch64. Not on
+        # cx (boxes structs — pointer mode is correct there).
+        if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { fs_is_ptr = 0; } } }
         if (fs_is_ptr == 1) {
             EFLLOAD(S, fs_lli);
             EMOVCA(S);
@@ -1517,7 +1533,7 @@ fn PARSE_VAR(S): i64 {
     }
     var asv_try = 0;
     var asv_pair = 0;
-    if ((pscale < 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
+    if ((pscale <= 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
         var _look_ti = GTI(S) + 1;
         if (TOKTYP(S, _look_ti) == 2) {
             if (TOKTYP(S, _look_ti + 1) == 10) {
@@ -1525,6 +1541,21 @@ fn PARSE_VAR(S): i64 {
                 var _look_fi = FINDFN(S, _look_noff);
                 if (_look_fi >= 0) {
                     var _look_sid = GFRS(S, _look_fi);
+                    # v6.3.16: inferred `var p = mk();` (no type annotation → pscale==0)
+                    # from a struct-returning callee. Infer the local's struct type so
+                    # the asv_try (>16B retptr) / asv_pair (9-16B rax:rdx) allocation
+                    # below runs — the same aggregate-slot + &p-retptr codegen as the
+                    # explicit `var p: T = mk();` path. Only infer for the sizes that take
+                    # those paths; Str / <=8B returns keep the existing scalar/pointer-mode
+                    # inferred behavior (byte-identical). Without this the inferred local
+                    # got a scalar slot and the callee wrote its aggregate to a garbage
+                    # retptr → SIGSEGV.
+                    # Closes issues/2026-06-28-inferred-struct-local-from-call-segfaults.md.
+                    if ((pscale == 0) && (_look_sid > 0)) {
+                        var _inf_sz = STRUCTSZ(S, _look_sid - 1);
+                        if (_inf_sz > 16) { pscale = 0 - _look_sid; }
+                        elif ((_inf_sz > 8) && (_look_sid != _STR_SID(S))) { pscale = 0 - _look_sid; }
+                    }
                     # v5.10.2 paired with parse_fn.cyr's
                     # rough-scan: ≤16-byte struct returns (Str,
                     # any small struct) flow through scalar

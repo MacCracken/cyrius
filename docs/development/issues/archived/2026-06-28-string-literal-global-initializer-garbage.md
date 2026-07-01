@@ -52,3 +52,14 @@ Either (a) make string-literal global initializers work (emit the literal +
 seed the global with its address), or (b) **fail loud at compile time** — reject
 a non-integer global initializer with a clear error — so this can't silently
 miscompile. (b) is the minimum; the current silent-garbage behavior is the trap.
+
+## Status
+
+✅ **RESOLVED (option a) — already fixed by an earlier v6.3.x; regression-locked in
+v6.3.16.** As of v6.3.15, `var S = "hello"; strlen(S)` returns 5, `load8(S+i)`
+returns the real literal bytes, cross-function use + a second global (`var DB_PATH
+= "yeo.patra"`, len 9) all resolve correctly — default-on and `CYRIUS_STACK_ARRAYS=0`.
+The literal is emitted into the data section and the global is seeded with its
+address (option a), so no hard-error was needed. Pinned by
+`tests/tcyr/struct_local_codegen.tcyr` (the string-literal global assertion) so it
+can't silently regress. See CHANGELOG [6.3.16].

@@ -1,0 +1,54 @@
+# struct_local_codegen.tcyr — v6.3.16 var-decl / struct-local codegen fixes.
+#
+# (c) A single-8-byte-field inline struct local (`var b: B1;`) reserved zero
+#     filler slots, so PARSE_FIELD_*'s inline-vs-pointer disambiguation
+#     (prev slot == -1 sentinel?) misclassified it as a pointer-to-struct →
+#     `mov [slot]` (garbage as a pointer) instead of `lea &slot` → SIGSEGV.
+#     Fixed by reserving at least one filler for STRUCTSZ<=8 inline structs.
+# (a) An INFERRED struct-local from a struct-returning call (`var p = mk();`,
+#     no type annotation) got a scalar slot, so the callee wrote its aggregate
+#     to a garbage retptr → SIGSEGV. Fixed by inferring the struct type and
+#     routing through the explicit-annotation retptr/pair codegen.
+# (b) A top-level string-literal global init (`var S = "hello";`) — regression
+#     lock; it was silently garbage when filed but is fixed in an earlier
+#     v6.3.x, so this pins it.
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+struct B1  { val: i64; }                    # single 8-byte field (c)
+struct One { x: i32; }                      # single sub-8-byte field (c)
+struct Pt  { x: i64; y: i64; }              # 16 B → asv_pair (rax:rdx)
+struct Tri { a: i64; b: i64; c: i64; }      # 24 B → asv_try (retptr)
+
+# (c) single-field struct locals: field store/load must lea &b, not mov [b].
+fn single_i64(): i64 { var b: B1; b.val = 42; return b.val; }
+fn single_i32(): i64 { var o: One; o.x = 7; return o.x; }
+# 2-field control (always worked — must stay byte-identical / correct).
+fn two_field(): i64 { var b: Pt; b.x = 40; b.y = 2; return b.x + b.y; }
+
+fn mk():  Pt  { var p: Pt;  p.x = 10; p.y = 20; return p; }
+fn mk3(): Tri { var t: Tri; t.a = 5; t.b = 7; t.c = 9; return t; }
+
+# (a) inferred struct-local from a struct-returning call.
+fn inferred_16(): i64 { var p = mk();  return p.x + p.y; }         # 16 B asv_pair
+fn inferred_24(): i64 { var t = mk3(); return t.a + t.b + t.c; }   # 24 B retptr
+# explicit annotation still works.
+fn explicit_16(): i64 { var p: Pt = mk(); return p.x + p.y; }
+
+# (b) string-literal global initializer (regression lock).
+var GLOBAL_STR = "hello";
+
+test_group("single-field struct locals (v6.3.16 c: inline-filler invariant)");
+assert_eq(single_i64(), 42, "struct{val:i64} field store/load = 42 (was SIGSEGV)");
+assert_eq(single_i32(), 7, "struct{x:i32} field store/load = 7 (was SIGSEGV)");
+assert_eq(two_field(), 42, "2-field struct control still 42");
+
+test_group("inferred struct-local from struct-returning call (v6.3.16 a)");
+assert_eq(inferred_16(), 30, "var p = mk() [16B rax:rdx pair] = 30 (was SIGSEGV)");
+assert_eq(inferred_24(), 21, "var t = mk3() [24B retptr] = 21 (was SIGSEGV)");
+assert_eq(explicit_16(), 30, "var p: Pt = mk() explicit annotation still 30");
+
+test_group("string-literal global initializer (regression lock)");
+assert_eq(strlen(GLOBAL_STR), 5, "global var S = literal holds the literal address");
+
+var rc = assert_summary();

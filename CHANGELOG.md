@@ -6,6 +6,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.16] — 2026-06-30
+
+**v6.3.16 — var-decl / struct-local codegen fixes (P2).** The roadmapped "var-decl codegen pair" slot —
+three pre-existing struct-local codegen bugs, all in `parse_decl.cyr` (shared frontend → all 7 forks).
+
+### Fixed
+- **(a) inferred struct-local from a struct-returning call** — `var p = mk();` (no type annotation, `mk`
+  returns a struct) allocated a scalar slot, so the callee wrote its aggregate to a garbage retptr →
+  SIGSEGV; only the explicit `var p: T = mk();` form worked. Now the var-decl **infers the struct type**
+  from the callee's return sid and routes through the same aggregate-slot + `&p`-retptr / `rax:rdx`-pair
+  codegen as the explicit form (broadened the asv detection gate to `pscale <= 0`; infer
+  `pscale = -callee_sid` for the sizes that take those paths). Str / ≤8 B returns keep the existing
+  scalar / pointer-mode inferred path (byte-identical). Closes
+  [`issues/2026-06-28-inferred-struct-local-from-call-segfaults.md`](docs/development/issues/archived/2026-06-28-inferred-struct-local-from-call-segfaults.md).
+- **(c) single-≤8-byte-field struct-local field access** — `var b: B1; b.val = 42; return b.val;`
+  segfaulted on **x86 + aarch64** (cx was already correct). A one-slot struct-local has no `-1` filler,
+  so `PARSE_FIELD_LOAD`/`STORE`'s inline-vs-pointer disambiguation ("is the previous slot the `-1`
+  sentinel?") misread it as a single-slot **pointer-to-struct** → `mov [slot]` (deref the value as a
+  pointer) instead of `lea &slot`. Fix (both disambiguation sites): a struct-local of `STRUCTSZ <= 8`
+  holds its value **inline** → force `lea`; only `STRUCTSZ > 8` single slots are genuine pointers (Str,
+  16 B via rax). **Gated `_TARGET_CX == 0`** — cx boxes structs (pointer mode is correct there, so its
+  struct-byval parity test stays green). Closes
+  [`issues/2026-06-30-single-field-struct-segfaults.md`](docs/development/issues/archived/2026-06-30-single-field-struct-segfaults.md).
+- **(b) string-literal global initializer** — `var S = "hello";` at module scope was silently garbage
+  when filed (v6.3.0/.1). It is **already fixed** in an earlier v6.3.x (the literal is emitted into the
+  data section and the global seeded with its address); **regression-locked** here. Closes
+  [`issues/2026-06-28-string-literal-global-initializer-garbage.md`](docs/development/issues/archived/2026-06-28-string-literal-global-initializer-garbage.md).
+
+### Added
+- `tests/tcyr/struct_local_codegen.tcyr` — single-field field access (i64/i32), inferred struct-local
+  (16 B `rax:rdx` pair + 24 B retptr), explicit-annotation control, 2-field control, string-literal global.
+
+### Verified
+- Fixpoint byte-identical; **seed → cybs → cycc**; check.sh **109/109**. Struct fix confirmed on **x86 +
+  aarch64 (real pi native binary) + cx** — single-field field-access = 42 and by-value `var p:S=mkp()` =
+  42 on all three; 2-field control unchanged. (An inferred/explicit **>8 B** struct-by-value on **cx**
+  hard-errors "int-class 16B struct pair-return ABI not supported" — a pre-existing cx limitation,
+  identical for explicit and inferred, out of scope.) **ecb + cass + pi SELFHOST_OK.** bench self_compile
+  **546 ms**; cycc **1,027,664 B** (unchanged — struct-local codegen only, no size delta).
+
 ## [6.3.15] — 2026-06-30
 
 **v6.3.15 — array locals are per-thread by DEFAULT (str_builder concurrency root-cause fix, default-on).**

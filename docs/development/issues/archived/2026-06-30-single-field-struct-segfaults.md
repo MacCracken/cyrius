@@ -43,4 +43,23 @@ case.
 
 ## Status
 
-Filed 2026-06-30. Independent of the generics arc; fix in a future codegen slot.
+✅ **RESOLVED — v6.3.16.** Root cause confirmed via disasm + a cross-backend matrix
+(x86 / aarch64 / cx): a single-≤8-byte-field inline struct local occupies exactly one
+slot with no `-1` filler, so `PARSE_FIELD_LOAD`/`STORE`'s inline-vs-pointer
+disambiguation ("is the previous slot the `-1` sentinel?") misclassified the named
+slot as a single-slot **pointer-to-struct** → emitted `mov [slot]` (deref the slot's
+value as a pointer) instead of `lea &slot` → SIGSEGV on **x86 AND aarch64** (cx was
+already correct — it boxes structs as pointers, so pointer mode is right there).
+**Fix (`parse_decl.cyr`, both disambiguation sites):** a struct-local whose type fits
+in `STRUCTSZ <= 8` occupies one slot that HOLDS THE VALUE (inline) — never a pointer —
+so force `is_ptr = 0` (`lea`). Only `STRUCTSZ > 8` single-slot locals are genuine
+pointers (Str, 16 B via rax). **Gated on `_TARGET_CX == 0`** (inline-struct backends);
+cx keeps pointer mode so its struct-byval parity test stays green. (A first attempt —
+reserve a filler — was reverted: it perturbed the cx layout + the struct-return path.)
+Verified field-access `struct{i64}` = 42 / `struct{i32}` = 7 and by-value
+`var p:S=mkp()` = 42 on **x86 + aarch64 + cx**; 2-field control unchanged. Fixpoint +
+seed-derive OK. See `tests/tcyr/struct_local_codegen.tcyr`, CHANGELOG [6.3.16].
+
+(Note: an inferred/explicit **>8 B** struct-by-value on **cx** hard-errors "int-class
+16B struct pair-return ABI not supported" — a pre-existing cx limitation, identical for
+`var p: Pt = mk()` and `var p = mk()`, out of scope here.)
