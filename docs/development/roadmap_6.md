@@ -453,7 +453,9 @@ bites; the heavier Phase C may take the 2nd release — a decision made
   mode unchanged (default). Bare sub-module names this slot; the cross-pkg
   `pkg:submodule` group form lands with lever-2. Gate: `_deps_modular_gate`
   (check.sh 97/97). **This completes lever 1.**
-- **Phase D — dissolve the "stdlib" category + migrate the flagship.**
+- **Phase D — dissolve the "stdlib" category + migrate the flagship. ⟶ SCHEDULED v6.3.29**
+  (was dangling here with no active slot until the 2026-07-01 roadmap-gap audit; A/B/C
+  shipped v6.2.48/.49/.50, D now has a home — the whole arc is scheduled, see roadmap.md).
   Reframe `[deps].stdlib` as a default group (`std = [...]`, `stdlib`
   aliases for back-compat). Migrate **descent** off its 29-element hand
   list + 3 whole-monolith includes as the acceptance proof. Bump the

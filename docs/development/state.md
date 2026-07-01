@@ -16,8 +16,9 @@
 > whole v6.4.x ABI/Perf arc + the 2026-06-10 governance cluster (minus LEGAL-01, deferred
 > to public release) are pulled into v6.3.x; Intel-Mac arc at the tail; v6.4.x reopened as
 > an empty staging minor. Sequence: perf-prereqs (bench un-blind .17, differential gate
-> .20) → governance body (.21–.23) → v6.4.x perf arc (.24–.28) → Intel-Mac (.29–.30) →
-> closeout. **.18 and .19 were consumer-filed stdlib pull-ins** (the AGNOS base-stack
+> .20) → governance body (.21–.23) → v6.4.x perf arc (.24–.28) → deps/language/lib
+> pull-ins (**Phase D** .29 = the modularity-arc lever-1 completion / generics tail .30 /
+> protobuf .31) → Intel-Mac (.32–.33) → closeout. **.18 and .19 were consumer-filed stdlib pull-ins** (the AGNOS base-stack
 > migration to 6.3.15): .18 the undersized-array hardening sweep, .19 the ws_server header
 > rename + agnos `sys_fstat` peer (the differential gate + all downstream slots shifted +1).
 > See [roadmap.md](roadmap.md).

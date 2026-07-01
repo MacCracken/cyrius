@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.20] — 2026-07-01
+
 ## [6.3.19] — 2026-06-30
 
 **v6.3.19 — two more consumer-filed stdlib fixes (AGNOS base-stack migration to 6.3.15, cont'd) +

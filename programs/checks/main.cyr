@@ -313,6 +313,10 @@ fn _run_regression_gates(): i64 {
     _reserved_kw_diag_gate();
     println("");
 
+    _section("Differential corpus (VR-03)");
+    _gate("differential-corpus harness smoke — the logic-preserving perf-arc gate (scripts/differential.sh --smoke)", "scripts/differential-smoke.sh");
+    println("");
+
     # v5.9.25 (per v5.9.6 pin): the 6 _tcyr_relay_gate calls
     # previously here (shadow_pam / fdlopen / thread_local /
     # atomics / thread_safety / flags) are removed — each tcyr is
