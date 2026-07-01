@@ -8,6 +8,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.3.20] — 2026-07-01
 
+**v6.3.20 — the differential-corpus gate (VR-03), the perf-arc prerequisite.** Codifies the
+"logic-preserving" verification that had been muscle memory — a ~338-input old-vs-new
+byte-identical corpus + DCE torture, re-assembled by hand each refactor (v6.1.5/.6/.8) — into
+`scripts/differential.sh`. It is the ONLY guard between the pulled-in v6.3.2x perf arc (cross-BB
+regalloc / copy-prop / cross-BB DSE / float peephole) and a **silent miscompile**: a refactor may
+change HOW cycc works internally but must not change WHAT bytes it emits for existing programs.
+Scripts + check-program only → cycc **byte-identical**.
+
+### Added
+- **`scripts/differential.sh`** — builds the OLD cycc from a git ref (`git show OLD_REF:build/cycc`,
+  the tracked binary — no rebuild) and the NEW working-tree cycc, compiles a deterministic
+  **304-input corpus** (the two `src` compilers + all `tests/tcyr/*.tcyr` + `programs/*.cyr` +
+  `benches/*.bcyr` + `fuzz/*.fcyr`) with BOTH, in default AND `CYRIUS_DCE=1` torture modes, and
+  `cmp`s every output. Classifies each input **identical** / **codegen-diff** (both compile, bytes
+  differ — the danger case) / **status-diff** (one compiles, the other does not) / both-fail
+  (skipped). Manual-trigger: `sh scripts/differential.sh [OLD_REF]`; `--quick` skips DCE, `--smoke`
+  runs a tiny corpus. **Validated both ways**: a clean-tree self-run (OLD == NEW) is all-identical
+  (303/304; `programs/io.cyr` is a non-standalone both-fail); a run against the pre-v6.3.15 cycc
+  correctly flags the array-locals-on-stack codegen diffs **RED** with the offending input list —
+  a real detector, not a placebo.
+- **`scripts/differential-smoke.sh` + a `_differential smoke gate`** (check.sh **109→110**) — a
+  FUNCTIONAL rot-guard (not a syntax placebo) so the otherwise manual-trigger gate cannot silently
+  rot the way the macOS self-host CI did: the smoke runs the harness end-to-end (git-extract OLD +
+  compile both + `cmp` + report, in default AND DCE modes) on a 4-input corpus and asserts only
+  that the plumbing works (exit 0), independent of working-tree diffs.
+
+_Self-host + seed→cybs→cycc byte-identical; check.sh **110/110**; ecb + cass + pi **SELFHOST_OK**;
+self_compile **545 ms**; cycc **1,027,664 B** (byte-identical — scripts + check-program only, no
+compiler/lib change)._
+
 ## [6.3.19] — 2026-06-30
 
 **v6.3.19 — two more consumer-filed stdlib fixes (AGNOS base-stack migration to 6.3.15, cont'd) +
