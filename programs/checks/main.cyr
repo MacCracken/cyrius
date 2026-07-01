@@ -329,6 +329,10 @@ fn _run_regression_gates(): i64 {
     _gate("CYRIUS_SYMS function-symbol dump emits on x86 + aarch64 (DX-01 parity, v6.3.23)", "tests/dx01_syms_parity.sh");
     println("");
 
+    _section("Enum-shadow hard-error");
+    _gate("non-int var shadowing an enum constant hard-errors; int same-value shadow allowed (v6.3.24)", "tests/enum_shadow_error.sh");
+    println("");
+
     _section("Binary structural lint (VR-04)");
     _binary_structural_lint_gate();
     println("");

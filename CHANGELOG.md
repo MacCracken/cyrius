@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.24] — 2026-07-01
+
+**v6.3.24 — consumer-filed bug pack (SecureYeoman / yeo-cy-test + shravan + phylax).** Three
+consumer-filed bugs in one release. The headline is a compiler hardening whose real root cause was
+nothing like what was filed.
+
+### Fixed — silent var-shadows-enum-constant miscompile → hard error (the "string global at scale" bug)
+- **`yeo-cy-test`'s `var DB_PATH = "yeo.patra"` crash was misdiagnosed as a string-literal-global
+  codegen bug; the real cause is a SYMBOL COLLISION.** `DB_PATH` collides by name with patra's
+  exported `enum DbOff { DB_PATH = 16 }`. Cyrius symbol resolution returns the *last* registration
+  for a name, so once the consumer's var is registered it rebinds `DB_PATH` for **every** later
+  reference — including inside already-parsed `patra_open`, where `store64(db + DB_PATH, wpath)` uses
+  the constant as an ABI offset. `db + <string pointer>` is a wild address → out-of-bounds store →
+  SIGSEGV. The string **value is fine** (`write(2, DB_PATH, 9)` prints `yeo.patra` right up to the
+  crash); it's a mis-resolved *offset*. Root-caused directly against the real consumer (six synthetic
+  large-program reproductions all compiled a correct global — none named a global the same as an
+  included enum), with DX-01's new `CYRIUS_SYMS` localizing the fault to `patra_open+0x2b5` and a
+  fn-form-vs-global-form disassembly diff pinning the collided slot. **Fix:** `CHK_ENUM_SHADOW`
+  (`src/frontend/parse_types.cyr`), called from global-var registration for **non-int-literal** inits
+  — a `var` (string / expr / struct init) that shadows an enum constant is now a **hard compile
+  error** (`variable 'X' shadows an enum constant (rename the variable)`) instead of a silent
+  miscompile. Detection uses the uncapped, growable `var_enum_id` marker (`GVENUMID`), not the
+  1024-capped fold table that let the collision slip through in large stacks. An **int-literal
+  same-value** shadow stays allowed (chrono's `var CLOCK_MONOTONIC = 1` harmlessly aliasing the
+  syscall enum); an int *conflicting-value* shadow keeps the existing CHKDUPVAL warning. Regression
+  gate `tests/enum_shadow_error.sh` (check.sh 114→**115**). Consumer fix: rename the global (e.g.
+  `YEO_DB_FILE`) — the `db_path()` fn workaround also remains valid.
+  [`string-literal-global`](docs/development/issues/2026-07-01-string-literal-global-garbage-in-large-programs.md).
+
+### Fixed — `#derive(Serialize)` `Str`-field deserialize
+- `Name_from_json` (the pairs-based deserializer) emitted `store64(ptr + off, str_from(v))` for a
+  `Str` field, but `v` from `bayan_json_get` is **already the value `Str`**, not a cstr — `str_from`
+  reinterpreted the Str pointer as a char\* and stored a garbage Str, so a serialize → parse →
+  deserialize → re-serialize roundtrip produced `"�"` (the working serialize half masked it; shravan
+  2.4.1). Fix (`src/frontend/lex_pp.cyr`): store `v` directly. The issue's speculated
+  `bayan_json_v_str` fix was for the value-node API, which this pairs parser doesn't produce. The
+  single-pass `Name_from_json_str` was already correct. New `tests/tcyr/derive_str_deserialize.tcyr`
+  (both deserializers + full roundtrip).
+  [`derive-str`](docs/development/issues/2026-07-01-derive-serialize-str-field-deserialize-broken.md).
+
+### Fixed — `lib/callback.cyr` `fork_with_pre_exec` unguarded on agnos
+- The agnos 0-63 syscall surface has no fork/execve, so `sys_fork`/`sys_execve` are undefined there;
+  because a consumer listing `callback` in `cyrius.cyml` pulls the whole module, an unguarded
+  `fork_with_pre_exec` stayed reachable-undefined and hard-failed **every** `--agnos` build (bit
+  phylax, which uses only the pure `vec_*` helpers). Wrapped in `#ifndef CYRIUS_TARGET_AGNOS`,
+  mirroring `lib/process.cyr`; the higher-order helpers stay available on every target.
+  [`callback-agnos`](docs/development/issues/2026-07-01-callback-fork-with-pre-exec-unguarded-agnos.md).
+
+_check.sh 114→**115**; cycc self-host fixpoint + seed→cybs→cycc byte-identical; ecb + cass + pi
+**SELFHOST_OK**; self_compile **535 ms**; cycc **1,027,720 B** (+48 B — the `CHK_ENUM_SHADOW` guard
++ the `Str`-deserialize emit)._
+
 ## [6.3.23] — 2026-07-01
 
 **v6.3.23 — unreviewed dimensions (DX-01 + DX-02 + SEC-AGNOS-01).** Closes the "completeness critic"
@@ -90,7 +142,7 @@ structural validation beyond `file | grep`. Test/check-program only → cycc **b
   lint is the tracked follow-on, folded into the VR-01 slot). check.sh **112→113**.
 
 ### Changed
-- **VR-01 split to its own slot (v6.3.34)** — the 8 platform-variant stdlib tcyr
+- **VR-01 split to its own slot (v6.3.36)** — the 8 platform-variant stdlib tcyr
   (`fs_win`/`thread_win`/`sync_windows`/`alloc_macos`/`args_macos`/`process_win`/`syscalls_macos`/
   `syscalls_windows`, none of which any of the 173 tcyr touch) + the LIBTEST per-host gate are
   cross-host (only run on cass/ecb), so they are batched near the Intel-Mac arc for focused per-host

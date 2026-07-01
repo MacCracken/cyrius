@@ -781,9 +781,22 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                 }
             }
             if (fj_str == 1) {
+                # v6.3.24: `bayan_json_get(pairs, key)` returns the value **Str
+                # directly** (bayan_json_parse builds a vec of key→val pairs where
+                # each val is `str_new`'d), NOT a cstr and NOT a JTAG_STR value
+                # node. The old `str_from(v)` fed that Str pointer to a cstr ctor,
+                # storing a garbage Str → a Str field round-tripped to `"�"` (the
+                # working serialize half masked it). A Str field is an 8-byte Str
+                # ptr, so store `v` as-is (same borrow semantics the int path's
+                # str_to_int(v) already relies on). NOTE: the issue's speculated
+                # bayan_json_v_str / v_is_str fix is for the value-NODE API, which
+                # this pairs-based parser doesn't produce — v_is_str(v) would read
+                # a JTAG from a Str header and always fail, leaving the field 0 →
+                # a NULL Str crashes re-serialize.
+                # See issues/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
                 op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", str_from(v)); }\n");
+                op = op + PP_EMIT_STR(out, op, ", v); }\n");
             } else { if (fj_prim > 0) {
                 op = op + PP_EMIT_STR(out, op, "if (v != 0) { store");
                 op = op + PP_EMIT_INT(out, op, fj_prim);

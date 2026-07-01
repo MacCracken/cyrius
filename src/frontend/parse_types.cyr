@@ -632,3 +632,33 @@ fn CHKDUPVAL(S, noff, newval): i64 {
     }
     return 0;
 }
+
+# v6.3.24: HARD-ERROR when a `var` is declared with the same name as an existing
+# ENUM CONSTANT. Distinct from CHKDUPVAL (var-vs-var literal conflict → a warning,
+# to preserve the intentional-override pattern): a var shadowing an enum constant
+# is almost always a bug and SILENTLY miscompiles. FINDVAR returns last-match, so
+# once the var is registered EVERY later `NAME` reference — including inside
+# already-parsed library code that uses the constant as an ABI offset — binds to
+# the var's slot instead of the folded constant. A consumer `var DB_PATH = "…"`
+# shadowing patra's `enum DbOff { DB_PATH = 16 }` made `patra_open`'s
+# `store64(db + DB_PATH, …)` add a string POINTER as an offset → out-of-bounds
+# store → runtime SIGSEGV (the yeo-cy-test / SecureYeoman probe crash, misfiled as
+# a "string-literal global holds garbage at scale" codegen bug — the string value
+# is fine; the NAME collides). CHKDUPVAL missed it twice: it only ran for `= NUM ;`
+# inits (a string/expr init never reached it) and its fold-table probe caps at
+# index 1024 (large consumer stacks exceed it). var_enum_id (GVENUMID) is the
+# reliable, uncapped, growable per-symbol marker (1-based enum-id; 0 = plain var).
+# Fail loud so the collision surfaces at compile time — the fix is to rename the
+# variable. See issues/2026-07-01-string-literal-global-garbage-in-large-programs.md.
+fn CHK_ENUM_SHADOW(S, noff): i64 {
+    var pi = FINDVAR(S, noff);
+    if (pi < 0) { return 0; }
+    if (GVENUMID(S, pi) == 0) { return 0; }   # prior symbol is a plain var, not an enum const
+    syscall(SYS_WRITE, 2, "error:", 6);
+    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+    syscall(SYS_WRITE, 2, ": variable '", 12);
+    PRSTR(S + 0x60000 + noff);
+    syscall(SYS_WRITE, 2, "' shadows an enum constant (rename the variable)\n", 49);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}

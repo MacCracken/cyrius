@@ -1,5 +1,16 @@
 # `str_builder` (lib/str.cyr) is not thread-safe — concurrent builders corrupt each other
 
+> **RESOLVED — v6.3.15 (verified by this consumer 2026-07-01).** Root cause was the
+> array-local codegen (a fn-scope `var X[N]` was a shared static across threads), not
+> `str_builder` per se; v6.3.13 root-caused it and **v6.3.15 made array locals
+> per-thread by default**. Verified on cyrius 6.3.23: the minimal repro below is now
+> **`sb_fail = 0`** (was ~87%), the probe's `concurrency_repro.sh` is **0/300** (was
+> ~3%), and the **multi-worker-TLS `BAD_SIGNATURE`** (the "second manifestation"
+> below) is **gone** — `sandhi_server_run_pooled_tls` at `max_conns=4` serves 100/100
+> concurrent HTTPS cleanly. (One narrow residual TLS issue remains at max_conns>1 —
+> `RECORD_LAYER_FAILURE` under a mixed pattern — but that is a *separate*, non-str_builder
+> record-layer bug, filed as `2026-07-01-multiworker-tls-record-layer-failure-under-mixed-load.md`.)
+
 > **Status (v6.3.13): ROOT-CAUSED + fixed OPT-IN; default-on tracked separately.**
 > NOT a str_builder bug at all — the real cause is that **`var arr[N]` LOCALS are
 > allocated at a shared global/BSS address** (thread-shared); str_builder corrupts

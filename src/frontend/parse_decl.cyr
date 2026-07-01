@@ -861,6 +861,15 @@ fn PARSE_GVAR_REG(S): i64 {
     # parse_types.cyr. Gated on the shadow so the common non-colliding case skips
     # the scan; CHKDUPVAL itself is value-conflict-only (identical = silent).
     if (chk_has == 1 && sit_shadow == 1) { CHKDUPVAL(S, noff, chk_lit); }
+    # v6.3.24: a NON-int-literal global (string / expr / struct / array init →
+    # chk_has==0) that shadows an enum constant is the dangerous silent-miscompile
+    # case — a pointer/expr can never be a benign same-value alias of an int enum
+    # fold, and once registered every later reference to the name rebinds to the
+    # var, INCLUDING inside already-parsed library code that uses the constant as an
+    # ABI offset (patra `DbOff.DB_PATH`). Hard-error. An int-literal shadow stays a
+    # CHKDUPVAL warning above (e.g. chrono's harmless `var CLOCK_MONOTONIC = 1`
+    # aliasing the syscall enum, same value). See CHK_ENUM_SHADOW in parse_types.cyr.
+    if (chk_has == 0) { CHK_ENUM_SHADOW(S, noff); }
     # Register
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);

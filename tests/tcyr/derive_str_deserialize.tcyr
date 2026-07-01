@@ -1,0 +1,53 @@
+# derive_str_deserialize.tcyr — v6.3.24 regression for the
+# `#derive(Serialize)` deserializer's `Str`-field path.
+#
+# Pre-fix, the pairs-based `Name_from_json` emitted
+# `store64(ptr + OFF, str_from(v))` for a Str field — but `v`
+# (from `bayan_json_get`) is ALREADY the value Str, not a cstr,
+# so `str_from` reinterpreted the Str pointer as a char* and
+# stored a garbage Str. A serialize → parse → deserialize →
+# re-serialize roundtrip produced `{"title":"�",...}`; the
+# working serialize half masked it (shravan 2.4.1 filing).
+# Fix: store `v` directly (it is the Str). The single-pass
+# `Name_from_json_str` already `str_new`'d the bytes correctly —
+# this test guards BOTH paths so they can't diverge again.
+#
+# Closes issues/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/result.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct Meta { title: Str; artist: Str; }
+
+fn main(): i64 {
+    alloc_init();
+    var m = Meta { str_new("Song", 4), str_new("Band", 4) };
+    var sb = str_builder_new();
+    Meta_to_json(&m, sb);
+    var js = str_builder_build(sb);
+
+    # Pairs-based Meta_from_json — the v6.3.24-fixed path.
+    var rec = Meta_from_json(bayan_json_parse(js));
+    assert_eq(str_eq(load64(rec + 0), str_from("Song")), 1, "Meta_from_json: title Str deserialized");
+    assert_eq(str_eq(load64(rec + 8), str_from("Band")), 1, "Meta_from_json: artist Str deserialized");
+
+    # Single-pass Meta_from_json_str — already correct; parity guard.
+    var rec2 = Meta_from_json_str(str_data(js));
+    assert_eq(str_eq(load64(rec2 + 0), str_from("Song")), 1, "Meta_from_json_str: title Str deserialized");
+    assert_eq(str_eq(load64(rec2 + 8), str_from("Band")), 1, "Meta_from_json_str: artist Str deserialized");
+
+    # Full roundtrip: re-serialize the pairs-deserialized struct must equal the original JSON.
+    var sb2 = str_builder_new();
+    Meta_to_json(rec, sb2);
+    var js2 = str_builder_build(sb2);
+    assert_eq(str_eq(js, js2), 1, "Meta roundtrip (to_json → from_json → to_json) is stable");
+
+    return assert_summary();
+}
