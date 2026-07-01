@@ -35,6 +35,7 @@ include "lib/fnptr.cyr"
 # packed into a struct + passed by address (the 0xF007 reroute reads them).
 fn thread_create(fp, arg): i64 {
     alloc_init();
+    _threads_active = 1;   # v6.3.17 PF-02: arm the shared-heap lock before CreateThread
     var a = alloc(48);
     store64(a,      0);    # lpThreadAttributes = NULL
     store64(a + 8,  0);    # dwStackSize = 0 (default)

@@ -40,6 +40,7 @@ include "lib/thread_local.cyr"
 # wrong-scratch-lane bug for any crypto run on main after a batch fans out.
 # Returns a fake non-zero handle so callers' null-checks pass + join is valid.
 fn thread_create(fp, arg): i64 {
+    _threads_active = 1;   # v6.3.17 PF-02: arm the shared-heap lock before the spawn
     var save: i64[16];    # TLOCAL_MAX_SLOTS slots
     var i = 0;
     while (i < 16) {

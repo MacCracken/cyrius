@@ -45,6 +45,16 @@ include "lib/atomic.cyr"
 
 var _alloc_lock = 0;
 
+# v6.3.17 (PF-02): single-threaded fast path. The v6.0.64 spinlock+2-fences is only
+# needed once REAL threads share the heap; the dominant case (cycc itself, and every
+# non-threaded consumer) is single-threaded and paid a 3-6× alloc tax for a lock it
+# never contends. `_threads_active` is armed to 1 by thread_create/_thread_spawn
+# (Linux/agnos/Windows) BEFORE the child runs — a monotonic 0→1 set that happens-before
+# any concurrency (clone/CreateThread is a full barrier), so both parent and child then
+# take the locked path. While it is 0, acquire/release are no-ops → the ~10 ns bump path
+# is restored. See issues/2026-06-10-runtime-bench-suite-blind.md (PF-02).
+var _threads_active = 0;
+
 # Acquire the global alloc spinlock (busy-wait until the 0→1 CAS wins), then an
 # ACQUIRE barrier. Mirrors lib/thread.cyr mutex_lock: on x86 the CAS (lock
 # cmpxchg) is already a full barrier so atomic_fence is a cheap near-no-op, but
@@ -52,6 +62,7 @@ var _alloc_lock = 0;
 # critical-section _heap_ptr read can be observed before the lock is held,
 # yielding a stale bump pointer → overlap-allocation on a weak memory model.
 fn _alloc_lock_acquire(): i64 {
+    if (_threads_active == 0) { return 0; }   # v6.3.17 PF-02: single-threaded → no lock
     #ifdef CYRIUS_ARCH_X86
     while (atomic_cas(&_alloc_lock, 0, 1) == 0) { }
     atomic_fence();
@@ -71,6 +82,7 @@ fn _alloc_lock_acquire(): i64 {
 # acquirer reads a stale bump pointer and overlap-allocates. Mirrors
 # lib/thread.cyr mutex_unlock.
 fn _alloc_lock_release(): i64 {
+    if (_threads_active == 0) { return 0; }   # v6.3.17 PF-02: single-threaded → no lock
     #ifdef CYRIUS_ARCH_X86
     atomic_fence();
     atomic_store(&_alloc_lock, 0);

@@ -200,6 +200,7 @@ fn _thread_spawn(flags, child_stack, t, tls): i64 {
 # The function pointer must be obtained via &fn_name.
 fn thread_create(fp, arg): i64 {
     alloc_init();
+    _threads_active = 1;   # v6.3.17 PF-02: arm the shared-heap lock BEFORE the clone below
     var t = alloc(THREAD_SIZE);
     var ssize = THREAD_STACK_SIZE;
     var sbase = mmap_stack(ssize);

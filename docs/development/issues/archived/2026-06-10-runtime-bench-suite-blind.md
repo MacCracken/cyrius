@@ -10,9 +10,23 @@
 > (str/freelist/interning/keccak/mulmod/regalloc/shortcircuit/switch) are wired
 > into Tiers 1–3 and now produce history (bench_mulmod's stale `lib/u128.cyr`
 > include was repointed to `lib/bayan.cyr` after the v6.1.25 carve). A full run now
-> appends 86 entries (was ~42). **PF-02** (alloc CAS-lock single-threaded fast
-> path) and **PF-03** (per-release phase attribution) remain OPEN — must land
-> before v6.4.x. See CHANGELOG [6.2.15].
+> appends 86 entries (was ~42). See CHANGELOG [6.2.15].
+>
+> **PF-02 + PF-03 RESOLVED — v6.3.17. ✅ ISSUE CLOSED.** **PF-02**: `alloc()` now
+> takes a single-threaded fast path — `_alloc_lock_acquire`/`_release` no-op while
+> `_threads_active == 0`, skipping the v6.0.64 CAS spinlock + 2 fences that taxed the
+> dominant single-thread case (cycc itself; it includes `lib/alloc.cyr`). `thread_create`
+> / `_thread_spawn` (Linux/agnos/Windows) arm `_threads_active = 1` BEFORE the child runs
+> (a monotonic 0→1 set that happens-before the clone/CreateThread barrier), so both
+> parent and child take the locked path once any real thread exists. Single-threaded
+> allocs verified correct + monotonic (100k loop); the concurrency fixture stays clean
+> (lock armed). cycc self-hosts + seed-derives (alloc returns identical pointers
+> single-threaded → one-step fixpoint). **PF-03**: `scripts/bench-history.sh` tier-3 now
+> runs one `CYRIUS_PROF=1` self-compile and appends `compiler/phase_<pp|lex|gvar|parse|
+> fixup|emit|write>` rows (ns) to `bench-history.csv`, so the cycle carries a
+> phase-resolved trend into the v6.5.x perf-refactor first-step audit. The whole bench
+> harness is now un-blind → the v6.4.x perf arc (pulled into v6.3.x) can measure its own
+> wins. See CHANGELOG [6.3.17].
 
 **Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High (it silently defeats the "benchmark every release" gate and

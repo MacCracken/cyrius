@@ -171,6 +171,24 @@ bench_cmd() {
 bench_cmd "compiler/trivial" "echo 'var x = 42;' | $CC > /dev/null"
 bench_cmd "compiler/self_compile" "cat $REPO_ROOT/src/main.cyr | $CC > /dev/null"
 
+# v6.3.17 (PF-03): per-phase-resolved self-compile via the v5.10.0 CYRIUS_PROF profiler.
+# Appends compiler/phase_<pp|lex|gvar|parse|fixup|emit|write> rows (ns) so the cycle
+# carries a phase-resolved trend into the v6.5.x perf-refactor "first-step audit" (which
+# needs history already accumulated at its entry). One extra self-compile; the profiler
+# line goes to stderr as: `prof: compile NNN ms (pp=NN lex=NN gvar=NN parse=NN fixup=NN
+# emit=NN write=NN ms)`. Phases are ms-granularity (profiler resolution); recorded as ns.
+prof_tmp=$(mktemp)
+cat "$REPO_ROOT/src/main.cyr" | CYRIUS_PROF=1 $CC > /dev/null 2>"$prof_tmp"
+prof_line=$(grep '^prof:' "$prof_tmp" | head -1)
+rm -f "$prof_tmp"
+if [ -n "$prof_line" ]; then
+    echo "$prof_line" | grep -oE '(pp|lex|gvar|parse|fixup|emit|write)=[0-9]+' | while IFS='=' read -r ph val; do
+        ns=$((val * 1000000))
+        echo "${TIMESTAMP},${COMMIT},${BRANCH},compiler/phase_${ph},${ns}" >> "$HISTORY_FILE"
+        printf "  %-35s %dms\n" "compiler/phase_${ph}" "$val"
+    done
+fi
+
 # Binary sizes (not timing, but track as metrics)
 if [ -f "$REPO_ROOT/build/cycc" ]; then
     local_cc5_size=$(wc -c < "$REPO_ROOT/build/cycc")

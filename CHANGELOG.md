@@ -6,6 +6,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.17] — 2026-06-30
+
+**v6.3.17 — bench harness un-blind (PF-02 + PF-03).** Opens the **v6.3.x EXPANSION** (user 2026-06-30:
+the whole v6.4.x ABI/Perf arc + the 2026-06-10 governance cluster, minus LEGAL-01, are pulled into v6.3.x;
+Intel-Mac arc at the tail; v6.4.x reopens as an empty staging minor). This is the **perf-arc
+prerequisite** — the runtime bench harness could not measure the pulled-in regalloc / copy-prop / DSE wins.
+Closes [`runtime-bench-suite-blind`](docs/development/issues/archived/2026-06-10-runtime-bench-suite-blind.md)
+(PF-01 already done v6.2.15).
+
+### Fixed
+- **PF-02 — `alloc()` single-threaded fast path.** The v6.0.64 CAS spinlock + 2 fences serialize `alloc()`
+  across real threads, but the dominant case (cycc itself — it includes `lib/alloc.cyr` — and every
+  non-threaded consumer) is single-threaded and paid that tax for a lock it never contends.
+  `_alloc_lock_acquire`/`_release` now no-op while a new `_threads_active` flag is `0`, restoring the ~10 ns
+  bump path. `thread_create` / `_thread_spawn` (Linux / agnos / Windows) arm `_threads_active = 1` **before**
+  the child runs — a monotonic `0→1` set that happens-before the `clone`/`CreateThread` full-barrier, so both
+  parent and child take the locked path once any real thread exists. Single-threaded allocs verified correct +
+  monotonic (100k loop); the 8-thread concurrency fixture stays clean (lock armed). cycc self-hosts +
+  seed-derives byte-identical (alloc returns identical pointers single-threaded → one-step fixpoint). The
+  `self_compile` bench is flat (~545 ms — cycc isn't alloc-bound; the win is per-alloc, visible in alloc-heavy
+  consumers), but the per-alloc CAS+fence tax is gone.
+
+### Added
+- **PF-03 — per-phase bench history.** `scripts/bench-history.sh` tier-3 now runs one `CYRIUS_PROF=1`
+  self-compile and appends `compiler/phase_<pp|lex|gvar|parse|fixup|emit|write>` rows (ns) to
+  `bench-history.csv`, so the cycle carries a phase-resolved trend into the v6.5.x perf-refactor first-step
+  audit. The bench harness is now fully un-blind → the pulled-in v6.4.x perf arc can measure its own deltas.
+
+### Verified
+- Fixpoint byte-identical; **seed → cybs → cycc**; check.sh **109/109**; **ecb + cass + pi SELFHOST_OK**;
+  bench self_compile **545 ms** + phase rows now recorded; cycc **1,027,664 B** (unchanged). Install snapshot
+  refreshed for the edited `lib/{alloc,thread,thread_agnos,thread_win}.cyr` (snapshot-ping-pong guard).
+
 ## [6.3.16] — 2026-06-30
 
 **v6.3.16 — var-decl / struct-local codegen fixes (P2).** The roadmapped "var-decl codegen pair" slot —

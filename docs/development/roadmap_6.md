@@ -889,7 +889,21 @@ cap; minors flex long.
 
 ---
 
-## v6.4.x — ABI + Perf Arc
+## v6.4.x — REOPENED as an empty staging minor (user 2026-06-30)
+
+> **The ABI + Perf arc below was PULLED INTO v6.3.x** (user direction 2026-06-30 —
+> "bring in 6.4.x items into current 6.3.x arc and open 6.4.x to stay open"). Class B
+> FFI / `fncall6` ABI + cross-BB regalloc/liveness + copy-prop + cross-BB DSE + float
+> peephole now land as **v6.3.22 → v6.3.26** ([roadmap.md](roadmap.md)); the
+> bench-harness un-blind (PF) + differential-corpus gate (VR-03) prerequisites land
+> first as **v6.3.17 / v6.3.18**. **v6.4.x now reopens as an EMPTY staging minor** —
+> the landing zone for work that surfaces during the long v6.3.x runway (closeout-swept
+> residuals, new consumer/agnos requests). The v6.5.x perf-refactor + v6.6.x RISC-V
+> minors are unchanged. The original arc plan is preserved below for reference.
+
+---
+
+## v6.4.x — ABI + Perf Arc — ▲ PULLED INTO v6.3.x (reference only)
 
 **Theme**: Class B FFI / wgpu fncall6 ABI fix + register
 allocation upgrade + deferred peephole passes.
