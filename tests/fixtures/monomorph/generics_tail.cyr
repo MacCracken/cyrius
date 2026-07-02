@@ -1,0 +1,51 @@
+# Fixture for _generics_tail_gate (v6.3.33 — generics arc tail).
+#
+# The v6.3.10 generic-STRUCT substrate was shipped non-functional: `var x: T<Conc>`
+# never actually instantiated (GSTP was recorded in pass-1, before CYRIUS_MONOMORPH
+# was read, so every generic struct had GSTP==0 → the instantiation condition never
+# fired → silent fallback to the base i64 struct). The old generics_full fixture
+# passed only because its tests didn't distinguish (i32-as-i64 sums identically;
+# `h.tag` reads the same value at either offset). v6.3.33 reads the flag BEFORE pass-1,
+# so structs instantiate — and this fixture exercises the cases that EXPOSE it:
+#
+#   - NESTED field access into a struct-typed generic field (h.v.x) — needs the field
+#     registered as a real struct sid, not the base i64 (the pre-.33 false-positive).
+#   - MULTI-type-param with a DISTINCT struct 2nd param (Two<i64, Point>) — needs conc1
+#     threaded (pre-.33 collapsed both params to conc0).
+#   - NESTED generic (Box<Pair<i32>>) — the type-arg is itself a generic instance;
+#     needs recursive instantiation + `>>`-as-two-`>` close handling.
+#   - MULTI-type-param scalar fn (firstof<i64, i32>) + CONTROL-FLOW in a generic body.
+#
+# Compiles + runs ONLY under CYRIUS_MONOMORPH=1 (gated; default codegen byte-identical).
+# MUST exit 42.
+
+struct Point { x: i64; y: i64; }
+struct Holder<T> { v: T; tag: i64; }
+struct Two<T, U> { a: T; b: U; }
+struct Pair<T> { a: T; b: T; }
+struct Box<T> { v: T; }
+
+fn firstof<T, U>(a: T, b: U): T { return a; }     # returns the FIRST (i64), ignores U=i32
+fn maxof<T>(a: T, b: T): T { if (a > b) { return a; } return b; }   # control-flow in a generic body
+
+fn main(): i64 {
+    var r = 0;
+
+    # nested field access into a struct-typed generic field (v: Point)
+    var h: Holder<Point>; h.v.x = 10; h.v.y = 5; h.tag = 0;
+    r = r + h.v.x + h.v.y;                          # +15 = 15
+
+    # multi-type-param with a distinct struct 2nd param (b: Point, offset 8)
+    var w: Two<i64, Point>; w.a = 3; w.b.x = 4; w.b.y = 5;
+    r = r + w.a + w.b.x + w.b.y;                    # +12 = 27
+
+    # nested generic: Box<Pair<i32>> — v is a Pair$i32 instance
+    var b: Box<Pair<i32>>; b.v.a = 2; b.v.b = 1;
+    r = r + b.v.a + b.v.b;                          # +3 = 30
+
+    # multi-type-param scalar fn + control-flow in a generic body
+    r = r + firstof<i64, i32>(7, 99);              # +7 = 37
+    r = r + maxof<i64>(5, 2);                       # +5 = 42
+
+    return r;
+}

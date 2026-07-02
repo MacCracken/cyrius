@@ -473,6 +473,49 @@ fn _generics_full_gate(): i64 {
     return fail;
 }
 
+# v6.3.33 (generics tail): the generic-STRUCT substrate now actually instantiates
+# (flag read before pass-1 → GSTP captured). Exercises the cases the pre-.33
+# false-positive fixture missed: nested field access into a struct-typed generic
+# field (h.v.x), multi-type-param with a distinct STRUCT 2nd param (Two<i64,Point>),
+# and a NESTED generic (Box<Pair<i32>>) + multi-param scalar fn + control-flow in a
+# generic body. Runs under CYRIUS_MONOMORPH=1 (must exit 42), rejected flag-off.
+fn _generics_tail_gate(): i64 {
+    var label = "v6.3.33 generics tail: struct instantiation + nested field access + multi-type-param + nested generics run under CYRIUS_MONOMORPH=1 (exit 42), gated off";
+    var src = _root_path("tests/fixtures/monomorph/generics_tail.cyr");
+    var fail = 0;
+    var bin_on = _tmp_path("audit_gentail_on_");
+    var rc_on = _self_host_pipe_env(src, CC_PATH, bin_on, "CYRIUS_MONOMORPH=1");
+    if (rc_on != 0) {
+        sys_unlink(bin_on);
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON generics-tail compile failed rc="); print_num(rc_on); println("");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin_on, 493);
+    var ec_on = _pipe_file_to_bin(bin_on, src);
+    sys_unlink(bin_on);
+    if (ec_on != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON generics-tail program exit "); print_num(ec_on); println(" (expected 42)");
+        fail = fail + 1;
+    }
+    var bin_off = _tmp_path("audit_gentail_off_");
+    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    sys_unlink(bin_off);
+    if (rc_off == 0) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        println(": flag-OFF compiled generics-tail — the feature is NOT gated");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": generic structs instantiate (nested field access + multi-param + nested generics) under the flag, gated off");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _async_await_gate(): i64 {
     var label = "v6.3.11 G: async fn / await → first-class Futures over the epoll runtime, run under CYRIUS_ASYNC=1 (exit 42), gated off";
     var src = _root_path("tests/fixtures/async/async_await.cyr");

@@ -6,6 +6,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.33] — 2026-07-02
+
+**v6.3.33 — generics arc tail: generic STRUCTS now actually instantiate (v6.3.10 shipped them broken) + multi-type-param + nested generics.**
+Premise-check at slot entry (with *distinguishing* tests) found the roadmap's "nested + multi-param +
+control-flow" premise was partly wrong: **control-flow in generic bodies already worked**, but the
+v6.3.10 generic-**struct** feature was shipped **substantially non-functional** — `var x: T<Conc>` never
+actually instantiated. All generic-struct experimental support (gated behind `CYRIUS_MONOMORPH=1`) is
+default byte-identical: **differential 306/306, 0 codegen-diff, 0 status-diff**.
+
+### Fixed
+- **Generic structs never instantiated (the v6.3.10 substrate bug).** Root cause: `main.cyr` read
+  `CYRIUS_MONOMORPH` **after pass-1**, but structs (and their `<T>` type-param encoding, `GSTP`, captured
+  by `_capture_tparams`) are registered **in pass-1** — so every generic struct had `GSTP==0`, the
+  `var x: T<Conc>` instantiation condition (`parse_decl.cyr`) never fired, and structs silently fell back
+  to the base (all-i64) struct. The v6.3.10 `generics_full` fixture passed only because its tests **don't
+  distinguish** the failure (`i32`-as-`i64` sums identically; `h.tag` reads the same value at offset 8 or
+  16 — nested access `h.v.x`, which exposes it, was never tested). Fix: **read `CYRIUS_MONOMORPH` before
+  pass-1** so `GSTP` is captured (default env-unset → `_MONOMORPH_OK` stays 0 → pass-1 `SKIP_GENERICS`
+  unchanged → byte-identical). This alone makes `Holder<Point>` fields real Points, `h.v.x` work, etc.
+
+### Added (all gated behind `CYRIUS_MONOMORPH=1`; default byte-identical)
+- **Nested field access into a struct-typed generic field** — `var h: Holder<Point>; h.v.x = …` now
+  resolves `v` as a real `Point` (was a false-positive: layout right via `ADDFIELDTYPED`, but never
+  exercised past `h.tag`).
+- **Multi-type-param with distinct concretes** — `fn f<T, U>` / `struct Two<T, U>` thread a second
+  concrete `conc1` through `_mint_generic_name` (now `Base$<c0>$<c1>` so `Two<i64,i32>` ≠ `Two<i64,i64>`),
+  `_instantiate_generic_struct` (binds `t1→conc1`, was `→conc0`), and both call sites. Was: only the
+  first type-arg captured; the second collapsed to `conc0` (fn) / was `0` (struct) → `Two<i64, Point>`
+  failed on the struct 2nd param.
+- **Nested generics `Outer<Inner<T>>`** — `_parse_one_type_arg` recursively parses + instantiates a
+  nested generic type-arg (`Box<Pair<i32>>` binds Box's `T` to the `Pair$i32` instance), including the
+  C++ `>>` problem: `Pair<i32>>` lexes the trailing `>>` as **one** right-shift token (39), so
+  `_consume_gt` closes two levels via a pending-`>` counter (`_ta_pending_gt`), and
+  `LOOKAHEAD_IS_TYPE_ARG_CALL` treats `>>` as depth −2.
+
+### Guarded (no silent miscompile)
+- **Generic FUNCTIONS with STRUCT type-arguments** (`id<Pair<i32>>`, `wrap<i64, Point>`) HARD-ERROR now
+  (`_instantiate_generic_fn` returns −3 on a struct conc) instead of silently miscompiling
+  (`wrap<i64, Point>` returned 60 not 42 — by-value struct param + struct-return retptr not rebound per
+  instance). Scalar fn type-args and struct type-args on generic **structs** are unaffected. This is a
+  dedicated follow-on: [`generic-fns-struct-type-args-monomorph-abi`](docs/development/issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md).
+
+Verified: `tests/fixtures/monomorph/generics_tail.cyr` (nested field access + multi-type-param + nested
+generics + scalar fn + control-flow → exit 42), gate `_generics_tail_gate` (flag-on runs / flag-off
+rejected; check.sh 122→**123**); the v6.3.9/.10 gates unregressed; self-host fixpoint (two-step) +
+seed→cybs→cycc byte-identical (the new recursive `_parse_one_type_arg` is cybs-safe); differential
+306/306 byte-identical (default codegen untouched); ecb+cass+pi SELFHOST_OK. Bench: self_compile
+**524 ms** (flat vs .32's ~525); cycc **1,011,688 B** (+4,216 B vs .32's 1,007,472 — the new gated
+`_parse_one_type_arg`/`_consume_gt`/`conc1`-threading parse fns compiled in; default output byte-identical).
+
 ## [6.3.32] — 2026-07-02
 
 **v6.3.32 — Phase D: dissolve the "stdlib" category into a built-in `std` default group (modularity arc lever-1 COMPLETION).**

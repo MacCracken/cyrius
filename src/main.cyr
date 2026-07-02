@@ -1135,6 +1135,20 @@ EB(S, 0xE9);
 var jmp_patch = GCP(S);
 EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 
+# v6.3.5 AR-01 — opt-in monomorphization substrate (gated proof). CYRIUS_MONOMORPH=1
+# opts in. v6.3.33: this MUST be read BEFORE pass-1 — pass-1 registers structs (incl.
+# their `<T>` type-param encoding via _capture_tparams → GSTP), and a generic struct's
+# GSTP is only captured when _MONOMORPH_OK==1. Reading it after pass-1 (the pre-.33 site)
+# left every generic struct with GSTP==0, so `var x: Box<Conc>` never met the
+# instantiation condition and silently fell back to the base (i64) struct. Default
+# (env unset) → _MONOMORPH_OK stays 0 → pass-1 SKIP_GENERICS unchanged → byte-identical.
+var _mono_env = _read_env("CYRIUS_MONOMORPH");
+if (_mono_env != 0) {
+    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
+        _MONOMORPH_OK = 1;
+    }
+}
+
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
 STI(S, 0);
 var scan = 1;
@@ -1328,16 +1342,8 @@ if (_pe_env != 0) {
     }
 }
 
-# v6.3.5 AR-01 — opt-in monomorphization substrate (gated proof). CYRIUS_MONOMORPH=1
-# re-enables the inline body-token capture so the intact emit-time replay path
-# fires; default off keeps codegen byte-identical. Set before pass 2 (capture runs
-# in PARSE_FN_DEF). See util.cyr `_MONOMORPH_OK`.
-var _mono_env = _read_env("CYRIUS_MONOMORPH");
-if (_mono_env != 0) {
-    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
-        _MONOMORPH_OK = 1;
-    }
-}
+# v6.3.5 AR-01 — CYRIUS_MONOMORPH is now read BEFORE pass-1 (v6.3.33: generic-struct
+# GSTP is captured in pass-1, so the flag must be live then). See the read above.
 
 # v6.3.29 — callee-saved frame-trim. DEFAULT ON; CYRIUS_FRAMETRIM=0 opts out.
 var _ftrim_env = _read_env("CYRIUS_FRAMETRIM");

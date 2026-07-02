@@ -396,6 +396,9 @@ fn PARSE_FACTOR(S): i64 {
                         if (_spec == 0 - 2) {
                             ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 92);
                         }
+                        if (_spec == 0 - 3) {
+                            ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 119);
+                        }
                         PARSE_FNCALL(S, L64(_fnt_names + _spec * 8));
                     }
                     _cfo = 0;

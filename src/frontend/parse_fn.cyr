@@ -1464,6 +1464,13 @@ fn _mint_generic_name(S, base_noff, conc, conc1): i64 {
 # restore. Returns the specialized fi, or -2 for the not-yet-handled pc>0 case (the
 # caller errors). pc=0 only this bite (param re-emission is the follow-on).
 fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
+    # v6.3.33: a STRUCT-typed type-arg on a generic FN (e.g. `id<Pair<i32>>`,
+    # `wrap<i64, Point>`) needs a monomorphized struct-ABI (by-value struct params +
+    # struct-return retptr rebound per instance) that the token-replay path does not
+    # yet emit soundly — it produced wrong values for the multi-param struct case.
+    # Return -3 so the caller HARD-ERRORS instead of silently miscompiling. Scalar
+    # type-args on generic fns work; struct type-args are supported on generic STRUCTS.
+    if (conc0 > 0 || conc1 > 0) { return 0 - 3; }
     var base_noff = L64(_fnt_names + base_fi * 8);
     var mangled = _mint_generic_name(S, base_noff, conc0, conc1);
     var spec = FINDFN(S, mangled);
