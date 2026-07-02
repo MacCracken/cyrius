@@ -6,6 +6,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.28] — 2026-07-02
+
+**v6.3.28 — `CYRIUS_IR=3` substrate: root-caused + two real bugs fixed (it was NEVER "fundamentally blocked").**
+The perf arc was roadmapped on the `CYRIUS_IR=3` optimizer substrate without investigating *why* it
+couldn't compile cycc (0 bytes) or a `#derive` program (SIGILL) — I kept calling it "blocked / needs a
+re-emit rewrite" as an excuse. A root-cause workflow **disproved** that: the failures are BOUNDED,
+in-place-fixable bugs (Path A, not re-emit — `ir_lower_all` is a red herring `CYRIUS_IR=3` doesn't use).
+The x86 byte-peephole originally pinned for this slot was investigated and empirically found **~nil** on
+the default stream (the 611 redundant reloads are 376 cross-BB *join*-reloads → need copy-prop, blocked;
+the stream is already tight — push/pop, self-mov, test-after-arith all measured **0**), so the slot
+pivoted (user direction) to the substrate fix the arc actually needs.
+
+### Fixed
+- **SIGILL on struct-init / `#derive` — IR opcode aliasing.** `EVADDR_X1` (`backend/x86/emit.cyr`) emits
+  `movabs $imm,%rcx` but recorded `IR_LOAD_ADDR_G` — the SAME opcode `EVADDR` uses for `movabs %rax`.
+  The liveness model classed it a pure-RAX def, so `ir_dce_capped` eliminated the live RCX-writing movabs
+  → `ir_apply_lase` NOP-filled it → FIXUP patched the address immediate over the NOPs → illegal
+  instruction. Isolated via `CYRIUS_DCE_CAP=39` pass / `40` fail. Fix: new opcode `IR_LOAD_ADDR_G_X1`(9)
+  in `common/ir.cyr`, recorded by `EVADDR_X1`, added to `_ir_def_rcx_any`, kept OUT of every `_pure`/RAX
+  classifier (so it's never DCE-eliminable and its RCX kill is modeled). `derive_str_deserialize` under
+  `CYRIUS_IR=3`: **5/5 pass** (was SIGILL 132). Default codegen byte-identical (IR-gated).
+- **0 bytes on cycc — IR node buffer overflow (not an optimizer bug).** The whole-program IR node table
+  (cap 262144, reset once before pass-2, never per-fn) overflowed on cycc's ~280K-node demand → a
+  deliberate `SYS_EXIT(1)` *during parsing*, before any pass ran. Fix: relocated `ir_nodes` (→16 MB) +
+  `ir_cp` (→4 MB) from `0xA3A000`/`0xF7B000` to the arena top (`0x5E9D000`/`0x6E9D000`, above the v6.3.27
+  liveness arrays), cap 262144→**1048576**, grew the x86 arenas (`main.cyr` mmap+brk `0x5E9D000`→
+  `0x7300000`; `main_win.cyr` VirtualAlloc `0x5F00000`→`0x7300000`; aarch64/macho untouched — IR is
+  x86-only). The IR region is touched ONLY under `CYRIUS_IR`, so the larger arena is lazy VA → **zero
+  real-memory cost on default builds**. Two-step bootstrap (arena change; cc2==cc3 fixpoint). **`CYRIUS_IR=3`
+  now compiles cycc: exit 0, 279 787 nodes** (was 0 bytes); **27/30 sampled tcyr pass under `CYRIUS_IR=3`**.
+
+### Added
+- `CYRIUS_FOLD_OFF` / `CYRIUS_LASE_OFF` bisection knobs (`main.cyr` IR block; default 0 → all passes run;
+  IR-gated → default byte-identical) — matching the `CYRIUS_DCE_CAP`/`CYRIUS_DSE_CAP` methodology, for
+  isolating unsound `CYRIUS_IR=3` passes.
+
+### Carry-over (filed)
+- The residual **3/30** `CYRIUS_IR=3` miscompiles (`alloc_str_extras`/`alloc_collections` SIGSEGV,
+  `bigint` hang) are a **fixpoint cascade over-elimination**: each of `const_fold`/`DCE`/`dead_store`/`LASE`
+  is individually sound (each alone → correct output), only the four combined over-fire. Categorically
+  deeper than the bounded opcode fix, and **NOT on the perf arc's critical path** (the arc needs sound
+  ANALYSIS — the v6.3.27 `ir_liveness_cfg` ✓ — plus new passes, not the old transforms). Filed
+  `docs/development/issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md`; scheduled into the .29
+  substrate-productionization slot.
+
+Default codegen **byte-identical** (`scripts/differential.sh` 306/306 GREEN); self-host fixpoint +
+seed→cybs→cycc byte-identical; check.sh **118**; cross-OS ecb (macOS) + cass (Windows) + pi (aarch64)
+all **SELFHOST_OK** (real hardware); self_compile **538 ms**; cycc **1 031 944 B**.
+
 ## [6.3.27] — 2026-07-02
 
 **v6.3.27 — perf arc opens: cross-BB liveness + spill-interval detection (the regalloc substrate).**

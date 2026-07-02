@@ -1859,6 +1859,10 @@ if (_epi_km == 3 || _epi_km == 2) {
 if (IR_ENABLED(S) == 1) {
     var ir_bbs = ir_build_bbs(S);
     var ir_edges = ir_build_edges(S);
+    # v6.3.28 bisection knobs (per the DCE_CAP/DSE_CAP methodology — isolate an
+    # unsound pass on the CYRIUS_IR=3 substrate). Default 0 → all passes run.
+    var _fold_off = _read_env("CYRIUS_FOLD_OFF");
+    var _lase_off = _read_env("CYRIUS_LASE_OFF");
     # v6.3.27: cross-BB liveness fixpoint (pure analysis — writes only the
     # ir_live_in/out arrays; the substrate .28 copy-prop + .29 cross-BB DSE use).
     var ir_live_iters = ir_liveness_cfg(S);
@@ -1934,7 +1938,7 @@ if (IR_ENABLED(S) == 1) {
         while (_changed == 1) {
             _changed = 0;
             ir_fp_iter = ir_fp_iter + 1;
-            var fp_fold_pack = ir_const_fold(S);
+            var fp_fold_pack = 0; if (_fold_off == 0) { fp_fold_pack = ir_const_fold(S); }
             var fp_fold_n = (fp_fold_pack >> 32) & 0xFFFFFFFF;
             if (fp_fold_n > 0) {
                 ir_fold_n = ir_fold_n + fp_fold_n;
@@ -1949,7 +1953,7 @@ if (IR_ENABLED(S) == 1) {
         }
         # Apply LASE once at the end — picks up all IR_ELIMINATEDs from
         # all passes (DCE + dead-store).
-        ir_lase_bytes = ir_apply_lase(S);
+        if (_lase_off == 0) { ir_lase_bytes = ir_apply_lase(S); }
         ir_dce_bytes = ir_lase_bytes;  # legacy field name; reflects total NOP-fill
         # DBE pinned to a later investigation slot.
         # ir_dbe_bytes = ir_dead_block_elim(S);
