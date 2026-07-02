@@ -904,6 +904,18 @@ cap; minors flex long.
 > residuals, new consumer/agnos requests). The v6.5.x perf-refactor + v6.6.x RISC-V
 > minors are unchanged. The original arc plan is preserved below for reference.
 
+### Candidate arcs FILED for full review at v6.4.x arc-open (no decisions committed)
+
+- **Function visibility (`pub`/`private`)** — the first candidate arc. Executes "Phase 2"
+  of [`module-manifest-design.md`](module-manifest-design.md) (closes the flat-global-namespace
+  bug classes: the `dynlib_*` dead-code corruption, enum-shadow, slot-collision; makes the
+  api-surface snapshot compiler-enforced). Design + grounded substrate + open decisions filed in
+  [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md).
+  **Decisions deferred to arc-open** (module boundary file-vs-dep, marker `_`-prefix-vs-explicit-keywords,
+  default public-vs-private). User lean (2026-07-02, not a commitment): `_`-prefix as the private
+  marker. **First step at arc-open: the `_`-prefix cross-file-call audit** — it decides whether
+  derive-from-`_` is truly zero-churn.
+
 ---
 
 ## v6.4.x — ABI + Perf Arc — ▲ PULLED INTO v6.3.x (reference only)
