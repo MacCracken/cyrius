@@ -937,8 +937,21 @@ clean-slate by this point per the mabda 3.0 GA timing).
 
 ### Cross-BB regalloc + liveness pass
 
+> **RESEQUENCED 2026-07-02 (see [roadmap.md](roadmap.md) v6.3.28–.30).** The naïve plan below
+> assumed the IR-level passes could land directly on cross-BB liveness data. They cannot: the
+> `CYRIUS_IR=3` optimizer is experimental/incomplete (patches codebuf in-place with no re-emit →
+> regalloc can't grow instructions; `IR_RAW_EMIT` pervasive → sound DSE inert / unsound
+> miscompiles; `CYRIUS_IR=3` can't even compile cycc). PROVEN by the v6.3.27 regalloc-rewrite
+> deferral + the reverted v6.3.28 cross-BB DSE build. The passes are now sequenced **behind an IR
+> substrate-productionization slot** (v6.3.29: re-emit path + complete local-access opcode model +
+> `CYRIUS_IR=3` differential correctness). The one IR-independent win — the **x86 byte-peephole on
+> the default emit stream** — leads (v6.3.28), decoupled from the broken IR optimizer. Full
+> analysis: [`issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md`](issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md)
+> + memory `project_perf_arc_blocked_on_ir_substrate`.
+
 Linear-scan register allocator with cross-BB liveness data.
-Unlocks three deferred passes that all share the same gate:
+Unlocks three deferred passes that all share the same gate
+(**now gated behind v6.3.29 substrate productionization**):
 
 - **Copy propagation** — deferred 2026-04-23 v5.6.18/.19. Stack-
   machine IR had no virtual registers for the classical wins;
@@ -946,9 +959,11 @@ Unlocks three deferred passes that all share the same gate:
 - **Extended cross-BB dead-store elimination** — deferred same
   date, same gate. Per-BB DSE shipped v5.6.18; cross-BB variant
   needs the liveness-out set per BB that regalloc builds.
-  `ir_extdse_recon` revival.
-- **Float peephole** (`float.cyr:41`, 5-instruction → 3-byte
-  reduction) — worth landing here if bench delta justifies.
+  `ir_extdse_recon` revival. **The v6.3.28 attempt proved it is
+  inert-if-sound / miscompiling-if-not on the raw substrate.**
+- **Float / x86 byte-peephole** (`float.cyr:41`, 5-instruction →
+  3-byte reduction) — the IR-INDEPENDENT win; **pulled to lead
+  (v6.3.28)** since it needs none of the substrate work.
 
 ### Slot estimate (v6.4.x)
 
