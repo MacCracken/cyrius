@@ -1454,6 +1454,36 @@ fn _mint_generic_name(S, base_noff, conc, conc1): i64 {
     return noff;
 }
 
+# v6.3.35 (root cause A): the inline instance below is emitted by re-invoking
+# PARSE_FN_DEF, which RESETS the per-fn jump-target table (`0x19E000`) at fn start
+# (`jump_target_count = 0`). Because the instance is emitted INLINE in the enclosing
+# fn's code range, that reset wipes the ENCLOSING fn's recorded jump targets — so the
+# enclosing fn's LASE (`IS_JUMP_TARGET`) then mis-eliminates a load that IS a branch
+# join (dropping early returns, clobbering a live local, corrupting operands). Snapshot
+# the enclosing targets before the inline emit and merge them back after, so the
+# enclosing LASE sees BOTH the instance's targets (already emitted in-range) and its
+# own. (jump_src / nop-run compaction needs no restore: the enclosing fn is always
+# `_cur_fn_has_closure` here → frame-trim is skipped and no nop_runs are produced.)
+fn _jt_snapshot(S): i64 {
+    var n = L64(S + 0x19E000);
+    var buf = alloc((n + 1) * 8);
+    store64(buf, n);
+    var i = 0;
+    while (i < n) { store64(buf + 8 + i * 8, L64(S + 0x19E008 + i * 8)); i = i + 1; }
+    return buf;
+}
+fn _jt_merge(S, buf): i64 {
+    var saved = load64(buf);
+    var cur = L64(S + 0x19E000);
+    var i = 0;
+    while (i < saved) {
+        if (cur < 1023) { S64(S + 0x19E008 + cur * 8, load64(buf + 8 + i * 8)); cur = cur + 1; }
+        i = i + 1;
+    }
+    S64(S + 0x19E000, cur);
+    return 0;
+}
+
 # v6.3.10 (instantiate-once): emit a deduped, monomorphized instance of generic fn
 # `base_fi` for concrete-type token `conc0` (and `conc1`). Mints `base$ty`; FINDFN is
 # the dedup index (hit → return the existing fi). On a miss, emits the specialized
@@ -1498,6 +1528,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     # signature (params/masks/return) + body and emits the specialized fn with T bound
     # to the concretes — full fidelity (params, struct args, masks) for free. ---
     var jmp = EJMP0(S);
+    var jt_snap = _jt_snapshot(S);   # v6.3.35: save enclosing fn's jump targets (PARSE_FN_DEF resets them)
     STI(S, defstart);
     _inst_name = mangled;
     _inst_conc0 = conc0;
@@ -1506,6 +1537,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _inst_name = 0;
     _inst_conc0 = 0;
     _inst_conc1 = 0;
+    _jt_merge(S, jt_snap);           # v6.3.35: restore enclosing targets (alongside the instance's)
     EPATCH(S, jmp);
     # --- restore the enclosing fn's state ---
     SLVAR(S, sv_lv);
