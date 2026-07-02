@@ -225,6 +225,10 @@ var _fnt_defstart = 0;
 var _inst_name = 0;
 var _inst_conc0 = 0;
 var _inst_conc1 = 0;
+# v6.3.33 (generics tail — nested `Outer<Inner<T>>`): `>>` lexes to ONE right-shift
+# token (39), not two `>`. When a nested type-arg close consumes a `>>`, it closes the
+# INNER level and OWES one `>` to the outer level — tracked here (see _consume_gt).
+var _ta_pending_gt = 0;
 # v6.3.11 (G): per-fn async flag (1 = `async fn`, else 0). Lazy-alloc'd (max fn
 # cap) like _fnt_tparams; stays 0 (unallocated) for the default self-host (cycc
 # has no async fn) → zero overhead, byte-identical. A call to a flagged fn builds

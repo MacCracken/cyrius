@@ -1292,16 +1292,20 @@ fn PARSE_VAR(S): i64 {
             # → the existing SKIP_GENERICS (the base struct IS the i64 instance).
             if (_MONOMORPH_OK == 1 && _gs_sid > 0 && PEEKT(S) == 19 && GSTP(S, _gs_sid - 1) != 0) {
                 STI(S, GTI(S) + 1);                 # consume `<`
-                var _gstc = _classify_return_type(S, PEEKV(S));
-                var _gsd = 1;                       # consume the type-arg list incl. `>`
-                while (_gsd > 0) {
-                    var _gst = PEEKT(S);
-                    if (_gst == 19) { _gsd = _gsd + 1; }
-                    if (_gst == 20) { _gsd = _gsd - 1; }
-                    STI(S, GTI(S) + 1);
-                }
-                if (_gstc != 0 - 8) {
-                    var _ginst = _instantiate_generic_struct(S, _gs_sid - 1, _gstc);
+                _ta_pending_gt = 0;
+                # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (handles a
+                # NESTED generic type-arg by instantiating it → its instance sid).
+                var _gstc = _parse_one_type_arg(S);
+                var _gstc1 = 0;
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _gstc1 = _parse_one_type_arg(S); }  # `,`
+                _consume_gt(S);                       # consume the closing `>` (or `>>` tail)
+                # Use the base (the all-i64 instance) only when EVERY arg is i64; any
+                # non-i64 arg (incl. a distinct second param) needs a real instance.
+                var _do_inst = 0;
+                if (_gstc != 0 - 8) { _do_inst = 1; }
+                if (_gstc1 != 0 && _gstc1 != 0 - 8) { _do_inst = 1; }
+                if (_do_inst == 1) {
+                    var _ginst = _instantiate_generic_struct(S, _gs_sid - 1, _gstc, _gstc1);
                     if (_ginst > 0) { pscale = 0 - _ginst; }
                 }
             } else {

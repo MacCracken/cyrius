@@ -1412,15 +1412,11 @@ fn _is_tparam_of(S, fi, noff): i64 {
 # tok_names for a concrete-type token, returning its noff. '$' (36) is not a legal
 # identifier byte, so the name is unforgeable from source. Scalar tokens → i8/i16/
 # i32/i64; a struct sid (>0) → the struct's name.
-fn _mint_generic_name(S, base_noff, conc): i64 {
-    var blen = 0;
-    while (load8(S + 0x60000 + base_noff + blen) != 0) { blen = blen + 1; }
-    NPOS_GUARD(S, blen + 40);
-    var wp = GNPOS(S);
-    var noff = wp;
-    var i = 0;
-    while (i < blen) { store8(S + 0x60000 + wp, load8(S + 0x60000 + base_noff + i)); wp = wp + 1; i = i + 1; }
-    store8(S + 0x60000 + wp, 36); wp = wp + 1;   # '$'
+# v6.3.33 (generics tail): append one concrete's name-fragment at name-pool offset
+# `wp`, return the new wp. Scalar → `i8`/`i16`/`i32`/`i64`; a struct sid → the
+# struct's (possibly-already-mangled, e.g. nested `Pair$i32`) name. Extracted so
+# `_mint_generic_name` can append BOTH type-args for a multi-param generic.
+fn _append_conc_name(S, wp, conc): i64 {
     if (conc < 0) {
         store8(S + 0x60000 + wp, 105); wp = wp + 1;   # 'i'
         if (conc == 0 - 8) { store8(S + 0x60000 + wp, 54); wp = wp + 1; store8(S + 0x60000 + wp, 52); wp = wp + 1; }
@@ -1431,6 +1427,27 @@ fn _mint_generic_name(S, base_noff, conc): i64 {
         var snoff = L64(S + 0x1A6018 + (conc - 1) * 8);
         var j = 0;
         while (load8(S + 0x60000 + snoff + j) != 0) { store8(S + 0x60000 + wp, load8(S + 0x60000 + snoff + j)); wp = wp + 1; j = j + 1; }
+    }
+    return wp;
+}
+
+# v6.3.33: mint `Base$<conc0>` (single param) or `Base$<conc0>$<conc1>` (two distinct
+# params, conc1 != 0). The two-fragment name keeps `Two<i64,i32>` and `Two<i64,i64>`
+# distinct in the FINDFN/FINDSTRUCT dedup index. Single-param (conc1 == 0) mints the
+# same name as before → byte-identical dedup for the existing single-param instances.
+fn _mint_generic_name(S, base_noff, conc, conc1): i64 {
+    var blen = 0;
+    while (load8(S + 0x60000 + base_noff + blen) != 0) { blen = blen + 1; }
+    NPOS_GUARD(S, blen + 80);
+    var wp = GNPOS(S);
+    var noff = wp;
+    var i = 0;
+    while (i < blen) { store8(S + 0x60000 + wp, load8(S + 0x60000 + base_noff + i)); wp = wp + 1; i = i + 1; }
+    store8(S + 0x60000 + wp, 36); wp = wp + 1;   # '$'
+    wp = _append_conc_name(S, wp, conc);
+    if (conc1 != 0) {
+        store8(S + 0x60000 + wp, 36); wp = wp + 1;   # '$'
+        wp = _append_conc_name(S, wp, conc1);
     }
     store8(S + 0x60000 + wp, 0); wp = wp + 1;
     SNPOS(S, wp);
@@ -1448,7 +1465,7 @@ fn _mint_generic_name(S, base_noff, conc): i64 {
 # caller errors). pc=0 only this bite (param re-emission is the follow-on).
 fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var base_noff = L64(_fnt_names + base_fi * 8);
-    var mangled = _mint_generic_name(S, base_noff, conc0);
+    var mangled = _mint_generic_name(S, base_noff, conc0, conc1);
     var spec = FINDFN(S, mangled);
     if (spec >= 0) { return spec; }                 # dedup hit
     var defstart = GFDS(S, base_fi);
@@ -1512,9 +1529,9 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
 # field resolves to the concrete type via the field consult. No codegen (struct
 # registration only) → far simpler than the fn instance: just save/restore the cursor
 # + binding. Returns the 1-based instance sid, or 0 if `base_si` isn't a generic struct.
-fn _instantiate_generic_struct(S, base_si, conc0): i64 {
+fn _instantiate_generic_struct(S, base_si, conc0, conc1): i64 {
     var base_noff = L64(S + 0x1A6018 + base_si * 8);
-    var mangled = _mint_generic_name(S, base_noff, conc0);
+    var mangled = _mint_generic_name(S, base_noff, conc0, conc1);
     var existing = FINDSTRUCT(S, mangled);
     if (existing > 0) { return existing; }           # dedup hit (1-based)
     var ds = GSDS(S, base_si);
@@ -1528,12 +1545,52 @@ fn _instantiate_generic_struct(S, base_si, conc0): i64 {
     var t0 = stp & 0xFFFFFFFF;
     if (t0 != 0) { _tp_bind(S, 0, t0 - 1, conc0); }
     var t1 = (stp >> 32) & 0xFFFFFFFF;
-    if (t1 != 0) { _tp_bind(S, 1, t1 - 1, conc0); }
+    # v6.3.33: bind the SECOND type param to conc1 (was conc0 → collapsed distinct
+    # params). Single-param structs have t1 == 0 → no bind → conc1 unused.
+    if (t1 != 0) { _tp_bind(S, 1, t1 - 1, conc1); }
     PARSE_STRUCT_DEF(S);
     _inst_name = 0;
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
     return FINDSTRUCT(S, mangled);                   # 1-based instance sid
+}
+
+# v6.3.33: consume one type-arg-list `>` close. A `>` (token 20) closes one level. A
+# `>>` (token 39, the right-shift lexeme) closes THIS level AND owes one `>` to the
+# enclosing level (`_ta_pending_gt`), so `Box<Pair<i32>>`'s trailing `>>` closes both
+# Pair's and Box's `<`. If a close is already owed, decrement it and consume nothing.
+fn _consume_gt(S): i64 {
+    if (_ta_pending_gt > 0) { _ta_pending_gt = _ta_pending_gt - 1; return 0; }
+    var t = PEEKT(S);
+    if (t == 20) { STI(S, GTI(S) + 1); return 0; }
+    if (t == 39) { STI(S, GTI(S) + 1); _ta_pending_gt = 1; return 0; }   # `>>`
+    return 0;
+}
+
+# v6.3.33 (generics tail — NESTED + multi-arg): consume ONE type argument at the
+# cursor and return its concrete encoding (per _classify_return_type: >0 struct sid,
+# -1/-2/-4/-8 scalars, -16..-21 special). A NESTED generic type-arg (`Name<...>` where
+# Name is a generic struct) is RECURSIVELY parsed + instantiated → its INSTANCE sid is
+# returned, so `Box<Pair<i32>>` binds Box's T to the `Pair$i32` instance (not the base
+# Pair, whose i64 layout differs). Consumes the name + any nested `<...>`; leaves the
+# cursor on the `,` or `>` that terminates this arg. A nested 2-param `M<A, B>` recurses
+# on both. Gated by the callers (`_MONOMORPH_OK`); no default-path effect.
+fn _parse_one_type_arg(S): i64 {
+    var noff = PEEKV(S);
+    STI(S, GTI(S) + 1);                              # consume the type-arg name
+    if (PEEKT(S) != 19) {                            # no `<` → plain scalar / struct
+        return _classify_return_type(S, noff);
+    }
+    var base_sid = FINDSTRUCT(S, noff);
+    if (base_sid <= 0 || GSTP(S, base_sid - 1) == 0) {
+        return _classify_return_type(S, noff);       # `<` but not a generic struct
+    }
+    STI(S, GTI(S) + 1);                              # consume the nested `<`
+    var in0 = _parse_one_type_arg(S);                # recurse into the inner arg(s)
+    var in1 = 0;
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); in1 = _parse_one_type_arg(S); }   # `,`
+    _consume_gt(S);                                  # consume the nested `>` (or `>>`)
+    return _instantiate_generic_struct(S, base_sid - 1, in0, in1);
 }
 
 # Parse fn name<T>(params) { body }
