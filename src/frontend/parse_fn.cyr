@@ -1582,15 +1582,34 @@ fn _consume_gt(S): i64 {
 # Pair, whose i64 layout differs). Consumes the name + any nested `<...>`; leaves the
 # cursor on the `,` or `>` that terminates this arg. A nested 2-param `M<A, B>` recurses
 # on both. Gated by the callers (`_MONOMORPH_OK`); no default-path effect.
+# v6.3.33: special/aggregate types (Result/Option/Tagged/cstring/f64v2/f64v4,
+# encoded <= -16 by _classify_return_type) are NOT supported as generic type-args.
+# Their monomorphized ABI is not soundly emitted (proven: a generic fn instantiated
+# with f64v2/f64v4 slipped the struct guard AND miscompiled), and _append_conc_name
+# only width-suffixes the plain scalars {-8,-4,-2,-1} — every special collapses to
+# `Base$i`, ALIASING distinct instances in the FINDFN/FINDSTRUCT dedup. Hard-error at
+# the single leaf-classify choke point (covers fn + struct + nested) instead of
+# silently miscompiling. Scalars and struct type-args are unaffected.
+fn _reject_special_type_arg(S, c): i64 {
+    if (c <= 0 - 16) {
+        ERR_MSG(S, "generic type-args must be a scalar (i8/i16/i32/i64) or a struct; Result/Option/Tagged/cstring/f64v2/f64v4 are unsupported", 121);
+    }
+    return 0;
+}
+
 fn _parse_one_type_arg(S): i64 {
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);                              # consume the type-arg name
     if (PEEKT(S) != 19) {                            # no `<` → plain scalar / struct
-        return _classify_return_type(S, noff);
+        var _c0 = _classify_return_type(S, noff);
+        _reject_special_type_arg(S, _c0);
+        return _c0;
     }
     var base_sid = FINDSTRUCT(S, noff);
     if (base_sid <= 0 || GSTP(S, base_sid - 1) == 0) {
-        return _classify_return_type(S, noff);       # `<` but not a generic struct
+        var _c1 = _classify_return_type(S, noff);    # `<` but not a generic struct
+        _reject_special_type_arg(S, _c1);
+        return _c1;
     }
     STI(S, GTI(S) + 1);                              # consume the nested `<`
     var in0 = _parse_one_type_arg(S);                # recurse into the inner arg(s)

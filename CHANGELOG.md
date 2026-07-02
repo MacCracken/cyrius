@@ -8,12 +8,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.3.33] — 2026-07-02
 
-**v6.3.33 — generics arc tail: generic STRUCTS now actually instantiate (v6.3.10 shipped them broken) + multi-type-param + nested generics.**
+**v6.3.33 — generics arc tail: generic STRUCTS now actually instantiate (v6.3.10 shipped them broken) + multi-type-param + nested generics + the fixes an adversarial-verification pass surfaced.**
 Premise-check at slot entry (with *distinguishing* tests) found the roadmap's "nested + multi-param +
-control-flow" premise was partly wrong: **control-flow in generic bodies already worked**, but the
-v6.3.10 generic-**struct** feature was shipped **substantially non-functional** — `var x: T<Conc>` never
-actually instantiated. All generic-struct experimental support (gated behind `CYRIUS_MONOMORPH=1`) is
-default byte-identical: **differential 306/306, 0 codegen-diff, 0 status-diff**.
+control-flow" premise partly wrong: **control-flow in generic bodies already worked**, but the v6.3.10
+generic-**struct** feature was shipped **substantially non-functional** — `var x: T<Conc>` never actually
+instantiated. Before handoff, an **adversarial-verification workflow** (4 lenses, each finding reproduced
+by a skeptic — run precisely because this slot exists to end v6.3.10's "broken feature behind a
+non-distinguishing fixture" mistake) caught two more real defects and, chasing them, a third. This
+release ships the substrate fix + the two gated guard/instantiation fixes + a pre-existing **default-path**
+nested-field-access bug; a third (pre-existing, gated) is filed for v6.3.34.
+Default-codegen impact is surgical: **differential 306 identical / 1 codegen-diff / 0 status-diff** of 308
+corpus inputs — the *only* changed input is the new `nested_subword_field.tcyr` regression test that
+exercises the field-access fix; nothing else in the ecosystem corpus was affected.
 
 ### Fixed
 - **Generic structs never instantiated (the v6.3.10 substrate bug).** Root cause: `main.cyr` read
@@ -41,20 +47,52 @@ default byte-identical: **differential 306/306, 0 codegen-diff, 0 status-diff**.
   `_consume_gt` closes two levels via a pending-`>` counter (`_ta_pending_gt`), and
   `LOOKAHEAD_IS_TYPE_ARG_CALL` treats `>>` as depth −2.
 
-### Guarded (no silent miscompile)
-- **Generic FUNCTIONS with STRUCT type-arguments** (`id<Pair<i32>>`, `wrap<i64, Point>`) HARD-ERROR now
+### Fixed (default-path — from the adversarial-verify pass)
+- **Nested sub-i64 field access read/wrote 64-bit** (pre-existing, generics-independent). `x.y.z` where the
+  leaf `z` is `i8`/`i16`/`i32` used the *intermediate* struct's type for the access width, not the leaf's:
+  `PARSE_FIELD_LOAD`/`PARSE_FIELD_STORE` (`parse_decl.cyr`) computed `FIELDSZ(S, ft)` from the first-level
+  field, and the chained-access block resolved the leaf's **offset** but never re-pointed `ft` at the leaf
+  type. So `b.v.a` (a nested `i32`) did a 64-bit load, and a nested `i32` store wrote 8 bytes over the
+  4-byte leaf (clobbering the neighbor). Fix: `ft = GETFTYPE(S, isi, ifi)` in both chained blocks (leaf
+  `i64` → width 8 and leaf struct → its size are unchanged). Reproduced with a hand-written
+  `struct BoxM { v: PairI32 }` (no generics) — this is *why* the nested-generic feature was observably
+  wrong even though instantiation was correct. Default-codegen change → two-step bootstrap (one-step-stable
+  fixpoint). Regression-locked by `tests/tcyr/nested_subword_field.tcyr` (load/store truncation at
+  i8/i16/i32, neighbor-not-clobbered, 1-level control).
+
+### Guarded (gated — no silent miscompile)
+- **Special/aggregate type-args on generics** (`idv<f64v2>`, `Box<Result>`, …) HARD-ERROR now. `Result`/
+  `Option`/`Tagged`/`cstring`/`f64v2`/`f64v4` classify as `−16..−21` — they slipped the `>0` struct guard
+  **and** all mangled to `Base$i` (`_append_conc_name` only width-suffixes plain scalars), so distinct
+  type-args aliased to one instance in the `FINDFN`/`FINDSTRUCT` dedup and dispatched a wrong ABI
+  (`idv<f64v2>` / `idv<f64v4>` compiled clean, deduped to one `idv$i`). Fix: reject any non-scalar leaf
+  type-arg at the single `_parse_one_type_arg` choke point (covers fn + struct + nested). Scalars and
+  struct type-args are unaffected.
+- **Generic FUNCTIONS with STRUCT type-arguments** (`id<Pair<i32>>`, `wrap<i64, Point>`) HARD-ERROR
   (`_instantiate_generic_fn` returns −3 on a struct conc) instead of silently miscompiling
   (`wrap<i64, Point>` returned 60 not 42 — by-value struct param + struct-return retptr not rebound per
-  instance). Scalar fn type-args and struct type-args on generic **structs** are unaffected. This is a
-  dedicated follow-on: [`generic-fns-struct-type-args-monomorph-abi`](docs/development/issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md).
+  instance). Dedicated follow-on: [`generic-fns-struct-type-args-monomorph-abi`](docs/development/issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md).
+
+### Filed (pre-existing, gated — scheduled v6.3.34)
+- **Monomorph inline-instance emission clobbers a live local after a branch.** An `if` (not `while`)
+  followed by a generic fn's *first-use* inline instance emission with the result folded into a live local
+  (`r = r + idg<i32>(7)`) loses the local across the closure-style jump-over body emit → returns 7 not 37.
+  Reproduces on the committed v6.3.10 engine (not introduced here), gated, narrow trigger (pre-instantiating
+  / `while` / a generic struct all avoid it). Root cause: the caller's in-flight operand register is not
+  spilled around the inline body emission. Batched with the generic-fn-struct-type-arg follow-on into the
+  v6.3.34 generics-engine de-risking slot. [`monomorph-inline-instance-clobbers-live-local-after-branch`](docs/development/issues/2026-07-02-monomorph-inline-instance-clobbers-live-local-after-branch.md).
 
 Verified: `tests/fixtures/monomorph/generics_tail.cyr` (nested field access + multi-type-param + nested
-generics + scalar fn + control-flow → exit 42), gate `_generics_tail_gate` (flag-on runs / flag-off
-rejected; check.sh 122→**123**); the v6.3.9/.10 gates unregressed; self-host fixpoint (two-step) +
-seed→cybs→cycc byte-identical (the new recursive `_parse_one_type_arg` is cybs-safe); differential
-306/306 byte-identical (default codegen untouched); ecb+cass+pi SELFHOST_OK. Bench: self_compile
-**524 ms** (flat vs .32's ~525); cycc **1,011,688 B** (+4,216 B vs .32's 1,007,472 — the new gated
-`_parse_one_type_arg`/`_consume_gt`/`conc1`-threading parse fns compiled in; default output byte-identical).
+generics + scalar fn + control-flow → exit 42, now **distinguishing** via `b.v.a >> 30` — real
+`Box<Pair<i32>>` = 42, i64-fallback = 46 — not the old layout-invariant `2+1=3`); gate `_generics_tail_gate`
+(flag-on runs / flag-off rejected / `idv<f64v2>` rejected via `generics_special_reject.cyr`; check.sh
+122→**123**); `nested_subword_field.tcyr` 6/6; the v6.3.9/.10 gates unregressed; self-host fixpoint
+(two-step, stable) + seed→cybs→cycc byte-identical (the new recursive `_parse_one_type_arg` is cybs-safe);
+differential 306 identical / 1 intended codegen-diff (the new nested-access test) / 0 status-diff of 308;
+ecb+cass+pi SELFHOST_OK. Bench: self_compile **553 ms** (vs .32's ~525 — within run-to-run jitter on a
+non-quiet box; the added parse work is gated/monomorph-path, and the default nested-access change is one
+extra `GETFTYPE` per chained field access); cycc **1,011,816 B** (+4,344 B vs .32's 1,007,472 — the gated
+generics parse fns + the special-type guard + the nested-access leaf-width fix).
 
 ## [6.3.32] — 2026-07-02
 

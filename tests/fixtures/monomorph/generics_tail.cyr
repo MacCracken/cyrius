@@ -39,9 +39,15 @@ fn main(): i64 {
     var w: Two<i64, Point>; w.a = 3; w.b.x = 4; w.b.y = 5;
     r = r + w.a + w.b.x + w.b.y;                    # +12 = 27
 
-    # nested generic: Box<Pair<i32>> — v is a Pair$i32 instance
-    var b: Box<Pair<i32>>; b.v.a = 2; b.v.b = 1;
-    r = r + b.v.a + b.v.b;                          # +3 = 30
+    # nested generic: Box<Pair<i32>> — v is a Pair$i32 instance (i32 fields, NOT the
+    # base i64 Pair). DISTINGUISHING (the v6.3.10 lesson): bit-32 is set, so a real i32
+    # leaf truncates b.v.a to 2 and `b.v.a >> 30` is 0; a silent fallback to the base
+    # i64 Pair would keep the full value and shift a nonzero high bit into the low byte,
+    # pushing the result off 42. The `>> 30` (not a compare) both proves the width and
+    # exercises the nested sub-i64 field-access fix landed this slot (pre-fix b.v.a read
+    # wide even when the instance was correct — masking feature AND regression).
+    var b: Box<Pair<i32>>; b.v.a = 0x100000002; b.v.b = 1;
+    r = r + b.v.a + b.v.b + (b.v.a >> 30);         # i32: 2 +1 +0 = +3 = 30; i64 fallback ≠ 42
 
     # multi-type-param scalar fn + control-flow in a generic body
     r = r + firstof<i64, i32>(7, 99);              # +7 = 37

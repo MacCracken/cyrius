@@ -1,0 +1,14 @@
+# Negative fixture for _generics_tail_gate (v6.3.33).
+#
+# Special/aggregate types (Result/Option/Tagged/cstring/f64v2/f64v4) as generic
+# type-args must HARD-ERROR — their monomorphized ABI is not soundly emitted and
+# they all mangle to `Base$i` (aliasing distinct instances in the dedup index). Pre
+# the v6.3.33 guard, `idv<f64v2>` compiled clean and silently miscompiled/aliased.
+# Compiling this under CYRIUS_MONOMORPH=1 MUST fail (non-zero).
+fn idv<T>(a: T): T { return a; }
+
+fn main(): i64 {
+    var v: f64v2;
+    var a = idv<f64v2>(v);
+    return 42;
+}

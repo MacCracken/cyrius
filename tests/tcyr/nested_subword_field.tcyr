@@ -1,0 +1,78 @@
+# nested_subword_field.tcyr — v6.3.33.
+#
+# Nested field access `x.y.z` where the LEAF `z` is a sub-i64 field (i8/i16/i32)
+# dropped the leaf width and read/wrote 64-bit: PARSE_FIELD_LOAD/STORE computed
+# FIELDSZ from the FIRST-level field's type (the intermediate struct) instead of
+# the leaf's, because the chained-access block resolved the leaf's OFFSET but never
+# re-pointed `ft` at the leaf type. Fixed by `ft = GETFTYPE(S, isi, ifi)` in both
+# chained blocks. Pre-existing (generics-independent); surfaced by the v6.3.33
+# generics-tail adversarial verification (a `Box<Pair<i32>>` inner field read wide).
+# 1-level sub-i64 field access always worked — this pins the nested (2-level) case.
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+struct I32P { a: i32; b: i32; }
+struct BoxI32 { v: I32P; z: i64; }
+struct I16P { a: i16; b: i16; }
+struct BoxI16 { v: I16P; }
+struct I8P { a: i8; b: i8; }
+struct BoxI8 { v: I8P; }
+
+# LOAD: a nested i32 leaf must read only 32 bits. Store a value with bit-32 set;
+# a correct i32 leaf truncates to the low 32 bits, so the comparison sees the
+# small value (0). A 64-bit load would see the full value (1).
+fn n32_load_truncates(): i64 {
+    var o: BoxI32; o.v.a = 0x100000002; o.v.b = 3; o.z = 7;
+    var wide = 0;
+    if (o.v.a > 1000000) { wide = 1; }
+    return wide;                       # 0 = 32-bit load (correct)
+}
+
+# value round-trips at the truncated width
+fn n32_value(): i64 {
+    var o: BoxI32; o.v.a = 0x100000002; o.v.b = 3; o.z = 7;
+    return o.v.a + o.v.b + o.z;        # 2 + 3 + 7 = 12
+}
+
+# STORE: a nested i32 leaf store must write only 4 bytes — a 64-bit store to `a`
+# (offset 0) would spill the high half into `b` (offset 4).
+fn n32_store_no_clobber(): i64 {
+    var o: BoxI32; o.v.b = 9; o.v.a = 0x100000002;
+    return o.v.b;                      # 9 = store stayed 4 bytes (correct); 1 = clobbered
+}
+
+# i16 leaf
+fn n16_load_truncates(): i64 {
+    var o: BoxI16; o.v.a = 0x10005; o.v.b = 0;   # low 16 bits = 5
+    var wide = 0;
+    if (o.v.a > 1000) { wide = 1; }
+    return wide;                       # 0 = 16-bit load; 1 = wide
+}
+
+# i8 leaf
+fn n8_load_truncates(): i64 {
+    var o: BoxI8; o.v.a = 0x105; o.v.b = 0;      # low 8 bits = 5
+    var wide = 0;
+    if (o.v.a > 200) { wide = 1; }
+    return wide;                       # 0 = 8-bit load; 1 = wide
+}
+
+# 1-level control — must stay correct (sub-i64 field access already worked at depth 1)
+fn one_level_i32(): i64 {
+    var p: I32P; p.a = 0x100000002; p.b = 4;
+    var wide = 0;
+    if (p.a > 1000000) { wide = 1; }
+    return wide * 100 + p.a + p.b;     # 0 + 2 + 4 = 6
+}
+
+test_group("nested sub-i64 field access — leaf width (v6.3.33)");
+assert_eq(n32_load_truncates(), 0, "nested i32 leaf LOAD reads 32 bits (was 64)");
+assert_eq(n32_value(), 12, "nested i32 leaf values round-trip = 12");
+assert_eq(n32_store_no_clobber(), 9, "nested i32 leaf STORE writes 4 bytes, no neighbor clobber");
+assert_eq(n16_load_truncates(), 0, "nested i16 leaf LOAD reads 16 bits");
+assert_eq(n8_load_truncates(), 0, "nested i8 leaf LOAD reads 8 bits");
+
+test_group("1-level sub-i64 field access — control (unregressed)");
+assert_eq(one_level_i32(), 6, "1-level i32 field still truncates = 6");
+
+var rc = assert_summary();

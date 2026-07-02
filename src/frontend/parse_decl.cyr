@@ -314,6 +314,13 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             var ifi = FINDFIELD(S, isi, ifnoff);
             if (ifi < 0) { ERR(S); }
             off = off + FIELDOFF(S, isi, ifi);
+            # v6.3.33: the load width must come from the LEAF field, not the
+            # intermediate struct. Pre-fix `ft` stayed the inner struct sid, so
+            # FIELDSZ returned its size (e.g. 8 for a 2×i32 Pair) → a 64-bit load
+            # that ignored a sub-i64 leaf (`x.y.z` with z: i8/i16/i32 read wide).
+            # Re-point `ft` at the leaf so FIELDSZ/EFIELD_LOAD_W pick the true width
+            # (leaf i64 → 0 → 8; leaf struct → its size — both unchanged).
+            ft = GETFTYPE(S, isi, ifi);
         } }
     # Load variable address + field offset, then load value (width-correct).
     # idx < -1 is a local-encoded index from the struct-local branch above
@@ -451,6 +458,11 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
             var ifi = FINDFIELD(S, isi, ifnoff);
             if (ifi < 0) { ERR(S); }
             off = off + FIELDOFF(S, isi, ifi);
+            # v6.3.33: mirror of PARSE_FIELD_LOAD — the store width must come from
+            # the LEAF field. Pre-fix `ft` stayed the inner struct sid, so a nested
+            # `x.y.z = v` (z: i8/i16/i32) took the else/ESTOC 64-bit store, writing 8
+            # bytes over a 4-byte leaf (truncation lost + neighbor clobber).
+            ft = GETFTYPE(S, isi, ifi);
         } }
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);

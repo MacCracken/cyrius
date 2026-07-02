@@ -508,6 +508,17 @@ fn _generics_tail_gate(): i64 {
         println(": flag-OFF compiled generics-tail — the feature is NOT gated");
         fail = fail + 1;
     }
+    # v6.3.33: a special/aggregate type-arg (f64v2) on a generic fn must HARD-ERROR
+    # under the flag (not silently miscompile + alias to `Base$i`).
+    var src_rej = _root_path("tests/fixtures/monomorph/generics_special_reject.cyr");
+    var bin_rej = _tmp_path("audit_gentail_rej_");
+    var rc_rej = _self_host_pipe_env(src_rej, CC_PATH, bin_rej, "CYRIUS_MONOMORPH=1");
+    sys_unlink(bin_rej);
+    if (rc_rej == 0) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        println(": special-type type-arg (idv<f64v2>) was NOT rejected — silent-miscompile guard missing");
+        fail = fail + 1;
+    }
     if (fail == 0) {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
         println(": generic structs instantiate (nested field access + multi-param + nested generics) under the flag, gated off");
