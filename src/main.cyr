@@ -424,7 +424,12 @@
 #   0x5DDD000 local_types       [131072]  16384 type slots × 8B (was 0x192200)
 #   0x5DFD000 local_slice_widths[131072]  16384 slice-width slots × 8B (was 0x193400) → ends 0x5E1D000
 #
-#   0x5E1D000 brk-final                   ~94.1 MB — heap end (+512 KB local-table relocation @ v6.1.40;
+# --- IR cross-BB liveness arrays (v6.3.27; analysis-only, touched only under CYRIUS_IR) ---
+#   0x5E1D000 ir_live_in         [262144]  32768 BB live-in reg-bitmaps × 8B (u64; bit0=RAX..bit6=R15)
+#   0x5E5D000 ir_live_out        [262144]  32768 BB live-out reg-bitmaps × 8B → ends 0x5E9D000
+#
+#   0x5E9D000 brk-final                   ~94.6 MB — heap end (+512 KB IR liveness @ v6.3.27;
+#                                        +512 KB local-table relocation @ v6.1.40;
 #                                        +16MB output_buf @ v6.1.27). v5.11.68
 #                                        full heap-map reorg shrunk brk
 #                                        by 9.06 MB (was 0x56AD000 /
@@ -659,10 +664,11 @@ if (_vn > 0) {
 # any output (the x86 driver previously paid this unconditionally, so the
 # x86 Mach-O cycc never compiled on-device — only the syscall ABV xlat in
 # emit.cyr was missing too; both are needed). Linux mmap number 9 →
-# BSD 197 via EMACHO_SYSXLAT at emit. Size 0x5E1D000 (~94.1 MB) matches
+# BSD 197 via EMACHO_SYSXLAT at emit. Size 0x5E9D000 (~94.6 MB) matches
 # main.cyr's brk top below (output_buf 16 MB @ v6.1.27 + local tables
-# +512 KB @ v6.1.40); flags MAP_ANON|MAP_PRIVATE = 0x1002.
-var S = syscall(9, 0, 0x5E1D000, 3, 0x1002, 0 - 1, 0);
+# +512 KB @ v6.1.40 + IR cross-BB liveness arrays +512 KB @ v6.3.27);
+# flags MAP_ANON|MAP_PRIVATE = 0x1002.
+var S = syscall(9, 0, 0x5E9D000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(1, 2, "cycc: mmap heap init failed\n", 28);
     syscall(60, 1);
@@ -673,7 +679,9 @@ var S = syscall(SYS_BRK, 0);
 # + 0xD81000 size, per src/frontend/ts/{lex,parse}.cyr design after
 # v5.7.2 P2.1). TS region is only TOUCHED in --lex-ts / --parse-ts
 # modes; the +13.5 MB brk extension is paid unconditionally.
-syscall(SYS_BRK, S + 0x5E1D000);
+# v6.3.27: +512 KB for the IR cross-BB liveness arrays at the arena top
+# (live_in @ +0x5E1D000, live_out @ +0x5E5D000; only touched under CYRIUS_IR).
+syscall(SYS_BRK, S + 0x5E9D000);
 #endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)

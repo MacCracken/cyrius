@@ -220,6 +220,27 @@ fn IR_BB_SUCC0(S, bi): i64 { return load64(S + 0xE3A000 + bi * 32 + 24) & 0xFFFF
 fn IR_BB_SUCC1(S, bi): i64 { return (load64(S + 0xE3A000 + bi * 32 + 24) >> 32) & 0xFFFFFFFF; }
 
 # ================================================================
+# Cross-BB liveness arrays (v6.3.27, analysis-only, gated under CYRIUS_IR)
+# ================================================================
+# Per-BB register-liveness bitmaps (one u64 each, indexed by BB id, ≤32768).
+# Bit encoding widens the v5.6.16 2-bit DCE map: bit0=RAX, bit1=RCX, and (storage
+# reserved, no allocation meaning yet) bit2=RBX, bit3=R12, bit4=R13, bit5=R14,
+# bit6=R15. `ir_liveness_cfg` computes these as a CFG fixpoint; the register
+# allocation/rewrite that would CONSUME bits 2-6 is deferred to a later slot that
+# first builds the IR re-emit path (the in-place-patch emit model can't grow a
+# `push`→`mov reg` instruction). Cross-BB liveness is the reusable substrate the
+# v6.3.28 copy-prop + v6.3.29 cross-BB DSE consume.
+#
+# Placed at the arena top (past local_types @ 0x5DDD000): live_in @ S+0x5E1D000,
+# live_out @ S+0x5E5D000, 256 KB each (32768 × 8). The S arena was bumped +512 KB
+# (0x5E1D000 → 0x5E9D000, main.cyr) to hold them. Zero-init by mmap/brk; only
+# touched under CYRIUS_IR, so the default emit path is unaffected.
+fn IR_LIVEIN(S, bi): i64 { return load64(S + 0x5E1D000 + bi * 8); }
+fn IR_SLIVEIN(S, bi, v): i64 { store64(S + 0x5E1D000 + bi * 8, v); return 0; }
+fn IR_LIVEOUT(S, bi): i64 { return load64(S + 0x5E5D000 + bi * 8); }
+fn IR_SLIVEOUT(S, bi, v): i64 { store64(S + 0x5E5D000 + bi * 8, v); return 0; }
+
+# ================================================================
 # IR builder — Phase 2 API
 # ================================================================
 
