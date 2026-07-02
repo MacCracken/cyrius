@@ -1596,6 +1596,77 @@ fn IS_JUMP_TARGET(S, off): i64 {
     return 0;
 }
 
+# v6.3.29 callee-saved frame-trim (CYRIUS_FRAMETRIM). A #regalloc fn's prologue/epilogue
+# save+restore ALL _cur_fn_regalloc callee-saved regs (rbx,r12-r15), but the linear-scan
+# picker used only _ra_used_n of them (it allocates lowest-first → the used set is the
+# prefix {0.._ra_used_n-1}). Callee-saved regs are written ONLY by the picker, so the
+# saves/restores for the unused [_ra_used_n, _cur_fn_regalloc) regs are DEAD. Record them
+# as nop_runs → PARSE_FN_DEF's existing compactor (below) deletes them with full jump/
+# fixup/target repair. Saves are 4 B each at _ra_save_cp+k*4 (order rbx=0..r15=4); the
+# restore sequence emits REVERSE (r15 first), so reg k sits at
+# _ra_restore_cp+(_cur_fn_regalloc-1-k)*4. Frame size is unchanged (the reserved slot
+# stays, just unused; disps don't shift) → reloc-safe. x86-only; gated CYRIUS_FRAMETRIM.
+fn _ra_frame_trim(S, fn_start): i64 {
+    # v6.3.29: the trim's invariant is that the regalloc PICKER ran and its
+    # lowest-first assignment is faithfully tracked in `_ra_used_n`. Two paths break
+    # that, so skip them:
+    #  - `_cur_fn_has_closure`: the fn emitted an INLINE closure/generic instance in
+    #    its own range; the picker is skipped and the range holds a foreign frame.
+    #  - `_MONOMORPH_OK` (CYRIUS_MONOMORPH=1, experimental/opt-in/default-off): generic
+    #    instances are emitted by token-replaying PARSE_FN_DEF with the picker skipped,
+    #    so `_ra_used_n` (0) understates the instance's real callee-saved use → a trim
+    #    would drop a live save. The trim is a DEFAULT-path optimization; the replay
+    #    path is out of its scope.
+    if (_cur_fn_has_closure != 0) { return 0; }
+    if (_MONOMORPH_OK != 0) { return 0; }
+    if (_cur_fn_regalloc <= 0) { return 0; }
+    if (_ra_used_n >= _cur_fn_regalloc) { return 0; }
+    var cb = _codebuf_base;
+    var lim = GCP(S) - 4;
+    var k = _ra_used_n;
+    while (k < _cur_fn_regalloc) {
+        # Per-reg save/restore bytes: [rex, 89(save)/8B(restore), modrm, disp8].
+        # k: 0=rbx 1=r12 2=r13 3=r14 4=r15. An UNUSED reg (k>=_ra_used_n) is never
+        # touched by the body (only the picker writes callee-saved regs, and it didn't
+        # assign this one), so these 4-byte patterns appear ONLY as its real prologue
+        # save + epilogue restore(s) — pattern-scanning finds ALL of them (handles
+        # multiple epilogues) with no body false-match.
+        var rex = 0x4C;   if (k == 0) { rex = 0x48; }
+        var modrm = 0x5D; if (k == 1) { modrm = 0x65; }
+        if (k == 2) { modrm = 0x6D; }
+        if (k == 3) { modrm = 0x75; }
+        if (k == 4) { modrm = 0x7D; }
+        var disp = 0xF8;  if (k == 1) { disp = 0xF0; }
+        if (k == 2) { disp = 0xE8; }
+        if (k == 3) { disp = 0xE0; }
+        if (k == 4) { disp = 0xD8; }
+        var p = fn_start;
+        while (p <= lim) {
+            var hit = 0;
+            if (load8(cb + p) == rex) {
+                if (load8(cb + p + 2) == modrm) {
+                    if (load8(cb + p + 3) == disp) {
+                        var op = load8(cb + p + 1);
+                        if (op == 0x89) { hit = 1; }
+                        if (op == 0x8B) { hit = 1; }
+                        if (hit == 1) {
+                            var nc = L64(S + 0x1A2008);
+                            if (nc < 1024) {
+                                S64(S + 0x1A2010 + nc * 16, p);
+                                S64(S + 0x1A2010 + nc * 16 + 8, 4);
+                                S64(S + 0x1A2008, nc + 1);
+                            }
+                        }
+                    }
+                }
+            }
+            if (hit == 1) { p = p + 4; } else { p = p + 1; }
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
 # v6.3.5 CO-01 — single source of truth for param-type-name classification.
 # Returns the param-type class for a type name at tok_names offset `tnoff`:
 #   0 = int / struct / other (no special ABI mask)
@@ -2197,6 +2268,7 @@ fn PARSE_FN_DEF(S): i64 {
     # codegen (EFNEPI, ETAILJMP) can emit rbx save/restore. Reset at
     # the end of PARSE_FN_DEF.
     _cur_fn_regalloc = GFRA(S, fi);
+    _ra_used_n = 0;            # v6.3.29 frame-trim: max callee-saved reg the picker assigns, +1
     _cur_fn_has_closure = 0;   # v6.3.7 — set by PARSE_FACTOR when this fn emits a closure
     # v5.5.36 Phase 2b — look ahead past the param list to see whether
     # the fn signature carries a `: StructName` return annotation. We
@@ -3225,6 +3297,7 @@ fn PARSE_FN_DEF(S): i64 {
                         if (free_r != (0 - 1)) {
                             store64(&active_iv + free_r * 8, pi);
                             store64(&iv_assigned + pi * 8, free_r);
+                            if (free_r + 1 > _ra_used_n) { _ra_used_n = free_r + 1; }   # v6.3.29 frame-trim
                             picked = picked + 1;
                         } else {
                             # Spill heuristic: pick active reg whose interval
@@ -3247,6 +3320,7 @@ fn PARSE_FN_DEF(S): i64 {
                                 store64(&iv_assigned + prev_pi * 8, 0 - 1);
                                 store64(&active_iv + spill_r * 8, pi);
                                 store64(&iv_assigned + pi * 8, spill_r);
+                                if (spill_r + 1 > _ra_used_n) { _ra_used_n = spill_r + 1; }   # v6.3.29 frame-trim
                                 # picked count stays — net zero (one in, one out).
                             }
                             # else: cur spills, iv_assigned[pi] stays -1.
@@ -3340,6 +3414,10 @@ fn PARSE_FN_DEF(S): i64 {
         var _kmode = L64(S + 0x18FCA0);
         if (_kmode <= 1) {
             if (IR_ENABLED(S) == 0) {
+                # v6.3.29: append dead callee-saved save/restore nop_runs BEFORE reading
+                # _nrn, so the compactor below harvests them (same jump/fixup repair as
+                # the regalloc picker's runs). Off by default → byte-identical.
+                if (_FRAMETRIM_OK == 1) { _ra_frame_trim(S, fn_start); }
                 var _nrn = L64(S + 0x1A2008);
                 var _jsn = L64(S + 0x1A0000);
                 if (_nrn > 0 && _nrn < 1024 && _jsn < 1024) {

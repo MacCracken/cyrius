@@ -264,6 +264,16 @@ var _fnt_cap = 0;
 # (generics) builds on this in v6.3.7; v6.3.5 only proves the value-replay
 # substrate is byte-correct cross-arch behind the flag.
 var _MONOMORPH_OK = 0;
+# v6.3.29 — callee-saved frame-trim (CYRIUS_FRAMETRIM). Every #regalloc fn saves+
+# restores ALL _cur_fn_regalloc callee-saved regs (rbx,r12-r15) in prologue/epilogue,
+# even when the linear-scan picker used FEWER. Since the picker allocates lowest-first
+# and callee-saved regs are written ONLY by the picker, the regs it used are a prefix
+# {0.._ra_used_n-1}; the saves/restores for [_ra_used_n, _cur_fn_regalloc) are DEAD →
+# NOP them + let the existing compactor harvest them. ~2% cycc size + fewer mem-ops/call.
+# v6.3.29: DEFAULT ON (CYRIUS_FRAMETRIM=0 opts out). Verified via self-host fixpoint +
+# full tcyr (exit-identical to default) + the two-step bootstrap.
+var _FRAMETRIM_OK = 1;
+var _ra_used_n = 0;      # max callee-saved reg index the picker assigned, +1 (per-fn)
 # Copy an 8 B/slot table's live oc entries into a fresh nc-slot buffer. The tail
 # (oc..nc) is zeroed by alloc's fresh mmap pages — new fn slots default 0, which is
 # exactly what REGFN's mask/overload/body tables expect (they're only written when

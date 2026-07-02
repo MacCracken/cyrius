@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.29] — 2026-07-02
+
+**v6.3.29 — callee-saved frame-trim: the perf arc's first real, measurable win (cycc −1.6%, self_compile −1.5%).**
+Every `#regalloc` fn's prologue/epilogue saves + restores ALL 5 callee-saved registers (rbx,r12-r15),
+but the linear-scan register picker usually uses fewer. Since the picker allocates lowest-first and
+callee-saved regs are written ONLY by the picker, the used set is a prefix `{0.._ra_used_n-1}` — the
+save/restore pairs for the unused `[_ra_used_n, _cur_fn_regalloc)` regs are dead. (The x86 byte-peephole
+originally pinned for the perf arc was measured empirically ~nil; this is the real IR-independent win.)
+
+### Changed
+- **Callee-saved frame-trim (DEFAULT ON; `CYRIUS_FRAMETRIM=0` opts out).** The regalloc picker now
+  tracks `_ra_used_n` (max callee-saved reg index it assigned, +1; reset per-fn). After a fn's code is
+  emitted, `_ra_frame_trim` (`parse_fn.cyr`) pattern-scans the fn range for each unused reg's exact
+  4-byte save/restore bytes (`48/4C 89/8B <modrm> <disp8>`) — which appear ONLY as real save/restores,
+  since an unassigned callee-saved reg is never touched by the body (no false-match), and the scan finds
+  ALL of a fn's (possibly multiple) epilogues — and records them as nop_runs. PARSE_FN_DEF's existing
+  compactor deletes them with full jump-disp32 / fixup-CP / jump-target repair (no new relocation code).
+  Frame size is unchanged (the reserved slot stays; local disps don't shift) → reloc-safe. **cycc shrank
+  1,031,944 → 1,015,608 B (−16,336 B, −1.6%); self_compile 538 → 530 ms (fewer memory ops per call).**
+  x86-only (aarch64/macho byte-identical — the trim is `_AARCH64_BACKEND==0`-gated). Skipped for fns that
+  emit an inline closure/generic instance (`_cur_fn_has_closure`) and under `CYRIUS_MONOMORPH=1` (the
+  token-replay instance path skips the picker, so `_ra_used_n` doesn't reflect the instance's real use —
+  the trim is a default-path optimization, out of that experimental path's scope). Gate
+  `tests/frametrim.sh` (self-hosts + shrinks vs `CYRIUS_FRAMETRIM=0` + exit-identical; check.sh 118→**119**).
+
+ABI-critical, exhaustively verified: **201/201 tcyr exit-identical to the default compiler**; self-host
+fixpoint (two-step bootstrap, cc2==cc3); seed→cybs→cycc byte-identical; `differential.sh` status-diff=0
+(296 codegen-diffs = the trim applied, behavior preserved); cross-OS ecb (macOS) + cass (Windows) + pi
+(aarch64) all SELFHOST_OK; self_compile **530 ms**; cycc **1,015,608 B**.
+
+### Deferred (off the perf arc's critical path)
+- The **IR substrate productionization** (re-emit path `ir_lower_all` + complete local-access opcode model
+  + the `CYRIUS_IR=3` fixpoint over-elimination fix) — the .29 investigation refined the residual
+  `CYRIUS_IR=3` bug to a **probabilistic (ASLR-dependent) miscompile** in `ir_lase`/the fixpoint, not a
+  bounded opcode bug — a deep, open-ended grind on the OLD experimental optimizer that the arc's NEW
+  passes don't need (they build on the sound v6.3.27 analysis). Its own dedicated slot when the IR-level
+  passes actually need it. See `issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md`.
+
 ## [6.3.28] — 2026-07-02
 
 **v6.3.28 — `CYRIUS_IR=3` substrate: root-caused + two real bugs fixed (it was NEVER "fundamentally blocked").**

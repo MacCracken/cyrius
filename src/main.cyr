@@ -1339,6 +1339,14 @@ if (_mono_env != 0) {
     }
 }
 
+# v6.3.29 — callee-saved frame-trim. DEFAULT ON; CYRIUS_FRAMETRIM=0 opts out.
+var _ftrim_env = _read_env("CYRIUS_FRAMETRIM");
+if (_ftrim_env != 0) {
+    if (load8(_ftrim_env) == 48 && load8(_ftrim_env + 1) == 0) {
+        _FRAMETRIM_OK = 0;
+    }
+}
+
 # AGNOS ring-3 output via CYRIUS_TARGET_AGNOS=1 (x86_64 ELF, agnos syscall
 # numbers + agnos exit=0). Shares the default ELF emit path (_TARGET_PE==0,
 # _TARGET_MACHO==0); EEXIT branches on _TARGET_AGNOS for syscall(0) exit.
