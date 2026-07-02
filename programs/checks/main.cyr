@@ -341,6 +341,10 @@ fn _run_regression_gates(): i64 {
     _gate("stack-protected extern-C via fncall4/5/6/7 + foreign-TLS coexistence, no %fs clobber (v6.3.26)", "tests/ffi_stack_protected_extern_c.sh");
     println("");
 
+    _section("IR cross-BB liveness + spill detection (perf-arc substrate)");
+    _gate("ir_liveness_cfg fixpoint converges + precise (exit BBs live_out==0) + spill-interval detection, behavior-safe (v6.3.27)", "tests/ir_liveness_cfg.sh");
+    println("");
+
     _section("Binary structural lint (VR-04)");
     _binary_structural_lint_gate();
     println("");

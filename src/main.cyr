@@ -1859,6 +1859,16 @@ if (_epi_km == 3 || _epi_km == 2) {
 if (IR_ENABLED(S) == 1) {
     var ir_bbs = ir_build_bbs(S);
     var ir_edges = ir_build_edges(S);
+    # v6.3.27: cross-BB liveness fixpoint (pure analysis — writes only the
+    # ir_live_in/out arrays; the substrate .28 copy-prop + .29 cross-BB DSE use).
+    var ir_live_iters = ir_liveness_cfg(S);
+    if (_read_env("CYRIUS_IR_LIVENESS") != 0) {
+        syscall(SYS_WRITE, 2, "IR liveness: bbs=", 17); PRNUM(ir_bbs);
+        syscall(SYS_WRITE, 2, " iters=", 7); PRNUM(ir_live_iters);
+        syscall(SYS_WRITE, 2, " exit0=", 7); PRNUM(ir_count_exit_bbs(S));
+        syscall(SYS_WRITE, 2, " spills=", 8); PRNUM(_ir_find_spill_intervals(S));
+        syscall(SYS_WRITE, 2, "\n", 1);
+    }
     var ir_lase_n = ir_lase(S);
     # v5.6.12: LASE + DBE codebuf patching ENABLED under CYRIUS_IR=3.
     # Safety precondition: parse_*.cyr's 15 direct-emit blocks are now

@@ -987,6 +987,185 @@ fn ir_dce_capped(S, cap): i64 {
 fn ir_dce(S): i64 { return ir_dce_capped(S, 0 - 1); }
 
 # ================================================================
+# v6.3.27 — cross-BB liveness (CFG backward dataflow fixpoint)
+# ================================================================
+# The per-BB DCE above seeds each BB's exit conservatively (live = 3, both
+# RAX/RCX). This computes the PRECISE per-BB live-out as the union of the
+# successors' live-in, iterated to a fixpoint over the CFG (succ0/succ1 from
+# ir_build_edges). Pure ANALYSIS — it writes only the ir_live_in/ir_live_out
+# arrays (v6.3.27 heap region) and never mutates codegen; it runs only on the
+# CYRIUS_IR path, so the default emit path is untouched. It is the reusable
+# substrate the v6.3.28 copy-prop + v6.3.29 cross-BB DSE consume. The register
+# allocation/rewrite that would CONSUME this liveness is deferred to a later slot
+# (the in-place-patch emit model can't grow a `push`→`mov reg` instruction; see
+# docs/development/issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md).
+#
+# cybs note (feedback_seed_derive_mandatory_cybs_limits): kept as several small
+# helpers chained by regular (non-tail) calls so no single fn trips the bootstrap
+# compiler's ref-density / tail-call limits. seed-derive after this bite.
+
+# Backward per-node transfer for ONE BB: returns live_in given live_out.
+# Same reg-effect model as ir_dce_capped's inner loop (lines 977-980), WITHOUT
+# the DCE kill — seeded with the real live_out instead of the conservative 3.
+fn _ir_bb_transfer(S, bi, live_out): i64 {
+    var first = IR_BB_FIRST(S, bi);
+    var count = IR_BB_COUNT(S, bi);
+    var live = live_out;
+    var k = count;
+    while (k > 0) {
+        k = k - 1;
+        var ni = first + k;
+        var op = IR_NODE_OP(S, ni);
+        if (op == IR_NOP) { continue; }
+        if (op == IR_ELIMINATED) { continue; }
+        if (_ir_clobbers_rax(op) == 1) { live = live & 0xFFFFFFFFFFFFFFFE; }
+        if (_ir_def_rcx_any(op) == 1)  { live = live & 0xFFFFFFFFFFFFFFFD; }
+        if (_ir_uses_rax(op) == 1)     { live = live | 1; }
+        if (_ir_uses_rcx(op) == 1)     { live = live | 2; }
+    }
+    return live;
+}
+
+# live_in of one successor, or 0 if the successor slot is empty (-1 reads as
+# 0xFFFFFFFF after the SUCC accessor mask; a real BB id is always < bcnt).
+fn _ir_succ_livein(S, s, bcnt): i64 {
+    if (s < bcnt) { return IR_LIVEIN(S, s); }
+    return 0;
+}
+
+# Union of a BB's successors' live-in (0/1/2 successors: JMP/fall = succ0 only,
+# JCC = succ0+succ1, RET/EPILOGUE = neither → 0).
+fn _ir_succ_union(S, bi, bcnt): i64 {
+    var s0 = IR_BB_SUCC0(S, bi);
+    var s1 = IR_BB_SUCC1(S, bi);
+    var u0 = _ir_succ_livein(S, s0, bcnt);
+    var u1 = _ir_succ_livein(S, s1, bcnt);
+    return u0 | u1;
+}
+
+# Conservative bail: everything live everywhere (never frees a reg). Only reached
+# if the monotone fixpoint fails to converge within the cap — a 7-bit lattice
+# over ≤32768 BBs converges in a handful of passes, so this must never fire on
+# real IR; if it does, it's a bug to investigate, not a correctness hole.
+fn _ir_liveness_bail(S, bcnt): i64 {
+    var bi = 0;
+    while (bi < bcnt) {
+        IR_SLIVEIN(S, bi, 0 - 1);
+        IR_SLIVEOUT(S, bi, 0 - 1);
+        bi = bi + 1;
+    }
+    return 0;
+}
+
+# Compute cross-BB liveness to a fixpoint. Returns the iteration count (the gate
+# test asserts convergence < the cap). Call AFTER ir_build_bbs + ir_build_edges.
+fn ir_liveness_cfg(S): i64 {
+    var bcnt = IR_BCNT(S);
+    var bi = 0;
+    while (bi < bcnt) {
+        IR_SLIVEIN(S, bi, 0);
+        IR_SLIVEOUT(S, bi, 0);
+        bi = bi + 1;
+    }
+    var iters = 0;
+    var changed = 1;
+    while (changed == 1) {
+        changed = 0;
+        var b = bcnt;
+        while (b > 0) {
+            b = b - 1;
+            var out = _ir_succ_union(S, b, bcnt);
+            IR_SLIVEOUT(S, b, out);
+            var lin = _ir_bb_transfer(S, b, out);
+            if (lin != IR_LIVEIN(S, b)) {
+                IR_SLIVEIN(S, b, lin);
+                changed = 1;
+            }
+        }
+        iters = iters + 1;
+        if (iters >= 64) { changed = 0; }
+    }
+    if (iters >= 64) { _ir_liveness_bail(S, bcnt); }
+    return iters;
+}
+
+# Count BBs whose live_out is empty — i.e. exit/return blocks nothing flows past.
+# Observable proof the fixpoint is more precise than the DCE's conservative
+# "always 3" seed (a RET/EPILOGUE BB gets live_out==0). Used by the gate test.
+fn ir_count_exit_bbs(S): i64 {
+    var bcnt = IR_BCNT(S);
+    var n = 0;
+    var bi = 0;
+    while (bi < bcnt) {
+        if (IR_LIVEOUT(S, bi) == 0) { n = n + 1; }
+        bi = bi + 1;
+    }
+    return n;
+}
+
+# ================================================================
+# v6.3.27 — spill-interval detection (analysis-only)
+# ================================================================
+# A value computed in RAX is spilled to the stack via IR_PUSH and later reloaded
+# via IR_POP_RAX / IR_POP_RCX — the classic stack round-trip of the binop shuttle
+# (LOAD_IMM a; PUSH; LOAD_IMM b; POP_RCX; OP). A future register allocator could
+# keep that value in a free callee-saved reg (rbx/r12-r15) across the interval,
+# eliminating the memory traffic. This pass COUNTS the promotable intervals; it
+# does NOT allocate or rewrite — the rewrite needs the IR re-emit path (the
+# in-place-patch emit model can't grow `push`(1B)→`mov reg`(3B)); deferred to a
+# later slot (see docs/development/issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md).
+
+# Ops that break the clean-span guarantee: they may touch [rsp] (RAW/inline-asm),
+# consume stack args (CALL_POPS/CALL_CLEAN), transfer control (SWITCH/TAIL_JMP),
+# or clobber regs opaquely (SYSCALL/CALL*/RAX_CLOBBER). Seeing one abandons the
+# open-push stack, so any matched PUSH..POP is guaranteed opaque-op-free.
+fn _ir_op_opaque_stack(op): i64 {
+    if (op == IR_CALL)          { return 1; }
+    if (op == IR_CALL_KNOWN)    { return 1; }
+    if (op == IR_CALL_POPS)     { return 1; }
+    if (op == IR_CALL_CLEAN)    { return 1; }
+    if (op == IR_CALL_INDIRECT) { return 1; }
+    if (op == IR_TAIL_JMP)      { return 1; }
+    if (op == IR_SYSCALL)       { return 1; }
+    if (op == IR_SWITCH)        { return 1; }
+    if (op == IR_RAW_BYTE)      { return 1; }
+    if (op == IR_RAW_EMIT)      { return 1; }
+    if (op == IR_RAX_CLOBBER)   { return 1; }
+    return 0;
+}
+
+# Count clean, INTRA-BB PUSH..POP spill intervals (the future allocation targets).
+# Depth counter per BB: PUSH deepens, POP_RAX/POP_RCX matches (one promotable
+# interval), any opaque op resets the stack. Cross-BB spills are excluded (depth
+# resets at each BB boundary). Analysis-only: returns the count, records nothing
+# (the node list isn't needed until allocation, which is deferred).
+fn _ir_find_spill_intervals(S): i64 {
+    var bcnt = IR_BCNT(S);
+    var promotable = 0;
+    var bi = 0;
+    while (bi < bcnt) {
+        var first = IR_BB_FIRST(S, bi);
+        var count = IR_BB_COUNT(S, bi);
+        var depth = 0;
+        var k = 0;
+        while (k < count) {
+            var op = IR_NODE_OP(S, first + k);
+            if (op == IR_PUSH) { depth = depth + 1; }
+            elif (op == IR_POP_RAX) {
+                if (depth > 0) { depth = depth - 1; promotable = promotable + 1; }
+            }
+            elif (op == IR_POP_RCX) {
+                if (depth > 0) { depth = depth - 1; promotable = promotable + 1; }
+            }
+            elif (_ir_op_opaque_stack(op) == 1) { depth = 0; }
+            k = k + 1;
+        }
+        bi = bi + 1;
+    }
+    return promotable;
+}
+
+# ================================================================
 # v5.6.18 — Dead-store elimination
 # ================================================================
 # Per-BB forward sweep: for each STORE_LOCAL(x), scan forward in the

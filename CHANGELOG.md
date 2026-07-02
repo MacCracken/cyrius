@@ -6,6 +6,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.27] — 2026-07-02
+
+**v6.3.27 — perf arc opens: cross-BB liveness + spill-interval detection (the regalloc substrate).**
+Pulled from v6.4.x. AR-04 substrate decision: build on the IR (the cross-arch-capable path that
+unlocks .28/.29), gated under `CYRIUS_IR`. Adversarial review of the full linear-scan design caught
+a **fatal miscompile hole** — so this release ships the safe **analysis half**, and the register
+allocation + rewrite is deferred to a dedicated re-emit-path slot.
+
+### Added — cross-BB liveness fixpoint (`ir_liveness_cfg`) + spill-interval detection
+- **Cross-BB liveness** (`src/common/ir.cyr`): a CFG backward-dataflow fixpoint —
+  `live_out[BB] = ∪ live_in[successors]`, iterated to convergence — computing precise per-BB
+  register liveness (`ir_live_in`/`ir_live_out` u64 bitmaps, new +512 KB arena region at the top).
+  More precise than the per-BB DCE's conservative "both live" seed: a RET/EPILOGUE block correctly
+  gets `live_out==0`. **Pure analysis — emits zero code**, so the default codegen path is
+  byte-identical; runs only under `CYRIUS_IR`. This is the reusable substrate that **v6.3.28
+  copy-prop** and **v6.3.29 cross-BB DSE** consume.
+- **Spill-interval detection** (`_ir_find_spill_intervals`): counts clean intra-BB `PUSH`..`POP`
+  stack round-trips (the binop shuttle — the future register-promotion targets); abandons any span
+  containing an opaque stack/reg op (CALL*/SYSCALL/RAW/SWITCH/RAX_CLOBBER). Analysis-only.
+- Observable via `CYRIUS_IR_LIVENESS=1` (`IR liveness: bbs=N iters=M exit0=K spills=J`).
+- Gate `tests/ir_liveness_cfg.sh` (check.sh 117→**118**): behavioral safety (default==CYRIUS_IR),
+  convergence (< 64-iter cap), precision (exit BBs `live_out==0`), spill detection (> 0).
+
+### Deferred — register allocation + rewrite (needs the IR re-emit path)
+- Adversarial review proved the rewrite **can't land on the current emit model**: `CYRIUS_IR`
+  emits x86 during parsing and the optimizer **patches codebuf in-place (shrink-only)** — it never
+  re-emits (`ir_lower_all` is dead scaffolding). Promotion **grows** an instruction (`push rax`
+  1 B → `mov r12, rax` 3 B), which would overwrite the next instruction = silent miscompile. The
+  allocation + rewrite is deferred to a slot that first wires + proves the IR re-emit path
+  byte-equivalent.
+  [`ir-regalloc-rewrite-needs-reemit`](docs/development/issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md).
+
+_check.sh 117→**118**; cycc self-host fixpoint + seed→cybs→cycc byte-identical (analysis gated under
+CYRIUS_IR; default codegen unchanged; cycc grew 1,027,720 → 1,031,888 B for the new IR fns + a
++512 KB arena region for the liveness arrays); ecb + cass + pi **SELFHOST_OK**; self_compile
+**543 ms**; cycc **1,031,888 B**._
+
 ## [6.3.26] — 2026-07-02
 
 **v6.3.26 — "Class B FFI / `fncall6` ABI fix" was a MISDIAGNOSIS; the real issue is TLS/`%fs`.**
