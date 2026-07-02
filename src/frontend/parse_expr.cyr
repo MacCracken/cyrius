@@ -504,7 +504,14 @@ fn PARSE_FACTOR(S): i64 {
                 if (lt == F32_TYID) { EFLLOAD(S, li); SESTYPE(S, 0); return 0; }
                 SPSC(S, lt);
                 # Width-correct load for scalar types (1=i8, 2=i16, 4=i32)
-                if (lt > 0) { if (lt <= 8) { SEXW(S, lt); EFLLOAD_W(S, li, lt); return 0; } }
+                # v6.3.34: a sub-i64 SCALAR local (SLTYPE 1/2/4 for i8/i16/i32) is NOT
+                # a pointer — its scale for `+`/`-` arithmetic must be 1, not its byte
+                # width. The SPSC(S, lt) above sets scale=lt, which is only correct for a
+                # pointer-to-lt element; a plain `var a: i32` then made `a + 2` add
+                # 2*sizeof(i32). Reset to 1 for lt < 8 ONLY: SLTYPE 8 is a `*i64` typed
+                # pointer (scalar i64 is SLTYPE 0), which genuinely needs scale 8 for
+                # `p + i`. No sub-i64 typed pointers exist, so 1/2/4 are always scalars.
+                if (lt > 0) { if (lt <= 8) { if (lt < 8) { SPSC(S, 1); } SEXW(S, lt); EFLLOAD_W(S, li, lt); return 0; } }
                 EFLLOAD(S, li);
                 return 0;
             }

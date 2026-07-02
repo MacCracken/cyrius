@@ -1,0 +1,42 @@
+# subword_scalar_arith.tcyr — v6.3.34.
+#
+# A sub-i64 SCALAR local (`var a: i8/i16/i32`) used as the LEFT operand of `+` or `-`
+# had its right operand pointer-scaled by sizeof(type): `var a: i32 = 40; a + 2` gave
+# 48 (= 40 + 2*4), i16 gave 44, and `var c: i32=30; var d=40; c + d` gave 190. Root
+# cause: PARSE_FACTOR's local-load set the pointer scale (SPSC) to the scalar's byte
+# width `lt`, which is only correct for a pointer-to-lt element — a plain scalar's
+# arithmetic scale must be 1. Fixed in parse_expr.cyr (scalar branch → SPSC 1).
+# i8 passed by coincidence (scale 1 == no-op); i64 by scale 0; multiplication and a
+# scalar on the RIGHT were always immune; i32 PARAMS were immune (different load path).
+# Pre-existing since ≥v5.11.69; latent because sub-i64 locals rarely sit left of +/-.
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+fn i32_add(): i64 { var a: i32 = 40; return a + 2; }
+fn i16_add(): i64 { var a: i16 = 40; return a + 2; }
+fn i8_add():  i64 { var a: i8  = 40; return a + 2; }
+fn i64_add(): i64 { var a: i64 = 40; return a + 2; }
+fn i32_sub(): i64 { var a: i32 = 44; return a - 2; }
+fn i32_add_local(): i64 { var c: i32 = 30; var d = 40; return c + d; }
+fn i32_two(): i64 { var a: i32 = 40; var b: i32 = 2; return a + b; }
+fn i32_mul(): i64 { var a: i32 = 40; return a * 2; }          # mul always immune
+fn i32_right(): i64 { var a: i32 = 40; return 2 + a; }        # scalar on RIGHT always immune
+fn i32_varinit(): i64 { var a: i32 = 5; var b = a + 2; return b; }
+fn i32_param(a: i32): i64 { return a + 2; }                    # param path (was already fine)
+fn i32_chain(): i64 { var a: i32 = 10; var b: i32 = 20; var c: i32 = 12; return a + b + c; }
+
+test_group("sub-i64 scalar LEFT-operand arithmetic (v6.3.34 pointer-scale fix)");
+assert_eq(i32_add(), 42, "i32 a + 2 = 42 (was 48)");
+assert_eq(i16_add(), 42, "i16 a + 2 = 42 (was 44)");
+assert_eq(i8_add(), 42, "i8 a + 2 = 42 (was already 42)");
+assert_eq(i64_add(), 42, "i64 a + 2 = 42 (scale 0, immune)");
+assert_eq(i32_sub(), 42, "i32 a - 2 = 42 (subtraction scaled too, was 36)");
+assert_eq(i32_add_local(), 70, "i32 c + i64 d = 70 (was 190)");
+assert_eq(i32_two(), 42, "i32 a + i32 b = 42 (was 48)");
+assert_eq(i32_mul(), 80, "i32 a * 2 = 80 (mul immune)");
+assert_eq(i32_right(), 42, "i32 2 + a = 42 (right operand immune)");
+assert_eq(i32_varinit(), 7, "i32 var b = a + 2 = 7 (was 13)");
+assert_eq(i32_param(40), 42, "i32 param a + 2 = 42 (param path unaffected)");
+assert_eq(i32_chain(), 42, "i32 a + b + c = 42 (left-assoc chain)");
+
+var rc = assert_summary();

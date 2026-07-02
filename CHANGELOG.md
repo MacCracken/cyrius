@@ -6,6 +6,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.34] — 2026-07-02
+
+**v6.3.34 — default-path miscompile: a sub-i64 SCALAR local on the LEFT of `+`/`-` was pointer-scaled.**
+Found by the v6.3.34 monomorph-engine discovery sweep (which also surfaced 8 gated generics bugs — filed
+for v6.3.35/.36; user re-sequenced this default-path fix first). A `var a: i32`/`i16` used as the left
+operand of `+` or `-` had its other operand multiplied by `sizeof` — pointer arithmetic wrongly applied
+to a scalar. Pre-existing since ≥v5.11.69 (cc5 reproduces it), latent because sub-i64 `var` locals rarely
+sit left of `+`/`-`.
+
+### Fixed
+- **`var a: i32 = 40; a + 2` gave 48** (= 40 + 2·4); `var c: i32=30; var d=40; c + d` → **190**; i16 →
+  scale 2 (`44`); `a - 2` scaled too (`32`). i8 was scale-1 by coincidence, i64 scale-0; a scalar on the
+  RIGHT (`2 + a`), multiplication, and i32 *params* were all immune. Root cause: `PARSE_FACTOR`'s
+  local-load (`parse_expr.cyr`) set the pointer scale (`SPSC`) to the scalar's byte width `lt`, which is
+  correct only for a pointer-to-lt element. Fix: reset the scale to 1 for `lt < 8` (SLTYPE 1/2/4 =
+  i8/i16/i32 scalars). **`lt == 8` is left alone** — that is a `*i64` typed pointer (a scalar i64 is
+  SLTYPE 0), which genuinely needs scale 8 for `p + i`; and no sub-i64 typed pointers exist in the
+  ecosystem, so SLTYPE 1/2/4 is always a scalar. `programs/points.cyr`'s `*i64` pointer arithmetic (25)
+  is preserved.
+
+Verified: `tests/tcyr/subword_scalar_arith.tcyr` (12 asserts — i8/i16/i32/i64 add/sub, two-local add,
+mul-immune, right-operand-immune, var-init, param, left-assoc chain); the only differential codegen-diffs
+vs .33 are the intended sub-i64 scalar-arithmetic corrections (`points.cyr`/`struct_list.cyr` re-verified
+correct — 25/15); two-step bootstrap (one-step-stable fixpoint); self-host + seed→cybs→cycc
+byte-identical; ecb+cass+pi SELFHOST_OK. Bench: self_compile **560 ms** (within jitter vs .33's 553 on
+a non-quiet box); cycc **1,011,816 B** (unchanged — the `lt < 8` gate is net-zero size). Filed alongside: a separate
+pre-existing **global** typed sub-i64 scalar load SIGSEGV
+([`global-typed-subword-scalar-load-crash`](docs/development/issues/2026-07-02-global-typed-subword-scalar-load-crash.md))
+and the 8-bug monomorph-engine inventory
+([`monomorph-engine-bug-inventory`](docs/development/issues/2026-07-02-monomorph-engine-bug-inventory.md), v6.3.35/.36).
+
 ## [6.3.33] — 2026-07-02
 
 **v6.3.33 — generics arc tail: generic STRUCTS now actually instantiate (v6.3.10 shipped them broken) + multi-type-param + nested generics + the fixes an adversarial-verification pass surfaced.**
