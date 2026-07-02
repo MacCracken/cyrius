@@ -1,5 +1,12 @@
 # Client-side signature anti-downgrade floor (rollback protection)
 
+> **STATUS: ✅ RESOLVED (v6.3.21) — shipped as CVE-21's anti-downgrade floor.**
+> `scripts/install.sh` now TOFU-pins the highest signed version to
+> `~/.cyrius/signed-since` on a successful signed verify and requires a valid
+> signature for any version ≥ that floor (`CYRIUS_ALLOW_UNSIGNED` escape,
+> sort-based `_version_ge`). Closes the strip-`SHA256SUMS.sig` silent downgrade.
+> See CHANGELOG [6.3.21] and `2026-06-10-overdue-security-audit-cve-tail.md` (CVE-21).
+
 **Filed:** 2026-06-20 (surfaced by the v6.2.31 CVE-13 adversarial review)
 **Severity:** P3 (hardening; the v6.2.31 signing is complete for its stated threat)
 **Affects:** `scripts/install.sh`, `scripts/ci.sh`, `scripts/install.ps1`

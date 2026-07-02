@@ -117,3 +117,12 @@ stdlib = [
 # of `yantra` in [deps].stdlib (yantra references sigil's SIG_ALG_ED25519
 # constant + sandhi/sakshi fns, so the deps are required, not just runtime).
 # Re-fold at the next patched tag rather than git-resolve at consume time.
+#
+# Ganita vendored at 1.0.2 (v6.3.31): the f64 math lib (trig / hyperbolic /
+# linalg / matrix). Vendored byte-identical into lib/ganita.cyr from its dist
+# (`cyrius distlib`); its dep sidecar (ganita.deps) requires syscalls / string /
+# alloc / fmt / vec / str / math in scope. Re-fold at the next patched tag.
+# 1.0.2 fixed `ganita_f64_tanh` returning NaN for |x| > ~709 (overflow of the
+# (e^x-e^-x)/(e^x+e^-x) form) — now saturates to +/-1 for |x| > 20, BIT-EXACT
+# (tanh already rounds to +/-1.0 in f64 by |x| ~19); no API change. Surfaced by
+# a GPT-2-small import whose GELU tanh NaN-poisoned the forward.

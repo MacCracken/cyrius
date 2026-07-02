@@ -345,6 +345,7 @@ fn _run_regression_gates(): i64 {
     _gate("ir_liveness_cfg fixpoint converges + precise (exit BBs live_out==0) + spill-interval detection, behavior-safe (v6.3.27)", "tests/ir_liveness_cfg.sh");
     _gate("callee-saved frame-trim: trimmed cycc self-hosts, shrinks vs CYRIUS_FRAMETRIM=0, behavior-preserving (v6.3.29)", "tests/frametrim.sh");
     _gate("redundant-reload elimination: self-hosts, shrinks vs CYRIUS_RELOADELIM=0, control-flow-safe, behavior-preserving (v6.3.30)", "tests/reloadelim.sh");
+    _gate("freelist agnos mmap-ABI: Linux round-trip=42, agnos build clean, _fl_mmap routes the single-arg agnos mmap (v6.3.31)", "tests/freelist_agnos_mmap.sh");
     println("");
 
     _section("Binary structural lint (VR-04)");

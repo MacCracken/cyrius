@@ -6,6 +6,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.31] — 2026-07-02
+
+**v6.3.31 — freelist allocator is now agnos-aware (consumer-filed HIGH; every agnos `fl_alloc` was SIGSEGVing).**
+`lib/freelist.cyr`'s two mmap sites used the Linux/BSD 6-arg form (length in arg2/`rsi`, addr=0 in
+arg1/`rdi`), but **agnos `mmap#27` is single-arg** — the kernel reads the length from arg1/`rdi` and
+always returns an anonymous R/W mapping (`kernel/core/syscall.cyr`: `if (num == 27) return
+sys_mmap(arg1)`). So on agnos the freelist called mmap with `arg1 = 0` → the kernel saw **length 0** →
+returned 0 (MAP_FAILED) → the caller's first `store64` dereferenced NULL → SIGSEGV on **every** agnos
+`fl_alloc` consumer (libro's audit chain `chain_new → fl_alloc`, sigil's `sha256`/`x25519`/`hex_decode`).
+Surfaced by the agnos base-stack migration — mirshi-fanout running `cyrius-yeomans-descent` crashed in
+`persist_init`.
+
+### Fixed
+- **`lib/freelist.cyr` dispatches the mmap ABI by target.** New `_fl_mmap(length)` helper —
+  `#ifdef CYRIUS_TARGET_AGNOS → syscall(SYS_MMAP, length)` (agnos single-arg; `SYS_MMAP` is 27 there),
+  else the Linux/BSD 6-arg `syscall(SYS_MMAP, 0, length, prot, flags, -1, 0)` (with the existing
+  `_fl_map_flags()` macOS `MAP_ANON` divergence) — and both allocation sites (`_fl_arena_alloc` arena +
+  `fl_alloc` large path) route through it. Exactly mirrors how `_fl_map_flags` already handles the macOS
+  flag divergence. **cyrius-NATIVE lib** (`lib/freelist.cyr` IS the source — no vendored repo); consumers
+  drop their interim local patch and re-sync. Consumer-verified end-to-end on real agnos: descent rebuilds,
+  `persist_init` completes, the server binds `:4000`, a telnet client reaches the login banner under mirshi.
+- **Ganita re-vendored 1.0.1 → 1.0.2** (folded into this release). `ganita_f64_tanh` no longer returns
+  **NaN for large |x|** — the `(e^x−e^-x)/(e^x+e^-x)` form overflowed to `inf/inf = NaN` once
+  `f64_exp(x)` hit +inf (|x| > ~709); now saturates to ±1 for |x| > 20, which is **bit-exact** (for
+  |x| ≳ 19 `tanh` already rounds to exactly ±1.0 in f64, so no correctly-computed value changes) and
+  NaN-safe. Fixes GELU `tanh(c·(x + a·x³))` on massive-activation outliers (surfaced by a real
+  GPT-2-small import) for every downstream consumer (rupantara `ru_gelu_fwd`, attn11 `gelu_fwd`, …).
+  **No API change.** Vendored byte-identical from ganita's `cyrius distlib` output (cyrius-side
+  `lib/ganita.cyr` is a pristine dist, not hand-edited); no new deps (`F64_TWO` is pre-existing).
+  Verified: `tanh(±1000) → ±1`, and all six ganita-consuming tcyr green (math 51 / matrix 12 /
+  linalg 51 / inverse-hyperbolic 13 / inverse-trig 17 / math-pack-integration 10).
+
+cycc **byte-identical** (neither freelist nor ganita is compiled into the compiler); Linux `fl_alloc` round-trip
+(small arena + large direct) exits 42 unchanged; the agnos-target build compiles clean and routes both
+mmap sites through the single-arg dispatcher. Gate `tests/freelist_agnos_mmap.sh` (Linux behavior +
+agnos build + `_fl_mmap` source-integrity — catches a removed agnos branch or an un-routed site;
+check.sh 120→**121**). self-host fixpoint + seed→cybs→cycc byte-identical; ecb+cass+pi SELFHOST_OK.
+[`freelist-agnos-mmap`](docs/development/issues/archived/2026-07-02-freelist-agnos-mmap-abi.md).
+
 ## [6.3.30] — 2026-07-02
 
 **v6.3.30 — redundant-reload elimination (O2 category 5): the perf arc's second real win (cycc −0.80%).**

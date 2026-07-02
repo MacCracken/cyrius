@@ -4,7 +4,7 @@
 **Reporter:** agnos base-stack agnos-readiness pass (phylax consumer)
 **Severity:** low — blocks `--agnos` builds of any consumer that lists the
 `callback` stdlib module, even when only its `vec_*` higher-order helpers are used.
-**Status:** OPEN (surfaced per hands-off policy; not patched here)
+**Status:** ✅ RESOLVED (v6.3.24) — `fork_with_pre_exec` guarded with `#ifndef CYRIUS_TARGET_AGNOS` in `lib/callback.cyr`; `--agnos` builds no longer hard-fail on the reachable-undefined. See CHANGELOG [6.3.24].
 
 ## Summary
 
