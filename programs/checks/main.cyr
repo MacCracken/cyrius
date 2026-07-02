@@ -337,6 +337,10 @@ fn _run_regression_gates(): i64 {
     _gate("sigil crypto-bank thread-local slot is clear of patra's 0-4 (v6.3.25 TLS RECORD_LAYER fix)", "tests/thread_local_slot_collision.sh");
     println("");
 
+    _section("Extern-C FFI (fncallN + foreign-%fs coexistence)");
+    _gate("stack-protected extern-C via fncall4/5/6/7 + foreign-TLS coexistence, no %fs clobber (v6.3.26)", "tests/ffi_stack_protected_extern_c.sh");
+    println("");
+
     _section("Binary structural lint (VR-04)");
     _binary_structural_lint_gate();
     println("");

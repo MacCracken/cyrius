@@ -1,8 +1,15 @@
 # `#derive(Serialize)` `_from_json` cannot deserialize `Str` fields — garbage on roundtrip
 
+> **RESOLVED — fixed in cycc 6.3.25.** The repro
+> (`repros/derive-serialize-str-roundtrip.cyr`) now roundtrips clean
+> (`roundtrip == to_json`, exit 0), and shravan's 7-field `ShrAudioMetadata`
+> deserializes correctly via the derived `ShrAudioMetadata_from_json`. shravan
+> 2.5.2 retired its hand-written `audio_metadata_from_json` workaround and moved
+> to the derive. Verified broken on 6.3.19/6.3.22, fixed on 6.3.25.
+
 **Discovered:** 2026-07-01 during shravan 2.4.1 (restoring the full serde surface — JSON metadata serialization)
 **Severity:** Medium (silent wrong-data on deserialize; workaround: hand-write `_from_json`)
-**Affects:** cycc with `Str`-field `#derive(Serialize)` — serialize support landed ~v5.10.x; deserialize never implemented. Verified broken on the **6.3.19** pin and the **6.3.22** wrapper.
+**Affects:** cycc with `Str`-field `#derive(Serialize)` — serialize support landed ~v5.10.x; deserialize never implemented. Verified broken on the **6.3.19** pin and the **6.3.22** wrapper; **fixed in 6.3.25**.
 
 ## Summary
 

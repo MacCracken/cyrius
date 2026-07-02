@@ -159,6 +159,67 @@ in `ECALLPOPS`.
 
 ---
 
+## Extern-C prerequisite: a glibc-compatible `%fs` (v6.3.26)
+
+**There is no `fncall6` calling-convention bug.** The v6.3.26 slot was
+scheduled as one ("Class B FFI / `fncall6` ABI fix"); investigation proved
+the arg-passing (`rdi,rsi,rdx,rcx,r8,r9`) and 16-byte stack alignment are
+correct — a real gcc-compiled, stack-protected C function taking 4/5/6/7
+integer args returns the right result when called via `fncallN`.
+
+The folklore that **"`fncall6` into extern-C (wgpu) is unreliable"** — carried
+in mabda's `wgpu_ffi.cyr` / `compute.cyr` / `texture.cyr` comments, which
+work around it by packing args into a struct and calling `fncall2` instead —
+was a **misdiagnosis of a TLS/`%fs` init problem**:
+
+- Any glibc-compiled C function with an array/buffer local carries
+  `-fstack-protector` and begins with `mov %fs:0x28, %rax` (the stack-canary
+  read). If `%fs` is not a glibc-compatible thread block, that prologue
+  faults — **regardless of arg count** (`fncall1` through `fncall8` all hit
+  it; it merely correlated with the 6-arg wgpu entry points, which have local
+  buffers). The struct-packing "workaround" only sidestepped it by chance
+  when the packed callee happened not to be stack-protected.
+- The failure the C-launcher model was invented to avoid (ADR-004: *"calling
+  libc's dlopen from a non-libc process crashes — TLS not initialized"*) is
+  the same root cause.
+
+### Satisfying it
+
+1. **C launcher (preferred)** — mabda's `deps/wgpu_main.c`: C `main` gets
+   full libc init (`%fs`, pthreads, dynamic linker), pre-inits the GPU, builds
+   the fn-pointer table, then calls into cyrius. `%fs` is already glibc's, so
+   every `fncallN` into wgpu works. This is the shipping model through the
+   NVIDIA wgpu route's life (mabda v5.0, per ADR-006).
+2. **Pure-cyrius dlopen** — call `dynlib_bootstrap_cpu_features()` +
+   `dynlib_bootstrap_tls()` (+ `dynlib_bootstrap_stack_end(0)`) before the
+   first extern-C `fncallN`. See `tests/tcyr/dynlib_init.tcyr`.
+
+### Coexisting cyrius thread-locals in a foreign host
+
+If cyrius code in a glibc-hosted process **also** uses its own thread-locals
+(sigil crypto banking on slot 8, patra on slots 0-4), `thread_local_init`
+would `arch_prctl(ARCH_SET_FS)` a fresh cyrius block over glibc's `%fs` —
+wiping the TCB self-pointer at offset 0 and the **stack canary at 0x28**, and
+`thread_local_set(5, …)` (offset `0x28`) would overwrite the canary directly.
+Either breaks every stack-protected C callee.
+
+The host declares itself once at startup with
+**`thread_local_use_foreign_tls()`** (`lib/thread_local.cyr`). cyrius then
+leaves `%fs` untouched and keeps its slots in a process-global fallback array
+(identical to the macOS/agnos path). It is **explicit, not auto-detected**: a
+native `CLONE_SETTLS` worker also has a non-zero `%fs`, so a `fs != 0 =>
+foreign` heuristic would misclassify native workers and collapse their
+per-thread crypto lanes (the v6.3.25 collision class). Foreign mode is
+process-global, so it assumes cyrius thread-local code runs on a single thread
+inside the host (the C launcher runs mabda on `main`); a foreign multi-thread
+consumer would need a pthread-key backing (tracked follow-up).
+
+Regression gate: `tests/ffi_stack_protected_extern_c.sh` (check.sh) — a
+stack-protected extern-C `.so` via `fncall4/5/6/7` **and** the foreign-`%fs`
+no-clobber / canary-intact proof.
+
+---
+
 ## See also
 
 - `struct-packing.md` — canonical C-shim pattern with worked examples.

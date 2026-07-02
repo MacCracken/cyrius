@@ -3984,6 +3984,7 @@ thread_local::thread_local_init/0
 thread_local::thread_local_init/0
 thread_local::thread_local_set/2
 thread_local::thread_local_set/2
+thread_local::thread_local_use_foreign_tls/0
 thread_win::chan_close/1
 thread_win::chan_new/1
 thread_win::chan_recv/1

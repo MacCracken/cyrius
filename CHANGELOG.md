@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.26] — 2026-07-02
+
+**v6.3.26 — "Class B FFI / `fncall6` ABI fix" was a MISDIAGNOSIS; the real issue is TLS/`%fs`.**
+The slot carried from v5.9.x–v5.11.x as a `fncall6` vs SysV calling-convention bug. Proven
+empirically (a real gcc-compiled, stack-protected C library called from cyrius): **there is no
+such bug** — `fncall4/5/6/7` arg-passing (`rdi,rsi,rdx,rcx,r8,r9`) and 16-byte stack alignment are
+correct, and a stack-protected extern-C fn taking 4/5/6/7 integer args returns the right result via
+`fncallN`. Third consecutive consumer misdiagnosis (`.24` string-global→enum-shadow, `.25`
+TLS-state→slot-collision, `.26` fncall6-ABI→TLS).
+
+### Fixed — cyrius thread-locals no longer clobber a foreign (glibc) host's `%fs`
+- **Root cause of the folklore.** mabda's "`fncall6` into extern-C wgpu is unreliable" (worked
+  around by packing args into a struct + `fncall2`) was a TLS/`%fs` problem: any glibc-compiled C
+  function with an array local carries `-fstack-protector` and reads its canary from `%fs:0x28` in
+  its prologue → it faults **regardless of arg count** if `%fs` isn't a glibc thread block. The
+  6-arg wgpu entry points just happened to have local buffers. mabda's **C-launcher** (ADR-004)
+  already supplies glibc's `%fs`, so the wgpu C-hook path works today.
+- **Residual hazard fixed.** cyrius's `thread_local_init` does `arch_prctl(ARCH_SET_FS)`, and
+  `thread_local_set(5, …)` writes `%fs:0x28` — either **clobbers the host's TCB self-pointer / stack
+  canary** and breaks every stack-protected C callee. Bites any process combining wgpu C hooks with
+  a cyrius thread-local user (sigil crypto banking, patra). New **`thread_local_use_foreign_tls()`**
+  (`lib/thread_local.cyr`): the glibc-hosted consumer declares itself once; cyrius then leaves `%fs`
+  untouched and keeps slots in a process-global fallback array (macOS/agnos path). **Explicit, not
+  auto-detected** — a native `CLONE_SETTLS` worker also has non-zero `%fs`, so a `fs != 0 =>
+  foreign` heuristic would misclassify native workers and collapse their per-thread crypto lanes
+  (the v6.3.25 collision class). Native path unchanged / byte-identical behavior.
+- **Regression gate** `tests/ffi_stack_protected_extern_c.sh` (check.sh 116→**117**): a
+  stack-protected extern-C `.so` via `fncall4/5/6/7` **and** the foreign-`%fs` no-clobber /
+  canary-intact proof. Skips off Linux-x86 / without gcc.
+- **Docs**: `lib/fnptr.cyr` header + `docs/ffi/fncall-abi.md` "Extern-C prerequisite" section +
+  resolved issue [`fncall6-extern-c-tls-not-abi`](docs/development/issues/2026-07-02-fncall6-extern-c-tls-not-abi.md).
+- **Consumer follow-up (mabda, separate repo — user's call):** with the ABI proven correct, mabda
+  can drop its struct-packing `fncall2`-instead-of-`fncall6` workarounds and use the natural wgpu C
+  signatures, and call `thread_local_use_foreign_tls()` in `deps/wgpu_main.c` if it links a cyrius
+  thread-local user. Backwards-compat cleanup for the NVIDIA wgpu route (through mabda v5.0).
+
+### Also (surfaced during the cut)
+- **api-surface snapshot** regenerated for the one new public fn
+  `thread_local::thread_local_use_foreign_tls/0` (docs/api-surface.snapshot).
+- **Flaky negative-control hardened** — the v6.3.15 array-locals concurrency gate's
+  `CYRIUS_STACK_ARRAYS=0` corruption check is a race that a single 8-thread run detects only ~90% of
+  the time; it now retries up to 5× and fails only if the race NEVER manifests (was ~10%-per-run
+  false-RED on the release gate; `programs/checks/platform_efi.cyr`).
+
+_check.sh 116→**117**; cycc self-host fixpoint + seed→cybs→cycc byte-identical (fnptr/thread_local
+lib-only + doc/test, no compiler change); ecb + cass + pi **SELFHOST_OK**; self_compile **537 ms**;
+cycc **1,027,720 B** (unchanged)._
+
 ## [6.3.25] — 2026-07-01
 
 **v6.3.25 — multi-worker TLS `RECORD_LAYER_FAILURE` root-caused + fixed (SecureYeoman / yeo-cy-test).**

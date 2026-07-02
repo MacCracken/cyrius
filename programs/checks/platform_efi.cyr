@@ -615,10 +615,22 @@ fn _array_local_threadsafe_gate(): i64 {
     var rcD = _self_host_pipe_env(src, CC_PATH, binD, "CYRIUS_STACK_ARRAYS=0");
     if (rcD == 0) {
         sys_chmod(binD, 493);
-        var ecD = _pipe_file_to_bin(binD, src);
-        if (ecD == 0) {
+        # The shared-global corruption is a RACE: a single 8-thread run detects
+        # it only ~90% of the time (the threads occasionally serialize under
+        # scheduling and never interleave). Retry up to 5x and case-FAIL only if
+        # the race NEVER manifests — a genuine "the test can't detect the bug",
+        # not a one-shot scheduling miss. Fixes the ~10%-per-run flaky
+        # negative-control that false-RED'd the release gate (v6.3.13 note; v6.3.26).
+        var detected = 0;
+        var tries = 0;
+        while (tries < 5) {
+            var ecD = _pipe_file_to_bin(binD, src);
+            if (ecD != 0) { detected = 1; tries = 5; }
+            tries = tries + 1;
+        }
+        if (detected == 0) {
             _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
-            println(": CYRIUS_STACK_ARRAYS=0 (shared-global arrays) did NOT corrupt — the test isn't detecting the bug");
+            println(": CYRIUS_STACK_ARRAYS=0 (shared-global arrays) did NOT corrupt in 5 tries — the test isn't detecting the bug");
             fail = fail + 1;
         }
     }
