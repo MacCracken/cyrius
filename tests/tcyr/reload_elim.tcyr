@@ -1,0 +1,61 @@
+# reload_elim.tcyr — v6.3.30 redundant-reload elimination (O2 category 5).
+#
+# A 64-bit reload of a local emitted IMMEDIATELY after storing that same local
+# (GCP still == the store's post-emit CP → nothing between → rax still holds it)
+# is a DEAD reload and is skipped at emit time. These cases pin the CONTROL-FLOW
+# invalidation: a reload reachable via a loop back-edge (loop-top) or a
+# forward-join landing (EPATCH) must NOT be skipped — rax is stale there. If the
+# invalidation regressed, the loop / branch cases below would compute wrong values
+# (the earlier iterations' rax, or the wrong branch's value).
+include "lib/assert.cyr"
+
+# Basic dead reload: store r, then reload r for the return.
+fn basic(): i64 { var r = 40 + 2; return r; }
+
+# Store-then-use chain: each `var = <prev expr>` stores, the next line reloads.
+fn chain(): i64 { var a = 10; var b = a + 5; var c = b + 5; return c; }   # 10 -> 15 -> 20
+
+# Forward join: x is reloaded AFTER the if (a jump lands on that reload). Both
+# the taken and fall-through paths must produce the right value.
+fn fwd(n: i64): i64 {
+    var x = 100;
+    if (n > 0) { x = 7; }
+    return x;                        # n>0 -> 7 ; else -> 100
+}
+
+# Loop back-edge: acc and i are reloaded at the loop top on every iteration; the
+# back-edge means rax does NOT hold them on iterations 2+.
+fn loopsum(n: i64): i64 {
+    var acc = 0;
+    var i = 0;
+    while (i < n) {
+        acc = acc + i;
+        i = i + 1;
+    }
+    return acc;                      # sum 0..n-1
+}
+
+# continue jumps to the loop-top (a back-edge); the reload there must survive.
+fn contsum(n: i64): i64 {
+    var s = 0;
+    var i = 0;
+    while (i < n) {
+        i = i + 1;
+        if (i == 3) { continue; }
+        s = s + i;
+    }
+    return s;
+}
+
+test_group("reload-elim v6.3.30 — basic dead reloads");
+assert_eq(basic(), 42, "store r; return r = 42");
+assert_eq(chain(), 20, "store/reload chain = 20");
+
+test_group("reload-elim v6.3.30 — control-flow invalidation (must NOT skip reachable reloads)");
+assert_eq(fwd(1), 7, "forward-join: n>0 path = 7");
+assert_eq(fwd(0), 100, "forward-join: fall-through path = 100");
+assert_eq(loopsum(5), 10, "loop back-edge: sum 0..4 = 10 (acc/i not stale)");
+assert_eq(loopsum(1), 0, "loop back-edge: sum 0..0 = 0");
+assert_eq(contsum(5), 12, "continue back-edge: 1+2+4+5 = 12 (i==3 skipped)");
+
+var rc = assert_summary();

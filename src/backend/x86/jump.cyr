@@ -86,6 +86,10 @@ fn EJMP0(S): i64 {
 # Also records GCP(S) as a jump target for basic-block analysis.
 # cycc: records IR_NOP as BB boundary marker (landing pad)
 fn EPATCH(S, off): i64 {
+    # v6.3.30: a forward jump now lands HERE → control can enter without the
+    # preceding store, so kill the reload-elim store-tracker (this CP is a jump
+    # target; a reload emitted here must NOT be skipped).
+    _efl_store_cp = 0 - 1;
     # cycc: record landing pad with the patch offset for edge matching
     var _ire = IR_ENABLED(S);
     if (_ire >= 1) { ir_emit(S, IR_NOP, 0, off, 0); }

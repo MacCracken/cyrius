@@ -3045,6 +3045,17 @@ fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
 # Emit fn local load: mov rax, [rbp - offset]
 fn EFLLOAD(S, idx): i64 {
     if (_IR_REC1(S, IR_LOAD_LOCAL, idx) == 1) { return 0; }
+    # v6.3.30 O2 cat 5: a 64-bit reload of a local that was JUST stored (this load
+    # is the very next emit — GCP still == the store's post-emit CP — and reloads the
+    # SAME idx) is DEAD: rax still holds the stored value. Skip the emit entirely.
+    # Fail-safe via CP-adjacency: any intervening emit moves GCP off _efl_store_cp;
+    # zero-byte control-flow entries (loop-tops, forward-join landings) clear
+    # _efl_store_cp so a reachable-via-jump reload is never skipped.
+    if (_RELOADELIM_OK == 1) {
+        if (GCP(S) == _efl_store_cp) { if (idx == _efl_store_idx) {
+            return 0;
+        } }
+    }
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: shift past the reserved rbx save slot.
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
@@ -3146,6 +3157,8 @@ fn EFLSTORE(S, idx): i64 {
     var addr = _codebuf_base + GCP(S);
     S64(addr, (L64(addr) >> 32 << 32) | (disp & 0xFFFFFFFF));
     SCP(S, GCP(S) + 4);
+    _efl_store_cp = GCP(S);   # v6.3.30: record post-store CP + idx for reload-elim
+    _efl_store_idx = idx;
     return 0;
 }
 

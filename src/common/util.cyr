@@ -274,6 +274,24 @@ var _MONOMORPH_OK = 0;
 # full tcyr (exit-identical to default) + the two-step bootstrap.
 var _FRAMETRIM_OK = 1;
 var _ra_used_n = 0;      # max callee-saved reg index the picker assigned, +1 (per-fn)
+# v6.3.30 — redundant-reload elimination. Naive codegen emits, at statement
+# boundaries, `mov [rbp-N],rax` (store a just-computed value) immediately
+# followed by `mov rax,[rbp-N]` (reload it for the next use). The reload is
+# DEAD: the two are adjacent, nothing writes rax or [rbp-N] between them, so
+# rax already holds the value. Record the 7-byte reload as a nop_run → the
+# existing compactor deletes it (size + one fewer memory load per site). The
+# only hazard is a jump landing ON the reload (control could arrive without the
+# store) → guarded by IS_JUMP_TARGET. DEFAULT ON (CYRIUS_RELOADELIM=0 opts out).
+# x86-only; runs in PARSE_FN_DEF's compaction block after the picker + frame-trim.
+var _RELOADELIM_OK = 1;
+# v6.3.30 O2 category 5 reload-elim tracker (shared home so parse_ctrl.cyr's loop-top
+# clears compile on every fork; only the x86 EFLSTORE/EFLLOAD set/consult it — the
+# aarch64/cx forks leave it at -1, so the clears are no-ops there). EFLSTORE records
+# its post-emit CP + local idx; a 64-bit EFLLOAD of the SAME idx as the very next emit
+# (GCP still == _efl_store_cp) is a dead reload (rax still holds it) → skipped. Fail-safe
+# via CP-adjacency; loop-tops + EPATCH landings clear it for control-flow entries.
+var _efl_store_cp = 0 - 1;
+var _efl_store_idx = 0 - 1;
 # Copy an 8 B/slot table's live oc entries into a fresh nc-slot buffer. The tail
 # (oc..nc) is zeroed by alloc's fresh mmap pages — new fn slots default 0, which is
 # exactly what REGFN's mask/overload/body tables expect (they're only written when

@@ -202,6 +202,7 @@ fn PARSE_WHILE(S): i64 {
     var saved_ltop = L64(S + 0x18F838);
     var saved_brk = L64(S + 0x18F840);
     var loop_top = GCP(S);
+    _efl_store_cp = 0 - 1;   # v6.3.30: loop-top is a back-edge target → kill reload-elim tracker
     S64(S + 0x18F838, loop_top);
     S64(S + 0x18F840, 0);
     # v5.6.14: record IR_NOP landing pad so BB construction splits
@@ -323,6 +324,7 @@ fn PARSE_FOR(S): i64 {
                 var fisbk = L64(S + 0x18F840);
                 var fiscfw = L64(S + 0x18F898);
                 var fitop = GCP(S);
+                _efl_store_cp = 0 - 1;   # v6.3.30: for-in loop-top back-edge → kill reload-elim tracker
                 S64(S + 0x18F838, fitop);
                 S64(S + 0x18F840, 0);
                 S64(S + 0x18F898, 1);
@@ -407,6 +409,7 @@ fn PARSE_FOR(S): i64 {
             var fisbk = L64(S + 0x18F840);
             var fiscfw = L64(S + 0x18F898);
             var fitop = GCP(S);
+            _efl_store_cp = 0 - 1;   # v6.3.30: range-for loop-top back-edge → kill reload-elim tracker
             S64(S + 0x18F838, fitop);
             S64(S + 0x18F840, 0);
             S64(S + 0x18F898, 1);
@@ -461,6 +464,7 @@ fn PARSE_FOR(S): i64 {
     var sbk = L64(S + 0x18F840);
     var scfw = L64(S + 0x18F898);
     var ltop = GCP(S);
+    _efl_store_cp = 0 - 1;   # v6.3.30: loop-top back-edge target → kill reload-elim tracker
     S64(S + 0x18F838, ltop);
     S64(S + 0x18F840, 0);
     S64(S + 0x18F898, 1);

@@ -1347,6 +1347,14 @@ if (_ftrim_env != 0) {
     }
 }
 
+# v6.3.30 — redundant-reload elimination. DEFAULT ON; CYRIUS_RELOADELIM=0 opts out.
+var _relim_env = _read_env("CYRIUS_RELOADELIM");
+if (_relim_env != 0) {
+    if (load8(_relim_env) == 48 && load8(_relim_env + 1) == 0) {
+        _RELOADELIM_OK = 0;
+    }
+}
+
 # AGNOS ring-3 output via CYRIUS_TARGET_AGNOS=1 (x86_64 ELF, agnos syscall
 # numbers + agnos exit=0). Shares the default ELF emit path (_TARGET_PE==0,
 # _TARGET_MACHO==0); EEXIT branches on _TARGET_AGNOS for syscall(0) exit.

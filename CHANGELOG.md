@@ -6,6 +6,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.30] — 2026-07-02
+
+**v6.3.30 — redundant-reload elimination (O2 category 5): the perf arc's second real win (cycc −0.80%).**
+Naive codegen emits, at statement boundaries, `mov [rbp-N],rax` (store a just-computed value) immediately
+followed by `mov rax,[rbp-N]` (reload it for the next use) — the reload is DEAD (rax still holds the
+value). This is an **in-emit** eliminator: it fires DURING code emission (before the regalloc picker
+runs), where the store and reload are genuinely adjacent. (A first attempt scanned the finished codebuf
+for the pattern and got **0 hits** — the 378 strictly-adjacent pairs in the final binary are *post-
+compaction* artifacts; the emit-time layer has **1961** raw adjacencies, **1354** after control-flow
+invalidation.) The direct-emit stream is now tight — every sibling redundancy class (store→store,
+store-back, register shuttles) measures **0**, already captured by the existing O2 trackers.
+
+### Changed
+- **Redundant-reload elimination (DEFAULT ON; `CYRIUS_RELOADELIM=0` opts out).** `EFLSTORE`
+  (`backend/x86/emit.cyr`) records its post-emit CP + local idx (`_efl_store_cp`/`_efl_store_idx`, in
+  `util.cyr` so `parse_ctrl.cyr` can reach them on every fork). A 64-bit `EFLLOAD` whose
+  `GCP(S) == _efl_store_cp` and same idx — i.e. it is the very next emit, nothing between → rax still
+  holds the value — **skips the emit entirely**. **Fail-safe via CP-adjacency** (mirrors the
+  `_last_push_cp` push/pop-cancel tracker): any intervening emit moves GCP off the store CP → no skip;
+  no per-clobber bookkeeping. The only hazards GCP-adjacency can't see are **zero-byte control-flow
+  entries** landing on a reload (control could arrive without the store → rax stale): these are covered
+  by clearing `_efl_store_cp` in **`EPATCH`** (`backend/x86/jump.cyr` — every forward-join landing:
+  if/else, `&&`/`||`, ternary, break, match arms) and at the **four loop-top captures** in
+  `parse_ctrl.cyr` (while / for-in / range-for / loop back-edges; continue targets the loop-top).
+  **cycc shrank 1,015,608 → 1,007,472 B (−8,136 B, −0.80%)** — 1354 reload instructions removed per
+  cycc self-compile; self_compile flat within jitter (median ~525 ms vs 530). x86-only (aarch64/cx
+  `EFLLOAD` don't consult the tracker — the shared `parse_ctrl.cyr` clears are no-ops there; aarch64/
+  macho emit byte-identical). Gate `tests/reloadelim.sh` + `tests/tcyr/reload_elim.tcyr` (loop back-edge
+  / forward-join / continue hazards compute correctly; check.sh 119→**120**).
+
+ABI-critical, exhaustively verified: `differential.sh` **status-diff=0 in BOTH default and CYRIUS_DCE=1
+modes** (287 codegen-diffs = the win applied, **0 behavior changes across 306 inputs** — the real proof
+the control-flow invalidation is complete); self-host fixpoint (two-step bootstrap, cc2==cc3);
+seed→cybs→cycc byte-identical; cross-OS ecb (macOS) + cass (Windows) + pi (aarch64) all SELFHOST_OK;
+self_compile ~525 ms (median); cycc **1,007,472 B**.
+
+### Deferred (off the perf arc's critical path — unchanged from .29)
+- The big remaining reload firehose (~23 K reloads compiling cycc; the cross-BB *join*-reloads) needs
+  copy-propagation → the **IR substrate productionization** (re-emit path + complete local-access opcode
+  model + the `CYRIUS_IR=3` fixpoint fix). Its own dedicated slot when the IR-level passes need it. See
+  `issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md`, `issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md`.
+
 ## [6.3.29] — 2026-07-02
 
 **v6.3.29 — callee-saved frame-trim: the perf arc's first real, measurable win (cycc −1.6%, self_compile −1.5%).**
