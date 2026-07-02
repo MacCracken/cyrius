@@ -729,6 +729,33 @@ fn _dep_parse_groups(buf, n): i64 {
     return 0;
 }
 
+# v6.3.32 Phase D (modularity arc, lever-1 COMPLETION — dissolve the "stdlib"
+# category): register the built-in `std` DEFAULT GROUP — the universal core stdlib
+# leaves every real program pulls (matches the `cyrius init` template core). This
+# makes `stdlib`/`requires` list a group like any other (`stdlib = ["std", <extras>]`)
+# instead of hand-ordering the whole leaf set: `std` expands at resolve time via the
+# Phase B `_dep_expand_groups` path (already applied to the stdlib list + `requires`).
+# Registered AFTER `_dep_parse_groups` so a manifest that defines its OWN `std` group
+# wins (override, not clobber). Member ORDER matches the init-template core so a
+# `["std", …]` list resolves the SAME leaves in the SAME order as the explicit form
+# → byte-identical. A manifest that never names `std` is unaffected (the expansion of
+# a std-free list is dedup-in-order = identity).
+fn _dep_register_default_std_group(): i64 {
+    if (_dep_group_names == 0) { return 0; }              # parse_groups not run yet
+    if (_dep_group_lookup("std") != 0) { return 0; }      # manifest defined its own `std`
+    var m = vec_new();
+    vec_push(m, "string");
+    vec_push(m, "fmt");
+    vec_push(m, "alloc");
+    vec_push(m, "io");
+    vec_push(m, "vec");
+    vec_push(m, "str");
+    vec_push(m, "syscalls");
+    vec_push(_dep_group_names, "std");
+    vec_push(_dep_group_members, m);
+    return 0;
+}
+
 # v6.3.1 (dependency-model arc, lever 2 — required vs optional deps): parse a
 # `[features]` table into `_dep_feature_names` / `_dep_feature_deps` (parallel
 # vecs), structurally identical to `_dep_parse_groups`. Each `name = ["dep", ...]`
@@ -1555,6 +1582,7 @@ fn cmd_deps(): i64 {
     _dep_queue = vec_new();
     _dep_commit_lines = vec_new();   # CVE-21 (v6.2.30): git-dep commit pins
     _dep_parse_groups(buf, n);       # v6.2.49 Phase B: [groups] (buf is the TOML header, CYML body already stripped)
+    _dep_register_default_std_group();  # v6.3.32 Phase D: built-in `std` default group (after parse so a manifest's own `std` wins)
     _dep_parse_features(buf, n);     # v6.3.1 lever 2: [features] table (populates _dep_feature_names/_deps; gating happens in _process_named_deps)
 
     # === Phase 1: stdlib deps ===

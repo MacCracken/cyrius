@@ -553,6 +553,10 @@ fn _run_regression_gates(): i64 {
     _deps_modular_gate();
     println("");
 
+    _section("cyrius deps: built-in `std` default group dissolves the stdlib category (v6.3.32 dependency-model lever 1 Phase D)");
+    _deps_std_group_gate();
+    println("");
+
     _section("cyrius deps rejects path-traversal sub-module names from a malicious index.cyml (v6.2.51 closeout CVE-32)");
     _deps_modular_traversal_gate();
     println("");

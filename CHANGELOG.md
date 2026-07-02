@@ -6,6 +6,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.32] — 2026-07-02
+
+**v6.3.32 — Phase D: dissolve the "stdlib" category into a built-in `std` default group (modularity arc lever-1 COMPLETION).**
+The v6.2.x dependency-model arc shipped lever 1 in three phases — `requires`/`.deps` sidecar (A, v6.2.46/.47),
+`[groups]` (B, v6.2.49), `distlib --modular` (C, v6.2.50) — but the final phase (D) had no slot until the
+2026-07-01 roadmap-gap audit. Phase D completes it: `[deps].stdlib` is no longer a special hardcoded
+category — its universal core is a built-in **`std` default group**, resolved through the same `[groups]`
+expansion path. CLI-only (`cbt/deps.cyr`) → **cycc byte-identical**.
+
+### Changed
+- **Built-in `std` default group** (`cbt/deps.cyr` `_dep_register_default_std_group`, registered right after
+  `_dep_parse_groups`). `std` names the universal core leaves — `["string", "fmt", "alloc", "io", "vec",
+  "str", "syscalls"]` (the set every real program pulls; matches the `cyrius init` templates). A manifest now
+  writes `stdlib = ["std", <non-core>]` instead of hand-ordering the whole leaf set; `std` expands via the
+  Phase B `_dep_expand_groups` (already applied to the stdlib list + `requires`), in the SAME order as the
+  explicit form → **byte-identical** resolution, and it drops the omit-one→SIGILL order-sensitivity the old
+  hand-ordered list carried. Registered AFTER the manifest's `[groups]` parse, so a manifest that defines its
+  OWN `std` group **overrides** the built-in (not clobbered). Manifests that never name `std` resolve
+  byte-identical to before (the expansion of a std-free list is dedup-in-order = identity). `stdlib` stays the
+  section key (back-compat alias). Gate `_deps_std_group_gate` (Case A: `["std", "chrono"]` → the 7 universals
+  + chrono; Case B: a manifest's own `std` overrides; check.sh 121→**122**).
+- **Flagship migration — descent** (`cyrius-yeomans-descent`, separate repo): its 18-element hand-ordered
+  `stdlib` list → `stdlib = ["std", "assert", "bench", "args", "net", "chrono", "result", "tagged", "fnptr",
+  "freelist", "cyml", "toml"]` + pin `cyrius = "6.2.48" → "6.3.32"`. Verified: resolves the **identical 30-leaf
+  set** (7 universals + their arch-dispatcher transitives + the 9 non-core) as the old list — no symbol-set
+  change, no hand-ordering. (This "29-element" list had already drifted to 18 when the M6 crypto/store leaves
+  moved to the `libro.deps` sidecar at v6.2.46/.48.) Cross-repo — committed in descent's repo.
+
+cycc **byte-identical** (the resolver lives in the `cyrius` CLI, not the compiler); self-host fixpoint +
+seed→cybs→cycc byte-identical; check.sh **122/122**; the Phase A/B/C deps gates unchanged (no regression);
+ecb+cass+pi SELFHOST_OK. Vidya: `dependencies.cyml` lever-1 entry extended with the `std` surface (item 6).
+This **completes lever 1 (Phases A–D)**. Lever 2 (`[features]`/`optional`/`target=`) shipped v6.3.1 on top.
+
 ## [6.3.31] — 2026-07-02
 
 **v6.3.31 — freelist allocator is now agnos-aware (consumer-filed HIGH; every agnos `fl_alloc` was SIGSEGVing).**

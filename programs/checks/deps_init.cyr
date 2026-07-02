@@ -276,6 +276,77 @@ fn _deps_sidecar_gate(): i64 {
 # `[deps].stdlib` or a `[deps.NAME] requires`. This gate proves nested
 # expansion (`core` → `crypto` → ct/keccak) + cycle-safety (`selfref` →
 # `selfref` skips without hanging).
+fn _deps_std_group_gate(): i64 {
+    var label = "cyrius deps: built-in `std` default group expands to the universal core; a manifest's own `std` overrides it — v6.3.32 dependency-model lever 1 Phase D";
+
+    var cyrius_bin = _root_path("build/cyrius");
+    if (file_exists(cyrius_bin) != 1) {
+        _p("  skip: build/cyrius not built\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    # Case A — `stdlib = ["std", "chrono"]` must resolve the 7 universal core leaves
+    # (string/fmt/alloc/io/vec/str/syscalls) via the built-in default group + chrono.
+    var fa = _tmp_path("audit_std_group_a_");
+    sys_mkdir(fa, 0x1ED);
+    _write_file(_lk_path(fa, "/cyrius.cyml"),
+        "[package]\nname = \"std_group_a\"\n\n[deps]\nstdlib = [\"std\", \"chrono\"]\n");
+    var oa = _tmp_path("audit_std_group_a_out_");
+    var eca = _exec_in_dir(fa, cyrius_bin, "deps", oa);
+    var a_string  = file_exists(_lk_path(fa, "/lib/string.cyr"));
+    var a_fmt     = file_exists(_lk_path(fa, "/lib/fmt.cyr"));
+    var a_alloc   = file_exists(_lk_path(fa, "/lib/alloc.cyr"));
+    var a_io      = file_exists(_lk_path(fa, "/lib/io.cyr"));
+    var a_vec     = file_exists(_lk_path(fa, "/lib/vec.cyr"));
+    var a_str     = file_exists(_lk_path(fa, "/lib/str.cyr"));
+    var a_sys     = file_exists(_lk_path(fa, "/lib/syscalls.cyr"));
+    var a_chrono  = file_exists(_lk_path(fa, "/lib/chrono.cyr"));
+
+    # Case B — a manifest defining its OWN `std` group overrides the built-in (only
+    # its member resolves; the built-in universals must NOT be merged in).
+    var fb = _tmp_path("audit_std_group_b_");
+    sys_mkdir(fb, 0x1ED);
+    _write_file(_lk_path(fb, "/cyrius.cyml"),
+        "[package]\nname = \"std_group_b\"\n\n[groups]\nstd = [\"ct\"]\n\n[deps]\nstdlib = [\"std\"]\n");
+    var ob = _tmp_path("audit_std_group_b_out_");
+    var ecb = _exec_in_dir(fb, cyrius_bin, "deps", ob);
+    var b_ct     = file_exists(_lk_path(fb, "/lib/ct.cyr"));
+    var b_string = file_exists(_lk_path(fb, "/lib/string.cyr"));
+
+    # Cleanup.
+    sys_unlink(oa); sys_unlink(ob);
+    sys_unlink(_lk_path(fa, "/lib/string.cyr")); sys_unlink(_lk_path(fa, "/lib/fmt.cyr"));
+    sys_unlink(_lk_path(fa, "/lib/alloc.cyr"));  sys_unlink(_lk_path(fa, "/lib/io.cyr"));
+    sys_unlink(_lk_path(fa, "/lib/vec.cyr"));    sys_unlink(_lk_path(fa, "/lib/str.cyr"));
+    sys_unlink(_lk_path(fa, "/lib/syscalls.cyr"));sys_unlink(_lk_path(fa, "/lib/chrono.cyr"));
+    sys_unlink(_lk_path(fa, "/cyrius.lock"));    sys_unlink(_lk_path(fa, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(fa, "/lib"));             sys_rmdir(fa);
+    sys_unlink(_lk_path(fb, "/lib/ct.cyr"));     sys_unlink(_lk_path(fb, "/lib/string.cyr"));
+    sys_unlink(_lk_path(fb, "/cyrius.lock"));    sys_unlink(_lk_path(fb, "/cyrius.cyml"));
+    sys_rmdir(_lk_path(fb, "/lib"));             sys_rmdir(fb);
+
+    var fail = 0;
+    if (eca != 0 || ecb != 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": deps exited nonzero (A="); print_num(eca); _p(" B="); print_num(ecb); println(")");
+        fail = 1;
+    } elif (a_string != 1 || a_fmt != 1 || a_alloc != 1 || a_io != 1 || a_vec != 1 || a_str != 1 || a_sys != 1 || a_chrono != 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": built-in `std` group did not expand to the 7 universal core leaves + chrono");
+        fail = 1;
+    } elif (b_ct != 1 || b_string == 1) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": a manifest's own `std` group did NOT override the built-in (expected ct only, not the universals)");
+        fail = 1;
+    } else {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": `std` expands to the universal core; manifest-defined `std` overrides the built-in");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _deps_groups_gate(): i64 {
     var label = "cyrius deps expands [groups] in [deps].stdlib (nested + cycle-guarded) → members resolve — v6.2.49 dependency-model lever 1 Phase B";
 
