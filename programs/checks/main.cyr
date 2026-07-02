@@ -333,6 +333,10 @@ fn _run_regression_gates(): i64 {
     _gate("non-int var shadowing an enum constant hard-errors; int same-value shadow allowed (v6.3.24)", "tests/enum_shadow_error.sh");
     println("");
 
+    _section("Thread-local slot collision");
+    _gate("sigil crypto-bank thread-local slot is clear of patra's 0-4 (v6.3.25 TLS RECORD_LAYER fix)", "tests/thread_local_slot_collision.sh");
+    println("");
+
     _section("Binary structural lint (VR-04)");
     _binary_structural_lint_gate();
     println("");

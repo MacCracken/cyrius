@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.25] — 2026-07-01
+
+**v6.3.25 — multi-worker TLS `RECORD_LAYER_FAILURE` root-caused + fixed (SecureYeoman / yeo-cy-test).**
+The consumer-filed "multi-worker TLS state leak" turned out to be a **thread-local slot collision
+between sigil and patra** — a whole-ecosystem class of bug, not TLS state at all.
+
+### Fixed — sigil ⇄ patra thread-local slot-0 collision corrupted TLS handshakes
+- **Root cause:** cyrius's `thread_local_get/set` is a tiny (16-slot) SHARED integer slot space with
+  **no allocator**; libs hardcode slot indices. **sigil's per-thread crypto-bank lane
+  (`_SIGIL_CBANK_SLOT`) and patra's SQL-parse scratch both used slot 0** (patra owns 0-4). In a
+  server linking both — a `run_pooled_tls` pool over a patra-backed API, exactly yeo-cy-test — a
+  patra query overwrote sigil's pinned bank in slot 0; the next `cbank()` read patra's scratch as the
+  bank index and pointed sigil at the **wrong lane of the process-global banked crypto buffers**
+  (`&X + cbank()*N`), corrupting an in-flight handshake's key schedule → the client's
+  `RECORD_LAYER_FAILURE`.
+- **The filing's framing was all incidental.** Not an aborted handshake (reproduces with none), not
+  multi-worker state (reproduces at `max_conns=1`), not a per-connection reset. It's **deterministic:
+  every 4th TLS handshake fails**, single-threaded. Root-caused by bisection to a heisenbug — the
+  failure needed the concurrent 4-worker HTTP pool running; disabling it, adding *any* syscall in the
+  TLS worker loop, or growing the pool to 8 all made it vanish (a timing/layout-sensitive race on the
+  shared bank buffer). Confirmed the collision by moving sigil's slot 0→8: the full `verify.py` at
+  `max_conns=4` went **34/34, scenario 9h included**.
+- **Fix:** sigil source `src/crypto_scratch.cyr` `_SIGIL_CBANK_SLOT` 0 → 8 (**sigil 3.9.9**),
+  re-vendored into `lib/sigil.cyr`. Added a **slot-namespace registry** to `lib/thread_local.cyr`
+  (0-4 patra, 8 sigil, 15 consumer; 5-7/9-14 free) so libs stop colliding. Regression gate
+  `tests/thread_local_slot_collision.sh` (check.sh 115→**116**). cycc **byte-identical** (sigil +
+  thread_local are lib-only, not in the compiler).
+- **Consumer fix:** bump the sigil dep to ≥3.9.9; `max_conns` can return to >1.
+- **Two follow-ups filed:** a proper `thread_local_alloc()` slot allocator
+  ([`thread-local-slot-namespace`](docs/development/issues/2026-07-01-thread-local-slot-namespace-no-allocator.md)),
+  and sandhi's `_SANDHI_RPC_POLICY_SLOT=16` out-of-bounds on macOS/agnos
+  ([`sandhi-rpc-slot-oob`](docs/development/issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md)).
+  [`multiworker-tls`](docs/development/issues/2026-07-01-multiworker-tls-record-layer-failure-under-mixed-load.md).
+
+_check.sh 115→**116**; cycc self-host fixpoint + seed→cybs→cycc byte-identical (sigil/thread_local
+lib-only, no compiler change); ecb + cass + pi **SELFHOST_OK**; self_compile **543 ms**; cycc
+**1,027,720 B** (unchanged)._
+
 ## [6.3.24] — 2026-07-01
 
 **v6.3.24 — consumer-filed bug pack (SecureYeoman / yeo-cy-test + shravan + phylax).** Three
