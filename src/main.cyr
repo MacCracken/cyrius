@@ -668,7 +668,7 @@ if (_vn > 0) {
 # main.cyr's brk top below (output_buf 16 MB @ v6.1.27 + local tables
 # +512 KB @ v6.1.40 + IR cross-BB liveness arrays +512 KB @ v6.3.27);
 # flags MAP_ANON|MAP_PRIVATE = 0x1002.
-var S = syscall(9, 0, 0x5E9D000, 3, 0x1002, 0 - 1, 0);
+var S = syscall(9, 0, 0x7300000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(1, 2, "cycc: mmap heap init failed\n", 28);
     syscall(60, 1);
@@ -681,7 +681,7 @@ var S = syscall(SYS_BRK, 0);
 # modes; the +13.5 MB brk extension is paid unconditionally.
 # v6.3.27: +512 KB for the IR cross-BB liveness arrays at the arena top
 # (live_in @ +0x5E1D000, live_out @ +0x5E5D000; only touched under CYRIUS_IR).
-syscall(SYS_BRK, S + 0x5E9D000);
+syscall(SYS_BRK, S + 0x7300000);
 #endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)

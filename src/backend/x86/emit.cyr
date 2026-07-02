@@ -3066,7 +3066,7 @@ fn EFLLOAD(S, idx): i64 {
 
 # Load variable address into rcx (x86: mov rcx, <addr>)
 fn EVADDR_X1(S, idx): i64 {
-    var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_LOAD_ADDR_G, idx); }
+    var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_LOAD_ADDR_G_X1, idx); }
     # v6.1.6: PIC-gate the byte-array-literal address load. This was the one
     # &global address-emit site _IS_OBJ did NOT gate — an unconditional
     # absolute `mov rcx, imm64` that broke shared/object/PIE builds using a

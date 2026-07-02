@@ -4,8 +4,16 @@
 # Parse builds IR; lowering pass walks IR and calls emit functions.
 #
 # Memory layout (all relative to S):
-#   0xA3A000  ir_nodes    [4MB]   262144 nodes × 16 bytes
-#   0xE3A000  ir_blocks   [1MB]   32768 blocks × 32 bytes
+#   0x5E9D000  ir_nodes    [16MB]  1048576 nodes × 16 bytes  (v6.3.28: relocated
+#              from 0xA3A000 + cap 262144→1048576. cycc's own whole-program IR
+#              demands ~280K nodes — over the old cap → "IR node buffer full"
+#              abort → 0 bytes. The node/cp arrays were boxed against ir_blocks,
+#              so both moved to the arena TOP, above the v6.3.27 liveness arrays.
+#              IR is touched ONLY under CYRIUS_IR, so the larger region is lazy
+#              VA — zero real-memory cost on default builds.)
+#   0x6E9D000  ir_cp       [4MB]   1048576 node CP offsets × 4 bytes (relocated
+#              from 0xF7B000). ir_nodes ends 0x6E9D000; ir_cp ends 0x729D000.
+#   0xE3A000  ir_blocks   [1MB]   32768 blocks × 32 bytes  (unchanged)
 #   0xF3A000 ir_state    [4KB]   counters + current state (IR_NCNT/BCNT/CURBB/ECNT/ENABLED @ 0xF3A000..028)
 #   0xF3B000 ir_edges    [256KB] 32768 edges × 8 bytes
 #
@@ -43,6 +51,15 @@ enum IROp {
     IR_LOAD_ADDR_L = 6;   # arg1 = local index → rax = &local
     IR_LOAD_ADDR_G = 7;   # arg1 = var index → rax = &global
     IR_LOAD_STR    = 8;   # arg1 = string offset → rax
+    IR_LOAD_ADDR_G_X1 = 9;  # arg1 = var index → RCX = &global (EVADDR_X1, x86).
+                            # v6.3.28: DISTINCT from IR_LOAD_ADDR_G (which is → RAX
+                            # via EVADDR). Both emit movabs $imm,reg but into
+                            # different registers; sharing one opcode made the
+                            # liveness model treat the rcx-writing movabs as a pure
+                            # RAX def, so ir_dce_capped eliminated it as "dead rax"
+                            # → NOP-fill → SIGILL on struct-init/#derive. This op is
+                            # in _ir_def_rcx_any (writes rcx) and in NO _pure set
+                            # (never DCE-eliminable). CYRIUS_IR=3 substrate fix.
 
     # -- Arithmetic --
     IR_ADD         = 10;  # rax = rcx + rax
@@ -180,7 +197,7 @@ fn _ir_pack_op(op, flags): i64 {
 
 # Write an IR node at index ni
 fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
-    var base = S + 0xA3A000 + ni * 16;
+    var base = S + 0x5E9D000 + ni * 16;
     store32(base, opflags);
     store32(base + 4, arg1);
     store64(base + 8, arg2);
@@ -188,11 +205,11 @@ fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
 }
 
 # Read IR node fields
-fn IR_NODE_CP(S, ni): i64 { return load32(S + 0xF7B000 + ni * 4); }
-fn IR_NODE_OP(S, ni): i64 { return load16(S + 0xA3A000 + ni * 16); }
-fn IR_NODE_FL(S, ni): i64 { return load16(S + 0xA3A000 + ni * 16 + 2); }
-fn IR_NODE_A1(S, ni): i64 { return load32(S + 0xA3A000 + ni * 16 + 4); }
-fn IR_NODE_A2(S, ni): i64 { return load64(S + 0xA3A000 + ni * 16 + 8); }
+fn IR_NODE_CP(S, ni): i64 { return load32(S + 0x6E9D000 + ni * 4); }
+fn IR_NODE_OP(S, ni): i64 { return load16(S + 0x5E9D000 + ni * 16); }
+fn IR_NODE_FL(S, ni): i64 { return load16(S + 0x5E9D000 + ni * 16 + 2); }
+fn IR_NODE_A1(S, ni): i64 { return load32(S + 0x5E9D000 + ni * 16 + 4); }
+fn IR_NODE_A2(S, ni): i64 { return load64(S + 0x5E9D000 + ni * 16 + 8); }
 
 # ================================================================
 # Basic block read/write
@@ -268,13 +285,13 @@ fn ir_set_bb(S, bi): i64 {
 # Returns node index.
 fn ir_emit(S, op, flags, arg1, arg2): i64 {
     var ni = IR_NCNT(S);
-    if (ni >= 262144) {
+    if (ni >= 1048576) {
         syscall(SYS_WRITE, 2, "error: IR node buffer full\n", 27);
         syscall(SYS_EXIT, 1);
     }
     _ir_set_node(S, ni, _ir_pack_op(op, flags), arg1, arg2);
     # Record codebuf position (32-bit, CP fits in 1MB)
-    store32(S + 0xF7B000 + ni * 4, GCP(S));
+    store32(S + 0x6E9D000 + ni * 4, GCP(S));
     IR_SNCNT(S, ni + 1);
 
     # Update current BB's node count
@@ -455,6 +472,7 @@ fn _ir_opname(op): i64 {
     if (op == IR_LOAD_GLOBAL)  { return "LOAD_G"; }
     if (op == IR_STORE_GLOBAL) { return "STORE_G"; }
     if (op == IR_LOAD_ADDR_G)  { return "ADDR_G"; }
+    if (op == IR_LOAD_ADDR_G_X1) { return "ADDR_G_X1"; }
     if (op == IR_LOAD_STR)     { return "LOAD_STR"; }
     if (op == IR_ADD)          { return "ADD"; }
     if (op == IR_SUB)          { return "SUB"; }
@@ -920,6 +938,7 @@ fn _ir_uses_rcx(op): i64 {
 # it only reads it. Removed from this list; added to _ir_uses_rcx.
 fn _ir_def_rcx_any(op): i64 {
     if (op == IR_MOV_CA)       { return 1; }
+    if (op == IR_LOAD_ADDR_G_X1) { return 1; }   # v6.3.28: EVADDR_X1 `movabs $imm,%rcx`
     if (op == IR_POP_RCX)      { return 1; }
     if (op == IR_CALL)         { return 1; }
     if (op == IR_CALL_KNOWN)   { return 1; }
