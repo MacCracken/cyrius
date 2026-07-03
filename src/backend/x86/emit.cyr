@@ -962,24 +962,27 @@ fn EWRITE_PE(S): i64 {
     EB(S, 0x58);                                   # pop rax (buf)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);         # mov rdx, rax
     EB(S, 0x58);                                   # pop rax (fd)
-    # fd → nStdHandle: 0→-10 (stdin), 1→-11 (stdout), 2→-12 (stderr).
-    # `neg rax; sub rax, 10` handles the common fd range in two instr.
-    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);         # neg rax
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE8); EB(S, 0x0A); # sub rax, 10
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
-    # Allocate 64 B frame and stash buf/len across the GetStdHandle call.
+    # Allocate 64 B frame and stash buf/len BEFORE any call clobbers rdx/r8.
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x40); # sub rsp, 0x40
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], rdx
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r8
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], rdx (buf)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r8 (len)
 
-    # call [rip+GetStdHandle]
-    EB(S, 0xFF); EB(S, 0x15);
+    # v6.3.43 (VR-01): the fd may be a real CreateFileW handle (>2), not a std
+    # stream. fd 0/1/2 → GetStdHandle(nStdHandle: 0→-10, 1→-11, 2→-12); fd>2 →
+    # use the handle directly. UNSIGNED compare — handles can have the high bit set.
+    # Before this, EWRITE_PE always neg/sub'd the fd into a std-handle index, so
+    # sys_write to a file wrote to a bogus handle and failed (found by vr01 on cass).
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
+    EB(S, 0x77); EB(S, 0x10);                           # ja .wfile (skip the 16-byte GetStdHandle block)
+    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);              # neg rax
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE8); EB(S, 0x0A); # sub rax, 10
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (nStdHandle)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+GetStdHandle] → rax = hFile
     _pe_iat_fixup_add(S, GCP(S), gsh_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-
-    # Reload WriteFile args; hFile = rax.
+    # .wfile: rax = hFile (file handle passed through, or GetStdHandle result)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov rdx, [rsp+0x30]
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov r8, [rsp+0x38]

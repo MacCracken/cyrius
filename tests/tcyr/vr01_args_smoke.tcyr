@@ -1,0 +1,31 @@
+# vr01_args_smoke.tcyr — VR-01 SMOKE: the argv capture path (lib/args.cyr →
+# args_macos.cyr _macho_capture_args on ecb; args_win.cyr on cass; the Linux
+# stack-walk on Linux). SMOKE, not a round-trip: the LIBTEST runner invokes the
+# test with no extra argv, so the strongest portable assertion is that the capture
+# ran without crashing and argv(0) (the program path) is present when argc >= 1.
+# The value here is that _macho_capture_args / args_win execute at all on the
+# target — that path had zero tcyr coverage. Runs on Linux + cass + ecb.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/args.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    test_group("argv capture executes and is self-consistent (smoke)");
+    var n = argc();
+    assert_eq(n >= 0, 1, "argc() returned a non-negative count (capture did not fault)");
+    if (n >= 1) {
+        assert_neq(argv(0), 0, "argv(0) — the program path — is a non-null pointer");
+    } else {
+        assert_eq(1, 1, "argc()==0 on this host — capture ran, nothing to index");
+    }
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

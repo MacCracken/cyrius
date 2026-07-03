@@ -1,0 +1,36 @@
+# vr01_syscalls_meta.tcyr — VR-01: filesystem-metadata syscalls (sys_mkdir / sys_chmod
+# / sys_unlink → syscalls_windows.cyr CreateDirectory/DeleteFile on cass; syscalls_macos.cyr
+# on ecb; Linux path on Linux). Distinct from the file-I/O test. is_dir (lib/fs.cyr)
+# confirms mkdir landed. Idempotent (asserts is_dir, not mkdir's return, so a re-run
+# over an existing dir still passes). Runs on Linux + cass + ecb.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/fs.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("sys_mkdir creates a directory (verified via is_dir)");
+    sys_mkdir("_vr01_mdir", 493);                # 0755; return not asserted (idempotent re-runs)
+    assert_eq(is_dir(str_from("_vr01_mdir")), 1, "the directory exists after sys_mkdir");
+
+    test_group("sys_chmod + sys_unlink on a regular file");
+    var fd = sys_open("_vr01_meta.bin", 577, 420);   # create
+    assert_neq(fd < 0, 1, "created the metadata test file");
+    sys_write(fd, "x", 1);
+    sys_close(fd);
+    var cm = sys_chmod("_vr01_meta.bin", 420);   # 0644
+    assert_eq(cm < 0, 0, "sys_chmod on the file succeeded");
+    var u = sys_unlink("_vr01_meta.bin");
+    assert_eq(u < 0, 0, "sys_unlink removed the file");
+    assert_eq(is_dir(str_from("_vr01_meta.bin")), 0, "the unlinked file is gone");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

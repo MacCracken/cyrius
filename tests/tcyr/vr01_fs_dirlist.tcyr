@@ -1,0 +1,30 @@
+# vr01_fs_dirlist.tcyr — VR-01: the directory-listing layer (lib/fs.cyr → fs_win.cyr
+# FindFirstFileW/GetFileAttributesW on cass; getdents64 on Linux; getdirentries on
+# ecb). Before v6.1.18 dir_list/is_dir were silent no-ops on Windows. Runs on
+# Linux + cass + ecb; paths (VERSION, tests/win) exist in the LIBTEST bundle CWD.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/fs.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("is_dir distinguishes directory / file / missing");
+    assert_eq(is_dir(str_from("tests/win")), 1, "is_dir on a directory returns 1");
+    assert_eq(is_dir(str_from("VERSION")), 0, "is_dir on a regular file returns 0");
+    assert_eq(is_dir(str_from("no_such_dir_xyz")), 0, "is_dir on a missing path returns 0");
+
+    test_group("dir_list enumerates the CWD");
+    var v = dir_list(str_from("."));
+    assert_neq(v, 0, "dir_list returned a vec");
+    assert_eq(vec_len(v) > 0, 1, "dir_list found at least one entry in the CWD");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

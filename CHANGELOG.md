@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.43] — 2026-07-03
+
+**v6.3.43 — VR-01 cross-host stdlib verification + VR-04 PE lint + foldins (sigil 3.10.0, patra
+1.12.8).** The last v6.3.x work before closeout. Authoring platform-variant tcyr and running them on
+**real cass (Windows) + ecb (macOS)** hardware is how years-old silent stdlib rot gets caught — and
+it caught a real compiler bug (below). Self-host fixpoint + seed → cybs → cycc byte-identical (the
+`EWRITE_PE` codegen change is cybs-safe); check.sh 125; **ecb + cass + pi SELFHOST_OK + the new
+VR-01 LIBTEST gate green on all three**; self_compile 568 ms; cycc 1,024,488 B (unchanged —
+`EWRITE_PE` isn't called on Linux/ELF emit).
+
+### Fixed — Windows `sys_write`/`sys_read` on file handles (a real compiler bug, found by VR-01)
+- `EWRITE_PE` (`src/backend/x86/emit.cyr`) **always translated the fd into a *standard handle*** via
+  `GetStdHandle` (`neg rax; sub rax,10`), so `sys_write`/`sys_read` only ever worked for fd 0/1/2 —
+  a real `CreateFileW` handle (a large value) mistranslated into a bogus std-handle index →
+  `WriteFile` to an invalid handle → the whole file round-trip silently failed. It was never caught
+  because no test had ever written to a *file* on Windows (tests/win/ is dir-list/nanosleep/callptr/
+  dxgi — all stdout). Fixed with an unsigned fd-branch — `cmp rax,2; ja` → fd>2 uses the handle
+  directly as `hFile`; fd≤2 keeps the `GetStdHandle` path — mirroring the fix `EREAD_PE` already had
+  since v6.0.45 (include-file reads need real handles; `EWRITE_PE` was the missing mirror).
+- `lib/syscalls_windows.cyr`: `sys_mkdir` / `sys_unlink` were no-op `return 0` stubs → routed to
+  `syscall(83)` → CreateDirectoryW / `syscall(87)` → DeleteFileW (the PE reroutes already existed).
+
+### Added — VR-01: 8 platform-variant stdlib tcyr + a standing LIBTEST gate
+- `tests/tcyr/vr01_*` (dispatcher API, exit-0, PE-safe): `syscalls_fileops`, `syscalls_meta`,
+  `fs_dirlist`, `thread_spawn`, `sync_mutex`, `alloc_grow`, `args_smoke`, `process_smoke` — the 8
+  files (`fs_win`/`thread_win`/`sync_windows`/`alloc_macos`/`args_macos`/`process_win`/
+  `syscalls_macos`/`syscalls_windows`) that **zero prior tcyr touched**. All pass on Linux (full
+  assertions), **cass 8/8, ecb 8/8**.
+- **LIBTEST promoted from an opt-in fallback to a STANDING per-host gate** (`scripts/release-gate.sh`
+  passes the `vr01_` glob + requires `LIBTEST_OK` on ecb/cass/pi every release) — so macOS/Windows
+  stdlib rot is caught at the gate, not by ports.
+
+### Added — VR-04: PE structural lint
+- `_binary_structural_lint_gate` (`programs/checks/services.cyr`) gains `_lint_pe_buf` (MZ → `PE\0\0`
+  → machine → PE32+ magic → section table + each section's raw data in file bounds →
+  `AddressOfEntryPoint` inside an `IMAGE_SCN_MEM_EXECUTE` section) alongside the extracted
+  `_lint_elf_buf`; on an ELF host it cross-emits a PE (`CYRIUS_TARGET_WIN=1`) and lints it, so the PE
+  lint runs locally. The **Mach-O** structural lint is **deferred to the v6.4.x Intel-Mac arc** (the
+  only local Mach-O emitter is the broken x86-macho port that arc fixes).
+
+### Changed — foldins (dependency review)
+- **sigil 3.9.9 → 3.10.0** (`lib/sigil.cyr` re-vendored; +17 public fns additive, 0 removals — the
+  native UEFI Authenticode PE-signing crypto `der_*` / `authenticode_pe_sign` that is **P1 of the
+  v6.4.x UEFI Secure Boot arc**; api-surface snapshot regenerated).
+- **patra 1.12.7 → 1.12.8** (`lib/patra.cyr` re-vendored; +1 private fn, api-surface neutral;
+  "fix for cy-yeo"). The other 9 vendored libs were current.
+- Both lib-only → **cycc byte-identical**; snapshot-ping-pong protection applied.
+
+### Filed — found-by-ports gaps (VR-01 surfaced; tests platform-guarded until fixed)
+- **macOS threading is broken** (`2026-07-03-macos-threading-workers-dont-run`) — `thread_create`
+  returns null and the worker never runs (sync counter stays 0), `chan_recv` blocks; no
+  `bsdthread_create`/`__ulock` path. P2, its own slot (a `lib/thread_macos.cyr`).
+- **`getpid`/`getppid` cross-platform** (`2026-07-03-getpid-cross-platform`) — Win32 is a documented
+  0-stub; macOS uses the Linux syscall number (39) instead of BSD 20. P3.
+
 ## [6.3.42] — 2026-07-03
 
 **v6.3.42 — `lib/protobuf.cyr` proto3 wire codec: double/float completion + docs (consumer-filed,

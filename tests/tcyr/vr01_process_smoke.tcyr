@@ -1,0 +1,43 @@
+# vr01_process_smoke.tcyr — VR-01 SMOKE: process identity path (lib/process.cyr
+# getpid / getppid → process_win.cyr on cass; getpid/getppid syscalls on Linux/ecb).
+# SMOKE, not a spawn round-trip: cross-platform spawning (CreateProcess vs fork/exec)
+# is out of scope for a portable exit-0 test.
+#
+# getpid's VALUE is unreliable cross-platform (VR-01 surfaced this — filed
+# 2026-07-03-getpid-cross-platform):
+#   - Win32: documented 0-returning stub (GetCurrentProcessId out of the v6.0.51
+#     process-creation arc scope; process_win.cyr:294).
+#   - macOS: SYS_GETPID is the Linux number 39, but BSD getpid is syscall 20 — the
+#     macho number-rewrite maps 39→0x2000027 (a different BSD call), so the value
+#     is wrong. Needs a getpid entry in the macho translation table.
+#   - Linux: a correct positive PID.
+# So this smoke asserts only the portable truth: the identity path is CALLABLE
+# without faulting (no STATUS_ILLEGAL_INSTRUCTION / crash) and getpid is STABLE
+# across calls. The value-correctness fix rides the filed issue. Runs Linux+cass+ecb.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/process.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("process identity: getpid / getppid callable + stable (smoke)");
+    var pid = getpid();
+    assert_eq(getpid(), pid, "getpid() is stable across calls (no fault on any platform)");
+    var ppid = getppid();
+    assert_eq(ppid, ppid, "getppid() is callable without faulting");
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_MACOS
+    # Linux: getpid is a correct positive PID (the value fix lands per-platform).
+    assert_eq(pid > 0, 1, "Linux getpid() returned a positive PID");
+    assert_eq(ppid >= 0, 1, "Linux getppid() returned a non-negative parent PID");
+#endif
+#endif
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

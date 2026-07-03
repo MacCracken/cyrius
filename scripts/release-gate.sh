@@ -78,16 +78,24 @@ if [ "$QUICK" = "1" ]; then
     exit 0
 fi
 
-# 4. cross-OS self-host (SEQUENTIAL — fixed /tmp+_cyaud paths clobber if concurrent)
-step "4/5" "cross-OS self-host: ecb (macOS) + cass (Windows) + pi (aarch64) — REAL hardware"
+# 4. cross-OS self-host + VR-01 platform LIBTEST (SEQUENTIAL — fixed /tmp+_cyaud
+# paths clobber if concurrent). v6.3.43: the `vr01_` glob promotes LIBTEST from an
+# opt-in fallback to a STANDING per-host gate — the 8 platform-variant tcyr
+# (fs/thread/sync/alloc/args/process/syscalls on cass+ecb) run on real hardware every
+# release, so macOS/Windows stdlib rot is caught here, not by ports.
+step "4/5" "cross-OS self-host + VR-01 platform tcyr: ecb (macOS) + cass (Windows) + pi (aarch64) — REAL hardware"
 for H in ecb cass pi; do
     echo "  --- $H ---"
-    sh scripts/cross-os-selfhost.sh "$H" > "$T/co.out" 2>&1
+    sh scripts/cross-os-selfhost.sh "$H" "vr01_" > "$T/co.out" 2>&1
     if ! grep -q "SELFHOST_OK: $H" "$T/co.out"; then
         tail -8 "$T/co.out"
         fail "cross-OS self-host FAILED on $H (a green CI check is NOT this — run the compiler on the hardware)"
     fi
-    echo "  OK: $H SELFHOST_OK"
+    if ! grep -q "LIBTEST_OK: $H" "$T/co.out"; then
+        tail -8 "$T/co.out"
+        fail "VR-01 platform tcyr FAILED on $H (found-by-ports stdlib rot — see the failing vr01_ test)"
+    fi
+    echo "  OK: $H SELFHOST_OK + VR-01 LIBTEST_OK"
 done
 
 # 5. bench (non-blocking — record the delta, triage per the growth-tax rule) ---

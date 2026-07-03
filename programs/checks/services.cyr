@@ -928,50 +928,17 @@ fn _kernel_pie_struct_gate(): i64 {
     return 0;
 }
 
-# VR-04 (v6.3.22): pure-cyrius structural lint of an EMITTED binary. Compiles a
-# small program with cycc, then validates the ELF64 the compiler produced —
+# VR-04: pure-cyrius structural lint of an EMITTED ELF64. Returns 0 = valid.
 # magic + ELFCLASS64, e_type (ET_EXEC/ET_DYN), e_machine (x86-64/aarch64), the
 # PH + SH tables in file bounds, every PT_LOAD's file range in bounds, and the
-# entry point landing inside an EXECUTABLE (PF_X) PT_LOAD (entry-in-text). This
-# catches a whole class of emit bugs that `file | grep ELF` cannot see. ELF is
-# the primary target (Linux/agnos x86-64 + aarch64); PE/Mach-O structural lint is
-# partially covered by platform_efi.cyr + the cross-OS funcgate magic checks and
-# is tracked as a follow-on.
-fn _binary_structural_lint_gate(): i64 {
-    var label = "pure-cyrius ELF structural lint — header + PH/SH bounds + entry-in-text on an emitted binary (VR-04, v6.3.22)";
-    var src = _root_path("programs/collatz.cyr");
-    if (file_exists(src) != 1) { _check(label, 0); return 0; }
-    var out = _tmp_path("audit_binlint_");
-    if (_self_host_pipe(src, CC_PATH, out) != 0) {
-        sys_unlink(out);
-        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": VR-04 test program failed to compile");
-        _check(label, 1);
-        return 1;
-    }
-    var cap = 4000000;
-    var buf = alloc(cap);
-    var fsz = file_read_all(out, buf, cap);
-    sys_unlink(out);
+# entry point landing inside an EXECUTABLE (PF_X) PT_LOAD (entry-in-text).
+fn _lint_elf_buf(buf, fsz): i64 {
     var fail = 0;
-    if (fsz < 64) { fail = 1; }
-    # On a Windows/macOS host cycc emits PE/Mach-O — skip (ELF is the primary
-    # target; PE/Mach-O structural lint is the tracked follow-on). The gate suite
-    # runs on x86_64 Linux, so this validates ELF there.
-    if (fail == 0) {
-        if (load8(buf) != 127) {
-            _p("  skip: non-ELF emit host (PE/Mach-O lint is a VR-04 follow-on)");
-            println("");
-            _check(label, 0);
-            return 0;
-        }
-    }
-    if (fail == 0) {
-        if (load8(buf + 1) != 69) { fail = 1; }     # 'E'
-        if (load8(buf + 2) != 76) { fail = 1; }     # 'L'
-        if (load8(buf + 3) != 70) { fail = 1; }     # 'F'
-        if (load8(buf + 4) != 2)  { fail = 1; }     # ELFCLASS64
-    }
+    if (fsz < 64) { return 1; }
+    if (load8(buf + 1) != 69) { fail = 1; }     # 'E'
+    if (load8(buf + 2) != 76) { fail = 1; }     # 'L'
+    if (load8(buf + 3) != 70) { fail = 1; }     # 'F'
+    if (load8(buf + 4) != 2)  { fail = 1; }     # ELFCLASS64
     var entry = 0; var phoff = 0; var phnum = 0; var phent = 0; var shoff = 0; var shnum = 0; var shent = 0;
     if (fail == 0) {
         var etype = load8(buf + 16) | (load8(buf + 17) << 8);
@@ -1011,12 +978,113 @@ fn _binary_structural_lint_gate(): i64 {
         }
         if (entry_in_x == 0) { fail = 1; }                      # entry must be in an R+E segment
     }
+    return fail;
+}
+
+# VR-04 (v6.3.43): pure-cyrius structural lint of an EMITTED PE32+. Returns 0 = valid.
+# MZ magic, e_lfanew → 'PE\0\0' signature, Machine (x86-64 0x8664 / aarch64 0xAA64),
+# PE32+ optional-header magic (0x20B), the section table + each section's raw data
+# in file bounds, and AddressOfEntryPoint (an RVA) landing inside a section with
+# IMAGE_SCN_MEM_EXECUTE (0x20000000) — the entry-in-text equivalent for PE.
+fn _lint_pe_buf(buf, fsz): i64 {
+    var fail = 0;
+    if (fsz < 64) { return 1; }
+    if (load8(buf) != 77) { return 1; }                         # 'M'
+    if (load8(buf + 1) != 90) { return 1; }                     # 'Z'
+    var e = load32(buf + 60);                                   # e_lfanew @0x3C
+    if (e + 264 > fsz) { return 1; }                            # COFF + PE32+ opt hdr must fit
+    if (load8(buf + e) != 80) { fail = 1; }                     # 'P'
+    if (load8(buf + e + 1) != 69) { fail = 1; }                 # 'E'
+    if (load8(buf + e + 2) != 0) { fail = 1; }
+    if (load8(buf + e + 3) != 0) { fail = 1; }
+    var mach = load8(buf + e + 4) | (load8(buf + e + 5) << 8);
+    if (mach != 34404) { if (mach != 43620) { fail = 1; } }     # 0x8664 x86-64 / 0xAA64 aarch64
+    var nsec = load8(buf + e + 6) | (load8(buf + e + 7) << 8);
+    var optsz = load8(buf + e + 20) | (load8(buf + e + 21) << 8);
+    var optmagic = load8(buf + e + 24) | (load8(buf + e + 25) << 8);
+    if (optmagic != 523) { fail = 1; }                          # 0x20B PE32+
+    var aoe = load32(buf + e + 40);                             # AddressOfEntryPoint @ opt+16
+    var sectab = e + 24 + optsz;
+    if (sectab + nsec * 40 > fsz) { return 1; }                 # section table in bounds
+    var entry_in_x = 0;
+    var i = 0;
+    while (i < nsec) {
+        var s = buf + sectab + i * 40;
+        var vsz = load32(s + 8);                                # VirtualSize
+        var va = load32(s + 12);                                # VirtualAddress (RVA)
+        var rawsz = load32(s + 16);                             # SizeOfRawData
+        var rawptr = load32(s + 20);                            # PointerToRawData
+        var chars = load32(s + 36);                             # Characteristics
+        if (rawptr + rawsz > fsz) { fail = 1; }                 # raw data in bounds
+        var span = vsz;
+        if (rawsz > span) { span = rawsz; }
+        if (aoe >= va) {
+            if (aoe < va + span) {
+                if ((chars & 536870912) != 0) { entry_in_x = 1; }   # 0x20000000 IMAGE_SCN_MEM_EXECUTE
+            }
+        }
+        i = i + 1;
+    }
+    if (entry_in_x == 0) { fail = 1; }
+    return fail;
+}
+
+# VR-04: compile a small program with cycc and structurally lint the binary it
+# emits — a class of emit bugs `file | grep ELF/PE` cannot see. Dispatches on
+# magic: ELF (Linux/agnos native), PE (cass native), Mach-O (ecb — deferred to
+# the v6.4.x Intel-Mac arc, whose x86-macho fix gives a local emitter to gate
+# against). On an ELF host it ALSO cross-emits a PE via CYRIUS_TARGET_WIN=1 and
+# lints it, so the PE lint is exercised locally without a Windows host (v6.3.43).
+fn _binary_structural_lint_gate(): i64 {
+    var label = "pure-cyrius binary structural lint — ELF + PE (cross-emit) header/section bounds + entry-in-text (VR-04)";
+    var src = _root_path("programs/collatz.cyr");
+    if (file_exists(src) != 1) { _check(label, 0); return 0; }
+    var out = _tmp_path("audit_binlint_");
+    if (_self_host_pipe(src, CC_PATH, out) != 0) {
+        sys_unlink(out);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": VR-04 test program failed to compile");
+        _check(label, 1);
+        return 1;
+    }
+    var cap = 4000000;
+    var buf = alloc(cap);
+    var fsz = file_read_all(out, buf, cap);
+    sys_unlink(out);
+    var b0 = 0;
+    if (fsz >= 64) { b0 = load8(buf); }
+    var fail = 0;
+    var host_elf = 0;
+    if (b0 == 127) { fail = _lint_elf_buf(buf, fsz); host_elf = 1; }         # ELF
+    elif (b0 == 77) { fail = _lint_pe_buf(buf, fsz); }                       # 'M' — PE (cass)
+    elif (b0 == 207) {                                                       # 0xCF — Mach-O
+        _p("  skip: Mach-O emit host — Mach-O structural lint deferred to the v6.4.x Intel-Mac arc");
+        println("");
+        _check(label, 0);
+        return 0;
+    } else { fail = 1; }
+    # ELF host: also cross-emit a PE (CYRIUS_TARGET_WIN=1) and lint it, so the PE
+    # path is validated locally. A cross-emit failure is not fatal (native ELF
+    # lint already ran) — only a STRUCTURALLY-BAD PE fails the gate.
+    if (fail == 0) {
+        if (host_elf == 1) {
+            var pout = _tmp_path("audit_binlint_pe_");
+            if (_self_host_pipe_win(src, CC_PATH, pout) == 0) {
+                var pbuf = alloc(cap);
+                var pfsz = file_read_all(pout, pbuf, cap);
+                sys_unlink(pout);
+                if (_lint_pe_buf(pbuf, pfsz) != 0) { fail = 1; }
+            } else {
+                sys_unlink(pout);
+            }
+        }
+    }
     if (fail == 0) {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
-        println(": emitted ELF valid — magic/class/type/machine, PH+SH in bounds, entry-in-text");
+        println(": emitted binary valid — magic/machine, header+section bounds, entry-in-text (ELF native + PE cross-emit)");
     } else {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
-        println(": emitted ELF failed structural lint (VR-04)");
+        println(": emitted binary failed structural lint (VR-04)");
     }
     _check(label, fail);
     return fail;

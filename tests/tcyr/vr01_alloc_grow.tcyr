@@ -1,0 +1,39 @@
+# vr01_alloc_grow.tcyr — VR-01: the bump allocator (lib/alloc.cyr → alloc_macos.cyr
+# vm_allocate/mmap on ecb; alloc_windows.cyr VirtualAlloc on cass; brk/mmap on Linux).
+# Allocates past a page, writes a sentinel at both ends, reads it back, checks
+# alloc_used accounting, and that alloc_reset rewinds. Linux + cass + ecb.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("alloc past a page + sentinel round-trip");
+    var n = 100000;                              # > one 4K/16K page
+    var p = alloc(n);
+    assert_neq(p, 0, "alloc(100000) returned a non-null pointer");
+    store64(p, 305419896);                       # 0x12345678 at the start
+    store64(p + n - 8, 2596069104);              # 0x9ABCDEF0 at the end
+    assert_eq(load64(p), 305419896, "start sentinel reads back");
+    assert_eq(load64(p + n - 8), 2596069104, "end sentinel reads back (whole block writable)");
+
+    test_group("distinct allocations don't overlap + accounting advances");
+    var used0 = alloc_used();
+    var a = alloc(32);
+    var b = alloc(32);
+    assert_neq(a, b, "two allocations return distinct pointers");
+    assert_eq(b >= a + 32, 1, "the second allocation starts at/after the first's end");
+    assert_eq(alloc_used() > used0, 1, "alloc_used advanced after allocating");
+
+    test_group("alloc_reset rewinds the arena");
+    alloc_reset();
+    var after = alloc(32);
+    assert_neq(after, 0, "alloc after reset still returns memory");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
