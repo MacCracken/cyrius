@@ -1,0 +1,47 @@
+# Fixture for _generics_struct_abi_gate (v6.3.39 — the specialized-instance struct ABI).
+#
+# Exercises the two struct-ABI features finalized in v6.3.39 (both gated CYRIUS_MONOMORPH=1;
+# default codegen byte-identical). Each contributes a distinguishing value to a total of 42.
+#
+#   B-explicit  an EXPLICIT non-i64 generic struct receiver — `var m: M<i32> = mk<i32>(...)`.
+#               Pre-fix: hard-errored ("fn return struct-id differs from declared var type")
+#               because the receive sized the ABI off the callee's BASE return and the sid
+#               check compared base-vs-specialized. Fixed: the explicit specialized receiver
+#               re-derives the receive from the callee's base (like the inferred path).
+#   B3          a STRUCT type-arg on a generic FN — `wrap<Point>(pt)`. Pre-fix: the i64 base
+#               couldn't parse `p.x` (illegal on a scalar) AND `_instantiate_generic_fn`
+#               blanket-rejected struct type-args (-3). Fixed: the base skips its (never-
+#               called) i64 body; each instance re-emits with T bound to the struct sid so
+#               `p` is a by-value struct param (address-passed when >8 B via the structmask).
+#
+# Compiles + runs ONLY under CYRIUS_MONOMORPH=1 (gated). MUST exit 42.
+
+struct M<T> { a: T; b: T; }
+struct Point { x: i64; y: i64; }
+struct W { v: i64; }
+
+fn mk<T>(x: T, y: T): M<T> { var m: M<T>; m.a = x; m.b = y; return m; }
+fn wrap<T>(p: T): i64 { return p.x + p.y; }     # B3: struct type-param field access
+fn get1<T>(p: T): i64 { return p.v; }           # B3: 1-field (<=8B, value-passed) struct tparam
+
+fn main(): i64 {
+    var r = 0;
+
+    # B-explicit: explicit non-i64 (i32) struct receiver — pre-fix hard-errored.
+    var m: M<i32> = mk<i32>(10, 4);
+    r = r + m.a + m.b;                           # +14 = 14
+
+    # B3: a struct (16 B, >8 B → address-passed) type-arg on a generic fn.
+    var pt: Point; pt.x = 12; pt.y = 6;
+    r = r + wrap<Point>(pt);                     # +18 = 32
+
+    # B3: called a SECOND time (regalloc/le8 coherence) — 2 * 4 = 8.
+    var w: W; w.v = 4;
+    r = r + get1<W>(w) + get1<W>(w);             # +8  = 40
+
+    # B3: a struct-tparam instance deduped with the first wrap<Point>.
+    var pt2: Point; pt2.x = 1; pt2.y = 1;
+    r = r + wrap<Point>(pt2);                    # +2  = 42
+
+    return r;
+}

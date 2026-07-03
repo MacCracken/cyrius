@@ -340,6 +340,19 @@ if (_is_macho_arm_build == 1) {
 # Emit initial branch over fn bodies (aarch64: B +0, patch later)
 var jmp_patch = EJMP0(S);
 
+# v6.3.39 (aarch64 monomorph parity): read CYRIUS_MONOMORPH BEFORE pass-1. Pass-1
+# registers structs including their generic type-param encoding (GSTP), which is only
+# captured when _MONOMORPH_OK==1. Reading it AFTER pass-1 (the pre-v6.3.39 site, which
+# stayed here after the v6.3.33 fix landed in main.cyr ONLY) left generic structs
+# un-instantiated on aarch64 → `var h: Holder<Point>; h.v.x` parse-failed. Default (env
+# unset) → _MONOMORPH_OK stays 0 → pass-1 SKIP_GENERICS unchanged → byte-identical.
+var _mono_env = _read_env("CYRIUS_MONOMORPH");
+if (_mono_env != 0) {
+    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
+        _MONOMORPH_OK = 1;
+    }
+}
+
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
 # Synced with main.cyr v2.1 — includes mod/pub/use/impl/union support
 STI(S, 0);
@@ -462,13 +475,8 @@ if (_macho_arm_env != 0) {
     }
 }
 
-# v6.3.5 AR-01 — opt-in monomorphization substrate (CYRIUS_MONOMORPH=1; default off; see util.cyr).
-var _mono_env = _read_env("CYRIUS_MONOMORPH");
-if (_mono_env != 0) {
-    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
-        _MONOMORPH_OK = 1;
-    }
-}
+# v6.3.5 AR-01 — monomorphization opt-in is now read BEFORE pass-1 (see above,
+# v6.3.39 aarch64 parity). This site retired.
 
 # Pass 2: Parse struct and fn definitions (vars already registered)
 # Synced with main.cyr v2.1 — includes mod/pub/use/impl/union/enum-ctor support

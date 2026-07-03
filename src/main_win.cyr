@@ -491,6 +491,16 @@ EB(S, 0xE9);
 var jmp_patch = GCP(S);
 EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 
+# v6.3.39 (Windows monomorph parity): read CYRIUS_MONOMORPH BEFORE pass-1 (pass-1
+# captures generic structs' GSTP type-param encoding only when _MONOMORPH_OK==1; the
+# v6.3.33 fix landed in main.cyr only). Default (env unset) → byte-identical.
+var _mono_env = _read_env("CYRIUS_MONOMORPH");
+if (_mono_env != 0) {
+    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
+        _MONOMORPH_OK = 1;
+    }
+}
+
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
 STI(S, 0);
 var scan = 1;
@@ -687,13 +697,8 @@ if (_ir_env != 0) {
     }
 }
 
-# v6.3.5 AR-01 — opt-in monomorphization substrate (CYRIUS_MONOMORPH=1; default off; see util.cyr).
-var _mono_env = _read_env("CYRIUS_MONOMORPH");
-if (_mono_env != 0) {
-    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
-        _MONOMORPH_OK = 1;
-    }
-}
+# v6.3.5 AR-01 — monomorphization opt-in is now read BEFORE pass-1 (v6.3.39 Windows
+# parity). This site retired.
 
 # Pass 2: Parse struct and fn definitions (vars already registered)
 STI(S, 0);

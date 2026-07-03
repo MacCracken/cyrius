@@ -1,5 +1,15 @@
 # ≤8-byte struct passed BY VALUE reads 0 on the SECOND call (default-path, pre-existing)
 
+**RESOLVED v6.3.39** (the "le8" fix). Root cause: the linear-scan regalloc **safety scan**
+(parse_fn.cyr:3496) tested the ModRM byte `== 0x85` (reg field = rax) exactly, so a
+`lea rN,[rbp+disp32]` with N ≠ rax — which a ≤8-byte struct field-store `s.v =` emits as
+`lea rcx,[rbp+disp]; mov [rcx],rax` (ModRM 0x8D) — was invisible. The address-taken slot was
+then wrongly promoted to a callee-saved register the memory field-store never wrote → reads 0.
+Fix: also bar regalloc for any local that is the target of a `lea` of its slot, matched with
+`(modrm & 0xC7) == 0x85` (masks the reg field). Only ever flips a slot register→memory;
+differential GREEN both modes; fixpoint stable. x86-only (the bug does not exist on aarch64 —
+separate regalloc, confirmed). See CHANGELOG [6.3.39].
+
 **Filed:** 2026-07-03 (surfaced while building the v6.3.37 monomorph-repairs fixture)
 **Severity:** P2 — default-path miscompile, but a narrow shape (a ≤8-byte struct local
 passed by value to the SAME callee more than once). Pre-existing: reproduces on the

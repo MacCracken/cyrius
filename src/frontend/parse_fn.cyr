@@ -1467,6 +1467,38 @@ fn _is_tparam_of(S, fi, noff): i64 {
     return 0;
 }
 
+# v6.3.39 (B3): scan a generic fn's body (GTI must be AT the first body token, just
+# after `{`) for a `<param> .` field access where <param> is a type-param-TYPED param
+# (`fn wrap<T>(p: T)` → p, recorded in _cur_fn_tp_pmask). Such a fn uses a type-param AS
+# A STRUCT and has NO valid i64 base (`p.x` on the i64-bound param is illegal), so the
+# base-as-i64 emission must skip the body (see PARSE_FN_DEF). NOTE the accessed token is
+# the PARAM name (`p`), not the type-param name (`T`) — the param's slot bit in
+# _cur_fn_tp_pmask is the discriminator (a NON-tparam struct param like `s: Point` is a
+# real struct → `s.field` is legal → its bit is clear → not skipped). Non-consuming:
+# saves + restores GTI. Depth starts at 1 (inside the body); stops at the matching `}`.
+fn _body_field_accesses_tparam(S, fi): i64 {
+    if (GFTP(S, fi) == 0) { return 0; }
+    if (_cur_fn_tp_pmask == 0) { return 0; }         # no tparam-typed params → nothing to skip
+    var _sv = GTI(S);
+    var _bd = 1;
+    var _found = 0;
+    while (_bd > 0) {
+        var _t = PEEKT(S);
+        if (_t == 12) { break; }                     # EOF guard
+        if (_t == 13) { _bd = _bd + 1; }
+        elif (_t == 14) { _bd = _bd - 1; if (_bd == 0) { break; } }
+        elif (_t == 2) {
+            if (TOKTYP(S, GTI(S) + 1) == 41) {
+                var _sl = FINDLOCAL(S, PEEKV(S));
+                if (_sl >= 0) { if ((_cur_fn_tp_pmask & (1 << _sl)) != 0) { _found = 1; } }
+            }
+        }
+        STI(S, GTI(S) + 1);
+    }
+    STI(S, _sv);
+    return _found;
+}
+
 # v6.3.10 (instantiate-once): mint a deduped specialized name `base$<tyname>` into
 # tok_names for a concrete-type token, returning its noff. '$' (36) is not a legal
 # identifier byte, so the name is unforgeable from source. Scalar tokens → i8/i16/
@@ -1553,13 +1585,17 @@ fn _jt_merge(S, buf): i64 {
 # restore. Returns the specialized fi, or -2 for the not-yet-handled pc>0 case (the
 # caller errors). pc=0 only this bite (param re-emission is the follow-on).
 fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
-    # v6.3.33: a STRUCT-typed type-arg on a generic FN (e.g. `id<Pair<i32>>`,
-    # `wrap<i64, Point>`) needs a monomorphized struct-ABI (by-value struct params +
-    # struct-return retptr rebound per instance) that the token-replay path does not
-    # yet emit soundly — it produced wrong values for the multi-param struct case.
-    # Return -3 so the caller HARD-ERRORS instead of silently miscompiling. Scalar
-    # type-args on generic fns work; struct type-args are supported on generic STRUCTS.
-    if (conc0 > 0 || conc1 > 0) { return 0 - 3; }
+    # v6.3.33/v6.3.39: a STRUCT-typed type-arg on a generic FN needs a monomorphized
+    # struct-ABI (by-value struct params + struct-return rebound per instance). v6.3.39
+    # (B3) enables the SINGLE-tparam case — `wrap<Point>` re-emits the body with T bound
+    # to the struct sid, so `p` becomes a by-value struct param and `p.x` resolves; the
+    # ABI is now sound (the v6.3.36 structmask address-passes >8B struct params and the
+    # v6.3.39 le8 fix keeps <=8B struct locals coherent — a plain `fn wrap_point(p:
+    # Point): i64` already works, and the instance emits equivalent code). The MULTI-
+    # tparam struct combos (`Two<Point,i64>`, a struct as the 2nd type-arg) remain
+    # unproven — still -3 so the caller HARD-ERRORS rather than silently miscompiling.
+    if (conc0 > 0 && conc1 != 0) { return 0 - 3; }   # struct 1st + a 2nd type-arg
+    if (conc1 > 0) { return 0 - 3; }                 # struct as the 2nd type-arg
     var base_noff = L64(_fnt_names + base_fi * 8);
     var mangled = _mint_generic_name(S, base_noff, conc0, conc1);
     var spec = FINDFN(S, mangled);
@@ -1580,6 +1616,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var sv_rscal = _cur_fn_ret_scalar;
     var sv_naked = _cur_fn_naked;
     var sv_ix = _cur_fn_ix;
+    var sv_tppmask = _cur_fn_tp_pmask;   # v6.3.39 (B3): restore across the nested re-emit
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
     var locsnap = _cl_save_locals(S, sv_flc);
     # --- jump over the instance, then re-invoke PARSE_FN_DEF on the BASE's verbatim
@@ -1610,6 +1647,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _cur_fn_ret_scalar = sv_rscal;
     _cur_fn_naked = sv_naked;
     _cur_fn_ix = sv_ix;
+    _cur_fn_tp_pmask = sv_tppmask;   # v6.3.39 (B3)
     # The instance is emitted INLINE in the enclosing fn's code range (jumped over),
     # so mark the enclosing fn to skip its regalloc byte-scan post-pass (it would
     # rewrite + corrupt the instance) — same guard closures use.
@@ -2792,6 +2830,20 @@ fn PARSE_FN_DEF(S): i64 {
     var option_mask = 0;
     var tagged_mask = 0;
     var struct_mask = 0;   # v6.3.36 (issue [5]): bit N = plain struct >8 B param
+    _cur_fn_tp_pmask = 0;  # v6.3.39 (B3): reset per-fn tparam-typed-param mask
+    # v6.3.39 (B3): for a specialized INSTANCE re-emit, bind T -> the concrete type(s)
+    # BEFORE the param loop so a type-param-typed param `p: T` resolves to the concrete
+    # struct (p becomes a by-value struct param → `p.x` in the body lays out + reads
+    # correctly, like a plain `fn wrap_point(p: Point)`). CLEARED right after the loop so
+    # the return-type scan + rest of the fn are unchanged; the existing body bind (~3113)
+    # re-establishes it for PARSE_PROG. Only fires for an INSTANCE (_inst_conc0 != 0 — a
+    # path that was -3-blocked before v6.3.39 for structs; scalar instances resolve the
+    # tparam to a scalar → pt_sid stays 0, byte-identical). BASE + default never enter.
+    var _b3_pl_bound = 0;
+    if (_MONOMORPH_OK == 1) { if (_inst_conc0 != 0) { if (GFTP(S, fi) != 0) {
+        _bind_generic_call(S, fi, _inst_conc0, _inst_conc1);
+        _b3_pl_bound = 1;
+    } } }
     if (PEEKT(S) != 11) {
         var pgo = 1;
         while (pgo == 1) {
@@ -2852,6 +2904,10 @@ fn PARSE_FN_DEF(S): i64 {
                     elif (_ptc == 7) { pt_simd_class = 2; }
                     # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
                     if (_param_wants_struct_ptr(S, tnoff) == 1) { struct_mask = struct_mask | (1 << pc); }
+                    # v6.3.39 (B3) — record params whose declared type is a type-param, so
+                    # the i64 BASE emission can skip the body when such a param is field-
+                    # accessed as a struct (no valid i64 form). Gated; default byte-identical.
+                    if (_MONOMORPH_OK == 1) { if (_is_tparam_of(S, fi, tnoff) == 1) { _cur_fn_tp_pmask = _cur_fn_tp_pmask | (1 << pc); } }
                     pt_sid = FINDSTRUCT(S, tnoff);
                     # v6.3.9 (F-fns): param `: T` under an active generic binding.
                     # A struct-bound tparam makes this a struct param (pt_sid);
@@ -2861,7 +2917,16 @@ fn PARSE_FN_DEF(S): i64 {
                     # Inert when _tp_c0==0 → byte-identical default path.
                     if (_tp_c0 != 0) {
                         var _ptpc = _tp_resolve(S, tnoff);
-                        if (_ptpc > 0) { pt_sid = _ptpc; }
+                        if (_ptpc > 0) {
+                            pt_sid = _ptpc;
+                            # v6.3.39 (B3) — a tparam-typed param resolved (via the instance
+                            # binding) to a struct >8 B must be ADDRESS-passed, exactly like a
+                            # plain struct >8 B param. The name-based _param_wants_struct_ptr
+                            # above sees only "T" (not a struct) so it can't set the bit; set
+                            # it here from the resolved sid. <=8 B resolved structs stay
+                            # value-passed (bit clear), matching the non-generic ABI.
+                            if (STRUCTSZ(S, _ptpc - 1) > 8) { struct_mask = struct_mask | (1 << pc); }
+                        }
                     }
                 }
                 # Win64 PE doesn't support f64v2/f64v4 value-form
@@ -2979,6 +3044,7 @@ fn PARSE_FN_DEF(S): i64 {
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
     S64(_fnt_params + fi * 8, pc);
+    if (_b3_pl_bound == 1) { _tp_clear(S); }   # v6.3.39 (B3): end the param-loop binding
     # v6.2.x: a #naked fn may take up to 6 register-passed params (the arg-home
     # stores are gated above, so they stay in x0../rdi.. for the asm body — e.g.
     # dl_setjmp(buf) / dl_longjmp(buf,val)). 7+ params spill to the stack, which a
@@ -3071,7 +3137,32 @@ fn PARSE_FN_DEF(S): i64 {
         else { _bind_generic_call(S, fi, 0 - 8, 0 - 8); }
         _gen_base = 1;
     }
-    PARSE_PROG(S);
+    # v6.3.39 (B3): a generic fn that field-accesses a tparam-typed param
+    # (`fn wrap<T>(p: T): i64 { return p.x + p.y; }`) has NO valid i64 base — `p.x` on an
+    # i64-bound tparam is illegal. The base-as-i64 body can't be parsed, but it is also
+    # never validly CALLED (there is no `wrap<i64>` — i64 has no fields). So for the base
+    # emission ONLY, skip the body to a trivial `rax=0` dead stub. The SPECIALIZED
+    # instances re-emit the real body with T bound to the concrete struct (p becomes a
+    # by-value struct param → `p.x` resolves; the v6.3.36 structmask + v6.3.39 le8 fix
+    # make that ABI sound — a plain `fn wrap_point(p: Point): i64` already works). Gated
+    # under _MONOMORPH_OK (this whole _gen_base block) → default byte-identical.
+    var _b3_skip = 0;
+    if (_gen_base == 1 && _inst_conc0 == 0) {
+        if (_body_field_accesses_tparam(S, fi) == 1) { _b3_skip = 1; }
+    }
+    if (_b3_skip == 1) {
+        var _b3_bd = 1;
+        while (_b3_bd > 0) {
+            var _b3t = PEEKT(S);
+            if (_b3t == 12) { break; }               # EOF guard
+            if (_b3t == 13) { _b3_bd = _b3_bd + 1; }
+            elif (_b3t == 14) { _b3_bd = _b3_bd - 1; if (_b3_bd == 0) { break; } }
+            STI(S, GTI(S) + 1);
+        }
+        EMOVI(S, 0);                                  # dead stub: rax = 0
+    } else {
+        PARSE_PROG(S);
+    }
     if (_gen_base == 1) { _tp_clear(S); }
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     # Record body end and classify inline candidate (x86 only; AR-01 monomorph gate)
@@ -3504,6 +3595,21 @@ fn PARSE_FN_DEF(S): i64 {
                                     }
                                     if (ps_ok == 0) { ps_safe = 0; }
                                 } }
+                            # v6.3.39 (le8-2ndcall) — a `lea rN,[rbp+disp32]` that takes the
+                            # address of THIS local's slot means the slot is address-taken (a
+                            # <=8-byte struct field-store emits `lea rcx,[rbp+disp]; mov [rcx],rax`)
+                            # → it MUST live in memory, never a register. The 0x85 block above
+                            # only catches the rax-dest lea (ModRM 0x85); a non-rax dest (e.g.
+                            # rcx → ModRM 0x8D) slipped through, so the picker wrongly promoted
+                            # the slot to a callee-saved reg that the memory field-store never
+                            # wrote → reads 0. Mask the reg field ((modrm & 0xC7)==0x85 = mod=10,
+                            # rm=101 = [rbp+disp32], any reg) so ANY lea of this slot bars it.
+                            if (load8(_codebuf_base + ps_sp) == 0x48) {
+                                if (load8(_codebuf_base + ps_sp + 1) == 0x8D) {
+                                    if ((load8(_codebuf_base + ps_sp + 2) & 0xC7) == 0x85) {
+                                        if (load32(_codebuf_base + ps_sp + 3) == ps_disp32) {
+                                            ps_safe = 0;
+                                        } } } }
                             ps_sp = ps_sp + 1;
                         }
                     }

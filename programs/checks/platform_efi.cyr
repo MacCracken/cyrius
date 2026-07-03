@@ -572,6 +572,43 @@ fn _monomorph_repairs_gate(): i64 {
     return fail;
 }
 
+fn _generics_struct_abi_gate(): i64 {
+    var label = "v6.3.39 generics struct ABI: B-explicit (explicit non-i64 struct receiver) + B3 (struct type-arg on a generic fn) run under CYRIUS_MONOMORPH=1 (exit 42), gated off";
+    var src = _root_path("tests/fixtures/monomorph/generics_struct_abi.cyr");
+    var fail = 0;
+    var bin_on = _tmp_path("audit_gsa_on_");
+    var rc_on = _self_host_pipe_env(src, CC_PATH, bin_on, "CYRIUS_MONOMORPH=1");
+    if (rc_on != 0) {
+        sys_unlink(bin_on);
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON generics-struct-abi compile failed rc="); print_num(rc_on); println("");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin_on, 493);
+    var ec_on = _pipe_file_to_bin(bin_on, src);
+    sys_unlink(bin_on);
+    if (ec_on != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON generics-struct-abi program exit "); print_num(ec_on); println(" (expected 42)");
+        fail = fail + 1;
+    }
+    var bin_off = _tmp_path("audit_gsa_off_");
+    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    sys_unlink(bin_off);
+    if (rc_off == 0) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        println(": flag-OFF compiled generics-struct-abi — the feature is NOT gated");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": explicit M<i32> receiver + wrap<Point>/get1<W>/sum<Big> struct type-args run under the flag, gated off");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _async_await_gate(): i64 {
     var label = "v6.3.11 G: async fn / await → first-class Futures over the epoll runtime, run under CYRIUS_ASYNC=1 (exit 42), gated off";
     var src = _root_path("tests/fixtures/async/async_await.cyr");

@@ -68,6 +68,12 @@ var _cur_fn_regalloc = 0;
 # records the peak so the frame reserves it. Raised ONLY in the flagged replay
 # path; stays 0 on default builds → frame size byte-identical.
 var _flc_hwm = 0;
+# v6.3.39 (B3) — per-fn bitmask: bit i set = param i's declared type is a type-param
+# (`fn wrap<T>(p: T)` → bit 0). Populated in PARSE_FN_DEF's param loop (gated
+# _MONOMORPH_OK) and read by _body_field_accesses_tparam to decide whether the i64
+# BASE emission must skip the body (a tparam-typed param field-accessed as a struct
+# has no valid i64 form). Reset per fn; stays 0 on default builds → byte-identical.
+var _cur_fn_tp_pmask = 0;
 # v6.3.7 — set to 1 when the current fn emits a closure literal. Closures are
 # emitted INLINE in the enclosing fn's code range (jumped over), so the enclosing
 # fn's regalloc post-pass — a byte-scan that NOP-patches + reallocates locals —

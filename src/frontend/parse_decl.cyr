@@ -1655,6 +1655,21 @@ fn PARSE_VAR(S): i64 {
                 var _look_fi = FINDFN(S, _look_noff);
                 if (_look_fi >= 0) {
                     var _look_sid = GFRS(S, _look_fi);
+                    # v6.3.39 (B-explicit): an EXPLICIT specialized-instance receiver of a
+                    # generic call — `var m: M<i32> = mk<i32>(...)` — annotated pscale as the
+                    # packed instance sid (M$i32), but the generic callee returns the BASE
+                    # layout (proven: the inferred `var x = mk<i32>(...)` path re-derives from
+                    # the base at line ~1670 and reads the right values). The instance-sized
+                    # receive then mis-routed the ABI (base 16B → asv_pair) AND hard-errored at
+                    # the base≠instance sid check (:1760/:1860). Reset pscale to 0 so the
+                    # inferred logic below re-derives the receive from the callee's BASE return,
+                    # unifying explicit with the (correct) inferred path. Gated on a GENERIC
+                    # callee (GFTP!=0) so non-generic struct-returning fns are untouched; the
+                    # i64 case re-derives to the same base sid (no behavior change). Default
+                    # (flag-off) byte-identical.
+                    if (_MONOMORPH_OK == 1) { if (pscale < 0) {
+                        if (GFTP(S, _look_fi) != 0) { pscale = 0; }
+                    } }
                     # v6.3.16: inferred `var p = mk();` (no type annotation → pscale==0)
                     # from a struct-returning callee. Infer the local's struct type so
                     # the asv_try (>16B retptr) / asv_pair (9-16B rax:rdx) allocation

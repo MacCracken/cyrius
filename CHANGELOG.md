@@ -6,6 +6,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.39] — 2026-07-03
+
+**v6.3.39 — generics FINALIZE bite 2/2: the deep specialized-instance struct ABI + cross-target
+monomorph parity + a default-path regalloc fix. The generics arc closes.** Root-caused via a
+3-bug workflow (isolated worktrees, adversarial-verify — all CONFIRMED), then each fix implemented
++ verified: self-host fixpoint stable, differential status-diff = 0 both modes (all changes
+logic-preserving), seed → cybs → cycc byte-identical, and — after the parity fix — every generics
+fixture runs on aarch64 (qemu) as well as x86. All three struct-ABI features are gated
+`CYRIUS_MONOMORPH=1`; the default (flag-off) path is byte-identical.
+
+### Fixed — ≤8-byte struct passed by value to the same callee twice read 0 (DEFAULT path, x86)
+- `fn getv(s: S): i64 { return s.v; } ... var a = getv(s); var b = getv(s);` returned a = b = 0
+  (single call was fine; >8 B was fine). The linear-scan regalloc **safety scan**
+  (parse_fn.cyr:3496) tested the ModRM byte `== 0x85` exactly (reg field = rax), so a
+  `lea rN,[rbp+disp32]` with N ≠ rax — which a ≤8 B struct field-store `s.v =` emits as
+  `lea rcx,[rbp+disp]; mov [rcx],rax` (ModRM 0x8D) — was invisible to it. The address-taken slot
+  was then wrongly promoted to a callee-saved register that the memory field-store never wrote →
+  reads 0. Fix: also bar regalloc for any local that is the target of a `lea` of its slot, matched
+  with `(modrm & 0xC7) == 0x85` (masks the reg field → `[rbp+disp32]` for **any** destination reg).
+  Only ever flips a slot from register-eligible to memory. Logic-preserving (differential GREEN;
+  fixpoint stable). x86-only — the bug does not exist on aarch64 (separate regalloc; confirmed).
+  [issue 2026-07-03](docs/development/issues/2026-07-03-le8byte-struct-byval-second-call-reads-zero.md).
+
+### Fixed — B-explicit: explicit non-i64 generic struct receiver hard-errored (gated)
+- `var m: M<i32> = mk<i32>(...)` errored "fn return struct-id differs from declared var type". The
+  receive sized the ABI off the callee's **base** return (16 B → the rax:rdx pair path) and the
+  sid check compared base-vs-specialized. The inferred form (`var x = mk<i32>(...)`) already
+  re-derives the receive from the callee's base and works — so the fix resets `pscale` for an
+  explicit specialized-instance receiver of a generic call, re-entering that (correct) inferred
+  path. Verified across 2-field/3-field and i32/i64 instances.
+
+### Added — B3: STRUCT type-arg on a generic FN (gated) — the roadmap's HIGH-risk item, landed
+- `fn wrap<T>(p: T): i64 { return p.x + p.y; }` called `wrap<Point>(pt)` now works (was a hard
+  error). Two blockers, both cleared: (1) the i64 **base** can't parse `p.x` (illegal on a scalar)
+  — so a generic fn that field-accesses a type-param-typed param now **skips** its (never-called)
+  i64 base body to a trivial `rax = 0` stub, detected via a new per-fn `_cur_fn_tp_pmask`
+  (bit = a param whose declared type is a type-param) + a body scan for `<that-param>.field`;
+  (2) `_instantiate_generic_fn` blanket-rejected struct type-args (`-3`, added v6.3.33 as "produced
+  wrong values") — that predated the v6.3.36 struct-param mask + the v6.3.39 ≤8 B fix that made the
+  by-value struct-param ABI sound (a plain `fn wrap_point(p: Point): i64` already works; the
+  instance re-emits equivalent code). The instance now binds `T → concrete` **before** its param
+  loop (so `p: T` becomes a by-value struct param) and sets the address-pass mask from the resolved
+  struct sid when > 8 B. Works across 8 B / 16 B / 24 B struct type-args; **multi-tparam** struct
+  combos (`Two<Point,i64>`) remain intentionally rejected (unproven).
+- Fixture `tests/fixtures/monomorph/generics_struct_abi.cyr` + gate `_generics_struct_abi_gate`
+  (check.sh 124 → **125**): exit 42 flag-on, rejected flag-off, distinguishing (pristine .38
+  compile-errors on it).
+
+### Fixed — cross-target monomorph parity (aarch64 / Windows / macOS-x86)
+- The v6.3.33 "read `CYRIUS_MONOMORPH` **before** pass-1" fix (so pass-1 captures generic structs'
+  `GSTP` type-param encoding) had only ever been applied to `main.cyr`. `main_aarch64.cyr`,
+  `main_win.cyr`, and `main_x86_macho.cyr` all still read the flag **after** pass-1 → generic
+  structs never instantiated on those targets (`var h: Holder<Point>; h.v.x` parse-failed). Moved
+  the flag read before pass-1 in all three. After the fix **every** generics fixture
+  (`generics_tail` / `generics_full` / `generics_struct_abi` / `monomorph_repairs`) runs on aarch64
+  (qemu → 42) and the aarch64 cycc self-hosts byte-identical. Gated → default byte-identical.
+
+`CYRIUS_MONOMORPH` remains opt-in (default-off) — flipping the long-gated flag default-**on** is a
+separate step (needs a full flag-ON differential + flag-ON self-host + cross-OS), tracked as a
+follow-on. check.sh 125; self_compile 555 ms; cycc 1,020,040 B (unchanged — le8 changed content
+not size, gated changes don't touch default codegen); ecb + cass + pi SELFHOST_OK.
+
 ## [6.3.38] — 2026-07-03
 
 **v6.3.38 — generics-engine A-broad residual (gated) + bayan 1.0.4 / mabda 4.0.2 refold.**
