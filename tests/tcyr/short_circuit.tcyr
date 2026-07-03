@@ -101,4 +101,37 @@ if (p1 != 0 && sc_side_deref(p1) != 0) {
 # If we got here without crashing, the bug is fixed.
 assert_eq(_sc_calls, 0, "null guard prevents dereference");
 
+# v6.3.36 — && binds TIGHTER than || (issue [3]). Before v6.3.36 both shared one
+# flat left-associative loop (equal precedence), so `a || b && c` mis-parsed as
+# `(a || b) && c`. These fixtures FAIL under the old flat parse and pass under
+# correct precedence. The parenthesized twin pins the expected grouping.
+test_group("&& binds tighter than || (precedence)");
+fn prec_or_over_and() {
+    var t = 1;
+    var f = 0;
+    # true || (false && false) == true. Flat (a||b)&&c == (true)&&false == false.
+    if (t == 1 || f == 1 && f == 1) { return 42; }
+    return 0;
+}
+fn prec_and_over_or() {
+    var t = 1;
+    var f = 0;
+    # (false && false) || true == true. Flat (a&&b)||c is also true here, so use
+    # a case that distinguishes: false && (false || true) vs (false&&false)||true.
+    if (f == 1 && f == 1 || t == 1) { return 42; }
+    return 0;
+}
+fn prec_matches_parens() {
+    var t = 1;
+    var f = 0;
+    var implicit = 0;
+    var explicit = 0;
+    if (t == 1 || f == 1 && f == 1) { implicit = 1; }
+    if (t == 1 || (f == 1 && f == 1)) { explicit = 1; }
+    return implicit - explicit;   # 0 when the implicit parse matches the parens
+}
+assert_eq(prec_or_over_and(), 42, "a || b && c == a || (b && c)");
+assert_eq(prec_and_over_or(), 42, "a && b || c == (a && b) || c");
+assert_eq(prec_matches_parens(), 0, "unparenthesized parse matches && binding tighter");
+
 var r = assert_summary();

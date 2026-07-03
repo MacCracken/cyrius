@@ -51,9 +51,33 @@ fn test_for_range() {
     for i in 0..10 { sum = sum + i; }
     return sum;
 }
+# v6.3.36 — a for-range with an IDENTIFIER (local or param) as the start bound.
+# Pre-v6.3.36 `IDENT..hi` mis-parsed: the range `..` was greedily eaten as a
+# `.field` access on the start identifier ("expected identifier, got '.'").
+fn test_for_range_ident() {
+    var lo = 3;
+    var sum = 0;
+    for i in lo..10 { sum = sum + i; }   # 3+4+5+6+7+8+9 == 42
+    return sum;
+}
+fn test_for_range_both_ident() {
+    var lo = 3;
+    var hi = 10;
+    var sum = 0;
+    for i in lo..hi { sum = sum + i; }
+    return sum;
+}
+fn test_for_range_param(lo) {
+    var sum = 0;
+    for i in lo..10 { sum = sum + i; }
+    return sum;
+}
 assert_eq(test_while(), 45, "while sum");
 assert_eq(test_for(), 45, "for sum");
 assert_eq(test_for_range(), 45, "for-in range sum");
+assert_eq(test_for_range_ident(), 42, "for-in range with identifier start bound");
+assert_eq(test_for_range_both_ident(), 42, "for-in range with identifier both bounds");
+assert_eq(test_for_range_param(3), 42, "for-in range with param start bound");
 
 test_group("Functions");
 fn fib(n) {

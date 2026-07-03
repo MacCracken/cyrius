@@ -69,6 +69,25 @@ fn cap_two_closures(): i64 {
     return callptr(f, 0) + callptr(g, 4);   # (30+0) + (8+4) = 42
 }
 
+# v6.3.36 — a capturing closure COPIED to another local (`var g = f`) carries
+# its CLOSURE_TYID tag, so callptr(g,…) still auto-dispatches (load fn_ptr from
+# [g], pass g as env) instead of jumping into the heap object (which SIGSEGV'd
+# pre-v6.3.36 because the copy landed as a plain i64). Both bindings alias the
+# same env object, so calling either applies the same captured value.
+fn cap_copy_to_local(): i64 {
+    var base = 40;
+    var f = |x| base + x;            # captures `base`; f tagged CLOSURE_TYID
+    var g = f;                       # copy — g must inherit the tag
+    return callptr(g, 2);            # 40 + 2 via the copied binding
+}
+
+fn cap_copy_both(): i64 {
+    var base = 20;
+    var f = |x| base + x;
+    var g = f;                       # f and g alias the same env
+    return callptr(f, 1) + callptr(g, 1);   # (20+1) + (20+1) == 42
+}
+
 # ---- top-level statements ----
 alloc_init();
 
@@ -82,5 +101,9 @@ assert_eq(cap_by_value(), 42, "captured value is an independent by-value copy");
 assert_eq(cap_thunk(), 42, "|| k zero-param thunk captures k == 42");
 assert_eq(cap_with_locals(), 42, "capture inside a fn with locals before+after == 42");
 assert_eq(cap_two_closures(), 42, "two independent capturing closures == 42");
+
+test_group("closure copied to another local (v6.3.36)");
+assert_eq(cap_copy_to_local(), 42, "var g = f; callptr(g,2): copied closure dispatches == 42");
+assert_eq(cap_copy_both(), 42, "f and g alias same env: callptr(f,1)+callptr(g,1) == 42");
 
 var r = assert_summary();
