@@ -381,6 +381,10 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
     # v5.9.27, x86 has been there since v5.6.12). Each backend's
     # helper handles widths 1/2/4 with its native sub-byte load
     # encoding and falls through to ELODC for width 8.
+    # v6.3.35: a sub-i64 struct field (ft = -width, i.e. -1/-2/-4) is SIGNED — the
+    # struct-def only recognizes i8/i16/i32 (never u8/u16/u32) into the -width encoding,
+    # so a negative ftype is always signed. Pass a negative width → sign-extend (movsx).
+    if (ft < 0) { fld_sz = 0 - fld_sz; }
     EFIELD_LOAD_W(S, fld_sz);
     return 0;
 }
@@ -1138,6 +1142,7 @@ fn PARSE_VAR(S): i64 {
     # Optional type annotation: var x: type = ... or var x: *type = ...
     var pscale = 0;
     var scalar_type = 0;
+    var scalar_signed = 0;   # v6.3.35: 1 for a SIGNED sub-i64 (iN) local, 0 for uN/other
     var lfloat = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for local `var x: f64`/`f32`
     var slice_elt_w = 0;  # v5.8.14 §6: element width for slice<T>/[T] (0 = not a slice)
     if (PEEKT(S) == 49) {
@@ -1268,6 +1273,10 @@ fn PARSE_VAR(S): i64 {
                 elif (ltname & 0xFFFFFF == 0x323375) { scalar_type = 4; }
                 elif (ltname & 0xFFFFFF == 0x343669) { scalar_type = 8; }
                 elif (ltname & 0xFFFFFF == 0x343675) { scalar_type = 8; }
+                # v6.3.35: a sub-i64 SIGNED type name ends in 'i' (low byte 0x69, e.g.
+                # "i8"/"i16"/"i32"); unsigned ends in 'u' (0x75). Mark signed so the
+                # load sign-extends (movsx). i64/u64 (width 8) load full-width — no mark.
+                if (scalar_type >= 1) { if (scalar_type <= 4) { if (ltname & 0xFF == 0x69) { scalar_signed = 1; } } }
                 # v5.10.28 — `f64v2` value type (16-byte). Detected
                 # here at var-decl parsing so `var v: f64v2;` triggers
                 # the 2-slot stack-local allocation path below. Encoded
@@ -1975,6 +1984,10 @@ fn PARSE_VAR(S): i64 {
             }
             # v5.8.14 §6: per-local slice element width (0 = not a slice).
             SSLICE_W(S, li, slice_elt_w);
+            # v6.3.35: mark a SIGNED sub-i64 scalar local with a NEGATIVE sentinel in the
+            # (otherwise-0-for-scalars) slice-width table — slice-logic only checks `>0`, so
+            # the sentinel is invisible to it. The load reads it to sign-extend (movsx).
+            if (scalar_signed == 1) { if (slice_elt_w == 0) { SSLICE_W(S, li, 0 - scalar_type); } }
             SFLC(S, li + 1);
         }
     } else {

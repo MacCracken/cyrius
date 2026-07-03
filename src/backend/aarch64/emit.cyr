@@ -1881,6 +1881,13 @@ fn EFLLOAD_W(S, idx, width): i64 {
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
     if (disp >= 0 - 256) {
         var off9 = disp & 0x1FF;
+        # v6.3.35: negative width = SIGNED → sign-extending unscaled load (ldursb/h/sw).
+        if (width < 0) {
+            var sw = 0 - width;
+            if (sw == 1) { EW(S, 0x388003A0 | (off9 << 12)); return 0; }  # ldursb x0, [x29]
+            if (sw == 2) { EW(S, 0x788003A0 | (off9 << 12)); return 0; }  # ldursh x0, [x29]
+            if (sw == 4) { EW(S, 0xB88003A0 | (off9 << 12)); return 0; }  # ldursw x0, [x29]
+        }
         if (width == 1) { EW(S, 0x384003A0 | (off9 << 12)); return 0; }
         if (width == 2) { EW(S, 0x784003A0 | (off9 << 12)); return 0; }
         if (width == 4) { EW(S, 0xB84003A0 | (off9 << 12)); return 0; }
@@ -1888,6 +1895,12 @@ fn EFLLOAD_W(S, idx, width): i64 {
         return 0;
     }
     _EFP_ADDR_X9(S, disp);
+    if (width < 0) {
+        var sw2 = 0 - width;
+        if (sw2 == 1) { EW(S, 0x39800120); return 0; }  # ldrsb x0, [x9]
+        if (sw2 == 2) { EW(S, 0x79800120); return 0; }  # ldrsh x0, [x9]
+        if (sw2 == 4) { EW(S, 0xB9800120); return 0; }  # ldrsw x0, [x9]
+    }
     if (width == 1) { EW(S, 0x39400120); return 0; }  # ldrb w0, [x9]
     if (width == 2) { EW(S, 0x79400120); return 0; }  # ldrh w0, [x9]
     if (width == 4) { EW(S, 0xB9400120); return 0; }  # ldr w0, [x9]
@@ -1941,6 +1954,10 @@ fn EVSTORE_W(S, idx, width): i64 {
 # without parse_decl.cyr having to grow another arch arm.
 fn EFIELD_LOAD_W(S, width): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
+    # v6.3.35: negative width = SIGNED field → sign-extending load from [x1].
+    if (width < 0 - 2) { EW(S, 0xB9800020); return 0; }  # -4: ldrsw x0, [x1]
+    if (width == 0 - 2) { EW(S, 0x79800020); return 0; } # ldrsh x0, [x1]
+    if (width == 0 - 1) { EW(S, 0x39800020); return 0; } # ldrsb x0, [x1]
     if (width == 1) { EW(S, 0x39400020); return 0; }   # ldrb w0, [x1]
     if (width == 2) { EW(S, 0x79400020); return 0; }   # ldrh w0, [x1]
     if (width == 4) { EW(S, 0xB9400020); return 0; }   # ldr  w0, [x1]

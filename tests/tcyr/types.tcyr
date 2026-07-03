@@ -34,11 +34,14 @@ fn test_i16_store() {
     return x;
 }
 fn test_i16_max() {
-    var x: i16 = 65535;
+    var x: i16 = 65535;   # 0xFFFF truncates into a SIGNED i16 → reads back -1
     return x;
 }
 assert_eq(test_i16_store(), 30000, "i16 store 30000");
-assert_eq(test_i16_max(), 65535, "i16 max");
+# v6.3.35: 65535 (0xFFFF) is the UNSIGNED 16-bit max; in a SIGNED i16 it is -1.
+# Pre-v6.3.35 this wrongly read 65535 (sub-i64 loads zero-extended). Sign-extension
+# is now correct: an i16 holding 0xFFFF is -1. (Use u16 for the 0..65535 range.)
+assert_eq(test_i16_max(), 0 - 1, "i16 0xFFFF reads as -1 (signed sign-extension)");
 
 test_group("i32 storage");
 fn test_i32_store() {

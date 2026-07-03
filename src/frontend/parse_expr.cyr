@@ -511,7 +511,16 @@ fn PARSE_FACTOR(S): i64 {
                 # 2*sizeof(i32). Reset to 1 for lt < 8 ONLY: SLTYPE 8 is a `*i64` typed
                 # pointer (scalar i64 is SLTYPE 0), which genuinely needs scale 8 for
                 # `p + i`. No sub-i64 typed pointers exist, so 1/2/4 are always scalars.
-                if (lt > 0) { if (lt <= 8) { if (lt < 8) { SPSC(S, 1); } SEXW(S, lt); EFLLOAD_W(S, li, lt); return 0; } }
+                if (lt > 0) { if (lt <= 8) {
+                    if (lt < 8) { SPSC(S, 1); }
+                    SEXW(S, lt);
+                    # v6.3.35: a SIGNED sub-i64 local (marked by a negative slice-width
+                    # sentinel) loads via movsx (negative width); unsigned stays movzx.
+                    var _lw = lt;
+                    if (lt < 8) { if (GSLICE_W(S, li) < 0) { _lw = 0 - lt; } }
+                    EFLLOAD_W(S, li, _lw);
+                    return 0;
+                } }
                 EFLLOAD(S, li);
                 return 0;
             }

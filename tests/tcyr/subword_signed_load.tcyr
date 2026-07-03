@@ -1,0 +1,50 @@
+# subword_signed_load.tcyr — v6.3.35 (default-path batch 1).
+#
+# A SIGNED sub-i64 (i8/i16/i32) value was ZERO-extended on load instead of
+# sign-extended: EFLLOAD_W (local) / EFIELD_LOAD_W (field) emitted movzx, so a
+# negative stored in an `iN` read back as a large positive and every signed
+# compare/arithmetic on it was wrong (`var a:i32 = -1; a < 0` was false). Fixed by
+# emitting movsx (x86) / ldrs* (aarch64) when the load width is passed negative,
+# driven by signedness tracked at the decl: a signed local is marked with a negative
+# sentinel in the (0-for-scalars) slice-width table; a sub-i64 struct field is always
+# signed (the struct-def only recognizes i8/i16/i32, never u8/u16/u32). UNSIGNED
+# u8/u16/u32 correctly stay zero-extended.
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+struct SI { a: i8;  b: i8;  }
+struct SH { a: i16; b: i16; }
+struct SW { a: i32; b: i32; }
+
+fn i8_neg(): i64  { var a: i8  = 0 - 1; if (a < 0) { return 1; } return 0; }
+fn i16_neg(): i64 { var a: i16 = 0 - 1; if (a < 0) { return 1; } return 0; }
+fn i32_neg(): i64 { var a: i32 = 0 - 1; if (a < 0) { return 1; } return 0; }
+fn i32_val(): i64 { var a: i32 = 0 - 5; return a; }                 # -5
+fn i32_pos(): i64 { var a: i32 = 100; return a; }                   # 100 (no sign bit)
+fn u32_big(): i64 { var a: u32 = 0 - 1; if (a > 1000000) { return 1; } return 0; }  # unsigned stays zero-ext
+fn i32_call(x: i64): i64 { return x; }
+fn i32_asarg(): i64 { var a: i32 = 0 - 7; return i32_call(a); }     # -7 through a call
+
+fn field_i8():  i64 { var s: SI; s.a = 0 - 1; if (s.a < 0) { return 1; } return 0; }
+fn field_i16(): i64 { var s: SH; s.a = 0 - 1; if (s.a < 0) { return 1; } return 0; }
+fn field_i32(): i64 { var s: SW; s.a = 0 - 1; if (s.a < 0) { return 1; } return 0; }
+fn field_pos(): i64 { var s: SW; s.a = 20; s.b = 22; return s.a + s.b; }  # 42
+
+test_group("signed sub-i64 LOCAL sign-extension (v6.3.35)");
+assert_eq(i8_neg(), 1, "i8 -1 < 0 (sign-extended)");
+assert_eq(i16_neg(), 1, "i16 -1 < 0");
+assert_eq(i32_neg(), 1, "i32 -1 < 0");
+assert_eq(i32_val(), 0 - 5, "i32 -5 reads back -5");
+assert_eq(i32_pos(), 100, "i32 100 (positive, no change)");
+assert_eq(i32_asarg(), 0 - 7, "signed i32 local -7 through a call arg");
+
+test_group("UNSIGNED sub-i64 stays zero-extended");
+assert_eq(u32_big(), 1, "u32 -1 reads as a large positive (> 1e6)");
+
+test_group("signed sub-i64 FIELD sign-extension");
+assert_eq(field_i8(), 1, "i8 field -1 < 0");
+assert_eq(field_i16(), 1, "i16 field -1 < 0");
+assert_eq(field_i32(), 1, "i32 field -1 < 0");
+assert_eq(field_pos(), 42, "i32 fields positive round-trip = 42");
+
+var rc = assert_summary();
