@@ -455,10 +455,15 @@ fn EVLOAD(S, idx): i64 {
 # Width-aware var load: rcx = &var; load_width [rcx] → rax
 fn EVLOAD_W(S, idx, width): i64 {
     if (_IR_REC(S, IR_LOAD_GLOBAL, width, idx, 0) == 1) { return 0; }
-    _EVRCX(S, idx);
-    if (width == 1) { ELOAD8(S); return 0; }
-    if (width == 2) { ELOAD16(S); return 0; }
-    if (width == 4) { ELOAD32(S); return 0; }
+    _EVRCX(S, idx);   # global address → RCX
+    # v6.3.35: read from [RCX] (where _EVRCX put the address). The old ELOAD8/16/32
+    # helpers load from [RAX], but RAX is garbage here → SIGSEGV on any typed sub-i64
+    # GLOBAL scalar load (`var G: i32 = 40; return G;`). The width-8 ELODC already reads
+    # [rcx], which is why i64 globals worked. RCX-based narrow loads mirror ELOAD8/16/32
+    # with ModRM rm=001 (rcx) instead of rm=000 (rax).
+    if (width == 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }  # movzx rax, byte [rcx]
+    if (width == 2) { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }               # movzx eax, word [rcx]
+    if (width == 4) { EB(S, 0x8B); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }                            # mov eax, [rcx]
     ELODC(S);
     return 0;
 }

@@ -501,8 +501,18 @@ fn _EMIT_GVAR_STATIC_INITS(S, O, bss_o): i64 {
         var siv = GVSI(S, gvi);
         if (siv != 0) {
             var vsize = L64(_vars_base + gvi * 8);
+            # v6.3.35: also write the static-init literal for sub-i64 globals. The
+            # `vsize == 8` gate skipped narrow globals entirely, so `var G: i32 = 40`
+            # left G zero in the file image (the load then read 0). Write the value at
+            # the var's width (the load reads the same width from the same offset).
             if (vsize == 8) {
                 S64(O + bss_o + GVOFF(S, gvi), siv);
+            } elif (vsize == 4) {
+                store32(O + bss_o + GVOFF(S, gvi), siv & 0xFFFFFFFF);
+            } elif (vsize == 2) {
+                store16(O + bss_o + GVOFF(S, gvi), siv & 0xFFFF);
+            } elif (vsize == 1) {
+                store8(O + bss_o + GVOFF(S, gvi), siv & 0xFF);
             }
         }
         gvi = gvi + 1;
