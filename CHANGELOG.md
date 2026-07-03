@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.35] — 2026-07-02
+
+**v6.3.35 — default-path correctness batch 1/3: sub-i64 LOAD correctness.**
+First of a 3-way even split of the bug inventory two adversarial discovery sweeps surfaced. This batch
+is everything about how sub-i64 values load from memory: signed sign-extension, and typed-global
+scalars. (Batch 2 = struct/parser/closure → .36; batch 3 = generics-engine repairs → .37.)
+
+### Fixed — signed sub-i64 sign-extension (default-path, x86 + aarch64)
+- **A signed `i8`/`i16`/`i32` read back a stored NEGATIVE as a huge positive** — `var a: i32 = -1; a < 0`
+  was false; every signed compare/arithmetic on a sub-i64 was wrong. The load helpers zero-extended
+  (`movzx` / `ldrb`/`ldrh`) unconditionally, never sign-extending. Fix: emit `movsx`/`movsxd` (x86) and
+  `ldursb`/`ldursh`/`ldursw` + `ldrsb`/`ldrsh`/`ldrsw` (aarch64) when the load width is passed **negative**
+  (additive — positive width is byte-identical). Signedness is tracked with **no new heap**: a signed
+  scalar local is marked by a negative sentinel in the (otherwise-0-for-scalars) slice-width table (all
+  three consumers guard `> 0`, so it is invisible to slice logic); a sub-i64 struct field is **always**
+  signed (the struct-def only recognizes `i8/i16/i32`, never `u8/u16/u32`). Covers locals, struct fields,
+  and signed locals passed as call arguments. **UNSIGNED `u8/u16/u32` correctly stay zero-extended.**
+
+### Fixed — typed sub-i64 GLOBAL scalars (default-path)
+- **`var G: i32` (typed sub-i64 global) SIGSEGV'd on load** — x86 `EVLOAD_W` put the address in RCX but
+  the narrow-load helpers read `[RAX]`; fixed to read `[rcx]` (aarch64 was already correct). And the
+  **initializer read 0** — the shared static-init writer (`_EMIT_GVAR_STATIC_INITS`) only wrote the literal
+  for `vsize == 8`; extended to widths 4/2/1 (x86 + aarch64). Now `var G: i32 = 40` reads 40.
+
+### Fixed — generics inline-instance jump-table clobber (gated `CYRIUS_MONOMORPH=1`)
+- The inline instance's `PARSE_FN_DEF` reset the per-fn jump-target table (`0x19E000`), wiping the
+  **enclosing** fn's targets → its LASE pass mis-eliminated a load at a branch join (an `if` before
+  `r = r + idg<i32>(7)` returned 7 not 37). Fixed by snapshot/merge of the enclosing fn's jump targets
+  around the inline emit. (One of the .37 generics repairs, landed early here.)
+
+Verified: `subword_signed_load.tcyr` (11 asserts, signed + unsigned local/field + call-arg) +
+`subword_scalar_arith.tcyr` / `nested_subword_field.tcyr` unregressed; a stale `types.tcyr` assert
+(`i16 = 65535` → the *unsigned* max) corrected to the signed `-1`. cycc self-compiles **byte-identical**
+(no sign-ext-sensitive `iN` in its own source → zero self-host risk); **aarch64 qemu-verified**
+(local + field + unsigned-stays-zero-ext + positives); differential **status-diff=0** (7 codegen-diffs,
+all sub-i64 users = the intended corrections); self-host fixpoint + seed→cybs→cycc byte-identical;
+check.sh 123; ecb+cass+pi SELFHOST_OK. Bench: self_compile **550 ms** (flat vs .34's 560); cycc
+**1,015,912 B** (+4,096 vs .34 — the movsx/ldrs* load variants + the signedness threading). **Deferred as
+narrow follow-ons** (in the inventory): signed sub-i64 *globals* sign-extension (rare) and
+`*i8/*i16/*i32` pointer truncation (none exist in the codebase).
+
 ## [6.3.34] — 2026-07-02
 
 **v6.3.34 — default-path miscompile: a sub-i64 SCALAR local on the LEFT of `+`/`-` was pointer-scaled.**
