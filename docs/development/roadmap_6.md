@@ -994,6 +994,17 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
   These were formerly v6.3.42/.43; deferred because the Intel-Mac port is self-contained and the
   v6.3.x tail is better spent finishing the cross-host verification (VR) coverage + closeout.
 
+- **macOS thread backend** (`lib/thread_macos.cyr`) — **P2**, re-pointed here from the v6.3.44
+  untracked-issue sweep (user 2026-07-03; its own focused slot per the issue). On ecb (macOS arm64)
+  `thread_create` returns a handle but **the worker never runs** — the whole threads/mutex/channel
+  subsystem is a silent no-op (`vr01_sync_mutex`'s 8×1000 locked increments → counter 0). macOS has no
+  `clone(2)`; needs `bsdthread_create` + `bsdthread_register` (or libSystem `pthread_create`) for
+  `thread_create`/`join` and `__ulock_wait`/`__ulock_wake` (not Linux `futex`) for the mutex/channel
+  wait/wake — mirror the `thread_win.cyr` split. Not blocking today (no first-party macOS consumer
+  threads), which is why it rides the v6.4.x Mach-O tail rather than the v6.3.44 sweep. When it lands,
+  un-guard the `#ifdef CYRIUS_TARGET_MACOS` assertions in `vr01_sync_mutex`/`vr01_thread_spawn` and
+  validate on ecb. [`macos-threading-workers-dont-run`](issues/2026-07-03-macos-threading-workers-dont-run.md).
+
 ### Candidate arcs FILED for full review at v6.4.x arc-open (no decisions committed)
 
 _(Integer SIMD, array-typed struct fields, UEFI Secure Boot signing, and function visibility were

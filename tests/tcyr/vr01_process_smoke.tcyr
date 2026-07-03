@@ -3,17 +3,28 @@
 # SMOKE, not a spawn round-trip: cross-platform spawning (CreateProcess vs fork/exec)
 # is out of scope for a portable exit-0 test.
 #
-# getpid's VALUE is unreliable cross-platform (VR-01 surfaced this — filed
-# 2026-07-03-getpid-cross-platform):
-#   - Win32: documented 0-returning stub (GetCurrentProcessId out of the v6.0.51
-#     process-creation arc scope; process_win.cyr:294).
-#   - macOS: SYS_GETPID is the Linux number 39, but BSD getpid is syscall 20 — the
-#     macho number-rewrite maps 39→0x2000027 (a different BSD call), so the value
-#     is wrong. Needs a getpid entry in the macho translation table.
-#   - Linux: a correct positive PID.
-# So this smoke asserts only the portable truth: the identity path is CALLABLE
-# without faulting (no STATUS_ILLEGAL_INSTRUCTION / crash) and getpid is STABLE
-# across calls. The value-correctness fix rides the filed issue. Runs Linux+cass+ecb.
+# getpid / getppid cross-platform status (v6.3.44 closed 2026-07-03-getpid-cross-platform):
+#   - getpid(): a correct positive PID on ALL THREE targets —
+#       * Linux  : native getpid syscall.
+#       * macOS  : the macho syscall xlat maps the source getpid number → BSD 20.
+#                  x86-macho (39→20) worked since v6.0.02, but **aarch64-macho was
+#                  BROKEN** — its stdlib uses the aarch64-Linux number 172
+#                  (syscalls.cyr → syscalls_aarch64_linux.cyr), which was NOT
+#                  translated, so getpid ran an untranslated svc and returned
+#                  positive GARBAGE. The old callable-only smoke passed on it (a
+#                  garbage-positive value is still "callable, stable"); running THIS
+#                  tightened value assertion on real ecb is what surfaced it. Fixed
+#                  v6.3.44: aarch64 ESYSXLAT 172→20. (Found by ports, exactly.)
+#       * Windows: kernel32!GetCurrentProcessId via the 0xF01C PE reroute (v6.3.44;
+#                  was a documented 0-stub before).
+#   - getppid(): a correct positive parent PID on Linux + macOS —
+#       * Linux  : native getppid syscall.
+#       * macOS  : the source getppid number → BSD 39, ADDED v6.3.44 — x86-macho
+#                  110→39, aarch64-macho 173→39 (was untranslated → returned 0).
+#       * Windows: no cheap Win32 equivalent (would need a CreateToolhelp32Snapshot
+#                  walk), so it stays a documented 0-stub.
+# This still doubles as a callable-without-faulting smoke (getpid stable across
+# calls); the value assertions are now tightened per the fix. Runs Linux+cass+ecb.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -23,17 +34,22 @@ include "lib/process.cyr"
 
 fn main(): i64 {
     alloc_init();
-    test_group("process identity: getpid / getppid callable + stable (smoke)");
+    test_group("process identity: getpid / getppid (value-correct, v6.3.44)");
     var pid = getpid();
     assert_eq(getpid(), pid, "getpid() is stable across calls (no fault on any platform)");
     var ppid = getppid();
     assert_eq(ppid, ppid, "getppid() is callable without faulting");
+    # getpid is a positive PID on every target now (Linux native / macOS 39→20 /
+    # Windows GetCurrentProcessId).
+    assert_eq(pid > 0, 1, "getpid() returned a positive PID (Linux + macOS + Windows)");
 #ifndef CYRIUS_TARGET_WIN
-#ifndef CYRIUS_TARGET_MACOS
-    # Linux: getpid is a correct positive PID (the value fix lands per-platform).
-    assert_eq(pid > 0, 1, "Linux getpid() returned a positive PID");
-    assert_eq(ppid >= 0, 1, "Linux getppid() returned a non-negative parent PID");
+    # getppid is a correct positive parent PID on Linux + macOS (macOS via the
+    # v6.3.44 110→39 macho xlat).
+    assert_eq(ppid > 0, 1, "getppid() returned a positive parent PID (Linux + macOS)");
 #endif
+#ifdef CYRIUS_TARGET_WIN
+    # Windows getppid has no cheap Win32 equivalent — documented 0-stub.
+    assert_eq(ppid, 0, "Windows getppid() is a documented 0-stub");
 #endif
 
     var rc = assert_summary();

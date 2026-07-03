@@ -1,5 +1,13 @@
 # Monomorph inline instance emission clobbers a live local when it follows a branch
 
+> **RESOLVED v6.3.35** (this is bug **A1** of the [monomorph-engine bug inventory](2026-07-02-monomorph-engine-bug-inventory.md)).
+> Fixed by the .35 `_jt_snapshot` save/merge of the enclosing fn's jump-target table around the inline
+> `PARSE_FN_DEF` (the inline instance was wiping the enclosing fn's recorded jump targets → LASE
+> mis-eliminated the branch-join load holding the live local). **Verified on `build/cycc 6.3.43`:** the
+> minimal repro below now exits **37** (was 7). Gated (`CYRIUS_MONOMORPH=1`) → default byte-identical.
+> The whole generics arc closed v6.3.39; the `CYRIUS_MONOMORPH` default-on flip is pinned to v6.4.0.
+> Archive at the v6.3.x closeout doc-sync.
+
 **Filed:** 2026-07-02 (v6.3.33 generics-tail slot — surfaced by adversarial verification)
 **Severity:** N/A for default builds (`CYRIUS_MONOMORPH=1` is opt-in experimental; default codegen
 byte-identical). A wrong-value miscompile in the gated monomorphization path.

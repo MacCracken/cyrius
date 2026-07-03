@@ -746,6 +746,19 @@ fn _pe_ensure_getcurtid(S): i64 {
 }
 fn _pe_getcurtid_get(): i64 { return _pe_getcurtid_idx; }
 
+# v6.3.44: GetCurrentProcessId for getpid() on Windows. process_win.cyr's getpid()
+# was a documented 0-returning stub (the v6.0.51 process arc left self-PID out of
+# scope). syscall(0xF01C) → kernel32!GetCurrentProcessId(). Mirrors GetCurrentThreadId.
+var _pe_getcurpid_ready = 0;
+var _pe_getcurpid_idx   = 0;
+fn _pe_ensure_getcurpid(S): i64 {
+    if (_pe_getcurpid_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getcurpid_idx, "GetCurrentProcessId");
+    _pe_getcurpid_ready = 1;
+    return 0;
+}
+fn _pe_getcurpid_get(): i64 { return _pe_getcurpid_idx; }
+
 var _pe_tlsalloc_ready = 0;
 var _pe_tlsalloc_idx   = 0;
 fn _pe_ensure_tlsalloc(S): i64 {

@@ -346,6 +346,7 @@ fn _run_regression_gates(): i64 {
     _gate("callee-saved frame-trim: trimmed cycc self-hosts, shrinks vs CYRIUS_FRAMETRIM=0, behavior-preserving (v6.3.29)", "tests/frametrim.sh");
     _gate("redundant-reload elimination: self-hosts, shrinks vs CYRIUS_RELOADELIM=0, control-flow-safe, behavior-preserving (v6.3.30)", "tests/reloadelim.sh");
     _gate("freelist agnos mmap-ABI: Linux round-trip=42, agnos build clean, _fl_mmap routes the single-arg agnos mmap (v6.3.31)", "tests/freelist_agnos_mmap.sh");
+    _gate("single-owner mutex: thread+sync co-include has 0 duplicate-fn warnings, lock still guards under contention, thread*.cyr delegate to sync (v6.3.44)", "tests/mutex_single_owner.sh");
     println("");
 
     _section("Binary structural lint (VR-04)");

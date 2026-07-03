@@ -1065,12 +1065,30 @@ fn EMIT_GVAR_INITS(S): i64 {
                 while (fii < fc) {
                     var fft = GETFTYPE(S, sid - 1, fii);
                     if (fft > 0) {
-                        var ifc = GETFCOUNT(S, fft - 1);
-                        var ifi = 0;
-                        while (ifi < ifc) {
+                        # v6.3.44: a Str field is a SINGLE 8-byte pointer slot,
+                        # not a flattened 2-field by-value embedding — mirror
+                        # PARSE_STRUCT_INIT's positional Str branch (v5.10.7).
+                        # This global-init REPLAY is a parallel copy of that
+                        # positional loop that never got the Str fix, so it fell
+                        # into the nested-struct flatten below, PCMPE'd a 2nd
+                        # (nonexistent) expression for the Str's `len`, and hit
+                        # `}` → `unexpected '}'`. Only bit at GLOBAL scope: an
+                        # in-fn `var s = T { .. }` goes through PARSE_STRUCT_INIT
+                        # which already handles Str. (Issue 2026-07-03-derive-
+                        # serialize-str-field-global-scope-parse-error — filed as
+                        # a derive bug, but #derive-independent: any plain struct
+                        # with a Str field + a global struct-literal reproduced.)
+                        if (IS_STR_FIELD(S, fft) == 1) {
                             EMIT_STRUCT_FIELD_W(S, idx, boff, 8);
                             boff = boff + 8;
-                            ifi = ifi + 1;
+                        } else {
+                            var ifc = GETFCOUNT(S, fft - 1);
+                            var ifi = 0;
+                            while (ifi < ifc) {
+                                EMIT_STRUCT_FIELD_W(S, idx, boff, 8);
+                                boff = boff + 8;
+                                ifi = ifi + 1;
+                            }
                         }
                     } else {
                         var gf_w = FIELDSZ(S, fft);

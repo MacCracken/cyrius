@@ -859,6 +859,7 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 11, 0x2000049);   # munmap   11 → 73
     _msx(S, 21, 0x2000021);   # access   21 → 33
     _msx(S, 39, 0x2000014);   # getpid   39 → 20
+    _msx(S, 110, 0x2000027);  # getppid  110 → 39  (v6.3.44: Linux 110 was untranslated → ran BSD 110, wrong)
     _msx(S, 59, 0x200003B);   # execve   59 → 59
     _msx(S, 60, 0x2000001);   # exit     60 → 1
     _msx(S, 61, 0x2000007);   # wait4    61 → 7
@@ -1600,6 +1601,13 @@ fn _pe_call_2arg_aligned(S, idx): i64 {
 fn EGETCURTID_PE(S): i64 {
     _pe_ensure_getcurtid(S);
     return _pe_call_0arg_aligned(S, _pe_getcurtid_get());
+}
+
+# v6.3.44: syscall(0xF01C) → GetCurrentProcessId(). 0 args. DWORD pid in eax
+# (zero-extended to rax). Backs getpid() on Windows (was a 0-returning stub).
+fn EGETCURPID_PE(S): i64 {
+    _pe_ensure_getcurpid(S);
+    return _pe_call_0arg_aligned(S, _pe_getcurpid_get());
 }
 
 # syscall(0xF00C) → TlsAlloc(). 0 args. Returns a fresh TLS slot index (DWORD)

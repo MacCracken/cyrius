@@ -1,0 +1,60 @@
+# derive_str_field_global_init.tcyr — v6.3.44 regression for a GLOBAL-scope
+# struct-literal initializer whose struct has a `Str` field.
+#
+# Bug: `var g = T { .., <str> };` at GLOBAL scope, where T has a Str field,
+# failed to PARSE with `error:<source>:N: unexpected '}'`. The same literal
+# INSIDE a fn compiled fine, and an i64/f64-only struct compiled fine at global
+# scope — so it was specifically Str-field × global-scope.
+#
+# Root cause (parse_decl.cyr): EMIT_GVAR_INITS's pass-2 replay of a global
+# struct-literal init is a PARALLEL COPY of PARSE_STRUCT_INIT's positional loop
+# that never received the v5.10.7 Str fix. A Str field (field-type id > 0) fell
+# into the nested-struct FLATTEN branch, which treats it as a 2-field by-value
+# embedding and PCMPE'd a second (nonexistent) expression for the Str's `len`,
+# hitting the closing `}`. In-fn init goes through PARSE_STRUCT_INIT (already
+# fixed), so only global scope was affected. Fix: mirror the IS_STR_FIELD
+# single-8-byte-slot branch into EMIT_GVAR_INITS.
+#
+# Filed as a #derive(Serialize) bug (2026-07-03-derive-serialize-str-field-
+# global-scope-parse-error) but it is #derive-INDEPENDENT — a plain struct with a
+# Str field + a global struct literal reproduced it. This test covers BOTH: the
+# plain global Str-field literal AND the full #derive(Serialize) codec round-trip
+# driven entirely from global scope (the consumer/svara shape).
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct sample { id: i64; label: Str; }
+
+# --- the regression: struct literal WITH a Str field, at GLOBAL scope ---
+var g_label = str_new("hello", 5);
+var g_s = sample { 42, g_label };
+
+# --- full #derive codec round-trip, also entirely at global scope ---
+var g_sb = str_builder_new();
+var g_ser = sample_to_json(&g_s, g_sb);
+var g_json = str_builder_build(g_sb);
+var g_back = sample_from_json_str(str_data(g_json));
+
+fn main(): i64 {
+    # (1) the global Str-field struct-literal stored both fields
+    assert_eq(load64(&g_s), 42, "global struct literal: i64 field stored");
+    assert_eq(str_eq(load64(&g_s + 8), str_from("hello")), 1, "global struct literal: Str field stored (not flattened)");
+
+    # (2) the codec round-trip driven from global scope recovered the fields
+    assert_eq(load64(g_back), 42, "global-scope from_json_str: id round-tripped");
+    assert_eq(str_eq(load64(g_back + 8), str_from("hello")), 1, "global-scope from_json_str: Str round-tripped");
+
+    return assert_summary();
+}

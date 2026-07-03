@@ -6,6 +6,82 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.44] — 2026-07-03
+
+**v6.3.44 — untracked-issue sweep: cross-OS + stdlib correctness.** Clears the genuinely-open
+untracked `issues/` (an `issues/*.md`-vs-roadmap cross-ref found 7 untracked; 3 were premise-checked
+as already-resolved — see below). Three fixes: single-owner mutex, a global-scope Str-field
+struct-literal parse bug, and getpid/getppid cross-platform. **Each surfaced a wrong premise that a
+premise-check corrected** (the .40/.41/.42 pattern, still holding). Self-host fixpoint + seed → cybs →
+cycc byte-identical; check.sh 126; ecb + cass + pi SELFHOST_OK + LIBTEST_OK; self_compile 565 ms;
+cycc 1,024,552 B (+64 — the getpid PE reroute + macho getppid xlat entries, compiler code).
+
+### Fixed — duplicate `mutex_*` across the thread/sync stdlib (single owner)
+- `mutex_new`/`mutex_lock`/`mutex_unlock` + `MUTEX_SIZE` were defined in BOTH `lib/thread.cyr`
+  (Linux futex) and `lib/sync.cyr`, and likewise in each platform sibling (`thread_win.cyr` ⇄
+  `sync_windows.cyr` SRWLOCK; `thread_agnos.cyr` ⇄ the sync agnos branch). Any consumer linking both
+  `thread` and `sync` (sync arrives transitively via alloc/atomic/patra) saw 3 `duplicate fn 'mutex_*'`
+  warnings on every build, with a silent link-order winner if the impls ever drifted (filed by
+  yeo-cy-test). **Fix:** `sync.cyr` is now the single owner — `thread.cyr` includes it once at the top
+  and all three `thread*.cyr` drop their inline mutex defs. `sync`'s own `#ifdef` routing selects the
+  backend (Linux futex / Windows SRWLOCK / macOS spinlock / agnos no-op), and include-once dedup
+  collapses the both-included case to one definition. Behavior-preserving on Linux/Windows/agnos (the
+  bodies were byte-for-byte identical) and a net improvement on macOS (a working spinlock instead of
+  the never-routed futex). Gate `tests/mutex_single_owner.sh` (0 dup warnings + lock still guards
+  under 4×1000 contention + thread.cyr delegates). api-surface snapshot regenerated: 9 relocations
+  (`thread`/`thread_win`/`thread_agnos`::`mutex_*` removed), 0 real additions — the unqualified
+  consumer-visible `mutex_*` stays intact via `sync`/`sync_macos`/`sync_windows`.
+
+### Fixed — global-scope struct-literal with a `Str` field → `unexpected '}'`
+- A `var g = T { .., <str> };` at GLOBAL scope, where `T` has a `Str` field, failed to PARSE
+  (`error:<source>:N: unexpected '}'`). The same literal inside a fn compiled fine, and an
+  i64/f64-only struct compiled fine at global scope. **Filed as a `#derive(Serialize)` bug but it is
+  `#derive`-INDEPENDENT** — a plain struct with a Str field + a global struct literal reproduced it
+  (premise-check). Root cause (`src/frontend/parse_decl.cyr`): `EMIT_GVAR_INITS`'s pass-2 replay of a
+  global struct-literal init is a PARALLEL COPY of `PARSE_STRUCT_INIT`'s positional loop that never
+  received the v5.10.7 Str fix — a Str field (field-type id > 0) fell into the nested-struct FLATTEN
+  branch, which treats it as a 2-field by-value embedding and `PCMPE`'d a second (nonexistent)
+  expression for the Str's `len`, hitting the closing `}`. In-fn init goes through `PARSE_STRUCT_INIT`
+  (already fixed), so only global scope was affected. **Fix:** mirror the `IS_STR_FIELD`
+  single-8-byte-slot branch into `EMIT_GVAR_INITS`. Default codegen byte-identical (the branch only
+  fires for a global Str-field struct literal, which previously failed to compile). Regression
+  `tests/tcyr/derive_str_field_global_init.tcyr` (plain global Str-field literal + full
+  `#derive(Serialize)` codec round-trip, all at global scope; fails on the .43 binary with the exact
+  parse error).
+
+### Fixed — `getpid()` / `getppid()` cross-platform (found-by-ports: getpid was broken on aarch64-macOS too)
+- The filing under-counted the breakage. Tightening `vr01_process_smoke.tcyr` to assert a POSITIVE PID
+  and running it on **real ecb (aarch64-macOS)** surfaced that **getpid was ALSO broken on
+  aarch64-macho**, not just getppid. The fact the reasoning missed: the macho syscall xlat is
+  **arch-specific in its SOURCE numbers** — x86-macho feeds the BSD-numbered `syscalls_macos.cyr`
+  (getpid 39, getppid 110), but **aarch64-macho feeds `syscalls_aarch64_linux.cyr` (getpid 172,
+  getppid 173)** (`lib/syscalls.cyr:69`). So a fix reasoning only about the x86 table (39/110) misses
+  the aarch64-macho stdlib entirely.
+  - **macOS getpid**: x86-macho 39→20 worked since v6.0.02, but **aarch64-macho 172 was untranslated**
+    → getpid ran an untranslated `svc` and returned positive GARBAGE — the old callable-only smoke
+    passed on it (a garbage-positive value is still "callable, stable"). Fixed: aarch64 ESYSXLAT
+    `172→20`. Confirmed on ecb (`syscall(172)` now returns a real, positive PID).
+  - **macOS getppid**: both arches broken — x86-macho 110 untranslated, aarch64-macho 173 untranslated
+    (returned 0). Fixed: x86 `_msx(S, 110, 0x2000027)` + aarch64 `173→39` (`cmp x8,#173; movz x16,#39`,
+    llvm-mc-verified, disasm-confirmed, run-verified on ecb). `_macho_arm_routes` whitelist updated to
+    172/173.
+  - **Windows getpid** was a `return 0` stub → now `kernel32!GetCurrentProcessId` via a new 0xF01C PE
+    reroute (`_pe_ensure_getcurpid` + `EGETCURPID_PE`, mirroring `GetCurrentThreadId`; the aarch64/cx
+    backends get a `return 0` stub for symbol resolution). Verified: the PE import table carries
+    `GetCurrentProcessId`. **Windows getppid** stays a documented 0-stub (no cheap Win32 equivalent).
+- `tests/tcyr/vr01_process_smoke.tcyr` tightened: positive getpid on all three targets + positive
+  getppid on Linux+macOS + the documented 0-stub on Windows (was smoke-only, guarded off macOS/Windows).
+  **Lesson: hardware ports catch what a green CI check and a disasm-of-x86 never would — getpid
+  returning garbage on aarch64-macOS shipped silently in .43 behind a callable-only smoke.**
+
+### Housekeeping
+- **3 untracked issues premise-checked as already-resolved → triaged, not scheduled:**
+  `le8byte-struct-byval-2nd-call` (RESOLVED v6.3.39, repro exits 5), `monomorph-inline-instance-clobbers`
+  (A1, RESOLVED v6.3.35, repro exits 37), `monomorph-engine-bug-inventory` (generics arc closed .39;
+  residual gated → the v6.4.0 default-on flip).
+- The **macOS thread backend** (`lib/thread_macos.cyr`, P2 — `thread_create` is a silent no-op on
+  ecb) was re-pointed to the **v6.4.x** Mach-O/Intel-Mac tail as its own focused slot (user 2026-07-03).
+
 ## [6.3.43] — 2026-07-03
 
 **v6.3.43 — VR-01 cross-host stdlib verification + VR-04 PE lint + foldins (sigil 3.10.0, patra

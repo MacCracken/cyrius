@@ -921,6 +921,7 @@ fn EFINDNEXT_PE(S): i64 { return 0; }
 fn EFLADDR_X8(S, lli): i64 { return 0; }
 fn EGETCMDLINE_PE(S): i64 { return 0; }
 fn EGETCURTID_PE(S): i64 { return 0; }
+fn EGETCURPID_PE(S): i64 { return 0; }
 fn EGETENV_PE(S): i64 { return 0; }
 fn EGETEXIT_PE(S): i64 { return 0; }
 fn EGETFATTR_PE(S): i64 { return 0; }
