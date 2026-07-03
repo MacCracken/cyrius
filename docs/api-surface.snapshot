@@ -1899,7 +1899,9 @@ process_win::run_capture/5
 process_win::spawn/3
 process_win::wait_pid/1
 protobuf::pb_read_bytes/5
+protobuf::pb_read_double/4
 protobuf::pb_read_fixed/5
+protobuf::pb_read_float/4
 protobuf::pb_read_tag/5
 protobuf::pb_read_varint/4
 protobuf::pb_skip/4
@@ -1907,8 +1909,10 @@ protobuf::pb_tag/2
 protobuf::pb_unzigzag/1
 protobuf::pb_write_bool/3
 protobuf::pb_write_bytes/4
+protobuf::pb_write_double/3
 protobuf::pb_write_fixed32/3
 protobuf::pb_write_fixed64/3
+protobuf::pb_write_float/3
 protobuf::pb_write_int/3
 protobuf::pb_write_message/3
 protobuf::pb_write_sint/3

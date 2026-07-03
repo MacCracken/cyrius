@@ -145,6 +145,30 @@ fn main(): i64 {
     var trc = pb_read_varint(&tbuf, 0, 1, &tv);
     assert_eq(trc, 0 - 1, "truncated varint returns -1");
 
+    # --- wire 1 double + wire 5 float (v6.3.42 f64/f32 bit-reinterpret helpers) ---
+    test_group("double / float");
+    var pf_v = f64_div(f64_from(7), f64_from(2));   # 3.5 — exactly representable in f32
+    var pf_sb = str_builder_new();
+    pb_write_double(pf_sb, 1, pf_v);
+    pb_write_float(pf_sb, 2, pf_v);
+    var pf_b = str_builder_build(pf_sb);
+    var pf_buf = str_data(pf_b);
+    var pf_len = str_len(pf_b);
+    var pf_f = 0; var pf_wt = 0;
+    var pf_p = pb_read_tag(pf_buf, 0, pf_len, &pf_f, &pf_wt);
+    assert_eq(pf_f, 1, "double field number");
+    assert_eq(pf_wt, PB_WIRE_I64, "double is wire 1 (I64)");
+    var pf_dg = 0;
+    pf_p = pb_read_double(pf_buf, pf_p, pf_len, &pf_dg);
+    assert_eq(pf_dg, pf_v, "double round-trips bit-exact");
+    pf_p = pb_read_tag(pf_buf, pf_p, pf_len, &pf_f, &pf_wt);
+    assert_eq(pf_f, 2, "float field number");
+    assert_eq(pf_wt, PB_WIRE_I32, "float is wire 5 (I32)");
+    var pf_fg = 0;
+    pf_p = pb_read_float(pf_buf, pf_p, pf_len, &pf_fg);
+    assert_eq(pf_fg, pf_v, "float 3.5 round-trips exactly (representable in f32)");
+    assert_eq(pf_p, pf_len, "double + float consume the whole buffer");
+
     var r = assert_summary();
     return r;
 }

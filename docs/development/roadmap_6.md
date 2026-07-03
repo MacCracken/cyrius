@@ -908,8 +908,8 @@ cap; minors flex long.
 ### v6.4.x arc — OPENING SEQUENCE (user-committed priority, 2026-07-03)
 
 The arc opens with the **integer-SIMD work as the top priority — to unblock ML/AI workloads**, then
-array-typed struct fields, then function visibility. (Design decisions inside each item are still
-chosen at arc-open; the ORDER is committed.)
+array-typed struct fields, then UEFI Secure Boot signing (gnoboot sovereignty), then function
+visibility. (Design decisions inside each item are still chosen at arc-open; the ORDER is committed.)
 
 1. **Integer SIMD (`iNxM` typed vectors + int8/16/32 vector ops) — THE ARC OPENER, ML/AI priority.**
    Cyrius SIMD is **f64-only** today (`lib/simd.cyr` exposes only `f64v2`/`f64v4`); there are no
@@ -931,7 +931,29 @@ chosen at arc-open; the ORDER is committed.)
    THEN the `#derive(Serialize)` array codegen across the 3 codec fns. Sequenced BEFORE function
    visibility (user 2026-07-03).
 
-3. **Function visibility (`pub`/`private`).** Executes "Phase 2 — `pub` enforcement" of
+3. **Sovereign UEFI Secure Boot signing — Authenticode PE signing + the RSA/X.509/PKCS#7 crypto
+   floor (before function visibility, user 2026-07-03).** Consumer-filed by **gnoboot** (the sovereign
+   UEFI bootloader that replaced GRUB): cyrius emits a valid PE32+ EFI Application
+   (`CYRIUS_TARGET_EFI=1`) but cannot **sign** it for UEFI Secure Boot, so the only way to sign a
+   sovereign AGNOS EFI binary today is external, non-sovereign tooling (`sbsign`/`efitools`/host
+   `openssl`) — breaking the sovereignty pattern at the machine's root of trust. Firmware **mandates**
+   X.509/RSA/PKCS#7 (Ed25519 is rejected), so "sovereign Secure Boot" means **AGNOS owns the keys**
+   (self-managed PK/KEK/db), not a new signature scheme. The crypto floor **mostly already exists in
+   `sigil`** — native RSA PKCS#1 v1.5 sign, X.509/DER, SHA-256(+SHA-NI); the **gap** is the UEFI
+   packaging: PKCS#7/CMS `SignedData`, the Authenticode `SpcIndirectData` + PE Authenticode hash +
+   attribute-cert-table embed, and `EFI_SIGNATURE_LIST` (`.esl`/`.auth`) generation. Headline
+   deliverable: **`cyrius sign-efi`** (mirrors `sbsign`), on a new `sigil` `authenticode`/`pkcs7`
+   module. Phasing: **P1** sigil PKCS#7 + Authenticode-hash layer (the gate) → **P2** `cyrius sign-efi`
+   (unblocks gnoboot, provable vs `OVMF_CODE.secboot.fd` with AGNOS keys) → **P3** `.esl`/`.auth`
+   enrollment artifacts (agnova self-provisioning) → **P4** (optional) PE signature *verification* to
+   close the full firmware→gnoboot→kernel trust chain. **NOT a release blocker** — Secure Boot is
+   post-v1.0 in gnoboot's roadmap; this is the toolchain prerequisite that unblocks it. **Design
+   decisions deferred to arc-open**: crypto home (grow `sigil` vs a dedicated `pki`/`authenticode`
+   crate), RSA-2048 vs ECDSA-P256 default, driver-subcommand (`cyrius sign-efi`) vs standalone
+   (`cyrsign-efi`), and whether P4 verify rides the same arc.
+   [`proposals/2026-07-03-uefi-secure-boot-signing.md`](proposals/2026-07-03-uefi-secure-boot-signing.md).
+
+4. **Function visibility (`pub`/`private`).** Executes "Phase 2 — `pub` enforcement" of
    [`module-manifest-design.md`](module-manifest-design.md) — closes the flat-global-namespace bug
    classes (the `dynlib_*` dead-code corruption, enum-shadow, slot-collision) and makes the
    api-surface snapshot compiler-enforced. **Design decisions still deferred to arc-open** (module
@@ -974,9 +996,10 @@ chosen at arc-open; the ORDER is committed.)
 
 ### Candidate arcs FILED for full review at v6.4.x arc-open (no decisions committed)
 
-_(Integer SIMD, array-typed struct fields, and function visibility were promoted 2026-07-03 to the
-committed **v6.4.x OPENING SEQUENCE** above, in that order — SIMD (ML/AI) → array struct fields →
-pub/private. The remaining candidate below has no committed order.)_
+_(Integer SIMD, array-typed struct fields, UEFI Secure Boot signing, and function visibility were
+promoted to the committed **v6.4.x OPENING SEQUENCE** above, in that order — SIMD (ML/AI) → array
+struct fields → UEFI signing (gnoboot, 2026-07-03) → pub/private. The remaining candidate below has
+no committed order.)_
 
 - **Source-level VERSION constant** — consumer-filed (sit 1.0.4, the `/sit/v1/capabilities` identity
   banner); tracked here after the 2026-07-03 audit found it un-roadmapped. `cyrius.cyml`'s
@@ -987,7 +1010,8 @@ pub/private. The remaining candidate below has no committed order.)_
   CI-guard stopgap). [`proposals/2026-06-25-source-level-version-constant.md`](proposals/2026-06-25-source-level-version-constant.md).
 
   _(Array-typed struct fields + function visibility (`pub`/`private`) were here; promoted 2026-07-03
-  to #2 and #3 of the committed v6.4.x OPENING SEQUENCE above.)_
+  to #2 and #4 of the committed v6.4.x OPENING SEQUENCE above — UEFI Secure Boot signing was
+  inserted at #3, before pub/private.)_
 
 ---
 

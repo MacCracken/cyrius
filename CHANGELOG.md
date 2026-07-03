@@ -6,6 +6,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.42] — 2026-07-03
+
+**v6.3.42 — `lib/protobuf.cyr` proto3 wire codec: double/float completion + docs (consumer-filed,
+hoosh).** **Premise-check: the core protobuf lib already shipped in v6.2.17** (commit `4a107da9`,
+2026-06-17 — the day after the slot was granted) — varints, zigzag, all four wire types, field
+writers, decode + skip, tested (`tests/tcyr/protobuf.tcyr`), api-surface-registered. The roadmap
+.42 slot was stale (re-added during an audit that missed the existing lib). So this release is the
+**finish**, not a rebuild: the `double`/`float` helpers the header advertised but never provided,
+plus documentation. Lib-only (+ the api-surface tool) → **cycc byte-identical** (self-host fixpoint
++ seed → cybs → cycc byte-identical; ecb + cass + pi SELFHOST_OK); check.sh 125; self_compile
+561 ms; cycc 1,024,488 B (unchanged). Third consecutive premise-check win (.40 codec already
+existed, .41 "256" was really 1024, .42 lib already shipped).
+
+### Added — `double` / `float` wire helpers (the advertised-but-missing gap)
+- `pb_write_double(sb, field_no, dval)` / `pb_read_double(buf, pos, end, out)` — a Cyrius `f64` value
+  IS its 8-byte IEEE-754 bit pattern, so a proto `double` is fixed64 (wire 1) of those bits; the
+  read stores the f64 bits straight back (feed to `f64_add`/`f64_lt`/…).
+- `pb_write_float(sb, field_no, dval)` / `pb_read_float(buf, pos, end, out)` — proto `float` (wire 5)
+  is 32-bit: write narrows the f64 to f32 via the `f32_from` native builtin (cvtsd2ss / fcvt) and
+  emits fixed32; read widens the 4 bytes back to an f64 via `f32_to`. Both take/return a Cyrius f64
+  — the narrowing is internal. No `math.cyr` include needed (`f64_from`/`f32_from`/`f32_to` are
+  compiler builtins since 6.2.18, not lib fns).
+- `tests/tcyr/protobuf.tcyr` grows 42 → 49 asserts: double round-trips bit-exact, `3.5` (exactly
+  representable in f32) round-trips exactly through float, correct wire types (I64 / I32).
+- api-surface snapshot regenerated additive-only: +4 fns (`pb_write_double`/`pb_write_float`/
+  `pb_read_double`/`pb_read_float`), 0 removals.
+
+### Docs
+- Language guide gains a **Protobuf (proto3 wire codec)** section — the lib was undocumented: a
+  wire-type → write/read fn table, the double/float f64-bit-pattern note, and an encode/decode
+  example. Added `lib/protobuf.cyr` to the Standard Libraries include list.
+
 ## [6.3.41] — 2026-07-03
 
 **v6.3.41 — raise the initialized-globals per-compilation-unit cap 1024 → 4096 (consumer-filed,

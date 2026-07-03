@@ -1078,6 +1078,49 @@ include "lib/thread.cyr"  # Threads (clone+mmap), mutex (futex), MPSC channels
 include "lib/async.cyr"   # Async primitives
 include "lib/freelist.cyr"# Freelist allocator (free + reuse, O(1) alloc/free)
 include "lib/math.cyr"    # Math functions: f64_atan and extended math ops
+include "lib/protobuf.cyr"# proto3 wire codec: pb_write_*/pb_read_* (needs string.cyr + str.cyr)
+```
+
+## Protobuf (proto3 wire codec)
+
+`lib/protobuf.cyr` is a minimal, hand-driven **proto3 wire-format** encoder/decoder
+— no `.proto` compiler, no codegen. You build and parse messages field-by-field.
+Pure Cyrius, no syscalls; encode appends to a `str_builder`, decode is `load8` +
+pointer math over a raw buffer. It covers the wire subset OTLP / gRPC / proto3 use:
+
+| Wire | Types | Write | Read |
+|---|---|---|---|
+| 0 VARINT | int32/64, uint32/64, sint (zigzag), bool, enum | `pb_write_int` / `pb_write_bool` / `pb_write_sint` | `pb_read_varint` (+ `pb_unzigzag`) |
+| 1 I64 | fixed64, sfixed64, **double** | `pb_write_fixed64` / `pb_write_double` | `pb_read_fixed` / `pb_read_double` |
+| 2 LEN | string, bytes, embedded message, packed | `pb_write_string` / `pb_write_bytes` / `pb_write_message` | `pb_read_bytes` |
+| 5 I32 | fixed32, sfixed32, **float** | `pb_write_fixed32` / `pb_write_float` | `pb_read_fixed` / `pb_read_float` |
+
+`pb_read_tag` splits a tag into (field number, wire type); `pb_skip` advances past
+an unknown field for forward-compatible parsing. Nested messages are just a
+length-delimited field whose bytes are another encoded message (`pb_write_message`).
+
+**double / float** take and return a Cyrius `f64` directly — an f64 value *is* its
+8-byte IEEE-754 bit pattern, so `pb_write_double` is fixed64 of those bits;
+`pb_write_float` narrows to 32-bit via the `f32_from` builtin, and `pb_read_float`
+widens back via `f32_to` (both native since 6.2.18 — no `math.cyr` include needed).
+
+```
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/protobuf.cyr"
+
+# Encode a message: field 1 = int 150, field 2 = "hi", field 3 = double 3.5
+var sb = str_builder_new();
+pb_write_int(sb, 1, 150);
+pb_write_string(sb, 2, "hi");
+pb_write_double(sb, 3, f64_div(f64_from(7), f64_from(2)));
+var msg = str_builder_build(sb);          # str_data(msg), str_len(msg) = the wire bytes
+
+# Decode: read field 1
+var buf = str_data(msg); var len = str_len(msg);
+var field = 0; var wire = 0;
+var pos = pb_read_tag(buf, 0, len, &field, &wire);   # field=1, wire=0
+var v = 0; pos = pb_read_varint(buf, pos, len, &v);  # v = 150
 ```
 
 ## AGNOS System Libraries
