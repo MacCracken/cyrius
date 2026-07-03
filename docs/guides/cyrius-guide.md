@@ -1023,6 +1023,30 @@ var global_var = 42;             # Visible to functions above
 var r = get_value();             # r = 42
 ```
 
+**Initialized-globals cap (per compilation unit).** A top-level `var` whose
+initializer is anything other than a bare positive integer literal — a call
+(`var t = alloc(1024);`), an identifier, or an expression — is a *deferred
+initializer*: its RHS runs once, before `main`, and it consumes one slot in the
+compiler's `gvar_toks` table. That table holds **4096** slots (raised from 1024
+at v6.3.41; see the heap-map note in `src/main.cyr`). Exceeding it is a hard
+error, not a silent failure:
+
+```
+error:<file>:<line>: too many initialized globals (max 4096)
+```
+
+What does **not** count against the 4096:
+
+- **Bare integer-literal initializers** (`var x = 42;`) — these take a
+  static-init fast path (baked into the image), not the deferred table.
+- **Enum members** (`enum E { A = 0; B = 1; }`) — const-folded at parse time.
+  For a large family of compile-time constants, prefer an `enum` over many
+  `var … = <literal>;` decls.
+
+The cap is per *compilation unit* (the whole preprocessed source, including all
+`include`d libraries), so vendoring several dist bundles into one program sums
+their deferred globals — that is what the 4096 ceiling is sized for.
+
 ## String Standard Library
 
 ```
@@ -1118,7 +1142,9 @@ offsets past the params.
 
 - `for` loop step must be simple assignment (`i = i + 1`)
 - Exit codes truncated to 0-255 (Linux limitation)
-- Max ~64 global vars with initializers (use enums for constants)
+- Max 4096 global vars with *non-literal* initializers per compilation unit
+  (raised from 1024 at v6.3.41; integer-literal inits and enum members are free
+  — see **Global Initializers** for the counting rule)
 - `default`, `match`, `in`, `shared` are keywords
 - Closures (`|x| body`) are non-capturing — the body can't reference enclosing
   locals yet (pass them as parameters); lexical capture is a planned follow-up.

@@ -737,10 +737,10 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
         # the replay path detects the `[N] = { ... };` shape and emits
         # store8 calls per byte.
         var gc = L64(S + 0x19A000);
-        if (gc >= 1024) {
-            ERR_MSG(S, "too many initialized globals (max 1024)", 39);
+        if (gc >= 4096) {
+            ERR_MSG(S, "too many initialized globals (max 4096)", 39);
         }
-        S64(S + 0x198000 + gc * 8, sti);
+        S64(S + 0x729000 + gc * 8, sti);
         S64(S + 0x19A000, gc + 1);
     }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -936,10 +936,10 @@ fn PARSE_GVAR_REG(S): i64 {
     } else {
         # Save token index for deferred init
         var gc = L64(S + 0x19A000);
-        if (gc >= 1024) {
-            ERR_MSG(S, "too many initialized globals (max 1024)", 39);
+        if (gc >= 4096) {
+            ERR_MSG(S, "too many initialized globals (max 4096)", 39);
         }
-        S64(S + 0x198000 + gc * 8, sti);
+        S64(S + 0x729000 + gc * 8, sti);
         S64(S + 0x19A000, gc + 1);
     }
     # Skip to semicolon
@@ -957,7 +957,7 @@ fn EMIT_GVAR_INITS(S): i64 {
     var gc = L64(S + 0x19A000);
     var gi = 0;
     while (gi < gc) {
-        var sti = L64(S + 0x198000 + gi * 8);
+        var sti = L64(S + 0x729000 + gi * 8);
         STI(S, sti);
         STI(S, GTI(S) + 1);  # consume VAR
         var noff = PEEKV(S);

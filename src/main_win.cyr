@@ -56,7 +56,8 @@
 #   0x1903E8  inline_depth  [8]
 #   0x1903F0  expr_width    [8]
 #   0x1903F8  init_offset / elf_out_len [8]  (dual-use: init_offset pre-FIXUP, elf_out_len post-FIXUP)
-#   0x198000  gvar_toks     [8192]        1024 deferred global var inits
+#   0x198000  (FREED v6.3.41)             was gvar_toks[8192]=1024 → relocated+grown to 0x729000[32768]=4096
+#   0x729000  gvar_toks     [32768]       4096 deferred global var inits (v6.3.41; count stays at 0x19A000)
 #   0x19A000  gvar_cnt      [8]
 #   0x71A000  file_map_cnt  [8]           file:line error map entry count (v6.1.35: relocated from 0x19A100)
 #   0x71A040  file_map      [24576]       1024 entries × 24 B (start_line, line_count, fname_offset);

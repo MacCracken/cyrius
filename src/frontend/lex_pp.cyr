@@ -371,10 +371,13 @@ fn ISDERIVE_DE(S, pos, bl): i64 {
 # libro -D LIBRO_TPM pulls 66 #derive structs: 27 libro + 39 agnosys) are ALLOC'd
 # from the heap, NOT fixed S-offsets. The fixed scratch band is packed solid (the
 # old 0x197500/0x197700 slot fit only 64; every nearby fixed region is live during
-# preprocessing — gvar_toks@0x198000, file_map@0x19A108, the struct pool@0x1A0000+,
-# preprocess_out@0x459D000). alloc() lands them in the post-brk heap, zero collision.
-# (CI-SIGILL fix: the first cut relocated sizes/names to a FIXED 0x198000 and
-# clobbered gvar_toks → corrupted deferred-global-init codegen → Illegal instruction.)
+# preprocessing — file_map@0x19A108, the struct pool@0x1A0000+, preprocess_out@0x459D000;
+# gvar_toks now lives at 0x729000, moved off 0x198000 at v6.3.41). alloc() lands them in
+# the post-brk heap, zero collision.
+# (CI-SIGILL fix: the first cut relocated sizes/names to a FIXED 0x198000 and clobbered
+# gvar_toks (which lived at 0x198000 until v6.3.41) → corrupted deferred-global-init
+# codegen → Illegal instruction. The fixed scratch band stays packed, so alloc() remains
+# the right home even though 0x198000 itself is now free.)
 var _pp_derive_count = 0;
 var _pp_derive_sizes = 0;   # alloc(512*8)  lazily on first #derive registration
 var _pp_derive_names = 0;   # alloc(512*32) ditto

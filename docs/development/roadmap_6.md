@@ -891,7 +891,7 @@ cap; minors flex long.
 
 ---
 
-## v6.4.x — REOPENED as an empty staging minor (user 2026-06-30)
+## v6.4.x — staging minor (reopened empty 2026-06-30; OPENING SEQUENCE committed 2026-07-03)
 
 > **The ABI + Perf arc below was PULLED INTO v6.3.x** (user direction 2026-06-30 —
 > "bring in 6.4.x items into current 6.3.x arc and open 6.4.x to stay open"). Class B
@@ -899,10 +899,46 @@ cap; minors flex long.
 > peephole now land as **v6.3.22 → v6.3.26** ([roadmap.md](roadmap.md)); the
 > bench-harness un-blind (PF) + differential-corpus gate (VR-03) prerequisites land
 > first as **v6.3.17 / v6.3.19** (a consumer-filed stdlib hardening sweep took v6.3.18).
-> **v6.4.x now reopens as an EMPTY staging minor** —
-> the landing zone for work that surfaces during the long v6.3.x runway (closeout-swept
-> residuals, new consumer/agnos requests). The v6.5.x perf-refactor + v6.6.x RISC-V
-> minors are unchanged. The original arc plan is preserved below for reference.
+> **v6.4.x reopened as a staging minor** (2026-06-30) — the landing zone for work that surfaces
+> during the long v6.3.x runway (closeout-swept residuals, new consumer/agnos requests). **As of
+> 2026-07-03 the user committed the v6.4.x OPENING SEQUENCE** (below); it is no longer empty. The
+> v6.5.x perf-refactor + v6.6.x RISC-V minors are unchanged. The original arc plan is preserved
+> below for reference.
+
+### v6.4.x arc — OPENING SEQUENCE (user-committed priority, 2026-07-03)
+
+The arc opens with the **integer-SIMD work as the top priority — to unblock ML/AI workloads**, then
+array-typed struct fields, then function visibility. (Design decisions inside each item are still
+chosen at arc-open; the ORDER is committed.)
+
+1. **Integer SIMD (`iNxM` typed vectors + int8/16/32 vector ops) — THE ARC OPENER, ML/AI priority.**
+   Cyrius SIMD is **f64-only** today (`lib/simd.cyr` exposes only `f64v2`/`f64v4`); there are no
+   integer vector types/ops, capping every int / quantized / bit kernel at scalar speed — the direct
+   blocker for the quantized-ML throughput floor (tentib's b1.58 matmul-free inference, attn11/tarka
+   int paths, sankoch compression, int8/int16 DSP, edge/Pi tok-s). Follows the v5.10.x typed-**f64**
+   SIMD arc precedent (value/pointer dual-form, lane extractors, SysV/aarch64 reg conventions,
+   `bench`-gated correctness). Consumer-filed; tentib 0.4.0 ships scalar, this unblocks 0.4.1's
+   int-SIMD kernel. [`proposals/2026-06-23-integer-simd.md`](proposals/2026-06-23-integer-simd.md).
+
+2. **Array-typed struct fields.** Cyrius has NO array-typed struct field syntax at all —
+   `struct Box { items: i64[]; }` is a hard parse error ("expected identifier, got `[`"), and no such
+   field exists anywhere; variable-length data is an untyped `Vec` (8-byte handle, i64 elements). This
+   is the "f64 array" half of the [derive-json-codec proposal](proposals/archived/2026-07-03-derive-json-codec.md)
+   (the f64 scalar half shipped v6.3.40) — the derive can't serialize `f64[]`/`P[]` fields until they
+   can be declared, and it also unblocks tables/lists in structs generally. Scope: (1) struct-field
+   parser accepts `field: T[]`; (2) an array field representation/layout — decide **`T[]`-inline vs a
+   typed `Vec<T>` handle** FIRST (that fork drives everything else); (3) field-access codegen; (4)
+   THEN the `#derive(Serialize)` array codegen across the 3 codec fns. Sequenced BEFORE function
+   visibility (user 2026-07-03).
+
+3. **Function visibility (`pub`/`private`).** Executes "Phase 2 — `pub` enforcement" of
+   [`module-manifest-design.md`](module-manifest-design.md) — closes the flat-global-namespace bug
+   classes (the `dynlib_*` dead-code corruption, enum-shadow, slot-collision) and makes the
+   api-surface snapshot compiler-enforced. **Design decisions still deferred to arc-open** (module
+   boundary file-vs-dep, marker `_`-prefix-vs-explicit-keywords, default public-vs-private); user
+   lean (2026-07-02, not a commitment): `_`-prefix as the private marker. **First step: the
+   `_`-prefix cross-file-call audit** — it decides whether derive-from-`_` is truly zero-churn.
+   [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md).
 
 ### Pinned to v6.4.0 (user-committed)
 
@@ -919,30 +955,39 @@ cap; minors flex long.
   self-host** on ecb/cass/pi real hardware; (4) the two-step bootstrap holds. Only after (1)-(4)
   green does the default flip; the env var then becomes an opt-**out** (`CYRIUS_MONOMORPH=0`).
 
+### Pinned to the v6.4.x TAIL (user-committed)
+
+- **Intel-Mac arc (x86-macho)** — moved out of v6.3.x to the **END of the v6.4.x line** (user
+  2026-07-03; the last v6.3.x work is the VR verification slot, then closeout). Two committed items,
+  to land as the final v6.4.x work before v6.5.x:
+  1. **x86-macho native miscompile fix** (the core blocker, **High**) — the cross-built cycc emits a
+     broken NATIVE x86_64 Mach-O cycc (`backend/x86/emit.cyr` + `backend/macho/emit.cyr`); Intel Macs
+     have no working compiler. [`macos-x86-release-no-compiler`](issues/2026-06-02-macos-x86-release-no-compiler.md).
+  2. **x86-macho toolchain completion** — `_read_env`/`_macho_fill_environ` for x86-macho (HOME
+     defaults to `/root` today); `cbt` `set_arch` Intel-vs-Apple-Silicon detection (unconditional
+     `ARCH_AARCH64` today); wrapper cycc-discovery; complete `build-macos-x86-tarball.sh`; add the
+     x86-macho branch to `install.sh` + point `release.yml` build-macos at it; add the x86 arm of the
+     real-install gate on **ach** (Intel Mac, mirror of the ecb check); revert the superseded
+     layer-1/3 `#ifdef CYRIUS_TARGET_MACOS` branches once `main_x86_macho.cyr` is the default.
+  These were formerly v6.3.42/.43; deferred because the Intel-Mac port is self-contained and the
+  v6.3.x tail is better spent finishing the cross-host verification (VR) coverage + closeout.
+
 ### Candidate arcs FILED for full review at v6.4.x arc-open (no decisions committed)
 
-- **Array-typed struct fields** — filed to **v6.4.x** (user 2026-07-03; surfaced during the v6.3.40
-  `#derive(Serialize)` f64 work). Cyrius has NO array-typed struct field syntax at all:
-  `struct Box { items: i64[]; }` is a hard parse error ("expected identifier, got `[`"), and no
-  such field exists anywhere in the codebase. Variable-length data is held as an untyped `Vec`
-  (8-byte handle, i64 elements). This blocks `#derive(Serialize)` array support (the derive can't
-  serialize `f64[]`/`P[]` fields because they can't be declared) — the second half of the
-  [derive-json-codec proposal](proposals/archived/2026-07-03-derive-json-codec.md), now that f64
-  landed in v6.3.40. Scope: (1) struct-field parser accepts `field: T[]`; (2) an array field
-  representation/layout (pointer+length vs a typed `Vec<T>` handle); (3) field-access codegen;
-  (4) THEN the `#derive` array codegen across the 3 codec fns (json_v_arr_* or a length-prefixed
-  loop). Decide `T[]`-inline vs `Vec<T>`-handle first — that fork drives everything else. Its own
-  arc, not a codegen bite.
+_(Integer SIMD, array-typed struct fields, and function visibility were promoted 2026-07-03 to the
+committed **v6.4.x OPENING SEQUENCE** above, in that order — SIMD (ML/AI) → array struct fields →
+pub/private. The remaining candidate below has no committed order.)_
 
-- **Function visibility (`pub`/`private`)** — the first candidate arc. Executes "Phase 2"
-  of [`module-manifest-design.md`](module-manifest-design.md) (closes the flat-global-namespace
-  bug classes: the `dynlib_*` dead-code corruption, enum-shadow, slot-collision; makes the
-  api-surface snapshot compiler-enforced). Design + grounded substrate + open decisions filed in
-  [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md).
-  **Decisions deferred to arc-open** (module boundary file-vs-dep, marker `_`-prefix-vs-explicit-keywords,
-  default public-vs-private). User lean (2026-07-02, not a commitment): `_`-prefix as the private
-  marker. **First step at arc-open: the `_`-prefix cross-file-call audit** — it decides whether
-  derive-from-`_` is truly zero-churn.
+- **Source-level VERSION constant** — consumer-filed (sit 1.0.4, the `/sit/v1/capabilities` identity
+  banner); tracked here after the 2026-07-03 audit found it un-roadmapped. `cyrius.cyml`'s
+  `${file:VERSION}` is manifest-metadata only — source code can't read the package version at build
+  time, so every `--version` / identity-banner / `Server:` string is a hand-maintained literal that
+  silently drifts from `VERSION` (sit's drifted for 6 releases). Small build/manifest feature: extend
+  the existing `${file:VERSION}` file-read to a source-visible constant. Not a blocker (sit ships a
+  CI-guard stopgap). [`proposals/2026-06-25-source-level-version-constant.md`](proposals/2026-06-25-source-level-version-constant.md).
+
+  _(Array-typed struct fields + function visibility (`pub`/`private`) were here; promoted 2026-07-03
+  to #2 and #3 of the committed v6.4.x OPENING SEQUENCE above.)_
 
 ---
 

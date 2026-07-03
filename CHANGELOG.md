@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.41] — 2026-07-03
+
+**v6.3.41 — raise the initialized-globals per-compilation-unit cap 1024 → 4096 (consumer-filed,
+thoth) + fold sankoch 2.4.9.** A large first-party app (thoth) that vendors several dist bundles —
+bote-core / libro / t-ron / avatara / vyakarana / darshana / sit's read profile / sankoch — into
+ONE compilation unit crossed the old 1024-slot ceiling on top-level non-literal `var … = …`
+initializers (`error:src/agent.cyr:495: too many initialized globals (max 1024)`), forcing the
+ecosystem to carve artificially-lean distlib profiles (sankoch's `[lib.zlib]`, sit's `[lib.read]`)
+purely to fit a consumer's global budget. This raises the cap to 4096 by relocating the `gvar_toks`
+deferred-init table into a reclaimed heap band — a compile-time scratch offset, so **default
+codegen is byte-identical** (differential codegen-diff = 0 over 313 inputs both modes; the only
+status-diff is the new fixture, which is intended: it fails on the old cap and passes on the new).
+Self-host fixpoint + seed → cybs → cycc byte-identical; ecb + cass + pi SELFHOST_OK; check.sh 125;
+self_compile 561 ms; cycc 1,024,488 B (unchanged — cycc's own source has well under 1024 deferred
+globals, and the moved offset isn't baked into output).
+
+### Changed — initialized-globals cap 1024 → 4096
+- `src/frontend/parse_decl.cyr`: the `gvar_toks` deferred-init token table (indexed per top-level
+  non-literal global initializer) relocated off `0x198000[8192]=1024` to the reclaimed
+  `0x729000[32768]=4096` band — the v6.3.27 output_buf gap, below the TS frontend reservation at
+  `0x800000` and every per-target arena floor, verified free across all targets (no `S + 0x…`
+  offset in `0x729000..0x800000` in any source file). Both cap checks (`>= 1024` → `>= 4096`, error
+  message "max 1024" → "max 4096") and the `EMIT_GVAR_INITS` replay reader were retargeted; the
+  counter `gvar_cnt` stays at `0x19A000`. In-place growth was blocked by `jump_target_cnt` at
+  `0x19E000`, hence the relocation.
+- **Counting rule** (only a NON-literal top-level initializer consumes a slot): a `var x = <call /
+  identifier / expression>;` is a deferred initializer and takes one `gvar_toks` slot; a bare
+  positive-integer-literal init (`var x = 42;`) takes the static-init fast path (`_vgsi_base`) and
+  does NOT count; enum members are const-folded and do NOT count. Documented in the language guide's
+  **Global Initializers** section; the stale "Max ~64 global vars with initializers" line in
+  *Known Limitations* was corrected to 4096. (The stale "256 initialized globals" figure in
+  downstream first-party `CLAUDE.md` files — the live compiler capped at 1024, not 256 — is
+  reconciled by a separate spawned task; this repo carried no such line.)
+- Heap-map comments updated in `src/main.cyr` + `main_win.cyr` + `main_aarch64{,_macho,_native}.cyr`
+  + `lex_pp.cyr` (0x198000 marked FREED, 0x729000 documented). Heap-map audit clean (99 regions, 0
+  overlaps): `file_map_str` ends exactly at `0x729000` where `gvar_toks` begins (gap 0, no overlap),
+  `gvar_toks` ends `0x731000` well below the next sized region.
+
+### Added
+- `tests/tcyr/many_initialized_globals.tcyr` — 1100 call-initialized globals (`var gN = seed();`,
+  the mutable-lazy-init shape the issue describes). Fails on the old cap-1024 compiler (`too many
+  initialized globals` at global ~1026, stdlib includes consuming the first ~49 slots), passes on
+  the new cap-4096 compiler (4 asserts, returns clean). Runs within the tcyr-suite gate.
+
+### Changed — folded sankoch 2.4.7 → 2.4.9
+- `lib/sankoch.cyr` re-vendored from `~/Repos/sankoch/dist/sankoch.cyr` (the "zlib breakout" +
+  CRC slice-by-8 internal reorg). 288 public fns, arities identical → **api-surface neutral**;
+  sankoch is a stdlib module not included in the compiler → **cycc byte-identical**. In-repo
+  consumers (`programs/cyrfmt.cyr`, `programs/checks/services.cyr`,
+  `tests/tcyr/sankoch_bzip2_roundtrip.tcyr`) rebuild + pass under check.sh. Snapshot-ping-pong
+  protection: the install snapshot was refreshed before the deps-resolving check.
+
 ## [6.3.40] — 2026-07-03
 
 **v6.3.40 — `#derive(Serialize)` f64 field support (from the derive-json-codec proposal).** A

@@ -41,7 +41,8 @@
 #   0x191800  local_depths  [512]
 #   0x192000  macro tables
 #   0x192200  local_types
-#   0x198000  gvar_toks     [8192]
+#   0x198000  (FREED v6.3.41)  was gvar_toks[8192]=1024 → 0x729000[32768]=4096
+#   0x729000  gvar_toks     [32768]  4096 deferred global var inits (v6.3.41)
 #   0x19A000  gvar_cnt      [8]
 #   0x1A0000  jump_src + nop_run + fn_start_fcnt (v5.6.27)
 #   0x1C0000  fn_names      [16384]       2048 functions
