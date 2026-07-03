@@ -461,6 +461,10 @@ fn EVLOAD_W(S, idx, width): i64 {
     # GLOBAL scalar load (`var G: i32 = 40; return G;`). The width-8 ELODC already reads
     # [rcx], which is why i64 globals worked. RCX-based narrow loads mirror ELOAD8/16/32
     # with ModRM rm=001 (rcx) instead of rm=000 (rax).
+    # v6.3.35: negative width = SIGNED global → movsx (sign-extend) from [rcx].
+    if (width < 0 - 2) { EB(S, 0x48); EB(S, 0x63); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }              # -4: movsxd rax, dword [rcx]
+    if (width == 0 - 2) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBF); EB(S, 0x01); _flags_reflect_rax = 0; return 0; } # movsx rax, word [rcx]
+    if (width == 0 - 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBE); EB(S, 0x01); _flags_reflect_rax = 0; return 0; } # movsx rax, byte [rcx]
     if (width == 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }  # movzx rax, byte [rcx]
     if (width == 2) { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }               # movzx eax, word [rcx]
     if (width == 4) { EB(S, 0x8B); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }                            # mov eax, [rcx]
@@ -487,6 +491,15 @@ fn EFLLOAD_W(S, idx, width): i64 {
     # so every user-visible local sits 8 bytes deeper in the frame.
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+    # v6.3.35: a NEGATIVE width = SIGNED sub-i64 → sign-extend (movsx) rather than the
+    # historical zero-extend (movzx). Positive width is unchanged (byte-identical until
+    # a caller opts in). Fixes signed i8/i16/i32 reading a stored negative as a huge +.
+    if (width < 0) {
+        var sw = 0 - width;
+        if (sw == 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBE); EB(S, 0x85); EDISP32(S, disp); return 0; }  # movsx rax, byte [rbp+disp]
+        if (sw == 2) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBF); EB(S, 0x85); EDISP32(S, disp); return 0; }  # movsx rax, word [rbp+disp]
+        if (sw == 4) { EB(S, 0x48); EB(S, 0x63); EB(S, 0x85); EDISP32(S, disp); return 0; }               # movsxd rax, dword [rbp+disp]
+    }
     if (width == 1) {
         # movzx rax, byte [rbp+disp]
         EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x85);
@@ -547,6 +560,10 @@ fn EFLSTORE_W(S, idx, width): i64 {
 # so the aarch64 + cx backends can sit alongside as peers.
 fn EFIELD_LOAD_W(S, width): i64 {
     if (width == 1 || width == 2 || width == 4) { _IR_REC0(S, IR_RAW_EMIT); }
+    # v6.3.35: negative width = SIGNED narrow field → movsx (sign-extend) from [rcx].
+    if (width < 0 - 2) { EB(S, 0x48); EB(S, 0x63); EB(S, 0x01); return 0; }              # width -4: movsxd rax, dword [rcx]
+    if (width == 0 - 2) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBF); EB(S, 0x01); return 0; } # movsx rax, word [rcx]
+    if (width == 0 - 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBE); EB(S, 0x01); return 0; } # movsx rax, byte [rcx]
     if (width == 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x01); return 0; }   # movzx rax, byte [rcx]
     if (width == 2) { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x01); return 0; }                # movzx eax, word [rcx]
     if (width == 4) { EB(S, 0x8B); EB(S, 0x01); return 0; }                              # mov eax, [rcx]
