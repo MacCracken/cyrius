@@ -6,6 +6,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.38] — 2026-07-03
+
+**v6.3.38 — generics-engine A-broad residual (gated) + bayan 1.0.4 / mabda 4.0.2 refold.**
+The first bite of the generics FINALIZE arc lands the one clean, bounded gated fix from the .37
+adversarial re-sweep, folded with two downstream library refreshes. (The deep specialized-instance
+struct-return/param ABI — B-explicit + B3 — plus aarch64 monomorph parity and the finalize pass
+continue as v6.3.39.) Self-host fixpoint + seed → cybs → cycc byte-identical; differential
+status-diff = 0 both modes; cross-OS SELFHOST_OK (ecb macOS / cass Windows / pi aarch64).
+check.sh 124 (api-surface snapshot regenerated 4381 → 4424 for the +43 mabda symbols);
+self_compile 559 ms; cycc 1,020,040 B (byte-for-byte unchanged — A-broad is gated).
+
+### Fixed — A-broad: explicit-type-arg generic call clobbered an argument (gated `CYRIUS_MONOMORPH=1`)
+- `add<i64>(8, add<i64>(16, 32))` returned 64 instead of 56, and `acc = add<i64>(acc, id<i64>(10))` in a
+  loop returned 20 instead of 30 — an explicit-type-arg 2-arg generic call whose second argument
+  contains another (inline) call clobbered the first argument. The inline-replay path stores arg0 into a
+  frame slot (`p0_slot = saved_flc`) but bumped the frame-slot count only *after* the arg loop, so a
+  nested inline call while evaluating arg1 reused `saved_flc` as its own param base and overwrote arg0.
+  Fix: reserve the param slots (bump `SFLC` + `_flc_hwm`) **before** the arg loop, so nested calls use
+  slots above them. (v6.3.37's `_flc_hwm` reserved frame *size*; this reserves the slot *indices*.)
+  Gated → default codegen byte-identical.
+
+### Changed — bayan 1.0.3 → 1.0.4 refold
+- Byte-identical `cyrius distlib` re-vendor into `lib/bayan.cyr`. bayan 1.0.4 fixes **TOML `"""`
+  triple-double-quote multi-line strings being silently dropped** (the parser recognized only `'''`;
+  a `"""` value parsed as an empty string with no diagnostic). cyrius's `toml` / `cyml` / `json` /
+  `u128` / `bigint` consumers all green after the fold.
+
+### Changed — mabda → 4.0.2 refold
+- Byte-identical re-vendor into `lib/mabda.cyr`. mabda 4.0.0 added a **pure-Cyrius native NVIDIA
+  (nouveau DRM) GPU backend** — a third backend behind the v3.0 backend-abstraction, with **no
+  public-API change**; 4.0.1/4.0.2 followed. cyrius consumes mabda only as a large-source compile
+  fixture (`large_source` / `large_input` / `preprocessor_past_cap`), all green after the fold.
+
 ## [6.3.37] — 2026-07-03
 
 **v6.3.37 — default-path correctness batch 3/3: generics-engine repairs (all gated `CYRIUS_MONOMORPH=1`).**

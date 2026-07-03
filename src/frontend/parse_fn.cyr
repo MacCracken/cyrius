@@ -1028,6 +1028,14 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # Allocate fresh frame slots for callee params
                 var p0_slot = saved_flc;
                 var p1_slot = saved_flc + 1;
+                # v6.3.38 (A-broad) — RESERVE the param slots BEFORE evaluating args, so a
+                # nested inline call while evaluating arg1 uses frame slots ABOVE p0/p1
+                # instead of reusing saved_flc and clobbering the already-stored arg0.
+                # (v6.3.37 A3 only reserved frame SIZE via _flc_hwm; this reserves the slot
+                # INDICES too by bumping GFLC up-front.) Idempotent with the old post-loop
+                # SFLC(saved_flc+pc); the _flc_hwm high-water still feeds the frame patch.
+                SFLC(S, saved_flc + pc);
+                if (saved_flc + pc > _flc_hwm) { _flc_hwm = saved_flc + pc; }
                 # Evaluate args and store to param slots
                 var iargc = 0;
                 # v6.3.9 (F-fns): positional generic inference — capture each arg's
