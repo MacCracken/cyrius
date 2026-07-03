@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.40] — 2026-07-03
+
+**v6.3.40 — `#derive(Serialize)` f64 field support (from the derive-json-codec proposal).** A
+premise-check of the "add a `#derive(json)` codec" proposal found a codec derive **already exists**
+— `#derive(Serialize)` emits `Type_to_json` / `Type_from_json` / `Type_from_json_str`, and the typed
+`json_v_*` DOM already lives in bayan. The real gap was **f64 fields**, which emitted an undefined
+`f64_to_json` / `f64_from_json` (a hard "refusing to emit binary with reachable undefined function"
+error — the same bug class as the i64 gap fixed at v5.9.35). This closes that gap. Default codegen
+byte-identical (differential status-diff = 0 both modes; the new branches only fire for a struct
+with an f64 field); self-host fixpoint + seed → cybs → cycc byte-identical; ecb + cass + pi
+SELFHOST_OK; check.sh 125; self_compile 548 ms; cycc 1,024,488 B (+4448 for the f64 emission).
+
+### Fixed — `#derive(Serialize)` now handles f64 fields
+- All three generated codec fns detect an `f64` field: `_to_json` renders it as a bare JSON number
+  via `fmt_float_buf` (lib/fmt.cyr) into a shared scratch buffer; `_from_json` (pairs) and
+  `_from_json_str` (single-pass scanner) parse it via `f64_parse` (lib/math.cyr) — the pairs path
+  through `str_data(v)`, the scanner by capturing the numeric token substring. A fractional value
+  (`1234.5`) round-trips through the 6-decimal text; f64 composes with i64/Str/nested fields.
+- **New include requirement**: an f64-deriving struct must have **`lib/math.cyr`** in scope (for
+  `f64_parse`) in addition to `lib/fmt.cyr` (usually already included). Regression fixture
+  `tests/tcyr/derive_serialize_f64.tcyr` (5 asserts: serialize + both deserialize paths).
+
+### Deferred — array fields → v6.4.x
+- The proposal's array support (`f64[]` / `P[]` struct fields) is blocked on a **language feature
+  that does not exist**: Cyrius has no array-typed struct fields at all (`struct { x: T[]; }` is a
+  hard parse error). Filed to **v6.4.x** as its own arc (roadmap_6.md); the derive can't serialize
+  array fields until the language can declare them. The proposal's separate `#derive(json)`
+  typed-DOM variant was deemed unnecessary (it would duplicate the existing codec). The
+  derive-json-codec + native-float proposals are archived (native-float Tier A having shipped).
+
+### Filed
+- A pre-existing P3: a `#derive(Serialize)` struct with a `Str` field errors ("unexpected `}`") when
+  its codec is invoked at **global scope** (works inside `fn main`; i64/f64-only structs are fine).
+  Not on this slot's path. [issue 2026-07-03](docs/development/issues/2026-07-03-derive-serialize-str-field-global-scope-parse-error.md).
+
 ## [6.3.39] — 2026-07-03
 
 **v6.3.39 — generics FINALIZE bite 2/2: the deep specialized-instance struct ABI + cross-target

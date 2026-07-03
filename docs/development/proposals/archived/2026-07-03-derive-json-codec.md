@@ -1,3 +1,12 @@
+> **RESOLVED v6.3.40 (f64) + filed to v6.4.x (arrays).** Premise-check found a codec derive
+> ALREADY exists — `#derive(Serialize)` emits `Type_to_json`/`Type_from_json`/`_from_json_str`
+> covering i8/i16/i32/i64/Str/nested, and the typed `json_v_*` DOM (Tier B) already exists in
+> bayan. The real gap was **f64** (emitted undefined `f64_to_json` → hard error) — FIXED in
+> v6.3.40 (f64 across all three codec fns; fractional round-trip verified). **Arrays** turned out
+> to need a LANGUAGE feature that doesn't exist (`struct { x: T[]; }` doesn't parse — array-typed
+> struct fields), so it's filed to **v6.4.x** (roadmap_6.md). The proposal's `#derive(json)`
+> typed-DOM variant was deemed unnecessary (would duplicate the existing codec). See CHANGELOG [6.3.40].
+
 # Compile-time struct↔data-format codecs (`#derive(json)` / annotation-driven)
 
 **Filed:** 2026-07-03 during the svara Rust→Cyrius port (L3 — the 101-phoneme

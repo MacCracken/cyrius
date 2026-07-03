@@ -904,7 +904,35 @@ cap; minors flex long.
 > residuals, new consumer/agnos requests). The v6.5.x perf-refactor + v6.6.x RISC-V
 > minors are unchanged. The original arc plan is preserved below for reference.
 
+### Pinned to v6.4.0 (user-committed)
+
+- **`CYRIUS_MONOMORPH` default-on flip** — pinned to **v6.4.0** (user 2026-07-03; held from
+  v6.3.39 where the generics arc closed). The whole generics feature (fn + struct generics,
+  scalar + struct type-args, explicit + inferred receivers, cross-target — x86 + aarch64 + Windows
+  + macOS) is verified correct behind `CYRIUS_MONOMORPH=1` as of v6.3.39, but the flag stays
+  **opt-in** until this dedicated de-risking slot: flipping default-**on** makes `_MONOMORPH_OK==1`
+  for ALL compilation, which changes the pass-1 `SKIP_GENERICS` behavior + the inline-replay path
+  for *every* program, not just generic ones. **Flip criteria (all required before the flip):**
+  (1) a **flag-ON differential** over the full corpus with **status-diff = 0** (non-generic code
+  byte-identical or logic-preserving with the flag forced on); (2) **flag-ON cycc self-host**
+  byte-identical fixpoint (cycc compiling itself with `CYRIUS_MONOMORPH=1`); (3) **flag-ON cross-OS
+  self-host** on ecb/cass/pi real hardware; (4) the two-step bootstrap holds. Only after (1)-(4)
+  green does the default flip; the env var then becomes an opt-**out** (`CYRIUS_MONOMORPH=0`).
+
 ### Candidate arcs FILED for full review at v6.4.x arc-open (no decisions committed)
+
+- **Array-typed struct fields** — filed to **v6.4.x** (user 2026-07-03; surfaced during the v6.3.40
+  `#derive(Serialize)` f64 work). Cyrius has NO array-typed struct field syntax at all:
+  `struct Box { items: i64[]; }` is a hard parse error ("expected identifier, got `[`"), and no
+  such field exists anywhere in the codebase. Variable-length data is held as an untyped `Vec`
+  (8-byte handle, i64 elements). This blocks `#derive(Serialize)` array support (the derive can't
+  serialize `f64[]`/`P[]` fields because they can't be declared) — the second half of the
+  [derive-json-codec proposal](proposals/archived/2026-07-03-derive-json-codec.md), now that f64
+  landed in v6.3.40. Scope: (1) struct-field parser accepts `field: T[]`; (2) an array field
+  representation/layout (pointer+length vs a typed `Vec<T>` handle); (3) field-access codegen;
+  (4) THEN the `#derive` array codegen across the 3 codec fns (json_v_arr_* or a length-prefixed
+  loop). Decide `T[]`-inline vs `Vec<T>`-handle first — that fork drives everything else. Its own
+  arc, not a codegen bite.
 
 - **Function visibility (`pub`/`private`)** — the first candidate arc. Executes "Phase 2"
   of [`module-manifest-design.md`](module-manifest-design.md) (closes the flat-global-namespace

@@ -1,3 +1,7 @@
+> **RESOLVED — Tier A shipped.** Native f64 type + literals (`1.5`) + operators (`+ - * /`,
+> comparisons) + NaN on x86 + aarch64 shipped (see CHANGELOG; verified `var x: f64 = 1.5; x + 2.5`).
+> Tier B (stdlib intrinsics) was the fallback and is moot. Archived.
+
 # Native float arithmetic (f32/f64 operators or stdlib intrinsics)
 
 **Filed:** 2026-06-16 during mabda 3.2.x (TS.8b — native AMD bilinear/scaled

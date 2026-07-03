@@ -1,0 +1,65 @@
+# derive_serialize_f64.tcyr — v6.3.40 regression for `#derive(Serialize)` f64 fields.
+#
+# Pre-v6.3.40 the auto-generated codec emitted `f64_to_json(...)` / `f64_from_json(...)`
+# for every f64 field — fns that never existed → `error: refusing to emit binary with
+# reachable undefined function(s)`. Same bug class as the i64 gap fixed at v5.9.35.
+#
+# Fix (src/frontend/lex_pp.cyr PP_DERIVE_SERIALIZE): f64 detection in all three emitted
+# fns — `_to_json` formats via fmt_float_buf (lib/fmt.cyr) into a shared scratch;
+# `_from_json` (pairs) and `_from_json_str` (single-pass) parse via f64_parse
+# (lib/math.cyr). An f64-deriving struct must have BOTH `lib/fmt.cyr` and `lib/math.cyr`
+# in scope (fmt is usually already included; math is the new requirement).
+#
+# (This fixture keeps i64 + f64 fields only — a Str field invoked at GLOBAL scope hits a
+# SEPARATE pre-existing derive limitation, unrelated to f64; the existing
+# derive_serialize_roundtrip.tcyr is i64-only for the same reason.)
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/math.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct sample {
+    id: i64;
+    freq: f64;
+    bw: f64;
+}
+
+var s = sample { 0, 0, 0 };
+store64(&s + 0, 42);
+store64(&s + 8, f64_div(f64_from(2469), f64_from(2)));   # 1234.5
+store64(&s + 16, f64_from(50));                          # 50.0
+
+# Serialize: f64 fields render as bare JSON numbers (fmt_float_buf, 6 decimals).
+var sb = str_builder_new();
+sample_to_json(&s, sb);
+var j = str_data(str_builder_build(sb));
+assert_eq(memeq(j, "{\"id\":42,\"freq\":1234.500000,\"bw\":50.000000}", 42), 1, "f64 fields serialize as bare JSON numbers");
+
+# Round-trip via the single-pass deserializer (f64_parse of each numeric token).
+var s2 = sample_from_json_str(j);
+assert_eq(load64(s2 + 0), 42, "sample.id i64 round-trips alongside the f64 fields");
+
+var d1 = f64_sub(load64(s2 + 8), f64_div(f64_from(2469), f64_from(2)));
+if (f64_lt(d1, f64_from(0)) == 1) { d1 = f64_sub(f64_from(0), d1); }
+assert_eq(f64_lt(d1, f64_div(f64_from(1), f64_from(1000))), 1, "sample.freq f64 (1234.5) round-trips within 1e-3");
+
+var d2 = f64_sub(load64(s2 + 16), f64_from(50));
+if (f64_lt(d2, f64_from(0)) == 1) { d2 = f64_sub(f64_from(0), d2); }
+assert_eq(f64_lt(d2, f64_div(f64_from(1), f64_from(1000))), 1, "sample.bw f64 (50.0) round-trips within 1e-3");
+
+# Round-trip via the pairs deserializer too.
+var s3 = sample_from_json(bayan_json_parse(str_builder_build(sb)));
+assert_eq(load64(s3 + 0), 42, "pairs-path from_json also round-trips id");
+
+var r = assert_summary();
