@@ -1,0 +1,113 @@
+# struct_byval_param.tcyr — v6.3.36 issues [5] + [6].
+#
+# [5] A >8-byte struct passed BY VALUE as a bare-identifier arg: the callee treats
+#     a >8-byte struct param as a pointer-to-struct (v6.3.16 lf_is_ptr) and derefs
+#     it. Pre-v6.3.36 the caller loaded only the struct's first 8 bytes as a value
+#     → the callee dereffed 42-as-address → SIGSEGV. The caller now address-passes
+#     such args, gated on the callee's per-fn struct-param mask (_fnt_structmask) so
+#     Str/Result/handle args to scalar params stay value-passed (no regression).
+#
+# [6] `var b: P = a;` struct-to-struct copy-init from a local struct variable:
+#     allocate b inline + full word-by-word value copy (was truncated to 8 bytes and
+#     dereffed as a pointer → SIGSEGV). A true value copy — mutating b leaves a alone.
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+struct Pair { a: i64; b: i64; }              # 16 bytes
+struct Trip { a: i64; b: i64; c: i64; }      # 24 bytes
+struct One  { a: i64; }                      # 8 bytes (stays by-value / inline)
+
+# ---- [5] struct by-value parameter ----
+fn p_get_a(s: Pair): i64 { return s.a; }
+fn p_get_b(s: Pair): i64 { return s.b; }
+fn p_sum(s: Pair): i64 { return s.a + s.b; }
+fn p_add_two(s: Pair, t: Pair): i64 { return s.a + t.a; }
+fn t_get_c(x: Trip): i64 { return x.c; }
+fn one_get(s: One): i64 { return s.a; }      # 8-byte struct: value-passed, still works
+
+fn byval_first_field(): i64 {
+    var s: Pair;
+    s.a = 42;
+    s.b = 99;
+    return p_get_a(s);
+}
+fn byval_second_field(): i64 {
+    var s: Pair;
+    s.a = 1;
+    s.b = 42;
+    return p_get_b(s);
+}
+fn byval_sum(): i64 {
+    var s: Pair;
+    s.a = 40;
+    s.b = 2;
+    return p_sum(s);
+}
+fn byval_two_args(): i64 {
+    var s: Pair;
+    var t: Pair;
+    s.a = 40;
+    t.a = 2;
+    return p_add_two(s, t);
+}
+fn byval_24byte(): i64 {
+    var x: Trip;
+    x.a = 1;
+    x.b = 2;
+    x.c = 42;
+    return t_get_c(x);
+}
+fn byval_8byte(): i64 {
+    var s: One;
+    s.a = 42;
+    return one_get(s);
+}
+
+# ---- [6] struct-to-struct copy-init ----
+fn copy_read_a(): i64 {
+    var a: Pair;
+    a.a = 42;
+    a.b = 7;
+    var b: Pair = a;
+    return b.a;
+}
+fn copy_read_b(): i64 {
+    var a: Pair;
+    a.a = 1;
+    a.b = 42;
+    var b: Pair = a;
+    return b.b;            # full copy, not truncated to first 8 bytes
+}
+fn copy_is_value(): i64 {
+    var a: Pair;
+    a.a = 42;
+    a.b = 7;
+    var b: Pair = a;
+    b.a = 99;             # mutating the copy must NOT touch the original
+    return a.a;
+}
+fn copy_24byte(): i64 {
+    var x: Trip;
+    x.a = 1;
+    x.b = 2;
+    x.c = 42;
+    var y: Trip = x;
+    return y.c;
+}
+
+test_group("[5] >8-byte struct by-value parameter");
+assert_eq(byval_first_field(), 42, "read first field of a by-value struct param");
+assert_eq(byval_second_field(), 42, "read second field of a by-value struct param");
+assert_eq(byval_sum(), 42, "sum both fields of a by-value struct param");
+assert_eq(byval_two_args(), 42, "two by-value struct params");
+assert_eq(byval_24byte(), 42, "24-byte struct param, read third field");
+assert_eq(byval_8byte(), 42, "8-byte struct param stays by-value (unchanged)");
+
+test_group("[6] struct-to-struct copy-init");
+assert_eq(copy_read_a(), 42, "var b: P = a; b.a reads the copied first field");
+assert_eq(copy_read_b(), 42, "var b: P = a; b.b reads the copied second field (full copy)");
+assert_eq(copy_is_value(), 42, "copy is independent — mutating b leaves a unchanged");
+assert_eq(copy_24byte(), 42, "24-byte struct copy-init, read third field");
+
+var r = assert_summary();

@@ -106,6 +106,7 @@ _fnt_bodyend = S + 0x9FA000;
 _fnt_inline = S + 0xA0A000;
 _fnt_strmask = S + 0xA1A000;
 _fnt_codeend = S + 0xA2A000;
+_fnt_structmask = S + 0xA3A000;
 _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
 _fnt_hash_mask = 8191;

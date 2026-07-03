@@ -110,6 +110,9 @@
 #   0xA0A000 fn_inline              _fnt_inline
 #   0xA1A000 fn_param_str_mask      _fnt_strmask
 #   0xA2A000 fn_code_end            _fnt_codeend
+#   0xA3A000 fn_param_struct_mask   _fnt_structmask (v6.3.36 issue [5]: bit N =
+#            param N is a plain non-Str struct >8 B → caller address-passes it.
+#            Reclaims the slot ir_nodes vacated at v6.3.28 when it moved to 0x5E9D000.)
 #   0x110000 fn_name_hash (2 B/slot) _fnt_namehash  (grow → rehash)
 #   0x114000 fn_start_hash (2 B/slot) _fnt_starthash (rebuilt per fixup)
 # Initial bases live back-to-back in the band ending at 0x92A000 (the IR
@@ -350,8 +353,9 @@
 #                                                  SIMD args into XMM regs rather than
 #                                                  int-class arg regs.
 #
-# --- cycc IR region (v5.0.0) ---
-#   0xA3A000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
+# --- cycc IR region (v5.0.0; relocated v6.3.28 — see src/common/ir.cyr for the
+#     current bases. ir_nodes/ir_cp moved to the arena top (0x5E9D000/0x6E9D000);
+#     0xA3A000 was reclaimed by fn_param_struct_mask above. ir_blocks etc. unchanged.) ---
 #   0xE3A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
 #   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
 #   0xF3B000 ir_edges     [262144]      32768 CFG edges × 8 bytes
@@ -718,6 +722,7 @@ _fnt_bodyend = S + 0x9FA000;
 _fnt_inline = S + 0xA0A000;
 _fnt_strmask = S + 0xA1A000;
 _fnt_codeend = S + 0xA2A000;
+_fnt_structmask = S + 0xA3A000;
 _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
 _fnt_hash_mask = 8191;

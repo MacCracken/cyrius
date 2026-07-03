@@ -64,8 +64,13 @@ fn main() {
     store32(buf2 + 12,     1);      # long_y
 
     var mw: mixed_widths = buf2;
-    if (mw.flag    != 0xAB)  { syscall(60, 5); }    # i8 load (the v5.9.27 fix)
-    if (mw.pad8    != 0xCD)  { syscall(60, 6); }    # i8 load (offset 1)
+    # v6.3.35: sub-i64 struct fields are SIGNED (the struct-def only recognizes
+    # i8/i16/i32) and now SIGN-EXTEND on load. 0xAB in a signed i8 reads back as -85,
+    # 0xCD as -51. word_a/word_b (111/222) and long_x (54321) are positive in their
+    # widths so their loads are unchanged. Pre-v6.3.35 these i8 fields wrongly
+    # zero-extended (this fixture asserted 0xAB / 0xCD — the buggy behavior).
+    if (mw.flag    != 0 - 85)  { syscall(60, 5); }  # i8 sign-extend (0xAB → -85)
+    if (mw.pad8    != 0 - 51)  { syscall(60, 6); }  # i8 sign-extend (0xCD → -51)
     if (mw.word_a  != 111)   { syscall(60, 7); }
     if (mw.word_b  != 222)   { syscall(60, 8); }
     if (mw.long_x  != 54321) { syscall(60, 9); }

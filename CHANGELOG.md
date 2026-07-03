@@ -6,6 +6,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.36] — 2026-07-02
+
+**v6.3.36 — default-path correctness batch 2/3: struct value semantics + parser + closures.**
+Batch 2 of the 3-way split of the bug inventory. Everything about struct-by-value semantics, two
+parser precedence/parse bugs, and a closure copy. (Batch 1 = sub-i64 loads → .35; batch 3 =
+generics-engine repairs → .37.) All default-path; each verified byte-identical on the differential
+corpus or a logic-preserving correction, cross-OS self-host on ecb/cass/pi.
+
+### Fixed — [5] >8-byte struct passed BY VALUE as a parameter (default-path, x86 + aarch64)
+- **`fn geta(s: S)` where `S` is >8 bytes SIGSEGV'd on any field read.** The callee treats a >8-byte
+  struct param slot as a pointer-to-struct (v6.3.16 `lf_is_ptr`) and dereferences it, but the caller
+  loaded only the struct's first 8 bytes as a value → the callee dereffed `42`-as-an-address → fault.
+  8-byte structs worked (inlined); 12/16/24-byte all faulted. Fix: the caller **address-passes** a bare
+  struct-identifier arg — but *only* when the callee actually declares that param as a plain struct, via
+  a **new per-fn struct-param mask** (`_fnt_structmask`, reclaiming the `0xA3A000` slot `ir_nodes`
+  vacated at v6.3.28). The mask is the reliable discriminator: cyrius tags **both** inline structs and
+  struct *handles* (`Str`, `str_new_a()` results) with `SLTYPE = -sid` and reuses the `-1` slot
+  sentinel for freed block-locals, so no arg-side heuristic works — the callee's declared param type
+  does. `Str`/`Result`/`Option`/`Tagged`/scalar params keep their mask bit clear → value-passed. Tail
+  calls to struct-param callees drop TCO (the epilogue frees the frame the address points into).
+  Byte-identical on the whole corpus (no existing code passes a plain struct >8 B by value).
+### Fixed — [6] `var b: P = a` struct-to-struct copy-init from a local variable (default-path)
+- Copy-initializing a >8-byte struct local from another struct variable **truncated the copy to 8 bytes
+  AND dereferenced the copy as a pointer** → SIGSEGV (or a silently wrong value). `var b: P = mk()`
+  (from a struct-returning fn) already worked; only copy from a variable was broken. Fix: allocate `b`
+  as an inline struct (the same slot-trick as `var b: P;`) and copy all `STRUCTSZ` bytes word-by-word.
+  A true **value** copy — mutating `b` leaves `a` untouched.
+### Fixed — [3] `&&` / `||` operator precedence (default-path)
+- `&&` and `||` shared one flat left-associative loop → equal precedence, so `a || b && c` mis-parsed as
+  `(a || b) && c`. Split into two precedence levels (`&&` binds tighter than `||`). Byte-identical on the
+  corpus (all existing `&&`/`||` mixing is explicitly parenthesized — audited first).
+### Fixed — [4] `for i in IDENT..hi` range mis-parse (default-path)
+- A for-range whose start bound is an identifier (`for i in lo..hi`) failed to compile — the range `..`
+  was greedily consumed as a `.field` access on the start identifier. Fix: a `.` immediately followed by
+  another `.` is the range operator, never field access.
+### Fixed — [9] capturing closure copied to another local (default-path)
+- `var g = f; callptr(g, …)` where `f` is a capturing closure SIGSEGV'd — the `CLOSURE_TYID` tag that
+  makes `callptr` auto-dispatch was set only on the closure-literal binding, not on a copy. Fix:
+  propagate the tag on `var g = f` copy-init.
+### Fixed — closeout: stale v6.3.35 sub-byte struct-field fixture
+- `tests/fixtures/aarch64_cluster/sub_byte_field_load.cyr` asserted the pre-v6.3.35 (buggy)
+  zero-extension of signed `i8` struct fields (`0xAB` → `171`); v6.3.35's sign-extension correctly reads
+  `-85`. Updated the fixture's expected values (a leftover the .35 close missed, like `types.tcyr`).
+
+Verified: `struct_byval_param.tcyr` (10 asserts: by-value param 8/12/16/24-byte + copy-init value
+semantics), `core.tcyr` (for-range identifier bounds), `short_circuit.tcyr` (precedence),
+`closures_capture.tcyr` (closure copy). Self-host fixpoint byte-identical; seed → cybs → cycc
+byte-identical; differential status-diff = 0; check.sh 123; ecb+cass+pi SELFHOST_OK. Bench:
+self_compile **553 ms** (flat within jitter vs .35's 550); cycc **1015928 B** (+16 vs .35 — the
+new `_fnt_structmask` population + caller helper).
+
 ## [6.3.35] — 2026-07-02
 
 **v6.3.35 — default-path correctness batch 1/3: sub-i64 LOAD correctness.**

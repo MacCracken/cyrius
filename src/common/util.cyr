@@ -207,6 +207,9 @@ var _fnt_bodyend = 0;     # 0x9FA000 fn_body_end
 var _fnt_inline = 0;      # 0xA0A000 fn_inline
 var _fnt_strmask = 0;     # 0xA1A000 fn_param_str_mask
 var _fnt_codeend = 0;     # 0xA2A000 fn_code_end
+var _fnt_structmask = 0;  # 0xA3A000 fn_param_struct_mask (v6.3.36 issue [5]): bit N set
+                          # = param N is a plain (non-Str/Result/…) struct >8 B, which
+                          # the callee derefs as a pointer → the caller address-passes it.
 # v6.3.9 (F-fns): per-fn generic type-param names, packed (off0+1) | ((off1+1)<<32),
 # 0 = non-generic fn. LAZY-alloc'd at the first generic capture (SFTP) to the MAX fn
 # cap (32768 slots × 8 B = 256 KB) so it never needs to ride _fnt_grow; stays 0
