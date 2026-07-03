@@ -1382,7 +1382,15 @@ fn PARSE_VAR(S): i64 {
                 # Use the base (the all-i64 instance) only when EVERY arg is i64; any
                 # non-i64 arg (incl. a distinct second param) needs a real instance.
                 var _do_inst = 0;
-                if (_gstc != 0 - 8) { _do_inst = 1; }
+                # v6.3.37 (B1 half-A): _gstc==0 = an UNRESOLVED type-parameter (`var p:
+                # Pair<T>` inside a generic body emitted base-as-i64) — it is the base
+                # all-i64 instance, exactly as the return-type classification treats it,
+                # so the local keeps the base struct sid and matches _cur_fn_ret_sid (the
+                # int-pair/retptr return path then fires). Without this, `_gstc==0 != -8`
+                # instantiated a bogus struct → local sid != ret sid → struct-return
+                # silently degraded to scalar-rax → caller SIGSEGV. (_gstc1==0 is already
+                # excluded by its `!= 0` guard below — same "unresolved = base" rule.)
+                if (_gstc != 0 - 8 && _gstc != 0) { _do_inst = 1; }
                 if (_gstc1 != 0 && _gstc1 != 0 - 8) { _do_inst = 1; }
                 if (_do_inst == 1) {
                     var _ginst = _instantiate_generic_struct(S, _gs_sid - 1, _gstc, _gstc1);
@@ -1632,7 +1640,17 @@ fn PARSE_VAR(S): i64 {
     if ((pscale <= 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
         var _look_ti = GTI(S) + 1;
         if (TOKTYP(S, _look_ti) == 2) {
-            if (TOKTYP(S, _look_ti + 1) == 10) {
+            # v6.3.37 (B1 half-B / B2): recognize a struct-returning call in BOTH the
+            # plain `IDENT (` and the monomorph generic `IDENT < ... > (` shapes. The
+            # RHS-consume path (parse_expr.cyr:375) already handles the generic call;
+            # only this LHS receive-type inference needed the `<`-token widening.
+            var _look_iscall = 0;
+            if (TOKTYP(S, _look_ti + 1) == 10) { _look_iscall = 1; }
+            if (_look_iscall == 0) { if (_MONOMORPH_OK == 1) { if (TOKTYP(S, _look_ti + 1) == 19) {
+                var _look_gfi0 = FINDFN(S, TOKVAL(S, _look_ti));
+                if (_look_gfi0 >= 0) { if (GFTP(S, _look_gfi0) != 0) { _look_iscall = 1; } }
+            } } }
+            if (_look_iscall == 1) {
                 var _look_noff = TOKVAL(S, _look_ti);
                 var _look_fi = FINDFN(S, _look_noff);
                 if (_look_fi >= 0) {
@@ -1721,6 +1739,15 @@ fn PARSE_VAR(S): i64 {
         }
         var asv_fnoff = PEEKV(S);
         STI(S, GTI(S) + 1);                         # consume fn-name IDENT
+        # v6.3.37 (B1 half-B): skip a monomorph `<typeargs>` list between the fn-name
+        # and `(` so `var p: Pair<i64> = mk<i64>(...)` reaches the retptr-receive path.
+        if (_MONOMORPH_OK == 1) { if (PEEKT(S) == 19) {
+            STI(S, GTI(S) + 1);   # consume `<`
+            _ta_pending_gt = 0;
+            _parse_one_type_arg(S);
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
+            _consume_gt(S);
+        } }
         if (PEEKT(S) != 10) {
             ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 47);
         }
@@ -1813,6 +1840,14 @@ fn PARSE_VAR(S): i64 {
         }
         var asp_fnoff = PEEKV(S);
         STI(S, GTI(S) + 1);                         # consume fn-name IDENT
+        # v6.3.37 (B1 half-B): skip a monomorph `<typeargs>` list (see asv_try above).
+        if (_MONOMORPH_OK == 1) { if (PEEKT(S) == 19) {
+            STI(S, GTI(S) + 1);   # consume `<`
+            _ta_pending_gt = 0;
+            _parse_one_type_arg(S);
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
+            _consume_gt(S);
+        } }
         if (PEEKT(S) != 10) {
             ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 47);
         }
@@ -1909,7 +1944,16 @@ fn PARSE_VAR(S): i64 {
     var _ti_inferred_sid = 0;
     if (pscale == 0) { if (scalar_type == 0) {
         if (PEEKT(S) == 2) {
-            if (TOKTYP(S, GTI(S) + 1) == 10) {
+            # v6.3.37 (B2): infer the local's struct type from BOTH a plain `IDENT (`
+            # and a monomorph generic `IDENT < ... > (` call — so `var b = mk<i32>(...)`
+            # types `b` as the struct (its GFRS return sid) and `b.x`/`b.w` parse.
+            var _ti_iscall = 0;
+            if (TOKTYP(S, GTI(S) + 1) == 10) { _ti_iscall = 1; }
+            if (_ti_iscall == 0) { if (_MONOMORPH_OK == 1) { if (TOKTYP(S, GTI(S) + 1) == 19) {
+                var _ti_gfi = FINDFN(S, PEEKV(S));
+                if (_ti_gfi >= 0) { if (GFTP(S, _ti_gfi) != 0) { _ti_iscall = 1; } }
+            } } }
+            if (_ti_iscall == 1) {
                 var _ti_noff = PEEKV(S);
                 var _ti_fi = FINDFN(S, _ti_noff);
                 if (_ti_fi >= 0) {

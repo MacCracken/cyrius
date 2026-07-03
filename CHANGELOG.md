@@ -6,6 +6,70 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.37] — 2026-07-03
+
+**v6.3.37 — default-path correctness batch 3/3: generics-engine repairs (all gated `CYRIUS_MONOMORPH=1`).**
+Batch 3 of the 3-way split of the bug inventory — the monomorphization engine's bug tail from the
+v6.3.34 discovery sweep. **All fixes are behind `CYRIUS_MONOMORPH=1` (experimental, default-off), so
+default codegen is byte-identical** (differential 310/311, status-diff = 0; self-host fixpoint +
+seed → cybs → cycc byte-identical). A **premise-check** first found two of the reported bugs were
+already fixed. (Batch 1 = sub-i64 loads → .35; batch 2 = struct/parser/closure → .36.)
+
+### Fixed — A3: nested explicit type-args clobbered the first binary operand
+- `idg<i64>(idg<i64>(5) + idg<i64>(37))` returned 74 (= 37+37) instead of 42 — the first operand was
+  lost. Root cause (disasm-verified): the monomorph inline-replay path materializes callee args into
+  the enclosing frame via `EFLSTORE`, transiently bumping the frame-slot count and restoring it — so the
+  frame-size patch (which reads the FINAL count) under-reserves, and a live runtime `push rax` (the
+  binary `+`'s left operand) lands at the same address as the inline param slot and gets overwritten.
+  Fix: a per-fn frame-slot **high-water mark** (`_flc_hwm`) so the frame reserves the inline path's peak.
+### Premise-check — A2 / A4 already fixed by the v6.3.35 A1 jump-target snapshot
+- The early-`return`-before-inline-instance (A2) and the outer-generic-first-instantiates-inner (A4)
+  cases both pass on the current compiler — the v6.3.35 `_jt_snapshot`/`_jt_merge` (A1) covered them.
+  Only A3 survived in that cluster (a different mechanism). Regression-covered in the new gate.
+### Fixed — C1: a by-value struct-param call as a bare statement mis-parsed under the flag
+- Under `CYRIUS_MONOMORPH=1`, `f(s);` (a call passing a struct by value, not the sole `return` operand)
+  emitted a spurious `unexpected ';'` — even for a non-generic struct. The inline-candidate classifier
+  marks small fns inlinable, but the inline-replay re-registers the param slot by NAME only, dropping the
+  struct SLTYPE, so `s.field` in the replayed body mis-parses. Fix: exclude any fn with a struct/Str/
+  Result/Option/Tagged param from the inline path → it falls back to a normal/tail call (correct ABI).
+### Fixed — B1 / B2: receiving a multi-field generic struct return
+- A generic fn returning a multi-field generic struct (`fn mk<T>(...): Pair<T>`) SIGSEGV'd (B1), and an
+  inferred receiver `var b = mk<i32>(...)` gave a parse error (B2). Two root causes: (a, callee) `var p:
+  Pair<T>` inside the base emission mis-instantiated a bogus struct for the unresolved type-parameter
+  (`_gstc==0`), so the local's sid != the fn's return sid and the struct-return silently degraded to a
+  scalar-rax return; (b, caller) the LHS receive-type inference + the asv retptr/pair-receive consume
+  path only recognized the `IDENT (` call shape, never `IDENT < ... > (`. Fix: treat an unresolved
+  type-parameter as the base i64 instance, and widen all three receive sites (asv detector, asv consume,
+  inferred-sid detector) to the generic-call token shape.
+### Deferred — B3 (struct type-arg on a generic fn) → v6.3.38
+- Removing the v6.3.33 `-3` guard makes the trivial case (`wrap<i64,Point>` that never dereferences the
+  struct param) work, but the useful case (the body does `b.x`) hard-errors at the fn *definition*: the
+  base-as-i64 emission binds the type-param to `i64`, so `b.x` on a scalar mis-parses. Fixing it needs a
+  base-emission rework (skip/legalize tparam struct-param field access) — the one HIGH-risk, unproven
+  item; scoped as its own v6.3.38 slot (it depends on B1, now landed; was already deferred once at .33).
+### Residual — adversarial re-sweep found two more gated cases → v6.3.38
+- A confirm-the-tail-is-dry re-sweep (4 probe agents) surfaced two residual gated defects the four
+  fixes above don't fully close (both `CYRIUS_MONOMORPH=1`-only → no default impact): (A-broad) an
+  explicit-type-arg 2-arg generic call whose arg0 is a plain expr and arg1 contains a call clobbers
+  arg0 (`add<i64>(8, add<i64>(16,32))` → 64) — the inline-replay arg loop reuses the same frame slot
+  base for a nested inline call (the `_flc_hwm` fix reserved frame *size*, not slot *indices*); and
+  (B-explicit) an explicit non-i64 struct receiver `var m: M<i32> = mk<i32>(...)` hard-errors because
+  the receive check compares the callee's BASE return sid against the var's SPECIALIZED instance sid.
+  Both are the same explicit-type-arg arg-slot / non-i64-receiver surface as B3 — scoped to v6.3.38.
+### Filed — pre-existing ≤8-byte struct-by-value second-call reads 0 (default-path, P2)
+- Surfaced while building the fixture: a ≤8-byte struct local passed by value to the same callee twice
+  reads 0 on the second call (register-allocated struct local vs memory field-store incoherence).
+  Reproduces on the v6.3.35 release binary — pre-existing, NOT from this batch or v6.3.36. Filed for a
+  future slot ([`le8byte-struct-byval-second-call-reads-zero`](docs/development/issues/2026-07-03-le8byte-struct-byval-second-call-reads-zero.md)).
+
+Verified: `_monomorph_repairs_gate` (`tests/fixtures/monomorph/monomorph_repairs.cyr` — A2/A3/A4/C1/B1/B2
+combined, exit 42 under the flag, rejected off); differential status-diff = 0; check.sh 123 → 124;
+fixpoint + seed → cybs → cycc byte-identical; ecb + cass + pi SELFHOST_OK. Bench: self_compile **546 ms**
+(within jitter vs .36's 553); cycc **1,020,040 B** (+4,112 vs .36 — the gated `_flc_hwm` + `<`-token
+receive widening + struct-param inline-exclude). aarch64 monomorph has pre-existing gaps (the feature is
+x86-validated; aarch64 parity is a v6.3.38 FINALIZE concern) — default (flag-off) is byte-identical on
+all arches.
+
 ## [6.3.36] — 2026-07-02
 
 **v6.3.36 — default-path correctness batch 2/3: struct value semantics + parser + closures.**

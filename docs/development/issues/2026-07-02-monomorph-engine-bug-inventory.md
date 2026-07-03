@@ -9,6 +9,13 @@ has accumulated a bug tail; treat as a focused de-risking + completion effort, n
 The sweep confirmed **8 distinct gated miscompiles** (all reproduced by a skeptic verifier). They
 cluster into ~3 root causes.
 
+> **RESOLUTION (v6.3.37, 2026-07-03):** premise-check found **A2 + A4 already fixed** by the v6.3.35 A1
+> `_jt_snapshot`. **A3, C1, B1, B2 fixed** in v6.3.37 (all gated → default byte-identical; verified via
+> a 5-agent root-cause workflow + adversarial re-sweep). **B3 deferred to v6.3.38** (base-emission rework
+> — the one HIGH-risk unproven item; depends on B1, now landed). See CHANGELOG [6.3.37] +
+> `project_v6337_generics_engine_repairs`. A pre-existing default-path bug surfaced while fixing:
+> `2026-07-03-le8byte-struct-byval-second-call-reads-zero.md`.
+
 ## Root cause A — inline-instance emission corrupts the enclosing fn (ROOT-CAUSED)
 
 `_instantiate_generic_fn` emits the specialized body INLINE at the call site (EJMP0 over it,

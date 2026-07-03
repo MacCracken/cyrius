@@ -1058,6 +1058,10 @@ fn PARSE_FNCALL(S, noff): i64 {
                 _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0);
                 # Set local count past the param slots
                 SFLC(S, saved_flc + pc);
+                # v6.3.37 (A3) — record the transient inline param-slot high-water so
+                # the enclosing fn's frame reserves it (see _flc_hwm). Without this the
+                # param slot aliases a live runtime `push rax` and clobbers an operand.
+                if (saved_flc + pc > _flc_hwm) { _flc_hwm = saved_flc + pc; }
                 # Register callee param names as temporary locals (packed in fn_inline)
                 var inl_packed = GFINL(S, fi);
                 var pn0 = inl_packed & 0xFFFFFFFF;
@@ -2686,6 +2690,7 @@ fn PARSE_FN_DEF(S): i64 {
     var saved_lv = GLVAR(S);
     SINFN(S, 1);
     SFLC(S, 0);
+    _flc_hwm = 0;   # v6.3.37 (A3) — reset the inline param-slot high-water per fn
     # v6.0.7 — return-patch storage migrated from fixed array
     # (S + 0x18DA20, cap 256) to rp_vec. Per-fn reset is now
     # vec_truncate(rp_vec, 0); same semantic, bounded memory under the
@@ -3073,6 +3078,21 @@ fn PARSE_FN_DEF(S): i64 {
         # offsets) capacity is untouched. Only fires under _INLINE_OK/_MONOMORPH_OK
         # (this whole block is gated) → default cycc self-host is byte-identical.
         if (btokens > 32) { can_inline = 0; }
+        # v6.3.37 (C1) — a struct/Str/Result/Option/Tagged param (SLTYPE = -sid) cannot
+        # ride the inline-replay path: the replay re-registers the param slot by NAME
+        # only (never re-applying the struct SLTYPE the fn-def set), so `s.field` in the
+        # body mis-parses → spurious 'unexpected ;'. Exclude such fns → they fall back to
+        # a normal/tail call, which handles the struct-param ABI correctly. The param
+        # slots 0..pc-1 still hold their SLTYPE here (body locals take slots >= pc).
+        # f64v2(-20)/f64v4(-21) are register-class (not dot-accessed) → stay inlinable.
+        if (can_inline == 1) {
+            var _psi = 0;
+            while (_psi < pc) {
+                var _pslt = GLTYPE(S, _psi);
+                if (_pslt < 0) { if (_pslt != 0 - 20) { if (_pslt != 0 - 21) { can_inline = 0; } } }
+                _psi = _psi + 1;
+            }
+        }
         if (can_inline == 1) {
             var sci = GFBS(S, fi);
             while (sci < GTI(S)) {
@@ -3731,6 +3751,9 @@ fn PARSE_FN_DEF(S): i64 {
     }
     # Patch frame size
     var flc = GFLC(S);
+    # v6.3.37 (A3) — cover the inline-replay path's transient param-slot peak so a
+    # live runtime `push` can't alias it (inert on default builds — _flc_hwm stays 0).
+    if (_flc_hwm > flc) { flc = _flc_hwm; }
     # v4.8.4-alpha6: #regalloc fns reserve an extra 8-byte slot at
     # [rbp-8] for the saved rbx. Bumping flc by 1 pre-rounding keeps
     # the 16-byte alignment formula valid — call-site rsp stays 16-

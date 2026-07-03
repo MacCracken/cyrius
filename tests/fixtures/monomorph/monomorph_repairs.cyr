@@ -1,0 +1,62 @@
+# Fixture for _monomorph_repairs_gate (v6.3.37 — batch 3/3 generics-engine repairs).
+#
+# Exercises the monomorph-engine bugs fixed in v6.3.37, each with a DISTINGUISHING
+# value (the pre-fix behavior pushes the total off 42):
+#   A2  early `return` before a first-use inline instance (fixed .35 A1; regression-guard)
+#   A3  nested explicit type-args — the first operand of a binary arg was clobbered by
+#       the inline-replay path's transient param slot aliasing a live runtime `push`
+#       (frame under-reservation → the _flc_hwm fix).
+#   A4  a generic fn whose body first-instantiates another generic (arg-dependent).
+#   C1  a by-value struct-param call as a bare STATEMENT + as an operand — the inline
+#       classifier now excludes struct-param fns (their SLTYPE can't ride the replay).
+#   B1  a generic fn returning a MULTI-FIELD generic struct — both fields read correctly
+#       (callee `_gstc==0` keeps the base sid; caller `<`-token receive path recognized).
+#   B2  an INFERRED receiver `var b = mk2<i32>(...)` of a generic struct-returning call.
+#
+# Compiles + runs ONLY under CYRIUS_MONOMORPH=1 (gated; default codegen byte-identical).
+# MUST exit 42.
+
+var _c1_seen = 0;                                     # C1 side-effect witness
+
+struct Pair<T> { a: T; b: T; }
+struct Two<T> { x: T; w: T; }
+struct S { v: i64; }
+
+fn idg<T>(a: T): T { return a; }
+fn inner<T>(a: T): T { return a + 1; }
+fn outer<T>(a: T): T { return inner<T>(a); }          # A4: outer(a) = inner(a) = a+1
+fn mk<T>(x: T, y: T): Pair<T> { var p: Pair<T>; p.a = x; p.b = y; return p; }
+fn mk2<T>(p: T, q: T): Two<T> { var t: Two<T>; t.x = p; t.w = q; return t; }
+fn getv(s: S): i64 { _c1_seen = s.v; return s.v; }    # struct-by-value param + side effect
+
+fn a2test(): i64 { return 1; return idg<i64>(99); }   # A2: early return → 1 (not 99)
+
+fn main(): i64 {
+    var r = 0;
+
+    r = r + a2test();                                 # A2: +1  = 1
+
+    # A3: nested explicit type-args — 3+4 = 7 (the bug returned 4+4 = 8).
+    r = r + idg<i64>(idg<i64>(3) + idg<i64>(4));      # +7  = 8
+
+    # A4: generic body first-instantiates another generic — outer(3) = 4.
+    r = r + outer<i64>(3);                            # +4  = 12
+
+    # C1: a by-value struct-param call as a bare STATEMENT (pre-fix: spurious
+    # 'unexpected ;' under the flag). Read the side effect via a global — a SECOND
+    # call to getv(s) would trip a separate pre-existing ≤8-byte-struct-by-value
+    # register-coherence bug (see issue 2026-07-03-le8byte-struct-byval-second-call).
+    var s: S; s.v = 5;
+    getv(s);                                          # statement must PARSE + run → _c1_seen = 5
+    r = r + _c1_seen;                                 # +5  = 17
+
+    # B1: generic multi-field struct return — both fields (pre-fix: SIGSEGV / 2nd field 0).
+    var p: Pair<i64> = mk<i64>(10, 5);
+    r = r + p.a + p.b;                                # +15 = 32
+
+    # B2: inferred receiver of a generic struct-returning call, sub-i64 fields.
+    var b = mk2<i32>(7, 3);
+    r = r + b.x + b.w;                                # +10 = 42
+
+    return r;
+}

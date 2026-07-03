@@ -527,6 +527,51 @@ fn _generics_tail_gate(): i64 {
     return fail;
 }
 
+# v6.3.37 (batch 3/3): the generics-engine repairs. Compiles one fixture that
+# exercises A2 (early return before an inline instance), A3 (nested explicit
+# type-args — first operand no longer clobbered by the inline-replay frame
+# under-reservation), A4 (generic body first-instantiates another generic), C1
+# (a by-value struct-param call as a bare statement now parses — struct-param fns
+# excluded from the inline-replay path), and B1/B2 (a generic fn returning a
+# multi-field generic struct received via an explicit `var p: Pair<i64> = mk<i64>`
+# and an inferred `var b = mk2<i32>`). MUST exit 42 under the flag; rejected off.
+fn _monomorph_repairs_gate(): i64 {
+    var label = "v6.3.37 generics-engine repairs: A2/A3/A4/C1/B1/B2 run under CYRIUS_MONOMORPH=1 (exit 42), gated off";
+    var src = _root_path("tests/fixtures/monomorph/monomorph_repairs.cyr");
+    var fail = 0;
+    var bin_on = _tmp_path("audit_monorep_on_");
+    var rc_on = _self_host_pipe_env(src, CC_PATH, bin_on, "CYRIUS_MONOMORPH=1");
+    if (rc_on != 0) {
+        sys_unlink(bin_on);
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON monomorph-repairs compile failed rc="); print_num(rc_on); println("");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin_on, 493);
+    var ec_on = _pipe_file_to_bin(bin_on, src);
+    sys_unlink(bin_on);
+    if (ec_on != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": flag-ON monomorph-repairs program exit "); print_num(ec_on); println(" (expected 42)");
+        fail = fail + 1;
+    }
+    var bin_off = _tmp_path("audit_monorep_off_");
+    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    sys_unlink(bin_off);
+    if (rc_off == 0) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        println(": flag-OFF compiled monomorph-repairs — the feature is NOT gated");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": A3 frame-hwm + C1 struct-param inline-exclude + B1/B2 generic-struct-return receive run under the flag, gated off");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _async_await_gate(): i64 {
     var label = "v6.3.11 G: async fn / await → first-class Futures over the epoll runtime, run under CYRIUS_ASYNC=1 (exit 42), gated off";
     var src = _root_path("tests/fixtures/async/async_await.cyr");

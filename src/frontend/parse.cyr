@@ -60,6 +60,14 @@ var _cur_fn_is_pure = 0;
 # Codegen uses this to compute displacement shifts (N*8 bytes reserved)
 # and to save/restore the correct set of callee-saved registers.
 var _cur_fn_regalloc = 0;
+# v6.3.37 (A3) — per-fn frame-slot high-water mark. The monomorph/inline-replay
+# path (parse_fn.cyr, gated _INLINE_OK||_MONOMORPH_OK) transiently bumps GFLC to
+# materialize callee args into enclosing-frame slots, then restores it — so the
+# frame-size patch (which reads the FINAL GFLC) under-reserves, and a live runtime
+# `push rax` (a binary operand) aliases the transient inline param slot. This
+# records the peak so the frame reserves it. Raised ONLY in the flagged replay
+# path; stays 0 on default builds → frame size byte-identical.
+var _flc_hwm = 0;
 # v6.3.7 — set to 1 when the current fn emits a closure literal. Closures are
 # emitted INLINE in the enclosing fn's code range (jumped over), so the enclosing
 # fn's regalloc post-pass — a byte-scan that NOP-patches + reallocates locals —
