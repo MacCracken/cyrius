@@ -1,5 +1,10 @@
 # `alloc_reset()` rewinds the bump pointer without zeroing; reused first-chunk memory leaks the prior occupant's bytes
 
+> **SCHEDULED → v6.4.1** (user 2026-07-03), right after the v6.4.0 `CYRIUS_MONOMORPH` default-on
+> flip. Deliberately NOT folded into the byte-identical v6.3.45 closeout (a real lib security fix
+> deserves its own slot + the security process: severity → fix → verify → re-audit). See
+> roadmap_6.md "Pinned to v6.4.1".
+>
 > **OPEN** — filed 2026-07-03 by **daimon** (consumer), against cyrius 6.3.43.
 > `lib/alloc.cyr` `alloc_reset()` (lines 228–236). A **memory-reuse information-leak** in the bump allocator: the only point the allocator hands the same address to a different owner is `alloc_reset()`, and it does not zero the reclaimed span. Same bug class as **CVE-2026-34988** (Wasmtime) / **CVE-2022-39393**. Consumers cannot fix it (the stdlib owns both the allocator and — via sandhi — the reset call site), so it must be fixed here.
 

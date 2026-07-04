@@ -977,6 +977,25 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
   self-host** on ecb/cass/pi real hardware; (4) the two-step bootstrap holds. Only after (1)-(4)
   green does the default flip; the env var then becomes an opt-**out** (`CYRIUS_MONOMORPH=0`).
 
+### Pinned to v6.4.1 (user-committed)
+
+- **`alloc_reset()` memory-reuse info-leak fix** — pinned to **v6.4.1**, right after the v6.4.0
+  monomorph flip (user 2026-07-03). Consumer-filed by **daimon** against v6.3.43: `lib/alloc.cyr`
+  `alloc_reset()` (lines ~228-236) rewinds the bump pointer (`_heap_base`/`_heap_ptr`/`_heap_end` to
+  the first chunk, `_heap_used = 0`) **without zeroing the reclaimed span** — so the next allocation
+  reuses first-chunk addresses while the prior occupant's bytes are still resident, leaking them into
+  the new owner. `alloc_reset()` is the ONLY point the bump allocator hands the same address to a
+  different owner (everywhere else it moves forward onto kernel-zeroed anonymous pages), so this one
+  function is the entire reuse channel. Same class as CVE-2026-34988 (Wasmtime) / CVE-2022-39393.
+  **Severity Low → High** (Low for a single-trust-domain consumer; High the moment one allocator is
+  handed to two logical owners across a reset — multi-tenant hosting, sandboxing, untrusted
+  federation, tool-callback response data sharing the heap). Consumers can't fix it (the stdlib owns
+  both the allocator and, via sandhi, the reset call site). Fix = zero `[_heap_first_base, old
+  _heap_ptr)` on reset (memset the used span before rewinding), plus a regression test that a value
+  written before a reset reads back zero after. Runs the security process (severity → fix → verify →
+  re-audit the reset call sites). Not folded into the v6.3.45 byte-identical closeout (scope
+  discipline). [`alloc-reset-no-zero-reused-memory`](issues/2026-07-03-alloc-reset-no-zero-reused-memory.md).
+
 ### Pinned to the v6.4.x TAIL (user-committed)
 
 - **Intel-Mac arc (x86-macho)** — moved out of v6.3.x to the **END of the v6.4.x line** (user
