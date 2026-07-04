@@ -2028,7 +2028,10 @@ sakshi::sakshi_span_enter/2
 sakshi::sakshi_span_exit/0
 sakshi::sakshi_trace/2
 sakshi::sakshi_trace_id/0
+sakshi::sakshi_trace_id_hi/0
+sakshi::sakshi_trace_id_lo/0
 sakshi::sakshi_trace_set/1
+sakshi::sakshi_trace_set_128/2
 sakshi::sakshi_warn/2
 sandhi::sandhi_alpn_encode_protos/3
 sandhi::sandhi_ap_activate_app/3

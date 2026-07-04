@@ -962,20 +962,23 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
    `_`-prefix cross-file-call audit** — it decides whether derive-from-`_` is truly zero-churn.
    [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md).
 
-### Pinned to v6.4.0 (user-committed)
+### v6.4.0 — SHIPPED: `CYRIUS_MONOMORPH` default-on flip
 
-- **`CYRIUS_MONOMORPH` default-on flip** — pinned to **v6.4.0** (user 2026-07-03; held from
-  v6.3.39 where the generics arc closed). The whole generics feature (fn + struct generics,
-  scalar + struct type-args, explicit + inferred receivers, cross-target — x86 + aarch64 + Windows
-  + macOS) is verified correct behind `CYRIUS_MONOMORPH=1` as of v6.3.39, but the flag stays
-  **opt-in** until this dedicated de-risking slot: flipping default-**on** makes `_MONOMORPH_OK==1`
-  for ALL compilation, which changes the pass-1 `SKIP_GENERICS` behavior + the inline-replay path
-  for *every* program, not just generic ones. **Flip criteria (all required before the flip):**
-  (1) a **flag-ON differential** over the full corpus with **status-diff = 0** (non-generic code
-  byte-identical or logic-preserving with the flag forced on); (2) **flag-ON cycc self-host**
-  byte-identical fixpoint (cycc compiling itself with `CYRIUS_MONOMORPH=1`); (3) **flag-ON cross-OS
-  self-host** on ecb/cass/pi real hardware; (4) the two-step bootstrap holds. Only after (1)-(4)
-  green does the default flip; the env var then becomes an opt-**out** (`CYRIUS_MONOMORPH=0`).
+- **`CYRIUS_MONOMORPH` default-on flip — SHIPPED v6.4.0** (2026-07-03). Generics are now on by
+  default; `CYRIUS_MONOMORPH=0` is the opt-out. **All four pinned flip criteria met:** (1) flag-on
+  differential **status-diff = 0 / codegen-diff = 0** over the 322-input corpus (both default + DCE
+  modes — byte-identical for every existing program); (2) flag-on cycc self-host byte-identical
+  fixpoint; (3) flag-on cross-OS self-host on **ecb + cass + pi** real hardware (SELFHOST_OK +
+  LIBTEST_OK); (4) two-step bootstrap + seed → cybs → cycc byte-identical. **The flip was NOT a
+  one-line default-invert — two prerequisites (which is why it was a dedicated slot):** (a) DECOUPLE
+  monomorph from GENERAL inlining — the shared `_INLINE_OK || _MONOMORPH_OK` capture gate re-enabled
+  general function inlining under the flag (the v1.11.3 x86 size regression, +25.6% on cycc); gated
+  the capture to generic fns only (`GFTP != 0`); (b) narrow the v6.3.29 frame-trim `_MONOMORPH_OK`
+  blanket to `_MONOMORPH_OK == 1 && GFTP(S, fi) != 0` (passing `fi` into `_ra_frame_trim`) so the trim
+  runs for non-generic fns under the flag (base + instances share the generic `fi`). With both, cycc
+  is byte-identical flag-on vs flag-off. Gate semantics updated: generics-gate rejection checks use
+  `CYRIUS_MONOMORPH=0`; the v6.3.5 substrate gate repurposed to prove the decouple (monomorph leaves
+  non-generic fns un-inlined). See CHANGELOG [6.4.0]. **Generics are now a default-on language feature.**
 
 ### Pinned to v6.4.1 (user-committed)
 

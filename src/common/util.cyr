@@ -270,7 +270,7 @@ var _fnt_cap = 0;
 # capture gates OR `_INLINE_OK == 1 || _MONOMORPH_OK == 1`. Type substitution
 # (generics) builds on this in v6.3.7; v6.3.5 only proves the value-replay
 # substrate is byte-correct cross-arch behind the flag.
-var _MONOMORPH_OK = 0;
+var _MONOMORPH_OK = 1;
 # v6.3.29 — callee-saved frame-trim (CYRIUS_FRAMETRIM). Every #regalloc fn saves+
 # restores ALL _cur_fn_regalloc callee-saved regs (rbx,r12-r15) in prologue/epilogue,
 # even when the linear-scan picker used FEWER. Since the picker allocates lowest-first

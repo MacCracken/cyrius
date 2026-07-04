@@ -176,8 +176,8 @@ var jmp_patch = EJMP0(S);
 # v6.3.33 fix landed in main.cyr only). Default (env unset) → byte-identical.
 var _mono_env = _read_env("CYRIUS_MONOMORPH");
 if (_mono_env != 0) {
-    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
-        _MONOMORPH_OK = 1;
+    if (load8(_mono_env) == 48 && load8(_mono_env + 1) == 0) {
+        _MONOMORPH_OK = 0;
     }
 }
 

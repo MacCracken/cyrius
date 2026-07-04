@@ -1167,8 +1167,8 @@ EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 # (env unset) → _MONOMORPH_OK stays 0 → pass-1 SKIP_GENERICS unchanged → byte-identical.
 var _mono_env = _read_env("CYRIUS_MONOMORPH");
 if (_mono_env != 0) {
-    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
-        _MONOMORPH_OK = 1;
+    if (load8(_mono_env) == 48 && load8(_mono_env + 1) == 0) {
+        _MONOMORPH_OK = 0;
     }
 }
 

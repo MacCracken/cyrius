@@ -399,8 +399,8 @@ _TARGET_MACHO = 2;
 # v6.3.5 AR-01 — opt-in monomorphization substrate (CYRIUS_MONOMORPH=1; default off; see util.cyr).
 var _mono_env = _read_env("CYRIUS_MONOMORPH");
 if (_mono_env != 0) {
-    if (load8(_mono_env) == 49 && load8(_mono_env + 1) == 0) {
-        _MONOMORPH_OK = 1;
+    if (load8(_mono_env) == 48 && load8(_mono_env + 1) == 0) {
+        _MONOMORPH_OK = 0;
     }
 }
 

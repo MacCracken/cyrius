@@ -324,12 +324,12 @@ fn _tls_freestanding_link_gate(): i64 {
 # without changing default codegen (_MONOMORPH_OK defaults 0). Type substitution
 # (generics) builds on this in v6.3.7.
 fn _monomorph_substrate_gate(): i64 {
-    var label = "v6.3.5 AR-01: CYRIUS_MONOMORPH=1 replays an in-fn inline byte-correct (exit 42 both, binaries differ)";
+    var label = "v6.4.0 decouple: monomorph (default-on) does NOT inline non-generic fns — byte-identical to CYRIUS_MONOMORPH=0 (exit 42 both)";
     var src = _root_path("tests/fixtures/monomorph/inline_proof.cyr");
-    var bin_off = _tmp_path("audit_mono_off_");
-    var bin_on  = _tmp_path("audit_mono_on_");
-    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
-    var rc_on  = _self_host_pipe_env(src, CC_PATH, bin_on, "CYRIUS_MONOMORPH=1");
+    var bin_off = _tmp_path("audit_mono_off_");   # CYRIUS_MONOMORPH=0 (opt-out)
+    var bin_on  = _tmp_path("audit_mono_on_");    # default (monomorph ON post-v6.4.0 flip)
+    var rc_off = _self_host_pipe_env(src, CC_PATH, bin_off, "CYRIUS_MONOMORPH=0");
+    var rc_on  = _self_host_pipe(src, CC_PATH, bin_on);
     if (rc_off != 0 || rc_on != 0) {
         sys_unlink(bin_off); sys_unlink(bin_on);
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
@@ -370,14 +370,14 @@ fn _monomorph_substrate_gate(): i64 {
             i = i + 1;
         }
     }
-    if (same == 1) {
+    if (same == 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
-        println(": flag-ON binary identical to flag-off — inline capture did not fire (substrate inert)");
+        println(": monomorph-on binary DIFFERS from CYRIUS_MONOMORPH=0 — monomorph inlined a non-generic fn (the v6.4.0 decouple regressed)");
         fail = fail + 1;
     }
     if (fail == 0) {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
-        println(": monomorph token-replay substrate is byte-correct (exit 42 both) and active (binaries differ)");
+        println(": monomorph (default-on) leaves non-generic fns un-inlined — byte-identical to the opt-out (decouple holds)");
     }
     _check(label, fail);
     return fail;
@@ -415,7 +415,7 @@ fn _generics_fn_i64_gate(): i64 {
     # (2) gated: flag-OFF must REJECT the `: T` generic return — proves the feature
     # cannot affect default codegen (the release-gate differential confirms the rest).
     var bin_off = _tmp_path("audit_genfn_off_");
-    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    var rc_off = _self_host_pipe_env(src, CC_PATH, bin_off, "CYRIUS_MONOMORPH=0");
     sys_unlink(bin_off);
     if (rc_off == 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
@@ -458,7 +458,7 @@ fn _generics_full_gate(): i64 {
         fail = fail + 1;
     }
     var bin_off = _tmp_path("audit_genfull_off_");
-    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    var rc_off = _self_host_pipe_env(src, CC_PATH, bin_off, "CYRIUS_MONOMORPH=0");
     sys_unlink(bin_off);
     if (rc_off == 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
@@ -500,7 +500,7 @@ fn _generic_closure_gate(): i64 {
         fail = fail + 1;
     }
     var bin_off = _tmp_path("audit_genclo_off_");
-    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    var rc_off = _self_host_pipe_env(src, CC_PATH, bin_off, "CYRIUS_MONOMORPH=0");
     sys_unlink(bin_off);
     if (rc_off == 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
@@ -541,7 +541,7 @@ fn _async_closure_generic_gate(): i64 {
         fail = fail + 1;
     }
     var bin_off = _tmp_path("audit_asyncclo_off_");
-    var rc_off = _self_host_pipe_env(src, CC_PATH, bin_off, "CYRIUS_ASYNC=1");
+    var rc_off = _self_host_pipe_env2(src, CC_PATH, bin_off, "CYRIUS_ASYNC=1", "CYRIUS_MONOMORPH=0");
     sys_unlink(bin_off);
     if (rc_off == 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
@@ -584,7 +584,7 @@ fn _generics_tail_gate(): i64 {
         fail = fail + 1;
     }
     var bin_off = _tmp_path("audit_gentail_off_");
-    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    var rc_off = _self_host_pipe_env(src, CC_PATH, bin_off, "CYRIUS_MONOMORPH=0");
     sys_unlink(bin_off);
     if (rc_off == 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
@@ -640,7 +640,7 @@ fn _monomorph_repairs_gate(): i64 {
         fail = fail + 1;
     }
     var bin_off = _tmp_path("audit_monorep_off_");
-    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    var rc_off = _self_host_pipe_env(src, CC_PATH, bin_off, "CYRIUS_MONOMORPH=0");
     sys_unlink(bin_off);
     if (rc_off == 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
@@ -677,7 +677,7 @@ fn _generics_struct_abi_gate(): i64 {
         fail = fail + 1;
     }
     var bin_off = _tmp_path("audit_gsa_off_");
-    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    var rc_off = _self_host_pipe_env(src, CC_PATH, bin_off, "CYRIUS_MONOMORPH=0");
     sys_unlink(bin_off);
     if (rc_off == 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
@@ -714,7 +714,7 @@ fn _async_await_gate(): i64 {
         fail = fail + 1;
     }
     var bin_off = _tmp_path("audit_async_off_");
-    var rc_off = _self_host_pipe(src, CC_PATH, bin_off);
+    var rc_off = _self_host_pipe_env(src, CC_PATH, bin_off, "CYRIUS_MONOMORPH=0");
     sys_unlink(bin_off);
     if (rc_off == 0) {
         _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);

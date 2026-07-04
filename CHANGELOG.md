@@ -6,6 +6,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.0] — 2026-07-03
+
+**v6.4.0 — `CYRIUS_MONOMORPH` default-on flip: generics are now on by default.** Opens the v6.4.x
+minor. Generic fns + structs (scalar + struct type-args, explicit + inferred receivers, cross-target)
+compile WITHOUT the env flag; `CYRIUS_MONOMORPH=0` is the opt-out. The whole generics feature was
+verified correct behind the flag as of v6.3.39; this slot de-risked the DEFAULT flip. cycc **byte-
+identical** (1,024,552 B — flag-on self-host == flag-off, since cycc has no generics); self-host
+fixpoint + seed → cybs → cycc byte-identical; check.sh 128; **ecb + cass + pi SELFHOST_OK + LIBTEST_OK**;
+differential status-diff=0 / codegen-diff=0 (byte-identical over the whole 322-input corpus, both
+modes); self_compile 559 ms.
+
+### The flip was NOT a one-line default-invert — two prerequisites (the reason it was a dedicated slot)
+- **Prerequisite 1 — decouple monomorph from GENERAL inlining.** `_MONOMORPH_OK` shared the inline-
+  capture gate with `_INLINE_OK` (`_INLINE_OK == 1 || _MONOMORPH_OK == 1` in parse_fn.cyr), so flipping
+  monomorph on also re-enabled general function inlining for EVERY program — the v1.11.3 x86 size
+  regression that got `_INLINE_OK` disabled by default (measured **+25.6%** on a flag-on cycc self-host:
+  1.02 MB → 1.29 MB). Fix: gate the capture to generic fns only — `_INLINE_OK == 1 || (_MONOMORPH_OK ==
+  1 && GFTP(S, fi) != 0)` (both the SFBS body-start and the SFBE classify sites). Non-generic codegen is
+  now byte-identical under the flag; general inlining stays opt-in behind `_INLINE_OK` (default 0).
+- **Prerequisite 2 — narrow the frame-trim blanket.** The v6.3.29 callee-saved frame-trim was disabled
+  under monomorph by a broad `if (_MONOMORPH_OK != 0) return` (to protect token-replayed generic
+  INSTANCES, whose regalloc picker is skipped → stale `_ra_used_n=0` → a trim would drop live saves).
+  That blanket disabled the trim for EVERY fn under the flag — a further +16 KB the moment the default
+  flips. Narrowed to `if (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) return` (passing `fi` into
+  `_ra_frame_trim`): a generic fn's base AND all its instances share the generic `fi` (GFTP != 0), so
+  this covers exactly the picker-skipped cases while leaving every non-generic fn trimmed. cycc has zero
+  generic fns → every fn trims → byte-identical. (Empirically: without this precise signal, the earlier
+  broad/loose attempts either regressed cycc +12–16 KB or SIGSEGV'd generics_full/tail/struct_abi.)
+
+With both prerequisites, **flag-on cycc == flag-off cycc byte-for-byte**, and all six generics fixtures
+(fn_i64 / full / tail / repairs / struct_abi / generic_closure) exit 42 — so flipping the default is a
+byte-identical change to every existing (non-generic) program.
+
+### Changed — the flip + gate semantics
+- `_MONOMORPH_OK` default 0 → 1 (`src/common/util.cyr`); all SEVEN driver forks (main, main_aarch64,
+  main_win, main_x86_macho, main_aarch64_macho, main_cx, main_aarch64_native) now read
+  `CYRIUS_MONOMORPH` as an OPT-OUT (`=0` sets `_MONOMORPH_OK = 0`) instead of an opt-in.
+- Generics gates' flag-off / rejection checks now compile with `CYRIUS_MONOMORPH=0` (the opt-out) rather
+  than no-env (which is default-on now). The v6.3.5 `_monomorph_substrate_gate` is **repurposed** — it
+  used non-generic `add1`/`twice` to prove general inlining fired under the flag, which the decouple
+  removes; it now proves the inverse (monomorph-on leaves non-generic fns un-inlined, byte-identical to
+  the opt-out — i.e. the decouple holds).
+
+### Verified — the four pinned flip criteria
+1. flag-on differential status-diff = 0 (byte-identical corpus, both default + DCE modes); 2. flag-on
+cycc self-host byte-identical fixpoint; 3. flag-on cross-OS self-host on ecb + cass + pi real hardware;
+4. two-step bootstrap + seed → cybs → cycc byte-identical.
+
+### Folded — stdlib
+- **sakshi 2.4.2 → 2.4.4** (`lib/sakshi.cyr`). 2.4.4 adds **128-bit trace-id support** in `span.cyr`:
+  `sakshi_trace_set_128(hi, lo)` + `sakshi_trace_id_hi()` / `sakshi_trace_id_lo()` preserve a full W3C
+  `traceparent` 128-bit trace-id instead of folding it to 64 bits (+3 public fns; 2.4.3 was a pin-only
+  bump, no code change). Content-identity sweep confirmed sakshi was the ONLY vendored lib drifted from
+  its source dist (bayan/ganita/mabda/niyama/patra/sandhi/sankoch/sigil/vani/yantra/yukti all identical).
+  api-surface snapshot regenerated: exactly +3 additions / 0 removals (4436 → 4439). Lib-only → cycc
+  byte-identical (sakshi is not in the compiler).
+
+### Follow-ups
+- `CYRIUS_MONOMORPH=1` in existing gates/scripts is now redundant (default) but harmless (no-op).
+- Next: v6.4.1 = the `alloc_reset()` info-leak fix, then the v6.4.x opening sequence (integer SIMD →
+  array-typed struct fields → UEFI signing → pub/private).
+
 ## [6.3.45] — 2026-07-03
 
 **v6.3.45 — v6.3.x minor CLOSEOUT (before v6.4.0).** The last v6.3.x patch: cross-feature
