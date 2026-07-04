@@ -748,6 +748,65 @@ fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv): i64 {
     return load32(&status_buf);
 }
 
+# v6.3.45: like _self_host_pipe_env but injects TWO env vars — for a fixture that
+# needs two feature gates at once (e.g. async_closure_generic.cyr = CYRIUS_ASYNC=1
+# + CYRIUS_MONOMORPH=1). Returns the child's exit status, or a negative setup error.
+fn _self_host_pipe_env2(src_path, compiler_path, out_path, env_kv1, env_kv2): i64 {
+    var src_cap = 2000000;
+    var src_buf = alloc(src_cap);
+    var src_n = file_read_all(src_path, src_buf, src_cap);
+    if (src_n <= 0) { return 0 - 1; }
+    var out_fd = sys_open(out_path, 577, 420);
+    if (out_fd < 0) { return 0 - 2; }
+    var pipefd[16];
+    var pr = sys_pipe(&pipefd);
+    if (pr < 0) { sys_close(out_fd); return 0 - 3; }
+    var read_fd = load32(&pipefd);
+    var write_fd = load32(&pipefd + 4);
+    # Augmented envp: parent's ENVP_ARR + env_kv1 + env_kv2 + null.
+    var aug_envp = alloc((ENVP_COUNT + 3) * 8);
+    var ei = 0;
+    while (ei < ENVP_COUNT) {
+        store64(aug_envp + ei * 8, load64(ENVP_ARR + ei * 8));
+        ei = ei + 1;
+    }
+    store64(aug_envp + ENVP_COUNT * 8, env_kv1);
+    store64(aug_envp + (ENVP_COUNT + 1) * 8, env_kv2);
+    store64(aug_envp + (ENVP_COUNT + 2) * 8, 0);
+
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(read_fd); sys_close(write_fd); sys_close(out_fd);
+        return 0 - 4;
+    }
+    if (pid == 0) {
+        sys_close(write_fd);
+        sys_dup2(read_fd, 0);
+        sys_close(read_fd);
+        sys_dup2(out_fd, 1);
+        sys_close(out_fd);
+        var devnull = sys_open("/dev/null", 1, 0);
+        if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
+        var argv[24];
+        store64(&argv,     compiler_path);
+        store64(&argv + 8, 0);
+        sys_execve(compiler_path, &argv, aug_envp);
+        sys_exit(127);
+    }
+    sys_close(read_fd);
+    sys_close(out_fd);
+    var written = 0;
+    while (written < src_n) {
+        var w = sys_write(write_fd, src_buf + written, src_n - written);
+        if (w <= 0) { written = src_n; }
+        else { written = written + w; }
+    }
+    sys_close(write_fd);
+    var status_buf2[1];
+    sys_waitpid(pid, &status_buf2, 0);
+    return load32(&status_buf2);
+}
+
 fn _self_host_gate(): i64 {
     _section("Self-Hosting");
     var src = _root_path("src/main.cyr");

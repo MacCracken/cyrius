@@ -6,6 +6,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.3.45] — 2026-07-03
+
+**v6.3.45 — v6.3.x minor CLOSEOUT (before v6.4.0).** The last v6.3.x patch: cross-feature
+integration coverage + the minor-close judgment-call audits (heap-map / dead-code / refactor /
+code-review / cleanup / security, run as an 8-agent workflow) + doc-hygiene + issue triage. **Ships
+code** (integration tests + gates), not docs-only. cycc **byte-identical** (1,024,552 B — the
+closeout adds tests, gates, comments, and issue docs; no cycc codegen change). Self-host fixpoint +
+seed → cybs → cycc byte-identical; **check.sh 126 → 128**; ecb + cass + pi SELFHOST_OK + LIBTEST_OK;
+self_compile ~565 ms. **Heap map: 135 region entries, 56 live regions, 0 overlaps. DCE floor: 61
+unreachable fns / 24,239 bytes** (all documented false-positive classes — ~24 public stdlib fns dead
+in cycc but exercised by tcyr/benches/downstream, ~15 cross-arch/gated backend stubs; no removal).
+
+### Added — cross-feature integration tests (the v6.3.x language features composed)
+- `tests/tcyr/integration_closures_threads.tcyr` (DEFAULT path): lexical-capture closures × per-thread
+  stack array-locals × concurrency (thread_create/join + the .44 single-owner mutex) — N workers each
+  build+dispatch a per-thread capturing closure and fold under the lock; a cross-thread capture/frame
+  bug would corrupt the asserted sum.
+- `tests/fixtures/monomorph/generic_closure.cyr` (GATED, CYRIUS_MONOMORPH=1): generic fns × capturing
+  closures compose (a closure whose body calls a generic fn; a closure capturing a generic-call
+  result). Gate `_generic_closure_gate` — exit 42 on-flag, rejected off.
+- `tests/fixtures/async/async_closure_generic.cyr` (DOUBLE-GATED, CYRIUS_ASYNC=1 + CYRIUS_MONOMORPH=1):
+  an `async fn` body builds a closure capturing a generic-call result — the triple combo. Gate
+  `_async_closure_generic_gate` (uses a new `_self_host_pipe_env2` two-env helper) — exit 42 both-flags,
+  rejected if either off. De-risks the two gated language features flipping on together at v6.4.0.
+- check.sh 126 → **128** (the two new integration gates).
+
+### Changed — doc-hygiene sweep (heap-map map drift + stale binary names; all byte-identical to cycc)
+- `src/main.cyr` heap-map: marked the stale `0xF7B000 ir_cp` entry FREED (relocated to the arena top
+  at v6.3.28) + added the `0x5E9D000 ir_nodes [16 MB]` / `0x6E9D000 ir_cp [4 MB]` region entries;
+  corrected the `brk-final` marker + mmap-size comment (said ~94.6 MB / 0x5E9D000, actual ~115 MB /
+  0x7300000 after the v6.3.28 +20 MB IR arena); documented the live DCE-warning scratch slots
+  (0x18FCD8/0x18FCE0) and the lex_pp `#derive` scratch band (0x1FC000/0x1FE000/0x200000).
+- `src/main_aarch64_native.cyr` + `src/main_win.cyr`: struct_ftypes/struct_fnames region size
+  `[16384] 64 structs × 32 fields` → `[65536] PACKED field pool (v6.0.47)` to match main.cyr.
+- Stale binary names: `cc3cx` → `cycc_cx` (main_cx.cyr), `cc5_win_linux` → `cycc_win` (main_win.cyr),
+  gvar_toks cap `64 slot limit` → `4096` (lib/syscalls_x86_64_linux.cyr; snapshot refreshed).
+
+### Housekeeping
+- Archived the two .44-resolved issues to `issues/archived/` (le8byte-struct-byval-2nd-call →
+  RESOLVED v6.3.39; monomorph-inline-instance-clobbers A1 → RESOLVED v6.3.35); CHANGELOG links
+  repointed. Deleted the orphaned `tests/fixtures/type_check/str_to_cstr.cyr` (no runner, prior-major
+  `cc5`, a promised v5.10.2 gate never landed).
+- **Filed** (audit findings that touch codegen / need a self-host+differential pass → v6.4.x-early, not
+  a byte-identical closeout): `2026-07-03-v6345-closeout-audit-backlog` (5 refactor consolidations of
+  the ".44 EMIT_GVAR_INITS parallel-copy class" — PARSE_FIELD_LOAD/STORE, EWRITE_PE/EREAD_PE
+  fd-prologue, scalar-name→width ladder, EVLOAD_W/EFIELD_LOAD_W, EMIT_GVAR_INITS; 2 dead-code sweeps
+  gated to an IR/decoder slot; and 2 genuine latent bugs — **L1** the lex_pp `#ifdef`/`#define` flag
+  table's undocumented 16-slot cap with silent corruption past it, **L2** `_msx`'s imm8 truncation of
+  any syscall number ≥ 128) + `2026-07-03-sigil-authenticode-pe-hash-oob-read` (a 1–2 byte OOB read on
+  the untrusted UEFI-signing path — vendored, so fix at sigil source / the v6.4.x UEFI arc).
+- **Residual P3s triaged → all defer to v6.4.x**: tls13-server-get-version-zero (one-line lib fix but
+  touches the standing TLS LIBTEST gate + snapshot-ping-pong), bare-metal-forbidden-module-check #4
+  (a pinned bare-metal-arc deliverable, not a stray), syscall-write-byte-length-gate +
+  bare-local-array-slot-write-lint (both new cyrlint analyses, batch together).
+
+### Security (light re-scan; full-audit cadence pinned v6.4.0)
+- No new command-execution sinks / fixed-buffer overflows / silent cap-returns since the 2026-06-10
+  audit. The one new surface (sigil UEFI Authenticode, 3.10.0) has the OOB read filed above; the
+  v6.3.41 global-init cap raise (1024→4096) keeps its hard error and stays in-region; Windows
+  sys_mkdir/sys_unlink route the path to Win32 (CreateDirectoryW/DeleteFileW), not a shell.
+
 ## [6.3.44] — 2026-07-03
 
 **v6.3.44 — untracked-issue sweep: cross-OS + stdlib correctness.** Clears the genuinely-open
@@ -277,7 +338,7 @@ fixture runs on aarch64 (qemu) as well as x86. All three struct-ABI features are
   with `(modrm & 0xC7) == 0x85` (masks the reg field → `[rbp+disp32]` for **any** destination reg).
   Only ever flips a slot from register-eligible to memory. Logic-preserving (differential GREEN;
   fixpoint stable). x86-only — the bug does not exist on aarch64 (separate regalloc; confirmed).
-  [issue 2026-07-03](docs/development/issues/2026-07-03-le8byte-struct-byval-second-call-reads-zero.md).
+  [issue 2026-07-03](docs/development/issues/archived/2026-07-03-le8byte-struct-byval-second-call-reads-zero.md).
 
 ### Fixed — B-explicit: explicit non-i64 generic struct receiver hard-errored (gated)
 - `var m: M<i32> = mk<i32>(...)` errored "fn return struct-id differs from declared var type". The
@@ -405,7 +466,7 @@ already fixed. (Batch 1 = sub-i64 loads → .35; batch 2 = struct/parser/closure
 - Surfaced while building the fixture: a ≤8-byte struct local passed by value to the same callee twice
   reads 0 on the second call (register-allocated struct local vs memory field-store incoherence).
   Reproduces on the v6.3.35 release binary — pre-existing, NOT from this batch or v6.3.36. Filed for a
-  future slot ([`le8byte-struct-byval-second-call-reads-zero`](docs/development/issues/2026-07-03-le8byte-struct-byval-second-call-reads-zero.md)).
+  future slot ([`le8byte-struct-byval-second-call-reads-zero`](docs/development/issues/archived/2026-07-03-le8byte-struct-byval-second-call-reads-zero.md)).
 
 Verified: `_monomorph_repairs_gate` (`tests/fixtures/monomorph/monomorph_repairs.cyr` — A2/A3/A4/C1/B1/B2
 combined, exit 42 under the flag, rejected off); differential status-diff = 0; check.sh 123 → 124;
@@ -612,7 +673,7 @@ exercises the field-access fix; nothing else in the ecosystem corpus was affecte
   Reproduces on the committed v6.3.10 engine (not introduced here), gated, narrow trigger (pre-instantiating
   / `while` / a generic struct all avoid it). Root cause: the caller's in-flight operand register is not
   spilled around the inline body emission. Batched with the generic-fn-struct-type-arg follow-on into the
-  v6.3.34 generics-engine de-risking slot. [`monomorph-inline-instance-clobbers-live-local-after-branch`](docs/development/issues/2026-07-02-monomorph-inline-instance-clobbers-live-local-after-branch.md).
+  v6.3.34 generics-engine de-risking slot. [`monomorph-inline-instance-clobbers-live-local-after-branch`](docs/development/issues/archived/2026-07-02-monomorph-inline-instance-clobbers-live-local-after-branch.md).
 
 Verified: `tests/fixtures/monomorph/generics_tail.cyr` (nested field access + multi-type-param + nested
 generics + scalar fn + control-flow → exit 42, now **distinguishing** via `b.v.a >> 30` — real

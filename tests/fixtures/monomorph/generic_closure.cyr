@@ -1,0 +1,36 @@
+# generic_closure.cyr — v6.3.45 closeout cross-feature integration (GATED).
+#
+# Exercises the interaction of two v6.3.x language features that ship on separate
+# tracks: lexical-capture CLOSURES (default-on, v6.3.7/.8) and monomorphized
+# GENERICS (opt-in CYRIUS_MONOMORPH=1, pinned to the v6.4.0 default-on flip). A
+# closeout integration proof that they COMPOSE before the flip:
+#   - a closure captures a local and calls a generic fn in its body;
+#   - a generic fn returns a value that a closure then captures;
+#   - the closure is dispatched via callptr.
+#
+# Compiles + runs ONLY under CYRIUS_MONOMORPH=1 (the generic calls hard-error when
+# the flag is off — this fixture is a gate for "generic × closure" staying correct).
+# MUST exit 42.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+
+fn idg<T>(a: T): T { return a; }
+fn addg<T>(a: T, b: T): T { return a + b; }
+
+fn main(): i64 {
+    alloc_init();
+
+    # (1) closure body calls a generic fn, capturing a local base.
+    var base = 30;
+    var f = |x| base + idg<i64>(x);        # 30 + x
+    var r1 = callptr(f, 2);                # 32
+
+    # (2) a generic call feeds a value the closure captures.
+    var seed = addg<i64>(4, 6);            # 10
+    var g = |y| seed + y;                  # 10 + y
+    var r2 = callptr(g, 0);                # 10
+
+    return r1 + r2 - 0;                     # 32 + 10 = 42
+}

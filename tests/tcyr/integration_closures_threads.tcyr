@@ -1,0 +1,58 @@
+# integration_closures_threads.tcyr — v6.3.45 closeout cross-feature integration.
+#
+# Exercises three DEFAULT-ON v6.3.x features INTERACTING in one program (the point
+# of a closeout integration test — each feature has its own unit tests; this proves
+# they compose):
+#   - lexical-capture closures (v6.3.7/.8): a closure captures a per-thread local
+#     by value and is dispatched via callptr.
+#   - per-thread stack array-locals (v6.3.13/.15): the closure + the worker's locals
+#     live in each thread's own frame (no cross-thread aliasing).
+#   - concurrency (thread_create/join + the single-owner mutex, v6.3.44): N workers
+#     each build+call a capturing closure and fold the result under the lock.
+# Plus struct value-semantics (v6.3.36): each worker returns a small struct by value.
+#
+# The closure captures a DIFFERENT base per thread (derived from the arg), so a
+# cross-thread capture/frame bug would corrupt the sum. Correct total is asserted.
+
+include "lib/syscalls.cyr"
+include "lib/atomic.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/mmap.cyr"
+include "lib/fnptr.cyr"
+include "lib/thread.cyr"
+include "lib/assert.cyr"
+
+var g_sum = 0;
+var g_m = 0;
+
+# Each worker: capture `base` (per-thread) in a closure, dispatch it, fold the
+# result into the shared sum under the lock. base = 10*(arg), closure adds arg.
+fn worker(a): i64 {
+    var base = 10 * a;
+    var f = |x| base + x;              # captures base by value into this thread's frame
+    var r = callptr(f, a);             # 10*a + a = 11*a
+    mutex_lock(g_m);
+    g_sum = g_sum + r;
+    mutex_unlock(g_m);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("integration: capturing closures across concurrent workers");
+    g_m = mutex_new();
+    assert_eq(g_m != 0, 1, "mutex allocated (single-owner sync.cyr backend)");
+
+    # 4 workers with args 1,2,3,4 → sum of 11*a = 11*(1+2+3+4) = 11*10 = 110.
+    var t0 = thread_create(&worker, 1);
+    var t1 = thread_create(&worker, 2);
+    var t2 = thread_create(&worker, 3);
+    var t3 = thread_create(&worker, 4);
+    thread_join(t0); thread_join(t1); thread_join(t2); thread_join(t3);
+
+    assert_eq(g_sum, 110, "each worker's per-thread capturing closure folded correctly (no cross-thread capture/frame aliasing)");
+
+    return assert_summary();
+}

@@ -56,6 +56,8 @@
 #   0x18FCC0  scope_depth   [8]
 #   0x18FCC8  str_pos       [8]           string write position (moved from 0x70000 in v4.6.2)
 #   0x18FCD0  data_size     [8]           total variable data bytes (moved from 0x70008 in v4.6.2)
+#   0x18FCD8  dce_dead_var_bytes [8]      DCE-warning scratch: bytes inside unreachable fns (written fixup.cyr:661, read :1207)
+#   0x18FCE0  dce_dead_fn_count  [8]      DCE-warning scratch: count of unreachable fns (written fixup.cyr:662, read :1208)
 #   0x18FCE8  kernel_load_base [8]        v6.3.3 #5: settable kernel ELF base (0 = built-in default)
 #   0x18FEC8  current_module [8]
 #   0x18FED0  pub_flags     [256]
@@ -169,6 +171,9 @@
 #   0x1AC018  struct_field_pooltop[8]     next free packed-pool entry index (NEW v6.0.47)
 #   0x1AC020  defer_count   [8]           deferred/secret blocks per fn (cap 8→64; was 0x18F900)
 #   0x1AC028  defer_addrs   [1536]        64 × 24B {block_start, end_jmp, flag_local} (was 0x18F908)
+#   0x1FC000  PP #derive field-name scratch [8KB]  reuses the v5.11.19-freed fn_flags band; owned by lex_pp.cyr, cap 256 fields
+#   0x1FE000  PP #derive field-types  [8KB]         (paired with the above)
+#   0x200000  PP #derive field-offsets [2KB]        (paired with the above)
 #   0x1DA000  DCE bitmap    [8192]        dead-code-elimination scratch (pass 2 only)
 #   0x1DC000  pe_reloc_coffs[65536]       8192 × 8B coff slots for PE base-
 #                                        relocation collection (DIR64 sites),
@@ -367,7 +372,7 @@
 #   0xE3A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
 #   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
 #   0xF3B000 ir_edges     [262144]      32768 CFG edges × 8 bytes
-#   0xF7B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
+#   0xF7B000 (FREED v6.3.28)             was ir_cp → relocated to 0x6E9D000 (arena top)
 #
 # --- Fixup table — NEW slot (v5.5.37) ---
 #   0x107B000 fixup_tbl    [16777216]    1048576 entries × 16 bytes
@@ -439,8 +444,12 @@
 # --- IR cross-BB liveness arrays (v6.3.27; analysis-only, touched only under CYRIUS_IR) ---
 #   0x5E1D000 ir_live_in         [262144]  32768 BB live-in reg-bitmaps × 8B (u64; bit0=RAX..bit6=R15)
 #   0x5E5D000 ir_live_out        [262144]  32768 BB live-out reg-bitmaps × 8B → ends 0x5E9D000
+#   0x5E9D000 ir_nodes           [16 MB]   relocated from 0xA3A000 to the arena top (v6.3.28; see src/common/ir.cyr)
+#   0x6E9D000 ir_cp              [4 MB]    relocated from 0xF7B000 to the arena top (v6.3.28); ends 0x729D000
 #
-#   0x5E9D000 brk-final                   ~94.6 MB — heap end (+512 KB IR liveness @ v6.3.27;
+#   0x7300000 brk-final                   ~115 MB — heap end (IR node/cp arena 0x5E9D000..0x729D000
+#                                        now sits below the new brk @ v6.3.28;
+#                                        +512 KB IR liveness @ v6.3.27;
 #                                        +512 KB local-table relocation @ v6.1.40;
 #                                        +16MB output_buf @ v6.1.27). v5.11.68
 #                                        full heap-map reorg shrunk brk
@@ -676,9 +685,10 @@ if (_vn > 0) {
 # any output (the x86 driver previously paid this unconditionally, so the
 # x86 Mach-O cycc never compiled on-device — only the syscall ABV xlat in
 # emit.cyr was missing too; both are needed). Linux mmap number 9 →
-# BSD 197 via EMACHO_SYSXLAT at emit. Size 0x5E9D000 (~94.6 MB) matches
+# BSD 197 via EMACHO_SYSXLAT at emit. Size 0x7300000 (~115 MB) matches
 # main.cyr's brk top below (output_buf 16 MB @ v6.1.27 + local tables
-# +512 KB @ v6.1.40 + IR cross-BB liveness arrays +512 KB @ v6.3.27);
+# +512 KB @ v6.1.40 + IR cross-BB liveness arrays +512 KB @ v6.3.27
+# +20 MB IR node/cp arena @ v6.3.28);
 # flags MAP_ANON|MAP_PRIVATE = 0x1002.
 var S = syscall(9, 0, 0x7300000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {

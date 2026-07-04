@@ -1,5 +1,5 @@
 # Cyrius-X Compiler — emits .cyx bytecode instead of ELF
-# Usage: cat prog.cyr | ./build/cc3cx > prog.cyx
+# Usage: cat prog.cyr | ./build/cycc_cx > prog.cyx
 # Run:   cat prog.cyx | ./build/cxvm
 
 enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 12; SYS_EXIT = 60; }

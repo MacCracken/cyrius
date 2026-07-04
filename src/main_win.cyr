@@ -123,8 +123,8 @@
 #   See main.cyr for the new layout (high block at 0x2D7C000, cap 1048576).
 #
 # --- Relocated struct field tables (v3.6.6) ---
-#   0x91A000 struct_ftypes [16384]       64 structs × 32 fields × 8 bytes
-#   0x92A000 struct_fnames [16384]       64 structs × 32 fields × 8 bytes
+#   0x91A000 struct_ftypes [65536]       PACKED field pool (v6.0.47), 8192 flat entries × 8B, addr=(field_base[si]+fc)*8
+#   0x92A000 struct_fnames [65536]       PACKED field pool (v6.0.47), 8192 flat entries × 8B, addr=(field_base[si]+fc)*8
 #
 #   0x93A000 (fixup table: 16384 entries × 16 bytes ends at 0x9BA000)
 #
@@ -222,7 +222,7 @@ var _vfd = 0;
 # Linux-only pseudofile. On Windows this CreateFileW returns
 # INVALID_HANDLE_VALUE and subsequent ReadFile on the bad handle
 # crashes cycc_win.exe at startup. Gate the whole block on
-# CYRIUS_TARGET_LINUX so cycc_win.exe (built by cc5_win_linux with
+# CYRIUS_TARGET_LINUX so cycc_win.exe (built by cycc_win with
 # CYRIUS_TARGET_WIN predefined at runtime) skips it entirely.
 # v6.0.54: the Windows equivalent below uses GetCommandLineW (the
 # `syscall(0xF006)` PE reroute, src/backend/x86/emit.cyr) — the
@@ -331,10 +331,10 @@ if (_vw != 0) {
 # pattern crashes with STATUS_ACCESS_VIOLATION on PE because SYS_BRK
 # isn't rerouted). v5.5.8: use SYS_MMAP which works on both paths of
 # this file's build chain:
-#   - cycc (Linux) compiles main_win.cyr → cc5_win_linux (Linux ELF):
+#   - cycc (Linux) compiles main_win.cyr → cycc_win (Linux ELF):
 #     heap init runs on Linux, calls mmap(0, 32MB, PROT_RW=3,
 #     MAP_PRIVATE|MAP_ANONYMOUS=0x22, -1, 0) → valid region.
-#   - cc5_win_linux compiles main_win.cyr → cycc_win.exe (PE):
+#   - cycc_win compiles main_win.cyr → cycc_win.exe (PE):
 #     heap init runs on Windows, PE backend (v5.5.1) routes to
 #     VirtualAlloc(0, 32MB, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).
 #     The prot/flags/fd/offset are ignored by EMMAP_PE.

@@ -1,0 +1,34 @@
+# async_closure_generic.cyr — v6.3.45 closeout cross-feature integration (DOUBLE-GATED).
+#
+# The triple-feature interaction the closeout roadmap named: an `async fn` whose
+# body builds a CLOSURE that captures the result of a GENERIC call. This composes
+# three v6.3.x features that ship on three separate tracks:
+#   - async/await Futures (opt-in CYRIUS_ASYNC=1, v6.3.11)
+#   - monomorphized generics (opt-in CYRIUS_MONOMORPH=1, v6.4.0-flip)
+#   - lexical-capture closures (default-on, v6.3.7/.8)
+#
+# Compiles + runs ONLY under CYRIUS_ASYNC=1 CYRIUS_MONOMORPH=1 (both gates needed;
+# rejected if either is off). MUST exit 42. A closeout proof that the gated
+# language features de-risk together before the v6.4.0 default-on flip.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+
+fn idg<T>(a: T): T { return a; }
+
+# async body: capture a generic-call result in a closure, dispatch it, return.
+async fn compute(n): i64 {
+    var base = idg<i64>(40);           # generic call inside an async body
+    var f = |x| base + x;              # closure captures the generic result
+    return callptr(f, n);              # 40 + n
+}
+
+fn main(): i64 {
+    alloc_init();
+    var total = await compute(1);      # 41   (await directly on the async call)
+    var fut = compute(1);              # build a Future (deferred), = 41 when forced
+    total = total + await fut - 40;    # 41 + 41 - 40 = 42   (stored Future, awaited later)
+    return total;                      # 42
+}
