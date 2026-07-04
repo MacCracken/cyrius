@@ -980,6 +980,17 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
   `CYRIUS_MONOMORPH=0`; the v6.3.5 substrate gate repurposed to prove the decouple (monomorph leaves
   non-generic fns un-inlined). See CHANGELOG [6.4.0]. **Generics are now a default-on language feature.**
 
+### v6.4.2 — SHIPPED 2026-07-04
+
+- **agnos `sys_snd_*` audio syscall band (#64–#69)** — ✅ **SHIPPED v6.4.2** (2026-07-04). Reactive
+  consumer pull-in (filed 2026-07-04 by the agnos audio arc, 1.52.x Gate 2). The ring-3 half of a
+  two-sided ABI freeze: 6 `SYS_SND_*` constants + 7 wrappers (`sys_snd_open`/`_config`/`_write`/
+  `_write_nb`/`_close`/`_drain`/`_avail`) mirroring the frozen agnos band into
+  `lib/syscalls_x86_64_agnos.cyr`, same shape as `sys_symlink#63`. Single frozen format 48000/16/stereo;
+  `_write_nb` = 5-arg a4=r10 NONBLOCK. agnos-gated → cycc byte-identical on every non-agnos target;
+  agnos-crossbuild-gate green + a 7-wrapper call-probe → valid agnos ELF. Unblocks vani + cyrius-doom
+  (separate repos). See CHANGELOG [6.4.2]. (issue `2026-07-04-agnos-snd-audio-syscall-band-64-69`.)
+
 ### v6.4.1 — SHIPPED 2026-07-03
 
 - **`alloc_reset()` memory-reuse info-leak fix** — ✅ **SHIPPED v6.4.1** (2026-07-03). Zero-on-reset in

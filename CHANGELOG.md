@@ -6,6 +6,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.2] — 2026-07-04
+
+**v6.4.2 — add the agnos `sys_snd_*` audio syscall band (#64–#69).** The ring-3 half of the two-sided
+agnos 1.52.x Gate-2 audio freeze (kernel HDA handlers land in parallel); purely additive, same shape as
+`sys_symlink#63`. Unblocks agnos audio for vani + cyrius-doom (`cyrius-doom audio.cyr → vani agnos backend
+→ these wrappers → agnos #64–#69 → HDA ring → ALC897`). agnos-gated (`#ifdef CYRIUS_TARGET_AGNOS`), so
+cycc self-hosts **byte-identical** on Linux/macOS/Windows/aarch64; check.sh 128; ecb + cass + pi
+SELFHOST_OK; self_compile 543 ms.
+
+### Added — `lib/syscalls_x86_64_agnos.cyr`
+- Six `SYS_SND_*` constants (`SND_OPEN=64`, `SND_CONFIG=65`, `SND_WRITE=66`, `SND_CLOSE=67`, `SND_DRAIN=68`,
+  `SND_AVAIL=69`), next to `SYS_SYMLINK=63`.
+- Seven wrappers: `sys_snd_open()`, `sys_snd_config(slot, rate, fmt)`, `sys_snd_write(slot, buf, frames)`,
+  `sys_snd_write_nb(slot, buf, frames)`, `sys_snd_close(slot)`, `sys_snd_drain(slot)`, `sys_snd_avail(slot)`.
+- The frozen ABI: a single hard-armed 48000 Hz / 16-bit / stereo output stream (S16 interleaved, 4 B/frame,
+  no kernel resample); `snd_id` slot `0..3`; `#65–#69` reject a slot not owned by the caller (`-1`).
+  `sys_snd_write_nb` sets a4=r10 bit0 = `O_NONBLOCK` via the same 5-arg `syscall(N, …, 1)` form
+  `sys_symlink` uses (the compiler passes a4 through push→`pop %r10`, so no drift from the blocking form).
+
+### Verified
+- The standing `agnos-crossbuild-gate.sh` stays green (all 9 sub-checks → valid agnos ELF). A probe that
+  CALLS all seven wrappers compiles to a valid agnos ELF (rc=0, no reachable-undefined), emitting `syscall`
+  with `eax = 0x40–0x45` for the six numbers. Runtime (HDA → ALC897) validates QEMU-side on the agnos arm.
+- Self-host fixpoint byte-identical (agnos peer is `#ifdef`-out of every non-agnos build) + seed → cybs →
+  cycc byte-identical.
+
 ## [6.4.1] — 2026-07-03
 
 **v6.4.1 — `alloc_reset()` zero-on-reset: close the CVE-2026-34988-class memory-reuse info-leak.**

@@ -3955,6 +3955,13 @@ syscalls_x86_64_agnos::sys_sched_yield/0
 syscalls_x86_64_agnos::sys_signalfd/3
 syscalls_x86_64_agnos::sys_sigprocmask/3
 syscalls_x86_64_agnos::sys_sleep_ms/1
+syscalls_x86_64_agnos::sys_snd_avail/1
+syscalls_x86_64_agnos::sys_snd_close/1
+syscalls_x86_64_agnos::sys_snd_config/3
+syscalls_x86_64_agnos::sys_snd_drain/1
+syscalls_x86_64_agnos::sys_snd_open/0
+syscalls_x86_64_agnos::sys_snd_write/3
+syscalls_x86_64_agnos::sys_snd_write_nb/3
 syscalls_x86_64_agnos::sys_sock_accept/1
 syscalls_x86_64_agnos::sys_sock_close/1
 syscalls_x86_64_agnos::sys_sock_connect/3
