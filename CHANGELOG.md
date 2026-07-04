@@ -6,6 +6,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.1] — 2026-07-03
+
+**v6.4.1 — `alloc_reset()` zero-on-reset: close the CVE-2026-34988-class memory-reuse info-leak.**
+Consumer-filed (daimon VULN-007, against 6.3.43); scheduled to its own slot after the v6.4.0 flip so a
+real stdlib security fix gets the full severity→fix→verify→re-audit process, not a byte-identical fold.
+cycc self-hosts **byte-identical** (1,024,552 B — the scrub is +424 B of code absorbed into page-align
+padding); seed → cybs → cycc byte-identical; check.sh 128; ecb + cass + pi SELFHOST_OK + LIBTEST_OK;
+self_compile 545 ms.
+
+### The leak
+The bump allocator is forward-only: every allocation moves onto never-touched, kernel-zeroed pages —
+*except* `alloc_reset()`, the one point it hands the same address to a new owner. It rewound the bump
+pointer without zeroing the reclaimed span, so a post-reset allocation read the prior occupant's bytes
+(same class as CVE-2026-34988 / CVE-2022-39393). Consumers can't fix it — the stdlib owns both the
+allocator and, via sandhi's per-batch reset, the call site.
+
+### Fixed — zero-on-reset in ALL FOUR backends
+- New un-gated `_alloc_zero(base, n)` in `lib/alloc.cyr` — a local `store64`/`store8` loop, so the
+  foundational allocator carries NO `lib/string.cyr` (memset) dependency; visible to every platform
+  backend (the arena_* precedent proves un-gated alloc.cyr fns reach the included backends).
+- **Linux (`alloc.cyr`) + agnos (`alloc_agnos.cyr`)** — chunk-chain allocators. Only the FIRST chunk is a
+  reuse channel (spills past it re-`mmap` fresh zeroed chunks), so `alloc_reset()` scrubs the first
+  chunk's written extent: `_heap_ptr - _heap_first_base` when still in the first chunk (the common case,
+  exact + cheap), else the whole first chunk (`_heap_base != _heap_first_base`, the rare spill). The
+  report's suggested `memset(_heap_first_base, 0, _heap_used)` is UNSAFE — `_heap_used` is cumulative
+  across chunks and would over-run the first chunk (past `_heap_first_end`) on a multi-chunk heap.
+- **macOS (`alloc_macos.cyr`) + Windows (`alloc_windows.cyr`)** — single contiguous region; zero the exact
+  `[_heap_base, _heap_ptr)`.
+
+### Verified
+- `tests/tcyr/vr01_alloc_reset_zeroes.tcyr` — writes an all-ones sentinel, resets, re-allocates the same
+  address, asserts every byte reads zero. Proven to FAIL on the unfixed allocator (leak assertion) and
+  PASS on the fix; `vr01_` prefix runs it on Linux + ecb + cass in the cross-OS LIBTEST gate.
+- `_alloc_zero` resolves on every target (Linux/agnos rc=0; macho-x86 + macho-arm compiler builds rc=0,
+  no reachable-undefined; Windows PE artifact valid). Self-host fixpoint + seed-derive byte-identical.
+
 ## [6.4.0] — 2026-07-03
 
 **v6.4.0 — `CYRIUS_MONOMORPH` default-on flip: generics are now on by default.** Opens the v6.4.x

@@ -1,0 +1,46 @@
+# vr01_alloc_reset_zeroes.tcyr — VR-01: alloc_reset() scrubs reclaimed memory
+# (v6.4.1 info-leak fix; CVE-2026-34988 / CVE-2022-39393 class, filed by daimon
+# VULN-007). alloc_reset is the ONLY point the bump allocator hands an address to
+# a new owner; before v6.4.1 it rewound the bump pointer WITHOUT zeroing, so the
+# reused span leaked the prior occupant's bytes. This test writes a non-zero
+# sentinel, resets, re-allocates the SAME address, and asserts every byte reads
+# zero. Runs on Linux + cass (VirtualAlloc) + ecb (mmap) via the vr01_ LIBTEST
+# glob — the reuse channel exists on every backend (chunk + single-region).
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    # Reset first so the reused address is deterministic and no test-framework
+    # allocation sits between the sentinel write and the reuse window.
+    alloc_reset();
+    var a = alloc(256);
+
+    # Fill with an all-ones sentinel (every byte 0xFF => non-zero) via i64 stores
+    # (word-level, so sub-byte signed sign-extension is irrelevant to the check).
+    var i = 0;
+    while (i < 256) { store64(a + i, 0 - 1); i = i + 8; }
+    var wrote = load64(a);            # capture BEFORE reset — `a` is scrubbed after
+
+    # The reuse channel: reset rewinds, the next alloc hands back the same span.
+    alloc_reset();
+    var b = alloc(256);
+
+    # Scan the reused span for any surviving sentinel byte BEFORE touching the
+    # (possibly-allocating) assert framework, so the scan sees pristine reuse.
+    var leaked = 0;
+    var j = 0;
+    while (j < 256) { if (load64(b + j) != 0) { leaked = 1; } j = j + 8; }
+
+    test_group("alloc_reset scrubs reused memory (v6.4.1 info-leak fix)");
+    assert_neq(wrote, 0, "sentinel was actually written pre-reset (test is meaningful)");
+    assert_eq(b, a, "reset + realloc reuses the same base address (the reuse channel)");
+    assert_eq(leaked, 0, "reused span reads all-zero, not the prior sentinel (no leak)");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

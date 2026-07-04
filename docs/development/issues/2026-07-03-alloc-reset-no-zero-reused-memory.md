@@ -5,7 +5,24 @@
 > deserves its own slot + the security process: severity → fix → verify → re-audit). See
 > roadmap_6.md "Pinned to v6.4.1".
 >
-> **OPEN** — filed 2026-07-03 by **daimon** (consumer), against cyrius 6.3.43.
+> **RESOLVED v6.4.1** (2026-07-03) — zero-on-reset landed in ALL FOUR allocator
+> backends (Linux `lib/alloc.cyr`, `alloc_agnos.cyr`, `alloc_macos.cyr`,
+> `alloc_windows.cyr`) via a shared un-gated `_alloc_zero(base, n)` (local
+> store64/store8, no `lib/string.cyr` dep). `alloc_reset()` now scrubs the reused
+> span before rewinding. Chunk backends (Linux/agnos) zero the FIRST chunk's
+> written extent — exactly `_heap_ptr - _heap_first_base` when still in the first
+> chunk, else the whole first chunk (`_heap_base != _heap_first_base`); the naive
+> `memset(_heap_first_base, 0, _heap_used)` from the report is UNSAFE because
+> `_heap_used` is cumulative across chunks and would over-run the first chunk on a
+> multi-chunk heap. Single-region backends (macOS/Windows) zero `[_heap_base,
+> _heap_ptr)`. Spills past the first chunk re-`mmap` fresh kernel-zeroed memory, so
+> the first chunk is the only reuse channel. Regression test:
+> `tests/tcyr/vr01_alloc_reset_zeroes.tcyr` (proven to FAIL on the unfixed
+> allocator, PASS on the fix) — runs on Linux + ecb + cass via the `vr01_` LIBTEST
+> glob. cycc self-hosts byte-identical (1,024,552 B; the scrub is +424 B of code
+> absorbed into page-align padding). See CHANGELOG [6.4.1].
+>
+> **OPEN → FIXED** — filed 2026-07-03 by **daimon** (consumer), against cyrius 6.3.43.
 > `lib/alloc.cyr` `alloc_reset()` (lines 228–236). A **memory-reuse information-leak** in the bump allocator: the only point the allocator hands the same address to a different owner is `alloc_reset()`, and it does not zero the reclaimed span. Same bug class as **CVE-2026-34988** (Wasmtime) / **CVE-2022-39393**. Consumers cannot fix it (the stdlib owns both the allocator and — via sandhi — the reset call site), so it must be fixed here.
 
 **Severity:** Low → High. Low for a single-trust-domain consumer; High the moment a consumer hands one allocator to two logical owners across a reset (multi-tenant hosting, sandboxing, untrusted federation, external tool-callback response data sharing the heap).

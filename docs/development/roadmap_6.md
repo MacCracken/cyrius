@@ -980,8 +980,16 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
   `CYRIUS_MONOMORPH=0`; the v6.3.5 substrate gate repurposed to prove the decouple (monomorph leaves
   non-generic fns un-inlined). See CHANGELOG [6.4.0]. **Generics are now a default-on language feature.**
 
-### Pinned to v6.4.1 (user-committed)
+### v6.4.1 — SHIPPED 2026-07-03
 
+- **`alloc_reset()` memory-reuse info-leak fix** — ✅ **SHIPPED v6.4.1** (2026-07-03). Zero-on-reset in
+  ALL FOUR backends (Linux/agnos chunk-chain + macOS/Windows single-region) via a shared un-gated
+  `_alloc_zero(base, n)` (local store64/store8, no string.cyr dep). Chunk backends scrub the first
+  chunk's written extent (`_heap_ptr - _heap_first_base`, else whole first chunk on spill) — NOT the
+  report's `memset(..., _heap_used)`, which over-runs on a multi-chunk heap since `_heap_used` is
+  cumulative. Regression test `vr01_alloc_reset_zeroes.tcyr` (proven fail-on-bug / pass-on-fix, in the
+  cross-OS LIBTEST glob). cycc byte-identical (1,024,552 B; +424 B code in page-padding). See CHANGELOG
+  [6.4.1]. Original scoping below:
 - **`alloc_reset()` memory-reuse info-leak fix** — pinned to **v6.4.1**, right after the v6.4.0
   monomorph flip (user 2026-07-03). Consumer-filed by **daimon** against v6.3.43: `lib/alloc.cyr`
   `alloc_reset()` (lines ~228-236) rewinds the bump pointer (`_heap_base`/`_heap_ptr`/`_heap_end` to
