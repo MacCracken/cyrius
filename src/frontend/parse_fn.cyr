@@ -638,14 +638,14 @@ fn PARSE_RETURN(S): i64 {
     # Win64 PCS for ≤16B composite returns uses retptr-style
     # (caller passes hidden buffer ptr in RCX), NOT pair register.
     # Mirror of the existing big-struct retptr return at line ~447.
-    if (_cur_fn_ret_scalar == 0 - 20) {
+    if (_cur_fn_ret_scalar == 0 - 20 || _cur_fn_ret_scalar == 0 - 2121) {  # f64v2 or f32v4 — both 16B/xmm0
         if (PEEKT(S) == 2) {
             if (TOKTYP(S, GTI(S) + 1) == 5) {
                 var _f2_noff = PEEKV(S);
                 var _f2_lli = FINDLOCAL(S, _f2_noff);
                 if (_f2_lli >= 0) {
                     var _f2_lt = GLTYPE(S, _f2_lli);
-                    if (_f2_lt == 0 - 20) {
+                    if (_f2_lt == 0 - 20 || _f2_lt == 0 - 2121) {
                         STI(S, GTI(S) + 1);  # consume IDENT
                         STI(S, GTI(S) + 1);  # consume ';'
                         if (_cur_fn_ret_stash > 0) {
@@ -876,6 +876,7 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     if (lt >= 0) { return 0; }          # must be a struct-typed local (SLTYPE = -sid)
     if (lt == 0 - 20) { return 0; }     # not f64v2
     if (lt == 0 - 21) { return 0; }     # not f64v4
+    if (lt == 0 - 2121) { return 0; }   # not f32v4 (register-class, like f64v2)
     EFLADDR(S, li);
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
@@ -2004,6 +2005,10 @@ fn _classify_return_type(S, rt_noff): i64 {
         if (b4 == 50) { if (b5 == 0) { return 0 - 20; } }
         if (b4 == 52) { if (b5 == 0) { return 0 - 21; } }
     } } } }
+    # f32v4 → 'f','3','2','v','4', 0 — 128-bit descriptor sentinel -2121 (SIMD Phase 1)
+    if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
+        if (b4 == 52) { if (b5 == 0) { return 0 - 2121; } }
+    } } } }
     return 0;
 }
 
@@ -2744,6 +2749,26 @@ fn PARSE_FN_DEF(S): i64 {
                             }
                         }
                     }
+                    # v6.4.3+ (SIMD Phase 1) — `f32v4` (16-byte / 128-bit): same
+                    # SysV/aarch64/cx pair-return treatment as f64v2 — set
+                    # _rs_is_scalar = 1 to skip the retptr-stash so PARSE_RETURN's
+                    # pair path (rt_scalar == -2121) fires; Win64 PE keeps the
+                    # retptr-stash (leave _rs_is_scalar 0), like f64v2 on PE.
+                    if (_rs_b0 == 102) {
+                        if (_rs_b1 == 51) {
+                            if (_rs_b2 == 50) {
+                                if (_rs_b3 == 118) {
+                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 52) {
+                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 0) {
+                                            if (_TARGET_PE == 0) {
+                                                _rs_is_scalar = 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     # v6.3.9 (F-fns): a `: T` return where T is a captured type-param
                     # is i64-shaped (scalar) for the base instance — recognize it here
                     # so the rough-scan does NOT default to the retptr/stash ABI, which
@@ -3222,7 +3247,7 @@ fn PARSE_FN_DEF(S): i64 {
             var _psi = 0;
             while (_psi < pc) {
                 var _pslt = GLTYPE(S, _psi);
-                if (_pslt < 0) { if (_pslt != 0 - 20) { if (_pslt != 0 - 21) { can_inline = 0; } } }
+                if (_pslt < 0) { if (_pslt != 0 - 20) { if (_pslt != 0 - 21) { if (_pslt != 0 - 2121) { can_inline = 0; } } } }
                 _psi = _psi + 1;
             }
         }

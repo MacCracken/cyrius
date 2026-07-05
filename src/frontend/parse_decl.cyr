@@ -1523,14 +1523,14 @@ fn PARSE_VAR(S): i64 {
     # callee writes through the retptr. No post-call store needed
     # (the local is already populated). Mirror of the existing
     # big-struct asv path at line ~1063.
-    if ((pscale == 0 - 20) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
+    if ((pscale == 0 - 20 || pscale == 0 - 2121) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {  # f64v2 or f32v4
         var _f2c_look_ti = GTI(S) + 1;
         if (TOKTYP(S, _f2c_look_ti) == 2) {
             if (TOKTYP(S, _f2c_look_ti + 1) == 10) {
                 var _f2c_look_noff = TOKVAL(S, _f2c_look_ti);
                 var _f2c_look_fi = FINDFN(S, _f2c_look_noff);
                 if (_f2c_look_fi >= 0) {
-                    if (GFRS(S, _f2c_look_fi) == 0 - 20) {
+                    if (GFRS(S, _f2c_look_fi) == pscale) {  # callee's ret sid matches the var's f64v2/f32v4 tag
                         # Allocate 2-slot stack-local (filler + named, like
                         # the v5.5.36 Phase 2 struct-local pattern).
                         var _f2c_existing = FINDLOCAL(S, noff);
@@ -1547,7 +1547,7 @@ fn PARSE_VAR(S): i64 {
                         var _f2c_named = GFLC(S);
                         S64(S + 0x5D9D000 + _f2c_named * 8, noff);
                         SLDEP(S, _f2c_named, GSDEP(S));
-                        SLTYPE(S, _f2c_named, 0 - 20);
+                        SLTYPE(S, _f2c_named, pscale);  # tag the received local f64v2(-20) or f32v4(-2121)
                         SFLC(S, _f2c_named + 1);
                         STI(S, GTI(S) + 1);  # consume '='
                         if (_TARGET_PE == 1) {
