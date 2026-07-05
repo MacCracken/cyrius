@@ -36,6 +36,23 @@ job forces the removal at exactly the right time. During Phases 2–4 (before NE
 the test legitimately fails on ARM and is xfail'd → the job stays green; it cannot
 persist past the point it should pass.
 
+## set -e gotcha (v6.4.5 — the XFAIL loop must be set-e-safe)
+
+The GHA shell is `bash -eo pipefail`. The corpus loop originally captured a
+test's exit code with `out=$("$bin" 2>&1); ec=$?`. When an XFAIL test
+*legitimately fails* (e.g. `simd_f32v4` no-ops the f32 arithmetic on the ARM
+stubs → 10 failed asserts → `exit 10`), the command-substitution failure trips
+`set -e` and **aborts the whole step with the test's exit code — before the xfail
+bookkeeping ever runs**. So the v6.4.4 SKIP→XFAIL flip *silently turned the
+aarch64 job red* (SKIP never ran the test; XFAIL runs it and the failure aborted
+the step). Fixed to `ec=0; out=$("$bin" 2>&1) || ec=$?` (and `... || f=""` on the
+grep, for tests that crash with no "N failed" line). **Rule: any change to the
+SKIP/XFAIL loop logic MUST be tested under `bash -eo pipefail` with a mock
+failing test — not just the case-match.** And note the local-gate gap: the
+release gate's cross-OS step runs only the `vr01_` LIBTEST glob on real ARM, so a
+full-corpus aarch64 loop bug slips past it; reproduce with `qemu-aarch64` (compile
+a tcyr with `build/cycc_aarch64`, run under qemu — exit codes match CI).
+
 ## Why the underlying op is a silent stub (not a hard error)
 
 A hard error at `EMIT_F32V_LOOP` on aarch64/cx would break **every** aarch64

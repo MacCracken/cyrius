@@ -34,9 +34,30 @@ self_compile 555 ms.
 - **Test** — `simd_f32v4.tcyr` extended (8 → 13 asserts): value + pointer `f32v4_fmadd`/`_dot`, plus a raw
   `f32v_dot` over 8 lanes exercising two loop iterations.
 
+### Fixed — CI
+- **The aarch64-native tcyr-corpus loop was not set-e-safe, so the XFAIL mechanism never worked.** The GHA shell
+  is `bash -eo pipefail`; the loop captured a test's exit with `out=$("$bin"); ec=$?`, so the moment an XFAIL
+  test legitimately *failed* on ARM (`simd_f32v4` no-ops the f32 arithmetic → 10 failed asserts → exit 10), the
+  command-substitution failure tripped `set -e` and **aborted the whole step with the test's exit code (10)** —
+  before the xfail bookkeeping ran. The v6.4.4 SKIP→XFAIL change silently turned the job red (SKIP never ran the
+  test; XFAIL runs it). Fixed: `ec=0; out=$("$bin" 2>&1) || ec=$?` + `... || f=""` on the grep. Verified under
+  `bash -eo pipefail` (mock pass/xfail/fail/crash matrix) and against the real aarch64 binary via `qemu-aarch64`
+  (`simd_f32v4` exit 10 → xfail'd → step green; a genuine non-xfail failure still fails). **Gap it exposed: the
+  release gate's cross-OS step runs only the `vr01_` LIBTEST glob, not the full corpus — a full-corpus aarch64
+  loop regression slips past the local gate; CI (or `qemu-aarch64`) is what catches it.**
+
+### Added — cross-OS f32v4 coverage (closes the gap above)
+- **`tests/tcyr/vr01_f32v4_ctor.tcyr`** — the f32v4 **type + construct/splat/lane-extract + value-form param
+  ABI** are arch-neutral (store32/load32, NOT `EMIT_F32V_LOOP`), so they work on aarch64/macOS even though the
+  arithmetic is x86-only. This `vr01_` test therefore runs on **real ecb (macOS) + pi (aarch64)** via the release
+  gate's cross-OS LIBTEST (skips cleanly on cass/PE, gated `CYRIUS_HAS_VAL_SIMD_PARAMS`, like `vr01_f64v2_ctor`).
+  It gives the release gate the on-hardware f32 SIMD coverage that the XFAIL'd, arithmetic-heavy `simd_f32v4.tcyr`
+  can't — so the type/ABI half of the feature is now caught locally, not just in CI. Verified 7/7 on x86 and on
+  aarch64 via `qemu-aarch64`.
+
 ### Known-limitation
 - f32 matmul arithmetic is **x86-only this phase** (same as Phase 1) — aarch64/cx stub `EMIT_F32V_*`; the
-  `simd_f32v4` tcyr stays **XFAIL** (strict) in the aarch64-native CI corpus until Phase 5 NEON lands.
+  `simd_f32v4` tcyr stays **XFAIL** (strict, now actually working) in the aarch64-native CI corpus until Phase 5.
 
 ### Next
 - Phase 3: the integer SIMD lanes (i8/i16/i32/i64) + a tentib b1.58 acceptance bench.

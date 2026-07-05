@@ -631,8 +631,14 @@ jobs:
             isx=0; case " $XFAIL " in *" $name "*) isx=1;; esac
             bin="/tmp/at_$name"
             if cat "$t" | $CC > "$bin" 2>/dev/null && chmod +x "$bin"; then
-              out=$("$bin" 2>&1); ec=$?
-              f=$(printf '%s' "$out" | grep -oE '[0-9]+ failed' | tail -1 | grep -oE '^[0-9]+')
+              # set-e-safe: the GHA shell is `bash -eo pipefail`, so a test that
+              # exits non-zero (e.g. an XFAIL test that legitimately fails on ARM)
+              # would ABORT the whole step at `out=$(...)` before the xfail
+              # bookkeeping — the step dies with the test's exit code. `|| ec=$?`
+              # captures the code without tripping set -e; the grep gets `|| f=""`
+              # for tests whose output has no "N failed" line (crash / no assert).
+              ec=0; out=$("$bin" 2>&1) || ec=$?
+              f=$(printf '%s' "$out" | grep -oE '[0-9]+ failed' | tail -1 | grep -oE '^[0-9]+') || f=""
               bad=0; [ "$ec" -ne 0 ] && bad=1; [ "${f:-0}" -gt 0 ] && bad=1
             else
               bad=1; ec="compile"
