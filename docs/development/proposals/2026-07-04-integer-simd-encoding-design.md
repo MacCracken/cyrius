@@ -1,10 +1,27 @@
-# Integer SIMD — Phase 0 encoding design decision (the pin)
+# Packed SIMD compute (f32-first, then integer) — Phase 0 encoding design decision (the pin)
 
-> **Arc**: v6.4.x integer SIMD (arc opener, ML/AI priority). **Phase 0 — the encoding
-> design gate**: no emit code until the type-class encoding + param-mask + builtin-dispatch
-> scheme are pinned (they drive the whole 5–7 release arc and are expensive to reverse).
-> Grounded in a 2026-07-04 code-mapping pass (exact file:line sites verified in-tree).
-> Companion: [`2026-06-23-integer-simd.md`](2026-06-23-integer-simd.md) (the arc proposal).
+> **Arc**: v6.4.x SIMD-compute (ML/AI priority). **Sequence pivot (user 2026-07-04): f32
+> SIMD compute FIRST, then the lower-int lanes.** Model testing shows f32+SIMD is the primary
+> throughput lever, with int8/quantized lanes as the optimization layer on top. **Phase 0 —
+> the encoding design gate**: no emit code until the type-class encoding + param-mask +
+> builtin-dispatch are pinned (they drive the whole 5–7 release arc and are expensive to
+> reverse). Grounded in a 2026-07-04 code-mapping pass (exact file:line sites verified
+> in-tree). Companion: [`2026-06-23-integer-simd.md`](2026-06-23-integer-simd.md).
+
+## Design frame — the i64 oracle + free type movement (user 2026-07-04)
+
+The durable type-model principle this arc extends: **`i64` is the ORACLE** — the canonical,
+default, ground-truth type — and every other type (`i8/i16/i32`, `u8..u64`, `f32/f64`, and
+the vector types) is a **view/optimization** you can **move freely into and out of, always
+returning to i64**. This is already the embryonic architecture: `i64` is the untyped default;
+sub-width ints are SLTYPE-sentinel views; floats live in a separate TYID channel reached by a
+**conversion hub** that is already heavily used — `f64_from` (i64→float, 125×), `f64_to`
+(float→i64, 56×), `f32_from`/`f32_to` (narrow/widen), `cvt*`. Scalar float arithmetic already
+funnels through `f64` (f32 is storage-only today; `parse_expr.cyr:506` resets an f32 load to
+i64/untyped). **The SIMD types are the next views on this lattice**: a vector is N lanes of an
+element type; you enter it by broadcast/load and **return to the i64 oracle by extract/reduce**.
+The encoding below is chosen so vectors are first-class *views* — freely convertible, never a
+parallel type universe — with `i64` still the anchor everything reduces to.
 
 ## The problem — three walls the f64-only encoding hits
 
@@ -77,46 +94,58 @@ forms all 32 B (4 slots), so they reuse `parse_fn.cyr:2966-2980` + `parse_decl.c
 slot sizing and the multi-register return ABI (rax/rdx, XMM0, V0, cx r0/r1) **unchanged**. The
 `_F64V_DISP` frame-disp formula and the `simd_pc` budget check are reused as-is.
 
-## Release-1 minimal op set (unblock tentib 0.4.1, not the full matrix)
+## Release-1 minimal op set — f32 dense matmul (the ML lever)
 
-The tentib b1.58 ternary matmul-free kernel needs only a small op set — ship **that** first,
-x86 128-bit (SSE2/SSSE3) only:
+`f32v4` (128-bit, 4 lanes) **reuses the existing f64 SSE packed path minus the `66` prefix** —
+`mulps` = `0F 59` vs `mulpd` = `66 0F 59`, `addps` = `0F 58` vs `addpd` = `66 0F 58` — and the
+same 16-byte register + pair/quad slot machinery. The dense-f32 matmul / attention inner loop,
+x86 128-bit first:
 
-- `i8` load / store / broadcast
-- **sign-select** (ternary {−1,0,+1} select via mask-blend: `pcmpgtb` + `pand`/`pandn`/`por`)
-- **`i16` widening multiply-accumulate** (`pmaddubsw` → `pmaddwd`; VNNI `vpdpbusd` where the
-  host has it — feature-gated, SSE2 fallback otherwise)
-- **horizontal reduce** to a scalar accumulator (`phaddw`/`phaddd` or shuffle-add)
+- `f32v4` load / store / **broadcast** (splat a scalar across 4 lanes)
+- **`addps` / `subps` / `mulps`** (packed single add/sub/mul)
+- **FMA** — `vfmadd231ps` where AVX2+FMA is present (feature-gated; `mul`+`add` fallback
+  otherwise) — the matmul/attention multiply-accumulate
+- **horizontal reduce / dot** to a scalar accumulator (`haddps` / shuffle-add, or `dpps` for a
+  4-wide dot) → **returns to the f64/i64 oracle**
 
-That's the whole b1.58 inner loop. The full lane-op matrix (add/sub/and/or/xor/shl/shr/cmp/
-blend/broadcast across all widths) + AVX2 256-bit + aarch64 NEON (`sdot`/`smlal`) fill in
-across Phases 2–4.
+That's the dense-f32 GEMM/attention inner loop — the primary throughput lever. **Then the
+integer layer** (the tentib b1.58 quantized kernel: `i8` load + sign-select via mask-blend +
+`i16` widening multiply-accumulate `pmaddubsw`→`pmaddwd` / VNNI `vpdpbusd` + horizontal reduce)
+rides the **same** `EMIT_ISIMD` op-table with the packed-integer opcodes. `f32v8` + AVX2 256-bit
+and aarch64 NEON (`fmla`/`sdot`) fill in later phases.
 
-## Phase plan (this doc = Phase 0)
+## Phase plan (this doc = Phase 0) — f32-first
 
-- **Phase 0 ✅ (this doc)** — encoding + dispatch + minimal-op decision pinned.
-- **Phase 1** — one lane width (`i8v16`) end-to-end on x86: descriptor + `_vec_desc`, var-decl,
-  return ABI, param ABI, value/pointer dual-form. Prove the encoding scales. Byte-identical
-  default (f64 untouched); differential status-diff=0.
-- **Phase 2** — the release-1 op set + tentib-0.4.1 acceptance bench, x86, bench-gated.
-- **Phase 3** — fill the `i8/i16/i32/i64 × 128/256-bit` matrix (AVX2).
-- **Phase 4** — aarch64 NEON parity (`sdot`/`smlal`) + cx stubs + PE gating (mandatory
+- **Phase 0 ✅ (this doc)** — encoding + dispatch + f32-first minimal-op decision pinned.
+- **Phase 1** — `f32v4` end-to-end on x86: descriptor + `_vec_desc`, var-decl, return/param
+  ABI, value/pointer dual-form, load/store/broadcast + `addps`/`mulps`. Reuses the f64 SSE
+  packed path (minus the `66` prefix) → the lowest-risk first lane. Byte-identical default (the
+  existing f64v2/f64v4 path untouched); differential status-diff=0.
+- **Phase 2** — the f32 matmul op set (FMA + horizontal-dot) + a dense-f32 GEMM/attention
+  acceptance bench, x86, bench-gated (the ML throughput proof).
+- **Phase 3** — the integer lanes (`i8v16`/`i16v8`/`i32v4`/`i64v2`) on the same `EMIT_ISIMD`
+  op-table + the tentib-0.4.1 b1.58 quantized-kernel bench.
+- **Phase 4** — `f32v8` + the `256-bit` (AVX2) matrix across f32 + int.
+- **Phase 5** — aarch64 NEON parity (`fmla`/`sdot`) + cx stubs + PE gating (mandatory
   cross-arch, 4-host self-host each release).
-- **Phase 5** — `lib/simd.cyr` `iNvM` wrappers + guide/vidya docs.
-- **Phase 6** — repair tail (budgeted 1–2; lane-width sign-ext, widening overflow, cross-arch
-  mask divergence — the generics-arc .37/.38/.39 precedent).
+- **Phase 6** — `lib/simd.cyr` `f32vN`/`iNvM` wrappers + guide/vidya docs.
+- **Phase 7** — repair tail (budgeted 1–2; the generics-arc .37/.38/.39 precedent).
 
 ## Sub-decisions folded into this recommendation (open to adjust)
 
 1. **Descriptor in the sentinel vs a side-table** → **sentinel** (recommended): no new heap
    region / no 7-fork `_fnt_grow` addition, one lookup, and the reserved band is collision-free.
    (Facet 1/2 floated a side-table; the sentinel is lower-churn given the descriptor is small.)
-2. **Fold f64 onto the unified scheme now vs later** → **later** (recommended): keep −20/−21 in
-   release-1 for byte-identity; unify as an optional cleanup once integer lands.
-3. **4 width-tokens vs one `isimd` family** → **4 width-tokens** (recommended): lower churn,
-   width statically visible, reuses the `LEXKW` pattern.
-4. **Release-1 arch** → **x86 128-bit first**, aarch64 NEON in Phase 4 (arc lands x86, then the
-   mandatory cross-arch propagation).
+2. **Element-classes covered by the descriptor** → **f32 leads, then i8/i16/i32/i64** (u* fold
+   in via the signed bit). **Legacy f64v2/f64v4 keep −20/−21** in release-1 for byte-identity;
+   f32vN + the integer lanes use the new structured band. (A later cleanup can fold f64 onto the
+   unified descriptor — optional, not release-1.)
+3. **Builtin dispatch surface** → a single **op-table** per backend (`EMIT_ISIMD`/`EMIT_VSIMD`)
+   keyed by the descriptor's (element-class, op) — the exact token spelling (per-type `f32v4`/
+   `i8v16` names vs a `vsimd(op, …)` family) is a Phase-1 detail; the load-bearing decision is
+   **one dispatch table, not an if-chain per (op × class × width)**.
+4. **Release-1 arch** → **x86 128-bit first** (f32v4 rides the proven f64 SSE path), aarch64
+   NEON in Phase 5 (arc lands x86, then the mandatory cross-arch propagation).
 
-**Status: Phase 0 design pinned, pending sign-off. On approval → Phase 1 (i8v16 end-to-end,
-x86).**
+**Status: Phase 0 design pinned (f32-first), pending sign-off. On approval → Phase 1 (`f32v4`
+end-to-end, x86 — the lowest-risk lane, reusing the f64 SSE packed path).**

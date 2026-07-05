@@ -74,37 +74,37 @@ and .0's own de-risking) — see *Reactive headroom* below.
 
 ## PINNED — immediate work
 
-### Pin 1 — Integer SIMD (arc opener, ML/AI priority) — ~5–7 releases
+### Pin 1 — Packed SIMD compute (f32-first, then integer; ML/AI priority) — ~5–7 releases
 
-`iNxM` typed integer vectors + int8/16/32(/64) lane ops + the quantized-ML
-primitives (widening multiply-add, sign-select, horizontal reduce). Cyrius SIMD is
-**f64-only** today (`lib/simd.cyr` = `f64v2`/`f64v4`); there are no integer vector
-types, capping every int/quantized/bit kernel at scalar speed — the direct blocker
-for quantized-ML throughput (tentib b1.58 inference, attn11/tarka int paths, sankoch
-compression, int8/16 DSP, edge/Pi tok-s). Follows the v5.10.x typed-**f64** SIMD arc
-precedent — but that was a ~50-patch combined arc, and this is **8 vector types with
-new integer semantics vs f64's 2 with native FP ops**, so "just mirror f64"
-understates it.
+**Sequence pivot (user 2026-07-04): f32 SIMD compute FIRST, then the lower-int lanes** — model
+testing shows f32+SIMD is the primary throughput lever, with int8/quantized as the optimization
+layer on top. Cyrius SIMD is **f64-only** today (`lib/simd.cyr` = `f64v2`/`f64v4`); **f32 is
+storage-only (no arithmetic — routes through f64) and there is no f32 or integer SIMD at all**,
+capping dense-f32 matmul/attention AND every int/quantized kernel at scalar/f64 speed. f32v4
+**rides the existing f64 SSE packed path minus the `66` prefix** (`mulps`=`0F 59` vs
+`mulpd`=`66 0F 59`) — the lowest-risk first lane. Then integer lanes (i8/i16/i32/i64) ride the
+same op-table for the quantized frontier (tentib b1.58, attn11/tarka, sankoch, edge/Pi tok-s).
+Extends the **i64-oracle / free-type-movement** model: vectors are views entered by
+broadcast/load and returned to i64 by extract/reduce.
 
-- **▶ IMMEDIATE FIRST STEP (the pin): decide the type-class ENCODING — before any
-  emit code.** The current `-20`/`-21` pscale sentinels + the **2-bit-per-param SIMD
-  mask** physically cannot encode 8 integer vector types; that fork drives the whole
-  arc (the way the array-field representation fork drives Pin 2). **Second pin:** agree
-  the **minimal-op cut** (int8 load + sign-select + int16 widening-accumulate +
-  hreduce) so the *first* release ships tentib-0.4.1-unblocking scope, not the full
-  lane-op matrix.
-- **Phases**: (0) encoding + minimal-op decision → (1) one lane width end-to-end on
-  x86 (prove the encoding scales) → (2) core lane ops + the quantized-ML primitives,
-  x86, bench-gated → (3) fill out the i8/i16/i32/i64 × 128/256-bit matrix → (4)
-  aarch64 NEON parity (sdot/smlal) + cx stubs + PE gating → (5) `lib/simd.cyr`
-  wrappers + tentib 0.4.1 integration bench → (6) repair tail (budgeted, 1–2).
-- **Risks**: the 2-bit param mask + `-20/-21` sentinels are a hard scaling wall
-  (silent mis-encoding class, cf. the v6.3.36 struct-mask); the builtin token-ID space
-  is near-saturated (needs a new dispatch scheme); integer-only semantics (saturating,
-  signed/unsigned per width, widening-madd overflow) have **no f64 template** and are
-  exactly where sign-ext/truncation bugs hide; VNNI/sdot availability varies per arch;
-  bench-gated acceptance means a correct-but-slow first cut doesn't satisfy the
-  consumer. Cross-repo: tentib 0.4.1 is the acceptance bench (separate repo).
+- **▶ PHASE 0 DONE — encoding PINNED** (design doc
+  [`2026-07-04-integer-simd-encoding-design.md`](proposals/2026-07-04-integer-simd-encoding-design.md)):
+  a **structured SIMD descriptor** in a reserved SLTYPE sentinel band **below −2048**
+  (collision-free — struct sids cap at 1024), decoded by one `_vec_desc()`; f64v2/f64v4 keep
+  their legacy −20/−21 (byte-identity); the 2-bit param mask stays coarse (route-to-vec-reg) with
+  the full descriptor in the param's SLTYPE; dispatch collapses to one `EMIT_ISIMD` op-table per
+  backend (lifting the `EMIT_F64V` pattern). Release-1 op set = the **dense-f32 matmul inner
+  loop** (f32v4 load/store/broadcast + `addps`/`mulps` + FMA + horizontal-dot).
+- **▶ NEXT: Phase 1 — `f32v4` end-to-end on x86** (descriptor + `_vec_desc` + var-decl/return/
+  param plumbing + load/store/broadcast/`addps`/`mulps`), byte-identical default, differential
+  status-diff=0.
+- **Phases**: (0 ✅) encoding → (1) f32v4 end-to-end x86 → (2) f32 matmul op set + GEMM/attention
+  bench → (3) integer lanes (i8/i16/i32/i64) + tentib b1.58 bench → (4) f32v8 + 256-bit AVX2 →
+  (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers + docs → (7) repair tail.
+- **Risks**: integer-lane semantics (saturating, signed/unsigned per width, widening-madd) have
+  no f64 template → sign-ext/truncation surface (cf. v6.3.35/.36); VNNI/sdot/FMA availability
+  varies per arch (feature-gated); bench-gated acceptance (a correct-but-slow cut doesn't satisfy
+  the consumer). Cross-repo acceptance benches: dense-f32 GEMM + tentib 0.4.1 (separate repos).
 
 ### Pin 2 — Array-typed struct fields — ~3–4 releases
 
