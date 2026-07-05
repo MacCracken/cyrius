@@ -116,6 +116,11 @@ broadcast/load and returned to i64 by extract/reduce.
   GEMM/attention bench → (3) integer lanes (i8/i16/i32/i64) + tentib b1.58 bench → (4) f32v8 +
   256-bit AVX2 → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers + docs →
   (7) repair tail.
+- **Phase 5 cleanup (carried from v6.4.4)** — when aarch64 (and cx) `EMIT_F32V_LOOP` gets a real
+  implementation, **remove the `simd_f32v4` XFAIL** from the aarch64-native CI corpus (`ci.yml`),
+  promote `simd_f32v4.tcyr` into the `vr01_` cross-OS LIBTEST glob so the release gate covers it,
+  and drop the "x86-only this phase" stub comments. Tracked:
+  `issues/2026-07-05-aarch64-f32v4-xfail-phase5.md` (CI surfaces it via `XPASS` once it passes).
 - **Risks**: integer-lane semantics (saturating, signed/unsigned per width, widening-madd) have
   no f64 template → sign-ext/truncation surface (cf. v6.3.35/.36); VNNI/sdot/FMA availability
   varies per arch (feature-gated); bench-gated acceptance (a correct-but-slow cut doesn't satisfy

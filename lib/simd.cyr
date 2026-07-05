@@ -239,7 +239,8 @@ fn f32v4_lane3_ptr(p): i64 { return load32(p + 12); }
 # (v6.4.4); aarch64 NEON + cx land in Phase 5. On aarch64/cx EMIT_F32V_LOOP is a
 # stub, so these wrappers COMPILE (emit no packed op) but a call produces no
 # result — DO NOT use f32v4 arithmetic on aarch64/cx yet. (The simd_f32v4 tcyr
-# is x86-only by design and SKIP'd in the aarch64-native CI corpus run.)
+# is XFAIL'd in the aarch64-native CI corpus so Phase 5 auto-surfaces via XPASS —
+# see docs/development/issues/2026-07-05-aarch64-f32v4-xfail-phase5.md.)
 # Packed add (pointer form) — addps over the 4 lanes. Routes f32v4_add(&x, &y) here.
 fn f32v4_add_ptr(a_ptr, b_ptr): f32v4 {
     var r: f32v4;

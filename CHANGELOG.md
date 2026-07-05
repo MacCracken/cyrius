@@ -70,9 +70,13 @@ A 3-lens adversarial review of the diff surfaced three latent bugs the encoding 
 - **f32v4 packed arithmetic is x86-only this phase.** aarch64/cx `EMIT_F32V_LOOP` is a stub (emits nothing —
   aarch64 NEON `fmla` lands in Phase 5, cx SIMD is wholly TBD), so `lib/simd.cyr` still *compiles* on aarch64/cx
   (needed — a hard error there would break every build that `include`s it), but f32v4 arithmetic *no-ops* on
-  those targets — don't use it until Phase 5. `simd_f32v4.tcyr` is therefore x86-only by design and **SKIP'd in
-  the aarch64-native CI corpus run** (`ci.yml`, alongside `math_pack_integration`); construct/extract
-  (`f32v4_make`/`_splat`/`_lane`) remain universal.
+  those targets — don't use it until Phase 5. Found post-ship by the aarch64-native CI corpus run (which globs
+  the full corpus, unlike the release gate's `vr01_`-only LIBTEST); `simd_f32v4.tcyr` is **XFAIL'd (not SKIP'd)**
+  there — and the XFAIL is **strict** (`xfail_strict`): an XPASS is a **HARD CI failure**, not a soft log line
+  (the corpus gate is now `fail==0 && xpass==0`). So the moment Phase 5 makes it pass on ARM the job goes RED
+  and forces the XFAIL removal — a green check with a buried "XPASS" reminder is the silent placebo we refuse to
+  ship. Construct/extract (`f32v4_make`/`_splat`/`_lane`) remain universal. Tracked:
+  `issues/2026-07-05-aarch64-f32v4-xfail-phase5.md` + a Phase-5 roadmap cleanup item.
 
 ### Next
 - Phase 2: the f32 matmul op set (FMA + horizontal-dot) + a dense-f32 GEMM/attention acceptance bench; then

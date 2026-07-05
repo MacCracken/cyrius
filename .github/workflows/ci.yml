@@ -612,13 +612,18 @@ jobs:
         run: |
           # The first on-hardware tcyr coverage beyond self-host + funcgate — runs
           # the full corpus through the NATIVE cycc_native_a64 (what ARM users
-          # actually run) and executes natively. HARD. SKIP = x86-only by design;
-          # XFAIL = backend bugs tracked in
-          # docs/development/issues/2026-06-19-aarch64-tcyr-failures.md.
+          # actually run) and executes natively. HARD. SKIP = permanently x86-only
+          # by design (never runs on ARM). XFAIL = expected-to-fail-FOR-NOW: a
+          # backend bug OR a phase-gated feature gap — it STILL runs on ARM, so
+          # when the gap closes the test passes and CI prints "XPASS: … remove
+          # from XFAIL" (a self-cleaning workaround, not a silent SKIP). Tracked
+          # in docs/development/issues/2026-07-05-aarch64-f32v4-xfail-phase5.md.
           chmod +x a64/cycc_native_a64
           CC=a64/cycc_native_a64
-          SKIP="math_pack_integration simd_f32v4"
-          XFAIL=""
+          SKIP="math_pack_integration"
+          # simd_f32v4: f32v4 packed ops are x86-only until SIMD Phase 5 (aarch64
+          # NEON) — XFAIL (not SKIP) so Phase 5 auto-surfaces the removal via XPASS.
+          XFAIL="simd_f32v4"
           pass=0; fail=0; xfail=0; xpass=0; skip=0
           for t in tests/tcyr/*.tcyr; do
             name=$(basename "$t" .tcyr)
@@ -636,11 +641,17 @@ jobs:
             if [ $bad -eq 1 ]; then
               if [ $isx -eq 1 ]; then xfail=$((xfail+1)); else echo "  FAIL: $name ($ec)"; fail=$((fail+1)); fi
             else
-              if [ $isx -eq 1 ]; then echo "  XPASS: $name — FIXED? remove from XFAIL"; xpass=$((xpass+1)); else pass=$((pass+1)); fi
+              if [ $isx -eq 1 ]; then echo "  XPASS: $name — now PASSES on ARM; REMOVE it from XFAIL (see docs/development/issues/)"; xpass=$((xpass+1)); else pass=$((pass+1)); fi
             fi
           done
           echo "tcyr-native: $pass pass / $fail fail / $xfail xfail / $xpass xpass / $skip skip (of $(ls tests/tcyr/*.tcyr | wc -l))"
-          test $fail -eq 0
+          # STRICT XFAIL (xfail_strict): an XPASS is a HARD failure, not a soft log
+          # line. A test parked in XFAIL that starts passing MUST be removed — and CI
+          # going RED is what forces someone to do it. A green check with a buried
+          # "XPASS" reminder is exactly the silent placebo this project refuses to
+          # ship (cf. the macOS-rot incident). So the gate is BOTH fail==0 AND
+          # xpass==0 — an XFAIL cannot silently outlive its reason.
+          test $fail -eq 0 && test $xpass -eq 0
 
   # ── macOS Mach-O ──
   macho:
