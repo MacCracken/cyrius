@@ -531,11 +531,35 @@ fn f32v4_dot(a: f32v4, b: f32v4): i64 {
     return f32v_dot(&a, &b, 4);
 }
 
-# NOTE (SIMD Phase 3a): value-form typed integer ops (e.g. `i32v4_add(a, b)` with
-# i32v4 VALUE params) are deferred to Phase 3b. They need the value-form param-mask
-# redesign — the 2-bit `_fnt_simdmask` is saturated (0/1/2/3 = none/f64v2/f64v4/
-# f32v4), so integer 128-bit params can't yet be routed through XMM as a full 16
-# bytes (they pass as an 8-byte i64 → lanes 2-3 lost). That mask work lands in 3b
-# alongside the widening-MAC. For 3a, use the pointer-form ops (i32v4_add_ptr etc.)
-# above, or the flat-array builtins (iv_add/iv_sub/iv_mul) directly — both work.
+# --- Integer vector value-form ops (SIMD Phase 3b, v6.4.7) ---
+# The value-form param-mask redesign (class 1 = any 16-byte vector) lets integer
+# 128-bit types route through XMM as full 16 bytes, so these value-form typed ops work.
+# Extract i32v4 lane 0 (value form). Routes i32v4_lane0(v); &v → _ptr sibling.
+fn i32v4_lane0(v: i32v4): i64 { return load32(&v + 0); }
+# Extract i32v4 lane 1 (value form).
+fn i32v4_lane1(v: i32v4): i64 { return load32(&v + 4); }
+# Extract i32v4 lane 2 (value form).
+fn i32v4_lane2(v: i32v4): i64 { return load32(&v + 8); }
+# Extract i32v4 lane 3 (value form).
+fn i32v4_lane3(v: i32v4): i64 { return load32(&v + 12); }
+# Packed i32 add (value form): r[i] = a[i] + b[i].
+fn i32v4_add(a: i32v4, b: i32v4): i32v4 { var r: i32v4; iv_add(&r, &a, &b, 4, 4); return r; }
+# Packed i32 sub (value form).
+fn i32v4_sub(a: i32v4, b: i32v4): i32v4 { var r: i32v4; iv_sub(&r, &a, &b, 4, 4); return r; }
+# Packed i32 mul (value form, low 32 bits).
+fn i32v4_mul(a: i32v4, b: i32v4): i32v4 { var r: i32v4; iv_mul(&r, &a, &b, 4, 4); return r; }
+# Packed i16 add (value form).
+fn i16v8_add(a: i16v8, b: i16v8): i16v8 { var r: i16v8; iv_add(&r, &a, &b, 8, 2); return r; }
+# Packed i16 sub (value form).
+fn i16v8_sub(a: i16v8, b: i16v8): i16v8 { var r: i16v8; iv_sub(&r, &a, &b, 8, 2); return r; }
+# Packed i16 mul (value form, low 16 bits).
+fn i16v8_mul(a: i16v8, b: i16v8): i16v8 { var r: i16v8; iv_mul(&r, &a, &b, 8, 2); return r; }
+# Packed i8 add (value form).
+fn i8v16_add(a: i8v16, b: i8v16): i8v16 { var r: i8v16; iv_add(&r, &a, &b, 16, 1); return r; }
+# Packed i8 sub (value form).
+fn i8v16_sub(a: i8v16, b: i8v16): i8v16 { var r: i8v16; iv_sub(&r, &a, &b, 16, 1); return r; }
+# Packed i64 add (value form).
+fn i64v2_add(a: i64v2, b: i64v2): i64v2 { var r: i64v2; iv_add(&r, &a, &b, 2, 8); return r; }
+# Packed i64 sub (value form).
+fn i64v2_sub(a: i64v2, b: i64v2): i64v2 { var r: i64v2; iv_sub(&r, &a, &b, 2, 8); return r; }
 #endif

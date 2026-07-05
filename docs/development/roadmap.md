@@ -55,6 +55,12 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   generalization (differential 0/328) + `i8v16`/`i16v8`/`i32v4`/`i64v2` (+`u*`) + `iv_add`/`iv_sub`/
   `iv_mul` (paddb/w/d/q…) + pointer-form lib wrappers. Fixed a rough-scan retptr SIGSEGV (Phase-1
   bug class, closed descriptor-driven). Value-form typed int ops + widening-MAC + b1.58 → 3b.
+- **v6.4.7** — **SIMD arc Phase 3b: value-form typed integer ops + int8 widening dot** — the
+  param-mask redesign (class 1 = any 16-byte vector routes through XMM; caller class-1 type-check
+  relaxed to `_is_simd128`, f32v4 stays strict; differential 0/331) unblocks `i32v4_add(a,b)` value
+  ops (i32v4/i16v8/i8v16/i64v2) + `i32v4_lane*(v)`. `iv_dp8` (u8·i8 → i32 widening dot,
+  pmaddubsw→pmaddwd→paddd, movsxd sign-extend) = the b1.58 GEMM inner loop; `bench_i8_gemm.bcyr`
+  (64³, ~30×). simd_ints 11→21 asserts. Fixpoint; x86-only phase. **Integer-SIMD arc CLOSES.**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -134,15 +140,21 @@ broadcast/load and returned to i64 by extract/reduce.
     (paddb/w/d/q, psubb/w/d/q, pmullw/pmulld); pointer-form lib wrappers; `simd_ints.tcyr` +
     `vr01_ints_ctor.tcyr`. Fixed a return-type-rough-scan retptr SIGSEGV **descriptor-driven**
     (closes the Phase-1 f32v4 bug class for all future vector types).
-  - **▶ NEXT: Phase 3b (v6.4.7)** — **value-form typed integer ops + the ML-acceleration op set +
-    bench.** First the **value-form param-mask redesign** (the 2-bit `_fnt_simdmask` is saturated —
-    integer 128-bit value params can't route through XMM yet; deferred from 3a). Then the widening MAC
-    (`pmaddubsw` u8×i8→i16-sat, `pmaddwd` i16×i16→i32, `paddd` accumulate) + horizontal reduce, then
-    the **tentib b1.58 (int8/ternary) GEMM acceptance bench**.
+  - **✅ Phase 3b (v6.4.7) — value-form typed integer ops + int8 widening dot + b1.58 bench.** The
+    **value-form param-mask redesign**: `_classify_param_type`/`_classify_return_type` gained integer
+    arms, the def-fold/prescan set `_fnt_simdmask` class 1 for **any** `≤ −2048` vector param, and the
+    caller class-1 arg type-check was relaxed from the exact f64v2 sentinel to `_is_simd128` (any
+    16-byte vector) — f32v4 (mask code 3) stays strict so `simd_vec_reject` holds. Byte-identical
+    (differential 0/331: the only class-1 params were f64v2-with-f64v2-args, so widening the accepted
+    set changes no existing codegen). Value-form `i32v4_add`/`_sub`/`_mul` + `_lane{0..3}`,
+    `i16v8`/`i8v16`/`i64v2` add/sub(/mul). The widening MAC shipped as **`iv_dp8`** (u8·i8→i32:
+    `pmaddubsw`→`pmaddwd`→`paddd` accumulate + `phaddd`×2 + **`movsxd` sign-extend**) — the b1.58 GEMM
+    inner loop; `bench_i8_gemm.bcyr` (64³, ~30× vs scalar). `simd_ints.tcyr` 11→21 asserts. **The
+    integer-SIMD arc CLOSES here.**
 - **Phases**: (0 ✅) encoding → (1 ✅ v6.4.4) f32v4 end-to-end x86 → (2 ✅ v6.4.5) f32 matmul op set +
-  GEMM bench → (3a v6.4.6) int types + packed ops → (3b v6.4.7) int widening-MAC + b1.58 bench →
-  (4) f32v8 + 256-bit AVX2 → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers +
-  docs → (7) repair tail.
+  GEMM bench → (3a ✅ v6.4.6) int types + packed ops → (3b ✅ v6.4.7) int widening-MAC + b1.58 bench →
+  **(4 ▶ NEXT) f32v8 + 256-bit AVX2** → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr`
+  wrappers + docs → (7) repair tail.
 - **Phase 5 cleanup (carried from v6.4.4)** — when aarch64 (and cx) `EMIT_F32V_LOOP` gets a real
   implementation, **remove the `simd_f32v4` XFAIL** from the aarch64-native CI corpus (`ci.yml`),
   promote `simd_f32v4.tcyr` into the `vr01_` cross-OS LIBTEST glob so the release gate covers it,

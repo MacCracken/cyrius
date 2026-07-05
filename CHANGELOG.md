@@ -6,6 +6,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.7] — 2026-07-05
+
+**v6.4.7 — SIMD arc Phase 3b: value-form typed integer ops + the int8 widening dot (b1.58 GEMM inner loop).**
+The second half of the 3a/3b split. 3b lands the **value-form param-mask redesign** that unblocks
+`i32v4_add(a, b)`-style typed ops (i32v4/i16v8/i8v16/i64v2 *value* params routed through XMM as a full 16
+bytes), plus `iv_dp8` — the widening `u8·i8 → i32` dot that is the BitNet/b1.58 quantized-matmul inner loop —
+and a dense int8 GEMM bench. The mask refactor is **differential-green (codegen-diff=0 over 331 corpus
+inputs)**; cycc self-hosts a **fixpoint** (no integer-SIMD in its own source → byte-identical at 1,049,352 B);
+seed → cybs → cycc byte-identical; check.sh 129; ecb + cass + pi SELFHOST_OK; self_compile 561 ms.
+
+### Added — value-form integer ops (x86)
+- **Param-mask redesign (byte-identical)** — the value-form SIMD param path is generalized so a 128-bit
+  *integer* vector param routes through XMM as a full 16 bytes. `_classify_param_type` / `_classify_return_type`
+  gained integer arms (returning the structured-descriptor sentinels), the def-fold + prescan now set the
+  2-bit `_fnt_simdmask` class 1 for **any** `≤ −2048` vector param, and the caller's class-1 arg type-check was
+  relaxed from the exact f64v2 sentinel (`−20`) to `_is_simd128(S, arg)` — any 16-byte vector. f32v4 (mask
+  code 3) stays strict, so `simd_vec_reject` still rejects a mismatched SIMD arg. Verified logic-preserving
+  (differential 0/331): before this, the only class-1 params were f64v2 called with f64v2 args, so widening
+  the accepted set changes no existing codegen.
+- **`lib/simd.cyr`** — value-form typed ops: `i32v4_add`/`_sub`/`_mul(a, b)` + `i32v4_lane{0..3}(v)`,
+  `i16v8_add`/`_sub`/`_mul`, `i8v16_add`/`_sub`, `i64v2_add`/`_sub` (i8 has no packed multiply; i64 packed
+  multiply needs pmuludq sequencing — both left to the pointer-form / flat-array path). Value-form SIMD args
+  must be **bare local IDENTs** (not call-result temporaries) — the same constraint f32v4 already carries.
+  api-surface +14 / −0.
+
+### Added — int8 widening dot + GEMM bench (x86)
+- **`iv_dp8(a, b, n)`** → i32 in `eax`/`rax`: the widening `sum(a[i] * b[i])` for `a` = **u8** activations, `b`
+  = **i8** weights, `n` a multiple of 16. `EMIT_IVEC_DP8` (`backend/x86/float.cyr`) = a `pxor` accumulator +
+  a `pcmpeqw`/`psrlw` ones-vector, then a 16-lane loop of `movups`/`pmaddubsw` (u8×i8 → i16 pairs) /
+  `pmaddwd` against ones (i16 → i32 widen) / `paddd` accumulate, reduced with two `phaddd` + `movd eax` and
+  **sign-extended with `movsxd rax, eax`**. Token 146. aarch64/cx silent stub (Phase 5 `sdot`).
+- **Bench** — `benches/bench_i8_gemm.bcyr`: a dense 64×64×64 int8 GEMM (`C = A·Bᵀ`, one `iv_dp8` per cell —
+  the b1.58 inner loop) vs a scalar u8×i8 baseline, with a correctness self-check. The SIMD path is
+  **~30× faster** (28.7 µs vs 879.5 µs).
+
+### Fixed — found by testing
+- **`iv_dp8` sign-extension** — a negative int8 dot result (e.g. i8 weights of `−1`) came back as a large
+  positive number (`4294967160` = `0xFFFFFF88`, i.e. `−136` zero-extended): the reduced 32-bit sum in `eax`
+  was returned as a zero-extended 64-bit value. Fixed with `movsxd rax, eax` (sign-extend the low 32 bits).
+  Locked by a signed-weight assert in `simd_ints.tcyr`.
+
+### Tests
+- **`simd_ints.tcyr` (11 → 21 asserts)** — value-form `i32v4_add`/`_sub`/`_mul`/`_lane3` (proving all 16 bytes
+  route — lane 3 survives), `i16v8`/`i8v16`/`i64v2` value-form add, and `iv_dp8` both unsigned (`2·3·16 = 96`)
+  and **signed** (`i8 = −1 → −32`, exercising the sign-extend fix). x86-only, XFAIL in the aarch64 corpus like
+  `simd_f32v4`.
+
 ## [6.4.6] — 2026-07-05
 
 **v6.4.6 — SIMD arc Phase 3a: integer vector types + packed ops (the first of a planned 3a/3b split).**

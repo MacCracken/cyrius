@@ -1186,8 +1186,13 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # arg (f64v2 -> f32v4 param) is rejected instead of silently
                 # running addps over f64 bit patterns.
                 if (_fc_class == 1) {
-                    if (_fc_arg_lt != 0 - 20) {
-                        ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v2)", 56);
+                    # v6.4.7: class 1 = any 16-byte/1-XMM vector (f64v2 OR an integer
+                    # vector i32v4/i16v8/i8v16/i64v2). They route identically, so the
+                    # check is size-class (_is_simd128), not the exact type. f32v4
+                    # (class 3) stays exact. Byte-identical for the corpus: class-1
+                    # params were f64v2 with f64v2 args → _is_simd128(-20)==1, no error.
+                    if (_is_simd128(S, _fc_arg_lt) == 0) {
+                        ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44);
                     }
                 } elif (_fc_class == 3) {
                     if (_fc_arg_lt != 0 - 2121) {
@@ -1968,6 +1973,18 @@ fn _classify_param_type(S, tnoff): i64 {
     if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
         if (b4 == 52) { if (b5 == 0) { return 8; } }
     } } } }
+    # v6.4.7 (Phase 3b) — integer vector value-form params: return the NEGATIVE
+    # descriptor sentinel (≤ -2048), distinct from the small positive codes 1-8.
+    # The prescan + def-fold detect `c <= -2048` → 16-byte/1-XMM routing (mask 1),
+    # SLTYPE = the sentinel. 'i'=105 'u'=117 'v'=118.
+    if (b0 == 105) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) { if (b4 == 52) { if (b5 == 0) { return 0 - 2122; } } } } } }  # i32v4
+    if (b0 == 117) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) { if (b4 == 52) { if (b5 == 0) { return 0 - 2120; } } } } } }  # u32v4
+    if (b0 == 105) { if (b1 == 49) { if (b2 == 54) { if (b3 == 118) { if (b4 == 56) { if (b5 == 0) { return 0 - 2150; } } } } } }  # i16v8
+    if (b0 == 117) { if (b1 == 49) { if (b2 == 54) { if (b3 == 118) { if (b4 == 56) { if (b5 == 0) { return 0 - 2148; } } } } } }  # u16v8
+    if (b0 == 105) { if (b1 == 56) { if (b2 == 118) { if (b3 == 49) { if (b4 == 54) { if (b5 == 0) { return 0 - 2178; } } } } } }  # i8v16
+    if (b0 == 117) { if (b1 == 56) { if (b2 == 118) { if (b3 == 49) { if (b4 == 54) { if (b5 == 0) { return 0 - 2176; } } } } } }  # u8v16
+    if (b0 == 105) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) { if (b4 == 50) { if (b5 == 0) { return 0 - 2094; } } } } } }  # i64v2
+    if (b0 == 117) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) { if (b4 == 50) { if (b5 == 0) { return 0 - 2092; } } } } } }  # u64v2
     return 0;
 }
 
@@ -2121,6 +2138,7 @@ fn _prescan_params(S, fi): i64 {
                         elif (c == 6) { simd_mask = simd_mask | (1 << (pc * 2)); }
                         elif (c == 7) { simd_mask = simd_mask | (2 << (pc * 2)); }
                         elif (c == 8) { simd_mask = simd_mask | (3 << (pc * 2)); }  # f32v4 (16-byte; mask=3 distinguishes from f64v2=1)
+                        elif (c <= 0 - 2048) { simd_mask = simd_mask | (1 << (pc * 2)); }  # v6.4.7: integer 128-bit vector → 16-byte/1-XMM (mask 1)
                         # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
                         if (_param_wants_struct_ptr(S, PEEKV(S)) == 1) { struct_mask = struct_mask | (1 << pc); }
                         STI(S, GTI(S) + 1);                  # consume type name
@@ -2995,6 +3013,7 @@ fn PARSE_FN_DEF(S): i64 {
                     elif (_ptc == 6) { pt_simd_class = 1; pt_simd_sid = 20; }
                     elif (_ptc == 7) { pt_simd_class = 2; pt_simd_sid = 21; }
                     elif (_ptc == 8) { pt_simd_class = 1; pt_simd_sid = 2121; }  # f32v4
+                    elif (_ptc <= 0 - 2048) { pt_simd_class = 1; pt_simd_sid = 0 - _ptc; }  # v6.4.7: integer 128-bit vector (16-byte/1-XMM, SLTYPE = sentinel)
                     # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
                     if (_param_wants_struct_ptr(S, tnoff) == 1) { struct_mask = struct_mask | (1 << pc); }
                     # v6.3.39 (B3) — record params whose declared type is a type-param, so
