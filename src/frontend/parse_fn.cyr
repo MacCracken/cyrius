@@ -2022,6 +2022,19 @@ fn _classify_return_type(S, rt_noff): i64 {
     if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
         if (b4 == 52) { if (b5 == 0) { return 0 - 2121; } }
     } } } }
+    # v6.4.6 (Phase 3a) — integer vector return/param types (128-bit sentinels).
+    # 'i'=105 'u'=117 'v'=118. i32v4/u32v4 = i/u,'3','2','v','4'.
+    if (b0 == 105) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) { if (b4 == 52) { if (b5 == 0) { return 0 - 2122; } } } } } }  # i32v4
+    if (b0 == 117) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) { if (b4 == 52) { if (b5 == 0) { return 0 - 2120; } } } } } }  # u32v4
+    # i16v8/u16v8 = i/u,'1','6','v','8'.
+    if (b0 == 105) { if (b1 == 49) { if (b2 == 54) { if (b3 == 118) { if (b4 == 56) { if (b5 == 0) { return 0 - 2150; } } } } } }  # i16v8
+    if (b0 == 117) { if (b1 == 49) { if (b2 == 54) { if (b3 == 118) { if (b4 == 56) { if (b5 == 0) { return 0 - 2148; } } } } } }  # u16v8
+    # i8v16/u8v16 = i/u,'8','v','1','6'.
+    if (b0 == 105) { if (b1 == 56) { if (b2 == 118) { if (b3 == 49) { if (b4 == 54) { if (b5 == 0) { return 0 - 2178; } } } } } }  # i8v16
+    if (b0 == 117) { if (b1 == 56) { if (b2 == 118) { if (b3 == 49) { if (b4 == 54) { if (b5 == 0) { return 0 - 2176; } } } } } }  # u8v16
+    # i64v2/u64v2 = i/u,'6','4','v','2'.
+    if (b0 == 105) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) { if (b4 == 50) { if (b5 == 0) { return 0 - 2094; } } } } } }  # i64v2
+    if (b0 == 117) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) { if (b4 == 50) { if (b5 == 0) { return 0 - 2092; } } } } } }  # u64v2
     return 0;
 }
 
@@ -2628,6 +2641,15 @@ fn PARSE_FN_DEF(S): i64 {
                     var _rs_b2 = load8(S + 0x60000 + _rs_rt_noff + 2);
                     var _rs_b3 = load8(S + 0x60000 + _rs_rt_noff + 3);
                     var _rs_is_scalar = 0;
+                    # v6.4.6 (Phase 3a) — any SIMD VECTOR return type (f64v2/f64v4/
+                    # f32v4 + integer vectors i8v16..u64v2) returns register-class
+                    # (SysV pair / XMM0), NOT via retptr. Catch them ALL uniformly
+                    # through the shared classifier so a new vector type can never
+                    # silently default to the retptr-stash — the Phase-1 f32v4
+                    # SIGSEGV class. (Scalars classify non-vector → _is_simd_any 0;
+                    # structs classify to a +sid → 0. So this only fires for vectors,
+                    # byte-identical for every existing return type.)
+                    if (_is_simd_any(S, _classify_return_type(S, _rs_rt_noff)) == 1) { _rs_is_scalar = 1; }
                     if (_rs_b0 == 105) {
                         if (_rs_b1 == 56) {
                             if (_rs_b2 == 0) { _rs_is_scalar = 1; }
