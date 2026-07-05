@@ -226,10 +226,13 @@ fn f32v4_splat(x_bits): f32v4 {
     return f32v4_make(x_bits, x_bits, x_bits, x_bits);
 }
 
-# Extract lane 0/1/2/3 (pointer form). Parser routes f32v4_lane0(&v) here.
+# Extract lane 0 (pointer form). Parser routes f32v4_lane0(&v) here.
 fn f32v4_lane0_ptr(p): i64 { return load32(p + 0); }
+# Extract lane 1 (pointer form). Parser routes f32v4_lane1(&v) here.
 fn f32v4_lane1_ptr(p): i64 { return load32(p + 4); }
+# Extract lane 2 (pointer form). Parser routes f32v4_lane2(&v) here.
 fn f32v4_lane2_ptr(p): i64 { return load32(p + 8); }
+# Extract lane 3 (pointer form). Parser routes f32v4_lane3(&v) here.
 fn f32v4_lane3_ptr(p): i64 { return load32(p + 12); }
 
 # Packed add (pointer form) — addps over the 4 lanes. Routes f32v4_add(&x, &y) here.
@@ -404,6 +407,41 @@ fn f64v4_abs(a: f64v4): f64v4 {
 fn f64v4_sqrt(a: f64v4): f64v4 {
     var r: f64v4;
     f64v_sqrt(&r, &a, 4);
+    return r;
+}
+
+# --- f32v4 value-form (non-PE) — v6.4.3+ SIMD Phase 1 ---
+
+# Extract lane 0 (value form). Parser routes f32v4_lane0(v) here; &v → _ptr sibling.
+fn f32v4_lane0(v: f32v4): i64 { return load32(&v + 0); }
+
+# Extract lane 1 (value form).
+fn f32v4_lane1(v: f32v4): i64 { return load32(&v + 4); }
+
+# Extract lane 2 (value form).
+fn f32v4_lane2(v: f32v4): i64 { return load32(&v + 8); }
+
+# Extract lane 3 (value form).
+fn f32v4_lane3(v: f32v4): i64 { return load32(&v + 12); }
+
+# Packed add (value form) — addps over the 4 lanes.
+fn f32v4_add(a: f32v4, b: f32v4): f32v4 {
+    var r: f32v4;
+    f32v_add(&r, &a, &b, 4);
+    return r;
+}
+
+# Packed sub (value form) — subps over the 4 lanes.
+fn f32v4_sub(a: f32v4, b: f32v4): f32v4 {
+    var r: f32v4;
+    f32v_sub(&r, &a, &b, 4);
+    return r;
+}
+
+# Packed mul (value form) — mulps over the 4 lanes.
+fn f32v4_mul(a: f32v4, b: f32v4): f32v4 {
+    var r: f32v4;
+    f32v_mul(&r, &a, &b, 4);
     return r;
 }
 

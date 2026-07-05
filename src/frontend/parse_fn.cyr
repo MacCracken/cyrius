@@ -1181,11 +1181,19 @@ fn PARSE_FNCALL(S, noff): i64 {
                     ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47);
                 }
                 var _fc_arg_lt = GLTYPE(S, _fc_arg_lli);
-                # Verify the IDENT's SLTYPE matches the param's class.
-                # f64v2 (-20) for class=1; f64v4 (-21) for class=2.
+                # Verify the IDENT's SLTYPE matches the param's class EXACTLY.
+                # v6.4.4: mask class 1=f64v2 (-20), 2=f64v4 (-21), 3=f32v4
+                # (-2121). Both f64v2 and f32v4 are 16-byte/1-XMM (identical
+                # codegen), but the mask distinguishes them so a mismatched
+                # arg (f64v2 -> f32v4 param) is rejected instead of silently
+                # running addps over f64 bit patterns.
                 if (_fc_class == 1) {
                     if (_fc_arg_lt != 0 - 20) {
                         ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v2)", 56);
+                    }
+                } elif (_fc_class == 3) {
+                    if (_fc_arg_lt != 0 - 2121) {
+                        ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56);
                     }
                 } else {
                     if (_fc_arg_lt != 0 - 21) {
@@ -1197,7 +1205,9 @@ fn PARSE_FNCALL(S, noff): i64 {
                 store64(&_fc_simd_table + _fc_simd_count * 24 + 8, _fc_simd_pc_caller);
                 store64(&_fc_simd_table + _fc_simd_count * 24 + 16, _fc_class);
                 _fc_simd_count = _fc_simd_count + 1;
-                if (_fc_class == 1) { _fc_simd_pc_caller = _fc_simd_pc_caller + 1; }
+                # class 1 (f64v2) and 3 (f32v4) are both 16-byte = 1 XMM;
+                # class 2 (f64v4) is 32-byte = 2 XMM.
+                if (_fc_class == 1 || _fc_class == 3) { _fc_simd_pc_caller = _fc_simd_pc_caller + 1; }
                 else { _fc_simd_pc_caller = _fc_simd_pc_caller + 2; }
                 argc = argc + 1;
                 if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
@@ -1345,8 +1355,8 @@ fn PARSE_FNCALL(S, noff): i64 {
         var _fc_arg_lli = load64(&_fc_simd_table + _fc_si * 24);
         var _fc_arg_pc = load64(&_fc_simd_table + _fc_si * 24 + 8);
         var _fc_arg_cl = load64(&_fc_simd_table + _fc_si * 24 + 16);
-        if (_fc_arg_cl == 1) {
-            ELOAD_F64V2_TO_XMM(S, _fc_arg_pc, _fc_arg_lli);
+        if (_fc_arg_cl == 1 || _fc_arg_cl == 3) {
+            ELOAD_F64V2_TO_XMM(S, _fc_arg_pc, _fc_arg_lli);   # 16-byte (f64v2 or f32v4)
         } else {
             ELOAD_F64V4_TO_XMM(S, _fc_arg_pc, _fc_arg_lli);
         }
@@ -1955,6 +1965,11 @@ fn _classify_param_type(S, tnoff): i64 {
         if (b4 == 50) { if (b5 == 0) { return 6; } }
         if (b4 == 52) { if (b5 == 0) { return 7; } }
     } } } }
+    # f32v4 → 'f','3','2','v','4', 0 — 128-bit; class 8 reuses f64v2's XMM/2-slot ABI
+    # (pt_simd_class 1) but tags the param SLTYPE -2121 for op-width dispatch.
+    if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
+        if (b4 == 52) { if (b5 == 0) { return 8; } }
+    } } } }
     return 0;
 }
 
@@ -2094,6 +2109,7 @@ fn _prescan_params(S, fi): i64 {
                         elif (c == 5) { tagged_mask = tagged_mask | (1 << pc); }
                         elif (c == 6) { simd_mask = simd_mask | (1 << (pc * 2)); }
                         elif (c == 7) { simd_mask = simd_mask | (2 << (pc * 2)); }
+                        elif (c == 8) { simd_mask = simd_mask | (3 << (pc * 2)); }  # f32v4 (16-byte; mask=3 distinguishes from f64v2=1)
                         # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
                         if (_param_wants_struct_ptr(S, PEEKV(S)) == 1) { struct_mask = struct_mask | (1 << pc); }
                         STI(S, GTI(S) + 1);                  # consume type name
@@ -2933,6 +2949,7 @@ fn PARSE_FN_DEF(S): i64 {
             # below can see it. 0 = int-class (default), 1 = f64v2,
             # 2 = f64v4.
             var pt_simd_class = 0;
+            var pt_simd_sid = 0;     # SLTYPE sentinel: 20 f64v2 / 21 f64v4 / 2121 f32v4
             if (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);  # consume :
                 if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }  # skip * for pointer types
@@ -2955,8 +2972,9 @@ fn PARSE_FN_DEF(S): i64 {
                     elif (_ptc == 3) { result_mask = result_mask | (1 << pc); }
                     elif (_ptc == 4) { option_mask = option_mask | (1 << pc); }
                     elif (_ptc == 5) { tagged_mask = tagged_mask | (1 << pc); }
-                    elif (_ptc == 6) { pt_simd_class = 1; }
-                    elif (_ptc == 7) { pt_simd_class = 2; }
+                    elif (_ptc == 6) { pt_simd_class = 1; pt_simd_sid = 20; }
+                    elif (_ptc == 7) { pt_simd_class = 2; pt_simd_sid = 21; }
+                    elif (_ptc == 8) { pt_simd_class = 1; pt_simd_sid = 2121; }  # f32v4
                     # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
                     if (_param_wants_struct_ptr(S, tnoff) == 1) { struct_mask = struct_mask | (1 << pc); }
                     # v6.3.39 (B3) — record params whose declared type is a type-param, so
@@ -3004,11 +3022,10 @@ fn PARSE_FN_DEF(S): i64 {
             # is the legacy single-slot path. Shared loop-bottom
             # (pc++ + comma-consume) at the end.
             if (pt_simd_class > 0) {
-                var simd_slots = 2;     # f64v2
-                var simd_sid = 20;      # SLTYPE encoding
+                var simd_slots = 2;     # f64v2 / f32v4 (128-bit)
+                var simd_sid = pt_simd_sid;   # 20 f64v2 / 21 f64v4 / 2121 f32v4
                 if (pt_simd_class == 2) {
                     simd_slots = 4;     # f64v4
-                    simd_sid = 21;
                 }
                 # Allocate (simd_slots - 1) anon filler slots + 1
                 # named slot (deepest = lo half, where &v points).
@@ -3031,7 +3048,12 @@ fn PARSE_FN_DEF(S): i64 {
                 # Encode in per-fn simd_mask: 2 bits per param at
                 # offset pc*2. PARSE_FNCALL reads this to route value-
                 # form args into XMM/V regs at call sites.
-                simd_mask = simd_mask | (pt_simd_class << (pc * 2));
+                # v6.4.4: the mask distinguishes f32v4 (code 3) from f64v2
+                # (code 1) for caller type-checking; pt_simd_class stays 1
+                # (XMM count / 16-byte ABI) so all size logic is unchanged.
+                var pt_mask_code = pt_simd_class;
+                if (simd_sid == 2121) { pt_mask_code = 3; }
+                simd_mask = simd_mask | (pt_mask_code << (pc * 2));
                 # Bound check: SysV SIMD arg-regs are XMM0..XMM7
                 # (8 regs); f64v2 uses 1, f64v4 uses 2.
                 if (simd_pc + pt_simd_class > 8) {

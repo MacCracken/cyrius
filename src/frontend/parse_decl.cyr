@@ -202,6 +202,14 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         var lli = FINDLOCAL(S, noff);
         if (lli >= 0) {
             var lt = GLTYPE(S, lli);
+            # v6.4.4: SIMD vector sentinels (f64v2 -20, f64v4 -21, and the
+            # descriptor band <= -2048, e.g. f32v4 -2121) are NOT struct ids.
+            # Without this guard `0 - lt` yields 2121 -> si=2120, which blows
+            # past the 1024-entry struct tables (OOB read in BUILD_METHOD_NAME
+            # / FINDFIELD). Vectors expose lanes via fN_laneK(&v), not `.field`.
+            if (lt == 0 - 20 || lt == 0 - 21 || lt <= 0 - 2048) {
+                ERR_MSG(S, "SIMD vector has no named fields", 31);
+            }
             if (lt < 0) { sid = 0 - lt; }
             idx = 0 - 2 - lli;
             # v5.8.16 §8: slice dot-syntax field load (s.ptr / s.len).
@@ -404,6 +412,12 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
         var lli = FINDLOCAL(S, noff);
         if (lli >= 0) {
             var lt = GLTYPE(S, lli);
+            # v6.4.4: SIMD vector sentinels are not struct ids — reject `.field`
+            # before `0 - lt` escapes the 1024-entry struct tables. See the
+            # mirror guard in PARSE_FIELD_LOAD.
+            if (lt == 0 - 20 || lt == 0 - 21 || lt <= 0 - 2048) {
+                ERR_MSG(S, "SIMD vector has no named fields", 31);
+            }
             if (lt < 0) { sid = 0 - lt; }
             idx = 0 - 2 - lli;
             # v5.8.16 §8: slice dot-syntax field store (s.ptr = expr;

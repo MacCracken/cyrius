@@ -44,6 +44,10 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   the `f64v2(a,b)`/`f64v4(...)` intrinsic constructor syntax (FINDFN → `_make`) +
   `f64v2_splat`/`f64v4_splat`; XMM-state prerequisite noted; + vani 0.9.8 / yukti 2.2.8
   folds. Reactive slot — finishes the f64 SIMD ergonomics before the SIMD arc builds on it.
+- **v6.4.4** — **SIMD arc Phase 1: `f32v4` end-to-end on x86** — 128-bit packed single-precision
+  (descriptor −2121 + `_vec_desc`, full value-form ABI, `addps`/`subps`/`mulps`, lib wrappers).
+  Adversarial review caught + fixed 3 latent bugs (token/`await` collision, a `.field` OOB
+  struct-table escape, f32v4/f64v2 param mask conflation). check.sh 129; fixpoint (cycc has no f32v4).
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -99,12 +103,19 @@ broadcast/load and returned to i64 by extract/reduce.
   the full descriptor in the param's SLTYPE; dispatch collapses to one `EMIT_ISIMD` op-table per
   backend (lifting the `EMIT_F64V` pattern). Release-1 op set = the **dense-f32 matmul inner
   loop** (f32v4 load/store/broadcast + `addps`/`mulps` + FMA + horizontal-dot).
-- **▶ NEXT: Phase 1 — `f32v4` end-to-end on x86** (descriptor + `_vec_desc` + var-decl/return/
-  param plumbing + load/store/broadcast/`addps`/`mulps`), byte-identical default, differential
-  status-diff=0.
-- **Phases**: (0 ✅) encoding → (1) f32v4 end-to-end x86 → (2) f32 matmul op set + GEMM/attention
-  bench → (3) integer lanes (i8/i16/i32/i64) + tentib b1.58 bench → (4) f32v8 + 256-bit AVX2 →
-  (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers + docs → (7) repair tail.
+- **▶ PHASE 1 DONE (v6.4.4) — `f32v4` end-to-end on x86**: descriptor sentinel −2121 + `_vec_desc`
+  + var-decl/return/receive/value-form-param plumbing + `addps`/`subps`/`mulps` (`EMIT_F32V_LOOP`) +
+  `lib/simd.cyr` value+pointer wrappers + `simd_f32v4.tcyr`. Self-host is a fixpoint (cycc has no
+  f32v4). Adversarial review caught + fixed 3 latent bugs (token/`await` collision → 138–140; the
+  −2121 `.field` OOB struct-table escape; the f32v4/f64v2 param mask conflation → 3-state mask +
+  `tests/simd_vec_reject.sh`). Filed one pre-existing residual (value-form SIMD param on a
+  non-SIMD-returning callee skips the type-check — `issues/2026-07-05-valform-simd-param-typecheck-only-when-simd-return.md`).
+- **▶ NEXT: Phase 2 — f32 matmul op set** (FMA + horizontal-dot) + a dense-f32 GEMM/attention
+  acceptance bench.
+- **Phases**: (0 ✅) encoding → (1 ✅ v6.4.4) f32v4 end-to-end x86 → (2) f32 matmul op set +
+  GEMM/attention bench → (3) integer lanes (i8/i16/i32/i64) + tentib b1.58 bench → (4) f32v8 +
+  256-bit AVX2 → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers + docs →
+  (7) repair tail.
 - **Risks**: integer-lane semantics (saturating, signed/unsigned per width, widening-madd) have
   no f64 template → sign-ext/truncation surface (cf. v6.3.35/.36); VNNI/sdot/FMA availability
   varies per arch (feature-gated); bench-gated acceptance (a correct-but-slow cut doesn't satisfy

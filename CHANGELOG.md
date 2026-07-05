@@ -6,6 +6,72 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.4] — 2026-07-05
+
+**v6.4.4 — SIMD arc Phase 1: `f32v4` (128-bit packed single-precision) end-to-end on x86.** The first lane of
+the v6.4.x SIMD-compute arc — f32 packed vectors for the ML/matmul throughput floor, on the Phase-0
+structured-descriptor encoding. cycc self-hosts a **fixpoint** (cycc has no f32v4 in its own source →
+`cycc == cycc(src)` byte-identical at 1,032,872 B); seed → cybs → cycc byte-identical; check.sh 129;
+ecb + cass + pi SELFHOST_OK; self_compile 544 ms.
+
+### The encoding (Phase 0, pinned in `proposals/2026-07-04-integer-simd-encoding-design.md`)
+- A SIMD vector is a STRUCTURED descriptor in a reserved negative-SLTYPE band **below −2048** (collision-free
+  — struct sids cap at 1024), decoded by one `_vec_desc()` (`util.cyr`). f32v4 = sentinel −2121 (desc 73:
+  is_float / lane_log2 2 / lanes_log2 2). Legacy f64v2/f64v4 keep their flat −20/−21 → the f64 SIMD path is
+  byte-identical, and the scheme extends to f32v8 / int lanes by adding descriptor values, not code arms.
+
+### Added — f32v4 end-to-end (x86)
+- **Type + var-decl** — `var v: f32v4` (16 B / 2 slots, reusing f64v2's footprint), name-literal recognition
+  (`0x00003476323366`, ordered before the 3-byte `f32` scalar check), `_vec_desc` sizing.
+- **Full ABI** — value-form return, receive (`var v: f32v4 = f()`), and value-form **params** (class 8 →
+  128-bit XMM, reusing `ESTOREPARM_F64V2`, tagged −2121). Byte-identical: at the receive `pscale` is already
+  −20 for f64v2, so the `== pscale` threading is a no-op on the f64 path.
+- **Packed ops** — x86 `addps`/`subps`/`mulps` (`EMIT_F32V_LOOP` = the f64 packed path minus the `66` prefix,
+  SIB `0xB2` scale ×4, `rsi += 4`); `f32v_add`/`_sub`/`_mul` builtins (tokens **138–140**) wired through the
+  lexer, statement dispatcher, and expr dispatcher. aarch64/cx STUB `EMIT_F32V_LOOP` (real NEON in Phase 5),
+  so f32v4 compute is x86-only this phase.
+- **`lib/simd.cyr`** — `f32v4_make`/`_splat`/`_lane{0..3}`/`_add`/`_sub`/`_mul` in **both value and pointer
+  form** (the `&IDENT → _ptr` routing works via the value-form base); api-surface +16 / −0.
+- **Test** — `tests/tcyr/simd_f32v4.tcyr` (x86, 8 asserts: construct / addps / subps / mulps / dual-form /
+  value-form param round-trip).
+
+### Found by testing (fixed)
+- The return-type **rough-scan** defaulted f32v4 to a retptr-stash → **SIGSEGV** on `fn(): f32v4` (Linux took
+  the Win64 retptr branch). The statement-level SIMD token band (62–105 + 128–130) **missed the new tokens** →
+  `f32v_add` as a statement parsed as "unexpected". Both are separate ABI-setup / routing sites the encoding
+  map couldn't see — found only by running the code.
+
+### Found by adversarial review (fixed)
+A 3-lens adversarial review of the diff surfaced three latent bugs the encoding map hid — all fixed + gated:
+- **Token collision** — `f32v_add`/`_sub`/`_mul` were initially assigned tokens **135–137**, but **135 is
+  `await`** (async). Under `CYRIUS_ASYNC=1` the statement/expr f32v band intercepted `await` before its real
+  handler → async broke silently (invisible to self-host: cycc's source has no `await`). Renumbered to the free
+  **138–140** band across the lexer + both dispatchers (`ptyp − 138`). Caught by the release gate's async
+  fixture, not by a green check.
+- **f32v4 `.field` OOB struct-table escape (memory-unsafety)** — the `-2121` descriptor sentinel exceeds the
+  1024-entry struct-table cap, and `PARSE_FIELD_LOAD`/`PARSE_FIELD_STORE` (`parse_decl.cyr`) converted any
+  negative SLTYPE to a struct id (`0 − lt = 2121`) with **no SIMD guard** → `si = 2120` read past
+  `struct_names` / `struct_fcounts` into live heap (a wild, heap-state-dependent read in `BUILD_METHOD_NAME` /
+  `FINDFIELD`). f64v2/f64v4 (sids 19/20) stayed in-bounds and only *looked* safe. Fixed: both field paths now
+  reject SIMD sentinels (`== −20 || == −21 || ≤ −2048`) with a clean *"SIMD vector has no named fields"* error
+  — heap-independent (verified identical with 60 structs prepended).
+- **f32v4/f64v2 param type-confusion (soundness)** — the value-form SIMD param mask collapsed both 16-byte
+  types to class 1, so an `f64v2` arg silently satisfied an `f32v4` param (→ `addps` over f64 bit patterns, no
+  diagnostic). Fixed by a 3-state mask (code **3** = f32v4, distinct from **1** = f64v2) decoupled from
+  `pt_simd_class` (which stays 1 = the 16-byte XMM count, so all size/codegen logic is unchanged) → the caller
+  now type-checks exactly when the ABI engages (SIMD-returning callee). New gate `tests/simd_vec_reject.sh`
+  (both guards + a positive control).
+
+### Known-limitation (filed)
+- Value-form SIMD params on a **non-SIMD-returning** callee (e.g. `fn f(a: f32v4): i64`) store `_fnt_simdmask`
+  = 0, so the call-site type-check is bypassed — a **pre-existing** gap (identical for f64v2, *not* introduced
+  by f32v4; args still pass correctly, so no wrong result for well-typed code). Filed
+  `issues/2026-07-05-valform-simd-param-typecheck-only-when-simd-return.md` for a follow-up SIMD-arc slot.
+
+### Next
+- Phase 2: the f32 matmul op set (FMA + horizontal-dot) + a dense-f32 GEMM/attention acceptance bench; then
+  the integer lanes (Phase 3), f32v8 / AVX2 (Phase 4), aarch64 NEON (Phase 5).
+
 ## [6.4.3] — 2026-07-04
 
 **v6.4.3 — pre-SIMD f64v2/f64v4 surface solidification (agnos FP issue §2) + vani/yukti folds.** A
