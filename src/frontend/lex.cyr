@@ -1081,6 +1081,11 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFFFFFF == 0x6E6C5F343666) { ADDTOK(S, 86, 0); return p; }
         # "f32_to" → token 132 (f32→f64, cvtss2sd). v6.2.18 native-float math arc.
         if (kw & 0xFFFFFFFFFFFF == 0x6F745F323366) { ADDTOK(S, 132, 0); return p; }
+        # v6.4.6 (Phase 3a) — packed integer ops iv_add/iv_sub/iv_mul(dst,a,b,n,w):
+        # w = lane byte-width literal (1/2/4/8). Tokens 143-145 (142=f32v_dot).
+        if (kw & 0xFFFFFFFFFFFF == 0x6464615F7669) { ADDTOK(S, 143, 0); return p; }  # iv_add
+        if (kw & 0xFFFFFFFFFFFF == 0x6275735F7669) { ADDTOK(S, 144, 0); return p; }  # iv_sub
+        if (kw & 0xFFFFFFFFFFFF == 0x6C756D5F7669) { ADDTOK(S, 145, 0); return p; }  # iv_mul
     }
     # "continue" = 0x65756E69746E6F63 (8 bytes)
     if (klen == 8) {

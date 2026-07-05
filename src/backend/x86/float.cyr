@@ -253,6 +253,54 @@ fn EMIT_F32V_DOT(S, vbase): i64 {
     return 0;
 }
 
+# v6.4.6 (Phase 3a) — EMIT_IVEC_BINOP(S, op, w, vbase) — packed INTEGER
+# dst[i] = a[i] OP b[i]. op: 0=add 1=sub 2=mul. w = lane byte-width (1/2/4/8).
+# Descriptor-driven (the "one integer op-table" the Phase-0 encoding was designed
+# for): one 128-bit movups load/store per iter (reusing the f32v4 pattern), the
+# op is padd{b,w,d,q} / psub{b,w,d,q} / pmullw|pmulld selected by w, and rsi
+# advances by 16/w lanes with SIB scale = w. Args at vbase: dst, a, b, n(rax).
+# add/sub are width-agnostic (two's complement — signed==unsigned); mul is i16/i32
+# only (pmullw / pmulld SSE4.1) — w=1/w=8 mul hard-errors (no 1-instruction
+# pmulb/pmulq). All integer ops carry the 66 prefix (packed-integer SSE2).
+fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
+    var sib = 0x32; var step = 16;                       # w == 1: [rdx+rsi*1], +16 lanes
+    if (w == 2) { sib = 0x72; step = 8; }
+    if (w == 4) { sib = 0xB2; step = 4; }
+    if (w == 8) { sib = 0xF2; step = 2; }
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);   # rcx = n
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);   # rsi = 0
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);   # cmp rsi, rcx
+    EB(S, 0x0F); EB(S, 0x8D);                 # jge done
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);              # a base
+    EB(S, 0x0F); EB(S, 0x10); EB(S, 0x04); EB(S, sib);   # movups xmm0, [rdx+rsi*w]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);              # b base
+    EB(S, 0x0F); EB(S, 0x10); EB(S, 0x0C); EB(S, sib);   # movups xmm1, [rdx+rsi*w]
+    if (op == 0) {                                        # padd{b,w,d,q} xmm0, xmm1
+        EB(S, 0x66); EB(S, 0x0F);
+        if (w == 1) { EB(S, 0xFC); } if (w == 2) { EB(S, 0xFD); } if (w == 4) { EB(S, 0xFE); } if (w == 8) { EB(S, 0xD4); }
+        EB(S, 0xC1);
+    }
+    if (op == 1) {                                        # psub{b,w,d,q} xmm0, xmm1
+        EB(S, 0x66); EB(S, 0x0F);
+        if (w == 1) { EB(S, 0xF8); } if (w == 2) { EB(S, 0xF9); } if (w == 4) { EB(S, 0xFA); } if (w == 8) { EB(S, 0xFB); }
+        EB(S, 0xC1);
+    }
+    if (op == 2) {
+        if (w == 2) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0xD5); EB(S, 0xC1); }                   # pmullw
+        elif (w == 4) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x38); EB(S, 0x40); EB(S, 0xC1); }    # pmulld (SSE4.1)
+        else { ERR_MSG(S, "packed integer mul is i16/i32 only", 34); }
+    }
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);                  # dst base
+    EB(S, 0x0F); EB(S, 0x11); EB(S, 0x04); EB(S, sib);   # movups [rdx+rsi*w], xmm0
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, step);   # add rsi, step (16/w lanes)
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+
 # EMIT_F64V_UNARY — packed unary ops: sqrtpd (op=0), abs via andpd (op=1)
 # Args at vbase: dst, src, n(rax)
 fn EMIT_F64V_UNARY(S, op, vbase): i64 {

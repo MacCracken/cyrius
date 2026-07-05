@@ -1356,6 +1356,19 @@ fn PARSE_VAR(S): i64 {
                 var _ltc = 0;
                 if (_tp_c0 != 0) { _ltc = _tp_resolve(S, lann); }
                 if (_ltc != 0) { if (_ltc < 0) { scalar_type = 0 - _ltc; } else { pscale = 0 - _ltc; } }
+                # v6.4.6 (Phase 3a) — integer vector types (128-bit). MUST precede the
+                # scalar int checks below: "i8v16" & 0xFFFF == "i8" (0x3869) etc. The
+                # 6-byte packed name selects the structured-descriptor sentinel
+                # (util.cyr: desc = signed<<1 | lane_log2<<2 | lanes_log2<<5; signed
+                # bit set for i*, clear for u*). All are 16 B / 2 slots / 1 XMM.
+                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003631763869) { pscale = 0 - 2178; }  # i8v16  (signed,  1B×16)
+                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003631763875) { pscale = 0 - 2176; }  # u8v16  (unsigned)
+                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003876363169) { pscale = 0 - 2150; }  # i16v8  (signed,  2B×8)
+                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003876363175) { pscale = 0 - 2148; }  # u16v8  (unsigned)
+                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003476323369) { pscale = 0 - 2122; }  # i32v4  (signed,  4B×4)
+                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003476323375) { pscale = 0 - 2120; }  # u32v4  (unsigned)
+                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003276343669) { pscale = 0 - 2094; }  # i64v2  (signed,  8B×2)
+                elif ((ltname & 0xFFFFFFFFFFFF) == 0x003276343675) { pscale = 0 - 2092; }  # u64v2  (unsigned)
                 elif (ltname & 0xFFFF == 0x3869) { scalar_type = 1; }
                 elif (ltname & 0xFFFF == 0x3875) { scalar_type = 1; }
                 elif (ltname & 0xFFFFFF == 0x363169) { scalar_type = 2; }

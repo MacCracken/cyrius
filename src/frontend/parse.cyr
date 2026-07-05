@@ -1070,6 +1070,8 @@ fn PARSE_STMT(S): i64 {
     if (typ >= 138) { if (typ <= 140) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
     # v6.4.5 (SIMD Phase 2): f32v_fmadd/f32v_dot as statements (141-142).
     if (typ >= 141) { if (typ <= 142) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul as statements (143-145).
+    if (typ >= 143) { if (typ <= 145) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
     if (typ == 2) {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);
