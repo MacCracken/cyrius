@@ -638,14 +638,14 @@ fn PARSE_RETURN(S): i64 {
     # Win64 PCS for ≤16B composite returns uses retptr-style
     # (caller passes hidden buffer ptr in RCX), NOT pair register.
     # Mirror of the existing big-struct retptr return at line ~447.
-    if (_cur_fn_ret_scalar == 0 - 20 || _cur_fn_ret_scalar == 0 - 2121) {  # f64v2 or f32v4 — both 16B/xmm0
+    if (_is_simd128(S, _cur_fn_ret_scalar) == 1) {  # any 16B/1-XMM vector (f64v2/f32v4/i32v4/i16v8/i8v16/i64v2)
         if (PEEKT(S) == 2) {
             if (TOKTYP(S, GTI(S) + 1) == 5) {
                 var _f2_noff = PEEKV(S);
                 var _f2_lli = FINDLOCAL(S, _f2_noff);
                 if (_f2_lli >= 0) {
                     var _f2_lt = GLTYPE(S, _f2_lli);
-                    if (_f2_lt == 0 - 20 || _f2_lt == 0 - 2121) {
+                    if (_is_simd128(S, _f2_lt) == 1) {
                         STI(S, GTI(S) + 1);  # consume IDENT
                         STI(S, GTI(S) + 1);  # consume ';'
                         if (_cur_fn_ret_stash > 0) {
@@ -874,9 +874,7 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     if (li < 0) { return 0; }
     var lt = GLTYPE(S, li);
     if (lt >= 0) { return 0; }          # must be a struct-typed local (SLTYPE = -sid)
-    if (lt == 0 - 20) { return 0; }     # not f64v2
-    if (lt == 0 - 21) { return 0; }     # not f64v4
-    if (lt == 0 - 2121) { return 0; }   # not f32v4 (register-class, like f64v2)
+    if (_is_simd_any(S, lt) == 1) { return 0; }   # not any SIMD vector (register-class: f64v2/f64v4/f32v4/int vecs)
     EFLADDR(S, li);
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
@@ -3269,7 +3267,7 @@ fn PARSE_FN_DEF(S): i64 {
             var _psi = 0;
             while (_psi < pc) {
                 var _pslt = GLTYPE(S, _psi);
-                if (_pslt < 0) { if (_pslt != 0 - 20) { if (_pslt != 0 - 21) { if (_pslt != 0 - 2121) { can_inline = 0; } } } }
+                if (_pslt < 0) { if (_is_simd_any(S, _pslt) == 0) { can_inline = 0; } }   # struct param → not inlinable; SIMD vectors stay inlinable
                 _psi = _psi + 1;
             }
         }

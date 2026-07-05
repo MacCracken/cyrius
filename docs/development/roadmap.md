@@ -119,11 +119,23 @@ broadcast/load and returned to i64 by extract/reduce.
   `PARSE_SIMD_EXT`; `lib/simd.cyr` `f32v4_fmadd`/`_dot` (value+ptr) wrappers; `bench_f32_gemm.bcyr`
   (48³ dense GEMM, ~27× SIMD-vs-scalar); `simd_f32v4.tcyr` 8→13 asserts. Fixpoint (cycc has no
   f32v_). aarch64/cx stubbed → x86-only this phase (`simd_f32v4` stays XFAIL until Phase 5).
-- **▶ NEXT: Phase 3 — integer SIMD lanes** (i8/i16/i32/i64) + a tentib b1.58 acceptance bench.
+- **▶ NEXT: Phase 3 — integer SIMD lanes, a PLANNED 2-release split** (the encoding is pinned;
+  the size — an ABI-generalization refactor + novel signed/saturating/widening int semantics +
+  a b1.58 bench — makes 3a/3b the intentional packing, decided up front, not mid-execution):
+  - **Phase 3a (v6.4.6)** — **ABI generalization + integer types + basic packed ops.** Generalize
+    the ~21 f32v4-hardcoded `−2121` value-form ABI sites (return / receive / param-class /
+    inline-exclude) to **descriptor-driven** (any 128-bit vector shares the 16-byte/1-XMM ABI),
+    kept **byte-identical** for f32v4/f64v2. Then the integer vector TYPES — `i8v16`/`i16v8`/
+    `i32v4`/`i64v2` + unsigned `u*` (descriptor sentinels; signedness = desc bit 1, getter added) —
+    and **packed `add`/`sub`/`mul`** (`paddb/w/d/q`, `psubb/w/d/q`, `pmullw`/`pmulld`) + lib
+    wrappers + tcyr + a `vr01_` ctor test.
+  - **Phase 3b (v6.4.7)** — **the ML-acceleration op set + acceptance bench.** The widening MAC
+    (`pmaddubsw` u8×i8→i16-sat, `pmaddwd` i16×i16→i32, `paddd` accumulate) + horizontal reduce,
+    then the **tentib b1.58 (int8/ternary) GEMM acceptance bench**.
 - **Phases**: (0 ✅) encoding → (1 ✅ v6.4.4) f32v4 end-to-end x86 → (2 ✅ v6.4.5) f32 matmul op set +
-  GEMM bench → (3) integer lanes (i8/i16/i32/i64) + tentib b1.58 bench → (4) f32v8 +
-  256-bit AVX2 → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers + docs →
-  (7) repair tail.
+  GEMM bench → (3a v6.4.6) int types + packed ops → (3b v6.4.7) int widening-MAC + b1.58 bench →
+  (4) f32v8 + 256-bit AVX2 → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers +
+  docs → (7) repair tail.
 - **Phase 5 cleanup (carried from v6.4.4)** — when aarch64 (and cx) `EMIT_F32V_LOOP` gets a real
   implementation, **remove the `simd_f32v4` XFAIL** from the aarch64-native CI corpus (`ci.yml`),
   promote `simd_f32v4.tcyr` into the `vr01_` cross-OS LIBTEST glob so the release gate covers it,

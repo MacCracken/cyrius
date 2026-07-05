@@ -620,13 +620,15 @@ fn SSLICE_W(S, li, w): i64 { S64(S + 0x5DFD000 + li * 8, w); return 0; }
 var _vd_nslots = 0;      # 16-byte/128b vec = 2, 32-byte/256b = 4
 var _vd_lane_bytes = 0;  # per-lane byte width (f32 = 4, f64 = 8)
 var _vd_is_float = 0;    # 1 = float lanes, 0 = integer lanes
+var _vd_signed = 0;      # v6.4.6 (Phase 3): 1 = signed integer lanes, 0 = unsigned (float = 0)
 fn _vec_desc(S, sltype): i64 {
-    if (sltype == 0 - 20) { _vd_nslots = 2; _vd_lane_bytes = 8; _vd_is_float = 1; return 1; }
-    if (sltype == 0 - 21) { _vd_nslots = 4; _vd_lane_bytes = 8; _vd_is_float = 1; return 1; }
+    if (sltype == 0 - 20) { _vd_nslots = 2; _vd_lane_bytes = 8; _vd_is_float = 1; _vd_signed = 0; return 1; }
+    if (sltype == 0 - 21) { _vd_nslots = 4; _vd_lane_bytes = 8; _vd_is_float = 1; _vd_signed = 0; return 1; }
     if (sltype <= 0 - 2048) {
         var neg = 0 - sltype;
         var desc = neg - 2048;
         _vd_is_float = desc & 1;
+        _vd_signed = (desc >> 1) & 1;
         var lane_log2 = (desc >> 2) & 7;
         var lanes_log2 = (desc >> 5) & 7;
         _vd_lane_bytes = 1 << lane_log2;
@@ -640,6 +642,37 @@ fn _vec_desc(S, sltype): i64 {
 fn GVEC_NSLOTS(S): i64 { return _vd_nslots; }
 fn GVEC_LANEB(S): i64 { return _vd_lane_bytes; }
 fn GVEC_ISFLOAT(S): i64 { return _vd_is_float; }
+fn GVEC_SIGNED(S): i64 { return _vd_signed; }
+
+# v6.4.6 (Phase 3a) — descriptor-driven register-class predicates. The value-form
+# SIMD ABI treats ALL 128-bit vectors identically (1 XMM: param/return/receive) and
+# all 256-bit vectors identically (2 XMM). These replace the ~21 f32v4-hardcoded
+# `== -2121` (and f64v2 `== -20`) checks so integer vectors (i32v4/i16v8/i8v16/i64v2,
+# all 16 B) share the same machinery. Byte-identical for existing f64v2/f32v4: -20
+# and -2121 return exactly what the old `==` checks did. (They call _vec_desc, which
+# sets the _vd_* globals — a boolean-class query; callers needing the full decode
+# re-call _vec_desc.)
+fn _is_simd128(S, pscale): i64 {
+    if (pscale == 0 - 20) { return 1; }            # f64v2 (legacy flat sentinel)
+    if (pscale <= 0 - 2048) {
+        if (_vec_desc(S, pscale) == 1) { if (_vd_nslots == 2) { return 1; } }
+    }
+    return 0;
+}
+fn _is_simd256(S, pscale): i64 {
+    if (pscale == 0 - 21) { return 1; }            # f64v4 (legacy flat sentinel)
+    if (pscale <= 0 - 2048) {
+        if (_vec_desc(S, pscale) == 1) { if (_vd_nslots == 4) { return 1; } }
+    }
+    return 0;
+}
+# 1 if pscale is ANY SIMD vector sentinel (128b or 256b, float or int).
+fn _is_simd_any(S, pscale): i64 {
+    if (pscale == 0 - 20) { return 1; }
+    if (pscale == 0 - 21) { return 1; }
+    if (pscale <= 0 - 2048) { return 1; }
+    return 0;
+}
 
 # (TWIDTH type-width helper removed — every call site now inlines
 # the byte-width decision directly for single-dispatch code paths.)
