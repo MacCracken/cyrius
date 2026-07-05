@@ -617,7 +617,7 @@ jobs:
           # docs/development/issues/2026-06-19-aarch64-tcyr-failures.md.
           chmod +x a64/cycc_native_a64
           CC=a64/cycc_native_a64
-          SKIP="math_pack_integration"
+          SKIP="math_pack_integration simd_f32v4"
           XFAIL=""
           pass=0; fail=0; xfail=0; xpass=0; skip=0
           for t in tests/tcyr/*.tcyr; do

@@ -67,6 +67,12 @@ A 3-lens adversarial review of the diff surfaced three latent bugs the encoding 
   = 0, so the call-site type-check is bypassed — a **pre-existing** gap (identical for f64v2, *not* introduced
   by f32v4; args still pass correctly, so no wrong result for well-typed code). Filed
   `issues/2026-07-05-valform-simd-param-typecheck-only-when-simd-return.md` for a follow-up SIMD-arc slot.
+- **f32v4 packed arithmetic is x86-only this phase.** aarch64/cx `EMIT_F32V_LOOP` is a stub (emits nothing —
+  aarch64 NEON `fmla` lands in Phase 5, cx SIMD is wholly TBD), so `lib/simd.cyr` still *compiles* on aarch64/cx
+  (needed — a hard error there would break every build that `include`s it), but f32v4 arithmetic *no-ops* on
+  those targets — don't use it until Phase 5. `simd_f32v4.tcyr` is therefore x86-only by design and **SKIP'd in
+  the aarch64-native CI corpus run** (`ci.yml`, alongside `math_pack_integration`); construct/extract
+  (`f32v4_make`/`_splat`/`_lane`) remain universal.
 
 ### Next
 - Phase 2: the f32 matmul op set (FMA + horizontal-dot) + a dense-f32 GEMM/attention acceptance bench; then

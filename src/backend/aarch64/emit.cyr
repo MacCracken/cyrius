@@ -2295,6 +2295,13 @@ var _LOOPVAR_OK = 0;
 
 # v6.4.3+ (SIMD Phase 1) — f32v packed ops are x86-only for now; aarch64 stub
 # (real NEON fmul/fadd .4s lands in Phase 5's cross-arch propagation).
+# f32v4 packed ops (addps/subps/mulps) are x86-only in SIMD Phase 1 (v6.4.4);
+# aarch64 NEON lands in Phase 5 (fmla). Stub (emit nothing) so lib/simd.cyr's
+# f32v4 arithmetic wrappers still COMPILE on aarch64 for its f64v2/f64v4 +
+# f32v4 construct/extract halves — a HARD error here would break every aarch64
+# build that `include`s lib/simd.cyr (the wrapper bodies are emitted before
+# DCE). f32v4 arithmetic must not be used on aarch64 until Phase 5; the
+# simd_f32v4 tcyr is x86-only by design and SKIP'd in the aarch64 CI corpus.
 fn EMIT_F32V_LOOP(S, op, vbase): i64 { return 0; }
 fn EMIT_F64V_LOOP(S, op, vbase): i64 {
     EW(S, 0xAA0003EA);                # mov x10, x0   — n
