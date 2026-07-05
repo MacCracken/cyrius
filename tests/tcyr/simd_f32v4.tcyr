@@ -36,6 +36,23 @@ fn main(): i64 {
     var d: f32v4 = scale2(b);                                                      # 1.0+1.0 = 2.0f
     assert_eq(f32v4_lane0(d), 0x40000000, "value-form f32v4 param round-trip = 2.0f");
 
+    # --- SIMD Phase 2: fused multiply-add + horizontal dot ---
+    test_group("f32v4 fmadd + horizontal dot (SIMD Phase 2)");
+    var fm: f32v4 = f32v4_fmadd(a, b, b);          # a*b + c = 2*1 + 1 = 3.0f
+    assert_eq(f32v4_lane0(fm), 0x40400000, "fmadd lane 0 = 2*1+1 = 3.0f");
+    assert_eq(f32v4_lane3(fm), 0x40400000, "fmadd lane 3 = 3.0f (all lanes)");
+    var dt = f32v4_dot(a, b);                       # sum(2*1) x4 = 8.0f
+    assert_eq(dt, 0x41000000, "f32v4_dot(2.0x4 · 1.0x4) = 8.0f (value-form)");
+    var dt2 = f32v4_dot(&a, &b);                    # &-routed pointer form = 8.0f
+    assert_eq(dt2, 0x41000000, "f32v4_dot(&a, &b) = 8.0f (pointer-form)");
+
+    # raw flat-array f32v_dot over 8 lanes exercises 2 loop iterations
+    var buf[32]; var one[32];
+    var iw = 0;
+    while (iw < 8) { store32(&buf + iw * 4, 0x40000000); store32(&one + iw * 4, 0x3F800000); iw = iw + 1; }
+    var d8 = f32v_dot(&buf, &one, 8);               # sum(2*1) x8 = 16.0f
+    assert_eq(d8, 0x41800000, "f32v_dot 8-lane (2 loop iters) = 16.0f");
+
     return assert_summary();
 }
 var ec = main();

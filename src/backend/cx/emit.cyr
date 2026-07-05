@@ -827,6 +827,9 @@ fn EMIT_F64V_LOOP(S, op, vbase): i64 { return 0; }
 # (EMIT_F64V_LOOP above is likewise a stub). Emit nothing so lib/simd.cyr still
 # compiles on cx — f32v4 arithmetic must not be used on cx yet.
 fn EMIT_F32V_LOOP(S, op, vbase): i64 { return 0; }
+# v6.4.5 (SIMD Phase 2) — f32v_fmadd / f32v_dot: cx SIMD is wholly TBD; silent stubs.
+fn EMIT_F32V_FMADD(S, vbase): i64 { return 0; }
+fn EMIT_F32V_DOT(S, vbase): i64 { return 0; }
 fn EMIT_F64V_UNARY(S, op, vbase): i64 { return 0; }
 fn EMIT_F64V_FMADD(S, vbase): i64 { return 0; }
 

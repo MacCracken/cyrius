@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 6.4.4
+- **Version**: 6.4.5
 
 ## Goal
 

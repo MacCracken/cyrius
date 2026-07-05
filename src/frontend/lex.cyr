@@ -1100,6 +1100,8 @@ fn LEXID(S, p, npos): i64 {
         if (kw == 0x6464615F76323366) { ADDTOK(S, 138, 0); return p; }  # f32v_add
         if (kw == 0x6275735F76323366) { ADDTOK(S, 139, 0); return p; }  # f32v_sub
         if (kw == 0x6C756D5F76323366) { ADDTOK(S, 140, 0); return p; }  # f32v_mul
+        # v6.4.5 (SIMD Phase 2) — f32v_dot(a,b,n) → f32 scalar (horizontal dot).
+        if (kw == 0x746F645F76323366) { ADDTOK(S, 142, 0); return p; }  # f32v_dot
     }
     if (klen == 9) {
         if (kw == 0x6F6F6C665F343666) {
@@ -1116,6 +1118,13 @@ fn LEXID(S, p, npos): i64 {
         if (kw == 7020379954331530854) {
             if (load8(S + 0x60000 + ws + 8) == 100) {
                 if (load8(S + 0x60000 + ws + 9) == 100) { ADDTOK(S, 96, 0); return p; }
+            }
+        }
+        # v6.4.5 (SIMD Phase 2) — f32v_fmadd(dst,a,b,c,n). "f32v_fma" packed +
+        # bytes 8,9 == 'd','d'. Token 141 (140=f32v_mul is the last Phase-1 tok).
+        if (kw == 0x616D665F76323366) {
+            if (load8(S + 0x60000 + ws + 8) == 100) {
+                if (load8(S + 0x60000 + ws + 9) == 100) { ADDTOK(S, 141, 0); return p; }
             }
         }
     }

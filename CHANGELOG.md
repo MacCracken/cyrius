@@ -6,7 +6,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [6.4.4] — 2026-07-05
+## [6.4.5] — 2026-07-05
+
+**v6.4.5 — SIMD arc Phase 2: the f32 matmul op set (`f32v_fmadd` + `f32v_dot`) + a dense-f32 GEMM bench.**
+The second lane of the SIMD-compute arc — the two primitives the dense-f32 matmul inner loop needs, mirroring the
+existing f64 `f64v_fmadd`/`f64v_dot`. cycc self-hosts a **fixpoint** (cycc has no f32v_ in its own source → byte-
+identical at 1,036,968 B); seed → cybs → cycc byte-identical; check.sh 129; ecb + cass + pi SELFHOST_OK;
+self_compile 555 ms.
+
+### Added — f32 matmul ops (x86)
+- **`f32v_fmadd(dst, a, b, c, n)`** — `dst[i] = a[i]*b[i] + c[i]` (packed single). `EMIT_F32V_FMADD`
+  (`backend/x86/float.cyr`) = the f64 `EMIT_F64V_FMADD` minus the `66` prefix, 4-byte lanes (SIB `0xB2`,
+  `rsi += 4`): `movups`/`mulps`/`addps`. Token 141.
+- **`f32v_dot(a, b, n)`** → f32 bit pattern in `eax`/`rax` (`sum(a[i]*b[i])`). `EMIT_F32V_DOT` accumulates with
+  `mulps`+`addps` in `xmm2`, then reduces **four** packed-single lanes with **two `haddps`** (SSE3, `F2 0F 7C`)
+  and extracts the 32-bit result with `movd eax, xmm2` (vs f64's single `haddpd` + `movq rax`). Token 142.
+  Caller contract (same as `f64v_dot`): `n` a multiple of 4, or over-allocate to a multiple of 4 with **zeroed**
+  padding — the tail iteration multiplies+sums up to 3 lanes past `n`.
+- Both wired through the lexer (`f32v_dot` as an 8-byte packed keyword; `f32v_fmadd` as a 10-byte keyword),
+  `PARSE_SIMD_EXT` (mirroring the `f64v_fmadd`(96)/`f64v_dot`(128) handlers), and the expr + statement dispatch.
+  aarch64/cx `EMIT_F32V_FMADD`/`_DOT` are **silent stubs** (Phase 5 NEON), so `lib/simd.cyr` still compiles there.
+- **`lib/simd.cyr`** — `f32v4_fmadd`/`_fmadd_ptr` (3-operand FMA over the 4 lanes) + `f32v4_dot`/`_dot_ptr`
+  (4-lane horizontal dot → f32 bits), both value and pointer form; api-surface +4 / −0.
+- **Bench** — `benches/bench_f32_gemm.bcyr`: a dense-f32 48×48×48 GEMM (`C = A·Bᵀ` via `f32v_dot` per cell) with
+  a scalar-f32 baseline (routed through f64) and a correctness self-check. The SIMD path is **~27× faster** than
+  the scalar baseline (28.6 µs vs 784.9 µs).
+- **Test** — `simd_f32v4.tcyr` extended (8 → 13 asserts): value + pointer `f32v4_fmadd`/`_dot`, plus a raw
+  `f32v_dot` over 8 lanes exercising two loop iterations.
+
+### Known-limitation
+- f32 matmul arithmetic is **x86-only this phase** (same as Phase 1) — aarch64/cx stub `EMIT_F32V_*`; the
+  `simd_f32v4` tcyr stays **XFAIL** (strict) in the aarch64-native CI corpus until Phase 5 NEON lands.
+
+### Next
+- Phase 3: the integer SIMD lanes (i8/i16/i32/i64) + a tentib b1.58 acceptance bench.
 
 **v6.4.4 — SIMD arc Phase 1: `f32v4` (128-bit packed single-precision) end-to-end on x86.** The first lane of
 the v6.4.x SIMD-compute arc — f32 packed vectors for the ML/matmul throughput floor, on the Phase-0

@@ -262,6 +262,20 @@ fn f32v4_mul_ptr(a_ptr, b_ptr): f32v4 {
     return r;
 }
 
+# v6.4.5 (SIMD Phase 2) — fused multiply-add (pointer form): dst = a*b + c over
+# the 4 lanes. Routes f32v4_fmadd(&x, &y, &z) here. The matmul inner-loop verb.
+fn f32v4_fmadd_ptr(a_ptr, b_ptr, c_ptr): f32v4 {
+    var r: f32v4;
+    f32v_fmadd(&r, a_ptr, b_ptr, c_ptr, 4);
+    return r;
+}
+
+# v6.4.5 (SIMD Phase 2) — horizontal dot (pointer form): returns the f32 bit
+# pattern of sum(a[i]*b[i]) over the 4 lanes (use f32_to to get the value).
+fn f32v4_dot_ptr(a_ptr, b_ptr): i64 {
+    return f32v_dot(a_ptr, b_ptr, 4);
+}
+
 # --- Value-form typed wrappers (non-PE targets only) ---
 # Gated on CYRIUS_HAS_VAL_SIMD_PARAMS, predefined by every main_*.cyr
 # except main_win.cyr. On Win64 PE these fns are absent; the parser's
@@ -449,6 +463,18 @@ fn f32v4_mul(a: f32v4, b: f32v4): f32v4 {
     var r: f32v4;
     f32v_mul(&r, &a, &b, 4);
     return r;
+}
+
+# v6.4.5 (SIMD Phase 2) — fused multiply-add (value form): r = a*b + c per lane.
+fn f32v4_fmadd(a: f32v4, b: f32v4, c: f32v4): f32v4 {
+    var r: f32v4;
+    f32v_fmadd(&r, &a, &b, &c, 4);
+    return r;
+}
+
+# v6.4.5 (SIMD Phase 2) — horizontal dot (value form): f32 bits of sum(a[i]*b[i]).
+fn f32v4_dot(a: f32v4, b: f32v4): i64 {
+    return f32v_dot(&a, &b, 4);
 }
 
 #endif

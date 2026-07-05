@@ -48,6 +48,9 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   (descriptor −2121 + `_vec_desc`, full value-form ABI, `addps`/`subps`/`mulps`, lib wrappers).
   Adversarial review caught + fixed 3 latent bugs (token/`await` collision, a `.field` OOB
   struct-table escape, f32v4/f64v2 param mask conflation). check.sh 129; fixpoint (cycc has no f32v4).
+- **v6.4.5** — **SIMD arc Phase 2: f32 matmul op set** — `f32v_fmadd` + `f32v_dot` (tokens 141/142,
+  the packed-single FMA + 4-lane `haddps` horizontal-dot), `lib/simd.cyr` `f32v4_fmadd`/`_dot`
+  wrappers, and `bench_f32_gemm.bcyr` (48³ dense GEMM, ~27× SIMD-vs-scalar). Fixpoint; x86-only phase.
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -110,10 +113,15 @@ broadcast/load and returned to i64 by extract/reduce.
   −2121 `.field` OOB struct-table escape; the f32v4/f64v2 param mask conflation → 3-state mask +
   `tests/simd_vec_reject.sh`). Filed one pre-existing residual (value-form SIMD param on a
   non-SIMD-returning callee skips the type-check — `issues/2026-07-05-valform-simd-param-typecheck-only-when-simd-return.md`).
-- **▶ NEXT: Phase 2 — f32 matmul op set** (FMA + horizontal-dot) + a dense-f32 GEMM/attention
-  acceptance bench.
-- **Phases**: (0 ✅) encoding → (1 ✅ v6.4.4) f32v4 end-to-end x86 → (2) f32 matmul op set +
-  GEMM/attention bench → (3) integer lanes (i8/i16/i32/i64) + tentib b1.58 bench → (4) f32v8 +
+- **▶ PHASE 2 DONE (v6.4.5) — f32 matmul op set**: `f32v_fmadd` (token 141, `EMIT_F32V_FMADD` =
+  the f64 FMADD minus the 66 prefix) + `f32v_dot` (token 142, `EMIT_F32V_DOT` = mulps/addps
+  accumulate → two `haddps` fold 4 lanes → `movd eax`), both mirroring the f64 handlers in
+  `PARSE_SIMD_EXT`; `lib/simd.cyr` `f32v4_fmadd`/`_dot` (value+ptr) wrappers; `bench_f32_gemm.bcyr`
+  (48³ dense GEMM, ~27× SIMD-vs-scalar); `simd_f32v4.tcyr` 8→13 asserts. Fixpoint (cycc has no
+  f32v_). aarch64/cx stubbed → x86-only this phase (`simd_f32v4` stays XFAIL until Phase 5).
+- **▶ NEXT: Phase 3 — integer SIMD lanes** (i8/i16/i32/i64) + a tentib b1.58 acceptance bench.
+- **Phases**: (0 ✅) encoding → (1 ✅ v6.4.4) f32v4 end-to-end x86 → (2 ✅ v6.4.5) f32 matmul op set +
+  GEMM bench → (3) integer lanes (i8/i16/i32/i64) + tentib b1.58 bench → (4) f32v8 +
   256-bit AVX2 → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers + docs →
   (7) repair tail.
 - **Phase 5 cleanup (carried from v6.4.4)** — when aarch64 (and cx) `EMIT_F32V_LOOP` gets a real
