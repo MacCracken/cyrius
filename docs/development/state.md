@@ -12,16 +12,23 @@
 
 ## Current state
 
-> **v6.3.x EXPANSION in effect (user 2026-06-30).** v6.3.x does NOT close at .16 — the
-> whole v6.4.x ABI/Perf arc + the 2026-06-10 governance cluster (minus LEGAL-01, deferred
-> to public release) are pulled into v6.3.x; Intel-Mac arc → v6.4.x tail (moved 2026-07-03, was v6.3.x tail); v6.4.x
-> OPENING SEQUENCE committed 2026-07-03 (integer SIMD first for ML/AI → array-typed struct fields → UEFI Secure Boot signing (gnoboot) → pub/private — roadmap_6.md). Sequence: perf-prereqs (bench un-blind .17, differential gate
-> .20) → governance body (.21–.23) → **consumer-filed bug fixes (.24–.25: codegen+agnos pack, multi-worker TLS)** → FFI + perf arc (.26–.30) → deps/language/lib
-> pull-ins (**Phase D** .31 = the modularity-arc lever-1 completion / generics tail .32 /
-> protobuf .33) → Intel-Mac (.34–.35) → VR-01 (.36) → closeout. **.18 and .19 were consumer-filed stdlib pull-ins** (the AGNOS base-stack
-> migration to 6.3.15): .18 the undersized-array hardening sweep, .19 the ws_server header
-> rename + agnos `sys_fstat` peer (the differential gate + all downstream slots shifted +1).
-> See [roadmap.md](roadmap.md).
+> **v6.4.x ACTIVE — the ABI / Language-Features minor** (opened at the v6.3.45 → v6.4.0
+> cut, 2026-07-03). v6.3.x (Language Refinements — closures/generics/async/native-float +
+> deps-model + bare-metal + perf + cross-OS hardening) **CLOSED at v6.3.45**; its slot table
+> is canonical in [CHANGELOG.md](../../CHANGELOG.md).
+> **Committed opening sequence** (ORDER fixed 2026-07-03; design chosen at arc-open):
+> **integer SIMD (ML/AI) → array-typed struct fields → UEFI Secure Boot signing (gnoboot) →
+> function visibility (`pub`/`private`) → Intel-Mac (x86_64 Mach-O) toolchain tail.**
+> **Conservatively ~17–26 `.NN` releases for the opening sequence — v6.4.x is a LONG minor**
+> (code-grounded scoping 2026-07-04: int-SIMD 5–7, array-fields 3–4, UEFI 3–5, pub/private
+> 4–6, Intel-Mac 2–4; **none a release-blocker**). **PINNED immediate: integer SIMD** (pin the
+> type-class encoding first — the `-20/-21` pscale sentinel + 2-bit param mask can't hold 8
+> int vector types) **+ array-typed struct fields** (pin the `T[N]`-inline-vs-`Vec<T>`-handle
+> representation fork). Reactive **agnos + consumer-filed repairs interleave as SEPARATE
+> slots** (not counted; 3 already — .0 de-risk / .1 alloc_reset / .2 agnos audio; more agnos
+> expected). v7-parked items (LEGAL-01, DWARF, incremental compilation, public release) stay
+> in [roadmap-future.md](roadmap-future.md). See [roadmap.md](roadmap.md) for the full pin +
+> length map.
 
 | | |
 |---|---|

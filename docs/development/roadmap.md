@@ -1,310 +1,230 @@
-# Cyrius Development Roadmap — v6.3.x (active minor)
+# Cyrius Development Roadmap — v6.4.x (active minor)
 
-**Scope** — the **current active minor only** (v6.3.x — Language
-Refinements), opened at the v6.2.x → v6.3.0 cut (2026-06-28). This is the
-slot-pinning working artifact: the **proposed v6.3.x release workflow**
-(the eight-release sequence below). The *fuller* per-cluster design (closures
-/ generics / async / native-float), the rest of the cycle (v6.4.x → v6.6.x),
-and the closed-minor summaries live in [roadmap_6.md](roadmap_6.md).
+**Scope** — the **current active minor only** (v6.4.x). This is the
+slot-pinning working artifact: the committed opening sequence + a **conservative,
+code-grounded length map** for each remaining arc. The fuller per-arc design, the
+rest of the cycle (v6.5.x → v6.6.x), and the closed-minor summaries live in
+[roadmap_6.md](roadmap_6.md); everything beyond v6.x is in
+[roadmap-future.md](roadmap-future.md).
 
-> **v6.3.0 shipped** the var-family growable migration — the last fixed
-> compile-time cap (closes the v6.2.0 Phase-0 / AR-03 growable-region arc).
-> **v6.3.1 shipped** dependency-model **lever 2** — required vs optional deps
-> (`optional`/`[features]`/`--features`/`target=`); cbt-only, cycc byte-identical.
-> **v6.3.2 shipped** the **undefined-fn reachable-call hard-error** (default-on,
-> `--allow-undef` to downgrade) + the cx annotation-desync fold — the flip's full
-> blast radius treated with ZERO `--allow-undef`.
-> **v6.3.3 shipped** bare-metal **#5** (`[sections] base` settable kernel load base —
-> de-dup'd `_kernel_load_base` accessor + `CYRIUS_KERNEL_BASE` env; resolves the
-> kernel-load-base-settable issue) + **#6** (x86 inline-asm fences `mfence`/`lfence`/`sfence`
-> — the last gap; the rest of #6 shipped .27/.28). check.sh 101→102; byte-identical default.
-> **v6.3.4 shipped** bare-metal **#7** — kernel-freestanding `lib/tls_native` link
-> (`_tls_freestanding_link_gate`) + a full TLS 1.3 handshake smoke over ONLY the transport/entropy/clock
-> hooks, zero socket/getrandom syscalls (`tls_native_freestanding.tcyr`, x86+pi). **Completes the three
-> OPEN bare-metal design deliverables #5/#6/#7** (#1–#3 shipped .27/.28; #4 forbidden-module-check was
-> never built — filed `issues/2026-06-28-bare-metal-forbidden-module-check-unbuilt.md`). Test/gate-only →
-> cycc byte-identical; check.sh 102→103.
-> See [CHANGELOG.md](../../CHANGELOG.md).
-
-> **v6.3.x EXPANSION (user direction 2026-06-30).** v6.3.x does **not** close out at
-> .16. The whole **v6.4.x ABI/Perf arc** (Class B FFI / `fncall6` ABI + cross-BB
-> regalloc/liveness + copy-prop + cross-BB DSE + float peephole) is **pulled into
-> v6.3.x**, alongside the **2026-06-10 governance cluster** (security-audit tail,
-> verification-coverage gaps, unreviewed dimensions) — **minus LEGAL-01**, which is
-> deferred to near public release. The **Intel-Mac (x86_64 Mach-O) toolchain arc**
-> runs at the **tail** of v6.3.x. **v6.4.x reopens as an empty staging minor.** The
-> perf-arc prerequisites (un-blind the bench harness · land the differential-corpus
-> gate) come FIRST, then the governance body, then the perf arc, then the **deps /
-> language / lib pull-ins surfaced by the 2026-07-01 roadmap-gap audit** (Phase D — the
-> modularity-arc lever-1 completion · the generics-arc tail · protobuf.cyr), then Intel-Mac,
-> then closeout. See the expanded slot table below (v6.3.17 →). **v7-only items (LEGAL-01,
-> DWARF/diagnostics, stdlib-reference docs, incremental compilation, the public-release
-> decision) are PARKED for the v7 cut — see roadmap-future.md; they are not near-term.**
-
-> **v6.2.x is CLOSED** (Platform Expansion — bare-metal core + dependency-model
-> lever 1; shipped .0 → .52). **v6.1.x CLOSED** (Backend Codegen multi-arc,
-> .0 → .41). **v6.0.x CLOSED** (Language Cleanup + Stdlib + Native TLS, .0 → .91).
-> Per-slot detail is canonical in [CHANGELOG.md](../../CHANGELOG.md); the
-> closed-minor summaries live in [roadmap_6.md](roadmap_6.md).
-
-> **Reading order**: this file (active-minor release workflow) →
-> [roadmap_6.md](roadmap_6.md) (full v6.x cycle + fuller v6.3.x cluster
-> design) → [roadmap-future.md](roadmap-future.md) (beyond v6.x).
+> **Reading order**: this file (active-minor pins + length map) →
+> [roadmap_6.md](roadmap_6.md) (full v6.x cycle + fuller per-arc design) →
+> [roadmap-future.md](roadmap-future.md) (v7+ watching list).
 
 ## See also
 
-- [roadmap_6.md](roadmap_6.md) — the **whole v6.x cycle** reference
-  (framing, per-minor budgeting, the fuller v6.3.x cluster design,
-  v6.4.x → v6.6.x, the closed v6.0.x / v6.1.x / v6.2.x summaries).
-- [roadmap-future.md](roadmap-future.md) — long-term watching list.
-- [cycle-discipline.md](cycle-discipline.md) — durable operating
-  principles (slot acceptance, bottom-to-top priority, premise-check at
-  slot entry, cross-host smoke, cycle-close shape).
-- [state.md](state.md) — volatile current state (version, cycc size,
-  in-flight slot, recent shipped patches). Refreshed every release.
+- [roadmap_6.md](roadmap_6.md) — the **whole v6.x cycle** (framing, per-arc
+  design, the closed v6.0.x/v6.1.x/v6.2.x/v6.3.x summaries).
+- [roadmap-future.md](roadmap-future.md) — long-term / v7+ watching list.
+- [cycle-discipline.md](cycle-discipline.md) — durable operating principles
+  (slot acceptance, premise-check at slot entry, cross-host smoke, cycle-close shape).
+- [state.md](state.md) — volatile current state (version, cycc size, in-flight slot).
 - [`CHANGELOG.md`](../../CHANGELOG.md) — per-patch source of truth.
 
 ---
 
-## v6.3.x — Language Refinements
+## v6.4.x — ABI / Language-Features arc
 
-**Theme**: the language-level trio the v5.x cycle held out explicitly —
-**closures with lexical capture, real generic instantiation
-(monomorphization), and async/await sugar** — gated behind a **Phase 0
-substrate** prerequisite. Native-float Tier A continues here. Riding the
-language minor: the **dependency-model lever 2** (Required/Optional deps) and
-the **bare-metal design-deliverable tail** (#5/#6/#7), both pinned in 2026-06-27.
+**Opened** at the v6.3.45 → v6.4.0 cut (2026-07-03). The v6.3.x language-refinement
+minor (closures / generics / async / native-float, plus the deps-model, bare-metal,
+perf, and cross-OS-hardening arcs) **closed at v6.3.45** — its whole slot table is
+canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
+[roadmap_6.md](roadmap_6.md); it is intentionally not repeated here.
 
-Per-cluster design (scope, acceptance bars, touched surfaces) is in
-[roadmap_6.md § v6.3.x](roadmap_6.md). This file pins what we execute now.
+**Shipped so far in v6.4.x:**
 
-**Near-term committed focus** (the opening releases → **v6.3.1–.4** in the
-workflow below, in order):
+- **v6.4.0** — `CYRIUS_MONOMORPH` **default-on flip**: generics are now a default-on
+  language feature (`CYRIUS_MONOMORPH=0` opts out). Byte-identical (cycc has no
+  generic fns); needed the `_INLINE_OK` decouple + the GFTP-gated frame-trim.
+- **v6.4.1** — `alloc_reset()` **zero-on-reset**: closed a CVE-2026-34988-class
+  memory-reuse info-leak in all four allocator backends.
+- **v6.4.2** — agnos **`sys_snd_*` audio syscall band (#64–#69)**: the ring-3 half of
+  the agnos 1.52.x Gate-2 audio freeze (unblocks vani + cyrius-doom).
 
-1. **Required vs Optional Dependencies (lever 2)** — the scoping layer on top
-   of the v6.2.x modules/groupings foundation (lever 1). **[v6.3.1 — SHIPPED]**
-2. **Undefined-fn reachable-call hard-error** — its own slot. **[v6.3.2 — SHIPPED]**
-   (default-on flip + `--allow-undef`; full blast radius cleaned with ZERO `--allow-undef`;
-   cx annotation-desync folded in.)
-3. **Bare-metal deliverable completion (#5/#6/#7)** — the structured pass over the three open
-   bare-metal *design* deliverables, split #5+#6 then #7. **#5+#6 SHIPPED [v6.3.3]; #7 SHIPPED
-   [v6.3.4] — the three OPEN design deliverables DONE.** (#4 forbidden-module-check was never built —
-   filed `issues/2026-06-28-bare-metal-forbidden-module-check-unbuilt.md`, P3.)
-4. **Phase-0 substrate (D)** — CO-01 order-independent call ABI (pass-1 prescan) + AR-01
-   monomorphization token-replay revival (GATED PROOF, no default codegen change; user 2026-06-28).
-   **[v6.3.5 — SHIPPED]** Non-capturing closures **[v6.3.7 — SHIPPED]** + lexical capture
-   **[v6.3.8 — SHIPPED]** (closures arc complete). **NEXT: real generic instantiation /
-   monomorphization on this substrate [v6.3.9].**
-
-Per cycle discipline: premise-check each arc at slot entry
-([[feedback_premise_check_at_slot_entry]]); cross-arch propagation is
-mandatory for any compiler-emit change
-([[feedback_cross_arch_propagation_mandatory]]); 4-host cross-OS self-host
-verify before every cut, even lib-only work
-([[feedback_cross_os_verify_always_even_lib]],
-[[reference_verification_hosts_ssh]]); seed-derive after any `src/` change
-([[feedback_seed_derive_mandatory_cybs_limits]]); benchmark every release
-([[feedback_benchmark_every_release]]). Window open to change
-([[feedback_minor_window_at_arc_open]]) — minors flex long.
+**The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
+decisions *inside* each arc are chosen at arc-open — only the order is committed):
+**integer SIMD → array-typed struct fields → UEFI Secure Boot signing → function
+visibility**, with the **Intel-Mac (x86_64 Mach-O) toolchain arc** at the tail.
 
 ---
 
-## v6.3.x release workflow (proposed sequence)
+## Conservative length map (arc-scoped against the code, 2026-07-04)
 
-Nine releases, derived 2026-06-28 from a 3-lens sequencing pass
-(dependency-topological / bottom-to-top-consumer-pressure / risk-first) +
-your sequencing decisions (recorded below). The spine honors your stated
-near-term order **A → B → C** (B un-bundled from A into its own slot once A
-landed and B's 21/192 blast radius was measured), gates generics behind the
-non-negotiable Phase-0 substrate, and lands the language trio last (weakest
-live consumer pull). Sizes indicative; minors flex long. **v6.3.x is expected
-to grow well beyond these nine** (user 2026-06-28): this is the committed spine, and
-issue-repairs + items that become necessary get pulled in as they surface
-through the minor — inserted between or alongside these releases, not capping
-them. Only the user re-scopes ([[feedback_no_unilateral_scope_decisions]]);
-reactive pull-ins follow the bare-metal open-window pattern
-([[feedback_bare_metal_open_reactive_window]]). Per-cluster design lives in
-[roadmap_6.md § v6.3.x](roadmap_6.md).
+Each arc was scoped against the actual tree (not the proposal's optimistic framing).
+The estimates lean **high** — a feature touching the type system / codegen / ABI is
+multi-release and grows a repair tail (the generics precedent: .9 → .39 + the .0
+flip, with deep-ABI repairs still surfacing at .37/.38/.39). **Sizes are `.NN`
+releases, each bundling several bites. Minors flex long.**
 
-| Release | Content | Folds / riders | ~bites |
-|---|---|---|---|
-| **v6.3.0** ✅ | **var-family growable migration** — SEVEN `vcnt`-indexed tables → `_base` + chained `_var_grow` (byte-identical under cap). Closes the v6.2.0 Phase-0 / AR-03 arc — last fixed compile-time cap. | — | shipped |
-| **v6.3.1** ✅ | **Deps lever 2 (A)** — `optional = true` + `[features]` table + `--features`/`--no-default-features` + platform-conditional `target=` keys (axes combine; builds on lever 1). cbt-only → cycc byte-identical; check.sh 100→101 (`_deps_features_gate`). [[project_v6_3_x_required_optional_deps]] | — | shipped |
-| **v6.3.2** ✅ | **Undefined-fn reachable-call hard-error (B), default-on** + `--allow-undef` downgrade — **SHIPPED** (+ the cx annotation-desync fold **F**). Treated the flip's full blast radius with **ZERO `--allow-undef`** in the repo's own builds: 18 tcyr include-completed; 3 mabda tcyr via **source-gating** (**mabda 3.4.5** `#ifdef MABDA_LOGIND`/`MABDA_PNG`, re-folded); cx fork 47 `*_PE`/`*_ARM` stubs (`backend/cx/emit.cyr`); CLI→PE 11 POSIX stubs (`lib/syscalls_windows.cyr`); ark `nous` stubs (`programs/nous_stub.cyr`); TLS-probe includes. check.sh 101/101; ecb+cass+pi SELFHOST_OK; bench 505 ms; cycc 1,075,616 B; seed-derive OK; pi native-fixpoint OK. *(Original plan:)* Its OWN slot (un-bundled from A, user 2026-06-28). Flip the x86/aarch64 fixup gate from `_strict_mode` → `_allow_undef`; add `--al` to the 5 argv forks (`main_x86_macho` stub always-hard-errors). **Blast radius MEASURED at slot entry: 21/192 tcyr fail under the flip** — **18 are stdlib include-gaps** (real `str_*`/`vec_*`/`str_builder_*`/`payload`/`dynlib_*` refs; surgically complete each tcyr's includes — the raw-`cat\|cycc` harness has a repo-relative-include dedup subtlety that makes a blanket `cyrius build` switch non-trivial), **3 are `lib/mabda.cyr`→external `samvada_*`/`chitra_*`** (not in-repo; **fix at mabda's SOURCE**: declare optional + guard the device/PNG calls so they're not DCE-reachable when absent, then re-fold — the proper lever-2 dogfood, user 2026-06-28). [`issues/…undefined-fn-reachable-call-hard-error.md`](issues/2026-06-25-undefined-fn-reachable-call-hard-error.md). | DRY-4-scanners **dropped** (byte-identity + cybs-limit hostile per the v6.3.1 premise-check — stays on the carry-in line); the cx annotation-desync fix (the one real bug the rider targeted) folds here | ~6 |
-| **v6.3.3** ✅ | **Bare-metal #5 + #6 (C-1)** — `#5` `[sections] base` settable kernel ELF load base in `cyrius.cyml` (de-dup'd `_kernel_load_base` accessor + `CYRIUS_KERNEL_BASE` env + base-aware D6 report; resolves the kernel-load-base-settable issue); `#6` x86 inline-asm fences `mfence`/`lfence`/`sfence` (the only gap — `cli`/`sti`/`hlt`/`cpuid`/port-I/O shipped .27/.28; aarch64 `dmb`/`dsb`/`isb` already complete). check.sh 101→102 (`_sections_base_override_gate`); byte-identical default; pi+ecb+cass SELFHOST_OK; bench 504 ms; cycc 1,077,136 B. **Premise-check found the roadmap stale on #6.** | opt-in bounds-checked `store*`/`load*` **carried to bug-bandwidth** (not folded — #5+#6 packed the slot) | shipped |
-| **v6.3.4** ✅ | **Bare-metal #7 (C-2)** — kernel-freestanding `lib/tls_native` link + in-kernel handshake smoke (cyrius-side link + smoke; *live* in-kernel boot stays AGNOS-consumer-gated). **Premise-check found the foundation already shipped** (transport vtable v6.2.4 + entropy hook v6.2.28 = the freestanding hooks; tls_native already compiles under the kernel target) — the gap was the PROOF. `tls_native_freestanding.tcyr` runs a full 1.3 handshake over the hooks alone (fork + mmap loopback, ZERO socket/getrandom/clock syscalls on the TLS path; x86+pi); `_tls_freestanding_link_gate` proves the native stack links into a freestanding kernel ELF. check.sh 102→103; cycc byte-identical (test/gate-only). Filed: `tls13-server-get-version-zero` (P3) + `bare-metal-forbidden-module-check-unbuilt` (#4 was never built — the one remaining bare-metal gap). **Completes the OPEN design deliverables #5/#6/#7.** | **byte-length gate (DOTALL) → carried to bug-bandwidth** (separate standing audit; #7 packed the slot); load-base settability rider DONE in v6.3.3 #5 | shipped |
-| **v6.3.5** ✅ | **Phase 0 substrate (D)** — **CO-01** order-independent call ABI: pass-1 fn-signature prescan (`_prescan_fn_sig`, all 7 forks) registers every top-level fn + masks/return-type before pass-2 emits calls → forward calls get the right `: Str`/SIMD/struct-return ABI (was silent mask-0). Shared `_classify_param_type`/`_classify_return_type` (differential byte-identical). **AR-01** monomorphization token-replay revival as a **GATED PROOF** (user 2026-06-28 — no default codegen change): the emit-time replay was always INTACT, only the capture was off; opt-in `_MONOMORPH_OK` (`CYRIUS_MONOMORPH=1`, all 7 drivers) re-enables it; `_monomorph_substrate_gate` (check.sh 103→**104**) + REAL pi prove byte-correct + active (the aarch64 corruption was already gone via relocation). `forward_call_abi.tcyr`; filed `inferred-struct-local-from-call-segfaults` (P2). **TYPE substitution / generics deferred to v6.3.7.** Self-host + seed→cybs→cycc byte-identical; tcyr 195/195; ecb+cass+pi SELFHOST_OK; bench 509 ms; cycc 1,079,440 B. [`issues/…monomorphization-substrate-prereqs.md`](issues/2026-06-10-monomorphization-substrate-prereqs.md). | local-array bare `var a[N]` slot-write lint (prescan territory) **carried to bug-bandwidth** | shipped |
-| **v6.3.6** ✅ | **Ecosystem refold + AGNOS `sys_symlink` peer** — LIB-ONLY maintenance cut (cycc byte-identical, only the version string moved). Refolded **sigil 3.9.4→3.9.7** (SECURITY: 64-lane per-thread crypto banking kills the concurrent-TLS-handshake race; streaming Poly1305 `poly1305_init/_update/_finalize`; `ecdsa_p256/p384_warm` prewarm; per-lane RSA residue zeroize; `.bss` +~14 MB lazy), **patra 1.12.6→1.12.7** (per-handle tail-page cache, handle 64→88 B, internal `tbl_insert/5→/6`), **sandhi 1.6.13→1.7.0** (h2-promote IPv6 arity fix), **vani 0.9.5→0.9.6** (pin bumps + chrono). Added `sys_symlink`+`SYS_SYMLINK=63` to `lib/syscalls_x86_64_agnos.cyr` (mirrors `sys_link`#32 4-arg a4=r10; agnos kernel `symlink`#63 @ 1.51.0; unblocks ark M3 `.so→.so.N`/agnova/kriya). api-surface regenerated (additions-only — 5 sigil crypto + `sys_symlink/4` + internal patra arity, NO removals). check.sh 104/104; seed→cybs→cycc byte-identical; ecb+cass+pi SELFHOST_OK; bench 502 ms; cycc 1,079,440 B. on-agnos symlink round-trip = downstream ark M3 exerciser. | — | shipped |
-| **v6.3.7** ✅ | **Non-capturing closures (E-base)** — premise-check found `\|x\| body` closures a scaffolded-but-NON-FUNCTIONAL, untested, unused feature (not "working closures missing capture"). Fixed FIVE codegen bugs, all from the closure being an anon fn emitted INLINE in the enclosing fn while sharing its mutable state: param-passing (`_cur_fn_regalloc` leak → params past phantom callee-saved slots + stale-reg reads), frame size never `EPATCHFRAME`'d, zero-param `\|\|` (lexed as logical-or), enclosing-local clobbering (shared local-slot tables → snapshot/restore), and the regalloc post-pass byte-scan rewriting+corrupting the inline closure (SIGILL → skip via `_cur_fn_has_closure`). + unique `__clNNNNN` naming. **First-ever `tests/tcyr/closures.tcyr`** (8 cases). Closures run on x86 + aarch64(qemu) + PE(wine); self-host byte-identical (closure-path-only); check.sh 104/104; ecb+cass+pi SELFHOST_OK; bench 501 ms; cycc 1,081,696 B. Planned base-first split (user 2026-06-29). | — | shipped |
-| **v6.3.8** ✅ | **Lexical capture (E-capture)** — a closure body reading an enclosing local (a free variable) is captured **by value** into a heap env object `[fn_ptr, cap0, …]` at construction; the closure value *is* the object, dispatched via `callptr` auto-dispatch (callee tagged `CLOSURE_TYID` 0x40000003 → load fn ptr from `[obj]`, pass obj as the hidden env arg1 — call sites identical to non-capturing). `_cl_prescan_captures` intercepts `FINDLOCAL` against the v6.3.7 enclosing-name-table snapshot (free var = FINDLOCAL-fails + not param/shadow + not an `IDENT(` call + IS in snapshot); the capturing closure gains a hidden env param (slot 0; user params +1); captured read = `load64(env+(1+capi)*8)`. Needs `include lib/alloc.cyr` + `alloc_init()` (fail-loud else). Non-capturing closures stay bare fn ptrs. FIXED: stale-name scratch slot → false "duplicate variable" (shared local tables not cleared per-fn; anonymize scratch + `callptr` spill slots `name=-1`). PE: capturing fails loud (env + `ECALLPTR_PE` align unverified); non-capturing PE works. **`tests/tcyr/closures_capture.tcyr`** (7 cases). Self-host byte-identical (closure-path-only; differential vs 6.3.7); seed→cybs→cycc OK; check.sh 104/104; capture 7/7 on x86 + aarch64(qemu) + native-aarch64 regen self-hosts byte-identical & runs 7/7; PE non-cap runs / cap fails-loud (wine); closures.tcyr 8/8; ecb+cass+pi SELFHOST_OK; bench 507 ms; cycc 1,089,248 B. Closures arc complete (E-base .7 + E-capture .8). | — | shipped |
-| **v6.3.9** ✅ | **Generic FUNCTIONS — i64 monomorphization (F-fns)** — `fn foo<T>(...)` over **i64**, on the proven AR-01 substrate (`_MONOMORPH_OK`, default-off → cycc byte-identical). Type-params captured at the signature (`_capture_tparams` replacing `SKIP_GENERICS`, gated) into lazy-alloc `_fnt_tparams`; a scoped `T→concrete` binding (`_tp_resolve`) substitutes at the 4 type-resolution sites (param-type / local `:T` / `slice<T>` / `sizeof`). **Architecture: the base fn IS the i64 instantiation** — its body is emitted ONCE with `T→i64` bound (`_bind_generic_call(fi,-8,-8)` before `PARSE_PROG`), so i64 calls are plain normal calls (dedup-by-construction, no instantiate-once needed). Positional inference from args; `: T` return accepted (the load-bearing fix: the return-type rough-scan was defaulting `: T` to the retptr/stash ABI, shifting params — recognize a tparam as i64-scalar). **+ btokens ceiling 16→32.** Gate `_generics_fn_i64_gate` (check.sh 104→**105**) — fixture exits 42 under the flag, REJECTED off. Byte-correct x86 + aarch64(qemu); self-host + differential + seed→cybs→cycc byte-identical; bench/cycc-size recorded in CHANGELOG. **Deferred to v6.3.10** (shares the instantiate-once machinery with structs): non-i64 type-args (`foo<i32>`/`foo<Struct>`), explicit `foo<i64>(x)` syntax. First half of the 2-release generics arc (user 2026-06-30). | — | shipped |
-| **v6.3.10** ✅ | **Generic STRUCTS + non-i64 fn instantiation + explicit syntax (F-structs)** — second half of the generics arc; the full non-i64 surface on one **instantiate-once engine**. **Explicit `foo<i64>(x)`** via a non-consuming `<`-disambiguation lookahead (`LOOKAHEAD_IS_TYPE_ARG_CALL`; gated + generic-fn-callee-only, so `a<b` unaffected). **Non-i64 fn instances** (`add<i32>`): mint `foo$ty`, `FINDFN`-dedup, **re-invoke `PARSE_FN_DEF`** on the base's verbatim tokens (`_fnt_defstart`) with name + concrete-binding overrides (`_inst_name`/`_inst_conc0/1`) — full fidelity (params/masks/struct-args/body) for free, jumped-over (`EJMP0`/`EPATCH`) with enclosing-state save/restore + `_cur_fn_has_closure` regalloc-skip. **Generic structs** (`Pair<i32>`, `Holder<Point>`): the base IS the i64 instance (`val: T` → untyped field); non-i64 use re-invokes `PARSE_STRUCT_DEF` with the field `: T` consult → `Box$ty` via `REGSTRUCT`+`FINDSTRUCT`-dedup; wired at the `var x: Box<conc>` type site. **Verified x86 + aarch64(qemu)**: `add<i32>`/`Pair<i32>`/`Holder<Point>`(struct-type-arg, field-offset-correct)/dedup/fn×struct mix all exit-correct; self-host + differential + seed→cybs→cycc byte-identical (gated `_MONOMORPH_OK`); `_generics_full_gate` (check.sh 105→**106**). Filed pre-existing **1-field-struct segfault** (P2, non-generic). **Deferred** (not yet): nested `Outer<Inner<T>>`, multi-type-param distinct `T`/`U`, control-flow in generic-fn bodies. | — | shipped |
-| **v6.3.11** ✅ | **Async/await (G)** — `async fn`/`await` → **first-class Futures** over the cooperative epoll runtime (NOT CPS coroutines — see below). An `async fn` call builds a deferred heap Future `[ &f$impl, argc, args… ]` (constructor; body = hidden `f$impl`); `await fut` → `future_force` via `fncallN`. Reuses E's closure-env heap construction. Gated `_ASYNC_OK` (`CYRIUS_ASYNC=1`) → cycc byte-identical (differential vs .10, x86+aarch64). `_async_await_gate` (check.sh 106→**107**). **Premise-check found the runtime is run-to-completion** (no suspend/resume), so true stackless CPS coroutines would need a poll-runtime rework — pinned as a follow-on; the deferred-then-forced Future model is the faithful, complete fit. **Native-float Tier A tail (H): already complete** (f64 type+operators+NaN x86/aarch64 .18/.19/.41; f32 conversions .18) — only f32 *scalar arithmetic* remains, consumer-less (mabda shims deleted .19), **deferred** as an optional follow-on. self_compile 533 ms; cycc 1,107,280 B. | x86-macOS usable-toolchain tail (ach-gated) | shipped |
-| **v6.3.12** ✅ | **[gate] W^X — `cyrld` separate code/data PT_LOAD (P1, linker)** — every userland ELF now emits a text `R E` segment + a data `RW ` segment instead of one `RWE`, closing the last writable-executable surface on the agnos W^X loader (1.50.6 PF_X-aware → zero kernel work). **DEFAULT ON; `CYRIUS_WX=0` opts out.** Data vaddr 2 MB-aligned (`_wx_data_vaddr`; agnos huge-page granularity), file offset to `p_align` (4 KB x86 / 64 KB aarch64) so `p_vaddr ≡ p_offset` → near-zero file bytes. FIXUP ↔ EMITELF_USER lockstep on `dbase`; `.text` shifts 120→176 for the 2nd PH (entry follows). x86 + aarch64 (separate backends); Mach-O/PE/kernel/`.so` unaffected. **Two-step bootstrap to flip default-on** (cc2 stable W^X fixpoint == cc3); seed→cybs→gen2 W^X. `_wx_segments_gate` (check.sh 107→**108**, reads emitted PHs); `readelf -lW` confirms text R E / data RW on x86, aarch64, `CYRIUS_TARGET_AGNOS`. ecb+cass(unaffected)+pi(W^X, real aarch64) SELFHOST_OK; bench 538 ms; cycc 1,111,576 B. [`proposals/2026-06-29-elf-wx-separate-code-data-segments.md`](proposals/2026-06-29-elf-wx-separate-code-data-segments.md). | — | shipped |
-| **v6.3.13** ✅ | **[gate] str_builder concurrency — ROOT-CAUSED + opt-in fix (P1)** — the "miscompile of str_builder fns" framing was WRONG: the real cause is FUNDAMENTAL — **`var arr[N]` LOCALS are allocated at a fixed global/BSS address shared by every thread** (scalar locals already stack-allocate per-thread; array locals went through the global var table). Any concurrent path using an array-local aliases one global buffer → ~87% cross-thread splice. Found via an ultracode 3-agent workflow (the minimal-reduction agent nailed it by varying the byte source: `&array-local` = identical `0x600C18` across all 8 threads vs scalar `lea[rbp-N]` per-thread). **Fix (opt-in `CYRIUS_STACK_ARRAYS=1`):** `PARSE_ARRAY` routes array locals to per-thread STACK slots (struct-local multi-slot mechanism; `&arr`/`arr[i]` already had `FINDLOCAL`→`lea[rbp-N]` branches — one shared-frontend change covers x86 + aarch64 + all 7 forks). `THREAD_STACK_SIZE` 64KB→2MB. Validated: str_builder `sb_fail 0`, per-thread x86+aarch64, cycc self-hosts (binary SHRANK as arrays left BSS), seed-derive byte-id, flag-off differential byte-id; `_array_local_threadsafe_gate` (check.sh 108→**109**). [`str-builder issue`](issues/2026-06-28-str-builder-not-thread-safe.md). | — | shipped |
-| **v6.3.14** ✅ | **AGNOS syscall peer — 8 missing wrappers (lib-only)** — `lib/syscalls_x86_64_agnos.cyr` omitted 8 numbers the agnos kernel dispatches (the kernel implements 0–63 contiguous): `sys_klug`#36 (log ring), `sys_execwait`#37 / `sys_spawn_path`#43 / `sys_exec_redirect`#62 (process/exec + capture), `sys_fbinfo`#38 / `sys_blit`#39 (framebuffer), `sys_kbscan`#42 (input), `sys_sched_yield`#44. Proactive before the base-system consumers (kavach, bote, t-ron, thoth, phylax, aegis) port to `--agnos`. New `SysNrAgnosProc` enum + 8 `sys_*` wrappers (`#39 blit` a4=r10). cycc byte-identical (lib-only); a `--agnos` program calling all 8 emits the right `syscall #N`. [`issue`](issues/2026-06-30-agnos-syscall-peer-incomplete-8-wrappers.md). | — | ~1 |
-| **v6.3.15** ✅ | **[gate] array-locals default-on (P1, completes .13)** — per-thread array locals flipped opt-in → **DEFAULT** (`CYRIUS_STACK_ARRAYS=0` opts out). Both .13 blockers fixed: **m128 16-align** (one-slot parity pad when `&arr` disp ≡ 8 mod 16 → `pxor`/`aesenc xmm,[arr]` #GP-free) + **`secret var` zeroise** through the LOCAL slot (`ELOAD_LOCAL_ADDR`). **Auto-fallback**: an array over the per-fn 16384-slot budget stays global+`note:` (sole case = sigil `hash_file_into` 256 KB buf, already global → no regression). The feared ecosystem footgun was a FALSE ALARM (buggy awk mis-flagged element-typed arrays); a precise + 11-file agent audit = **295 bare-array locals, 0 over-runs, ZERO stdlib changes**. 6 `.tcyr` suites using the daimon under-declared-array idiom → element-typed decls; `secret`/`element_typed_array` rewritten layout-independent. Two-step bootstrap; cycc SHRANK 1,111,616→1,027,664 B. Gate GREEN (check.sh 109/109; seed→cybs→cycc; ecb+cass+pi SELFHOST_OK; bench 544 ms). [`array-locals arc`](issues/2026-06-30-array-locals-stack-default-on-m128-align.md). | — | shipped |
-| **v6.3.16** ✅ | **[gate] var-decl codegen pair (P2)** — 3 struct-local codegen bugs (`parse_decl.cyr`). **(a)** inferred `var p = mk()` from a struct-returning call → infer the struct type + route through the explicit-annotation retptr/`rax:rdx`-pair codegen. **(c)** single-≤8B-field struct field access segfaulted on x86+aarch64 (1-slot has no `-1` filler → misread as pointer-to-struct → `mov[slot]` not `lea&slot`); fix = force inline when `STRUCTSZ<=8`, gated `_TARGET_CX==0` (cx boxes structs → already correct; parity test stays green). **(b)** string-literal global init already fixed earlier → regression-locked. `struct_local_codegen.tcyr`; verified x86 + aarch64 (real pi native) + cx = 42; ecb+cass+pi SELFHOST_OK; check.sh 109/109; bench 546 ms. 3 issues closed→archived. [`inferred`](issues/archived/2026-06-28-inferred-struct-local-from-call-segfaults.md) · [`1-field`](issues/archived/2026-06-30-single-field-struct-segfaults.md) · [`str-literal`](issues/archived/2026-06-28-string-literal-global-initializer-garbage.md). | — | shipped |
-| — | **▼ v6.3.x EXPANSION (user 2026-06-30): pull the whole v6.4.x ABI/Perf arc + the governance cluster (ex-LEGAL) into v6.3.x; ~~do the Intel-Mac arc at the tail~~; v6.4.x reopens as an empty staging minor. Closeout moves to the very end. UPDATE 2026-07-03: the Intel-Mac arc moved OUT of the v6.3.x tail to the END of the v6.4.x line; the thoth initialized-globals cap-raise (+ sankoch 2.4.9 fold) took .41 as a consumer-unblock, shifting protobuf → .42. The v6.3.x tail is now the globals-cap (.41, shipped) → protobuf (.42) → the VR verification slot (.43) → closeout.** | | |
-| **v6.3.17** ✅ | **[gov / perf-prereq] Bench harness un-blind** — **PF-02** `alloc()` single-threaded fast-path (`_alloc_lock_acquire`/`_release` no-op while `_threads_active == 0`; `thread_create`/`_thread_spawn` arm the flag before the child runs → skips the v6.0.64 CAS spinlock + 2 fences for the dominant single-thread case, incl. cycc; single-thread allocs monotonic, concurrency fixture clean, one-step self-host fixpoint) + **PF-03** `bench-history.sh` tier-3 `CYRIUS_PROF=1` per-phase rows (`compiler/phase_pp/lex/gvar/parse/fixup/emit/write` ns → v6.5.x perf-refactor trend). PF-01 already done (v6.2.15). Unblocks perf-delta measurement for the pulled-in v6.4.x arc. self_compile flat 545 ms (cycc not alloc-bound); check.sh 109/109; ecb+cass+pi SELFHOST_OK. Issue closed→archived. [`runtime-bench-suite-blind`](issues/archived/2026-06-10-runtime-bench-suite-blind.md). | — | shipped |
-| **v6.3.18** ✅ | **[hardening, consumer-filed] stdlib undersized-array-locals sweep** — completes the v6.3.13 stack-locals sweep (a bare `var X[N]` written past `ceil(N/8)*8` bytes smashes the frame). Filed by the AGNOS base-stack migration. A 17-file agent audit (max-write-width vs slot) caught **2 genuine stack-smashes both in `sankoch.cyr` bzip2** — `_bz_decode_block` `var pos[6]`→`[48]` (48-byte `store64` loop) + `_bze_emit_block` `var present[16]`→`[128]` (128-byte loop), the daimon footgun (slots-meant-bytes-declared), **missed by the v6.3.13 sweep AND the v6.3.15 audit**. The 34 sites the issue named (`process`/`regression`/`pam`/`shadow`/`net`/`tls`/`yukti`/`ws`/`syscalls_*`) were latent-benign (≤8 B writes fit the 1-slot alloc) → sized correctly anyway (byte-identical codegen). New `sankoch_bzip2_roundtrip.tcyr`; cycc byte-identical (consumer-lib-only); check.sh 109/109; ecb+cass+pi SELFHOST_OK; bench 540 ms. Issue closed→archived. [`stdlib-undersized`](issues/archived/2026-06-30-stdlib-undersized-array-locals-stack-smash.md). | — | shipped |
-| **v6.3.19** ✅ | **[hardening, consumer-filed] two more stdlib fixes (AGNOS migration, cont'd)** — **ws_server**: `http_find_header`→`sandhi_server_find_header` (4 dangling calls missed by the `http_*`→`sandhi_server_*` rename → reachable-undefined the moment a consumer's WS handshake ran; bote 2.7.7) + **first-ever ws test** `ws_server_handshake.tcyr` (reject-path; a stale name is now a *local* reachable-undefined, proven by revert). **agnos `sys_fstat`**: fail-closed peer `return 0-1` mirroring `sys_access` — agnos kernel 1.51.2 has **no fstat-by-fd** (0–63 table full → a real syscall is agnos-kernel work); `--agnos` probe links clean. api-surface +`sys_fstat/2` (additions-only, no removals). **Third consumer issue triaged**: sankoch `zlib_compress` SIGSEGV was a **TEST-file** `var chunks[4]` footgun (32 B into a 4 B slot) — cyrius codegen **and** sankoch library BOTH exonerated by an adversarial compress-path array audit; fixed at sankoch source (`chunks: i64[4]`) + pin 6.2.44→6.3.18. cycc **byte-identical** (both fixes consumer-lib-only); check.sh 109/109; seed→cybs→cycc; ecb+cass+pi SELFHOST_OK; bench 537 ms. Issues closed. [`fstat`](issues/2026-06-30-agnos-sys-fstat-peer.md) · [`ws`](issues/2026-06-30-stdlib-ws-server-http-find-header-dangling.md). | — | shipped |
-| **v6.3.20** ✅ | **[gov / perf-prereq] Differential-corpus gate** — VR-03 `scripts/differential.sh`: OLD cycc (`git show ref:build/cycc`, tracked binary) + NEW cycc compile a deterministic **304-input corpus** (src compilers + tcyr + programs + benches + fuzz) in default + `CYRIUS_DCE=1` modes; `cmp` all → identical / codegen-diff / status-diff / both-fail. Manual-trigger; `--quick`/`--smoke`. **Validated both ways**: clean self-run all-identical (303/304); vs pre-.15 cycc correctly flags the array-locals codegen diffs RED (real detector, not placebo). Functional `_differential smoke gate` rot-guard (check.sh 109→**110**). The guard the perf arc (.27–.29) sits behind — **MUST precede it**. cycc byte-identical (scripts + check-prog only); ecb+cass+pi SELFHOST_OK; bench 545 ms. [`verification-coverage-gaps` VR-03](issues/2026-06-10-verification-coverage-gaps.md). | — | shipped |
-| **v6.3.21** ✅ | **[gov] Security-audit tail (RM-06)** — SHIPPED: **CVE-09** hard-error on x86 jump-target overflow (differential-proven byte-identical 304/304, regression-gated `tests/jump_target_cap.sh`, check.sh 111); **CVE-11** canaries accepted-with-rationale (guard page + W^X + PIE); **CVE-21 anti-downgrade floor** in install.sh (`~/.cyrius/signed-since` TOFU-pin, `CYRIUS_ALLOW_UNSIGNED` escape, logic unit-tested); **CVE-10** paper-closed; **RM-02** threat-model refresh (16 MB output cap); audit cadence pinned **v6.4.0**. Premise-check caught the stale CVE-29 row (shipped v6.2.44) + stale tls_native "holes" header. ecb+cass+pi SELFHOST_OK; bench 539 ms. *(Was:)* **CVE-09** jump-table overflow (`backend/x86/jump.cyr:44` cap-1023 silent truncation past 1023 targets → per-fn growable table or hard error; real codegen bug — lets LASE mis-eliminate) + CVE-10 paper-close (fixed v4.10.0, never ticked) + **CVE-11** stack-canary decision (emit, or accept-with-rationale in `threat-model.md`) + re-file CVE-09/11/12/13 as tracked rows (12/13/20 already CLOSED via the v6.2.30/.31 trust-chain arc) + **RM-02** rewrite `threat-model.md` (correct the TLS-backend / ASLR-PIE / input-buffer-cap misstatements + add native-TLS Known Limitations) + **client-side anti-downgrade floor** (completes the CVE-21 trust chain — v6.2.31 SIGNS releases but a client still accepts an UNSIGNED downgrade if `SHA256SUMS.sig` is stripped: record a "signed-since" version floor in `~/.cyrius/` + require a valid sig for any version ≥ it, or TOFU-pin the release pubkey on first verified install; may land as cyriusly/installer work) + pin the next full-audit cadence. [`overdue-security-audit-cve-tail`](issues/2026-06-10-overdue-security-audit-cve-tail.md). | — | shipped |
-| **v6.3.22** ✅ | **[gov] Verification coverage — VR-02 + VR-04** (VR-01 split to its own slot, cross-host by nature). **VR-02** REAL mutation fuzzers (the shipped harnesses were fixed-input): `tests/cycc_parser_fuzz.sh` — byte-mutated hostile source → cycc's stdin parser, assert no crash (400 inputs / 0 crashes; check gate) + `fuzz/tls_client_hello.fcyr` — adversarial ClientHello bodies → the network-facing `_tn_parse_client_hello` with a fresh server ctx per iter (in `cyrius fuzz`, 120 / 0). **VR-04** pure-cyrius **ELF** structural lint (magic/ELFCLASS64/e_type/e_machine + PH & SH tables in bounds + every PT_LOAD's file range + **entry-in-an-executable-segment**) on an emitted binary; skips gracefully on a PE/Mach-O host (that lint is the follow-on). Both parsers held (0 crashes). check.sh 111→**113**; cycc **byte-identical** (test/check-program only); ecb+cass+pi SELFHOST_OK. [`verification-coverage-gaps`](issues/2026-06-10-verification-coverage-gaps.md). | — | shipped |
-| **v6.3.23** ✅ | **[gov, ex-LEGAL] Unreviewed dimensions** — SHIPPED. **DX-01**: `CYRIUS_SYMS` function-symbol dump hoisted from the x86-only inline block to a shared `_emit_sym_dump(S, base)` in `runtime.cyr`, called from x86 **and aarch64** fixup (the aarch64 backend emitted nothing before — silent x86-ELF-only rot); PE crash-reporter base corrected to ImageBase+text-RVA; cx N/A (bytecode, `_read_env` stub); rot-guard `tests/dx01_syms_parity.sh` (check.sh 113→**114**); byte-identical (behind the env guard). **DX-02**: real OOB stack write in `cyrius-lsp.cyr` fixed (`var pipe_fds[2]`/`status_buf[1]`→`[16]`, the daimon footgun the v6.3.18 sweep missed in `programs/`) + `Content-Length` 16 MB cap + `read_body` null-check + `uri_to_path` `..`-traversal reject + adversarial **Phase 4** in the LSP gate. **SEC-AGNOS-01**: assessed against fn bodies — entropy (getrandom #45, fail-closed), W^X (2-PT_LOAD default), PIE/ASLR (non-PIE ET_EXEC; ASLR cross-repo), `alloc_agnos` (CVE-24/25/26 guards) all SAFE / correctly cross-repo → **no code change owed**; 2 stale comments corrected. ~~CVE-29~~ shipped v6.2.44; CVE-28 v6.1.38. **LEGAL-01 EXCLUDED** (v7 legal review). ecb+cass+pi SELFHOST_OK. [`unreviewed-dimensions`](issues/2026-06-10-unreviewed-dimensions.md). | — | shipped |
-| **v6.3.24** ✅ | **[consumer-filed bug pack] SecureYeoman/yeo-cy-test + shravan + phylax** — SHIPPED. **(1) The "string-literal global at scale" crash was MISDIAGNOSED — real cause is a SYMBOL COLLISION** (`yeo-cy-test`, Med): `var DB_PATH = "yeo.patra"` collides by name with patra's `enum DbOff { DB_PATH = 16 }`; cyrius resolves a name to its LAST registration, so the var shadowed the enum constant inside already-parsed `patra_open` (`store64(db + DB_PATH, …)` → `db + <string ptr>` = OOB store → SIGSEGV). The string VALUE is fine. Root-caused against the real consumer (six synthetic repros all compiled a correct global — none collided a name), DX-01 `CYRIUS_SYMS` localizing `patra_open+0x2b5` + a fn-vs-global disasm diff. Fix = `CHK_ENUM_SHADOW` (parse_types.cyr): a **non-int-literal** var shadowing an enum constant is now a HARD ERROR (uncapped `var_enum_id` marker; int same-value shadow like chrono's `CLOCK_MONOTONIC` stays allowed). Gate `tests/enum_shadow_error.sh` (check.sh 114→**115**). Consumer renames the global. **(2) `#derive(Serialize)` `Str` deserialize** (shravan): `_from_json`'s `str_from(v)` fed the value-`Str` to a cstr ctor → `"�"` roundtrip; fix = store `v` directly (it's already the Str); `derive_str_deserialize.tcyr`. **(3) `callback.cyr` agnos guard** (phylax): `fork_with_pre_exec` → `#ifndef CYRIUS_TARGET_AGNOS`. seed→cybs→cycc byte-identical; ecb+cass+pi SELFHOST_OK. [`string-literal`](issues/2026-07-01-string-literal-global-garbage-in-large-programs.md) · [`derive-str`](issues/2026-07-01-derive-serialize-str-field-deserialize-broken.md) · [`callback-agnos`](issues/2026-07-01-callback-fork-with-pre-exec-unguarded-agnos.md). | — | shipped |
-| **v6.3.25** ✅ | **[consumer-filed bug — TLS] multi-worker TLS `RECORD_LAYER_FAILURE`** — SHIPPED. The filing's "per-connection TLS state leak / aborted-handshake / needs-concurrency / max_conns>1" framing was **all incidental**: the real cause is a **thread-local SLOT COLLISION between sigil and patra** (`yeo-cy-test`, Med). cyrius's `thread_local_get/set` is a 16-slot SHARED integer space with **no allocator**; **sigil's crypto-bank lane (`_SIGIL_CBANK_SLOT`) and patra's SQL-parse scratch both hardcoded slot 0** (patra owns 0-4). In a server linking both (a `run_pooled_tls` pool over a patra-backed API — exactly yeo-cy-test), a patra query clobbered sigil's pinned bank in slot 0 → the next `cbank()` read patra scratch as the bank index → sigil indexed the **wrong lane of the process-global banked crypto buffers** (`&X + cbank()*N`) → in-flight handshake key-schedule corruption → client `RECORD_LAYER_FAILURE`. Deterministic **every-4th-handshake**, reproduces single-threaded at `max_conns=1`; root-caused by bisection to a heisenbug (any syscall in the worker loop, or pool size 8, hid it → timing/layout race on the shared bank). Fix = sigil `src/crypto_scratch.cyr` `_SIGIL_CBANK_SLOT` 0→8 (**sigil 3.9.9**), re-vendored `lib/sigil.cyr`; **slot-namespace registry** documented in `lib/thread_local.cyr`; gate `tests/thread_local_slot_collision.sh` (check.sh 115→**116**). Consumer: bump sigil ≥3.9.9, `max_conns` back to >1. cycc byte-identical (lib-only). Two follow-ups filed: `thread_local_alloc()` allocator + sandhi `_SANDHI_RPC_POLICY_SLOT=16` macOS/agnos OOB. [`multiworker-tls`](issues/2026-07-01-multiworker-tls-record-layer-failure-under-mixed-load.md) · [`slot-namespace`](issues/2026-07-01-thread-local-slot-namespace-no-allocator.md) · [`sandhi-slot-oob`](issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md). | — | shipped |
-| **v6.3.26** ✅ | **[v6.4.x pull-in — ABI] "Class B FFI / `fncall6` ABI fix" was a MISDIAGNOSIS** — SHIPPED. Proven empirically (real gcc-compiled stack-protected C called from cyrius): **there is no `fncall6` calling-convention bug** — arg-passing (`rdi,rsi,rdx,rcx,r8,r9`) + 16-byte stack alignment are correct; a stack-protected extern-C fn taking 4/5/6/7 int args returns the right result via `fncallN`. The "fncall6 into extern-C wgpu is unreliable" folklore (mabda works around it by struct-packing to `fncall2`) was a **TLS/`%fs`** problem: any glibc-compiled C fn with an array local carries `-fstack-protector` and reads its canary from `%fs:0x28` — so it faults **regardless of arg count** if `%fs` isn't a glibc thread block. mabda's C-launcher (ADR-004) already supplies glibc's `%fs`, so the wgpu path works today. **Fix (the residual hazard):** cyrius's `thread_local_init` does `arch_prctl(ARCH_SET_FS)` and `thread_local_set(5,…)` writes `%fs:0x28` — either clobbers the host's TCB/canary and breaks stack-protected C callees (any process mixing wgpu C hooks + sigil/patra thread-locals). New **`thread_local_use_foreign_tls()`**: the glibc-hosted consumer declares itself once; cyrius leaves `%fs` untouched, slots go to a process-global fallback (macOS/agnos path). **Explicit, not auto-detected** — a native `CLONE_SETTLS` worker also has non-zero `%fs`, so `fs!=0 => foreign` would misclassify native workers (v6.3.25 collision class). Native byte-identical; cycc byte-identical (lib/doc/test only). Gate `tests/ffi_stack_protected_extern_c.sh` (check.sh 116→**117**). Third consecutive consumer misdiagnosis (`.24` enum-shadow, `.25` slot-collision, `.26` TLS-not-ABI). ecb+cass+pi SELFHOST_OK. [`fncall6-extern-c-tls-not-abi`](issues/2026-07-02-fncall6-extern-c-tls-not-abi.md). | — | shipped |
-| **v6.3.27** ✅ | **[v6.4.x pull-in — perf] Cross-BB liveness + spill detection (regalloc substrate)** — SHIPPED (analysis half). **AR-04 decision:** build on the IR (cross-arch-capable, the only path to aarch64/riscv64 parity + the substrate .28/.29 need), gated under `CYRIUS_IR`. **Adversarial review caught a fatal miscompile hole** in the full linear-scan design: the `CYRIUS_IR` pipeline emits x86 during parsing and the optimizer **patches codebuf in-place (shrink-only)** — it never re-emits (`ir_lower_all` is dead scaffolding), so promoting `push rax`(1B)→`mov r12,rax`(3B) would overwrite the next instruction = silent miscompile of every arithmetic expr. So this ships the **safe analysis half** (emits zero code → byte-identical default): **`ir_liveness_cfg`** cross-BB backward-dataflow fixpoint (`live_out[BB]=∪ live_in[succ]`, per-BB `ir_live_in`/`ir_live_out` u64 bitmaps, +512 KB arena region; RET/EPILOGUE BBs get `live_out==0`, more precise than the DCE's "both live" seed) + **`_ir_find_spill_intervals`** (counts clean intra-BB `PUSH`..`POP` promotion targets, abandons opaque-op spans). Observable via `CYRIUS_IR_LIVENESS=1`; gate `tests/ir_liveness_cfg.sh` (check.sh 117→**118**: behavior-safe + converges + precise + spills>0). The **allocation + rewrite is deferred** to a slot that first wires+proves the IR re-emit path byte-equivalent ([`ir-regalloc-rewrite-needs-reemit`](issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md)). Self-host fixpoint + seed→cybs→cycc byte-identical; ecb+cass+pi SELFHOST_OK; self_compile 543 ms; cycc 1,031,888 B. | — | shipped (analysis) |
-| — | **▼ PERF ARC RESEQUENCED (2026-07-02) — the IR-optimizer passes were scheduled on a substrate that can't run them.** v6.3.27's regalloc-rewrite deferral + a full v6.3.28 cross-BB-DSE build (implemented, corpus-tested, REVERTED) PROVED the `CYRIUS_IR=3` optimizer is experimental/incomplete on THREE independent walls: **(1)** it patches codebuf **in-place, shrink-only** and never re-emits (`ir_lower_all` is dead scaffolding) → an instruction can't GROW → the regalloc rewrite is impossible; **(2)** `IR_RAW_EMIT` (op 98) is emitted even for trivial code (`var x=99; if…`) and inline asm can touch any `[rbp-N]` → a **sound** cross-BB DSE must bail on it → fires ~never (inert), while an **unsound** one miscompiles (`IR_CALL_INDIRECT` reads a spill local, SIMD `f64v2`/`f64v4` multi-slot locals, `IR_STORE_PARM`, incomplete `IR_SWITCH`/unresolved-JMP CFG); **(3)** `CYRIUS_IR=3` can't even compile cycc (0 bytes) or derive (SIGILL 132) — PRE-EXISTING on BOTH .27 and .28, which is exactly why `differential.sh` only tests `default`+`CYRIUS_DCE=1`, never `CYRIUS_IR=3`. **So copy-prop / cross-BB DSE / the regalloc rewrite ALL gate on first PRODUCTIONIZING the substrate — a prerequisite the old .28/.29 rows assumed away.** The fix (memory [[project_perf_arc_blocked_on_ir_substrate]]): the IR-level passes are re-sequenced *behind* the substrate slot (.29); the one perf item that never touches the IR optimizer (the x86 byte-peephole on the DEFAULT direct-emit stream) is pulled forward (.28) so the arc ships a real win NOW. **Do NOT re-attempt copy-prop/DSE/regalloc on the raw substrate — .29 lands first.** | | |
-| **v6.3.28** ✅ | **[perf — IR substrate root-cause + 2 real fixes] `CYRIUS_IR=3` now compiles cycc (was 0 bytes)** — the roadmapped x86 byte-peephole was INVESTIGATED and empirically found **~nil** on the default stream (the 611 redundant reloads are 376 cross-BB *join*-reloads → need copy-prop, blocked; the stream is already tight via the in-emit O2 trackers + regalloc picker — push/pop, self-mov, test-after-arith all measured **0**), so the slot **pivoted** to the substrate fix the arc actually needs (user direction). A root-cause workflow **DISPROVED** my earlier "fundamentally blocked / needs a re-emit rewrite" claim — the failures are BOUNDED, in-place-fixable bugs (Path A, not re-emit; `ir_lower_all` is a red herring CYRIUS_IR=3 doesn't use). **Bug 1 (SIGILL on struct-init/`#derive`):** `EVADDR_X1` emits `movabs→RCX` but recorded `IR_LOAD_ADDR_G` (the RAX opcode) → `ir_dce_capped` eliminated the live RCX-writing movabs → `apply_lase` NOP-fill → FIXUP over the NOPs → illegal insn; fix = new opcode `IR_LOAD_ADDR_G_X1`(9) in `_ir_def_rcx_any`, kept OUT of every `_pure`/RAX set (isolated via `CYRIUS_DCE_CAP=39` pass/`40` fail). **Bug 2 (0 bytes on cycc):** whole-program IR node table cap 262144, never reset per-fn, cycc demands ~280K → deliberate `SYS_EXIT(1)` *during parsing*; fix = relocate `ir_nodes`(16 MB)+`ir_cp`(4 MB) to the arena top (above the .27 liveness), cap→1 M, grow the x86 arenas (main.cyr 0x5E9D000→0x7300000; main_win.cyr 0x5F00000→0x7300000; aarch64/macho untouched — IR is x86-only; the region is lazy VA → zero real-mem cost on default builds), two-step bootstrap. **`CYRIUS_IR=3` compiles cycc: exit 0, 279 787 nodes; 27/30 sampled tcyr pass under IR=3.** + `CYRIUS_FOLD_OFF`/`LASE_OFF` bisection knobs (DCE_CAP/DSE_CAP methodology). Default codegen **byte-identical** (differential 306/306); self-host fixpoint + seed→cybs→cycc byte-identical; check.sh 118. **CARRY-OVER (filed):** the residual **3/30** IR=3 miscompiles (`alloc_str_extras`/`collections` SIGSEGV, `bigint` hang) are a **fixpoint cascade over-elimination** (each pass individually sound, only the four combined over-fire — deeper than the bounded class, and **NOT on the perf arc's critical path**: the arc needs sound analysis (.27 ✓) + new passes, not the old transforms). [`ir3-fixpoint-cascade`](issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md). | — | shipped |
-| **v6.3.29** ✅ | **[perf — the arc's first REAL, measurable win] callee-saved frame-trim (default-on)** — every `#regalloc` fn's prologue/epilogue save+restore ALL 5 callee-saved regs (rbx,r12-r15), but the linear-scan picker usually uses fewer. Since the picker allocates lowest-first and callee-saved regs are written ONLY by the picker, the used set is a prefix `{0.._ra_used_n-1}` → the save/restore pairs for the unused `[_ra_used_n, _cur_fn_regalloc)` regs are DEAD. Track `_ra_used_n` in the picker; after emit, **pattern-scan** the fn for each unused reg's exact 4-byte save/restore bytes (they appear ONLY as real save/restores — the body never touches an unassigned callee-saved reg → no false-match, and it catches ALL of a fn's multiple epilogues) → record nop_runs → PARSE_FN_DEF's existing compactor deletes them with full jump/fixup/target repair. **cycc SHRANK ~1.6% (1,031,944→1,015,608 B); fewer memory ops per call → faster self_compile.** DEFAULT ON (`CYRIUS_FRAMETRIM=0` opts out); two-step bootstrap (cc2==cc3). ABI-critical, exhaustively verified: **201/201 tcyr exit-identical to default**, self-host fixpoint, seed→cybs→cycc, differential status-diff=0 (296 codegen-diffs = the win applied; behavior preserved). Gate `tests/frametrim.sh` (check.sh 118→**119**). x86-only (aarch64/macho byte-identical — trim is x86-gated). **This is the perf arc's first concrete win — the .28 byte-peephole was ~nil, this is real.** | — | shipped |
-| — | **▼ DEFERRED (perf arc — the IR-level half, gated on a substrate the direct-emit peepholes .29/.30 did NOT need):** the **IR-level passes** — **regalloc rewrite** (v6.3.27 deferral: promote hot `PUSH`..`POP`→callee-saved regs, needs an instruction to GROW), **copy-propagation** (`ir_copyprop_recon`, kills the ~23K reload firehose's cross-BB *join*-reloads — the big remaining win), **extended cross-BB DSE** (`ir_extdse_recon`) — ALL gate on first **productionizing the `CYRIUS_IR=3` substrate**: the re-emit path (`ir_lower_all`, so an insn can grow) + a complete local-access opcode model (so liveness passes are sound not inert) + the `CYRIUS_IR=3` **fixpoint** fix (a probabilistic, ASLR-dependent `ir_lase` miscompile — open-ended, NOT the bounded opcode class). Deep, high-risk work on the OLD experimental optimizer; its own dedicated slot **when the user schedules the substrate grind** — the two direct-emit peephole wins (.29 frame-trim −1.6%, .30 reload-elim −0.80%) shipped WITHOUT it. Placement is the user's call. [`ir3-fixpoint-cascade`](issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md), [`ir-regalloc-rewrite-needs-reemit`](issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md). | | |
-| **v6.3.30** ✅ | **[perf — the arc's 2nd real win] redundant-reload elimination (O2 cat 5, default-on)** — naive codegen emits, at statement boundaries, `mov [rbp-N],rax` (store) immediately followed by `mov rax,[rbp-N]` (reload) — the reload is DEAD (rax still holds it). An **in-emit** eliminator: `EFLSTORE` records its post-emit CP+idx; a 64-bit `EFLLOAD` that is the very next emit (`GCP==_efl_store_cp`, same idx → nothing between) SKIPS the emit. **Fail-safe via CP-adjacency** (mirrors `_last_push_cp`): any intervening emit moves GCP off the store CP → no skip. The only hazards are zero-byte control-flow ENTRIES on a reload — cleared in `EPATCH` (all forward joins) + the 4 loop-top captures (`parse_ctrl.cyr`, back-edges). A post-pass byte-scan was a DEAD END (the 378 final-adjacent pairs are *post-compaction* artifacts; 0 hits pre-compaction — emit-time has 1961 raw / **1354 safe** adjacencies). **cycc 1,015,608→1,007,472 B (−8,136, −0.80%)**; self_compile flat (median ~525 ms). DEFAULT ON (`CYRIUS_RELOADELIM=0` opts out); two-step bootstrap; x86-only (aarch64/cx `EFLLOAD` don't consult the tracker — shared `parse_ctrl.cyr` clears are no-ops there). **differential status-diff=0 in BOTH default+DCE modes (287 codegen-diffs = the win, 0 behavior changes / 306)**; self-host fixpoint; seed→cybs→cycc; ecb+cass+pi SELFHOST_OK. Gate `tests/reloadelim.sh` + `tests/tcyr/reload_elim.tcyr` (check.sh 119→**120**). | — | shipped |
-| **v6.3.31** ✅ | **[consumer-filed bug — HIGH, agnos base-stack] freelist allocator now agnos-aware** — `lib/freelist.cyr`'s two mmap sites used the Linux/BSD 6-arg form (length in arg2/`rsi`, addr=0 in arg1/`rdi`), but **agnos `mmap#27` is single-arg** (kernel reads length from arg1/`rdi`, always anon R/W) → freelist passed length 0 → mmap returned 0 → first `store64` derefs NULL → **SIGSEGV on every agnos `fl_alloc` consumer** (libro's audit chain `chain_new→fl_alloc`, sigil crypto). Found via mirshi-fanout running `cyrius-yeomans-descent` (crash in `persist_init`). **Fix = new `_fl_mmap(length)` dispatcher** (`#ifdef CYRIUS_TARGET_AGNOS → syscall(SYS_MMAP, length)`, else the 6-arg form with `_fl_map_flags()`), both alloc sites routed through it — mirrors the existing `_fl_map_flags` macOS `MAP_ANON` divergence. cyrius-NATIVE lib (no vendored repo; consumers drop their interim patch + re-sync). cycc **byte-identical** (freelist not in the compiler); Linux `fl_alloc` round-trip exits 42; agnos build routes the single-arg mmap. Consumer-verified end-to-end on real agnos (descent runs, binds `:4000`). Gate `tests/freelist_agnos_mmap.sh` (Linux behavior + agnos build + `_fl_mmap` source-integrity; check.sh 120→**121**); self-host fixpoint + seed→cybs→cycc; ecb+cass+pi SELFHOST_OK. [`freelist-agnos-mmap`](issues/archived/2026-07-02-freelist-agnos-mmap-abi.md). | — | shipped |
-| **v6.3.32** ✅ | **[deps — modularity arc lever-1 COMPLETION] Phase D: dissolve the "stdlib" category → built-in `std` default group** — the FINAL phase of the v6.2.x granularity arc (A/B/C shipped v6.2.48/.49/.50). `_dep_register_default_std_group` (`cbt/deps.cyr`, after `_dep_parse_groups`) registers a built-in **`std`** group = the 7 universal core leaves `["string","fmt","alloc","io","vec","str","syscalls"]` (matches the `cyrius init` templates). A manifest writes `stdlib = ["std", <non-core>]`; `std` expands via the Phase B `_dep_expand_groups` (already applied to the stdlib list) in the SAME order as the explicit form → **byte-identical**, dropping the omit-one→SIGILL order-sensitivity. Registered AFTER the manifest's `[groups]` so a manifest's OWN `std` **overrides** the built-in; std-free manifests resolve byte-identical (expansion of a std-free list = dedup-in-order = identity). `stdlib` stays the section key (back-compat). **Premise-check found descent's "29-element" list had already drifted to 18** (M6 crypto/store leaves → the `libro.deps` sidecar at v6.2.46/.48); migrated its manifest → `["std", <9 non-core>]` + pin `6.2.48→6.3.32`, **verified the identical 30-leaf resolution** (cross-repo — committed in descent's repo). cycc **byte-identical** (CLI-only, resolver not in the compiler); self-host fixpoint + seed→cybs→cycc; gate `_deps_std_group_gate` (Case A std-expands + Case B own-std-overrides; check.sh 121→**122**); Phase A/B/C gates unregressed; vidya `dependencies.cyml` item 6. **Completes lever 1 (Phases A–D).** | — | shipped |
-| **v6.3.33** ✅ | **[language — generics arc TAIL] generic STRUCTS now actually instantiate (v6.3.10 shipped them broken) + multi-type-param + nested generics** — **premise-check (distinguishing tests) found the roadmap's premise partly wrong**: control-flow in generic bodies ALREADY worked, but the v6.3.10 generic-**struct** feature was **non-functional** — `var x: T<Conc>` never instantiated (`CYRIUS_MONOMORPH` was read AFTER pass-1, but structs + their `GSTP` type-param encoding are registered IN pass-1 → `GSTP==0` → instantiation condition never fired → silent fallback to the base i64 struct; the v6.3.10 fixture passed on non-distinguishing tests — i32-as-i64 sums equal, `h.tag` reads the same at either offset, `h.v.x` never tested). **Fix: read `CYRIUS_MONOMORPH` before pass-1** (default env-unset → byte-identical). Then: **nested field access** into a struct-typed generic field (`h.v.x`); **multi-type-param** distinct concretes (`conc1` threaded through mint/instantiate/both sites — `Two<i64,Point>`, mangled `Base$c0$c1`); **nested generics** `Box<Pair<i32>>` (`_parse_one_type_arg` recursion + the C++ `>>` problem — `>>` lexes to ONE right-shift token, handled via `_consume_gt` pending-`>` + `LOOKAHEAD` depth −2). Generic **fns** with **struct** type-args HARD-ERROR (was a silent miscompile — `wrap<i64,Point>`→60) — a dedicated follow-on ([`generic-fns-struct-type-args`](issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md)); scalar fn type-args + all struct generics work. All gated (`_MONOMORPH_OK`) → **differential 306/306 byte-identical, 0 codegen-diff**; self-host fixpoint + seed→cybs→cycc (new recursive fn cybs-safe); fixture `generics_tail.cyr` + gate `_generics_tail_gate` (check.sh 122→**123**); ecb+cass+pi SELFHOST_OK. | — | shipped |
-| **v6.3.34** ✅ | **[compiler — DEFAULT-PATH miscompile, from the .34 discovery sweep] sub-i64 SCALAR local on the LEFT of `+`/`-` was pointer-scaled** — `var a: i32 = 40; a + 2` gave **48** (= 40 + 2·sizeof(i32)); `var c: i32=30; var d=40; c + d` → **190**; i16 → scale 2; `a - 2` scaled too. Pre-existing since ≥v5.11.69, latent because sub-i64 `var` locals rarely sit left of `+`/`-` (i8 was scale-1 by luck, i64 scale-0, params + right-operand immune). Root cause: `PARSE_FACTOR`'s local-load set the pointer scale (`SPSC`) to the scalar's byte width `lt`, right only for a pointer-to-lt element. **Fix**: reset scale to 1 for `lt < 8` (SLTYPE 1/2/4 = i8/i16/i32 scalars); keep `lt == 8` (a `*i64` typed pointer — scalar i64 is SLTYPE 0, and no sub-i64 typed pointers exist, so 1/2/4 are always scalars → `points.cyr` `*i64` scaling preserved). Regression-locked by `tests/tcyr/subword_scalar_arith.tcyr` (12 asserts); differential = only intended scalar-arith corrections. Two-step bootstrap. **Discovered while sweeping the monomorph engine (user re-sequenced: #6 first).** Filed alongside: a separate pre-existing **global** typed sub-i64 scalar load SIGSEGV ([`global-typed-subword-scalar-load-crash`](issues/2026-07-02-global-typed-subword-scalar-load-crash.md)). | — | shipped |
-| **v6.3.35** ✅ | **[compiler — DEFAULT-PATH batch 1/3: sub-i64 LOAD correctness] SHIPPED.** Signed sub-i64 **sign-extension** — locals + struct fields + call-args, x86 `movsx`/`movsxd` + aarch64 `ldurs*`/`ldrs*`, driven by a negative load width; signedness tracked with **no new heap** (negative sentinel in the 0-for-scalars slice-width table for locals; a sub-i64 field is always signed — struct-def only recognizes i8/i16/i32). `var a:i32=-1; a<0` now true; unsigned `uN` stays zero-extended. Typed sub-i64 **global** scalar LOAD SIGSEGV (x86 RCX/RAX) + INIT-returns-0 (`_EMIT_GVAR_STATIC_INITS` only wrote `vsize==8`) both fixed, cross-arch. **A1** (generics inline-instance jump-table clobber, gated — a .37 repair) landed early. cycc self-compiles byte-identical (zero self-host risk); aarch64 qemu + **pi SELFHOST_OK**; differential status-diff=0 (7 sub-i64 codegen-corrections); `subword_signed_load.tcyr` (11) + corrected stale `types.tcyr` assert; self_compile 550 ms; cycc 1,015,912 B. DEFERRED narrow: signed sub-i64 *globals* sign-ext (rare) + `*iN` pointer (#7, none exist). [`default-path-miscompile-inventory`](issues/2026-07-02-default-path-miscompile-inventory.md). | — | shipped |
-| **v6.3.36** ✅ | **[compiler — DEFAULT-PATH batch 2/3: struct value semantics + parser + closures] SHIPPED.** **[5] >8-byte struct by-value PARAM** — callee derefs a >8B struct param as a pointer, caller passed only the first 8 bytes → SIGSEGV. Fix = caller ADDRESS-passes, gated on a **NEW per-fn `_fnt_structmask`** (bit N = param N is a plain non-Str struct >8B; reclaims `0xA3A000` from the v6.3.28-relocated `ir_nodes`) — the reliable discriminator, because cyrius conflates inline-structs & struct-handles (both `SLTYPE=-sid`) and reuses the `-1` sentinel for freed block-locals, so no arg-side heuristic works (a naive caller-side fix regressed str_split/toml — `str_new_a()` handles to `i64` params). Str/Result/handle/scalar params → value-passed; TCO dropped for struct-param callees. **[6]** `var b: P = a` copy-init → inline alloc + full word copy (true value semantics). **[3]** `&&`/`||` split into two precedence levels (`&&` tighter). **[4]** `for i in IDENT..hi` — a `.` followed by `.` is the range op. **[9]** `var g = f` propagates `CLOSURE_TYID` so `callptr(g,…)` dispatches. Closeout: fixed a **stale v6.3.35 fixture** (`sub_byte_field_load.cyr` asserted the pre-sign-ext i8 zero-extension — was RED on the released .35). All byte-identical on the corpus (differential status-diff=0) or logic-preserving; fixpoint + seed-derive byte-identical; ecb+cass+pi SELFHOST_OK; check.sh 123; `struct_byval_param.tcyr` (10). self_compile 553 ms; cycc 1,015,928 B (+16). 9d (closure through an i64 param) filed v6.4. [`default-path-miscompile-inventory`](issues/2026-07-02-default-path-miscompile-inventory.md). | — | shipped |
-| **v6.3.37** ✅ | **[language — DEFAULT-PATH batch 3/3: generics engine REPAIRS] SHIPPED (all gated `CYRIUS_MONOMORPH=1` → default byte-identical).** **Premise-check first: A2 (early return) + A4 (nested outer generic) were ALREADY fixed by the .35 A1 `_jt_snapshot`** — only A3 survived. Fixed via a 5-agent root-cause workflow + adversarial re-sweep: **A3** — nested explicit type-args clobbered the first binary operand; the inline-replay materializes args into enclosing-frame slots but the frame-size patch reads the FINAL count → under-reserves → a live runtime `push` aliases the inline param slot. Fix = per-fn frame **high-water** `_flc_hwm`. **C1** — a by-value struct-param call as a bare statement mis-parsed (inline-replay drops the param's struct SLTYPE); fix = exclude struct-param fns from the inline path. **B1/B2** — a multi-field generic struct return SIGSEGV'd (callee `_gstc==0` mis-instantiated a bogus struct → sid mismatch) + an i64 explicit/i32 inferred receiver parse-errored (the LHS receive inference + asv consume paths only matched `IDENT (`, not `IDENT < ... > (`); fix = treat unresolved tparam as base + widen 3 receive sites. **B3 (struct type-arg on a fn) DEFERRED → .38** (base-emission rework, HIGH-risk unproven). Re-sweep found **two residual gated cases → .38** (A-broad: explicit-type-arg 2-arg arg-slot reuse; B-explicit: non-i64 struct receiver base-vs-instance sid check). Byte-identical default (differential status-diff=0); fixpoint + seed-derive byte-identical; ecb+cass+pi SELFHOST_OK; check.sh 123→**124** (`_monomorph_repairs_gate`); self_compile 546 ms; cycc 1,020,040 B. Filed pre-existing ≤8B-struct-by-value-2nd-call default bug. | — | shipped |
-| **v6.3.38** ✅ | **[language — generics FINALIZE, bite 1 of 2] SHIPPED — A-broad gated residual + bayan 1.0.4 / mabda 4.0.2 refold** (user-directed split 2026-07-03: cut A + the folds now, the deep-ABI rest as .39). **A-broad** — an explicit-type-arg 2-arg generic call whose arg1 contains another call clobbered arg0 (`add<i64>(8, add<i64>(16,32))`→64 not 56; `acc = add<i64>(acc, id<i64>(10))` loop→20 not 30): the inline-replay stored arg0 into `saved_flc` but bumped `GFLC` only AFTER the arg loop, so a nested inline call reused `saved_flc` as its own param base. Fix = reserve the param slots (`SFLC` + `_flc_hwm`) BEFORE the arg loop — .37's `_flc_hwm` reserved frame SIZE, this reserves the slot INDICES (parse_fn.cyr:1031). Gated (`CYRIUS_MONOMORPH=1`) → default byte-identical. **+ bayan 1.0.3→1.0.4** (TOML `"""` triple-double-quote multi-line strings silently dropped — parser recognized only `'''`; byte-identical `cyrius distlib` re-vendor; 0 new public fns). **+ mabda→4.0.2** (4.0.0 = pure-Cyrius native NVIDIA/nouveau GPU backend behind the v3.0 abstraction, no public-API removal; +43 `mabda::native_nv_*`/`backend_nvidia_new`/`wgpu_adapter_vendor_id` public fns → api-surface snapshot regenerated 4381→4424). fixpoint + seed→cybs→cycc byte-identical; differential status-diff=0 both modes; ecb+cass+pi SELFHOST_OK; check.sh 124; self_compile 559 ms; cycc 1,020,040 B (unchanged — A-broad gated). | — | shipped |
-| **v6.3.39** ✅ | **[language — generics FINALIZE, bite 2 of 2] SHIPPED — the deep specialized-instance struct ABI + cross-target monomorph parity + a default-path regalloc fix. The generics arc CLOSES.** Root-caused via a 3-bug workflow (isolated worktrees + adversarial-verify, all CONFIRMED), then each fix implemented + verified. **≤8B (DEFAULT-path, x86)** — a ≤8-byte struct passed by value to the same callee twice read 0: the regalloc safety scan (parse_fn.cyr:3496) tested the ModRM byte `== 0x85` (rax) exactly, missing a `lea rN,[rbp+disp]` with N≠rax (a ≤8B struct field-store emits `lea rcx,…`); fix = also bar regalloc for any `lea`-of-slot via `(modrm & 0xC7)==0x85`. Logic-preserving (differential GREEN); x86-only (no aarch64 bug). **B-explicit (gated)** — `var m: M<i32> = mk<i32>()` hard-errored; the inferred form already re-derives the receive from the callee's BASE and works, so the fix resets `pscale` for an explicit specialized receiver to re-enter that path (ONE line — the agent's disasm "m.b=0" did NOT reproduce). **B3 (gated, the roadmap-flagged HIGH-risk item — LANDED)** — a struct type-arg on a generic fn (`wrap<Point>(pt)`): the i64 base can't parse `p.x` → SKIP the never-called base body to a `rax=0` stub (detected via a new per-fn `_cur_fn_tp_pmask` + a body scan for `<tparam-typed-param>.field`); the `-3` blanket predated the .36 structmask + this ≤8B fix that made the by-value struct-param ABI sound → relaxed for single-tparam; the instance binds T→struct before its param loop + sets the address-pass mask from the resolved sid when >8B. Works 8B/16B/24B; multi-tparam struct still rejected. **Cross-target parity** — the v6.3.33 "read `CYRIUS_MONOMORPH` before pass-1" fix was in main.cyr ONLY; moved it before pass-1 in main_aarch64/win/x86_macho.cyr → every generics fixture now runs on aarch64 (qemu → 42) + aarch64 self-host byte-identical. Fixture `generics_struct_abi.cyr` + gate (check.sh 124→**125**). `CYRIUS_MONOMORPH` stays OPT-IN — the default-on flip is **pinned to v6.4.0** (user 2026-07-03; needs a flag-ON differential status-diff=0 + flag-ON cycc self-host + flag-ON cross-OS first — see roadmap_6.md "Pinned to v6.4.0"). fixpoint + seed→cybs→cycc byte-identical; differential status-diff=0 both modes; ecb+cass+pi SELFHOST_OK; self_compile 555 ms; cycc 1,020,040 B. Closes the generics arc (v6.3.9/.10 → .33 → .35 → .36 → .37 → .38 → .39). | — | shipped |
-| **v6.3.40** ✅ | **[language — consumer-filed, svara] SHIPPED — `#derive(Serialize)` f64 field support.** User-directed 2026-07-03 from the [derive-json-codec proposal](proposals/archived/2026-07-03-derive-json-codec.md). **Premise-check: a codec derive ALREADY exists** — `#derive(Serialize)` emits `Type_to_json`/`Type_from_json`/`Type_from_json_str` (covers i8/i16/i32/i64/Str/nested), and the typed `json_v_*` DOM the proposal wanted already lives in bayan. The real gap was **f64** (emitted undefined `f64_to_json`/`f64_from_json` → hard "refusing to emit binary with reachable undefined fn" error, same class as the v5.9.35 i64 gap). Fix (lex_pp.cyr PP_DERIVE_SERIALIZE): f64 detection in all three codec fns — `_to_json` via `fmt_float_buf` (fmt.cyr) into a shared scratch, `_from_json`/`_from_json_str` via `f64_parse` (math.cyr, the new include requirement). Fractional `1234.5` round-trips; composes with i64/Str. `derive_serialize_f64.tcyr` (5). Differential status-diff=0 both modes (f64 branches only fire for an f64-field struct); fixpoint + seed→cybs→cycc byte-identical; ecb+cass+pi SELFHOST_OK. **Arrays deferred → v6.4.x** (blocked on a missing language feature: `struct { x: T[]; }` doesn't parse — no array-typed struct fields; filed roadmap_6.md). Proposal's new `#derive(json)` typed-DOM variant deemed unnecessary (duplicates the existing codec). derive-json + native-float proposals archived. Filed a pre-existing P3 (Str field + global-scope codec invocation → "unexpected `}`"). | — | shipped |
-| **v6.3.41** ✅ | **[compiler — consumer-filed, thoth] SHIPPED — raise the initialized-globals per-compilation-unit cap 1024 → 4096.** User-directed 2026-07-03 from [issue 2026-07-03](issues/2026-07-03-raise-max-1024-initialized-globals-cap.md) (thoth vendoring several first-party dist bundles — bote-core/libro/t-ron/avatara/vyakarana/darshana/sit/sankoch — into ONE compilation unit crossed 1024 top-level non-literal `var … = …` inits: `error:src/agent.cyr:495: too many initialized globals (max 1024)`, forcing the ecosystem to carve artificially-lean distlib profiles to fit). Fix (parse_decl.cyr): the `gvar_toks` deferred-init table relocated off `0x198000[8192]=1024` to the reclaimed `0x729000[32768]=4096` band (the .27 output_buf gap, below TS@0x800000, verified free across all targets); both cap checks + the emit-back reader retargeted; `gvar_cnt` stays at `0x19A000`. **Counting rule** (now documented in the guide's Global Initializers section): only a NON-literal top-level initializer (call/ident/expr) consumes a slot — bare integer literals take the static-init fast path, enum members are const-folded; neither counts. Heap-map comments updated in all `main_*.cyr` + `lex_pp.cyr`; heap-map audit clean (99 regions, 0 overlaps). Fixture `many_initialized_globals.tcyr` (1100 call-init globals — fails on old cap-1024, passes on new; runs within the tcyr-suite gate → check.sh stays **125**). Compile-time scratch offset → default codegen byte-identical (differential codegen-diff=0; the only status-diff is the new fixture, intended); fixpoint + seed→cybs→cycc byte-identical; ecb+cass+pi SELFHOST_OK; self_compile 561 ms; cycc 1,024,488 B. **Also folded (user 2026-07-03): sankoch 2.4.7 → 2.4.9** (the "zlib breakout" + CRC slice-by-8; `lib/sankoch.cyr` re-vendored from `~/Repos/sankoch/dist` — 288 public fns unchanged, arities identical → api-surface neutral, cycc byte-identical). Downstream `CLAUDE.md` "256 initialized globals" figure reconcile spawned as a separate task. | — | shipped |
-| **v6.3.42** ✅ | **[stdlib — consumer-filed, hoosh] SHIPPED — `lib/protobuf.cyr` proto3 wire codec: double/float completion + docs.** **PREMISE-CHECK: the core lib ALREADY SHIPPED in v6.2.17** (commit `4a107da9`, 2026-06-17 — the day after the slot was granted) — varints, zigzag, all 4 wire types, field writers, decode + skip, tested (`protobuf.tcyr`), api-surface-registered. The roadmap slot was stale (re-added during an audit that didn't notice it existed). So .42 is NOT "build protobuf" — it's the **finish**: (1) `pb_write_double`/`pb_read_double` (f64 ↔ wire-1 fixed64 — an f64 value IS its i64 bit pattern) + `pb_write_float`/`pb_read_float` (f64 ↔ wire-5 fixed32, narrow/widen via the `f32_from`/`f32_to` builtins) — completing the `double`/`float` the header already advertised but had no helper for (same "advertised-but-no-fn" class as .40's f64_to_json); (2) a guide **Protobuf** section (was undocumented); (3) 7 round-trip asserts (`protobuf.tcyr` 42→49). Lib-only + the api-surface tool → **cycc byte-identical**; api-surface snapshot regenerated additive-only (+4 fns, 0 removals). Third consecutive premise-check win (.40 codec, .41 "256", .42 lib-already-shipped). hoosh's OTLP/protobuf path is now fully unblocked (double for metrics + the trace primitives). | — | shipped |
-| — | **▼ Intel-Mac arc MOVED to the END of the v6.4.x line (user 2026-07-03)** — the x86-macho native-miscompile fix + x86-macho toolchain completion (formerly .42/.43) are deferred out of v6.3.x to the tail of v6.4.x (see roadmap_6.md "Pinned to the v6.4.x tail"). The last v6.3.x WORK is the VR verification item below, then closeout. | | |
-| **v6.3.43** ✅ | **[gov — verification] SHIPPED — VR-01 + VR-04 cross-host stdlib verification + foldins.** **Headline: a real compiler bug found by ports — Windows `sys_write`/`sys_read` only worked for std handles (0/1/2), never files** (`EWRITE_PE` always `GetStdHandle`-translated the fd; fixed with an unsigned `cmp rax,2; ja` fd-branch in `src/backend/x86/emit.cyr`, mirroring `EREAD_PE`'s v6.0.45 fix). + `sys_mkdir`/`sys_unlink` Windows stubs wired to their existing CreateDirectoryW/DeleteFileW reroutes. **VR-01**: 8 `vr01_*` platform tcyr (Linux + **cass 8/8 + ecb 8/8**); LIBTEST **promoted to a standing per-host gate** (release-gate runs the `vr01_` glob + requires `LIBTEST_OK` on ecb/cass/pi). **VR-04**: PE structural lint added (`_lint_pe_buf`, local cross-emit); Mach-O lint → v6.4.x Intel-Mac arc. **Foldins**: sigil 3.9.9→3.10.0 (+17 fns, UEFI Authenticode crypto) + patra 1.12.7→1.12.8 (api-surface neutral). **Filed** (VR-01 found, tests platform-guarded): macOS threading broken (`thread_create` no-op) + getpid cross-platform. fixpoint + seed→cybs→cycc byte-id (the codegen change is cybs-safe); check.sh 125; ecb+cass+pi SELFHOST_OK + LIBTEST_OK; self_compile 568 ms; cycc 1,024,488 B. **The LAST v6.3.x work before closeout.** ORIGINAL SCOPE: — the LAST v6.3.x work item before closeout (user 2026-07-03). Targeted tcyr for `fs_win` / `thread_win` / `sync_windows` / `alloc_macos` / `args_macos` / `process_win` / `syscalls_macos` / `syscalls_windows` (**zero of the 173 tcyr touch these** — the exact found-by-consumers gap that let the macOS/Windows stdlib rot silently), validated on **cass (Windows) + ecb (macOS)** REAL hardware; promote LIBTEST to a standing per-host gate; full tcyr on the remaining targets. **Cross-host by nature → split from .22 into its own slot** (user 2026-07-01). **VR-04**: adds the **PE** structural lint (exercised locally via `CYRIUS_TARGET_WIN=1` cross-emit + on cass); the **Mach-O** structural lint is **deferred to the v6.4.x Intel-Mac arc** (user 2026-07-03) — the only local Mach-O emitter is the broken x86-macho port that arc fixes, so gating it there gives a working local emitter to lint against. Also folds **sigil 3.9.9 → 3.10.0** (foldins review; +17 public fns incl. the UEFI Authenticode crypto that is P1 of the v6.4.x UEFI arc). [`verification-coverage-gaps` VR-01](issues/2026-06-10-verification-coverage-gaps.md). | — | ~4 |
-| **v6.3.44** ✅ | **[untracked-issue sweep — cross-OS + stdlib correctness] SHIPPED.** The genuinely-open untracked `issues/` (an `issues/*.md`-vs-roadmap cross-ref found 7 untracked; **3 premise-checked as already-resolved**, below). **(1) single-owner `mutex_*`** ([`dup-mutex`](issues/2026-07-03-duplicate-mutex-fns-thread-vs-sync-stdlib.md), LOW): `mutex_new/lock/unlock`+`MUTEX_SIZE` were defined in BOTH `thread*.cyr` and `sync*.cyr` → 3 `duplicate fn` warnings on every consumer linking both → `sync.cyr` is now the single owner (`thread.cyr` includes it once; the 3 `thread*.cyr` drop their copies; include-once dedup collapses the both-included case). api-surface regen: 9 relocations, 0 real additions. Gate `tests/mutex_single_owner.sh`. **(2) global-scope `Str`-field struct-literal** → `unexpected '}'` ([`derive-str-global`](issues/2026-07-03-derive-serialize-str-field-global-scope-parse-error.md), P3): **`#derive`-INDEPENDENT** (a plain struct reproduced it) — `EMIT_GVAR_INITS`'s pass-2 replay was a parallel copy of `PARSE_STRUCT_INIT`'s positional loop missing the v5.10.7 `IS_STR_FIELD` fix (flattened the Str field → PCMPE'd a 2nd expr for `len` → hit `}`); mirrored the fix. Default byte-identical (differential codegen-diff=0; the 1 status-diff is the new regression tcyr, fail→pass). **(3) getpid/getppid cross-platform** ([`getpid`](issues/2026-07-03-getpid-cross-platform.md), P3, codegen): **found-by-ports — getpid was ALSO broken on aarch64-macOS, not just getppid.** The macho syscall xlat SOURCE numbers are arch-specific: x86-macho feeds `syscalls_macos.cyr` (39/110), aarch64-macho feeds `syscalls_aarch64_linux.cyr` (172/173). aarch64 getpid(172) ran untranslated → **positive GARBAGE** (the .43 callable-only smoke passed on it); getppid untranslated → 0. Fixed: aarch64 ESYSXLAT `172→20`+`173→39`, x86 `39→20`(existing)+`110→39`; Windows getpid `0`-stub → `GetCurrentProcessId` (0xF01C PE reroute, aarch64/cx stubs). `vr01_process_smoke.tcyr` tightened (positive PID assertions) — run-verified on **ecb + cass + pi**. **Premise-check triage (already resolved):** `le8byte-struct-byval-2nd-call` (v6.3.39, repro exits 5); `monomorph-inline-instance-clobbers` A1 (v6.3.35, exits 37); `monomorph-engine-bug-inventory` (generics arc closed .39; residual gated → v6.4.0 flip). **macOS thread backend** ([`macos-threading`](issues/2026-07-03-macos-threading-workers-dont-run.md), P2) re-pointed to the **v6.4.x** Mach-O/Intel-Mac tail (user 2026-07-03). fixpoint + seed→cybs→cycc byte-id; check.sh 125→**126** (mutex gate); ecb+cass+pi SELFHOST_OK + LIBTEST_OK; self_compile 565 ms; cycc 1,024,552 B. | — | shipped |
-| **v6.3.45 (closeout)** ✅ | **Closeout — SHIPPED (v6.3.x minor close before v6.4.0).** **Cross-feature integration:** `integration_closures_threads.tcyr` (default: closures × per-thread array-locals × concurrency + the .44 single-owner mutex) + gated fixtures `generic_closure.cyr` (CYRIUS_MONOMORPH=1) + `async_closure_generic.cyr` (CYRIUS_ASYNC=1 + CYRIUS_MONOMORPH=1, via a new `_self_host_pipe_env2`) + 2 gates → check.sh 126→**128**. **Minor-close judgment audits** (heap-map / dead-code / refactor / code-review / cleanup / security, run as an 8-agent workflow): heap map **135 region entries, 56 live, 0 overlaps**; DCE floor **61 fns / 24,239 B** (all documented false-positives, no removal); **doc-hygiene sweep** = 9 byte-identical heap-map/stale-name comment fixes (0xF7B000 ir_cp freed, brk 94.6→115 MB, struct_ftypes [16384]→[65536], cc3cx→cycc_cx, cc5_win_linux→cycc_win, gvar_toks 64→4096). Archived the 2 .44-resolved issues; deleted the orphaned `str_to_cstr.cyr` fixture. **Filed** (codegen-touching / self-host+differential → v6.4.x-early, not a byte-identical closeout): `v6345-closeout-audit-backlog` (5 refactor consolidations of the .44 EMIT_GVAR_INITS parallel-copy class + 2 dead-code sweeps + 2 latent bugs — lex_pp 16-slot flag-table cap, `_msx` imm8 ≥128 truncation) + `sigil-authenticode-pe-hash-oob-read` (vendored → sigil source / v6.4.x UEFI arc). **Residual P3s triaged → ALL defer to v6.4.x** (tls13-get-version, bare-metal-forbidden-module-check #4, syscall-write-byte-length-gate, bare-local-array-slot-write-lint). cycc byte-identical (1,024,552 B — tests/gates/comments/docs only); fixpoint + seed→cybs→cycc byte-id; ecb+cass+pi SELFHOST_OK + LIBTEST_OK; self_compile 565 ms; vidya minor-close sync. **v6.3.x CLOSES — v6.4.0 opens next (integer SIMD → array-typed struct fields → UEFI signing → pub/private; + the CYRIUS_MONOMORPH default-on flip).** See CHANGELOG [6.3.45]. | — | shipped |
+| # | Arc | Conservative length | Release-blocker? | Status |
+|---|-----|--------------------:|:----------------:|--------|
+| 1 | **Integer SIMD** (ML/AI) | **5–7 releases** | No | **PINNED — immediate** |
+| 2 | **Array-typed struct fields** | **3–4 releases** | No | **PINNED — immediate** |
+| 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
+| 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
+| T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
 
-**Per-release gates & risks** (the places these bite):
-
-- **v6.3.1 (SHIPPED):** byte-identical for any manifest with no `[features]`/`optional`/
-  `target` (the lever-1 deps gates are the regression wall); `cyrius build --features X`
-  resolves the gated dep, plain build does not; `target=` skips on a non-matching host;
-  axes combine. All proven by `_deps_features_gate` + 6 manual transition tests.
-- **v6.3.2 (B blast radius — MEASURED 21/192):** gate on **all 192 `.tcyr` green under
-  default-on hard-error** — 18 via surgical per-tcyr include completion, 3 via the
-  mabda-source optional-gating + re-fold. If any can't be made green, that's
-  **STOP-and-ASK**, not a quiet `--allow-undef` sprinkle (one-bug-one-complete-fix).
-  cybs-limit + seed-derive after the fixup/main-fork edits; cross-arch parity x86==aarch64.
-- **v6.3.3 (#6 cross-arch emit, ABI-leak class):** disasm-verify each primitive on
-  x86 **and** aarch64; guard x86-privileged ops (`cli`/`sti`/`hlt`/`in`/`out`/`cpuid`)
-  on non-x86 paths; 4-host self-host mandatory — a green CI check is **not**
-  verification.
-- **v6.3.5 (cycle's load-bearing unknown):** AR-01 must **root-cause** the ARM
-  metadata corruption that disabled `_INLINE_OK`, not paper over it — regression
-  probe proving correct emit on **real pi** (aarch64-native tcyr). If un-revivable,
-  surface it (it gates generics).
-- **v6.3.7 (perf cliff):** the self_compile budget is a **hard** gate with in-scope
-  dedup + cap-headroom — the v6.x cycle already ate a +65 % growth-tax once.
-- **Every release:** seed-derive after any `src/` change (cybs limits — small fns,
-  no tail calls; the v6.3.0 seed-break lesson, [[feedback_seed_derive_mandatory_cybs_limits]]),
-  bench delta in CHANGELOG, 4-host cross-OS for emit changes, premise-check at entry.
-
-**Sequencing decisions on record (user, 2026-06-28):** (1) Phase-0 substrate lands
-**after** bare-metal (your literal A → B → C order), not as an early risk-spike;
-(2) the **full** language trio (closures + generics + async) executes inside v6.3.x;
-(3) bare-metal splits **#5+#6 then #7** (isolates the cross-arch emit change from the
-stdlib-link for cleaner verification); (4) **A and B un-bundled** — A (deps lever-2)
-ships as v6.3.1 on its own; B (undef-hard-error) gets its own slot v6.3.2 once A's
-landing + B's measured 21/192 blast radius made the bundle's risk profile clear; (5)
-B's 3 mabda-external tcyr are fixed **at mabda's source** (optional-gate + re-fold),
-not by tcyr restructure or `--allow-undef`.
-
-**Open inputs (pin at slot entry, not blocking):** the v6.3.7 self_compile ceiling
-number (current ~508 ms, 500–549 ms jitter band) and the expected v6.3.x patch count
-(minor-window convention, for packing density).
+**Opening sequence total: conservatively ~17–26 `.NN` releases** — v6.4.x is a **long
+minor**. **None of the five arcs is a release-blocker.** On top of the arcs, **reactive
+agnos + consumer-filed repairs interleave throughout** and consume **separate** slots
+that are **not** counted above (3 already this minor: .1 alloc_reset, .2 agnos audio,
+and .0's own de-risking) — see *Reactive headroom* below.
 
 ---
 
-## Open carry-in / DX hardening (ride bug-bandwidth)
+## PINNED — immediate work
 
-Not pinned to a slot — these land on a bug-bandwidth line, fold into an
-adjacent compiler change, or move on consumer pressure / explicit user
-direction ([[feedback_no_unilateral_scope_decisions]]), not as standalone
-releases.
+### Pin 1 — Integer SIMD (arc opener, ML/AI priority) — ~5–7 releases
 
-- **DRY the four pass-1/pass-2 top-level scanners** (`main.cyr`,
-  `main_aarch64.cyr`, `main_aarch64_macho.cyr`, `main_x86_macho.cyr`). The
-  v6.2.2 `unexpected enum` fix was the **3rd instance** of a new top-level
-  token landing on only one fork's scanner (v5.8.20 `#io`, v6.2.2 `#pure`).
-  Each fork hand-maintains a parallel pass-1 pre-scan + pass-2 parse loop; a
-  7th annotation token, or any new top-level construct, will desync again.
-  Extract the token-dispatch into a shared `common/`-hosted helper (mirror the
-  v6.1.4/.5 `_emit_fmt`/DCE hoist pattern). Logic-preserving → byte-identical
-  self-host on all 4 hosts is the gate. MEDIUM (DX / recurring-bug-class).
-  See [[project_v622_annotation_fork_desync]].
-- **Hoist `_emit_fmt` / `_entry_base` to a shared home** — dedup the byte-identical
-  copies in `backend/x86/fixup.cyr` + `backend/aarch64/fixup.cyr` (same DRY bug-class as
-  the 4-scanners item). **Gated on a prerequisite**: `runtime.cyr` is parsed before
-  `emit.cyr`, but `_emit_fmt` reads `_TARGET_*` globals declared only in `emit.cyr` — so
-  first relocate the `_TARGET_*` decls into `runtime.cyr`/`tokens.cyr` (verified feasible),
-  THEN hoist. Rides an adjacent multi-backend change; logic-preserving → byte-identical
-  self-host is the gate. MEDIUM. (carried from the v6.0.x closeout, roadmap-future.md.)
-- **Fill-as-you-go compiler-state scalars — LIVE THIS MINOR.** When adding a new
-  compiler-state scalar, reuse the v6.0.88 `ret_patches` ~2 KB hole + the v6.0.47 holes
-  (`0x18E630` / `0x18EE30` / `0x18F900` / `0x18F908`) BEFORE growing the band. v6.3.x adds
-  many such scalars (closures env, generics tparam tables, async gate, monomorph state),
-  so this directive is actionable NOW, not deferred. (roadmap-future.md.)
-- **Local-array byte-vs-slot convention decision.** Largely resolved by the
-  v6.2.1 `var a: T[N]` slot spelling, but the *bare* `var a[N]` convention
-  (local = N bytes, global = N slots) remains a latent footgun. Decide: lint
-  the address-taken-per-slot idiom on a bare local array, or audit
-  stdlib/consumers for remaining bare-array slot writes. MEDIUM (DX).
-  [`issues/2026-06-25-bare-local-array-slot-write-lint.md`](issues/2026-06-25-bare-local-array-slot-write-lint.md).
-- **Permanent syscall-write byte-length gate** — the `.39` audit missed a
-  multi-line syscall (single-line regex); make the byte-length check a
-  standing gate using DOTALL.
-  [`issues/2026-06-25-syscall-write-byte-length-gate.md`](issues/2026-06-25-syscall-write-byte-length-gate.md).
-- **Opt-in bounds-checked `store*` / `load*`** (added 2026-06-22 from a
-  downstream report). An OFF-by-default `CYRIUS_BOUNDS=1` / `#bounds` sanitizer
-  that guards each raw `store*`/`load*` against the heap-map live regions and
-  aborts `_vec_die`-style instead of corrupting silently. Design + open
-  questions in [roadmap_6.md § "Opt-in bounds-checked memory primitives"](roadmap_6.md).
-- **Thread-local slot allocator + the sandhi RPC-policy slot-OOB** (filed as
-  v6.3.25 follow-ups; previously only mentioned inside the shipped .25 cell, no
-  scheduled home). Two related Medium latent-corruption items: (a) `thread_local_get/set`
-  is a 16-slot SHARED space with **no allocator** — libs hardcode indices and collide
-  (the sigil/patra slot-0 collision that shipped the `RECORD_LAYER_FAILURE` bug; the v6.3.25
-  registry in `lib/thread_local.cyr` is a stop-gap). Add `thread_local_alloc()` (atomic
-  next-free-slot) + migrate patra/sigil/sandhi off literals; bump the macOS/agnos
-  `_tlocal_*[128]` arrays if 16 gets tight. (b) sandhi's `_SANDHI_RPC_POLICY_SLOT = 16` is
-  **one past the end** on macOS/agnos (`_tlocal_*` = exactly 16 slots) → a silent OOB write
-  per RPC-policy set (benign on Linux's 512-slot block). Fix in sandhi SOURCE (move to a free
-  slot 5-7/9-14) + re-vendor, OR fold into the allocator migration. Cross-repo (thread_local.cyr
-  native + vendored patra/sigil/sandhi). Not blocking (stop-gap holds; Linux-benign).
-  [`slot-namespace`](issues/2026-07-01-thread-local-slot-namespace-no-allocator.md) ·
-  [`sandhi-slot-oob`](issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md).
-- **x86-macOS usable-toolchain arc tail.** Phase 1 (argv prologue) shipped
-  v6.1.30; remaining `ach`-gated layers: env reading (`HOME`/uname), wrapper
-  macOS arch-default, cycc-finding, the layer-6 native self-compile miscompile
-  (tools ship cross-built until fixed), packaging. `ach` is the supported
-  macOS-x86 verify host.
-  [`issues/2026-06-02-macos-x86-release-no-compiler.md`](issues/2026-06-02-macos-x86-release-no-compiler.md).
-- **Cyim regex unblock** (mabda C6) — consumer-gated; lands when cyim updates
-  + re-tests against v6.x.
+`iNxM` typed integer vectors + int8/16/32(/64) lane ops + the quantized-ML
+primitives (widening multiply-add, sign-select, horizontal reduce). Cyrius SIMD is
+**f64-only** today (`lib/simd.cyr` = `f64v2`/`f64v4`); there are no integer vector
+types, capping every int/quantized/bit kernel at scalar speed — the direct blocker
+for quantized-ML throughput (tentib b1.58 inference, attn11/tarka int paths, sankoch
+compression, int8/16 DSP, edge/Pi tok-s). Follows the v5.10.x typed-**f64** SIMD arc
+precedent — but that was a ~50-patch combined arc, and this is **8 vector types with
+new integer semantics vs f64's 2 with native FP ops**, so "just mirror f64"
+understates it.
+
+- **▶ IMMEDIATE FIRST STEP (the pin): decide the type-class ENCODING — before any
+  emit code.** The current `-20`/`-21` pscale sentinels + the **2-bit-per-param SIMD
+  mask** physically cannot encode 8 integer vector types; that fork drives the whole
+  arc (the way the array-field representation fork drives Pin 2). **Second pin:** agree
+  the **minimal-op cut** (int8 load + sign-select + int16 widening-accumulate +
+  hreduce) so the *first* release ships tentib-0.4.1-unblocking scope, not the full
+  lane-op matrix.
+- **Phases**: (0) encoding + minimal-op decision → (1) one lane width end-to-end on
+  x86 (prove the encoding scales) → (2) core lane ops + the quantized-ML primitives,
+  x86, bench-gated → (3) fill out the i8/i16/i32/i64 × 128/256-bit matrix → (4)
+  aarch64 NEON parity (sdot/smlal) + cx stubs + PE gating → (5) `lib/simd.cyr`
+  wrappers + tentib 0.4.1 integration bench → (6) repair tail (budgeted, 1–2).
+- **Risks**: the 2-bit param mask + `-20/-21` sentinels are a hard scaling wall
+  (silent mis-encoding class, cf. the v6.3.36 struct-mask); the builtin token-ID space
+  is near-saturated (needs a new dispatch scheme); integer-only semantics (saturating,
+  signed/unsigned per width, widening-madd overflow) have **no f64 template** and are
+  exactly where sign-ext/truncation bugs hide; VNNI/sdot availability varies per arch;
+  bench-gated acceptance means a correct-but-slow first cut doesn't satisfy the
+  consumer. Cross-repo: tentib 0.4.1 is the acceptance bench (separate repo).
+
+### Pin 2 — Array-typed struct fields — ~3–4 releases
+
+Make `struct { field: T[]; }` / `field: T[N]` **parse, represent, access, and
+derive-serialize**. Today it's a hard parse error ("expected identifier, got `[`");
+variable-length data is an untyped `Vec` (i64-only). This is the "array half" of the
+`#derive(Serialize)` codec (the f64 *scalar* half shipped v6.3.40) and unblocks
+tables/lists in structs generally.
+
+- **▶ IMMEDIATE FIRST STEP (the pin): decide the field REPRESENTATION —
+  inline-fixed-array `T[N]` vs a typed `Vec<T>` handle — FIRST.** That fork drives
+  everything downstream (layout, `struct_ftypes` widening, field-access codegen, the
+  derive). **Hold dynamic `Vec<T>` element-typing OUT of the initial pin** (Vec is
+  i64-only today; typing its elements is its own multi-release generics sub-arc) —
+  keeping it out is what holds this arc to 3–4.
+- **Phases**: (1) struct-field parser accepts `field: T[]`/`T[N]` → (2) the
+  representation + layout (`struct_ftypes` needs element-type + count, likely a new
+  metadata table across all `main_*` forks) → (3) field-access codegen, cross-arch →
+  (4) the `#derive(Serialize)` array codegen across the 3 codec fns.
+- **Consumers**: svara (~40 serde types + a 101-row phoneme table) is blocked on this;
+  naad/vidya dropped round-trip tests. Tier B (`toml_v_*` typed DOM in bayan) is a
+  **separate stdlib** item, not part of this arc.
 
 ---
 
-## Deep-dive hardening spread (rides v6.3.x+ bug-bandwidth)
+## Order-committed (length-blocked, not yet pinned)
 
-From the 2026-06-10 deep-dive review
-([`docs/audit/2026-06-10-deep-dive-review.md`](../audit/2026-06-10-deep-dive-review.md)).
-The urgent set landed across v6.1.x Phase-F (CVE-14…31, CO-02/03, AR-03) and
-v6.2.x (CVE-20/21 trust-chain .30/.31 + seed→cybs→cycc derivation, CVE-29
-thread-stack guard .44, CVE-32 modular-resolver closeout .51). The remainder
-spreads here and to later minors per "urgent now, rest spread":
+### 3 — UEFI Secure Boot signing — ~3–5 releases · NOT a release-blocker
 
-- **Monomorphization substrate** (AR-01 / CO-01) — **v6.3.x Phase 0** (the
-  growable-tables half, AR-02, already landed v6.2.0 / v6.3.0).
-- **Verification coverage** (VR-01…04) — VR-01/02 shipped v6.2.29; VR-03
-  differential corpus gates v6.4.x; the rest as surfaced.
-- **v7 readiness gates** (LEGAL-01 licensing, diagnostics) — tracked for the
-  v7 cut.
+Give the sovereign toolchain a **`cyrius sign-efi`** path (Authenticode-sign a
+`CYRIUS_TARGET_EFI` PE) + EFI key-enrollment artifacts. Consumer-filed by **gnoboot**
+(the sovereign UEFI bootloader). **Premise-check first — much already exists:** the
+RSA/X.509/SHA-256 crypto floor **and** the PKCS#7/CMS + Authenticode PE-hash +
+attr-cert-embed packaging are **already shipped in sigil 3.10.0** (`src/authenticode.cyr`,
+KAT-tested, already folded into `lib/sigil.cyr`) — the proposal's "packaging is
+missing" framing is stale.
 
-Audit cadence + the CVE-09…13 re-file tail:
-[overdue-security-audit-cve-tail](issues/2026-06-10-overdue-security-audit-cve-tail.md)
-— this deep-dive IS the overdue full audit.
+- **Real gaps**: (A) **cyrius side** — the entire driver surface is net-new
+  (`sign-efi`/`efi-keys`/`efi-sigdb` in `cbt/cyrius.cyr`, or a standalone
+  `cyrsign-efi`): a thin glue over the shipped sigil core. (B) **sigil side** — P3
+  (`EFI_SIGNATURE_LIST` `.esl` + `.auth` generation) is 0 files; P4 (Authenticode
+  *verify*) is mostly re-assembly; X.509 *issuance* for `efi-keys` may be genuinely new.
+- **▶ First step**: pin driver-subcommand-vs-standalone, then **confirm P1 round-trips
+  against a real `OVMF_CODE.secboot.fd` boot** (not just the openssl KAT) — that one
+  experiment says whether P1 is a thin-glue release or hides a PE-layout repair tail.
+- **Notably cheap tail**: this arc touches **zero compiler codegen/ABI** → no
+  cross-arch propagation cost and no deep-ABI repair tail (the 4-host self-host +
+  seed-derive still run, but changes are lib/CLI-only, cycc byte-identical). Cross-repo:
+  split cyrius (driver) + sigil (P3/P4/keygen, each folded back via `cyrius deps` +
+  api-surface regen). Downstream gnoboot/agnova Secure Boot is post-v1.0 → not a blocker.
+
+### 4 — Function visibility (`pub`/`private`) — ~4–6 releases · NOT a release-blocker
+
+Execute "Phase 2 — `pub` enforcement" of
+[`module-manifest-design.md`](module-manifest-design.md): close the flat-global-namespace
+bug classes (the `dynlib_*` dead-code corruption, enum-shadow, slot-collision) and make
+the api-surface snapshot compiler-enforced. Runs long because it's a **retrofit onto a
+flat namespace + a real cross-ecosystem migration**.
+
+- **▶ First step (the arc-open gate): the `_`-prefix cross-file-call audit.** Already
+  run for cyrius-internal here — **165 distinct `_`-fns are called cross-file** (253
+  pairs; 52 in `lib/` are cohesive-subsystem internals like `_tn_*`/`_uc_*`/`_alloc_*`),
+  and sigil alone has 703 `_`-defs. **This DISPROVES "derive-from-`_` = zero-churn"** →
+  the forced decision: a **HYBRID marker** (`_` default + explicit `pub`/`private`
+  override) and **default = PUBLIC** (additive/byte-identical; reject default-private).
+- **Phases**: (0) `_`-audit + decision lock → (1) the **per-fn file-id substrate** (new
+  preprocessor infra + `_fnt_fileid` across all 7 `main_*` forks — the real work,
+  byte-identical) → (2) `fn_flags` bit-6 + WARN-mode enforce → (3) the ecosystem
+  migration (add `pub`/rename cross-file `_`-callees; cyrius first, then 14 downstream
+  repos via `cyrius deps`, sigil heaviest) → (4) flip to hard-error + feed DCE + prove
+  the win → (5) docs/close.
+- **Risks**: HIGH-churn — subsystem-spanning `_` helpers (tls-native, unicode,
+  alloc-backends) mean file=module is too fine a unit; a mis-stamped file-id → silent
+  false-positive rejections; late-ABI repair tail (file-id × monomorph instances,
+  use-aliases, `GMOD` mangling); two enforcement sites (`PARSE_FNCALL` + the tail-call
+  path — easy to miss one). Cross-repo migration is a big part of why it runs long.
+
+### T — Intel-Mac (x86_64 Mach-O) usable-toolchain tail — ~2–4 releases · NOT a blocker
+
+Runs at the **v6.4.x tail** (moved 2026-07-03). Phase 1 (argv prologue) shipped
+v6.1.30; remaining `ach`-gated layers: env reading (`HOME`/uname), wrapper macOS
+arch-default, cycc-finding, the layer-6 native self-compile miscompile (tools ship
+cross-built until fixed), packaging. `ach` is the supported macOS-x86 verify host.
+[`issues/2026-06-02-macos-x86-release-no-compiler.md`](issues/2026-06-02-macos-x86-release-no-compiler.md).
+
+---
+
+## Reactive headroom — agnos + consumer repairs (interleave throughout)
+
+Agnos ABI mirrors + consumer-filed repairs land as **separate slots between/alongside
+the arcs** — they are **not** counted in the arc lengths above, and they follow the
+bare-metal open-window pattern ([[feedback_bare_metal_open_reactive_window]]). This
+minor has already absorbed three (`.0` de-risk, `.1` alloc_reset, `.2` agnos audio),
+and **more agnos work is expected**: the audio consumers (vani's agnos backend,
+cyrius-doom's `audio_write` retarget) will surface follow-ons, and the syscall-peer /
+freelist-agnos / thread-backend pattern (v6.3.31, v6.4.2) continues as agnos 1.5x lands
+kernel features. Budget for it; don't wedge it into an arc. **Only the user re-scopes
+or re-prioritizes** ([[feedback_no_unilateral_scope_decisions]]); findings are surfaced,
+never unilaterally deferred or redirected.
+
+## Carry-in / watching (open, not in the committed sequence)
+
+- **VR-03/04 differential + platform-lint residuals** — as surfaced (the VR-01 LIBTEST
+  gate is now standing on ecb/cass/pi).
+- **Consumer-gated**: cyim regex unblock (lands when cyim re-tests against v6.x);
+  sandhi RPC-policy TLS-slot OOB
+  ([`issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md`](issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md));
+  the `thread_local_alloc()` allocator follow-up.
+- **v7-PARKED (NOT near-term)** — LEGAL-01 licensing, DWARF/diagnostics,
+  stdlib-reference docs, incremental compilation, the public-release decision. These
+  stay in [roadmap-future.md](roadmap-future.md); they are **not** pulled into v6.4.x.
+
+## Discipline (per [cycle-discipline.md](cycle-discipline.md))
+
+Premise-check each arc at slot entry ([[feedback_premise_check_at_slot_entry]]) — the
+UEFI arc is the live example (crypto already shipped in sigil). Cross-arch propagation
+is mandatory for any compiler-emit change ([[feedback_cross_arch_propagation_mandatory]]);
+4-host cross-OS self-host verify before **every** cut, even lib-only
+([[feedback_cross_os_verify_always_even_lib]], [[reference_verification_hosts_ssh]]);
+seed-derive after any `src/` change ([[feedback_seed_derive_mandatory_cybs_limits]]);
+benchmark every release ([[feedback_benchmark_every_release]]); one bug ships complete
+([[feedback_one_bug_one_complete_fix]]). The minor window is open to change
+([[feedback_minor_window_at_arc_open]]) — minors flex long, and this one especially.
