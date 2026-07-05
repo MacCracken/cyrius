@@ -6,6 +6,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.6] — 2026-07-05
+
+**v6.4.6 — SIMD arc Phase 3a: integer vector types + packed ops (the first of a planned 3a/3b split).**
+Integer SIMD (i8/i16/i32/i64 lanes) for the ML/quantized-throughput arc. 3a lands the ABI substrate + the
+integer types + the basic packed ops; 3b (next) adds the widening-MAC + the tentib b1.58 GEMM bench. cycc
+self-hosts byte-identical (no integer-SIMD in its own source); the ABI refactor is **differential-green
+(codegen-diff=0 over 328 corpus inputs)**; seed → cybs → cycc byte-identical; check.sh 129; ecb + cass + pi
+SELFHOST_OK; self_compile 553 ms.
+
+### Added — integer SIMD (x86)
+- **ABI generalization (byte-identical)** — the ~21 f32v4-hardcoded `−2121` value-form register-class checks
+  (return / receive / struct-arg-exclude / inline-exclude) are now **descriptor-driven** via `_is_simd128` /
+  `_is_simd256` / `_is_simd_any` (`util.cyr`), so every 128-bit vector shares the 16-byte/1-XMM ABI. Verified
+  logic-preserving for f32v4/f64v2 (differential 0/328).
+- **Integer vector types** — `i8v16`/`i16v8`/`i32v4`/`i64v2` + unsigned `u*` (structured-descriptor sentinels;
+  signedness = desc bit 1, decoded by the extended `_vec_desc` + `GVEC_SIGNED`). Parse + size as var-decls,
+  return types, and params.
+- **Packed ops** — `iv_add`/`iv_sub`/`iv_mul(dst, a, b, n, w)` with a compile-time lane-width literal `w` →
+  one descriptor-driven `EMIT_IVEC_BINOP` emitting `paddb/w/d/q`, `psubb/w/d/q`, `pmullw`/`pmulld` (tokens
+  143–145). add/sub are two's-complement (signed==unsigned); mul is i16/i32 only. aarch64/cx stub (Phase 5).
+- **`lib/simd.cyr`** — pointer-form typed wrappers: `i32v4_make`/`_splat`/`_lane{0..3}_ptr`/`_add_ptr`/
+  `_sub_ptr`/`_mul_ptr` + `i16v8`/`i8v16`/`i64v2` construct + add/sub(/mul) pointer-form. api-surface +20 / −0.
+- **Tests** — `simd_ints.tcyr` (x86, 11 asserts, XFAIL in the aarch64 corpus like `simd_f32v4`) +
+  `vr01_ints_ctor.tcyr` (construct/extract are arch-neutral → runs on real ecb + pi, 9/9 on x86 AND aarch64
+  via qemu).
+
+### Fixed — found by testing
+- A function returning `i32v4` **SIGSEGV'd**: the return-type **rough-scan** defaulted any type it didn't
+  recognize as register-class to the Win64/>16B **retptr-stash**, so on SysV it `rep movsb`'d to a garbage
+  `%rdi` — the exact Phase-1 f32v4 class recurring. Fixed **descriptor-driven** (`_is_simd_any(_classify_
+  return_type(...))`), which catches every vector type current *and future*, closing the bug class permanently.
+
+### Deferred to 3b (planned)
+- **Value-form typed integer ops** (`i32v4_add(a, b)` with i32v4 *value* params) need the value-form
+  param-mask redesign — the 2-bit `_fnt_simdmask` is saturated (0/1/2/3 = none/f64v2/f64v4/f32v4), so integer
+  128-bit params can't yet route through XMM as a full 16 bytes (they pass as 8-byte i64 → lanes 2-3 lost).
+  That mask work lands in 3b alongside the widening-MAC. For 3a: the pointer-form ops + flat-array `iv_*`
+  builtins fully cover packed add/sub/mul.
+
 ## [6.4.5] — 2026-07-05
 
 **v6.4.5 — SIMD arc Phase 2: the f32 matmul op set (`f32v_fmadd` + `f32v_dot`) + a dense-f32 GEMM bench.**

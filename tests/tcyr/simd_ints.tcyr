@@ -1,0 +1,41 @@
+# simd_ints.tcyr — SIMD Phase 3a (v6.4.6): integer vector types + packed add/sub/mul.
+# i8v16/i16v8/i32v4/i64v2 construct + pointer-form ops + the flat-array iv_* builtins.
+# x86-only this phase (aarch64/cx stub EMIT_IVEC_BINOP → Phase 5) → XFAIL'd in the
+# aarch64-native CI corpus (same as simd_f32v4). Value-form typed ops land in Phase 3b.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    test_group("integer vector types + packed ops (SIMD Phase 3a)");
+    var a: i32v4 = i32v4_make(1, 2, 3, 4);
+    var b: i32v4 = i32v4_splat(10);
+    assert_eq(i32v4_lane0_ptr(&a), 1, "i32v4_make lane0 = 1");
+    assert_eq(i32v4_lane3_ptr(&a), 4, "i32v4_make lane3 = 4");
+    var s: i32v4 = i32v4_add_ptr(&a, &b);
+    assert_eq(i32v4_lane0_ptr(&s), 11, "i32v4 paddd lane0 = 1+10 = 11");
+    assert_eq(i32v4_lane3_ptr(&s), 14, "i32v4 paddd lane3 = 4+10 = 14");
+    var d: i32v4 = i32v4_sub_ptr(&b, &a);
+    assert_eq(i32v4_lane1_ptr(&d), 8, "i32v4 psubd lane1 = 10-2 = 8");
+    var m: i32v4 = i32v4_mul_ptr(&a, &b);
+    assert_eq(i32v4_lane2_ptr(&m), 30, "i32v4 pmulld lane2 = 3*10 = 30");
+    var p16a: i16v8 = i16v8_splat(100);
+    var p16b: i16v8 = i16v8_splat(23);
+    var p16: i16v8 = i16v8_add_ptr(&p16a, &p16b);
+    assert_eq(load16(&p16 + 0), 123, "i16v8 paddw lane0 = 123");
+    var z8a: i8v16 = i8v16_splat(5);
+    var z8b: i8v16 = i8v16_splat(7);
+    var z8: i8v16 = i8v16_add_ptr(&z8a, &z8b);
+    assert_eq(load8(&z8 + 3), 12, "i8v16 paddb lane3 = 12");
+    var m64a: i64v2 = i64v2_make(1000000, 2000000);
+    var m64b: i64v2 = i64v2_splat(5);
+    var o64: i64v2 = i64v2_add_ptr(&m64a, &m64b);
+    assert_eq(load64(&o64 + 0), 1000005, "i64v2 paddq lane0 = 1000005");
+    var arr[32]; var brr[32]; var drr[32];
+    var i = 0; while (i < 8) { store32(&arr + i * 4, i); store32(&brr + i * 4, 100); i = i + 1; }
+    iv_add(&drr, &arr, &brr, 8, 4);
+    assert_eq(load32(&drr + 0), 100, "iv_add i32 8-lane (2 iters) [0] = 100");
+    assert_eq(load32(&drr + 28), 107, "iv_add i32 8-lane [7] = 107");
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

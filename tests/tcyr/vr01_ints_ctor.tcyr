@@ -1,0 +1,36 @@
+# vr01_ints_ctor.tcyr — VR-01: integer vector construct + splat + lane-extract, CROSS-OS.
+# (v6.4.6, SIMD Phase 3a.) The integer vector TYPES (i8v16/i16v8/i32v4/i64v2),
+# construct (make/splat), and pointer-form lane-extract are ARCH-NEUTRAL — they lower
+# to store/load + the 128-bit value-form return ABI, NOT to EMIT_IVEC_BINOP. So they
+# work on aarch64/macOS even though the packed ARITHMETIC (add/sub/mul) is x86-only
+# until Phase 5. Gives the release gate's cross-OS LIBTEST real-hardware coverage of
+# the integer-vector type + return/receive ABI on ecb (macOS) + pi (aarch64).
+# Gated on CYRIUS_HAS_VAL_SIMD_PARAMS (value-form SIMD is non-PE) → skips cass, like
+# vr01_f32v4_ctor. Verified on x86 and aarch64 via qemu-aarch64.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+#ifdef CYRIUS_HAS_VAL_SIMD_PARAMS
+    test_group("integer vector construct + splat + lane-extract (cross-OS)");
+    var a: i32v4 = i32v4_make(10, 20, 30, 40);
+    assert_eq(i32v4_lane0_ptr(&a), 10, "i32v4_make lane 0 = 10");
+    assert_eq(i32v4_lane2_ptr(&a), 30, "i32v4_make lane 2 = 30");
+    assert_eq(i32v4_lane3_ptr(&a), 40, "i32v4_make lane 3 = 40");
+    var s: i32v4 = i32v4_splat(7);
+    assert_eq(i32v4_lane0_ptr(&s), 7, "i32v4_splat broadcasts lane 0");
+    assert_eq(i32v4_lane3_ptr(&s), 7, "i32v4_splat broadcasts lane 3");
+    var q: i64v2 = i64v2_make(111, 222);
+    assert_eq(load64(&q + 0), 111, "i64v2_make lane 0 = 111");
+    assert_eq(load64(&q + 8), 222, "i64v2_make lane 1 = 222");
+    var w: i16v8 = i16v8_splat(300);
+    assert_eq(load16(&w + 0), 300, "i16v8_splat lane 0 = 300");
+    var e: i8v16 = i8v16_splat(42);
+    assert_eq(load8(&e + 15), 42, "i8v16_splat lane 15 = 42");
+    return assert_summary();
+#endif
+    return 0;   # PE (no value-form SIMD): skip cleanly — tracked separately.
+}
+var ec = main();
+syscall(60, ec);

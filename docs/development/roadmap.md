@@ -51,6 +51,10 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
 - **v6.4.5** — **SIMD arc Phase 2: f32 matmul op set** — `f32v_fmadd` + `f32v_dot` (tokens 141/142,
   the packed-single FMA + 4-lane `haddps` horizontal-dot), `lib/simd.cyr` `f32v4_fmadd`/`_dot`
   wrappers, and `bench_f32_gemm.bcyr` (48³ dense GEMM, ~27× SIMD-vs-scalar). Fixpoint; x86-only phase.
+- **v6.4.6** — **SIMD arc Phase 3a: integer vector types + packed ops** — descriptor-driven ABI
+  generalization (differential 0/328) + `i8v16`/`i16v8`/`i32v4`/`i64v2` (+`u*`) + `iv_add`/`iv_sub`/
+  `iv_mul` (paddb/w/d/q…) + pointer-form lib wrappers. Fixed a rough-scan retptr SIGSEGV (Phase-1
+  bug class, closed descriptor-driven). Value-form typed int ops + widening-MAC + b1.58 → 3b.
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -119,19 +123,22 @@ broadcast/load and returned to i64 by extract/reduce.
   `PARSE_SIMD_EXT`; `lib/simd.cyr` `f32v4_fmadd`/`_dot` (value+ptr) wrappers; `bench_f32_gemm.bcyr`
   (48³ dense GEMM, ~27× SIMD-vs-scalar); `simd_f32v4.tcyr` 8→13 asserts. Fixpoint (cycc has no
   f32v_). aarch64/cx stubbed → x86-only this phase (`simd_f32v4` stays XFAIL until Phase 5).
-- **▶ NEXT: Phase 3 — integer SIMD lanes, a PLANNED 2-release split** (the encoding is pinned;
+- **Phase 3 — integer SIMD lanes, a PLANNED 2-release split** (the encoding is pinned;
   the size — an ABI-generalization refactor + novel signed/saturating/widening int semantics +
   a b1.58 bench — makes 3a/3b the intentional packing, decided up front, not mid-execution):
-  - **Phase 3a (v6.4.6)** — **ABI generalization + integer types + basic packed ops.** Generalize
-    the ~21 f32v4-hardcoded `−2121` value-form ABI sites (return / receive / param-class /
-    inline-exclude) to **descriptor-driven** (any 128-bit vector shares the 16-byte/1-XMM ABI),
-    kept **byte-identical** for f32v4/f64v2. Then the integer vector TYPES — `i8v16`/`i16v8`/
-    `i32v4`/`i64v2` + unsigned `u*` (descriptor sentinels; signedness = desc bit 1, getter added) —
-    and **packed `add`/`sub`/`mul`** (`paddb/w/d/q`, `psubb/w/d/q`, `pmullw`/`pmulld`) + lib
-    wrappers + tcyr + a `vr01_` ctor test.
-  - **Phase 3b (v6.4.7)** — **the ML-acceleration op set + acceptance bench.** The widening MAC
-    (`pmaddubsw` u8×i8→i16-sat, `pmaddwd` i16×i16→i32, `paddd` accumulate) + horizontal reduce,
-    then the **tentib b1.58 (int8/ternary) GEMM acceptance bench**.
+  - **✅ Phase 3a (v6.4.6) — ABI generalization + integer types + basic packed ops.** Generalized
+    the ~21 f32v4-hardcoded `−2121` value-form ABI sites (return / receive / struct-arg / inline-
+    exclude) to **descriptor-driven** (`_is_simd128`/`_is_simd256`/`_is_simd_any`), byte-identical
+    for f32v4/f64v2 (differential 0/328). Integer types `i8v16`/`i16v8`/`i32v4`/`i64v2` + `u*`
+    (signedness = desc bit 1). Packed `iv_add`/`iv_sub`/`iv_mul(dst,a,b,n,w)` → one `EMIT_IVEC_BINOP`
+    (paddb/w/d/q, psubb/w/d/q, pmullw/pmulld); pointer-form lib wrappers; `simd_ints.tcyr` +
+    `vr01_ints_ctor.tcyr`. Fixed a return-type-rough-scan retptr SIGSEGV **descriptor-driven**
+    (closes the Phase-1 f32v4 bug class for all future vector types).
+  - **▶ NEXT: Phase 3b (v6.4.7)** — **value-form typed integer ops + the ML-acceleration op set +
+    bench.** First the **value-form param-mask redesign** (the 2-bit `_fnt_simdmask` is saturated —
+    integer 128-bit value params can't route through XMM yet; deferred from 3a). Then the widening MAC
+    (`pmaddubsw` u8×i8→i16-sat, `pmaddwd` i16×i16→i32, `paddd` accumulate) + horizontal reduce, then
+    the **tentib b1.58 (int8/ternary) GEMM acceptance bench**.
 - **Phases**: (0 ✅) encoding → (1 ✅ v6.4.4) f32v4 end-to-end x86 → (2 ✅ v6.4.5) f32 matmul op set +
   GEMM bench → (3a v6.4.6) int types + packed ops → (3b v6.4.7) int widening-MAC + b1.58 bench →
   (4) f32v8 + 256-bit AVX2 → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers +

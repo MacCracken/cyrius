@@ -621,9 +621,10 @@ jobs:
           chmod +x a64/cycc_native_a64
           CC=a64/cycc_native_a64
           SKIP="math_pack_integration"
-          # simd_f32v4: f32v4 packed ops are x86-only until SIMD Phase 5 (aarch64
-          # NEON) — XFAIL (not SKIP) so Phase 5 auto-surfaces the removal via XPASS.
-          XFAIL="simd_f32v4"
+          # simd_f32v4 / simd_ints: f32v4 + integer packed ops are x86-only until SIMD
+          # Phase 5 (aarch64 NEON) — XFAIL (not SKIP) so Phase 5 auto-surfaces the
+          # removal via XPASS. Both stub EMIT_F32V_*/EMIT_IVEC_BINOP on aarch64.
+          XFAIL="simd_f32v4 simd_ints"
           pass=0; fail=0; xfail=0; xpass=0; skip=0
           for t in tests/tcyr/*.tcyr; do
             name=$(basename "$t" .tcyr)
