@@ -1,5 +1,17 @@
 # agnos FP arc — XMM-state prerequisites + f64-scalar-return / f64vN-constructor gaps
 
+> **§2 RESOLVED v6.4.3 (2026-07-04) + §3 NOTED.** Premise-check: the f64v2/f64v4 value
+> constructors + lane-extract ALREADY existed as `f64v2_make`/`f64v4_make` + `f64v2_lo`/`_hi` /
+> `f64v4_lane*` (value + pointer form) — the reported "`undefined function 'f64v2'`" was a *syntax*
+> gap, not a functionality gap. v6.4.3 added: the natural `f64v2(a,b)` / `f64v4(a,b,c,d)` intrinsic
+> **syntax** (a `FINDFN` fallback → `..._make` in `src/frontend/parse_fn.cyr`; falls through to the
+> normal undefined-fn error if `lib/simd.cyr` isn't included) + the missing `f64v2_splat` /
+> `f64v4_splat` broadcasts (`lib/simd.cyr`). Regression: `tests/tcyr/vr01_f64v2_ctor.tcyr` (Linux +
+> ecb + cass + pi). The shared agnos **XMM-state prerequisite (§3)** is recorded in the SIMD encoding
+> design doc (`proposals/2026-07-04-integer-simd-encoding-design.md`). **§1 (scalar `f64` return type)
+> stays a low-priority roadmap item; the agnos XMM-state kernel layer remains the real naad blocker
+> (agnos-side).** See CHANGELOG [6.4.3].
+
 **Filed:** 2026-07-04
 **Filed by:** agnos-side coordination (agnosticos), for the naad FP-enablement arc
 **cyrius at filing:** 6.4.2   **agnos at filing:** 1.52.8

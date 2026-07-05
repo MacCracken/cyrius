@@ -3612,6 +3612,7 @@ simd::f64v2_mul/2
 simd::f64v2_mul_ptr/2
 simd::f64v2_scale/2
 simd::f64v2_scale_ptr/2
+simd::f64v2_splat/1
 simd::f64v2_sqrt/1
 simd::f64v2_sqrt_ptr/1
 simd::f64v2_sub/2
@@ -3639,6 +3640,7 @@ simd::f64v4_mul/2
 simd::f64v4_mul_ptr/2
 simd::f64v4_scale/2
 simd::f64v4_scale_ptr/2
+simd::f64v4_splat/1
 simd::f64v4_sqrt/1
 simd::f64v4_sqrt_ptr/1
 simd::f64v4_sub/2

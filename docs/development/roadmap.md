@@ -40,6 +40,10 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   memory-reuse info-leak in all four allocator backends.
 - **v6.4.2** — agnos **`sys_snd_*` audio syscall band (#64–#69)**: the ring-3 half of
   the agnos 1.52.x Gate-2 audio freeze (unblocks vani + cyrius-doom).
+- **v6.4.3** — **pre-SIMD f64v2/f64v4 surface solidification** (agnos FP issue §2):
+  the `f64v2(a,b)`/`f64v4(...)` intrinsic constructor syntax (FINDFN → `_make`) +
+  `f64v2_splat`/`f64v4_splat`; XMM-state prerequisite noted; + vani 0.9.8 / yukti 2.2.8
+  folds. Reactive slot — finishes the f64 SIMD ergonomics before the SIMD arc builds on it.
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):

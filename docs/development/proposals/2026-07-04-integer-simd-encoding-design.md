@@ -131,6 +131,20 @@ and aarch64 NEON (`fmla`/`sdot`) fill in later phases.
 - **Phase 6** — `lib/simd.cyr` `f32vN`/`iNvM` wrappers + guide/vidya docs.
 - **Phase 7** — repair tail (budgeted 1–2; the generics-arc .37/.38/.39 precedent).
 
+## Runtime prerequisite on agnos — the shared XMM-state layer
+
+All of this — scalar `f64` (already emitted), `f32`/`f64` SIMD, AND integer SIMD — lives in the
+**XMM/YMM register file**. On agnos ring-3 today XMM state is not enabled/context-switched, so the
+first `movq %rax,%xmm0` (already emitted by scalar `f64_*`) `#UD`s. The agnos kernel arc that fixes it
+— CR4.OSFXSR/OSXMMEXCPT + CR0.MP/EM + `fninit` per core + per-proc `fxsave`/`fxrstor` across context
+switches — is **one prerequisite for the whole SIMD/FP surface, not one-per-feature**: when the
+int-SIMD instructions land they will `#UD` on agnos for the *exact same reason* scalar f64 does today.
+**No cyrius change is required to start that agnos arc** (scalar f64 is sufficient to build + iron-prove
+the XMM-state layer); f32/int-SIMD are the *next* consumers of that one `fxsave` proof. Recorded per the
+2026-07-04 agnos FP coordination issue §3. The **v6.4.3** `f64v2`/`f64v4` constructors + splat are the
+ergonomic complement (§2) — the value-form vectors they build also need this same XMM-state layer to
+*run* on agnos, but compile + run on every XMM-enabled host today.
+
 ## Sub-decisions folded into this recommendation (open to adjust)
 
 1. **Descriptor in the sentinel vs a side-table** → **sentinel** (recommended): no new heap

@@ -260,6 +260,31 @@ fn FINDFN(S, noff): i64 {
         }
         i = i + 1;
     }
+    # v6.4.3: f64v2(...) / f64v4(...) constructor sugar. An f64v2/f64v4 call
+    # name that is NOT a real fn resolves to the lib constructor f64v2_make /
+    # f64v4_make (lib/simd.cyr) — the natural `type(...)` spelling over the
+    # proven make (agnos FP issue §2). Only fires as a fallback: a real fn
+    # named f64v2 is found by the hash probe above and takes precedence.
+    var _cp = S + 0x60000 + noff;
+    if (load8(_cp) == 0x66) {                 # 'f'
+        if (load8(_cp + 1) == 0x36) {         # '6'
+            if (load8(_cp + 2) == 0x34) {     # '4'
+                if (load8(_cp + 3) == 0x76) { # 'v'
+                    var _cd = load8(_cp + 4);
+                    if (load8(_cp + 5) == 0) {          # exactly "f64vN"
+                        if (_cd == 0x32) {              # '2'
+                            var _mk2 = _FINDFN_CSTR(S, "f64v2_make", 10);
+                            if (_mk2 >= 0) { return _mk2; }
+                        }
+                        if (_cd == 0x34) {              # '4'
+                            var _mk4 = _FINDFN_CSTR(S, "f64v4_make", 10);
+                            if (_mk4 >= 0) { return _mk4; }
+                        }
+                    }
+                }
+            }
+        }
+    }
     return 0 - 1;
 }
 

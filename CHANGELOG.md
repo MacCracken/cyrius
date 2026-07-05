@@ -6,6 +6,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.3] — 2026-07-04
+
+**v6.4.3 — pre-SIMD f64v2/f64v4 surface solidification (agnos FP issue §2) + vani/yukti folds.** A
+reactive slot that finishes the existing f64 SIMD ergonomics before the SIMD arc proper builds on it.
+**Premise-check win:** the f64v2/f64v4 value constructors + lane-extract ALREADY existed as
+`f64v2_make`/`f64v4_make` + `f64v2_lo`/`_hi` / `f64v4_lane*` (value + pointer form) — the
+consumer-reported "`undefined function 'f64v2'`" was a *syntax* gap, not a functionality gap. cycc
+self-hosts byte-identical (1,024,568 B, +16 for the FINDFN fallback); seed → cybs → cycc byte-identical;
+check.sh 128; ecb + cass + pi SELFHOST_OK + LIBTEST_OK; self_compile 540 ms.
+
+### Added
+- **`f64v2(a,b)` / `f64v4(a,b,c,d)` intrinsic constructor syntax** — a `FINDFN` fallback
+  (`src/frontend/parse_fn.cyr`): an `f64v2`/`f64v4` call name that isn't a real fn resolves to the lib
+  `f64v2_make`/`f64v4_make`. The natural `type(...)` spelling over the proven make; a real fn named
+  `f64v2` still wins (hash probe first), and without `lib/simd.cyr` it falls through to the normal
+  undefined-fn error. In the shared frontend → all targets; cross-arch by construction (the make + the
+  value-form ABI are already cross-arch).
+- **`f64v2_splat` / `f64v4_splat`** (`lib/simd.cyr`) — broadcast one f64 bit-pattern across all lanes
+  (the one genuine functional gap; construct + lane-extract already shipped). api-surface +2 / −0.
+- Regression: `tests/tcyr/vr01_f64v2_ctor.tcyr` (7 asserts — ctor syntax + splat + lane-extract; runs on
+  Linux + ecb + cass + pi via the `vr01_` LIBTEST glob).
+
+### Coordination (agnos FP issue §3)
+- Recorded the shared **agnos XMM-state prerequisite** in the SIMD encoding design doc
+  (`proposals/2026-07-04-integer-simd-encoding-design.md`): scalar f64 + f32/f64 SIMD + integer SIMD all
+  live in XMM, so there is ONE agnos kernel prerequisite (`fxsave`/`fxrstor` + CR4.OSFXSR…), not
+  one-per-feature. No cyrius change is required to start that agnos arc. §1 (scalar `f64` return type)
+  stays a low-priority roadmap item; the agnos XMM-state layer is the real (agnos-side) naad blocker.
+
+### Folded — stdlib
+- **vani 0.9.6 → 0.9.8** + **yukti 2.2.7 → 2.2.8** — the downstream agnos-audio consumers now build + run
+  `--agnos` (vani's `vani_*` → `yukti_audio_*` path, riding the v6.4.2 `sys_snd_*` band). API-neutral
+  folds (0 new public fns; a content-identity sweep confirmed these were the only two vendored libs
+  drifted from source).
+
 ## [6.4.2] — 2026-07-04
 
 **v6.4.2 — add the agnos `sys_snd_*` audio syscall band (#64–#69).** The ring-3 half of the two-sided

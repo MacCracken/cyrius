@@ -39,6 +39,11 @@ fn f64v2_make(lo_bits, hi_bits): f64v2 {
     return v;
 }
 
+# Broadcast one f64 bit-pattern across both lanes: {x, x}.
+fn f64v2_splat(x_bits): f64v2 {
+    return f64v2_make(x_bits, x_bits);
+}
+
 # --- f64v2 pointer-form (universal — all targets) ---
 
 # Extract lo half (pointer form). Parser routes `f64v2_lo(&x)` here.
@@ -122,6 +127,11 @@ fn f64v4_make(b0, b1, b2, b3): f64v4 {
     store64(&v + 16, b2);
     store64(&v + 24, b3);
     return v;
+}
+
+# Broadcast one f64 bit-pattern across all four lanes: {x, x, x, x}.
+fn f64v4_splat(x_bits): f64v4 {
+    return f64v4_make(x_bits, x_bits, x_bits, x_bits);
 }
 
 # --- f64v4 pointer-form (universal — all targets) ---
