@@ -301,6 +301,42 @@ fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
     return 0;
 }
 
+# v6.4.7 (Phase 3b) — EMIT_IVEC_DP8(S, vbase) — the b1.58 / int8 GEMM-cell primitive:
+# the widening int8 dot product sum(a[i]*b[i]) for i in [0,n), a=UNSIGNED u8, b=SIGNED
+# i8, accumulated in i32 and returned in eax/rax. Args at vbase: a, b; n in rax.
+# Per 16-byte iteration: pmaddubsw (u8×i8 → 8×i16, adjacent-pair sums, saturating) →
+# pmaddwd against an all-ones i16 vector (→ 4×i32 pair sums) → paddd into the i32
+# accumulator xmm2. Tail: two phaddd fold the 4 i32 lanes → movd eax. The ones vector
+# is built in xmm3 via pcmpeqw + psrlw 15 (no memory constant). SSSE3 (pmaddubsw/
+# phaddd) + SSE2. Caller contract: n a multiple of 16 (or zero-pad the tail).
+fn EMIT_IVEC_DP8(S, vbase): i64 {
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0xEF); EB(S, 0xD2);         # pxor xmm2, xmm2 (i32 accumulator)
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x75); EB(S, 0xDB);         # pcmpeqw xmm3, xmm3 (all ones)
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x71); EB(S, 0xD3); EB(S, 0x0F);  # psrlw xmm3, 15 → each i16 lane = 1
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);   # rcx = n
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);   # rsi = 0
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);   # cmp rsi, rcx
+    EB(S, 0x0F); EB(S, 0x8D);                 # jge done
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);                  # a base (u8)
+    EB(S, 0x0F); EB(S, 0x10); EB(S, 0x04); EB(S, 0x32);   # movups xmm0, [rdx+rsi*1]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);              # b base (i8)
+    EB(S, 0x0F); EB(S, 0x10); EB(S, 0x0C); EB(S, 0x32);   # movups xmm1, [rdx+rsi*1]
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x38); EB(S, 0x04); EB(S, 0xC1);  # pmaddubsw xmm0, xmm1 → 8×i16
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0xF5); EB(S, 0xC3);   # pmaddwd xmm0, xmm3 (×ones) → 4×i32
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0xFE); EB(S, 0xD0);   # paddd xmm2, xmm0 (accumulate)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x10);   # rsi += 16
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x38); EB(S, 0x02); EB(S, 0xD2);  # phaddd xmm2, xmm2 (4→2)
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x38); EB(S, 0x02); EB(S, 0xD2);  # phaddd xmm2, xmm2 (2→1)
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x7E); EB(S, 0xD0);   # movd eax, xmm2 → i32 sum in eax
+    EB(S, 0x48); EB(S, 0x63); EB(S, 0xC0);               # movsxd rax, eax — SIGN-extend (signed dot; weights can be < 0)
+    return 0;
+}
+
 # EMIT_F64V_UNARY — packed unary ops: sqrtpd (op=0), abs via andpd (op=1)
 # Args at vbase: dst, src, n(rax)
 fn EMIT_F64V_UNARY(S, op, vbase): i64 {

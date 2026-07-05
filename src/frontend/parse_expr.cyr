@@ -1865,6 +1865,22 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 0;
         } }
+    # v6.4.7 (Phase 3b): iv_dp8(a, b, n) → i32 widening int8 dot in rax (a=u8, b=i8).
+    # 3-arg scalar-return, mirrors the f32v_dot(142) handler → EMIT_IVEC_DP8.
+    if (ptyp == 146) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+        var dpbase = GFLC(S);
+        PCMPE(S); _SIMD_STASH(S, dpbase);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S); _SIMD_STASH(S, dpbase + 1);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S);
+        SFLC(S, dpbase + 2);
+        EMIT_IVEC_DP8(S, dpbase);
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        return 0;
+    }
     # v5.10.17: f64v_scale(dst, a, scalar, n) — dst[i] = a[i] * scalar
     if (ptyp == 129) {
         STI(S, GTI(S) + 1);
@@ -2059,7 +2075,7 @@ fn PARSE_TERM(S): i64 {
     # v6.4.5 (SIMD Phase 2): f32v_fmadd (141) + f32v_dot (142) → PARSE_SIMD_EXT.
     if (ptyp >= 141) { if (ptyp <= 142) { return PARSE_SIMD_EXT(S, ptyp); } }
     # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul (143-145) → PARSE_SIMD_EXT.
-    if (ptyp >= 143) { if (ptyp <= 145) { return PARSE_SIMD_EXT(S, ptyp); } }
+    if (ptyp >= 143) { if (ptyp <= 146) { return PARSE_SIMD_EXT(S, ptyp); } }
     # f64 builtins — check before PARSE_FACTOR dispatches.
     # v5.11.37 path-A: each ptyp dispatches to its named op in
     # <backend>/emit.cyr — x86 emits SSE2/x87, aarch64 emits FNEG /
