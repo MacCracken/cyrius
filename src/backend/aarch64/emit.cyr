@@ -2293,6 +2293,9 @@ var _LOOPVAR_OK = 0;
 # by one slot or pass even n. Pre-existing footgun preserved
 # for cross-arch parity; documented here, not silently fixed.
 
+# v6.4.3+ (SIMD Phase 1) — f32v packed ops are x86-only for now; aarch64 stub
+# (real NEON fmul/fadd .4s lands in Phase 5's cross-arch propagation).
+fn EMIT_F32V_LOOP(S, op, vbase): i64 { return 0; }
 fn EMIT_F64V_LOOP(S, op, vbase): i64 {
     EW(S, 0xAA0003EA);                # mov x10, x0   — n
     EW(S, 0xD280000B);                # movz x11, #0  — index = 0

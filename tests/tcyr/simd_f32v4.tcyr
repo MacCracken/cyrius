@@ -1,0 +1,33 @@
+# simd_f32v4.tcyr — SIMD Phase 1: f32v4 (128-bit, 4 f32 lanes) construct + packed
+# addps/mulps + lane extract. x86-only for Phase 1 — aarch64 NEON + cx land in
+# Phase 5's cross-arch propagation (they currently stub EMIT_F32V_LOOP), so this is
+# a REGULAR tcyr (host x86), NOT a vr01_ cross-OS test. f32 values are their i32 bit
+# patterns: 1.0f = 0x3F800000, 2.0f = 0x40000000, 3.0f = 0x40400000.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    test_group("f32v4 construct + packed addps/mulps + lane extract (SIMD Phase 1)");
+    var a: f32v4 = f32v4_make(0x40000000, 0x40000000, 0x40000000, 0x40000000);   # 2.0f x4
+    var b: f32v4 = f32v4_splat(0x3F800000);                                        # 1.0f x4
+    assert_eq(f32v4_lane0_ptr(&a), 0x40000000, "f32v4_make lane 0 = 2.0f");
+    assert_eq(f32v4_lane3_ptr(&a), 0x40000000, "f32v4_make lane 3 = 2.0f");
+    assert_eq(f32v4_lane0_ptr(&b), 0x3F800000, "f32v4_splat lane 0 = 1.0f");
+    assert_eq(f32v4_lane2_ptr(&b), 0x3F800000, "f32v4_splat lane 2 = 1.0f");
+
+    var r: f32v4 = f32v4_add_ptr(&a, &b);                                          # 3.0f x4
+    assert_eq(f32v4_lane0_ptr(&r), 0x40400000, "addps lane 0 = 3.0f");
+    assert_eq(f32v4_lane3_ptr(&r), 0x40400000, "addps lane 3 = 3.0f (all 4 lanes)");
+
+    var m: f32v4 = f32v4_mul_ptr(&a, &b);                                          # 2.0f x4
+    assert_eq(f32v4_lane0_ptr(&m), 0x40000000, "mulps lane 0 = 2.0f");
+    assert_eq(f32v4_lane2_ptr(&m), 0x40000000, "mulps lane 2 = 2.0f");
+
+    var s: f32v4 = f32v4_sub_ptr(&r, &b);                                          # 3.0-1.0 = 2.0f
+    assert_eq(f32v4_lane1_ptr(&s), 0x40000000, "subps lane 1 = 2.0f");
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

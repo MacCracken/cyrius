@@ -1095,6 +1095,10 @@ fn LEXID(S, p, npos): i64 {
         if (kw == 0x6464615F76343666) { ADDTOK(S, 89, 0); return p; }
         if (kw == 0x6275735F76343666) { ADDTOK(S, 90, 0); return p; }
         if (kw == 0x6C756D5F76343666) { ADDTOK(S, 91, 0); return p; }
+        # v6.4.3+ (SIMD Phase 1) — f32v_add/sub/mul (packed f32: addps/subps/mulps).
+        if (kw == 0x6464615F76323366) { ADDTOK(S, 135, 0); return p; }  # f32v_add
+        if (kw == 0x6275735F76323366) { ADDTOK(S, 136, 0); return p; }  # f32v_sub
+        if (kw == 0x6C756D5F76323366) { ADDTOK(S, 137, 0); return p; }  # f32v_mul
     }
     if (klen == 9) {
         if (kw == 0x6F6F6C665F343666) {

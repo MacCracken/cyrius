@@ -160,6 +160,35 @@ fn EMIT_F64V_LOOP(S, op, vbase): i64 {
     return 0;
 }
 
+# v6.4.3+ (SIMD Phase 1) — packed f32 batch: addps/subps/mulps(dst, a, b, n).
+# Mirror of EMIT_F64V_LOOP minus the 66 prefix (movups vs movupd, addps vs addpd)
+# and with 4-byte lanes: the loads/store use [rdx+rsi*4] (SIB 0xB2, scale *4) and
+# rsi advances by 4 f32s per 128-bit iteration. op 0=add(0x58) 1=sub(0x5C) 2=mul(0x59).
+fn EMIT_F32V_LOOP(S, op, vbase): i64 {
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);   # rcx = n
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);   # rsi = 0 (loop counter)
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);   # cmp rsi, rcx
+    EB(S, 0x0F); EB(S, 0x8D);                 # jge done
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);  # rdx = a base
+    EB(S, 0x0F); EB(S, 0x10); EB(S, 0x04); EB(S, 0xB2);   # movups xmm0, [rdx+rsi*4]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);  # rdx = b base
+    EB(S, 0x0F); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xB2);   # movups xmm1, [rdx+rsi*4]
+    EB(S, 0x0F);                              # addps/subps/mulps xmm0, xmm1
+    if (op == 0) { EB(S, 0x58); }
+    if (op == 1) { EB(S, 0x5C); }
+    if (op == 2) { EB(S, 0x59); }
+    EB(S, 0xC1);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);      # rdx = dst base
+    EB(S, 0x0F); EB(S, 0x11); EB(S, 0x04); EB(S, 0xB2);   # movups [rdx+rsi*4], xmm0
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x04);   # rsi += 4
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+
 # EMIT_F64V_UNARY — packed unary ops: sqrtpd (op=0), abs via andpd (op=1)
 # Args at vbase: dst, src, n(rax)
 fn EMIT_F64V_UNARY(S, op, vbase): i64 {
