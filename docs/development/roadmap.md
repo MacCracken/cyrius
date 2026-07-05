@@ -155,6 +155,33 @@ broadcast/load and returned to i64 by extract/reduce.
   GEMM bench → (3a ✅ v6.4.6) int types + packed ops → (3b ✅ v6.4.7) int widening-MAC + b1.58 bench →
   **(4 ▶ NEXT) f32v8 + 256-bit AVX2** → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr`
   wrappers + docs → (7) repair tail.
+- **▶ Phase 4 (f32v8 + 256-bit AVX2) — arc-open DECISIONS (user 2026-07-05, after a code-grounded
+  premise-check).** Full design + disassembler-verified VEX byte encodings + the CPUID-fallback design
+  live in [`proposals/2026-07-05-f32v8-avx2-phase4-design.md`](proposals/2026-07-05-f32v8-avx2-phase4-design.md).
+  Premise-check ground truth: **no 256-bit AVX exists** — `f64v4` is a count-driven
+  128-bit SSE2 loop (`EMIT_F64V_LOOP`, `rsi += 2`), and a full `src/` scan finds **zero VEX/AVX/ymm**
+  emission (only a "no AVX/VEX" comment in `decode.cyr`). So VEX encoding is **fully greenfield**. The
+  descriptor already fits f32v8 cleanly (**sentinel −2153**, 32B/4-slot/lane-width-4 decode, no
+  name/struct-guard change), but `_is_simd256` keys on `nslots==4` — **shared with f64v4** → lane-width-
+  blind; any op keyed on it must re-read `GVEC_LANEB`. The 2-bit param mask is **saturated** (0/1/2/3).
+  **Decisions:**
+  - **AVX2 model = real AVX2 + CPUID runtime fallback.** f32v8 emits `vaddps ymm` etc. when the CPU has
+    AVX2, falling back to a 2×SSE path when absent (probed at runtime — SSE2 is x86-64 baseline; `vaddps
+    ymm` SIGILLs on pre-AVX2). cycc itself has no f32v8 → the **compiler stays SSE2/portable and
+    self-hosts byte-identical everywhere**; only consumer programs calling f32v8 exercise the dispatch.
+    (Fallback-mechanism design pending the CPUID-scaffolding read — cpuid `0F A2`, EAX=7 → EBX bit 5.)
+  - **Lib form = pointer-form first** (`f32v8_add_ptr`/`_make`/`_lane…`); value-form deferred (it would
+    force widening the saturated 2-bit mask to 3 bits — the Phase 3b wall — plus a single-ymm return
+    ABI). Matches every prior phase's first bite and dodges the retptr-stash return SIGSEGV.
+  - **Pre-planned 2-release split** (boundary fixed now, not mid-execution): **R1** = VEX encoder +
+    `decode.cyr` VEX length-decode + elementwise `vaddps/vsubps/vmulps ymm` + `vmovups` + the CPUID probe
+    + pointer-form lib + a **disassembler gate** (mandatory — no in-tree VEX oracle) + `simd_f32v8.tcyr`
+    (XFAIL aarch64/cx). **R2** = `vfmadd231ps` + the 8-lane dot (`vextractf128` + SSE fold — the two-
+    `haddps` f32v4 pattern can't cross the 128-bit lane split) + a f32v8 GEMM bench (proves the AVX2 win
+    vs the "256-bit-in-name-only" trap). Guard the recurring bug-classes: the `−2153` `0 − lt → sid`
+    sites (struct-guard covers it, verify each new site), the retptr-stash rough-scan (pointer-form
+    dodges), mask saturation (pointer-form dodges), and `_is_simd256` lane-width-blindness.
+  - x86-only (aarch64 NEON is 128-bit → 256-bit is 2×V-pairs, a Phase-5 concern; cx stubs; PE gated).
 - **Phase 5 cleanup (carried from v6.4.4)** — when aarch64 (and cx) `EMIT_F32V_LOOP` gets a real
   implementation, **remove the `simd_f32v4` XFAIL** from the aarch64-native CI corpus (`ci.yml`),
   promote `simd_f32v4.tcyr` into the `vr01_` cross-OS LIBTEST glob so the release gate covers it,
