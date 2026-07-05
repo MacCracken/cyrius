@@ -1120,6 +1120,18 @@ fn LEXID(S, p, npos): i64 {
         if (kw == 8246499246534309478) {
             if (load8(S + 0x60000 + ws + 8) == 116) { ADDTOK(S, 94, 0); return p; }
         }
+        # v6.4.8 (SIMD Phase 4 R1) — f32v8_add/sub/mul (packed f32 on 256-bit AVX2:
+        # vaddps/vsubps/vmulps ymm). 9-char names: 8-byte packed kw + 9th byte 'd'/'b'/'l'.
+        # Tokens 147-149 (146=iv_dp8 is the prior max).
+        if (kw == 0x64615F3876323366) {
+            if (load8(S + 0x60000 + ws + 8) == 100) { ADDTOK(S, 147, 0); return p; }   # f32v8_add
+        }
+        if (kw == 0x75735F3876323366) {
+            if (load8(S + 0x60000 + ws + 8) == 98) { ADDTOK(S, 148, 0); return p; }    # f32v8_sub
+        }
+        if (kw == 0x756D5F3876323366) {
+            if (load8(S + 0x60000 + ws + 8) == 108) { ADDTOK(S, 149, 0); return p; }   # f32v8_mul
+        }
     }
     if (klen == 10) {
         if (kw == 7020379954331530854) {

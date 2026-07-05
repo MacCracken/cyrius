@@ -2316,6 +2316,10 @@ fn EMIT_F32V_DOT(S, vbase): i64 { return 0; }
 fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 { return 0; }
 # v6.4.7 (Phase 3b) — int8 widening dot (b1.58): aarch64 NEON (sdot/udot) → Phase 5.
 fn EMIT_IVEC_DP8(S, vbase): i64 { return 0; }
+# v6.4.8 (Phase 4 R1) — 256-bit AVX2 f32v8 is x86-only; aarch64 has no 256-bit reg
+# (NEON is 128-bit → 2×V-pairs is a Phase-5 concern). Silent stub so lib/simd.cyr
+# compiles; f32v8 must not be used on aarch64 until Phase 5.
+fn EMIT_F32V8_LOOP(S, op, vbase): i64 { return 0; }
 fn EMIT_F64V_LOOP(S, op, vbase): i64 {
     EW(S, 0xAA0003EA);                # mov x10, x0   — n
     EW(S, 0xD280000B);                # movz x11, #0  — index = 0
