@@ -17,11 +17,13 @@ trap 'rm -f "$T" "$B" "$D"' EXIT
 cat > "$T" <<'EOF'
 include "lib/syscalls.cyr"
 fn main(): i64 {
-    var a[32]; var b[32]; var r[32];
+    var a[32]; var b[32]; var c[32]; var r[32];
     f32v8_add(&r, &a, &b, 8);
     f32v8_sub(&r, &a, &b, 8);
     f32v8_mul(&r, &a, &b, 8);
-    return load32(&r);
+    f32v8_fma(&r, &a, &b, &c, 8);
+    var dsum = f32v8_dot(&a, &b, 8);
+    return load32(&r) + dsum;
 }
 var ec = main();
 syscall(60, ec);
@@ -42,5 +44,9 @@ check "c5 fc 5c c1 *[[:space:]]+vsubps.*ymm"      "vsubps ymm0,ymm0,ymm1"
 check "c5 fc 59 c1 *[[:space:]]+vmulps.*ymm"      "vmulps ymm0,ymm0,ymm1"
 check "c5 fc 11 04 b2 *[[:space:]]+vmovups.*ymm0" "vmovups [rdx+rsi*4],ymm0 store"
 check "c5 f8 77 *[[:space:]]+vzeroupper"          "vzeroupper (AVX/SSE transition guard)"
+# R2 (v6.4.9): the 3-byte VEX (C4) fma + the 8-lane dot reduce.
+check "c4 e2 7d b8 d1 *[[:space:]]+vfmadd231ps.*ymm"  "vfmadd231ps ymm (FMA3, 3-byte VEX)"
+check "c4 e3 7d 19 d1 01 *[[:space:]]+vextractf128"   "vextractf128 xmm1,ymm2,1 (3-byte VEX + imm8)"
+check "c5 e8 58 d1 *[[:space:]]+vaddps.*xmm"          "vaddps xmm2,xmm2,xmm1 (L=0 128-bit fold)"
 
-echo "PASS: f32v8 256-bit AVX2 emits exact VEX bytes (vmovups/vaddps/vsubps/vmulps ymm + vzeroupper)"
+echo "PASS: f32v8 256-bit AVX2 emits exact VEX bytes (vmovups/vaddps/vsubps/vmulps/vfmadd231ps/vextractf128 ymm + vzeroupper)"

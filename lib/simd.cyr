@@ -366,6 +366,59 @@ fn f32v8_mul_ptr(a_ptr, b_ptr): f32v8 {
     return r;
 }
 
+# --- FMA runtime capability gate (SIMD Phase 4 R2, v6.4.9) ---
+# f32v8_fma emits vfmadd231ps (FMA3), which needs a DIFFERENT CPUID bit than AVX2:
+# leaf 1 ECX bit 12 (FMA), not leaf 7 EBX bit 5 (AVX2). Every shipping AVX2 x86 also has
+# FMA3 (both landed in Haswell), but the ISA bits are distinct, so we probe FMA precisely.
+# Probe = a byte-for-byte clone of sigil's _aes_ni_cpuid_probe (leaf 1 ECX), bit 12 not 25.
+var _fma_cache = 2;       # 2 = uncached, 0 = no, 1 = yes
+var _fma_probe_buf[8];    # 8-byte scratch (BSS, no alloc dep)
+
+# Write CPUID leaf 1 ECX to *out (x86 only; no-op elsewhere → cache stays 0).
+fn _fma_cpuid_probe(out): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        param_load(rdi, 0);            # out
+        0x53;                          # push rbx (callee-saved; CPUID clobbers it)
+        0xB8; 0x01; 0x00; 0x00; 0x00;  # mov eax, 1   (leaf 1)
+        0x31; 0xC9;                    # xor ecx, ecx (sub-leaf 0)
+        0x0F; 0xA2;                    # cpuid
+        0x48; 0x89; 0x0F;              # mov [rdi], rcx  ; *out = ecx
+        0x5B;                          # pop rbx
+    }
+    #endif
+    return 0;
+}
+
+# 1 if the CPU supports FMA3 (CPUID.1.ECX bit 12), else 0. Cached after first probe.
+fn simd_has_fma(): i64 {
+    if (_fma_cache != 2) { return _fma_cache; }
+    store64(&_fma_probe_buf, 0);
+    _fma_cpuid_probe(&_fma_probe_buf);
+    var ecx = load64(&_fma_probe_buf);
+    if ((ecx & (1 << 12)) == 0) { _fma_cache = 0; } else { _fma_cache = 1; }
+    return _fma_cache;
+}
+
+# --- f32v8 fused multiply-add + horizontal dot (SIMD Phase 4 R2, v6.4.9) ---
+# Fused multiply-add (pointer form): dst[i] = a[i]*b[i] + c[i] over 8 lanes. AVX2+FMA
+# (vfmadd231ps ymm, SINGLE rounding) when available, else the SSE f32v_fmadd (mulps+addps,
+# TWO roundings). The two paths can differ by 1 ULP for non-exact products — callers
+# needing bit-equality across CPUs should use exact-product inputs.
+fn f32v8_fma_ptr(a_ptr, b_ptr, c_ptr): f32v8 {
+    var r: f32v8;
+    if (simd_has_fma() == 1) { f32v8_fma(&r, a_ptr, b_ptr, c_ptr, 8); }
+    else { f32v_fmadd(&r, a_ptr, b_ptr, c_ptr, 8); }
+    return r;
+}
+
+# Horizontal dot (pointer form): sum(a[i]*b[i]) over 8 lanes → f32 bit pattern. AVX2
+# (vmulps/vaddps accumulate + vextractf128 8-lane reduce) when available, else SSE f32v_dot.
+fn f32v8_dot_ptr(a_ptr, b_ptr): i64 {
+    if (simd_has_avx2() == 1) { return f32v8_dot(a_ptr, b_ptr, 8); }
+    return f32v_dot(a_ptr, b_ptr, 8);
+}
+
 # v6.4.5 (SIMD Phase 2) — fused multiply-add (pointer form): dst = a*b + c over
 # the 4 lanes. Routes f32v4_fmadd(&x, &y, &z) here. The matmul inner-loop verb.
 fn f32v4_fmadd_ptr(a_ptr, b_ptr, c_ptr): f32v4 {

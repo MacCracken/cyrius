@@ -1,33 +1,37 @@
-# Repro: bare `var X[N]` global is sized N*8 BEFORE the first bare top-level
-# statement (pass-1 declaration pre-scan) but N AFTER it (PARSE_PROG statement
-# parser). Same syntax, same file, same host target — position is the only variable.
-#
-# Build (host x86_64, cyrius 6.4.8):
-#   cyrius build 2026-07-05-toplevel-bare-array-8x-undersize.cyr out && ./out
-# Expected (buggy) output:
-#   BEF=192        # var BEF[24] declared before the first bare statement -> 24*8
-#   AFT=24         # var AFT[24] declared after  the first bare statement -> 24
-#
-# The byte gap (&marker - &array) is the array's allocated size: two consecutive
-# i64 scalar globals are 8 bytes apart, so the subtraction is a raw byte count.
+# Does the SAME `var X[N]` size differently depending on whether it appears
+# BEFORE (pass-1 declaration zone) or AFTER (PARSE_PROG statement zone) the
+# first bare top-level statement?
 
-var BEF[24];
-var BEFmark = 0;
+var BEF[24];   var BEFm = 0;    # BEFORE the bare stmt -> pass-1 PARSE_GVAR_ARR (expect 192 = N*8)
 
-fn probe(a: i64, b: i64): i64 { return b - a; }
-
-fn main(): i64 {
-    println_i64(probe(&BEF as i64, &BEFmark as i64));   # BEF size
-    println_i64(probe(&AFT as i64, &AFTmark as i64));   # AFT size
+fn pr(label: i64, len: i64, n: i64): i64 {
+    syscall(1, 1, label, len);
+    var tmp[32];
+    var tp = &tmp;
+    var ti = 0;
+    var v = n;
+    if (v == 0) { store8(tp, 48); ti = 1; }
+    while (v > 0) { store8(tp + ti, 48 + (v % 10)); v = v / 10; ti = ti + 1; }
+    var buf[34];
+    var bp = &buf;
+    var bi = 0;
+    while (ti > 0) { ti = ti - 1; store8(bp + bi, load8(tp + ti)); bi = bi + 1; }
+    store8(bp + bi, 10); bi = bi + 1;
+    syscall(1, 1, bp, bi);
     return 0;
 }
 
-# ---- first bare top-level statement: this HALTS the pass-1 declaration pre-scan.
-# Everything declared below is now parsed as a STATEMENT by PARSE_PROG.
-var _kick = probe(0, 0);
+nop_first();   # FIRST bare top-level statement -> HALTS the pass-1 pre-scan
+fn nop_first(): i64 { return 0; }
 
-var AFT[24];        # identical syntax to BEF, but now sized N (24), not N*8
-var AFTmark = 0;
+var AFT[24];   var AFTm = 0;    # AFTER the bare stmt -> PARSE_PROG PARSE_ARRAY (expect 24 = N)
 
-fn _entry(): i64 { var r = main(); syscall(SYS_EXIT, r); return 0; }
-_entry();
+# reader defined AFTER the arrays so it can see the pass-2 `AFT` declaration
+report();
+fn report(): i64 {
+    pr("BEFORE size[24] = ", 18, &BEFm - &BEF);   # 192  (24 * 8, pass-1 path)
+    pr("AFTER  size[24] = ", 18, &AFTm - &AFT);   #  24  (pass-2 PARSE_ARRAY path)
+    return 0;
+}
+
+syscall(60, 0);

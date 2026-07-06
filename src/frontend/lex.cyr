@@ -1132,6 +1132,14 @@ fn LEXID(S, p, npos): i64 {
         if (kw == 0x756D5F3876323366) {
             if (load8(S + 0x60000 + ws + 8) == 108) { ADDTOK(S, 149, 0); return p; }   # f32v8_mul
         }
+        # v6.4.9 (SIMD Phase 4 R2) — f32v8_fma (vfmadd231ps ymm) + f32v8_dot (8-lane
+        # AVX2 dot). 9-char names → klen==9. Tokens 150-151 (149=f32v8_mul is the R1 max).
+        if (kw == 0x6D665F3876323366) {
+            if (load8(S + 0x60000 + ws + 8) == 97) { ADDTOK(S, 150, 0); return p; }    # f32v8_fma
+        }
+        if (kw == 0x6F645F3876323366) {
+            if (load8(S + 0x60000 + ws + 8) == 116) { ADDTOK(S, 151, 0); return p; }   # f32v8_dot
+        }
     }
     if (klen == 10) {
         if (kw == 7020379954331530854) {

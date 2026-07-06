@@ -34,6 +34,19 @@ fn main(): i64 {
     assert_eq(f32v8_lane0_ptr(&r2), f32_from(11), "f32v8 add via SSE fallback lane0 = 11");
     assert_eq(f32v8_lane7_ptr(&r2), f32_from(18), "f32v8 add via SSE fallback lane7 = 18");
     _avx2_cache = 2;   # reset to uncached so real detection resumes
+    # --- fma + dot (Phase 4 R2): exact-product inputs so AVX2/FMA and SSE-fallback agree ---
+    var cc: f32v8 = f32v8_splat(f32_from(4));
+    var fr: f32v8 = f32v8_fma_ptr(&a, &s, &cc);   # a*s + cc; a=1..8, s=10 → (i+1)*10+4
+    assert_eq(f32v8_lane0_ptr(&fr), f32_from(14), "f32v8_fma lane0 = 1*10+4 = 14");
+    assert_eq(f32v8_lane7_ptr(&fr), f32_from(84), "f32v8_fma lane7 = 8*10+4 = 84 (all 8 lanes)");
+    var dd = f32v8_dot_ptr(&a, &s);               # sum((i+1)*10) = 10*(1+..+8) = 360
+    assert_eq(dd, f32_from(360), "f32v8_dot = 10*(1+..+8) = 360 (8-lane reduce)");
+    _fma_cache = 0; _avx2_cache = 0;              # force SSE fallback for fma + dot
+    var fr2: f32v8 = f32v8_fma_ptr(&a, &s, &cc);
+    assert_eq(f32v8_lane7_ptr(&fr2), f32_from(84), "f32v8_fma via SSE fallback lane7 = 84");
+    var dd2 = f32v8_dot_ptr(&a, &s);
+    assert_eq(dd2, f32_from(360), "f32v8_dot via SSE fallback = 360");
+    _fma_cache = 2; _avx2_cache = 2;
     return assert_summary();
 }
 var ec = main();

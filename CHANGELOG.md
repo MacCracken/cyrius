@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.9] — 2026-07-05
+
+**v6.4.9 — SIMD arc Phase 4 R2: f32v8 fused multiply-add + 8-lane horizontal dot + a f32 GEMM bench.**
+The second half of the Phase 4 split, and the **close of Phase 4** (f32 SIMD is now complete on x86: f32v4
+128-bit + f32v8 256-bit, elementwise + FMA + dot). R2 lands the **first 3-byte VEX (C4)** the toolchain emits
+(R1 only used 2-byte C5). cycc has no f32v8 → stays pure SSE2, self-hosts byte-identical (fixpoint 1,057,544 B);
+the compiler change is **differential-green** (codegen-diff=0/status-diff=0 — the new emit fires only for tokens
+150/151); seed → cybs → cycc byte-identical; check.sh 130; ecb + cass + pi SELFHOST_OK; self_compile 563 ms.
+
+### Added — f32v8 FMA + dot (x86 AVX2)
+- **`f32v8_fma(dst, a, b, c, n)`** → `dst[i] = a[i]*b[i] + c[i]` over 8 f32 lanes with a **true fused**
+  multiply-add: `EMIT_F32V8_FMADD` emits **`vfmadd231ps ymm` (`C4 E2 7D B8 D1`)** — FMA3, 0F38 map, the
+  first **3-byte VEX** in the toolchain (single rounding, the matmul inner-loop verb). Token 150.
+- **`f32v8_dot(a, b, n)`** → `sum(a[i]*b[i])` over 8 lanes → f32 bits in `eax`. `EMIT_F32V8_DOT` accumulates
+  with `vmulps`/`vaddps ymm`, then does the **8-lane horizontal reduce** the two-`haddps` f32v4 trick can't do
+  (haddps never crosses the 128-bit lane split): `vextractf128 xmm1, ymm2, 1` (`C4 E3 7D 19 D1 01`) +
+  `vaddps xmm2, xmm2, xmm1` (**`C5 E8 58 D1` — L=0 / 128-bit**, folds high+low) + `vzeroupper` + the proven
+  f32v4 `haddps`×2 + `movd eax` tail. Token 151. **Every VEX byte llvm-mc-verified + disasm-gated.**
+- **`simd_has_fma()`** (`lib/simd.cyr`) — `vfmadd231ps` needs a **different** CPUID bit than AVX2: leaf 1 ECX
+  **bit 12** (FMA), not leaf 7 EBX bit 5. Probe = a byte-for-byte clone of sigil's `_aes_ni_cpuid_probe` (leaf 1
+  ECX), bit 12 not 25. `f32v8_fma_ptr` gates on it (fallback `f32v_fmadd` = mulps+addps); `f32v8_dot_ptr` gates
+  on `simd_has_avx2()` (fallback `f32v_dot`). api-surface +3 / −0. (FMA vs mulps+addps can differ by 1 ULP for
+  non-exact products — documented; the wrappers/tests use exact-product inputs so both paths agree.)
+
+### Bench
+- **`benches/bench_f32v8_gemm.bcyr`** — a dense 64×64×64 f32 GEMM (`C = A·Bᵀ`, one dot per cell) comparing the
+  **256-bit AVX2** `f32v8_dot` path against the **128-bit SSE** `f32v_dot` path (the direct AVX2-vs-SSE win R2
+  exists to deliver), with a correctness self-check. **~1.48×** (256-bit 40.0 µs vs 128-bit 59.0 µs — sub-2×
+  because the fixed per-cell `vextractf128`+reduce overhead dilutes the 8-vs-4-lane advantage at K=64).
+
+### Tests
+- **`simd_f32v8.tcyr` (10 → 15 asserts)** — `f32v8_fma`/`_dot` via the wrappers (AVX2/FMA path) **and** the SSE
+  fallback (forced `_fma_cache`/`_avx2_cache=0`), exact-product inputs so both agree. x86-only, XFAIL aarch64
+  (5 construct-pass / 10 arith-fail under qemu = legit XFAIL). Disasm gate extended with the fma/dot 3-byte VEX.
+
+**Phase 4 CLOSES.** NEXT: Phase 5 — aarch64 NEON (`fmla`/`sdot`) + cx/PE, which un-XFAILs `simd_f32v4`/
+`simd_ints`/`simd_f32v8`. (The cx bytecode CLI-exposure item from v6.4.8 remains tracked for after the arc.)
+
 ## [6.4.8] — 2026-07-05
 
 **v6.4.8 — SIMD arc Phase 4 R1: f32v8 (256-bit, 8× f32) on AVX2 — the first VEX/AVX in the toolchain.**

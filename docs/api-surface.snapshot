@@ -3614,6 +3614,8 @@ simd::f32v4_splat/1
 simd::f32v4_sub/2
 simd::f32v4_sub_ptr/2
 simd::f32v8_add_ptr/2
+simd::f32v8_dot_ptr/2
+simd::f32v8_fma_ptr/3
 simd::f32v8_lane0_ptr/1
 simd::f32v8_lane1_ptr/1
 simd::f32v8_lane2_ptr/1
@@ -3713,6 +3715,7 @@ simd::i8v16_splat/1
 simd::i8v16_sub/2
 simd::i8v16_sub_ptr/2
 simd::simd_has_avx2/0
+simd::simd_has_fma/0
 slice::slice_copy/2
 slice::slice_copy_bytes/2
 slice::slice_eq/2

@@ -1,0 +1,79 @@
+# bench_f32v8_gemm.bcyr — dense f32 GEMM, the SIMD Phase 4 R2 (v6.4.9) acceptance
+# bench. Computes C[MxN] = A[MxK] · B[KxN] with B pre-transposed to Bt[NxK] so both
+# operands of every dot are contiguous, then C[i][j] = dot(A_row_i, Bt_row_j, K). This
+# compares the 256-bit AVX2 path (f32v8_dot — vmulps/vaddps ymm + vextractf128 reduce,
+# 8 f32/iter) against the 128-bit SSE path (f32v_dot — 4 f32/iter), i.e. the direct
+# AVX2-vs-SSE win the whole R2 exists to deliver. x86-only + requires AVX2 at runtime
+# (the raw f32v8_dot builtin emits vaddps ymm unconditionally — this is a bench, run on
+# the AVX2 bench box; consumers use the gated f32v8_dot_ptr wrapper). K is a multiple of
+# 8 (the f32v8_dot lane stride; also a multiple of 4 for f32v_dot).
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+include "lib/bench.cyr"
+include "lib/simd.cyr"
+
+var M = 64; var K = 64; var N = 64;
+var _A = 0; var _Bt = 0; var _C = 0;
+
+# 256-bit AVX2 GEMM: one f32v8_dot per output cell (8 f32/iter).
+fn work_gemm_256() {
+    var i = 0;
+    while (i < M) {
+        var j = 0;
+        while (j < N) {
+            store32(_C + (i * N + j) * 4, f32v8_dot(_A + i * K * 4, _Bt + j * K * 4, K));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 128-bit SSE GEMM: one f32v_dot per output cell (4 f32/iter) — the Phase-2 baseline.
+fn work_gemm_128() {
+    var i = 0;
+    while (i < M) {
+        var j = 0;
+        while (j < N) {
+            store32(_C + (i * N + j) * 4, f32v_dot(_A + i * K * 4, _Bt + j * K * 4, K));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    _A  = alloc(M * K * 4);
+    _Bt = alloc(N * K * 4);
+    _C  = alloc(M * N * 4);
+    # Fill A and Bt with 1.0f so every C[i][j] == K (64.0f = 0x42800000).
+    var p = 0;
+    while (p < M * K) { store32(_A + p * 4, 0x3F800000); p = p + 1; }
+    p = 0;
+    while (p < N * K) { store32(_Bt + p * 4, 0x3F800000); p = p + 1; }
+
+    # Correctness self-check (exit non-zero if either GEMM is wrong — the bench doubles
+    # as a VEX-codegen + array-scale regression guard in bench-history runs).
+    work_gemm_256();
+    if (load32(_C) != 0x42800000) { syscall(60, 7); }
+    work_gemm_128();
+    if (load32(_C) != 0x42800000) { syscall(60, 8); }
+
+    var all = vec_new();
+    var b1 = bench_new("simd/f32v8_gemm_64_avx2_256");
+    bench_run(b1, &work_gemm_256, 200);
+    vec_push(all, b1);
+    var b2 = bench_new("simd/f32v8_gemm_64_sse_128");
+    bench_run(b2, &work_gemm_128, 200);
+    vec_push(all, b2);
+    bench_report_all(all);
+    return 0;
+}
+var exit_code = main();
+syscall(60, exit_code);

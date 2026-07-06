@@ -153,12 +153,14 @@ broadcast/load and returned to i64 by extract/reduce.
     integer-SIMD arc CLOSES here.**
 - **Phases**: (0 ✅) encoding → (1 ✅ v6.4.4) f32v4 end-to-end x86 → (2 ✅ v6.4.5) f32 matmul op set +
   GEMM bench → (3a ✅ v6.4.6) int types + packed ops → (3b ✅ v6.4.7) int widening-MAC + b1.58 bench →
-  **(4 R1 ✅ v6.4.8) f32v8 256-bit AVX2 elementwise + VEX substrate + CPUID runtime fallback → (4 R2 ▶ NEXT)
-  f32v8 fmadd + 8-lane dot + GEMM bench** → (5) aarch64 NEON (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr`
-  wrappers + docs → (7) repair tail. **R1 shipped:** first VEX/AVX in the toolchain (llvm-mc-verified,
-  disasm-gated); 256-bit value-return ABI generalized to `_is_simd256` (byte-id for f64v4); `simd_has_avx2()`
-  CPUID probe + branching wrappers; decode.cyr VEX dropped (pre-existing SYSCALL mis-decode, filed). simd_f32v8
-  XFAIL aarch64.
+  **(4 R1 ✅ v6.4.8) f32v8 256-bit AVX2 elementwise + VEX substrate + CPUID runtime fallback → (4 R2 ✅ v6.4.9)
+  f32v8 fmadd + 8-lane dot + GEMM bench — PHASE 4 CLOSES** → **(5 ▶ NEXT) aarch64 NEON (`fmla`/`sdot`) + cx/PE**
+  → (6) `lib/simd.cyr` wrappers + docs → (7) repair tail. **R1 (v6.4.8):** first VEX/AVX in the toolchain
+  (2-byte C5, llvm-mc-verified, disasm-gated); 256-bit value-return ABI generalized to `_is_simd256` (byte-id
+  for f64v4); `simd_has_avx2()` CPUID probe + branching wrappers; decode.cyr VEX dropped (pre-existing SYSCALL
+  mis-decode, filed). **R2 (v6.4.9):** first 3-byte VEX (C4) — `vfmadd231ps` (FMA3) + the 8-lane `vextractf128`
+  dot reduce; `simd_has_fma()` (leaf 1 ECX bit 12) gate; `bench_f32v8_gemm` ~1.48× (256 vs 128-bit). f32 SIMD
+  now complete on x86 (f32v4 + f32v8). `simd_f32v8` XFAIL aarch64 until Phase 5.
 - **▶ Phase 4 (f32v8 + 256-bit AVX2) — arc-open DECISIONS (user 2026-07-05, after a code-grounded
   premise-check).** Full design + disassembler-verified VEX byte encodings + the CPUID-fallback design
   live in [`proposals/2026-07-05-f32v8-avx2-phase4-design.md`](proposals/2026-07-05-f32v8-avx2-phase4-design.md).
