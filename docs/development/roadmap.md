@@ -174,9 +174,11 @@ broadcast/load and returned to i64 by extract/reduce.
     force widening the saturated 2-bit mask to 3 bits — the Phase 3b wall — plus a single-ymm return
     ABI). Matches every prior phase's first bite and dodges the retptr-stash return SIGSEGV.
   - **Pre-planned 2-release split** (boundary fixed now, not mid-execution): **R1** = VEX encoder +
-    `decode.cyr` VEX length-decode + elementwise `vaddps/vsubps/vmulps ymm` + `vmovups` + the CPUID probe
-    + pointer-form lib + a **disassembler gate** (mandatory — no in-tree VEX oracle) + `simd_f32v8.tcyr`
-    (XFAIL aarch64/cx). **R2** = `vfmadd231ps` + the 8-lane dot (`vextractf128` + SSE fold — the two-
+    elementwise `vaddps/vsubps/vmulps ymm` + `vmovups` + the CPUID probe + pointer-form lib + a
+    **disassembler gate** (mandatory — no in-tree VEX oracle) + `simd_f32v8.tcyr` (XFAIL aarch64/cx).
+    (The planned `decode.cyr` VEX length-decode was **dropped** — not needed, DCE fail-safe-refuses
+    dead f32v8 wrappers; and it broke DCE-mode byte-identity via a pre-existing SYSCALL/CPUID mis-decode:
+    `issues/2026-07-05-decode-len-mislengths-no-modrm-0f-opcodes.md`.) **R2** = `vfmadd231ps` + the 8-lane dot (`vextractf128` + SSE fold — the two-
     `haddps` f32v4 pattern can't cross the 128-bit lane split) + a f32v8 GEMM bench (proves the AVX2 win
     vs the "256-bit-in-name-only" trap). Guard the recurring bug-classes: the `−2153` `0 − lt → sid`
     sites (struct-guard covers it, verify each new site), the retptr-stash rough-scan (pointer-form

@@ -116,8 +116,15 @@ inline `:2142`) + PARSE_SIMD_EXT handlers; `parse.cyr` statement range guards; n
   path for the 9-char `f32v8_add` keyword). `_vec_desc`/`GVEC_*` need no change.
 - **VEX encoder** (the one net-new primitive): a helper emitting 2-byte (`C5`) and 3-byte
   (`C4`) VEX via `EB(S,byte)`, packing `R̄X̄B̄`/`vvvv`(1's-comp of src1)/`L`/`pp`/`mmmmm`.
-- **decode.cyr**: teach the length-decoder to skip VEX-prefixed instrs so DCE/CFG
-  byte-walking stays correct (co-requisite of first VEX emission).
+- ~~**decode.cyr**: teach the length-decoder to skip VEX-prefixed instrs~~ — **DROPPED
+  from R1 (2026-07-05).** Adding VEX to `DECODE_LEN` is *not* needed (an undecodable VEX
+  byte already makes DCE refuse to NOP a dead f32v8 wrapper — the correct fail-safe) and it
+  **breaks DCE-mode byte-identity**: it collides with a pre-existing `DECODE_LEN` bug
+  (SYSCALL / CPUID and other no-ModR/M `0F` opcodes are mis-lengthed → the walk mis-aligns
+  onto a spurious `0xC5` ModR/M byte in crypto fns). Filed as
+  `issues/2026-07-05-decode-len-mislengths-no-modrm-0f-opcodes.md` for a dedicated
+  decoder-correctness slot. Net effect for f32v8: dead f32v8 wrappers are conservatively
+  KEPT by DCE (byte-identical, safe).
 - **Ops** — `EMIT_F32V8_LOOP` mirroring `EMIT_F32V_LOOP`, **stride `rsi += 8`** (SIB stays
   `B2`/scale-4 since index is element count), `vzeroupper` (`C5 F8 77`) before return:
   - `vmovups ymm0/ymm1,[rdx+rsi*4]` = `C5 FC 10 04 B2` / `C5 FC 10 0C B2`; store `C5 FC 11 04 B2`
