@@ -3613,6 +3613,19 @@ simd::f32v4_mul_ptr/2
 simd::f32v4_splat/1
 simd::f32v4_sub/2
 simd::f32v4_sub_ptr/2
+simd::f32v8_add_ptr/2
+simd::f32v8_lane0_ptr/1
+simd::f32v8_lane1_ptr/1
+simd::f32v8_lane2_ptr/1
+simd::f32v8_lane3_ptr/1
+simd::f32v8_lane4_ptr/1
+simd::f32v8_lane5_ptr/1
+simd::f32v8_lane6_ptr/1
+simd::f32v8_lane7_ptr/1
+simd::f32v8_make/8
+simd::f32v8_mul_ptr/2
+simd::f32v8_splat/1
+simd::f32v8_sub_ptr/2
 simd::f64v2_abs/1
 simd::f64v2_abs_ptr/1
 simd::f64v2_add/2
@@ -3699,6 +3712,7 @@ simd::i8v16_add_ptr/2
 simd::i8v16_splat/1
 simd::i8v16_sub/2
 simd::i8v16_sub_ptr/2
+simd::simd_has_avx2/0
 slice::slice_copy/2
 slice::slice_copy_bytes/2
 slice::slice_eq/2

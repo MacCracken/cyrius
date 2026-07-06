@@ -679,14 +679,18 @@ fn PARSE_RETURN(S): i64 {
     # local. SysV/aarch64/cx: pair-quad register return (two
     # MOVUPDs on x86 / two LDR Q on aarch64 / four R-regs on cx
     # via EFLLOAD_F64V4_PAIR). Win64 PE: retptr-style with size 32.
-    if (_cur_fn_ret_scalar == 0 - 21) {
+    # v6.4.8 (SIMD Phase 4) — generalized from the exact -21 (f64v4) check to
+    # _is_simd256 so f32v8 (-2153) shares the identical 32-byte / 2×128-XMM return
+    # ABI. Byte-identical for f64v4 (_is_simd256(-21)==1); f32v8 is new. The return
+    # value's byte layout is the same 32 bytes regardless of float lane width.
+    if (_is_simd256(S, _cur_fn_ret_scalar) == 1) {
         if (PEEKT(S) == 2) {
             if (TOKTYP(S, GTI(S) + 1) == 5) {
                 var _f4_noff = PEEKV(S);
                 var _f4_lli = FINDLOCAL(S, _f4_noff);
                 if (_f4_lli >= 0) {
                     var _f4_lt = GLTYPE(S, _f4_lli);
-                    if (_f4_lt == 0 - 21) {
+                    if (_is_simd256(S, _f4_lt) == 1) {
                         STI(S, GTI(S) + 1);  # consume IDENT
                         STI(S, GTI(S) + 1);  # consume ';'
                         if (_cur_fn_ret_stash > 0) {
@@ -2038,6 +2042,10 @@ fn _classify_return_type(S, rt_noff): i64 {
     # f32v4 → 'f','3','2','v','4', 0 — 128-bit descriptor sentinel -2121 (SIMD Phase 1)
     if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
         if (b4 == 52) { if (b5 == 0) { return 0 - 2121; } }
+    } } } }
+    # f32v8 → 'f','3','2','v','8', 0 — 256-bit descriptor sentinel -2153 (SIMD Phase 4)
+    if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
+        if (b4 == 56) { if (b5 == 0) { return 0 - 2153; } }
     } } } }
     # v6.4.6 (Phase 3a) — integer vector return/param types (128-bit sentinels).
     # 'i'=105 'u'=117 'v'=118. i32v4/u32v4 = i/u,'3','2','v','4'.
