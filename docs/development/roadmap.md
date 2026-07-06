@@ -83,6 +83,17 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   (2) `cyrius distlib` **per-module read cap 256 KB → 1 MB** (`cbt/commands.cyr`, matching cycc's
   `input_buf[1 MB]`) — distlib was rejecting modules cycc compiles fine. check.sh 130; ecb+cass+pi
   `SELFHOST_OK`; self_compile 556 ms.
+- **v6.4.11** — **array-typed struct fields R1: `Vec<T>` handle fields** (Pin 2 opens). Struct/union
+  fields can be declared `Vec<T>` — an 8-byte handle slot; element type T in a far-negative ftype
+  sentinel (`MKVEC = (0-0x50000)-elem`, decoded by `IS_VEC_FIELD` before any `ft>0`/`ft<0` path;
+  **OOB-safe by construction** per an adversarial 9-site `GETFTYPE` guard-audit — 0 guards needed).
+  Parse (struct + union) + field load/store + struct-literal init (local + global); the negative
+  sentinel needs **no `PARSE_STRUCT_INIT` edit** (flows through `else`→`FIELDSZ`→8, unlike Str's
+  positive-sid flatten). Fixed a bare `.field` load truncating the 8-byte handle to 32 bits (the
+  `-width` sign-extend fired on the sentinel → `movsxd`; audit-found, the happy-path test used raw
+  `load64`). Syntax `Vec<T>` (not `T[]`) survives the `#derive` pre-parser for R2/R3. cycc byte-id
+  (size unchanged); check.sh 130; seed-derive OK; ecb+cass+pi `SELFHOST_OK`; self_compile 574 ms;
+  test `vec_struct_field.tcyr` (14, proven fail-on-bug). **NEXT: R2 = `#derive` Vec<primitive>.**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -102,7 +113,7 @@ releases, each bundling several bites. Minors flex long.**
 | # | Arc | Conservative length | Release-blocker? | Status |
 |---|-----|--------------------:|:----------------:|--------|
 | 1 | **Packed SIMD compute** (f32-first, then integer; ML/AI) | **5–7 releases** | No | **x86 portion COMPLETE (v6.4.4–.9, 6 releases); ⏸ aarch64 NEON (Phase 5) deferred** |
-| 2 | **Array-typed struct fields** | **3–4 releases** | No | **PINNED — next up** |
+| 2 | **Array-typed struct fields** | **3–4 releases** | No | **ACTIVE — R1 shipped v6.4.11 (`Vec<T>` parse+access); R2 `#derive`-primitive, R3 `#derive`-struct+svara** |
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
@@ -239,6 +250,13 @@ broadcast/load and returned to i64 by extract/reduce.
   the consumer). Cross-repo acceptance benches: dense-f32 GEMM + tentib 0.4.1 (separate repos).
 
 ### Pin 2 — Array-typed struct fields — ~3–4 releases
+
+> **STATUS (2026-07-06): DESIGN PINNED + R1 SHIPPED (v6.4.11).** Representation fork RESOLVED by
+> user → a typed **`Vec<T>` HANDLE** (not inline `T[N]`); syntax **`Vec<T>`**; 3-release split:
+> **R1** parse + metadata + access (✅ **v6.4.11**) · **R2** `#derive` Vec<primitive> · **R3**
+> `#derive` Vec<struct> + svara minor patch. Full design + sentinel encoding + risks:
+> [`proposals/2026-07-06-array-typed-struct-fields-design.md`](proposals/2026-07-06-array-typed-struct-fields-design.md).
+> The representation discussion below predates the fork resolution — kept for context.
 
 Make `struct { field: T[]; }` / `field: T[N]` **parse, represent, access, and
 derive-serialize**. Today it's a hard parse error ("expected identifier, got `[`");

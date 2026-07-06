@@ -6,6 +6,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.11] — 2026-07-06
+
+**v6.4.11 — array-typed struct fields R1: `Vec<T>` handle fields (parse + layout + access).**
+First release of the Pin 2 arc — the 3-release `Vec<T>`-handle plan (R1 parse+metadata+access ·
+R2 `#derive` Vec&lt;primitive&gt; · R3 `#derive` Vec&lt;struct&gt; + svara). Frontend + one field-load codegen
+fix; cycc byte-identical (size unchanged, fixpoint 1,057,568 B); seed → cybs → cycc byte-identical;
+check.sh 130; ecb + cass + pi SELFHOST_OK; self_compile 574 ms.
+
+### Added — `Vec<T>` array-typed struct/union fields
+- Struct and union fields can now be declared `Vec<T>` (e.g. `struct S { xs: Vec<i64>; }`) — previously a hard
+  parse error (`expected identifier, got '<'`). A `Vec<T>` field is an **8-byte handle slot** (a pointer to the
+  heap Vec `{data,len,cap}`), like a `Str` field. The concrete element type `T` is recorded in a **far-negative
+  ftype sentinel** — `MKVEC(elem) = (0-0x50000) - elem`, decoded by `IS_VEC_FIELD` (window `(-0x80000, -0x40000]`)
+  / `VEC_ELEM`, checked BEFORE any `ft>0` / `ft<0` struct/scalar path (`parse_types.cyr`; parser branches added to
+  both `PARSE_STRUCT_DEF` and `PARSE_UNION_DEF`). Syntax is `Vec<T>` (not `T[]`) so the type string survives the
+  `#derive` text pre-parser for R2/R3.
+- Field load/store and struct-literal init (local **and** global scope) all work. Because the sentinel is
+  negative, struct-init flows through the existing 8-byte-slot path (`else` → `FIELDSZ` → 8) with **no
+  `PARSE_STRUCT_INIT` / `EMIT_GVAR_INITS` change** — unlike `Str` (a positive sid that needed the v5.10.7/v6.3.44
+  flatten fixes).
+- **OOB-safe by construction** — an adversarial guard-site audit over all 9 `GETFTYPE` consumers confirmed the
+  far-negative sentinel is excluded from every `ft>0` / `ft-1` struct-table index and never reaches the only
+  `0-ft` width decode (`FIELDSZ`-first): zero guards needed.
+- Scope: `#derive` support for `Vec<T>` fields lands in R2 (Vec&lt;primitive&gt;) / R3 (Vec&lt;struct&gt;). Dynamic
+  generic `Vec<T>` element-typing stays out (concrete-T only); Vec fields are gated to non-generic structs in R1.
+
+### Fixed — bare `.field` load of a `Vec` field truncated the handle to 32 bits
+- A bare `s.myvec` load emitted a 32-bit sign-extending `movsxd` instead of a full 8-byte load: the sub-width
+  sign-extend at `parse_decl.cyr` (`if (ft < 0) { fld_sz = 0 - fld_sz; }`, intended for `-width` scalars) **fired
+  on the negative Vec sentinel**, turning `FIELDSZ`'s 8 into -8 → `EFIELD_LOAD_W(-8)` → truncated handle → crash on
+  use. **Fix**: guard the negate with `IS_VEC_FIELD` (only real sub-width scalars sign-extend). Found by the
+  guard-site audit — the initial happy-path test used raw `load64(&s+off)`, which never exercised the `.field`
+  load path. Regression test `tests/tcyr/vec_struct_field.tcyr` (14 asserts; proven fail-on-bug: pre-fix the
+  `.field` load returned a truncated `-354418648` vs the full handle and segfaulted).
+
+### Docs
+- **Design/plan**: `docs/development/proposals/2026-07-06-array-typed-struct-fields-design.md` — the pinned R1–R3
+  arc (representation fork, sentinel encoding, release split, risks), user-signed-off 2026-07-06.
+- Fork heap-map comments (`main_aarch64{,_macho}.cyr`, `parse_types.cyr` header) refreshed from the stale
+  "256×32 grid v5.7.17" to the v6.0.47 packed pool + the Vec sentinel note.
+- **Internal developer-doc stamp sweep** (bundled): `roadmap_6.md` "Current metrics" (was stale v6.3.2 →
+  current), `roadmap-future.md` (`lib/protobuf.cyr` struck ✅ shipped v6.2.17/finished v6.3.42), `ADR-002`
+  (Status Update: floats + SIMD vectors break pure-i64), `doc-health.md` ledger, and vidya current-state stamps.
+
 ## [6.4.10] — 2026-07-05
 
 **v6.4.10 — frontend-correctness + tooling: the P1 top-level-array under-size fix + the distlib read-cap bump.**
