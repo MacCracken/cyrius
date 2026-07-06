@@ -61,6 +61,28 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   ops (i32v4/i16v8/i8v16/i64v2) + `i32v4_lane*(v)`. `iv_dp8` (u8·i8 → i32 widening dot,
   pmaddubsw→pmaddwd→paddd, movsxd sign-extend) = the b1.58 GEMM inner loop; `bench_i8_gemm.bcyr`
   (64³, ~30×). simd_ints 11→21 asserts. Fixpoint; x86-only phase. **Integer-SIMD arc CLOSES.**
+- **v6.4.8** — **SIMD arc Phase 4 R1: `f32v8` 256-bit AVX2 elementwise** — the **first VEX/AVX the
+  toolchain ever emits** (2-byte C5 VEX; `EMIT_F32V8_LOOP` = `vaddps`/`vsubps`/`vmulps ymm` +
+  `vmovups`), descriptor sentinel −2153, tokens 147–149; the 256-bit value-return ABI generalized
+  from the exact f64v4 sentinel to `_is_simd256`. `simd_has_avx2()` **CPUID runtime fallback** (leaf 7
+  EBX bit 5 — AVX2 is NOT x86-64 baseline) so wrappers branch AVX2-vs-2×SSE. Disassembler-gated (no
+  in-tree VEX oracle). `decode.cyr` VEX length-decode dropped (collided with a pre-existing
+  SYSCALL/CPUID mis-decode; filed). Pointer-form lib first. Fixpoint (cycc has no f32v8).
+- **v6.4.9** — **SIMD arc Phase 4 R2: `f32v8` FMA + 8-lane dot** — `f32v8_fma` (token 150,
+  `vfmadd231ps` = the **first 3-byte VEX / C4** the toolchain emits) + `f32v8_dot` (token 151,
+  8-lane `vextractf128` reduce — the two-`haddps` f32v4 fold can't cross the 128-bit lane split).
+  `simd_has_fma()` (leaf 1 ECX bit 12 — a **different** CPUID bit than AVX2). `bench_f32v8_gemm.bcyr`
+  (~1.48× 256-bit vs 128-bit). **Phase 4 CLOSES — f32 SIMD complete on x86** (f32v4 128-bit + f32v8
+  256-bit, elementwise + FMA + dot). Fixpoint; x86-only phase.
+- **v6.4.10** — **first interim items after the SIMD x86 break point** (aarch64 NEON deferred).
+  (1) **P1 kernel-blocker fix** — a bare top-level `var X[N]` was silently **8× under-sized** when
+  declared *after* the first bare top-level statement (pass-2 `PARSE_ARRAY` used the fn-local N-byte
+  default instead of `PARSE_GVAR_ARR`'s N×8); fixed in `parse_decl.cyr` (~61) to size a bare non-fn-
+  local array N×8. cycc's own top-level arrays were affected → **two-step bootstrap** (fixpoint
+  1,057,568 B; differential codegen-diff = 31 / status-diff = 0 — 31 programs' arrays correctly grow).
+  (2) `cyrius distlib` **per-module read cap 256 KB → 1 MB** (`cbt/commands.cyr`, matching cycc's
+  `input_buf[1 MB]`) — distlib was rejecting modules cycc compiles fine. check.sh 130; ecb+cass+pi
+  `SELFHOST_OK`; self_compile 556 ms.
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -79,17 +101,19 @@ releases, each bundling several bites. Minors flex long.**
 
 | # | Arc | Conservative length | Release-blocker? | Status |
 |---|-----|--------------------:|:----------------:|--------|
-| 1 | **Integer SIMD** (ML/AI) | **5–7 releases** | No | **PINNED — immediate** |
-| 2 | **Array-typed struct fields** | **3–4 releases** | No | **PINNED — immediate** |
+| 1 | **Packed SIMD compute** (f32-first, then integer; ML/AI) | **5–7 releases** | No | **x86 portion COMPLETE (v6.4.4–.9, 6 releases); ⏸ aarch64 NEON (Phase 5) deferred** |
+| 2 | **Array-typed struct fields** | **3–4 releases** | No | **PINNED — next up** |
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
 
 **Opening sequence total: conservatively ~17–26 `.NN` releases** — v6.4.x is a **long
-minor**. **None of the five arcs is a release-blocker.** On top of the arcs, **reactive
-agnos + consumer-filed repairs interleave throughout** and consume **separate** slots
-that are **not** counted above (3 already this minor: .1 alloc_reset, .2 agnos audio,
-and .0's own de-risking) — see *Reactive headroom* below.
+minor**. **None of the five arcs is a release-blocker.** **Pin 1's x86 portion landed at 6 releases
+(v6.4.4–.9), inside the 5–7 budget** — the aarch64-NEON remainder (Phase 5) is intentionally paused
+(see the break-point note under Pin 1). On top of the arcs, **reactive agnos + consumer-filed repairs
+interleave throughout** and consume **separate** slots that are **not** counted above (already this
+minor: .0's own de-risking, .1 alloc_reset, .2 agnos audio, .3 the f64 SIMD-surface solidification,
+and .10 the kernel-blocker + distlib-cap interim fixes) — see *Reactive headroom* below.
 
 ---
 

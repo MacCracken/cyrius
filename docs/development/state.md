@@ -21,13 +21,20 @@
 > function visibility (`pub`/`private`) → Intel-Mac (x86_64 Mach-O) toolchain tail.**
 > **Conservatively ~17–26 `.NN` releases for the opening sequence — v6.4.x is a LONG minor**
 > (code-grounded scoping 2026-07-04: int-SIMD 5–7, array-fields 3–4, UEFI 3–5, pub/private
-> 4–6, Intel-Mac 2–4; **none a release-blocker**). **PINNED immediate: integer SIMD** (pin the
-> type-class encoding first — the `-20/-21` pscale sentinel + 2-bit param mask can't hold 8
-> int vector types) **+ array-typed struct fields** (pin the `T[N]`-inline-vs-`Vec<T>`-handle
-> representation fork). Reactive **agnos + consumer-filed repairs interleave as SEPARATE
-> slots** (not counted; 3 already — .0 de-risk / .1 alloc_reset / .2 agnos audio; more agnos
-> expected). v7-parked items (LEGAL-01, DWARF, incremental compilation, public release) stay
-> in [roadmap-future.md](roadmap-future.md). See [roadmap.md](roadmap.md) for the full pin +
+> 4–6, Intel-Mac 2–4; **none a release-blocker**). **The SIMD compute arc (Pin 1) — x86 portion
+> is COMPLETE** (6 releases, v6.4.4→v6.4.9: f32v4 128-bit → f32 matmul → integer vectors +
+> int8 widening dot → f32v8 256-bit AVX2 elementwise + FMA + dot; first VEX/AVX the toolchain
+> ever emitted). **⏸ SIMD BREAK POINT (user 2026-07-05): the x86 SIMD portion is done and the
+> arc is intentionally PAUSED. Phase 5 (aarch64 NEON: fmla/sdot + cx/PE) is DEFERRED, to resume
+> later in v6.4.x** after interim items — pre-scoped as a mechanical NEON mirror of the existing
+> `EMIT_F64V_*` aarch64 code, a planned 2-release split (5a f32 NEON, 5b integer NEON + `iv_dp8`;
+> `simd_f32v4`/`simd_ints`/`simd_f32v8` stay XFAIL on ARM until then). **NOW: interim short-term
+> items** (v6.4.10 = the bare-top-level-array under-size fix + distlib read-cap bump). **NEXT
+> committed arcs (order fixed 2026-07-03): array-typed struct fields → UEFI Secure Boot signing →
+> function visibility (`pub`/`private`) → Intel-Mac (x86_64 Mach-O) tail.** Reactive **agnos +
+> consumer-filed repairs interleave as SEPARATE slots** (not counted; more agnos expected).
+> v7-parked items (LEGAL-01, DWARF, incremental compilation, public release) stay in
+> [roadmap-future.md](roadmap-future.md). See [roadmap.md](roadmap.md) for the full pin +
 > length map.
 
 | | |

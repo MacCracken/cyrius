@@ -2,8 +2,8 @@
 
 **Scope** — the **whole v6.x cycle** (cycle-open 2026-05-19). This is
 the cycle-level reference: framing, per-minor budgeting, and the
-remaining minors v6.3.x → v6.6.x (v6.2.x CLOSED — shipped .0 → .52). The
-**current active minor (v6.3.x)** is broken out in detail in [roadmap.md](roadmap.md); items beyond the
+remaining minors v6.4.x → v6.6.x (v6.2.x + v6.3.x CLOSED). The
+**current active minor (v6.4.x, at v6.4.10)** is broken out in detail in [roadmap.md](roadmap.md); items beyond the
 cycle (v7.0+ aspirations, unpinned language refinements, speculative
 work) live in [roadmap-future.md](roadmap-future.md). v5.x history and
 the now-closed v6.0.x detail are canonical in
@@ -545,7 +545,12 @@ in-kernel crypto. Premise-check at arc entry per
 
 ---
 
-## v6.3.x — Language Refinements
+## v6.3.x — Language Refinements — ✅ COMPLETE (v6.3.0 → v6.3.45)
+
+> **Closed minor.** Shipped .0 → .45 (closeout at v6.3.45); v6.4.0 opened the cut
+> 2026-07-03. The section below is the cycle-level design record; per-patch detail is the
+> [`CHANGELOG.md`](../../CHANGELOG.md) source of truth. The active minor is now **v6.4.x**
+> (at v6.4.10 — [roadmap.md](roadmap.md)).
 
 **Theme**: language-level closures + generics + async sugar.
 Three syntactic/semantic additions the v5.x cycle held out
@@ -962,6 +967,42 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
    `_`-prefix cross-file-call audit** — it decides whether derive-from-`_` is truly zero-churn.
    [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md).
 
+### v6.4.x arc — EXECUTION STATUS (updated 2026-07-06)
+
+The opening sequence is executing in order. **Item 1 (SIMD) has shipped its x86 portion** (a
+6-release arc, v6.4.4–.9, on top of the f64 pre-solidification .3) and is **paused at a
+deliberate break point**; **item 2 (array-typed struct fields) is next up**; items 3–4 (UEFI, `pub`/
+`private`) remain order-committed. Interim consumer/kernel fixes interleave (.10 shipped as the first
+after the SIMD break). Slot-level detail is canonical in [roadmap.md](roadmap.md) (active minor) +
+[CHANGELOG.md](../../CHANGELOG.md); the cycle-level summary:
+
+- **▶ Item 1 — Packed SIMD compute (f32-first, then integer): x86 portion ✅ COMPLETE (v6.4.4–.9).**
+  Sequence pivot (user 2026-07-04): f32 SIMD FIRST (primary throughput lever), int8/quantized as the
+  optimization layer on top. Phase 0 pinned a **structured SIMD descriptor** in a reserved SLTYPE
+  sentinel band below −2048 (f64v2/f64v4 keep legacy −20/−21), decoded by one `_vec_desc`. Then:
+  **Phase 1 (v6.4.4)** f32v4 128-bit end-to-end on x86 (addps/subps/mulps = the f64 packed loop minus
+  the 66 prefix; 3 adversarial-review bugs fixed); **Phase 2 (v6.4.5)** f32 matmul (`f32v_fmadd` +
+  `f32v_dot` haddps reduce; ~27× GEMM); **Phase 3a (v6.4.6)** integer vector types i8v16/i16v8/i32v4/
+  i64v2 (+u*) + iv_add/sub/mul, with the ~21-site ABI generalization to descriptor-driven
+  `_is_simd128/256/any`; **Phase 3b (v6.4.7)** value-form typed int ops + `iv_dp8` (u8·i8→i32 widening
+  dot, the b1.58 GEMM inner loop; ~30×) — **integer-SIMD arc closed**; **Phase 4 R1 (v6.4.8)** f32v8
+  256-bit AVX2 elementwise — the **first VEX/AVX the toolchain ever emits** (2-byte C5), with a
+  `simd_has_avx2()` CPUID runtime fallback (AVX2 is not x86-64 baseline); **Phase 4 R2 (v6.4.9)**
+  f32v8 FMA (`vfmadd231ps`, first 3-byte VEX/C4) + 8-lane `vextractf128` dot + `simd_has_fma()` gate —
+  **Phase 4 closed, f32 SIMD complete on x86** (f32v4 + f32v8, elementwise + FMA + dot). cycc itself
+  has no SIMD → every phase self-hosts byte-identical; only consumer programs exercise the ops.
+- **⏸ SIMD BREAK POINT (user 2026-07-05) — Phase 5 (aarch64 NEON) DEFERRED, to resume later in
+  6.4.x.** The x86 SIMD portion is complete and the arc is **intentionally paused** to land some
+  interim items first. Phase 5 is NOT cancelled — `simd_f32v4`/`simd_ints`/`simd_f32v8` stay XFAIL on
+  ARM until it lands. It is pre-scoped as a **mechanical NEON mirror** of the existing `EMIT_F64V_*`
+  aarch64 code, a planned 2-release split: **5a** f32 NEON (fadd/fmul/fmla/dot — un-XFALs both f32v4
+  and f32v8 on ARM, since the f32v8 wrappers fall through to the f32v_ path) and **5b** integer NEON +
+  `iv_dp8` (where `sdot` needs the optional `FEAT_DotProd` → a runtime feature-gate or `smull`/
+  `saddlp` fallback, the aarch64 analog of the x86 FMA gate). cx/PE SIMD + the `lib/simd.cyr` doc pass
+  are the Phase-6/7 tail. Tracked in [roadmap-future.md](roadmap-future.md).
+- **▶ Item 2 — Array-typed struct fields — NEXT UP.** Unchanged from the opening-sequence scope above.
+- **Items 3–4 (UEFI Secure Boot signing, `pub`/`private` visibility)** — order-committed, unstarted.
+
 ### v6.4.0 — SHIPPED: `CYRIUS_MONOMORPH` default-on flip
 
 - **`CYRIUS_MONOMORPH` default-on flip — SHIPPED v6.4.0** (2026-07-03). Generics are now on by
@@ -990,6 +1031,35 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
   `_write_nb` = 5-arg a4=r10 NONBLOCK. agnos-gated → cycc byte-identical on every non-agnos target;
   agnos-crossbuild-gate green + a 7-wrapper call-probe → valid agnos ELF. Unblocks vani + cyrius-doom
   (separate repos). See CHANGELOG [6.4.2]. (issue `2026-07-04-agnos-snd-audio-syscall-band-64-69`.)
+
+### v6.4.3 — SHIPPED 2026-07-04
+
+- **Pre-SIMD f64v2/f64v4 surface solidification** (agnos FP issue §2) — a reactive slot that finished
+  the f64 SIMD ergonomics before the SIMD arc built on them. Premise-check: the reported "undefined
+  f64v2" was a *syntax* gap (`_make`/lane extractors already existed) → added the `f64v2(a,b)`/
+  `f64v4(...)` intrinsic constructor syntax (FINDFN → `_make`) + `f64v2_splat`/`f64v4_splat`; XMM-state
+  prerequisite noted; found-by-ports that value-form f64v2 SIMD is non-PE (Win64 vector-return ABI) →
+  gated. + vani 0.9.8 / yukti 2.2.8 folds. cycc byte-identical. See CHANGELOG [6.4.3].
+
+### v6.4.4 → v6.4.9 — SHIPPED: the SIMD compute arc (x86 portion)
+
+- See the **v6.4.x arc — EXECUTION STATUS** block above for the phase-by-phase summary (f32v4 → f32
+  matmul → integer vectors → int8 widening dot → f32v8 256-bit AVX2 → f32v8 FMA/dot), and
+  [roadmap.md](roadmap.md) for the per-release detail. **x86 SIMD complete; aarch64 NEON (Phase 5)
+  deferred at the break point.** Each release self-hosts byte-identical (cycc has no SIMD).
+
+### v6.4.10 — SHIPPED 2026-07-05: interim items after the SIMD break point
+
+- **(1) P1 kernel-blocker fix** — a bare top-level `var X[N]` was silently **8× under-sized** when
+  declared *after* the first bare top-level statement (pass-2 `PARSE_ARRAY` used the fn-local N-byte
+  default instead of `PARSE_GVAR_ARR`'s N×8) → BSS overflow (agnos ring-3 #PF). Fixed in
+  `parse_decl.cyr` (~61): a bare non-fn-local array sizes N×8. cycc's own top-level arrays were
+  affected → **two-step bootstrap** (fixpoint 1,057,568 B; differential codegen-diff = 31 /
+  status-diff = 0 — 31 programs' arrays correctly grow, nothing breaks). Regression
+  `toplevel_bare_array_size.tcyr`. **(2) `cyrius distlib` per-module read cap 256 KB → 1 MB**
+  (`cbt/commands.cyr`, matching cycc's `input_buf[1 MB]`) — distlib was rejecting modules cycc
+  compiles fine (a 283 KB generated CMUdict). cbt-only → cycc unaffected. check.sh 130; ecb+cass+pi
+  `SELFHOST_OK`; self_compile 556 ms. See CHANGELOG [6.4.10].
 
 ### v6.4.1 — SHIPPED 2026-07-03
 

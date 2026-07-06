@@ -21,10 +21,13 @@ var y: i64 = 42;      # Same thing — annotation is documentation
 ```
 
 `i64` is the core tenet, not the only type. A deliberate, narrow exception
-exists for math hot paths: scalar `f64` floats and the `f64v2` / `f64v4`
-SIMD vector types (`lib/math.cyr`, `lib/simd.cyr`), backed by SSE2/NEON
-builtins. These are reinterpreted bit patterns — float ops use explicit
-`f64_from` / `f64_to` conversions, not a full float type system.
+exists for math hot paths: scalar `f64` floats and the SIMD vector types
+(`f64v2` / `f64v4`, `f32v4` / `f32v8`, and the integer vectors), backed by
+SSE2 / AVX2 / NEON builtins (`lib/math.cyr`, `lib/simd.cyr`). These are
+reinterpreted bit patterns — float ops use explicit `f64_from` / `f64_to`
+(and `f32_from` / `f32_to` for 32-bit lanes) conversions, not a full float
+type system. See [SIMD Vectors](#simd-vectors) for the full type set,
+packed-op builtins, and runtime capability gating.
 
 ## Number Literals
 
@@ -364,6 +367,129 @@ fn example() {
 var angle = f64_atan(x);         # Arctangent (f64)
 # See lib/math.cyr for additional math functions
 ```
+
+## SIMD Vectors
+
+Cyrius exposes fixed-width SIMD vectors as first-class types for math /
+tensor hot paths. Lanes are stored as **reinterpreted bit patterns**: pass
+each lane as its integer bit pattern (`f64_from` for `f64` lanes,
+`f32_from` for `f32` lanes, plain integers for the integer vectors) and
+read results back with `f64_to` / `f32_to`. The compiler emits packed
+machine instructions directly; `lib/simd.cyr` provides typed wrappers over
+the raw builtins.
+
+### Vector types
+
+| Type     | Width   | Lanes        | Register | Since   |
+|----------|---------|--------------|----------|---------|
+| `f64v2`  | 128-bit | 2 × `f64`    | XMM      | v5.10.x |
+| `f64v4`  | 256-bit | 4 × `f64`    | XMM pair | v5.10.x |
+| `f32v4`  | 128-bit | 4 × `f32`    | XMM      | v6.4.4  |
+| `f32v8`  | 256-bit | 8 × `f32`    | YMM      | v6.4.8  |
+| `i8v16`  | 128-bit | 16 × `i8`    | XMM      | v6.4.6  |
+| `i16v8`  | 128-bit | 8 × `i16`    | XMM      | v6.4.6  |
+| `i32v4`  | 128-bit | 4 × `i32`    | XMM      | v6.4.6  |
+| `i64v2`  | 128-bit | 2 × `i64`    | XMM      | v6.4.6  |
+
+The integer vectors are signed by default; the unsigned variants
+(`u8v16`, `u16v8`, `u32v4`, `u64v2`) share the same lane layout and select
+unsigned packed ops where the width distinguishes them.
+
+### Packed-op builtins
+
+The raw builtins take **pointer arguments** (a destination and the operand
+addresses) plus a lane count `n`; the integer ops also take a compile-time
+lane byte-width literal `w` (1/2/4/8):
+
+```
+# 128-bit f32 (x86 SSE) — v6.4.4/v6.4.5
+f32v_add(&dst, &a, &b, n);        # packed addps  (also f32v_sub / f32v_mul)
+f32v_fmadd(&dst, &a, &b, &c, n);  # a*b + c, fused (mulps + addps)
+var s = f32v_dot(&a, &b, n);      # horizontal dot → f32 bit pattern
+
+# Integer 128-bit — v6.4.6/v6.4.7
+iv_add(&dst, &a, &b, n, w);       # packed add   (also iv_sub / iv_mul)
+var acc = iv_dp8(&a, &b, n);      # u8·i8 → i32 widening dot (BitNet/b1.58 inner loop)
+
+# 256-bit f32 (x86 AVX2) — v6.4.8/v6.4.9
+f32v8_add(&dst, &a, &b, n);       # packed vaddps ymm (also f32v8_sub / f32v8_mul)
+f32v8_fma(&dst, &a, &b, &c, n);   # vfmadd231ps ymm (single-rounding FMA)
+var s8 = f32v8_dot(&a, &b, n);    # 8-lane vextractf128 reduce → f32 bit pattern
+```
+
+`iv_mul` supports `i16` / `i32` widths only. The contract for `n` is
+"exactly the lane count, or over-allocate and zero-pad" — the dot builtins
+over-**read** and `f32v_fmadd` over-**writes** up to 3 destination lanes
+past `n`, so under-sizing `dst` is a memory-corruption footgun.
+
+> The bare `f32v8_*` builtins emit **unconditional AVX2** (they `#UD` on a
+> pre-AVX2 CPU). Call them only when `simd_has_avx2()` is true, or use the
+> `lib/simd.cyr` wrappers below, which pick the AVX2 or SSE-fallback path
+> for you.
+
+### `lib/simd.cyr` typed wrappers
+
+Each op has a **value form** and a **pointer form** with the same base
+name; the parser's overload dispatch routes `&IDENT` call sites to the
+`_ptr` sibling automatically:
+
+```
+include "lib/simd.cyr"
+
+# Value form — pass the vectors themselves (non-PE targets)
+var a: f32v4 = f32v4_make(f32_from(1), f32_from(2), f32_from(3), f32_from(4));
+var b: f32v4 = f32v4_splat(f32_from(10));
+var r: f32v4 = f32v4_add(a, b);          # {11, 12, 13, 14}
+var l0 = f32v4_lane0(r);                 # → f32 bit pattern of lane 0
+
+# Pointer form — pass addresses; `&IDENT` auto-routes to f32v4_add_ptr
+var r2: f32v4 = f32v4_add(&a, &b);
+
+# 256-bit wrappers self-select AVX2 vs 2×SSE at runtime
+var x: f32v8 = f32v8_make(/* 8 lanes */);
+var y: f32v8 = f32v8_splat(f32_from(2));
+var z: f32v8 = f32v8_add_ptr(&x, &y);    # vaddps ymm on AVX2, else 2×SSE addps
+
+# Integer vectors
+var p: i32v4 = i32v4_make(1, 2, 3, 4);
+var q: i32v4 = i32v4_splat(10);
+var s: i32v4 = i32v4_add(p, q);          # {11, 12, 13, 14}
+```
+
+Constructors (`*_make`, `*_splat`), lane extractors (`*_lane0` … per lane),
+and the arithmetic wrappers exist for every vector type. Value-form
+wrappers are gated on `CYRIUS_HAS_VAL_SIMD_PARAMS` (defined by every non-PE
+`main_*.cyr`); on Win64 PE only the pointer form is present, but the
+overload dispatch still routes `f32v4_add(&a, &b)` transparently.
+
+### Runtime capability gating (x86)
+
+AVX2 and FMA are **not** the x86-64 baseline, so the 256-bit path is
+guarded by a cached CPUID probe:
+
+```
+if (simd_has_avx2() == 1) { /* YMM path available */ }
+if (simd_has_fma()  == 1) { /* vfmadd231ps available */ }
+```
+
+`simd_has_avx2()` tests `CPUID.7.EBX` bit 5; `simd_has_fma()` tests
+`CPUID.1.ECX` bit 12 (a *different* bit). The `f32v8_*` wrappers call these
+internally and fall back to the 128-bit SSE ops (2 × 128-bit iterations)
+when a feature is absent, so consumer code stays correct on any x86 CPU.
+`cycc` itself never calls the AVX2 ops, so the compiler stays pure SSE2 and
+self-hosts everywhere.
+
+### Portability
+
+The packed SIMD ops are **x86-only** as of v6.4.10. On aarch64 (NEON) and
+the `cx` bytecode backend the packed-op emitters are silent stubs: the
+`f32v4` / `f32v8` / integer-vector wrappers *compile* but produce no result
+on those targets — do not use them there yet. The aarch64 NEON port
+(`fmla` / `sdot`, mirroring the existing `f64v` NEON code) is SIMD Phase 5,
+planned but deferred; the `simd_f32v4` / `simd_ints` / `simd_f32v8` tests
+are `XFAIL` in the aarch64 CI corpus until it lands. The scalar `f64` /
+`f64v2` / `f64v4` ops (backed by SSE2 / NEON) are available on every
+target.
 
 ## Includes
 

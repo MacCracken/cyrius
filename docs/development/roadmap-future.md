@@ -29,6 +29,30 @@ run path, (3) finish cx float ops ([roadmap_6.md:742](roadmap_6.md)) + decide SI
 
 ---
 
+## SIMD Phase 5 — aarch64 NEON (+ cx/PE tail) (DEFERRED, resumes later in v6.4.x)
+
+**Break point taken 2026-07-05** (user): the x86 SIMD compute portion of the v6.4.x arc shipped
+complete (Phase 1–4, v6.4.4–.9 — f32v4 128-bit + f32v8 256-bit AVX2, integer vectors + int8 widening
+dot), and the arc is **intentionally paused** to land interim items first. Phase 5 is **deferred, NOT
+cancelled** — it resumes **later in the v6.4.x minor** (so it stays in the active-minor arc, not v7);
+it lives here only as the tracking home while paused. Until it lands, `simd_f32v4` / `simd_ints` /
+`simd_f32v8` stay **XFAIL on aarch64** (and the cx/PE stubs stay silent).
+
+**Pre-scoped (premise-check 2026-07-05):** a **mechanical NEON mirror** of the existing `EMIT_F64V_*`
+aarch64 code (`.2d` → `.4s`, llvm-mc-sourced encodings), a planned **2-release split**:
+- **5a — f32 NEON** (`fadd`/`fmul`/`fmla`/dot). Un-XFAILs **both** `simd_f32v4` and `simd_f32v8` on
+  ARM in one go, because the f32v8 wrappers fall through to the f32v_ (128-bit) path on aarch64.
+- **5b — integer NEON + `iv_dp8`.** The one design point: `sdot` needs the optional **`FEAT_DotProd`**
+  extension, so a runtime feature-gate or an `smull`/`saddlp` fallback is required — the aarch64
+  analog of the x86 FMA/AVX2 CPUID gate.
+
+**Phase-6/7 tail:** cx-bytecode SIMD (decide alongside the cx CLI-exposure item above) + PE-target
+SIMD gating + the `lib/simd.cyr` wrapper/doc pass. When 5a lands, remove the `simd_f32v4`/`simd_f32v8`
+XFAILs from the aarch64-native CI corpus and promote them into the `vr01_` cross-OS LIBTEST glob (CI
+surfaces the flip via `XPASS`). Tracked: `issues/2026-07-05-aarch64-f32v4-xfail-phase5.md`.
+
+---
+
 ## v6.1.x carry-in (from the v6.0.x → v6.1.0 closeout, 2026-06-07) — ✅ MOSTLY SHIPPED
 
 Surfaced by the v6.0.91 closeout judgment-pass workflow (heap/dead-code/

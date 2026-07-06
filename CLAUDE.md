@@ -224,15 +224,19 @@ Periodically (before major releases, after significant changes), run a security 
 ```
 bootstrap/           29KB seed binary + cybs.cyr + asm.cyr
 src/
-  main.cyr           Compiler entry point (includes modules)
-  main_aarch64.cyr   Cross-compiler (swaps arch includes)
-  frontend/          lex.cyr, parse.cyr
-  backend/x86/       emit.cyr, jump.cyr, fixup.cyr
+  main.cyr           Compiler entry point (includes modules); 7 per-target forks
+                     (main.cyr + main_aarch64{,_macho,_native}.cyr, main_win.cyr,
+                     main_x86_macho.cyr, main_cx.cyr) + version_str.cyr (generated)
+  frontend/          lex.cyr, lex_pp.cyr, parse.cyr + the parse_* split
+                     (parse_ctrl/decl/expr/fn/types.cyr)
+  backend/x86/       emit.cyr, jump.cyr, fixup.cyr, decode.cyr (length-decoder),
+                     float.cyr (SSE/AVX FP + ALL SIMD emitters — the v6.4.x arc)
   backend/aarch64/   emit.cyr, jump.cyr, fixup.cyr
-  backend/cx/        emit.cyr (cyrius-x bytecode)
+  backend/cx/        emit.cyr (cyrius-x bytecode; runner: programs/cxvm.cyr)
+  backend/js/        emit.cyr (TS/TSX → JS, `cycc --emit-js`)
   common/            util.cyr, ir.cyr
 lib/                 Standard library (98 lib/*.cyr modules)
-programs/            79 programs (tools, tests, demos, algorithms)
+programs/            82 program files + subdirs (tools, tests, demos, algorithms)
 tests/               Test suites (tcyr/*.tcyr, heapmap.sh)
 benches/             Benchmarks (*.bcyr)
 fuzz/                Fuzz harnesses (*.fcyr)

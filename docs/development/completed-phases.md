@@ -55,6 +55,42 @@ Deferred: error message line numbers, performance pass, block scoping.
 - Benchmarks and documentation updated
 ---
 
+## v6.4.x — SIMD Compute Arc (x86)
+
+The one notable cross-release *arc* of the v6.4.x minor worth a single-glance
+summary here (per-release detail is canonical in [`CHANGELOG.md`](../../CHANGELOG.md)).
+A six-release SIMD build-out that took cyrius from 128-bit f64 vectors to a
+complete f32 SIMD stack on x86 (128-bit SSE + 256-bit AVX2) plus integer
+vectors, and emitted the **first VEX/AVX instructions the toolchain has ever
+produced**. The arc's x86 portion is COMPLETE; aarch64 NEON (Phase 5) is
+intentionally DEFERRED to resume later in v6.4.x.
+
+- **v6.4.4 — Phase 1: f32v4** (128-bit, 4×f32) — the first f32 SIMD. addps/subps/mulps (`EMIT_F32V_LOOP` = the f64 packed loop minus the 66 prefix). Structured-descriptor sentinel −2121 (reserved band ≤ −2048, decoded by `util.cyr` `_vec_desc`). Builtin tokens 138–140. Full value-form ABI + `.field`-OOB / async-token-collision / param-mask review bugs fixed. `lib/simd.cyr` f32v4 wrappers (value + ptr).
+- **v6.4.5 — Phase 2: f32 matmul ops** — `f32v_fmadd` (token 141, mulps+addps) + `f32v_dot` (token 142, two haddps horizontal reduce + `movd eax` 32-bit extract). `bench_f32_gemm` ~27× SIMD-vs-scalar.
+- **v6.4.6 — Phase 3a: integer vectors** — i8v16 / i16v8 / i32v4 / i64v2 (+ unsigned `u*`) types + packed `iv_add`/`iv_sub`/`iv_mul` (tokens 143–145; 5th arg = compile-time lane-width literal). Descriptor-driven ABI generalization (`_is_simd128`/`_is_simd256`/`_is_simd_any` in `util.cyr`; signed = descriptor bit 1). Return-type rough-scan SIGSEGV closed for all future vectors.
+- **v6.4.7 — Phase 3b: value-form typed integer ops** — `i32v4_add(a,b)` etc. + `iv_dp8` (token 146 — u8·i8→i32 widening int8 dot, the BitNet / b1.58 GEMM inner loop; pmaddubsw/pmaddwd/paddd). Param-mask redesign (class 1 = any 16-byte vector). `bench_i8_gemm` 64³ ~30×. **Integer-SIMD arc CLOSED.**
+- **v6.4.8 — Phase 4 R1: f32v8** (256-bit, 8×f32) AVX2 elementwise — the **first VEX/AVX** the toolchain ever emits (2-byte C5 VEX). `EMIT_F32V8_LOOP` (vaddps/vsubps/vmulps ymm). Structured-descriptor sentinel −2153. Tokens 147–149. 256-bit value-return ABI generalized to `_is_simd256`. `simd_has_avx2()` CPUID runtime fallback (leaf 7 EBX bit 5 — AVX2 is NOT x86-64 baseline; wrappers branch AVX2-vs-2×SSE).
+- **v6.4.9 — Phase 4 R2: f32v8 FMA + dot** — `f32v8_fma` (token 150, vfmadd231ps — the first 3-byte VEX / C4) + `f32v8_dot` (token 151, 8-lane vextractf128 reduce). `simd_has_fma()` (leaf 1 ECX bit 12 — a different CPUID bit than AVX2). `bench_f32v8_gemm` ~1.48× (256-bit vs 128-bit). **Phase 4 CLOSES — f32 SIMD complete on x86** (f32v4 128-bit + f32v8 256-bit, elementwise + FMA + dot).
+
+⏸ **SIMD break point** (2026-07-05): the x86 SIMD portion is complete; the arc is
+intentionally PAUSED. Phase 5 (aarch64 NEON: fmla/sdot + cx/PE) is pre-scoped as
+a mechanical NEON mirror of the existing `EMIT_F64V_*` aarch64 code — a planned
+2-release split (5a f32 NEON, 5b integer NEON + `iv_dp8`) — deferred to resume
+later in v6.4.x. `simd_f32v4` / `simd_ints` / `simd_f32v8` stay XFAIL on ARM until
+then.
+
+## v6.4.x — other releases
+
+Openers and interim work outside the SIMD arc:
+
+- **v6.4.0** — `CYRIUS_MONOMORPH` default-on flip (generics default-on; `CYRIUS_MONOMORPH=0` opts out).
+- **v6.4.1** — `alloc_reset()` zero-on-reset: closes a CVE-class memory-reuse info-leak across all four allocator backends.
+- **v6.4.2** — agnos `sys_snd_*` audio syscall band (#64–#69) mirrored into `lib/syscalls_x86_64_agnos.cyr`.
+- **v6.4.3** — f64v2/f64v4 value constructors + splat / lane-extract (pre-SIMD-arc surface solidification).
+- **v6.4.10** — interim items after the SIMD break point: (1) P1 kernel-blocker fix — a bare top-level `var X[N]` was silently 8× under-sized when declared after the first bare top-level statement (`parse_decl.cyr`; needed a two-step bootstrap since cycc's own arrays were affected); (2) cyrius distlib per-module read cap 256 KB → 1 MB (matching cycc's `input_buf`).
+
+---
+
 ## v0.9.x → v5.x — per-version detail
 
 Per-version slot history (every `## [x.y.z]` block) lives in

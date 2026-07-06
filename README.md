@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~1.07 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 98 stdlib modules + 0 git deps (folded sibling distfiles: sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; mabda 3.4.5; **bayan 1.0.3 at v6.1.25** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.1 at v6.1.26** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`; **yantra 1.0.0 at v6.2.26** — UI/E2E testing into `lib/yantra.cyr`). 192 .tcyr + 1 soak + 1 smoke + 5 fuzz + 15 bench, 101 check.sh gates + QEMU boot gate.
+~1.07 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Packed-SIMD compute (v6.4.x) — f32/f64/integer 128-bit + **256-bit AVX2** f32v8 (elementwise + FMA + horizontal dot) with CPUID runtime dispatch; x86 complete, aarch64 NEON in progress. Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 98 stdlib modules + 0 git deps (folded sibling distfiles: sakshi / patra / sigil / vani / yukti / sankoch at v5.8.65; niyama at v5.9.0; mabda 3.4.5; **bayan 1.0.3 at v6.1.25** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.1 at v6.1.26** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`; **yantra 1.0.0 at v6.2.26** — UI/E2E testing into `lib/yantra.cyr`). 227 .tcyr + 1 soak + 1 smoke + 6 fuzz + 18 bench, 130 check.sh gates + QEMU boot gate.
 
 ## Install
 
@@ -91,7 +91,7 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **1,075,616 B** (~1.07 MB) x86_64 at v6.3.2 |
+| Compiler (`cycc`) | **1,057,568 B** (~1.06 MB) x86_64 at v6.4.10 |
 | Cross compilers | `cycc_aarch64` 627,376 B, `cycc_win` 851,968 B (cross-built); `cycc-native-aarch64` 913,920 B (aarch64-native, pi-verified) |
 | Seed binary (`asm`) | **29,024 B** (committed binary root of trust; re-derivable from `archive/seed/` via `bootstrap/verify.sh`) |
 | Bootstrap compiler (`cybs`) | **21,066 B** (compiles all of `src/main.cyr`) |
