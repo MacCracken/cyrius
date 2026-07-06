@@ -1,0 +1,33 @@
+# Repro: bare `var X[N]` global is sized N*8 BEFORE the first bare top-level
+# statement (pass-1 declaration pre-scan) but N AFTER it (PARSE_PROG statement
+# parser). Same syntax, same file, same host target — position is the only variable.
+#
+# Build (host x86_64, cyrius 6.4.8):
+#   cyrius build 2026-07-05-toplevel-bare-array-8x-undersize.cyr out && ./out
+# Expected (buggy) output:
+#   BEF=192        # var BEF[24] declared before the first bare statement -> 24*8
+#   AFT=24         # var AFT[24] declared after  the first bare statement -> 24
+#
+# The byte gap (&marker - &array) is the array's allocated size: two consecutive
+# i64 scalar globals are 8 bytes apart, so the subtraction is a raw byte count.
+
+var BEF[24];
+var BEFmark = 0;
+
+fn probe(a: i64, b: i64): i64 { return b - a; }
+
+fn main(): i64 {
+    println_i64(probe(&BEF as i64, &BEFmark as i64));   # BEF size
+    println_i64(probe(&AFT as i64, &AFTmark as i64));   # AFT size
+    return 0;
+}
+
+# ---- first bare top-level statement: this HALTS the pass-1 declaration pre-scan.
+# Everything declared below is now parsed as a STATEMENT by PARSE_PROG.
+var _kick = probe(0, 0);
+
+var AFT[24];        # identical syntax to BEF, but now sized N (24), not N*8
+var AFTmark = 0;
+
+fn _entry(): i64 { var r = main(); syscall(SYS_EXIT, r); return 0; }
+_entry();

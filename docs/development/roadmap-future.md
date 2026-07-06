@@ -12,6 +12,23 @@ See [roadmap.md](roadmap.md) for the current active minor and
 
 ---
 
+## cyrius-x (cx) bytecode backend — productize the output/run path (TRACKED, after the v6.4.x SIMD arc)
+
+**Surfaced by a user premise-check 2026-07-05.** The cx / cyrius-x bytecode backend —
+born as the commit `caa7122e "wasm what"` and grown into a self-hosting, end-to-end-tested
+backend (`src/backend/cx/emit.cyr` + `src/main_cx.cyr` + `programs/cxvm.cyr` + the
+`programs/checks/cx.cyr` gate in the green check.sh) — is **built and functional internally
+but has ZERO user-facing surface**: no `cyrius build --target=cx`, `cxvm` is not installed
+(only built ad-hoc in the gate), and there's no `.cyx` run path. It's "all those minors of
+work sitting there unable to be used" — the exact shape of the TS→JS gap before `--target=js`
+(v6.1.12) exposed it. **Last-mile productization**, not new backend work: (1) `cyrius build
+--target=cx` routed to the cx emit path (mirror `--target=js`), (2) install `cxvm` + a `.cyx`
+run path, (3) finish cx float ops ([roadmap_6.md:742](roadmap_6.md)) + decide SIMD-on-cx.
+**Dig deeper later — do not start until the SIMD arc closes.** Full stub:
+[`proposals/2026-07-05-cx-bytecode-cli-exposure.md`](proposals/2026-07-05-cx-bytecode-cli-exposure.md).
+
+---
+
 ## v6.1.x carry-in (from the v6.0.x → v6.1.0 closeout, 2026-06-07) — ✅ MOSTLY SHIPPED
 
 Surfaced by the v6.0.91 closeout judgment-pass workflow (heap/dead-code/

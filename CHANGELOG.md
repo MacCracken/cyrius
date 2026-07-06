@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.8] — 2026-07-05
+
+**v6.4.8 — SIMD arc Phase 4 R1: f32v8 (256-bit, 8× f32) on AVX2 — the first VEX/AVX in the toolchain.**
+The first half of the planned Phase 4 2-release split (R1 = VEX substrate + elementwise + runtime
+fallback; R2 = fmadd + 8-lane dot + GEMM bench). Before this, the compiler emitted **zero** VEX bytes
+(`decode.cyr`: "no AVX/VEX/EVEX"); the existing "256-bit" `f64v4` is a count-driven 128-bit SSE2 loop, not
+AVX. cycc has no f32v8 in its own source → it stays pure SSE2 and self-hosts **byte-identical** on every
+target (fixpoint 1,049,352 B); the compiler change is **differential-green (codegen-diff=0)**; seed → cybs →
+cycc byte-identical; check.sh 129 → 130; ecb + cass + pi SELFHOST_OK; self_compile 566 ms.
+
+### Added — f32v8 256-bit AVX2 (x86)
+- **`EMIT_F32V8_LOOP`** (`backend/x86/float.cyr`) — the f32v4 loop widened to 256-bit **VEX**: the 128-bit
+  SSE bytes gain a 2-byte VEX prefix (`C5 FC`), 8 f32/iteration (`rsi += 8`), and `vzeroupper` (`C5 F8 77`)
+  on exit to avoid the AVX↔SSE transition penalty. `f32v8_add`/`_sub`/`_mul` → `vaddps`/`vsubps`/`vmulps ymm`
+  (tokens 147–149). **Every VEX byte was assembled + round-trip-verified with `llvm-mc`** (the `vvvv` field —
+  1's-complement of src1 — is the invisible wrong-register trap the closeout warns about).
+- **`f32v8` type** — 8 f32 lanes = 32 bytes = 256-bit, structured-descriptor sentinel **−2153** (`_vec_desc`
+  → 4-slot / lane-width-4). Parse + size as var-decls, return types, params.
+- **256-bit value-return ABI** — `_classify_return_type` gained the f32v8 arm; the f64v4 return path
+  (`parse_fn.cyr`) + caller-receive (`parse_decl.cyr`) generalized from exact `−21` to `_is_simd256`, so
+  f32v8 shares f64v4's identical 32-byte / `EFLLOAD_F64V4_PAIR` ABI. **Byte-identical for f64v4** (isolating
+  the compiler change gives a fully green differential — codegen-diff=0/status-diff=0). Verified cross-arch:
+  f32v8 construct/return works on real aarch64 (qemu), not just x86.
+- **AVX2 runtime fallback** — AVX2 is **not** x86-64 baseline (`vaddps ymm` #UDs on pre-AVX2 CPUs), so
+  `lib/simd.cyr` adds `simd_has_avx2()` (a byte-for-byte clone of sigil's `_sha_ni_cpuid_probe` — CPUID leaf 7
+  EBX, **bit 5** not 29; idempotent, no CAS latch) and the `f32v8_*_ptr` wrappers branch **inside the single
+  call site**: AVX2 → `vaddps ymm`, else `f32v_*(…, 8)` = 2×SSE. Each path is emitted once program-wide (zero
+  bloat). Both paths value-verified (AVX2 default; SSE via forced cache).
+- **`lib/simd.cyr`** — `f32v8_make`/`_splat`/`_lane0..7_ptr` + `f32v8_add`/`_sub`/`_mul_ptr` (pointer-form
+  first; value-form deferred to dodge the mask-saturation wall). api-surface +14 / −0.
+
+### Tests
+- **`simd_f32v8.tcyr`** (10 asserts, x86; XFAIL in the aarch64 corpus like `simd_f32v4`/`simd_ints`) — construct
+  + AVX2 arithmetic via the wrappers + the **SSE fallback** (forced `_avx2_cache=0`). Passes on non-AVX2 x86 too
+  (only the guarded wrappers are called). qemu-aarch64: 5 construct pass / 5 arithmetic fail → legit XFAIL.
+- **`vr01_f32v8_ctor.tcyr`** (arch-neutral construct/extract) — x86 6/6 + aarch64 6/6 (qemu); picked up by the
+  release gate's cross-OS `vr01_` LIBTEST glob.
+- **`tests/simd_f32v8_disasm.sh`** — a **disassembler gate** (registered in check.sh, 129 → 130) verifying each
+  emitted VEX byte sequence decodes to the intended `ymm` instruction **host-CPU-independently** — catches a
+  `vvvv` typo even on a non-AVX2 runner where the tcyr silently takes the SSE path.
+
+### Dropped from R1 (with a filed bug)
+- The planned **`decode.cyr` VEX length-decode was dropped** — it isn't needed (an undecodable VEX byte already
+  makes DCE fail-safe-refuse to NOP a dead f32v8 wrapper) and it broke DCE-mode byte-identity by colliding with
+  a **pre-existing** decoder bug: `DECODE_LEN` mis-lengths no-ModR/M `0F` opcodes (`SYSCALL`/`CPUID`/…), mis-
+  aligning the walk onto a spurious `0xC5`. Filed `issues/2026-07-05-decode-len-mislengths-no-modrm-0f-opcodes.md`
+  for a dedicated decoder-correctness slot.
+
+### Tracked (docs only) — surfaced by a user premise-check
+- The **cyrius-x (cx) bytecode backend** (born as the commit `"wasm what"`) is built, self-hosting, and
+  end-to-end tested but has **no user-facing CLI surface** (no `cyrius build --target=cx`, `cxvm` uninstalled,
+  no `.cyx` run path) — the same shape as the TS→JS gap before `--target=js`. Productization tracked in
+  `proposals/2026-07-05-cx-bytecode-cli-exposure.md` + `roadmap-future.md` + a vidya gotcha, scheduled after the
+  SIMD arc. **NEXT: Phase 4 R2** — `vfmadd231ps` + the 8-lane dot (`vextractf128` fold) + a f32v8 GEMM bench.
+
 ## [6.4.7] — 2026-07-05
 
 **v6.4.7 — SIMD arc Phase 3b: value-form typed integer ops + the int8 widening dot (b1.58 GEMM inner loop).**
