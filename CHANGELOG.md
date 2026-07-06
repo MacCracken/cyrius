@@ -6,6 +6,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.10] — 2026-07-05
+
+**v6.4.10 — frontend-correctness + tooling: the P1 top-level-array under-size fix + the distlib read-cap bump.**
+The first releases after the SIMD-arc x86 break point (aarch64 NEON deferred). Two independent bites bundled.
+Self-host: the array-sizing fix changes `.bss` layout, so cycc needed a **two-step bootstrap** (cycc itself had
+affected arrays) → byte-identical fixpoint 1,057,568 B; seed → cybs → cycc byte-identical; check.sh 130; ecb +
+cass + pi SELFHOST_OK; self_compile 556 ms.
+
+### Fixed — P1 (kernel blocker): bare top-level `var X[N]` silently 8× under-sized
+- A bare top-level `var X[N]` was sized **N×8** when declared *before* the first bare top-level statement (pass-1
+  `PARSE_GVAR_ARR`) but only **N bytes** when declared *after* it (pass-2 `PARSE_ARRAY`, which used the fn-local
+  N-byte default) — a silent 8× under-size → BSS overflow / memory corruption (it manifested as an agnos ring-3
+  `#PF` from a 24-slot payload buffer sized at 24 bytes). **Fix** (`parse_decl.cyr` ~61): `PARSE_ARRAY` now sizes
+  a bare array at **N×8 when it is NOT a function-local** (`GINFN(S) != 1`), matching `PARSE_GVAR_ARR`;
+  in-function locals keep the N-byte rounding. cycc's *own* top-level arrays were affected (hence the two-step
+  bootstrap). **Differential codegen-diff=31 / status-diff=0** — 31 programs' top-level bare arrays correctly
+  grow to N×8 and nothing breaks (the safe `.bss` shift; over-size, never under-size). Regression test
+  `tests/tcyr/toplevel_bare_array_size.tcyr`. Closes `issues/2026-07-05-toplevel-bare-array-8x-undersize.md`.
+
+### Changed — `cyrius distlib` per-module read cap 256 KB → 1 MB
+- Both `cbt/commands.cyr` call sites (flat + `--modular`) raised from a hardcoded 256 KB (`262144`) buffer to
+  **1 MB (`1048576`)**, matching cycc's own `input_buf[1048576]` — `distlib` was rejecting modules the compiler
+  compiles fine (a shabdakosh 283 KB generated CMUdict forced a manual shard). The fail-loud guard is preserved
+  at the new 1 MB ceiling. cbt-only change → cycc self-host unaffected; verified the rebuilt CLI bundles a 405 KB
+  module the old CLI rejected. Closes `proposals/2026-07-05-distlib-per-module-read-cap.md`.
+
 ## [6.4.9] — 2026-07-05
 
 **v6.4.9 — SIMD arc Phase 4 R2: f32v8 fused multiply-add + 8-lane horizontal dot + a f32 GEMM bench.**

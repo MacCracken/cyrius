@@ -1556,13 +1556,16 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
         sys_write(mfd, base, strlen(base));
         sys_write(mfd, " (cyrius distlib --modular)\n\n", 29);
 
-        var fbuf = alloc(262144);
-        var flen = file_read_all(mod_path, fbuf, 262143);
+        # v6.4.10: per-module read buffer raised 256KB → 1MB to match cycc's own
+        # input_buf[1048576] — distlib was rejecting modules the compiler compiles fine
+        # (shabdakosh's 283KB generated CMUdict). See distlib-per-module-read-cap proposal.
+        var fbuf = alloc(1048576);
+        var flen = file_read_all(mod_path, fbuf, 1048575);
         if (flen <= 0) { sys_close(mfd); mi = mi + 1; continue; }
-        # v6.2.51 (closeout): fail loud on a >256KB module — a silent truncation
+        # v6.2.51 (closeout): fail loud on a >1MB module — a silent truncation
         # would drop trailing `include`s from the index leaf list → missing-dep SIGILL.
-        if (flen >= 262143 && _file_size(mod_path) > 262143) {
-            _err_ctx("distlib --modular: module exceeds 256KB read cap (truncated)", mod_path);
+        if (flen >= 1048575 && _file_size(mod_path) > 1048575) {
+            _err_ctx("distlib --modular: module exceeds 1024KB read cap (truncated)", mod_path);
             sys_close(mfd);
             return 1;
         }
@@ -1855,19 +1858,19 @@ fn cmd_distlib(profile): i64 {
         # required stdlib before this bundle — cyrius's deps phase
         # handles the include order, now with stdlib-before-deps
         # (v5.5.26 flip in cbt/build.cyr).
-        # v5.7.36: per-module read buffer raised 64KB → 256KB. mabda
-        # surfaced the wall when its dist generation truncated at the
-        # 65535-byte read cap (single-module sources outgrew 64KB after
-        # hardware-iter accretion). 256KB is the next breathing room
-        # without committing to a dynamic vec — revisit if a module
-        # ever crosses 192KB.
-        var fbuf = alloc(262144);
-        var flen = file_read_all(mod_path, fbuf, 262143);
+        # v5.7.36: per-module read buffer 64KB → 256KB (mabda hit the 64KB wall).
+        # v6.4.10: 256KB → 1MB (1048576) to match cycc's own input_buf[1048576] —
+        # distlib was refusing modules the compiler compiles fine (shabdakosh's 283KB
+        # generated CMUdict forced a manual shard). One-shot alloc in the short-lived
+        # cbt process; the fail-loud guard is preserved at the new 1MB ceiling. A
+        # dynamic (_file_size-based) buffer is the eventual fix if a module nears 1MB.
+        var fbuf = alloc(1048576);
+        var flen = file_read_all(mod_path, fbuf, 1048575);
         if (flen <= 0) { mi = mi + 1; continue; }
-        # v6.2.51 (closeout): fail loud on a >256KB module rather than silently
+        # v6.2.51 (closeout): fail loud on a >1MB module rather than silently
         # truncating the bundle + dropping its trailing include/leaf lines.
-        if (flen >= 262143 && _file_size(mod_path) > 262143) {
-            _err_ctx("distlib: module exceeds 256KB read cap (truncated)", mod_path);
+        if (flen >= 1048575 && _file_size(mod_path) > 1048575) {
+            _err_ctx("distlib: module exceeds 1024KB read cap (truncated)", mod_path);
             sys_close(ofd);
             return 1;
         }

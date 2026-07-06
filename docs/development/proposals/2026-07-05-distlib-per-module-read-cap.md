@@ -2,8 +2,11 @@
 
 - **Filed**: 2026-07-05 (surfaced by a shabdakosh consumer premise-check during its
   v3.0.0 Rust→CYRIUS port, at the distlib/release-prep step)
-- **Status**: PROPOSED — small, localized, low-risk constant bump. Ready to implement;
-  a dynamic-buffer alternative is noted but explicitly deferred by the current code.
+- **Status**: ✅ **IMPLEMENTED in v6.4.10** (2026-07-05). Both call sites in `cbt/commands.cyr`
+  (flat + `--modular`) bumped 256KB → 1MB (`alloc(1048576)` / `1048575` read / `1048575` guard /
+  "1024KB read cap" message), matching cycc's `input_buf[1048576]`. Verified: the rebuilt `cyrius`
+  CLI bundles a 405KB module the old CLI rejected. cbt-only change → cycc self-host unaffected. The
+  dynamic `_file_size`-based buffer remains the eventual fix if a module nears 1MB.
 - **Priority**: not a release-blocker (consumers can shard their large modules today),
   but it removes a real, recurring workaround tax on generated-data crates.
 

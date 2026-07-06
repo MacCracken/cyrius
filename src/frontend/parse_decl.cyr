@@ -58,6 +58,15 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     # from this 0x12A000 table. See CHANGELOG [6.2.1].
     var aligned = (asz + 7) & (0 - 8);
     if (ew > 0) { aligned = (asz * ew + 7) & (0 - 8); }
+    # v6.4.10 (P1 fix, kernel blocker) — a BARE top-level `var X[N]` (ew==0, NOT a
+    # function-local) must size N×8 to match PARSE_GVAR_ARR (the pass-1 declaration path,
+    # parse_decl.cyr ~700 `ar_ew` defaults to 8). Otherwise the IDENTICAL decl is N×8 when
+    # it precedes the first bare top-level statement (pass 1) but only N bytes when it
+    # follows it (pass 2, this PARSE_ARRAY) — a silent 8× under-size → BSS overflow /
+    # memory corruption (agnos fpctxsw_payload ring-3 #PF). True in-function locals (GINFN
+    # ==1) keep the legacy N-byte rounding; the sa_on stack-array path below is inert at
+    # top level. See issues/2026-07-05-toplevel-bare-array-8x-undersize.md.
+    elif (GINFN(S) != 1) { aligned = (asz * 8 + 7) & (0 - 8); }
     # v6.3.13 (thread-safe array locals): a `var arr[N]` INSIDE a function goes to a
     # per-thread STACK slot block (the struct-local mechanism) instead of the shared
     # global/BSS data region, so concurrent code can't alias one global buffer. Reserve

@@ -1,0 +1,25 @@
+# toplevel_bare_array_size.tcyr — v6.4.10 P1 regression: a bare top-level `var X[N]`
+# must be sized N×8 (N u64 slots) REGARDLESS of whether it is declared before or after
+# the first bare top-level statement. Before the fix, an array after the first bare
+# statement went through PARSE_ARRAY (pass-2) with the fn-local N-byte default → an 8×
+# silent under-size → BSS overflow (agnos fpctxsw_payload ring-3 #PF). The reader fn must
+# be defined AFTER the arrays (a global declared after the first bare statement is not
+# visible to functions defined earlier — the secondary symptom). Arch-neutral (sizing is
+# in the shared frontend); the byte gap between two consecutive i64 globals is the size.
+# See issues/2026-07-05-toplevel-bare-array-8x-undersize.md.
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+var BEF[24]; var BEFm = 0;      # BEFORE the first bare stmt → pass-1 PARSE_GVAR_ARR → 24*8=192
+fn _tba_probe(): i64 { return 0; }
+_tba_probe();                    # the first bare top-level statement — halts the pass-1 pre-scan
+var AFT[24]; var AFTm = 0;      # AFTER it → pass-2 PARSE_ARRAY → was buggy 24, now 192
+
+fn _tba_check(): i64 {
+    test_group("top-level bare array sizing (P1 fix, v6.4.10)");
+    assert_eq(&BEFm - &BEF, 192, "BEF[24] before bare stmt = 24*8 = 192");
+    assert_eq(&AFTm - &AFT, 192, "AFT[24] after bare stmt = 24*8 = 192 (was silently 24)");
+    return assert_summary();
+}
+var ec = _tba_check();
+syscall(60, ec);

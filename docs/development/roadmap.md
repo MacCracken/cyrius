@@ -97,6 +97,19 @@ and .0's own de-risking) — see *Reactive headroom* below.
 
 ### Pin 1 — Packed SIMD compute (f32-first, then integer; ML/AI priority) — ~5–7 releases
 
+> **⏸ BREAK POINT (user 2026-07-05): the x86 portion of Pin 1 is COMPLETE and the arc is
+> intentionally paused here.** Phases 0–4 shipped x86 SIMD end-to-end — f32v4 (v6.4.4), f32
+> matmul (v6.4.5), integer vectors (v6.4.6/.7), and f32v8 256-bit AVX2 + FMA/dot (v6.4.8/.9) —
+> **6 releases, within the 5–7 budget**. The **aarch64 NEON remainder (Phase 5+)** is
+> **DEFERRED, to be resumed properly later in 6.4.x** after some other items. It is NOT
+> cancelled — `simd_f32v4`/`simd_ints`/`simd_f32v8` stay XFAIL on ARM until then. Premise-check
+> done (2026-07-05): Phase 5 is a **mechanical NEON mirror** of the existing `EMIT_F64V_*` code
+> (`.2d`→`.4s`, llvm-mc-sourced), a planned 2-release split — **5a** f32 NEON (fadd/fmul/fmla/dot;
+> the f32v8 wrappers fall through to the f32v_ path on ARM, so 5a un-XFAILs BOTH simd_f32v4 +
+> simd_f32v8) and **5b** integer NEON + `iv_dp8` (the one design point: `sdot` needs the optional
+> `FEAT_DotProd`, so a runtime feature-gate or `smull`/`saddlp` fallback — the aarch64 analog of
+> the x86 FMA gate). cx/PE SIMD + the `lib/simd.cyr` doc pass are the Phase-6/7 tail.
+
 **Sequence pivot (user 2026-07-04): f32 SIMD compute FIRST, then the lower-int lanes** — model
 testing shows f32+SIMD is the primary throughput lever, with int8/quantized as the optimization
 layer on top. Cyrius SIMD is **f64-only** today (`lib/simd.cyr` = `f64v2`/`f64v4`); **f32 is
@@ -154,8 +167,9 @@ broadcast/load and returned to i64 by extract/reduce.
 - **Phases**: (0 ✅) encoding → (1 ✅ v6.4.4) f32v4 end-to-end x86 → (2 ✅ v6.4.5) f32 matmul op set +
   GEMM bench → (3a ✅ v6.4.6) int types + packed ops → (3b ✅ v6.4.7) int widening-MAC + b1.58 bench →
   **(4 R1 ✅ v6.4.8) f32v8 256-bit AVX2 elementwise + VEX substrate + CPUID runtime fallback → (4 R2 ✅ v6.4.9)
-  f32v8 fmadd + 8-lane dot + GEMM bench — PHASE 4 CLOSES** → **(5 ▶ NEXT) aarch64 NEON (`fmla`/`sdot`) + cx/PE**
-  → (6) `lib/simd.cyr` wrappers + docs → (7) repair tail. **R1 (v6.4.8):** first VEX/AVX in the toolchain
+  f32v8 fmadd + 8-lane dot + GEMM bench — PHASE 4 CLOSES; x86 SIMD COMPLETE** → **⏸ BREAK POINT (user
+  2026-07-05: park the arc, do other items first)** → (5 — deferred, resume later in 6.4.x) aarch64 NEON
+  (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers + docs → (7) repair tail. **R1 (v6.4.8):** first VEX/AVX in the toolchain
   (2-byte C5, llvm-mc-verified, disasm-gated); 256-bit value-return ABI generalized to `_is_simd256` (byte-id
   for f64v4); `simd_has_avx2()` CPUID probe + branching wrappers; decode.cyr VEX dropped (pre-existing SYSCALL
   mis-decode, filed). **R2 (v6.4.9):** first 3-byte VEX (C4) — `vfmadd231ps` (FMA3) + the 8-lane `vextractf128`

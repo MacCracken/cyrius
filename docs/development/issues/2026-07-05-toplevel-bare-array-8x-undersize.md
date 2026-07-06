@@ -1,6 +1,13 @@
 # Bare `var X[N]` global silently under-sized 8x when declared AFTER the first bare top-level statement
 
 - **Filed**: 2026-07-05 (during agnos kernel FP/SIMD B5 work; surfaced as a ring-3 #PF, root-caused to array sizing)
+- **Status**: ✅ **FIXED in v6.4.10** (2026-07-05, after the SIMD x86 break point). The one-site
+  element-width unification below was applied: `PARSE_ARRAY` (`parse_decl.cyr` ~61) now sizes a bare
+  top-level `var X[N]` (ew==0, `GINFN(S) != 1`) at N×8 to match `PARSE_GVAR_ARR`. Function-locals keep
+  N-byte rounding. cycc itself had affected arrays → **two-step bootstrap** (cc_fix→cc_fix_b, byte-identical
+  fixpoint 1,057,568 B); seed-derive OK; check.sh 130; **differential codegen-diff=31 / status-diff=0** (31
+  programs' top-level bare arrays correctly grow to N×8, nothing breaks — the predicted safe `.bss` shift).
+  Regression test `tests/tcyr/toplevel_bare_array_size.tcyr`.
 - **Severity**: P1 (silent 8x under-size of a top-level array → BSS buffer overflow → memory corruption; compiles clean, only surfaces downstream. Opt-in to hit: you must declare a top-level array and overrun it — but when hit it is a hard-to-trace corruption, not a fail-safe miss). **Review after the current SIMD work lands.**
 - **File**: `src/frontend/parse_decl.cyr` — the bare-array element-width default in `PARSE_ARRAY` (line 59) vs `PARSE_GVAR_ARR` (lines 699–701); split driven by `src/main.cyr` pass-1 terminator (line 1314)
 
