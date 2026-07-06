@@ -14,8 +14,8 @@
 #   0x13A000 var_types[8192]      65536 bytes — struct_id per var (0=scalar)
 #   0x1A6018  struct_names[256]    2048 bytes — name offset per struct (cap 256, v5.7.17)
 #   0x1A8018  struct_fcounts[256]  2048 bytes — field count per struct (bit 63 = union; relocated v5.7.17)
-#   0x91A000 struct_ftypes        65536 bytes — 256×32 field type IDs  (stride 256, v5.7.17)
-#   0x92A000 struct_fnames        65536 bytes — 256×32 field name offsets (stride 256, v5.7.17)
+#   0x91A000 struct_ftypes        65536 bytes — PACKED field-type pool (v6.0.47): 8192 entries × 8B, addr=(field_base[si]+fc)*8. ftype: >0 sid / 0 i64 / <0 -width / far-neg = Vec<T> handle sentinel (v6.4.x, MKVEC)
+#   0x92A000 struct_fnames        65536 bytes — PACKED field-name pool (v6.0.47): 8192 entries × 8B, same indexing
 #   0x18F830  struct_count         8 bytes
 #   0x1D8000  enum_const_val[8192] 8192 bytes — 1024 × 8 B enum-fold table (v5.5.2)
 
@@ -178,10 +178,34 @@ fn IS_STR_FIELD(S, ft): i64 {
     return 1;
 }
 
+# v6.4.x Pin 2 — Vec<T> array-typed struct field encoding. A Vec<T> field is
+# an 8-byte pointer slot (the vec_new() handle), like a Str field, but Vec is
+# not a registered struct so it cannot be name-detected. The ftype cell carries
+# a far-negative sentinel: MKVEC(elem) = -0x50000 - elem, where `elem` is the
+# element type in the normal field-type encoding (>0 struct sid, 0 = i64/f64,
+# <0 = -width scalar). IS_VEC_FIELD tests the sentinel window BEFORE any ft>0 /
+# ft<0 decode (the -2121-class OOB guard); VEC_ELEM recovers the element type.
+# The window (-0x80000, -0x40000] is disjoint from every real field ftype
+# (0, sids 1..1024, -1/-2/-4 widths).
+fn MKVEC(S, elem): i64 {
+    return (0 - 0x50000) - elem;
+}
+fn IS_VEC_FIELD(S, ft): i64 {
+    if (ft <= (0 - 0x40000)) {
+        if (ft > (0 - 0x80000)) { return 1; }
+    }
+    return 0;
+}
+fn VEC_ELEM(S, ft): i64 {
+    return (0 - 0x50000) - ft;
+}
+
 # Get byte size of a single field from its type encoding
 # >0 = nested struct ID, 0 = untyped (8), <0 = sized scalar (-width)
 # v5.10.7 — Str field special-case: 8 bytes (pointer slot).
+# v6.4.x — Vec<T> field special-case: 8 bytes (pointer slot), guarded FIRST.
 fn FIELDSZ(S, ft): i64 {
+    if (IS_VEC_FIELD(S, ft) == 1) { return 8; }
     if (ft > 0) {
         if (IS_STR_FIELD(S, ft) == 1) { return 8; }
         return STRUCTSZ(S, ft - 1);
@@ -486,7 +510,37 @@ fn PARSE_STRUCT_DEF(S): i64 {
                     elif (ftname & 0xFFFFFF == 0x323369) { fscalar = 4; }
                     elif (ftname & 0xFFFFFF == 0x343669) { fscalar = 8; }
                     STI(S, GTI(S) + 1);
-                    if (fscalar > 0) {
+                    # v6.4.x Pin 2 — Vec<T> array-typed field. `Vec` (0x636556)
+                    # followed by `<` (token 19) is a typed handle field: an
+                    # 8-byte pointer slot (like Str), element type T recorded in
+                    # a far-negative sentinel via MKVEC. Non-generic structs only.
+                    if (ftname & 0xFFFFFFFF == 0x636556) {
+                        if (PEEKT(S) == 19) {
+                            STI(S, GTI(S) + 1);   # consume <
+                            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+                            var etoff = PEEKV(S);
+                            var ename = L64(S + 0x60000 + etoff);
+                            var ew = 0;
+                            if (ename & 0xFFFF == 0x3869) { ew = 1; }
+                            elif (ename & 0xFFFFFF == 0x363169) { ew = 2; }
+                            elif (ename & 0xFFFFFF == 0x323369) { ew = 4; }
+                            elif (ename & 0xFFFFFF == 0x343669) { ew = 8; }
+                            STI(S, GTI(S) + 1);   # consume element type name
+                            var elemc = 0;
+                            if (ew > 0) {
+                                if (ew < 8) { elemc = 0 - ew; }
+                            } else {
+                                elemc = FINDSTRUCT(S, etoff);
+                            }
+                            if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
+                            STI(S, GTI(S) + 1);   # consume >
+                            var _vsent = MKVEC(S, elemc);
+                            ADDFIELDTYPED(S, si, fnoff, _vsent);
+                        } else {
+                            var _bsid = FINDSTRUCT(S, tnoff);
+                            ADDFIELDTYPED(S, si, fnoff, _bsid);
+                        }
+                    } elif (fscalar > 0) {
                         # Store as negative width for sized scalars, 0 for i64 (default)
                         if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                         else { ADDFIELD(S, si, fnoff); }
@@ -536,7 +590,35 @@ fn PARSE_UNION_DEF(S): i64 {
                 elif (ftname & 0xFFFFFF == 0x323369) { fscalar = 4; }
                 elif (ftname & 0xFFFFFF == 0x343669) { fscalar = 8; }
                 STI(S, GTI(S) + 1);
-                if (fscalar > 0) {
+                # v6.4.x Pin 2 — Vec<T> array-typed field (PARSE_UNION_DEF
+                # parallel copy of the PARSE_STRUCT_DEF branch).
+                if (ftname & 0xFFFFFFFF == 0x636556) {
+                    if (PEEKT(S) == 19) {
+                        STI(S, GTI(S) + 1);   # consume <
+                        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+                        var etoff = PEEKV(S);
+                        var ename = L64(S + 0x60000 + etoff);
+                        var ew = 0;
+                        if (ename & 0xFFFF == 0x3869) { ew = 1; }
+                        elif (ename & 0xFFFFFF == 0x363169) { ew = 2; }
+                        elif (ename & 0xFFFFFF == 0x323369) { ew = 4; }
+                        elif (ename & 0xFFFFFF == 0x343669) { ew = 8; }
+                        STI(S, GTI(S) + 1);   # consume element type name
+                        var elemc = 0;
+                        if (ew > 0) {
+                            if (ew < 8) { elemc = 0 - ew; }
+                        } else {
+                            elemc = FINDSTRUCT(S, etoff);
+                        }
+                        if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
+                        STI(S, GTI(S) + 1);   # consume >
+                        var _vsent = MKVEC(S, elemc);
+                        ADDFIELDTYPED(S, si, fnoff, _vsent);
+                    } else {
+                        var _bsid = FINDSTRUCT(S, tnoff);
+                        ADDFIELDTYPED(S, si, fnoff, _bsid);
+                    }
+                } elif (fscalar > 0) {
                     if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                     else { ADDFIELD(S, si, fnoff); }
                 } else {

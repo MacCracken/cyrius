@@ -195,9 +195,10 @@ platform work (bottom-to-top priority) takes v6.2.x.
   **silent-correctness + stdlib-refold arc** — call-arity check + IEEE-754 NaN
   fix (.41), sigil certpin (.42), agnos-clock + ERR_* namespacing + agnos
   landmine gates (.43). Note: `agnosys` retired at .37 (decomposed), dropping
-  api-surface from ~5035 to **4343 fns** (now 4363 @ v6.3.2). **Current metrics live
-  in [state.md](state.md)** (avoid re-rotting an inline snapshot here): as of v6.3.2 —
-  cycc 1,075,616 B, check.sh 101/101 + boot gate, api-surface 4363, tests 192 `.tcyr`.
+  api-surface from ~5035 to **4343 fns** (grown to 4519 @ v6.4.10 with per-cycle
+  additions). **Current metrics live in [state.md](state.md)** (avoid re-rotting an
+  inline snapshot here): as of v6.4.10 — cycc 1,057,568 B, check.sh 130, api-surface
+  4519, tests 227 `.tcyr`.
 
 Remaining v6.2.x arc: the **dependency-model foundation (lever 1)** — the
 active committed arc — plus the **open bare-metal/kernel reactive window**

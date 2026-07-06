@@ -1,0 +1,84 @@
+# vec_struct_field.tcyr — v6.4.x Pin 2 R1: array-typed struct fields (Vec<T> handle).
+#
+# A `Vec<T>` struct field is an 8-byte pointer slot (the vec_new() handle), like a
+# Str field, encoded as a far-negative sentinel (MKVEC) in the ftype cell so it is
+# decoded BEFORE any ft>0 / ft<0 struct/scalar path (the -2121-class OOB guard,
+# proven safe-by-construction by the R1 guard-site audit).
+#
+# Because the sentinel is NEGATIVE, struct-literal init flows through the scalar
+# `else` branch -> FIELDSZ -> 8 (one 8-byte slot), so it needs NO PARSE_STRUCT_INIT
+# fix — unlike Str (a POSITIVE sid that hit the flatten branch, v5.10.7/v6.3.44).
+#
+# Covers: (1) parse-acceptance of `xs: Vec<i64>`; (2) layout — the field AFTER a Vec
+# field lands at the right offset (proves 8-byte sizing), incl. a Vec field BETWEEN
+# scalars; (3) global + local struct-literal init store the handle (not flattened);
+# (4) `.field` LOAD returns the FULL 8-byte handle — the v6.4.x §4(a) fix: the Vec
+# sentinel is ft<0, and the sub-width sign-extend at parse_decl.cyr:404 wrongly fired
+# on it (movsxd -> 32-bit truncation); now guarded by IS_VEC_FIELD; (5) `.field` STORE.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+struct holder { id: i64; xs: Vec<i64>; tag: i64; }
+struct withvec { head: i64; body: Vec<i32>; tail: i64; }
+
+# --- global-scope struct literal WITH a Vec field ---
+var g_xs = vec_new();
+var g_h = holder { 42, g_xs, 7 };
+
+fn main(): i64 {
+    vec_push(g_xs, 100);
+    vec_push(g_xs, 200);
+
+    # (1) raw layout: id@0, xs@8 (8-byte handle), tag@16
+    assert_eq(load64(&g_h), 42, "id field @ offset 0");
+    assert_eq(load64(&g_h + 16), 7, "tag field @ offset 16 (Vec field is 8 bytes)");
+
+    # (2) .field LOAD returns the FULL 8-byte handle (== the raw 8-byte read); a
+    #     truncating 32-bit load would diverge from load64 when the handle has high bits.
+    assert_eq(g_h.xs, load64(&g_h + 8), ".field load == raw 8-byte handle");
+    assert_eq(vec_len(g_h.xs), 2, ".field load: handle usable via vec_len");
+    assert_eq(vec_get(g_h.xs, 1), 200, ".field load: element via field");
+
+    # (2b) DETERMINISTIC load-width check: stash a >32-bit pattern in a Vec-field
+    #      slot and read it back through `.field`. Pre-fix (movsxd) truncates to the
+    #      low 32 bits (0x9ABCDEF0 sign-extends to 0xFFFFFFFF9ABCDEF0) != the stored
+    #      0x123456789ABCDEF0 -> assert fails on the bug, passes on the 8-byte load.
+    var wv_body = vec_new();
+    var wv = withvec { 111, wv_body, 222 };
+    store64(&wv + 8, 0x123456789ABCDEF0);
+    assert_eq(wv.body, 0x123456789ABCDEF0, ".field load: full 64 bits, not 32-bit truncated");
+
+    # (3) Vec field BETWEEN scalars — offset integrity (fail-on-bug if mis-sized)
+    store64(&wv + 8, wv_body);   # restore a real handle
+    assert_eq(wv.head, 111, "withvec: head @ 0");
+    assert_eq(wv.tail, 222, "withvec: tail @ 16 (Vec<i32> field is 8 bytes)");
+    wv.tail = 333;
+    wv.head = 444;
+    assert_eq(wv.head, 444, "withvec: head store");
+    assert_eq(wv.tail, 333, "withvec: tail unclobbered (offsets disjoint)");
+
+    # (4) local literal + .field load/store
+    var l_xs = vec_new();
+    vec_push(l_xs, 9);
+    var l_h = holder { 1, l_xs, 2 };
+    assert_eq(l_h.tag, 2, "local literal: tag via .field");
+    assert_eq(vec_get(l_h.xs, 0), 9, "local literal: Vec handle via .field");
+
+    var l_xs2 = vec_new();
+    vec_push(l_xs2, 77);
+    l_h.xs = l_xs2;
+    assert_eq(vec_get(l_h.xs, 0), 77, ".field store: new handle stored + reloaded");
+    assert_eq(l_h.tag, 2, ".field store: adjacent field unclobbered");
+
+    return assert_summary();
+}

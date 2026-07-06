@@ -154,7 +154,7 @@ pulled (no urgency — every consumer has a working fallback today).
 
 | Lib | Filed by | Effort | Status / Notes |
 |---|---|---|---|
-| **`lib/protobuf.cyr`** (proto3 wire encode/decode) | hoosh (OTLP/OpenTelemetry span export) | Medium | Its own slot (user 2026-06-16). Minimal proto3 wire codec — length-delimited messages, no `.proto` compiler. Pure Cyrius, no syscalls. hoosh ships OTLP/**JSON** today (works), but most collectors + gRPC/proto3 interop default to protobuf. See `proposals/2026-06-10-protobuf-lib.md`. |
+| ~~`lib/protobuf.cyr`~~ (proto3 wire encode/decode) | hoosh (OTLP/OpenTelemetry span export) | — | ✅ **Shipped v6.2.17**, finished v6.3.42 (double/float wire helpers + guide section, protobuf.tcyr 49 cases). Minimal proto3 wire codec — length-delimited messages, no `.proto` compiler; pure Cyrius, no syscalls. Proposal archived. |
 | ~~`sys_fsync`/`sys_fdatasync`~~ | hapi (atomic manifest edits) | — | ✅ **Shipped v6.2.14** — bare wrappers in `syscalls_x86_64_linux.cyr` (74/75) + `syscalls_aarch64_linux.cyr` (emit x86 74/75, ESYSXLAT → 82/83). Proposal archived. |
 
 ---
