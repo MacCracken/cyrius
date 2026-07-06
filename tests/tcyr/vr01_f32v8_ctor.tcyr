@@ -1,0 +1,30 @@
+# vr01_f32v8_ctor.tcyr — VR-01: f32v8 (256-bit) construct + splat + lane-extract, CROSS-OS.
+# (v6.4.8, SIMD Phase 4 R1.) The f32v8 TYPE, construct (make/splat), and pointer-form
+# lane-extract are ARCH-NEUTRAL — they lower to store/load + the 256-bit value-form
+# return ABI (shared with f64v4), NOT to EMIT_F32V8_LOOP. So they work on aarch64/macOS
+# even though the packed AVX2 ARITHMETIC (add/sub/mul) is x86-only. Gives the release
+# gate's cross-OS LIBTEST real-hardware coverage of the f32v8 type + 32-byte return/
+# receive ABI on ecb (macOS) + pi (aarch64). Uses raw i32 bit patterns (not f32_from) so
+# it depends on nothing but the construct/extract round-trip. Gated on
+# CYRIUS_HAS_VAL_SIMD_PARAMS (value-form SIMD is non-PE) → skips cass, like vr01_f32v4_ctor.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+#ifdef CYRIUS_HAS_VAL_SIMD_PARAMS
+    test_group("f32v8 construct + splat + lane-extract (cross-OS)");
+    var a: f32v8 = f32v8_make(10, 20, 30, 40, 50, 60, 70, 80);
+    assert_eq(f32v8_lane0_ptr(&a), 10, "f32v8_make lane 0 = 10");
+    assert_eq(f32v8_lane3_ptr(&a), 40, "f32v8_make lane 3 = 40");
+    assert_eq(f32v8_lane4_ptr(&a), 50, "f32v8_make lane 4 = 50 (past the 128-bit split)");
+    assert_eq(f32v8_lane7_ptr(&a), 80, "f32v8_make lane 7 = 80 (full 256-bit return)");
+    var s: f32v8 = f32v8_splat(7);
+    assert_eq(f32v8_lane0_ptr(&s), 7, "f32v8_splat broadcasts lane 0");
+    assert_eq(f32v8_lane7_ptr(&s), 7, "f32v8_splat broadcasts lane 7");
+    return assert_summary();
+#endif
+    return 0;   # PE (no value-form SIMD): skip cleanly — tracked separately.
+}
+var ec = main();
+syscall(60, ec);

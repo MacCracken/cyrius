@@ -1,0 +1,40 @@
+# simd_f32v8.tcyr — SIMD Phase 4 R1 (v6.4.8): f32v8 (256-bit, 8 f32 lanes) — construct,
+# packed AVX2 arithmetic (vaddps/vsubps/vmulps ymm) via the runtime-fallback wrappers,
+# and the SSE fallback path. x86-only: EMIT_F32V8_LOOP is AVX2; aarch64/cx stub it (like
+# f32v4/int vectors) → XFAIL in the aarch64-native CI corpus. On x86 the wrappers work on
+# ANY CPU (AVX2 → vaddps ymm; else 2×SSE), so this passes on non-AVX2 x86 too — the raw
+# f32v8_* builtins (unconditional AVX2) are NOT called directly here; only through the
+# guarded wrappers. The exact VEX bytes are checked host-CPU-independently by the disasm
+# gate (tests/simd_f32v8_disasm.sh); this test checks VALUES.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    test_group("f32v8 (256-bit AVX2) construct + packed ops (SIMD Phase 4)");
+    # Construct + lane-extract (arch-neutral).
+    var a: f32v8 = f32v8_make(f32_from(1), f32_from(2), f32_from(3), f32_from(4),
+                              f32_from(5), f32_from(6), f32_from(7), f32_from(8));
+    assert_eq(f32v8_lane0_ptr(&a), f32_from(1), "f32v8_make lane 0 = 1.0");
+    assert_eq(f32v8_lane7_ptr(&a), f32_from(8), "f32v8_make lane 7 = 8.0");
+    var s: f32v8 = f32v8_splat(f32_from(10));
+    assert_eq(f32v8_lane3_ptr(&s), f32_from(10), "f32v8_splat lane 3 = 10.0");
+    # Packed arithmetic via the runtime-fallback wrappers (AVX2 or 2×SSE per host).
+    var r: f32v8 = f32v8_add_ptr(&a, &s);
+    assert_eq(f32v8_lane0_ptr(&r), f32_from(11), "f32v8 add lane0 = 1+10 = 11");
+    assert_eq(f32v8_lane7_ptr(&r), f32_from(18), "f32v8 add lane7 = 8+10 = 18 (all 8 lanes)");
+    var d: f32v8 = f32v8_sub_ptr(&s, &a);
+    assert_eq(f32v8_lane4_ptr(&d), f32_from(5), "f32v8 sub lane4 = 10-5 = 5 (past 128-bit split)");
+    var m: f32v8 = f32v8_mul_ptr(&a, &s);
+    assert_eq(f32v8_lane2_ptr(&m), f32_from(30), "f32v8 mul lane2 = 3*10 = 30");
+    assert_eq(f32v8_lane6_ptr(&m), f32_from(70), "f32v8 mul lane6 = 7*10 = 70");
+    # SSE fallback path: force the AVX2 cache off → the wrapper takes f32v_*(n=8) = 2×SSE.
+    # Must produce the identical result. (Reset the cache after.)
+    _avx2_cache = 0;
+    var r2: f32v8 = f32v8_add_ptr(&a, &s);
+    assert_eq(f32v8_lane0_ptr(&r2), f32_from(11), "f32v8 add via SSE fallback lane0 = 11");
+    assert_eq(f32v8_lane7_ptr(&r2), f32_from(18), "f32v8 add via SSE fallback lane7 = 18");
+    _avx2_cache = 2;   # reset to uncached so real detection resumes
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);
