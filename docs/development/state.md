@@ -16,8 +16,8 @@
 | **Bootstrap / cross-OS** | seed (29 KB asm) → cybs → cycc byte-identical · ecb (macOS/arm64) + cass (Windows/PE) + pi (aarch64) `SELFHOST_OK` |
 | **Active minor** | **v6.4.x** — ABI / Language-Features (opened at v6.4.0; v6.3.x closed at v6.3.45) |
 | **In-flight arc** | **Pin 2 — array-typed struct fields: COMPLETE** (v6.4.11–.13). **struct-sid 20/21 P1: SHIPPED** (v6.4.14 — f64v2/f64v4 folded into the descriptor band, retiring the flat −20/−21). **NEXT: SIMD Pin 1 aarch64 NEON (Phase 5)** — un-pause below. |
-| **Next up** | **SIMD Pin 1 aarch64 NEON — Phase 5** (5a f32 NEON → 5b int NEON; un-XFAILs the `simd_*` tcyr on aarch64). x86 SIMD complete (v6.4.4–.9). |
-| **Committed after** | UEFI Secure Boot signing → function visibility (`pub`/`private`) → Intel-Mac (x86_64 Mach-O) tail |
+| **Next up** | **SIMD Pin 1 aarch64 NEON — Phase 5** (5a f32 NEON → 5b int NEON; un-XFAILs the `simd_*` tcyr on aarch64). x86 SIMD complete (v6.4.4–.9). **+ cx backend CLI exposure PRIORITIZED as interim DX** (2026-07-07 — consumer hit the wasm-shaped wall). |
+| **Committed after** | UEFI Secure Boot signing → function visibility (`pub`/`private`) → Intel-Mac (x86_64 Mach-O) tail. **2026-07-07 horizon**: + scalar-float completion + diagnostics later in 6.4.x · **v6.5.x = perf-quality** (absorbs SIMD register-residency / IR-regalloc) · **v6.6.x = language ergonomics** (defer, const fn, block scoping, bounds mode, trait-bounds gated) · **RISC-V → v6.7/v6.8** |
 
 > Full arc detail, per-arc length estimates, and the Phase-5 5a/5b plan live in
 > [roadmap.md](roadmap.md). Reactive agnos + consumer-filed repairs interleave as

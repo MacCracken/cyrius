@@ -12,19 +12,14 @@ See [roadmap.md](roadmap.md) for the current active minor and
 
 ---
 
-## cyrius-x (cx) bytecode backend — productize the output/run path (TRACKED, after the v6.4.x SIMD arc)
+## cyrius-x (cx) bytecode backend — ▲ PULLED FORWARD to v6.4.x (2026-07-07)
 
-**Surfaced by a user premise-check 2026-07-05.** The cx / cyrius-x bytecode backend —
-born as the commit `caa7122e "wasm what"` and grown into a self-hosting, end-to-end-tested
-backend (`src/backend/cx/emit.cyr` + `src/main_cx.cyr` + `programs/cxvm.cyr` + the
-`programs/checks/cx.cyr` gate in the green check.sh) — is **built and functional internally
-but has ZERO user-facing surface**: no `cyrius build --target=cx`, `cxvm` is not installed
-(only built ad-hoc in the gate), and there's no `.cyx` run path. It's "all those minors of
-work sitting there unable to be used" — the exact shape of the TS→JS gap before `--target=js`
-(v6.1.12) exposed it. **Last-mile productization**, not new backend work: (1) `cyrius build
---target=cx` routed to the cx emit path (mirror `--target=js`), (2) install `cxvm` + a `.cyx`
-run path, (3) finish cx float ops ([roadmap_6.md:742](roadmap_6.md)) + decide SIMD-on-cx.
-**Dig deeper later — do not start until the SIMD arc closes.** Full stub:
+**Moved to the active minor** at the 2026-07-07 horizon session: the missing CLI
+surface was hit as a real wall by a consumer needing wasm-shaped output, so the
+user prioritized it as **sooner-than-later interim DX work in v6.4.x** — see
+[roadmap.md](roadmap.md) "2026-07-07 horizon additions". Scope unchanged:
+`cyrius build --target=cx` (mirror `--target=js`) + install `cxvm`/`.cyx` run
+path + finish cx float ops + decide SIMD-on-cx. Full stub:
 [`proposals/2026-07-05-cx-bytecode-cli-exposure.md`](proposals/2026-07-05-cx-bytecode-cli-exposure.md).
 
 ---
@@ -140,10 +135,10 @@ at each cycle-open per [`feedback_premise_check_at_slot_entry`].
 |---|---|---|
 | **Hardware 128-bit div-mod** | Medium | Stays unpinned. abaco / sigil work around via u128 shifts; not blocking. Pull forward if a real perf regression surfaces. |
 | **Phase 3-full varargs** (`va_arg` for structs-by-value + nested) | Medium | Phase 3-min shipped v5.5.36. Stays unpinned — niche. Most consumers use array-of-args pattern instead. |
-| **cycc per-block scoping** | Medium | Stays unpinned. Function-scope works for current consumer base; promote when a real refactor surfaces the pain point. |
-| **Incremental compilation** | High | Stays **watching**. Whole-program self-host is fast (~500 ms @ v6.1.x). Reconsider when cycc self-host crosses ~2 sec — and per user 2026-06-11, **the next few arcs will inform the timing**: PIE/generics growth (v6.1.x–v6.3.x) + RISC-V (now v6.6.x) plus the (currently blind, PF-01) bench harness once fixed will show whether self-host is approaching the threshold. Don't pin now; let those arcs report. Same posture for the **bus-factor / institutional-memory** question (vidya + memory-pins live outside the repo) — revisit as those arcs land. |
+| **cycc per-block scoping** | Medium | ▲ **PINNED v6.6.x** (2026-07-07 horizon session — item 3 of the Language-Ergonomics minor, with shadowing; see [roadmap_6.md](roadmap_6.md)). |
+| **Incremental compilation** | High | Stays **watching**. Whole-program self-host is fast (~500 ms @ v6.1.x). Reconsider when cycc self-host crosses ~2 sec (~575 ms @ v6.4.14) — and per user 2026-06-11, **the next few arcs will inform the timing**: the v6.5.x perf-quality minor + RISC-V (now v6.7/v6.8) will show whether self-host is approaching the threshold (the bench harness is un-blind since v6.2.15/v6.3.17, phase-resolved). Don't pin now; let those arcs report. Same posture for the **bus-factor / institutional-memory** question (vidya + memory-pins live outside the repo) — revisit as those arcs land. |
 | **Stackless coroutines** (suspend/resume across `await`) | Medium (poll-runtime rework) | **Unpinned follow-on.** v6.3.11 shipped async/await as first-class deferred-then-forced Futures over the run-to-completion epoll runtime, explicitly NOT stackless CPS. True suspend/resume needs a poll-runtime rework (+ force-once memoization). No live consumer; pull forward on a real suspend-across-await need. (Named in the v6.3.11 slot cell as "pinned as a follow-on" — recorded here 2026-07-01 so it points somewhere.) |
-| **f32 scalar arithmetic** (native-float Tier A tail) | Low | **Unpinned, consumer-less.** f64 type/operators/NaN (x86+aarch64) + f32 conversions shipped .18/.19/.41; only f32 *scalar arithmetic* remains. mabda's f32 shims were deleted at v6.3.19, so zero consumers. Pull forward on a demand signal. (Recorded 2026-07-01 so the native-float arc isn't silently "done" with a deferred remainder unlogged.) |
+| **f32 scalar arithmetic** (native-float Tier A tail) | Low | ▲ **PINNED later-v6.4.x** (2026-07-07 horizon session — the scalar-float completion slot, together with scalar-`f64` return type + stricter f64/f32 typecheck; see [roadmap.md](roadmap.md)). |
 
 ---
 
@@ -169,8 +164,11 @@ or design driver materializes.
 - **Polymorphic items beyond monomorphization** — trait-bounded
   generics, higher-kinded types, GATs (generic associated types),
   or whatever shape post-monomorphization generic work needs once
-  v6.3.x ships and consumers start hitting the next ceiling.
-  Concrete asks land here when they surface.
+  consumers start hitting the next ceiling. **Trait-bounded generics
+  got a DEMAND-GATED home at the v6.6.x ergonomics tail (2026-07-07)**
+  — pulls in only if consumer pressure materializes by that arc-open
+  (the open B3 struct-type-args monomorph bug lands first). HKTs/GATs
+  stay here.
 - **Effect tracking beyond `@unsafe`** — v5.8.x shipped `@unsafe`
   as the first effect annotation. Lift-to-more-effects (e.g.
   `@io`, `@alloc`, `@panic`) only if a real consumer enforcement

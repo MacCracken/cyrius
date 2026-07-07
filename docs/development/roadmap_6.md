@@ -2,8 +2,8 @@
 
 **Scope** — the **whole v6.x cycle** (cycle-open 2026-05-19). This is
 the cycle-level reference: framing, per-minor budgeting, and the
-remaining minors v6.4.x → v6.6.x (v6.2.x + v6.3.x CLOSED). The
-**current active minor (v6.4.x, at v6.4.10)** is broken out in detail in [roadmap.md](roadmap.md); items beyond the
+remaining minors v6.4.x → v6.8.x (v6.2.x + v6.3.x CLOSED). The
+**current active minor (v6.4.x)** is broken out in detail in [roadmap.md](roadmap.md); items beyond the
 cycle (v7.0+ aspirations, unpinned language refinements, speculative
 work) live in [roadmap-future.md](roadmap-future.md). v5.x history and
 the now-closed v6.0.x detail are canonical in
@@ -141,8 +141,9 @@ landing as packed releases before the cycle-close. Full slot detail lives in
 foundation** (modules + module groupings, lever 1 of 2). RISC-V rv64 —
 originally this minor's second platform arc — was **re-homed to v6.6.x**
 (user 2026-06-27: *"don't want to worry about another platform until some
-of the other items in the minors get ironed out"*; full scope re-homed to
-the [v6.6.x section below](#v66x--platform-risc-v-rv64)). Substantial
+of the other items in the minors get ironed out"*; re-homed AGAIN to
+v6.7.x/v6.8.x at the 2026-07-07 horizon session — full scope now in the
+[RISC-V section below](#v67x-or-v68x--platform-risc-v-rv64)). Substantial
 new-code minor; substrate prerequisites all landed in v5.11.x close
 (parser-to-emit named-op refactor, heap-map full reorg) + v6.1.x backend
 codegen.
@@ -1213,10 +1214,40 @@ Unlocks three deferred passes that all share the same gate
 
 ---
 
-## v6.5.x — Self-Compile Perf-Refactor
+## v6.5.x — Performance Quality (generated-code + self-compile)
 
-**Theme**: dedicated perf cleanup once accumulated growth
-surfaces. Middle-late v6.x timing per user direction 2026-05-19:
+**Theme REFRAMED 2026-07-07 (user, horizon session): v6.5.x absorbs the
+GENERATED-CODE quality arc, not just the self-compile growth-tax cleanup.**
+The anchor is the svara finding
+([`issues/2026-07-06-simd-f64v-memory-operand-no-register-residency.md`](issues/2026-07-06-simd-f64v-memory-operand-no-register-residency.md)):
+every `f64v_*` op is a *memory → xmm → op → memory* loop with **no register
+residency across a chain**, so consumer DSP/numeric code runs **10–38× behind
+its Rust baseline** and hand-SIMD gains ~5% where LLVM gains 2–4× — a codegen
+ceiling, not a usage problem, and the piece that makes the shipped v6.4.x SIMD
+instruction set actually pay off in chains. Committed shape (design decisions
+at arc-open):
+
+1. **IR substrate productionization** — the prerequisite
+   ([`issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md`](issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md)
+   + [`issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md`](issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md)):
+   re-emit path, complete local-access opcode model, `CYRIUS_IR=3` differential
+   correctness. Proven necessary by the v6.3.27/.28 deferrals.
+2. **Cross-BB regalloc WITH a vector register class** — the vector class is what
+   lets SIMD values live in registers; planned in from the start, not retrofit.
+3. **Register-resident vector-value ops** — value-form `f64v4_add/mul/fmadd/…`
+   keep values in xmm/ymm reg-reg-reg, touching memory only at chain edges; the
+   memory-loop kernels stay for the `_ptr`/bulk forms. Plus wrapper inlining and
+   true 256-bit AVX for f64v4 under `simd_has_avx2()`.
+4. **The deferred passes** — copy-prop + cross-BB DSE revival (both proven
+   inert-if-sound / miscompiling-if-not on the raw substrate at v6.3.28).
+5. **Self-compile growth-tax audit** — the original theme rides along (the bench
+   harness is fully un-blind since v6.2.15/v6.3.17; phase-resolved trend available).
+
+**Acceptance anchor**: the svara formant bench (`svara/benches/hotpath.bcyr`,
+`process_block 1024`: 186 µs vs Rust 4.84 µs at filing) closes to single-digit-×
+of the Rust baseline; self_compile stays inside a stated budget.
+
+Middle-late v6.x timing per user direction 2026-05-19:
 "compile time can holdover until later in 6.x cycle probably
 middle-late".
 
@@ -1235,9 +1266,9 @@ bloat.
 
 **v6.x adds its own growth-creating surfaces**: PIE codegen
 (v6.1.x), bare-metal (v6.2.x), language refinements (v6.3.x),
-Class B FFI + cross-BB regalloc (v6.4.x), RISC-V rv64 (v6.6.x).
+SIMD + ABI/language features (v6.4.x), RISC-V rv64 (v6.7/v6.8).
 By v6.5.x the new baseline is established and a dedicated
-perf-refactor minor can land without bumping capability work.
+perf minor can land without bumping capability work.
 
 ### First-step audit
 
@@ -1267,17 +1298,60 @@ to 40+ if the perf-refactor surface is wider than expected.
 
 ---
 
-## v6.6.x — Platform: RISC-V rv64
+## v6.6.x — Language Ergonomics ("best of the best" imports)
 
-**Theme**: the 4th platform peer — first-class RISC-V 64-bit. **Re-homed
-here from v6.2.x** (user 2026-06-27: *"6.6 is where we put it for now …
-[I] don't want to worry about another platform until some of the other
-items in the minors get ironed out"*). A **deferral of worry, not intent**
-— the rv64 hardware is in-hand; the point is to keep v6.2.x's bare-metal
-reactive window unblocked and let the v6.3.x–v6.5.x arcs (language /
-ABI+perf / perf-refactor) settle before adding a 7th backend. Slots in
-after v6.5.x; the cycle is explicitly allowed to grow past 6 minors (see
-"What comes after v6.x" below).
+**Theme set 2026-07-07 (user, horizon session).** RISC-V rv64 — previously this
+minor's theme — was **re-homed again to v6.7.x/v6.8.x** (below): hardware is in
+hand, but the user is deliberately holding a 7th platform while *"still heavy
+quality and ergonomic improvements [are] on the horizon."* v6.6.x instead takes
+the modern-language feature imports that fit the assembly-up identity — no GC,
+no hidden control flow you can't disassemble. **The WHOLE list is committed; the
+bring-in is STAGGERED** — bulk lands here, and **1–2 low-risk early risers may
+pull forward into the v6.4.x/v6.5.x absorber bands** if slots open (surfaced at
+slot entry, never folded in silently).
+
+The list (ROI order; design decisions inside each item at arc-open):
+
+1. **`defer` / scope-exit** (Go/Zig lineage) — the single best ergonomic win for
+   a manual-memory language; no RAII machinery; lowers to a jump-to-epilogue
+   chain the disassembly shows plainly. **Early-riser candidate.**
+2. **`const fn` — the const-eval ladder, option 1** (Zig-comptime-lite / Rust) —
+   proposal staged:
+   [`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md).
+   Reuses the existing `ir_const_fold` fixpoint; retires generator-program
+   ceremony for computed constants. The narrow `#phf` builtin (proposal option 3)
+   is the fallback if scope balloons. **Early-riser candidate.**
+3. **Per-block scoping + shadowing** — retires the no-redecl / function-scope-only
+   footgun class (pulled from roadmap-future.md 2026-07-07).
+4. **Opt-in bounds-checked memory mode** (`CYRIUS_BOUNDS` / `#bounds`) — designed
+   in the v6.3.x plan (see that section above), never shipped. The sanitizer
+   story that makes footguns findable at their source. OFF by default
+   (assembly-up: raw stores stay raw in release builds).
+5. **Trait-bounded generics** — the post-monomorphization ceiling. **DEMAND-GATED
+   tail**: pulls in only if consumer pressure materializes by arc-open; fix the
+   open B3 struct-type-args monomorph bug first
+   ([`issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md)).
+
+**Explicitly NOT imported** (decided 2026-07-07): borrow-checker-style lifetimes
+(wrong fit for the trust model + single-pass design), a general const-eval VM
+(proposal option 4), exceptions of any kind.
+
+---
+
+## v6.7.x or v6.8.x — Platform: RISC-V rv64
+
+**Theme**: the 4th platform peer — first-class RISC-V 64-bit. **Re-homed here
+from v6.6.x at the 2026-07-07 horizon session** (user: hardware in hand, *"can
+do it now but have been hesitant to add another platform with still heavy
+quality and ergonomic improvements on the horizon … risc can be 6.7 or 6.8 arc
+work"*) — the second deliberate deferral of the same shape as the first
+(**re-homed from v6.2.x**, user 2026-06-27: *"6.6 is where we put it for now …
+[I] don't want to worry about another platform until some of the other items in
+the minors get ironed out"*). A **deferral of worry, not intent** — the point is
+to let the v6.5.x perf-quality + v6.6.x ergonomics minors land before adding a
+7th backend. Whether it takes 6.7 or 6.8 is decided at v6.6.x close (consumer
+pressure may claim 6.7 first); the cycle is explicitly allowed to grow past 6
+minors (see "What comes after v6.x" below).
 
 First-class RISC-V 64-bit target — the 4th platform peer after
 x86_64 / aarch64 / PE-x86_64. Substrate prerequisites already landed:
@@ -1324,10 +1398,11 @@ landed first in v6.2.x).
 ## What comes after v6.x
 
 **v6.x is not capped at 6 minors.** Per user direction 2026-06-11, the cycle
-**grows further before any major bump** — v6.2.x–v6.5.x plus **v6.6.x (RISC-V
-rv64, pinned here 2026-06-27 when RISC-V was re-homed out of v6.2.x)** are the
-current pins, and more v6.x minors can still follow (consumer pressure, language
-refinements, platform work) before v7.0.0. v7 is *further out* than the original
+**grows further before any major bump** — v6.4.x (active) → **v6.5.x
+(performance quality)** → **v6.6.x (language ergonomics)** → **v6.7.x/v6.8.x
+(RISC-V rv64, re-homed there 2026-07-07)** are the current pins, and more v6.x
+minors can still follow (consumer pressure, language refinements, platform work)
+before v7.0.0. v7 is *further out* than the original
 "6 minors" framing implied; don't treat the tail as the cycle's hard end.
 
 v7.x scope is open. Known commitments per CLAUDE.md "Version

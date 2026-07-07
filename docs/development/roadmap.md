@@ -3,7 +3,7 @@
 **Scope** — the **current active minor only** (v6.4.x). This is the
 slot-pinning working artifact: the committed opening sequence + a **conservative,
 code-grounded length map** for each remaining arc. The fuller per-arc design, the
-rest of the cycle (v6.5.x → v6.6.x), and the closed-minor summaries live in
+rest of the cycle (v6.5.x → v6.8.x), and the closed-minor summaries live in
 [roadmap_6.md](roadmap_6.md); everything beyond v6.x is in
 [roadmap-future.md](roadmap-future.md).
 
@@ -149,15 +149,59 @@ releases, each bundling several bites. Minors flex long.**
 | 2 | **Array-typed struct fields** | **3 releases (done)** | No | **✅ DONE — R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13 (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>)** |
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
+| 5 | **DX: cx bytecode backend CLI exposure** (`--target=cx` + `cxvm` install + `.cyx` run path) | **1–2 releases** | No | **pinned 2026-07-07 — PRIORITIZED interim (consumer hit the wall)** |
+| 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | **2–3 releases** | No | pinned 2026-07-07 — later 6.4.x |
+| 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | **2–4 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
 
-**Opening sequence total: conservatively ~17–26 `.NN` releases** — v6.4.x is a **long
-minor**. **None of the five arcs is a release-blocker.** **Pin 1's x86 portion landed at 6 releases
+**Opening sequence total: conservatively ~22–35 `.NN` releases** (grown from ~17–26
+at the 2026-07-07 horizon session: + cx CLI exposure, scalar-float completion,
+diagnostics) — v6.4.x is a **long minor**, per the user's standing preference for
+**large minors (~45–99 releases historically), not a theme-per-minor**. **None of the
+arcs is a release-blocker.** **Pin 1's x86 portion landed at 6 releases
 (v6.4.4–.9), inside the 5–7 budget** — the aarch64-NEON remainder (Phase 5) is intentionally paused
 (see the break-point note under Pin 1). On top of the arcs, **reactive agnos + consumer-filed repairs
 interleave throughout** and consume **separate** slots that are **not** counted above (already this
 minor: .0's own de-risking, .1 alloc_reset, .2 agnos audio, .3 the f64 SIMD-surface solidification,
 and .10 the kernel-blocker + distlib-cap interim fixes) — see *Reactive headroom* below.
+
+---
+
+## 2026-07-07 horizon additions (user-committed, planning session)
+
+Three additions to THIS minor. (The same session also reframed **v6.5.x** as the
+**Performance-Quality minor** — absorbing the SIMD register-residency / IR-regalloc
+work — set **v6.6.x** as the **Language-Ergonomics minor**, and re-homed **RISC-V
+rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
+
+- **DX: cx bytecode backend CLI exposure — PRIORITIZED, sooner-than-later.** User
+  reasoning: a consumer agent's project needed wasm-shaped output and **hit the
+  wall** — the backend is fully built, self-hosting, and check.sh-gated but has
+  ZERO user-facing surface. Scope (pulled forward from roadmap-future.md):
+  `cyrius build --target=cx` routed to the cx emit path (mirror `--target=js`),
+  install `cxvm` + a `.cyx` run path, finish cx float ops, decide SIMD-on-cx.
+  Land as the next interim slot(s) — this does NOT displace the committed arc
+  order (interim slots interleave by design; Phase 5 NEON remains the next arc).
+  Full stub: [`proposals/2026-07-05-cx-bytecode-cli-exposure.md`](proposals/2026-07-05-cx-bytecode-cli-exposure.md).
+- **Scalar-float completion — later 6.4.x.** Scalar `f64` as a function RETURN
+  type (returned in xmm0 per SysV — today's allow-list admits `f64v2`/`f64v4` but
+  not `f64`; [`issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md`](issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md) §1),
+  **f32 scalar arithmetic** (the native-float Tier A tail, pulled from
+  roadmap-future.md), and stricter f64/f32 typecheck. Retires the i64-boxed-f64
+  idiom, where a plain `+` on a boxed f64 silently integer-adds the bit pattern —
+  the ergonomic face of the same numeric push v6.5.x anchors.
+- **DX: diagnostics — later 6.4.x.** Multi-error reporting (today:
+  first-error-exit) + column + source-excerpt in errors. A maintenance-cost item:
+  consumer-filed misdiagnoses are the recurring tax better errors retire. DWARF
+  debug-info stays v7-parked (only the error-reporting layer moves here).
+
+**Absorber-band (rides between arcs, uncounted):** the v6.3.45 closeout backlog
+([`issues/2026-07-03-v6345-closeout-audit-backlog.md`](issues/2026-07-03-v6345-closeout-audit-backlog.md)
+— L1 pp-flag-table 16-slot silent-corruption cap, L2 `_msx` imm8 ≥128 guard,
+R1–R5 parallel-copy consolidations), the decode.cyr no-ModRM-0F mis-length fix,
+the SIMD value-form typecheck residual, and an **issue-archive hygiene pass**
+(open queue ~21; resolved-in-header entries archive per
+[[feedback_issue_hygiene_batch_not_pile]]).
 
 ---
 
@@ -396,9 +440,11 @@ never unilaterally deferred or redirected.
   sandhi RPC-policy TLS-slot OOB
   ([`issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md`](issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md));
   the `thread_local_alloc()` allocator follow-up.
-- **v7-PARKED (NOT near-term)** — LEGAL-01 licensing, DWARF/diagnostics,
+- **v7-PARKED (NOT near-term)** — LEGAL-01 licensing, DWARF debug-info,
   stdlib-reference docs, incremental compilation, the public-release decision. These
-  stay in [roadmap-future.md](roadmap-future.md); they are **not** pulled into v6.4.x.
+  stay in [roadmap-future.md](roadmap-future.md). (**Diagnostics** — multi-error +
+  column/excerpt — **was pulled INTO v6.4.x at the 2026-07-07 horizon session**;
+  DWARF itself stays parked.)
 
 ## Discipline (per [cycle-discipline.md](cycle-discipline.md))
 
