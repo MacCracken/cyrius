@@ -263,6 +263,7 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     for cbin in $_R_CROSS; do
         case "$cbin" in
             cycc_aarch64) _rebuild_stale "cycc_aarch64" "src/main_aarch64.cyr" "lib src" ;;
+            cycc_cx) _rebuild_stale "cycc_cx" "src/main_cx.cyr" "lib src" ;;   # cx arc: cx bytecode compiler (plain build/cycc, no env — like cycc_aarch64)
             cycc-native-aarch64)
                 # v6.0.7 — native aarch64 self-host. Built by piping
                 # src/main_aarch64_native.cyr through build/cycc_aarch64
@@ -663,6 +664,13 @@ if [ "$installed" -eq 0 ]; then
     # Cross-compiler(s)
     if [ -f src/main_aarch64.cyr ]; then
         _build_tool "cycc_aarch64" "src/main_aarch64.cyr"
+    fi
+    # cx arc: cx bytecode compiler — plain build/cycc compiling src/main_cx.cyr
+    # (no env, unlike cycc_win). cxvm (the .cyx runtime) rides the bins loop free
+    # via programs/cxvm.cyr. Both let an installed cyrius reach --target=cx /
+    # `cyrius run *.cyx` without repo sources (the JIT fallback needs src/).
+    if [ -f src/main_cx.cyr ]; then
+        _build_tool "cycc_cx" "src/main_cx.cyr"
     fi
     # v6.0.50: PE compiler — build cycc_win from src/main_win.cyr with
     # CYRIUS_TARGET_WIN=1 (the x86 cycc emits a PE32+ cycc). Unfreezes it

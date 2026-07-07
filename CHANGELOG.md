@@ -6,6 +6,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.17] — 2026-07-07
+
+**v6.4.17 — cx portable bytecode target, Release A: CLI exposure + run path.** The cx /
+cyrius-x bytecode backend (built, self-hosting, check-gated, but ZERO user-facing surface)
+gets its first CLI — a consumer who "hit the wasm-shaped wall" can now emit and run portable
+`.cyx` bytecode. First of a ~4-release arc (user chose the full-portable scope: **A** this
+release, **B** cx scalar float, **C** cross-OS cxvm). cycc is **byte-identical** — the entire
+cx surface lives in `cbt/` + the cx fork/backend + cxvm, none included by `src/main.cyr`.
+
+### Added — cx CLI + run path
+- **`cyrius build --target=cx <src>.cyr <out>.cyx`** — routes to the cx bytecode compiler.
+  cx is a source FORK (`src/main_cx.cyr`), so this **resolves+execs a `cycc_cx` binary**
+  (the aarch64-cross-compiler dispatch shape, NOT the `--target=js` flag model — a flag merge
+  would be a deep two-backend emit-dispatch rewrite). `cbt/build.cyr` `_emit_cx` pipes
+  source→`cycc_cx` **stdin**→`.cyx`, atomic tmp-rename. `cycc_cx` is JIT-built from
+  `src/main_cx.cyr` on first in-repo use and installed via `cross_bins` (rebuilt-on-demand,
+  gitignored, out of the seed trusted base — like `cycc_aarch64`).
+- **`cyrius run <file>.cyx`** — detects the `.cyx` extension and runs it via **cxvm** (the
+  `.cyx` piped to cxvm's stdin; guest exit code passes through). `run_cx` mirrors
+  `run_binary`'s fork/waitpid. cxvm ships as an installed bin (`cyrius.cyml [release].bins`,
+  host-native from `programs/cxvm.cyr`).
+- **Versioned `.cyx` header** — header byte 3 (was a hardcoded `0`) is now a format version
+  (`CYX_VERSION = 1`); cxvm rejects an unrecognized version rather than mis-executing. Landed
+  NOW, before any public `.cyx` ships, so arc-B float opcodes / arc-C changes have a compat marker.
+
+### Fixed — cx float footgun (fail loud, not silent-wrong)
+- cx `EMIT_FLOAT_LIT` emitted **garbage** (raw rational numer/denom bits via `EMOVI`, never
+  divided) — any float constant on cx silently miscompiled (the found-by-ports failure the
+  project forbids). Now every cx float entry point (literal, `f64` arithmetic, i↔f cast, `f32`
+  convert) **hard-errors** (*"float (f64/f32) is not yet supported on the cx bytecode target"*)
+  so a `--target=cx` build of float code fails at compile time. Real scalar float = Release B.
+
+### Scope + gate
+- cx target is **x86-Linux only** for now (cxvm uses raw x86-Linux syscalls; cross-OS `.cyx`
+  is arc C). WASM is an explicit **non-goal** (CYX register-bytecode ≠ WASM). Supported cx
+  subset: integer / syscall / struct-byval; float hard-errors; SIMD / callptr / inline-asm
+  unsupported. New gate `tests/cx_cli.sh` (end-to-end: `build --target=cx` → versioned `.cyx`
+  → `cyrius run` exit code + float-reject) so `--target=cx` can't rot behind the 5 internal
+  `cc_cx` gates. check.sh **132**; cycc byte-identical (1,069,552 B); self_compile 577 ms;
+  ecb + cass + pi `SELFHOST_OK` + VR-01 `LIBTEST_OK` on **real hardware** (cass/Windows PE
+  proves the `cyrius` CLI compiles with the cx fork/exec plumbing).
+
 ## [6.4.16] — 2026-07-07
 
 **v6.4.16 — aarch64 `f64_sin` / `f64_cos` polyfill (consumer-filed P2 arch-parity).**

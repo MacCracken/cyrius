@@ -789,13 +789,22 @@ fn E2(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); return 0; }
 fn E3(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); EB(S, v >> 16 & 0xFF); return 0; }
 fn E8(S, v): i64 { var i = 0; while (i < 8) { EB(S, (v >> (i * 8)) & 0xFF); i = i + 1; } return 0; }
 
-# Float stubs (not supported in bytecode yet)
-fn EMIT_FLOAT_LIT(S, v): i64 { EMOVI(S, v); return 0; }
-fn EMIT_F64_BINOP(S, op): i64 { return 0; }
-fn EF32_FROM(S): i64 { return 0; }   # v6.2.18: cx has no scalar float (stub, like EMIT_F64_BINOP)
-fn EF32_TO(S): i64 { return 0; }
-fn EI2F(S): i64 { return 0; }
-fn EF2I(S): i64 { return 0; }
+# Float: NOT yet supported on the cx bytecode target (the VM has no float opcodes
+# — scalar float lands in a later cx-arc release). FAIL LOUD. Pre-cx-arc these were
+# silent stubs and EMIT_FLOAT_LIT actively emitted GARBAGE (raw rational-pair bits
+# via EMOVI, never divided) → any float constant silently miscompiled. Now every
+# float entry point (literal, arithmetic, i↔f cast, f32 convert) hard-errors so a
+# `--target=cx` build of float code fails at compile time, not with wrong output.
+fn _cx_float_unsupported(S): i64 {
+    ERR_MSG(S, "float (f64/f32) is not yet supported on the cx bytecode target", 62);
+    return 0;
+}
+fn EMIT_FLOAT_LIT(S, v): i64 { _cx_float_unsupported(S); return 0; }
+fn EMIT_F64_BINOP(S, op): i64 { _cx_float_unsupported(S); return 0; }
+fn EF32_FROM(S): i64 { _cx_float_unsupported(S); return 0; }
+fn EF32_TO(S): i64 { _cx_float_unsupported(S); return 0; }
+fn EI2F(S): i64 { _cx_float_unsupported(S); return 0; }
+fn EF2I(S): i64 { _cx_float_unsupported(S); return 0; }
 # v5.7.11: PF64BIN / PF64CMP now defined in parse_expr.cyr (the
 # shared frontend, since v5.6.x). The cx stubs that lived here
 # collided with the parse_expr versions and lost (last-include

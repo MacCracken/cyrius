@@ -17,8 +17,13 @@ output = "build/cc5"
 # hardcoded lists was never updated. Now: add a binary here, every
 # consumer picks it up automatically.
 [release]
-bins = ["cycc", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cybs", "cyaudit", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner", "cyrsign", "cyrius-init"]
-cross_bins = ["cycc_aarch64", "cycc_win", "cycc-native-aarch64"]
+bins = ["cycc", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cybs", "cyaudit", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner", "cyrsign", "cyrius-init", "cxvm"]
+# cx arc: cxvm (the .cyx runtime) rides bins — host-native, built from
+# programs/cxvm.cyr like cyrfmt/cyrlint. cycc_cx (the cx bytecode COMPILER, from
+# src/main_cx.cyr) rides cross_bins — a cross-target compiler rebuilt on demand,
+# gitignored, out of the seed trusted base (like cycc_aarch64). Needs an explicit
+# install.sh case arm (its source is src/main_cx.cyr, not programs/cycc_cx.cyr).
+cross_bins = ["cycc_aarch64", "cycc_win", "cycc-native-aarch64", "cycc_cx"]
 # v5.11.10: scripts/cyriusly retired from release.scripts — replaced by
 # programs/cyriusly.cyr in bins (cyrius binary handles all verbs; heavy
 # verbs shell-out to OS tools via process.exec). scripts/cyriusly stays

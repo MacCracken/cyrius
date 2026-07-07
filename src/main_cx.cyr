@@ -447,11 +447,14 @@ while (fi < fcnt) {
 }
 
 # Emit CYX file: header + bytecode + var data + string data
-# Header: "CYX\0" (4 bytes) + entry_offset (4 bytes LE)
+# Header: "CYX" (3 bytes) + format version (1 byte) + entry_offset (4 bytes LE).
+# cx arc A: byte 3 is now a FORMAT VERSION (was a hardcoded 0). Bump CYX_VERSION on
+# ANY bytecode-ISA change (e.g. arc-B float opcodes) so a shipped cxvm rejects a
+# .cyx it can't run instead of silently mis-executing. cxvm validates it.
 syscall(SYS_WRITE, 1, "CYX", 3);
-var zero_byte[1];
-store8(&zero_byte, 0);
-syscall(SYS_WRITE, 1, &zero_byte, 1);
+var ver_byte[1];
+store8(&ver_byte, 1);   # CYX_VERSION = 1
+syscall(SYS_WRITE, 1, &ver_byte, 1);
 var entry_off[4];
 store32(&entry_off, 0);
 syscall(SYS_WRITE, 1, &entry_off, 4);
@@ -464,6 +467,8 @@ while (bwgo == 1) {
     else { bw = bw + w; if (bw >= cp) { bwgo = 0; } }
 }
 # Write variable data (zeroed)
+var zero_byte[1];
+store8(&zero_byte, 0);
 vi = 0;
 while (vi < totvar) { syscall(SYS_WRITE, 1, &zero_byte, 1); vi = vi + 1; }
 # Write string data

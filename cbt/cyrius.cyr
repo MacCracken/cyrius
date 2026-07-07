@@ -343,6 +343,12 @@ fn main(): i64 {
                 _js_target = 1;
                 ai = ai + 1;
             }
+            elif (streq(argv(ai), "--target=cx") == 1) {
+                # cx arc: route to the cx bytecode compiler (cycc_cx) → a .cyx
+                # portable-bytecode file. Run with `cyrius run <out>.cyx` (cxvm).
+                _cx_target = 1;
+                ai = ai + 1;
+            }
             elif (streq(argv(ai), "--target=x86_64-bare-metal-elf") == 1) {
                 # v6.2.27: first-class bare-metal triple. build.cyr injects
                 # CYRIUS_KERNEL=1 (forces kernel_mode) + CYRIUS_ELF64_KERNEL=1.

@@ -47,6 +47,26 @@ fn cmd_build(source, output): i64 {
         if (jr == 0) { println("OK"); } else { println("FAIL"); }
         return jr;
     }
+    # cx arc: --target=cx routes to the cx bytecode compiler (cycc_cx), producing
+    # a .cyx portable-bytecode file (run with `cyrius run <out>.cyx` via cxvm).
+    if (_cx_target == 1) {
+        if (_dry_run == 1) {
+            sys_write(STDOUT_FD, "dry-run: emit-cx ", 17);
+            sys_write(STDOUT_FD, source, strlen(source));
+            sys_write(STDOUT_FD, " -> ", 4);
+            sys_write(STDOUT_FD, output, strlen(output));
+            sys_write(STDOUT_FD, "\n", 1);
+            return 0;
+        }
+        sys_write(STDOUT_FD, "emit-cx ", 8);
+        sys_write(STDOUT_FD, source, strlen(source));
+        sys_write(STDOUT_FD, " -> ", 4);
+        sys_write(STDOUT_FD, output, strlen(output));
+        sys_write(STDOUT_FD, " [cx] ", 6);
+        var xr = _emit_cx(source, output);
+        if (xr == 0) { println("OK"); } else { println("FAIL"); }
+        return xr;
+    }
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: compile ", 17);
         sys_write(STDOUT_FD, source, strlen(source));
@@ -108,6 +128,19 @@ fn cmd_build(source, output): i64 {
 }
 
 fn cmd_run(source): i64 {
+    # cx arc: a .cyx is already-compiled portable bytecode — run it directly via
+    # cxvm (no compile step). Detect by extension; everything else is the native
+    # compile+exec path below. (A `.cyr` → cx compile-and-run in one shot could be
+    # an additive `--cx` flag later; keeping run <foo>.cyr the native path.)
+    if (str_ends_with(str_from(source), str_from(".cyx")) == 1) {
+        if (_dry_run == 1) {
+            sys_write(STDOUT_FD, "dry-run: run-cx ", 16);
+            sys_write(STDOUT_FD, source, strlen(source));
+            sys_write(STDOUT_FD, "\n", 1);
+            return 0;
+        }
+        return run_cx(source);
+    }
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: compile + run ", 23);
         sys_write(STDOUT_FD, source, strlen(source));

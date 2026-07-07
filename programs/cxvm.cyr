@@ -271,11 +271,14 @@ while (_cx_done == 0) {
     else { _cx_code_len = _cx_code_len + n; }
 }
 
-# Check magic "CYX\0"
+# Check magic "CYX" + format version (byte 3). cx arc A: byte 3 is the .cyx
+# format version — reject a version this cxvm doesn't understand rather than
+# mis-execute it. CYX_VERSION must match main_cx.cyr's writer.
 if (_cx_code_len < 8) { syscall(1, 2, "error: not a .cyx file\n", 23); syscall(60, 1); }
 if (load8(_cx_code) != 67) { syscall(1, 2, "error: bad magic\n", 17); syscall(60, 1); }
 if (load8(_cx_code + 1) != 89) { syscall(1, 2, "error: bad magic\n", 17); syscall(60, 1); }
 if (load8(_cx_code + 2) != 88) { syscall(1, 2, "error: bad magic\n", 17); syscall(60, 1); }
+if (load8(_cx_code + 3) != 1) { syscall(1, 2, "error: unsupported .cyx format version\n", 39); syscall(60, 1); }
 
 # Entry offset (4 bytes LE at offset 4)
 var entry = load32(_cx_code + 4);

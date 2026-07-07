@@ -218,10 +218,11 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
   → cross_bins (rebuilt-on-demand, gitignored) · `cyrius run foo.cyx` via `.cyx`-extension
   detect + stdin-pipe (`#ifdef` guard for the PE `cyrius` build) · **cx SIMD DEFERRED+filed**
   (scalar-loop in an interpreter = zero speedup, fails ADR-002).
-  - **Release A** — `--target=cx` + `cycc_cx` resolver + `cxvm` install + `cyrius run
-    foo.cyx` + a **versioned `.cyx` header** (before the format is public) + float
-    hard-error + an end-to-end `_cx_cli_gate` (so the CLI can't rot behind the 5 green
-    internal gates).
+  - **Release A ✅ SHIPPED (v6.4.17)** — `--target=cx` (FORK dispatch via `cycc_cx`
+    resolver + JIT/cross_bins) + `cyrius run foo.cyx` (`.cyx`-extension → cxvm stdin) +
+    `cxvm` install (bins) + a **versioned `.cyx` header** (CYX_VERSION=1, before the
+    format is public) + float **hard-error** (was silent garbage) + `tests/cx_cli.sh`
+    end-to-end gate. cycc byte-identical; check.sh 132; cross-OS GREEN incl. cass/PE.
   - **Release B** — cx scalar float: host-backed f64 opcodes in cxvm (reinterpret i64
     bits as f64, host op) + rewire ~12 emitters (fix `EMIT_FLOAT_LIT`/binop/casts/cmp)
     + `_cx_float_gate`; transcendentals fail loud. Lifts A's guard.
