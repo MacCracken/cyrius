@@ -25,6 +25,21 @@
 #   0x31 = ne     ra, rb, rc      ra = (rb != rc) ? 1 : 0
 #   0x32 = lt     ra, rb, rc      ra = (rb < rc) ? 1 : 0
 #   0x33 = gt     ra, rb, rc      ra = (rb > rc) ? 1 : 0
+#   --- float (cx arc B): register bits reinterpreted as f64, host-backed ---
+#   0x54 = fadd   ra, rb, rc      ra = f64(rb) + f64(rc)
+#   0x55 = fsub   ra, rb, rc      ra = f64(rb) - f64(rc)
+#   0x56 = fmul   ra, rb, rc      ra = f64(rb) * f64(rc)
+#   0x57 = fdiv   ra, rb, rc      ra = f64(rb) / f64(rc)
+#   0x58 = i2f    ra, rb          ra = f64-bits of (double)(i64)rb
+#   0x59 = f2i    ra, rb          ra = (i64)(double)f64-bits(rb)
+#   0x5A = flt    ra, rb, rc      ra = (f64(rb) <  f64(rc)) ? 1 : 0  (NaN-correct)
+#   0x5B = fle    ra, rb, rc      ra = (f64(rb) <= f64(rc)) ? 1 : 0
+#   0x5C = fgt    ra, rb, rc      ra = (f64(rb) >  f64(rc)) ? 1 : 0
+#   0x5D = fge    ra, rb, rc      ra = (f64(rb) >= f64(rc)) ? 1 : 0
+#   0x5E = feq    ra, rb, rc      ra = (f64(rb) == f64(rc)) ? 1 : 0
+#   0x5F = fne    ra, rb, rc      ra = (f64(rb) != f64(rc)) ? 1 : 0
+#   0x64 = fneg   ra, rb          ra = f64-bits of -f64(rb)
+#   0x65 = fabs   ra, rb          ra = f64-bits of |f64(rb)|
 #   0x40 = load8  ra, [rb]        ra = zero-extend byte at mem[rb]
 #   0x41 = load64 ra, [rb]        ra = 64-bit at mem[rb]
 #   0x42 = store8 [ra], rb        mem[ra] = low byte of rb
@@ -145,6 +160,25 @@ fn cx_run(code, code_len): i64 {
         elif (op == 49) { if (cx_reg_get(rb) != cx_reg_get(rc)) { cx_reg_set(ra, 1); } else { cx_reg_set(ra, 0); } }
         elif (op == 50) { if (cx_reg_get(rb) < cx_reg_get(rc)) { cx_reg_set(ra, 1); } else { cx_reg_set(ra, 0); } }
         elif (op == 51) { if (cx_reg_get(rb) > cx_reg_get(rc)) { cx_reg_set(ra, 1); } else { cx_reg_set(ra, 0); } }
+
+        # float (cx arc B): the i64 register bits ARE the f64 bit pattern, and the
+        # f64_* builtins operate on bit patterns — so cxvm float is host-backed
+        # (the host's native SSE/NEON f64, NaN-correct for the compares). fadd/fsub/
+        # fmul/fdiv (0x54-57), i2f/f2i (0x58/59), flt/fle/fgt/fge/feq/fne (0x5A-5F).
+        elif (op == 84) { cx_reg_set(ra, f64_add(cx_reg_get(rb), cx_reg_get(rc))); }
+        elif (op == 85) { cx_reg_set(ra, f64_sub(cx_reg_get(rb), cx_reg_get(rc))); }
+        elif (op == 86) { cx_reg_set(ra, f64_mul(cx_reg_get(rb), cx_reg_get(rc))); }
+        elif (op == 87) { cx_reg_set(ra, f64_div(cx_reg_get(rb), cx_reg_get(rc))); }
+        elif (op == 88) { cx_reg_set(ra, f64_from(cx_reg_get(rb))); }
+        elif (op == 89) { cx_reg_set(ra, f64_to(cx_reg_get(rb))); }
+        elif (op == 90) { cx_reg_set(ra, f64_lt(cx_reg_get(rb), cx_reg_get(rc))); }
+        elif (op == 91) { var _le = 0; if (f64_lt(cx_reg_get(rb), cx_reg_get(rc)) == 1) { _le = 1; } if (f64_eq(cx_reg_get(rb), cx_reg_get(rc)) == 1) { _le = 1; } cx_reg_set(ra, _le); }
+        elif (op == 92) { cx_reg_set(ra, f64_gt(cx_reg_get(rb), cx_reg_get(rc))); }
+        elif (op == 93) { var _ge = 0; if (f64_gt(cx_reg_get(rb), cx_reg_get(rc)) == 1) { _ge = 1; } if (f64_eq(cx_reg_get(rb), cx_reg_get(rc)) == 1) { _ge = 1; } cx_reg_set(ra, _ge); }
+        elif (op == 94) { cx_reg_set(ra, f64_eq(cx_reg_get(rb), cx_reg_get(rc))); }
+        elif (op == 95) { if (f64_eq(cx_reg_get(rb), cx_reg_get(rc)) == 0) { cx_reg_set(ra, 1); } else { cx_reg_set(ra, 0); } }
+        elif (op == 100) { cx_reg_set(ra, f64_neg(cx_reg_get(rb))); }   # 0x64 fneg
+        elif (op == 101) { cx_reg_set(ra, f64_abs(cx_reg_get(rb))); }   # 0x65 fabs
 
         # memory: load8/16/32/64, store8/16/32/64
         elif (op == 64) { cx_reg_set(ra, load8(_cx_mem + cx_reg_get(rb))); }

@@ -399,7 +399,7 @@ var dbase = cp;
 var fcnt = GFCNT(S);
 var fi = 0;
 while (fi < fcnt) {
-    var faddr = S + 0x1A0000 + fi * 16;
+    var faddr = S + 0x150B000 + fi * 16;   # cx arc B: fixup table base — MUST match the writers (RECFIX / ECALLFIX / closure-fixup in backend/cx/emit.cyr all write 0x150B000). Was 0x1A0000 (a refactor miss) → var + forward-call fixups were written but never read, so every global var / forward call collided at the placeholder addr 0.
     var coff = L64(faddr);
     var raw = L64(faddr + 8);
     var ftype = raw >> 56;

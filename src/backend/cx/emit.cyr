@@ -287,20 +287,28 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
 # cx has no f64 opcodes in this slot. All 8 ops are IR-record
 # stubs; real CYX f64 op coverage (coordinated with cxvm) is
 # future work tracked in docs/audit/2026-04-27-cx-direct-emit-inventory.md.
-fn EF64_NEG(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
-fn EF64_ABS(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
-fn EF64_SIN(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
-fn EF64_COS(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
-fn EF64_EXP(S): i64  { _IR_REC0(S, IR_RAW_EMIT); return 0; }
-fn EF64_LN(S): i64   { _IR_REC0(S, IR_RAW_EMIT); return 0; }
-fn EF64_LOG2(S): i64 { _IR_REC0(S, IR_RAW_EMIT); return 0; }
-fn EF64_EXP2(S): i64 { _IR_REC0(S, IR_RAW_EMIT); return 0; }
-fn EF64_ATAN(S): i64 { _IR_REC0(S, IR_RAW_EMIT); return 0; }
+# cx arc B: fneg/fabs are real (host-backed opcodes 0x64/0x65). The transcendentals
+# (sin/cos/exp/ln/log2/exp2/atan) still FAIL LOUD — the VM has no libm opcodes (a
+# later cx-arc tail; `_cx_float_unsupported` defined below in the float block).
+fn EF64_NEG(S): i64  { CX_EMIT(S, 100, 0, 0, 0); return 0; }   # fneg r0, r0
+fn EF64_ABS(S): i64  { CX_EMIT(S, 101, 0, 0, 0); return 0; }   # fabs r0, r0
+fn EF64_SIN(S): i64  { _cx_float_unsupported(S); return 0; }
+fn EF64_COS(S): i64  { _cx_float_unsupported(S); return 0; }
+fn EF64_EXP(S): i64  { _cx_float_unsupported(S); return 0; }
+fn EF64_LN(S): i64   { _cx_float_unsupported(S); return 0; }
+fn EF64_LOG2(S): i64 { _cx_float_unsupported(S); return 0; }
+fn EF64_EXP2(S): i64 { _cx_float_unsupported(S); return 0; }
+fn EF64_ATAN(S): i64 { _cx_float_unsupported(S); return 0; }
 
-# EF64_CMP — cx no-op + EPOPR to keep stack in sync with the
-# preceding push that the x86/aarch64 backends consume.
+# EF64_CMP — f64 comparison. The cxvm compare opcodes (flt/fle/fgt/fge/feq/fne,
+# 0x5A-0x5F) exist and compute correctly for DIRECT use, but the compare RESULT is
+# left F64-typed by the shared frontend (PF64CMP doesn't SESTYPE(0)), so using it
+# in `if (f64_lt(...))` / `f64_gt(...) == N` silently misbehaves ON CX (works on
+# x86). Rather than ship a silent-wrong conditional, f64 comparisons FAIL LOUD on
+# cx for now. Wiring them back (with the frontend type-tracking fixed) is the cx-arc
+# "f64 compare" follow-up — issues/2026-07-07-cx-f64-compare-result-typing.md.
 fn EF64_CMP(S, tok): i64 {
-    _IR_REC0(S, IR_RAW_EMIT);
+    _cx_float_unsupported(S);
     EPOPR(S);
     return 0;
 }
@@ -789,22 +797,37 @@ fn E2(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); return 0; }
 fn E3(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); EB(S, v >> 16 & 0xFF); return 0; }
 fn E8(S, v): i64 { var i = 0; while (i < 8) { EB(S, (v >> (i * 8)) & 0xFF); i = i + 1; } return 0; }
 
-# Float: NOT yet supported on the cx bytecode target (the VM has no float opcodes
-# — scalar float lands in a later cx-arc release). FAIL LOUD. Pre-cx-arc these were
-# silent stubs and EMIT_FLOAT_LIT actively emitted GARBAGE (raw rational-pair bits
-# via EMOVI, never divided) → any float constant silently miscompiled. Now every
-# float entry point (literal, arithmetic, i↔f cast, f32 convert) hard-errors so a
-# `--target=cx` build of float code fails at compile time, not with wrong output.
+# cx arc B: scalar f64 is REAL now via the host-backed cxvm float opcodes
+# (0x54-0x5F fadd/fsub/fmul/fdiv, i2f/f2i, flt/fle/fgt/fge/feq/fne; 0x64/0x65
+# fneg/fabs). f32 conversion + transcendentals (sin/cos/exp/ln/…) + sqrt/floor
+# still FAIL LOUD — the VM has no f32 or libm opcodes yet (a later cx-arc tail).
 fn _cx_float_unsupported(S): i64 {
-    ERR_MSG(S, "float (f64/f32) is not yet supported on the cx bytecode target", 62);
+    ERR_MSG(S, "this float op is not yet supported on the cx bytecode target", 60);
     return 0;
 }
-fn EMIT_FLOAT_LIT(S, v): i64 { _cx_float_unsupported(S); return 0; }
-fn EMIT_F64_BINOP(S, op): i64 { _cx_float_unsupported(S); return 0; }
-fn EF32_FROM(S): i64 { _cx_float_unsupported(S); return 0; }
+# float literal: fval = numer(low 32) | denom(high 32) (a rational); the value is
+# (f64)numer / (f64)denom — mirrors the x86 EMIT_FLOAT_LIT (movabs/cvtsi2sd/divsd).
+fn EMIT_FLOAT_LIT(S, v): i64 {
+    var numer = v & 0xFFFFFFFF;
+    var denom = (v >> 32) & 0xFFFFFFFF;
+    CX_MOVI(S, 1, numer);
+    CX_EMIT(S, 88, 1, 1, 0);        # i2f r1, r1  = (f64)numer
+    CX_MOVI(S, 2, denom);
+    CX_EMIT(S, 88, 2, 2, 0);        # i2f r2, r2  = (f64)denom
+    CX_EMIT(S, 87, 0, 1, 2);        # fdiv r0, r1, r2  = numer/denom
+    return 0;
+}
+# f64 a OP b: the frontend leaves a (left) on the stack, b (right) in r0
+# (mirrors x86 EMIT_F64_BINOP). fop 0=add 1=sub 2=mul 3=div → opcodes 0x54..0x57.
+fn EMIT_F64_BINOP(S, op): i64 {
+    EPOPC(S);                       # r1 = a (left)
+    CX_EMIT(S, 84 + op, 0, 1, 0);   # f{add,sub,mul,div} r0, r1, r0  = a OP b
+    return 0;
+}
+fn EI2F(S): i64 { CX_EMIT(S, 88, 0, 0, 0); return 0; }   # i2f r0, r0
+fn EF2I(S): i64 { CX_EMIT(S, 89, 0, 0, 0); return 0; }   # f2i r0, r0
+fn EF32_FROM(S): i64 { _cx_float_unsupported(S); return 0; }   # f32 conv: cx-arc tail
 fn EF32_TO(S): i64 { _cx_float_unsupported(S); return 0; }
-fn EI2F(S): i64 { _cx_float_unsupported(S); return 0; }
-fn EF2I(S): i64 { _cx_float_unsupported(S); return 0; }
 # v5.7.11: PF64BIN / PF64CMP now defined in parse_expr.cyr (the
 # shared frontend, since v5.6.x). The cx stubs that lived here
 # collided with the parse_expr versions and lost (last-include

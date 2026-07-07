@@ -31,11 +31,23 @@ rc=0
 "$CYR" run "$T/i.cyx" >/dev/null 2>&1 || rc=$?
 [ "$rc" = "33" ] || { echo "FAIL: cyrius run *.cyx exited $rc (want 33)"; exit 1; }
 
-# (2) float program must hard-error on cx (no silent garbage)
-printf 'fn main(): i64 { var x = 3.14; var y = f64_add(x, x); return 0; }\nvar e = main();\nsyscall(60, e);\n' > "$T/f.cyr"
-if "$CYR" build --target=cx "$T/f.cyr" "$T/f.cyx" >/dev/null 2>"$T/f.err"; then
-    echo "FAIL: float program compiled on cx target — must hard-error"; exit 1
-fi
-grep -q "not yet supported on the cx bytecode target" "$T/f.err" || { echo "FAIL: wrong/missing float error:"; cat "$T/f.err"; exit 1; }
+# (2) cx arc B: f64 ARITHMETIC works. 60.0 / 4.0 - 13.0 = 2.0 -> exit 2.
+printf 'fn main(): i64 { var a = 60.0; var b = 4.0; var q = f64_div(a, b); var r = f64_sub(q, 13.0); return f64_to(r); }\nvar e = main();\nsyscall(60, e);\n' > "$T/fa.cyr"
+"$CYR" build --target=cx "$T/fa.cyr" "$T/fa.cyx" >/dev/null 2>&1 || { echo "FAIL: f64 arithmetic build --target=cx"; exit 1; }
+rc=0; "$CYR" run "$T/fa.cyx" >/dev/null 2>&1 || rc=$?
+[ "$rc" = "2" ] || { echo "FAIL: cx f64 arithmetic exit $rc (want 2)"; exit 1; }
 
-echo "PASS: cyrius build --target=cx -> versioned .cyx -> run (exit 33); float hard-errors (cx arc A)"
+# (3) global-var-collision fix (RECFIX/fixup-table): 3 globals must be distinct.
+printf 'var a = 100;\nvar b = 7;\nvar c = a - b;\nsyscall(60, c);\n' > "$T/g.cyr"
+"$CYR" build --target=cx "$T/g.cyr" "$T/g.cyx" >/dev/null 2>&1 || { echo "FAIL: global-var build"; exit 1; }
+rc=0; "$CYR" run "$T/g.cyx" >/dev/null 2>&1 || rc=$?
+[ "$rc" = "93" ] || { echo "FAIL: cx global vars collide (exit $rc, want 93)"; exit 1; }
+
+# (4) still fail loud: f64 COMPARE (cx arc B tail) + a transcendental.
+printf 'fn main(): i64 { var a = 3.0; var b = 2.0; if (f64_lt(a, b)) { return 1; } return 0; }\nvar e = main();\nsyscall(60, e);\n' > "$T/fc.cyr"
+if "$CYR" build --target=cx "$T/fc.cyr" "$T/fc.cyx" >/dev/null 2>"$T/fc.err"; then
+    echo "FAIL: f64 comparison compiled on cx — must fail loud pending the cmp follow-up"; exit 1
+fi
+grep -q "not yet supported on the cx bytecode target" "$T/fc.err" || { echo "FAIL: wrong f64-compare error:"; cat "$T/fc.err"; exit 1; }
+
+echo "PASS: cx --target=cx build/run + versioned .cyx; f64 arithmetic works; globals distinct; f64 compare fails loud (cx arc A/B)"

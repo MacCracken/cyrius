@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.18] — 2026-07-07
+
+**v6.4.18 — cx portable target, Release B: cx scalar f64 (arithmetic) + a foundational
+global-var-collision fix.** cx f64 now computes for real (host-backed VM float opcodes), and
+a pre-existing cx bug where every top-level/global var collided at address 0 is fixed. cycc
+**byte-identical** — all cx work lives in the cx fork/backend + cxvm. f64 *comparisons* are
+deferred (fail loud) pending a follow-up. Arc: A (v6.4.17 CLI) → **B (this)** → C (cross-OS cxvm).
+
+### Fixed — cx global-var collision (foundational; found during Release B)
+- cx's fixup WRITERS (`RECFIX` / `ECALLFIX` / closure-fixup in `src/backend/cx/emit.cyr`)
+  recorded entries at heap `S+0x150B000`, but the fixup PASS in `src/main_cx.cyr` READ from
+  `S+0x1A0000` (a refactor miss). So every global-var reference and forward call stayed at its
+  placeholder `movi r1, 0` — **all top-level vars collided at address 0** (int AND f64). The
+  cx gates never caught it (their programs use no fixups: direct calls, no multiple globals).
+  Fixed the reader to match the writers. Now `var a=100; var b=7; var c=a-b` → 93.
+
+### Added — cx scalar f64 (arithmetic)
+- Host-backed f64 opcodes in cxvm (`0x54-0x5F` fadd/fsub/fmul/fdiv + i2f/f2i + the six
+  compares; `0x64/0x65` fneg/fabs). The i64 register bits ARE the f64 bit pattern and the
+  `f64_*` builtins operate on bit patterns, so cxvm float uses the host's native SSE (the
+  compares are NaN-correct for free).
+- cx emitters rewired: `EMIT_FLOAT_LIT` (was GARBAGE → real `i2f numer / i2f denom / fdiv`),
+  `EMIT_F64_BINOP`, `EI2F`/`EF2I`, `EF64_NEG`/`EF64_ABS`. Verified end-to-end on cx: f64
+  `+`/`-`/`*`/`/`, int↔float casts, negate/abs all correct.
+
+### Deferred — f64 comparisons on cx (fail loud, not silent-wrong)
+- f64 comparison RESULTS are left F64-typed by the shared frontend (`PF64CMP` doesn't
+  `SESTYPE(0)`), so using one in `if (f64_lt(...))` / `f64_gt(...) == N` misbehaves ON CX
+  (works on x86). Rather than ship silent-wrong conditionals, `EF64_CMP` **fails loud** on cx
+  for now — the cxvm compare opcodes ARE shipped and correct; only the wiring waits. Filed:
+  `issues/2026-07-07-cx-f64-compare-result-typing.md` (a one-line `SESTYPE(0)` was tried and
+  REJECTED — it churned 10 corpus programs' codegen and didn't fix cx; the fix needs the cx
+  conditional-truthiness path traced). f32 conversion + transcendentals still fail loud (later tail).
+
+### Gate
+- `tests/cx_cli.sh` extended: `--target=cx` f64 arithmetic works (`60/4-13` → 2), 3 globals
+  distinct (→93), f64 compare fails loud. cycc byte-identical (1,069,552 B); check.sh 132.
+
 ## [6.4.17] — 2026-07-07
 
 **v6.4.17 — cx portable bytecode target, Release A: CLI exposure + run path.** The cx /

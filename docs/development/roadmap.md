@@ -223,9 +223,15 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
     `cxvm` install (bins) + a **versioned `.cyx` header** (CYX_VERSION=1, before the
     format is public) + float **hard-error** (was silent garbage) + `tests/cx_cli.sh`
     end-to-end gate. cycc byte-identical; check.sh 132; cross-OS GREEN incl. cass/PE.
-  - **Release B** — cx scalar float: host-backed f64 opcodes in cxvm (reinterpret i64
-    bits as f64, host op) + rewire ~12 emitters (fix `EMIT_FLOAT_LIT`/binop/casts/cmp)
-    + `_cx_float_gate`; transcendentals fail loud. Lifts A's guard.
+  - **Release B ✅ SHIPPED (v6.4.18)** — cx scalar f64 ARITHMETIC: host-backed f64
+    opcodes in cxvm (0x54-0x5F + fneg/fabs) + rewired emitters (`EMIT_FLOAT_LIT`/binop/
+    casts/neg/abs). **+ a foundational global-var-collision fix** (fixup-table
+    reader/writer address mismatch — all top-level vars collided at addr 0, pre-existing).
+    f64 **comparisons deferred** (fail loud): the compare result is F64-typed and misbehaves
+    in `if()`/`==` on cx — `issues/2026-07-07-cx-f64-compare-result-typing.md` (the cxvm
+    compare opcodes ARE shipped+correct; a one-line SESTYPE fix was tried + rejected —
+    churned 10 programs, didn't fix cx). f32/transcendentals still fail loud. **NEXT: the
+    f64-compare follow-up, then Release C.**
   - **Release C** — cxvm portable syscall ABI: a canonical guest-syscall set cxvm
     translates per-host (ESYSXLAT-style) so an I/O-doing `.cyx` runs on ecb/cass/pi;
     raised caps. Split C1/C2 (boundary set at C-open after reading cxvm dispatch depth).
