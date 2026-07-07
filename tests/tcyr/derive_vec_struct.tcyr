@@ -1,0 +1,119 @@
+# derive_vec_struct.tcyr — v6.4.x Pin 2 R3: #derive Serialize/Deserialize for
+# Vec<#derive-struct> (array of objects), full round-trip.
+#
+# A Vec<T> field where T is a #derive struct serializes each element via its own
+# <T>_to_json (nested objects in a JSON array) and decodes via a recursive object-scan
+# in the single-pass from_json_str — the first recursive value-parse in that scanner
+# (pre-R3 it skipped nested objects). The scan is STRING-AWARE: a '}' / '{' inside a
+# "..." string element must not close the object early. Elements are stored as pointers
+# (a Vec<struct> slot holds the element struct's pointer). Vec<Str> stays R3-unsupported
+# (compile error); pairs-form Vec<struct> decodes to an empty vec (use from_json_str).
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct pt { x: i64; y: i64; }          # x@0, y@8
+
+#derive(Serialize)
+struct seq { id: i64; pts: Vec<pt>; }  # id@0, pts@8
+
+#derive(Serialize)
+struct rec { name: Str; val: i64; }    # name@0, val@8
+
+#derive(Serialize)
+struct db { rows: Vec<rec>; }          # rows@0
+
+#derive(Serialize)
+struct geom { pts: Vec<pt>; id: i64; }  # pts@0, id@8 — Vec<struct> FIRST (BUG-1 sibling test)
+
+#derive(Serialize)
+struct info { n: i64; }                # lowercase-i element name (BUG-2)
+
+#derive(Serialize)
+struct ibox { items: Vec<info>; }      # Vec<info> — element name starts with 'i' (BUG-2)
+
+fn main(): i64 {
+    # --- basic Vec<struct> round-trip ---
+    var p1 = pt { 1, 2 };
+    var p2 = pt { 3, 4 };
+    var v = vec_new(); vec_push(v, &p1); vec_push(v, &p2);
+    var s = seq { 7, v };
+    var sb = str_builder_new(); seq_to_json(&s, sb);
+    var js = str_builder_build(sb);
+    assert_eq(str_eq(js, str_from("{\"id\":7,\"pts\":[{\"x\":1,\"y\":2},{\"x\":3,\"y\":4}]}")), 1, "Vec<struct> serialize");
+    var d = seq_from_json_str(str_data(js));
+    assert_eq(load64(d), 7, "seq: id round-trip");
+    assert_eq(vec_len(load64(d + 8)), 2, "seq: pts len");
+    assert_eq(load64(vec_get(load64(d + 8), 0)), 1, "pts[0].x");
+    assert_eq(load64(vec_get(load64(d + 8), 1) + 8), 4, "pts[1].y");
+
+    # --- empty Vec<struct> ---
+    var es = seq { 5, vec_new() };
+    var esb = str_builder_new(); seq_to_json(&es, esb);
+    var ejs = str_builder_build(esb);
+    assert_eq(str_eq(ejs, str_from("{\"id\":5,\"pts\":[]}")), 1, "empty Vec<struct> serialize");
+    assert_eq(vec_len(load64(seq_from_json_str(str_data(ejs)) + 8)), 0, "empty Vec<struct> decode");
+
+    # --- STRING-AWARE scan: an element Str field containing '}' / '{' / '"' ---
+    var r1 = rec { str_from("a}b{c"), 1 };
+    var r2 = rec { str_from("plain"), 2 };
+    var rv = vec_new(); vec_push(rv, &r1); vec_push(rv, &r2);
+    var dbx = db { rv };
+    var dsb = str_builder_new(); db_to_json(&dbx, dsb);
+    var djs = str_builder_build(dsb);
+    # the '}' and '{' are inside the JSON string, so the object-scan must not split early
+    var back = db_from_json_str(str_data(djs));
+    var rows = load64(back);
+    assert_eq(vec_len(rows), 2, "string-aware: 2 rows (brace-in-string did not split)");
+    assert_eq(str_eq(load64(vec_get(rows, 0)), str_from("a}b{c")), 1, "string-aware: name with braces round-trips");
+    assert_eq(load64(vec_get(rows, 0) + 8), 1, "string-aware: val 1");
+    assert_eq(str_eq(load64(vec_get(rows, 1)), str_from("plain")), 1, "string-aware: row1 name");
+
+    # --- whitespace / pretty-printed array of objects ---
+    var ws = seq_from_json_str(str_data(str_from("{ \"id\" : 9 , \"pts\" : [ { \"x\":10, \"y\":20 } , { \"x\":30,\"y\":40 } ] }")));
+    assert_eq(load64(ws), 9, "ws: id");
+    assert_eq(vec_len(load64(ws + 8)), 2, "ws: pts len");
+    assert_eq(load64(vec_get(load64(ws + 8), 1)), 30, "ws: pts[1].x");
+
+    # --- BUG-1: a non-array value for a Vec<struct> field must not eat sibling fields ---
+    var g1 = geom_from_json_str(str_data(str_from("{\"pts\":{\"a\":1},\"id\":7}")));
+    assert_eq(load64(g1 + 8), 7, "BUG-1: sibling id survives a non-array Vec value");
+    assert_eq(vec_len(load64(g1)), 0, "BUG-1: bad Vec value -> empty vec, no corruption");
+    var g2 = geom_from_json_str(str_data(str_from("{\"pts\":null,\"id\":9}")));
+    assert_eq(load64(g2 + 8), 9, "BUG-1b: id survives a null Vec value");
+
+    # --- BUG-2: lowercase-i element struct name (Vec<info>) must compile + round-trip ---
+    var i1 = info { 11 };
+    var iv = vec_new(); vec_push(iv, &i1);
+    var ic = ibox { iv };
+    var isb = str_builder_new(); ibox_to_json(&ic, isb);
+    var iback = ibox_from_json_str(str_data(str_builder_build(isb)));
+    assert_eq(vec_len(load64(iback)), 1, "BUG-2: Vec<info> (lowercase-i) round-trips");
+    assert_eq(load64(vec_get(load64(iback), 0)), 11, "BUG-2: Vec<info> element value");
+
+    # --- BUG-3: element Str with an escaped quote must round-trip intact (un-escaped) ---
+    var q1 = rec { str_from("say \"hi\" now"), 42 };
+    var qv = vec_new(); vec_push(qv, &q1);
+    var qdb = db { qv };
+    var qsb = str_builder_new(); db_to_json(&qdb, qsb);
+    var qback = db_from_json_str(str_data(str_builder_build(qsb)));
+    assert_eq(str_eq(load64(vec_get(load64(qback), 0)), str_from("say \"hi\" now")), 1, "BUG-3: escaped-quote name round-trips un-escaped");
+    assert_eq(load64(vec_get(load64(qback), 0) + 8), 42, "BUG-3: escaped-quote sibling val");
+
+    # --- R-3: a string element with an embedded ']' must not truncate the array ---
+    var t = seq_from_json_str(str_data(str_from("{\"id\":1,\"pts\":[\"a]b\",{\"x\":5,\"y\":6}]}")));
+    assert_eq(load64(vec_get(load64(t + 8), vec_len(load64(t + 8)) - 1) + 8), 6, "R-3: embedded-] string element did not truncate the array");
+
+    return assert_summary();
+}

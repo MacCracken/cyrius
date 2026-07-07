@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.13] — 2026-07-06
+
+**v6.4.13 — array-typed struct fields R3: `#derive` for `Vec<#derive-struct>` (the arc CLOSES).**
+Final release of the Pin 2 arc. `#derive(Serialize)` structs can now have `Vec<T>` fields where T is
+itself a `#derive` struct — they serialize to a JSON array of objects and decode via a recursive
+object-scan in the single-pass `from_json_str` (the first recursive value-parse in that scanner). With
+R1 (`Vec<T>` handle fields, v6.4.11) + R2 (`Vec<primitive>` codecs, v6.4.12), **the array-typed struct
+fields arc is complete**. cycc self-hosts (+6 KB generator code → 1,073,544 B); seed → cybs → cycc
+byte-identical; check.sh 130; self_compile 577 ms; ecb+cass+pi SELFHOST_OK.
+
+### Added — `#derive` codecs for `Vec<#derive-struct>` fields
+- A `Vec<T>` field where T is a `#derive(Serialize)` struct now generates working `_to_json` /
+  `_from_json_str`. Encode emits a JSON array where each element is `<T>_to_json(vec_get(...), sb)` (the
+  Vec slot holds the element struct's pointer). Decode does a **string-aware bracket-depth object-scan**:
+  for each `{...}` element it calls `<T>_from_json_str`, then advances past the matching `}` (a `}`/`{`
+  inside a `"..."` string doesn't count). `_pp_vec_elem` classifies `Vec<struct>` as kind 300.
+- `Vec<Str>` stays unsupported (clear diagnostic). The pairs-form `from_json` decodes a Vec<struct> field
+  to an empty vec (bayan truncates array-of-objects values at the first inner comma — use `from_json_str`,
+  svara's path). Element structs must be FLAT (a nested-struct field inside an element decodes empty — the
+  pre-existing general `from_json_str` nested-field limitation, not R3-specific).
+
+### Fixed — codec robustness (adversarial review, one-complete-fix)
+- **Non-array value for a Vec<struct> field ate sibling fields** (silent data loss): the `[`-gate had no
+  `else`, so a `null`/object/string value left the scan cursor un-advanced and the object's inner `}` was
+  read as the struct close, dropping every later field. A non-array value (and a non-object array element)
+  is now skipped via a shared string-aware `_cy_json_skipval` helper.
+- **`Vec<info>` / `Vec<f64x>` (lowercase-i/f struct element names) were mis-rejected** as `Vec<Str>`: the
+  `_pp_vec_elem` `iNN`/`fNN` fall-through returned 201 instead of 300 → a legal program refused with the
+  wrong error.
+- **Element `Str` fields with an escaped `"` decoded truncated** (a pre-existing v5.10.8 single-pass
+  Str-decode gap R3 newly exposed): the leaf Str scan wasn't escape-aware. Now escape-aware **and
+  un-escaping** (`\"` `\\` `\n` `\t` resolved) — fixes ALL `#derive` Str decode, not just Vec elements.
+- Hardening: a trailing `\` in a string can't leap the buffer NUL; a `>31`-byte field type name errors
+  loudly instead of overrunning the 32-byte type slot; a string element with an embedded `]` no longer
+  truncates the array.
+
+### Tests
+- `tests/tcyr/derive_vec_struct.tcyr` (22 asserts): Vec<struct> serialize + recursive `from_json_str`
+  round-trip, empty arrays, whitespace, a Str element containing `}`/`{`, plus the sibling-survival,
+  lowercase-i element name, escaped-quote round-trip, and embedded-`]` regressions the review surfaced.
+
 ## [6.4.12] — 2026-07-06
 
 **v6.4.12 — array-typed struct fields R2: `#derive` Serialize/Deserialize for `Vec<primitive>`.**

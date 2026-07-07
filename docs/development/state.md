@@ -11,11 +11,11 @@
 
 | | |
 |---|---|
-| **Version** | **6.4.12** — array-typed struct fields R2 (`#derive` Serialize/Deserialize for `Vec<primitive>`). Per-release detail → [CHANGELOG](../../CHANGELOG.md). |
-| **cycc** | 1,067,464 B (x86_64 self-host fixpoint; +9.7 KB R2 codec generator) · check.sh **130** · self_compile ~576 ms |
+| **Version** | **6.4.13** — array-typed struct fields R3 (`#derive` for `Vec<#derive-struct>`); the array-typed arc **CLOSES**. Per-release detail → [CHANGELOG](../../CHANGELOG.md). |
+| **cycc** | 1,073,544 B (x86_64 self-host fixpoint; R1→R3 codec generator) · check.sh **130** · self_compile ~577 ms |
 | **Bootstrap / cross-OS** | seed (29 KB asm) → cybs → cycc byte-identical · ecb (macOS/arm64) + cass (Windows/PE) + pi (aarch64) `SELFHOST_OK` |
 | **Active minor** | **v6.4.x** — ABI / Language-Features (opened at v6.4.0; v6.3.x closed at v6.3.45) |
-| **In-flight arc** | **Pin 2 — array-typed struct fields** (ACTIVE): R1 (`Vec<T>` fields) v6.4.11 + R2 (`#derive` Vec\<primitive\>) v6.4.12 shipped → **R3 = `#derive` Vec\<struct\> + svara minor patch** (next) |
+| **In-flight arc** | **Pin 2 — array-typed struct fields: COMPLETE** (R1 `Vec<T>` fields v6.4.11 · R2 `#derive` Vec\<primitive\> v6.4.12 · R3 `#derive` Vec\<struct\> v6.4.13). **NEXT: review new issues/proposals** (incl. the struct-id 20/21 ↔ `-20/-21` SIMD-sentinel collision), then the committed arcs below. |
 | **Paused** | SIMD Pin 1 aarch64 NEON (Phase 5) — deferred within v6.4.x (x86 SIMD complete, v6.4.4–.9) |
 | **Committed next** | UEFI Secure Boot signing → function visibility (`pub`/`private`) → Intel-Mac (x86_64 Mach-O) tail |
 

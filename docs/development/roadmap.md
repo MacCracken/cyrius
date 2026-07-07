@@ -104,6 +104,17 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   honest-diagnostic (kind-201, R3). Folded **bayan 1.0.4 → 1.1.0** (JSON API byte-identical; cycc byte-id).
   check.sh 130; seed-derive OK; test `derive_vec_primitive.tcyr` (33). **NEXT: R3 = `#derive` Vec<struct>
   + svara minor patch.**
+- **v6.4.13** — **array-typed struct fields R3: `#derive` for `Vec<#derive-struct>`** — **the arc CLOSES**.
+  `#derive(Serialize)` structs can hold `Vec<T>` where T is itself a `#derive` struct — serialize to a JSON
+  array of objects + decode via a recursive **string-aware object-scan** in the single-pass `from_json_str`
+  (the first recursive value-parse there). Encode `<T>_to_json(vec_get(...), sb)`; decode calls
+  `<T>_from_json_str` per `{...}` element + a bracket-depth `}`-skip (a `}`/`{` inside a string doesn't
+  count, via `_cy_json_skipval`). **Adversarial review caught + fixed 3 bugs** (non-array value ate
+  siblings; lowercase-i/f element names mis-rejected; escaped-quote Str truncation — now escape-aware +
+  un-escaping, fixing ALL #derive Str decode) + hardening (trailing-`\` NUL, 31-char type-name cap,
+  embedded-`]`). Vec<Str>/nested-element-struct = clear-diagnostic/documented boundaries. cycc self-hosts
+  (+6 KB → 1,073,544 B); check.sh 130; seed-derive OK; ecb+cass+pi `SELFHOST_OK`; test
+  `derive_vec_struct.tcyr` (22). **Array-typed struct fields (Pin 2) is DONE.**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -123,7 +134,7 @@ releases, each bundling several bites. Minors flex long.**
 | # | Arc | Conservative length | Release-blocker? | Status |
 |---|-----|--------------------:|:----------------:|--------|
 | 1 | **Packed SIMD compute** (f32-first, then integer; ML/AI) | **5–7 releases** | No | **x86 portion COMPLETE (v6.4.4–.9, 6 releases); ⏸ aarch64 NEON (Phase 5) deferred** |
-| 2 | **Array-typed struct fields** | **3–4 releases** | No | **ACTIVE — R1 (`Vec<T>` v6.4.11) + R2 (`#derive` Vec<primitive> v6.4.12) shipped; R3 `#derive` Vec<struct> + svara remaining** |
+| 2 | **Array-typed struct fields** | **3 releases (done)** | No | **✅ DONE — R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13 (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>)** |
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
@@ -261,10 +272,10 @@ broadcast/load and returned to i64 by extract/reduce.
 
 ### Pin 2 — Array-typed struct fields — ~3–4 releases
 
-> **STATUS (2026-07-06): R1 + R2 SHIPPED; R3 remaining.** Representation fork RESOLVED by
-> user → a typed **`Vec<T>` HANDLE** (not inline `T[N]`); syntax **`Vec<T>`**; 3-release split:
+> **STATUS (2026-07-06): ✅ COMPLETE — R1 + R2 + R3 SHIPPED.** Representation fork RESOLVED by
+> user → a typed **`Vec<T>` HANDLE** (not inline `T[N]`); syntax **`Vec<T>`**; 3-release split, ALL SHIPPED:
 > **R1** parse + metadata + access (✅ **v6.4.11**) · **R2** `#derive` Vec<primitive> (✅ **v6.4.12**) · **R3**
-> `#derive` Vec<struct> + svara minor patch. Full design + sentinel encoding + risks:
+> `#derive` Vec<struct> (✅ **v6.4.13**) + svara minor patch. Full design + sentinel encoding + risks:
 > [`proposals/2026-07-06-array-typed-struct-fields-design.md`](proposals/2026-07-06-array-typed-struct-fields-design.md).
 > The representation discussion below predates the fork resolution — kept for context.
 
