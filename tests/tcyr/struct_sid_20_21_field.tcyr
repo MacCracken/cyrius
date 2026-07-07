@@ -83,13 +83,19 @@ fn t22(): i64 {
 }
 
 fn main(): i64 {
+    # Print a harness-style "N passed, M failed" summary (raw write(1) — no
+    # includes, so struct numbering is preserved). The .tcyr runner / ci.yml
+    # loop greps the output for "N failed"; a test that prints NOTHING trips a
+    # `f=$(grep …)` set -e abort under `bash -eo pipefail`. Exit code is still
+    # the authoritative pass/fail (0 = pass, failing struct-id = fail).
     var e = t19();
-    if (e != 0) { return e; }
+    if (e != 0) { syscall(1, 1, "0 passed, 1 failed\n", 19); return e; }
     e = t20();
-    if (e != 0) { return e; }
+    if (e != 0) { syscall(1, 1, "0 passed, 1 failed\n", 19); return e; }
     e = t21();
-    if (e != 0) { return e; }
+    if (e != 0) { syscall(1, 1, "0 passed, 1 failed\n", 19); return e; }
     e = t22();
-    if (e != 0) { return e; }
+    if (e != 0) { syscall(1, 1, "0 passed, 1 failed\n", 19); return e; }
+    syscall(1, 1, "4 passed, 0 failed\n", 19);
     return 0;
 }

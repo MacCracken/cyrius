@@ -51,6 +51,13 @@ ecb + cass + pi `SELFHOST_OK`.
   and **quarantines it mid-run** → 0-byte output → a false self-host FAIL on a perfectly good
   compiler. The self-host + LIBTEST legs now run under `C:\cyrius-tests\_cyaud` so the binary is
   never scanned/quarantined and the verdict is real.
+- **ci.yml test-suite loop `set -e` trap.** The ubuntu + agnos `.tcyr` loops did
+  `f=$(echo "$output" | grep -o '[0-9]* failed' | …)` unguarded; an exit-code-only test that
+  prints NO `N failed` summary (like `struct_sid_20_21_field`) makes the `grep` exit 1, and the
+  bare `f=$(…)` aborts the whole step under GitHub's `bash -eo pipefail` — with no `FAIL:` line, so
+  it reads as a mystery crash right after the previous test's `PASS`. Added `|| f=""` (the aarch64
+  loop already had it — this closes the ubuntu/agnos gap) and gave `struct_sid_20_21_field` a
+  raw-`write(1)` `N passed, M failed` summary so it prints like every other test.
 
 ## [6.4.13] — 2026-07-06
 

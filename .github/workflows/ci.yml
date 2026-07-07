@@ -217,7 +217,7 @@ jobs:
             if [ $? -ne 0 ]; then echo "FAIL (compile): $name"; fail=$((fail+1)); continue; fi
             output=$("$tmpbin" 2>&1) && ec=0 || ec=$?
             rm -f "$tmpbin"
-            f=$(echo "$output" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+            f=$(echo "$output" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*') || f=""  # set-e-safe: a test with no "N failed" output (exit-code-only tests) makes grep exit 1 → bare f=$(…) aborts the step under bash -eo pipefail
             if [ "$ec" -ne 0 ] || { [ -n "$f" ] && [ "$f" -gt 0 ]; }; then
               echo "FAIL: $name"; fail=$((fail+1))
             else
@@ -458,7 +458,7 @@ jobs:
             if [ $? -ne 0 ]; then echo "FAIL (compile): $name"; fail=$((fail+1)); continue; fi
             output=$("$tmpbin" 2>&1) && ec=0 || ec=$?
             rm -f "$tmpbin"
-            f=$(echo "$output" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+            f=$(echo "$output" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*') || f=""  # set-e-safe: a test with no "N failed" output (exit-code-only tests) makes grep exit 1 → bare f=$(…) aborts the step under bash -eo pipefail
             if [ "$ec" -ne 0 ] || { [ -n "$f" ] && [ "$f" -gt 0 ]; }; then
               echo "FAIL: $name"; fail=$((fail+1))
             else
