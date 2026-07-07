@@ -176,7 +176,7 @@ releases, each bundling several bites. Minors flex long.**
 | 2 | **Array-typed struct fields** | **3 releases (done)** | No | **✅ DONE — R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13 (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>)** |
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
-| 5 | **DX: cx bytecode backend CLI exposure** (`--target=cx` + `cxvm` install + `.cyx` run path) | **1–2 releases** | No | **pinned 2026-07-07 — PRIORITIZED interim (consumer hit the wall)** |
+| 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | **~4 releases** | No | **ACTIVE (opened after v6.4.16). Scoped 6-facet workflow; user chose the FULL portable target 2026-07-07. Arc A→B→C below.** |
 | 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | **2–3 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | **2–4 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
@@ -201,14 +201,35 @@ Three additions to THIS minor. (The same session also reframed **v6.5.x** as the
 work — set **v6.6.x** as the **Language-Ergonomics minor**, and re-homed **RISC-V
 rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
 
-- **DX: cx bytecode backend CLI exposure — PRIORITIZED, sooner-than-later.** User
-  reasoning: a consumer agent's project needed wasm-shaped output and **hit the
-  wall** — the backend is fully built, self-hosting, and check.sh-gated but has
-  ZERO user-facing surface. Scope (pulled forward from roadmap-future.md):
-  `cyrius build --target=cx` routed to the cx emit path (mirror `--target=js`),
-  install `cxvm` + a `.cyx` run path, finish cx float ops, decide SIMD-on-cx.
-  Land as the next interim slot(s) — this does NOT displace the committed arc
-  order (interim slots interleave by design; Phase 5 NEON remains the next arc).
+- **cx portable bytecode target — ACTIVE ARC (opened after v6.4.16).** A consumer
+  agent hit the **wasm-shaped wall** — the cx backend is built, self-hosting, and
+  check.sh-gated but had ZERO user-facing surface. Scoped by a 6-facet code-grounded
+  workflow (2026-07-07); **user chose the FULL portable target** (cx as a first-class
+  portable `.cyx` distributable across OSes, WASM an explicit non-goal — CYX
+  register-bytecode ≠ WASM). Key code facts: cx is a **source FORK** (`src/main_cx.cyr`),
+  so `--target=cx` **resolves+execs a `cycc_cx` binary** (cross-compiler dispatch, NOT
+  the `--target=js` flag model — a flag merge would be a deep emit-dispatch rewrite);
+  `.cyx` = `"CYX\0"` + entry, fixed 4-byte instrs; `cxvm` reads `.cyx` from stdin, exit
+  code passes through. **🚩 `EMIT_FLOAT_LIT` (emit.cyr:793) emits GARBAGE** (raw
+  rational-pair bits) — any float constant silently miscompiles the moment cx is
+  exposed, so float is **hard-errored in A** and implemented in B. cxvm is x86-Linux-only
+  (raw syscalls, no ESYSXLAT) + **64 KB code/data caps** — the cross-OS/cap work is arc C.
+  **Locked decisions:** FORK model · `cxvm` → `cyrius.cyml` bins (installed) · `cycc_cx`
+  → cross_bins (rebuilt-on-demand, gitignored) · `cyrius run foo.cyx` via `.cyx`-extension
+  detect + stdin-pipe (`#ifdef` guard for the PE `cyrius` build) · **cx SIMD DEFERRED+filed**
+  (scalar-loop in an interpreter = zero speedup, fails ADR-002).
+  - **Release A** — `--target=cx` + `cycc_cx` resolver + `cxvm` install + `cyrius run
+    foo.cyx` + a **versioned `.cyx` header** (before the format is public) + float
+    hard-error + an end-to-end `_cx_cli_gate` (so the CLI can't rot behind the 5 green
+    internal gates).
+  - **Release B** — cx scalar float: host-backed f64 opcodes in cxvm (reinterpret i64
+    bits as f64, host op) + rewire ~12 emitters (fix `EMIT_FLOAT_LIT`/binop/casts/cmp)
+    + `_cx_float_gate`; transcendentals fail loud. Lifts A's guard.
+  - **Release C** — cxvm portable syscall ABI: a canonical guest-syscall set cxvm
+    translates per-host (ESYSXLAT-style) so an I/O-doing `.cyx` runs on ecb/cass/pi;
+    raised caps. Split C1/C2 (boundary set at C-open after reading cxvm dispatch depth).
+  - **Deferred (filed at arc close):** cx SIMD (+ the `issues/2026-07-05-...phase5.md`
+    cx-SIMD closure note).
   Full stub: [`proposals/2026-07-05-cx-bytecode-cli-exposure.md`](proposals/2026-07-05-cx-bytecode-cli-exposure.md).
 - **Scalar-float completion — later 6.4.x.** Scalar `f64` as a function RETURN
   type (returned in xmm0 per SysV — today's allow-list admits `f64v2`/`f64v4` but
