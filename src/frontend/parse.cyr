@@ -124,8 +124,9 @@ var _cur_fn_ret_pair = 0;
 
 # v5.10.28 — current fn's return-type scalar tag (negative encodings
 # from `_rt_scalar`: -1=i8, -2=i16, -4=i32, -8=i64, -16=Result,
-# -17=Option, -18=Tagged, -19=cstring, -20=f64v2). PARSE_RETURN
+# -17=Option, -18=Tagged, -19=cstring, -2093=f64v2). PARSE_RETURN
 # checks this to dispatch f64v2 multi-register pair return ABI.
+# (v6.4.14: f64v2 moved off -20 -> descriptor -2093; f64v4 -> -2125.)
 # 0 when fn returns a struct (use _cur_fn_ret_sid) or no annotation.
 var _cur_fn_ret_scalar = 0;
 

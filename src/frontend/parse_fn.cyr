@@ -623,8 +623,9 @@ fn PARSE_RETURN(S): i64 {
         }
     }
     # v5.10.28 — f64v2 multi-register pair return ABI.
-    # When the current fn is annotated `: f64v2` (encoding -20 in
-    # _cur_fn_ret_scalar) AND the return form is `return IDENT;`
+    # When the current fn is annotated `: f64v2` (encoding -2093 in
+    # _cur_fn_ret_scalar; v6.4.14 moved it off the flat -20) AND the
+    # return form is `return IDENT;`
     # where IDENT is a 2-slot stack-local f64v2 var, emit the pair
     # load: rax = lo (named slot, &v+0), rdx = hi (filler slot,
     # &v+8). This is x86 SysV's 16-byte int-class struct return
@@ -1203,7 +1204,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                         ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56);
                     }
                 } else {
-                    if (_fc_arg_lt != 0 - 21) {
+                    if (_fc_arg_lt != 0 - 2125) {
                         ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56);
                     }
                 }
@@ -2034,10 +2035,12 @@ fn _classify_return_type(S, rt_noff): i64 {
     # cstring → 'c','s','t','r','i','n','g',0
     if (b0 == 99) { if (b1 == 115) { if (b2 == 116) { if (b3 == 114) {
         if (b4 == 105) { if (b5 == 110) { if (b6 == 103) { if (b7 == 0) { return 0 - 19; } } } } } } } }
-    # f64v2 / f64v4 → 'f','6','4','v', '2'|'4', 0
+    # f64v2 / f64v4 → 'f','6','4','v', '2'|'4', 0 — 128/256-bit descriptor sentinels
+    # -2093 (desc 45) / -2125 (desc 77): moved off the flat -20/-21 that collided with
+    # struct-ids 20/21 (v6.4.14 struct-sid/SIMD-sentinel fix). Decoded by _vec_desc.
     if (b0 == 102) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) {
-        if (b4 == 50) { if (b5 == 0) { return 0 - 20; } }
-        if (b4 == 52) { if (b5 == 0) { return 0 - 21; } }
+        if (b4 == 50) { if (b5 == 0) { return 0 - 2093; } }
+        if (b4 == 52) { if (b5 == 0) { return 0 - 2125; } }
     } } } }
     # f32v4 → 'f','3','2','v','4', 0 — 128-bit descriptor sentinel -2121 (SIMD Phase 1)
     if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
@@ -2995,7 +2998,7 @@ fn PARSE_FN_DEF(S): i64 {
             # below can see it. 0 = int-class (default), 1 = f64v2,
             # 2 = f64v4.
             var pt_simd_class = 0;
-            var pt_simd_sid = 0;     # SLTYPE sentinel: 20 f64v2 / 21 f64v4 / 2121 f32v4
+            var pt_simd_sid = 0;     # SLTYPE sentinel: 2093 f64v2 / 2125 f64v4 / 2121 f32v4 (all descriptor-band)
             if (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);  # consume :
                 if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }  # skip * for pointer types
@@ -3018,8 +3021,8 @@ fn PARSE_FN_DEF(S): i64 {
                     elif (_ptc == 3) { result_mask = result_mask | (1 << pc); }
                     elif (_ptc == 4) { option_mask = option_mask | (1 << pc); }
                     elif (_ptc == 5) { tagged_mask = tagged_mask | (1 << pc); }
-                    elif (_ptc == 6) { pt_simd_class = 1; pt_simd_sid = 20; }
-                    elif (_ptc == 7) { pt_simd_class = 2; pt_simd_sid = 21; }
+                    elif (_ptc == 6) { pt_simd_class = 1; pt_simd_sid = 2093; }  # f64v2 (v6.4.14: was 20, collided w/ struct-id 20)
+                    elif (_ptc == 7) { pt_simd_class = 2; pt_simd_sid = 2125; }  # f64v4 (v6.4.14: was 21)
                     elif (_ptc == 8) { pt_simd_class = 1; pt_simd_sid = 2121; }  # f32v4
                     elif (_ptc <= 0 - 2048) { pt_simd_class = 1; pt_simd_sid = 0 - _ptc; }  # v6.4.7: integer 128-bit vector (16-byte/1-XMM, SLTYPE = sentinel)
                     # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
@@ -3070,7 +3073,7 @@ fn PARSE_FN_DEF(S): i64 {
             # (pc++ + comma-consume) at the end.
             if (pt_simd_class > 0) {
                 var simd_slots = 2;     # f64v2 / f32v4 (128-bit)
-                var simd_sid = pt_simd_sid;   # 20 f64v2 / 21 f64v4 / 2121 f32v4
+                var simd_sid = pt_simd_sid;   # 2093 f64v2 / 2125 f64v4 / 2121 f32v4
                 if (pt_simd_class == 2) {
                     simd_slots = 4;     # f64v4
                 }

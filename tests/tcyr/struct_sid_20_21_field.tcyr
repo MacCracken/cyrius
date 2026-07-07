@@ -1,0 +1,95 @@
+# struct_sid_20_21_field.tcyr — v6.4.14 regression for the struct-id 20/21 ↔
+# f64v2/f64v4 SIMD-sentinel collision (docs/development/issues/
+# 2026-07-06-struct-sid-20-21-simd-sentinel-collision.md).
+#
+# BUG (pre-v6.4.14): a struct-typed local's type is stored as SLTYPE = (0 - sid).
+# The two LEGACY-FLAT SIMD sentinels reused f64v2 = -20 and f64v4 = -21 — exactly
+# the SLTYPE of the 20th and 21st struct defined in the unit. The field-access
+# guards in parse_decl.cyr (PARSE_FIELD_LOAD / PARSE_FIELD_STORE) matched
+# `lt == 0-20 || lt == 0-21`, so `x.field` on the 20th/21st struct hard-errored
+# "SIMD vector has no named fields" — a correct program rejected, data-dependently
+# (the collision lands on whichever struct is 20th/21st OVERALL, incl. stdlib +
+# dep-bundle structs). Found porting stiva Rust→Cyrius.
+#
+# FIX (Option 1): f64v2/f64v4 moved into the descriptor band (-2093 / -2125, like
+# every other vector); the guards collapse to the single `lt <= 0-2048` range test,
+# so struct-ids are collision-free through 2047.
+#
+# This test is DELIBERATELY include-free: struct-ids are assigned sequentially over
+# every struct in the compilation unit, so the 20th `struct` below IS id 20. Adding
+# any `include` would prepend stdlib structs and shift the numbering off 20/21,
+# masking the exact case this guards. Exit-code contract (no test.cyr harness):
+# main returns 0 on success, or the failing struct-id — the .tcyr runner treats a
+# nonzero exit as FAIL. On a pre-fix compiler the `.field` writes below fail to
+# COMPILE (FAIL (compile)); on a fixed compiler it compiles, runs, and exits 0.
+
+struct S1  { a; }
+struct S2  { a; }
+struct S3  { a; }
+struct S4  { a; }
+struct S5  { a; }
+struct S6  { a; }
+struct S7  { a; }
+struct S8  { a; }
+struct S9  { a; }
+struct S10 { a; }
+struct S11 { a; }
+struct S12 { a; }
+struct S13 { a; }
+struct S14 { a; }
+struct S15 { a; }
+struct S16 { a; }
+struct S17 { a; }
+struct S18 { a; }
+struct S19 { a; }   # struct-id 19 — control (below the collision)
+struct S20 { a; }   # struct-id 20 — was f64v2 sentinel (-20)
+struct S21 { a; }   # struct-id 21 — was f64v4 sentinel (-21)
+struct S22 { a; }   # struct-id 22 — control (above the collision)
+
+# id 19 — never collided; proves the harness reaches a real field access.
+fn t19(): i64 {
+    var b[8];
+    var x: S19 = &b;
+    x.a = 190;              # PARSE_FIELD_STORE on id-19 struct
+    if (x.a != 190) { return 19; }   # PARSE_FIELD_LOAD
+    return 0;
+}
+
+# id 20 — the f64v2 collision. Pre-fix: "SIMD vector has no named fields".
+fn t20(): i64 {
+    var b[8];
+    var x: S20 = &b;
+    x.a = 200;
+    if (x.a != 200) { return 20; }
+    return 0;
+}
+
+# id 21 — the f64v4 collision.
+fn t21(): i64 {
+    var b[8];
+    var x: S21 = &b;
+    x.a = 210;
+    if (x.a != 210) { return 21; }
+    return 0;
+}
+
+# id 22 — control above the collision.
+fn t22(): i64 {
+    var b[8];
+    var x: S22 = &b;
+    x.a = 220;
+    if (x.a != 220) { return 22; }
+    return 0;
+}
+
+fn main(): i64 {
+    var e = t19();
+    if (e != 0) { return e; }
+    e = t20();
+    if (e != 0) { return e; }
+    e = t21();
+    if (e != 0) { return e; }
+    e = t22();
+    if (e != 0) { return e; }
+    return 0;
+}

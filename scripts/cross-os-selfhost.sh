@@ -140,10 +140,15 @@ case "$HOST" in
     cat src/main_win.cyr | /tmp/_co_l > /tmp/_co_w && chmod +x /tmp/_co_w
     cat src/main_win.cyr | /tmp/_co_w > /tmp/_co_exe
     printf 'fn main() { return 42; }' > /tmp/_co_ec.cyr
-    ssh $SSHO cass 'cmd /c "rmdir /s /q %USERPROFILE%\_cyaud 2>nul & mkdir %USERPROFILE%\_cyaud"'
-    scp -q $SSHO /tmp/_co.tgz cass:_cyaud/_co.tgz
-    scp -q $SSHO /tmp/_co_exe cass:_cyaud/cycc.exe
-    scp -q $SSHO /tmp/_co_ec.cyr cass:_cyaud/_ec.cyr
+    # v6.4.14 — run under C:\cyrius-tests, the dir cass has a standing Windows
+    # Defender exclusion for. The old %USERPROFILE%\_cyaud was NOT excluded, so
+    # Defender's ML classifier (Bearfoos.A!ml) could QUARANTINE a freshly-built
+    # cycc.exe mid-run → 0-byte output → a FALSE self-host FAIL on a perfectly
+    # good compiler. Writing to the excluded root makes the verdict trustworthy.
+    ssh $SSHO cass 'cmd /c "rmdir /s /q C:\cyrius-tests\_cyaud 2>nul & mkdir C:\cyrius-tests\_cyaud"'
+    scp -q $SSHO /tmp/_co.tgz cass:/cyrius-tests/_cyaud/_co.tgz
+    scp -q $SSHO /tmp/_co_exe cass:/cyrius-tests/_cyaud/cycc.exe
+    scp -q $SSHO /tmp/_co_ec.cyr cass:/cyrius-tests/_cyaud/_ec.cyr
     # cmd.exe for `<` redirection. The &&-chain stops at the first failure and
     # cmd /c returns that command's exit code, which ssh propagates back, so a
     # broken cycc.exe (emits 0 code today) fails the gate for the right reason.
@@ -153,12 +158,28 @@ case "$HOST" in
     # where main_win.cyr's DCE stubs `fn main` / never auto-calls it (the bug
     # fixed in v6.0.54). `cmd /v` is REQUIRED — bare `%errorlevel%` expands at
     # parse time and falsely reads 0 (feedback_windows_errorlevel_test_wrapper).
-    ssh $SSHO cass 'cmd /c "cd /d %USERPROFILE%\_cyaud && tar xzf _co.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < _ec.cyr > _ec.exe && _ec.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\callptr_real_win64.cyr > cpr.exe && cpr.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\nanosleep_pe.cyr > nsp.exe && nsp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\var_syscall_arity_pe.cyr > vsa.exe && vsa.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d %USERPROFILE%\_cyaud && c2.exe < tests\win\dir_list_pe.cyr > dlp.exe && dlp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'
+    # v6.4.14 — the cass leg is the ONE host that splits its checks across
+    # MULTIPLE ssh invocations joined by LOCAL `&&`. That is a set -e FALSE-PASS
+    # trap: POSIX `set -e` IGNORES a failure of any command in an AND-OR list
+    # OTHER THAN THE LAST. So if the FIRST ssh (the self-host `fc /b c2.exe
+    # c3.exe`) FAILS, the chain short-circuits, set -e does NOT fire, and the
+    # script falls straight through to `echo SELFHOST_OK` below — reporting a
+    # GREEN verdict on a BROKEN Windows self-host. (ecb/ach/pi are safe: each is
+    # a SINGLE ssh whose remote `&&`-chain exit ssh propagates, so a nonzero ssh
+    # is a standalone command that set -e catches.) A broken cass PE self-host
+    # slipped past as SELFHOST_OK exactly this way. Wrap the whole chain in an
+    # explicit `if` so ANY leg's failure is a hard, visible exit 1 — never masked.
+    if ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\_cyaud && tar xzf _co.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < _ec.cyr > _ec.exe && _ec.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\callptr_real_win64.cyr > cpr.exe && cpr.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\nanosleep_pe.cyr > nsp.exe && nsp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\var_syscall_arity_pe.cyr > vsa.exe && vsa.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\dir_list_pe.cyr > dlp.exe && dlp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'; then
+      :   # all cass legs passed (self-host fixpoint + the 5 exit-42 guards)
+    else
+      echo "SELFHOST_FAIL: cass — Windows self-host fixpoint (fc /b c2.exe c3.exe) or an exit-code guard FAILED (rc=$?). NOT SELFHOST_OK."
+      exit 1
+    fi
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
     # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
     # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this
@@ -243,7 +264,7 @@ if [ -n "$LIBTEST" ]; then
       cass)
         # PE: the glob MUST select PE-safe tests (fork/socketpair are POSIX-only).
         wt=$(echo "$t" | tr '/' '\\')
-        ssh $SSHO cass "cmd /v /c \"cd /d %USERPROFILE%\\_cyaud && c2.exe < $wt > _lt.exe && _lt.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" \
+        ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\_cyaud && c2.exe < $wt > _lt.exe && _lt.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" \
           || { echo "  LIBTEST_FAIL: $base on cass (PE-incompatible? fork/socketpair are POSIX-only)"; exit 1; }
         ;;
     esac

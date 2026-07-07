@@ -115,6 +115,18 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   embedded-`]`). Vec<Str>/nested-element-struct = clear-diagnostic/documented boundaries. cycc self-hosts
   (+6 KB → 1,073,544 B); check.sh 130; seed-derive OK; ecb+cass+pi `SELFHOST_OK`; test
   `derive_vec_struct.tcyr` (22). **Array-typed struct fields (Pin 2) is DONE.**
+- **v6.4.14** — **struct-id 20/21 ↔ f64v2/f64v4 SIMD-sentinel collision fix** (consumer-filed P1,
+  found porting stiva) + **cross-OS gate hardening**. A struct-typed local's `SLTYPE = (0 - sid)`
+  collided with the flat f64v2 `-20` / f64v4 `-21` sentinels → `.field` on the 20th/21st struct
+  hard-errored *"SIMD vector has no named fields"* (data-dependent: stdlib/dep structs shift the
+  numbering). Fix (Option 1): fold f64v2/f64v4 into the `≤ -2048` descriptor band (f64v2 → -2093,
+  f64v4 → -2125), retire the flat codes → guards collapse to `lt <= -2048`; struct-ids collision-free
+  through 2047. All producers migrated in lockstep (`_classify_return_type`, var-decl, value-form
+  param `pt_simd_sid`); differential vs .13 **0/0** over 338 inputs. Gate: fixed the cass-leg `set -e`
+  `&&`-chain **false-pass** (a failed Windows self-host reported `SELFHOST_OK`) + moved the cass work
+  dir to the Defender-excluded `C:\cyrius-tests` (Defender's `Bearfoos.A!ml` ML classifier quarantines
+  the unsigned cycc.exe → false FAIL). cycc byte-identical (1,073,544 B); check.sh 130; seed-derive OK;
+  ecb+cass+pi `SELFHOST_OK`; test `struct_sid_20_21_field.tcyr`. **NEXT: SIMD Pin 1 aarch64 NEON (Phase 5).**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):

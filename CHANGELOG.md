@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.14] — 2026-07-07
+
+**v6.4.14 — struct-id 20/21 ↔ f64v2/f64v4 SIMD-sentinel collision fix (consumer-filed P1,
+found porting stiva Rust→Cyrius) + cross-OS gate hardening.** A struct-typed local's type is
+stored as `SLTYPE = (0 - struct_id)`; the two *legacy-flat* SIMD sentinels reused f64v2 = `-20`
+and f64v4 = `-21` — byte-identical to the SLTYPE of the **20th and 21st struct** defined in a
+compilation unit. So `x.field` on the 20th/21st struct hard-errored *"SIMD vector has no named
+fields"* — a correct program rejected, data-dependently (the collision lands on whichever struct
+is 20th/21st *overall*, including stdlib + dep-bundle structs, so adding an unrelated module could
+break a different module's field access). cycc self-hosts byte-identical on all four targets
+(1,073,544 B; codegen-neutral — cycc uses no f64v2/f64v4); check.sh 130; self_compile ~570 ms;
+ecb + cass + pi `SELFHOST_OK`.
+
+### Fixed — struct-sid/SIMD-sentinel collision (Option 1: unify on the descriptor band)
+- f64v2/f64v4 moved OFF the flat `-20`/`-21` into the `≤ -2048` structured-descriptor band like
+  every other vector: **f64v2 → -2093** (desc 45), **f64v4 → -2125** (desc 77), decoded by
+  `_vec_desc` (`src/common/util.cyr`). The field-access guards in `parse_decl.cyr`
+  (`PARSE_FIELD_LOAD`/`PARSE_FIELD_STORE`) collapse from `lt == -20 || lt == -21 || lt <= -2048`
+  to a single `lt <= -2048` range test → struct-ids are collision-free through 2047.
+- All producers migrated in lockstep so the encoding stays consistent: `_classify_return_type`
+  (parse_fn.cyr, the return-type name→sentinel map), the `var v: f64v2;` var-decl path
+  (parse_decl.cyr), and the **value-form param path** (`pt_simd_sid` 20/21 → 2093/2125,
+  parse_fn.cyr) — the last was the subtle one: the param-store recognizes f64v2 via `pt_simd_class`
+  but the local's SLTYPE (`0 - pt_simd_sid`) must decode through `_is_simd128` for the pair-return
+  ABI, so a half-migration silently routed `return a;` of an f64v2 param through the scalar `mov
+  rax` path instead of `movupd xmm0`. Consumers (`_is_simd128/256/any`, return-sizing, caller-side
+  arg checks) already used the descriptor predicates and needed only the flat special-cases removed.
+- Logic-preserving: **differential vs v6.4.13 = codegen-diff 0 / status-diff 0** over 338 corpus
+  inputs (default + DCE), incl. all f64 SIMD programs (`f64v2_byval_param.tcyr` byte-identical).
+- Regression: `tests/tcyr/struct_sid_20_21_field.tcyr` — 22 include-free structs, `.field`
+  read/write on ids 19–22; pre-fix errors at the id-20 write, post-fix compiles + exits 0.
+
+### Fixed — cross-OS self-host gate (`scripts/cross-os-selfhost.sh`) trustworthiness
+- **`set -e` false-pass on the cass leg.** The Windows leg chained its checks across six separate
+  `ssh` invocations joined by a *local* `&&`; POSIX `set -e` **ignores** a failure of any command
+  in an AND-OR list *other than the last*, so a failed self-host (the first command) short-circuited
+  the chain, `set -e` never fired, and the script fell through to `echo SELFHOST_OK` — a GREEN
+  verdict on a broken Windows self-host. Wrapped the chain in an explicit `if … else echo
+  SELFHOST_FAIL; exit 1`. (ecb/ach/pi are single `ssh` calls whose exit propagates — safe.)
+- **cass work dir moved to the Defender-excluded path.** cass has a standing Windows Defender
+  exclusion for `C:\cyrius-tests`, but the gate wrote to `%USERPROFILE%\_cyaud` (not excluded).
+  Defender's ML classifier (`Trojan:Win32/Bearfoos.A!ml`) flags the unsigned PE-emitting cycc.exe
+  and **quarantines it mid-run** → 0-byte output → a false self-host FAIL on a perfectly good
+  compiler. The self-host + LIBTEST legs now run under `C:\cyrius-tests\_cyaud` so the binary is
+  never scanned/quarantined and the verdict is real.
+
 ## [6.4.13] — 2026-07-06
 
 **v6.4.13 — array-typed struct fields R3: `#derive` for `Vec<#derive-struct>` (the arc CLOSES).**

@@ -211,12 +211,15 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         var lli = FINDLOCAL(S, noff);
         if (lli >= 0) {
             var lt = GLTYPE(S, lli);
-            # v6.4.4: SIMD vector sentinels (f64v2 -20, f64v4 -21, and the
-            # descriptor band <= -2048, e.g. f32v4 -2121) are NOT struct ids.
-            # Without this guard `0 - lt` yields 2121 -> si=2120, which blows
+            # v6.4.4: SIMD vector sentinels live in the descriptor band <= -2048
+            # (f64v2 -2093, f64v4 -2125, f32v4 -2121, ...) and are NOT struct ids.
+            # Without this guard `0 - lt` yields e.g. 2121 -> si=2120, which blows
             # past the 1024-entry struct tables (OOB read in BUILD_METHOD_NAME
             # / FINDFIELD). Vectors expose lanes via fN_laneK(&v), not `.field`.
-            if (lt == 0 - 20 || lt == 0 - 21 || lt <= 0 - 2048) {
+            # v6.4.14: the old flat -20/-21 special-cases were removed — they
+            # collided with struct-ids 20/21, wrongly rejecting `.field` on the
+            # 20th/21st struct. The single band check is exact now.
+            if (lt <= 0 - 2048) {
                 ERR_MSG(S, "SIMD vector has no named fields", 31);
             }
             if (lt < 0) { sid = 0 - lt; }
@@ -427,10 +430,11 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
         var lli = FINDLOCAL(S, noff);
         if (lli >= 0) {
             var lt = GLTYPE(S, lli);
-            # v6.4.4: SIMD vector sentinels are not struct ids — reject `.field`
-            # before `0 - lt` escapes the 1024-entry struct tables. See the
-            # mirror guard in PARSE_FIELD_LOAD.
-            if (lt == 0 - 20 || lt == 0 - 21 || lt <= 0 - 2048) {
+            # v6.4.4: SIMD vector sentinels (band <= -2048) are not struct ids —
+            # reject `.field` before `0 - lt` escapes the 1024-entry struct
+            # tables. See the mirror guard in PARSE_FIELD_LOAD. v6.4.14 dropped
+            # the flat -20/-21 cases (they collided with struct-ids 20/21).
+            if (lt <= 0 - 2048) {
                 ERR_MSG(S, "SIMD vector has no named fields", 31);
             }
             if (lt < 0) { sid = 0 - lt; }
@@ -1398,23 +1402,26 @@ fn PARSE_VAR(S): i64 {
                 if (scalar_type >= 1) { if (scalar_type <= 4) { if (ltname & 0xFF == 0x69) { scalar_signed = 1; } } }
                 # v5.10.28 — `f64v2` value type (16-byte). Detected
                 # here at var-decl parsing so `var v: f64v2;` triggers
-                # the 2-slot stack-local allocation path below. Encoded
-                # as pscale = -20 (sentinel below STRUCT sid range —
-                # struct sids start at 1 so -20 is safe). The branch
+                # the 2-slot stack-local allocation path below. Encoded as
+                # pscale = -2093 (128-bit descriptor sentinel, desc 45, in
+                # the <= -2048 SIMD band decoded by _vec_desc). v6.4.14
+                # moved f64v2 off the flat -20, which collided with
+                # struct-id 20 (`0 - sid` for the 20th struct). The branch
                 # at line ~873 (`pscale < 0 && PEEKT == 5`) routes
                 # uninitialized f64v2 locals through the 2-slot
-                # filler+named allocation; the named slot's SLTYPE
-                # gets -20 (via `0 - sv_sid` where sv_sid = 20).
+                # filler+named allocation.
                 # bytes for "f64v2\0" — 5 chars + nul, packed in 6 bytes
                 elif ((ltname & 0xFFFFFFFFFFFF) == 0x00003276343666) {
-                    pscale = 0 - 20;
+                    pscale = 0 - 2093;
                 }
                 # v5.10.37 — `f64v4` value type (32-byte). Same shape
-                # as f64v2 but 4-slot allocation. Encoded as -21.
+                # as f64v2 but 4-slot allocation. Encoded as -2125 (256-bit
+                # descriptor sentinel, desc 77; v6.4.14 moved it off the flat
+                # -21 that collided with struct-id 21).
                 # bytes for "f64v4\0": 'f' 0x66, '6' 0x36, '4' 0x34,
                 # 'v' 0x76, '4' 0x34, NUL 0x00 — packed LE = 0x00_34_76_34_36_66.
                 elif ((ltname & 0xFFFFFFFFFFFF) == 0x00003476343666) {
-                    pscale = 0 - 21;
+                    pscale = 0 - 2125;
                 }
                 # v6.4.3+ (SIMD Phase 1) — `f32v4` value type: 4 f32 lanes = 16 bytes
                 # = 128-bit = same footprint as f64v2 (2 slots), distinguished by the
@@ -1500,17 +1507,12 @@ fn PARSE_VAR(S): i64 {
         }
         var sv_sid = 0 - pscale;
         var sv_sz = 0;
-        # v5.10.28 — `f64v2` sentinel pscale = -20 takes a fixed 16-byte
-        # size without consulting STRUCTSZ (no struct registered for it).
-        # The named slot's SLTYPE = -20 below; PARSE_RETURN's pair-load
-        # path keys on this.
-        # v5.10.37 — `f64v4` sentinel pscale = -21, fixed 32-byte
-        # size, 4-slot allocation; same pattern as f64v2.
-        if (sv_sid == 20) { sv_sz = 16; }
-        elif (sv_sid == 21) { sv_sz = 32; }
-        # v6.4.3+ SIMD band (sentinel <= -2048, below the struct-sid range): size via
-        # the structured descriptor. f32v4 (-2121) -> 2 slots / 16 bytes.
-        elif (pscale <= 0 - 2048) { _vec_desc(S, pscale); sv_sz = GVEC_NSLOTS(S) * 8; }
+        # SIMD band (sentinel <= -2048, below the struct-sid range): size via
+        # the structured descriptor. f64v2 (-2093) -> 2 slots / 16 bytes,
+        # f64v4 (-2125) -> 4 slots / 32 bytes, f32v4 (-2121) -> 2 slots.
+        # v6.4.14 folded the old flat f64v2/f64v4 -20/-21 cases into this
+        # band (they collided with struct-ids 20/21); _vec_desc handles all.
+        if (pscale <= 0 - 2048) { _vec_desc(S, pscale); sv_sz = GVEC_NSLOTS(S) * 8; }
         else { sv_sz = STRUCTSZ(S, sv_sid - 1); }
         if (sv_sz < 8) { sv_sz = 8; }
         var sv_aligned = (sv_sz + 7) & (0 - 8);
