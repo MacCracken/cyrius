@@ -452,23 +452,31 @@ fn EVLOAD(S, idx): i64 {
     return 0;
 }
 
+# Width-aware narrow load from [rcx] → rax. Shared byte ladder for EVLOAD_W /
+# EFIELD_LOAD_W (R4, v6.4.15): emits the sign/zero-extending mov for width
+# -4/-2/-1/1/2/4 (ModRM rm=001) and returns 1 (narrow); width-8 falls to ELODC
+# and returns 0. The _flags_reflect_rax bookkeeping stays in the CALLERS —
+# EVLOAD_W clears it, EFIELD_LOAD_W deliberately leaves it (load-bearing:
+# parse_ctrl reads _flags_reflect_rax before conditional branches).
+fn _EMIT_NLOAD_RCX(S, width): i64 {
+    if (width < 0 - 2) { EB(S, 0x48); EB(S, 0x63); EB(S, 0x01); return 1; }              # -4: movsxd rax, dword [rcx]
+    if (width == 0 - 2) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBF); EB(S, 0x01); return 1; } # movsx rax, word [rcx]
+    if (width == 0 - 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBE); EB(S, 0x01); return 1; } # movsx rax, byte [rcx]
+    if (width == 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x01); return 1; }  # movzx rax, byte [rcx]
+    if (width == 2) { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x01); return 1; }               # movzx eax, word [rcx]
+    if (width == 4) { EB(S, 0x8B); EB(S, 0x01); return 1; }                            # mov eax, [rcx]
+    ELODC(S);
+    return 0;
+}
+
 # Width-aware var load: rcx = &var; load_width [rcx] → rax
 fn EVLOAD_W(S, idx, width): i64 {
     if (_IR_REC(S, IR_LOAD_GLOBAL, width, idx, 0) == 1) { return 0; }
     _EVRCX(S, idx);   # global address → RCX
-    # v6.3.35: read from [RCX] (where _EVRCX put the address). The old ELOAD8/16/32
-    # helpers load from [RAX], but RAX is garbage here → SIGSEGV on any typed sub-i64
-    # GLOBAL scalar load (`var G: i32 = 40; return G;`). The width-8 ELODC already reads
-    # [rcx], which is why i64 globals worked. RCX-based narrow loads mirror ELOAD8/16/32
-    # with ModRM rm=001 (rcx) instead of rm=000 (rax).
-    # v6.3.35: negative width = SIGNED global → movsx (sign-extend) from [rcx].
-    if (width < 0 - 2) { EB(S, 0x48); EB(S, 0x63); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }              # -4: movsxd rax, dword [rcx]
-    if (width == 0 - 2) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBF); EB(S, 0x01); _flags_reflect_rax = 0; return 0; } # movsx rax, word [rcx]
-    if (width == 0 - 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBE); EB(S, 0x01); _flags_reflect_rax = 0; return 0; } # movsx rax, byte [rcx]
-    if (width == 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }  # movzx rax, byte [rcx]
-    if (width == 2) { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }               # movzx eax, word [rcx]
-    if (width == 4) { EB(S, 0x8B); EB(S, 0x01); _flags_reflect_rax = 0; return 0; }                            # mov eax, [rcx]
-    ELODC(S);
+    # v6.3.35: RCX-based narrow loads (ModRM rm=001) — the old ELOAD8/16/32 read
+    # from [RAX] (garbage here → SIGSEGV on a typed sub-i64 global). Signed widths
+    # sign-extend (movsx). A narrow load clobbers flags → clear _flags_reflect_rax.
+    if (_EMIT_NLOAD_RCX(S, width) == 1) { _flags_reflect_rax = 0; }
     return 0;
 }
 
@@ -560,14 +568,9 @@ fn EFLSTORE_W(S, idx, width): i64 {
 # so the aarch64 + cx backends can sit alongside as peers.
 fn EFIELD_LOAD_W(S, width): i64 {
     if (width == 1 || width == 2 || width == 4) { _IR_REC0(S, IR_RAW_EMIT); }
-    # v6.3.35: negative width = SIGNED narrow field → movsx (sign-extend) from [rcx].
-    if (width < 0 - 2) { EB(S, 0x48); EB(S, 0x63); EB(S, 0x01); return 0; }              # width -4: movsxd rax, dword [rcx]
-    if (width == 0 - 2) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBF); EB(S, 0x01); return 0; } # movsx rax, word [rcx]
-    if (width == 0 - 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBE); EB(S, 0x01); return 0; } # movsx rax, byte [rcx]
-    if (width == 1) { EB(S, 0x48); EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x01); return 0; }   # movzx rax, byte [rcx]
-    if (width == 2) { EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x01); return 0; }                # movzx eax, word [rcx]
-    if (width == 4) { EB(S, 0x8B); EB(S, 0x01); return 0; }                              # mov eax, [rcx]
-    ELODC(S);
+    # Same [rcx] narrow ladder as EVLOAD_W (R4, v6.4.15) — but does NOT touch
+    # _flags_reflect_rax (the field-load path must leave it as the caller set it).
+    _EMIT_NLOAD_RCX(S, width);
     return 0;
 }
 
@@ -827,6 +830,7 @@ fn EEXIT(S): i64 {
 # never match; otherwise it falls through unchanged (e.g. EEXIT's already-
 # classed 0x2000001 skips the whole chain).
 fn _msx(S, lin, classed): i64 {
+    if (lin >= 128) { return _msx32(S, lin, classed); }   # >127 sets imm8 bit 7 -> sign-extends to negative; route to the imm32 form (cf. getdents64 217, getrandom 318). CHANGELOG [6.4.15] L2
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, lin);    # cmp rax, lin (imm8)
     EB(S, 0x75); EB(S, 0x07);                             # jne +7 (skip the mov)
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);                # mov rax, imm32:

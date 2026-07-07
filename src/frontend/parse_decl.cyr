@@ -196,6 +196,55 @@ fn BUILD_METHOD_NAME(S, si, mnoff): i64 {
     return scratch;
 }
 
+# --- R1 (v6.4.15): field address + leaf-retype resolution, extracted from the
+# formerly-duplicated PARSE_FIELD_LOAD / PARSE_FIELD_STORE copies so a fix lands
+# once (the copies had repeatedly taken the same fixes: v5.8.17 sentinel, v6.3.16
+# <=8B-inline, v6.3.33 leaf-retype). Byte-identical extraction.
+
+# Emit rcx = base address of the struct whose field is being accessed.
+# idx < -1 is a local-encoded index (idx = 0 - 2 - lli); >= -1 is a global.
+# Disambiguates pointer-to-struct (mov [slot]) from inline-struct (lea &slot)
+# via the -1 sentinel predecessor + the <=8B-inline rule (not on cx: it boxes).
+fn _resolve_field_base_addr(S, idx, sid): i64 {
+    if (idx < 0 - 1) {
+        var rli = 0 - 2 - idx;
+        var is_ptr = 1;
+        if (rli > 0) {
+            if (L64(S + 0x5D9D000 + (rli - 1) * 8) == 0 - 1) { is_ptr = 0; }
+        }
+        if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { is_ptr = 0; } } }
+        if (is_ptr == 1) {
+            EFLLOAD(S, rli);
+            EMOVCA(S);
+        } else {
+            EFLADDR_X1(S, rli);
+        }
+    } else { EVADDR_X1(S, idx); }
+    return 0;
+}
+
+# Chained-access leaf retype: for `s.inner.field`, walk one nesting level so the
+# load/store WIDTH comes from the leaf field (v6.3.33), not the intermediate
+# struct. Returns the leaf ftype; writes the updated byte-offset to _rlf_off
+# (the second return — read it immediately at the call site; non-reentrant).
+var _rlf_off = 0;
+fn _resolve_leaf_field(S, si, fi, off): i64 {
+    var ft = GETFTYPE(S, si, fi);
+    if (ft > 0) { if (PEEKT(S) == 41) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            var ifnoff = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            var isi = ft - 1;
+            var ifi = FINDFIELD(S, isi, ifnoff);
+            if (ifi < 0) { ERR(S); }
+            off = off + FIELDOFF(S, isi, ifi);
+            ft = GETFTYPE(S, isi, ifi);
+        } }
+    _rlf_off = off;
+    return ft;
+}
+
 # Load a struct field: ident.field → emit load from var_addr + field_offset
 # Or call a method: ident.method(args) → call StructName_method(&ident, args)
 fn PARSE_FIELD_LOAD(S, noff): i64 {
@@ -322,77 +371,14 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
     var fi = FINDFIELD(S, si, fnoff);
     if (fi < 0) { ERR(S); }
     var off = FIELDOFF(S, si, fi);
-    # Check for chained access: s.inner.field
-    var ft = GETFTYPE(S, si, fi);
-    if (ft > 0) { if (PEEKT(S) == 41) {
-            # Nested struct — chain the dot access
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-            var ifnoff = PEEKV(S);
-            STI(S, GTI(S) + 1);
-            var isi = ft - 1;
-            var ifi = FINDFIELD(S, isi, ifnoff);
-            if (ifi < 0) { ERR(S); }
-            off = off + FIELDOFF(S, isi, ifi);
-            # v6.3.33: the load width must come from the LEAF field, not the
-            # intermediate struct. Pre-fix `ft` stayed the inner struct sid, so
-            # FIELDSZ returned its size (e.g. 8 for a 2×i32 Pair) → a 64-bit load
-            # that ignored a sub-i64 leaf (`x.y.z` with z: i8/i16/i32 read wide).
-            # Re-point `ft` at the leaf so FIELDSZ/EFIELD_LOAD_W pick the true width
-            # (leaf i64 → 0 → 8; leaf struct → its size — both unchanged).
-            ft = GETFTYPE(S, isi, ifi);
-        } }
+    # Check for chained access: s.inner.field — leaf retype (R1, v6.4.15).
+    var ft = _resolve_leaf_field(S, si, fi, off);
+    off = _rlf_off;
     # Load variable address + field offset, then load value (width-correct).
-    # idx < -1 is a local-encoded index from the struct-local branch above
-    # (idx = 0 - 2 - lli, so lli = 0 - 2 - idx). v5.5.36 Phase 2: route
-    # through EFLADDR_X1 (lea rcx, [rbp - disp]) instead of the global
-    # EVADDR_X1 (movabs rcx, abs64 + fixup), which would register a bogus
-    # global fixup for the local-encoded negative idx.
-    #
-    # v5.8.17 §9: distinguish pointer-to-struct from inline-struct
-    # locals. The v5.5.36 inline path reserves ceil(STRUCTSZ/8)
-    # consecutive slots and tags all but the last (named) slot
-    # with the sentinel name `-1`. A pointer-to-struct local
-    # (e.g., `var s: Str = str_from(...)` where the RHS returns
-    # a heap pointer) takes a single slot whose value IS the
-    # pointer. The two patterns reach this branch with the same
-    # GLTYPE encoding (`-sid`) but need different addressing:
-    #   inline:  rcx = &slot (lea — slot IS the struct's bytes)
-    #   pointer: rcx = [slot] (mov — slot HOLDS the struct's pointer)
-    # Disambiguate by checking the previous slot: if it carries
-    # the sentinel name -1, this slot is the named tail of an
-    # inline allocation; otherwise it's a single-slot pointer.
-    # Slot 0 has no predecessor, so it's pointer-mode by
-    # construction (inline structs always reserve at least one
-    # filler slot before the named slot when STRUCTSZ > 8).
-    if (idx < 0 - 1) {
-        var lf_lli = 0 - 2 - idx;
-        var lf_is_ptr = 1;
-        if (lf_lli > 0) {
-            if (L64(S + 0x5D9D000 + (lf_lli - 1) * 8) == 0 - 1) { lf_is_ptr = 0; }
-        }
-        # v6.3.16: a struct-local whose type fits in <= 8 bytes occupies exactly ONE
-        # slot that HOLDS THE VALUE (inline) — never a pointer — so it must use
-        # `lea &slot`, not `mov [slot]`. The sentinel-predecessor test above can't see
-        # this: a single-slot inline struct has no -1 filler, so it was mislabelled a
-        # pointer-to-struct → `mov [slot]` dereferenced the garbage value → SIGSEGV on
-        # x86 + aarch64 (cx was already correct). Only STRUCTSZ > 8 single-slot locals
-        # are genuine pointers (Str, 16 B via rax). Closes single-field-struct-segfaults.
-        # NOT on cx: the cx backend BOXES structs (the slot always holds a pointer, even
-        # for uninit / by-value ≤8B), so pointer mode is correct there — forcing inline
-        # would break the cx struct-byval parity test. Gate on the inline-struct targets.
-        if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { lf_is_ptr = 0; } } }
-        if (lf_is_ptr == 1) {
-            # Pointer-to-struct: load the slot's value into rax,
-            # then move into rcx as the struct's base pointer.
-            EFLLOAD(S, lf_lli);
-            EMOVCA(S);
-        } else {
-            # Inline struct: take the slot's address as the
-            # struct's base.
-            EFLADDR_X1(S, lf_lli);
-        }
-    } else { EVADDR_X1(S, idx); }
+    # Pointer-vs-inline struct-base resolution: v5.5.36 local-encoded idx
+    # (lea rcx,[rbp-disp] via EFLADDR_X1 vs global EVADDR_X1), v5.8.17 -1-sentinel
+    # predecessor test, v6.3.16 <=8B-single-slot-inline rule (not on cx — it boxes).
+    _resolve_field_base_addr(S, idx, sid);
     if (off > 0) { EADDIMM_X1(S, off); }
     var fld_sz = FIELDSZ(S, ft);
     # v5.9.40 — sub-byte struct field load now goes through the
@@ -484,23 +470,9 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     var fi = FINDFIELD(S, si, fnoff);
     if (fi < 0) { ERR(S); }
     var off = FIELDOFF(S, si, fi);
-    # Check for chained access: s.inner.field = expr;
-    var ft = GETFTYPE(S, si, fi);
-    if (ft > 0) { if (PEEKT(S) == 41) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-            var ifnoff = PEEKV(S);
-            STI(S, GTI(S) + 1);
-            var isi = ft - 1;
-            var ifi = FINDFIELD(S, isi, ifnoff);
-            if (ifi < 0) { ERR(S); }
-            off = off + FIELDOFF(S, isi, ifi);
-            # v6.3.33: mirror of PARSE_FIELD_LOAD — the store width must come from
-            # the LEAF field. Pre-fix `ft` stayed the inner struct sid, so a nested
-            # `x.y.z = v` (z: i8/i16/i32) took the else/ESTOC 64-bit store, writing 8
-            # bytes over a 4-byte leaf (truncation lost + neighbor clobber).
-            ft = GETFTYPE(S, isi, ifi);
-        } }
+    # Check for chained access: s.inner.field = expr — leaf retype (R1, v6.4.15).
+    var ft = _resolve_leaf_field(S, si, fi, off);
+    off = _rlf_off;
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
     PCMPE(S);
@@ -510,24 +482,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     # pointer-vs-inline disambiguation as PARSE_FIELD_LOAD —
     # see that fn for the sentinel-based detection rationale.
     EPUSHR(S);
-    if (idx < 0 - 1) {
-        var fs_lli = 0 - 2 - idx;
-        var fs_is_ptr = 1;
-        if (fs_lli > 0) {
-            if (L64(S + 0x5D9D000 + (fs_lli - 1) * 8) == 0 - 1) { fs_is_ptr = 0; }
-        }
-        # v6.3.16: <=8-byte struct-local is inline (holds the value in its one slot),
-        # never a pointer → lea &slot, not mov [slot]. Mirror of PARSE_FIELD_LOAD; see
-        # there. Fixes single-field struct field STORE segfault on x86 + aarch64. Not on
-        # cx (boxes structs — pointer mode is correct there).
-        if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { fs_is_ptr = 0; } } }
-        if (fs_is_ptr == 1) {
-            EFLLOAD(S, fs_lli);
-            EMOVCA(S);
-        } else {
-            EFLADDR_X1(S, fs_lli);
-        }
-    } else { EVADDR_X1(S, idx); }
+    _resolve_field_base_addr(S, idx, sid);
     if (off > 0) { EADDIMM_X1(S, off); }
     EPOPR(S);
     var fst_sz = FIELDSZ(S, ft);
@@ -565,6 +520,43 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     elif (width == 4) { ESTORE32(S); }
     else { ESTOC(S); }
     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# R5 (v6.4.15): positional struct-literal init loop, extracted from the two
+# formerly-parallel copies in PARSE_STRUCT_INIT and EMIT_GVAR_INITS (the .44
+# Str-field fix had to be applied to both separately — the exact repeat-fix bug
+# class this kills). Emits one EMIT_STRUCT_FIELD_W per scalar/pointer slot in
+# declaration order: a Str field is ONE 8-byte pointer slot (v5.10.7/v6.3.44),
+# a nested struct flattens into 8-byte slots, a scalar advances by FIELDSZ
+# (v5.9.36 width-aware stride). target_idx is the var/global slot receiving it.
+fn _emit_struct_positional_init(S, target_idx, sid): i64 {
+    var si = sid - 1;
+    var fc = GETFCOUNT(S, si);
+    var boff = 0;
+    var fi = 0;
+    while (fi < fc) {
+        var ft = GETFTYPE(S, si, fi);
+        if (ft > 0) {
+            if (IS_STR_FIELD(S, ft) == 1) {
+                EMIT_STRUCT_FIELD_W(S, target_idx, boff, 8);
+                boff = boff + 8;
+            } else {
+                var ifc = GETFCOUNT(S, ft - 1);
+                var ifi = 0;
+                while (ifi < ifc) {
+                    EMIT_STRUCT_FIELD_W(S, target_idx, boff, 8);
+                    boff = boff + 8;
+                    ifi = ifi + 1;
+                }
+            }
+        } else {
+            var w = FIELDSZ(S, ft);
+            EMIT_STRUCT_FIELD_W(S, target_idx, boff, w);
+            boff = boff + w;
+        }
+        fi = fi + 1;
+    }
     return 0;
 }
 
@@ -637,38 +629,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
         # (`a; b; c;`) keep the 8-byte stride; nested-struct fields
         # flatten into 8-byte slots per inner field (existing
         # behavior preserved).
-        var boff = 0;
-        var fi = 0;
-        while (fi < fc) {
-            var ft = GETFTYPE(S, si, fi);
-            if (ft > 0) {
-                # v5.10.7 — Str field is a single 8-byte pointer slot,
-                # not a flattened 2-field by-value embedding. Mirrors
-                # FIELDSZ's Str special-case + PP_DERIVE Serialize
-                # codegen which uses load64(ptr+offset) to read the
-                # Str pointer. Pre-fix this branch always flattened,
-                # producing `unexpected '}'` on `Outer { my_str, x }`
-                # because the parser was waiting for a second
-                # expression for the Str field's `len`.
-                if (IS_STR_FIELD(S, ft) == 1) {
-                    EMIT_STRUCT_FIELD_W(S, vcnt, boff, 8);
-                    boff = boff + 8;
-                } else {
-                    var ifc = GETFCOUNT(S, ft - 1);
-                    var ifi = 0;
-                    while (ifi < ifc) {
-                        EMIT_STRUCT_FIELD_W(S, vcnt, boff, 8);
-                        boff = boff + 8;
-                        ifi = ifi + 1;
-                    }
-                }
-            } else {
-                var pf_w = FIELDSZ(S, ft);
-                EMIT_STRUCT_FIELD_W(S, vcnt, boff, pf_w);
-                boff = boff + pf_w;
-            }
-            fi = fi + 1;
-        }
+        _emit_struct_positional_init(S, vcnt, sid);
     }
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
@@ -1092,44 +1053,10 @@ fn EMIT_GVAR_INITS(S): i64 {
                 # v5.9.36: width-aware boff advance + width-correct
                 # store, mirroring PARSE_STRUCT_INIT's positional path.
                 # See that fn for the full rationale.
-                var fc = GETFCOUNT(S, sid - 1);
-                var boff = 0;
-                var fii = 0;
-                while (fii < fc) {
-                    var fft = GETFTYPE(S, sid - 1, fii);
-                    if (fft > 0) {
-                        # v6.3.44: a Str field is a SINGLE 8-byte pointer slot,
-                        # not a flattened 2-field by-value embedding — mirror
-                        # PARSE_STRUCT_INIT's positional Str branch (v5.10.7).
-                        # This global-init REPLAY is a parallel copy of that
-                        # positional loop that never got the Str fix, so it fell
-                        # into the nested-struct flatten below, PCMPE'd a 2nd
-                        # (nonexistent) expression for the Str's `len`, and hit
-                        # `}` → `unexpected '}'`. Only bit at GLOBAL scope: an
-                        # in-fn `var s = T { .. }` goes through PARSE_STRUCT_INIT
-                        # which already handles Str. (Issue 2026-07-03-derive-
-                        # serialize-str-field-global-scope-parse-error — filed as
-                        # a derive bug, but #derive-independent: any plain struct
-                        # with a Str field + a global struct-literal reproduced.)
-                        if (IS_STR_FIELD(S, fft) == 1) {
-                            EMIT_STRUCT_FIELD_W(S, idx, boff, 8);
-                            boff = boff + 8;
-                        } else {
-                            var ifc = GETFCOUNT(S, fft - 1);
-                            var ifi = 0;
-                            while (ifi < ifc) {
-                                EMIT_STRUCT_FIELD_W(S, idx, boff, 8);
-                                boff = boff + 8;
-                                ifi = ifi + 1;
-                            }
-                        }
-                    } else {
-                        var gf_w = FIELDSZ(S, fft);
-                        EMIT_STRUCT_FIELD_W(S, idx, boff, gf_w);
-                        boff = boff + gf_w;
-                    }
-                    fii = fii + 1;
-                }
+                # v6.3.44 Str-field fix lives in _emit_struct_positional_init now
+                # (R5, v6.4.15) — this global-init REPLAY was the parallel copy
+                # that had to take the fix separately.
+                _emit_struct_positional_init(S, idx, sid);
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
                 STI(S, GTI(S) + 1);
                 SLVAR(S, idx);

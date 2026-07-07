@@ -11,12 +11,12 @@
 
 | | |
 |---|---|
-| **Version** | **6.4.14** — struct-id 20/21 ↔ f64v2/f64v4 SIMD-sentinel collision fix (consumer P1) + cross-OS gate hardening. Per-release detail → [CHANGELOG](../../CHANGELOG.md). |
-| **cycc** | 1,073,544 B (x86_64 self-host fixpoint; codegen-neutral vs .13) · check.sh **130** · self_compile ~570 ms |
-| **Bootstrap / cross-OS** | seed (29 KB asm) → cybs → cycc byte-identical · ecb (macOS/arm64) + cass (Windows/PE) + pi (aarch64) `SELFHOST_OK` |
+| **Version** | **6.4.16** — aarch64 `f64_sin`/`f64_cos` polyfill (attn11 consumer P2 arch-parity), **cut together with v6.4.15 absorber-band** (.15 not separately pushed — both changesets ship in the .16 tag). Per-release detail → [CHANGELOG](../../CHANGELOG.md). |
+| **cycc** | x86 1,069,552 B (self-host fixpoint; trig lives in the aarch64 backend + `lib/math.cyr`, neither in the x86 compiler — x86 byte-identical vs .15) · check.sh **131** · self_compile ~577 ms |
+| **Bootstrap / cross-OS** | seed (29 KB asm) → cybs → cycc byte-identical · ecb (macOS/arm64) + cass (Windows/PE) + pi (aarch64) `SELFHOST_OK` + VR-01 `LIBTEST_OK` (incl. `vr01_trig_polyfill`; release-gate GREEN) |
 | **Active minor** | **v6.4.x** — ABI / Language-Features (opened at v6.4.0; v6.3.x closed at v6.3.45) |
-| **In-flight arc** | **Pin 2 — array-typed struct fields: COMPLETE** (v6.4.11–.13). **struct-sid 20/21 P1: SHIPPED** (v6.4.14 — f64v2/f64v4 folded into the descriptor band, retiring the flat −20/−21). **NEXT: SIMD Pin 1 aarch64 NEON (Phase 5)** — un-pause below. |
-| **Next up** | **SIMD Pin 1 aarch64 NEON — Phase 5** (5a f32 NEON → 5b int NEON; un-XFAILs the `simd_*` tcyr on aarch64). x86 SIMD complete (v6.4.4–.9). **+ cx backend CLI exposure PRIORITIZED as interim DX** (2026-07-07 — consumer hit the wasm-shaped wall). |
+| **In-flight arc** | **v6.4.15 absorber-band + v6.4.16 aarch64 trig polyfill: SHIPPED.** Trig was a reactive consumer repair (interleaves, uncounted). **NEXT: cx bytecode backend CLI exposure** (user-set order 2026-07-07: absorber → cx CLI → Phase 5 NEON; the trig repair rode ahead per bottom-to-top / consumer-blocking priority). |
+| **Next up** | **cx bytecode backend CLI exposure** (interim DX — `cyrius build --target=cx` mirroring `--target=js`, install `cxvm` + a `.cyx` run path, finish cx float ops, decide SIMD-on-cx; a consumer hit the wasm-shaped wall). **Then SIMD Pin 1 aarch64 NEON — Phase 5** (5a f32 → 5b int NEON; un-XFAILs the `simd_*` tcyr on aarch64; x86 SIMD complete v6.4.4–.9). |
 | **Committed after** | UEFI Secure Boot signing → function visibility (`pub`/`private`) → Intel-Mac (x86_64 Mach-O) tail. **2026-07-07 horizon**: + scalar-float completion + diagnostics later in 6.4.x · **v6.5.x = perf-quality** (IR/regalloc substrate + passes; SIMD register-residency expected to pull into 6.4.x post-NEON per user follow-up) · **v6.6.x = language ergonomics** (defer, const fn, block scoping, bounds mode, trait-bounds gated) · **RISC-V → v6.7/v6.8** |
 
 > Full arc detail, per-arc length estimates, and the Phase-5 5a/5b plan live in

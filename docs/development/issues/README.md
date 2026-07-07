@@ -11,7 +11,7 @@ to file, read this.
   building a real project against Cyrius.
 - **Stdlib surface recommendations** — "we keep re-rolling this
   twelve-line loop, should it be in `lib/*.cyr`?". See
-  [`stdlib-math-recommendations-from-abaco.md`](./stdlib-math-recommendations-from-abaco.md)
+  [`archived/stdlib-math-recommendations-from-abaco.md`](./archived/stdlib-math-recommendations-from-abaco.md)
   for the canonical example of a well-formed recommendation doc.
 - **Design-gap reports** — a language or compiler behavior that
   worked around in consumer code with a clear stopgap, where the

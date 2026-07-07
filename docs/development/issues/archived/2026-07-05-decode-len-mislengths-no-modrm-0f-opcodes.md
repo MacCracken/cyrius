@@ -1,5 +1,14 @@
 # DECODE_LEN mis-lengths no-ModRM two-byte (0F) opcodes (syscall / cpuid / rdtsc / ud2 …)
 
+> **RESOLVED — v6.4.15 (absorber-band).** Added the no-ModR/M 0F opcode set
+> (05/07/08/09/0B/30/31/32/33/34/35/77/A2/AA) as fixed-2-byte cases in `DECODE_LEN`
+> before the ModR/M fallthrough. **Default codegen byte-identical** (DECODE_LEN feeds
+> only the opt-in DCE validator). The `CYRIUS_DCE=1` torture differential was
+> deliberately RE-BASELINED: 278/339 inputs now diverge — every diff is pure 0x90 NOP-fill
+> of dead syscall/cpuid-containing fns that the mis-length previously forced DCE to keep
+> (spot-checked: 0 live-code bytes moved). Committing the new build/cycc IS the re-baseline;
+> a future bisector should expect the v6.4.15 DCE-torture shift. See CHANGELOG [6.4.15].
+
 - **Filed**: 2026-07-05 (during SIMD Phase 4 R1; surfaced when adding VEX length-decode)
 - **Severity**: P3 (conservative DCE miss; no miscompile, no crash, fail-safe today)
 - **File**: `src/backend/x86/decode.cyr` — `DECODE_LEN`, the `if (op == 0x0F)` block

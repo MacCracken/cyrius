@@ -1,5 +1,14 @@
 # Value-form SIMD params skip type-checking (and the XMM param ABI) unless the callee returns a SIMD type
 
+> **RESOLVED — v6.4.15 (absorber-band).** The filed root-cause was WRONG: an instrumented
+> cycc proved `_fnt_simdmask` is already stored correctly (15) for a SIMD-param / non-SIMD-return
+> fn — the mask is independent of return type. The real hole is `PARSE_RETURN`'s **tail-call
+> path** (`return simdfn(local)`), which evaluates args via PCMPE/EPUSHR and never read the mask.
+> Fix: read the callee's mask up-front (read-only FINDFN — the real FINDFN/REGFN registration is
+> unchanged, byte-identical) and reject a value-form SIMD-arg type mismatch there, mirroring
+> PARSE_FNCALL's class check. Reject-only (emission untouched) → self-host + differential 0/0
+> (src/ has zero SIMD-value params). Guard added: `tests/simd_vec_reject.sh` Guard 3. See CHANGELOG [6.4.15].
+
 - **Filed**: 2026-07-05 (during v6.4.4, SIMD Phase 1 f32v4)
 - **Severity**: P3 (type-strictness gap; no memory-unsafety, no crash, no wrong
   result for correctly-typed programs)

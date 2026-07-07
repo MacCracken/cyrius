@@ -6,6 +6,119 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.16] — 2026-07-07
+
+**v6.4.16 — aarch64 `f64_sin` / `f64_cos` polyfill (consumer-filed P2 arch-parity).**
+attn11's hearing lane broke the aarch64 CI leg — Hann-window `f64_cos`, synth `f64_sin`,
+and hisab's `num_fft` twiddles (`issues/2026-07-07-aarch64-no-trig-polyfill.md`). x86 has
+native x87 `fsin`/`fcos`; aarch64 has no native trig and the backend hard-rejected both
+(*"f64_sin is x86-only … needs polyfill"*), so any trig-consuming amalgamation failed to
+compile on aarch64 — even with the consumer's own calls `#ifdef`-gated, since a dep's mere
+presence auto-prepends its trig. Applies the v5.7.31 exp/ln polyfill pattern to trig.
+**Cut together with v6.4.15** (the absorber-band changes are the base of this tag; .15 was not
+separately pushed). cycc x86 byte-identical (1,069,552 B — trig lives in the aarch64 backend +
+`lib/math.cyr`, neither in the x86 compiler); check.sh 131; self_compile 577 ms; ecb + cass + pi
+`SELFHOST_OK` + VR-01 `LIBTEST_OK` on **real hardware** (the `vr01_trig_polyfill` gate ran on real
+ecb macOS-arm64 + pi aarch64).
+
+### Fixed — aarch64 trig
+- **`lib/math.cyr`** (core-cyrius, *not* the ganita fold — fixed at the source; downstream
+  re-vendors via `cyrius deps`): `_f64_sin_polyfill` / `_f64_cos_polyfill`. Range-reduce
+  `x = k·(π/2) + r`, `|r| ≤ π/4`, quadrant `q = k mod 4` (two's-comp `& 3` handles `k < 0`);
+  evaluate `sin(r)`/`cos(r)` via shared Horner Taylor `_core` helpers (through `1/15!` and
+  `1/14!`, ~1e-16 on the reduced range) + quadrant select/sign via `f64_neg`. Single-constant
+  reduction (like `_f64_exp`'s single `ln2`); extreme-`|x|` Payne-Hanek is a future polish slot.
+- **`src/backend/aarch64/emit.cyr`**: `EF64_SIN` / `EF64_COS` now dispatch to the polyfills
+  (`_FINDFN_CSTR` → `EPUSHR`/`ECALLPOPS`/`ECALLFIX`), mirroring `EF64_LN`/`EF64_EXP`. `exp2` /
+  `atan` stay hard-errors (separate unfiled aarch64 gaps; `tan` = `sin`/`cos` at the lib level).
+- **Verified**: accuracy tier-1 — worst error < 1e-14 vs native x87 across all quadrants + both
+  signs. aarch64 end-to-end under qemu: the trig tcyr compiles (was a hard error) and runs
+  correct (`sin²+cos²=1` + absolute anchors). x86 cycc byte-identical; aarch64 self-host fixpoint
+  byte-identical under qemu; seed-derive OK. Test `tests/tcyr/vr01_trig_polyfill.tcyr` (31
+  asserts; `vr01_` → runs in the cross-OS gate on real ecb + pi).
+
+## [6.4.15] — 2026-07-07
+
+**v6.4.15 — absorber-band cleanup: two latent-bug guards, four parallel-copy
+consolidations, a decoder-correctness fix, a SIMD tail-call type-check, and an
+issue-archive hygiene pass.** The v6.3.45 closeout-audit backlog (`issues/2026-07-03-v6345-closeout-audit-backlog.md`)
+plus two adjacent deferred correctness residuals, packed into one release. Every
+code change is proven byte-identical (self-host fixpoint + differential 0/0 +
+seed-derive) **except** the DECODE fix, which is byte-identical in default codegen
+and *deliberately* re-baselines the opt-in `CYRIUS_DCE=1` torture differential.
+cycc self-hosts byte-identical on all four targets (**1,069,552 B** — the R3-narrow
+ladder collapse nets **−4 KB** vs .14: 1,073,544 → 1,069,552); check.sh **131**;
+self_compile **587 ms** (+17 ms vs .14 ~570 — within growth-tax/run-variance, no single
+patch dominates); ecb + cass + pi `SELFHOST_OK` + VR-01 `LIBTEST_OK` (real hardware).
+
+### Fixed — two latent bugs (byte-identical guards; fire only past current usage)
+- **L1 — lex_pp `#define`/`#ifdef` feature-flag table 16-slot silent corruption.**
+  The hash table (`S+0x190800`) and value table (`S+0x190880`) sit exactly `0x80`
+  bytes = 16 slots apart, and `_pp_flag_count` was bumped with no cap guard — the
+  17th registered flag wrote its hash over `value[0]` with no diagnostic. `PP_PREDEFINE`
+  / `PP_DEFINE` now hard-error past 16 total entries (builtins + user `#define`s share
+  the counter; ~3 builtins fire on Linux). Byte-identical (max real use ~15). Regression:
+  `tests/pp_flag_cap.sh` (20 `#define`s reject, small sets compile — target-robust). check.sh 130 → 131.
+- **L2 — `_msx` (Mach-O syscall-xlat) imm8 `cmp rax, N` sign-extends past 127.**
+  A Linux syscall number ≥ 128 routed through `_msx`'s `0x83 /7` imm8 form sign-extends
+  to a negative and the translation silently never fires (the getdents64 217 / getrandom
+  318 cases already route through the imm32 sibling `_msx32`). `_msx` now auto-dispatches
+  to `_msx32` for `lin ≥ 128`. Byte-identical (all 38 current callers ≤ 110).
+
+### Changed — parallel-copy consolidations (the ".44 EMIT_GVAR_INITS repeat-fix bug class)
+Each collapses a hand-duplicated block that had repeatedly taken the *same* fix in N
+places — the exact class that produced the v6.3.44 Str-field miss. All logic-preserving
+(differential 0/0):
+- **R1** — `PARSE_FIELD_LOAD` / `PARSE_FIELD_STORE` field addressing: extracted
+  `_resolve_field_base_addr` (pointer-vs-inline struct base: v5.5.36 local-encoded idx +
+  v5.8.17 `-1`-sentinel + v6.3.16 ≤8B-inline) and `_resolve_leaf_field` (v6.3.33 chained-
+  access leaf retype; two-value off/ft return via a module-scratch `_rlf_off`).
+- **R3 (narrow slice)** — the pure i8/i16/i32/i64 name→width ladder, extracted to
+  `_scalar_name_width` at the **6 clean shape-A sites** (struct/union field + Vec element,
+  `#assert sizeof`, expression `sizeof`). The **−4 KB** binary shrink. The 5 complex
+  annotation ladders (parse_decl `ann_scalar`/`ann_float` split, load-bearing SIMD-before-
+  scalar ordering, `scalar_signed` side effect) stay inline — a parametrized collapse there
+  is codegen-risk, not a cleanup lift.
+- **R4** — the width-load ladder: per-backend `_EMIT_NLOAD_RCX` (x86) + `_EMIT_NLOAD_X1_POS`
+  (aarch64, shared positive arms only; signed arms stay inline). The `_flags_reflect_rax`
+  write stays in `EVLOAD_W`'s wrapper (load-bearing — `parse_ctrl` reads it before branches);
+  `EFIELD_LOAD_W` still leaves it untouched. aarch64 output-equivalence verified under
+  qemu-aarch64 (main_aarch64.cyr + 79 programs, 0 diffs).
+- **R5** — `_emit_struct_positional_init`, shared by `PARSE_STRUCT_INIT` and
+  `EMIT_GVAR_INITS` (the v6.3.44 Str-field fix now lands once).
+
+### Fixed — `DECODE_LEN` no-ModR/M `0F` opcodes (changes-dce-only; deliberate re-baseline)
+- `DECODE_LEN` treated every non-Jcc `0F xx` as ModR/M-bearing, mis-lengthing the no-operand
+  forms — notably `0F 05` SYSCALL (emitted constantly) and `0F A2` CPUID (sigil AES-NI/SHA-NI
+  probes). Added `05/07/08/09/0B/30/31/32/33/34/35/77/A2/AA` as fixed-2-byte cases before the
+  ModR/M fallthrough. `DECODE_LEN` feeds ONLY the opt-in DCE dead-fn validator, so **default
+  codegen is byte-identical** (self-host + seed-derive + cross-OS unaffected). The
+  `CYRIUS_DCE=1` torture differential was **deliberately re-baselined**: 278/339 inputs diverge,
+  every diff pure `0x90` NOP-fill of dead syscall/cpuid-containing fns that the mis-length
+  previously forced DCE to keep (spot-checked: 0 live-code bytes moved). *A future bisector
+  should expect the v6.4.15 DCE-torture baseline shift — committing the new build/cycc IS the re-baseline.*
+
+### Fixed — SIMD value-form arg type-check in tail-call position (SIMD_TC)
+- A value-form SIMD arg mismatched to the callee's SIMD param (e.g. `f64v2` where `f32v4` is
+  expected) was accepted silently when the call was in **tail position** (`return simdfn(local)`)
+  — `PARSE_RETURN`'s tail path bypasses `PARSE_FNCALL` and never read the param mask. (The filed
+  issue's root-cause — `_fnt_simdmask==0` for non-SIMD-return fns — was disproved by an
+  instrumented cycc; the mask is correct.) The tail path now reads the callee's mask up-front
+  (read-only `FINDFN`; the real `FINDFN`/`REGFN` registration is unchanged → byte-identical) and
+  rejects a mismatch, mirroring `PARSE_FNCALL`'s class check. Reject-only (emission untouched) →
+  self-host + differential 0/0 (src/ has zero SIMD-value params). Guard: `tests/simd_vec_reject.sh` Guard 3.
+
+### Docs / issue-archive hygiene
+- Open issue queue **20 → 17**. Archived the two resolved residuals (DECODE, SIMD_TC) with
+  re-baseline / root-cause notes; consolidated two `cyrlint` follow-on lint gates
+  (bare-local-array slot-write, syscall-write byte-length) into a new "DX / cyrlint tooling
+  (watching)" list in `roadmap-future.md`; fixed a stale `issues/README.md` pointer.
+- **Deferred (premise-check disproved byte-identity):** **R2** — the `EWRITE_PE`/`EREAD_PE`
+  GetStdHandle prologues are NOT byte-identical (5-byte divergence from the .43 VR-01 fix);
+  any extraction changes `cycc_win.exe` PE codegen + IAT relocs, so it does not fit a
+  byte-identical cleanup slot (revisit as a conscious PE-codegen change with full cass verify).
+  **D1/D2** (dead `CYRIUS_IR=3` helpers, decode CFG API) stay for the v6.5.x IR slot.
+
 ## [6.4.14] — 2026-07-07
 
 **v6.4.14 — struct-id 20/21 ↔ f64v2/f64v4 SIMD-sentinel collision fix (consumer-filed P1,

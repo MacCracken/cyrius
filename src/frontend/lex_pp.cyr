@@ -1436,7 +1436,7 @@ fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
     return ip;
 }
 
-# Feature flag table: up to 32 flags, stored as name hashes at S+0x190800
+# Feature flag table: up to 16 flags, stored as name hashes at S+0x190800
 var _pp_flag_count = 0;
 
 # Macro table: up to 16 macros with args
@@ -1629,6 +1629,7 @@ fn PP_HASH_CSTR(name): i64 {
 # `#ifdef CYRIUS_ARCH_AARCH64` / `#ifdef CYRIUS_ARCH_X86` to gate
 # architecture-specific asm blocks without per-arch lib files.
 fn PP_PREDEFINE(S, name): i64 {
+    if (_pp_flag_count >= 16) { ERR_MSG(S, "too many preprocessor #define/flag entries (max 16)", 51); }
     var h = PP_HASH_CSTR(name);
     store64(S + 0x190800 + _pp_flag_count * 8, h);
     store64(S + 0x190880 + _pp_flag_count * 8, 0);
@@ -1639,6 +1640,7 @@ fn PP_PREDEFINE(S, name): i64 {
 # v5.6.42: src_base separated from S — see PP_HASH above. Source reads
 # come from src_base+pos; flag-table writes stay at S+0x190800/0x190880.
 fn PP_DEFINE(S, src_base, pos): i64 {
+    if (_pp_flag_count >= 16) { ERR_MSG(S, "too many preprocessor #define/flag entries (max 16)", 51); }
     var h = PP_HASH(src_base, pos);
     store64(S + 0x190800 + _pp_flag_count * 8, h);
     # Check for value: #define NAME VALUE (skip name, find space, parse int)

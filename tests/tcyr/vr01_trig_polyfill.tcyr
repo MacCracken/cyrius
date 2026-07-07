@@ -1,0 +1,49 @@
+# vr01_trig_polyfill.tcyr — VR-01: f64_sin / f64_cos on aarch64 (ecb macOS-arm64 +
+# pi) route through lib/math.cyr's _f64_sin_polyfill / _f64_cos_polyfill (v6.4.16,
+# attn11 trig unblock — issues/2026-07-07-aarch64-no-trig-polyfill.md); x86 (Linux +
+# cass) keeps native x87 fsin/fcos. Validates known angles, the polyfill directly
+# (exercises the aarch64 path on every arch), and the sin²+cos²=1 identity across
+# all four quadrants + negatives. Pre-v6.4.16 this hard-errored on aarch64.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+
+alloc_init();
+
+var eps = f64_div(f64_from(1), f64_from(1000000000));   # 1e-9
+
+fn near(a, b) {
+    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+}
+
+test_group("f64_sin/f64_cos known angles (arch-dispatched builtin)");
+assert(near(f64_sin(f64_from(0)), f64_from(0)) == 1, "sin 0 = 0");
+assert(near(f64_cos(f64_from(0)), f64_from(1)) == 1, "cos 0 = 1");
+assert(near(f64_sin(F64_PI_2), f64_from(1)) == 1, "sin pi/2 = 1");
+assert(near(f64_cos(F64_PI_2), f64_from(0)) == 1, "cos pi/2 = 0");
+assert(near(f64_sin(F64_PI), f64_from(0)) == 1, "sin pi = 0");
+assert(near(f64_cos(F64_PI), f64_neg(f64_from(1))) == 1, "cos pi = -1");
+assert(near(f64_sin(f64_div(F64_PI, f64_from(6))), F64_HALF) == 1, "sin pi/6 = 0.5");
+assert(near(f64_cos(f64_div(F64_PI, f64_from(3))), F64_HALF) == 1, "cos pi/3 = 0.5");
+
+test_group("_f64_*_polyfill direct (the aarch64 path, exercised on every arch)");
+assert(near(_f64_sin_polyfill(F64_PI_2), f64_from(1)) == 1, "polyfill sin pi/2 = 1");
+assert(near(_f64_cos_polyfill(F64_PI), f64_neg(f64_from(1))) == 1, "polyfill cos pi = -1");
+assert(near(_f64_sin_polyfill(f64_div(F64_PI, f64_from(6))), F64_HALF) == 1, "polyfill sin pi/6 = 0.5");
+
+test_group("sin^2 + cos^2 = 1 across quadrants + negatives");
+var one = f64_from(1);
+var t = f64_neg(f64_from(5));
+var i = 0;
+while (i < 20) {
+    var s = f64_sin(t);
+    var c = f64_cos(t);
+    var id = f64_add(f64_mul(s, s), f64_mul(c, c));
+    assert(near(id, one) == 1, "sin^2+cos^2=1");
+    t = f64_add(t, F64_HALF);
+    i = i + 1;
+}
+
+var r = assert_summary();

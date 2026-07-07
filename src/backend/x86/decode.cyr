@@ -89,6 +89,19 @@ fn DECODE_LEN(buf, off): i64 {
         if (op2 >= 0x80 && op2 <= 0x8F) {
             return p - off + 4;                # rel32
         }
+        # No-ModR/M, no-operand two-byte opcodes — the 2-byte form is the whole
+        # instruction (v6.4.15 DECODE fix). Cyrius emits 0F 05 SYSCALL constantly
+        # and 0F A2 CPUID (sigil AES-NI/SHA-NI probes); the rest are future-proofing.
+        #   05 SYSCALL  07 SYSRET   08 INVD    09 WBINVD  0B UD2     30 WRMSR
+        #   31 RDTSC    32 RDMSR    33 RDPMC   34 SYSENTER 35 SYSEXIT 77 EMMS
+        #   A2 CPUID    AA RSM
+        # (A2 CPUID is distinct from A3 BT/ModR/M; AA RSM from AB BTS/ModR/M.)
+        if (op2 == 0x05 || op2 == 0x07 || op2 == 0x08 || op2 == 0x09 ||
+            op2 == 0x0B || op2 == 0x30 || op2 == 0x31 || op2 == 0x32 ||
+            op2 == 0x33 || op2 == 0x34 || op2 == 0x35 || op2 == 0x77 ||
+            op2 == 0xA2 || op2 == 0xAA) {
+            return p - off;                    # 0F + op2 already consumed (2 bytes + prefixes)
+        }
         # ModR/M-bearing forms
         var mr = load8(buf + p);
         p = p + 1;

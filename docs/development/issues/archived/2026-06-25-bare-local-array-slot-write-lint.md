@@ -1,5 +1,9 @@
 # Bare local-array slot-write lint (`var a[N]` + `&a + i*8`) — follow-on
 
+> **CONSOLIDATED — v6.4.15 hygiene pass.** Folded into the "DX / cyrlint tooling
+> (watching)" list in [roadmap-future.md](../roadmap-future.md) (batched with the
+> syscall-write byte-length gate as one cyrlint slot). Archived; no consumer blocked.
+
 > **Filed 2026-06-25, not yet scheduled.** Carried from the v6.2.44 reactive
 > slot; pulled out of the cut because a precise rule needs byte-size-vs-max-index
 > analysis the line-based linter can't easily do, and a heuristic version fires

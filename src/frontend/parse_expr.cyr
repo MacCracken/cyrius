@@ -316,14 +316,13 @@ fn PARSE_FACTOR(S): i64 {
                 var _szc = 0;
                 if (_tp_c0 != 0) { _szc = _tp_resolve(S, szn); }
                 if (_szc != 0) { if (_szc < 0) { szval = 0 - _szc; } else { szval = STRUCTSZ(S, _szc - 1); } }
-                elif (szname & 0xFFFF == 0x3869) { szval = 1; }
-                elif (szname & 0xFFFFFF == 0x363169) { szval = 2; }
-                elif (szname & 0xFFFFFF == 0x323369) { szval = 4; }
-                elif (szname & 0xFFFFFF == 0x343669) { szval = 8; }
                 else {
-                    var szsid = FINDSTRUCT(S, szn);
-                    if (szsid > 0) { szval = STRUCTSZ(S, szsid - 1); }
-                    else { ERR_MSG(S, "sizeof: unknown type", 20); }
+                    szval = _scalar_name_width(szname);
+                    if (szval == 0) {
+                        var szsid = FINDSTRUCT(S, szn);
+                        if (szsid > 0) { szval = STRUCTSZ(S, szsid - 1); }
+                        else { ERR_MSG(S, "sizeof: unknown type", 20); }
+                    }
                 }
             }
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }

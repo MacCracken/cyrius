@@ -1,5 +1,9 @@
 # Permanent syscall-write byte-length gate (DOTALL) — follow-on
 
+> **CONSOLIDATED — v6.4.15 hygiene pass.** Folded into the "DX / cyrlint tooling
+> (watching)" list in [roadmap-future.md](../roadmap-future.md) (batched with the
+> bare-local-array slot-write lint as one cyrlint slot). Archived; no consumer blocked.
+
 > **Filed 2026-06-25, not yet scheduled.** Carried from the v6.2.44 reactive
 > slot; pulled out of the cut because it's a new cyrlint rule / gate with real
 > false-positive exposure that needs careful iteration, and it prevents *future*

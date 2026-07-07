@@ -321,6 +321,10 @@ fn _run_regression_gates(): i64 {
     _gate("x86 jump-target overflow hard-errors past 1023, compiles under it (CVE-09, v6.3.21)", "tests/jump_target_cap.sh");
     println("");
 
+    _section("Preprocessor flag-table cap (L1)");
+    _gate("PP #define/flag table hard-errors past 16 entries; small sets compile clean (L1, v6.4.15)", "tests/pp_flag_cap.sh");
+    println("");
+
     _section("Parser fuzz (VR-02)");
     _gate("cycc stdin-parser survives byte-mutated hostile input, no crash (VR-02, v6.3.22)", "tests/cycc_parser_fuzz.sh");
     println("");

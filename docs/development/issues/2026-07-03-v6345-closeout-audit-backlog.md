@@ -1,5 +1,23 @@
 # v6.3.45 closeout audit — backlog (refactor consolidations, dead code, 2 latent bugs)
 
+> **STATUS (v6.4.15 absorber-band):** MOSTLY LANDED. Shipped this slot, each proven
+> byte-identical (self-host fixpoint + differential 0/0 + seed-derive):
+> **L1** PP-flag-table 16-slot cap guard (+ `tests/pp_flag_cap.sh`) ·
+> **L2** `_msx` imm8 ≥128 auto-dispatch to `_msx32` ·
+> **R1** `_resolve_field_base_addr` + `_resolve_leaf_field` (field addr/leaf-retype) ·
+> **R3 (NARROW SLICE only)** `_scalar_name_width` at the 6 pure-4-way sites (−4 KB) ·
+> **R4** `_EMIT_NLOAD_RCX` (x86) + `_EMIT_NLOAD_X1_POS` (aarch64) width-load ladders ·
+> **R5** `_emit_struct_positional_init`.
+> **DEFERRED (premise-check disproved byte-identity):** **R2** — the EWRITE_PE / EREAD_PE
+> prologues are NOT byte-identical (5-byte divergence: EREAD has an extra `mov rcx,rax`+`jmp`,
+> EWRITE a compact fall-through written fresh in the .43 VR-01 fix); extracting either would
+> CHANGE `cycc_win.exe` PE codegen + IAT relocs, so it does not fit a byte-identical cleanup
+> slot. Revisit as a conscious PE-codegen change (pick a canonical form, full cass verify).
+> **R3 (complex sites)** — the 5 annotation/SIMD-order-sensitive ladders (parse_decl `ann_scalar`/
+> `ann_float` split, load-bearing SIMD-before-scalar ordering, `scalar_signed` side effect) stay
+> inline; a correct parametrized collapse is codegen-risk, not a cleanup-slot lift. **D1/D2** —
+> dead `CYRIUS_IR=3` helpers (want the v6.5.x IR slot) + the speculative decode CFG API — still open.
+
 **Filed:** 2026-07-03 (the v6.3.45 minor-closeout judgment-call audit — heap-map / dead-code /
 refactor / code-review / cleanup / security). The closeout LANDED the byte-identical doc-hygiene
 fixes (heap-map map drift + stale binary names) and archived the .44-resolved issues. Everything

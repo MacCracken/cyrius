@@ -394,9 +394,36 @@ fn PARSE_RETURN(S): i64 {
                             # Parse args (same as PARSE_FNCALL arg handling)
                             STI(S, GTI(S) + 1);  # consume (
                             var tcargc = 0;
+                            # SIMD_TC (v6.4.15): the tail-call path bypasses
+                            # PARSE_FNCALL, so a value-form SIMD arg mismatched to the
+                            # callee's SIMD param (e.g. f64v2 where f32v4 is expected)
+                            # was accepted silently. Read the callee's param mask
+                            # up-front (FINDFN is read-only — the real FINDFN/REGFN
+                            # registration below is unchanged, so fn-table order and
+                            # codegen are byte-identical) and reject a mismatch,
+                            # mirroring PARSE_FNCALL's class check. Reject-only: the
+                            # PCMPE/EPUSHR emission is untouched, so well-typed calls
+                            # (and every SIMD-free call) stay byte-identical.
+                            var _tc_smask = 0;
+                            var _tc_prefi = FINDFN(S, tcnoff);
+                            if (_tc_prefi >= 0) { _tc_smask = L64(_fnt_simdmask + _tc_prefi * 8); }
                             if (PEEKT(S) != 11) {
                                 var tcgo = 1;
                                 while (tcgo == 1) {
+                                    var _tc_cls = (_tc_smask >> (tcargc * 2)) & 3;
+                                    if (_tc_cls > 0) {
+                                        if (PEEKT(S) != 2) { ERR_MSG(S, "value-form SIMD arg must be a local IDENT", 41); }
+                                        var _tc_alli = FINDLOCAL(S, PEEKV(S));
+                                        if (_tc_alli < 0) { ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47); }
+                                        var _tc_alt = GLTYPE(S, _tc_alli);
+                                        if (_tc_cls == 1) {
+                                            if (_is_simd128(S, _tc_alt) == 0) { ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44); }
+                                        } elif (_tc_cls == 3) {
+                                            if (_tc_alt != 0 - 2121) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56); }
+                                        } else {
+                                            if (_tc_alt != 0 - 2125) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56); }
+                                        }
+                                    }
                                     PCMPE(S);
                                     EPUSHR(S);
                                     tcargc = tcargc + 1;

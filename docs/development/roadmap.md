@@ -127,6 +127,33 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   dir to the Defender-excluded `C:\cyrius-tests` (Defender's `Bearfoos.A!ml` ML classifier quarantines
   the unsigned cycc.exe → false FAIL). cycc byte-identical (1,073,544 B); check.sh 130; seed-derive OK;
   ecb+cass+pi `SELFHOST_OK`; test `struct_sid_20_21_field.tcyr`. **NEXT: SIMD Pin 1 aarch64 NEON (Phase 5).**
+- **v6.4.15** — **absorber-band cleanup** (the v6.3.45 closeout-audit backlog + two deferred
+  correctness residuals, one release). Two byte-identical latent-bug guards: **L1** lex_pp
+  `#define`/`#ifdef` flag-table 16-slot silent-corruption cap (+ `tests/pp_flag_cap.sh`); **L2**
+  `_msx` Mach-O syscall-xlat imm8 ≥128 sign-ext → auto-dispatch to `_msx32`. Four parallel-copy
+  consolidations (the ".44 repeat-fix" bug class), all differential 0/0: **R1**
+  `_resolve_field_base_addr` + `_resolve_leaf_field`; **R3 (narrow slice)** `_scalar_name_width`
+  at the 6 pure-4-way sites (**−4 KB**); **R4** `_EMIT_NLOAD_RCX` (x86) + `_EMIT_NLOAD_X1_POS`
+  (aarch64, qemu-verified output-equivalent); **R5** `_emit_struct_positional_init`. **DECODE**
+  no-ModR/M `0F` fixed-length (SYSCALL/CPUID/…): default codegen byte-identical, opt-in
+  `CYRIUS_DCE=1` torture deliberately re-baselined (278 inputs, all NOP-fill of dead
+  syscall/cpuid fns). **SIMD_TC** value-form SIMD-arg type mismatch now rejected in tail-call
+  position (`return simdfn(local)`; the filed root-cause was wrong — real hole is `PARSE_RETURN`'s
+  tail path; reject-only, byte-identical; `simd_vec_reject.sh` Guard 3). Issue hygiene: queue
+  20→17 (2 resolved archived, 2 lint gates consolidated to roadmap-future). **R2 DEFERRED** —
+  premise-check disproved byte-identity (EWRITE_PE/EREAD_PE prologues diverge 5 bytes → PE-codegen
+  change, doesn't fit a byte-identical slot). cycc 1,069,552 B; check.sh 131; seed-derive OK;
+  ecb+cass+pi `SELFHOST_OK`+`LIBTEST_OK`; self_compile 587 ms. **NEXT: cx backend CLI exposure,
+  then Phase 5 NEON** (user-set order 2026-07-07).
+- **v6.4.16** — **aarch64 `f64_sin` / `f64_cos` polyfill** (reactive consumer repair — attn11 P2
+  arch-parity; hearing lane broke the aarch64 CI leg). `_f64_sin_polyfill` / `_f64_cos_polyfill`
+  in core `lib/math.cyr` (range-reduce x = k·(π/2)+r, quadrant `q = k&3`, shared Horner Taylor
+  `_core` helpers through 1/15!/1/14!) + `EF64_SIN`/`EF64_COS` aarch64 dispatch (v5.7.31 exp/ln
+  pattern; `exp2`/`atan` stay hard-errors — `tan` = sin/cos at the lib level). Accuracy tier-1
+  (worst < 1e-14 vs x87, all quadrants); aarch64 qemu end-to-end (compile + `sin²+cos²=1` +
+  anchors); x86 cycc byte-identical; aarch64 self-host fixpoint byte-identical under qemu.
+  **Cut together with .15** (.15 not separately pushed). Test `tests/tcyr/vr01_trig_polyfill.tcyr`
+  (31 asserts, ran in the cross-OS gate on real ecb + pi). check.sh 131; self_compile 577 ms.
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):

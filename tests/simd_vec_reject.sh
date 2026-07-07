@@ -75,4 +75,34 @@ var ec = main();
 EOF
 "$CC" < "$T" > /dev/null 2>&1 || { echo "FAIL: matching f32v4 combine() failed to compile"; exit 1; }
 
-echo "PASS: f32v4 .field hard-errors (heap-independent) + mismatched SIMD arg rejected (v6.4.4)"
+# --- Guard 3 (v6.4.15 SIMD_TC): mismatch rejected in TAIL-CALL position too ---
+# `return simdfn(mismatched)` bypasses PARSE_FNCALL via PARSE_RETURN's tail path,
+# which used to skip the SIMD-arg type-check. It must now reject the same mismatch.
+cat > "$T" <<'EOF'
+include "lib/simd.cyr"
+fn wrong(a: f32v4, b: f32v4): i64 { return f32v4_lane0(a); }
+fn main(): i64 {
+    var p: f64v2 = f64v2_make(100, 200);
+    return wrong(p, p);
+}
+var ec = main();
+EOF
+if "$CC" < "$T" > /dev/null 2>"$E"; then
+    echo "FAIL: f64v2 arg to f32v4 param in TAIL position compiled — must reject (SIMD_TC)"; exit 1
+fi
+grep -q 'callee expects f32v4' "$E" || { echo "FAIL: tail-form mismatch gave wrong error:"; cat "$E"; exit 1; }
+
+# --- Positive control: matching f32v4 tail call compiles clean ---
+cat > "$T" <<'EOF'
+include "lib/simd.cyr"
+fn getlane0(v: f32v4): i64 { return f32v4_lane0(v); }
+fn caller(a: f32v4): i64 { return getlane0(a); }
+fn main(): i64 {
+    var x: f32v4 = f32v4_splat(1);
+    return caller(x);
+}
+var ec = main();
+EOF
+"$CC" < "$T" > /dev/null 2>&1 || { echo "FAIL: matching f32v4 tail call failed to compile (over-rejection)"; exit 1; }
+
+echo "PASS: f32v4 .field hard-errors (heap-independent) + mismatched SIMD arg rejected in call + tail position (v6.4.4/.15)"

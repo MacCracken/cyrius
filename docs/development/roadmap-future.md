@@ -142,6 +142,25 @@ at each cycle-open per [`feedback_premise_check_at_slot_entry`].
 
 ---
 
+## DX / cyrlint tooling (watching)
+
+Static-analysis lint gates worth a single `cyrlint` tooling slot when the
+diagnostics arc (pinned later-v6.4.x) or a consumer ask pulls them. Consolidated
+here from standalone issues at the v6.4.15 absorber-band hygiene pass — no
+urgency, no consumer blocked; the underlying bugs each already have a real fix.
+
+- **Bare-local-array slot-write lint** (was `issues/2026-06-25-bare-local-array-slot-write-lint.md`)
+  — warn when a bare `var a[N]` (N *bytes*, rounded to 8) is written past its byte
+  size as if it were N *slots*; needs byte-size-vs-max-index analysis. ~21 intentional
+  sites in-tree today (the v6.4.10 top-level-array fix closed the codegen half; this is
+  the lint half).
+- **Syscall-write byte-length gate** (was `issues/2026-06-25-syscall-write-byte-length-gate.md`)
+  — a permanent DOTALL check that `syscall(SYS_WRITE, fd, buf, LEN)`'s LEN matches the
+  literal's byte length; ~543 sites. Batch with the bare-local-array lint as one cyrlint
+  line — both are byte-length-vs-declared-size static checks.
+
+---
+
 ## Stdlib libs (consumer-filed proposals)
 
 Discrete stdlib additions filed by ecosystem consumers; each is its own slot when
