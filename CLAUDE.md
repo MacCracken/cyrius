@@ -278,6 +278,74 @@ docs/                Architecture, roadmap, benchmarks, language guide
 - `CHANGELOG.md` — Source of truth for all changes
 - `../vidya/content/compiler_bootstrapping/cyrius_*.toml` — 90+ vidya entries
 
+## Working Agreements (distilled 2026-07-07 from session-feedback memory)
+
+Durable rules from user feedback across v5.x–v6.4.x, consolidated here from
+per-session memory files so they survive environment changes.
+
+### Execution integrity
+- **A filed repro is the spec** — the user-reported verbatim test case must pass. Never edit a consumer repro to fit the fix; never substitute an easier task for the hard one ("a bug before a feature" is only legit as a genuine prerequisite).
+- **A consumer filing enumerates the FULL surface they need** — shipping a subset labeled "hardening"/"tightening" is a silent deferral.
+- **Never misrepresent build/trust state** ("works from the seed", "chain intact") — state plainly how it actually works.
+- **Deferral is real only when FILED** (its own issue, that turn — not buried in prose) AND pinned to a roadmap slot with acceptance criteria. Once documented-and-deferred, MOVE ON — don't re-investigate it every slot.
+- **Read the actual code before concluding something blocks work**; don't raise a blast-radius alarm from a crude scan and reach for a defer — verify precisely, then FINISH the fix.
+- **When a gate blocks a legitimate feature, fix the gate** — never drop the feature.
+- "Push X back" means ship it then pivot — NOT revert.
+- Cross-repo smokes naming a repo missing from `~/Repos` must surface the gap to the user, not silently skip.
+
+### Verification habits (beyond the Release Gate)
+- **LOOK at live artifacts, don't parrot verdicts** — docs/pins/issues go stale in a fast-moving project; run the binary on the host yourself.
+- check.sh's grep summary masks tcyr segfaults/exit-code failures — run a per-file exit-code loop before claiming green.
+- **CI shell-loop gates (SKIP/XFAIL) must be tested under `bash -eo pipefail`** — `var=$(failing_cmd)` trips `set -e` before the bookkeeping. The release gate's cross-OS step runs only the `vr01_` glob; reproduce full-corpus aarch64 failures locally with `qemu-aarch64`.
+- **cass (Windows) gotchas**: Defender ML (`Bearfoos.A!ml`) quarantines the unsigned cycc.exe → 0-byte output / "cannot execute" that LOOKS like a compiler bug — run under the excluded `C:\cyrius-tests`, check `Get-MpThreat`. `cmd /c "prog & echo %errorlevel%"` falsely reports 0 (parse-time expansion). `prog < in > out 2>nul &` corrupts the redirect — use `2> err & exit` then inspect. Wrap multi-host SSH chains in `if…else exit 1`, never bare `&&` chains under `set -e` (non-final failures pass silently).
+- Run `cross-os-selfhost.sh` ONE host at a time — fixed /tmp + remote paths clobber under concurrency.
+- A helper that compiles is not a helper that works — end-to-end verify new helpers before commit.
+- Hardware-only bugs (GPU/COM, no debugger/stdout): exit-code probes over SSH.
+- Logic-preserving refactors are proven with the byte-identical self-host + differential-corpus recipe — and stale includes invalidate the comparison (refresh first).
+- Clean up test artifacts: local /tmp probes AND remote binaries scp'd to cass/ecb/pi.
+
+### Planning & slots (extends Release & Slot Discipline)
+- **Premise-check at slot entry** — empirically test that the gap still exists (pins go stale; three consecutive slots were already-shipped work). Premise-check against the UPSTREAM repo source (`~/Repos/<dep>/src`), never the vendored `lib/` copy.
+- **Scope arcs at PLANNING time** (grep the sites, set phase boundaries up front); a mid-execution "we should split this" is suspect — only bug-squash-to-clear-a-hurdle is a legit mid-execution out.
+- Roadmap the WHOLE arc and cross-check roadmap_6 / roadmap-future / issues so nothing dangles. Roadmap prose like "needs downstream coordination" is a self-instruction — execute it when the slot opens.
+- Priority runs bottom-to-top: kernel/baseOS blockers before application/library wins. Keep an open reactive window during bare-metal/kernel phases.
+- Cross-repo arcs do the FULL dependency cross-walk at arc-open (one coordinated filing, not drip).
+- Non-blocking cosmetic/tooling fixes fold into adjacent work — no dedicated slots. Minor-open/closeout slots include real code deliverables, not just docs.
+- **Version bumps only when a release ships** — a failed/in-flight release is re-cut at the SAME version. User drives all bumps/CHANGELOG ("X.Y.Z is out, lets keep moving" = bump for the next slot); agent runs `version-bump.sh` + state.md refresh at slot close; user push+tag is the CI gate. No minor-component bumps for surface-preserving refactors.
+- Don't pin minor patch-count windows — the user states expected size at each arc-open and it changes. **Large minors (~45–99 releases) are the norm; never propose a theme-per-minor.**
+
+### Communication
+- **Decide with sensible defaults and act** — surface at most ONE genuine fork, rarely. When the user picks an option, GET MOVING; no re-confirming.
+- "continue" / "free to continue" = skip recap and work — no status ceremony, no plan-back.
+- No end-of-turn /schedule pitches in this project.
+- No hand-wave recommendations ("trust the accumulator", "default to A unless…") — push back with specifics when a proposal is vague.
+- Repos with no active bug or ask don't exist for the current work — don't proactively pull them in.
+
+### Ecosystem & stdlib
+- sigil/sakshi/bayan/ganita/etc. are the **language's OWN stdlibs** (sovereign), never "external upstream". Anything shipping into `lib/` via `cyrius deps` IS stdlib — full stdlib discipline applies.
+- **Fix the SOURCE repo, not the fold** — a fix applied only to cyrius's vendored `lib/<dep>.cyr` evaporates at the next re-vendor. Patch upstream, version-bump it, regen dist, re-vendor.
+- Sibling-repo agents editing cyrius source is a hard violation regardless of patch correctness — revert + file as an issue.
+- Ecosystem-wide renames must cover ALL source extensions, not just `.cyr`/`.tcyr`.
+- Lib files referencing flag constants (O_WRONLY, MAP_PRIVATE, …) must include their definers — self-sufficient modules.
+- **Sovereignty**: no Python/bash/C as a shipped slot deliverable (same category error as crates.io). Every bootstrap rung added to seed→cycc enlarges the trusted base — minimize rungs.
+- DCE-"dead" fns may be external API surface (`--lex-ts`, cyrdoc, downstream consumers) — check before removal.
+- `cbt/cyrius.cyr` (the CLI) cross-compiles to PE/Mach-O — Linux-syscall lib includes break it; guard with `#ifdef` + early return.
+
+### Docs & issues hygiene
+- CHANGELOG is canonical history; state.md is current-cycle volatile only; **archive docs, don't delete** — and grep `.github/workflows/` + release scripts for hard-coded path deps first.
+- Issues archive to `issues/archived/` at slot close; keep the open dir a lean working queue (~10–12); consolidate the P3/"someday" deferral tail into roadmap entries, not issue files.
+- Source comments keep the WHY-invariant plus a one-line `CHANGELOG [X.Y.Z]` pointer — not history blocks.
+
+## Language & test conventions (recurring gotchas)
+
+- **fns take ≤6 args cleanly** (register ABI); args 7+ go on the stack and have shown corruption — restructure instead.
+- **`var x[N]` local = N BYTES** (rounded to 8), not N slots — use `var a: i64[N]` for slots. Bare top-level arrays = N×8 (fixed v6.4.10).
+- `secret`, `pub`, `shared` are reserved keywords — parser fails on them as identifiers.
+- tcyr files MUST end `var r = assert_summary();` (or an explicit exit syscall) so success exits 0. Name tests topically, never temporally ("pass2"/"v3" — 20-yr QA pet peeve).
+- cyrfmt flattens multi-line call continuations to 4-space indent — write them that way up front.
+- aarch64 stdlib syscall numbers that collide with an x86 number in ESYSXLAT get silently mis-remapped — use the x86 number + an ESYSXLAT entry.
+- When restoring/fixing user configs, restore only what was there — no unrequested "sensible defaults".
+
 ## DO NOT
 
 - **Do not commit or push** — the user handles all git operations

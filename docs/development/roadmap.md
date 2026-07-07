@@ -195,6 +195,18 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
   consumer-filed misdiagnoses are the recurring tax better errors retire. DWARF
   debug-info stays v7-parked (only the error-reporting layer moves here).
 
+**SIMD sequencing amendment (user, same session):** the intended order inside the
+SIMD focus is **Phase 5 NEON first, then circle back to the register-residency /
+memory-store proposal** (the ml-ai-arc consumer filing,
+[`issues/2026-07-06-simd-f64v-memory-operand-no-register-residency.md`](issues/2026-07-06-simd-f64v-memory-operand-no-register-residency.md)).
+Because the kernel + ecosystem AI release arc makes SIMD the primary focus of
+v6.4.x, **SIMD-adjacent work — the register-residency piece included — is expected
+to get pulled INTO v6.4.x** rather than waiting for v6.5.x, alongside high-priority
+bug fixes as they surface. v6.5.x remains the home for the full IR/regalloc
+substrate + the deferred passes; how much register residency can land ahead of that
+substrate (wrapper inlining + chain-local residency vs. full vector-class regalloc)
+is a premise-check at slot entry.
+
 **Absorber-band (rides between arcs, uncounted):** the v6.3.45 closeout backlog
 ([`issues/2026-07-03-v6345-closeout-audit-backlog.md`](issues/2026-07-03-v6345-closeout-audit-backlog.md)
 — L1 pp-flag-table 16-slot silent-corruption cap, L2 `_msx` imm8 ≥128 guard,

@@ -1247,6 +1247,16 @@ at arc-open):
 `process_block 1024`: 186 µs vs Rust 4.84 µs at filing) closes to single-digit-×
 of the Rust baseline; self_compile stays inside a stated budget.
 
+> **Pull-forward note (user 2026-07-07, follow-up):** SIMD is v6.4.x's primary
+> focus (the kernel + ecosystem AI release arc), so **item 3 — the
+> register-resident vector-value piece — is expected to pull INTO v6.4.x after
+> Phase 5 NEON** (*"get NEON done, then circle back to the memory-store
+> proposal"*). In that case this minor keeps the substrate half: IR
+> productionization (1), cross-BB regalloc + vector class (2), the deferred
+> passes (4), and the growth-tax audit (5). How much residency is achievable in
+> v6.4.x ahead of the substrate (wrapper inlining + chain-local residency vs.
+> full vector-class regalloc) is a premise-check at that slot's entry.
+
 Middle-late v6.x timing per user direction 2026-05-19:
 "compile time can holdover until later in 6.x cycle probably
 middle-late".
