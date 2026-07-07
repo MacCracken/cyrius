@@ -6,6 +6,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.12] — 2026-07-06
+
+**v6.4.12 — array-typed struct fields R2: `#derive` Serialize/Deserialize for `Vec<primitive>`.**
+Second release of the Pin 2 arc. `#derive(Serialize)` structs can now have `Vec<i8/i16/i32/i64>` and
+`Vec<f64>` fields — they serialize to a JSON array and round-trip back via both `from_json_str`
+(single-pass, the canonical/svara path) and the pairs-form `from_json`. Frontend-only (the codecs are
+emitted Cyrius source), so cycc self-hosts — but the added generator code grows cycc **+9.7 KB → 1,067,464 B**
+(not byte-identical: emitted-string codecs are real compiler surface). seed → cybs → cycc byte-identical;
+check.sh 130; self_compile 576 ms; ecb+cass+pi SELFHOST_OK. Also folds **bayan 1.0.4 → 1.1.0**.
+
+### Added — `#derive` codecs for `Vec<int>` / `Vec<f64>` fields
+- A `Vec<T>` field (T ∈ i8/i16/i32/i64/f64) in a `#derive(Serialize)` struct now generates working
+  `_to_json` / `_from_json` / `_from_json_str`. Encode emits a JSON array (`[e0,e1,…]`) inline via
+  `vec_len`/`vec_get` with a null-handle guard (a 0 handle → `[]`). Decode uses one emitted-once shared
+  runtime helper per element kind (`_cy_vecdec_int` / `_cy_vecdec_f64`), called by both decode paths.
+- `from_json_str` (svara's path) scans the array in place; the pairs-form `from_json` re-scans the array
+  text `bayan_json_get` returns. Vec slots are i64 (vec semantics); element width matters only for JSON
+  text. `Vec<Str>` / `Vec<struct>` remain R3.
+- `lex_pp.cyr`: `_pp_vec_elem` classifies the `Vec<T>` type string; the shared decode helpers are emitted
+  only when a Vec field of that kind exists (non-Vec derive structs stay byte-identical).
+
+### Fixed — codec robustness (found by an adversarial review)
+- **Malformed-array crash (2× P1)** — both emitted decoders infinite-looped → allocator abort on any array
+  byte that is neither consumable nor a terminator (a `.`/`+` in a `Vec<i64>`, a `null`/stray letter in a
+  `Vec<f64>`): the scan cursor never advanced. Added a forward-progress guard so a non-consumable byte is
+  skipped — malformed/externally-authored JSON degrades gracefully instead of crashing. (Self-produced
+  round-trip tests couldn't catch this: the serializer never emits those bytes.)
+- **`Vec<struct>` / `Vec<Str>` diagnostic** — a kind-201 element previously fell through to the nested-struct
+  path and emitted `Vec<…>_to_json`, hard-erroring at re-parse with a misleading `file:line`. Now rejected
+  up front with an honest message ("only Vec<i8|i16|i32|i64|f64> supported in R2; Vec<struct>/Vec<Str> land
+  in R3").
+
+### Changed — folded bayan 1.0.4 → 1.1.0
+- `lib/bayan.cyr` refreshed from bayan's 1.1.0 `cyrius distlib` output (adds TOML array-element access —
+  `bayan_toml_array_parse` / `_is_array` / `_get_array` — and a quote/comment-aware array-capture fix). The
+  **JSON API R2's codecs use is byte-identical to 1.0.4**, so the fold is purely additive; cycc is not a
+  bayan consumer → byte-identical. `cyrius.cyml` + vidya dependency refs bumped; api-surface snapshot
+  regenerated for bayan's 4 new TOML fns (**4519 → 4527**).
+
+### Tests
+- `tests/tcyr/derive_vec_primitive.tcyr` (33 asserts): Vec<i64>/Vec<f64> serialize + both decode paths,
+  negatives, empty `[]`/`[ ]`, a Vec between an i32 and a Str, two Vec fields in one struct, Vec-first
+  positioning, heavy-whitespace JSON, f64 exponent/negative/zero forms, i64 MAX, and the malformed-input
+  regressions (`[1.5,2,+3]`, `[1.0,null,2.0]`).
+
 ## [6.4.11] — 2026-07-06
 
 **v6.4.11 — array-typed struct fields R1: `Vec<T>` handle fields (parse + layout + access).**

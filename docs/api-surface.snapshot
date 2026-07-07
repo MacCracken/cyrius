@@ -183,8 +183,12 @@ bayan::bayan_json_v_str_new/1
 bayan::bayan_json_v_str_new_a/2
 bayan::bayan_json_v_tag/1
 bayan::bayan_json_value/1
+bayan::bayan_toml_array_parse/1
+bayan::bayan_toml_array_parse_a/2
 bayan::bayan_toml_get/2
+bayan::bayan_toml_get_array/2
 bayan::bayan_toml_get_sections/2
+bayan::bayan_toml_is_array/1
 bayan::bayan_toml_pair_key/1
 bayan::bayan_toml_pair_new/2
 bayan::bayan_toml_pair_new_a/3
@@ -328,8 +332,12 @@ bayan::json_v_str_new/1
 bayan::json_v_str_new_a/2
 bayan::json_v_tag/1
 bayan::json_value/1
+bayan::toml_array_parse/1
+bayan::toml_array_parse_a/2
 bayan::toml_get/2
+bayan::toml_get_array/2
 bayan::toml_get_sections/2
+bayan::toml_is_array/1
 bayan::toml_pair_key/1
 bayan::toml_pair_new/2
 bayan::toml_pair_new_a/3

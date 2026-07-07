@@ -1,0 +1,138 @@
+# derive_vec_primitive.tcyr — v6.4.x Pin 2 R2: #derive Serialize/Deserialize for
+# Vec<primitive> (int / f64) fields, full round-trip + adversarial malformed input.
+#
+# Vec<T> fields serialize to a JSON array and decode back via BOTH the single-pass
+# from_json_str scanner (the canonical path svara uses) AND the pairs-form from_json
+# (bayan_json_get returns the array text; re-scanned by the shared decoder). Decode
+# uses one emitted-once runtime helper per element kind (_cy_vecdec_int/_f64). Encode
+# is inline (vec_len/vec_get) with a null-handle guard (a 0 handle → "[]").
+#
+# Adversarial cases (added after the R2 codec review found 2 P1 stalls): a malformed
+# array byte ('.', '+', a `null` literal) must NOT hang/crash — the decoders have a
+# forward-progress guard that skips a non-consumable byte. Vec<struct>/Vec<Str> (R3)
+# must reject up front with a clear diagnostic (compile-time, not tested at runtime).
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/math.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+struct nums { id: i64; xs: Vec<i64>; }        # id@0, xs@8
+
+#derive(Serialize)
+struct fnums { tag: i64; ys: Vec<f64>; }      # tag@0, ys@8
+
+#derive(Serialize)
+struct mixed { a: i32; xs: Vec<i64>; b: Str; }  # a@0, xs@4, b@12 (packed)
+
+#derive(Serialize)
+struct twovec { p: Vec<i64>; q: Vec<i64>; }   # p@0, q@8 — two Vec fields in one struct
+
+#derive(Serialize)
+struct vfirst { xs: Vec<i64>; id: i64; }      # xs@0, id@8 — Vec field FIRST
+
+fn main(): i64 {
+    # --- Vec<i64>: serialize + from_json_str + pairs round-trip, incl. negatives ---
+    var v = vec_new(); vec_push(v, 10); vec_push(v, 0 - 20); vec_push(v, 30);
+    var n = nums { 7, v };
+    var sb = str_builder_new(); nums_to_json(&n, sb);
+    var s = str_builder_build(sb);
+    assert_eq(str_eq(s, str_from("{\"id\":7,\"xs\":[10,-20,30]}")), 1, "Vec<i64> serialize");
+    var n2 = nums_from_json_str(str_data(s));
+    assert_eq(load64(n2), 7, "id round-trip (from_json_str)");
+    assert_eq(vec_len(load64(n2 + 8)), 3, "xs len (from_json_str)");
+    assert_eq(vec_get(load64(n2 + 8), 1), 0 - 20, "xs[1] negative (from_json_str)");
+    var n3 = nums_from_json(bayan_json_parse(s));
+    assert_eq(vec_len(load64(n3 + 8)), 3, "xs len (pairs)");
+    assert_eq(vec_get(load64(n3 + 8), 2), 30, "xs[2] (pairs)");
+
+    # --- empty vec serialize + decode ([] and [ ] with interior space) ---
+    var e = nums { 1, vec_new() };
+    var sbe = str_builder_new(); nums_to_json(&e, sbe);
+    assert_eq(str_eq(str_builder_build(sbe), str_from("{\"id\":1,\"xs\":[]}")), 1, "empty Vec serialize");
+    assert_eq(vec_len(load64(vfirst_from_json_str(str_data(str_from("{\"xs\":[],\"id\":5}"))))), 0, "empty [] decode");
+    assert_eq(vec_len(load64(vfirst_from_json_str(str_data(str_from("{\"xs\":[ ],\"id\":6}"))))), 0, "empty [ ] decode");
+
+    # --- Vec<f64> round-trip ---
+    var vf = vec_new(); vec_push(vf, f64_from(3)); vec_push(vf, f64_from(5));
+    var fx = fnums { 9, vf };
+    var sbf = str_builder_new(); fnums_to_json(&fx, sbf);
+    var fs = str_builder_build(sbf);
+    assert_eq(str_eq(fs, str_from("{\"tag\":9,\"ys\":[3.000000,5.000000]}")), 1, "Vec<f64> serialize");
+    var fd = fnums_from_json_str(str_data(fs));
+    assert_eq(vec_len(load64(fd + 8)), 2, "ys len");
+    assert_eq(f64_to(vec_get(load64(fd + 8), 0)), 3, "ys[0] ~= 3");
+
+    # --- mixed: Vec<i64> between an i32 and a Str (packed offsets) ---
+    var mv = vec_new(); vec_push(mv, 100); vec_push(mv, 200);
+    var m = mixed { 42, mv, str_from("hi") };
+    var sbm = str_builder_new(); mixed_to_json(&m, sbm);
+    var ms = str_builder_build(sbm);
+    assert_eq(str_eq(ms, str_from("{\"a\":42,\"xs\":[100,200],\"b\":\"hi\"}")), 1, "mixed serialize");
+    var md = mixed_from_json_str(str_data(ms));
+    assert_eq(load32(md), 42, "mixed: a (i32) @0");
+    assert_eq(vec_get(load64(md + 4), 1), 200, "mixed: xs[1] @4");
+    assert_eq(str_eq(load64(md + 12), str_from("hi")), 1, "mixed: b (Str) @12");
+
+    # --- two Vec fields in one struct: unique emitted names + shared helper ---
+    var p = vec_new(); vec_push(p, 1); vec_push(p, 2);
+    var q = vec_new(); vec_push(q, 8); vec_push(q, 9); vec_push(q, 10);
+    var tw = twovec { p, q };
+    var sbt = str_builder_new(); twovec_to_json(&tw, sbt);
+    assert_eq(str_eq(str_builder_build(sbt), str_from("{\"p\":[1,2],\"q\":[8,9,10]}")), 1, "two-Vec serialize");
+    var td = twovec_from_json_str(str_data(str_from("{\"p\":[1,2],\"q\":[8,9,10]}")));
+    assert_eq(vec_len(load64(td)), 2, "twovec: p len @0");
+    assert_eq(vec_get(load64(td + 8), 2), 10, "twovec: q[2] @8");
+
+    # --- Vec field FIRST (positioning: trailing scalar must still parse past ']') ---
+    var vfr = vfirst_from_json_str(str_data(str_from("{\"xs\":[10,-20,30],\"id\":7}")));
+    assert_eq(load64(vfr + 8), 7, "Vec-first: trailing id @8 parsed");
+    assert_eq(vec_len(load64(vfr)), 3, "Vec-first: xs len @0");
+    assert_eq(vec_get(load64(vfr), 1), 0 - 20, "Vec-first: xs[1]");
+
+    # --- heavy whitespace + newline in/around the array ---
+    var wsr = vfirst_from_json_str(str_data(str_from("{ \"xs\" : [ 1 , 2 , 3 ] ,\n \"id\" : 9 }")));
+    assert_eq(load64(wsr + 8), 9, "whitespace: id");
+    assert_eq(vec_len(load64(wsr)), 3, "whitespace: xs len");
+
+    # --- f64 exponent / negative / zero / fraction ---
+    var ff = fnums_from_json_str(str_data(str_from("{\"ys\":[1e5,-3.14,0.0,2.5],\"tag\":42}")));
+    assert_eq(load64(ff), 42, "f64-forms: tag");
+    assert_eq(vec_len(load64(ff + 8)), 4, "f64-forms: 4 elements");
+
+    # --- i64 MAX exact round-trip ---
+    var mx = nums_from_json_str(str_data(str_from("{\"id\":0,\"xs\":[9223372036854775807,-100]}")));
+    assert_eq(vec_get(load64(mx + 8), 0), 9223372036854775807, "i64 MAX round-trip");
+    assert_eq(vec_get(load64(mx + 8), 1), 0 - 100, "i64: -100");
+
+    # --- BUG-1 regression: malformed int-vec must NOT hang/crash (forward-progress) ---
+    var b1 = nums_from_json_str(str_data(str_from("{\"id\":1,\"xs\":[1.5,2,+3]}")));
+    assert_eq((b1 != 0), 1, "BUG-1: malformed int-vec returns (no allocator abort)");
+    assert_eq(load64(b1), 1, "BUG-1: id still parsed after malformed array");
+
+    # --- BUG-2 regression: malformed f64-vec (`null` literal) must NOT hang/crash ---
+    var b2 = fnums_from_json_str(str_data(str_from("{\"tag\":9,\"ys\":[1.0,null,2.0]}")));
+    assert_eq((b2 != 0), 1, "BUG-2: malformed f64-vec returns (no allocator abort)");
+    assert_eq(load64(b2), 9, "BUG-2: tag still parsed");
+    assert_eq(vec_len(load64(b2 + 8)), 2, "BUG-2: null skipped, 2 valid f64s");
+
+    # RISK-A note: bayan_json_parse truncates an array value's Str length at the first
+    # inner comma (a borrowed 3-byte "[10" for [10,20,30]); the pairs-form Vec decode
+    # works only because _cy_vecdec_int is length-blind and reads forward through the
+    # contiguous buffer to the real ']'. The n3 pairs round-trip above is the coupling
+    # guard — if bayan's array-value handling changes, it trips. (Whole-array capture is
+    # an R3 bayan hardening item.) A str_len() pin was dropped: bayan's borrowed array
+    # value is not a well-formed Str header, so str_len on it faults.
+
+    return assert_summary();
+}

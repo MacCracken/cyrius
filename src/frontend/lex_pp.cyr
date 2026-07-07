@@ -381,6 +381,8 @@ fn ISDERIVE_DE(S, pos, bl): i64 {
 var _pp_derive_count = 0;
 var _pp_derive_sizes = 0;   # alloc(512*8)  lazily on first #derive registration
 var _pp_derive_names = 0;   # alloc(512*32) ditto
+var _pp_vecdec_int_done = 0;  # v6.4.x R2 — emitted the shared _cy_vecdec_int JSON-array helper yet?
+var _pp_vecdec_f64_done = 0;  # v6.4.x R2 — emitted the shared _cy_vecdec_f64 JSON-array helper yet?
 
 # Helper: write decimal integer to output buffer, return bytes written
 fn PP_EMIT_INT(out, op, val): i64 {
@@ -579,6 +581,46 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     return ip;
 }
 
+# v6.4.x Pin 2 R2 — classify the element type of a `#derive` field whose type
+# string (a 32-byte cstring at `t`) is `Vec<T>`. Returns:
+#   0                  — not a Vec<...> field
+#   8 / 16 / 32 / 64   — Vec<i8/i16/i32/i64> (int element; the JSON-text width, but
+#                        Vec slots are always i64 so encode/decode use the full slot)
+#   200                — Vec<f64>
+#   201                — Vec<other> (struct / Str element) — unsupported until R3
+# The type string reaches here verbatim because the #derive text pre-parser stops
+# only on `; } space \n` — never on `<`/`>` — so `xs: Vec<i64>` lands as "Vec<i64>".
+fn _pp_vec_elem(S, t): i64 {
+    if (load8(t) != 86) { return 0; }       # 'V'
+    if (load8(t + 1) != 101) { return 0; }  # 'e'
+    if (load8(t + 2) != 99) { return 0; }   # 'c'
+    if (load8(t + 3) != 60) { return 0; }   # '<'
+    var e0 = load8(t + 4);
+    if (e0 == 105) {                         # 'i'
+        var e1 = load8(t + 5);
+        if (e1 == 56) { if (load8(t + 6) == 62) { return 8; } }                               # i8>
+        if (e1 == 49) { if (load8(t + 6) == 54) { if (load8(t + 7) == 62) { return 16; } } }  # i16>
+        if (e1 == 51) { if (load8(t + 6) == 50) { if (load8(t + 7) == 62) { return 32; } } }  # i32>
+        if (e1 == 54) { if (load8(t + 6) == 52) { if (load8(t + 7) == 62) { return 64; } } }  # i64>
+        return 201;
+    }
+    if (e0 == 102) {                         # 'f'
+        if (load8(t + 5) == 54) { if (load8(t + 6) == 52) { if (load8(t + 7) == 62) { return 200; } } }  # f64>
+        return 201;
+    }
+    return 201;
+}
+
+# R2 — true when _pp_vec_elem returned a Vec kind this release supports (int/f64).
+fn _pp_vec_ok(k): i64 {
+    if (k == 8) { return 1; }
+    if (k == 16) { return 1; }
+    if (k == 32) { return 1; }
+    if (k == 64) { return 1; }
+    if (k == 200) { return 1; }
+    return 0;
+}
+
 # Emit #derive(Serialize) — generates Name_to_json function after struct def
 # ip points to '#' of #derive. out+op is the output position.
 # Returns new ip (past the struct). Updates op via S+0x197008.
@@ -594,6 +636,56 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
     var field_count = load64(S + 0x197010);
     var cumul_off = load64(S + 0x197018);
     # Aliases: sname=S+0x197020, names=S+0x1FC000, types=S+0x1FE000, offsets=S+0x200000
+    # v6.4.x R2 — emit the shared Vec<primitive> JSON-array decode helper(s) ONCE per
+    # compilation, only for the element kinds actually present. Each takes a byte-ptr at
+    # (or before) the array's '[' and returns a fresh vec. from_json_str + from_json
+    # (pairs) both call these; encode is inline (vec_len/vec_get). Emitted only when a
+    # Vec field exists → non-Vec derive structs stay byte-identical.
+    var _needi = 0;
+    var _needf = 0;
+    var _vqi = 0;
+    while (_vqi < field_count) {
+        var _vek = _pp_vec_elem(S, S + 0x1FE000 + _vqi * 32);
+        if (_vek == 200) { _needf = 1; }
+        if (_vek >= 8) { if (_vek <= 64) { _needi = 1; } }
+        # v6.4.x R2 — a Vec<T> field whose element is a struct or Str (kind 201) is NOT
+        # yet supported: reject it up front with an HONEST diagnostic rather than letting
+        # the raw "Vec<...>" string reach `<typestring>_to_json` (which hard-errors at
+        # re-parse with a misleading file:line). Vec<struct>/Vec<Str> land in R3.
+        if (_vek == 201) {
+            syscall(SYS_WRITE, 2, "error: #derive Vec field: only Vec<i8|i16|i32|i64|f64> supported in R2 (Vec<struct>/Vec<Str> land in R3)\n", 105);
+            syscall(SYS_EXIT, 1);
+        }
+        _vqi = _vqi + 1;
+    }
+    if (_needi == 1) { if (_pp_vecdec_int_done == 0) {
+        op = op + PP_EMIT_STR(out, op, "fn _cy_vecdec_int(bp) {\nvar v = vec_new();\nvar p = 0;\n");
+        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) != 0 && load8(bp + p) != 91) { p = p + 1; }\n");
+        op = op + PP_EMIT_STR(out, op, "if (load8(bp + p) == 91) { p = p + 1;\nwhile (1 == 1) {\n");
+        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) == 32 || load8(bp + p) == 10 || load8(bp + p) == 13 || load8(bp + p) == 9 || load8(bp + p) == 44) { p = p + 1; }\n");
+        op = op + PP_EMIT_STR(out, op, "var c = load8(bp + p);\nif (c == 93 || c == 0) { break; }\n");
+        op = op + PP_EMIT_STR(out, op, "var es = p;\nvar neg = 0; if (c == 45) { neg = 1; p = p + 1; }\nvar iv = 0;\n");
+        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) >= 48 && load8(bp + p) <= 57) { iv = iv * 10 + load8(bp + p) - 48; p = p + 1; }\n");
+        # Forward-progress guard: a non-consumable byte (e.g. '.'/'+'/letter) that is
+        # neither ']'/NUL/ws/comma nor a digit/'-' would otherwise leave p unmoved and
+        # spin the outer loop forever (vec_push spam → allocator abort). If nothing was
+        # consumed, skip the byte + the push; malformed JSON degrades, never crashes.
+        op = op + PP_EMIT_STR(out, op, "if (p == es) { p = p + 1; } else { if (neg == 1) { iv = 0 - iv; } vec_push(v, iv); }\n}\n}\nreturn v;\n}\n");
+        _pp_vecdec_int_done = 1;
+    } }
+    if (_needf == 1) { if (_pp_vecdec_f64_done == 0) {
+        op = op + PP_EMIT_STR(out, op, "fn _cy_vecdec_f64(bp) {\nvar v = vec_new();\nvar p = 0;\n");
+        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) != 0 && load8(bp + p) != 91) { p = p + 1; }\n");
+        op = op + PP_EMIT_STR(out, op, "if (load8(bp + p) == 91) { p = p + 1;\nwhile (1 == 1) {\n");
+        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) == 32 || load8(bp + p) == 10 || load8(bp + p) == 13 || load8(bp + p) == 9 || load8(bp + p) == 44) { p = p + 1; }\n");
+        op = op + PP_EMIT_STR(out, op, "var c = load8(bp + p);\nif (c == 93 || c == 0) { break; }\nvar vs = p;\n");
+        op = op + PP_EMIT_STR(out, op, "while (1 == 1) { var fc = load8(bp + p); if ((fc >= 48 && fc <= 57) || fc == 45 || fc == 43 || fc == 46 || fc == 101 || fc == 69) { p = p + 1; } else { break; } }\n");
+        # Forward-progress guard (mirrors _cy_vecdec_int): a byte outside [0-9-+.eE] and
+        # not ']'/NUL/ws/comma (e.g. the 'n' of `null`) captures zero token chars, so
+        # skip it + the push rather than spinning the outer loop → allocator abort.
+        op = op + PP_EMIT_STR(out, op, "if (p == vs) { p = p + 1; } else { vec_push(v, f64_parse(bp + vs)); }\n}\n}\nreturn v;\n}\n");
+        _pp_vecdec_f64_done = 1;
+    } }
     # === Emit Name_to_json (2-arg composable form) ===
     # fn Name_to_json(ptr, sb) { ... writes to caller's sb ... }
     # v5.9.31 (agnosys 1.1.12 follow-up): renamed from
@@ -623,6 +715,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                 }
             }
         }
+        if (_pp_vec_elem(S, S + 0x1FE000 + _hf * 32) == 200) { _has_f64 = 1; }
         _hf = _hf + 1;
     }
     if (_has_f64 == 1) { op = op + PP_EMIT_STR(out, op, "var _dfb[80];\n"); }
@@ -709,7 +802,50 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     }
                 }
             }
-            if (is_f64 == 1) {
+            var _vk = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
+            if (_pp_vec_ok(_vk) == 1) {
+                # v6.4.x R2 — Vec<int/f64> field: emit a JSON array. Null-handle guard
+                # (a never-initialized Vec field is 0 → vec_len(0) would crash). Vec
+                # slots are i64, so int elements add_int the slot directly; f64 elements
+                # go through fmt_float_buf into the shared _dfb scratch (declared above).
+                op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"[\");\nif (load64(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, ") != 0) {\nvar _vh");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " = load64(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, ");\nvar _vn");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " = vec_len(_vh");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, ");\nvar _vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " = 0;\nwhile (_vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " < _vn");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, ") {\nif (_vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " > 0) { str_builder_add_cstr(sb, \",\"); }\n");
+                if (_vk == 200) {
+                    op = op + PP_EMIT_STR(out, op, "store8(&_dfb + fmt_float_buf(vec_get(_vh");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, ", _vi");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, "), &_dfb, 6), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+                } else {
+                    op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, vec_get(_vh");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, ", _vi");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, "));\n");
+                }
+                op = op + PP_EMIT_STR(out, op, "_vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " = _vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " + 1;\n}\n}\nstr_builder_add_cstr(sb, \"]\");\n");
+            } else { if (is_f64 == 1) {
                 # v6.3.40 — f64: fmt_float_buf(bits, &_dfb, 6) writes the decimal text
                 # + returns its length; null-terminate + append as a bare JSON number.
                 op = op + PP_EMIT_STR(out, op, "store8(&_dfb + fmt_float_buf(load64(ptr + ");
@@ -748,7 +884,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                 op = op + PP_EMIT_STR(out, op, "_to_json(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
                 op = op + PP_EMIT_STR(out, op, ", sb);\n");
-            } } }
+            } } } }
         } else {
             # Scalar field: emit as bare integer (valid JSON number)
             op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, load64(ptr + ");
@@ -826,7 +962,18 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     }
                 }
             }
-            if (fj_f64 == 1) {
+            var _vk_p = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
+            if (_pp_vec_ok(_vk_p) == 1) {
+                # v6.4.x R2 — Vec<int/f64> field (pairs form): bayan_json_get returns the
+                # array TEXT as a Str; re-scan it with the shared decoder, else empty vec.
+                op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, ", _cy_vecdec_");
+                if (_vk_p == 200) { op = op + PP_EMIT_STR(out, op, "f64"); } else { op = op + PP_EMIT_STR(out, op, "int"); }
+                op = op + PP_EMIT_STR(out, op, "(str_data(v))); } else { store64(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, ", vec_new()); }\n");
+            } else { if (fj_f64 == 1) {
                 op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
                 op = op + PP_EMIT_STR(out, op, ", f64_parse(str_data(v))); }\n");
@@ -876,7 +1023,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                 }
                 op = op + PP_EMIT_INT(out, op, tsz);
                 op = op + PP_EMIT_STR(out, op, ");\n}\n");
-            } } }
+            } } } }
         } else {
             op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
             op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
@@ -964,7 +1111,16 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     }
                 }
             }
-            if (fjf == 1) {
+            var _vk_s = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
+            if (_pp_vec_ok(_vk_s) == 1) {
+                # v6.4.x R2 — Vec<int/f64> field (single-pass): _p is at the value's '['.
+                # Decode via the shared helper, then advance _p past the closing ']'.
+                op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, ", _cy_vecdec_");
+                if (_vk_s == 200) { op = op + PP_EMIT_STR(out, op, "f64"); } else { op = op + PP_EMIT_STR(out, op, "int"); }
+                op = op + PP_EMIT_STR(out, op, "(json + _p));\nwhile (load8(json + _p) != 93 && load8(json + _p) != 0) { _p = _p + 1; }\nif (load8(json + _p) == 93) { _p = _p + 1; }\n");
+            } else { if (fjf == 1) {
                 # Capture the numeric token (digits/sign/./exponent) then f64_parse it.
                 op = op + PP_EMIT_STR(out, op, "_vs = _p;\nwhile (1 == 1) { var _fc = load8(json + _p); if ((_fc >= 48 && _fc <= 57) || _fc == 45 || _fc == 43 || _fc == 46 || _fc == 101 || _fc == 69) { _p = _p + 1; } else { break; } }\n");
                 op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
@@ -991,7 +1147,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                 # Nested struct: skip value (fall through to json_get path)
                 op = op + PP_EMIT_STR(out, op, "# nested struct — skip for single-pass\n");
                 op = op + PP_EMIT_STR(out, op, "while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; }\n");
-            } } }
+            } } } }
         } else {
             # Untyped scalar: parse decimal
             op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");
