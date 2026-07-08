@@ -6,6 +6,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.24] — 2026-07-08
+
+**v6.4.24 — P1: a struct field access silently read a global var when the field name
+shadowed a top-level var.** The consumer-filed "struct field-name/offset collision"
+(stiva's `Container.exit_code` reading 0) — root-caused to something entirely different
+from the two-struct collision that was filed.
+
+### Fixed — `struct_var.field` mis-parsed as `Enum.VARIANT` when the field shadows a global
+- The `X.Y` disambiguation (enum-variant vs struct-field, `parse_expr.cyr`) decided
+  "enum-variant" by checking whether **Y (the field name) is a known global var** — and if
+  so, loaded that global, **ignoring the base X entirely**. So `bc.exit_code` where
+  `exit_code` was also a top-level var silently loaded the global (`0`/`99`) instead of the
+  Container field @+72. A **silent wrong value** — no error, no crash.
+- Why it looked size/shape-dependent (and why the filing misdiagnosed it as a two-struct
+  collision): it only bites when the field name **also happens to be a top-level var**, so
+  small repros pass and it surfaces only in a large consumer unit that has such a var
+  (stiva's `var exit_code = main()`). It is NOT a two-struct collision (renaming the other
+  struct's field didn't help) and NOT a buffer overflow (token/name buffers were well under
+  cap). The consumer's `exit_code`→`exit_status` rename dodged it because `exit_status` was
+  not also a top-level var.
+- Fix: the base of an `Enum.VARIANT` access is a bare **enum type name, never a variable**
+  — so if the base `X` is a known local/global var, `X.Y` is a **field access, full stop**.
+  Guarded the enum-variant branch on `X` not being a known var (`FINDLOCAL`/`FINDVAR`).
+  Genuine `Enum.VARIANT` access (base is a type) is preserved.
+- cycc **byte-identical** (cycc's own source has no field-name-shadows-global pattern —
+  fixpoint holds). Differential: codegen-diff=1 (the new regression test only),
+  status-diff=0 — landed-and-contained. New gate
+  `tests/tcyr/field_name_shadows_global.tcyr` (field read = 7 not the shadowed global;
+  global untouched; `Enum.VARIANT` still works). Closes
+  `issues/2026-07-07-struct-field-name-offset-collision.md`.
+- **Investigation method** (recorded for next time): the filing's hypothesis was wrong, so
+  a temporary `CYRIUS_DUMP_PP` preprocess-dump + a token-window dump in `ERR` + a filtered
+  field-load trace localized it in the live stiva unit — after a corrected full revert of
+  the consumer's dodge (the first partial revert produced a self-inflicted red-herring
+  parse error). Small repros pass; the trigger is a field name colliding with a top-level var.
+- check.sh 134; release-gate GREEN (cross-OS ecb/cass/pi); self_compile ~606 ms; cycc
+  1,073,648 B (unchanged — byte-identical). stiva's `runpath.tcyr` 169/2 → 171/0.
+
 ## [6.4.23] — 2026-07-08
 
 **v6.4.23 — repair batch: signed sub-i64 GLOBAL scalar sign-extension + the agnos

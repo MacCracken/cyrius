@@ -417,10 +417,22 @@ fn PARSE_FACTOR(S): i64 {
         # field-access branch so the identifier falls through to the normal scalar
         # load below (leaving `..` for the range parser). Fixes `for i in IDENT..hi`.
         if (PEEKT(S) == 41 && TOKTYP(S, GTI(S) + 1) != 41) {
+            # v6.4.24 (P1 fix): `Enum.VARIANT` ignores the base and loads VARIANT (a
+            # global const) whenever the field name is ALSO a global var. But that
+            # over-matches `struct_var.field` when `field` SHADOWS a global var name:
+            # `bc.exit_code` silently loaded the global `exit_code` (=0) instead of the
+            # Container field @+72 (the size-dependent silent-wrong-read — only bites
+            # when the field name happens to also be a top-level var, so small repros
+            # passed). The base of an enum-variant access is a bare ENUM TYPE NAME, never
+            # a variable — so if the base IS a known local/global var, `.field` is a
+            # FIELD access, full stop. Guard the enum-variant branch on that.
+            var _base_is_var = 0;
+            if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { _base_is_var = 1; } }
+            if (_base_is_var == 0) { if (FINDVAR(S, noff) >= 0) { _base_is_var = 1; } }
             # Peek: is the second ident a known global var? (enum variant)
             var dot_ti = GTI(S);
             STI(S, GTI(S) + 1);
-            if (PEEKT(S) == 2) {
+            if (_base_is_var == 0 && PEEKT(S) == 2) {
                 var vn = PEEKV(S);
                 var vi = FINDVAR(S, vn);
                 if (vi >= 0) {

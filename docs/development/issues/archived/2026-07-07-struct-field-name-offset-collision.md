@@ -1,4 +1,18 @@
-# Struct field READ mis-resolves when two structs share a field name at different offsets
+# Struct field READ mis-resolves when two structs share a field name at different offsets — RESOLVED
+
+> **RESOLVED v6.4.24 — archived 2026-07-08. The filed diagnosis was WRONG.** It is NOT a
+> two-struct field-name/offset collision. Real root cause: the `X.Y` disambiguation
+> (enum-variant vs struct-field, `parse_expr.cyr`) checked whether **Y (the field name) is a
+> known global var** and, if so, loaded that global — ignoring the base `X`. So
+> `bc.exit_code` where `exit_code` was ALSO a top-level var silently loaded the global
+> (`0`) instead of Container's field @+72. Only bites when the field name shadows a top-level
+> var (hence "size-dependent" — small repros lack such a var; stiva's `var exit_code =
+> main()` had it). Fix: if the base `X` is a known local/global var, `X.Y` is a field access,
+> full stop (enum-variant's base is a bare TYPE name, never a var). Regression
+> `tests/tcyr/field_name_shadows_global.tcyr`; cycc byte-identical; differential
+> codegen-diff=1/status-diff=0. See CHANGELOG [6.4.24]. The v6.4.22 investigation note below
+> (which disproved the two-struct hypothesis) led here.
+
 
 - **Filed**: 2026-07-07 (found wiring stiva's container-state serde; a JSON
   round-trip silently dropped `exit_code`).

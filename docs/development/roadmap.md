@@ -537,10 +537,10 @@ never unilaterally deferred or redirected.
 > Release ORDER within each bucket is the user's to set; severity is the sort hint.
 
 - **🔴 Correctness bugs — near-term patch slots:**
-  - **P1 struct-field-name-offset collision → SCHEDULED .24 (deep-dive).** Investigation
-    (v6.4.22) DISPROVED the two-struct-collision filing — it's a subtle **size-dependent
-    buffer/boundary bug** that doesn't repro minimally and needs cycc instrumentation to
-    localize ([`issues/2026-07-07-struct-field-name-offset-collision.md`](issues/2026-07-07-struct-field-name-offset-collision.md)).
+  - ~~**P1 struct-field-name-offset collision**~~ — ✅ **SHIPPED v6.4.24.** Root cause was NOT
+    the filed two-struct collision (nor a buffer overflow): the `X.Y` disambiguation loaded
+    a global var whenever the FIELD name was a global var, ignoring base X. Fix: if X is a
+    known var, `X.Y` is a field access ([`issues/2026-07-07-struct-field-name-offset-collision.md`](issues/2026-07-07-struct-field-name-offset-collision.md)).
   - ~~**P2 signed sub-i64 GLOBAL scalar sign-extension**~~ — ✅ **SHIPPED v6.4.23** (new 8th
     per-var `_vsgn_base` table, max-sized/no-grow to keep the cybs seed-chain intact; x86 +
     aarch64 backends).

@@ -1,0 +1,37 @@
+# Struct field name that SHADOWS a global var must be a FIELD access (v6.4.24, P1).
+# The `X.Y` disambiguation (enum-variant vs struct-field) used to load the global `Y`
+# whenever Y was a known global var — so `rec.exit_code` silently loaded the top-level
+# `exit_code` (=99) instead of Rec's field @+16. It only bit when the field name ALSO
+# happened to be a top-level var, so small repros passed and it surfaced only in a large
+# consumer unit (stiva's `exit_code` global). The base of an enum-variant access is a bare
+# ENUM TYPE NAME, never a variable — so if the base is a known var, `.field` is a field
+# access, full stop. Issue 2026-07-07-struct-field-name-offset-collision.
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+var exit_code = 99;                 # a global whose name collides with a struct field
+enum Signal { RUNNING; STOPPED; }   # enum-variant access must still work
+
+struct Rec { a; b; exit_code; }     # exit_code @ +16
+
+fn rec_new(): i64 {
+    var p = alloc(64);
+    var x: Rec = p;
+    x.a = 1; x.b = 2; x.exit_code = 7;
+    return p;
+}
+
+fn run(): i64 {
+    var r: Rec = rec_new();
+    # r.exit_code must read the FIELD (7), not the global exit_code (99).
+    assert_eq(r.exit_code, 7, "field access reads the field, not the shadowed global");
+    # the global itself is untouched.
+    assert_eq(exit_code, 99, "global exit_code unchanged");
+    # genuine enum-variant access (base is a TYPE, not a var) still resolves.
+    assert_eq(Signal.STOPPED, 1, "Enum.VARIANT access preserved");
+    return 0;
+}
+
+alloc_init();
+var _ = run();
+var r = assert_summary();
