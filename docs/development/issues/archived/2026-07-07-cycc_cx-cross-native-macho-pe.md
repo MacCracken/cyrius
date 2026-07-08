@@ -1,4 +1,14 @@
-# 2026-07-07 — cycc_cx (the cx bytecode compiler) doesn't run cross-native on macOS/Windows
+# 2026-07-07 — cycc_cx (the cx bytecode compiler) doesn't run cross-native on macOS/Windows — RESOLVED
+
+> **RESOLVED v6.4.22 — archived 2026-07-08.** Root cause: `main_cx.cyr`'s arena used
+> `syscall(SYS_BRK,...)`, and neither XNU nor Win32 has `brk` (the 2 "not routed" warnings
+> were the 2 brk calls). Fixed with flat per-target `#ifdef` blocks (mmap on macho flags
+> `0x1002` / PE flags `0x22`, brk on Linux/agnos) — mirrors `main.cyr`/`main_win.cyr`.
+> Verified on real hardware: native `cycc_cx` on **ecb** (macOS) + **cass** (Windows)
+> compiles a `.cyr`→118 B `.cyx` that the native `cxvm` runs to exit 42 (was signal-12 on
+> macOS). Re-added to all 3 tarball builders; a native compile→run round-trip is gated per
+> host in `cross-os-selfhost.sh` (ecb/pi/cass). cycc byte-identical. See CHANGELOG [6.4.22].
+
 
 **Status:** OPEN — filed during cx Release C (v6.4.20). NOT a Release C blocker;
 Release C ships the portable-`.cyx` **runtime** (cxvm) cross-OS, which is the

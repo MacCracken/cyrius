@@ -39,13 +39,13 @@ mkdir -p "$WORK/$STAGE/bin" "$WORK/$STAGE/lib"
 cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/cycc"
 # Wrapper + quality tools, cross-emitted to x86_64 Mach-O.
 cat cbt/cyrius.cyr | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/cyrius"
-# cx Release C: cxvm (the portable-.cyx RUNTIME) ships so a binary-install
-# x86-macOS user can `cyrius run *.cyx` (build-once-on-Linux / run-anywhere). The
-# cx COMPILER (cycc_cx) is NOT shipped — cross-emitted to Mach-O it faults on
-# unrouted syscalls; tracked as a follow-on (issues/2026-07-07-cycc_cx-cross-native-macho-pe.md).
+# cx: both cxvm (RUNTIME) + cycc_cx (COMPILER) ship — v6.4.22 fixed cycc_cx's
+# Mach-O cross-native brk-fault (now mmap per-target). x86-macOS users can
+# build+run .cyx natively. (cycc_cx line is separate — src/main_cx.cyr, a fork.)
 for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm; do
     cat "programs/${tool}.cyr" | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/${tool}"
 done
+cat src/main_cx.cyr | CYRIUS_MACHO=1 ./build/cycc > "$WORK/$STAGE/bin/cycc_cx"
 # Version manager + prompt helper + repl shim. v6.2.40: `cyrius init` and
 # `cyrius port` are the native cyrius-init binary (built above), so the
 # cyrius-init.sh / cyrius-port.sh shims are gone — only cyrius-repl.sh
@@ -56,7 +56,7 @@ chmod +x "$WORK/$STAGE/bin"/*
 
 # Validate every Mach-O binary (magic cffaedfe = MH_MAGIC_64, cputype
 # 07000001 = CPU_TYPE_X86_64) — refuse to package a non-x86 / empty artifact.
-for b in cycc cyrius cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm; do
+for b in cycc cyrius cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cycc_cx; do
     f="$WORK/$STAGE/bin/$b"
     magic=$(xxd -l4 -p "$f" | tr -d ' \n')
     cput=$(xxd -s4 -l4 -p "$f" | tr -d ' \n')

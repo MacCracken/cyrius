@@ -28,17 +28,32 @@ include "src/frontend/parse.cyr"
 # MAIN
 # ================================================================
 
-# Allocate heap
+# Allocate heap. v6.4.22: per-target — macOS/Windows have NO brk (XNU/Win32),
+# so cross-compiling cycc_cx to Mach-O/PE with the old raw `syscall(SYS_BRK,...)`
+# emitted 2 unrouted syscalls that FAULTED on macOS (signal 12) and would on PE.
+# Mirror main.cyr / main_win.cyr: mmap on macho (flags 0x1002 = MAP_ANON|PRIVATE)
+# + on PE (flags 0x22, the syscall(9) → VirtualAlloc reroute), brk on Linux/agnos.
+# Flat per-target #ifdef blocks (exactly one of MACOS/WIN/LINUX/AGNOS is predefined
+# by the compiling driver) — the alloc.cyr idiom, avoids nested #ifdef. Arena top
+# 0x7400000 maps the relocated lexid_entries @ 0x7300000 (v6.4.21 LEXID cap).
+#ifdef CYRIUS_TARGET_MACOS
+var S = syscall(9, 0, 0x7400000, 3, 0x1002, 0 - 1, 0);
+if (S < 0x100000) {
+    syscall(1, 2, "cycc_cx: mmap heap init failed\n", 31);
+    syscall(60, 1);
+}
+#endif
+#ifdef CYRIUS_TARGET_WIN
+var S = syscall(9, 0, 0x7400000, 3, 0x22, 0 - 1, 0);
+#endif
+#ifdef CYRIUS_TARGET_LINUX
 var S = syscall(SYS_BRK, 0);
-# v5.7.11 / v5.11.68 — brk extends through preprocess_out
-# (~77.6 MB post-.68 heap-map full reorg; was ~86.6 MB through
-# .67). Pre-.68 sed left the body shifted; this comment block
-# was rewritten at .68 close to match the new layout. cx skips
-# the TS frontend, so the 13.3 MB pad between fixup_tbl-end
-# (0x207B000) and tok-block-start (0x2D7C000) is unused on this
-# path; kept for offset parity with main.cyr. See CHANGELOG
-# [5.11.68] for the full close shape.
-syscall(SYS_BRK, S + 0x7400000);   # v6.4.21: 0x5E1D000 → 0x7400000 to map relocated lexid_entries @ 0x7300000 (LEXID cap 16384→65536)
+syscall(SYS_BRK, S + 0x7400000);
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+var S = syscall(SYS_BRK, 0);
+syscall(SYS_BRK, S + 0x7400000);
+#endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

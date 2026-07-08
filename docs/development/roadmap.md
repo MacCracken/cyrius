@@ -176,7 +176,7 @@ releases, each bundling several bites. Minors flex long.**
 | 2 | **Array-typed struct fields** | **3 releases (done)** | No | **✅ DONE — R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13 (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>)** |
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
-| 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 4 releases (.17–.20) | No | **✅ DONE (v6.4.17–.20). A=CLI, B=f64 arith, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts). Tail deferred+filed: cycc_cx cross-native, f32/transcendentals.** |
+| 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 5 releases (.17–.20, .22) | No | **✅ DONE. A=CLI, B=f64, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts), .22=cycc_cx cross-native (macOS/Win). Tail: f32/transcendentals fail loud.** |
 | 5b | **Async runtime — tokio-parity primitives** (5 lib APIs blocking the stiva v3.1 port) | **3–5 releases** | No | **🔴 CONSUMER-BLOCKED (stiva, our Docker project) — scheduled IMMEDIATELY AFTER SIMD Phase 5 (Pin 1), ahead of arcs 3/4/6/7. NOT v6.8-parked** (pinned 2026-07-07; [`issues/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/2026-07-07-async-runtime-tokio-parity-gaps.md)) |
 | 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | **2–3 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | **2–4 releases** | No | pinned 2026-07-07 — later 6.4.x |
@@ -247,10 +247,12 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
     lseek, argc2 close/exit). Caps 64 KB→1 MB + overflow probe. cxvm ships in the
     macOS/Windows tarballs; `cross-os-selfhost.sh` + `cx_cli.sh` gate a portable-`.cyx`
     I/O fixture. cycc byte-identical (cxvm is off the self-host chain).
-  - **Deferred (filed):** the cx **compiler** `cycc_cx` cross-native on macOS/Windows
-    (`issues/2026-07-07-cycc_cx-cross-native-macho-pe.md` — cross-compiles clean but
-    faults on macOS; `.cyx` build-on-Linux/run-anywhere makes this a convenience, not a
-    blocker) · cx SIMD (+ the `issues/2026-07-05-...phase5.md` cx-SIMD closure note).
+  - **✅ cycc_cx cross-native — SHIPPED v6.4.22.** The cx **compiler** faulted at runtime
+    on macOS/PE (arena used `brk`, absent on XNU/Win32) — fixed with per-target `#ifdef`
+    (mmap on macho/PE). Native `cycc_cx` compile→run round-trip verified on ecb + cass;
+    re-added to all 3 tarball builders + gated in `cross-os-selfhost.sh`.
+  - **Deferred (filed):** cx SIMD (+ the `issues/2026-07-05-...phase5.md` cx-SIMD closure
+    note); f32 conversion + transcendentals still fail loud on cx.
   Full stub: [`proposals/2026-07-05-cx-bytecode-cli-exposure.md`](proposals/2026-07-05-cx-bytecode-cli-exposure.md).
 - **Async runtime — tokio-parity primitives (arc 5b) — CONSUMER-BLOCKED, scheduled
   right after SIMD Phase 5.** The **stiva v3.1 async port (our Docker project) is

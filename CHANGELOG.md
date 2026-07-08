@@ -6,6 +6,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.22] — 2026-07-08
+
+**v6.4.22 — cx `cycc_cx` cross-native on macOS + Windows.** The cx bytecode **compiler**
+(`cycc_cx`, `src/main_cx.cyr`) cross-compiled to Mach-O/PE without error but **faulted at
+runtime on macOS** (signal 12) — its heap arena used `syscall(SYS_BRK, ...)`, and neither
+XNU nor Win32 has `brk` (the 2 "syscall not routed by Mach-O ARM translation" warnings
+were the 2 brk calls). So a macOS/Windows user could `cyrius run *.cyx` (cxvm shipped in
+v6.4.20) but not `cyrius build --target=cx` — the "build-once-on-Linux" gap. Now closed.
+
+### Fixed — main_cx.cyr arena: brk → mmap per-target
+- Wrapped the arena setup in flat per-target `#ifdef` blocks (the `alloc.cyr` idiom):
+  **macOS** → `mmap` (flags `0x1002`), **Windows** → `mmap` (flags `0x22`, the
+  `syscall(9)` → `VirtualAlloc` reroute), **Linux/agnos** → `brk` (unchanged). Exactly one
+  of `CYRIUS_TARGET_{MACOS,WIN,LINUX,AGNOS}` is predefined by the compiling driver, so the
+  right block fires per cross-target. Mirrors `main.cyr` / `main_win.cyr`.
+- **Verified on real hardware — the full native cx toolchain (compiler + runtime):** on
+  **ecb** (macOS/arm64) and **cass** (Windows) the native `cycc_cx` compiles a `.cyr` → a
+  118 B `.cyx` (byte-identical to Linux's — portable bytecode) that the native `cxvm` runs
+  to `exit 42`. Previously the macOS `cycc_cx` faulted with signal 12; now clean (0 "not
+  routed" warnings on all targets, `defender-clean` on cass).
+- **cycc byte-identical** (1,069,552 B — `main_cx.cyr` is the cx fork, not in cycc's
+  self-host/seed chain); `cx_cli.sh` (Linux CLI path) still green; check.sh 132;
+  self_compile ~602 ms; release-gate GREEN (cross-OS now runs the cycc_cx round-trip).
+
+### Provisioning + anti-rot gate
+- **`cycc_cx` re-added to all 3 tarball builders** (macos-arm64/x86 + windows, bin-build +
+  magic-validation loops — reverses the v6.4.20 removal). A binary-install macOS/Windows
+  user now gets both `cycc_cx` and `cxvm` → full `cyrius build --target=cx` + `run`.
+- **`cross-os-selfhost.sh` gained a native `cycc_cx` compile→run round-trip** per host
+  (ecb/pi/cass): build `cycc_cx` with the just-self-hosted compiler, compile a `.cyr` →
+  `.cyx`, run it via the native `cxvm`, assert exit 42. This is the run-gate the bug needed
+  — it compiled clean and only faulted at runtime, so a compile-only check would miss a
+  regression. Closes `issues/2026-07-07-cycc_cx-cross-native-macho-pe.md`.
+
 ## [6.4.21] — 2026-07-08
 
 **v6.4.21 — repair batch: LEXID identifier-dedup cap 16384 → 65536 (unblocks large
