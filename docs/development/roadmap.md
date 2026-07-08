@@ -230,8 +230,12 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
     f64 **comparisons deferred** (fail loud): the compare result is F64-typed and misbehaves
     in `if()`/`==` on cx — `issues/2026-07-07-cx-f64-compare-result-typing.md` (the cxvm
     compare opcodes ARE shipped+correct; a one-line SESTYPE fix was tried + rejected —
-    churned 10 programs, didn't fix cx). f32/transcendentals still fail loud. **NEXT: the
-    f64-compare follow-up, then Release C.**
+    churned 10 programs, didn't fix cx). f32/transcendentals still fail loud.
+  - **f64-compare follow-up ✅ SHIPPED (v6.4.19)** — root cause was NOT the F64 type; cx's
+    flag-less `EJCC` re-compared against a stale r1 on the bare-boolean truthiness path. Fix:
+    cx `ETESTAZ` sets r1=0 + `EF64_CMP` re-wired to 0x5A-0x5F (cx-backend-only, cycc byte-id).
+    Also fixed a latent bare-int-boolean branch bug. cx now runs real int/float programs
+    (arithmetic + comparisons + conditionals). **NEXT: Release C.**
   - **Release C** — cxvm portable syscall ABI: a canonical guest-syscall set cxvm
     translates per-host (ESYSXLAT-style) so an I/O-doing `.cyx` runs on ecb/cass/pi;
     raised caps. Split C1/C2 (boundary set at C-open after reading cxvm dispatch depth).

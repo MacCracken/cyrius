@@ -43,11 +43,18 @@ printf 'var a = 100;\nvar b = 7;\nvar c = a - b;\nsyscall(60, c);\n' > "$T/g.cyr
 rc=0; "$CYR" run "$T/g.cyx" >/dev/null 2>&1 || rc=$?
 [ "$rc" = "93" ] || { echo "FAIL: cx global vars collide (exit $rc, want 93)"; exit 1; }
 
-# (4) still fail loud: f64 COMPARE (cx arc B tail) + a transcendental.
-printf 'fn main(): i64 { var a = 3.0; var b = 2.0; if (f64_lt(a, b)) { return 1; } return 0; }\nvar e = main();\nsyscall(60, e);\n' > "$T/fc.cyr"
-if "$CYR" build --target=cx "$T/fc.cyr" "$T/fc.cyx" >/dev/null 2>"$T/fc.err"; then
-    echo "FAIL: f64 comparison compiled on cx — must fail loud pending the cmp follow-up"; exit 1
-fi
-grep -q "not yet supported on the cx bytecode target" "$T/fc.err" || { echo "FAIL: wrong f64-compare error:"; cat "$T/fc.err"; exit 1; }
+# (4) cx arc B follow-up: f64 COMPARES now WORK in conditionals (the flag-less-EJCC
+# truthiness fix). gt(10,4) true -> +1; lt(10,4) false -> +0; gt(10,4)==1 true -> +2 = 3.
+printf 'fn main(): i64 { var a = 10.0; var b = 4.0; var r = 0; if (f64_gt(a, b)) { r = r + 1; } if (f64_lt(a, b)) { r = r + 100; } if (f64_gt(a, b) == 1) { r = r + 2; } return r; }\nvar e = main();\nsyscall(60, e);\n' > "$T/fc.cyr"
+"$CYR" build --target=cx "$T/fc.cyr" "$T/fc.cyx" >/dev/null 2>&1 || { echo "FAIL: f64 compare build --target=cx"; exit 1; }
+rc=0; "$CYR" run "$T/fc.cyx" >/dev/null 2>&1 || rc=$?
+[ "$rc" = "3" ] || { echo "FAIL: cx f64 compare in conditionals exit $rc (want 3)"; exit 1; }
 
-echo "PASS: cx --target=cx build/run + versioned .cyx; f64 arithmetic works; globals distinct; f64 compare fails loud (cx arc A/B)"
+# (5) transcendentals still fail loud (f64_sin — no libm opcodes yet).
+printf 'fn main(): i64 { var x = 1.0; var y = f64_sin(x); return 0; }\nvar e = main();\nsyscall(60, e);\n' > "$T/ts.cyr"
+if "$CYR" build --target=cx "$T/ts.cyr" "$T/ts.cyx" >/dev/null 2>"$T/ts.err"; then
+    echo "FAIL: f64_sin compiled on cx — transcendentals must fail loud"; exit 1
+fi
+grep -q "not yet supported on the cx bytecode target" "$T/ts.err" || { echo "FAIL: wrong transcendental error:"; cat "$T/ts.err"; exit 1; }
+
+echo "PASS: cx --target=cx build/run + versioned .cyx; f64 arithmetic + comparisons work; globals distinct; transcendentals fail loud (cx arc A/B + cmp follow-up)"

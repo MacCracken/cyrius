@@ -1,5 +1,17 @@
 # cx: f64 comparison results are F64-typed → misbehave in `if()` / `== N` on the cx target
 
+> **RESOLVED — v6.4.19.** The title's framing (F64-typed result) was a red herring. Root cause
+> (found by a 4-facet investigation): cx has **no CPU flags**, so its `EJCC` re-synthesizes a
+> TWO-operand `eq r0,r0,r1` on EVERY branch, assuming `ECONDCMP` left LHS in r0 and RHS in r1.
+> True for a real comparison (`if (a==b)`), but on the **bare-boolean** path (`if (f64_lt(...))`,
+> `if (bool)`) only r0 holds the boolean and **r1 is stale** — so it branched on `boolean ==
+> garbage` ("always true"). x86's `ETESTAZ` emits `test rax,rax` (flag from one value); cx's was
+> a NO-OP. **Fix (cx-backend-only, cycc byte-identical — NOT the rejected frontend SESTYPE):**
+> cx `ETESTAZ` now sets `r1 = 0` so `EJCC`'s `eq r0,r0,r1` becomes `eq r0,r0,0` = a real `r0==0`
+> truthiness test; and `EF64_CMP` re-wired to the 0x5A-0x5F compare opcodes. Fixes `if(f64_lt)`,
+> `f64_gt==N`, AND a latent bare-int-boolean-in-`if` bug. Verified end-to-end (combined test 47→63).
+> Gate: `tests/cx_cli.sh`. See CHANGELOG [6.4.19].
+
 - **Filed**: 2026-07-07 (during cx arc Release B — cx scalar float)
 - **Severity**: P2 — a correctness footgun IF the compare opcodes are wired, so for
   Release B f64 comparisons **fail loud** on cx (hard-error) rather than ship

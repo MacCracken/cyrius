@@ -180,7 +180,15 @@ fn ESTOC(S): i64 { CX_EMIT(S, 67, 1, 0, 0); return 0; }    # store64 [r1], r0
 
 # Comparison: setCC pattern → compare and set r0 to 0/1
 fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline
-fn ETESTAZ(S): i64 { return 0; }  # no-op for bytecode
+# cx arc B follow-up: cx has no flags, and EJCC re-synthesizes a TWO-operand
+# `eq r0,r0,r1` on the bare-boolean truthiness path (ECONDCMP's no-cmp branch,
+# parse_ctrl.cyr:47-50) where only r0 holds the boolean and r1 is STALE garbage —
+# so `if (f64_lt(...))` / `if (bool)` mis-branched ("always true"). x86's ETESTAZ
+# emits `test rax,rax` (flag from the single value); cx has no flags, so instead we
+# set r1 = 0, turning EJCC's `eq r0,r0,r1` into `eq r0,r0,0` = a genuine `r0 == 0`
+# truthiness test. ETESTAZ only fires on the bare-boolean condition path (r1 is
+# scratch there — both callers, parse_ctrl.cyr:48 + parse_fn.cyr:3409, are truthiness).
+fn ETESTAZ(S): i64 { CX_MOVI(S, 1, 0); return 0; }  # r1 = 0 so EJCC's eq r0,r0,r1 tests r0==0
 fn EMOVRDXRAX(S): i64 { return 0; }  # no-op for bytecode
 fn EMOVRA_RDX(S): i64 { return 0; }  # no-op for bytecode
 fn ESETCC(S, op): i64 {
@@ -300,16 +308,23 @@ fn EF64_LOG2(S): i64 { _cx_float_unsupported(S); return 0; }
 fn EF64_EXP2(S): i64 { _cx_float_unsupported(S); return 0; }
 fn EF64_ATAN(S): i64 { _cx_float_unsupported(S); return 0; }
 
-# EF64_CMP — f64 comparison. The cxvm compare opcodes (flt/fle/fgt/fge/feq/fne,
-# 0x5A-0x5F) exist and compute correctly for DIRECT use, but the compare RESULT is
-# left F64-typed by the shared frontend (PF64CMP doesn't SESTYPE(0)), so using it
-# in `if (f64_lt(...))` / `f64_gt(...) == N` silently misbehaves ON CX (works on
-# x86). Rather than ship a silent-wrong conditional, f64 comparisons FAIL LOUD on
-# cx for now. Wiring them back (with the frontend type-tracking fixed) is the cx-arc
-# "f64 compare" follow-up — issues/2026-07-07-cx-f64-compare-result-typing.md.
+# EF64_CMP — f64 comparison (cx arc B follow-up: RE-ENABLED). The frontend
+# (PF64CMP :1686 + the site-2 `== N` path :2690) leaves a (left) in r1 and b (right)
+# on the stack — mirror of x86 EF64_CMP. r0 = (a CMP b) ? 1 : 0 via the NaN-correct
+# cxvm float-compare opcodes 0x5A-0x5F. The result is a clean i64 0/1 in r0; the
+# "misbehaves in if()/==" symptom was NOT this emit — it was cx's flag-less EJCC
+# truthiness path (fixed in ETESTAZ above), so this is safe to re-enable.
 fn EF64_CMP(S, tok): i64 {
-    _cx_float_unsupported(S);
-    EPOPR(S);
+    EPOPR(S);                       # r0 = b (right); r1 = a (left) from the frontend setup
+    var op = 94;                    # default feq (== is tok 17, eq builtin tok 68)
+    if (tok == 69) { op = 90; }     # lt builtin → flt
+    if (tok == 70) { op = 92; }     # gt builtin → fgt
+    if (tok == 19) { op = 90; }     # <   → flt
+    if (tok == 20) { op = 92; }     # >   → fgt
+    if (tok == 21) { op = 91; }     # <=  → fle
+    if (tok == 22) { op = 93; }     # >=  → fge
+    if (tok == 18) { op = 95; }     # !=  → fne
+    CX_EMIT(S, op, 0, 1, 0);        # fcmp r0, r1, r0  = (a CMP b) ? 1 : 0
     return 0;
 }
 

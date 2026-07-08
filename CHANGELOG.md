@@ -6,6 +6,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.19] — 2026-07-07
+
+**v6.4.19 — cx f64 comparisons work in conditionals (the cx arc B follow-up) + a latent
+bare-boolean branch bug fixed.** Closes the deferred item from v6.4.18. cycc **byte-identical**
+(cx-backend-only — this is NOT the frontend `SESTYPE(0)` that was tried and rejected in B).
+
+### Fixed — cx flag-less branch truthiness (root cause of the f64-compare-in-conditional bug)
+- The v6.4.18 symptom (`if (f64_lt(a,b))` always true; `f64_gt(a,b) == 1` wrong) was NOT the
+  F64-typed result (the title's framing) — a 4-facet investigation found the real cause: **cx has
+  no CPU flags**, so its `EJCC` re-synthesizes a TWO-operand `eq r0,r0,r1` on every branch,
+  assuming `ECONDCMP` left LHS in r0 and RHS in r1. That holds for a real comparison (`if (a==b)`),
+  but on the **bare-boolean** path (`if (bool)` / `if (f64_lt(...))`) only r0 holds the boolean and
+  **r1 is stale garbage** → it branched on `boolean == garbage`. x86's `ETESTAZ` emits `test
+  rax,rax` (a flag from the single value); cx's `ETESTAZ` was a **no-op**.
+- **Fix**: cx `ETESTAZ` now emits `movi r1, 0`, so `EJCC`'s `eq r0,r0,r1` becomes `eq r0,r0,0` =
+  a genuine `r0 == 0` truthiness test (both `ETESTAZ` callers — `parse_ctrl.cyr:48` bare-boolean
+  + `parse_fn.cyr:3409` defer-flag — are truthiness contexts where r1 is scratch). Also fixes a
+  **latent bare-int-boolean bug** (`if (someInt)` mis-branched on cx too, just less noticed).
+- `EF64_CMP` re-wired from the v6.4.18 fail-loud stub to the `0x5A-0x5F` cxvm compare opcodes
+  (they were always correct for direct use). Both fixes are in `src/backend/cx/emit.cyr` only.
+
+### Verified
+- `if (f64_lt(10,4))` → false, `if (f64_gt(10,4))` → true, `f64_gt(a,b) == 1` → true, `f64_le`/
+  `f64_ge` correct; the v6.4.18 combined test 47 → **63**. Regressions clean: int comparisons,
+  bare-int-bool (`if(f)` → taken; `if(0)` → skipped), arithmetic, globals. cycc byte-identical
+  (1,069,552 B); check.sh 132. `tests/cx_cli.sh` extended (f64 compares work; transcendentals
+  still fail loud). The frontend `SESTYPE(0)` idea is dead — this needed no frontend change.
+
 ## [6.4.18] — 2026-07-07
 
 **v6.4.18 — cx portable target, Release B: cx scalar f64 (arithmetic) + a foundational
