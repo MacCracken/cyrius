@@ -1968,6 +1968,12 @@ fn _EMIT_NLOAD_X1_POS(S, width): i64 {
 # Width-aware global load: ldr from [x1] with width
 fn EVLOAD_W(S, idx, width): i64 {
     EVADDR_X1(S, idx);
+    # v6.4.23: negative width = SIGNED sub-i64 global → sign-extending load from [x1]
+    # (same encodings as EFIELD_LOAD_W; the global-load caller now passes a negated
+    # width for signed iN globals per parse_expr.cyr's GVSGN check).
+    if (width < 0 - 2) { EW(S, 0xB9800020); return 0; }  # -4: ldrsw x0, [x1]
+    if (width == 0 - 2) { EW(S, 0x79800020); return 0; } # ldrsh x0, [x1]
+    if (width == 0 - 1) { EW(S, 0x39800020); return 0; } # ldrsb x0, [x1]
     _EMIT_NLOAD_X1_POS(S, width);
     return 0;
 }

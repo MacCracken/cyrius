@@ -62,6 +62,43 @@ name; the JSON key stays `"exit_code"` for Rust-serde parity). With the name no
 longer colliding, both structs' reads resolve correctly and the 847-test suite is
 green. This is a rename-to-dodge, not a fix.
 
+## Investigation 2026-07-08 (v6.4.22) — the consumer's two-struct hypothesis is DISPROVEN; it's subtler
+
+Reproduced against the live stiva repo: reverting the dodge (`exit_status` →
+`exit_code` in `src/container.cyr`, 3 lines) makes `tests/runpath.tcyr` **fail to
+compile** — `error:<source>:501: unexpected ','` — where clean it passes 171 tests.
+So the bug is real and reproduces. BUT the root cause is NOT what was filed:
+
+- **It is NOT the two-struct field-name collision.** Renaming the *other* struct's
+  field (`ContainerExecResult.exit_code` → `exec_rc` in `runtime.cyr`) while keeping
+  `Container.exit_code` **still errors**. So the trigger is `Container.exit_code`
+  *alone* in the large unit, not a pair colliding at 72-vs-0.
+- **It does NOT reproduce minimally.** Every small repro resolves correctly: single
+  struct `.exit_code` read; two structs sharing `exit_code` at different offsets
+  (both declaration orders); field-name == parameter-name shadowing;
+  store-in-one-fn / read-in-another. All return the right value. The issue's "small
+  repros don't trigger" is confirmed — it's purely size/shape-dependent.
+- **The field-resolution code is correct + capped.** `FINDFIELD`/`FIELDOFF`
+  (parse_types.cyr) resolve per-struct-type via `field_base[si]`; the packed field
+  pool (`0x92A000`, 8192 entries) and struct tables (1024) have hard caps that
+  **ERROR** on overflow, not silently corrupt. There is no global name→offset table.
+- **Manifestation shifted** vs the filing (silent wrong read on the consumer's
+  v6.4.19 → a parse error on v6.4.22), and `exit_status` (11 bytes, unique) vs
+  `exit_code` (9 bytes, already used as var/param names elsewhere) differ in
+  identifier-buffer / dedup footprint — pointing at a **buffer/table BOUNDARY
+  interaction at scale**, not a simple offset collision.
+- **Localization is blocked without cycc-internal instrumentation.** cycc reports
+  `<source>:501` against its post-`#ifdef`/comment-stripped `preprocess_out`, a
+  coordinate system a naive include-expansion doesn't match (line 501 there lands in
+  an `lib/alloc.cyr` comment). Pinning it needs a cycc preprocess-dump or
+  many-iteration bisection of the full 25-module + 6-dep-bundle unit (~150 s/build).
+
+**Reframed scope:** this is a subtle size-dependent preprocessor/buffer-boundary bug,
+materially harder to root-cause than the "key the fast-path table by (structType,
+fieldName)" fix the filing suggested (that table doesn't exist). Needs a dedicated
+deep-dive with cycc instrumentation, not a clean patch bite. stiva stays on the
+rename-dodge in the meantime (no consumer currently blocked).
+
 ## Suggested direction (compiler-side)
 
 - Field offsets must be resolved **per struct type via the variable's annotation**,

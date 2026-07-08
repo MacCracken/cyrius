@@ -56,6 +56,10 @@ var CLOSURE_TYID = 0x40000003;
 var FUTURE_TYID = 0x40000004;
 fn GVTYPE(S, vi): i64 { return L64(_vart_base + vi * 8); }
 fn SVTYPE(S, vi, v): i64 { S64(_vart_base + vi * 8, v); return 0; }
+# v6.4.23: per-var signedness (1 = signed sub-i64 iN scalar global). var_size can't
+# hold it (fixup.cyr SUMS it for data layout); the type table has 6 direct readers.
+fn GVSGN(S, vi): i64 { return L64(_vsgn_base + vi * 8); }
+fn SVSGN(S, vi, v): i64 { S64(_vsgn_base + vi * 8, v); return 0; }
 
 # v5.7.17: dump every registered struct name to stderr. Called from
 # REGSTRUCT before the cap-overflow ERR_MSG so the user sees WHICH

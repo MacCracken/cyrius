@@ -6,6 +6,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.23] — 2026-07-08
+
+**v6.4.23 — repair batch: signed sub-i64 GLOBAL scalar sign-extension + the agnos
+`sys_readlink`#70 peer.** Two bites.
+
+### Fixed — signed sub-i64 global scalars now sign-extend on load
+- A typed **signed** sub-i64 **global** (`var G: i8/i16/i32`) loaded **zero-extended**,
+  so a stored negative read back as a large positive (`var G: i32 = -1` → `4294967295`);
+  every signed compare/arith on it was wrong. Locals, struct fields, and call-args got
+  sign-extension in v6.3.35; globals were the deferred residual (claimed "in the
+  inventory" but never actually filed/fixed — surfaced by a CHANGELOG-prose deferral sweep).
+- Globals recorded no signedness (`var_size` is summed by `fixup.cyr` for the data-section
+  layout, so it can't carry a flag; the type table has 6 direct readers). Fix: a new 8th
+  per-var table **`_vsgn_base`** — set at declaration (i8/i16/i32 → signed; uN stays
+  unsigned), read at the global-scalar load path to pass a **negative width** so
+  `EVLOAD_W` sign-extends (x86 `_EMIT_NLOAD_RCX` already did; added the aarch64
+  `ldrsw/ldrsh/ldrsb` arms; cx ignores width, unchanged).
+- **`_vsgn_base` is NOT a grow-chain table.** Wiring it into the var-family grow-chain
+  (`_grow_g8`) desynced **cybs** — gen1 mis-grew the var tables into the adjacent enum
+  table (`enum table full`). The cycc fixpoint + differential were both green; only
+  `seed-derive` caught it. So it's alloc'd **max-sized** (1048576 = `_var_grow`'s hard cap,
+  8 MB lazy-mapped ≈ free) and never grows — no grow-chain change, seed-chain intact.
+- cycc byte-identical to v6.4.22 output on the whole corpus **except** the new regression
+  test (`differential`: codegen-diff=1, status-diff=0 — the landed-and-contained-fix
+  signature, not a refactor regression). New gate `tests/tcyr/signed_global_scalar.tcyr`
+  (i8/i16/i32 sign-extend to −5; u8/u16/u32 zero-extend to 251/65531/4294967291).
+  release-gate GREEN (cross-OS ecb/cass/pi — pi's aarch64 self-host exercises the new
+  signed arms); check.sh 133; self_compile ~612 ms; cycc 1,073,648 B.
+
+### Added — agnos `sys_readlink`#70 peer (`lib/syscalls_x86_64_agnos.cyr`)
+- agnos grew a ring-3 `readlink`#70 syscall (the symlink-introspection peer of
+  `symlink`#63): reads a symlink's TEXT target **no-follow** into a buffer. Added the
+  4-arg agnos wrapper `sys_readlink(path, pathlen, buf, buflen)` (a4 in r10), mirroring
+  `sys_symlink`#63. So a `--agnos` symlink manager (hapi) gets a native wrapper instead of
+  a hand-rolled raw number. Distinct from the existing Linux/mac 3-arg `sys_readlink` —
+  `#ifdef CYRIUS_TARGET_AGNOS`-split, consumers branch per target. Lib-only (cycc
+  byte-identical); `docs/api-surface.snapshot` updated. Closes
+  `issues/2026-07-08-agnos-sys-readlink-peer.md`.
+
 ## [6.4.22] — 2026-07-08
 
 **v6.4.22 — cx `cycc_cx` cross-native on macOS + Windows.** The cx bytecode **compiler**

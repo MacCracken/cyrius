@@ -1,4 +1,14 @@
-# Signed sub-i64 GLOBAL scalar load missing sign-extension
+# Signed sub-i64 GLOBAL scalar load missing sign-extension — RESOLVED
+
+> **RESOLVED v6.4.23 — archived 2026-07-08.** Fixed with a new 8th per-var table
+> `_vsgn_base` (set at declaration for i8/i16/i32; read at the global-scalar load path to
+> pass a negative width so `EVLOAD_W` sign-extends — x86 `_EMIT_NLOAD_RCX` + new aarch64
+> `ldrsw/ldrsh/ldrsb` arms). The scope-finding held: it needed a new table because var_size
+> is summed and the type table has 6 readers. Gotcha: wiring `_vsgn_base` into the
+> cybs-fragile grow-chain desynced the seed chain (only `seed-derive` caught it), so it's
+> alloc'd max-sized/no-grow instead. Regression `tests/tcyr/signed_global_scalar.tcyr`;
+> differential codegen-diff=1/status-diff=0. See CHANGELOG [6.4.23].
+
 
 **Filed:** 2026-07-07 (surfaced by a CHANGELOG-prose deferral sweep — the deferral was
 claimed "in the inventory" but no issue actually backed it).

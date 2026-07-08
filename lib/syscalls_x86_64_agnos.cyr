@@ -79,6 +79,9 @@ enum SysNrAgnos {
     SYS_SND_CLOSE  = 67;          # snd_close(slot) → 0 / -1
     SYS_SND_DRAIN  = 68;          # snd_drain(slot) → 0; blocks until play-out (~1s cap)
     SYS_SND_AVAIL  = 69;          # snd_avail(slot) → free frames / -1; non-blocking
+    SYS_READLINK   = 70;          # readlink(path, pathlen, buf, buflen) → target bytes / -1 (a4=r10).
+    #   Symlink-INTROSPECTION peer of SYS_SYMLINK=63: reads the link's TEXT target NO-FOLLOW into
+    #   buf (≤ buflen, NOT NUL-terminated); -1 if path absent / not a symlink / target > buflen / non-ext2.
 }
 
 # ================================================================
@@ -471,6 +474,16 @@ fn sys_link(target, targetlen, linkpath, linkpathlen): i64 {
 # `--agnos` programs (ark `.so → .so.N` install, agnova, kriya `ln -s`). (issue 2026-06-29.)
 fn sys_symlink(target, targetlen, linkpath, linkpathlen): i64 {
     return syscall(SYS_SYMLINK, target, targetlen, linkpath, linkpathlen);
+}
+
+# Read the TEXT target of the symlink at `path` (len `pathlen`) into `buf` (cap `buflen`),
+# returning the target byte count (≤ buflen, NOT NUL-terminated) or -1. 4-arg, a4 in r10. The
+# no-follow INTROSPECTION peer of sys_symlink#63 (agnos readlink#70) — resolves the FINAL path
+# component WITHOUT following it, so a `--agnos` symlink manager (hapi) can SEE an existing link +
+# read its target (there is no lstat peer, and path-based sys_stat#33 FOLLOWS the final symlink).
+# -1 on: path absent / not a symlink / target > buflen / non-ext2. (issue 2026-07-08.)
+fn sys_readlink(path, pathlen, buf, buflen): i64 {
+    return syscall(SYS_READLINK, path, pathlen, buf, buflen);
 }
 
 # ---- agnos HDA audio band (#64-69) — the ring-3 half of the agnos 1.52.x Gate-2

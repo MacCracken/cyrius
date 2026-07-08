@@ -4029,6 +4029,7 @@ syscalls_x86_64_agnos::sys_open/3
 syscalls_x86_64_agnos::sys_pause/0
 syscalls_x86_64_agnos::sys_pipe/1
 syscalls_x86_64_agnos::sys_read/3
+syscalls_x86_64_agnos::sys_readlink/4
 syscalls_x86_64_agnos::sys_reboot/0
 syscalls_x86_64_agnos::sys_rename/4
 syscalls_x86_64_agnos::sys_rmdir/2

@@ -1,0 +1,30 @@
+# signed sub-i64 GLOBAL scalar sign-extension (v6.4.23)
+# A signed iN global (i8/i16/i32) must sign-extend on load (movsx); an unsigned
+# uN global must zero-extend (movzx). Regression for the P2 where signed globals
+# read back zero-extended (var G:i32 = -1 read as 4294967295). Locals/fields/
+# call-args got this in v6.3.35; globals were the deferred residual.
+include "lib/assert.cyr"
+
+var gi8:  i8  = 0;
+var gi16: i16 = 0;
+var gi32: i32 = 0;
+var gu8:  u8  = 0;
+var gu16: u16 = 0;
+var gu32: u32 = 0;
+
+fn run(): i64 {
+    gi8 = 0 - 5; gi16 = 0 - 5; gi32 = 0 - 5;
+    gu8 = 0 - 5; gu16 = 0 - 5; gu32 = 0 - 5;
+    # signed → sign-extend → -5
+    assert_eq(gi8,  0 - 5, "signed i8 global sign-extends");
+    assert_eq(gi16, 0 - 5, "signed i16 global sign-extends");
+    assert_eq(gi32, 0 - 5, "signed i32 global sign-extends");
+    # unsigned → zero-extend → (-5 & mask), a large positive, NOT -5
+    assert_eq(gu8,  251,        "unsigned u8 global zero-extends");
+    assert_eq(gu16, 65531,      "unsigned u16 global zero-extends");
+    assert_eq(gu32, 4294967291, "unsigned u32 global zero-extends");
+    return 0;
+}
+
+var _ = run();
+var r = assert_summary();

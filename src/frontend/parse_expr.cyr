@@ -563,7 +563,13 @@ fn PARSE_FACTOR(S): i64 {
             var gvsz = L64(_vars_base + idx * 8);
             if (gvsz < 8) {
                 SEXW(S, gvsz);
-                EVLOAD_W(S, idx, gvsz);
+                # v6.4.23: a SIGNED sub-i64 global (i8/i16/i32) loads via movsx —
+                # pass a NEGATIVE width so EVLOAD_W's _EMIT_NLOAD_RCX (x86) / signed
+                # arms (aarch64) sign-extend. Unsigned (uN) stays zero-extend. Mirrors
+                # the local negative-width sentinel (parse_expr.cyr ~523).
+                var _gw = gvsz;
+                if (GVSGN(S, idx) == 1) { _gw = 0 - gvsz; }
+                EVLOAD_W(S, idx, _gw);
                 return 0;
             }
             SESTYPE(S, vt);

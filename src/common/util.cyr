@@ -36,6 +36,12 @@ var _vgoff_base = 0;   # 0x1B0000 gvar_byte_off
 var _vecv_base = 0;    # 0x1D8000 enum_const_val
 var _vgsi_base = 0;    # 0x1EC000 gvar_initval
 var _venid_base = 0;   # 0x204000 var_enum_id
+var _vsgn_base = 0;    # v6.4.23: per-var signedness (1 = signed sub-i64 iN scalar, 0 = uN/other).
+                       # Read by the global-scalar load path to sign-extend (movsx) vs zero-extend.
+                       # NOT a grow-chain table: it's alloc'd MAX-sized (1048576 = _var_grow's hard
+                       # cap) at init, so it never grows — adding an 8th link to the grow chain
+                       # DESYNCED cybs (gen1 mis-grew the var tables into the adjacent enum table →
+                       # "enum table full"). 8 MB lazy-mapped is ~free. See _var_grow's cap below.
 var _var_cap = 0;
 # Grow ONE var-family table 2x: alloc a new region (2x cap slots), copy the used
 # `cap` slots, return the new base. Kept tiny (3 locals) ON PURPOSE — cybs, the

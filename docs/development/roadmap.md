@@ -536,15 +536,14 @@ never unilaterally deferred or redirected.
 > Reconciled 2026-07-07: every open issue now has a roadmap home (no dangling filings).
 > Release ORDER within each bucket is the user's to set; severity is the sort hint.
 
-- **🔴 Correctness bugs — want a near-term patch slot** (silent-miscompile class; the user
-  decides which `.NN`):
-  - **P1 struct-field-name-offset collision** — two structs sharing a field name at
-    different offsets → silent wrong value on read
-    ([`issues/2026-07-07-struct-field-name-offset-collision.md`](issues/2026-07-07-struct-field-name-offset-collision.md)).
-    NOT the v6.4.14 struct-sid fail-closed fix — opposite failure mode.
-  - **P2 signed sub-i64 GLOBAL scalar sign-extension** — `var G: i32 = -1` reads back huge
-    positive ([`issues/2026-07-07-signed-subword-global-scalar-sign-extension.md`](issues/2026-07-07-signed-subword-global-scalar-sign-extension.md)).
-    Assessed for v6.4.21, DEFERRED — needs a new 8th var-family table (~LEXID-sized); its own slot.
+- **🔴 Correctness bugs — near-term patch slots:**
+  - **P1 struct-field-name-offset collision → SCHEDULED .24 (deep-dive).** Investigation
+    (v6.4.22) DISPROVED the two-struct-collision filing — it's a subtle **size-dependent
+    buffer/boundary bug** that doesn't repro minimally and needs cycc instrumentation to
+    localize ([`issues/2026-07-07-struct-field-name-offset-collision.md`](issues/2026-07-07-struct-field-name-offset-collision.md)).
+  - ~~**P2 signed sub-i64 GLOBAL scalar sign-extension**~~ — ✅ **SHIPPED v6.4.23** (new 8th
+    per-var `_vsgn_base` table, max-sized/no-grow to keep the cybs seed-chain intact; x86 +
+    aarch64 backends).
 - **🟠 Consumer-blocked (near-term):**
   - ~~**P2 LEXID dedup cap** (16384)~~ — ✅ **SHIPPED v6.4.21** (raised to 65536; `lexid_entries`
     relocated to arena-top + all forks' arenas extended). Unblocks the stiva port.

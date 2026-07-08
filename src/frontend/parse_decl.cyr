@@ -753,6 +753,7 @@ fn PARSE_GVAR_REG(S): i64 {
     var psc = 0;
     var ann_sid = 0;
     var ann_scalar = 0;
+    var ann_signed = 0;  # v6.4.23: 1 for a SIGNED sub-i64 (i8/i16/i32) global scalar → sign-extend on load
     var ann_float = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for `var x: f64`/`f32`
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);
@@ -765,12 +766,12 @@ fn PARSE_GVAR_REG(S): i64 {
                 # v6.2.1: unsigned widths (u8/u16/u32/u64) added alongside
                 # the signed ones so top-level `var g: u64[N]` element-sizes
                 # like the in-fn path. u128 = 0x38323175.
-                if (ann_tn & 0xFFFF == 0x3869) { ann_scalar = 1; }
-                elif (ann_tn & 0xFFFF == 0x3875) { ann_scalar = 1; }
-                elif (ann_tn & 0xFFFFFF == 0x363169) { ann_scalar = 2; }
-                elif (ann_tn & 0xFFFFFF == 0x363175) { ann_scalar = 2; }
-                elif (ann_tn & 0xFFFFFF == 0x323369) { ann_scalar = 4; }
-                elif (ann_tn & 0xFFFFFF == 0x323375) { ann_scalar = 4; }
+                if (ann_tn & 0xFFFF == 0x3869) { ann_scalar = 1; ann_signed = 1; }      # i8
+                elif (ann_tn & 0xFFFF == 0x3875) { ann_scalar = 1; }                     # u8
+                elif (ann_tn & 0xFFFFFF == 0x363169) { ann_scalar = 2; ann_signed = 1; } # i16
+                elif (ann_tn & 0xFFFFFF == 0x363175) { ann_scalar = 2; }                 # u16
+                elif (ann_tn & 0xFFFFFF == 0x323369) { ann_scalar = 4; ann_signed = 1; } # i32
+                elif (ann_tn & 0xFFFFFF == 0x323375) { ann_scalar = 4; }                 # u32
                 elif (ann_tn & 0xFFFFFF == 0x343669) { ann_scalar = 8; }
                 elif (ann_tn & 0xFFFFFF == 0x343675) { ann_scalar = 8; }
                 elif (ann_tn & 0xFFFFFF == 0x343666) { ann_float = F64_TYID; }
@@ -896,6 +897,7 @@ fn PARSE_GVAR_REG(S): i64 {
             if (ann_scalar < 8) {
                 S64(_vars_base + vcnt * 8, ann_scalar);
                 SVTYPE(S, vcnt, ann_scalar);
+                SVSGN(S, vcnt, ann_signed);   # v6.4.23: sign-extend a signed iN global on load
             } else {
                 # 8 (i64) or 16 (u128) — allocate the full width.
                 # No type marker for now: u128 bytes live in the slot,
