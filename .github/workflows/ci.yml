@@ -627,11 +627,13 @@ jobs:
           chmod +x a64/cycc_native_a64
           CC=a64/cycc_native_a64
           SKIP="math_pack_integration"
-          # simd_f32v4 / simd_ints / simd_f32v8: f32v4 + integer packed ops + f32v8 256-bit
-          # AVX2 are x86-only until SIMD Phase 5 (aarch64 NEON) — XFAIL (not SKIP) so Phase 5
-          # auto-surfaces the removal via XPASS. All stub EMIT_F32V_*/EMIT_IVEC_*/EMIT_F32V8_LOOP
-          # on aarch64. (vr01_f32v8_ctor is NOT here — its construct/extract is arch-neutral.)
-          XFAIL="simd_f32v4 simd_ints simd_f32v8"
+          # simd_ints / simd_f32v8: integer packed ops + f32v8 256-bit AVX2 are x86-only until
+          # their SIMD Phase 5 releases (aarch64 NEON) — XFAIL (not SKIP) so Phase 5 auto-surfaces
+          # the removal via XPASS. Stub EMIT_IVEC_*/EMIT_F32V8_LOOP on aarch64.
+          # (f32v4 LANDED in Phase 5 v6.4.28 — NEON EMIT_F32V_LOOP/FMADD/DOT; simd_f32v4 is no
+          # longer XFAIL'd and now PASSES here on native arm64. Its Win64-safe flat-array subset
+          # is additionally gated cross-OS by vr01_simd_f32v4_neon.tcyr.)
+          XFAIL="simd_ints simd_f32v8"
           pass=0; fail=0; xfail=0; xpass=0; skip=0
           for t in tests/tcyr/*.tcyr; do
             name=$(basename "$t" .tcyr)

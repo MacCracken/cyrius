@@ -6,6 +6,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.28] — 2026-07-08
+
+**v6.4.28 — SIMD Phase 5: f32v4 packed ops on aarch64 NEON.** The Pin-1 SIMD arc's x86 portion
+shipped in v6.4.4–.9; the aarch64-NEON remainder was paused. This lands the first Phase-5 slot —
+f32v4 packed arithmetic on aarch64 — flipping the strict `simd_f32v4` XFAIL to a pass on real ARM.
+
+### Added — aarch64 NEON f32v4 emitters
+- `src/backend/aarch64/emit.cyr`: replaced the three f32v4 stubs with real NEON, mirroring the
+  existing `EMIT_F64V_LOOP`/`EMIT_F64V_DOT`:
+  - `EMIT_F32V_LOOP` — packed add/sub/mul via `.4s` `fadd`/`fsub`/`fmul` (0x4E21D400 / 0x4EA1D400 /
+    0x6E21DC00), 4 f32 lanes/iter (`ldr/str q`, `lsl #2` stride, index += 4).
+  - `EMIT_F32V_FMADD` — `a*b + c` as `fmul` then `fadd` (NOT fused `fmla`), to match x86's
+    `mulps`+`addps` rounding.
+  - `EMIT_F32V_DOT` — `fmul`+`fadd` accumulate, then two `faddp .4s` reductions (4→2→1) + `fmov w0, s2`.
+  - All encodings verified via `llvm-mc`.
+- x86 `cycc` **byte-identical** (aarch64 emit is not in the x86 fork); aarch64 self-host fixpoint
+  **byte-identical** (the emitters reproduce themselves).
+
+### Changed — XFAIL removal (the strict-XPASS forcing cue fired as designed)
+- `simd_f32v4` removed from the strict `XFAIL` in `.github/workflows/ci.yml` — it now PASSES on the
+  native-arm64 CI corpus (13/13). It stays a **regular tcyr** (not a full `vr01_`): it uses
+  value-form f32v4 params, which are **unsupported on Win64 PE** (documented hard-error — filed
+  `2026-07-08-win64-value-form-simd-params.md`). Closes `2026-07-05-aarch64-f32v4-xfail-phase5.md`.
+- New `tests/tcyr/vr01_simd_f32v4_neon.tcyr` — the Win64-safe **flat-array** subset (`f32v_add/sub/
+  mul/fmadd/dot` over pointers), so the packed ops are gated **cross-OS** in the release gate.
+  8/8 on x86-Linux, aarch64-qemu, wine, **and real ecb/cass/pi**.
+
+### Verification
+- Release-gate GREEN: x86 + aarch64 self-host fixpoints byte-identical · seed-derive OK · check.sh
+  **132** · cross-OS **real hardware**: pi + ecb + cass `SELFHOST_OK`, `vr01_simd_f32v4_neon` PASS on
+  all three · self_compile ~613 ms · cycc 1,073,616 B (unchanged).
+- **Remaining Phase 5**: aarch64 int-vectors (`simd_ints`) + f32v8 2×NEON (`simd_f32v8`) stay
+  strict-XFAIL'd (later slots); cx SIMD is a separate pipeline.
+
 ## [6.4.27] — 2026-07-08
 
 **v6.4.27 — P1: agnos `file_open` folded `O_RDWR` → `AO_WRONLY`, so reads on an RDWR fd

@@ -2337,24 +2337,89 @@ var _LOOPVAR_OK = 0;
 # by one slot or pass even n. Pre-existing footgun preserved
 # for cross-arch parity; documented here, not silently fixed.
 
-# v6.4.3+ (SIMD Phase 1) — f32v packed ops are x86-only for now; aarch64 stub
-# (real NEON fmul/fadd .4s lands in Phase 5's cross-arch propagation).
-# f32v4 packed ops (addps/subps/mulps) are x86-only in SIMD Phase 1 (v6.4.4);
-# aarch64 NEON lands in Phase 5 (fmla). Stub (emit nothing) so lib/simd.cyr's
-# f32v4 arithmetic wrappers still COMPILE on aarch64 for its f64v2/f64v4 +
-# f32v4 construct/extract halves — a HARD error here would break every aarch64
-# build that `include`s lib/simd.cyr (the wrapper bodies are emitted before
-# DCE). f32v4 arithmetic must not be used on aarch64 until Phase 5; the
-# simd_f32v4 tcyr is XFAIL'd (strict) in the aarch64-native CI corpus — it DOES
-# run on ARM and auto-surfaces via XPASS once Phase 5 makes it pass (see
-# issues/2026-07-05-aarch64-f32v4-xfail-phase5.md), so do NOT assume it is safe
-# to leave aarch64 f32 codegen broken.
-fn EMIT_F32V_LOOP(S, op, vbase): i64 { return 0; }
-# v6.4.5 (SIMD Phase 2) — f32v_fmadd / f32v_dot are x86-only this phase; aarch64
-# NEON (fmla / faddp reduce) lands in Phase 5. Silent stubs (same as EMIT_F32V_LOOP)
-# so lib/simd.cyr compiles on aarch64; f32 matmul must not be used here until Phase 5.
-fn EMIT_F32V_FMADD(S, vbase): i64 { return 0; }
-fn EMIT_F32V_DOT(S, vbase): i64 { return 0; }
+# SIMD Phase 5 (v6.4.28) — f32v4 packed ops on aarch64 NEON. Mirrors EMIT_F64V_LOOP
+# but 4 f32 lanes/iter (128-bit q reg): index scales ×4 (lsl #2), the NEON op is
+# .4s, and the counter advances by 4. Slots: vbase=dst, vbase+1=a, vbase+2=b; n in
+# x0. op 0=fadd, 1=fsub, 2=fmul (.4s). Encodings verified via llvm-mc. This flips the
+# simd_f32v4 XFAIL → XPASS on real ARM (was x86-only in Phase 1).
+fn EMIT_F32V_LOOP(S, op, vbase): i64 {
+    EW(S, 0xAA0003EA);                # mov x10, x0   — n
+    EW(S, 0xD280000B);                # movz x11, #0  — index = 0
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done (patched later)
+    EFLLOAD(S, vbase + 1);            # x0 = a base
+    EW(S, 0xAA0003EC);                # mov x12, x0
+    EW(S, 0x8B0B098C);                # add x12, x12, x11, lsl #2   (f32 stride)
+    EW(S, 0x3DC00180);                # ldr q0, [x12]
+    EFLLOAD(S, vbase + 2);            # b base
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B098C);
+    EW(S, 0x3DC00181);                # ldr q1, [x12]
+    if (op == 0) { EW(S, 0x4E21D400); }   # fadd v0.4s, v0.4s, v1.4s
+    if (op == 1) { EW(S, 0x4EA1D400); }   # fsub v0.4s, v0.4s, v1.4s
+    if (op == 2) { EW(S, 0x6E21DC00); }   # fmul v0.4s, v0.4s, v1.4s
+    EFLLOAD(S, vbase);               # dst base
+    EW(S, 0xAA0003EC);
+    EW(S, 0x8B0B098C);
+    EW(S, 0x3D800180);                # str q0, [x12]
+    EW(S, 0x9100116B);                # add x11, x11, #4
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+# SIMD Phase 5 (v6.4.28) — f32v4 fmadd / dot on aarch64 NEON.
+# EMIT_F32V_FMADD: dst[i] = a[i]*b[i] + c[i], done as fmul then fadd (NOT fused fmla)
+# to match the x86 mulps+addps rounding. Slots: vbase=dst, +1=a, +2=b, +3=c; n in x0.
+fn EMIT_F32V_FMADD(S, vbase): i64 {
+    EW(S, 0xAA0003EA);                # mov x10, x0   — n
+    EW(S, 0xD280000B);                # movz x11, #0  — index
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done
+    EFLLOAD(S, vbase + 1);            # a
+    EW(S, 0xAA0003EC); EW(S, 0x8B0B098C); EW(S, 0x3DC00180);   # ldr q0, [x12]
+    EFLLOAD(S, vbase + 2);            # b
+    EW(S, 0xAA0003EC); EW(S, 0x8B0B098C); EW(S, 0x3DC00181);   # ldr q1, [x12]
+    EW(S, 0x6E21DC00);                # fmul v0.4s, v0.4s, v1.4s   (a*b)
+    EFLLOAD(S, vbase + 3);            # c
+    EW(S, 0xAA0003EC); EW(S, 0x8B0B098C); EW(S, 0x3DC00181);   # ldr q1, [x12] (c)
+    EW(S, 0x4E21D400);                # fadd v0.4s, v0.4s, v1.4s   (a*b + c)
+    EFLLOAD(S, vbase);                # dst
+    EW(S, 0xAA0003EC); EW(S, 0x8B0B098C); EW(S, 0x3D800180);   # str q0, [x12]
+    EW(S, 0x9100116B);                # add x11, x11, #4
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+
+# EMIT_F32V_DOT: sum(a[i]*b[i]) → f32 bits in x0. v2 accumulates fmul+fadd per iter
+# (matches x86 mulps+addps, NOT fused); tail reduces 4 lanes via two faddp (4→2→1).
+# Slots: vbase=a, +1=b; n in x0.
+fn EMIT_F32V_DOT(S, vbase): i64 {
+    EW(S, 0x6E221C42);                # eor v2.16b, v2.16b, v2.16b — zero accumulator
+    EW(S, 0xAA0003EA);                # mov x10, x0   — n
+    EW(S, 0xD280000B);                # movz x11, #0  — index
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done
+    EFLLOAD(S, vbase);                # a
+    EW(S, 0xAA0003EC); EW(S, 0x8B0B098C); EW(S, 0x3DC00180);   # ldr q0, [x12]
+    EFLLOAD(S, vbase + 1);            # b
+    EW(S, 0xAA0003EC); EW(S, 0x8B0B098C); EW(S, 0x3DC00181);   # ldr q1, [x12]
+    EW(S, 0x6E21DC00);                # fmul v0.4s, v0.4s, v1.4s   (a*b)
+    EW(S, 0x4E20D442);                # fadd v2.4s, v2.4s, v0.4s   (accumulate)
+    EW(S, 0x9100116B);                # add x11, x11, #4
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    EW(S, 0x6E22D442);                # faddp v2.4s, v2.4s, v2.4s  (4 → 2)
+    EW(S, 0x6E22D442);                # faddp v2.4s, v2.4s, v2.4s  (2 → 1, total in lane 0)
+    EW(S, 0x1E260040);                # fmov w0, s2   — f32 bits → x0
+    return 0;
+}
 # v6.4.6 (Phase 3a) — packed integer add/sub/mul are x86-only this phase; aarch64
 # NEON (add/sub/mul .16b/.8h/.4s/.2d) lands in Phase 5. Silent stub.
 fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 { return 0; }

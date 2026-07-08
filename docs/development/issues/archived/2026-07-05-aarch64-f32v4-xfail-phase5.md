@@ -1,5 +1,20 @@
 # aarch64-native tcyr XFAIL: `simd_f32v4` — f32v4 packed ops are x86-only until SIMD Phase 5
 
+> **RESOLVED v6.4.28** (SIMD Phase 5 — aarch64 NEON f32v4). Implemented `EMIT_F32V_LOOP`
+> (fadd/fsub/fmul `.4s`), `EMIT_F32V_FMADD` (fmul+fadd, matching x86 mulps+addps rounding),
+> and `EMIT_F32V_DOT` (fmul+fadd accumulate + two `faddp` reductions + `fmov w0,s2`) in
+> `src/backend/aarch64/emit.cyr`, mirroring the existing `EMIT_F64V_LOOP`/`EMIT_F64V_DOT`.
+> Encodings verified via llvm-mc. Removal steps done: (1) `simd_f32v4` removed from the strict
+> XFAIL in `ci.yml` — it now PASSES on native arm64 (13/13 on x86 + aarch64-qemu; PASS on real
+> ecb/pi). (2) It STAYS a regular tcyr (value-form f32v4 params are unsupported on Win64 PE, so
+> it can't be a full vr01_); the Win64-safe flat-array subset is gated cross-OS by the new
+> `vr01_simd_f32v4_neon.tcyr` (8/8 on x86/aarch64-qemu/wine + ecb/cass/pi). (3) `lib/simd.cyr` +
+> aarch64-emit comments updated. (4) this file archived. aarch64 self-host fixpoint
+> byte-identical; x86 cycc byte-identical (aarch64 emit not in the x86 fork). **cx SIMD +
+> aarch64 int-vector (`simd_ints`) + f32v8 (`simd_f32v8`) remain XFAIL'd — later Phase-5 slots.**
+> Surfaced a separate gap: **value-form f32v4 params on Win64 PE** (documented hard-error) — a
+> future Win64-vector-ABI slot, out of scope for Phase 5.
+
 - **Filed**: 2026-07-05 (v6.4.4, after CI caught it on real ARM)
 - **Kind**: **phase-gated feature gap, NOT a bug** — expected-to-fail *for now*
 - **CI**: `.github/workflows/ci.yml` → job `aarch64-native` → step "Test suite

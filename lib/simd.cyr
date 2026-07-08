@@ -235,12 +235,11 @@ fn f32v4_lane2_ptr(p): i64 { return load32(p + 8); }
 # Extract lane 3 (pointer form). Parser routes f32v4_lane3(&v) here.
 fn f32v4_lane3_ptr(p): i64 { return load32(p + 12); }
 
-# Packed f32v4 arithmetic — addps/subps/mulps — is x86-only in SIMD Phase 1
-# (v6.4.4); aarch64 NEON + cx land in Phase 5. On aarch64/cx EMIT_F32V_LOOP is a
-# stub, so these wrappers COMPILE (emit no packed op) but a call produces no
-# result — DO NOT use f32v4 arithmetic on aarch64/cx yet. (The simd_f32v4 tcyr
-# is XFAIL'd in the aarch64-native CI corpus so Phase 5 auto-surfaces via XPASS —
-# see docs/development/issues/2026-07-05-aarch64-f32v4-xfail-phase5.md.)
+# Packed f32v4 arithmetic — addps/subps/mulps. **CROSS-ARCH as of SIMD Phase 5
+# (v6.4.28):** x86 emits SSE (Phase 1, v6.4.4); aarch64 emits NEON (.4s fadd/fsub/fmul
+# via EMIT_F32V_LOOP). cx remains a stub (its SIMD pipeline is a separate slot). Gates:
+# simd_f32v4.tcyr (value + pointer forms, x86-Linux + aarch64 corpus) + the Win64-safe
+# flat-array vr01_simd_f32v4_neon.tcyr (cross-OS: ecb/cass/pi).
 # Packed add (pointer form) — addps over the 4 lanes. Routes f32v4_add(&x, &y) here.
 fn f32v4_add_ptr(a_ptr, b_ptr): f32v4 {
     var r: f32v4;
