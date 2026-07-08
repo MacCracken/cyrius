@@ -1,5 +1,14 @@
 # Async runtime — the parity gaps that block porting a tokio-shaped app (stiva)
 
+> **ROADMAPPED 2026-07-07 → arc 5b, scheduled right after SIMD Phase 5.** stiva is a
+> real consumer (our Docker project) blocked NOW, so the 5 library primitives (async
+> subprocess, `interval`+`timeout`, joinable `JoinHandle`/`task_join`, async TCP client +
+> `join_all`/`select`, `async_rwlock`) are a **committed near-term arc** — NOT parked in
+> v6.8 (roadmap.md slot 5b). The 6th gap (stackless suspend/resume — execution model) is
+> cross-linked to the stackless-coroutines item in roadmap-future.md and is NOT a blocker
+> for the 5 primitives. Likely home: extract a `sutra`/`kaal` async-runtime lib, vendor back.
+
+
 - **Filed**: 2026-07-07 (found porting stiva Rust→Cyrius; the whole async
   container-orchestration surface deferred to "v3.1" bounced off these gaps).
 - **Severity**: P2 (feature-completeness). `lib/async.cyr` exists and works for

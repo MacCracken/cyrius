@@ -1,4 +1,14 @@
-# Monomorphization engine (`CYRIUS_MONOMORPH=1`) bug inventory — v6.3.35/.36 repair list
+# Monomorphization engine (`CYRIUS_MONOMORPH=1`) bug inventory — v6.3.35/.36 repair list — RESOLVED
+
+> **RESOLVED — archived 2026-07-07.** All 8 gated miscompiles (A1–A4, B1–B3, C1)
+> shipped/verified across v6.3.35 → v6.3.39; the residual default-on flip shipped
+> v6.4.0 (CHANGELOG names this file: "generics arc closed .39; residual gated → the
+> v6.4.0 default-on flip"). Generics are now default-on (`CYRIUS_MONOMORPH=0` opts
+> out). The only surviving generics residual — multi-type-param mixed-struct combos —
+> is tracked separately in
+> [`2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](../2026-07-02-generic-fns-struct-type-args-monomorph-abi.md).
+> The inventory below is retained for history.
+
 
 **Filed:** 2026-07-02 (from the v6.3.34 adversarial discovery sweep — 7 dimensions, each verified)
 **Severity:** N/A for default builds — ALL of these are gated behind `CYRIUS_MONOMORPH=1` (opt-in

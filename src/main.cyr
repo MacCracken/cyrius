@@ -403,21 +403,28 @@
 #   0x3D7C000 tok_lines     [8388608]     1048576 entries × 8 bytes — was 0xF4A000
 #
 # --- LEXID dedup index (v5.10.40 — lex-hot-path optimization) ---
-#   0x457C000  lexid_count   [8]            entries used so far (≤16384)
+#   0x457C000  lexid_count   [8]            entries used so far (≤65536)
 #   0x457C100  lexid_heads   [2048]         per-length head idx+1 (256 × 8B;
 #                                            0 = empty bucket). bucket = klen
 #                                            saturated at 255 (collisions tolerated;
 #                                            byte-compare still authoritative).
-#   0x457C900  lexid_entries [131072]       16384 × 8B linked-list nodes.
+#   0x457C900  (FREED v6.4.21)              was lexid_entries [131072]; relocated to
+#                                            the arena top (0x7300000) when the cap
+#                                            grew 16384→65536 (it was boxed in by
+#                                            preprocess_out @ 0x459D000). 128 KB hole.
+#   0x7300000  lexid_entries [524288]       65536 × 8B linked-list nodes (v6.4.21).
 #                                            Each entry packs (canonical offset
 #                                            into tok_names @ 0x60000 in low 32,
 #                                            next-entry idx+1 in high 32). Walked
 #                                            most-recent-first; on match returns
 #                                            the recorded canonical offset.
-#                                            Replaces the v0.x O(N²) walk-from-
-#                                            offset-zero dedup loop in LEXID.
-#                                            cap 16384 → ~3× safety margin over
-#                                            cycc self-compile's distinct-id count.
+#                                            RELOCATED here (above the x86 IR arena)
+#                                            because it must be a single fixed offset
+#                                            common to ALL forks; the aarch64/macho/cx
+#                                            forks extend their arena to 0x7400000 to
+#                                            map it (lazy → no physical cost below it).
+#                                            cap 65536 (stiva + multi-bundle consumers,
+#                                            CHANGELOG [6.4.21]; was 16384).
 #
 #
 # --- Relocated large buffer (v5.11.33) ---
@@ -690,7 +697,7 @@ if (_vn > 0) {
 # +512 KB @ v6.1.40 + IR cross-BB liveness arrays +512 KB @ v6.3.27
 # +20 MB IR node/cp arena @ v6.3.28);
 # flags MAP_ANON|MAP_PRIVATE = 0x1002.
-var S = syscall(9, 0, 0x7300000, 3, 0x1002, 0 - 1, 0);
+var S = syscall(9, 0, 0x7400000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(1, 2, "cycc: mmap heap init failed\n", 28);
     syscall(60, 1);
@@ -703,7 +710,7 @@ var S = syscall(SYS_BRK, 0);
 # modes; the +13.5 MB brk extension is paid unconditionally.
 # v6.3.27: +512 KB for the IR cross-BB liveness arrays at the arena top
 # (live_in @ +0x5E1D000, live_out @ +0x5E5D000; only touched under CYRIUS_IR).
-syscall(SYS_BRK, S + 0x7300000);
+syscall(SYS_BRK, S + 0x7400000);   # v6.4.21: +512 KB lexid_entries @ 0x7300000 (LEXID cap 16384→65536)
 #endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)

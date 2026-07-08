@@ -177,6 +177,7 @@ releases, each bundling several bites. Minors flex long.**
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
 | 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 4 releases (.17–.20) | No | **✅ DONE (v6.4.17–.20). A=CLI, B=f64 arith, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts). Tail deferred+filed: cycc_cx cross-native, f32/transcendentals.** |
+| 5b | **Async runtime — tokio-parity primitives** (5 lib APIs blocking the stiva v3.1 port) | **3–5 releases** | No | **🔴 CONSUMER-BLOCKED (stiva, our Docker project) — scheduled IMMEDIATELY AFTER SIMD Phase 5 (Pin 1), ahead of arcs 3/4/6/7. NOT v6.8-parked** (pinned 2026-07-07; [`issues/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/2026-07-07-async-runtime-tokio-parity-gaps.md)) |
 | 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | **2–3 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | **2–4 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
@@ -228,7 +229,7 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
     casts/neg/abs). **+ a foundational global-var-collision fix** (fixup-table
     reader/writer address mismatch — all top-level vars collided at addr 0, pre-existing).
     f64 **comparisons deferred** (fail loud): the compare result is F64-typed and misbehaves
-    in `if()`/`==` on cx — `issues/2026-07-07-cx-f64-compare-result-typing.md` (the cxvm
+    in `if()`/`==` on cx — `issues/archived/2026-07-07-cx-f64-compare-result-typing.md` (the cxvm
     compare opcodes ARE shipped+correct; a one-line SESTYPE fix was tried + rejected —
     churned 10 programs, didn't fix cx). f32/transcendentals still fail loud.
   - **f64-compare follow-up ✅ SHIPPED (v6.4.19)** — root cause was NOT the F64 type; cx's
@@ -251,6 +252,22 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
     faults on macOS; `.cyx` build-on-Linux/run-anywhere makes this a convenience, not a
     blocker) · cx SIMD (+ the `issues/2026-07-05-...phase5.md` cx-SIMD closure note).
   Full stub: [`proposals/2026-07-05-cx-bytecode-cli-exposure.md`](proposals/2026-07-05-cx-bytecode-cli-exposure.md).
+- **Async runtime — tokio-parity primitives (arc 5b) — CONSUMER-BLOCKED, scheduled
+  right after SIMD Phase 5.** The **stiva v3.1 async port (our Docker project) is
+  blocked NOW** on 5 library-level API primitives with no runtime today: async
+  subprocess spawn/wait/output, `interval` + `timeout` combinator, a joinable
+  `JoinHandle`/`task_join`, async TCP client + `join_all`/`select`, and `async_rwlock`.
+  These were surfaced by [`issues/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/2026-07-07-async-runtime-tokio-parity-gaps.md)
+  and were initially triaged toward the roadmap-future watching list — **corrected
+  2026-07-07: a real consumer is blocked, so async is NOT parked in v6.8.** It's a
+  committed near-term arc, sequenced **immediately after SIMD Phase 5 (Pin 1)** per the
+  user's "SIMD first, then async" call — ahead of the order-committed arcs 3/4/6/7. The
+  arc's likely home is a `sutra`/`kaal` async-runtime lib the issue proposes (extract →
+  vendor back). The 6th gap in the filing — stackless suspend/resume (execution-model,
+  not a library primitive) — stays cross-linked to the **stackless-coroutines** item in
+  [roadmap-future.md](roadmap-future.md) (which now has a would-be consumer in stiva) and
+  is NOT a blocker for the 5 primitives. Final interleave vs arcs 3/4 is the user's call;
+  the intent is near-term, not deferred.
 - **Scalar-float completion — later 6.4.x.** Scalar `f64` as a function RETURN
   type (returned in xmm0 per SysV — today's allow-list admits `f64v2`/`f64v4` but
   not `f64`; [`issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md`](issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md) §1),
@@ -276,7 +293,7 @@ substrate (wrapper inlining + chain-local residency vs. full vector-class regall
 is a premise-check at slot entry.
 
 **Absorber-band (rides between arcs, uncounted):** the v6.3.45 closeout backlog
-([`issues/2026-07-03-v6345-closeout-audit-backlog.md`](issues/2026-07-03-v6345-closeout-audit-backlog.md)
+([`issues/archived/2026-07-03-v6345-closeout-audit-backlog.md`](issues/archived/2026-07-03-v6345-closeout-audit-backlog.md)
 — L1 pp-flag-table 16-slot silent-corruption cap, L2 `_msx` imm8 ≥128 guard,
 R1–R5 parallel-copy consolidations), the decode.cyr no-ModRM-0F mis-length fix,
 the SIMD value-form typecheck residual, and an **issue-archive hygiene pass**
@@ -327,7 +344,7 @@ broadcast/load and returned to i64 by extract/reduce.
   f32v4). Adversarial review caught + fixed 3 latent bugs (token/`await` collision → 138–140; the
   −2121 `.field` OOB struct-table escape; the f32v4/f64v2 param mask conflation → 3-state mask +
   `tests/simd_vec_reject.sh`). Filed one pre-existing residual (value-form SIMD param on a
-  non-SIMD-returning callee skips the type-check — `issues/2026-07-05-valform-simd-param-typecheck-only-when-simd-return.md`).
+  non-SIMD-returning callee skips the type-check — `issues/archived/2026-07-05-valform-simd-param-typecheck-only-when-simd-return.md`).
 - **▶ PHASE 2 DONE (v6.4.5) — f32 matmul op set**: `f32v_fmadd` (token 141, `EMIT_F32V_FMADD` =
   the f64 FMADD minus the 66 prefix) + `f32v_dot` (token 142, `EMIT_F32V_DOT` = mulps/addps
   accumulate → two `haddps` fold 4 lanes → `movd eax`), both mirroring the f64 handlers in
@@ -390,7 +407,7 @@ broadcast/load and returned to i64 by extract/reduce.
     **disassembler gate** (mandatory — no in-tree VEX oracle) + `simd_f32v8.tcyr` (XFAIL aarch64/cx).
     (The planned `decode.cyr` VEX length-decode was **dropped** — not needed, DCE fail-safe-refuses
     dead f32v8 wrappers; and it broke DCE-mode byte-identity via a pre-existing SYSCALL/CPUID mis-decode:
-    `issues/2026-07-05-decode-len-mislengths-no-modrm-0f-opcodes.md`.) **R2** = `vfmadd231ps` + the 8-lane dot (`vextractf128` + SSE fold — the two-
+    `issues/archived/2026-07-05-decode-len-mislengths-no-modrm-0f-opcodes.md`.) **R2** = `vfmadd231ps` + the 8-lane dot (`vextractf128` + SSE fold — the two-
     `haddps` f32v4 pattern can't cross the 128-bit lane split) + a f32v8 GEMM bench (proves the AVX2 win
     vs the "256-bit-in-name-only" trap). Guard the recurring bug-classes: the `−2153` `0 − lt → sid`
     sites (struct-guard covers it, verify each new site), the retptr-stash rough-scan (pointer-form
@@ -514,17 +531,44 @@ never unilaterally deferred or redirected.
 
 ## Carry-in / watching (open, not in the committed sequence)
 
-- **VR-03/04 differential + platform-lint residuals** — as surfaced (the VR-01 LIBTEST
-  gate is now standing on ecb/cass/pi).
-- **Consumer-gated**: cyim regex unblock (lands when cyim re-tests against v6.x);
-  sandhi RPC-policy TLS-slot OOB
-  ([`issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md`](issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md));
-  the `thread_local_alloc()` allocator follow-up.
-- **v7-PARKED (NOT near-term)** — LEGAL-01 licensing, DWARF debug-info,
-  stdlib-reference docs, incremental compilation, the public-release decision. These
-  stay in [roadmap-future.md](roadmap-future.md). (**Diagnostics** — multi-error +
-  column/excerpt — **was pulled INTO v6.4.x at the 2026-07-07 horizon session**;
-  DWARF itself stays parked.)
+> Reconciled 2026-07-07: every open issue now has a roadmap home (no dangling filings).
+> Release ORDER within each bucket is the user's to set; severity is the sort hint.
+
+- **🔴 Correctness bugs — want a near-term patch slot** (silent-miscompile class; the user
+  decides which `.NN`):
+  - **P1 struct-field-name-offset collision** — two structs sharing a field name at
+    different offsets → silent wrong value on read
+    ([`issues/2026-07-07-struct-field-name-offset-collision.md`](issues/2026-07-07-struct-field-name-offset-collision.md)).
+    NOT the v6.4.14 struct-sid fail-closed fix — opposite failure mode.
+  - **P2 signed sub-i64 GLOBAL scalar sign-extension** — `var G: i32 = -1` reads back huge
+    positive ([`issues/2026-07-07-signed-subword-global-scalar-sign-extension.md`](issues/2026-07-07-signed-subword-global-scalar-sign-extension.md)).
+    Assessed for v6.4.21, DEFERRED — needs a new 8th var-family table (~LEXID-sized); its own slot.
+- **🟠 Consumer-blocked (near-term):**
+  - ~~**P2 LEXID dedup cap** (16384)~~ — ✅ **SHIPPED v6.4.21** (raised to 65536; `lexid_entries`
+    relocated to arena-top + all forks' arenas extended). Unblocks the stiva port.
+  - **thread-local slot allocator + sandhi OOB** — land as ONE cross-repo bite
+    (`thread_local_alloc()` + `TLOCAL_MAX_SLOTS` bump + patra/sigil/sandhi slot migration):
+    [`thread-local-slot-namespace`](issues/2026-07-01-thread-local-slot-namespace-no-allocator.md)
+    + [`sandhi-rpc-policy-tls-slot-oob`](issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md).
+  - cyim regex unblock (lands when cyim re-tests against v6.x).
+- **🟡 Deferred prerequisites (land WHEN their arc opens):**
+  - ~~`tls13-server-get-version-zero`~~ — ✅ **SHIPPED v6.4.21** (server `respond_hello` stores the negotiated 1.3 version).
+  - `bare-metal-forbidden-module-check` → fold into the Function-visibility arc's `#`-annotation slot.
+  - `macho-structural-lint-residual` → Intel-Mac tail (slot T).
+  - `sigil-authenticode-pe-hash-oob-read` → UEFI Secure Boot arc (slot 3).
+  - `capturing-closures-windows-pe` → a PE-codegen touch (verify on wine + cass).
+  - `v6415-closeout-residuals` (R2 PE prologue → opportunistic; D1/D2 dead IR → v6.5.x).
+- **🟢 aarch64 / SIMD polish (SIMD Phase 5 tail):** `i64v2-valueform-packed-multiply`,
+  `aarch64-f64-exp2-atan-hard-error`, `aarch64-trig-payne-hanek-range-reduction`.
+- **Downstream-repo (their timeline):** `yukti-udev-src-len-undersized-array-local`
+  (fix upstream, re-vendor).
+- **v5.x-era substrate (v6.5.x):** `ir-regalloc-rewrite-needs-reemit` (perf passes) +
+  `ir3-fixpoint-cascade-overelimination` (CYRIUS_IR=3 correctness) — both cited by the
+  v6.5.x Performance-Quality entry in [roadmap_6.md](roadmap_6.md).
+- **v7-PARKED (NOT near-term)** — LEGAL-01 licensing (`unreviewed-dimensions`), DWARF
+  debug-info, stdlib-reference docs, incremental compilation, the public-release decision.
+  These stay in [roadmap-future.md](roadmap-future.md). (**Diagnostics** was pulled INTO
+  v6.4.x at the 2026-07-07 horizon session; DWARF itself stays parked.)
 
 ## Discipline (per [cycle-discipline.md](cycle-discipline.md))
 

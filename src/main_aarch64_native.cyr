@@ -169,7 +169,8 @@ if (_vn > 0) {
 # aarch64 syscall numbers (no translation layer — native numbers)
 var S = syscall(SYS_BRK, 0);
 # brk extends through tok_lines (~78.5 MB) — synced with main.cyr.
-syscall(SYS_BRK, S + 0x5E1D000);
+# v6.4.21: 0x5E1D000 → 0x7400000 to map the relocated lexid_entries @ 0x7300000.
+syscall(SYS_BRK, S + 0x7400000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

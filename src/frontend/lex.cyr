@@ -941,9 +941,14 @@ fn LEXID(S, p, npos): i64 {
     # the v5.10.39 brk extension (heap-map in main.cyr §LEXID_DEDUP):
     #   0x457C000  lexid_count   [8]            entries in use
     #   0x457C100  lexid_heads   [2048]         per-length head idx+1 (256 × 8B; 0 = empty)
-    #   0x457C900  lexid_entries [131072]       16384 × 8B; low32 = canonical offset
+    #   0x7300000  lexid_entries [524288]       65536 × 8B; low32 = canonical offset
     #                                            into tok_names @ 0x60000, high32 =
     #                                            next-entry idx+1 (0 = chain tail).
+    #   CHANGELOG [6.4.21]: cap 16384 → 65536 (stiva + multi-bundle consumers).
+    #   entries RELOCATED 0x457C900 → 0x7300000 (a fresh arena-top region above the
+    #   x86 IR arena; the old 0x457C900 slot was boxed in by preprocess_out). All 7
+    #   forks' arenas now extend to 0x7400000 (lazy mmap → no physical cost on the
+    #   aarch64/macho/cx forks that don't use the range below it). count/heads stay put.
     # First-occurrence wins (canonical offset preserved across calls →
     # byte-identical) because we only insert when no match found, and
     # subsequent lookups for the same string return the recorded offset
@@ -955,7 +960,7 @@ fn LEXID(S, p, npos): i64 {
     var hi = L64(S + 0x457C100 + bucket * 8);
     while (hi > 0) {
         var idx = hi - 1;
-        var ent = L64(S + 0x457C900 + idx * 8);
+        var ent = L64(S + 0x7300000 + idx * 8);
         var eoff = ent & 0xFFFFFFFF;
         var dc = 0;
         c = 1;
@@ -968,12 +973,12 @@ fn LEXID(S, p, npos): i64 {
     }
     if (ws == bl) {
         var ec = L64(S + 0x457C000);
-        if (ec >= 16384) {
-            syscall(SYS_WRITE, 2, "error: identifier dedup table full (16384 entries) - raise LEXID cap in lex.cyr\n", 80);
+        if (ec >= 65536) {
+            syscall(SYS_WRITE, 2, "error: identifier dedup table full (65536 entries) - raise LEXID cap in lex.cyr\n", 80);
             syscall(SYS_EXIT, 1);
         }
         var prev_head = L64(S + 0x457C100 + bucket * 8);
-        S64(S + 0x457C900 + ec * 8, bl | (prev_head << 32));
+        S64(S + 0x7300000 + ec * 8, bl | (prev_head << 32));
         S64(S + 0x457C100 + bucket * 8, ec + 1);
         S64(S + 0x457C000, ec + 1);
     }

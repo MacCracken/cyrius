@@ -1,5 +1,13 @@
 # Generic FUNCTIONS with STRUCT type-arguments need a monomorphized struct-ABI (follow-on)
 
+> **STATUS (2026-07-07): NARROWED to the multi-tparam residual.** The single-type-param
+> cases SHIPPED — struct-return + inferred-lookahead **v6.3.38 (B1/B2)**, struct-by-value
+> param + the −3 guard drop **v6.3.39 (B3)**. The only OPEN scope is the **mixed
+> multi-type-param** combo (`wrap<i64,Point>` / `Two<Point,i64>` with a generic fn),
+> intentionally rejected as unproven. Stays the demand-gated prerequisite ahead of
+> trait-bounded generics (no dedicated slot). Roadmap wording corrected at
+> roadmap_6.md + roadmap-future.md (was "the open B3 bug", which shipped).
+
 **Filed:** 2026-07-02 (v6.3.33 generics-tail slot)
 **Severity:** N/A for default builds (`CYRIUS_MONOMORPH=1` is opt-in experimental; default codegen byte-identical — differential 306/306). Blocks the experimental struct-type-arg-on-generic-fn surface.
 **Component:** `src/frontend/parse_fn.cyr` `_instantiate_generic_fn` (token-replay monomorphization) + the struct by-value param / retptr ABI.

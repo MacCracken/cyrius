@@ -6,6 +6,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.21] — 2026-07-08
+
+**v6.4.21 — repair batch: LEXID identifier-dedup cap 16384 → 65536 (unblocks large
+multi-bundle consumers like stiva) + the TLS 1.3 server `get_version` fix.** Two bites.
+
+### Changed — LEXID dedup cap 16384 → 65536 (heap relocation)
+- The per-compilation-unit identifier dedup table capped at **16384** entries — a hard
+  ceiling a large, correct program legitimately hits (stiva's `tests/stiva.tcyr` bundles
+  ~9 AGNOS dep bundles + ~800 test fns and tipped over it; the error even directed the fix
+  to `lex.cyr`, which a consumer can't touch). Raised to **65536** (4×).
+- Not a one-line bump: `lexid_entries` (16384×8B @ `0x457C900`) was boxed in by
+  `preprocess_out` (8 MB @ `0x459D000`, 1792 B gap), so it was **relocated to a fresh
+  arena-top region @ `0x7300000`** (524288 B, above the x86 IR arena). Because it's a
+  single fixed offset shared by all forks, every `main_*.cyr` fork's arena now extends to
+  `0x7400000` — the x86/win forks from `0x7300000`, the aarch64/macho/cx forks from
+  `0x5E1D000` (the extra virtual range below `0x7300000` is unused on those forks but
+  **lazy-mapped → no physical cost**). `lexid_count`/`lexid_heads` stay put.
+- **Layout change → two-step bootstrap.** cycc **byte-identical** (1,069,552 B — the new
+  offsets are same-width immediates); differential **340/340** byte-identical (the change
+  is cycc's runtime heap, not its codegen); seed-derive OK; check.sh green; cross-OS
+  ecb/cass/pi `SELFHOST_OK` + `LIBTEST_OK`; self_compile ~610 ms (noise vs .20's 600 ms —
+  cycc byte-identical, no perf delta). Proven end-to-end: a synthetic **20000-distinct-identifier**
+  program **fails** on the old cycc ("dedup table full (16384 entries)") and **compiles +
+  runs** on the new one — the relocated region held 20000 entries without faulting.
+
+### Fixed — TLS 1.3 server `get_version` returned 0
+- After a successful 1.3 handshake, `tls_native_get_version(srv)` returned **0** instead
+  of `0x0304` — the 1.3 **server** accept path never stored the negotiated version (the
+  client path + the 1.2 server path both do). Cosmetic (P3): the version IS enforced
+  internally; only the *reported* value was wrong. `tls_native_server_respond_hello`'s
+  ServerHello path now stores `TLS_VERSION_1_3` (mirrors the client's
+  `parse_server_hello`). `tls_native_freestanding.tcyr` flipped from its
+  `get_cipher==0x1302` workaround back to a direct `get_version` assertion (11/11 pass).
+  Lib-only (`lib/tls_native_hs13.cyr`) → cycc unaffected. Closes
+  `issues/2026-06-28-tls13-server-get-version-zero.md`.
+
+### Deferred (assessed, filed)
+- **Signed sub-i64 GLOBAL scalar sign-extension** was in the candidate batch but proved
+  ~LEXID-sized on inspection (globals record no signedness; var_size is summed for data
+  layout, the type table has 6 direct readers → the clean fix needs a new 8th var-family
+  table across all 7 forks + the cybs-fragile grow-chain + aarch64 backend arms). Not
+  stacked on the LEXID relocation — kept as its own focused slot with the scope finding
+  recorded in `issues/2026-07-07-signed-subword-global-scalar-sign-extension.md`.
+
 ## [6.4.20] — 2026-07-07
 
 **v6.4.20 — cx arc C: portable `.cyx` runs cross-OS.** A `.cyx` doing real I/O now

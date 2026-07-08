@@ -1,4 +1,12 @@
-# Identifier dedup table cap (16384) too low for large multi-bundle consumers
+# Identifier dedup table cap (16384) too low for large multi-bundle consumers — RESOLVED
+
+> **RESOLVED v6.4.21 — archived 2026-07-08.** Cap raised **16384 → 65536** (4×). Not a
+> one-line bump: `lexid_entries` was boxed in by `preprocess_out`, so it was relocated to
+> a fresh arena-top region @ `0x7300000` and all 7 forks' arenas extended to `0x7400000`
+> (lazy-mapped → no cost on the aarch64/macho/cx forks). Two-step bootstrap, cycc
+> byte-identical, differential 340/340, cross-OS ecb/cass/pi SELFHOST_OK; proven with a
+> 20000-identifier program (fails on old cycc, compiles on new). See CHANGELOG [6.4.21].
+
 
 - **Filed**: 2026-07-07 (hit while wiring stiva's run path + logging; adding ~4
   test functions to `tests/stiva.tcyr` tipped the compile over the cap).

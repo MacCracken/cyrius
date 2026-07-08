@@ -3,6 +3,12 @@
 **Filed:** 2026-07-01 (surfaced while mapping the thread-local slot namespace)
 **Severity:** Medium — latent OOB write on macOS/agnos; benign on Linux.
 **Component:** vendored sandhi (`lib/sandhi.cyr:_SANDHI_RPC_POLICY_SLOT`).
+**Status:** OPEN — **un-archived 2026-07-07**: it was archived while the OOB is still
+live (macOS/agnos `TLOCAL_MAX_SLOTS = 16` → slot 16 is still one past the end; no fix
+shipped). Lands as ONE coordinated cross-repo bite with
+[`2026-07-01-thread-local-slot-namespace-no-allocator.md`](2026-07-01-thread-local-slot-namespace-no-allocator.md)
+— the `thread_local_alloc()` allocator that hands out slots is the real fix, and the
+`TLOCAL_MAX_SLOTS` bump on the macOS/agnos 16-slot arrays is exactly the raise this OOB needs.
 
 ## Problem
 

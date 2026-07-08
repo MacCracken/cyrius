@@ -195,7 +195,10 @@ var S = syscall(SYS_BRK, 0);
 # aarch64 skips the TS frontend, so the ~13.5 MiB pad between
 # fixup_tbl-end (0x298B000) and tok-block-start (0x2D7C000) is
 # unused on this path; kept for offset parity with main.cyr.
-syscall(SYS_BRK, S + 0x5E1D000);
+# v6.4.21: extended 0x5E1D000 → 0x7400000 so the relocated lexid_entries
+# @ 0x7300000 (LEXID cap 16384→65536) is mapped; 0x5E1D000..0x7300000 is
+# unused on aarch64 (no IR arena) but lazy-mapped, so no physical cost.
+syscall(SYS_BRK, S + 0x7400000);
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);

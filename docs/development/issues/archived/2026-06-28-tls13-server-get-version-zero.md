@@ -1,4 +1,11 @@
-# `tls_native_get_version` returns 0 on a connected TLS 1.3 SERVER ctx
+# `tls_native_get_version` returns 0 on a connected TLS 1.3 SERVER ctx — RESOLVED
+
+> **RESOLVED v6.4.21 — archived 2026-07-08.** `tls_native_server_respond_hello`'s
+> ServerHello path now stores `TLS_VERSION_1_3` into the ctx (mirroring the client's
+> `parse_server_hello` + the 1.2 server path). `tls_native_freestanding.tcyr` flipped from
+> its `get_cipher==0x1302` workaround back to a direct `get_version` assertion (11/11).
+> Lib-only. See CHANGELOG [6.4.21].
+
 
 **Filed:** 2026-06-28 (surfaced building the v6.3.4 #7 freestanding handshake smoke).
 **Severity:** P3 (cosmetic / API-consistency; no security or interop impact — the

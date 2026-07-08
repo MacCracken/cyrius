@@ -186,8 +186,8 @@ or design driver materializes.
   consumers start hitting the next ceiling. **Trait-bounded generics
   got a DEMAND-GATED home at the v6.6.x ergonomics tail (2026-07-07)**
   — pulls in only if consumer pressure materializes by that arc-open
-  (the open B3 struct-type-args monomorph bug lands first). HKTs/GATs
-  stay here.
+  (the multi-tparam struct-type-arg residual lands first — single-tparam
+  shipped v6.3.38/.39). HKTs/GATs stay here.
 - **Effect tracking beyond `@unsafe`** — v5.8.x shipped `@unsafe`
   as the first effect annotation. Lift-to-more-effects (e.g.
   `@io`, `@alloc`, `@panic`) only if a real consumer enforcement

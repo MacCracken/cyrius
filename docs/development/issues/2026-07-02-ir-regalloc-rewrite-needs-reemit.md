@@ -1,4 +1,19 @@
-# IR substrate productionization — the whole IR-optimizer perf arc gates on it (v6.3.29)
+# IR substrate productionization — the whole IR-optimizer perf arc gates on it (→ v6.5.x)
+
+> **STATUS (2026-07-07): re-scoped — the original framing is materially stale; the
+> CAPABILITY is still open and correctly homed at v6.5.x.** Corrections:
+> - **Wall 3** (`CYRIUS_IR=3` can't compile cycc) — **FIXED v6.3.28** (compiles: exit 0,
+>   279,787 nodes; derive 5/5). No longer a wall.
+> - **Wall 1** (the `ir_lower_all` re-emit rewrite is *mandatory*) — **disproved** as a red
+>   herring; the named home slot v6.3.29 shipped callee-saved frame-trim instead.
+> - The live `CYRIUS_IR=3` **correctness** remnant is carried by the sibling issue
+>   [`2026-07-02-ir3-fixpoint-cascade-overelimination.md`](2026-07-02-ir3-fixpoint-cascade-overelimination.md).
+> - This issue now tracks the **perf-substrate** residual (Wall 2 opcode/local-access model
+>   + the deferred regalloc/copy-prop/DSE passes) for the **v6.5.x Performance-Quality arc**
+>   (roadmap_6.md's v6.5.x entry cites both this file and the sibling). Kept OPEN — the
+>   passes are real, unshipped work; the dead `CYRIUS_IR=3` helpers (D1) fold in here too
+>   ([`2026-07-07-v6415-closeout-residuals.md`](2026-07-07-v6415-closeout-residuals.md)).
+
 
 **Filed:** 2026-07-02 (during v6.3.27 — cross-BB regalloc arc opening)
 **Expanded:** 2026-07-02 (after the v6.3.28 cross-BB DSE attempt — implemented, corpus-tested, REVERTED)

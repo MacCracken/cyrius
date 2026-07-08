@@ -1,4 +1,12 @@
-# Verification coverage gaps (the found-by-consumers class) — VR-01/02/03/04
+# Verification coverage gaps (the found-by-consumers class) — VR-01/02/03/04 — RESOLVED
+
+> **RESOLVED — archived 2026-07-07.** VR-01 + VR-02 shipped v6.2.29; VR-03
+> (`scripts/differential.sh`) v6.3.20; VR-04 ELF/PE structural lint v6.3.22 + v6.3.43.
+> The one surviving residual — **Mach-O** structural lint, deferred to the v6.4.x
+> Intel-Mac arc — was re-filed as its own issue so it isn't lost in prose:
+> [`2026-07-07-macho-structural-lint-residual.md`](../2026-07-07-macho-structural-lint-residual.md).
+> The historical status banner below is retained for context.
+
 
 > **STATUS (v6.2.43): VR-01 + VR-02 SHIPPED v6.2.29** — the full `.tcyr` corpus now
 > runs on real arm64 (aarch64-native CI job; surfaced + fixed a stale-fork + 9-bug

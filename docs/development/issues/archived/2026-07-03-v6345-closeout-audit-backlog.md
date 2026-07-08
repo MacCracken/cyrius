@@ -1,4 +1,13 @@
-# v6.3.45 closeout audit — backlog (refactor consolidations, dead code, 2 latent bugs)
+# v6.3.45 closeout audit — backlog (refactor consolidations, dead code, 2 latent bugs) — RESOLVED
+
+> **RESOLVED — archived 2026-07-07.** The L1/L2 latent-bug guards and the R1/R3/R4/R5
+> parallel-copy consolidations all shipped byte-identical in v6.4.15 (CHANGELOG [6.4.15]).
+> The three conscious deferrals — **R2** (PE GetStdHandle prologue extraction, codegen-risk)
+> and **D1/D2** (dead `CYRIUS_IR=3` helpers + speculative decode CFG API) — were re-filed as
+> their own issue so they aren't lost in prose:
+> [`2026-07-07-v6415-closeout-residuals.md`](../2026-07-07-v6415-closeout-residuals.md).
+> The audit backlog below is retained for history.
+
 
 > **STATUS (v6.4.15 absorber-band):** MOSTLY LANDED. Shipped this slot, each proven
 > byte-identical (self-host fixpoint + differential 0/0 + seed-derive):

@@ -1339,7 +1339,8 @@ The list (ROI order; design decisions inside each item at arc-open):
    (assembly-up: raw stores stay raw in release builds).
 5. **Trait-bounded generics** — the post-monomorphization ceiling. **DEMAND-GATED
    tail**: pulls in only if consumer pressure materializes by arc-open; fix the
-   open B3 struct-type-args monomorph bug first
+   **multi-type-param struct-type-arg residual** first (single-tparam struct type-args
+   shipped v6.3.38 B1/B2 + v6.3.39 B3; the residual is only the mixed multi-tparam combo)
    ([`issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md)).
 
 **Explicitly NOT imported** (decided 2026-07-07): borrow-checker-style lifetimes
