@@ -1224,14 +1224,29 @@ fn EF64_COS(S): i64 {
     return 0;
 }
 
-# Still hard-error on aarch64 (no polyfill filed): exp2, atan.
+# f64_exp2 / f64_atan — polyfill-dispatch (v6.4.25, mirrors EF64_SIN/EF64_EXP).
+# Route to lib/math.cyr's `_f64_exp2_polyfill` / `_f64_atan_polyfill` (closes the
+# last two aarch64 transcendental gaps; issues/2026-07-07-aarch64-f64-exp2-atan-
+# hard-error.md). x86 keeps its native x87 f2xm1/fpatan paths.
 fn EF64_EXP2(S): i64 {
-    ERR_MSG(S, "f64_exp2 is x86-only for v5.6.0; aarch64 has no native exp2 — needs polyfill", 76);
+    var pf = _FINDFN_CSTR(S, "_f64_exp2_polyfill", 18);
+    if (pf < 0) {
+        ERR_MSG(S, "f64_exp2 on aarch64 requires include \"lib/math.cyr\" (provides _f64_exp2_polyfill)", 80);
+    }
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, pf);
     return 0;
 }
 
 fn EF64_ATAN(S): i64 {
-    ERR_MSG(S, "f64_atan is x86-only for v5.6.0; aarch64 has no native fpatan — needs polyfill", 78);
+    var pf = _FINDFN_CSTR(S, "_f64_atan_polyfill", 18);
+    if (pf < 0) {
+        ERR_MSG(S, "f64_atan on aarch64 requires include \"lib/math.cyr\" (provides _f64_atan_polyfill)", 80);
+    }
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, pf);
     return 0;
 }
 

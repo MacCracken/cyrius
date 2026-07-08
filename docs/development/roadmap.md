@@ -559,8 +559,12 @@ never unilaterally deferred or redirected.
   - `sigil-authenticode-pe-hash-oob-read` → UEFI Secure Boot arc (slot 3).
   - `capturing-closures-windows-pe` → a PE-codegen touch (verify on wine + cass).
   - `v6415-closeout-residuals` (R2 PE prologue → opportunistic; D1/D2 dead IR → v6.5.x).
-- **🟢 aarch64 / SIMD polish (SIMD Phase 5 tail):** `i64v2-valueform-packed-multiply`,
-  `aarch64-f64-exp2-atan-hard-error`, `aarch64-trig-payne-hanek-range-reduction`.
+- **🟢 aarch64 / SIMD polish (SIMD Phase 5 tail):** `i64v2-valueform-packed-multiply`.
+  - ~~`aarch64-f64-exp2-atan-hard-error`~~ — ✅ **SHIPPED v6.4.25** (polyfill-dispatch +
+    `_f64_exp2_polyfill`/`_f64_atan_polyfill`). Unblocked `ganita` inverse-trig →
+    [`aarch64-ganita-inverse-trig-unguard`](issues/2026-07-08-aarch64-ganita-inverse-trig-unguard.md) (open follow-on).
+  - ~~`aarch64-trig-payne-hanek-range-reduction`~~ — ✅ **SHIPPED v6.4.25** (double-double
+    dd reduction for |x| ≥ 8192; small-angle path byte-identical).
 - **Downstream-repo (their timeline):** `yukti-udev-src-len-undersized-array-local`
   (fix upstream, re-vendor).
 - **v5.x-era substrate (v6.5.x):** `ir-regalloc-rewrite-needs-reemit` (perf passes) +

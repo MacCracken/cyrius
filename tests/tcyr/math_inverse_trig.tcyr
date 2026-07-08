@@ -25,7 +25,7 @@ fn near(a, b) {
 
 # Pre-computed reference bit patterns for values not built from
 # primitives already in F64_* — π/6, 3π/4, π/3, etc.
-var F64_PI_6 = 0x3FE0_C152_382D_7365;   # π/6
+# F64_PI_6 now provided by lib/math.cyr's shared constant block (v6.4.25).
 var F64_PI_3 = 0x3FF0_C152_382D_7365;   # π/3
 
 # v6.2.x: ganita_f64_asin/acos/atan2 are #ifdef CYRIUS_ARCH_X86 in lib/ganita.cyr

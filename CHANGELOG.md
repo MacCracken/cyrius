@@ -6,6 +6,62 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.25] — 2026-07-08
+
+**v6.4.25 — the aarch64 transcendental gaps: `f64_exp2` / `f64_atan` polyfills + a
+Payne-Hanek-lite double-double trig range reduction for large |x|.** Closes the two
+aarch64-backend issues filed in the CHANGELOG-prose deferral sweep. An aarch64-only
+compiler change — the x86 fork includes only `backend/x86/emit.cyr`, so **x86 `cycc` is
+byte-identical to 6.4.24** (differential codegen-diff=0 across 343 inputs); the change
+lives entirely in the aarch64 forks + `lib/math.cyr`.
+
+### Fixed — `f64_exp2` / `f64_atan` hard-errored on aarch64 (no polyfill)
+- x86 emits native x87 (`f2xm1`/`fscale`, `fpatan`); aarch64 has neither, and unlike
+  `f64_sin`/`f64_cos`/`f64_exp`/`f64_ln` (polyfilled in v5.7.31 / v6.4.16), `f64_exp2` and
+  `f64_atan` still **hard-errored** on aarch64 — blocking any aarch64 amalgamation using
+  them. `src/backend/aarch64/emit.cyr` `EF64_EXP2`/`EF64_ATAN` now polyfill-dispatch (mirror
+  `EF64_SIN`/`EF64_EXP`) into `lib/math.cyr`'s new `_f64_exp2_polyfill` /
+  `_f64_atan_polyfill`. x86 keeps its native x87 paths untouched.
+  - `_f64_exp2_polyfill(x)`: `2^x = 2^n·2^f`, `n = round(x)`, `2^f = exp(f·ln2)` via the
+    same 11-term Taylor as `_f64_exp_polyfill` + exponent bit-pack. ~3e-13 worst rel err
+    over [-50, 50] (matches the exp polyfill).
+  - `_f64_atan_polyfill(x)`: two-stage argument reduction (sign fold → reciprocal fold for
+    |x|>1 → π/6 fold for ax>2−√3) into |t| ≤ tan(π/12), then an 11-term Taylor (through
+    t^21). ~1e-14 worst rel err over ±1e8.
+  - `f64_tan` needs no backend op — compose `sin/cos` at the call site.
+  - Closes `issues/2026-07-07-aarch64-f64-exp2-atan-hard-error.md`.
+
+### Fixed — aarch64 trig polyfills lost precision for large |x| (single-constant reduction)
+- `_f64_sin_polyfill` / `_f64_cos_polyfill` reduced with a single π/2 literal (like
+  `_f64_exp`'s single ln2); for large |x| the `x − k·π/2` subtraction suffers catastrophic
+  cancellation (rel err ~5e-2 at 1e15). Added a **Payne-Hanek-lite double-double (Dekker
+  TwoProduct, no FMA) range reduction** gated at |x| ≥ 8192: below the threshold the
+  single-constant path is **byte-identical** (small angles unchanged); above it the dd path
+  holds the reduction exact to ~1e-16 through |x| ≈ 1e15. 2/π and π/2 each carry a hi word +
+  lo tail; the split constants let TwoProduct multiply exactly without FMA.
+  - Closes `issues/2026-07-07-aarch64-trig-payne-hanek-range-reduction.md`.
+
+### Added
+- `tests/tcyr/vr01_exp2_atan_bigtrig.tcyr` — VR-01 gate (runs on ecb/cass/pi): `f64_exp2`
+  (2^0/2^1/2^10/2^-1/2^0.5), `f64_atan` (0/1/-1/√3/1/√3/1000), the `_f64_*_polyfill` fns
+  directly (aarch64 path on every arch), and the Payne-Hanek large-angle `sin/cos(1e4,1e6)`
+  refs + `sin²+cos²=1` identity out to |x|≈1e6. 33/33 on x86, aarch64-qemu, pi, ecb, cass.
+- `F64_PI_6` promoted to `lib/math.cyr`'s shared constant block (the atan polyfill needs it;
+  `math_inverse_trig.tcyr` dropped its now-redundant local copy).
+
+### Follow-on filed (not hidden)
+- `issues/2026-07-08-aarch64-ganita-inverse-trig-unguard.md` — `ganita_f64_asin/acos/atan2`
+  are `#ifdef CYRIUS_ARCH_X86` *because* aarch64 lacked `f64_atan`; the new polyfill unblocks
+  them. Un-guarding (source-repo ganita + re-vendor + aarch64 accuracy verify) is a separate,
+  now-actionable slot — filed, not folded, per one-bug-one-scope.
+
+### Verification
+- Release-gate GREEN: x86 self-host fixpoint byte-identical (1,073,648 B) · **aarch64
+  self-host fixpoint byte-identical** (main_aarch64.cyr under qemu, 1,010,896 B) · seed-derive
+  OK · check.sh **132** · cross-OS **real hardware**: pi `SELFHOST_OK`, ecb `SELFHOST_OK`,
+  cass `LIBTEST_OK` — `vr01_exp2_atan_bigtrig.tcyr` PASS on all three. self_compile ~611 ms;
+  cycc 1,073,648 B (unchanged — x86 byte-identical).
+
 ## [6.4.24] — 2026-07-08
 
 **v6.4.24 — P1: a struct field access silently read a global var when the field name
