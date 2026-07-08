@@ -6,6 +6,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.30] — 2026-07-08
+
+**v6.4.30 — SIMD Phase 5 COMPLETE: integer vectors on aarch64 NEON (the last SIMD XFAIL).**
+Packed integer add/sub/mul + the int8 widening dot now emit real NEON, and a pre-existing
+codegen limit that blocked the test from even compiling on aarch64 is fixed. **No SIMD XFAILs
+remain** — f32v4 (.28), f32v8 (.29), and int-vectors (.30) all pass on native arm64.
+
+### Added — aarch64 NEON integer-vector emitters
+- `src/backend/aarch64/emit.cyr` (replacing the stubs):
+  - `EMIT_IVEC_BINOP` — width-dispatched packed add/sub/mul: `ADD`/`SUB` `.16b/.8h/.4s/.2d`
+    (i8/i16/i32/i64), `MUL` `.8h/.4s` (i16/i32 only — NEON has no 64-bit vector mul; i8/i64
+    mul hard-errors, matching x86). Per-width index stride (`lsl #0/1/2/3`) + counter step
+    (16/w lanes). Mirrors `EMIT_F32V_LOOP`.
+  - `EMIT_IVEC_DP8` — int8 widening dot `sum(a_u8[i]·b_i8[i]) → i32` (the b1.58 ML inner loop):
+    `uxtl`/`sxtl` widen to i16 (u8→u16 is always positive, so signed `smlal` is exact) →
+    `smlal`/`smlal2` accumulate into `v16.4s` → `addv` reduce + `sxtw` sign-extend. Matches
+    x86's `pmaddubsw`+`pmaddwd`.
+  - All encodings verified via `llvm-mc`.
+
+### Fixed — STUR/LDUR Q imm9 large-frame limit (value-form vector returns)
+- `EFLLOAD_F64V2_PAIR`/`EFLSTORE_F64V2_PAIR` hard-errored when a 128-bit vector return-stash
+  displacement fell outside `LDUR`/`STUR Q`'s ±256 `imm9` range — which blocked `simd_ints`
+  (its value-form vector returns sit in a large frame) from **compiling** on aarch64 at all
+  (so its XFAIL was masking a compile failure, not a runtime one). Now the large-frame path
+  computes the address in x9 (`_EFP_ADDR_X9`) and uses `ldr/str q0, [x9]` — mirroring
+  `EFLLOAD`'s existing x-register fallback. Small-frame path byte-identical (no regression;
+  `simd_f32v4` value-form still 13/13 on aarch64).
+
+### Changed
+- `simd_ints` removed from the strict `XFAIL` (`XFAIL=""` — the last one) — now 21/21 on native
+  arm64. New `tests/tcyr/vr01_simd_ints_neon.tcyr` — the Win64-safe flat-array subset
+  (`iv_add/sub/mul` all widths + `iv_dp8`), cross-OS-gated on ecb/cass/pi.
+
+### Verification
+- x86 `cycc` byte-identical (all changes in the aarch64 fork) · aarch64 self-host fixpoint
+  byte-identical · seed-derive OK · check.sh **132** · cross-OS **real hardware**: pi + ecb + cass
+  `SELFHOST_OK`, `vr01_simd_ints_neon` PASS on all three (10/10; NEON on ecb/pi, SSE on cass);
+  `simd_ints` 21/21 native arm64 · adversarial diff-review (encodings / ABI-fix / lane-sizing):
+  0 confirmed defects · self_compile ~620 ms. **SIMD Pin 1 fully done on aarch64; next: async runtime (arc 5b).**
+
 ## [6.4.29] — 2026-07-08
 
 **v6.4.29 — SIMD Phase 5: f32v8 on aarch64 works for free (2×NEON fallback).** Follow-on to

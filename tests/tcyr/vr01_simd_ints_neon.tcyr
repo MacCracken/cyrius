@@ -1,0 +1,61 @@
+# vr01_simd_ints_neon.tcyr — cross-OS gate for packed integer ops via the RAW flat-array
+# intrinsics (iv_add/iv_sub/iv_mul over pointers + lane count + element width, and iv_dp8).
+# Exercises the width-dispatched packed emitters directly — x86 SSE (padd/psub/pmull + the
+# pmaddubsw/pmaddwd int8 dot) and aarch64 NEON (add/sub/mul .16b/.8h/.4s/.2d + the
+# uxtl/sxtl+smlal widening dot, SIMD Phase 5 v6.4.30) — with NO integer-vector value-form
+# params/returns, so it also runs on Win64 PE. Value-form / typed surface is in simd_ints.tcyr.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    test_group("packed int ops — raw flat-array intrinsics (x86 SSE / aarch64 NEON)");
+
+    # i32 (w=4) add/sub/mul, 8 lanes = 2×128-bit iterations
+    var a[32]; var b[32]; var r[32];
+    var i = 0;
+    while (i < 8) { store32(&a + i * 4, i); store32(&b + i * 4, 100); i = i + 1; }
+    iv_add(&r, &a, &b, 8, 4);
+    assert_eq(load32(&r + 0),  100, "iv_add i32 [0] = 0+100");
+    assert_eq(load32(&r + 28), 107, "iv_add i32 [7] = 7+100 (2 iters)");
+    iv_sub(&r, &b, &a, 8, 4);
+    assert_eq(load32(&r + 12), 97,  "iv_sub i32 [3] = 100-3");
+    iv_mul(&r, &a, &b, 8, 4);
+    assert_eq(load32(&r + 20), 500, "iv_mul i32 [5] = 5*100");
+
+    # i16 (w=2) add, 8 lanes
+    var c[16]; var d[16]; var e[16];
+    var j = 0;
+    while (j < 8) { store16(&c + j * 2, 1000); store16(&d + j * 2, 23); j = j + 1; }
+    iv_add(&e, &c, &d, 8, 2);
+    assert_eq(load16(&e + 0), 1023, "iv_add i16 [0] = 1023");
+
+    # i8 (w=1) add, 16 lanes
+    var p[16]; var q[16]; var s[16];
+    var k = 0;
+    while (k < 16) { store8(&p + k, 5); store8(&q + k, 7); k = k + 1; }
+    iv_add(&s, &p, &q, 16, 1);
+    assert_eq(load8(&s + 3), 12, "iv_add i8 [3] = 12");
+
+    # i64 (w=8) add, 2 lanes
+    var m[16]; var n2[16]; var o[16];
+    store64(&m + 0, 1000000); store64(&m + 8, 42);
+    store64(&n2 + 0, 5);      store64(&n2 + 8, 8);
+    iv_add(&o, &m, &n2, 2, 8);
+    assert_eq(load64(&o + 0), 1000005, "iv_add i64 [0] = 1000005");
+    assert_eq(load64(&o + 8), 50,      "iv_add i64 [1] = 50");
+
+    # iv_dp8: u8 activations · i8 weights → i32 (b1.58 inner loop), 16 lanes
+    var au[16]; var bu[16];
+    var w = 0;
+    while (w < 16) { store8(&au + w, 2); store8(&bu + w, 3); w = w + 1; }
+    assert_eq(iv_dp8(&au, &bu, 16), 96, "iv_dp8 u8·i8 = 2*3*16 = 96");
+    var x = 0;
+    while (x < 16) { store8(&bu + x, 255); x = x + 1; }   # 255 as i8 = -1
+    assert_eq(iv_dp8(&au, &bu, 16), 0 - 32, "iv_dp8 signed i8=-1 → -32 (sxtw)");
+
+    var ec = assert_summary();
+    return ec;
+}
+var rc = main();
+syscall(60, rc);

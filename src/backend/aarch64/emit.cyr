@@ -1592,13 +1592,17 @@ fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
     if (_cur_fn_ret_stash > 0) {
         disp_lo = disp_lo - _cur_fn_ret_stash;
     }
-    if (disp_lo < 0 - 256) {
-        syscall(SYS_WRITE, 2, "error: f64v2 NEON return disp out of LDUR Q imm9 range on aarch64\n", 66);
-        syscall(SYS_EXIT, 1);
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        # ldur q0, [x29, #disp_lo] — single 128-bit SIMD load.
+        EW(S, 0x3CC003A0 | (off_lo << 12));
+        return 0;
     }
-    var off_lo = disp_lo & 0x1FF;
-    # ldur q0, [x29, #disp_lo] — single 128-bit SIMD load.
-    EW(S, 0x3CC003A0 | (off_lo << 12));
+    # v6.4.30: large frame — disp out of LDUR Q's imm9 (±256). Compute the address in
+    # x9 (= x29 + disp) then ldr q0, [x9] — mirrors EFLLOAD's x-reg large-disp fallback.
+    # (Surfaced enabling simd_ints on aarch64: its value-form vector returns sit past −256.)
+    _EFP_ADDR_X9(S, disp_lo);
+    EW(S, 0x3DC00120);                # ldr q0, [x9]
     return 0;
 }
 
@@ -1612,13 +1616,15 @@ fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
     if (_cur_fn_ret_stash > 0) {
         disp_lo = disp_lo - _cur_fn_ret_stash;
     }
-    if (disp_lo < 0 - 256) {
-        syscall(SYS_WRITE, 2, "error: f64v2 NEON return disp out of STUR Q imm9 range on aarch64\n", 66);
-        syscall(SYS_EXIT, 1);
+    if (disp_lo >= 0 - 256) {
+        var off_lo = disp_lo & 0x1FF;
+        # stur q0, [x29, #disp_lo] — single 128-bit SIMD store.
+        EW(S, 0x3C8003A0 | (off_lo << 12));
+        return 0;
     }
-    var off_lo = disp_lo & 0x1FF;
-    # stur q0, [x29, #disp_lo] — single 128-bit SIMD store.
-    EW(S, 0x3C8003A0 | (off_lo << 12));
+    # v6.4.30: large frame — use x9-relative str q0 (see EFLLOAD_F64V2_PAIR).
+    _EFP_ADDR_X9(S, disp_lo);
+    EW(S, 0x3D800120);                # str q0, [x9]
     return 0;
 }
 
@@ -2420,11 +2426,87 @@ fn EMIT_F32V_DOT(S, vbase): i64 {
     EW(S, 0x1E260040);                # fmov w0, s2   — f32 bits → x0
     return 0;
 }
-# v6.4.6 (Phase 3a) — packed integer add/sub/mul are x86-only this phase; aarch64
-# NEON (add/sub/mul .16b/.8h/.4s/.2d) lands in Phase 5. Silent stub.
-fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 { return 0; }
-# v6.4.7 (Phase 3b) — int8 widening dot (b1.58): aarch64 NEON (sdot/udot) → Phase 5.
-fn EMIT_IVEC_DP8(S, vbase): i64 { return 0; }
+# SIMD Phase 5 (v6.4.30) — packed integer add/sub/mul on aarch64 NEON, width-dispatched.
+# w = element bytes (1/2/4/8 → i8/i16/i32/i64); 16/w lanes per 128-bit iter. op 0=add, 1=sub,
+# 2=mul. add/sub via ADD/SUB `.16b/.8h/.4s/.2d`; MUL is i16/i32 only (`.8h/.4s`) — NEON has no
+# 64-bit or (matched to x86) 8-bit vector mul, so w∈{1,8} hard-errors, same as x86. Slots:
+# vbase=dst, +1=a, +2=b; n in x0. Mirrors EMIT_F32V_LOOP with a per-width stride/op. llvm-mc.
+fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
+    var shcode = 0x8B0B018C; var incr = 0x9100416B;   # w==1: add x12,x11,lsl#0 ; add x11,#16
+    if (w == 2) { shcode = 0x8B0B058C; incr = 0x9100216B; }   # lsl#1 ; +8
+    if (w == 4) { shcode = 0x8B0B098C; incr = 0x9100116B; }   # lsl#2 ; +4
+    if (w == 8) { shcode = 0x8B0B0D8C; incr = 0x9100096B; }   # lsl#3 ; +2
+    var opword = 0;
+    if (op == 0) {   # add v0.T, v0.T, v1.T
+        if (w == 1) { opword = 0x4E218400; }
+        if (w == 2) { opword = 0x4E618400; }
+        if (w == 4) { opword = 0x4EA18400; }
+        if (w == 8) { opword = 0x4EE18400; }
+    }
+    if (op == 1) {   # sub v0.T, v0.T, v1.T
+        if (w == 1) { opword = 0x6E218400; }
+        if (w == 2) { opword = 0x6E618400; }
+        if (w == 4) { opword = 0x6EA18400; }
+        if (w == 8) { opword = 0x6EE18400; }
+    }
+    if (op == 2) {   # mul — i16/i32 only (MUL .8h/.4s); ERR_MSG exits for w∈{1,8}
+        if (w == 2) { opword = 0x4E619C00; }
+        if (w == 4) { opword = 0x4EA19C00; }
+        if (w == 1) { ERR_MSG(S, "packed integer mul is i16/i32 only", 34); }
+        if (w == 8) { ERR_MSG(S, "packed integer mul is i16/i32 only", 34); }
+    }
+    EW(S, 0xAA0003EA);                # mov x10, x0   — n
+    EW(S, 0xD280000B);                # movz x11, #0  — index
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done
+    EFLLOAD(S, vbase + 1);            # a
+    EW(S, 0xAA0003EC); EW(S, shcode); EW(S, 0x3DC00180);   # mov x12,x0 ; add x12,x11,lsl ; ldr q0
+    EFLLOAD(S, vbase + 2);            # b
+    EW(S, 0xAA0003EC); EW(S, shcode); EW(S, 0x3DC00181);   # ldr q1, [x12]
+    EW(S, opword);                    # v0.T = v0.T {add,sub,mul} v1.T
+    EFLLOAD(S, vbase);               # dst
+    EW(S, 0xAA0003EC); EW(S, shcode); EW(S, 0x3D800180);   # str q0, [x12]
+    EW(S, incr);                     # add x11, x11, #(16/w lanes)
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    return 0;
+}
+
+# SIMD Phase 5 (v6.4.30) — int8 widening dot (b1.58 ML inner loop): sum(a_u8[i] * b_i8[i]) → i32,
+# sign-extended into x0. NEON: widen each 16-byte chunk to i16 (uxtl a → u16 which is always
+# positive so signed math is exact; sxtl b → i16), then signed smlal (i16*i16→i32) accumulates
+# into v16.4s; tail `addv` reduces the 4 lanes + `sxtw` sign-extends. Matches x86's
+# pmaddubsw+pmaddwd (unsigned activations · signed weights). Slots: vbase=a(u8), +1=b(i8); n in x0.
+fn EMIT_IVEC_DP8(S, vbase): i64 {
+    EW(S, 0x4F000410);                # movi v16.4s, #0 — i32 accumulator
+    EW(S, 0xAA0003EA);                # mov x10, x0   — n
+    EW(S, 0xD280000B);                # movz x11, #0  — index (bytes; w=1)
+    var loop_top = GCP(S);
+    EW(S, 0xEB0A017F);                # cmp x11, x10
+    var done_patch = GCP(S);
+    EW(S, 0x5400000A);                # b.ge done
+    EFLLOAD(S, vbase);                # a (u8)
+    EW(S, 0xAA0003EC); EW(S, 0x8B0B018C); EW(S, 0x3DC00180);   # add x12,x11,lsl#0 ; ldr q0
+    EFLLOAD(S, vbase + 1);            # b (i8)
+    EW(S, 0xAA0003EC); EW(S, 0x8B0B018C); EW(S, 0x3DC00181);   # ldr q1
+    EW(S, 0x2F08A402);                # uxtl  v2.8h, v0.8b   (a lo → u16)
+    EW(S, 0x6F08A403);                # uxtl2 v3.8h, v0.16b  (a hi → u16)
+    EW(S, 0x0F08A424);                # sxtl  v4.8h, v1.8b   (b lo → i16)
+    EW(S, 0x4F08A425);                # sxtl2 v5.8h, v1.16b  (b hi → i16)
+    EW(S, 0x0E648050);                # smlal  v16.4s, v2.4h, v4.4h  (+= a*b, i32)
+    EW(S, 0x4E648050);                # smlal2 v16.4s, v2.8h, v4.8h
+    EW(S, 0x0E658070);                # smlal  v16.4s, v3.4h, v5.4h
+    EW(S, 0x4E658070);                # smlal2 v16.4s, v3.8h, v5.8h
+    EW(S, 0x9100416B);                # add x11, x11, #16
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    EW(S, 0x4EB1BA00);                # addv s0, v16.4s — horizontal add 4×i32 → s0
+    EW(S, 0x1E260000);                # fmov w0, s0
+    EW(S, 0x93407C00);                # sxtw x0, w0 — sign-extend i32 sum → i64
+    return 0;
+}
 # 256-bit AVX2 f32v8 is x86-only; aarch64 has no 256-bit register. These stay STUBS on
 # aarch64 and are NEVER reached: on aarch64 the lib/simd.cyr f32v8 wrappers take the
 # 2×128-bit fallback (f32v_*(n=8) → EMIT_F32V_LOOP, real NEON as of Phase 5 v6.4.28), so
