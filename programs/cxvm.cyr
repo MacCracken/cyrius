@@ -74,17 +74,22 @@ var _cx_cstack = 0;       # 1024 call stack entries (return addresses)
 var _cx_csp = 0;
 var _cx_pc = 0;
 
-var _CX_MEM_SIZE = 65536;
+# Data segment = code + var-data + strings + downward stack, one flat region.
+# 64 KB was too small for a real cross-OS .cyx; raised to 1 MB (matches cycc's
+# input_buf, main_cx.cyr:91). CHANGELOG [6.4.20]. NB: code, data AND the stack
+# (grows down from _CX_MEM_SIZE) still share this one region — a program whose
+# data approaches the top collides with the stack; keep large .cyx modest.
+var _CX_MEM_SIZE = 1048576;
 var _cx_code = 0;       # set after loading .cyx file
 
 fn cx_init(): i64 {
     alloc_init();
-    _cx_regs = alloc(256);       # 32 registers × 8
-    _cx_mem = alloc(65536);      # 64KB memory
-    _cx_dstack = alloc(8192);    # 1024 entries × 8
-    _cx_cstack = alloc(8192);    # 1024 entries × 8
+    _cx_regs = alloc(256);            # 32 registers × 8
+    _cx_mem = alloc(_CX_MEM_SIZE);    # data segment (see _CX_MEM_SIZE note)
+    _cx_dstack = alloc(8192);         # 1024 entries × 8
+    _cx_cstack = alloc(8192);         # 1024 entries × 8
     memset(_cx_regs, 0, 256);
-    memset(_cx_mem, 0, 65536);
+    memset(_cx_mem, 0, _CX_MEM_SIZE);
     return 0;
 }
 
@@ -258,13 +263,36 @@ fn cx_run(code, code_len): i64 {
             var s4 = cx_reg_get(4);
             var s5 = cx_reg_get(5);
             var s6 = cx_reg_get(6);
-            # write(1): r3=buf is pointer
-            # read(0): r3=buf is pointer
-            # open(2): r3=path is pointer
+            # --- pointer-arg fixup: a guest passes .cyx-virtual offsets, but the
+            # host kernel needs REAL addresses. Translate ONLY the register(s) a
+            # given syscall treats as a pointer (scalar fd/len/flags/whence must
+            # NOT be shifted). Keyed on the GUEST x86-Linux number `sn` BEFORE the
+            # compiler renumbers it per-host (ESYSXLAT/EMACHO/PE-dynamic act on the
+            # emitted syscall below). Linux ABI arg order → s2=arg0, s3=arg1, ...
+            #   read(0)/write(1)  = (fd, buf, count)   → buf   is arg1 = s3
+            #   open(2)           = (path, flags, mode)→ path  is arg0 = s2
+            # CHANGELOG [6.4.20]: open fixed s3 (=flags) instead of s2 (=path) —
+            # every guest open() corrupted flags and passed a raw offset as path
+            # (EFAULT on all hosts). Other pointer-taking syscalls (nanosleep 35,
+            # clock_gettime 228, pipe 22, stat) need their own entry when a
+            # consumer .cyx uses them — out of the minimal I/O set below.
             if (sn == 0) { if (s3 > 0) { s3 = _cx_mem + s3; } }
             elif (sn == 1) { if (s3 > 0) { s3 = _cx_mem + s3; } }
-            elif (sn == 2) { if (s3 > 0) { s3 = _cx_mem + s3; } }
-            result = syscall(sn, s2, s3, s4, s5, s6);
+            elif (sn == 2) { if (s2 > 0) { s2 = _cx_mem + s2; } }
+            # --- arity-correct dispatch: issue the syscall with the guest's REAL
+            # Linux arg-count so the PE arity-bucket router (EPE_SYSCALL_DYNAMIC:
+            # argc4→read/write/open/lseek, argc2→close/exit) matches. cxvm's old
+            # fixed 5-trailing-arg shape was argc 6 — an arity NO PE bucket routes,
+            # so on Windows every guest write/read/open/close/exit returned -ENOSYS
+            # and did nothing (cass exit=-38, no output). Linux/macOS ignore extra
+            # args, so exact-arity is equally correct there — one dispatch, 4 hosts.
+            # The `else` passes 5 args (argc 6): fine on Linux/macOS (extra ignored),
+            # honest -ENOSYS on PE (the compile-time warning is expected). 6-arg
+            # syscalls (mmap) aren't supported — cxvm captures only r2..r6.
+            # CHANGELOG [6.4.20].
+            if (sn == 0 || sn == 1 || sn == 2 || sn == 8) { result = syscall(sn, s2, s3, s4); }
+            elif (sn == 3 || sn == 60) { result = syscall(sn, s2); }
+            else { result = syscall(sn, s2, s3, s4, s5, s6); }
             cx_reg_set(0, result);
         }
 
@@ -295,14 +323,28 @@ fn cx_run(code, code_len): i64 {
 cx_init();
 
 # Read .cyx header: "CYX\0" magic + 4-byte entry offset
-var _cx_code_cap = 65536;
+# 64 KB → 1 MB (CHANGELOG [6.4.20]). The read loop now probes for overflow
+# instead of SILENTLY TRUNCATING a >cap .cyx (which mis-executed) — mirrors
+# main_cx.cyr:95-101's input-buffer probe.
+var _cx_code_cap = 1048576;
 _cx_code = alloc(_cx_code_cap);
 var _cx_code_len = 0;
 var _cx_done = 0;
 while (_cx_done == 0) {
     var n = syscall(0, 0, _cx_code + _cx_code_len, _cx_code_cap - _cx_code_len);
     if (n <= 0) { _cx_done = 1; }
-    else { _cx_code_len = _cx_code_len + n; }
+    else {
+        _cx_code_len = _cx_code_len + n;
+        if (_cx_code_len >= _cx_code_cap) {
+            var _cx_probe[1];
+            var pn = syscall(0, 0, &_cx_probe, 1);
+            if (pn > 0) {
+                syscall(1, 2, "error: .cyx exceeds 1MB cxvm code buffer\n", 41);
+                syscall(60, 1);
+            }
+            _cx_done = 1;
+        }
+    }
 }
 
 # Check magic "CYX" + format version (byte 3). cx arc A: byte 3 is the .cyx

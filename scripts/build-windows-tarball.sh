@@ -34,7 +34,12 @@ mkdir -p "$WORK/$STAGE/bin" "$WORK/$STAGE/lib"
 # Windows-native cycc (PE) + the cyrius wrapper + quality tools, all PE32+.
 cat src/main_win.cyr | "$WORK/cc_win" > "$WORK/$STAGE/bin/cycc.exe"
 cat cbt/cyrius.cyr   | "$WORK/cc_win" > "$WORK/$STAGE/bin/cyrius.exe"
-for tool in cyrfmt cyrlint cyrdoc cyrsign; do
+# cx Release C: cxvm.exe (the portable-.cyx RUNTIME) ships so a binary-install
+# Windows user can `cyrius run *.cyx` — cxvm's arity-correct dispatch routes the
+# guest write/read/open/close/exit to kernel32 (verified on cass). The cx
+# COMPILER (cycc_cx) is NOT shipped (build-once-on-Linux / run-anywhere; PE
+# cross-native untested) — tracked (issues/2026-07-07-cycc_cx-cross-native-macho-pe.md).
+for tool in cyrfmt cyrlint cyrdoc cyrsign cxvm; do
     if [ -f "programs/${tool}.cyr" ]; then
         cat "programs/${tool}.cyr" | "$WORK/cc_win" > "$WORK/$STAGE/bin/${tool}.exe"
     fi
@@ -42,7 +47,7 @@ done
 
 # Validate every binary is a real PE (MZ magic = 4d5a) — refuse to package an
 # empty / non-PE artifact (the "found by ports" guard).
-for b in cycc.exe cyrius.exe cyrfmt.exe cyrlint.exe cyrdoc.exe cyrsign.exe; do
+for b in cycc.exe cyrius.exe cyrfmt.exe cyrlint.exe cyrdoc.exe cyrsign.exe cxvm.exe; do
     f="$WORK/$STAGE/bin/$b"
     [ -f "$f" ] || continue
     magic=$(xxd -l2 -p "$f" 2>/dev/null)

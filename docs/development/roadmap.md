@@ -176,7 +176,7 @@ releases, each bundling several bites. Minors flex long.**
 | 2 | **Array-typed struct fields** | **3 releases (done)** | No | **✅ DONE — R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13 (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>)** |
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
-| 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | **~4 releases** | No | **ACTIVE (opened after v6.4.16). Scoped 6-facet workflow; user chose the FULL portable target 2026-07-07. Arc A→B→C below.** |
+| 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 4 releases (.17–.20) | No | **✅ DONE (v6.4.17–.20). A=CLI, B=f64 arith, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts). Tail deferred+filed: cycc_cx cross-native, f32/transcendentals.** |
 | 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | **2–3 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | **2–4 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
@@ -236,11 +236,20 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
     cx `ETESTAZ` sets r1=0 + `EF64_CMP` re-wired to 0x5A-0x5F (cx-backend-only, cycc byte-id).
     Also fixed a latent bare-int-boolean branch bug. cx now runs real int/float programs
     (arithmetic + comparisons + conditionals). **NEXT: Release C.**
-  - **Release C** — cxvm portable syscall ABI: a canonical guest-syscall set cxvm
-    translates per-host (ESYSXLAT-style) so an I/O-doing `.cyx` runs on ecb/cass/pi;
-    raised caps. Split C1/C2 (boundary set at C-open after reading cxvm dispatch depth).
-  - **Deferred (filed at arc close):** cx SIMD (+ the `issues/2026-07-05-...phase5.md`
-    cx-SIMD closure note).
+  - **Release C ✅ SHIPPED (v6.4.20)** — portable `.cyx` doing real I/O runs on **all
+    four hosts** (x86-Linux/pi/ecb/cass), verified on real hardware (write+exit AND
+    file open→read→write→close). **NO C1/C2 split needed** (boundary-set-after-reading
+    confirmed it): the scoping premise was wrong — the compiler's `ESYSXLAT`/
+    `EMACHO_SYSXLAT` already renumber a runtime (var) syscall number per-host, so the
+    real bugs were cxvm-only: the `open` pointer-slot (fixed s3=flags → s2=path) + the
+    Windows argc-6 arity-bucket miss (→ arity-correct dispatch: argc4 read/write/open/
+    lseek, argc2 close/exit). Caps 64 KB→1 MB + overflow probe. cxvm ships in the
+    macOS/Windows tarballs; `cross-os-selfhost.sh` + `cx_cli.sh` gate a portable-`.cyx`
+    I/O fixture. cycc byte-identical (cxvm is off the self-host chain).
+  - **Deferred (filed):** the cx **compiler** `cycc_cx` cross-native on macOS/Windows
+    (`issues/2026-07-07-cycc_cx-cross-native-macho-pe.md` — cross-compiles clean but
+    faults on macOS; `.cyx` build-on-Linux/run-anywhere makes this a convenience, not a
+    blocker) · cx SIMD (+ the `issues/2026-07-05-...phase5.md` cx-SIMD closure note).
   Full stub: [`proposals/2026-07-05-cx-bytecode-cli-exposure.md`](proposals/2026-07-05-cx-bytecode-cli-exposure.md).
 - **Scalar-float completion — later 6.4.x.** Scalar `f64` as a function RETURN
   type (returned in xmm0 per SysV — today's allow-list admits `f64v2`/`f64v4` but

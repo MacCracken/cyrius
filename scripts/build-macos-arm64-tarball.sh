@@ -39,7 +39,13 @@ cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE
 cp "$WORK/$STAGE/bin/cycc" "$WORK/$STAGE/bin/cycc_aarch64"
 # Wrapper + quality tools, cross-emitted to arm64 Mach-O.
 cat cbt/cyrius.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/cyrius"
-for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign; do
+# cx Release C: cxvm (the portable-.cyx RUNTIME) ships so a binary-install macOS
+# user can `cyrius run *.cyx` — the portable-bytecode model is build-once (on
+# Linux, where cycc_cx runs) / run-anywhere (cxvm, verified on ecb). The cx
+# COMPILER (cycc_cx) is NOT shipped: cross-emitted to Mach-O it FAULTS (signal
+# 12) on 2 syscalls ESYSXLAT doesn't route yet — tracked as a follow-on, not
+# needed for running .cyx. See issues/2026-07-07-cycc_cx-cross-native-macho-pe.md.
+for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm; do
     cat "programs/${tool}.cyr" | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/${tool}"
 done
 # Version manager + prompt helper + repl shim. v6.2.40: `cyrius init` and
@@ -52,7 +58,7 @@ chmod +x "$WORK/$STAGE/bin"/*
 
 # Validate every Mach-O binary (magic cffaedfe, cputype 0x0100000C) —
 # refuse to package a non-arm64 / empty artifact.
-for b in cycc cycc_aarch64 cyrius cyrfmt cyrlint cyrdoc cyrius-init cyrsign; do
+for b in cycc cycc_aarch64 cyrius cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm; do
     f="$WORK/$STAGE/bin/$b"
     magic=$(xxd -l4 -p "$f" | tr -d ' \n')
     cput=$(xxd -s4 -l4 -p "$f" | tr -d ' \n')

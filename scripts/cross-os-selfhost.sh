@@ -86,12 +86,23 @@ SSHO="-o ConnectTimeout=20 -o BatchMode=yes -o HostName=$IP -o HostKeyAlias=$HN 
 # ecb-install, which builds its own tarball). Built from clean source so what
 # we verify is what we ship.
 cat src/main.cyr | ./build/cycc > /tmp/_co_l && chmod +x /tmp/_co_l
+# cx Release C (v6.4.20): a portable-.cyx I/O fixture, built once with the LOCAL
+# cx bytecode compiler (cycc_cx), shipped to every host. Each self-host leg
+# rebuilds cxvm with the just-self-hosted NATIVE cycc and runs this .cyx —
+# proving cxvm's per-host guest-syscall translation actually works (exit 42 IFF
+# the guest write() returned its byte count, i.e. the 0x70 syscall path fired).
+# A green cxvm-that-halts is the placebo CLAUDE.md warns about, so the fixture
+# EXERCISES a guest write, not just a halt. programs/cxvm.cyr rides the bundle
+# (its includes lib/string.cyr + lib/alloc.cyr are already in `lib`).
+cat src/main_cx.cyr | ./build/cycc > /tmp/_co_ccx && chmod +x /tmp/_co_ccx
+printf 'fn main(): i64 { var w = syscall(1, 1, "cx-io-ok\\n", 9); if (w == 9) { return 42; } return 1; }\nvar e = main();\nsyscall(60, e);\n' > /tmp/_co_cx.cyr
+cat /tmp/_co_cx.cyr | /tmp/_co_ccx > /tmp/_co_cx.cyx
 # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
 # lib/assert.cyr only ride along when the lib-test fallback is triggered.
 if [ -n "$LIBTEST" ]; then
-  tar czf /tmp/_co.tgz src lib tests/win tests/tcyr VERSION
+  tar czf /tmp/_co.tgz src lib tests/win tests/tcyr VERSION programs/cxvm.cyr
 else
-  tar czf /tmp/_co.tgz src lib tests/win VERSION
+  tar czf /tmp/_co.tgz src lib tests/win VERSION programs/cxvm.cyr
 fi
 
 case "$HOST" in
@@ -99,10 +110,13 @@ case "$HOST" in
     cat src/main_aarch64.cyr       | /tmp/_co_l                   > /tmp/_co_x  && chmod +x /tmp/_co_x
     cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 /tmp/_co_x > /tmp/_co_m
     ssh $SSHO ecb 'rm -rf ~/_cyaud && mkdir ~/_cyaud'
-    scp -q $SSHO /tmp/_co.tgz /tmp/_co_m ecb:~/_cyaud/
+    scp -q $SSHO /tmp/_co.tgz /tmp/_co_m /tmp/_co_cx.cyx ecb:~/_cyaud/
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where
-    # main() is never called and the program exits with argc).
+    # main() is never called and the program exits with argc). Then cx C:
+    # build a NATIVE Mach-O cxvm with the just-self-hosted r1r and run the
+    # portable .cyx I/O fixture — proves EMACHO_SYSXLAT translates the guest's
+    # runtime syscall number (must exit 42; guest write() must return 9).
     ssh $SSHO ecb 'cd ~/_cyaud && tar xzf _co.tgz && chmod +x _co_m && codesign -s - -f _co_m \
       && cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./_co_m > r1 \
       && cp r1 r1r && chmod +x r1r && codesign -s - -f r1r \
@@ -110,7 +124,9 @@ case "$HOST" in
       && cmp r1 r2 \
       && printf "fn main() { return 42; }" > _ec.cyr \
       && cat _ec.cyr | CYRIUS_MACHO_ARM=1 ./r1r > _ec && chmod +x _ec && codesign -s - -f _ec \
-      && (_rc=0; ./_ec || _rc=$?; [ $_rc -eq 42 ])'
+      && (_rc=0; ./_ec || _rc=$?; [ $_rc -eq 42 ]) \
+      && cat programs/cxvm.cyr | CYRIUS_MACHO_ARM=1 ./r1r > cxvm && chmod +x cxvm && codesign -s - -f cxvm \
+      && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ])'
     ;;
   ach)
     # x86 ELF cycc told to emit Mach-O builds the x86 Mach-O cycc (its driver
@@ -129,11 +145,16 @@ case "$HOST" in
     cat src/main_aarch64.cyr | /tmp/_co_l  > /tmp/_co_x   && chmod +x /tmp/_co_x
     cat src/main_aarch64.cyr | /tmp/_co_x  > /tmp/_co_a64 && chmod +x /tmp/_co_a64
     ssh $SSHO pi 'rm -rf ~/_cyaud && mkdir ~/_cyaud'
-    scp -q $SSHO /tmp/_co.tgz /tmp/_co_a64 pi:~/_cyaud/
+    scp -q $SSHO /tmp/_co.tgz /tmp/_co_a64 /tmp/_co_cx.cyx pi:~/_cyaud/
+    # Self-host twice + cmp, then cx C: build a NATIVE aarch64 cxvm with r1 and
+    # run the portable .cyx I/O fixture — proves ESYSXLAT translates the guest's
+    # runtime syscall number (incl. open→openat AT_FDCWD shift). Must exit 42.
     ssh $SSHO pi 'cd ~/_cyaud && tar xzf _co.tgz && chmod +x _co_a64 \
       && cat src/main_aarch64.cyr | ./_co_a64 > r1 && chmod +x r1 \
       && cat src/main_aarch64.cyr | ./r1 > r2 \
-      && cmp r1 r2'
+      && cmp r1 r2 \
+      && cat programs/cxvm.cyr | ./r1 > cxvm && chmod +x cxvm \
+      && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ])'
     ;;
   cass)
     # x86 ELF -> PE-emitting cross-compiler (cycc_win) -> native PE cycc.exe.
@@ -149,6 +170,7 @@ case "$HOST" in
     scp -q $SSHO /tmp/_co.tgz cass:/cyrius-tests/_cyaud/_co.tgz
     scp -q $SSHO /tmp/_co_exe cass:/cyrius-tests/_cyaud/cycc.exe
     scp -q $SSHO /tmp/_co_ec.cyr cass:/cyrius-tests/_cyaud/_ec.cyr
+    scp -q $SSHO /tmp/_co_cx.cyx cass:/cyrius-tests/_cyaud/_co_cx.cyx
     # cmd.exe for `<` redirection. The &&-chain stops at the first failure and
     # cmd /c returns that command's exit code, which ssh propagates back, so a
     # broken cycc.exe (emits 0 code today) fails the gate for the right reason.
@@ -174,8 +196,9 @@ case "$HOST" in
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\callptr_real_win64.cyr > cpr.exe && cpr.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\nanosleep_pe.cyr > nsp.exe && nsp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\var_syscall_arity_pe.cyr > vsa.exe && vsa.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\dir_list_pe.cyr > dlp.exe && dlp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'; then
-      :   # all cass legs passed (self-host fixpoint + the 5 exit-42 guards)
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\dir_list_pe.cyr > dlp.exe && dlp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < programs\cxvm.cyr > cxvm.exe && cxvm.exe < _co_cx.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'; then
+      :   # all cass legs passed (self-host fixpoint + the 5 exit-42 guards + cx-C portable-.cyx I/O)
     else
       echo "SELFHOST_FAIL: cass — Windows self-host fixpoint (fc /b c2.exe c3.exe) or an exit-code guard FAILED (rc=$?). NOT SELFHOST_OK."
       exit 1
@@ -198,6 +221,13 @@ case "$HOST" in
     # FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW (lib/fs_win.cyr);
     # dir_list_pe.cyr enumerates tests\win + checks is_dir on a dir/file/missing
     # path on real Windows — must exit 42.
+    # v6.4.20 cx Release C: the NATIVE cycc.exe builds a PE cxvm from
+    # programs\cxvm.cyr and runs the portable .cyx I/O fixture (a guest write()).
+    # Before C, cxvm issued the guest syscall with a FIXED argc-6 shape that hit
+    # NO EPE_SYSCALL_DYNAMIC arity bucket → every guest write/read/open/exit
+    # returned -ENOSYS (cass exit=-38, no output). The arity-correct dispatch
+    # (write/read/open/lseek→argc4, close/exit→argc2) makes the PE buckets route
+    # to EWRITE_PE/etc. Must exit 42 (guest write must return its 9-byte count).
     ;;
   ecb-install)
     # Packaging-rot guard (v6.0.38): build the real tarball via the same

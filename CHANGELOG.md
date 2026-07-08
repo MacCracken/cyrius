@@ -6,6 +6,78 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.20] — 2026-07-07
+
+**v6.4.20 — cx arc C: portable `.cyx` runs cross-OS.** A `.cyx` doing real I/O now
+runs on **all four hosts** — x86-Linux, aarch64 (pi), macOS (ecb), Windows (cass) —
+verified on **real hardware** (both write+exit AND full file open→read→write→close).
+Two bugs in `programs/cxvm.cyr` only; **cycc byte-identical** (1,069,552 B — cxvm is
+not in the self-host/seed chain). One release, all four hosts (no C1/C2 split).
+
+The scoping workflow's premise ("cxvm passes the guest syscall number untranslated →
+add a per-host renumber table; Windows needs a separate emulation sub-release") was
+**disproven by reading the code + running on hardware**: the compiler's `ESYSXLAT`
+(aarch64) / `EMACHO_SYSXLAT` (macOS) emit a **runtime** `cmp/renumber` chain, so
+`syscall(sn,...)` with a *var* `sn` already gets renumbered per-target. A cxvm table
+would double-translate. The current (pre-fix) cxvm cross-compiled to aarch64/macOS
+already ran a write+exit `.cyx` unchanged.
+
+### Fixed — cxvm open pointer-slot bug (all hosts)
+- The `0x70` syscall handler translated the guest's virtual `.cyx` offset → real
+  address on the wrong register for `open`. `open(path, flags, mode)` puts the pointer
+  (`path`) in arg0 = **s2**, but the handler fixed **s3** (=`flags`). So every guest
+  `open()` corrupted flags and passed a raw offset as the path → EFAULT on all hosts.
+  Fixed: `open` translates s2; `read`/`write` keep s3 (`buf`), which were correct. The
+  fixup keys on the GUEST number BEFORE the compiler renumbers, and only shifts the
+  pointer reg (offset 0 = NULL, left alone).
+
+### Fixed — cxvm guest I/O on Windows (cass): arity-correct syscall dispatch
+- cxvm issued every guest syscall with a **fixed 5-trailing-arg** shape (`syscall(sn,
+  s2,s3,s4,s5,s6)` = argc 6). Windows routes var-numbered syscalls **by arity**
+  (`EPE_SYSCALL_DYNAMIC`: argc4→read/write/open/lseek, argc2→close/exit) and has **no
+  argc-6 bucket**, so every guest write/read/open/close/exit hit `_pe_dyn_nomatch` →
+  **-ENOSYS**. cass ran but did nothing (exit `-38`, no output; confirmed NOT a
+  Defender quarantine — `defender-clean`).
+- Fixed: dispatch on the guest number to issue the syscall with its **real Linux
+  arity** — `sn∈{0,1,2,8}`→argc4, `sn∈{3,60}`→argc2, else 5-arg passthrough. The PE
+  arity buckets now route to the existing `EWRITE_PE`/`EREAD_PE`/`EOPEN_PE`/
+  `ECLOSE_PE`/`ELSEEK_PE`/`EEXIT` emitters (**zero new backend code**). Linux/macOS
+  ignore extra args, so exact-arity is equally correct there — **one dispatch, four
+  hosts**. Non-I/O syscalls honestly `-ENOSYS` on PE (one expected compile warning);
+  6-arg syscalls (mmap) remain unsupported (cxvm captures only r2..r6).
+
+### Changed — cxvm caps 64 KB → 1 MB + overflow probe
+- `_CX_MEM_SIZE` (data segment) and `_cx_code_cap` (bytecode buffer) raised 64 KB → 1 MB
+  (match cycc's `input_buf`); `alloc`/`memset` now track `_CX_MEM_SIZE`. The stdin read
+  loop got an **overflow probe** (mirror `main_cx.cyr:95-101`) — a `>1 MB` `.cyx` now
+  errors instead of silently truncating + mis-executing. Code + data + stack still
+  share the one flat region (documented).
+
+### Provisioning + anti-rot gate
+- **cxvm ships in the macOS/Windows release tarballs** (`build-macos-arm64/x86` +
+  `build-windows` tarball builders) so a binary-install user can `cyrius run *.cyx`.
+  The portable-bytecode model is build-once (on Linux) / run-anywhere (cxvm).
+- `cross-os-selfhost.sh` — each of ecb/pi/cass now **builds a native cxvm with the
+  just-self-hosted compiler and runs a portable write-`.cyx` fixture** (exit-42 guard;
+  the guest write must return its byte count). A cxvm-that-halts is the placebo
+  CLAUDE.md warns about, so the fixture exercises the `0x70` path. All three GREEN
+  through the real gate.
+- `tests/cx_cli.sh` test (6): an x86 guest-write `.cyx` asserts both stdout content
+  and the write byte-count return.
+- **Deferred + filed:** the cx **compiler** (`cycc_cx`) is NOT shipped cross-native —
+  it cross-compiles to Mach-O/PE without error but **faults on macOS** (2 syscalls
+  `ESYSXLAT` doesn't route; caught by running it on ecb). `.cyx` are built on Linux and
+  run anywhere via cxvm, so this is a convenience, not a blocker. See
+  `issues/2026-07-07-cycc_cx-cross-native-macho-pe.md`.
+
+### Verified
+- Real hardware, both write+exit AND file open→read→write→close: x86-Linux · pi
+  (aarch64; open + `openat` AT_FDCWD arg-shift compose) · ecb (macOS; BSD `openat→open`
+  shift) · cass (Windows; open→CreateFileW, fd=HANDLE, ReadFile/WriteFile/CloseHandle).
+  cycc byte-identical (1,069,552 B — unchanged; cxvm is off the self-host path);
+  check.sh 132; self_compile ~600 ms (noise vs .19's 583 ms). release-gate GREEN
+  (fixpoint + seed-derive + check.sh + cross-OS ecb/cass/pi + bench).
+
 ## [6.4.19] — 2026-07-07
 
 **v6.4.19 — cx f64 comparisons work in conditionals (the cx arc B follow-up) + a latent

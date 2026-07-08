@@ -57,4 +57,17 @@ if "$CYR" build --target=cx "$T/ts.cyr" "$T/ts.cyx" >/dev/null 2>"$T/ts.err"; th
 fi
 grep -q "not yet supported on the cx bytecode target" "$T/ts.err" || { echo "FAIL: wrong transcendental error:"; cat "$T/ts.err"; exit 1; }
 
-echo "PASS: cx --target=cx build/run + versioned .cyx; f64 arithmetic + comparisons work; globals distinct; transcendentals fail loud (cx arc A/B + cmp follow-up)"
+# (6) cx arc C: the guest syscall path (0x70) does real I/O — a .cyx that WRITES
+# to stdout, and exits with the guest write()'s byte count. Proves the pointer-arg
+# fixup + arity-correct dispatch route the guest write to the host (not just a
+# halt). Cross-OS hosts run the same class of fixture via cross-os-selfhost.sh.
+printf 'fn main(): i64 { var w = syscall(1, 1, "cx-io-ok\\n", 9); return w; }\nvar e = main();\nsyscall(60, e);\n' > "$T/io.cyr"
+"$CYR" build --target=cx "$T/io.cyr" "$T/io.cyx" >/dev/null 2>&1 || { echo "FAIL: cx I/O build --target=cx"; exit 1; }
+# `cyrius run` exits with the guest's code (9) — capture stdout AND rc in one
+# ||-guarded assignment so `set -e` doesn't abort on the nonzero exit (the
+# CI-loop trap). Command substitution captures stdout regardless of exit code.
+io_rc=0; io_out=$("$CYR" run "$T/io.cyx" 2>/dev/null) || io_rc=$?
+[ "$io_out" = "cx-io-ok" ] || { echo "FAIL: cx I/O stdout=[$io_out] (want cx-io-ok)"; exit 1; }
+[ "$io_rc" = "9" ] || { echo "FAIL: cx I/O guest write returned $io_rc (want 9 bytes)"; exit 1; }
+
+echo "PASS: cx --target=cx build/run + versioned .cyx; f64 arithmetic + comparisons work; globals distinct; transcendentals fail loud; guest I/O writes to stdout (cx arc A/B/C)"
