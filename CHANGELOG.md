@@ -6,6 +6,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.29] — 2026-07-08
+
+**v6.4.29 — SIMD Phase 5: f32v8 on aarch64 works for free (2×NEON fallback).** Follow-on to
+v6.4.28: after f32v4's `EMIT_F32V_LOOP` became real NEON, the aarch64-native CI corpus surfaced
+`XPASS: simd_f32v8` — the strict-XFAIL forcing cue firing correctly. aarch64 has no 256-bit
+register, so the `lib/simd.cyr` f32v8 wrappers take the 2×128-bit fallback (`f32v_*(n=8)` →
+`EMIT_F32V_LOOP`) whenever AVX2 is absent, which is always on aarch64. So v6.4.28's f32v4 NEON
+made f32v8 work on aarch64 too — no `EMIT_F32V8_*` needed (those stay symbol-resolution stubs,
+never reached on aarch64). **2×NEON IS the correct aarch64 f32v8; there is no native 256-bit path.**
+
+### Changed
+- `simd_f32v8` removed from the strict `XFAIL` in `.github/workflows/ci.yml` (leaving `simd_ints`)
+  — it now PASSES on native arm64 (15/15, qemu-confirmed; the CI XPASS proved it on real arm64).
+- Comment-only updates to `src/backend/aarch64/emit.cyr` (the `EMIT_F32V8_*` stubs — clarifying
+  they're never reached on aarch64), `tests/tcyr/simd_f32v8.tcyr`, documenting the fallback path.
+- The 2×128-bit multi-iteration NEON path is cross-OS-gated by `vr01_simd_f32v4_neon.tcyr`'s
+  `f32v_dot(n=8)` (2 loop iterations) on ecb/cass/pi.
+
+### Verification
+- No codegen change (comment-only src edit — comments are stripped) → x86 + aarch64 `cycc`
+  **byte-identical**; seed-derive OK; check.sh **132**. `simd_ints` confirmed still legitimately
+  failing on aarch64 (int-vector NEON unimplemented) → correctly stays strict-XFAIL. **Remaining
+  Phase 5: aarch64 int-vectors (`simd_ints`) — the last SIMD XFAIL.**
+
 ## [6.4.28] — 2026-07-08
 
 **v6.4.28 — SIMD Phase 5: f32v4 packed ops on aarch64 NEON.** The Pin-1 SIMD arc's x86 portion
