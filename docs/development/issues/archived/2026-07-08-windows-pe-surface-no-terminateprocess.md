@@ -1,5 +1,13 @@
 # Windows PE syscall surface has no TerminateProcess — a spawned child cannot be killed
 
+> **RESOLVED v6.4.26** (2026-07-08). Added `syscall(0xF01D, hProcess, uExitCode) →
+> kernel32!TerminateProcess` (`ETERMINATE_PE`, the shared 2-arg aligned reroute) + the
+> kernel32 import + parse dispatch (argc==3) + cross-fork stubs (aarch64/cx). `lib/process_win.cyr`
+> gains `_win_terminate(hProcess, exitCode)` and `_win_wait_timeout(pi, ms, killed_out)`
+> (WAIT_TIMEOUT → terminate + reap, returns 137, sets *killed_out). Verified on cass
+> (`vr01_win_terminate.tcyr` — spawn 6 s child, 300 ms wait → kill → PASS) + wine; cass/pi/ecb
+> `SELFHOST_OK`. thoth can now implement `exec_shell_capture`'s Windows timeout-kill.
+
 **Filed:** 2026-07-08 (thoth 0.20.2 — Windows shell-tool timed capture; the timeout-kill has no primitive).
 **Severity:** P2 — blocks a downstream safety feature with no workaround: a spawned Windows process that
 exceeds a deadline cannot be terminated, so a hung/timed-out child leaks. Keeps thoth's shell tool

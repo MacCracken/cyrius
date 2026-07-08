@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.26] — 2026-07-08
+
+**v6.4.26 — Windows PE batch: `TerminateProcess` timeout-kill + capturing closures on PE
++ the R2 fd→HANDLE prologue extraction.** Three cyrius-native Windows/PE issues packed into
+one release with a single cass verification pass. (The sibling/folded-lib PE issue —
+sigil `authenticode_pe_hash` — stays out, handled in the separate folded-lib pass + UEFI arc.)
+
+### Added — `TerminateProcess` (0xF01D) PE reroute + timeout-kill verbs
+- Win32 has no signals, so a spawned child that ran past a wall-clock deadline could be
+  *detected* (`WaitForSingleObject` with a finite timeout) but not *killed* — a resource
+  leak that kept thoth's shell tool unadvertised on Windows. Added `syscall(0xF01D,
+  hProcess, uExitCode) → kernel32!TerminateProcess`: `ETERMINATE_PE`
+  (`src/backend/x86/emit.cyr`, the shared 2-arg aligned reroute) + the kernel32 import
+  (`src/backend/pe/emit.cyr`) + the parse dispatch (`src/frontend/parse_expr.cyr`, argc==3).
+  `lib/process_win.cyr` gains `_win_terminate(hProcess, exitCode)` (the SIGKILL analogue) and
+  `_win_wait_timeout(pi, ms, killed_out)` (wait up to `ms`; on `WAIT_TIMEOUT` = 258,
+  TerminateProcess + reap; returns 137 = 128+SIGKILL and sets `*killed_out`). Closes
+  `2026-07-08-windows-pe-surface-no-terminateprocess.md`.
+- **Cross-fork stubs required**: `ETERMINATE_PE` is referenced in `parse_expr.cyr` (all
+  forks) but real only in the x86 backend — added `return-0` stubs in
+  `src/backend/aarch64/emit.cyr` + `src/backend/cx/emit.cyr` for symbol resolution (same
+  pattern as `EGETCURPID_PE`/`EWAIT_PE`). A missed stub SELFHOST_FAILED cass's cycc_cx
+  build — caught by the cross-OS gate, not local Linux/wine (both include the x86 backend).
+
+### Fixed — capturing closures hard-errored on Windows PE
+- A **capturing** closure (`|x| base + x` dispatched via `callptr`) hard-errored on PE (the
+  v6.3.8 fail-loud guard: the env-build + `ECALLPTR_PE` 16-byte-align interaction was
+  unverified). Now PE routes capturing closures through `ECALLPTR_PE` like non-capturing
+  ones: the fn pointer is pushed as the callee (deepest), the env object as arg 0 (→rcx),
+  user args on top — matching `ECALLPTR_PE`'s `[callee-deepest, args-on-top]` contract, so
+  the closure body runs 16-byte-aligned (the SSE case the guard flagged). The v6.3.8 guard
+  is removed. Emit (`ECALLPTR_PE`) unchanged — the fix is the parse-side push order. Closes
+  `2026-07-07-capturing-closures-windows-pe.md`.
+
+### Changed — R2: extract the shared PE fd→HANDLE prologue
+- `EWRITE_PE` + `EREAD_PE` hand-duplicated the `fd → GetStdHandle-or-direct-handle`
+  prologue (the exact block the v6.2.43 VR-01 fix had to re-apply to `EWRITE_PE` after
+  `EREAD_PE` already had it — a proven repeat-fix hazard). Extracted `_pe_fd_to_handle_rcx`
+  called by both. `EREAD_PE`'s emission is byte-identical; `EWRITE_PE`'s changes (its old
+  form left hFile in rax + a trailing `mov rcx,rax`; the canonical helper leaves the HANDLE
+  in rcx) — verified by cass self-host, which reads source via `EREAD_PE` and writes the PE
+  via `EWRITE_PE`. Closes R2 of `2026-07-07-v6415-closeout-residuals.md` (D1/D2 remain →
+  v6.5.x IR substrate).
+
+### Added — gate tests
+- `tests/tcyr/vr01_win_terminate.tcyr` — spawn a ~6 s child, `_win_wait_timeout(300ms)` →
+  WAIT_TIMEOUT → TerminateProcess → assert killed + exit 137. PE-only (trivial pass off
+  Windows). `tests/tcyr/vr01_win_capturing_closure.tcyr` — portable: single/double capture,
+  capture+2-args, and an **f64 capture** (the SSE-align path) via callptr on every target.
+
+### Verification
+- x86-only change to the compiler? No — the x86 `cycc` genuinely changed (grew by
+  `ETERMINATE_PE`, shrank by the guard removal + R2 collapse; net cycc 1,073,616 B). Linux
+  differential codegen-diff=0/345 (every change is PE-guarded, dead on non-PE). Release-gate
+  GREEN: x86 fixpoint byte-identical · aarch64 fixpoint byte-identical (qemu, 1,010,824 B) ·
+  seed-derive OK · check.sh **132** · cross-OS **real hardware**: cass `SELFHOST_OK` +
+  `LIBTEST_OK` (17), pi + ecb `SELFHOST_OK` — `vr01_win_terminate` + `vr01_win_capturing_closure`
+  PASS on all three (wine too). Adversarial diff-review (symbol-resolution / PE-asm /
+  closure-ABI): 0 confirmed defects. self_compile ~618 ms.
+
 ## [6.4.25] — 2026-07-08
 
 **v6.4.25 — the aarch64 transcendental gaps: `f64_exp2` / `f64_atan` polyfills + a

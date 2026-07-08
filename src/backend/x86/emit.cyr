@@ -956,6 +956,32 @@ fn EMACHO_CLOCK_ARM(S): i64 {
 # 0x40 bytes keeps RSP 16-aligned at each `call` site (caller's RSP
 # was 8-mod-16 entering this fn because of the implicit return
 # address on the stack — same guarantee EEXIT relies on).
+
+# v6.4.26 (R2): fd → Win32 HANDLE prologue, shared by EWRITE_PE + EREAD_PE.
+# Input: rax = fd. Output: rcx = HANDLE. fd {0,1,2} → GetStdHandle({-10,-11,-12});
+# ANY other fd is a real CreateFileW handle used DIRECTLY (UNSIGNED compare — real
+# handles can have the high bit set; GetStdHandle(realHandle) returns garbage).
+# EWRITE_PE and EREAD_PE hand-duplicated this block — the exact repeat-fix hazard
+# the v6.2.43 VR-01 fix hit (it had to re-apply the fd>2 direct-handle path to
+# EWRITE_PE after EREAD_PE already had it). Extracted per
+# 2026-07-07-v6415-closeout-residuals.md (R2). NOTE: collapsing the two sites to
+# this one canonical sequence changes EWRITE_PE's emitted bytes (its old form left
+# hFile in rax + a trailing `mov rcx,rax`); EREAD_PE is byte-identical. Verified on
+# cass (self-host reads source via EREAD_PE + writes the PE via EWRITE_PE).
+fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
+    EB(S, 0x77); EB(S, 0x15);                           # ja +0x15 → .direct (skip std block)
+    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);              # neg rax
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE8); EB(S, 0x0A); # sub rax, 10
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (nStdHandle)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+GetStdHandle]
+    _pe_iat_fixup_add(S, GCP(S), gsh_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (std handle → rcx)
+    EB(S, 0xEB); EB(S, 0x03);                           # jmp +3 → .ready
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # .direct: mov rcx, rax (fd IS the handle)
+    return 0;                                            # .ready: rcx = HANDLE
+}
 fn EWRITE_PE(S): i64 {
     _pe_ensure_stdio(S);
     var gsh_idx = _pe_stdio_getstd_get();
@@ -975,20 +1001,12 @@ fn EWRITE_PE(S): i64 {
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r8 (len)
 
     # v6.3.43 (VR-01): the fd may be a real CreateFileW handle (>2), not a std
-    # stream. fd 0/1/2 → GetStdHandle(nStdHandle: 0→-10, 1→-11, 2→-12); fd>2 →
-    # use the handle directly. UNSIGNED compare — handles can have the high bit set.
-    # Before this, EWRITE_PE always neg/sub'd the fd into a std-handle index, so
-    # sys_write to a file wrote to a bogus handle and failed (found by vr01 on cass).
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
-    EB(S, 0x77); EB(S, 0x10);                           # ja .wfile (skip the 16-byte GetStdHandle block)
-    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);              # neg rax
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE8); EB(S, 0x0A); # sub rax, 10
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (nStdHandle)
-    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+GetStdHandle] → rax = hFile
-    _pe_iat_fixup_add(S, GCP(S), gsh_idx);
-    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    # .wfile: rax = hFile (file handle passed through, or GetStdHandle result)
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax
+    # stream. fd 0/1/2 → GetStdHandle; fd>2 → use the handle directly. The block is
+    # now the shared _pe_fd_to_handle_rcx helper (v6.4.26 R2) — it leaves the HANDLE
+    # in rcx (WriteFile's hFile arg). Before this, EWRITE_PE always neg/sub'd the fd
+    # into a std-handle index, so sys_write to a file wrote to a bogus handle and
+    # failed (found by vr01 on cass).
+    _pe_fd_to_handle_rcx(S, gsh_idx);              # rcx = HANDLE (std or direct)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov rdx, [rsp+0x30]
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov r8, [rsp+0x38]
     EB(S, 0x4C); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x28); # lea r9, [rsp+0x28]
@@ -1219,19 +1237,10 @@ fn EREAD_PE(S): i64 {
     # handle returned by CreateFileW (the `include` file reads) and must be used
     # DIRECTLY — GetStdHandle(realHandle) returns garbage, which made every
     # include READFILE return 0 (the Windows self-host bug: zero includes
-    # expanded → 'undefined variable _TARGET_MACHO').
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
-    EB(S, 0x77); EB(S, 0x15);                      # ja +21 → .direct (skip std block)
-    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xD8);         # neg rax
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE8); EB(S, 0x0A); # sub rax, 10
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax (nStdHandle)
-    EB(S, 0xFF); EB(S, 0x15);                      # call [rip+GetStdHandle]
-    _pe_iat_fixup_add(S, GCP(S), gsh_idx);
-    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax (std handle)
-    EB(S, 0xEB); EB(S, 0x03);                      # jmp +3 → .ready (skip .direct)
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # .direct: mov rcx, rax (fd IS the handle)
-    # .ready: rcx = handle; reload ReadFile args.
+    # expanded → 'undefined variable _TARGET_MACHO'). v6.4.26 (R2): now the shared
+    # _pe_fd_to_handle_rcx helper (byte-identical to this site's prior emission).
+    _pe_fd_to_handle_rcx(S, gsh_idx);
+    # rcx = handle; reload ReadFile args.
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov rdx, [rsp+0x30]
     EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov r8, [rsp+0x38]
     EB(S, 0x4C); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x28); # lea r9, [rsp+0x28] (lpNumberOfBytesRead)
@@ -1612,6 +1621,16 @@ fn EGETCURTID_PE(S): i64 {
 fn EGETCURPID_PE(S): i64 {
     _pe_ensure_getcurpid(S);
     return _pe_call_0arg_aligned(S, _pe_getcurpid_get());
+}
+
+# v6.4.26: syscall(0xF01D, hProcess, uExitCode) → kernel32!TerminateProcess. 2 args
+# (HANDLE→rcx, UINT exit code→rdx). Returns BOOL (nonzero=success) in rax. The Windows
+# SIGKILL analogue — force-terminates a spawned child that ran past a wall-clock
+# deadline (thoth's exec_shell_capture timeout-kill). Uses the same 2-arg aligned
+# reroute as GetProcAddress/ProcessPrng. See 2026-07-08-windows-pe-surface-no-terminateprocess.md.
+fn ETERMINATE_PE(S): i64 {
+    _pe_ensure_terminateproc(S);
+    return _pe_call_2arg_aligned(S, _pe_terminateproc_get());
 }
 
 # syscall(0xF00C) → TlsAlloc(). 0 args. Returns a fresh TLS slot index (DWORD)

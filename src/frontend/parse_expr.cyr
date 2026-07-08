@@ -705,11 +705,10 @@ fn PARSE_FACTOR(S): i64 {
             var cp_cli = FINDLOCAL(S, PEEKV(S));
             if (cp_cli >= 0) { if (GLTYPE(S, cp_cli) == CLOSURE_TYID) { cp_is_closure = 1; } }
         }
-        if (cp_is_closure == 1) {
-            if (_TARGET_PE == 1) {
-                ERR_MSG(S, "capturing closures not yet supported on Windows PE — use a non-capturing closure + explicit args", 100);
-            }
-        }
+        # v6.4.26: capturing closures now supported on PE — they route through
+        # ECALLPTR_PE (the 16-byte-aligned path) with the fn pointer pushed as the
+        # callee and the env object as arg 0. The v6.3.8 fail-loud guard is removed.
+        # See 2026-07-07-capturing-closures-windows-pe.md.
         PCMPE(S);                               # eval callee → rax (the env object if closure)
         # v6.0.86: on PE the callee goes on the STACK (pushed FIRST, below the
         # args), NOT a frame slot — a GFLC slot could alias a `&`-taken local
@@ -723,16 +722,30 @@ fn PARSE_FACTOR(S): i64 {
             SLDEP(S, cp_obj_slot, 0);
             SFLC(S, cp_obj_slot + 1);
             EFLSTORE(S, cp_obj_slot);           # spill the env object
-            EFLLOAD(S, cp_obj_slot);            # rax = obj
-            ELOAD64(S);                         # rax = [obj+0] = closure fn pointer
-            cp_idx = GFLC(S);
-            S64(S + 0x5D9D000 + cp_idx * 8, 0 - 1);
-            SLDEP(S, cp_idx, 0);
-            SFLC(S, cp_idx + 1);
-            EFLSTORE(S, cp_idx);                # spill fn pointer (the callee)
-            EFLLOAD(S, cp_obj_slot);            # rax = obj
-            EPUSHR(S);                          # push obj as arg 1 (env)
-            cp_argc = 1;
+            if (_TARGET_PE == 1) {
+                # v6.4.26: PE closures use ECALLPTR_PE, which wants the callee
+                # pushed FIRST (deepest) and the args on top. Push the fn pointer
+                # as the callee, then the env object as arg 0 (→rcx); user args
+                # follow in the while-loop. cp_idx stays 0 (callee is on the stack,
+                # not a frame slot — same as the PE non-capturing path).
+                EFLLOAD(S, cp_obj_slot);        # rax = obj
+                ELOAD64(S);                     # rax = [obj+0] = closure fn pointer
+                EPUSHR(S);                      # push fn pointer as callee (deepest)
+                EFLLOAD(S, cp_obj_slot);        # rax = obj
+                EPUSHR(S);                      # push obj as arg 0 (env)
+                cp_argc = 1;
+            } else {
+                EFLLOAD(S, cp_obj_slot);        # rax = obj
+                ELOAD64(S);                     # rax = [obj+0] = closure fn pointer
+                cp_idx = GFLC(S);
+                S64(S + 0x5D9D000 + cp_idx * 8, 0 - 1);
+                SLDEP(S, cp_idx, 0);
+                SFLC(S, cp_idx + 1);
+                EFLSTORE(S, cp_idx);            # spill fn pointer (the callee)
+                EFLLOAD(S, cp_obj_slot);        # rax = obj
+                EPUSHR(S);                      # push obj as arg 1 (env)
+                cp_argc = 1;
+            }
         } else {
             if (_TARGET_PE == 1) {
                 EPUSHR(S);                      # push callee (consumed by ECALLPTR_PE)
@@ -758,7 +771,10 @@ fn PARSE_FACTOR(S): i64 {
         # call with an rbx-anchored `and rsp,-16` (the kernel32-reroute pattern),
         # so the callee is entered ABI-correct regardless of caller alignment.
         # See issue 2026-06-05-windows-com-vtable-real-callee-frame-corruption.md.
-        if (_TARGET_PE == 1 && cp_is_closure == 0) {
+        if (_TARGET_PE == 1) {
+            # v6.4.26: both capturing and non-capturing closures on PE use
+            # ECALLPTR_PE — for capturing, cp_argc counts the env (arg 0) + user
+            # args, and the fn pointer was pushed as the callee (deepest).
             ECALLPTR_PE(S, cp_argc);            # pop args + pop callee (rax) + call rax
         } else {
             ECALLPOPS(S, cp_argc);              # marshal args into arg regs (+ Win64 shadow)
@@ -1085,6 +1101,16 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            # v6.4.26: syscall(0xF01D, hProcess, uExitCode) → TerminateProcess
+            # (2-arg, argc==3). The Windows timeout-kill primitive (thoth). See
+            # 2026-07-08-windows-pe-surface-no-terminateprocess.md.
+            if (sc_num == 61469) {
+                if (argc == 3) {
+                    ETERMINATE_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             if (sc_num == 61452) {
                 if (argc == 1) {
                     # syscall(0xF00C) → TlsAlloc (no args, slot index in rax).
@@ -1261,7 +1287,7 @@ fn PARSE_FACTOR(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
             584);
         }
         ESCPOPS(S, argc);

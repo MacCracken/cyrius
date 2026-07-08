@@ -1,5 +1,11 @@
 # v6.4.15 closeout residuals — R2 (PE prologue refactor) + D1/D2 (dead IR/decode code)
 
+> **R2 SHIPPED v6.4.26** (2026-07-08) — `_pe_fd_to_handle_rcx` extracted from `EWRITE_PE` +
+> `EREAD_PE` (`src/backend/x86/emit.cyr`); `EREAD_PE` byte-identical, `EWRITE_PE` re-emitted;
+> verified by cass PE self-host (reads via `EREAD_PE`, writes via `EWRITE_PE`) + pi/ecb
+> `SELFHOST_OK`. **D1/D2 (dead IR/decode) REMAIN OPEN → v6.5.x IR-substrate slot.** This issue
+> stays open for D1/D2; close it when they land.
+
 **Filed:** 2026-07-07 (extracted from the now-archived
 [`2026-07-03-v6345-closeout-audit-backlog.md`](archived/2026-07-03-v6345-closeout-audit-backlog.md)
 so the three conscious deferrals are real issues, not CHANGELOG prose).

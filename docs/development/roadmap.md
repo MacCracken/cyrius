@@ -557,8 +557,12 @@ never unilaterally deferred or redirected.
   - `bare-metal-forbidden-module-check` → fold into the Function-visibility arc's `#`-annotation slot.
   - `macho-structural-lint-residual` → Intel-Mac tail (slot T).
   - `sigil-authenticode-pe-hash-oob-read` → UEFI Secure Boot arc (slot 3).
-  - `capturing-closures-windows-pe` → a PE-codegen touch (verify on wine + cass).
-  - `v6415-closeout-residuals` (R2 PE prologue → opportunistic; D1/D2 dead IR → v6.5.x).
+  - ~~`capturing-closures-windows-pe`~~ — ✅ **SHIPPED v6.4.26** (route through `ECALLPTR_PE`;
+    guard removed; verified wine + cass).
+  - `v6415-closeout-residuals` — **R2 (PE prologue) ✅ SHIPPED v6.4.26** (`_pe_fd_to_handle_rcx`
+    extracted; cass-verified). D1/D2 (dead IR/decode) REMAIN → v6.5.x IR substrate.
+  - ~~`windows-pe-surface-no-terminateprocess`~~ — ✅ **SHIPPED v6.4.26** (0xF01D TerminateProcess
+    + `_win_terminate`/`_win_wait_timeout`; unblocks thoth's Windows timeout-kill).
 - **🟢 aarch64 / SIMD polish (SIMD Phase 5 tail):** `i64v2-valueform-packed-multiply`.
   - ~~`aarch64-f64-exp2-atan-hard-error`~~ — ✅ **SHIPPED v6.4.25** (polyfill-dispatch +
     `_f64_exp2_polyfill`/`_f64_atan_polyfill`). Unblocked `ganita` inverse-trig →

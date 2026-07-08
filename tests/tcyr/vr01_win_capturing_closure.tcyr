@@ -1,0 +1,57 @@
+# vr01_win_capturing_closure.tcyr — VR-01: lexical-capture closures dispatched via
+# callptr on EVERY target, including Windows PE (v6.4.26). Pre-v6.4.26 a capturing
+# closure hard-errored on PE ("capturing closures not yet supported on Windows PE");
+# now PE routes them through ECALLPTR_PE (fn pointer as the callee, env object as
+# arg 0, 16-byte-aligned). This is a PORTABLE test — it exercises the feature on
+# Linux/macOS/aarch64 (where it already worked) AND on cass (the newly-fixed path).
+# The f64 capture exercises the SSE-alignment interaction the v6.3.8 guard flagged
+# as unverified. See 2026-07-07-capturing-closures-windows-pe.md.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+
+# single capture + 1 arg
+fn cap_add(base, x): i64 {
+    var f = |y| base + y;
+    return callptr(f, x);
+}
+
+# two captures + 1 arg
+fn cap_two(a, b, x): i64 {
+    var f = |y| a + b + y;
+    return callptr(f, x);
+}
+
+# capture + 2 args (exercises the env=arg0, args=rdx/r8 marshalling on Win64)
+fn cap_two_args(base): i64 {
+    var f = |p, q| base + p * q;
+    return callptr(f, 3, 4);
+}
+
+# f64 capture + f64 arg — the SSE path (why the PE guard existed: env build +
+# ECALLPTR_PE 16-byte-align interaction). base/x are f64 bit patterns.
+fn cap_f64(base, x): i64 {
+    var f = |y| f64_add(base, y);
+    return callptr(f, x);
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("capturing closures via callptr (all targets incl. Windows PE, v6.4.26)");
+    assert_eq(cap_add(100, 5), 105, "single capture + 1 arg → base+x");
+    assert_eq(cap_add(0 - 30, 8), 0 - 22, "single capture negative base");
+    assert_eq(cap_two(10, 20, 7), 37, "two captures + 1 arg → a+b+x");
+    assert_eq(cap_two_args(1), 13, "capture + 2 args → 1 + 3*4");
+    assert_eq(cap_two_args(100), 112, "capture + 2 args → 100 + 3*4");
+
+    var eps = f64_div(f64_from(1), f64_from(1000000));   # 1e-6
+    var r = cap_f64(f64_from(100), f64_from(5));
+    assert_eq(f64_lt(f64_abs(f64_sub(r, f64_from(105))), eps), 1, "f64 capturing closure (SSE-align path) → 100.0+5.0");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

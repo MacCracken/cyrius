@@ -1,0 +1,43 @@
+# vr01_win_terminate.tcyr — VR-01: Windows TerminateProcess timeout-kill (v6.4.26).
+# The 0xF01D PE reroute (kernel32!TerminateProcess) + lib/process_win.cyr's
+# _win_terminate / _win_wait_timeout verbs — the Windows SIGKILL analogue that lets
+# a spawned child which ran past a wall-clock deadline be force-terminated (thoth's
+# exec_shell_capture). PE-only: on Linux/macOS/aarch64 this is a trivial pass (there
+# is no TerminateProcess reroute off PE). On cass it spawns a ~6 s child, waits 300 ms
+# → WAIT_TIMEOUT → TerminateProcess → reap, and asserts the deadline was enforced.
+# See 2026-07-08-windows-pe-surface-no-terminateprocess.md.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/process.cyr"
+
+fn main(): i64 {
+    alloc_init();
+#ifdef CYRIUS_TARGET_WIN
+    test_group("Windows TerminateProcess timeout-kill (0xF01D)");
+    # Spawn a long-running child (~6 s) so the 300 ms wait is guaranteed to time out.
+    var wbuf = alloc(16384);
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, "cmd /c ping -n 6 127.0.0.1 > nul");
+    _w_terminate(wbuf, o);
+    var pi[24];
+    var spawned = _win_create_process(wbuf, 0, 0, &pi);
+    assert_eq(spawned != 0, 1, "child spawned via CreateProcessW");
+    var killed[8];
+    store64(&killed, 0);
+    var ec = _win_wait_timeout(&pi, 300, &killed);
+    # The child is a 6 s ping; a 300 ms wait MUST time out → we terminate it.
+    assert_eq(load64(&killed), 1, "300ms wait on a 6s child timed out → TerminateProcess enforced");
+    assert_eq(ec, 137, "killed child reports the forced 137 exit code (128+SIGKILL convention)");
+#endif
+#ifndef CYRIUS_TARGET_WIN
+    test_group("TerminateProcess is PE-only (trivial pass off Windows)");
+    assert_eq(1, 1, "no TerminateProcess reroute off PE — nothing to exercise here");
+#endif
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
