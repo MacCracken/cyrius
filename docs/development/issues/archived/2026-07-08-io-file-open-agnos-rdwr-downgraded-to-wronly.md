@@ -1,5 +1,12 @@
 # io: `file_open` agnos flag-map collapses `O_RDWR` → `AO_WRONLY` (reads on an RDWR fd fail)
 
+> **RESOLVED v6.4.27 — BOTH sites (2026-07-08).** `lib/io.cyr:80`: replaced the
+> `if ((flags & 3) != 0) { ao = ao | 0x1; }` fold with `ao = ao | (flags & 3);` (access mode is
+> 1:1 Linux↔agnos). Verified under mirshi: fixed → exit 42, buggy line → exit 4 — `tests/io_rdwr_agnos.sh`
+> + the `io.tcyr` round-trip are sharp. The `lib/sakshi.cyr:88` DUPLICATE is fixed at the sakshi
+> SOURCE (`~/Repos/sakshi/src/syscalls.cyr:66`), released as **sakshi 2.4.5**, and re-vendored into
+> `lib/sakshi.cyr`. cycc byte-identical (lib-only). Both sites closed.
+
 **Filed:** 2026-07-08 (surfaced porting `sit` + `patra` to agnos; validated under mirshi).
 **Severity:** P1 — silent functional miscompile (no `ud2`). Every agnos consumer that opens a
 file `O_RDWR` via `file_open` and then *reads* it gets a write-only fd, so the read fails. Affects

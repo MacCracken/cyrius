@@ -1,5 +1,12 @@
 # aarch64: un-guard ganita inverse-trig (asin/acos/atan2) now that f64_atan polyfills
 
+> **RESOLVED v6.4.27** (2026-07-08, folded-stdlib repair). Removed the `#ifdef CYRIUS_ARCH_X86`
+> guard around `ganita_f64_asin/acos/atan2` in the ganita SOURCE
+> (`~/Repos/ganita/src/math_advanced.cyr`) — unblocked by `.25`'s `_f64_atan_polyfill`. The
+> `_compat.cyr` `f64_asin/acos/atan2` wrappers (which sat outside the guard) no longer reference an
+> undefined fn on aarch64. Verified `ganita_f64_atan2(1,1)=π/4` on aarch64 (qemu) + x86. Released as
+> **ganita 1.0.3** + re-vendored into `lib/ganita.cyr` (aarch64 consumers must `include "lib/math.cyr"`).
+
 **Filed:** 2026-07-08 (unblocked by v6.4.25's aarch64 `f64_atan` polyfill).
 **Severity:** P3 — enhancement; the functions work on x86, just skipped on aarch64.
 **Component:** `lib/ganita.cyr` (inverse-trig `#ifdef CYRIUS_ARCH_X86` block, lines ~1197–1252),

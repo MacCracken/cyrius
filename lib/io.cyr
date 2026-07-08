@@ -77,7 +77,7 @@ fn file_open(path: cstring, flags, mode): i64 {
     var namelen = 0;
     while (load8(path + namelen) != 0) { namelen = namelen + 1; }
     var ao = 0;
-    if ((flags & 3) != 0) { ao = ao | 0x1; }       # O_WRONLY/O_RDWR -> AO_WRONLY (O_RDONLY=0)
+    ao = ao | (flags & 3);   # O_/AO_ access mode 1:1 (0/1/2); v6.4.27: was folding O_RDWR→AO_WRONLY
     if ((flags & 64) != 0) { ao = ao | 0x100; }    # O_CREAT  -> AO_CREAT
     if ((flags & 512) != 0) { ao = ao | 0x200; }   # O_TRUNC  -> AO_TRUNC
     if ((flags & 1024) != 0) { ao = ao | 0x400; }  # O_APPEND -> AO_APPEND

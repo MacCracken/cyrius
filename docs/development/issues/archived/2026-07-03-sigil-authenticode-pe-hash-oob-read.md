@@ -1,5 +1,11 @@
 # sigil `authenticode_pe_hash` — 1–2 byte OOB read of the PE optional-header magic before the size guard
 
+> **RESOLVED v6.4.27** (2026-07-08, folded-stdlib repair). Fixed at the sigil SOURCE
+> (`~/Repos/sigil/src/authenticode.cyr`): hoisted `if (opt + 2 > pe_len) { return 0 - 1; }` above
+> the 2-byte magic read (the prior guard only ensured `opt <= pe_len`); downstream reads are covered
+> by the existing `secdir_off + 8 > pe_len` guard. Released as **sigil 3.10.1** + re-vendored into
+> `lib/sigil.cyr`. cycc byte-identical (lib-only).
+
 **Filed:** 2026-07-03 (v6.3.45 closeout security re-scan). **Severity:** Low — an over-read of 1–2
 bytes on a MALFORMED PE, on the UEFI Authenticode signing path that is not exercised until the v6.4.x
 UEFI Secure Boot arc. No in-repo callers, so no current regression surface.

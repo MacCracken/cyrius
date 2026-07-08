@@ -1,5 +1,5 @@
 # sakshi.cyr — tracing, error handling, and structured logging for Cyrius
-# Bundled distribution of sakshi v2.4.4
+# Bundled distribution of sakshi v2.4.5
 # Source: https://github.com/MacCracken/sakshi
 # License: GPL-3.0-only
 #
@@ -85,7 +85,7 @@ fn _sk_open(path, flags, mode): i64 {
     var n = 0;
     while (load8(path + n) != 0) { n = n + 1; }
     var ao = 0;
-    if ((flags & 3) != 0) { ao = ao | 0x1; }        # O_WRONLY/O_RDWR -> AO_WRONLY
+    ao = ao | (flags & 3);   # O_/AO_ access mode 1:1 (0/1/2); was folding O_RDWR→AO_WRONLY
     if ((flags & 64) != 0) { ao = ao | 0x100; }     # O_CREAT  -> AO_CREAT
     if ((flags & 512) != 0) { ao = ao | 0x200; }    # O_TRUNC  -> AO_TRUNC
     if ((flags & 1024) != 0) { ao = ao | 0x400; }   # O_APPEND -> AO_APPEND

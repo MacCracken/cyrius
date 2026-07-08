@@ -1,5 +1,16 @@
 # sandhi `_SANDHI_RPC_POLICY_SLOT = 16` is out-of-bounds on macOS/agnos thread-local
 
+> **PREMISE DISPROVED — CLOSE (2026-07-08, folded-stdlib repair pass).** The claim is that
+> sandhi uses `_SANDHI_RPC_POLICY_SLOT = 16` as a `thread_local_set`/`get` slot index (slot 16
+> > `TLOCAL_MAX_SLOTS` 15 → OOB on macOS/agnos). Verified against sandhi 1.7.0 SOURCE
+> (`~/Repos/sandhi/src/rpc/dispatch.cyr`) AND the vendored `lib/sandhi.cyr`: `_SANDHI_RPC_POLICY_SLOT`
+> is the **byte-stride of a HEAP table entry** (`alloc_via(default_alloc(), CAP*SLOT)` +
+> `_sandhi_rpc_policy_tbl + i*SLOT`, key@+0/policy@+8), NOT a TLS slot. There are **ZERO
+> `thread_local_set/get` calls in sandhi** (source or fold). sandhi was refactored from any
+> TLS scheme to a heap table; the issue premise is stale/misread. **No sandhi fix; no OOB.**
+> The paired `2026-07-01-thread-local-slot-namespace-no-allocator.md` (cyrius-side allocator)
+> stands on its own — this dismissal does not touch it.
+
 **Filed:** 2026-07-01 (surfaced while mapping the thread-local slot namespace)
 **Severity:** Medium — latent OOB write on macOS/agnos; benign on Linux.
 **Component:** vendored sandhi (`lib/sandhi.cyr:_SANDHI_RPC_POLICY_SLOT`).

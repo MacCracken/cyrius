@@ -445,6 +445,12 @@ jobs:
         run: |
           [ -s build/cyrius ] || { cat cbt/cyrius.cyr | ./build/cycc > build/cyrius && chmod +x build/cyrius; }
           sh scripts/agnos-crossbuild-gate.sh
+      - name: AGNOS O_RDWR flag-map gate (file_open access-mode passthrough)
+        # v6.4.27: guard against `file_open`'s agnos branch re-folding O_RDWR → AO_WRONLY
+        # (2026-07-08-io-file-open-agnos-rdwr...). Linux O_RDWR round-trip + agnos build
+        # clean + source integrity; the mirshi read-after-write leg runs where mirshi is
+        # checked out (local dev) — CI does the build + integrity legs.
+        run: sh tests/io_rdwr_agnos.sh
       - name: Test suite (.tcyr)
         run: |
           pass=0; fail=0

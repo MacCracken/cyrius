@@ -1,5 +1,10 @@
 # yukti udev.cyr `src_len[1]` undersized array-local (4-byte socklen in a 1-slot local)
 
+> **RESOLVED v6.4.27** (2026-07-08, folded-stdlib repair). `~/Repos/yukti/src/udev.cyr:685`
+> `var src_len[1]` → `var src_len[4]` (benign — `[1]` rounds to 8B so the 4-byte write already fit —
+> but it removes the under-declared-slot idiom). Released as **yukti 2.2.9** + re-vendored into
+> `lib/yukti.cyr`.
+
 **Filed:** 2026-07-07 (CHANGELOG-prose deferral sweep — "cosmetic backlog item for yukti's
 own timeline" that never got a real issue).
 **Severity:** P3 — benign today; the under-declared-slot idiom the v6.3.18 sweep eliminated

@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.27] — 2026-07-08
+
+**v6.4.27 — P1: agnos `file_open` folded `O_RDWR` → `AO_WRONLY`, so reads on an RDWR fd
+failed.** A silent functional miscompile (no `ud2`) on the agnos target: every consumer that
+opened a file `O_RDWR` and then *read* it got a write-only fd. Surfaced porting `sit`/`patra`
+to agnos under mirshi (`patra: cannot read header` reopening its B-tree). Linux/macOS/Windows
+unaffected.
+
+### Fixed — access-mode passthrough in `file_open`'s agnos branch
+- `lib/io.cyr:80` mapped `if ((flags & 3) != 0) { ao = ao | 0x1; }` — folding BOTH `O_WRONLY`
+  (1) and `O_RDWR` (2) to `AO_WRONLY` (0x1), never emitting `AO_RDWR` (0x2). The access-mode
+  bits are identical Linux↔agnos (`RDONLY/WRONLY/RDWR = 0/1/2`), so they pass straight through:
+  `ao = ao | (flags & 3);`. `O_CREAT`/`O_TRUNC`/`O_APPEND` were already correct and are
+  unchanged. Lib-only fix (`io.cyr` is not compiled into `cycc`) → all `cycc` forks
+  byte-identical; only the `#ifdef CYRIUS_TARGET_AGNOS` branch changed, so
+  Linux/macOS/Windows `file_open` is untouched. Closes
+  `2026-07-08-io-file-open-agnos-rdwr-downgraded-to-wronly.md`.
+- **Folded-lib duplicate** — the same bug lived in `lib/sakshi.cyr:88` (sakshi's own `_sk_*`
+  agnos open helper). Fixed at the sakshi SOURCE repo + re-vendored here (see the folded-stdlib
+  repair below), NOT patched in the fold. Tree grep confirmed only these two sites
+  (`sankoch.cyr:7157`'s `flags & 3` is an unrelated LZ4 filter count).
+
+### Added — regression gates (sharp: revert-tested)
+- `tests/tcyr/io.tcyr` gains an O_RDWR read-after-write round-trip (create+write O_RDWR, close,
+  reopen O_RDWR, read, assert content) — runs in the standard suite (Linux/macOS/Windows) and
+  the CI agnos `.tcyr` job. `tests/io_rdwr_agnos.sh` (wired into the CI `test-agnos` job) does
+  the Linux round-trip + `--agnos` build + source integrity, and — where mirshi is checked out
+  — runs the agnos binary under mirshi (read-after-write → exit 42). **Verified locally under
+  mirshi: fixed → 42, and the buggy line → 4 (read on write-only fd), proving the gate is
+  sharp.**
+
+### Folded-stdlib repair — 4 sibling stdlibs fixed at source + re-vendored
+The folded-stdlib repair pass (user-directed): each bug fixed in its SOURCE repo, patch-released,
+and re-vendored byte-identical into `lib/<name>.cyr` (never patched in the fold). All four sibling
+`cyrius.cyml` pins bumped to `6.4.26` (last released toolchain; satisfies ganita's `.25` dep).
+- **sakshi 2.4.4 → 2.4.5** — `_sk_open` agnos O_RDWR fold (the `lib/io.cyr` twin above);
+  `ao = ao | (flags & 3)`. mirshi-equivalent to the io.cyr fix. Closes the io issue's fold half.
+- **sigil 3.10.0 → 3.10.1** — `authenticode_pe_hash` 1–2 byte OOB read of the PE optional-header
+  magic before the size guard; hoisted `if (opt + 2 > pe_len) return -1`. Closes
+  `2026-07-03-sigil-authenticode-pe-hash-oob-read.md`.
+- **ganita 1.0.2 → 1.0.3** — inverse-trig `asin/acos/atan2` un-guarded from `#ifdef
+  CYRIUS_ARCH_X86` (the `_compat.cyr` wrappers were a latent aarch64 undefined-fn); unblocked by
+  `.25`'s `_f64_atan_polyfill`. `atan2(1,1)=π/4` verified on aarch64 (qemu) + x86. Closes
+  `2026-07-08-aarch64-ganita-inverse-trig-unguard.md`.
+- **yukti 2.2.8 → 2.2.9** — `udev.cyr` `src_len[1] → [4]` (benign; states the 4-byte socklen
+  intent). Closes `2026-07-07-yukti-udev-src-len-undersized-array-local.md`.
+- **sandhi** — investigated, **premise-disproved** (the filed TLS-slot-OOB is a heap-table
+  byte-stride, zero `thread_local` calls); issue archived, no fix.
+
+### Verification
+- cycc byte-identical (lib-only changes — none of the folded libs is compiled into `cycc`) →
+  cross-OS self-host byte-identical-by-construction; the changed target (agnos) is mirshi-verified.
+  seed-derive OK · check.sh **132** · Linux O_RDWR round-trip exit 42 · agnos-under-mirshi exit 42
+  · ganita aarch64 atan2 exit 42.
+
 ## [6.4.26] — 2026-07-08
 
 **v6.4.26 — Windows PE batch: `TerminateProcess` timeout-kill + capturing closures on PE
