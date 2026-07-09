@@ -481,15 +481,30 @@ self-hosts everywhere.
 
 ### Portability
 
-The packed SIMD ops are **x86-only** as of v6.4.10. On aarch64 (NEON) and
-the `cx` bytecode backend the packed-op emitters are silent stubs: the
-`f32v4` / `f32v8` / integer-vector wrappers *compile* but produce no result
-on those targets — do not use them there yet. The aarch64 NEON port
-(`fmla` / `sdot`, mirroring the existing `f64v` NEON code) is SIMD Phase 5,
-planned but deferred; the `simd_f32v4` / `simd_ints` / `simd_f32v8` tests
-are `XFAIL` in the aarch64 CI corpus until it lands. The scalar `f64` /
-`f64v2` / `f64v4` ops (backed by SSE2 / NEON) are available on every
-target.
+Packed SIMD is **Phase 5 complete on all four backends** as of v6.4.32. The
+`f32v4` / `f32v8` / `f64v2` / `f64v4` and integer-vector packed ops (plus
+`iv_dp8`) run natively on every target:
+
+- **x86** — SSE + AVX2, CPUID runtime dispatch (v6.4.4–.9).
+- **aarch64 NEON** — the `EMIT_F32V_LOOP` / `EMIT_F32V_FMADD` / `EMIT_F32V_DOT`
+  and `EMIT_IVEC_BINOP` / `EMIT_IVEC_DP8` emitters in
+  `src/backend/aarch64/emit.cyr` (v6.4.28–.30). NEON uses `fmul`+`fadd` (not
+  `fmla`) so results round bit-identically to the x86 path.
+- **Windows PE** — value-form SIMD params *and* returns (by-pointer copy-in +
+  retptr) (v6.4.31).
+- **cx bytecode** — every flat-array verb lowers to a per-lane scalar loop
+  (`_CX_VLOOP_BIN`, cxvm opcodes through `0x68`) (v6.4.32).
+
+The former `simd_f32v4` / `simd_ints` / `simd_f32v8` ARM `XFAIL`s were all
+removed at v6.4.30; the `vr01_simd_f32v4_neon` / `vr01_simd_ints_neon` /
+`vr01_simd_cx` cross-OS fixtures run the real emitters on pi (aarch64) and are
+verified on real hardware. Every vector type is available on every backend.
+The one caveat: the aarch64 *native 256-bit* `f32v8` emitters are return-0
+stubs that are never reached at runtime — `lib/simd.cyr` routes `f32v8`
+through native `f32v4` NEON, so the verb still works on aarch64; only a native
+256-bit path (as opposed to 2×128-bit) stays x86-AVX2-only. The scalar `f64` /
+`f64v2` / `f64v4` ops (backed by SSE2 / NEON / cx scalar loops) are likewise
+available on every target.
 
 ## Includes
 
@@ -1315,9 +1330,11 @@ offsets past the params.
   (raised from 1024 at v6.3.41; integer-literal inits and enum members are free
   — see **Global Initializers** for the counting rule)
 - `default`, `match`, `in`, `shared` are keywords
-- Closures (`|x| body`) are non-capturing — the body can't reference enclosing
-  locals yet (pass them as parameters); lexical capture is a planned follow-up.
-  Closures must be written inside a function. See the **Closures** section.
+- Closures (`|x| body`) support lexical capture by value (v6.3.8) — a body may
+  reference enclosing locals, captured by value at construction (Windows PE is
+  the exception: capturing closures are a compile error there — pass the values
+  as parameters). Closures must be written inside a function. See the
+  **Closures** section.
 
 ## Gotchas
 
@@ -2030,7 +2047,7 @@ the TS frontend.
 
 ## Example Programs
 
-See `programs/` for 81 examples:
+See `programs/` for 82 examples:
 - **CLI tools**: cat, echo, head, wc, grep, hexdump, tail, tr, uniq, sort, basename, cols, count, toupper, rot13, rev, nl, seq, tee, yes, true, false
 - **Algorithms**: fizzbuzz, primes, sieve, collatz, ackermann, gcd, brainfuck, life, xor
 - **Data structures**: struct_list (linked list), alloctest (heap), strtype (fat strings)
@@ -2041,7 +2058,7 @@ See `programs/` for 81 examples:
 
 ```
 bootstrap/asm (29KB seed)
-  → cybs (~21 KB bootstrap compiler)
+  → cybs (~12 KB bootstrap compiler)
     → cycc (modular compiler + IR)
       → cycc_aarch64 (Linux + macOS Mach-O cross-compiler)
       → cycc_win    (Windows PE32+ cross-compiler)

@@ -57,10 +57,13 @@ var remainder = 100 % 7;     # 2
 
 `i64` stays the core tenet, but it isn't the *only* type. A deliberate,
 narrow exception exists for math hot paths: scalar `f64` floats plus the
-`f64v2` / `f64v4` SIMD vector types (see `lib/math.cyr`, `lib/simd.cyr`).
-These are bit-pattern values backed by SSE2/NEON builtins — not a full
-float type system, just enough for numeric kernels. Everything else
-remains an i64.
+SIMD vector types — `f32v4` / `f32v8` and `f64v2` / `f64v4`, along with
+the integer vectors (`i8v16` / `i16v8` / `i32v4` / `i64v2` and their
+unsigned forms) (see `lib/math.cyr`, `lib/simd.cyr`). These are
+bit-pattern values backed by packed SIMD emitters — x86 SSE/AVX2,
+aarch64 NEON, Windows PE, and cx bytecode are all Phase 5 complete as of
+v6.4.32 — not a full float type system, just enough for numeric kernels.
+Everything else remains an i64.
 
 ## Functions
 
@@ -261,4 +264,4 @@ syscall(60, exit_code);
 - [Language Guide](cyrius-guide.md) — complete reference
 - [Standard Library](../stdlib-reference.md) — every function documented
 - [Size comparisons](../size-comparisons.md) — exit42 across languages, compiler footprint
-- [Examples](../../programs/) — 81 working programs
+- [Examples](../../programs/) — 82 working programs

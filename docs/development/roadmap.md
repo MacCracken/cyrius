@@ -154,6 +154,15 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   anchors); x86 cycc byte-identical; aarch64 self-host fixpoint byte-identical under qemu.
   **Cut together with .15** (.15 not separately pushed). Test `tests/tcyr/vr01_trig_polyfill.tcyr`
   (31 asserts, ran in the cross-OS gate on real ecb + pi). check.sh 131; self_compile 577 ms.
+- **v6.4.17–.32 (summary; per-release detail in [CHANGELOG.md](../../CHANGELOG.md)):** .17–.22 **cx
+  portable-target arc** (CLI exposure, f64 arith/compare, cross-OS `.cyx` on all 4 hosts); .23 signed
+  sub-i64 global sign-ext; .24 struct-field-name-offset collision; .25 aarch64 `exp2`/`atan` + Payne-Hanek
+  range reduction; .26 Windows PE batch (TerminateProcess reroute + capturing closures on PE); .27 agnos
+  `O_RDWR` + the folded-stdlib repair campaign; **.28–.30 SIMD Phase 5 aarch64 NEON (f32v4/f32v8/int
+  vectors + `iv_dp8` — Phase 5 COMPLETE, last SIMD XFAIL removed)**; **.31 Win64 PE value-form SIMD
+  params + returns**; **.32 cx bytecode SIMD codegen** (per-lane emitters + cxvm opcodes 0x66–0x68).
+  Current head: **v6.4.32**, cycc 1,077,592 B, check.sh 132, self_compile ~616 ms. **NEXT: async
+  runtime arc 5b (v6.4.33, stiva-blocked).**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -172,12 +181,12 @@ releases, each bundling several bites. Minors flex long.**
 
 | # | Arc | Conservative length | Release-blocker? | Status |
 |---|-----|--------------------:|:----------------:|--------|
-| 1 | **Packed SIMD compute** (f32-first, then integer; ML/AI) | **5–7 releases** | No | **x86 portion COMPLETE (v6.4.4–.9, 6 releases); ⏸ aarch64 NEON (Phase 5) deferred** |
+| 1 | **Packed SIMD compute** (f32-first, then integer; ML/AI) | **5–7 releases** | No | **✅ COMPLETE on all four backends — x86 SSE+AVX2 (.4–.9), aarch64 NEON (.28–.30), Win64 PE value-form (.31), cx bytecode (.32)** |
 | 2 | **Array-typed struct fields** | **3 releases (done)** | No | **✅ DONE — R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13 (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>)** |
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
 | 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 5 releases (.17–.20, .22) | No | **✅ DONE. A=CLI, B=f64, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts), .22=cycc_cx cross-native (macOS/Win). Tail: f32/transcendentals fail loud.** |
-| 5b | **Async runtime — tokio-parity primitives** (5 lib APIs blocking the stiva v3.1 port) | **3–5 releases** | No | **🔴 CONSUMER-BLOCKED (stiva, our Docker project) — scheduled IMMEDIATELY AFTER SIMD Phase 5 (Pin 1), ahead of arcs 3/4/6/7. NOT v6.8-parked** (pinned 2026-07-07; [`issues/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/2026-07-07-async-runtime-tokio-parity-gaps.md)) |
+| 5b | **Async runtime — tokio-parity primitives** (5 lib APIs blocking the stiva v3.1 port) | **3–5 releases** | No | **🔴 CONSUMER-BLOCKED (stiva, our Docker project) — THE NEXT OPEN SLOT (v6.4.33): SIMD Pin 1 is now complete, so this is up next, ahead of arcs 3/4/6/7. NOT v6.8-parked** (pinned 2026-07-07; [`issues/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/2026-07-07-async-runtime-tokio-parity-gaps.md)) |
 | 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | **2–3 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | **2–4 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
@@ -186,9 +195,9 @@ releases, each bundling several bites. Minors flex long.**
 at the 2026-07-07 horizon session: + cx CLI exposure, scalar-float completion,
 diagnostics) — v6.4.x is a **long minor**, per the user's standing preference for
 **large minors (~45–99 releases historically), not a theme-per-minor**. **None of the
-arcs is a release-blocker.** **Pin 1's x86 portion landed at 6 releases
-(v6.4.4–.9), inside the 5–7 budget** — the aarch64-NEON remainder (Phase 5) is intentionally paused
-(see the break-point note under Pin 1). On top of the arcs, **reactive agnos + consumer-filed repairs
+arcs is a release-blocker.** **Pin 1 landed complete across x86 (v6.4.4–.9),
+aarch64 NEON (.28–.30), Win64 PE (.31), and cx (.32)** — the aarch64-NEON remainder shipped;
+it is no longer paused (see the Pin 1 completion note). On top of the arcs, **reactive agnos + consumer-filed repairs
 interleave throughout** and consume **separate** slots that are **not** counted above (already this
 minor: .0's own de-risking, .1 alloc_reset, .2 agnos audio, .3 the f64 SIMD-surface solidification,
 and .10 the kernel-blocker + distlib-cap interim fixes) — see *Reactive headroom* below.
@@ -308,18 +317,21 @@ the SIMD value-form typecheck residual, and an **issue-archive hygiene pass**
 
 ### Pin 1 — Packed SIMD compute (f32-first, then integer; ML/AI priority) — ~5–7 releases
 
-> **⏸ BREAK POINT (user 2026-07-05): the x86 portion of Pin 1 is COMPLETE and the arc is
-> intentionally paused here.** Phases 0–4 shipped x86 SIMD end-to-end — f32v4 (v6.4.4), f32
-> matmul (v6.4.5), integer vectors (v6.4.6/.7), and f32v8 256-bit AVX2 + FMA/dot (v6.4.8/.9) —
-> **6 releases, within the 5–7 budget**. The **aarch64 NEON remainder (Phase 5+)** is
-> **DEFERRED, to be resumed properly later in 6.4.x** after some other items. It is NOT
-> cancelled — `simd_f32v4`/`simd_ints`/`simd_f32v8` stay XFAIL on ARM until then. Premise-check
-> done (2026-07-05): Phase 5 is a **mechanical NEON mirror** of the existing `EMIT_F64V_*` code
-> (`.2d`→`.4s`, llvm-mc-sourced), a planned 2-release split — **5a** f32 NEON (fadd/fmul/fmla/dot;
-> the f32v8 wrappers fall through to the f32v_ path on ARM, so 5a un-XFAILs BOTH simd_f32v4 +
-> simd_f32v8) and **5b** integer NEON + `iv_dp8` (the one design point: `sdot` needs the optional
-> `FEAT_DotProd`, so a runtime feature-gate or `smull`/`saddlp` fallback — the aarch64 analog of
-> the x86 FMA gate). cx/PE SIMD + the `lib/simd.cyr` doc pass are the Phase-6/7 tail.
+> **✅ PIN 1 COMPLETE (2026-07-09, v6.4.32): packed SIMD ships on ALL FOUR backends.**
+> Phases 0–4 shipped x86 SIMD end-to-end — f32v4 (v6.4.4), f32 matmul (v6.4.5), integer
+> vectors (v6.4.6/.7), and f32v8 256-bit AVX2 + FMA/dot (v6.4.8/.9). Phase 5 then completed
+> the remaining backends: **aarch64 NEON** (v6.4.28 f32v4/f32v8, .29 f32v8-free via 2×128
+> fallback, .30 integer vectors + `iv_dp8` — the **last SIMD XFAIL removed**), **Win64 PE
+> value-form params + returns** (v6.4.31), and **cx bytecode per-lane emitters** (v6.4.32,
+> cxvm opcodes through 0x68). The break point is **resolved** — no ARM XFAILs remain;
+> `simd_f32v4`/`simd_ints`/`simd_f32v8` all pass on aarch64 (NEON) and cx, verified on real
+> hardware (pi/ecb/cass). Phase 5 was the mechanical NEON mirror of `EMIT_F64V_*` it was
+> premise-checked to be (`.2d`→`.4s`, llvm-mc-sourced; fmul+fadd not fmla to match x86
+> rounding). Only the aarch64 *native* 256-bit f32v8 emitters remain return-0 stubs never
+> reached at runtime — `lib/simd.cyr` routes f32v8 through native f32v4 NEON, so the verb
+> works; native 256-bit stays x86-AVX2-only. Remaining SIMD follow-ons (register residency,
+> `i64v2` value-form multiply, cx value-form params) are filed as standalone polish items,
+> not blockers.
 
 **Sequence pivot (user 2026-07-04): f32 SIMD compute FIRST, then the lower-int lanes** — model
 testing shows f32+SIMD is the primary throughput lever, with int8/quantized as the optimization
@@ -333,7 +345,7 @@ Extends the **i64-oracle / free-type-movement** model: vectors are views entered
 broadcast/load and returned to i64 by extract/reduce.
 
 - **▶ PHASE 0 DONE — encoding PINNED** (design doc
-  [`2026-07-04-integer-simd-encoding-design.md`](proposals/2026-07-04-integer-simd-encoding-design.md)):
+  [`2026-07-04-integer-simd-encoding-design.md`](proposals/archived/2026-07-04-integer-simd-encoding-design.md)):
   a **structured SIMD descriptor** in a reserved SLTYPE sentinel band **below −2048**
   (collision-free — struct sids cap at 1024), decoded by one `_vec_desc()`; f64v2/f64v4 keep
   their legacy −20/−21 (byte-identity); the 2-bit param mask stays coarse (route-to-vec-reg) with
@@ -378,17 +390,18 @@ broadcast/load and returned to i64 by extract/reduce.
 - **Phases**: (0 ✅) encoding → (1 ✅ v6.4.4) f32v4 end-to-end x86 → (2 ✅ v6.4.5) f32 matmul op set +
   GEMM bench → (3a ✅ v6.4.6) int types + packed ops → (3b ✅ v6.4.7) int widening-MAC + b1.58 bench →
   **(4 R1 ✅ v6.4.8) f32v8 256-bit AVX2 elementwise + VEX substrate + CPUID runtime fallback → (4 R2 ✅ v6.4.9)
-  f32v8 fmadd + 8-lane dot + GEMM bench — PHASE 4 CLOSES; x86 SIMD COMPLETE** → **⏸ BREAK POINT (user
-  2026-07-05: park the arc, do other items first)** → (5 — deferred, resume later in 6.4.x) aarch64 NEON
-  (`fmla`/`sdot`) + cx/PE → (6) `lib/simd.cyr` wrappers + docs → (7) repair tail. **R1 (v6.4.8):** first VEX/AVX in the toolchain
+  f32v8 fmadd + 8-lane dot + GEMM bench — PHASE 4 CLOSES; x86 SIMD COMPLETE** → **(5 ✅ v6.4.28–.32)
+  aarch64 NEON (fmul+fadd, not fmla, to match x86 rounding; `smull`/`saddlp` int-dot) + Win64 PE
+  value-form (.31) + cx bytecode per-lane (.32) → (6 ✅) `lib/simd.cyr` wrappers + docs → PIN 1 COMPLETE
+  on all four backends.** **R1 (v6.4.8):** first VEX/AVX in the toolchain
   (2-byte C5, llvm-mc-verified, disasm-gated); 256-bit value-return ABI generalized to `_is_simd256` (byte-id
   for f64v4); `simd_has_avx2()` CPUID probe + branching wrappers; decode.cyr VEX dropped (pre-existing SYSCALL
   mis-decode, filed). **R2 (v6.4.9):** first 3-byte VEX (C4) — `vfmadd231ps` (FMA3) + the 8-lane `vextractf128`
   dot reduce; `simd_has_fma()` (leaf 1 ECX bit 12) gate; `bench_f32v8_gemm` ~1.48× (256 vs 128-bit). f32 SIMD
-  now complete on x86 (f32v4 + f32v8). `simd_f32v8` XFAIL aarch64 until Phase 5.
+  now complete on x86 (f32v4 + f32v8); Phase 5 later landed it on aarch64/PE/cx (the `simd_f32v8` aarch64 XFAIL was removed at v6.4.29).
 - **▶ Phase 4 (f32v8 + 256-bit AVX2) — arc-open DECISIONS (user 2026-07-05, after a code-grounded
   premise-check).** Full design + disassembler-verified VEX byte encodings + the CPUID-fallback design
-  live in [`proposals/2026-07-05-f32v8-avx2-phase4-design.md`](proposals/2026-07-05-f32v8-avx2-phase4-design.md).
+  live in [`proposals/2026-07-05-f32v8-avx2-phase4-design.md`](proposals/archived/2026-07-05-f32v8-avx2-phase4-design.md).
   Premise-check ground truth: **no 256-bit AVX exists** — `f64v4` is a count-driven
   128-bit SSE2 loop (`EMIT_F64V_LOOP`, `rsi += 2`), and a full `src/` scan finds **zero VEX/AVX/ymm**
   emission (only a "no AVX/VEX" comment in `decode.cyr`). So VEX encoding is **fully greenfield**. The
@@ -414,12 +427,12 @@ broadcast/load and returned to i64 by extract/reduce.
     vs the "256-bit-in-name-only" trap). Guard the recurring bug-classes: the `−2153` `0 − lt → sid`
     sites (struct-guard covers it, verify each new site), the retptr-stash rough-scan (pointer-form
     dodges), mask saturation (pointer-form dodges), and `_is_simd256` lane-width-blindness.
-  - x86-only (aarch64 NEON is 128-bit → 256-bit is 2×V-pairs, a Phase-5 concern; cx stubs; PE gated).
-- **Phase 5 cleanup (carried from v6.4.4)** — when aarch64 (and cx) `EMIT_F32V_LOOP` gets a real
-  implementation, **remove the `simd_f32v4` XFAIL** from the aarch64-native CI corpus (`ci.yml`),
-  promote `simd_f32v4.tcyr` into the `vr01_` cross-OS LIBTEST glob so the release gate covers it,
-  and drop the "x86-only this phase" stub comments. Tracked:
-  `issues/2026-07-05-aarch64-f32v4-xfail-phase5.md` (CI surfaces it via `XPASS` once it passes).
+  - x86-only *at Phase 4* (aarch64 NEON is 128-bit → 256-bit is 2×V-pairs; cx stubs; PE gated) — all resolved in Phase 5 (.28–.32).
+- **Phase 5 cleanup (carried from v6.4.4)** — ✅ **DONE.** aarch64 `EMIT_F32V_LOOP` shipped v6.4.28
+  and cx per-lane emitters v6.4.32; the `simd_f32v4`/`simd_ints`/`simd_f32v8` XFAILs were removed at
+  v6.4.28–.30, the `vr01_simd_*_neon` + `vr01_simd_cx` cross-OS fixtures are in the release-gate glob,
+  and the "x86-only this phase" stub comments are gone. Issue `2026-07-05-aarch64-f32v4-xfail-phase5.md`
+  is archived.
 - **Risks**: integer-lane semantics (saturating, signed/unsigned per width, widening-madd) have
   no f64 template → sign-ext/truncation surface (cf. v6.3.35/.36); VNNI/sdot/FMA availability
   varies per arch (feature-gated); bench-gated acceptance (a correct-but-slow cut doesn't satisfy
@@ -431,7 +444,7 @@ broadcast/load and returned to i64 by extract/reduce.
 > user → a typed **`Vec<T>` HANDLE** (not inline `T[N]`); syntax **`Vec<T>`**; 3-release split, ALL SHIPPED:
 > **R1** parse + metadata + access (✅ **v6.4.11**) · **R2** `#derive` Vec<primitive> (✅ **v6.4.12**) · **R3**
 > `#derive` Vec<struct> (✅ **v6.4.13**) + svara minor patch. Full design + sentinel encoding + risks:
-> [`proposals/2026-07-06-array-typed-struct-fields-design.md`](proposals/2026-07-06-array-typed-struct-fields-design.md).
+> [`proposals/2026-07-06-array-typed-struct-fields-design.md`](proposals/archived/2026-07-06-array-typed-struct-fields-design.md).
 > The representation discussion below predates the fork resolution — kept for context.
 
 Make `struct { field: T[]; }` / `field: T[N]` **parse, represent, access, and
@@ -540,7 +553,7 @@ never unilaterally deferred or redirected.
   - ~~**P1 struct-field-name-offset collision**~~ — ✅ **SHIPPED v6.4.24.** Root cause was NOT
     the filed two-struct collision (nor a buffer overflow): the `X.Y` disambiguation loaded
     a global var whenever the FIELD name was a global var, ignoring base X. Fix: if X is a
-    known var, `X.Y` is a field access ([`issues/2026-07-07-struct-field-name-offset-collision.md`](issues/2026-07-07-struct-field-name-offset-collision.md)).
+    known var, `X.Y` is a field access ([`issues/2026-07-07-struct-field-name-offset-collision.md`](issues/archived/2026-07-07-struct-field-name-offset-collision.md)).
   - ~~**P2 signed sub-i64 GLOBAL scalar sign-extension**~~ — ✅ **SHIPPED v6.4.23** (new 8th
     per-var `_vsgn_base` table, max-sized/no-grow to keep the cybs seed-chain intact; x86 +
     aarch64 backends).
@@ -550,7 +563,7 @@ never unilaterally deferred or redirected.
   - **thread-local slot allocator + sandhi OOB** — land as ONE cross-repo bite
     (`thread_local_alloc()` + `TLOCAL_MAX_SLOTS` bump + patra/sigil/sandhi slot migration):
     [`thread-local-slot-namespace`](issues/2026-07-01-thread-local-slot-namespace-no-allocator.md)
-    + [`sandhi-rpc-policy-tls-slot-oob`](issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md).
+    + [`sandhi-rpc-policy-tls-slot-oob`](issues/archived/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md).
   - cyim regex unblock (lands when cyim re-tests against v6.x).
 - **🟡 Deferred prerequisites (land WHEN their arc opens):**
   - ~~`tls13-server-get-version-zero`~~ — ✅ **SHIPPED v6.4.21** (server `respond_hello` stores the negotiated 1.3 version).
@@ -563,10 +576,10 @@ never unilaterally deferred or redirected.
     extracted; cass-verified). D1/D2 (dead IR/decode) REMAIN → v6.5.x IR substrate.
   - ~~`windows-pe-surface-no-terminateprocess`~~ — ✅ **SHIPPED v6.4.26** (0xF01D TerminateProcess
     + `_win_terminate`/`_win_wait_timeout`; unblocks thoth's Windows timeout-kill).
-- **🟢 aarch64 / SIMD polish (SIMD Phase 5 tail):** `i64v2-valueform-packed-multiply`.
+- **🟢 SIMD polish (standalone; Pin 1 is closed, these are follow-ons not blockers):** `i64v2-valueform-packed-multiply`, cx value-form SIMD params/returns (`issues/2026-07-09-cx-valueform-simd-params-returns.md`), the x86/aarch64 `f(v,v)` dup-arg bug (`issues/2026-07-08-valueform-simd-duplicate-arg-x86.md`), and SIMD register-residency (`issues/2026-07-06-simd-f64v-memory-operand-no-register-residency.md`, a v6.5.x IR-substrate item).
   - ~~`aarch64-f64-exp2-atan-hard-error`~~ — ✅ **SHIPPED v6.4.25** (polyfill-dispatch +
     `_f64_exp2_polyfill`/`_f64_atan_polyfill`). Unblocked `ganita` inverse-trig →
-    [`aarch64-ganita-inverse-trig-unguard`](issues/2026-07-08-aarch64-ganita-inverse-trig-unguard.md) (open follow-on).
+    [`aarch64-ganita-inverse-trig-unguard`](issues/archived/2026-07-08-aarch64-ganita-inverse-trig-unguard.md) (open follow-on).
   - ~~`aarch64-trig-payne-hanek-range-reduction`~~ — ✅ **SHIPPED v6.4.25** (double-double
     dd reduction for |x| ≥ 8192; small-angle path byte-identical).
 - **Downstream-repo (their timeline):** `yukti-udev-src-len-undersized-array-local`

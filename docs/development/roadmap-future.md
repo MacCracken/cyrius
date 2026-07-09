@@ -12,39 +12,24 @@ See [roadmap.md](roadmap.md) for the current active minor and
 
 ---
 
-## cyrius-x (cx) bytecode backend — ▲ PULLED FORWARD to v6.4.x (2026-07-07)
+## cyrius-x (cx) bytecode backend — ✅ SHIPPED (v6.4.17–.22, + SIMD .32)
 
-**Moved to the active minor** at the 2026-07-07 horizon session: the missing CLI
-surface was hit as a real wall by a consumer needing wasm-shaped output, so the
-user prioritized it as **sooner-than-later interim DX work in v6.4.x** — see
-[roadmap.md](roadmap.md) "2026-07-07 horizon additions". Scope unchanged:
-`cyrius build --target=cx` (mirror `--target=js`) + install `cxvm`/`.cyx` run
-path + finish cx float ops + decide SIMD-on-cx. Full stub:
-[`proposals/2026-07-05-cx-bytecode-cli-exposure.md`](proposals/2026-07-05-cx-bytecode-cli-exposure.md).
+Landed in the active minor: `cyrius build --target=cx` CLI (.17), cx f64 arith (.18) + compare (.19),
+cross-OS portable `.cyx` running on all four hosts (.20), cxvm cap/dispatch hardening (.21/.22), and
+full cx SIMD codegen (.32, per-lane emitters + cxvm opcodes 0x66–0x68). Portable `.cyx` is now a
+byte-exact SIMD correctness oracle. Detail in [CHANGELOG.md](../../CHANGELOG.md) + completed-phases.md.
 
 ---
 
-## SIMD Phase 5 — aarch64 NEON (+ cx/PE tail) (DEFERRED, resumes later in v6.4.x)
+## SIMD Phase 5 — aarch64 NEON + cx/PE — ✅ SHIPPED (v6.4.28–.32)
 
-**Break point taken 2026-07-05** (user): the x86 SIMD compute portion of the v6.4.x arc shipped
-complete (Phase 1–4, v6.4.4–.9 — f32v4 128-bit + f32v8 256-bit AVX2, integer vectors + int8 widening
-dot), and the arc is **intentionally paused** to land interim items first. Phase 5 is **deferred, NOT
-cancelled** — it resumes **later in the v6.4.x minor** (so it stays in the active-minor arc, not v7);
-it lives here only as the tracking home while paused. Until it lands, `simd_f32v4` / `simd_ints` /
-`simd_f32v8` stay **XFAIL on aarch64** (and the cx/PE stubs stay silent).
-
-**Pre-scoped (premise-check 2026-07-05):** a **mechanical NEON mirror** of the existing `EMIT_F64V_*`
-aarch64 code (`.2d` → `.4s`, llvm-mc-sourced encodings), a planned **2-release split**:
-- **5a — f32 NEON** (`fadd`/`fmul`/`fmla`/dot). Un-XFAILs **both** `simd_f32v4` and `simd_f32v8` on
-  ARM in one go, because the f32v8 wrappers fall through to the f32v_ (128-bit) path on aarch64.
-- **5b — integer NEON + `iv_dp8`.** The one design point: `sdot` needs the optional **`FEAT_DotProd`**
-  extension, so a runtime feature-gate or an `smull`/`saddlp` fallback is required — the aarch64
-  analog of the x86 FMA/AVX2 CPUID gate.
-
-**Phase-6/7 tail:** cx-bytecode SIMD (decide alongside the cx CLI-exposure item above) + PE-target
-SIMD gating + the `lib/simd.cyr` wrapper/doc pass. When 5a lands, remove the `simd_f32v4`/`simd_f32v8`
-XFAILs from the aarch64-native CI corpus and promote them into the `vr01_` cross-OS LIBTEST glob (CI
-surfaces the flip via `XPASS`). Tracked: `issues/2026-07-05-aarch64-f32v4-xfail-phase5.md`.
+Phase 5 completed the whole packed-SIMD arc on the remaining three backends: **aarch64 NEON**
+(v6.4.28 f32v4/f32v8, .29 f32v8-free via 2×128 fallback, .30 integer vectors + `iv_dp8` — the **last
+SIMD XFAIL removed**), **Win64 PE value-form params + returns** (.31), and **cx bytecode per-lane
+emitters** (.32). Packed SIMD now runs on all four backends; all `simd_*` ARM XFAILs are gone and the
+`vr01_simd_*` fixtures run real emitters cross-OS on ecb/pi/cass. Only caveat: the aarch64 *native*
+256-bit f32v8 emitters are stubs that route through native f32v4 NEON (verb works; native 256-bit is
+x86-AVX2-only). Detail in [CHANGELOG.md](../../CHANGELOG.md) + completed-phases.md.
 
 ---
 
@@ -218,6 +203,15 @@ Two things follow:
 first-party docs") fixes a "stable point" — when the language stops accumulating
 substantial new surface. That point is now expected later in (or after) the v6.x
 cycle, not at a near-term v7.
+
+**LEGAL-01 — GPL-3.0-only stdlib statically source-included into consumers (v7-release blocker).**
+Cyrius is GPL-3.0-only, and the stdlib (including folded sigil, whose own licensing has a
+dual-BSD/GPLv2 leg) is *source-included* into every consumer at build time, so consumer binaries
+inherit GPL-3.0 obligations. Before any full-public release this needs a deliberate licensing
+decision — a linking/library exception, or an explicit statement that consumers accept GPL-3.0 —
+with legal sign-off. Deliberately deferred to near public release (was tracked in the now-archived
+`issues/archived/2026-06-10-unreviewed-dimensions.md`; the rest of that issue — CVE-28/29,
+DX-01/02, SEC-AGNOS-01 — all shipped by v6.3.23).
 
 ---
 

@@ -6,7 +6,7 @@
 A self-hosting systems language that bootstraps from a 29KB binary. No Rust, no LLVM, no Python. Designed to write the AGNOS operating system kernel.
 
 ### What can I build with it?
-CLI tools, system utilities, kernels, init systems, package managers, and networked services (a native TLS 1.3 stack ships in `lib/tls_native.cyr` — no OpenSSL). Anything that runs on Linux (x86_64/aarch64), macOS (arm64 Mach-O), or Windows (x86_64 PE32+) — all three self-host cycc byte-identical. See `programs/` for 81 examples.
+CLI tools, system utilities, kernels, init systems, package managers, and networked services (a native TLS 1.3 stack ships in `lib/tls_native.cyr` — no OpenSSL). Anything that runs on Linux (x86_64/aarch64), macOS (arm64 Mach-O), or Windows (x86_64 PE32+) — all three self-host cycc byte-identical. See `programs/` for 82 examples.
 
 ### How is everything i64?
 The core type is the 64-bit integer (see ADR-002): strings are pointers (which are integers), and structs are contiguous memory accessed via integer offsets. This simplifies the compiler enormously while still being practical for systems code. The one deliberate, narrow exception is math hot paths — scalar `f64` floats plus the `f64v2`/`f64v4` SIMD vector types (`lib/math.cyr`, `lib/simd.cyr`) — which are bit-pattern values, not a full float type system. Everything else is an i64.
@@ -15,7 +15,7 @@ The core type is the 64-bit integer (see ADR-002): strings are pointers (which a
 Type annotations (`var x: i64 = 42`) are documentation. Generics (`fn foo<T>()`) are parsed but not enforced. The compiler warns on pointer/scalar mismatches at assignment. Full type checking is on the roadmap.
 
 ### Is it fast?
-The compiler self-compiles in ~505 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.07 MB output, measured at v6.3.2 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~480–510 ms as growth-tax over the v6.0.x–v6.3.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables, the v6.3 deps-model + undef-hard-error — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
+The compiler self-compiles in ~616 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.03 MB output — 1,077,592 B at v6.4.32 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~616 ms as growth-tax over the v6.0.x–v6.4.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables, the v6.3 deps-model + undef-hard-error, the v6.4.x SIMD compute arc — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
 
 ---
 
@@ -48,13 +48,13 @@ units remains the fallback for the rare ceiling case.
 Exit codes are truncated to 0-255 (Linux limitation). Use `print_num()` or `fmt_int()` to display values larger than 255.
 
 ### Enum values are 0 inside functions
-This was a bug (fixed in 0.9.0). If you're on an older version, update. The fix: enum init code must run before global var init code in the compiler entry point.
+This was a bug (fixed long ago). If you're on a pre-v1 version, update to a current release. The fix: enum init code must run before global var init code in the compiler entry point.
 
 ### "include" string literal breaks compilation
 The preprocessor eats `"include "` patterns in string literals. Workaround: build the pattern at runtime using `store8()`. See the cybs source for an example.
 
 ### aarch64 binary crashes with SIGILL
-Check that you're using `cycc_aarch64` (the cross-compiler) and running via `qemu-aarch64`. Common encoding bugs were fixed in 0.9.0.
+Check that you're using `cycc_aarch64` (the cross-compiler) and running via `qemu-aarch64`. Common encoding bugs were fixed long ago; update to a current release.
 
 ### Vec bounds check aborts
 `vec_get`/`vec_set` abort on out-of-bounds access. Check your indices. Use `vec_len()` to verify before accessing.
@@ -72,12 +72,12 @@ String literals are null-terminated, but if you're building strings manually, ma
 1. No `&&`/`||` mixed in same condition — use nested `if`
 2. For loop step must be simple assignment (`i = i + 1`)
 3. Exit codes truncated to 0-255
-4. Max ~64 global vars with initializers (use enums for constants)
+4. Max 4096 global vars with non-literal initializers per compilation unit (raised from 1024 at v6.3.41); integer-literal inits and enum members don't count (use enums for constants)
 5. Fixup entries: growable since v6.2.0, 64M-entry ceiling (was a fixed 1M cap — `cyrius capacity --check` to monitor headroom)
 6. Functions per compilation: growable since v6.2.0, 32,768 ceiling (was a fixed 8192 cap)
 7. No negative literals — use `(0 - N)` instead of `-N`
 8. `default`, `match`, `in` are keywords — don't use as variable names
-9. Block closures (`|x| { ... }`) only work inside functions, not at global scope
+9. Block closures (`|x| { ... }`) capture enclosing locals by value (since v6.3.8), but only work inside functions, not at global scope
 
 ## Gotchas
 

@@ -50,11 +50,14 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
 
 | Category | Modules |
 |----------|---------|
-| Core | string, fmt, alloc, io, vec, str, args, fnptr, flags |
+| Core | string, fmt, alloc, io, vec, slice, str, args, fnptr, flags |
 | Types | tagged (Option), result (Result + ? operator; v5.8.28-.32), hashmap, hashmap_fast, trait, assert, bounds |
 | System | syscalls, callback, process, bench, **sys** (uname / sysinfo / is_root introspection; v6.1.28) |
-| Concurrency | thread (clone+mmap, mutex, MPSC), thread_local, atomic, async, freelist |
+| Concurrency | thread (clone+mmap, mutex, MPSC), thread_local, atomic, async, sync (mutex/once over futex), freelist |
+| Testing & bench tooling | **test** (assertion/test-runner primitives), **regression** (bench-regression harness), **audit_walk** (source-tree audit walker) |
 | Math/regex (stdlib primitives) | regex, math (F64 constants + basic ops + gcd/lcm + f64_parse + f64-builtin polyfills) |
+| **SIMD** | **simd** — typed vectors (f32v4/f64v2/f64v4/f32v8 + integer vectors i8v16/i16v8/i32v4/i64v2 + unsigned) + packed flat-array verbs (`f32v_`/`f64v_`/`iv_` add/sub/mul/div/sqrt/abs/fmadd/dot/scale/axpy, `iv_dp8`); **Phase 5 complete (v6.4.32)** on all four backends — x86 SSE+AVX2, aarch64 NEON, Win64 PE (value-form params + returns), cx bytecode (per-lane scalar). See `lib/simd.cyr`. |
+| **Data (protobuf)** | **protobuf** — protobuf proto3 wire encode/decode (`lib/protobuf.cyr`). |
 | **Data formats + big-int (bayan)** | **bayan** — json / toml / cyml / csv / base64 / bigint (`u256`) / u128; folded v6.1.25, opt-in `include "lib/bayan.cyr"`; canonical `bayan_*` API + legacy aliases (`json_parse`, `u256_add`, …). Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must include bayan. |
 | **Linear algebra + advanced math (ganita)** | **ganita** — matrix (`ganita_mat_*`) + linalg (LU/det/inv/Cholesky/QR/least-squares/eigen/SVD) + advanced math (transcendental + fibonacci/binomial); folded v6.1.26, opt-in `include "lib/ganita.cyr"`; `ganita_*` + legacy aliases (`mat_mul`, `f64_pow`, …). Keep stdlib `math` in scope (f64-exp/ln polyfills). |
 | Unicode | unicode/categories, unicode/casefold, unicode/normalize (NFC/NFD/NFKC/NFKD), unicode/_decode |
@@ -71,9 +74,10 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
 | Tracing | **sakshi** (folded v5.8.65) |
 | Database | **patra** (folded v5.8.65) |
 | Security | **sigil** (folded v5.8.65) |
-| Hardware | **yukti** (folded v5.8.65) |
+| Hardware | **yukti** (folded v5.8.65), **dxgi** (Windows DXGI GPU/adapter enumeration) |
+| UI / E2E testing | **yantra** (folded v6.2.26; UI + end-to-end test framework) |
 | Compression | **sankoch** (folded v5.8.65) |
-| GPU | **mabda** (folded v6.0.x at 3.0.1; opt-in `include "lib/mabda.cyr"`) |
+| GPU | **mabda** (folded v6.0.x, now 4.0.2; opt-in `include "lib/mabda.cyr"`) |
 
 ## See also
 

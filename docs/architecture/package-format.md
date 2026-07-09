@@ -25,7 +25,7 @@ version = "0.9.0"
 description = "PID 1 init system for AGNOS"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.1.27"           # toolchain pin (cycc — the top compiler binary)
+cyrius = "6.4.32"           # toolchain pin (cycc — the top compiler binary)
 
 [build]
 entry = "src/main.cyr"

@@ -1,5 +1,11 @@
 # Unreviewed dimensions (completeness critic) — LEGAL-01, CVE-28/29, DX/AGNOS/LSP
 
+> **✅ ARCHIVED at the v6.4.32 handoff sweep (2026-07-09).** All actionable items shipped by
+> v6.3.23 (CVE-28 v6.1.38, CVE-29 v6.2.44, DX-01/02 + SEC-AGNOS-01 v6.3.23). The one remaining
+> item — **LEGAL-01** (GPL-3.0-only stdlib source-included into consumers; a v7-release blocker
+> needing legal sign-off) — is now tracked in [`roadmap-future.md`](../roadmap-future.md) under
+> "~v7.0 — Public release", so this issue no longer needs to sit in the open working queue.
+
 > **STATUS (v6.3.23): closed for this cycle except LEGAL-01 (v7).** CVE-28 RESOLVED
 > v6.1.38; CVE-29 (thread-stack guard page) SHIPPED v6.2.44 (`PROT_NONE` guard below
 > each thread stack, `lib/thread.cyr:67-92`); **DX-01, DX-02, SEC-AGNOS-01 all

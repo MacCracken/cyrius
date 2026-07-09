@@ -55,15 +55,16 @@ Deferred: error message line numbers, performance pass, block scoping.
 - Benchmarks and documentation updated
 ---
 
-## v6.4.x — SIMD Compute Arc (x86)
+## v6.4.x — SIMD Compute Arc (all four backends)
 
 The one notable cross-release *arc* of the v6.4.x minor worth a single-glance
 summary here (per-release detail is canonical in [`CHANGELOG.md`](../../CHANGELOG.md)).
-A six-release SIMD build-out that took cyrius from 128-bit f64 vectors to a
-complete f32 SIMD stack on x86 (128-bit SSE + 256-bit AVX2) plus integer
-vectors, and emitted the **first VEX/AVX instructions the toolchain has ever
-produced**. The arc's x86 portion is COMPLETE; aarch64 NEON (Phase 5) is
-intentionally DEFERRED to resume later in v6.4.x.
+A SIMD build-out that took cyrius from 128-bit f64 vectors to a complete
+packed-SIMD stack — f32/f64/integer 128-bit + 256-bit AVX2 — emitting the
+**first VEX/AVX instructions the toolchain has ever produced**, then completing
+**Phase 5** so every verb runs on all four backends: x86 (SSE + AVX2), aarch64
+NEON, Windows PE (value-form params + returns), and cx bytecode (per-lane scalar
+loops). **The arc is COMPLETE** — all ARM SIMD XFAILs were removed at v6.4.30.
 
 - **v6.4.4 — Phase 1: f32v4** (128-bit, 4×f32) — the first f32 SIMD. addps/subps/mulps (`EMIT_F32V_LOOP` = the f64 packed loop minus the 66 prefix). Structured-descriptor sentinel −2121 (reserved band ≤ −2048, decoded by `util.cyr` `_vec_desc`). Builtin tokens 138–140. Full value-form ABI + `.field`-OOB / async-token-collision / param-mask review bugs fixed. `lib/simd.cyr` f32v4 wrappers (value + ptr).
 - **v6.4.5 — Phase 2: f32 matmul ops** — `f32v_fmadd` (token 141, mulps+addps) + `f32v_dot` (token 142, two haddps horizontal reduce + `movd eax` 32-bit extract). `bench_f32_gemm` ~27× SIMD-vs-scalar.
@@ -72,12 +73,14 @@ intentionally DEFERRED to resume later in v6.4.x.
 - **v6.4.8 — Phase 4 R1: f32v8** (256-bit, 8×f32) AVX2 elementwise — the **first VEX/AVX** the toolchain ever emits (2-byte C5 VEX). `EMIT_F32V8_LOOP` (vaddps/vsubps/vmulps ymm). Structured-descriptor sentinel −2153. Tokens 147–149. 256-bit value-return ABI generalized to `_is_simd256`. `simd_has_avx2()` CPUID runtime fallback (leaf 7 EBX bit 5 — AVX2 is NOT x86-64 baseline; wrappers branch AVX2-vs-2×SSE).
 - **v6.4.9 — Phase 4 R2: f32v8 FMA + dot** — `f32v8_fma` (token 150, vfmadd231ps — the first 3-byte VEX / C4) + `f32v8_dot` (token 151, 8-lane vextractf128 reduce). `simd_has_fma()` (leaf 1 ECX bit 12 — a different CPUID bit than AVX2). `bench_f32v8_gemm` ~1.48× (256-bit vs 128-bit). **Phase 4 CLOSES — f32 SIMD complete on x86** (f32v4 128-bit + f32v8 256-bit, elementwise + FMA + dot).
 
-⏸ **SIMD break point** (2026-07-05): the x86 SIMD portion is complete; the arc is
-intentionally PAUSED. Phase 5 (aarch64 NEON: fmla/sdot + cx/PE) is pre-scoped as
-a mechanical NEON mirror of the existing `EMIT_F64V_*` aarch64 code — a planned
-2-release split (5a f32 NEON, 5b integer NEON + `iv_dp8`) — deferred to resume
-later in v6.4.x. `simd_f32v4` / `simd_ints` / `simd_f32v8` stay XFAIL on ARM until
-then.
+**Phase 5 — the remaining three backends (v6.4.28–.32):**
+- **v6.4.28 — aarch64 NEON f32v4** (`EMIT_F32V_LOOP`/`FMADD`/`DOT`, mirroring the f64 packed loop: `.2d`→`.4s`, `lsl #3`→`lsl #2`, +2→+4; **fmul+fadd, NOT fused fmla**, to match x86 rounding bit-for-bit; every hand-encoding llvm-mc-verified). Flips the `simd_f32v4` ARM XFAIL.
+- **v6.4.29 — f32v8 came free** — the 256-bit wrappers fall through to the 128-bit `EMIT_F32V_LOOP` on ARM (2×128), so the `simd_f32v8` XFAIL was removed with no new emitter.
+- **v6.4.30 — aarch64 NEON integer vectors** (`EMIT_IVEC_BINOP` width-dispatched add/sub/mul + `EMIT_IVEC_DP8` uxtl/sxtl+smlal int8 dot). The blocker was actually a *compile* failure (value-form 128-bit vector returns past the STUR/LDUR Q imm9 ±256 range), fixed with the `_EFP_ADDR_X9` fallback. **Removes the LAST SIMD XFAIL — Phase 5 aarch64 COMPLETE.**
+- **v6.4.31 — Win64 PE value-form SIMD params + returns** (MS x64 by-pointer copy-in `ESTOREPARM_SIMD_WIN64` + retptr return); `simd_f32v4` 13/13 + `simd_ints` 21/21 on real cass. Also fixed a SIMD-return-convention regression on PE (since v6.4.6) and a regalloc disp↔index off-by-one.
+- **v6.4.32 — cx bytecode SIMD codegen** — per-lane scalar loops for every flat-array verb (`_CX_VLOOP_BIN`) + new cxvm opcodes `f32widen` 0x66 / `f32narrow` 0x67 / `fsqrt` 0x68. Fixed two pre-existing cx local-addressing bugs the SIMD stash exposed (`ELOAD_LOCAL_ADDR` return-0 stub → `&local` aliased; scalar load/store disp missed the regalloc reservation `EFLADDR` had). Portable `.cyx` is now a byte-exact SIMD correctness oracle; cross-OS fixture runs SIMD on real hardware.
+
+Only caveat: the aarch64 *native* 256-bit f32v8 emitters remain return-0 stubs never reached at runtime — `lib/simd.cyr` routes f32v8 through native f32v4 NEON, so the verb works; native 256-bit stays x86-AVX2-only.
 
 ## v6.4.x — other releases
 
@@ -88,6 +91,16 @@ Openers and interim work outside the SIMD arc:
 - **v6.4.2** — agnos `sys_snd_*` audio syscall band (#64–#69) mirrored into `lib/syscalls_x86_64_agnos.cyr`.
 - **v6.4.3** — f64v2/f64v4 value constructors + splat / lane-extract (pre-SIMD-arc surface solidification).
 - **v6.4.10** — interim items after the SIMD break point: (1) P1 kernel-blocker fix — a bare top-level `var X[N]` was silently 8× under-sized when declared after the first bare top-level statement (`parse_decl.cyr`; needed a two-step bootstrap since cycc's own arrays were affected); (2) cyrius distlib per-module read cap 256 KB → 1 MB (matching cycc's `input_buf`).
+- **v6.4.11–.13** — **array-typed struct fields** (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>) — the Pin 2 arc.
+- **v6.4.14** — struct-field-name→offset collision fix (folded f64v2/v4 into the descriptor band; migrate all producers in lockstep).
+- **v6.4.15** — absorber-band cleanup (the v6.3.45 closeout-audit backlog: guards + consolidations + DECODE DCE rebaseline).
+- **v6.4.16** — aarch64 `f64_sin`/`f64_cos` polyfill (reactive arch-parity repair).
+- **v6.4.17–.22** — **cx portable-target arc**: CLI exposure (.17), f64 arith (.18) + compare (.19), cross-OS `.cyx` running on all four hosts (.20), and the cxvm cap/dispatch hardening (.21/.22). A portable `.cyx` doing I/O now runs on Linux, macOS, Windows, and aarch64.
+- **v6.4.23** — signed sub-i64 global sign-extension (8th var-family table).
+- **v6.4.24** — struct-field-name-offset deep-dive + fix (`parse.cyr` line 501 collision class).
+- **v6.4.25** — aarch64 `exp2`/`atan` polyfills + Payne-Hanek trig range reduction (closes the last aarch64 transcendental gaps).
+- **v6.4.26** — Windows PE batch: `TerminateProcess` reroute (0xF01D) + capturing closures on PE (`ECALLPTR_PE` push-order) + R2 PE-prologue extract.
+- **v6.4.27** — agnos `O_RDWR` flag-map fix + the **folded-stdlib repair campaign** (fixed-at-source + released + re-vendored sakshi 2.4.5 / sigil 3.10.1 / ganita 1.0.3 / yukti 2.2.9).
 
 ---
 

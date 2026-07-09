@@ -469,7 +469,7 @@ Glob matching and string search/replace.
 
 Linux syscall bindings (arch-dispatched x86_64 / aarch64). 61 syscall numbers + 65 `sys_*` wrappers (x86_64).
 
-See [agnosys documentation](cyrius-guide.md#agnos-system-libraries) for full API.
+See [agnosys documentation](guides/cyrius-guide.md#agnos-system-libraries) for full API.
 
 Key functions: `sys_open`, `sys_close`, `sys_read`, `sys_write`, `sys_fork`, `sys_execve`, `sys_pipe`, `sys_waitpid`, `sys_kill`, `sys_mount`, `sys_mkdir`, `sys_rmdir`, `sys_sigprocmask`, `sys_signalfd`, `sys_epoll_create`, `sys_epoll_ctl`, `sys_epoll_wait`, `sys_timerfd_create`.
 
@@ -477,7 +477,7 @@ Helper functions: `sigset_new`, `sigset_add`, `sigset_has`, `epoll_event_new`, `
 
 ## Identity & Authentication
 
-Pure-cyrius parsers for `/etc/passwd`, `/etc/group`, `/etc/shadow` that bypass glibc NSS entirely — same architectural stance musl libc takes. Added in v5.5.26 (pwd/grp) and v5.5.27 (shadow/pam) as the landing for the NSS-dispatch work that the v5.5.23-25 arc proved was not tractable through glibc's dlopen surface. See `docs/development/issues/dynlib-nss-bootstrap.md` for the full why.
+Pure-cyrius parsers for `/etc/passwd`, `/etc/group`, `/etc/shadow` that bypass glibc NSS entirely — same architectural stance musl libc takes. Added in v5.5.26 (pwd/grp) and v5.5.27 (shadow/pam) as the landing for the NSS-dispatch work that the v5.5.23-25 arc proved was not tractable through glibc's dlopen surface. See `docs/development/issues/archived/dynlib-nss-bootstrap.md` for the full why.
 
 ### pwd.cyr (v5.5.26)
 
@@ -733,7 +733,14 @@ Scalar f64 math: trigonometric (inverse on x86), hyperbolic, exponential, power,
 
 ### simd.cyr
 
-Typed SIMD wrappers for f64v2 (2-lane) and f64v4 (4-lane) vectors. Each operation has value-form (non-PE targets) and pointer-form (universal) variants. Parser auto-routes `&x` calls to `_ptr` siblings.
+Typed SIMD wrappers over the compiler's packed-vector builtins. **SIMD Phase 5 is complete (v6.4.32): every verb runs on all four backends** — x86 (SSE + AVX2), aarch64 NEON, Windows PE (value-form params + returns, v6.4.31), and cx bytecode (per-lane scalar loops, v6.4.32). Each operation has a value-form (non-PE targets, plus PE since v6.4.31) and a pointer-form (universal) variant; the parser auto-routes `&x` calls to the `_ptr` siblings.
+
+The surface spans four vector families plus flat-array packed verbs:
+
+- **f64v2 (2-lane) / f64v4 (4-lane)** — the double-precision vectors detailed in the table below.
+- **f32v4 (4-lane) / f32v8 (8-lane, 256-bit AVX2 on x86)** — single-precision `make`/`splat`/`lane`/`add`/`sub`/`mul`/`fmadd`/`dot`. On aarch64, f32v8 routes through native f32v4 NEON (native 256-bit is x86-AVX2-only).
+- **integer vectors** — `i8v16`/`i16v8`/`i32v4`/`i64v2` (+ unsigned) with `iv_add`/`iv_sub`/`iv_mul` (mul is i16/i32 only) and `iv_dp8` (u8·i8→i32 widening int8 dot, the BitNet inner loop).
+- **flat-array packed verbs** — `f32v_*`/`f64v_*`/`iv_*` over `(&dst, &a, &b, n)` pointer+count arguments: `add`/`sub`/`mul`/`div`/`sqrt`/`abs`/`fmadd`/`dot`/`scale`/`axpy`. These are the portable form that runs identically on every backend (the cx bytecode oracle lowers them to per-lane scalar loops).
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1490,7 +1497,7 @@ documented separately** — their public surface is the parent module's (above):
 
 > **Coverage note**: this reference now documents the **core, concurrency,
 > math/SIMD, crypto, data/encoding, networking (TLS + WebSocket), systems/FFI,
-> and testing** surfaces — roughly **65 of 87 `lib/*.cyr` modules** (was ~33).
+> and testing** surfaces — roughly **65 of 98 `lib/*.cyr` modules** (was ~33).
 > What remains undocumented here is so by design:
 > - **Folded sibling distfiles** (`sigil` / `sandhi` / `patra` / `sankoch` /
 >   `yukti` / `vani` / `niyama` / `mabda` / `sakshi`, listed above) — the

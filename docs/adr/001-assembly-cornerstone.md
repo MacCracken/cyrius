@@ -13,7 +13,7 @@ Build Cyrius from assembly up — no C compiler, no Rust, no LLVM, no libc in th
 - **Auditability**: A 29KB binary can be reviewed by a single person
 - **Sovereignty**: No external toolchain governance can block the project
 - **Reproducibility**: Byte-exact self-hosting from a committed binary
-- **Size**: The entire toolchain (~1.05 MB compiler + 29 KB seed) is smaller than most profile photos
+- **Size**: The entire toolchain (~1.03 MB compiler + 29 KB seed) is smaller than most profile photos
 
 ## Consequences
 

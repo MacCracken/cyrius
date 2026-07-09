@@ -1,5 +1,11 @@
 # Win64 PE: value-form SIMD params/returns unsupported (`f32v4`/`f64v2`/`f64v4` by value)
 
+> **✅ RESOLVED — SHIPPED v6.4.31 (2026-07-08).** Value-form SIMD params AND returns now work on
+> Win64 PE (MS x64 by-pointer copy-in `ESTOREPARM_SIMD_WIN64` + retptr return); `simd_f32v4` 13/13
+> + `simd_ints` 21/21 verified on real cass. See CHANGELOG [6.4.31]. Archived at the v6.4.32
+> handoff sweep. (The follow-on x86/aarch64 `f(v,v)` dup-arg bug is a separate open issue,
+> `2026-07-08-valueform-simd-duplicate-arg-x86.md`.)
+
 **Filed:** 2026-07-08 (surfaced attempting to cross-OS-gate `simd_f32v4` in SIMD Phase 5).
 **Severity:** P3 — fails LOUD with a clear message + workaround (pointer-form); no miscompile.
 **Component:** `src/backend/x86/emit.cyr` (Win64 vector param/return ABI), the value-form SIMD
