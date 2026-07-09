@@ -8,6 +8,24 @@
 > cross-linked to the stackless-coroutines item in roadmap-future.md and is NOT a blocker
 > for the 5 primitives. Likely home: extract a `sutra`/`kaal` async-runtime lib, vendor back.
 
+> **ARC-OPEN DECISIONS (2026-07-09, after a code-grounded 8-verifier premise-check).** Arc 5b
+> opens at **v6.4.33**. All 6 gaps CONFIRMED still-missing against v6.4.32 source (none stale).
+> **Reframe:** the runtime is **not actually an event loop** — the rt epoll fd is created+closed
+> but never used to multiplex (`async_run` is a serial linked-list sweep), `TASK_WAITING` is a
+> dead state, nothing yields mid-body, `async_sleep_ms` blocks the whole loop, the runtime is
+> single-use, and tasks are single-arg with no result slot. So gaps 1/2/4/5 cannot be honestly
+> non-blocking without a **reactor + cooperative suspend/resume** substrate first (only gap 3
+> JoinHandle is deliverable in today's run-to-completion model). Two uncovered categories the
+> 5-item list omits: **async file I/O** and **async DNS** (a name-based async client still blocks
+> on `getaddrinfo`). **User calls (2026-07-09): (1) FOUNDATION-FIRST** — build the reactor +
+> suspend/resume + JoinHandle substrate before the primitives; **(2) IOCP-Windows folded into this
+> arc, AFTER gap coverage** (issue 2026-07-08); **(3) extraction to its own repo DEFERRED to a
+> later minor** — build in-place in `lib/async.cyr` for now; **when extracted+refolded the repo
+> name will be `tantu`** (thread/fiber, NOT `sutra`/`kaal` — the earlier suggestion is superseded).
+> Honest arc length grew from ~3–5 to **~6–8 releases**. Sugar (`async`/`await`) stays
+> compiler-resident (lex tokens 134/135, `_ASYNC_OK` gate) — only the 13-fn runtime library is
+> ever extractable. Dependency-ordered shape + rationale in roadmap.md slot 5b.
+
 
 - **Filed**: 2026-07-07 (found porting stiva Rust→Cyrius; the whole async
   container-orchestration surface deferred to "v3.1" bounced off these gaps).

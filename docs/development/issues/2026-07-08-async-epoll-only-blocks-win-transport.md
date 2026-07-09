@@ -1,5 +1,16 @@
 # async runtime is epoll-only — no IOCP path blocks every `--win` build that pulls `async`
 
+> **ARC-OPEN DECISION (2026-07-09): folded into async arc 5b, sequenced AFTER gap coverage.**
+> Premise-check verdict `FOUNDATIONAL_DEPENDENT_MUST_WAIT`: epoll is not behind a poller seam
+> (inline across 4 fns — `async_new_in`/`async_await_readable`/`async_timeout`/`async_read`), and
+> each of the 5 tokio-parity primitives adds new inline poll/wait sites, so an IOCP backend must
+> MIRROR the frozen surface, not precede it. Land the reactor + suspend/resume foundation and the
+> 5 primitives first; then `async_win.cyr` mirrors that surface in one shot (3+ kernel32 reroutes:
+> `CreateIoCompletionPort` / `GetQueuedCompletionStatus` / `PostQueuedCompletionStatus` + WSA
+> overlapped I/O, each a v6.4.26-style PE-reroute bite with mandatory aarch64+cx return-0 stub
+> twins). Optional-early: the 3 core kernel32 emitters *could* be pre-registered like
+> `TerminateProcess`, but they're inert without the lib backend. See roadmap.md slot 5b.
+
 **Filed:** 2026-07-08 (thoth 0.20.4 — the Windows shell substrate landed + verified on `cass`, but the full
 thoth `--win` binary still cannot link).
 **Severity:** P2 — blocks shipping ANY Windows binary that uses the async transport (the sandhi/daimon/bote

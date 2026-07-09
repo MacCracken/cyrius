@@ -186,7 +186,7 @@ releases, each bundling several bites. Minors flex long.**
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
 | 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 5 releases (.17–.20, .22) | No | **✅ DONE. A=CLI, B=f64, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts), .22=cycc_cx cross-native (macOS/Win). Tail: f32/transcendentals fail loud.** |
-| 5b | **Async runtime — tokio-parity primitives** (5 lib APIs blocking the stiva v3.1 port) | **3–5 releases** | No | **🔴 CONSUMER-BLOCKED (stiva, our Docker project) — THE NEXT OPEN SLOT (v6.4.33): SIMD Pin 1 is now complete, so this is up next, ahead of arcs 3/4/6/7. NOT v6.8-parked** (pinned 2026-07-07; [`issues/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/2026-07-07-async-runtime-tokio-parity-gaps.md)) |
+| 5b | **Async runtime — reactor + suspend/resume foundation, THEN tokio-parity primitives + IOCP-Windows** (blocks stiva v3.1 + thoth `--win`) | **6–8 releases** | No | **🔴 CONSUMER-BLOCKED (stiva) — THE OPEN ARC (opens v6.4.33). Premise-checked 2026-07-09: the engine is NOT an event loop (epfd vestigial, `TASK_WAITING` dead, no mid-body yield) → user chose FOUNDATION-FIRST (reactor + cooperative suspend/resume substrate before the 5 primitives). IOCP-Windows folded in, sequenced AFTER gap coverage (`FOUNDATIONAL_DEPENDENT` verdict). Extraction to its own repo (`tantu`) DEFERRED to a later minor — build in-place for now.** (pinned 2026-07-07, shaped 2026-07-09; [`issues/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/2026-07-07-async-runtime-tokio-parity-gaps.md), [`issues/2026-07-08-async-epoll-only-blocks-win-transport.md`](issues/2026-07-08-async-epoll-only-blocks-win-transport.md)) |
 | 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | **2–3 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | **2–4 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
@@ -279,6 +279,31 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
   [roadmap-future.md](roadmap-future.md) (which now has a would-be consumer in stiva) and
   is NOT a blocker for the 5 primitives. Final interleave vs arcs 3/4 is the user's call;
   the intent is near-term, not deferred.
+  - **ARC-OPEN DECISIONS (2026-07-09, after a code-grounded premise-check — 8-verifier
+    workflow).** Arc 5b opens at **v6.4.33**. All 6 gaps confirmed still-missing against v6.4.32
+    source (none stale). **The reframe:** the runtime is **not actually an event loop** — the rt
+    epoll fd is created+closed but never used to multiplex (`async_run` is a serial linked-list
+    sweep, [`lib/async.cyr`](../../lib/async.cyr) 99–122), `TASK_WAITING` is a **dead state**
+    (declared, never stored), nothing yields mid-body, `async_sleep_ms` blocks the whole loop,
+    the runtime is single-use, and tasks are single-arg with no result slot. So gaps 1/2/4/5
+    cannot be **honestly** non-blocking without a **reactor + cooperative suspend/resume**
+    substrate first; only **gap 3 (JoinHandle)** is deliverable in today's run-to-completion
+    model. Two uncovered categories the 5-item list omits: **async file I/O** and **async DNS**
+    (a name-based async client still blocks on `getaddrinfo`). **User calls (2026-07-09):**
+    **(1) FOUNDATION-FIRST** — build the reactor + suspend/resume + JoinHandle substrate before
+    the primitives (the "one bug ships complete" discipline; a blocking veneer over today's model
+    is a semantic dead-end). **(2) IOCP-Windows folded into this arc, sequenced AFTER gap
+    coverage** (issue 2026-07-08; `FOUNDATIONAL_DEPENDENT` — epoll has no poller seam and each
+    primitive adds inline poll sites, so `async_win.cyr` must MIRROR the frozen surface).
+    **(3) Extraction DEFERRED to a later minor** — build in-place in `lib/async.cyr` for now;
+    **when extracted+refolded the repo will be named `tantu`** (thread/fiber). The `async`/`await`
+    sugar stays compiler-resident (lex tokens 134/135, `_ASYNC_OK` gate in
+    [`parse_fn.cyr`](../../src/frontend/parse_fn.cyr) / [`parse_expr.cyr`](../../src/frontend/parse_expr.cyr))
+    — only the 13-fn runtime library is ever extractable. **Proposed dependency-ordered shape:**
+    F1 reactor → F2 suspend + task substrate (+ JoinHandle, gap 3) → P1 timers (gap 2) → P2
+    subprocess (gap 1) → P3 net client + `join_all`/`select` + async DNS (gap 4) → P4 `async_rwlock`
+    (gap 5) → W IOCP-Windows mirror. Length grew from ~3–5 to ~6–8 releases (foundation +
+    IOCP-mirror + 2 uncovered I/O categories).
 - **Scalar-float completion — later 6.4.x.** Scalar `f64` as a function RETURN
   type (returned in xmm0 per SysV — today's allow-list admits `f64v2`/`f64v4` but
   not `f64`; [`issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md`](issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md) §1),
