@@ -40,6 +40,9 @@
 #   0x5F = fne    ra, rb, rc      ra = (f64(rb) != f64(rc)) ? 1 : 0
 #   0x64 = fneg   ra, rb          ra = f64-bits of -f64(rb)
 #   0x65 = fabs   ra, rb          ra = f64-bits of |f64(rb)|
+#   0x66 = f32widen  ra, rb       ra = f64-bits of f32-from-bits(rb)   (cvtss2sd; v6.4.32 cx-SIMD)
+#   0x67 = f32narrow ra, rb       ra = f32-bits of narrow(f64-bits rb) (cvtsd2ss; v6.4.32 cx-SIMD)
+#   0x68 = fsqrt  ra, rb          ra = f64-bits of sqrt(f64(rb))       (v6.4.32 cx-SIMD)
 #   0x40 = load8  ra, [rb]        ra = zero-extend byte at mem[rb]
 #   0x41 = load64 ra, [rb]        ra = 64-bit at mem[rb]
 #   0x42 = store8 [ra], rb        mem[ra] = low byte of rb
@@ -184,6 +187,14 @@ fn cx_run(code, code_len): i64 {
         elif (op == 95) { if (f64_eq(cx_reg_get(rb), cx_reg_get(rc)) == 0) { cx_reg_set(ra, 1); } else { cx_reg_set(ra, 0); } }
         elif (op == 100) { cx_reg_set(ra, f64_neg(cx_reg_get(rb))); }   # 0x64 fneg
         elif (op == 101) { cx_reg_set(ra, f64_abs(cx_reg_get(rb))); }   # 0x65 fabs
+        # v6.4.32 cx-SIMD: f32<->f64 (host cvtss2sd/cvtsd2ss) + sqrt, host-backed
+        # like the f64 ops. f32widen: f32 bit pattern (low 32 of rb) -> f64 bits.
+        # f32narrow: f64 bits -> f32 bit pattern (low 32). These let the scalar
+        # per-lane f32 SIMD loops compute in f64 and round once per op (bit-exact
+        # vs x86 addps/mulps). fsqrt backs f64v_sqrt (no packed sqrt on a scalar VM).
+        elif (op == 102) { cx_reg_set(ra, f32_to(cx_reg_get(rb))); }    # 0x66 f32widen  (cvtss2sd)
+        elif (op == 103) { cx_reg_set(ra, f32_from(cx_reg_get(rb))); }  # 0x67 f32narrow (cvtsd2ss)
+        elif (op == 104) { cx_reg_set(ra, f64_sqrt(cx_reg_get(rb))); }  # 0x68 fsqrt
 
         # memory: load8/16/32/64, store8/16/32/64
         elif (op == 64) { cx_reg_set(ra, load8(_cx_mem + cx_reg_get(rb))); }

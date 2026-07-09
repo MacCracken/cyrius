@@ -288,6 +288,16 @@ fn ELOAD_FN_ADDR(S, fnaddr, fc, fni): i64 {
 
 fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
+    # v6.4.32: was a return-0 STUB — so `&local` (address-of a stack-local)
+    # emitted nothing and r0 kept its stale value, aliasing every local-array
+    # address. Latent until v6.3.15 flipped stack-arrays default-on (before that
+    # `var arr[N]` locals were globals → EVADDR, which works). Emit the frame
+    # address into r0 (the accumulator), mirroring x86's `lea rax,[rbp+adisp]`
+    # and cx's EFLADDR: adisp is negative (fp − offset), so r0 = fp − (−adisp).
+    var d = 0 - adisp;
+    CX_EMIT(S, 2, 0, 253, 0);             # mov r0, fp
+    CX_MOVI(S, 14, d);                    # r14 = frame offset
+    CX_EMIT(S, 17, 0, 0, 14);             # sub r0, r0, r14  → r0 = &local
     return 0;
 }
 
@@ -495,6 +505,22 @@ fn EVADDR(S, idx): i64 {
     return 0;
 }
 
+# v6.4.32: frame offset (bytes) for local slot `idx`, INCLUDING the reserved
+# callee-saved (regalloc) block + retptr stash — matching EFLADDR/EFLADDR_X1 and
+# the shared frontend's &-of-local disp (parse_expr `adisp`). Before this, the
+# scalar EFLLOAD/EFLSTORE, the f64v2/f64v4 pair emitters, ESTOREPARM, and the
+# SIMD arg-loader all omitted the regalloc term while EFLADDR added it — so a
+# slot INDEX mapped to two different ADDRESSES depending on the access path.
+# Access-by-name was self-consistent (both omit it) so it went unnoticed, but
+# `&local` + pointer use, and the SIMD arg-stash slots, collided with the
+# regalloc-shifted array storage. One helper → one uniform slot→address map.
+fn _cx_ldisp(idx): i64 {
+    var d = (idx + 1) * 8;
+    if (_cur_fn_regalloc > 0) { d = d + _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { d = d + _cur_fn_ret_stash; }
+    return d;
+}
+
 # v5.10.30 — cx f64v2 pair-register return (Phase 3 of the
 # value-type ABI arc; Phase 1 x86 v5.10.28, Phase 2 aarch64
 # v5.10.29). cx PCS for f64v2: r0 = lo, r1 = hi. Mirror of
@@ -509,12 +535,12 @@ fn EVADDR(S, idx): i64 {
 fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
     # lo: r0 = [fp - (idx+1)*8]  (named slot)
     CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
-    CX_MOVI(S, 15, (idx + 1) * 8);      # r15 = offset_lo
+    CX_MOVI(S, 15, _cx_ldisp(idx));      # r15 = offset_lo
     CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
     CX_EMIT(S, 65, 0, 14, 0);           # load64 r0, [r14]
     # hi: r1 = [fp - idx*8]  (filler slot)
     CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
-    CX_MOVI(S, 15, idx * 8);            # r15 = offset_hi
+    CX_MOVI(S, 15, _cx_ldisp(idx - 1));            # r15 = offset_hi
     CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
     CX_EMIT(S, 65, 1, 14, 0);           # load64 r1, [r14]
     return 0;
@@ -523,12 +549,12 @@ fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
 fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
     # lo: [fp - (idx+1)*8] = r0  (named slot)
     CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
-    CX_MOVI(S, 15, (idx + 1) * 8);      # r15 = offset_lo
+    CX_MOVI(S, 15, _cx_ldisp(idx));      # r15 = offset_lo
     CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
     CX_EMIT(S, 67, 14, 0, 0);           # store64 [r14], r0
     # hi: [fp - idx*8] = r1  (filler slot)
     CX_EMIT(S, 2, 14, 253, 0);          # mov r14, fp
-    CX_MOVI(S, 15, idx * 8);            # r15 = offset_hi
+    CX_MOVI(S, 15, _cx_ldisp(idx - 1));            # r15 = offset_hi
     CX_EMIT(S, 17, 14, 14, 15);         # sub r14, r14, r15
     CX_EMIT(S, 67, 14, 1, 0);           # store64 [r14], r1
     return 0;
@@ -545,22 +571,22 @@ fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
 fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
     # r0 = [fp - (idx+1)*8]  (lo, named)
     CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, (idx + 1) * 8);
+    CX_MOVI(S, 15, _cx_ldisp(idx));
     CX_EMIT(S, 17, 14, 14, 15);
     CX_EMIT(S, 65, 0, 14, 0);
     # r1 = [fp - idx*8]      (filler 1)
     CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, idx * 8);
+    CX_MOVI(S, 15, _cx_ldisp(idx - 1));
     CX_EMIT(S, 17, 14, 14, 15);
     CX_EMIT(S, 65, 1, 14, 0);
     # r2 = [fp - (idx-1)*8]  (filler 2)
     CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, (idx - 1) * 8);
+    CX_MOVI(S, 15, _cx_ldisp(idx - 2));
     CX_EMIT(S, 17, 14, 14, 15);
     CX_EMIT(S, 65, 2, 14, 0);
     # r3 = [fp - (idx-2)*8]  (filler 3)
     CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, (idx - 2) * 8);
+    CX_MOVI(S, 15, _cx_ldisp(idx - 3));
     CX_EMIT(S, 17, 14, 14, 15);
     CX_EMIT(S, 65, 3, 14, 0);
     return 0;
@@ -583,22 +609,22 @@ fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 { return 0; }
 fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
     # [fp - (idx+1)*8] = r0
     CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, (idx + 1) * 8);
+    CX_MOVI(S, 15, _cx_ldisp(idx));
     CX_EMIT(S, 17, 14, 14, 15);
     CX_EMIT(S, 67, 14, 0, 0);
     # [fp - idx*8] = r1
     CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, idx * 8);
+    CX_MOVI(S, 15, _cx_ldisp(idx - 1));
     CX_EMIT(S, 17, 14, 14, 15);
     CX_EMIT(S, 67, 14, 1, 0);
     # [fp - (idx-1)*8] = r2
     CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, (idx - 1) * 8);
+    CX_MOVI(S, 15, _cx_ldisp(idx - 2));
     CX_EMIT(S, 17, 14, 14, 15);
     CX_EMIT(S, 67, 14, 2, 0);
     # [fp - (idx-2)*8] = r3
     CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, (idx - 2) * 8);
+    CX_MOVI(S, 15, _cx_ldisp(idx - 3));
     CX_EMIT(S, 17, 14, 14, 15);
     CX_EMIT(S, 67, 14, 3, 0);
     return 0;
@@ -622,7 +648,7 @@ fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
 fn EFLLOAD(S, idx): i64 {
     # load from [fp - (idx+1)*8]. Use r14/r15 as temps.
     CX_EMIT(S, 2, 14, 253, 0);      # mov r14, fp
-    CX_MOVI(S, 15, (idx + 1) * 8);  # r15 = offset
+    CX_MOVI(S, 15, _cx_ldisp(idx));  # r15 = offset
     CX_EMIT(S, 17, 14, 14, 15);     # sub r14, r14, r15
     CX_EMIT(S, 65, 0, 14, 0);       # load64 r0, [r14]
     return 0;
@@ -630,7 +656,7 @@ fn EFLLOAD(S, idx): i64 {
 
 fn EFLSTORE(S, idx): i64 {
     CX_EMIT(S, 2, 14, 253, 0);
-    CX_MOVI(S, 15, (idx + 1) * 8);
+    CX_MOVI(S, 15, _cx_ldisp(idx));
     CX_EMIT(S, 17, 14, 14, 15);
     CX_EMIT(S, 67, 14, 0, 0);       # store64 [r14], r0
     return 0;
@@ -649,7 +675,7 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
     # Store param register to local slot. Use r14/r15 as temps to avoid
     # clobbering arg registers r3-r8.
     CX_EMIT(S, 2, 14, 253, 0);           # mov r14, fp
-    CX_MOVI(S, 15, (lidx + 1) * 8);      # r15 = offset
+    CX_MOVI(S, 15, _cx_ldisp(lidx));      # r15 = offset
     CX_EMIT(S, 17, 14, 14, 15);          # sub r14, r14, r15
     CX_EMIT(S, 67, 14, 3 + pidx, 0);    # store64 [r14], arg_reg
     return 0;
@@ -842,8 +868,8 @@ fn EMIT_F64_BINOP(S, op): i64 {
 }
 fn EI2F(S): i64 { CX_EMIT(S, 88, 0, 0, 0); return 0; }   # i2f r0, r0
 fn EF2I(S): i64 { CX_EMIT(S, 89, 0, 0, 0); return 0; }   # f2i r0, r0
-fn EF32_FROM(S): i64 { _cx_float_unsupported(S); return 0; }   # f32 conv: cx-arc tail
-fn EF32_TO(S): i64 { _cx_float_unsupported(S); return 0; }
+fn EF32_FROM(S): i64 { CX_EMIT(S, 103, 0, 0, 0); return 0; }   # v6.4.32: f32narrow r0 (f64→f32 bits)
+fn EF32_TO(S): i64 { CX_EMIT(S, 102, 0, 0, 0); return 0; }     # v6.4.32: f32widen r0 (f32 bits→f64)
 # v5.7.11: PF64BIN / PF64CMP now defined in parse_expr.cyr (the
 # shared frontend, since v5.6.x). The cx stubs that lived here
 # collided with the parse_expr versions and lost (last-include
@@ -870,31 +896,305 @@ fn EX87POP(S): i64 { return 0; }
 # the SIMD primitives gain a scalar-loop fallback at the same
 # time. Tracked at docs/development/roadmap.md (cx f64 support
 # is a multi-minor arc; not v5.10.x scope).
-fn EMIT_F64V_LOOP(S, op, vbase): i64 { return 0; }
-# v6.4.4 (SIMD Phase 1) — f32v4 packed ops are x86-only; cx SIMD is wholly TBD
-# (EMIT_F64V_LOOP above is likewise a stub). Emit nothing so lib/simd.cyr still
-# compiles on cx — f32v4 arithmetic must not be used on cx yet.
-fn EMIT_F32V_LOOP(S, op, vbase): i64 { return 0; }
-# v6.4.5 (SIMD Phase 2) — f32v_fmadd / f32v_dot: cx SIMD is wholly TBD; silent stubs.
-fn EMIT_F32V_FMADD(S, vbase): i64 { return 0; }
-fn EMIT_F32V_DOT(S, vbase): i64 { return 0; }
-# v6.4.6 (Phase 3a) — packed integer ops: cx SIMD is wholly TBD; silent stub.
-fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 { return 0; }
-# v6.4.7 (Phase 3b) — int8 widening dot: cx SIMD is wholly TBD; silent stub.
-fn EMIT_IVEC_DP8(S, vbase): i64 { return 0; }
-# v6.4.8 (Phase 4 R1) — 256-bit AVX2 f32v8: cx SIMD is wholly TBD; silent stub.
-fn EMIT_F32V8_LOOP(S, op, vbase): i64 { return 0; }
-# v6.4.9 (Phase 4 R2) — f32v8 fmadd/dot: cx SIMD is wholly TBD; silent stubs.
-fn EMIT_F32V8_FMADD(S, vbase): i64 { return 0; }
-fn EMIT_F32V8_DOT(S, vbase): i64 { return 0; }
-fn EMIT_F64V_UNARY(S, op, vbase): i64 { return 0; }
-fn EMIT_F64V_FMADD(S, vbase): i64 { return 0; }
+# ============================================================================
+# v6.4.32 — cx SIMD flat-array emitters (per-lane scalar bytecode loops).
+# cx is a scalar VM with no vector registers, so every packed SIMD builtin lowers
+# to a loop over the same &dst/&a/&b pointers (the frontend stashes them + n into
+# frame slots vbase..vbase+k). Results are byte-identical to the x86 SSE /
+# aarch64 NEON packed paths — cx is a portable correctness oracle, not hardware
+# SIMD. Reg map: r8=n · r9=i(lane) · r2=byte offset(i*stride) · r10..r13=base
+# ptrs · r14/r15=addr+imm scratch · r0/r1=values · r3=accumulator. Loop guard:
+# `lt r0,i,n` (op 50) then `jz r0,done` (op 81); back-edge via EJMP/EPATCH.
+# Value-form params/returns stay stubbed (ESTOREPARM_*/ELOAD_* above) — deferred,
+# see docs/development/issues/2026-07-09-cx-valueform-simd-params-returns.md.
 
-# v5.10.17 — same shape, new primitives. dot/scale/axpy stubbed
-# pending cx f64 support.
-fn EMIT_F64V_DOT(S, vbase): i64 { return 0; }
-fn EMIT_F64V_SCALE(S, vbase): i64 { return 0; }
-fn EMIT_F64V_AXPY(S, vbase): i64 { return 0; }
+# Load the pointer/scalar held in frame local `idx` into `reg` (local idx lives
+# at [fp − (idx+1)*8], same convention as EFLLOAD_F64V2_PAIR).
+fn _cx_ld_local(S, reg, idx): i64 {
+    CX_EMIT(S, 2, 14, 253, 0);            # mov r14, fp
+    CX_MOVI(S, 15, _cx_ldisp(idx));        # r15 = (idx+1)*8
+    CX_EMIT(S, 17, 14, 14, 15);           # sub r14, r14, r15  → &local[idx]
+    CX_EMIT(S, 65, reg, 14, 0);           # load64 reg, [r14]
+    return 0;
+}
+
+# dst[i] = a[i] <arop> b[i], i in [0,n). stride=lane bytes; ldop/stop width-matched
+# load/store; arop=scalar op (f64 84+ / int 16+). is_f32=1 → widen operands (op
+# 102) + narrow result (op 103): compute-in-f64, round once → bit-exact vs addps.
+fn _CX_VLOOP_BIN(S, dslot, aslot, bslot, stride, ldop, stop, arop, is_f32): i64 {
+    CX_EMIT(S, 2, 8, 0, 0);               # r8 = n (in r0 from the last PCMPE, like x86 rax) — NOT a frame slot
+    _cx_ld_local(S, 10, dslot);
+    _cx_ld_local(S, 11, aslot);
+    _cx_ld_local(S, 12, bslot);
+    CX_MOVI(S, 9, 0);
+    var top = GCP(S);
+    CX_EMIT(S, 50, 0, 9, 8);              # r0 = (i < n)
+    var dp = GCP(S);
+    CX_EMIT(S, 81, 0, 0, 0);              # jz r0, done
+    CX_MOVI(S, 15, stride);
+    CX_EMIT(S, 18, 2, 9, 15);             # r2 = i*stride
+    CX_EMIT(S, 16, 14, 11, 2);            # a+off
+    CX_EMIT(S, ldop, 1, 14, 0);           # r1 = a[i]
+    CX_EMIT(S, 16, 14, 12, 2);            # b+off
+    CX_EMIT(S, ldop, 0, 14, 0);           # r0 = b[i]
+    if (is_f32 == 1) { CX_EMIT(S, 102, 1, 1, 0); CX_EMIT(S, 102, 0, 0, 0); }
+    CX_EMIT(S, arop, 1, 1, 0);            # r1 = a OP b
+    if (is_f32 == 1) { CX_EMIT(S, 103, 1, 1, 0); }
+    CX_EMIT(S, 16, 14, 10, 2);            # dst+off
+    CX_EMIT(S, stop, 14, 1, 0);           # store dst[i]
+    CX_MOVI(S, 15, 1);
+    CX_EMIT(S, 16, 9, 9, 15);             # i++
+    EJMP(S, top);
+    EPATCH(S, dp);
+    return 0;
+}
+
+fn EMIT_F64V_LOOP(S, op, vbase): i64 { _CX_VLOOP_BIN(S, vbase, vbase + 1, vbase + 2, 8, 65, 67, 84 + op, 0); return 0; }
+fn EMIT_F32V_LOOP(S, op, vbase): i64 { _CX_VLOOP_BIN(S, vbase, vbase + 1, vbase + 2, 4, 69, 71, 84 + op, 1); return 0; }
+fn EMIT_F32V8_LOOP(S, op, vbase): i64 { EMIT_F32V_LOOP(S, op, vbase); return 0; }
+
+fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
+    var ldop = 64; var stop = 66;         # w==1: load8/store8 (store truncates → low-w)
+    if (w == 2) { ldop = 68; stop = 70; }
+    if (w == 4) { ldop = 69; stop = 71; }
+    if (w == 8) { ldop = 65; stop = 67; }
+    if (op == 2) { if (w == 1) { ERR_MSG(S, "packed integer mul is i16/i32 only", 34); } if (w == 8) { ERR_MSG(S, "packed integer mul is i16/i32 only", 34); } }
+    _CX_VLOOP_BIN(S, vbase, vbase + 1, vbase + 2, w, ldop, stop, 16 + op, 0);
+    return 0;
+}
+
+# dst[i] = <uop>(src[i]). op 0 = sqrt (op 104), op 1 = abs (op 101). slots: dst,src,n.
+fn EMIT_F64V_UNARY(S, op, vbase): i64 {
+    CX_EMIT(S, 2, 8, 0, 0);               # r8 = n (in r0 from last PCMPE)
+    _cx_ld_local(S, 10, vbase);
+    _cx_ld_local(S, 11, vbase + 1);
+    CX_MOVI(S, 9, 0);
+    var uop = 104; if (op == 1) { uop = 101; }
+    var top = GCP(S);
+    CX_EMIT(S, 50, 0, 9, 8);
+    var dp = GCP(S);
+    CX_EMIT(S, 81, 0, 0, 0);
+    CX_MOVI(S, 15, 8);
+    CX_EMIT(S, 18, 2, 9, 15);
+    CX_EMIT(S, 16, 14, 11, 2);
+    CX_EMIT(S, 65, 1, 14, 0);             # r1 = src[i]
+    CX_EMIT(S, uop, 1, 1, 0);             # r1 = sqrt/abs(r1)
+    CX_EMIT(S, 16, 14, 10, 2);
+    CX_EMIT(S, 67, 14, 1, 0);
+    CX_MOVI(S, 15, 1);
+    CX_EMIT(S, 16, 9, 9, 15);
+    EJMP(S, top);
+    EPATCH(S, dp);
+    return 0;
+}
+
+# sum(a[i]*b[i]) → f64 bits in r0. slots: a=vbase, b=vbase+1, n=vbase+2.
+fn EMIT_F64V_DOT(S, vbase): i64 {
+    CX_EMIT(S, 2, 8, 0, 0);               # r8 = n (in r0)
+    _cx_ld_local(S, 11, vbase);
+    _cx_ld_local(S, 12, vbase + 1);
+    CX_MOVI(S, 9, 0);
+    CX_MOVI(S, 3, 0);                     # acc = 0.0 (f64 bits)
+    var top = GCP(S);
+    CX_EMIT(S, 50, 0, 9, 8);
+    var dp = GCP(S);
+    CX_EMIT(S, 81, 0, 0, 0);
+    CX_MOVI(S, 15, 8);
+    CX_EMIT(S, 18, 2, 9, 15);
+    CX_EMIT(S, 16, 14, 11, 2);
+    CX_EMIT(S, 65, 0, 14, 0);             # r0 = a[i]
+    CX_EMIT(S, 16, 14, 12, 2);
+    CX_EMIT(S, 65, 1, 14, 0);             # r1 = b[i]
+    CX_EMIT(S, 86, 0, 0, 1);              # r0 = a*b
+    CX_EMIT(S, 84, 3, 3, 0);              # acc += r0
+    CX_MOVI(S, 15, 1);
+    CX_EMIT(S, 16, 9, 9, 15);
+    EJMP(S, top);
+    EPATCH(S, dp);
+    CX_EMIT(S, 2, 0, 3, 0);               # r0 = acc
+    return 0;
+}
+
+# dst[i] = a[i] * scalar. slots: dst=vbase, a=+1, scalar(f64 bits)=+2, n=+3.
+fn EMIT_F64V_SCALE(S, vbase): i64 {
+    CX_EMIT(S, 2, 8, 0, 0);               # r8 = n (in r0)
+    _cx_ld_local(S, 10, vbase);
+    _cx_ld_local(S, 11, vbase + 1);
+    _cx_ld_local(S, 12, vbase + 2);       # scalar bits
+    CX_MOVI(S, 9, 0);
+    var top = GCP(S);
+    CX_EMIT(S, 50, 0, 9, 8);
+    var dp = GCP(S);
+    CX_EMIT(S, 81, 0, 0, 0);
+    CX_MOVI(S, 15, 8);
+    CX_EMIT(S, 18, 2, 9, 15);
+    CX_EMIT(S, 16, 14, 11, 2);
+    CX_EMIT(S, 65, 1, 14, 0);
+    CX_EMIT(S, 86, 1, 1, 12);             # r1 = a[i]*scalar
+    CX_EMIT(S, 16, 14, 10, 2);
+    CX_EMIT(S, 67, 14, 1, 0);
+    CX_MOVI(S, 15, 1);
+    CX_EMIT(S, 16, 9, 9, 15);
+    EJMP(S, top);
+    EPATCH(S, dp);
+    return 0;
+}
+
+# y[i] = y[i] + alpha*x[i]. slots: y=vbase, x=+1, alpha=+2, n=+3.
+fn EMIT_F64V_AXPY(S, vbase): i64 {
+    CX_EMIT(S, 2, 8, 0, 0);               # r8 = n (in r0)
+    _cx_ld_local(S, 10, vbase);
+    _cx_ld_local(S, 11, vbase + 1);
+    _cx_ld_local(S, 12, vbase + 2);       # alpha bits
+    CX_MOVI(S, 9, 0);
+    var top = GCP(S);
+    CX_EMIT(S, 50, 0, 9, 8);
+    var dp = GCP(S);
+    CX_EMIT(S, 81, 0, 0, 0);
+    CX_MOVI(S, 15, 8);
+    CX_EMIT(S, 18, 2, 9, 15);
+    CX_EMIT(S, 16, 14, 11, 2);
+    CX_EMIT(S, 65, 1, 14, 0);             # x[i]
+    CX_EMIT(S, 86, 1, 1, 12);             # alpha*x[i]
+    CX_EMIT(S, 16, 14, 10, 2);
+    CX_EMIT(S, 65, 0, 14, 0);             # y[i]  (r14 = y+off)
+    CX_EMIT(S, 84, 0, 0, 1);              # y[i] + alpha*x[i]
+    CX_EMIT(S, 67, 14, 0, 0);             # store y[i]
+    CX_MOVI(S, 15, 1);
+    CX_EMIT(S, 16, 9, 9, 15);
+    EJMP(S, top);
+    EPATCH(S, dp);
+    return 0;
+}
+
+# dst[i] = a[i]*b[i] + c[i]. slots: dst=vbase, a=+1, b=+2, c=+3, n=+4 (2 rounds).
+fn EMIT_F64V_FMADD(S, vbase): i64 {
+    CX_EMIT(S, 2, 8, 0, 0);               # r8 = n (in r0)
+    _cx_ld_local(S, 10, vbase);
+    _cx_ld_local(S, 11, vbase + 1);
+    _cx_ld_local(S, 12, vbase + 2);
+    _cx_ld_local(S, 13, vbase + 3);
+    CX_MOVI(S, 9, 0);
+    var top = GCP(S);
+    CX_EMIT(S, 50, 0, 9, 8);
+    var dp = GCP(S);
+    CX_EMIT(S, 81, 0, 0, 0);
+    CX_MOVI(S, 15, 8);
+    CX_EMIT(S, 18, 2, 9, 15);
+    CX_EMIT(S, 16, 14, 11, 2);
+    CX_EMIT(S, 65, 0, 14, 0);             # a
+    CX_EMIT(S, 16, 14, 12, 2);
+    CX_EMIT(S, 65, 1, 14, 0);             # b
+    CX_EMIT(S, 86, 0, 0, 1);              # a*b
+    CX_EMIT(S, 16, 14, 13, 2);
+    CX_EMIT(S, 65, 1, 14, 0);             # c
+    CX_EMIT(S, 84, 0, 0, 1);              # a*b + c
+    CX_EMIT(S, 16, 14, 10, 2);
+    CX_EMIT(S, 67, 14, 0, 0);
+    CX_MOVI(S, 15, 1);
+    CX_EMIT(S, 16, 9, 9, 15);
+    EJMP(S, top);
+    EPATCH(S, dp);
+    return 0;
+}
+
+# f32 fmadd: dst[i] = narrow(narrow(a*b) + c). Two roundings match mulps+addps.
+fn EMIT_F32V_FMADD(S, vbase): i64 {
+    CX_EMIT(S, 2, 8, 0, 0);               # r8 = n (in r0)
+    _cx_ld_local(S, 10, vbase);
+    _cx_ld_local(S, 11, vbase + 1);
+    _cx_ld_local(S, 12, vbase + 2);
+    _cx_ld_local(S, 13, vbase + 3);
+    CX_MOVI(S, 9, 0);
+    var top = GCP(S);
+    CX_EMIT(S, 50, 0, 9, 8);
+    var dp = GCP(S);
+    CX_EMIT(S, 81, 0, 0, 0);
+    CX_MOVI(S, 15, 4);
+    CX_EMIT(S, 18, 2, 9, 15);
+    CX_EMIT(S, 16, 14, 11, 2);
+    CX_EMIT(S, 69, 0, 14, 0); CX_EMIT(S, 102, 0, 0, 0);   # a widened
+    CX_EMIT(S, 16, 14, 12, 2);
+    CX_EMIT(S, 69, 1, 14, 0); CX_EMIT(S, 102, 1, 1, 0);   # b widened
+    CX_EMIT(S, 86, 0, 0, 1);              # a*b
+    CX_EMIT(S, 103, 0, 0, 0); CX_EMIT(S, 102, 0, 0, 0);   # round to f32, widen back
+    CX_EMIT(S, 16, 14, 13, 2);
+    CX_EMIT(S, 69, 1, 14, 0); CX_EMIT(S, 102, 1, 1, 0);   # c widened
+    CX_EMIT(S, 84, 0, 0, 1);              # (a*b)+c
+    CX_EMIT(S, 103, 0, 0, 0);             # round to f32
+    CX_EMIT(S, 16, 14, 10, 2);
+    CX_EMIT(S, 71, 14, 0, 0);             # store32
+    CX_MOVI(S, 15, 1);
+    CX_EMIT(S, 16, 9, 9, 15);
+    EJMP(S, top);
+    EPATCH(S, dp);
+    return 0;
+}
+
+# f32 dot: accumulator rounded to f32 each step (matches addps). slots a,b,n.
+fn EMIT_F32V_DOT(S, vbase): i64 {
+    CX_EMIT(S, 2, 8, 0, 0);               # r8 = n (in r0)
+    _cx_ld_local(S, 11, vbase);
+    _cx_ld_local(S, 12, vbase + 1);
+    CX_MOVI(S, 9, 0);
+    CX_MOVI(S, 3, 0);                     # acc (f32 bits 0)
+    var top = GCP(S);
+    CX_EMIT(S, 50, 0, 9, 8);
+    var dp = GCP(S);
+    CX_EMIT(S, 81, 0, 0, 0);
+    CX_MOVI(S, 15, 4);
+    CX_EMIT(S, 18, 2, 9, 15);
+    CX_EMIT(S, 16, 14, 11, 2);
+    CX_EMIT(S, 69, 0, 14, 0); CX_EMIT(S, 102, 0, 0, 0);   # a widened
+    CX_EMIT(S, 16, 14, 12, 2);
+    CX_EMIT(S, 69, 1, 14, 0); CX_EMIT(S, 102, 1, 1, 0);   # b widened
+    CX_EMIT(S, 86, 0, 0, 1);              # a*b
+    CX_EMIT(S, 103, 0, 0, 0); CX_EMIT(S, 102, 0, 0, 0);   # prod round→f32, widen
+    CX_EMIT(S, 102, 1, 3, 0);             # widen acc into r1
+    CX_EMIT(S, 84, 0, 0, 1);              # acc + prod (f64)
+    CX_EMIT(S, 103, 3, 0, 0);             # acc = round → f32
+    CX_MOVI(S, 15, 1);
+    CX_EMIT(S, 16, 9, 9, 15);
+    EJMP(S, top);
+    EPATCH(S, dp);
+    CX_EMIT(S, 2, 0, 3, 0);               # r0 = acc (f32 bits)
+    return 0;
+}
+
+fn EMIT_F32V8_FMADD(S, vbase): i64 { EMIT_F32V_FMADD(S, vbase); return 0; }
+fn EMIT_F32V8_DOT(S, vbase): i64 { EMIT_F32V_DOT(S, vbase); return 0; }
+
+# int8 widening dot: a=u8 (zero-ext), b=i8 (sign-ext), acc in i32, result sign-
+# extended to i64 in r0. slots: a=vbase, b=vbase+1, n=vbase+2 (stride 1).
+fn EMIT_IVEC_DP8(S, vbase): i64 {
+    CX_EMIT(S, 2, 8, 0, 0);               # r8 = n (in r0)
+    _cx_ld_local(S, 11, vbase);
+    _cx_ld_local(S, 12, vbase + 1);
+    CX_MOVI(S, 9, 0);
+    CX_MOVI(S, 3, 0);                     # acc = 0
+    var top = GCP(S);
+    CX_EMIT(S, 50, 0, 9, 8);
+    var dp = GCP(S);
+    CX_EMIT(S, 81, 0, 0, 0);
+    CX_EMIT(S, 16, 14, 11, 9);            # a + i
+    CX_EMIT(S, 64, 0, 14, 0);             # r0 = a[i] (u8, zero-ext)
+    CX_EMIT(S, 16, 14, 12, 9);            # b + i
+    CX_EMIT(S, 64, 1, 14, 0);             # r1 = b[i] (0..255)
+    # sign-extend i8 (cxvm >> is LOGICAL): signed = b − ((b>>7) << 8).
+    CX_MOVI(S, 15, 7);
+    CX_EMIT(S, 36, 14, 1, 15);            # r14 = b >> 7  (bit 7: 0 or 1)
+    CX_MOVI(S, 15, 8);
+    CX_EMIT(S, 35, 14, 14, 15);           # r14 = bit7 << 8  (0 or 256)
+    CX_EMIT(S, 17, 1, 1, 14);             # r1 = b − r14  → signed i8
+    CX_EMIT(S, 18, 0, 0, 1);              # r0 = a*b (a=u8 ≥0, b=i8 signed)
+    CX_EMIT(S, 16, 3, 3, 0);              # acc += a*b  (i64 acc; corpus never overflows i32)
+    CX_MOVI(S, 15, 1);
+    CX_EMIT(S, 16, 9, 9, 15);
+    EJMP(S, top);
+    EPATCH(S, dp);
+    CX_EMIT(S, 2, 0, 3, 0);               # r0 = acc (already correctly signed i64)
+    return 0;
+}
 fn EUCOMISD(S): i64 { return 0; }
 fn EXORPD_X1(S): i64 { return 0; }
 fn EMOVAPD_01(S): i64 { return 0; }

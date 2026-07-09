@@ -6,6 +6,72 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.32] — 2026-07-09
+
+**v6.4.32 — cx SIMD codegen: the packed-verb emitters + the frame-addressing fixes
+they needed.** The cx bytecode backend gained real per-lane emitters for every
+flat-array SIMD verb (`f64v_*`/`f32v_*`/`iv_*` — add/sub/mul/div, dot, fmadd, scale,
+axpy, sqrt, int8 widening dot), so the portable `.cyx` target is now a byte-exact
+correctness oracle for the whole packed-SIMD surface, matching x86 SSE / aarch64 NEON.
+Getting there surfaced and fixed **two real cx codegen bugs** in local-variable
+addressing that predate SIMD but only bit once SIMD stashed pointers in frame slots.
+Verified on **real hardware** (ecb/pi/cass `SELFHOST_OK`) — each host rebuilds its
+native cxvm + cycc_cx and runs an `f64v_add`+`f64v_sqrt` fixture to exit 42.
+Bench: self_compile 616 ms · cycc 1,077,592 B — **byte-identical to v6.4.31**
+(all v6.4.32 work is cx-backend-only; `src/main.cyr`'s x86 include chain is untouched).
+
+### Added — cx packed-SIMD emitters (`src/backend/cx/emit.cyr`)
+- Replaced the 13 SIMD emit stubs with real per-lane scalar loops over a shared
+  `_CX_VLOOP_BIN` driver: `f64v`/`f32v` add/sub/mul/div (`EMIT_F64V_LOOP`/`EMIT_F32V_LOOP`,
+  `EMIT_F32V8_LOOP` = 2×128 fallback), `iv_add`/`sub`/`mul` (`EMIT_IVEC_BINOP`,
+  width-dispatched load/store, mul guarded to i16/i32), unary sqrt/abs
+  (`EMIT_F64V_UNARY`), dot / scale / axpy / fmadd (`EMIT_F64V_*`), the f32 variants
+  (`EMIT_F32V_FMADD`/`EMIT_F32V_DOT` + v8 fallbacks), and int8 widening dot
+  (`EMIT_IVEC_DP8`). Reg map documented at the driver: r8=n, r9=lane, r2=byte offset,
+  r10–r13=base ptrs, r14/r15=addr+imm scratch, r0/r1=values, r3=accumulator.
+- **f32 = compute-in-f64, round-per-op**: operands widened (new cxvm `f32widen`), the
+  scalar op runs in f64, the result narrowed (new cxvm `f32narrow`) so a single packed
+  op is bit-exact vs `addps`/`mulps`; `fmadd` narrows twice to match `mulps`+`addps`.
+- **`EMIT_IVEC_DP8`** sign-extends the i8 `b` lane with `b − ((b>>7)<<8)` (cxvm `>>` is
+  **logical**, so the naive `<<56/>>56` sign trick is unavailable), `a` zero-extended,
+  i64 accumulate — matches the x86/NEON signed·unsigned dot.
+- `EF32_FROM`/`EF32_TO` un-stubbed (scalar f32↔f64 bit conversion).
+
+### Added — cxvm opcodes (`programs/cxvm.cyr`)
+- `f32widen` (0x66), `f32narrow` (0x67), `fsqrt` (0x68) — the three scalar primitives
+  the f32 packed path and `f64v_sqrt` compile to. Documented in the ISA header.
+
+### Fixed — cx `&local` returned a bogus address (`ELOAD_LOCAL_ADDR` was a `return 0` stub)
+- Address-of a local (`&a`) emitted nothing and left r0 = 0, so two distinct locals
+  `&a` and `&b` both read as address 0 — a silent aliasing bug for any code taking the
+  address of a stack variable (SIMD `f64v_add(&R, &A, &B, n)` wrote all three through
+  the same address). Now emits `r0 = fp − adisp` (fp-relative, regalloc/ret_stash-aware).
+
+### Fixed — cx local-slot disp non-uniformity (regalloc offset applied inconsistently)
+- `EFLADDR` (address-of) already folded the `_cur_fn_regalloc`/`_cur_fn_ret_stash`
+  reservation into its slot disp, but the scalar load/store path (`EFLLOAD`/`EFLSTORE`,
+  the f64v2 load/store pairs, `ESTOREPARM`, and the SIMD stash loader) did **not** — so
+  when a fn used both stack arrays (addressed via `EFLADDR`) and the SIMD pointer stash
+  (via `EFLSTORE`), the stash slots collided with regalloc-shifted array storage.
+  Unified every local-disp site through one `_cx_ldisp(idx)` helper that always includes
+  the reservation. Verified against the v6.4.31 baseline: **no general `var x = <call>`
+  regression** with large (4-array) frames; SIMD results byte-correct over local + global
+  arrays.
+
+### Changed
+- New cross-OS gate `tests/tcyr/vr01_simd_cx.tcyr` — the flat-array SIMD verbs over
+  **local** arrays (exercising the frame fixes), passing on all four backends
+  (cx/x86/PE/aarch64: 15/15). The cx round-trip fixture in `scripts/cross-os-selfhost.sh`
+  was upgraded from a bare I/O write to also run `f64v_add` + `f64v_sqrt` over local
+  arrays, so a green ecb/cass/pi leg now proves the cx SIMD emitters + frame addressing
+  execute on that host's native cxvm — not just that a write halts.
+- `_CX_VLOOP_BIN` shed a vestigial `nslot` parameter (n comes from r0, never a frame
+  slot) — pure readability, cx bytecode byte-identical.
+- Filed `docs/development/issues/2026-07-09-cx-var-capture-after-global-mutation.md` — a
+  **pre-existing** cx-only bug (`var x = assert_summary()` mis-captures after a prior
+  `assert_eq` mutated the assert globals; reproduces on v6.4.31 with zero SIMD/arrays).
+  Not a .32 regression; the new gate ends with `return assert_summary()` to sidestep it.
+
 ## [6.4.31] — 2026-07-08
 
 **v6.4.31 — Win64 value-form SIMD params & returns (the last PE SIMD-ABI gap).**

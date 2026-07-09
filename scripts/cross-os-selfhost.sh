@@ -86,16 +86,21 @@ SSHO="-o ConnectTimeout=20 -o BatchMode=yes -o HostName=$IP -o HostKeyAlias=$HN 
 # ecb-install, which builds its own tarball). Built from clean source so what
 # we verify is what we ship.
 cat src/main.cyr | ./build/cycc > /tmp/_co_l && chmod +x /tmp/_co_l
-# cx Release C (v6.4.20): a portable-.cyx I/O fixture, built once with the LOCAL
+# cx Release C (v6.4.20): a portable-.cyx fixture, built once with the LOCAL
 # cx bytecode compiler (cycc_cx), shipped to every host. Each self-host leg
 # rebuilds cxvm with the just-self-hosted NATIVE cycc and runs this .cyx —
 # proving cxvm's per-host guest-syscall translation actually works (exit 42 IFF
 # the guest write() returned its byte count, i.e. the 0x70 syscall path fired).
 # A green cxvm-that-halts is the placebo CLAUDE.md warns about, so the fixture
-# EXERCISES a guest write, not just a halt. programs/cxvm.cyr rides the bundle
+# EXERCISES real work, not just a halt. programs/cxvm.cyr rides the bundle
 # (its includes lib/string.cyr + lib/alloc.cyr are already in `lib`).
+# v6.4.32: upgraded to also exercise the cx SIMD path — local-array frame
+# addressing (ELOAD_LOCAL_ADDR + the EFLLOAD/EFLSTORE regalloc unification),
+# f64v_add (per-lane fadd), and f64v_sqrt (the new cxvm fsqrt opcode 0x68).
+# A green leg now means the cx SIMD emitters + frame fix run on that host's
+# native cxvm, not just that a write halts. (Text output length 10, not 9.)
 cat src/main_cx.cyr | ./build/cycc > /tmp/_co_ccx && chmod +x /tmp/_co_ccx
-printf 'fn main(): i64 { var w = syscall(1, 1, "cx-io-ok\\n", 9); if (w == 9) { return 42; } return 1; }\nvar e = main();\nsyscall(60, e);\n' > /tmp/_co_cx.cyr
+printf 'fn main(): i64 { var A[24]; var B[16]; var R[16]; store64(&A + 0, f64_from(10)); store64(&A + 8, f64_from(20)); store64(&B + 0, f64_from(3)); store64(&B + 8, f64_from(4)); f64v_add(&R, &A, &B, 2); if (f64_to(load64(&R + 0)) != 13) { return 1; } if (f64_to(load64(&R + 8)) != 24) { return 2; } store64(&A + 0, f64_from(9)); store64(&A + 8, f64_from(16)); f64v_sqrt(&R, &A, 2); if (f64_to(load64(&R + 0)) != 3) { return 3; } if (f64_to(load64(&R + 8)) != 4) { return 4; } var w = syscall(1, 1, "cx-simd-ok\\n", 10); if (w == 10) { return 42; } return 5; }\nvar e = main();\nsyscall(60, e);\n' > /tmp/_co_cx.cyr
 cat /tmp/_co_cx.cyr | /tmp/_co_ccx > /tmp/_co_cx.cyx
 # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
 # lib/assert.cyr only ride along when the lib-test fallback is triggered.
