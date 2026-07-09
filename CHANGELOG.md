@@ -6,16 +6,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-**v6.4.33 (in progress) — async runtime F1: the epoll reactor (arc 5b opens).**
-The first slot of the async-runtime arc turns `lib/async.cyr` from a serial
-run-to-completion sweep into a real epoll reactor. The runtime's `epfd` — created
-since v6.1.22 but never used to multiplex — now drives task scheduling: a task can
-park itself on an fd via the new `async_wait_fd(rt, fd)`, and `async_run` blocks on
-the shared `epfd` and resumes the task when its fd is readable. A task that never
-parks runs straight to completion, byte-for-byte the pre-F1 behavior, so the
-sandhi/daimon accept loops are unaffected. cycc is **byte-identical** (it does not
-include `lib/async.cyr`) and there is no `src/` change, so the seed→cybs→cycc chain
-is untouched. check.sh 132→133.
+## [6.4.33] — 2026-07-09
+
+**v6.4.33 — async runtime F1 (the epoll reactor, arc 5b opens) + the sandhi 1.7.2
+re-vendor + a tls-backend fmt/lint repair.** The first slot of the async-runtime arc
+turns `lib/async.cyr` from a serial run-to-completion sweep into a real epoll reactor.
+The runtime's `epfd` — created since v6.1.22 but never used to multiplex — now drives
+task scheduling: a task can park itself on an fd via the new `async_wait_fd(rt, fd)`,
+and `async_run` blocks on the shared `epfd` and resumes the task when its fd is
+readable. A task that never parks runs straight to completion, byte-for-byte the
+pre-F1 behavior, so the sandhi/daimon accept loops are unaffected. The compiler is
+untouched (no logic change to `src/`, only the version string), so the seed→cybs→cycc
+chain holds. check.sh 132→133.
+Bench: self_compile **620 ms** · cycc **1,077,592 B** — flat vs v6.4.32 (the .33 work
+is lib-only; cycc differs from .32 only by the embedded version string).
 
 ### Added — the reactor (`lib/async.cyr`)
 - **`async_run` is an epoll reactor.** Each sweep runs every `TASK_READY` task; a
@@ -57,6 +61,14 @@ is untouched. check.sh 132→133.
   unaffected (it does not include `lib/sandhi.cyr`). The low-severity, deprecated-only
   `-D CYRIUS_TLS_LIBSSL` libssl-dce reachable-undef remains open cyrius-side (native
   shipping path unaffected; retires at sandhi 2.0).
+
+### Fixed — `lib/tls_native_ctx.cyr` release-gate hygiene (formatting only)
+- The concurrent native-TLS fix (partial-record `READ_HOLD` hold buffer) tripped the
+  stdlib fmt + lint gates: a >120-char comment on `TLS_CTX_LEN` and an over-indented
+  continuation comment on `TLS_CTX_OFF_READ_HOLD`. Reflowed both — no logic change;
+  lint-clean + cyrfmt-idempotent. That hold buffer is **new this release**, so a
+  consumer relying on it (sandhi 1.7.x's large-HTTPS-response fix) must target
+  ≥ v6.4.33 — sandhi's pin bump is deferred to its 1.7.3 cut.
 
 ## [6.4.32] — 2026-07-09
 
