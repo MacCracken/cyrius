@@ -1797,6 +1797,12 @@ fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
     return 0;
 }
 
+# v6.4.31 — Win64-only value-form SIMD param store (MS x64 by-pointer ABI).
+# Never reached off-PE (_TARGET_PE==0 on aarch64); stub so the shared
+# parse_fn.cyr reference resolves in the aarch64 forks. [[project_v6426]]
+# ETERMINATE_PE cross-fork-stub lesson.
+fn ESTOREPARM_SIMD_WIN64(S, pidx, named_idx, nbytes): i64 { return 0; }
+
 # v5.10.38 — aarch64 caller-side SIMD-arg LOAD into V-register.
 # Mirror of x86 ELOAD_F64V2_TO_XMM. Encoding: ldur q<N> base
 # 0x3CC003A0 + N; deep-frame fallback ldr q<N> base 0x3DC00120 + N.

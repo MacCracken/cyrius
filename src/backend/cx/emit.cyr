@@ -576,6 +576,7 @@ fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
 # shape (R0..R3 stores per slot).
 fn ESTOREPARM_F64V2(S, simd_ord, named_idx): i64 { return 0; }
 fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 { return 0; }
+fn ESTOREPARM_SIMD_WIN64(S, pidx, named_idx, nbytes): i64 { return 0; }  # v6.4.31 PE-only; stub off-PE
 fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 { return 0; }
 fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 { return 0; }
 

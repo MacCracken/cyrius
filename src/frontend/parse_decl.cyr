@@ -1542,12 +1542,19 @@ fn PARSE_VAR(S): i64 {
                             EFLADDR(S, _f2c_named);
                             EPUSHR(S);
                             var _f2w_argc = 1;
+                            var _f2w_uarg = 0;   # v6.4.31: user-param index (retptr is arg 0, not counted)
                             if (PEEKT(S) != 11) {
                                 var _f2w_go = 1;
                                 while (_f2w_go == 1) {
-                                    PCMPE(S);
-                                    EPUSHR(S);
+                                    # v6.4.31: a value-form SIMD arg (bare SIMD-typed local) is
+                                    # address-passed on Win64 (struct_mask set for the callee's
+                                    # SIMD param) — push &local instead of the by-value low-8.
+                                    if (_try_push_struct_addr_arg(S, _f2c_look_fi, _f2w_uarg) == 0) {
+                                        PCMPE(S);
+                                        EPUSHR(S);
+                                    }
                                     _f2w_argc = _f2w_argc + 1;
+                                    _f2w_uarg = _f2w_uarg + 1;
                                     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                                     else { _f2w_go = 0; }
                                 }
@@ -1619,12 +1626,17 @@ fn PARSE_VAR(S): i64 {
                             EFLADDR(S, _f4c_named);
                             EPUSHR(S);
                             var _f4w_argc = 1;
+                            var _f4w_uarg = 0;   # v6.4.31: user-param index (retptr is arg 0)
                             if (PEEKT(S) != 11) {
                                 var _f4w_go = 1;
                                 while (_f4w_go == 1) {
-                                    PCMPE(S);
-                                    EPUSHR(S);
+                                    # v6.4.31: value-form SIMD arg → address-passed on Win64.
+                                    if (_try_push_struct_addr_arg(S, _f4c_look_fi, _f4w_uarg) == 0) {
+                                        PCMPE(S);
+                                        EPUSHR(S);
+                                    }
                                     _f4w_argc = _f4w_argc + 1;
+                                    _f4w_uarg = _f4w_uarg + 1;
                                     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                                     else { _f4w_go = 0; }
                                 }

@@ -2810,6 +2810,47 @@ fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
     return 0;
 }
 
+# v6.4.31 — emit Win64 value-form SIMD-class param store at fn entry.
+# The MS x64 ABI passes __m128 / any >8B aggregate BY POINTER in an
+# integer arg reg (rcx/rdx/r8/r9 for pidx 0..3; stack for pidx>=4),
+# NOT in XMM as SysV does. `pidx` is that integer arg-reg index (already
+# retptr-shifted by the caller). `named_idx` is the named slot of the
+# same multi-slot frame region SysV uses, so &v + lane access are
+# byte-identical to SysV downstream — only the arrival differs. We copy
+# `nbytes` (16 for f64v2/f32v4/int-vec, 32 for f64v4) from [ptr] into the
+# frame. Scratch: rax (the pointer), xmm5 (Win64 volatile, not an arg reg).
+fn ESTOREPARM_SIMD_WIN64(S, pidx, named_idx, nbytes): i64 {
+    var disp_lo = 0 - ((named_idx + 1) * 8);
+    if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
+    # ptr → rax
+    if (pidx == 0) { E3(S, 0xC88948); }        # mov rax, rcx
+    if (pidx == 1) { E3(S, 0xD08948); }        # mov rax, rdx
+    if (pidx == 2) { E3(S, 0xC0894C); }        # mov rax, r8
+    if (pidx == 3) { E3(S, 0xC8894C); }        # mov rax, r9
+    if (pidx >= 4) {
+        var win_sdisp = 16 + 32 + (pidx - 4) * 8;
+        E3(S, 0x858B48);                        # mov rax, [rbp+sdisp]
+        EDISP32(S, win_sdisp);
+    }
+    # lo 16: movupd xmm5,[rax] ; movupd [rbp+disp_lo],xmm5
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x28);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0xAD);
+    var a1 = _codebuf_base + GCP(S);
+    S64(a1, (L64(a1) >> 32 << 32) | (disp_lo & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    if (nbytes > 16) {
+        # hi 16: movupd xmm5,[rax+16] ; movupd [rbp+disp_lo+16],xmm5
+        EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x68); EB(S, 0x10);
+        EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0xAD);
+        var a2 = _codebuf_base + GCP(S);
+        var disp_hi = disp_lo + 16;
+        S64(a2, (L64(a2) >> 32 << 32) | (disp_hi & 0xFFFFFFFF));
+        SCP(S, GCP(S) + 4);
+    }
+    return 0;
+}
+
 # v5.10.38 — emit caller-side SIMD-arg LOAD (mirror of ESTOREPARM_F64V2).
 # Used by PARSE_FNCALL when a callee param is f64v2: load 16 bytes
 # from the caller's local (at named_idx) into XMM<simd_ord>.

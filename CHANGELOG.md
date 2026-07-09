@@ -6,6 +6,63 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.31] — 2026-07-08
+
+**v6.4.31 — Win64 value-form SIMD params & returns (the last PE SIMD-ABI gap).**
+Value-form vector types (`f32v4`/`f64v2`/`f64v4`/`f32v8` + integer vectors) now work as
+function **parameters and return values** on Win64 PE, not just via the `_ptr` pointer-form
+wrappers. `simd_f32v4` (13/13) and `simd_ints` (21/21) now pass on **real Windows** (cass),
+and the value-form surface is a permanent cross-OS gate. Uncovered and fixed **two latent
+bugs** along the way (both no-ops for the common non-retptr case → byte-identical there).
+Bench: self_compile 611 ms · cycc 1,077,592 B (+3,976 for the new codegen).
+
+### Added — Win64 by-pointer SIMD parameter ABI
+- `ESTOREPARM_SIMD_WIN64` (`src/backend/x86/emit.cyr`) — MS x64 passes `__m128`/`__m256` (and
+  any >8B vector) **by hidden pointer in an integer arg register**, not in XMM. The new emitter
+  copies the pointed-to 16/32 bytes into the same multi-slot frame region SysV uses, so `&v` +
+  lane access downstream are byte-identical to SysV — only the arrival differs. Callee-side stub
+  added to the aarch64 + cx backends (PE-only; the cross-fork-reference lesson from `ETERMINATE_PE`).
+- `CYRIUS_HAS_VAL_SIMD_PARAMS` is now predefined for the PE target (`main_win.cyr`), so
+  `lib/simd.cyr`'s value-form typed wrappers compile on Win64.
+- Caller marshaling wired through all four call contexts: `PARSE_FNCALL` (scalar-return calls
+  with SIMD args, via the `struct_mask` address-push), `parse_decl` (`var v: f32v4 = f(...)`),
+  and `PARSE_RETURN` (`return f32v4_make(...)` — a SIMD-returning call in a return: the tail-call
+  is disabled for retptr returns on PE and a temp-and-copy-to-retptr handler added). Inline
+  candidates with a SIMD param/return are barred on PE (the inline replay can't carry a 16/32B
+  vector through its 8-byte arg homing).
+
+### Fixed — SIMD return ABI on Win64 PE (regressed since v6.4.6)
+- The v6.4.6 uniform "any SIMD return is register-class" catch-all overrode the PE-specific
+  intent, forcing `_cur_fn_ret_stash = 0` so a SIMD-returning fn returned in XMM0 while the
+  **caller** (and the callee's own PE return handler) set up a retptr → SIGSEGV / wrong result.
+  Value-form SIMD returns never worked on real Windows; the cass gate only ever ran the
+  flat-array subset. Now gated to `_TARGET_PE == 0`, so PE SIMD returns use the retptr like any
+  >16B composite. **x86-Linux/aarch64 byte-identical** (they were already register-class).
+
+### Fixed — regalloc disp↔local-index off-by-one on retptr-returning fns (x86)
+- The linear-scan regalloc's disp↔index mapping (ra-counts builder, safety scan, patch pass)
+  omitted the `_cur_fn_ret_stash` term, so on any retptr-returning fn (>16B struct return, or —
+  as of this release — any SIMD return) every local's refs mapped one slot high. That let a
+  **parameter** (homed by `ESTOREPARM`, not a `var x = …` store) slip past the `iv_li = pc`
+  param-exclusion and get a callee-saved register with **no initializing load** → the body read
+  garbage. Added `- _cur_fn_ret_stash` at all three sites. **No-op when `ret_stash == 0`** (the
+  vast majority — scalar/pair returns), so byte-identical for non-retptr fns; corrects a latent
+  bug for the rest.
+
+### Changed
+- `tests/tcyr/vr01_simd_f32v4_neon.tcyr` extended with a value-form params/returns group
+  (`f32v4_make`/`splat`/`add`/`mul`/`lane0`/`dot`) — now a cross-OS gate for the whole ABI on
+  ecb/cass/pi (was flat-array only). `simd_f32v4.tcyr` / `simd_ints.tcyr` headers updated (the
+  PE value-form gap is closed).
+- Filed `docs/development/issues/2026-07-08-valueform-simd-duplicate-arg-x86.md` — a **pre-existing**
+  x86/aarch64 value-form bug (`f(v, v)` with a duplicated value-form arg returns `v`, not the op),
+  found while extending the gate. Not a .31 regression (v6.4.29 fails identically); PE is correct.
+
+### Verified
+- x86 self-host fixpoint byte-identical; `seed → cybs → cycc` byte-identical; `check.sh` 132/0.
+- Cross-OS on **real hardware**: `SELFHOST_OK` on cass (Windows) + pi (aarch64) + ecb (macOS
+  arm64); value-form `simd_f32v4` 13/13 + `simd_ints` 21/21 on real cass; aarch64 SIMD under qemu.
+
 ## [6.4.30] — 2026-07-08
 
 **v6.4.30 — SIMD Phase 5 COMPLETE: integer vectors on aarch64 NEON (the last SIMD XFAIL).**

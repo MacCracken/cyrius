@@ -3,9 +3,10 @@
 #   Phase 3b (v6.4.7): value-form typed ops (i32v4_add(a,b) with i32v4 VALUE params) via the
 #                      param-mask redesign (class 1 = any 16-byte vector routes through XMM).
 # **CROSS-ARCH as of SIMD Phase 5 v6.4.30:** x86 SSE + aarch64 NEON (EMIT_IVEC_BINOP +
-# EMIT_IVEC_DP8); no longer XFAIL'd on ARM. cx stubs it. Stays a regular tcyr (value-form
-# vector params/returns are unsupported on Win64 PE — the flat-array subset is cross-OS-gated
-# by vr01_simd_ints_neon.tcyr). Value-form SIMD args must be bare local IDENTs (not call temps).
+# EMIT_IVEC_DP8); no longer XFAIL'd on ARM. cx stubs it. **v6.4.31: value-form integer-vector
+# params/returns now work on Win64 PE too** (MS x64 by-pointer param + retptr return); the
+# cross-OS gate is vr01_simd_ints_neon.tcyr. Stays a regular tcyr (fuller corpus).
+# Value-form SIMD args must be bare local IDENTs (not call temps).
 include "lib/assert.cyr"
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"

@@ -2,10 +2,10 @@
 # fmadd + horizontal dot, VALUE + pointer dual-form, value-form params. **CROSS-ARCH as of
 # SIMD Phase 5 (v6.4.28):** x86 emits SSE (Phase 1, v6.4.4); aarch64 emits NEON (Phase 5 —
 # EMIT_F32V_LOOP/FMADD/DOT via .4s + faddp reduce). No longer XFAIL'd on ARM (was through
-# v6.4.27) — the aarch64-native CI corpus runs it un-XFAIL'd. Stays a REGULAR tcyr (x86-Linux
-# + aarch64), NOT vr01_, because it uses value-form f32v4 params/returns which Win64 PE does
-# not yet support; the Win64-safe flat-array intrinsics are gated cross-OS by
-# vr01_simd_f32v4_neon.tcyr (ecb/cass/pi in the release gate).
+# v6.4.27). **v6.4.31: value-form f32v4 params + returns now work on Win64 PE too** (MS x64
+# by-pointer param + retptr return ABI), so the value-form surface is cross-OS-gated by
+# vr01_simd_f32v4_neon.tcyr on ecb/cass/pi. This stays a REGULAR tcyr (fuller x86/aarch64
+# corpus); the vr01_ gate carries the cross-OS-critical subset.
 # f32 values are i32 bit patterns: 1.0f = 0x3F800000, 2.0f = 0x40000000, 3.0f = 0x40400000.
 include "lib/assert.cyr"
 include "lib/simd.cyr"
