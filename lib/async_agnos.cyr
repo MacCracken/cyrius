@@ -28,12 +28,14 @@ var TASK_READY = 0;
 var TASK_WAITING = 1;
 var TASK_DONE = 2;
 
-# Task struct: { fp, arg, state, next } = 32 bytes.
-var TASK_SIZE = 32;
+# Task struct: { fp, arg, state, next, wait_fd } = 40 bytes (mirror async.cyr F1).
+# wait_fd is unused on agnos (no epoll parking; tasks run to completion inline).
+var TASK_SIZE = 40;
 
-# Runtime struct: { epfd, tasks, task_count, active, allocator } = 40 bytes.
-# epfd is unused on agnos (no epoll for arbitrary fds) and stored as -1.
-var RT_SIZE = 40;
+# Runtime struct: { epfd, tasks, task_count, active, allocator, current } = 48
+# bytes (mirror async.cyr F1). epfd is unused on agnos (no epoll for arbitrary
+# fds) and stored as -1; current is unused (serial run-to-completion loop).
+var RT_SIZE = 48;
 
 # Create a new async runtime backed by allocator `a`. No epoll instance is
 # created (agnos has no epoll_create1; the cooperative loop below needs none —
@@ -46,6 +48,7 @@ fn async_new_in(a): i64 {
     store64(rt + 16, 0);
     store64(rt + 24, 0);
     store64(rt + 32, a);
+    store64(rt + 40, 0);         # current: unused on agnos (mirror layout)
     return rt;
 }
 
@@ -62,6 +65,7 @@ fn async_spawn(rt, fp, arg): i64 {
     store64(t + 8, arg);
     store64(t + 16, TASK_READY);
     store64(t + 24, load64(rt + 8));
+    store64(t + 32, 0 - 1);          # wait_fd: unused on agnos (mirror layout)
     store64(rt + 8, t);
     store64(rt + 16, load64(rt + 16) + 1);
     store64(rt + 24, load64(rt + 24) + 1);
@@ -114,6 +118,13 @@ fn async_read(fd, buf, len): i64 {
 # its reads block until data, so the subsequent read already blocks — this is a
 # no-op that returns immediately.
 fn async_await_readable(fd): i64 {
+    return 0;
+}
+
+# Cooperative fd-wait (mirror async.cyr F1). AGNOS has no epoll and its reads
+# block until data, so parking is a no-op — the task's subsequent blocking read
+# already waits. Present so consumers stay target-agnostic.
+fn async_wait_fd(rt, fd): i64 {
     return 0;
 }
 

@@ -72,6 +72,7 @@ async::async_sleep_ms/1
 async::async_spawn/3
 async::async_spawn_future/2
 async::async_timeout/3
+async::async_wait_fd/2
 async::cancel_token_check/1
 async::cancel_token_new/0
 async::cancel_token_signal/1
@@ -84,6 +85,7 @@ async_agnos::async_run/1
 async_agnos::async_sleep_ms/1
 async_agnos::async_spawn/3
 async_agnos::async_timeout/3
+async_agnos::async_wait_fd/2
 atomic::atomic_cas/3
 atomic::atomic_fence/0
 atomic::atomic_fetch_add/2

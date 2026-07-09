@@ -38,10 +38,12 @@ var TASK_READY = 0;
 var TASK_WAITING = 1;
 var TASK_DONE = 2;
 
-# Task struct: { fp, arg, state, next } = 32 bytes
-var TASK_SIZE = 32;
+# Task struct: { fp, arg, state, next, wait_fd } = 40 bytes.
+# wait_fd (@32, v6.4.33 F1) = the fd a parked task is blocked on, so async_run's
+# reactor can EPOLL_CTL_DEL it on wake; -1 when the task is not fd-waiting.
+var TASK_SIZE = 40;
 
-# Runtime struct: { epfd, tasks, task_count, active, allocator } = 40 bytes.
+# Runtime struct: { epfd, tasks, task_count, active, allocator, current } = 48 bytes.
 # v6.1.22 — +allocator slot @32: async_new_in threads a caller-owned Allocator
 # so the rt AND its spawned task structs come from it. A long-running batched
 # accept loop (daimon serve_async, sandhi sandhi_server_run_async) recreates the
@@ -49,7 +51,9 @@ var TASK_SIZE = 32;
 # bump (no free) that leaked ~32 B/task + 32 B/batch forever. Passing an
 # arena_allocator + reset_via(a) per batch reclaims it. See
 # docs/development/issues/2026-06-09-async-runtime-no-free-task-leak.md.
-var RT_SIZE = 40;
+# v6.4.33 F1 — +current slot @40: the task async_run is executing, so
+# async_wait_fd(rt, fd) can park THAT task on the runtime's shared epfd.
+var RT_SIZE = 48;
 
 # Create a new async runtime whose rt + every async_spawn task struct are
 # allocated from `a` — an Allocator from lib/alloc.cyr (bump_allocator /
@@ -65,6 +69,7 @@ fn async_new_in(a): i64 {
     store64(rt + 16, 0);
     store64(rt + 24, 0);
     store64(rt + 32, a);
+    store64(rt + 40, 0);        # current task (set by async_run before dispatch)
     return rt;
 }
 
@@ -88,26 +93,38 @@ fn async_spawn(rt, fp, arg): i64 {
     store64(t + 8, arg);
     store64(t + 16, TASK_READY);
     store64(t + 24, load64(rt + 8));
+    store64(t + 32, 0 - 1);          # wait_fd: not fd-waiting (F1)
     store64(rt + 8, t);
     store64(rt + 16, load64(rt + 16) + 1);
     store64(rt + 24, load64(rt + 24) + 1);
     return t;
 }
 
-# Run all spawned tasks to completion.
-# Tasks run cooperatively — each task runs to completion or yield.
+# Run the runtime to completion as an epoll reactor (v6.4.33 F1).
+# Each sweep runs every TASK_READY task; a task that parks itself via
+# async_wait_fd(rt, fd) comes back TASK_WAITING (not marked DONE). When a sweep
+# makes no progress (every remaining task is WAITING on an fd), block on the
+# runtime's shared epfd until one fd is readable, wake that task, and resume.
+# A task that never parks runs straight to completion — byte-for-byte the old
+# run-to-completion behavior (sandhi/daimon accept loops), so consumers are
+# unaffected. Terminates when no task is READY or WAITING; closes the epfd.
 fn async_run(rt): i64 {
+    var epfd = load64(rt);
     var go = 1;
     while (go == 1) {
         var active = 0;
+        var ran = 0;
         var t = load64(rt + 8);
         while (t != 0) {
             var state = load64(t + 16);
             if (state == TASK_READY) {
-                var fp = load64(t);
-                var arg = load64(t + 8);
-                fncall1(fp, arg);
-                store64(t + 16, TASK_DONE);
+                store64(rt + 40, t);            # current task, for async_wait_fd
+                fncall1(load64(t), load64(t + 8));
+                ran = 1;
+                # if the task parked itself it is now WAITING; else it is done
+                if (load64(t + 16) == TASK_READY) {
+                    store64(t + 16, TASK_DONE);
+                }
             }
             if (load64(t + 16) != TASK_DONE) {
                 active = active + 1;
@@ -115,9 +132,45 @@ fn async_run(rt): i64 {
             t = load64(t + 24);
         }
         if (active == 0) { go = 0; }
+        if (go == 1) {
+            if (ran == 0) {
+                # no progress — every live task is parked on an fd; block on the
+                # shared epfd, then wake the task whose fd fired.
+                var evbuf[16];
+                var nr = sys_epoll_wait(epfd, &evbuf, 1, 0 - 1);
+                if (nr > 0) {
+                    var wtask = load64(&evbuf + 4);
+                    var wfd = load64(wtask + 32);
+                    syscall(SYS_EPOLL_CTL, epfd, 2, wfd, 0);   # EPOLL_CTL_DEL
+                    store64(wtask + 32, 0 - 1);
+                    store64(wtask + 16, TASK_READY);
+                }
+            }
+        }
     }
     # Cleanup
-    syscall(SYS_CLOSE, load64(rt));
+    syscall(SYS_CLOSE, epfd);
+    return 0;
+}
+
+# Cooperatively wait for `fd` to become readable from inside a running task.
+# Registers `fd` on the runtime's shared epfd keyed to the current task, parks
+# the task (TASK_WAITING), and returns; async_run blocks on the epfd and re-runs
+# the task once the fd is ready. The task must be poll-structured (re-entrant):
+# it advances its own progress and returns after calling this, resuming from the
+# top when woken. Returns -1 if called outside async_run (no current task).
+# v6.4.33 (F1) — the rt-integrated reactor path; async_await_readable stays the
+# standalone one-shot blocking helper (used by sandhi on the idle listen fd).
+fn async_wait_fd(rt, fd): i64 {
+    var cur = load64(rt + 40);
+    if (cur == 0) { return 0 - 1; }
+    var epfd = load64(rt);
+    var ev[16];
+    store32(&ev, 1);                 # EPOLLIN
+    store64(&ev + 4, cur);           # epoll_data = task ptr (packed @4)
+    syscall(SYS_EPOLL_CTL, epfd, 1, fd, &ev);   # EPOLL_CTL_ADD
+    store64(cur + 32, fd);           # remember fd for EPOLL_CTL_DEL on wake
+    store64(cur + 16, TASK_WAITING); # park
     return 0;
 }
 

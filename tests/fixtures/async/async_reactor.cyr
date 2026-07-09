@@ -1,0 +1,66 @@
+# Fixture for _async_reactor_gate (v6.4.33 F1 — the epoll reactor).
+#
+# Exercises the runtime-integrated cooperative fd-wait: a poll-structured task
+# parks on a pipe read-fd via `async_wait_fd(rt, rfd)` (→ TASK_WAITING), and
+# `async_run` drives the runtime's SHARED epfd — blocking on it, then resuming
+# the task when the fd is readable. Distinct from the async/await SUGAR (which
+# needs CYRIUS_ASYNC=1): this uses the plain library API only.
+#
+# Proven fail-on-bug: if async_wait_fd does not park (task marked DONE after one
+# run) the reader never reaches step 1, `out` stays 0, and main returns 0 ≠ 42.
+# If the reactor never wakes the parked task the program hangs (gate timeout).
+# The byte is written to the pipe BEFORE async_run, so epoll_wait returns at once.
+#
+# Linux-only (pipe + epoll); run on the local host by check.sh. MUST exit 42.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+
+# ctx: { step, rfd, rt, out } = 32 bytes
+fn reader_task(ctx): i64 {
+    var step = load64(ctx);
+    if (step == 0) {
+        store64(ctx, 1);                                 # advance progress
+        async_wait_fd(load64(ctx + 16), load64(ctx + 8));  # park on rfd
+        return 0;                                        # yield (poll-pending)
+    }
+    # resumed: rfd is readable
+    var buf[8];
+    store64(&buf, 0);
+    syscall(SYS_READ, load64(ctx + 8), &buf, 1);
+    store64(load64(ctx + 24), load8(&buf));              # record the byte read
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    var pipefd[16];
+    sys_pipe(&pipefd);
+    var rfd = load32(&pipefd);
+    var wfd = load32(&pipefd + 4);
+
+    # make rfd readable up front so the reactor's epoll_wait returns immediately
+    var wbuf[8];
+    store8(&wbuf, 42);
+    syscall(SYS_WRITE, wfd, &wbuf, 1);
+
+    var out = alloc(8);
+    store64(out, 0);
+
+    var rt = async_new();
+    var ctx = alloc(32);
+    store64(ctx, 0);            # step
+    store64(ctx + 8, rfd);
+    store64(ctx + 16, rt);
+    store64(ctx + 24, out);
+
+    async_spawn(rt, &reader_task, ctx);
+    async_run(rt);
+
+    syscall(SYS_CLOSE, rfd);
+    syscall(SYS_CLOSE, wfd);
+    return load64(out);        # 42 iff the parked task resumed + read the byte
+}

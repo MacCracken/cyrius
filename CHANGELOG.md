@@ -6,6 +6,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**v6.4.33 (in progress) — async runtime F1: the epoll reactor (arc 5b opens).**
+The first slot of the async-runtime arc turns `lib/async.cyr` from a serial
+run-to-completion sweep into a real epoll reactor. The runtime's `epfd` — created
+since v6.1.22 but never used to multiplex — now drives task scheduling: a task can
+park itself on an fd via the new `async_wait_fd(rt, fd)`, and `async_run` blocks on
+the shared `epfd` and resumes the task when its fd is readable. A task that never
+parks runs straight to completion, byte-for-byte the pre-F1 behavior, so the
+sandhi/daimon accept loops are unaffected. cycc is **byte-identical** (it does not
+include `lib/async.cyr`) and there is no `src/` change, so the seed→cybs→cycc chain
+is untouched. check.sh 132→133.
+
+### Added — the reactor (`lib/async.cyr`)
+- **`async_run` is an epoll reactor.** Each sweep runs every `TASK_READY` task; a
+  task that parks (`async_wait_fd`) comes back `TASK_WAITING` and is not completed.
+  When a sweep makes no progress (every live task is parked on an fd) the loop
+  blocks on the runtime's shared `epfd` — no more busy-spin — and wakes the task
+  whose fd fired (task pointer carried in the epoll `data`, `EPOLL_CTL_DEL` on wake).
+  Terminates when no task is `READY` or `WAITING`; still closes the `epfd` (the
+  single-use "drain the batch" contract sandhi relies on is preserved).
+- **`async_wait_fd(rt, fd)`** — the runtime-integrated cooperative fd-wait: registers
+  `fd` on the shared `epfd` keyed to the current task, parks the task, returns. The
+  task is poll-structured (re-entrant), resuming from the top when woken. Returns
+  -1 if called outside `async_run`. `async_await_readable` stays the standalone
+  one-shot blocking helper (sandhi's idle listen-fd wait), unchanged.
+- Task struct grows a `wait_fd` slot (@32, the fd a parked task blocks on) and the
+  runtime a `current` slot (@40, the executing task) — `TASK_SIZE` 32→40,
+  `RT_SIZE` 40→48. No consumer hardcodes these. `lib/async_agnos.cyr` mirrors the
+  layout with a no-op `async_wait_fd` (agnos has no epoll; reads block).
+
+### Added — test
+- `tests/fixtures/async/async_reactor.cyr` + `_async_reactor_gate` (check 132→133):
+  a poll-structured task parks on a pipe read-fd and the reactor resumes it to exit
+  42; **proven fail-on-bug** — a no-park control never reaches the read step and
+  exits 0.
+- `docs/api-surface.snapshot` regenerated for the new public `async_wait_fd/2`
+  (async + async_agnos), the expected stdlib-hygiene bump.
+
 ## [6.4.32] — 2026-07-09
 
 **v6.4.32 — cx SIMD codegen: the packed-verb emitters + the frame-addressing fixes
