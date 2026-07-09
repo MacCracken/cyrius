@@ -2119,6 +2119,13 @@ fn tls_native_record_open(cipher, key, static_iv, seq8, record, record_len, out,
         }
     }
     if (idx < 0) { return TLS_ERR_BAD_RECORD; }
+    # `idx` is the recovered content length (inner content-type byte + zero
+    # padding stripped). Callers now pass out_max = TLS_RECORD_MAX_CIPHERTEXT so a
+    # full-size record's inner plaintext (content + type byte) fits, so re-assert
+    # the RFC 8446 §5.4 record-size limit here: content over 2^14 is a
+    # record_overflow, not silently delivered (the old undersized out_max used to
+    # enforce this implicitly by rejecting the whole record as BUFFER_FULL).
+    if (idx > TLS_RECORD_MAX_PLAINTEXT) { return TLS_ERR_RECORD_OVERFLOW; }
     store64(out_ct, load8(out + idx) & 0xFF);
     tls_native_seq_increment(seq8);
     return idx;
