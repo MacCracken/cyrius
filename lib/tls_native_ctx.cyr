@@ -20,7 +20,9 @@
 # control block; +136..+255 is reserved for the read/write key
 # material, sequence numbers, and I/O buffers Mini-arcs B-D append.
 
-var TLS_CTX_LEN          = 512;   # 64 i64 slots (+3 @ record partial-read hold buffer; +1 @ v6.2.25: ALLOC; +1 @ v6.2.8: CERT_REQUESTED)
+# 512 = 64 i64 slots: +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
+# +1 (v6.2.8) CERT_REQUESTED.
+var TLS_CTX_LEN          = 512;
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -111,8 +113,7 @@ var TLS_CTX_OFF_ALLOC          = 480; # v6.2.25 Allocator handle for per-connect
 # the next record. Lets a caller read a TLS stream in sub-record chunks (an h2
 # 9-byte frame header, the tail of a bounded response buffer) without losing data
 # or desyncing the AEAD read sequence. Zeroed by the ctor → no hold until needed.
-var TLS_CTX_OFF_READ_HOLD      = 488; # ptr to the held-plaintext buffer (lazily alloc'd once,
-                                      # TLS_RECORD_MAX_PLAINTEXT bytes, reused), or 0 = none
+var TLS_CTX_OFF_READ_HOLD      = 488; # ptr to held-plaintext buffer (TLS_RECORD_MAX_PLAINTEXT, reused), 0 = none
 var TLS_CTX_OFF_READ_HOLD_LEN  = 496; # total valid held bytes (0 = nothing held)
 var TLS_CTX_OFF_READ_HOLD_OFF  = 504; # held bytes already delivered to the caller
 

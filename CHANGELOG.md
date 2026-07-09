@@ -43,6 +43,21 @@ is untouched. check.sh 132→133.
 - `docs/api-surface.snapshot` regenerated for the new public `async_wait_fd/2`
   (async + async_agnos), the expected stdlib-hygiene bump.
 
+### Changed — vendored sandhi 1.7.0 → 1.7.2 (`lib/sandhi.cyr`)
+- Re-folded `lib/sandhi.cyr` from sandhi's `dist/sandhi.cyr`. **1.7.1** brought the
+  native-TLS large-response fix — `_sandhi_http_recv_framed` now reads in whole
+  16 KB TLS-record steps (`step` 4096→16384), relying on cyrius's already-present
+  native-backend record hold-buffer ([lib/tls_native_ctx.cyr](lib/tls_native_ctx.cyr));
+  small responses had slipped through, so the failure looked host-specific but was
+  purely response-size-dependent. **1.7.2** refreshes sandhi's cyrius language pin
+  `6.3.5 → 6.4.32` (it had trailed a full minor) — validated: sandhi's native
+  `CYRIUS_DCE=1 cyrius build programs/smoke.cyr` link proof passes clean against
+  6.4.32, and the vendored bundle + F1 `async.cyr` link clean under this cycc.
+- The whole vendored-bundle diff is the version strings + the `step` change; cycc is
+  unaffected (it does not include `lib/sandhi.cyr`). The low-severity, deprecated-only
+  `-D CYRIUS_TLS_LIBSSL` libssl-dce reachable-undef remains open cyrius-side (native
+  shipping path unaffected; retires at sandhi 2.0).
+
 ## [6.4.32] — 2026-07-09
 
 **v6.4.32 — cx SIMD codegen: the packed-verb emitters + the frame-addressing fixes
