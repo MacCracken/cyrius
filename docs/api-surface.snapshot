@@ -70,10 +70,12 @@ async::async_join_all/4
 async::async_new/0
 async::async_new_in/1
 async::async_read/3
+async::async_read_unlock/1
 async::async_recv/4
 async::async_resolve/4
 async::async_run/1
 async::async_run_process/5
+async::async_rwlock_new/0
 async::async_select/3
 async::async_send/4
 async::async_sleep_ms/1
@@ -81,9 +83,12 @@ async::async_spawn/3
 async::async_spawn_future/2
 async::async_spawn_process/4
 async::async_timeout/3
+async::async_try_read_lock/1
+async::async_try_write_lock/1
 async::async_wait_fd/2
 async::async_wait_writable/2
 async::async_with_timeout/3
+async::async_write_unlock/1
 async::cancel_token_check/1
 async::cancel_token_new/0
 async::cancel_token_signal/1

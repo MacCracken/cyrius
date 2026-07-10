@@ -6,6 +6,90 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.42] — 2026-07-10
+
+**v6.4.42 — async arc consolidation + the aarch64 reactor made real.** A closeout-style
+adversarial review of the 9 async releases (F1 reactor → RwLock, v6.4.33–.41) fixed **8
+confirmed bugs** and, while verifying the aarch64 offset fix on **real pi hardware**,
+uncovered + fixed a **pre-existing compiler bug: the aarch64 epoll reactor had NEVER worked**.
+All 7 async reactor fixtures now pass on pi (first time ever). x86 cycc **byte-identical**
+(the compiler fix is aarch64-emit-only; the lib fixes are not in the compiler); ecb + cass +
+pi `SELFHOST_OK`.
+Bench: self_compile **623ms** · cycc **1,077,592 B** — flat vs v6.4.41 (x86 cycc byte-identical).
+
+### Fixed — aarch64 async reactor (compiler + stdlib; found on real pi hardware)
+- **`epoll_pwait` syscall-number collision** (`src/backend/aarch64/emit.cyr` ESYSXLAT +
+  `lib/syscalls_aarch64_linux.cyr`) — `sys_epoll_wait` issued the aarch64 `epoll_pwait`
+  number **22**, but 22 is x86 `pipe`, which ESYSXLAT rewrites to `pipe2(x0, 0)` → every
+  reactor wait ran `pipe2(epfd, 0)` → `-EFAULT` and the reactor hung. The classic
+  aarch64-stdlib/x86 number collision (cf. flock 73 / socket 41 / getdents 217). Fix:
+  `sys_epoll_wait` issues x86 **232**; a new ESYSXLAT arg-extend entry maps `232 →
+  epoll_pwait(22)` with NULL sigmask (mirrors the `poll 7 → ppoll 73` shape), placed after
+  the `pipe(22)` cmp so the `x8=22` it produces isn't re-caught.
+- **`epoll_event.data` offset** (`lib/async.cyr`) — was hardcoded at byte offset 4 (x86
+  `EPOLL_PACKED`, 12-byte struct); aarch64 leaves the struct unpacked (16 bytes, u64 @8), so
+  the task-ptr round-trip through `epoll_data` used the wrong offset. Now
+  `#ifdef CYRIUS_ARCH_AARCH64`-guarded to @8 at the write (`_async_wait_events`) + wake read
+  (`_async_step`) + the two standalone helpers; the dead `epoll_event_new` stdlib helper too.
+- Both invisible to x86 self-host + the async gates (which run only on x86) — the exact
+  "found by ports" failure class. Verified end-to-end on pi. Vidya field note added.
+
+### Fixed — async runtime library (`lib/async.cyr`, `lib/async_agnos.cyr`)
+- **`async_select` missed-completion** — a task that ran to DONE and drove the active count
+  to 0 in the SAME sweep returned -1 ("none done") instead of its index; now re-scans handles
+  after an idling step. **+ null-handle guard** (matches `task_join`/`async_join_all`). Mirror
+  applied to the agnos peer.
+- **`_async_retire` owned-fd leak** — a connect/resolve task retired by `async_with_timeout`
+  (or as a `select` loser) had its socket/UDP fd `EPOLL_CTL_DEL`'d but never `close()`d (the
+  close lived only in the never-reached resume body). Added a task `owned_fd` slot (@48,
+  `TASK_SIZE` 48→56) that connect/resolve set; `_async_retire` now closes it. recv/send park
+  on a caller-owned fd and are exempt; process cleanup stays in `async_run_process`.
+- **`_async_interval_task` null-token deref** — a null cancel token (the documented
+  "never cancel" value, per `cancel_token_check(0)`) dereferenced address 0 on entry/tick;
+  now guarded, matching `cancel_token_check`/`_signal`.
+- **`_async_process_task` unchecked pidfd** — a failed `pidfd_open` (kernel < 5.3 / raced pid)
+  parked on a negative fd → the reactor blocked forever + a child zombie; now reaps the child
+  and completes with an error.
+- **agnos `async_with_timeout` null-handle parity** — returned 1 ("completed") for a null
+  handle where the Linux version returns 0, so a target-agnostic consumer dereferenced a 0
+  handle on agnos; now guards `handle == 0 → 0`.
+
+### Changed — async refactor/dedup (`lib/async.cyr`)
+- `async_sleep_ms` now shares the one-shot timerfd construction with the reactor via
+  `_async_timerfd(ms, 0)` (was a hand-rolled duplicate).
+- All reactor task-ctx allocations route through the runtime's allocator
+  (`alloc_via(load64(rt+32), …)`) so an arena-backed runtime reclaims them, honoring the
+  v6.1.22 per-batch leak-fix invariant (they bypassed it via bare `alloc`).
+
+### Docs
+- `docs/development/issues/2026-07-07-async-runtime-tokio-parity-gaps.md` — marked the 5
+  primitive gaps RESOLVED; recorded the consolidation + the remaining follow-ons (mid-body
+  suspend, pidfd/reactor-fd `O_CLOEXEC`, single-waiter-per-fd multiplex, IOCP-Windows).
+- Vidya: 1 compiler gotcha (aarch64 reactor ESYSXLAT collision + epoll offset) + 2 language
+  gotchas (`unwrap()` is Option-only / silently corrupts on Result; sockaddr IPv4 =
+  network-order bytes packed as an int).
+
+## [6.4.41] — 2026-07-09
+
+**v6.4.41 — async runtime: cooperative RwLock (gap 5, try-acquire).** `async_rwlock_new` +
+the `async_try_read_lock`/`async_read_unlock`/`async_try_write_lock`/`async_write_unlock`
+family — the reactor-cooperative reader/writer lock for shared state held across an await.
+Shared across all targets (plain state ops, no epoll — no agnos mirror). cycc byte-identical.
+Bench: self_compile **635ms** · cycc **1,077,592 B** — flat vs v6.4.40.
+
+### Added — async RwLock (`lib/async.cyr`, shared section)
+- **`async_rwlock_new()`** + **`async_try_read_lock`** / **`async_read_unlock`** /
+  **`async_try_write_lock`** / **`async_write_unlock`** — a cooperative reader/writer lock
+  (`{writer_held, reader_count}`) for state a single-threaded reactor holds across a yield. A
+  writer excludes readers + other writers; readers share + block writers. The **try-acquire**
+  family is what the cooperative model needs (tasks are atomic between yields, so a lock is
+  only needed across a yield). For cross-THREAD sharing use `lib/thread.cyr`'s preemptive mutex.
+- Test `tests/fixtures/async/async_rwlock.cyr` + `_async_rwlock_gate` (check 140→141): 7
+  exclusion-invariant checks sum to 42, **proven fail-on-bug** (skipping an unlock → 24).
+  api-surface regenerated.
+- Note: a **blocking** await-until-free acquire (the fully task-yielding lock) needs mid-body
+  suspend — filed with the execution-model follow-on (shared with streaming socket I/O).
+
 ## [6.4.40] — 2026-07-09
 
 **v6.4.40 — async runtime: DNS resolution.** `async_resolve` — reactor-integrated DNS

@@ -900,6 +900,18 @@ fn ESYSXLAT(S): i64 {
     # ordering rule as the at-family above). See proposal 2026-05-20.
     EW(S, 0xF101291F); EW(S, 0x54000041); EW(S, 0xD2800A48);  # fsync     74→82
     EW(S, 0xF1012D1F); EW(S, 0x54000041); EW(S, 0xD2800A68);  # fdatasync 75→83
+    # v6.4.42: epoll_wait 232 → epoll_pwait 22 (arg-extend, NULL sigmask). aarch64-Linux
+    # has NO bare epoll_wait; #22 is epoll_pwait, which COLLIDES with the pipe(22→pipe2)
+    # remap above — issuing raw 22 ran pipe2(epfd,0) → -EFAULT, so the async epoll reactor
+    # NEVER worked on aarch64 (async gates run only on x86; found on real pi hardware).
+    # lib/syscalls_aarch64_linux.cyr:sys_epoll_wait now issues the x86 number 232, which
+    # this entry arg-extends: epoll_wait(epfd,events,maxevents,timeout) x0-x3 →
+    # epoll_pwait(...,sigmask=0,sigsetsize=0) x0-x5, x8=22. MUST come AFTER the
+    # pipe(22→pipe2) cmp so the x8=22 produced here is not re-caught (same ordering rule
+    # as the at-family/flock entries). aarch64-linux-gnu-as verified.
+    # cmp x8,#232; b.ne +16 (skip 3); movz x4,#0; movz x5,#0; movz x8,#22.
+    EW(S, 0xF103A11F); EW(S, 0x54000081);
+    EW(S, 0xD2800004); EW(S, 0xD2800005); EW(S, 0xD28002C8);
     return 0;
 }
 
