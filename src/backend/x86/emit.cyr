@@ -1593,6 +1593,57 @@ fn _pe_call_5arg_aligned(S, idx): i64 {
     return 0;
 }
 
+# 6-arg kernel32/ws2_32 reroute, 16-byte aligned. a1-a4 → rcx/rdx/r8/r9; a5 →
+# [rsp+0x20], a6 → [rsp+0x28] (above the 32-byte shadow, Win64). Result in rax.
+# Stack on entry (top→bottom): [a6] [a5] [a4] [a3] [a2] [a1] [sc_nr]. v6.4.43
+# (WSASocketW — af/type/proto/lpProtocolInfo/g/dwFlags). Frame 0x30 keeps rsp
+# 16-aligned at the call.
+fn _pe_call_6arg_aligned(S, idx): i64 {
+    EB(S, 0x58);                                        # pop rax (a6)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax (a6, temp)
+    EB(S, 0x58);                                        # pop rax (a5)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (a5, temp)
+    EB(S, 0x58);                                        # pop rax (a4)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC1);              # mov r9, rax  (a4)
+    EB(S, 0x58);                                        # pop rax (a3)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC0);              # mov r8, rax  (a3)
+    EB(S, 0x58);                                        # pop rax (a2)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (a2)
+    EB(S, 0x58);                                        # pop rax (a1)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x30); # sub rsp, 0x30 (32 shadow + a5 + a6)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x20);  # mov [rsp+0x20], r11 (a5)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x28);  # mov [rsp+0x28], r10 (a6)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
+# v6.4.43: ws2_32 socket foundation. syscall(0xF022, af,type,proto,info,g,flags) →
+# WSASocketW (6-arg; WSA_FLAG_OVERLAPPED=1 → an IOCP-associable socket; returns
+# SOCKET or INVALID_SOCKET=-1).
+fn EWSASOCKET_PE(S): i64 {
+    _pe_ensure_wsasocket(S);
+    return _pe_call_6arg_aligned(S, _pe_wsasocket_get());
+}
+# syscall(0xF023, s) → closesocket (1-arg; 0 on success).
+fn ECLOSESOCKET_PE(S): i64 {
+    _pe_ensure_closesocket(S);
+    return _pe_srw_call_1arg(S, _pe_closesocket_get());
+}
+# syscall(0xF024) → WSAGetLastError (0-arg; last-error DWORD, e.g. WSA_IO_PENDING=997).
+fn EWSALASTERR_PE(S): i64 {
+    _pe_ensure_wsalasterr(S);
+    return _pe_call_0arg_aligned(S, _pe_wsalasterr_get());
+}
+
 # syscall(0xF012, &iid, &ppFactory) → dxgi!CreateDXGIFactory1. 2 args
 # (REFIID riid → rcx, void** ppFactory → rdx). Returns HRESULT (0=S_OK) in
 # rax/eax; *ppFactory receives the IDXGIFactory1*. v6.0.70 §0 — dxgi.dll is
