@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.34] — 2026-07-09
+
+**v6.4.34 — async runtime F2 (result-carrying tasks + `task_join`) + the agnos shm
+syscall band + the sandhi 1.7.3 pin bump.** F2 extends the arc-5b substrate: `async_run`
+captures each task's return and `task_join(rt, handle)` hands it back (the JoinHandle
+primitive) — with multi-arg for free via `async_spawn_future` (the `tokio::spawn(async{…}).await`
+shape). Plus a reactive agnos repair (`sys_shm_*` #71-74 wrappers for the kernel-owned
+shared-buffer band) and the deferred sandhi pin bump to 6.4.33 (which carries the tls
+`READ_HOLD` fix 1.7.x depends on). All lib-only — cycc byte-identical modulo the version
+string, so the seed→cybs→cycc chain holds.
+Bench: self_compile **607 ms** · cycc **1,077,592 B** — flat vs v6.4.33.
+
+### Added — agnos shm syscall band (`lib/syscalls_x86_64_agnos.cyr`)
+- `sys_shm_create` / `_write` / `_read` / `_free` (`#71-74`) wrap agnos 1.53.9's
+  COPY-based, kernel-owned shared-buffer band (the next band after `readlink`#70). A
+  writer `sys_shm_write`s a buffer, hands the 1-based id over its own IPC, a reader
+  `sys_shm_read`s it — no page mapping, no socket streaming (avoids the single-core
+  `sock_send` preemption deadlock and the `proc_free_address_space` use-after-free a
+  mapped shared page hits). Backs the setu shared-buffer present; retires the raw
+  `syscall(71..74)` literals in setu's `buf.cyr` (setu flips after its next lib re-sync).
+  agnos-kernel-only (no host twin) and `_agnos`-guarded, so default cycc is
+  byte-identical. (issue 2026-07-09-agnos-sys-shm-peers; api-surface snapshot regenerated.)
+
+### Added — async runtime F2: result-carrying tasks + `task_join` (`lib/async.cyr`)
+- `async_run` now captures each task fn's return into a per-task **result slot** (@40);
+  the F1 reactor loop is extracted into a shared `_async_pump(rt, until)` that either
+  drains to completion (`async_run`) or stops when one target task is done.
+- **`task_join(rt, handle)`** — the JoinHandle primitive: drives the loop until the
+  spawned task (`handle` = the `async_spawn` / `async_spawn_future` return) completes and
+  hands back its result, **without** closing the runtime (join several, and/or `async_run`
+  after). Joining a **Future** handle yields the async-fn result with multi-arg (via
+  `future_force`), so `async_spawn_future` + `task_join` is the `tokio::spawn(async{…}).await`
+  shape — no separate multi-arg spawn API needed.
+- Task struct grows a `result` slot (`TASK_SIZE` 40→48); `lib/async_agnos.cyr` mirrors it
+  (serial pump). cycc byte-identical (async is not in the compiler). Test
+  `tests/fixtures/async/async_taskjoin.cyr` + `_async_taskjoin_gate` (check 133→134),
+  proven fail-on-bug (no-join control exits 0); api-surface snapshot regenerated for
+  `task_join`. F1 (the reactor) unaffected — verified byte-for-byte via its own gate.
+
+### Changed — vendored sandhi 1.7.2 → 1.7.3 (`lib/sandhi.cyr`)
+- Completes the deferred pin bump: sandhi's cyrius pin `6.4.32 → 6.4.33`. sandhi 1.7.x's
+  native-TLS large-response fix depends on the partial-record `READ_HOLD` hold buffer,
+  which shipped in **6.4.33** — pinning 6.4.32 (as 1.7.2 did, the last-released floor at
+  fold time) understated the requirement. Validated: sandhi's native `CYRIUS_DCE=1` smoke
+  links clean against 6.4.33 with `READ_HOLD` present. Version-only dist change.
+
 ## [6.4.33] — 2026-07-09
 
 **v6.4.33 — async runtime F1 (the epoll reactor, arc 5b opens) + the sandhi 1.7.2

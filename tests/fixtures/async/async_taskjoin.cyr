@@ -1,0 +1,42 @@
+# Fixture for _async_taskjoin_gate (v6.4.34 F2 — result-carrying tasks + task_join).
+#
+# `async_run` now captures each task fn's return into the task's result slot (@40),
+# and `task_join(rt, handle)` drives the loop until that task completes and hands the
+# value back — the JoinHandle primitive, without tearing down the runtime. Because
+# `async_spawn_future` bundles multi-arg calls through `future_force`, joining a Future
+# handle yields the async-fn shape's result (multi-arg) too. Plain library API — no
+# CYRIUS_ASYNC sugar.
+#
+# Proven fail-on-bug: if the result is not captured (or task_join fails to pump), both
+# joins return the init-0 result slot and main returns 0 ≠ 42.
+# MUST exit 42.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+
+fn dbl(x): i64 { return x + x; }
+fn add2(a, b): i64 { return a + b; }
+
+fn main(): i64 {
+    alloc_init();
+    var rt = async_new();
+
+    # plain spawn: task returns a value, joined for its result
+    var h1 = async_spawn(rt, &dbl, 10);          # -> 20
+
+    # Future spawn (multi-arg via future_force): [impl, argc=2, arg0=15, arg1=7]
+    var fut = alloc(32);
+    store64(fut, &add2);
+    store64(fut + 8, 2);
+    store64(fut + 16, 15);
+    store64(fut + 24, 7);
+    var h2 = async_spawn_future(rt, fut);        # future_force -> add2(15, 7) = 22
+
+    var a = task_join(rt, h1);                   # 20
+    var b = task_join(rt, h2);                   # 22
+    async_run(rt);                               # drain + close (both already done)
+
+    return a + b;                                # 20 + 22 = 42
+}

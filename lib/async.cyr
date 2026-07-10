@@ -38,10 +38,12 @@ var TASK_READY = 0;
 var TASK_WAITING = 1;
 var TASK_DONE = 2;
 
-# Task struct: { fp, arg, state, next, wait_fd } = 40 bytes.
+# Task struct: { fp, arg, state, next, wait_fd, result } = 48 bytes.
 # wait_fd (@32, v6.4.33 F1) = the fd a parked task is blocked on, so async_run's
 # reactor can EPOLL_CTL_DEL it on wake; -1 when the task is not fd-waiting.
-var TASK_SIZE = 40;
+# result (@40, v6.4.34 F2) = the task fn's return value, captured on completion so
+# task_join(rt, handle) can hand it back (the JoinHandle primitive).
+var TASK_SIZE = 48;
 
 # Runtime struct: { epfd, tasks, task_count, active, allocator, current } = 48 bytes.
 # v6.1.22 — +allocator slot @32: async_new_in threads a caller-owned Allocator
@@ -94,21 +96,22 @@ fn async_spawn(rt, fp, arg): i64 {
     store64(t + 16, TASK_READY);
     store64(t + 24, load64(rt + 8));
     store64(t + 32, 0 - 1);          # wait_fd: not fd-waiting (F1)
+    store64(t + 40, 0);              # result: task fn's return, captured on done (F2)
     store64(rt + 8, t);
     store64(rt + 16, load64(rt + 16) + 1);
     store64(rt + 24, load64(rt + 24) + 1);
     return t;
 }
 
-# Run the runtime to completion as an epoll reactor (v6.4.33 F1).
-# Each sweep runs every TASK_READY task; a task that parks itself via
-# async_wait_fd(rt, fd) comes back TASK_WAITING (not marked DONE). When a sweep
-# makes no progress (every remaining task is WAITING on an fd), block on the
-# runtime's shared epfd until one fd is readable, wake that task, and resume.
-# A task that never parks runs straight to completion — byte-for-byte the old
-# run-to-completion behavior (sandhi/daimon accept loops), so consumers are
-# unaffected. Terminates when no task is READY or WAITING; closes the epfd.
-fn async_run(rt): i64 {
+# Drive the epoll reactor (v6.4.33 F1 loop, extracted at v6.4.34 F2). Each sweep
+# runs every TASK_READY task, capturing its return into the task's result slot on
+# completion (@40); a task that parks itself via async_wait_fd comes back
+# TASK_WAITING (not marked DONE). When a sweep makes no progress (every live task
+# is parked on an fd), block on the shared epfd until one fd is readable, wake that
+# task, and resume. Stops when `until` (a task handle) is DONE — that's task_join's
+# single-target wait; when until == 0 it drains to completion (async_run). Does NOT
+# close the epfd — the caller owns teardown.
+fn _async_pump(rt, until): i64 {
     var epfd = load64(rt);
     var go = 1;
     while (go == 1) {
@@ -119,10 +122,12 @@ fn async_run(rt): i64 {
             var state = load64(t + 16);
             if (state == TASK_READY) {
                 store64(rt + 40, t);            # current task, for async_wait_fd
-                fncall1(load64(t), load64(t + 8));
+                var r = fncall1(load64(t), load64(t + 8));
                 ran = 1;
-                # if the task parked itself it is now WAITING; else it is done
+                # if the task parked itself it is now WAITING; else capture its
+                # result and mark it done
                 if (load64(t + 16) == TASK_READY) {
+                    store64(t + 40, r);         # F2: capture return for task_join
                     store64(t + 16, TASK_DONE);
                 }
             }
@@ -131,7 +136,13 @@ fn async_run(rt): i64 {
             }
             t = load64(t + 24);
         }
-        if (active == 0) { go = 0; }
+        # single-target join satisfied?
+        if (until != 0) {
+            if (load64(until + 16) == TASK_DONE) { go = 0; }
+        }
+        if (go == 1) {
+            if (active == 0) { go = 0; }
+        }
         if (go == 1) {
             if (ran == 0) {
                 # no progress — every live task is parked on an fd; block on the
@@ -148,9 +159,29 @@ fn async_run(rt): i64 {
             }
         }
     }
-    # Cleanup
-    syscall(SYS_CLOSE, epfd);
     return 0;
+}
+
+# Run every spawned task to completion, then close the runtime's epfd (single-use).
+# Byte-for-byte the F1 run-to-completion behavior for consumers that ignore results
+# (sandhi/daimon accept loops).
+fn async_run(rt): i64 {
+    _async_pump(rt, 0);
+    syscall(SYS_CLOSE, load64(rt));
+    return 0;
+}
+
+# Await a spawned task's result without tearing down the runtime (JoinHandle, F2).
+# `handle` is the pointer async_spawn / async_spawn_future returned. Drives the loop
+# until that task completes and returns its fn's captured return value; if it is
+# already done, returns the stored result without pumping. Unlike async_run it does
+# NOT close the epfd, so you can join several handles and/or async_run afterward.
+# Pairs with async_spawn_future: joining a Future handle yields the async fn's value
+# (multi-arg via future_force). Returns 0 on a null handle.
+fn task_join(rt, handle): i64 {
+    if (handle == 0) { return 0; }
+    if (load64(handle + 16) != TASK_DONE) { _async_pump(rt, handle); }
+    return load64(handle + 40);
 }
 
 # Cooperatively wait for `fd` to become readable from inside a running task.
