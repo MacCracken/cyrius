@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.44] — 2026-07-10
+
 **v6.4.44 — async arc 5b "W" step R2: Windows IOCP timers + subprocess + combinator parity.**
 The Windows async runtime gains `async_with_timeout` / `async_interval` (a waitable-timer →
 threadpool → IOCP bridge), `async_spawn_process` / `async_run_process` (`CreateProcessW` +
