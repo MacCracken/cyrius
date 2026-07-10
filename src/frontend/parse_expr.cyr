@@ -1111,6 +1111,16 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            # v6.4.43: syscall(0xF01E, wVersionRequested, lpWSAData) → ws2_32!WSAStartup
+            # (2-arg, argc==3). Winsock init for the async IOCP backend. See
+            # 2026-07-08-async-epoll-only-blocks-win-transport.md.
+            if (sc_num == 61470) {
+                if (argc == 3) {
+                    EWSASTARTUP_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             if (sc_num == 61452) {
                 if (argc == 1) {
                     # syscall(0xF00C) → TlsAlloc (no args, slot index in rax).
