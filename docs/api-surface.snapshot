@@ -65,11 +65,13 @@ assert::panic/1
 assert::test_group/1
 async::async_await_readable/1
 async::async_interval/5
+async::async_join_all/4
 async::async_new/0
 async::async_new_in/1
 async::async_read/3
 async::async_run/1
 async::async_run_process/5
+async::async_select/3
 async::async_sleep_ms/1
 async::async_spawn/3
 async::async_spawn_future/2
@@ -84,11 +86,13 @@ async::future_force/1
 async::task_join/2
 async_agnos::async_await_readable/1
 async_agnos::async_interval/5
+async_agnos::async_join_all/4
 async_agnos::async_new/0
 async_agnos::async_new_in/1
 async_agnos::async_read/3
 async_agnos::async_run/1
 async_agnos::async_run_process/5
+async_agnos::async_select/3
 async_agnos::async_sleep_ms/1
 async_agnos::async_spawn/3
 async_agnos::async_spawn_process/4

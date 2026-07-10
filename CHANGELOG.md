@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.37] — 2026-07-09
+
+**v6.4.37 — async runtime P3: concurrency combinators.** `async_join_all` (await N tasks,
+collect results) and `async_select` (first of N to complete) — the fan-out half of the
+tokio-parity net story. The F1/F2 reactor pump is refactored into a reusable `_async_step`
+so task_join / async_with_timeout / join_all / select share one loop body (a
+behavior-preserving extraction — the earlier gates verify byte-for-byte). cycc byte-identical.
+Bench: self_compile **619ms** · cycc **1,077,592 B** — flat vs v6.4.36.
+
+### Added — combinators (`lib/async.cyr`)
+- **`async_join_all(rt, handles, n, results)`** — awaits all n task handles concurrently on
+  the reactor (they run in parallel), collecting each result into `results[0..n)`; returns
+  n. tokio's `join!` / `join_all`.
+- **`async_select(rt, handles, n)`** — returns the index of the first handle to complete (or
+  -1 if the runtime goes idle with none done); the other tasks are left pending. tokio's
+  `select!`.
+- `lib/async_agnos.cyr` mirrors both (serial). Test
+  `tests/fixtures/async/async_combinators.cyr` + `_async_combinators_gate` (check 136→137):
+  join_all over three children (exit 10/11/12) collects [10,11,12] (+33), and select over a
+  fast child (exit 0 @0) vs a slow one (sleep 0.3 @1) returns index 0 (+9) — sum 42, **proven
+  fail-on-bug** (a child-exit shift → 35). api-surface regenerated.
+
 ## [6.4.36] — 2026-07-09
 
 **v6.4.36 — async runtime P2: subprocess.** The second tokio-parity primitive — spawn a

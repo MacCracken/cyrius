@@ -1,0 +1,54 @@
+# Fixture for _async_combinators_gate (v6.4.37 P3 — async_join_all + async_select).
+#
+# async_join_all(rt, handles, n, results) awaits all n task handles concurrently on the
+# reactor, collecting each result. async_select(rt, handles, n) returns the index of the
+# first handle to complete. Exercised over P2 subprocess handles. Plain library API.
+#
+# Proven fail-on-bug — sum is exactly 42:
+#   join_all over three children (exit 10, 11, 12) -> results [10,11,12] -> +33
+#   select over {fast exit 0 @0, slow sleep 0.3 @1} -> index 0 (fast wins) -> +9
+# A wrong collected result or a wrong select index misses 42.
+# MUST exit 42.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    var total = 0;
+    var envp[8];
+    store64(&envp, 0);
+
+    # join_all: three children exit 10 / 11 / 12
+    var rt = async_new();
+    var a10[32];
+    store64(&a10, "/bin/sh"); store64(&a10 + 8, "-c"); store64(&a10 + 16, "exit 10"); store64(&a10 + 24, 0);
+    var a11[32];
+    store64(&a11, "/bin/sh"); store64(&a11 + 8, "-c"); store64(&a11 + 16, "exit 11"); store64(&a11 + 24, 0);
+    var a12[32];
+    store64(&a12, "/bin/sh"); store64(&a12 + 8, "-c"); store64(&a12 + 16, "exit 12"); store64(&a12 + 24, 0);
+    var handles[24];
+    store64(&handles, async_spawn_process(rt, "/bin/sh", &a10, &envp));
+    store64(&handles + 8, async_spawn_process(rt, "/bin/sh", &a11, &envp));
+    store64(&handles + 16, async_spawn_process(rt, "/bin/sh", &a12, &envp));
+    var results[24];
+    async_join_all(rt, &handles, 3, &results);
+    total = total + load64(&results) + load64(&results + 8) + load64(&results + 16);
+    async_run(rt);
+
+    # select: a fast child (exit 0 @ index 0) vs a slow one (sleep 0.3 @ index 1)
+    var rt2 = async_new();
+    var af[32];
+    store64(&af, "/bin/sh"); store64(&af + 8, "-c"); store64(&af + 16, "exit 0"); store64(&af + 24, 0);
+    var asl[32];
+    store64(&asl, "/bin/sh"); store64(&asl + 8, "-c"); store64(&asl + 16, "sleep 0.3"); store64(&asl + 24, 0);
+    var h2[16];
+    store64(&h2, async_spawn_process(rt2, "/bin/sh", &af, &envp));
+    store64(&h2 + 8, async_spawn_process(rt2, "/bin/sh", &asl, &envp));
+    if (async_select(rt2, &h2, 2) == 0) { total = total + 9; }
+    async_run(rt2);   # drain the slow child + close
+
+    return total;   # 33 + 9 = 42
+}
