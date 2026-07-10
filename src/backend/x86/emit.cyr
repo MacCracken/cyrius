@@ -1690,6 +1690,24 @@ fn EWSAIOCTL_PE(S): i64 {
     _pe_ensure_wsaioctl(S);
     return _pe_call_nargs_aligned(S, _pe_wsaioctl_get(), 9);
 }
+# syscall(0xF028, s, &sockaddr, namelen) → ws2_32!connect (3-arg blocking connect; 0
+# on success).
+fn ECONNECT_PE(S): i64 {
+    _pe_ensure_connect(S);
+    return _pe_call_3arg_aligned(S, _pe_connect_get());
+}
+# syscall(0xF029, s, &WSABUF, count, &recvd, &flags, &overlapped, 0) → ws2_32!WSARecv
+# (7-arg; blocking when &overlapped is 0, else IOCP-overlapped).
+fn EWSARECV_PE(S): i64 {
+    _pe_ensure_wsarecv(S);
+    return _pe_call_nargs_aligned(S, _pe_wsarecv_get(), 7);
+}
+# syscall(0xF02A, s, &WSABUF, count, &sent, flags, &overlapped, 0) → ws2_32!WSASend
+# (7-arg; blocking when &overlapped is 0, else IOCP-overlapped).
+fn EWSASEND_PE(S): i64 {
+    _pe_ensure_wsasend(S);
+    return _pe_call_nargs_aligned(S, _pe_wsasend_get(), 7);
+}
 
 # v6.4.43: ws2_32 socket foundation. syscall(0xF022, af,type,proto,info,g,flags) →
 # WSASocketW (6-arg; WSA_FLAG_OVERLAPPED=1 → an IOCP-associable socket; returns
