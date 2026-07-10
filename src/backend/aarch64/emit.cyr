@@ -120,6 +120,9 @@ fn EFREEADDRINFO_PE(S) { return 0; } # v6.4.43 ws2_32!freeaddrinfo (x86-only)
 fn EREGWAIT_PE(S) { return 0; }      # v6.4.43 R2 kernel32!RegisterWaitForSingleObject (x86-only)
 fn ECREATETIMER_PE(S) { return 0; }  # v6.4.43 R2 kernel32!CreateWaitableTimerW (x86-only)
 fn ESETTIMER_PE(S) { return 0; }     # v6.4.43 R2 kernel32!SetWaitableTimer (x86-only)
+fn EUNREGWAIT_PE(S) { return 0; }    # v6.4.43 R2 kernel32!UnregisterWaitEx (x86-only)
+fn ECANCELIO_PE(S) { return 0; }     # v6.4.43 R2 kernel32!CancelIoEx (x86-only)
+fn ESETSOCKOPT_PE(S) { return 0; }   # v6.4.43 R2 ws2_32!setsockopt (x86-only)
 fn ETLSALLOC_PE(S) { return 0; }     #  reroutes (x86-only real impl; aarch64
 fn ETLSGET_PE(S) { return 0; }       #  stubs for parse_expr.cyr symbol
 fn ETLSSET_PE(S) { return 0; }       #  resolution)

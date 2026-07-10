@@ -1305,6 +1305,9 @@ fn EFREEADDRINFO_PE(S): i64 { return 0; } # v6.4.43 ws2_32!freeaddrinfo (x86-onl
 fn EREGWAIT_PE(S): i64 { return 0; }      # v6.4.43 R2 kernel32!RegisterWaitForSingleObject (x86-only)
 fn ECREATETIMER_PE(S): i64 { return 0; }  # v6.4.43 R2 kernel32!CreateWaitableTimerW (x86-only)
 fn ESETTIMER_PE(S): i64 { return 0; }     # v6.4.43 R2 kernel32!SetWaitableTimer (x86-only)
+fn EUNREGWAIT_PE(S): i64 { return 0; }    # v6.4.43 R2 kernel32!UnregisterWaitEx (x86-only)
+fn ECANCELIO_PE(S): i64 { return 0; }     # v6.4.43 R2 kernel32!CancelIoEx (x86-only)
+fn ESETSOCKOPT_PE(S): i64 { return 0; }   # v6.4.43 R2 ws2_32!setsockopt (x86-only)
 fn EGETENV_PE(S): i64 { return 0; }
 fn EGETEXIT_PE(S): i64 { return 0; }
 fn EGETFATTR_PE(S): i64 { return 0; }

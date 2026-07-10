@@ -1702,6 +1702,24 @@ fn ESETTIMER_PE(S): i64 {
     _pe_ensure_settimer(S);
     return _pe_call_6arg_aligned(S, _pe_settimer_get());
 }
+# syscall(0xF030, waitHandle, completionEvent) → UnregisterWaitEx (2-arg; drain the
+# RegisterWaitForSingleObject callback before closing the waited-on handle).
+fn EUNREGWAIT_PE(S): i64 {
+    _pe_ensure_unregwait(S);
+    return _pe_call_2arg_aligned(S, _pe_unregwait_get());
+}
+# syscall(0xF031, hFile, &overlapped) → CancelIoEx (2-arg; cancel one in-flight overlapped
+# op without closing the handle).
+fn ECANCELIO_PE(S): i64 {
+    _pe_ensure_cancelio(S);
+    return _pe_call_2arg_aligned(S, _pe_cancelio_get());
+}
+# syscall(0xF032, s, level, optname, optval, optlen) → ws2_32!setsockopt (5-arg;
+# SO_UPDATE_CONNECT_CONTEXT after ConnectEx).
+fn ESETSOCKOPT_PE(S): i64 {
+    _pe_ensure_setsockopt(S);
+    return _pe_call_5arg_aligned(S, _pe_setsockopt_get());
+}
 
 # v6.4.43: ws2_32 socket foundation. syscall(0xF022, af,type,proto,info,g,flags) →
 # WSASocketW (6-arg; WSA_FLAG_OVERLAPPED=1 → an IOCP-associable socket; returns
