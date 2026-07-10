@@ -343,6 +343,160 @@ fn async_send(rt, fd, buf, len): i64 {
 }
 
 # ================================================================
+# Async DNS (v6.4.40) — reactor A-record resolution (UDP query, self-contained
+# wire-format; ported from the sandhi resolver so async.cyr stays sandhi-free).
+# ================================================================
+
+# Encode a hostname (C-string) into DNS label wire-format at `out`. Returns length.
+fn _async_dns_encode_labels(host, out): i64 {
+    var label_start = 0;
+    var p = 0;
+    var wi = 1;                         # +1: leaves room for label 0's length byte
+    while (load8(host + p) != 0) {
+        var c = load8(host + p);
+        if (c == 46) {                 # '.'
+            var llen = p - label_start;
+            if (llen == 0) { return 0 - 1; }
+            if (llen > 63) { return 0 - 1; }
+            store8(out + (wi - llen - 1), llen);
+            label_start = p + 1;
+            wi = wi + 1;
+        } else {
+            store8(out + wi, c);
+            wi = wi + 1;
+        }
+        p = p + 1;
+    }
+    var last_len = p - label_start;
+    if (last_len == 0) { return 0 - 1; }
+    if (last_len > 63) { return 0 - 1; }
+    store8(out + (wi - last_len - 1), last_len);
+    store8(out + wi, 0);               # root terminator
+    wi = wi + 1;
+    if (wi > 255) { return 0 - 1; }
+    return wi;
+}
+
+# Build a DNS A-record query (txid `id`, hostname `host`) into `out`. Returns length.
+fn _async_dns_build_query(id, host, out): i64 {
+    store8(out + 0, (id >> 8) & 0xFF);
+    store8(out + 1, id & 0xFF);
+    store8(out + 2, 0x01);             # flags MSB: RD=1
+    store8(out + 3, 0x00);
+    store8(out + 4, 0x00); store8(out + 5, 0x01);   # QDCOUNT=1
+    store8(out + 6, 0x00); store8(out + 7, 0x00);
+    store8(out + 8, 0x00); store8(out + 9, 0x00);
+    store8(out + 10, 0x00); store8(out + 11, 0x00);
+    var qlen = _async_dns_encode_labels(host, out + 12);
+    if (qlen < 0) { return 0 - 1; }
+    var qi = 12 + qlen;
+    store8(out + qi + 0, 0x00); store8(out + qi + 1, 0x01);   # QTYPE=A
+    store8(out + qi + 2, 0x00); store8(out + qi + 3, 0x01);   # QCLASS=IN
+    return qi + 4;
+}
+
+# Skip a DNS name at `off` (labels + 0xC0 compression pointer). Returns offset past it.
+fn _async_dns_skip_name(buf, blen, off): i64 {
+    var p = off;
+    var safety = 0;
+    while (safety < 256) {
+        if (p >= blen) { return 0 - 1; }
+        var c = load8(buf + p);
+        if (c == 0) { return p + 1; }
+        if ((c & 0xC0) == 0xC0) {
+            if (p + 1 >= blen) { return 0 - 1; }
+            return p + 2;
+        }
+        if (c > 63) { return 0 - 1; }
+        p = p + 1 + c;
+        safety = safety + 1;
+    }
+    return 0 - 1;
+}
+
+# Parse a DNS response: verify the txid + rcode, skip the question, and return the
+# first A record's IPv4 (network-order bytes as an int, ready for async_connect), or
+# -1. Pragmatic — returns the first A answer (no CNAME-chain / name-match validation).
+fn _async_dns_parse_a(buf, blen, expected_id): i64 {
+    if (blen < 12) { return 0 - 1; }
+    if (((load8(buf + 0) << 8) | load8(buf + 1)) != expected_id) { return 0 - 1; }
+    if ((load8(buf + 3) & 0x0F) != 0) { return 0 - 1; }        # rcode
+    var ancount = (load8(buf + 6) << 8) | load8(buf + 7);
+    if (ancount == 0) { return 0 - 1; }
+    var off = _async_dns_skip_name(buf, blen, 12);             # skip the question name
+    if (off < 0) { return 0 - 1; }
+    off = off + 4;                                             # QTYPE + QCLASS
+    var i = 0;
+    while (i < ancount) {
+        off = _async_dns_skip_name(buf, blen, off);
+        if (off < 0) { return 0 - 1; }
+        if (off + 10 > blen) { return 0 - 1; }
+        var rtype = (load8(buf + off + 0) << 8) | load8(buf + off + 1);
+        var rdlength = (load8(buf + off + 8) << 8) | load8(buf + off + 9);
+        off = off + 10;
+        if (rtype == 1) {
+            if (rdlength != 4) { return 0 - 1; }
+            if (off + 4 > blen) { return 0 - 1; }
+            var b0 = load8(buf + off);
+            var b1 = load8(buf + off + 1);
+            var b2 = load8(buf + off + 2);
+            var b3 = load8(buf + off + 3);
+            return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+        }
+        off = off + rdlength;
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Resolve task: UDP-connect to the nameserver, send the A query, park on the reply,
+# parse it. ctx = { step, host, ns_addr, ns_port, fd, id, rt }.
+fn _async_resolve_task(ctx): i64 {
+    if (load64(ctx) == 0) {
+        var fd = syscall(SYS_SOCKET, 2, 2, 0);          # AF_INET, SOCK_DGRAM
+        if (fd < 0) { return 0 - 1; }
+        var sa[16];
+        store16(&sa, 2);
+        var port = load64(ctx + 24);
+        store16(&sa + 2, ((port & 0xFF) << 8) | ((port >> 8) & 0xFF));
+        store32(&sa + 4, load64(ctx + 16));             # nameserver addr
+        store64(&sa + 8, 0);
+        if (syscall(SYS_CONNECT, fd, &sa, 16) < 0) { syscall(SYS_CLOSE, fd); return 0 - 1; }
+        var qbuf[288];
+        var qlen = _async_dns_build_query(load64(ctx + 40), load64(ctx + 8), &qbuf);
+        if (qlen < 0) { syscall(SYS_CLOSE, fd); return 0 - 1; }
+        syscall(SYS_WRITE, fd, &qbuf, qlen);
+        store64(ctx + 32, fd);
+        store64(ctx, 1);
+        async_wait_fd(load64(ctx + 48), fd);            # park for the response
+        return 0;
+    }
+    var fd = load64(ctx + 32);
+    var rbuf[512];
+    var n = syscall(SYS_READ, fd, &rbuf, 512);
+    syscall(SYS_CLOSE, fd);
+    return _async_dns_parse_a(&rbuf, n, load64(ctx + 40));
+}
+
+# Async DNS A-record resolution on the reactor via nameserver `ns_addr`:`ns_port`
+# (`ns_addr` = network-order IPv4 bytes as an int, e.g. 0x0100007F for 127.0.0.1;
+# `ns_port` host-order, usually 53). Returns a task handle whose result (via task_join)
+# is the resolved IPv4 in the same network-order-int form — feed it straight to
+# async_connect — or -1 on failure. The reactor parks on the UDP reply, so other tasks
+# run concurrently. Linux only. v6.4.40 (async DNS).
+fn async_resolve(rt, ns_addr, ns_port, host): i64 {
+    var ctx = alloc(56);
+    store64(ctx, 0);
+    store64(ctx + 8, host);
+    store64(ctx + 16, ns_addr);
+    store64(ctx + 24, ns_port);
+    store64(ctx + 32, 0);          # fd
+    store64(ctx + 40, 0x4342);     # txid
+    store64(ctx + 48, rt);
+    return async_spawn(rt, &_async_resolve_task, ctx);
+}
+
+# ================================================================
 # P1 timers (v6.4.35) — async_with_timeout + async_interval on the reactor.
 # ================================================================
 

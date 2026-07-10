@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.40] — 2026-07-09
+
+**v6.4.40 — async runtime: DNS resolution.** `async_resolve` — reactor-integrated DNS
+A-record resolution (build query → UDP send → park on the reply → parse) — completes the
+name-based async client: **resolve → connect → send → recv**, all reactor-integrated. cycc
+byte-identical (async is not in the compiler).
+Bench: self_compile **622ms** · cycc **1,077,592 B** — flat vs v6.4.39.
+
+### Added — async DNS (`lib/async.cyr`)
+- **`async_resolve(rt, ns_addr, ns_port, host)`** — resolves `host`'s A record via the
+  nameserver `ns_addr`:`ns_port` (usually 53): builds a DNS query, UDP-sends it, parks on
+  the reply, and parses the first A record — returning a task handle whose result (via
+  `task_join`) is the IPv4 as a network-order int (feed it straight to `async_connect`), or
+  -1. Self-contained wire-format (query build + label encode + response parse with 0xC0
+  compression-pointer skip), ported from the sandhi resolver so async.cyr stays sandhi-free.
+  `lib/async_agnos.cyr` degrades (no reactor UDP round-trip on the serial client model).
+  Linux only.
+- Test `tests/fixtures/async/async_dns.cyr` + `_async_dns_gate` (check 139→140): a mock DNS
+  server task on the same reactor replies with a canned A record (42.0.0.0); the resolver
+  round-trips the query and parses it to 42 — **proven fail-on-bug** (A-record byte 30 → 30).
+  api-surface regenerated.
+
 ## [6.4.39] — 2026-07-09
 
 **v6.4.39 — async socket send/recv + the agnos block-device syscall band.** The async net

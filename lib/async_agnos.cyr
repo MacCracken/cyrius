@@ -214,6 +214,12 @@ fn async_send(rt, fd, buf, len): i64 {
     return async_spawn(rt, &_async_send_task, ctx);
 }
 
+# Async DNS resolve (agnos): no reactor UDP round-trip on the serial client model —
+# unsupported, returns 0 (no handle). Present so consumers stay target-agnostic. v6.4.40.
+fn async_resolve(rt, ns_addr, ns_port, host): i64 {
+    return 0;
+}
+
 # Sleep for `ms` milliseconds. AGNOS has a real sleep primitive (#41,
 # sys_sleep_ms — halts until the 100 Hz tick), so this is a faithful sleep,
 # not a stub. Guard ms<=0 (sys_sleep_ms caps at 1 h on the kernel side).

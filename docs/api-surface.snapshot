@@ -71,6 +71,7 @@ async::async_new/0
 async::async_new_in/1
 async::async_read/3
 async::async_recv/4
+async::async_resolve/4
 async::async_run/1
 async::async_run_process/5
 async::async_select/3
@@ -96,6 +97,7 @@ async_agnos::async_new/0
 async_agnos::async_new_in/1
 async_agnos::async_read/3
 async_agnos::async_recv/4
+async_agnos::async_resolve/4
 async_agnos::async_run/1
 async_agnos::async_run_process/5
 async_agnos::async_select/3

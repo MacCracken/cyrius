@@ -932,6 +932,35 @@ fn _async_sendrecv_gate(): i64 {
     return fail;
 }
 
+fn _async_dns_gate(): i64 {
+    var label = "v6.4.40 async net: async_resolve — reactor DNS A-record resolution (mock nameserver round-trip, exit 42)";
+    var src = _root_path("tests/fixtures/async/async_dns.cyr");
+    var fail = 0;
+    var bin = _tmp_path("audit_async_dns_");
+    var rc = _self_host_pipe(src, CC_PATH, bin);
+    if (rc != 0) {
+        sys_unlink(bin);
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": dns fixture compile failed rc="); print_num(rc); println("");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(bin, 493);
+    var ec = _pipe_file_to_bin(bin, src);
+    sys_unlink(bin);
+    if (ec != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": dns program exit "); print_num(ec); println(" (expected 42)");
+        fail = fail + 1;
+    }
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": async_resolve round-trips a DNS query on the reactor + parses the A record (exit 42)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _wx_segments_gate(): i64 {
     var label = "v6.3.12 W^X: userland ELF defaults to separate text (R E) + data (RW) PT_LOADs; CYRIUS_WX=0 opts out to single RWX";
     var src = _root_path("tests/fixtures/wx/wx_probe.cyr");
