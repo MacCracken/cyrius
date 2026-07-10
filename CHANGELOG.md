@@ -6,6 +6,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.39] — 2026-07-09
+
+**v6.4.39 — async socket send/recv + the agnos block-device syscall band.** The async net
+client gains single-shot reactor `async_send`/`async_recv` (completing connect → send →
+recv), and the agnos `sys_blk_*` (#75-80) raw block-device wrappers land (the .34 shm band's
+sibling). cycc byte-identical (async is not in the compiler).
+Bench: self_compile **611ms** · cycc **1,077,592 B** — flat vs v6.4.38.
+
+### Added — async socket I/O (`lib/async.cyr`)
+- **`async_recv(rt, fd, buf, len)`** / **`async_send(rt, fd, buf, len)`** — park on the
+  socket's read/write readiness, then do one read/write; each returns a task handle whose
+  result (via `task_join`) is the byte count. With `async_connect` this completes a basic
+  async request/response client (connect + send + recv, all reactor-integrated).
+  `async_agnos.cyr` degrades to serial blocking I/O. Test
+  `tests/fixtures/async/async_sendrecv.cyr` + `_async_sendrecv_gate` (check 138→139): a
+  localhost round-trip (client sends 20, server sends 22) sums to 42, **proven fail-on-bug**
+  (send 5 → 27). Streaming with backpressure (a loop parking mid-buffer) still awaits the
+  mid-body-suspend follow-on.
+
+### Added — agnos block-device syscall band (`lib/syscalls_x86_64_agnos.cyr`)
+- `sys_blk_enum` / `_open` / `_read` / `_write` / `_info` / `_close` (`#75-80`) wrap agnos
+  1.53.10's ring-3 raw block-device band — the native-install primitive (a sovereign
+  installer/mkfs like agnova partitions + formats a disk with no Linux `parted`/`mkfs`: the
+  kernel exposes raw sectors, userland builds the GPT/mkfs structures). Raw WRITE is
+  capability-gated kernel-side; the wrappers only marshal. agnos-kernel-only and
+  `_agnos`-guarded → default cycc byte-identical. (issue 2026-07-09-agnos-sys-blk-peers;
+  api-surface regenerated.)
+
 ## [6.4.38] — 2026-07-09
 
 **v6.4.38 — async runtime: net client (connect).** The reactor gains write-readiness

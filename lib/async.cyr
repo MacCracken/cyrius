@@ -293,6 +293,55 @@ fn async_connect(rt, addr, port): i64 {
     return async_spawn(rt, &_async_connect_task, ctx);
 }
 
+# Reactor socket recv task: park on the fd's read-readiness, then read once into buf.
+# ctx = { step, fd, buf, len, rt }.
+fn _async_recv_task(ctx): i64 {
+    if (load64(ctx) == 0) {
+        store64(ctx, 1);
+        async_wait_fd(load64(ctx + 32), load64(ctx + 8));      # park on EPOLLIN
+        return 0;
+    }
+    return syscall(SYS_READ, load64(ctx + 8), load64(ctx + 16), load64(ctx + 24));
+}
+
+# Async single-shot recv on the reactor: park until `fd` is readable, then read up to
+# `len` bytes into `buf`. Returns a task handle whose result (via task_join) is the byte
+# count (0 = EOF, <0 = error). One read per call — a full-message read re-spawns per
+# chunk (streaming with backpressure awaits the mid-body-suspend follow-on). v6.4.39.
+fn async_recv(rt, fd, buf, len): i64 {
+    var ctx = alloc(40);
+    store64(ctx, 0);
+    store64(ctx + 8, fd);
+    store64(ctx + 16, buf);
+    store64(ctx + 24, len);
+    store64(ctx + 32, rt);
+    return async_spawn(rt, &_async_recv_task, ctx);
+}
+
+# Reactor socket send task: park on the fd's write-readiness, then write once from buf.
+# ctx = { step, fd, buf, len, rt }.
+fn _async_send_task(ctx): i64 {
+    if (load64(ctx) == 0) {
+        store64(ctx, 1);
+        async_wait_writable(load64(ctx + 32), load64(ctx + 8));   # park on EPOLLOUT
+        return 0;
+    }
+    return syscall(SYS_WRITE, load64(ctx + 8), load64(ctx + 16), load64(ctx + 24));
+}
+
+# Async single-shot send on the reactor: park until `fd` is writable, then write up to
+# `len` bytes from `buf`. Returns a task handle whose result (via task_join) is the byte
+# count written (<0 = error). One write per call. v6.4.39.
+fn async_send(rt, fd, buf, len): i64 {
+    var ctx = alloc(40);
+    store64(ctx, 0);
+    store64(ctx + 8, fd);
+    store64(ctx + 16, buf);
+    store64(ctx + 24, len);
+    store64(ctx + 32, rt);
+    return async_spawn(rt, &_async_send_task, ctx);
+}
+
 # ================================================================
 # P1 timers (v6.4.35) — async_with_timeout + async_interval on the reactor.
 # ================================================================

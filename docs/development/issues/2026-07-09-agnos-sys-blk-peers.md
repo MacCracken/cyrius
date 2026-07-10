@@ -1,5 +1,12 @@
 # agnos raw block-device `#75-80` has no `sys_blk_*` peer — the installer + mkfs tools hardcode raw syscall numbers
 
+> **✅ RESOLVED cyrius-side (v6.4.39, 2026-07-09):** `SYS_BLK_ENUM/OPEN/READ/WRITE/INFO/CLOSE`
+> (75-80) + `sys_blk_enum`/`_open`/`_read`/`_write`/`_info`/`_close` wrappers added to
+> `lib/syscalls_x86_64_agnos.cyr` after the `sys_shm_*` band. agnos-target compile verified;
+> default cycc byte-identical; api-surface + cyrdoc regenerated. **Remaining (downstream):**
+> agnova's executor port + the sovereign mkfs flip their raw `syscall(75..80)` literals to the
+> native `sys_blk_*` wrappers after their next `lib/` re-sync. Archive at v6.4.39 slot close.
+
 **Filed:** 2026-07-09 (agnos 1.53.10 — the native-install primitive; kernel half shipped + QEMU-proven).
 **Severity:** **P3 — ABI-completeness / stdlib surface.** A raw-syscall stopgap works and is proven
 (`blk-test/blkprobe.cyr` + `blkwr.cyr` call `syscall(75..80)` directly), so nothing is *blocked* — but

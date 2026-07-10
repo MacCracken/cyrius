@@ -70,9 +70,11 @@ async::async_join_all/4
 async::async_new/0
 async::async_new_in/1
 async::async_read/3
+async::async_recv/4
 async::async_run/1
 async::async_run_process/5
 async::async_select/3
+async::async_send/4
 async::async_sleep_ms/1
 async::async_spawn/3
 async::async_spawn_future/2
@@ -93,9 +95,11 @@ async_agnos::async_join_all/4
 async_agnos::async_new/0
 async_agnos::async_new_in/1
 async_agnos::async_read/3
+async_agnos::async_recv/4
 async_agnos::async_run/1
 async_agnos::async_run_process/5
 async_agnos::async_select/3
+async_agnos::async_send/4
 async_agnos::async_sleep_ms/1
 async_agnos::async_spawn/3
 async_agnos::async_spawn_process/4
@@ -4014,6 +4018,12 @@ syscalls_x86_64_agnos::sigset_has/2
 syscalls_x86_64_agnos::sigset_new/0
 syscalls_x86_64_agnos::sys_access/2
 syscalls_x86_64_agnos::sys_blit/4
+syscalls_x86_64_agnos::sys_blk_close/1
+syscalls_x86_64_agnos::sys_blk_enum/2
+syscalls_x86_64_agnos::sys_blk_info/2
+syscalls_x86_64_agnos::sys_blk_open/2
+syscalls_x86_64_agnos::sys_blk_read/4
+syscalls_x86_64_agnos::sys_blk_write/4
 syscalls_x86_64_agnos::sys_chmod/2
 syscalls_x86_64_agnos::sys_close/1
 syscalls_x86_64_agnos::sys_dup/1

@@ -183,6 +183,37 @@ fn async_connect(rt, addr, port): i64 {
     return 0;
 }
 
+# recv task (agnos): a plain blocking read inline — no epoll. v6.4.39.
+fn _async_recv_task(ctx): i64 {
+    return sys_read(load64(ctx + 8), load64(ctx + 16), load64(ctx + 24));
+}
+# Async single-shot recv (agnos): spawn a task that blocking-reads into buf; task_join
+# yields the byte count. Mirror of async.cyr's reactor recv, degraded to serial. v6.4.39.
+fn async_recv(rt, fd, buf, len): i64 {
+    var ctx = alloc(40);
+    store64(ctx, 0);
+    store64(ctx + 8, fd);
+    store64(ctx + 16, buf);
+    store64(ctx + 24, len);
+    store64(ctx + 32, rt);
+    return async_spawn(rt, &_async_recv_task, ctx);
+}
+# send task (agnos): a plain blocking write inline — no epoll. v6.4.39.
+fn _async_send_task(ctx): i64 {
+    return sys_write(load64(ctx + 8), load64(ctx + 16), load64(ctx + 24));
+}
+# Async single-shot send (agnos): spawn a task that blocking-writes from buf; task_join
+# yields the byte count. Mirror of async.cyr's reactor send, degraded to serial. v6.4.39.
+fn async_send(rt, fd, buf, len): i64 {
+    var ctx = alloc(40);
+    store64(ctx, 0);
+    store64(ctx + 8, fd);
+    store64(ctx + 16, buf);
+    store64(ctx + 24, len);
+    store64(ctx + 32, rt);
+    return async_spawn(rt, &_async_send_task, ctx);
+}
+
 # Sleep for `ms` milliseconds. AGNOS has a real sleep primitive (#41,
 # sys_sleep_ms — halts until the 100 Hz tick), so this is a faithful sleep,
 # not a stub. Guard ms<=0 (sys_sleep_ms caps at 1 h on the kernel side).
