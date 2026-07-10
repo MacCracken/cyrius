@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**v6.4.44 — async arc 5b "W" step R2: Windows IOCP timers + subprocess + combinator parity.**
+The Windows async runtime gains `async_with_timeout` / `async_interval` (a waitable-timer →
+threadpool → IOCP bridge), `async_spawn_process` / `async_run_process` (`CreateProcessW` +
+threadpool-wait reap), and verified `async_join_all` / `async_select` parity — so the full R1+R2
+IOCP surface now has **permanent release-gate coverage on real Windows** (`tests/win/async_iocp_pe.cyr`,
+run by the cass leg every release). The subprocess work uncovered + fixed a **pre-existing PE reroute
+stack-misalignment bug** — 8 kernel32 reroutes used a fixed `sub rsp` that only 16-aligned the call on
+the right rsp parity, faulting `CloseHandle` (`0xC0000005`) in the deep async resume; real-Windows-only,
+invisible to WINE. The permanent Windows async gate then surfaced a **second** pre-existing Win64 ABI
+bug (since v6.4.31): a retptr-shifted value-form SIMD/struct return with >6 params homed its deep stack
+args one slot too deep (`f32v8_make` lanes 5-7 garbage on cass) — fixed in the prologue param-homing.
+Also: agnos `sys_readdir` (#81); re-vendored **sankoch 2.5.1** (sovereign zstd decode
++ tar cursor), **patra 1.12.9** (off-Linux `.patra` opens), **vani 1.0.0**. x86 self-host + seed-derive
+byte-identical; `SELFHOST_OK` on ecb/cass/pi (reroute change is PE-emit-only; aarch64/macho forks don't
+include `x86/emit.cyr`). Bench: self_compile **615ms** (617→615) · cycc **1,086,840 B** (1,086,496→,840).
+
 ### Added — async arc 5b "W" step R2: Windows async TIMERS (`lib/async_win.cyr`)
 - **Threadpool→IOCP callback bridge (foundation)** — a Win32 waitable timer can't post to an
   IOCP directly, so `_async_win_timer_cb` is registered with `RegisterWaitForSingleObject`
@@ -46,6 +62,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (inline reroutes → shared helpers). Localized via a `WriteFile`-trace of `_async_step`; **only real
   Windows reproduces it — WINE aligns leniently and returned 42 throughout.** cycc self-host + seed
   derive byte-identical (PE-emit-only path; cycc's own Linux codegen never calls these).
+
+### Fixed — Win64 retptr-shifted deep-stack-param homing (`src/frontend/parse_fn.cyr`)
+- **A value-form SIMD/struct-returning fn on Win64 PE with >6 params corrupted its deep stack args.**
+  On Win64 a by-value SIMD/struct return uses a hidden retptr in RCX, so the user args shift down one
+  ABI slot (a,b,c→rdx/r8/r9; d,e,f,g,h→stack). The prologue's **in-loop** param-homing applies that
+  retptr shift (`_pp_shift`), but the **post-loop** that homes the deeper stack params (`pidx≥6`) used
+  the param index as BOTH the source ABI slot AND the destination local slot with **no shift** — so it
+  homed each deep stack param one local slot too deep and dropped the last param, while the body reads
+  the contiguous `-0x30-lidx*8` slots via `FINDLOCAL`. `f32v8_make(a..h)` returned **lanes 5,6,7 = garbage**
+  on real cass (lanes 0-4 correct); Linux/SysV unaffected (SIMD returns via the xmm pair — no retptr, so
+  `_pl_shift==0` and the emit is textually the old code). Fix: mirror the in-loop `_pp_shift` in the
+  post-loop (shift `pidx`, keep `lidx` contiguous, start one param earlier). Root-caused by disassembling
+  both caller (correct) and callee (the skew) on real hardware. **Pre-existing since v6.4.31** (Win64
+  value-form SIMD); latent because `vr01_f32v8_ctor.tcyr`'s stale "skips cass" comment masked that
+  `CYRIUS_HAS_VAL_SIMD_PARAMS` became true on PE at .31 — that test now runs on cass every release and
+  guards this. Self-host fixpoint + seed-derive byte-identical; cass `f32v8_make` all-8-lanes correct.
 
 ### Added — async arc 5b "W" step R2: Windows async SUBPROCESS (`lib/async_win.cyr`)
 - **`async_spawn_process` / `async_run_process`** — `CreateProcessW` the child, then register a
