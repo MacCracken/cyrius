@@ -1684,6 +1684,24 @@ fn EFREEADDRINFO_PE(S): i64 {
     _pe_ensure_freeaddrinfo(S);
     return _pe_srw_call_1arg(S, _pe_freeaddrinfo_get());
 }
+# v6.4.43 R2 — the non-IOCP-event → IOCP bridge (kernel32).
+# syscall(0xF02D, &phWait, hObject, callback, context, ms, flags) →
+# RegisterWaitForSingleObject (6-arg; callback = a cyrius fn that PostQueuedCompletionStatus).
+fn EREGWAIT_PE(S): i64 {
+    _pe_ensure_regwait(S);
+    return _pe_call_6arg_aligned(S, _pe_regwait_get());
+}
+# syscall(0xF02E, attrs, manualReset, name) → CreateWaitableTimerW (3-arg; → timer HANDLE).
+fn ECREATETIMER_PE(S): i64 {
+    _pe_ensure_createtimer(S);
+    return _pe_call_3arg_aligned(S, _pe_createtimer_get());
+}
+# syscall(0xF02F, hTimer, &dueTime, period, routine, arg, resume) → SetWaitableTimer (6-arg;
+# dueTime = negative LARGE_INTEGER = relative 100ns units).
+fn ESETTIMER_PE(S): i64 {
+    _pe_ensure_settimer(S);
+    return _pe_call_6arg_aligned(S, _pe_settimer_get());
+}
 
 # v6.4.43: ws2_32 socket foundation. syscall(0xF022, af,type,proto,info,g,flags) →
 # WSASocketW (6-arg; WSA_FLAG_OVERLAPPED=1 → an IOCP-associable socket; returns

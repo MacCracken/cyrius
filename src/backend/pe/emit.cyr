@@ -903,6 +903,42 @@ fn _pe_ensure_freeaddrinfo(S): i64 {
 }
 fn _pe_freeaddrinfo_get(): i64 { return _pe_freeaddrinfo_idx; }
 
+# v6.4.43 R2 — the non-IOCP-event → IOCP bridge (all kernel32). A process exit or a
+# timer expiry is not a native IOCP completion, so the reactor waits on the HANDLE via
+# RegisterWaitForSingleObject(&waitHandle, hObject, Callback, Context, ms, flags) — a
+# threadpool wait whose Callback (a cyrius fn) does PostQueuedCompletionStatus to wake
+# the reactor. CreateWaitableTimerW + SetWaitableTimer give the timer HANDLE that
+# async_with_timeout/async_interval wait on (the Windows analogue of the Linux timerfd).
+var _pe_regwait_ready = 0;
+var _pe_regwait_idx   = 0;
+fn _pe_ensure_regwait(S): i64 {
+    if (_pe_regwait_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_regwait_idx, "RegisterWaitForSingleObject");
+    _pe_regwait_ready = 1;
+    return 0;
+}
+fn _pe_regwait_get(): i64 { return _pe_regwait_idx; }
+
+var _pe_createtimer_ready = 0;
+var _pe_createtimer_idx   = 0;
+fn _pe_ensure_createtimer(S): i64 {
+    if (_pe_createtimer_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_createtimer_idx, "CreateWaitableTimerW");
+    _pe_createtimer_ready = 1;
+    return 0;
+}
+fn _pe_createtimer_get(): i64 { return _pe_createtimer_idx; }
+
+var _pe_settimer_ready = 0;
+var _pe_settimer_idx   = 0;
+fn _pe_ensure_settimer(S): i64 {
+    if (_pe_settimer_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_settimer_idx, "SetWaitableTimer");
+    _pe_settimer_ready = 1;
+    return 0;
+}
+fn _pe_settimer_get(): i64 { return _pe_settimer_idx; }
+
 # v6.2.13 — kernel32!GetSystemTimeAsFileTime for the Windows wall-clock
 # (chrono.clock_epoch_secs/ns). `void GetSystemTimeAsFileTime(LPFILETIME)` fills
 # an 8-byte FILETIME (100ns ticks since 1601-01-01) at the pointer arg; the
