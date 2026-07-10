@@ -31,6 +31,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   not the global `rt+40` "current task", so a re-entrant `fp()` can't clobber the park target.
 - x86 self-host byte-identical (async_win.cyr is PE-consumer-only, not in the compiler).
 
+### Fixed — PE reroute stack misalignment (`src/backend/x86/emit.cyr`) — prereq for async subprocess
+- **8 kernel32 reroutes force-aligned to 16 bytes.** `ECLOSE_PE` (CloseHandle) and 7 siblings
+  (`EWAIT_PE`, `EGETEXIT_PE`, `ESETHANDLE_PE`, `ECREATEPIPE_PE`, `EGETCMDLINE_PE`, `EGETTICKS_PE`,
+  `EMMAP_PE`/VirtualAlloc) used a **fixed `sub rsp, 0x28`** that only 16-aligned the `call` when the
+  caller's rsp happened to land on the right parity. When it didn't, `CloseHandle` (and any kernel32
+  fn with an aligned SSE access) faulted with `0xC0000005`. `CreateProcessW` was already fixed this
+  way at v6.0.51, but its comment wrongly assumed "the ≤4-arg reroutes tolerate a misalign" — the
+  async subprocess resume (a deep call stack: `main → task_join → _async_pump → _async_step →
+  fncall1 → resume → CloseHandle`) disproved that: two sequential `async_run_process` calls crashed
+  on real cass while a single one and the batched form worked (alignment-parity dependent). All 8 now
+  route through the existing rbx-anchored dynamic-align helpers (`_pe_call_Narg_aligned` /
+  `_pe_srw_call_1arg` — save rsp in rbx, `and rsp,-16`, carve shadow, restore). cycc **shrank ~4 KB**
+  (inline reroutes → shared helpers). Localized via a `WriteFile`-trace of `_async_step`; **only real
+  Windows reproduces it — WINE aligns leniently and returned 42 throughout.** cycc self-host + seed
+  derive byte-identical (PE-emit-only path; cycc's own Linux codegen never calls these).
+
+### Added — async arc 5b "W" step R2: Windows async SUBPROCESS (`lib/async_win.cyr`)
+- **`async_spawn_process` / `async_run_process`** — `CreateProcessW` the child, then register a
+  one-shot threadpool wait (`RegisterWaitForSingleObject`, `WT_EXECUTEONLYONCE`) on its process
+  HANDLE (signalled on exit) bridged to the IOCP; on wake `GetExitCodeProcess` reaps it. Mirrors the
+  Linux fork+exec+pidfd path. `run_process` adds an optional deadline via `async_with_timeout`; on
+  timeout the retire path `TerminateProcess`+reaps+closes the child (returns -2). execve-style
+  `argv`/`envp` (`char**`) are marshalled to a UTF-16 command line + double-NUL env block by
+  self-contained `_asw_*` helpers (no dependency on `process_win.cyr`'s Vec/Str-typed builders).
+  Registration-failure degrades to a blocking reap (no hang/leak). Cross-verified on real cass:
+  19+21+timeout-kill = **RC=42**, sequential 2-process = **RC=40**.
+
 ### Added — agnos `sys_readdir` (#81) wrapper (`lib/syscalls_x86_64_agnos.cyr`)
 - `SYS_READDIR = 81` + `sys_readdir(path, buf, max) -> count` — a named, agnos-gated entry
   point for the ring-3 directory-listing syscall (agnos kernel 1.53.13, `ext2_readdir_sys`),
