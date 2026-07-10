@@ -6,6 +6,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.45] — 2026-07-10
+
+**v6.4.45 — async arc 5b "W" step R3: the overlapped AcceptEx server.** Closes the async "W" arc
+(client .43 · timers/subprocess/parity .44 · server .45) — sandhi/daimon can now `accept()` on
+Windows. Adds the `listen` ws2_32 reroute and a target-agnostic `async_accept(rt, listen_sock)`;
+the permanent Windows gate grows a self-connecting server leg so the AcceptEx path is release-gated
+on real cass every release. x86 self-host + seed-derive byte-identical; `SELFHOST_OK` on ecb/cass/pi.
+Bench: self_compile **629ms** (615→629) · cycc **1,086,888 B** (1,086,840→,888, +48 = the listen reroute).
+
+### Added — `listen` ws2_32 reroute (`0xF033`) — the AcceptEx server's listener primitive
+- `syscall(0xF033, s, backlog)` → `ws2_32!listen(s, backlog)`, a 2-arg reroute through the rbx-anchored
+  `_pe_call_2arg_aligned` helper. Wired across the 4 sites (IAT registration in `pe/emit.cyr`,
+  `ELISTEN_PE` in `x86/emit.cyr`, dispatch + routed-syscall warning in `parse_expr.cyr`, aarch64/cx
+  return-0 stub twins). Verified WSASocketW→bind→**listen** → RC 42 on real cass. cycc self-host +
+  seed-derive byte-identical.
+
+### Added — target-agnostic `async_accept(rt, listen_sock)` — the AcceptEx server (`lib/async*.cyr`)
+- **Windows (`async_win.cyr`)** — `_async_accept_task` creates an overlapped ACCEPT socket, associates
+  it with the IOCP, fetches `AcceptEx` via `WSAIoctl`/WSAID_ACCEPTEX (mirroring the R1 ConnectEx path),
+  posts an overlapped `AcceptEx` on the caller's IOCP-associated LISTEN socket (8-arg callptr, through
+  the v6.4.43 `>4` fix), parks, and on completion applies `SO_UPDATE_ACCEPT_CONTEXT` and returns the
+  accepted socket. Retire closes the accept socket it created, never the caller's listener. Sync-failure
+  (non-`WSA_IO_PENDING`) and `WSAIoctl`-failure paths close + fail rather than parking into a dead completion.
+- **Linux (`async.cyr`)** — the epoll-readiness parity: park on the listen fd (`EPOLLIN`), then `accept`
+  (x86 43 → aarch64 202 via ESYSXLAT, so no compiler change) + `FD_CLOEXEC`. Verified natively RC 42
+  (server forks a client, parent accepts).
+- **agnos (`async_agnos.cyr`)** — stub returning 0 (no server-accept on the serial model), present so
+  consumers stay target-agnostic. api-surface regenerated (+3 `async_accept` entries).
+- **Permanent gate** (`tests/win/async_iocp_pe.cyr`) — a self-connecting server leg (`async_accept` races
+  `async_connect` on one reactor) runs on cass every release. cass RC 42 with the full R1+R2+R3 surface.
+
 ## [6.4.44] — 2026-07-10
 
 **v6.4.44 — async arc 5b "W" step R2: Windows IOCP timers + subprocess + combinator parity.**
