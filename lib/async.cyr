@@ -79,7 +79,7 @@ var RT_SIZE = 48;
 fn async_new_in(a): i64 {
     var rt = alloc_via(a, RT_SIZE);
     if (rt == 0) { return 0; }
-    var epfd = syscall(SYS_EPOLL_CREATE1, 0);
+    var epfd = syscall(SYS_EPOLL_CREATE1, EPOLL_CLOEXEC);   # CLOEXEC: a fork-in-reactor child (v6.4.43)
     store64(rt, epfd);
     store64(rt + 8, 0);
     store64(rt + 16, 0);
@@ -303,7 +303,7 @@ fn _async_own_fd(rt, fd): i64 {
 # socket syscalls (async.cyr stays net.cyr-free). ctx = { step, addr, port, fd, rt }.
 fn _async_connect_task(ctx): i64 {
     if (load64(ctx) == 0) {
-        var fd = syscall(SYS_SOCKET, 2, 1, 0);          # AF_INET, SOCK_STREAM
+        var fd = syscall(SYS_SOCKET, 2, 1 | 524288, 0);  # AF_INET, SOCK_STREAM|SOCK_CLOEXEC (v6.4.43)
         if (fd < 0) { return 0 - 1; }
         var fl = syscall(SYS_FCNTL, fd, 3, 0);          # F_GETFL
         syscall(SYS_FCNTL, fd, 4, fl | 2048);           # F_SETFL O_NONBLOCK
@@ -508,7 +508,7 @@ fn _async_dns_parse_a(buf, blen, expected_id): i64 {
 # parse it. ctx = { step, host, ns_addr, ns_port, fd, id, rt }.
 fn _async_resolve_task(ctx): i64 {
     if (load64(ctx) == 0) {
-        var fd = syscall(SYS_SOCKET, 2, 2, 0);          # AF_INET, SOCK_DGRAM
+        var fd = syscall(SYS_SOCKET, 2, 2 | 524288, 0);  # AF_INET, SOCK_DGRAM|SOCK_CLOEXEC (v6.4.43)
         if (fd < 0) { return 0 - 1; }
         var sa[16];
         store16(&sa, 2);
@@ -559,7 +559,7 @@ fn async_resolve(rt, ns_addr, ns_port, host): i64 {
 # Create a CLOCK_MONOTONIC timerfd that first fires after value_ms and then every
 # interval_ms (interval_ms == 0 = one-shot). Returns the fd, or -1 on failure.
 fn _async_timerfd(value_ms, interval_ms): i64 {
-    var tfd = syscall(SYS_TIMERFD_CREATE, 1, 0);
+    var tfd = syscall(SYS_TIMERFD_CREATE, 1, TFD_CLOEXEC);   # CLOEXEC (v6.4.43)
     if (tfd < 0) { return 0 - 1; }
     # itimerspec: { interval_sec, interval_nsec, value_sec, value_nsec }
     var spec[32];
