@@ -2670,6 +2670,16 @@ sankoch::stream_decompress_init/1
 sankoch::stream_decompress_init_inc/3
 sankoch::stream_reset/1
 sankoch::stream_write/3
+sankoch::tar_data/1
+sankoch::tar_kind/1
+sankoch::tar_link/1
+sankoch::tar_mode/1
+sankoch::tar_mtime/1
+sankoch::tar_next/1
+sankoch::tar_open/2
+sankoch::tar_open_auto/2
+sankoch::tar_path/1
+sankoch::tar_size/1
 sankoch::xxhash32/2
 sankoch::xxhash32_final/1
 sankoch::xxhash32_init/0
@@ -2690,6 +2700,8 @@ sankoch::zlib_enc_finish/1
 sankoch::zlib_enc_init/3
 sankoch::zlib_enc_init_dict/5
 sankoch::zlib_enc_write/3
+sankoch::zstd_decompress/4
+sankoch::zstd_frame_content_size/2
 sha1::sha1/3
 shadow::shadow_getspnam/4
 shadow::shadow_getspnam_r/4
@@ -4395,6 +4407,7 @@ vani::audio_rate/1
 vani::audio_read/3
 vani::audio_resume/1
 vani::audio_set_params/4
+vani::audio_set_params_full/6
 vani::audio_set_sw_params/4
 vani::audio_start/1
 vani::audio_write/3

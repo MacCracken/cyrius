@@ -75,6 +75,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   verified; default cycc byte-identical; api-surface + cyrdoc regenerated. Resolves
   `issues/2026-07-10-agnos-sys-readdir-wrapper.md`.
 
+### Changed — vendored stdlib folds (re-vendored from sibling `cyrius distlib` dists)
+- **sankoch 2.4.9 → 2.5.1** (`lib/sankoch.cyr`, +1.3k lines) — a **sovereign Zstandard decoder**
+  (`zstd_decompress` / `zstd_frame_content_size`, RFC 8878 decode-only) + a **shared tar cursor**
+  (`tar_open`/`tar_kind`/`tar_data`/…), so the AGNOS ecosystem has one canonical path for
+  `.tar{,.gz,.xz,.bz2,.zst}` with no shell-outs; 2.5.1 adds per-codec distlib profiles.
+- **patra 1.12.8 → 1.12.9** (`lib/patra.cyr`) — `.patra` opens now work off-Linux (agnos): the
+  object-store/WAL/JSONL opens route through the `file_open` ABI bridge instead of raw `sys_open`
+  (Linux arg-order + `O_*` values). Surfaced by the `owl` consumer on the agnos kernel.
+- **vani 1.0.0** (`lib/vani.cyr`, 0.9.8 → stable) — the `vani_*` audio surface (106 symbols)
+  frozen under SemVer; drop-in for existing consumers.
+- Each folded byte-identical from the sibling's committed `cyrius distlib` output and verified to
+  compile + run on the current toolchain (sankoch `crc32("123456789")==0xCBF43926`; patra/vani
+  full-dep compile). cycc self-host unaffected — none is in the compiler's own source.
+
 ## [6.4.43] — 2026-07-10
 
 **v6.4.43 — async arc 5b "W" step R1: the Windows IOCP async CLIENT.** The reactor was
