@@ -1,0 +1,51 @@
+# Fixture for _async_connect_gate (v6.4.38 — async net connect).
+#
+# async_connect(rt, addr, port) initiates a non-blocking TCP connect on the reactor,
+# parks on the socket's write-readiness during the handshake, and returns a task handle
+# whose result (via task_join) is the connected fd. Exercised end-to-end against a
+# localhost listener: connect via the reactor, accept, then send a byte and read it back.
+#
+# Proven fail-on-bug: the received byte is 42 only if the async connect established a
+# real, working connection (a failed connect returns -1 → the fixture exits 1).
+# MUST exit 42.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/tagged.cyr"
+include "lib/fnptr.cyr"
+include "lib/net.cyr"
+include "lib/async.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    var port = 47653;
+    var localhost = 0x0100007F;    # 127.0.0.1 (network-order IPv4 bytes as an int)
+
+    # listener on 0.0.0.0:port
+    var lfd = payload(tcp_socket());
+    sock_reuse(lfd);
+    sock_bind(lfd, 0, port);        # INADDR_ANY
+    sock_listen(lfd, 1);
+
+    # async connect to 127.0.0.1:port on the reactor
+    var rt = async_new();
+    var h = async_connect(rt, localhost, port);
+    var cfd = task_join(rt, h);     # connected client fd, or -1
+    async_run(rt);
+    if (cfd < 0) { return 1; }      # connect failed
+
+    # accept the queued connection, then send 42 and read it back
+    var sfd = payload(sock_accept(lfd));
+    var b[8];
+    store8(&b, 42);
+    sock_send(cfd, &b, 1);
+    store8(&b, 0);
+    sock_recv(sfd, &b, 1);
+    var got = load8(&b);
+
+    sock_close(cfd);
+    sock_close(sfd);
+    sock_close(lfd);
+    return got;                     # 42 iff the async connection worked end-to-end
+}

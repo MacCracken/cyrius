@@ -215,17 +215,82 @@ fn async_select(rt, handles, n): i64 {
 # top when woken. Returns -1 if called outside async_run (no current task).
 # v6.4.33 (F1) — the rt-integrated reactor path; async_await_readable stays the
 # standalone one-shot blocking helper (used by sandhi on the idle listen fd).
-fn async_wait_fd(rt, fd): i64 {
+fn _async_wait_events(rt, fd, events): i64 {
     var cur = load64(rt + 40);
     if (cur == 0) { return 0 - 1; }
     var epfd = load64(rt);
     var ev[16];
-    store32(&ev, 1);                 # EPOLLIN
+    store32(&ev, events);            # EPOLLIN (1) / EPOLLOUT (4)
     store64(&ev + 4, cur);           # epoll_data = task ptr (packed @4)
     syscall(SYS_EPOLL_CTL, epfd, 1, fd, &ev);   # EPOLL_CTL_ADD
     store64(cur + 32, fd);           # remember fd for EPOLL_CTL_DEL on wake
     store64(cur + 16, TASK_WAITING); # park
     return 0;
+}
+# Cooperatively wait for `fd` to become READABLE (EPOLLIN) from inside a running task —
+# parks the current task on the reactor until fd is ready; a poll-structured task resumes
+# from the top when woken. Returns -1 if called outside async_run. v6.4.33 (F1).
+fn async_wait_fd(rt, fd): i64 {
+    return _async_wait_events(rt, fd, 1);       # EPOLLIN — wait for readable
+}
+# Cooperatively wait for `fd` to become WRITABLE (EPOLLOUT) — the write-readiness
+# complement of async_wait_fd. A non-blocking connect signals completion as
+# writable, and a socket send that hit EAGAIN resumes here. v6.4.38.
+fn async_wait_writable(rt, fd): i64 {
+    return _async_wait_events(rt, fd, 4);       # EPOLLOUT — wait for writable
+}
+
+# ================================================================
+# Async net client (v6.4.38) — non-blocking connect on the reactor.
+# ================================================================
+
+# Reactor connect task: initiate a non-blocking TCP connect and park on the socket's
+# write-readiness; on resume, read back SO_ERROR to confirm the handshake. Raw Linux
+# socket syscalls (async.cyr stays net.cyr-free). ctx = { step, addr, port, fd, rt }.
+fn _async_connect_task(ctx): i64 {
+    if (load64(ctx) == 0) {
+        var fd = syscall(SYS_SOCKET, 2, 1, 0);          # AF_INET, SOCK_STREAM
+        if (fd < 0) { return 0 - 1; }
+        var fl = syscall(SYS_FCNTL, fd, 3, 0);          # F_GETFL
+        syscall(SYS_FCNTL, fd, 4, fl | 2048);           # F_SETFL O_NONBLOCK
+        var sa[16];                                     # sockaddr_in (Linux)
+        store16(&sa, 2);                                # AF_INET
+        var port = load64(ctx + 16);
+        store16(&sa + 2, ((port & 0xFF) << 8) | ((port >> 8) & 0xFF));   # port, network order
+        store32(&sa + 4, load64(ctx + 8));              # addr (network-order IPv4 as int)
+        store64(&sa + 8, 0);
+        store64(ctx + 24, fd);
+        if (syscall(SYS_CONNECT, fd, &sa, 16) == 0) { return fd; }   # connected immediately
+        store64(ctx, 1);
+        async_wait_writable(load64(ctx + 32), fd);      # EINPROGRESS → park on writable
+        return 0;
+    }
+    # resumed (writable): getsockopt(SOL_SOCKET, SO_ERROR)
+    var fd = load64(ctx + 24);
+    var sb[8];
+    var slen[8];
+    store32(&sb, 0);
+    store32(&slen, 4);
+    syscall(55, fd, 1, 4, &sb, &slen);                  # getsockopt SO_ERROR (Linux SOL_SOCKET=1)
+    if (load32(&sb) == 0) { return fd; }                # connected
+    syscall(SYS_CLOSE, fd);
+    return 0 - 1;
+}
+
+# Async TCP connect on the reactor. `addr` is the 4 IPv4 bytes in network order as an
+# int (e.g. 0x0100007F for 127.0.0.1); `port` is host-order. Returns a task handle
+# whose result — via task_join(rt, handle) — is the connected socket fd, or -1 on
+# failure; the reactor parks on the socket's write-readiness during the handshake, so
+# other tasks run concurrently. Linux only (agnos/macOS degrade). v6.4.38 (async net
+# client — connect).
+fn async_connect(rt, addr, port): i64 {
+    var ctx = alloc(40);
+    store64(ctx, 0);
+    store64(ctx + 8, addr);
+    store64(ctx + 16, port);
+    store64(ctx + 24, 0);       # fd
+    store64(ctx + 32, rt);
+    return async_spawn(rt, &_async_connect_task, ctx);
 }
 
 # ================================================================

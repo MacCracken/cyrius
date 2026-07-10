@@ -6,6 +6,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.38] — 2026-07-09
+
+**v6.4.38 — async runtime: net client (connect).** The reactor gains write-readiness
+parking (`async_wait_writable`) and a non-blocking TCP `async_connect` — the first piece
+of the async net client. cycc byte-identical (async is not in the compiler).
+Bench: self_compile **606ms** · cycc **1,077,592 B** — flat vs v6.4.37.
+
+### Added — async net (`lib/async.cyr`)
+- **`async_wait_writable(rt, fd)`** — parks the current task until `fd` is WRITABLE
+  (EPOLLOUT), the complement of F1's `async_wait_fd` (EPOLLIN). Both now share an
+  `_async_wait_events(rt, fd, events)` helper — behavior-preserving (the reactor gate
+  still exits 42).
+- **`async_connect(rt, addr, port)`** — initiates a non-blocking TCP connect (`addr` = the
+  4 network-order IPv4 bytes as an int, e.g. 0x0100007F for 127.0.0.1; `port` host-order)
+  and returns a task handle whose result (via `task_join`) is the connected socket fd, or
+  -1 on failure. The reactor parks on the socket's write-readiness during the handshake,
+  reads back SO_ERROR on resume, and other tasks run concurrently. Raw Linux socket
+  syscalls keep async.cyr net.cyr-free; `lib/async_agnos.cyr` degrades (no BSD
+  non-blocking connect on the serial client model).
+- Test `tests/fixtures/async/async_connect.cyr` + `_async_connect_gate` (check 137→138):
+  async_connect to a localhost listener, then accept + send/recv a byte end-to-end (exit
+  42), **proven fail-on-bug** (a dead port → connect refused → exit 1). api-surface
+  regenerated.
+- Note: streaming read/write with backpressure (a loop that parks mid-buffer) stays bounded
+  by the no-mid-body-suspend execution model — a follow-on; connect is a single EPOLLOUT
+  event and needs no such loop.
+
 ## [6.4.37] — 2026-07-09
 
 **v6.4.37 — async runtime P3: concurrency combinators.** `async_join_all` (await N tasks,
