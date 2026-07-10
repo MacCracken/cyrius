@@ -6,6 +6,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — async arc 5b "W" step R2: Windows async TIMERS (`lib/async_win.cyr`)
+- **Threadpool→IOCP callback bridge (foundation)** — a Win32 waitable timer can't post to an
+  IOCP directly, so `_async_win_timer_cb` is registered with `RegisterWaitForSingleObject`
+  (0xF02D) and runs on an OS threadpool thread doing ONLY `PostQueuedCompletionStatus`
+  (thread-safe) — bridging OS timer signals into the reactor's single completion queue. Adds
+  the `CreateWaitableTimerW` (0xF02E) / `SetWaitableTimer` (0xF02F) / `UnregisterWaitEx`
+  (0xF030) / `CancelIoEx` (0xF031) / `setsockopt` (0xF032) reroutes (pe/x86 emit + parse_expr
+  dispatch + aarch64/cx return-0 stub twins).
+- **`async_with_timeout`** — races a task against a one-shot manual-reset waitable-timer
+  sentinel on the reactor; returns 1 if the task beat the deadline, 0 if the deadline fired
+  first (the still-pending loser is retired). Cross-verified on real cass (RC=42).
+- **`async_interval`** — invokes `fp(arg)` every `ms` on the reactor until a cancel-token cell
+  is signalled, via a PERIODIC auto-reset waitable timer driving a PERSISTENT threadpool wait;
+  re-parks each tick. Cross-verified on real cass (RC=42, 3-tick self-cancel).
+- **Per-task-type retire** (`_async_win_retire`) — a timeout race-loser is torn down by
+  dispatch on its task fn pointer: sentinel/interval → `UnregisterWaitEx` then `CloseHandle` the
+  timer (that order — closing a timer under a live wait is UB); connect → `closesocket`;
+  recv/send → `CancelIoEx` the in-flight op on the caller-owned socket (no close).
+- **Hardening** (adversarial review): overlapped ops that fail SYNCHRONOUSLY (non-`WSA_IO_PENDING`)
+  no longer park into a completion that never arrives; the connect resume path applies
+  `SO_UPDATE_CONNECT_CONTEXT`; timer-arm / wait-registration failure closes the timer and fails
+  the task instead of hanging the reactor forever; the interval re-parks its own task (ctx+32),
+  not the global `rt+40` "current task", so a re-entrant `fp()` can't clobber the park target.
+- x86 self-host byte-identical (async_win.cyr is PE-consumer-only, not in the compiler).
+
 ### Added — agnos `sys_readdir` (#81) wrapper (`lib/syscalls_x86_64_agnos.cyr`)
 - `SYS_READDIR = 81` + `sys_readdir(path, buf, max) -> count` — a named, agnos-gated entry
   point for the ring-3 directory-listing syscall (agnos kernel 1.53.13, `ext2_readdir_sys`),
