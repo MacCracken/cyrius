@@ -831,6 +831,19 @@ fn _pe_ensure_getsockopt(S): i64 {
 }
 fn _pe_getsockopt_get(): i64 { return _pe_getsockopt_idx; }
 
+# v6.4.43 — ws2_32!WSAIoctl (dll_id 4), used with SIO_GET_EXTENSION_FUNCTION_POINTER
+# (0xC8000006) + the WSAID_CONNECTEX GUID to fetch the ConnectEx fn pointer at load
+# time (ConnectEx is not an exported symbol — it must be looked up per-socket). 9-arg.
+var _pe_wsaioctl_ready = 0;
+var _pe_wsaioctl_idx   = 0;
+fn _pe_ensure_wsaioctl(S): i64 {
+    if (_pe_wsaioctl_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_wsaioctl_idx, "WSAIoctl", 4);
+    _pe_wsaioctl_ready = 1;
+    return 0;
+}
+fn _pe_wsaioctl_get(): i64 { return _pe_wsaioctl_idx; }
+
 # v6.2.13 — kernel32!GetSystemTimeAsFileTime for the Windows wall-clock
 # (chrono.clock_epoch_secs/ns). `void GetSystemTimeAsFileTime(LPFILETIME)` fills
 # an 8-byte FILETIME (100ns ticks since 1601-01-01) at the pointer arg; the

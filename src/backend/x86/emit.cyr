@@ -1626,6 +1626,71 @@ fn _pe_call_6arg_aligned(S, idx): i64 {
     return 0;
 }
 
+# General n-arg kernel32/ws2_32 reroute, 16-byte aligned. a1-a4 → rcx/rdx/r8/r9;
+# a5..aN → [rsp+0x20 + (i-5)*8] (above the 32-byte shadow, Win64). Result in rax.
+# Stack on entry (top→bottom): [aN] .. [a1] [sc_nr]. Mirrors ECALLPTR_PE's >4 path
+# (same temp regs r10/r11/r14/r15/r12 + slot map), but calls [rip+IAT] and drops
+# sc_nr (no stack callee). v6.4.43 (WSAIoctl n=9; WSARecv/WSASend n=7). n <= 6 have
+# dedicated helpers; this handles n >= 5 uniformly (caps at n=9 → nextra 5).
+fn _pe_call_nargs_aligned(S, idx, n): i64 {
+    var nextra = n - 4;
+    if (nextra >= 1) { EB(S, 0x58); E3(S, 0xC28949); }      # pop rax; mov r10, rax (aN)
+    if (nextra >= 2) { EB(S, 0x58); E3(S, 0xC38949); }      # pop rax; mov r11, rax
+    if (nextra >= 3) { EB(S, 0x58); E3(S, 0xC68949); }      # pop rax; mov r14, rax
+    if (nextra >= 4) { EB(S, 0x58); E3(S, 0xC78949); }      # pop rax; mov r15, rax
+    if (nextra >= 5) { EB(S, 0x58); E3(S, 0xC48949); }      # pop rax; mov r12, rax
+    EB(S, 0x41); EB(S, 0x59);                               # pop r9   (a4)
+    EB(S, 0x41); EB(S, 0x58);                               # pop r8   (a3)
+    EB(S, 0x5A);                                            # pop rdx  (a2)
+    EB(S, 0x59);                                            # pop rcx  (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08);     # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                            # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);                  # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0);     # and rsp, -16
+    var framesize = 32 + nextra * 8;
+    if ((framesize & 15) != 0) { framesize = framesize + 8; }
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, framesize); # sub rsp, framesize
+    if (nextra == 1) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r10
+    }
+    if (nextra == 2) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r11
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x28);   # [rsp+40] r10
+    }
+    if (nextra == 3) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x74); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r14
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x28);   # [rsp+40] r11
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30);   # [rsp+48] r10
+    }
+    if (nextra == 4) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r15
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x74); EB(S, 0x24); EB(S, 0x28);   # [rsp+40] r14
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x30);   # [rsp+48] r11
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x38);   # [rsp+56] r10
+    }
+    if (nextra == 5) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x64); EB(S, 0x24); EB(S, 0x20);   # [rsp+32] r12
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x28);   # [rsp+40] r15
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x74); EB(S, 0x24); EB(S, 0x30);   # [rsp+48] r14
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x38);   # [rsp+56] r11
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x40);   # [rsp+64] r10
+    }
+    EB(S, 0xFF); EB(S, 0x15);                               # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);                  # mov rsp, rbx
+    EB(S, 0x5B);                                            # pop rbx
+    return 0;
+}
+
+# syscall(0xF027, s, code, &in, inlen, &out, outlen, &bytes, 0, 0) → ws2_32!WSAIoctl
+# (9-arg). Used with SIO_GET_EXTENSION_FUNCTION_POINTER (0xC8000006) + WSAID_CONNECTEX
+# to fetch the ConnectEx function pointer into &out (then called via callptr).
+fn EWSAIOCTL_PE(S): i64 {
+    _pe_ensure_wsaioctl(S);
+    return _pe_call_nargs_aligned(S, _pe_wsaioctl_get(), 9);
+}
+
 # v6.4.43: ws2_32 socket foundation. syscall(0xF022, af,type,proto,info,g,flags) →
 # WSASocketW (6-arg; WSA_FLAG_OVERLAPPED=1 → an IOCP-associable socket; returns
 # SOCKET or INVALID_SOCKET=-1).

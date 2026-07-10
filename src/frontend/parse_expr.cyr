@@ -1185,6 +1185,15 @@ fn PARSE_FACTOR(S): i64 {
                     return 0;
                 }
             }
+            # v6.4.43: ws2_32 WSAIoctl (9-arg → argc 10) — fetch the ConnectEx pointer
+            # via SIO_GET_EXTENSION_FUNCTION_POINTER.
+            if (sc_num == 61479) {
+                if (argc == 10) {
+                    EWSAIOCTL_PE(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             if (sc_num == 61452) {
                 if (argc == 1) {
                     # syscall(0xF00C) → TlsAlloc (no args, slot index in rax).
@@ -1361,7 +1370,7 @@ fn PARSE_FACTOR(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF026 (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF027 (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
             584);
         }
         ESCPOPS(S, argc);
