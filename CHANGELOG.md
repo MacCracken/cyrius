@@ -6,6 +6,63 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — agnos `sys_readdir` (#81) wrapper (`lib/syscalls_x86_64_agnos.cyr`)
+- `SYS_READDIR = 81` + `sys_readdir(path, buf, max) -> count` — a named, agnos-gated entry
+  point for the ring-3 directory-listing syscall (agnos kernel 1.53.13, `ext2_readdir_sys`),
+  mirroring the `sys_shm_*`/`sys_blk_*` bands. Fixed 64-byte records (name@0, type@63); `.`/`..`
+  omitted. #81 is `fchdir` on Linux, so it lives only in the agnos syscall stdlib. agnos compile
+  verified; default cycc byte-identical; api-surface + cyrdoc regenerated. Resolves
+  `issues/2026-07-10-agnos-sys-readdir-wrapper.md`.
+
+## [6.4.43] — 2026-07-10
+
+**v6.4.43 — async arc 5b "W" step R1: the Windows IOCP async CLIENT.** The reactor was
+epoll-only, so ANY `--win` program pulling `async` hard-errored at compile
+(`undefined SYS_EPOLL_CREATE1`) — blocking every Windows binary using the transport
+(thoth). R1 delivers a **real IOCP async client** on Windows: `async_resolve` →
+`async_connect` → `async_send` → `async_recv`, every op overlapped and completing through
+`GetQueuedCompletionStatus`. Built + proven end-to-end on real cass across the whole arc
+(from-scratch ws2_32 bring-up — the filed issue's "3+ reroutes" undercounted; the real
+count is 13 ws2_32/IOCP reroutes). x86 self-host byte-identical modulo the version string;
+ecb + cass + pi `SELFHOST_OK`. Resolves the CLIENT half of
+`docs/development/issues/2026-07-08-async-epoll-only-blocks-win-transport.md` (server/AcceptEx
+= R3; subprocess + timers = R2). Scoped 3 releases (client+server) per user 2026-07-10.
+Bench: self_compile **617ms** · cycc **1,086,496 B**.
+
+### Added — Windows IOCP async backend (`lib/async_win.cyr`, new; `lib/async.cyr` guard split)
+- **Three-way target split** — `async.cyr`'s epoll body now gates NOT-agnos AND NOT-win;
+  `#ifdef CYRIUS_TARGET_WIN` includes the new `lib/async_win.cyr` (mirrors the agnos split,
+  nested-guard precedent `lib/fs.cyr`). `--win` async builds now link + run.
+- **`async_win.cyr` IOCP reactor** — `async_new_in` creates the IOCP + one-time
+  `WSAStartup`; `_async_step` drains one completion via `GetQueuedCompletionStatus` and
+  wakes the owning task via the `lpOverlapped`→ctx→task recovery (OVERLAPPED @ctx+0, task
+  ptr @ctx+32, byte count @ctx+8). `async_connect` = overlapped `ConnectEx` (fetched via
+  `WSAIoctl`, called through a fn pointer); `async_recv`/`async_send` = overlapped
+  `WSARecv`/`WSASend`; `async_resolve` = blocking `getaddrinfo` (system resolver, first
+  A record). Timers/subprocess are R2 (stubbed); server accept is R3.
+
+### Added — Windows PE reroutes (`src/backend/pe`, `x86`, `parse_expr` + aarch64/cx stub twins)
+- **ws2_32.dll registered as the 5th import DLL** + 13 reroutes (0xF01E–0xF02C): WSAStartup;
+  IOCP core CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus;
+  WSASocketW/closesocket/WSAGetLastError; bind/getsockopt; WSAIoctl (ConnectEx fetch);
+  connect/WSARecv/WSASend; getaddrinfo/freeaddrinfo. New 4-arg/5-arg/6-arg/general-n call
+  helpers (Win64 stack args above the shadow). Each reroute carries its aarch64 + cx
+  return-0 stub twins. Every one verified running on real cass.
+
+### Fixed — callptr `>4`-arg register-clobber (`ECALLPTR_PE` + `_pe_call_nargs_aligned`)
+- A **latent codegen bug**, first triggered by the 7-arg `ConnectEx` callptr (max prior
+  callptr/reroute use was 3 args, so the `>4` path had NEVER been exercised): the `>4`-arg
+  Win64 marshalling used **non-volatile `r12`/`r14`/`r15` as scratch without saving them**,
+  corrupting a caller-live value the regalloc had placed there (an open socket →
+  `WSAENOTSOCK`). Root-caused via disassembly. Fixed: read the reg-args by stack offset and
+  copy each stack-arg through the volatile `r10` only — `r12`/`r14`/`r15` are never touched.
+  Also corrects the latent clobber in the shipped WSAIoctl reroute. cass `SELFHOST_OK`.
+
+### Fixed — reactor-fd `O_CLOEXEC` (`lib/async.cyr`, Linux)
+- The shared epfd (`EPOLL_CLOEXEC`), reactor timerfds (`TFD_CLOEXEC`), and connect/resolve
+  sockets (`SOCK_CLOEXEC`) are now close-on-exec, so a fork-in-reactor child
+  (`async_spawn_process`) no longer inherits the reactor's fds. Behavior-neutral.
+
 ## [6.4.42] — 2026-07-10
 
 **v6.4.42 — async arc consolidation + the aarch64 reactor made real.** A closeout-style

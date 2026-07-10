@@ -1,5 +1,15 @@
 # async runtime is epoll-only — no IOCP path blocks every `--win` build that pulls `async`
 
+> **✅ CLIENT RESOLVED — v6.4.43 (W-step R1).** `--win` async builds now LINK + RUN: a real
+> IOCP client (`lib/async_win.cyr`) — `async_resolve`→`async_connect`→`async_send`→`async_recv`,
+> every op overlapped and completing through `GetQueuedCompletionStatus`, proven end-to-end on
+> real cass (RC 42 vs a loopback echo). From-scratch ws2_32 bring-up: 13 PE reroutes (0xF01E–
+> 0xF02C) + a callptr `>4`-arg codegen fix the arc exposed. The undefined-`SYS_EPOLL_CREATE1`
+> hard-error that blocked EVERY `--win` async binary is gone. **Still open:** R2 = async
+> subprocess + timers + combinator parity on Windows; R3 = the overlapped `AcceptEx` SERVER so
+> sandhi/daimon can *accept* on Windows (the server half of Acceptance below). thoth's `--win`
+> end-to-end is a downstream check after sandhi re-vendors `async` from .43. See CHANGELOG [6.4.43].
+
 > **ARC-OPEN DECISION (2026-07-09): folded into async arc 5b, sequenced AFTER gap coverage.**
 > Premise-check verdict `FOUNDATIONAL_DEPENDENT_MUST_WAIT`: epoll is not behind a poller seam
 > (inline across 4 fns — `async_new_in`/`async_await_readable`/`async_timeout`/`async_read`), and

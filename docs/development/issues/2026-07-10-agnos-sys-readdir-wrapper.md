@@ -1,5 +1,11 @@
 # 2026-07-10 — agnos `sys_readdir` wrapper for the directory-listing syscall (#81)
 
+> **✅ RESOLVED cyrius-side (v6.4.43, 2026-07-10):** `SYS_READDIR = 81` + the `sys_readdir(path,
+> buf, max)` wrapper added to `lib/syscalls_x86_64_agnos.cyr` after the `sys_blk_*` band (same
+> agnos-only pattern; #81 is `fchdir` on Linux so it lives only in the agnos syscall stdlib).
+> agnos-target compile verified; default cycc byte-identical; api-surface + cyrdoc regenerated.
+> Named entry point now trickles to crab / a future `ls` / agnsh by name.
+
 **Status:** OPEN — cyrius-side ask. The **kernel half is done** in agnos — **cut 1.53.13**
 (`ext2_readdir_sys` + dispatch #81, QEMU-proven: crab lists real `/bin` and `/`). Full detail in
 `agnos/docs/development/issues/2026-07-10-readdir-syscall-cyrius-wrapper.md`. This is the
