@@ -1288,6 +1288,9 @@ fn EGETCURTID_PE(S): i64 { return 0; }
 fn EGETCURPID_PE(S): i64 { return 0; }
 fn ETERMINATE_PE(S): i64 { return 0; }   # v6.4.26 TerminateProcess (x86-only real impl; stub here)
 fn EWSASTARTUP_PE(S): i64 { return 0; }  # v6.4.43 ws2_32!WSAStartup (x86-only real impl; stub here)
+fn ECREATEIOCP_PE(S): i64 { return 0; }  # v6.4.43 IOCP core CreateIoCompletionPort (x86-only)
+fn EGETQCS_PE(S): i64 { return 0; }      # v6.4.43 IOCP core GetQueuedCompletionStatus (x86-only)
+fn EPOSTQCS_PE(S): i64 { return 0; }     # v6.4.43 IOCP core PostQueuedCompletionStatus (x86-only)
 fn EGETENV_PE(S): i64 { return 0; }
 fn EGETEXIT_PE(S): i64 { return 0; }
 fn EGETFATTR_PE(S): i64 { return 0; }

@@ -1538,6 +1538,61 @@ fn _pe_call_3arg_aligned(S, idx): i64 {
     return 0;
 }
 
+# 4-arg kernel32 reroute, 16-byte aligned. a1→rcx, a2→rdx, a3→r8, a4→r9. Result in
+# rax. Stack on entry (top→bottom): [a4] [a3] [a2] [a1] [sc_nr]. v6.4.43 (IOCP core:
+# CreateIoCompletionPort / PostQueuedCompletionStatus).
+fn _pe_call_4arg_aligned(S, idx): i64 {
+    EB(S, 0x58);                                        # pop rax (a4)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC1);              # mov r9, rax  (a4)
+    EB(S, 0x58);                                        # pop rax (a3)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC0);              # mov r8, rax  (a3)
+    EB(S, 0x58);                                        # pop rax (a2)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (a2)
+    EB(S, 0x58);                                        # pop rax (a1)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
+# 5-arg kernel32 reroute, 16-byte aligned. a1-a4 → rcx/rdx/r8/r9; a5 → [rsp+0x20]
+# (above the 32-byte shadow, Win64). Result in rax. Stack on entry (top→bottom):
+# [a5] [a4] [a3] [a2] [a1] [sc_nr]. v6.4.43 (IOCP core: GetQueuedCompletionStatus —
+# 5-arg with 3 out-params in a2/a3/a4). Frame 0x30 (32 shadow + a5 + 8 pad) keeps
+# rsp 16-aligned at the call.
+fn _pe_call_5arg_aligned(S, idx): i64 {
+    EB(S, 0x58);                                        # pop rax (a5)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax (a5, temp)
+    EB(S, 0x58);                                        # pop rax (a4)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC1);              # mov r9, rax  (a4)
+    EB(S, 0x58);                                        # pop rax (a3)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC0);              # mov r8, rax  (a3)
+    EB(S, 0x58);                                        # pop rax (a2)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (a2)
+    EB(S, 0x58);                                        # pop rax (a1)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax (a1)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x30); # sub rsp, 0x30 (32 shadow + a5 + pad)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20);  # mov [rsp+0x20], r10 (a5)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+IAT]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
 # syscall(0xF012, &iid, &ppFactory) → dxgi!CreateDXGIFactory1. 2 args
 # (REFIID riid → rcx, void** ppFactory → rdx). Returns HRESULT (0=S_OK) in
 # rax/eax; *ppFactory receives the IDXGIFactory1*. v6.0.70 §0 — dxgi.dll is
@@ -1640,6 +1695,26 @@ fn ETERMINATE_PE(S): i64 {
 fn EWSASTARTUP_PE(S): i64 {
     _pe_ensure_wsastartup(S);
     return _pe_call_2arg_aligned(S, _pe_wsastartup_get());
+}
+
+# v6.4.43: the IOCP core (kernel32), the async reactor's completion engine.
+# syscall(0xF01F, FileHandle, ExistingPort, Key, NumThreads) → CreateIoCompletionPort
+# (4-arg; returns the IOCP HANDLE, or associates a socket with an existing port).
+fn ECREATEIOCP_PE(S): i64 {
+    _pe_ensure_createiocp(S);
+    return _pe_call_4arg_aligned(S, _pe_createiocp_get());
+}
+# syscall(0xF020, port, &bytes, &key, &overlapped, ms) → GetQueuedCompletionStatus
+# (5-arg; a2/a3/a4 are OUT-pointers the kernel writes; returns BOOL, timeout → 0).
+fn EGETQCS_PE(S): i64 {
+    _pe_ensure_getqcs(S);
+    return _pe_call_5arg_aligned(S, _pe_getqcs_get());
+}
+# syscall(0xF021, port, bytes, key, &overlapped) → PostQueuedCompletionStatus
+# (4-arg; posts a manual completion to wake the reactor for non-socket sources).
+fn EPOSTQCS_PE(S): i64 {
+    _pe_ensure_postqcs(S);
+    return _pe_call_4arg_aligned(S, _pe_postqcs_get());
 }
 
 # syscall(0xF00C) → TlsAlloc(). 0 args. Returns a fresh TLS slot index (DWORD)
