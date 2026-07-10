@@ -1643,6 +1643,18 @@ fn EWSALASTERR_PE(S): i64 {
     _pe_ensure_wsalasterr(S);
     return _pe_call_0arg_aligned(S, _pe_wsalasterr_get());
 }
+# syscall(0xF025, s, &sockaddr, namelen) → ws2_32!bind (3-arg; 0 on success — the
+# local bind ConnectEx requires).
+fn EBIND_PE(S): i64 {
+    _pe_ensure_bind(S);
+    return _pe_call_3arg_aligned(S, _pe_bind_get());
+}
+# syscall(0xF026, s, level, optname, &optval, &optlen) → ws2_32!getsockopt (5-arg;
+# SO_ERROR read after a connect completion). optval/optlen are OUT-pointers.
+fn EGETSOCKOPT_PE(S): i64 {
+    _pe_ensure_getsockopt(S);
+    return _pe_call_5arg_aligned(S, _pe_getsockopt_get());
+}
 
 # syscall(0xF012, &iid, &ppFactory) → dxgi!CreateDXGIFactory1. 2 args
 # (REFIID riid → rcx, void** ppFactory → rdx). Returns HRESULT (0=S_OK) in
