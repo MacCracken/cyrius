@@ -69,9 +69,11 @@ async::async_new/0
 async::async_new_in/1
 async::async_read/3
 async::async_run/1
+async::async_run_process/5
 async::async_sleep_ms/1
 async::async_spawn/3
 async::async_spawn_future/2
+async::async_spawn_process/4
 async::async_timeout/3
 async::async_wait_fd/2
 async::async_with_timeout/3
@@ -86,8 +88,10 @@ async_agnos::async_new/0
 async_agnos::async_new_in/1
 async_agnos::async_read/3
 async_agnos::async_run/1
+async_agnos::async_run_process/5
 async_agnos::async_sleep_ms/1
 async_agnos::async_spawn/3
+async_agnos::async_spawn_process/4
 async_agnos::async_timeout/3
 async_agnos::async_wait_fd/2
 async_agnos::async_with_timeout/3
@@ -3926,6 +3930,7 @@ syscalls_linux_common::sys_listen/2
 syscalls_linux_common::sys_mkdirat/3
 syscalls_linux_common::sys_mount/5
 syscalls_linux_common::sys_openat/4
+syscalls_linux_common::sys_pidfd_open/2
 syscalls_linux_common::sys_prctl/5
 syscalls_linux_common::sys_read/3
 syscalls_linux_common::sys_reboot/1

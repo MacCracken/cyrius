@@ -6,6 +6,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.36] — 2026-07-09
+
+**v6.4.36 — async runtime P2: subprocess.** The second tokio-parity primitive — spawn a
+child process and await its exit on the reactor without a blocking waitpid, via a `pidfd`.
+cycc byte-identical (async is not in the compiler).
+Bench: self_compile **630ms** · cycc **1,077,592 B** — flat vs v6.4.35.
+
+### Added — pidfd syscall (`lib/syscalls_*`)
+- `SYS_PIDFD_OPEN` (434) + `sys_pidfd_open(pid, flags)`: an fd for a pid that becomes
+  readable when the process exits (Linux 5.3+). Defined per-arch on Linux (+ reused on
+  macOS-aarch64); **stubbed on macOS-x86** (`syscalls_macos.cyr`, like the epoll numbers)
+  so the shared `linux_common` wrapper still cross-compiles the `cbt/cyrius.cyr` CLI to
+  Mach-O — async subprocess is Linux-functional only.
+
+### Added — async subprocess (`lib/async.cyr`)
+- **`async_spawn_process(rt, path, argv, envp)`** — fork+exec a child, park on its pidfd
+  until it exits, then reap; the task's result (via `task_join`) is the exit code. The
+  reactor multiplexes multiple children concurrently.
+- **`async_run_process(rt, path, argv, envp, ms)`** — spawn + wait with an optional
+  deadline (`ms <= 0` = none): the exit code, or -2 on timeout, in which case the child
+  is SIGKILLed, reaped, and its pidfd closed (no orphan, no fd leak).
+- `lib/async_agnos.cyr` mirrors degraded (agnos has no clone-fork: `async_spawn_process`
+  returns 0, `async_run_process` returns -1).
+- Test `tests/fixtures/async/async_process.cyr` + `_async_process_gate` (check 135→136):
+  `/bin/sh -c "exit 19"` → 19, `exit 21` → 21, `/bin/sleep 5` with a 50 ms deadline → -2
+  (killed) — sum 42, **proven fail-on-bug** (exit 5 → 28). api-surface regenerated.
+- Known follow-on: the forked child inherits the reactor's fds (no `CLOEXEC` yet) —
+  harmless for short-lived children, a hardening item for long-lived ones.
+
 ## [6.4.35] — 2026-07-09
 
 **v6.4.35 — async runtime P1: timers.** The first tokio-parity primitive on the F1/F2

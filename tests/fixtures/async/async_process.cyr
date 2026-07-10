@@ -1,0 +1,56 @@
+# Fixture for _async_process_gate (v6.4.36 P2 — async subprocess).
+#
+# async_spawn_process(rt, path, argv, envp) forks+execs a child and parks on its
+# pidfd (readable on exit) so the reactor waits without a blocking waitpid; the task
+# result is the child's exit code. async_run_process(rt, path, argv, envp, ms) spawns
+# + waits with an optional deadline: exit code, or -2 on timeout (child SIGKILLed +
+# reaped, pidfd closed). Plain library API.
+#
+# Proven fail-on-bug — the three children sum to exactly 42:
+#   /bin/sh -c "exit 19"  -> 19 (exit code read via the pidfd reap)
+#   /bin/sh -c "exit 21"  -> 21 (completes well before its 5 s deadline)
+#   /bin/sleep 5 (50 ms deadline) -> -2 (times out, killed+reaped) -> +2
+# A wrong exit code, a missed timeout, or a premature kill all miss 42.
+# MUST exit 42.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    var total = 0;
+    var envp[8];
+    store64(&envp, 0);
+
+    var rt = async_new();
+
+    # (1) exit 19 — no deadline (spawn + join)
+    var argv1[32];
+    store64(&argv1, "/bin/sh");
+    store64(&argv1 + 8, "-c");
+    store64(&argv1 + 16, "exit 19");
+    store64(&argv1 + 24, 0);
+    total = total + async_run_process(rt, "/bin/sh", &argv1, &envp, 0);
+
+    # (2) exit 21 — completes before its 5 s deadline
+    var argv2[32];
+    store64(&argv2, "/bin/sh");
+    store64(&argv2 + 8, "-c");
+    store64(&argv2 + 16, "exit 21");
+    store64(&argv2 + 24, 0);
+    total = total + async_run_process(rt, "/bin/sh", &argv2, &envp, 5000);
+
+    # (3) sleep 5 with a 50 ms deadline -> times out -> -2 (killed + reaped)
+    var argv3[32];
+    store64(&argv3, "/bin/sleep");
+    store64(&argv3 + 8, "5");
+    store64(&argv3 + 16, 0);
+    if (async_run_process(rt, "/bin/sleep", &argv3, &envp, 50) == 0 - 2) {
+        total = total + 2;
+    }
+
+    async_run(rt);
+    return total;   # 19 + 21 + 2 = 42
+}

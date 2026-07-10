@@ -135,6 +135,17 @@ fn async_interval(rt, fp, arg, ms, tok): i64 {
     return 0;
 }
 
+# async subprocess (agnos): AGNOS has no clone-fork, so a reactor-driven subprocess
+# is unsupported on the serial client target. Returns 0 / -1 (unscheduled); present so
+# consumers stay target-agnostic. Mirror of async.cyr's P2 surface. v6.4.36.
+fn async_spawn_process(rt, path, argv, envp): i64 {
+    return 0;
+}
+# spawn + wait + timeout (agnos): no clone-fork, so unsupported. Returns -1. v6.4.36.
+fn async_run_process(rt, path, argv, envp, ms): i64 {
+    return 0 - 1;
+}
+
 # Sleep for `ms` milliseconds. AGNOS has a real sleep primitive (#41,
 # sys_sleep_ms — halts until the 100 Hz tick), so this is a faithful sleep,
 # not a stub. Guard ms<=0 (sys_sleep_ms caps at 1 h on the kernel side).
