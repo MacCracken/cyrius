@@ -31,7 +31,16 @@
 include "lib/async_agnos.cyr"
 #endif
 
+# v6.4.43: Windows (PE) has no epoll/timerfd/fork either — route to an IOCP backend
+# (lib/async_win.cyr), the same per-target split as agnos. The epoll body below is
+# gated NOT-agnos AND NOT-win. Nested-guard precedent: lib/fs.cyr. Resolves
+# docs/development/issues/2026-07-08-async-epoll-only-blocks-win-transport.md.
+#ifdef CYRIUS_TARGET_WIN
+include "lib/async_win.cyr"
+#endif
+
 #ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_WIN
 
 # Task states
 var TASK_READY = 0;
@@ -834,6 +843,7 @@ fn async_timeout(fp, arg, ms): i64 {
     return 0 - 1;
 }
 
+#endif
 #endif
 
 # ================================================================

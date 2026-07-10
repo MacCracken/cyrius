@@ -1,0 +1,248 @@
+# async_win.cyr — Windows (PE) async runtime: IOCP backend.
+# Usage: included by lib/async.cyr under #ifdef CYRIUS_TARGET_WIN.
+# Requires: alloc.cyr (alloc/alloc_via/default_alloc), fnptr.cyr (fncall1),
+#           syscalls.cyr (the Windows PE reroutes).
+#
+# Windows has no epoll/timerfd/fork — the Linux reactor's syscall surface does
+# not exist. The correct Windows equivalent is an I/O Completion Port (IOCP):
+# CreateIoCompletionPort + GetQueuedCompletionStatus + PostQueuedCompletionStatus,
+# with overlapped WSA socket I/O (ws2_32). This peer makes async.cyr COMPILE and
+# LINK on the PE target (the epoll body is Linux-only), mirroring the
+# lib/async_agnos.cyr per-target split, and grows the real IOCP loop bite by bite
+# (async arc 5b "W" step, v6.4.43+). See CHANGELOG [6.4.43],
+# docs/development/issues/2026-07-08-async-epoll-only-blocks-win-transport.md.
+#
+# The public surface MUST match lib/async.cyr's so consumers stay target-agnostic:
+# async_new / async_new_in / async_spawn / async_run / task_join / async_join_all /
+# async_select / async_wait_fd / async_wait_writable / async_connect / async_recv /
+# async_send / async_resolve / async_with_timeout / async_interval /
+# async_spawn_process / async_run_process / async_sleep_ms / async_read /
+# async_await_readable / async_timeout. The cancel-token / async_rwlock / futures
+# API is SHARED (defined unguarded in async.cyr) and is NOT redefined here.
+#
+# BUILD STATUS (v6.4.43 R1, in progress): the poll-task reactor CORE (new/spawn/
+# step-run/pump/run/task_join/join_all/select) is real and OS-independent; the
+# IOCP wait phase + overlapped socket bodies land in the ws2_32/IOCP-core reroute
+# bites. Bodies that need an unbuilt reroute return an error (0-1) and are marked
+# TODO(R1-iocp) — they are NOT shipped as capability until the reroute + real body
+# land and verify on cass.
+#
+# >>> include "lib/fnptr.cyr"
+include "lib/fnptr.cyr"
+
+# Task states (mirror lib/async.cyr).
+var TASK_READY = 0;
+var TASK_WAITING = 1;
+var TASK_DONE = 2;
+
+# Task struct: { fp, arg, state, next, wait_fd, result, owned_fd } = 56 bytes
+# (mirror async.cyr; owned_fd @48 added v6.4.42). On Windows wait_fd holds the
+# overlapped socket/HANDLE a parked task awaits; owned_fd the task-owned socket
+# to closesocket on retire.
+var TASK_SIZE = 56;
+
+# Runtime struct: { iocp, tasks, task_count, active, allocator, current } = 48
+# bytes (mirror async.cyr; rt+0 holds the IOCP HANDLE, not an epfd).
+var RT_SIZE = 48;
+
+# Create a new async runtime backed by allocator `a`. rt+0 holds the IOCP handle.
+# TODO(R1-iocp): create it via CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0)
+# once that reroute lands; for now the handle slot is 0 (no completion port yet).
+fn async_new_in(a): i64 {
+    var rt = alloc_via(a, RT_SIZE);
+    if (rt == 0) { return 0; }
+    store64(rt, 0);              # IOCP handle — TODO(R1-iocp): CreateIoCompletionPort
+    store64(rt + 8, 0);
+    store64(rt + 16, 0);
+    store64(rt + 24, 0);
+    store64(rt + 32, a);
+    store64(rt + 40, 0);        # current task (set before dispatch)
+    return rt;
+}
+
+# Back-compat wrapper over the global bump allocator.
+fn async_new(): i64 {
+    return async_new_in(default_alloc());
+}
+
+# Spawn a task on the runtime (pure memory — identical to the Linux path).
+fn async_spawn(rt, fp, arg): i64 {
+    var t = alloc_via(load64(rt + 32), TASK_SIZE);
+    if (t == 0) { return 0; }
+    store64(t, fp);
+    store64(t + 8, arg);
+    store64(t + 16, TASK_READY);
+    store64(t + 24, load64(rt + 8));
+    store64(t + 32, 0 - 1);          # wait_fd: not awaiting
+    store64(t + 40, 0);              # result
+    store64(t + 48, 0 - 1);          # owned_fd
+    store64(rt + 8, t);
+    store64(rt + 16, load64(rt + 16) + 1);
+    store64(rt + 24, load64(rt + 24) + 1);
+    return t;
+}
+
+# One reactor step. Runs every TASK_READY task, capturing its return into the
+# result slot (@40); a task that parks stays TASK_WAITING. If nothing ran and
+# tasks are parked, drain one IOCP completion and wake the task it belongs to.
+# Returns the count of tasks not yet DONE (0 = idle).
+# TODO(R1-iocp): the wait phase is a GetQueuedCompletionStatus drain; until the
+# IOCP-core reroute lands it returns `active` without waiting (a fully-parked
+# runtime would otherwise have no way to make progress). The run phase is real.
+fn _async_step(rt): i64 {
+    var active = 0;
+    var ran = 0;
+    var t = load64(rt + 8);
+    while (t != 0) {
+        if (load64(t + 16) == TASK_READY) {
+            store64(rt + 40, t);
+            var r = fncall1(load64(t), load64(t + 8));
+            ran = 1;
+            if (load64(t + 16) == TASK_READY) {
+                store64(t + 40, r);
+                store64(t + 16, TASK_DONE);
+            }
+        }
+        if (load64(t + 16) != TASK_DONE) {
+            active = active + 1;
+        }
+        t = load64(t + 24);
+    }
+    # TODO(R1-iocp): if (active > 0 && ran == 0) { GetQueuedCompletionStatus(...)
+    # → wake the task whose overlapped completed }.
+    return active;
+}
+
+# Drive the reactor until either watched handle is DONE, or — both 0 — until idle.
+fn _async_pump(rt, until_a, until_b): i64 {
+    while (1 == 1) {
+        if (until_a != 0) { if (load64(until_a + 16) == TASK_DONE) { return 0; } }
+        if (until_b != 0) { if (load64(until_b + 16) == TASK_DONE) { return 0; } }
+        if (_async_step(rt) == 0) { return 0; }
+    }
+}
+
+# Run all spawned tasks to completion.
+# TODO(R1-iocp): close the IOCP handle (rt+0) here once it is created.
+fn async_run(rt): i64 {
+    _async_pump(rt, 0, 0);
+    return 0;
+}
+
+# Await a spawned task's result (JoinHandle). Mirror of async.cyr task_join.
+fn task_join(rt, handle): i64 {
+    if (handle == 0) { return 0; }
+    if (load64(handle + 16) != TASK_DONE) { _async_pump(rt, handle, 0); }
+    return load64(handle + 40);
+}
+
+# Await every handle in handles[0..n), collecting results. v6.4.37 (P3).
+fn async_join_all(rt, handles, n, results): i64 {
+    var i = 0;
+    while (i < n) {
+        store64(results + i * 8, task_join(rt, load64(handles + i * 8)));
+        i = i + 1;
+    }
+    return n;
+}
+
+# Await the first handle to complete; returns its index, or -1 if idle with none
+# done. Mirror of async.cyr async_select (null-guard + post-idle re-scan). v6.4.37/.42.
+fn async_select(rt, handles, n): i64 {
+    while (1 == 1) {
+        var i = 0;
+        while (i < n) {
+            var hnd = load64(handles + i * 8);
+            if (hnd != 0) { if (load64(hnd + 16) == TASK_DONE) { return i; } }
+            i = i + 1;
+        }
+        if (_async_step(rt) == 0) {
+            i = 0;
+            while (i < n) {
+                var hd = load64(handles + i * 8);
+                if (hd != 0) { if (load64(hd + 16) == TASK_DONE) { return i; } }
+                i = i + 1;
+            }
+            return 0 - 1;
+        }
+    }
+}
+
+# Cooperative fd-wait / write-wait. On Windows a parked task awaits an overlapped
+# completion, not readiness. TODO(R1-iocp): associate the socket with the IOCP and
+# park the current task keyed to its overlapped. Present so consumers link.
+fn async_wait_fd(rt, fd): i64 {
+    return 0 - 1;               # TODO(R1-iocp): overlapped park
+}
+fn async_wait_writable(rt, fd): i64 {
+    return 0 - 1;               # TODO(R1-iocp): overlapped park
+}
+
+# Async TCP connect. TODO(R1-iocp): ConnectEx on an overlapped, IOCP-associated
+# socket (WSASocketW + bind + WSAIoctl SIO_GET_EXTENSION_FUNCTION_POINTER). Returns
+# 0 (no handle) until the ws2_32 reroutes land — NOT a shipped capability yet.
+fn async_connect(rt, addr, port): i64 {
+    return 0;                   # TODO(R1-iocp): ConnectEx
+}
+
+# Async single-shot recv / send. TODO(R1-iocp): overlapped WSARecv / WSASend on the
+# IOCP-associated socket; the byte count is read from the completion on wake.
+fn async_recv(rt, fd, buf, len): i64 {
+    return 0;                   # TODO(R1-iocp): overlapped WSARecv
+}
+fn async_send(rt, fd, buf, len): i64 {
+    return 0;                   # TODO(R1-iocp): overlapped WSASend
+}
+
+# Async DNS resolve. TODO(R1-iocp): GetAddrInfoW (blocking is acceptable for R1 —
+# thoth reaches hoosh by gateway host). Returns 0 until it lands.
+fn async_resolve(rt, ns_addr, ns_port, host): i64 {
+    return 0;                   # TODO(R1-iocp): GetAddrInfoW
+}
+
+# Await `handle` with a deadline. TODO(R1-iocp): race the task against a GQCS
+# timeout. Until then, join it and report completed (mirrors the agnos degrade —
+# honest for a run-to-completion task, not a real deadline).
+fn async_with_timeout(rt, handle, ms): i64 {
+    if (handle == 0) { return 0; }
+    task_join(rt, handle);
+    return 1;
+}
+
+# Repeating interval. TODO(R2): CreateWaitableTimer / deadline-heap → PostQueued.
+fn async_interval(rt, fp, arg, ms, tok): i64 {
+    return 0;                   # TODO(R2): Windows timers
+}
+
+# Async subprocess. TODO(R2): CreateProcessW (0xF005, exists) +
+# RegisterWaitForSingleObject → PostQueuedCompletionStatus; reap GetExitCodeProcess.
+fn async_spawn_process(rt, path, argv, envp): i64 {
+    return 0;                   # TODO(R2): Windows async subprocess
+}
+fn async_run_process(rt, path, argv, envp, ms): i64 {
+    return 0 - 1;               # TODO(R2): Windows async subprocess
+}
+
+# Sleep for `ms` milliseconds via the kernel32 Sleep reroute (0xF00F, exists).
+fn async_sleep_ms(ms): i64 {
+    if (ms <= 0) { return 0; }
+    syscall(0xF00F, ms);        # Sleep(dwMilliseconds)
+    return 0;
+}
+
+# Non-blocking read. On Windows a plain ReadFile (syscall 0 → ReadFile reroute);
+# overlapped read integration is the reactor's job (async_recv). Blocking here.
+fn async_read(fd, buf, len): i64 {
+    return syscall(0, fd, buf, len);        # ReadFile via the PE reroute
+}
+
+# Wait for `fd` readable. TODO(R1-iocp): overlapped wait. Present so consumers link.
+fn async_await_readable(fd): i64 {
+    return 0;                   # TODO(R1-iocp)
+}
+
+# Run `fp(arg)` with a timeout. No fork on Windows; run inline (mirrors the agnos
+# inline-body model). `ms` advisory / ignored.
+fn async_timeout(fp, arg, ms): i64 {
+    return fncall1(fp, arg);
+}
