@@ -89,7 +89,24 @@ fn main(): i64 {
     var idx = async_select(rt, &hs, 2);
     if (idx != 0) { if (idx != 1) { return 4; } }
 
+    # (7) async_accept SERVER (v6.4.44 R3), self-connecting loopback: a listener + async_accept
+    # races an async_connect on the SAME reactor — the posted AcceptEx completes when ConnectEx
+    # connects. Exercises listen (0xF033) + AcceptEx (WSAIoctl+callptr) end-to-end, no external client.
+    var ls = syscall(0xF022, 2, 1, 0, 0, 0, 1);            # WSASocketW listener
+    if (ls == 0 - 1) { return 5; }
+    syscall(0xF01F, ls, load64(rt), 0, 0);                 # associate the listener with the IOCP
+    var sa[16]; store16(&sa, 2); store16(&sa + 2, ((9995 & 0xFF) << 8) | ((9995 >> 8) & 0xFF)); store32(&sa + 4, 0); store64(&sa + 8, 0);
+    if (syscall(0xF025, ls, &sa, 16) != 0) { return 6; }   # bind 0.0.0.0:9995
+    if (syscall(0xF033, ls, 4) != 0) { return 7; }          # listen
+    var hacc = async_accept(rt, ls);
+    var hcli = async_connect(rt, 0x0100007F, 9995);         # client → 127.0.0.1:9995
+
     async_run(rt);
+
+    var accfd = load64(hacc + 40);                          # accepted socket (server side)
+    if (accfd == 0 - 1) { return 8; }
+    if (accfd == 0) { return 9; }
+    if (load64(hcli + 40) == 0 - 1) { return 10; }          # client socket connected
 
     # 19 + 21 + 1 + 1 = 42
     if (total != 42) { return 50 + total; }
