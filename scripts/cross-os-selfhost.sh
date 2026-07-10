@@ -215,6 +215,7 @@ case "$HOST" in
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\nanosleep_pe.cyr > nsp.exe && nsp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\var_syscall_arity_pe.cyr > vsa.exe && vsa.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\dir_list_pe.cyr > dlp.exe && dlp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\async_iocp_pe.cyr > aip.exe && aip.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < programs\cxvm.cyr > cxvm.exe && cxvm.exe < _co_cx.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < src\main_cx.cyr > cycc_cx.exe && cycc_cx.exe < _co_cx.cyr > nat.cyx && cxvm.exe < nat.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'; then
       :   # all cass legs passed (self-host fixpoint + the 5 exit-42 guards + cx-C portable-.cyx I/O + v6.4.22 native cycc_cx compile→run round-trip)
@@ -240,6 +241,12 @@ case "$HOST" in
     # FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW (lib/fs_win.cyr);
     # dir_list_pe.cyr enumerates tests\win + checks is_dir on a dir/file/missing
     # path on real Windows — must exit 42.
+    # v6.4.44 IOCP async: the NATIVE cycc.exe compiles async_iocp_pe.cyr and drives
+    # the Windows IOCP reactor end-to-end — async_interval + async_with_timeout +
+    # async_spawn_process/run_process + async_join_all/async_select — folding to
+    # exit 42. First permanent Windows async coverage (R1/R2 were ad-hoc); also
+    # guards the v6.4.44 PE reroute 16-align fix (CloseHandle in the process resume
+    # faulted 0xC0000005 on a misaligned stack; WINE could not reproduce it).
     # v6.4.20 cx Release C: the NATIVE cycc.exe builds a PE cxvm from
     # programs\cxvm.cyr and runs the portable .cyx I/O fixture (a guest write()).
     # Before C, cxvm issued the guest syscall with a FIXED argc-6 shape that hit

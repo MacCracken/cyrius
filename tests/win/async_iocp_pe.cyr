@@ -1,0 +1,97 @@
+# async_iocp_pe.cyr — Windows regression for the IOCP async runtime (arc 5b "W").
+# Run on cass by the native self-hosted cycc.exe; must exit 42.
+#
+# Before this, the whole Windows async surface (R1 client, R2 timers/subprocess/
+# combinators) was verified only ad-hoc — never in the release gate. This is the
+# "the feature running on the target IS the test" guard for lib/async_win.cyr: it
+# drives the IOCP reactor end-to-end on REAL Windows every release. Exercises
+#   async_interval        — periodic auto-reset timer + persistent threadpool wait
+#   async_with_timeout    — one-shot sentinel racing a task
+#   async_spawn / spawn_process / run_process — CreateProcessW + threadpool-wait reap
+#   async_join_all / async_select — combinators over real process completions
+# and folds their results to exactly 42. It also transitively covers the v6.4.44 PE
+# reroute 16-align fix — CloseHandle/GetExitCodeProcess/WaitForSingleObject in the
+# process resume faulted on a misaligned stack before the fix (two sequential
+# run_process calls crashed 0xC0000005 on real Windows; WINE could not reproduce it).
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+
+var g_ticks = 0;
+var g_tok[8];
+
+fn work(x): i64 { return 5; }
+
+# Interval callback: bump a counter, signal the cancel-token cell at 3 ticks.
+fn tick(a): i64 {
+    g_ticks = g_ticks + 1;
+    if (g_ticks >= 3) { store64(&g_tok, 1); }
+    return 0;
+}
+
+# argv[32] buffer <- cmd /c <w>  (w = "exit NN")
+fn mkargv(a, w): i64 {
+    store64(a, "cmd");
+    store64(a + 8, "/c");
+    store64(a + 16, w);
+    store64(a + 24, 0);
+    return 0;
+}
+
+fn main(): i64 {
+    var envp[8];
+    store64(&envp, 0);
+
+    # (1) async_interval on its own runtime (async_run closes the single-use IOCP):
+    #     3 ticks then self-cancel via the token cell.
+    store64(&g_tok, 0);
+    var rti = async_new();
+    async_interval(rti, &tick, 0, 30, &g_tok);
+    async_run(rti);
+    if (g_ticks != 3) { return 3; }
+
+    # (2..5) timeout + subprocess + combinators on a second runtime.
+    var rt = async_new();
+
+    # (2) async_with_timeout: a fast task beats the 1 s deadline (result readable).
+    var fast = async_spawn(rt, &work, 0);
+    if (async_with_timeout(rt, fast, 1000) != 1) { return 1; }
+    if (load64(fast + 40) != 5) { return 2; }
+
+    var total = 0;
+
+    # (3) spawn + join, no deadline: cmd /c exit 19 -> 19
+    var a1[32]; mkargv(&a1, "exit 19");
+    total = total + async_run_process(rt, "cmd", &a1, &envp, 0);
+
+    # (4) spawn + wait + deadline (completes in time): cmd /c exit 21 -> 21
+    var a2[32]; mkargv(&a2, "exit 21");
+    total = total + async_run_process(rt, "cmd", &a2, &envp, 5000);
+
+    # (5) async_join_all over 2 concurrent processes: 1 + 1 -> 2
+    var b0[32]; mkargv(&b0, "exit 1");
+    var b1[32]; mkargv(&b1, "exit 1");
+    var hj[16];
+    store64(&hj,     async_spawn_process(rt, "cmd", &b0, &envp));
+    store64(&hj + 8, async_spawn_process(rt, "cmd", &b1, &envp));
+    var res[16];
+    async_join_all(rt, &hj, 2, &res);
+    total = total + load64(&res) + load64(&res + 8);
+
+    # (6) async_select over 2 processes: must report a valid completed index (not summed).
+    var c0[32]; mkargv(&c0, "exit 2");
+    var c1[32]; mkargv(&c1, "exit 3");
+    var hs[16];
+    store64(&hs,     async_spawn_process(rt, "cmd", &c0, &envp));
+    store64(&hs + 8, async_spawn_process(rt, "cmd", &c1, &envp));
+    var idx = async_select(rt, &hs, 2);
+    if (idx != 0) { if (idx != 1) { return 4; } }
+
+    async_run(rt);
+
+    # 19 + 21 + 1 + 1 = 42
+    if (total != 42) { return 50 + total; }
+    return 42;
+}

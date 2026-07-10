@@ -58,6 +58,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Registration-failure degrades to a blocking reap (no hang/leak). Cross-verified on real cass:
   19+21+timeout-kill = **RC=42**, sequential 2-process = **RC=40**.
 
+### Added — permanent Windows async gate coverage (`tests/win/async_iocp_pe.cyr`)
+- **First release-gated Windows async test.** The whole IOCP surface (R1 client + R2
+  timers/subprocess/combinators) was verified only ad-hoc until now. `async_iocp_pe.cyr` drives
+  `async_interval` + `async_with_timeout` + `async_spawn_process`/`run_process` +
+  `async_join_all`/`async_select` end-to-end and folds to exit 42; `cross-os-selfhost.sh`'s cass
+  leg compiles it with the freshly self-hosted native cycc.exe and asserts 42 **every release**.
+  Also the regression guard for the reroute 16-align fix (its two-sequential-process crash would
+  fail this test). `SELFHOST_OK: cass` with the new leg.
+
 ### Added — agnos `sys_readdir` (#81) wrapper (`lib/syscalls_x86_64_agnos.cyr`)
 - `SYS_READDIR = 81` + `sys_readdir(path, buf, max) -> count` — a named, agnos-gated entry
   point for the ring-3 directory-listing syscall (agnos kernel 1.53.13, `ext2_readdir_sys`),
