@@ -1673,6 +1673,17 @@ fn EWSASEND_PE(S): i64 {
     _pe_ensure_wsasend(S);
     return _pe_call_nargs_aligned(S, _pe_wsasend_get(), 7);
 }
+# syscall(0xF02B, node, service, hints, &result) → ws2_32!getaddrinfo (4-arg; 0 on
+# success, &result → addrinfo list).
+fn EGETADDRINFO_PE(S): i64 {
+    _pe_ensure_getaddrinfo(S);
+    return _pe_call_4arg_aligned(S, _pe_getaddrinfo_get());
+}
+# syscall(0xF02C, result) → ws2_32!freeaddrinfo (1-arg; frees the addrinfo list).
+fn EFREEADDRINFO_PE(S): i64 {
+    _pe_ensure_freeaddrinfo(S);
+    return _pe_srw_call_1arg(S, _pe_freeaddrinfo_get());
+}
 
 # v6.4.43: ws2_32 socket foundation. syscall(0xF022, af,type,proto,info,g,flags) →
 # WSASocketW (6-arg; WSA_FLAG_OVERLAPPED=1 → an IOCP-associable socket; returns

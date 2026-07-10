@@ -305,9 +305,37 @@ fn async_send(rt, fd, buf, len): i64 {
     return async_spawn(rt, &_async_send_task, ctx);
 }
 
-# Async DNS resolve. TODO(R1 tail): GetAddrInfoW. Returns 0 (no handle) until it lands.
+# Reactor resolve task: blocking getaddrinfo (system resolver) → the first A record's
+# IPv4 (network-order bytes as an int, ready for async_connect). Run-to-completion
+# (getaddrinfo is synchronous — acceptable for R1). ctx = { host, rt }.
+fn _async_resolve_task(ctx): i64 {
+    var result[8]; store64(&result, 0);
+    if (syscall(0xF02B, load64(ctx), 0, 0, &result) != 0) { return 0 - 1; }   # getaddrinfo(host,0,0,&res)
+    var ai = load64(&result);
+    var ipv4 = 0 - 1;
+    var found = 0;
+    while (ai != 0) {
+        if (found == 0) {
+            if (load32(ai + 4) == 2) {                   # ai_family == AF_INET
+                ipv4 = load32(load64(ai + 32) + 4);      # ai_addr → sin_addr (network-order IPv4)
+                found = 1;
+            }
+        }
+        ai = load64(ai + 40);                            # ai_next
+    }
+    syscall(0xF02C, load64(&result));                    # freeaddrinfo
+    return ipv4;
+}
+
+# Async DNS A-record resolution. On Windows getaddrinfo uses the SYSTEM resolver, so
+# `ns_addr`/`ns_port` are ignored; `host` is a C string. Returns a task handle whose
+# result (via task_join) is the resolved IPv4 in network-order-int form — feed straight
+# to async_connect — or -1. Blocking (run-to-completion) for R1. v6.4.43.
 fn async_resolve(rt, ns_addr, ns_port, host): i64 {
-    return 0;
+    var ctx = alloc_via(load64(rt + 32), 16);
+    store64(ctx, host);
+    store64(ctx + 8, rt);
+    return async_spawn(rt, &_async_resolve_task, ctx);
 }
 
 # Await `handle` with a deadline. TODO(R2): race against a GQCS timeout. For now join +

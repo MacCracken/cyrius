@@ -1300,6 +1300,8 @@ fn EWSAIOCTL_PE(S): i64 { return 0; }    # v6.4.43 ws2_32!WSAIoctl / ConnectEx f
 fn ECONNECT_PE(S): i64 { return 0; }     # v6.4.43 ws2_32!connect (x86-only)
 fn EWSARECV_PE(S): i64 { return 0; }     # v6.4.43 ws2_32!WSARecv (x86-only)
 fn EWSASEND_PE(S): i64 { return 0; }     # v6.4.43 ws2_32!WSASend (x86-only)
+fn EGETADDRINFO_PE(S): i64 { return 0; }  # v6.4.43 ws2_32!getaddrinfo (x86-only)
+fn EFREEADDRINFO_PE(S): i64 { return 0; } # v6.4.43 ws2_32!freeaddrinfo (x86-only)
 fn EGETENV_PE(S): i64 { return 0; }
 fn EGETEXIT_PE(S): i64 { return 0; }
 fn EGETFATTR_PE(S): i64 { return 0; }
