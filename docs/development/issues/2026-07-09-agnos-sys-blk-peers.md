@@ -84,6 +84,6 @@ consumers (agnova executor port, sovereign mkfs) call the native `sys_blk_*` wra
 
 - agnos-side mirror of this ticket: `agnos/docs/development/issues/2026-07-09-cyrius-block-device-wrappers.md`
 - agnos kernel: `kernel/core/syscall.cyr` (the `blk_*_sys` helpers + `#75-80` dispatch + the `blk_rw_armed` gate), CHANGELOG `[1.53.10]`
-- design: `agnos/docs/development/issue/2026-07-09-ring3-block-device-syscalls-for-install.md`
+- design: `agnos/docs/development/issues/2026-07-09-ring3-block-device-syscalls-for-install.md`
 - consumers: agnova (native installer, the executor port), a future sovereign mkfs/partition tool
 - precedent: the just-landed `sys_shm_*` #71-74 band (`2026-07-09-agnos-sys-shm-peers.md`) — same "kernel half shipped, wrapper missing" shape
