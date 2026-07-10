@@ -3,9 +3,11 @@
 > **✅ RESOLVED cyrius-side (v6.4.34, 2026-07-09):** `SYS_SHM_CREATE/WRITE/READ/FREE` (71-74)
 > + `sys_shm_create`/`_write`/`_read`/`_free` wrappers added to `lib/syscalls_x86_64_agnos.cyr`
 > after `sys_readlink`#70. agnos-target compile verified; default cycc byte-identical;
-> api-surface snapshot regenerated. **Remaining (downstream, setu's timeline):** flip setu
-> `buf.cyr`'s four `syscall(71..74)` sites to the native `sys_shm_*` wrappers after its next
-> `lib/` re-sync. Archive at v6.4.34 slot close.
+> api-surface snapshot regenerated. **Downstream flip DONE (2026-07-09):** setu `buf.cyr`'s
+> agnos branch now calls the native `sys_shm_*` wrappers (0 raw `syscall(71..74)` left); setu +
+> aethersafha pins bumped →6.4.34 (aethersafha needed `cyrius lib sync --full`, not just
+> `cyrius deps`). Re-proven both targets — `aethersafha-setu-smoke.sh` gate 4 green on agnos +
+> the Linux file-backend PPM unchanged. **Nothing left — archive at v6.4.34 slot close.**
 
 **Filed:** 2026-07-09 (setu `buf.cyr` — the sovereign shared-buffer PRESENT backend; agnos kernel
 half shipped + QEMU-proven in agnos 1.53.9).

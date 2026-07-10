@@ -6,6 +6,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.35] — 2026-07-09
+
+**v6.4.35 — async runtime P1: timers.** The first tokio-parity primitive on the F1/F2
+foundation: `async_with_timeout` (the `timeout(future, dur)` combinator) and
+`async_interval` (a cancellable repeating timer), both driven by a CLOCK_MONOTONIC
+timerfd on the reactor. cycc byte-identical (async is not in the compiler).
+Bench: self_compile **611 ms** · cycc **1,077,592 B** — flat vs v6.4.34.
+
+### Added — async timers (`lib/async.cyr`)
+- **`async_with_timeout(rt, handle, ms)`** — races a spawned task against a deadline:
+  returns 1 if it completes in time (its result is then joinable via `task_join`), 0 if
+  the deadline fires first (the pending task is retired so nothing dangles on the closed
+  timerfd), -1 if the timerfd could not be created. Built on a generalized
+  `_async_pump(rt, until_a, until_b)` that stops on the first of two handles to finish —
+  the task vs a deadline sentinel task parked on the timerfd.
+- **`async_interval(rt, fp, arg, ms, tok)`** — invokes `fp(arg)` every `ms` on the
+  reactor until the cancel-token cell `tok` is set (`cancel_token_signal` / `store64(tok, 1)`),
+  then stops and closes the timer. Returns the interval task handle; `async_run`/`task_join`
+  drive the ticks.
+- Helpers `_async_timerfd(value_ms, interval_ms)` (arm a one-shot or repeating timerfd)
+  and `_async_retire` (drop a timeout race's loser). `lib/async_agnos.cyr` mirrors the
+  surface degraded — no timerfd/epoll on the serial client model: `async_with_timeout`
+  joins inline + reports complete, `async_interval` returns 0 (unscheduled).
+- Test `tests/fixtures/async/async_timers.cyr` + `_async_timers_gate` (check 134→135):
+  a fast task beats a 1 s deadline (+21 result), a task parked on a never-ready fd times
+  out at 10 ms (+18), and an interval fires exactly 3 times before cancelling (+3) — sum
+  42, **proven fail-on-bug** (limit=4 shifts it to 43). api-surface snapshot regenerated
+  for `async_with_timeout` + `async_interval`.
+
 ## [6.4.34] — 2026-07-09
 
 **v6.4.34 — async runtime F2 (result-carrying tasks + `task_join`) + the agnos shm

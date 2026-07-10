@@ -519,6 +519,7 @@ fn _run_regression_gates(): i64 {
     _async_await_gate();              # v6.3.11 G: async fn / await → Futures over the epoll runtime, gated off
     _async_reactor_gate();            # v6.4.33 F1: epoll reactor — async_wait_fd parks a task, async_run drives rt's shared epfd (exit 42)
     _async_taskjoin_gate();           # v6.4.34 F2: task result capture + task_join (JoinHandle) — plain + Future/multi-arg (exit 42)
+    _async_timers_gate();             # v6.4.35 P1: async_with_timeout (deadline race) + async_interval (cancellable ticks) (exit 42)
     _generic_closure_gate();          # v6.3.45 closeout: generic fns × capturing closures compose under the flag (exit 42), gated off
     _async_closure_generic_gate();    # v6.3.45 closeout: async fn × closure × generic compose under both flags (exit 42), gated off
     _wx_segments_gate();              # v6.3.12: userland ELF W^X — separate text R+E / data R+W PT_LOADs (default), CYRIUS_WX=0 opts out

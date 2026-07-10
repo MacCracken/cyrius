@@ -64,6 +64,7 @@ assert::fail_after_n_allocs/1
 assert::panic/1
 assert::test_group/1
 async::async_await_readable/1
+async::async_interval/5
 async::async_new/0
 async::async_new_in/1
 async::async_read/3
@@ -73,12 +74,14 @@ async::async_spawn/3
 async::async_spawn_future/2
 async::async_timeout/3
 async::async_wait_fd/2
+async::async_with_timeout/3
 async::cancel_token_check/1
 async::cancel_token_new/0
 async::cancel_token_signal/1
 async::future_force/1
 async::task_join/2
 async_agnos::async_await_readable/1
+async_agnos::async_interval/5
 async_agnos::async_new/0
 async_agnos::async_new_in/1
 async_agnos::async_read/3
@@ -87,6 +90,7 @@ async_agnos::async_sleep_ms/1
 async_agnos::async_spawn/3
 async_agnos::async_timeout/3
 async_agnos::async_wait_fd/2
+async_agnos::async_with_timeout/3
 async_agnos::task_join/2
 atomic::atomic_cas/3
 atomic::atomic_fence/0

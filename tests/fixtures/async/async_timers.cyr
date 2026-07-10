@@ -1,0 +1,77 @@
+# Fixture for _async_timers_gate (v6.4.35 P1 — async_with_timeout + async_interval).
+#
+# async_with_timeout(rt, handle, ms) races a task against a deadline timerfd on the
+# reactor: 1 if the task completes in time (result joinable), 0 if the deadline fires
+# first (the pending task is retired). async_interval(rt, fp, arg, ms, tok) invokes a
+# callback every ms until the cancel-token cell `tok` is set. Plain library API.
+#
+# Proven fail-on-bug — the three cases must each behave, summing to exactly 42:
+#   (1) a fast task completes before a 1s deadline  -> +21 (its result)
+#   (2) a task parked on a never-ready fd times out -> +18 (deadline wins)
+#   (3) an interval fires exactly 3 times then cancels -> +3 (the tick count)
+# A miscount, a wrong timeout verdict, or a lost result all miss 42.
+# MUST exit 42.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+
+fn fast_task(x): i64 { return 21; }
+
+# poll task parked on a fd that never becomes readable -> can only lose the race
+fn slow_task(ctx): i64 {
+    if (load64(ctx) == 0) {
+        store64(ctx, 1);
+        async_wait_fd(load64(ctx + 16), load64(ctx + 8));   # park on rfd (never written)
+        return 0;
+    }
+    return 999;
+}
+
+# interval callback: bump a counter, signal cancel after `limit` ticks
+fn tick_cb(cbctx): i64 {
+    var c = load64(cbctx) + 1;
+    store64(cbctx, c);
+    if (c >= load64(cbctx + 8)) { store64(load64(cbctx + 16), 1); }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var total = 0;
+
+    # (1) fast task completes before the deadline -> 1, result joinable
+    var rt = async_new();
+    var hf = async_spawn(rt, &fast_task, 0);
+    if (async_with_timeout(rt, hf, 1000) == 1) { total = total + task_join(rt, hf); }
+    async_run(rt);
+
+    # (2) slow task parks on a never-written pipe -> deadline fires -> 0
+    var rt2 = async_new();
+    var pipefd[16];
+    sys_pipe(&pipefd);
+    var sctx = alloc(24);
+    store64(sctx, 0);
+    store64(sctx + 8, load32(&pipefd));   # rfd
+    store64(sctx + 16, rt2);
+    var hs = async_spawn(rt2, &slow_task, sctx);
+    if (async_with_timeout(rt2, hs, 10) == 0) { total = total + 18; }
+    async_run(rt2);
+    syscall(SYS_CLOSE, load32(&pipefd));
+    syscall(SYS_CLOSE, load32(&pipefd + 4));
+
+    # (3) interval fires exactly 3 times then cancels
+    var rt3 = async_new();
+    var tok = alloc(8);
+    store64(tok, 0);
+    var cbctx = alloc(24);
+    store64(cbctx, 0);       # count
+    store64(cbctx + 8, 3);   # limit
+    store64(cbctx + 16, tok);
+    async_interval(rt3, &tick_cb, cbctx, 2, tok);   # 2 ms interval
+    async_run(rt3);
+    total = total + load64(cbctx);
+
+    return total;   # 21 + 18 + 3 = 42
+}
