@@ -198,8 +198,8 @@ platform work (bottom-to-top priority) takes v6.2.x.
   landmine gates (.43). Note: `agnosys` retired at .37 (decomposed), dropping
   api-surface from ~5035 to **4343 fns** (grown to 4519 @ v6.4.11 with per-cycle
   additions). **Current metrics live in [state.md](state.md)** (avoid re-rotting an
-  inline snapshot here): as of v6.4.32 — cycc 1,077,592 B, check.sh 132, tests
-  240 `.tcyr`.
+  inline snapshot here): as of v6.4.48 — cycc 1,091,000 B, check.sh 141, tests
+  241 `.tcyr`.
 
 Remaining v6.2.x arc: the **dependency-model foundation (lever 1)** — the
 active committed arc — plus the **open bare-metal/kernel reactive window**

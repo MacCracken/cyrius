@@ -30,7 +30,7 @@ git entries (see Live deps below).
 | `lib/vani.cyr` | v5.8.0 (refold v6.4.46) | vani 1.1.0 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/sakshi.cyr` | v5.8.65 (refold v6.4.27) | sakshi 2.4.5 | Tracing |
 | `lib/patra.cyr` | v5.8.65 (refold v6.4.44) | patra 1.12.9 | Storage |
-| `lib/sigil.cyr` | v5.8.65 (refold v6.4.46) | sigil 3.11.0 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing) |
+| `lib/sigil.cyr` | v5.8.65 (refold v6.4.48) | sigil 3.11.1 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing; UEFI Secure Boot signing (authenticode_pe_sign) + enrollment (efi_signature_list/efi_auth)) |
 | `lib/yukti.cyr` | v5.8.65 (refold v6.4.27) | yukti 2.2.9 | Hardware enumeration |
 | `lib/sankoch.cyr` | v5.8.65 (refold v6.4.44) | sankoch 2.5.1 | Compression |
 | `lib/niyama.cyr` | **v5.9.0** (2026-05-06) | niyama 1.0.5 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,664 lines) |

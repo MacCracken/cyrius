@@ -129,7 +129,7 @@ while (1 == 1) {
 == != < > <= >=
 
 # Bitwise
-& | ^ ~ << >>
+& | ^ ~ << >> >>>
 
 # Logical (short-circuit, chainable)
 &&  ||
@@ -139,6 +139,11 @@ while (1 == 1) {
 +|  -|  *|      # saturating (clamp to i64 min/max via lib/overflow.cyr)
 +?  -?  *?      # checked (panic with exit code 57 on overflow)
 ```
+
+Right shift comes in two forms (v6.4.46): `>>` is a **logical** shift
+(zero-fill) and `>>>` is an **arithmetic**, sign-preserving shift. Note
+this is the **reverse** of JS/Java, where `>>` is arithmetic and `>>>` is
+the zero-fill logical shift.
 
 Wrapping ops (`+%` etc.) document intent at the call site that a wrap is
 expected — bytes are identical to the bare operator. Saturating and
