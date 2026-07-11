@@ -1688,6 +1688,100 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
     return 0;
 }
 
+# v6.4.48 — per-profile `.deps` pruning. The umbrella scan (src/lib.cyr) captures
+# the WHOLE fold's stdlib leaves, which is right for the full bundle but wrong for a
+# `[lib.<profile>]` subset: a `sha`-only profile was getting the entire crypto suite's
+# deps (bayan / keccak / mldsa-adjacent / thread / process …). Prune req_leaves to
+# only the leaves the profile's bundle actually references. (Full-bundle path unchanged.)
+fn _distlib_ident_char(c): i64 {
+    if (c >= 97 && c <= 122) { return 1; }   # a-z
+    if (c >= 65 && c <= 90)  { return 1; }   # A-Z
+    if (c >= 48 && c <= 57)  { return 1; }   # 0-9
+    if (c == 95) { return 1; }               # _
+    return 0;
+}
+
+# Does `bundle` reference the token `name` (nlen) as a whole identifier?
+fn _distlib_bundle_refs(bundle, blen, name, nlen): i64 {
+    if (nlen <= 0) { return 0; }
+    var i = 0;
+    while (i + nlen <= blen) {
+        if (memeq(bundle + i, name, nlen) == 1) {
+            var lok = 0;
+            if (i == 0) { lok = 1; } elif (_distlib_ident_char(load8(bundle + i - 1)) == 0) { lok = 1; }
+            if (lok == 1 && _distlib_ident_char(load8(bundle + i + nlen)) == 0) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Return 1 if `bundle` references any symbol DEFINED in leaf lib/<leaf>.cyr —
+# a top-level `fn NAME(` or a `var NAME`. Conservative: on any read failure or
+# a leaf we can't inspect, keep it (return 1) so we never drop a real dep.
+fn _distlib_leaf_referenced(leaf, bundle, blen): i64 {
+    # Resolve the leaf: repo-vendored lib/<leaf>.cyr first, else the global
+    # stdlib snapshot <CYRIUS_HOME>/lib/<leaf>.cyr (a package vendors only its
+    # declared deps, but the umbrella can name others that live only globally).
+    var psb = str_builder_new();
+    str_builder_add_cstr(psb, "lib/");
+    str_builder_add_cstr(psb, leaf);
+    str_builder_add_cstr(psb, ".cyr");
+    var path = str_data(str_builder_build(psb));
+    if (file_exists(path) == 0) {
+        if (_home == 0) { return 1; }
+        var gsb = str_builder_new();
+        str_builder_add_cstr(gsb, _home);
+        str_builder_add_cstr(gsb, "/lib/");
+        str_builder_add_cstr(gsb, leaf);
+        str_builder_add_cstr(gsb, ".cyr");
+        path = str_data(str_builder_build(gsb));
+        if (file_exists(path) == 0) { return 1; }
+    }
+    var lbuf = alloc(1048576);
+    var llen = file_read_all(path, lbuf, 1048575);
+    if (llen <= 0) { return 1; }
+    store8(lbuf + llen, 0);
+    var p = 0;
+    while (p < llen) {
+        var bol = 0;
+        if (p == 0) { bol = 1; } elif (load8(lbuf + p - 1) == 10) { bol = 1; }
+        if (bol == 1) {
+            var kw = 0;   # 3 = "fn ", 4 = "var "
+            if (p + 3 < llen && memeq(lbuf + p, "fn ", 3) == 1) { kw = 3; }
+            elif (p + 4 < llen && memeq(lbuf + p, "var ", 4) == 1) { kw = 4; }
+            if (kw > 0) {
+                var ns = p + kw;
+                while (ns < llen && load8(lbuf + ns) == 32) { ns = ns + 1; }
+                var ne = ns;
+                while (ne < llen && _distlib_ident_char(load8(lbuf + ne)) == 1) { ne = ne + 1; }
+                if (ne > ns) {
+                    if (_distlib_bundle_refs(bundle, blen, lbuf + ns, ne - ns) == 1) { return 1; }
+                }
+            }
+        }
+        while (p < llen && load8(lbuf + p) != 10) { p = p + 1; }
+        p = p + 1;
+    }
+    return 0;
+}
+
+# Prune `leaves` to those a profile bundle at `bundle_path` actually references.
+fn _distlib_prune_profile_leaves(leaves, bundle_path): i64 {
+    if (file_exists(bundle_path) == 0) { return leaves; }
+    var bb = alloc(4194304);
+    var bl = file_read_all(bundle_path, bb, 4194303);
+    if (bl <= 0) { return leaves; }
+    var kept = vec_new();
+    var i = 0;
+    while (i < vec_len(leaves)) {
+        var lf = vec_get(leaves, i);
+        if (_distlib_leaf_referenced(lf, bb, bl) == 1) { vec_push(kept, lf); }
+        i = i + 1;
+    }
+    return kept;
+}
+
 fn cmd_distlib(profile): i64 {
     if (_distlib_valid_profile(profile) == 0) {
         _err("invalid profile name (allowed: [a-zA-Z0-9_-]{1,32})");
@@ -1967,6 +2061,14 @@ fn cmd_distlib(profile): i64 {
     # (once transitively, once as a bogus stdlib pull) → duplicate-fn errors.
     # Collect the named-dep names so they're EXCLUDED from the sidecar below.
     var named_deps = _distlib_named_deps(mbuf, mlen);   # v6.2.51 closeout: shared helper (was duplicated here + in _distlib_modular_emit)
+
+    # v6.4.48 — for a `[lib.<profile>]` subset, prune the umbrella-captured leaves to
+    # only those the profile bundle actually references. Without this a `sha` profile's
+    # sidecar carried the whole crypto suite's stdlib chain. Full-bundle path (profile
+    # == 0) keeps the umbrella's complete set unchanged.
+    if (profile != 0) {
+        req_leaves = _distlib_prune_profile_leaves(req_leaves, out_path);
+    }
 
     # v6.2.47 (deps lever 1, Phase A producer side): emit the dep sidecar
     # `dist/<pkg>.deps` — one stdlib leaf per line — capturing the

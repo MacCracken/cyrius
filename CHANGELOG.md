@@ -6,6 +6,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.48] — 2026-07-10
+
+**Per-profile `distlib` `.deps` subsetting + sigil 3.11.1 refold (UEFI Secure Boot enrollment).**
+
+### Fixed — `cyrius distlib <profile>` sidecar
+
+- **`[lib.<profile>]` `.deps` sidecars no longer carry the whole bundle's stdlib chain.**
+  The umbrella scan (`src/lib.cyr`) captures a fold's *complete* stdlib leaf set — correct
+  for the full bundle, but a `sha`-only profile was getting the entire crypto suite's deps
+  (bayan / keccak / thread / process …). Now, for a profile, `req_leaves` is pruned to only
+  the leaves the profile's bundle actually references (checked against each leaf's symbols,
+  resolving from the global stdlib snapshot). Verified against sigil's 12 profiles: `sha`
+  23 → 6 leaves, `mldsa` correctly keeps `keccak` (SHAKE), all transitive-resolution
+  sufficient. Full-bundle path (`profile == 0`) unchanged. `cbt/commands.cyr`.
+
+### Changed — stdlib refold
+
+- **`lib/sigil.cyr` → sigil 3.11.1** — adds UEFI Secure Boot *enrollment*
+  (`efi_signature_list_from_cert` / `efi_auth_from_esl` / `efi_time`): the `.esl` /
+  `.auth` (`EFI_SIGNATURE_LIST` + signed `EFI_VARIABLE_AUTHENTICATION_2`) generation that
+  pairs with 6.4.47's `cyrius sign-efi`. Closes roadmap arc #3's residual (B). The sign-efi
+  gate stays green against the refolded lib; api-surface snapshot +3 (`efi_*`). cycc
+  byte-identical (lib/CLI-only).
+
 ## [6.4.47] — 2026-07-10
 
 **`cyrius sign-efi` — native UEFI Secure Boot signing (roadmap arc #3, bite 1).**

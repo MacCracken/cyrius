@@ -2962,6 +2962,9 @@ sigil::ed25519_keypair/3
 sigil::ed25519_privkey_from_der/3
 sigil::ed25519_sign/4
 sigil::ed25519_verify/4
+sigil::efi_auth_from_esl/6
+sigil::efi_signature_list_from_cert/4
+sigil::efi_time/7
 sigil::enforcement_name/1
 sigil::err_from_errno/1
 sigil::err_from_syscall_ret/1
