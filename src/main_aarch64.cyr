@@ -618,6 +618,8 @@ EEXIT(S);
 
 # Fixup + ELF + write
 FIXUP(S);
+# v6.4.50: soft capacity warnings, shared across all 7 drivers (util.cyr).
+_capacity_warnings(S, 67108864, 1);
 EMITELF(S);
 # Write ELF output (loop on partial writes)
 var olen = L64(S + 0x1903F8);

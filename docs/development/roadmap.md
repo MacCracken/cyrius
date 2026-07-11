@@ -164,9 +164,13 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   **.33–.42 async arc 5b — reactor + the 5 tokio-parity primitives + consolidation; .43–.45 the
   IOCP-Windows "W" step (client .43 / timers+subprocess+combinator-parity .44 / AcceptEx server .45,
   all release-gated on real cass); .44 also fixed two pre-existing Win64 ABI bugs (PE-reroute 16-align,
-  retptr deep-stack-param homing).** Current head: **v6.4.45**, cycc 1,086,888 B, check.sh 141,
-  self_compile ~629 ms. **The async arc 5b is CLOSED. No arc in flight — next 6.4.x pickup is
-  maintainer-prioritized (candidates: UEFI Secure-Boot signing · function visibility · scalar-float).**
+  retptr deep-stack-param homing).** .46 `>>>` arithmetic-shift operator + stdlib folds; .47–.48 UEFI
+  Secure Boot signing (`cyrius sign-efi`) + enrollment (`.esl`/`.auth` via sigil 3.11.1); .49 growable
+  8 MiB off-heap codebuf; **.50 capacity-warning consolidation (Pin 3 — one shared `_capacity_warnings`
+  across all 7 drivers).** Current head: **v6.4.50**, cycc 1,091,056 B, check.sh 141, self_compile
+  ~611 ms. **The async arc 5b + UEFI arc (#3) are CLOSED. No arc in flight — next 6.4.x pickup is
+  maintainer-prioritized (candidates, bottom-to-top: function visibility · scalar-float completion ·
+  diagnostics · Intel-Mac x86_64 Mach-O tail).**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -496,8 +500,17 @@ tables/lists in structs generally.
   naad/vidya dropped round-trip tests. Tier B (`toml_v_*` typed DOM in bayan) is a
   **separate stdlib** item, not part of this arc.
 
-### Pin 3 — End-of-compile capacity-warning consolidation ◀ **NEXT UP** (~1 release)
+### Pin 3 — End-of-compile capacity-warning consolidation — **✅ SHIPPED v6.4.50**
 
+> **✅ SHIPPED v6.4.50.** Extracted the inline warning block into one shared
+> `_capacity_warnings(S, codebuf_cap, codebuf_growable)` in `common/util.cyr` (next to
+> `_codebuf_grow`) and wired all 7 drivers; the 5 previously-silent forks
+> (`main_aarch64{,_native,_macho}`, `main_x86_macho`, `main_cx`) now warn. Native forks
+> pass `(67108864, 1)` — the 64 MiB growable codebuf; cx passes `(524288, 0)` — its fixed
+> 512 KiB region. Logic-preserving: cycc self-host + seed-derive + cross-OS (pi/ecb/cass)
+> byte-identical, differential 0/0 (default + DCE), dead-code floor unchanged, check.sh 141.
+> See CHANGELOG [6.4.50].
+>
 > **Reactive follow-on from v6.4.49** (the codebuf 8 MiB / growable work). Surfaced there:
 > the end-of-compile capacity-warning block — `warning: var_table / fixup_table /
 > string_data / code buffer at N% …` — lives ONLY in `main.cyr` (x86-Linux) +
@@ -522,6 +535,38 @@ tables/lists in structs generally.
   codebuf, so the codebuf line needs a cx-specific cap (524288) or omission. Keep the
   helper fork-agnostic — read every metric via its accessor (`GSPOS`/`GCP`/…), no
   hardcoded `S+offset`.
+
+### Pin 4 — v6.4.51 reactive consumer-filed fixes ◀ **NEXT UP** (~1–2 releases)
+
+> Two consumer filings surfaced 2026-07-11 (during the 6.4.50 sandhi fold + thoth
+> work); **user pinned BOTH to 6.4.51** (2026-07-11). Neither blocks the 6.4.50 tag.
+> Both are cross-OS-affecting, so they share one cross-OS gate run if bundled.
+
+1. **`signal_ignore` / SIGPIPE stdlib gap** —
+   [`issues/2026-07-11-sandhi-signal-ignore-stdlib-gap.md`](issues/2026-07-11-sandhi-signal-ignore-stdlib-gap.md).
+   `lib/syscalls.cyr` has no `signal_ignore`/`rt_sigaction` and no `SIGPIPE` in the
+   `Signal` enum; `lib/net.cyr` `sock_send` is a flagsless `sys_write` (no
+   `MSG_NOSIGNAL`) — so any server on `sock_send` dies on SIGPIPE when a peer
+   disconnects mid-response (**macOS = High: unauthenticated server DoS, no consumer
+   workaround**; sandhi 1.8.x carries a Linux-only raw `rt_sigaction` workaround).
+   Premise-checked absent in live lib/ (grep = 0). **Acceptance:** portable
+   `signal_ignore(signum)` (Linux `rt_sigaction` x86 13 / aarch64 134; macOS BSD
+   `sigaction` + the missing `ESYSXLAT` entry; agnos no-op) + `SIGPIPE`=13 in the
+   `Signal` enum; sandhi drops its raw-syscall workaround. New public lib fn → trips
+   the 3 stdlib-hygiene gates (lint / api-surface / cyrdoc); **verify on real ecb
+   (macOS)** since macOS is the whole point.
+2. **`output_buf` 16 MiB → 1024 MiB cap raise** —
+   [`issues/2026-07-11-output-buf-16mib-cap-blocks-large-test-binaries.md`](issues/2026-07-11-output-buf-16mib-cap-blocks-large-test-binaries.md).
+   The final-image `output_buf` is a **fixed 16 MiB** region (NOT growable, unlike the
+   codebuf); `_check_output_cap` ([`runtime.cyr:348`](../../src/backend/common/runtime.cyr))
+   hardcodes `16777216`. thoth's single-translation-unit test binary hit it
+   (16,781,048 B — 3,832 over). **Acceptance:** raise the two `16777216` literals in
+   `_check_output_cap` → `1073741824`, enlarge the `output_buf [16777216]→[1073741824]`
+   region (lazy-mapped, like `vsgn_base`), and shift the downstream heap regions / `brk`
+   top in **all 5 per-target maps** (`main.cyr`, `main_aarch64_native`,
+   `main_aarch64_macho`, `main_x86_macho`, `main_win`) — the coordinated relocation done
+   for the 2 MB→16 MB bump at v6.1.27. **HEAP-LAYOUT change → two-step bootstrap +
+   cross-OS (ecb/cass/pi).**
 
 ---
 

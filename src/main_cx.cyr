@@ -462,6 +462,11 @@ while (fi < fcnt) {
     fi = fi + 1;
 }
 
+# v6.4.50: soft capacity warnings (util.cyr, shared). cx's code lives in the
+# fixed 512 KiB region at 0x54A000 — no growable codebuf — so pass (524288, 0).
+# Warnings go to stderr (fd 2); the .cyx below goes to stdout (fd 1), unaffected.
+_capacity_warnings(S, 524288, 0);
+
 # Emit CYX file: header + bytecode + var data + string data
 # Header: "CYX" (3 bytes) + format version (1 byte) + entry_offset (4 bytes LE).
 # cx arc A: byte 3 is now a FORMAT VERSION (was a hardcoded 0). Bump CYX_VERSION on

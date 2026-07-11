@@ -6,6 +6,64 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.50] — 2026-07-11
+
+**End-of-compile capacity warnings unified across all 7 drivers (Pin 3) + stdlib folds (sandhi 1.8.2, sakshi 2.4.6, vani 1.1.1).**
+
+Reactive follow-on from v6.4.49 (the growable-codebuf work). That release surfaced
+that the soft capacity-warning block (`warning: var_table / fixup_table / string_data /
+code buffer at N% …`) lived **inline and duplicated** in only two of the seven compiler
+drivers — `main.cyr` (x86-Linux) and `main_win.cyr` (Win64). The other five —
+`main_aarch64{,_native,_macho}.cyr`, `main_x86_macho.cyr`, `main_cx.cyr` — emitted **no
+capacity warnings at all**, which is why `thoth`'s codebuf warning only ever showed on
+x86 and never on the macOS/aarch64 toolchains. Logic-preserving: the warning
+thresholds and text don't change, so cycc self-hosts + seed-derives + cross-OS
+byte-identical; the only new behavior is the *same* warnings now firing on the five
+previously-silent drivers.
+
+### Changed — capacity-warning consolidation
+
+- **New `_capacity_warnings(S, codebuf_cap, codebuf_growable)` in `src/common/util.cyr`**
+  (next to `_codebuf_grow`), called by every driver's end-of-compile path. It reads
+  `CYRIUS_STATS` itself (resolving to the real `_read_env` on the native forks and the
+  cx stub on cx), emits the five fixed-cap table warnings verbatim (fn_table 85% /
+  identifiers 85% / var_table 85% / fixup_table 85% / string_data 85%), then a
+  code-buffer warning (75%). Fork-agnostic by construction — every metric is read
+  through its accessor (`GFNC`/`GNPOS`/`GVCNT`/`GFCNT`/`GSPOS`/`GCP`), no hardcoded
+  `S+offset`.
+- **All 6 native drivers pass `(67108864, 1)`** — the 64 MiB growable off-heap codebuf,
+  message form "…% of 64 MiB ceiling (N bytes, +8 MiB/grow)" (byte-identical to the old
+  inline text). The inline block in `main.cyr` + `main_win.cyr` collapses to a single
+  call; the four aarch64/macho drivers gain the warnings for the first time.
+- **cx passes `(524288, 0)`** — cx's code lives in the fixed 512 KiB region at `0x54A000`
+  (no growable codebuf; the shared `_codebuf_base/_cap` it sets are vestigial for cx), so
+  the codebuf warning reports "…% of the 512 KiB cx region (N bytes)" without the
+  growable-buffer advice. cx had **no** overflow guard on that region, so this is the
+  first heads-up before it silently overruns.
+
+### Changed — folded stdlib updates (re-vendored byte-identical from each sibling's committed `cyrius distlib` dist)
+
+- **`lib/sandhi.cyr` → sandhi 1.8.2** (was 1.7.3) — HTTP/2 + JSON-RPC + service discovery + TLS policy.
+- **`lib/sakshi.cyr` → sakshi 2.4.6** (was 2.4.5) — tracing / structured logging.
+- **`lib/vani.cyr` → vani 1.1.1** (was 1.1.0) — audio (ALSA PCM + ring buffer + mixer).
+- Each folded from the sibling's clean, tagged tree (VERSION == git tag, dist regenerated after
+  the last src change) with the install snapshot refreshed in lockstep (ping-pong protection). No
+  compiler source includes these, so **cycc is byte-identical** (self-host `cycc(src) == build/cycc`
+  after the fold). Compile-verified with each dep's documented prereq chain (sandhi: net/tls/async/
+  fdlopen/bayan/sakshi/sigil; vani: yukti/sakshi) — 0 hard errors. Folded-version table in
+  [`docs/ecosystem.md`](docs/ecosystem.md) refreshed.
+
+### Verification
+
+- cycc self-host fixpoint byte-identical; **seed-derive** (`seed → cybs → cycc`)
+  byte-identical (cybs compiled the new 30-call helper cleanly — no silent seed-break).
+- Differential corpus **0/0** in both default and DCE modes; dead-code floor unchanged
+  (64 unreachable / 24,633 B). x86 behavioral: the `var_table` warning fires with
+  byte-identical text old-vs-new, and the compiled binary is byte-identical.
+- Cross-OS on real hardware: **pi (aarch64) + ecb (macOS/arm64) + cass (Windows/PE) all
+  `SELFHOST_OK` + `LIBTEST_OK (20 vr01 tests)`**. check.sh 141.
+- cycc x86 **1,091,056 B** (+24 vs v6.4.49); self_compile ~611 ms (was ~608; within noise).
+
 ## [6.4.49] — 2026-07-10
 
 **Code buffer: 8 MiB initial + 8 MiB linear grow steps (was 3 MiB + doubling); fix the misleading "code buffer at N%" warning.**

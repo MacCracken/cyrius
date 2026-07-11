@@ -26,9 +26,9 @@ git entries (see Live deps below).
 
 | Lib | Folded at | Source tag | Domain |
 |-----|-----------|------------|--------|
-| `lib/sandhi.cyr` | v5.7.0 (refold v6.0.83) | sandhi 1.6.13 | HTTP/2 + JSON-RPC + service discovery + TLS policy (ALPN/SPKI on typed native verbs) |
-| `lib/vani.cyr` | v5.8.0 (refold v6.4.46) | vani 1.1.0 | Audio (ALSA PCM + ring buffer + mixer) |
-| `lib/sakshi.cyr` | v5.8.65 (refold v6.4.27) | sakshi 2.4.5 | Tracing |
+| `lib/sandhi.cyr` | v5.7.0 (refold v6.4.50) | sandhi 1.8.2 | HTTP/2 + JSON-RPC + service discovery + TLS policy (ALPN/SPKI on typed native verbs) |
+| `lib/vani.cyr` | v5.8.0 (refold v6.4.50) | vani 1.1.1 | Audio (ALSA PCM + ring buffer + mixer) |
+| `lib/sakshi.cyr` | v5.8.65 (refold v6.4.50) | sakshi 2.4.6 | Tracing |
 | `lib/patra.cyr` | v5.8.65 (refold v6.4.44) | patra 1.12.9 | Storage |
 | `lib/sigil.cyr` | v5.8.65 (refold v6.4.48) | sigil 3.11.1 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing; UEFI Secure Boot signing (authenticode_pe_sign) + enrollment (efi_signature_list/efi_auth)) |
 | `lib/yukti.cyr` | v5.8.65 (refold v6.4.27) | yukti 2.2.9 | Hardware enumeration |

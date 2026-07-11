@@ -2083,48 +2083,9 @@ if (_stats_env != 0) {
         syscall(SYS_WRITE, 2, " / 1048576\n",    11);
     }
 }
-# v4.8.3-alpha2: soft 85% warnings on default builds. Catches
-# "close-to-wall" conditions before a refactor trips the cap.
-# Suppressed under CYRIUS_STATS=1 (already shown above) and under
-# `--version` short-circuit (handled before this point).
-if (_stats_env == 0) {
-    if (GFNC(S) * 100 / _fnt_cap >= 85) {
-        syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
-        PRNUM(GFNC(S) * 100 / _fnt_cap);
-        syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
-        syscall(SYS_WRITE, 2, "/8192) — split into compilation units soon\n", 45);
-    }
-    if (GNPOS(S) * 100 / 262144 >= 85) {
-        syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);
-        PRNUM(GNPOS(S) * 100 / 262144);
-        syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GNPOS(S));
-        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce includes or split soon\n", 49);
-    }
-    if (GVCNT(S) * 100 / 8192 >= 85) {
-        syscall(SYS_WRITE, 2, "warning: var_table at ", 22);
-        PRNUM(GVCNT(S) * 100 / 8192);
-        syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GVCNT(S));
-        syscall(SYS_WRITE, 2, "/8192) — too many globals + locals\n", 37);
-    }
-    if (GFCNT(S) * 100 / 1048576 >= 85) {
-        syscall(SYS_WRITE, 2, "warning: fixup_table at ", 24);
-        PRNUM(GFCNT(S) * 100 / 1048576);
-        syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFCNT(S));
-        syscall(SYS_WRITE, 2, "/1048576) — too many cross-fn refs\n", 37);
-    }
-    if (GSPOS(S) * 100 / 2097152 >= 85) {
-        syscall(SYS_WRITE, 2, "warning: string_data at ", 24);
-        PRNUM(GSPOS(S) * 100 / 2097152);
-        syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GSPOS(S));
-        syscall(SYS_WRITE, 2, "/2097152 bytes)\n", 16);
-    }
-    if (GCP(S) * 100 / 67108864 >= 75) {
-        syscall(SYS_WRITE, 2, "warning: code buffer at ", 24);
-        PRNUM(GCP(S) * 100 / 67108864);
-        syscall(SYS_WRITE, 2, "% of 64 MiB ceiling (", 21); PRNUM(GCP(S));
-        syscall(SYS_WRITE, 2, " bytes, +8 MiB/grow)\n", 21);
-    }
-}
+# v4.8.3-alpha2: soft capacity warnings. Shared across all 7 drivers via
+# _capacity_warnings (util.cyr) since v6.4.50; 64 MiB growable codebuf here.
+_capacity_warnings(S, 67108864, 1);
 EMITELF(S);
 if (_prof_on == 1) { _prof_emit_end = _prof_clock_ns(); }
 # Write ELF output (loop on partial writes)
