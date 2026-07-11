@@ -76,6 +76,7 @@ enum IROp {
     IR_NOT         = 23;
     IR_SHL         = 24;  # rax = rcx << rax
     IR_SHR         = 25;  # rax = rcx >> rax
+    IR_ASHR        = 26;  # rax = rcx >>> rax (ARITHMETIC/sign-preserving; keep >> logical)
 
     # -- Stack --
     IR_PUSH        = 30;  # push rax
@@ -407,6 +408,7 @@ fn _ir_lower_node(S, op, fl, a1, a2): i64 {
     if (op == IR_NOT)           { ENOTR(S); return 0; }
     if (op == IR_SHL)           { ESHLCL(S); return 0; }
     if (op == IR_SHR)           { ESHRCL(S); return 0; }
+    if (op == IR_ASHR)          { EASHRCL(S); return 0; }
 
     if (op == IR_PUSH)          { EPUSHR(S); return 0; }
     if (op == IR_POP_RAX)       { EPOPR(S); return 0; }
@@ -483,6 +485,7 @@ fn _ir_opname(op): i64 {
     if (op == IR_NOT)          { return "NOT"; }
     if (op == IR_SHL)          { return "SHL"; }
     if (op == IR_SHR)          { return "SHR"; }
+    if (op == IR_ASHR)         { return "ASHR"; }
     if (op == IR_PUSH)         { return "PUSH"; }
     if (op == IR_POP_RAX)      { return "POP_A"; }
     if (op == IR_POP_RCX)      { return "POP_C"; }
@@ -548,6 +551,7 @@ fn _ir_clobbers_rax(op): i64 {
     if (op == IR_NOT)          { return 1; }
     if (op == IR_SHL)          { return 1; }
     if (op == IR_SHR)          { return 1; }
+    if (op == IR_ASHR)          { return 1; }
     if (op == IR_POP_RAX)      { return 1; }
     if (op == IR_LOAD8)        { return 1; }
     if (op == IR_LOAD16)       { return 1; }
@@ -666,6 +670,7 @@ fn _ir_is_foldable_binop(op): i64 {
     if (op == IR_XOR) { return 1; }
     if (op == IR_SHL) { return 1; }
     if (op == IR_SHR) { return 1; }
+    if (op == IR_ASHR) { return 1; }
     return 0;
 }
 
@@ -678,6 +683,7 @@ fn _ir_compute_fold(op, a, b): i64 {
     if (op == IR_XOR) { return a ^ b; }
     if (op == IR_SHL) { return a << b; }
     if (op == IR_SHR) { return a >> b; }
+    if (op == IR_ASHR) { if (b == 0) { return a; } if (a >= 0) { return a >> b; } return 0 - (((0 - a) + (1 << b) - 1) >> b); }
     return 0;
 }
 
@@ -882,6 +888,7 @@ fn _ir_uses_rax(op): i64 {
     if (op == IR_XOR)          { return 1; }
     if (op == IR_SHL)          { return 1; }
     if (op == IR_SHR)          { return 1; }
+    if (op == IR_ASHR)          { return 1; }
     if (op == IR_NOT)          { return 1; }
     if (op == IR_NEG)          { return 1; }
     if (op == IR_CMP)          { return 1; }
@@ -921,6 +928,7 @@ fn _ir_uses_rcx(op): i64 {
     if (op == IR_XOR)          { return 1; }
     if (op == IR_SHL)          { return 1; }
     if (op == IR_SHR)          { return 1; }
+    if (op == IR_ASHR)          { return 1; }
     if (op == IR_CMP)          { return 1; }
     if (op == IR_STORE8)       { return 1; }
     if (op == IR_STORE16)      { return 1; }

@@ -144,6 +144,7 @@ fn EXORR(S): i64 { CX_EMIT(S, 34, 0, 0, 1); return 0; }
 fn ENOTR(S): i64 { CX_EMIT(S, 34, 0, 0, 31); return 0; }   # xor r0, r0, r31(all-ones) — approx NOT
 fn ESHLCL(S): i64 { CX_EMIT(S, 35, 0, 0, 1); return 0; }   # shl r0, r0, r1
 fn ESHRCL(S): i64 { CX_EMIT(S, 36, 0, 0, 1); return 0; }   # shr r0, r0, r1
+fn EASHRCL(S): i64 { CX_EMIT(S, 37, 0, 0, 1); return 0; }  # asr r0, r0, r1 (`>>>`)
 
 # Load/store memory
 fn ELOAD8(S): i64 { CX_EMIT(S, 64, 0, 0, 0); return 0; }   # load8 r0, [r0]

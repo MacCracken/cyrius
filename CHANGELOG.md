@@ -6,6 +6,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.46] — 2026-07-10
+
+**`>>>` arithmetic right-shift operator (the drishti signed-shift fix) + stdlib foldin
+(sigil 3.11.0 + vani 1.1.0) + a doc/hygiene cleanup sweep.** `cycc` grows the `>>>` operator
+(+4,112 B → 1,091,000 B); self-host byte-identical, seed-derive + cross-OS (x86/aarch64/cx) verified.
+
+### Added — `>>>` arithmetic (sign-preserving) right shift
+
+- **`x >>> n` is an arithmetic right shift** = `floor(x / 2^n)` for negatives, matching C's
+  signed `>>`. **`>>` stays LOGICAL** (unsigned). **NOTE: this is the *reverse* of JS/Java**
+  (there `>>` is arithmetic, `>>>` is logical) — deliberate, because `>>` being logical is
+  load-bearing here: every crypto rotate `(x << n) | (x >> (64 - n))` (keccak / sha / chacha) and
+  the compiler's own union flag `ISUNION() = fcount >> 63` depend on it. Making `>>` arithmetic
+  corrupts all of them (empirically: it broke SHA-3 → the native TLS stack, and union `sizeof`),
+  so the sign-preserving shift is the new `>>>` operator instead.
+- Single-instruction emit: x86 `sar rax, cl`, aarch64 `asrv x0, x0, x1`, cx opcode 37. The IR-level
+  const-fold computes the arithmetic shift; the parser fast-path stays runtime for `>>>` (its fold
+  shortcut uses logical `>>`, wrong for negative operands).
+- New lexer token + IR op `IR_ASHR`; triple-nested generics `A<B<C<T>>>` learn the `>>>` lexeme
+  (close three type-arg levels). `>>>=` compound-assign is not yet added.
+- Resolves the **drishti** report (2026-07-10): AV1 inverse-transform `Round2` / Walsh–Hadamard /
+  `read_global_param` signed shifts silently corrupted under the old logical `>>`; drishti can drop
+  its `dr_ashr` workaround for `>>>`. Regression test: `tests/tcyr/shift_right_arithmetic.tcyr`.
+
+### Changed — folded stdlib updates
+
+### Changed — folded stdlib updates
+- **`lib/sigil.cyr` → sigil 3.11.0** (per-primitive `[lib.<type>]` distlib profiles + cyrius pin
+  6.4.45; the full bundle is byte-identical to 3.10.1 modulo the version stamp).
+- **`lib/vani.cyr` → vani 1.1.0** — adds `audio_write_nb` (non-blocking DAC-ring write) +
+  `audio_avail` (playback-ring room), agnos-gated; purely additive, existing consumers unchanged.
+  Regenerated `docs/api-surface.snapshot` (`+vani::audio_avail/1`, `+vani::audio_write_nb/3`).
+
+### Housekeeping — doc drift + repo hygiene (cleanup sweep)
+- **Folded-distfile version tables** refreshed to match `lib/`: sigil 3.11.0, vani 1.1.0,
+  patra 1.12.9, sankoch 2.5.1 across `docs/ecosystem.md`, `README.md`, `docs/stdlib-reference.md`
+  (vani was worst — the tables read 0.9.3/0.9.5 vs 1.1.0 actual).
+- **README user-facing stamps** un-frozen from v6.4.32: `cycc` 1,077,592 B → **1,086,888 B**,
+  132 → **141** check.sh gates, 98 → **99** stdlib modules, version → v6.4.46.
+- **`docs/development/state.md`** "Committed after" cell dropped the completed async arc 5b prefix
+  (it contradicted the file's own "arc 5b COMPLETE" cell).
+- **`2026-06-02-macos-x86` issue** — corrected a stale cross-ref: sub-blocker "issue-1 native
+  miscompile" was RESOLVED at v6.2.10 (the issue itself stays open for the Intel-Mac tail).
+- **cx-bytecode-CLI-exposure proposal** status TRACKED-not-started → ✅ SHIPPED (v6.4.17–.22).
+- **`.gitignore`** now excludes `archive/seed/target/` (accidentally-committed Rust build output;
+  the 35 tracked files want a `git rm -r --cached` at commit — provenance *source* stays).
+- Removed a leftover `build/boot_serial.tmp.*` scratch file.
+- Dead-code floor recorded: **65 unreachable fns** (24,793 B) — all intentional API surface
+  (stdlib vec/arena/atomic, `--lex-ts`, IR substrate, Mach-O/aarch64 emit helpers).
+
+
 ## [6.4.45] — 2026-07-10
 
 **v6.4.45 — async arc 5b "W" step R3: the overlapped AcceptEx server.** Closes the async "W" arc

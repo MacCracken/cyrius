@@ -247,6 +247,13 @@ fn LOOKAHEAD_IS_TYPE_ARG_CALL(S): i64 {
                 if (i + 1 < n) { if (TOKTYP(S, i + 1) == 10) { return 1; } }
                 return 0;
             }
+        } elif (t == 152) {
+            # `>>>` (arith-shift lexeme) closes THREE type-arg levels (A<B<C<T>>>).
+            depth = depth - 3;
+            if (depth <= 0) {
+                if (i + 1 < n) { if (TOKTYP(S, i + 1) == 10) { return 1; } }
+                return 0;
+            }
         } elif (t == 39) {
             # v6.3.33: `>>` (right-shift lexeme) closes TWO type-arg levels — the tail
             # of a nested `Outer<Inner<T>>`. If that lands us at (or past) depth 0, this
@@ -2597,6 +2604,13 @@ fn PARSE_TERM(S): i64 {
                                 } else { _cfo = 0; ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); } }
                             else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; }
                         }
+                        else { if (typ == 152) {
+                                # `>>>` arithmetic (sign-preserving) right shift. Always runtime:
+                                # the parser fast-path fold uses logical `>>`, wrong for negative
+                                # operands; EASHRCL (sar/asrv) is correct. CHANGELOG [6.4.46].
+                                STI(S, GTI(S) + 1);
+                                _cfo = 0; ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EASHRCL(S);
+                            }
                         # v5.6.2: *| / *? — saturating / checked mul. Calls into
                         # lib/overflow.cyr. Matches the +|/+? pattern at PEXPR.
                         else { if (typ == 120) {
@@ -2616,7 +2630,7 @@ fn PARSE_TERM(S): i64 {
                                     _cfo = 0;
                                 }
                                 else { go = 0; }
-                            } } } } } }
+                            } } } } } } }
     }
     return 0;
 }

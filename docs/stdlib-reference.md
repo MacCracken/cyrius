@@ -1475,7 +1475,7 @@ own canonical API reference in its own repo; this table is a pointer. See
 | `lib/patra.cyr` | patra 1.10.3 | Storage |
 | `lib/sankoch.cyr` | sankoch 2.2.5 | Compression |
 | `lib/yukti.cyr` | yukti 2.2.3 | Hardware enumeration |
-| `lib/vani.cyr` | vani 0.9.3 | Audio (ALSA PCM + ring buffer + mixer) |
+| `lib/vani.cyr` | vani 1.1.0 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/niyama.cyr` | niyama 1.0.2 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
 | `lib/mabda.cyr` | mabda 3.0.1 | GPU / compute (AMD-native) |
 | `lib/bayan.cyr` | bayan 1.0.0 | Data formats + big-int (json / toml / cyml / csv / base64 / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |

@@ -4,7 +4,7 @@
 
 A self-hosting compiler toolchain that bootstraps from a 29 KB binary with zero external dependencies. No Rust, no LLVM, no Python, no libc. Writes the [AGNOS](https://github.com/MacCracken/agnos) kernel, its own package manager, its own build tool, and (as of v5.11.49) bootable UEFI applications.
 
-~1.03 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Packed-SIMD compute (v6.4.x, Phase 5 complete) — f32/f64/integer 128-bit + **256-bit AVX2** f32v8 (elementwise + FMA + horizontal dot) with CPUID runtime dispatch — complete on all four backends: x86 (SSE + AVX2), aarch64 NEON (v6.4.28–.30), Windows PE value-form params + returns (v6.4.31), and cx bytecode per-lane scalar loops (v6.4.32). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 98 stdlib modules + 0 git deps (folded sibling distfiles: sakshi 2.4.5 / patra 1.12.8 / sigil 3.10.1 / vani / yukti 2.2.9 / sankoch 2.4.9; niyama at v5.9.0; mabda 4.0.2; **bayan 1.1.0** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.3** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`; **yantra 1.0.0 at v6.2.26** — UI/E2E testing into `lib/yantra.cyr`). 240 .tcyr + 1 soak + 1 smoke + 6 fuzz + 18 bench, 132 check.sh gates + QEMU boot gate.
+~1.03 MB compiler. Self-hosting on x86_64 + aarch64 (cross + native), Windows PE cross (directory-listing available since v6.1.18), macOS Mach-O (arm64 + x86), UEFI Application emit (gnoboot bootloader unblocked at v5.11.49), cyrius-x bytecode. Position-independent (PIE) codegen on x86_64 + aarch64 (`--pie`), `.gnu.hash` dynamic linking, and a TS/TSX → JS emitter (`cycc --emit-js`). Packed-SIMD compute (v6.4.x, Phase 5 complete) — f32/f64/integer 128-bit + **256-bit AVX2** f32v8 (elementwise + FMA + horizontal dot) with CPUID runtime dispatch — complete on all four backends: x86 (SSE + AVX2), aarch64 NEON (v6.4.28–.30), Windows PE value-form params + returns (v6.4.31), and cx bytecode per-lane scalar loops (v6.4.32). Sovereign native TLS 1.3 — client + server, sigil-backed X.509 chain verification, no OpenSSL — is the **default** TLS backend since v6.1.21 (`-D CYRIUS_TLS_LIBSSL` opts back to the libssl bridge). 99 stdlib modules + 0 git deps (folded sibling distfiles: sakshi 2.4.5 / patra 1.12.9 / sigil 3.11.0 / vani 1.1.0 / yukti 2.2.9 / sankoch 2.5.1; niyama at v5.9.0; mabda 4.0.2; **bayan 1.1.0** — data formats & big-int into `lib/bayan.cyr`; **ganita 1.0.3** — linear algebra + advanced math: matrix / linalg / transcendental into `lib/ganita.cyr`; **yantra 1.0.0 at v6.2.26** — UI/E2E testing into `lib/yantra.cyr`). 240 .tcyr + 1 soak + 1 smoke + 6 fuzz + 18 bench, 141 check.sh gates + QEMU boot gate.
 
 ## Install
 
@@ -91,7 +91,7 @@ syscall(60, r);
 
 | Metric | Value |
 |--------|-------|
-| Compiler (`cycc`) | **1,077,592 B** (~1.03 MB) x86_64 at v6.4.32 (byte-identical v6.4.31→v6.4.32; .32 was cx-backend-only) |
+| Compiler (`cycc`) | **1,086,888 B** (~1.04 MB) x86_64 at v6.4.46 |
 | Cross compilers | `cycc_aarch64` 633,800 B, `cycc_win` 938,496 B, `cycc_cx` 550,496 B (cross-built); `cycc-native-aarch64` 940,536 B (aarch64-native, pi-verified) |
 | Seed binary (`asm`) | **29,024 B** (committed binary root of trust; re-derivable from `archive/seed/` via `bootstrap/verify.sh`) |
 | Bootstrap compiler (`cybs`) | **12,344 B** (compiles all of `src/main.cyr`) |
@@ -218,7 +218,7 @@ src/
 ```
 bootstrap/asm (29,024 B committed binary -- root of trust)
   -> cybs (12,344 B compiler)
-    -> cycc (modular compiler + IR, 1,077,592 B at v6.4.32)
+    -> cycc (modular compiler + IR, 1,086,888 B at v6.4.46)
       -> cycc_aarch64, cycc_win, cycc-native-aarch64, cycc_cx (cross-compilers)
 ```
 

@@ -59,3 +59,6 @@ Thumbs.db
 /coverage/
 *.profraw
 *.profdata
+
+# Accidentally-committed Rust build output under the archived original seed (provenance src stays)
+archive/seed/target/

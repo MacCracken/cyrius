@@ -1481,7 +1481,12 @@ fn LEX(S): i64 {
                                                                                             var gc = load8(S + 0x459D000 + p + 1);
                                                                                             if (gc == 61) { ADDTOK(S, 22, 0); p = p + 2; }
                                                                                             else {
-                                                                                                if (gc == 62) { ADDTOK(S, 39, 0); p = p + 2; }
+                                                                                                if (gc == 62) {
+                                                    var g3 = 0;
+                                                    if (p + 2 < bl) { g3 = load8(S + 0x459D000 + p + 2); }
+                                                    if (g3 == 62) { ADDTOK(S, 152, 0); p = p + 3; }
+                                                    else { ADDTOK(S, 39, 0); p = p + 2; }
+                                                }
                                                                                                 else { ADDTOK(S, 20, 0); p = p + 1; }
                                                                                             }
                                                                                         } else { ADDTOK(S, 20, 0); p = p + 1; }

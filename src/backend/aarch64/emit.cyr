@@ -388,6 +388,7 @@ fn EXORR(S): i64 { _TRY_COMBINE_SHUTTLE(S); EW(S, 0xCA010000); return 0; }
 fn ENOTR(S): i64 { EW(S, 0xAA2003E0); return 0; }     # mvn x0, x0
 fn ESHLCL(S): i64 { EW(S, 0x9AC12000); return 0; }    # lslv x0, x0, x1
 fn ESHRCL(S): i64 { EW(S, 0x9AC12400); return 0; }    # lsrv x0, x0, x1
+fn EASHRCL(S): i64 { EW(S, 0x9AC12800); return 0; }   # asrv x0, x0, x1 (`>>>` arithmetic)
 # v5.6.7 O2: shift x0 by immediate (1..63) using UBFM aliases.
 # LSL Xd, Xn, #n → UBFM Xd, Xn, #((-n) mod 64), #(63-n)
 # LSR Xd, Xn, #n → UBFM Xd, Xn, #n, #63

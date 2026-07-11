@@ -1,0 +1,31 @@
+# `>>>` is an ARITHMETIC (sign-preserving) right shift = floor(x / 2^n) for
+# negatives; `>>` stays a LOGICAL (unsigned) shift. NOTE: this is the REVERSE
+# of JS/Java (where `>>` is arithmetic and `>>>` is logical) — deliberate, because
+# `>>` being logical is load-bearing across the codebase (crypto rotates
+# `(x<<n)|(x>>(64-n))` in keccak/sha/chacha, and the compiler's own union flag
+# `ISUNION() = fcount >> 63`). Making `>>` arithmetic corrupts all of those, so
+# the sign-preserving shift is the new `>>>` operator instead. See CHANGELOG [6.4.46]
+# and the drishti report (2026-07-10 AV1 inverse-transform Round2 / WHT).
+include "lib/assert.cyr"
+
+fn ashr(x, n): i64 { return x >>> n; }
+fn lshr(x, n): i64 { return x >> n; }
+
+fn main(): i64 {
+    # `>>>` — arithmetic, both folded and runtime
+    assert_eq((0 - 8) >>> 1, 0 - 4, "folded -8 >>> 1 == -4 (arithmetic)");
+    assert_eq(ashr(0 - 8, 1), 0 - 4, "runtime -8 >>> 1 == -4");
+    assert_eq(ashr(0 - 1, 63), 0 - 1, "-1 >>> 63 == -1 (all sign bits)");
+    assert_eq(ashr(0 - 7, 1), 0 - 4, "-7 >>> 1 == -4 (floor toward -inf)");
+    assert_eq(ashr(1024, 4), 64, "positive 1024 >>> 4 == 64");
+    assert_eq(8 >>> 1, 4, "positive 8 >>> 1 == 4 (arith == logical)");
+
+    # `>>` — UNCHANGED, still logical (the crypto-rotate / union-flag invariant)
+    assert_eq(lshr(0 - 8, 1), 9223372036854775804, "runtime -8 >> 1 stays LOGICAL");
+    assert_eq((0 - 1) >> 63, 1, "-1 >> 63 == 1 (logical)");
+    assert_eq(((0 - 1) >>> 8) & 0xFF, 0xFF, "masked (v >>> k) & mask extraction");
+
+    return assert_summary();
+}
+
+var r = main();

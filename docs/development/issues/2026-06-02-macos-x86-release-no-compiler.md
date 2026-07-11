@@ -19,9 +19,9 @@
 > Apple Silicon) → the wrapper picked `[aarch64]`/`cycc_aarch64`; detect x86 on
 > Intel (needs uname/env from layer 1). (3) **cycc-finding** on x86-macho. (4)
 > **issue-1 native miscompile** (own file `2026-06-07-x86-macho-byte-array...`) —
-> the NATIVE macho cycc miscompiles complex code: it built a broken 323 KB wrapper
-> vs the correct 610 KB cross-built one. So tools must ship cross-built until issue-1
-> is fixed. (5) **packaging** (`build-macos-x86-tarball.sh` + install.sh + release.yml).
+> the NATIVE macho cycc miscompiled complex code (a broken 323 KB wrapper vs the
+> correct 610 KB cross-built one). **RESOLVED at v6.2.10** (verified on ach): the
+> byte-array-literal miscompile is fixed, so this sub-blocker is cleared. (5) **packaging** (`build-macos-x86-tarball.sh` + install.sh + release.yml).
 
 > **Status update v6.0.58 (premise-check + build):** the cycc RUNTIME half is DONE — x86 Mach-O cycc
 > self-hosts byte-identical + `return 42`→42 on real Intel hardware (`ach`), per the .43-.45 work. The

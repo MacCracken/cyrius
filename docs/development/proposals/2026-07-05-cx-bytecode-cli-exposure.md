@@ -1,9 +1,10 @@
 # Productize the cyrius-x (cx) bytecode backend — give it a user-facing output/run path
 
 - **Filed**: 2026-07-05 (surfaced by a user premise-check during SIMD Phase 4)
-- **Status**: TRACKED — lightweight stub; **dig deeper later**. Scheduled AFTER the
-  v6.4.x SIMD arc. Design (exact CLI surface, cxvm install shape, float/SIMD scope)
-  is deliberately NOT finalized here.
+- **Status**: ✅ SHIPPED v6.4.17–.22 — cx CLI (`--target=cx` → versioned `.cyx` → `cyrius run`),
+  f64 arith (.18), f64-compare (.19), cross-OS `.cyx` (.20), `cycc_cx` cross-native (.22), SIMD
+  codegen (.32). Residual (`f32`/transcendentals) is fail-loud + filed. See roadmap.md Pin 5 +
+  roadmap-future.md. (Kept in `proposals/` rather than archived: roadmap.md/CHANGELOG link this path.)
 - **Priority**: not a release-blocker; a "finish the last mile" of an existing,
   working-but-unexposed backend.
 

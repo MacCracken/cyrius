@@ -4393,6 +4393,7 @@ trait::trait_data/1
 trait::trait_eq/2
 trait::trait_obj_new/2
 trait::trait_vtable/1
+vani::audio_avail/1
 vani::audio_bit_depth/1
 vani::audio_can_set_params/4
 vani::audio_channels/1
@@ -4415,6 +4416,7 @@ vani::audio_set_sw_params/4
 vani::audio_start/1
 vani::audio_write/3
 vani::audio_write_bytes/3
+vani::audio_write_nb/3
 vani::vani_alsa_for/2
 vani::vani_audio_handle/1
 vani::vani_bytes_per_frame/1

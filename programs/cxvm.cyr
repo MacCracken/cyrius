@@ -162,6 +162,11 @@ fn cx_run(code, code_len): i64 {
         elif (op == 34) { cx_reg_set(ra, cx_reg_get(rb) ^ cx_reg_get(rc)); }
         elif (op == 35) { cx_reg_set(ra, cx_reg_get(rb) << cx_reg_get(rc)); }
         elif (op == 36) { cx_reg_set(ra, cx_reg_get(rb) >> cx_reg_get(rc)); }
+        elif (op == 37) {
+            var _av = cx_reg_get(rb); var _ac = cx_reg_get(rc);
+            if (_av >= 0) { cx_reg_set(ra, _av >> _ac); }
+            else { cx_reg_set(ra, 0 - (((0 - _av) + (1 << _ac) - 1) >> _ac)); }
+        }
 
         # compare: eq, ne, lt, gt
         elif (op == 48) { if (cx_reg_get(rb) == cx_reg_get(rc)) { cx_reg_set(ra, 1); } else { cx_reg_set(ra, 0); } }

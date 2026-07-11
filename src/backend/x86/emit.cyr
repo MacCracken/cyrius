@@ -382,6 +382,8 @@ fn EXORR(S): i64 { if (_IR_REC0(S, IR_XOR) == 1) { return 0; } _TRY_COMBINE_SHUT
 fn ENOTR(S): i64 { if (_IR_REC0(S, IR_NOT) == 1) { return 0; } E3(S, 0xD0F748); return 0; }
 fn ESHLCL(S): i64 { if (_IR_REC0(S, IR_SHL) == 1) { return 0; } E3(S, 0xE0D348); _flags_reflect_rax = 0; return 0; }
 fn ESHRCL(S): i64 { if (_IR_REC0(S, IR_SHR) == 1) { return 0; } E3(S, 0xE8D348); _flags_reflect_rax = 0; return 0; }
+# `>>>` arithmetic shift: sar rax, cl (48 D3 F8). `>>` stays logical (shr). CHANGELOG [6.4.46].
+fn EASHRCL(S): i64 { if (_IR_REC0(S, IR_ASHR) == 1) { return 0; } E3(S, 0xF8D348); _flags_reflect_rax = 0; return 0; }
 # v5.6.7 O2: shift rax by immediate (1..63). Encoding: 48 C1 E0 imm8
 # for shl; 48 C1 E8 imm8 for shr. Used by strength-reduction peephole
 # (x * 2^n → shl rax, n and x / 2^n → shr rax, n for unsigned).
