@@ -496,6 +496,33 @@ tables/lists in structs generally.
   naad/vidya dropped round-trip tests. Tier B (`toml_v_*` typed DOM in bayan) is a
   **separate stdlib** item, not part of this arc.
 
+### Pin 3 — End-of-compile capacity-warning consolidation ◀ **NEXT UP** (~1 release)
+
+> **Reactive follow-on from v6.4.49** (the codebuf 8 MiB / growable work). Surfaced there:
+> the end-of-compile capacity-warning block — `warning: var_table / fixup_table /
+> string_data / code buffer at N% …` — lives ONLY in `main.cyr` (x86-Linux) +
+> `main_win.cyr` (Win64), **duplicated inline**. The five other drivers —
+> `main_aarch64{,_native,_macho}.cyr`, `main_x86_macho.cyr`, `main_cx.cyr` — emit
+> **zero** capacity warnings, so an aarch64 / macOS / cx compile gets no heads-up
+> approaching ANY ceiling (this is why thoth's codebuf warning only showed on x86).
+> Confirmed 2026-07-10: 6 warning lines in each of main.cyr/main_win.cyr, 0 in the
+> other five.
+
+- **Extract the block into ONE shared helper** (`_capacity_warnings(S)` in
+  `src/common/util.cyr`, next to `_codebuf_grow`) and call it from every driver's
+  end-of-compile path — closes the aarch64/macho/cx gap **and** de-duplicates the
+  inline copy in main.cyr + main_win.cyr in one move.
+- **Logic-preserving**: thresholds/text don't change, so cycc must stay
+  **byte-identical** self-host + seed-derive + cross-OS (ecb/cass/pi); the only new
+  behavior is the SAME warnings now firing on the 5 previously-silent drivers. Prove
+  with the byte-identical self-host + differential-corpus recipe (refresh stale
+  includes first).
+- **Watch**: each driver's end-of-compile call site differs — wire carefully. The **cx**
+  driver reports against its own **fixed 512 KiB** region (`0x54A000`), NOT the growable
+  codebuf, so the codebuf line needs a cx-specific cap (524288) or omission. Keep the
+  helper fork-agnostic — read every metric via its accessor (`GSPOS`/`GCP`/…), no
+  hardcoded `S+offset`.
+
 ---
 
 ## Order-committed (length-blocked, not yet pinned)
