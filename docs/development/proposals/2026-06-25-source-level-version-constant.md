@@ -1,5 +1,9 @@
 # Source-level VERSION constant — build-time injection of the package version into Cyrius source
 
+**Status:** ▲ SCHEDULED (minimal cut) 2026-07-10 — committed scope is the injected source-visible
+`CYRIUS_PKG_VERSION` constant (the `${file:VERSION}` file-read surfaced to source), NOT a general
+const-eval. No dedicated release; fold into the next 6.4.x arc's closeout / an absorber band. See
+[roadmap_6.md](../roadmap_6.md) (candidate list).
 **Filed:** 2026-06-25 (by a sit consumer — sit 1.0.4, the `/sit/v1/capabilities`
 server-identity banner)
 **Severity:** Build/manifest ergonomics gap — `cyrius.cyml`'s `${file:VERSION}`

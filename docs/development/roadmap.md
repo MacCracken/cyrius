@@ -161,8 +161,12 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   `O_RDWR` + the folded-stdlib repair campaign; **.28–.30 SIMD Phase 5 aarch64 NEON (f32v4/f32v8/int
   vectors + `iv_dp8` — Phase 5 COMPLETE, last SIMD XFAIL removed)**; **.31 Win64 PE value-form SIMD
   params + returns**; **.32 cx bytecode SIMD codegen** (per-lane emitters + cxvm opcodes 0x66–0x68).
-  Current head: **v6.4.32**, cycc 1,077,592 B, check.sh 132, self_compile ~616 ms. **NEXT: async
-  runtime arc 5b (v6.4.33, stiva-blocked).**
+  **.33–.42 async arc 5b — reactor + the 5 tokio-parity primitives + consolidation; .43–.45 the
+  IOCP-Windows "W" step (client .43 / timers+subprocess+combinator-parity .44 / AcceptEx server .45,
+  all release-gated on real cass); .44 also fixed two pre-existing Win64 ABI bugs (PE-reroute 16-align,
+  retptr deep-stack-param homing).** Current head: **v6.4.45**, cycc 1,086,888 B, check.sh 141,
+  self_compile ~629 ms. **The async arc 5b is CLOSED. No arc in flight — next 6.4.x pickup is
+  maintainer-prioritized (candidates: UEFI Secure-Boot signing · function visibility · scalar-float).**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -186,7 +190,7 @@ releases, each bundling several bites. Minors flex long.**
 | 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
 | 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 5 releases (.17–.20, .22) | No | **✅ DONE. A=CLI, B=f64, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts), .22=cycc_cx cross-native (macOS/Win). Tail: f32/transcendentals fail loud.** |
-| 5b | **Async runtime — reactor + suspend/resume foundation, THEN tokio-parity primitives + IOCP-Windows** (blocks stiva v3.1 + thoth `--win`) | **6–8 releases** | No | **🔴 CONSUMER-BLOCKED (stiva) — THE OPEN ARC (opens v6.4.33). Premise-checked 2026-07-09: the engine is NOT an event loop (epfd vestigial, `TASK_WAITING` dead, no mid-body yield) → user chose FOUNDATION-FIRST (reactor + cooperative suspend/resume substrate before the 5 primitives). IOCP-Windows folded in, sequenced AFTER gap coverage (`FOUNDATIONAL_DEPENDENT` verdict). Extraction to its own repo (`tantu`) DEFERRED to a later minor — build in-place for now.** (pinned 2026-07-07, shaped 2026-07-09; [`issues/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/2026-07-07-async-runtime-tokio-parity-gaps.md), [`issues/2026-07-08-async-epoll-only-blocks-win-transport.md`](issues/2026-07-08-async-epoll-only-blocks-win-transport.md)) |
+| 5b | **Async runtime — reactor + suspend/resume foundation, THEN tokio-parity primitives + IOCP-Windows** (unblocks stiva v3.1 + thoth `--win`) | 6–8 releases (shipped in ~13: .33–.45) | No | **✅ SHIPPED (.33–.45).** FOUNDATION-FIRST (reactor + the 5 tokio-parity primitives, .33–.41) → consolidation (.42) → IOCP-Windows "W" step: client (.43) / timers+subprocess+combinator-parity (.44) / AcceptEx server (.45), all target-agnostic and release-gated on real cass. `async_accept` closes the surface. Mid-body suspend/resume = FUTURE ARC (parked in roadmap-future: stackless coroutines; blocked on the v6.5.x IR substrate + no live consumer). `tantu` extraction = RESERVED future-minor deliverable (repo name held) — NOT sequenced. (pinned 2026-07-07, shaped 2026-07-09, shipped 2026-07-10; history: [`issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md), [`issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md`](issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md)) |
 | 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | **2–3 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | **2–4 releases** | No | pinned 2026-07-07 — later 6.4.x |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
@@ -268,7 +272,7 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
   blocked NOW** on 5 library-level API primitives with no runtime today: async
   subprocess spawn/wait/output, `interval` + `timeout` combinator, a joinable
   `JoinHandle`/`task_join`, async TCP client + `join_all`/`select`, and `async_rwlock`.
-  These were surfaced by [`issues/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/2026-07-07-async-runtime-tokio-parity-gaps.md)
+  These were surfaced by [`issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md)
   and were initially triaged toward the roadmap-future watching list — **corrected
   2026-07-07: a real consumer is blocked, so async is NOT parked in v6.8.** It's a
   committed near-term arc, sequenced **immediately after SIMD Phase 5 (Pin 1)** per the

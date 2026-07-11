@@ -1131,13 +1131,15 @@ promoted to the committed **v6.4.x OPENING SEQUENCE** above, in that order — S
 struct fields → UEFI signing (gnoboot, 2026-07-03) → pub/private. The remaining candidate below has
 no committed order.)_
 
-- **Source-level VERSION constant** — consumer-filed (sit 1.0.4, the `/sit/v1/capabilities` identity
-  banner); tracked here after the 2026-07-03 audit found it un-roadmapped. `cyrius.cyml`'s
-  `${file:VERSION}` is manifest-metadata only — source code can't read the package version at build
-  time, so every `--version` / identity-banner / `Server:` string is a hand-maintained literal that
-  silently drifts from `VERSION` (sit's drifted for 6 releases). Small build/manifest feature: extend
-  the existing `${file:VERSION}` file-read to a source-visible constant. Not a blocker (sit ships a
-  CI-guard stopgap). [`proposals/2026-06-25-source-level-version-constant.md`](proposals/2026-06-25-source-level-version-constant.md).
+- **Source-level VERSION constant — ▲ SCHEDULED (minimal cut), fold into an adjacent 6.4.x release**
+  (maintainer decision 2026-07-10). Consumer-filed (sit 1.0.4, the `/sit/v1/capabilities` identity
+  banner); `cyrius.cyml`'s `${file:VERSION}` is manifest-metadata only — source code can't read the
+  package version at build time, so every `--version` / identity-banner / `Server:` string is a
+  hand-maintained literal that silently drifts from `VERSION` (sit's drifted for 6 releases).
+  **Committed scope = the minimal cut: an injected source-visible `CYRIUS_PKG_VERSION` constant**
+  (the `${file:VERSION}` file-read surfaced to source), NOT a general const-eval. Small build/manifest
+  bite — no dedicated release; fold into the next arc's closeout or an absorber band. Not a blocker
+  (sit ships a CI-guard stopgap). [`proposals/2026-06-25-source-level-version-constant.md`](proposals/2026-06-25-source-level-version-constant.md).
 
   _(Array-typed struct fields + function visibility (`pub`/`private`) were here; promoted 2026-07-03
   to #2 and #4 of the committed v6.4.x OPENING SEQUENCE above — UEFI Secure Boot signing was
@@ -1235,7 +1237,7 @@ at arc-open):
 
 1. **IR substrate productionization** — the prerequisite
    ([`issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md`](issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md)
-   + [`issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md`](issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md)):
+   + [`issues/archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md`](issues/archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md)):
    re-emit path, complete local-access opcode model, `CYRIUS_IR=3` differential
    correctness. Proven necessary by the v6.3.27/.28 deferrals.
 2. **Cross-BB regalloc WITH a vector register class** — the vector class is what
@@ -1347,7 +1349,7 @@ The list (ROI order; design decisions inside each item at arc-open):
    tail**: pulls in only if consumer pressure materializes by arc-open; fix the
    **multi-type-param struct-type-arg residual** first (single-tparam struct type-args
    shipped v6.3.38 B1/B2 + v6.3.39 B3; the residual is only the mixed multi-tparam combo)
-   ([`issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md)).
+   ([`issues/archived/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](issues/archived/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md)).
 
 **Explicitly NOT imported** (decided 2026-07-07): borrow-checker-style lifetimes
 (wrong fit for the trust model + single-pass design), a general const-eval VM

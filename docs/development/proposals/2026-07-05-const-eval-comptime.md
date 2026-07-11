@@ -50,8 +50,10 @@ What it does **not** cover is **compile-time computation**:
   `src/main_win.cyr:96`). This is an **optimization pass** over arithmetic / enum-value literals,
   **not** a user-facing const-eval: global initializers are literals (plus that folding), and
   there is **no `const fn`, no comptime block, no compile-time loop/table generation.**
-- No `const-eval` / `comptime` / `const fn` appears in `docs/development/roadmap_6.md` or the
-  proposals set (only the related `source-level-version-constant` build-time-value proposal).
+- (At filing) no `const-eval` / `comptime` / `const fn` appeared in `docs/development/roadmap_6.md`.
+  **Superseded 2026-07-07**: const-eval/comptime is now SCHEDULED for v6.6.x (language-ergonomics
+  minor, early-riser candidate — see roadmap_6.md). The related `source-level-version-constant`
+  build-time-value proposal is scheduled separately as a minimal-cut fold in 6.4.x.
 
 ## Design space (sketch — maintainer picks the scope)
 
