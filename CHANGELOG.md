@@ -6,6 +6,78 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.51] — 2026-07-11
+
+**Three consumer-filed reactive fixes (roadmap Pin 4): `signal_ignore`/SIGPIPE stdlib gap (sandhi) + `output_buf` 16 MiB→1 GiB on Linux (thoth; macOS/Windows in .52) + an error-enum namespace lint gate.**
+
+### Added — `signal_ignore(signum)` + `Signal` enum (`lib/syscalls.cyr`)
+
+Closes the sandhi-filed SIGPIPE server-DoS gap
+([issue](docs/development/issues/2026-07-11-sandhi-signal-ignore-stdlib-gap.md)):
+`lib/net.cyr`'s `sock_send` is a flagsless `sys_write`, and stdlib had no
+signal-disposition helper — so a write to a peer that closed mid-response raised
+SIGPIPE and **terminated the process** (an unauthenticated remote DoS against any
+server on `sock_send`). sandhi carried a Linux-only raw-syscall workaround; **macOS
+had none**.
+
+- **`signal_ignore(signum)`** sets a signal's disposition to `SIG_IGN` — Linux
+  `rt_sigaction` (x86 #13 / aarch64 #134), macOS BSD `sigaction`, Windows/agnos no-op.
+  The 32-byte `{sa_handler=SIG_IGN,0,0,0}` struct is valid for both the Linux and BSD
+  sigaction ABIs. `Signal` enum added with `SIGINT`/`SIGQUIT`/`SIGKILL`/`SIGPIPE`/`SIGTERM`.
+- **macOS backend**: the Mach-O ESYSXLAT gains `rt_sigaction → BSD sigaction 46` on both
+  arches — aarch64 `134→46` (`cmp x8,#134`=`0xF102191F` / `movz x16,#46`=`0xD28005D0`,
+  llvm-mc-verified) + its `_macho_arm_routes` mirror, and x86 `13→0x200002E`. This is
+  the compiler-side change; the Linux/Windows/agnos paths are lib-only.
+- Verified on **real ecb (macOS)** via `tests/tcyr/vr01_signal_ignore.tcyr` (socketpair
+  SIGPIPE trigger → EPIPE, not process-kill) in the cross-OS gate.
+
+### Changed — `output_buf` 16 MiB → 1 GiB on Linux (platform-adaptive; macOS/Windows follow in .52)
+
+Closes the thoth-filed output-cap
+([issue](docs/development/issues/2026-07-11-output-buf-16mib-cap-blocks-large-test-binaries.md))
+on Linux: the final-image `output_buf` was a **fixed 16 MiB** in-heap region at `S+0x4D9D000`
+(non-growable, unlike the codebuf), so a large single-translation-unit binary — thoth's
+test driver hit **16.78 MB** — was hard-rejected.
+
+- **Off-heap `_output_base = alloc(1073741824)`** (lazy-mapped 1 GiB) replaces the fixed
+  region; all 19 emit/fixup/write sites across the 6 native drivers + x86/aarch64/macho/pe/js
+  backends route through the new base (`src/common/util.cyr` declares it). output_buf sits
+  mid-heap (regions above it), so it can't grow in place — off-heap, like v6.4.49's codebuf.
+- **Platform-adaptive**: Linux's allocator mmaps a chunk sized to the request (overcommit), so
+  `alloc(1 GiB)` succeeds → 1 GiB `output_buf`. The **macOS and Windows allocators can't produce
+  a >256 MiB single region yet** (macOS caps at its 256 MiB reservation with a hint-grow macOS
+  ignores; Windows has a fixed no-grow reservation), so `alloc(1 GiB)` returns 0 and each driver
+  **falls back to the pre-.51 fixed 16 MiB region** (`if (_output_base == 0) { … = S+0x4D9D000 }`).
+  `_output_cap` tracks the real buffer, so the cap is 1 GiB on Linux and 16 MiB on macOS/Windows
+  — no crash, no regression. The dedicated large-alloc path for those two is
+  [filed for v6.4.52](docs/development/issues/2026-07-11-macos-windows-large-single-allocation-path.md).
+- **`ALLOC_MAX` 256 MiB → 2 GiB** in all four alloc peers so the 1 GiB `alloc` clears the
+  overflow guard (which still rejects truly-absurd sizes).
+- **Four output-size caps** now key on `_output_cap` (was hardcoded 16 MiB): `_check_output_cap`
+  (`runtime.cyr`, shared by ELF/Mach-O/PE) + the x86-specific ELF-exe (`final_sz`), `.so`, and `.o`
+  caps in `x86/fixup.cyr`. On Linux a 19.8 MiB binary now compiles + runs (was `output too large`).
+
+### Added — error-enum namespace lint gate (`programs/cyrlint.cyr`)
+
+Cyrius enum members are flat globals, so two libs that both define a bare `ERR_TIMEOUT`
+collide by name (value-dependent miscompile). New `lint_error_enum_namespace` rule: bare
+`ERR_*` enum members in a **non-owner** file emit an attribution **note** — sakshi, the
+ecosystem base logger, owns the canonical unprefixed set; leaf libs must prefix
+(`<LIB>_ERR_*`). Owner matched by path (cyrius-side config). Ships note-level (surfaces
+the migration surface — only `lib/sankoch.cyr` in cyrius today — without failing the gate);
+flips to a hard warn after the ecosystem migration window. Proposal:
+`docs/development/proposals/2026-07-11-error-enum-namespace-lint-gate.md`.
+
+### Verification
+
+- cycc self-host fixpoint byte-identical; **seed-derive** (`seed → cybs → cycc`) byte-identical.
+- Differential corpus 0 (the output_buf move + ESYSXLAT entry don't change consumer codegen).
+- check.sh 141; `alloc_safety.tcyr` updated to the new 2 GiB bound; `docs/api-surface.snapshot`
+  +1 (`signal_ignore`).
+- Cross-OS: pi (aarch64) + ecb (macOS) + cass (Windows) `SELFHOST_OK` + `LIBTEST_OK` incl.
+  `vr01_signal_ignore` on real hardware.
+- cycc x86 1,091,056 B; self_compile ~602 ms.
+
 ## [6.4.50] — 2026-07-11
 
 **End-of-compile capacity warnings unified across all 7 drivers (Pin 3) + stdlib folds (sandhi 1.8.2, sakshi 2.4.6, vani 1.1.1).**

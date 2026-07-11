@@ -62,7 +62,7 @@ fn alloc_init() {
 # Maximum single allocation (256 MB — same as Linux peer, will
 # fail at runtime if >16 MB is requested from a single allocation
 # since the reservation is 16 MB).
-var ALLOC_MAX = 0x10000000;
+var ALLOC_MAX = 0x80000000;   # 2 GiB (v6.4.51: was 256 MiB; output_buf now allocs 1 GiB off-heap)
 
 # Allocate size bytes, 8-byte aligned. Returns 0 on overflow /
 # out-of-region.

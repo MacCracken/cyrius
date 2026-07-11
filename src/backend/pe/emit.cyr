@@ -1424,7 +1424,7 @@ fn _pe_layout(S): i64 {
 # redeclaration (reassignment is the supported pattern).
 
 fn EMITPE_EXEC(S): i64 {
-    var O = S + 0x4D9D000;
+    var O = _output_base;
     var o = 0;
     var cp = GCP(S);
     var cb = _codebuf_base;       # codebuf base

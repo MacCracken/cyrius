@@ -16,8 +16,8 @@ var p2 = alloc(0);
 assert_eq(p2, 0, "alloc(0) returns 0");
 
 test_group("alloc rejects oversized");
-var p3 = alloc(0x10000001);
-assert_eq(p3, 0, "alloc(256MB+1) returns 0");
+var p3 = alloc(0x80000001);
+assert_eq(p3, 0, "alloc(2GB+1) returns 0");
 
 test_group("alloc accepts normal size");
 var p4 = alloc(64);

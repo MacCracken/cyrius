@@ -877,6 +877,7 @@ fn EMACHO_SYSXLAT(S): i64 {
     # parity with the arm64 ESYSXLAT). The fork+socketpair TLS e2e ran the Linux
     # number on Darwin → garbage fds → TLS_ERR_IO. See aarch64/emit.cyr.
     _msx(S, 53, 0x2000087);   # socketpair 53 → 135
+    _msx(S, 13, 0x200002E);   # rt_sigaction 13 → sigaction 46 (v6.4.51 signal_ignore(SIGPIPE); BSD-classed 0x2000000|46)
     _msx(S, 7,  0x20000E6);   # poll        7 → 230
     # v6.0.60: dir enumeration — getdents64 217 → getdirentries64 344 (0x158).
     # fs.cyr passes the 4th basep out-param (Linux ignores it). Parity w/ arm64.

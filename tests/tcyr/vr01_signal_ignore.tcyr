@@ -1,0 +1,37 @@
+# vr01_signal_ignore.tcyr — signal_ignore(SIGPIPE) verified on REAL hardware
+# (v6.4.51). The macOS leg exercises the ESYSXLAT rt_sigaction(134/13)→BSD
+# sigaction(46) translation: without it a write to a disconnected peer would
+# SIGPIPE-kill the process (unauthenticated server DoS). Socketpair (POSIX) is
+# the portable Linux↔macOS trigger; Windows has no SIGPIPE (signal_ignore no-op).
+# Uses per-arch SYS_* constants (x86 53/3/1, aarch64 199/57/64, macOS via ESYSXLAT)
+# so the syscall numbers are correct on every target. See issue
+# 2026-07-11-sandhi-signal-ignore-stdlib-gap.md.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    assert_eq(signal_ignore(SIGPIPE), 0, "signal_ignore(SIGPIPE) returns 0");
+    #ifdef CYRIUS_TARGET_LINUX
+    var fds[8];
+    var sp = syscall(SYS_SOCKETPAIR, 1, 1, 0, &fds);        # AF_UNIX, SOCK_STREAM
+    assert_eq(sp, 0, "socketpair ok");
+    syscall(SYS_CLOSE, load32(&fds));                       # close sv[0]
+    var w = syscall(SYS_WRITE, load32(&fds + 4), "x", 1);   # write sv[1] -> EPIPE (SIGPIPE ignored)
+    assert(w < 0, "write to closed-peer socket returns EPIPE, not SIGPIPE-kill");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var mfds[8];
+    var msp = syscall(SYS_SOCKETPAIR, 1, 1, 0, &mfds);      # ESYSXLAT -> BSD socketpair 135
+    assert_eq(msp, 0, "socketpair ok (macOS)");
+    syscall(SYS_CLOSE, load32(&mfds));                      # ESYSXLAT -> BSD close 6
+    var mw = syscall(SYS_WRITE, load32(&mfds + 4), "x", 1); # ESYSXLAT -> BSD write 4; SIGPIPE ignored -> EPIPE
+    assert(mw < 0, "write to closed-peer socket returns EPIPE (macOS ESYSXLAT sigaction)");
+    #endif
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

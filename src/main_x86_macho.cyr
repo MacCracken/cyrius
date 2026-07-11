@@ -116,6 +116,8 @@ _fnt_cap = 8192;
 # the cap, 64 MiB ceiling (util.cyr _codebuf_grow). Was a fixed 3 MiB in-heap
 # region @ S+0x41A000 pre-.49. cx's own 0x54A000 codebuf is separate + fixed.
 _codebuf_base = alloc(8388608);
+_output_base = alloc(1073741824);
+if (_output_base == 0) { _output_base = S + 0x4D9D000; _output_cap = 16777216; } else { _output_cap = 1073741824; }   # v6.4.51: 1 GiB off-heap on Linux; macOS/Windows fall back to the fixed 16 MiB region pending the .52 large-alloc path
 _varn_base = S + 0x11A000;
 _vars_base = S + 0x12A000;
 _vart_base = S + 0x13A000;
@@ -577,7 +579,7 @@ var olen = L64(S + 0x1903F8);
 var written = 0;
 var wgo = 1;
 while (wgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x4D9D000 + written, olen - written);
+    var w = syscall(SYS_WRITE, 1, _output_base + written, olen - written);
     if (w <= 0) { wgo = 0; }
     else {
         written = written + w;

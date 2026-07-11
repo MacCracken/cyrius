@@ -3924,6 +3924,7 @@ sys::system_uptime/0
 sys::uname_hostname/1
 sys::uname_machine/1
 sys::uname_release/1
+syscalls::signal_ignore/1
 syscalls_aarch64_linux::epoll_event_new/2
 syscalls_aarch64_linux::err_code/1
 syscalls_aarch64_linux::is_err/1

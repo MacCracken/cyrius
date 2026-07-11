@@ -100,7 +100,7 @@ fn EMITMACHO_EXEC(S): i64 {
     # ncmds=3: __PAGEZERO + __TEXT + LC_UNIXTHREAD
     # lc_total = 72 + 152 + 184 = 408
 
-    var O = S + 0x4D9D000;
+    var O = _output_base;
     var o = 0;
 
     # ================================================================
@@ -390,7 +390,7 @@ fn EMITMACHO_ARM64(S): i64 {
     # globals + strings + __LINKEDIT), before the first output_buf store below.
     _check_output_cap(S, FILE_END);
 
-    var O = S + 0x4D9D000;
+    var O = _output_base;
     var o = 0;
 
     # ================================================================

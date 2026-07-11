@@ -13,7 +13,7 @@ var _heap_ptr = 0;
 var _heap_end = 0;
 
 # Maximum single allocation size (256MB) — matches alloc.cyr
-var ALLOC_MAX = 0x10000000;
+var ALLOC_MAX = 0x80000000;   # 2 GiB (v6.4.51: was 256 MiB; output_buf now allocs 1 GiB off-heap)
 
 # Initial heap reservation. v6.0.34: was 1MB, grown by 1MB chunks via a
 # HINTED mmap at _heap_end. macOS does NOT honor mmap address hints (no

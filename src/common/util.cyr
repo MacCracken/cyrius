@@ -330,6 +330,20 @@ fn _fnt_copy_table(old, oc, nc): i64 {
 # is up; `_codebuf_cap==0` guards any pre-init call. Byte-identical under the old cap.
 var _codebuf_base = 0;
 var _codebuf_cap = 0;
+# v6.4.51: the final output image (ELF/Mach-O/PE) is emitted here — an off-heap,
+# lazy-mapped 1 GiB `alloc()` set per-driver, replacing the fixed 16 MiB in-heap
+# region at S+0x4D9D000 (which capped a large single-translation-unit test binary
+# — thoth hit 16.78 MB). Off-heap because it sits mid-heap (regions above it) so
+# it couldn't grow in place; lazy overcommit means only touched pages cost RAM.
+# Every emit/fixup/write site reaches the buffer through this base. CHANGELOG [6.4.51].
+var _output_base = 0;
+# The output buffer's real capacity, set per-driver: 1 GiB when the off-heap
+# `alloc` succeeds (Linux), else 16 MiB when it falls back to the fixed
+# S+0x4D9D000 region (macOS/Windows, whose allocators can't yet produce a >256 MiB
+# single region — a dedicated large-alloc path is the v6.4.52 follow-up; see
+# issue 2026-07-11-macos-windows-large-single-allocation-path.md). `_check_output_cap`
+# keys on this so the cap always matches the actual buffer.
+var _output_cap = 0;
 fn _codebuf_grow(S): i64 {
     var nc = _codebuf_cap + 8388608;   # v6.4.49: +8 MiB linear steps (was *2)
     if (nc > 67108864) {

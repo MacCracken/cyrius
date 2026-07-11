@@ -536,8 +536,20 @@ tables/lists in structs generally.
   helper fork-agnostic — read every metric via its accessor (`GSPOS`/`GCP`/…), no
   hardcoded `S+offset`.
 
-### Pin 4 — v6.4.51 reactive consumer-filed fixes ◀ **NEXT UP** (~1–2 releases)
+### Pin 4 — v6.4.51 reactive consumer-filed fixes — **✅ SHIPPED v6.4.51** (+ .52 carryover)
 
+> **✅ SHIPPED v6.4.51** (2026-07-11) — THREE items (the user added the error-enum lint
+> gate at cut time): (1) `signal_ignore(SIGPIPE)` + `Signal` enum + the macOS ESYSXLAT
+> `rt_sigaction 134/13→BSD sigaction 46` translation — **verified on real ecb (macOS)**
+> via `vr01_signal_ignore` (socketpair SIGPIPE → EPIPE, not process-kill); (2) `output_buf`
+> 16 MiB→1 GiB **on Linux** (off-heap `_output_base`; a 19.8 MiB binary compiles) — macOS
+> and Windows fall back to the fixed 16 MiB region because their allocators can't produce a
+> >256 MiB single region, **carried to v6.4.52** as the dedicated large-alloc path
+> ([`issues/2026-07-11-macos-windows-large-single-allocation-path.md`](issues/2026-07-11-macos-windows-large-single-allocation-path.md));
+> (3) the `lint_error_enum_namespace` cyrlint note rule (bare `ERR_*` reserved for sakshi).
+> cross-OS pi+ecb+cass all `SELFHOST_OK`+`LIBTEST_OK (21)`; check.sh 141; seed-derive OK.
+> See CHANGELOG [6.4.51]. Original filing detail below.
+>
 > Two consumer filings surfaced 2026-07-11 (during the 6.4.50 sandhi fold + thoth
 > work); **user pinned BOTH to 6.4.51** (2026-07-11). Neither blocks the 6.4.50 tag.
 > Both are cross-OS-affecting, so they share one cross-OS gate run if bundled.

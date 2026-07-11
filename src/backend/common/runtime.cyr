@@ -345,10 +345,12 @@ fn RECFIX(S, idx): i64 {
 # images (the AGNOS authorship goal + v6.2.x bare-metal) were exactly the
 # unguarded path. See CHANGELOG [6.1.35].
 fn _check_output_cap(S, filesz): i64 {
-    if (filesz > 16777216) {
+    if (filesz > _output_cap) {
         syscall(SYS_WRITE, 2, "error: output too large (", 25);
         PRNUM(filesz);
-        syscall(SYS_WRITE, 2, "/16777216 bytes)", 16);
+        syscall(SYS_WRITE, 2, "/", 1);
+        PRNUM(_output_cap);
+        syscall(SYS_WRITE, 2, " bytes)", 7);
         var vcount = GVCNT(S);
         var top1_sz = 0; var top1_ix = 0 - 1;
         var top2_sz = 0; var top2_ix = 0 - 1;

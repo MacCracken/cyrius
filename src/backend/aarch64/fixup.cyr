@@ -705,7 +705,7 @@ fn EMITELF(S): i64 {
     # ~370 B overrun window just under 16 MB. Mirror EMITELF_OBJ. See CHANGELOG.
     _check_output_cap(S, shdr_off + 5 * 64);
 
-    var O = S + 0x4D9D000;
+    var O = _output_base;
     var op = 0;
     # ELF64 header (64 bytes)
     # e_ident: ELF magic + class64 + LE + version + ELFOSABI_NONE
@@ -884,7 +884,7 @@ fn EMITELF_KERNEL(S): i64 {
     # 5×64 section-header table past filesz. Mirror EMITELF_OBJ. See CHANGELOG.
     _check_output_cap(S, shdr_off + 5 * 64);
 
-    var O = S + 0x4D9D000;
+    var O = _output_base;
     var op = 0;
     # ELF64 header (64 bytes)
     S64(O + op, 0x00010102464C457F); op = op + 8;

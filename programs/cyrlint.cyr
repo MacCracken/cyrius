@@ -133,6 +133,90 @@ fn note_deferral(line, term): i64 {
     return 0;
 }
 
+# === Rule: error-enum namespace (v6.4.51; issue 2026-07-11) ===
+# Cyrius enum members are FLAT globals (an `enum` does not namespace them), so two
+# libs that both define a bare `ERR_TIMEOUT` collide BY NAME under textual include
+# + last-wins — a value-dependent miscompile, not just noise. Decision: sakshi, the
+# ecosystem base logger every AGNOS Cyrius project includes, OWNS the canonical
+# unprefixed `ERR_*` set; every OTHER lib must prefix its error-enum members
+# (`<LIB>_ERR_*`). This surfaces a bare `ERR_*` member in any NON-owner file as an
+# informational NOTE (does NOT increment `_warnings`, so it never fails the gate)
+# during the ecosystem migration window; it flips to a hard `warn` once the leaves
+# (sankoch/yukti/…) rename their members. Owner = sakshi, matched by path
+# (cyrius-side config — proposal option 1b). Ref:
+# docs/development/proposals/2026-07-11-error-enum-namespace-lint-gate.md
+var _err_enum_notes = 0;
+fn _lint_path_is_err_owner(path): i64 {
+    # bare `ERR_*` is owned by sakshi — a path containing "sakshi" IS the owner file
+    var pl = strlen(path);
+    var i = 0;
+    while (i + 6 <= pl) {
+        if (memeq(path + i, "sakshi", 6) == 1) { return 1; }
+        i += 1;
+    }
+    return 0;
+}
+fn note_err_enum(line): i64 {
+    syscall(1, 2, "  note line ", 12);
+    var eb[24];
+    var el = fmt_int_buf(line, &eb);
+    syscall(1, 2, &eb, el);
+    var em = ": bare ERR_* enum member - reserved for the sakshi base logger; a leaf lib must prefix its error enum (<LIB>_ERR_*) or the flat enum-const collides across libs (proposal 2026-07-11-error-enum-namespace-lint-gate)\n";
+    syscall(1, 2, em, strlen(em));
+    _err_enum_notes += 1;
+    return 0;
+}
+fn lint_error_enum_namespace(buf, total, path): i64 {
+    if (_lint_path_is_err_owner(path) == 1) { return 0; }   # sakshi owns bare ERR_*
+    var si = 0;
+    var lineno = 1;
+    var in_enum = 0;
+    while (si < total) {
+        # end of this line (position of '\n' or EOF)
+        var eol = si;
+        var atend = 0;
+        while (atend == 0) {
+            if (eol >= total) { atend = 1; }
+            elif (load8(buf + eol) == 10) { atend = 1; }
+            else { eol += 1; }
+        }
+        # first non-whitespace column of the line
+        var p = si;
+        var scanning = 1;
+        while (scanning == 1) {
+            if (p >= eol) { scanning = 0; }
+            elif (load8(buf + p) == 32) { p += 1; }
+            elif (load8(buf + p) == 9) { p += 1; }
+            else { scanning = 0; }
+        }
+        var is_comment = 0;
+        if (p < eol) {
+            if (load8(buf + p) == 35) { is_comment = 1; }   # '#'
+        }
+        var is_skip = _line_has(buf, si, eol, "#skip-lint");
+        if (is_comment == 0) {
+            if (is_skip == 0) {
+                if (in_enum == 0) {
+                    if (_line_has(buf, si, eol, "enum ") == 1) {
+                        if (_line_has(buf, si, eol, "{") == 1) { in_enum = 1; }
+                    }
+                } else {
+                    if (_line_has(buf, si, eol, "}") == 1) {
+                        in_enum = 0;
+                    } else {
+                        if (p + 4 <= eol) {
+                            if (memeq(buf + p, "ERR_", 4) == 1) { note_err_enum(lineno); }
+                        }
+                    }
+                }
+            }
+        }
+        si = eol + 1;
+        lineno += 1;
+    }
+    return 0;
+}
+
 fn lint_file(buf, total): i64 {
     var lineno = 1;
     var pos = 0;
@@ -818,6 +902,7 @@ fn main(): i64 {
 
     lint_file(buf, n);
     lint_globals_init_order(buf, n);
+    lint_error_enum_namespace(buf, n, path);
 
     # Deferral summary goes to STDERR (with its per-line notes), and BEFORE the
     # warnings line, so the canonical machine-readable last line of STDOUT stays

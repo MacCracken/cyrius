@@ -655,6 +655,12 @@ fn ESYSXLAT(S): i64 {
         # cbt hardcodes syscall(39). Encodings verified via llvm-mc + disasm on ecb.
         EW(S, 0xF102B11F); EW(S, 0x54000041); EW(S, 0xD2800290);  # getpid  172→20
         EW(S, 0xF102B51F); EW(S, 0x54000041); EW(S, 0xD28004F0);  # getppid 173→39
+        # v6.4.51: rt_sigaction (aarch64-Linux #134) → BSD sigaction 46, for
+        # signal_ignore(SIGPIPE) so a server on sock_send survives a peer
+        # disconnect on macOS instead of dying (SIGPIPE DoS). llvm-mc-verified:
+        # cmp x8,#134=0xF102191F, movz x16,#46=0xD28005D0. See signal_ignore
+        # (lib/syscalls.cyr) + issue 2026-07-11-sandhi-signal-ignore-stdlib-gap.
+        EW(S, 0xF102191F); EW(S, 0x54000041); EW(S, 0xD28005D0);  # rt_sigaction 134→46
         # v6.0.41: Darwin has NO getcwd syscall — the old `79→326` map was
         # bogus (slot 326 is unused → SIGSYS, which killed `cyrius deps`/
         # `build` for any [deps] manifest via _abs_path). cwd is now derived
@@ -954,6 +960,7 @@ fn _macho_arm_routes(n): i64 {
     if (n == 34) { return 1; }   if (n == 35) { return 1; }   # mkdirat / unlinkat
     if (n == 39) { return 1; }   if (n == 41) { return 1; }   # getpid (x86 hardcode) / socket
     if (n == 172) { return 1; }  if (n == 173) { return 1; }  # getpid / getppid (aarch64 stdlib nums, v6.3.44 ESYSXLAT 172→20 / 173→39)
+    if (n == 134) { return 1; }                                # rt_sigaction (v6.4.51 signal_ignore, ESYSXLAT 134→46)
     if (n == 42) { return 1; }   if (n == 43) { return 1; }   # connect / accept
     if (n == 48) { return 1; }   if (n == 49) { return 1; }   # shutdown / bind
     if (n == 50) { return 1; }   if (n == 53) { return 1; }   # listen / fchmodat (53=fchmodat on the a64 enum; socketpair is 199, below)
