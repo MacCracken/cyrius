@@ -38,7 +38,8 @@ ran through v5.x (the fixup table alone went 16K → 32K → 262K → 1M):
 - **fixup table** — grows to a 64M-entry ceiling (was a fixed 1M cap; the old
   `error: fixup table full` no longer fires)
 - **fn-tables** — grow + rehash to a 32,768-function ceiling (was a fixed 8192 cap)
-- **codebuf** — grows to a 64 MiB ceiling (was a fixed 3 MB cap)
+- **codebuf** — 8 MiB initial (off-heap), grows +8 MiB per step to a 64 MiB ceiling
+  (was a fixed 3 MB in-heap cap; growable-by-doubling since v6.2.0, 8 MiB + linear at v6.4.49)
 
 You'd only hit a ceiling on a genuinely pathological compilation. `cyrius capacity
 --check src/main.cyr` still reports headroom; splitting into separately-compiled

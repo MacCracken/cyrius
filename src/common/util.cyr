@@ -324,14 +324,14 @@ fn _fnt_copy_table(old, oc, nc): i64 {
 # 4 B slot) and the DSE/LASE peephole passes read+patch already-emitted code in
 # place — all reach codebuf through `_codebuf_base`, re-derived fresh each access,
 # so a relocation is transparent (the bytes are copied, offsets preserved). EB grows
-# 2x when cp nears the cap, with a 64 B guard band so the disp32 RMW (and any byte
+# +8 MiB when cp nears the cap, with a 64 B guard band so the disp32 RMW (and any byte
 # advanced past the EB cap-check) never crosses the buffer end. Ceiling 64 MiB (the
 # 16 MB output cap bounds real code well under it). Inited per-driver after the heap
 # is up; `_codebuf_cap==0` guards any pre-init call. Byte-identical under the old cap.
 var _codebuf_base = 0;
 var _codebuf_cap = 0;
 fn _codebuf_grow(S): i64 {
-    var nc = _codebuf_cap * 2;
+    var nc = _codebuf_cap + 8388608;   # v6.4.49: +8 MiB linear steps (was *2)
     if (nc > 67108864) {
         syscall(SYS_WRITE, 2, "error: codebuf exceeds 64 MiB (program too large)\n", 50);
         syscall(SYS_EXIT, 1);

@@ -6,6 +6,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.49] — 2026-07-10
+
+**Code buffer: 8 MiB initial + 8 MiB linear grow steps (was 3 MiB + doubling); fix the misleading "code buffer at N%" warning.**
+
+Prompted by a consumer (`thoth`) reporting "91% of the ~3.14 MB cap." Premise-check: the
+codebuf has been **growable since v6.2.0** (initial 3 MiB, doubled off-heap to a 64 MiB
+ceiling) — 91% was a *soft* warning against the small initial allocation, not a hard wall;
+the build succeeds and grows transparently. This release makes that headroom the default and
+stops the warning from reading like a hard cap.
+
+### Changed — growable codebuf (Phase 0 tuning)
+
+- **Initial codebuf cap 3 MiB → 8 MiB, off-heap.** The generated-machine-code buffer now
+  starts as an 8 MiB off-heap `alloc(8388608)` (cap 8,388,608) instead of the fixed 3 MiB
+  in-heap region at `S+0x41A000` (now vestigial — couldn't grow in place, boxed in by
+  `file_map` at `0x71A000`). Most compiles — cycc itself emits ~1.09 MB — now fit the initial
+  allocation with **zero grows** and no warning. All 6 native forks (`main.cyr` +
+  `main_win`/`main_aarch64{,_native,_macho}`/`main_x86_macho`). The cx bytecode backend keeps
+  its own separate fixed 512 KiB region (`0x54A000`) — untouched.
+- **Grow steps are +8 MiB linear (was ×2 doubling).** `_codebuf_grow` now adds 8 MiB per
+  grow (8→16→24→…→64), dividing evenly into the 64 MiB ceiling — no doubling overshoot (the
+  old 3→6→12→24→48→96 overshot 64 at the last step; ~48 MiB was usable). `src/common/util.cyr`.
+  Safe because `alloc()` extends on demand via fresh mmap chunks (not a fixed arena), and the
+  common ≤8 MiB compile does zero grows.
+
+### Fixed — the misleading "code buffer at N%" warning
+
+- The soft warning fired at 85% of the *current* cap and printed a **hardcoded**
+  `/3145728 bytes` denominator (stale after any grow) — reading like an impending hard
+  3.14 MB limit when the buffer auto-grows. It now fires at 75% of the real **64 MiB
+  ceiling** and reports `... % of 64 MiB ceiling (N bytes, +8 MiB/grow)`. A ~2.86 MB compile
+  (previously a scary "91%") is now a silent ~4.5%. `main.cyr` + `main_win.cyr`. (The
+  aarch64/macho drivers have no end-of-compile summary block, so the warning remains
+  x86-Linux + Win64 only — a pre-existing gap, noted for a future diagnostics pass.)
+
+### Verification
+
+- cycc self-host byte-identical (**1,091,032 B**, +32 B vs .48); seed→cybs→cycc byte-identical;
+  **check.sh 141/141**; 241 tcyr exit 0. **Grow path exercised** — a throwaway 64 KiB-cap build
+  forced a grow and produced byte-identical output to a normal compile (the +8 MiB grow emits
+  correct code). Cross-OS self-host byte-identical on **real hardware**: ecb (macOS arm64) +
+  cass (Windows PE, VirtualAlloc) + pi (aarch64). cycc codegen unaffected — cap/base are
+  runtime buffer sizing, not emitted code.
+- Bench: self_compile ~608 ms; cycc 1,091,032 B.
+
 ## [6.4.48] — 2026-07-10
 
 **Per-profile `distlib` `.deps` subsetting + sigil 3.11.1 refold (UEFI Secure Boot enrollment).**

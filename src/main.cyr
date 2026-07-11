@@ -752,10 +752,11 @@ _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
 _fnt_hash_mask = 8191;
 _fnt_cap = 8192;
-# Phase 0 (v6.2.0): growable codebuf — base at the original 3 MB region,
-# cap 3145728 (byte-identical under the old cap; EB grows + relocates off-heap
-# when cp nears it). The cx backend's own 0x54A000 codebuf is separate + fixed.
-_codebuf_base = S + 0x41A000;
+# Growable codebuf (Phase 0 v6.2.0; 8 MiB base + 8 MiB steps @ v6.4.49): base is
+# an off-heap 8 MiB alloc (cap 8388608); EB grows +8 MiB off-heap when cp nears
+# the cap, 64 MiB ceiling (util.cyr _codebuf_grow). Was a fixed 3 MiB in-heap
+# region @ S+0x41A000 pre-.49. cx's own 0x54A000 codebuf is separate + fixed.
+_codebuf_base = alloc(8388608);
 _varn_base = S + 0x11A000;
 _vars_base = S + 0x12A000;
 _vart_base = S + 0x13A000;
@@ -765,7 +766,7 @@ _vgsi_base = S + 0x1EC000;
 _venid_base = S + 0x204000;
 _var_cap = 8192;
 _vsgn_base = alloc(1048576 * 8);   # v6.4.23 signed-global sign-ext: max-sized (var-grow cap) so it never grows → NO cybs-fragile grow-chain change; 8MB lazy-mapped
-_codebuf_cap = 3145728;
+_codebuf_cap = 8388608;
 
 # Read input. Buffer is 256KB (v3.4.19, was 128KB before). If the source ever
 # fills the whole buffer, we error out explicitly instead of silently truncating
@@ -2117,11 +2118,11 @@ if (_stats_env == 0) {
         syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GSPOS(S));
         syscall(SYS_WRITE, 2, "/2097152 bytes)\n", 16);
     }
-    if (GCP(S) * 100 / _codebuf_cap >= 85) {
+    if (GCP(S) * 100 / 67108864 >= 75) {
         syscall(SYS_WRITE, 2, "warning: code buffer at ", 24);
-        PRNUM(GCP(S) * 100 / _codebuf_cap);
-        syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GCP(S));
-        syscall(SYS_WRITE, 2, "/3145728 bytes)\n", 16);
+        PRNUM(GCP(S) * 100 / 67108864);
+        syscall(SYS_WRITE, 2, "% of 64 MiB ceiling (", 21); PRNUM(GCP(S));
+        syscall(SYS_WRITE, 2, " bytes, +8 MiB/grow)\n", 21);
     }
 }
 EMITELF(S);
