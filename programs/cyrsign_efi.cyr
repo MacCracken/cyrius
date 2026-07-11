@@ -1,0 +1,83 @@
+# cyrsign-efi — native UEFI Authenticode PE signer (the sovereign `sbsign`).
+# Signs a PE32+ EFI Application for UEFI Secure Boot using sigil's shipped
+# authenticode_pe_sign (RSA-PKCS1v15 / SHA-256 / SpcIndirectData / WIN_CERTIFICATE).
+# Kept a SEPARATE binary (not folded into the `cyrius` CLI): sigil's RSA bignum
+# scratch banks are ~13 MB of reachable static data, which would bloat cyrius 24x.
+# `cyrius sign-efi` dispatches here. CHANGELOG [6.4.47] (arc #3 bite 1).
+#
+# usage: cyrsign-efi <pe-in> <key.der> <cert.der> <pe-out>
+#   key.der  : PKCS#1 or PKCS#8 DER RSA private key
+#   cert.der : DER X.509 signer certificate (embedded in the SignedData)
+# exit 0 = signed OK, 1 = crypto/IO error, 2 = usage.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/str.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/fmt.cyr"
+include "lib/args.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/slice.cyr"
+include "lib/tagged.cyr"
+include "lib/process.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/ct.cyr"
+include "lib/keccak.cyr"
+include "lib/thread_local.cyr"
+include "lib/thread.cyr"
+include "lib/bayan.cyr"
+include "lib/sigil.cyr"
+
+fn _cse_err(msg) { sys_write(2, "cyrsign-efi: ", 13); sys_write(2, msg, strlen(msg)); sys_write(2, "\n", 1); }
+
+fn _cse_read(path, out_len): i64 {
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) { return 0; }
+    var cap = 8388608;
+    var buf = alloc(cap);
+    var total = 0;
+    var n = sys_read(fd, buf + total, cap - total);
+    while (n > 0) { total = total + n; n = sys_read(fd, buf + total, cap - total); }
+    sys_close(fd);
+    store64(out_len, total);
+    return buf;
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    _ac_oids_init();
+    if (argc() < 5) { _cse_err("usage: cyrsign-efi <pe-in> <key.der> <cert.der> <pe-out>"); return 2; }
+
+    var pe_len = 0;   var pe   = _cse_read(argv(1), &pe_len);
+    var kl = 0;       var kder = _cse_read(argv(2), &kl);
+    var cl = 0;       var cder = _cse_read(argv(3), &cl);
+    if (pe_len == 0) { _cse_err("cannot read PE input"); return 1; }
+    if (kl == 0)     { _cse_err("cannot read key.der"); return 1; }
+    if (cl == 0)     { _cse_err("cannot read cert.der"); return 1; }
+
+    var key = alloc(RSAK_SIZE);
+    if (rsa_privkey_from_der(kder, kl, key) != 0) { _cse_err("rsa_privkey_from_der failed (need PKCS#1 or PKCS#8 DER)"); return 1; }
+
+    var out = alloc(pe_len + 65536);
+    var out_len = 0;
+    if (authenticode_pe_sign(pe, pe_len, key, cder, cl, out, &out_len) != 0) { _cse_err("authenticode_pe_sign failed"); return 1; }
+
+    var fd = sys_open(argv(4), 0x241, 0x1A4);       # O_WRONLY|O_CREAT|O_TRUNC, 0644
+    if (fd < 0) { _cse_err("cannot open output"); return 1; }
+    sys_write(fd, out, out_len);
+    sys_close(fd);
+
+    sys_write(1, "signed ", 7); sys_write(1, argv(1), strlen(argv(1)));
+    sys_write(1, " -> ", 4);    sys_write(1, argv(4), strlen(argv(4))); sys_write(1, "\n", 1);
+    return 0;
+}
+
+var _rc = main();
+syscall(60, _rc);

@@ -273,6 +273,29 @@ fn main(): i64 {
         if (dr > 0) { return dr; }
     }
 
+    # --- sign-efi: UEFI Authenticode PE signing ---
+    # Dispatches to the separate `cyrsign-efi` helper binary (sigil's RSA bignum
+    # scratch is ~13 MB of reachable static data — folding it into `cyrius` would
+    # bloat the CLI 24x). execve replaces this process, so the helper's exit code
+    # is ours. On non-Linux the sys_execve stub returns -1 → the error path fires.
+    # CHANGELOG [6.4.47] (arc #3 bite 1).
+    if (streq(cmd, "sign-efi") == 1) {
+        find_tools();
+        var _se_tool = make_path(_tools_dir, "cyrsign-efi");
+        var _se_argv: i64[16];
+        store64(&_se_argv, _se_tool);
+        var _se_ai = cmd_idx + 1;
+        var _se_ni = 1;
+        while (_se_ai < argc()) {
+            if (_se_ni < 15) { store64(&_se_argv + _se_ni * 8, argv(_se_ai)); _se_ni = _se_ni + 1; }
+            _se_ai = _se_ai + 1;
+        }
+        store64(&_se_argv + _se_ni * 8, 0);
+        sys_execve(_se_tool, &_se_argv, _envp);
+        _err("sign-efi: cyrsign-efi helper not found (Linux-only; build it with `cyrius build programs/cyrsign_efi.cyr build/cyrsign-efi`)");
+        return 127;
+    }
+
     # --- Build commands ---
     if (streq(cmd, "distlib") == 1) {
         # v6.2.50 Phase C: scan args for `--modular` (per-module dist + index);
