@@ -250,7 +250,7 @@ jobs:
           # Instead, compile key tools for macOS
           # cyrsign included so install/upgrade can verify Ed25519 release
           # signatures on x86_64-macOS too (CVE-13, v6.2.31).
-          for tool in cyrfmt cyrlint cyrdoc cyrsign cyrius-init; do
+          for tool in cyrfmt cyrlint cyrdoc cyrsign cyrsign-efi cyrius-init; do
             if [ -f "programs/${tool}.cyr" ]; then
               cat programs/${tool}.cyr | CYRIUS_MACHO=1 /tmp/cc5_fresh > ./build/${tool}_macho 2>/dev/null
               echo "${tool}_macho: $(wc -c < ./build/${tool}_macho) bytes"

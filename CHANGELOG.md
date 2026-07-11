@@ -6,6 +6,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.47] — 2026-07-10
+
+**`cyrius sign-efi` — native UEFI Secure Boot signing (roadmap arc #3, bite 1).**
+
+### Added — `cyrius sign-efi`
+
+- **`cyrius sign-efi <pe> <key.der> <cert.der> <out>`** Authenticode-signs a PE32+ EFI
+  Application for UEFI Secure Boot — the sovereign `sbsign`. Thin glue over sigil's
+  shipped `authenticode_pe_sign` (RSA-PKCS1v15 / SHA-256 / SpcIndirectData /
+  `WIN_CERTIFICATE`). The arc's de-risk confirmed the signature is one a **real UEFI
+  firmware accepts** — independent from-scratch PE-hash recompute + RSA `verifyrecover`
+  over a real gnoboot `BOOTX64.EFI` both matched.
+- **Helper-dispatcher shape.** `cyrius sign-efi` execs a separate `cyrsign-efi`
+  (`programs/cyrsign-efi.cyr`). sigil's RSA bignum scratch is ~13 MB of *reachable*
+  static data — folding it into the `cyrius` CLI would bloat it 24× (582 KB → 14 MB), so
+  the crypto lives in the helper and the CLI grows only **+144 B**. cbt still
+  cross-compiles to PE/Mach-O (the `sys_execve` stub errors gracefully off-Linux). New
+  `[bins]` entry; shipped alongside `cyrsign`/`cyrfmt`.
+- **Release-gated test** (`scripts/sign-efi-gate.sh` → check.sh): signs a synthetic PE
+  and independently verifies the Authenticode PE-hash arithmetic **and** the RSA
+  signature via openssl — the end-to-end round-trip the component KATs can't cover.
+- Zero compiler codegen — cycc byte-identical; lib / CLI / program only.
+
+### Notes
+- Arc #3 residual **(B) `EFI_SIGNATURE_LIST`** (`.esl` / `.auth`) enrollment generation
+  in sigil (PK/KEK/db keychain setup — distinct from *signing*) is a filed follow-on.
+
 ## [6.4.46] — 2026-07-10
 
 **`>>>` arithmetic right-shift operator (the drishti signed-shift fix) + stdlib foldin

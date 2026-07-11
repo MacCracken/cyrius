@@ -47,6 +47,7 @@ fn usage(): i64 {
     println("  tests [--aarch64] [dir]         recursively run all .tcyr under dir (default tests/)");
     println("  bench <bench.cyr>               compile + run benchmarks");
     println("  check [--with-deps] <src.cyr>  syntax check (default: standalone)");
+    println("  sign-efi <pe> <key.der> <cert.der> <out>   Authenticode-sign a PE for UEFI Secure Boot (via cyrsign-efi)");
     println("  self                            self-hosting check (cycc==cycc)");
     println("  clean                           remove build/ contents");
     println("  lib sync [--dry-run] [--full]   vendor declared [deps].stdlib from pin (--full = whole snapshot)");

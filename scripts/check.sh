@@ -57,3 +57,10 @@ fi
 # verification; the kernel actually running IS). Visibly skips when qemu is
 # absent rather than masquerading as green.
 sh "$ROOT/scripts/qemu-boot-gate.sh"
+
+# v6.4.47 (arc #3): UEFI Authenticode signing end-to-end gate — `cyrius sign-efi`
+# signs a synthetic PE and an independent oracle (openssl + from-scratch PE-hash)
+# confirms the signature is one a real UEFI firmware would accept. Skips if openssl
+# is absent. The sign path is lib/CLI-only (cycc byte-identical), so this is the
+# behavioral gate for the signer.
+sh "$ROOT/scripts/sign-efi-gate.sh"

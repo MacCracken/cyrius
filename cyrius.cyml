@@ -17,7 +17,7 @@ output = "build/cc5"
 # hardcoded lists was never updated. Now: add a binary here, every
 # consumer picks it up automatically.
 [release]
-bins = ["cycc", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cybs", "cyaudit", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner", "cyrsign", "cyrius-init", "cxvm"]
+bins = ["cycc", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cybs", "cyaudit", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner", "cyrsign", "cyrsign-efi", "cyrius-init", "cxvm"]
 # cx arc: cxvm (the .cyx runtime) rides bins — host-native, built from
 # programs/cxvm.cyr like cyrfmt/cyrlint. cycc_cx (the cx bytecode COMPILER, from
 # src/main_cx.cyr) rides cross_bins — a cross-target compiler rebuilt on demand,

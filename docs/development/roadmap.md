@@ -187,7 +187,7 @@ releases, each bundling several bites. Minors flex long.**
 |---|-----|--------------------:|:----------------:|--------|
 | 1 | **Packed SIMD compute** (f32-first, then integer; ML/AI) | **5–7 releases** | No | **✅ COMPLETE on all four backends — x86 SSE+AVX2 (.4–.9), aarch64 NEON (.28–.30), Win64 PE value-form (.31), cx bytecode (.32)** |
 | 2 | **Array-typed struct fields** | **3 releases (done)** | No | **✅ DONE — R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13 (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>)** |
-| 3 | **UEFI Secure Boot signing** | **3–5 releases** | No | order-committed |
+| 3 | **UEFI Secure Boot signing** | **1 release (was 3–5)** | No | **✅ SHIPPED bite 1 v6.4.47 — `cyrius sign-efi` (thin glue over sigil's shipped `authenticode_pe_sign`; de-risk confirmed UEFI-acceptable on real gnoboot EFI). Residual (B) `EFI_SIGNATURE_LIST` enrollment = filed follow-on. Premise-check shrank the arc: the crypto+Authenticode core was already shipped in sigil.** |
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
 | 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 5 releases (.17–.20, .22) | No | **✅ DONE. A=CLI, B=f64, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts), .22=cycc_cx cross-native (macOS/Win). Tail: f32/transcendentals fail loud.** |
 | 5b | **Async runtime — reactor + suspend/resume foundation, THEN tokio-parity primitives + IOCP-Windows** (unblocks stiva v3.1 + thoth `--win`) | 6–8 releases (shipped in ~13: .33–.45) | No | **✅ SHIPPED (.33–.45).** FOUNDATION-FIRST (reactor + the 5 tokio-parity primitives, .33–.41) → consolidation (.42) → IOCP-Windows "W" step: client (.43) / timers+subprocess+combinator-parity (.44) / AcceptEx server (.45), all target-agnostic and release-gated on real cass. `async_accept` closes the surface. Mid-body suspend/resume = FUTURE ARC (parked in roadmap-future: stackless coroutines; blocked on the v6.5.x IR substrate + no live consumer). `tantu` extraction = RESERVED future-minor deliverable (repo name held) — NOT sequenced. (pinned 2026-07-07, shaped 2026-07-09, shipped 2026-07-10; history: [`issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md), [`issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md`](issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md)) |
@@ -500,7 +500,15 @@ tables/lists in structs generally.
 
 ## Order-committed (length-blocked, not yet pinned)
 
-### 3 — UEFI Secure Boot signing — ~3–5 releases · NOT a release-blocker
+### 3 — UEFI Secure Boot signing — **✅ SHIPPED bite 1 (v6.4.47)** · NOT a release-blocker
+
+> **✅ v6.4.47 — `cyrius sign-efi` (A) shipped.** A separate `cyrsign-efi` helper (the 14 MB
+> crypto stays out of the CLI) wraps sigil's `authenticode_pe_sign`; `cyrius sign-efi` dispatches
+> to it. De-risked against a real gnoboot `BOOTX64.EFI`: independent PE-hash recompute + RSA
+> verify confirm a real UEFI would accept it (thin-glue, no PE-layout repair tail). Gate:
+> `scripts/sign-efi-gate.sh`. **Residual (B):** `EFI_SIGNATURE_LIST` `.esl`/`.auth` enrollment
+> generation in sigil (PK/KEK/db keychain setup — distinct from signing) is a follow-on; and
+> the belt-and-suspenders OVMF-secboot QEMU boot. Original framing below (kept for context):
 
 Give the sovereign toolchain a **`cyrius sign-efi`** path (Authenticode-sign a
 `CYRIUS_TARGET_EFI` PE) + EFI key-enrollment artifacts. Consumer-filed by **gnoboot**
