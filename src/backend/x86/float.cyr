@@ -56,6 +56,30 @@ fn EMIT_F64_BINOP(S, fop): i64 {
     return 0;
 }
 
+# v6.4.56 (scalar-float D2) — f32 scalar arith: dst = a OP b on IEEE-754 single
+# bit patterns. Mirror of EMIT_F64_BINOP but single-precision: transfer via movd
+# (f32 lives in the low 32 bits) instead of movq, and addss/subss/mulss/divss
+# (F3 0F 58/5C/59/5E C1) instead of the F2-prefixed sd forms. movd eax, xmm0 on
+# extract zero-extends rax, keeping the stored slot's high half clean (matching
+# the f32 storage convention: bits in low 32, high 32 = 0). fop 0=add 1=sub 2=mul
+# 3=div. All encodings llvm-mc-verified. cycc uses no scalar f32 → never emitted
+# on the self-host input (byte-identical).
+fn EMIT_F32_BINOP(S, fop): i64 {
+    EPOPC(S);
+    EPUSHR(S);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC8);              # mov rax, rcx  (a)
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xC0); # movd xmm0, eax  (a)
+    EPOPR(S);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax  (b)
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xC9); # movd xmm1, ecx  (b)
+    if (fop == 0) { EB(S, 0xF3); EB(S, 0x0F); EB(S, 0x58); EB(S, 0xC1); }  # addss
+    if (fop == 1) { EB(S, 0xF3); EB(S, 0x0F); EB(S, 0x5C); EB(S, 0xC1); }  # subss
+    if (fop == 2) { EB(S, 0xF3); EB(S, 0x0F); EB(S, 0x59); EB(S, 0xC1); }  # mulss
+    if (fop == 3) { EB(S, 0xF3); EB(S, 0x0F); EB(S, 0x5E); EB(S, 0xC1); }  # divss
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x7E); EB(S, 0xC0); # movd eax, xmm0  (result, zero-ext)
+    return 0;
+}
+
 fn EMIT_FLOAT_LIT(S, fval): i64 {
     var numer = fval & 0xFFFFFFFF;
     var denom = (fval >> 32) & 0xFFFFFFFF;

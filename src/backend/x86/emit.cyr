@@ -2615,6 +2615,48 @@ fn EF64_CMP(S, tok): i64 {
     return 0;
 }
 
+# v6.4.56 (scalar-float D2) — f32 scalar compare. Mirror of EF64_CMP but single-
+# precision: transfer via movd (f32 bits in low 32) and ucomiss (0F 2E C1, NO 66
+# prefix) instead of the movq shuttles + ucomisd (66 0F 2E C1). ucomiss sets
+# CF/ZF/PF exactly as ucomisd, so the setcc ladder AND the IEEE-754 NaN parity
+# fold (setnp/and for ordered ==,<,<=,eq,lt; setp/or for !=) are byte-for-byte
+# reusable. Entry (from _PLOGIC_ATOM): rcx = a (lhs), rax pushed = b (rhs).
+fn EF32_CMP(S, tok): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC8);              # mov rax, rcx  (a)
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xC0); # movd xmm0, eax  (a)
+    EPOPR(S);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);              # mov rcx, rax  (b)
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xC9); # movd xmm1, ecx  (b)
+    EB(S, 0x0F); EB(S, 0x2E); EB(S, 0xC1);              # ucomiss xmm0, xmm1
+    EB(S, 0xB8); EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);  # mov eax, 0
+    if (tok == 68) { EB(S, 0x0F); EB(S, 0x94); EB(S, 0xC0); }  # sete al   (eq builtin)
+    if (tok == 69) { EB(S, 0x0F); EB(S, 0x92); EB(S, 0xC0); }  # setb al   (lt builtin, ordered <)
+    if (tok == 70) { EB(S, 0x0F); EB(S, 0x97); EB(S, 0xC0); }  # seta al   (gt builtin, ordered >)
+    if (tok == 17) { EB(S, 0x0F); EB(S, 0x94); EB(S, 0xC0); }  # ==  sete
+    if (tok == 18) { EB(S, 0x0F); EB(S, 0x95); EB(S, 0xC0); }  # !=  setne
+    if (tok == 19) { EB(S, 0x0F); EB(S, 0x92); EB(S, 0xC0); }  # <   setb
+    if (tok == 20) { EB(S, 0x0F); EB(S, 0x97); EB(S, 0xC0); }  # >   seta
+    if (tok == 21) { EB(S, 0x0F); EB(S, 0x96); EB(S, 0xC0); }  # <=  setbe
+    if (tok == 22) { EB(S, 0x0F); EB(S, 0x93); EB(S, 0xC0); }  # >=  setae
+    var nan_and = 0;
+    if (tok == 68) { nan_and = 1; }
+    if (tok == 69) { nan_and = 1; }
+    if (tok == 17) { nan_and = 1; }
+    if (tok == 19) { nan_and = 1; }
+    if (tok == 21) { nan_and = 1; }
+    if (nan_and == 1) {
+        EB(S, 0x0F); EB(S, 0x9B); EB(S, 0xC1);  # setnp cl
+        EB(S, 0x20); EB(S, 0xC8);               # and al, cl
+    }
+    if (tok == 18) {
+        EB(S, 0x0F); EB(S, 0x9A); EB(S, 0xC1);  # setp cl
+        EB(S, 0x08); EB(S, 0xC8);               # or al, cl
+    }
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);  # movzx eax, al
+    return 0;
+}
+
 # Emit call rel32 to known target
 fn ECALLTO(S, target): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit(S, IR_CALL_KNOWN, 0, 0, target); }

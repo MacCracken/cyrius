@@ -935,6 +935,34 @@ fn EMIT_F64_BINOP(S, op): i64 {
     CX_EMIT(S, 84 + op, 0, 1, 0);   # f{add,sub,mul,div} r0, r1, r0  = a OP b
     return 0;
 }
+# v6.4.56 (scalar-float D2) — f32 scalar arith. cxvm has no native f32 ALU op:
+# widen both operands to f64 (f32widen=102), do the f64 op (84+op), narrow the
+# result back to f32 bits (f32narrow=103). Frontend leaves a on stack, b in r0.
+fn EMIT_F32_BINOP(S, op): i64 {
+    EPOPC(S);                       # r1 = a (left, f32 bits); r0 = b (right, f32 bits)
+    CX_EMIT(S, 102, 1, 1, 0);       # f32widen r1  = (f64)a
+    CX_EMIT(S, 102, 0, 0, 0);       # f32widen r0  = (f64)b
+    CX_EMIT(S, 84 + op, 0, 1, 0);   # f{add,sub,mul,div} r0, r1, r0  = a OP b (f64)
+    CX_EMIT(S, 103, 0, 0, 0);       # f32narrow r0  = (f32 bits)result
+    return 0;
+}
+# v6.4.56 (scalar-float D2) — f32 scalar compare. Widen both to f64, then reuse
+# the exact fcmp opcode select from EF64_CMP. Frontend leaves a in r1, b on stack.
+fn EF32_CMP(S, tok): i64 {
+    EPOPR(S);                       # r0 = b (right); r1 = a (left)
+    CX_EMIT(S, 102, 1, 1, 0);       # f32widen r1  = (f64)a
+    CX_EMIT(S, 102, 0, 0, 0);       # f32widen r0  = (f64)b
+    var op = 94;                    # default feq (== tok 17, eq builtin tok 68)
+    if (tok == 69) { op = 90; }     # lt builtin → flt
+    if (tok == 70) { op = 92; }     # gt builtin → fgt
+    if (tok == 19) { op = 90; }     # <   → flt
+    if (tok == 20) { op = 92; }     # >   → fgt
+    if (tok == 21) { op = 91; }     # <=  → fle
+    if (tok == 22) { op = 93; }     # >=  → fge
+    if (tok == 18) { op = 95; }     # !=  → fne
+    CX_EMIT(S, op, 0, 1, 0);        # fcmp r0, r1, r0  = (a CMP b) ? 1 : 0
+    return 0;
+}
 fn EI2F(S): i64 { CX_EMIT(S, 88, 0, 0, 0); return 0; }   # i2f r0, r0
 fn EF2I(S): i64 { CX_EMIT(S, 89, 0, 0, 0); return 0; }   # f2i r0, r0
 fn EF32_FROM(S): i64 { CX_EMIT(S, 103, 0, 0, 0); return 0; }   # v6.4.32: f32narrow r0 (f64→f32 bits)

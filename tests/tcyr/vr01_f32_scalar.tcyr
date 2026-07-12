@@ -1,0 +1,25 @@
+# vr01_f32_scalar.tcyr — v6.4.56: f32 scalar arithmetic (+,-,*,/) + comparison. cyrius boxes an
+# f32 as its IEEE-754 bit-pattern in the low 32 bits of the GP accumulator; an f32-typed value
+# routes +,-,*,/ to EMIT_F32_BINOP (x86 addss/subss/mulss/divss, aarch64 NEON fadd/fsub/fmul/fdiv
+# on S-regs, cx widen-op-narrow) and comparisons to EF32_CMP (ucomiss / fcmp / widen+fcmp), with
+# the same NaN-correct ladder as the f64 path. Construct via f32_from(f64_from(int)); extract via
+# f64_to(f32_to(x)) (f32_from takes an f64 = cvtsd2ss; f32_to yields f64 = cvtss2sd).
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    test_group("f32 scalar arithmetic + comparison (single-precision)");
+    var a: f32 = f32_from(f64_from(6));
+    var b: f32 = f32_from(f64_from(2));
+    assert_eq(f64_to(f32_to(a * b)), 12, "f32 mul: 6*2 = 12 (mulss)");
+    assert_eq(f64_to(f32_to(a + b)),  8, "f32 add: 6+2 = 8 (addss)");
+    assert_eq(f64_to(f32_to(a - b)),  4, "f32 sub: 6-2 = 4 (subss)");
+    assert_eq(f64_to(f32_to(a / b)),  3, "f32 div: 6/2 = 3 (divss)");
+    var gt = 0; if (a > b) { gt = 1; }  assert_eq(gt, 1, "f32 cmp: 6 > 2");
+    var le = 0; if (b <= a) { le = 1; } assert_eq(le, 1, "f32 cmp: 2 <= 6 (NaN-safe ls/setbe)");
+    var eq = 0; if (a == a) { eq = 1; } assert_eq(eq, 1, "f32 cmp: a == a");
+    var ne = 0; if (a != b) { ne = 1; } assert_eq(ne, 1, "f32 cmp: 6 != 2");
+    return assert_summary();
+}
+var rc = main();
+syscall(60, rc);

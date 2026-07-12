@@ -1535,6 +1535,11 @@ fn PARSE_FNCALL(S, noff): i64 {
         ECALLFIX(S, fi);
     }
     ECALLCLEAN(S, _fc_int_argc);
+    # v6.4.56 D3 — a call result's type is i64, not its LAST argument's expr-type
+    # (which the arg parse leaked). Normalize so an outer op on the call result
+    # doesn't mis-see it as f64. (Also the D1 seam: a scalar-f64-returning callee
+    # is re-tagged F64_TYID at the call site in parse_expr after this returns.)
+    SESTYPE(S, 0);
     return 0;
 }
 

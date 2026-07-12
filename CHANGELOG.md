@@ -6,6 +6,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.56] — 2026-07-12
+
+**f32 scalar arithmetic + comparison, and a stricter float typecheck — completing the scalar-float slot (roadmap #2) begun in v6.4.55 (scalar f64 return).**
+
+### Added — f32 scalar arithmetic (+,−,*,/) + comparison (`src/backend/{x86,aarch64,cx}`, `parse_expr.cyr`)
+
+- An `f32`-typed value now dispatches `+ − * /` to `EMIT_F32_BINOP` and comparisons to `EF32_CMP`,
+  mirroring the f64 path in single precision. cyrius boxes an f32 as its IEEE-754 bit-pattern in the
+  low 32 bits of the GP accumulator; the f32-local load now propagates **F32_TYID** so the operator
+  dispatch routes to the f32 emitters instead of silently integer-adding the bit pattern.
+- Per backend: **x86/PE/Mach-O** `movd` shuttles + `addss/subss/mulss/divss` + `ucomiss` (reusing
+  the EF64_CMP setcc + IEEE-754 NaN parity-fold ladder byte-for-byte — `ucomiss` sets CF/ZF/PF like
+  `ucomisd`); **aarch64** NEON S-regs `fmov s,w` + `fadd/fsub/fmul/fdiv s0,s0,s1` + `fcmp` (same cset
+  table incl. the NaN-safe `<=`); **cx** widen-op-narrow (`f32widen`/f64-op/`f32narrow`). All
+  encodings llvm-mc-verified. Construct via `f32_from(f64_from(int))`, extract via
+  `f64_to(f32_to(x))`. cycc self-hosts **byte-identical** (cycc uses no scalar f32 → the emitters are
+  present but never called on the self-compile).
+
+### Added — stricter scalar-float typecheck (WARN-only) (`parse_expr.cyr`, `parse_fn.cyr`)
+
+- A new **warning** (not error — an error would break the legal i64-boxed float idiom, ADR-002) fires
+  when a plain `+ − * /` on an `f64`-typed value has a **non-f64 right operand** — the exact trap where
+  `x + 1` silently means `x + <int-1-as-a-denormal>`, not `x + 1.0`. Gated on the default-on
+  `CYRIUS_TYPE_CHECK`; writes to stderr.
+- Two **SESTYPE-normalization bug fixes** that the check rests on: a `f64_lt(..)`-style builtin result
+  is now correctly typed **i64-boolean** (was leaking F64_TYID, mis-routing an outer `f64_lt(..) == 1`
+  through the f64-compare path), and a **call result** is typed i64 rather than leaking its last
+  argument's expr-type (this is also the D1 seam — a scalar-f64-returning callee is re-tagged F64_TYID
+  at the call site).
+- **Deferred**: the f64/int **comparison**-mix warning (the `_FLT_TYPE_WARN` kind-0 branch exists but
+  its call sites are unwired) — it false-positives on the common `if (x > 0)` f64 sign-check (literal
+  0's bits equal 0.0) and needs literal-0 suppression. Filed:
+  [compare-mix warning literal suppression](docs/development/issues/2026-07-12-f64-compare-mix-warning-literal-suppression.md).
+
+### Verification
+
+- cycc self-host fixpoint byte-identical; seed-derive (`seed→cybs→cycc`) OK; check.sh 142.
+- **Cross-OS: pi + ecb + cass all `SELFHOST_OK` + `LIBTEST_OK`** — `vr01_f32_scalar.tcyr` (f32
+  +,−,*,/ + 4 comparisons) passes on **real aarch64 NEON + macOS + Windows PE** + x86 + cx; the new
+  backend emitters self-host byte-identical on every host. **Honest byte-impact**: cycc self-host
+  byte-identical, and the two SESTYPE-normalization fixes change ~12 tcyr binaries' bytes — all
+  **behavior-preserving** (full corpus passes), NOT "0 diff".
+- cycc x86 1,095,296 B (+4,192 vs v6.4.55 — the f32 emitters + typecheck code; size-quantized);
+  self_compile ~614 ms.
+
 ## [6.4.55] — 2026-07-11
 
 **Scalar `f64` as a function RETURN type (returned in xmm0 per SysV) — the ergonomic unlock for the f64 libraries (naad/hisab/goonj) so they can read as `fn osc_next_sample(): f64` instead of boxing every double in an `i64`.**

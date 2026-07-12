@@ -1389,6 +1389,28 @@ fn EF64_CMP(S, tok): i64 {
     return 0;
 }
 
+# v6.4.56 (scalar-float D2) — f32 scalar compare. Mirror of EF64_CMP with S-regs:
+# fmov s,w + fcmp s0,s1 (0x1E212000). fcmp on S-regs sets the same NZCV as the
+# D-reg form, so the cset condition table (incl. the v6.2.41 `<=` = cset ls NaN
+# fix) is reused unchanged. Entry (from _PLOGIC_ATOM): a in x1, b in x0.
+fn EF32_CMP(S, tok): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EW(S, 0x1E270020);  # fmov s0, w1   — s0 = a
+    EPOPR(S);            # pop b back to x0
+    EW(S, 0x1E270001);  # fmov s1, w0   — s1 = b
+    EW(S, 0x1E212000);  # fcmp s0, s1
+    if (tok == 68) { EW(S, 0x9A9F17E0); }  # cset x0, eq
+    if (tok == 69) { EW(S, 0x9A9F57E0); }  # cset x0, mi  (ordered <)
+    if (tok == 70) { EW(S, 0x9A9FD7E0); }  # cset x0, gt  (ordered >)
+    if (tok == 17) { EW(S, 0x9A9F17E0); }  # ==  cset eq
+    if (tok == 18) { EW(S, 0x9A9F07E0); }  # !=  cset ne
+    if (tok == 19) { EW(S, 0x9A9F57E0); }  # <   cset mi
+    if (tok == 20) { EW(S, 0x9A9FD7E0); }  # >   cset gt
+    if (tok == 21) { EW(S, 0x9A9F87E0); }  # <=  cset ls  (NaN-safe, matches EF64_CMP)
+    if (tok == 22) { EW(S, 0x9A9FB7E0); }  # >=  cset ge
+    return 0;
+}
+
 # Emit BL to known target
 fn ECALLTO(S, target): i64 {
     var cp = GCP(S);
@@ -2326,6 +2348,21 @@ fn EMIT_F64_BINOP(S, fop): i64 {
     if (fop == 2) { EW(S, 0x1E610800); }   # fmul d0, d0, d1
     if (fop == 3) { EW(S, 0x1E611800); }   # fdiv d0, d0, d1
     EW(S, 0x9E660000);   # fmov x0, d0   — extract result bit pattern
+    return 0;
+}
+
+# v6.4.56 (scalar-float D2) — f32 scalar arith. Mirror of EMIT_F64_BINOP with
+# single-precision S-regs: fmov s,w (bits→reg) / fmov w,s (reg→bits) and the
+# f{add,sub,mul,div} s0,s0,s1 forms. All S-reg encodings llvm-mc-verified.
+fn EMIT_F32_BINOP(S, fop): i64 {
+    EW(S, 0x1E270001);   # fmov s1, w0   — s1 = b (second arg)
+    EPOPR(S);            # pop a into x0
+    EW(S, 0x1E270000);   # fmov s0, w0   — s0 = a (first arg)
+    if (fop == 0) { EW(S, 0x1E212800); }   # fadd s0, s0, s1
+    if (fop == 1) { EW(S, 0x1E213800); }   # fsub s0, s0, s1
+    if (fop == 2) { EW(S, 0x1E210800); }   # fmul s0, s0, s1
+    if (fop == 3) { EW(S, 0x1E211800); }   # fdiv s0, s0, s1
+    EW(S, 0x1E260000);   # fmov w0, s0   — extract result bit pattern (zero-ext into x0)
     return 0;
 }
 
