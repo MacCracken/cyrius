@@ -852,6 +852,7 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 72, 0x200005C);   # fcntl    72 → 92
     _msx(S, 77, 0x20000C9);   # ftruncate 77 → 201
     _msx(S, 82, 0x2000080);   # rename   82 → 128
+    _msx(S, 74, 0x200005F);   # fsync    74 → BSD 95 (v6.4.57 xfsync durability half of file_write_atomic)
     _msx(S, 83, 0x2000088);   # mkdir    83 → 136
     _msx(S, 84, 0x2000089);   # rmdir    84 → 137
     _msx(S, 87, 0x200000A);   # unlink   87 → 10
@@ -2122,6 +2123,76 @@ fn EDELETEF_PE(S): i64 {
 
     EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
     EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63
+    return 0;
+}
+
+# v6.4.57: MoveFileExW(lpExistingFileName, lpNewFileName, MOVEFILE_REPLACE_EXISTING)
+# — the Windows half of lib/io.cyr's portable file_rename (POSIX rename(2) / AGNOS
+# 4-arg sys_rename). syscall(0xF034, old, new): stack on entry (top->bottom):
+# [new] [old] [sc_nr=0xF034]. BOTH paths are widened inline UTF-8->UTF-16LE (ASCII
+# fast path, same widener as EOPEN_PE/ECREATEDIR_PE) into two 528-byte frame
+# buffers, then rcx=old_wide, rdx=new_wide, r8d=1 (MOVEFILE_REPLACE_EXISTING) and
+# kernel32!MoveFileExW is called. BOOL result -> 0 (success) / -1 (fail) via the
+# EDELETEF_PE dec+sar idiom. Frame (rbx-anchored + and rsp,-16, so alignment-
+# agnostic): 0x460 = 32 shadow + 528 old + 528 new + 32 slack, 16-aligned at CALL.
+fn EMOVEFILEEX_PE(S): i64 {
+    _pe_ensure_movefileex(S);
+    var mv_idx = _pe_movefileex_get();
+
+    EB(S, 0x58);                                        # pop rax (new ptr)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash new)
+    EB(S, 0x58);                                        # pop rax (old ptr)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax (stash old)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+
+    # anchor + align (rbx-preserved; alignment-agnostic)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);              # sub rsp, 0x460
+    EB(S, 0x60); EB(S, 0x04); EB(S, 0x00); EB(S, 0x00);
+
+    # widen old (r10) -> [rsp+0x20]
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD6);              # mov rsi, r10
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x20); # lea rdi, [rsp+0x20]
+    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
+    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov [rdi+rcx*2], ax
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
+    EB(S, 0x74); EB(S, 0x0C);                           # jz old_done (+12)
+    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
+    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
+    EB(S, 0x73); EB(S, 0x02);                           # jae old_done (+2)
+    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_old (-24)
+    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # old_done: NUL WCHAR
+
+    # widen new (r11) -> [rsp+0x230]
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0xBC); EB(S, 0x24); EB(S, 0x30); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00); # lea rdi, [rsp+0x230]
+    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
+    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov [rdi+rcx*2], ax
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
+    EB(S, 0x74); EB(S, 0x0C);                           # jz new_done (+12)
+    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
+    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
+    EB(S, 0x73); EB(S, 0x02);                           # jae new_done (+2)
+    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_new (-24)
+    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # new_done: NUL WCHAR
+
+    # args: rcx = old_wide, rdx = new_wide, r8d = MOVEFILE_REPLACE_EXISTING
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x20); # lea rcx, [rsp+0x20]
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x94); EB(S, 0x24); EB(S, 0x30); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00); # lea rdx, [rsp+0x230]
+    EB(S, 0x41); EB(S, 0xB8); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 1
+
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+MoveFileExW]
+    _pe_iat_fixup_add(S, GCP(S), mv_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
+    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
     return 0;
 }
 

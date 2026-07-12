@@ -111,6 +111,7 @@ fn ECLOSESOCKET_PE(S) { return 0; }  # v6.4.43 ws2_32!closesocket (x86-only)
 fn EWSALASTERR_PE(S) { return 0; }   # v6.4.43 ws2_32!WSAGetLastError (x86-only)
 fn EBIND_PE(S) { return 0; }         # v6.4.43 ws2_32!bind (x86-only)
 fn ELISTEN_PE(S) { return 0; }       # v6.4.44 ws2_32!listen (x86-only)
+fn EMOVEFILEEX_PE(S) { return 0; }   # v6.4.57 kernel32!MoveFileExW (x86-only)
 fn EGETSOCKOPT_PE(S) { return 0; }   # v6.4.43 ws2_32!getsockopt (x86-only)
 fn EWSAIOCTL_PE(S) { return 0; }     # v6.4.43 ws2_32!WSAIoctl / ConnectEx fetch (x86-only)
 fn ECONNECT_PE(S) { return 0; }      # v6.4.43 ws2_32!connect (x86-only)
@@ -668,6 +669,12 @@ fn ESYSXLAT(S): i64 {
         # no mapping; fcntl does. fcntl: x86 72 → BSD 92.
         EW(S, 0xF101211F); EW(S, 0x54000041); EW(S, 0xD2800B90);  # fcntl 72→92
         EW(S, 0xF101491F); EW(S, 0x54000041); EW(S, 0xD2801010);  # rename 82→128
+        # v6.4.57: fsync 74→BSD 95 (Darwin arm64). syscalls_aarch64_linux.cyr (the peer
+        # arm-macho pulls) issues x86 number 74; untranslated it ran BSD 74 (mprotect) —
+        # the durability half of lib/io.cyr file_write_atomic was a wrong syscall on
+        # macOS. Pure renumber (fsync takes just fd; x16=95). cmp x8,#74=0xF101291F;
+        # movz x16,#95=0xD2800BF0 (llvm-mc -triple aarch64-apple-darwin verified).
+        EW(S, 0xF101291F); EW(S, 0x54000041); EW(S, 0xD2800BF0);  # fsync  74→95
         EW(S, 0xF101611F); EW(S, 0x54000041); EW(S, 0xD2800730);  # symlink 88→57
         # v6.1.20: aarch64-Linux at-family numbers the macho branch never mapped —
         # sys_stat/lstat/fstatat (262), sys_link/linkat (37), sys_rename/renameat
@@ -961,6 +968,7 @@ fn _macho_arm_routes(n): i64 {
     if (n == 39) { return 1; }   if (n == 41) { return 1; }   # getpid (x86 hardcode) / socket
     if (n == 172) { return 1; }  if (n == 173) { return 1; }  # getpid / getppid (aarch64 stdlib nums, v6.3.44 ESYSXLAT 172→20 / 173→39)
     if (n == 134) { return 1; }                                # rt_sigaction (v6.4.51 signal_ignore, ESYSXLAT 134→46)
+    if (n == 74) { return 1; }                                 # fsync (v6.4.57 xfsync, ESYSXLAT 74→95)
     if (n == 42) { return 1; }   if (n == 43) { return 1; }   # connect / accept
     if (n == 48) { return 1; }   if (n == 49) { return 1; }   # shutdown / bind
     if (n == 50) { return 1; }   if (n == 53) { return 1; }   # listen / fchmodat (53=fchmodat on the a64 enum; socketpair is 199, below)
