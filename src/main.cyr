@@ -1790,30 +1790,14 @@ while (wfi < wfc) {
 if (_init_km == 1) {
     EMIT_GVAR_INITS(S);
 } else {
-    # v6.0.58: x86-macОS argv/env capture ("layer 6"). Emit `call
-    # _macho_capture_args` HERE — after EMIT_GVAR_INITS above (so the
-    # `_macho_init_rsp = 0` initializer already ran and won't clobber us) but
-    # BEFORE PARSE_PROG (so it runs ahead of any top-level `var r = main();
-    # syscall(60, r)` that would exit before the auto-call-main below — the case
-    # for cyrfmt/cyrlint/cyrdoc and the cyrius wrapper). rsp here still = the
-    # LC_UNIXTHREAD init stack ([rsp]=argc, inline argv). The fn parks the init
-    # rsp into _macho_init_rsp; argc()/argv()/_macho_fill_environ read it. Emits
-    # nothing if the program omits args_macos.cyr (e.g. cycc, reads stdin).
-    # _TARGET_MACHO==1 is x86-macho; ==2 is arm64 (its own stp/x28 prologue).
-    if (_TARGET_MACHO == 1) {
-        var _mcap_found = _find_fn_by_name(S, "_macho_capture_args", 19);
-        if (_mcap_found >= 0) {
-            var _mcap_off = L64(_fnt_offsets + _mcap_found * 8);
-            if (_mcap_off >= 0) { ECALLTO(S, _mcap_off); }
-        }
-    }
-    # v6.1.32: the agnos init-rsp capture moved UP to the entry landing (the r15
-    # park next to the x86-macho one). The v6.1.14 `call _agnos_capture_rsp` that
-    # used to be HERE ran AFTER EMIT_GVAR_INITS, so a `var r = main();` gvar
-    # initializer (emitted inside the gvar-init block) executed main() before the
-    # capture → argc()==0 (attn11 issue
-    # 2026-06-10-cyrius-agnos-capture-after-gvar-init-call). The landing park is
-    # immune to that. See the park above + lib/args_agnos.cyr.
+    # v6.4.59: the x86-macho argv/env capture is done by the r15 landing park at
+    # the entry (main.cyr's macho park + main_x86_macho.cyr:505), BEFORE the
+    # gvar-inits — the same fix agnos got in v6.1.32. The old post-gvar-init `call
+    # _macho_capture_args` / `call _agnos_capture_rsp` here was wrong: a top-level
+    # `var r = main(); syscall(60, r)` (cyrfmt/cyrlint/cyrdoc + the cyrius wrapper)
+    # is a gvar-init, so main() ran BEFORE the capture → argc()==0 / env unread
+    # (issue 2026-06-10-cyrius-agnos-capture-after-gvar-init-call). The landing
+    # park is immune; _macho_argv_base()/argc()/argv()/_read_env read r15 directly.
     # Parse main code (top-level statements)
     PARSE_PROG(S);
 }

@@ -517,19 +517,11 @@ while (escan == 1) {
 EMIT_GVAR_INITS(S);
 STI(S, gvar_save_ti);
 
-# v6.0.58: x86-macОS argv/env capture ("layer 6"). Emit `call
-# _macho_capture_args` HERE — after the gvar-inits (so the `_macho_init_rsp = 0`
-# initializer has already run and won't clobber us) but BEFORE PARSE_PROG (so it
-# runs ahead of any top-level `var r = main(); syscall(60, r)` that would exit
-# before the auto-call-main below). rsp here still = the LC_UNIXTHREAD init stack
-# ([rsp]=argc, inline argv) — gvar-inits don't net-move it. The fn parks the init
-# rsp into _macho_init_rsp; argc()/argv()/_read_env read it. Emits nothing if the
-# program omits args_macos.cyr (e.g. cycc, reads stdin).
-var _mcap_found = _find_fn_by_name(S, "_macho_capture_args", 19);
-if (_mcap_found >= 0) {
-    var _mcap_off = L64(_fnt_offsets + _mcap_found * 8);
-    if (_mcap_off >= 0) { ECALLTO(S, _mcap_off); }
-}
+# v6.4.59: x86-macho argv/env capture is done by the `mov r15, rsp` landing park
+# above (line ~505), BEFORE the gvar-inits — argc()/argv()/_read_env read r15.
+# The old post-gvar-init `call _macho_capture_args` was retired (it ran after a
+# top-level `var r = main()` gvar-init, so main() saw argc()==0); cycc itself
+# never had the fn anyway (reads stdin, no args_macos.cyr). See args_macos.cyr.
 
 # Parse main code (top-level statements)
 PARSE_PROG(S);
