@@ -3178,6 +3178,9 @@ fn PARSE_FN_DEF(S): i64 {
             # fall through to the undefined-variable path or read from
             # the slot's literal value.
             var pt_sid = 0;
+            # v6.4.57 (Gap A) — scalar f64/f32 param tag (declared per-param here,
+            # set from the type-name byte-match below, applied at the SLTYPE site).
+            var pt_float = 0;
             # v5.10.38 — hoist pt_simd_class out of the nested type-
             # annotation block so the SIMD vs int-class path branch
             # below can see it. 0 = int-class (default), 1 = f64v2,
@@ -3201,6 +3204,17 @@ fn PARSE_FN_DEF(S): i64 {
                     # PARSE_FNCALL consults the masks for call-site type checks
                     # and value-form SIMD-arg routing.
                     var _ptc = _classify_param_type(S, tnoff);
+                    # v6.4.57 (Gap A) — scalar f64/f32 param (exact "f64\0" / "f32\0").
+                    # Only when _ptc == 0 so the SIMD f*v* vectors (which share the
+                    # "f64"/"f32" prefix) are already caught by the classifier; the
+                    # 4-byte mask with a trailing nul rules out "f32v8" etc. Applied to
+                    # the int-class local's SLTYPE below (scalar f64/f32 travel in an int
+                    # arg-reg as the raw IEEE bit-pattern, matching the return convention).
+                    if (_ptc == 0) {
+                        var _pfn = L64(S + 0x60000 + tnoff) & 0xFFFFFFFF;
+                        if (_pfn == 0x00343666) { pt_float = F64_TYID; }
+                        elif (_pfn == 0x00323366) { pt_float = F32_TYID; }
+                    }
                     if (_ptc == 1) { str_mask = str_mask | (1 << pc); }
                     elif (_ptc == 2) { cstring_mask = cstring_mask | (1 << pc); }
                     elif (_ptc == 3) { result_mask = result_mask | (1 << pc); }
@@ -3336,6 +3350,12 @@ fn PARSE_FN_DEF(S): i64 {
                 # `-pt_sid` only if explicitly annotated.
                 SLTYPE(S, li, 0);
                 if (pt_sid > 0) { SLTYPE(S, li, 0 - pt_sid); }
+                # v6.4.57 (Gap A) — a scalar f64/f32 param gets the same positive
+                # F64_TYID/F32_TYID tag a `var y: f64` local gets, so parse_expr's
+                # local-load (lt == F64_TYID/F32_TYID) routes ops to the float
+                # emitters. pt_float is 0 for every non-float param (incl. all of
+                # cycc's) → self-host stays byte-identical.
+                if (pt_float != 0) { SLTYPE(S, li, pt_float); }
                 # Only emit register params now (0-5). v5.5.36 Phase 2b:
                 # x86 struct-returning fns reserve arg-reg 0 (RDI on SysV,
                 # RCX on Win64) for the hidden retptr, so user param 0
