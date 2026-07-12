@@ -1,9 +1,11 @@
-# e2e: file_write_atomic / file_rename / file_create_exclusive (v6.4.57). Cross-OS: the core
-# crash-safe write + rename runs on x86/aarch64/macOS/Windows (Windows rename via MoveFileExW).
-# Uses CWD-RELATIVE paths (not /tmp) and xunlink (not sys_unlink) so it is portable to Windows,
-# whose CWD in the gate is C:\cyrius-tests. Two genuine Windows residuals are gated off under
-# CYRIUS_TARGET_WIN (documented in issue 2026-07-12-windows-atomic-write-residuals): the on-failure
-# temp unlink is a no-op (xunlink unwired on Win) and file_create_exclusive isn't yet atomic there.
+# e2e: file_write_atomic / file_rename / file_create_exclusive / xunlink (v6.4.57, v6.4.58).
+# Cross-OS: the core crash-safe write + rename runs on x86/aarch64/macOS/Windows (Windows rename
+# via MoveFileExW). Uses CWD-RELATIVE paths (not /tmp) and xunlink (not sys_unlink) so it is
+# portable to Windows, whose CWD in the gate is C:\cyrius-tests.
+# v6.4.58 closed the two Windows residuals that used to be gated off under CYRIUS_TARGET_WIN
+# (issue 2026-07-12-windows-atomic-write-residuals): xunlink now removes on Windows (DeleteFileW,
+# 0xF035) and file_create_exclusive is atomic there (EOPEN_PE maps O_CREAT|O_EXCL → CREATE_NEW).
+# Both assertions below now run on ALL targets, including Windows.
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -71,16 +73,12 @@ var nro = file_read_all(tgt, bufo, 63);
 assert_eq(nro, 18, "original still 18 bytes (untouched by failed write)");
 store8(bufo + nro, 0);
 assert_eq(streq(bufo, "ORIGINAL-GOOD-DATA"), 1, "original content preserved");
-#ifndef CYRIUS_TARGET_WIN
-# xunlink is unwired on Windows (returns -1), so the sim temp lingers there — a documented
-# residual, not a corruption. Only assert cleanup where xunlink is real.
-assert_eq(file_exists(tmp), 0, "temp cleaned up (POSIX)");
-#endif
+# v6.4.58: xunlink now removes on Windows too (DeleteFileW), so the sim temp is gone on ALL targets.
+assert_eq(file_exists(tmp), 0, "temp cleaned up (xunlink removes on every target incl. Windows)");
 
-#ifndef CYRIUS_TARGET_WIN
-# file_create_exclusive is atomic (O_CREAT|O_EXCL) on POSIX; on Windows EOPEN_PE doesn't yet
-# map O_EXCL→CREATE_NEW (filed residual), so the no-clobber guard is exercised off-Windows.
-test_group("file_create_exclusive: no-clobber (POSIX/atomic)");
+# file_create_exclusive is atomic on every target: O_CREAT|O_EXCL on POSIX, CREATE_NEW on Windows
+# (v6.4.58 EOPEN_PE mapping). The no-clobber guard + the xunlink round-trip now run on Windows too.
+test_group("file_create_exclusive: no-clobber + xunlink round-trip (all targets)");
 var ex = "cyrius_excl_test.txt";
 xunlink(ex);
 var efd = file_create_exclusive(ex, 0x1A4);
@@ -89,8 +87,14 @@ file_write(efd, "excl", 4);
 file_close(efd);
 var efd2 = file_create_exclusive(ex, 0x1A4);
 assert_eq(efd2 < 0, 1, "exclusive create of existing path fails (negative)");
+# xunlink must actually REMOVE the file (proves DeleteFileW on Windows): re-creating then succeeds.
+var ur = xunlink(ex);
+assert_eq(ur, 0, "xunlink removes the exclusive file (returns 0)");
+assert_eq(file_exists(ex), 0, "file gone after xunlink");
+var efd3 = file_create_exclusive(ex, 0x1A4);
+assert_eq(efd3 >= 0, 1, "exclusive re-create succeeds after xunlink (proves removal)");
+file_close(efd3);
 xunlink(ex);
-#endif
 
 xunlink(path);
 xunlink(dst);

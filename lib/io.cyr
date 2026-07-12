@@ -112,7 +112,7 @@ fn xunlink(path): i64 {
     return sys_unlink(path, an);
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    return -1;   # Windows: no POSIX unlink (DeleteFileW — not wired; no consumer)
+    return syscall(0xF035, path);   # v6.4.58: kernel32!DeleteFileW reroute (EDELETEFILEW_PE)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN
@@ -350,8 +350,8 @@ fn _io_tmp_name(path): i64 {
 # temp, loops the write until all bytes land (partial-write-safe), fsyncs, closes,
 # then atomically renames the temp over `path`. On ANY failure the temp is unlinked
 # and the negative errno is returned, leaving the original `path` intact. Returns
-# 0 on success. NOTE the on-failure unlink is a no-op on Windows (xunlink is
-# unwired there) — a rare-path temp leak, not a corruption; see the io.cyr TODO.
+# 0 on success. v6.4.58: the on-failure unlink is now real on EVERY target — xunlink
+# routes to DeleteFileW (0xF035) on Windows, so no rare-path temp leak lingers there.
 fn file_write_atomic(path, buf, len): i64 {
     var tmp = _io_tmp_name(path);
     var fd = file_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
@@ -379,11 +379,10 @@ fn file_write_atomic(path, buf, len): i64 {
 # write fd or -EEXIST (-17). On Linux/macOS this is enforced atomically at the
 # kernel via O_CREAT|O_EXCL. AGNOS has no exclusive-create AO_* bit (its AO_* set
 # is RDONLY/WRONLY/RDWR/CREAT/TRUNC/APPEND/DIRECTORY only), so there it degrades to
-# a file_exists pre-check + plain O_CREAT — RESIDUAL: NOT atomic. On Windows the
-# current EOPEN_PE derives its disposition from O_CREAT only and does not yet honor
-# O_EXCL (OPEN_ALWAYS, not CREATE_NEW) — no-clobber is best-effort there until
-# EOPEN_PE maps O_EXCL→CREATE_NEW (filed follow-up). See issue
-# 2026-07-12-thoth-portable-atomic-file-write.md (item 3).
+# a file_exists pre-check + plain O_CREAT — RESIDUAL: NOT atomic. v6.4.58: Windows is
+# now atomic too — EOPEN_PE maps O_CREAT|O_EXCL (mask 0xC0) → CREATE_NEW, so the open
+# itself fails with ERROR_FILE_EXISTS when the target already exists (no clobber, no
+# race). See issue 2026-07-12-windows-atomic-write-residuals.md (item A).
 fn file_create_exclusive(path, mode): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     if (file_exists(path) == 1) { return -17; }   # -EEXIST (non-atomic residual)

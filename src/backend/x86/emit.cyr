@@ -2196,6 +2196,59 @@ fn EMOVEFILEEX_PE(S): i64 {
     return 0;
 }
 
+# v6.4.58: DeleteFileW(lpFileName) — the Windows temp-cleanup half of lib/io.cyr's
+# xunlink / file_write_atomic on-failure unlink. syscall(0xF035, path): stack on
+# entry (top->bottom): [path] [sc_nr=0xF035]. The single UTF-8 path is widened
+# inline to UTF-16LE (ASCII fast path, same widener as EOPEN_PE/EMOVEFILEEX_PE)
+# into a 528-byte frame buffer, then rcx=path_wide and kernel32!DeleteFileW is
+# called. BOOL result -> 0/-1 via dec+sar. rbx-anchored + and rsp,-16 (alignment-
+# agnostic, safe from a deep/contended context) like EMOVEFILEEX_PE, unlike the
+# older syscall(87) EDELETEF_PE fixed-frame path. Reuses the same DeleteFileW IAT
+# import. Frame 0x240 = 32 shadow + 528 path + 16 slack. Issue
+# 2026-07-12-windows-atomic-write-residuals.md, B.
+fn EDELETEFILEW_PE(S): i64 {
+    _pe_ensure_deletef(S);
+    var df_idx = _pe_deletef_get();
+
+    EB(S, 0x58);                                        # pop rax (path ptr)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax (stash path)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+
+    # anchor + align (rbx-preserved; alignment-agnostic)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);              # sub rsp, 0x240
+    EB(S, 0x40); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+
+    # widen path (r10) -> [rsp+0x20]
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD6);              # mov rsi, r10
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x20); # lea rdi, [rsp+0x20]
+    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
+    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov [rdi+rcx*2], ax
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
+    EB(S, 0x74); EB(S, 0x0C);                           # jz path_done (+12)
+    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
+    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
+    EB(S, 0x73); EB(S, 0x02);                           # jae path_done (+2)
+    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_path (-24)
+    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # path_done: NUL WCHAR
+
+    # arg: rcx = path_wide
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x20); # lea rcx, [rsp+0x20]
+
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+DeleteFileW]
+    _pe_iat_fixup_add(S, GCP(S), df_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
+    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
+    return 0;
+}
+
 # emit Win64 open: `syscall(2, path, flags, mode)` →
 # CreateFileW(lpFileName, dwDesiredAccess, dwShareMode,
 #             lpSecurityAttributes, dwCreationDisposition,
@@ -2240,10 +2293,20 @@ fn EOPEN_PE(S): i64 {
 
     EB(S, 0x58);                                        # pop rax (mode, ignored)
     EB(S, 0x58);                                        # pop rax (flags)
-    # Derive disposition = 3 + ((flags >> 6) & 1); result in r10d.
+    # Derive dwCreationDisposition into r10d. Base = 3 + ((flags >> 6) & 1):
+    # OPEN_EXISTING (3) if O_CREAT (0x40) clear, OPEN_ALWAYS (4) if set.
+    # v6.4.58: if BOTH O_CREAT (0x40) and O_EXCL (0x80) are set (mask 0xC0),
+    # override to CREATE_NEW (1) so the open fails with ERROR_FILE_EXISTS when
+    # the target already exists — makes lib/io.cyr file_create_exclusive atomic
+    # on Windows (issue 2026-07-12-windows-atomic-write-residuals.md, A).
+    EB(S, 0x89); EB(S, 0xC1);                           # mov ecx, eax (save flags)
     EB(S, 0xC1); EB(S, 0xE8); EB(S, 0x06);              # shr eax, 6
     EB(S, 0x83); EB(S, 0xE0); EB(S, 0x01);              # and eax, 1
-    EB(S, 0x83); EB(S, 0xC0); EB(S, 0x03);              # add eax, 3
+    EB(S, 0x83); EB(S, 0xC0); EB(S, 0x03);              # add eax, 3 (3=OPEN_EXISTING / 4=OPEN_ALWAYS)
+    EB(S, 0x81); EB(S, 0xE1); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # and ecx, 0xC0 (O_CREAT|O_EXCL)
+    EB(S, 0x81); EB(S, 0xF9); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 0xC0
+    EB(S, 0x75); EB(S, 0x05);                           # jne +5 (skip override)
+    EB(S, 0xB8); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov eax, 1 (CREATE_NEW)
     EB(S, 0x41); EB(S, 0x89); EB(S, 0xC2);              # mov r10d, eax
     EB(S, 0x58);                                        # pop rax (path ptr)
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
