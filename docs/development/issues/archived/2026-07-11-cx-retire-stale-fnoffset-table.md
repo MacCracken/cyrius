@@ -41,3 +41,7 @@ calls to eliminated-fn stubs, and cx self-host stays byte-identical.
 - No cx code reads/writes 0xE92000; all fn-offset lookups go through `_fnt_offsets`.
 - Undefined-fn warning fires on cx for a registered-but-undefined fn.
 - cx self-host byte-identical; x86 unaffected.
+
+---
+
+**RESOLVED — v6.4.58** (2026-07-12). See CHANGELOG [6.4.58]. Verified: x86 self-host byte-identical + seed-derive, cross-OS self-host on ecb/cass/pi, and (for the cx items) the `_cx_v6458_modulo_immediate_gate` cxvm exit-code gate; (for the Windows items) `vr01_atomic_write.tcyr` 23/23 on real cass.

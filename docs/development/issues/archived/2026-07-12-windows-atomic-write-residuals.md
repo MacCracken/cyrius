@@ -38,3 +38,7 @@ in `lib/io.cyr`, not fixable without an AGNOS kernel `AO_EXCL`.
 - Windows `file_create_exclusive` fails on an existing path atomically (CREATE_NEW).
 - A failed `file_write_atomic` on Windows leaves no temp file.
 - Both verified on real cass.
+
+---
+
+**RESOLVED — v6.4.58** (2026-07-12). See CHANGELOG [6.4.58]. Verified: x86 self-host byte-identical + seed-derive, cross-OS self-host on ecb/cass/pi, and (for the cx items) the `_cx_v6458_modulo_immediate_gate` cxvm exit-code gate; (for the Windows items) `vr01_atomic_write.tcyr` 23/23 on real cass.

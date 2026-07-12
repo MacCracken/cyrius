@@ -6,6 +6,69 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.58] — 2026-07-12
+
+**Deferred-item batch: cx correctness + cleanups + the Windows atomic-write finish-out** — four
+P2/P3 residuals filed during the v6.4.54 cx work and the v6.4.57 atomic-write work, closed together.
+
+### Fixed — cx correctness (`src/backend/cx/emit.cyr`, `programs/cxvm.cyr`)
+
+Closes [issue](docs/development/issues/archived/2026-07-11-cx-fmt-int-and-large-immediate-gaps.md).
+Two pre-existing cx-only bugs the v6.4.54 forward-call/alignment fix de-masked (before it, affected
+programs derailed to a lucky HALT and never ran their body):
+
+- **64-bit immediates dropped their top 16 bits.** `CX_MOVI` emitted only 3 of the 4 16-bit chunks
+  (`movi`/`movhi`/`movhh` = bits 0–47), so any constant ≥ 2⁴⁸ loaded truncated. Now emits all four
+  words with a logical `>>` per chunk and a new **`movhk` (opcode 253)** for bits 48–63; `cxvm` gets
+  the matching decoder. Full 64-bit constants (`0xDEADBEEFCAFE1234`, negative-looking high-half
+  values) now load correctly.
+- **`%` (modulo) was wrong on cx** — the real cause of the "`fmt_int(12345)` prints `01234`" symptom.
+  cxvm's divide overwrites the dividend register, so modulo needs a stash: `EIDIV` now saves the
+  dividend in `r13` before dividing and `EMOVDR` computes `r0 = r13 % r1`. `12345 % 10 == 5` on cx.
+- Gated by a new `_cx_v6458_modulo_immediate_gate` in `programs/checks/cx.cyr` that compiles both
+  fixtures with `cycc_cx` and runs them under `cxvm` (exit-code oracle) — the x86 tcyr suite can't
+  gate this, since x86 never had either bug.
+
+### Fixed — cx cleanups (`src/frontend/parse.cyr`, `src/main_cx.cyr`)
+
+Closes [naked-asm realign](docs/development/issues/archived/2026-07-11-cx-naked-asm-4byte-realign.md)
++ [stale table](docs/development/issues/archived/2026-07-11-cx-retire-stale-fnoffset-table.md):
+
+- **Naked-asm 4-byte realign.** cx bytecode is strictly-4-byte and computes every call target as
+  `off*4`, so a raw non-multiple-of-4 `asm{}` emit shifts every following fn off alignment (the
+  v6.4.54 DCE-stub bug class). The asm-block realign padding in `parse.cyr` was gated to
+  `_AARCH64_BACKEND==1` only; now `_AARCH64_BACKEND==1 || _TARGET_CX==1`, so `#naked` fns
+  (`dl_setjmp`/`dl_longjmp`, a raw 3-byte block) stay aligned on cx.
+- **Retired the stale `0xE92000` fn-offset table.** The three remaining cx-fork users (DCE-stub
+  write, undefined-fn-warning read, `ftype==3` fn-pointer read) now use the canonical relocatable
+  `_fnt_offsets`; the fixed-address `0xE92000` table is gone.
+
+### Fixed — Windows atomic-write finish-out (`src/backend/x86/emit.cyr`, `lib/io.cyr`)
+
+Closes the two Windows residuals filed at v6.4.57
+([issue](docs/development/issues/archived/2026-07-12-windows-atomic-write-residuals.md)):
+
+- **`file_create_exclusive` is now atomic on Windows.** `EOPEN_PE` derived `dwCreationDisposition`
+  from `O_CREAT` alone; now when both `O_CREAT` (0x40) and `O_EXCL` (0x80) are set (mask `0xC0`) it
+  overrides to **`CREATE_NEW` (1)**, so `CreateFileW` fails with `ERROR_FILE_EXISTS` on an existing
+  target — no clobber, no race.
+- **`xunlink` now removes on Windows.** New **`EDELETEFILEW_PE`** emitter (syscall `0xF035`,
+  `parse_expr` `61493` dispatch) widens the UTF-8 path to UTF-16 and calls `kernel32!DeleteFileW`
+  (rbx-anchored + `and rsp,-16`; BOOL→0/-1), reusing the `DeleteFileW` IAT import; return-0 stubs
+  added to the cx + aarch64 backends (`parse_expr` calls it in every fork). `lib/io.cyr` `xunlink`'s
+  Windows branch routes to `syscall(0xF035, path)`, so the on-failure temp unlink in
+  `file_write_atomic` is now real on every target.
+- `tests/tcyr/vr01_atomic_write.tcyr`: its two `CYRIUS_TARGET_WIN` gates removed + an `xunlink`
+  round-trip assert added. Verified on real cass — **23/23, exit 0**.
+
+The compiler forks don't include `lib/io.cyr`; PIECE 1 is cx-only and PIECE 3's backend reroute is
+inert for cycc (no `0xF035`/`O_EXCL` open in its source). x86 self-host byte-identical fixpoint +
+seed→cybs→cycc derivation green; cross-OS self-host on ecb/cass/pi.
+
+- **Bench:** self_compile 613 ms · cycc 1,103,584 B (+4,128 B vs .57's 1,099,456 B — the PIECE 3
+  PE emitters, `EDELETEFILEW_PE` + the EOPEN_PE disposition logic, live in cycc's `.text` though
+  inert on the x86 self-compile; PIECE 1 is cx-only, byte-identical on x86).
+
 ## [6.4.57] — 2026-07-12
 
 **Portable crash-safe atomic file write (thoth's consumer-blocking need) + the scalar-float follow-ons from slot #2.**

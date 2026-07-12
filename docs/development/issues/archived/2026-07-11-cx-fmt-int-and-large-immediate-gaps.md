@@ -46,3 +46,7 @@ is genuinely green; assert-framework exit codes are correct despite the `fmt_int
 - `var x = 0x4018000000000000` (and other high-half constants) loads the true value on cx.
 - Investigate whether A and B share a root (cx large-value handling) or are independent.
 - Regression `.tcyr` under the cx path; cx self-host byte-identical; x86 unaffected.
+
+---
+
+**RESOLVED — v6.4.58** (2026-07-12). See CHANGELOG [6.4.58]. Verified: x86 self-host byte-identical + seed-derive, cross-OS self-host on ecb/cass/pi, and (for the cx items) the `_cx_v6458_modulo_immediate_gate` cxvm exit-code gate; (for the Windows items) `vr01_atomic_write.tcyr` 23/23 on real cass.
