@@ -1029,14 +1029,85 @@ fn _lint_pe_buf(buf, fsz): i64 {
     return fail;
 }
 
+# VR-04 (v6.4.59): pure-cyrius structural lint of an EMITTED Mach-O 64. Returns
+# 0 = valid. MH_MAGIC_64 (CF FA ED FE), cputype (x86_64 0x01000007 / arm64
+# 0x0100000C), filetype MH_EXECUTE (2), the load-command table in file bounds,
+# every LC_SEGMENT_64's file range (fileoff+filesize) in bounds, and the
+# LC_UNIXTHREAD entry (x86_THREAD_STATE64 rip @ LC+144 / ARM_THREAD_STATE64 pc @
+# LC+272) landing inside a segment with VM_PROT_EXECUTE (initprot & 4) — the
+# entry-in-text equivalent for Mach-O. cyrius emits LC_UNIXTHREAD, not LC_MAIN
+# (backend/macho/emit.cyr), so the entry IS the thread-state rip/pc.
+fn _lint_macho_buf(buf, fsz): i64 {
+    var fail = 0;
+    if (fsz < 32) { return 1; }
+    if (load8(buf) != 207) { return 1; }                        # 0xCF
+    if (load8(buf + 1) != 250) { fail = 1; }                    # 0xFA
+    if (load8(buf + 2) != 237) { fail = 1; }                    # 0xED
+    if (load8(buf + 3) != 254) { fail = 1; }                    # 0xFE
+    var cputype = load32(buf + 4);
+    if (cputype != 16777223) { if (cputype != 16777228) { fail = 1; } }   # 0x01000007 x86_64 / 0x0100000C arm64
+    var filetype = load32(buf + 12);
+    if (filetype != 2) { fail = 1; }                            # MH_EXECUTE
+    var ncmds = load32(buf + 16);
+    var lc_bytes = load32(buf + 20);                            # sizeofcmds (avoid the `sizeof` token)
+    if (lc_bytes + 32 > fsz) { return 1; }                      # LC table in bounds
+    # Pass 1: find the LC_UNIXTHREAD entry (rip/pc).
+    var entry = 0;
+    var have_entry = 0;
+    var lc = buf + 32;
+    var ci = 0;
+    while (ci < ncmds) {
+        var cmd = load32(lc);
+        var cmdsize = load32(lc + 4);
+        if (cmdsize < 8) { fail = 1; break; }                   # malformed LC
+        if (lc + cmdsize > buf + fsz) { fail = 1; break; }      # LC in file bounds
+        if (cmd == 5) {                                         # LC_UNIXTHREAD
+            var flavor = load32(lc + 8);
+            if (flavor == 4) { entry = load64(lc + 144); have_entry = 1; }   # x86 rip = state[16]
+            if (flavor == 6) { entry = load64(lc + 272); have_entry = 1; }   # arm64 pc = state[32]
+        }
+        lc = lc + cmdsize;
+        ci = ci + 1;
+    }
+    # Pass 2: LC_SEGMENT_64 file-range bounds + entry-in-executable-segment.
+    var entry_in_x = 0;
+    lc = buf + 32;
+    ci = 0;
+    while (ci < ncmds) {
+        var cmd = load32(lc);
+        var cmdsize = load32(lc + 4);
+        if (cmdsize < 8) { break; }
+        if (cmd == 25) {                                        # 0x19 LC_SEGMENT_64
+            var vmaddr = load64(lc + 24);
+            var vmsize = load64(lc + 32);
+            var fileoff = load64(lc + 40);
+            var filesize = load64(lc + 48);
+            var initprot = load32(lc + 60);
+            if (fileoff + filesize > fsz) { fail = 1; }         # segment file range in bounds
+            if (have_entry == 1) {
+                if (entry >= vmaddr) {
+                    if (entry < vmaddr + vmsize) {
+                        if ((initprot & 4) != 0) { entry_in_x = 1; }   # VM_PROT_EXECUTE
+                    }
+                }
+            }
+        }
+        lc = lc + cmdsize;
+        ci = ci + 1;
+    }
+    if (have_entry == 0) { fail = 1; }                          # no LC_UNIXTHREAD entry
+    if (entry_in_x == 0) { fail = 1; }                          # entry must be in an executable segment
+    return fail;
+}
+
 # VR-04: compile a small program with cycc and structurally lint the binary it
 # emits — a class of emit bugs `file | grep ELF/PE` cannot see. Dispatches on
-# magic: ELF (Linux/agnos native), PE (cass native), Mach-O (ecb — deferred to
-# the v6.4.x Intel-Mac arc, whose x86-macho fix gives a local emitter to gate
-# against). On an ELF host it ALSO cross-emits a PE via CYRIUS_TARGET_WIN=1 and
-# lints it, so the PE lint is exercised locally without a Windows host (v6.3.43).
+# magic: ELF (Linux/agnos native), PE (cass native), Mach-O (ecb/ach native).
+# On an ELF host it ALSO cross-emits a PE (CYRIUS_TARGET_WIN=1) AND a Mach-O
+# (CYRIUS_MACHO=1) and lints them, so the PE (v6.3.43) + Mach-O (v6.4.59) paths
+# are exercised locally without a Windows / macOS host.
 fn _binary_structural_lint_gate(): i64 {
-    var label = "pure-cyrius binary structural lint — ELF + PE (cross-emit) header/section bounds + entry-in-text (VR-04)";
+    var label = "pure-cyrius binary structural lint — ELF + PE + Mach-O (cross-emit) header/section bounds + entry-in-text (VR-04)";
     var src = _root_path("programs/collatz.cyr");
     if (file_exists(src) != 1) { _check(label, 0); return 0; }
     var out = _tmp_path("audit_binlint_");
@@ -1057,12 +1128,8 @@ fn _binary_structural_lint_gate(): i64 {
     var host_elf = 0;
     if (b0 == 127) { fail = _lint_elf_buf(buf, fsz); host_elf = 1; }         # ELF
     elif (b0 == 77) { fail = _lint_pe_buf(buf, fsz); }                       # 'M' — PE (cass)
-    elif (b0 == 207) {                                                       # 0xCF — Mach-O
-        _p("  skip: Mach-O emit host — Mach-O structural lint deferred to the v6.4.x Intel-Mac arc");
-        println("");
-        _check(label, 0);
-        return 0;
-    } else { fail = 1; }
+    elif (b0 == 207) { fail = _lint_macho_buf(buf, fsz); }                   # 0xCF — Mach-O (ecb/ach)
+    else { fail = 1; }
     # ELF host: also cross-emit a PE (CYRIUS_TARGET_WIN=1) and lint it, so the PE
     # path is validated locally. A cross-emit failure is not fatal (native ELF
     # lint already ran) — only a STRUCTURALLY-BAD PE fails the gate.
@@ -1077,11 +1144,23 @@ fn _binary_structural_lint_gate(): i64 {
             } else {
                 sys_unlink(pout);
             }
+            # v6.4.59: also cross-emit a Mach-O (CYRIUS_MACHO=1) and lint it, so the
+            # Mach-O path is validated locally on Linux (mirrors the PE leg above —
+            # the x86-macho Intel-Mac arc gives a local emitter to gate against).
+            var mout = _tmp_path("audit_binlint_macho_");
+            if (_self_host_pipe_env(src, CC_PATH, mout, "CYRIUS_MACHO=1") == 0) {
+                var mbuf = alloc(cap);
+                var mfsz = file_read_all(mout, mbuf, cap);
+                sys_unlink(mout);
+                if (_lint_macho_buf(mbuf, mfsz) != 0) { fail = 1; }
+            } else {
+                sys_unlink(mout);
+            }
         }
     }
     if (fail == 0) {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
-        println(": emitted binary valid — magic/machine, header+section bounds, entry-in-text (ELF native + PE cross-emit)");
+        println(": emitted binary valid — magic/machine, header+section bounds, entry-in-text (ELF native + PE & Mach-O cross-emit)");
     } else {
         _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
         println(": emitted binary failed structural lint (VR-04)");
