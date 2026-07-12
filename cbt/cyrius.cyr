@@ -183,12 +183,17 @@ fn main(): i64 {
     load_environ();
     find_tools();
     set_arch(ARCH_X86);
-    # v6.0.34: the Mach-O wrapper runs on Apple Silicon — default to
-    # aarch64 (so current_cc() picks the native macho cycc_aarch64), not
-    # x86. An explicit --aarch64 is already handled below; this just makes
-    # the host-native default correct. macho-only; Linux/Windows unchanged.
+    # v6.0.34: an arm64 (Apple Silicon) Mach-O wrapper defaults to aarch64 so
+    # current_cc() picks the native macho cycc_aarch64. v6.4.59: gate this on the
+    # WRAPPER's OWN arch (CYRIUS_ARCH_AARCH64) — an Intel-Mac (x86-macho) wrapper
+    # must KEEP the ARCH_X86 default above, else it picks [aarch64]/cycc_aarch64
+    # and "compiler not found" on real Intel hardware (found on ach). Mirrors the
+    # find_tools() guard in cbt/core.cyr. An explicit --aarch64 is handled below.
+    # macho-only; Linux/Windows unchanged.
     #ifdef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_ARCH_AARCH64
     set_arch(ARCH_AARCH64);
+    #endif
     #endif
 
     # v5.11.25: per-repo isolation Part 2.

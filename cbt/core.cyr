@@ -251,9 +251,16 @@ fn _macho_fill_environ(buf, cap): i64 {
     #else
     # x86: the LC_UNIXTHREAD init stack is inline — [rsp]=argc, argv[i] at
     # rsp+8+i*8, then a NULL, then envp. So envp = init_rsp + 8 + (argc+1)*8.
-    if (_macho_init_rsp == 0) { return 0; }
-    var m_argc = load64(_macho_init_rsp);
-    var envp = _macho_init_rsp + 8 + (m_argc + 1) * 8;
+    # v6.4.59: read the init rsp from _macho_argv_base() (r15, reserved from
+    # regalloc since v6.1.30) — the SAME source argc()/argv() use. The old
+    # _macho_init_rsp global is set only by the vestigial _macho_capture_args
+    # path (unemitted on the wrapper → 0), so env-read returned 0, HOME was
+    # never found, _home defaulted to /root, and cycc-finding failed on Intel
+    # (found on ach: `/root/.cyrius/bin/cycc_aarch64` not found).
+    var ir = _macho_argv_base();
+    if (ir == 0) { return 0; }
+    var m_argc = load64(ir);
+    var envp = ir + 8 + (m_argc + 1) * 8;
     #endif
     var pos = 0;
     var i = 0;
