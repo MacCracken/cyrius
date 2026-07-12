@@ -83,8 +83,13 @@ fi
 # opt-in fallback to a STANDING per-host gate — the 8 platform-variant tcyr
 # (fs/thread/sync/alloc/args/process/syscalls on cass+ecb) run on real hardware every
 # release, so macOS/Windows stdlib rot is caught here, not by ports.
-step "4/5" "cross-OS self-host + VR-01 platform tcyr: ecb (macOS) + cass (Windows) + pi (aarch64) — REAL hardware"
-for H in ecb cass pi; do
+step "4/5" "cross-OS self-host + VR-01 platform tcyr: ecb (macOS-arm64) + ach (Intel-Mac x86-macho) + cass (Windows) + pi (aarch64) — REAL hardware"
+# v6.4.59: ach (Intel Mac, x86_64 Mach-O) added — its compiler self-hosts + the
+# usable toolchain works (wrapper argv/env/arch via r15). Without it in this
+# ONE mandated pre-tag gate, x86-macho could rot green behind a CI check exactly
+# like macOS-arm64 did for ~9 minors (the found-by-ports incident). The ach recipe
+# has the exit-42 rot-guard + the vr01_ glob fires its VR-01 libtest (25 tests).
+for H in ecb ach cass pi; do
     echo "  --- $H ---"
     sh scripts/cross-os-selfhost.sh "$H" "vr01_" > "$T/co.out" 2>&1
     if ! grep -q "SELFHOST_OK: $H" "$T/co.out"; then

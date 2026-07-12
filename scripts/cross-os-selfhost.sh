@@ -145,11 +145,18 @@ case "$HOST" in
     cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 /tmp/_co_l > /tmp/_co_mx
     ssh $SSHO ach 'rm -rf ~/_cyaud && mkdir ~/_cyaud'
     scp -q $SSHO /tmp/_co.tgz /tmp/_co_mx ach:~/_cyaud/
-    # NO codesign (see header). Self-host twice + cmp.
+    # NO codesign (see header — unsigned x86_64 Mach-O runs on Intel 13.7.8).
+    # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
+    # (fn main(){return 42;} must exit 42 — catches the rot-class where main()
+    # is never called and the program exits with argc), mirroring the ecb leg.
+    # Without the guard a byte-identical-but-broken cycc could self-host green.
     ssh $SSHO ach 'cd ~/_cyaud && tar xzf _co.tgz && chmod +x _co_mx \
       && cat src/main_x86_macho.cyr | ./_co_mx > r1 && chmod +x r1 \
       && cat src/main_x86_macho.cyr | ./r1 > r2 \
-      && cmp r1 r2'
+      && cmp r1 r2 \
+      && printf "fn main() { return 42; }" > _ec.cyr \
+      && cat _ec.cyr | ./r1 > _ec && chmod +x _ec \
+      && (_rc=0; ./_ec || _rc=$?; [ $_rc -eq 42 ])'
     ;;
   pi)
     # x86 ELF -> aarch64-emitting cross-compiler -> NATIVE aarch64 cycc.

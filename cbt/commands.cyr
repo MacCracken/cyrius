@@ -828,14 +828,34 @@ fn _cross_os_selfhost(): i64 {
     # retraction was a codesign-comparison artifact (codesign mutates the
     # binary with LC_CODE_SIGNATURE). The gate runs UNSIGNED — see
     # scripts/cross-os-selfhost.sh.
-    var ach_rc = _co_run_sh("sh scripts/cross-os-selfhost.sh ach");
+    # v6.4.59: pass the vr01_ glob so ach also runs the VR-01 platform libtest
+    # (the 25 fs/thread/sync/alloc/args/process/syscalls tcyr on native x86-macho),
+    # matching ecb/cass/pi — the x86-macho stdlib is now gated on real Intel, not
+    # just the bare compiler self-host. The ach recipe also carries the exit-42
+    # rot-guard (scripts/cross-os-selfhost.sh).
+    var ach_rc = _co_run_sh("sh scripts/cross-os-selfhost.sh ach vr01_");
     if (ach_rc == 0) {
-        println("  PASS: ach (macOS x86_64) cycc self-host byte-identical");
+        println("  PASS: ach (macOS x86_64) cycc self-host byte-identical + VR-01 libtest");
     } elif (ach_rc == 3) {
         println("  FAIL: ach (macOS x86_64) UNREACHABLE — host down/unresolvable, cannot verify (publish blocked)");
         fails = fails + 1;
     } else {
-        println("  FAIL: ach (macOS x86_64) self-host NOT byte-identical");
+        println("  FAIL: ach (macOS x86_64) self-host / VR-01 libtest FAILED");
+        fails = fails + 1;
+    }
+
+    # ach install pillar (v6.4.59) — the Intel-Mac analog of the ecb install gate.
+    # Self-host proves the COMPILER; this proves the USABLE TOOLCHAIN + PACKAGING:
+    # the real install.sh yields a `cyrius` wrapper that resolves argv/env/arch via
+    # the r15 park (v6.4.59) and `cyrius build`s fn main(){return 42} to a runnable
+    # Mach-O exiting 42. Catches a tarball missing cycc/wrapper (the found-by-ports
+    # hole this arc closed), a broken installer, or a wrapper that can't find cycc.
+    var ach_install = "set -e; sh scripts/build-macos-x86-tarball.sh /tmp/_co_dist_x86 >/dev/null 2>&1; V=$(tr -d '[:space:]' < VERSION); printf 'fn main() { return 42; }' > /tmp/_co_tx.cyr; ssh -o ConnectTimeout=15 -o BatchMode=yes ach 'rm -rf ~/_coih_x86 ~/_co_tx.out'; scp -q scripts/install.sh /tmp/_co_tx.cyr /tmp/_co_dist_x86/cyrius-$V-x86_64-macos.tar.gz ach:~/; ssh ach 'CYRIUS_VERSION='$V' CYRIUS_HOME=$HOME/_coih_x86 CYRIUS_INSTALL_TARBALL=$HOME/cyrius-'$V'-x86_64-macos.tar.gz sh $HOME/install.sh >/dev/null 2>&1 && CYRIUS_HOME=$HOME/_coih_x86 $HOME/_coih_x86/bin/cyrius build $HOME/_co_tx.cyr $HOME/_co_tx.out >/dev/null 2>&1 && (r=0; $HOME/_co_tx.out || r=$?; [ $r -eq 42 ])'";
+    var ach_inst_rc = _co_run_sh(ach_install);
+    if (ach_inst_rc == 0) {
+        println("  PASS: ach (macOS x86_64/Intel) REAL install -> cyrius build -> exit 42");
+    } else {
+        println("  FAIL: ach (macOS x86_64/Intel) real-install path — tarball missing the toolchain, installer broken, or wrapper can't find cycc");
         fails = fails + 1;
     }
 
