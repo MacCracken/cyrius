@@ -415,6 +415,13 @@ fn PARSE_FACTOR(S): i64 {
         # Check for function call
         if (PEEKT(S) == 10) {
             PARSE_FNCALL(S, noff);
+            # v6.4.55: if the callee returns scalar f64 (sentinel -9), the double is in
+            # xmm0 (SysV/Win64) — bring it back into rax (cyrius's f64-boxing register)
+            # and tag the expr F64_TYID so a bare +,-,*,/,compare on the call result
+            # dispatches to the f64 emitters, not integer ops. EMOVQ_A_X0 = `movq rax,
+            # xmm0` on x86/PE/macho, a no-op on aarch64/cx (value already in x0/r0).
+            var _f64r_fi = FINDFN(S, noff);
+            if (_f64r_fi >= 0) { if (GFRS(S, _f64r_fi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); } }
             _cfo = 0;
             return 0;
         }

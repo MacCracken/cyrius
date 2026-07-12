@@ -869,6 +869,11 @@ fn PARSE_RETURN(S): i64 {
         return 0;
     }
     PCMPE(S);
+    # v6.4.55: scalar f64 return (sentinel -9) — cyrius boxes the f64 as its IEEE-754
+    # bit-pattern in rax; SysV/Win64 return a double in xmm0, so move rax→xmm0 before
+    # the epilogue. EMOVQ_X0_A is `movq xmm0, rax` on x86/PE/macho, a no-op on
+    # aarch64/cx (value already in x0/r0 = their return reg). CHANGELOG [6.4.55].
+    if (_cur_fn_ret_scalar == 0 - 9) { EMOVQ_X0_A(S); }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     # Emit jmp to epilogue (record as return patch)
@@ -2189,6 +2194,10 @@ fn _classify_return_type(S, rt_noff): i64 {
     # cstring → 'c','s','t','r','i','n','g',0
     if (b0 == 99) { if (b1 == 115) { if (b2 == 116) { if (b3 == 114) {
         if (b4 == 105) { if (b5 == 110) { if (b6 == 103) { if (b7 == 0) { return 0 - 19; } } } } } } } }
+    # v6.4.55: scalar f64 → 'f','6','4',0 — returned in xmm0 (SysV/Win64, NOT retptr).
+    # Sentinel -9: free (−1..−8 = int scalars, −16..−19 = Result/Option/Tagged/cstring,
+    # the SIMD band is <= −2048). Distinct from f64v2/f64v4 below (byte 3 = 'v' = 118).
+    if (b0 == 102) { if (b1 == 54) { if (b2 == 52) { if (b3 == 0) { return 0 - 9; } } } }
     # f64v2 / f64v4 → 'f','6','4','v', '2'|'4', 0 — 128/256-bit descriptor sentinels
     # -2093 (desc 45) / -2125 (desc 77): moved off the flat -20/-21 that collided with
     # struct-ids 20/21 (v6.4.14 struct-sid/SIMD-sentinel fix). Decoded by _vec_desc.
@@ -2846,6 +2855,10 @@ fn PARSE_FN_DEF(S): i64 {
                     # allocated a retptr → PE value-form SIMD returns were broken
                     # since v6.4.6. See [[project_v6431_win64_valueform_simd]].
                     if (_TARGET_PE == 0) { if (_is_simd_any(S, _classify_return_type(S, _rs_rt_noff)) == 1) { _rs_is_scalar = 1; } }
+                    # v6.4.55: scalar f64 ('f','6','4',0) returns in xmm0 on SysV AND
+                    # Win64 (a single double is NOT a >8B composite → no retptr, so
+                    # UNGATED unlike the f64v2/f64v4 SIMD catch above). stash=0.
+                    if (_rs_b0 == 102) { if (_rs_b1 == 54) { if (_rs_b2 == 52) { if (_rs_b3 == 0) { _rs_is_scalar = 1; } } } }
                     if (_rs_b0 == 105) {
                         if (_rs_b1 == 56) {
                             if (_rs_b2 == 0) { _rs_is_scalar = 1; }

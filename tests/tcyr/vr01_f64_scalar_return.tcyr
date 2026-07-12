@@ -1,0 +1,24 @@
+# vr01_f64_scalar_return.tcyr — v6.4.55: scalar `f64` as a function RETURN type, returned in
+# xmm0 per SysV (return-type sentinel -9). The double round-trips through the call, and a bare
+# arithmetic op on the call result dispatches to the f64 emitters (mulsd), not integer ops.
+# cyrius boxes an f64 as its IEEE-754 bit-pattern in the GP accumulator; at the return boundary
+# EMOVQ_X0_A moves rax->xmm0 (callee) and at the call site EMOVQ_A_X0 moves xmm0->rax (caller) +
+# tags F64_TYID. Both are real `movq` on x86/PE/Mach-O and NO-OP stubs on aarch64/cx (the value is
+# already in x0/r0 = their return register), so the round-trip is correct on all backends.
+# f64 bit-patterns constructed/read via f64_from(int) / f64_to(f64).
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+fn three(): f64 { return f64_from(3); }
+fn scale(): f64 { var y: f64 = three(); return y + y; }   # 6.0 — f64 local arithmetic in a : f64 fn
+
+fn main(): i64 {
+    test_group("scalar f64 return type (xmm0, sentinel -9)");
+    assert_eq(f64_to(three()), 3, "f64 return round-trips: f64_to(three()) = 3");
+    assert_eq(f64_to(three() * three()), 9, "call-result * call-result = 9 (f64 mul via F64_TYID, not int)");
+    assert_eq(f64_to(three()) + 4, 7, "f64_to(call) + 4 = 7 (f64_to yields i64)");
+    assert_eq(f64_to(scale()), 6, "f64 return from a fn doing f64 local arithmetic = 6");
+    return assert_summary();
+}
+var rc = main();
+syscall(60, rc);

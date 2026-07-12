@@ -6,6 +6,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.55] — 2026-07-11
+
+**Scalar `f64` as a function RETURN type (returned in xmm0 per SysV) — the ergonomic unlock for the f64 libraries (naad/hisab/goonj) so they can read as `fn osc_next_sample(): f64` instead of boxing every double in an `i64`.**
+
+First deliverable of the scalar-float-completion slot (roadmap slot #2); f32 scalar arithmetic +
+the stricter float typecheck are the remaining two, landing in **v6.4.56**. Scoped this tight per
+maintainer direction. Closes §1 of
+[the FP-arc issue](docs/development/issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md).
+
+### Added — scalar `f64` return type (`src/frontend/parse_fn.cyr`, `parse_expr.cyr`)
+
+- The return-type allow-list previously accepted `f64v2`/`f64v4` (128/256-bit vectors) but **not
+  scalar `f64`** — a single double couldn't be returned. Now it can, returned in **xmm0** (SysV /
+  Win64) via a new return-type sentinel **-9** (free: -1..-8 int scalars, -16..-19
+  Result/Option/Tagged/cstring, the SIMD band is ≤ -2048).
+- cyrius boxes an f64 as its IEEE-754 bit-pattern in the GP accumulator, so the marshaling is one
+  move each end: the callee emits `movq xmm0, rax` before the epilogue (`EMOVQ_X0_A`), the caller
+  emits `movq rax, xmm0` after the call (`EMOVQ_A_X0`) and tags the result **F64_TYID** so a bare
+  `+ - * /` or comparison on the call result dispatches to the f64 emitters (`mulsd` etc.), not
+  integer ops. Both helpers are real `movq` on x86/PE/Mach-O and **no-op stubs on aarch64/cx** (the
+  double is already in x0/r0 = their return register), so one code path is correct on every target.
+- The fn-entry rough-scan recognizes a scalar-`f64` return as register-class (stash=0, **not** a
+  retptr — a single double is not a >8-byte composite, so unlike f64v2/f64v4 it is **ungated on
+  Win64**). cycc self-hosts **byte-identical** (cycc declares no `: f64` fns, so every new branch is
+  inert on the self-compile).
+
+### Known limitation (filed, deferred)
+
+- A `: f64` fn can do f64 arithmetic on **locals** (`var y: f64 = x; y + y`) but **not directly on
+  its f64 params** — `fn inc(x: f64): f64 { return x + f64_from(1); }` mis-dispatches to integer
+  add (params aren't yet float-tagged). Workaround: copy to a typed local first. Filed:
+  [scalar-float param arithmetic + compound-assign](docs/development/issues/2026-07-11-scalar-float-param-and-compound-assign.md).
+  Also filed a pre-existing [ERR_MSG length over-read](docs/development/issues/2026-07-11-parse-fn-retmsg-length-overread.md)
+  spotted in the return-type allow-list.
+
+### Verification
+
+- cycc self-host fixpoint byte-identical; seed-derive (`seed→cybs→cycc`) OK; check.sh 142.
+- **Cross-OS: pi + ecb + cass all `SELFHOST_OK` + `LIBTEST_OK`** — `vr01_f64_scalar_return.tcyr`
+  (round-trip + call-result f64 arithmetic) passes on **real aarch64 + macOS + Windows PE** (the
+  latter validates the Win64 xmm0-not-retptr decision on hardware); also x86 + cx locally.
+- cycc x86 1,091,104 B (unchanged — the feature code is inert on the self-compile); self_compile ~616 ms.
+
 ## [6.4.54] — 2026-07-11
 
 **cx finish-outs (slot #1 cx half): value-form SIMD params/returns + the "var-capture" bug — which root-caused to cx code-stream misalignment + a systemic forward-call resolver bug that had been silently corrupting ~⅔ of cx programs.**
