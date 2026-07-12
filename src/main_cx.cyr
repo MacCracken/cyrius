@@ -338,7 +338,7 @@ while (topgo == 1) {
                                         # Register or find function and set its offset to stub
                                         var stub_fi = FINDFN(S, stub_noff);
                                         if (stub_fi < 0) { stub_fi = REGFN(S, stub_noff); }
-                                        S64(S + 0xE92000 + stub_fi * 8, GCP(S));
+                                        S64(_fnt_offsets + stub_fi * 8, GCP(S));   # v6.4.58: canonical table (was stale 0xE92000)
                                         # Emit stub: movi r0,0; ret (8 bytes, both 4-aligned).
                                         # cx bytecode is fixed 4-byte instructions and cxvm computes
                                         # call/jump targets as off*4, so the raw 3-byte x86 stub
@@ -393,9 +393,9 @@ STI(S, gvar_save_ti);
 var wfi = 0;
 var wfc = GFNC(S);
 while (wfi < wfc) {
-    if (L64(S + 0xE92000 + wfi * 8) < 0) {
+    if (L64(_fnt_offsets + wfi * 8) < 0) {   # v6.4.58: canonical table (0xE92000 was all-zero → never fired)
         syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-        PRSTR(S + 0x60000 + L64(S + 0xE8A000 + wfi * 8));
+        PRSTR(S + 0x60000 + L64(_fnt_names + wfi * 8));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     wfi = wfi + 1;
@@ -448,7 +448,7 @@ while (fi < fcnt) {
     }
     elif (ftype == 3) {
         # Function pointer — absolute code offset
-        var foff = L64(S + 0xE92000 + idx * 8);
+        var foff = L64(_fnt_offsets + idx * 8);   # v6.4.58: canonical table (mirrors the ftype==2 reader migrated in v6.4.54)
         # Patch movi: store 16-bit value in bytes 2-3
         store8(S + 0x54A000 + coff + 2, foff & 0xFF);
         store8(S + 0x54A000 + coff + 3, (foff >> 8) & 0xFF);

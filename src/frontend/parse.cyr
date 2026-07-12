@@ -1031,7 +1031,12 @@ fn PARSE_STMT(S): i64 {
         # bytes. Pad with zeros so downstream emit stays aligned. The x86
         # backend is variable-length and doesn't care about alignment, so
         # this costs nothing there — on aarch64 `_AARCH64_BACKEND == 1`.
-        if (_AARCH64_BACKEND == 1) {
+        # v6.4.58: cx bytecode is ALSO strictly 4-byte instructions (cxvm computes
+        # call/jump targets as off*4), so a raw asm block whose length isn't a
+        # multiple of 4 misaligns every following fn — same class as the v6.4.54
+        # DCE-stub bug. Pad on cx too. x86 is variable-length (both operands 0 →
+        # no padding, byte-identical). See issue 2026-07-11-cx-naked-asm-4byte-realign.
+        if (_AARCH64_BACKEND == 1 || _TARGET_CX == 1) {
             while ((GCP(S) & 3) != 0) { EB(S, 0); }
         }
         return 0;
