@@ -1183,13 +1183,33 @@ fn PARSE_STMT(S): i64 {
         if (compound_op != 0) {
             # Compound: x += expr → load x, push, eval expr, then x OP expr
             var cidx = FINDLOCAL(S, noff);
-            if (cidx >= 0) { EFLLOAD(S, cidx); }
+            var cltype = 0;
+            if (cidx >= 0) { EFLLOAD(S, cidx); cltype = GLTYPE(S, cidx); }
             else {
                 var gidx = FINDVAR(S, noff);
                 if (gidx >= 0) { EVLOAD(S, gidx); }
             }
             EPUSHR(S);
             PCMPE(S);
+            # v6.4.57 (scalar-float, Gap B): when the LHS local is f64/f32-typed,
+            # `x += y` must FLOAT-add, not integer-add on the raw bit pattern. Stack =
+            # x (LHS), rax = expr (RHS) — exactly EMIT_F{64,32}_BINOP's convention, so
+            # route through the same emitters the `x = x + y` path uses. fop 0/1/2/3 maps
+            # to compound_op 6/7/8/9; %,&,|,^,<<,>> on a float fall through to the integer
+            # arms. cycc has no `: f64`/`: f32` locals → this arm never emits on the
+            # self-host input (byte-identical). See issue 2026-07-11-scalar-float-param-*.
+            var f_fop = 0 - 1;
+            if (cltype == F64_TYID || cltype == F32_TYID) {
+                if (compound_op == 6) { f_fop = 0; }
+                if (compound_op == 7) { f_fop = 1; }
+                if (compound_op == 8) { f_fop = 2; }
+                if (compound_op == 9) { f_fop = 3; }
+            }
+            if (f_fop >= 0) {
+                if (cltype == F64_TYID) { EMIT_F64_BINOP(S, f_fop); }
+                else { EMIT_F32_BINOP(S, f_fop); }
+            }
+            else {
             # Stack = x, rax = expr. For x OP expr: mov rcx,rax; pop rax; OP
             EMOVCA(S);
             EPOPR(S);
@@ -1203,6 +1223,7 @@ fn PARSE_STMT(S): i64 {
             elif (compound_op == 36) { EXORR(S); }
             elif (compound_op == 38) { ESHLCL(S); }
             elif (compound_op == 39) { ESHRCL(S); }
+            }   # close the v6.4.57 non-float (integer-op) else
         } else {
             PCMPE(S);
         }
