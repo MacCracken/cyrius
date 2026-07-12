@@ -536,7 +536,17 @@ tables/lists in structs generally.
   helper fork-agnostic — read every metric via its accessor (`GSPOS`/`GCP`/…), no
   hardcoded `S+offset`.
 
-### Pin 4 — v6.4.51 reactive consumer-filed fixes — **✅ SHIPPED v6.4.51** (+ .52 carryover)
+### Pin 4 — v6.4.51 reactive consumer-filed fixes — **✅ SHIPPED v6.4.51 + .52 carryover SHIPPED v6.4.52**
+
+> **✅ .52 CARRYOVER SHIPPED v6.4.52** — the dedicated macOS + Windows large-single-allocation
+> path landed: `alloc()` serves a >remaining-reserve request with a dedicated unhinted
+> `mmap(0,size)` (macOS, overcommit; replaces the hint-grow loop macOS ignored) / dedicated
+> `VirtualAlloc` (Windows, eager `MEM_COMMIT`), so `output_buf` is now **1 GiB on ALL platforms**
+> (the .51 16 MiB macOS/Windows fallback is gone; a guard hard-errors on true OOM). **Verified on
+> real ecb + cass** via `vr01_alloc_1gib` (alloc 1 GiB + touch both ends); cross-OS
+> `SELFHOST_OK`+`LIBTEST_OK (22)`. Also, more broadly, unblocks any consumer needing a >256 MiB
+> buffer on those OSes. See CHANGELOG [6.4.52].
+
 
 > **✅ SHIPPED v6.4.51** (2026-07-11) — THREE items (the user added the error-enum lint
 > gate at cut time): (1) `signal_ignore(SIGPIPE)` + `Signal` enum + the macOS ESYSXLAT

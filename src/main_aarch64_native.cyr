@@ -212,7 +212,9 @@ _fnt_cap = 8192;
 # region @ S+0x41A000 pre-.49. cx's own 0x54A000 codebuf is separate + fixed.
 _codebuf_base = alloc(8388608);
 _output_base = alloc(1073741824);
-if (_output_base == 0) { _output_base = S + 0x4D9D000; _output_cap = 16777216; } else { _output_cap = 1073741824; }   # v6.4.51: 1 GiB off-heap on Linux; macOS/Windows fall back to the fixed 16 MiB region pending the .52 large-alloc path
+if (_output_base == 0) { syscall(SYS_WRITE, 2, "error: cannot allocate 1 GiB output buffer
+", 43); syscall(SYS_EXIT, 1); }
+_output_cap = 1073741824;   # v6.4.52: 1 GiB output buffer on ALL platforms (macOS/Windows large-alloc path landed; was Linux-only + 16 MiB fallback in .51)
 _varn_base = S + 0x11A000;
 _vars_base = S + 0x12A000;
 _vart_base = S + 0x13A000;

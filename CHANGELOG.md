@@ -6,6 +6,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.52] — 2026-07-11
+
+**Dedicated large-single-allocation path for the macOS + Windows allocators — `output_buf` is now 1 GiB on ALL platforms (the v6.4.51 macOS/Windows carryover).**
+
+v6.4.51 shipped `output_buf` 1 GiB on Linux with macOS/Windows falling back to 16 MiB,
+because their allocators couldn't produce a >256 MiB single region. This adds a large-request
+path to both (mirroring Linux's fresh-chunk-per-request), closing that gap — and, more broadly,
+unblocking any consumer needing a large buffer (both OSes routinely handle >1 GiB files). Lib +
+driver change only; cycc self-hosts byte-identical. Closes
+[issue](docs/development/issues/2026-07-11-macos-windows-large-single-allocation-path.md).
+
+### Changed — macOS allocator large-object path (`lib/alloc_macos.cyr`)
+
+- `alloc()` now serves any request that won't fit the remaining 256 MiB reserve with its OWN
+  dedicated **unhinted `mmap(0, size)`**, returned directly (bump pointer untouched, no contiguity
+  needed). macOS overcommits anonymous mmap, so a 1 GiB mapping costs only its touched pages. This
+  **replaces the old hinted 1 MiB grow loop**, which could never succeed on macOS (macOS ignores
+  mmap address hints, so growth broke the contiguity guard). No ESYSXLAT change (`syscall(9)` already
+  translates 9→BSD mmap 197). `alloc_reset` stays safe — dedicated mappings are fresh + kernel-zeroed,
+  outside the bump heap, never recycled (no memory-reuse info-leak channel).
+
+### Changed — Windows allocator large-object path (`lib/alloc_windows.cyr`)
+
+- `alloc()` now serves a request larger than the fixed reservation with its OWN dedicated
+  `VirtualAlloc` (the same `syscall(9,...)` → EMMAP_PE reroute), replacing the no-grow bail.
+  **Eager-commit note**: EMMAP_PE always emits `MEM_COMMIT|MEM_RESERVE`, so a 1 GiB request charges
+  1 GiB against the commit limit up front (physical RAM stays lazy/demand-zero) — this succeeds on a
+  normal dev box (verified on cass) but a `MEM_RESERVE`-only + commit-on-touch path (needs a codegen
+  change) is a future optimization if commit-charge ever bites.
+
+### Changed — `output_buf` 1 GiB on all platforms (`src/main*.cyr`)
+
+- The 6 native drivers drop the v6.4.51 `if (_output_base == 0)` 16 MiB fallback; `alloc(1 GiB)` now
+  succeeds everywhere, so `_output_cap` is 1 GiB on macOS/Windows too. A **defensive guard**
+  hard-errors (`cannot allocate 1 GiB output buffer`) on a true OOM instead of a page-0 SIGSEGV. The
+  fixed `S+0x4D9D000` region is now vestigial.
+
+### Verification
+
+- cycc self-host fixpoint byte-identical; seed-derive (`seed→cybs→cycc`) OK; check.sh 141.
+- **Cross-OS: pi + ecb + cass all `SELFHOST_OK` + `LIBTEST_OK (22)` incl. `vr01_alloc_1gib`** —
+  `alloc(1 GiB)` + touch-both-ends passes on **real macOS + Windows + aarch64**; each host self-hosts
+  cycc writing to the 1 GiB `_output_base`. A 19.8 MiB binary compiles + runs on Linux.
+- cycc x86 1,091,104 B (+48 vs v6.4.51 — the driver OOM-guard); self_compile ~603 ms.
+
 ## [6.4.51] — 2026-07-11
 
 **Three consumer-filed reactive fixes (roadmap Pin 4): `signal_ignore`/SIGPIPE stdlib gap (sandhi) + `output_buf` 16 MiB→1 GiB on Linux (thoth; macOS/Windows in .52) + an error-enum namespace lint gate.**

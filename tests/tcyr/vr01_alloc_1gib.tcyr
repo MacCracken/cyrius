@@ -1,0 +1,23 @@
+# vr01_alloc_1gib.tcyr — the large-single-allocation path (v6.4.52) on REAL hardware.
+# alloc(1 GiB) must succeed + be usable end-to-end on macOS (dedicated unhinted
+# mmap), Windows (dedicated VirtualAlloc), and Linux (fresh chunk). This is what
+# unblocks output_buf 1 GiB on macOS/Windows. See issue
+# 2026-07-11-macos-windows-large-single-allocation-path.md.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    var p = alloc(1073741824);                 # 1 GiB
+    assert(p != 0, "alloc(1 GiB) returns a non-null region");
+    store8(p, 65);                              # touch first page
+    store8(p + 1073741823, 90);                # touch the LAST byte (1 GiB in)
+    assert_eq(load8(p), 65, "first byte readable");
+    assert_eq(load8(p + 1073741823), 90, "last byte (1 GiB in) readable");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
