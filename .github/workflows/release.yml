@@ -240,68 +240,20 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 (pinned 2026-06-19, latest-in-major)
 
-      - name: Build macOS compiler + tools
+      - name: Build macOS x86_64 tarball
         run: |
+          # v6.4.59: ship a REAL toolchain — cycc + the cyrius wrapper + the
+          # quality tools + cx (cxvm/cycc_cx) — not formatters-only. Pre-fix this
+          # job built cyrfmt/cyrlint/cyrdoc/cyrsign/cyrius-init as Mach-O but NO
+          # cycc and NO cyrius wrapper, so every Intel-Mac install got no compiler
+          # (the "found by ports" hole the arm64 builder closed at v6.0.38). The
+          # x86-macho cycc self-hosts on real Intel (ach) and the wrapper now
+          # resolves argv/env/arch via the r15 park (v6.4.59). Packaging lives in
+          # ONE script (build-macos-x86-tarball.sh) that the `cyrius audit`
+          # cross-OS install gate also runs, so what we verify is what we ship;
+          # the script validates each binary's cputype (07000001) itself.
           chmod +x build/cycc
-          # Build cycc from source (for reproducibility)
-          cat src/main.cyr | ./build/cycc > /tmp/cc5_fresh && chmod +x /tmp/cc5_fresh
-          # Cross-compile: cycc itself as a Mach-O binary
-          # (The Mach-O cycc won't self-host on Linux — it's for macOS)
-          # Instead, compile key tools for macOS
-          # cyrsign included so install/upgrade can verify Ed25519 release
-          # signatures on x86_64-macOS too (CVE-13, v6.2.31).
-          for tool in cyrfmt cyrlint cyrdoc cyrsign cyrsign-efi cyrius-init; do
-            if [ -f "programs/${tool}.cyr" ]; then
-              cat programs/${tool}.cyr | CYRIUS_MACHO=1 /tmp/cc5_fresh > ./build/${tool}_macho 2>/dev/null
-              echo "${tool}_macho: $(wc -c < ./build/${tool}_macho) bytes"
-              # Verify Mach-O magic
-              magic=$(xxd -l4 -p ./build/${tool}_macho)
-              test "$magic" = "cffaedfe" || { echo "ERROR: ${tool} not Mach-O"; exit 1; }
-            fi
-          done
-
-      - name: Verify Mach-O binaries
-        run: |
-          for f in build/*_macho; do
-            [ -f "$f" ] || continue
-            file "$f" | grep -q "Mach-O 64-bit x86_64" || { echo "ERROR: $f not Mach-O x86_64"; exit 1; }
-          done
-          echo "PASS: all Mach-O binaries verified"
-
-      - name: Package macOS tarball
-        run: |
-          VER="${GITHUB_REF_NAME}"
-          STAGE="cyrius-${VER}-x86_64-macos"
-          mkdir -p "$STAGE/bin" "$STAGE/lib"
-
-          # Rename tools (strip _macho suffix)
-          for f in build/*_macho; do
-            [ -f "$f" ] || continue
-            name=$(basename "$f" _macho)
-            cp "$f" "$STAGE/bin/$name"
-            chmod +x "$STAGE/bin/$name"
-          done
-
-          # Version manager
-          cp scripts/cyriusly "$STAGE/bin/"
-          chmod +x "$STAGE/bin/cyriusly"
-
-          # v6.2.40: native scaffolder templates (cyrius-init_macho staged
-          # above) — so `cyrius init` / `cyrius port` work on macOS x86.
-          mkdir -p "$STAGE/programs"
-          cp -r programs/cyrius-init-templates "$STAGE/programs/"
-
-          # Include macOS-specific stdlib
-          sh scripts/release-lib.sh "$STAGE/lib"
-          cp lib/syscalls_macos.cyr "$STAGE/lib/"
-          cp lib/alloc_macos.cyr "$STAGE/lib/"
-          cp VERSION LICENSE "$STAGE/"
-
-          tar czf "${STAGE}.tar.gz" "$STAGE"
-          sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
-
-          mkdir -p dist
-          mv "${STAGE}.tar.gz" "${STAGE}.tar.gz.sha256" dist/
+          sh scripts/build-macos-x86-tarball.sh dist
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (pinned 2026-06-19, latest-in-major)
         with:
