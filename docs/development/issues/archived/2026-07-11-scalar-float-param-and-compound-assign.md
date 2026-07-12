@@ -1,3 +1,5 @@
+**Status (2026-07-12): RESOLVED in cyrius 6.4.57.** Gap A: a `: f64`/`: f32` param's local slot is now tagged F64_TYID/F32_TYID in PARSE_FN_DEF's param loop, so `fn inc(x: f64): f64 { return x + f64_from(1); }` computes correctly. Gap B: `x += y`/`-=`/`*=`/`/=` on an f64/f32 local routes through EMIT_F{64,32}_BINOP. Both inert for cycc (no `: f64`/`: f32` params/locals) → self-host byte-identical; verified x86 + aarch64.
+
 # scalar-float ergonomics: f64/f32 param arithmetic + compound-assign don't dispatch to float ops
 
 **Filed:** 2026-07-11 (during v6.4.55 scalar-f64-return; surfaced by the design-workflow verifiers).

@@ -6,6 +6,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.57] — 2026-07-12
+
+**Portable crash-safe atomic file write (thoth's consumer-blocking need) + the scalar-float follow-ons from slot #2.**
+
+### Added — portable atomic file write (`lib/io.cyr`, backend `MoveFileExW`/fsync)
+
+Closes [issue](docs/development/issues/archived/2026-07-12-thoth-portable-atomic-file-write.md).
+thoth's model `edit`/`create_file` tools rewrite user source; `file_write_all` (O_TRUNC + one
+non-looping write) is not crash-safe — a short write leaves the file truncated. New primitives:
+
+- **`file_rename(old, new)`** — portable same-fs rename, bridging the per-target ABI like `file_open`
+  bridges `sys_open`: POSIX 2-arg `sys_rename` (aarch64 82→renameat 38 + macho 82→BSD 128 via the
+  existing ESYSXLAT), AGNOS 4-arg `sys_rename(old,ol,new,nl)`, and **Windows** via a new
+  **`MoveFileExW`(old, new, MOVEFILE_REPLACE_EXISTING) reroute** (syscall 0xF034 → `EMOVEFILEEX_PE`,
+  which widens both UTF-8 paths to UTF-16 and calls kernel32).
+- **`file_write_atomic(path, buf, len)`** — writes a unique sibling temp, loops the write until all
+  bytes land (partial-write-safe), `xfsync`, then atomically `file_rename`s over the target; on any
+  failure unlinks the temp and leaves the original intact.
+- **`xfsync(fd)`** — `sys_fsync` on Linux/macOS (macOS via a new `SYS_FSYNC=74` + a 74→BSD-95 ESYSXLAT
+  on x86-macho and aarch64-macho), `sys_sync()` on AGNOS (documented residual), no-op on Windows.
+- **`file_create_exclusive(path, mode)`** — `O_CREAT|O_EXCL` on POSIX/Windows, `file_exists`+create on
+  AGNOS (no exclusive-create AO_* bit — documented). Two Windows residuals (O_EXCL→CREATE_NEW not yet
+  mapped; on-failure temp unlink is a Windows no-op) are
+  [filed](docs/development/issues/2026-07-12-windows-atomic-write-residuals.md), not blocking.
+
+The compiler forks don't include `lib/io.cyr`, so the stdlib is a pure add; the backend reroute +
+ESYSXLAT are inert for cycc (no 0xF034/fsync in its source) → self-host byte-identical.
+
+### Added — scalar-float follow-ons (slot #2 tail)
+
+- **f64/f32 scalar param arithmetic (Gap A)** — a `: f64`/`: f32` param's local slot is now tagged
+  F64_TYID/F32_TYID, so `fn inc(x: f64): f64 { return x + f64_from(1); }` computes correctly
+  (previously integer-added the bit pattern). Closes Gap A of
+  [issue](docs/development/issues/2026-07-11-scalar-float-param-and-compound-assign.md).
+- **Float compound-assign (Gap B)** — `x += y` / `-=` / `*=` / `/=` on an f64/f32 local routes through
+  `EMIT_F{64,32}_BINOP` instead of the integer arm.
+- **f64/int compare-mix warning** (kind 0), now live with literal-0 suppression: `if (x > 0)` on an
+  f64 does not warn (0's bits are 0.0) but `if (x > 5)` / `if (x > y)` do. Closes
+  [issue](docs/development/issues/2026-07-12-f64-compare-mix-warning-literal-suppression.md).
+- **ERR_MSG over-read fix** — the return-type-reject message passed len=93 for an 88-byte string
+  (5-byte over-read → "ra:" garbage); now `/f64` added + len=92. Closes
+  [issue](docs/development/issues/2026-07-11-parse-fn-retmsg-length-overread.md).
+
+### Verification
+
+- cycc self-host fixpoint byte-identical; seed-derive (`seed→cybs→cycc`) OK; check.sh 142.
+- **Cross-OS: pi + ecb + cass all `SELFHOST_OK` + `LIBTEST_OK`** — `vr01_atomic_write.tcyr`
+  (create / atomic overwrite via REPLACE_EXISTING / rename / short-write-safe / create-exclusive)
+  passes on **real aarch64 + macOS (74→95 fsync) + Windows (MoveFileExW)**, x86 20/20. The real-cass
+  run caught that the test's `/tmp`+`sys_unlink` (POSIX-only) had masked the working reroute — a
+  portable probe proved MoveFileExW, then the gate was made relative-path + `#ifndef CYRIUS_TARGET_WIN`.
+  f64/f32 param + compound-assign + compare-mix verified on x86 + aarch64.
+- cycc x86 1,099,456 B (+4,160 — the MoveFileExW emitter + fsync ESYSXLAT + param/compound-assign
+  code; inert on the self-compile); self_compile ~633 ms.
+
 ## [6.4.56] — 2026-07-12
 
 **f32 scalar arithmetic + comparison, and a stricter float typecheck — completing the scalar-float slot (roadmap #2) begun in v6.4.55 (scalar f64 return).**

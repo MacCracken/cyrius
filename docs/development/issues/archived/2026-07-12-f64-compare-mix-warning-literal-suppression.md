@@ -1,3 +1,5 @@
+**Status (2026-07-12): RESOLVED in cyrius 6.4.57.** The kind-0 f64/int comparison-mix warning is wired in the _PLOGIC_ATOM compare arm WITH literal-0 suppression (peek the RHS first token): `if (x > 0)` on an f64 does NOT warn (0's bits are 0.0), but `if (x > 5)` / `if (x > y)` do. WARN-only. Verified.
+
 # stricter float typecheck: the f64/int comparison-mix warning (kind 0) needs literal-0 suppression before it can ship
 
 **Filed:** 2026-07-12 (v6.4.56 D3 — the compare-mix half of the stricter-float-typecheck deliverable).

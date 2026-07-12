@@ -1,3 +1,5 @@
+**Status (2026-07-12): RESOLVED in cyrius 6.4.57.** The return-type-reject ERR_MSG now passes the true byte length (92) and adds `/f64` to the message — no more 5-byte over-read / `ra:` garbage tail.
+
 # parse_fn.cyr: return-type-error ERR_MSG passes len=93 for an 88-byte string (5-byte over-read)
 
 **Filed:** 2026-07-11 (found during v6.4.55 while adding scalar f64 to the return-type allow-list).

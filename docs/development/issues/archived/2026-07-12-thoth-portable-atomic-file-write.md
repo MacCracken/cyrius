@@ -1,3 +1,5 @@
+**Status (2026-07-12): RESOLVED in cyrius 6.4.57.** Added `file_rename` (portable POSIX 2-arg / AGNOS 4-arg / **Windows MoveFileExW** reroute 0xF034), `file_write_atomic` (temp+looped-write+fsync+rename, unlink-on-failure), `xfsync` (sys_fsync on Linux/macOS incl. a new 74→BSD-95 ESYSXLAT, sys_sync on AGNOS, no-op on Win), and `file_create_exclusive` (#1/#2 fully; #3 = AGNOS has no exclusive-create AO_* bit → documented `file_exists`+create residual). Verified `vr01_atomic_write.tcyr` on x86 + real pi/ecb/cass (MoveFileExW proven on real Windows). Two Windows residuals (O_EXCL→CREATE_NEW not yet mapped; on-failure temp unlink is a Win no-op) filed as `2026-07-12-windows-atomic-write-residuals`.
+
 # Portable atomic file write (`file_rename` / `file_write_atomic`) + AGNOS `O_EXCL` — needed for thoth's model file-write tools
 
 **Discovered:** 2026-07-12 during thoth 0.31.0–0.31.3 (the model `edit` / `create_file` tools — a jailed, gated, agentic file editor)
