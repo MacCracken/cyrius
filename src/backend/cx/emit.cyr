@@ -73,14 +73,25 @@ fn CX_EMIT(S, op, ra, rb, rc): i64 {
 
 # Emit 16-bit immediate load (movi ra, imm16)
 fn CX_MOVI(S, reg, val): i64 {
+    # v6.4.58: build the full 64-bit constant from FOUR 16-bit chunks. movi loads
+    # bits 0-15; movhi/movhh/movhk OR in bits 16-31 / 32-47 / 48-63. The old code
+    # stopped at bit 47 (no top-word emit) so any constant with set bits in 48-63
+    # (e.g. f64 6.0 = 0x4018<<48) silently loaded 0. Test each higher word with a
+    # LOGICAL >> (not the old signed `val > 0xFFFFFFFF` magnitude test) so bit-63 /
+    # negative constants load their top word too. See issue
+    # 2026-07-11-cx-fmt-int-and-large-immediate-gaps.md.
     CX_EMIT(S, 1, reg, val & 0xFF, (val >> 8) & 0xFF);
-    if (val > 0xFFFF) {
+    if (((val >> 16) & 0xFFFF) != 0) {
         # movhi: ra |= (imm16 << 16)
         CX_EMIT(S, 254, reg, (val >> 16) & 0xFF, (val >> 24) & 0xFF);
     }
-    if (val > 0xFFFFFFFF) {
+    if (((val >> 32) & 0xFFFF) != 0) {
         # movhh: ra |= (imm16 << 32)
         CX_EMIT(S, 255, reg, (val >> 32) & 0xFF, (val >> 40) & 0xFF);
+    }
+    if (((val >> 48) & 0xFFFF) != 0) {
+        # movhk: ra |= (imm16 << 48) — top 16 bits (v6.4.58)
+        CX_EMIT(S, 253, reg, (val >> 48) & 0xFF, (val >> 56) & 0xFF);
     }
     return 0;
 }
@@ -134,8 +145,15 @@ fn EADDRA_IMM(S, n): i64 {
 fn ESUBR(S): i64 { CX_EMIT(S, 17, 0, 0, 1); return 0; }    # sub r0, r0, r1
 fn EIMUL(S): i64 { CX_EMIT(S, 18, 0, 0, 1); return 0; }    # mul r0, r0, r1
 fn ECQO(S): i64 { return 0; }                                 # no-op (sign extend for div)
-fn EIDIV(S): i64 { CX_EMIT(S, 19, 0, 0, 1); return 0; }    # div r0, r0, r1
-fn EMOVDR(S): i64 { CX_EMIT(S, 20, 0, 0, 1); return 0; }   # mod r0, r0, r1
+# v6.4.58: cx has no dual-output divide (x86 IDIV yields quotient in rax AND remainder
+# in rdx from ONE instruction; the shared frontend emits `ECQO; EIDIV; EMOVDR` and
+# EMOVDR just reads rdx). cx `div` OVERWRITES the dividend (r0) with the quotient, so
+# the old EMOVDR `mod r0, r0, r1` computed (n/d) % d, not n % d — every cx `%` was
+# wrong (fmt_int printed "01234" for 12345). Fix: EIDIV stashes the dividend to r13
+# first; EMOVDR takes the remainder of that stashed dividend. EIDIV/EMOVDR are always
+# emitted adjacently (ir.cyr IR_MOD) and r13 is otherwise unused across the pair.
+fn EIDIV(S): i64 { CX_EMIT(S, 2, 13, 0, 0); CX_EMIT(S, 19, 0, 0, 1); return 0; }  # r13 = r0 (dividend); r0 = r0 / r1
+fn EMOVDR(S): i64 { CX_EMIT(S, 20, 0, 13, 1); return 0; }                          # r0 = r13 % r1 (true remainder)
 
 # Bitwise
 fn EANDR(S): i64 { CX_EMIT(S, 32, 0, 0, 1); return 0; }

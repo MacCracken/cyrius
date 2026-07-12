@@ -326,6 +326,11 @@ fn cx_run(code, code_len): i64 {
             imm = rb | (rc << 8);
             cx_reg_set(ra, cx_reg_get(ra) | (imm << 32));
         }
+        # movhk: ra = ra | (imm16 << 48) — top 16 bits (v6.4.58; full 64-bit constant loads)
+        elif (op == 253) {
+            imm = rb | (rc << 8);
+            cx_reg_set(ra, cx_reg_get(ra) | (imm << 48));
+        }
     }
 
     return cx_reg_get(0);
