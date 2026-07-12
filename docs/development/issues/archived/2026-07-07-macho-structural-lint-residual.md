@@ -42,3 +42,7 @@ inside that arc so the Mach-O lint ships with the rest of the macOS toolchain wo
 `_lint_macho_buf` validates both x86_64 and arm64 Mach-O; the structural-lint gate
 rejects a corrupted Mach-O fixture and passes a real cross-emitted one; CHANGELOG's
 "deferred to v6.4.x Intel-Mac arc" line is closed.
+
+---
+
+**RESOLVED — v6.4.59** (2026-07-12). `_lint_macho_buf` added to `programs/checks/services.cyr` (MH_MAGIC_64 + cputype + filetype + LC-table/LC_SEGMENT_64 file-range bounds + LC_UNIXTHREAD entry-in-executable), wired into `_binary_structural_lint_gate`'s 0xCF dispatch (was a skip), plus a Linux `_self_host_pipe_env(..., "CYRIUS_MACHO=1")` cross-emit leg so it runs without a macOS host. check.sh gate now reads "ELF + PE + Mach-O (cross-emit)". Part of the Intel-Mac revival arc — see CHANGELOG [6.4.59].

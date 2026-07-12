@@ -1,5 +1,29 @@
 # 2026-06-02 — x86_64-macOS: cycc SIGSYS's on real compiles (runtime arc, not just packaging)
 
+> **★★★ RESOLVED — v6.4.59 (2026-07-12). The Intel-Mac x86_64 Mach-O arc is COMPLETE:
+> compiler + usable toolchain + packaging + a first-class release gate.** The COMPILER
+> self-hosted byte-identical on real Intel (`ach`) since v6.0.43 (layers 1-6); this release
+> closed the "usable toolchain" tail that had rotted UNGATED for ~2.5 minors:
+>
+> - **wrapper arch default** — `cbt/cyrius.cyr` no longer forces `ARCH_AARCH64` on x86-macho
+>   (nested under `CYRIUS_ARCH_AARCH64`); it picks the x86 `cycc`, not `cycc_aarch64`.
+> - **wrapper env/HOME** — `_macho_fill_environ` reads r15 via `_macho_argv_base()` (not the
+>   vestigial `_macho_init_rsp`), so HOME resolves to `$HOME/.cyrius`, not `/root/.cyrius`.
+> - **cycc `_read_env`** — un-stubbed on x86-macho (r15 envp walk); native Intel cycc now
+>   honors `CYRIUS_*`.
+> - **vestigial retirement** — `_macho_init_rsp`/`_macho_capture_args` removed (dead after r15).
+> - **Mach-O structural lint** — `_lint_macho_buf` (VR-04) added + a Linux cross-emit leg.
+> - **packaging** — `release.yml` build-macos now runs `build-macos-x86-tarball.sh` (ships
+>   cycc + wrapper + tools, not formatters-only).
+> - **THE SYSTEMIC FIX** — `ach` added to `release-gate.sh` (+ exit-42 rot-guard) and a
+>   `cyrius audit` ach install gate. x86-macho can no longer rot green behind a CI check.
+>
+> Verified on real `ach`: `cyrius build` fn-main-42 → `[x86_64] OK` → exit 42 (via install.sh →
+> ~/.cyrius AND CYRIUS_HOME); SELFHOST_OK + VR-01 LIBTEST_OK (25 tests); full release gate GREEN
+> on ecb + ach + cass + pi. See CHANGELOG [6.4.59], `project_v6459_intel_mac_revival`.
+>
+> --- (historical layer-by-layer diagnosis below — kept for the record) ---
+
 > **★ v6.1.30 (argv prologue DONE — verified on ach):** the "layer 6 / tools argv"
 > blocker is FIXED. cycc self-hosts byte-identical on Intel (re-confirmed `ach`
 > SELFHOST_OK); the tools (`cyrius` wrapper + cyrfmt/lint/doc) got `argc=0` because

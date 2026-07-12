@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.59] — 2026-07-12
+
+**Intel-Mac (x86_64 Mach-O) revival — the usable toolchain + packaging + a first-class release gate.**
+The x86-macho *compiler* has self-hosted byte-identical on a real Intel Mac (`ach`) since v6.0.43,
+but the toolchain around it was broken for ~2.5 minors — undetected because **ach was never in the
+release gate** (the exact rot setup CLAUDE.md warns about). Premise-checked on real ach at 6.4.58:
+`cyrius build` reported `[aarch64] compiler not found: /root/.cyrius/bin/cycc_aarch64`. Seven bites,
+all verified on real `ach` (Darwin x86_64 13.7.8):
+
+### Fixed — the `cyrius` wrapper on Intel Mac (`cbt/cyrius.cyr`, `cbt/core.cyr`)
+
+- **arch default** — `main()` unconditionally `set_arch(ARCH_AARCH64)` for *any* macOS target, so an
+  x86-macho wrapper picked `cycc_aarch64` (absent from the x86 tarball). Now nested under
+  `#ifdef CYRIUS_ARCH_AARCH64` (mirrors `find_tools`) → x86 keeps `ARCH_X86`.
+- **env/HOME** — `_macho_fill_environ`'s x86 branch read the vestigial global `_macho_init_rsp`
+  (=0, a `main()`-as-gvar-init timing bug), so `HOME` was unread and `_home` defaulted to
+  `/root/.cyrius`. Now reads r15 via `_macho_argv_base()` — the same source argv uses. cycc-finding
+  falls out of both. `cyrius build` → `[x86_64] OK` → exit 42 on ach, via HOME-default + CYRIUS_HOME.
+
+### Fixed — native Intel cycc honors `CYRIUS_*` (`src/backend/common/runtime.cyr`)
+
+`_read_env`'s x86-macho branch hard-returned 0, so native Intel cycc silently ignored
+`CYRIUS_MONOMORPH`/`SYMS`/`DCE`/`ALLOW_PARENT_INCLUDES`. Un-stubbed to an r15 envp walk (the stale
+"garbage r13" rationale predated the v6.1.30 r15 park). Macho-gated → x86-ELF/aarch64/PE
+byte-identical; seed-derive green; ach self-host byte-identical; `CYRIUS_SYMS` now writes on ach.
+
+### Changed — retire the vestigial `_macho_init_rsp`/`_macho_capture_args`
+
+Dead once both argv (v6.1.30) and env (above) moved to the r15 landing park: the global had no
+readers, and the fn only wrote it — a wasted `call` in every x86-macho tool's entry that ran AFTER
+the gvar-inits (the bug the r15 park fixes). Dropped from `lib/args_macos.cyr` + the emit blocks in
+`src/main.cyr` / `src/main_x86_macho.cyr`. build/cycc 1,103,584 → 1,103,544 B (dead-on-ELF `if
+(_TARGET_MACHO == 1)` removed); fixpoint + seed-derive green; ach self-host + wrapper still work.
+
+### Added — Mach-O structural lint (`programs/checks/services.cyr`)
+
+`_lint_macho_buf` (VR-04): MH_MAGIC_64, cputype, filetype MH_EXECUTE, load-command table + every
+LC_SEGMENT_64 file range in bounds, and the LC_UNIXTHREAD entry (x86 rip / arm64 pc) in an executable
+segment — the peer of `_lint_elf_buf`/`_lint_pe_buf`. A Linux `CYRIUS_MACHO=1` cross-emit leg
+exercises it without a macOS host. The gate no longer silently skips Mach-O.
+
+### Fixed — release packaging ships a compiler (`.github/workflows/release.yml`)
+
+The `build-macos` job built only formatters (no cycc, no wrapper) — an Intel-Mac install got no
+compiler. Replaced with `sh scripts/build-macos-x86-tarball.sh dist` (the complete builder, cycc +
+wrapper + tools + cx, cputype-validated), mirroring `build-macos-arm64`.
+
+### Added — ach is a first-class release gate (the systemic fix)
+
+`release-gate.sh` cross-OS loop `ecb cass pi` → `ecb ach cass pi`; the ach recipe gains the exit-42
+rot-guard (a byte-identical-but-broken cycc can't self-host green); `cyrius audit` runs ach's VR-01
+libtest (25 tests) + a **real install gate** (build-macos-x86-tarball.sh → real install.sh →
+`cyrius build` fn-main-42 → exit 42), peer of ecb/cass. x86-macho can no longer rot green.
+
+Closes [issue](docs/development/issues/archived/2026-06-02-macos-x86-release-no-compiler.md) (High —
+open since 2026-06-02). Full release gate GREEN on real hardware: ecb + **ach** + cass + pi.
+
+- **Bench:** self_compile 622 ms · cycc 1,103,544 B (−40 B vs .58's 1,103,584 B — the retired
+  x86-macho capture-emit block).
+
 ## [6.4.58] — 2026-07-12
 
 **Deferred-item batch: cx correctness + cleanups + the Windows atomic-write finish-out** — four
