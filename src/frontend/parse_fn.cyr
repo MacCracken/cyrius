@@ -3438,7 +3438,7 @@ fn PARSE_FN_DEF(S): i64 {
             # ride the struct-interaction work (v6.3.10). Non-tparam unknowns error.
             if (_is_tparam_of(S, fi, rt_noff) == 1) { _rtc = 0 - 8; }
             else {
-                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64v2/f64v4", 93);
+                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64/f64v2/f64v4", 92);
             }
         }
         SFRS(S, fi, _rtc);

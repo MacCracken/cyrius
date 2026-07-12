@@ -2920,9 +2920,10 @@ fn PEXPR(S): i64 {
 # float idiom (ADR-002) — f64_add/f64_lt on untyped vars never reach an F64_TYID arm,
 # so they're untouched. kind 1 (arithmetic mix) is live: a plain `+`/`-`/`*`/`/` on an
 # F64_TYID value with a non-f64 RHS is the exact trap where `x + 1` silently means
-# `x + <int-1-as-denormal>`, not `x + 1.0`. kind 0 (comparison mix) is DEFERRED — it
-# false-positives on the common `if (x > 0)` f64 sign-check (literal 0's bits ARE 0.0),
-# pending literal-0 suppression (filed). stderr (fd 2) — stdout is the binary.
+# `x + <int-1-as-denormal>`, not `x + 1.0`. kind 0 (comparison mix) is live as of v6.4.57:
+# wired in the _PLOGIC_ATOM compare arm WITH literal-0 suppression — `if (x > 0)` on an f64
+# does NOT warn (the int literal 0's bits ARE 0.0, so the compare is exact), but `if (x > 5)`
+# / `if (x > y)` DO (5's int bits ≠ 5.0's f64 bits — a denormal compare). stderr (fd 2).
 fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
     syscall(SYS_WRITE, 2, "warning:", 8);
@@ -2952,10 +2953,17 @@ fn _PLOGIC_ATOM(S): i64 {
             # mirrors PF64CMP's. Result is an i64 boolean (SESTYPE 0).
             var cmpst = GESTYPE(S);
             STI(S, GTI(S) + 1);
+            # v6.4.57 (kind-0 compare-mix warn): peek the rhs FIRST token before it's
+            # parsed. Suppress the warning when the non-float operand is the integer
+            # LITERAL 0 (token type 1, value 0) — `if (x > 0)` is exact since 0's int
+            # bits ARE 0.0. `if (x > 5)` / `if (x > y)` are NOT suppressed and warn.
+            var _rhs_lit0 = 0;
+            if (PEEKT(S) == 1) { if (PEEKV(S) == 0) { _rhs_lit0 = 1; } }
             _cfo = 0;
             EPUSHR(S);
             PEXPR(S);
             if (cmpst == F64_TYID) {
+                if (GESTYPE(S) != F64_TYID) { if (_rhs_lit0 == 0) { _FLT_TYPE_WARN(S, 0); } }
                 EPOPC(S); EPUSHR(S);
                 EF64_CMP(S, op);
                 SESTYPE(S, 0);
@@ -2966,6 +2974,7 @@ fn _PLOGIC_ATOM(S): i64 {
                 EF32_CMP(S, op);
                 SESTYPE(S, 0);
             } else {
+                if (GESTYPE(S) == F64_TYID) { if (_rhs_lit0 == 0) { _FLT_TYPE_WARN(S, 0); } }
                 EMOVCA(S);
                 EPOPR(S);
                 ESETCC(S, op);
