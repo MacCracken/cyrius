@@ -438,6 +438,65 @@ fn _cx_v6454_forward_valueform_gate(): i64 {
     return fail;
 }
 
+# v6.4.58 cx correctness: full 64-bit immediate loads (CX_MOVI's bits-48-63 chunk via cxvm
+# opcode 253/movhk) + correct modulo (cx has no dual-output divide → EIDIV stashes the dividend
+# for EMOVDR; pre-fix every cx `%` computed (n/d)%d). Runs under cxvm — the x86 tcyr suite can't
+# gate this (x86 never had either bug). Both bugs were pre-existing, de-masked by the v6.4.54
+# forward-call fix; see issue 2026-07-11-cx-fmt-int-and-large-immediate-gaps.md.
+fn _cx_v6458_modulo_immediate_gate(): i64 {
+    var label = "cx v6.4.58: full 64-bit immediate loads + correct modulo (self-contained, exit-code)";
+    var cc_cx = _tmp_path("audit_cx58_cc_");
+    var cxvm  = _tmp_path("audit_cx58_vm_");
+    var rc1 = _self_host_pipe(_root_path("src/main_cx.cyr"), CC_PATH, cc_cx);
+    var rc2 = _self_host_pipe(_root_path("programs/cxvm.cyr"), CC_PATH, cxvm);
+    if (WIFEXITED(rc1) != 1) { rc1 = 0 - 1; } else { rc1 = WEXITSTATUS(rc1); }
+    if (WIFEXITED(rc2) != 1) { rc2 = 0 - 1; } else { rc2 = WEXITSTATUS(rc2); }
+    if (rc1 != 0 || rc2 != 0) {
+        sys_unlink(cc_cx); sys_unlink(cxvm);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cycc_cx / cxvm build failed");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(cc_cx, 493);
+    sys_chmod(cxvm,  493);
+
+    var fail = 0;
+
+    # --- Sub-check 1: full 64-bit immediate loads. Pre-v6.4.58 CX_MOVI emitted only bits 0-47,
+    #     so any constant with bits 48-63 set loaded truncated (0x4018.. read as 0). Each check
+    #     exits with its own code on mismatch (syscall(60) is exit); all-pass falls through to 42. ---
+    var imm_src = "fn main() { var full = 0xDEADBEEFCAFE1234; if (((full >> 56) & 0xFF) != 0xDE) { syscall(60, 4); } if ((full & 0xFF) != 0x34) { syscall(60, 5); } var big = 0x4018000000000000; if (big == 0) { syscall(60, 1); } if (((big >> 56) & 0xFF) != 0x40) { syscall(60, 2); } var neg = 0xC018000000000000; if (((neg >> 56) & 0xFF) != 0xC0) { syscall(60, 3); } syscall(60, 42); }\nmain();\n";
+    var imm_ec = _cx_run_fixture(cc_cx, cxvm, imm_src, "audit_cx58_imm_src_", "audit_cx58_imm_bc_");
+    if (imm_ec != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": 64-bit immediate cxvm exit="); print_num(imm_ec);
+        println(" (expected 42; N=which word failed — the bits-48-63 movhk chunk)");
+        fail = fail + 1;
+    }
+
+    # --- Sub-check 2: modulo. Pre-v6.4.58 cxvm's divide overwrote the dividend, so `%` returned
+    #     (n/d)%d — e.g. 12345 % 10 → 4 (from 1234 % 10), the "fmt_int prints 01234" symptom. ---
+    var mod_src = "fn main() { if (12345 % 10 != 5) { syscall(60, 6); } if (100 % 7 != 2) { syscall(60, 7); } if (255 % 16 != 15) { syscall(60, 8); } if (1000000 % 1000 != 0) { syscall(60, 9); } syscall(60, 42); }\nmain();\n";
+    var mod_ec = _cx_run_fixture(cc_cx, cxvm, mod_src, "audit_cx58_mod_src_", "audit_cx58_mod_bc_");
+    if (mod_ec != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": modulo cxvm exit="); print_num(mod_ec);
+        println(" (expected 42; 6=12345%10 7=100%7 8=255%16 9=1000000%1000 — EIDIV/EMOVDR dividend stash)");
+        fail = fail + 1;
+    }
+
+    sys_unlink(cc_cx);
+    sys_unlink(cxvm);
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": cx v6.4.58 full 64-bit immediates + correct modulo (2/2 sub-checks)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _cx_roundtrip_gate(): i64 {
     var label = "cycc_cx output: well-formed CYX, no x86 noise; cxvm consumes (v5.7.12 path B)";
     var src_cx = _root_path("src/main_cx.cyr");
