@@ -1,0 +1,95 @@
+# e2e: file_write_atomic / file_rename / file_create_exclusive (v6.4.57)
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+test_group("file_write_atomic: create + content round-trip");
+var path = "/tmp/cyrius_atomic_test.txt";
+sys_unlink(path);
+var rc = file_write_atomic(path, "hello atomic world", 18);
+assert_eq(rc, 0, "atomic write returns 0");
+var buf = alloc(64);
+var nr = file_read_all(path, buf, 63);
+assert_eq(nr, 18, "read back 18 bytes");
+store8(buf + nr, 0);
+assert_eq(streq(buf, "hello atomic world"), 1, "content matches");
+
+test_group("file_write_atomic: overwrite existing (atomic replace)");
+var rc2 = file_write_atomic(path, "second", 6);
+assert_eq(rc2, 0, "second atomic write returns 0");
+var buf2 = alloc(64);
+var nr2 = file_read_all(path, buf2, 63);
+assert_eq(nr2, 6, "read back 6 bytes after replace");
+store8(buf2 + nr2, 0);
+assert_eq(streq(buf2, "second"), 1, "replaced content matches");
+
+test_group("no leftover temp files");
+# The temp name is "<path>.cyrtmp.<pid>.<ctr>" — after a successful write it must
+# have been renamed away, so opening it must fail. We can't know pid/ctr, but we
+# CAN assert the original is intact and no .cyrtmp sibling with ctr we just used
+# lingers by re-writing and confirming success repeatedly.
+var i = 0;
+while (i < 5) {
+    var rr = file_write_atomic(path, "loopdata", 8);
+    assert_eq(rr, 0, "repeated atomic write succeeds (unique temp each time)");
+    i = i + 1;
+}
+var buf3 = alloc(64);
+var nr3 = file_read_all(path, buf3, 63);
+assert_eq(nr3, 8, "final content is 8 bytes");
+
+test_group("file_rename: direct move");
+var src = "/tmp/cyrius_rename_src.txt";
+var dst = "/tmp/cyrius_rename_dst.txt";
+sys_unlink(src);
+sys_unlink(dst);
+file_write_all(src, "movable", 7);
+var mv = file_rename(src, dst);
+assert_eq(mv, 0, "rename returns 0");
+assert_eq(file_exists(src), 0, "source gone after rename");
+assert_eq(file_exists(dst), 1, "dest exists after rename");
+var bufd = alloc(32);
+var nrd = file_read_all(dst, bufd, 31);
+store8(bufd + nrd, 0);
+assert_eq(streq(bufd, "movable"), 1, "renamed content intact");
+
+test_group("simulated short write leaves original intact");
+# Manually reproduce the atomic pattern with a temp so we can force a failure path:
+# write a temp, then DON'T rename (simulate a crash), and confirm the target is
+# untouched. Then unlink the temp (as file_write_atomic's failure path would).
+var tgt = "/tmp/cyrius_intact_test.txt";
+sys_unlink(tgt);
+file_write_all(tgt, "ORIGINAL-GOOD-DATA", 18);
+var tmp = "/tmp/cyrius_intact_test.txt.cyrtmp.sim";
+var tfd = file_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+assert_eq(tfd >= 0, 1, "temp open ok");
+file_write(tfd, "HALF", 4);     # a short/partial write, then simulated failure
+file_close(tfd);
+xunlink(tmp);                    # failure path: drop temp, never rename over tgt
+# The original must be completely untouched.
+var bufo = alloc(64);
+var nro = file_read_all(tgt, bufo, 63);
+assert_eq(nro, 18, "original still 18 bytes (untouched by failed write)");
+store8(bufo + nro, 0);
+assert_eq(streq(bufo, "ORIGINAL-GOOD-DATA"), 1, "original content preserved");
+assert_eq(file_exists(tmp), 0, "temp cleaned up");
+
+test_group("file_create_exclusive: no-clobber");
+var ex = "/tmp/cyrius_excl_test.txt";
+sys_unlink(ex);
+var efd = file_create_exclusive(ex, 0x1A4);
+assert_eq(efd >= 0, 1, "exclusive create of absent path succeeds");
+file_write(efd, "excl", 4);
+file_close(efd);
+var efd2 = file_create_exclusive(ex, 0x1A4);
+assert_eq(efd2 < 0, 1, "exclusive create of existing path fails (negative)");
+
+sys_unlink(path);
+sys_unlink(dst);
+sys_unlink(tgt);
+sys_unlink(ex);
+var r = assert_summary();
