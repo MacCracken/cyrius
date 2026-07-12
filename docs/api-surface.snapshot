@@ -786,6 +786,7 @@ io::eprint/2
 io::file_append_locked/3
 io::file_close/1
 io::file_close_r/1
+io::file_create_exclusive/2
 io::file_exists/1
 io::file_lock/1
 io::file_lock_shared/1
@@ -795,15 +796,18 @@ io::file_read/3
 io::file_read_all/3
 io::file_read_all_r/3
 io::file_read_r/3
+io::file_rename/2
 io::file_trylock/1
 io::file_unlock/1
 io::file_write/3
 io::file_write_all/3
 io::file_write_all_r/3
+io::file_write_atomic/3
 io::file_write_r/3
 io::getenv/1
 io::print/2
 io::xflock/2
+io::xfsync/1
 io::xgetdents/3
 io::xlseek/3
 io::xopen/2
@@ -4024,6 +4028,7 @@ syscalls_macos::sys_access/2
 syscalls_macos::sys_chmod/2
 syscalls_macos::sys_dup2/2
 syscalls_macos::sys_fork/0
+syscalls_macos::sys_fsync/1
 syscalls_macos::sys_link/2
 syscalls_macos::sys_lstat/2
 syscalls_macos::sys_mkdir/2
