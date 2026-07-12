@@ -633,6 +633,10 @@ fn _run_regression_gates(): i64 {
     _cx_phase2c_gate();
     println("");
 
+    _section("cx v6.4.54 forward-call + value-form SIMD");
+    _cx_v6454_forward_valueform_gate();
+    println("");
+
     _section("TS asserts predicate signatures");
     _parse_ts_dir_gate("cycc --parse-ts accepts asserts predicate signatures + this-type (v5.7.24)", "asserts predicates + this-type (TS 3.7+)", "ts_asserts");
     println("");

@@ -373,6 +373,71 @@ fn _cx_phase2c_gate(): i64 {
     return fail;
 }
 
+fn _cx_v6454_forward_valueform_gate(): i64 {
+    var label = "cx v6.4.54: forward-call resolver + value-form SIMD params/returns (self-contained, exit-code)";
+    var cc_cx = _tmp_path("audit_cx54_cc_");
+    var cxvm  = _tmp_path("audit_cx54_vm_");
+    var rc1 = _self_host_pipe(_root_path("src/main_cx.cyr"), CC_PATH, cc_cx);
+    var rc2 = _self_host_pipe(_root_path("programs/cxvm.cyr"), CC_PATH, cxvm);
+    if (WIFEXITED(rc1) != 1) { rc1 = 0 - 1; } else { rc1 = WEXITSTATUS(rc1); }
+    if (WIFEXITED(rc2) != 1) { rc2 = 0 - 1; } else { rc2 = WEXITSTATUS(rc2); }
+    if (rc1 != 0 || rc2 != 0) {
+        sys_unlink(cc_cx); sys_unlink(cxvm);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": cycc_cx / cxvm build failed");
+        _check(label, 1);
+        return 1;
+    }
+    sys_chmod(cc_cx, 493);
+    sys_chmod(cxvm,  493);
+
+    var fail = 0;
+
+    # --- Sub-check 1: forward call (callee defined AFTER caller). Pre-v6.4.54 the cx forward-call
+    #     fixup read the stale 0xE92000 table in BYTE units and clobbered the call opcode, so every
+    #     forward call derailed (this exact shape returned 16, or SIGSEGV'd). Now resolves to 42. ---
+    var fwd_src = "fn caller(): i64 { return callee() + 1; }\nfn callee(): i64 { return 41; }\nfn main() { syscall(60, caller()); }\nmain();\n";
+    var fwd_ec = _cx_run_fixture(cc_cx, cxvm, fwd_src, "audit_cx54_fwd_src_", "audit_cx54_fwd_bc_");
+    if (fwd_ec != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": forward-call cxvm exit="); print_num(fwd_ec);
+        println(" (expected 42 = callee()+1; the v6.4.54 forward-call resolver fix)");
+        fail = fail + 1;
+    }
+
+    # --- Sub-check 2: f32v4 value-form param + return (16B GP-pair transport, ELOAD_F64V2_TO_XMM
+    #     + ESTOREPARM_F64V2). Round-trips a 16-byte vector through a call by value. ---
+    var v16_src = "fn passthru(v: f32v4): f32v4 { return v; }\nfn main() { var a: f32v4; store32(&a + 0, 42); store32(&a + 4, 0); store32(&a + 8, 0); store32(&a + 12, 0); var b: f32v4 = passthru(a); syscall(60, load32(&b + 0)); }\nmain();\n";
+    var v16_ec = _cx_run_fixture(cc_cx, cxvm, v16_src, "audit_cx54_v16_src_", "audit_cx54_v16_bc_");
+    if (v16_ec != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": f32v4 value-form round-trip cxvm exit="); print_num(v16_ec);
+        println(" (expected 42 — 16B value param+return marshaling)");
+        fail = fail + 1;
+    }
+
+    # --- Sub-check 3: f64v4 value-form param + return (32B quad transport r16..r19,
+    #     ELOAD_F64V4_TO_XMM + ESTOREPARM_F64V4). All 4 lanes must survive the call. ---
+    var v32_src = "fn pass4(v: f64v4): f64v4 { return v; }\nfn main() { var a: f64v4; store64(&a + 0, 40); store64(&a + 8, 1); store64(&a + 16, 1); store64(&a + 24, 0); var b: f64v4 = pass4(a); syscall(60, load64(&b + 0) + load64(&b + 8) + load64(&b + 16) + load64(&b + 24)); }\nmain();\n";
+    var v32_ec = _cx_run_fixture(cc_cx, cxvm, v32_src, "audit_cx54_v32_src_", "audit_cx54_v32_bc_");
+    if (v32_ec != 42) {
+        _p("    "); _p(ANSI_RED); _p("case-FAIL"); _p(ANSI_RESET);
+        _p(": f64v4 value-form round-trip cxvm exit="); print_num(v32_ec);
+        println(" (expected 42 = 40+1+1+0 — 32B quad value param+return marshaling)");
+        fail = fail + 1;
+    }
+
+    sys_unlink(cc_cx);
+    sys_unlink(cxvm);
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": cx v6.4.54 forward-call + value-form SIMD (3/3 sub-checks)");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _cx_roundtrip_gate(): i64 {
     var label = "cycc_cx output: well-formed CYX, no x86 noise; cxvm consumes (v5.7.12 path B)";
     var src_cx = _root_path("src/main_cx.cyr");

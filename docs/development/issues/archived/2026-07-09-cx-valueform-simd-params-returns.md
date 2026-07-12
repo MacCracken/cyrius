@@ -1,5 +1,20 @@
 # cx: value-form SIMD params & returns (the Phase-4 tail of the cx-SIMD arc)
 
+**Status (2026-07-11): RESOLVED in cyrius 6.4.54.** Implemented the four marshaling emitters
+(`ESTOREPARM_F64V2/F64V4`, `ELOAD_F64V2/F64V4_TO_XMM`, `backend/cx/emit.cyr`) via a **GP
+register-pair transport** (cxvm has no vector regs): SIMD ordinal k → r(16+2k)=lo / r(16+2k+1)=hi;
+a 32B f64v4 spans r(16+2k)..+3 — clear of int-args/returns/scratch/ENOTR. Predefined
+`CYRIUS_HAS_VAL_SIMD_PARAMS` on cx so `lib/simd.cyr`'s value-form wrappers compile. The
+**"f32v4 value-form struct-return SIGSEGV"** was NOT a return-path defect — it was the cx
+**forward-call resolver** (`main_cx.cyr` ftype==2) reading a stale table (0xE92000 not
+`_fnt_offsets`), using byte units not 4-byte units, and clobbering the call opcode; fixed to mirror
+`ECALLTO`. That resolver fix roughly **doubled** cx corpus correctness (49→99/221). Verified
+framework-free (exit-code): f32v4/i32v4 16B + f64v4 32B value param+return all match x86; x86
+self-host byte-identical; cx-bytecode regression gate added (`programs/checks/cx.cyr`). NOTE the
+acceptance's "assert-framework tcyr green on cx" is gated by pre-existing cx `fmt_int`/large-immediate
+gaps (filed separately, [`2026-07-11-cx-fmt-int-and-large-immediate-gaps`](2026-07-11-cx-fmt-int-and-large-immediate-gaps.md));
+control-flow/exit-codes are correct.
+
 **Filed:** v6.4.32 (cx-SIMD arc — flat-array shipped in .32; this is the deferred tail)
 **Pinned to:** a follow-on release after v6.4.32 (user-directed: "flat-array first, then
 break value-form into a followup release").

@@ -123,6 +123,10 @@ SBL(S, bl);
 
 # Preprocess includes
 _init_cyrius_lib();
+# v6.4.54: cx now marshals value-form SIMD params/returns (GP register-pair transport,
+# ESTOREPARM_F64V2/V4 + ELOAD_F64V2/V4_TO_XMM in backend/cx/emit.cyr), so lib/simd.cyr's
+# value-form typed wrappers compile on cx — matches every other fork (main.cyr:1021, etc.).
+PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 PREPROCESS(S);
 
 # Lex
@@ -335,8 +339,15 @@ while (topgo == 1) {
                                         var stub_fi = FINDFN(S, stub_noff);
                                         if (stub_fi < 0) { stub_fi = REGFN(S, stub_noff); }
                                         S64(S + 0xE92000 + stub_fi * 8, GCP(S));
-                                        # Emit stub: xor eax, eax; ret (3 bytes)
-                                        EB(S, 0x31); EB(S, 0xC0); EB(S, 0xC3);
+                                        # Emit stub: movi r0,0; ret (8 bytes, both 4-aligned).
+                                        # cx bytecode is fixed 4-byte instructions and cxvm computes
+                                        # call/jump targets as off*4, so the raw 3-byte x86 stub
+                                        # (0x31 0xC0 0xC3, copied verbatim from the x86 forks) shifted
+                                        # every following fn off 4-byte alignment and derailed backward
+                                        # calls into a mid-prologue 0x00 = HALT (returning a lucky stale
+                                        # r0). CHANGELOG [6.4.54]
+                                        CX_EMIT(S, 1, 0, 0, 0);    # movi r0, 0
+                                        CX_EMIT(S, 97, 0, 0, 0);   # ret
                                         # Skip function body tokens
                                         var sdep = 0;
                                         var ssk2 = 1;
@@ -421,11 +432,19 @@ while (fi < fcnt) {
     var ftype = raw >> 56;
     var idx = raw & 0x00FFFFFFFFFFFFFF;
     if (ftype == 2) {
-        # Function call — patch relative offset in movi (bytes 2-3 of the instruction)
-        var target = L64(S + 0xE92000 + idx * 8);
-        var rel = target - coff - 4;
-        var pa = S + 0x54A000 + coff;
-        S64(pa, (L64(pa) >> 32 << 32) | (rel & 0xFFFFFFFF));
+        # Forward function call — patch the 24-bit relative offset into bytes 1-3 of
+        # the call instruction (opcode 0x60 at byte 0 PRESERVED), in 4-byte instruction
+        # units, mirroring ECALLTO's `off=(target-cp)/4`. v6.4.54: this was triply broken
+        # — (a) read the stale 0xE92000 stub table (only the DCE-dead-fn stub writes it)
+        # instead of _fnt_offsets (the canonical table PARSE_FN_DEF writes + ECALLTO reads,
+        # parse_fn.cyr:1526); (b) used BYTE units (`target-coff-4`); (c) `S64(pa, ...low 32
+        # bits...)` clobbered byte 0 (the 0x60 opcode) → every forward call derailed/SIGSEGV.
+        # CHANGELOG [6.4.54]
+        var target = L64(_fnt_offsets + idx * 8);
+        var off = (target - coff) / 4;
+        store8(S + 0x54A000 + coff + 1, off & 0xFF);
+        store8(S + 0x54A000 + coff + 2, (off >> 8) & 0xFF);
+        store8(S + 0x54A000 + coff + 3, (off >> 16) & 0xFF);
     }
     elif (ftype == 3) {
         # Function pointer — absolute code offset

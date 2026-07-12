@@ -601,11 +601,79 @@ fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
 # CYRIUS_TARGET_CX. If a future cx consumer needs SIMD param
 # passing, mirror the v5.10.37 4-register pair-quad return
 # shape (R0..R3 stores per slot).
-fn ESTOREPARM_F64V2(S, simd_ord, named_idx): i64 { return 0; }
-fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 { return 0; }
+# v6.4.54 — cx value-form SIMD param/return marshaling. cxvm has no vector register
+# file, so 16B/32B value-form vectors ride a GP register-PAIR transport: SIMD ordinal
+# k occupies r(16+2k)=lo / r(16+2k+1)=hi (a 32B f64v4 spans two ordinals → the 4
+# consecutive regs r(16+2k)..r(16+2k+3)). r16.. is clear of int-args (r3..r8), returns
+# (r0..r3), scratch (r14/r15), and the ENOTR sentinel (r31); nothing between the caller's
+# ELOAD (call site) and the callee's ESTOREPARM (fn entry) touches r16.., so the pair
+# survives the call. Frame lane layout reuses _cx_ldisp and mirrors EFL{STORE,LOAD}_*_PAIR.
+# 16B covers f64v2 / f32v4 / i32v4 (2-slot pair); f64v4 is the 4-slot quad. CHANGELOG [6.4.54].
+fn ESTOREPARM_F64V2(S, simd_ord, named_idx): i64 {
+    var base = 16 + simd_ord * 2;
+    CX_EMIT(S, 2, 14, 253, 0);              # mov r14, fp
+    CX_MOVI(S, 15, _cx_ldisp(named_idx));    # r15 = offset_lo (named slot)
+    CX_EMIT(S, 17, 14, 14, 15);             # sub r14, r14, r15
+    CX_EMIT(S, 67, 14, base, 0);            # store64 [r14], r_lo
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx - 1));   # filler slot (hi half)
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 67, 14, base + 1, 0);        # store64 [r14], r_hi
+    return 0;
+}
+fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
+    var base = 16 + simd_ord * 2;
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 67, 14, base, 0);
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx - 1));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 67, 14, base + 1, 0);
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx - 2));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 67, 14, base + 2, 0);
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx - 3));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 67, 14, base + 3, 0);
+    return 0;
+}
 fn ESTOREPARM_SIMD_WIN64(S, pidx, named_idx, nbytes): i64 { return 0; }  # v6.4.31 PE-only; stub off-PE
-fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 { return 0; }
-fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 { return 0; }
+fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 {
+    var base = 16 + simd_ord * 2;
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 65, base, 14, 0);            # load64 r_lo, [r14]
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx - 1));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 65, base + 1, 14, 0);        # load64 r_hi, [r14]
+    return 0;
+}
+fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 {
+    var base = 16 + simd_ord * 2;
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 65, base, 14, 0);
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx - 1));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 65, base + 1, 14, 0);
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx - 2));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 65, base + 2, 14, 0);
+    CX_EMIT(S, 2, 14, 253, 0);
+    CX_MOVI(S, 15, _cx_ldisp(named_idx - 3));
+    CX_EMIT(S, 17, 14, 14, 15);
+    CX_EMIT(S, 65, base + 3, 14, 0);
+    return 0;
+}
 
 fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
     # [fp - (idx+1)*8] = r0

@@ -1,5 +1,20 @@
 # cx: `var x = <call>` mis-captures when the callee returns a global and the caller previously mutated other globals
 
+**Status (2026-07-11): RESOLVED in cyrius 6.4.54 — the "var-capture" framing was a RED HERRING.**
+The capture/store path (`EFLSTORE`/`_cx_ldisp`) was correct. Root cause (found by bytecode-level
+investigation): **code-stream misalignment**. `main_cx.cyr` emitted a raw **3-byte** x86 DCE stub
+(`xor eax,eax; ret` = `0x31 0xC0 0xC3`, copied verbatim from the x86 forks) for every DCE-dead
+module-0 fn, but cx bytecode is **strictly 4-byte** instructions and cxvm computes call targets as
+`off*4`. Each 3-byte stub shifted every following fn off 4-byte alignment; a later call
+`(target-cp)/4` truncated and landed 2 bytes into the callee's prologue on a `00`=HALT byte, so
+`cx_run` halted mid-chain and returned a **lucky stale r0=0**. `return assert_summary()` "passed"
+only because it *also* derailed and never ran. Fix: a 4-byte-aligned cx stub (`movi r0,0; ret`).
+Verified: the repro exits 0 (was 1), precise value capture matches x86, x86 self-host byte-identical,
+de-masks a whole class of previously-corrupt cx programs. A cx-bytecode regression gate was added
+(`programs/checks/cx.cyr`). Latent sibling (naked-asm on cx) filed separately
+([`2026-07-11-cx-naked-asm-4byte-realign`](2026-07-11-cx-naked-asm-4byte-realign.md)); the surfaced
+`fmt_int`/large-immediate gaps filed separately too.
+
 - **Filed**: 2026-07-09 (surfaced during v6.4.32 cx-SIMD gate bring-up)
 - **Severity**: P2 (cx-only correctness; does not affect x86/aarch64/PE)
 - **Status**: OPEN — pre-existing, NOT a v6.4.32 regression (reproduces on v6.4.31 with zero SIMD/arrays)

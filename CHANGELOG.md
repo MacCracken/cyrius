@@ -6,6 +6,70 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.54] — 2026-07-11
+
+**cx finish-outs (slot #1 cx half): value-form SIMD params/returns + the "var-capture" bug — which root-caused to cx code-stream misalignment + a systemic forward-call resolver bug that had been silently corrupting ~⅔ of cx programs.**
+
+Both filed cx issues were **misdiagnosed**; a multi-agent bytecode-level investigation found the
+real causes. All changes are **cx-fork-only** — x86/aarch64/PE self-host + the seed→cybs→cycc
+chain are byte-identical. cx is not in the bootstrap chain.
+
+### Fixed — cx code-stream misalignment (the "var-capture-after-global-mutation" bug)
+
+Closes [issue](docs/development/issues/archived/2026-07-09-cx-var-capture-after-global-mutation.md).
+
+- The "var-capture" framing was a **red herring** — the capture/store path was correct. The real
+  cause: `main_cx.cyr` emitted a raw **3-byte** x86 stub (`xor eax,eax; ret`, copied verbatim from
+  the x86 forks) for every DCE-dead module-0 fn. cx bytecode is **strictly 4-byte** instructions
+  and cxvm computes call targets as `off*4`, so each 3-byte stub shifted every following fn off
+  4-byte alignment — a later call `(target-cp)/4` truncated and landed on a `00`=HALT byte
+  mid-prologue. `cx_run` halted and returned a **lucky stale r0=0**. Any cx program pulling in
+  DCE-dead fns was affected; `return assert_summary()` "passed" only because it *also* derailed and
+  never ran. Fix: a 4-byte-aligned cx stub (`movi r0,0; ret`).
+
+### Fixed — cx forward-call resolver (root cause of the "f32v4 value-return SIGSEGV")
+
+- The `ftype==2` forward-call fixup (`main_cx.cyr`) was **triply broken**: it read a **stale
+  parallel table** (0xE92000, written only by the DCE-stub path) instead of the canonical
+  `_fnt_offsets` (what `PARSE_FN_DEF` writes + `ECALLTO` reads); used **byte units** instead of
+  cxvm's 4-byte instruction units; and its low-32-bit `S64` write **clobbered the call opcode**
+  (0x60) — so every forward-referenced call derailed or SIGSEGV'd. Fix mirrors `ECALLTO`:
+  `off=(target-coff)/4` from `_fnt_offsets`, written to bytes 1-3 with the opcode preserved.
+- Impact: across the tcyr corpus, **cx-exit-matches-x86 roughly doubled** (measured 49→99 of 221)
+  — this was a broad latent corruption, not a niche SIMD bug.
+
+### Added — cx value-form SIMD params & returns (`src/backend/cx/emit.cyr`, `src/main_cx.cyr`)
+
+Closes [issue](docs/development/issues/archived/2026-07-09-cx-valueform-simd-params-returns.md).
+
+- Implemented the four marshaling emitters (`ESTOREPARM_F64V2/F64V4`, `ELOAD_F64V2/F64V4_TO_XMM`),
+  previously `return 0` stubs, via a **GP register-pair transport** (cxvm has no vector registers):
+  SIMD ordinal k → r(16+2k)=lo / r(16+2k+1)=hi; a 32B f64v4 spans the four regs r(16+2k)..+3. r16..
+  is clear of int-args, returns, scratch, and the ENOTR sentinel. Covers f64v2/f32v4/i32v4 (16B
+  pair) + f64v4 (32B quad). `CYRIUS_HAS_VAL_SIMD_PARAMS` now predefined on cx so `lib/simd.cyr`'s
+  value-form wrappers compile.
+
+### Added — cx-bytecode regression gate (`programs/checks/cx.cyr`)
+
+- New check gate builds cc_cx→cxvm and exit-code-verifies, self-contained: a **forward call**
+  (was 16/SIGSEGV → 42), **f32v4** 16B value param+return round-trip, and **f64v4** 32B quad
+  round-trip. cx-bytecode SIMD/forward-call paths were previously ungated in check.sh.
+
+### Follow-ons filed (pre-existing cx gaps de-masked by the forward-call fix — NOT bundled)
+
+The forward-call fix makes previously-derailed cx programs actually run, surfacing pre-existing
+gaps: [cx `fmt_int` digit-shift + high-half 64-bit immediates load as 0](docs/development/issues/2026-07-11-cx-fmt-int-and-large-immediate-gaps.md),
+[naked-asm 4-byte realign](docs/development/issues/2026-07-11-cx-naked-asm-4byte-realign.md),
+[retire the stale 0xE92000 table](docs/development/issues/2026-07-11-cx-retire-stale-fnoffset-table.md).
+
+### Verification
+
+- x86 self-host fixpoint byte-identical; seed-derive (`seed→cybs→cycc`) OK; check.sh 142.
+- cx (framework-free, exit-code): var-capture repro 1→0; forward call 16→42; value-form f32v4 +
+  i32v4 + f64v4-32B all match x86; `vr01_simd_cx.tcyr` genuinely green (was vacuously green).
+- Native backends (x86/aarch64/PE/macho) + seed chain **byte-identical** (only the cx fork changed).
+- cycc x86 1,091,104 B (unchanged); self_compile flat.
+
 ## [6.4.53] — 2026-07-11
 
 **SIMD value-form finish-outs (arc cleanup, deferred mid-Phase-5): duplicate-arg tail-call correctness fix + the last unbuilt integer-SIMD op, i64v2 packed multiply.**
