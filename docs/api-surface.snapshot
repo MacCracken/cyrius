@@ -3784,6 +3784,8 @@ simd::i32v4_sub_ptr/2
 simd::i64v2_add/2
 simd::i64v2_add_ptr/2
 simd::i64v2_make/2
+simd::i64v2_mul/2
+simd::i64v2_mul_ptr/2
 simd::i64v2_splat/1
 simd::i64v2_sub/2
 simd::i64v2_sub_ptr/2

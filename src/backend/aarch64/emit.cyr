@@ -2476,8 +2476,9 @@ fn EMIT_F32V_DOT(S, vbase): i64 {
 }
 # SIMD Phase 5 (v6.4.30) — packed integer add/sub/mul on aarch64 NEON, width-dispatched.
 # w = element bytes (1/2/4/8 → i8/i16/i32/i64); 16/w lanes per 128-bit iter. op 0=add, 1=sub,
-# 2=mul. add/sub via ADD/SUB `.16b/.8h/.4s/.2d`; MUL is i16/i32 only (`.8h/.4s`) — NEON has no
-# 64-bit or (matched to x86) 8-bit vector mul, so w∈{1,8} hard-errors, same as x86. Slots:
+# 2=mul. add/sub via ADD/SUB `.16b/.8h/.4s/.2d`; MUL uses `.8h/.4s` for i16/i32, and i64 (w==8)
+# is synthesized from 2 scalar GPR products (NEON has no .2d integer mul); i8 (w==1) hard-errors
+# (SSE/NEON have no 8-bit vector mul — matched to x86, v6.4.53). Slots:
 # vbase=dst, +1=a, +2=b; n in x0. Mirrors EMIT_F32V_LOOP with a per-width stride/op. llvm-mc.
 fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
     var shcode = 0x8B0B018C; var incr = 0x9100416B;   # w==1: add x12,x11,lsl#0 ; add x11,#16
@@ -2497,11 +2498,12 @@ fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
         if (w == 4) { opword = 0x6EA18400; }
         if (w == 8) { opword = 0x6EE18400; }
     }
-    if (op == 2) {   # mul — i16/i32 only (MUL .8h/.4s); ERR_MSG exits for w∈{1,8}
+    var i64mul = 0;
+    if (op == 2) {   # mul — MUL .8h/.4s for i16/i32; i64 synthesized below; i8 hard-errors
         if (w == 2) { opword = 0x4E619C00; }
         if (w == 4) { opword = 0x4EA19C00; }
-        if (w == 1) { ERR_MSG(S, "packed integer mul is i16/i32 only", 34); }
-        if (w == 8) { ERR_MSG(S, "packed integer mul is i16/i32 only", 34); }
+        if (w == 1) { ERR_MSG(S, "packed integer mul is i16/i32/i64 only", 38); }
+        if (w == 8) { i64mul = 1; }   # NEON has no .2d integer mul — see the inline synthesis
     }
     EW(S, 0xAA0003EA);                # mov x10, x0   — n
     EW(S, 0xD280000B);                # movz x11, #0  — index
@@ -2513,7 +2515,22 @@ fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
     EW(S, 0xAA0003EC); EW(S, shcode); EW(S, 0x3DC00180);   # mov x12,x0 ; add x12,x11,lsl ; ldr q0
     EFLLOAD(S, vbase + 2);            # b
     EW(S, 0xAA0003EC); EW(S, shcode); EW(S, 0x3DC00181);   # ldr q1, [x12]
-    EW(S, opword);                    # v0.T = v0.T {add,sub,mul} v1.T
+    if (i64mul == 1) {
+        # v6.4.53: NEON has no .2d integer multiply, so do the two i64 lanes as scalar
+        # GPR products (exact for the low 64 bits — signed==unsigned in two's complement).
+        # Extract a/b lanes → x13/x14/x15/x9, mul, reinsert into v0. Those GPRs are dead
+        # before the dst store (loop state is x10=n, x11=index). All 8 words llvm-mc-verified.
+        EW(S, 0x4E083C0D);            # umov x13, v0.d[0]  (a_lo)
+        EW(S, 0x4E183C0E);            # umov x14, v0.d[1]  (a_hi)
+        EW(S, 0x4E083C2F);            # umov x15, v1.d[0]  (b_lo)
+        EW(S, 0x4E183C29);            # umov x9,  v1.d[1]  (b_hi)
+        EW(S, 0x9B0F7DAD);            # mul  x13, x13, x15 (a_lo*b_lo)
+        EW(S, 0x9B097DCE);            # mul  x14, x14, x9  (a_hi*b_hi)
+        EW(S, 0x4E081DA0);            # ins  v0.d[0], x13
+        EW(S, 0x4E181DC0);            # ins  v0.d[1], x14
+    } else {
+        EW(S, opword);               # v0.T = v0.T {add,sub,mul} v1.T
+    }
     EFLLOAD(S, vbase);               # dst
     EW(S, 0xAA0003EC); EW(S, shcode); EW(S, 0x3D800180);   # str q0, [x12]
     EW(S, incr);                     # add x11, x11, #(16/w lanes)

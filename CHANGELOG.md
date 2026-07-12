@@ -6,6 +6,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.53] — 2026-07-11
+
+**SIMD value-form finish-outs (arc cleanup, deferred mid-Phase-5): duplicate-arg tail-call correctness fix + the last unbuilt integer-SIMD op, i64v2 packed multiply.**
+
+Two SIMD items left behind during the value-form/integer-vector arc (v6.4.6–.31), cleared per
+the "arc finish-out items soonest" backlog re-pin. Both are codegen changes — cycc self-hosts
+byte-identical (it uses no SIMD itself), only SIMD-consumer output changes.
+
+### Fixed — value-form SIMD duplicate-arg through a tail-call return (`src/frontend/parse_fn.cyr`)
+
+Closes [issue 2026-07-08](docs/development/issues/2026-07-08-valueform-simd-duplicate-arg-x86.md).
+
+- A callee taking value-form SIMD params, called with a **duplicated local** in a tail position
+  — `fn dbl(v: f32v4) { return f32v4_add(v, v); }` — returned garbage for the second (dup) arg.
+  Root cause: the **tail-call path** (`PARSE_RETURN`) marshaled value-form vector args through
+  **integer** registers (`PCMPE`→`EPUSHR`→`ECALLPOPS`), with no XMM/q-reg second pass, so the
+  duplicated local left the 2nd vector register **stale** — the callee read whatever was there.
+  Distinct args survived by luck (each got loaded once); only the dup exposed the missing pass.
+- Fix: when the tail callee has a non-zero `_fnt_simdmask` (any value-form vector param), set
+  `tc_has_addr` so the call is **diverted off the tail path to the normal `PARSE_FNCALL` path**,
+  which already has the `_fc_simd_table` XMM/q-reg second pass (the v6.4.7 param-mask design).
+  Applies on **all targets** — the v6.4.31 guard covered only `_TARGET_PE`. SIMD-free callees
+  have `simdmask==0`, so non-SIMD tail calls stay byte-identical (differential-corpus verified).
+
+### Added — i64v2 packed multiply (`src/backend/{x86/float,aarch64/emit,cx/emit}.cyr`, `lib/simd.cyr`)
+
+Closes [issue 2026-07-07](docs/development/issues/2026-07-07-i64v2-valueform-packed-multiply.md)
+— the integer-SIMD arc's "closed here" line (CHANGELOG [6.4.7]) had left this one op unbuilt.
+
+- `i64v2_mul` / `i64v2_mul_ptr` (value + pointer form) — low 64 bits per lane, signed==unsigned.
+- **x86/PE/Intel-Mac** (shared SSE emitter): no `pmullq` before AVX-512, so synthesized via
+  **pmuludq sequencing** — `a·b = a_lo·b_lo + (a_lo·b_hi + a_hi·b_lo)<<32`, the `a_hi·b_hi·2^64`
+  term wrapping out mod 2^64 (10 llvm-mc-verified encodings, xmm2/xmm3 scratch).
+- **aarch64 NEON**: no `.2d` integer multiply, so the 2 lanes are extracted to GPRs, multiplied
+  with scalar `mul` (exact for the low 64 bits), and reinserted (8 llvm-mc-verified words).
+- **cx bytecode**: native — the scalar per-lane loop already does a 64-bit `mul` (opcode 18) on
+  `load64`'d lanes; only the `w==8` hard-error was dropped. i8 (`w==1`) still errors on all three
+  (no 8-bit vector multiply in SSE/NEON — a hardware non-feature, intentionally out of scope).
+- Regression: `simd_ints.tcyr` gains a cross-term case `(2^32+1)·3` (exercises `a_hi·b_lo`) and a
+  `2^32·2^32 ≡ 0` wraparound case (proves the high term drops); the dup-arg fix is gated on all
+  four hosts by a `dbl_v(v)=f32v4_add(v,v)` tail-call case in `vr01_simd_f32v4_neon.tcyr`.
+
+### Verification
+
+- cycc self-host fixpoint byte-identical; seed-derive (`seed→cybs→cycc`) OK; check.sh 141.
+- **Cross-OS: pi + ecb + cass all `SELFHOST_OK` + `LIBTEST_OK (3)`** — `vr01_simd_f32v4_neon`
+  (dup-arg tail call), `vr01_simd_cx` (i64 `iv_mul`), `vr01_simd_ints_neon` pass on **real
+  aarch64 + macOS + Windows**; each host self-hosts cycc byte-identical. Local: x86 141/141,
+  qemu-aarch64 emit-verify, cx via cxvm (i64 `iv_mul` exit 0).
+- cycc x86 1,091,104 B (unchanged vs v6.4.52 — size-quantized output; the dup-arg guard +
+  i64-mul emit fit existing padding); self_compile ~605 ms (flat, no growth-tax).
+
 ## [6.4.52] — 2026-07-11
 
 **Dedicated large-single-allocation path for the macOS + Windows allocators — `output_buf` is now 1 GiB on ALL platforms (the v6.4.51 macOS/Windows carryover).**

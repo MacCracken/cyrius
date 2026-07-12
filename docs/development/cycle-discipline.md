@@ -96,3 +96,49 @@ should be similarly explicit at cycle entry rather than
 discovered mid-cycle.
 
 Memory pin: `feedback_cycle_close_shape`.
+
+## Closeout checklist + ledger
+
+The **runnable** checklist we tick — and **record** — before every `x.Y.0` / `x.0.0`
+bump; the operational counterpart to the [Cycle-close shape](#cycle-close-shape) above.
+The durable *rationale* for each step lives in [`CLAUDE.md`](../../CLAUDE.md) "Closeout
+Pass"; this is the checkbox version + the **per-closeout ledger** so drift is visible
+across cycles. Copy the block into a new ledger entry and tick as you go. Ship the
+closeout as the last engineering patch of the current minor (e.g. `6.4.NN` before `6.5.0`).
+
+**Mechanical gates (fail-fast) — `sh scripts/release-gate.sh`**
+- [ ] Self-host fixpoint byte-identical · seed-derive (`seed→cybs→cycc`) byte-identical
+- [ ] check.sh all-green (record N) · cross-OS **ecb + cass + pi** [+ **ach** for the Intel-Mac tail] `SELFHOST_OK`+`LIBTEST_OK` on REAL hardware · bench recorded (self_compile ms + cycc B)
+
+**Judgment passes** (where bugs hide — see CLAUDE.md items 4–8)
+- [ ] Heap-map audit · dead-code audit (record floor) · refactor pass · code-review pass · cleanup sweep
+
+**Compliance / external**
+- [ ] Security re-scan (full audit every 2–3 minors) · downstream `cyrius.cyml` pins → the released tag
+
+**Docs (silent-rot prevention)**
+- [ ] CHANGELOG / roadmap / `state.md` current · vidya refresh (CLAUDE.md item 11 — language/field_notes/impl/deps + version cross-check)
+- [ ] **Backlog re-triage (rot sweep)** — verify open `issues/` + `proposals/` resolved-status against **LIVE code**, not the file's own claim; archive resolved; re-pin deferrals in order (finish-out items soonest, big arcs after the queue is clean). **Enforce: no codegen/runtime in 7.x → 6.x line or the `roadmap.md` "potential backlog."** Mark stale-shipped watching entries SHIPPED. Keep the open dir lean (~10–12). See `feedback_no_codegen_parking_in_v7`.
+
+### Closeout ledger (newest first)
+
+One entry per minor/major closeout — gate counts + notable judgment findings + follow-ups
+spawned. A ledger, not prose: it makes the rot visible (stale entries, growing dead-code
+floor, a re-triage that keeps re-pinning the same item).
+
+<!-- TEMPLATE — copy for each closeout:
+### vX.Y.0 closeout — YYYY-MM-DD
+- Gates: check.sh NNN · cross-OS ecb/cass/pi green · self_compile NNN ms · cycc NNN B · dead-code floor NN fns
+- Judgment / compliance: <findings, or "clean">
+- Backlog re-triage: N archived, N re-pinned — <notes>
+- Follow-ups spawned: <issues / patches>
+-->
+
+- _**v6.4.x → v6.5.0 closeout — pending** (mid-minor at 6.4.52; run this block at the `6.4.NN`
+  close). Interim: a 2026-07-11 backlog re-triage archived 4 (drishti-shift .46, EFI-enrollment
+  .48, uefi-signing + cx-CLI proposals) and re-pinned the 12 open issues into the roadmap.md
+  "Deferral backlog — pinned order."_
+- _v6.3.x → v6.4.0 and earlier: full gate detail predates this ledger — canonical in
+  [CHANGELOG.md](../../CHANGELOG.md) + [completed-phases.md](completed-phases.md)._
+
+Memory pin: `feedback_cycle_close_shape`.

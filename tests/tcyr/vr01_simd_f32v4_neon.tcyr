@@ -12,6 +12,15 @@ include "lib/vec.cyr"      # v6.4.31: simd.cyr's value-form wrappers reference v
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"
 
+# v6.4.53 (issue 2026-07-08): value-form SIMD call with a DUPLICATED arg in a tail-call
+# return — f(v, v). The tail-call path marshaled value-form vector args through INTEGER
+# registers (no XMM/q-reg second pass), so the duplicated local left the 2nd vector reg
+# stale and the callee read garbage for arg 2. Distinct args survived by luck; only the
+# dup exposed it. Fix: divert value-form-SIMD-param callees off the tail path to the
+# normal PARSE_FNCALL path (which has the XMM/q-reg second pass) on ALL targets. This runs
+# the exact broken path — dup arg through a tail-call return — on every cross-OS host.
+fn dbl_v(v: f32v4): f32v4 { return f32v4_add(v, v); }
+
 fn main(): i64 {
     test_group("f32v4 packed ops — raw flat-array intrinsics (x86 SSE / aarch64 NEON)");
     var a[16]; var b[16]; var r[16];   # 4 f32 lanes each (16 bytes)
@@ -56,6 +65,14 @@ fn main(): i64 {
     var vm: f32v4 = f32v4_mul(va, vb);                                             # 2.0f (2 by-ptr params + retptr)
     assert_eq(f32v4_lane0(vm), 0x40000000, "f32v4_mul(value) lane0 = 2.0f");
     assert_eq(f32v4_dot(va, vb), 0x41000000, "f32v4_dot(value) = 8.0f");
+
+    # --- v6.4.53 duplicate-arg tail-call fix: dbl_v(v) = f32v4_add(v, v) via a tail return ---
+    test_group("f32v4 value-form DUPLICATE-arg tail call (v6.4.53)");
+    var dv: f32v4 = f32v4_splat(0x40000000);                                       # 2.0f x4
+    var dd: f32v4 = dbl_v(dv);                                                      # add(v,v) = 4.0f x4
+    assert_eq(f32v4_lane0(dd), 0x40800000, "dbl_v(2.0f) lane0 = 4.0f (dup arg, tail call)");
+    assert_eq(f32v4_lane1(dd), 0x40800000, "dbl_v(2.0f) lane1 = 4.0f (2nd reg not stale)");
+    assert_eq(f32v4_lane3(dd), 0x40800000, "dbl_v(2.0f) lane3 = 4.0f (all 16 bytes)");
 
     var ec = assert_summary();
     return ec;

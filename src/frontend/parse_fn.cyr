@@ -367,6 +367,19 @@ fn PARSE_RETURN(S): i64 {
                         # same frame-lifetime reasoning as the `&`-arg case below.
                         var _tc_cfi = FINDFN(S, PEEKV(S));
                         if (_tc_cfi >= 0) { if (L64(_fnt_structmask + _tc_cfi * 8) != 0) { tc_has_addr = 1; } }
+                        # v6.4.53 (issue 2026-07-08): a callee with value-form SIMD params
+                        # (f32v4/f64v2/f64v4/int-vec, the -2121/-2125 XMM/V-register ABI) takes
+                        # its args in vector regs, but the tail-call arg loop below marshals
+                        # them via the INTEGER convention (PCMPE→EPUSHR→ECALLPOPS into rdi/rsi),
+                        # never loading XMM/V. Distinct args survive by luck (the caller's
+                        # incoming xmm0/xmm1 pass through the jmp untouched); a DUPLICATED source
+                        # local leaves the 2nd vector reg stale → the callee reads garbage
+                        # (`return f32v4_add(v, v)` returned v, not 2v — x86 + aarch64; PE was
+                        # already diverted by the SIMD-RETURN guard below). Force the normal
+                        # PARSE_FNCALL path (which has the _fc_simd_table XMM second pass). ALL
+                        # targets — simdmask==0 for every SIMD-free callee, so non-SIMD tail
+                        # calls stay byte-identical. `_fnt_simdmask` is stored unconditionally.
+                        if (_tc_cfi >= 0) { if (L64(_fnt_simdmask + _tc_cfi * 8) != 0) { tc_has_addr = 1; } }
                         var tc_addrscan = ti_after + 1;
                         while (tc_addrscan < GTCNT(S)) {
                             if (TOKTYP(S, tc_addrscan) == 10) { tc_depth = tc_depth + 1; }

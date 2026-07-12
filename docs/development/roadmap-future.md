@@ -1,11 +1,13 @@
 # Cyrius Future Work — Beyond Current Minor
 
-**Scope** — Items that aren't pinned to the current cycle but are
-known long-term work: v7.0+ aspirations, unpinned language
-refinements waiting on consumer pressure, speculative type-system
-extensions, and the public-release manuscript pin. Items here may
-get pulled forward into a v6.x minor when consumer pressure
-materializes; the placement is "watching" not "deferred".
+**Scope** — A **6.x-cycle watching / potential-backlog list**: known work not yet
+pinned to a slot, pulled forward into a v6.x minor the moment consumer pressure
+materializes (placement is "watching," not "deferred"). **PLACEMENT RULE (hard):
+everything technical here is 6.x-cycle work — no codegen / runtime / platform item is
+ever a "v7 item."** The ONLY genuine 7.x content is the **public-release manuscript
+(the "language book") + legal / release invariants** at the bottom of this file. If it
+compiles code, it belongs in a 6.x minor (roadmap.md pinned order) or the roadmap.md
+potential backlog — never parked to 7.x.
 
 See [roadmap.md](roadmap.md) for the current active minor and
 [roadmap_6.md](roadmap_6.md) for the whole v6.x cycle.
@@ -75,37 +77,26 @@ original candidate write-ups are kept below for history:
 
 ---
 
-## TS/TSX → JS emit — frontend builder (consumer-filed, minor TBD)
+## TS/TSX → JS emit — ✅ SHIPPED (v6.1.10–.15)
 
-SecureYeoman's `yeo-cy-test` port probe (2026-05-27) confirmed the
-Cyrius TS/TSX front-end **parses** real-world TS/TSX cleanly
-(interfaces, `<K extends string, V>` generics + default type params,
-`?.`/`??`, async/await, enums, `readonly`/optional members,
-destructuring, spread, tuples, `Record<K,V>`, a full React component
-with `useState`/`useEffect`/JSX) — but has **no emit**. `--lex-ts` /
-`--parse-ts` validate only; the P3–P5 lowering from the old v5.7.2 TS
-plan never shipped. So Cyrius can be the build-time *validator* of a TS
-frontend but not its *builder*; the consumer hand-maintains a parallel
-`web/app.js` as the production stopgap.
+The `cycc --emit-js` / `cyrius build --target=js` codegen stage landed: walk the existing
+AST — strip type annotations / interfaces / aliases, lower JSX → `createElement`-style
+calls, pass ESM through (single-file; a bundler stays out of scope). Phase D emitter on
+the corrected AST (v6.1.10/.11), surfaced via `cyrius build --target=js` (v6.1.12),
+`async`-on-nested-arrow fix (v6.1.15). The TS/TSX front-end already *parsed* real-world
+TS/TSX cleanly (SecureYeoman's `yeo-cy-test` probe, 2026-05-27) — this closed the
+"validator but not builder" gap. check.sh-gated (`programs/checks/ts.cyr`
+`_emit_js_to_file`, `tests/fixtures/ts_emit/`). Issue archived:
+[`issues/archived/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`](issues/archived/2026-05-27-yeo-cy-test-no-tsx-js-emit.md).
 
-**Ask**: a `cycc --emit-js <file.tsx>` (or `cyrius build --target=js`)
-codegen stage walking the existing AST — strip type annotations /
-interfaces / type aliases, lower JSX → `createElement`-style calls
-(configurable pragma), pass ESM through. Single-file emit only; a
-bundler is explicitly out of scope. The expensive part (a correct,
-full-fidelity TS/TSX parser) already exists — this is codegen on top.
-
-**Status**: consumer-filed with active pressure, but **minor TBD** per
-user direction 2026-05-27 ("arc TBD"). Larger than the three TS
-scripting papercuts the same filing surfaced (those are near-term
-v6.0.x bug-bandwidth — see [roadmap.md](roadmap.md)). Notable framing:
-this is a *non-machine-code output target* for an assembly-up compiler,
-so its home minor is a deliberate open decision rather than an obvious
-v6.3.x language-refinements fit. ✅ **SHIPPED v6.1.10/.11** (Phase D — emitter on
-the corrected AST; surfaced via `cyrius build --target=js` v6.1.12; `async`-on-
-nested-arrow fix v6.1.15). Issue (resolved, archived):
-[`issues/archived/2026-05-27-yeo-cy-test-no-tsx-js-emit.md`](issues/archived/2026-05-27-yeo-cy-test-no-tsx-js-emit.md);
-full write-up in `secureyeoman/yeo-cy-test/FINDINGS.md`.
+> **Cautionary tale (kept on purpose — [[feedback_no_codegen_parking_in_v7]]):** this sat
+> as "minor TBD / consumer-filed with active pressure" in this watching list for a while
+> before it shipped — the SAME deferral pattern that kept the **cx backend** target-less
+> "for a couple majors when it was ready to" (the wasm-shaped wall only broke when a
+> consumer hit it, .17). A ready or near-ready capability belongs in a **pinned 6.x
+> slot**, not left in watching/"minor TBD" limbo to "get found out." And keep this list
+> HONEST: mark shipped items SHIPPED — do not leave them framed as pending (this entry was
+> stale until 2026-07-11).
 
 ---
 

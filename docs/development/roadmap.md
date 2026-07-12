@@ -592,6 +592,69 @@ tables/lists in structs generally.
 
 ---
 
+## Deferral backlog — pinned order (triaged 2026-07-11 @ v6.4.52)
+
+A full sweep of open `issues/` + `proposals/` after the .50–.52 run. **12 open issues + 3
+open proposals** remain; **4 were resolved/shipped and archived in this pass** — drishti
+`>>>` shift (→ .46), EFI enrollment (→ .48), and the UEFI-signing + cx-CLI proposals
+(shipped .47/.48 and .17–.22). Order set by the maintainer (2026-07-11).
+
+> **PLACEMENT RULE (hard):** every technical / codegen / runtime item lives in the **6.x
+> line** or the **potential backlog** below — **NOTHING codegen-related is EVER pushed to
+> 7.x**. 7.x is **language book + legal-for-public-release ONLY**. An item without a
+> committed slot goes in the potential backlog (still 6.x-cycle work), not a far-future
+> version.
+
+### 6.4.x tail — pinned order
+
+Arc **finish-out** items deferred *during* the SIMD + cx arcs run **FIRST** — they were
+done work that got left behind, so they clear soonest. The **function-visibility** arc runs
+**LAST** (one of the final arcs of the minor), so the issue queue is clean before it. The
+**Intel-Mac** platform revival is scoped **before** function-visibility — it's been lingering
+and is the trickiest to bring back, so it gets a hard look ahead of the big arc.
+
+| # | Slot | Absorbs | Sev |
+|:-:|---|---|:-:|
+| 1 | **SIMD + cx arc finish-out** — deferred finish-out of the Pin-1 SIMD arc + the cx portable arc. **SIMD half ✅ SHIPPED v6.4.53**: dup-arg `f(v,v)` correctness BUG (root cause = tail-call path marshaling value-form vectors through int regs; fix diverts SIMD-param callees to the normal XMM/q-reg path on all targets) + i64v2 packed multiply (x86/PE pmuludq · NEON extract-mul-insert · cx native 64-bit lane) — cross-OS-gated pi/ecb/cass. **cx half → v6.4.54**: cx value-form SIMD params/returns + cx `var`-capture-after-global-mutation (the two cx-backend items, split off cleanly at planning) | ~~`…valueform-simd-duplicate-arg-x86`~~ ✅ .53, ~~`…i64v2-valueform-packed-multiply`~~ ✅ .53, `…cx-valueform-simd-params-returns` (P2), `…cx-var-capture-after-global-mutation` (P2) | P2 |
+| 2 | **Scalar-float completion** — f64 scalar RETURN in xmm0 + f32 scalar arithmetic + stricter typecheck (cyrius-side; the agnos XMM-state **kernel** layer is agnos-side + separate) | `…agnos-fp-xmm-state-and-f64-scalar-return` §1 (P3) | P2 |
+| 3 | **Intel-Mac (x86_64 Mach-O) toolchain revival (slot T)** — scoped **before** function-visibility (been an issue a while; a tricky platform-revival arc — give it a hard look early). Core self-host is FIXED; env/arch-default/cycc-finding/layer-6 native self-compile miscompile/packaging remain. Mach-O structural lint lands as a bite inside it | `2026-06-02-macos-x86-release-no-compiler` (P1, partial), `2026-07-07-macho-structural-lint-residual` (P3, bite) | P1 |
+| 4 | **DX diagnostics** — multi-error reporting + column/source-excerpt (committed horizon item; no issue file) | — | P2 |
+| 5 | **Function visibility (`pub`/`private`)** — **one of the LAST arcs of the minor**, run after the queue is cleared (§4 below) | proposal `2026-07-02-function-visibility-pub-private` | P2 |
+
+**Fold-in (no dedicated slot):** `2026-06-25-source-level-version-constant` (P3 — build
+tooling) rides a convenient minor-cut, per the "cosmetic/tooling fixes fold into adjacent
+work" rule.
+
+### v6.5.x — Performance-Quality minor (anchors already framed in roadmap_6.md)
+
+| Slot | Open issues it absorbs |
+|---|---|
+| **IR substrate productionization** — the anchor; gates the whole perf/regalloc arc | `2026-07-02-ir-regalloc-rewrite-needs-reemit` (P2, L); folds `2026-07-07-v6415-closeout-residuals` (D1/D2 dead IR/decode, R2 PE prologue) + the `_cur_fn_ret_stash` disp↔idx substrate (state.md "Filed follow-on") |
+| **SIMD register residency** — IR-substrate-gated; a codegen-QUALITY gap (bit-identical, no wrong results), so it can't batch ahead of the substrate | `2026-07-06-simd-f64v-memory-operand-no-register-residency` (P2, L) |
+| **TLS slot allocator** — stdlib/threading; coordinated cross-repo bump (shares `TLOCAL_MAX_SLOTS` with the sandhi-rpc-slot migration) | `2026-07-01-thread-local-slot-namespace-no-allocator` (P2, M) |
+| **macOS-arm64 threading backend** — `lib/thread_macos.cyr` (bsdthread/`__ulock`), mirrors the thread_win split; **distinct from the Intel-Mac x86 tail** and has no consumer blocked yet | `2026-07-03-macos-threading-workers-dont-run` (P2, M) |
+
+### v6.6.x — Language-Ergonomics minor
+
+- **const-eval / comptime** — proposal `2026-07-05-const-eval-comptime` (P3, L; already homed here).
+
+### Potential backlog — 6.x-cycle, unscheduled (NOT parked to 7.x)
+
+Real 6.x-line work without a committed slot yet; pulled into a release the moment a consumer
+or priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
+
+- **Async execution-model** — stackless coroutines / mid-body suspend; single-waiter-per-fd
+  multiplex (both real runtime/codegen work; slot when a consumer needs them).
+- **`tantu` runtime extraction** — the async runtime lib → its own repo (repo name reserved;
+  a future-**minor** deliverable, still 6.x).
+
+### 7.x — public-release ONLY
+
+**Language book** (reference/guide finalization) + **legal** (licensing / public-release prep).
+**No codegen, runtime, or platform work ever lives here** — if it compiles code, it's 6.x.
+
+---
+
 ## Order-committed (length-blocked, not yet pinned)
 
 ### 3 — UEFI Secure Boot signing — **✅ SHIPPED bite 1 (v6.4.47)** · NOT a release-blocker
@@ -707,7 +770,11 @@ never unilaterally deferred or redirected.
     extracted; cass-verified). D1/D2 (dead IR/decode) REMAIN → v6.5.x IR substrate.
   - ~~`windows-pe-surface-no-terminateprocess`~~ — ✅ **SHIPPED v6.4.26** (0xF01D TerminateProcess
     + `_win_terminate`/`_win_wait_timeout`; unblocks thoth's Windows timeout-kill).
-- **🟢 SIMD polish (standalone; Pin 1 is closed, these are follow-ons not blockers):** `i64v2-valueform-packed-multiply`, cx value-form SIMD params/returns (`issues/2026-07-09-cx-valueform-simd-params-returns.md`), the x86/aarch64 `f(v,v)` dup-arg bug (`issues/2026-07-08-valueform-simd-duplicate-arg-x86.md`), and SIMD register-residency (`issues/2026-07-06-simd-f64v-memory-operand-no-register-residency.md`, a v6.5.x IR-substrate item).
+- **🟢 SIMD polish (standalone; Pin 1 is closed, these are follow-ons not blockers):**
+  ~~`i64v2-valueform-packed-multiply`~~ ✅ **SHIPPED v6.4.53**, ~~the x86/aarch64 `f(v,v)` dup-arg
+  bug~~ ✅ **SHIPPED v6.4.53** (both archived); still open: cx value-form SIMD params/returns
+  (`issues/2026-07-09-cx-valueform-simd-params-returns.md`, → v6.4.54) and SIMD register-residency
+  (`issues/2026-07-06-simd-f64v-memory-operand-no-register-residency.md`, a v6.5.x IR-substrate item).
   - ~~`aarch64-f64-exp2-atan-hard-error`~~ — ✅ **SHIPPED v6.4.25** (polyfill-dispatch +
     `_f64_exp2_polyfill`/`_f64_atan_polyfill`). Unblocked `ganita` inverse-trig →
     [`aarch64-ganita-inverse-trig-unguard`](issues/archived/2026-07-08-aarch64-ganita-inverse-trig-unguard.md) (open follow-on).

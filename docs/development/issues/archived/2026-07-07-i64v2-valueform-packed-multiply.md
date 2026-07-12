@@ -1,5 +1,17 @@
 # i64v2 value-form packed multiply unimplemented (needs pmuludq sequencing)
 
+**Status (2026-07-11): RESOLVED in cyrius 6.4.53** — added `i64v2_mul` / `i64v2_mul_ptr`
+(value + pointer form, `lib/simd.cyr`), low 64 bits per lane (signed==unsigned in two's
+complement). Per-backend: **x86/PE/Intel-Mac** (shared SSE emitter) synthesize via **pmuludq
+sequencing** `a·b = a_lo·b_lo + (a_lo·b_hi + a_hi·b_lo)<<32` (the `a_hi·b_hi·2^64` term wraps
+out mod 2^64); **aarch64 NEON** extracts the 2 lanes to GPRs + scalar `mul` + reinserts (no
+`.2d` integer multiply exists); **cx** does a native 64-bit lane `mul` (`load64`/opcode-18/
+`store64`) — only the `w==8` hard-error was dropped. i8 (`w==1`) still errors on the packed
+backends (no 8-bit vector multiply in SSE/NEON — a hardware non-feature). All 10 x86 + 8
+aarch64 encodings llvm-mc-verified; cycc self-hosts byte-identical (it uses no SIMD).
+Regression: `simd_ints.tcyr` cross-term `(2^32+1)·3` + wraparound `2^32·2^32≡0`, and an i64
+`iv_mul` case in `vr01_simd_cx.tcyr` gated cross-OS on **pi + ecb + cass**.
+
 **Filed:** 2026-07-07 (CHANGELOG-prose deferral sweep).
 **Severity:** P3 — missing SIMD op; the claimed workaround does not actually exist.
 **Component:** `src/backend/x86/float.cyr` (`EMIT_IVEC_BINOP`), `lib/simd.cyr`.

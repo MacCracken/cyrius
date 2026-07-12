@@ -396,7 +396,25 @@ fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
     if (op == 2) {
         if (w == 2) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0xD5); EB(S, 0xC1); }                   # pmullw
         elif (w == 4) { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x38); EB(S, 0x40); EB(S, 0xC1); }    # pmulld (SSE4.1)
-        else { ERR_MSG(S, "packed integer mul is i16/i32 only", 34); }
+        elif (w == 8) {
+            # v6.4.53: packed i64 multiply (low 64 bits/lane). SSE has no pmullq (AVX-512
+            # only), so synthesize via pmuludq (unsigned 32×32→64 on the low dword of each
+            # qword): a*b = a_lo·b_lo + (a_lo·b_hi + a_hi·b_lo)<<32 — the a_hi·b_hi·2^64
+            # term wraps out mod 2^64, and low-64 signed == unsigned (two's complement).
+            # xmm0=a, xmm1=b in; result in xmm0; xmm2/xmm3 scratch (caller-saved). All
+            # ten encodings llvm-mc-verified. See issue 2026-07-07-i64v2-valueform-packed-multiply.
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0x6F); EB(S, 0xD1);                # movdqa xmm2, xmm1  (b)
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0x73); EB(S, 0xD2); EB(S, 0x20);   # psrlq  xmm2, 32    (b_hi)
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0xF4); EB(S, 0xD0);                # pmuludq xmm2, xmm0 (a_lo·b_hi)
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0x6F); EB(S, 0xD8);                # movdqa xmm3, xmm0  (a)
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0x73); EB(S, 0xD3); EB(S, 0x20);   # psrlq  xmm3, 32    (a_hi)
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0xF4); EB(S, 0xD9);                # pmuludq xmm3, xmm1 (a_hi·b_lo)
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0xD4); EB(S, 0xD3);                # paddq  xmm2, xmm3  (cross sum)
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0x73); EB(S, 0xF2); EB(S, 0x20);   # psllq  xmm2, 32
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0xF4); EB(S, 0xC1);                # pmuludq xmm0, xmm1 (a_lo·b_lo)
+            EB(S, 0x66); EB(S, 0x0F); EB(S, 0xD4); EB(S, 0xC2);                # paddq  xmm0, xmm2  (final)
+        }
+        else { ERR_MSG(S, "packed integer mul is i16/i32/i64 only", 38); }
     }
     _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);                  # dst base
     EB(S, 0x0F); EB(S, 0x11); EB(S, 0x04); EB(S, sib);   # movups [rdx+rsi*w], xmm0

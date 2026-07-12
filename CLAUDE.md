@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 6.4.52
+- **Version**: 6.4.53
 
 ## Goal
 
@@ -139,6 +139,8 @@ with the gate RED. Losing the seed costs days of repair.**
 
 ## Closeout Pass (before every minor/major bump)
 
+> **Runnable checklist + per-closeout ledger:** [`docs/development/cycle-discipline.md`](docs/development/cycle-discipline.md) "Closeout checklist + ledger" — tick the boxes there and RECORD the run (gate counts, findings, follow-ups). This section is the durable *spec* (the why behind each step); that doc is what you open, run, and log against each closeout.
+
 Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the current minor (e.g. 4.2.5 before 4.3.0). **Mechanical checks first, then the judgment-call passes (refactor / code review / cleanup), then the doc sync.**
 
 ### Mechanical (automated, fast-fail) — this IS `scripts/release-gate.sh` (run it)
@@ -170,6 +172,7 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
    - **`vidya/content/cyrius/implementation.toml`** / **`types.toml`** — bump version refs and any structural changes (heap map, fixup table, fn table caps, IR opcode count, backend modules).
    - **`vidya/content/cyrius/dependencies.toml`** / **`ecosystem.toml`** — refresh when deps bump (sigil 2.8.4 → next, etc.) and when downstream consumer counts / test counts change.
    - **Cross-check the version**: every vidya file mentioning a `cc?` version (`cc3 4.8.5`, `cycc 5.4.x`, etc.) should match the current `VERSION` file. `version-bump.sh` doesn't touch vidya — that's manual at closeout.
+12. **Backlog re-triage (rot sweep)** — sweep the open `issues/` + `proposals/` queue and re-pin the roadmap. **Verify each item's resolved-status against LIVE code / CHANGELOG — NOT the file's own claim** (a shipped-but-still-framed-as-pending entry is the exact rot: cx sat target-less for a couple majors when it was ready, TS→JS emit shipped v6.1.10 but stayed "minor TBD" in `roadmap-future.md` for months). Archive the resolved (`issues/archived/`, `proposals/archived/`); batch the rest by theme + dependency; re-pin them into an ordered roadmap sequence (arc **finish-out** items soonest, big new arcs after the queue is clean). **Enforce the placement rule: every technical / codegen / runtime item lives in the 6.x line or the `roadmap.md` "potential backlog" — NOTHING codegen is EVER parked to 7.x** (7.x = the language book + legal-for-public-release, that's it). Also re-scan the `roadmap-future.md` "watching" list for stale-shipped entries and mark them SHIPPED. Keep the open dir lean (~10–12). See [`feedback_no_codegen_parking_in_v7`]. (Cheap to run any time on request — "re-triage the backlog" — but MANDATORY at minor/major closeout, when a release burst has piled up drift.)
 
 Order matters: mechanical checks fail-fast (if self-host breaks, stop). Judgment passes uncover scope for a follow-up patch if needed (landing the refactor during closeout is fine IF it stays byte-identical; otherwise defer to the next minor's first patch). Doc sync is last so it reflects whatever the judgment passes changed.
 
@@ -271,7 +274,7 @@ docs/                Architecture, roadmap, benchmarks, language guide
 - `docs/development/roadmap.md` — **Active minor** (current v6.x.y), slot-by-slot
 - `docs/development/roadmap_6.md` — Whole-v6.x-cycle reference (framing, per-minor budgeting, v6.2.x → v6.5.x, the closed v6.0.x summary)
 - `docs/development/roadmap-future.md` — Long-term watching list (unpinned items, speculative work, v7.0+ aspirations)
-- `docs/development/cycle-discipline.md` — Evergreen operating principles (slot acceptance, bottom-to-top priority, premise-check, cross-host smoke, cycle-close shape)
+- `docs/development/cycle-discipline.md` — Evergreen operating principles (slot acceptance, bottom-to-top priority, premise-check, cross-host smoke, cycle-close shape) **+ the runnable Closeout checklist + per-closeout ledger** (the doc you open/run/record against at every minor/major bump)
 - `docs/development/state.md` — Volatile cycle / pin / sweep state (refreshed every release)
 - `docs/development/dev-tools-linux.md` — per-environment dev toolchain (Linux x86_64 first; `qemu-user`/`wine` to reproduce aarch64/PE self-host bugs locally, `llvm-objdump` disasm, SSH cross-host verify). macOS/Windows siblings to follow. Install these before cross-target codegen work.
 - `docs/doc-health.md` — Living doc-currency ledger (per-tier fresh / stale / archived; refreshed when docs are touched)
