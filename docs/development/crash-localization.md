@@ -68,4 +68,4 @@ Earlier known-bug list (libro PatraStore Heisenbug from v3.4.8+) has
 since resolved — current open bugs live in
 [`docs/development/issues/`](issues/). This page focuses on the
 CYRIUS_SYMS mechanism itself, which has been stable since v4.3.1
-across the cc3 → cc5 → cycc renames and through v6.0.x.
+across the cc3 → cc5 → cycc renames and through v6.4.x.

@@ -53,12 +53,12 @@
 
 ## Security Scanning
 
-`cybs vet` scans for dangerous patterns:
+`cyrius vet` scans for dangerous patterns (a `cyaudit` pass dispatched by the `cyrius` CLI — not the `cybs` bootstrap compiler, which has no vet/deny mode; the `cybs vet` wording was a mis-wire fixed v6.1.25):
 - Raw `syscall(59, ...)` (execve) outside process.cyr/agnosys
 - Unbounded loops without break conditions
 - Missing null checks on pointer arguments
 
-`cybs deny` enforces policy:
+`cyrius deny` enforces policy:
 - No shell execution in library code
 - No network syscalls in core libraries
 - Trusted path validation for include directives

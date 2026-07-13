@@ -2,7 +2,7 @@
 
 > Sovereign, self-hosting systems language. Assembly up.
 
-> **Doc currency** (reviewed at v6.4.32; framing last reworked at the
+> **Doc currency** (reviewed at v6.4.62; framing last reworked at the
 > v5.11.63 sweep): the principles and self-hosting framing below are
 > durable across the v5.x → v6.x cycles.
 > Historical version anchors (cc3 era, v5.6.43 "as of" stamps) are
@@ -80,14 +80,15 @@ not control:
    ran exit=42 cleanly on macOS Sonoma may exit=1 on Sequoia not
    because our bytes changed but because dyld's posture did.
 
-**Status per platform (as of v6.4.32):**
+**Status per platform (as of v6.4.62):**
 
 | Target | Narrow scope | Broad scope | Notes |
 |--------|--------------|-------------|-------|
-| Linux x86_64 | ✅ | ✅ | Daily-driver host. Byte-identical 3-step fixpoint at both `IR_ENABLED == 0` and `IR_ENABLED == 3`, self-host compile ~616 ms. |
+| Linux x86_64 | ✅ | ✅ | Daily-driver host. Byte-identical 3-step fixpoint at both `IR_ENABLED == 0` and `IR_ENABLED == 3`, self-host compile ~627 ms. |
 | Linux aarch64 (cross) | ✅ | ✅ (cross-built binary runs on Pi) | `programs/checks/platform_aarch64.cyr` (via `scripts/check.sh`) gates the runtime path. |
 | Linux aarch64 (native self-host on Pi) | ✅ | ✅ | Closed at **v5.6.32** (1-line fix: missing `include "src/common/ir.cyr"` in `main_aarch64_native.cyr`). Earlier `_TARGET_MACHO` framing was stale shape from pre-v5.6.12 source. `programs/checks/platform_aarch64.cyr` is the active gate. |
 | macOS arm64 Mach-O | ✅ | ✅ | Closed at **v5.6.33** (gate fixture rewrite — no compiler regression existed; `fn main()` fixture never ran main() per cyrius's no-auto-main rule). `programs/checks/platform_win_macho.cyr` is the active gate. |
+| macOS x86_64 Mach-O (Intel) | ✅ | ✅ | Revived at **v6.4.59** (Intel-Mac x86_64 Mach-O revival — wrapper arch/env, cycc `_read_env` un-stub, `_lint_macho_buf` lint, x86 release tarball). The full toolchain self-hosts byte-identical on real Intel hardware (`ach`), now a first-class release-gate host. Apple Intel is EOL upstream so arm64 stays primary, but x86-macho is release-gated, not parity-only. |
 | Windows 11 PE32+ | ✅ | ✅ | Substantially complete as of **v6.1.18** — process creation, threading, TLS-via-args, env, file I/O, and **directory enumeration** (`lib/fs_win.cyr` + FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) all work; `EPE_SYSCALL_DYNAMIC` var-syscall dispatch + portable mutex + `cycc_win` in the release tarball (v6.1.16); `nanosleep(35)`→`Sleep` (v6.1.17). Self-host gate fixture closed at v5.6.36; `programs/checks/platform_win_macho.cyr` is the active gate. v5.6.31 fixed the HIGH_ENTROPY_VA `EREAD_PE`/`EWRITE_PE` DWORD-into-qword post-call read. |
 | cyrius-x portable (`.cyx`) | ✅ | ✅ (runs on all 4 hosts) | Portable bytecode target closed at **v6.4.20** — a single `.cyx` doing I/O runs byte-for-byte on x86_64 Linux, aarch64 (pi), Windows (cass), and macOS (ecb) via the `cxvm` runner; the compiler runtime-renumbers guest syscalls so no cxvm translation table is needed. SIMD lowers to per-lane scalar loops (v6.4.32). |
 
@@ -146,8 +147,8 @@ Assembly (the cornerstone)
               → cc.cyr → cc3 (modular, 7 modules, 181 fns)
                 → 38 programs, 137 tests (Phase 5) ✓
                   → kernel prerequisites (Phase 6) ✓
-                    → boot_serial.cyr: "AGNOS" on QEMU  ← WE ARE HERE
-                      → AGNOS kernel (Phase 7+)
+                    → boot_serial.cyr: "AGNOS" on QEMU  ✓ (boot-to-prompt v6.0.55–.56)
+                      → AGNOS kernel (Phase 7+)  ← WE ARE HERE (many iron / bare-metal boot phases done)
 ```
 
 ## Current State

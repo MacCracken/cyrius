@@ -39,7 +39,7 @@ self-host remains byte-identical. See `CHANGELOG [6.2.0]` and `util.cyr`.
 ## Layout (summary — reconciled v6.0.73)
 
 The **authoritative** registry is the `HEAP MAP` comment block in
-`src/main.cyr` (the `HEAP MAP` block, 100 regions, verified monotonic + overlap-free
+`src/main.cyr` (the `HEAP MAP` block, 96 regions, verified monotonic + overlap-free
 by `tests/heapmap.sh`). This ADR keeps only a high-level summary; when the
 two disagree, **`src/main.cyr` wins**. Major regions, in offset order:
 
