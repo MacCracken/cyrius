@@ -167,10 +167,10 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   retptr deep-stack-param homing).** .46 `>>>` arithmetic-shift operator + stdlib folds; .47–.48 UEFI
   Secure Boot signing (`cyrius sign-efi`) + enrollment (`.esl`/`.auth` via sigil 3.11.1); .49 growable
   8 MiB off-heap codebuf; **.50 capacity-warning consolidation (Pin 3 — one shared `_capacity_warnings`
-  across all 7 drivers).** Current head: **v6.4.50**, cycc 1,091,056 B, check.sh 141, self_compile
-  ~611 ms. **The async arc 5b + UEFI arc (#3) are CLOSED. No arc in flight — next 6.4.x pickup is
-  maintainer-prioritized (candidates, bottom-to-top: function visibility · scalar-float completion ·
-  diagnostics · Intel-Mac x86_64 Mach-O tail).**
+  across all 7 drivers).** Current head: **v6.4.62**, cycc 1,103,568 B, check.sh 146, self_compile
+  ~627 ms. **The async arc 5b + UEFI arc (#3) are CLOSED; scalar-float completion (.55/.56), DX
+  diagnostics (.60 R1 + .62 R2), and the Intel-Mac x86_64 Mach-O tail (.59) have all SHIPPED. No arc
+  in flight — the one remaining committed 6.4.x arc is function visibility (`pub`/`private`).**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -195,9 +195,9 @@ releases, each bundling several bites. Minors flex long.**
 | 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
 | 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 5 releases (.17–.20, .22) | No | **✅ DONE. A=CLI, B=f64, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts), .22=cycc_cx cross-native (macOS/Win). Tail: f32/transcendentals fail loud.** |
 | 5b | **Async runtime — reactor + suspend/resume foundation, THEN tokio-parity primitives + IOCP-Windows** (unblocks stiva v3.1 + thoth `--win`) | 6–8 releases (shipped in ~13: .33–.45) | No | **✅ SHIPPED (.33–.45).** FOUNDATION-FIRST (reactor + the 5 tokio-parity primitives, .33–.41) → consolidation (.42) → IOCP-Windows "W" step: client (.43) / timers+subprocess+combinator-parity (.44) / AcceptEx server (.45), all target-agnostic and release-gated on real cass. `async_accept` closes the surface. Mid-body suspend/resume = FUTURE ARC (parked in roadmap-future: stackless coroutines; blocked on the v6.5.x IR substrate + no live consumer). `tantu` extraction = RESERVED future-minor deliverable (repo name held) — NOT sequenced. (pinned 2026-07-07, shaped 2026-07-09, shipped 2026-07-10; history: [`issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md), [`issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md`](issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md)) |
-| 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | **2–3 releases** | No | pinned 2026-07-07 — later 6.4.x |
-| 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | **2–4 releases** | No | pinned 2026-07-07 — later 6.4.x |
-| T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | **2–4 releases** | No | committed tail |
+| 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | 2–3 releases (done in 2) | No | **✅ COMPLETE — f64 scalar return (v6.4.55) + f32 arith/compare + WARN-only typecheck (v6.4.56)** |
+| 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | 2–4 releases (done in 2) | No | **✅ COMPLETE — R1 column + source-excerpt/caret (v6.4.60) + R2 panic-mode multi-error (v6.4.62)** |
+| T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | 2–4 releases (done in 1) | No | **✅ COMPLETE — Intel-Mac x86_64 Mach-O revival (v6.4.59); `ach` now a first-class release-gate host** |
 
 **Opening sequence total: conservatively ~22–35 `.NN` releases** (grown from ~17–26
 at the 2026-07-07 horizon session: + cx CLI exposure, scalar-float completion,
@@ -657,15 +657,16 @@ or priority surfaces. **These are technical items → they stay in the 6.x cycle
 
 ## Order-committed (length-blocked, not yet pinned)
 
-### 3 — UEFI Secure Boot signing — **✅ SHIPPED bite 1 (v6.4.47)** · NOT a release-blocker
+### 3 — UEFI Secure Boot signing — **✅ COMPLETE (signing v6.4.47 + enrollment v6.4.48)** · NOT a release-blocker
 
 > **✅ v6.4.47 — `cyrius sign-efi` (A) shipped.** A separate `cyrsign-efi` helper (the 14 MB
 > crypto stays out of the CLI) wraps sigil's `authenticode_pe_sign`; `cyrius sign-efi` dispatches
 > to it. De-risked against a real gnoboot `BOOTX64.EFI`: independent PE-hash recompute + RSA
 > verify confirm a real UEFI would accept it (thin-glue, no PE-layout repair tail). Gate:
-> `scripts/sign-efi-gate.sh`. **Residual (B):** `EFI_SIGNATURE_LIST` `.esl`/`.auth` enrollment
-> generation in sigil (PK/KEK/db keychain setup — distinct from signing) is a follow-on; and
-> the belt-and-suspenders OVMF-secboot QEMU boot. Original framing below (kept for context):
+> `scripts/sign-efi-gate.sh`. **✅ Residual (B) SHIPPED v6.4.48:** `EFI_SIGNATURE_LIST`
+> `.esl`/`.auth` enrollment generation (`efi_signature_list_from_cert`/`efi_auth_from_esl`/
+> `efi_time`, via folded sigil 3.11.1's `efi_sigdb`) — the PK/KEK/db keychain setup, distinct
+> from signing. The whole arc is now COMPLETE. Original framing below (kept for context):
 
 Give the sovereign toolchain a **`cyrius sign-efi`** path (Authenticode-sign a
 `CYRIUS_TARGET_EFI` PE) + EFI key-enrollment artifacts. Consumer-filed by **gnoboot**
@@ -715,13 +716,16 @@ flat namespace + a real cross-ecosystem migration**.
   use-aliases, `GMOD` mangling); two enforcement sites (`PARSE_FNCALL` + the tail-call
   path — easy to miss one). Cross-repo migration is a big part of why it runs long.
 
-### T — Intel-Mac (x86_64 Mach-O) usable-toolchain tail — ~2–4 releases · NOT a blocker
+### T — Intel-Mac (x86_64 Mach-O) usable-toolchain tail — **✅ COMPLETE (v6.4.59)** · NOT a blocker
 
-Runs at the **v6.4.x tail** (moved 2026-07-03). Phase 1 (argv prologue) shipped
-v6.1.30; remaining `ach`-gated layers: env reading (`HOME`/uname), wrapper macOS
-arch-default, cycc-finding, the layer-6 native self-compile miscompile (tools ship
-cross-built until fixed), packaging. `ach` is the supported macOS-x86 verify host.
-[`issues/2026-06-02-macos-x86-release-no-compiler.md`](issues/2026-06-02-macos-x86-release-no-compiler.md).
+Ran at the **v6.4.x tail** (moved 2026-07-03). Phase 1 (argv prologue) shipped
+v6.1.30; the remaining `ach`-gated layers all landed at **v6.4.59** (Intel-Mac
+x86_64 Mach-O revival): wrapper arch/env (`HOME` via r15, macOS arch-default),
+cycc `_read_env` un-stub, `_lint_macho_buf` structural lint, x86 release tarball
+in release.yml, and **`ach` added to the release gate** as a first-class host —
+closing the 13-month "macOS x86 release, no compiler" issue. The toolchain
+self-hosts on real `ach`.
+[`issues/archived/2026-06-02-macos-x86-release-no-compiler.md`](issues/archived/2026-06-02-macos-x86-release-no-compiler.md).
 
 ---
 

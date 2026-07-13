@@ -116,14 +116,16 @@ at each cycle-open per [`feedback_premise_check_at_slot_entry`].
 | **Stackless coroutines** (suspend/resume across `await`) | Medium (poll-runtime rework) | **Unpinned follow-on.** v6.3.11 shipped async/await as first-class deferred-then-forced Futures over the run-to-completion epoll runtime, explicitly NOT stackless CPS. True suspend/resume needs a poll-runtime rework (+ force-once memoization). No live consumer; pull forward on a real suspend-across-await need. (Named in the v6.3.11 slot cell as "pinned as a follow-on" — recorded here 2026-07-01 so it points somewhere.) Subsumes the mid-body-suspend "gap 6" of the now-shipped async "W" arc. |
 | **Async reactor-fd `O_CLOEXEC`** | Low | **Unpinned follow-on** (parked from `issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md` at its .45 archive). `async_new_in` opens the epfd, and connect/accept sockets set `O_NONBLOCK` but not `FD_CLOEXEC`, so an `async` fd leaks across a subsequent `exec` (matters once a reactor fork+execs while holding live connections). No live consumer bite yet; fold into an adjacent async touch. |
 | **Async single-waiter-per-fd** | Low–Medium | **Unpinned follow-on** (parked from the same issue). `_async_wait_events` uses the epoll `data` slot AS the waiter identity, so two tasks parking the SAME fd hit `EPOLL_CTL_ADD` `EEXIST` and one starves. Needs a real per-fd waiter list (reconsidered 2026-07-09 as NOT a cheap hygiene bite). No consumer exercises concurrent same-fd waiters today. |
-| **f32 scalar arithmetic** (native-float Tier A tail) | Low | ▲ **PINNED later-v6.4.x** (2026-07-07 horizon session — the scalar-float completion slot, together with scalar-`f64` return type + stricter f64/f32 typecheck; see [roadmap.md](roadmap.md)). |
+| **f32 scalar arithmetic** (native-float Tier A tail) | — | ✅ **SHIPPED v6.4.56** — f32 scalar arith/compare + WARN-only typecheck, together with scalar-`f64` return type (v6.4.55). The scalar-float completion slot is closed; no longer a watching item. |
 
 ---
 
 ## DX / cyrlint tooling (watching)
 
-Static-analysis lint gates worth a single `cyrlint` tooling slot when the
-diagnostics arc (pinned later-v6.4.x) or a consumer ask pulls them. Consolidated
+Static-analysis lint gates worth a single `cyrlint` tooling slot when a
+consumer ask pulls them. (The DX diagnostics arc itself SHIPPED — column +
+source-excerpt v6.4.60, panic-mode multi-error v6.4.62 — so these lint gates
+are the remaining unpinned tail, not part of that arc.) Consolidated
 here from standalone issues at the v6.4.15 absorber-band hygiene pass — no
 urgency, no consumer blocked; the underlying bugs each already have a real fix.
 

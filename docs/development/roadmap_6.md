@@ -198,8 +198,8 @@ platform work (bottom-to-top priority) takes v6.2.x.
   landmine gates (.43). Note: `agnosys` retired at .37 (decomposed), dropping
   api-surface from ~5035 to **4343 fns** (grown to 4519 @ v6.4.11 with per-cycle
   additions). **Current metrics live in [state.md](state.md)** (avoid re-rotting an
-  inline snapshot here): as of v6.4.48 — cycc 1,091,000 B, check.sh 141, tests
-  241 `.tcyr`.
+  inline snapshot here): as of v6.4.62 — cycc 1,103,568 B, check.sh 146, tests
+  246 `.tcyr`.
 
 Remaining v6.2.x arc: the **dependency-model foundation (lever 1)** — the
 active committed arc — plus the **open bare-metal/kernel reactive window**
@@ -552,7 +552,7 @@ in-kernel crypto. Premise-check at arc entry per
 > **Closed minor.** Shipped .0 → .45 (closeout at v6.3.45); v6.4.0 opened the cut
 > 2026-07-03. The section below is the cycle-level design record; per-patch detail is the
 > [`CHANGELOG.md`](../../CHANGELOG.md) source of truth. The active minor is now **v6.4.x**
-> (at v6.4.32 — [roadmap.md](roadmap.md)).
+> (at v6.4.62 — [roadmap.md](roadmap.md)).
 
 **Theme**: language-level closures + generics + async sugar.
 Three syntactic/semantic additions the v5.x cycle held out
@@ -1007,8 +1007,10 @@ detail is canonical in [roadmap.md](roadmap.md) (active minor) +
   returns (by-pointer copy-in + retptr). **.32** cx bytecode per-lane scalar loops for every flat-array
   verb (`_CX_VLOOP_BIN`; cxvm opcodes through 0x68 — f32widen 0x66 / f32narrow 0x67 / fsqrt 0x68).
   SIMD now runs on x86, aarch64, PE, and cx — Phase 5 complete on all four backends.
-- **▶ Item 2 — Array-typed struct fields — NEXT UP.** Unchanged from the opening-sequence scope above.
-- **Items 3–4 (UEFI Secure Boot signing, `pub`/`private` visibility)** — order-committed, unstarted.
+- **✅ Item 2 — Array-typed struct fields — SHIPPED** (R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13; `Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>).
+- **✅ Item 3 — UEFI Secure Boot signing — SHIPPED** (signing `cyrius sign-efi` v6.4.47 + `.esl`/`.auth` enrollment v6.4.48 via sigil 3.11.1).
+- **▶ Item 4 — `pub`/`private` function visibility — the LAST committed 6.4.x arc, still unstarted.**
+- **Also shipped since this block was cut (v6.4.32):** async 5b incl. IOCP-Windows (.33–.45), scalar-float completion (f64 return .55, f32 arith/typecheck .56), Intel-Mac x86_64 Mach-O revival (.59), DX diagnostics R1 column/excerpt (.60) + R2 panic-mode multi-error (.62). Function visibility is all that remains.
 
 ### v6.4.0 — SHIPPED: `CYRIUS_MONOMORPH` default-on flip
 

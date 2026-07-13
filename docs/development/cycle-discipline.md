@@ -134,7 +134,7 @@ floor, a re-triage that keeps re-pinning the same item).
 - Follow-ups spawned: <issues / patches>
 -->
 
-- _**v6.4.x → v6.5.0 closeout — pending** (mid-minor at 6.4.52; run this block at the `6.4.NN`
+- _**v6.4.x → v6.5.0 closeout — pending** (mid-minor at 6.4.62; run this block at the `6.4.NN`
   close). Interim: a 2026-07-11 backlog re-triage archived 4 (drishti-shift .46, EFI-enrollment
   .48, uefi-signing + cx-CLI proposals) and re-pinned the 12 open issues into the roadmap.md
   "Deferral backlog — pinned order."_
