@@ -623,7 +623,12 @@ fn ADDXP(S, p): i64 {
 # Line tracking
 fn GCLINE(S): i64 { return L64(S + 0x18FCB8); }
 fn SCLINE(S, v): i64 { S64(S + 0x18FCB8, v); return 0; }
-fn GTLINE(S, ti): i64 { return L64(S + 0x3D7C000 + ti * 8); }
+# v6.4.60 (DX): tok_lines packs the token-start byte offset (into preprocess_out)
+# in the high 32 bits + the line number in the low 32. GTLINE masks to the line
+# (all ~30 readers use it purely as a line number); GTOFF reads the offset for the
+# column + source-excerpt. STLINE writes the whole packed word (ADDTOK builds it).
+fn GTLINE(S, ti): i64 { return L64(S + 0x3D7C000 + ti * 8) & 0xFFFFFFFF; }
+fn GTOFF(S, ti): i64 { return L64(S + 0x3D7C000 + ti * 8) >> 32; }
 fn STLINE(S, ti, v): i64 { S64(S + 0x3D7C000 + ti * 8, v); return 0; }
 
 # Block scoping
