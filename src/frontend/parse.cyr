@@ -551,7 +551,7 @@ fn PARSE_MATCH(S): i64 {
                             }
                             if (dupe == 1) {
                                 syscall(SYS_WRITE, 2, "warning:", 8);
-                                FM_LOOKUP(S, GTLINE(S, GTI(S)));
+                                _err_head(S);
                                 syscall(SYS_WRITE, 2, ": duplicate match arm '", 23);
                                 PRSTR(S + 0x60000 + arm_noff);
                                 syscall(SYS_WRITE, 2, "'\n", 2);
@@ -680,7 +680,7 @@ fn PARSE_STMT(S): i64 {
         _unsafe_depth = _unsafe_depth + 1;
         if (_unsafe_depth > 1) {
             syscall(SYS_WRITE, 2, "warning:", 8);
-            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+            _err_head(S);
             syscall(SYS_WRITE, 2, ": nested @unsafe block\n", 23);
         }
         while (PEEKT(S) != 14) {
@@ -713,7 +713,7 @@ fn PARSE_STMT(S): i64 {
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
         if (lhs == 0) {
             syscall(SYS_WRITE, 2, "error:", 6);
-            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+            _err_head(S);
             syscall(SYS_WRITE, 2, ": #assert failed", 16);
             if (PEEKT(S) == 30) {
                 # String token value is (offset << 16) | length
@@ -1093,7 +1093,7 @@ fn PARSE_STMT(S): i64 {
                 var _mu_flags = L64(S + 0x17A000 + _mu_fi * 8);
                 if (_mu_flags & 1 != 0) {
                     syscall(SYS_WRITE, 2, "warning:", 8);
-                    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+                    _err_head(S);
                     syscall(SYS_WRITE, 2, ": #must_use result of '", 23);
                     PRSTR(S + 0x60000 + noff);
                     syscall(SYS_WRITE, 2, "' is discarded\n", 15);
@@ -1259,7 +1259,7 @@ fn PARSE_STMT(S): i64 {
             idx = FINDVAR(S, noff);
             if (idx < 0) {
                 syscall(SYS_WRITE, 2, "error:", 6);
-                FM_LOOKUP(S, GTLINE(S, GTI(S)));
+                _err_head(S);
                 syscall(SYS_WRITE, 2, ": undefined variable '", 22);
                 PRSTR(S + 0x60000 + noff);
                 syscall(SYS_WRITE, 2, "'\n", 2);

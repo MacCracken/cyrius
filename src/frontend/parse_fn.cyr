@@ -475,14 +475,14 @@ fn PARSE_RETURN(S): i64 {
                                 var _tcf = L64(S + 0x17A000 + tcfi * 8);
                                 if (_tcf & 16 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
-                                    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+                                    _err_head(S);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
                                     PRSTR(S + 0x60000 + tcnoff);
                                     syscall(SYS_WRITE, 2, "'\n", 2);
                                 }
                                 if (_tcf & 32 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
-                                    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+                                    _err_head(S);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
                                     PRSTR(S + 0x60000 + tcnoff);
                                     syscall(SYS_WRITE, 2, "'\n", 2);
@@ -1165,7 +1165,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     var _dep_flags = L64(S + 0x17A000 + fi * 8);
     if (_dep_flags & 4 != 0) {
         syscall(SYS_WRITE, 2, "warning:", 8);
-        FM_LOOKUP(S, GTLINE(S, GTI(S)));
+        _err_head(S);
         syscall(SYS_WRITE, 2, ": '", 3);
         PRSTR(S + 0x60000 + noff);
         syscall(SYS_WRITE, 2, "' is deprecated", 15);
@@ -1185,14 +1185,14 @@ fn PARSE_FNCALL(S, noff): i64 {
     if (_cur_fn_is_pure == 1) {
         if (_dep_flags & 16 != 0) {
             syscall(SYS_WRITE, 2, "warning:", 8);
-            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+            _err_head(S);
             syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
             PRSTR(S + 0x60000 + noff);
             syscall(SYS_WRITE, 2, "'\n", 2);
         }
         if (_dep_flags & 32 != 0) {
             syscall(SYS_WRITE, 2, "warning:", 8);
-            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+            _err_head(S);
             syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
             PRSTR(S + 0x60000 + noff);
             syscall(SYS_WRITE, 2, "'\n", 2);
@@ -1433,7 +1433,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                     if (_tc_str_sid > 0) {
                         if (_tc_typ == 0 - _tc_str_sid) {
                             syscall(SYS_WRITE, 2, "warning:", 8);
-                            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+                            _err_head(S);
                             syscall(SYS_WRITE, 2, ": passing Str-typed '", 21);
                             PRSTR(S + 0x60000 + _tc_arg_noff);
                             syscall(SYS_WRITE, 2, "' to '", 6);
@@ -2591,7 +2591,7 @@ fn PARSE_FN_DEF(S): i64 {
         var _dup_off = L64(_fnt_offsets + fi * 8);
         if (_dup_off >= 0) {
             syscall(SYS_WRITE, 2, "warning:", 8);
-            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+            _err_head(S);
             syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
             PRSTR(S + 0x60000 + noff);
             syscall(SYS_WRITE, 2, "' (last definition wins)\n", 25);
@@ -2708,7 +2708,7 @@ fn PARSE_FN_DEF(S): i64 {
         if (_has_inline_asm == 0) { if (_AARCH64_BACKEND == 0) { SFRA(S, fi, _ra_cap); } }
         else {
             syscall(SYS_WRITE, 2, "warning:", 8);
-            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+            _err_head(S);
             syscall(SYS_WRITE, 2, ": '", 3);
             PRSTR(S + 0x60000 + noff);
             syscall(SYS_WRITE, 2, "': #regalloc skipped — fn contains inline asm (hardcoded stack offsets)\n", 74);

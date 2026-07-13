@@ -708,7 +708,7 @@ fn CHKDUPVAL(S, noff, newval): i64 {
     if (phas == 1) {
         if (pval != newval) {
             syscall(SYS_WRITE, 2, "warning:", 8);
-            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+            _err_head(S);
             syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
             PRSTR(S + 0x60000 + noff);
             syscall(SYS_WRITE, 2, "' redefined with conflicting value (last definition wins)\n", 58);
@@ -739,7 +739,7 @@ fn CHK_ENUM_SHADOW(S, noff): i64 {
     if (pi < 0) { return 0; }
     if (GVENUMID(S, pi) == 0) { return 0; }   # prior symbol is a plain var, not an enum const
     syscall(SYS_WRITE, 2, "error:", 6);
-    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+    _err_head(S);
     syscall(SYS_WRITE, 2, ": variable '", 12);
     PRSTR(S + 0x60000 + noff);
     syscall(SYS_WRITE, 2, "' shadows an enum constant (rename the variable)\n", 49);

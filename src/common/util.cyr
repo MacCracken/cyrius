@@ -891,9 +891,34 @@ fn IS_KEYWORD_TOK(typ): i64 {
     return 0;
 }
 
+# v6.4.60 (DX diagnostics): derive the 1-based BYTE column of a token from its
+# packed start offset (GTOFF) by back-scanning preprocess_out (S+0x459D000) to
+# the preceding newline. off==0 (unpacked token / buffer start) → column 1. The
+# expanded-buffer column equals the original-source column (the preprocessor
+# copies source lines verbatim, inserting only whole #@file marker lines).
+fn _err_col(S, off): i64 {
+    var ls = off;
+    while (ls > 0) {
+        if (load8(S + 0x459D000 + ls - 1) == 10) { break; }
+        ls = ls - 1;
+    }
+    return off - ls + 1;
+}
+
+# Shared diagnostic location head: prints "<file>:line:col" (NO "error:" /
+# "warning:" prefix — each caller writes its own). Routing all five emitters
+# through this gives every one of the 432 error sites a column for free.
+fn _err_head(S): i64 {
+    var ti = GTI(S);
+    FM_LOOKUP(S, GTLINE(S, ti));
+    syscall(SYS_WRITE, 2, ":", 1);
+    PRNUM(_err_col(S, GTOFF(S, ti)));
+    return 0;
+}
+
 fn ERRDUPVAR(S): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
-    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+    _err_head(S);
     syscall(SYS_WRITE, 2, ": duplicate variable\n", 21);
     syscall(SYS_EXIT, 1);
     return 0;
@@ -901,7 +926,7 @@ fn ERRDUPVAR(S): i64 {
 
 fn WARN(S, msg, len): i64 {
     syscall(SYS_WRITE, 2, "warning:", 8);
-    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+    _err_head(S);
     syscall(SYS_WRITE, 2, ": ", 2);
     syscall(SYS_WRITE, 2, msg, len);
     syscall(SYS_WRITE, 2, "\n", 1);
@@ -911,7 +936,7 @@ fn WARN(S, msg, len): i64 {
 fn ERR(S): i64 {
     var typ = PEEKT(S);
     syscall(SYS_WRITE, 2, "error:", 6);
-    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+    _err_head(S);
     syscall(SYS_WRITE, 2, ": unexpected ", 13);
     PRSTR(TOKNAME(typ));
     if (typ == 2) {
@@ -971,7 +996,7 @@ fn _find_fn_by_name(S, name_cstr, name_len): i64 {
 fn ERR_EXPECT(S, expected_type): i64 {
     var got = PEEKT(S);
     syscall(SYS_WRITE, 2, "error:", 6);
-    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+    _err_head(S);
     syscall(SYS_WRITE, 2, ": expected ", 11);
     PRSTR(TOKNAME(expected_type));
     syscall(SYS_WRITE, 2, ", got ", 6);
@@ -1034,7 +1059,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
 
 fn ERR_MSG(S, msg, len): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
-    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+    _err_head(S);
     syscall(SYS_WRITE, 2, ": ", 2);
     syscall(SYS_WRITE, 2, msg, len);
     syscall(SYS_WRITE, 2, "\n", 1);

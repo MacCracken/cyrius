@@ -575,7 +575,7 @@ fn PARSE_FACTOR(S): i64 {
         var idx = FINDVAR(S, noff);
         if (idx < 0) {
             syscall(SYS_WRITE, 2, "error:", 6);
-            FM_LOOKUP(S, GTLINE(S, GTI(S)));
+            _err_head(S);
             syscall(SYS_WRITE, 2, ": undefined variable '", 22);
             PRSTR(S + 0x60000 + noff);
             syscall(SYS_WRITE, 2, "' (missing include or enum?)\n", 29);
@@ -682,7 +682,7 @@ fn PARSE_FACTOR(S): i64 {
             return 0;
         }
         # Nothing of this name exists in any scope.
-        syscall(SYS_WRITE, 2, "error:", 6); FM_LOOKUP(S, GTLINE(S, GTI(S))); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
+        syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
         PRSTR(S + 0x60000 + anoff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
         return 0;
     }
@@ -2949,7 +2949,7 @@ fn PEXPR(S): i64 {
 fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
     syscall(SYS_WRITE, 2, "warning:", 8);
-    FM_LOOKUP(S, GTLINE(S, GTI(S)));
+    _err_head(S);
     if (kind == 0) {
         syscall(SYS_WRITE, 2, ": comparison mixes f64 and integer operands\n", 44);
     } else {
