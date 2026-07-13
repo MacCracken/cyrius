@@ -6,6 +6,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.61] — 2026-07-12
+
+**net.cyr `sock_accept` per-poll alloc leak (consumer-filed) + DX multi-error prep.**
+
+### Fixed — `sock_accept` leaked the bump heap on every poll (`lib/net.cyr`)
+
+Filed by agnosticos/mishran while hardening the audio-routing daemon. On the no-free bump
+allocator, a non-blocking server's accept-poll loop calls `sock_accept` every tick — almost always
+with nothing pending — and each call boxed a fresh 16-byte `Result` (and, on Linux/macho, a dead
+peer-address buffer), so long-running sovereign daemons (mishrand/agora/descent/setu) grew the arena
+until they NULL-faulted. Measured **40 B/poll → 4,000,000 B over 100 000 polls**.
+
+- **Fix A (Linux/macho):** `accept(NULL, NULL)` — `client_addr`/`addrlen` were written but never read
+  (`sock_accept` returns only `Ok(cfd)`), so allocating them was 20 B/call of pure leak.
+- **Fix B:** a lazily-built shared `Err(_NET_EAGAIN)` singleton for the would-block path (the poll
+  steady state) — box it **once**, hand back the same pointer each poll → **0 steady-state
+  allocation**. Safe: callers only read the tag + code and never mutate it. `_NET_EAGAIN` + the
+  singleton moved out of the AGNOS `#ifdef` (the Linux/macho path uses them too).
+
+Verified: the probe grows **0 B** over 100 000 polls (was 4,000,000 B); the singleton is a correct
+`Err(11)`, same pointer reused. New regression gate `tests/net_accept_no_leak.sh` → check.sh
+(144 → 145). `lib/net.cyr` isn't in cycc → self-host byte-identical; zero API change.
+Closes [issue](docs/development/issues/archived/2026-07-12-net-sock-accept-per-poll-alloc-leak.md).
+
+### Changed — DX multi-error prep: EOF-guard the recovery skip-loops (`src/frontend/`)
+
+Prerequisite for the DX multi-error arc (Release 2, deferred to v6.4.62). Three parser skip-loops
+(`parse_types.cyr:316` ctor args, `parse_decl.cyr:585` named fields, `parse_fn.cyr:2254` generic
+params) advanced `while (PEEKT != <terminator>)` with **no EOF guard** — safe today only because
+`ERR_EXPECT` hard-exits, but once recovery lets the emitters return and the cursor desyncs past a
+missing terminator, an unguarded loop would run off the end of the token array (OOB → SIGSEGV) on
+malformed input. Added the EOF guard to each. **Byte-identical behavior** (valid input always has the
+terminator before EOF, so the guards never fire): self-host fixpoint holds, seed-derive green, cross-OS
+byte-identical on ecb/ach/cass/pi. The remaining recovery core (emitters print-and-return + `_panic` +
+`_sync_skip` + gate the output write on `_had_error` + a negative-input corpus) lands complete-in-one
+as v6.4.62.
+
+- **Bench:** self_compile 619 ms · cycc 1,103,496 B (unchanged vs .60 — the EOF guards net zero
+  size; net.cyr is not in cycc).
+
 ## [6.4.60] — 2026-07-12
 
 **DX diagnostics (Release 1 of 2): column numbers + a source-excerpt with a caret on every error.**

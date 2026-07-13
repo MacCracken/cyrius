@@ -93,3 +93,7 @@ to this `sock_accept` allocation ("out of scope — a cyrius-side fix").
 is only from calling it in a poll loop on a no-free allocator. The daemons could also cache
 one `Result` and re-poll less aggressively, but the stdlib fix is the correct home — every
 sovereign accept-poll server hits this.
+
+---
+
+**RESOLVED — v6.4.61** (2026-07-12). Fix A (Linux/macho accept(NULL,NULL) — dead peer-addr buffer) + Fix B (lazy shared Err(_NET_EAGAIN) singleton for the would-block path). Probe: 0 B growth over 100k polls (was 4,000,000 B); singleton is a correct Err(11), same pointer reused. Regression gate tests/net_accept_no_leak.sh. lib/net.cyr not in cycc → self-host byte-identical. See CHANGELOG [6.4.61].

@@ -1,5 +1,12 @@
 # DX diagnostics: multi-error reporting (Release 2 of the DX arc)
 
+> **PROGRESS (v6.4.61):** the EOF-hardening prerequisite is DONE — the 3 unguarded
+> `while(PEEKT!=<term>)` skip-loops (`parse_types.cyr:316`, `parse_decl.cyr:585`,
+> `parse_fn.cyr:2254`) now break on EOF (byte-identical; bounds the desync crash surface).
+> The recovery CORE (emitters print-and-return + `_panic` + `_sync_skip` + gate the output
+> write on `_had_error` + a negative-input corpus) is scheduled for **v6.4.62** (a focused,
+> complete-in-one release — user's call 2026-07-12 to keep it off the marathon tail).
+
 **Filed:** 2026-07-12 (at v6.4.60, when DX Release 1 — column + source-excerpt — shipped).
 **Severity:** P2 — DX quality; not a correctness bug.
 **Component:** `src/frontend/parse*.cyr`, `src/common/util.cyr` (the emitters), `src/main.cyr`
