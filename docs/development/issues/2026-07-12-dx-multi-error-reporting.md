@@ -1,5 +1,24 @@
 # DX diagnostics: multi-error reporting (Release 2 of the DX arc)
 
+> **★ RECOVERY CORE SHIPPED — v6.4.62 (3rd attempt; the fuzz wall is broken).** The panic-mode
+> mechanism landed: 4 emitters print-and-return + `_panic` + `_sync_skip` + a `PARSE_STMT` wrapper
+> (guaranteed-progress guard) + the all-fork output gate (2 `EMITELF` fns + cx + all-fork
+> `exit=_had_error` + `_had_error` shared in util.cyr). **THE KEY THAT UNBLOCKED IT: a
+> `_had_error`-gated watchdog in `PEEKT`** — after the first error, if `GTI` stalls >500 000 reads
+> (far above any legal descent depth → never false-fires on valid code) cycc aborts cleanly. This
+> universally bounds ANY desync spin the per-loop guards miss — the piece the 2 prior attempts
+> lacked. VERIFIED: valid self-compile byte-identical + seed-derive + all 6 forks; **VR-02 heavy
+> fuzz `CYCC_FUZZ_ITERS=300` (1500 runs) = 0 crashes/0 hangs**; check.sh 146/0. Covers the
+> `ERR_EXPECT` (346) + `ERR`/`ERR_MSG`/`ERRDUPVAR` syntax class.
+>
+> **STILL OPEN (the follow-up — a smaller, distinct scope):** (a) the **25 inline `SYS_EXIT`
+> errors** (undefined-variable @parse_expr etc. + the lexer errors, which are pre-parse and stay
+> fatal) — convert the *parser* inline ones to print-and-return + `_panic` so semantic errors
+> multi-report too; (b) dense consecutive errors COALESCE (`_sync_skip` skips to the next `;`,
+> swallowing no-`;` statements) — a smarter sync (stop at statement-start keywords) is the
+> refinement. Neither blocks the shipped syntax-class multi-error. The watchdog makes any future
+> inline conversion safe by construction (it can't reintroduce a hang).
+
 > **PROGRESS (v6.4.61):** the EOF-hardening prerequisite is DONE — the 3 unguarded
 > `while(PEEKT!=<term>)` skip-loops (`parse_types.cyr:316`, `parse_decl.cyr:585`,
 > `parse_fn.cyr:2254`) now break on EOF (byte-identical; bounds the desync crash surface).

@@ -6,6 +6,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.62] — 2026-07-12
+
+**DX diagnostics (Release 2): panic-mode multi-error reporting — cycc reports many errors per
+compile instead of fail-fast.** The hard part was doing it *safely*: two prior attempts hit a fuzz
+wall (byte-mutated stdin hung/crashed cycc). This release breaks it. Before, the first parse error
+`SYS_EXIT`'d; now:
+
+```
+error:<source>:3:5: expected ';', got return
+    var p = 1
+        ^
+error:<source>:7:5: expected ';', got return
+    var q = 2
+        ^
+```
+
+### Added — panic-mode recovery (`src/common/util.cyr`, `src/frontend/parse.cyr`)
+
+- The 4 central emitters (`ERR`/`ERR_EXPECT`/`ERR_MSG`/`ERRDUPVAR`) **print once, then return**
+  and set `_had_error`/`_panic` instead of exiting; `_panic` swallows the cascade until recovery.
+- `_sync_skip(S)` — a `GTCNT`-bounded skip to the next `;`/`}`/EOF, then clears `_panic`.
+- A **`PARSE_STMT` wrapper** — the single recovery chokepoint (the body became `_PARSE_STMT_IMPL`):
+  `_sync_skip` on `_panic`, plus a guaranteed-progress guard (force one token if a statement made
+  none) so the enclosing block/PROG loop can't spin.
+
+### Added — the anti-hang watchdog (`src/backend/common/tokens.cyr` + `util.cyr`)
+
+The breakthrough the two prior attempts lacked. A `_had_error`-gated watchdog in `PEEKT`: after the
+first error, if `GTI` stalls for >500 000 reads (far above any legal recursive-descent depth, so it
+**never** false-fires on valid nested code) cycc aborts cleanly. This **universally** bounds any
+desync spin the per-loop guards miss — the parser now provably terminates on *any* stdin.
+
+### Changed — output gate + exit code, all forks
+
+A compile with any reported error emits **no** output and exits 1. Gated inside the 2 `EMITELF` fns
+(`x86`+`aarch64` fixup.cyr: zero the output length + return — covers the 5 ELF/PE/macho forks) + the
+cx write path; all 6 forks' final `SYS_EXIT 0` → `SYS_EXIT _had_error`; `_had_error` moved to the
+shared `util.cyr`. New gate `tests/dx_multi_error.sh` (check.sh 145 → 146).
+
+Everything is **inert until the first error**, so the **valid self-compile is byte-identical** (fixpoint
++ seed-derive green; all 6 forks build). **Robustness is gated by VR-02**: `CYCC_FUZZ_ITERS=300`
+(1500 byte-mutated parses) = 0 crashes, 0 hangs. Cross-OS self-host byte-identical on ecb/ach/cass/pi.
+
+**Scope:** the `ERR_EXPECT` (346-site) + `ERR`/`ERR_MSG`/`ERRDUPVAR` syntax-error class. The 25 inline
+`SYS_EXIT` errors (undefined-variable etc.) stay fail-fast — a filed follow-up
+([issue](docs/development/issues/2026-07-12-dx-multi-error-reporting.md)). Dense consecutive errors
+coalesce (bounded recovery). On pathological desync input, cycc bails via the watchdog in <1 s.
+
+- **Bench:** self_compile 627 ms · cycc 1,103,568 B (+72 B vs .61 — the recovery + watchdog code;
+  the `PEEKT` `_had_error` check is on the hot path but a single compare, inert on valid input).
+
 ## [6.4.61] — 2026-07-12
 
 **net.cyr `sock_accept` per-poll alloc leak (consumer-filed) + DX multi-error prep.**
