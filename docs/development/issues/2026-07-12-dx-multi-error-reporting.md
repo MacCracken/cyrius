@@ -3,9 +3,39 @@
 > **PROGRESS (v6.4.61):** the EOF-hardening prerequisite is DONE — the 3 unguarded
 > `while(PEEKT!=<term>)` skip-loops (`parse_types.cyr:316`, `parse_decl.cyr:585`,
 > `parse_fn.cyr:2254`) now break on EOF (byte-identical; bounds the desync crash surface).
-> The recovery CORE (emitters print-and-return + `_panic` + `_sync_skip` + gate the output
-> write on `_had_error` + a negative-input corpus) is scheduled for **v6.4.62** (a focused,
-> complete-in-one release — user's call 2026-07-12 to keep it off the marathon tail).
+>
+> **PROTOTYPE PROVEN (v6.4.62 attempt, reverted — mechanism validated, completion scoped):**
+> Built + tested the recovery mechanism: `_panic` global; `_sync_skip(S)` (GTCNT-bounded skip
+> to `;`/`}`/EOF, consume `;`, clear `_panic`); the 4 central emitters (ERR/ERR_EXPECT/ERR_MSG/
+> ERRDUPVAR) print-if-`!_panic` → set `_had_error`+`_panic` → return; a **PARSE_STMT wrapper**
+> (rename body → `_PARSE_STMT_IMPL`, wrapper `_sync_skip`s on `_panic`) as the single recovery
+> chokepoint covering all 6 call sites + the recursion; x86-ELF output gated on `_had_error`.
+> RESULTS: **valid input byte-identical** (self-host fixpoint held — recovery is never-taken on
+> valid input); **SAFE — garbage/past-EOF input does NOT crash** (the EOF guards + bounded
+> `_sync_skip` held); **2 reachable functions with missing-`;` errors → BOTH reported** (`:3:5:`
+> + `:7:5:`), exit 1, no output. So the mechanism WORKS + is safe for the ERR_EXPECT (346-site)
+> syntax class.
+>
+> **COMPLETION SCOPE (why it wasn't shipped — bigger than one clean deliverable):**
+> 1. **Output gate in ALL forks, not just x86-ELF.** With the emitters returning, every fork
+>    recovers, but only main.cyr gated the write → the other forks (main_win / main_aarch64{,_macho,_native}
+>    / main_x86_macho / main_cx) would emit GARBAGE on error (a regression). Cleanest: gate inside
+>    the 2 `EMITELF` fns (`x86/fixup.cyr:2057`, `aarch64/fixup.cyr:653` — set the output length
+>    `S+0x1903F8`=0 + return on `_had_error`, covering the 5 ELF/PE/macho forks) + the cx write path
+>    (`main_cx.cyr:494-518`).
+> 2. **The 25 inline ad-hoc errors still `SYS_EXIT` (fail-fast)** — incl. the very common
+>    `undefined variable` (parse_expr). They aren't the 4 converted emitters, so multi-error is
+>    inconsistent until they route through a print-and-return + `_panic` path too. (grep:
+>    `syscall(SYS_WRITE, 2, "error:", 6)` in src/frontend = 25 sites.)
+> 3. **Dense consecutive broken statements COALESCE** — `_sync_skip` skips to the next `;`, so
+>    intervening no-`;` statements get swallowed (test: 3 dense errors → 1 report). Acceptable
+>    "bounded recovery" but worth a smarter sync (stop at statement-start keywords).
+> 4. **DCE-dead fn bodies aren't syntax-checked** (pre-existing: a fn with no reachable caller
+>    compiles despite body errors) — so the negative corpus must make every test fn reachable.
+>
+> Recommended: complete (1)+(2) as v6.4.62 in a focused session (the mechanism is proven +
+> reverted-clean; re-apply from this scope). (3) is a follow-on refinement; (4) is a test caveat.
+> Scheduled complete-in-one — user's call 2026-07-12 to keep it off the marathon tail.
 
 **Filed:** 2026-07-12 (at v6.4.60, when DX Release 1 — column + source-excerpt — shipped).
 **Severity:** P2 — DX quality; not a correctness bug.
