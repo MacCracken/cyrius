@@ -104,7 +104,7 @@ syscall(60, r);
 | Architectures | x86_64 + aarch64 (cross + native), Windows PE cross, macOS Mach-O (arm64 + x86), UEFI Application emit, cyrius-x bytecode (with SIMD codegen since v6.4.32) |
 | Stdlib modules | **99** (distfiles folded byte-identical; bayan 1.1.0 → `lib/bayan.cyr`, ganita 1.0.3 → `lib/ganita.cyr`, `lib/sys.cyr` system-introspection @ v6.1.28; see [docs/stdlib-modules.md](docs/stdlib-modules.md)) |
 | Cross-host CI | aarch64 Linux (Pi 4) + Apple Silicon macOS (ecb) + Intel macOS x86_64 Mach-O (ach, first-class release-gate host since v6.4.59) + Windows 11 PE, all SSH-wired |
-| Heap layout | 96 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000); the var-family + fn/fixup/codebuf tables are growable (relocatable bases) as of the v6.2.0/v6.3.0 Phase-0 migration; backed by an anonymous-mmap **chunk** bump allocator since v6.1.19 (was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge), `alloc_init()` idempotent since v6.1.23 |
+| Heap layout | 100 regions, monotonic post-v5.11.68 full reorg (str_data at 0x21A000, codebuf at 0x41A000); the var-family + fn/fixup/codebuf tables are growable (relocatable bases) as of the v6.2.0/v6.3.0 Phase-0 migration; backed by an anonymous-mmap **chunk** bump allocator since v6.1.19 (was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge), `alloc_init()` idempotent since v6.1.23 |
 
 ### Toolchain size comparison
 
