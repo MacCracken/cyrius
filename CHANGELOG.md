@@ -6,6 +6,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.60] — 2026-07-12
+
+**DX diagnostics (Release 1 of 2): column numbers + a source-excerpt with a caret on every error.**
+cycc reported only `error:<source>:LINE: <msg>` (line, no column, no excerpt) plus an internal
+`at fail: fn=…/ident=…` table dump. Now:
+
+```
+error:<source>:3:5: expected ';', got return
+    return x;
+    ^
+```
+
+All ~452 current-token error sites gained this **for free** by routing through one shared emitter.
+
+### Added — column + source-excerpt (`src/frontend/lex.cyr`, `src/common/util.cyr`)
+
+- **Packed token offset (bite 1).** The lexer records each token's start byte-offset into
+  `preprocess_out` and packs it into the **high 32 bits of the existing `tok_lines` word** (line in
+  the low 32) — zero new heap region, no brk / heap-map / per-fork change (the token trio is boxed
+  in; a 4th array would force a two-step reloc). `GTLINE` masks `& 0xFFFFFFFF`; a new `GTOFF` reads
+  the offset. Provably safe: sole writer `ADDTOK`, sole reader `GTLINE`, no raw `L64` on `0x3D7C000`.
+- **Column (bite 2).** `_err_col` derives the 1-based byte column by back-scanning `preprocess_out`
+  from the token offset to the preceding newline; `_err_head` prints `<file>:line:col`. Routed all
+  current-token error locations through it — the 5 central emitters (`ERR`/`ERR_EXPECT`/`ERR_MSG`/
+  `ERRDUPVAR`/`WARN`) + the 20 ad-hoc inline error prints across `parse{,_expr,_decl,_fn,_types}.cyr`.
+- **Source-excerpt + caret (bite 3).** `_err_excerpt` slices the offending line out of
+  `preprocess_out` (resident through parse+emit) and underlines the column with `^`. Wired into all
+  5 emitters. **Deleted** the two `at fail:` internal table dumps (zero test coverage; lower cybs
+  ref count). New gate `tests/dx_diag_format.sh` → check.sh (143 → 144).
+
+The column is the current parse token's position — exact for the `expected/got` class; a few
+backward-looking diagnostics read one token past the cause (line exact; the caret disambiguates).
+Byte column (tabs = 1). All changes are on error paths → **self-host byte-identical fixpoint** +
+**seed-derive green** (the `ADDTOK` hot-path packing kept inline for the cybs ceiling); check.sh 144/0;
+cross-OS self-host byte-identical on ecb + ach + cass + pi.
+
+### Deferred — multi-error reporting
+
+Release 2 of this arc: bounded statement/decl-boundary panic-mode recovery (report several errors per
+compile) — the `_had_error` deferred-exit hook already exists but is dead. Filed
+([issue](docs/development/issues/2026-07-12-dx-multi-error-reporting.md)); it is riskier than a normal
+slot (desync → crash exposure on malformed input) and lands complete-in-one. Full arbitrary recovery
+is filed to the backlog (cybs-hostile — needs error-return threading through 346+ sites).
+
+- **Bench:** self_compile 628 ms · cycc 1,103,496 B (−48 B vs .59 — the retired `at fail:` dumps
+  net of the excerpt/column code).
+
 ## [6.4.59] — 2026-07-12
 
 **Intel-Mac (x86_64 Mach-O) revival — the usable toolchain + packaging + a first-class release gate.**
