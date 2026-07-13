@@ -583,6 +583,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
         # fields are not supported in named form — use positional for those.
         var initialized = 0;
         while (PEEKT(S) != 14) {
+            if (PEEKT(S) == 12) { break; }   # v6.4.61: EOF guard (multi-error recovery safety)
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var fname_off = PEEKV(S);
             STI(S, GTI(S) + 1);

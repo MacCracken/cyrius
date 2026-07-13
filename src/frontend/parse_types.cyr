@@ -314,6 +314,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 has_ctor = 1;
                 STI(S, GTI(S) + 1);
                 while (PEEKT(S) != 11) {
+                    if (PEEKT(S) == 12) { break; }   # v6.4.61: EOF guard (multi-error recovery safety)
                     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                     else {
                         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }

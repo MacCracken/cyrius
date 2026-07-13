@@ -2251,7 +2251,7 @@ fn _classify_return_type(S, rt_noff): i64 {
 fn _prescan_skip_fn(S): i64 {
     STI(S, GTI(S) + 1);  # consume FN
     STI(S, GTI(S) + 1);  # consume name
-    if (PEEKT(S) == 19) { while (PEEKT(S) != 20) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 19) { while (PEEKT(S) != 20 && PEEKT(S) != 12) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
     var dep = 0;
     var fsk = 1;
     while (fsk == 1) {
