@@ -916,10 +916,43 @@ fn _err_head(S): i64 {
     return 0;
 }
 
+# v6.4.60 (DX diagnostics): print the offending source line + a caret under the
+# column. Slices the line containing the current token's byte offset out of
+# preprocess_out (S+0x459D000, still resident through parse+emit) bounded by
+# GBL(S), then writes (col-1) spaces + '^'. off==0 / out-of-range → skip (no
+# crash). Byte column — tabs count as 1 (documented caveat). Format:
+#     <source line>
+#         ^
+fn _err_excerpt(S): i64 {
+    var off = GTOFF(S, GTI(S));
+    var bl = GBL(S);
+    if (off == 0) { return 0; }
+    if (off >= bl) { return 0; }
+    var ls = off;
+    while (ls > 0) {
+        if (load8(S + 0x459D000 + ls - 1) == 10) { break; }
+        ls = ls - 1;
+    }
+    var le = off;
+    while (le < bl) {
+        if (load8(S + 0x459D000 + le) == 10) { break; }
+        le = le + 1;
+    }
+    syscall(SYS_WRITE, 2, "    ", 4);
+    syscall(SYS_WRITE, 2, S + 0x459D000 + ls, le - ls);
+    syscall(SYS_WRITE, 2, "\n    ", 5);
+    var nsp = off - ls;
+    var sp = 0;
+    while (sp < nsp) { syscall(SYS_WRITE, 2, " ", 1); sp = sp + 1; }
+    syscall(SYS_WRITE, 2, "^\n", 2);
+    return 0;
+}
+
 fn ERRDUPVAR(S): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": duplicate variable\n", 21);
+    _err_excerpt(S);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -930,6 +963,7 @@ fn WARN(S, msg, len): i64 {
     syscall(SYS_WRITE, 2, ": ", 2);
     syscall(SYS_WRITE, 2, msg, len);
     syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
     return 0;
 }
 
@@ -949,6 +983,7 @@ fn ERR(S): i64 {
         PRNUM(PEEKV(S));
     }
     syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -1012,11 +1047,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
             PRSTR(TOKNAME(got));
             syscall(SYS_WRITE, 2, "' (cannot be used as an identifier; rename the variable/field/fn)", 65);
             syscall(SYS_WRITE, 2, "\n", 1);
-            syscall(SYS_WRITE, 2, "  at fail: fn=", 14); PRNUM(L64(S + 0x18DA00));
-            syscall(SYS_WRITE, 2, "/8192 ident=", 12); PRNUM(L64(S + 0x18C128));
-            syscall(SYS_WRITE, 2, "/262144 var=", 12); PRNUM(L64(S + 0x18C110));
-            syscall(SYS_WRITE, 2, "/8192 fixup=", 12); PRNUM(L64(S + 0x18FCA8));
-            syscall(SYS_WRITE, 2, "/32768\n", 7);
+            _err_excerpt(S);
             syscall(SYS_EXIT, 1);
         }
     }
@@ -1044,15 +1075,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
             syscall(SYS_WRITE, 2, "  hint: a string literal where ',' is expected often means a nested call inside a fn argument confused the parser; stage the inner call into a `var` first.\n", 156);
         }
     }
-    # v4.8.4-alpha3: dump capacity at error site so consumers can
-    # see if the error is correlated with a near-cap table — same
-    # diagnostic as CYRIUS_STATS=1 but fired on parse failures so
-    # users don't need to re-run with the env flag to get context.
-    syscall(SYS_WRITE, 2, "  at fail: fn=", 14); PRNUM(L64(S + 0x18DA00));
-    syscall(SYS_WRITE, 2, "/8192 ident=", 12); PRNUM(L64(S + 0x18C128));
-    syscall(SYS_WRITE, 2, "/262144 var=", 12); PRNUM(L64(S + 0x18C110));
-    syscall(SYS_WRITE, 2, "/8192 fixup=", 12); PRNUM(L64(S + 0x18FCA8));
-    syscall(SYS_WRITE, 2, "/32768\n", 7);
+    _err_excerpt(S);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -1063,6 +1086,7 @@ fn ERR_MSG(S, msg, len): i64 {
     syscall(SYS_WRITE, 2, ": ", 2);
     syscall(SYS_WRITE, 2, msg, len);
     syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
     syscall(SYS_EXIT, 1);
     return 0;
 }
