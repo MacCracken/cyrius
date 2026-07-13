@@ -1469,17 +1469,17 @@ own canonical API reference in its own repo; this table is a pointer. See
 
 | Module | Folded dep | Domain |
 |--------|-----------|--------|
-| `lib/sandhi.cyr` | sandhi 1.4.2 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
-| `lib/sigil.cyr` | sigil 3.7.4 | Security / x509 / RSA / ECDSA — powers native TLS |
-| `lib/sakshi.cyr` | sakshi 2.2.10 | Tracing / structured logging |
-| `lib/patra.cyr` | patra 1.10.3 | Storage |
-| `lib/sankoch.cyr` | sankoch 2.2.5 | Compression |
-| `lib/yukti.cyr` | yukti 2.2.3 | Hardware enumeration |
-| `lib/vani.cyr` | vani 1.1.0 | Audio (ALSA PCM + ring buffer + mixer) |
-| `lib/niyama.cyr` | niyama 1.0.2 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
-| `lib/mabda.cyr` | mabda 3.0.1 | GPU / compute (AMD-native) |
-| `lib/bayan.cyr` | bayan 1.0.0 | Data formats + big-int (json / toml / cyml / csv / base64 / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |
-| `lib/ganita.cyr` | ganita 1.0.0 | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial) — carved v6.1.26, `ganita_*` + legacy aliases |
+| `lib/sandhi.cyr` | sandhi 1.8.2 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
+| `lib/sigil.cyr` | sigil 3.11.1 | Security / x509 / Ed25519 — powers native TLS + release/UEFI signing |
+| `lib/sakshi.cyr` | sakshi 2.4.6 | Tracing / structured logging |
+| `lib/patra.cyr` | patra 1.12.9 | Storage |
+| `lib/sankoch.cyr` | sankoch 2.5.1 | Compression |
+| `lib/yukti.cyr` | yukti 2.2.9 | Hardware enumeration |
+| `lib/vani.cyr` | vani 1.1.1 | Audio (ALSA PCM + ring buffer + mixer) |
+| `lib/niyama.cyr` | niyama 1.0.5 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
+| `lib/mabda.cyr` | mabda 4.0.2 | GPU / compute (AMD-native) |
+| `lib/bayan.cyr` | bayan 1.1.0 | Data formats + big-int (json / toml / cyml / csv / base64 / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |
+| `lib/ganita.cyr` | ganita 1.0.3 | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial) — carved v6.1.26, `ganita_*` + legacy aliases |
 
 ## Platform sub-modules
 
@@ -1497,7 +1497,7 @@ documented separately** — their public surface is the parent module's (above):
 
 > **Coverage note**: this reference now documents the **core, concurrency,
 > math/SIMD, crypto, data/encoding, networking (TLS + WebSocket), systems/FFI,
-> and testing** surfaces — roughly **65 of 98 `lib/*.cyr` modules** (was ~33).
+> and testing** surfaces — roughly **65 of 99 `lib/*.cyr` modules** (was ~33).
 > What remains undocumented here is so by design:
 > - **Folded sibling distfiles** (`sigil` / `sandhi` / `patra` / `sankoch` /
 >   `yukti` / `vani` / `niyama` / `mabda` / `sakshi`, listed above) — the

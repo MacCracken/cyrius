@@ -6,27 +6,39 @@
 A self-hosting systems language that bootstraps from a 29KB binary. No Rust, no LLVM, no Python. Designed to write the AGNOS operating system kernel.
 
 ### What can I build with it?
-CLI tools, system utilities, kernels, init systems, package managers, and networked services (a native TLS 1.3 stack ships in `lib/tls_native.cyr` — no OpenSSL). Anything that runs on Linux (x86_64/aarch64), macOS (arm64 Mach-O), or Windows (x86_64 PE32+) — all three self-host cycc byte-identical. See `programs/` for 82 examples.
+CLI tools, system utilities, kernels, init systems, package managers, and networked services (a native TLS 1.3 stack ships in `lib/tls_native.cyr` — no OpenSSL). Anything that runs on Linux (x86_64/aarch64), macOS (arm64 + x86_64 Mach-O), or Windows (x86_64 PE32+) — all self-host cycc byte-identical. See `programs/` for 97 examples.
 
 ### How is everything i64?
-The core type is the 64-bit integer (see ADR-002): strings are pointers (which are integers), and structs are contiguous memory accessed via integer offsets. This simplifies the compiler enormously while still being practical for systems code. The one deliberate, narrow exception is math hot paths — scalar `f64` floats plus the `f64v2`/`f64v4` SIMD vector types (`lib/math.cyr`, `lib/simd.cyr`) — which are bit-pattern values, not a full float type system. Everything else is an i64.
+The core type is the 64-bit integer (see ADR-002): strings are pointers (which are integers), and structs are contiguous memory accessed via integer offsets. This simplifies the compiler enormously while still being practical for systems code. The one deliberate, narrow exception is math hot paths — scalar `f64`/`f32` floats plus the full SIMD vector set: `f64v2`/`f64v4`, `f32v4`/`f32v8`, and the integer vectors `i8v16`/`i16v8`/`i32v4`/`i64v2` (`lib/math.cyr`, `lib/simd.cyr`), all shipped in the v6.4.x SIMD arc (Phase 5 complete on all four backends) — which are bit-pattern values, not a full float type system. Everything else is an i64.
 
 ### Where are the types?
 Type annotations (`var x: i64 = 42`) are documentation. Generics (`fn foo<T>()`) are parsed but not enforced. The compiler warns on pointer/scalar mismatches at assignment. Full type checking is on the roadmap.
 
 ### Is it fast?
-The compiler self-compiles in ~649 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.04 MB output — 1,091,000 B at v6.4.48 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~649 ms as growth-tax over the v6.0.x–v6.4.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables, the v6.3 deps-model + undef-hard-error, the v6.4.x SIMD compute arc — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
+The compiler self-compiles in ~627 ms (cycc reproduces a byte-identical cycc, 3-step fixpoint; ~1.05 MB output — 1,103,568 B at v6.4.62 — `BENCHMARKS.md` carries the canonical, every-release figure). Compile time fell from 1037 ms → ~387 ms (-63%, 2.7×) across the v5.10.40+v5.10.41 compile-time-perf miniarc, then settled around ~627 ms as growth-tax over the v6.0.x–v6.4.x feature work (native TLS, PIE codegen, the TS/TSX→JS emitter, Phase-0 growable tables, the v6.3 deps-model + undef-hard-error, the v6.4.x SIMD compute arc — not a regression). Programs are 10-233x smaller than GNU equivalents. `wc` is 20x faster than GNU on large files. See [size comparisons](../size-comparisons.md) for the canonical exit42 numbers across languages and platforms.
 
 ---
 
 ## Troubleshooting
 
-### "error at token N (type=T)"
-The compiler hit unexpected syntax. Common causes:
-- **type=5 (SEMICOLON)**: Missing expression before `;`. Check for empty assignments like `var x = ;`
-- **type=17 (==)**: Comparison in wrong context. Did you put `==` inside a function call before the comparison-in-args fix?
-- **type=33 (RETURN)**: `return` outside a function body, or `default` used as a parameter name (it's a keyword)
-- **type=19 (LT)**: `<` being parsed as comparison when you meant generics. Make sure generics are on function/struct definitions, not in expressions.
+### Reading a syntax error
+Since **v6.4.60** every diagnostic is `error:<file>:<line>:<col>: <message>`
+followed by the offending source line and a caret (`^`) under the exact column
+— no more opaque `error at token N (type=T)` codes. Since **v6.4.62** cycc runs
+in **panic-mode recovery**: it reports *many* errors in one compile (not just the
+first), emits **no** output binary when any error fired, and never hangs or
+crashes on hostile input. Common syntax causes:
+- **Missing expression before `;`** — empty assignments like `var x = ;`.
+- **Comparison in a function-call argument** — `f(a == b)` isn't allowed; bind
+  the comparison to a `var` first.
+- **`return` outside a function body**, or a reserved keyword (`default`,
+  `secret`, `pub`, `shared`) used as an identifier.
+- **`<` parsed as comparison when you meant generics** — generics live on
+  function/struct *definitions* (`fn foo<T>()`), not in expressions.
+
+(If you ever see `error: parser recovery aborted (desync — too many errors)`,
+the recovery watchdog tripped on deeply malformed input — fix the earliest
+reported error and recompile.)
 
 ### "error: duplicate var at token N"
 Two `var` declarations with the same name in the same function. Cyrius has no block scoping — all vars in a function share one scope. Rename the duplicate.

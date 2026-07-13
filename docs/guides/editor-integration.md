@@ -25,7 +25,7 @@ Capabilities (current):
 - `shutdown` — exit cleanly
 
 Diagnostics are produced by invoking the in-tree compiler (`cycc`) and
-parsing its `error:<file>:<line>: <msg>` output back into LSP
+parsing its `error:<file>:<line>:<col>: <msg>` output back into LSP
 `Diagnostic` records.
 
 ### Build / install

@@ -937,7 +937,7 @@ match s {
     PENDING => { ... }
     ACTIVE  => { ... }
 }
-# warning:<file>:<line>: non-exhaustive match over enum 'Status'
+# warning:<file>:<line>:<col>: non-exhaustive match over enum 'Status'
 #   — covers 2 of 3 variants; add `_ =>` to opt out
 
 match s {
@@ -1178,7 +1178,7 @@ at v6.3.41; see the heap-map note in `src/main.cyr`). Exceeding it is a hard
 error, not a silent failure:
 
 ```
-error:<file>:<line>: too many initialized globals (max 4096)
+error:<file>:<line>:<col>: too many initialized globals (max 4096)
 ```
 
 What does **not** count against the 4096:
@@ -2052,7 +2052,7 @@ the TS frontend.
 
 ## Example Programs
 
-See `programs/` for 82 examples:
+See `programs/` for 97 examples:
 - **CLI tools**: cat, echo, head, wc, grep, hexdump, tail, tr, uniq, sort, basename, cols, count, toupper, rot13, rev, nl, seq, tee, yes, true, false
 - **Algorithms**: fizzbuzz, primes, sieve, collatz, ackermann, gcd, brainfuck, life, xor
 - **Data structures**: struct_list (linked list), alloctest (heap), strtype (fat strings)

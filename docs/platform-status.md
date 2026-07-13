@@ -8,10 +8,10 @@ section tracks the per-release add history; this file is the
 
 | Platform | Format | Status |
 |----------|--------|--------|
-| Linux x86_64 | ELF | **✅ Narrow + Broad** — primary host. cycc ~1.04 MB (1,091,000 B at v6.4.48; x86 packed-SIMD/AVX2 emitters in float.cyr; SIMD Phase 5 complete on all four backends — x86 SSE/AVX2, aarch64 NEON, Win64 PE, cx); 3-step bootstrap byte-identical. |
+| Linux x86_64 | ELF | **✅ Narrow + Broad** — primary host. cycc ~1.05 MB (1,103,568 B at v6.4.62; x86 packed-SIMD/AVX2 emitters in float.cyr; SIMD Phase 5 complete on all four backends — x86 SSE/AVX2, aarch64 NEON, Win64 PE, cx); 3-step bootstrap byte-identical. |
 | Linux aarch64 | ELF | **✅ Narrow + Broad** — cross-build byte-identity + native self-host on Pi 4 (repaired v5.6.32). Three libs (`lib/hashmap_fast`, `lib/u128`, `lib/mabda`) still contain ungated x86 asm — arch-gating queued. |
 | cyrius-x bytecode | .cyx | **✅ Narrow + Broad** — clean CYX bytecode; portable-target arc complete (v6.4.20): a `.cyx` doing I/O runs on all 4 hosts. Full SIMD codegen (per-lane emitters for every flat-array verb, `_CX_VLOOP_BIN`, cxvm opcodes through 0x68, v6.4.32). |
-| macOS x86_64 | Mach-O | **⏸️ Parity-track** (Apple Intel EOL) — cycc DOES self-host byte-identical on real Intel hardware (`ach`), verified every slot via `cross-os-selfhost.sh ach`. Kept parity-only; arm64 (`ecb`) is the primary/promised macOS target. |
+| macOS x86_64 | Mach-O | **✅ Gated self-host** — the full toolchain (wrapper + `cycc`) works on real Intel hardware (`ach`) and self-hosts byte-identical; **`ach` became a first-class release-gate host at v6.4.59** (Intel-Mac x86_64 Mach-O revival — wrapper arch/env, cycc `_read_env` un-stub, `_lint_macho_buf` structural lint, x86 release tarball), verified every slot via `cross-os-selfhost.sh ach`. Apple Intel is EOL upstream, so arm64 (`ecb`) remains the primary/promised macOS target — but x86 is no longer parity-only; it is release-gated. |
 | macOS aarch64 | Mach-O | **✅ Narrow + Broad** — cycc self-hosts byte-identical on real hardware (`ecb`), proven v6.0.45 (the `READFILE`/`openat` cross-OS gate). |
 | Windows x86_64 | PE/COFF | **✅ Narrow + Broad** — substantially complete (v6.1.16–v6.1.18): process creation, threading, TLS-via-args, env read, file I/O, and **directory enumeration** (`dir_list`/`is_dir`/`dir_walk` via `lib/fs_win.cyr` + FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW, v6.1.18). `EPE_SYSCALL_DYNAMIC` var-syscall dispatch + portable mutex (SRWLOCK) + `cycc_win` shipping in the release tarball (v6.1.16); `nanosleep(35)`→`Sleep` (v6.1.17). Win64 ABI complete (v5.5.36); .reloc + 32-bit ASLR (v5.5.35); HIGH_ENTROPY_VA (v5.6.31); gate fixture v5.6.36. Verified every slot on real `cass` via `cross-os-selfhost.sh`. |
 | Compiler optimization (O1–O6) | — | **✅ Closed** (v5.6.5 + v5.6.7–v5.6.27). |
@@ -31,6 +31,7 @@ fix gets cross-tested in the same slot:
 | `pi` | aarch64 Linux (Pi 4) | Native aarch64 self-host + multi-thread / mutex shakedown. |
 | `cass` | Windows x86_64 | PE/COFF broad-scope on real Win11. |
 | `ecb` | macOS Apple Silicon | Mach-O native verification (broad-scope). |
+| `ach` | macOS Intel x86_64 | x86_64 Mach-O self-host — first-class release-gate host since v6.4.59. |
 
 > "NO EXCUSE THAT SHIT [is] BEING FOUND BY PORTS" — user
 > 2026-05-04. SSH-wired hosts mean cross-test is mechanical, not
