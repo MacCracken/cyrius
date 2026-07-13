@@ -36,6 +36,33 @@
 > Recommended: complete (1)+(2) as v6.4.62 in a focused session (the mechanism is proven +
 > reverted-clean; re-apply from this scope). (3) is a follow-on refinement; (4) is a test caveat.
 > Scheduled complete-in-one — user's call 2026-07-12 to keep it off the marathon tail.
+>
+> **SECOND ATTEMPT (v6.4.62, reverted again — the FUZZ WALL, the real blocker):** re-applied the
+> mechanism + completed (1) the all-fork output gate — gated inside the 2 `EMITELF` fns
+> (`x86/fixup.cyr` + `aarch64/fixup.cyr`: `if (_had_error==1) { S64(S+0x1903F8, 0); return 0; }`)
+> + the cx write path + changed all 6 forks' final `SYS_EXIT 0` → `SYS_EXIT _had_error` + moved
+> `_had_error` to util.cyr (shared, so every fork's gate/exit sees it). ALL of that WORKED: valid
+> input byte-identical, seed-derive green, all 7 forks build, **2 separated syntax errors → both
+> reported, 0 output bytes, exit 1**. BUT the **VR-02 parser-fuzz gate FAILED** — byte-mutated
+> hostile input drove cycc into an **infinite loop (100% CPU hang / TIMEOUT)**. Added a
+> guaranteed-progress guard to the PARSE_STMT wrapper (`before=GTI; …; if (GTI==before) STI+1`) —
+> that fixed the LIGHT fuzz (75 runs) AND kept valid byte-identical, but the **HEAVY fuzz (300
+> iters) found ANOTHER hang** (a `build/cycc` spinning at 100% CPU). So the desync goes DEEPER than
+> the single PARSE_STMT chokepoint: other parse loops (the top-level PROG loop, the
+> `while(PEEKT!=14)` block loops, expression/decl inner loops) also fail to guarantee progress on
+> mutated input.
+>
+> **THE REAL COMPLETION REQUIREMENT (do this before re-attempting):** a *systematic* progress +
+> no-crash invariant across EVERY parse loop that can run under desync — not one wrapper. Likely:
+> audit each parse loop for a `GTI`-advance-or-break guard (the 8 EOF-guarded skip-loops are a
+> start but insufficient), or reconsider whether error-return threading (rejected as cybs-hostile)
+> is actually the safer path. **The VR-02 fuzz gate is the acceptance bar** — a re-attempt only
+> lands when `CYCC_FUZZ_ITERS=300 sh tests/cycc_parser_fuzz.sh` is GREEN (0 crashes, 0 hangs) AND
+> the self-host stays byte-identical. This is a DEDICATED arc, not a bite: THREE attempts have now
+> hit the wall (scope → crash → residual hang), confirming safe bounded multi-error is bigger than
+> one release. A compiler that hangs/crashes on hostile stdin is a DoS regression that must NEVER
+> ship — hence the reverts. The `_had_error`-out-put-gate + all-fork-exit + EMITELF-gate design
+> (parts 1) IS proven and can be re-applied verbatim; only the parse-loop progress-hardening is open.
 
 **Filed:** 2026-07-12 (at v6.4.60, when DX Release 1 — column + source-excerpt — shipped).
 **Severity:** P2 — DX quality; not a correctness bug.
