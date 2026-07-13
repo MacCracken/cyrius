@@ -637,4 +637,4 @@ while (wgo == 1) {
         if (written >= olen) { wgo = 0; }
     }
 }
-syscall(SYS_EXIT, 0);
+syscall(SYS_EXIT, _had_error);   # v6.4.62: DX multi-error — exit 1 when errors were reported

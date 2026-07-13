@@ -346,6 +346,10 @@ fn _run_regression_gates(): i64 {
     _gate("error output carries :LINE:COL: + a source excerpt with a caret; no at-fail dump (v6.4.60)", "tests/dx_diag_format.sh");
     println("");
 
+    _section("DX diagnostics: multi-error recovery (v6.4.62)");
+    _gate("reports N>=2 errors per compile (panic-mode), no output on error, no crash/hang on garbage, valid emits (v6.4.62)", "tests/dx_multi_error.sh");
+    println("");
+
     _section("Enum-shadow hard-error");
     _gate("non-int var shadowing an enum constant hard-errors; int same-value shadow allowed (v6.3.24)", "tests/enum_shadow_error.sh");
     println("");

@@ -2055,6 +2055,11 @@ fn EMITELF_OBJ(S): i64 {
 }
 
 fn EMITELF(S): i64 {
+    # v6.4.62 (DX multi-error): a compile with ANY reported error emits NO output.
+    # Zero the output length (S+0x1903F8, read by every fork's write loop) + skip
+    # emit — desynced parsing may have left garbage in the code/fixup tables. Covers
+    # all 5 EMITELF forks (ELF/PE/macho); the fork exits with _had_error(=1).
+    if (_had_error == 1) { S64(S + 0x1903F8, 0); return 0; }
     # v6.0.89: dispatch on the derived _emit_fmt instead of re-reading the
     # raw _TARGET_* flags (same selector FIXUP uses for the entry base).
     var fmt = _emit_fmt(S);

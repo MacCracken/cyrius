@@ -557,7 +557,8 @@ var _allow_undef = 0;
 # final exit returns it as the process exit code. Without this,
 # `cyrius check` and every gate-script that pipes through cycc silently
 # treats failed compiles as successes.
-var _had_error = 0;
+# _had_error moved to common/util.cyr (v6.4.62) so every fork's EMITELF gate +
+# exit + the PEEKT watchdog can see it; the final exit below still returns it.
 var _ts_lex_only_mode = 0;       # P1.6b: --lex-ts CLI flag
 var _ts_parse_only_mode = 0;     # P2.1: --parse-ts CLI flag
 var _ts_emit_js_mode = 0;        # v6.1.10: --emit-js CLI flag (Phase D)

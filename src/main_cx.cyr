@@ -491,32 +491,36 @@ _capacity_warnings(S, 524288, 0);
 # cx arc A: byte 3 is now a FORMAT VERSION (was a hardcoded 0). Bump CYX_VERSION on
 # ANY bytecode-ISA change (e.g. arc-B float opcodes) so a shipped cxvm rejects a
 # .cyx it can't run instead of silently mis-executing. cxvm validates it.
-syscall(SYS_WRITE, 1, "CYX", 3);
-var ver_byte[1];
-store8(&ver_byte, 1);   # CYX_VERSION = 1
-syscall(SYS_WRITE, 1, &ver_byte, 1);
-var entry_off[4];
-store32(&entry_off, 0);
-syscall(SYS_WRITE, 1, &entry_off, 4);
-# Write bytecode
-var bw = 0;
-var bwgo = 1;
-while (bwgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x54A000 + bw, cp - bw);
-    if (w <= 0) { bwgo = 0; }
-    else { bw = bw + w; if (bw >= cp) { bwgo = 0; } }
+# v6.4.62 (DX multi-error): a compile with ANY reported error emits NO .cyx (cx has
+# its own write path, not EMITELF) — every error was printed and cx exits _had_error(=1).
+if (_had_error == 0) {
+    syscall(SYS_WRITE, 1, "CYX", 3);
+    var ver_byte[1];
+    store8(&ver_byte, 1);   # CYX_VERSION = 1
+    syscall(SYS_WRITE, 1, &ver_byte, 1);
+    var entry_off[4];
+    store32(&entry_off, 0);
+    syscall(SYS_WRITE, 1, &entry_off, 4);
+    # Write bytecode
+    var bw = 0;
+    var bwgo = 1;
+    while (bwgo == 1) {
+        var w = syscall(SYS_WRITE, 1, S + 0x54A000 + bw, cp - bw);
+        if (w <= 0) { bwgo = 0; }
+        else { bw = bw + w; if (bw >= cp) { bwgo = 0; } }
+    }
+    # Write variable data (zeroed)
+    var zero_byte[1];
+    store8(&zero_byte, 0);
+    vi = 0;
+    while (vi < totvar) { syscall(SYS_WRITE, 1, &zero_byte, 1); vi = vi + 1; }
+    # Write string data
+    bw = 0;
+    bwgo = 1;
+    while (bwgo == 1) {
+        var w = syscall(SYS_WRITE, 1, S + 0x21A000 + bw, spos - bw);
+        if (w <= 0) { bwgo = 0; }
+        else { bw = bw + w; if (bw >= spos) { bwgo = 0; } }
+    }
 }
-# Write variable data (zeroed)
-var zero_byte[1];
-store8(&zero_byte, 0);
-vi = 0;
-while (vi < totvar) { syscall(SYS_WRITE, 1, &zero_byte, 1); vi = vi + 1; }
-# Write string data
-bw = 0;
-bwgo = 1;
-while (bwgo == 1) {
-    var w = syscall(SYS_WRITE, 1, S + 0x21A000 + bw, spos - bw);
-    if (w <= 0) { bwgo = 0; }
-    else { bw = bw + w; if (bw >= spos) { bwgo = 0; } }
-}
-syscall(SYS_EXIT, 0);
+syscall(SYS_EXIT, _had_error);
