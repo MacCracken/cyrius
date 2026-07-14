@@ -351,6 +351,61 @@ if command -v objdump >/dev/null 2>&1; then
 fi
 echo "PASS: CYRIUS_TARGET_AGNOS signal constants + sigset wrappers (1<<sig) + net_config #61 + winsize #60 -> defined + correct numbers + valid agnos ELF"
 
+# 1i. GPU-compute band (#82-83, v6.4.63). Two legs — the second is SAFETY, not
+#     portability. On Linux x86_64 #82 is rename(old,new) and #83 is mkdir(path,mode),
+#     so a wrapper that resolved off-agnos would hand the caller's 8x8 matmul buffer
+#     POINTERS to the kernel as filesystem PATHS. That is materially worse than the
+#     #81/fchdir precedent (1e). The ONLY thing preventing it is that the band lives in
+#     the standalone agnos peer, included behind `#ifdef CYRIUS_TARGET_AGNOS` in
+#     lib/syscalls.cyr — i.e. the fns simply do not exist off-agnos. This gate pins BOTH
+#     halves of that invariant so a future refactor (e.g. hoisting the band into a shared
+#     syscalls file) cannot silently arm rename/mkdir.
+#     From 2026-07-14-agnos-sys-gpu-dispatch-wrappers.md; consumer: gpumm 0.2.0.
+cat > /tmp/_agnos_gpu_gate.cyr <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+fn main(): i64 {
+    var a[512];
+    var b[512];
+    var c[512];
+    var r = sys_gpu_dispatch(&a, &b, &c);          # 64xi32 8x8 A*B -> C
+    var r2 = sys_gpu_dispatch_f64(&a, &b, &c);     # 64xf64 8x8, rosnet-bit-correct
+    return r + r2;
+}
+CYR
+# Leg 1 — the band resolves + emits the right numbers on agnos.
+build/cyrius build --agnos /tmp/_agnos_gpu_gate.cyr /tmp/_agnos_gpu_gate.out >/tmp/_agnos_gpu_gate.log 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS gpu-dispatch probe did not compile (peer band regression)"; cat /tmp/_agnos_gpu_gate.log; exit 1; }
+if grep -q "undefined function 'sys_gpu_dispatch" /tmp/_agnos_gpu_gate.log; then
+    echo "FAIL: agnos gpu_dispatch wrapper undefined (peer band regressed to ud2/SIGILL stub at runtime):"
+    grep "undefined function" /tmp/_agnos_gpu_gate.log
+    exit 1
+fi
+assert_agnos_elf /tmp/_agnos_gpu_gate.out
+if command -v objdump >/dev/null 2>&1; then
+    gdis=$(objdump -d -M intel /tmp/_agnos_gpu_gate.out 2>/dev/null)
+    echo "$gdis" | grep -qE 'mov +eax,0x52\b' || { echo "FAIL: gpu probe emits no SYS_GPU_DISPATCH #82 (0x52) — band rotted to a stub?"; exit 1; }
+    echo "$gdis" | grep -qE 'mov +eax,0x53\b' || { echo "FAIL: gpu probe emits no SYS_GPU_DISPATCH_F64 #83 (0x53) — band rotted to a stub?"; exit 1; }
+fi
+# Leg 2 — THE SAFETY LEG. The same probe must NOT build for Linux: the wrappers must be
+# absent (hard "reachable undefined function" error, no binary), never resolved to #82/#83
+# = rename/mkdir. `if` guards the intentional failure from `set -e`.
+# Clear the target FIRST: this leg's own `exit 1` path skips any trailing cleanup, so a
+# previous RED run would otherwise leave a binary here and pin the gate red forever.
+rm -f /tmp/_agnos_gpu_linux.out
+if build/cyrius build /tmp/_agnos_gpu_gate.cyr /tmp/_agnos_gpu_linux.out >/tmp/_agnos_gpu_linux.log 2>&1; then
+    echo "FAIL: the gpu-dispatch band RESOLVED on a non-agnos (Linux) build — #82 is rename(2) and #83 is"
+    echo "      mkdir(2) on Linux x86_64, so matmul buffer pointers would be passed to the kernel as paths."
+    echo "      The band must live ONLY in the #ifdef CYRIUS_TARGET_AGNOS peer (lib/syscalls_x86_64_agnos.cyr)."
+    exit 1
+fi
+if command -v objdump >/dev/null 2>&1 && [ -f /tmp/_agnos_gpu_linux.out ]; then
+    objdump -d -M intel /tmp/_agnos_gpu_linux.out 2>/dev/null | grep -qE 'mov +eax,0x5[23]\b' \
+        && { echo "FAIL: a Linux build emitted syscall 82/83 (rename/mkdir) for the gpu band"; exit 1; }
+fi
+rm -f /tmp/_agnos_gpu_linux.out
+echo "PASS: CYRIUS_TARGET_AGNOS gpu-compute band (#82/#83 correct numbers) + ABSENT on Linux (rename/mkdir safety)"
+
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"
 if [ -f "$AGNOSHI/src/agnsh.cyr" ]; then

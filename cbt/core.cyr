@@ -25,6 +25,7 @@ var _verbose = 0;
 var _quiet = 0;
 var _dry_run = 0;
 var _lib_sync_full = 0;   # v6.2.40: `cyrius lib sync --full` opt-in (whole snapshot)
+var _check_lib_sync = 0;  # v6.4.63: `--check-lib-sync` — stale ./lib/ is an ERROR (CI gate)
 var _dep_includes = 0;
 # v5.7.14: transitive dep resolution state.
 # _dep_visited: vec<cstr> of dep names already resolved (closest-wins skip).
@@ -294,6 +295,51 @@ fn _win_getenv_into(name, dst): i64 {
     return dst;                                # NUL-terminated by the API
 }
 #endif
+
+# v6.4.63 — portable "is env var NAME set to exactly 1?" for the wrapper.
+# find_tools() below already reaches the environment on all three hosts (Linux
+# /proc/self/environ · macOS entry-stack envp · Windows GetEnvironmentVariableA)
+# but inlines that read for HOME/CYRIUS_HOME only. The lib-freshness check needs
+# the same reach for its CYRIUS_NO_WARN_SHADOW_LIB opt-out. lib/io.cyr's getenv()
+# is NOT a substitute: it opens /proc/self/environ unconditionally off-agnos, so
+# on macOS/Windows it silently returns 0 — i.e. the opt-out would be unhonorable
+# on exactly the hosts the check was extended to. See CHANGELOG [6.4.63].
+#ifdef CYRIUS_TARGET_WIN
+var _cbt_env1_buf[512];
+#endif
+fn _cbt_env_is_1(name): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var wv = _win_getenv_into(name, &_cbt_env1_buf);
+    if (wv == 0) { return 0; }
+    if (load8(wv) == 49) { if (load8(wv + 1) == 0) { return 1; } }
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var eb = alloc(32768);
+    var en = file_read_all("/proc/self/environ", eb, 32767);
+    #ifdef CYRIUS_TARGET_MACOS
+    en = _macho_fill_environ(eb, 32768);
+    #endif
+    if (en <= 0) { return 0; }
+    store8(eb + en, 0);
+    var nl = strlen(name);
+    var ei = 0;
+    while (ei < en) {
+        if (memeq(eb + ei, name, nl) == 1) {
+            if (load8(eb + ei + nl) == 61) {           # '='
+                if (load8(eb + ei + nl + 1) == 49) {   # '1'
+                    if (load8(eb + ei + nl + 2) == 0) { return 1; }
+                }
+            }
+        }
+        while (ei < en) {
+            if (load8(eb + ei) == 0) { ei = ei + 1; break; }
+            ei = ei + 1;
+        }
+    }
+    return 0;
+    #endif
+}
 
 fn find_tools(): i64 {
     # v6.0.34/6.0.58: on arm64-macОS default to aarch64 so current_cc() picks

@@ -1089,6 +1089,10 @@ mabda::gpu_texture_generate_mipmaps/2
 mabda::gpu_texture_load/3
 mabda::gpu_texture_load_dds/3
 mabda::gpu_texture_load_dds_result/3
+mabda::gpu_texture_load_jpeg/3
+mabda::gpu_texture_load_jpeg_mipped/3
+mabda::gpu_texture_load_jpeg_mipped_result/3
+mabda::gpu_texture_load_jpeg_result/3
 mabda::gpu_texture_load_ktx2/3
 mabda::gpu_texture_load_ktx2_result/3
 mabda::gpu_texture_load_png/3
@@ -1880,6 +1884,7 @@ patra::patra_open/1
 patra::patra_prepare/2
 patra::patra_query/2
 patra::patra_query_prepared/2
+patra::patra_quote_str/3
 patra::patra_result_col_name/2
 patra::patra_result_col_type/2
 patra::patra_result_cols/1
@@ -2765,6 +2770,12 @@ sigil::alog_len/1
 sigil::alog_load/2
 sigil::alog_record/2
 sigil::alog_save/2
+sigil::argon2_mem_blocks/2
+sigil::argon2_mem_bytes/2
+sigil::argon2d/9
+sigil::argon2i/9
+sigil::argon2id/9
+sigil::argon2id_into/10
 sigil::artifact_change_new/4
 sigil::artifact_content_hash/1
 sigil::artifact_path/1
@@ -2792,6 +2803,15 @@ sigil::authenticode_pkcs7_sign/5
 sigil::baseline_entry_new/2
 sigil::bentry_hash/1
 sigil::bentry_path/1
+sigil::blake2b/4
+sigil::blake2b_512/3
+sigil::blake2b_finalize/2
+sigil::blake2b_global_init/0
+sigil::blake2b_init/1
+sigil::blake2b_init_into/2
+sigil::blake2b_init_key_into/4
+sigil::blake2b_key/6
+sigil::blake2b_update/3
 sigil::bn_add_assign/3
 sigil::bn_bitlen/2
 sigil::bn_cmp/3
@@ -4095,6 +4115,8 @@ syscalls_x86_64_agnos::sys_geteuid/0
 syscalls_x86_64_agnos::sys_getpid/0
 syscalls_x86_64_agnos::sys_getrandom/3
 syscalls_x86_64_agnos::sys_getuid/0
+syscalls_x86_64_agnos::sys_gpu_dispatch/3
+syscalls_x86_64_agnos::sys_gpu_dispatch_f64/3
 syscalls_x86_64_agnos::sys_icmp_echo/1
 syscalls_x86_64_agnos::sys_kbscan/2
 syscalls_x86_64_agnos::sys_kill/2

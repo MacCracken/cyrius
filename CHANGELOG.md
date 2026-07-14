@@ -6,6 +6,136 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.63] — 2026-07-14
+
+**Two consumer filings — the agnos GPU-compute syscall band, and a lib-freshness check that NAMES
+version skew instead of whispering about it — plus the stdlib fold-in (sigil 3.12.0 / patra 1.12.10
+/ mabda 4.0.5, one of which fixes a live silent data-loss bug).**
+
+### Added — agnos GPU-compute wrappers `#82`/`#83` (`lib/syscalls_x86_64_agnos.cyr`)
+
+The ring-3 seam onto the agnos 1.54.x GPU arc (kernel drives the AMD Cezanne iGPU/gfx90c
+directly — no amdgpu, no ROCm). Consumer: `gpumm` 0.2.0, currently on raw `syscall(82/83, …)`.
+
+- `SYS_GPU_DISPATCH = 82` + `sys_gpu_dispatch(a,b,c)` — 8×8 i32 matmul on the shader cores.
+- `SYS_GPU_DISPATCH_F64 = 83` + `sys_gpu_dispatch_f64(a,b,c)` — 8×8 f64, deliberately
+  **unfused** (`v_mul_f64` + `v_add_f64`, two roundings, k-ascending) so the GPU result is
+  **bit-identical to rosnet's CPU arithmetic**.
+- Returns `0` OK · `-1` no GPU (the NORMAL answer off-iron, e.g. QEMU — not a failure) ·
+  `-2` no completion · `-3` VM fault · `-4`/`-5` bad user pointer.
+
+**The safety gate, stated precisely.** On Linux x86_64 **`82` is `rename(2)` and `83` is
+`mkdir(2)`** — an ungated wrapper would hand the caller's matmul buffer *pointers* to the
+kernel as filesystem *paths*. The filing asked for an in-function `#ifdef` returning an error
+"exactly as `sys_readdir` does"; `sys_readdir` in fact has no such guard — the whole peer is
+included behind `#ifdef CYRIUS_TARGET_AGNOS` in `lib/syscalls.cyr`. That file-level gate is
+**stronger** than the ask: off-agnos these fns do not exist, so a non-agnos build fails at
+**compile** time rather than erroring at runtime. Verified: `cyrius build` (Linux) →
+`error: refusing to emit binary with 2 reachable undefined function(s)`, **no binary emitted**.
+No in-function guards were added — this peer is wrong in its *entirety* off-agnos
+(`SYS_OPEN=7` would be Linux `lseek`), so guarding 2 of ~80 wrappers would be false comfort.
+
+New permanent gate in `scripts/agnos-crossbuild-gate.sh` (§1i), two legs: the band emits
+`#82`/`#83` with the right ABI on agnos, **and is ABSENT on a Linux build**. Mutation-tested
+(hoisting the band into the shared file turns it red).
+
+### Fixed — `./lib/` version skew is now named, not whispered (`cbt/`)
+
+Consumer filing (`yeo-cy-test`): a stale project-local `lib/` shadowed the version-pinned
+snapshot and the toolchain said only *"a shadow exists"* — true of every project using `lib/`,
+so it read as routine noise. The skew was in **crypto**: `sigil 3.9.8` against a `3.11.1` pin,
+predating sigil 3.9.9's `_SIGIL_CBANK_SLOT` 0→8 fix (a fix filed *by that same consumer*)
+while their patra declared TLS slot 0 — the documented corruption condition. Latent, not
+observed, but the toolchain let a known-bad crypto config ship with no actionable signal.
+
+`cyrius build` (and `run`/`test`/`bench`/`check`/…) now reports:
+
+```
+warning: ./lib/ shadows version-pinned ~/.cyrius/versions/6.4.62/lib — 2 bundled lib(s) differ:
+      sigil 3.9.8 (pinned: 3.11.1), sakshi 2.1.0 (pinned: 2.4.6)
+  run `cyrius lib sync --full` to re-sync, or set CYRIUS_NO_WARN_SHADOW_LIB=1 to silence
+```
+
+- **Both header formats.** `cyrius distlib` writes `# Version: X` (11 libs); sakshi still
+  carries `scripts/bundle.sh`'s `# Bundled distribution of sakshi vX`. A `# Version: `-only
+  parser would silently skip **the base logger** — the same silent-skip class as the bug.
+- **`warning:`, not `note:`** — a `lib/` carrying an *older version* means you are not
+  building what your pin says (filing's fix #2). New **`--check-lib-sync`** makes it an error
+  and fails the build, for CI (fix #3).
+- **Sentinel-independent.** Also fixes a **second, unfiled defect** found while premise-checking:
+  cycc's `_check_shadow_lib` byte-SIZE-compares one hardcoded sentinel (`lib/alloc.cyr`) and
+  returns **silently** when it matches — so a stale sigil behind an unchanged-size `alloc.cyr`
+  produced *no note at all*. (Not what bit yeo-cy-test — their `alloc.cyr` differed too, which
+  is why they saw the note — but real, and reproduced.) The wrapper check ignores the sentinel
+  entirely.
+- **Cross-OS — the check now exists off Linux at all.** cycc's note is compiled out on
+  macOS-/Windows-/agnos-hosted cycc (the `#ifdef` keys on HOST, not emit target). The wrapper
+  reuses `dir_list`/`file_read_all`, whose per-OS guards already live inside the lib files.
+  New `_cbt_env_is_1` (`cbt/core.cyr`) gives the opt-out the same reach — `lib/io.cyr`'s
+  `getenv` opens `/proc/self/environ` unconditionally and so returns 0 on macOS/Windows, which
+  would have made the opt-out unhonorable exactly where the check was extended.
+- The cyrius source repo never warns about its own `lib/` — via the **name-based**
+  `[package] name = "cyrius"` signal, **not** `file_exists("src/main.cyr")`: downstream repos
+  (gnoboot, kybernet, yeo-cy-test) also build from `src/main.cyr`, and that conflation (the
+  v6.0.1 mkdir bug) would have silently disabled the check for every consumer it protects.
+  Caught by the release test, not by review.
+
+New gate `tests/lib_freshness.sh` (check.sh **146 → 147**), mutation-tested. **Verified on real
+hardware — Linux + ecb (macOS arm64) + ach (Intel Mac) + cass (Windows/PE)**: names both
+formats, opt-out honored on each host's distinct env path.
+
+### Folded — latest stdlib: sigil 3.11.1→3.12.0, patra 1.12.9→1.12.10, mabda 4.0.2→4.0.5
+
+Byte-identical re-vendor from each sibling's committed dist. None is included by cycc (the
+compiler's transitive closure is `alloc`/`alloc_agnos`/`alloc_macos`/`alloc_windows`/`atomic`/
+`fnptr`/`vec`), so **cycc is unaffected**. Purely additive across all three: **+20 public fns,
+0 removals, 0 arity changes to any existing fn, no dep-leaf drift, no symbol collisions.**
+
+- **patra 1.12.10 — this one fixes a LIVE bug in the shipped tree.** 1.12.9 **silently dropped**
+  an INSERT row for a quoted-string pattern (yukti's exact usage): the row was rejected and the
+  caller saw success. Verified by compiling both against a replica — **1.12.9 → exit 41 (row
+  dropped), 1.12.10 → exit 0 (round-trips)**. Adds `patra_quote_str/3`.
+- **sigil 3.12.0 — sovereign password hashing: BLAKE2b (RFC 7693) + Argon2id (RFC 9106)**,
+  validated upstream against the three official RFC 9106 §5 vectors. `_SIGIL_CBANK_SLOT` stays
+  8 (no slot renumbering → no TLS-collision risk). New scratch is `cbank()`-banked at 64 lanes,
+  allocator-free. **No cyrius caller** — `cyrsign`/`cyrsign-efi` are the only sigil consumers and
+  do not touch argon2, so the addition is inert here.
+- **mabda 4.0.5 — JPEG texture loaders** (4 fns), behind `#ifdef MABDA_JPEG`, which cyrius never
+  defines; the chitra decoder is not vendored, so the guarded branch is dead here.
+
+Verified: `cyrsign` + `cyrsign-efi` rebuild clean (no undefined fns) and the **sign-efi gate
+passes end-to-end** (Authenticode PE-hash + RSA verify); the three cap-sensitive bulk-include
+tests (`large_source`/`large_input`/`preprocessor_past_cap`) pass — the binding cap is
+`preprocess_out` (8 MB) at ~4.2 MB, ~50 % headroom.
+
+**Known gap, filed, NOT verified here:** sigil's new argon2 surface takes **9–10 args publicly**
+(`argon2id/9`, `argon2id_into/10`) and up to **17 internally** — over the ≤6-arg register-ABI
+guidance, where stack-passed args have historically shown corruption. Upstream tests it on
+x86 only, and because sigil sits outside cycc's closure the release gate's cross-OS step does
+**not** cover it. Inert in cyrius (no caller), so this release does not depend on it — see
+`2026-07-14-sigil-argon2-arg-count-cross-target.md`.
+
+### Gate
+
+Release gate GREEN: self-host fixpoint + **seed-derive** (`seed → cybs → cycc`) + check.sh **147**
+(146 → 147, the new `tests/lib_freshness.sh`) + cross-OS self-host on **real ecb + ach + cass + pi**
+(all `SELFHOST_OK` + VR-01 `LIBTEST_OK`). 246/246 tcyr by per-file exit code.
+
+**cycc codegen unchanged — 1,103,568 B (+0 vs .62).** No `src/` change this release, and the agnos
+peer, `cbt/`, and all three folds are outside cycc's include closure. Pre-bump the binary was
+*bit-identical* to the 6.4.62 tag (sha `2c1d4d90…`); post-bump the only byte delta is the embedded
+version string (`5b4398ad…`, same length → same size). Self-host fixpoint byte-identical and
+`build/cycc == cycc(src)`. api-surface 4621 → 4643 (**+22**: 2 `sys_gpu_dispatch*` + 20 folds),
+**0 removals**.
+
+**Bench: self_compile 650 ms · cycc 1,103,568 B.** The 627 ms → 650 ms delta vs .62 is **neither a
+regression nor noise** — it is machine clock state, and the binary proves it: the cycc that
+recorded 627 ms and the one recording 650 ms are *the same bytes*, compiling identical input, so
+there is no code change to attribute a delta to. Quiet-box spread was tight and repeatable
+(652/652/653/653/655 ms) with the CPU under the `powersave` governor at ~2.3 GHz against a
+4.47 GHz max (48.9 °C — no thermal throttle). Recorded for the ledger, explicitly **not** triaged
+as growth-tax: there is nothing to bisect.
+
 ## [6.4.62] — 2026-07-12
 
 **DX diagnostics (Release 2): panic-mode multi-error reporting — cycc reports many errors per

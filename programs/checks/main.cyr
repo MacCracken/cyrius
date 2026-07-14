@@ -369,6 +369,7 @@ fn _run_regression_gates(): i64 {
     _gate("freelist agnos mmap-ABI: Linux round-trip=42, agnos build clean, _fl_mmap routes the single-arg agnos mmap (v6.3.31)", "tests/freelist_agnos_mmap.sh");
     _gate("single-owner mutex: thread+sync co-include has 0 duplicate-fn warnings, lock still guards under contention, thread*.cyr delegate to sync (v6.3.44)", "tests/mutex_single_owner.sh");
     _gate("net sock_accept would-block path is alloc-free: 100k no-pending polls grow the bump heap 0 B (accept-per-poll leak, v6.4.61)", "tests/net_accept_no_leak.sh");
+    _gate("lib freshness: `cyrius build` NAMES per-lib version skew vs the pin (both header formats, sentinel-independent), silent when fresh, opt-out + --check-lib-sync + source-repo carve-out (v6.4.63)", "tests/lib_freshness.sh");
     println("");
 
     _section("Binary structural lint (VR-04)");

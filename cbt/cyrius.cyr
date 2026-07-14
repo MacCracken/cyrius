@@ -260,6 +260,11 @@ fn main(): i64 {
             _baremetal_target = 1;
             _baremetal_aa = 1;
         }
+        # v6.4.63: read here (not in the subcommand loop) because the freshness
+        # check fires alongside _auto_deps, before that loop runs.
+        elif (streq(pfa, "--check-lib-sync") == 1) {
+            _check_lib_sync = 1;
+        }
         pf = pf + 1;
     }
 
@@ -277,6 +282,15 @@ fn main(): i64 {
     if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1) {
         var dr = _auto_deps();
         if (dr > 0) { return dr; }
+        # v6.4.63: name any version skew between ./lib/ and the version-pinned
+        # snapshot (yeo-cy-test filing). Sits OUTSIDE _auto_deps deliberately —
+        # _auto_deps early-returns when cyrius.cyml has no [deps]/[deps.*]
+        # section, and a FOLDED lib (sigil et al., vendored into lib/ and removed
+        # from [deps]) is exactly that case: the one we most need to catch, since
+        # a silent multi-version skew in the crypto bundle can withhold a security
+        # fix. Warning by default; --check-lib-sync makes it fail the build.
+        var lf = _check_lib_freshness(_check_lib_sync);
+        if (_check_lib_sync == 1 && lf > 0) { return 1; }
     }
 
     # --- sign-efi: UEFI Authenticode PE signing ---
@@ -427,7 +441,8 @@ fn main(): i64 {
         }
         if (vec_len(defs) > 0) { _defines = defs; }
         if (argc() < ai + 2) {
-            println("Usage: cyrius build [--aarch64|--win|--agnos|--target=js] [-v] [-q] [--no-deps] [--strict] [--strict-pin] [--features <list>] [--no-default-features] [-D NAME]... <source> <output>");
+            println("Usage: cyrius build [--aarch64|--win|--agnos|--target=js] [-v] [-q] [--no-deps] [--strict] [--strict-pin] [--check-lib-sync] [--features <list>] [--no-default-features] [-D NAME]... <source> <output>");
+            println("  --check-lib-sync   fail the build if ./lib/ is a stale version vs the pinned snapshot (CI)");
             return 1;
         }
         return cmd_build(argv(ai), argv(ai + 1));
