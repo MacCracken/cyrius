@@ -4008,9 +4008,11 @@ syscalls_linux_common::sys_getdents64/3
 syscalls_linux_common::sys_getegid/0
 syscalls_linux_common::sys_geteuid/0
 syscalls_linux_common::sys_getgid/0
+syscalls_linux_common::sys_getpeername/3
 syscalls_linux_common::sys_getpid/0
 syscalls_linux_common::sys_getppid/0
 syscalls_linux_common::sys_getrandom/3
+syscalls_linux_common::sys_getsockname/3
 syscalls_linux_common::sys_getuid/0
 syscalls_linux_common::sys_kill/2
 syscalls_linux_common::sys_landlock_add_rule/4
@@ -4078,7 +4080,9 @@ syscalls_windows::sys_dup2/2
 syscalls_windows::sys_execve/3
 syscalls_windows::sys_exit/1
 syscalls_windows::sys_fork/0
+syscalls_windows::sys_getpeername/3
 syscalls_windows::sys_getrandom/3
+syscalls_windows::sys_getsockname/3
 syscalls_windows::sys_lseek/3
 syscalls_windows::sys_mkdir/2
 syscalls_windows::sys_mmap/6

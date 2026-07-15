@@ -24,7 +24,10 @@
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
 
-# x86-Linux numbers — the backends translate. AF_INET=2, SOCK_STREAM=1.
+# v6.4.64: exercises the WRAPPERS (sys_getpeername/sys_getsockname), which is the
+# whole point — each peer supplies its own arch's number, so nothing needs an ESYSXLAT
+# entry for x86-52 (which would collide with the aarch64 peer's SYS_FCHMOD = 52).
+# AF_INET=2, SOCK_STREAM=1.
 fn mk_sock(): i64 { return syscall(41, 2, 1, 0); }
 
 # getpeername(fd, sockaddr, addrlen) on an unconnected socket -> -ENOTCONN.
@@ -32,7 +35,7 @@ fn peer_errno(fd): i64 {
     var out[16];
     var alen[8];
     store32(&alen, 16);
-    var r = syscall(52, fd, &out, &alen);
+    var r = sys_getpeername(fd, &out, &alen);
     if (r >= 0) { return 0 - 1; }     # -1 => it SUCCEEDED: NOT getpeername (the pi failure)
     return 0 - r;
 }
@@ -43,7 +46,7 @@ fn name_ok(fd): i64 {
     var out[16];
     var alen[8];
     store32(&alen, 16);
-    var r = syscall(51, fd, &out, &alen);
+    var r = sys_getsockname(fd, &out, &alen);
     if (r == 0) { return 1; }
     return 0;
 }

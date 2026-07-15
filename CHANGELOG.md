@@ -76,35 +76,47 @@ redundant until `2026-07-14-converge-cycc-shadow-lib-sentinel.md` lands.
 
 ### Fixed — P1: `getpeername`/`getsockname` reached the WRONG SYSCALL off x86-Linux
 
-cyrius's stdlib uses x86_64-Linux syscall numbers and the backends translate per target
-(`ESYSXLAT` on aarch64/Darwin, `EMACHO_SYSXLAT` on x86-macho). The socket band was translated —
-socket 41, connect 42, accept 43, bind 49, listen 50, setsockopt 54, getsockopt 55, socketpair 53 —
-but **`getpeername` (52) was missing from every table**, and **`getsockname` (51) from all but the
-aarch64-Linux one**. An untranslated number does not error; it passes through and invokes a
-*different* syscall:
+cyrius had **no `getpeername`/`getsockname` wrapper at all**, so sandhi 1.9.0's peer-address API
+hardcoded a raw `syscall(52, ...)` — the x86_64-Linux number. That is correct on x86 (52 *is*
+getpeername) and silently catastrophic elsewhere, because an untranslated number does not error, it
+invokes a *different syscall*:
 
 | target | 52 became | result |
 |---|---|---|
 | aarch64-Linux | **`fchmod(fd, mode)`** — `mode` = low bits of the sockaddr **pointer** | **returned SUCCESS** |
-| Darwin arm64 + Intel | `sigpending` / `setpriority` | wrong |
+| Darwin | `sigpending` | wrong |
+| Windows | unrouted → `-ENOSYS` | safe ("unknown"); reroute filed |
 
-**Verified on real pi**: a probe doing `socket(41)` then `syscall(52)` on the unconnected fd returns
-`-107` (ENOTCONN) on x86 but **succeeded (0)** on aarch64 pre-fix. Succeeding is *worse than
-failing*: the caller believes it obtained a peer address while its buffer is **untouched garbage**,
-and the fd gets chmod'd as a side effect.
+**Verified on real pi**: `socket(41)` then `syscall(52)` on the unconnected fd gives `-107`
+(ENOTCONN) on x86 but **succeeded (0)** on aarch64. Succeeding is *worse than failing* — the caller
+believes it obtained a peer address while its buffer is **untouched garbage**, so sandhi's per-IP
+rate limiting would key on uninitialized stack.
 
-Fixed in all three tables: aarch64-Linux `52→205`; Darwin arm64 `52→31` + `51→32`; x86-macho
-`_msx 52→31` + `51→32` (BSD accept=30, getpeername=31, getsockname=32 — note the adjacency to the
-existing accept line). New gate `tests/tcyr/vr01_getpeername_xlat.tcyr` — getpeername on an
-*unconnected* socket has exactly one right answer (ENOTCONN; Linux 107 / Darwin 57), so any other
-result proves the number reached something else. **PASS on real pi + ecb + ach**; mutation-tested
-(reverting the tables → `LIBTEST_FAIL` on pi). Windows has no ws2_32 getpeername reroute yet — the
-raw syscall is unroutable and returns `-ENOSYS`, which sandhi's contract already treats as "peer
-unknown"; the gate `#ifndef`s Windows and the reroute is filed follow-up.
+**Fixed by giving the stdlib the wrapper it never had**, per-arch, which is what
+`lib/syscalls_<arch>.cyr` exists for: `SYS_GETPEERNAME`/`SYS_GETSOCKNAME` + `sys_getpeername`/
+`sys_getsockname` — x86-Linux **52/51** (native), aarch64-Linux **205/204** (native), macOS
+x86-numbered + EMACHO xlat to BSD **31/32**, Windows **fail-closed `-ENOSYS`** (a `return 0` stub
+would claim success with an unwritten buffer — the v6.3.42 `sys_mkdir`/`sys_unlink` stubs are the
+cautionary precedent). The macho backend dual-maps the aarch64 numbers **205→31 / 204→32**, because
+macOS-arm64 resolves the aarch64 peer — the same shape as the existing `socket 198→97` row, added
+for exactly this reason.
 
-**Why it hid:** cyrius's own `lib/net.cyr` calls neither fn — there was no consumer until sandhi
-1.9.0, whose entire purpose is per-IP rate limiting. A rate limiter keyed on uninitialized stack is
-silently not a rate limiter.
+**The approach that does NOT work, and why it matters.** The obvious fix — an ESYSXLAT entry for
+x86-52 — was tried first and is **unsound**: x86-52 collides with the aarch64 peer's own
+`SYS_FCHMOD = 52`, and the translation chain is `cmp; b.ne; movz` with no early exit, so the entry
+remaps **fchmod into getpeername**. CI caught it (`sandbox_syscalls` RED on aarch64 native) — a real,
+tested syscall broken to fix an untested one. This is the collision class CLAUDE.md already names
+(*"aarch64 stdlib syscall numbers that collide with an x86 number in ESYSXLAT get silently
+mis-remapped"*) and that `emit.cyr:698` flags for fchmodat/53. **Do not re-attempt it**; per-arch
+numbers sidestep the collision entirely.
+
+Gate: `tests/tcyr/vr01_getpeername_xlat.tcyr` — getpeername on an *unconnected* socket has exactly
+one right answer (ENOTCONN; Linux 107 / Darwin 57), so any other result proves the number reached
+something else; `getsockname` succeeding on the same fd pins that 51 and 52 are not swapped. **PASS
+on real pi + ecb + ach.**
+
+**Why it hid:** cyrius's own `lib/net.cyr` calls neither fn, so there was no consumer and no gate
+until sandhi 1.9.0 — whose entire purpose is per-IP rate limiting.
 
 ### Folded — sandhi 1.8.2 → 1.9.0
 

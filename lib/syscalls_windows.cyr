@@ -186,3 +186,16 @@ fn sys_mkdir(path, mode): i64 { return syscall(83, path, mode); }
 # (_pe_ensure_deletef, v5.11.22). Returns 0 on success, -1 on failure. (Was a
 # no-op `return 0` stub through v6.3.42 — VR-01 surfaced the file was never deleted.)
 fn sys_unlink(path): i64 { return syscall(87, path); }
+
+# v6.4.64 — getpeername / getsockname. There is no ws2_32 reroute for these yet, so
+# there is no way to answer honestly on PE. FAIL-CLOSED with -ENOSYS rather than a
+# `return 0` stub: 0 means SUCCESS to sys_getpeername's contract, which would hand the
+# caller an UNWRITTEN sockaddr — precisely the fabrication this release fixed on
+# aarch64 (where x86-52 landed on fchmod and *succeeded*). The sys_mkdir / sys_unlink
+# `return 0` stubs above are the cautionary precedent: they claimed success while doing
+# nothing, and VR-01 caught it only at v6.3.42. Consumers MUST treat <0 as "peer
+# unknown" and fail open or fall back — sandhi's peer API already does.
+# Filed: docs/development/issues/2026-07-14-windows-getpeername-reroute-missing.md
+fn sys_getpeername(fd, addr, addrlen): i64 { return 0 - 38; }
+# getsockname on PE — same fail-closed -ENOSYS; no ws2_32 reroute yet.
+fn sys_getsockname(fd, addr, addrlen): i64 { return 0 - 38; }
