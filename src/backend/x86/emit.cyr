@@ -2895,6 +2895,39 @@ fn _emov_rsp_disp(S, rex, op, reg3, disp): i64 {
     return 0;
 }
 
+# v6.4.64 — the Win64 call-frame size for an n-arg call (n > 4). ECALLPOPS and
+# ECALLCLEAN MUST agree byte-for-byte or the stack leaks/underflows, so the
+# formula lives here once.
+#   32 B shadow (Win64 ABI home area) + nextra*8 stack args, rounded up to 16,
+#   plus an 8 B parity pad when n is odd.
+# Why the pad: the caller's body rsp is 16-aligned, and n pushes leave rsp at
+# base - n*8 — 8-mod-16 for odd n. The frame is carved from THERE (we no longer
+# pop the args first), so odd n would otherwise leave rsp 8-mod-16 at the CALL,
+# violating the Win64 ABI. The old pop-based path got alignment for free by
+# consuming all n slots first; this pays for it explicitly.
+fn _pe_call_frame(n): i64 {
+    var framesize = 32 + (n - 4) * 8;
+    if ((framesize & 15) != 0) { framesize = framesize + 8; }
+    if ((n & 1) == 1) { framesize = framesize + 8; }
+    return framesize;
+}
+
+# sub rsp, imm — imm8 form when it fits, else imm32. A 17-arg call needs
+# 32 + 13*8 = 136 B, past the imm8 ceiling; the old hardcoded `83 EC ib` would
+# have truncated it.
+fn _esub_rsp_imm(S, imm): i64 {
+    if (imm < 128) { EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, imm); return 0; }
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC); EDISP32(S, imm);
+    return 0;
+}
+
+# add rsp, imm — imm8/imm32 peer of _esub_rsp_imm.
+fn _eadd_rsp_imm(S, imm): i64 {
+    if (imm < 128) { EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, imm); return 0; }
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4); EDISP32(S, imm);
+    return 0;
+}
+
 # For >6: the top (n-6) items are stack args that must stay on the stack.
 #   Pop them to temp (r11), pop 6 register args, push them back.
 fn ECALLPOPS(S, n): i64 {
@@ -2920,65 +2953,54 @@ fn ECALLPOPS(S, n): i64 {
             EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20);   # sub rsp, 0x20 (shadow)
             return 0;
         }
-        # n > 4: shuttle extras, pop register args, write extras
-        # to stack at [rsp+0..(nextra-1)*8]. Stack on entry:
-        # [a[n-1], a[n-2], …, a[0]] with a[n-1] on top.
-        # Max nextra = 5 (v5.5.6 extended from v5.5.4's 4) to
-        # accommodate fncall8 which takes 9 params (fp + 8 args =
-        # N=9 pushes = nextra=5). 5 scratch regs: r10/r11/r14/r15 +
-        # r12. No save/restore needed — cyrius fncallN bodies don't
-        # read r12 beyond this asm block.
+        # n > 4 — GENERAL, any arity (v6.4.64).
+        #
+        # THE BUG THIS REPLACES (silent wrong code, no diagnostic): the old path
+        # shuttled the extras through a FIXED set of 5 scratch regs
+        # (r10/r11/r14/r15/r12) with `if (nextra >= 1..5)` pops and `if (nextra ==
+        # 1..5)` write-backs. `nextra = n - 4`, so at **n >= 10 (nextra >= 6)**:
+        #   (a) only 5 of the >=6 extras were popped, so the following 4 reg-arg
+        #       pops read SHIFTED slots -> **rcx (a1) got the wrong value**, and
+        #   (b) no `nextra ==` branch matched, so the stack args were NEVER
+        #       written -> the callee read garbage at [rsp+32..].
+        # Both silent. Measured on real cass: arity 5-9 OK, arity 10/11/12 -> arg 1
+        # corrupted. sigil 3.12.0's `argon2id_into` (10 args) is a live consumer.
+        # The `<=6 args` folklore in CLAUDE.md mis-stated this: 7-9 were fine, 10+
+        # was broken, and the rule told users to restructure around OUR codegen bug.
+        #
+        # SysV solved the same class at v5.6.24/v6.0.57 by dropping the register
+        # shuttle for rsp-relative addressing (`_emov_rsp_disp`, disp8/disp32
+        # auto-select). This mirrors that, and is uniform for every n > 4 (no
+        # per-nextra branches to run out of).
+        #
+        # Stack on entry: a_k at [rsp + (n-k)*8]  (pushed left-to-right, aN on top).
+        # Win64 wants a1..a4 in rcx/rdx/r8/r9 and a5 at the LOWEST stack-arg slot
+        # ([rsp_call+32], per ESTORESTACKPARM's [rbp+16+32+(pidx-4)*8]) — i.e. the
+        # extras must be REVERSED relative to the push stack. A reversal cannot be
+        # done in place by a single ascending or descending shift (each write would
+        # clobber a slot a later read still needs), so we carve the call frame BELOW
+        # the pushed args: dest is then strictly below source and overlap is
+        # impossible at any arity. The pushed args become dead space above the frame;
+        # ECALLCLEAN reclaims them (framesize + n*8).
         var nextra = n - 4;
-        # Pop extras into r10/r11/r14/r15/r12. First pop = top =
-        # a[n-1] → r10; second pop = a[n-2] → r11; etc.
-        if (nextra >= 1) { EB(S, 0x58); E3(S, 0xC28949); }   # pop rax; mov r10, rax (a[n-1])
-        if (nextra >= 2) { EB(S, 0x58); E3(S, 0xC38949); }   # pop rax; mov r11, rax (a[n-2])
-        if (nextra >= 3) { EB(S, 0x58); E3(S, 0xC68949); }   # pop rax; mov r14, rax (a[n-3])
-        if (nextra >= 4) { EB(S, 0x58); E3(S, 0xC78949); }   # pop rax; mov r15, rax (a[n-4])
-        if (nextra >= 5) { EB(S, 0x58); E3(S, 0xC48949); }   # pop rax; mov r12, rax (a[n-5])
-        # Pop 4 register args (stack now has a[3],a[2],a[1],a[0] top-down).
-        EB(S, 0x41); EB(S, 0x59);                             # pop r9   (a[3])
-        EB(S, 0x41); EB(S, 0x58);                             # pop r8   (a[2])
-        EB(S, 0x5A);                                          # pop rdx  (a[1])
-        EB(S, 0x59);                                          # pop rcx  (a[0])
-        # Allocate 32 B shadow + stack-arg frame (16-aligned).
-        # v5.5.7: framesize = 32 (shadow) + nextra*8 (stack args)
-        # rounded up to 16.
-        var framesize = 32 + nextra * 8;
-        if ((framesize & 15) != 0) { framesize = framesize + 8; }
-        EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, framesize);  # sub rsp, framesize (imm8)
-        # Write extras above shadow at [rsp+32..]. Layout at call:
-        #   [rsp+0..31]  = 32 B shadow (callee's arg reg home area)
-        #   [rsp+32]     = a[4]
-        #   [rsp+40]     = a[5]
-        #   [rsp+48]     = a[6]
-        #   [rsp+56]     = a[7]
-        #   [rsp+64]     = a[8]    (nextra=5 only)
-        # Register assignments: r15=a[n-4], r14=a[n-3], r11=a[n-2], r10=a[n-1].
-        if (nextra == 1) {
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20);              # mov [rsp+32], r10 (a[4])
-        }
-        if (nextra == 2) {
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x20);              # mov [rsp+32], r11 (a[4])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x28);              # mov [rsp+40], r10 (a[5])
-        }
-        if (nextra == 3) {
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x74); EB(S, 0x24); EB(S, 0x20);              # mov [rsp+32], r14 (a[4])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x28);              # mov [rsp+40], r11 (a[5])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30);              # mov [rsp+48], r10 (a[6])
-        }
-        if (nextra == 4) {
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x20);              # mov [rsp+32], r15 (a[4])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x74); EB(S, 0x24); EB(S, 0x28);              # mov [rsp+40], r14 (a[5])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x30);              # mov [rsp+48], r11 (a[6])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x38);              # mov [rsp+56], r10 (a[7])
-        }
-        if (nextra == 5) {
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x64); EB(S, 0x24); EB(S, 0x20);              # mov [rsp+32], r12 (a[4])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x28);              # mov [rsp+40], r15 (a[5])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x74); EB(S, 0x24); EB(S, 0x30);              # mov [rsp+48], r14 (a[6])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x38);              # mov [rsp+56], r11 (a[7])
-            EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x40);              # mov [rsp+64], r10 (a[8])
+        var framesize = _pe_call_frame(n);
+        # 1. Load the 4 register args in place (no pops — pops are what ran out).
+        _emov_rsp_disp(S, 0x48, 0x8B, 1, (n - 1) * 8);   # rcx = a1
+        _emov_rsp_disp(S, 0x48, 0x8B, 2, (n - 2) * 8);   # rdx = a2
+        _emov_rsp_disp(S, 0x4C, 0x8B, 0, (n - 3) * 8);   # r8  = a3
+        _emov_rsp_disp(S, 0x4C, 0x8B, 1, (n - 4) * 8);   # r9  = a4
+        # 2. Carve the frame below the args. framesize already carries the parity
+        #    pad that keeps rsp 16-aligned at the CALL (see _pe_call_frame).
+        _esub_rsp_imm(S, framesize);
+        # 3. Reverse-copy the extras into the stack-arg slots above the shadow:
+        #    a_(4+j) : [rsp + framesize + (n-4-j)*8]  ->  [rsp + 32 + (j-1)*8]
+        #    r10 is caller-saved (the v5.6.24 lesson: r12-r15 are callee-saved and
+        #    regalloc may pin caller locals to them -> silent clobber).
+        var j = 1;
+        while (j <= nextra) {
+            _emov_rsp_disp(S, 0x4C, 0x8B, 2, framesize + (n - 4 - j) * 8);   # r10 = a(4+j)
+            _emov_rsp_disp(S, 0x4C, 0x89, 2, 32 + (j - 1) * 8);              # [rsp+32+(j-1)*8] = r10
+            j = j + 1;
         }
         return 0;
     }
@@ -3070,9 +3092,12 @@ fn ECALLCLEAN(S, n): i64 {
             EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x20);    # add rsp, 0x20 (shadow)
             return 0;
         }
-        var framesize = 32 + (n - 4) * 8;
-        if ((framesize & 15) != 0) { framesize = framesize + 8; }
-        EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, framesize);   # add rsp, framesize (imm8)
+        # v6.4.64: ECALLPOPS no longer pops the n pushed args (the pop-based
+        # shuttle is what ran out of registers at nextra >= 6) — it carves the call
+        # frame BELOW them and leaves them as dead space. So the cleanup reclaims
+        # BOTH the frame and the n*8 of pushed args, returning rsp to its pre-push
+        # value exactly as the old pop-based path did.
+        _eadd_rsp_imm(S, _pe_call_frame(n) + n * 8);
         return 0;
     }
     if (n > 6) {

@@ -368,6 +368,16 @@ fn main(): i64 {
                 _strict_pin = 1;
                 ai = ai + 1;
             }
+            # v6.4.64: the flag's EFFECT is applied earlier (the freshness check runs
+            # beside _auto_deps, before this loop), and the pre-scan already set
+            # _check_lib_sync — but this loop must still CONSUME it or it falls through
+            # to the unknown-flag error below. v6.4.63 shipped it advertised-but-rejected:
+            # the only path that appeared to work was a project WITH drift, where the
+            # check exits non-zero before reaching this loop. sandhi 1.9.0 hit it on a
+            # clean lib/ and filed it. (issue build-check-lib-sync-flag-advertised-but-rejected.)
+            elif (streq(argv(ai), "--check-lib-sync") == 1) {
+                ai = ai + 1;
+            }
             elif (streq(argv(ai), "--strict") == 1) {
                 _strict = 1;
                 ai = ai + 1;

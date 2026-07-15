@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 6.4.63
+- **Version**: 6.4.64
 
 ## Goal
 
@@ -341,7 +341,18 @@ per-session memory files so they survive environment changes.
 
 ## Language & test conventions (recurring gotchas)
 
-- **fns take ≤6 args cleanly** (register ABI); args 7+ go on the stack and have shown corruption — restructure instead.
+- **fns take any number of args** (verified 5–20 on real Windows/Linux/aarch64, v6.4.64). The old
+  rule here read *"≤6 args cleanly; args 7+ have shown corruption — restructure instead"*. That was
+  **wrong in both directions and it was OUR bug, not the caller's**: 7–9 args were always fine, and
+  **10+ silently corrupted argument 1 on Win64** (ECALLPOPS' PE branch shuttled stack args through a
+  fixed 5-register table and had no code path past `nextra == 5`, so it both mis-popped the register
+  args and emitted no stack-arg writes at all). Fixed in v6.4.64; gated by
+  `tests/tcyr/vr01_win64_stack_args.tcyr` on real hardware.
+  **The lesson worth keeping is not about arity.** A codegen bug had been written down as a language
+  rule telling users to restructure their code around it — so for ~a year it was never fixed, and it
+  got cited (2026-07-14) to file a *sigil* issue asking a stdlib to contort around a cyrius defect.
+  This is the language repo: **when the compiler can't compile valid cyrius, fix the compiler.** If a
+  rule here tells you to work around codegen, treat the rule as the bug report.
 - **`var x[N]` local = N BYTES** (rounded to 8), not N slots — use `var a: i64[N]` for slots. Bare top-level arrays = N×8 (fixed v6.4.10).
 - `secret`, `pub`, `shared` are reserved keywords — parser fails on them as identifiers.
 - tcyr files MUST end `var r = assert_summary();` (or an explicit exit syscall) so success exits 0. Name tests topically, never temporally ("pass2"/"v3" — 20-yr QA pet peeve).

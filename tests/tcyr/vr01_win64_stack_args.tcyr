@@ -1,0 +1,84 @@
+# vr01_win64_stack_args.tcyr — v6.4.64: calls with MORE THAN 4 arguments must marshal every
+# argument correctly on every target. Runs on real hardware via the release gate's `vr01_` glob
+# (cass/ecb/pi), which is the only place the Win64 ABI is actually exercised.
+#
+# THE BUG THIS GUARDS (silent wrong code, no diagnostic, found 2026-07-14):
+# Win64 passes 4 args in rcx/rdx/r8/r9 and the rest on the stack. ECALLPOPS' PE branch shuttled
+# those extras through a FIXED set of 5 scratch registers (r10/r11/r14/r15/r12), with
+# `if (nextra >= 1..5)` pops and `if (nextra == 1..5)` write-backs, where `nextra = n - 4`.
+# So at **n >= 10** it fell off the end of its own table:
+#   (a) only 5 of the >=6 extras were popped -> the 4 following reg-arg pops read SHIFTED
+#       stack slots -> **rcx (argument 1) received the wrong value**, and
+#   (b) no `nextra ==` branch matched -> the stack args were NEVER written to [rsp+32..],
+#       so the callee read whatever garbage was there.
+# Measured on real cass BEFORE the fix: arity 5-9 OK, arity 10/11/12 -> arg 1 corrupted.
+# Both failure modes are SILENT — wrong answers, no error, no warning.
+#
+# Live consumer: sigil 3.12.0's `argon2id_into` takes 10 args and `argon2_hash_into` takes 17.
+# A password KDF returning a wrong-but-plausible hash is the worst shape of this bug.
+#
+# NOTE the arity here is deliberate: 10 is the first BROKEN case, 17 matches sigil's widest fn,
+# and 5/9 pin the boundary that used to work (so a future "fix" that breaks 5-9 is caught too).
+# The old CLAUDE.md folklore said "<=6 args cleanly" — that was wrong in BOTH directions: 7-9
+# were fine, and 10+ was silently broken. Do not re-derive the rule from arity 7.
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+# Boundary that always worked — a regression here means a fix went too far.
+fn f5(a1, a2, a3, a4, a5): i64 {
+    if (a1 != 1) { return 1; }
+    if (a5 != 5) { return 5; }
+    return 0;
+}
+fn f9(a1, a2, a3, a4, a5, a6, a7, a8, a9): i64 {
+    if (a1 != 1) { return 1; }
+    if (a5 != 5) { return 5; }
+    if (a9 != 9) { return 9; }
+    return 0;
+}
+# The first arity that was broken (nextra = 6 > the old 5-register table).
+fn f10(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10): i64 {
+    if (a1 != 1) { return 1; }      # <- the exact byte that was corrupted
+    if (a2 != 2) { return 2; }
+    if (a3 != 3) { return 3; }
+    if (a4 != 4) { return 4; }
+    if (a5 != 5) { return 5; }      # <- first STACK arg; was never written
+    if (a6 != 6) { return 6; }
+    if (a7 != 7) { return 7; }
+    if (a8 != 8) { return 8; }
+    if (a9 != 9) { return 9; }
+    if (a10 != 10) { return 10; }
+    return 0;
+}
+# sigil's widest (argon2_hash_into). Also crosses the imm8 frame ceiling:
+# 32 + 13*8 = 136 > 127, so the frame `sub rsp` needs the imm32 form.
+fn f17(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17): i64 {
+    if (a1 != 1) { return 1; }
+    if (a4 != 4) { return 4; }
+    if (a5 != 5) { return 5; }
+    if (a12 != 12) { return 12; }
+    if (a16 != 16) { return 16; }
+    if (a17 != 17) { return 17; }
+    return 0;
+}
+# A >4-arg fn that itself calls a >4-arg fn: the callee's own arg frame must not
+# clobber the caller's still-live stack args.
+fn nested(b1, b2, b3, b4, b5, b6, b7, b8, b9, b10): i64 {
+    var inner = f17(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
+    if (inner != 0) { return 100 + inner; }
+    if (b1 != 1) { return 1; }
+    if (b10 != 10) { return 10; }
+    return 0;
+}
+
+fn main(): i64 {
+    test_group("calls with >4 args marshal every argument (Win64 stack-arg ABI)");
+    assert_eq(f5(1, 2, 3, 4, 5), 0, "5 args (all-register boundary + 1)");
+    assert_eq(f9(1, 2, 3, 4, 5, 6, 7, 8, 9), 0, "9 args (last arity the old 5-reg shuttle fit)");
+    assert_eq(f10(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), 0, "10 args — arg 1 was silently corrupted before v6.4.64");
+    assert_eq(f17(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17), 0, "17 args (sigil argon2_hash_into; frame > imm8)");
+    assert_eq(nested(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), 0, "a >4-arg fn calling a >4-arg fn");
+    return assert_summary();
+}
+var rc = main();
+syscall(60, rc);

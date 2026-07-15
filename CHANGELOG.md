@@ -6,6 +6,88 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.64] — 2026-07-14
+
+**P0 — Win64: calls with ≥10 args silently corrupted argument 1 and never wrote the stack args.
+Fixed, and the "≤6 args" rule that hid it for ~a year is gone.**
+
+### Fixed — `ECALLPOPS` Win64 stack-arg marshaling (`src/backend/x86/emit.cyr`)
+
+Win64 passes 4 args in `rcx/rdx/r8/r9`, the rest on the stack at `[rsp+32..]`. Because args are
+pushed left-to-right (aN on top) but Win64 wants a5 at the *lowest* stack slot, the caller must
+**reverse** the extras. The old PE branch did that by shuttling them through a **fixed 5-register
+table** (`r10/r11/r14/r15/r12`), with `if (nextra >= 1..5)` pops and `if (nextra == 1..5)`
+write-backs. `nextra = n - 4`, so **n ≥ 10 fell off the end of its own table — two ways at once**:
+
+1. Only 5 of the ≥6 extras were popped → the following `pop r9/r8/rdx/rcx` read **shifted** slots
+   → **`rcx` (argument 1) got the wrong value**.
+2. No `nextra ==` branch matched → **the stack args were never written at all** → the callee read
+   garbage at `[rsp+32..]`.
+
+Both **silent** — wrong answers, no error, no warning, on a Tier-1 target. Measured on real cass
+before the fix: **arity 5–9 OK, arity 10/11/12 → arg 1 corrupted**. SysV and aarch64 were fine at
+every arity (5–20): SysV was migrated off the register shuttle to rsp-relative addressing at
+v5.6.24/v6.0.57 for exactly this bug class; **the Win64 branch was never brought along.**
+
+The fix mirrors SysV — uniform for every `n > 4`, with no per-`nextra` branches to run out of:
+- Load `rcx/rdx/r8/r9` **in place** via `_emov_rsp_disp` (disp8/disp32 auto-select); no pops.
+- Carve the frame **below** the pushed args so the reversed copy's destination is strictly below its
+  source and **cannot overlap at any arity** (an in-place reversal can't be done by a single
+  ascending or descending shift — every order clobbers a slot a later read still needs).
+- Reverse-copy via `r10` (**caller**-saved — the v5.6.24 lesson: r12–r15 are callee-saved and
+  regalloc may pin caller locals to them → silent clobber).
+- New `_pe_call_frame(n)`: the one shared formula for `ECALLPOPS`/`ECALLCLEAN` (32 shadow +
+  nextra*8, 16-rounded, +8 parity pad for odd `n` — the old path got alignment free by popping all
+  `n` slots first; this pays for it explicitly). New `_esub_rsp_imm`/`_eadd_rsp_imm` — a 17-arg call
+  needs a 136 B frame, past the imm8 ceiling. `ECALLCLEAN` now reclaims `frame + n*8`.
+
+**Live consumer:** sigil 3.12.0 (folded in .63) — `argon2id_into` takes **10** args,
+`argon2_hash_into` **17**. A password KDF returning a wrong-but-plausible hash is the worst shape
+this bug could take.
+
+**Verified on real hardware:** cass arity sweep **5–20 all correct** (was: 10+ broken) · **`cycc.exe`
+SELFHOST_OK on real Windows** — the compiler is itself full of >4-arg calls, so that is the
+load-bearing test · x86 self-host byte-identical · aarch64 unaffected. New gate
+`tests/tcyr/vr01_win64_stack_args.tcyr` (arity 5/9/10/17 + nested), which runs on real hardware via
+the release gate's `vr01_` glob — mutation-tested on cass: **old codegen 2 passed / 3 failed, fixed
+codegen 5 passed / 0 failed.**
+
+### Fixed — `cyrius build --check-lib-sync` was advertised in usage but rejected (`cbt/cyrius.cyr`)
+
+Consumer filing (**sandhi 1.9.0**, wiring the lib-freshness CI gate): v6.4.63 documented
+`--check-lib-sync` in `build`'s usage — twice — but never added it to `build`'s flag loop, so it
+fell through to `error: unknown flag '--check-lib-sync'`. The CI gate the help text describes was
+unreachable. The pre-scan set `_check_lib_sync` and the check ran beside `_auto_deps`, but that loop
+still has to *consume* the flag.
+
+**Why v6.4.63's own gate passed it.** `tests/lib_freshness.sh` case 5 only exercised the flag on a
+**stale** `lib/` — where the freshness check exits non-zero *before* the arg loop is ever reached —
+and asserted nothing but "exit != 0". A rejected flag also exits 1, so the assertion could not tell
+"works" from "unknown flag". It passed for the wrong reason; a consumer found it, not the gate.
+The case now (a) asserts the flag is **accepted** on a fresh `lib/`, (b) asserts the drift failure by
+its **message** (`is stale vs version-pinned`) rather than its exit code, and (c) gives the fixture a
+real `cycc` under its `CYRIUS_HOME` — without one every build died with "cycc not found", so an
+exit-code assertion proved nothing. Mutation-tested: reverting the wiring turns the gate RED.
+
+Also tightened the gate's grep from `shadows version-pinned` to `warning: ./lib/ shadows
+version-pinned`: cycc's legacy sentinel note (`note: cwd ./lib/ shadows version-pinned …`) contains
+the same phrase, so the loose pattern reported cycc's note as the wrapper's. The two mechanisms stay
+redundant until `2026-07-14-converge-cycc-shadow-lib-sentinel.md` lands.
+
+### Changed — CLAUDE.md's arity rule (the reason this survived ~a year)
+
+The rule read: *"fns take ≤6 args cleanly (register ABI); args 7+ go on the stack and have shown
+corruption — restructure instead."* That is a **codegen bug written down as a language rule**. It was
+wrong in both directions (7–9 always worked; the cliff was 10, on one target), nobody re-measured it
+because it read as settled, and on 2026-07-14 it was cited to file an issue **against sigil** asking
+a stdlib to restructure around a defect in the compiler that compiles it — in the language repo. The
+release gate also structurally could not catch it: sigil sits outside cycc's include closure, and
+cycc's own PE calls happen to stay ≤9 args.
+
+Replaced with the measured behavior plus the durable lesson: **if a rule in this repo tells you to
+work around codegen, treat the rule as the bug report.** Full post-mortem:
+`docs/development/issues/archived/2026-07-14-win64-stack-args-corrupt-at-10-plus.md`.
+
 ## [6.4.63] — 2026-07-14
 
 **Two consumer filings — the agnos GPU-compute syscall band, and a lib-freshness check that NAMES

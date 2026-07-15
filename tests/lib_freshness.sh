@@ -22,6 +22,13 @@
 #      stdlib). Guarded by the NAME-based `[package] name = "cyrius"` signal —
 #      NOT `file_exists("src/main.cyr")`, which downstream repos also satisfy
 #      (the v6.0.1 conflation bug).
+# PATTERN NOTE (v6.4.64): match `warning: ./lib/ shadows` EXACTLY, not the looser
+# "shadows version-pinned". cycc still emits its own legacy sentinel note
+# (`note: cwd ./lib/ shadows version-pinned ...`, src/frontend/lex.cyr
+# _check_shadow_lib) which contains the same phrase — a loose grep here reports
+# cycc's note as ours and fails the fresh-lib case. The two mechanisms are
+# redundant by design for now; see
+# issues/2026-07-14-converge-cycc-shadow-lib-sentinel.md.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CY="$ROOT/build/cyrius"
@@ -33,7 +40,15 @@ trap 'rm -rf "$W"' EXIT
 
 SNAP="$W/home/versions/$VER/lib"
 PROJ="$W/proj"
-mkdir -p "$SNAP" "$PROJ/lib" "$PROJ/src"
+mkdir -p "$SNAP" "$PROJ/lib" "$PROJ/src" "$W/home/bin"
+# The fixture needs a REAL compiler under its CYRIUS_HOME, otherwise every build dies
+# with "cycc not found" and an exit-code assertion proves nothing about this feature.
+# (v6.4.64: the pre-fix gate only ever asserted "exit != 0" on a stale lib/, which is
+# also what a broken/unknown flag produces — that is how it passed while
+# `--check-lib-sync` was advertised-but-rejected. Assertions must be able to fail for
+# only the reason under test.)
+[ -x "$ROOT/build/cycc" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+cp "$ROOT/build/cycc" "$W/home/bin/cycc"
 
 # `syscalls.cyr` is the marker _dep_dir_has_stdlib probes to decide "this lib/
 # shadows stdlib at all" — both sides need it.
@@ -69,7 +84,7 @@ cmp -s "$PROJ/lib/alloc.cyr" "$SNAP/alloc.cyr" \
     || { echo "FAIL: fixture broken — alloc.cyr must be byte-identical for the sentinel-independence case"; exit 1; }
 EXTRA_ENV=""
 out=$(run_build "")
-echo "$out" | grep -q "shadows version-pinned" \
+echo "$out" | grep -q "warning: ./lib/ shadows version-pinned" \
     || { echo "FAIL: no skew warning for a stale ./lib/ (alloc.cyr identical — the cycc-silent case)"; echo "$out"; exit 1; }
 echo "$out" | grep -q "sigil 3.9.8 (pinned: 3.11.1)" \
     || { echo "FAIL: distlib-format skew not named (expected 'sigil 3.9.8 (pinned: 3.11.1)')"; echo "$out"; exit 1; }
@@ -79,7 +94,7 @@ echo "$out" | grep -q "sakshi 2.1.0 (pinned: 2.4.6)" \
 # ---- 3: fresh lib/ -> silent (no false positive) -----------------------------
 fresh_lib
 out=$(run_build "")
-if echo "$out" | grep -q "shadows version-pinned"; then
+if echo "$out" | grep -q "warning: ./lib/ shadows version-pinned"; then
     echo "FAIL: fresh ./lib/ warned — a check that cries wolf is the bug we are fixing"; echo "$out"; exit 1
 fi
 
@@ -87,20 +102,42 @@ fi
 stale_lib
 EXTRA_ENV="CYRIUS_NO_WARN_SHADOW_LIB=1"
 out=$(run_build "")
-if echo "$out" | grep -q "shadows version-pinned"; then
+if echo "$out" | grep -q "warning: ./lib/ shadows version-pinned"; then
     echo "FAIL: CYRIUS_NO_WARN_SHADOW_LIB=1 did not silence the warning"; echo "$out"; exit 1
 fi
 EXTRA_ENV=""
 
-# ---- 5: --check-lib-sync turns drift into a build failure (CI) ---------------
+# ---- 5: --check-lib-sync is ACCEPTED, and turns drift into a build failure ----
+# v6.4.64: this case previously only ran the STALE path and only asserted "exit != 0".
+# That passed for the WRONG REASON — v6.4.63 shipped the flag advertised in usage but
+# never wired into `build`'s arg loop, so on a clean lib/ it died with
+# `error: unknown flag '--check-lib-sync'`, and on a stale lib/ the freshness check
+# exited non-zero BEFORE the loop ever saw it. Both exit 1, so a bare exit-code check
+# cannot tell "works" from "rejected". sandhi 1.9.0 found it, not this gate.
+# So: assert the flag is ACCEPTED when fresh, and assert the drift failure by its MESSAGE.
+fresh_lib
+if ! ( cd "$PROJ" && CYRIUS_RESOLVED=1 CYRIUS_HOME="$W/home" \
+        "$CY" build --check-lib-sync src/main.cyr "$W/out.bin" > "$W/cls_fresh" 2>&1 ); then
+    if grep -q "unknown flag" "$W/cls_fresh"; then
+        echo "FAIL: --check-lib-sync is advertised in usage but REJECTED by the arg parser"
+        grep -m1 "unknown flag" "$W/cls_fresh"; exit 1
+    fi
+    echo "FAIL: --check-lib-sync failed the build on a FRESH ./lib/"; cat "$W/cls_fresh"; exit 1
+fi
+grep -q "unknown flag" "$W/cls_fresh" && { echo "FAIL: --check-lib-sync reported as unknown"; exit 1; }
+
+stale_lib
 if ( cd "$PROJ" && CYRIUS_RESOLVED=1 CYRIUS_HOME="$W/home" \
-        "$CY" build --check-lib-sync src/main.cyr "$W/out.bin" >/dev/null 2>&1 ); then
+        "$CY" build --check-lib-sync src/main.cyr "$W/out.bin" > "$W/cls_stale" 2>&1 ); then
     echo "FAIL: --check-lib-sync exited 0 on a stale ./lib/ (must fail the build)"; exit 1
 fi
+# The failure must be the SKEW, not an arg-parse error.
+grep -q "is stale vs version-pinned" "$W/cls_stale" \
+    || { echo "FAIL: --check-lib-sync failed for the wrong reason (expected the skew error):"; cat "$W/cls_stale"; exit 1; }
 
 # ---- 6: the cyrius source repo never warns about its own lib/ ----------------
 out=$( cd "$ROOT" && "$CY" build "$PROJ/src/main.cyr" "$W/out.bin" 2>&1 || true )
-if echo "$out" | grep -q "shadows version-pinned"; then
+if echo "$out" | grep -q "warning: ./lib/ shadows version-pinned"; then
     echo "FAIL: the cyrius source repo warned about its own lib/ — the name-based"
     echo "      [package] name = \"cyrius\" carve-out regressed to the src/main.cyr conflation"
     echo "$out"; exit 1
