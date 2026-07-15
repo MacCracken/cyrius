@@ -714,6 +714,14 @@ fn ESYSXLAT(S): i64 {
         EW(S, 0xF100C11F); EW(S, 0x54000041); EW(S, 0xD28010D0);  # shutdown   48→134
         EW(S, 0xF100C51F); EW(S, 0x54000041); EW(S, 0xD2800D10);  # bind       49→104
         EW(S, 0xF100C91F); EW(S, 0x54000041); EW(S, 0xD2800D50);  # listen     50→106
+        # v6.4.64: getsockname/getpeername were the last untranslated socket pair here —
+        # x86 51/52 fell through UNMAPPED to Darwin 51 (=setpriority) / 52 (=sigpending),
+        # i.e. a completely different syscall that can SUCCEED and leave the caller's
+        # sockaddr buffer UNWRITTEN. sandhi 1.9.0's peer-address API is the first consumer
+        # (cyrius's own net.cyr never called either, which is why this hid). BSD: accept=30,
+        # getpeername=31, getsockname=32 — the adjacency to the accept=30 line above.
+        EW(S, 0xF100D11F); EW(S, 0x54000041); EW(S, 0xD28003F0);  # getpeername 52→31
+        EW(S, 0xF100CD1F); EW(S, 0x54000041); EW(S, 0xD2800410);  # getsockname 51→32
         EW(S, 0xF100D91F); EW(S, 0x54000041); EW(S, 0xD2800D30);  # setsockopt 54→105
         EW(S, 0xF100DD1F); EW(S, 0x54000041); EW(S, 0xD2800ED0);  # getsockopt 55→118
         # v6.2.24: aarch64-Linux socket numbers → Darwin. The .59 port mapped only
@@ -825,6 +833,16 @@ fn ESYSXLAT(S): i64 {
     EW(S, 0xF100C51F); EW(S, 0x54000041); EW(S, 0xD2801908);  # bind        49→200
     EW(S, 0xF100C91F); EW(S, 0x54000041); EW(S, 0xD2801928);  # listen      50→201
     EW(S, 0xF100CD1F); EW(S, 0x54000041); EW(S, 0xD2801988);  # getsockname 51→204
+    # v6.4.64: getpeername was the sibling this band forgot — 51 was mapped, 52 was not.
+    # x86 52 fell through UNMAPPED and issued aarch64 #52 = fchmod(fd, mode), with `mode`
+    # = the low bits of the caller's sockaddr POINTER. VERIFIED on real pi: it returned
+    # SUCCESS (0), so the caller believes it obtained a peer address while its buffer is
+    # untouched garbage — strictly worse than an error, and it side-effects the fd.
+    # (Probe: socket(41), then syscall(52) on the unconnected fd → x86 gives -107
+    # ENOTCONN; pi gave 0/success pre-fix.) First consumer: sandhi 1.9.0's peer-address
+    # API, whose entire purpose is per-IP rate limiting — a garbage key defeats it
+    # silently. cyrius's own net.cyr calls neither, which is why this hid.
+    EW(S, 0xF100D11F); EW(S, 0x54000041); EW(S, 0xD28019A8);  # getpeername 52→205
     EW(S, 0xF100D91F); EW(S, 0x54000041); EW(S, 0xD2801A08);  # setsockopt  54→208
     EW(S, 0xF100DD1F); EW(S, 0x54000041); EW(S, 0xD2801A28);  # getsockopt  55→209
     # v6.2.24: getdents64 — the v6.2.24 fs.cyr SYS_*→FSYS_ dedup made fs.cyr emit

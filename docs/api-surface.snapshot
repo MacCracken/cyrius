@@ -2430,6 +2430,8 @@ sandhi::sandhi_rpc_set_default_tls_policy/2
 sandhi::sandhi_server_body_offset/2
 sandhi::sandhi_server_conn_fd/1
 sandhi::sandhi_server_conn_is_tls/1
+sandhi::sandhi_server_conn_peer_ip/1
+sandhi::sandhi_server_conn_peer_port/1
 sandhi::sandhi_server_conn_plain/1
 sandhi::sandhi_server_conn_plain_a/2
 sandhi::sandhi_server_conn_write/3
@@ -2442,6 +2444,7 @@ sandhi::sandhi_server_get_param/2
 sandhi::sandhi_server_get_param_a/3
 sandhi::sandhi_server_get_path/2
 sandhi::sandhi_server_get_path_a/3
+sandhi::sandhi_server_ip4_str/1
 sandhi::sandhi_server_options_backlog/2
 sandhi::sandhi_server_options_get_backlog/1
 sandhi::sandhi_server_options_get_idle_ms/1
@@ -2456,6 +2459,9 @@ sandhi::sandhi_server_path_only/1
 sandhi::sandhi_server_path_only_a/2
 sandhi::sandhi_server_path_segment/2
 sandhi::sandhi_server_path_segment_a/3
+sandhi::sandhi_server_peer_ip/1
+sandhi::sandhi_server_peer_port/1
+sandhi::sandhi_server_peer_sockaddr/2
 sandhi::sandhi_server_recv_request/3
 sandhi::sandhi_server_recv_request_c/3
 sandhi::sandhi_server_request_has_cl_te_conflict/2

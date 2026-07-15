@@ -874,6 +874,13 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 50, 0x200006A);   # listen     50 → 106
     _msx(S, 54, 0x2000069);   # setsockopt 54 → 105
     _msx(S, 55, 0x2000076);   # getsockopt 55 → 118
+    # v6.4.64: cross-arch parity with the arm64 ESYSXLAT — 51/52 were the last
+    # untranslated socket pair. Unmapped, x86 51/52 reach Darwin as setpriority/sigpending:
+    # a different syscall that can SUCCEED and leave the caller's sockaddr UNWRITTEN, so
+    # the caller trusts garbage. BSD accept=30, getpeername=31, getsockname=32 (note the
+    # adjacency to the accept line above). First consumer: sandhi 1.9.0's peer-address API.
+    _msx(S, 52, 0x200001F);   # getpeername 52 → 31
+    _msx(S, 51, 0x2000020);   # getsockname 51 → 32
     # v6.0.84: socketpair was the last untranslated socket syscall (cross-arch
     # parity with the arm64 ESYSXLAT). The fork+socketpair TLS e2e ran the Linux
     # number on Darwin → garbage fds → TLS_ERR_IO. See aarch64/emit.cyr.

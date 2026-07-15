@@ -74,6 +74,59 @@ version-pinned`: cycc's legacy sentinel note (`note: cwd ./lib/ shadows version-
 the same phrase, so the loose pattern reported cycc's note as the wrapper's. The two mechanisms stay
 redundant until `2026-07-14-converge-cycc-shadow-lib-sentinel.md` lands.
 
+### Fixed — P1: `getpeername`/`getsockname` reached the WRONG SYSCALL off x86-Linux
+
+cyrius's stdlib uses x86_64-Linux syscall numbers and the backends translate per target
+(`ESYSXLAT` on aarch64/Darwin, `EMACHO_SYSXLAT` on x86-macho). The socket band was translated —
+socket 41, connect 42, accept 43, bind 49, listen 50, setsockopt 54, getsockopt 55, socketpair 53 —
+but **`getpeername` (52) was missing from every table**, and **`getsockname` (51) from all but the
+aarch64-Linux one**. An untranslated number does not error; it passes through and invokes a
+*different* syscall:
+
+| target | 52 became | result |
+|---|---|---|
+| aarch64-Linux | **`fchmod(fd, mode)`** — `mode` = low bits of the sockaddr **pointer** | **returned SUCCESS** |
+| Darwin arm64 + Intel | `sigpending` / `setpriority` | wrong |
+
+**Verified on real pi**: a probe doing `socket(41)` then `syscall(52)` on the unconnected fd returns
+`-107` (ENOTCONN) on x86 but **succeeded (0)** on aarch64 pre-fix. Succeeding is *worse than
+failing*: the caller believes it obtained a peer address while its buffer is **untouched garbage**,
+and the fd gets chmod'd as a side effect.
+
+Fixed in all three tables: aarch64-Linux `52→205`; Darwin arm64 `52→31` + `51→32`; x86-macho
+`_msx 52→31` + `51→32` (BSD accept=30, getpeername=31, getsockname=32 — note the adjacency to the
+existing accept line). New gate `tests/tcyr/vr01_getpeername_xlat.tcyr` — getpeername on an
+*unconnected* socket has exactly one right answer (ENOTCONN; Linux 107 / Darwin 57), so any other
+result proves the number reached something else. **PASS on real pi + ecb + ach**; mutation-tested
+(reverting the tables → `LIBTEST_FAIL` on pi). Windows has no ws2_32 getpeername reroute yet — the
+raw syscall is unroutable and returns `-ENOSYS`, which sandhi's contract already treats as "peer
+unknown"; the gate `#ifndef`s Windows and the reroute is filed follow-up.
+
+**Why it hid:** cyrius's own `lib/net.cyr` calls neither fn — there was no consumer until sandhi
+1.9.0, whose entire purpose is per-IP rate limiting. A rate limiter keyed on uninitialized stack is
+silently not a rate limiter.
+
+### Folded — sandhi 1.8.2 → 1.9.0
+
+Byte-identical re-vendor from the committed dist. sandhi has **zero in-repo includers** (it is a
+leaf distfile; the compiler's closure is `alloc`/`alloc_agnos`/`alloc_macos`/`alloc_windows`/
+`atomic`/`fnptr`/`vec` across all 7 forks), so **cycc is unaffected**. Purely additive: 803 → 809
+fns, **+6 public, 0 removed, 0 arity/return-type changes**, one new global
+(`_SANDHI_SYS_GETPEERNAME`), no enum churn, no `ERR_*`, no TLS-slot claim, no dep drift (the only
+`cyrius.cyml` change is its pin, `6.4.49 → 6.4.63`).
+
+**Peer address for server handlers** — `sandhi_server_peer_ip/port`, `sandhi_server_conn_peer_ip/port`
+(works over both the plaintext and TLS seams), the allocation-free primitive
+`sandhi_server_peer_sockaddr(fd, out16)`, and `sandhi_server_ip4_str`. Filed by **yeo-cy-test**,
+whose `/api/login` runs Argon2id at ~244 ms CPU per attempt — a request-amplification lever with no
+way to throttle per-IP. This is the feature the `getpeername` fix above exists to make correct;
+folding it without that fix would have shipped a wrong-answer security primitive to aarch64/macOS.
+
+**Bonus repair:** sandhi already defines **11 fns taking ≥10 args** and has **15 call sites passing
+≥10** (`_sandhi_http_follow_a` = 14, `_sandhi_http_do_a` = 13) — **identical in 1.8.2**. Its HTTP
+client was therefore silently miscompiled on Win64 by the ECALLPOPS bug above, in both versions.
+The Win64 fix in this release repairs it.
+
 ### Changed — CLAUDE.md's arity rule (the reason this survived ~a year)
 
 The rule read: *"fns take ≤6 args cleanly (register ABI); args 7+ go on the stack and have shown
