@@ -1,5 +1,36 @@
 # CYRIUS_IR=3 fixpoint optimizer: cascade over-elimination (deep, NOT the bite-1 class)
 
+**Status:** 🟡 **OPEN — UN-ARCHIVED 2026-07-14 (v6.4.64 rot sweep).** This file was moved to
+`archived/` **without a resolution header and without the bug being fixed**. Every failure it names
+still reproduces at v6.4.64 — verified directly, not inferred:
+
+```
+tests/tcyr/alloc_str_extras   default exit 0   CYRIUS_IR=3 exit 139 (SIGSEGV)
+tests/tcyr/alloc_collections  default exit 0   CYRIUS_IR=3 exit 139 (SIGSEGV)
+```
+
+and `bigint` still hangs (124) under IR=3. No CHANGELOG entry closes it — the three mentions
+(`CHANGELOG.md:3986`, `:4020`, `:4024`) are context references, not resolutions.
+
+**Why this is the costlier error class.** `2026-07-02-ir-regalloc-rewrite-needs-reemit.md:10`
+delegates its correctness remnant *to this file*. With this file archived, that remnant was owned by
+nobody and the link dangled into `archived/` — i.e. an open bug that self-describes as *"Blocks
+CYRIUS_IR=3 self-hosting a byte-correct cycc"* was laundered as resolved. Archiving is how we assert
+something is done; doing it without a resolution stamp turns the archive into a claim nobody checked.
+
+**Also corrected while re-verifying:** the old "IR=3 produces 0 bytes compiling cycc" framing is
+stale but NOT fixed — it MOVED one generation down. An IR=3-built cycc now emits a binary, and that
+binary is **miscompiled**: `cat src/main.cyr | <ir3-cycc>` → exit 1, 0 bytes, with ~25 bogus
+`fn return type must be struct or i8/i16/i32/i64/…` errors rejecting valid code like
+`fn S64(a, v): i64`. Compiling `var x = 42;` with it succeeds — which is exactly the hello-world
+smoke CLAUDE.md calls a placebo. Drive the compiler, not a toy.
+
+**Home:** v6.5.x (the IR/regalloc perf-substrate anchor), alongside its sibling.
+
+**Original filing follows.**
+
+---
+
 **Filed:** 2026-07-02 (v6.3.28, after the buffer + opcode-aliasing fixes exposed it)
 **Severity:** N/A for default builds (CYRIUS_IR=3 is opt-in experimental; default codegen is
 byte-identical — differential 306/306). Blocks CYRIUS_IR=3 self-hosting a byte-correct cycc.

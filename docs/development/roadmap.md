@@ -312,13 +312,17 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
     subprocess (gap 1) → P3 net client + `join_all`/`select` + async DNS (gap 4) → P4 `async_rwlock`
     (gap 5) → W IOCP-Windows mirror. Length grew from ~3–5 to ~6–8 releases (foundation +
     IOCP-mirror + 2 uncovered I/O categories).
-- **Scalar-float completion — later 6.4.x.** Scalar `f64` as a function RETURN
-  type (returned in xmm0 per SysV — today's allow-list admits `f64v2`/`f64v4` but
-  not `f64`; [`issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md`](issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md) §1),
-  **f32 scalar arithmetic** (the native-float Tier A tail, pulled from
-  roadmap-future.md), and stricter f64/f32 typecheck. Retires the i64-boxed-f64
-  idiom, where a plain `+` on a boxed f64 silently integer-adds the bit pattern —
-  the ergonomic face of the same numeric push v6.5.x anchors.
+- **Scalar-float completion** — ✅ **DONE (v6.4.55 / .56 / .57).** Scalar `f64` as a
+  function RETURN type (xmm0 per SysV, sentinel -9) shipped **v6.4.55** — the
+  allow-list now admits `f64` (`parse_fn.cyr`), closing §1 of
+  [`issues/archived/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md`](issues/archived/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md).
+  **f32 scalar arithmetic** + the stricter f64/f32 typecheck shipped **v6.4.56**;
+  f64/f32 param arithmetic + float compound-assign + the compare-mix warning
+  shipped **v6.4.57**. Retired the i64-boxed-f64 idiom, where a plain `+` on a
+  boxed f64 silently integer-added the bit pattern.
+  (Stale-shipped through v6.4.64 — this bullet still asserted "today's allow-list
+  admits `f64v2`/`f64v4` but not `f64`" in the present tense, ~9 releases after
+  v6.4.55 falsified it, which is what kept the linked issue reading as open.)
 - **DX: diagnostics — later 6.4.x.** Multi-error reporting (today:
   first-error-exit) + column + source-excerpt in errors. A maintenance-cost item:
   consumer-filed misdiagnoses are the recurring tax better errors retire. DWARF

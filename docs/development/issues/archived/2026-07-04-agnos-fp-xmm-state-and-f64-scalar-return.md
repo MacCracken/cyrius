@@ -1,5 +1,34 @@
 # agnos FP arc — XMM-state prerequisites + f64-scalar-return / f64vN-constructor gaps
 
+**Status:** ✅ **RESOLVED — ARCHIVED 2026-07-14 (v6.4.64 rot sweep).** All three sections are
+closed cyrius-side. Verified by RE-RUNNING THIS FILE'S OWN REPROS against build/cycc at v6.4.64,
+not by reading the CHANGELOG:
+
+- **§1 (scalar `f64` return): SHIPPED v6.4.55.** This file's verbatim repro (`fn get_sample(): f64`),
+  recorded here as a hard error, now compiles clean (exit 0); `parse_fn.cyr`'s return-type allow-list
+  reads `…/cstring/f64/f64v2/f64v4` — the `/f64/` whose absence IS the repro. `vr01_f64_scalar_return.tcyr`
+  passes 4/4 at runtime, so the xmm0/sentinel-9 path actually works (not merely an allow-list string
+  change). CHANGELOG [6.4.55] closes it by this filename.
+- **§2 (f64v2/f64v4 lane constructors): SHIPPED v6.4.3.** The repro's `undefined function 'f64v2'` is
+  gone — compiles clean, no undefined-fn warning; `f64v2_splat`/`f64v4_splat` live in `lib/simd.cyr`;
+  `vr01_f64v2_ctor.tcyr` passes 7/7.
+- **§3 (agnos XMM-state prereq): DISCHARGED.** Its only cyrius-side ask — note the prereq in the
+  int-SIMD arc doc — landed verbatim in `proposals/archived/2026-07-04-integer-simd-encoding-design.md`
+  ("Runtime prerequisite on agnos — the shared XMM-state layer"). The remaining blocker is
+  agnos-KERNEL-side by this file's own text, not cyrius's.
+
+**Why it sat open ~9 releases after shipping:** `roadmap.md`'s "Scalar-float completion — later
+6.4.x" bullet asserted §1 in the PRESENT tense ("today's allow-list admits `f64v2`/`f64v4` but not
+`f64`") and linked here, so the pin kept re-manufacturing the impression that the issue was live.
+That bullet is now marked ✅ DONE (v6.4.55/.56/.57) and re-pointed at this archived path. This is
+exactly the shipped-but-still-framed-as-pending rot CLAUDE.md closeout item 12 exists to catch — and
+the lesson is that archiving an issue is not enough if a roadmap pin still speaks about it in the
+present tense.
+
+**Original filing follows.**
+
+---
+
 > **§2 RESOLVED v6.4.3 (2026-07-04) + §3 NOTED.** Premise-check: the f64v2/f64v4 value
 > constructors + lane-extract ALREADY existed as `f64v2_make`/`f64v4_make` + `f64v2_lo`/`_hi` /
 > `f64v4_lane*` (value + pointer form) — the reported "`undefined function 'f64v2'`" was a *syntax*

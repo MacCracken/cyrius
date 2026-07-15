@@ -1239,7 +1239,7 @@ at arc-open):
 
 1. **IR substrate productionization** — the prerequisite
    ([`issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md`](issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md)
-   + [`issues/archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md`](issues/archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md)):
+   + [`issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md`](issues/2026-07-02-ir3-fixpoint-cascade-overelimination.md)):
    re-emit path, complete local-access opcode model, `CYRIUS_IR=3` differential
    correctness. Proven necessary by the v6.3.27/.28 deferrals.
 2. **Cross-BB regalloc WITH a vector register class** — the vector class is what
