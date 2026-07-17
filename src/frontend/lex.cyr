@@ -312,23 +312,14 @@ fn _init_cyrius_lib(): i64 {
                             store8(&_cyrius_lib + wi, 47); wi = wi + 1;   # /
                             store8(&_cyrius_lib + wi, 0);
                             _cyrius_lib_len = wi;
-                            # v5.10.15 — shadow-lib compile warn.
-                            # Detect if cwd has its own `lib/` that
-                            # would shadow the version-pinned path.
-                            # The agnosys 1.1.12 saga (v5.10.7-.10)
-                            # spent four slots chasing what turned
-                            # out to be a stale shadow lib in the
-                            # consumer project folder. This emits a
-                            # one-line note so future consumers
-                            # catch the resolution choice at compile
-                            # time, not at SIGILL.
-                            #
-                            # Opt-out via CYRIUS_NO_WARN_SHADOW_LIB=1
-                            # for cyrius-repo dev workflow (where
-                            # cwd `lib/` IS the intended source of
-                            # truth) or for any consumer that
-                            # knowingly uses a project-local lib.
-                            _check_shadow_lib();
+                            # v6.4.66: the shadow-lib compile note was RETIRED here.
+                            # The CLI wrapper's version-aware freshness check
+                            # (cbt/ `_check_lib_freshness`, v6.4.63) supersedes it:
+                            # it names per-lib version skew on every build/run/test,
+                            # whereas cycc's note byte-size-compared only alloc.cyr
+                            # (a silent false negative when a stale dep sat behind an
+                            # unchanged alloc.cyr) and was Linux-host-only. See
+                            # issues/2026-07-14-converge-cycc-shadow-lib-sentinel.md.
                             # v5.11.57: detect cyml pin drift
                             # (iron-boot papercut Item 1).
                             # Wrapper-side drift is invisible to
@@ -353,117 +344,21 @@ fn _init_cyrius_lib(): i64 {
     return 0;
 }
 
-# v5.10.15 — emit a one-line note to stderr if cwd has a `lib/`
-# directory that will shadow the version-pinned path. Called
-# once at the end of `_init_cyrius_lib`. Uses sys_open with
-# O_RDONLY|O_DIRECTORY to probe `lib/`; if open succeeds we
-# know cwd has the shadow.
-fn _check_shadow_lib(): i64 {
-    #ifdef CYRIUS_TARGET_LINUX
-    # Opt-out: if CYRIUS_NO_WARN_SHADOW_LIB=1, skip the note.
-    var _shadow_env_buf[4096];
-    # v5.11.27: aarch64 openat ABI — see _init_cyrius_lib above.
-    var _shadow_efd = 0;
-    if (SYS_OPEN == 2) { _shadow_efd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
-    else { _shadow_efd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
-    if (_shadow_efd < 0) { return 0; }
-    var _shadow_elen = syscall(0, _shadow_efd, &_shadow_env_buf, 4096);
-    syscall(3, _shadow_efd);
-    var _shadow_ei = 0;
-    while (_shadow_ei < _shadow_elen) {
-        # Look for "CYRIUS_NO_WARN_SHADOW_LIB=1\0" in the env stream.
-        # The name is 25 chars; '=' is at offset 25; '1' at offset 26.
-        # Cheap two-byte gate first ('C','Y'); full-prefix check on hit.
-        if (load8(&_shadow_env_buf + _shadow_ei) == 67) {       # 'C'
-            if (load8(&_shadow_env_buf + _shadow_ei + 1) == 89) {   # 'Y'
-                if (load8(&_shadow_env_buf + _shadow_ei + 25) == 61) {  # '=' at byte 25
-                    if (load8(&_shadow_env_buf + _shadow_ei + 26) == 49) {  # '1' at byte 26
-                        # Confirm the full prefix "CYRIUS_NO_WARN_SHADOW_LIB".
-                        var _check_str = "CYRIUS_NO_WARN_SHADOW_LIB";
-                        var _ck = 0;
-                        var _ck_match = 1;
-                        while (_ck < 25) {
-                            if (load8(&_shadow_env_buf + _shadow_ei + _ck) != load8(_check_str + _ck)) { _ck_match = 0; break; }
-                            _ck = _ck + 1;
-                        }
-                        if (_ck_match == 1) { return 0; }
-                    }
-                }
-            }
-        }
-        # Skip to next null
-        while (_shadow_ei < _shadow_elen) { if (load8(&_shadow_env_buf + _shadow_ei) == 0) { break; } _shadow_ei = _shadow_ei + 1; }
-        _shadow_ei = _shadow_ei + 1;
-    }
-    # Probe cwd `lib/` via O_RDONLY|O_DIRECTORY (0x10000).
-    # v5.11.27: aarch64 openat ABI — see _init_cyrius_lib above.
-    var _shadow_fd = 0;
-    if (SYS_OPEN == 2) { _shadow_fd = syscall(SYS_OPEN, "lib", 0x10000, 0); }
-    else { _shadow_fd = syscall(SYS_OPEN, 0 - 100, "lib", 0x10000, 0); }
-    if (_shadow_fd < 0) { return 0; }
-    syscall(3, _shadow_fd);
-    # v5.11.57: content-compare filter. Without this, the note
-    # fires on every build when cwd has ./lib/ — even when the
-    # directory is empty (the agnosticos/scripts/lib/ case from
-    # the iron-boot papercut filing) or contains only project-
-    # local files unrelated to stdlib. Filter: probe a canonical
-    # stdlib file (alloc.cyr — universally present) in cwd lib/.
-    # If absent, cwd lib/ isn't shadowing stdlib at all; skip
-    # the note. If present, byte-size-compare against the
-    # snapshot's alloc.cyr; only emit when they differ (real
-    # drift). See CHANGELOG [5.11.57].
-    var _shadow_local_sz = _file_size("lib/alloc.cyr");
-    if (_shadow_local_sz < 0) { return 0; }
-    var _shadow_snap_path[4096];
-    var _shadow_spi = 0;
-    while (_shadow_spi < _cyrius_lib_len) {
-        store8(&_shadow_snap_path + _shadow_spi, load8(&_cyrius_lib + _shadow_spi));
-        _shadow_spi = _shadow_spi + 1;
-    }
-    store8(&_shadow_snap_path + _shadow_spi + 0, 97);   # a
-    store8(&_shadow_snap_path + _shadow_spi + 1, 108);  # l
-    store8(&_shadow_snap_path + _shadow_spi + 2, 108);  # l
-    store8(&_shadow_snap_path + _shadow_spi + 3, 111);  # o
-    store8(&_shadow_snap_path + _shadow_spi + 4, 99);   # c
-    store8(&_shadow_snap_path + _shadow_spi + 5, 46);   # .
-    store8(&_shadow_snap_path + _shadow_spi + 6, 99);   # c
-    store8(&_shadow_snap_path + _shadow_spi + 7, 121);  # y
-    store8(&_shadow_snap_path + _shadow_spi + 8, 114);  # r
-    store8(&_shadow_snap_path + _shadow_spi + 9, 0);
-    var _shadow_snap_sz = _file_size(&_shadow_snap_path);
-    if (_shadow_snap_sz == _shadow_local_sz) { return 0; }
-    # Drift detected — emit the note.
-    syscall(1, 2, "note: cwd ./lib/ shadows version-pinned ", 40);
-    syscall(1, 2, &_cyrius_lib, _cyrius_lib_len);
-    syscall(1, 2, " — delete ./lib/ to use the version-matched snapshot, or set CYRIUS_NO_WARN_SHADOW_LIB=1 to silence this note\n", 112);
-    #endif
-    return 0;
-}
-
-# v5.11.57: open path, lseek to end, return size. Returns -1 if
-# the file doesn't exist. Used by _check_shadow_lib (Item 4) for
-# canonical-file byte-size compare against the snapshot.
-fn _file_size(path): i64 {
-    #ifdef CYRIUS_TARGET_LINUX
-    var _fs_fd = 0;
-    if (SYS_OPEN == 2) { _fs_fd = syscall(SYS_OPEN, path, 0, 0); }
-    else { _fs_fd = syscall(SYS_OPEN, 0 - 100, path, 0, 0); }
-    if (_fs_fd < 0) { return 0 - 1; }
-    # SYS_LSEEK = 8 on x86_64, SEEK_END = 2.
-    var _fs_sz = syscall(8, _fs_fd, 0, 2);
-    syscall(3, _fs_fd);
-    return _fs_sz;
-    #endif
-    return 0 - 1;
-}
+# v6.4.66: `_check_shadow_lib` + `_file_size` were RETIRED here. The one-line
+# shadow-lib note they emitted is superseded by the CLI wrapper's version-aware
+# `_check_lib_freshness` (cbt/, v6.4.63), which is stronger (names per-lib version
+# skew, works on all four hosts, no single-sentinel false negative). Removing them
+# also drops ~80 lines of global/call-heavy frontend from cycc (a cybs-ceiling
+# liability). `CYRIUS_NO_WARN_SHADOW_LIB` is still honored by the wrapper check.
+# See docs/development/issues/2026-07-14-converge-cycc-shadow-lib-sentinel.md.
 
 # v5.11.57: shared opt-out env probe. Returns 1 if
 # /proc/self/environ contains "<name>=1\0", 0 otherwise. Used
 # by _check_cyml_pin_drift (CYRIUS_NO_WARN_PIN_DRIFT,
-# CYRIUS_STRICT_PIN). The existing _check_shadow_lib inline
-# pattern (CYRIUS_NO_WARN_SHADOW_LIB) predates this helper and
-# stays inline for byte-identity stability of the surrounding
-# code; future cleanup can converge.
+# CYRIUS_STRICT_PIN). The old _check_shadow_lib had its own
+# inline copy of this probe (CYRIUS_NO_WARN_SHADOW_LIB); that
+# function was retired at v6.4.66 (see above), so this helper is
+# now the single opt-out probe.
 fn _env_var_is_1(name, name_len): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     var _ev_buf[4096];

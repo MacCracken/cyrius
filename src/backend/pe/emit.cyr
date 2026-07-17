@@ -837,6 +837,31 @@ fn _pe_ensure_bind(S): i64 {
 }
 fn _pe_bind_get(): i64 { return _pe_bind_idx; }
 
+# v6.4.66: ws2_32!getpeername(s, name, namelen) — the peer-address reroute (3-arg,
+# same shape as bind). Closes the Windows half of the getpeername gap so sandhi's
+# per-IP rate limiting has a real peer address on PE. Filed:
+# docs/development/issues/2026-07-14-windows-getpeername-reroute-missing.md
+var _pe_getpeername_ready = 0;
+var _pe_getpeername_idx   = 0;
+fn _pe_ensure_getpeername(S): i64 {
+    if (_pe_getpeername_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_getpeername_idx, "getpeername", 4);   # dll_id 4 = ws2_32
+    _pe_getpeername_ready = 1;
+    return 0;
+}
+fn _pe_getpeername_get(): i64 { return _pe_getpeername_idx; }
+
+# v6.4.66: ws2_32!getsockname(s, name, namelen) — the local-address peer of the above.
+var _pe_getsockname_ready = 0;
+var _pe_getsockname_idx   = 0;
+fn _pe_ensure_getsockname(S): i64 {
+    if (_pe_getsockname_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_getsockname_idx, "getsockname", 4);   # dll_id 4 = ws2_32
+    _pe_getsockname_ready = 1;
+    return 0;
+}
+fn _pe_getsockname_get(): i64 { return _pe_getsockname_idx; }
+
 # v6.4.44 R3: ws2_32!listen(s, backlog) — the AcceptEx server's listener prereq.
 var _pe_listen_ready = 0;
 var _pe_listen_idx   = 0;

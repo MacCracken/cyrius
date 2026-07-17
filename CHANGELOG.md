@@ -6,6 +6,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.66] — 2026-07-17
+
+**Issue sweep — the two eldest 6.4.x-doable open issues (both filed 2026-07-14).**
+(The strictly-older 07-02/07-03/07-06/07-07 issues are all homed in the v6.5.x
+IR/threading/perf-substrate slot and were left alone; 07-12 DX multi-error is a
+fuzz-wall-blocked dedicated arc, not a bite.)
+
+### Fixed — Windows `getpeername`/`getsockname` reach ws2_32 (`src/backend/pe/emit.cyr` + `x86/emit.cyr` + `parse_expr.cyr`)
+
+`getpeername`(52)/`getsockname`(51) were unroutable on PE — the wrapper returned a
+fail-closed `-ENOSYS(-38)`, so sandhi's peer API (per-IP rate limiting) got "unknown"
+for every peer on Windows. Added the ws2_32 reroutes mirroring the socket band:
+`syscall(0xF036/0xF037, s, name, namelen)` → `ws2_32!getpeername`/`getsockname`
+(3-arg, `EGETPEERNAME_PE`/`EGETSOCKNAME_PE`; return-0 stubs in the aarch64/cx forks
+since `parse_expr` dispatches them in every fork; seed-derive mandatory).
+
+- **The `sys_*` wrappers normalize failure to `-WSAGetLastError`.** Winsock returns
+  SOCKET_ERROR (`int -1`), which cyrius sees **zero-extended** as `0xFFFFFFFF` — a
+  *positive* value that would defeat a consumer's `if (r < 0)` check and let it
+  fabricate a peer (exactly what `sandhi_server_peer_sockaddr` does). The wrapper now
+  returns `0` on success or `-WSAGetLastError` (e.g. `-10057` WSAENOTCONN) on failure.
+- **Caught only on real hardware:** the first cut passed `"getpeername", 11` to
+  `_pe_register_import` — but the 4th arg is `dll_id`, not the string length (`4` =
+  ws2_32). The import bound to a bogus DLL and the call crashed on cass. Self-host +
+  seed-derive were green (the reroute is inert on the x86-ELF self-compile); **only
+  running it on real Windows surfaced it.** `vr01_getpeername_xlat.tcyr` un-guarded on
+  PE (getpeername → `-10057`, getsockname → `-10022` WSAEINVAL on an unbound socket —
+  distinct codes prove both reached the real symbol and 51/52 aren't swapped); PASS on
+  real cass. Closes `2026-07-14-windows-getpeername-reroute-missing`.
+
+### Removed — cycc's redundant `_check_shadow_lib` sentinel note (`src/frontend/lex.cyr`)
+
+Retired `_check_shadow_lib` + `_file_size` (~80 lines). The v6.4.63 CLI-wrapper
+`_check_lib_freshness` (cbt/) supersedes them and is strictly stronger: it names
+per-lib version skew on every build/run/test across all four hosts, whereas cycc's
+note byte-size-compared only `alloc.cyr` (a silent false negative when a stale dep sat
+behind an unchanged `alloc.cyr`) and was Linux-host-only. `CYRIUS_NO_WARN_SHADOW_LIB`
+is still honored by the wrapper. Closes `2026-07-14-converge-cycc-shadow-lib-sentinel`.
+
+### Verification
+
+- Both are `src/` changes → cycc bytes change. **cycc `1,103,480 B` (−88 B vs 6.4.65)**
+  — the ~80-line removal outweighs the reroute's +112 B. self-host fixpoint byte-identical
+  (build/cycc == gen1 == gen2); **seed-derive** (`seed → cybs → cycc`) green (both
+  emit.cyr call-refs and the lex.cyr removal survive cybs); **differential corpus
+  codegen-diff 0/0** (default + DCE — both changes inert on normal programs); check.sh
+  **147**; cross-OS self-host **ecb + ach + cass + pi** (getpeername LIBTEST_OK on real
+  cass). self_compile **625 ms** (in the 614-634 band).
+
 ## [6.4.65] — 2026-07-17
 
 **Repair the oldest open issue — the thread-local slot namespace has no allocator —

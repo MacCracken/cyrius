@@ -19,16 +19,26 @@
 #
 # HOW IT TESTS: getpeername on a fresh, UNCONNECTED socket has one correct answer —
 # ENOTCONN. Any other result means the number reached something that is not getpeername.
-# The errno differs per OS (Linux 107, Darwin 57), and Windows has no routable getpeername
-# at all (documented degradation: the reroute is future work), so those are gated.
+# The errno differs per OS (Linux 107, Darwin 57 = ENOTCONN); Windows (v6.4.66) routes to
+# ws2_32 and reports SOCKET_ERROR(-1) + WSAGetLastError = WSAENOTCONN(10057), not an errno.
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
 
 # v6.4.64: exercises the WRAPPERS (sys_getpeername/sys_getsockname), which is the
 # whole point — each peer supplies its own arch's number, so nothing needs an ESYSXLAT
 # entry for x86-52 (which would collide with the aarch64 peer's SYS_FCHMOD = 52).
-# AF_INET=2, SOCK_STREAM=1.
-fn mk_sock(): i64 { return syscall(41, 2, 1, 0); }
+# AF_INET=2, SOCK_STREAM=1. On PE the raw socket(41) is not routed, so Windows uses
+# the ws2_32 foundation (WSAStartup 0xF01E + WSASocketW 0xF022) instead.
+fn mk_sock(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var wsadata[512];                              # WSADATA (~408 B on Win64)
+    syscall(61470, 0x0202, &wsadata);              # WSAStartup(0x0202, &wsadata)
+    return syscall(61474, 2, 1, 0, 0, 0, 0);       # WSASocketW(AF_INET, SOCK_STREAM, 0, NULL, 0, 0)
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return syscall(41, 2, 1, 0);
+    #endif
+}
 
 # getpeername(fd, sockaddr, addrlen) on an unconnected socket -> -ENOTCONN.
 fn peer_errno(fd): i64 {
@@ -56,8 +66,6 @@ fn main(): i64 {
     var fd = mk_sock();
     assert_gte(fd, 0, "socket(41) — the translated socket band still works");
 
-    # Windows: no ws2_32 getpeername reroute yet — the raw syscall is not routable and
-    # returns -ENOSYS(-38). Documented gap, not this test's subject.
     #ifndef CYRIUS_TARGET_WIN
     var e = peer_errno(fd);
     assert_neq(e, 0 - 1, "getpeername did NOT silently SUCCEED (-1 = it hit fchmod/sigpending, not getpeername — the real pi pre-fix failure)");
@@ -68,6 +76,23 @@ fn main(): i64 {
     assert_eq(e, 107, "getpeername on an unconnected socket = ENOTCONN (Linux 107)");
     #endif
     assert_eq(name_ok(fd), 1, "getsockname on an unconnected socket succeeds (51 and 52 are not swapped)");
+    #endif
+
+    # v6.4.66: Windows now routes getpeername/getsockname to ws2_32 (was a fail-closed
+    # -ENOSYS(-38) stub through .65). Winsock does NOT use the POSIX errno space; the
+    # sys_* wrappers normalize failure to -WSAGetLastError. On a fresh socket:
+    #   getpeername (unconnected) -> -WSAENOTCONN (-10057)
+    #   getsockname (unbound)     -> -WSAEINVAL  (-10022)   [POSIX would succeed]
+    # The two DISTINCT, specific error codes prove each reroute reached the REAL symbol
+    # (not the old -38 stub) AND that 51/52 are not swapped (distinct answers).
+    #ifdef CYRIUS_TARGET_WIN
+    var wout[16];
+    var walen[8];
+    store32(&walen, 16);
+    var wr = sys_getpeername(fd, &wout, &walen);
+    assert_eq(wr, 0 - 10057, "getpeername reaches ws2_32: -WSAENOTCONN(-10057) on an unconnected socket, not the old -ENOSYS(-38) stub");
+    var nr = sys_getsockname(fd, &wout, &walen);
+    assert_eq(nr, 0 - 10022, "getsockname reaches ws2_32: -WSAEINVAL(-10022) on an unbound socket — distinct from getpeername (51/52 not swapped)");
     #endif
 
     syscall(3, fd);

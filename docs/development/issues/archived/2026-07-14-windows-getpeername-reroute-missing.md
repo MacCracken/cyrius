@@ -1,7 +1,17 @@
-# Windows: no `getpeername`/`getsockname` reroute — peer address unavailable on PE
+# Windows: no `getpeername`/`getsockname` reroute — peer address unavailable on PE — RESOLVED
 
-**Status:** 🟡 **OPEN** — capability gap, safe degradation. **Filed:** 2026-07-14 at the v6.4.64 close.
+**Status:** ✅ **RESOLVED in v6.4.66** (CHANGELOG [6.4.66]). **Filed:** 2026-07-14 at the v6.4.64 close.
 **Severity:** Low-Medium (no wrong answers; a real feature is simply unavailable on one target).
+
+> **RESOLVED v6.4.66.** Added the ws2_32 reroutes `syscall(0xF036/0xF037)` →
+> `getpeername`/`getsockname` (`EGETPEERNAME_PE`/`EGETSOCKNAME_PE`, dll_id 4). The
+> `sys_*` wrappers normalize failure to `-WSAGetLastError` — ws2_32 returns SOCKET_ERROR
+> (`int -1`) which cyrius zero-extends to a *positive* `0xFFFFFFFF`, so a raw return would
+> defeat `sandhi_server_peer_sockaddr`'s `if (r < 0)` and fabricate a peer; `-10057`
+> (WSAENOTCONN) is correct. Verified on real cass via `vr01_getpeername_xlat.tcyr`
+> (getpeername → −10057, getsockname → −10022 on an unbound socket). NOTE: sandhi still
+> calls `syscall(52)` directly, not the wrapper — adopting `sys_getpeername` is the
+> sibling issue `2026-07-14-sandhi-peer-api-use-stdlib-getpeername.md`.
 
 ## The gap
 

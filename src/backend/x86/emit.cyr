@@ -1686,6 +1686,20 @@ fn EBIND_PE(S): i64 {
     return _pe_call_3arg_aligned(S, _pe_bind_get());
 }
 
+# v6.4.66: syscall(0xF036, s, name, namelen) → ws2_32!getpeername (3-arg; 0 on
+# success, SOCKET_ERROR on failure with WSAGetLastError = WSAENOTCONN on an
+# unconnected socket). Same 3-arg shape as bind; the socket is passed as-is (it is
+# already a ws2_32 SOCKET from WSASocketW, like every other call in this band).
+fn EGETPEERNAME_PE(S): i64 {
+    _pe_ensure_getpeername(S);
+    return _pe_call_3arg_aligned(S, _pe_getpeername_get());
+}
+# v6.4.66: syscall(0xF037, s, name, namelen) → ws2_32!getsockname (3-arg).
+fn EGETSOCKNAME_PE(S): i64 {
+    _pe_ensure_getsockname(S);
+    return _pe_call_3arg_aligned(S, _pe_getsockname_get());
+}
+
 # v6.4.44 R3: syscall(0xF033, s, backlog) → ws2_32!listen(s, backlog). 2-arg.
 fn ELISTEN_PE(S): i64 {
     _pe_ensure_listen(S);

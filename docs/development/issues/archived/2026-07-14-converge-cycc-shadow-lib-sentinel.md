@@ -1,7 +1,13 @@
-# Converge (or retire) cycc's `_check_shadow_lib` sentinel note — now redundant, and silently wrong
+# Converge (or retire) cycc's `_check_shadow_lib` sentinel note — now redundant, and silently wrong — RESOLVED
 
-**Status:** 🟡 **OPEN** — cleanup. **Filed:** 2026-07-14 (v6.4.63 slot close).
+**Status:** ✅ **RESOLVED in v6.4.66** (option **(a) retire**; CHANGELOG [6.4.66]). **Filed:** 2026-07-14 (v6.4.63 slot close).
 **Severity:** Low (correctness of a diagnostic, not of codegen). **Owner surface:** `src/frontend/lex.cyr`.
+
+> **RESOLVED v6.4.66 — retired (option a).** Removed `_check_shadow_lib` + `_file_size`
+> (~80 lines) from `src/frontend/lex.cyr`; the CLI wrapper's `_check_lib_freshness`
+> (cbt/, v6.4.63) supersedes it. cycc self-host fixpoint + seed-derive green; differential
+> codegen-diff 0; `CYRIUS_NO_WARN_SHADOW_LIB` still honored by the wrapper; cycc −88 B net
+> (with the getpeername reroute in the same release).
 
 ## Context
 
