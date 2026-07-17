@@ -310,6 +310,18 @@ bayan::bayan_u256_to_hex/1
 bayan::bayan_u256_zero/0
 bayan::bayan_u64_mulmod/3
 bayan::bayan_u64_powmod/3
+bayan::bayan_yaml_fm_body/1
+bayan::bayan_yaml_fm_yaml/1
+bayan::bayan_yaml_frontmatter_split/1
+bayan::bayan_yaml_frontmatter_split_a/2
+bayan::bayan_yaml_last_error/0
+bayan::bayan_yaml_last_error_pos/0
+bayan::bayan_yaml_parse/1
+bayan::bayan_yaml_parse_ctx/3
+bayan::bayan_yaml_parse_ctx_str/2
+bayan::bayan_yaml_parse_str/2
+bayan::bayan_yaml_state_error/1
+bayan::bayan_yaml_state_error_pos/1
 bayan::csv_escape/1
 bayan::csv_parse_line/1
 bayan::csv_write_line/1
@@ -1333,6 +1345,7 @@ mabda::native_nv_push_dispatch_sample/4
 mabda::native_nv_push_draw/3
 mabda::native_nv_qmd_build/5
 mabda::native_nv_rc_is_masterless/1
+mabda::native_nv_rt_pitch_bytes/1
 mabda::native_nv_sass_render_fs/1
 mabda::native_nv_sass_render_vs/1
 mabda::native_nv_sass_sample_tex/1
@@ -4250,6 +4263,7 @@ thread_agnos::chan_try_recv/1
 thread_agnos::gettid/0
 thread_agnos::thread_create/2
 thread_agnos::thread_join/1
+thread_local::thread_local_alloc/0
 thread_local::thread_local_get/1
 thread_local::thread_local_get/1
 thread_local::thread_local_init/0

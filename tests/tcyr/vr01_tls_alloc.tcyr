@@ -1,0 +1,90 @@
+# vr01_tls_alloc.tcyr — v6.4.65: the thread-local SLOT ALLOCATOR.
+#
+# Runs on real hardware via the release gate's `vr01_` glob (cass/ecb/pi), so
+# the bumped per-platform backing (Windows 1024-byte TlsSetValue block; the
+# 128-slot macOS/agnos/foreign arrays) is exercised where it actually lives,
+# not just on x86-Linux %fs.
+#
+# THE ISSUE THIS CLOSES (docs/development/issues/2026-07-01-thread-local-slot-
+# namespace-no-allocator.md): the slot namespace had no allocator, so every lib
+# hardcoded an integer index and two libs linked together could silently clobber
+# each other's per-thread state (sigil vs patra, the v6.3.25 RECORD_LAYER bug).
+#
+# What v6.4.65 guarantees, asserted below:
+#   1. thread_local_alloc() hands out UNIQUE, MONOTONIC slots starting at 16,
+#      so allocated lib slots NEVER alias the frozen 0-15 app/legacy range.
+#   2. A high allocated slot round-trips through set/get — proving the backing
+#      arrays/block were grown past the old 16-slot ceiling (slot 100 would
+#      have been a silent OOB before this release).
+#   3. Setting an allocated slot does not disturb a frozen low slot, and vice
+#      versa (collision-freedom across the 0-15 / 16+ boundary).
+#
+# Single-threaded on purpose: cyrius threads are clone-only (no macOS/Windows
+# worker path), and the allocator is a target-agnostic process-global counter —
+# the threaded per-%fs coverage lives in thread_local.tcyr (x86/aarch64).
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/thread_local.cyr"
+
+fn test_alloc_monotonic_from_16() {
+    test_group("thread_local_alloc: unique, monotonic, >= 16");
+    var a = thread_local_alloc();
+    var b = thread_local_alloc();
+    var c = thread_local_alloc();
+    assert_eq(a, 16, "first allocated slot is 16 (above the frozen 0-15 range)");
+    assert_eq(b, 17, "second allocated slot is 17");
+    assert_eq(c, 18, "third allocated slot is 18");
+    assert_gte(a, 16, "allocated slots never alias 0-15");
+    assert_neq(a, b, "distinct slots a != b");
+    assert_neq(b, c, "distinct slots b != c");
+}
+
+fn test_alloc_roundtrip_and_high_slot() {
+    test_group("allocated + high slot round-trip");
+    var s = thread_local_alloc();       # 19
+    thread_local_set(s, 0x11111111);
+    assert_eq(thread_local_get(s), 0x11111111, "allocated slot round-trip");
+    # Slot 100 would have overflowed the old 16-slot backing on macOS/agnos/Win.
+    thread_local_set(100, 0xABCDEF);
+    assert_eq(thread_local_get(100), 0xABCDEF, "slot 100 round-trip (arrays grown to 128)");
+}
+
+fn test_collision_free_across_boundary() {
+    test_group("frozen 0-15 range disjoint from allocated 16+");
+    # Frozen app/legacy slots first.
+    thread_local_set(5, 0x5555);
+    thread_local_set(14, 0x1414);
+    thread_local_set(15, 0x1515);
+    # Allocate three lib slots and write to them.
+    var x = thread_local_alloc();
+    var y = thread_local_alloc();
+    var z = thread_local_alloc();
+    thread_local_set(x, 111);
+    thread_local_set(y, 222);
+    thread_local_set(z, 333);
+    # Allocated writes must not disturb the frozen slots...
+    assert_eq(thread_local_get(5), 0x5555, "frozen slot 5 preserved");
+    assert_eq(thread_local_get(14), 0x1414, "frozen slot 14 preserved");
+    assert_eq(thread_local_get(15), 0x1515, "frozen slot 15 preserved");
+    # ...and allocated slots must not alias each other.
+    assert_eq(thread_local_get(x), 111, "allocated x isolated");
+    assert_eq(thread_local_get(y), 222, "allocated y isolated");
+    assert_eq(thread_local_get(z), 333, "allocated z isolated");
+}
+
+fn main() {
+    alloc_init();
+    var ok = thread_local_init();
+    assert_eq(ok, 1, "thread_local_init succeeded");
+    test_alloc_monotonic_from_16();
+    test_alloc_roundtrip_and_high_slot();
+    test_collision_free_across_boundary();
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

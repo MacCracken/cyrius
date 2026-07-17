@@ -29,13 +29,13 @@ git entries (see Live deps below).
 | `lib/sandhi.cyr` | v5.7.0 (refold v6.4.50) | sandhi 1.8.2 | HTTP/2 + JSON-RPC + service discovery + TLS policy (ALPN/SPKI on typed native verbs) |
 | `lib/vani.cyr` | v5.8.0 (refold v6.4.50) | vani 1.1.1 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/sakshi.cyr` | v5.8.65 (refold v6.4.50) | sakshi 2.4.6 | Tracing |
-| `lib/patra.cyr` | v5.8.65 (refold v6.4.44) | patra 1.12.9 | Storage |
-| `lib/sigil.cyr` | v5.8.65 (refold v6.4.48) | sigil 3.11.1 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing; UEFI Secure Boot signing (authenticode_pe_sign) + enrollment (efi_signature_list/efi_auth)) |
+| `lib/patra.cyr` | v5.8.65 (refold v6.4.65) | patra 1.12.12 | Storage (thread-local slots allocator-managed @1.12.12) |
+| `lib/sigil.cyr` | v5.8.65 (refold v6.4.65) | sigil 3.12.1 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing; UEFI Secure Boot signing (authenticode_pe_sign) + enrollment (efi_signature_list/efi_auth); crypto-bank slot allocator-managed @3.12.1) |
 | `lib/yukti.cyr` | v5.8.65 (refold v6.4.27) | yukti 2.2.9 | Hardware enumeration |
 | `lib/sankoch.cyr` | v5.8.65 (refold v6.4.44) | sankoch 2.5.1 | Compression |
-| `lib/niyama.cyr` | **v5.9.0** (2026-05-06) | niyama 1.0.5 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,664 lines) |
-| `lib/mabda.cyr` | **v6.0.45** (refold v6.3.2) | mabda 4.0.2 | GPU/compute (AMD-native GA; array textures + cubemaps + BC arrays; samvada/chitra calls `#ifdef`-gated @4.0.2) |
-| `lib/bayan.cyr` | **v6.1.25** | bayan 1.1.0 | Data formats + big-int (json / toml / cyml / csv / base64 / bigint `u256` / u128). **Carve** out of stdlib: public fns renamed `bayan_*` + legacy aliases. Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must `include "lib/bayan.cyr"`. |
+| `lib/niyama.cyr` | **v5.9.0** (refold v6.4.65) | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,664 lines) |
+| `lib/mabda.cyr` | **v6.0.45** (refold v6.4.65) | mabda 4.0.7 | GPU/compute (AMD-native GA; array textures + cubemaps + BC arrays; samvada/chitra calls `#ifdef`-gated) |
+| `lib/bayan.cyr` | **v6.1.25** (refold v6.4.65) | bayan 1.2.0 | Data formats + big-int (json / toml / cyml / csv / base64 / **yaml** / bigint `u256` / u128; per-format sublibs @1.2.0). **Carve** out of stdlib: public fns renamed `bayan_*` + legacy aliases. Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must `include "lib/bayan.cyr"`. |
 | `lib/ganita.cyr` | **v6.1.26** | ganita 1.0.3 | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial). **Carve** out of stdlib (closes Phase E): renamed `ganita_*` + legacy aliases. Keep stdlib `math` in scope (f64-exp/ln polyfills + F64 constants). |
 
 ## Live deps (explicit `[deps.*]`)

@@ -6,6 +6,79 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.65] — 2026-07-17
+
+**Repair the oldest open issue — the thread-local slot namespace has no allocator —
+and fold the pending stdlib updates. The hardcoded-slot collision class is now
+closed STRUCTURALLY.**
+
+### Fixed — thread-local slot allocator (`lib/thread_local.cyr`)
+
+`thread_local_get/set(slot)` address a shared per-thread integer slot space
+(`TLOCAL_MAX_SLOTS`). Every library that wanted per-thread state **hardcoded** a
+slot index, so two libs linked into one program could silently clobber each
+other's state — the v6.3.25 `RECORD_LAYER_FAILURE` (sigil's crypto bank collided
+with patra's SQL-parse scratch), then hand-patched by moving sigil to slot 8.
+The real fix, filed 2026-07-01, is an **allocator**:
+
+- **`thread_local_alloc(): i64`** — hands out the next free slot monotonically,
+  **based at 16**. Because allocated lib slots are always ≥ 16, they can never
+  alias the **frozen 0-15 range** used by app/legacy hardcoded slots — so a
+  partially-migrated program (new lib + old app) stays collision-free without any
+  coordination. A CAS gate in each consumer allocates exactly once at runtime.
+- `TLOCAL_MAX_SLOTS` 16 → 128; the Windows per-thread `TlsSetValue` block grows
+  128 → 1024 B to match. The macOS/agnos/foreign fallback arrays already held 128
+  slots (a bare top-level `var x[N]` is `N*8` bytes since v6.4.10 — the old
+  `= 16*8 bytes` comment was stale; corrected, not resized).
+- **Registry-comment correction:** the file (and the issue) claimed sandhi's
+  `_SANDHI_RPC_POLICY_SLOT = 16` was a "latent OOB thread-local slot." **It is
+  not a thread-local slot at all** — it's a 16-byte policy-record stride, never
+  passed to `thread_local_get/set` (premise-checked against live source). Removed
+  the false claim. sandhi is not a consumer of this namespace.
+
+New gate `tests/tcyr/vr01_tls_alloc.tcyr` (allocator hands out unique monotonic
+slots ≥ 16, high slot 100 round-trips through the grown backing, allocated slots
+stay disjoint from the frozen 0-15 range) runs on real hardware via the `vr01_`
+glob. The old `tests/thread_local_slot_collision.sh` — which pinned sigil to slot
+8 — was rewritten to assert the *new* invariant (sigil + patra both claim slots
+from the allocator; no hardcoded low-integer slot survives).
+
+### Changed — consumer migrations (fixed at source, re-vendored)
+
+- **sigil 3.12.0 → 3.12.1** (`src/crypto_scratch.cyr`): `_SIGIL_CBANK_SLOT` is
+  claimed from `thread_local_alloc()` via a CAS-gated `_sigil_ensure_slot()`
+  instead of the hardcoded `8`. Concurrency + crypto suites green.
+- **patra 1.12.10 → 1.12.12** (`src/sql.cyr` + `src/file.cyr`): the five slots
+  (`TLS_TOKS`/`TLS_PR`/`TLS_NTOKS` were 0/1/2; `TLS_SLAB_STACK`/`TLS_SLAB_TOP`
+  were 3/4) are allocated together, once, by a CAS-gated `_patra_tls_ensure()`
+  called at the head of `_sql_ensure` and `_pg_slab_init`. Full suite 893/0 incl.
+  P1/P2 concurrency. (Folds through the pending 1.12.11 toolchain-pin patch.)
+
+### Changed — stdlib fold-in (byte-identical from each sibling's committed dist)
+
+- **bayan 1.1.0 → 1.2.0** — per-format sublibs (+ a YAML front-matter parser:
+  `bayan_yaml_*`); +32 fns, 0 removed.
+- **mabda 4.0.5 → 4.0.7** — +1 fn (`native_nv_rt_pitch_bytes`), 0 removed.
+- **niyama 1.0.5 → 1.0.6**, **yantra 1.0.0 → 1.0.1** — internal/fix-only, no
+  public-surface change.
+
+Fold due-diligence: **0 removed public fns, no arity changes, no symbol
+collisions, no dep drift** across all folds. api-surface `4653 → 4667` public fns
+(+14: 12 bayan YAML + mabda + `thread_local_alloc`; 0 removals).
+
+### Verification
+
+- **cycc byte-identical** — `thread_local.cyr` and every folded dep are outside
+  cycc's include closure; no `src/` change. cycc `1,103,568 B`, sha `d6f1c76d…`
+  (identical to the 6.4.64 tag; post-bump the only delta is the version string).
+- Release gate GREEN: self-host fixpoint + seed-derive (`seed → cybs → cycc`) +
+  check.sh **147** + cross-OS self-host **ecb + ach + cass + pi** (real hardware;
+  `vr01_tls_alloc` LIBTEST_OK on each — the grown Windows block + 128-slot arrays
+  exercised where they live). self_compile **618 ms** (in the 614-634 band).
+- **Follow-up noted (not blocking):** `hoosh`'s `src/lib/trace.cyr` still
+  hardcodes `TRACE_SLOT = 1` (a downstream tool, not a vendored stdlib) — it
+  should adopt `thread_local_alloc()` too; tracked as a downstream consumer task.
+
 ## [6.4.64] — 2026-07-14
 
 **P0 — Win64: calls with ≥10 args silently corrupted argument 1 and never wrote the stack args.
