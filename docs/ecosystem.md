@@ -31,8 +31,8 @@ git entries (see Live deps below).
 | `lib/sakshi.cyr` | v5.8.65 (refold v6.4.50) | sakshi 2.4.6 | Tracing |
 | `lib/patra.cyr` | v5.8.65 (refold v6.4.65) | patra 1.12.12 | Storage (thread-local slots allocator-managed @1.12.12) |
 | `lib/sigil.cyr` | v5.8.65 (refold v6.4.65) | sigil 3.12.1 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing; UEFI Secure Boot signing (authenticode_pe_sign) + enrollment (efi_signature_list/efi_auth); crypto-bank slot allocator-managed @3.12.1) |
-| `lib/yukti.cyr` | v5.8.65 (refold v6.4.27) | yukti 2.2.9 | Hardware enumeration |
-| `lib/sankoch.cyr` | v5.8.65 (refold v6.4.44) | sankoch 2.5.1 | Compression |
+| `lib/yukti.cyr` | v5.8.65 (refold v6.4.67) | yukti 2.2.10 | Hardware enumeration |
+| `lib/sankoch.cyr` | v5.8.65 (refold v6.4.67) | sankoch 2.5.5 | Compression |
 | `lib/niyama.cyr` | **v5.9.0** (refold v6.4.65) | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,664 lines) |
 | `lib/mabda.cyr` | **v6.0.45** (refold v6.4.65) | mabda 4.0.7 | GPU/compute (AMD-native GA; array textures + cubemaps + BC arrays; samvada/chitra calls `#ifdef`-gated) |
 | `lib/bayan.cyr` | **v6.1.25** (refold v6.4.65) | bayan 1.2.0 | Data formats + big-int (json / toml / cyml / csv / base64 / **yaml** / bigint `u256` / u128; per-format sublibs @1.2.0). **Carve** out of stdlib: public fns renamed `bayan_*` + legacy aliases. Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must `include "lib/bayan.cyr"`. |

@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.67] — 2026-07-18
+
+**`lib/chrono.cyr`: a `DateTime` handle, Rust-`chrono`-style `Duration` API, and
+strftime `format()`/parse** (the 2026-07-18 proposal, triggered by the **samay**
+Rust→Cyrius port — a scheduler whose every timestamp is a `DateTime<Utc>`). Plus a
+stdlib fold. All additive, UTC only, all i64 math; **cycc byte-identical** (chrono is
+not in cycc's include closure).
+
+### Added — chrono `DateTime` / `Duration` / `format()` (`lib/chrono.cyr`)
+
+Builds on the existing primitives (`epoch_to_date`, `dur_new`, `_chrono_w2/_w4`,
+`iso8601`) — no compiler change. Per the proposal's recommended answers: a `DateTime`
+is a **bare epoch-nanosecond `i64` handle** (no wrapper alloc; consistent with
+`clock_epoch_ns`, ~year-2262 ceiling), the strftime subset is **numeric** (names are a
+documented Tier-2 extension), and `iso8601()` is kept as the fast fixed-form path.
+
+- **DateTime:** `dt_now` / `dt_from_epoch_secs` / `dt_from_epoch_ns` / `dt_epoch_secs`
+  / `dt_epoch_ns`; UTC field accessors `dt_year` / `dt_month` / `dt_day` / `dt_hour` /
+  `dt_minute` / `dt_second` (keep `epoch_to_date`'s struct layout private).
+- **Duration:** unit constructors `dur_seconds/minutes/hours/days/weeks/millis/nanos`
+  (reuse the `{secs,nsecs}` layout so old + new code interoperate) + `num_*` accessors
+  `dur_num_seconds/minutes/hours/days/millis/nanos` + `dur_add`/`dur_sub`.
+- **Arithmetic:** `dt_add` / `dt_sub` (DateTime ± Duration) + `dt_diff` (→ Duration,
+  correct for negative spans).
+- **Format:** `dt_format(dt, fmt)` (`%Y %y %m %d %e %H %M %S %j %%`; unknown specs pass
+  through as `%<c>`) and `dt_strptime(s, fmt)` → epoch ns or `-1`. `dt_strptime` is
+  stricter than `iso8601_parse` — it **rejects non-digit numeric fields** rather than
+  computing garbage (the gate caught the original permissive read).
+
+New gate `tests/tcyr/vr01_chrono_datetime.tcyr` (29 asserts: accessors, unit
+round-trips, `dt±dur`/`dt_diff` incl. negative, format specifiers, strptime round-trip
++ mismatch/out-of-range → `-1`); runs on x86 + cross-OS. api-surface +34, 0 removals.
+
+### Changed — stdlib fold-in
+
+- **sankoch 2.5.1 → 2.5.5** (+29 fns, 0 removed), **yukti 2.2.9 → 2.2.10** (fix-only,
+  no surface change) — byte-identical from each committed dist; no collisions, no dep
+  drift. Both outside cycc's closure.
+
+### Verification
+
+cycc **byte-identical** (chrono additions + both folds are lib-only, outside the
+include closure — sha unchanged pre-bump); self-host fixpoint + seed-derive green;
+check.sh **147**; cross-OS ecb/ach/cass/pi (the chrono gate runs on each). self_compile
+**629 ms** (in the 614-634 band).
+
 ## [6.4.66] — 2026-07-17
 
 **Issue sweep — the two eldest 6.4.x-doable open issues (both filed 2026-07-14).**

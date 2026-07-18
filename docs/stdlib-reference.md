@@ -1473,8 +1473,8 @@ own canonical API reference in its own repo; this table is a pointer. See
 | `lib/sigil.cyr` | sigil 3.12.1 | Security / x509 / Ed25519 — powers native TLS + release/UEFI signing |
 | `lib/sakshi.cyr` | sakshi 2.4.6 | Tracing / structured logging |
 | `lib/patra.cyr` | patra 1.12.12 | Storage |
-| `lib/sankoch.cyr` | sankoch 2.5.1 | Compression |
-| `lib/yukti.cyr` | yukti 2.2.9 | Hardware enumeration |
+| `lib/sankoch.cyr` | sankoch 2.5.5 | Compression |
+| `lib/yukti.cyr` | yukti 2.2.10 | Hardware enumeration |
 | `lib/vani.cyr` | vani 1.1.1 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/niyama.cyr` | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
 | `lib/mabda.cyr` | mabda 4.0.7 | GPU / compute (AMD-native) |

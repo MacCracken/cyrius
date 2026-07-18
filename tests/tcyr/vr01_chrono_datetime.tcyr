@@ -1,0 +1,78 @@
+# vr01_chrono_datetime.tcyr — v6.4.67: the chrono DateTime / Duration / strftime API
+# (docs/development/proposals/2026-07-18-chrono-datetime-duration-format.md).
+# Pure i64 + alloc + string math (no clocks), so it runs identically on every target;
+# in the vr01_ glob for real-hardware coverage.
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/chrono.cyr"
+
+fn test_accessors() {
+    test_group("DateTime field accessors (UTC)");
+    var secs = iso8601_parse("2026-04-09T15:30:00Z");   # a known instant, via the existing parser
+    var dt = dt_from_epoch_secs(secs);
+    assert_eq(dt_year(dt), 2026, "year");
+    assert_eq(dt_month(dt), 4, "month");
+    assert_eq(dt_day(dt), 9, "day");
+    assert_eq(dt_hour(dt), 15, "hour");
+    assert_eq(dt_minute(dt), 30, "minute");
+    assert_eq(dt_second(dt), 0, "second");
+    assert_eq(dt_epoch_secs(dt), secs, "epoch_secs round-trip");
+    assert_eq(dt_epoch_ns(dt), secs * 1000000000, "epoch_ns");
+}
+
+fn test_duration_units() {
+    test_group("Duration unit constructors + num_* accessors");
+    assert_eq(dur_num_minutes(dur_hours(1)), 60, "1h = 60 min");
+    assert_eq(dur_num_seconds(dur_hours(1)), 3600, "1h = 3600 s");
+    assert_eq(dur_num_hours(dur_days(1)), 24, "1d = 24 h");
+    assert_eq(dur_num_days(dur_weeks(1)), 7, "1w = 7 d");
+    assert_eq(dur_num_millis(dur_seconds(5)), 5000, "5s = 5000 ms");
+    assert_eq(dur_num_nanos(dur_millis(2)), 2000000, "2ms = 2e6 ns");
+    assert_eq(dur_num_seconds(dur_add(dur_minutes(1), dur_seconds(30))), 90, "1m + 30s = 90 s");
+    assert_eq(dur_num_seconds(dur_sub(dur_hours(1), dur_minutes(1))), 3540, "1h - 1m = 3540 s");
+}
+
+fn test_arithmetic() {
+    test_group("DateTime +/- Duration and diff");
+    var dt = dt_from_epoch_secs(iso8601_parse("2026-04-09T15:30:00Z"));
+    assert_eq(dt_hour(dt_add(dt, dur_hours(1))), 16, "dt + 1h -> hour 16");
+    assert_eq(dt_day(dt_sub(dt, dur_days(1))), 8, "dt - 1d -> day 8");
+    assert_eq(dur_num_hours(dt_diff(dt_add(dt, dur_hours(1)), dt)), 1, "diff(dt+1h, dt) = 1h");
+    assert_eq(dur_num_seconds(dt_diff(dt, dt_add(dt, dur_hours(1)))), 0 - 3600, "negative diff = -3600 s");
+}
+
+fn test_format() {
+    test_group("dt_format (strftime subset)");
+    var dt = dt_from_epoch_secs(iso8601_parse("2026-04-09T15:30:00Z"));
+    assert_streq(dt_format(dt, "%Y-%m-%dT%H:%M:%SZ"), "2026-04-09T15:30:00Z", "ISO shape via format");
+    assert_streq(dt_format(dt, "%y/%m/%d %H:%M"), "26/04/09 15:30", "%y short year");
+    assert_streq(dt_format(dt, "day %j pct %%"), "day 099 pct %", "%j day-of-year (99) + literal %%");
+    assert_streq(dt_format(dt, "[%e]"), "[ 9]", "%e space-padded day");
+    assert_streq(dt_format(dt, "no specs"), "no specs", "literal passthrough");
+}
+
+fn test_strptime() {
+    test_group("dt_strptime round-trip + mismatch");
+    var dt = dt_from_epoch_secs(iso8601_parse("2026-04-09T15:30:00Z"));
+    assert_eq(dt_strptime("2026-04-09T15:30:00Z", "%Y-%m-%dT%H:%M:%SZ"), dt, "strptime round-trips to the same ns");
+    assert_eq(dt_strptime("2026-099", "%Y-%j"), dt_from_epoch_secs(iso8601_parse("2026-04-09T00:00:00Z")), "%j parse -> Apr 9");
+    assert_eq(dt_strptime("nope", "%Y"), 0 - 1, "literal mismatch -> -1");
+    assert_eq(dt_strptime("2026-13-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ"), 0 - 1, "out-of-range month -> -1");
+}
+
+fn main() {
+    alloc_init();
+    test_accessors();
+    test_duration_units();
+    test_arithmetic();
+    test_format();
+    test_strptime();
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);
