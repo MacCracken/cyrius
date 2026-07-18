@@ -1,0 +1,21 @@
+# Repro: reserved SIMD intrinsic `iv_add` used as a variable name yields
+# the misleading `expected identifier, got unknown` instead of a clear
+# "reserved name" diagnostic.
+#
+#   cyrius test docs/development/issues/repros/2026-07-17-iv-intrinsic-var-name.cyr
+#
+# Actual:   error:<source>:1:5: expected identifier, got unknown
+#               var iv_add = 1;
+#                   ^
+# Expected: either it compiles (intrinsics are contextual keywords, usable
+#           as identifiers outside call position) OR a clear diagnostic:
+#           "error: 'iv_add' is a reserved SIMD intrinsic; choose another name".
+#
+# iv_add / iv_sub / iv_mul (and iv_dp8) are the affected names.
+# iv_div / iv_neg / iv_abs / iv_xyz are NOT intrinsics and compile fine —
+# there is no integer-vector divide, which is exactly why iv_div is safe.
+# Deterministic: 8/8. Reproduces on cycc 6.3.11, 6.4.5, 6.4.6, 6.4.65, 6.4.66.
+
+include "lib/syscalls.cyr"
+
+var iv_add = 1;
