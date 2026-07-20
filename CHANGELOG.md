@@ -6,6 +6,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.68] — 2026-07-20
+
+### Fixed — agnos `sys_reboot` widened to the 1.55.25+ 4-arg ABI (`lib/syscalls_x86_64_agnos.cyr`)
+
+agnos 1.55.25 replaced the halt-only `#13` stub with `power_sys(magic1, magic2, cmd, arg)`,
+which the tree's **nullary** `sys_reboot()` wrapper could no longer express — a nullary
+`syscall(13)` leaves the magic/cmd registers holding caller garbage, which the kernel's
+magic gate rejects (`-1`, silent no-op). Widened the wrapper to the **filed** 4-arg form
+and exported the constants consumers were hand-rolling: `sys_reboot(magic1, magic2, cmd, arg)`
+\+ `PWR_MAGIC1`/`PWR_MAGIC2` (`"PWR1"`/`"PWR2"`) + `PWR_HALT`/`PWR_OFF`/`PWR_REBOOT` (1/2/3).
+Verified: a reboot probe cross-compiles to a valid agnos ELF emitting syscall #13 in the
+4-arg (`a4=r10`) shape with the magics in `.data`; full `agnos-crossbuild-gate.sh` green
+incl. the agnoshi consumer; **cycc byte-identical** (the agnos syscalls peer is not in
+cycc's include closure). Resolves
+`docs/development/issues/2026-07-19-sys-reboot-nullary-vs-agnos-4arg-abi.md`.
+
+### Changed — stdlib fold-in (byte-identical from each sibling's committed dist)
+
+- **sankoch 2.5.5 → 2.6.4** — additive: **+85 public fns** (a Zstd/FSE encoder
+  `_z_*`/`_ze_*` + `_star_ledger_*`), **0 removed**, no arity changes, **0 symbol
+  collisions** across the stdlib.
+- **vani 1.1.1 → 1.1.2** — version-only bump (byte-identical to 1.1.1 outside the header).
+
+Both vendored byte-identical from each sibling's upstream committed `dist/<name>.cyr`.
+Consumability verified (declared prelude + `include "lib/<name>.cyr"` compiles and runs
+exit-0); **cycc byte-identical** (both folds are outside cycc's include closure). The other
+ten folded deps (bayan, ganita, mabda, niyama, patra, sakshi, sandhi, sigil, yantra, yukti)
+were already current with upstream. api-surface baseline regenerated for the new public
+surface (`docs/api-surface.snapshot` → **4730** public fns: +30 `sankoch::zip_*`, and
+`syscalls_x86_64_agnos::sys_reboot/0` → `/4` from the reboot widen above).
+
+**Release gate:** `check.sh` **147/147**; self-host fixpoint byte-identical; agnos
+cross-build gate green (incl. agnoshi); **cross-OS self-host byte-identical on ecb
+(macOS arm64) + cass (Windows PE)** on real hardware (cycc's post-bump byte delta vs
+6.4.67 is version-string-only; ach/pi not re-run this lib+doc cut). self_compile **618 ms**
+(historical 614–634 band); cycc **1,103,480 B**.
+
 ## [6.4.67] — 2026-07-18
 
 **`lib/chrono.cyr`: a `DateTime` handle, Rust-`chrono`-style `Duration` API, and

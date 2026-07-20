@@ -1,25 +1,22 @@
-# `sys_reboot()` is nullary but agnos syscall #13 now takes four arguments — RESOLVED v6.4.68
+# `sys_reboot()` is nullary but agnos syscall #13 now takes four arguments — FIXED IN TREE (targets 6.4.68)
 
-**RESOLVED v6.4.68** — `lib/syscalls_x86_64_agnos.cyr` now ships a 1-arg
-`sys_reboot(cmd)` that folds `PWR_MAGIC1`/`PWR_MAGIC2` internally (mirroring the
-Linux/macOS `sys_reboot(cmd)` peers), plus `enum RebootCmd` + `enum AgnosPwrCmd`
-carrying agnos-native cmd values (halt=1/off=2/reboot=3). Verified against the
-kernel handler `power_sys(magic1, magic2, cmd, arg)` (agnos/kernel/core/power.cyr:349);
-the reboot probe cross-compiles to a valid agnos ELF; no caller used the old
-nullary form. The filed fix (a 4-arg `sys_reboot(magic1,magic2,cmd,arg)`) was
-**not** taken — it would have been the tree's only 4-arg reboot and broken the
-1-arg argonaut/kybernet call sites (arity mismatch is warning-only, not
-`--strict`-promoted); the 1-arg form matching the Linux peer was shipped instead.
+**Fixed 2026-07-20** in `lib/syscalls_x86_64_agnos.cyr` — the **filed 4-arg form** was
+implemented verbatim: `fn sys_reboot(magic1, magic2, cmd, arg)` + exported
+`PWR_MAGIC1`/`PWR_MAGIC2` (`"PWR1"`/`"PWR2"`) + `PWR_HALT`/`PWR_OFF`/`PWR_REBOOT` (1/2/3).
+Verified: a reboot probe cross-compiles to a valid agnos ELF emitting syscall #13 in the
+4-arg (`a4=r10`) shape with both magics in `.data`; `scripts/agnos-crossbuild-gate.sh` is
+green including the agnoshi consumer; cycc self-hosts byte-identical (the agnos syscalls
+peer is not in cycc's include closure). Not yet in a cut release (VERSION 6.4.67 →
+targets 6.4.68; the release is the user's to cut). Convenience wrappers (`sys_power_off()`
+etc.) and any reconciliation with the 1-arg Linux `sys_reboot(cmd)` peer are deliberately
+deferred as later refinements per direction on this fix.
 
-**Note (not this issue, surfaced during the fix):** argonaut/kybernet still won't
-fully *function* on agnos — their Linux-status-word `waitpid` reaping reads a
-status buffer agnos never writes, their 5-arg `sys_mount(MS_*)` hits agnos's
-0-arg no-op mount, and their `nanosleep` uses `syscall(35)` (=`sysinfo` on agnos).
-Those are consumer-side agnos-port gaps, tracked here for whoever picks up the
-pid-1-on-agnos work — the reboot ABI itself is closed.
+**Consumer note (separate work):** argonaut/kybernet call the 1-arg **Linux** peer
+`sys_reboot(RB_*)`; on a Linux build they are unaffected. On an *agnos-target* build those
+1-arg calls arity-warn against this 4-arg wrapper and pass Linux `RB_*` values that do not
+map to agnos `PWR_*` — part of the tracked argonaut/kybernet agnos-port gap, not this issue.
 
 ---
-
 
 **Discovered:** 2026-07-19 while building the **agnos** 1.55.x shutdown arc (orderly
 filesystem flush + device quiesce + platform reset / ACPI S5 soft-off, both iron-validated
