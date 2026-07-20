@@ -1,0 +1,99 @@
+# Repro: #derive(Serialize) carries its own f64 codec, independent of bayan's.
+#
+#   emit:  lex_pp.cyr:900-903 (field) and :882 (vec) inline fmt_float_buf(..., 6)
+#          into every generated *_to_json -- so no library fix can reach it.
+#   parse: lex_pp.cyr:1042 uses math's f64_parse, while bayan's DOM uses _jp_atof.
+#
+# Demonstrates that the two paths already disagree by 1 ULP on BYTE-IDENTICAL text,
+# which means fixing one without the other silently splits the ecosystem's float format.
+#
+# Build: cyrius build docs/development/issues/repros/2026-07-19-derive-serialize-f64-second-implementation.cyr /tmp/derivef64
+# Run:   /tmp/derivef64      (exit 0 = paths agree AND roundtrip; exit 1 = they don't)
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/result.cyr"
+include "lib/hashmap.cyr"
+include "lib/math.cyr"
+include "lib/bayan.cyr"
+
+#derive(Serialize)
+struct S { x: f64; }
+
+var _fails = 0;
+
+# Fresh document each time: reusing one Str across both parsers is NOT the
+# problem (neither mutates its input -- verified), but a fresh buffer keeps
+# the comparison obviously independent.
+fn emit(v) {
+    var s = S{ v };
+    var sb = str_builder_new();
+    S_to_json(&s, sb);
+    return str_builder_build(sb);
+}
+
+fn compare(label, v) {
+    syscall(1, 1, label, strlen(label));
+
+    var j0 = emit(v);
+    syscall(1, 1, "  derive emits ", 15);
+    syscall(1, 1, str_data(j0), str_len(j0));
+
+    # path A -- bayan value tree (_jp_atof)
+    var dom = json_v_parse(emit(v));
+    var a = 0;
+    if (dom != 0) { a = json_v_float(json_v_obj_get(dom, "x")); }
+
+    # path B -- the derive's own from_json (math f64_parse).
+    # Read the field with load64: a `var r: S = ...` typed local does NOT
+    # read back correctly here, which is a separate ergonomics trap.
+    var rec = S_from_json(bayan_json_parse(emit(v)));
+    var b = 0;
+    if (rec != 0) { b = load64(rec); }
+
+    syscall(1, 1, "\n      orig  =", 14); fmt_hex0x(v);
+    syscall(1, 1, "\n      bayan =", 14); fmt_hex0x(a);
+    syscall(1, 1, "\n      derive=", 14); fmt_hex0x(b);
+
+    if (a != b) {
+        _fails = _fails + 1;
+        syscall(1, 1, "\n      *** PATHS DISAGREE on identical text ***", 46);
+    } elif (a != v) {
+        _fails = _fails + 1;
+        syscall(1, 1, "\n      (paths agree, but both lossy vs original)", 47);
+    } else {
+        syscall(1, 1, "\n      ok", 9);
+    }
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    syscall(1, 1, "-- exact for both paths --\n", 27);
+    compare("0.5 ", f64_div(f64_from(1), f64_from(2)));
+
+    syscall(1, 1, "\n-- the two float parsers diverge by 1 ULP --\n", 45);
+    compare("1/3 ", f64_div(f64_from(1), f64_from(3)));
+    compare("2/3 ", f64_div(f64_from(2), f64_from(3)));
+
+    syscall(1, 1, "\n-- derive inherits the same annihilation + invalid-JSON emit --\n", 64);
+    compare("1e-9", f64_div(f64_from(1), f64_from(1000000000)));
+    compare("+Inf", 0x7FF0000000000000);
+    compare("NaN ", 0x7FF8000000000000);
+
+    syscall(1, 1, "\nfailure count: ", 16);
+    print_num(_fails);
+    syscall(1, 1, "\n", 1);
+    if (_fails == 0) { return 0; }
+    return 1;
+}
+
+var ec = main();
+syscall(60, ec);

@@ -1,0 +1,134 @@
+# Repro: f64 JSON roundtrip is lossy — every emit path caps at 6 decimals.
+#
+# Covers three defects:
+#   (1) fmt_float_buf(v, buf, 6) truncates to 6 decimal places, no exponent form
+#       -> 1/3 loses ~9 mantissa bits; |x| < 5e-7 is annihilated to 0.
+#   (2) bayan's _jp_atof and math's f64_parse disagree by 1 ULP on identical text.
+#   (3) non-finite and huge values emit text that is not valid JSON.
+#
+# Build: cyrius build docs/development/issues/repros/2026-07-19-f64-json-roundtrip-6-decimals.cyr /tmp/f64rt
+# Run:   /tmp/f64rt        (exit 0 = all roundtrips exact; exit 1 = at least one lossy)
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/result.cyr"
+include "lib/hashmap.cyr"
+include "lib/math.cyr"
+include "lib/bayan.cyr"
+
+var _fails = 0;
+
+# Emit `v` through the bayan JSON value tree, parse it back, compare bit patterns.
+# Also parse the same text with math's f64_parse to show the two parsers diverge.
+fn probe(label, v) {
+    var o = json_v_obj_new();
+    json_v_obj_set(o, str_from("x"), json_v_float_new(v));
+    var js = json_v_build(o);
+
+    syscall(1, 1, label, strlen(label));
+    syscall(1, 1, "  emitted ", 10);
+    syscall(1, 1, str_data(js), str_len(js));
+
+    var back = json_v_parse(js);
+    var got = json_v_float(json_v_obj_get(back, "x"));
+
+    if (got == v) {
+        syscall(1, 1, "  -> EXACT\n", 11);
+    } else {
+        _fails = _fails + 1;
+        syscall(1, 1, "  -> LOSSY  orig=", 17);
+        fmt_hex0x(v);
+        syscall(1, 1, " bayan=", 7);
+        fmt_hex0x(got);
+        # math's f64_parse over the same digits, for the 1-ULP divergence
+        var mp = f64_parse(str_cstr(js) + 5);
+        syscall(1, 1, " math=", 6);
+        fmt_hex0x(mp);
+        syscall(1, 1, "\n", 1);
+    }
+    return 0;
+}
+
+# Build {"x":<numtext>} with str_builder — NOT a source-level string literal.
+# Escaped quotes inside a .cyr literal do not survive to the parser here, which
+# silently turns every probe into a parse error that looks fast and healthy.
+fn mk_obj(numtext) {
+    var sb = str_builder_new();
+    str_builder_putc(sb, 123);              # {
+    str_builder_putc(sb, 34);               # "
+    str_builder_putc(sb, 120);              # x
+    str_builder_putc(sb, 34);               # "
+    str_builder_putc(sb, 58);               # :
+    str_builder_add_cstr(sb, numtext);
+    str_builder_putc(sb, 125);              # }
+    return str_builder_build(sb);
+}
+
+# Time a full document parse. Work is linear in the exponent's VALUE, so it is
+# exponential in input length — and every result below is +Inf, so it is all wasted.
+fn dos(label, numtext) {
+    var js = mk_obj(numtext);
+    var t0 = clock_now_ns();
+    var v = json_v_parse(js);
+    var t1 = clock_now_ns();
+    syscall(1, 1, label, strlen(label));
+    syscall(1, 1, " doclen=", 8);
+    print_num(str_len(js));
+    syscall(1, 1, "  ns=", 5);
+    print_num(t1 - t0);
+    if (v == 0) { syscall(1, 1, "  [PARSE ERROR]", 15); }
+    else {
+        syscall(1, 1, "  bits=", 7);
+        fmt_hex0x(json_v_float(json_v_obj_get(v, "x")));
+    }
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    syscall(1, 1, "-- values that DO roundtrip (must not regress) --\n", 49);
+    probe("1.0      ", f64_from(1));
+    probe("0.5      ", f64_div(f64_from(1), f64_from(2)));
+    probe("0.25     ", f64_div(f64_from(1), f64_from(4)));
+    probe("0.1      ", f64_div(f64_from(1), f64_from(10)));
+    probe("1e9      ", f64_from(1000000000));
+
+    syscall(1, 1, "\n-- (1) precision loss: 6-decimal cap --\n", 40);
+    probe("1/3      ", f64_div(f64_from(1), f64_from(3)));
+    probe("2/3      ", f64_div(f64_from(2), f64_from(3)));
+
+    syscall(1, 1, "\n-- (1) flush-to-zero below 5e-7 --\n", 35);
+    probe("1e-7     ", f64_div(f64_from(1), f64_from(10000000)));
+    probe("1e-9     ", f64_div(f64_from(1), f64_from(1000000000)));
+
+    syscall(1, 1, "\n-- (3) huge + non-finite: is the output even valid JSON? --\n", 60);
+    probe("1e18     ", f64_from(1000000000000000000));
+    # 2^63 and beyond: fmt_float_buf goes through f64_to(f64_floor(v)) -> i64
+    probe("2^63     ", f64_mul(f64_from(4611686018427387904), f64_from(2)));
+    probe("+Inf     ", 0x7FF0000000000000);
+    probe("NaN      ", 0x7FF8000000000000);
+    probe("-0.0     ", 0x8000000000000000);
+
+    syscall(1, 1, "\n-- (4) exponent loop is O(exponent VALUE): DoS on untrusted input --\n", 69);
+    dos("1e10        ", "1e10");
+    dos("1e1000      ", "1e1000");
+    dos("1e1000000   ", "1e1000000");
+    dos("1e10000000  ", "1e10000000");
+    dos("1e100000000 ", "1e100000000");
+
+    syscall(1, 1, "\nlossy count: ", 14);
+    print_num(_fails);
+    syscall(1, 1, "\n", 1);
+    if (_fails == 0) { return 0; }
+    return 1;
+}
+
+var ec = main();
+syscall(60, ec);
