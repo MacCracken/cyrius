@@ -1,4 +1,23 @@
-# f64 JSON serialization is lossy and can emit invalid JSON — every emit path caps at 6 decimals — OPEN
+# f64 JSON serialization is lossy and can emit invalid JSON — every emit path caps at 6 decimals — FIXED (6.4.69)
+
+**Fixed 2026-07-20 (bayan 1.2.1 + cycc 6.4.69).** All three defects closed. The
+6-decimal `fmt_float_buf(v, 6)` emit is replaced by a **Grisu2** (Loitsch;
+integer-only, always-succeeds) round-trip-correct formatter `bayan_f64_to_json`
+(non-finite → `null`, the serde_json / JS policy this issue recommended). The two
+divergent-by-1-ULP atofs are replaced by ONE **Clinger-fast-path + normalized-DiyFp**
+correctly-rounded, **exponent-saturating** parser `bayan_f64_from_json` — the O(exp)
+DoS is gone (`1e100000000` now parses in microseconds, not 237 ms). Both live in bayan
+`src/dtoa.cyr`; bayan's emit (`_jb_walk`) + parse (`_jp_atof`), `#derive(Serialize)`,
+and `math.cyr`'s `f64_parse` (DoS clamp) all route through / adopt them. Validated
+**bit-exact across the entire double range** — format→parse round-trip 0/7124 fail,
+reference-`strtod` parse agreement 0/4017 fail (incl. all powers of two, subnormals,
+5000+ randoms); the f64 codec LIBTEST passes on real ecb (macOS) + cass (Windows).
+The only values that don't round-trip are `Inf`/`NaN`, which now serialize to a valid
+`null` (JSON has no Inf/NaN literal). The `-0.0` `fmt_hex` diagnostic is fixed
+separately ([`2026-07-19-fmt-hex-high-bit-prints-nothing.md`](./2026-07-19-fmt-hex-high-bit-prints-nothing.md)).
+The derive's compiler-side half is [`2026-07-19-derive-serialize-f64-second-implementation.md`](./2026-07-19-derive-serialize-f64-second-implementation.md).
+
+---
 
 **Discovered:** 2026-07-19 while implementing **samay** M4 (JSON `Serialize`/`Deserialize`
 for every public type) against cycc 6.4.67.

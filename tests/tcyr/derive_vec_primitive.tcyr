@@ -68,7 +68,7 @@ fn main(): i64 {
     var fx = fnums { 9, vf };
     var sbf = str_builder_new(); fnums_to_json(&fx, sbf);
     var fs = str_builder_build(sbf);
-    assert_eq(str_eq(fs, str_from("{\"tag\":9,\"ys\":[3.000000,5.000000]}")), 1, "Vec<f64> serialize");
+    assert_eq(str_eq(fs, str_from("{\"tag\":9,\"ys\":[3.0,5.0]}")), 1, "Vec<f64> serialize (Grisu2 shortest, v6.4.69)");
     var fd = fnums_from_json_str(str_data(fs));
     assert_eq(vec_len(load64(fd + 8)), 2, "ys len");
     assert_eq(f64_to(vec_get(load64(fd + 8), 0)), 3, "ys[0] ~= 3");

@@ -176,6 +176,9 @@ bayan::bayan_cyml_expand_value/1
 bayan::bayan_cyml_parse/2
 bayan::bayan_cyml_parse_file_r/1
 bayan::bayan_cyml_split/6
+bayan::bayan_f64_from_json/1
+bayan::bayan_f64_parse/2
+bayan::bayan_f64_to_json/2
 bayan::bayan_json_build/1
 bayan::bayan_json_get/2
 bayan::bayan_json_get_int/2

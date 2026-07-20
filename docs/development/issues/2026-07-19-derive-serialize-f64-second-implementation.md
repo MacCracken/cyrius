@@ -1,4 +1,21 @@
-# `#derive(Serialize)` carries a second, divergent f64 codec — fixing the libraries cannot reach it — OPEN
+# `#derive(Serialize)` carries a second, divergent f64 codec — fixing the libraries cannot reach it — FIXED (6.4.69)
+
+**Fixed 2026-07-20 (cycc 6.4.69).** The derive (`src/frontend/lex_pp.cyr`) no longer
+inlines `fmt_float_buf(…, 6)` / `f64_parse` into generated `*_to_json` / `*_from_json`:
+it now emits calls to the **named stdlib codec** `bayan_f64_to_json` /
+`bayan_f64_from_json` (bayan 1.2.1 — the Grisu2 round-trip-correct formatter + the
+correctly-rounded parser). So (a) the two float codecs in the tree are now ONE — the
+derive and bayan agree bit-for-bit, killing the 1-ULP divergence; (b) the next fix is a
+bayan release, not a recompile-the-world; (c) the compiler change and the bayan change
+shipped in the **same release**, so no two-format window. **Consumers must rebuild**
+(the emitted call text changed — relink is not enough) and have `lib/bayan.cyr` in
+scope for an f64-deriving struct. Verified: the filed repro's finite values now
+round-trip bit-exact and the two paths AGREE (was "PATHS DISAGREE"); `Inf`/`NaN` emit
+valid `null`. Self-host fixpoint byte-identical, seed-derive green, cross-OS ecb+cass
+green. Gates: `tests/tcyr/derive_serialize_f64.tcyr` + `derive_vec_primitive.tcyr`
+(updated to the Grisu2 shortest output) + `vr01_f64_json_roundtrip.tcyr`.
+
+---
 
 **Discovered:** 2026-07-19 while implementing **samay** M4 (JSON `Serialize`/`Deserialize`
 for every public type) against cycc 6.4.67.

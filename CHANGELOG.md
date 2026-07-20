@@ -6,6 +6,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.69] — 2026-07-20
+
+### Fixed — f64 JSON round-trip: correct, valid, and DoS-safe (3 filed issues, 2026-07-19)
+
+- **`fmt_hex`/`fmt_hex0x`/`fmt_hex_buf` printed NOTHING for any high-bit-set value.**
+  The loop guard was `while (n > 0)` on a signed i64 — false for every negative /
+  `u64 >= 2^63`, so zero digits were emitted (and no error). `>>` is logical, so the
+  body already walks all 16 nibbles; the fix is `while (n != 0)` in two places
+  (`lib/fmt.cyr`; also repairs `fmt_sprintf`'s `%x`).
+- **f64 JSON serialization was lossy, emitted invalid JSON, and had a parse DoS.**
+  Every emit path funneled f64 through `fmt_float_buf(v, 6)` — a 6-decimal cap that
+  lost ~9 mantissa bits on `1/3`, flushed `|x| < 5e-7` to `0`, and overflowed i64
+  into the **non-JSON** token `-.00000-` for `Inf`/`NaN`/`|x| >= 2^63`. Parsing used
+  two divergent-by-1-ULP atofs whose exponent apply looped once per unit of the
+  exponent **value** (a 17-byte `{"x":1e100000000}` burned ~237 ms — an
+  algorithmic-complexity DoS). **Fixed at the source (bayan 1.2.1):** a new
+  `src/dtoa.cyr` with a **Grisu2** (Loitsch; integer-only, always-succeeds)
+  round-trip-correct formatter (`bayan_f64_to_json`, non-finite → `null`) and a
+  **Clinger-fast-path + normalized-DiyFp** correctly-rounded, exponent-saturating
+  parser (`bayan_f64_from_json`). bayan's JSON emit (`_jb_walk`) and parse
+  (`_jp_atof`) route through them; folded byte-identical into `lib/bayan.cyr`.
+  Validated **bit-exact across the full double range** (all powers of two,
+  subnormals, 5000+ randoms): format→parse round-trip 0/7124 fail, reference-`strtod`
+  parse agreement 0/4017 fail, DoS inputs return in microseconds.
+- **`#derive(Serialize)` carried a second, divergent 6-decimal codec** inlined into
+  every generated `*_to_json`. The derive (`src/frontend/lex_pp.cyr`) now emits calls
+  to `bayan_f64_to_json` / `bayan_f64_from_json` instead of `fmt_float_buf(,6)` /
+  `f64_parse` — one implementation, unified with bayan, no 1-ULP divergence. **f64
+  `#derive` consumers must rebuild (not relink)** and have `lib/bayan.cyr` in scope.
+- `fmt_float_buf` gained a non-finite guard (`Inf`/`NaN` → `"inf"`/`"nan"`, not
+  `-.00000-`) for its remaining fixed-decimal `fmt_float` debug callers; `math.cyr`'s
+  `f64_parse` got the same exponent-saturation DoS clamp.
+
+**Compiler change** (`lex_pp.cyr`): self-host fixpoint byte-identical, seed-derive
+green. New gate `tests/tcyr/vr01_f64_json_roundtrip.tcyr` (14 asserts, real hardware);
+`derive_serialize_f64` / `derive_vec_primitive` updated to the Grisu2 shortest output.
+bayan 1.2.0 → 1.2.1 (+16 tests, cyrius pin → 6.4.68). Release gate GREEN — check.sh
+**147/0**; **cross-OS ecb (macOS) + cass (Windows) + pi (aarch64) self-host
+byte-identical + the f64 codec LIBTEST bit-exact on all three real-hardware targets**;
+self_compile **624 ms**; cycc **1,103,512 B** (+32 vs 6.4.68 = the longer emit strings).
+api-surface 4730 → 4733 (+3 `bayan_f64_*`, 0 removed).
+
 ## [6.4.68] — 2026-07-20
 
 ### Fixed — agnos `sys_reboot` widened to the 1.55.25+ 4-arg ABI (`lib/syscalls_x86_64_agnos.cyr`)

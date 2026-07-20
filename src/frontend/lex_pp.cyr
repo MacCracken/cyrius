@@ -714,7 +714,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
         # Forward-progress guard (mirrors _cy_vecdec_int): a byte outside [0-9-+.eE] and
         # not ']'/NUL/ws/comma (e.g. the 'n' of `null`) captures zero token chars, so
         # skip it + the push rather than spinning the outer loop → allocator abort.
-        op = op + PP_EMIT_STR(out, op, "if (p == vs) { p = p + 1; } else { vec_push(v, f64_parse(bp + vs)); }\n}\n}\nreturn v;\n}\n");
+        op = op + PP_EMIT_STR(out, op, "if (p == vs) { p = p + 1; } else { vec_push(v, bayan_f64_from_json(bp + vs)); }\n}\n}\nreturn v;\n}\n");
         _pp_vecdec_f64_done = 1;
     } }
     if (_needsk == 1) { if (_pp_skipval_done == 0) {
@@ -879,11 +879,11 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     op = op + PP_EMIT_INT(out, op, fi);
                     op = op + PP_EMIT_STR(out, op, "), sb);\n");
                 } else { if (_vk == 200) {
-                    op = op + PP_EMIT_STR(out, op, "store8(&_dfb + fmt_float_buf(vec_get(_vh");
+                    op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(vec_get(_vh");
                     op = op + PP_EMIT_INT(out, op, fi);
                     op = op + PP_EMIT_STR(out, op, ", _vi");
                     op = op + PP_EMIT_INT(out, op, fi);
-                    op = op + PP_EMIT_STR(out, op, "), &_dfb, 6), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+                    op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
                 } else {
                     op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, vec_get(_vh");
                     op = op + PP_EMIT_INT(out, op, fi);
@@ -899,9 +899,9 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
             } else { if (is_f64 == 1) {
                 # v6.3.40 — f64: fmt_float_buf(bits, &_dfb, 6) writes the decimal text
                 # + returns its length; null-terminate + append as a bare JSON number.
-                op = op + PP_EMIT_STR(out, op, "store8(&_dfb + fmt_float_buf(load64(ptr + ");
+                op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(load64(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, "), &_dfb, 6), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+                op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
             } else { if (is_str == 1) {
                 # v5.10.8 — Str field: emit RFC 8259-compliant
                 # quoted JSON string via the `str_builder_add_json_str`
@@ -1039,7 +1039,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
             } else { if (fj_f64 == 1) {
                 op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", f64_parse(str_data(v))); }\n");
+                op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(str_data(v))); }\n");
             } else { if (fj_str == 1) {
                 # v6.3.24: `bayan_json_get(pairs, key)` returns the value **Str
                 # directly** (bayan_json_parse builds a vec of key→val pairs where
@@ -1249,7 +1249,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                 op = op + PP_EMIT_STR(out, op, "_vs = _p;\nwhile (1 == 1) { var _fc = load8(json + _p); if ((_fc >= 48 && _fc <= 57) || _fc == 45 || _fc == 43 || _fc == 46 || _fc == 101 || _fc == 69) { _p = _p + 1; } else { break; } }\n");
                 op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
                 op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", f64_parse(json + _vs));\n");
+                op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(json + _vs));\n");
             } else { if (fjs == 1) {
                 # String value: read until closing quote
                 # v6.4.x R3 (BUG-3) — escape-aware, un-escaping Str decode. The old scan

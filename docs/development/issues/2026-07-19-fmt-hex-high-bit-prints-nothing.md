@@ -1,4 +1,12 @@
-# `fmt_hex` / `fmt_hex0x` / `fmt_hex_buf` silently print nothing for any high-bit-set value — OPEN
+# `fmt_hex` / `fmt_hex0x` / `fmt_hex_buf` silently print nothing for any high-bit-set value — FIXED (6.4.69)
+
+**Fixed 2026-07-20 (6.4.69).** `while (n > 0)` → `while (n != 0)` in `fmt_hex`
+(`lib/fmt.cyr:54`) and `fmt_hex_buf` (`:119`). `>>` is logical (zero-fill), so the loop
+body already walks all 16 nibbles of a high-bit value; only the guard was wrong.
+`fmt_sprintf`'s `%x` (routes through `fmt_hex_buf`) is fixed by the same change. The
+filed repro passes (empty-output count 0 for `0x8000…`/`-1`/`0xfff0…`).
+
+---
 
 **Discovered:** 2026-07-19 while dumping f64 bit patterns during **samay** M4 JSON work
 (the `-0.0` pattern `0x8000000000000000` printed as bare `0x`).
