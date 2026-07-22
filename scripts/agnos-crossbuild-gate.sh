@@ -370,22 +370,35 @@ fn main(): i64 {
     var c[512];
     var r = sys_gpu_dispatch(&a, &b, &c);          # 64xi32 8x8 A*B -> C
     var r2 = sys_gpu_dispatch_f64(&a, &b, &c);     # 64xf64 8x8, rosnet-bit-correct
-    return r + r2;
+    var r3 = sys_gpu_present();                    # #84 present (RMDIR on Linux — DESTRUCTIVE)
+    var r4 = sys_gpu_fill(0x00FF0000);             # #85 CP-DMA fill (CREAT on Linux)
+    return r + r2 + r3 + r4;
 }
 CYR
 # Leg 1 — the band resolves + emits the right numbers on agnos.
 build/cyrius build --agnos /tmp/_agnos_gpu_gate.cyr /tmp/_agnos_gpu_gate.out >/tmp/_agnos_gpu_gate.log 2>&1 \
     || { echo "FAIL: CYRIUS_TARGET_AGNOS gpu-dispatch probe did not compile (peer band regression)"; cat /tmp/_agnos_gpu_gate.log; exit 1; }
-if grep -q "undefined function 'sys_gpu_dispatch" /tmp/_agnos_gpu_gate.log; then
-    echo "FAIL: agnos gpu_dispatch wrapper undefined (peer band regressed to ud2/SIGILL stub at runtime):"
+if grep -qE "undefined function 'sys_gpu_(dispatch|present|fill)" /tmp/_agnos_gpu_gate.log; then
+    echo "FAIL: an agnos gpu_* wrapper is undefined (peer band regressed to ud2/SIGILL stub at runtime):"
     grep "undefined function" /tmp/_agnos_gpu_gate.log
     exit 1
 fi
 assert_agnos_elf /tmp/_agnos_gpu_gate.out
 if command -v objdump >/dev/null 2>&1; then
-    gdis=$(objdump -d -M intel /tmp/_agnos_gpu_gate.out 2>/dev/null)
-    echo "$gdis" | grep -qE 'mov +eax,0x52\b' || { echo "FAIL: gpu probe emits no SYS_GPU_DISPATCH #82 (0x52) — band rotted to a stub?"; exit 1; }
-    echo "$gdis" | grep -qE 'mov +eax,0x53\b' || { echo "FAIL: gpu probe emits no SYS_GPU_DISPATCH_F64 #83 (0x53) — band rotted to a stub?"; exit 1; }
+    # PRECISE number check. A bare `grep 'mov eax,0x54'` is a PLACEBO here: 0x52-0x55 are
+    # ASCII 'R','S','T','U', so a string-literal byte store (`mov eax,0x54; pop rcx;
+    # mov BYTE PTR [rcx],al`) matches it and the check PASSES even when the syscall number
+    # is wrong — proven by mutation (#84 -> 99 still reported PASS). The real syscall
+    # number is the `mov eax,0xNN` immediately preceding each `syscall`, so extract that
+    # set and assert membership. CHANGELOG [6.4.70].
+    gnums=$(objdump -d -M intel /tmp/_agnos_gpu_gate.out 2>/dev/null | awk '
+      /mov +eax,0x[0-9a-f]+/ { if (match($0, /0x[0-9a-f]+$/)) last=substr($0, RSTART, RLENGTH) }
+      /\<syscall\>/ { if (last != "") { print last; last="" } }' | sort -u)
+    for want in 0x52:82:SYS_GPU_DISPATCH 0x53:83:SYS_GPU_DISPATCH_F64 0x54:84:SYS_GPU_PRESENT 0x55:85:SYS_GPU_FILL; do
+        hex=${want%%:*}; rest=${want#*:}; dec=${rest%%:*}; nm=${rest#*:}
+        echo "$gnums" | grep -qw "$hex" \
+            || { echo "FAIL: gpu probe emits no $nm #$dec ($hex) AT A SYSCALL SITE — band rotted to a stub or renumbered?"; exit 1; }
+    done
 fi
 # Leg 2 — THE SAFETY LEG. The same probe must NOT build for Linux: the wrappers must be
 # absent (hard "reachable undefined function" error, no binary), never resolved to #82/#83
@@ -394,17 +407,19 @@ fi
 # previous RED run would otherwise leave a binary here and pin the gate red forever.
 rm -f /tmp/_agnos_gpu_linux.out
 if build/cyrius build /tmp/_agnos_gpu_gate.cyr /tmp/_agnos_gpu_linux.out >/tmp/_agnos_gpu_linux.log 2>&1; then
-    echo "FAIL: the gpu-dispatch band RESOLVED on a non-agnos (Linux) build — #82 is rename(2) and #83 is"
-    echo "      mkdir(2) on Linux x86_64, so matmul buffer pointers would be passed to the kernel as paths."
-    echo "      The band must live ONLY in the #ifdef CYRIUS_TARGET_AGNOS peer (lib/syscalls_x86_64_agnos.cyr)."
+    echo "FAIL: the gpu band RESOLVED on a non-agnos (Linux) build. On Linux x86_64 #82=rename(2),"
+    echo "      #83=mkdir(2), #84=RMDIR(2) and #85=creat(2) — so matmul buffer pointers become paths,"
+    echo "      a NULLARY present() DELETES A DIRECTORY at whatever stale value sits in rdi, and a"
+    echo "      32-bit colour creates/truncates a file. The band must live ONLY in the"
+    echo "      #ifdef CYRIUS_TARGET_AGNOS peer (lib/syscalls_x86_64_agnos.cyr)."
     exit 1
 fi
 if command -v objdump >/dev/null 2>&1 && [ -f /tmp/_agnos_gpu_linux.out ]; then
-    objdump -d -M intel /tmp/_agnos_gpu_linux.out 2>/dev/null | grep -qE 'mov +eax,0x5[23]\b' \
-        && { echo "FAIL: a Linux build emitted syscall 82/83 (rename/mkdir) for the gpu band"; exit 1; }
+    objdump -d -M intel /tmp/_agnos_gpu_linux.out 2>/dev/null | grep -qE 'mov +eax,0x5[2-5]\b' \
+        && { echo "FAIL: a Linux build emitted syscall 82-85 (rename/mkdir/RMDIR/creat) for the gpu band"; exit 1; }
 fi
 rm -f /tmp/_agnos_gpu_linux.out
-echo "PASS: CYRIUS_TARGET_AGNOS gpu-compute band (#82/#83 correct numbers) + ABSENT on Linux (rename/mkdir safety)"
+echo "PASS: CYRIUS_TARGET_AGNOS gpu band (#82/#83/#84/#85 correct numbers) + ABSENT on Linux (rename/mkdir/RMDIR/creat safety)"
 
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"

@@ -6,6 +6,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.70] — 2026-07-22
+
+### Added — agnos GPU present/fill wrappers (`#84` / `#85`)
+
+`SYS_GPU_PRESENT = 84` / `SYS_GPU_FILL = 85` + `sys_gpu_present()` (nullary) and
+`sys_gpu_fill(color)` in `lib/syscalls_x86_64_agnos.cyr`, continuing the band that already
+carries `#81` readdir + `#82`/`#83` gpu_dispatch. `present()` flips the accumulated blit
+back buffer to the scanout — tear-free and vsync-paced; it BLOCKS up to one frame and *is*
+the pacer (returns `1` presented / `0` nothing to present). `gpu_fill(color)` GPU-clears the
+back buffer to a 32-bit xRGB8888 colour via a PM4 CP-DMA `DMA_DATA` constant fill on the MEC
+compute ring, replacing a full-screen CPU store loop (only the colour crosses the ring-3
+boundary — `fb_phys` stays unexposed). **Iron-only:** under QEMU they return `0` / `-1`
+*cleanly* — read that as "no GPU here", not a failure (the `#82`/`#83` precedent). Consumers:
+`/bin/gpufill` migrates off raw `syscall(84)`/`syscall(85)`; aethersafha's compositor is the
+real target. Resolves `issues/2026-07-21-agnos-sys-gpu-present-fill-wrappers.md`.
+
+**Safety:** on Linux x86_64 `84 = rmdir(pathname)` — a *nullary* `present()` there would
+**delete a directory** at whatever stale value sits in `rdi` — and `85 = creat(pathname, mode)`,
+where a colour becomes a path pointer. Both are reachable ONLY on agnos: the entire peer is
+included behind `#ifdef CYRIUS_TARGET_AGNOS` in `lib/syscalls.cyr`, so off-agnos the fns do
+not exist and a Linux build referencing them fails at COMPILE time with no binary emitted —
+stronger than an in-function guard.
+
+### Fixed — the agnos GPU-band gate was a PLACEBO
+
+`agnos-crossbuild-gate.sh`'s emit-inspect used `grep 'mov eax,0x52'`-style checks. **0x52-0x55
+are ASCII `'R'`,`'S'`,`'T'`,`'U'`**, so an ordinary string-literal byte store
+(`mov eax,0x54; pop rcx; mov BYTE PTR [rcx],al`) satisfied them — the gate reported PASS with
+a *wrong* syscall number, proven by mutation (`#84 → 99` still passed). Replaced with a precise
+extraction of the `mov eax,0xNN` immediately preceding each `syscall`, asserted for all four
+band members; **mutation-proven** (mutated → FAIL, restored → PASS). This also repairs the
+latent hole in the v6.4.63 `#82`/`#83` checks.
+
+### Changed — stdlib fold-in (byte-identical from each sibling's committed dist)
+
+- **ganita 1.0.3 → 1.0.4** — fix-only; identical public surface (107 fns, 0 added, 0 removed).
+- **sankoch 2.6.4 → 2.7.5** — additive: **+20 fns, 0 removed**, 0 symbol collisions.
+
+Both consumability-verified (declared prelude + `include` compiles and runs exit-0).
+**cycc byte-identical** — the agnos peer and both folds are all outside cycc's include closure.
+Issue queue swept: **5 resolved issues archived** (the three 2026-07-19 f64 / fmt_hex items
+shipped in 6.4.69, `sys_reboot` in 6.4.68, and the agnos GPU band here) — open queue **14 → 9**.
+
 ## [6.4.69] — 2026-07-20
 
 ### Fixed — f64 JSON round-trip: correct, valid, and DoS-safe (3 filed issues, 2026-07-19)

@@ -95,6 +95,8 @@ enum SysNrAgnos {
     SYS_READDIR    = 81;          # readdir(path, buf, max) → count / <0 (agnos #81; fchdir on Linux)
     SYS_GPU_DISPATCH     = 82;    # gpu_dispatch(a,b,c) → 0/<0; 64xi32 8x8 A*B→C on GPU (RENAME on Linux)
     SYS_GPU_DISPATCH_F64 = 83;    # gpu_dispatch_f64(a,b,c) → 0/<0; 64xf64, unfused (MKDIR on Linux)
+    SYS_GPU_PRESENT      = 84;    # present() → 1/0; flip back buffer (RMDIR on Linux — DESTRUCTIVE)
+    SYS_GPU_FILL         = 85;    # gpu_fill(color) → 0/-1; CP-DMA constant-fill of the back buffer (CREAT on Linux)
 }
 
 # ================================================================
@@ -585,6 +587,39 @@ fn sys_readdir(path, buf, max): i64      { return syscall(SYS_READDIR, path, buf
 fn sys_gpu_dispatch(a, b, c): i64     { return syscall(SYS_GPU_DISPATCH, a, b, c); }
 # gpu_dispatch_f64(a, b, c) — 8x8 f64 matmul, rosnet-bit-correct (unfused); C = A * B → 0 / <0.
 fn sys_gpu_dispatch_f64(a, b, c): i64 { return syscall(SYS_GPU_DISPATCH_F64, a, b, c); }
+
+# present() — flip the accumulated blit back buffer to the scanout. NULLARY.
+# Tear-free + vsync-paced: BLOCKS until the pipe takes the surface at the next
+# vblank (<= one frame) — it IS the vsync pacer. The explicit half of the P7
+# blit/present split: a compositor blits with blit #39's DEFER_PRESENT bit (no
+# flip), then calls this ONCE per frame. Returns 1 = presented, 0 = nothing to
+# present (double-buffer not armed / direct-FB path). IRON-ONLY: under QEMU this
+# returns 0 CLEANLY — read that as "no GPU here", not a failure (the #82/#83
+# precedent). agnos 1.55.x.
+# SAFETY: syscall 84 is rmdir(pathname) on Linux x86_64 — a DESTRUCTIVE call that
+# would delete a directory at whatever stale pointer sits in rdi. This wrapper is
+# reachable ONLY on agnos: the entire peer is included behind
+# `#ifdef CYRIUS_TARGET_AGNOS` in lib/syscalls.cyr, so off-agnos the fn does not
+# exist and any build referencing it fails at COMPILE time with no binary emitted
+# — stronger than an in-function guard (guarding 2 of ~80 rows would be false
+# comfort when SYS_OPEN=7 is Linux lseek). Both legs gated by
+# scripts/agnos-crossbuild-gate.sh. CHANGELOG [6.4.70].
+fn sys_gpu_present(): i64 { return syscall(SYS_GPU_PRESENT); }
+
+# gpu_fill(color) — GPU-clear the current blit back buffer to `color` (32-bit
+# xRGB8888) via a PM4 CP-DMA DMA_DATA constant fill (SRC_SEL=2 DATA) on the MEC
+# compute ring, replacing a full-screen CPU store loop. Arms the double-buffer
+# lazily; pair with sys_gpu_present() to show it. Only the colour crosses the
+# ring-3 boundary — fb_phys stays unexposed (same discipline as blit #39).
+# BLOCKS on a bounded CP-DMA completion fence (~100 ms cap). Needs NO cache flush
+# to be scanout-visible (CP-DMA writes MC-direct, bypassing GL2). Returns
+# 0 = filled, -1 = no usable display (no GPU/pipe — e.g. QEMU) or the fill failed;
+# treat -1 under QEMU as "no GPU here". agnos 1.55.30 (iron-proven: CP-DMA
+# hardware fill verified 4KB all=pattern).
+# SAFETY: syscall 85 is creat(pathname, mode) on Linux x86_64 — a 32-bit colour
+# reinterpreted as a path pointer would create/truncate a file. Same file-level
+# agnos gate as sys_gpu_present above. CHANGELOG [6.4.70].
+fn sys_gpu_fill(color): i64 { return syscall(SYS_GPU_FILL, color); }
 
 # ---- agnos HDA audio band (#64-69) — the ring-3 half of the agnos 1.52.x Gate-2
 # freeze (kernel handlers land in parallel). Single frozen format: 48000 Hz / S16 /
