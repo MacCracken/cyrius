@@ -1,12 +1,36 @@
-# Function Visibility (pub / private) — v6.4.x arc candidate
+# Function/Var Visibility (public / private) — **v6.5.0 OPENER**
 
-**Status:** **FILED for full review at v6.4.x arc open** (2026-07-02). **No decisions committed.**
-This is a grounded design *exploration* — the levers in "Open decisions" are chosen at arc-open,
-not here.
+**Status:** ✅ **DESIGN COMMITTED (user, 2026-07-22). Scheduled as the v6.5.0 OPENER** — no longer
+the last 6.4.x arc. 6.4.x stays open for agnos work + bugs and closes out on its own; this arc does
+not gate that closeout.
 
-**User lean (2026-07-02 — a lean, NOT a commitment):** the `_`-prefix as the private marker
-appeals (it enforces the convention the ecosystem already follows). Everything else is open;
-nothing is to be treated as decided until the arc-open review.
+## Committed design — file-scoped opt-in, default public
+
+1. **A top-level `private` declaration in a source file flips that FILE to private-by-default** —
+   every `fn` (and `var`) in it becomes private to the file.
+2. **Inside such a file, a `public` moniker in front of an individual `fn`/`var` re-exposes it.**
+3. **No declaration = today's behaviour: everything public** — unless an item is individually
+   declared private.
+4. **The `_`-prefix convention is explicitly LATER** — it may come back as a convenience for
+   declaring additional items, but it is *not* part of this arc.
+
+**Why this is materially better than the model this doc originally forced.** The earlier framing
+(hybrid `_`-default + keyword override) was blocked by its own prerequisite: the `_`-audit found
+**165 `_`-prefixed fns are called cross-file**, so derive-from-`_` was never zero-churn and every
+violation would have needed an escape hatch or a rename. This design **sidesteps that entirely** —
+nothing is derived from names, so the audit result stops being a blocker. It is also **opt-in per
+file**, which means the whole ecosystem keeps compiling unchanged on day one and adoption is a
+per-file decision rather than a migration.
+
+**Scope note:** visibility covers **`fn` *and* `var`** (the user specified "function/var") — the
+original doc was fn-only.
+
+**Open implementation detail (not a design question):** the exact spelling of the file-level
+declaration — cyrius already has a directive vocabulary (`#ifdef`, `#derive`, `#regalloc`,
+`#pe_import`), so a `#private`-style directive fits the language; the keyword form is equally
+workable. Pick at implementation. Note `pub` is already lexer token 73 but **dead**
+(consumed-and-ignored at `parse_fn.cyr:1570`), and so is `shared` — decide whether `public`
+reuses/renames that token.
 
 **Prior art:** this arc would execute **"Phase 2 — `pub` enforcement"** already sketched in
 [`module-manifest-design.md`](../module-manifest-design.md) (Phase 1 = the v6.2.x manifest/deps,
@@ -63,17 +87,18 @@ the enforcement check are small; the file-id substrate is the effort.
 - **Enforcement = warn → flip to hard-error** — the proven **v6.3.2 undefined-fn-flip playbook**
   (measure blast radius in warn-mode, then flip default-on with zero `--allow-*` sprinkling).
 
-## Open decisions — resolve at the v6.4.x arc-open review
+## ~~Open decisions~~ — RESOLVED (user, 2026-07-22)
 
-1. **Marker:** derive-from-`_` (zero churn; must audit) **vs** explicit `pub`/`private` keywords
-   (the doc's model; needs a migration) **vs** hybrid (`_` default + keyword override).
-2. **Boundary:** file (needs the file-id substrate) **vs** dep (coarser; would lean on the manifest).
-3. **Default:** public (additive) **vs** private-across-files (clean, breaking).
-4. **`_`-audit (do this FIRST at arc-open):** *how many `_`-prefixed fns are actually called
-   cross-file today?* Grep the repo + ecosystem for calls to a `_`-prefixed fn from a different
-   source file. **That number decides whether derive-from-`_` is truly zero-churn** — every
-   convention violation needs a `pub` escape hatch or a rename. Do not commit to derive-from-`_`
-   before this measurement.
+1. **Marker:** ✅ **explicit** — a file-level `private` declaration + a per-item `public` moniker.
+   *Not* derive-from-`_`, and *not* the hybrid this doc previously forced.
+2. **Boundary:** ✅ **FILE.** The declaration applies to the source file it appears in. (This still
+   wants the Phase-1 file-id substrate below; that part of the plan stands.)
+3. **Default:** ✅ **PUBLIC** — additive and non-breaking. The private default is **opt-in per file**,
+   so nothing in the tree or the ecosystem changes behaviour until a file opts in.
+4. **`_`-audit:** ✅ **moot for this design.** It was run and *disproved* zero-churn (165 `_`-prefixed
+   fns are called cross-file), which is exactly why the committed design derives nothing from names.
+   Keep the number on record for the possible later `_` convenience layer — if that ever lands, those
+   165 sites are the migration surface it must answer for.
 
 ## Proposed phased arc (candidate structure — not pinned)
 

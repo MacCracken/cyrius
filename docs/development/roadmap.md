@@ -170,7 +170,7 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   across all 7 drivers).** Current head: **v6.4.62**, cycc 1,103,568 B, check.sh 146, self_compile
   ~627 ms. **The async arc 5b + UEFI arc (#3) are CLOSED; scalar-float completion (.55/.56), DX
   diagnostics (.60 R1 + .62 R2), and the Intel-Mac x86_64 Mach-O tail (.59) have all SHIPPED. No arc
-  in flight — the one remaining committed 6.4.x arc is function visibility (`pub`/`private`).**
+  in flight. **SUPERSEDED 2026-07-22: `pub`/`private` is NO LONGER a 6.4.x arc — it moved to the **v6.5.0 OPENER**, and its design is COMMITTED (file-level `private` declaration flips a file to private-by-default; per-item `public` re-exposes; no declaration = all public; `_`-prefix LATER). 6.4.x now runs reactive (agnos asks + bugs) until it quiets. Read `proposals/2026-07-02-function-visibility-pub-private.md` — the forced hybrid/derive-from-`_` text below is STALE.**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -192,7 +192,7 @@ releases, each bundling several bites. Minors flex long.**
 | 1 | **Packed SIMD compute** (f32-first, then integer; ML/AI) | **5–7 releases** | No | **✅ COMPLETE on all four backends — x86 SSE+AVX2 (.4–.9), aarch64 NEON (.28–.30), Win64 PE value-form (.31), cx bytecode (.32)** |
 | 2 | **Array-typed struct fields** | **3 releases (done)** | No | **✅ DONE — R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13 (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>)** |
 | 3 | **UEFI Secure Boot signing** | **2 releases (was 3–5)** | No | **✅ COMPLETE — signing (`cyrius sign-efi`, v6.4.47) + enrollment (`.esl`/`.auth` via sigil 3.11.1's `efi_sigdb`, v6.4.48). Premise-check shrank it: sigil already shipped the Authenticode crypto core.** |
-| 4 | **Function visibility** (`pub`/`private`) | **4–6 releases** | No | order-committed |
+| 4 | ~~**Function visibility** (`pub`/`private`)~~ **MOVED to v6.5.0 opener (2026-07-22)** | **4–6 releases** | No | design committed; see proposal |
 | 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 5 releases (.17–.20, .22) | No | **✅ DONE. A=CLI, B=f64, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts), .22=cycc_cx cross-native (macOS/Win). Tail: f32/transcendentals fail loud.** |
 | 5b | **Async runtime — reactor + suspend/resume foundation, THEN tokio-parity primitives + IOCP-Windows** (unblocks stiva v3.1 + thoth `--win`) | 6–8 releases (shipped in ~13: .33–.45) | No | **✅ SHIPPED (.33–.45).** FOUNDATION-FIRST (reactor + the 5 tokio-parity primitives, .33–.41) → consolidation (.42) → IOCP-Windows "W" step: client (.43) / timers+subprocess+combinator-parity (.44) / AcceptEx server (.45), all target-agnostic and release-gated on real cass. `async_accept` closes the surface. Mid-body suspend/resume = FUTURE ARC (parked in roadmap-future: stackless coroutines; blocked on the v6.5.x IR substrate + no live consumer). `tantu` extraction = RESERVED future-minor deliverable (repo name held) — NOT sequenced. (pinned 2026-07-07, shaped 2026-07-09, shipped 2026-07-10; history: [`issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md), [`issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md`](issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md)) |
 | 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | 2–3 releases (done in 2) | No | **✅ COMPLETE — f64 scalar return (v6.4.55) + f32 arith/compare + WARN-only typecheck (v6.4.56)** |
@@ -623,7 +623,7 @@ and is the trickiest to bring back, so it gets a hard look ahead of the big arc.
 | 2 | **Scalar-float completion ✅ COMPLETE** (cyrius-side; agnos XMM-state kernel layer is agnos-side + separate). **f64 scalar RETURN in xmm0 ✅ v6.4.55** (sentinel -9; EMOVQ rax↔xmm0 marshal, no-op on aarch64/cx; §1 closed). **f32 scalar arithmetic + comparison + stricter float typecheck ✅ v6.4.56** (EMIT_F32_BINOP/EF32_CMP on x86/PE/macho·aarch64 NEON·cx widen-op-narrow; warn-level f64/int arithmetic-mix + 2 SESTYPE-normalization bug-fixes). Follow-ons filed: scalar-float param arithmetic + compound-assign, ERR_MSG len over-read, f64/int compare-mix warning (needs literal-0 suppression) | ~~`…agnos-fp-xmm-state-and-f64-scalar-return` §1~~ ✅ .55; `…scalar-float-param-and-compound-assign` (P2), `…parse-fn-retmsg-length-overread` (P3), `…f64-compare-mix-warning-literal-suppression` (P3) | P2 |
 | 3 | **Intel-Mac (x86_64 Mach-O) toolchain revival ✅ COMPLETE v6.4.59** — the compiler self-hosted on ach since v6.0.43; this closed the ungated usable-toolchain tail: wrapper arch-default + env(HOME) via r15, cycc `_read_env` un-stub, retire the vestigial `_macho_capture_args`, `_lint_macho_buf` (the Mach-O structural lint bite), `release.yml`→`build-macos-x86-tarball.sh`, and **the systemic fix — `ach` added to `release-gate.sh` + a real install gate**. Verified on real ach; full gate GREEN ecb+ach+cass+pi. | ~~`2026-06-02-macos-x86-release-no-compiler`~~ ✅ .59 (High, open 13mo), ~~`2026-07-07-macho-structural-lint-residual`~~ ✅ .59 | P1 |
 | 4 | **DX diagnostics ✅ COMPLETE** — R1 (v6.4.60) column + source-excerpt with a caret on every error; **R2 (v6.4.62) panic-mode multi-error** — cycc reports many errors/compile, no output on error, and NEVER hangs/crashes on hostile stdin (a `PEEKT` anti-hang watchdog broke the fuzz wall that stopped 2 prior attempts; VR-02 `CYCC_FUZZ_ITERS=300` = 0 crashes). Follow-up (non-blocking): convert the 25 inline `SYS_EXIT` errors + a smarter `_sync_skip`. | ~~column/source-excerpt~~ ✅ .60, ~~multi-error recovery core~~ ✅ .62; `2026-07-12-dx-multi-error-reporting` (inline follow-up, P3) | P2 |
-| 5 | **Function visibility (`pub`/`private`)** — **one of the LAST arcs of the minor**, run after the queue is cleared (§4 below) | proposal `2026-07-02-function-visibility-pub-private` | P2 |
+| 5 | ~~**Function visibility (`pub`/`private`)**~~ — **MOVED OUT of 6.4.x to the v6.5.0 OPENER (user, 2026-07-22); design COMMITTED** | proposal `2026-07-02-function-visibility-pub-private` (authoritative) | — |
 
 **Fold-in (no dedicated slot):** `2026-06-25-source-level-version-constant` (P3 — build
 tooling) rides a convenient minor-cut, per the "cosmetic/tooling fixes fold into adjacent
@@ -694,7 +694,15 @@ missing" framing is stale.
   split cyrius (driver) + sigil (P3/P4/keygen, each folded back via `cyrius deps` +
   api-surface regen). Downstream gnoboot/agnova Secure Boot is post-v1.0 → not a blocker.
 
-### 4 — Function visibility (`pub`/`private`) — ~4–6 releases · NOT a release-blocker
+### 4 — Function visibility (`public`/`private`) — **MOVED to the v6.5.0 OPENER (2026-07-22)**
+
+> ⚠ **The design text in this section is SUPERSEDED.** The committed design is: a top-level
+> `private` declaration flips that FILE to private-by-default (fns *and* vars); a per-item `public`
+> moniker re-exposes; no declaration = everything public (today's behaviour). Nothing derives from
+> `_` (that is a LATER convenience layer), so the 165-cross-file-`_`-call audit result is no longer a
+> blocker. Authoritative: `proposals/2026-07-02-function-visibility-pub-private.md`.
+
+#### (superseded) original framing — ~4–6 releases · NOT a release-blocker
 
 Execute "Phase 2 — `pub` enforcement" of
 [`module-manifest-design.md`](module-manifest-design.md): close the flat-global-namespace

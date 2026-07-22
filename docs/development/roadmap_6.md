@@ -960,7 +960,7 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
    (`cyrsign-efi`), and whether P4 verify rides the same arc.
    [`proposals/2026-07-03-uefi-secure-boot-signing.md`](proposals/2026-07-03-uefi-secure-boot-signing.md).
 
-4. **Function visibility (`pub`/`private`).** Executes "Phase 2 — `pub` enforcement" of
+4. ~~**Function visibility (`pub`/`private`).**~~ **MOVED to the v6.5.0 OPENER (user, 2026-07-22); design COMMITTED — see the proposal.** Executes "Phase 2 — `pub` enforcement" of
    [`module-manifest-design.md`](module-manifest-design.md) — closes the flat-global-namespace bug
    classes (the `dynlib_*` dead-code corruption, enum-shadow, slot-collision) and makes the
    api-surface snapshot compiler-enforced. **Design decisions still deferred to arc-open** (module
@@ -1009,8 +1009,8 @@ detail is canonical in [roadmap.md](roadmap.md) (active minor) +
   SIMD now runs on x86, aarch64, PE, and cx — Phase 5 complete on all four backends.
 - **✅ Item 2 — Array-typed struct fields — SHIPPED** (R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13; `Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>).
 - **✅ Item 3 — UEFI Secure Boot signing — SHIPPED** (signing `cyrius sign-efi` v6.4.47 + `.esl`/`.auth` enrollment v6.4.48 via sigil 3.11.1).
-- **▶ Item 4 — `pub`/`private` function visibility — the LAST committed 6.4.x arc, still unstarted.**
-- **Also shipped since this block was cut (v6.4.32):** async 5b incl. IOCP-Windows (.33–.45), scalar-float completion (f64 return .55, f32 arith/typecheck .56), Intel-Mac x86_64 Mach-O revival (.59), DX diagnostics R1 column/excerpt (.60) + R2 panic-mode multi-error (.62). Function visibility is all that remains.
+- **▶ Item 4 — `pub`/`private` visibility — MOVED OUT of 6.4.x to the v6.5.0 OPENER (2026-07-22), design COMMITTED (file-level opt-in, default public).** 6.4.x now runs reactive: agnos asks + bugs until it quiets.
+- **Also shipped since this block was cut (v6.4.32):** async 5b incl. IOCP-Windows (.33–.45), scalar-float completion (f64 return .55, f32 arith/typecheck .56), Intel-Mac x86_64 Mach-O revival (.59), DX diagnostics R1 column/excerpt (.60) + R2 panic-mode multi-error (.62). Function visibility has since MOVED to the v6.5.0 opener (2026-07-22); 6.4.x now runs reactive (agnos + bugs).
 
 ### v6.4.0 — SHIPPED: `CYRIUS_MONOMORPH` default-on flip
 
