@@ -1,6 +1,18 @@
 # sandhi: switch the peer API off raw `syscall(52)` onto the new `sys_getpeername` wrapper
 
-**Status:** 🟡 **OPEN** — cross-repo ask (sandhi-side). **Filed:** 2026-07-14 at the v6.4.64 close.
+**Status:** ✅ **FIXED — sandhi 1.9.1, folded into cyrius [6.4.71] (2026-07-22).** Fixed AT THE SOURCE:
+`src/server/mod.cyr` drops `_SANDHI_SYS_GETPEERNAME = 52` and calls the stdlib's per-arch
+`sys_getpeername(fd, out16, &alen)`; the AGNOS `#ifdef` early-return is unchanged, and Windows'
+fail-closed `-ENOSYS` flows through the existing `r < 0` guard as "unknown" (contract unchanged).
+**Defence-in-depth taken:** `sandhi_server_peer_ip` / `_peer_port` now zero their 16-byte sockaddr
+buffer first, so a future unrouted target degrades to `0.0.0.0` instead of leaking stack contents —
+that contains the *class*. sandhi's cyrius pin 6.4.63 → 6.4.70 and its `./lib/` re-vendored (the
+wrapper does not exist before 6.4.64 — the stale vendored stdlib was the actual build blocker).
+sandhi tests green (554/167/342/63, 0 failed); dist regenerated at 1.9.1 and folded byte-identical
+into `lib/sandhi.cyr` (809 public fns, **0 added, 0 removed** — a behaviour fix, not a surface change);
+`syscall(52)` no longer appears anywhere in the vendored bundle.
+
+**Filed:** 2026-07-14 at the v6.4.64 close.
 **Severity:** **High until fixed** — sandhi 1.9.0's peer API **fabricates addresses on aarch64-Linux
 and macOS-arm64**. **Consumer waiting:** `yeo-cy-test` (per-IP rate limiting on an Argon2id login).
 

@@ -372,7 +372,11 @@ fn main(): i64 {
     var r2 = sys_gpu_dispatch_f64(&a, &b, &c);     # 64xf64 8x8, rosnet-bit-correct
     var r3 = sys_gpu_present();                    # #84 present (RMDIR on Linux — DESTRUCTIVE)
     var r4 = sys_gpu_fill(0x00FF0000);             # #85 CP-DMA fill (CREAT on Linux)
-    return r + r2 + r3 + r4;
+    var r5 = sys_shm_create_gpu(4096);             # #86 GPU-visible shm (LINK on Linux)
+    var r6 = sys_gpu_blit_shm(1, 4194368, 0);      # #87 composite (UNLINK on Linux — DELETES)
+    var r7 = sys_gpu_fill_rect(16711680, 4194368, 0);  # #88 rect fill (SYMLINK on Linux)
+    var r8 = sys_gpu_caps(&a, 512);                # #89 bb geometry (READLINK on Linux — WRITES arg2)
+    return r + r2 + r3 + r4 + r5 + r6 + r7 + r8;
 }
 CYR
 # Leg 1 — the band resolves + emits the right numbers on agnos.
@@ -394,7 +398,8 @@ if command -v objdump >/dev/null 2>&1; then
     gnums=$(objdump -d -M intel /tmp/_agnos_gpu_gate.out 2>/dev/null | awk '
       /mov +eax,0x[0-9a-f]+/ { if (match($0, /0x[0-9a-f]+$/)) last=substr($0, RSTART, RLENGTH) }
       /\<syscall\>/ { if (last != "") { print last; last="" } }' | sort -u)
-    for want in 0x52:82:SYS_GPU_DISPATCH 0x53:83:SYS_GPU_DISPATCH_F64 0x54:84:SYS_GPU_PRESENT 0x55:85:SYS_GPU_FILL; do
+    for want in 0x52:82:SYS_GPU_DISPATCH 0x53:83:SYS_GPU_DISPATCH_F64 0x54:84:SYS_GPU_PRESENT 0x55:85:SYS_GPU_FILL \
+                0x56:86:SYS_SHM_CREATE_GPU 0x57:87:SYS_GPU_BLIT_SHM 0x58:88:SYS_GPU_FILL_RECT 0x59:89:SYS_GPU_CAPS; do
         hex=${want%%:*}; rest=${want#*:}; dec=${rest%%:*}; nm=${rest#*:}
         echo "$gnums" | grep -qw "$hex" \
             || { echo "FAIL: gpu probe emits no $nm #$dec ($hex) AT A SYSCALL SITE — band rotted to a stub or renumbered?"; exit 1; }
@@ -407,19 +412,20 @@ fi
 # previous RED run would otherwise leave a binary here and pin the gate red forever.
 rm -f /tmp/_agnos_gpu_linux.out
 if build/cyrius build /tmp/_agnos_gpu_gate.cyr /tmp/_agnos_gpu_linux.out >/tmp/_agnos_gpu_linux.log 2>&1; then
-    echo "FAIL: the gpu band RESOLVED on a non-agnos (Linux) build. On Linux x86_64 #82=rename(2),"
-    echo "      #83=mkdir(2), #84=RMDIR(2) and #85=creat(2) — so matmul buffer pointers become paths,"
-    echo "      a NULLARY present() DELETES A DIRECTORY at whatever stale value sits in rdi, and a"
-    echo "      32-bit colour creates/truncates a file. The band must live ONLY in the"
+    echo "FAIL: the gpu band RESOLVED on a non-agnos (Linux) build. On Linux x86_64 the band lands on"
+    echo "      #82=rename #83=mkdir #84=RMDIR #85=creat #86=link #87=UNLINK #88=symlink #89=readlink —"
+    echo "      so matmul pointers become paths, a NULLARY present() DELETES A DIRECTORY at whatever"
+    echo "      stale rdi holds, gpu_blit_shm DELETES A FILE, a 32-bit colour becomes a symlink target,"
+    echo "      and readlink WRITES into arg2. The band must live ONLY in the"
     echo "      #ifdef CYRIUS_TARGET_AGNOS peer (lib/syscalls_x86_64_agnos.cyr)."
     exit 1
 fi
 if command -v objdump >/dev/null 2>&1 && [ -f /tmp/_agnos_gpu_linux.out ]; then
-    objdump -d -M intel /tmp/_agnos_gpu_linux.out 2>/dev/null | grep -qE 'mov +eax,0x5[2-5]\b' \
-        && { echo "FAIL: a Linux build emitted syscall 82-85 (rename/mkdir/RMDIR/creat) for the gpu band"; exit 1; }
+    objdump -d -M intel /tmp/_agnos_gpu_linux.out 2>/dev/null | grep -qE 'mov +eax,0x5[2-9]\b' \
+        && { echo "FAIL: a Linux build emitted syscall 82-89 (rename/mkdir/RMDIR/creat/link/UNLINK/symlink/readlink) for the gpu band"; exit 1; }
 fi
 rm -f /tmp/_agnos_gpu_linux.out
-echo "PASS: CYRIUS_TARGET_AGNOS gpu band (#82/#83/#84/#85 correct numbers) + ABSENT on Linux (rename/mkdir/RMDIR/creat safety)"
+echo "PASS: CYRIUS_TARGET_AGNOS gpu band (#82-#89 correct numbers) + ABSENT on Linux (3 destructive rows gated)"
 
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"

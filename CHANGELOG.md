@@ -6,6 +6,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.71] — 2026-07-22
+
+### Added — agnos GPU/display band `#86`–`#89` (Tier 1 + Tier 1b, consolidated)
+
+`SYS_SHM_CREATE_GPU = 86` / `SYS_GPU_BLIT_SHM = 87` / `SYS_GPU_FILL_RECT = 88` / `SYS_GPU_CAPS = 89`
++ wrappers in `lib/syscalls_x86_64_agnos.cyr` — one pass for the whole shipped band instead of a new
+ask per syscall. `#86` is the **GPU-visible** peer of `shm_create #71`, and it is *not* an
+optimisation: `#71` allocates system RAM, which the GPU cannot reach at all (bus-master is off by
+design; the engines see only the FB aperture), so a GPU composite from a `#71` buffer is impossible.
+`#87` composites a client surface from its carveout slot straight into the blit back buffer (one
+CP-DMA per row) — pixels never leave kernel GPU-visible memory. `#88` is the **rect** form of `#85`'s
+whole-buffer fill (compositor chrome runs ~10×/window/frame). `#89` reports back-buffer geometry so a
+compositor can clip — `#87`/`#88` **reject rather than clip**, and `#89` **arms the double-buffer
+lazily** (a cold probe would otherwise report 0×0 and every later blit would fail). Iron-only: `-1`/`0`
+under QEMU mean "no GPU here", not a failure. `#90`/`#91` are **reserved, not wrapped** — numbers held
+as enum comments so they cannot drift — until agnos ships them. Consumers: aethersafha, bhumi, setu,
+`/bin/gpublit`.
+
+**Safety:** the band lands on occupied Linux x86_64 numbers, three of them destructive — `87 = unlink`
+(**deletes a file**), `89 = readlink` (**the kernel writes into arg2**), plus the reserved `90 = chmod`
+(setuid reachable) and `91 = fchmod` (where `(0,0)` packs to fd `0` = **stdin**, so the Linux call would
+plausibly *succeed*). All are reachable ONLY on agnos via the **file-level** `#ifdef CYRIUS_TARGET_AGNOS`
+on the whole peer: off-agnos the fns do not exist and a referencing build fails at COMPILE time with no
+binary. This hazard is live in the tree — `setu/src/buf.cyr` has `syscall(87)` meaning **unlink** and
+`gpu_blit_shm` in the same file ten lines apart, separated only by an `#ifdef`.
+`agnos-crossbuild-gate.sh` now asserts **#82–#89** on both legs; **mutation-proven** (`#87 → 79` ⇒ FAIL,
+restored ⇒ PASS).
+
+### Changed — sandhi 1.9.0 → 1.9.1 (fixed at source, then folded)
+
+sandhi's peer API called the hardcoded **x86_64-Linux** number 52. cyrius uses **per-arch** syscall
+numbers and an untranslated number does not error — it invokes a *different* syscall. On **aarch64,
+52 is `fchmod(fd, mode)`, and it SUCCEEDS**: `sandhi_server_peer_sockaddr` returned 1 ("got it") with
+the sockaddr **never written**, so `sandhi_server_peer_ip` handed back **uninitialized stack** — a rate
+limiter keyed on garbage, failing *quietly* (macOS-arm64 the same). Fixed in the sandhi repo: it now
+calls cyrius's per-arch `sys_getpeername`, and **zeroes the sockaddr buffer first** (defence-in-depth —
+a future unrouted target degrades to `0.0.0.0` rather than leaking stack, containing the *class*).
+sandhi's cyrius pin 6.4.63 → 6.4.70 with its `./lib/` re-vendored — the stale vendored stdlib predated
+the wrapper and was the actual build blocker, not the pin. sandhi tests green (554 / 167 / 342 / 63, 0
+failed); dist regenerated and folded byte-identical: **809 public fns, 0 added, 0 removed** (a behaviour
+fix, not a surface change), and `syscall(52)` no longer appears in the vendored bundle. Resolves
+`issues/2026-07-14-sandhi-peer-api-use-stdlib-getpeername.md`. Consumer: `yeo-cy-test` per-IP rate
+limiting on an Argon2id login.
+
 ## [6.4.70] — 2026-07-22
 
 ### Added — agnos GPU present/fill wrappers (`#84` / `#85`)
