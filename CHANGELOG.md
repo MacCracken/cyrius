@@ -37,10 +37,36 @@ The test corpus now walks `tests/` **recursively** (was hardcoded `tests/tcyr/`)
 `tests/<name>.tcyr` is found. cyrius reports `183/1188 (15%)` over its own `src/`; hoosh `12/365 (3%)`
 over its own `src/`. (The linked-vs-mirror distinction the report raised is moot for *reference*
 coverage — a referenced symbol is a watched symbol either way.) Resolves
-`issues/2026-07-23-hoosh-coverage-reports-stdlib-not-local-repo.md`. **Found + filed in passing:**
-`lib/fs.cyr`'s `find_files`/`find_files_with_prunes` silently return 0 matches (the coverage rewrite
-works around them with `dir_walk` + inline `str_ends_with`); they back the TS-corpus release gates, so
-that's a separate investigation.
+`issues/2026-07-23-hoosh-coverage-reports-stdlib-not-local-repo.md`. **Found in passing** and
+**root-caused + fixed in this same release** — see the `find_files` Fixed entry below.
+
+### Fixed — `lib/fs.cyr` `find_files`/`find_files_with_prunes` silently returned 0 for a bare-literal `ext`
+
+The bug the `cyrius coverage` rewrite above worked around. `find_files(path, ".cyr")` returned **0
+matches** while `dir_walk` on the same path returned every file and a direct `str_ends_with(walked,
+".cyr")` returned 1 — which is why the coverage collector switched to `dir_walk` + an inline
+`str_ends_with` filter. **Not** allocator aliasing or a "heap regime" issue (the working hypothesis at
+the time): `find_files(path, str_from(".cyr"))` always returned the full set. The real cause was a
+**type-coercion asymmetry** — `find_files` / `find_files_with_prunes` / `path_has_ext` had **untyped**
+`ext` (and `path`) params, and the compiler's string-literal→`Str` auto-coercion
+(`parse_fn.cyr` ~L1469) fires *only* for a param annotated `: Str` **and** a literal-token arg. A bare
+`".cyr"` therefore entered as a raw cstr pointer, flowed unchanged through the untyped param, and
+reached `str_ends_with` as `suffix`, where `str_len(suffix) = load64(ptr+8)` read garbage and every
+entry failed the filter (a direct `str_ends_with(x, ".cyr")` works because `str_ends_with`'s `suffix:
+Str` **is** typed, so its literal coerces). Fix: annotate `path: Str` / `ext: Str` on the three fns so
+the bare-literal form coerces at the API boundary; `str_from`-wrapped callers are **byte-identical**
+(an IDENT arg is never coerced). Not a compiler bug — the coercion is literal-only by design (a runtime
+`i64` can't be known to be a `Str`); the library just failed to express the contract. The TS-corpus
+release gates (`programs/checks/ts.cyr`, `programs/ts_test_runner.cyr`) already pass `str_from(ext)`,
+so they were **not** silently vacuous — **mutation-proven** on `src/`: real `.cyr` → 34, bogus `.zzz` →
+0, prune `backend` → 20 (`< 34`, `> 0`). `fs.cyr` is not in cycc's compile chain; self-host fixpoint
+byte-identical. The misdiagnosing comment in `cbt/quality.cyr` (it had blamed the "heap regime") is
+corrected.
+
+**Bench:** self_compile **617 ms** · cycc **1,103,512 B** (+0 — byte-identical, unchanged since 6.4.69;
+every 6.4.72 change, the agnos GPU band and this `fs.cyr` fix, is outside cycc's include closure). Full
+5-step release gate GREEN: self-host fixpoint + seed-derive (`seed→cybs→cycc`) + check.sh (**147/0**) +
+cross-OS self-host & VR-01 platform tcyr on **ecb/ach/cass/pi** (real hardware) + bench.
 
 ## [6.4.71] — 2026-07-22
 
