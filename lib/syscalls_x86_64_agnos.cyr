@@ -101,9 +101,8 @@ enum SysNrAgnos {
     SYS_GPU_BLIT_SHM     = 87;    # gpu_blit_shm(id,wh,dstxy) → 0/-1 (UNLINK on Linux — DELETES A FILE)
     SYS_GPU_FILL_RECT    = 88;    # gpu_fill_rect(color,wh,dstxy) → 0/-1 (SYMLINK on Linux)
     SYS_GPU_CAPS         = 89;    # gpu_caps(buf,len) → 0/-1; bb geometry (READLINK on Linux — WRITES arg2)
-    # RESERVED, not wrapped until agnos ships them (numbers held so they can't drift):
-    #   90 gpu_readback_shm(id,wh,srcxy)  — CHMOD on Linux (setuid risk)
-    #   91 gpu_blit_bb(srcxy,wh,dstxy)    — FCHMOD on Linux; (0,0) packs to fd 0 = stdin, would SUCCEED
+    SYS_GPU_READBACK_SHM = 90;    # gpu_readback_shm(id,wh,srcxy) → 0/-1; capture bb→shm (CHMOD on Linux)
+    SYS_GPU_BLIT_BB      = 91;    # gpu_blit_bb(srcxy,wh,dstxy) → 0/-1; bb→bb move (FCHMOD on Linux — SUCCEEDS)
 }
 
 # ================================================================
@@ -673,6 +672,31 @@ fn sys_gpu_fill_rect(color, wh, dstxy): i64 { return syscall(SYS_GPU_FILL_RECT, 
 # a wild process-memory write if rsi ever holds a mapped address. Reachable ONLY on agnos via
 # the file-level peer gate. CHANGELOG [6.4.71].
 fn sys_gpu_caps(buf, len): i64 { return syscall(SYS_GPU_CAPS, buf, len); }
+
+# gpu_readback_shm(id, wh, srcxy) — the INVERSE of #87 gpu_blit_shm: GPU-copy a w×h rect OUT
+# of the blit back buffer at (sx,sy) INTO the client's carveout shm slot `id`. The
+# screen-capture / read-pixels primitive: without it a compositor reading its own shm sees
+# STALE content (the composited frame lives in the kernel back buffer, never the client
+# page). Packing matches #87: wh = (h<<16)|w, srcxy = (sy<<16)|sx. Rejects (does not clip):
+# off-screen, a slot too small for w*h*4, a PMM-backed slot (the GPU can't write it), or no
+# display. Built on the same iron-proven gpu_cp_dma_blit as #87 — direction-agnostic (both
+# operands are MC), so this is #87 with the operands swapped. Returns 0 / -1 (-1 under QEMU =
+# "no GPU here"). agnos 1.55.x (iron-proven /bin/gpucopy 2026-07-23). SAFETY: 90 is
+# chmod(path,mode) on Linux — a packed geometry word as a mode can set SETUID. Reachable ONLY
+# on agnos via the file-level #ifdef CYRIUS_TARGET_AGNOS peer gate. CHANGELOG [6.4.72].
+fn sys_gpu_readback_shm(id, wh, srcxy): i64 { return syscall(SYS_GPU_READBACK_SHM, id, wh, srcxy); }
+
+# gpu_blit_bb(srcxy, wh, dstxy) — GPU rect COPY WITHIN the blit back buffer (move a window /
+# scroll a region); no fb→fb copy existed before. Packing: srcxy = (sy<<16)|sx,
+# wh = (h<<16)|w, dstxy = (dy<<16)|dx. Rejects either rect off-screen. OVERLAP is handled
+# kernel-side (a downward move copies rows bottom-up, memmove semantics) — the wrapper needs
+# no reverse-order logic. Residual: intra-row HORIZONTAL overlap on the SAME source row is
+# undefined; a caller must not self-overlap a single row. Returns 0 / -1 (-1 under QEMU =
+# "no GPU here"). agnos 1.55.x. SAFETY: 91 is fchmod(fd,mode) on Linux — and arg1 is a packed
+# srcxy where (0,0) packs to fd 0 = STDIN, so small coordinates are valid fd numbers and the
+# Linux call would PLAUSIBLY SUCCEED. Reachable ONLY on agnos via the file-level peer gate.
+# CHANGELOG [6.4.72].
+fn sys_gpu_blit_bb(srcxy, wh, dstxy): i64 { return syscall(SYS_GPU_BLIT_BB, srcxy, wh, dstxy); }
 
 # ---- agnos HDA audio band (#64-69) — the ring-3 half of the agnos 1.52.x Gate-2
 # freeze (kernel handlers land in parallel). Single frozen format: 48000 Hz / S16 /

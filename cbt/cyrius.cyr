@@ -72,7 +72,7 @@ fn usage(): i64 {
     println("  deny <source.cyr>               enforce project policies");
     println("");
     println("Testing:");
-    println("  coverage                        report test coverage");
+    println("  coverage [--full] [--min <pct>]  reference coverage of project src/ (--full=vendored lib/; --min gates CI)");
     println("  doctest <file.cyr>              run doc examples");
     println("  soak [N]                        N-iter self-host loop + tests/scyr/*.scyr harnesses");
     println("  smoke                           run tests/smcyr/*.smcyr quick-validation programs");

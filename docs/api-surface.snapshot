@@ -4204,6 +4204,7 @@ syscalls_x86_64_agnos::sys_geteuid/0
 syscalls_x86_64_agnos::sys_getpid/0
 syscalls_x86_64_agnos::sys_getrandom/3
 syscalls_x86_64_agnos::sys_getuid/0
+syscalls_x86_64_agnos::sys_gpu_blit_bb/3
 syscalls_x86_64_agnos::sys_gpu_blit_shm/3
 syscalls_x86_64_agnos::sys_gpu_caps/2
 syscalls_x86_64_agnos::sys_gpu_dispatch/3
@@ -4211,6 +4212,7 @@ syscalls_x86_64_agnos::sys_gpu_dispatch_f64/3
 syscalls_x86_64_agnos::sys_gpu_fill/1
 syscalls_x86_64_agnos::sys_gpu_fill_rect/3
 syscalls_x86_64_agnos::sys_gpu_present/0
+syscalls_x86_64_agnos::sys_gpu_readback_shm/3
 syscalls_x86_64_agnos::sys_icmp_echo/1
 syscalls_x86_64_agnos::sys_kbscan/2
 syscalls_x86_64_agnos::sys_kill/2

@@ -8,9 +8,9 @@ double-buffer arming is documented (a cold probe would otherwise report 0x0 and 
 blit would fail). Safety is the FILE-level `#ifdef CYRIUS_TARGET_AGNOS` on the whole peer, as required.
 `agnos-crossbuild-gate.sh` now asserts **#82-#89** and the Linux-absence leg covers all of them;
 **mutation-proven** (`#87 -> 79` → FAIL, restored → PASS).
-🟡 **STILL OPEN for Tier 2 only:** `#90 gpu_readback_shm` / `#91 gpu_blit_bb` are **reserved, not
-requested** — numbers held in the enum as comments so they cannot drift; wrap each as agnos ships it.
-(Ticket intentionally kept open as the tracking vehicle for those two rows.)
+✅ **NOW FULLY CLOSED (6.4.72).** Tier 2 shipped: `#90 sys_gpu_readback_shm` / `#91 sys_gpu_blit_bb`
+landed in 6.4.72 (see [`2026-07-23-agnos-gpu-readback-blit-bb.md`](archived/2026-07-23-agnos-gpu-readback-blit-bb.md)).
+The whole band is contiguous **#82–#91**, all gated + mutation-proven. Nothing reserved remains.
 
 **Original ask below.** Prior status: Supersedes the one-at-a-time pattern of
 `2026-07-14-gpu-dispatch-syscall-cyrius-wrappers.md` (#82/#83, resolved) and

@@ -6,6 +6,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.72] — 2026-07-23
+
+### Added — agnos GPU band `#90`/`#91` (Tier 2, band now contiguous #82–#91)
+
+`SYS_GPU_READBACK_SHM = 90` (`sys_gpu_readback_shm(id,wh,srcxy)`) + `SYS_GPU_BLIT_BB = 91`
+(`sys_gpu_blit_bb(srcxy,wh,dstxy)`) in `lib/syscalls_x86_64_agnos.cyr`. `#90` is the **inverse of
+`#87`** — GPU-copy a rect *out of* the blit back buffer into a client carveout slot (the
+screen-capture / read-pixels primitive; without it a compositor reading its own shm sees stale
+content). `#91` is a GPU rect **copy within** the back buffer (window move / scroll); overlap is
+handled kernel-side (memmove semantics), so the wrapper needs no reverse-order logic. Both reject
+rather than clip; iron-only `-1`/`0` under QEMU = "no GPU here". This promotes the Tier-2 rows that
+6.4.71 held reserved, closing the numbering hole. **Safety:** `90 = chmod` on Linux (a geometry word
+as a mode can set setuid) and `91 = fchmod` where `(0,0)` packs to fd `0` = **stdin**, so the Linux
+call would plausibly *succeed* — both reachable ONLY on agnos via the file-level `#ifdef
+CYRIUS_TARGET_AGNOS` peer gate. `agnos-crossbuild-gate.sh` now asserts #82–#91 on both legs;
+**mutation-proven** (`#91 → 77` ⇒ FAIL, restored ⇒ PASS).
+
+### Fixed — `cyrius coverage` reported on the vendored stdlib, not the project
+
+Run from a project root, `cyrius coverage` reported reference coverage of the **vendored `lib/`
+stdlib** rather than the project's own sources — so a downstream project got "Functions: 0/1097" (a
+stdlib figure, permanently ~0 for any project) and a "Libraries: 67/68 covered" line that read like
+good news about the project but described the stdlib (`cbt/quality.cyr`). Now defaults to the
+project's **own `src/`** (recursive, `lib/` + `dist/` excluded); `--full` restores the vendored-stdlib
+behaviour; `--min <pct>` gates CI (non-zero exit below the floor); the **mode is stated** in the
+summary with a `[reference coverage — a floor, not a correctness proof]` caveat; and the module-name
+column is padded (the old `22 - llen` went negative for long names, running the count into the name).
+The test corpus now walks `tests/` **recursively** (was hardcoded `tests/tcyr/`), so a suite at
+`tests/<name>.tcyr` is found. cyrius reports `183/1188 (15%)` over its own `src/`; hoosh `12/365 (3%)`
+over its own `src/`. (The linked-vs-mirror distinction the report raised is moot for *reference*
+coverage — a referenced symbol is a watched symbol either way.) Resolves
+`issues/2026-07-23-hoosh-coverage-reports-stdlib-not-local-repo.md`. **Found + filed in passing:**
+`lib/fs.cyr`'s `find_files`/`find_files_with_prunes` silently return 0 matches (the coverage rewrite
+works around them with `dir_walk` + inline `str_ends_with`); they back the TS-corpus release gates, so
+that's a separate investigation.
+
 ## [6.4.71] — 2026-07-22
 
 ### Added — agnos GPU/display band `#86`–`#89` (Tier 1 + Tier 1b, consolidated)

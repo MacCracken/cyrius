@@ -1,59 +1,108 @@
 # ================================================================
-# Native coverage: scan lib/*.cyr functions, check if tested
-# ================================================================
+# Native coverage — REFERENCE coverage: for each public `fn` in the scanned
+# source tree, is its name referenced anywhere in the tests/tcyr corpus? This is
+# a floor against UNWATCHED code, not a line/branch-coverage or correctness proof
+# (a mirror-style suite that re-implements rather than calls still "references"
+# the symbol — that is intentional: reference coverage is meaningful for both
+# linked and mirror suites, which is why it does not need the linked-vs-mirror
+# line-coverage distinction).
+#
+# v6.4.72 (issue 2026-07-23-hoosh-coverage-reports-stdlib-not-local-repo):
+#   cyrius coverage           -> the PROJECT's OWN sources (src/, recursive) — the
+#                                new default. Was `lib/` (the VENDORED stdlib), so
+#                                a downstream project got a number about the stdlib,
+#                                not itself ("Functions: 0/1097", permanently ~0).
+#   cyrius coverage --full    -> the vendored stdlib in lib/ (today's behaviour;
+#                                legitimate when working ON cyrius itself).
+#   cyrius coverage --min N   -> exit non-zero if coverage% < N (a CI gate).
+# The mode is stated in the summary so a stdlib figure can't be mistaken for a
+# project figure. `--min` and `--full` compose. argv(2..) carries the flags.
 fn cmd_coverage(): i64 {
+    var full = 0;
+    var min_pct = 0 - 1;                      # -1 = no gate
+    var ai = 2;
+    while (argc() > ai) {
+        var a = argv(ai);
+        if (streq(a, "--full") == 1) { full = 1; }
+        elif (streq(a, "--min") == 1) {
+            if (argc() > ai + 1) { min_pct = atoi(argv(ai + 1)); ai = ai + 1; }
+        }
+        ai = ai + 1;
+    }
+
+    # Scan root: lib/ for --full, else the project's own src/ (recursive).
+    var root = "src";
+    if (full == 1) { root = "lib"; }
+    if (is_dir(str_from(root)) != 1) {
+        # No src/ (e.g. a flat project) — fall back to '.', still excluding lib/.
+        root = ".";
+    }
+
     _status("=== Coverage Report ===");
+    if (full == 1) {
+        println("  mode: --full (vendored stdlib in lib/); reference coverage");
+    } else {
+        sys_write(STDOUT_FD, "  mode: local repo sources (", 28);
+        sys_write(STDOUT_FD, root, strlen(root));
+        println("/, recursive; lib/ + dist/ excluded); reference coverage");
+    }
     println("");
-    # Collect all test content into one buffer for searching
-    var corpus = alloc(262144);
+
+    # Collect all tests/tcyr content into one searchable corpus. (Uses dir_walk +
+    # an inline suffix test, NOT find_files — the latter's filter wrapper mis-drops
+    # every entry in this heap regime; dir_walk + str_ends_with is proven-correct.)
+    var corpus = alloc(1048576);
     var corpus_len = 0;
-    var tent = dir_list(str_from("tests/tcyr"));
-    var ti = 0;
-    while (ti < vec_len(tent)) {
-        var tn = str_data(vec_get(tent, ti));
-        var tl = str_len(vec_get(tent, ti));
-        if (tl > 5) {
-            if (memeq(tn + tl - 5, ".tcyr", 5) == 1) {
-                var tp = make_path("tests/tcyr", tn);
-                var n = file_read_all(tp, corpus + corpus_len, 262144 - corpus_len - 1);
+    if (is_dir(str_from("tests")) == 1) {
+        var tests = vec_new();
+        dir_walk(str_from("tests"), tests);      # recursive: tests/tcyr/*.tcyr AND tests/*.tcyr
+        var ti = 0;
+        while (ti < vec_len(tests)) {
+            var tf = vec_get(tests, ti);
+            if (str_ends_with(tf, ".tcyr") == 1) {
+                var n = file_read_all(str_data(tf), corpus + corpus_len, 1048576 - corpus_len - 1);
                 if (n > 0) { corpus_len = corpus_len + n; }
             }
+            ti = ti + 1;
         }
-        ti = ti + 1;
     }
     store8(corpus + corpus_len, 0);
 
-    var lib_ent = dir_list(str_from("lib"));
-    var li = 0;
-    var total_libs = 0;
-    var covered_libs = 0;
+    # Recursively collect .cyr sources under `root`, pruning vendored trees
+    # (the prunes are inert for the src/ and lib/ roots — their entries are never
+    # named lib/dist — and matter only for the '.' flat-project fallback).
+    var prunes = vec_new();
+    vec_push(prunes, str_from("lib"));       # vendored stdlib (never "local")
+    vec_push(prunes, str_from("dist"));      # generated bundles
+    var walked = vec_new();
+    dir_walk_with_prunes(str_from(root), walked, prunes);
+    var srcs = vec_new();
+    var wi = 0;
+    while (wi < vec_len(walked)) {
+        var wf = vec_get(walked, wi);
+        if (str_ends_with(wf, ".cyr") == 1) { vec_push(srcs, wf); }
+        wi = wi + 1;
+    }
+
+    var total_files = 0;
+    var covered_files = 0;
     var total_fns = 0;
     var covered_fns = 0;
-    while (li < vec_len(lib_ent)) {
-        var lname = str_data(vec_get(lib_ent, li));
-        var llen = str_len(vec_get(lib_ent, li));
+    var lbuf = alloc(262144);                 # one reusable file buffer (avoid per-file alloc)
+    var li = 0;
+    while (li < vec_len(srcs)) {
+        var spath = str_data(vec_get(srcs, li));
         li = li + 1;
-        if (llen < 5) { continue; }
-        if (memeq(lname + llen - 4, ".cyr", 4) == 0) { continue; }
-        # Skip symlinks (dep files) — check if it's a real file
-        var lpath = make_path("lib", lname);
-        total_libs = total_libs + 1;
-
-        # Read lib file and count public functions
-        var lbuf = alloc(32768);
-        var ln = file_read_all(lpath, lbuf, 32767);
+        var ln = file_read_all(spath, lbuf, 262143);
         if (ln <= 0) { continue; }
         store8(lbuf + ln, 0);
 
-        # Count "fn " at line starts (not "_" private)
         var pub_fns = 0;
         var called = 0;
         var pos = 0;
         while (pos < ln) {
-            # Find "fn " at start of line
             if (pos == 0 || load8(lbuf + pos - 1) == 10) {
                 if (memeq(lbuf + pos, "fn ", 3) == 1) {
-                    # Extract function name
                     var ns = pos + 3;
                     var ne = ns;
                     while (ne < ln) {
@@ -63,23 +112,16 @@ fn cmd_coverage(): i64 {
                     }
                     var fname_len = ne - ns;
                     if (fname_len > 0) {
-                        if (load8(lbuf + ns) != 95) {
+                        if (load8(lbuf + ns) != 95) {     # skip `_`-prefixed (private convention)
                             pub_fns = pub_fns + 1;
                             total_fns = total_fns + 1;
-                            # Search corpus for this function name
                             var found = 0;
                             var ci = 0;
                             while (ci < corpus_len - fname_len) {
-                                if (memeq(corpus + ci, lbuf + ns, fname_len) == 1) {
-                                    found = 1;
-                                    break;
-                                }
+                                if (memeq(corpus + ci, lbuf + ns, fname_len) == 1) { found = 1; break; }
                                 ci = ci + 1;
                             }
-                            if (found == 1) {
-                                called = called + 1;
-                                covered_fns = covered_fns + 1;
-                            }
+                            if (found == 1) { called = called + 1; covered_fns = covered_fns + 1; }
                         }
                     }
                 }
@@ -87,34 +129,59 @@ fn cmd_coverage(): i64 {
             pos = pos + 1;
         }
 
-        # Print module line
+        if (pub_fns == 0) { continue; }        # no public surface — omit from the per-file list
+        total_files = total_files + 1;
+        if (called > 0) { covered_files = covered_files + 1; }
+
+        # Per-file line — pad the name column to a fixed width, guarding long names
+        # (the old `22 - llen` went negative for e.g. `syscalls_linux_common.cyr`,
+        # so the count ran into the name).
+        var disp = str_data(path_basename(str_from(spath)));
+        var dlen = strlen(disp);
         sys_write(STDOUT_FD, "  ", 2);
-        sys_write(STDOUT_FD, lname, llen);
-        var pad = 22 - llen;
+        sys_write(STDOUT_FD, disp, dlen);
+        var pad = 34 - dlen;
+        if (pad < 1) { pad = 1; }
         while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
-        if (pub_fns > 0) {
-            covered_libs = covered_libs + 1;
-            fmt_int(called);
-            sys_write(STDOUT_FD, "/", 1);
-            fmt_int(pub_fns);
-            sys_write(STDOUT_FD, " fns\n", 5);
-        } else {
-            println("  (no public fns)");
-        }
+        fmt_int(called);
+        sys_write(STDOUT_FD, "/", 1);
+        fmt_int(pub_fns);
+        sys_write(STDOUT_FD, " fns\n", 5);
     }
 
+    var pct = 0;
+    if (total_fns > 0) { pct = (covered_fns * 100) / total_fns; }
     println("");
     println("-- Summary --");
-    sys_write(STDOUT_FD, "  Libraries: ", 13);
-    fmt_int(covered_libs);
+    if (full == 1) { sys_write(STDOUT_FD, "  Modules referenced: ", 22); }
+    else           { sys_write(STDOUT_FD, "  Files referenced:   ", 22); }
+    fmt_int(covered_files);
     sys_write(STDOUT_FD, "/", 1);
-    fmt_int(total_libs);
-    println(" covered");
-    sys_write(STDOUT_FD, "  Functions: ", 13);
+    fmt_int(total_files);
+    println("");
+    sys_write(STDOUT_FD, "  Functions referenced: ", 24);
     fmt_int(covered_fns);
     sys_write(STDOUT_FD, "/", 1);
     fmt_int(total_fns);
-    println("");
+    sys_write(STDOUT_FD, " (", 2);
+    fmt_int(pct);
+    println("%)  [reference coverage — a floor, not a correctness proof]");
+
+    if (total_fns == 0) {
+        sys_write(STDERR_FD, "  note: no public functions found under ", 40);
+        sys_write(STDERR_FD, root, strlen(root));
+        sys_write(STDERR_FD, "/ — is this a project root?\n", 28);
+    }
+    if (min_pct >= 0) {
+        if (pct < min_pct) {
+            sys_write(STDERR_FD, "coverage gate FAILED: ", 22);
+            fmt_int_fd(2, pct); sys_write(STDERR_FD, "% < --min ", 10); fmt_int_fd(2, min_pct);
+            sys_write(STDERR_FD, "%\n", 2);
+            return 1;
+        }
+        sys_write(STDOUT_FD, "  gate OK: ", 11);
+        fmt_int(pct); sys_write(STDOUT_FD, "% >= --min ", 11); fmt_int(min_pct); println("%");
+    }
     return 0;
 }
 

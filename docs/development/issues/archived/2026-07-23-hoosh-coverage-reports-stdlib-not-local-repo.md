@@ -1,4 +1,23 @@
-# `cyrius coverage` reports on the vendored stdlib, not the local repo — OPEN
+# `cyrius coverage` reports on the vendored stdlib, not the local repo — FIXED (6.4.72)
+
+**Fixed 2026-07-20 (6.4.72)** in `cbt/quality.cyr`. `cyrius coverage` now defaults to the
+**project's own `src/`** (recursive), with `lib/` + `dist/` excluded; `--full` gives the old
+vendored-stdlib behaviour; `--min <pct>` gates CI (non-zero exit below the floor); the **mode is
+stated** in the summary and the number carries a `[reference coverage — a floor, not a correctness
+proof]` caveat; and the module-name column is padded (the old `22 - llen` went negative for long
+names, running the count into the name). The test **corpus now walks `tests/` recursively** (was
+hardcoded `tests/tcyr/`), so projects whose suite lives at `tests/<name>.tcyr` (like hoosh) are
+picked up. Verified: cyrius reports `183/1188 (15%)` over its own `src/`; hoosh reports `12/365 (3%)`
+over its own `src/` (honest reference coverage — low because its suite is mostly a mirror; hoosh does
+`include` a few src files, hence non-zero). The linked-vs-mirror distinction the issue raised is moot
+for reference coverage — a referenced symbol is a watched symbol regardless of whether the test calls
+or re-implements it; line coverage (where that distinction bites) is a separate future thing.
+**Found in passing + filed separately:** `lib/fs.cyr`'s `find_files`/`find_files_with_prunes`
+silently return 0 matches (the coverage rewrite works around them with `dir_walk` + inline
+`str_ends_with`); those helpers back the TS-corpus release gates, so that's its own investigation.
+
+---
+
 
 **Discovered:** 2026-07-23 during **hoosh** v2.5.10 (scaffolding-parity band of its
 rust-old port), while replacing the Rust project's codecov gate with a Cyrius one.

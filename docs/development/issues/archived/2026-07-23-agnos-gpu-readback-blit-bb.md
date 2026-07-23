@@ -1,11 +1,23 @@
 # 2026-07-23 — agnos ask: #90 `gpu_readback_shm` + #91 `gpu_blit_bb` wrappers (Tier 2 now SHIPPED in agnos)
 
-**Status:** 🟡 **OPEN.** Promotes the two **Tier 2** rows of
+**Status:** ✅ **FIXED (cyrius 6.4.72, 2026-07-20).** `SYS_GPU_READBACK_SHM = 90` /
+`SYS_GPU_BLIT_BB = 91` + `sys_gpu_readback_shm(id,wh,srcxy)` / `sys_gpu_blit_bb(srcxy,wh,dstxy)` in
+`lib/syscalls_x86_64_agnos.cyr`, each docstring carrying the packing, the reject-don't-clip contract,
+the Linux collision + destructive flag (90 = chmod/setuid, 91 = fchmod where (0,0) = fd 0 = stdin so
+it would SUCCEED), and the iron-only returns. The band is now **contiguous #82–#91**. Safety is the
+file-level `#ifdef CYRIUS_TARGET_AGNOS` on the whole peer (off-agnos the fns don't exist; a
+referencing build fails at compile time). `agnos-crossbuild-gate.sh` extended to assert #90/#91 on
+both legs (Linux-absence now covers 0x5a/0x5b); **mutation-proven** (#91 → 77 ⇒ FAIL, restored ⇒
+PASS). Closes the Tier-2 reservation held in
+[`2026-07-22-agnos-gpu-display-syscall-band.md`](2026-07-22-agnos-gpu-display-syscall-band.md).
+
+**Original ask below.** Prior status: 🟢 **IRON-PROVEN in agnos; wrappers wanted** (cyrius leg OPEN). Promotes the two **Tier 2** rows of
 [`2026-07-22-agnos-gpu-display-syscall-band.md`](2026-07-22-agnos-gpu-display-syscall-band.md) — which held
-`#90`/`#91` as *reserved, not requested* ("wrap each as agnos ships it"). **agnos has now shipped both**, so
-the trigger has fired. This closes the numbering hole: the kernel dispatch was contiguous through `#89`, then
-jumped to `#92`; `#90`/`#91` were live-but-unimplemented. Wrapping them lets the ring-3 band be contiguous
-`84…92` with no gap.
+`#90`/`#91` as *reserved, not requested* ("wrap each as agnos ships it"). **agnos has now shipped AND
+iron-proven both** on archaemenid (`/bin/gpucopy` → `run: exit 95`, 2026-07-23). This closes the numbering
+hole: the kernel dispatch was contiguous through `#89`, then jumped to `#92`; `#90`/`#91` were
+live-but-unimplemented. Wrapping them lets the ring-3 band be contiguous `84…92` with no gap. Both are
+iron-safe to wrap now.
 
 **Discovered:** 2026-07-23 while landing the two kernel handlers in agnos.
 **Severity:** Medium — the peer-add itself is ergonomic (Low), but both numbers collide with **destructive**
