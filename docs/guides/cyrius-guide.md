@@ -1640,12 +1640,13 @@ code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at e
 
 ### AGNOS Syscall ABI
 
-agnos defines a frozen syscall surface (numbers 0–33, agnos 1.41.x+). The register
+agnos defines an append-only syscall surface (numbers 0–91, agnos 1.55.x; the latest
+additions are the GPU-compute band #82–#91). The register
 convention is x86_64 SysV (rax=number, rdi/rsi/rdx/r10=args 1–4, rax returns
 result ≥0 on success, -1 on error). Key differences from Linux:
 
 ```
-# agnos syscall numbers — FROZEN (lib/syscalls_x86_64_agnos.cyr)
+# agnos syscall numbers — append-only, 0–91 (lib/syscalls_x86_64_agnos.cyr)
 SYS_EXIT = 0       (not Linux 60)
 SYS_WRITE = 1
 SYS_READ = 5
@@ -1692,9 +1693,11 @@ lib/process.cyr           → lib/process_agnos.cyr
 lib/io.cyr (getenv)       → delegates to lib/args_agnos.cyr::_agnos_getenv
 ```
 
-**`lib/syscalls_x86_64_agnos.cyr`**: the full agnos syscall surface (0–33),
+**`lib/syscalls_x86_64_agnos.cyr`**: the full agnos syscall surface (0–91),
 with wrappers (`sys_write`, `sys_read`, `sys_open`, `sys_spawn`, `sys_waitpid`,
-`sys_mmap`, `sys_stat`, etc.) and the agnos `stat` / `getdents` record layouts.
+`sys_mmap`, `sys_stat`, the socket/UDP/ICMP networking band, framebuffer/blit/keyboard,
+the GPU-compute band `sys_gpu_dispatch`..`sys_gpu_blit_bb` (#82–#91), etc.) and the
+agnos `stat` / `getdents` record layouts.
 
 **`lib/alloc_agnos.cyr`**: bump allocator over agnos's `sys_mmap(27)` chunks
 (2 MB-granular, kernel-picked base, no hints). Successive mmaps are discontiguous;
@@ -1744,29 +1747,31 @@ branching internally. Avoid platform-specific syscall numbers, flags, or struct 
 ### Capabilities and Limitations
 
 **Works on agnos**:
-- Syscall wrappers (all 0–33)
+- Syscall wrappers (all 0–91)
 - Heap allocation (bump, 2 MB chunks)
-- File I/O (read, write, open, close, stat, getdents)
+- File I/O (read, write, open, close, stat, getdents/readdir)
 - Process spawn and wait (in-memory ELF)
 - Arguments and environment variables
 - Pipes, epoll, signalfd, timerfd (the event loop primitives)
 - Signals (sigprocmask, kill, pause)
 - Filesystem (mkdir, rmdir, unlink, rename, link on ext2)
+- Networking (sockets, UDP, ICMP; #47–#61)
+- Framebuffer, blit, keyboard (#38–#42) and the GPU-compute band (`sys_gpu_dispatch`..`sys_gpu_blit_bb`, #82–#91)
 - SIMD, function pointers, inline asm (same as Linux/macOS)
 
-**Does NOT work on agnos** (either frozen out of syscalls 0–33 or stubbed):
+**Does NOT work on agnos** (either absent from syscalls 0–91 or stubbed):
 - Process arguments to spawned programs (`sys_spawn` is elf_addr, elf_size only)
 - stdout/stderr redirection (`sys_dup` is a stub; pipe → spawn → wait works, but
   output goes to the terminal, not a buffer; `run_capture` returns 0 bytes)
-- `getppid` (no getppid in frozen surface; returns 0)
+- `getppid` (no getppid in the surface; returns 0)
 - `getuid` (always 0 / root)
 - `chmod` (no permission model; `sys_chmod` is a no-op stub returning 0)
 - Thread-local storage (not modeled in agnos ring-3)
 - Dynamic linking (`dlopen`, auxv machinery), only static binaries
 
-The agnos syscall surface is **frozen as of 1.41.x** per its `docs/development/agnos-userland-abi.md`
-protocol (§5): any number/signature change in that doc is authoritative, and this guide +
-`lib/syscalls_x86_64_agnos.cyr` must be updated in sync. See `docs/development/issues/` for
+The agnos syscall surface is **append-only, currently through #91 at agnos 1.55.x** per its
+`docs/development/agnos-userland-abi.md` protocol (§5): any number/signature change in that doc
+is authoritative, and this guide + `lib/syscalls_x86_64_agnos.cyr` must be updated in sync. See `docs/development/issues/` for
 follow-up arcs (e.g., "2026-06-03-agnos-followup-after-boot.md" covers the spawn-argv gap).
 
 ## Position-Independent Executables (PIE) (v6.1.6)

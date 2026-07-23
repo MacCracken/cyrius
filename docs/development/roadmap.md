@@ -167,9 +167,14 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   retptr deep-stack-param homing).** .46 `>>>` arithmetic-shift operator + stdlib folds; .47–.48 UEFI
   Secure Boot signing (`cyrius sign-efi`) + enrollment (`.esl`/`.auth` via sigil 3.11.1); .49 growable
   8 MiB off-heap codebuf; **.50 capacity-warning consolidation (Pin 3 — one shared `_capacity_warnings`
-  across all 7 drivers).** Current head: **v6.4.62**, cycc 1,103,568 B, check.sh 146, self_compile
-  ~627 ms. **The async arc 5b + UEFI arc (#3) are CLOSED; scalar-float completion (.55/.56), DX
-  diagnostics (.60 R1 + .62 R2), and the Intel-Mac x86_64 Mach-O tail (.59) have all SHIPPED. No arc
+  across all 7 drivers).** Current head: **v6.4.72**, cycc 1,103,512 B, check.sh 147, self_compile
+  ~620 ms. **The async arc 5b + UEFI arc (#3) are CLOSED; scalar-float completion (.55/.56), DX
+  diagnostics (.60 R1 + .62 R2), and the Intel-Mac x86_64 Mach-O tail (.59) have all SHIPPED.
+  .63–.72 ran reactive: agnos GPU band #82–#91 (now contiguous) + lib-freshness (.63/.70/.71/.72),
+  **Win64 stack-args P0** (.64, ECALLPOPS 10+-arg corruption), thread-local slot allocator (.65),
+  getpeername xlat (.66) + sandhi 1.9.1 getpeername fold (.71), chrono DateTime (.67), agnos
+  `sys_reboot` 4-arg (.68), **f64 JSON round-trip** (.69, bayan 1.2.1 Grisu2 + fmt_hex high-bit
+  fix), and `cyrius coverage` scoped to project `src/` not vendored stdlib (.72). No arc
   in flight. **SUPERSEDED 2026-07-22: `pub`/`private` is NO LONGER a 6.4.x arc — it moved to the **v6.5.0 OPENER**, and its design is COMMITTED (file-level `private` declaration flips a file to private-by-default; per-item `public` re-exposes; no declaration = all public; `_`-prefix LATER). 6.4.x now runs reactive (agnos asks + bugs) until it quiets. Read `proposals/2026-07-02-function-visibility-pub-private.md` — the forced hybrid/derive-from-`_` text below is STALE.**
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
@@ -599,7 +604,8 @@ tables/lists in structs generally.
 ## Deferral backlog — pinned order (triaged 2026-07-11 @ v6.4.52)
 
 A full sweep of open `issues/` + `proposals/` after the .50–.52 run. **12 open issues + 3
-open proposals** remain; **4 were resolved/shipped and archived in this pass** — drishti
+open proposals** remained @v6.4.52 (**9 open issues + 3 proposals** as of 2026-07-23);
+**4 were resolved/shipped and archived in this pass** — drishti
 `>>>` shift (→ .46), EFI enrollment (→ .48), and the UEFI-signing + cx-CLI proposals
 (shipped .47/.48 and .17–.22). Order set by the maintainer (2026-07-11).
 
@@ -635,7 +641,6 @@ work" rule.
 |---|---|
 | **IR substrate productionization** — the anchor; gates the whole perf/regalloc arc | `2026-07-02-ir-regalloc-rewrite-needs-reemit` (P2, L); folds `2026-07-07-v6415-closeout-residuals` (D1/D2 dead IR/decode, R2 PE prologue) + the `_cur_fn_ret_stash` disp↔idx substrate (state.md "Filed follow-on") |
 | **SIMD register residency** — IR-substrate-gated; a codegen-QUALITY gap (bit-identical, no wrong results), so it can't batch ahead of the substrate | `2026-07-06-simd-f64v-memory-operand-no-register-residency` (P2, L) |
-| **TLS slot allocator** — stdlib/threading; coordinated cross-repo bump (shares `TLOCAL_MAX_SLOTS` with the sandhi-rpc-slot migration) | `2026-07-01-thread-local-slot-namespace-no-allocator` (P2, M) |
 | **macOS-arm64 threading backend** — `lib/thread_macos.cyr` (bsdthread/`__ulock`), mirrors the thread_win split; **distinct from the Intel-Mac x86 tail** and has no consumer blocked yet | `2026-07-03-macos-threading-workers-dont-run` (P2, M) |
 
 ### v6.6.x — Language-Ergonomics minor
@@ -756,7 +761,7 @@ never unilaterally deferred or redirected.
 
 ## Carry-in / watching (open, not in the committed sequence)
 
-> Reconciled 2026-07-07: every open issue now has a roadmap home (no dangling filings).
+> Reconciled 2026-07-23: every open issue now has a roadmap home (no dangling filings).
 > Release ORDER within each bucket is the user's to set; severity is the sort hint.
 
 - **🔴 Correctness bugs — near-term patch slots:**
@@ -767,12 +772,15 @@ never unilaterally deferred or redirected.
   - ~~**P2 signed sub-i64 GLOBAL scalar sign-extension**~~ — ✅ **SHIPPED v6.4.23** (new 8th
     per-var `_vsgn_base` table, max-sized/no-grow to keep the cybs seed-chain intact; x86 +
     aarch64 backends).
+  - **SIMD intrinsic shadows a var name** — a SIMD builtin name used as an identifier is
+    parsed as the intrinsic ([`iv-simd-intrinsic-shadows-var-name`](issues/2026-07-17-iv-simd-intrinsic-shadows-var-name.md)).
 - **🟠 Consumer-blocked (near-term):**
   - ~~**P2 LEXID dedup cap** (16384)~~ — ✅ **SHIPPED v6.4.21** (raised to 65536; `lexid_entries`
     relocated to arena-top + all forks' arenas extended). Unblocks the stiva port.
-  - **thread-local slot allocator + sandhi OOB** — land as ONE cross-repo bite
-    (`thread_local_alloc()` + `TLOCAL_MAX_SLOTS` bump + patra/sigil/sandhi slot migration):
-    [`thread-local-slot-namespace`](issues/2026-07-01-thread-local-slot-namespace-no-allocator.md)
+  - ~~**thread-local slot allocator + sandhi OOB**~~ — ✅ **SHIPPED v6.4.65**
+    (`thread_local_alloc()` based at 16, `TLOCAL_MAX_SLOTS` 16→128; sigil 3.12.1/patra 1.12.12
+    migrated — sandhi does not use this namespace):
+    [`thread-local-slot-namespace`](issues/archived/2026-07-01-thread-local-slot-namespace-no-allocator.md)
     + [`sandhi-rpc-policy-tls-slot-oob`](issues/archived/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md).
   - cyim regex unblock (lands when cyim re-tests against v6.x).
 - **🟡 Deferred prerequisites (land WHEN their arc opens):**
@@ -788,16 +796,20 @@ never unilaterally deferred or redirected.
     + `_win_terminate`/`_win_wait_timeout`; unblocks thoth's Windows timeout-kill).
 - **🟢 SIMD polish (standalone; Pin 1 is closed, these are follow-ons not blockers):**
   ~~`i64v2-valueform-packed-multiply`~~ ✅ **SHIPPED v6.4.53**, ~~the x86/aarch64 `f(v,v)` dup-arg
-  bug~~ ✅ **SHIPPED v6.4.53** (both archived); still open: cx value-form SIMD params/returns
-  (`issues/2026-07-09-cx-valueform-simd-params-returns.md`, → v6.4.54) and SIMD register-residency
+  bug~~ ✅ **SHIPPED v6.4.53** (both archived); ~~cx value-form SIMD params/returns~~
+  ✅ **SHIPPED v6.4.54** (`issues/archived/2026-07-09-cx-valueform-simd-params-returns.md`); still
+  open: SIMD register-residency
   (`issues/2026-07-06-simd-f64v-memory-operand-no-register-residency.md`, a v6.5.x IR-substrate item).
   - ~~`aarch64-f64-exp2-atan-hard-error`~~ — ✅ **SHIPPED v6.4.25** (polyfill-dispatch +
     `_f64_exp2_polyfill`/`_f64_atan_polyfill`). Unblocked `ganita` inverse-trig →
     [`aarch64-ganita-inverse-trig-unguard`](issues/archived/2026-07-08-aarch64-ganita-inverse-trig-unguard.md) (open follow-on).
   - ~~`aarch64-trig-payne-hanek-range-reduction`~~ — ✅ **SHIPPED v6.4.25** (double-double
     dd reduction for |x| ≥ 8192; small-angle path byte-identical).
-- **Downstream-repo (their timeline):** `yukti-udev-src-len-undersized-array-local`
-  (fix upstream, re-vendor).
+- **🔧 Tooling / gate hardening (fold into an adjacent slot):** release-gate's cross-OS
+  self-host step runs only the `vr01_` glob, not the full corpus, on the remote hosts
+  ([`release-gate-cross-os-runs-only-vr01-glob`](issues/2026-07-14-release-gate-cross-os-runs-only-vr01-glob.md)).
+- **Downstream-repo (their timeline):** ~~`yukti-udev-src-len-undersized-array-local`~~ —
+  ✅ **SHIPPED v6.4.27** (fixed upstream, released as yukti 2.2.9, re-vendored).
 - **v5.x-era substrate (v6.5.x):** `ir-regalloc-rewrite-needs-reemit` (perf passes) +
   `ir3-fixpoint-cascade-overelimination` (CYRIUS_IR=3 correctness) — both cited by the
   v6.5.x Performance-Quality entry in [roadmap_6.md](roadmap_6.md).

@@ -198,7 +198,7 @@ platform work (bottom-to-top priority) takes v6.2.x.
   landmine gates (.43). Note: `agnosys` retired at .37 (decomposed), dropping
   api-surface from ~5035 to **4343 fns** (grown to 4519 @ v6.4.11 with per-cycle
   additions). **Current metrics live in [state.md](state.md)** (avoid re-rotting an
-  inline snapshot here): as of v6.4.62 — cycc 1,103,568 B, check.sh 146, tests
+  inline snapshot here): as of v6.4.72 — cycc 1,103,512 B, check.sh 147, tests
   246 `.tcyr`.
 
 Remaining v6.2.x arc: the **dependency-model foundation (lever 1)** — the
@@ -455,9 +455,9 @@ bites; the heavier Phase C may take the 2nd release — a decision made
   mode unchanged (default). Bare sub-module names this slot; the cross-pkg
   `pkg:submodule` group form lands with lever-2. Gate: `_deps_modular_gate`
   (check.sh 97/97). **This completes lever 1.**
-- **Phase D — dissolve the "stdlib" category + migrate the flagship. ⟶ SCHEDULED v6.3.29**
-  (was dangling here with no active slot until the 2026-07-01 roadmap-gap audit; A/B/C
-  shipped v6.2.48/.49/.50, D now has a home — the whole arc is scheduled, see roadmap.md).
+- **Phase D — dissolve the "stdlib" category + migrate the flagship — ✅ SHIPPED v6.3.32**
+  (`std` built-in default group, `stdlib` back-compat alias; completes lever 1. A/B/C
+  shipped v6.2.48/.49/.50).
   Reframe `[deps].stdlib` as a default group (`std = [...]`, `stdlib`
   aliases for back-compat). Migrate **descent** off its 29-element hand
   list + 3 whole-monolith includes as the acceptance proof. Bump the
@@ -552,7 +552,7 @@ in-kernel crypto. Premise-check at arc entry per
 > **Closed minor.** Shipped .0 → .45 (closeout at v6.3.45); v6.4.0 opened the cut
 > 2026-07-03. The section below is the cycle-level design record; per-patch detail is the
 > [`CHANGELOG.md`](../../CHANGELOG.md) source of truth. The active minor is now **v6.4.x**
-> (at v6.4.62 — [roadmap.md](roadmap.md)).
+> (at v6.4.72 — [roadmap.md](roadmap.md)).
 
 **Theme**: language-level closures + generics + async sugar.
 Three syntactic/semantic additions the v5.x cycle held out
@@ -963,18 +963,21 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
 4. ~~**Function visibility (`pub`/`private`).**~~ **MOVED to the v6.5.0 OPENER (user, 2026-07-22); design COMMITTED — see the proposal.** Executes "Phase 2 — `pub` enforcement" of
    [`module-manifest-design.md`](module-manifest-design.md) — closes the flat-global-namespace bug
    classes (the `dynlib_*` dead-code corruption, enum-shadow, slot-collision) and makes the
-   api-surface snapshot compiler-enforced. **Design decisions still deferred to arc-open** (module
-   boundary file-vs-dep, marker `_`-prefix-vs-explicit-keywords, default public-vs-private); user
-   lean (2026-07-02, not a commitment): `_`-prefix as the private marker. **First step: the
-   `_`-prefix cross-file-call audit** — it decides whether derive-from-`_` is truly zero-churn.
+   api-surface snapshot compiler-enforced. **Design COMMITTED (user 2026-07-22):** a top-level
+   `private` declaration flips a FILE to private-by-default (fns AND vars); a per-item `public`
+   moniker re-exposes; no declaration = everything public (today's behaviour). Derives nothing from
+   names — the `_`-prefix marker was rejected (the audit found 165 `_`-prefixed fns are called
+   cross-file, so derive-from-`_` was never zero-churn); the `_`-prefix convention is explicitly LATER.
    [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md).
 
 ### v6.4.x arc — EXECUTION STATUS (updated 2026-07-09)
 
 The opening sequence is executing in order. **Item 1 (SIMD) is COMPLETE on all four backends** — the
 x86 arc (v6.4.4–.9) plus Phase 5 aarch64 NEON (.28–.30), Win64 PE value-form params+returns (.31), and
-cx bytecode per-lane emitters (.32) — with **item 2 (array-typed struct fields) next up**; items 3–4
-(UEFI, `pub`/`private`) remain order-committed. Interim consumer/kernel fixes interleave. Slot-level
+cx bytecode per-lane emitters (.32). **Item 2 (array-typed struct fields) SHIPPED (.11–.13)** and
+**item 3 (UEFI Secure Boot signing) SHIPPED (.47/.48)**; **item 4 (`pub`/`private`) MOVED to the
+v6.5.0 opener (2026-07-22)** — 6.4.x now runs reactive (agnos asks + bugs) toward its own close.
+Interim consumer/kernel fixes interleave. Slot-level
 detail is canonical in [roadmap.md](roadmap.md) (active minor) +
 [CHANGELOG.md](../../CHANGELOG.md); the cycle-level summary:
 
@@ -1010,7 +1013,7 @@ detail is canonical in [roadmap.md](roadmap.md) (active minor) +
 - **✅ Item 2 — Array-typed struct fields — SHIPPED** (R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13; `Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>).
 - **✅ Item 3 — UEFI Secure Boot signing — SHIPPED** (signing `cyrius sign-efi` v6.4.47 + `.esl`/`.auth` enrollment v6.4.48 via sigil 3.11.1).
 - **▶ Item 4 — `pub`/`private` visibility — MOVED OUT of 6.4.x to the v6.5.0 OPENER (2026-07-22), design COMMITTED (file-level opt-in, default public).** 6.4.x now runs reactive: agnos asks + bugs until it quiets.
-- **Also shipped since this block was cut (v6.4.32):** async 5b incl. IOCP-Windows (.33–.45), scalar-float completion (f64 return .55, f32 arith/typecheck .56), Intel-Mac x86_64 Mach-O revival (.59), DX diagnostics R1 column/excerpt (.60) + R2 panic-mode multi-error (.62). Function visibility has since MOVED to the v6.5.0 opener (2026-07-22); 6.4.x now runs reactive (agnos + bugs).
+- **Also shipped since this block was cut (v6.4.32):** async 5b incl. IOCP-Windows (.33–.45), scalar-float completion (f64 return .55, f32 arith/typecheck .56), Intel-Mac x86_64 Mach-O revival (.59), DX diagnostics R1 column/excerpt (.60) + R2 panic-mode multi-error (.62), Win64 stack-args P0 (10+-arg ECALLPOPS corruption, .64), agnos sys_reboot 4-arg (.68), f64 JSON round-trip / Grisu2 (.69), the agnos GPU-syscall band (.63/.70–.72, now contiguous #82–#91), and the `cyrius coverage` project-src fix (.72). Function visibility has since MOVED to the v6.5.0 opener (2026-07-22); 6.4.x now runs reactive (agnos + bugs).
 
 ### v6.4.0 — SHIPPED: `CYRIUS_MONOMORPH` default-on flip
 
@@ -1225,6 +1228,11 @@ Unlocks three deferred passes that all share the same gate
 ---
 
 ## v6.5.x — Performance Quality (generated-code + self-compile)
+
+> **v6.5.0 OPENS with function/var visibility (`pub`/`private`)** — moved from 6.4.x, design
+> committed 2026-07-22 (file-level `private` opt-in, per-item `public`, default public); see
+> [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md).
+> The performance-quality arc below follows the opener.
 
 **Theme REFRAMED 2026-07-07 (user, horizon session): v6.5.x absorbs the
 GENERATED-CODE quality arc, not just the self-compile growth-tax cleanup.**

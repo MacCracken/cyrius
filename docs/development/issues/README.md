@@ -115,6 +115,6 @@ v5.1.0+ adds macOS Mach-O support (per CLAUDE.md's DO-NOT block).
 
 - [`archived/`](./archived/) — resolved issues, indexed.
 - [`../roadmap.md`](../roadmap.md) — shipped / planned releases.
-- [`../handoff-4.8.5.md`](../handoff-4.8.5.md) — agent handoff state.
+- [`../state.md`](../state.md) — current cycle state (version, cycc size, in-flight slots).
 - `../../../CHANGELOG.md` — source of truth for what each release
   actually shipped.

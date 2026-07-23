@@ -134,10 +134,15 @@ floor, a re-triage that keeps re-pinning the same item).
 - Follow-ups spawned: <issues / patches>
 -->
 
-- _**v6.4.x → v6.5.0 closeout — pending** (mid-minor at 6.4.62; run this block at the `6.4.NN`
+- _**v6.4.x → v6.5.0 closeout — pending** (mid-minor at 6.4.72; run this block at the `6.4.NN`
   close). Interim: a 2026-07-11 backlog re-triage archived 4 (drishti-shift .46, EFI-enrollment
-  .48, uefi-signing + cx-CLI proposals) and re-pinned the 12 open issues into the roadmap.md
-  "Deferral backlog — pinned order."_
+  .48, uefi-signing + cx-CLI proposals) and re-pinned the then-12 open issues into the roadmap.md
+  "Deferral backlog — pinned order." Since then the .63–.72 band shipped (agnos GPU-syscall band
+  #82–#91 contiguous, bayan 1.2.1 f64 JSON round-trip, sandhi 1.9.1 getpeername fold, `cyrius
+  coverage` project-`src/`-scope fix) and the f64/fmt_hex/sys_reboot/agnos-GPU/getpeername/
+  coverage/thread-local issues archived — leaving **9 open issues** as of 2026-07-23. Note the
+  function-visibility (`pub`/`private`) arc has been MOVED OUT of 6.4.x to the v6.5.0 opener
+  (user 2026-07-22)._
 - _v6.3.x → v6.4.0 and earlier: full gate detail predates this ledger — canonical in
   [CHANGELOG.md](../../CHANGELOG.md) + [completed-phases.md](completed-phases.md)._
 

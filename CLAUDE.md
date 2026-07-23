@@ -166,11 +166,11 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 
 ### Docs (silent-rot prevention)
 11. **CHANGELOG/roadmap/vidya sync** — all docs reflect current state. Vidya in particular needs explicit refresh per minor (it falls out of sync silently — no compile-time check):
-   - **`vidya/content/cyrius/language.toml`** — language usage. Add `[[entries]]` blocks for any new syntax / builtins / directives shipped this minor (e.g. `#regalloc`, `secret var`, `#pe_import`, multi-return, struct initializer). Update existing entries when behavior changed (e.g. `&local` arch dispatch, `_cyrius_init` binding flip). Refresh the `overview` entry's compiler-size + cc-binary-name + version line at every minor.
-   - **`vidya/content/cyrius/field_notes/compiler.toml`** — compiler internals + non-obvious gotchas. Add field notes for anything that surprised us this minor (e.g. RBP-after-`clone()` race, `FUTEX_PRIVATE_FLAG` mismatch with kernel `CLONE_CHILD_CLEARTID`, parse.cyr unguarded x86-emit paths that shipped silently, `mov rN, rax` byte-order typos that segfault on Windows). One entry per gotcha; future-claude searching vidya before reimplementing should hit them.
-   - **`vidya/content/cyrius/field_notes/language.toml`** — user-facing language gotchas (e.g. no `var` redecl in same scope, no comparisons in fn-call args, parser's `#ifdef`-but-not-`#else`).
-   - **`vidya/content/cyrius/implementation.toml`** / **`types.toml`** — bump version refs and any structural changes (heap map, fixup table, fn table caps, IR opcode count, backend modules).
-   - **`vidya/content/cyrius/dependencies.toml`** / **`ecosystem.toml`** — refresh when deps bump (sigil 2.8.4 → next, etc.) and when downstream consumer counts / test counts change.
+   - **`vidya/content/cyrius/language/`** (directory: `core.cyml`, `features.cyml`, `tooling.cyml`, `stdlib_modules.cyml`, `agents.cyml`, `index.cyml`) — language usage. Add `[[entries]]` blocks for any new syntax / builtins / directives shipped this minor (e.g. `#regalloc`, `secret var`, `#pe_import`, multi-return, struct initializer). Update existing entries when behavior changed (e.g. `&local` arch dispatch, `_cyrius_init` binding flip). Refresh the `overview` entry (in `language/core.cyml` / `index.cyml`) compiler-size + cc-binary-name + version line at every minor.
+   - **`vidya/content/cyrius/field_notes/compiler/`** (directory: `methodology.cyml`, `patterns.cyml`, `gotchas.cyml`, `index.cyml` + `retros/`) — compiler internals + non-obvious gotchas. Add field notes for anything that surprised us this minor (e.g. RBP-after-`clone()` race, `FUTEX_PRIVATE_FLAG` mismatch with kernel `CLONE_CHILD_CLEARTID`, parse.cyr unguarded x86-emit paths that shipped silently, `mov rN, rax` byte-order typos that segfault on Windows). One entry per gotcha; future-claude searching vidya before reimplementing should hit them.
+   - **`vidya/content/cyrius/field_notes/language/`** (directory: `parser_syntax.cyml`, `semantics_runtime.cyml`, `platform_abi.cyml`, `diagnostics_caps.cyml`, `stdlib_format.cyml`, `shell_runtime.cyml`) — user-facing language gotchas (e.g. no `var` redecl in same scope, no comparisons in fn-call args, parser's `#ifdef`-but-not-`#else`).
+   - **`vidya/content/cyrius/types.cyml`** (note: `implementation.toml` is retired — archived at `archive/implementation.cyml`) — bump version refs and any structural changes (heap map, fixup table, fn table caps, IR opcode count, backend modules).
+   - **`vidya/content/cyrius/dependencies.cyml`** / **`ecosystem.cyml`** — refresh when deps bump (sigil 3.12.1 → next, etc.) and when downstream consumer counts / test counts change.
    - **Cross-check the version**: every vidya file mentioning a `cc?` version (`cc3 4.8.5`, `cycc 5.4.x`, etc.) should match the current `VERSION` file. `version-bump.sh` doesn't touch vidya — that's manual at closeout.
 12. **Backlog re-triage (rot sweep)** — sweep the open `issues/` + `proposals/` queue and re-pin the roadmap. **Verify each item's resolved-status against LIVE code / CHANGELOG — NOT the file's own claim** (a shipped-but-still-framed-as-pending entry is the exact rot: cx sat target-less for a couple majors when it was ready, TS→JS emit shipped v6.1.10 but stayed "minor TBD" in `roadmap-future.md` for months). Archive the resolved (`issues/archived/`, `proposals/archived/`); batch the rest by theme + dependency; re-pin them into an ordered roadmap sequence (arc **finish-out** items soonest, big new arcs after the queue is clean). **Enforce the placement rule: every technical / codegen / runtime item lives in the 6.x line or the `roadmap.md` "potential backlog" — NOTHING codegen is EVER parked to 7.x** (7.x = the language book + legal-for-public-release, that's it). Also re-scan the `roadmap-future.md` "watching" list for stale-shipped entries and mark them SHIPPED. Keep the open dir lean (~10–12). See [`feedback_no_codegen_parking_in_v7`]. (Cheap to run any time on request — "re-triage the backlog" — but MANDATORY at minor/major closeout, when a release burst has piled up drift.)
 
@@ -238,8 +238,8 @@ src/
   backend/cx/        emit.cyr (cyrius-x bytecode; runner: programs/cxvm.cyr)
   backend/js/        emit.cyr (TS/TSX → JS, `cycc --emit-js`)
   common/            util.cyr, ir.cyr
-lib/                 Standard library (98 lib/*.cyr modules)
-programs/            82 program files + subdirs (tools, tests, demos, algorithms)
+lib/                 Standard library (~99 lib/*.cyr modules)
+programs/            ~83 program files + subdirs (tools, tests, demos, algorithms)
 tests/               Test suites (tcyr/*.tcyr, heapmap.sh)
 benches/             Benchmarks (*.bcyr)
 fuzz/                Fuzz harnesses (*.fcyr)
@@ -279,7 +279,7 @@ docs/                Architecture, roadmap, benchmarks, language guide
 - `docs/development/dev-tools-linux.md` — per-environment dev toolchain (Linux x86_64 first; `qemu-user`/`wine` to reproduce aarch64/PE self-host bugs locally, `llvm-objdump` disasm, SSH cross-host verify). macOS/Windows siblings to follow. Install these before cross-target codegen work.
 - `docs/doc-health.md` — Living doc-currency ledger (per-tier fresh / stale / archived; refreshed when docs are touched)
 - `CHANGELOG.md` — Source of truth for all changes
-- `../vidya/content/compiler_bootstrapping/cyrius_*.toml` — 90+ vidya entries
+- `../vidya/content/cyrius/*.cyml` (+ the `language/` and `field_notes/{compiler,language}/` subdirs) — 90+ cyrius vidya entries
 
 ## Working Agreements (distilled 2026-07-07 from session-feedback memory)
 

@@ -17,12 +17,12 @@
 
 **Filed:** 2026-07-02 (during v6.3.27 — cross-BB regalloc arc opening)
 **Expanded:** 2026-07-02 (after the v6.3.28 cross-BB DSE attempt — implemented, corpus-tested, REVERTED)
-**Severity:** N/A (deferred capability, not a bug). **Blocks the entire IR-level half of the perf arc — regalloc rewrite, copy propagation, AND cross-BB DSE.** Scheduled as its own slot **v6.3.29** (roadmap.md).
+**Severity:** N/A (deferred capability, not a bug). **Blocks the entire IR-level half of the perf arc — regalloc rewrite, copy propagation, AND cross-BB DSE.** Scheduled for its own slot in the **v6.5.x** Performance-Quality arc (superseded from v6.3.29 — see STATUS header).
 **Component:** `src/common/ir.cyr` (IR pipeline emit model + local-access opcode model).
 
 > **Bottom line:** the `CYRIUS_IR=3` optimizer is opt-in **experimental scaffolding**, not a
 > verified-correct mode. THREE independent walls (below) each block a production perf pass.
-> A dedicated slot (**v6.3.29 IR substrate productionization**) must make `CYRIUS_IR=3`
+> A dedicated slot (**v6.5.x IR substrate productionization**) must make `CYRIUS_IR=3`
 > production-correct FIRST; only then can regalloc / copy-prop / cross-BB DSE land. The
 > v6.3.28 x86 byte-peephole ships perf in the meantime by NOT touching this substrate.
 
@@ -92,16 +92,16 @@ mode is added to the differential corpus.
 
 - **Cross-BB liveness fixpoint** (`ir_liveness_cfg`): live_out[BB] = ∪ live_in[succ],
   iterated to convergence; per-BB `ir_live_in`/`ir_live_out` u64 bitmaps. Pure analysis,
-  emits zero code → byte-identical default path. The reusable substrate v6.3.28 copy-prop
-  and v6.3.29 cross-BB DSE consume.
+  emits zero code → byte-identical default path. The reusable substrate the copy-prop
+  and cross-BB DSE passes (now homed at v6.5.x) consume.
 - **Spill-interval detection** (`_ir_find_spill_intervals`): counts clean intra-BB
   `PUSH`..`POP` intervals (the future allocation targets); abandons any span containing an
   opaque stack/reg op. Analysis-only — records nothing, allocates nothing.
 - Gate `tests/ir_liveness_cfg.sh`; both gated under `CYRIUS_IR`.
 
-## The productionization slot — v6.3.29 (prerequisite for regalloc / copy-prop / cross-BB DSE)
+## The productionization slot — v6.5.x (superseded from v6.3.29, see header) (prerequisite for regalloc / copy-prop / cross-BB DSE)
 
-A dedicated slot (**v6.3.29 IR substrate productionization**, roadmap.md) must make
+A dedicated slot (**v6.5.x IR substrate productionization**, roadmap.md) must make
 `CYRIUS_IR=3` production-correct — all three walls — BEFORE any IR-level perf pass:
 
 1. **Wire + prove the IR re-emit path** (Wall 1). Activate `ir_lower_all` (mode-2: record IR,
@@ -120,7 +120,7 @@ A dedicated slot (**v6.3.29 IR substrate productionization**, roadmap.md) must m
    `CYRIUS_IR=3` mode to `differential.sh` so the mode is verified byte-correct on every cut —
    not experimental scaffolding.
 
-**Then** (v6.3.30) land the IR-level passes on the sound substrate:
+**Then** (a later v6.5.x slot) land the IR-level passes on the sound substrate:
 
 - **Regalloc rewrite** — linear-scan over `_ir_find_spill_intervals`, assign a callee-saved reg
   consulting the liveness + `_cur_fn_regalloc` reservation (claim only regs EREGALLOC actually
@@ -135,5 +135,5 @@ Each pass: gated proof, differential byte-SAFE, measure the self_compile win.
 **Do NOT re-attempt copy-prop / cross-BB DSE / regalloc on the raw substrate** — the v6.3.28 DSE
 attempt proved it is inert-if-sound / miscompiling-if-not. The v6.3.27 `ir_liveness_cfg` +
 `_ir_find_spill_intervals` analysis substrate is in place and correct (emits zero code), but it is
-the CEILING of what is shippable until v6.3.29 lands. The IR-INDEPENDENT x86 byte-peephole
+the CEILING of what is shippable until the v6.5.x substrate slot lands. The IR-INDEPENDENT x86 byte-peephole
 (v6.3.28, default direct-emit stream) is the perf win that ships without this substrate.

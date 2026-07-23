@@ -44,7 +44,7 @@ Remaining: instruction correctness, self-hosting on ARM, kernel port, cross-comp
 Done: kernel audit (23 issues fixed), compiler hardening (fixup + token guards), 17 new edge case tests.
 Deferred: error message line numbers, performance pass, block scoping.
 
-## Phase 11 ��� Prove at Scale (Crate Rewrites)
+## Phase 11 — Prove at Scale (Crate Rewrites)
 5 AGNOS crate rewrites in Cyrius:
 - **agnostik** — 6 modules (error, types, security, agent, audit, config), 54 tests
 - **agnosys** — syscall bindings (50 numbers, 20+ wrappers, sigset, epoll, timerfd)
@@ -64,7 +64,10 @@ packed-SIMD stack — f32/f64/integer 128-bit + 256-bit AVX2 — emitting the
 **first VEX/AVX instructions the toolchain has ever produced**, then completing
 **Phase 5** so every verb runs on all four backends: x86 (SSE + AVX2), aarch64
 NEON, Windows PE (value-form params + returns), and cx bytecode (per-lane scalar
-loops). **The arc is COMPLETE** — all ARM SIMD XFAILs were removed at v6.4.30.
+loops). Phase 5 elementwise/dot on all four backends completed at v6.4.32 (all
+ARM SIMD XFAILs removed at v6.4.30); the **value-form finish-outs** left mid-arc —
+a duplicate-arg tail-call correctness fix on all targets + i64v2 packed multiply —
+**closed at v6.4.53**.
 
 - **v6.4.4 — Phase 1: f32v4** (128-bit, 4×f32) — the first f32 SIMD. addps/subps/mulps (`EMIT_F32V_LOOP` = the f64 packed loop minus the 66 prefix). Structured-descriptor sentinel −2121 (reserved band ≤ −2048, decoded by `util.cyr` `_vec_desc`). Builtin tokens 138–140. Full value-form ABI + `.field`-OOB / async-token-collision / param-mask review bugs fixed. `lib/simd.cyr` f32v4 wrappers (value + ptr).
 - **v6.4.5 — Phase 2: f32 matmul ops** — `f32v_fmadd` (token 141, mulps+addps) + `f32v_dot` (token 142, two haddps horizontal reduce + `movd eax` 32-bit extract). `bench_f32_gemm` ~27× SIMD-vs-scalar.
@@ -79,6 +82,7 @@ loops). **The arc is COMPLETE** — all ARM SIMD XFAILs were removed at v6.4.30.
 - **v6.4.30 — aarch64 NEON integer vectors** (`EMIT_IVEC_BINOP` width-dispatched add/sub/mul + `EMIT_IVEC_DP8` uxtl/sxtl+smlal int8 dot). The blocker was actually a *compile* failure (value-form 128-bit vector returns past the STUR/LDUR Q imm9 ±256 range), fixed with the `_EFP_ADDR_X9` fallback. **Removes the LAST SIMD XFAIL — Phase 5 aarch64 COMPLETE.**
 - **v6.4.31 — Win64 PE value-form SIMD params + returns** (MS x64 by-pointer copy-in `ESTOREPARM_SIMD_WIN64` + retptr return); `simd_f32v4` 13/13 + `simd_ints` 21/21 on real cass. Also fixed a SIMD-return-convention regression on PE (since v6.4.6) and a regalloc disp↔index off-by-one.
 - **v6.4.32 — cx bytecode SIMD codegen** — per-lane scalar loops for every flat-array verb (`_CX_VLOOP_BIN`) + new cxvm opcodes `f32widen` 0x66 / `f32narrow` 0x67 / `fsqrt` 0x68. Fixed two pre-existing cx local-addressing bugs the SIMD stash exposed (`ELOAD_LOCAL_ADDR` return-0 stub → `&local` aliased; scalar load/store disp missed the regalloc reservation `EFLADDR` had). Portable `.cyx` is now a byte-exact SIMD correctness oracle; cross-OS fixture runs SIMD on real hardware.
+- **v6.4.53 — value-form SIMD finish-outs** (arc cleanup, deferred mid-Phase-5): the duplicate-arg `f(v,v)` tail-call path had no XMM second pass and returned garbage on ALL targets (the v6.4.31 guard covered only `_TARGET_PE`) — fixed everywhere; plus i64v2 packed multiply, the one integer op the "arc CLOSED" line at v6.4.7 had left unbuilt.
 
 Only caveat: the aarch64 *native* 256-bit f32v8 emitters remain return-0 stubs never reached at runtime — `lib/simd.cyr` routes f32v8 through native f32v4 NEON, so the verb works; native 256-bit stays x86-AVX2-only.
 
@@ -101,6 +105,23 @@ Openers and interim work outside the SIMD arc:
 - **v6.4.25** — aarch64 `exp2`/`atan` polyfills + Payne-Hanek trig range reduction (closes the last aarch64 transcendental gaps).
 - **v6.4.26** — Windows PE batch: `TerminateProcess` reroute (0xF01D) + capturing closures on PE (`ECALLPTR_PE` push-order) + R2 PE-prologue extract.
 - **v6.4.27** — agnos `O_RDWR` flag-map fix + the **folded-stdlib repair campaign** (fixed-at-source + released + re-vendored sakshi 2.4.5 / sigil 3.10.1 / ganita 1.0.3 / yukti 2.2.9).
+- **v6.4.33–.45** — **async wrap-up + IOCP-Windows arc** (CLOSED): client/timers/subprocess/combinators/AcceptEx on all hosts; the .42 consolidation also cleared 8 lib bugs + the real-pi-only aarch64 epoll bug (ESYSXLAT `epoll_pwait`↔`pipe` collision + `event.data` offset).
+- **v6.4.54** — cx finish-outs: both filed cx bugs were misdiagnosed (code-stream misalignment + forward-call resolver); ~doubled cx correctness.
+- **v6.4.55/.56** — **scalar-float arc**: f64 as a fn *return* (.55, xmm0 sentinel) then f32 scalar arith/compare + WARN-only typecheck (.56).
+- **v6.4.57** — atomic-write follow-ons: `file_rename` / `write_atomic` / `xfsync` / `create_exclusive` (Windows `MoveFileExW`, macOS BSD `SYS_FSYNC`).
+- **v6.4.58** — cx hardening + Windows finish-out: cx `%` fixed for every modulo + 64-bit immediates (cxvm `movhk`); `O_EXCL`→`CREATE_NEW`; `xunlink`→`DeleteFileW`.
+- **v6.4.59** — **Intel-Mac x86_64 Mach-O revival**: the compiler self-hosted since v6.0.43 but the *toolchain* had rotted ungated ~2.5 minors; wrapper arch/env + cycc un-stubs + macho linter + ach added to the release gate. Closed a 13-month High issue.
+- **v6.4.60–.62** — **DX diagnostics arc**: column + source-excerpt/caret on every error (.60, token byte-offset packed into `tok_lines` high bits); net-sock per-poll leak fix + EOF-hardened skip loops (.61); multi-error panic-mode recovery — many errors/compile, never hangs on hostile stdin, bounded by a `PEEKT` watchdog (.62).
+- **v6.4.63** — agnos GPU syscall band openers (#82/#83 = `rename`/`mkdir`) + version-aware lib-freshness skew check in `cbt/` + sigil 3.12.0 / patra 1.12.10 / mabda 4.0.5 fold-in.
+- **v6.4.64** — **Win64 stack-args P0**: `ECALLPOPS`' PE branch shuttled stack args through a fixed 5-register table with no path past `nextra==5`, silently corrupting arg 1 for calls with 10+ args (5–9 were fine); mirrored the SysV rsp-relative fix. Gated by `vr01_win64_stack_args.tcyr` on real cass.
+- **v6.4.65–.68** — reactive stdlib/agnos band: `thread_local_alloc` (.65), `getpeername` syscall xlat (.66), chrono `DateTime` (.67), agnos `sys_reboot` 4-arg (.68).
+- **v6.4.69** — **f64 JSON round-trip**: Grisu2 shortest-float formatter + a correctly-rounded, DoS-safe parser (bayan 1.2.1); `fmt_hex` high-bit fix; `#derive` rewired to the bayan codec.
+- **v6.4.70–.72** — agnos GPU syscall band completion (#84–#91; band now contiguous #82–#91) + a placebo agnos-gate repair (.70) + sandhi 1.9.1 `getpeername` fold (.71) + `cyrius coverage` fixed to report project `src/` not vendored stdlib (.72).
+
+> The v6.4.x minor is still **OPEN** (head v6.4.72, held open for reactive agnos
+> asks + bug repairs). The bullets above are single-glance hooks; per-release
+> detail is canonical in [`CHANGELOG.md`](../../CHANGELOG.md). Full arc write-ups
+> land at minor close.
 
 ---
 
