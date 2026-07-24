@@ -53,6 +53,52 @@ var has_entries = 0;
 if (vec_len(entries) > 0) { has_entries = 1; }
 assert_eq(has_entries, 1, "tmp has entries");
 
+# ── v6.4.73: bare-string-literal args must reach Str-semantics params correctly ──
+# REGRESSION GATE for the silent-zero class (issues/archived/
+# 2026-07-23-find-files-silently-returns-zero-matches.md). cycc's string-literal
+# -> Str auto-coercion in PARSE_FNCALL fires ONLY for a param annotated `: Str`.
+# An UNTYPED param receives the bare literal as a raw cstr pointer, and every
+# consumer that then does str_len() reads load64(ptr+8) = garbage — so the fn
+# silently returns 0/empty instead of erroring. That shipped in lib/fs.cyr for
+# ~a year across 11 fns.
+#
+# THIS TEST IS THE ACCEPTANCE BAR AND IS MUTATION-PROVEN: strip the `: Str` off
+# any of these params in lib/fs.cyr and the matching assert below MUST fail.
+# The pre-existing asserts in this file all wrap in str_from(...) and therefore
+# passed against the BROKEN library — which is exactly why the defect survived
+# every gate. Each pair here asserts bare-literal == str_from-wrapped.
+test_group("bare literal -> Str param coercion (silent-zero gate)");
+
+assert_eq(is_dir("/tmp"), 1, "is_dir bare literal");
+assert_eq(is_dir("/tmp"), is_dir(str_from("/tmp")), "is_dir bare == str_from");
+
+var bw_bare = vec_new();
+var bw_wrap = vec_new();
+var nbare = dir_walk("/tmp", bw_bare);
+var nwrap = dir_walk(str_from("/tmp"), bw_wrap);
+assert_eq(nbare, nwrap, "dir_walk bare == str_from");
+
+var dl_bare = dir_list("/tmp");
+var dl_wrap = dir_list(str_from("/tmp"));
+assert_eq(vec_len(dl_bare), vec_len(dl_wrap), "dir_list bare == str_from");
+
+var pj = path_join("/tmp", "x.txt");
+assert_eq(str_len(pj), 10, "path_join bare literals -> /tmp/x.txt");
+
+assert_eq(str_len(path_basename("/a/b/c.txt")), 5, "path_basename bare literal");
+assert_eq(str_len(path_dirname("/a/b/c.txt")), 4, "path_dirname bare literal");
+
+assert_eq(path_has_ext("/a/b/c.txt", ".txt"), 1, "path_has_ext bare literals");
+
+var ff_bare = find_files("lib", ".cyr");
+var ff_wrap = find_files(str_from("lib"), str_from(".cyr"));
+assert_eq(vec_len(ff_bare), vec_len(ff_wrap), "find_files bare == str_from");
+
+var pr = vec_new();
+vec_push(pr, str_from("__nonexistent_prune__"));
+var fp_bare = find_files_with_prunes("lib", ".cyr", pr);
+assert_eq(vec_len(fp_bare), vec_len(ff_wrap), "find_files_with_prunes bare == str_from");
+
 # Cleanup
 syscall(87, testpath);
 

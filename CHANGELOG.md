@@ -6,6 +6,171 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.73] — 2026-07-23
+
+### Fixed — `cyrius audit` and `cyrius capacity` compiled project sources with NO stdlib includes
+
+Reported by the **stiva** agent ("cyrius audit is broken for this project"). On stiva 3.0.6 (10 deps,
+83 locked), the same tree at the same moment:
+
+| Command | Before | After |
+|---|---|---|
+| `cyrius test` | 202 passed, 0 failed | *(unchanged)* |
+| `cyrius audit` → tests | **0 passed, 5 failed** | **5 passed, 0 failed** |
+| `cyrius capacity --check` | **"ok (all caps under 85%)"** | **"3 table(s) at >=85% -- failing"** |
+
+Every audit failure was a wall of `undefined function 'alloc' / 'strlen' / 'vec_new' / 'str_from'` —
+the entire stdlib. Root cause: `cbt/cyrius.cyr` gates dep resolution on a hard-coded command list, and
+`_auto_deps()` is what populates `_dep_includes`, which `compile()` reads to prepend the manifest's
+`include "lib/…"` lines. The list covered `build/run/test/tests/bench/fuzz/soak/smoke/check` —
+**`audit` and `capacity` were never added**, while `_audit_sweep()` calls `cmd_tests()` + `cmd_bench()`
+internally and assumes the prepend already happened. This is the **third** instance of the class the
+comment directly above that gate documents: `fuzz` joined at **v5.7.21** for exactly this reason,
+`soak`/`smoke` at **v5.7.38** citing the v5.7.21 fix.
+
+**Why it hid for a year:** 250 of cyrius's own 251 `tests/tcyr/*.tcyr` files self-declare their
+includes, so the in-repo corpus never exercised the auto-prepend and `cyrius audit` looked healthy
+here. A "found by ports" gap of the same shape as the macOS self-host rot — the check we trusted was
+not exercising the path that mattered.
+
+### Fixed — `cyrius capacity --check` was a green placebo (the more dangerous half)
+
+The tool whose entire purpose is to warn before a compiler table fills certified the opposite, via
+three compounding defects in `cmd_capacity` (`cbt/commands.cyr`) — and it would have kept doing so for
+*any* failing compile even after the gate fix, because it forks cycc directly (it needs
+`CYRIUS_STATS=1` in the child env) rather than going through `compile()`:
+
+1. **No dep prepend** → the compile aborted with `undefined variable 'Backend'`.
+2. **The child's exit status was never read** — `sys_waitpid` wrote `status_buf` and it was discarded.
+3. **Zero parsed stats lines counted as zero tables over threshold** — `hits` stayed 0 and the
+   fall-through printed `ok (all caps under 85%)` and returned 0.
+
+A fourth defect would have bitten the moment (1) was fixed: the stderr capture was **8 KiB** and the
+stats block prints at the *end* of a compile, so on stiva (~20 KB of duplicate-fn warnings first) the
+stats lines were the first thing truncated away.
+
+Fixes: the prepend block is factored out of `compile()` into **`_materialize_source(source)`**
+(`cbt/build.cyr`) so there is exactly ONE implementation and `capacity` calls it rather than growing a
+second copy to drift against; `cmd_capacity` now checks `WIFEXITED`/`WEXITSTATUS` and fails loud on a
+failed compile, **hard-fails when zero stats lines were parsed** ("cannot certify caps" — not a pass),
+and reads **1 MiB** of stderr.
+
+### Fixed — `CYRIUS_STATS=1` reported `code_size` against a stale 1 MiB denominator
+
+`src/main.cyr` + `src/main_win.cyr` printed `code_size: N / 1048576`. The code buffer became the 64 MiB
+growable off-heap region at **v6.4.49** and `_capacity_warnings` was updated to match, but this meter
+was not — so a *healthy* stiva build reported `code_size: 2822736 / 1048576`, i.e. **269 %**, and
+`cyrius capacity --json` published that ratio to anything consuming it. Now `/ 67108864`.
+
+**Residual (filed, not fixed here):** only **2 of the 7 forks** emit the `CYRIUS_STATS=1` block at all
+(`main.cyr`, `main_win.cyr`); aarch64/Mach-O/cx emit none, so `cyrius capacity` cannot report on them.
+Same gap `_capacity_warnings` closed for *warnings* one layer up at v6.4.50. With the placebo guard in
+place these now fail loud rather than certify falsely.
+
+### Fixed — `lib/fs.cyr`: the v6.4.72 `find_files` fix was sliced; 8 sibling fns still silently returned 0
+
+Completing the v6.4.72 fix rather than leaving the other half of its own bug class in the same file
+(Release Discipline rule 1 — *a bug ships complete*). v6.4.72 annotated `find_files`,
+`find_files_with_prunes` and `path_has_ext` as `: Str`, but **every other path-taking fn in the file
+was left untyped and carried the identical silent-zero defect**. Measured on HEAD before this fix:
+
+```
+is_dir("src")        = 0     is_dir(str_from("src"))        = 1
+dir_walk("src", v)   = 0     dir_walk(str_from("src"), v)   = 34
+dir_list("src")      = 0     dir_list(str_from("src"))      = 11
+```
+
+Annotated `path_join(dir: Str, name: Str)`, `path_basename(path: Str)`, `path_dirname(path: Str)`,
+`dir_list(path: Str)` (**both** the agnos and non-agnos arms), `dir_list_full(path: Str)`,
+`is_dir(path: Str)` (**both** arms), `dir_walk(path: Str, results)`, and
+`dir_walk_with_prunes(path: Str, results, prunes)` — 13 `: Str`-annotated params across 11 fns.
+`str_from`-wrapped callers are unaffected (an IDENT arg is never coerced), so this is
+behaviour-preserving for every existing in-repo call site; check.sh 147/0 and cycc's own fixpoint are
+untouched (`lib/fs.cyr` is not in cycc's include closure).
+
+**Added the regression gate the v6.4.72 fix never landed.** `tests/tcyr/fs.tcyr` passed **13/13
+against the broken library** — every pre-existing assert wrapped its args in `str_from(...)`, which is
+exactly why the defect survived every gate for ~a year. The new `bare literal -> Str param coercion
+(silent-zero gate)` group asserts bare-literal == `str_from`-wrapped for all 11 fns (23/23 total), and
+is **mutation-proven**: dropping `: Str` from `is_dir` ⇒ 2 FAIL, from `dir_walk` ⇒ 1 FAIL, restored ⇒
+23/23.
+
+**The general footgun is now documented, not just this file's instance:** cycc's string-literal→`Str`
+auto-coercion fires *only* for a param annotated `: Str`. Any stdlib fn with an untyped param that
+feeds `str_len`/`str_data` will silently read `load64(ptr+8)` as a length and return empty rather than
+error. This is a library-contract obligation, not a compiler bug — but it is a **silent-wrong-value**
+class and the rest of `lib/` warrants the same sweep.
+
+### Added — agnos GPU descriptor-array band `#92`/`#93` (band now contiguous #82–#93)
+
+`SYS_GPU_SHADER_OP = 92` (`sys_gpu_shader_op(desc_uva, len)`) + `SYS_GPU_MODESET_OP = 93`
+(`sys_gpu_modeset_op(desc_uva, len)`) in `lib/syscalls_x86_64_agnos.cyr`. Both take the **identical
+`(desc_uva, len)` shape** — a userland VA pointing at an array of fixed-size records, with the **op
+code inside each record** rather than in the syscall number (agnos decisions D-3 + MD-4). That design
+exists because per-operation syscalls with inline scalar args run *out of argument slots*: a gradient
+needing two stops plus geometry had no room left at all and never got a ring-3 path, an ABI break that
+cost the shader arc its S12.
+
+`#92` was the urgent one — agnos **shipped it and a consumer was working around the missing wrapper**
+with a raw `syscall(92, …)` (`aethersafha/src/gpu.cyr:97-102`, and agnos's own `/bin/gpublend`). `#93`
+is wrapped **ahead of its kernel half** (agnos bite H3), which the Tier-2 "don't wrap until agnos
+ships" rule would normally forbid — safe here for a structural reason: these wrappers are
+**layout-agnostic**, passing a pointer and a length and encoding not one field of the record, so the
+record layout can keep growing without ever touching the signature. The old rule existed because
+`#84`–`#91` encode *packed geometry* in their arguments, where a kernel-side repack silently
+invalidates a shipped wrapper. Frozen for both: the number, the arity/meaning, the `0`/negative
+return, and the name.
+
+**Safety:** `92 = chown(path,uid,gid)` on Linux and arg1 is a real user VA the kernel resolves **as a
+path** — the most dangerous collision in the whole band (a real path-resolving metadata write, not an
+`EBADF`). `93 = fchown(fd,…)`, where arg1 being a large VA makes a stray call overwhelmingly `EBADF` —
+a reason for calm, **not** for dropping the gate, since "EBADF most of the time" is not a safety
+property. Both reachable ONLY on agnos via the file-level `#ifdef CYRIUS_TARGET_AGNOS` peer gate, so
+off-agnos a referencing build fails at *compile* time. `agnos-crossbuild-gate.sh` now asserts #82–#93
+on both legs; **mutation-proven** (`#93 → 77` ⇒ FAIL, `#92 → 78` ⇒ FAIL, restored ⇒ PASS).
+Resolves agnos `2026-07-23-gpu-modeset-op-93-cyrius-wrapper.md`.
+
+### Filed — P0: `fn_table` growth past 8192 silently corrupts six fixed fn-indexed side tables
+
+Found while investigating stiva's `fn_table 90%, identifiers 92%` report; **filed, not fixed here** —
+it is a compiler-substrate change that deserves its own slot, and it is now the most urgent open item.
+`_fnt_grow` has grown the 17 `_fnt_*` tables since v6.2.0 (ceiling 32768), but **six other tables keyed
+by the same `fi` were never migrated** and remain fixed 8192-slot bands packed back-to-back
+(`fn_deprecated_msg` 0x100000, `fn_regalloc` 0x14A000, `fn_ret_sid` 0x15A000, `fn_variadic` 0x16A000,
+`fn_flags` 0x17A000, `fn_var_bytes` 0x1C8000) — so index 8192 of each **is index 0 of its neighbour**,
+and `PARSE_FN`'s unconditional per-fn resets write straight into them.
+
+Reproduced live, one index apart: in an 8300-fn unit with `#must_use` on fn 58, making fn **8250**
+reachable (8250−8192=58) **silently wipes the flag** — no diagnostic at all — while fn **8251** leaves
+it intact. Same class the v6.3.0 CHANGELOG describes for the *var* family ("a family of SEVEN … any
+unmigrated one silently overflows"); the fn-family repeat survived because **there is no >8192-fn gate
+in check.sh**.
+
+**And the warning goes silent exactly when corruption starts:** `_capacity_warnings` computes against
+the *live* `_fnt_cap`, so 8191 fns warns at 99 % but 9000 fns reports 54 % and warns not at all
+(verified — a 9000-fn unit compiles with zero capacity warnings). A consumer who heeds the 85 % warning
+and watches it disappear reads the silence as success. **stiva is at 7443/8192 — ~750 fns away.**
+
+Filed as `issues/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-tables.md` with the
+cybs-safe fix shape (the v6.4.23 `_vsgn_base` MAX-size-at-init precedent — *not* an 8th grow-chain
+link, which desynced cybs for the var family), plus three co-requisites: `REGFN`'s
+forward-overload site still writing pre-grow bases, the DCE `live[4096]`/clear-1024 mismatch, and a
+mutation-provable >8192-fn gate.
+
+Companion filed as `issues/2026-07-23-identifier-pool-256kb-cap-growable-in-place.md`: the 256 KB
+identifier pool **is** growable in place to a hard 640 KB ceiling (band `0xA0000–0x100000` verified
+free in all 7 forks; a scratch build at 620015 identifiers self-hosts byte-identical), and 256→512 KB
+is a constants-only change. stiva has already split its test suite **four times** to stay under it.
+
+### Housekeeping
+
+- Archived `2026-07-23-find-files-silently-returns-zero-matches.md` (**resolved v6.4.72**) after
+  re-verifying on live code: bare-literal, `str_from`, `dir_walk` control and `find_files_with_prunes`
+  now all agree at 34 matches over `src/`. The caller audit it asked for came back **clean** — the
+  TS-corpus release gates already passed `str_from(...)` and were never silently vacuous.
+- Filed + archived `2026-07-23-cyrius-audit-capacity-skip-dep-prepend.md` for the above.
+- Removed a stray 958 KB `-o` ELF binary accidentally committed to the repo root in `6a041e54`.
+
 ## [6.4.72] — 2026-07-23
 
 ### Added — agnos GPU band `#90`/`#91` (Tier 2, band now contiguous #82–#91)

@@ -1,4 +1,31 @@
-# `find_files` / `find_files_with_prunes` silently return 0 matches — OPEN
+# `find_files` / `find_files_with_prunes` silently return 0 matches — RESOLVED
+
+> **✅ RESOLVED in v6.4.72** (`lib/fs.cyr`; CHANGELOG [6.4.72]).
+>
+> **The speculated root cause in this document was WRONG** — it was not allocator aliasing and
+> not a "heap regime" issue. `find_files(path, ext)` had an **untyped `ext` param**, and the
+> compiler's literal→`Str` auto-coercion in `PARSE_FNCALL` fires only for a param declared
+> `: Str`. So a bare `".cyr"` arrived as a raw cstring POINTER, and `str_ends_with` read its
+> length from `load64(ptr + 8)` — garbage — so every entry failed the suffix test. The
+> ingredients each worked in isolation precisely because `str_ends_with` IS typed `: Str` and
+> therefore coerced the literal at its own call boundary. `find_files(path, str_from(".cyr"))`
+> always returned the full set.
+>
+> Fixed by annotating `path`/`ext` as `: Str` on `find_files`, `find_files_with_prunes`, and
+> `path_has_ext`. Verified 2026-07-23 on 6.4.73: all four forms (bare literal, `str_from`,
+> `dir_walk` control, and `find_files_with_prunes`) agree at **34 matches** over `src/`.
+>
+> **The caller audit this issue asked for came back clean.** The TS-corpus release gates
+> (`programs/checks/ts.cyr:408`, `programs/ts_test_runner.cyr:206`) already passed
+> `str_from(...)` for both args, so they were **never** silently vacuous — the placebo risk was
+> real as a class but did not materialize. `programs/vidya.cyr:186` and
+> `programs/cyrius-init.cyr:892` likewise wrap. `cbt/quality.cyr`'s `cmd_coverage` keeps its
+> `dir_walk` + inline `str_ends_with` form as the equivalent simplest shape.
+>
+> **The residual worth remembering is the language-level footgun, not this one function:** an
+> untyped param silently receives an un-coerced cstring pointer wherever a `Str` is expected.
+> That is a silent-wrong-value class across any stdlib fn with an untyped string param.
+
 
 **Discovered:** 2026-07-23 while fixing `cyrius coverage` (`cbt/quality.cyr`, issue
 `2026-07-23-hoosh-coverage-reports-stdlib-not-local-repo.md`). The coverage rewrite had to

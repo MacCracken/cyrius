@@ -1184,12 +1184,19 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     }
     if (file_exists(source) == 0) { _err_ctx("file not found", source); return 1; }
 
-    # Compile with CYRIUS_STATS=1, capture stderr
+    # Compile with CYRIUS_STATS=1, capture stderr.
+    # v6.4.73: feed the compiler the MATERIALIZED source (manifest dep includes +
+    # defines prepended), not the raw file. Pre-.73 this forked cycc on `source`
+    # directly, so on any real project every stdlib fn was undefined, the compile
+    # aborted BEFORE the stats block, and the --check path below then found zero
+    # stats lines and printed "ok (all caps under 85%)". See the placebo guard at
+    # the bottom of this fn. CHANGELOG [6.4.73].
+    var cap_source = _materialize_source(source);
     var tmpout = "/tmp/cyrius_cap_out";
     var tmperr = "/tmp/cyrius_cap_err";
     var pid = sys_fork();
     if (pid == 0) {
-        var sfd = sys_open(source, O_RDONLY, 0);
+        var sfd = sys_open(cap_source, O_RDONLY, 0);
         if (sfd < 0) { sys_exit(1); }
         sys_dup2(sfd, 0);
         sys_close(sfd);
@@ -1218,15 +1225,33 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
         sys_execve("/bin/sh", &sh_argv, _envp);
         sys_exit(127);
     }
-    var status_buf[1];
+    var status_buf[8];
     sys_waitpid(pid, &status_buf, 0);
+    var cap_status = load32(&status_buf);
+    var cap_failed = 1;
+    if (WIFEXITED(cap_status) == 1) { if (WEXITSTATUS(cap_status) == 0) { cap_failed = 0; } }
 
-    # Read stderr output
-    var errbuf = alloc(8192);
-    var errlen = file_read_all(tmperr, errbuf, 8191);
+    # Read stderr output.
+    # v6.4.73: 1 MiB, was 8 KiB. The stats block is printed at the END of the
+    # compile, so on any project whose warnings exceed the buffer the stats lines
+    # were the FIRST thing truncated away — stiva 3.0.6 emits ~20 KB of
+    # duplicate-fn warnings before them. An 8 KiB read there captured warnings
+    # only, and the caller read that as "no tables near their cap".
+    var errbuf = alloc(1048576);
+    var errlen = file_read_all(tmperr, errbuf, 1048575);
     sys_unlink(tmperr);
     if (errlen <= 0) { _err("no stats output from compiler"); return 1; }
     store8(errbuf + errlen, 0);
+    # The compile itself must have SUCCEEDED before any utilization number means
+    # anything. A failed compile produces no stats lines, and every consumer below
+    # treats "no lines" as "nothing over the threshold" — which is how `cyrius
+    # capacity --check` reported `ok (all caps under 85%)` for a project sitting at
+    # fn_table 90% / identifiers 92%. Fail loud instead.
+    if (cap_failed == 1) {
+        sys_write(STDERR_FD, errbuf, errlen);
+        _err_ctx("compile failed — no capacity numbers to report", source);
+        return 1;
+    }
 
     if (json_mode == 1) {
         # Parse "  name:    used / cap" lines into JSON
@@ -1284,6 +1309,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
         sys_write(STDERR_FD, errbuf, errlen);
         # Parse "  name:    used / cap" lines, check if any >= 85%
         var hits = 0;
+        var seen = 0;   # v6.4.73: stats lines actually parsed (0 = no certification possible)
         var pos = 0;
         while (pos < errlen) {
             # Look for lines with " / " (stats format)
@@ -1320,12 +1346,23 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
                     }
                     if (cap > 0) {
                         var pct = used * 100 / cap;
+                        seen = seen + 1;
                         if (pct >= 85) { hits = hits + 1; }
                     }
                 }
             }
             while (pos < errlen && load8(errbuf + pos) != 10) { pos = pos + 1; }
             pos = pos + 1;
+        }
+        # v6.4.73 placebo guard: parsing ZERO stats lines is not a pass. It means
+        # the stats block never arrived (compile aborted, buffer truncated, or the
+        # emitter's format drifted from this parser) — none of which is evidence
+        # that the tables are under 85%. Reporting "ok" here is precisely the
+        # vacuous green CLAUDE.md warns about, so treat it as a hard failure.
+        if (seen == 0) {
+            sys_write(STDERR_FD, errbuf, errlen);
+            _err("no capacity lines parsed from compiler output — cannot certify caps");
+            return 1;
         }
         if (hits > 0) {
             sys_write(STDERR_FD, "cyrius capacity --check: ", 25);

@@ -284,40 +284,18 @@ fn _sections_base_env(): i64 {
     return 0;
 }
 
-# Compile source.cyr to output using current compiler
-# If _defines vec is set, prepend #define lines to a temp file first.
-fn compile(source, output): i64 {
-    var cc = current_cc();
-    # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64
-    # cross-compiler (the same env knobs apply — kernel_mode + ELF64 kernel).
-    # HARD-ERROR if cycc_aarch64 is absent (review P1) — never silently fall
-    # through to the x86 cycc and build an x86 kernel for an aarch64 target.
-    if (_baremetal_aa == 1) {
-        if (file_exists(_cc_arm) == 1) { cc = _cc_arm; }
-        else {
-            _err_ctx("aarch64-bare-metal-elf requested but cycc_aarch64 not found; build it via `cyrius pulsar` (or CI/install)", _cc_arm);
-            return 1;
-        }
-    }
-    if (cc == 0) {
-        _err("cycc not found. Install Cyrius or set CYRIUS_HOME.");
-        return 1;
-    }
-    if (file_exists(cc) == 0) {
-        _err_ctx("compiler not found", cc);
-        return 1;
-    }
-    if (_verbose == 1) {
-        sys_write(STDERR_FD, "[verbose] compiler: ", 20);
-        sys_write(STDERR_FD, cc, strlen(cc));
-        sys_write(STDERR_FD, "\n", 1);
-        sys_write(STDERR_FD, "[verbose] source: ", 18);
-        sys_write(STDERR_FD, source, strlen(source));
-        sys_write(STDERR_FD, "\n", 1);
-        sys_write(STDERR_FD, "[verbose] output: ", 18);
-        sys_write(STDERR_FD, output, strlen(output));
-        sys_write(STDERR_FD, "\n", 1);
-    }
+# v6.4.73 — the manifest auto-prepend, factored out of compile() so it has exactly
+# ONE implementation. `cyrius capacity` forks cycc directly (it needs CYRIUS_STATS=1
+# in the child env) instead of going through compile(), so pre-.73 it fed cycc the
+# RAW source with no dep includes at all — every stdlib fn came back undefined, the
+# compile aborted before the stats block, and `--check` then read ZERO stats lines
+# and cheerfully printed "ok (all caps under 85%)". Duplicating the prepend into
+# cmd_capacity would just set up the two copies to drift, so both call this.
+#
+# Returns the path to actually hand the compiler: `source` itself when there is
+# nothing to prepend, else a /tmp temp holding [dep includes][defines][build
+# modules][source]. Honors _skip_deps exactly as before. CHANGELOG [6.4.73].
+fn _materialize_source(source): i64 {
     # Build temp file if we have dep includes or defines to prepend.
     # v5.7.8: _skip_deps suppresses the manifest auto-prepend; defines
     # and build-modules still apply.
@@ -397,6 +375,44 @@ fn compile(source, output): i64 {
             actual_source = tmp;
         }
     }
+    return actual_source;
+}
+
+# Compile source.cyr to output using current compiler.
+# If _defines vec is set, prepend #define lines to a temp file first.
+fn compile(source, output): i64 {
+    var cc = current_cc();
+    # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64
+    # cross-compiler (the same env knobs apply — kernel_mode + ELF64 kernel).
+    # HARD-ERROR if cycc_aarch64 is absent (review P1) — never silently fall
+    # through to the x86 cycc and build an x86 kernel for an aarch64 target.
+    if (_baremetal_aa == 1) {
+        if (file_exists(_cc_arm) == 1) { cc = _cc_arm; }
+        else {
+            _err_ctx("aarch64-bare-metal-elf requested but cycc_aarch64 not found; build it via `cyrius pulsar` (or CI/install)", _cc_arm);
+            return 1;
+        }
+    }
+    if (cc == 0) {
+        _err("cycc not found. Install Cyrius or set CYRIUS_HOME.");
+        return 1;
+    }
+    if (file_exists(cc) == 0) {
+        _err_ctx("compiler not found", cc);
+        return 1;
+    }
+    if (_verbose == 1) {
+        sys_write(STDERR_FD, "[verbose] compiler: ", 20);
+        sys_write(STDERR_FD, cc, strlen(cc));
+        sys_write(STDERR_FD, "\n", 1);
+        sys_write(STDERR_FD, "[verbose] source: ", 18);
+        sys_write(STDERR_FD, source, strlen(source));
+        sys_write(STDERR_FD, "\n", 1);
+        sys_write(STDERR_FD, "[verbose] output: ", 18);
+        sys_write(STDERR_FD, output, strlen(output));
+        sys_write(STDERR_FD, "\n", 1);
+    }
+    var actual_source = _materialize_source(source);
     # v6.0.85 — Windows path. Win32 has no fork/dup2/execve, and SYS_RENAME(82)
     # + getpid(39) are not PE reroutes, so the POSIX fork+atomic-rename block
     # below can't run here. Spawn `cc < actual_source > output` via cmd.exe

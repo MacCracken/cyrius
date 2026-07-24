@@ -997,7 +997,10 @@ if (_stats_env != 0) {
         syscall(SYS_WRITE, 2, "  string_data: ", 15); PRNUM(GSPOS(S));
         syscall(SYS_WRITE, 2, " / 2097152\n",    11);
         syscall(SYS_WRITE, 2, "  code_size:   ", 15); PRNUM(GCP(S));
-        syscall(SYS_WRITE, 2, " / 1048576\n",    11);
+        # v6.4.73: 67108864, was a stale 1048576 (see src/main.cyr — the codebuf
+        # became the 64 MiB growable off-heap region at v6.4.49; this meter's
+        # denominator was never brought along, so it reported >100 % as normal).
+        syscall(SYS_WRITE, 2, " / 67108864\n",   12);
     }
 }
 # v4.8.3-alpha2: soft capacity warnings. Shared across all 7 drivers via

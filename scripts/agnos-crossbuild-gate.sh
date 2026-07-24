@@ -378,7 +378,9 @@ fn main(): i64 {
     var r8 = sys_gpu_caps(&a, 512);                # #89 bb geometry (READLINK on Linux — WRITES arg2)
     var r9 = sys_gpu_readback_shm(1, 4194368, 0);  # #90 capture bb→shm (CHMOD on Linux — setuid)
     var r10 = sys_gpu_blit_bb(0, 4194368, 65536);  # #91 bb→bb move (FCHMOD on Linux — (0,0)=fd 0 succeeds)
-    return r + r2 + r3 + r4 + r5 + r6 + r7 + r8 + r9 + r10;
+    var r11 = sys_gpu_shader_op(&a, 512);          # #92 shader desc array (CHOWN on Linux — arg1 read as a PATH)
+    var r12 = sys_gpu_modeset_op(&a, 512);         # #93 modeset desc array (FCHOWN on Linux)
+    return r + r2 + r3 + r4 + r5 + r6 + r7 + r8 + r9 + r10 + r11 + r12;
 }
 CYR
 # Leg 1 — the band resolves + emits the right numbers on agnos.
@@ -402,7 +404,8 @@ if command -v objdump >/dev/null 2>&1; then
       /\<syscall\>/ { if (last != "") { print last; last="" } }' | sort -u)
     for want in 0x52:82:SYS_GPU_DISPATCH 0x53:83:SYS_GPU_DISPATCH_F64 0x54:84:SYS_GPU_PRESENT 0x55:85:SYS_GPU_FILL \
                 0x56:86:SYS_SHM_CREATE_GPU 0x57:87:SYS_GPU_BLIT_SHM 0x58:88:SYS_GPU_FILL_RECT 0x59:89:SYS_GPU_CAPS \
-                0x5a:90:SYS_GPU_READBACK_SHM 0x5b:91:SYS_GPU_BLIT_BB; do
+                0x5a:90:SYS_GPU_READBACK_SHM 0x5b:91:SYS_GPU_BLIT_BB \
+                0x5c:92:SYS_GPU_SHADER_OP 0x5d:93:SYS_GPU_MODESET_OP; do
         hex=${want%%:*}; rest=${want#*:}; dec=${rest%%:*}; nm=${rest#*:}
         echo "$gnums" | grep -qw "$hex" \
             || { echo "FAIL: gpu probe emits no $nm #$dec ($hex) AT A SYSCALL SITE — band rotted to a stub or renumbered?"; exit 1; }
@@ -417,18 +420,20 @@ rm -f /tmp/_agnos_gpu_linux.out
 if build/cyrius build /tmp/_agnos_gpu_gate.cyr /tmp/_agnos_gpu_linux.out >/tmp/_agnos_gpu_linux.log 2>&1; then
     echo "FAIL: the gpu band RESOLVED on a non-agnos (Linux) build. On Linux x86_64 the band lands on"
     echo "      #82=rename #83=mkdir #84=RMDIR #85=creat #86=link #87=UNLINK #88=symlink #89=readlink"
-    echo "      #90=CHMOD #91=FCHMOD — so matmul pointers become paths, a NULLARY present() DELETES A"
-    echo "      DIRECTORY at whatever stale rdi holds, gpu_blit_shm DELETES A FILE, readlink WRITES into"
-    echo "      arg2, chmod can set setuid, and gpu_blit_bb's (0,0) is fd 0 = stdin so fchmod SUCCEEDS."
+    echo "      #90=CHMOD #91=FCHMOD #92=CHOWN #93=FCHOWN — so matmul pointers become paths, a NULLARY"
+    echo "      present() DELETES A DIRECTORY at whatever stale rdi holds, gpu_blit_shm DELETES A FILE,"
+    echo "      readlink WRITES into arg2, chmod can set setuid, gpu_blit_bb's (0,0) is fd 0 = stdin so"
+    echo "      fchmod SUCCEEDS, and #92's arg1 is a real user VA the kernel resolves AS A PATH (chown)"
+    echo "      — the most dangerous collision in the band."
     echo "      The band must live ONLY in the #ifdef CYRIUS_TARGET_AGNOS peer (lib/syscalls_x86_64_agnos.cyr)."
     exit 1
 fi
 if command -v objdump >/dev/null 2>&1 && [ -f /tmp/_agnos_gpu_linux.out ]; then
-    objdump -d -M intel /tmp/_agnos_gpu_linux.out 2>/dev/null | grep -qE 'mov +eax,0x5[2-9a-b]\b' \
-        && { echo "FAIL: a Linux build emitted syscall 82-91 (rename..fchmod) for the gpu band"; exit 1; }
+    objdump -d -M intel /tmp/_agnos_gpu_linux.out 2>/dev/null | grep -qE 'mov +eax,0x5[2-9a-d]\b' \
+        && { echo "FAIL: a Linux build emitted syscall 82-93 (rename..fchown) for the gpu band"; exit 1; }
 fi
 rm -f /tmp/_agnos_gpu_linux.out
-echo "PASS: CYRIUS_TARGET_AGNOS gpu band (#82-#91 correct numbers) + ABSENT on Linux (5 destructive rows gated)"
+echo "PASS: CYRIUS_TARGET_AGNOS gpu band (#82-#93 correct numbers) + ABSENT on Linux (6 destructive rows gated)"
 
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"

@@ -20,7 +20,7 @@ include "lib/fs_win.cyr"
 #endif
 
 # Join two path components with /
-fn path_join(dir, name): i64 {
+fn path_join(dir: Str, name: Str): i64 {
     var sb = str_builder_new();
     str_builder_add(sb, dir);
     if (str_len(dir) > 0) {
@@ -32,7 +32,7 @@ fn path_join(dir, name): i64 {
 }
 
 # Get basename (last component after /)
-fn path_basename(path): i64 {
+fn path_basename(path: Str): i64 {
     var slen = str_len(path);
     var sd = str_data(path);
     var last_slash = 0 - 1;
@@ -46,7 +46,7 @@ fn path_basename(path): i64 {
 }
 
 # Get dirname (everything before last /)
-fn path_dirname(path): i64 {
+fn path_dirname(path: Str): i64 {
     var slen = str_len(path);
     var sd = str_data(path);
     var last_slash = 0 - 1;
@@ -106,7 +106,7 @@ fn path_has_ext(path: Str, ext: Str): i64 {
 # Inlined (strlen + sys_open) rather than reaching up to io.cyr's file_open so
 # this base lib keeps its existing dependency surface (string.cyr supplies
 # strlen). See 2026-06-18-stdlib-native-agnos-abi-fs.md.
-fn dir_list(path): i64 {
+fn dir_list(path: Str): i64 {
     var entries = vec_new();
     var dp = str_data(path);
     var fd = sys_open(dp, strlen(dp), AO_DIRECTORY);   # agnos: (name, namelen, AO_DIRECTORY)
@@ -146,7 +146,7 @@ fn dir_list(path): i64 {
 }
 #endif
 #ifndef CYRIUS_TARGET_AGNOS
-fn dir_list(path): i64 {
+fn dir_list(path: Str): i64 {
     var entries = vec_new();
     var fd = sys_open(str_data(path), O_RDONLY, 0);
     if (fd < 0) { return entries; }
@@ -196,7 +196,7 @@ fn dir_list(path): i64 {
 #endif
 
 # List directory entries with full paths
-fn dir_list_full(path): i64 {
+fn dir_list_full(path: Str): i64 {
     var names = dir_list(path);
     var full = vec_new();
     var di = 0;
@@ -214,7 +214,7 @@ fn dir_list_full(path): i64 {
 # dir test: the kernel's ext2_open_dir() path only succeeds for a directory
 # inode (a regular file / nonexistent path → fd<0), so a successful open already
 # proves it is a directory. See dir_list above for the AO_DIRECTORY rationale.
-fn is_dir(path): i64 {
+fn is_dir(path: Str): i64 {
     var dp = str_data(path);
     var fd = sys_open(dp, strlen(dp), AO_DIRECTORY);   # agnos: (name, namelen, AO_DIRECTORY)
     if (fd < 0) { return 0; }
@@ -226,7 +226,7 @@ fn is_dir(path): i64 {
 }
 #endif
 #ifndef CYRIUS_TARGET_AGNOS
-fn is_dir(path): i64 {
+fn is_dir(path: Str): i64 {
     var fd = sys_open(str_data(path), O_RDONLY, 0);
     if (fd < 0) { return 0; }
     # v6.0.60: use a full 4096 buffer, not 32. Linux getdents64 returns the
@@ -245,7 +245,7 @@ fn is_dir(path): i64 {
 #endif
 
 # Walk a directory tree, push all file paths to a vec
-fn dir_walk(path, results): i64 {
+fn dir_walk(path: Str, results): i64 {
     var entries = dir_list(path);
     var wi = 0;
     while (wi < vec_len(entries)) {
@@ -304,7 +304,7 @@ fn find_files(path: Str, ext: Str): i64 {
 # node_modules, dist, build, .next, coverage. Signature picked
 # to mirror `dir_walk(path, results)` so callers can use the
 # same shape.
-fn dir_walk_with_prunes(path, results, prunes): i64 {
+fn dir_walk_with_prunes(path: Str, results, prunes): i64 {
     var entries = dir_list(path);
     var wi = 0;
     while (wi < vec_len(entries)) {

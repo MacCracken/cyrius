@@ -279,7 +279,19 @@ fn main(): i64 {
     # as v5.7.21's fuzz fix. cmd_soak now walks `tests/scyr/*.scyr`
     # harnesses and cmd_smoke walks `tests/smcyr/*.smcyr` files; both
     # rely on compile() reading _dep_includes for stdlib auto-prepend.
-    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1) {
+    # v6.4.73: `audit` and `capacity` join the gate — the THIRD instance of
+    # this exact bug class, and the worst, because both are the tools you
+    # reach for to find out whether a project is healthy. `_audit_sweep`
+    # calls cmd_tests + cmd_bench internally, but `audit` was never in this
+    # list, so _dep_includes stayed empty and every stdlib fn came back
+    # `undefined function 'alloc'` — stiva 3.0.6 reported `0 passed, 5
+    # failed` under `cyrius audit` while `cyrius test` on the same tree
+    # reported `202 passed, 0 failed`. It stayed invisible in-repo for a
+    # year because 250 of cyrius's own 251 .tcyr files self-declare their
+    # includes and never needed the auto-prepend — a textbook "found by
+    # ports" gap. `capacity` needs it for the same reason (see
+    # _materialize_source). CHANGELOG [6.4.73].
+    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1) {
         var dr = _auto_deps();
         if (dr > 0) { return dr; }
         # v6.4.63: name any version skew between ./lib/ and the version-pinned
