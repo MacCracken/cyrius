@@ -162,6 +162,18 @@ identifier pool **is** growable in place to a hard 640 KB ceiling (band `0xA0000
 free in all 7 forks; a scratch build at 620015 identifiers self-hosts byte-identical), and 256→512 KB
 is a constants-only change. stiva has already split its test suite **four times** to stay under it.
 
+### Gates
+
+Release gate **GREEN** on all 5 steps: self-host fixpoint byte-identical (1103528 B) · seed → cybs →
+cycc derivation OK · check.sh **147 passed, 0 failed** · cross-OS self-host + VR-01 on **real hardware,
+all four hosts** (ecb macOS-arm64, ach Intel-Mac, cass Windows, pi aarch64 — each `SELFHOST_OK` +
+`LIBTEST_OK`) · bench **self_compile 619 ms**, **cycc 1103528 B** (unchanged from 6.4.72 — the `src/`
+delta is two comment blocks plus a stats-denominator string, and `lib/fs.cyr` is not in cycc's include
+closure). No perf delta to triage.
+
+New gate coverage added this release: `tests/tcyr/fs.tcyr` bare-literal→`Str` group (23/23,
+mutation-proven) and `agnos-crossbuild-gate.sh` #82–#93 (mutation-proven both directions).
+
 ### Housekeeping
 
 - Archived `2026-07-23-find-files-silently-returns-zero-matches.md` (**resolved v6.4.72**) after
