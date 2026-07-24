@@ -370,11 +370,17 @@ jobs:
           cp "$PWD/build/cycc" "$HOME/.cyrius/bin/cycc"
           T=$(mktemp -d); trap "rm -rf $T" EXIT
           echo 'fn main() { return 42; }' > "$T/small.cyr"
-          # v5.11.19 bumped 3500 → 7000 because fn_table cap doubled
-          # 4096 → 8192; 7000/8192 = 85.4% trips the threshold
-          # (3500/8192 = 42.7% does not). Keep in sync with
-          # programs/checks/heap_audit.cyr::_capacity_gate.
-          ( echo 'object;'; i=0; while [ "$i" -lt 7000 ]; do printf 'fn f%d() { return %d; }\n' "$i" "$i"; i=$((i+1)); done ) > "$T/big.cyr"
+          # big.cyr: a "non-trivial program compiles clean + emits a real binary"
+          # source (T4/T6). 7000 fns is plenty for that and cheap to compile.
+          ( echo 'object;'; seq 0 6999 | awk '{print "fn f"$1"() { return "$1"; }"}' ) > "$T/big.cyr"
+          # trip.cyr: the --check >=85% TRIP source (T3 only). v6.4.75 raised the
+          # fn_table hard ceiling from a fixed 8192 to 32768 (the six fn-indexed
+          # side tables no longer alias past 8192 — the P0), and `capacity` now
+          # reports fn_table against 32768. So the old 7000/8192 = 85% trip no
+          # longer fires; 28000/32768 = 85.4% does. Only THIS file is that big
+          # (one ~8s compile), so T4/T6 stay on the cheap 7000-fn big.cyr. Keep in
+          # sync with programs/checks/heap_audit.cyr::_capacity_gate.
+          ( echo 'object;'; seq 0 27999 | awk '{print "fn f"$1"() { return "$1"; }"}' ) > "$T/trip.cyr"
           # T1: default mode emits 6 stat keys.
           "$CYR" capacity "$T/small.cyr" > "$T/o1" 2>"$T/e1"
           for k in fn_table identifiers var_table fixup_table string_data code_size; do
@@ -384,8 +390,8 @@ jobs:
           set +e; "$CYR" capacity --check "$T/small.cyr" > "$T/o2" 2>&1; rc=$?; set -e
           [ "$rc" -eq 0 ] || { echo "FAIL T2: rc=$rc"; cat "$T/o2"; exit 1; }
           grep -q "ok (all caps under 85%)" "$T/o2" || { echo "FAIL T2: 'ok' missing"; exit 1; }
-          # T3: --check big rc=1 + ">=85%" diagnostic.
-          set +e; "$CYR" capacity --check "$T/big.cyr" > "$T/o3" 2>&1; rc=$?; set -e
+          # T3: --check trip.cyr (28000 fns → fn_table 85% of 32768) rc=1 + ">=85%".
+          set +e; "$CYR" capacity --check "$T/trip.cyr" > "$T/o3" 2>&1; rc=$?; set -e
           [ "$rc" -eq 1 ] || { echo "FAIL T3: rc=$rc (expected 1)"; cat "$T/o3"; exit 1; }
           grep -q "table(s) at >=85%" "$T/o3" || { echo "FAIL T3: '>=85%' missing"; exit 1; }
           # T4: 7000-fn source compiles via cycc + binary sane size.

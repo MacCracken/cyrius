@@ -452,10 +452,9 @@ fn _capacity_gate(): i64 {
     var small_path = str_data(str_builder_build(small_sb));
     _write_file(small_path, "fn main() { return 42; }\n");
 
-    # Build big.cyr — 7000-fn synthetic stress source matching the
-    # `object;` + `fn fN() { return N; }` shape the .sh used. v5.11.19
-    # bumped 3500 → 7000 because the fn_table cap doubled 4096 → 8192;
-    # 7000/8192 = 85.4% trips the threshold (3500/8192 = 42.7% does not).
+    # Build big.cyr — a "non-trivial program compiles clean + emits a real
+    # binary" source (Test4/Test6). 7000 fns is plenty for that and cheap to
+    # compile; the `object;` + `fn fN() { return N; }` shape matches the old .sh.
     var big_sb_path = str_builder_new();
     str_builder_add_cstr(big_sb_path, scratch);
     str_builder_add_cstr(big_sb_path, "/big.cyr");
@@ -472,6 +471,29 @@ fn _capacity_gate(): i64 {
         ix = ix + 1;
     }
     _write_file(big_path, str_data(str_builder_build(big)));
+
+    # Build trip.cyr — the --check >=85% TRIP source (Test3 ONLY). v6.4.75 raised
+    # the fn_table hard ceiling from a fixed 8192 to 32768 (the six fn-indexed side
+    # tables stopped aliasing past 8192 — the P0 fix), and `capacity` reports
+    # fn_table against 32768. So 7000/8192 = 85% no longer fires; 28000/32768 =
+    # 85.4% does. Only THIS source is that big (one ~8s compile); Test4/Test6 stay
+    # on the cheap 7000-fn big.cyr. Keep in sync with the ci.yml capacity step.
+    var trip_sb_path = str_builder_new();
+    str_builder_add_cstr(trip_sb_path, scratch);
+    str_builder_add_cstr(trip_sb_path, "/trip.cyr");
+    var trip_path = str_data(str_builder_build(trip_sb_path));
+    var trip = str_builder_new();
+    str_builder_add_cstr(trip, "object;\n");
+    var tix = 0;
+    while (tix < 28000) {
+        str_builder_add_cstr(trip, "fn f");
+        str_builder_add_int(trip, tix);
+        str_builder_add_cstr(trip, "() { return ");
+        str_builder_add_int(trip, tix);
+        str_builder_add_cstr(trip, "; }\n");
+        tix = tix + 1;
+    }
+    _write_file(trip_path, str_data(str_builder_build(trip)));
 
     var out1 = _tmp_path("audit_capacity_out1_");
     var out2 = _tmp_path("audit_capacity_out2_");
@@ -529,8 +551,8 @@ fn _capacity_gate(): i64 {
         fail = fail + 1;
     }
 
-    # Test 3: --check on 7000-fn big.cyr rc=1 + "table(s) at >=85%".
-    var ec_t3 = _exec_in_dir3(scratch, cyrius_shim, "capacity", "--check", big_path, out3);
+    # Test 3: --check on 28000-fn trip.cyr rc=1 + "table(s) at >=85%".
+    var ec_t3 = _exec_in_dir3(scratch, cyrius_shim, "capacity", "--check", trip_path, out3);
     if (ec_t3 != 1) {
         _p("    ");
         _p(ANSI_RED);
@@ -643,7 +665,7 @@ fn _capacity_gate(): i64 {
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": 7 sub-cases (default / --check ok+fail / 7000-fn stress / --json / no-args)");
+        println(": 7 sub-cases (default / --check ok+fail@28000fns / 7000-fn compile / --json / no-args)");
     }
     _check(label, fail);
     return fail;

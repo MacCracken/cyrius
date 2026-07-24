@@ -61,6 +61,17 @@ doesn't move: 7443 fns (stiva) now reports 22 % and no warning; ~28000 fns warns
 approaching the hard fn limit". The `CYRIUS_STATS=1` meter denominator (`main.cyr`, `main_win.cyr`) and
 `cyrius capacity` follow suit (`/ 32768`, was a stale `/ 8192`).
 
+### Changed — recalibrated the two capacity-meter gates for the 32768 ceiling
+
+The `--check >=85%` trip test in **both** the CI capacity step (`.github/workflows/ci.yml`) and its
+in-repo twin (`programs/checks/heap_audit.cyr::_capacity_gate`) generated **7000 fns** to hit 85 % of
+the *old* 8192 cap. With `capacity` now reporting fn_table against 32768, 7000/32768 = 21 % no longer
+trips — CI's `Test (ubuntu)` job failed `T3: rc=0 (expected 1)`. Both gates now use a **28000-fn** trip
+source (28000/32768 = 85.4 %). To keep the cost down, only the `--check` sub-test uses the 28000-fn
+file (one ~8 s compile — inherent to that fn count on any version, not a regression); the
+compile-clean + `--json` sub-tests stay on the cheap 7000-fn source. (In-repo this hid at first because
+`_capacity_gate` shells out to the *installed* cycc, which was still 6.4.74 until the version bump.)
+
 ### Added — the >8192-fn regression gate whose ABSENCE let this survive two migrations
 
 `programs/checks/selfhost.cyr` `_fn_grow_gate` — the fn-table twin of the existing `_var_grow_gate`.
