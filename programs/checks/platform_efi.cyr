@@ -6,6 +6,20 @@
 # All lib includes + the 18 globals + the dispatcher/driver live in
 # programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
 
+# v6.4.74: count occurrences of a needle. Used by _kmode_emit_order_gate to prove
+# NON-VACUITY — see the differential there.
+fn _count_bytes(buf, n, needle, nlen): i64 {
+    if (nlen == 0) { return 0; }
+    if (nlen > n) { return 0; }
+    var c = 0;
+    var i = 0;
+    while (i <= n - nlen) {
+        if (_buf_eq(buf + i, needle, nlen) == 1) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
 fn _kmode_emit_order_gate(): i64 {
     var src_path = _tmp_path("audit_kmode_src_");
     var fd = sys_open(src_path, 577, 420);
@@ -13,7 +27,22 @@ fn _kmode_emit_order_gate(): i64 {
         _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
         return 1;
     }
-    var src = "kernel;\n\nvar marker_var = 0xDEADBEE0 | 0xF;\n\nasm { 0xF4; 0xF4; 0xF4; 0xF4; }\n";
+    # ⚠ THE MARKER MUST STAY NON-CONST-FOLDABLE. This gate proves top-level asm is
+    # emitted BEFORE the deferred gvar-init block, so it needs a global whose init
+    # actually lands in that block (emitting the `48 b9` movabs it searches for).
+    # Until v6.4.74 the marker was `0xDEADBEE0 | 0xF`, which worked only because
+    # cycc's static-init path recognised bare literals ONLY and a computed
+    # initializer therefore fell through to the runtime store — i.e. **the gate was
+    # relying on the very defect v6.4.74 fixed**. Once that release taught the
+    # static-init path to fold constant expressions, `0xDEADBEE0 | 0xF` got baked
+    # into the image, the deferred store vanished, and `_find_bytes` silently
+    # matched an UNRELATED `48 b9` in the kmode boilerplate — the gate still
+    # reported PASS while testing nothing (verified: binary 408 B → 368 B, two
+    # `48 b9` → one, gate still green).
+    # `seed_var | 0xF` references an IDENT, so `_CF_TRY` (parse_decl.cyr) refuses to
+    # fold it and the deferred init is genuinely emitted. Do NOT "tidy" this into a
+    # literal or a foldable constant expression.
+    var src = "kernel;\n\nvar seed_var = 0xDEADBEE0;\nvar marker_var = seed_var | 0xF;\n\nasm { 0xF4; 0xF4; 0xF4; 0xF4; }\n";
     sys_write(fd, src, strlen(src));
     sys_close(fd);
 
@@ -55,6 +84,59 @@ fn _kmode_emit_order_gate(): i64 {
 
     var asm_off = _find_bytes(buf, n, &asm_needle, 4);
     var gvar_off = _find_bytes(buf, n, &gvar_needle, 2);
+
+    # ── NON-VACUITY DIFFERENTIAL (v6.4.74) ──────────────────────────────────
+    # `_find_bytes` returns the FIRST `48 b9` anywhere in the image, and the kmode
+    # boilerplate contains one of its own AFTER the asm marker. So the ordering
+    # assert below passes whether or not the marker's gvar init actually exists —
+    # which is exactly how this gate stayed green when v6.4.74's const-folder made
+    # the old `0xDEADBEE0 | 0xF` marker static-init (408 B → 368 B, two `48 b9` →
+    # one, still PASS). A comment telling the next person "keep the marker
+    # non-foldable" is not a gate; this is.
+    #
+    # Compile a CONTROL with the marker gvar removed and require the real variant
+    # to contain strictly MORE `48 b9` occurrences. If the marker ever stops
+    # emitting a deferred init, the counts converge and this fails loudly.
+    var ctl_path = _tmp_path("audit_kmode_ctl_");
+    var cfd = sys_open(ctl_path, 577, 420);
+    if (cfd < 0) {
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+    var ctl_src = "kernel;\n\nvar seed_var = 0xDEADBEE0;\n\nasm { 0xF4; 0xF4; 0xF4; 0xF4; }\n";
+    sys_write(cfd, ctl_src, strlen(ctl_src));
+    sys_close(cfd);
+    var ctl_bin = _tmp_path("audit_kmode_ctlbin_");
+    var crc = _self_host_pipe(ctl_path, CC_PATH, ctl_bin);
+    sys_unlink(ctl_path);
+    var ctl_n = 0;
+    var ctl_buf = alloc(cap);
+    if (crc == 0) { ctl_n = file_read_all(ctl_bin, ctl_buf, cap); }
+    sys_unlink(ctl_bin);
+    if (ctl_n <= 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": kmode control variant did not compile — cannot prove this gate is non-vacuous");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
+    var n_with = _count_bytes(buf, n, &gvar_needle, 2);
+    var n_without = _count_bytes(ctl_buf, ctl_n, &gvar_needle, 2);
+    if (n_with <= n_without) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": marker gvar emits no deferred init (48 b9 count with=");
+        print_num(n_with);
+        _p(" without=");
+        print_num(n_without);
+        println(") — gate would pass vacuously; make the marker non-const-foldable");
+        _check("kmode==1: top-level asm emitted before 64-bit gvar inits (v5.7.19; agnos boot)", 1);
+        return 1;
+    }
 
     if (asm_off < 0) {
         _p("  ");

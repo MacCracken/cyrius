@@ -6,6 +6,116 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.74] — 2026-07-24
+
+### Fixed — module-scope `var X = <computed expr>` read 0 forever in a kernel (agnos)
+
+Consumer-filed by **agnos** (`issues/2026-07-23-cyrius-module-scope-var-expr-initializer-zero.md`).
+A module-scope `var` whose initializer was a *computed expression* — `0 - 61`, `-5`, `512 * 2`,
+`1 << 4` — initialized to **0** for the entire life of the kernel. No warning, no error. It built
+clean, `cyrius fmt`'d clean, and produced a **4/4 PASS selftest that was comparing 0 against 0**.
+
+**Mechanism (verified in code, and narrower than the filing's original framing).** `include` is not
+the discriminator — this is **x86_64-ELF kmode only**. `src/main.cyr:1768-1776` emits `PARSE_PROG`
+FIRST and `EMIT_GVAR_INITS` AFTER it when `_init_km == 1` — the deliberate v5.7.19 multiboot
+invariant (top-level asm must run before 64-bit gvar inits) that agnos depends on and the filing
+explicitly asks us *not* to change. agnos's top-level program IS the whole boot and ends in
+`arch_halt()`, so it never returns and that deferred block is **dead code**. All six other forks
+(`main_aarch64{,_native,_macho}`, `main_win`, `main_x86_macho`, `main_cx`) emit gvar inits *before*
+`PARSE_PROG`, so an aarch64 agnos kernel never had this bug. v5.11.64 had already added a static-init
+escape hatch for the literal case, but it recognised **only** a bare `= NUM ;` ("Conservative on
+purpose", `parse_decl.cyr`) — so literals were baked into the image and everything else deferred.
+
+**Fix = the filing's preferred option ★:** a constant folder (`_CF_TRY` / `_CF_EXPR` / `_CF_TERM` /
+`_CF_FACTOR` in `parse_decl.cyr`) that widens the static-init path to any foldable integer
+expression. No ordering change, no risk to the multiboot invariant. `var A = 512 * 2;` in kmode now
+produces a **byte-identical image** to `var A = 1024;`.
+
+**Precedence was the real risk and is NOT C's.** A folder disagreeing with `PEXPR`/`PARSE_TERM` would
+bake in a different value than the runtime computes — the same silent-wrong-value class being fixed.
+Pinned empirically against the running compiler: the `PARSE_TERM` tier is `* / % << >> >>>` and the
+`PEXPR` tier is `+ - & | ^`, so **`&`/`|`/`^` share precedence with `+`/`-`, left-associative**
+(`1 | 2 + 1` == 4, i.e. `(1|2)+1`, not `1|(2+1)` == 3; `5 & 3 + 1` == 2). Validated by a
+**42-expression / 84-probe differential** (folded gvar vs runtime fn-body, low *and* high byte so
+logical-vs-arithmetic shifts can't hide): **0 mismatches**.
+
+`_CF_TRY` is conservative — anything it cannot prove constant leaves `_cf_ok == 0` and falls through
+to today's runtime store, and it requires the fold to land **exactly** on the terminating `;`, so a
+partial fold is impossible. That guard makes structural folder bugs *fail-safe* (fall back to
+runtime) rather than wrong-valued.
+
+**Seed ceiling, caught by the gate that exists for it.** The first cut spelled the arithmetic shift
+`v >>> _CF_FACTOR(S)`. It self-hosted and fixpointed cleanly on `build/cycc` — then
+`seed-derive-cycc.sh` failed at step [3/5] with a bare `syntax error`: **cybs cannot lex `>>>`**
+(`bootstrap/cybs.cyr` `lexer_shr` knows only `>`, `>=`, `>>`), so it tokenised `>>` `>`. Replaced with
+`_CF_ASR`, which sign-extends using only `>>`/`<<` and masks the count to 6 bits to match the
+backend's `sar`. Exactly the case CLAUDE.md's Release Gate item 2 exists for — the cycc fixpoint does
+not substitute for the seed gate.
+
+### Fixed — `_cfo = 0` cleared BEFORE `PARSE_FACTOR`, which re-arms it (17 sites) — silent wrong values
+
+**A pre-existing codegen bug found while building the folder, and a prerequisite for it.** Fixing it
+was not optional: shipping a folder that matched the *buggy* runtime would have been the
+"codegen bug written down as a language rule" antipattern.
+
+`PARSE_FACTOR` re-arms the constant-fold state for a bare NUM (`parse_expr.cyr:358/368` set
+`_cfp = GCP(S)` then `_cfv = val; _cfo = 1`). Seventeen branches across `/ % << >> >>>` cleared
+`_cfo = 0` **before** calling it, so the flag came back on with `_cfp` pointing *before* the RHS
+literal's emit. `PEXPR` then saw a live fold, combined the RHS literal with the next operator, and
+`SCP(S, _cfp)` **rewound the code pointer over the entire shift/div sequence**, emitting just the
+folded constant. Measured before the fix, in ordinary function bodies (not kmode):
+
+| expression | before | correct |
+|---|---|---|
+| `100 >>> 1 + 1` | **2** | 51 |
+| `100 >>> 2 * 3` | **6** | 75 |
+| `100 >> 0 + 1` | **1** | 101 |
+| `100 << 0 + 1` | **1** | 101 |
+
+`>>` and `<<` mostly escaped because their own fold path normally handles a literal RHS and keeps
+`_cfv` correct — the bug bit exactly where that fold could not apply (shift count 0, or a value
+outside the `0x10000` window). A parenthesised RHS also masked it (`100 >>> (1) + 1` == 51), since
+the paren path never re-arms. Fix: move `_cfo = 0` to *after* the emit at all 17 sites.
+
+### Fixed — the `kmode emit order` gate passed vacuously
+
+`programs/checks/platform_efi.cyr` proves top-level asm is emitted before the deferred gvar-init
+block by searching for a `48 b9` movabs. Its marker was `var marker_var = 0xDEADBEE0 | 0xF;` — a
+*deliberately computed* initializer, chosen so it would land in the runtime-store path. **The gate was
+therefore relying on the very defect this release fixes.** Once the folder baked that marker into the
+image, the deferred store vanished and `_find_bytes` silently matched an unrelated `48 b9` in the
+kmode boilerplate: binary 408 B → 368 B, two `48 b9` → one, **gate still green**.
+
+Marker changed to `seed_var | 0xF` (an IDENT, which `_CF_TRY` refuses to fold). A comment telling the
+next person "keep this non-foldable" is not a gate, so the gate now **proves its own non-vacuity**:
+it compiles a control variant with the marker gvar removed and requires the real variant to contain
+strictly more `48 b9` occurrences. **Mutation-proven** — restoring the foldable marker now yields
+`FAIL: marker gvar emits no deferred init (48 b9 count with=1 without=1) — gate would pass vacuously`
+instead of a false PASS.
+
+### Testing
+
+`tests/tcyr/gvar_static_init.tcyr` 23 → **29 asserts**: a 17-expression fold-correctness corpus
+covering both precedence tiers, parens, double unary minus, left-assoc chains, `%`, `^`, and the
+arithmetic `>>>`. Because the fold writes its result into the static-init image bytes, a mis-folded
+value is read straight back, so these asserts gate the folder directly. Item (5)'s stale
+"still works via runtime-store path" label corrected — it is const-folded now.
+
+**Mutation-proven, including one blind spot the mutation testing itself exposed:** folding `+` as `-`
+⇒ 5 FAIL; dropping unary minus ⇒ 1 FAIL; but making `>>` arithmetic ⇒ **0 FAIL**, because the corpus
+only shifted the *positive* `16 >> 2`, where logical and arithmetic agree. Added
+`(0 - 16) >> 2 == 4611686018427387900` (logical, not `-4`) — that mutation now fails. A test that
+cannot fail is not a test.
+
+### Gates
+
+Release gate **GREEN** on all 5 steps: self-host fixpoint byte-identical · seed → cybs → cycc
+derivation OK (the gate that caught the `>>>` lexing ceiling) · check.sh **147 passed, 0 failed** ·
+cross-OS self-host + VR-01 on **real hardware, all four hosts** (ecb, ach, cass, pi — each
+`SELFHOST_OK` + `LIBTEST_OK`) · bench **self_compile 619 ms** (6.4.73: 619 ms — flat), **cycc
+1103544 B** (+16 B from 6.4.73's 1103528 B: the folder plus `_CF_ASR`, against 17 `_cfo` sites moved).
+No perf delta to triage.
+
 ## [6.4.73] — 2026-07-23
 
 ### Fixed — `cyrius audit` and `cyrius capacity` compiled project sources with NO stdlib includes

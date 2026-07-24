@@ -25,10 +25,18 @@
 # (3) Hex literal reads back at value.
 # (4) `var X = 0;` falls through to BSS-zero path (no regression
 #     for the zero-literal case which all-of-cc5 uses extensively).
-# (5) Arithmetic RHS falls through to the runtime-store path —
-#     read at module top is undefined in kmode; here we only
-#     check it reads N after main() has fully entered (the
-#     pre-fix path still works for executable mode).
+# (5) Arithmetic RHS. UPDATED v6.4.74: this NO LONGER falls through to the
+#     runtime-store path — `_CF_TRY` (parse_decl.cyr) const-folds it and it
+#     takes the same static-init path as a literal. That is the whole point of
+#     v6.4.74: in kmode the deferred block is unreachable for a kernel whose
+#     top-level program never returns, so a computed initializer read 0 forever.
+# (6) v6.4.74 fold correctness — PRECEDENCE IS THE RISK. A folder that disagrees
+#     with PEXPR/PARSE_TERM would bake in a different value than the runtime
+#     computes, which is the same silent-wrong-value class being fixed. These
+#     asserts gate it directly: with the fold applied the static init writes
+#     fold(expr), so a mis-folded value is read back verbatim and fails here.
+#     Note cyrius is NOT C — `&`/`|`/`^` share precedence with `+`/`-`
+#     (left-assoc), so `1 | 2 + 1` is `(1|2)+1` == 4, not `1|(2+1)` == 3.
 
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
@@ -42,8 +50,34 @@ var XHCI_EVT_RING_SEGMENT_SIZE = 256;
 var HEX_LIT = 0xDEADBEEF;
 # (4) Zero literal — BSS-zero is already correct.
 var ZERO_LIT = 0;
-# (5) Arithmetic RHS — falls through to runtime store.
+# (5) Arithmetic RHS — v6.4.74: const-folded into the static-init path.
 var ARITH = 100 + 1;
+# (6) v6.4.74 fold-correctness corpus. Each value is what the RUNTIME evaluator
+# produces for the same expression (verified by a 42-expression differential at
+# the .74 cut); a precedence or operator bug in _CF_EXPR/_CF_TERM/_CF_FACTOR
+# changes these and fails the asserts below.
+var F_MUL     = 512 * 2;          # 1024
+var F_NEG     = -5;               # -5   (unary minus)
+var F_SUB     = 0 - 61;           # -61
+var F_SHL     = 1 << 4;           # 16
+var F_SHR     = 16 >> 2;          # 4    (positive operand — does NOT distinguish >> from >>>)
+# A NEGATIVE operand is what actually pins `>>` as LOGICAL. Without this the
+# mutation `>>` -> arithmetic passes the whole suite (found by mutation testing
+# at the .74 cut). (0-16) as u64 is 0xFFFFFFFFFFFFFFF0; >> 2 logical gives
+# 0x3FFFFFFFFFFFFFFC. Arithmetic would give -4.
+var F_SHRNEG  = (0 - 16) >> 2;    # 4611686018427387900, NOT -4
+var F_ASR     = (0 - 16) >>> 2;   # -4   (ARITHMETIC — cybs can't lex >>>, see _CF_ASR)
+var F_MOD     = 100 % 7;          # 2
+var F_PRE1    = 2 + 3 * 4;        # 14   (* binds tighter)
+var F_PRE2    = 1 | 2 + 1;        # 4    (NOT C: | same tier as +, left-assoc)
+var F_PRE3    = 5 & 3 + 1;        # 2
+var F_PAREN   = (2 + 3) * 4;      # 20
+var F_CHAIN   = 100 - 10 - 5;     # 85   (left-assoc)
+var F_XOR     = 255 ^ 15;         # 240
+var F_HEXOR   = 0xDEADBEE0 | 0xF; # 0xDEADBEEF
+var F_MIX     = 1 + 2 * 3 - 4 / 2;# 5
+var F_UNARY2  = - -7;             # 7
+var F_SHLCHN  = 1 << 2 << 3;      # 32
 
 fn read_small(): i64 { return SMALL_LIT; }
 fn read_spins(): i64 { return XHCI_CMD_TIMEOUT_SPINS; }
@@ -79,7 +113,28 @@ assert_eq(read_spins(), 10000000,  "(2') XHCI_CMD_TIMEOUT_SPINS consistent post-
 assert_eq(read_segsz(), 256,       "(3a') segsz consistent post-entry");
 assert_eq(read_hex(),   0xDEADBEEF, "(3b') hex consistent post-entry");
 assert_eq(read_zero(),  0,          "(4') zero consistent post-entry");
-assert_eq(read_arith(), 101,        "(5) arithmetic RHS still works via runtime-store path");
+assert_eq(read_arith(), 101,        "(5) arithmetic RHS const-folded to static init");
+
+# (6) v6.4.74 — fold correctness. These are read at module top, i.e. through the
+# static-init image bytes, so a wrong fold surfaces here directly.
+assert_eq(F_MUL,     1024,       "(6a) 512 * 2");
+assert_eq(F_NEG,     0 - 5,      "(6b) unary minus -5");
+assert_eq(F_SUB,     0 - 61,     "(6c) 0 - 61");
+assert_eq(F_SHL,     16,         "(6d) 1 << 4");
+assert_eq(F_SHR,     4,          "(6e) 16 >> 2");
+assert_eq(F_SHRNEG,  4611686018427387900, "(6e2) (0-16) >> 2 is LOGICAL (not sign-filled)");
+assert_eq(F_ASR,     0 - 4,      "(6f) (0-16) >>> 2 (arithmetic, sign-preserving)");
+assert_eq(F_MOD,     2,          "(6g) 100 % 7");
+assert_eq(F_PRE1,    14,         "(6h) 2 + 3 * 4 — * binds tighter");
+assert_eq(F_PRE2,    4,          "(6i) 1 | 2 + 1 == (1|2)+1 — NOT C precedence");
+assert_eq(F_PRE3,    2,          "(6j) 5 & 3 + 1 == (5&3)+1");
+assert_eq(F_PAREN,   20,         "(6k) (2 + 3) * 4");
+assert_eq(F_CHAIN,   85,         "(6l) 100 - 10 - 5 left-assoc");
+assert_eq(F_XOR,     240,        "(6m) 255 ^ 15");
+assert_eq(F_HEXOR,   0xDEADBEEF, "(6n) 0xDEADBEE0 | 0xF");
+assert_eq(F_MIX,     5,          "(6o) 1 + 2 * 3 - 4 / 2");
+assert_eq(F_UNARY2,  7,          "(6p) - -7 double unary");
+assert_eq(F_SHLCHN,  32,         "(6q) 1 << 2 << 3 left-assoc");
 
 var _exit_code = assert_summary();
 syscall(60, _exit_code);

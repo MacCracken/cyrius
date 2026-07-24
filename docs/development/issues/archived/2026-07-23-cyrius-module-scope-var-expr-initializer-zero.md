@@ -1,4 +1,39 @@
-# Cyrius: a module-scope `var` with a COMPUTED initializer silently becomes 0 (included modules)
+# Cyrius: a module-scope `var` with a COMPUTED initializer silently becomes 0 — RESOLVED
+
+> **✅ RESOLVED in v6.4.74** (`src/frontend/parse_decl.cyr`; CHANGELOG [6.4.74]).
+>
+> Shipped **option ★, the preferred fix**: a constant folder (`_CF_TRY`/`_CF_EXPR`/`_CF_TERM`/
+> `_CF_FACTOR`) that widens v5.11.64's static-init path from a bare `= NUM ;` to any foldable
+> integer expression. Emit order is untouched, so the `PARSE_PROG`-before-`EMIT_GVAR_INITS`
+> multiboot invariant agnos depends on is preserved exactly. `var A = 512 * 2;` in kmode now
+> produces a **byte-identical image** to `var A = 1024;`.
+>
+> **Two corrections to this document's analysis, both confirmed by reading and running the code:**
+>
+> 1. The corrected framing in the body (kmode emit ordering, not included-modules) is right, and is
+>    narrower still: this is **x86_64-ELF kmode ONLY**. The other six forks (`main_aarch64`,
+>    `_native`, `_macho`, `main_win`, `main_x86_macho`, `main_cx`) all emit `EMIT_GVAR_INITS`
+>    *before* `PARSE_PROG`, so an **aarch64 agnos kernel never had this bug**.
+> 2. The "Related, possibly same root cause" item — `var X[N]` sizing — is **already closed** and was
+>    not bundled. Global arrays are N×8 in included modules and at both top-level passes alike
+>    (fixed v6.4.10, `parse_decl.cyr`). The surviving global-vs-function-local difference is
+>    deliberate and documented.
+>
+> **Correctness validation.** Precedence was the real hazard: cyrius is **not C** — `&`/`|`/`^` share
+> precedence with `+`/`-` (left-assoc), so `1 | 2 + 1` is 4, not 3. A folder that disagreed with
+> `PEXPR`/`PARSE_TERM` would have baked in different values than the runtime computes, i.e. the same
+> silent-wrong-value class. Verified by a 42-expression / 84-probe differential (folded gvar vs
+> runtime fn-body, low and high byte): **0 mismatches**. `tests/tcyr/gvar_static_init.tcyr` grew to
+> 29 asserts and is mutation-proven.
+>
+> **Two further bugs were found and fixed in the same release** because they were prerequisites:
+> a pre-existing `_cfo`-ordering codegen bug that made `100 >>> 1 + 1` evaluate to 2 and
+> `100 >> 0 + 1` to 1 in *ordinary function bodies* (17 sites), and the `kmode emit order` gate,
+> which was passing **vacuously** — its marker was a computed initializer chosen to exercise the very
+> defect being fixed, so folding it silently reduced the gate to matching unrelated boilerplate.
+>
+> **The workaround in this document can now be reverted**: agnos may write these rc codes as named
+> `var`s again. The "do not tidy these into named `var`s" warning no longer applies at cycc ≥ 6.4.74.
 
 - **Filed**: 2026-07-23
 - **Reporter**: agnos (kernel), during modeset-arc bite H4
