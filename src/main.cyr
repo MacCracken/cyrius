@@ -130,7 +130,7 @@
 #
 # --- Reclaimable / scratch ---
 #   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
-#   0x1C8000  fn_var_bytes  [65536]       8192 × 8B — per-fn array-bytes
+#   0x1C8000  (FREED v6.4.75 — was fn_var_bytes; now _fnvb_base, alloc'd max-sized)
 #                                        accumulator (sum of all
 #                                        `var foo[N]` aligned sizes
 #                                        registered inside this fn body).
@@ -142,7 +142,7 @@
 #                                        DCE. Uses the slot reclaimed at
 #                                        v5.11.19 when fn_regalloc relocated
 #                                        0x1C8000 → 0x14A000. v5.11.62.
-#   0x14A000  fn_regalloc   [65536]       8192 per-fn #regalloc flags (v4.8.4-alpha4; v5.11.19 doubled + relocated 0x1C8000 → 0x14A000)
+#   0x14A000  (FREED v6.4.75 — was fn_regalloc; now _fnreg_base, alloc'd max-sized)
 #   0x1D8000  enum_const_val[8192]        1024 slots × 8 B — PARSE_ENUM_DEF
 #                                        stores (1<<63)|val per variant; read
 #                                        by PARSE_FACTOR to const-fold enum
@@ -179,13 +179,13 @@
 #                                        relocation collection (DIR64 sites),
 #                                        populated by _pe_layout + read by
 #                                        EMITPE_EXEC's .reloc writer (v5.5.35)
-#   0x15A000  fn_ret_sid    [65536]       8192 × 8B — per-fn struct return id (v5.11.19 doubled + relocated 0x1EC000 → 0x15A000)
+#   0x15A000  (FREED v6.4.75 — was fn_ret_sid; now _fnret_base, alloc'd max-sized)
 #                                        (0 = scalar return, sid = struct;
 #                                        set by PARSE_FN `: StructName` annot,
 #                                        read by PARSE_RETURN + call-site to
 #                                        emit Win64 hidden-RCX / SysV-RDI
 #                                        retptr convention (v5.5.36 Phase 2b)
-#   0x16A000  fn_variadic   [65536]       8192 × 8B — per-fn variadic flag (v5.11.19 doubled + relocated 0x1F4000 → 0x16A000)
+#   0x16A000  (FREED v6.4.75 — was fn_variadic; now _fnvar_base, alloc'd max-sized)
 #                                        (0 = fixed-arity, 1 = `fn f(a, ...)`
 #                                        took an ellipsis tail); set by
 #                                        PARSE_FN's param loop on seeing
@@ -194,7 +194,7 @@
 #                                        float-dup when an arg is f64;
 #                                        callee-side save-area prologue +
 #                                        va_arg stdlib is Phase 3-full.
-#   0x17A000  fn_flags      [65536]       8192 × 8B — per-fn attribute bits (v5.11.19 doubled + relocated 0x1FC000 → 0x17A000)
+#   0x17A000  (FREED v6.4.75 — was fn_flags; now _fnflg_base, alloc'd max-sized)
 #                                        (v5.6.3). bit0 = #must_use (warn
 #                                        when return is dropped at
 #                                        expression-statement level); bit1
@@ -271,7 +271,7 @@
 #                                        tagging. v5.8.24 moved 0x214808
 #                                        → 0x216008 + grew 256→1024 with
 #                                        the cap bump.
-#   0x100000 fn_deprecated_msg [65536]   8192 × 8B — per-fn deprecation (v5.11.19 doubled + relocated 0x104000 → 0x100000)
+#   0x100000  (FREED v6.4.75 — was fn_deprecated_msg; now _fndep_base, alloc'd max-sized)
 #                                        message token value (v5.6.4). 0 =
 #                                        no message; nonzero = (offset<<16)
 #                                        | length into str_data at 0x21A000
@@ -2059,7 +2059,7 @@ if (_stats_env != 0) {
     if (load8(_stats_env) == 49 && load8(_stats_env + 1) == 0) {
         syscall(SYS_WRITE, 2, "cyrius stats:\n", 14);
         syscall(SYS_WRITE, 2, "  fn_table:    ", 15); PRNUM(GFNC(S));
-        syscall(SYS_WRITE, 2, " / 8192\n",        8);
+        syscall(SYS_WRITE, 2, " / 32768\n",       9);   # v6.4.75: hard ceiling (_fnt_grow max), was a stale 8192
         syscall(SYS_WRITE, 2, "  identifiers: ", 15); PRNUM(GNPOS(S));
         syscall(SYS_WRITE, 2, " / 262144\n",     10);
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));

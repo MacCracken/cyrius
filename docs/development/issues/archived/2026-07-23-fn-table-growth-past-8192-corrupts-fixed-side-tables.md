@@ -1,4 +1,29 @@
-# P0: `fn_table` growth past 8192 silently corrupts six fixed fn-indexed side tables — and the capacity warning goes SILENT at exactly that point
+# P0: `fn_table` growth past 8192 silently corrupts six fixed fn-indexed side tables — RESOLVED
+
+> **✅ RESOLVED in v6.4.75** (`src/common/util.cyr`, `src/frontend/parse_fn.cyr`,
+> `src/backend/{x86,aarch64}/fixup.cyr`; CHANGELOG [6.4.75]).
+>
+> All four proposed items shipped, plus the stale-doc cleanup:
+> 1. **The six side tables** (`fn_deprecated_msg`, `fn_regalloc`, `fn_ret_sid`, `fn_variadic`,
+>    `fn_flags`, `fn_var_bytes`) now use the lazy-alloc-at-32768 pattern (the `_fnt_tparams` /
+>    `_vsgn_base` precedent) — each a `_fn*_base` gvar alloc'd max-sized on first write, never grows,
+>    **no per-fork edit, no `_fnt_grow` change**. The six fixed heap bands are freed.
+> 2. **`REGFN`'s forward-overload write** now goes through the relocatable `_fnt_ovstr`/`_ovint`/
+>    `_ovcstr` pointers instead of the stale `S + 0x97A000` base.
+> 3. **The DCE `live[]` clear loop** now covers all 4096 bytes (was 1024) on both x86 and aarch64 —
+>    the uninitialised-stack tail is gone. Confirmed it was the *diagnostic-only* (conservative:
+>    unreachable-fn kept, never a reachable one dropped) severity, but fixed regardless.
+> 4. **The capacity warning + `CYRIUS_STATS` meter** now report against the true 32768 ceiling, not
+>    the live `_fnt_cap` — 7443 fns (stiva) reports 22 % / no warning; 28000 warns "85 %".
+> 5. **`_fn_grow_gate`** added to check.sh (the twin of `_var_grow_gate`) — mutation-proven.
+>
+> **Verified:** the exact `#must_use`-at-8250 repro is fixed; **251/251 tcyr byte-identical** to
+> 6.4.74 (pure storage relocation); self-host fixpoint + seed-derive + all four cross-OS hosts green;
+> stiva 3.0.6 builds + passes all 207 tests and now reports `fn_table: 7443 / 32768`. Growth tax
+> +1.0 % self_compile (the lazy guard on the six hot accessors).
+>
+> One item from the "Related" section confirmed as recorded: the 2-byte hash slot is not the binding
+> constraint (ceiling `fi+1 ≤ 65535`, above the 32768 `_fnt_grow` cap).
 
 **Discovered:** 2026-07-23, while investigating the **stiva** agent's report of
 `Compiler caps: fn_table 90%, identifiers 92%`.

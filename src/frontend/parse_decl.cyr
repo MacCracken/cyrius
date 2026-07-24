@@ -144,8 +144,7 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     # `large static data` warning to surface "M bytes inside N
     # unreachable fns".
     if (_cur_fn_ix >= 0) {
-        S64(S + 0x1C8000 + _cur_fn_ix * 8,
-            L64(S + 0x1C8000 + _cur_fn_ix * 8) + aligned);
+        SFVB(S, _cur_fn_ix, GFVB(S, _cur_fn_ix) + aligned);
     }
     return 0;
 }

@@ -234,6 +234,56 @@ fn _var_grow_gate(): i64 {
     return fail;
 }
 
+# v6.4.75: the fn-table twin of _var_grow_gate — the gate whose ABSENCE let the
+# fn_table >8192 P0 survive two migrations. The var family was made growable at
+# v6.2.0/v6.3.0, but SIX fn-indexed side tables were left at fixed 8192-slot heap
+# bands packed back-to-back, so once _fnt_grow let the count past 8192, fn fi's
+# per-fn metadata reset wrote into slot (fi-8192) of the NEIGHBOURING table —
+# silent corruption, no diagnostic, and the capacity warning went quiet at exactly
+# that point (it divided by the live _fnt_cap). cycc self-host never caught it
+# because cycc has ~1135 fns; only a >8192-fn consumer (stiva, 7443) approached it.
+# See issues/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-tables.md.
+#
+# THE DISCRIMINATOR: put `#must_use` on a LOW fn (g58) and make a HIGH fn (g8250)
+# reachable. Pre-fix, g8250's per-fn reset clobbered fn_flags[58] (8250-8192=58),
+# WIPING the must-use bit, so discarding g58()'s result produced NO warning.
+# Post-fix each side table is its own 32768-slot alloc'd region, so the flag
+# survives and the warning fires. Mutation-proven: on 6.4.74 this emits 0
+# warnings, on 6.4.75 it emits 1 — revert any of the six accessors to the fixed
+# `S + 0xNNNNNN` band and this gate goes red.
+fn _fn_grow_gate(): i64 {
+    var label = "cyrius keeps per-fn metadata correct past 8192 fns — #must_use on fn 58 survives a reachable fn 8250 (v6.4.75; the six fn-indexed side tables no longer alias past the old 8192 cap)";
+
+    var sb = str_builder_new();
+    var nb[24];
+    var i = 0;
+    while (i < 8300) {
+        if (i == 58) { str_builder_add_cstr(sb, "#must_use\n"); }
+        str_builder_add_cstr(sb, "fn g");
+        fmt_int_buf(i, &nb);
+        str_builder_add_cstr(sb, &nb);
+        str_builder_add_cstr(sb, "(): i64 { return ");
+        fmt_int_buf(i - (i / 7) * 7, &nb);   # i % 7
+        str_builder_add_cstr(sb, &nb);
+        str_builder_add_cstr(sb, "; }\n");
+        i = i + 1;
+    }
+    # g8250 reachable (drives the >8192 reset path); g58() discarded (must-use probe).
+    str_builder_add_cstr(sb, "fn main(): i64 { var acc = g8250(); g58(); return acc; }\n");
+
+    var fail = _stderr_match_subcase(
+        "must_use on fn 58 survives reachable fn 8250 (fn-table side-table aliasing past 8192)",
+        str_data(str_builder_build(sb)),
+        "is discarded", 1);
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": 8300-fn program keeps fn 58's #must_use flag past the old 8192 cap");
+    }
+    _check(label, fail);
+    return fail;
+}
+
 fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
     var src_cap = 2000000;
     var src_buf = alloc(src_cap);

@@ -187,8 +187,10 @@ fn SFNC(S, v): i64 { S64(S + 0x18DA00, v); return 0; }
 # Phase 0 (v6.2.0): growable fn-tables. The function metadata was a FIXED family
 # of 16 parallel 8 B/slot tables at S+0x93A000..0xA2A000 plus two cap-sized 2 B/slot
 # hashes (fn_name_hash @0x110000 built at parse, fn_start_hash @0x114000 rebuilt each
-# fixup), all hard-capped at 8192 fns — and cycc itself is at ~6500 (79% full; the
-# cap error literally tells consumers to "split into compilation units"). Each table
+# fixup), all hard-capped at 8192 fns. (An earlier version of this note claimed cycc
+# was "at ~6500 (79% full)" — stale by ~6x: live measurement is ~1135 fns / 13.9%.
+# That gap is exactly WHY the >8192 side-table corruption fixed at v6.4.75 never
+# surfaced in-repo — cycc is nowhere near the cap; only a large consumer is.) Each table
 # + hash gets a relocatable base behind a single `_fnt_cap` source of truth; REGFN
 # grows the family 2x (and rehashes the name-hash) when the count would exceed the
 # cap, ceilinged at 32768 (the 2 B hash slot stores fi+1, so fi+1 <= 65535). Bases
@@ -267,6 +269,28 @@ var _fnt_namehash = 0;    # 0x110000 fn_name_hash (2 B/slot, name -> fi+1)
 var _fnt_starthash = 0;   # 0x114000 fn_start_hash (2 B/slot, start -> fi+1)
 var _fnt_hash_mask = 0;   # _fnt_cap - 1 (both hashes; cap is power-of-2)
 var _fnt_cap = 0;
+# v6.4.75 — the SIX fn-indexed side tables the v6.2.0 growable-fn_table migration
+# left behind at FIXED 8192-slot heap bands (0x100000, 0x14A000, 0x15A000,
+# 0x16A000, 0x17A000, 0x1C8000). They abutted their neighbours, so once _fnt_grow
+# let the fn count past 8192 (fi >= 8192), index fi of each wrote into slot
+# (fi-8192) of the NEXT table — silent metadata corruption with no diagnostic, and
+# the capacity warning went quiet at the same moment (it divides by the live
+# _fnt_cap). See issues/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-
+# tables.md.
+#
+# Fix follows the SAME lazy-alloc-at-max-cap pattern already used for the fn-indexed
+# _fnt_tparams / _fnt_defstart / _fnt_is_async tables just above (and _vsgn_base on
+# the var side, v6.4.23): each table is alloc'd MAX-sized (32768 slots = the
+# _fnt_grow ceiling) on first write and never grows, so it can never desync the
+# cybs-fragile grow chain — the accessors carry the whole change and NO per-fork
+# driver edit is needed. alloc() hands back kernel-zeroed bump-allocator pages, so
+# an un-written slot reads 0 exactly like the old BSS band did.
+var _fndep_base = 0;      # was 0x100000 fn_deprecated_msg (string-lit token: off<<16|len)
+var _fnreg_base = 0;      # was 0x14A000 fn_regalloc (#regalloc opt-in flag)
+var _fnret_base = 0;      # was 0x15A000 fn_ret_sid (struct-return StructName id)
+var _fnvar_base = 0;      # was 0x16A000 fn_variadic (1 = fn f(a, ...))
+var _fnflg_base = 0;      # was 0x17A000 fn_flags (must_use/deprecated/pure/io/alloc bits)
+var _fnvb_base = 0;       # was 0x1C8000 fn_var_bytes (per-fn array-bytes attribution)
 # v6.3.5 AR-01 — monomorphization substrate (gated proof). Opt-in flag that
 # re-enables the inline body-token CAPTURE (SFBS/SFBE/SFINL in PARSE_FN_DEF) so
 # the still-intact emit-time replay path (PARSE_FNCALL, GFINL!=0 branch) fires.
@@ -372,11 +396,19 @@ fn _codebuf_grow(S): i64 {
 # (GFNC/GNPOS/GVCNT/GFCNT/GSPOS/GCP), no hardcoded S+offset. CHANGELOG [6.4.50].
 fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
     if (_read_env("CYRIUS_STATS") == 0) {
-        if (GFNC(S) * 100 / _fnt_cap >= 85) {
+        # v6.4.75 — warn against the true hard ceiling (32768 = _fnt_grow's max),
+        # NOT the live _fnt_cap. Pre-.75 this divided by _fnt_cap, which DOUBLES as
+        # the table grows (8192→16384→32768): so the warning screamed "99%" at 8191
+        # fns and then went SILENT the instant the table grew (9000/16384 = 54%) —
+        # and back then 8192 was a real corruption cliff, so the silence coincided
+        # exactly with the danger. The six side tables that made 8192 a cliff are
+        # fixed (they now run to 32768 too), so the honest signal is distance to the
+        # 32768 hard error, which no longer moves.
+        if (GFNC(S) * 100 / 32768 >= 85) {
             syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
-            PRNUM(GFNC(S) * 100 / _fnt_cap);
+            PRNUM(GFNC(S) * 100 / 32768);
             syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
-            syscall(SYS_WRITE, 2, "/8192) — split into compilation units soon\n", 45);
+            syscall(SYS_WRITE, 2, "/32768) — approaching the hard fn limit; split into compilation units\n", 71);
         }
         if (GNPOS(S) * 100 / 262144 >= 85) {
             syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);
@@ -534,20 +566,31 @@ fn SFNE(S, fi, v): i64 { S64(_fnt_codeend + fi * 8, v); return 0; }
 # the by-value copy and at call sites to pre-allocate caller-
 # side struct space + pass &space as hidden first arg in
 # RDI (SysV) or RCX (Win64).
-fn GFRS(S, fi): i64 { return L64(S + 0x15A000 + fi * 8); }
-fn SFRS(S, fi, v): i64 { S64(S + 0x15A000 + fi * 8, v); return 0; }
+fn GFRS(S, fi): i64 { if (_fnret_base == 0) { return 0; } return L64(_fnret_base + fi * 8); }
+fn SFRS(S, fi, v): i64 { if (_fnret_base == 0) { _fnret_base = alloc(32768 * 8); } S64(_fnret_base + fi * 8, v); return 0; }
 
 # v5.5.36 Phase 3 — per-fn variadic marker. 0 = fixed-arity;
 # 1 = `fn f(a, ...)` (ellipsis terminator on the param list).
-fn SFVA(S, fi, v): i64 { S64(S + 0x16A000 + fi * 8, v); return 0; }
+fn SFVA(S, fi, v): i64 { if (_fnvar_base == 0) { _fnvar_base = alloc(32768 * 8); } S64(_fnvar_base + fi * 8, v); return 0; }
 # v6.2.41 — getter for the variadic marker (was write-only). Read by the
 # call-site arity check in PARSE_FNCALL to exempt variadic callees.
-fn GFVA(S, fi): i64 { return L64(S + 0x16A000 + fi * 8); }
+fn GFVA(S, fi): i64 { if (_fnvar_base == 0) { return 0; } return L64(_fnvar_base + fi * 8); }
 # Per-fn #regalloc flag (v4.8.4-alpha4). 0 = default ABI, 1 = opt-in
 # to callee-saved hot-local allocation. Set when `#regalloc` precedes
 # a `fn` definition; read by codegen in subsequent alphas.
-fn GFRA(S, fi): i64 { return L64(S + 0x14A000 + fi * 8); }
-fn SFRA(S, fi, v): i64 { S64(S + 0x14A000 + fi * 8, v); return 0; }
+fn GFRA(S, fi): i64 { if (_fnreg_base == 0) { return 0; } return L64(_fnreg_base + fi * 8); }
+fn SFRA(S, fi, v): i64 { if (_fnreg_base == 0) { _fnreg_base = alloc(32768 * 8); } S64(_fnreg_base + fi * 8, v); return 0; }
+
+# v6.4.75 — accessors for the three fn-indexed tables that previously used raw
+# `S + 0xNNNNNN + fi * 8` at their call sites (fn_flags, fn_deprecated_msg,
+# fn_var_bytes). Same lazy-alloc-at-max-cap shape as the accessors above, so the
+# raw sites become GFLG/SFLG/GFDM/SFDM/GFVB/SFVB and the fixed heap bands retire.
+fn GFLG(S, fi): i64 { if (_fnflg_base == 0) { return 0; } return L64(_fnflg_base + fi * 8); }
+fn SFLG(S, fi, v): i64 { if (_fnflg_base == 0) { _fnflg_base = alloc(32768 * 8); } S64(_fnflg_base + fi * 8, v); return 0; }
+fn GFDM(S, fi): i64 { if (_fndep_base == 0) { return 0; } return L64(_fndep_base + fi * 8); }
+fn SFDM(S, fi, v): i64 { if (_fndep_base == 0) { _fndep_base = alloc(32768 * 8); } S64(_fndep_base + fi * 8, v); return 0; }
+fn GFVB(S, fi): i64 { if (_fnvb_base == 0) { return 0; } return L64(_fnvb_base + fi * 8); }
+fn SFVB(S, fi, v): i64 { if (_fnvb_base == 0) { _fnvb_base = alloc(32768 * 8); } S64(_fnvb_base + fi * 8, v); return 0; }
 
 # v5.11.64 — static-init literal value for `var X = INT_LITERAL ;`
 # gvars detected by PARSE_GVAR_REG. FIXUP-time emit paths read these

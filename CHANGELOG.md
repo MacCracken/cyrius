@@ -6,6 +6,87 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.75] — 2026-07-24
+
+### Fixed — P0: `fn_table` growth past 8192 silently corrupted six fn-indexed side tables
+
+The Critical filed at v6.4.73 (`issues/2026-07-23-fn-table-growth-past-8192-corrupts-fixed-side-
+tables.md`), reproduced again at 6.4.74 before the fix. The v6.2.0 migration made the 17-table
+`_fnt_*` family growable (8192→32768) but left **six other tables keyed by the same fn index `fi`** at
+fixed 8192-slot heap bands, packed back-to-back: `fn_deprecated_msg` (0x100000), `fn_regalloc`
+(0x14A000), `fn_ret_sid` (0x15A000), `fn_variadic` (0x16A000), `fn_flags` (0x17A000), `fn_var_bytes`
+(0x1C8000). Once `_fnt_grow` let the count past 8192, `PARSE_FN`'s per-fn metadata reset for fn `fi`
+wrote into slot `(fi − 8192)` of the **neighbouring** table — silent corruption, no diagnostic. cycc
+self-host never caught it (cycc has ~1135 fns); only a >8192-fn consumer approached it. **stiva 3.0.6
+was at 7443/8192 (91 %), ~750 fns away.**
+
+**Fix** follows the lazy-alloc-at-max-cap pattern already used for the fn-indexed `_fnt_tparams` /
+`_fnt_defstart` / `_fnt_is_async` tables (and `_vsgn_base` on the var side, v6.4.23): each of the six
+becomes a `_fn*_base` gvar alloc'd **32768 slots** (the `_fnt_grow` ceiling) on first write and never
+grows — so it can never desync the cybs-fragile grow chain, and **no per-fork driver edit is needed**;
+the six accessors (`GFRS`/`SFRS`, `GFVA`/`SFVA`, `GFRA`/`SFRA` + new `GFLG`/`SFLG`, `GFDM`/`SFDM`,
+`GFVB`/`SFVB`) carry the whole change. `alloc()` hands back kernel-zeroed pages, so an un-written slot
+reads 0 exactly like the old BSS band. The six fixed heap bands are now free (marked in the heap map).
+
+**Verified:** the exact repro is fixed — `#must_use` on fn 58 now survives a reachable fn 8250 / 8251
+/ 9249 (previously wiped at 8250). **251/251 tcyr byte-identical to 6.4.74** (pure storage relocation,
+zero codegen impact). Self-host fixpoint + seed-derive green. Struct-return + large-array fns compile
+and run correctly past 8192.
+
+### Fixed — `REGFN` forward-overload registration wrote to a stale pre-grow base
+
+The `_fnt_ovstr`/`_fnt_ovint`/`_fnt_ovcstr` overload tables *are* in the `_fnt_grow` copy list, but the
+forward-registration site in `REGFN` (`parse_fn.cyr`) alone still wrote `S + 0x97A000 + …` instead of
+the relocatable pointer. After a grow relocated the table, a forward-registered overload landed in the
+abandoned region while every reader used the grown `_fnt_ovstr` — so an overload registered after the
+table grew past 8192 silently went missing. Now writes through `_fnt_ovstr`/`_ovint`/`_ovcstr`,
+matching the reverse-direction writes and the readers.
+
+### Fixed — DCE `live[]` reachability bitmap cleared only 1/4 of its declared size
+
+`var live[4096]` is 4096 bytes = 32768 bits (the `t3idx < 32768` root-seed bound already assumed that),
+but the clear loop stopped at 1024 bytes — so for a >8192-fn unit, bits 8192..32767 lived in
+**uninitialised stack** (`_STACK_ARRAYS` default-on since v6.3.15). The set-loop only ORs bits in, so a
+stray uninit 1-bit marked an unreachable fn "live" and kept it: non-deterministic unreachable-fn counts
+across identical runs. Conservative (never drops a reachable fn) but wrong. Clear loop now covers all
+4096 bytes, on both `src/backend/x86/fixup.cyr` and `src/backend/aarch64/fixup.cyr`.
+
+### Changed — the fn_table capacity warning and `CYRIUS_STATS` meter now report against 32768
+
+Pre-.75 `_capacity_warnings` divided by the **live** `_fnt_cap`, which doubles as the table grows — so
+it screamed "fn_table at 99 %" at 8191 fns and then went **silent** the instant the table grew
+(9000/16384 = 54 %). Back when 8192 was a corruption cliff, the silence coincided exactly with the
+danger. With the six side tables fixed, the honest signal is distance to the 32768 hard ceiling, which
+doesn't move: 7443 fns (stiva) now reports 22 % and no warning; ~28000 fns warns "85 % (28001/32768) —
+approaching the hard fn limit". The `CYRIUS_STATS=1` meter denominator (`main.cyr`, `main_win.cyr`) and
+`cyrius capacity` follow suit (`/ 32768`, was a stale `/ 8192`).
+
+### Added — the >8192-fn regression gate whose ABSENCE let this survive two migrations
+
+`programs/checks/selfhost.cyr` `_fn_grow_gate` — the fn-table twin of the existing `_var_grow_gate`.
+Generates an 8300-fn program with `#must_use` on fn 58 and a reachable fn 8250, and asserts the
+must-use warning fires (i.e. fn 58's flag survived). **Mutation-proven**: on 6.4.74 the source emits 0
+warnings (flag wiped), on 6.4.75 it emits 1 — revert any of the six accessors to its fixed
+`S + 0xNNNNNN` band and the gate goes red. check.sh 147 → 148.
+
+### Docs
+
+Marked the six freed heap bands in the `main.cyr` heap map. Corrected stale comments that still
+described the fn-name/start hashes as "8192 slots / mask 8191" (dynamic `_fnt_cap` / `_fnt_hash_mask`
+since v6.2.0) in `fixup.cyr` + `runtime.cyr`, and the "cycc is at ~6500 (79 % full)" claim in
+`util.cyr` (live: ~1135 / 13.9 % — the gap is exactly why this never surfaced in-repo).
+
+### Gates
+
+Release gate **GREEN** on all 5 steps: self-host fixpoint byte-identical · seed → cybs → cycc
+derivation OK · check.sh **148 passed, 0 failed** (the new `_fn_grow_gate`) · cross-OS self-host +
+VR-01 on **real hardware, all four hosts** (ecb, ach, cass, pi — each `SELFHOST_OK` + `LIBTEST_OK`) ·
+bench **self_compile ~627 ms quiet-box median (+1.0 % / +6.5 ms vs 6.4.74's 620 ms)**, **cycc 1103624
+B (+32 B)**. The +1 % is the growth tax of the lazy-alloc guard (`if (_base == 0)`) on the six hot
+fn-indexed accessors — a single coherent correctness change, growth-tax-by-default, no patch
+dominates. (The release-gate run reported 645 ms because the box was still loaded from the four-host
+cross-OS step immediately prior; the quiet-box median is 627 ms.)
+
 ## [6.4.74] — 2026-07-24
 
 ### Fixed — module-scope `var X = <computed expr>` read 0 forever in a kernel (agnos)

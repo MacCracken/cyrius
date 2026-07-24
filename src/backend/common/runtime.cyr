@@ -436,10 +436,11 @@ fn _check_output_cap(S, filesz): i64 {
 # fn_start → fn-index lookup over the 8192-slot open-addressing hash at
 # S+0x114000 (built once per FIXUP before the DCE byte-scan). Knuth
 # golden-ratio multiplicative hash (0x9E3779B97F4A7C15 = floor(2^64/phi)),
-# slot 0..8191, mask 8191. Returns the fn whose start offset == tgt, or -1
-# on miss. Byte-identical to the four inline probe loops it replaces — the
-# old `probes = 8192` loop-exit on empty-slot / match becomes a direct
-# return; same termination, same result.
+# slot 0.._fnt_hash_mask, masked by `_fnt_hash_mask` (DYNAMIC since v6.2.0, grows
+# with _fnt_cap 8192→32768 — the old "slot 0..8191, mask 8191" was fixed-cap text).
+# Returns the fn whose start offset == tgt, or -1 on miss. Byte-identical to the
+# four inline probe loops it replaces — the old loop-exit on empty-slot / match
+# becomes a direct return; same termination, same result.
 fn _dce_hash_lookup(S, tgt): i64 {
     var h = (tgt * 0x9E3779B97F4A7C15) >> 16;
     var slot = h & _fnt_hash_mask;

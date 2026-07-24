@@ -987,7 +987,7 @@ if (_stats_env != 0) {
     if (load8(_stats_env) == 49 && load8(_stats_env + 1) == 0) {
         syscall(SYS_WRITE, 2, "cyrius stats:\n", 14);
         syscall(SYS_WRITE, 2, "  fn_table:    ", 15); PRNUM(GFNC(S));
-        syscall(SYS_WRITE, 2, " / 8192\n",        8);
+        syscall(SYS_WRITE, 2, " / 32768\n",       9);   # v6.4.75: hard ceiling (_fnt_grow max), was a stale 8192
         syscall(SYS_WRITE, 2, "  identifiers: ", 15); PRNUM(GNPOS(S));
         syscall(SYS_WRITE, 2, " / 262144\n",     10);
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));

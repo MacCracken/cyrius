@@ -353,13 +353,19 @@ fn FIXUP(S): i64 {
         if (load8(dce_dbg_env) == 49 && load8(dce_dbg_env + 1) == 0) { dce_dbg = 1; }
     }
     # live[i] = 1 iff fn i is reachable from entry.
-    # 1024 bytes × 8 bits = 8192 fn cap (matches the parse_fn.cyr REGFN
-    # ceiling; v6.0.4 raised from 512/4096 — a >4096-fn unit overflowed
-    # live[] with an OOB write. Was 256/2048 pre-4.7.1, 512/4096 through
-    # v6.0.3. See CHANGELOG [6.0.4]).
+    # v6.4.75: clear all 4096 bytes (× 8 = 32768-fn cap, matching the _fnt_grow
+    # ceiling and the `t3idx < 32768` root-seed bound below). The array was ALREADY
+    # declared live[4096] (4096 bytes per the `var x[N]` = N-bytes rule) since v6.0.4,
+    # but the clear loop stopped at 1024 — so for a unit with >8192 fns, bits
+    # 8192..32767 lived in UNINITIALISED stack (var arrays are stack-resident under
+    # _STACK_ARRAYS, default-on since v6.3.15). The set-loop only ORs bits in, never
+    # clears, so a stray uninit 1-bit marked an unreachable fn "live" and kept it —
+    # non-deterministic unreachable-fn counts across identical runs. Conservative
+    # (an unreachable fn is kept, never a reachable one dropped), but wrong. Clearing
+    # the full array makes the count deterministic and correct up to 32768 fns.
     var live[4096];
     var ci = 0;
-    while (ci < 1024) { store8(&live + ci, 0); ci = ci + 1; }
+    while (ci < 4096) { store8(&live + ci, 0); ci = ci + 1; }
     # Call-graph construction is BYTE-SCAN-based, not fixup-based, because
     # Cyrius emits top-level/late calls via ECALLTO (direct rel32, no fixup)
     # once the target's offset is known. Only forward-reference calls go
@@ -391,7 +397,10 @@ fn FIXUP(S): i64 {
     # v5.10.41: build fn_start → fi+1 hash table at 0x114000 ONCE before
     # the DCE byte-scan passes. Replaces the two O(N²) linear scans in
     # seed (line ~412) and propagate (line ~465) — each previously walked
-    # fnc per E8/E9 match. Layout: 8192 slots × 2B (fi+1, 0 = empty). v5.11.19: relocated 0x110000 → 0x114000 (size unchanged; preserves mask 8191 for fn_table cap raise to 8192-fn — load factor degrades to 1.0 at extreme caps but acceptable for the P2 patch).
+    # fnc per E8/E9 match. Layout: `_fnt_cap` slots × 2B (fi+1, 0 = empty), masked by
+    # `_fnt_hash_mask` — both DYNAMIC since v6.2.0 (grow 8192→32768), NOT the fixed
+    # "8192 slots / mask 8191" this comment claimed through v6.4.74. The buffer is
+    # re-alloc'd by _fnt_grow; load factor stays 1.0 at extreme caps (acceptable).
     # 16 KB total in the 232 KB free gap between fn_name_hash + struct_ftypes.
     # Hash: golden-ratio multiply, shift down, mask. Knuth multiplicative
     # constant 0x9E3779B97F4A7C15 = floor(2^64 / phi). Load factor 0.5 at
@@ -652,7 +661,7 @@ fn FIXUP(S): i64 {
         if (u62_dnoff >= 0) {
             var u62_live = load8(&live + (u62_fi >> 3)) & (1 << (u62_fi & 7));
             if (u62_live == 0) {
-                u62_dvb = u62_dvb + L64(S + 0x1C8000 + u62_fi * 8);
+                u62_dvb = u62_dvb + GFVB(S, u62_fi);
                 u62_dcn = u62_dcn + 1;
             }
         }

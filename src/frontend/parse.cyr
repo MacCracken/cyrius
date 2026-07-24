@@ -1107,7 +1107,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # line number matches the call site, not the trailing ';'.
             var _mu_fi = FINDFN(S, noff);
             if (_mu_fi >= 0) {
-                var _mu_flags = L64(S + 0x17A000 + _mu_fi * 8);
+                var _mu_flags = GFLG(S, _mu_fi);
                 if (_mu_flags & 1 != 0) {
                     syscall(SYS_WRITE, 2, "warning:", 8);
                     _err_head(S);

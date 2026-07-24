@@ -294,13 +294,15 @@ fn FIXUP(S): i64 {
     if (dce_dbg_env != 0) {
         if (load8(dce_dbg_env) == 49 && load8(dce_dbg_env + 1) == 0) { dce_dbg = 1; }
     }
-    # live[i] = 1 iff fn i is reachable from entry. 1024 bytes × 8
-    # bits = 8192 fn cap, matching the parse_fn.cyr REGFN ceiling.
-    # v6.0.4: was 512/4096 — a >4096-fn unit overflowed live[] with an
-    # OOB stack write (latent on both arches). See CHANGELOG [6.0.4].
+    # live[i] = 1 iff fn i is reachable from entry. v6.4.75: clear all 4096 bytes
+    # (× 8 = 32768-fn cap, matching _fnt_grow's ceiling and the `t3idx < 32768`
+    # root-seed bound). Array was already live[4096] since v6.0.4, but the clear
+    # loop stopped at 1024, leaving bits 8192..32767 in uninitialised stack for a
+    # >8192-fn unit — a stray 1-bit kept an unreachable fn (non-deterministic
+    # counts). See the x86 fixup.cyr twin for the full note.
     var live[4096];
     var ci = 0;
-    while (ci < 1024) { store8(&live + ci, 0); ci = ci + 1; }
+    while (ci < 4096) { store8(&live + ci, 0); ci = ci + 1; }
     # Build fn_start → fi+1 hash table at 0x114000 (16 KB region
     # shared with x86 path; verified unused on aarch64 by reading
     # x86 fixup.cyr's v5.10.41 comment). Knuth golden-ratio

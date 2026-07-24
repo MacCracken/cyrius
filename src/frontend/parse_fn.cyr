@@ -166,10 +166,19 @@ fn REGFN(S, noff): i64 {
         var _ov_base_len = _ov_my_len - _ov_suffix_len;
         var _ov_base_fi = _FINDFN_CSTR(S, _ov_p, _ov_base_len);
         if (_ov_base_fi >= 0) {
-            var _ov_region = 0x97A000;
-            if (_ov_kind == 2) { _ov_region = 0x98A000; }
-            if (_ov_kind == 3) { _ov_region = 0x99A000; }
-            S64(S + _ov_region + _ov_base_fi * 8, fc + 1);
+            # v6.4.75 — write through the RELOCATABLE table pointer, not the fixed
+            # pre-grow base. _fnt_ovstr/ovint/ovcstr are in the _fnt_grow copy list
+            # (they DO grow past 8192), but this forward-registration site alone
+            # still wrote `S + 0x97A000 + ...`; once _fnt_grow relocated the table
+            # off that fixed base, a forward-registered overload landed in the
+            # abandoned region while every reader (parse_fn.cyr:1083/1109) looked at
+            # the grown _fnt_ovstr — so overloads registered after a grow silently
+            # went missing. The REVERSE-direction writes below already used the
+            # pointers; this matches them.
+            var _ov_tab = _fnt_ovstr;
+            if (_ov_kind == 2) { _ov_tab = _fnt_ovint; }
+            if (_ov_kind == 3) { _ov_tab = _fnt_ovcstr; }
+            S64(_ov_tab + _ov_base_fi * 8, fc + 1);
         }
     }
     # REVERSE direction — scan already-registered fns for any
@@ -472,7 +481,7 @@ fn PARSE_RETURN(S): i64 {
                             # `return helper(args);` bypasses PARSE_FNCALL but
                             # still needs the #io / #alloc check.
                             if (_cur_fn_is_pure == 1) {
-                                var _tcf = L64(S + 0x17A000 + tcfi * 8);
+                                var _tcf = GFLG(S, tcfi);
                                 if (_tcf & 16 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
                                     _err_head(S);
@@ -1162,14 +1171,14 @@ fn PARSE_FNCALL(S, noff): i64 {
     # is used). Line number is the paren-open we just consumed, which
     # matches the call-site. Message body lives in fn_deprecated_msg
     # as a string-literal token value (offset<<16 | length).
-    var _dep_flags = L64(S + 0x17A000 + fi * 8);
+    var _dep_flags = GFLG(S, fi);
     if (_dep_flags & 4 != 0) {
         syscall(SYS_WRITE, 2, "warning:", 8);
         _err_head(S);
         syscall(SYS_WRITE, 2, ": '", 3);
         PRSTR(S + 0x60000 + noff);
         syscall(SYS_WRITE, 2, "' is deprecated", 15);
-        var _dep_msg = L64(S + 0x100000 + fi * 8);
+        var _dep_msg = GFDM(S, fi);
         if (_dep_msg != 0) {
             var _dep_off = _dep_msg >> 16;
             var _dep_len = _dep_msg & 0xFFFF;
@@ -2603,7 +2612,7 @@ fn PARSE_FN_DEF(S): i64 {
     # Initialize the slot to 0 — fn body may have been touched by an earlier
     # forward-decl scan; this is the start of the body parse proper.
     _cur_fn_ix = fi;
-    S64(S + 0x1C8000 + fi * 8, 0);
+    SFVB(S, fi, 0);
     # v5.5.36 Phase 2b — clear fn's struct-return slot. The `: StructName`
     # annotation after `)` sets it later if present; otherwise this fn
     # returns a scalar value in rax as usual.
@@ -2719,16 +2728,16 @@ fn PARSE_FN_DEF(S): i64 {
     # v5.6.3: transfer any pending `#must_use` onto fn_flags[fi] bit 0.
     # Clear unconditionally (same stale-flag argument as #regalloc).
     if (_must_use_pending == 1) {
-        var _prev = L64(S + 0x17A000 + fi * 8);
-        S64(S + 0x17A000 + fi * 8, _prev | 1);
+        var _prev = GFLG(S, fi);
+        SFLG(S, fi, _prev | 1);
         _must_use_pending = 0;
     }
     # v5.6.4: transfer any pending `#deprecated("msg")` onto fn_flags
     # bit 2 + fn_deprecated_msg[fi]. Same stale-flag discipline.
     if (_deprecated_pending == 1) {
-        var _prev_d = L64(S + 0x17A000 + fi * 8);
-        S64(S + 0x17A000 + fi * 8, _prev_d | 4);
-        S64(S + 0x100000 + fi * 8, _deprecated_msg_pending);
+        var _prev_d = GFLG(S, fi);
+        SFLG(S, fi, _prev_d | 4);
+        SFDM(S, fi, _deprecated_msg_pending);
         _deprecated_pending = 0;
         _deprecated_msg_pending = 0;
     }
@@ -2737,18 +2746,18 @@ fn PARSE_FN_DEF(S): i64 {
     # bit 3 so PARSE_FNCALL can check it without re-loading fn_flags
     # for every call site (set here, reset at fn end below).
     if (_pure_pending == 1) {
-        var _prev_p = L64(S + 0x17A000 + fi * 8);
-        S64(S + 0x17A000 + fi * 8, _prev_p | 8);
+        var _prev_p = GFLG(S, fi);
+        SFLG(S, fi, _prev_p | 8);
         _pure_pending = 0;
     }
     if (_io_pending == 1) {
-        var _prev_i = L64(S + 0x17A000 + fi * 8);
-        S64(S + 0x17A000 + fi * 8, _prev_i | 16);
+        var _prev_i = GFLG(S, fi);
+        SFLG(S, fi, _prev_i | 16);
         _io_pending = 0;
     }
     if (_alloc_pending == 1) {
-        var _prev_a = L64(S + 0x17A000 + fi * 8);
-        S64(S + 0x17A000 + fi * 8, _prev_a | 32);
+        var _prev_a = GFLG(S, fi);
+        SFLG(S, fi, _prev_a | 32);
         _alloc_pending = 0;
     }
     # v6.2.27: #naked — record for this fn so the prologue/epilogue/frame emit
@@ -2758,7 +2767,7 @@ fn PARSE_FN_DEF(S): i64 {
         _naked_pending = 0;
     }
     else { _cur_fn_naked = 0; }
-    _cur_fn_is_pure = (L64(S + 0x17A000 + fi * 8) >> 3) & 1;
+    _cur_fn_is_pure = (GFLG(S, fi) >> 3) & 1;
     # v4.8.4-alpha5: mirror fn_regalloc[fi] into _cur_fn_regalloc so
     # codegen (EFNEPI, ETAILJMP) can emit rbx save/restore. Reset at
     # the end of PARSE_FN_DEF.
