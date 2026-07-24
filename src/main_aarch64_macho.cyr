@@ -25,7 +25,7 @@
 # See main.cyr for authoritative heap map with detailed annotations.
 #
 #   0x00000  input_buf     [1048576]      1MB raw stdin input
-#   0x60000  tok_names     [262144]      256KB packed identifier strings (v4.6.2; v5.11.18 doubled 128KB → 256KB)
+#   0x60000  tok_names     [524288]      512KB packed identifier strings (v5.11.18 128KB→256KB; v6.4.76 256KB→512KB)
 #   0x18FCC8  str_pos       [8]           string write position (moved in v4.6.2)
 #   0x18FCD0  data_size     [8]           total variable data bytes (moved in v4.6.2)
 #   0x18E630  struct_names  [2048]        256 struct name offsets (cap 256, v5.7.17)

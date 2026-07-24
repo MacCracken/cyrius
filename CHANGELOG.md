@@ -6,6 +6,64 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.76] — 2026-07-24
+
+### Changed — identifier pool (`tok_names`) cap raised 256 KB → 512 KB in place
+
+The companion to the v6.4.75 fn_table P0 (`issues/2026-07-23-identifier-pool-256kb-cap-growable-in-
+place.md`). `tok_names` — the interned identifier pool at `S+0x60000` — was a hard 256 KB cap that
+**stiva 3.0.6 was 7 % from** (243737/262144 = 93 %), and it had already forced stiva to split its test
+suite **four separate times** (`tests/mgmt.tcyr:2`, `tests/store.tcyr:4`, `tests/runpath.tcyr:2,385`).
+
+Raised to **512 KB** — a **constants-only** change, verified against live code:
+- the two LEX thresholds `261872 → 524016` (= 524288 − 272 slack) in `NPOS_GUARD` + `LEXID`
+  (`src/frontend/lex.cyr`),
+- the capacity-warning divisor (`src/common/util.cyr`) and the `CYRIUS_STATS` meter denominator
+  (`src/main.cyr`, `src/main_win.cyr`), `262144 → 524288`,
+- the error/warning message strings and the heap-map comments in all 5 forks that carry the size line.
+
+**Why it's safe in place:** the band `0xA0000–0x100000` (393216 B) is free of any occupant in all 7
+forks (exhaustively scanned), so the pool can grow from ending at `0xA0000` to ending at `0xE0000`. The
+pool is nested in `input_buf` (`S+0..0x100000`), but after `PREPROCESS` the real source lives at
+`0x459D000` (`preprocess_out`) and LEX writes the pool at `0x60000` — the input_buf overlap is dead
+scratch by lex time (a **temporal**, not spatial, invariant). **512 KB ends at `0xE0000`**, a 128 KB
+margin below the `0x100000` **physical ceiling** (`fn_name_hash`'s initial base) — the pool END must
+stay ≤ `0x100000` (max safe size 640 KB / threshold 655088); above that it overruns the hash/var
+tables and the compiler **hangs**. A prominent warning now documents that ceiling at the threshold.
+
+**Not a layout change** (no region moves, no base changes, no `brk`/`mmap` change — lazily-mapped
+pages cost nothing), so no two-step bootstrap. cycc's own compile uses ~43 K of identifiers, far under
+either cap, so the change is **byte-identical**: 251/251 tcyr identical to 6.4.75, self-host fixpoint +
+seed-derive green.
+
+**Verified functionally:** a ~360 KB-identifier program errors "identifier buffer full (261904/262144)"
+on 6.4.75 and **compiles + runs correctly** on 6.4.76; a >512 KB program still errors **cleanly**
+(524020/524288, no hang) at the new ceiling. stiva now reports `identifiers: 243737 / 524288` (46 %,
+was 93 %) — roughly double the headroom, and it can stop splitting its suite.
+
+**Deliberately NOT bundled** (both would be behaviour changes for the exact large consumers this
+unblocks): the DCE referenced-name bitmap (already decoupled via a `noff < 65536` guard, fail-safe),
+and the jump to 1 MB (needs relocating the `0x100000+` occupants — a separate project).
+
+### Added — the identifier-pool regression gate
+
+`programs/checks/selfhost.cyr` `_idpool_gate` — the twin of `_var_grow_gate`/`_fn_grow_gate`. Emits
+~10000 distinct 35-char globals (~339 KB of identifiers, over the old 262144 cap and under the new
+524288) and reads the last back. **Mutation-proven** (non-vacuous): its exact program errors
+"identifier buffer full" on 6.4.75, so reverting the two `lex.cyr` thresholds to 261872 turns it red.
+The `_cap_drift_gate` (v5.11.50) — which cross-checks the heap-map comment against the inline
+threshold — was updated to `[524288]` / `512KB` / `>= 524016` (and caught the drift when I first
+missed it). check.sh 148 → 149.
+
+### Gates
+
+Release gate **GREEN** on all 5 steps: self-host fixpoint byte-identical · seed → cybs → cycc
+derivation OK · check.sh **149 passed, 0 failed** (the new `_idpool_gate` + updated `_cap_drift_gate`)
+· cross-OS self-host + VR-01 on **real hardware, all four hosts** (ecb, ach, cass, pi) · bench
+**self_compile 629 ms quiet-box median (−0.6 % vs 6.4.75, i.e. noise)**, **cycc 1103624 B (unchanged)**.
+A size-constant change has zero runtime cost, as expected. (The release-gate run reported 637 ms
+because the box was still loaded from the four-host cross-OS step; the quiet-box median is 629 ms.)
+
 ## [6.4.75] — 2026-07-24
 
 ### Fixed — P0: `fn_table` growth past 8192 silently corrupted six fn-indexed side tables

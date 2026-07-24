@@ -1,4 +1,26 @@
-# `identifiers` pool capped at 256 KB — growable in place to 640 KB, and 512 KB is a constants-only change
+# `identifiers` pool capped at 256 KB — growable in place — RESOLVED
+
+> **✅ RESOLVED in v6.4.76** (`src/frontend/lex.cyr`, `src/common/util.cyr`, `src/main.cyr`,
+> `src/main_win.cyr` + heap-map comments; CHANGELOG [6.4.76]).
+>
+> Shipped the recommended **512 KB** in-place raise — a constants-only change. Verified against live
+> code (line numbers had shifted from the 6.4.73 filing): the real LEX thresholds are `261872` in
+> `NPOS_GUARD` + `LEXID` (not the "three size sites" the filing guessed), plus the util.cyr capacity
+> divisor and the two `CYRIUS_STATS` meter denominators. All moved 261872→524016 / 262144→524288.
+>
+> The `0xA0000–0x100000` band was re-confirmed free in all 7 forks. Chose 512 KB over the 640 KB hard
+> ceiling for a 128 KB margin below the `0x100000` physical end (`fn_name_hash`'s initial base) — a
+> prominent comment now documents that ceiling (max safe threshold 655088; above it the pool overruns
+> the hash/var tables and HANGS, which is what the filing's "hung indefinitely" observation was).
+>
+> **Verified:** a ~360 KB-identifier program errors on 6.4.75 and compiles+runs on 6.4.76; a >512 KB
+> program still errors CLEANLY (no hang) at the new ceiling; 251/251 byte-identical; self-host +
+> seed-derive + all four cross-OS hosts green; stiva now `identifiers: 243737 / 524288` (46 %, was
+> 93 %). Added `_idpool_gate` (mutation-proven) + updated `_cap_drift_gate`. Neither the DCE bitmap
+> nor the 1 MB jump was bundled, per the filing's guidance.
+>
+> Note the filing's cross-reference: the fn_table P0 it called "more urgent" shipped first (v6.4.75),
+> so raising this cap does not now walk consumers into a silent corruption — both caps are fixed.
 
 **Discovered:** 2026-07-23, from the **stiva** agent's `Compiler caps: … identifiers 92%` report.
 **Severity:** **Medium–High** — a hard ceiling a shipping consumer is 8 % from, already forcing

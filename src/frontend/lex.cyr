@@ -799,26 +799,34 @@ fn LEXKW_EXT(kw, klen, S, ws): i64 {
 # count for the pending write. See CHANGELOG [5.11.18].
 fn NPOS_GUARD(S, need): i64 {
     var np = GNPOS(S);
-    if (np + need >= 261872) {
+    if (np + need >= 524016) {
         syscall(SYS_WRITE, 2, "error: identifier buffer full (", 31);
         PRNUM(np);
-        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce included modules or split into separate units\n", 72);
+        syscall(SYS_WRITE, 2, "/524288 bytes) — reduce included modules or split into separate units\n", 72);
         syscall(SYS_EXIT, 1);
     }
     return 0;
 }
 
 # Lex an identifier starting at p, return new p. Stores token.
-# Threshold 261872 leaves 272 bytes of slack for the inner write loop.
-# Buffer grows 0x60000–0xA0000 (was 0x60000–0x80000 pre-v5.11.18,
-# 0x60000–0x70000 pre-v4.6.2). v5.11.18: kybernet 1.1.0 was 85% full
-# at the old 128 KB cap; 2× headroom unblocks 1.2.0's edge-boot
-# surface expansion. See CHANGELOG [5.11.18].
+# Threshold 524016 leaves 272 bytes of slack for the inner write loop.
+# v6.4.76: pool 256 KB → 512 KB. Buffer grows 0x60000–0xE0000 (was
+# 0x60000–0xA0000 v5.11.18–v6.4.75, 0x60000–0x80000 pre-v5.11.18,
+# 0x60000–0x70000 pre-v4.6.2). stiva 3.0.6 was at 243737/262144 (93%);
+# 512 KB drops it to 46% with real headroom. This is a size-constant change
+# ONLY — the pool is nested in input_buf (S+0..0x100000), and after
+# PREPROCESS the real source lives at 0x459D000, so LEX filling 0x60000+
+# never races the raw input. ⚠ PHYSICAL CEILING: the pool END must stay
+# ≤ 0x100000 (fn_name_hash's initial base); base is 0x60000, so the MAX
+# safe size is 0xA0000 = 640 KB and the MAX safe threshold is 655088. Above
+# that the pool overruns the hash/var tables and the compiler HANGS with no
+# diagnostic (not a clean error) — do NOT bump this past 655088 without
+# relocating the pool base. See issue 2026-07-23-identifier-pool-256kb-cap.
 fn LEXID(S, p, npos): i64 {
-    if (npos >= 261872) {
+    if (npos >= 524016) {
         syscall(SYS_WRITE, 2, "error: identifier buffer full (", 31);
         PRNUM(npos);
-        syscall(SYS_WRITE, 2, "/262144 bytes) — reduce included modules or split into separate units\n", 72);
+        syscall(SYS_WRITE, 2, "/524288 bytes) — reduce included modules or split into separate units\n", 72);
         syscall(SYS_EXIT, 1);
     }
     var bl = GBL(S);

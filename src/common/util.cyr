@@ -410,11 +410,11 @@ fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
             syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
             syscall(SYS_WRITE, 2, "/32768) — approaching the hard fn limit; split into compilation units\n", 71);
         }
-        if (GNPOS(S) * 100 / 262144 >= 85) {
+        if (GNPOS(S) * 100 / 524288 >= 85) {
             syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);
-            PRNUM(GNPOS(S) * 100 / 262144);
+            PRNUM(GNPOS(S) * 100 / 524288);
             syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GNPOS(S));
-            syscall(SYS_WRITE, 2, "/262144 bytes) — reduce includes or split soon\n", 49);
+            syscall(SYS_WRITE, 2, "/524288 bytes) — reduce includes or split soon\n", 49);
         }
         if (GVCNT(S) * 100 / 8192 >= 85) {
             syscall(SYS_WRITE, 2, "warning: var_table at ", 22);

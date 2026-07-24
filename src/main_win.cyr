@@ -18,7 +18,7 @@
 #                                         tok_names is REBUILT by LEX after preprocessing —
 #                                         the overlap is tolerated because preprocessing reads
 #                                         from 0x459D000, not S+0.
-#   0x60000  tok_names     [262144]      256KB packed identifier strings (nested in input_buf — rebuilt by LEX, v4.6.2 was 64KB, v5.11.18 doubled 128KB → 256KB)
+#   0x60000  tok_names     [524288]      512KB packed identifier strings (nested in input_buf — rebuilt by LEX; v5.11.18 128KB→256KB, v6.4.76 256KB→512KB; grows 0x60000-0xE0000)
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
 #   0x18E630  struct_names  [2048]        256 struct name offsets (cap 256, v5.7.17)
@@ -989,7 +989,7 @@ if (_stats_env != 0) {
         syscall(SYS_WRITE, 2, "  fn_table:    ", 15); PRNUM(GFNC(S));
         syscall(SYS_WRITE, 2, " / 32768\n",       9);   # v6.4.75: hard ceiling (_fnt_grow max), was a stale 8192
         syscall(SYS_WRITE, 2, "  identifiers: ", 15); PRNUM(GNPOS(S));
-        syscall(SYS_WRITE, 2, " / 262144\n",     10);
+        syscall(SYS_WRITE, 2, " / 524288\n",     10);   # v6.4.76: pool 256 KB → 512 KB
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));
         syscall(SYS_WRITE, 2, " / 8192\n",        8);
         syscall(SYS_WRITE, 2, "  fixup_table: ", 15); PRNUM(GFCNT(S));
