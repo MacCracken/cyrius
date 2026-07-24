@@ -67,37 +67,65 @@ assert_eq(has_entries, 1, "tmp has entries");
 # The pre-existing asserts in this file all wrap in str_from(...) and therefore
 # passed against the BROKEN library — which is exactly why the defect survived
 # every gate. Each pair here asserts bare-literal == str_from-wrapped.
+#
+# WALK A TINY SELF-BUILT TREE, NEVER /tmp ITSELF. `dir_walk` is RECURSIVE and
+# recurses on is_dir(full), which FOLLOWS SYMLINKS — pointing it at a shared
+# /tmp is unbounded (a runner's /tmp holds this very suite's compiler output and
+# grows as it runs) and a single self-referential symlink recurses forever. The
+# first cut of this gate did exactly that and hung CI's `Test (ubuntu)` and
+# `aarch64 Native Self-Host` jobs on the .tcyr step. A fixed 3-entry tree is
+# deterministic, instant, and asserts exact counts instead of "> 0".
 test_group("bare literal -> Str param coercion (silent-zero gate)");
 
-assert_eq(is_dir("/tmp"), 1, "is_dir bare literal");
-assert_eq(is_dir("/tmp"), is_dir(str_from("/tmp")), "is_dir bare == str_from");
+# The path is repeated as an inline LITERAL at every fs.cyr call below, not
+# hoisted into a var: the coercion fires only for a literal-token arg, so
+# passing an IDENT (even one holding a cstring) would test nothing. `wroot` is
+# used only for the str_from(...) control side and the mkdir/cleanup syscalls.
+var wroot = "/tmp/cyrius_fs_bare_gate";
+var wsub  = "/tmp/cyrius_fs_bare_gate/sub";
+sys_mkdir(wroot, 493);          # 0755
+sys_mkdir(wsub, 493);
+file_write_all("/tmp/cyrius_fs_bare_gate/a.cyr", "x", 1);
+file_write_all("/tmp/cyrius_fs_bare_gate/b.txt", "y", 1);
+file_write_all("/tmp/cyrius_fs_bare_gate/sub/c.cyr", "z", 1);
+
+assert_eq(is_dir("/tmp/cyrius_fs_bare_gate"), 1, "is_dir bare literal");
+assert_eq(is_dir("/tmp/cyrius_fs_bare_gate"), is_dir(str_from(wroot)), "is_dir bare == str_from");
 
 var bw_bare = vec_new();
 var bw_wrap = vec_new();
-var nbare = dir_walk("/tmp", bw_bare);
-var nwrap = dir_walk(str_from("/tmp"), bw_wrap);
+var nbare = dir_walk("/tmp/cyrius_fs_bare_gate", bw_bare);
+var nwrap = dir_walk(str_from(wroot), bw_wrap);
+assert_eq(nbare, 3, "dir_walk bare literal finds all 3 files");
 assert_eq(nbare, nwrap, "dir_walk bare == str_from");
 
-var dl_bare = dir_list("/tmp");
-var dl_wrap = dir_list(str_from("/tmp"));
+var dl_bare = dir_list("/tmp/cyrius_fs_bare_gate");
+var dl_wrap = dir_list(str_from(wroot));
+assert_eq(vec_len(dl_bare), 3, "dir_list bare literal finds 3 entries");
 assert_eq(vec_len(dl_bare), vec_len(dl_wrap), "dir_list bare == str_from");
 
-var pj = path_join("/tmp", "x.txt");
-assert_eq(str_len(pj), 10, "path_join bare literals -> /tmp/x.txt");
-
-assert_eq(str_len(path_basename("/a/b/c.txt")), 5, "path_basename bare literal");
-assert_eq(str_len(path_dirname("/a/b/c.txt")), 4, "path_dirname bare literal");
-
-assert_eq(path_has_ext("/a/b/c.txt", ".txt"), 1, "path_has_ext bare literals");
-
-var ff_bare = find_files("lib", ".cyr");
-var ff_wrap = find_files(str_from("lib"), str_from(".cyr"));
+var ff_bare = find_files("/tmp/cyrius_fs_bare_gate", ".cyr");
+var ff_wrap = find_files(str_from(wroot), str_from(".cyr"));
+assert_eq(vec_len(ff_bare), 2, "find_files bare literals finds 2 .cyr");
 assert_eq(vec_len(ff_bare), vec_len(ff_wrap), "find_files bare == str_from");
 
 var pr = vec_new();
-vec_push(pr, str_from("__nonexistent_prune__"));
-var fp_bare = find_files_with_prunes("lib", ".cyr", pr);
-assert_eq(vec_len(fp_bare), vec_len(ff_wrap), "find_files_with_prunes bare == str_from");
+vec_push(pr, str_from("sub"));
+var fp_bare = find_files_with_prunes("/tmp/cyrius_fs_bare_gate", ".cyr", pr);
+assert_eq(vec_len(fp_bare), 1, "find_files_with_prunes bare literals prunes sub/");
+
+# Pure-string fns — no filesystem access, so no walk cost.
+var pj = path_join("/tmp", "x.txt");
+assert_eq(str_len(pj), 10, "path_join bare literals -> /tmp/x.txt");
+assert_eq(str_len(path_basename("/a/b/c.txt")), 5, "path_basename bare literal");
+assert_eq(str_len(path_dirname("/a/b/c.txt")), 4, "path_dirname bare literal");
+assert_eq(path_has_ext("/a/b/c.txt", ".txt"), 1, "path_has_ext bare literals");
+
+syscall(87, "/tmp/cyrius_fs_bare_gate/sub/c.cyr");
+syscall(87, "/tmp/cyrius_fs_bare_gate/b.txt");
+syscall(87, "/tmp/cyrius_fs_bare_gate/a.cyr");
+syscall(84, wsub);              # rmdir
+syscall(84, wroot);
 
 # Cleanup
 syscall(87, testpath);

@@ -171,8 +171,22 @@ all four hosts** (ecb macOS-arm64, ach Intel-Mac, cass Windows, pi aarch64 — e
 delta is two comment blocks plus a stats-denominator string, and `lib/fs.cyr` is not in cycc's include
 closure). No perf delta to triage.
 
-New gate coverage added this release: `tests/tcyr/fs.tcyr` bare-literal→`Str` group (23/23,
-mutation-proven) and `agnos-crossbuild-gate.sh` #82–#93 (mutation-proven both directions).
+New gate coverage added this release: `tests/tcyr/fs.tcyr` bare-literal→`Str` group (26/26,
+mutation-proven across `is_dir` / `dir_walk` / `dir_list` / `find_files`) and
+`agnos-crossbuild-gate.sh` #82–#93 (mutation-proven both directions).
+
+**Self-inflicted CI stall, caught and fixed before the tag was pushed.** The first cut of the
+`fs.tcyr` gate walked **`/tmp` itself** — and `dir_walk` is RECURSIVE and recurses on `is_dir(full)`,
+which **follows symlinks**. Pointing it at a shared `/tmp` is unbounded (a runner's `/tmp` holds this
+very suite's compiler output and keeps growing while the suite runs) and one self-referential symlink
+recurses forever. CI runs #1729/#1730 hung on the `.tcyr` step in both **`Test (ubuntu)`** and
+**`aarch64 Native Self-Host`**, against a 2-minute baseline on the prior commit. The pre-existing
+`/tmp` asserts in this file were `dir_list` (non-recursive) and were never a problem; the recursive
+walk was new. Rewritten to build a fixed 3-entry tree under
+`/tmp/cyrius_fs_bare_gate/`, assert **exact** counts rather than `> 0`, and clean up after itself —
+26/26 in ~1 ms, still mutation-proven. The path is repeated as an inline **literal** at each call site
+because the coercion fires only for a literal-token arg; hoisting it into a `var` would have made the
+gate test nothing (verified — doing so turns all 9 asserts red for the wrong reason).
 
 ### Housekeeping
 
