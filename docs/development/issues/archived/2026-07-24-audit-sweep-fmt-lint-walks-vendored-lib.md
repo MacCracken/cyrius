@@ -1,4 +1,34 @@
-# `cyrius audit` fmt/lint-walks the consumer's vendored `lib/`, so the sweep FAILs on dependency code the project cannot fix
+# `cyrius audit` fmt/lint-walks the consumer's vendored `lib/` — RESOLVED
+
+> **✅ RESOLVED in v6.4.78** (`cbt/commands.cyr`; CHANGELOG [6.4.78]).
+>
+> `lib/` is now walked ONLY when `_dep_is_cyrius_source_repo()`. stiva reports `ok: format clean`,
+> and its docs count drops **53 → 41** — the issue predicted "the true number is lower" and it was
+> right. All four acceptance criteria met, verified on a synthetic consumer: vendored-`lib/` noise
+> gone, a real fmt error in `src/` still turns the stage RED, the failing file is NAMED, and the
+> counts reflect project code only.
+>
+> **One correction to the proposed fix.** Option 1 as written ("if `cyrius.cyml` has a `[deps]`
+> section, exclude `lib/`") **would have broken this repo** — cyrius.cyml *has* a `[deps]` section, so
+> lib/ would have been dropped here, where it IS the authored stdlib. The right predicate already
+> existed: `_dep_is_cyrius_source_repo()` (also used by `_check_lib_freshness` and, since v6.4.77,
+> `cmd_lib_sync`). Verified `1` here, `0` in stiva, `0` in `/tmp`. Option 2 (.gitignore parsing) was
+> not needed; option 3 (an `[audit] dirs` key) would have pushed work onto every project.
+>
+> **The "name the files" ask exposed something better than expected:** `audit_fmt_walk` has populated
+> `AW_FMT_FAIL_FILES` since it was written and **no caller ever printed it**. The data was collected
+> and discarded — which is why the failure was untriageable. Now printed, plus a `scope:` line stating
+> what was walked.
+>
+> **Both "Also seen" items addressed:** the bench stage now walks `tests/` itself, so
+> `tests/stiva.bcyr` is found (it was the sibling of the v6.4.72 test-corpus fix). The tests-stage
+> improvement you recorded at 6.4.76 was the v6.4.73 `_auto_deps` gate fix — `audit`/`capacity` were
+> never in that gate, so the whole stdlib came back undefined.
+>
+> **Residual, stated honestly:** `cyrius audit` still FAILs in the *cyrius repo*, now naming
+> `src/main.cyr` + 32 others. That is pre-existing — cycc's source is hand-formatted and cyrfmt
+> flattens multi-line call continuations — and is why `check.sh`'s fmt gate walks `lib/` only
+> ("format (stdlib)"). Not a regression; not reformatted here.
 
 **Discovered:** 2026-07-24 while running the mandated `cyrius audit` step of stiva's dev loop
 **Severity:** Medium — hard, permanent failure of a gate consumers are told to run; workaround is

@@ -10,5 +10,36 @@
 
 fn TOKTYP(S, i): i64 { return L64(S + 0x2D7C000 + i * 8); }
 fn TOKVAL(S, i): i64 { return L64(S + 0x357C000 + i * 8); }
-fn PEEKT(S): i64 { if (_had_error == 1) { _wd_tick(S); } return TOKTYP(S, GTI(S)); }   # v6.4.62: anti-hang watchdog (inert until the first error)
+# v6.4.62: anti-hang watchdog (inert until the first error).
+# v6.4.78: past-end EOF clamp, placed INSIDE the existing `_had_error == 1` guard so
+# it costs NOTHING on the hot path — PEEKT is the most-called fn in the parser, and
+# that compare-against-a-global is already there for the watchdog.
+#
+# THE BUG: TOKTYP is an unchecked `L64`. Past GTCNT it reads zeroed heap and returns
+# token type 0 — never 12 (EOF). So every `t == 12` EOF test in `_sync_skip` and the
+# block loops silently failed, panic-mode recovery could never terminate normally,
+# and PARSE_STMT's forced-progress guard was disarmed too (it only advances while
+# `GTI < GTCNT`, exactly the condition that is false there). Truncated input — a
+# clipped file, an unclosed `fn`, EOF mid-expression — therefore spewed **166,670**
+# stderr lines before the watchdog aborted. Not a hang, but unusable output that
+# buries the real error. (issues/2026-07-24-truncated-input-166k-line-error-cascade.md)
+#
+# WHY THE GUARD-INSIDE-GUARD IS SOUND, not a shortcut: LEX unconditionally appends an
+# EOF token (`ADDTOK(S, 12, 0)`, lex.cyr:1730), and every parse loop stops on type 12,
+# so a WELL-FORMED parse never advances past it — GTI < GTCNT holds until an error
+# occurs. The runaway is exclusively a post-error recovery phenomenon, which is the
+# same reason the v6.4.62 watchdog could be gated this way. Clamping unconditionally
+# in TOKTYP would also work but taxes every lookahead (`TOKTYP(S, GTI(S) + 1)`) on
+# clean compiles for no benefit.
+#
+# The watchdog is KEPT deliberately: it bounds ANY future desync this clamp does not
+# anticipate, and it is what broke the VR-02 fuzz wall that stopped two prior
+# attempts at multi-error recovery. Defence in depth, at zero clean-path cost.
+fn PEEKT(S): i64 {
+    if (_had_error == 1) {
+        _wd_tick(S);
+        if (GTI(S) >= GTCNT(S)) { return 12; }
+    }
+    return TOKTYP(S, GTI(S));
+}
 fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }

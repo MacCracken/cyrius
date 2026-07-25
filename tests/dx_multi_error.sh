@@ -30,10 +30,35 @@ rc=0; timeout 10 "$CC" < "$T" > "$O" 2>/dev/null || rc=$?
 [ "$rc" -ne 0 ] || { echo "FAIL: garbage input compiled clean (exit 0)"; exit 1; }
 [ ! -s "$O" ] || { echo "FAIL: garbage input emitted output"; exit 1; }
 
+# 2b) v6.4.78 — TRUNCATED input must not spew. `TOKTYP` is an unchecked L64, so past
+#     GTCNT it returned zeroed heap = token type 0, never 12 (EOF). Every `t == 12`
+#     EOF test in _sync_skip and the block loops therefore failed silently, recovery
+#     could never terminate normally, and PARSE_STMT's forced-progress guard was
+#     disarmed too (it only advances while GTI < GTCNT). Result: **166,670** stderr
+#     lines before the v6.4.62 watchdog aborted. Case 2 above did NOT catch this —
+#     its garbage happens to end in a way that recovers — so the shape that matters
+#     is input ending MID-CONSTRUCT. Fixed by clamping PEEKT to EOF past GTCNT,
+#     inside the existing `_had_error` guard (zero hot-path cost).
+#     Bound is generous (200) so it fails on a 166K regression, not on message churn.
+#     (issues/2026-07-24-truncated-input-166k-line-error-cascade.md)
+for _trunc in 'include "lib/syscalls.cyr"\nvar x = f64_sqrt' \
+              'include "lib/syscalls.cyr"\nfn f() { var a = iv_add;\n' \
+              'include "lib/syscalls.cyr"\nvar y = 1 +' \
+              'include "lib/syscalls.cyr"\nvar z = f64_to(1'; do
+    printf '%b' "$_trunc" > "$T"
+    rc=0; timeout 30 "$CC" < "$T" > "$O" 2>"$E" || rc=$?
+    [ "$rc" -ne 124 ] || { echo "FAIL: truncated input HUNG: $_trunc"; exit 1; }
+    [ "$rc" -ne 139 ] || { echo "FAIL: truncated input SIGSEGV'd: $_trunc"; exit 1; }
+    _n=$(wc -l < "$E")
+    [ "$_n" -le 200 ] || { echo "FAIL: truncated input produced $_n stderr lines (want <=200) for: $_trunc"; head -3 "$E"; exit 1; }
+    grep -q 'recovery aborted' "$E" && { echo "FAIL: watchdog fired on truncated input — the desync spin is back: $_trunc"; exit 1; }
+    [ ! -s "$O" ] || { echo "FAIL: truncated input emitted output"; exit 1; }
+done
+
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), valid emits"
 exit 0

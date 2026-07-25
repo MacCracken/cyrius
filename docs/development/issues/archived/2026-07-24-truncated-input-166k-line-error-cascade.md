@@ -1,4 +1,31 @@
-# Truncated / unclosed input produces a 166,670-line error cascade — `PEEKT` reads past the token array unchecked
+# Truncated / unclosed input produces a 166,670-line error cascade — RESOLVED
+
+> **✅ RESOLVED in v6.4.78** (`src/backend/common/tokens.cyr`; CHANGELOG [6.4.78]).
+>
+> Root cause confirmed exactly as filed. `PEEKT` now clamps to `12` (EOF) once
+> `GTI(S) >= GTCNT(S)`. Measured: trailing-intrinsic-at-EOF **166,670 → 5** lines, unclosed `fn`
+> 166,669 → 3, EOF mid-expression 166,670 → 5, EOF mid-arg-list 166,670 → 5.
+>
+> **The reason this was filed rather than bundled turned out not to apply to the fix that landed.**
+> The concern was that `PEEKT` is the parser's hottest fn. But it ALREADY has an
+> `if (_had_error == 1)` guard for the v6.4.62 watchdog, and the runaway is exclusively
+> **post-error**: LEX unconditionally appends an EOF token (`lex.cyr:1730`) and every parse loop stops
+> on type 12, so a well-formed parse never advances past it. Putting the clamp INSIDE that existing
+> guard costs nothing on a clean compile — **−0.07 %** on interleaved same-box medians (672.8 vs
+> 673.3 ms), size-neutral, 251/251 tcyr byte-identical. Clamping `TOKTYP` unconditionally (the other
+> option this doc raised) would work but taxes every lookahead for no benefit, so it was not taken.
+>
+> **The watchdog is KEPT** (this doc asked for a recommendation): it bounds any future desync the
+> clamp does not anticipate, and it is what broke the VR-02 fuzz wall that stopped two prior attempts
+> at multi-error recovery. Zero clean-path cost, so defence in depth is free.
+>
+> **Gate:** `tests/dx_multi_error.sh` extended with 4 truncated shapes (`<=200` lines, no hang, no
+> SIGSEGV, no output, and **the watchdog firing is itself a failure** now). Mutation-proven. Plus 60
+> deterministic random truncations of `lib/str.cyr`: worst case 166,680 → 18 lines, 0 hangs.
+>
+> The `TOKVAL`/`PEEKV` audit this doc suggested: they remain unchecked, but are only read after a
+> `PEEKT` that has already established the token exists, so no path reaches them past the end. Left
+> alone deliberately rather than clamped speculatively.
 
 **Discovered:** 2026-07-24, while fixing the reserved-intrinsic diagnostic
 (`2026-07-17-iv-simd-intrinsic-shadows-var-name`). **Not** caused by that fix — reproduces identically

@@ -6,6 +6,105 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.78] — 2026-07-24
+
+### Fixed — `cyrius audit` fmt/lint/doc-walked the consumer's VENDORED `lib/`
+
+Consumer-filed by **stiva** (`issues/2026-07-24-audit-sweep-fmt-lint-walks-vendored-lib.md`).
+`_audit_sweep` pushed `lib/` into the walk set unconditionally, with the comment "whichever exist in
+this project" — conflating *exists on disk* with *belongs to this project*. In **this** repo that is
+true (`lib/` is the authored stdlib, 106 tracked files); in **every consumer** it is false — `lib/` is
+dependency code `cyrius deps` vendors from the manifest and `.gitignore` excludes precisely because it
+is reproducible rather than authored (stiva and sandhi each have **0 tracked files** under `lib/`).
+
+So the sweep fmt-checked other people's bundles and blamed the consumer: stiva got a permanent
+`FAIL: files need reformatting` while **all 41 of its own tracked files were already clean**, and the
+printed remedy was actively harmful — `cyrius fmt -w` rewrites vendored files that the next
+`cyrius deps` overwrites, and in stiva's case breaks `deps --verify` lockfile hashes. The same `dirs`
+vector feeds the lint and docs walkers, so the counts were polluted too: stiva's "53 undocumented
+public fns" is **41** once scoped.
+
+`lib/` is now walked **only** when `_dep_is_cyrius_source_repo()` — the sanctioned predicate already
+used by `_check_lib_freshness` and (v6.4.77) `cmd_lib_sync`. Note the filed issue's preferred option
+("if `cyrius.cyml` has a `[deps]` section, treat `lib/` as vendored") **would have broken this repo** —
+cyrius.cyml *has* a `[deps]` section — and `file_exists("src/main.cyr")` is the v6.0.1 conflation bug.
+Verified: predicate `1` here, `0` in stiva, `0` in `/tmp`.
+
+### Added — the audit sweep now states its scope and NAMES the failing files
+
+Two reasons this sat unexamined. First, `FAIL: files need reformatting` named no file, so a real
+regression and a vendored-code false positive were indistinguishable without re-deriving the walk by
+hand. **`audit_fmt_walk` has populated `AW_FMT_FAIL_FILES` since it was written and no caller ever
+printed it** — the data was collected and thrown away. Now printed (capped at 20). Second, the stage
+never said what it walked; it now prints e.g. `scope: src  (lib/ excluded — vendored deps, not project
+source)`. A stage that reports a verdict without its scope reads as authoritative when it is not — the
+same defect as the release gate's silent `vr01_` subset.
+
+**Consequence worth stating plainly:** `cyrius audit` still reports `FAIL` for the *cyrius repo*, and
+that is now visibly attributable — it names `src/main.cyr`, `src/frontend/parse.cyr`, and 31 others.
+That is a **pre-existing** property of the compiler's hand-formatted source (cyrfmt flattens
+multi-line call continuations), not a regression and not something this release reformats. It is why
+`check.sh`'s own fmt gate walks `lib/` only and is labelled "format (stdlib)". Whether cycc's `src/`
+should be cyrfmt-normalized is a separate decision; the sweep is now honest enough to have it.
+
+### Fixed — `cyrius bench` never found a benchmark at `tests/<name>.bcyr`
+
+`_bench_walk_dir` is non-recursive and only `benches/` + `tests/bcyr/` were consulted, so stiva
+reported `No benchmarks found` while `cyrius bench tests/stiva.bcyr` — the layout its own
+`bench-history.sh` drives and the explicit-path form documents — ran fine. `tests/` itself is now
+walked (disjoint from `tests/bcyr`, since the walk is non-recursive). Exactly the class v6.4.72 fixed
+for the *test* corpus; the bench walker was the sibling that never got the same treatment.
+
+### Fixed — truncated input produced a 166,670-line error cascade
+
+Filed at v6.4.77 (`issues/2026-07-24-truncated-input-166k-line-error-cascade.md`) and fixed here.
+`TOKTYP` is an unchecked `L64`; past `GTCNT` it reads zeroed heap and returns token type `0`, never
+`12` (EOF). Every `t == 12` EOF test in `_sync_skip` and the block loops therefore failed silently,
+panic-mode recovery could never terminate normally, and `PARSE_STMT`'s forced-progress guard was
+disarmed too (it only advances while `GTI < GTCNT`, exactly the condition that is false there). Input
+ending mid-construct — a clipped file, an unclosed `fn`, EOF mid-expression — spewed **166,670**
+stderr lines before the v6.4.62 watchdog aborted.
+
+| shape | before | after |
+|---|---|---|
+| trailing intrinsic at EOF | 166,670 | **5** |
+| unclosed `fn` | 166,669 | **3** |
+| EOF mid-expression | 166,670 | **5** |
+| EOF mid-arg-list | 166,670 | **5** |
+
+**The perf objection that made me file this separately does not apply to the fix that landed.** I
+filed it as its own slot because `PEEKT` is the parser's hottest function. But `PEEKT` *already* has an
+`if (_had_error == 1)` guard for the v6.4.62 watchdog, and the runaway is exclusively a **post-error**
+phenomenon — LEX unconditionally appends an EOF token (`lex.cyr:1730`) and every parse loop stops on
+type 12, so a well-formed parse never advances past it. Putting the clamp **inside** that existing
+guard therefore costs **nothing** on a clean compile. Measured with interleaved medians on the same
+box: **−0.07 %** (672.8 ms vs 673.3 ms) — noise, and size-neutral (1108272 B both). Clamping
+unconditionally in `TOKTYP` would also work but taxes every lookahead for no benefit.
+
+The watchdog is **kept deliberately**: it bounds any future desync this clamp does not anticipate, and
+it is what broke the VR-02 fuzz wall that stopped two prior attempts at multi-error recovery. Defence
+in depth at zero clean-path cost.
+
+### Testing
+
+`tests/dx_multi_error.sh` (the v6.4.62 gate) extended with **4 truncated-input shapes**, asserting
+`<= 200` stderr lines, no hang, no SIGSEGV, no output, **and that the watchdog does not fire** (its
+firing is now itself the regression signal). The pre-existing garbage-token case did *not* catch this —
+its input happens to end in a way that recovers — so the shape that matters is ending mid-construct.
+**Mutation-proven:** disabling the clamp ⇒ `FAIL: truncated input produced 166670 stderr lines (want
+<=200)`.
+
+Independently fuzz-verified beyond the gate: **60 deterministic random truncations** of `lib/str.cyr`
+— worst case **166,680 → 18** stderr lines, **0 hangs**.
+
+### Gates
+
+Release gate **GREEN** on all 5: self-host fixpoint byte-identical · seed → cybs → cycc OK · check.sh
+**149 passed, 0 failed** · cross-OS + VR-01 on **real hardware, all four hosts** (ecb, ach, cass, pi) ·
+bench **cycc 1108272 B (unchanged)**. **251/251 tcyr byte-identical** to 6.4.77 — the clamp is
+unreachable on a successful compile. (The gate's own 672 ms self_compile reading was taken with the box
+loaded by a concurrent analysis run; the interleaved same-box A/B above is the meaningful number.)
+
 ## [6.4.77] — 2026-07-24
 
 ### Fixed — reserved intrinsic names reported `got unknown`; **67** tokens, not the 3 filed
