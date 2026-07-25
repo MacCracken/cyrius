@@ -101,9 +101,11 @@ Independently fuzz-verified beyond the gate: **60 deterministic random truncatio
 
 Release gate **GREEN** on all 5: self-host fixpoint byte-identical · seed → cybs → cycc OK · check.sh
 **149 passed, 0 failed** · cross-OS + VR-01 on **real hardware, all four hosts** (ecb, ach, cass, pi) ·
-bench **cycc 1108272 B (unchanged)**. **251/251 tcyr byte-identical** to 6.4.77 — the clamp is
-unreachable on a successful compile. (The gate's own 672 ms self_compile reading was taken with the box
-loaded by a concurrent analysis run; the interleaved same-box A/B above is the meaningful number.)
+bench **self_compile 621 ms quiet-box median**, **cycc 1108272 B (unchanged)**. **251/251 tcyr
+byte-identical** to 6.4.77 — the clamp is unreachable on a successful compile. (The gate's own 672 ms
+reading was taken with the box loaded by a concurrent analysis run; re-measured at 621 ms on a quiet
+box afterwards, −1.06 % vs 6.4.76's 628 ms. Post-bump re-verification: check.sh 149/0, self-host
+fixpoint byte-identical, seed-derive OK.)
 
 ## [6.4.77] — 2026-07-24
 
