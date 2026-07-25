@@ -379,14 +379,67 @@ fn _reserved_kw_diag_gate(): i64 {
     fail = fail + _stderr_match_subcase("legit-ident-no-falsepositive",
         "include \"lib/syscalls.cyr\"\nfn foo() { var my_var = 1; return my_var; }\nfoo();\nsyscall(60, 0);\n",
         "reserved keyword", 0);
+
+    # v6.4.77 — the BUILTIN/INTRINSIC half of the reserved set (issue
+    # 2026-07-17-iv-simd-intrinsic-shadows-var-name). All 51 of these were missing
+    # from IS_KEYWORD_TOK + TOKNAME (both stopped at token 111), so each reported
+    # "expected identifier, got unknown" — a syntactically clean identifier called
+    # "unknown". Filed for iv_add/iv_sub/iv_mul; the real surface was the whole
+    # class. One probe per FAMILY (iv_ / f32v_ / f64v_ / f64_ / f32_ / mem / syscall
+    # / stmt-keyword), each asserting the name is actually PRINTED — a gate that only
+    # checked "reserved keyword" would pass on "reserved keyword 'unknown'".
+    fail = fail + _stderr_match_subcase("var iv_add (the filed repro)",
+        "include \"lib/syscalls.cyr\"\nvar iv_add = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'iv_add'", 1);
+    fail = fail + _stderr_match_subcase("var f32v_add",
+        "include \"lib/syscalls.cyr\"\nvar f32v_add = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'f32v_add'", 1);
+    fail = fail + _stderr_match_subcase("var f64v_mul",
+        "include \"lib/syscalls.cyr\"\nvar f64v_mul = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'f64v_mul'", 1);
+    fail = fail + _stderr_match_subcase("var f64_add",
+        "include \"lib/syscalls.cyr\"\nvar f64_add = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'f64_add'", 1);
+    fail = fail + _stderr_match_subcase("var f32_to",
+        "include \"lib/syscalls.cyr\"\nvar f32_to = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'f32_to'", 1);
+    fail = fail + _stderr_match_subcase("var load64",
+        "include \"lib/syscalls.cyr\"\nvar load64 = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'load64'", 1);
+    fail = fail + _stderr_match_subcase("var syscall",
+        "include \"lib/syscalls.cyr\"\nvar syscall = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'syscall'", 1);
+    fail = fail + _stderr_match_subcase("var defer",
+        "include \"lib/syscalls.cyr\"\nvar defer = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'defer'", 1);
+    fail = fail + _stderr_match_subcase("var union",
+        "include \"lib/syscalls.cyr\"\nvar union = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'union'", 1);
+    fail = fail + _stderr_match_subcase("var async",
+        "include \"lib/syscalls.cyr\"\nvar async = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'async'", 1);
+    # The two DOUBLE-ASSIGNED token numbers: 79 = object|f64_sqrt, 111 = stack|callptr.
+    # The spelling is unrecoverable from the token, so BOTH are named. Pre-fix these
+    # actively LIED — `var f64_sqrt` said "reserved keyword 'object'".
+    fail = fail + _stderr_match_subcase("var f64_sqrt (token 79 collision)",
+        "include \"lib/syscalls.cyr\"\nvar f64_sqrt = 1;\nsyscall(60, 0);\n",
+        "'object'/'f64_sqrt'", 1);
+    fail = fail + _stderr_match_subcase("var callptr (token 111 collision)",
+        "include \"lib/syscalls.cyr\"\nvar callptr = 1;\nsyscall(60, 0);\n",
+        "'stack'/'callptr'", 1);
+    # THE ANTI-REGRESSION ASSERT: no reserved name may ever report "unknown" again.
+    fail = fail + _stderr_match_subcase("no-unknown-for-reserved",
+        "include \"lib/syscalls.cyr\"\nvar iv_add = 1;\nsyscall(60, 0);\n",
+        "got unknown", 0);
+
     if (fail == 0) {
         _p("  ");
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": reserved keyword diagnostic (4 kw + hint + negative control)");
+        println(": reserved keyword diagnostic (4 stmt-kw + 10 builtin/intrinsic + 2 collisions + hint + 2 negative controls)");
     }
-    _check("'var match/in/default/shared' \xe2\x86\x92 'reserved keyword ... cannot be used as identifier'", fail);
+    _check("reserved-keyword diagnostic names the token: stmt keywords + all 51 builtin/intrinsic names (v6.4.77) + the 2 double-assigned tokens; never 'unknown'", fail);
     return fail;
 }
 

@@ -738,6 +738,26 @@ fn _check_lib_freshness(strict): i64 {
 # else the wrapper's own _VERSION_TOOLCHAIN. Snapshot must
 # exist at ~/.cyrius/versions/<v>/lib/ or we error out.
 fn cmd_lib_sync(): i64 {
+    # v6.4.77 — REFUSE inside the cyrius source repo. `lib sync` copies
+    # ~/.cyrius/versions/<pin>/lib OVER ./lib, which is correct for a consumer
+    # (whose ./lib is a resolved-dep cache) and catastrophic here: in THIS repo
+    # ./lib IS the canonical source of every folded stdlib (the sandhi pattern —
+    # sandhi/sigil/patra/mabda/… are tracked byte-snapshots of upstream dists, not
+    # resolved deps). A sync would silently revert every fold to whatever the
+    # snapshot holds, and because the snapshot is refreshed FROM ./lib by
+    # install.sh --refresh-only, the damage can look like a no-op until a fold that
+    # landed after the last bump quietly disappears.
+    # `_check_lib_freshness` (:651) already carves this repo out for exactly this
+    # reason; this fn was the unguarded twin. Erroring rather than returning 0
+    # silently — the user typed the command, so say why it is refused.
+    # See CLAUDE.md "Downstream repo setup" + deps.cyr:_dep_is_cyrius_source_repo.
+    if (_dep_is_cyrius_source_repo() == 1) {
+        sys_write(STDERR_FD, "error: `lib sync` refused in the cyrius source repo\n", 52);
+        sys_write(STDERR_FD, "  ./lib/ here is the CANONICAL source of the folded stdlib (sandhi pattern),\n", 77);
+        sys_write(STDERR_FD, "  not a resolved-dep cache — syncing would revert every fold.\n", 64);
+        sys_write(STDERR_FD, "  To refresh a folded dep: cp <upstream>/dist/<name>.cyr lib/<name>.cyr\n", 72);
+        return 1;
+    }
     var sync_ver = _dep_read_cyml_cyrius_field();
     if (sync_ver == 0) { sync_ver = _VERSION_TOOLCHAIN; }
     var src_sb = str_builder_new();

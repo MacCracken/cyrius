@@ -1,4 +1,40 @@
-# `iv_add`/`iv_sub`/`iv_mul` reserved SIMD intrinsics shadow variable names with a misleading error — OPEN
+# `iv_add`/`iv_sub`/`iv_mul` reserved SIMD intrinsics shadow variable names with a misleading error — RESOLVED
+
+> **✅ RESOLVED in v6.4.77** (`src/common/util.cyr`; CHANGELOG [6.4.77]).
+>
+> `var iv_add = 1;` now reports
+> `reserved keyword 'iv_add' (cannot be used as an identifier; rename the variable/field/fn)`.
+>
+> **Scope was 67 tokens, not the 3 filed.** Root cause: `IS_KEYWORD_TOK` *and* `TOKNAME` both stopped
+> at token 111, so `ERR_EXPECT` could neither classify nor name anything above it. Fixed for the whole
+> class (`syscall`, `load8/16/32/64`, `store8/16/32/64`, all `f64_*`/`f64v_*`/`f32_*`/`f32v_*`/
+> `f32v8_*`/`iv_*`, `union`, `defer`, `secret`, `async`, `await`, `u128`, `bitget/bitset/bitclr`,
+> `ret2/rethi`) — a filing enumerates what it hit, not the class. Names live in a new
+> `TOKNAME_BUILTIN` and `IS_KEYWORD_TOK` **derives** from it, so the two sets cannot drift.
+>
+> **Two corrections to this document:**
+>
+> 1. **`iv_div` was not "never reserved" for the reason given.** The doc reasons "there is no integer-
+>    vector divide instruction, so `iv_div` was never reserved" — correct conclusion, but the pattern is
+>    broader than `iv_*`: 67 unrelated names had the identical failure, so the apparent randomness was
+>    not about the `iv_` prefix at all.
+> 2. **The cascade is a SEPARATE, pre-existing defect and is NOT fixed here.** This doc attributes the
+>    downstream `expected '(', got ')'` / `undefined variable` noise to the desync from this bug. At
+>    6.4.77 a well-formed file with reserved names reports cleanly (1–2 errors, no flood). The real
+>    cascade needs input that ends **mid-construct**, produces **166,670 lines**, and reproduces
+>    identically on 6.4.76 — root-caused to unbounded `PEEKT`/`TOKTYP` reads and filed as
+>    [`2026-07-24-truncated-input-166k-line-error-cascade.md`](../2026-07-24-truncated-input-166k-line-error-cascade.md).
+>    It was deliberately not bundled: not a prerequisite, and `PEEKT` is the parser's hottest fn.
+>
+> **Also fixed, found while mapping this:** the diagnostic actively named the WRONG keyword for the two
+> double-assigned token numbers — `var f64_sqrt` said "reserved keyword 'object'" (token 79) and
+> `var callptr` said "'stack'" (token 111). Both now name both spellings.
+>
+> **Gate:** `_reserved_kw_diag_gate` extended 6 → 19 subcases, mutation-proven in both halves, with a
+> negative control asserting `got unknown` never appears for a reserved name.
+>
+> hisab may revert its `iv_sum`/`iv_diff`/`iv_prod` rename — though note these names remain **reserved**
+> (they are real intrinsics); the fix makes the compiler *say so* clearly, it does not free the names.
 
 **Discovered:** 2026-07-17 while bumping the **hisab** math library to cycc 6.4.66 (its
 `tests/modules.tcyr` suite would not compile).

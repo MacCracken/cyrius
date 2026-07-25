@@ -830,6 +830,107 @@ fn PRSTR(s): i64 {
     return 0;
 }
 
+# v6.4.77 — printable names for the BUILTIN / INTRINSIC token types.
+#
+# WHY THIS IS SEPARATE FROM TOKNAME: 51 entries means 51 string-literal (global)
+# references. cybs — the bootstrap assembler-compiler the 29 KB seed assembles —
+# mis-compiles a fn with too many global references (the same limit that forced
+# `_var_grow` into the `_grow_g1.._grow_g7` tail-call chain; see this file's grow
+# chain and CLAUDE.md's Release Gate item 2). Folding these into TOKNAME's existing
+# ~48 literals risked the seed chain, so they live here and TOKNAME delegates.
+#
+# It is ALSO the single source of truth: `IS_KEYWORD_TOK` derives from this table
+# rather than repeating the list, so the "is it reserved?" set and the "what is it
+# called?" set can never drift apart. Returns 0 for a non-builtin token.
+#
+# THE BUG THIS FIXES (issue 2026-07-17-iv-simd-intrinsic-shadows-var-name):
+# every one of these 51 tokens was missing from BOTH TOKNAME and IS_KEYWORD_TOK,
+# which stopped at token 111. So `var iv_add = 1;` reported
+#   error: expected identifier, got unknown
+# — pointing at a syntactically clean identifier and calling it "unknown". It cost
+# hisab its whole 312-assertion suite, found only by bisection. Filed for
+# iv_add/iv_sub/iv_mul; the real surface is all 51 (syscall, load8/16/32/64,
+# store8/16/32/64, the f64_*/f64v_*/f32_*/f32v_*/f32v8_*/iv_* intrinsics, union,
+# defer, secret, async, await, u128, bitget/bitset/bitclr, ret2/rethi).
+#
+# COUNT NOTE: 67, not the 51 a first pass finds. The lexer has TWO keyword paths —
+# `LEXKW_EXT` (lex.cyr:740, which `return`s a token) and the inline ADDTOK chain
+# (lex.cyr:900+) — and names longer than 8 chars are matched by a u64 compare PLUS
+# per-byte `load8` tails, so they never appear as a single decodable literal. Any
+# regex sweep over one path or over 8-byte literals alone silently under-counts by
+# 16 (f64_floor/f64_round/f64v_sqrt/f64v_fmadd/f64v_scale/f64v_axpy/f32v_fmadd/
+# f32v8_*). Each entry below was confirmed by compiling `var <name> = 1;`.
+fn TOKNAME_BUILTIN(typ): i64 {
+    if (typ == 24) { return "syscall"; }
+    if (typ == 25) { return "load8"; }
+    if (typ == 26) { return "store8"; }
+    if (typ == 42) { return "load16"; }
+    if (typ == 43) { return "load32"; }
+    if (typ == 44) { return "load64"; }
+    if (typ == 45) { return "store16"; }
+    if (typ == 46) { return "store32"; }
+    if (typ == 47) { return "store64"; }
+    if (typ == 62) { return "f64_add"; }
+    if (typ == 63) { return "f64_sub"; }
+    if (typ == 64) { return "f64_mul"; }
+    if (typ == 65) { return "f64_div"; }
+    if (typ == 66) { return "f64_from"; }
+    if (typ == 67) { return "f64_to"; }
+    if (typ == 68) { return "f64_eq"; }
+    if (typ == 69) { return "f64_lt"; }
+    if (typ == 70) { return "f64_gt"; }
+    if (typ == 71) { return "f64_neg"; }
+    if (typ == 80) { return "f64_abs"; }
+    if (typ == 81) { return "f64_floor"; }
+    if (typ == 82) { return "f64_ceil"; }
+    if (typ == 83) { return "f64_sin"; }
+    if (typ == 84) { return "f64_cos"; }
+    if (typ == 85) { return "f64_exp"; }
+    if (typ == 86) { return "f64_ln"; }
+    if (typ == 87) { return "f64_log2"; }
+    if (typ == 88) { return "f64_exp2"; }
+    if (typ == 89) { return "f64v_add"; }
+    if (typ == 90) { return "f64v_sub"; }
+    if (typ == 91) { return "f64v_mul"; }
+    if (typ == 92) { return "f64_round"; }
+    if (typ == 93) { return "f64v_div"; }
+    if (typ == 94) { return "f64v_sqrt"; }
+    if (typ == 95) { return "f64v_abs"; }
+    if (typ == 96) { return "f64v_fmadd"; }
+    if (typ == 97) { return "ret2"; }
+    if (typ == 98) { return "rethi"; }
+    if (typ == 99) { return "f64_atan"; }
+    if (typ == 101) { return "union"; }
+    if (typ == 102) { return "bitget"; }
+    if (typ == 103) { return "bitset"; }
+    if (typ == 104) { return "bitclr"; }
+    if (typ == 105) { return "u128"; }
+    if (typ == 106) { return "defer"; }
+    if (typ == 108) { return "secret"; }
+    if (typ == 128) { return "f64v_dot"; }
+    if (typ == 129) { return "f64v_scale"; }
+    if (typ == 130) { return "f64v_axpy"; }
+    if (typ == 131) { return "f32_from"; }
+    if (typ == 132) { return "f32_to"; }
+    if (typ == 134) { return "async"; }
+    if (typ == 135) { return "await"; }
+    if (typ == 138) { return "f32v_add"; }
+    if (typ == 139) { return "f32v_sub"; }
+    if (typ == 140) { return "f32v_mul"; }
+    if (typ == 141) { return "f32v_fmadd"; }
+    if (typ == 142) { return "f32v_dot"; }
+    if (typ == 143) { return "iv_add"; }
+    if (typ == 144) { return "iv_sub"; }
+    if (typ == 145) { return "iv_mul"; }
+    if (typ == 146) { return "iv_dp8"; }
+    if (typ == 147) { return "f32v8_add"; }
+    if (typ == 148) { return "f32v8_sub"; }
+    if (typ == 149) { return "f32v8_mul"; }
+    if (typ == 150) { return "f32v8_fma"; }
+    if (typ == 151) { return "f32v8_dot"; }
+    return 0;
+}
+
 fn TOKNAME(typ): i64 {
     if (typ == 1) { return "number"; }
     if (typ == 2) { return "identifier"; }
@@ -877,8 +978,25 @@ fn TOKNAME(typ): i64 {
     if (typ == 76) { return "in"; }
     if (typ == 77) { return "impl"; }
     if (typ == 78) { return "shared"; }
-    if (typ == 79) { return "object"; }
-    if (typ == 111) { return "stack"; }
+    # v6.4.77 — these two token numbers are DOUBLE-ASSIGNED by the lexer, so the
+    # spelling cannot be recovered from the token type alone; name both. Verified
+    # by decoding every keyword literal in lex.cyr (both the extended-keyword table
+    # that `return`s a token and the inline ADDTOK chain): 79 = `object`
+    # (lex.cyr:970) AND `f64_sqrt` (lex.cyr:1013); 111 = `stack` (lex.cyr:753) AND
+    # `callptr` (lex.cyr:990). They coexist because the grammar disambiguates by
+    # POSITION (`object;` is a top-level mode declaration, `f64_sqrt(x)` an
+    # expression intrinsic; likewise `stack var b[N];` vs `callptr(...)`), and both
+    # spellings still compile correctly — but the diagnostic previously picked one
+    # arbitrarily and LIED: `var f64_sqrt = 1;` said "reserved keyword 'object'"
+    # and `var callptr = 1;` said "reserved keyword 'stack'". The caret excerpt
+    # shows which one the user actually wrote. (The collision itself is filed
+    # separately — renumbering touches codegen and is not a diagnostic fix.)
+    if (typ == 79) { return "object'/'f64_sqrt"; }
+    if (typ == 111) { return "stack'/'callptr"; }
+    # v6.4.77: the 51 builtin/intrinsic names live in TOKNAME_BUILTIN (see the note
+    # there for the cybs global-reference limit that keeps them out of this fn).
+    var bn = TOKNAME_BUILTIN(typ);
+    if (bn != 0) { return bn; }
     return "unknown";
 }
 
@@ -929,8 +1047,14 @@ fn IS_KEYWORD_TOK(typ): i64 {
     if (typ == 76) { return 1; }   # in
     if (typ == 77) { return 1; }   # impl
     if (typ == 78) { return 1; }   # shared
-    if (typ == 79) { return 1; }   # object
-    if (typ == 111) { return 1; }  # stack
+    if (typ == 79) { return 1; }   # object / f64_sqrt (double-assigned — see TOKNAME)
+    if (typ == 111) { return 1; }  # stack / callptr (double-assigned — see TOKNAME)
+    # v6.4.77 — every BUILTIN/INTRINSIC token is reserved too. DERIVED from
+    # TOKNAME_BUILTIN rather than repeated here, so this set and the name table
+    # cannot drift apart: if a future intrinsic gets a name there, it is reserved
+    # here automatically. Before this, all 51 fell through to `return 0` and
+    # ERR_EXPECT printed "expected identifier, got unknown" instead of naming them.
+    if (TOKNAME_BUILTIN(typ) != 0) { return 1; }
     return 0;
 }
 

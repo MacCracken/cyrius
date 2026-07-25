@@ -2317,8 +2317,12 @@ sandhi::sandhi_http_delete_retry/4
 sandhi::sandhi_http_delete_retry_a/5
 sandhi::sandhi_http_download/3
 sandhi::sandhi_http_download_a/4
+sandhi::sandhi_http_download_headers/4
+sandhi::sandhi_http_download_headers_a/5
 sandhi::sandhi_http_download_sink/4
 sandhi::sandhi_http_download_sink_a/5
+sandhi::sandhi_http_download_sink_headers/5
+sandhi::sandhi_http_download_sink_headers_a/6
 sandhi::sandhi_http_err_kind/1
 sandhi::sandhi_http_err_message/1
 sandhi::sandhi_http_get/2

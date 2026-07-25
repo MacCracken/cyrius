@@ -6,6 +6,139 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.77] — 2026-07-24
+
+### Fixed — reserved intrinsic names reported `got unknown`; **67** tokens, not the 3 filed
+
+Consumer-filed by **hisab** (`issues/2026-07-17-iv-simd-intrinsic-shadows-var-name.md`): `var iv_add
+= 1;` reported
+
+```
+error:<source>:1:5: expected identifier, got unknown
+```
+
+— pointing at a syntactically clean identifier and calling it `unknown`. It cost hisab its whole
+312-assertion `modules.tcyr` suite, findable only by bisection.
+
+Root cause: `IS_KEYWORD_TOK` and `TOKNAME` (`src/common/util.cyr`) both **stop at token 111**.
+`ERR_EXPECT` uses the first to choose the good "reserved keyword 'X' (cannot be used as an identifier;
+rename the variable/field/fn)" message and the second to print the name — so every token above 111,
+plus a long tail below it, fell through to `return 0` / `return "unknown"`.
+
+**The filing named `iv_add`/`iv_sub`/`iv_mul`; the real surface is 67 tokens** — a consumer filing
+enumerates what it hit, not the class. All 67 now name themselves: `syscall`, `load8/16/32/64`,
+`store8/16/32/64`, the whole `f64_*` / `f64v_*` / `f32_*` / `f32v_*` / `f32v8_*` / `iv_*` intrinsic
+families, `union`, `defer`, `secret`, `async`, `await`, `u128`, `bitget/bitset/bitclr`, `ret2/rethi`.
+
+**Shape:** the names live in a new `TOKNAME_BUILTIN`, and **`IS_KEYWORD_TOK` derives from it**
+(`if (TOKNAME_BUILTIN(typ) != 0) { return 1; }`) rather than repeating the list — so the "is it
+reserved?" set and the "what is it called?" set cannot drift apart, and a future intrinsic that gets a
+name is reserved automatically. Splitting the table out of `TOKNAME` also keeps either fn from
+carrying 100+ string-literal (global) references, the limit that forced `_var_grow` into its
+`_grow_g1..g7` tail-call chain; `seed-derive` confirms cybs is happy.
+
+**Counting trap worth recording:** a first pass finds only **51**. The lexer has *two* keyword paths —
+`LEXKW_EXT` (which `return`s a token) and the inline `ADDTOK` chain — and names longer than 8 chars are
+matched by a u64 compare **plus per-byte `load8` tails**, so they never appear as a single decodable
+literal. Any regex sweep over one path, or over 8-byte literals alone, silently under-counts by 16
+(`f64_floor`, `f64_round`, `f64v_sqrt`, `f64v_fmadd`, `f64v_scale`, `f64v_axpy`, `f32v_fmadd`,
+`f32v8_*`). Every entry was confirmed by compiling `var <name> = 1;` and checking the message names
+that exact spelling — which round-trip-validates all 67 hex decodes through the compiler itself.
+
+### Fixed — the diagnostic actively named the WRONG keyword for two tokens
+
+Found while mapping the above. Two token numbers are **double-assigned** by the lexer, so the spelling
+is unrecoverable from the token type: **79** = `object` (`lex.cyr:970`) *and* `f64_sqrt` (`:1013`);
+**111** = `stack` (`:753`, the `LEXKW_EXT` path) *and* `callptr` (`:990`). Both spellings compile
+correctly — the grammar disambiguates by *position* (`object;` is a top-level mode declaration,
+`f64_sqrt(x)` an expression intrinsic; `stack var b[N];` vs `callptr(...)`) — but the diagnostic picked
+one arbitrarily and **lied**: `var f64_sqrt = 1;` said "reserved keyword **'object'**" and
+`var callptr = 1;` said "reserved keyword **'stack'**". Both now name both (`'object'/'f64_sqrt'`), and
+the v6.4.60 caret excerpt disambiguates. The collision itself is a latent hazard requiring token
+renumbering (which touches codegen), so it is documented at the site rather than fixed here.
+
+### Changed — `cyrius lib sync` now refuses to run inside the cyrius source repo
+
+`cmd_lib_sync` copies `~/.cyrius/versions/<pin>/lib` **over** `./lib`. That is right for a consumer
+(whose `./lib` is a resolved-dep cache) and destructive here, where `./lib` **is** the canonical source
+of every folded stdlib — a sync would silently revert every fold. `_check_lib_freshness` already carves
+this repo out via `_dep_is_cyrius_source_repo()`; `cmd_lib_sync` was the unguarded twin. It now errors
+with the reason and points at the correct refold command. Verified both directions: refused in-repo,
+still syncs 99 files from a consumer dir.
+
+### Changed — sandhi re-vendored 1.9.1 → 1.9.3
+
+Fold refreshed from upstream `dist/sandhi.cyr` (the sandhi pattern — vendored byte-identical, not a
+`[deps]` entry; cyrius vendors only the full profile, not the 4 sub-profiles). **Zero local drift**
+confirmed first: `lib/sandhi.cyr` was byte-identical to `git show 1.9.1:dist/sandhi.cyr`, so the
+overwrite discarded nothing — the "fix the source repo, not the fold" failure mode was not present.
+Upstream `dist/` verified clean and regenerated at 1.9.3 for all 5 profiles.
+
+Purely additive: **4 new public fns**, 0 removed, 0 arity changes
+(`sandhi_http_download_headers{,_a}`, `sandhi_http_download_sink_headers{,_a}`) — api-surface snapshot
+4743 → 4747. sandhi is not in cycc's include closure (all 7 forks pull only `alloc`/`vec`), so **cycc
+stays byte-identical** and the seed chain is untouched.
+
+**Behaviour note for consumers, not just a diagnosis tweak:** an over-cap HTTP response now returns
+`SANDHI_ERR_PROTOCOL` where it previously returned `SANDHI_ERR_CONNECT`. Harmless at the
+error/no-error boundary, but any downstream code branching on the specific code changes meaning. Also
+1.9.2's CNAME fix is a **resolver semantic change** — hosts that previously hard-failed now resolve
+(bounded at 8 hops, owner-name anti-substitution retained, RDATA now bounds-checked for every record
+type, so the security posture holds on inspection). stiva filed both bugs and picks the fix up after
+bumping its pin.
+
+### Docs — the folded-distlib table rots silently; 5 of 11 rows were stale
+
+`docs/ecosystem.md`'s `Source tag` column had drifted on **5 rows**: sandhi 1.8.2 (two folds behind),
+**sankoch 2.5.5 → 2.7.5 (two minors)**, vani, bayan, ganita. A refold that updates `lib/` but not the
+table leaves no trace. Corrected all 5 against live `lib/*.cyr` headers, and added a **mechanical**
+verification command to the closeout checklist — including the gotcha that there are **three** header
+formats, so a single-pattern grep silently skips sakshi (which was in fact current). The `Folded at`
+column is not mechanically verifiable and may still be stale where a `Source tag` was corrected
+without a matching refold entry; the checklist now says to trust the CHANGELOG over it.
+
+### Filed — truncated input produces a 166,670-line error cascade (NOT bundled)
+
+`issues/2026-07-24-truncated-input-166k-line-error-cascade.md`. Input that ends mid-construct (a
+truncated file, an unclosed `fn`) yields **166,670 stderr lines** before the v6.4.62 watchdog aborts:
+`printf 'include "lib/syscalls.cyr"\nvar x = f64_sqrt' | build/cycc`. Root cause is `PEEKT`/`TOKTYP`
+(`src/backend/common/tokens.cyr:11,13`) reading past the token array unchecked — past the end they
+return zeroed heap (type `0`, never `12` = EOF), so every EOF test in `_sync_skip` and the block loops
+silently fails and recovery can never terminate normally.
+
+**Verified pre-existing** — identical 166,670 lines on 6.4.76 and on this build, so the diagnostic fix
+neither caused nor cures it — and it terminates (exit 1), so it is *not* a hang. **Deliberately not
+bundled:** it is not a prerequisite (the diagnostic fix is complete without it), and `PEEKT` is *the*
+hottest function in the parser, so adding a compare+branch there is a hot-path change that deserves
+its own slot with its own bench delta rather than a ride-along on a diagnostics patch.
+
+### Testing
+
+`programs/checks/lint_fmt.cyr` `_reserved_kw_diag_gate` extended from 6 to **19** subcases: one probe
+per intrinsic family (`iv_`/`f32v_`/`f64v_`/`f64_`/`f32_`/mem/`syscall`/stmt-keyword), both
+double-assigned tokens, and — the assert that matters — a **negative control that `got unknown` never
+appears for a reserved name**. A gate that only checked for the substring "reserved keyword" would
+have passed on `reserved keyword 'unknown'`.
+
+**Mutation-proven, both halves independently:** deleting the `IS_KEYWORD_TOK` derivation ⇒ message
+degrades to `expected identifier, got iv_add` (loses the reserved-keyword framing) ⇒ positive assert
+fails; deleting the `iv_add` name-table entry ⇒ `got unknown` returns ⇒ negative assert fires.
+check.sh 149 → 149 (the extended gate replaces the narrower one in place).
+
+### Gates
+
+Release gate **GREEN** on all 5 steps: self-host fixpoint byte-identical · seed → cybs → cycc
+derivation OK (the gate that proves the 67-literal table did not trip cybs's global-reference limit) ·
+check.sh **149 passed, 0 failed** · cross-OS self-host + VR-01 on **real hardware, all four hosts**
+(ecb, ach, cass, pi) · bench **self_compile 625 ms quiet-box median (−0.9 % vs 6.4.76, i.e. noise)**,
+**cycc 1108272 B (+4648** — the 67 name literals plus `TOKNAME_BUILTIN`; a diagnostic-only path, so no
+runtime cost on a successful compile).
+
+**251/251 tcyr byte-identical** to 6.4.76 — the new table is reached only from `ERR_EXPECT`, so codegen
+is untouched. The gate ran before the `lib sync` guard and doc edits, which are `cbt/` + `docs/` only
+and cannot affect cycc; check.sh was re-run green afterwards and the cross-OS leg (a cycc self-host
+test) remains valid.
+
 ## [6.4.76] — 2026-07-24
 
 ### Changed — identifier pool (`tok_names`) cap raised 256 KB → 512 KB in place
