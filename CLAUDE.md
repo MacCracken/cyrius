@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 6.4.79
+- **Version**: 6.4.80
 
 ## Goal
 
@@ -38,7 +38,7 @@ cyrius bench                       # run .bcyr benchmarks
 ## Key Principles
 
 - **Self-hosting is non-negotiable** — cycc==cycc byte-identical after every compiler change
-- **Cross-OS self-host is non-negotiable, on REAL hardware** — "self-hosting" means cycc reproduces itself byte-identical on **every target it claims to support**, not just x86_64 Linux. After ANY compiler-backend or stdlib change, verify cycc self-hosts on **ecb (macOS, arm64)** + **cass (Windows, PE)** via SSH — they're wired in `~/.ssh/config`, one `ssh` away, every slot. **A green CI checkmark is NOT verification.** The macOS compiler self-host rotted silently for ~9 minors (v5.3.13 → v6.0.32, 400+ patches) behind a CI job named "Mach-O ARM64 Native ✓" that only ran hello-world / exit-code programs and never once built or self-hosted `cycc`. It surfaced only when a human installed on a Mac and got a broken toolchain — the exact "found by ports" failure. Hello-world smoke is a placebo; the compiler self-hosting on the target IS the test. Never trust a checkmark over running the compiler on the hardware. See `feedback_macos_windows_ci_gate_mandatory`, `reference_verification_hosts_ssh`, Closeout 3b.
+- **Cross-OS self-host is non-negotiable, on REAL hardware** — "self-hosting" means cycc reproduces itself byte-identical on **every target it claims to support**, not just x86_64 Linux. After ANY compiler-backend or stdlib change, verify cycc self-hosts on **ecb (macOS, arm64)** + **ach (Intel-Mac, x86-macho)** + **cass (Windows, PE)** + **pi (aarch64)** via SSH — they're wired in `~/.ssh/config`, one `ssh` away, every slot. **A green CI checkmark is NOT verification.** The macOS compiler self-host rotted silently for ~9 minors (v5.3.13 → v6.0.32, 400+ patches) behind a CI job named "Mach-O ARM64 Native ✓" that only ran hello-world / exit-code programs and never once built or self-hosted `cycc`. It surfaced only when a human installed on a Mac and got a broken toolchain — the exact "found by ports" failure. Hello-world smoke is a placebo; the compiler self-hosting on the target IS the test. Never trust a checkmark over running the compiler on the hardware. See `feedback_macos_windows_ci_gate_mandatory`, `reference_verification_hosts_ssh`, Closeout 3b.
 - **Two-step bootstrap for heap changes** — cycc compiles cc5b, cycc==cc5b
 - **Never use raw `cat | cycc` for projects** — always invoke `cyrius build`. The CLI wrapper resolves deps, auto-prepends includes from `cyrius.cyml`, handles cross-arch + strict flags, and produces consistent output naming. Raw `cat | cycc` is for compiler-internal self-host (the verifier script + bootstrap chain) — not consumer code.
 - **Assembly is the cornerstone** — understand every instruction the compiler emits
@@ -127,7 +127,7 @@ Gates, fail-fast:
    build/cycc` matters; don't chase it.) See
    `feedback_seed_derive_mandatory_cybs_limits`.
 3. **check.sh** — all gates green.
-4. **Cross-OS self-host** — ecb (macOS) + cass (Windows) + pi (aarch64), REAL
+4. **Cross-OS self-host** — ecb (macOS-arm64) + ach (Intel-Mac) + cass (Windows) + pi (aarch64), REAL
    hardware, sequential. A green CI check is NOT this.
 5. **Bench** — record self_compile + cycc size in the CHANGELOG (non-blocking).
 
@@ -147,7 +147,7 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 1. **Self-host verify** — cycc compiles itself byte-identical
 2. **Bootstrap closure (seed-derive)** — `seed → cybs → cycc` byte-identical (`seed-derive-cycc.sh`). NOT covered by the cycc self-host fixpoint — see the Release Gate above; this is item 2 of the gate and is mandatory EVERY release, not just at closeout.
 3. **Full check.sh** — all gates green (count grows per minor; record the number)
-3b. **Cross-OS self-host (NON-NEGOTIABLE — added v6.0.x after the macOS rot incident)** — cycc must build from the correct per-target source AND **self-host byte-identical on real macOS (ecb) + Windows (cass) + aarch64 (pi)**, not just x86_64 Linux. Hello-world/exit-code smoke is NOT self-host — the macOS port rotted v5.3.13→v6.0.31 precisely because the `macho-arm64-native`/`windows-native` CI jobs only ran tiny programs, never the compiler. Verify via the `macos-14`/`windows-latest` CI jobs (once extended to self-host) AND/OR SSH to ecb/cass/pi. A minor does NOT close with macOS/Windows self-host unverified or red. See [reference: verification hosts, `feedback_macos_windows_ci_gate_mandatory`].
+3b. **Cross-OS self-host (NON-NEGOTIABLE — added v6.0.x after the macOS rot incident)** — cycc must build from the correct per-target source AND **self-host byte-identical on real macOS-arm64 (ecb) + Intel-Mac (ach) + Windows (cass) + aarch64 (pi)**, not just x86_64 Linux. Hello-world/exit-code smoke is NOT self-host — the macOS port rotted v5.3.13→v6.0.31 precisely because the `macho-arm64-native`/`windows-native` CI jobs only ran tiny programs, never the compiler. Verify via the `macos-14`/`windows-latest` CI jobs (once extended to self-host) AND/OR SSH to ecb/ach/cass/pi. (`scripts/release-gate.sh:92` runs all FOUR — `for H in ecb ach cass pi`; ach became a first-class gate at v6.4.59 after the Intel-Mac toolchain rotted ungated for ~2.5 minors, which is the same rot these bullets exist to prevent.) A minor does NOT close with macOS/Windows self-host unverified or red. See [reference: verification hosts, `feedback_macos_windows_ci_gate_mandatory`].
 
 ### Judgment-call passes (where bugs hide)
 4. **Heap map audit** — beyond "verify the map matches usage", evaluate:
@@ -354,7 +354,16 @@ per-session memory files so they survive environment changes.
   This is the language repo: **when the compiler can't compile valid cyrius, fix the compiler.** If a
   rule here tells you to work around codegen, treat the rule as the bug report.
 - **`var x[N]` local = N BYTES** (rounded to 8), not N slots — use `var a: i64[N]` for slots. Bare top-level arrays = N×8 (fixed v6.4.10).
-- `secret`, `pub`, `shared` are reserved keywords — parser fails on them as identifiers.
+- **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` (`src/common/util.cyr`) is
+  the single source of truth — **67** builtin/intrinsic names plus the ~25 statement keywords, and
+  `IS_KEYWORD_TOK` *derives* from it so the two sets cannot drift. It covers `syscall`,
+  `load8/16/32/64`, `store8/16/32/64`, every `f64_*` / `f64v_*` / `f32_*` / `f32v_*` / `f32v8_*` /
+  `iv_*` intrinsic, plus `union`, `defer`, `secret`, `async`, `await`, `u128`,
+  `bitget/bitset/bitclr`, `ret2/rethi` — and `pub`/`shared`/`match`/`in`/`default`/`stack`. The
+  parser rejects any of them as an identifier and (since v6.4.77) NAMES the one you hit.
+  This line used to read "`secret`, `pub`, `shared` are reserved keywords" — three names for a
+  67-name class, which is structurally the same error as the retired "≤6 args" rule: a partial
+  observation written down as a language rule. Read the table, don't extend the list here.
 - tcyr files MUST end `var r = assert_summary();` (or an explicit exit syscall) so success exits 0. Name tests topically, never temporally ("pass2"/"v3" — 20-yr QA pet peeve).
 - cyrfmt flattens multi-line call continuations to 4-space indent — write them that way up front.
 - aarch64 stdlib syscall numbers that collide with an x86 number in ESYSXLAT get silently mis-remapped — use the x86 number + an ESYSXLAT entry.

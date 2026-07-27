@@ -6,6 +6,90 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.80] — 2026-07-26
+
+### Fixed — **CRITICAL**: `1 - 2 + 3` evaluated to `5`; the `_cfo` rewind class, third occurrence
+
+Found by an adversarial verifier during the v6.4.x closeout doc sweep, while empirically re-checking
+an unrelated vidya claim about operator precedence — i.e. by *running* the compiler rather than
+reading it. Constant expressions in the PEXPR tier (`+ - & | ^`) **silently discarded their left
+operand** whenever a literal subtraction produced a negative intermediate:
+
+| expression | 6.4.79 | correct |
+|---|---|---|
+| `1 - 2 + 3` | **5** | 2 |
+| `2 - 5 + 10` | **15** | 7 |
+| `3 + 1 - 5 + 2` | **7** | 1 |
+| `1 - 2 ^ 3` | **1** | −4 |
+| `1 - 2 \| 3` | **3** | −1 |
+
+The emitted code is the expression with the leading `a -` deleted — `1 - 2 + 3` computes `2 + 3`.
+Non-negative intermediates were always correct (`5 - 3 + 1` == 3), which is exactly why it hid.
+**Measured blast radius: 40 of 400 (10 %) systematic 3-term expressions were wrong at 6.4.79.**
+
+**Root cause is the mechanism v6.4.74 fixed one tier down.** A fallback cleared `_cfo = 0` *before*
+calling `PARSE_TERM` → `PARSE_FACTOR`, which **re-arms** `_cfo` for a bare NUM and sets
+`_cfp = GCP(S)` past the left operand's emit; the next operator then saw a live fold and
+`SCP(S, _cfp)` rewound the code pointer over the left operand. The trigger is the `cfr >= 0` test in
+the subtract fold — a negative intermediate fails it and takes the runtime fallback, and the fallback
+was the buggy one.
+
+**This class has now bitten three times, each fix scoped to the reported operator rather than the
+mechanism:** 2026-06-11 cyrius-doom (`A * B * 4` → 800, the EIMUL path) → **v6.4.74** (17 sites,
+`PARSE_TERM` tier) → **v6.4.80** (16 sites, `PEXPR` tier). v6.4.74 was ours and shipped incomplete:
+it swept the tier the repro landed in without checking whether the same
+`_cfo = 0; …PARSE_TERM…` shape existed one tier up. It did, 16 times. A single
+`grep -c "_cfo = 0; E.*PARSE_TERM"` at .74 would have found them eight releases earlier — **grep for
+the shape, not the operator.** Verified afterwards that zero such occurrences remain in the file.
+
+**Verification.** All 7 reported cases correct · **520-expression fold-vs-runtime differential
+(0 mismatches)** · self-host fixpoint byte-identical · seed-derive OK · check.sh 149/0 ·
+**251/251 tcyr byte-identical to 6.4.79** — which is itself the finding: *the corpus contained no
+expression of the failing shape*, so 10 % of constant arithmetic could be wrong with every gate green.
+
+### Added — mechanism-level regression coverage (mutation-proven per operator)
+
+`tests/tcyr/const_chained_multiply_fold.tcyr` — already the home of the 2026-06-11 multiply instance,
+so one file now guards one mechanism — extended 8 → **33 assertions**.
+
+Getting real coverage took three rounds and is worth recording: the obvious `1 - 2 & 3` fires the
+**SUB** fallback, not the AND one, so reverting the 5 AND sites left the suite **green**; AND needed a
+left operand folding to 0 (`0 & 1 & 1`); OR/XOR needed a **zero right-hand operand** (`1 | 0 ^ 1`);
+and ADD is reachable only via **i64 overflow** (`9223372036854775807 + 1 + 1`), since a literal `crv`
+is never negative. Before that work **8 of the 16 sites had no coverage at all**. Mutating each of the
+five operator paths independently now fails 2–7 assertions (AND 3, OR 2, XOR 2, SUB 7, ADD 2).
+
+### Docs — closeout doc sweep (partial; the closeout itself moves to v6.4.81)
+
+`docs/doc-health.md` refreshed **v6.4.72 → v6.4.79** (a .73→.79 entry + fresh stamp block).
+`CLAUDE.md` corrected on two counts the audit caught: the cross-OS host list omitted **`ach`** in
+three places while `scripts/release-gate.sh:92` has run `for H in ecb ach cass pi` since v6.4.59 —
+ach became a first-class gate precisely because the Intel-Mac toolchain rotted ungated for ~2.5
+minors, the same rot those bullets exist to prevent; and the reserved-keyword rule named **three**
+keywords for what v6.4.77 proved is a **67-name class** — structurally the same error as the retired
+"≤6 args" rule, a partial observation written down as a language rule. It now points at
+`TOKNAME_BUILTIN` as the source of truth.
+
+`docs/development/handoff.md` added for the account switch, carrying the state, the v6.5.0 opener,
+the open-queue shape, and the traps from .73→.80 that otherwise live only in per-session memory
+outside the repo.
+
+**Deliberately left for the v6.4.81 closeout** (each needs judgment, not find-and-replace): roadmap.md's
+shipped list stops at .72; stackless coroutines is contradicted in 3+ places (roadmap-future.md:116 is
+authoritative); roadmap.md's v6.5.x table omits the pub/private opener; open-issue count says 9 vs a
+live 11; **heap regions disagree three ways** (`tests/heapmap.sh` says **94**, docs say 100, vidya says
+"135 entries / 56 live") — that belongs to the closeout heap-map audit where the number is re-derived,
+not patched; CLAUDE.md's "last security audit: v5.0.1" is actually 6.1.31 (2026-06-10); and **vidya has
+zero references to .73→.79** with `gotchas.cyml` stopping at v6.4.52. ⚠ The v6.4.72 vidya sweep is
+sitting **uncommitted** in `~/Repos/vidya`'s working tree — commit before editing.
+
+### Gates
+
+Release gate **GREEN** on all 5: self-host fixpoint byte-identical · seed → cybs → cycc OK · check.sh
+**149 passed, 0 failed** · cross-OS + VR-01 on **real hardware, all four hosts** (ecb, ach, cass, pi) ·
+bench **self_compile 632 ms**, **cycc 1108272 B — unchanged** (the fix moves 16 statements; it does not
+add code).
+
 ## [6.4.79] — 2026-07-26
 
 ### Fixed — sankoch 2.7.6 fold: batch gzip/deflate corrupted every input over 1 MiB

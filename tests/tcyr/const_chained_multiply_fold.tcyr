@@ -9,6 +9,10 @@ include "lib/assert.cyr"
 
 enum Dim { A = 320; B = 200; C = 7; }
 
+# v6.4.80 — the same expressions through the gvar static-init folder (_CF_TRY).
+var G_NEG_THEN_ADD = 1 - 2 + 3;
+var G_NEG_THEN_XOR = 1 - 2 ^ 3;
+
 fn main(): i64 {
     assert_eq(A * B, 64000, "2-operand enum fold");
     assert_eq(A * B * 4, 256000, "enum*enum*pow2 (the reported 320*200*4)");
@@ -18,6 +22,74 @@ fn main(): i64 {
     assert_eq(C * A * B, 448000, "enum*enum*enum (reordered)");
     assert_eq((A * B) * 4, 256000, "explicit-paren control");
     assert_eq(A * 200 * 4, 256000, "enum*lit*lit control");
+
+    # ── v6.4.80: the SAME mechanism in the PEXPR tier (+ - & | ^) ──────────────
+    # THIS CLASS HAS NOW BITTEN THREE TIMES, and each fix was scoped to the
+    # operator that was REPORTED rather than to the mechanism:
+    #   2026-06-11  cyrius-doom  `A * B * 4` -> 800        (EIMUL path; this file)
+    #   v6.4.74     `100 >>> 1 + 1` == 2                   (17 PARSE_TERM sites)
+    #   v6.4.80     `1 - 2 + 3` == 5                       (16 PEXPR sites)
+    # The mechanism is always identical: a fallback clears `_cfo = 0` BEFORE
+    # calling PARSE_TERM/PARSE_FACTOR, which RE-ARMS it for a bare NUM (setting
+    # `_cfp = GCP(S)` past the left operand's emit). The next operator then sees a
+    # live fold and `SCP(S, _cfp)` rewinds the code pointer over the left operand,
+    # silently emitting only the tail. The fix is always the same: move the clear
+    # to AFTER the emit.
+    #
+    # The .80 trigger is a literal subtraction whose intermediate goes NEGATIVE —
+    # `cfr >= 0` fails, the code takes the runtime fallback, and the fallback was
+    # the buggy one. That is why non-negative chains (`5 - 3 + 1`) always worked
+    # and hid it: 10% of systematic 3-term expressions were wrong, but none of the
+    # 251 .tcyr contained the shape, so the corpus was byte-identical across the
+    # fix and could never have caught it.
+    #
+    # These assert the MECHANISM across every PEXPR-tier operator, not one of them.
+    # Mutation-proven: restore any `_cfo = 0;` to before its PARSE_TERM call in
+    # parse_expr.cyr and the matching line here goes red.
+    assert_eq(1 - 2 + 3, 2, "neg intermediate then + (the .80 repro)");
+    assert_eq(2 - 5 + 10, 7, "neg intermediate then + (larger)");
+    assert_eq(0 - 1 + 3, 2, "0-1 then +");
+    assert_eq(3 + 1 - 5 + 2, 1, "4-term chain crossing zero");
+    assert_eq(1 - 2 ^ 3, 0 - 4, "neg intermediate then ^");
+    assert_eq(1 - 2 & 3, 3, "neg intermediate then &");
+    assert_eq(1 - 2 | 3, 0 - 1, "neg intermediate then |");
+    assert_eq(5 - 3 + 1, 3, "non-neg control (always worked)");
+    assert_eq(10 - 4 + 1, 7, "non-neg control (always worked)");
+    # Cross-tier: a PEXPR fallback followed by a PARSE_TERM-tier operator.
+    assert_eq(1 - 2 * 3, 0 - 5, "neg result via tighter-binding *");
+    # NOTE the parens: `>>` is PARSE_TERM tier and binds TIGHTER than `-`, so
+    # `0 - 8 >> 1` is `0 - (8 >> 1)` == -4 for BOTH shifts and discriminates
+    # nothing. Only an explicitly-parenthesised negative operand separates
+    # LOGICAL `>>` from ARITHMETIC `>>>`.
+    assert_eq((0 - 8) >> 1, 9223372036854775804, "paren-neg then LOGICAL >>");
+    assert_eq((0 - 8) >>> 1, 0 - 4, "paren-neg then ARITHMETIC >>>");
+    assert_eq(0 - 8 >> 1, 0 - 4, "unparenthesised: >> binds tighter than -");
+    # The &/|/^ RUNTIME-FALLBACK sites need their own shapes: `1 - 2 & 3` above
+    # fires the SUB fallback, not the AND one, so it does NOT cover them (found by
+    # mutation testing — reverting the 5 AND sites left the suite green). A left
+    # operand that folds to 0 is what drives these into their fallback.
+    assert_eq(0 & 1 & 1, 0, "AND fallback: left operand must not be dropped");
+    assert_eq(0 & 1 ^ 3, 3, "XOR fallback after a 0-folding AND");
+    assert_eq(0 & 1 | 5, 5, "OR fallback after a 0-folding AND");
+    assert_eq(0 & 3 + 4, 4, "ADD fallback after a 0-folding AND");
+    # OR and XOR need a ZERO right-hand operand to reach their fallback (found by
+    # per-operator mutation testing: the four cases above left OR/XOR green, so
+    # 8 of the 16 sites were uncovered until these landed).
+    assert_eq(1 | 0 ^ 1, 0, "OR fallback: rhs 0 then ^");
+    assert_eq(1 | 0 ^ 3, 2, "OR fallback: rhs 0 then ^ (larger)");
+    assert_eq(1 ^ 0 ^ 1, 0, "XOR fallback: rhs 0 then ^");
+    assert_eq(1 ^ 0 ^ 5, 4, "XOR fallback: rhs 0 then ^ (larger)");
+    # The ADD fallback is only reached when `_cfv + crv` OVERFLOWS negative — a
+    # literal `crv` is never < 0, so ordinary values always take the fold path.
+    # i64-MAX + 1 wraps to i64-MIN, and MIN + 1 == -9223372036854775807, whose low
+    # byte is 1; the buggy path drops the left operand and yields `1 + 1` == 2.
+    assert_eq((9223372036854775807 + 1 + 1) & 255, 1, "ADD fallback via i64 overflow");
+    assert_eq((0x7FFFFFFFFFFFFFFF + 2 + 5) & 255, 6, "ADD fallback via hex i64 overflow");
+
+    # Global-initializer path (v6.4.74's _CF_TRY folder) must agree with the above.
+    assert_eq(G_NEG_THEN_ADD, 2, "gvar init: 1 - 2 + 3 folds to 2");
+    assert_eq(G_NEG_THEN_XOR, 0 - 4, "gvar init: 1 - 2 ^ 3 folds to -4");
+
     var r = assert_summary();
     return r;
 }

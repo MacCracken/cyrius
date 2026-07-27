@@ -2823,9 +2823,9 @@ fn PEXPR(S): i64 {
                         var cfr = _cfv + crv;
                         if (cfr >= 0) {
                             STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                        } else { _cfo = 0; ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); }
+                        } else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
                     }
-                    else { _cfo = 0; ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); }
+                    else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
                 } else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
             }
         }
@@ -2850,9 +2850,9 @@ fn PEXPR(S): i64 {
                             var cfr = _cfv - crv;
                             if (cfr >= 0) {
                                 STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                            } else { _cfo = 0; EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); }
+                            } else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                         }
-                        else { _cfo = 0; EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); }
+                        else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                     } else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                 }
             }
@@ -2917,10 +2917,10 @@ fn PEXPR(S): i64 {
                                                 var cfr = _cfv & crv;
                                                 if (cfr > 0) { if (cfr < 0x10000) {
                                                         STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                                                    } else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); } }
-                                                else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); }
-                                            } else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); } }
-                                        else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); }
+                                                    } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; } }
+                                                else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; }
+                                            } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; } }
+                                        else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; }
                                     } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; }
                                 }
                                 else { if (typ == 35) {
@@ -2939,10 +2939,10 @@ fn PEXPR(S): i64 {
                                                     var cfr = _cfv | crv;
                                                     if (cfr > 0) { if (cfr < 0x10000) {
                                                             STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                                                        } else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); } }
-                                                    else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); }
-                                                } else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); } }
-                                            else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); }
+                                                        } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; } }
+                                                    else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; }
+                                                } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; } }
+                                            else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; }
                                         } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; }
                                     }
                                     else { if (typ == 36) {
@@ -2961,10 +2961,10 @@ fn PEXPR(S): i64 {
                                                         var cfr = _cfv ^ crv;
                                                         if (cfr > 0) { if (cfr < 0x10000) {
                                                                 STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                                                            } else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); } }
-                                                        else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); }
-                                                    } else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); } }
-                                                else { _cfo = 0; EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); }
+                                                            } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; } }
+                                                        else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; }
+                                                    } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; } }
+                                                else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; }
                                             } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; }
                                         }
                                         else { go = 0; }
