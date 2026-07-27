@@ -6,6 +6,80 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.79] — 2026-07-26
+
+### Fixed — sankoch 2.7.6 fold: batch gzip/deflate corrupted every input over 1 MiB
+
+Consumer-filed by **stiva**
+(`issues/2026-07-25-sankoch-batch-gzip-duplicates-bytes-at-block-boundary.md`). **High — silent data
+corruption.** `gzip_compress` / `deflate_compress` / `deflate_compress_level` produced a stream that
+did not decode back to the input whenever the input exceeded `DEFLATE_BLOCK_SIZE` (1 MiB). Nothing
+errored at compress time; the corruption surfaced arbitrarily later as a CRC-32 failure. In stiva
+this meant **every container image larger than ~1 MiB was written to disk corrupt** — `stiva import`
+succeeded and `stiva run` then failed with `layer unpack error`. 849 KB worked; 1.69 MB did not.
+
+**Fixed upstream first, per the "fix the SOURCE repo, not the fold" rule** — sankoch was at 2.7.5,
+identical to what we vendored, so the bug was live there too. Patched `~/Repos/sankoch`, cut a real
+**2.7.6** release (VERSION + CHANGELOG + all 10 dist profiles regenerated + full suite), *then*
+folded. A fix applied only to our `lib/sankoch.cyr` would have evaporated at the next re-vendor.
+
+**Root cause.** Both per-block encoders (`_deflate_compress_fixed_block`, levels 1-3;
+`_deflate_compress_dynamic_block`, levels 4-9) deliberately match against the **full** `src` rather
+than just their slice — back-refs spanning blocks is what keeps the ratio — so a match beginning just
+below `block_end` can extend up to `LZ77_MAX_MATCH` (258) bytes **past** it. The outer chunker then
+resumed the next block at `block_end` regardless, encoding every byte of the overshoot a **second**
+time. Both Huffman paths were affected, so lowering the level was never an escape. The **streaming**
+encoder never had this bug — `_denc_consume` stores the offset its LZ77 loop actually reached — so
+the fix gives the batch path that same contract: each block encoder publishes where it really
+stopped, and the chunker resumes there.
+
+Two subtleties that would each have left a partial fix:
+- The fixed path's **trailing lazy-match flush** writes a match that *starts* at `sp - 1`, so the
+  consumed end is `sp - 1 + prev_match`, not `sp`. Missing that would have left the duplication for
+  lazy-matched input alone — the hardest variant to notice.
+- `BFINAL` is decided from `block_end` **before** the block is encoded, so a block with
+  `block_end < src_len` can now consume through to `src_len` when the tail is shorter than a max
+  match: every byte encoded, but no block carrying `BFINAL`, leaving a stream a decoder considers
+  truncated. The chunker now closes that with an empty final fixed block (header + EOB, ~10 bits),
+  legal since DEFLATE permits mixing block types.
+
+**Verification.** The filed repro (2 MB round-trip) went from `gzip_decompress` returning `-5`
+(checksum mismatch) to a byte-exact 2000000 → 2000000 through the vendored copy. **GNU `gunzip` now
+accepts a 2 MB sankoch stream and its output is byte-exact** against the original — previously it
+rejected the same stream with `differ: char 1048797`, which is what isolated this to the encoder.
+sankoch's full suite is green at 23 files. **No API-surface change** (4747 public fns, unchanged) —
+purely internal. sankoch is not in cycc's include closure, so **cycc is byte-identical** and the seed
+chain is untouched.
+
+**Upstream regression gate** (`sankoch tests/tcyr/deflate_block_boundary.tcyr`, 21 assertions): 2 MB
+round-trips at levels 1/6/9, exactly-one-block, one-block-plus-short-tail (the empty-final-block
+path), three blocks, and the `gzip_compress` wrapper. Asserts **byte-exactness, not just length** — a
+length-only check would pass on a stream that duplicated N bytes and dropped N others.
+Mutation-proven: restoring `sp = block_end` yields `decoded length 2000153, expected 2000000` with
+first divergence at offset **1048729**, just past the boundary.
+
+**Why sankoch's own ~160K assertions missed it:** every pre-existing deflate/gzip test used an input
+*smaller* than `DEFLATE_BLOCK_SIZE` — the largest was 80000 bytes — so the outer chunker never took a
+second iteration and the boundary was never crossed. The shipping consumer found it instead.
+
+### Gates
+
+Release gate **GREEN** on all 5: self-host fixpoint byte-identical · seed → cybs → cycc OK · check.sh
+**149 passed, 0 failed** · cross-OS + VR-01 on **real hardware, all four hosts** (ecb, ach, cass, pi) ·
+bench **self_compile 632 ms**, **cycc 1108272 B — unchanged**, as expected for a lib-only fold
+(sankoch is not in cycc's include closure, so the seed chain is untouched). No API-surface change.
+
+### Roadmap — stackless coroutines PINNED to v6.5.x
+
+stiva filed `issues/2026-07-25-stiva-stackless-coroutines-interactive-exec.md`, which satisfies the
+exact unpin condition `roadmap-future.md:116` carried for this row — *"No live consumer; pull forward
+on a real suspend-across-await need."* Accepted and **▲ PINNED v6.5.x** (user, 2026-07-26), bound
+alongside the IR-substrate work it depends on: the poll-runtime rework (+ force-once memoization) is
+the same substrate the v6.5.x perf-quality minor opens, so doing it earlier would build that
+substrate twice. It also subsumes the mid-body-suspend "gap 6" of the shipped async "W" arc. The
+issue is left **open** deliberately — it is the acceptance record for a pinned arc, and archiving it
+would hide the consumer requirement from whoever opens that slot.
+
 ## [6.4.78] — 2026-07-24
 
 ### Fixed — `cyrius audit` fmt/lint/doc-walked the consumer's VENDORED `lib/`
