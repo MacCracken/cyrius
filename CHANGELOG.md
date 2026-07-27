@@ -69,6 +69,27 @@ Release gate **GREEN** on all 5: self-host fixpoint byte-identical · seed → c
 bench **self_compile 632 ms**, **cycc 1108272 B — unchanged**, as expected for a lib-only fold
 (sankoch is not in cycc's include closure, so the seed chain is untouched). No API-surface change.
 
+### Filed — `cyrius distlib` has no all-profiles mode (NOT fixed here)
+
+`issues/2026-07-26-distlib-has-no-all-profiles-mode.md`. Cutting sankoch 2.7.6 exposed it: the
+documented release step `cyrius distlib` rebuilt `dist/sankoch.cyr` to 2.7.6 and left **all nine
+sub-profiles at 2.7.5, still carrying the buggy encoder** — including `dist/sankoch-gzip.cyr`, the
+profile whose entire purpose is the codec that was broken. Caught only by sweeping version strings
+across `dist/*.cyr` afterwards; nothing in the tool or the release script would have said a word.
+
+The tool regenerates exactly one bundle per invocation and offers no way to ask the manifest what
+profiles exist, so every multi-profile repo hand-maintains the list in two more places. **Both
+hand-rolled CI loops in the ecosystem have already drifted from their manifests:** sankoch's covers
+7 of 9 (`zip` and `zipall` are tracked, shipped bundles that CI never regenerates *or* diff-checks —
+the staleness check omits them too), and sigil's covers 12 of 13 (missing `argon2`). Exposure is 36
+sub-profiles across 6 repos (sigil 13, sankoch 9, bayan 8, sandhi 4, yukti 1, vani 1).
+
+Proposed: `cyrius distlib --all` driven off the `[lib.<name>]` section headers (so the list cannot
+drift), plus a `--check` that verifies committed bundles and names the stale ones — which would
+replace both hand-rolled CI steps with a one-liner that cannot omit a profile. Filed rather than
+bundled: it is a CLI feature touching a verb six sibling repos drive from CI, and .79's job was the
+corruption fix.
+
 ### Roadmap — stackless coroutines PINNED to v6.5.x
 
 stiva filed `issues/2026-07-25-stiva-stackless-coroutines-interactive-exec.md`, which satisfies the
