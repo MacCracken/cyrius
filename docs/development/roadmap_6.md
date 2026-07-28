@@ -2,8 +2,10 @@
 
 **Scope** — the **whole v6.x cycle** (cycle-open 2026-05-19). This is
 the cycle-level reference: framing, per-minor budgeting, and the
-remaining minors v6.4.x → v6.8.x (v6.2.x + v6.3.x CLOSED). The
-**current active minor (v6.4.x)** is broken out in detail in [roadmap.md](roadmap.md); items beyond the
+remaining minors v6.5.x → v6.8.x (v6.0.x–v6.4.x all CLOSED; **v6.4.x
+closed at v6.4.82**). The **current active minor** is always broken out in
+detail in [roadmap.md](roadmap.md) — it rotates at every minor cut, so
+v6.5.x is what it holds next; items beyond the
 cycle (v7.0+ aspirations, unpinned language refinements, speculative
 work) live in [roadmap-future.md](roadmap-future.md). v5.x history and
 the now-closed v6.0.x detail are canonical in
@@ -47,10 +49,13 @@ late v5.x cycles when a minor's substantive new-code surface
 warrants it (notably v6.2.x platform expansion + v6.4.x ABI+Perf
 arcs).
 
-Reference points: v5.11.x = 70 slots (longest in history),
-v5.7.x = 49. v6.x cycles target a middle-ground — most minors
-in the 30-40 range, with the substantive-new-code minors flexing
-higher.
+Reference points, **updated at the v6.4.82 close** — this line used to call v5.11.x's
+70 slots "longest in history", which two v6.x minors have since passed. By closing
+patch number: **v6.0.x ran to .91** and **v6.4.x to .82**, then v5.11.x (.69),
+v6.2.x (.52), v5.7.x, v6.3.x (.45), v6.1.x (.41). Every v6.x minor except v6.1.x has
+exceeded the "30-40 range" target — the working rule (user 2026-06-10) is *"no worries
+about patch size, just hardening and adding features"*, and large minors are the norm,
+so read the budget as a planning aid, not a cap.
 
 ---
 
@@ -102,8 +107,9 @@ consolidation).
 
 > **Closed minor.** Shipped to v6.1.41; v6.2.0 opened the cut 2026-06-12.
 > The section below is the cycle-level summary; per-patch detail is the
-> [`CHANGELOG.md`](../../CHANGELOG.md) source of truth. The active minor is
-> now **v6.3.x** ([roadmap.md](roadmap.md)); v6.2.x CLOSED (.0 → .52).
+> [`CHANGELOG.md`](../../CHANGELOG.md) source of truth. (v6.2.x subsequently
+> CLOSED at .52, v6.3.x at .45, v6.4.x at .82 — for the current active minor
+> always read [roadmap.md](roadmap.md), never a "now" line in a closed section.)
 
 **Theme**: position-independent codegen + dynamic-link migration +
 v6.0.x back-compat retirement + the v6.0.x → v6.1.x carry-ins. Pinned
@@ -196,10 +202,11 @@ platform work (bottom-to-top priority) takes v6.2.x.
   **silent-correctness + stdlib-refold arc** — call-arity check + IEEE-754 NaN
   fix (.41), sigil certpin (.42), agnos-clock + ERR_* namespacing + agnos
   landmine gates (.43). Note: `agnosys` retired at .37 (decomposed), dropping
-  api-surface from ~5035 to **4343 fns** (grown to 4519 @ v6.4.11 with per-cycle
-  additions). **Current metrics live in [state.md](state.md)** (avoid re-rotting an
-  inline snapshot here): as of v6.4.72 — cycc 1,103,512 B, check.sh 147, tests
-  246 `.tcyr`.
+  api-surface from ~5035 to **4343 fns** at that cut. **Current metrics live in
+  [state.md](state.md)** — this file carries no inline snapshot. It used to, and the
+  snapshot immediately contradicted the sentence introducing it: the line read "avoid
+  re-rotting an inline snapshot here" and then quoted v6.4.72 numbers that were eight
+  releases stale by v6.4.81. Deleted at the v6.4.x closeout; the pointer is the fix.
 
 Remaining v6.2.x arc: the **dependency-model foundation (lever 1)** — the
 active committed arc — plus the **open bare-metal/kernel reactive window**
@@ -551,8 +558,8 @@ in-kernel crypto. Premise-check at arc entry per
 
 > **Closed minor.** Shipped .0 → .45 (closeout at v6.3.45); v6.4.0 opened the cut
 > 2026-07-03. The section below is the cycle-level design record; per-patch detail is the
-> [`CHANGELOG.md`](../../CHANGELOG.md) source of truth. The active minor is now **v6.4.x**
-> (at v6.4.72 — [roadmap.md](roadmap.md)).
+> [`CHANGELOG.md`](../../CHANGELOG.md) source of truth. (v6.4.x has since CLOSED at
+> **v6.4.82**; the active minor is whatever [roadmap.md](roadmap.md) holds.)
 
 **Theme**: language-level closures + generics + async sugar.
 Three syntactic/semantic additions the v5.x cycle held out
@@ -898,7 +905,17 @@ cap; minors flex long.
 
 ---
 
-## v6.4.x — staging minor (reopened empty 2026-06-30; OPENING SEQUENCE committed 2026-07-03)
+## v6.4.x — staging minor → long reactive minor — ✅ COMPLETE (v6.4.0 → v6.4.82)
+
+> **Closed minor** (.0 → .82, 2026-07-03 → 2026-07-27) — the second-longest minor in
+> project history, behind only v6.0.x (which ran to .91). Opened as a *staging*
+> minor with a four-item committed opening sequence and closed as a *reactive* one:
+> items 1–3 shipped, item 4 (`pub`/`private`) moved out to the v6.5.0 opener (user
+> 2026-07-22), and the remainder was consumer/agnos asks, bugs, and audit findings —
+> see the [.73–.82 closing band](#v6473--v6482--the-closing-band) below. The rest of
+> this section is the cycle-level record; per-patch detail is the
+> [`CHANGELOG.md`](../../CHANGELOG.md) source of truth and current metrics live in
+> [state.md](state.md).
 
 > **The ABI + Perf arc below was PULLED INTO v6.3.x** (user direction 2026-06-30 —
 > "bring in 6.4.x items into current 6.3.x arc and open 6.4.x to stay open"). Class B
@@ -970,16 +987,15 @@ visibility. (Design decisions inside each item are still chosen at arc-open; the
    cross-file, so derive-from-`_` was never zero-churn); the `_`-prefix convention is explicitly LATER.
    [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md).
 
-### v6.4.x arc — EXECUTION STATUS (updated 2026-07-09)
+### v6.4.x arc — EXECUTION STATUS — ✅ FINAL (minor closed at v6.4.82)
 
-The opening sequence is executing in order. **Item 1 (SIMD) is COMPLETE on all four backends** — the
-x86 arc (v6.4.4–.9) plus Phase 5 aarch64 NEON (.28–.30), Win64 PE value-form params+returns (.31), and
-cx bytecode per-lane emitters (.32). **Item 2 (array-typed struct fields) SHIPPED (.11–.13)** and
-**item 3 (UEFI Secure Boot signing) SHIPPED (.47/.48)**; **item 4 (`pub`/`private`) MOVED to the
-v6.5.0 opener (2026-07-22)** — 6.4.x now runs reactive (agnos asks + bugs) toward its own close.
-Interim consumer/kernel fixes interleave. Slot-level
-detail is canonical in [roadmap.md](roadmap.md) (active minor) +
-[CHANGELOG.md](../../CHANGELOG.md); the cycle-level summary:
+The opening sequence executed in order and **items 1–3 all shipped**: item 1 (SIMD) COMPLETE on all
+four backends — the x86 arc (v6.4.4–.9) plus Phase 5 aarch64 NEON (.28–.30), Win64 PE value-form
+params+returns (.31), and cx bytecode per-lane emitters (.32); **item 2 (array-typed struct fields)
+SHIPPED (.11–.13)**; **item 3 (UEFI Secure Boot signing) SHIPPED (.47/.48)**. **Item 4
+(`pub`/`private`) MOVED OUT to the v6.5.0 opener (user 2026-07-22)**, after which the minor ran
+purely reactive (agnos asks + consumer bugs + the closeout audit) to its close at **v6.4.82**.
+Slot-level detail is canonical in [CHANGELOG.md](../../CHANGELOG.md); the cycle-level summary:
 
 - **✅ Item 1 — Packed SIMD compute (f32-first, then integer): COMPLETE on all four backends (x86
   v6.4.4–.9, aarch64 NEON .28–.30, Win64 PE value-form .31, cx bytecode .32).**
@@ -1012,8 +1028,74 @@ detail is canonical in [roadmap.md](roadmap.md) (active minor) +
   SIMD now runs on x86, aarch64, PE, and cx — Phase 5 complete on all four backends.
 - **✅ Item 2 — Array-typed struct fields — SHIPPED** (R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13; `Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>).
 - **✅ Item 3 — UEFI Secure Boot signing — SHIPPED** (signing `cyrius sign-efi` v6.4.47 + `.esl`/`.auth` enrollment v6.4.48 via sigil 3.11.1).
-- **▶ Item 4 — `pub`/`private` visibility — MOVED OUT of 6.4.x to the v6.5.0 OPENER (2026-07-22), design COMMITTED (file-level opt-in, default public).** 6.4.x now runs reactive: agnos asks + bugs until it quiets.
-- **Also shipped since this block was cut (v6.4.32):** async 5b incl. IOCP-Windows (.33–.45), scalar-float completion (f64 return .55, f32 arith/typecheck .56), Intel-Mac x86_64 Mach-O revival (.59), DX diagnostics R1 column/excerpt (.60) + R2 panic-mode multi-error (.62), Win64 stack-args P0 (10+-arg ECALLPOPS corruption, .64), agnos sys_reboot 4-arg (.68), f64 JSON round-trip / Grisu2 (.69), the agnos GPU-syscall band (.63/.70–.72, now contiguous #82–#91), and the `cyrius coverage` project-src fix (.72). Function visibility has since MOVED to the v6.5.0 opener (2026-07-22); 6.4.x now runs reactive (agnos + bugs).
+- **▶ Item 4 — `pub`/`private` visibility — MOVED OUT of 6.4.x to the v6.5.0 OPENER (2026-07-22), design COMMITTED (file-level opt-in, default public).** From that point 6.4.x ran reactive: agnos asks + bugs + the closeout audit, to its close at .82.
+- **Also shipped after this block was originally cut (at v6.4.32):** SIMD finish-outs (.53 — the
+  dup-arg `f(v,v)` tail-call path, fixed on ALL targets, + i64v2 packed multiply) and cx finish-outs /
+  hardening (.54 code-stream misalignment + forward-call resolver, .58 `%` broken for every modulo +
+  64-bit immediates); async 5b incl. IOCP-Windows (.33–.45); scalar-float completion (f64 return .55,
+  f32 arith/typecheck .56); atomic-write family (.57); Intel-Mac x86_64 Mach-O revival (.59 — the
+  toolchain had rotted UNGATED ~2.5 minors, and **ach became a first-class release-gate host** as the
+  systemic fix); DX diagnostics R1 column/excerpt (.60) + R2 panic-mode multi-error recovery (.62);
+  the net-sock per-poll leak (.61); Win64 stack-args P0 (10+-arg `ECALLPOPS` corruption, .64); agnos
+  `sys_reboot` 4-arg (.68); f64 JSON round-trip / Grisu2 (.69); the **agnos syscall band**, grown
+  across .63/.70–.72/.73 and finished at .82 — now **contiguous #82–#95**; and the `cyrius coverage`
+  project-src fix (.72). Then the closing band below.
+
+### v6.4.73 → v6.4.82 — the closing band
+
+The last ten releases are worth calling out as a band because they share one cause: **the closeout
+audit was run, and running it found live bugs.** Twice the closeout itself had to move — .80 → .81 →
+.82 — because an audit pass surfaced a defect that had to ship as its own release first. That is the
+band working as intended, not slippage.
+
+- **Capacity P0s (.73 · .75 · .76).** `cyrius audit` and `cyrius capacity` had never been in the
+  `_auto_deps()` gate, so both compiled project sources with **no stdlib includes** — `capacity
+  --check` was a green placebo. Fixing that exposed the real one: six fn-indexed side tables were
+  never migrated at the v6.2.0 growable-table cut, so **fn index 8192 aliased index 0 of its
+  neighbour**, and the capacity warning went silent at exactly that point. Fixed by lazy-alloc at the
+  32768 ceiling (.75). The companion identifier-pool cap went 256 KB → **512 KB** in place (.76). Note
+  for future sweeps: the fn table's **init cap is still 8192** (it grows ×2 to a 32768 ceiling), so
+  most "8192" references in the tree are CORRECT — a blanket 8192→32768 sweep would introduce errors.
+- **The `_cfo` const-fold rewind class (.74 · .80 · .81) — three of the ten releases, one mechanism.**
+  A code-pointer rewind over already-emitted code, arising wherever a fold is cleared *before* a call
+  that re-arms it. .74 swept `PARSE_TERM` (17 sites), .80 swept the `PEXPR` tier (16 sites, after
+  `1 - 2 + 3` evaluated to **5** — 10 % of 3-term const expressions were wrong), and .81 found a
+  **fourth** occurrence one tier further down in operator-overload dispatch, where `mul`/`div` never
+  cleared `_cfo` though `add`/`sub` did, so `p * 3 + 1` compiled to **4**. Each sweep had honestly
+  reported the tier it grepped as clean. **The durable lesson: grep the SHAPE (a call that can re-arm
+  the fold), not the operator, and grep every tier — including the ones that call back into the fold
+  from below.** Also durable: `251/251 byte-identical` after .80 was not reassurance, it was the
+  finding — the corpus had **zero** coverage of the shape.
+- **Diagnostics + tooling scope (.77 · .78).** `IS_KEYWORD_TOK`/`TOKNAME` stopped at token 111, so
+  **67** reserved builtin/intrinsic names reported `got unknown` (the filing named 3); the new
+  `TOKNAME_BUILTIN` table is now the single source of truth and `IS_KEYWORD_TOK` *derives* from it so
+  the two sets cannot drift. `cyrius audit` had been fmt/lint-walking the consumer's **vendored**
+  `lib/`, and `PEEKT` now clamps to EOF (a truncated input produced a 166,670-line error cascade).
+- **Ecosystem fold (.79).** sankoch's batch gzip/deflate re-encoded up to 258 B at every 1 MiB block
+  boundary — every container image over 1 MiB silently CRC-failed. Fixed **upstream first** (sankoch
+  2.7.6), then folded. Two traps recorded: `cyrius distlib` regenerates only the main bundle (all nine
+  sub-profiles stayed on the buggy code), and the suite missed it for years because every deflate test
+  used input under 1 MiB.
+- **Security + gate honesty (.81).** CVE-32/33/34 — three unbounded copies reachable from untrusted
+  source; `include "<31490 chars>"` SIGSEGV'd cycc. The heap map had hidden CVE-32 for three minors by
+  documenting the scratch at an address **no code has ever written**. Alongside: the two Windows PE
+  gates had been validating a **cycc 5.11.69** binary for the whole v6.x line (the macOS-rot shape
+  again, in a different corner); `tests/heapmap.sh` was blind to 20 MB of live regions because its
+  size regex missed unit-suffixed entries; cross-compiling to PE/Mach-O silently dropped value-form
+  SIMD; and CVE-35/36 (23 fixed `/tmp` literals in `cbt/`). A `_doc_stamp_currency_gate` was added to
+  check.sh because **a checklist entry is not a gate** — .77 fixed this same rot class by adding a
+  checklist item, and a row went stale again two releases later.
+- **Closeout (.82).** The TS frontend arena moved off its fixed base `0x298B000` — it had overlapped
+  `tok_types` entirely plus 1.6 MB of `tok_values` (10,027,008 B), survivable only by an undocumented
+  temporal invariant — onto `alloc(TS_HEAP_SIZE)`. Plus agnos `#94 gpu_recover_op` / `#95 uptime_us`,
+  closing the syscall band contiguous at **#82–#95**.
+
+**Process finding, recorded because it changed the rules:** the .81 audit shipped four fixes and grew
+the open issue queue 11 → 15, three of the filings being two-line changes. **An audit's output is
+fixes, not a backlog** — file only when the fix genuinely cannot pack into the patch (a heap/brk
+*layout* change needing the two-step bootstrap, a user design call, cross-repo coordination) and name
+the reason. The .81 TS-arena deferral is the legitimate shape: it was a layout change, it was named as
+one, and it shipped one release later at .82.
 
 ### v6.4.0 — SHIPPED: `CYRIUS_MONOMORPH` default-on flip
 
@@ -1101,9 +1183,19 @@ detail is canonical in [roadmap.md](roadmap.md) (active minor) +
   re-audit the reset call sites). Not folded into the v6.3.45 byte-identical closeout (scope
   discipline). [`alloc-reset-no-zero-reused-memory`](issues/2026-07-03-alloc-reset-no-zero-reused-memory.md).
 
-### Pinned to the v6.4.x TAIL (user-committed)
+### Pinned to the v6.4.x TAIL (user-committed) — closeout status
 
-- **Intel-Mac arc (x86-macho)** — moved out of v6.3.x to the **END of the v6.4.x line** (user
+> **Verified at the v6.4.82 close (against live code, not against these entries' own text):**
+> the **Intel-Mac arc SHIPPED at v6.4.59** — both items, plus the systemic fix the arc earned
+> (**ach is now a first-class release-gate host**, `scripts/release-gate.sh` runs `for H in ecb ach
+> cass pi`). The **macOS thread backend did NOT land** — `lib/thread_macos.cyr` does not exist and
+> nothing in `lib/` references `bsdthread_create`. It carries out of the minor with its issue still
+> open and is **re-pinned to v6.5.x** in the closeout backlog re-triage (see the v6.5.x table in
+> [roadmap.md](roadmap.md)). The **source-level VERSION constant** below also did not land:
+> `CYRIUS_PKG_VERSION` appears nowhere in `src/`, `cbt/`, or `lib/`, and its proposal is still open.
+> Neither is codegen-parked to 7.x — both stay 6.x-line work.
+
+- **Intel-Mac arc (x86-macho) — ✅ SHIPPED v6.4.59.** Moved out of v6.3.x to the **END of the v6.4.x line** (user
   2026-07-03; the last v6.3.x work is the VR verification slot, then closeout). Two committed items,
   to land as the final v6.4.x work before v6.5.x:
   1. **x86-macho native miscompile fix** (the core blocker, **High**) — the cross-built cycc emits a
@@ -1118,7 +1210,7 @@ detail is canonical in [roadmap.md](roadmap.md) (active minor) +
   These were formerly v6.3.42/.43; deferred because the Intel-Mac port is self-contained and the
   v6.3.x tail is better spent finishing the cross-host verification (VR) coverage + closeout.
 
-- **macOS thread backend** (`lib/thread_macos.cyr`) — **P2**, re-pointed here from the v6.3.44
+- **macOS thread backend** (`lib/thread_macos.cyr`) — **NOT SHIPPED in v6.4.x; carries forward.** **P2**, re-pointed here from the v6.3.44
   untracked-issue sweep (user 2026-07-03; its own focused slot per the issue). On ecb (macOS arm64)
   `thread_create` returns a handle but **the worker never runs** — the whole threads/mutex/channel
   subsystem is a silent no-op (`vr01_sync_mutex`'s 8×1000 locked increments → counter 0). macOS has no
@@ -1136,8 +1228,9 @@ promoted to the committed **v6.4.x OPENING SEQUENCE** above, in that order — S
 struct fields → UEFI signing (gnoboot, 2026-07-03) → pub/private. The remaining candidate below has
 no committed order.)_
 
-- **Source-level VERSION constant — ▲ SCHEDULED (minimal cut), fold into an adjacent 6.4.x release**
-  (maintainer decision 2026-07-10). Consumer-filed (sit 1.0.4, the `/sit/v1/capabilities` identity
+- **Source-level VERSION constant — ▲ SCHEDULED (minimal cut); did NOT land in v6.4.x, carries forward**
+  (maintainer decision 2026-07-10; not-shipped verified at the v6.4.82 close — no `CYRIUS_PKG_VERSION`
+  anywhere in `src/` / `cbt/` / `lib/`, proposal still open). Consumer-filed (sit 1.0.4, the `/sit/v1/capabilities` identity
   banner); `cyrius.cyml`'s `${file:VERSION}` is manifest-metadata only — source code can't read the
   package version at build time, so every `--version` / identity-banner / `Server:` string is a
   hand-maintained literal that silently drifts from `VERSION` (sit's drifted for 6 releases).
@@ -1265,15 +1358,18 @@ at arc-open):
 `process_block 1024`: 186 µs vs Rust 4.84 µs at filing) closes to single-digit-×
 of the Rust baseline; self_compile stays inside a stated budget.
 
-> **Pull-forward note (user 2026-07-07, follow-up):** SIMD is v6.4.x's primary
-> focus (the kernel + ecosystem AI release arc), so **item 3 — the
+> **Pull-forward note (user 2026-07-07, follow-up) — RESOLVED at the v6.4.82 close: the
+> pull-forward did NOT happen, so item 3 stays here.** The note read: SIMD is v6.4.x's
+> primary focus (the kernel + ecosystem AI release arc), so **item 3 — the
 > register-resident vector-value piece — is expected to pull INTO v6.4.x after
-> Phase 5 NEON** (*"get NEON done, then circle back to the memory-store
-> proposal"*). In that case this minor keeps the substrate half: IR
-> productionization (1), cross-BB regalloc + vector class (2), the deferred
-> passes (4), and the growth-tax audit (5). How much residency is achievable in
-> v6.4.x ahead of the substrate (wrapper inlining + chain-local residency vs.
-> full vector-class regalloc) is a premise-check at that slot's entry.
+> Phase 5 NEON** (*"get NEON done, then circle back to the memory-store proposal"*).
+> Phase 5 NEON landed (.28–.30) and the circle-back never opened — the rest of the
+> minor went to consumer/agnos asks, bugs, and the closeout audit, and the anchor
+> issue [`2026-07-06-simd-f64v-memory-operand-no-register-residency.md`](issues/2026-07-06-simd-f64v-memory-operand-no-register-residency.md)
+> is **still open**. So v6.5.x carries the FULL shape, items 1–5, not just the
+> substrate half. How much residency is achievable ahead of the substrate (wrapper
+> inlining + chain-local residency vs. full vector-class regalloc) remains the
+> premise-check at slot entry.
 
 Middle-late v6.x timing per user direction 2026-05-19:
 "compile time can holdover until later in 6.x cycle probably
@@ -1427,8 +1523,9 @@ landed first in v6.2.x).
 ## What comes after v6.x
 
 **v6.x is not capped at 6 minors.** Per user direction 2026-06-11, the cycle
-**grows further before any major bump** — v6.4.x (active) → **v6.5.x
-(performance quality)** → **v6.6.x (language ergonomics)** → **v6.7.x/v6.8.x
+**grows further before any major bump** — v6.4.x (CLOSED at .82) → **v6.5.x
+(next: `pub`/`private` opener, then performance quality)** → **v6.6.x (language
+ergonomics)** → **v6.7.x/v6.8.x
 (RISC-V rv64, re-homed there 2026-07-07)** are the current pins, and more v6.x
 minors can still follow (consumer pressure, language refinements, platform work)
 before v7.0.0. v7 is *further out* than the original
@@ -1473,10 +1570,21 @@ any committed public-launch date. The deep-dive surfaced it
   seed, byte-identical, 2026-06-20). The shipped `cycc` is now seed-derived
   (no longer a blob disjoint from the seed chain), releases are signed, deps
   are commit-pinned. The sovereignty story holds.
-- **Diagnostics + debug-info** for strangers: no DWARF on any target,
-  crash-localization is x86-ELF-only, errors are first-error-exit with no
-  column/excerpt.
-- **stdlib-reference** covers ~65/88 modules — the rest need authoring.
+- **Diagnostics — ✅ the error-reporting half SHIPPED in v6.4.x.** This bullet used to
+  read "errors are first-error-exit with no column/excerpt". Both halves are gone:
+  **v6.4.60** added column + source-excerpt/caret on every error (~452 sites routed
+  through `_err_head`), and **v6.4.62** replaced first-error-exit with panic-mode
+  multi-error recovery that never hangs or crashes on hostile input. **v6.4.77** then
+  made the reserved-word diagnostic name the token you hit (all **67** of them) instead
+  of `got unknown`.
+- **Debug-info (DWARF) — still absent** (verified at the v6.4.82 close: zero `dwarf`
+  references anywhere in `src/`, `cbt/`, `programs/`), and crash-localization is still
+  x86-ELF-only. **This is 6.x-line work, NOT a v7 item** — DWARF is codegen, and per the
+  placement rule nothing codegen is ever parked to 7.x. It sits under this heading only
+  because the *adoption* framing surfaced it; the slot belongs in a 6.x minor or
+  roadmap.md's potential backlog. Unpinned today; no consumer has filed.
+- **stdlib-reference** covers ~65/88 modules — the rest need authoring. Docs work, so
+  this one genuinely can ride the public-release track.
 
 Beyond that, v7.x is open territory. Likely candidates: more language
 refinements based on consumer pressure from v6.x ship; toolchain

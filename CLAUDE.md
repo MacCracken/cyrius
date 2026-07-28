@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 6.4.81
+- **Version**: 6.4.82
 
 ## Goal
 
@@ -161,7 +161,7 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 8. **Cleanup sweep** — stale comments (grep for old version refs, outdated TODOs, references to renamed fns), dead `#ifdef` branches, unused includes, orphaned files in `build/` / `tests/`.
 
 ### Compliance / external
-9. **Security re-scan** — quick grep for new `sys_system`, `READFILE`, unchecked writes. Full audit every 2-3 minors (last: v5.0.1).
+9. **Security re-scan** — quick grep for new `sys_system`, `READFILE`, unchecked writes. Full audit every 2-3 minors. **Last full audit: `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82**; the one before it was `docs/audit/2026-06-10-deep-dive-review.md` (…CVE-31) at cycc 6.1.31. *(This line read "last: v5.0.1" until v6.4.82 — three minors stale, which is how the re-scan cadence quietly slipped. The 2026-07-27 pass found three unbounded copies reachable from untrusted source, one of them a `SIGSEGV` from an `include` path.)*
 10. **Downstream check** — all `cyrius.cyml` `cyrius` fields across ecosystem repos point to the released tag.
 
 ### Docs (silent-rot prevention)

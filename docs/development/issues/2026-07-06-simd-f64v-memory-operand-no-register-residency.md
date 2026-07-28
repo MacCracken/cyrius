@@ -1,5 +1,22 @@
 # SIMD `f64v_*` ops are memory-operand array kernels — no register-resident vector-value arithmetic, so hand-SIMD of a tight per-element chain gets ~no speedup
 
+**Status:** 🟡 **OPEN** — the root cause is unchanged. Re-read live at the v6.4.82 closeout:
+`EMIT_F64V_LOOP` (`src/backend/x86/float.cyr:152`) still emits exactly the
+`movupd xmm0,[rdx+rsi*8]` → `addpd/subpd/mulpd/divpd` → `movupd [rdx+rsi*8],xmm0` shape described
+below, with **no AVX branch and no register-residency path**, and there is no value-form f64v
+arithmetic emitter.
+**One correction to the fix list, not to the verdict:** item 3 ("true 256-bit AVX") has since landed
+**for f32 only** — `EMIT_F32V_LOOP` and the FMA/dot emitters widened to `vmovups/vfmadd231ps ymm`
+during the v6.4.x SIMD arc. `f64v4` was not widened and is still a two-iteration `xmm` loop, so both
+item 3 (for f64) and the load-bearing items 1–2 remain open. The v6.4.31/.53 work on value-form SIMD
+*params and returns* is a different thing from register-resident *arithmetic chains* — do not read it
+as closing this.
+**Placement:** **v6.5.x — "SIMD register residency"** (`roadmap.md`, v6.5.x table). Explicitly
+**gated behind** the IR-substrate anchor
+([`2026-07-02-ir-regalloc-rewrite-needs-reemit.md`](2026-07-02-ir-regalloc-rewrite-needs-reemit.md)):
+this is a codegen-QUALITY gap — bit-identical output, no wrong results — so it cannot batch ahead of
+the substrate that has to model a vector register class. 6.x line, never 7.x.
+
 - **Filed**: 2026-07-06 (found optimizing svara formant synthesis; repro on cc 6.4.12)
 - **Severity**: P2 (Medium) — codegen *quality*, not correctness. The vector path is
   bit-identical and safe; this is an optimization gap that caps first-party numeric /

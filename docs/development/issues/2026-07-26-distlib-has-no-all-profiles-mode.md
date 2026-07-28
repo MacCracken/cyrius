@@ -1,5 +1,17 @@
 # `cyrius distlib` regenerates ONE bundle per invocation, so multi-profile repos ship stale sub-bundles under a fresh version string
 
+**Status:** 🟡 **OPEN** — nothing has shipped for it. Re-verified against live code at the v6.4.82
+closeout: `cmd_distlib(profile)` (`cbt/commands.cyr:2131`) still takes one profile and emits one
+bundle, and the CLI dispatch (`cbt/cyrius.cyr:332-344`) still scans only for `--modular` and takes
+the first non-flag arg as the profile. There is **no `--all` and no `--check`**, and nothing reads
+the `[lib.<name>]` section headers as a set.
+**Placement:** unpinned — **6.x-line tooling backlog**, no dedicated slot as of the v6.4.82
+closeout. This is `cbt/` build tooling, so per CLAUDE.md's "non-blocking cosmetic/tooling fixes fold
+into adjacent work" rule it rides a convenient release rather than owning one; `--all` (fix 1) is
+the piece that removes the ritual and both hand-rolled CI loops, and `--check` (fix 2) is what makes
+the sibling repos' staleness steps un-driftable. Never 7.x. The sibling-repo profile-list
+corrections in "Also worth fixing while here" are *not* cyrius edits and must be done in those repos.
+
 **Discovered:** 2026-07-26 while cutting sankoch 2.7.6 (the batch-gzip block-boundary corruption fix,
 folded into cyrius v6.4.79).
 **Severity:** **Medium–High** — no wrong code in cyrius itself, but the failure mode is a *shipped

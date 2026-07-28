@@ -1,5 +1,18 @@
 # No `lchown`/`fchownat` wrapper, so consumers hardcode an x86_64 syscall number that is `exit_group` on aarch64
 
+**Status:** 🟡 **OPEN, and RE-SCOPED UPWARD from the filing** — the filing names `lchown`; the whole
+**chown family is absent from all six syscall peers**. Re-verified against live code at the v6.4.82
+closeout (`grep -rn 'chown\|CHOWN' lib/*.cyr` returns only agnos GPU-band comments; there is no
+`fn sys_lchown` / `sys_fchown` / `sys_fchownat` and no `SYS_*CHOWN*` constant anywhere). See
+**RE-SCOPED UPWARD** below for the two live hazards and the two additions — whoever takes this must
+read that section before writing a single constant.
+**Placement:** **v6.5.x**, as one *"missing syscall wrappers"* pass covering
+`fchownat`/`fchown`/`lchown`-semantics **plus `sys_chdir`** (§5 — called by `lib/regression.cyr:658`
+and defined nowhere). Gate it with a `vr01_`-named tcyr so the release gate's cross-OS leg actually
+executes it on pi — the un-globbed corpus is exactly the blind spot that let the v6.4.64 collision
+through, per [`2026-07-14-release-gate-cross-os-runs-only-vr01-glob.md`](2026-07-14-release-gate-cross-os-runs-only-vr01-glob.md).
+6.x line, **never 7.x**.
+
 **Discovered:** 2026-07-26, during an adversarial review of stiva 3.0.15
 **Severity:** Medium for the stdlib (a missing wrapper); **High for any consumer that works around it**
 **Affects:** cyrius 6.4.78's vendored syscall layer; earlier versions unverified
@@ -142,13 +155,47 @@ release gate's `vr01_` subset would very likely not catch it.
 *Resolution path:* fix `lib/yantra.cyr:453` to use `SYS_SETSOCKOPT` (x86 54 / aarch64 208) first; the
 `54→208` shim then has no consumer and aarch64-native 54 becomes safe for `fchownat`.
 
-### 3. ⚠ HAZARD — agnos 92/93 are **already** the GPU band
+### 3. ⚠ HAZARD — agnos 92/93 are **already** the GPU band — and as of v6.4.82 so are **94/95**
 
 `lib/syscalls_x86_64_agnos.cyr:106` `SYS_GPU_SHADER_OP = 92;` and `:107` `SYS_GPU_MODESET_OP = 93;`.
-The file's own notes at `:731`/`:741-745` already reason about this overlap in the other direction.
-agnos is the one target where a chown number is not merely wrong but points at a **live,
-side-effecting GPU primitive that reads arg1 as a userland VA**. Give the agnos peer an explicit
-`-ENOSYS` stub; never let it inherit the Linux common wrapper.
+The file's own band notes (`:719-741`) and the per-wrapper SAFETY blocks (`:746-750`, `:755-761`)
+already reason about this overlap in the other direction. agnos is the one target where a chown
+number is not merely wrong but points at a **live, side-effecting GPU primitive that reads arg1 as a
+userland VA**. Give the agnos peer an explicit `-ENOSYS` stub; never let it inherit the Linux common
+wrapper.
+
+**v6.4.82 extended the band over the exact number this issue is about.** `:108`
+`SYS_GPU_RECOVER_OP = 94;` (`sys_gpu_recover_op`, `:787`) and `:110` `SYS_UPTIME_US = 95;`
+(`sys_uptime_us`, `:807`) landed this release, so the agnos band is now contiguous **#82–#95**. That
+means **94** — the literal a consumer hardcodes for `lchown`, the one whose aarch64 meaning
+(`exit_group`) is the entire premise of this filing — is now *also* a live agnos GPU primitive.
+
+Read off this box's headers at the v6.4.82 closeout (`asm/unistd_64.h:96-99`,
+`asm-generic/unistd.h:256-262`). Every row is three different things on three targets, and none of
+them is chown — **the whole 92-95 run is a termination minefield on aarch64, not just 94**:
+
+| number | x86_64 Linux | aarch64 Linux | agnos |
+|---:|---|---|---|
+| 92 | `chown` | `personality` | `gpu_shader_op` |
+| 93 | `fchown` | **`exit` — TERMINATES THE CALLING THREAD** | `gpu_modeset_op` |
+| **94** | **`lchown`** | **`exit_group` — TERMINATES THE PROCESS** | **`gpu_recover_op`** |
+| 95 | `umask` | `waitid` | `uptime_us` |
+
+Note the second termination hazard: a consumer that hardcodes **93** for `fchown` — the obvious next
+thing someone reaches for after `lchown` — gets `exit` on aarch64. Two of the four numbers in this
+band kill the caller on ARM. That is a strong argument for `fchownat` (x86 260 / aarch64 54) as the
+one primitive to wrap, rather than the legacy trio.
+
+`lib/syscalls_x86_64_agnos.cyr:779-786` already documents this in its own words, citing "the open
+chown filing" — i.e. this one — and notes that `#95` is the nastier shape off-agnos because a
+nullary `syscall(95)` on Linux **succeeds** as `umask(garbage)`, returning a plausible positive
+number a caller would happily treat as a timestamp, while silently changing the process's
+file-creation mask. Fail-plausible is worse than fail-loud.
+
+The protection on all four is the **file-level** `#ifdef CYRIUS_TARGET_AGNOS` around the whole peer
+in `lib/syscalls.cyr`: a non-agnos build that references one of these fails at COMPILE time with
+"reachable undefined function" and emits no binary. That is strictly stronger than any in-function
+guard (the v6.4.63 lesson) — **do not weaken it to an in-fn check while adding chown wrappers.**
 
 ### 4. Darwin numbers are NOT verifiable from this box — read them off the hardware
 

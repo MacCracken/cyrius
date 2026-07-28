@@ -167,15 +167,153 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   retptr deep-stack-param homing).** .46 `>>>` arithmetic-shift operator + stdlib folds; .47–.48 UEFI
   Secure Boot signing (`cyrius sign-efi`) + enrollment (`.esl`/`.auth` via sigil 3.11.1); .49 growable
   8 MiB off-heap codebuf; **.50 capacity-warning consolidation (Pin 3 — one shared `_capacity_warnings`
-  across all 7 drivers).** Current head: **v6.4.81**, cycc 1,108,328 B, check.sh 150, self_compile
-  ~620 ms. **The async arc 5b + UEFI arc (#3) are CLOSED; scalar-float completion (.55/.56), DX
+  across all 7 drivers).** **The async arc 5b + UEFI arc (#3) are CLOSED; scalar-float completion (.55/.56), DX
   diagnostics (.60 R1 + .62 R2), and the Intel-Mac x86_64 Mach-O tail (.59) have all SHIPPED.
   .63–.72 ran reactive: agnos GPU band #82–#91 (now contiguous) + lib-freshness (.63/.70/.71/.72),
   **Win64 stack-args P0** (.64, ECALLPOPS 10+-arg corruption), thread-local slot allocator (.65),
   getpeername xlat (.66) + sandhi 1.9.1 getpeername fold (.71), chrono DateTime (.67), agnos
   `sys_reboot` 4-arg (.68), **f64 JSON round-trip** (.69, bayan 1.2.1 Grisu2 + fmt_hex high-bit
   fix), and `cyrius coverage` scoped to project `src/` not vendored stdlib (.72). No arc
-  in flight. **SUPERSEDED 2026-07-22: `pub`/`private` is NO LONGER a 6.4.x arc — it moved to the **v6.5.0 OPENER**, and its design is COMMITTED (file-level `private` declaration flips a file to private-by-default; per-item `public` re-exposes; no declaration = all public; `_`-prefix LATER). 6.4.x now runs reactive (agnos asks + bugs) until it quiets. Read `proposals/2026-07-02-function-visibility-pub-private.md` — the forced hybrid/derive-from-`_` text below is STALE.**
+  in flight. **SUPERSEDED 2026-07-22:** `public`/`private` visibility is **NO LONGER a 6.4.x arc** —
+  it moved to the **v6.5.0 OPENER** with its design **COMMITTED** (a file-level `private` declaration
+  flips that file to private-by-default for `fn` *and* `var`; a per-item `public` re-exposes; no
+  declaration = everything public; the `_`-prefix convention is explicitly LATER). 6.4.x then ran
+  reactive (agnos asks + bugs) through .73–.82. Authoritative:
+  [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md)
+  — **the old hybrid / derive-from-`_` framing is superseded and has been rewritten out of this
+  file** (section 4 below).
+- **v6.4.73** — **`cyrius audit` + `cyrius capacity` compiled project sources with NO stdlib includes.**
+  Neither verb was ever added to `_auto_deps()`'s hard-coded command list — the **third** instance of
+  the class (`fuzz` joined at v5.7.21, `soak`/`smoke` at v5.7.38) — so on stiva the same tree that
+  `cyrius test` passed 202/0 audited **0 passed, 5 failed**, every failure a wall of `undefined
+  function 'alloc'`. It hid in-repo because 250 of our 251 `.tcyr` self-declare their includes.
+  `capacity --check` was the more dangerous half — a **green placebo** compounding four defects (no
+  prepend, unread child exit status, zero parsed stats lines counted as zero tables over threshold,
+  8 KiB stderr cap truncating the stats block); it now hard-fails rather than certify. Plus the
+  `CYRIUS_STATS` `code_size` denominator (stale 1 MiB → the 64 MiB growable codebuf of .49, which had
+  been publishing **269 %** for a healthy build), the sliced v6.4.72 `lib/fs.cyr` fix **completed**
+  across 8 sibling path fns (13 `: Str` params — bare-literal args silently returned 0, and
+  `fs.tcyr` passed 13/13 against the broken library because every assert wrapped its args in
+  `str_from`), and agnos GPU `#92`/`#93` descriptor-array wrappers. **Filed the fn_table P0** below.
+  check.sh 147; cycc 1,103,528 B.
+- **v6.4.74** — **module-scope `var X = <computed expr>` read 0 forever in an agnos kernel**
+  (consumer-filed). Narrower than the filing: **x86-ELF kmode only** — the deliberate v5.7.19
+  multiboot invariant emits `PARSE_PROG` first and the gvar inits after, and agnos's top-level
+  program never returns, so that block is dead code. Fixed with a constant folder (`_CF_TRY`)
+  widening the static-init path from a bare `= NUM ;` to any foldable integer expression;
+  `var A = 512 * 2;` now images byte-identically to `= 1024`. Two traps worth carrying: **cybs
+  cannot lex `>>>`** — only `seed-derive-cycc.sh` caught it, the cycc fixpoint does not substitute
+  for the seed gate — and **cyrius precedence is not C's**, `&`/`|`/`^` share the `+`/`-` tier
+  (pinned by a 42-expression/84-probe differential). Also fixed the **pre-existing `_cfo` re-arm bug
+  at 17 `PARSE_TERM`-tier sites** (`100 >>> 1 + 1` == 2 in ordinary fn bodies) and the `kmode emit
+  order` gate, which had been passing **vacuously off that very bug**. check.sh 147; cycc 1,103,544 B.
+- **v6.4.75** — **P0: `fn_table` growth past 8192 silently corrupted six fn-indexed side tables.**
+  The v6.2.0 migration made the 17 `_fnt_*` tables growable (init cap 8192, ×2 to a 32768 ceiling)
+  but left six others keyed by the same `fi` at fixed 8192-slot bands packed back-to-back —
+  **index 8192 of each is index 0 of its neighbour**, written by `PARSE_FN`'s unconditional per-fn
+  reset, with no diagnostic. cycc (~1135 fns) could never reach it; **stiva was at 7443/8192**.
+  Fixed on the v6.4.23 `_vsgn_base` precedent — lazy-alloc at the 32768 ceiling, never grow — so the
+  six accessors carry the whole change with **no per-fork driver edit and no grow-chain link** (an
+  8th link is what desynced cybs for the var family). Plus `REGFN`'s forward-overload write to a
+  stale pre-grow base, the DCE `live[4096]`-cleared-1024 mismatch (uninit stack bits kept dead fns
+  alive non-deterministically), and the capacity warning re-pointed at the fixed 32768 ceiling — it
+  had divided by the *live* cap, so it screamed at 8191 fns and went **silent** the instant the table
+  grew, exactly when corruption started. New mutation-proven `_fn_grow_gate`; check.sh 148;
+  251/251 byte-identical.
+- **v6.4.76** — **identifier pool (`tok_names`) 256 KB → 512 KB, in place** — the companion to the
+  .75 P0 (stiva was at 93 % and had already split its test suite **four** times). Constants-only:
+  the two LEX thresholds `261872 → 524016`, the capacity divisor, the `CYRIUS_STATS` denominator,
+  and the heap-map size line in all 5 forks that carry it. Safe because the band `0xA0000–0x100000`
+  is unoccupied in all 7 forks; the pool now ends at `0xE0000`, **128 KB under the `0x100000`
+  physical ceiling** above which it overruns the hash/var tables and the compiler *hangs* (that
+  ceiling is now documented at the threshold). No region moves → **not a layout change**, no
+  two-step bootstrap, byte-identical. New `_idpool_gate` (mutation-proven against .75);
+  check.sh 149; cycc unchanged.
+- **v6.4.77** — **reserved intrinsic names reported `got unknown` — 67 tokens, not the 3 filed.**
+  `IS_KEYWORD_TOK` and `TOKNAME` both stopped at token 111, so every intrinsic above it fell through
+  to `"unknown"`, pointing at a syntactically clean identifier and calling it unknown; it cost hisab
+  its whole 312-assertion suite, findable only by bisection. New `TOKNAME_BUILTIN` table with
+  **`IS_KEYWORD_TOK` deriving from it**, so the "is it reserved" and "what is it called" sets cannot
+  drift and a future named intrinsic is reserved automatically. Counting trap: a first pass finds
+  **51** — the lexer has two keyword paths and >8-char names are a u64 compare plus `load8` tails.
+  Also: tokens **79** and **111** are double-assigned, so the diagnostic actively named the *wrong*
+  keyword (`var f64_sqrt = 1;` said `'object'`); `cyrius lib sync` now **refuses to run in this
+  repo** (it would silently revert every fold); sandhi re-vendored **1.9.1 → 1.9.3**; and
+  `docs/ecosystem.md`'s folded-distlib table was stale on **5 of 11** rows. check.sh 149;
+  cycc 1,108,272 B (+4,648 — the 67 name literals, a diagnostic-only path).
+- **v6.4.78** — **`cyrius audit` fmt/lint/doc-walked the consumer's VENDORED `lib/`** (stiva-filed):
+  the sweep conflated *exists on disk* with *belongs to this project*, so consumers got a permanent
+  `FAIL: files need reformatting` for other people's bundles — with a printed remedy that rewrites
+  files `cyrius deps` overwrites and breaks `deps --verify` hashes. Now gated on
+  `_dep_is_cyrius_source_repo()`; note the filing's preferred `[deps]`-section test **would have
+  broken this repo**. The stage now prints its `scope:` and NAMES the failing files
+  (`AW_FMT_FAIL_FILES` had been populated since it was written and never printed). Plus `cyrius
+  bench` finding `tests/<name>.bcyr`, and the **`PEEKT` EOF clamp** — truncated input went from a
+  **166,670-line** error cascade to 5 lines. The hot-path objection that got it filed separately
+  evaporated: `PEEKT` already has an `_had_error` guard and the runaway is post-error only, so the
+  clamp inside it costs **−0.07 %**. check.sh 149. **RESIDUAL (do not re-file): `cyrius audit`
+  still FAILs in the cyrius repo — cycc's `src/` is not cyrfmt-clean by design.**
+- **v6.4.79** — **sankoch 2.7.6 fold: batch gzip/deflate corrupted every input over 1 MiB.** Both
+  per-block encoders match against the full `src` (cross-block back-refs are what keep the ratio), so
+  a match starting just below `block_end` can run up to 258 B past it — and the chunker resumed at
+  `block_end` regardless, encoding the overshoot a second time. Nothing errored at compress time; it
+  surfaced arbitrarily later as a CRC-32 failure, which for stiva meant **every container image
+  larger than ~1 MiB was written to disk corrupt**. **Fixed UPSTREAM first** (a real sankoch 2.7.6
+  cut, all 10 dist profiles, full suite) *then* folded, per "fix the SOURCE repo, not the fold";
+  cross-validated against GNU `gunzip`. Two subtleties that would each have left a partial fix: the
+  lazy-match flush consumes to `sp - 1 + prev_match`, and `BFINAL` is decided *before* the block is
+  encoded. The suite missed it for years because every deflate test used input **under** the 1 MiB
+  block size. Also filed: `cyrius distlib` has no all-profiles mode — the documented release step
+  left all **nine** sub-profiles at 2.7.5 still carrying the buggy encoder. cycc byte-identical.
+- **v6.4.80** — **`1 - 2 + 3` evaluated to `5` — the `_cfo` rewind class, THIRD occurrence.** The
+  PEXPR tier (`+ - & | ^`) silently discarded its **left operand** whenever a literal subtraction
+  produced a negative intermediate (the `cfr >= 0` test fails → the runtime fallback, and the
+  fallback was the buggy one): **40 of 400 (10 %)** systematic 3-term constant expressions were
+  wrong. Same mechanism .74 fixed one tier down, 16 more sites. **Grep the SHAPE, not the
+  operator** — a single `grep "_cfo = 0; E.*PARSE_TERM"` at .74 would have found these eight
+  releases earlier. **251/251 tcyr byte-identical is the finding, not the reassurance**: the corpus
+  contained zero expressions of the failing shape, so 10 % of constant arithmetic could be wrong
+  with every gate green. Coverage 8 → 33 asserts took three rounds (AND/OR/XOR each need a different
+  shape; ADD is reachable only via i64 overflow). **Found by a doc-sweep verifier *running* the
+  compiler.** check.sh 149; cycc unchanged.
+- **v6.4.81** — **a FOURTH `_cfo` occurrence, plus CVE-32/33/34.** Struct operator-overload
+  dispatch: `mul`/`div` never cleared `_cfo` where `add`/`sub` did (a 2-of-4 asymmetry in four
+  structurally identical lines), so the emitted operator **CALL** was rewound over — `p * 3 + 1`
+  compiled to **4**. **Grep for calls that RE-ARM `_cfo`, across every tier**, not just the tier the
+  repro landed in. **CVE-32/33/34** = three unbounded copies reachable from untrusted source, which
+  cycc compiles by design: `include "<31490 A's>.cyr"` **SIGSEGV'd cycc**, `READFILE`'s
+  `CYRIUS_HOME` fallback composed into an unbounded `var fbuf[512]`, and a long `$HOME` overran
+  `_cyrius_lib`. CVE-32 survived three minors of heap-map audits because **the map documented a
+  region no code has ever written** (`0x190500 [256]`; every use is `0x190400`, unbounded) — the map
+  is machine-read, so explanatory prose on a map line is parsed as the size. Also the new
+  `_doc_stamp_currency_gate` (born RED on live rot — this file's head was eight releases behind), the
+  `src/main.cyr` PE/Mach-O **cross** arms that silently dropped value-form SIMD for the whole minor,
+  the two Windows PE gates that had been validating a **cycc 5.11.69** binary since 2026-05-19,
+  `tests/heapmap.sh` blind to **20 MB** of live heap (its size regex missed `[16 MB]`-style
+  entries — region count 94 → **100**), and CVE-35/36 (23 fixed `/tmp` literals in `cbt/`).
+  check.sh **150**; cycc 1,108,328 B.
+- **v6.4.82** — **the v6.4.x CLOSEOUT.** The **TS frontend arena moved off its fixed base
+  `0x298B000` to `alloc(TS_HEAP_SIZE)`** — it had overlapped `tok_types` **entirely** plus 1.6 MB of
+  `tok_values` (10,027,008 B), survivable only by an undocumented temporal invariant
+  (`--lex-ts`/`--parse-ts`/`--emit-js` all exit before `LEX`). Taking the arena from the allocator
+  sidesteps the ~14.2 MB-contiguous problem that made .81 correctly defer it as a brk/heap-**layout**
+  change, and it costs nothing on a normal compile because the region is taken only when a TS mode is
+  active. Plus agnos **`#94 gpu_recover_op` / `#95 uptime_us`** wrappers — the band is now contiguous
+  **#82–#95** — with the `GpuRecoverArm` enum so consumers stop hand-rolling arm numbers; `#94` is
+  `lchown` on x86_64 (arg1 read as a **path**) and **`exit_group` on aarch64**, where a raw
+  `syscall(94, arm)` silently terminates the process, which is precisely why the wrapper matters.
+  Closeout passes: heap map **100 regions / 0 overlaps**, backlog re-triage, doc sync. Read that 100
+  carefully — it is **not** the pre-.75 100 restored. It went 100 → **94** at .75 when six fn-indexed
+  side tables went lazy-alloc and their fixed bands were freed, then back to **100** at .81 when the
+  auditor's size parser was fixed to see unit-suffixed entries (`[16 MB]`) it had been skipping
+  entirely. Same number, different route, six different regions.
+
+**Current head: v6.4.82** — cycc **1,108,368 B** · check.sh **150 passed / 0 failed** · self_compile
+**~622 ms** · 251 `.tcyr` · 99 `lib/*.cyr` · api-surface **4749** public fns · heap map **100 regions,
+0 overlaps** · **11 open issues + 3 proposals** (273 archived). Verified against live artifacts at the
+v6.4.82 closeout. `_doc_stamp_currency_gate` (check.sh, since .81) keys on the `Current head` anchor
+that opens this paragraph and checks `VERSION` appears within 240 bytes of it; it **fails loudly** if
+the anchor disappears rather than passing on a missing one, so keep the string and keep it unique.
 
 **The committed opening sequence** (ORDER fixed by user 2026-07-03; the design
 decisions *inside* each arc are chosen at arc-open — only the order is committed):
@@ -197,9 +335,9 @@ releases, each bundling several bites. Minors flex long.**
 | 1 | **Packed SIMD compute** (f32-first, then integer; ML/AI) | **5–7 releases** | No | **✅ COMPLETE on all four backends — x86 SSE+AVX2 (.4–.9), aarch64 NEON (.28–.30), Win64 PE value-form (.31), cx bytecode (.32)** |
 | 2 | **Array-typed struct fields** | **3 releases (done)** | No | **✅ DONE — R1 v6.4.11 · R2 v6.4.12 · R3 v6.4.13 (`Vec<T>` fields + `#derive` Vec<primitive>/Vec<struct>)** |
 | 3 | **UEFI Secure Boot signing** | **2 releases (was 3–5)** | No | **✅ COMPLETE — signing (`cyrius sign-efi`, v6.4.47) + enrollment (`.esl`/`.auth` via sigil 3.11.1's `efi_sigdb`, v6.4.48). Premise-check shrank it: sigil already shipped the Authenticode crypto core.** |
-| 4 | ~~**Function visibility** (`pub`/`private`)~~ **MOVED to v6.5.0 opener (2026-07-22)** | **4–6 releases** | No | design committed; see proposal |
+| 4 | ~~**Function/var visibility** (`public`/`private`)~~ **MOVED to the v6.5.0 OPENER (2026-07-22)** | **4–6 releases** | No | design COMMITTED — file-scoped opt-in, default public; see the [proposal](proposals/2026-07-02-function-visibility-pub-private.md) and the v6.5.x table below |
 | 5 | **cx portable bytecode target** (CLI `--target=cx` + `cxvm` run + scalar float + cross-OS `.cyx`) | 5 releases (.17–.20, .22) | No | **✅ DONE. A=CLI, B=f64, .19=f64-compare, C=cross-OS `.cyx` (all 4 hosts), .22=cycc_cx cross-native (macOS/Win). Tail: f32/transcendentals fail loud.** |
-| 5b | **Async runtime — reactor + suspend/resume foundation, THEN tokio-parity primitives + IOCP-Windows** (unblocks stiva v3.1 + thoth `--win`) | 6–8 releases (shipped in ~13: .33–.45) | No | **✅ SHIPPED (.33–.45).** FOUNDATION-FIRST (reactor + the 5 tokio-parity primitives, .33–.41) → consolidation (.42) → IOCP-Windows "W" step: client (.43) / timers+subprocess+combinator-parity (.44) / AcceptEx server (.45), all target-agnostic and release-gated on real cass. `async_accept` closes the surface. Mid-body suspend/resume = FUTURE ARC (parked in roadmap-future: stackless coroutines; blocked on the v6.5.x IR substrate + no live consumer). `tantu` extraction = RESERVED future-minor deliverable (repo name held) — NOT sequenced. (pinned 2026-07-07, shaped 2026-07-09, shipped 2026-07-10; history: [`issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md), [`issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md`](issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md)) |
+| 5b | **Async runtime — reactor + suspend/resume foundation, THEN tokio-parity primitives + IOCP-Windows** (unblocks stiva v3.1 + thoth `--win`) | 6–8 releases (shipped in ~13: .33–.45) | No | **✅ SHIPPED (.33–.45).** FOUNDATION-FIRST (reactor + the 5 tokio-parity primitives, .33–.41) → consolidation (.42) → IOCP-Windows "W" step: client (.43) / timers+subprocess+combinator-parity (.44) / AcceptEx server (.45), all target-agnostic and release-gated on real cass. `async_accept` closes the surface. Mid-body suspend/resume — the "gap 6" of this arc — is **▲ PINNED v6.5.x** as **stackless coroutines** (user, 2026-07-26; it was parked in roadmap-future until stiva filed the consumer requirement), bound to the v6.5.x IR substrate it depends on. `tantu` extraction = RESERVED future-minor deliverable (repo name held) — NOT sequenced. (pinned 2026-07-07, shaped 2026-07-09, shipped 2026-07-10; history: [`issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md`](issues/archived/2026-07-07-async-runtime-tokio-parity-gaps.md), [`issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md`](issues/archived/2026-07-08-async-epoll-only-blocks-win-transport.md)) |
 | 6 | **Scalar-float completion** (f64 return type + f32 scalar arithmetic + typecheck strictness) | 2–3 releases (done in 2) | No | **✅ COMPLETE — f64 scalar return (v6.4.55) + f32 arith/compare + WARN-only typecheck (v6.4.56)** |
 | 7 | **DX: diagnostics** (multi-error reporting + column/excerpt) | 2–4 releases (done in 2) | No | **✅ COMPLETE — R1 column + source-excerpt/caret (v6.4.60) + R2 panic-mode multi-error (v6.4.62)** |
 | T | **Intel-Mac (x86_64 Mach-O) toolchain tail** | 2–4 releases (done in 1) | No | **✅ COMPLETE — Intel-Mac x86_64 Mach-O revival (v6.4.59); `ach` now a first-class release-gate host** |
@@ -288,9 +426,12 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
   user's "SIMD first, then async" call — ahead of the order-committed arcs 3/4/6/7. The
   arc's likely home is a `sutra`/`kaal` async-runtime lib the issue proposes (extract →
   vendor back). The 6th gap in the filing — stackless suspend/resume (execution-model,
-  not a library primitive) — stays cross-linked to the **stackless-coroutines** item in
-  [roadmap-future.md](roadmap-future.md) (which now has a would-be consumer in stiva) and
-  is NOT a blocker for the 5 primitives. Final interleave vs arcs 3/4 is the user's call;
+  not a library primitive) — is now **▲ PINNED v6.5.x** as **stackless coroutines** (user,
+  2026-07-26): stiva stopped being a "would-be" consumer and **filed**
+  ([`issues/2026-07-25-stiva-stackless-coroutines-interactive-exec.md`](issues/2026-07-25-stiva-stackless-coroutines-interactive-exec.md),
+  two blocked v3.1.0 features), which met the unpin condition
+  [roadmap-future.md](roadmap-future.md):116 had carried for it. It was NOT a blocker for the
+  5 primitives, and it lands with the v6.5.x IR substrate — see the v6.5.x slot table. Final interleave vs arcs 3/4 is the user's call;
   the intent is near-term, not deferred.
   - **ARC-OPEN DECISIONS (2026-07-09, after a code-grounded premise-check — 8-verifier
     workflow).** Arc 5b opens at **v6.4.33**. All 6 gaps confirmed still-missing against v6.4.32
@@ -328,10 +469,12 @@ rv64 to v6.7.x/v6.8.x**; see [roadmap_6.md](roadmap_6.md).)
   (Stale-shipped through v6.4.64 — this bullet still asserted "today's allow-list
   admits `f64v2`/`f64v4` but not `f64`" in the present tense, ~9 releases after
   v6.4.55 falsified it, which is what kept the linked issue reading as open.)
-- **DX: diagnostics — later 6.4.x.** Multi-error reporting (today:
-  first-error-exit) + column + source-excerpt in errors. A maintenance-cost item:
-  consumer-filed misdiagnoses are the recurring tax better errors retire. DWARF
-  debug-info stays v7-parked (only the error-reporting layer moves here).
+- **DX: diagnostics — ✅ SHIPPED (R1 v6.4.60 column + source-excerpt/caret, R2 v6.4.62
+  panic-mode multi-error).** A maintenance-cost item: consumer-filed misdiagnoses are the
+  recurring tax better errors retire. **DWARF debug-info is a separate deliverable and is
+  NOT part of this arc** — only the error-reporting layer moved here. It is **6.x-line
+  backend work in the potential backlog below**, never 7.x (it emits sections into the
+  object file; if it touches codegen it stays in the 6.x cycle).
 
 **SIMD sequencing amendment (user, same session):** the intended order inside the
 SIMD focus is **Phase 5 NEON first, then circle back to the register-residency /
@@ -564,7 +707,7 @@ tables/lists in structs generally.
 > 16 MiB→1 GiB **on Linux** (off-heap `_output_base`; a 19.8 MiB binary compiles) — macOS
 > and Windows fall back to the fixed 16 MiB region because their allocators can't produce a
 > >256 MiB single region, **carried to v6.4.52** as the dedicated large-alloc path
-> ([`issues/2026-07-11-macos-windows-large-single-allocation-path.md`](issues/2026-07-11-macos-windows-large-single-allocation-path.md));
+> ([`issues/archived/2026-07-11-macos-windows-large-single-allocation-path.md`](issues/archived/2026-07-11-macos-windows-large-single-allocation-path.md));
 > (3) the `lint_error_enum_namespace` cyrlint note rule (bare `ERR_*` reserved for sakshi).
 > cross-OS pi+ecb+cass all `SELFHOST_OK`+`LIBTEST_OK (21)`; check.sh 141; seed-derive OK.
 > See CHANGELOG [6.4.51]. Original filing detail below.
@@ -574,7 +717,7 @@ tables/lists in structs generally.
 > Both are cross-OS-affecting, so they share one cross-OS gate run if bundled.
 
 1. **`signal_ignore` / SIGPIPE stdlib gap** —
-   [`issues/2026-07-11-sandhi-signal-ignore-stdlib-gap.md`](issues/2026-07-11-sandhi-signal-ignore-stdlib-gap.md).
+   [`issues/archived/2026-07-11-sandhi-signal-ignore-stdlib-gap.md`](issues/archived/2026-07-11-sandhi-signal-ignore-stdlib-gap.md).
    `lib/syscalls.cyr` has no `signal_ignore`/`rt_sigaction` and no `SIGPIPE` in the
    `Signal` enum; `lib/net.cyr` `sock_send` is a flagsless `sys_write` (no
    `MSG_NOSIGNAL`) — so any server on `sock_send` dies on SIGPIPE when a peer
@@ -587,7 +730,7 @@ tables/lists in structs generally.
    the 3 stdlib-hygiene gates (lint / api-surface / cyrdoc); **verify on real ecb
    (macOS)** since macOS is the whole point.
 2. **`output_buf` 16 MiB → 1024 MiB cap raise** —
-   [`issues/2026-07-11-output-buf-16mib-cap-blocks-large-test-binaries.md`](issues/2026-07-11-output-buf-16mib-cap-blocks-large-test-binaries.md).
+   [`issues/archived/2026-07-11-output-buf-16mib-cap-blocks-large-test-binaries.md`](issues/archived/2026-07-11-output-buf-16mib-cap-blocks-large-test-binaries.md).
    The final-image `output_buf` is a **fixed 16 MiB** region (NOT growable, unlike the
    codebuf); `_check_output_cap` ([`runtime.cyr:348`](../../src/backend/common/runtime.cyr))
    hardcodes `16777216`. thoth's single-translation-unit test binary hit it
@@ -604,8 +747,11 @@ tables/lists in structs generally.
 ## Deferral backlog — pinned order (triaged 2026-07-11 @ v6.4.52)
 
 A full sweep of open `issues/` + `proposals/` after the .50–.52 run. **12 open issues + 3
-open proposals** remained @v6.4.52 (**9 open issues + 3 proposals** as of 2026-07-23);
-**4 were resolved/shipped and archived in this pass** — drishti
+open proposals** remained @v6.4.52; **live at the v6.4.82 closeout re-triage: 11 open
+issues + 3 open proposals** (273 archived) — counted against `docs/development/issues/`
+itself, not against this file's prior claim, which had drifted (it read "9" from a
+2026-07-23 sweep that .73–.82 then overtook). **4 were resolved/shipped and archived in the
+.50–.52 pass** — drishti
 `>>>` shift (→ .46), EFI enrollment (→ .48), and the UEFI-signing + cx-CLI proposals
 (shipped .47/.48 and .17–.22). Order set by the maintainer (2026-07-11).
 
@@ -629,7 +775,7 @@ and is the trickiest to bring back, so it gets a hard look ahead of the big arc.
 | 2 | **Scalar-float completion ✅ COMPLETE** (cyrius-side; agnos XMM-state kernel layer is agnos-side + separate). **f64 scalar RETURN in xmm0 ✅ v6.4.55** (sentinel -9; EMOVQ rax↔xmm0 marshal, no-op on aarch64/cx; §1 closed). **f32 scalar arithmetic + comparison + stricter float typecheck ✅ v6.4.56** (EMIT_F32_BINOP/EF32_CMP on x86/PE/macho·aarch64 NEON·cx widen-op-narrow; warn-level f64/int arithmetic-mix + 2 SESTYPE-normalization bug-fixes). Follow-ons filed: scalar-float param arithmetic + compound-assign, ERR_MSG len over-read, f64/int compare-mix warning (needs literal-0 suppression) | ~~`…agnos-fp-xmm-state-and-f64-scalar-return` §1~~ ✅ .55; `…scalar-float-param-and-compound-assign` (P2), `…parse-fn-retmsg-length-overread` (P3), `…f64-compare-mix-warning-literal-suppression` (P3) | P2 |
 | 3 | **Intel-Mac (x86_64 Mach-O) toolchain revival ✅ COMPLETE v6.4.59** — the compiler self-hosted on ach since v6.0.43; this closed the ungated usable-toolchain tail: wrapper arch-default + env(HOME) via r15, cycc `_read_env` un-stub, retire the vestigial `_macho_capture_args`, `_lint_macho_buf` (the Mach-O structural lint bite), `release.yml`→`build-macos-x86-tarball.sh`, and **the systemic fix — `ach` added to `release-gate.sh` + a real install gate**. Verified on real ach; full gate GREEN ecb+ach+cass+pi. | ~~`2026-06-02-macos-x86-release-no-compiler`~~ ✅ .59 (High, open 13mo), ~~`2026-07-07-macho-structural-lint-residual`~~ ✅ .59 | P1 |
 | 4 | **DX diagnostics ✅ COMPLETE** — R1 (v6.4.60) column + source-excerpt with a caret on every error; **R2 (v6.4.62) panic-mode multi-error** — cycc reports many errors/compile, no output on error, and NEVER hangs/crashes on hostile stdin (a `PEEKT` anti-hang watchdog broke the fuzz wall that stopped 2 prior attempts; VR-02 `CYCC_FUZZ_ITERS=300` = 0 crashes). Follow-up (non-blocking): convert the 25 inline `SYS_EXIT` errors + a smarter `_sync_skip`. | ~~column/source-excerpt~~ ✅ .60, ~~multi-error recovery core~~ ✅ .62; `2026-07-12-dx-multi-error-reporting` (inline follow-up, P3) | P2 |
-| 5 | ~~**Function visibility (`pub`/`private`)**~~ — **MOVED OUT of 6.4.x to the v6.5.0 OPENER (user, 2026-07-22); design COMMITTED** | proposal `2026-07-02-function-visibility-pub-private` (authoritative) | — |
+| 5 | ~~**Function/var visibility (`public`/`private`)**~~ — **MOVED OUT of 6.4.x to the v6.5.0 OPENER (user, 2026-07-22); design COMMITTED** (file-scoped `private` opt-in, per-item `public`, default public; `_`-prefix LATER). Re-homed in the **v6.5.x table below**. | proposal `2026-07-02-function-visibility-pub-private` (authoritative) | — |
 
 **Fold-in (no dedicated slot):** `2026-06-25-source-level-version-constant` (P3 — build
 tooling) rides a convenient minor-cut, per the "cosmetic/tooling fixes fold into adjacent
@@ -637,11 +783,18 @@ work" rule.
 
 ### v6.5.x — Performance-Quality minor (anchors already framed in roadmap_6.md)
 
+> **v6.5.0 OPENS with `public`/`private` visibility** — moved out of 6.4.x on 2026-07-22 with the
+> design COMMITTED. It is the minor's FIRST arc, ahead of the perf work; the perf anchor (IR
+> substrate) follows it. Same call is recorded in roadmap_6.md and the proposal.
+
 | Slot | Open issues it absorbs |
 |---|---|
-| **IR substrate productionization** — the anchor; gates the whole perf/regalloc arc | `2026-07-02-ir-regalloc-rewrite-needs-reemit` (P2, L); folds `2026-07-07-v6415-closeout-residuals` (D1/D2 dead IR/decode, R2 PE prologue) + the `_cur_fn_ret_stash` disp↔idx substrate (state.md "Filed follow-on") |
+| **`public`/`private` visibility — the v6.5.0 OPENER** (~4–6 releases). **Committed design:** a top-level `private` declaration flips that FILE to private-by-default (**`fn` *and* `var`**); a per-item `public` moniker re-exposes; **no declaration = today's everything-public**, so the whole ecosystem keeps compiling unchanged on day one and adoption is a per-file decision. The **`_`-prefix convention is explicitly LATER** — nothing is derived from names, which is what retires the 165-cross-file-`_`-call audit as a blocker. The real work is the per-fn **origin-file-id substrate** (`lex_pp.cyr` stamps a file-id, `_fnt_fileid[fi]` across the forks), not the flag or the check; enforcement sits at `PARSE_FNCALL` after `FINDFN` **plus the tail-call path**. Authoritative: [`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md) | folds `bare-metal-forbidden-module-check` (the `#`-annotation slot) |
+| **IR substrate productionization** — the perf anchor; gates the whole perf/regalloc arc | `2026-07-02-ir-regalloc-rewrite-needs-reemit` (P2, L); **`2026-07-02-ir3-fixpoint-cascade-overelimination`** (`CYRIUS_IR=3` correctness — BOUNDED fixable bugs, not a substrate redesign; the perf arc is blocked on this landing here); folds `2026-07-07-v6415-closeout-residuals` (D1/D2 dead IR/decode; its R2 PE prologue already ✅ v6.4.26) + the `_cur_fn_ret_stash` disp↔idx substrate (state.md "Filed follow-on") |
+| **Stackless coroutines / mid-body suspend-resume across `await`** — ▲ **PINNED v6.5.x** (user, 2026-07-26). Bound to the IR substrate above: the poll-runtime rework (+ force-once memoization) is the *same* substrate the perf minor opens, so doing it earlier would build that substrate twice. Subsumes the mid-body-suspend "gap 6" of the shipped async "W" arc (v6.3.11 shipped async/await as deferred-then-forced Futures over a run-to-completion epoll runtime, explicitly NOT stackless CPS). | `2026-07-25-stiva-stackless-coroutines-interactive-exec` — **left OPEN deliberately: it is the acceptance record for this pinned arc**, and archiving it would hide the consumer requirement from whoever opens the slot |
 | **SIMD register residency** — IR-substrate-gated; a codegen-QUALITY gap (bit-identical, no wrong results), so it can't batch ahead of the substrate | `2026-07-06-simd-f64v-memory-operand-no-register-residency` (P2, L) |
 | **macOS-arm64 threading backend** — `lib/thread_macos.cyr` (bsdthread/`__ulock`), mirrors the thread_win split; **distinct from the Intel-Mac x86 tail** and has no consumer blocked yet | `2026-07-03-macos-threading-workers-dont-run` (P2, M) |
+| **Missing syscall wrappers — one pass** covering `lchown`/`fchown`/`fchownat` semantics **plus `sys_chdir`** (called at `lib/regression.cyr:658` and defined nowhere). Medium for the stdlib, **High for any consumer that works around it**: a hardcoded `syscall(94, …)` is `lchown` on x86_64 but **`exit_group` on aarch64**, so the workaround silently terminates the process — the same class the v6.4.82 `#94`/`#95` agnos wrappers were added to prevent. Gate with a `vr01_`-named `.tcyr` so the cross-OS leg actually runs it on pi. | `2026-07-26-no-lchown-wrapper-forces-a-hardcoded-x86-64-syscall-number` |
 
 ### v6.6.x — Language-Ergonomics minor
 
@@ -652,8 +805,21 @@ work" rule.
 Real 6.x-line work without a committed slot yet; pulled into a release the moment a consumer
 or priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
-- **Async execution-model** — stackless coroutines / mid-body suspend; single-waiter-per-fd
-  multiplex (both real runtime/codegen work; slot when a consumer needs them).
+- **Async single-waiter-per-fd multiplex** — `_async_wait_events` uses the epoll `data` slot AS
+  the waiter identity, so two tasks parking the SAME fd hit `EPOLL_CTL_ADD` `EEXIST` and one
+  starves; needs a real per-fd waiter list. No consumer exercises concurrent same-fd waiters
+  today. (**Stackless coroutines / mid-body suspend used to share this bullet — it is no longer
+  unscheduled: ▲ PINNED v6.5.x, see the v6.5.x table above.**)
+- **DWARF debug-info emission** — **moved here from the "v7-parked" list at the v6.4.82 closeout.**
+  It emits debug sections into the object file, i.e. it is backend/codegen work, and the placement
+  rule is absolute: nothing that compiles code is ever parked to 7.x. Unscheduled 6.x-line work —
+  slot it when a real debugger story is needed. (Distinct from the DX diagnostics arc, which shipped
+  at .60/.62 and was only the error-reporting layer.)
+- **Incremental compilation** — **also moved here from the "v7-parked" list at the v6.4.82
+  closeout** (same reason: it is compiler work). Unpin condition per
+  [roadmap-future.md](roadmap-future.md): reconsider when cycc self-host crosses ~2 s — it is
+  **~622 ms at v6.4.82**, so the whole-program model is nowhere near the threshold. The v6.5.x
+  perf-quality minor and the v6.7/v6.8 RISC-V arcs report first.
 - **`tantu` runtime extraction** — the async runtime lib → its own repo (repo name reserved;
   a future-**minor** deliverable, still 6.x).
 
@@ -661,6 +827,12 @@ or priority surfaces. **These are technical items → they stay in the 6.x cycle
 
 **Language book** (reference/guide finalization) + **legal** (licensing / public-release prep).
 **No codegen, runtime, or platform work ever lives here** — if it compiles code, it's 6.x.
+
+> **Enforcement note (v6.4.82 closeout):** this file was itself violating the rule two sections
+> down, parking **DWARF debug-info** and **incremental compilation** at "v7-PARKED". Both are
+> compiler work and have been moved into the potential backlog above. A technical item with no
+> committed slot goes in the 6.x backlog, never a far-future major — the far-future label is how
+> real work stops being scheduled.
 
 ---
 
@@ -699,39 +871,46 @@ missing" framing is stale.
   split cyrius (driver) + sigil (P3/P4/keygen, each folded back via `cyrius deps` +
   api-surface regen). Downstream gnoboot/agnova Secure Boot is post-v1.0 → not a blocker.
 
-### 4 — Function visibility (`public`/`private`) — **MOVED to the v6.5.0 OPENER (2026-07-22)**
+### 4 — Function/var visibility (`public`/`private`) — **MOVED to the v6.5.0 OPENER (2026-07-22)** · ~4–6 releases · NOT a release-blocker
 
-> ⚠ **The design text in this section is SUPERSEDED.** The committed design is: a top-level
-> `private` declaration flips that FILE to private-by-default (fns *and* vars); a per-item `public`
-> moniker re-exposes; no declaration = everything public (today's behaviour). Nothing derives from
-> `_` (that is a LATER convenience layer), so the 165-cross-file-`_`-call audit result is no longer a
-> blocker. Authoritative: `proposals/2026-07-02-function-visibility-pub-private.md`.
+**Design COMMITTED (user, 2026-07-22).** Authoritative:
+[`proposals/2026-07-02-function-visibility-pub-private.md`](proposals/2026-07-02-function-visibility-pub-private.md).
+Sequenced as the v6.5.0 opener — see the v6.5.x slot table above. Still executes
+"Phase 2 — `pub` enforcement" of [`module-manifest-design.md`](module-manifest-design.md),
+closing the flat-global-namespace bug classes (the `dynlib_*` dead-code corruption,
+enum-shadow, slot-collision) and making the api-surface snapshot compiler-enforced.
 
-#### (superseded) original framing — ~4–6 releases · NOT a release-blocker
-
-Execute "Phase 2 — `pub` enforcement" of
-[`module-manifest-design.md`](module-manifest-design.md): close the flat-global-namespace
-bug classes (the `dynlib_*` dead-code corruption, enum-shadow, slot-collision) and make
-the api-surface snapshot compiler-enforced. Runs long because it's a **retrofit onto a
-flat namespace + a real cross-ecosystem migration**.
-
-- **▶ First step (the arc-open gate): the `_`-prefix cross-file-call audit.** Already
-  run for cyrius-internal here — **165 distinct `_`-fns are called cross-file** (253
-  pairs; 52 in `lib/` are cohesive-subsystem internals like `_tn_*`/`_uc_*`/`_alloc_*`),
-  and sigil alone has 703 `_`-defs. **This DISPROVES "derive-from-`_` = zero-churn"** →
-  the forced decision: a **HYBRID marker** (`_` default + explicit `pub`/`private`
-  override) and **default = PUBLIC** (additive/byte-identical; reject default-private).
-- **Phases**: (0) `_`-audit + decision lock → (1) the **per-fn file-id substrate** (new
-  preprocessor infra + `_fnt_fileid` across all 7 `main_*` forks — the real work,
-  byte-identical) → (2) `fn_flags` bit-6 + WARN-mode enforce → (3) the ecosystem
-  migration (add `pub`/rename cross-file `_`-callees; cyrius first, then 14 downstream
-  repos via `cyrius deps`, sigil heaviest) → (4) flip to hard-error + feed DCE + prove
-  the win → (5) docs/close.
-- **Risks**: HIGH-churn — subsystem-spanning `_` helpers (tls-native, unicode,
-  alloc-backends) mean file=module is too fine a unit; a mis-stamped file-id → silent
-  false-positive rejections; late-ABI repair tail (file-id × monomorph instances,
-  use-aliases, `GMOD` mangling); two enforcement sites (`PARSE_FNCALL` + the tail-call
-  path — easy to miss one). Cross-repo migration is a big part of why it runs long.
+- **The committed model — file-scoped opt-in, default public:**
+  1. a top-level **`private`** declaration in a source file flips that **FILE** to
+     private-by-default — every `fn` **and `var`** in it becomes file-private;
+  2. inside such a file a per-item **`public`** moniker re-exposes;
+  3. **no declaration = today's behaviour, everything public** (unless an item is
+     individually declared private);
+  4. the **`_`-prefix convention is explicitly LATER** — it may return as a convenience for
+     declaring additional items, but **nothing derives from names in this arc**.
+  Spelling of the file-level declaration (a `#private`-style directive vs a keyword) is an
+  implementation pick, not a design question; note `pub` is already lexer token 73 but **dead**
+  (consumed-and-ignored at `parse_fn.cyr:1570`), as is `shared`.
+- **Why this replaced the earlier framing (kept because it has re-contradicted itself before).**
+  This section used to force a **HYBRID marker** — `_`-prefix default plus a `pub`/`private`
+  override — because the arc-open audit found **165 distinct `_`-fns called cross-file** (253
+  pairs; sigil alone has 703 `_`-defs), which disproved "derive-from-`_` = zero-churn". The
+  committed design **sidesteps that entirely**: nothing is derived from `_`, so the audit result
+  **stops being a blocker** rather than forcing a hybrid, and because it is opt-in per file the
+  whole ecosystem keeps compiling unchanged on day one. **If you find derive-from-`_` or
+  "hybrid" framing anywhere else, it is stale — the proposal wins.**
+- **Phases**: (0) lock the declaration spelling → (1) the **per-fn origin-file-id substrate**
+  (`lex_pp.cyr` stamps a file-id per included file, `_fnt_fileid` across the `main_*` forks —
+  **this is the real work of the arc**, and it is byte-identical) → (2) `fn_flags` **bit 6**
+  (bits 0–5 used, 6–63 free) + WARN-mode enforce → (3) per-file adoption where it pays, cyrius
+  first → (4) flip to hard-error + feed DCE (file-private with no in-file caller is
+  *definitively* dead) + prove the win → (5) docs/close.
+- **Risks**: a mis-stamped file-id → silent false-positive rejections; late-ABI repair tail
+  (file-id × monomorph instances, use-aliases, `GMOD` mangling — note `GMOD`/`SMOD` is name
+  **mangling**, not a scoping boundary); **two enforcement sites** — `PARSE_FNCALL` right after
+  `FINDFN`, *and* the tail-call path (`parse_fn.cyr:~381`) — easy to miss one. The
+  cross-ecosystem migration risk is much reduced versus the superseded model, since day-one
+  behaviour is unchanged and adoption is per-file.
 
 ### T — Intel-Mac (x86_64 Mach-O) usable-toolchain tail — **✅ COMPLETE (v6.4.59)** · NOT a blocker
 
@@ -761,8 +940,10 @@ never unilaterally deferred or redirected.
 
 ## Carry-in / watching (open, not in the committed sequence)
 
-> Reconciled 2026-07-23: every open issue now has a roadmap home (no dangling filings).
-> Release ORDER within each bucket is the user's to set; severity is the sort hint.
+> Re-reconciled at the **v6.4.82 closeout**: all **11** open issues have a roadmap home and
+> each carries a matching `**Placement:**` line in its own file (the 2026-07-23 reconciliation
+> predates the .73–.82 run, which both cleared and added filings). Release ORDER within each
+> bucket is the user's to set; severity is the sort hint.
 
 - **🔴 Correctness bugs — near-term patch slots:**
   - ~~**P1 struct-field-name-offset collision**~~ — ✅ **SHIPPED v6.4.24.** Root cause was NOT
@@ -772,8 +953,11 @@ never unilaterally deferred or redirected.
   - ~~**P2 signed sub-i64 GLOBAL scalar sign-extension**~~ — ✅ **SHIPPED v6.4.23** (new 8th
     per-var `_vsgn_base` table, max-sized/no-grow to keep the cybs seed-chain intact; x86 +
     aarch64 backends).
-  - **SIMD intrinsic shadows a var name** — a SIMD builtin name used as an identifier is
-    parsed as the intrinsic ([`iv-simd-intrinsic-shadows-var-name`](issues/2026-07-17-iv-simd-intrinsic-shadows-var-name.md)).
+  - ~~**SIMD intrinsic shadows a var name**~~ — ✅ **SHIPPED v6.4.77** (archived). The filing named
+    3 intrinsics; the real surface was **67 reserved tokens** reporting `got unknown`, fixed via
+    `TOKNAME_BUILTIN` with `IS_KEYWORD_TOK` deriving from it
+    ([`iv-simd-intrinsic-shadows-var-name`](issues/archived/2026-07-17-iv-simd-intrinsic-shadows-var-name.md)).
+    The names are still reserved by design — they now name themselves in the diagnostic.
 - **🟠 Consumer-blocked (near-term):**
   - ~~**P2 LEXID dedup cap** (16384)~~ — ✅ **SHIPPED v6.4.21** (raised to 65536; `lexid_entries`
     relocated to arena-top + all forks' arenas extended). Unblocks the stiva port.
@@ -785,7 +969,8 @@ never unilaterally deferred or redirected.
   - cyim regex unblock (lands when cyim re-tests against v6.x).
 - **🟡 Deferred prerequisites (land WHEN their arc opens):**
   - ~~`tls13-server-get-version-zero`~~ — ✅ **SHIPPED v6.4.21** (server `respond_hello` stores the negotiated 1.3 version).
-  - `bare-metal-forbidden-module-check` → fold into the Function-visibility arc's `#`-annotation slot.
+  - `bare-metal-forbidden-module-check` → folds into the `#`-annotation slot of the
+    `public`/`private` visibility arc — now the **v6.5.0 opener**, not a 6.4.x arc.
   - `macho-structural-lint-residual` → Intel-Mac tail (slot T).
   - `sigil-authenticode-pe-hash-oob-read` → UEFI Secure Boot arc (slot 3).
   - ~~`capturing-closures-windows-pe`~~ — ✅ **SHIPPED v6.4.26** (route through `ECALLPTR_PE`;
@@ -805,18 +990,36 @@ never unilaterally deferred or redirected.
     [`aarch64-ganita-inverse-trig-unguard`](issues/archived/2026-07-08-aarch64-ganita-inverse-trig-unguard.md) (open follow-on).
   - ~~`aarch64-trig-payne-hanek-range-reduction`~~ — ✅ **SHIPPED v6.4.25** (double-double
     dd reduction for |x| ≥ 8192; small-angle path byte-identical).
-- **🔧 Tooling / gate hardening (fold into an adjacent slot):** release-gate's cross-OS
-  self-host step runs only the `vr01_` glob, not the full corpus, on the remote hosts
-  ([`release-gate-cross-os-runs-only-vr01-glob`](issues/2026-07-14-release-gate-cross-os-runs-only-vr01-glob.md)).
+- **🔧 Tooling / gate hardening (fold into an adjacent slot):**
+  - release-gate's cross-OS self-host step runs only the `vr01_` glob, not the full corpus, on
+    the remote hosts
+    ([`release-gate-cross-os-runs-only-vr01-glob`](issues/2026-07-14-release-gate-cross-os-runs-only-vr01-glob.md)).
+  - `cyrius distlib` has **no all-profiles mode** — it regenerates one bundle per invocation, so a
+    multi-profile repo ships stale sub-bundles under a fresh version string (the .79 sankoch cut left
+    all nine sub-profiles carrying the buggy encoder; 36 sub-profiles across 6 repos are exposed, and
+    both hand-rolled CI loops have already drifted from their manifests)
+    ([`distlib-has-no-all-profiles-mode`](issues/2026-07-26-distlib-has-no-all-profiles-mode.md)).
+  - the `dx-multi-error-reporting` inline follow-up (convert the 25 remaining inline `SYS_EXIT`
+    errors + a smarter `_sync_skip`) — P3, rides an adjacent slot
+    ([`dx-multi-error-reporting`](issues/2026-07-12-dx-multi-error-reporting.md)).
+- **📚 Stdlib backlog (6.x line, unpinned):** `lib/fs.cyr` `dir_list` allocates its whole working set
+  per call (`vec_new` + `alloc(4096)` + per-entry `str_from_buf`), with no caller-owned-buffer
+  variant — the last unbounded path in a long-running consumer; `dir_list_full` / `dir_walk` /
+  `find_files` / the `_with_prunes` pair share the shape
+  ([`agora-fs-dir-list-per-call-alloc`](issues/2026-07-26-agora-fs-dir-list-per-call-alloc.md)).
 - **Downstream-repo (their timeline):** ~~`yukti-udev-src-len-undersized-array-local`~~ —
   ✅ **SHIPPED v6.4.27** (fixed upstream, released as yukti 2.2.9, re-vendored).
 - **v5.x-era substrate (v6.5.x):** `ir-regalloc-rewrite-needs-reemit` (perf passes) +
-  `ir3-fixpoint-cascade-overelimination` (CYRIUS_IR=3 correctness) — both cited by the
-  v6.5.x Performance-Quality entry in [roadmap_6.md](roadmap_6.md).
-- **v7-PARKED (NOT near-term)** — LEGAL-01 licensing (`unreviewed-dimensions`), DWARF
-  debug-info, stdlib-reference docs, incremental compilation, the public-release decision.
-  These stay in [roadmap-future.md](roadmap-future.md). (**Diagnostics** was pulled INTO
-  v6.4.x at the 2026-07-07 horizon session; DWARF itself stays parked.)
+  `ir3-fixpoint-cascade-overelimination` (`CYRIUS_IR=3` correctness — BOUNDED fixable bugs, not a
+  redesign) — **both now named in this file's v6.5.x "IR substrate productionization" row**, as well
+  as in the v6.5.x Performance-Quality entry in [roadmap_6.md](roadmap_6.md).
+- **7.x — language book + legal ONLY (NOT near-term)** — LEGAL-01 licensing
+  (`unreviewed-dimensions`), stdlib-reference docs, the public-release decision. These stay in
+  [roadmap-future.md](roadmap-future.md). **Corrected at the v6.4.82 closeout: DWARF debug-info
+  and incremental compilation were listed here and are NOT 7.x items** — both are compiler /
+  backend work, so per the placement rule above they moved to the *Potential backlog — 6.x-cycle,
+  unscheduled* section. (**Diagnostics** was pulled INTO v6.4.x at the 2026-07-07 horizon session
+  and SHIPPED at .60/.62; DWARF was never part of that arc.)
 
 ## Discipline (per [cycle-discipline.md](cycle-discipline.md))
 

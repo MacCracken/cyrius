@@ -1,5 +1,17 @@
 # stiva: stackless coroutines — the live consumer for suspend-across-await — ACCEPTED, PINNED v6.5.x
 
+**Status:** 🟡 **OPEN — DELIBERATELY, and it is not rot.** This file is the **acceptance record for a
+pinned arc**, not an untriaged report. It is open because no cyrius change has shipped for it (and
+none will before v6.5.x); it stays un-archived because archiving is how we assert something is
+*done*, and doing that here would hide the consumer requirement from whoever opens the slot.
+**Do not "clean this up" in a future rot sweep** — verify instead that the roadmap pin still exists,
+and archive only when the v6.5.x coroutine work actually lands.
+**Placement:** **▲ PINNED v6.5.x** — confirmed live at the v6.4.82 closeout at
+`roadmap-future.md:116`, where the row's original unpin condition (*"No live consumer; pull forward
+on a real suspend-across-await need"*) is recorded as **met** by this filing. Bound into the v6.5.x
+arc because the poll-runtime rework it needs is the same IR/runtime substrate that minor opens, and
+it subsumes the mid-body-suspend "gap 6" of the shipped async "W" arc. 6.x line, never 7.x.
+
 > **✅ ACCEPTED for the v6.5.x arc** (user, 2026-07-26). This filing did exactly what it set out to do:
 > `roadmap-future.md:116` parked stackless coroutines with the unpin condition *"No live consumer;
 > pull forward on a real suspend-across-await need"*, and this is that consumer and that need. The row

@@ -134,15 +134,45 @@ floor, a re-triage that keeps re-pinning the same item).
 - Follow-ups spawned: <issues / patches>
 -->
 
-- _**v6.4.x → v6.5.0 closeout — pending** (mid-minor at 6.4.72; run this block at the `6.4.NN`
-  close). Interim: a 2026-07-11 backlog re-triage archived 4 (drishti-shift .46, EFI-enrollment
-  .48, uefi-signing + cx-CLI proposals) and re-pinned the then-12 open issues into the roadmap.md
-  "Deferral backlog — pinned order." Since then the .63–.72 band shipped (agnos GPU-syscall band
-  #82–#91 contiguous, bayan 1.2.1 f64 JSON round-trip, sandhi 1.9.1 getpeername fold, `cyrius
-  coverage` project-`src/`-scope fix) and the f64/fmt_hex/sys_reboot/agnos-GPU/getpeername/
-  coverage/thread-local issues archived — leaving **9 open issues** as of 2026-07-23. Note the
-  function-visibility (`pub`/`private`) arc has been MOVED OUT of 6.4.x to the v6.5.0 opener
-  (user 2026-07-22)._
+### v6.4.x → v6.5.0 closeout — 2026-07-27 (shipped as **v6.4.82**)
+
+- **Gates**: check.sh **150** (was 147 at .72; +`lib_freshness`-era growth, +`_doc_stamp_currency_gate`
+  and the `valform_simd_crosstarget` shell gate this cycle) · self-host fixpoint + seed-derive
+  byte-identical · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + VR-01 `LIBTEST_OK` on REAL hardware ·
+  self_compile **622 ms** · cycc **1,108,368 B** · heap **100 regions, 0 overlaps** · corpus **251
+  .tcyr** (verified by a per-file exit-code loop, not check.sh's grep summary) · api-surface **4749**.
+- **The closeout did not fit in one release.** It ran as an audit at .80, and the audit kept finding
+  live bugs: .80 became `1 - 2 + 3` == 5, .81 became a fourth `_cfo` occurrence + CVE-32/33/34, and
+  .82 is the closeout proper plus the TS-arena fix and agnos #94/#95. Two consecutive releases were
+  displaced by their own closeout audit — **that is the argument FOR running these passes, not
+  against**, and it is the single most useful thing this ledger entry records.
+- **Judgment findings** (all FIXED, not filed — see the feedback rule below):
+  fourth `_cfo` rewind occurrence in `EMIT_OP_DISPATCH` (`p * 3 + 1` == 4; `add`/`sub` cleared the
+  flag, `mul`/`div` never did) · CVE-32/33/34 three unbounded copies reachable from untrusted source
+  · the heap map documenting `include_fname` at an address **no code has ever written** (0x190500
+  vs the live unbounded 0x190400) so `heapmap.sh` validated a fiction for three minors ·
+  `heapmap.sh` blind to **20.02 MB** of live heap (`ir_nodes` 16 MB, `ir_cp` 4 MB) because its size
+  regex took a bare integer only, and mis-sizing `fn_param_struct_mask` as **5 bytes** off a trailing
+  `issue [5]` · the Windows PE gates validating a **cycc 5.11.69** binary for the entire v6.x line ·
+  value-form SIMD silently dropped on the PE/Mach-O **cross** paths since v6.4.31 · CVE-35/36 (23
+  fixed `/tmp` literals in `cbt/`) · the TS arena overlapping `tok_types` + 1.6 MB of `tok_values`
+  (10,027,008 B), safe only by a temporal invariant, now `alloc()`-backed.
+- **Backlog re-triage**: verified all 11 open issues against LIVE code (not their own status text) —
+  none resolved; two carried stale status text and were corrected. Archived the agnos #94/#95 filing
+  as resolved. Open queue **11** + README, 3 proposals, 273 archived. Enforced the placement rule:
+  DWARF debug-info and incremental compilation were parked at "v7-PARKED" in roadmap.md, contradicting
+  the file's own rule ~200 lines above — moved back into the 6.x line.
+- **Compliance**: new `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36, plus CVE-37/38
+  recorded as REFUTED so a future pass does not re-file them). `CLAUDE.md:164` had claimed the last
+  full audit was "v5.0.1" — three minors stale; corrected.
+- **Process fixes this cycle** (the durable output): `_doc_stamp_currency_gate` — a checklist entry is
+  not a gate, proven by v6.4.77 fixing this rot class in `ecosystem.md`, adding a checklist item, and
+  watching a row go stale again two releases later. And the feedback rule now in CLAUDE.md
+  "Execution integrity": **an audit's output is FIXES, not a backlog** — this closeout initially
+  filed four findings it could have fixed, growing the queue 11 → 15, and the user was right to
+  reject that.
+- **Follow-ups**: none deferred silently. Everything not fixed is filed with a NAMED reason.
+
 - _v6.3.x → v6.4.0 and earlier: full gate detail predates this ledger — canonical in
   [CHANGELOG.md](../../CHANGELOG.md) + [completed-phases.md](completed-phases.md)._
 

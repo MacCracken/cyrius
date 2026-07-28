@@ -1,5 +1,15 @@
 # IR substrate productionization — the whole IR-optimizer perf arc gates on it (→ v6.5.x)
 
+**Status:** 🟡 **OPEN** — the capability is genuinely unshipped; re-verified against live code at
+the v6.4.82 closeout. `ir_lower_all` still has **zero** callers (`grep -rn 'ir_lower_all(' src/` →
+one definition, no call site), so Wall 1's re-emit path is still dark, and `CYRIUS_IR=3` still
+miscompiles real programs (see the sibling below).
+**Placement:** **v6.5.x — "IR substrate productionization"**, the anchor slot of the
+Performance-Quality minor (`roadmap.md`, v6.5.x table). It is the *prerequisite* slot: it also
+absorbs D1/D2 from [`2026-07-07-v6415-closeout-residuals.md`](2026-07-07-v6415-closeout-residuals.md)
+and gates [`2026-07-06-simd-f64v-memory-operand-no-register-residency.md`](2026-07-06-simd-f64v-memory-operand-no-register-residency.md).
+Codegen work → 6.x line, never 7.x.
+
 > **STATUS (2026-07-07): re-scoped — the original framing is materially stale; the
 > CAPABILITY is still open and correctly homed at v6.5.x.** Corrections:
 > - **Wall 3** (`CYRIUS_IR=3` can't compile cycc) — **FIXED v6.3.28** (compiles: exit 0,
@@ -81,6 +91,13 @@ local N is known. Two fatal facts make that impossible on the current IR:
 
 ## Wall 3 — CYRIUS_IR=3 can't compile real programs (pre-existing, unrelated to any pass)
 
+> **Superseded in detail, not in substance (see the STATUS header).** The "0 bytes" symptom below is
+> the v6.3.27-era observation; v6.3.28 fixed *that*, and the defect moved one generation down — an
+> IR=3-built cycc now emits a binary, and the binary is miscompiled. Re-verified at v6.4.82:
+> `alloc_str_extras` and `alloc_collections` exit **0** by default and **139 (SIGSEGV)** under
+> `CYRIUS_IR=3`; `bigint` still **hangs (124)**. Owned by the sibling
+> [`2026-07-02-ir3-fixpoint-cascade-overelimination.md`](2026-07-02-ir3-fixpoint-cascade-overelimination.md).
+
 Both the v6.3.27 AND the (reverted) v6.3.28 cycc produce **0 bytes** compiling cycc itself under
 `CYRIUS_IR=3`, and **SIGILL (132)** on `derive_str_deserialize`. This is pre-existing and
 independent of any optimizer pass. It is exactly why `scripts/differential.sh` only tests
@@ -115,8 +132,10 @@ A dedicated slot (**v6.5.x IR substrate productionization**, roadmap.md) must ma
    drive down `IR_RAW_EMIT`(98) pervasiveness or give it a precise read/write set. Complete the
    CFG for `IR_SWITCH`(74, case targets) + unresolved JMP/JCC edges. Goal: liveness-based passes
    are SOUND without bailing on every function.
-3. **Fix CYRIUS_IR=3 compiling real programs + add it to the differential corpus** (Wall 3). Make
-   `CYRIUS_IR=3` compile cycc (0 bytes today) and derive (SIGILL 132 today), then add a
+3. **Fix CYRIUS_IR=3 compiling real programs + add it to the differential corpus** (Wall 3). As of
+   v6.4.82 the residual is not "0 bytes" but *silent miscompilation*: `alloc_str_extras` /
+   `alloc_collections` SIGSEGV (139) and `bigint` hangs (124) under IR=3 while all three are exit 0
+   by default. Fix that (the sibling issue carries the cascade root-cause), then add a
    `CYRIUS_IR=3` mode to `differential.sh` so the mode is verified byte-correct on every cut —
    not experimental scaffolding.
 

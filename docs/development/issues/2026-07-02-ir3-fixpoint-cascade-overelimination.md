@@ -1,16 +1,22 @@
 # CYRIUS_IR=3 fixpoint optimizer: cascade over-elimination (deep, NOT the bite-1 class)
 
-**Status:** 🟡 **OPEN — UN-ARCHIVED 2026-07-14 (v6.4.64 rot sweep).** This file was moved to
-`archived/` **without a resolution header and without the bug being fixed**. Every failure it names
-still reproduces at v6.4.64 — verified directly, not inferred:
+**Status:** 🟡 **OPEN — UN-ARCHIVED 2026-07-14 (v6.4.64 rot sweep); RE-VERIFIED 2026-07-27 at the
+v6.4.82 closeout.** This file was moved to `archived/` **without a resolution header and without the
+bug being fixed**. Every failure it names still reproduces — re-run today against `build/cycc`, not
+inferred from this file's own text:
 
 ```
 tests/tcyr/alloc_str_extras   default exit 0   CYRIUS_IR=3 exit 139 (SIGSEGV)
 tests/tcyr/alloc_collections  default exit 0   CYRIUS_IR=3 exit 139 (SIGSEGV)
+tests/tcyr/bigint             default exit 0   CYRIUS_IR=3 exit 124 (hang/timeout)
 ```
 
-and `bigint` still hangs (124) under IR=3. No CHANGELOG entry closes it — the three mentions
-(`CHANGELOG.md:3986`, `:4020`, `:4024`) are context references, not resolutions.
+No CHANGELOG entry closes it — the three mentions (`CHANGELOG.md:3986`, `:4020`, `:4024`) are
+context references, not resolutions.
+
+**Placement:** **v6.5.x — "IR substrate productionization"** (`roadmap.md`, v6.5.x table), alongside
+its sibling [`2026-07-02-ir-regalloc-rewrite-needs-reemit.md`](2026-07-02-ir-regalloc-rewrite-needs-reemit.md),
+which delegates its correctness remnant here. Codegen work → 6.x line, never 7.x.
 
 **Why this is the costlier error class.** `2026-07-02-ir-regalloc-rewrite-needs-reemit.md:10`
 delegates its correctness remnant *to this file*. With this file archived, that remnant was owned by

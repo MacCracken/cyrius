@@ -6,6 +6,107 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.82] — 2026-07-27
+
+**The v6.4.x closeout** — the last engineering release of the minor, before v6.5.0 opens on
+`pub`/`private`. Worth recording how it went: the closeout ran as an audit at .80 and the audit kept
+finding live bugs, so **.80 and .81 were both displaced by it** (`1 - 2 + 3` == 5, then a fourth
+`_cfo` occurrence + CVE-32/33/34). This release is the closeout proper plus the two items that needed
+their own verification.
+
+### Fixed — the TS frontend arena overlapped `tok_types` by 10 MB
+
+`TS_LEX`/`TS_PARSE`/`TS_JS_EMIT` took a **fixed** base `S + 0x298B000`, and `TS_HEAP_SIZE` is
+`0xD81000`, so the arena ran to `0x370C000` — over **all** of `tok_types` and 1.6 MB of `tok_values`:
+
+```
+(0x357C000-0x2D7C000) + (0x370C000-0x357C000) = 10,027,008 bytes
+```
+
+Nothing was corrupted, because all three TS modes `SYS_EXIT` before `PREPROCESS` and `LEX`. That is a
+**temporal** invariant guarding a **spatial** collision, held by nothing but call ordering — and
+`tests/heapmap.sh` structurally could not see it, because the base was a code literal rather than a
+map entry. `src/frontend/ts/lex.cyr:12-17` documents a planned architecture (in-process `.ts`
+dispatch from `compile()`) that would have activated it.
+
+The origin is arithmetic: `0x298B000 - 0x207B000` = 9,502,720 = **exactly** the 9.06 MB the v5.11.68
+reorg shrank the heap by. That reorg moved ~35 region bases and missed this one literal.
+
+**Fixed by making the arena `alloc(TS_HEAP_SIZE)`**, taken only when a TS mode is active — so a
+normal compile pays nothing and there is no heap-map entry at all. `alloc()` rather than another
+fixed base *because of how the bug was born*: a literal is what the next reorg misses too.
+`ts/lex.cyr:20-22` already named `alloc()` as the contract test drivers use; the fixed base was the
+deviation. The heap map's claimed "13.3 MB TS frontend reservation" — which never existed — and the
+stale `0x1D0B000` base (which lands inside `fixup_tbl`) are corrected.
+
+**Verified**: self-host fixpoint byte-identical · seed-derive `seed→cybs→gen1→gen2` GREEN ·
+**251/251 tcyr byte-identical codegen** (the relocation is provably neutral for normal compiles) ·
+**7/7 TS fixtures, 0 divergences** on `--lex-ts` exit codes *and* `--emit-js` output, old vs new —
+the functional check that matters, since `alloc()` is a real behavioral change and a byte-comparison
+alone would not have caught a broken TS path.
+
+### Added — agnos syscall band `#94`/`#95` (band now contiguous `#82`-`#95`)
+
+`SYS_GPU_RECOVER_OP = 94` (`gpu_recover_op(arm)` — the 3D arc's rung-5 hang/recovery battery) and
+`SYS_UPTIME_US = 95` (`uptime_us()` — the rdtsc µs clock), plus a `GpuRecoverArm` enum
+(`RECOV_ARM_A`..`E`) so consumers stop hand-rolling arm numbers.
+
+`sys_uptime_us` propagates **`-1` unchanged**: agnos returns it to distinguish "no clock" from
+"0 µs elapsed", and conflating them burned two flashes on agnos's rung-10 gate. `#95` is the only
+correct clock on the `run` path, where a foreground program executes with IF cleared and `uptime_ms`
+`#40` is frozen for its whole run.
+
+**Safety — and a correction to the filing.** It stated "#94 on Linux is `fchmodat`". Verified against
+the kernel headers, that is wrong, and wrong in the *reassuring* direction:
+
+```
+__NR_lchown 94    __NR_fchmodat 268     (x86_64)
+__NR_exit_group 94                      (asm-generic / aarch64)
+```
+
+So on x86_64 arg1 is read as a **path pointer**, not a dirfd — and on **aarch64 a raw
+`syscall(94, arm)` silently TERMINATES the process** with `arm` as the exit status. Same class as the
+open chown filing, and precisely why the wrapper matters: the file-level `#ifdef
+CYRIUS_TARGET_AGNOS` gate means a non-agnos build fails at COMPILE time instead. `#95` is `umask` on
+x86_64 — nullary here, so an ungated call would read garbage as a mask, **succeed**, and hand back a
+plausible small integer a timing consumer would treat as a timestamp.
+
+`agnos-crossbuild-gate.sh` asserts `#82`-`#95` on both legs and is **mutation-proven**
+(`SYS_UPTIME_US 95 → 77` ⇒ FAIL, restored ⇒ PASS). api-surface 4747 → **4749** (+2, 0 removed).
+
+### Closeout passes
+
+- **Heap-map audit** — 100 regions, 0 overlaps. See the ledger for the 100 → 94 → 100 history; the
+  same number twice by two different routes, which is exactly the kind of coincidence a stamped
+  number hides.
+- **Backlog re-triage** — all 11 open issues verified against **live code**, not their own status
+  text. None resolved; two carried stale text (the DX multi-error residual is 7 parser sites, not 25;
+  the release-gate `vr01_` glob counts were 27-of-248 against a live 251). Every open issue now
+  carries an explicit `**Status:**` line — nine had none, which is why open-vs-resolved was
+  unreadable at a glance. The agnos `#94`/`#95` filing is archived as resolved.
+- **Placement rule enforced** — `roadmap.md` had DWARF debug-info and incremental compilation parked
+  at "v7-PARKED", contradicting its own rule ~200 lines above. 7.x is the language book +
+  legal-for-public-release and nothing else; both moved back into the 6.x line.
+- **Security** — new `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36), with CVE-37/38
+  recorded as **REFUTED** so a later pass does not re-file them. `CLAUDE.md:164` had claimed the last
+  full audit was "v5.0.1"; it was the 2026-06-10 deep-dive at cycc 6.1.31 — three minors stale, which
+  is how the cadence slipped.
+- **Docs/vidya** — `roadmap.md`'s "Shipped so far" reached only .72 (ten releases missing);
+  `field_notes/compiler/gotchas.cyml` stopped at v6.4.52 (**30 releases with no gotcha recorded**);
+  `features.cyml` still said f32 was type-only with no arithmetic, wrong since v6.4.56; the
+  identifier pool was documented as 256 KB in five places (512 KB since .76); `ecosystem.cyml`
+  claimed a heap map of "135 entries / 56 live", a figure matching **no release in this project's
+  history**.
+
+### Verification
+
+Release gate **GREEN**, all five steps. Self-host fixpoint byte-identical · seed-derive
+(`seed→cybs→cycc`) OK · check.sh **150/0** · **cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on ecb
+(macOS-arm64), ach (Intel-Mac), cass (Windows/PE) and pi (aarch64), on REAL hardware** ·
+**251/251 tcyr by per-file exit-code loop** · self_compile **622 ms** · cycc 1,108,328 →
+**1,108,368 B** (+40, entirely the TS arena moving off its fixed base; the agnos wrappers are
+lib-only and outside cycc's include closure).
+
 ## [6.4.81] — 2026-07-27
 
 Four defects found by the v6.4.x closeout audit, shipped as their own release so the

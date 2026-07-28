@@ -1,5 +1,16 @@
 # v6.4.15 closeout residuals — R2 (PE prologue refactor) + D1/D2 (dead IR/decode code)
 
+**Status:** 🟡 **OPEN for D1/D2 only** — R2 shipped v6.4.26. Re-verified against live code at the
+v6.4.82 closeout, by counting definitions vs. call sites in `src/`:
+**D1** — `ir_lower_all`, `ir_dce`, `ir_dead_store`, `ir_emit2`, `IR_BB_ID`, `IR_EDGE_FROM` each have
+**1 definition and 0 call sites**; `_ir_lower_node`'s single reference is from `ir_lower_all`, so it
+is dead transitively. **D2** — `CLASSIFY_CF` / `CF_TARGET` (`src/backend/x86/decode.cyr:238` / `:279`)
+have **no consumer at all**; their only other mentions are the header comment at `:12`/`:19` and a
+cross-reference at `:277`. Both still dead exactly as filed.
+**Placement:** **v6.5.x — "IR substrate productionization"** (`roadmap.md`, v6.5.x table, which names
+this file as folded into that slot). `ir.cyr` is the delicate substrate, so the removal rides the
+slot that already owns it rather than a closeout. 6.x line, never 7.x.
+
 > **R2 SHIPPED v6.4.26** (2026-07-08) — `_pe_fd_to_handle_rcx` extracted from `EWRITE_PE` +
 > `EREAD_PE` (`src/backend/x86/emit.cyr`); `EREAD_PE` byte-identical, `EWRITE_PE` re-emitted;
 > verified by cass PE self-host (reads via `EREAD_PE`, writes via `EWRITE_PE`) + pi/ecb

@@ -39,6 +39,8 @@ project (e.g. `bote-cirlf-injection.md`,
 ```markdown
 # {title} — {short status}
 
+**Status:** 🟡 **OPEN** — one line on why it is still open.
+**Placement:** the release / arc it is pinned to, or "unpinned — 6.x-line backlog".
 **Discovered:** YYYY-MM-DD during {context}
 **Severity:** Low / Medium / High / Critical
 **Affects:** cycc {version range}
@@ -102,6 +104,49 @@ When the fix lands, the issue file:
 
 Filename stays stable across the move so external links keep
 working.
+
+## Status + placement lines (required, added at the v6.4.82 sweep)
+
+**Every file in this directory carries a `**Status:**` line and a
+`**Placement:**` line directly under its `#` heading.** Before the
+v6.4.82 closeout sweep only two of eleven did, which made
+open-vs-resolved unreadable at a glance and let a shipped-but-still-
+framed-as-pending file sit in the queue.
+
+- `**Status:**` — `🟡 **OPEN** — <why, one line>`, and say **what you
+  verified and when**, e.g. *"re-verified against live code at the
+  v6.4.82 closeout: `X` still has zero callers."* A status that only
+  restates the filing is worthless; a status that names a live check
+  is what makes the next sweep cheap.
+- `**Placement:**` — the release or arc it is pinned to (`v6.5.x — "IR
+  substrate productionization"`), or plainly `unpinned — 6.x-line
+  backlog`. Per CLAUDE.md, **every technical / codegen / runtime item
+  lives in the 6.x line or the roadmap's "potential backlog" — nothing
+  codegen is EVER parked to 7.x** (7.x = the language book + legal).
+  Say "never 7.x" so the next reader does not have to re-derive it.
+
+**Open-by-design is a real category.** An accepted filing that is the
+acceptance record for a *pinned* arc stays open and un-archived until
+the work ships — archiving is how we assert something is done, so
+archiving an unbuilt requirement hides it from whoever opens the slot.
+Say so in the Status line
+(see [`2026-07-25-stiva-stackless-coroutines-interactive-exec.md`](./2026-07-25-stiva-stackless-coroutines-interactive-exec.md))
+so a later rot sweep does not "clean it up".
+
+## Re-triage rule (the rot sweep)
+
+At every minor/major closeout the whole open queue is re-triaged.
+**Verify each item's status against LIVE code — never against the
+file's own claim.** Counts, line numbers and "N sites remaining"
+figures in a filing go stale silently: the v6.4.82 sweep found one
+file claiming 25 residual sites where a live grep said 7, and another
+quoting a 27-of-248 test ratio that was really 30 of 251. Re-derive
+the numbers, then write the command you used into the file so the next
+sweep can re-run it.
+
+Keep this directory a lean working queue (~10–12 files). Consolidate
+the P3 / "someday" tail into roadmap entries rather than leaving
+issue files for it.
 
 ## Recommended security floor
 

@@ -1,5 +1,17 @@
 # `fs.cyr` `dir_list` allocates its whole working set per call — the last unbounded path in a long-running consumer
 
+**Status:** 🟡 **OPEN** — nothing has shipped for it. Re-verified against live code at the v6.4.82
+closeout: `lib/fs.cyr` still allocates per call in both branches (`:110` / `:150` `vec_new()`,
+`:114` / `:153` `alloc(4096)`, `:158` `alloc(8)`), the per-entry `str_from_buf` push is unchanged,
+and there is **no `dir_list_into` or any other caller-owned-buffer variant** anywhere in `lib/`.
+`dir_list_full` (`:199`), `dir_walk` (`:248`), `find_files` (`:280`) and the `_with_prunes` variants
+(`:307` / `:342`) still share the shape.
+**Placement:** unpinned — **6.x-line stdlib backlog**, no dedicated slot as of the v6.4.82 closeout.
+It is the direct follow-on to the `sock_accept` per-poll leak that shipped in v6.4.61, so its
+natural home is the next stdlib-allocation slot; the cheap half (a file-scope `getdents` scratch,
+mirroring .61's lazy `Err(EAGAIN)` singleton) can fold into an adjacent release on its own. Never
+7.x.
+
 **Discovered:** 2026-07-26 while closing out agora's 1.6.x memory work (the 2026-07-26 P(-1) audit)
 **Severity:** Medium — no hard failure, but it is unbounded growth in a shipping server with **no
 consumer-side workaround**, and it is now the *only* remaining one there
