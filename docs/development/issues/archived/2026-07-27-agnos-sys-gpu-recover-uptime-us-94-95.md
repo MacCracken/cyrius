@@ -1,6 +1,22 @@
 # agnos syscalls #94 `gpu_recover_op` and #95 `uptime_us` have no stdlib wrapper
 
-**Status:** OPEN — filed 2026-07-27 against cyrius **6.4.80** / agnos kernel **1.56.23**.
+**Status:** ✅ **RESOLVED in cyrius v6.4.82** — `SYS_GPU_RECOVER_OP = 94` / `SYS_UPTIME_US = 95`
++ `sys_gpu_recover_op(arm)` / `sys_uptime_us()` landed in `lib/syscalls_x86_64_agnos.cyr`, plus a
+`GpuRecoverArm` enum (`RECOV_ARM_A`..`E`) so consumers stop hand-rolling the arm numbers. The
+`agnos-crossbuild-gate.sh` band assertion is extended to **#82-#95** on both legs and
+**mutation-proven** (`SYS_UPTIME_US 95 → 77` ⇒ FAIL, restored ⇒ PASS). `-1` is propagated unchanged
+from `sys_uptime_us`, per the ⛔ note below.
+
+> ⚠ **One correction to this filing.** It states "#94 on Linux is `fchmodat`". That is wrong, and
+> wrong in the *reassuring* direction. Verified against this box's kernel headers:
+> `/usr/include/asm/unistd_64.h` has `__NR_lchown 94` (and `__NR_fchmodat 268`), so on x86_64 arg1 is
+> read as a **path pointer**, not a dirfd. Worse, `/usr/include/asm-generic/unistd.h` has
+> `__NR_exit_group 94` — on **aarch64 a raw `syscall(94, arm)` SILENTLY TERMINATES THE PROCESS** with
+> `arm` as the exit status. Same class as the still-open chown filing
+> (`2026-07-26-no-lchown-wrapper-...`), which is exactly why the wrapper mattered. The shipped
+> comments record `lchown` + the aarch64 `exit_group` hazard, not `fchmodat`.
+
+**Originally filed** 2026-07-27 against cyrius **6.4.80** / agnos kernel **1.56.23**.
 **Affects:** `cyrius/lib/syscalls_x86_64_agnos.cyr` (the agnos syscall band).
 **Cross-filed** at `cyrius/docs/development/issues/` per the agnos↔cyrius convention
 ([[feedback_cross_repo_issues_both_repos]]).

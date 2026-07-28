@@ -393,24 +393,20 @@
 #                                        (post-v5.11.68 reorg; was
 #                                        0x298B000 / ~41.5 MB pre-.68)
 #   0x2D7C000 brk-with-ts-frontend        ~45.5 MB.
-#     ⚠ v6.4.81 — the "13.3 MB TS frontend reservation" this line used to claim
-#     DOES NOT EXIST. The TS arena base is 0x298B000 (main.cyr TS_LEX/TS_PARSE/
-#     TS_JS_EMIT call sites; ts/lex.cyr:60 TS_HEAP_SIZE = 0xD81000), so it runs
-#     0x298B000..0x370C000 and OVERLAPS tok_types entirely plus 1.6 MB of
-#     tok_values — 10,027,008 bytes. The gap that is actually free here is
-#     0x207B000..0x298B000 = 9,502,720 B, which is exactly the 9.06 MB the
-#     v5.11.68 reorg shrank the heap by: the TS base is still the PRE-.68 fixup
-#     end, the one literal that reorg missed. The reservation is also 524,288 B
-#     smaller than TS_HEAP_SIZE regardless.
-#     NOT a live corruption: --lex-ts / --parse-ts / --emit-js all SYS_EXIT
-#     before PREPROCESS and LEX, so the token arrays are never populated in TS
-#     mode. That is a TEMPORAL invariant guarding a spatial collision, and
-#     tests/heapmap.sh cannot see it (the base is a code literal, not a map
-#     entry). Relocating needs ~14.2 MB contiguous, which does not exist below
-#     the arena end (0x7400000) — so it is a brk/heap-LAYOUT change requiring the
-#     two-step bootstrap, deliberately not bundled into v6.4.81.
-#
-# --- Token arrays RELOCATED here (v5.8.46) ---
+#     v6.4.82 — RESOLVED. There is no TS reservation here and there is no longer a
+#     TS region in this map at all: the arena is now `alloc(TS_HEAP_SIZE)`, taken
+#     only when a TS mode is active (src/main.cyr, "TS frontend arena").
+#     What was wrong before: the map claimed a 13.3 MB reservation between
+#     fixup_tbl end (0x207B000) and tok_types (0x2D7C000), but the live base was
+#     0x298B000 with TS_HEAP_SIZE 0xD81000, so the arena ran to 0x370C000 and
+#     OVERLAPPED tok_types entirely plus 1.6 MB of tok_values — 10,027,008 bytes.
+#     0x298B000 - 0x207B000 = 9,502,720, exactly the 9.06 MB the v5.11.68 reorg
+#     shrank the heap by: the base was that reorg's PRE-move fixup end, the one
+#     literal it missed. Nothing corrupted, because all three TS modes SYS_EXIT
+#     before PREPROCESS/LEX — a temporal invariant this map could not express.
+#     alloc() was chosen over another fixed base precisely because a literal is
+#     what the next reorg misses; ts/lex.cyr:20-22 already named alloc() as the
+#     contract. The gap below is now genuinely free.
 #   0x2D7C000 tok_types     [8388608]     1048576 entries × 8 bytes — was 0x4D9D000
 #                                        (overlap w/ output_buf, capped at 262144). Cap raise
 #                                        from 262144 → 1048576 (4×) sized to absorb sandhi
@@ -481,12 +477,9 @@
 #                                        by 9.06 MB (was 0x56AD000 /
 #                                        ~86.6 MB pre-.68). Layout is
 #                                        monotonic from 0x00000 to brk
-#                                        except the claimed TS frontend
-#                                        reservation between fixup_tbl end
-#                                        and tok_types start — see the
-#                                        v6.4.81 note at brk-with-ts-frontend
-#                                        above: the real TS base is 0x298B000
-#                                        and it OVERLAPS tok_types.
+#                                        with no TS carve-out at all as of
+#                                        v6.4.82 (the TS arena is alloc()-backed,
+#                                        off this map entirely).
 #                                        See CHANGELOG [5.11.68]
 #                                        for the gap-by-gap close shape.
 #
@@ -726,12 +719,11 @@ if (S < 0x100000) {
 }
 #else
 var S = syscall(SYS_BRK, 0);
-# brk extends past the TS frontend heap region. v6.4.81: the base quoted
-# here was 0x1D0B000, which is STALE and lands inside fixup_tbl
-# (0x107B000..0x207B000) — the live base is 0x298B000 (+ 0xD81000 size, per
-# src/frontend/ts/{lex,parse}.cyr). TS region is only TOUCHED in --lex-ts /
-# --parse-ts / --emit-js modes, which exit before LEX; the +13.5 MB brk
-# extension is paid unconditionally. See the overlap note in the heap map.
+# v6.4.82: the brk no longer covers any TS region — the TS arena is
+# `alloc(TS_HEAP_SIZE)` and is taken only when a TS mode is active, so a normal
+# compile pays nothing for it. (Previously this comment quoted base 0x1D0B000,
+# which was stale and lands inside fixup_tbl, while the live base 0x298B000
+# overlapped tok_types.) The brk is set by lexid_entries at 0x7300000.
 # v6.3.27: +512 KB for the IR cross-BB liveness arrays at the arena top
 # (live_in @ +0x5E1D000, live_out @ +0x5E5D000; only touched under CYRIUS_IR).
 syscall(SYS_BRK, S + 0x7400000);   # v6.4.21: +512 KB lexid_entries @ 0x7300000 (LEXID cap 16384→65536)
@@ -839,6 +831,30 @@ while (done == 0) {
 if (_input_fd != 0) { syscall(SYS_CLOSE, _input_fd); }
 SBL(S, bl);
 
+# ─── TS frontend arena (v6.4.82) ──────────────────────────────────
+# The TS arena used to be the FIXED base `S + 0x298B000`, which overlapped
+# `tok_types` entirely plus 1.6 MB of `tok_values` — 10,027,008 bytes. It was
+# survivable only because all three TS modes SYS_EXIT before PREPROCESS and LEX,
+# so the token arrays are never populated in TS mode: a TEMPORAL invariant
+# guarding a spatial collision, held by nothing but call ordering, and invisible
+# to tests/heapmap.sh because the base was a code literal rather than a map entry.
+#
+# Origin: 0x298B000 - 0x207B000 = 9,502,720 = exactly the 9.06 MB the v5.11.68
+# reorg shrank the heap by. That reorg moved ~35 region bases and MISSED THIS ONE
+# literal. Which is the whole argument for alloc() over another fixed base — a
+# literal is what the next reorg misses too. ts/lex.cyr:20-22 already documented
+# `alloc()` as the contract test drivers use; the fixed base was the deviation.
+#
+# Allocated ONLY in a TS mode, so a normal compile pays nothing.
+var _ts_base = 0;
+if (_ts_lex_only_mode == 1 || _ts_parse_only_mode == 1 || _ts_emit_js_mode == 1) {
+    _ts_base = alloc(TS_HEAP_SIZE);
+    if (_ts_base == 0) {
+        syscall(SYS_WRITE, 2, "error: cannot allocate the TS frontend arena\n", 45);
+        syscall(SYS_EXIT, 1);
+    }
+}
+
 # ─── TS lex-only mode (P1.6b wire-in) ─────────────────────────────
 # When --lex-ts is set, run TS_LEX on the source bytes and exit with
 # 0 (clean lex) or 1 (lex error). No parser/typecheck/lower yet —
@@ -846,9 +862,9 @@ SBL(S, bl);
 # detect a .ts source and verify it lexes cleanly via cycc directly,
 # without forcing every consumer to go through a separate test driver.
 if (_ts_lex_only_mode == 1) {
-    var _ts_n = TS_LEX(S + 0x298B000, S, bl);
+    var _ts_n = TS_LEX(_ts_base, S, bl);
     if (_ts_n < 0) {
-        var _ts_err = TS_GETERR(S + 0x298B000);
+        var _ts_err = TS_GETERR(_ts_base);
         syscall(SYS_WRITE, 2, "ts lex error: code ", 19);
         var _eb[3];
         if (_ts_err >= 10) {
@@ -897,20 +913,20 @@ fn _emit_decimal(n): i64 {
 }
 
 if (_ts_parse_only_mode == 1) {
-    var _tp_lex_n = TS_LEX(S + 0x298B000, S, bl);
+    var _tp_lex_n = TS_LEX(_ts_base, S, bl);
     if (_tp_lex_n < 0) {
         syscall(SYS_WRITE, 2, "ts lex error before parse\n", 26);
         syscall(SYS_EXIT, 1);
     }
-    var _tp_parse_n = TS_PARSE(S + 0x298B000);
+    var _tp_parse_n = TS_PARSE(_ts_base);
     if (_tp_parse_n < 0) {
-        var _tp_err = TS_PARSE_GETERR(S + 0x298B000);
-        var _tp_etok = TS_PARSE_GETERR_TOK(S + 0x298B000);
+        var _tp_err = TS_PARSE_GETERR(_ts_base);
+        var _tp_etok = TS_PARSE_GETERR_TOK(_ts_base);
         # current parser TOK_IDX — most accurate since not all err
         # sites set ERR_TOK_IDX. Emit both for triage.
-        var _tp_cur = load64(S + 0x298B000 + 0xD80000 + 8);   # TS_PS_TOK_IDX = 8
-        var _tp_line = load64(S + 0x298B000 + 0x100000 + _tp_cur * 8);
-        var _tp_type = load64(S + 0x298B000 + 0x000000 + _tp_cur * 8);
+        var _tp_cur = load64(_ts_base + 0xD80000 + 8);   # TS_PS_TOK_IDX = 8
+        var _tp_line = load64(_ts_base + 0x100000 + _tp_cur * 8);
+        var _tp_type = load64(_ts_base + 0x000000 + _tp_cur * 8);
         syscall(SYS_WRITE, 2, "ts parse error: code=", 21);
         _emit_decimal(_tp_err);
         syscall(SYS_WRITE, 2, " line=", 6);
@@ -928,17 +944,17 @@ if (_ts_parse_only_mode == 1) {
 }
 
 if (_ts_emit_js_mode == 1) {
-    var _ej_lex_n = TS_LEX(S + 0x298B000, S, bl);
+    var _ej_lex_n = TS_LEX(_ts_base, S, bl);
     if (_ej_lex_n < 0) {
         syscall(SYS_WRITE, 2, "ts lex error before emit\n", 25);
         syscall(SYS_EXIT, 1);
     }
-    var _ej_parse_n = TS_PARSE(S + 0x298B000);
+    var _ej_parse_n = TS_PARSE(_ts_base);
     if (_ej_parse_n < 0) {
         syscall(SYS_WRITE, 2, "ts parse error before emit\n", 27);
         syscall(SYS_EXIT, 1);
     }
-    var _ej_rc = TS_JS_EMIT(S + 0x298B000, S);
+    var _ej_rc = TS_JS_EMIT(_ts_base, S);
     syscall(SYS_EXIT, _ej_rc);
 }
 
