@@ -6,6 +6,63 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.86] — 2026-07-28
+
+### Changed — sandhi 1.9.3 → **1.9.5** folded into the vendored stdlib
+
+Folded from sandhi's **committed** `dist/sandhi.cyr`, byte-identical. The substance is 1.9.4,
+which is a real correctness fix, not a version bump:
+
+**`sandhi_server_recv_request` accepted requests it could not hold, and dispatched them
+anyway.** It had exactly one failure value (`-1`, socket error) and reported everything else
+as "here are N bytes" — but three distinct situations produced an N that was **not a whole
+request**, and every serve loop dispatched all three:
+
+1. **Over the 64 KiB buffer** — the read loop is `while (have < max)`, so falling out the
+   bottom meant the peer had more to send, yet it returned `have` regardless. The handler got
+   a truncated body next to a `Content-Length` claiming the full size. `HTTP_PAYLOAD_TOO_LARGE
+   = 413` had been declared since 0.9.x with **zero references** — nothing ever sent it.
+2. **Peer hung up mid-request** — same `return have`, so a half-written body or an unterminated
+   header block reached the handler as if complete.
+3. **`Transfer-Encoding: chunked` with no `Content-Length`** — slipped past *both* smuggling
+   guards (`has_cl_te_conflict` returns 0 when Content-Length is absent; `has_dup_smuggling_header`
+   only fires on a *repeated* header). `content_length` returned 0, `need_body` collapsed to the
+   header terminator, and recv returned the instant the headers landed. The handler ran with an
+   **empty body** while the chunked bytes sat unread in the socket — not truncated, silently
+   discarded.
+
+Each now has a distinct outcome, so a serve loop can answer instead of guess: `-2`
+`SANDHI_SERVER_ERR_TOO_LARGE` → **413**, `-3` `SANDHI_SERVER_ERR_INCOMPLETE` → **400**,
+unsupported transfer coding → **501**. A `> 0` return is now a *guarantee* that the buffer
+holds a whole request. Wired into all five serve loops plus the TLS twin
+`sandhi_server_recv_request_c`, which had the same three fall-throughs.
+
+1.9.5 itself is pin-only — it moves sandhi's `[package].cyrius` to **6.4.85**, our closeout
+cut, so the 1.9.4 work folds against a current toolchain.
+
+### Fold verification
+
+- **Drift-check first** (the rule that stops a fold silently discarding a local patch): our
+  vendored 1.9.3 is **byte-identical** to upstream's `1.9.3` dist tag, so the overwrite loses
+  nothing. The fold is byte-identical to upstream's committed 1.9.5 dist.
+- **The fix is actually in the bundle** — `SANDHI_SERVER_ERR_TOO_LARGE` appears **7×** in the
+  fold and **0×** in 1.9.3. (A version bump can ship without the fix; that is the v6.4.79
+  lesson, so the symbol gets grepped rather than the header trusted.)
+- **All five upstream sub-profiles are at 1.9.5**, checked because .79 shipped 9 stale
+  sub-bundles under a fresh version string. `sandhi-tls.cyr` carries 0 occurrences of the fix
+  symbol — verified **legitimate**, not stale: that profile is TLS-policy modules only and
+  contains no server module at all.
+- api-surface 4752 → **4755** — +3 (`sandhi_server_options_max_request`,
+  `..._get_max_request`, `sandhi_server_request_has_unsupported_te`), **0 removed**, no arity
+  changes. **0 symbol collisions** against every other vendored lib.
+- The `TLS_BACKEND_LIBSSL` / `SYS_SOCKET` references that a bare `cat | cycc` trips on are
+  **unchanged between 1.9.3 and 1.9.5** (2 vs 2) — pre-existing bundle-needs-its-deps
+  behaviour, not a regression. sandhi declares both `tls` and `syscalls` in its `[deps]`.
+- cycc **byte-identical** — `lib/sandhi.cyr` is outside cycc's include closure.
+
+Release gate GREEN: check.sh **150/0** · self-host fixpoint + seed-derive OK · cross-OS
+`SELFHOST_OK` + VR-01 `LIBTEST_OK` on ecb / ach / cass / pi.
+
 ## [6.4.85] — 2026-07-28
 
 **v6.4.x is CLOSED.** This is the closeout-complete cut: docs, ledger and handoff reconciled

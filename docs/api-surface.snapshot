@@ -2500,9 +2500,11 @@ sandhi::sandhi_server_options_backlog/2
 sandhi::sandhi_server_options_get_backlog/1
 sandhi::sandhi_server_options_get_idle_ms/1
 sandhi::sandhi_server_options_get_max_conns/1
+sandhi::sandhi_server_options_get_max_request/1
 sandhi::sandhi_server_options_get_tls/1
 sandhi::sandhi_server_options_idle_ms/2
 sandhi::sandhi_server_options_max_conns/2
+sandhi::sandhi_server_options_max_request/2
 sandhi::sandhi_server_options_new/0
 sandhi::sandhi_server_options_new_a/1
 sandhi::sandhi_server_options_tls/5
@@ -2517,6 +2519,7 @@ sandhi::sandhi_server_recv_request/3
 sandhi::sandhi_server_recv_request_c/3
 sandhi::sandhi_server_request_has_cl_te_conflict/2
 sandhi::sandhi_server_request_has_dup_smuggling_header/2
+sandhi::sandhi_server_request_has_unsupported_te/2
 sandhi::sandhi_server_route_match/3
 sandhi::sandhi_server_router_handler/4
 sandhi::sandhi_server_router_handler_c/4
