@@ -284,6 +284,90 @@ fn PP_ALREADY_INCLUDED(S, fname): i64 {
 # Split into its own fn rather than inlined at the three sites because PREPROCESS
 # is already near cybs's per-fn literal/global ceiling (the `_var_grow` /
 # TOKNAME_BUILTIN precedent) and seed-derive is the gate that would catch it.
+# v6.5.0 Phase 1 — emit one `#@file "<name>"\n` marker into `out` at `op`; returns the
+# new `op`. `name` is a NUL-terminated cstr.
+#
+# Factored out of three inline copies (the initial main-source marker, and the two
+# include-expansion sites in PP_PASS / PP_IFDEF_PASS) because v6.5.0 adds a fourth and
+# fifth caller — the RESUME markers below — and five copies of an 8-store block inside
+# two already-enormous fns is exactly the shape cybs mis-compiles. The `_var_grow`
+# `_grow_g1..g7` chain, `TOKNAME_BUILTIN` and `PP_FNAME_TOO_LONG` are all in this file
+# or its neighbours for the same reason; seed-derive is the gate that catches it.
+# v6.5.0 Phase 1 — the file PP_IFDEF_PASS is currently copying FROM, so a nested
+# include can emit a correct resume marker. PP_PASS does not need this (it only ever
+# expands top-level includes, so its enclosing file is always the main source), but
+# PP_IFDEF_PASS runs over a stream that ALREADY carries `#@file` markers and expands
+# the nested ones, so it must remember which file it is inside.
+#
+# Its own 4 KB scratch rather than a heap band: the surrounding fns already sit near
+# cybs's per-fn global-reference ceiling, and a bare top-level `var x[N]` is N*8 bytes
+# (the v6.4.10 contract — this is 512*8 = 4096, not 512).
+var _pp_curfile[512];
+var _pp_curfile_set = 0;
+
+fn _pp_curfile_ptr(): i64 {
+    if (_pp_curfile_set == 0) { return "<source>"; }
+    return &_pp_curfile;
+}
+
+# Record `name` (a NUL-terminated cstr) as the file currently being copied.
+fn _pp_curfile_note(name): i64 {
+    var i = 0;
+    while (load8(name + i) != 0) {
+        if (i >= 4090) { i = 4090; }
+        store8(&_pp_curfile + i, load8(name + i));
+        i = i + 1;
+    }
+    store8(&_pp_curfile + i, 0);
+    _pp_curfile_set = 1;
+    return 0;
+}
+
+# Parse a `#@file "NAME"` line at `dip` and record NAME as the current file.
+# Tolerant by design: anything that is not exactly this shape is ignored, so an
+# ordinary `#@`-starting comment cannot corrupt the tracker.
+fn _pp_note_marker(tmp, dip, bl): i64 {
+    var p = dip + 2;
+    if (load8(tmp + p) != 102) { return 0; }      # 'f'
+    if (load8(tmp + p + 1) != 105) { return 0; }  # 'i'
+    if (load8(tmp + p + 2) != 108) { return 0; }  # 'l'
+    if (load8(tmp + p + 3) != 101) { return 0; }  # 'e'
+    if (load8(tmp + p + 4) != 32) { return 0; }   # ' '
+    if (load8(tmp + p + 5) != 34) { return 0; }   # '"'
+    p = p + 6;
+    var i = 0;
+    while (p < bl) {
+        var ch = load8(tmp + p);
+        if (ch == 34) { p = bl; }
+        else {
+            if (i < 4090) { store8(&_pp_curfile + i, ch); i = i + 1; }
+            p = p + 1;
+        }
+    }
+    store8(&_pp_curfile + i, 0);
+    _pp_curfile_set = 1;
+    return 0;
+}
+
+fn PP_FMARK(S, out, op, name): i64 {
+    store8(out + op, 35); op = op + 1;    # '#'
+    store8(out + op, 64); op = op + 1;    # '@'
+    store8(out + op, 102); op = op + 1;   # 'f'
+    store8(out + op, 105); op = op + 1;   # 'i'
+    store8(out + op, 108); op = op + 1;   # 'l'
+    store8(out + op, 101); op = op + 1;   # 'e'
+    store8(out + op, 32); op = op + 1;    # ' '
+    store8(out + op, 34); op = op + 1;    # '"'
+    var i = 0;
+    while (load8(name + i) != 0) {
+        store8(out + op, load8(name + i));
+        op = op + 1; i = i + 1;
+    }
+    store8(out + op, 34); op = op + 1;    # '"'
+    store8(out + op, 10); op = op + 1;    # '\n'
+    return op;
+}
+
 fn PP_FNAME_TOO_LONG(): i64 {
     syscall(SYS_WRITE, 2, "error: include/#ref filename exceeds 4095 bytes\n", 48);
     syscall(SYS_EXIT, 1);
@@ -2014,22 +2098,7 @@ fn PP_PASS(S): i64 {
                             # Include-once: skip if already included
                             if (PP_ALREADY_INCLUDED(S, fname) == 0) {
                                 PP_MARK_INCLUDED(S, fname);
-                                # Emit file marker: #@file "filename"\n
-                                store8(out + op, 35); op = op + 1;
-                                store8(out + op, 64); op = op + 1;
-                                store8(out + op, 102); op = op + 1;
-                                store8(out + op, 105); op = op + 1;
-                                store8(out + op, 108); op = op + 1;
-                                store8(out + op, 101); op = op + 1;
-                                store8(out + op, 32); op = op + 1;
-                                store8(out + op, 34); op = op + 1;
-                                var fmi = 0;
-                                while (load8(fname + fmi) != 0) {
-                                    store8(out + op, load8(fname + fmi));
-                                    op = op + 1; fmi = fmi + 1;
-                                }
-                                store8(out + op, 34); op = op + 1;
-                                store8(out + op, 10); op = op + 1;
+                                op = PP_FMARK(S, out, op, fname);
                                 var nr = READFILE(fname, out + op, 8388608 - op);
                                 if (nr < 0) {
                                     syscall(SYS_WRITE, 2, "error: cannot open include file: ", 33);
@@ -2040,6 +2109,20 @@ fn PP_PASS(S): i64 {
                                     syscall(SYS_EXIT, 1);
                                 }
                                 op = op + nr;
+                                # v6.5.0 Phase 1 — RESUME marker. Without this the
+                                # enclosing file's remaining text inherits the INCLUDED
+                                # file's identity, because FM_BUILD derives each span as
+                                # the gap to the NEXT marker. That made `private`
+                                # mis-scope in BOTH directions in cycc's own build
+                                # (lib/alloc.cyr and lib/atomic.cyr shared an id;
+                                # src/frontend/lex.cyr split across two), and it is also
+                                # a live DX bug — diagnostics reported the wrong file for
+                                # anything after an include.
+                                # PP_PASS only ever expands TOP-LEVEL includes (an
+                                # included file's own `include` lines are copied verbatim
+                                # into `out` and expanded later by PP_IFDEF_PASS), so the
+                                # file being resumed here is always the main source.
+                                op = PP_FMARK(S, out, op, "<source>");
                                 had_include = 1;
                             }
                         }
@@ -2282,6 +2365,13 @@ fn PP_IFDEF_PASS(S): i64 {
             # also gated on `in_string == 0`.
             var dip = PP_SKIP_WS(tmp, ip, bl);
             if (bol == 1 && in_string == 0) {
+                # v6.5.0 Phase 1 — remember which file we are copying FROM, so a nested
+                # include below can emit a correct RESUME marker. This only OBSERVES the
+                # marker; it is still copied through verbatim by the default path, so the
+                # emitted stream is unchanged by this branch.
+                if (load8(tmp + dip) == 35) {
+                    if (load8(tmp + dip + 1) == 64) { _pp_note_marker(tmp, dip, bl); }
+                }
                 if (ISDEFINE(tmp, dip, bl) == 1) {
                     if (skip_depth == 0) { PP_DEFINE(S, tmp, dip + 8); }
                     ip = PP_SKIPLINE(tmp, ip, bl); bol = 1; handled = 1;
@@ -2386,22 +2476,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                 }
                                 if (PP_ALREADY_INCLUDED(S, fname) == 0) {
                                     PP_MARK_INCLUDED(S, fname);
-                                    # Emit file marker
-                                    store8(out + op, 35); op = op + 1;
-                                    store8(out + op, 64); op = op + 1;
-                                    store8(out + op, 102); op = op + 1;
-                                    store8(out + op, 105); op = op + 1;
-                                    store8(out + op, 108); op = op + 1;
-                                    store8(out + op, 101); op = op + 1;
-                                    store8(out + op, 32); op = op + 1;
-                                    store8(out + op, 34); op = op + 1;
-                                    var fmi = 0;
-                                    while (load8(fname + fmi) != 0) {
-                                        store8(out + op, load8(fname + fmi));
-                                        op = op + 1; fmi = fmi + 1;
-                                    }
-                                    store8(out + op, 34); op = op + 1;
-                                    store8(out + op, 10); op = op + 1;
+                                    op = PP_FMARK(S, out, op, fname);
                                     var nr = READFILE(fname, out + op, 8388608 - op);
                                     if (nr < 0) {
                                         syscall(SYS_WRITE, 2, "error: cannot open include file: ", 33);
@@ -2412,6 +2487,13 @@ fn PP_IFDEF_PASS(S): i64 {
                                         syscall(SYS_EXIT, 1);
                                     }
                                     op = op + nr;
+                                    # v6.5.0 Phase 1 — RESUME marker (see PP_PASS). This
+                                    # pass expands the NESTED includes, so the file being
+                                    # resumed is whichever `#@file` was last seen in the
+                                    # INPUT stream, tracked in `_pp_curfile` as this pass
+                                    # copies markers through. Falls back to "<source>"
+                                    # when no marker has been seen yet.
+                                    op = PP_FMARK(S, out, op, _pp_curfile_ptr());
                                     had_new_include = 1;
                                 }
                             }

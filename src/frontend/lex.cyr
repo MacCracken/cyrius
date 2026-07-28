@@ -38,16 +38,42 @@ fn FM_BUILD(S): i64 {
                 var flen = fend - fstart;
                 if (flen > 0) {
                     if (_fm_count < 1024 && _fm_str_pos + flen + 1 <= 32768) {
+                        # v6.5.0 Phase 1 — CANONICAL identity. One physical file now
+                        # produces SEVERAL markers (one on entry plus a RESUME after each
+                        # include it contains), so the entry index is no longer a file
+                        # identity. Reuse the fname_offset of the first entry already
+                        # carrying this name; FM_FILEID then derives the id from that
+                        # offset, and every span belonging to one file answers alike.
+                        # Also stops the 32 KB name scratch being consumed N times over
+                        # for a file with N includes.
+                        var canon = 0 - 1;
+                        var ci = 0;
+                        while (ci < _fm_count) {
+                            var coff = load64(S + 0x71A040 + ci * 24 + 16);
+                            var same = 1;
+                            var k = 0;
+                            while (k < flen) {
+                                if (load8(S + 0x721000 + coff + k) != load8(buf + fstart + k)) { same = 0; k = flen; }
+                                else { k = k + 1; }
+                            }
+                            if (same == 1) { if (load8(S + 0x721000 + coff + flen) != 0) { same = 0; } }
+                            if (same == 1) { canon = coff; ci = _fm_count; }
+                            else { ci = ci + 1; }
+                        }
                         store64(S + 0x71A040 + _fm_count * 24, line + 1);
                         store64(S + 0x71A040 + _fm_count * 24 + 8, 0);
-                        store64(S + 0x71A040 + _fm_count * 24 + 16, _fm_str_pos);
-                        var fi = 0;
-                        while (fi < flen) {
-                            store8(S + 0x721000 + _fm_str_pos + fi, load8(buf + fstart + fi));
-                            fi = fi + 1;
+                        if (canon >= 0) {
+                            store64(S + 0x71A040 + _fm_count * 24 + 16, canon);
+                        } else {
+                            store64(S + 0x71A040 + _fm_count * 24 + 16, _fm_str_pos);
+                            var fi = 0;
+                            while (fi < flen) {
+                                store8(S + 0x721000 + _fm_str_pos + fi, load8(buf + fstart + fi));
+                                fi = fi + 1;
+                            }
+                            store8(S + 0x721000 + _fm_str_pos + flen, 0);
+                            _fm_str_pos = _fm_str_pos + flen + 1;
                         }
-                        store8(S + 0x721000 + _fm_str_pos + flen, 0);
-                        _fm_str_pos = _fm_str_pos + flen + 1;
                         _fm_count = _fm_count + 1;
                     } else {
                         # CVE-31: past the cap (or str scratch full), drop the marker
@@ -109,7 +135,12 @@ fn FM_FILEID(S, expanded_line): i64 {
         var start = load64(S + 0x71A040 + i * 24);
         var lines = load64(S + 0x71A040 + i * 24 + 8);
         if (expanded_line >= start) {
-            if (expanded_line < start + lines) { return i + 1; }
+            if (expanded_line < start + lines) {
+                # Canonical: the NAME offset, not the entry index — one file spans
+                # several entries once resume markers exist. +1 keeps it 1-based so 0
+                # stays available for "not in any mapped file".
+                return load64(S + 0x71A040 + i * 24 + 16) + 1;
+            }
         }
         i = i + 1;
     }
