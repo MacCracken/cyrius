@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.83] — 2026-07-27
+
+### Fixed — an intrinsic call could not flank a TERM-tier operator
+
+`a * f64_from(2)` and `f64_from(2) * a` were both **hard syntax errors**, on
+`* / % << >> >>>`, for every `f64_*` / `f32_*` / `f64v_*` / `f32v_*` / `iv_*` name plus
+`bitget`/`bitset`/`bitclr`, `store8/16/32/64`, `u128` and `ret2`/`rethi`:
+
+```
+var c = a * f64_from(2);   ->  error: unexpected f64_from
+var c = f64_from(2) * a;   ->  error: expected ';', got '*'
+var c = a + f64_from(2);   ->  fine
+var c = a * (f64_from(2)); ->  fine
+```
+
+`+ - & | ^` and every comparison worked, because in cyrius those live one tier **up** in
+PEXPR (the bitwise ops share the `+`/`-` tier here, unlike C). `load8/16/32/64`, `syscall`,
+`sizeof` and ordinary fn calls were unaffected. Parenthesising was a workaround. That
+combination is why it read as arbitrary rather than as one defect.
+
+**Root cause.** The extended builtins were dispatched inline at the head of `PARSE_TERM`,
+each arm ending in an early `return`. As a **left** operand the parse therefore exited
+`PARSE_TERM` before reaching that function's own `*` loop; as a **right** operand, that
+loop parses with `PARSE_FACTOR` — one tier **down** — which had never known these tokens.
+Both halves had to be fixed for either direction to work.
+
+**Fix.** The dispatch is extracted into `PARSE_INTRIN(S, ptyp)` and called from **both**
+tiers, so there is now exactly one list of intrinsic tokens and the two cannot drift apart
+again. `PARSE_TERM` falls through into its operator loop on a handled dispatch instead of
+returning; `PARSE_FACTOR` routes through the same helper after its state resets.
+
+Pre-existing and long-standing — the dispatch carries v5.10.17 / v6.4.5 / .6 / .9
+annotations. Found by the **v6.4.82 closeout vidya sweep**, by an agent that verified a
+documented claim by *running the compiler* instead of re-reading the doc. That is the third
+time in four releases that this habit found a live bug (.80's `1 - 2 + 3` came the same way).
+
+**Worth recording: the first cut of this fix broke every intrinsic call in the tree.** The
+extraction script only rewrote `return 0;` where it was a whole line, but most arms are
+one-liners (`if (ptyp >= 62) { ... return 0; } }`), so 21 of 27 arms still reported "not
+handled" and the caller re-parsed an already-consumed token. `lib/fmt.cyr` failed to compile
+immediately. The inverted-sentinel hazard is now called out in the helper's own comment.
+
+**Verification** — this is a parser restructure in the function that produced the `_cfo`
+rewind class four times, so codegen-neutrality is proof, not paperwork:
+
+- **251/251 tcyr byte-identical codegen** against 6.4.82 — 0 differ.
+- Self-host fixpoint byte-identical · **seed-derive `seed→cybs→cycc` GREEN** (the load-bearing
+  one: `PARSE_INTRIN` is a new fn carrying a large block of call references, which is exactly
+  cybs's documented weak spot).
+- New gate `tests/tcyr/intrinsic_flanks_term_operator.tcyr` — 19 assertions covering both
+  operand positions across the whole tier, both-operands-intrinsic, the f64 round-trip, the
+  PEXPR/paren cases that always worked, and precedence. **Mutation-proven**: the pre-fix
+  compiler cannot compile it at all (`unexpected bitget`). Assertions compare **values**, not
+  just "it compiles" — a compile-only check would have passed against the broken first cut.
+- The `_cfo` shape re-grepped across the frontend afterwards: no clear-before-a-re-arming-call
+  remains, and `const_chained_multiply_fold.tcyr` (the .80/.81 mechanism file) still passes
+  39/39.
+
+cycc 1,108,368 → **1,112,464 B** (+4096).
+
 ## [6.4.82] — 2026-07-27
 
 **The v6.4.x closeout** — the last engineering release of the minor, before v6.5.0 opens on

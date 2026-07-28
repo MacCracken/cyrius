@@ -1,0 +1,67 @@
+# intrinsic_flanks_term_operator.tcyr — v6.4.83: an intrinsic call must be usable on
+# EITHER side of a TERM-tier operator (`* / % << >> >>>`).
+#
+# THE BUG THIS GUARDS (hard syntax error, no wrong code, found 2026-07-27):
+# The extended builtins were dispatched inline at the head of `PARSE_TERM`, each arm
+# ending in an early `return`. So:
+#
+#   `f64_from(2) * a`   as a LEFT operand the early return exited PARSE_TERM before
+#                       reaching its own `*` loop -> "expected ';', got '*'"
+#   `a * f64_from(2)`   as a RIGHT operand that loop calls PARSE_FACTOR, one tier
+#                       DOWN, which had never known these tokens -> "unexpected f64_from"
+#
+# `+ - & | ^` and all comparisons were unaffected, because in cyrius those live one
+# tier UP in PEXPR (note: the bitwise ops share the `+`/`-` tier here, NOT C's).
+# Parenthesising worked (`a * (f64_from(2))`), which is what made it look arbitrary.
+#
+# Fixed by extracting the dispatch into `PARSE_INTRIN(S, ptyp)` and calling it from
+# BOTH tiers, so the two can never drift apart again.
+#
+# WHY THE ASSERTIONS COMPARE VALUES AND NOT JUST "IT COMPILES":
+# a pure compile-check would have passed against the first, broken cut of the fix,
+# where every arm still reported "not handled" and the caller re-parsed an already-
+# consumed token. Each case below computes something a wrong parse cannot produce.
+
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    test_group("intrinsic as the RIGHT operand of a TERM-tier operator");
+    var a = 3;
+    assert_eq(a * bitget(7, 0, 1), 3, "a * bitget(7,0,1) == 3 * 1");
+    assert_eq(a * bitget(6, 0, 1), 0, "a * bitget(6,0,1) == 3 * 0");
+    assert_eq(a / bitget(7, 0, 1), 3, "a / bitget(...)");
+    assert_eq(a % bitget(4, 1, 2), 1, "a %% bitget(4,1,2) == 3 %% 2");
+    assert_eq(a << bitget(7, 0, 1), 6, "a << bitget(...) == 3<<1");
+    assert_eq(a >> bitget(7, 0, 1), 1, "a >> bitget(...) == 3>>1");
+    assert_eq(a >>> bitget(7, 0, 1), 1, "a >>> bitget(...) (arithmetic shift)");
+
+    test_group("intrinsic as the LEFT operand");
+    assert_eq(bitget(7, 0, 1) * a, 3, "bitget(...) * a");
+    assert_eq(bitget(7, 0, 1) << a, 8, "bitget(...) << a == 1<<3");
+    assert_eq(bitget(6, 0, 1) * a, 0, "bitget(6,0,1) * a == 0");
+
+    test_group("both operands are intrinsics");
+    assert_eq(bitget(7, 0, 1) * bitget(7, 1, 1), 1, "bitget * bitget");
+    assert_eq(bitget(7, 0, 1) << bitget(7, 1, 1), 2, "bitget << bitget");
+
+    test_group("f64 intrinsics through the same path");
+    # f64_from/f64_to round-trip through a TERM-tier operator on both sides.
+    assert_eq(f64_to(f64_from(6) / f64_from(2)), 3, "f64_from(6) / f64_from(2) == 3.0");
+    assert_eq(f64_to(f64_from(2) * f64_from(4)), 8, "f64_from(2) * f64_from(4) == 8.0");
+
+    test_group("the PEXPR tier and parens must still behave");
+    # These always worked; they are here so a future 'simplification' that breaks
+    # them cannot pass by only checking the newly-fixed cases.
+    assert_eq(a + bitget(7, 0, 1), 4, "a + bitget(...) (PEXPR tier, always worked)");
+    assert_eq(a * (bitget(7, 0, 1)), 3, "a * (bitget(...)) (parenthesised workaround)");
+    assert_eq(a & bitget(7, 0, 1), 1, "a & bitget(...) (bitwise shares the +/- tier)");
+
+    test_group("precedence is unchanged by the fix");
+    # `*` must still bind tighter than `+`: 3 + 3*1 == 6, not (3+3)*1 == 6 — pick
+    # values where the two readings differ.
+    assert_eq(2 + a * bitget(7, 0, 1), 5, "2 + a*bitget == 5, not 15");
+    assert_eq(a * bitget(7, 0, 1) + 2, 5, "a*bitget + 2 == 5");
+
+    var r = assert_summary();
+    return r;
+}

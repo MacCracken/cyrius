@@ -277,6 +277,16 @@ fn PARSE_FACTOR(S): i64 {
     SESTYPE(S, 0);
     SESVAR(S, 0 - 1);
     SEXW(S, 0);
+    # v6.4.83 — the RIGHT-operand half of the intrinsic-flanking fix. PARSE_TERM's
+    # `* / % << >> >>>` loop parses its right operand with PARSE_FACTOR, one tier DOWN
+    # from where the intrinsics were dispatched, so `a * f64_from(2)` was a syntax
+    # error. Routing through the same shared PARSE_INTRIN the TERM tier uses means
+    # there is exactly ONE list of intrinsic tokens, so the two tiers cannot drift
+    # apart again. Placed AFTER the four state resets above so a dispatched intrinsic
+    # starts from the same clean slate as any other factor.
+    # `_cfo = 0`: an intrinsic result is never a const-foldable literal — see the
+    # `_cfo` discipline note on PARSE_INTRIN.
+    if (PARSE_INTRIN(S, typ) == 1) { _cfo = 0; return 0; }
     # Unary minus: -expr
     if (typ == 7) {
         STI(S, GTI(S) + 1);
@@ -379,39 +389,39 @@ fn PARSE_FACTOR(S): i64 {
         # bite-1 supports i64 type-args (the base IS the i64 instance → normal call);
         # non-i64 type-args (instantiate-once) land in a follow-on bite.
         if (_MONOMORPH_OK == 1) { if (PEEKT(S) == 19) {
-            var _eta_fi = FINDFN(S, noff);
-            if (_eta_fi >= 0) { if (GFTP(S, _eta_fi) != 0) {
-                if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) == 1) {
-                    STI(S, GTI(S) + 1);                 # consume `<`
-                    _ta_pending_gt = 0;
-                    # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
-                    # type-args instantiate → their instance sid; `>>` tail handled).
-                    var _ta_conc = _parse_one_type_arg(S);
-                    var _ta_conc1 = 0;
-                    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _ta_conc1 = _parse_one_type_arg(S); }  # `,`
-                    _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
-                    # Call the base (the all-i64 instance) only when EVERY arg is i64.
-                    var _ta_do = 0;
-                    if (_ta_conc != 0 - 8) { _ta_do = 1; }
-                    if (_ta_conc1 != 0 && _ta_conc1 != 0 - 8) { _ta_do = 1; }
-                    if (_ta_do == 0) {
-                        PARSE_FNCALL(S, noff);          # all-i64: call the base
-                    } else {
-                        # non-i64: monomorphize on demand + call the specialized fn.
-                        var _spec = _instantiate_generic_fn(S, _eta_fi, _ta_conc, _ta_conc1);
-                        if (_spec == 0 - 2) {
-                            ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 92);
+                var _eta_fi = FINDFN(S, noff);
+                if (_eta_fi >= 0) { if (GFTP(S, _eta_fi) != 0) {
+                        if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) == 1) {
+                            STI(S, GTI(S) + 1);                 # consume `<`
+                            _ta_pending_gt = 0;
+                            # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
+                            # type-args instantiate → their instance sid; `>>` tail handled).
+                            var _ta_conc = _parse_one_type_arg(S);
+                            var _ta_conc1 = 0;
+                            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _ta_conc1 = _parse_one_type_arg(S); }  # `,`
+                            _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
+                            # Call the base (the all-i64 instance) only when EVERY arg is i64.
+                            var _ta_do = 0;
+                            if (_ta_conc != 0 - 8) { _ta_do = 1; }
+                            if (_ta_conc1 != 0 && _ta_conc1 != 0 - 8) { _ta_do = 1; }
+                            if (_ta_do == 0) {
+                                PARSE_FNCALL(S, noff);          # all-i64: call the base
+                            } else {
+                                # non-i64: monomorphize on demand + call the specialized fn.
+                                var _spec = _instantiate_generic_fn(S, _eta_fi, _ta_conc, _ta_conc1);
+                                if (_spec == 0 - 2) {
+                                    ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 92);
+                                }
+                                if (_spec == 0 - 3) {
+                                    ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 119);
+                                }
+                                PARSE_FNCALL(S, L64(_fnt_names + _spec * 8));
+                            }
+                            _cfo = 0;
+                            return 0;
                         }
-                        if (_spec == 0 - 3) {
-                            ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 119);
-                        }
-                        PARSE_FNCALL(S, L64(_fnt_names + _spec * 8));
-                    }
-                    _cfo = 0;
-                    return 0;
-                }
+                    } }
             } }
-        } }
         # Check for function call
         if (PEEKT(S) == 10) {
             PARSE_FNCALL(S, noff);
@@ -494,34 +504,34 @@ fn PARSE_FACTOR(S): i64 {
                 # matches the element width.
                 var sw = GSLICE_W(S, li);
                 if (sw > 0) { if (PEEKT(S) == 28) {
-                    STI(S, GTI(S) + 1);  # consume [
-                    # Push &local as first arg (helper takes slice address)
-                    EFLADDR(S, li);
-                    EPUSHR(S);
-                    # Parse index expression — leaves idx in rax
-                    PCMPE(S);
-                    EPUSHR(S);
-                    # Look up and call the width-specific helper.
-                    # Helpers live in lib/slice.cyr; consumer must
-                    # `include "lib/slice.cyr"` (or pull via deps).
-                    var idx_fn = 0 - 1;
-                    if (sw == 1)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_1",  16); }
-                    if (sw == 2)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_2",  16); }
-                    if (sw == 4)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_4",  16); }
-                    if (sw == 8)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_8",  16); }
-                    if (sw == 16) { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_16", 17); }
-                    if (idx_fn < 0) {
-                        ERR_MSG(S, "slice subscript requires include \"lib/slice.cyr\" (provides _slice_idx_get_W helpers)", 92);
-                    }
-                    ECALLPOPS(S, 2);
-                    ECALLFIX(S, idx_fn);
-                    # Result in rax. Set expression-width tracking so
-                    # narrowing assignment warnings work for u8/u16/u32.
-                    SEXW(S, sw);
-                    if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
-                    STI(S, GTI(S) + 1);  # consume ]
-                    return 0;
-                } }
+                        STI(S, GTI(S) + 1);  # consume [
+                        # Push &local as first arg (helper takes slice address)
+                        EFLADDR(S, li);
+                        EPUSHR(S);
+                        # Parse index expression — leaves idx in rax
+                        PCMPE(S);
+                        EPUSHR(S);
+                        # Look up and call the width-specific helper.
+                        # Helpers live in lib/slice.cyr; consumer must
+                        # `include "lib/slice.cyr"` (or pull via deps).
+                        var idx_fn = 0 - 1;
+                        if (sw == 1)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_1",  16); }
+                        if (sw == 2)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_2",  16); }
+                        if (sw == 4)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_4",  16); }
+                        if (sw == 8)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_8",  16); }
+                        if (sw == 16) { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_16", 17); }
+                        if (idx_fn < 0) {
+                            ERR_MSG(S, "slice subscript requires include \"lib/slice.cyr\" (provides _slice_idx_get_W helpers)", 92);
+                        }
+                        ECALLPOPS(S, 2);
+                        ECALLFIX(S, idx_fn);
+                        # Result in rax. Set expression-width tracking so
+                        # narrowing assignment warnings work for u8/u16/u32.
+                        SEXW(S, sw);
+                        if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
+                        STI(S, GTI(S) + 1);  # consume ]
+                        return 0;
+                    } }
                 var lt = GLTYPE(S, li);
                 # v6.2.19 math arc: f64/f32 locals — load the 8-byte value and tag
                 # the expression f64/f32 so PEXPR/PARSE_TERM route operators to the
@@ -541,15 +551,15 @@ fn PARSE_FACTOR(S): i64 {
                 # pointer (scalar i64 is SLTYPE 0), which genuinely needs scale 8 for
                 # `p + i`. No sub-i64 typed pointers exist, so 1/2/4 are always scalars.
                 if (lt > 0) { if (lt <= 8) {
-                    if (lt < 8) { SPSC(S, 1); }
-                    SEXW(S, lt);
-                    # v6.3.35: a SIGNED sub-i64 local (marked by a negative slice-width
-                    # sentinel) loads via movsx (negative width); unsigned stays movzx.
-                    var _lw = lt;
-                    if (lt < 8) { if (GSLICE_W(S, li) < 0) { _lw = 0 - lt; } }
-                    EFLLOAD_W(S, li, _lw);
-                    return 0;
-                } }
+                        if (lt < 8) { SPSC(S, 1); }
+                        SEXW(S, lt);
+                        # v6.3.35: a SIGNED sub-i64 local (marked by a negative slice-width
+                        # sentinel) loads via movsx (negative width); unsigned stays movzx.
+                        var _lw = lt;
+                        if (lt < 8) { if (GSLICE_W(S, li) < 0) { _lw = 0 - lt; } }
+                        EFLLOAD_W(S, li, _lw);
+                        return 0;
+                    } }
                 EFLLOAD(S, li);
                 return 0;
             }
@@ -1546,46 +1556,46 @@ fn PARSE_FACTOR(S): i64 {
         # compile warning — acceptable tradeoff; the warning was
         # best-effort, not load-bearing.
         if (sc_num >= 0) { if (_AARCH64_BACKEND == 0) {
-            var expect = _SC_ARITY(sc_num);
-            if (expect >= 0) {
-                var got = argc - 1;
-                if (got != expect) {
-                    # Skip the warning when this is the cross-arch
-                    # openat shape: syscall(SYS_OPEN=2, AT_FDCWD, path,
-                    # flags, mode) — 4 user args instead of open()'s 3.
-                    # Source: arch-conditional wrappers in
-                    # lib/syscalls_*_linux.cyr and src/frontend/lex.cyr
-                    # keep both open()/openat() shapes for cross-arch
-                    # source compatibility; the dead branch on the
-                    # running arch is not a bug. Open() is never called
-                    # legitimately with 4 user args, so the structural
-                    # match is unambiguous.
-                    var skip_warn = 0;
-                    if (sc_num == 2) { if (got == 4) { skip_warn = 1; } }
-                    # v5.8.54: same cross-arch number-reuse pattern as
-                    # SYS_OPEN above. Linux x86_64 SYS_SETUID = 113 (1
-                    # arg); Linux aarch64 SYS_CLOCK_GETTIME = 113 (2
-                    # args: clock_id + timespec_ptr — `syscall(113, 1,
-                    # &ts)` in cyrius syntax = 3 cyrius-args, got=2).
-                    # Surfaced by `src/backend/aarch64/fixup.cyr`'s
-                    # `_prof_clock_ns()` helper; warning fired on every
-                    # aarch64 cross-build. setuid is never legitimately
-                    # called with 2 user args, so the structural match
-                    # is unambiguous (same logic as the SYS_OPEN skip).
-                    if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
-                    # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
-                    # collide with Linux numbers at different arities (agnos
-                    # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
-                    # read=0/3-args; ...). This arity table is Linux-only, so
-                    # it false-positives on every agnos syscall;
-                    # lib/syscalls_x86_64_agnos.cyr is the authority.
-                    if (_TARGET_AGNOS == 1) { skip_warn = 1; }
-                    if (skip_warn == 0) {
-                        WARN(S, "syscall arity mismatch", 22);
+                var expect = _SC_ARITY(sc_num);
+                if (expect >= 0) {
+                    var got = argc - 1;
+                    if (got != expect) {
+                        # Skip the warning when this is the cross-arch
+                        # openat shape: syscall(SYS_OPEN=2, AT_FDCWD, path,
+                        # flags, mode) — 4 user args instead of open()'s 3.
+                        # Source: arch-conditional wrappers in
+                        # lib/syscalls_*_linux.cyr and src/frontend/lex.cyr
+                        # keep both open()/openat() shapes for cross-arch
+                        # source compatibility; the dead branch on the
+                        # running arch is not a bug. Open() is never called
+                        # legitimately with 4 user args, so the structural
+                        # match is unambiguous.
+                        var skip_warn = 0;
+                        if (sc_num == 2) { if (got == 4) { skip_warn = 1; } }
+                        # v5.8.54: same cross-arch number-reuse pattern as
+                        # SYS_OPEN above. Linux x86_64 SYS_SETUID = 113 (1
+                        # arg); Linux aarch64 SYS_CLOCK_GETTIME = 113 (2
+                        # args: clock_id + timespec_ptr — `syscall(113, 1,
+                        # &ts)` in cyrius syntax = 3 cyrius-args, got=2).
+                        # Surfaced by `src/backend/aarch64/fixup.cyr`'s
+                        # `_prof_clock_ns()` helper; warning fired on every
+                        # aarch64 cross-build. setuid is never legitimately
+                        # called with 2 user args, so the structural match
+                        # is unambiguous (same logic as the SYS_OPEN skip).
+                        if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
+                        # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
+                        # collide with Linux numbers at different arities (agnos
+                        # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
+                        # read=0/3-args; ...). This arity table is Linux-only, so
+                        # it false-positives on every agnos syscall;
+                        # lib/syscalls_x86_64_agnos.cyr is the authority.
+                        if (_TARGET_AGNOS == 1) { skip_warn = 1; }
+                        if (skip_warn == 0) {
+                            WARN(S, "syscall arity mismatch", 22);
+                        }
                     }
                 }
-            }
-        } }
+            } }
         return 0;
     }
     if (typ == 25) {
@@ -2377,55 +2387,78 @@ fn _TRY_MUL_BY_POW2(S): i64 {
     return 1;
 }
 
-fn PARSE_TERM(S): i64 {
-    _cfo = 0;
-    # Extended builtins — checked first
-    var ptyp = PEEKT(S);
-    if (ptyp >= 93) { if (ptyp <= 99) { return PARSE_SIMD_EXT(S, ptyp); } }
-    if (ptyp >= 100) { if (ptyp <= 104) { return PARSE_SIMD_EXT(S, ptyp); } }
+# v6.4.83 — the intrinsic dispatch, extracted out of PARSE_TERM's head so BOTH tiers
+# can reach it. Returns 1 if it consumed an intrinsic call, 0 if `ptyp` is not one.
+#
+# THE BUG THIS FIXES: these arms used to sit inline at the top of PARSE_TERM, each
+# ending in an early `return`. So an intrinsic could not FLANK a TERM-tier operator
+# from either side:
+#   `f64_from(2) * a`  -> as a LEFT operand the early return exited PARSE_TERM before
+#                         its own `*` loop, so the `*` was unexpected
+#   `a * f64_from(2)`  -> as a RIGHT operand that loop calls PARSE_FACTOR one tier
+#                         DOWN, which never knew these tokens
+# Both were hard syntax errors on `* / % << >> >>>`, while `+ - & | ^` worked (those
+# live one tier up in PEXPR). It hit every f64_*/f32_*/f64v_*/f32v_*/iv_* name plus
+# bitget/bitset/bitclr, store8/16/32/64, u128 and ret2/rethi — but NOT load8/16/32/64
+# or ordinary calls, which is why it read as arbitrary. Pre-existing since the dispatch
+# was built up (v5.10.17 / v6.4.5 / .6 / .9); found by the v6.4.82 closeout vidya sweep
+# by RUNNING the compiler against a documented claim rather than re-reading the doc.
+#
+# ⚠ EVERY `return 1` below means HANDLED (the token was consumed). The single
+# `return 0` at the bottom means NOT AN INTRINSIC. Getting that inverted makes the
+# caller re-parse an already-consumed token — which is exactly how the first cut of
+# this fix broke every intrinsic call in the tree.
+#
+# ⚠ `_cfo` DISCIPLINE. An intrinsic result is never a const-foldable literal, so both
+# callers clear `_cfo` after a handled dispatch. Getting this wrong is the `_cfo`
+# rewind class (four occurrences: 2026-06-11, v6.4.74, .80, .81), whose failure mode
+# is SILENT WRONG CODE rather than a syntax error. Do not simplify those clears away.
+fn PARSE_INTRIN(S, ptyp): i64 {
+    if (ptyp >= 93) { if (ptyp <= 99) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
+    if (ptyp >= 100) { if (ptyp <= 104) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     # v5.10.17 — f64v_dot/scale/axpy
-    if (ptyp >= 128) { if (ptyp <= 130) { return PARSE_SIMD_EXT(S, ptyp); } }
+    if (ptyp >= 128) { if (ptyp <= 130) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     # v6.4.5 (SIMD Phase 2): f32v_fmadd (141) + f32v_dot (142) → PARSE_SIMD_EXT.
-    if (ptyp >= 141) { if (ptyp <= 142) { return PARSE_SIMD_EXT(S, ptyp); } }
+    if (ptyp >= 141) { if (ptyp <= 142) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul (143-145) → PARSE_SIMD_EXT.
-    if (ptyp >= 143) { if (ptyp <= 146) { return PARSE_SIMD_EXT(S, ptyp); } }
+    if (ptyp >= 143) { if (ptyp <= 146) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     # v6.4.9 (Phase 4 R2): f32v8_fma (150) + f32v8_dot (151) → PARSE_SIMD_EXT.
-    if (ptyp >= 150) { if (ptyp <= 151) { return PARSE_SIMD_EXT(S, ptyp); } }
+    if (ptyp >= 150) { if (ptyp <= 151) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     # f64 builtins — check before PARSE_FACTOR dispatches.
     # v5.11.37 path-A: each ptyp dispatches to its named op in
     # <backend>/emit.cyr — x86 emits SSE2/x87, aarch64 emits FNEG /
     # polyfill-call / hard-error, cx is no-op. parse_expr.cyr is
     # arch-agnostic for these ops.
-    if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 0; } }
-    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 0; } }
-    if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 1; } }
+    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 1; } }
+    if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_sqrt(x) — sqrtsd xmm0, xmm0
-    if (ptyp == 79) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 79) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_abs(x) — v5.11.40 path-A peephole. Dispatch lives in
     # <backend>/emit.cyr::EF64_ABS: x86 movabs+and (saves 5 B vs
     # the prior 5-instr push/movabs/movca/pop/and = 18 B); aarch64
     # native fabs via fmov/fabs/fmov (saves 20 B vs the prior
     # MOVK-chain + shuttle); cx no-op stub. See CHANGELOG [5.11.40].
-    if (ptyp == 80) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ABS(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 80) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ABS(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_floor(x) — roundsd xmm0, xmm0, 1 (SSE4.1)
-    if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_ceil(x) — roundsd xmm0, xmm0, 2 (SSE4.1)
-    if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_round(x) — roundsd xmm0, xmm0, 0 (round to nearest)
-    if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f32_from(x): f64 → f32 bit pattern (cvtsd2ss). f32_to(x): f32 → f64 (cvtss2sd).
     # v6.2.18 native-float math arc. Backend emit takes the value in rax, returns
     # the converted bits in rax (full move/cvt/move sequence lives per-arch).
-    if (ptyp == 131) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_FROM(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 132) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_TO(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 83) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_SIN(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 84) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_COS(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 85) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 86) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LN(S);   if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 87) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LOG2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
-    if (ptyp == 88) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 0; }
+    if (ptyp == 131) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_FROM(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 132) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF32_TO(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 83) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_SIN(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 84) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_COS(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 85) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP(S);  if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 86) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LN(S);   if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 87) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_LOG2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 88) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_EXP2(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64v_add/sub/mul(dst, a, b, n) — SSE2 packed f64 batch operations.
     # v5.10.39 — route through _SIMD_STASH (was bare EFLSTORE pre-fix).
     # The v5.10.35 locname-staleness fix covered f64v_div/sqrt/abs/
@@ -2450,7 +2483,7 @@ fn PARSE_TERM(S): i64 {
             SFLC(S, vbase + 3);
             EMIT_F64V_LOOP(S, ptyp - 89, vbase);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
-            return 0;
+            return 1;
         } }
     # v6.4.3+ (SIMD Phase 1) — f32v_add/sub/mul(dst, a, b, n) — SSE2 packed f32
     # (addps/subps/mulps), the f64v path minus the 66 prefix. Same 4-arg stash shape.
@@ -2468,7 +2501,7 @@ fn PARSE_TERM(S): i64 {
             SFLC(S, vbf + 3);
             EMIT_F32V_LOOP(S, ptyp - 138, vbf);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
-            return 0;
+            return 1;
         } }
     # v6.4.8 (SIMD Phase 4 R1) — f32v8_add/sub/mul(dst, a, b, n) — 256-bit AVX2 packed
     # f32 (vaddps/vsubps/vmulps ymm). Identical 4-arg stash to f32v_add; EMIT_F32V8_LOOP.
@@ -2486,9 +2519,17 @@ fn PARSE_TERM(S): i64 {
             SFLC(S, vbf8 + 3);
             EMIT_F32V8_LOOP(S, ptyp - 147, vbf8);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
-            return 0;
+            return 1;
         } }
-    PARSE_FACTOR(S);
+    return 0;
+}
+
+fn PARSE_TERM(S): i64 {
+    _cfo = 0;
+    # Extended builtins — checked first
+    var ptyp = PEEKT(S);
+    if (PARSE_INTRIN(S, ptyp) == 1) { _cfo = 0; }
+    else { PARSE_FACTOR(S); }
     # v5.8.29 — postfix `?` propagation operator. After the primary
     # factor evaluates (rax = Result heap pointer), `?` desugars to:
     #   tag = load64(rax)
@@ -2682,26 +2723,26 @@ fn PARSE_TERM(S): i64 {
                                 STI(S, GTI(S) + 1);
                                 ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EASHRCL(S); _cfo = 0;
                             }
-                        # v5.6.2: *| / *? — saturating / checked mul. Calls into
-                        # lib/overflow.cyr. Matches the +|/+? pattern at PEXPR.
-                        else { if (typ == 120) {
-                                STI(S, GTI(S) + 1);
-                                EPUSHR(S);
-                                PARSE_FACTOR(S);
-                                EPUSHR(S);
-                                EMIT_OVF_CALL(S, "_sat_mul_i64");
-                                _cfo = 0;
-                            }
-                            else { if (typ == 121) {
+                            # v5.6.2: *| / *? — saturating / checked mul. Calls into
+                            # lib/overflow.cyr. Matches the +|/+? pattern at PEXPR.
+                            else { if (typ == 120) {
                                     STI(S, GTI(S) + 1);
                                     EPUSHR(S);
                                     PARSE_FACTOR(S);
                                     EPUSHR(S);
-                                    EMIT_OVF_CALL(S, "_chk_mul_i64");
+                                    EMIT_OVF_CALL(S, "_sat_mul_i64");
                                     _cfo = 0;
                                 }
-                                else { go = 0; }
-                            } } } } } } }
+                                else { if (typ == 121) {
+                                        STI(S, GTI(S) + 1);
+                                        EPUSHR(S);
+                                        PARSE_FACTOR(S);
+                                        EPUSHR(S);
+                                        EMIT_OVF_CALL(S, "_chk_mul_i64");
+                                        _cfo = 0;
+                                    }
+                                    else { go = 0; }
+                                } } } } } } }
     }
     return 0;
 }
