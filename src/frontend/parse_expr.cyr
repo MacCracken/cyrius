@@ -2547,7 +2547,7 @@ fn PARSE_TERM(S): i64 {
             STI(S, GTI(S) + 1);
             if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
-            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3); }
+            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3); _cfo = 0; }
             else {
                 # Constant fold: NUM * NUM where both and result are small positive
                 if (_cfo == 1) {
@@ -2607,7 +2607,7 @@ fn PARSE_TERM(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
-                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3); }
+                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3); _cfo = 0; }
                 else {
                     if (_cfo == 1) { if (PEEKT(S) == 1) {
                             var crv = PEEKV(S);

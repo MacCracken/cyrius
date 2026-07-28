@@ -631,6 +631,10 @@ fn _run_regression_gates(): i64 {
     _doc_size_currency_gate();
     println("");
 
+    _section("Doc-stamp currency (state.md / roadmap.md / CHANGELOG vs VERSION + build/cycc)");
+    _doc_stamp_currency_gate();
+    println("");
+
     _section("install --refresh-only shim");
     _install_shim_symlink_gate();
     println("");

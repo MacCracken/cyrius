@@ -13,6 +13,30 @@ enum Dim { A = 320; B = 200; C = 7; }
 var G_NEG_THEN_ADD = 1 - 2 + 3;
 var G_NEG_THEN_XOR = 1 - 2 ^ 3;
 
+# v6.4.81 — the same mechanism through struct operator overloading. Each helper
+# returns a value that a plain integer op could never produce, so a rewound-away
+# call is unmistakable (a `return a * b` helper would alias the folded answer and
+# the test would pass while broken — the first repro attempt did exactly that).
+struct OpV { v; }
+fn OpV_mul(a, b) { return 1000 + b; }
+fn OpV_div(a, b) { return 2000 + b; }
+fn OpV_add(a, b) { return 3000 + b; }
+fn OpV_sub(a, b) { return 4000 + b; }
+
+var _opf_p: OpV = 5;
+var _opf_q: OpV = 5;
+var _opf_r: OpV = 5;
+var _opf_s: OpV = 5;
+var _opf_p2: OpV = 5;
+var _opf_q2: OpV = 5;
+
+var OPF_MUL = _opf_p * 3 + 1;
+var OPF_DIV = _opf_q / 3 + 1;
+var OPF_ADD = _opf_r + 3 + 1;
+var OPF_SUB = _opf_s - 3 + 1;
+var OPF_MUL2 = _opf_p2 * 3 - 1;
+var OPF_DIV2 = _opf_q2 / 3 - 1;
+
 fn main(): i64 {
     assert_eq(A * B, 64000, "2-operand enum fold");
     assert_eq(A * B * 4, 256000, "enum*enum*pow2 (the reported 320*200*4)");
@@ -89,6 +113,25 @@ fn main(): i64 {
     # Global-initializer path (v6.4.74's _CF_TRY folder) must agree with the above.
     assert_eq(G_NEG_THEN_ADD, 2, "gvar init: 1 - 2 + 3 folds to 2");
     assert_eq(G_NEG_THEN_XOR, 0 - 4, "gvar init: 1 - 2 ^ 3 folds to -4");
+
+    # v6.4.81 — FOURTH occurrence of this mechanism, one tier BELOW the .80 sweep.
+    # `EMIT_OP_DISPATCH` (struct operator overloading) parses its RHS with
+    # PARSE_TERM, which re-arms `_cfo` on a bare literal, and then sets
+    # SESTYPE(S, 0) — so the following `+`/`-` takes the CONST-FOLD branch with a
+    # live-but-stale fold and `SCP(S, _cfp)` rewinds the code pointer straight
+    # over the emitted operator CALL. `V_mul(p,3) + 1` became the constant 4.
+    #
+    # The `add`/`sub` dispatch sites already cleared `_cfo`; `mul`/`div` did not —
+    # a 2-of-4 asymmetry in four structurally identical lines. The .80 sweep
+    # grepped the PEXPR tier for the shape and found 16 sites, but the operator
+    # dispatch lives in the TERM tier and was not in that grep's range.
+    # ALL FOUR arms are asserted here so the next edit cannot re-open half of it.
+    assert_eq(OPF_MUL, 1004, "op-overload: p * 3 + 1 must call V_mul, not fold to 4");
+    assert_eq(OPF_DIV, 2004, "op-overload: q / 3 + 1 must call V_div, not fold to 4");
+    assert_eq(OPF_ADD, 3004, "op-overload: r + 3 + 1 must call V_add");
+    assert_eq(OPF_SUB, 4004, "op-overload: s - 3 + 1 must call V_sub");
+    assert_eq(OPF_MUL2, 1002, "op-overload: p2 * 3 - 1 (mul then SUB tier)");
+    assert_eq(OPF_DIV2, 2002, "op-overload: q2 / 3 - 1 (div then SUB tier)");
 
     var r = assert_summary();
     return r;

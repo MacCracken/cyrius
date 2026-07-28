@@ -67,7 +67,13 @@
 #   (0x19A100/0x19A108/0x19D000 now FREE — reclaimed by the v6.1.35 file_map move)
 #
 # --- Preprocessor + local var state ---
-#   0x190500  include_fname [256]         preprocessor filename scratch
+#   0x190400  include_fname [4096]        preprocessor include/#ref filename scratch
+#                                        v6.4.81 CVE-32: this was recorded one page high
+#                                        and 16x too small; no code has ever written that
+#                                        address (every use is 0x190400) and all three
+#                                        capture loops were unbounded, so heapmap.sh was
+#                                        validating a region that does not exist. Ends at
+#                                        0x191400, clear of the #ref read buffer 0x191800.
 #   0x191000  fn_local_names              local variable names
 #   0x191800  local_depths  [512]         scope depths per local
 #   0x192000  macro tables                16 macros (names, offsets, bodies)

@@ -262,9 +262,20 @@ fn _init_cyrius_lib(): i64 {
                             # Found HOME=, copy value + /.cyrius/versions/<VERSION>/lib/
                             var hi = ei + 5;
                             var wi = 0;
+                            # v6.4.81 (CVE-34): `var _cyrius_lib[256]` is a BARE
+                            # TOP-LEVEL array, so it is 256*8 = 2048 B (v6.4.10
+                            # contract) — not 256. This copy was bounded only by
+                            # `elen` (<= 4096 from /proc/self/environ), so a HOME
+                            # longer than ~2 KB overran it, and ~32 more bytes of
+                            # "/.cyrius/versions/<VER>/lib/" are appended below
+                            # unconditionally. Reserve that suffix and give up on
+                            # the fallback rather than smashing: the CYRIUS_HOME
+                            # lib path is best-effort, so `return 0` degrades to
+                            # "no fallback" exactly like the `efd < 0` case above.
                             while (hi < elen) {
                                 var hc = load8(&ebuf + hi);
                                 if (hc == 0) { break; }
+                                if (wi >= 1984) { return 0; }
                                 store8(&_cyrius_lib + wi, hc);
                                 wi = wi + 1; hi = hi + 1;
                             }
@@ -588,11 +599,19 @@ fn READFILE(path, dst, maxsz): i64 {
         if (_cyrius_lib_len > 0) {
             if (load8(path) == 108) { if (load8(path + 1) == 105) { if (load8(path + 2) == 98) { if (load8(path + 3) == 47) {
                             # Build fallback path: _cyrius_lib + (path + 4)
-                            var fbuf[512];
+                            # v6.4.81 (CVE-33): both copies below were unbounded
+                            # into a 512-BYTE local (`var x[N]` local = N bytes).
+                            # `_cyrius_lib_len` can reach ~2 KB and `path` is
+                            # caller-supplied, so either loop could walk off the
+                            # frame. Widened to 4096 (matching the PP filename
+                            # bound) and both loops now stop at 4095; a truncated
+                            # path simply fails to open and takes the existing
+                            # -1 / "cannot open include file" path.
+                            var fbuf[4096];
                             var fi = 0;
-                            while (fi < _cyrius_lib_len) { store8(&fbuf + fi, load8(&_cyrius_lib + fi)); fi = fi + 1; }
+                            while (fi < _cyrius_lib_len) { if (fi >= 4095) { break; } store8(&fbuf + fi, load8(&_cyrius_lib + fi)); fi = fi + 1; }
                             var pi = 4;
-                            while (load8(path + pi) != 0) { store8(&fbuf + fi, load8(path + pi)); fi = fi + 1; pi = pi + 1; }
+                            while (load8(path + pi) != 0) { if (fi >= 4095) { break; } store8(&fbuf + fi, load8(path + pi)); fi = fi + 1; pi = pi + 1; }
                             store8(&fbuf + fi, 0);
                             if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, &fbuf, 0, 0); }
                             else { fd = syscall(SYS_OPEN, 0 - 100, &fbuf, 0, 0); }

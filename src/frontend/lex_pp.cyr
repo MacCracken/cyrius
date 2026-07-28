@@ -266,6 +266,30 @@ fn PP_ALREADY_INCLUDED(S, fname): i64 {
     return 0;
 }
 
+# v6.4.81 (CVE-32) — bound for the include / `#ref` filename scratch at
+# S+0x190400. The scratch runs to the `#ref` read buffer at S+0x191800, so 4096 B
+# (0x190400..0x191400) fits with slack and is well past any real path.
+#
+# All THREE filename-capture loops (`include`, post-macro-expansion `include`,
+# and `#ref`) were UNBOUNDED. `include "<31490 chars>"` walked the write through
+# the include-count cell at S+0x197F00 and SIGSEGV'd (exit 139); below that
+# threshold it silently corrupted whatever lay between. Reachable from untrusted
+# source text with no flag, which is the whole threat model for a compiler.
+#
+# The heap map hid it: it documented this scratch at 0x190500 [256] — an address
+# NO code has ever written (every use is 0x190400) — so `tests/heapmap.sh`
+# validated a fiction and reported PASS through three minors of audits. The map
+# entry is corrected alongside this bound. See CHANGELOG [6.4.81].
+#
+# Split into its own fn rather than inlined at the three sites because PREPROCESS
+# is already near cybs's per-fn literal/global ceiling (the `_var_grow` /
+# TOKNAME_BUILTIN precedent) and seed-derive is the gate that would catch it.
+fn PP_FNAME_TOO_LONG(): i64 {
+    syscall(SYS_WRITE, 2, "error: include/#ref filename exceeds 4095 bytes\n", 48);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 fn PP_MARK_INCLUDED(S, fname): i64 {
     var cnt = L64(S + 0x197F00);
     if (cnt >= 256) {
@@ -1978,7 +2002,7 @@ fn PP_PASS(S): i64 {
                                 if (fgo == 1) {
                                     var fc = load8(S + ip);
                                     if (fc == 34) { ip = ip + 1; fgo = 0; }
-                                    else { store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
+                                    else { if (fi >= 4095) { PP_FNAME_TOO_LONG(); } store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
                                 }
                             }
                             store8(fname + fi, 0);
@@ -2351,7 +2375,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                     if (fgo == 1) {
                                         var fc = load8(tmp + ip);
                                         if (fc == 34) { ip = ip + 1; fgo = 0; }
-                                        else { store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
+                                        else { if (fi >= 4095) { PP_FNAME_TOO_LONG(); } store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
                                     }
                                 }
                                 store8(fname + fi, 0);
@@ -2475,6 +2499,7 @@ fn PP_REF_PASS(S): i64 {
                     while (ip < bl) {
                         var rc = load8(S + ip);
                         if (rc == 34) { ip = ip + 1; break; }
+                        if (rfi >= 4095) { PP_FNAME_TOO_LONG(); }
                         store8(rfn + rfi, rc); rfi = rfi + 1; ip = ip + 1;
                     }
                     store8(rfn + rfi, 0);
