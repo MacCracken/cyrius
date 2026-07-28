@@ -167,7 +167,7 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   retptr deep-stack-param homing).** .46 `>>>` arithmetic-shift operator + stdlib folds; .47–.48 UEFI
   Secure Boot signing (`cyrius sign-efi`) + enrollment (`.esl`/`.auth` via sigil 3.11.1); .49 growable
   8 MiB off-heap codebuf; **.50 capacity-warning consolidation (Pin 3 — one shared `_capacity_warnings`
-  across all 7 drivers).** Current head: **v6.4.72**, cycc 1,103,512 B, check.sh 147, self_compile
+  across all 7 drivers).** Current head: **v6.4.81**, cycc 1,108,328 B, check.sh 150, self_compile
   ~620 ms. **The async arc 5b + UEFI arc (#3) are CLOSED; scalar-float completion (.55/.56), DX
   diagnostics (.60 R1 + .62 R2), and the Intel-Mac x86_64 Mach-O tail (.59) have all SHIPPED.
   .63–.72 ran reactive: agnos GPU band #82–#91 (now contiguous) + lib-freshness (.63/.70/.71/.72),

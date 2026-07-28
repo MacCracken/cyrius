@@ -89,3 +89,97 @@ documents this drift class as a previously-fixed regression, which suggests it r
 A lint that flags a bare integer literal as the first argument of `syscall()` — "use the `SYS_*`
 constant or a wrapper" — would have caught all three at authoring time, and would catch the next
 one. Offered as a suggestion; the call on whether it is worth the false-positive rate is yours.
+
+---
+
+## RE-SCOPED UPWARD — v6.4.x closeout audit, 2026-07-27
+
+**Verdict: KEEP-OPEN, and the scope is wider than the filing.** Per CLAUDE.md, *a consumer filing
+enumerates what it HIT, not the class* — so the class was checked. Two corrections and two hazards.
+
+### 1. The whole chown family is absent from **all six** syscall peers, not just `lchown`
+
+```
+$ grep -rn 'chown\|CHOWN' lib/*.cyr
+(only three agnos GPU-band comments: syscalls_x86_64_agnos.cyr:106, :107, :731)
+```
+
+**Zero wrappers and zero `SYS_` constants** across `syscalls_x86_64_linux.cyr`,
+`syscalls_aarch64_linux.cyr`, `syscalls_linux_common.cyr`, `syscalls_macos.cyr`,
+`syscalls_windows.cyr`, `syscalls_x86_64_agnos.cyr`.
+
+Authoritative numbers from this box's kernel headers — x86_64 (`asm/unistd_64.h:96-98,264`):
+`chown=92`, `fchown=93`, **`lchown=94`**, `fchownat=260`. aarch64 (`asm-generic/unistd.h:154-156`):
+**`fchownat=54`, `fchown=55`, and no `chown`/`lchown` at all**; `:260` → **`exit_group=94`**.
+
+So the filing's "94 is `lchown` on x86_64 and `exit_group` on aarch64" is **exactly right**.
+*Correction to how this was summarised elsewhere:* the hardcoded number is **94, not 92** — aarch64
+92 is `personality`.
+
+The template to copy is `sys_fchmodat` at `lib/syscalls_linux_common.cyr:80-83`. `lchown` semantics =
+`AT_FDCWD` + `AT_SYMLINK_NOFOLLOW`, both already defined at `syscalls_linux_common.cyr:38/:48`.
+
+### 2. ⚠ HAZARD — `SYS_FCHOWNAT = 54` on aarch64 is silently remapped to `setsockopt`
+
+The aarch64-Linux leg of `ESYSXLAT` matches `x8==54` unconditionally:
+`src/backend/aarch64/emit.cyr:840` `# setsockopt 54→208` (and the macho leg at `:719`, 54→105). The
+correct aarch64-native `fchownat` number **is** 54, so a peer-native `SYS_FCHOWNAT = 54` gets
+rewritten to 208/105.
+
+The shim cannot simply be dropped: there is a live raw caller, `lib/yantra.cyr:453`
+`return syscall(54, fd, 6, 1, one, 4);` — a bare-literal x86 `setsockopt`/TCP_NODELAY, and itself an
+instance of the bare-syscall-literal class this filing's "wider point" asks to lint.
+
+The other obvious numbering collides too: the aarch64-macho leg already claims **260** as a source
+(`# wait4 260→7`).
+
+**This is the verbatim v6.4.64 collision class.** `lib/syscalls_aarch64_linux.cyr:174-178` documents
+it in its own words for the 51/52 pair: *"x86-52 collides with this peer's own `SYS_FCHMOD = 52`, and
+an ESYSXLAT entry for it would remap fchmod to getpeername (CI caught exactly that: sandbox_syscalls
+RED on pi)"*. Picking either number without resolving this reproduces that bug, **silently**, and the
+release gate's `vr01_` subset would very likely not catch it.
+
+*Resolution path:* fix `lib/yantra.cyr:453` to use `SYS_SETSOCKOPT` (x86 54 / aarch64 208) first; the
+`54→208` shim then has no consumer and aarch64-native 54 becomes safe for `fchownat`.
+
+### 3. ⚠ HAZARD — agnos 92/93 are **already** the GPU band
+
+`lib/syscalls_x86_64_agnos.cyr:106` `SYS_GPU_SHADER_OP = 92;` and `:107` `SYS_GPU_MODESET_OP = 93;`.
+The file's own notes at `:731`/`:741-745` already reason about this overlap in the other direction.
+agnos is the one target where a chown number is not merely wrong but points at a **live,
+side-effecting GPU primitive that reads arg1 as a userland VA**. Give the agnos peer an explicit
+`-ENOSYS` stub; never let it inherit the Linux common wrapper.
+
+### 4. Darwin numbers are NOT verifiable from this box — read them off the hardware
+
+`lib/syscalls_macos.cyr` uses **x86_64 Linux numbers** by convention and relies on emit-time
+translation (`:115` `SYS_FSYNC = 74;  # EMACHO_SYSXLAT maps 74→BSD 95`). `EMACHO_SYSXLAT`
+(`src/backend/x86/emit.cyr:836-885`) has no entry for 260 or 92/93/94 today, so adding a constant
+without the translation entry means the call reaches Darwin **untranslated** — the exact failure mode
+documented at `emit.cyr:877-882`. Read the numbers off ecb/ach directly
+(`grep -i chown /usr/include/sys/syscall.h`), then add both the `_msx()` entry and the matching
+`cmp x8,#N` in the `_TARGET_MACHO == 2` branch of the aarch64 `ESYSXLAT`. Both legs, or macOS-arm64
+and Intel-Mac diverge.
+
+### 5. Same class, found in passing: `sys_chdir` is called but **defined nowhere**
+
+`lib/regression.cyr:658` calls `sys_chdir(work_dir)` inside `regression_exec_in_dir3`. There is no
+`fn sys_chdir` anywhere in `lib/` or `src/` — only the `SYS_CHDIR` **constants** (x86 80, aarch64 49,
+macOS 80). A full sweep of `sys_*` called-vs-defined across `lib/`, `src/`, `programs/`, `cbt/` returns
+exactly one genuinely undefined name: this one.
+
+cycc classifies the call site as unreachable in the checks program (which uses its own
+`_exec_in_dir` with `syscall(SYS_CHDIR, …)` and *checks the return*), so it only warns. But any
+consumer that actually calls `regression_exec_in_dir3` gets
+`error: refusing to emit binary with 1 reachable undefined function(s)` — **a shipped stdlib helper
+that cannot be compiled by the consumers it ships to.** `lib/regression.cyr` goes out via
+`cyrius deps`.
+
+Fold `sys_chdir` into whatever wrapper pass fixes the chown family — same missing-wrapper class, same
+per-arch constant-exists-but-no-wrapper shape.
+
+### Placement
+
+v6.5.x, as one "missing syscall wrappers" pass covering `fchownat`/`fchown`/`lchown`-semantics +
+`sys_chdir`. Gate it with a `vr01_`-named tcyr so the cross-OS leg actually executes it on pi.
+**Not 7.x.**

@@ -6,6 +6,125 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.4.81] — 2026-07-27
+
+Four defects found by the v6.4.x closeout audit, shipped as their own release so the
+closeout itself stays clean. **The closeout moves to v6.4.82** — the same thing that
+happened at .80, and for the same reason: running the audit found live bugs.
+
+### Fixed — **CRITICAL**: a FOURTH `_cfo` rewind occurrence — struct operator overloading
+
+v6.4.80 swept the PEXPR tier for this mechanism, found 16 sites, and recorded "zero
+occurrences of the shape remain in `parse_expr.cyr`". That was true of the tier it
+grepped. The mechanism also lives one tier down, in the operator-overload dispatch:
+
+| expression (`var p: OpV = 5;` with an `OpV_mul`) | 6.4.80 | correct |
+|---|---|---|
+| `p * 3 + 1` | **4** | 1004 |
+| `p / 3 + 1` | **4** | 2004 |
+| `p * 3 - 1` | **2** | 1002 |
+
+`EMIT_OP_DISPATCH` parses its RHS with `PARSE_TERM`, which **re-arms `_cfo`** on a bare
+literal, and then ends with `SESTYPE(S, 0)`. The following `+`/`-` therefore takes the
+*const-fold* branch with a live-but-stale fold, and `SCP(S, _cfp)` rewinds the code
+pointer straight over the emitted operator **call**. The overload is silently deleted and
+replaced by a constant.
+
+The tell was a 2-of-4 asymmetry in four structurally identical lines: the `add`
+(`parse_expr.cyr:2809`) and `sub` (`:2837`) dispatch sites already cleared `_cfo`; `mul`
+(`:2550`) and `div` (`:2610`) never did. **Same lesson as .80, one level up: grep the
+SHAPE, not the operator — and grep every tier that calls back into the fold, not just the
+tier the repro landed in.** All four `EMIT_OP_DISPATCH` sites now clear `_cfo`; the grep
+is recorded so the next sweep starts from the call site, not the operator name.
+
+**Coverage.** `tests/tcyr/const_chained_multiply_fold.tcyr` — already the home of this one
+mechanism (2026-06-11 multiply, .80 PEXPR) — 33 → **39 assertions**, asserting **all four**
+arms so a future edit cannot re-open half of it. Mutation-proven in both directions: the
+pre-fix compiler fails exactly the 4 mul/div cases, the fixed one passes 39/39. Note the
+first repro attempt gave `OpV_mul` a body of `a * b`, which aliases the folded answer and
+**passed while broken** — the helpers now return values plain integer arithmetic cannot
+produce.
+
+### Security — CVE-32/33/34: three unbounded copies reachable from untrusted source
+
+cycc compiles untrusted source by design, so these are all on the wrong side of that
+boundary. Found by the closeout's security re-scan (CLAUDE.md item 9); the last full audit
+was `docs/audit/2026-06-10-deep-dive-review.md` at cycc 6.1.31, whose last identifier is
+CVE-31.
+
+- **CVE-32 (High) — heap smash from an `include` path.** The include / `#ref` filename
+  scratch at `S+0x190400` was filled by **three** unbounded loops (`include`,
+  post-macro-expansion `include`, `#ref`). `include "zzz/<31490 A's>.cyr"` walked the write
+  through the include-count cell at `S+0x197F00` and **SIGSEGV'd (exit 139)**; 31480 bytes
+  still gave a clean error, so the boundary is exact and everything below it corrupted the
+  preprocessor state silently. Bounded at 4096 B (the scratch ends at `0x191400`, clear of
+  the `#ref` read buffer at `0x191800`) via a shared `PP_FNAME_TOO_LONG` helper — split into
+  its own fn because `PREPROCESS` is already near cybs's per-fn literal/global ceiling and
+  seed-derive is the gate that would have caught it.
+- **CVE-33 (High) — unbounded composition into a 512-byte local.** `READFILE`'s
+  `CYRIUS_HOME/lib/` fallback built its path into `var fbuf[512]` with *neither* copy loop
+  bounded, and both a long `_cyrius_lib` and a caller-supplied `path` can overrun the frame.
+  Widened to 4096 and both loops bounded; a truncated path takes the existing "cannot open
+  include file" path.
+- **CVE-34 (Medium) — `_cyrius_lib` overflow from a long `$HOME`.** `var _cyrius_lib[256]`
+  is a **bare top-level array**, so it is 256×8 = 2048 B (the v6.4.10 contract), and the
+  `HOME=` copy was bounded only by `elen` (≤4096 from `/proc/self/environ`), with ~32 more
+  bytes of `/.cyrius/versions/<VER>/lib/` appended unconditionally afterwards. Now reserves
+  the suffix and gives up on the fallback rather than smashing — the same `return 0`
+  degradation the `efd < 0` path already used.
+
+### Fixed — the heap map was documenting a region that does not exist
+
+CVE-32 survived three minors of heap-map audits because the map hid it. `src/main.cyr:90`
+(and the four other forks carrying the map) recorded the preprocessor filename scratch as
+`0x190500  include_fname [256]` — **one page high and 16× too small**. No code has ever
+written `0x190500`; every use is `0x190400`, and unbounded. `tests/heapmap.sh` was
+therefore validating a region that exists only in the comment, and reporting PASS.
+
+Corrected in all five forks to `0x190400 include_fname [4096]` with the invariant written
+down. Worth recording: the first correction put the old `0x190500 [256]` into an
+explanatory parenthetical **on the map line**, and the map parser picked *that* up and
+reported the region as 256 B again — the prose now lives on continuation lines that carry
+no `0x… [N]` pattern.
+
+### Added — doc-stamp currency gate (check.sh 149 → 150)
+
+`_doc_stamp_currency_gate` (`programs/checks/heap_audit.cyr`) checks the three anchors that
+are *by construction* current-state claims — state.md's `**cycc**` row against the live
+`build/cycc` size, roadmap.md's `Current head:` against `VERSION`, and a CHANGELOG section
+for `VERSION` — and leaves historical "Prior: 6.4.NN …" narrative alone.
+
+It exists because **a checklist entry is not a gate**: v6.4.77 found this exact rot class
+in `ecosystem.md`, fixed it, and added a closeout checklist item with a copy-pasteable
+verification loop, and a row went stale again two releases later at .79. When first run it
+went **RED on live rot** — state.md cited 1,103,512 B and roadmap.md's head still read
+v6.4.72, eight releases behind — which is its mutation proof in the natural direction. It
+fails loudly if an anchor disappears rather than passing on a missing one, the placebo shape
+this repo has been bitten by at .70 and .74.
+
+### Verification
+
+Release gate **GREEN**, all five steps. Self-host fixpoint byte-identical · seed-derive
+(`seed→cybs→cycc`) OK · check.sh **150/0** · **cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on all four
+hosts — ecb (macOS-arm64), ach (Intel-Mac), cass (Windows/PE), pi (aarch64) — on REAL hardware** ·
+self_compile **626 ms** (inside the historical 614–634 band).
+
+Additionally, **251/251 tcyr verified by a per-file compile-and-exit-code loop**, not check.sh's grep
+summary — which CLAUDE.md notes can mask segfaults and non-zero exits. cycc 1,108,272 →
+**1,108,328 B** (+56: two
+`_cfo` clears, three bounds checks, and the `PP_FNAME_TOO_LONG` helper). The new check.sh
+gate lives in `programs/checks/` and is outside cycc's include closure, so it contributes
+nothing to that delta.
+
+Note for the .82 closeout: the audit that produced this release also confirmed findings that
+are **deliberately not** in it — the Windows PE gates have been validating a cycc **5.11.69**
+binary for the whole v6.x line; the TS frontend arena at `S+0x298B000` overlaps `tok_types`
+entirely plus 1.6 MB of `tok_values`, safe today only by an undocumented temporal invariant;
+`tests/heapmap.sh` is blind to six real sized regions (20 MB, incl. `ir_nodes` 16 MB) because
+its size regex misses `[16 MB]`-style entries; and `lib/regression.cyr:658` calls `sys_chdir`,
+which is **defined nowhere** — the same missing-wrapper class as the open chown issue, which
+the audit re-scoped upward to the whole family across all six syscall peers. Each is filed.
+
 ## [6.4.80] — 2026-07-26
 
 ### Fixed — **CRITICAL**: `1 - 2 + 3` evaluated to `5`; the `_cfo` rewind class, third occurrence
