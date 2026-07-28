@@ -308,7 +308,7 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   auditor's size parser was fixed to see unit-suffixed entries (`[16 MB]`) it had been skipping
   entirely. Same number, different route, six different regions.
 
-**Current head: v6.4.83** — cycc **1,112,464 B** · check.sh **150 passed / 0 failed** · self_compile
+**Current head: v6.4.85** — cycc **1,112,464 B** · check.sh **150 passed / 0 failed** · self_compile
 **~622 ms** · 251 `.tcyr` · 99 `lib/*.cyr` · api-surface **4749** public fns · heap map **100 regions,
 0 overlaps** · **11 open issues + 3 proposals** (273 archived). Verified against live artifacts at the
 v6.4.82 closeout. `_doc_stamp_currency_gate` (check.sh, since .81) keys on the `Current head` anchor

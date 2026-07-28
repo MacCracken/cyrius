@@ -1,0 +1,103 @@
+# vr01_chan_try_send.tcyr — v6.4.84: the bounded channel must have a non-blocking SEND,
+# not just a non-blocking receive.
+#
+# THE GAP THIS CLOSES (filed 2026-07-28 by the AgnosAI port, blocker #4):
+# `chan_try_recv` gave receivers a non-blocking path; senders had none. `chan_send`
+# blocks on FUTEX_WAIT until the buffer drains or the channel closes, so a producer
+# could not express "deliver this if the consumer is keeping up, otherwise drop it" —
+# the normal contract for telemetry, progress events and pub/sub fan-out. It turned
+# backpressure into head-of-line blocking across unrelated work.
+#
+# Live instance, in shipped code: `majra/src/pubsub.cyr` takes the hub mutex and calls
+# blocking `chan_send` inside the fan-out loop, so ONE full subscriber channel stalls
+# publishes to every other topic — unfixable from majra's side, because there was no
+# non-blocking send to reach for.
+#
+# CONTRACT (identical on all three backends — that uniformity is the point):
+#    0 → enqueued · -1 → closed · -2 → full
+#
+# ⚠ -2 MUST stay distinct from -1. A producer shedding load has to tell "nobody is
+# listening any more, stop producing" from "the consumer is briefly behind, drop this
+# one" — those call for opposite actions. The issue's proposed fix suggested aliasing
+# chan_try_send to chan_send on agnos; that would have returned -1 for FULL there
+# (agnos/Windows chan_send returns -1 on full and never checks `closed`), silently
+# diverging the contract per-backend. Both were written out properly instead.
+#
+# Runs on real hardware via the release gate's `vr01_` glob, so the Windows SRW-lock
+# backend and the aarch64 futex path are both exercised where they live.
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/thread.cyr"
+
+fn main(): i64 {
+    test_group("chan_try_send — the filed repro must not hang");
+    # VERBATIM from the issue: a bounded channel with no reader. Under the old API the
+    # second send blocked forever (FUTEX_WAIT, nothing will ever drain it). The whole
+    # point is that this test TERMINATES.
+    var ch = chan_new(1);
+    assert_eq(chan_try_send(ch, 42), 0, "first try_send fits (cap 1)");
+    assert_eq(chan_try_send(ch, 43), 0 - 2, "second try_send returns -2 (FULL), does not block");
+
+    test_group("a full channel does not lose or corrupt the queued value");
+    # The rejected send must not have written anything: the reader still sees 42.
+    assert_eq(chan_try_recv(ch), 42, "the value from the accepted send survives");
+    assert_eq(chan_try_recv(ch), 0, "channel is now empty (try_recv returns 0)");
+
+    test_group("space frees up after a drain");
+    assert_eq(chan_try_send(ch, 44), 0, "try_send succeeds again once drained");
+    assert_eq(chan_try_recv(ch), 44, "round-trips the new value");
+
+    test_group("-1 (closed) is distinct from -2 (full)");
+    # This is the assertion that would fail against an alias-to-chan_send shortcut.
+    var c2 = chan_new(2);
+    chan_close(c2);
+    assert_eq(chan_try_send(c2, 1), 0 - 1, "closed channel returns -1, NOT -2");
+
+    var c3 = chan_new(1);
+    assert_eq(chan_try_send(c3, 7), 0, "open+empty accepts");
+    assert_eq(chan_try_send(c3, 8), 0 - 2, "open+full returns -2");
+    chan_close(c3);
+    assert_eq(chan_try_send(c3, 9), 0 - 1, "closed beats full: -1 even though full");
+
+    test_group("FIFO order is preserved across try_send");
+    var c4 = chan_new(3);
+    assert_eq(chan_try_send(c4, 10), 0, "enqueue 10");
+    assert_eq(chan_try_send(c4, 20), 0, "enqueue 20");
+    assert_eq(chan_try_send(c4, 30), 0, "enqueue 30");
+    assert_eq(chan_try_send(c4, 40), 0 - 2, "4th into cap-3 is full");
+    assert_eq(chan_try_recv(c4), 10, "FIFO 1st");
+    assert_eq(chan_try_recv(c4), 20, "FIFO 2nd");
+    assert_eq(chan_try_recv(c4), 30, "FIFO 3rd");
+
+    test_group("ring wrap — tail must wrap modulo cap, not run off the buffer");
+    # Cycle more times than cap so head/tail wrap several times. A missing `% cap`
+    # would write past the allocation and corrupt the heap rather than fail loudly.
+    var c5 = chan_new(2);
+    var i = 0;
+    var ok = 1;
+    while (i < 10) {
+        if (chan_try_send(c5, 100 + i) != 0) { ok = 0; }
+        if (chan_try_recv(c5) != 100 + i) { ok = 0; }
+        i = i + 1;
+    }
+    assert_eq(ok, 1, "10 send/recv cycles through a cap-2 ring stay correct");
+
+    # BLOCKING chan_send is deliberately NOT exercised on macOS. It parks on
+    # FUTEX_WAIT, and Darwin has no futex — a raw SYS_FUTEX raises SIGSYS and kills
+    # the process (exit 140). That gap is pre-existing and tracked as issue
+    # 2026-07-03 (macOS threading), pinned to v6.5.x; the NON-BLOCKING pair above
+    # runs unguarded on macOS and must keep passing there.
+    #ifndef CYRIUS_TARGET_MACOS
+    test_group("blocking chan_send still works (not regressed)");
+    var c6 = chan_new(2);
+    assert_eq(chan_send(c6, 55), 0, "chan_send still enqueues");
+    assert_eq(chan_try_recv(c6), 55, "and is readable");
+    #endif
+
+    var r = assert_summary();
+    return r;
+}

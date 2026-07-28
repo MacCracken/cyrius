@@ -6,7 +6,139 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [6.4.83] — 2026-07-27
+## [6.4.85] — 2026-07-28
+
+**v6.4.x is CLOSED.** This is the closeout-complete cut: docs, ledger and handoff reconciled
+to the five-release closeout band, with no code change. v6.5.0 opens on `public`/`private`.
+
+### Changed — closeout reconciliation
+
+The closeout ran from **.80 to .85**, not in one release, because each pass kept finding live
+bugs. The ledger entry in [`cycle-discipline.md`](docs/development/cycle-discipline.md) now
+records the whole band and the number that matters: **three of the five releases were driven
+by findings from verification work rather than feature work** —
+
+| release | what displaced it | how it was found |
+|---|---|---|
+| .80 | `1 - 2 + 3` == **5** (`_cfo`, PEXPR tier) | adversarial verifier checking a **vidya** precedence claim |
+| .81 | 4th `_cfo` occurrence (`p * 3 + 1` == 4) + CVE-32/33/34 | closeout code-review + security passes |
+| .82 | closeout proper · TS arena · agnos #94/#95 | heap-map audit + backlog re-triage |
+| .83 | intrinsics could not flank a TERM-tier operator | the .82 **vidya sweep**, by running the compiler |
+| .84 | `chan_try_send` + macOS channel SIGSYS | consumer filing + the **cross-OS gate on ach** |
+
+Docs reconciled: `state.md`, `roadmap.md`'s head stamp and shipped list, `doc-health.md`, and
+`handoff.md` rewritten for v6.5.0.
+
+### Closeout status — all twelve CLAUDE.md items
+
+Mechanical (1–3b) green on real hardware · heap-map audit (4) · dead-code (5) · refactor (6) ·
+code-review (7) · cleanup (8) · security re-scan (9) → `docs/audit/2026-07-27-security-audit.md`
+(CVE-32…36, CVE-37/38 refuted) · downstream pins (10) · docs+vidya (11) — `gotchas.cyml`
+refreshed after 30 releases with no entry · backlog re-triage (12) — 11 open issues verified
+against **live code**, every one now carrying an explicit `**Status:**`, and the "v7-PARKED"
+placement-rule violation (DWARF + incremental compilation) corrected.
+
+### Verification
+
+cycc **byte-identical** to 6.4.84 (`1,112,464 B`) — docs-only. Release gate GREEN: check.sh
+**150/0** · self-host fixpoint + seed-derive OK · cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK`
+on ecb / ach / cass / pi.
+
+## [6.4.84] — 2026-07-28
+
+### Added — `chan_try_send`: the bounded channel was non-blocking on the receive side only
+
+`chan_try_recv` gave receivers a non-blocking path; senders had none. `chan_send` blocks
+on `FUTEX_WAIT` until the buffer drains or the channel closes, so a producer could not
+express **"deliver this if the consumer is keeping up, otherwise drop it and carry on"** —
+the normal contract for telemetry, progress events and pub/sub fan-out, exactly the traffic
+where one slow consumer must never stall a producer. The blocking send turned backpressure
+into head-of-line blocking across unrelated work.
+
+The filed repro, verified to hang before this release (5 s timeout, no progress):
+
+```cyrius
+var ch = chan_new(1);
+chan_send(ch, 42);        # ok — buffer had room
+chan_send(ch, 43);        # blocked forever: FUTEX_WAIT, nothing will ever drain it
+```
+
+**This was not only a port blocker — it was a live liveness bug in shipped code.**
+`majra/src/pubsub.cyr` takes the hub mutex and does not release it across its whole
+fan-out, calling blocking `chan_send` inside two loops. One subscriber whose channel is
+full therefore stalls publishes to *every other topic and every other subscriber*, while
+holding the hub lock. majra could not fix that from its own side: dropping the lock
+mid-fan-out races the subscriber list, and there was no non-blocking send to reach for.
+Filed by the AgnosAI Rust→Cyrius port (blocker #4), which has nine call sites spelled
+`let _ = tx.send(..)` — all on the crew-event/telemetry path, where a disconnected browser
+tab holding an SSE stream would have wedged a running crew.
+
+**Contract, identical on all three backends:**
+
+```
+ 0  → value enqueued
+-1  → channel closed, nothing enqueued
+-2  → buffer FULL, nothing enqueued
+```
+
+**Why `-2` is distinct from `-1`, and the one place the filing's own proposed fix was
+wrong.** A producer shedding load has to tell *"nobody is listening any more, stop
+producing"* from *"the consumer is briefly behind, drop this one"* — opposite actions. The
+issue suggested aliasing `chan_try_send` to `chan_send` on agnos since that backend never
+blocks. That would have shipped a **divergent per-backend contract**: agnos *and* Windows
+`chan_send` return **`-1` on FULL**, and neither inspects `closed` (+48) at all, so a send
+on a closed channel silently succeeds there. A consumer written against the Linux semantics
+would have been unable to distinguish the two cases on exactly the platforms where the
+distinction is cheapest to get wrong. All three backends are written out properly instead,
+and the uniformity is asserted by the gate.
+
+`lib/thread.cyr` (Linux/macOS, futex + mutex), `lib/thread_win.cyr` (SRW lock),
+`lib/thread_agnos.cyr` (serial path, no lock). api-surface 4749 → **4752** (+3, one per
+backend, 0 removed).
+
+### Fixed — the non-blocking channel surface SIGSYS'd on macOS (pre-existing)
+
+Caught by the cross-OS gate on **ach**, because `vr01_chan_try_send` is the first `vr01_`
+test ever to exercise channels on macOS. `lib/sync.cyr` has routed `mutex_*` through a real
+macOS backend since v6.3.44, but `lib/thread.cyr`'s channel fns called **`SYS_FUTEX`
+directly**, bypassing it. Darwin has no futex, so that raises **SIGSYS — bad system call**
+and kills the process (exit 140).
+
+That was not only the new fn: **`chan_try_recv` and `chan_close` were already broken this
+way**, on a surface advertised as non-blocking. All three now route through a
+`_chan_wake(ch, n)` helper that is a **no-op on macOS** — which is correct rather than a
+stub, because the only thing such a wake can release is a waiter parked in
+`chan_send`/`chan_recv`'s `FUTEX_WAIT`, and those are equally unavailable there. The
+non-blocking trio is therefore fully correct on macOS as plain mutex-protected ring
+operations, which is all a non-blocking API needs.
+
+The **blocking** paths remain macOS-broken and are deliberately not touched here — they
+need a real condvar backend, which is issue `2026-07-03-macos-threading-workers-dont-run`,
+pinned to v6.5.x. The test's blocking sub-case is `#ifndef CYRIUS_TARGET_MACOS`-guarded
+against that tracked gap; everything else runs unguarded on macOS.
+
+Worth recording how the second one hid: after fixing `chan_try_send`'s wake the test still
+died at the same visible point, because **SIGSYS discards buffered stdout** — the output
+showed only the first `test_group` header regardless of how far execution actually got. A
+primitive-by-primitive probe on the host showed `chan_try_send` working, which is what
+pointed at `chan_close` further down.
+
+### Verification
+
+New gate `tests/tcyr/vr01_chan_try_send.tcyr` — 20 assertions, carried to real hardware by
+the release gate's `vr01_` glob so the Windows SRW-lock backend and the aarch64 futex path
+are exercised where they live. It opens with the issue's **verbatim** repro (a filed repro
+is the spec), then covers: the rejected send not corrupting the queued value, space freeing
+after a drain, `-1`-vs-`-2` including closed-beats-full, FIFO order, and a 10-cycle ring
+wrap through a cap-2 channel (a missing `% cap` would corrupt the heap rather than fail
+loudly). **Mutation-proven**: collapsing `-2` into `-1` fails 3 assertions; the pre-fix
+blocking repro hangs under a 5 s timeout.
+
+cycc **byte-identical** — `lib/thread*.cyr` is outside cycc's include closure. Release gate
+GREEN: check.sh **150/0** · seed-derive OK · cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on
+ecb / ach / cass / pi.
+
+## [6.4.83] — 2026-07-28
 
 ### Fixed — an intrinsic call could not flank a TERM-tier operator
 

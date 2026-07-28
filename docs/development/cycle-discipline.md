@@ -171,6 +171,15 @@ floor, a re-triage that keeps re-pinning the same item).
   "Execution integrity": **an audit's output is FIXES, not a backlog** — this closeout initially
   filed four findings it could have fixed, growing the queue 11 → 15, and the user was right to
   reject that.
+- **The closeout took FIVE releases, .80 through .85**, because each pass kept finding live
+  bugs: .80 `1 - 2 + 3` == 5 · .81 the fourth `_cfo` occurrence + CVE-32/33/34 · .82 the
+  closeout proper + the TS arena + agnos #94/#95 · **.83** intrinsics could not flank a
+  TERM-tier operator (found by the .82 vidya sweep, by running the compiler against a
+  documented claim) · **.84** `chan_try_send` + the non-blocking channel surface SIGSYS-ing on
+  macOS (the new gate was the first `vr01_` ever to exercise channels there, and it caught
+  both the new fn AND pre-existing breakage in `chan_try_recv`/`chan_close`).
+  **Three of those five were found by verification work, not by feature work.** That is the
+  case for running these passes at all, and it is the number to remember next cycle.
 - **Follow-ups**: none deferred silently. Everything not fixed is filed with a NAMED reason.
 
 - _v6.3.x → v6.4.0 and earlier: full gate detail predates this ledger — canonical in

@@ -1,4 +1,4 @@
-# Handoff — v6.4.x is CLOSED at v6.4.82. **v6.5.0 opens on `public`/`private`.**
+# Handoff — v6.4.x is CLOSED at **v6.4.85**. **v6.5.0 opens on `public`/`private`.**
 
 > **Written 2026-07-27**, at the v6.4.x closeout. Read this, then `CLAUDE.md`, then
 > [`state.md`](state.md). **Refresh or delete this file when v6.5.0 ships** — a stale handoff is
@@ -10,14 +10,14 @@
 
 | | |
 |---|---|
-| Version | **6.4.82** — the v6.4.x CLOSEOUT (82 releases in the minor) |
-| cycc x86_64 | **1,108,368 B** — seed 29,024 B → cybs → cycc byte-identical |
+| Version | **6.4.85** — the v6.4.x CLOSEOUT (85 releases in the minor) |
+| cycc x86_64 | **1,112,464 B** — seed 29,024 B → cybs → cycc byte-identical |
 | Gates | `check.sh` **150 / 0** + 3 shell gates · release gate GREEN all 5 steps |
 | Cross-OS | ecb · ach · cass · pi — all `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware |
 | Corpus | **251** `.tcyr` (per-file exit-code loop, not the grep summary) · 99 `lib/*.cyr` · api-surface **4749** |
 | Heap | **100** regions, 0 overlaps |
 | self_compile | **628 ms** (historical band 614–634) |
-| Open issues | **12** · 3 proposals · 274 archived |
+| Open issues | **11** · 3 proposals · 274 archived |
 
 ## What the closeout actually taught us
 

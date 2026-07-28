@@ -4332,6 +4332,7 @@ thread::chan_new/1
 thread::chan_recv/1
 thread::chan_send/2
 thread::chan_try_recv/1
+thread::chan_try_send/2
 thread::gettid/0
 thread::mmap_stack/1
 thread::munmap_stack/2
@@ -4342,6 +4343,7 @@ thread_agnos::chan_new/1
 thread_agnos::chan_recv/1
 thread_agnos::chan_send/2
 thread_agnos::chan_try_recv/1
+thread_agnos::chan_try_send/2
 thread_agnos::gettid/0
 thread_agnos::thread_create/2
 thread_agnos::thread_join/1
@@ -4358,6 +4360,7 @@ thread_win::chan_new/1
 thread_win::chan_recv/1
 thread_win::chan_send/2
 thread_win::chan_try_recv/1
+thread_win::chan_try_send/2
 thread_win::gettid/0
 thread_win::thread_create/2
 thread_win::thread_join/1
