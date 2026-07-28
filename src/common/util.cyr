@@ -519,6 +519,27 @@ fn SFDS(S, fi, v): i64 { if (_fnt_defstart == 0) { _fnt_defstart = alloc(32768 *
 # v6.3.11 (G): per-fn async flag (lazy-alloc'd, 0 = not async / table unallocated).
 fn GFAS(S, fi): i64 { if (_fnt_is_async == 0) { return 0; } return L64(_fnt_is_async + fi * 8); }
 fn SFAS(S, fi, v): i64 { if (_fnt_is_async == 0) { _fnt_is_async = alloc(32768 * 8); } S64(_fnt_is_async + fi * 8, v); return 0; }
+# v6.5.0 Phase 1 (public/private visibility): per-fn ORIGIN FILE, so a call can later
+# be judged same-file or cross-file. Stored as `FM_FILEID(decl line) + 1`, following
+# the _fnt_defstart "+1, 0 = unrecorded" idiom, because every raw FM_FILEID value is
+# itself meaningful and 0 would otherwise be ambiguous with "main source":
+#     0   unrecorded (table unallocated, or fn registered outside a definition —
+#         e.g. a forward reference created by a call site before the definition)
+#     1   main source          (raw 0)
+#     2.. included file id-2   (raw 1..)
+#     -1+1 == 0 is NOT produced: an overflowed map yields raw -1, which is stored as
+#         0 and therefore reads back as UNRECORDED — the fail-closed direction, since
+#         an unrecorded fn can never be proven same-file. See FM_FILEID's warning.
+#
+# Lazy-alloc'd at the MAX fn cap (32768 slots) exactly like _fnt_tparams, NOT a fixed
+# heap band. That is the v6.4.75 P0 contract: six fn-indexed tables were left at fixed
+# 8192-slot bands where index 8192 aliased index 0 of the NEIGHBOUR table, silently
+# corrupting both. A new fn-indexed table must either ride _fnt_grow or allocate for
+# the full 32768 ceiling up front; this does the latter, so it needs no fork edit and
+# no change to the grow chain.
+var _fnt_fileid = 0;
+fn GFFI(S, fi): i64 { if (_fnt_fileid == 0) { return 0; } return L64(_fnt_fileid + fi * 8); }
+fn SFFI(S, fi, v): i64 { if (_fnt_fileid == 0) { _fnt_fileid = alloc(32768 * 8); } S64(_fnt_fileid + fi * 8, v); return 0; }
 # v6.3.10 (generic structs): per-struct (0-based si) type-params (packed, like
 # _fnt_tparams) + the `struct`-keyword token (defstart+1; 0=unrecorded). Lazy-alloc'd
 # at 1024 slots (the struct cap). Used to instantiate `Box<Point>` by re-invoking

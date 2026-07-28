@@ -71,3 +71,10 @@ sh "$ROOT/scripts/sign-efi-gate.sh"
 # built. Host-side by necessity: a tcyr runs natively on each host and therefore
 # exercises main_win.cyr (always correct), never the cross path.
 sh "$ROOT/tests/valform_simd_crosstarget.sh"
+
+# v6.5.0 Phase 1 (public/private visibility): every fn must be attributed to the
+# source file its `fn` keyword is in. Phase 2 turns that partition into a visibility
+# boundary, so a wrong stamp means `private` silently mis-scopes. Gated here at
+# Phase 1 — while the table is still recorded-not-enforced — so the substrate is
+# never write-only and never unverified.
+sh "$ROOT/tests/fileid_substrate.sh"

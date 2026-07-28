@@ -2528,6 +2528,39 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     return 0;
 }
 
+# v6.5.0 Phase 1 — `CYRIUS_FILEID_DUMP=1` prints `<fileid> <fnname>` per definition.
+#
+# This exists so the substrate is VERIFIABLE and, just as importantly, so it is not
+# WRITE-ONLY. The v6.4.82 closeout audit found `_fnt_is_async` had exactly one
+# occurrence of its getter repo-wide — its own definition — meaning it lazily allocates
+# 256 KB that nothing ever reads. A "recorded, not enforced" phase is precisely how a
+# table ends up in that state, so Phase 1 ships its own reader and its own gate rather
+# than waiting for Phase 2 to justify it retroactively.
+#
+# `-1` prints for an unrecorded/overflowed fn; see FM_FILEID's fail-closed note.
+# Split into its own fn (not inlined at the record site) because PARSE_FN_DEF is
+# already large and cybs mis-compiles fns carrying too many global/literal references —
+# the `_var_grow` / `TOKNAME_BUILTIN` / `PP_FNAME_TOO_LONG` precedent. seed-derive is
+# the gate that catches that, and it is run below.
+var _fileid_dump = 0;
+var _fileid_dump_init = 0;
+
+fn _fileid_dump_note(S, fi, noff): i64 {
+    PRNUM(GFFI(S, fi) - 1);
+    syscall(SYS_WRITE, 2, " ", 1);
+    PRSTR(S + 0x60000 + noff);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    return 0;
+}
+
+fn _fileid_dump_arm(): i64 {
+    if (_fileid_dump_init != 0) { return _fileid_dump; }
+    _fileid_dump_init = 1;
+    var e = _read_env("CYRIUS_FILEID_DUMP");
+    if (e != 0) { if (load8(e) == 49) { if (load8(e + 1) == 0) { _fileid_dump = 1; } } }
+    return _fileid_dump;
+}
+
 fn PARSE_FN_DEF(S): i64 {
     var _is_async = 0;
     var _async_noff_f = 0;
@@ -2608,6 +2641,19 @@ fn PARSE_FN_DEF(S): i64 {
     }
     if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
     if (_gtp != 0) { SFDS(S, fi, _defstart_ti + 1); }   # v6.3.10: def-start +1 (0 = unrecorded; token 0 is valid)
+    # v6.5.0 Phase 1 (public/private): stamp this fn's ORIGIN FILE, derived from the
+    # line of its `fn` keyword via the file map the preprocessor already builds for
+    # diagnostics (`#@file` markers -> FM_BUILD -> FM_FILEID). RECORDED ONLY — nothing
+    # reads this for a decision yet, so program codegen is unchanged; Phase 2 is what
+    # turns it into a visibility boundary.
+    #
+    # `_defstart_ti` is the `fn`-keyword token and is set unconditionally at the top of
+    # PARSE_FN_DEF, so this is exact for every definition rather than approximated from
+    # whatever token happens to be current. Deliberately placed HERE, after `fi` is
+    # resolved: a forward reference registers a slot from a CALL SITE, and attributing
+    # the fn to the caller's file would be precisely backwards.
+    SFFI(S, fi, FM_FILEID(S, GTLINE(S, _defstart_ti)) + 1);
+    if (_fileid_dump_arm() != 0) { _fileid_dump_note(S, fi, noff); }
     # v5.11.62: track the current fn for per-fn array-byte attribution.
     # Initialize the slot to 0 — fn body may have been touched by an earlier
     # forward-decl scan; this is the start of the body parse proper.
