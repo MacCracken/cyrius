@@ -253,12 +253,12 @@ fn cmd_doctest(arg): i64 {
                     dt_total = dt_total + 1;
 
                     # Write code to temp file, compile, run
-                    var tmpf = "/tmp/cyrius_dt_src";
+                    var tmpf = _cbt_tmpfile("dt_src");
                     var fd = syscall(2, tmpf, 0x241, 0x1A4);
                     if (fd >= 0) {
                         syscall(1, fd, code, code_len);
                         syscall(3, fd);
-                        var tmpbin = "/tmp/cyrius_dt_bin";
+                        var tmpbin = _cbt_tmpfile("dt_bin");
                         if (compile(tmpf, tmpbin) == 0) {
                             var ec = run_binary(tmpbin);
                             if (ec == expected) {

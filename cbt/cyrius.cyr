@@ -899,7 +899,7 @@ fn main(): i64 {
             _err("programs/cyrius-lsp.cyr not found");
             return 1;
         }
-        var lsp_out = "/tmp/cyrius-lsp";
+        var lsp_out = _cbt_tmpfile("lsp");
         var cr = compile(lsp_src, lsp_out);
         if (cr != 0) {
             _err("failed to build cyrius-lsp");

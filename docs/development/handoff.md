@@ -11,9 +11,9 @@
 |---|---|
 | Version | **6.4.81** (81 releases in the 6.4.x minor) |
 | cycc x86_64 | **1,108,328 B** — seed 29,024 B → cybs → cycc byte-identical |
-| Gates | `check.sh` **150 passed / 0 failed** (was 149; `_doc_stamp_currency_gate` is new) |
+| Gates | `check.sh` **150 passed / 0 failed** + 3 shell gates · release gate GREEN all 5 steps · cross-OS OK on ecb/ach/cass/pi |
 | Corpus | 251 `.tcyr` · 99 `lib/*.cyr` · 97 programs |
-| Open issues | **15** (was 11; four filed by the closeout audit) · 3 proposals · 271 archived |
+| Open issues | **12** (11 pre-existing + 1 genuinely-deferred heap-layout item) · 3 proposals · 271 archived |
 
 ## ⚠ v6.4.81 became a BUG-FIX release. The closeout is v6.4.82.
 
@@ -43,24 +43,32 @@ Mechanical gates fail-fast → judgment passes → compliance → docs last.
 adversarially-verified findings are the closeout's work list. Everything below was checked against
 **live code**, not against the docs' own claims.
 
-### Already filed as issues (do not re-derive)
+### FIXED in v6.4.81 (do not re-file — these are done)
 
-- `2026-07-27-pe-gates-validate-a-5-11-69-binary.md` — **the Windows PE gates have been exercising a
-  cycc 5.11.69 binary since 2026-05-19**, i.e. all of v6.0.x–v6.4.81. Existence-only rebuild trigger,
-  artifact not in `cross_bins`. Green checkmark, wrong compiler — the macOS-rot shape.
-- `2026-07-27-heapmap-blind-to-20mb-and-ts-arena-overlap.md` — `heapmap.sh`'s size regex misses
-  `[16 MB]`-style entries, so it cannot see `ir_nodes` (16 MB), `ir_cp` (4 MB) and four scratch
-  regions; it also mis-sizes `fn_param_struct_mask` as **5 bytes**. Plus: the TS arena at `0x298B000`
-  overlaps `tok_types` entirely + 1.6 MB of `tok_values`, safe today only by an undocumented temporal
-  invariant. Corrected table = **108 regions, 0 overlaps**.
-- `2026-07-27-cross-compile-drops-value-form-simd.md` — `main.cyr`'s PE/Mach-O **cross** branches never
-  got `CYRIUS_HAS_VAL_SIMD_PARAMS`, so value-form SIMD has been native-only all minor. 11 docs/tests
-  call this "non-PE by design", including four `vr01_*` headers that wrongly claim a cass skip.
-- `2026-07-27-cbt-fixed-tmp-paths-cve-35-36.md` — CVE-35/36, `cbt/`'s 20 fixed `/tmp` literals.
+The audit's code-level findings were fixed, not filed. Full detail in the CHANGELOG:
+
+- **Cross-compile dropped value-form SIMD** — `src/main.cyr`'s PE/Mach-O cross arms now predefine
+  `CYRIUS_HAS_VAL_SIMD_PARAMS`. Gated by `tests/valform_simd_crosstarget.sh` (host-side by necessity).
+  The 11 stale "non-PE by design" claims are corrected.
+- **PE gates validating a cycc 5.11.69 binary** — existence-only rebuild trigger replaced with an
+  unconditional rebuild; stale artifact deleted.
+- **`heapmap.sh` blind to 20 MB** — unit-suffixed sizes now parsed, first-bracket-wins fixes the
+  `fn_param_struct_mask`-as-5-bytes misparse. 94 -> 100 regions, mutation-proven.
+- **CVE-35/36** — all 23 fixed `/tmp` literals in `cbt/` route through a private 0700 per-invocation
+  directory that fails closed.
+
+### Still open and genuinely deferred (1 filed)
+
+- `2026-07-27-ts-arena-overlaps-token-arrays.md` — the TS arena overlaps `tok_types` + 1.6 MB of
+  `tok_values`. **Filed rather than fixed for a concrete reason**: relocating needs ~14.2 MB
+  contiguous, which does not exist below the arena end, so it is a brk/heap-**layout** change
+  requiring the two-step bootstrap. Not a live bug (temporal invariant). The documentation fiction
+  around it — a "13.3 MB reservation" that does not exist, and a stale `0x1D0B000` base pointing
+  inside `fixup_tbl` — was fixed in .81.
 - `2026-07-26-no-lchown-wrapper-…` — **re-scoped upward** with an appended section: the whole chown
   family is missing from **all six** peers; two live hazards for the fix (aarch64 `54` is remapped to
   `setsockopt` by ESYSXLAT, agnos 92/93 are the GPU band); Darwin numbers must be read off ecb/ach.
-  Also folds in `sys_chdir`, which `lib/regression.cyr:658` calls and **nothing defines**.
+  Folds in `sys_chdir`, which `lib/regression.cyr:658` calls and nothing defines.
 
 ### Doc work the audit specified but did NOT apply (this is the bulk of .82)
 
@@ -75,14 +83,15 @@ Every item below has exact old → new text in the audit result; re-derive only 
 - **roadmap.md's v6.5.x table omits the `pub`/`private` opener** and two of its own pinned items.
 - **PLACEMENT-RULE VIOLATION** — roadmap.md parks DWARF debug-info and incremental compilation at
   "v7-PARKED", contradicting its own rule 200 lines above. Nothing codegen goes to 7.x.
-- **Open-issue count says 9 in three docs**; live is now **15**.
+- **Open-issue count says 9 in three docs**; live is now **12**.
 - **state.md's Version row** was rewritten for .81, but the rest of the table still narrates .72.
 - **`doc-health.md` lists SIX "open" issues that are all archived**, and two "active" proposals that
   are archived.
 - **CLAUDE.md:164 says the last security audit was "v5.0.1"** — it is
   `docs/audit/2026-06-10-deep-dive-review.md` at cycc 6.1.31. A new audit doc
-  (`docs/audit/2026-07-27-security-audit.md`, CVE-32…CVE-38) is warranted; CVE-32/33/34 shipped in
-  .81, CVE-35/36 are filed, **CVE-37/38 were REFUTED on verification and must not be re-filed.**
+  (`docs/audit/2026-07-27-security-audit.md`, CVE-32…CVE-36) is warranted as the RECORD — CVE-32/33/34
+  **and** CVE-35/36 all shipped in .81, so the doc is written after the fact, not as a work list.
+  **CVE-37/38 were REFUTED on verification and must not be re-filed.**
 - **vidya** (`~/Repos/vidya/content/cyrius/`, working tree CLEAN as of `2cf0d97`): `gotchas.cyml` stops
   at v6.4.52 — **28 releases with no entry**. `features.cyml:2680` states "f32 is type-only, no f32
   arithmetic", **actively wrong since v6.4.56**. Identifier pool documented as 256 KB in 5 places
@@ -90,10 +99,12 @@ Every item below has exact old → new text in the audit result; re-derive only 
   warning in the previous handoff is stale), and **the "8192 fn table is wrong" premise is mostly
   FALSE** — `_fnt_cap = 8192` is still the live *init* cap that grows ×2 to 32768, so a blanket
   8192→32768 sweep would *introduce* errors. Exactly one 8192 is wrong (`gotchas.cyml:4334`).
-- **Heap-map count**: live is **94**; it was 100 from 6.4.0 through 6.4.74 and dropped at **.75** (the
-  six freed fn-indexed side tables). ADR-003 / doc-health / vidya `core.cyml` say 100; vidya
-  `ecosystem.cyml` says "135 entries / 56 live", which **matches no release in history**. Note the
-  count becomes 108 once the `heapmap.sh` parser is fixed — settle that issue before stamping a number.
+- **Heap-map count**: live is now **100** (v6.4.81 fixed the parser blind spot, 94 -> 100). History:
+  100 from 6.4.0 through 6.4.74, 94 at **.75** (the six freed fn-indexed side tables), 100 again at
+  .81 — the same number by coincidence, via a different route, so do not read the old "100" in
+  ADR-003 / doc-health / vidya `core.cyml` as having been right all along. vidya `ecosystem.cyml`
+  says "135 entries / 56 live", which **matches no release in history**. The 8 fn-table lines that
+  carry no size at all are still uncounted — giving them sizes would raise the number again.
 
 ### Refactor / dead-code candidates (verified, but proposed ranges were wrong — re-check before cutting)
 

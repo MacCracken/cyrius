@@ -310,7 +310,7 @@ fn _materialize_source(source): i64 {
         # Atomic temp file: O_EXCL rejects if path already exists (TOCTOU safe)
         var pid = syscall(39);
         var tmp_sb = str_builder_new();
-        str_builder_add_cstr(tmp_sb, "/tmp/cyrius_cpp_");
+        str_builder_add_cstr(tmp_sb, _cbt_tmpfile("cpp_"));
         str_builder_add_int(tmp_sb, pid);
         var tmp = str_data(str_builder_build(tmp_sb));
         # Unlink first so O_EXCL succeeds on re-runs with same PID
@@ -380,6 +380,77 @@ fn _materialize_source(source): i64 {
 
 # Compile source.cyr to output using current compiler.
 # If _defines vec is set, prepend #define lines to a temp file first.
+# ---------------------------------------------------------------------------
+# Private per-invocation temp directory (v6.4.81 — CVE-35 / CVE-36)
+# ---------------------------------------------------------------------------
+# The CLI used 23 FIXED /tmp literals. Two classes of problem, both needing a
+# shared or multi-user box (or shared CI) to matter:
+#
+#   CVE-35 — the DEPENDENCY-INTEGRITY controls read their result out of one:
+#     `_sha256sum_file` (the digests that go into cyrius.lock) captured through
+#     "/tmp/cyrius_sha_out" and `_git_head_sha` (the force-pushed-tag refusal)
+#     through "/tmp/cyrius_githead_out", both O_CREAT|O_TRUNC with no O_EXCL and
+#     no O_NOFOLLOW. An attacker who holds the name supplies the digest, so
+#     `cyrius deps --verify` passes on a tampered dependency. The security
+#     control itself is what gets subverted.
+#
+#   CVE-36 — `cyrius run/test/fuzz/bench/soak` compiled to a fixed name and then
+#     EXECUTED it. (Narrowly: `compile()` writes <out>.tmp.<pid> and renames, and
+#     rename(2) REPLACES a planted symlink rather than following it, so the naive
+#     pre-plant does not work — but the final name is still predictable and the
+#     window before execve is still there.)
+#
+# One private directory removes the shared namespace for both. mkdir is
+# exclusive, so this FAILS CLOSED: if the directory cannot be created we stop
+# rather than quietly falling back to a shared name.
+#
+# PID-only (no uid) deliberately: /tmp is sticky, `syscall(39)` is what the
+# pre-existing O_EXCL temp at compile() already uses, and `sys_getuid` is a
+# Linux-common wrapper that would not survive this file cross-compiling to
+# PE/Mach-O (CLAUDE.md: guard Linux-syscall use in cbt/).
+var _cbt_tmpdir_p = 0;
+
+fn _cbt_tmpdir(): i64 {
+    if (_cbt_tmpdir_p != 0) { return _cbt_tmpdir_p; }
+    # mkdir is EXCLUSIVE, so every attempt below fails closed: we never reuse a
+    # directory somebody else created. The suffix loop exists only so our OWN
+    # leftovers (PID reuse on a long-lived box) self-heal instead of bricking the
+    # CLI. Deliberately no rmdir-and-retry: `sys_rmdir` does not exist on the
+    # Windows peer and this file cross-compiles to PE — CLAUDE.md's rule about
+    # Linux-syscall use in cbt/, which the first cut of this helper broke and the
+    # PE cross-compile gate caught.
+    var attempt = 0;
+    while (attempt < 16) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "/tmp/cyrius-");
+        str_builder_add_int(sb, syscall(39));
+        if (attempt > 0) {
+            str_builder_add_cstr(sb, "-");
+            str_builder_add_int(sb, attempt);
+        }
+        var d = str_data(str_builder_build(sb));
+        if (sys_mkdir(d, 448) == 0) {       # 0700
+            _cbt_tmpdir_p = d;
+            return d;
+        }
+        attempt = attempt + 1;
+    }
+    println("error: cannot create a private temp directory under /tmp (fail-closed)");
+    println("  16 candidates were taken; remove stale /tmp/cyrius-* dirs and retry.");
+    println("  cyrius will NOT fall back to a shared /tmp name (CVE-35/CVE-36).");
+    sys_exit(1);
+    return 0;
+}
+
+# "<private dir>/<name>" — the replacement for every fixed "/tmp/cyrius_*".
+fn _cbt_tmpfile(name): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _cbt_tmpdir());
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, name);
+    return str_data(str_builder_build(sb));
+}
+
 fn compile(source, output): i64 {
     var cc = current_cc();
     # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64

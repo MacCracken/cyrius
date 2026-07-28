@@ -43,12 +43,35 @@ BEGIN { n = 0; errors = 0; warnings = 0 }
     # Strip trailing array index from name for display
     gsub(/\[.*/, "", name)
 
-    # Find byte size: last [NUMBER] on line (skip name[N] patterns)
+    # Find byte size. v6.4.81 fixed TWO holes here that made this gate blind:
+    #
+    #  (a) The pattern was /\[([0-9]+)\]/ — a BARE integer only — so every map line
+    #      whose size is written with a unit suffix was skipped entirely and the
+    #      region simply did not exist as far as the auditor was concerned. That hid
+    #      20.02 MB of LIVE heap: ir_nodes [16 MB], ir_cp [4 MB], lex_pp
+    #      file-scratch [16KB] and the three PP #derive scratch regions. Worse than
+    #      a missed region: the auditor then reported a phantom ~21.4 MB free gap
+    #      above ir_live_out that is fully occupied, so a future allocation dropped
+    #      "in the free space" would land inside ir_nodes and PASS.
+    #
+    #  (b) It took the LAST bracketed number on the line, so prose after the size
+    #      won. The fn_param_struct_mask line ends (v6.3.36 issue [5]: bit N = ...
+    #      and was parsed as FIVE BYTES — off by 13,107x. The same trap bit the
+    #      v6.4.81 include_fname correction: the new map line carried the old
+    #      0x190500 [256] in an explanatory parenthetical and the region was
+    #      re-parsed as 256 B. Taking the FIRST bracketed size after the name fixes
+    #      the class; keep prose on continuation lines regardless.
+    #
+    # Same parser-hole class as the v5.5.40 bug recorded in the header of this file
+    # — a heap auditor that cannot see a region cannot guard it.
+    # NOTE: this awk program is inside a SINGLE-QUOTED shell string. No apostrophes.
     size = 0
     line = $0
-    while (match(line, /\[([0-9]+)\]/, arr)) {
+    if (match(line, /\[([0-9]+)[ ]?(KB|MB|K|M)?\]/, arr)) {
         size = arr[1] + 0
-        line = substr(line, RSTART + RLENGTH)
+        unit = arr[2]
+        if (unit == "KB" || unit == "K") { size = size * 1024 }
+        else if (unit == "MB" || unit == "M") { size = size * 1048576 }
     }
 
     if (name != "" && size > 0) {

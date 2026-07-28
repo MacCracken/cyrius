@@ -4,7 +4,7 @@
 # broadcast; value/pointer lane-extract round-trips.
 #
 # Runs on Linux + ecb (macOS) + pi (aarch64) — all define CYRIUS_HAS_VAL_SIMD_PARAMS.
-# SKIPPED on cass (Win64 PE): value-form f64v2/f64v4 SIMD is non-PE by design (Win64's
+# RUNS on cass: value-form f64v2/f64v4 SIMD reached Win64 PE at v6.4.31 (Win64's
 # vector-return ABI differs — lib/simd.cyr gates the value-form fns on
 # CYRIUS_HAS_VAL_SIMD_PARAMS, undefined on main_win.cyr). PE value-form SIMD is a
 # pre-existing, separately-tracked limitation, out of scope for this constructor slot.

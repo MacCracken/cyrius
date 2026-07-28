@@ -471,7 +471,16 @@ fn _macho_derive_serialize_gate(): i64 {
 fn _pe_exit_gate(): i64 {
     var label = "PE syscall(60,42) → exit 42 on cass (pin v5.6.36)";
     var cc_pe = _root_path("build/cycc_win_cross");
-    if (file_exists(cc_pe) != 1) {
+    # v6.4.81: was `file_exists(cc_pe) != 1` — an EXISTENCE-only trigger, so once the
+    # artifact was built it was NEVER rebuilt. The checked-in copy was stamped
+    # `cycc 5.11.69` (2026-05-19) and both PE gates ran it for the WHOLE v6.x line:
+    # a green checkmark for a compiler nobody ships, which is the exact macOS-rot
+    # shape CLAUDE.md's Cross-OS principle exists to stop. Nothing else in the repo
+    # refreshes it either — it is not in cyrius.cyml's `cross_bins`, so `pulsar` and
+    # install never touch it. Now ALWAYS rebuilt from the current src/main_win.cyr
+    # through the current CC_PATH; an unconditional rebuild is cheap next to the SSH
+    # round-trip that follows, and it cannot go stale again.
+    if (1 == 1) {
         # Build on demand from src/main_win.cyr.
         var main_win = _root_path("src/main_win.cyr");
         if (file_exists(main_win) == 1) {
@@ -684,7 +693,16 @@ fn _pe_exit_gate(): i64 {
 fn _pe_path_apis_gate(): i64 {
     var label = "PE kernel32 path APIs on cass (CreateFileW + mkdir + unlink; v5.11.23)";
     var cc_pe = _root_path("build/cycc_win_cross");
-    if (file_exists(cc_pe) != 1) {
+    # v6.4.81: was `file_exists(cc_pe) != 1` — an EXISTENCE-only trigger, so once the
+    # artifact was built it was NEVER rebuilt. The checked-in copy was stamped
+    # `cycc 5.11.69` (2026-05-19) and both PE gates ran it for the WHOLE v6.x line:
+    # a green checkmark for a compiler nobody ships, which is the exact macOS-rot
+    # shape CLAUDE.md's Cross-OS principle exists to stop. Nothing else in the repo
+    # refreshes it either — it is not in cyrius.cyml's `cross_bins`, so `pulsar` and
+    # install never touch it. Now ALWAYS rebuilt from the current src/main_win.cyr
+    # through the current CC_PATH; an unconditional rebuild is cheap next to the SSH
+    # round-trip that follows, and it cannot go stale again.
+    if (1 == 1) {
         var main_win = _root_path("src/main_win.cyr");
         if (file_exists(main_win) == 1) {
             if (file_exists(CC_PATH) == 1) {

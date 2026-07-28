@@ -5,7 +5,8 @@
 # work on aarch64/macOS even though the packed ARITHMETIC (add/sub/mul) is x86-only
 # until Phase 5. Gives the release gate's cross-OS LIBTEST real-hardware coverage of
 # the integer-vector type + return/receive ABI on ecb (macOS) + pi (aarch64).
-# Gated on CYRIUS_HAS_VAL_SIMD_PARAMS (value-form SIMD is non-PE) → skips cass, like
+# Gated on CYRIUS_HAS_VAL_SIMD_PARAMS — defined on every target since v6.4.31/.32, so
+# this RUNS on cass. (Older wording claimed a cass skip; stale since .31.) Cf.
 # vr01_f32v4_ctor. Verified on x86 and aarch64 via qemu-aarch64.
 include "lib/assert.cyr"
 include "lib/simd.cyr"

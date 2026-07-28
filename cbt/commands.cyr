@@ -147,7 +147,7 @@ fn cmd_run(source): i64 {
         sys_write(STDOUT_FD, "\n", 1);
         return 0;
     }
-    var tmpbin = "/tmp/cyrius_run";
+    var tmpbin = _cbt_tmpfile("run");
     var r = compile(source, tmpbin);
     if (r != 0) {
         _err("compile failed");
@@ -161,7 +161,7 @@ fn cmd_run(source): i64 {
 
 fn cmd_test(source): i64 {
     _total = _total + 1;
-    var tmpbin = "/tmp/cyrius_test_bin";
+    var tmpbin = _cbt_tmpfile("test_bin");
     var r = compile(source, tmpbin);
     if (r != 0) {
         sys_write(STDERR_FD, "  FAIL: ", 8);
@@ -247,7 +247,7 @@ fn cmd_fuzz(): i64 {
             if (memeq(nd + nl - 5, ".fcyr", 5) == 1) {
                 found = 1;
                 var path = make_path("fuzz", nd);
-                var tmpbin = "/tmp/cyrius_fuzz";
+                var tmpbin = _cbt_tmpfile("fuzz");
                 sys_write(STDOUT_FD, "  ", 2);
                 sys_write(STDOUT_FD, nd, nl);
                 var pad = 26 - nl;
@@ -288,7 +288,7 @@ fn cmd_fuzz(): i64 {
 # Run one .bcyr file: compile, execute, propagate exit code.
 # Returns 0 on success, 1 on compile error, or the binary's exit code.
 fn _bench_run_one(path): i64 {
-    var tmpbin = "/tmp/cyrius_bench";
+    var tmpbin = _cbt_tmpfile("bench");
     var r = compile(path, tmpbin);
     if (r != 0) {
         sys_write(STDERR_FD, "FAIL: compile error\n", 20);
@@ -433,7 +433,7 @@ fn cmd_check(source, with_deps): i64 {
     # error message. cycc never actually ran in that path.
     var ck_pid = syscall(39);
     var ck_sb = str_builder_new();
-    str_builder_add_cstr(ck_sb, "/tmp/cyrius_check_");
+    str_builder_add_cstr(ck_sb, _cbt_tmpfile("check_"));
     str_builder_add_int(ck_sb, ck_pid);
     var ck_out = str_data(str_builder_build(ck_sb));
     var r = compile(actual, ck_out);
@@ -1294,8 +1294,8 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     # stats lines and printed "ok (all caps under 85%)". See the placebo guard at
     # the bottom of this fn. CHANGELOG [6.4.73].
     var cap_source = _materialize_source(source);
-    var tmpout = "/tmp/cyrius_cap_out";
-    var tmperr = "/tmp/cyrius_cap_err";
+    var tmpout = _cbt_tmpfile("cap_out");
+    var tmperr = _cbt_tmpfile("cap_err");
     var pid = sys_fork();
     if (pid == 0) {
         var sfd = sys_open(cap_source, O_RDONLY, 0);
@@ -1515,8 +1515,8 @@ fn cmd_soak(iters): i64 {
         var iter_ok = 1;
 
         # 1. Self-hosting check
-        var cc5_t = "/tmp/cyrius_soak_a";
-        var cc4_t = "/tmp/cyrius_soak_b";
+        var cc5_t = _cbt_tmpfile("soak_a");
+        var cc4_t = _cbt_tmpfile("soak_b");
         if (compile("src/main.cyr", cc5_t) != 0) { iter_ok = 0; }
         if (iter_ok == 1) {
             # Run cc5_t to compile itself
@@ -1556,7 +1556,7 @@ fn cmd_soak(iters): i64 {
                 if (tl > 5) {
                     if (memeq(tn + tl - 5, ".tcyr", 5) == 1) {
                         var tp = make_path("tests/tcyr", tn);
-                        var tmpbin = "/tmp/cyrius_soak_t";
+                        var tmpbin = _cbt_tmpfile("soak_t");
                         if (compile(tp, tmpbin) == 0) {
                             var ec = run_binary(tmpbin);
                             sys_unlink(tmpbin);
@@ -1629,7 +1629,7 @@ fn cmd_soak(iters): i64 {
                         }
                         scyr_found = 1;
                         var spath = make_path(sdir, snd);
-                        var stmpbin = "/tmp/cyrius_scyr";
+                        var stmpbin = _cbt_tmpfile("scyr");
                         sys_write(STDOUT_FD, "  ", 2);
                         sys_write(STDOUT_FD, snd, snl);
                         var spad = 30 - snl;
@@ -1696,7 +1696,7 @@ fn cmd_smoke(): i64 {
                     if (memeq(nd + nl - 6, ".smcyr", 6) == 1) {
                         found = 1;
                         var path = make_path(sdir, nd);
-                        var tmpbin = "/tmp/cyrius_smoke";
+                        var tmpbin = _cbt_tmpfile("smoke");
                         sys_write(STDOUT_FD, "  ", 2);
                         sys_write(STDOUT_FD, nd, nl);
                         var pad = 30 - nl;

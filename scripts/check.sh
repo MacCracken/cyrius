@@ -64,3 +64,10 @@ sh "$ROOT/scripts/qemu-boot-gate.sh"
 # is absent. The sign path is lib/CLI-only (cycc byte-identical), so this is the
 # behavioral gate for the signer.
 sh "$ROOT/scripts/sign-efi-gate.sh"
+
+# v6.4.81: value-form SIMD must exist on every EMIT path, not just the native
+# forks. main.cyr's PE/Mach-O CROSS arms were missing CYRIUS_HAS_VAL_SIMD_PARAMS
+# since v6.4.31, so the same source built differently depending on WHERE it was
+# built. Host-side by necessity: a tcyr runs natively on each host and therefore
+# exercises main_win.cyr (always correct), never the cross path.
+sh "$ROOT/tests/valform_simd_crosstarget.sh"

@@ -6,7 +6,8 @@
 # gate's cross-OS LIBTEST real-hardware coverage of the f32v8 type + 32-byte return/
 # receive ABI on ecb (macOS) + pi (aarch64). Uses raw i32 bit patterns (not f32_from) so
 # it depends on nothing but the construct/extract round-trip. Gated on
-# CYRIUS_HAS_VAL_SIMD_PARAMS (value-form SIMD is non-PE) → skips cass, like vr01_f32v4_ctor.
+# CYRIUS_HAS_VAL_SIMD_PARAMS — defined on every target since v6.4.31/.32, so this RUNS
+# on cass. (Older wording claimed a cass skip; that was never re-checked after .31.)
 include "lib/assert.cyr"
 include "lib/simd.cyr"
 include "lib/syscalls.cyr"

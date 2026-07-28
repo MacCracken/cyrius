@@ -1247,7 +1247,8 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         str_builder_add_cstr(clone_sb, "main");
                     }
                 } else {
-                    str_builder_add_cstr(clone_sb, "/tmp/cyrius_deps/");
+                    str_builder_add_cstr(clone_sb, _cbt_tmpfile("deps"));
+                    str_builder_add_cstr(clone_sb, "/");
                     str_builder_add_cstr(clone_sb, dep_name);
                     if (dep_tag != 0) {
                         str_builder_add_cstr(clone_sb, "_");
@@ -1266,7 +1267,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     str_builder_add_cstr(pdir2_sb, dep_name);
                     sys_mkdir(str_data(str_builder_build(pdir2_sb)), 0x1ED);
                 } else {
-                    sys_mkdir("/tmp/cyrius_deps", 0x1ED);
+                    sys_mkdir(_cbt_tmpfile("deps"), 0x1ED);
                 }
                 if (is_dir(str_from(clone_dir)) == 0) {
                     var git_ok = 1;
@@ -2021,7 +2022,7 @@ fn _sha256sum_file(path): i64 {
     # string was the broad CVE-01-class hole the deep-dive flagged. `/usr/bin/env`
     # does the PATH lookup for sha256sum with the real environ. (Windows already
     # uses the safe `exec_capture` argv path above.)
-    var tmpf = "/tmp/cyrius_sha_out";
+    var tmpf = _cbt_tmpfile("sha_out");
     var pid = sys_fork();
     if (pid == 0) {
         var ofd = sys_open(tmpf, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
@@ -2062,7 +2063,7 @@ fn _cstr_eq(a, b): i64 {
 # which already uses fork/execve); the git-dep flow does not run on native
 # Windows. Mirrors `_sha256sum_file`'s capture-via-tmpfile pattern.
 fn _git_head_sha(clone_dir): i64 {
-    var tmpf = "/tmp/cyrius_githead_out";
+    var tmpf = _cbt_tmpfile("githead_out");
     var pid = sys_fork();
     if (pid == 0) {
         var ofd = sys_open(tmpf, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);

@@ -441,7 +441,7 @@ name; the parser's overload dispatch routes `&IDENT` call sites to the
 ```
 include "lib/simd.cyr"
 
-# Value form — pass the vectors themselves (non-PE targets)
+# Value form — pass the vectors themselves (all targets)
 var a: f32v4 = f32v4_make(f32_from(1), f32_from(2), f32_from(3), f32_from(4));
 var b: f32v4 = f32v4_splat(f32_from(10));
 var r: f32v4 = f32v4_add(a, b);          # {11, 12, 13, 14}
@@ -463,7 +463,7 @@ var s: i32v4 = i32v4_add(p, q);          # {11, 12, 13, 14}
 
 Constructors (`*_make`, `*_splat`), lane extractors (`*_lane0` … per lane),
 and the arithmetic wrappers exist for every vector type. Value-form
-wrappers are gated on `CYRIUS_HAS_VAL_SIMD_PARAMS` (defined by every non-PE
+wrappers are gated on `CYRIUS_HAS_VAL_SIMD_PARAMS` (defined by every
 `main_*.cyr`); on Win64 PE only the pointer form is present, but the
 overload dispatch still routes `f32v4_add(&a, &b)` transparently.
 

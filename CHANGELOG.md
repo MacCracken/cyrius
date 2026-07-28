@@ -102,12 +102,66 @@ v6.4.72, eight releases behind — which is its mutation proof in the natural di
 fails loudly if an anchor disappears rather than passing on a missing one, the placebo shape
 this repo has been bitten by at .70 and .74.
 
+### Fixed — four more the audit found, fixed rather than filed
+
+These were briefly written up as issues before being fixed in this same release. Recording that
+because the instinct was wrong: **an audit's output is fixes, not a longer backlog.** Nothing in the
+closeout procedure says "document it and move on".
+
+- **Cross-compiling to PE or Mach-O silently dropped value-form SIMD.** All six *native* forks
+  predefine `CYRIUS_HAS_VAL_SIMD_PARAMS` (`main_win.cyr:459` since v6.4.31, `main_cx.cyr:129` since
+  .32, `main_x86_macho.cyr`, `main_aarch64*.cyr`), but `src/main.cyr`'s PE and Mach-O **cross** arms
+  predefined only the target macro — so `lib/simd.cyr`'s whole value-form block vanished and the same
+  source produced two different programs depending on where it was built. Half-shipped for the entire
+  minor. New gate `tests/valform_simd_crosstarget.sh` checks all four emit paths **on the build host**,
+  because a tcyr runs natively on each host and therefore exercises `main_win.cyr` — the fork that was
+  always right — and would have stayed green through the whole bug. Mutation-proven: reverting the two
+  predefines fails exactly the `pe` and `macho` legs. Eleven "non-PE by design" claims in `lib/simd.cyr`,
+  the guide, and four `vr01_*` headers are corrected — including headers that wrongly told a reader
+  those tests SKIP on cass, when they run.
+- **The two Windows PE gates had been validating a `cycc 5.11.69` binary since 2026-05-19** — all of
+  v6.0.x through v6.4.80. Both used an existence-only rebuild trigger on `build/cycc_win_cross`, and
+  nothing else in the repo refreshes that artifact (it is not in `cyrius.cyml`'s `cross_bins`, so
+  `pulsar` and install never touch it). A green checkmark for a compiler nobody ships — the same shape
+  as the macOS rot. Now rebuilt unconditionally from the current `src/main_win.cyr`; the stale artifact
+  is deleted.
+- **`tests/heapmap.sh` was blind to 20.02 MB of live heap.** Its size pattern accepted a bare `[N]`
+  only, so every unit-suffixed entry was skipped entirely — including `ir_nodes [16 MB]` and
+  `ir_cp [4 MB]` — and the auditor reported a phantom ~21.4 MB free gap above `ir_live_out` that is
+  fully occupied. It also took the *last* bracketed number on a line, parsing `fn_param_struct_mask`
+  as **5 bytes** (off by 13,107x) from a trailing `issue [5]`. Both fixed; region count 94 -> **100**.
+  Mutation-proven: a probe region planted inside `ir_nodes` now turns the gate RED (exit 1) where it
+  previously passed.
+- **CVE-35/36 — 23 fixed `/tmp` literals in `cbt/`.** The dependency-integrity controls read their
+  results out of predictable shared paths (`_sha256sum_file`, which produces the `cyrius.lock`
+  digests, and `_git_head_sha`, which gates the force-pushed-tag refusal), and `cyrius
+  run/test/fuzz/bench/soak` compiled to a fixed name and then executed it. All 23 now route through
+  one private per-invocation directory (`/tmp/cyrius-<pid>`, mode 0700) that fails closed rather than
+  falling back to a shared name. Verified: `cyrius run` -> exit 42, directory is `drwx------`, and the
+  old fixed names are gone.
+
+**One self-inflicted regression worth recording**: the first cut of that helper called `sys_rmdir`,
+which does not exist on the Windows peer, and broke the `cbt/cyrius.cyr` PE cross-compile — exactly
+the CLAUDE.md rule about Linux-syscall use in `cbt/`. The PE cross-compile gate caught it. Replaced
+with a portable exclusive-suffix loop that is still fail-closed but self-heals against our own stale
+directories.
+
+**Deliberately still open**: the TS frontend arena overlaps `tok_types` entirely plus 1.6 MB of
+`tok_values` (10,027,008 B), safe today only because `--lex-ts`/`--parse-ts`/`--emit-js` exit before
+`LEX`. Relocating needs ~14.2 MB contiguous, which does not exist below the arena end — it is a
+brk/heap-**layout** change requiring the two-step bootstrap, and bundling that into the tail of an
+already-gated release is how the seed gets broken. What *could* be fixed safely was: the heap map's
+claimed "13.3 MB TS frontend reservation" does not exist and is corrected in all three comment blocks,
+and the stale `0x1D0B000` base (which lands inside `fixup_tbl`) is corrected in `src/main.cyr` and
+`src/frontend/ts/lex.cyr`. Tracked in `issues/2026-07-27-ts-arena-overlaps-token-arrays.md`.
+
+
 ### Verification
 
 Release gate **GREEN**, all five steps. Self-host fixpoint byte-identical · seed-derive
 (`seed→cybs→cycc`) OK · check.sh **150/0** · **cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on all four
 hosts — ecb (macOS-arm64), ach (Intel-Mac), cass (Windows/PE), pi (aarch64) — on REAL hardware** ·
-self_compile **626 ms** (inside the historical 614–634 band).
+self_compile **631 ms** (inside the historical 614–634 band; the 626 ms reading was the pre-fix run).
 
 Additionally, **251/251 tcyr verified by a per-file compile-and-exit-code loop**, not check.sh's grep
 summary — which CLAUDE.md notes can mask segfaults and non-zero exits. cycc 1,108,272 →

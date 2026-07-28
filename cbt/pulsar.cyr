@@ -60,8 +60,8 @@ fn cmd_pulsar(): i64 {
 
     # Step 1: rebuild cycc
     _status("  cycc...");
-    var cc5_a = "/tmp/cyrius_pulsar_a";
-    var cc5_b = "/tmp/cyrius_pulsar_b";
+    var cc5_a = _cbt_tmpfile("pulsar_a");
+    var cc5_b = _cbt_tmpfile("pulsar_b");
     if (compile("src/main.cyr", cc5_a) != 0) {
         _err("cycc compile failed");
         return 1;
@@ -87,7 +87,7 @@ fn cmd_pulsar(): i64 {
     var sz_b = _file_size(cc5_b);
     if (sz_a != sz_b || sz_a <= 0) {
         # Try three-step
-        var cc5_c = "/tmp/cyrius_pulsar_c";
+        var cc5_c = _cbt_tmpfile("pulsar_c");
         var pid3 = sys_fork();
         if (pid3 == 0) {
             var sfd = sys_open("src/main.cyr", O_RDONLY, 0);
