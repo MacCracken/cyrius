@@ -1,0 +1,30 @@
+# Repro: `X(f(), ...)` silently dispatches to `X_int`.
+#
+# A bare function-call result in the FIRST argument position selects the `_int`
+# overload slot. The same value held in a variable does not. No diagnostic at
+# any verbosity — the wrong function body simply runs.
+#
+#   $ cyrius build 2026-07-29-int-overload-call-result-misdispatch.cyr r && ./r; echo $?
+#   compile ... OK
+#   1                      # <- expected 0
+#
+# This is how agnosai's tools_agnos suite miscompiled: a test helper
+# `_t_add(input, key, value)` ran `_t_add_int`'s body, so every string parameter
+# was stored as a JSON integer holding the string's own pointer. It surfaced
+# three layers away as "missing required parameter".
+
+fn make(): i64 { return 111; }
+
+fn take(a): i64 { return 1; }
+fn take_int(a): i64 { return 2; }
+
+fn main(): i64 {
+    var v = make();
+    var via_var = take(v);        # 1 — correct
+    var via_call = take(make());  # 2 — WRONG, ran take_int's body
+
+    if (via_var == 1 && via_call == 1) { return 0; }
+    return 1;
+}
+var r = main();
+syscall(60, r);
