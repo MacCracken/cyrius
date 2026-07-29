@@ -84,7 +84,31 @@ EOF
 ( cd "$T" && cat plain.cyr | "$CC" >/dev/null 2>err3.txt ) || true
 grep -q "is private to its file" "$T/err3.txt" 2>/dev/null && { echo "  FAIL: visibility-private — warned on a file with no 'private' declaration"; fail=1; }
 
+# ── Phase 3: it is a HARD ERROR, and no binary may be emitted ────────────────────
+( cd "$T" && cat m.cyr | "$CC" > out.bin 2>/dev/null ) || true
+[ -s "$T/out.bin" ] && { echo "  FAIL: visibility-private — a violating program still produced a binary"; fail=1; }
+grep -q "^error:" "$T/err.txt" 2>/dev/null || { echo "  FAIL: visibility-private — violation reported as a warning, not an error"; fail=1; }
+
+# Multi-error: every violation in ONE run (the v6.4.62 contract). A fail-fast exit
+# would make adopting `private` on a big file an N-compiles-to-find-N-callers job.
+[ "$W" -ge 2 ] || { echo "  FAIL: visibility-private — not reporting all violations in one run"; fail=1; }
+
+# The real adoption: lib/regex.cyr is private-by-default with a 9-fn public surface.
+# This asserts the shipped tree actually enforces, not just the synthetic fixture.
+cat > "$T/rx.cyr" <<'EOF'
+include "lib/regex.cyr"
+fn main(): i64 { return _re_alloc_class(); }
+EOF
+( cd "$ROOT" && cat "$T/rx.cyr" | "$CC" >/dev/null 2>"$T/rx.err" ) || true
+grep -q "'_re_alloc_class' is private to its file" "$T/rx.err" 2>/dev/null     || { echo "  FAIL: visibility-private — lib/regex.cyr adoption is not enforcing"; fail=1; }
+cat > "$T/rx2.cyr" <<'EOF'
+include "lib/regex.cyr"
+fn main(): i64 { return regex_compile(0, 0); }
+EOF
+( cd "$ROOT" && cat "$T/rx2.cyr" | "$CC" >/dev/null 2>"$T/rx2.err" ) || true
+grep -q "is private to its file" "$T/rx2.err" 2>/dev/null     && { echo "  FAIL: visibility-private — regex.cyr's PUBLIC surface was rejected"; fail=1; }
+
 if [ "$fail" = "0" ]; then
-    echo "  PASS: visibility-private — file-scoped private enforced on ordinary + tail + operator paths; 'public' re-exposes; default inert"
+    echo "  PASS: visibility-private — hard-error on ordinary/tail/operator paths, no binary emitted, multi-error; 'public' re-exposes; lib/regex.cyr adoption live; default inert"
 fi
 exit $fail

@@ -288,7 +288,12 @@ fn _scan_derive_struct(filebuf, filelen, module_off, module_len,
     return p;
 }
 
+var _asf_file_private = 0;   # v6.5.0: this file opened with a top-level `private`
+var _asf_saw_public = 0;     # v6.5.0: a `public` moniker is pending on the next fn
+
 fn _scan_file(filebuf, filelen, module_off, module_len) {
+    _asf_file_private = 0;
+    _asf_saw_public = 0;
     var pos = 0;
     var depth = 0;
     var pending_accessors = 0;
@@ -362,6 +367,34 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                 pending_serialize = 0;
             }
             if (p + 3 <= eol) {
+                # v6.5.0 — the snapshot is now VISIBILITY-DERIVED, not convention-
+                # derived. A `public` moniker prefixes the `fn` keyword, so step over
+                # it and treat the line as a fn definition; and in a file that opened
+                # with a top-level `private`, a fn WITHOUT that moniker is not public
+                # surface at all and is skipped below.
+                #
+                # Without this the tool reads `public fn foo()` as no longer matching
+                # `^fn `, i.e. as a REMOVED public fn — it reported 9 false BREAKING
+                # removals the moment lib/regex.cyr adopted the feature.
+                if (memeq(filebuf + p, "public ", 7) == 1) { p = p + 7; _asf_saw_public = 1; }
+                if (memeq(filebuf + p, "private", 7) == 1) {
+                    if (eol - p <= 8) { _asf_file_private = 1; }
+                }
+                # In a private-by-default file, a fn WITHOUT the `public` moniker is
+                # not API surface. Suppress it by nudging `p` so the `fn ` match below
+                # fails — deliberately NOT by `continue`, which would skip the
+                # brace-depth scan at the end of this loop: an unemitted `fn ... {`
+                # would then never increment `depth`, its closing `}` would drive
+                # depth to -1, and EVERY later fn in the file would fall outside the
+                # `depth == 0` guard. That is exactly what happened on the first cut —
+                # lib/regex.cyr emitted only its first public fn and the tool reported
+                # the other 8 as BREAKING removals.
+                if (_asf_file_private == 1) {
+                    if (_asf_saw_public == 0) {
+                        if (memeq(filebuf + p, "fn ", 3) == 1) { p = p + 1; }
+                    }
+                }
+                _asf_saw_public = 0;
                 if (memeq(filebuf + p, "fn ", 3) == 1) {
                     var np = p + 3;
                     while (np < eol) {

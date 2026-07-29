@@ -1072,12 +1072,39 @@ fn _vis_check(S, fi, noff): i64 {
     var caller = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
     if (caller == 0) { return 0; }
     if (caller == callee) { return 0; }          # same file — allowed
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    # v6.5.0 Phase 3 — HARD ERROR by default, via the v6.3.2 undefined-fn playbook:
+    # measure the blast radius in warn mode first, then flip default-on rather than
+    # sprinkling opt-outs. Measured on the tree with lib/regex.cyr adopted (41 private
+    # / 9 public): ZERO violations across tests/tcyr, programs, benches and fuzz.
+    #
+    # Routed through `_had_error` rather than SYS_EXIT so the compiler reports EVERY
+    # violation in one run and emits no binary — the v6.4.62 multi-error contract.
+    # A fail-fast exit here would make adopting `private` on a large file an
+    # N-compile-cycles-to-find-N-callers exercise.
+    syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": '", 3);
     PRSTR(S + 0x60000 + noff);
     syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
+    _had_error = 1;
     return 1;
+}
+
+# v6.5.0 Phase 3 — one-shot notice that visibility enforcement is DEGRADED.
+#
+# `private` is keyed on the file map, which caps at 1024 entries. Past that cap
+# FM_FILEID cannot identify a file, the stamp records "unrecorded", and the private
+# bit is therefore never set — so enforcement silently becomes a no-op for every file
+# beyond the cap. Silently is the problem: a consumer who adopts `private` and grows
+# past 1024 files would believe they still had a boundary. Fail-open is the right
+# CODE behaviour (we cannot prove a violation we cannot attribute) but it must be
+# announced, which is what this does.
+var _vis_degraded_said = 0;
+fn _vis_degraded_note(): i64 {
+    if (_vis_degraded_said != 0) { return 0; }
+    _vis_degraded_said = 1;
+    syscall(SYS_WRITE, 2, "warning: file map full -- `private` enforcement is DISABLED past the 1024-file cap\n", 82);
+    return 0;
 }
 
 fn PARSE_FNCALL(S, noff): i64 {
@@ -2726,6 +2753,9 @@ fn PARSE_FN_DEF(S): i64 {
     if (_pub_pending == 0) {
         if (_PRIV_FILE(_vis_fid) == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
     }
+    # An unattributable fn (FM_FILEID -1) can never be marked private, so enforcement
+    # would quietly stop applying. Say so once rather than degrade in silence.
+    if (_vis_fid < 0) { _vis_degraded_note(); }
     _pub_pending = 0;
     if (_fileid_dump_arm() != 0) { _fileid_dump_note(S, fi, noff); }
     # v5.11.62: track the current fn for per-fn array-byte attribution.
