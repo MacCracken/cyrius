@@ -1427,6 +1427,27 @@ fn _GNUHASH(np): i64 {
     return h;
 }
 
+# v6.5.0 — is this fn part of the exported dynamic-symbol surface?
+#
+# ONE predicate, used by all THREE export walks in EMITELF_SHARED below (the .dynsym
+# size count, the .dynsym emit, and the GNU hash build). They MUST agree exactly: if
+# the count and the emit disagree by even one symbol the section is malformed. Three
+# hand-copied `fo >= 0 && load8(np) != 95` conditions invite exactly that drift.
+#
+# Two filters:
+#   - `_`-prefix — the pre-existing convention (private by convention, not exported).
+#   - fn_flags bit 6 — file-`private` (v6.5.0). A private fn cannot be called from
+#     another file at compile time, so publishing it in .dynsym would hand a DYNAMIC
+#     consumer a door the language just closed. Making the linkage surface follow the
+#     source surface is the point; otherwise `private` is only a comment.
+fn _fn_exported(S, fi): i64 {
+    if (L64(_fnt_offsets + fi * 8) < 0) { return 0; }
+    var np = S + 0x60000 + L64(_fnt_names + fi * 8);
+    if (load8(np) == 95) { return 0; }
+    if ((GFLG(S, fi) & 64) != 0) { return 0; }
+    return 1;
+}
+
 fn EMITELF_SHARED(S): i64 {
     var cp = GCP(S);
     var totvar = L64(S + 0x18FCD0);
@@ -1454,7 +1475,7 @@ fn EMITELF_SHARED(S): i64 {
         var fo = L64(_fnt_offsets + fi * 8);
         var noff = L64(_fnt_names + fi * 8);
         var np = S + 0x60000 + noff;
-        if (fo >= 0 && load8(np) != 95) {
+        if (_fn_exported(S, fi) == 1) {
             # Defined, not underscore-prefixed.
             var nl = 0;
             while (load8(np + nl) != 0) { nl = nl + 1; }
@@ -1561,7 +1582,7 @@ fn EMITELF_SHARED(S): i64 {
         var fo2 = L64(_fnt_offsets + fi * 8);
         var noff2 = L64(_fnt_names + fi * 8);
         var np2 = S + 0x60000 + noff2;
-        if (fo2 >= 0 && load8(np2) != 95) {
+        if (_fn_exported(S, fi) == 1) {
             # st_name = str_cursor (offset into .dynstr)
             store8(sym_p + 0, str_cursor & 0xFF);
             store8(sym_p + 1, (str_cursor >> 8) & 0xFF);
@@ -1620,7 +1641,7 @@ fn EMITELF_SHARED(S): i64 {
         var fo3 = L64(_fnt_offsets + fi * 8);
         var noff3 = L64(_fnt_names + fi * 8);
         var np3 = S + 0x60000 + noff3;
-        if (fo3 >= 0 && load8(np3) != 95) {
+        if (_fn_exported(S, fi) == 1) {
             var hh = _GNUHASH(np3);
             # Bloom: bit (h % 64) and bit ((h >> bloom_shift) % 64).
             bloom = bloom | (1 << (hh % 64));

@@ -110,6 +110,31 @@ cat vw.cyr | "$CC" >/dev/null 2>vw.txt || true
 grep -q "'cfg_secret' is private to its file" vw.txt 2>/dev/null     || { echo "  FAIL: visibility-private — cross-file WRITE to a private global not caught"; fail=1; }
 cd "$ROOT"
 
+# ── private must not leak into the DYNAMIC SYMBOL TABLE either ───────────────────
+# A private fn cannot be called from another file at compile time, so publishing it
+# in .dynsym would hand a dynamic consumer a door the language just closed.
+# Asserted on .dynstr contents because a `shared;` object has no section headers —
+# readelf --dyn-syms cannot see them, only the PT_DYNAMIC STRTAB can.
+mkdir -p "$T/so/lib" && cd "$T/so"
+cat > lib/s.cyr <<'EOF'
+private
+fn so_hidden_sym(): i64 { return 1; }
+public fn so_open_sym(): i64 { return so_hidden_sym(); }
+EOF
+cat > m.cyr <<'EOF'
+shared;
+include "lib/s.cyr"
+fn main(): i64 { return so_open_sym(); }
+EOF
+cat m.cyr | "$CC" > t.so 2>/dev/null || true
+if [ -s t.so ]; then
+    grep -q "so_hidden_sym" t.so 2>/dev/null && { echo "  FAIL: visibility-private — a private fn was exported into .dynstr"; fail=1; }
+    grep -q "so_open_sym" t.so 2>/dev/null || { echo "  FAIL: visibility-private — the PUBLIC fn was dropped from .dynstr"; fail=1; }
+else
+    echo "  note: shared-object emit produced nothing; export filter unchecked"
+fi
+cd "$ROOT"
+
 # ── the default must stay completely inert ───────────────────────────────────────
 cat > "$T/plain.cyr" <<'EOF'
 fn plain_helper(): i64 { return 1; }
@@ -143,6 +168,6 @@ EOF
 grep -q "is private to its file" "$T/rx2.err" 2>/dev/null     && { echo "  FAIL: visibility-private — regex.cyr's PUBLIC surface was rejected"; fail=1; }
 
 if [ "$fail" = "0" ]; then
-    echo "  PASS: visibility-private — fns (ordinary/tail/operator) + global vars (read/write) hard-errored cross-file; 'public' re-exposes both; lib/regex.cyr adoption live; default inert"
+    echo "  PASS: visibility-private — fns (ordinary/tail/operator) + global vars (read/write) hard-errored cross-file; 'public' re-exposes both; lib/regex.cyr adoption live; private excluded from .dynstr; default inert"
 fi
 exit $fail
