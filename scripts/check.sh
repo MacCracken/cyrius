@@ -85,3 +85,12 @@ sh "$ROOT/tests/fileid_substrate.sh"
 # declared fixed three times before the fourth occurrence turned up in a path nobody
 # had enumerated.
 sh "$ROOT/tests/visibility_private.sh"
+
+# v6.5.1: overload-suffix dispatch must be ARITY-AWARE and POSITION-CONSISTENT.
+# Asserts across assign / return-tail / nested-arg because the two defects it covers
+# were *position-specific* — the redirect ignored the target's arity on the assign and
+# nested paths, and PARSE_RETURN's tail path skipped the dispatch entirely, so the same
+# call spelled two ways ran two different functions. The 253-file corpus changes 0 bytes
+# under the arity fix, i.e. it had ZERO coverage of the shape, which is why this must be
+# a gate and not a .tcyr.
+sh "$ROOT/tests/overload_arity_dispatch.sh"

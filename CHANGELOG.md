@@ -6,6 +6,104 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.1] — 2026-07-29
+
+**The overload-suffix dispatch, fixed compiler-side — and the stdlib folds that
+exposed it.** Two stdlibs had to rename their own functions to escape a cyrius
+codegen defect; one of those renames was a *breaking public API change*. This
+release fixes the defect at the source, which is where it always belonged: when
+the compiler cannot compile valid cyrius, the compiler is the bug.
+
+### Fixed — overload-suffix dispatch was arity-blind and position-inconsistent
+
+`_str` / `_int` / `_cstr` are reserved dispatch suffixes: the compiler rewrites
+`X(a, ...)` into `X_str` / `X_int` / `X_cstr` when argument 1 has the matching type
+and the sibling exists (registered bidirectionally at `REGFN`, v5.10.25). Two
+independent defects had ridden along since:
+
+**1. The redirect never checked the target's arity.** It decided on argument 1's
+type alone, so a 1-argument call could be rewritten into a call to a 2-argument
+function — surplus parameter bound to whatever occupied the register — reported as
+a *warning*, with the binary emitted anyway. Now gated by `_OV_ARITY_OK`, which
+compares the target's parameter count against a non-consuming token pre-scan of the
+call's real argument count (`_CALL_ARGC_PEEK`; depth counts `()`, `[]` **and** `{}`
+so nested calls, indices and struct initializers cannot leak commas into the count).
+Deliberately permissive in the two cases where the count is not yet knowable — an
+undefined (forward-referenced) target, whose param count is still 0 from `REGFN`,
+and a variadic target — which preserves pre-6.5.1 behaviour rather than silently
+dropping a legitimate redirect. Same exemption `_CHECK_ARITY` already makes.
+
+**2. `PARSE_RETURN`'s tail-call path skipped the dispatch entirely.** That path emits
+epilogue+jmp itself and never read the overload tables, so the same call spelled two
+ways ran two different functions:
+
+```cyrius
+var r = println(myStr);   # routed to println_str  — correct
+return println(myStr);    # called the cstr base   — WRONG, silently
+```
+
+A `return` of an overloaded call has been running the wrong function for as long as
+the tail path has existed. Fixed by forcing such callees onto the normal
+`PARSE_FNCALL` path — the same divert v6.4.53 used for value-form SIMD params and
+v6.3.36 for plain-struct params — rather than duplicating the dispatch. Callees with
+no sibling have 0 in both tables, so every other tail call is untouched.
+
+**3. A wrong argument count is now an ERROR, not a warning.** A call with the wrong
+arity cannot produce correct code, yet cyrius emitted a binary for it. That is the
+whole reason defect 1 stayed invisible: `bayan_json_v_parse(someStr)` returned 0 for
+every input across the ecosystem and the only outward sign was one easily-missed
+warning line. `_CHECK_ARITY` now sets `_had_error`, so no binary is produced. It
+deliberately does **not** set `_panic` — an arity mismatch is not a token-stream
+desync — so one compile reports *every* bad call site (the v6.4.62 multi-error
+contract), verified at 3 of 3.
+
+**Verified safe to escalate before escalating**: the entire repo — 253 `.tcyr`, all
+7 `main*` forks, `programs/` — produces **zero** arity warnings today.
+
+### Effect on the stdlib renames
+
+The compiler fix disarms the collision class on its own: with arity gating, sakshi's
+`_sk_write/2` can no longer be hijacked by `_sk_write_str/5`. The renames are kept as
+defence in depth and because the names genuinely lied — `X_str` means "the `Str`
+variant of `X`", and neither sakshi helper was that. bayan's rename remains its own
+call.
+
+### Verification
+
+Self-host fixpoint byte-identical at gen2 **and** gen3 · seed-derive
+`seed→cybs→cycc` OK (the real risk here — cybs fails *silently* on too many
+global/call refs in one fn) · check.sh **150/0** · **253/253** `.tcyr` pass by
+per-file exit-code loop · cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on
+ecb / ach / cass / pi, real hardware.
+
+**Bench: self_compile 667 ms · cycc 1,124,968 B — both flat against 6.5.0**
+(665 ms / same size). Worth stating because the tail-path divert gives up tail-call
+optimisation on every `return <overloaded>(...)` and the reasonable worry is that it
+costs throughput; measured, it does not — the diverted set is small (only callees
+that actually have a `_str`/`_int` sibling) and the +2 ms is inside run-to-run noise.
+
+**Codegen differential, attributed rather than summarised** — 81 of 253 files change,
+and each fix accounts for exactly its own share:
+
+| fix | files changed |
+|---|---|
+| arity-gated redirect | **0** of 253 |
+| tail-path divert | **81** of 253 |
+| arity → hard error | **0** of 253 |
+
+The arity fix changing **0** files is the finding, not a reassurance: the corpus had
+*zero coverage of the shape*, which is precisely why the defect survived from
+v5.10.25 to now. Same lesson as v6.4.80, where 251/251 were byte-identical across a
+real wrong-answer fix. The 81 are all the tail divert trading TCO for a correct
+callee on `return <overloaded>(...)`; behaviour-preserving, and 253/253 still pass.
+
+New gate `tests/overload_arity_dispatch.sh` (10 assertions over 4 axes), wired into
+check.sh and **mutation-proven against the actual v6.5.0 binary** (extracted from
+git, since `build/cycc` is tracked): it fails **5** assertions there, one per defect
+per position. Axis 4 — the legitimate cstr+len/`Str` pair the mechanism exists for —
+passes on *both* compilers, which is what proves the fix did not simply switch the
+dispatch off.
+
 ### Fixed — stdlib fold batch, and the reserved-suffix collision behind two of them
 
 Four folds. Two of them exist because **`_str` / `_int` / `_cstr` are reserved
@@ -43,8 +141,10 @@ runs `q_str` — but `return q(someStr);` runs `q`. The redirect fires on the
 assignment path and not the return path, and neither path checks arity. This is the
 same shape as the open High issue
 `issues/2026-07-29-agnosai-int-overload-call-result-misdispatch` (`take(make())`
-running `take_int`'s body). Fixing it compiler-side is the next release's headline —
-a stdlib should never have to rename its public API around a codegen defect.
+running `take_int`'s body). **Fixed compiler-side in this same release — see the
+first entry above.** A stdlib should never have to rename its public API around a
+codegen defect, so the fold and the compiler fix ship together rather than leaving
+the defect live for a release.
 
 
 ## [6.5.0] — 2026-07-29
