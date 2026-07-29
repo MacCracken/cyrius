@@ -857,6 +857,7 @@ io::xfsync/1
 io::xgetdents/3
 io::xlseek/3
 io::xopen/2
+io::xrmdir/1
 io::xstat/2
 io::xunlink/1
 keccak::shake128/4

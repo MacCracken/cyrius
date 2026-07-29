@@ -104,3 +104,12 @@ sh "$ROOT/tests/overload_arity_dispatch.sh"
 # making the local gate actually run it. `tests/heapmap.sh` is the only other CI-only
 # script and it is genuinely redundant: `_heapmap_gate()` in the check binary covers it.
 sh "$ROOT/tests/io_rdwr_agnos.sh"
+
+# v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
+# `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called
+# with 5 args against agnos's 0-parameter no-op stub, so yukti returned Ok() for a mount
+# that never happened — because NO gate had ever compiled a folded stdlib for a non-Linux
+# target. Parity (Linux-OK-but-agnos-broken) rather than "must build", since the distlib
+# bundles deliberately do not carry their own stdlib deps. Reports its own coverage: 11/12
+# today, niyama skipped and named.
+sh "$ROOT/tests/folds_agnos_parity.sh"
