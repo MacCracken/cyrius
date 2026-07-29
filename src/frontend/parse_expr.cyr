@@ -2792,6 +2792,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len): i64 {
     ECALLPOPS(S, 2);
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
+    _vis_check(S, ofi, opnoff);   # v6.5.0: operator overloading is its own call path
     var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }

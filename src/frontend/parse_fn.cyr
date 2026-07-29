@@ -477,6 +477,7 @@ fn PARSE_RETURN(S): i64 {
                             # Look up function
                             var tcfi = FINDFN(S, tcnoff);
                             if (tcfi < 0) { tcfi = REGFN(S, tcnoff); }
+                            _vis_check(S, tcfi, tcnoff);
                             # v5.8.20: #pure enforcement on the tail-call path —
                             # `return helper(args);` bypasses PARSE_FNCALL but
                             # still needs the #io / #alloc check.
@@ -1044,6 +1045,41 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
 }
 
 # Parse fn call args and emit call (as expression)
+# v6.5.0 Phase 2 — cross-file `private` call check. WARN-mode; Phase 3 flips it to a
+# hard error via the v6.3.2 undefined-fn playbook (measure the blast radius first,
+# then flip default-on rather than sprinkling opt-outs).
+#
+# ONE shared fn rather than a copy per call site. The plan named two sites; there are
+# at least thirteen paths that resolve a name to an fn index and emit their own call —
+# ordinary calls, tail calls, operator overloading, methods, `&fn` pointers, closures,
+# await, derive helpers. v6.4.81 shipped a bug of exactly that shape: the `_cfo` class
+# was declared fixed three times, each fix scoped to the tier its repro landed in, and
+# the fourth occurrence was in a resolution path nobody had enumerated. A single helper
+# means adding a site is one call, and the set of sites is greppable.
+#
+# FAIL-OPEN ON UNKNOWNS, deliberately, because this is warn-mode: fileid 0 means
+# unrecorded (a forward reference registered from a call site, an enum constructor, a
+# DCE stub), and warning on those would produce noise on correct code. Phase 3 must
+# revisit this before the error flip — at that point unrecorded has to become
+# fail-CLOSED or explicitly exempted, not silently allowed.
+fn _vis_check(S, fi, noff): i64 {
+    if ((GFLG(S, fi) & 64) == 0) { return 0; }   # callee not private — the common path
+    var callee = GFFI(S, fi);
+    if (callee == 0) { return 0; }               # callee origin unknown
+    # The CALLER's file comes from the token being parsed, not from `_cur_fn_ix`: the
+    # inline-replay path re-parses a callee's body tokens while `_cur_fn_ix` still
+    # names the enclosing fn, so asking the fn table would answer for the wrong file.
+    var caller = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
+    if (caller == 0) { return 0; }
+    if (caller == callee) { return 0; }          # same file — allowed
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": '", 3);
+    PRSTR(S + 0x60000 + noff);
+    syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
+    return 1;
+}
+
 fn PARSE_FNCALL(S, noff): i64 {
     STI(S, GTI(S) + 1);  # consume (
     # Check for inline candidate
@@ -1171,6 +1207,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # is used). Line number is the paren-open we just consumed, which
     # matches the call-site. Message body lives in fn_deprecated_msg
     # as a string-literal token value (offset<<16 | length).
+    _vis_check(S, fi, noff);
     var _dep_flags = GFLG(S, fi);
     if (_dep_flags & 4 != 0) {
         syscall(SYS_WRITE, 2, "warning:", 8);
@@ -1576,7 +1613,7 @@ fn PARSE_IMPL(S): i64 {
     while (igo == 1) {
         if (PEEKT(S) == 14) { igo = 0; }
         else {
-            if (PEEKT(S) == 73) { STI(S, GTI(S) + 1); }
+            if (_TL_VIS(S) == 1) { }   # v6.5.0: `pub`/`public` on an impl method
             if (PEEKT(S) == 32) { PARSE_FN_DEF(S); }
             else { igo = 0; }
         }
@@ -2379,6 +2416,26 @@ fn _prescan_fn_sig(S): i64 {
             var fi = FINDFN(S, noff);
             if (fi < 0) { fi = REGFN(S, noff); }
             if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
+            # v6.5.0 Phase 2 — stamp visibility HERE too, in pass 1.
+            #
+            # Two reasons, both load-bearing:
+            #  (1) FORWARD calls. PARSE_FN_DEF runs in pass 2 in source order, so a
+            #      cross-file call to a fn defined LATER in the concatenated stream
+            #      resolves while the callee's fileid is still 0 — enforcement would
+            #      fail open for exactly the half of calls that go through ECALLFIX,
+            #      i.e. purely as a function of include order.
+            #  (2) `_pub_pending` MUST be consumed here. Pass 1 walks the same tokens
+            #      and _TL_VIS arms the marker at every `public`, but pass 1 never
+            #      reached PARSE_FN_DEF to clear it — so the flag leaked across the
+            #      pass boundary and suppressed the private stamp on the FIRST fn of
+            #      pass 2. That is what made `private` work in a main source but
+            #      silently do nothing from an included file.
+            var _pfid = FM_FILEID(S, GTLINE(S, start_ti));
+            SFFI(S, fi, _pfid + 1);
+            if (_pub_pending == 0) {
+                if (_PRIV_FILE(_pfid) == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
+            }
+            _pub_pending = 0;
             _prescan_params(S, fi);
             if (PEEKT(S) == 49) {       # optional `: ReturnType`
                 STI(S, GTI(S) + 1);     # consume ':'
@@ -2548,6 +2605,10 @@ var _fileid_dump_init = 0;
 fn _fileid_dump_note(S, fi, noff): i64 {
     PRNUM(GFFI(S, fi) - 1);
     syscall(SYS_WRITE, 2, " ", 1);
+    # v6.5.0 Phase 2: also surface the visibility bit, so the gate can assert on the
+    # decision and not merely on the file partition.
+    if ((GFLG(S, fi) & 64) != 0) { syscall(SYS_WRITE, 2, "P ", 2); }
+    else { syscall(SYS_WRITE, 2, "- ", 2); }
     PRSTR(S + 0x60000 + noff);
     syscall(SYS_WRITE, 2, "\n", 1);
     return 0;
@@ -2652,7 +2713,20 @@ fn PARSE_FN_DEF(S): i64 {
     # whatever token happens to be current. Deliberately placed HERE, after `fi` is
     # resolved: a forward reference registers a slot from a CALL SITE, and attributing
     # the fn to the caller's file would be precisely backwards.
-    SFFI(S, fi, FM_FILEID(S, GTLINE(S, _defstart_ti)) + 1);
+    var _vis_fid = FM_FILEID(S, GTLINE(S, _defstart_ti));
+    SFFI(S, fi, _vis_fid + 1);
+    # v6.5.0 Phase 2 — fn_flags bit 6 = PRIVATE. Set when this fn's own file opted in
+    # AND no `public` moniker preceded it. Default (no `private` anywhere) leaves the
+    # bit clear for every fn, so the whole feature is inert and byte-identical until a
+    # file asks for it.
+    #
+    # `_pub_pending` is cleared UNCONDITIONALLY, exactly like `_must_use_pending` and
+    # friends below: a stale marker left armed by a construct that never reached a
+    # definition would otherwise re-expose an unrelated fn later in the file.
+    if (_pub_pending == 0) {
+        if (_PRIV_FILE(_vis_fid) == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
+    }
+    _pub_pending = 0;
     if (_fileid_dump_arm() != 0) { _fileid_dump_note(S, fi, noff); }
     # v5.11.62: track the current fn for per-fn array-byte attribution.
     # Initialize the slot to 0 — fn body may have been touched by an earlier

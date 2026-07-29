@@ -1029,6 +1029,12 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFFFF == 0x7469617761) { ADDTOK(S, 135, 0); return p; }
     }
     if (klen == 6) {
+        # v6.5.0 — "public" = 0x63696C627570, lexed to token 73, the SAME token as the
+        # existing `pub`. Deliberate alias, not a new id: `pub` is already consumed at
+        # every position `public` must reach (pass 1 and pass 2 of all 7 main_*.cyr
+        # forks, plus PARSE_IMPL), so aliasing inherits 15 working dispatch sites
+        # instead of hand-editing them and risking one being missed.
+        if (kw & 0xFFFFFFFFFFFFFF == 0x63696C627570) { ADDTOK(S, 73, 0); return p; }
         # "return" = 0x006E7275746572
         if (kw & 0xFFFFFFFFFFFFFF == 0x006E7275746572) { ADDTOK(S, 33, 0); return p; }
         # "store8" = 0x003865726F7473
@@ -1060,6 +1066,9 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFFFFFFFF == 0x74675F343666) { ADDTOK(S, 70, 0); return p; }
     }
     if (klen == 7) {
+        # v6.5.0 — "private" = 0x65746176697270, token 153 (first genuinely free id;
+        # 152 is already taken by the `>` operator group at lex.cyr:1483).
+        if (kw & 0xFFFFFFFFFFFFFF == 0x65746176697270) { ADDTOK(S, 153, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x6C6C6163737973) { ADDTOK(S, 24, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x363165726F7473) { ADDTOK(S, 45, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x323365726F7473) { ADDTOK(S, 46, 0); return p; }

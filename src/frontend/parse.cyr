@@ -169,6 +169,71 @@ var _cur_fn_ix = 0 - 1;
 # instead of `PEEKT(S)==32`, and the shared _prescan_fn_sig / PARSE_FN_DEF consume
 # the optional `async` prefix. Token 134 only exists when source has `async`
 # (cycc has none → byte-identical self-host), so no _ASYNC_OK guard is needed here.
+# ── v6.5.0 file-scoped visibility: the top-level `private` / `public` markers ──
+#
+# `private` on its own at top level flips THIS FILE to private-by-default; `public`
+# (== `pub`, token 73) in front of an individual item re-exposes it. Default with no
+# declaration is today's behaviour, everything public — so this is opt-in per file and
+# nothing in the tree or the ecosystem changes until a file asks for it.
+#
+# ONE shared helper rather than 14 hand-written dispatch arms. The top-level token
+# dispatch is inline code duplicated across pass 1 and pass 2 of all 7 `main_*.cyr`
+# forks, and BOTH fallthroughs terminate the parse SILENTLY — so a fork where the new
+# token was forgotten would not error, it would quietly stop parsing. Routing every
+# site through one call means the set of edits is a mechanical one-line substitution
+# and the behaviour cannot drift between forks. (Same reasoning as `_capacity_warnings`
+# at v6.4.50, which pulled a block duplicated in 2 of 7 drivers into one shared fn and
+# thereby fixed the 5 forks that had silently never had it.)
+#
+# Returns 1 if it consumed a visibility marker, 0 otherwise. Callers pass through to
+# their existing chain on 0.
+#
+# Recording is IDEMPOTENT: both passes walk the same token stream, so pass 2 re-marks
+# the same file id pass 1 already marked. That is deliberate — it means one helper
+# serves both passes with no pass-awareness.
+var _priv_files[512];        # 512*8 = 4096 B = 32768 bits, one per possible file id
+var _pub_pending = 0;        # `public` seen; consumed by the next fn definition
+
+fn _PRIV_MARK(fid): i64 {
+    if (fid <= 0) { return 0; }
+    if (fid >= 32768) { return 0; }
+    var w = fid / 64;
+    var b = fid % 64;
+    store64(&_priv_files + w * 8, load64(&_priv_files + w * 8) | (1 << b));
+    return 0;
+}
+
+fn _PRIV_FILE(fid): i64 {
+    if (fid <= 0) { return 0; }
+    if (fid >= 32768) { return 0; }
+    var w = fid / 64;
+    var b = fid % 64;
+    if ((load64(&_priv_files + w * 8) & (1 << b)) != 0) { return 1; }
+    return 0;
+}
+
+fn _TL_VIS(S): i64 {
+    var t = PEEKT(S);
+    if (t == 73) {
+        # `public` / `pub` — re-expose the NEXT item. Consumed by PARSE_FN_DEF.
+        _pub_pending = 1;
+        STI(S, GTI(S) + 1);
+        return 1;
+    }
+    if (t == 153) {
+        # `private` — flip the file this token sits in. Keyed on the token's own line
+        # through the file map, NOT on a running flag: a running flag armed here would
+        # leak into every file included AFTER this point, which is exactly the
+        # inheritance the committed design forbids.
+        _PRIV_MARK(FM_FILEID(S, GTLINE(S, GTI(S))));
+        STI(S, GTI(S) + 1);
+        # Tolerate an optional trailing `;` so both `private` and `private;` parse.
+        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+        return 1;
+    }
+    return 0;
+}
+
 fn _IS_FN_KW(S): i64 {
     var t = PEEKT(S);
     if (t == 32) { return 1; }

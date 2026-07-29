@@ -993,7 +993,12 @@ fn TOKNAME(typ): i64 {
     if (typ == 59) { return "default"; }
     if (typ == 60) { return "enum"; }
     if (typ == 72) { return "mod"; }
-    if (typ == 73) { return "pub"; }
+    # v6.5.0: 73 is now DOUBLE-SPELLED — `pub` and `public` both lex to it. Named
+    # together for the same reason tokens 79 and 111 are: v6.4.77 shipped a diagnostic
+    # that confidently named the WRONG keyword for every double-assigned token, and
+    # "got 'pub'" for source that says `public` is that bug in miniature.
+    if (typ == 73) { return "pub'/'public"; }
+    if (typ == 153) { return "private"; }   # v6.5.0 file-scoped visibility
     if (typ == 74) { return "use"; }
     if (typ == 75) { return "match"; }
     if (typ == 76) { return "in"; }
@@ -1045,6 +1050,12 @@ fn _TOK_IS_KERNEL(S): i64 {
 # try to use as an identifier)? Used by ERR_EXPECT to print a clearer
 # diagnostic when a user writes e.g. `var match = 1;`.
 fn IS_KEYWORD_TOK(typ): i64 {
+    # v6.5.0 — `private` (153). Listed HERE as well as in TOKNAME because the
+    # "derives from TOKNAME_BUILTIN, so they cannot drift" guarantee at the top of
+    # this file only covers the BUILTIN/intrinsic table; plain statement keywords are
+    # still enumerated separately below. Adding to one and not the other is exactly
+    # the drift that note claims is impossible.
+    if (typ == 153) { return 1; }   # private
     if (typ == 3)  { return 1; }   # var
     if (typ == 15) { return 1; }   # if
     if (typ == 16) { return 1; }   # while

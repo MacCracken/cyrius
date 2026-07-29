@@ -78,3 +78,10 @@ sh "$ROOT/tests/valform_simd_crosstarget.sh"
 # Phase 1 — while the table is still recorded-not-enforced — so the substrate is
 # never write-only and never unverified.
 sh "$ROOT/tests/fileid_substrate.sh"
+
+# v6.5.0 Phase 2: file-scoped `private` / per-item `public`, WARN mode. Asserts
+# per-RESOLUTION-PATH (ordinary / tail / operator), because enforcement that covers
+# only the obvious path is the v6.4.81 `_cfo` shape repeating — that class was
+# declared fixed three times before the fourth occurrence turned up in a path nobody
+# had enumerated.
+sh "$ROOT/tests/visibility_private.sh"
