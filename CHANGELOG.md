@@ -6,7 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [6.5.0] — 2026-07-28
+## [6.5.0] — 2026-07-29
 
 **`public` / `private` — file-scoped visibility.** The v6.5.0 opener, and the first time
 cyrius has had an enforced encapsulation boundary. Design committed by the user 2026-07-22;
@@ -86,11 +86,47 @@ Its public surface was deliberately kept at 11, not the 9 with in-tree callers:
 PUBLISHED them, and adoption must not silently shrink an API a consumer may depend on.
 api-surface **4755**, zero drift.
 
+### Fixed — the release gate graded `check.sh` by its stdout, not its exit status
+
+`release-gate.sh` step 3 ran `check.sh`, then decided pass/fail by grepping the printed
+`N passed, 0 failed` summary. That summary is emitted by the compiled `cyrius check`
+**binary**. `check.sh` then runs shell gates *after* it — `qemu-boot-gate`, `sign-efi-gate`,
+and the three added by this arc. A failure in any of those aborts `check.sh` with a non-zero
+exit **while the already-printed summary still reads `0 failed`**, so the release gate
+reported GREEN over a red gate, on a line that was telling the truth about something else.
+**Every shell gate appended after the check binary was advisory for as long as that code
+existed.**
+
+Surfaced by one of this arc's own gates: `tests/fileid_substrate.sh` matched the debug dump
+as `<id> <name>`, but Phase 2 added a visibility column (`<id> <P|-> <name>`), so every
+lookup silently returned empty and the gate failed for an entire multi-phase arc without
+turning anything red. Both are fixed — the matcher, and `sh scripts/check.sh || rc=$?`
+(the `|| rc=$?` is what keeps it working under `set -e`) with the FAIL lines echoed on
+failure. **Mutation-proven**: planting an `exit 1` shell gate turns the release gate RED with
+a message naming the cause; restoring it goes GREEN.
+
+The general rule is worth more than the fix and is now in vidya's `methodology.cyml`:
+**grading a subprocess by parsing its stdout instead of checking `$?` converts every check
+that reports outside the parsed format into a no-op** — and it silently stops being
+representative the moment anyone appends a step, which is exactly the action that feels like
+*adding* safety. Same family as the v6.4.73 capacity green-placebo and the `if [ ! -f X ]`
+staleness trigger. When you add a shell gate, verify it can turn the RELEASE gate red, not
+merely that it can fail.
+
 ### Verification
 
 **0 of 253 codegen differential** at every phase · self-host fixpoint byte-identical ·
 seed-derive `seed→cybs→cycc` OK · check.sh **150/0** · cross-OS `SELFHOST_OK` + VR-01
-`LIBTEST_OK` on ecb / ach / cass / pi · self_compile 649 ms · cycc 1,124,968 B.
+`LIBTEST_OK` on ecb / ach / cass / pi.
+
+**Bench: self_compile 649 / 665 ms across two runs · cycc 1,112,464 → 1,124,968 B (+12,504).**
+Recorded honestly: both readings sit **above** the historical 614–634 band, against a
+v6.4.85 baseline of 628 ms — roughly **+4 % to +6 %**. Triaged as **growth tax**, not a
+regression to bisect, per the standing rule: the arc adds a per-fn and a per-var file-id
+lookup plus a visibility predicate on the call and global-read paths, and grew the compiler
+by 12.5 KB, so a cost proportional to the surface added is the expected shape and no single
+patch dominates. **Flagging it rather than filing it** — one more release in this band and it
+stops being growth tax and becomes something to bisect.
 
 Two gates, `tests/fileid_substrate.sh` and `tests/visibility_private.sh`, **mutation-proven
 on eight independent axes**: constant file-id stamp, wrong-token stamp, tail-call path,

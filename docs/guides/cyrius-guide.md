@@ -518,6 +518,51 @@ include "lib/string.cyr"
 # Textual inclusion — file contents replace the include line
 ```
 
+## Visibility — `private` / `public` (v6.5.0)
+
+By default every fn and global var is visible everywhere, exactly as it always
+has been. A file opts IN to encapsulation by declaring `private` at the top:
+
+```
+private                        # this FILE is private-by-default
+
+fn helper(): i64 { return 7; } # file-private — callers outside this file error
+var _state = 0;                # file-private too
+
+public fn api(): i64 {         # re-exposed to everyone
+    return helper();           # in-file calls are unrestricted
+}
+public var CONFIG = 7;
+```
+
+Rules:
+
+- `private` is a bare top-level declaration. It applies to the **file it appears
+  in**, not to the files that file includes, and not to the file that includes it.
+- `public` marks one item. It is meaningful only inside a `private` file; in an
+  ordinary file everything is public already, so it is a no-op you may write for
+  documentation.
+- A file with **no** `private` declaration is unchanged from pre-6.5.0. Adoption is
+  per-file and never forced.
+- Referencing a private item from another file is a **hard error**, not a warning:
+
+```
+error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
+        var x = helper();
+            ^
+```
+
+- Errors are reported through the multi-error path (v6.4.62), so one compile lists
+  every violation instead of stopping at the first.
+- `public`/`private` control **visibility, not linkage**: private fns are also
+  omitted from the exported symbol table, so they no longer appear in `.dynstr` /
+  `nm` output or in `cyrius api-surface`. That is the point — the API surface a
+  consumer sees becomes the API surface you declared.
+- `pub` is accepted as a synonym for `public` (it is the same lexer token).
+
+Both names are reserved words — see the reserved-word note under *Functions*; you
+cannot use `public`, `pub`, or `private` as identifiers.
+
 ## Preprocessor
 
 ```
