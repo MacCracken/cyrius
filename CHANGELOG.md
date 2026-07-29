@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — stdlib fold batch, and the reserved-suffix collision behind two of them
+
+Four folds. Two of them exist because **`_str` / `_int` / `_cstr` are reserved
+overload-dispatch suffixes** in cyrius: the compiler rewrites a call `X(a, ...)`
+into `X_str` / `X_int` / `X_cstr` when arg 1 is of that type and the sibling
+exists — and it does **not** check that the sibling's arity matches the arguments
+supplied. A suffix-named function that is not the same-arity type variant of its
+base therefore hijacks calls to its base and binds the missing arguments to
+garbage. The compiler emits only a warning and still produces a binary.
+
+| dep | version | what |
+|---|---|---|
+| **bayan** | 1.2.1 → **1.3.0** | the collision **live**: `bayan_json_v_parse(someStr)` was rewritten into a 1-arg call to the 2-arg `bayan_json_v_parse_str` and returned 0 for *every* input, valid documents included. Fixed upstream by moving the cstr+len forms to `_buf`. Also Grisu2 f64 JSON round-tripping (1.2.1). |
+| **sakshi** | 2.4.6 → **2.4.7** | the same collision **latent**, found here: `_sk_write_int/4` and `_sk_write_str/5` occupied the dispatch slots of the unrelated `_sk_write/2` (a flush-to-output fn). Renamed to `_sk_buf_write_number` / `_sk_buf_write_string`. Both are `_`-prefixed internals, so **no API change**. Held back only by every `_sk_write` call site passing a buffer address as arg 1. |
+| **yantra** | 1.0.1 → **1.0.2** | fallout of bayan's rename: `src/protocol/cdp.cyr` called the removed `json_v_parse_str` at two sites. Renamed to `json_v_parse_buf` (identical `(buf, len)` signature). |
+| **sandhi** | 1.9.5 → **1.9.7** | 1.9.6: every refusal a serve loop emits (400/413/501) drew from the no-free global bump, making malformed traffic an unbounded-RSS vector at ~176 B per refused request on a path an unauthenticated peer controls; each loop now owns a rewound reject arena. 1.9.7: opt-in per-request arena for the routing/handler path. |
+
+**Both collision fixes were made UPSTREAM first, then re-vendored** — a fix applied
+only to cyrius's `lib/<dep>.cyr` evaporates at the next re-vendor. All twelve folds
+are now byte-identical to their upstream `dist/`.
+
+In-repo migration for bayan's rename: **63 call sites** across
+`tests/tcyr/json_engine.tcyr` (37), `json_pretty.tcyr` (17), `json_pointer.tcyr` (6),
+`tests/fixtures/json_pretty.cyr` (1) and `lib/yantra.cyr` (2). `..._parse_ctx_str`
+is unchanged upstream and deliberately untouched — it genuinely takes a `Str` first
+argument, which is what the suffix is supposed to mean.
+
+api-surface **4755 → 4760**: 3 bayan renames at identical arity, 5 new sandhi arena
+entry points, **zero unintended removals** (the snapshot diff was read before the
+snapshot was updated, not after).
+
+**The arity-blind dispatch itself is a cyrius bug and is not fixed by these folds.**
+Reproduced on 6.5.0: with `fn q(src)` and `fn q_str(buf, len)`, `var r = q(someStr);`
+runs `q_str` — but `return q(someStr);` runs `q`. The redirect fires on the
+assignment path and not the return path, and neither path checks arity. This is the
+same shape as the open High issue
+`issues/2026-07-29-agnosai-int-overload-call-result-misdispatch` (`take(make())`
+running `take_int`'s body). Fixing it compiler-side is the next release's headline —
+a stdlib should never have to rename its public API around a codegen defect.
+
+
 ## [6.5.0] — 2026-07-29
 
 **`public` / `private` — file-scoped visibility.** The v6.5.0 opener, and the first time

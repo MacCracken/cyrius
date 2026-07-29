@@ -23,64 +23,64 @@ alloc_init();
 
 # ── indent <= 0 fallback ─────────────────────────────────────────────
 test_group("indent <= 0 falls back to compact");
-var cv1 = bayan_json_v_build_pretty(bayan_json_v_parse_str("[1,2,3]", 7), 0);
+var cv1 = bayan_json_v_build_pretty(bayan_json_v_parse_buf("[1,2,3]", 7), 0);
 assert(streq(str_data(cv1), "[1,2,3]") == 1, "indent=0 == compact");
 
-var cv2 = bayan_json_v_build_pretty(bayan_json_v_parse_str("[1,2,3]", 7), 0 - 4);
+var cv2 = bayan_json_v_build_pretty(bayan_json_v_parse_buf("[1,2,3]", 7), 0 - 4);
 assert(streq(str_data(cv2), "[1,2,3]") == 1, "indent<0 == compact");
 
 # ── Scalars ──────────────────────────────────────────────────────────
 test_group("scalars unchanged");
-assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_str("null", 4), 2)), "null") == 1, "null");
-assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_str("true", 4), 2)), "true") == 1, "true");
-assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_str("42", 2), 2)), "42") == 1, "int");
-assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_str("\"hi\"", 4), 2)), "\"hi\"") == 1, "str");
+assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_buf("null", 4), 2)), "null") == 1, "null");
+assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_buf("true", 4), 2)), "true") == 1, "true");
+assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_buf("42", 2), 2)), "42") == 1, "int");
+assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_buf("\"hi\"", 4), 2)), "\"hi\"") == 1, "str");
 
 # ── Empty containers stay compact ────────────────────────────────────
 test_group("empty containers compact");
-assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_str("[]", 2), 2)), "[]") == 1, "empty arr");
-assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_str("{}", 2), 2)), "{}") == 1, "empty obj");
+assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_buf("[]", 2), 2)), "[]") == 1, "empty arr");
+assert(streq(str_data(bayan_json_v_build_pretty(bayan_json_v_parse_buf("{}", 2), 2)), "{}") == 1, "empty obj");
 
 # ── Simple array, indent=2 ──────────────────────────────────────────
 test_group("array indent=2");
-var a1 = bayan_json_v_build_pretty(bayan_json_v_parse_str("[1,2,3]", 7), 2);
+var a1 = bayan_json_v_build_pretty(bayan_json_v_parse_buf("[1,2,3]", 7), 2);
 assert(streq(str_data(a1), "[\n  1,\n  2,\n  3\n]") == 1, "[1,2,3] @ 2");
 
 # ── Simple object, indent=2 ──────────────────────────────────────────
 test_group("object indent=2");
-var o1 = bayan_json_v_build_pretty(bayan_json_v_parse_str("{\"a\":1,\"b\":2}", 13), 2);
+var o1 = bayan_json_v_build_pretty(bayan_json_v_parse_buf("{\"a\":1,\"b\":2}", 13), 2);
 assert(streq(str_data(o1), "{\n  \"a\": 1,\n  \"b\": 2\n}") == 1, "{a:1,b:2} @ 2");
 
 # ── Nested mix, indent=2 ─────────────────────────────────────────────
 test_group("nested indent=2");
-var n1 = bayan_json_v_build_pretty(bayan_json_v_parse_str("{\"x\":[1,2]}", 11), 2);
+var n1 = bayan_json_v_build_pretty(bayan_json_v_parse_buf("{\"x\":[1,2]}", 11), 2);
 assert(streq(str_data(n1), "{\n  \"x\": [\n    1,\n    2\n  ]\n}") == 1, "{x:[1,2]} @ 2");
 
 # ── Empty arr inside obj keeps compact tail ──────────────────────────
 test_group("empty arr inside obj");
-var n2 = bayan_json_v_build_pretty(bayan_json_v_parse_str("{\"e\":[]}", 8), 2);
+var n2 = bayan_json_v_build_pretty(bayan_json_v_parse_buf("{\"e\":[]}", 8), 2);
 assert(streq(str_data(n2), "{\n  \"e\": []\n}") == 1, "{e:[]} @ 2");
 
 # ── Indent=4 step ────────────────────────────────────────────────────
 test_group("indent=4 step");
-var w1 = bayan_json_v_build_pretty(bayan_json_v_parse_str("[1]", 3), 4);
+var w1 = bayan_json_v_build_pretty(bayan_json_v_parse_buf("[1]", 3), 4);
 assert(streq(str_data(w1), "[\n    1\n]") == 1, "[1] @ 4");
 
 # ── Round-trip: parse → pretty → parse → compact ─────────────────────
 test_group("round-trip parse(pretty(parse(x))) preserves compact form");
 var src1 = "{\"users\":[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]}";
-var v_src1 = bayan_json_v_parse_str(src1, 51);
+var v_src1 = bayan_json_v_parse_buf(src1, 51);
 var compact1 = bayan_json_v_build(v_src1);
 var pretty1 = bayan_json_v_build_pretty(v_src1, 2);
-var reparsed1 = bayan_json_v_parse_str(str_data(pretty1), str_len(pretty1));
+var reparsed1 = bayan_json_v_parse_buf(str_data(pretty1), str_len(pretty1));
 assert(reparsed1 != 0, "pretty output reparses");
 var compact1b = bayan_json_v_build(reparsed1);
 assert(streq(str_data(compact1), str_data(compact1b)) == 1, "round-trip preserves shape");
 
 var src2 = "{\"a\":{\"b\":{\"c\":[1,2,3]}}}";
-var v_src2 = bayan_json_v_parse_str(src2, 25);
+var v_src2 = bayan_json_v_parse_buf(src2, 25);
 var pretty2 = bayan_json_v_build_pretty(v_src2, 2);
-var reparsed2 = bayan_json_v_parse_str(str_data(pretty2), str_len(pretty2));
+var reparsed2 = bayan_json_v_parse_buf(str_data(pretty2), str_len(pretty2));
 assert(reparsed2 != 0, "deep nest pretty reparses");
 assert(streq(str_data(bayan_json_v_build(v_src2)), str_data(bayan_json_v_build(reparsed2))) == 1, "deep nest round-trip");
 

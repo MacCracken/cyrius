@@ -45,20 +45,20 @@ fn _check_ptr_int(c) {
 
 # ── Empty pointer = whole document ───────────────────────────────────
 test_group("empty pointer = root");
-var doc1 = bayan_json_v_parse_str("{\"a\":1}", 7);
+var doc1 = bayan_json_v_parse_buf("{\"a\":1}", 7);
 assert_eq(bayan_json_v_pointer(doc1, str_from("")), doc1, "empty pointer returns root");
 assert_eq(bayan_json_v_pointer_cstr(doc1, str_data(str_from("")), 0), doc1, "explicit zero len");
 
 # ── Object key lookup ───────────────────────────────────────────────
 test_group("object key lookup");
-var doc2 = bayan_json_v_parse_str("{\"name\":\"alice\",\"age\":30}", 25);
+var doc2 = bayan_json_v_parse_buf("{\"name\":\"alice\",\"age\":30}", 25);
 assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc2, str_from("/age"))), 30, "/age = 30");
 assert(streq(str_data(bayan_json_v_str(bayan_json_v_pointer(doc2, str_from("/name")))), "alice") == 1, "/name = alice");
 assert_eq(bayan_json_v_pointer(doc2, str_from("/missing")), 0, "missing key = 0");
 
 # ── Array index ─────────────────────────────────────────────────────
 test_group("array index");
-var doc3 = bayan_json_v_parse_str("[10,20,30]", 10);
+var doc3 = bayan_json_v_parse_buf("[10,20,30]", 10);
 assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc3, str_from("/0"))), 10, "/0 = 10");
 assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc3, str_from("/2"))), 30, "/2 = 30");
 assert_eq(bayan_json_v_pointer(doc3, str_from("/3")), 0, "OOB index = 0");
@@ -70,7 +70,7 @@ assert_eq(bayan_json_v_pointer(doc3, str_from("/abc")), 0, "/abc not a number");
 
 # ── Deep nested mixed ───────────────────────────────────────────────
 test_group("deep nested mixed");
-var doc4 = bayan_json_v_parse_str("{\"users\":[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]}", 51);
+var doc4 = bayan_json_v_parse_buf("{\"users\":[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]}", 51);
 assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc4, str_from("/users/0/id"))), 1, "/users/0/id = 1");
 assert(streq(str_data(bayan_json_v_str(bayan_json_v_pointer(doc4, str_from("/users/0/name")))), "a") == 1, "/users/0/name = a");
 assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc4, str_from("/users/1/id"))), 2, "/users/1/id = 2");
@@ -136,7 +136,7 @@ assert_eq(bayan_json_v_pointer(rfc, str_from("/~")), 0, "/~ trailing = 0");
 assert_eq(bayan_json_v_pointer(rfc, str_from("/~2")), 0, "/~2 unknown escape = 0");
 
 # Descend into scalar.
-var doc5 = bayan_json_v_parse_str("{\"a\":42}", 8);
+var doc5 = bayan_json_v_parse_buf("{\"a\":42}", 8);
 assert_eq(bayan_json_v_pointer(doc5, str_from("/a/x")), 0, "/a/x: can't descend into int = 0");
 
 # Null root.
@@ -147,7 +147,7 @@ assert_eq(bayan_json_v_pointer(doc2, 0), doc2, "null Str pointer = root");
 
 # ── Trailing slash → empty-key descent ──────────────────────────────
 test_group("trailing slash empty token");
-var doc6 = bayan_json_v_parse_str("{\"a\":{\"\":99}}", 13);
+var doc6 = bayan_json_v_parse_buf("{\"a\":{\"\":99}}", 13);
 assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc6, str_from("/a/"))), 99, "/a/ = a[\"\"] = 99");
 
 var r = assert_summary();
