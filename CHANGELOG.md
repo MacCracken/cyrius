@@ -60,6 +60,47 @@ contract), verified at 3 of 3.
 **Verified safe to escalate before escalating**: the entire repo — 253 `.tcyr`, all
 7 `main*` forks, `programs/` — produces **zero** arity warnings today.
 
+### Fixed — the first thing the arity error caught, and a CI-only gate that hid it
+
+`tests/io_rdwr_agnos.sh` compiles one source for **both** Linux and agnos, and it called
+`sys_unlink(path)`. The raw `sys_*` wrappers are per-target by design
+(`lib/syscalls_<arch>_<os>.cyr`) and **agnos's are length-carrying** — agnos spells it
+`sys_unlink(path, pathlen)` while all four other targets take `(path)`. So that line was
+never right for agnos; it only ever "compiled clean" because the arity mismatch was a
+warning. Now `xunlink(path)`, the portable bridge in `lib/io.cyr`, which already has the
+agnos branch that measures the path. With mirshi present the gate validates the real agnos
+round-trip (42), not merely that it builds.
+
+**The gate was CI-only** — `ci.yml` ran it and nothing local did, so `release-gate.sh`
+reported GREEN on this exact tree while CI went RED. That is the same blind spot as grading
+`check.sh` by its printed summary instead of its exit status (fixed in 6.5.0), and it is
+fixed the same way: `check.sh` now runs it. Swept for others — `tests/heapmap.sh` is the
+only remaining CI-only script and it is genuinely redundant, since the check binary's
+`_heapmap_gate()` covers the same ground.
+
+### Found, NOT fixed — yukti has never worked on agnos (needs a design decision)
+
+Compiling `lib/yukti.cyr` for agnos now fails with **six** arity errors, all pre-existing
+and all previously warnings:
+
+```
+lib/yukti.cyr:875   'sys_stat'   expects 3 arguments, got 2
+lib/yukti.cyr:1792  'sys_mount'  expects 0 arguments, got 5
+lib/yukti.cyr:1808  'sys_mount'  expects 0 arguments, got 5
+lib/yukti.cyr:1852  'sys_rmdir'  expects 2 arguments, got 1
+lib/yukti.cyr:3733  'sys_unlink' expects 2 arguments, got 1
+lib/yukti.cyr:4703  'sys_mount'  expects 0 arguments, got 5
+```
+
+`sys_stat`/`sys_rmdir`/`sys_unlink` are the mechanical length-carrying mismatch. The three
+`sys_mount` sites are not mechanical: agnos's `sys_mount()` is a **0-parameter no-op stub**,
+so yukti's five arguments were silently discarded and every mount on agnos quietly did
+nothing. **Filed rather than packed, and the reason is a design decision that is the user's:**
+either agnos's mount syscall gains a real signature, or yukti gates its mount path off on
+agnos. Guessing either way would bake in an ABI. `lib/sigil.cyr`'s `sys_unlink(path)` was
+checked and is correctly inside `#ifndef CYRIUS_TARGET_AGNOS`. See
+`issues/2026-07-29-yukti-agnos-syscall-arity-mismatches.md`.
+
 ### Effect on the stdlib renames
 
 The compiler fix disarms the collision class on its own: with arity gating, sakshi's
@@ -76,11 +117,16 @@ global/call refs in one fn) · check.sh **150/0** · **253/253** `.tcyr` pass by
 per-file exit-code loop · cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on
 ecb / ach / cass / pi, real hardware.
 
-**Bench: self_compile 667 ms · cycc 1,124,968 B — both flat against 6.5.0**
-(665 ms / same size). Worth stating because the tail-path divert gives up tail-call
-optimisation on every `return <overloaded>(...)` and the reasonable worry is that it
-costs throughput; measured, it does not — the diverted set is small (only callees
-that actually have a `_str`/`_int` sibling) and the +2 ms is inside run-to-run noise.
+**Bench: self_compile 667 / 688 ms across two gate runs · cycc 1,124,968 B —
+size exactly flat against 6.5.0** (which measured 649 / 665 ms). Stated as a range
+rather than a single figure because the box was not quiet — gate runs overlapped other
+work — and picking the lower reading would flatter the result. The honest read is
+**no size change and no clear time change**, with both releases' spreads overlapping.
+Worth measuring at all because the tail-path divert gives up tail-call optimisation on
+every `return <overloaded>(...)`, and the reasonable worry is that it costs throughput;
+nothing in these numbers says it does, and the diverted set is small by construction
+(only callees that actually have a `_str`/`_int` sibling). If v6.5.2 lands another
+reading at ~690 on a quiet box, that is the point to bisect rather than shrug.
 
 **Codegen differential, attributed rather than summarised** — 81 of 253 files change,
 and each fix accounts for exactly its own share:

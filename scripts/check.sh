@@ -94,3 +94,13 @@ sh "$ROOT/tests/visibility_private.sh"
 # under the arity fix, i.e. it had ZERO coverage of the shape, which is why this must be
 # a gate and not a .tcyr.
 sh "$ROOT/tests/overload_arity_dispatch.sh"
+
+# v6.5.1: the agnos O_RDWR flag-map gate (v6.4.27) was CI-ONLY — `ci.yml` ran it and
+# nothing local did, so `release-gate.sh` could report GREEN while CI went RED. It did
+# exactly that this release: the arity escalation above turned the gate's `sys_unlink(path)`
+# into a hard error (agnos's wrapper is length-carrying and takes 2 args), and the local
+# gate never noticed. A gate CI runs but the release gate does not is the same blind spot
+# as grading check.sh by its stdout instead of its exit status — fixed the same way, by
+# making the local gate actually run it. `tests/heapmap.sh` is the only other CI-only
+# script and it is genuinely redundant: `_heapmap_gate()` in the check binary covers it.
+sh "$ROOT/tests/io_rdwr_agnos.sh"

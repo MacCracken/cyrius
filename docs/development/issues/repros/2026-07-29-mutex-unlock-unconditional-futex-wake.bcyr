@@ -1,0 +1,89 @@
+# Repro: mutex_unlock issues an unconditional FUTEX_WAKE syscall.
+#
+#   cyrius bench docs/development/issues/repros/2026-07-29-mutex-unlock-unconditional-futex-wake.bcyr
+#
+# Single-threaded, so no waiter is ever parked and every FUTEX_WAKE is wasted.
+# On a 6.5.0 build (x86_64, Linux 7.1.5, spectre mitigations on) this prints:
+#
+#   nop_loop:            0ns
+#   alloc_16:           10ns     <- a real memory op, for scale
+#   atomic_cas_hit:      1ns     <- the lock's own fast path
+#   mutex_lock_unlock: 412ns     <- 400x the CAS it is built on
+#   chan_try_send_recv: 1.590us  <- every channel op pays it, several times
+#
+# 412ns for an uncontended acquire/release is a syscall, not an atomic. The
+# expectation is single-digit-to-low-double-digit ns: mutex_lock already has a
+# CAS fast path and skips the kernel, so the cost has to be in mutex_unlock,
+# which calls FUTEX_WAKE every time (lib/sync.cyr:76).
+#
+# This repo's [deps].stdlib prepend list carries neither `atomic` nor `sync`, so
+# both are included explicitly. Consumers that list them (agnosai does) get the
+# same numbers with these two lines deleted. `chan_try_send_recv` above came from
+# agnosai's run — reproducing it here would pull in lib/thread.cyr for one
+# illustrative number, and the mutex pair is the whole bug.
+
+include "lib/atomic.cyr"
+include "lib/sync.cyr"
+
+fn _r_nop(): i64 {
+    var n = 500000;
+    var b = bench_new("nop_loop");
+    bench_batch_start(b);
+    for (var i = 0; i < n; i = i + 1) { }
+    bench_batch_stop(b, n);
+    bench_report(b);
+    return 0;
+}
+
+fn _r_alloc(): i64 {
+    var n = 500000;
+    var b = bench_new("alloc_16");
+    bench_batch_start(b);
+    for (var i = 0; i < n; i = i + 1) { alloc(16); }
+    bench_batch_stop(b, n);
+    bench_report(b);
+    return 0;
+}
+
+# The primitive mutex_lock's fast path is built on, for scale.
+fn _r_cas(): i64 {
+    var n = 500000;
+    var cell = alloc(8);
+    var b = bench_new("atomic_cas_hit");
+    bench_batch_start(b);
+    for (var i = 0; i < n; i = i + 1) {
+        atomic_cas(cell, 0, 1);
+        atomic_store(cell, 0);
+    }
+    bench_batch_stop(b, n);
+    bench_report(b);
+    return 0;
+}
+
+# Uncontended acquire/release. The CAS in mutex_lock always succeeds here, so
+# the whole cost is mutex_unlock's FUTEX_WAKE.
+fn _r_mutex(): i64 {
+    var n = 500000;
+    var m = mutex_new();
+    var b = bench_new("mutex_lock_unlock");
+    bench_batch_start(b);
+    for (var i = 0; i < n; i = i + 1) {
+        mutex_lock(m);
+        mutex_unlock(m);
+    }
+    bench_batch_stop(b, n);
+    bench_report(b);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _r_nop();
+    _r_alloc();
+    _r_cas();
+    _r_mutex();
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

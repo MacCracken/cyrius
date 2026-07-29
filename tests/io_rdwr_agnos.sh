@@ -34,7 +34,15 @@ fn main(): i64 {
     if (nr != 9) { return 4; }
     file_close(fd2);
     if (load8(&buf + 0) != 114) { return 5; }    # 'r'
-    sys_unlink(path);
+    # v6.5.1: `xunlink`, NOT `sys_unlink`. The raw `sys_*` wrappers are per-target by
+    # design (lib/syscalls_<arch>_<os>.cyr) and agnos's are LENGTH-CARRYING, so agnos
+    # spells this `sys_unlink(path, pathlen)` while every other target spells it
+    # `sys_unlink(path)`. This gate compiles the same source for BOTH, so reaching past
+    # the portable layer to a raw wrapper cannot work. It only ever "compiled clean"
+    # because an arity mismatch was a warning; v6.5.1 makes it an error and this line
+    # became the first thing it caught. `xunlink` is the portable bridge and already
+    # has the agnos branch that measures the path.
+    xunlink(path);
     return 42;
 }
 var r = main();
