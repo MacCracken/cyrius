@@ -658,10 +658,40 @@ fn FINDVAR(S, noff): i64 {
     var vi = vcnt - 1;
     while (vi >= 0) {
         var stored = L64(_varn_base + vi * 8);
-        if (STREQ(S, stored, noff) == 1) { return vi; }
+        if (STREQ(S, stored, noff) == 1) {
+            # v6.5.0 Phase 2b — the cross-file `private` check for GLOBAL vars lives
+            # HERE, inside the single resolver, rather than being wired at each call
+            # site. FINDVAR is pure lookup and every global reference goes through it,
+            # so one check covers them all — which is the lesson from the fn side,
+            # where the plan named 2 of at least 13 resolution paths and the tail-call
+            # path was silently unenforced until a gate caught it.
+            #
+            # Locals need no special case: they are never stamped, so GVFI reads 0 and
+            # this falls straight through.
+            _vis_check_var(S, vi, noff);
+            return vi;
+        }
         vi = vi - 1;
     }
     return 0 - 1;
+}
+
+# Cross-file access to a file-private global. Same hard-error contract as the fn side
+# (v6.5.0 Phase 3): reported via `_had_error` so every violation surfaces in one run
+# and no binary is emitted.
+fn _vis_check_var(S, vi, noff): i64 {
+    var owner = GVFI(S, vi);
+    if (owner == 0) { return 0; }          # public, a local, or unrecorded
+    var here = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
+    if (here == 0) { return 0; }
+    if (here == owner) { return 0; }       # same file — allowed
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": '", 3);
+    PRSTR(S + 0x60000 + noff);
+    syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
+    _had_error = 1;
+    return 1;
 }
 
 # v6.2.11: constant-collision guardrail (issue 2026-06-14). cyrius has a FLAT

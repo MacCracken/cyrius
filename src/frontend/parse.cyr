@@ -234,6 +234,18 @@ fn _TL_VIS(S): i64 {
     return 0;
 }
 
+# v6.5.0 Phase 2b — stamp a global var's visibility. `decl_ti` is the `var` keyword
+# token, so the file is derived from the declaration itself rather than from whatever
+# token happens to be current (the same reasoning as the fn stamp using `_defstart_ti`).
+fn _GVAR_VIS(S, vi, decl_ti): i64 {
+    var fid = FM_FILEID(S, GTLINE(S, decl_ti));
+    if (_pub_pending == 0) {
+        if (_PRIV_FILE(fid) == 1) { SVFI(S, vi, fid + 1); }
+    }
+    _pub_pending = 0;
+    return 0;
+}
+
 fn _IS_FN_KW(S): i64 {
     var t = PEEKT(S);
     if (t == 32) { return 1; }

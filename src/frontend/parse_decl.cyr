@@ -1074,6 +1074,13 @@ fn PARSE_GVAR_REG(S): i64 {
             elif (psc > 0) { SVTYPE(S, vcnt, 0 - psc); }
         }
     }
+    # v6.5.0 Phase 2b: stamp this global's owning file if the file opted into
+    # private-by-default and no `public` moniker preceded it (fileid+1; 0 stays "not
+    # private" — see _var_fileid in util.cyr). Placed HERE, immediately before the
+    # count bump, because this is the one point EVERY global var reaches: the first
+    # cut sat inside the `ann_scalar < 8` arm and so only ever fired for annotated
+    # narrow scalars like `var x: i32`, silently doing nothing for a plain `var x = 1`.
+    _GVAR_VIS(S, vcnt, sti);
     SVCNT(S, vcnt + 1);
     # v5.11.64: static-init path — record literal value, skip gvar_toks
     # registration so EMIT_GVAR_INITS won't replay the (now redundant)

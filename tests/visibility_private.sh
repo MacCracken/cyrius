@@ -76,6 +76,40 @@ grep -q "'OpVis_add' is private to its file" err2.txt 2>/dev/null \
     || { echo "  FAIL: visibility-private — operator-overload path (EMIT_OP_DISPATCH) not enforced"; head -3 err2.txt; fail=1; }
 cd "$ROOT"
 
+# ── Phase 2b: GLOBAL VARS. The committed design covers `fn` AND `var`. ───────────
+# Enforced inside FINDVAR — the single resolver every global reference goes through —
+# rather than wired per call site. Locals need no special case: they are never
+# stamped, so the check reads 0 and falls straight through.
+mkdir -p "$T/v/lib" && cd "$T/v"
+cat > lib/cfg.cyr <<'EOF'
+private
+var cfg_secret = 42;
+public var cfg_open = 7;
+public fn cfg_reader(): i64 { return cfg_secret; }
+EOF
+# public var + public fn (the fn reads the private var, same-file) => silent
+cat > ok.cyr <<'EOF'
+include "lib/cfg.cyr"
+fn main(): i64 { return cfg_reader() + cfg_open; }
+EOF
+cat ok.cyr | "$CC" >/dev/null 2>vok.txt || true
+grep -q "is private to its file" vok.txt 2>/dev/null && { echo "  FAIL: visibility-private — public var/fn or a same-file read was rejected"; fail=1; }
+# cross-file READ of the private global
+cat > vr.cyr <<'EOF'
+include "lib/cfg.cyr"
+fn main(): i64 { return cfg_secret; }
+EOF
+cat vr.cyr | "$CC" >/dev/null 2>vr.txt || true
+grep -q "'cfg_secret' is private to its file" vr.txt 2>/dev/null     || { echo "  FAIL: visibility-private — cross-file READ of a private global not caught"; fail=1; }
+# cross-file WRITE — a read-only check would pass the read case and miss this
+cat > vw.cyr <<'EOF'
+include "lib/cfg.cyr"
+fn main(): i64 { cfg_secret = 9; return 0; }
+EOF
+cat vw.cyr | "$CC" >/dev/null 2>vw.txt || true
+grep -q "'cfg_secret' is private to its file" vw.txt 2>/dev/null     || { echo "  FAIL: visibility-private — cross-file WRITE to a private global not caught"; fail=1; }
+cd "$ROOT"
+
 # ── the default must stay completely inert ───────────────────────────────────────
 cat > "$T/plain.cyr" <<'EOF'
 fn plain_helper(): i64 { return 1; }
@@ -109,6 +143,6 @@ EOF
 grep -q "is private to its file" "$T/rx2.err" 2>/dev/null     && { echo "  FAIL: visibility-private — regex.cyr's PUBLIC surface was rejected"; fail=1; }
 
 if [ "$fail" = "0" ]; then
-    echo "  PASS: visibility-private — hard-error on ordinary/tail/operator paths, no binary emitted, multi-error; 'public' re-exposes; lib/regex.cyr adoption live; default inert"
+    echo "  PASS: visibility-private — fns (ordinary/tail/operator) + global vars (read/write) hard-errored cross-file; 'public' re-exposes both; lib/regex.cyr adoption live; default inert"
 fi
 exit $fail

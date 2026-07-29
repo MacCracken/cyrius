@@ -537,6 +537,25 @@ fn SFAS(S, fi, v): i64 { if (_fnt_is_async == 0) { _fnt_is_async = alloc(32768 *
 # corrupting both. A new fn-indexed table must either ride _fnt_grow or allocate for
 # the full 32768 ceiling up front; this does the latter, so it needs no fork edit and
 # no change to the grow chain.
+# v6.5.0 Phase 2b — per-GLOBAL-VAR visibility. The committed design covers `fn` AND
+# `var`, so a `private` file hides its globals too.
+#
+# ONE table, not two: it stores `origin_fileid + 1` ONLY for a var that is private,
+# and 0 otherwise. So 0 means "public, a local, or unrecorded" and a non-zero value is
+# both the private marker and the owning file. That avoids a second 8 MB table purely
+# to hold one bit, and it makes locals free — they are never stamped, so they read 0
+# and the check skips them without needing to know about scopes at all.
+#
+# ⚠ Lazy-alloc'd at the var-grow HARD CAP (1048576 slots). It must NEVER join the
+# `_grow_g1..g7` chain: util.cyr records that adding an 8th link DESYNCED cybs — gen1
+# mis-grew the var tables into the adjacent enum table and died with "enum table
+# full". `_vsgn_base` solved that by allocating max-sized at init in all 7 forks;
+# lazy-alloc gets the same guarantee with no fork edit at all, and costs nothing on
+# the overwhelmingly common build where no file opts in.
+var _var_fileid = 0;
+fn GVFI(S, vi): i64 { if (_var_fileid == 0) { return 0; } return L64(_var_fileid + vi * 8); }
+fn SVFI(S, vi, v): i64 { if (_var_fileid == 0) { _var_fileid = alloc(1048576 * 8); } S64(_var_fileid + vi * 8, v); return 0; }
+
 var _fnt_fileid = 0;
 fn GFFI(S, fi): i64 { if (_fnt_fileid == 0) { return 0; } return L64(_fnt_fileid + fi * 8); }
 fn SFFI(S, fi, v): i64 { if (_fnt_fileid == 0) { _fnt_fileid = alloc(32768 * 8); } S64(_fnt_fileid + fi * 8, v); return 0; }
