@@ -6,6 +6,105 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.0] — 2026-07-28
+
+**`public` / `private` — file-scoped visibility.** The v6.5.0 opener, and the first time
+cyrius has had an enforced encapsulation boundary. Design committed by the user 2026-07-22;
+see `proposals/2026-07-02-function-visibility-pub-private.md`.
+
+### Added — file-scoped `private`, per-item `public`
+
+```cyrius
+private                                    # this FILE is private-by-default
+fn helper(): i64 { return 7; }             # file-private
+public fn api(): i64 { return helper(); }  # re-exposed
+public var CONFIG = 7;                     # vars too
+```
+
+Covers **fns and global vars**. **Opt-in per file** — a file with no declaration behaves
+exactly as before, so nothing in the tree or the ecosystem changed on adoption day. A
+cross-file reference to a private item is a **hard error**, reported through `_had_error` so
+every violation surfaces in one run rather than one-per-compile.
+
+`public` deliberately re-uses lexer token **73** (`pub`), which was already consumed-and-
+ignored at all 15 positions it needed to reach — inheriting working plumbing instead of
+hand-editing 14 fork dispatch sites, four of which had *different comment text* around
+identical code. `private` is token 153 (152 was already the `>` operator group). Both are
+reserved and **named** in diagnostics; token 73 now reports as `pub'/'public`, because a
+message that confidently names the wrong keyword is the v6.4.77 bug in miniature.
+
+### Why the file-id substrate was the real work
+
+The compiler did not track which source file a `fn` came from. It turned out most of that
+already existed for a different reason — the preprocessor's `#@file` markers and `FM_BUILD`,
+built for CVE-31 diagnostics — so the arc needed an index-returning sibling of `FM_LOOKUP`
+rather than new preprocessor infrastructure.
+
+**But the map was silently wrong.** `#@file` was emitted only on ENTERING an include, never
+on returning, so a parent file's text after an include was attributed to the file it
+included. In cycc's own build `lib/alloc.cyr` and `lib/atomic.cyr` shared an id, as did
+`parse.cyr` + `parse_ctrl.cyr` + `parse_fn.cyr`, while `src/frontend/lex.cyr` split across
+two. **Both failure directions were live**: different files sharing an id is a silent LEAK
+(a cross-file private call judged same-file), and one file split across ids is a false
+rejection. Fixed with RESUME markers plus canonical identity in `FM_BUILD`, since one file
+now legitimately produces several markers.
+
+**The first version of the substrate gate certified that broken map.** Its fixture was flat
+and includes-first — the one arrangement where the partition holds anyway. It now uses a
+nested include and code-before-the-first-include, and was run RED against the broken
+substrate before the fix. That is the v6.4.80 lesson (251/251 byte-identical meant the
+corpus had *zero* coverage of the failing shape) recurring one phase later, in work whose
+own comments cite it.
+
+### Enforcement covers every resolution path, not the obvious one
+
+The plan named two sites. There are at least thirteen. Enforcement runs through one shared
+`_vis_check` called from the ordinary-call, **tail-call** and **operator-overload** paths,
+and — for globals — from inside `FINDVAR` itself, the single resolver every global reference
+passes through. The tail-call path was silently unenforced in the first cut. This is the
+`_cfo` shape from v6.4.81, where a class was declared fixed three times and the fourth
+occurrence sat in a path nobody had enumerated.
+
+### `private` holds at link time too
+
+A private fn no longer reaches the exported dynamic symbol table — measured, not assumed:
+`.dynstr` STRSZ 24 → 14, exactly the 10 bytes of `so_hidden\0`, with the public fn and `main`
+retained. All three export walks (`.dynsym` count, `.dynsym` emit, GNU hash) now share one
+`_fn_exported` predicate; they must agree exactly or the section is malformed, and three
+hand-copied conditions invited that drift.
+
+`docs/api-surface.snapshot` is now **visibility-derived** rather than `_`-prefix-derived.
+
+### Adoption
+
+`lib/regex.cyr` — 41 private, 11 public. Chosen over `fdlopen.cyr`: the `dynlib_*` fns are
+called from other files, so they are genuine public surface and `private` was never the fix
+there. Blast radius measured at **0** before the flip.
+
+Its public surface was deliberately kept at 11, not the 9 with in-tree callers:
+`regex_search_at` and `str_glob` have no callers but the previous non-underscore convention
+PUBLISHED them, and adoption must not silently shrink an API a consumer may depend on.
+api-surface **4755**, zero drift.
+
+### Verification
+
+**0 of 253 codegen differential** at every phase · self-host fixpoint byte-identical ·
+seed-derive `seed→cybs→cycc` OK · check.sh **150/0** · cross-OS `SELFHOST_OK` + VR-01
+`LIBTEST_OK` on ecb / ach / cass / pi · self_compile 649 ms · cycc 1,124,968 B.
+
+Two gates, `tests/fileid_substrate.sh` and `tests/visibility_private.sh`, **mutation-proven
+on eight independent axes**: constant file-id stamp, wrong-token stamp, tail-call path,
+operator path, `public` re-exposure, the warn→error flip, `lib/regex.cyr`'s adoption, and the
+export filter. Each fails the suite alone.
+
+### Known limitation
+
+Diagnostics report the wrong LINE for the main source once any `include` is present
+(pre-existing, present in 6.4.86; file and caret are correct). Filed as
+`issues/2026-07-28-main-source-diagnostic-line-wrong-after-an-include.md` with a disproved
+theory recorded so the next attempt does not repeat it. It matters more now than it did,
+because every visibility error is cross-file by construction.
+
 ## [6.4.86] — 2026-07-28
 
 ### Changed — sandhi 1.9.3 → **1.9.5** folded into the vendored stdlib

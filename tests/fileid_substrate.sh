@@ -65,7 +65,9 @@ EOF
 D="$T/dump.txt"
 [ -s "$D" ] || { echo "  FAIL: fileid-substrate — CYRIUS_FILEID_DUMP produced no output"; exit 1; }
 
-fid() { grep -E "^-?[0-9]+ $1\$" "$D" | awk '{print $1}' | head -1; }
+# Dump format is `<fileid> <P|-> <name>`: the visibility column was added in Phase 2
+# and this matcher was not updated with it, so every lookup silently returned empty.
+fid() { grep -E "^-?[0-9]+ [P-] $1\$" "$D" | awk '{print $1}' | head -1; }
 
 A=$(fid fid_one_alpha);  B=$(fid fid_one_beta)
 G=$(fid fid_two_gamma)

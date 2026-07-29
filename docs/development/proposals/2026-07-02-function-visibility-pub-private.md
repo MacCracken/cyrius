@@ -1,6 +1,13 @@
 # Function/Var Visibility (public / private) — **v6.5.0 OPENER**
 
-**Status:** ✅ **DESIGN COMMITTED (user, 2026-07-22). Scheduled as the v6.5.0 OPENER** — no longer
+**Status:** ✅ **SHIPPED in v6.5.0.** Design committed by the user 2026-07-22; delivered on the
+`privatefns` branch. Two corrections this doc made that the implementation disproved: (a) `fn_flags`
+is no longer at `0x17A000` — that band was FREED at v6.4.75 and the table is now `_fnflg_base`,
+lazy-alloc'd; (b) the "linchpin gap" was smaller than described — the preprocessor's `#@file` markers
+and `FM_BUILD` already existed for CVE-31 diagnostics, so the arc needed an index-returning sibling of
+`FM_LOOKUP`, not new preprocessor infrastructure. What the doc did NOT anticipate: that map was
+silently wrong (no resume marker on leaving an include), and enforcement needed 13 resolution paths,
+not 2. Original status: **DESIGN COMMITTED (user, 2026-07-22). Scheduled as the v6.5.0 OPENER** — no longer
 the last 6.4.x arc. 6.4.x stays open for agnos work + bugs and closes out on its own; this arc does
 not gate that closeout.
 

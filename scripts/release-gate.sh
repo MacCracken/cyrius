@@ -64,10 +64,26 @@ echo "  OK: build/cycc is machine-derivable from the seed"
 
 # 3. check.sh -----------------------------------------------------------------
 step "3/5" "check.sh (full gate suite)"
-sh scripts/check.sh > "$T/check.out" 2>&1
+# v6.5.0: capture the EXIT STATUS, not just the printed summary.
+#
+# This step used to grep only for "N passed, 0 failed" — the count emitted by the
+# cyrius check BINARY. But check.sh also runs shell gates AFTER that binary
+# (qemu-boot, sign-efi, and the v6.5.0 valform-simd / fileid-substrate /
+# visibility-private gates). A failure in any of those aborts check.sh with a
+# non-zero exit while the earlier summary line still says "0 failed" — so the
+# release gate reported GREEN over a red gate. Found when the fileid-substrate
+# matcher broke and the release gate did not notice.
+#
+# `|| rc=$?` keeps this working under `set -e`.
+rc=0
+sh scripts/check.sh > "$T/check.out" 2>&1 || rc=$?
 LINE=$(grep -E "passed, [0-9]+ failed" "$T/check.out" | tail -1)
 echo "  $LINE"
 echo "$LINE" | grep -q ", 0 failed" || { tail -8 "$T/check.out"; fail "check.sh has failures"; }
+if [ "$rc" != "0" ]; then
+    grep -E "^  FAIL|^  SKIP" "$T/check.out" | tail -8
+    fail "check.sh exited $rc — a shell gate after the check binary failed (its summary line does NOT cover those)"
+fi
 
 if [ "$QUICK" = "1" ]; then
     rm -rf "$T"

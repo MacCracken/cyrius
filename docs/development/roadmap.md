@@ -308,7 +308,7 @@ canonical in [CHANGELOG.md](../../CHANGELOG.md) and summarized in
   auditor's size parser was fixed to see unit-suffixed entries (`[16 MB]`) it had been skipping
   entirely. Same number, different route, six different regions.
 
-**Current head: v6.4.86** — cycc **1,112,464 B** · check.sh **150 passed / 0 failed** · self_compile
+**Current head: v6.5.0** — cycc **1,124,968 B** · check.sh **150 passed / 0 failed** · self_compile ~649 ms. **The v6.4.x minor CLOSED at v6.4.86** (closeout ran .80–.85; see the cycle-discipline ledger). **v6.5.0 opens the v6.5.x minor with the `public`/`private` file-scoped visibility arc** — delivered on the `privatefns` branch: file-id substrate + the preprocessor resume-marker repair, `private`/`public` for fns AND global vars, hard-error enforcement across the ordinary/tail/operator call paths and `FINDVAR`, `private` excluded from .dynstr, api-surface visibility-derived, `lib/regex.cyr` adopted. This file still describes the v6.4.x slot table below; the v6.5.x pin sequence is the next doc pass.
 **~622 ms** · 251 `.tcyr` · 99 `lib/*.cyr` · api-surface **4749** public fns · heap map **100 regions,
 0 overlaps** · **11 open issues + 3 proposals** (273 archived). Verified against live artifacts at the
 v6.4.82 closeout. `_doc_stamp_currency_gate` (check.sh, since .81) keys on the `Current head` anchor
