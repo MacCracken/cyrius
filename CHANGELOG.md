@@ -6,6 +6,125 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.2] — 2026-07-29
+
+**The `CYRIUS_IR=3` substrate, unblocked — plus the agnos ABI class the 6.5.1 arity
+error exposed.** The perf arc has been pinned behind "CYRIUS_IR=3 miscompiles real
+programs" for two minors. It does not any more: **IR=3 now self-hosts a byte-identical
+cycc**, and default-vs-IR=3 exit-code mismatches across the corpus went **35 → 8**.
+
+### Fixed — `ir_const_fold` erased the jump that followed a folded constant
+
+`ir_emit` stamps a node's codebuf position from `GCP(S)` **at call time**
+(`src/common/ir.cyr:295`), and every x86 emitter records BEFORE emitting bytes — the
+`_IR_REC0/1/2`-as-first-statement convention — so a node's CP is the **start** of its
+instruction. `ir_const_fold` depends on precisely that: it overwrites
+`IR_NODE_CP(ni+1) - IR_NODE_CP(ni_a)` bytes and `0x90`-fills the remainder
+(`ir.cyr:800-806`).
+
+**`EJCC` and `EJMP0` (`src/backend/x86/jump.cyr`) were the only two emitters that emitted
+bytes first and recorded after**, so their CP landed at the **end** of the jump. Whenever a
+foldable constant expression was immediately followed by a jump — canonically
+`return <const-expr>;` in a non-tail position, which emits the value then `jmp`s to the
+epilogue — the span ran 5 (`jmp`) or 6 (`jcc`) bytes long and the NOP-fill **deleted the
+jump**. Control fell through into the next statement:
+
+```cyrius
+fn f(n) { if (n > 0) { return 0 - 1; } return 42; }
+var x = f(1);
+syscall(60, x + 100);       # default: 99 (correct).  CYRIUS_IR=3: 142 — ran `return 42`
+```
+
+Both emitters now record before emitting, with the patch offset pre-computed
+(`GCP(S) + 1` past `E9`, `GCP(S) + 2` past `0F cc`).
+
+**The filed root cause was wrong, and that matters more than the fix.** The issue blamed a
+"fixpoint cascade over-elimination" and carried a bisection table showing five pass
+combinations sharing one hash. It is not a cascade and not a fixpoint problem — **const_fold
+alone miscompiles.** The table was an artifact of the second bug below: every one of those
+five rows was the same no-op run in which no pass executed at all.
+
+### Fixed — `_read_env`'s shared buffer made every IR diagnostic knob silently inert
+
+`_read_env` (`src/backend/common/runtime.cyr:110`) returns `&_env_scratch`, **one shared
+256-byte global**, so its result is valid only until the next `_read_env` call. `main.cyr`
+violated that twice:
+
+1. `_ir_env` held the pointer from line 1495, then the fixpoint block re-read
+   `CYRIUS_FOLD_OFF` / `CYRIUS_LASE_OFF` / `CYRIUS_IR_LIVENESS` — overwriting the buffer —
+   and line 1998 still did `load8(_ir_env) == 51`. Setting **any** knob therefore made that
+   test read `'1'` instead of `'3'` and **the entire `CYRIUS_IR=3` fixpoint block did not
+   run.** That is why bisection rows were indistinguishable.
+2. `_fold_off` and `_lase_off` held two pointers to the same buffer, so both were whatever
+   was read last.
+
+Both now snapshot a value (`_ir_mode`, and 0/1 flags) at the point of the call. Measured
+before → after with `CYRIUS_STATS=1` on `alloc_str_extras`:
+
+| flags | before | after |
+|---|---|---|
+| `IR=3` | full stats | full stats |
+| `IR=3 FOLD_OFF=1` | `126 LASE` *(whole block skipped)* | `126 LASE (506B applied), 144 DCE, 8 DSE` — folds gone |
+| `IR=3 LASE_OFF=1` | `126 LASE` *(whole block skipped)* | `126 LASE, 25 folds (125B), …` — apply gone |
+
+The knobs isolate individual passes again, which is what makes the remaining 8 mismatches
+bisectable rather than guesswork.
+
+### Added — `xrmdir`, and the agnos parity gate that should have existed
+
+- **`xrmdir(path)` in `lib/io.cyr`** — portable rmdir, mirroring `xunlink`. agnos's raw
+  wrapper is length-carrying (`sys_rmdir(path, pathlen)`) while POSIX takes a bare pointer,
+  so consumers reaching for `sys_rmdir` were right on Linux and silently wrong on agnos.
+  Windows returns −1 with the reason stated (no `RemoveDirectoryW` reroute is wired, and
+  adding one is a compiler change) — the same honest degrade `xstat` already makes.
+  api-surface 4760 → 4761.
+- **`tests/folds_agnos_parity.sh`** — the real gap behind the yukti bugs below: **no gate
+  had ever compiled a folded stdlib for a non-Linux target.** Asserts *parity* (builds for
+  Linux ⇒ must build for agnos) rather than "must build", because the distlib bundles
+  deliberately do not carry their own stdlib deps, so a bundle failing in isolation proves
+  nothing. **11 of 12** covered; niyama is reported as SKIP with the blocking symbol rather
+  than dropped. Mutation-proven twice; attributes a failure to the file the compiler names,
+  not to the probe under test.
+- **`tests/ir3_fold_jump_span.sh`** — 6 assertions, capstoned by "IR=3 builds a cycc
+  byte-identical to the default-built one", which is the strongest semantics-preserving
+  statement available on the largest program in the tree. Mutation-proven against the 6.5.1
+  binary: 5 of 6 fail there. Its `default mode` assertion passes on both, so it is a
+  regression guard rather than a bug detector.
+
+### Fixed — yukti 2.2.10 → 2.3.0 (fold): six agnos ABI mismatches, one fabricating success
+
+All six predate this release; 6.5.1's arity escalation made them fatal instead of silent.
+Fixed **upstream** then re-vendored.
+
+`sys_mount` on agnos is a **0-parameter no-op stub returning 0**, and yukti called it with
+five arguments at three sites. All five were discarded and `storage.cyr:1824` read the 0 as
+success — returning `Ok(mount_result_new(...))` for a filesystem that was never mounted.
+Now routed through `_yk_mount`, which **fails closed with `-ENOSYS` on agnos**, matching the
+stated philosophy of the `9001+` stub block directly above it. Deliberately *not* fixed by
+giving agnos a real 5-arg `sys_mount` — that is an agnos-side kernel ABI commitment.
+
+`sys_stat` / `sys_unlink` / `sys_rmdir` were called with the bare-pointer POSIX shape and now
+use `xstat` / `xunlink` / `xrmdir`. yukti: 653 tests pass; builds clean on Linux **and**
+agnos (was OK / 6 errors). Its `yukti-core` sub-profile was also regenerated — `distlib`
+does only the main bundle, the same trap that left sandhi's profiles stale.
+
+### Verification
+
+Self-host fixpoint byte-identical · seed-derive `seed→cybs→cycc` OK · check.sh **150/0** ·
+**0 of 253** default-mode codegen changes against 6.5.1 (every fix is IR=3-only, an
+agnos-only branch, or additive) · cycc 1,124,968 → **1,129,072 B**.
+
+**Bench: self_compile 638 ms** · cycc **1,129,072 B**. This also **retires the perf flag
+raised at 6.5.1**, which recorded 649/667/688 ms on a busy box and warned that another
+reading near 690 would mean bisecting rather than shrugging. 638 ms — on a quieter box, with
++4 KB more compiler — puts the series back at the historical 614–634 band and says those
+earlier readings were measurement noise, not a growth trend. No bisect needed.
+
+**Residual, stated not hidden:** 8 of 253 default-vs-IR=3 exit mismatches remain
+(`const_chained_multiply_fold`, `field_name_shadows_global`, `float`, `math_inverse_trig`,
+`math_pack_integration`, `subword_signed_load`, `switch_dispatch`, `types`). They are a
+different defect, now *bisectable* because the knobs work.
+
 ## [6.5.1] — 2026-07-29
 
 **The overload-suffix dispatch, fixed compiler-side — and the stdlib folds that

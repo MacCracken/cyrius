@@ -1,3 +1,14 @@
+> **v6.5.2 UPDATE — Wall 3 is CLOSED; Walls 1 and 2 still hold.** This file's line
+> "CYRIUS_IR=3 still miscompiles real programs" is no longer true: the const_fold/jump-span
+> bug is fixed and **IR=3 self-hosts a byte-identical cycc** (see
+> `2026-07-02-ir3-fixpoint-cascade-overelimination.md`). Re-verified live at 6.5.2 and still
+> blocking: `ir_lower_all` (`src/common/ir.cyr:361`) has **zero callers**; `IR_SENABLE(S,2)`
+> — record-only/re-emit mode — is **never activated** (only mode 1, at `main.cyr:1499` and
+> `main_win.cyr:715`); there are **24** `IR_RAW_EMIT` recording sites on the x86 path, not
+> the "~15 in parse_*.cyr" this file claims, and most are in `backend/x86/emit.cyr`; and
+> `ir_build_edges` still handles only `IR_JMP`/`IR_JMP_BACK`/`IR_JCC`, giving `IR_SWITCH` a
+> single fall-through edge, so the CFG remains incomplete for a regalloc rewrite.
+
 # IR substrate productionization — the whole IR-optimizer perf arc gates on it (→ v6.5.x)
 
 **Status:** 🟡 **OPEN** — the capability is genuinely unshipped; re-verified against live code at

@@ -1,3 +1,37 @@
+# RESOLVED at v6.5.2 — and the filed root cause was WRONG
+
+**Status:** ✅ **RESOLVED v6.5.2.** The three named programs (`alloc_str_extras`,
+`alloc_collections`, `bigint`) now exit 0 under `CYRIUS_IR=3`, and **`CYRIUS_IR=3` self-hosts
+a byte-identical cycc** — previously it produced a compiler that rejected its own source.
+Corpus default-vs-IR=3 exit mismatches: **35 → 8**.
+
+**The diagnosis in this file was wrong, which is the part worth carrying.** It blamed a
+"fixpoint cascade over-elimination" on the strength of a bisection table where five pass
+combinations shared one output hash. There is no cascade: **`ir_const_fold` alone
+miscompiles.** `EJCC`/`EJMP0` (`src/backend/x86/jump.cyr`) were the only two x86 emitters
+that recorded their IR node AFTER emitting bytes, so the node's CP was the END of the jump;
+const_fold's NOP-fill span (`CP(ni+1) - CP(ni_a)`) then ran 5–6 bytes long and **erased the
+jump**, so `return <const>;` fell through.
+
+The bisection table was an artifact of a second bug: `_read_env` returns a pointer into ONE
+shared 256-byte buffer, and `main.cyr` held it across later `_read_env` calls — so setting
+any knob made `load8(_ir_env)` read `'1'` instead of `'3'` and the entire IR=3 block never
+ran. **Every row of that table was the same no-op.** Both aliasing sites fixed; the knobs
+isolate passes again.
+
+**LESSON: a bisection table whose rows are indistinguishable is evidence the harness is
+broken, not evidence of a pass interaction.** Print the per-pass stats line and confirm the
+passes actually ran before reading anything into the hashes.
+
+**Follow-on (different defect, now bisectable):** 8 of 253 remain —
+`const_chained_multiply_fold`, `field_name_shadows_global`, `float`, `math_inverse_trig`,
+`math_pack_integration`, `subword_signed_load`, `switch_dispatch`, `types`.
+
+Gate: `tests/ir3_fold_jump_span.sh` (mutation-proven; 5 of 6 assertions fail on the 6.5.1
+binary). See CHANGELOG [6.5.2].
+
+---
+
 # CYRIUS_IR=3 fixpoint optimizer: cascade over-elimination (deep, NOT the bite-1 class)
 
 **Status:** 🟡 **OPEN — UN-ARCHIVED 2026-07-14 (v6.4.64 rot sweep); RE-VERIFIED 2026-07-27 at the

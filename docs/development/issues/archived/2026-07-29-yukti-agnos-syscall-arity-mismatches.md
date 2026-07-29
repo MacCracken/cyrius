@@ -1,10 +1,18 @@
 # yukti has never worked on agnos — 6 syscall arity mismatches, 3 of them a design question
 
-**Status:** 🔴 **OPEN** — found at v6.5.1, verified against live code the same day.
+**Status:** ✅ **RESOLVED v6.5.2** — yukti **2.3.0** fixed upstream then re-vendored.
+Option 2 was taken (fail closed on agnos, `_yk_mount` → `-ENOSYS`) rather than option 1
+(a real agnos 5-arg `sys_mount`), because option 1 is an agnos-side kernel ABI commitment
+that is not yukti's to make; if agnos gains real mount support, delete the one `#ifdef`
+branch. `sys_stat`/`sys_unlink`/`sys_rmdir` moved to `xstat`/`xunlink`/`xrmdir` — the last
+of which did not exist and was added to `lib/io.cyr` for this release. `lib/yukti.cyr`
+builds clean for agnos (was 6 errors); yukti 653 tests pass. Acceptance criterion 4's wider
+point is also addressed: `tests/folds_agnos_parity.sh` now builds 11 of 12 folded stdlibs
+for agnos, so this class cannot recur silently.
 **Severity:** **Medium–High.** Nothing regresses *because* of this — it has been broken the
 whole time — but `sys_mount` silently no-op'd on agnos, which is the worst failure shape:
 a container/mount layer that reports success and mounts nothing.
-**Placement:** v6.5.x. Blocked on one decision (below), not on effort.
+**Shipped:** v6.5.2 (cyrius) / yukti 2.3.0.
 
 ## What
 
@@ -69,7 +77,7 @@ filesystem. The sibling site at `:1807` has the same shape via `if (r < 0)`.
 There is no correct mechanical repair, because the two sides disagree about whether agnos has
 a mount ABI at all.
 
-## The decision needed (this is why it is filed, not fixed)
+## The decision that was needed — RESOLVED: option 2 was taken
 
 Pick one:
 
@@ -84,8 +92,10 @@ Either way the fix lands **upstream in `~/Repos/yukti` first**, then version-bum
 dist → re-vendor into `lib/yukti.cyr`. A fix applied only to the vendored copy evaporates at
 the next re-vendor.
 
-**Do not guess between these.** Option 1 bakes in an ABI; option 2 removes advertised
-functionality. Both are the user's call.
+**Resolution: option 2.** Option 1 would have committed agnos to a mount ABI that its
+kernel does not implement, which is not yukti's call to make. `_yk_mount` fails closed with
+`-ENOSYS` on agnos and passes through on POSIX; if agnos later gains real mount support,
+deleting one `#ifdef` branch is the whole change.
 
 ## Acceptance criteria
 

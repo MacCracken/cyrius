@@ -1493,8 +1493,20 @@ if (_efi_env != 0) {
 
 # cycc: opt-in IR recording via CYRIUS_IR=1|2
 var _ir_env = _read_env("CYRIUS_IR");
+# v6.5.2 — SNAPSHOT the mode character; do NOT hold the pointer.
+# `_read_env` (src/backend/common/runtime.cyr:110) returns `&_env_scratch`, ONE shared
+# 256-byte global, so its result is only valid until the NEXT `_read_env` call. Further
+# down, the fixpoint block reads CYRIUS_FOLD_OFF and CYRIUS_LASE_OFF — which overwrite
+# that buffer — and the old code then did `load8(_ir_env) == 51`, reading whichever knob
+# was fetched last. Consequence: setting either knob made `load8(_ir_env)` return '1'
+# instead of '3' and the ENTIRE CYRIUS_IR=3 fixpoint block silently did not run.
+# That is why the ir3 issue's bisection table showed five identical hashes — every one of
+# those rows was the same no-op, so the table pointed at a "pass cascade" that had never
+# executed. The real defect was in const_fold alone (see tests/ir3_fold_jump_span.sh).
+var _ir_mode = 0;
 if (_ir_env != 0) {
-    var _ir_ch = load8(_ir_env);
+    _ir_mode = load8(_ir_env);
+    var _ir_ch = _ir_mode;
     if (_ir_ch >= 49 && _ir_ch <= 51) {
         IR_SENABLE(S, 1);
         ir_reset(S);
@@ -1956,8 +1968,17 @@ if (IR_ENABLED(S) == 1) {
     var ir_edges = ir_build_edges(S);
     # v6.3.28 bisection knobs (per the DCE_CAP/DSE_CAP methodology — isolate an
     # unsound pass on the CYRIUS_IR=3 substrate). Default 0 → all passes run.
-    var _fold_off = _read_env("CYRIUS_FOLD_OFF");
-    var _lase_off = _read_env("CYRIUS_LASE_OFF");
+    # v6.5.2 — SNAPSHOT each knob as a 0/1 flag immediately. `_read_env` hands back a
+    # pointer into ONE shared 256-byte scratch buffer, so holding two of its results at
+    # once is meaningless: the second call overwrites what the first points at, and the
+    # `_read_env("CYRIUS_IR_LIVENESS")` a few lines down overwrites it a third time.
+    # Both knobs were therefore whatever was read LAST, which is why CYRIUS_FOLD_OFF and
+    # CYRIUS_LASE_OFF appeared to do nothing and the ir3 issue's bisection table was
+    # unusable. Compare-to-0 at the point of the call, keep the flag, drop the pointer.
+    var _fold_off = 0;
+    if (_read_env("CYRIUS_FOLD_OFF") != 0) { _fold_off = 1; }
+    var _lase_off = 0;
+    if (_read_env("CYRIUS_LASE_OFF") != 0) { _lase_off = 1; }
     # v6.3.27: cross-BB liveness fixpoint (pure analysis — writes only the
     # ir_live_in/out arrays; the substrate .28 copy-prop + .29 cross-BB DSE use).
     var ir_live_iters = ir_liveness_cfg(S);
@@ -1995,7 +2016,7 @@ if (IR_ENABLED(S) == 1) {
     var ir_dce_bytes = 0;
     var ir_dse_n = 0;
     var ir_fp_iter = 0;
-    if (load8(_ir_env) == 51) {
+    if (_ir_mode == 51) {
         # v5.6.18 cap knobs (per the v5.6.17 saved bisection methodology —
         # every IR pass gets a CYRIUS_<PASS>_CAP knob from day 1).
         var _dce_cap_env = _read_env("CYRIUS_DCE_CAP");
@@ -2096,7 +2117,7 @@ if (IR_ENABLED(S) == 1) {
     }
     syscall(SYS_WRITE, 2, "\n", 1);
     # CYRIUS_IR=2: verbose dump
-    if (load8(_ir_env) == 50) { ir_dump(S); }
+    if (_ir_mode == 50) { ir_dump(S); }
 }
 
 # Fixup + ELF + write

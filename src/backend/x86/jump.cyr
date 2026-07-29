@@ -6,14 +6,25 @@
 # Emit conditional jump (0F cc 00000000), return patch offset
 # cycc: records IR_JCC node with condition code in flags
 fn EJCC(S, cc): i64 {
+    # v6.5.2 — RECORD BEFORE EMIT. `ir_emit` stamps the node's codebuf position from
+    # GCP(S) *at call time* (ir.cyr:295), and every other x86 emitter records first
+    # (the `_IR_REC0/1/2`-as-first-statement convention), so a node's CP is the START
+    # of its instruction. This emitter and EJMP0 below were the only two that emitted
+    # bytes first, which put their CP at the END of the jump.
+    #
+    # `ir_const_fold` relies on that invariant: it overwrites
+    # `IR_NODE_CP(ni+1) - IR_NODE_CP(ni_a)` bytes and NOP-fills the remainder
+    # (ir.cyr:800-806). With a JCC/JMP as node ni+1 the span ran 5-6 bytes long and the
+    # fill ERASED THE JUMP, so control fell through — `return <const>;` in a non-tail
+    # position simply continued into the next statement. Reachable only under
+    # CYRIUS_IR=3, which is why default builds were unaffected.
     # Note: always emit x86 even in mode 2 — patch offsets needed by parse.cyr
+    var _ire = IR_ENABLED(S);
+    if (_ire >= 1) { ir_emit(S, IR_JCC, cc, 0, GCP(S) + 2); }   # +2 = past 0F cc
     EB(S, 0x0F);
     EB(S, cc);
     var patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    # cycc: record conditional jump with patch offset for edge matching
-    var _ire = IR_ENABLED(S);
-    if (_ire >= 1) { ir_emit(S, IR_JCC, cc, 0, patch); }
     # v5.6.27: record disp32 source CP for codebuf-compaction repair.
     var _jsc = L64(S + 0x1A0000);
     if (_jsc < 1024) {
@@ -67,12 +78,13 @@ fn EJMP(S, target): i64 {
 # Emit jmp placeholder (E9 00000000), return patch offset
 # cycc: records IR_JMP node (forward, target resolved at EPATCH)
 fn EJMP0(S): i64 {
+    # v6.5.2 — RECORD BEFORE EMIT, for the same reason as EJCC above: the node's CP must
+    # be the START of the jmp, or ir_const_fold's NOP-fill span swallows it.
+    var _ire = IR_ENABLED(S);
+    if (_ire >= 1) { ir_emit(S, IR_JMP, 0, 0, GCP(S) + 1); }   # +1 = past E9
     EB(S, 0xE9);
     var patch = GCP(S);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-    # cycc: record forward JMP with patch offset for edge matching
-    var _ire = IR_ENABLED(S);
-    if (_ire >= 1) { ir_emit(S, IR_JMP, 0, 0, patch); }
     # v5.6.27: record disp32 source CP for codebuf-compaction repair.
     var _jsc = L64(S + 0x1A0000);
     if (_jsc < 1024) {

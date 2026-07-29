@@ -1,0 +1,69 @@
+# Repro: fmt_int_buf renders i64::MIN as the single byte '-', and bayan
+# serialises it into invalid JSON.
+#
+#   cyrius build docs/development/issues/repros/2026-07-29-fmt-int-buf-i64-min.cyr /tmp/imin
+#   /tmp/imin; echo "exit=$?"
+#
+# Exits 1 when the bug is present, 0 when it is fixed.
+#
+# Expected (what every other integer does):
+#   str_from_int(i64::MIN)         -> "-9223372036854775808"  (20 bytes)
+#   bayan_json_v_build of that int -> {"n":-9223372036854775808}
+# Actual on cycc 6.5.1:
+#   str_from_int(i64::MIN)         -> "-"                     (1 byte)
+#   bayan_json_v_build of that int -> {"n":-}                 (invalid JSON)
+
+# This repo's [deps].stdlib prepend list does not carry `bayan`, so it is
+# included explicitly. Consumers that list it (agnosai does) get the same
+# numbers with this line deleted.
+include "lib/bayan.cyr"
+
+fn _emit(s: Str): i64 {
+    syscall(1, 1, str_data(s), str_len(s));
+    syscall(1, 1, str_data(str_from("\n")), 1);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    # i64::MIN, spelled so the lexer never sees the out-of-range positive.
+    var imin = (0 - 9223372036854775807) - 1;
+
+    var rendered = str_from_int(imin);
+    _emit(str_cat(str_from("str_from_int(i64::MIN) = ["), str_cat(rendered, str_from("]"))));
+
+    var obj = bayan_json_v_obj_new();
+    bayan_json_v_obj_set(obj, str_from("n"), bayan_json_v_int_new(imin));
+    var json = bayan_json_v_build(obj);
+    _emit(str_cat(str_from("bayan_json_v_build     = "), json));
+
+    var bad = 0;
+
+    if (str_eq(rendered, str_from("-9223372036854775808")) == 0) {
+        _emit(str_from("BUG: i64::MIN did not render as its decimal form"));
+        bad = 1;
+    }
+
+    if (str_eq(json, str_from("{\"n\":-9223372036854775808}")) == 0) {
+        _emit(str_from("BUG: the JSON document is not valid JSON"));
+        bad = 1;
+    }
+
+    # The value survives a round trip for every other integer, including
+    # i64::MAX and MIN+1, which is what isolates the negation as the cause.
+    var maxv = 9223372036854775807;
+    if (str_eq(str_from_int(maxv), str_from("9223372036854775807")) == 0) {
+        _emit(str_from("UNEXPECTED: i64::MAX also mis-renders"));
+        bad = 1;
+    }
+    if (str_eq(str_from_int(imin + 1), str_from("-9223372036854775807")) == 0) {
+        _emit(str_from("UNEXPECTED: i64::MIN+1 also mis-renders"));
+        bad = 1;
+    }
+
+    return bad;
+}
+
+var r = main();
+syscall(60, r);

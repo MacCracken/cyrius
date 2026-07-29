@@ -113,3 +113,12 @@ sh "$ROOT/tests/io_rdwr_agnos.sh"
 # bundles deliberately do not carry their own stdlib deps. Reports its own coverage: 11/12
 # today, niyama skipped and named.
 sh "$ROOT/tests/folds_agnos_parity.sh"
+
+# v6.5.2: ir_const_fold must not erase a following jump. EJCC/EJMP0 were the only two
+# x86 emitters that recorded their IR node AFTER emitting bytes, so the node's CP was the
+# END of the jump; const_fold's NOP-fill span (CP(ni+1) - CP(ni_a)) then ran 5-6 bytes long
+# and swallowed it, and `return <const>;` fell through. CYRIUS_IR=3-only, so the default
+# corpus was 0/253 unaffected and could never have caught it. Capstone assertion is that
+# IR=3 self-hosts a byte-identical cycc — the strongest semantics-preserving statement
+# available on the largest program in the tree.
+sh "$ROOT/tests/ir3_fold_jump_span.sh"
