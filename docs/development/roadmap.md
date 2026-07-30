@@ -82,6 +82,18 @@ not a single release.
   `sys_mount` fabricating `Ok()` for a filesystem that was never mounted). Corpus
   default-vs-IR=3 exit mismatches **35 → 8**. Bench 638 ms, retiring the 6.5.1 perf flag.
   cycc **1,129,288 B**.
+- **v6.5.3** — **diagnostics report the SOURCE line again**: an error in the main source used
+  to report `actual_line - (includes before it)`. The marker now carries a base
+  (`#@file "NAME" BASE`, packed into the high 32 bits of the map entry's line-count word) and
+  the `source_marked` one-shot — a second, hand-rolled emitter that had been silently
+  overwriting the correct marker, which is why an earlier correct attempt at this fix was
+  reverted as "disproved" — is deleted. Also: include-once skips no longer leave the base
+  stale, nested includes stop reporting expanded lines, and `FM_FILEID` masks the packed word
+  (unmasked it collapses every line to one file id — silent `private` mis-scoping that
+  *allows* access). Toolchain: `install.sh` aborted its install loop on the first ETXTBSY
+  `cp` and `cycc` is first in `bins`, so **all 17 later binaries were left stale** (the
+  `cyrius --version` drift a consumer reported); `version-bump.sh`'s same-version path exited
+  before its own force-rebuild. cycc 1,129,272 → 1,129,288 B.
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 

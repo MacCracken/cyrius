@@ -1,8 +1,8 @@
-# Handoff — **v6.5.0 is out**: `public`/`private`. v6.5.x continues.
+# Handoff — **v6.5.3 is out.** v6.5.x continues; nothing is mid-arc.
 
-> **Written 2026-07-29**, at the v6.5.0 ship. Read this, then `CLAUDE.md`, then
-> [`state.md`](state.md). **Refresh or delete this file when the next minor ships** — a stale
-> handoff is worse than none.
+> **Written 2026-07-30.** Read this, then `CLAUDE.md`, then [`state.md`](state.md), then
+> [`roadmap.md`](roadmap.md) for the slot sequence. **Refresh or delete this file when the
+> next release ships** — a stale handoff is worse than none.
 
 ---
 
@@ -10,101 +10,110 @@
 
 | | |
 |---|---|
-| Version | **6.5.0** — the v6.5.x OPENER (v6.4.x closed at .85; .86 was the sandhi fold) |
-| cycc x86_64 | **1,124,968 B** — seed 29,024 B → cybs → cycc byte-identical |
-| Gates | `check.sh` **150 / 0** + 5 shell gates · release gate GREEN all 5 steps |
+| Version | **6.5.3** — release gate GREEN, all 5 steps |
+| cycc x86_64 | **1,129,288 B** — seed 29,024 B → cybs → cycc byte-identical |
+| Gates | `check.sh` **150 / 0** + **10** shell gates · bench 654 ms |
 | Cross-OS | ecb · ach · cass · pi — all `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware |
-| Corpus | **253** `.tcyr` · 99 `lib/*.cyr` · api-surface **4755** |
-| Heap | **100** regions, 0 overlaps — v6.5.0 added **no** region (see below) |
-| Open issues | **15** · 3 proposals · 273 archived |
+| Corpus | **253** `.tcyr` · 99 `lib/*.cyr` · api-surface **4761** · heap 100 regions / 0 overlaps |
+| Queue | **15** open issues · 2 proposals · 277 archived |
+| Mid-arc work | **None.** 6.5.3 is complete; the next slot is open. |
 
-## What v6.5.0 shipped
+## What v6.5.x has shipped
 
-**File-scoped visibility — the language's first enforced encapsulation boundary.** A top-level
-`private` flips that FILE to private-by-default; per-item `public` re-exposes; a file with no
-declaration behaves exactly as it did before. Covers **fns and global vars**. Cross-file reference
-to a private item is a **hard error**, routed through the multi-error path so one compile reports
-all violations. Private fns are also dropped from the exported symbol table — `lib/regex.cyr`
-adopted it and its exported symbols went **24 → 14**.
+- **.0** — file-scoped `public`/`private` for fns *and* global vars. Opt-in per file, hard
+  error on violation, private excluded from `.dynstr`, `lib/regex.cyr` adopted.
+- **.1** — overload-suffix dispatch made arity-aware, plus the `PARSE_RETURN` tail-path
+  divert. Folded bayan 1.3.0 / sakshi 2.4.7 / yantra 1.0.2 / sandhi 1.9.7.
+- **.2** — the `ir_const_fold` jump-span miscompile (**default-vs-IR=3 mismatches 35 → 8**);
+  the `_read_env` aliasing that made every IR knob silently inert; `xrmdir`; yukti 2.3.0's
+  six agnos ABI defects.
+- **.3** — diagnostic lines surviving `include` expansion; `install.sh`'s ETXTBSY strand;
+  `version-bump.sh`'s same-version early exit.
 
-Substrate: `_fnt_fileid` (fn-indexed, lazy-alloc at 32768) and `_var_fileid` (vcnt-indexed,
-lazy-alloc at 1048576), plus fn_flags bit 6. **Lazy-alloc was chosen precisely to avoid a heap-map
-change** — no new region, no layout change, therefore no two-step bootstrap.
+## ⚠ Read before trusting anything in the tree
 
-## ⚠ Read this before trusting a green gate
+**Three of the 15 open issues are UNVETTED.** They were filed by subagents during the 6.5.2
+triage, which had been told not to write files, and **neither the maintainer nor I have
+reviewed them**: `2026-07-29-fmt-int-buf-i64-min`,
+`2026-07-29-no-portable-xmkdir-in-io-cyr`, `2026-07-29-mutex-unlock-unconditional-futex-wake`.
+Verify their claims against live code before acting. The `xmkdir` one is at least
+*plausible* — it is the companion observation to the `xrmdir` added at 6.5.2 — but that is
+not verification.
 
-**`release-gate.sh` step 3 graded `check.sh` by grepping its printed summary line, never its exit
-status** — so every gate `check.sh` runs *after* the check binary (`qemu-boot`, `sign-efi`, and the
-three added this arc) was **advisory**. A failure aborts `check.sh` with a non-zero exit while the
-already-printed `0 failed` summary stays on screen, and the release gate reported GREEN over it.
+**A gate being green is not the same as a gate being run.** Two blind spots were found and
+closed this minor, both of the same family:
+1. `release-gate.sh` graded `check.sh` by its printed summary instead of its **exit status**,
+   so every shell gate appended after the check binary was advisory (fixed 6.5.0).
+2. `tests/io_rdwr_agnos.sh` was **CI-only** — CI ran it, nothing local did, so the release
+   gate went GREEN on a tree whose CI then went RED (fixed 6.5.1).
+   When you add a gate, verify it can turn the RELEASE gate red, and check both sides:
+   `grep -ohE 'sh tests/[a-z0-9_]+\.sh' .github/workflows/*.yml` versus what `check.sh` runs.
 
-Found when `fileid_substrate.sh`'s matcher broke — the debug dump gained a visibility column
-(`<id> <name>` → `<id> <P|-> <name>`) and every lookup silently returned empty. It failed for an
-entire multi-phase arc without turning anything red. **Both are fixed and mutation-proven** (plant
-an `exit 1` gate → RED; restore → GREEN), but the lesson generalises and is now in
-`methodology.cyml`: **grading a subprocess by parsing its stdout instead of checking `$?` turns
-every appended check into a no-op.** When you add a shell gate, verify it can turn the RELEASE gate
-red — not merely that it can fail.
+## Two things owed to the maintainer
 
-## Open, live, and worth reading first
+Both are recorded as answered open questions in [`roadmap.md`](roadmap.md), and both belong
+to the **later performance track** — to be reviewed **together** when it opens:
 
-- `issues/2026-07-29-agnosai-int-overload-call-result-misdispatch.md` — **confirmed High.** I
-  reproduced it: `take(make())` runs the *wrong* overload's body; the repro exits 1 where 0 is
-  expected. Repro is committed at `issues/repros/`. **Not fixed in 6.5.0 by explicit user
-  instruction** ("we are not repairing ANY FILES ISSUES WITH THIS RELEASE"). This is the one to
-  pick up first.
-- `issues/2026-07-27-intrinsics-cannot-flank-a-term-tier-operator.md` — **partially addressed**:
-  v6.4.83 extracted `PARSE_INTRIN` out of `PARSE_TERM`'s head and wired it into `PARSE_FACTOR`.
-  Re-verify what remains against live code before assuming the whole issue is open.
-- `issues/2026-07-28-main-source-diagnostic-line-wrong-after-an-include.md` — diagnostics report
-  the wrong LINE for the main source once any `include` is present. **The obvious fix was tried and
-  disproved**: carrying a resume line in the marker changed nothing. The issue records the
-  disproved theory so the next attempt does not repeat it. The remaining suspect is that `FM_BUILD`
-  and the lexer's `tok_lines` count marker lines differently.
+1. **The self_compile budget.** roadmap_6's acceptance anchor has two clauses; the svara
+   figure is carried, the budget clause was never actually stated anywhere. Baseline to set
+   it against: **654 ms · 1,129,288 B**.
+2. **v6.5.x committed item 5 — the self-compile growth-tax audit.** Likely dropped, but
+   parked against that track's opening review rather than silently discarded. Its
+   prerequisites are all shipped, so nothing blocks it.
 
-## v6.5.x continues with
+## Where the next slot is likely to start
 
-1. **Perf/IR substrate** — the `CYRIUS_IR=3` failures are bounded, fixable bugs. SIMD
-   register-residency is gated on this.
-2. **Stackless coroutines** — ▲ PINNED v6.5.x; `roadmap-future.md` is authoritative. Its issue is
-   deliberately left OPEN as the acceptance record — do not "clean it up".
-3. **macOS-arm64 threading** also homes here.
-4. **`_`-prefix visibility** was explicitly deferred out of the visibility design — `private` is the
-   enforced mechanism, `_` stays a convention. Do not conflate them.
+[`roadmap.md`](roadmap.md) holds the sequence and four reactive windows (5/3/5/4 patches) for
+issue repair and agnos syscall additions. The IR substrate's *correctness* blocker died at
+6.5.2, so what remains there is:
 
-**Nothing codegen ever parks to 7.x.** 7.x is the language book + legal-for-public-release, only that.
+- **8 residual default-vs-IR=3 exit mismatches** — `const_chained_multiply_fold`,
+  `field_name_shadows_global`, `float`, `math_inverse_trig`, `math_pack_integration`,
+  `subword_signed_load`, `switch_dispatch`, `types`. Now genuinely **bisectable**: 6.5.2
+  fixed the `_read_env` shared-buffer aliasing that had made `CYRIUS_FOLD_OFF` /
+  `CYRIUS_LASE_OFF` silently no-ops, which is why the filed issue's bisection table showed
+  five identical hashes (every row was the same no-op run).
+- **The regalloc walls, re-verified live at 6.5.2**: `ir_lower_all` has zero callers;
+  `IR_SENABLE(S,2)` (record-only / re-emit) is never activated, only mode 1 and only in 2 of
+  7 forks; 24 `IR_RAW_EMIT` sites on the x86 path; `ir_build_edges` gives `IR_SWITCH` a
+  single fall-through edge, so the CFG is wrong for switch, not merely incomplete.
 
 ## Standing traps (the expensive ones)
 
-- **cybs cannot lex `>>>`** — self-hosts fine on `build/cycc`, then seed-derive fails with a bare
-  `syntax error`. The cleanest proof the cycc fixpoint does NOT cover the seed chain. cybs also
-  mis-compiles fns with too many global/literal references (`_grow_g1..g7`, `TOKNAME_BUILTIN`,
-  `PP_FNAME_TOO_LONG` are all split for this reason).
-- **A byte-identical rebuild after a real behaviour change is a TELL, not a reassurance** — it means
-  the edit sits on a path cycc's own source never takes. That is how the Phase 2b var stamp was
-  caught sitting inside the annotated-only (`ann_scalar < 8`) branch, firing only for `var x: i32`.
-- **The parser is two-pass and pending-modifier flags leak across it.** `_pub_pending` was consumed
-  in `PARSE_FN_DEF` but not `_prescan_fn_sig`, so `private` worked in a main source and silently did
-  nothing from an include. Consume in BOTH passes.
-- **The heap map is machine-read.** Prose on a map line is parsed as the size. Keep it on
-  continuation lines.
+- **cybs cannot lex `>>>`**, and mis-compiles fns with too many global/call references. The
+  cleanest proof the cycc fixpoint does NOT cover the seed chain. **6.5.3 changed the
+  `#@file` marker FORMAT, which cybs also parses** — exactly the class only seed-derive sees.
+- **"0 of 253 changed" means the corpus has no coverage of the shape, not that the change is
+  safe.** It said 0/253 for the overload arity fix, the `_int` gate, and the const-fold fix —
+  all three were real. At 6.5.2 I nearly removed the `_int` route on a 0/253 reading;
+  behaviour testing showed `println(fncall())` would have gone from printing `5` to nothing.
+- **A byte-identical rebuild after a real behaviour change is a TELL** — the edit is on a path
+  cycc's own source never takes.
+- **Before concluding a fix "doesn't work", check whether something else overwrites the same
+  record afterwards.** The 6.5.3 diagnostic fix had been implemented correctly once, verified
+  present in the binary, and reverted as disproved — because a second hand-rolled emitter
+  wrote a base-less duplicate right after it.
+- **An unreachable fn's body error never surfaces** (it is DCE'd). A test whose erroring fn is
+  never called is vacuous — this silently neutered an early version of the 6.5.3 gate.
+- **The heap map is machine-read.** Prose on a map line is parsed as the size.
 - **`var x[N]` local = N BYTES; a bare top-level `var x[N]` = N×8.**
-- **Cyrius precedence is NOT C's** — `&`/`|`/`^` share the `+`/`-` tier. `1 | 2 + 1` == 4. `>>` is
-  LOGICAL, `>>>` is ARITHMETIC. Verify by running the compiler.
-- **`#` starts a comment** — the include directive is bare `include "..."`. A `#include` probe is
-  inert, which is how a CVE-32 repro was written that tested nothing.
-- **A raw agnos syscall number off-agnos is the whole hazard.** #94 is `lchown` on x86_64 (arg1 = a
-  path pointer) and **`exit_group` on aarch64 — it terminates the process.** The file-level `#ifdef
-  CYRIUS_TARGET_AGNOS` gate is the barrier; off-agnos these fns must not exist.
-- **`cyrius lib sync` is refused in this repo** — it would revert every fold. To refresh a folded dep:
-  `cp <upstream>/dist/<name>.cyr lib/<name>.cyr`, then refresh the install snapshot immediately.
-- **`cyrius distlib` regenerates only the main bundle** — run it per profile and grep each for the fix.
+- **Cyrius precedence is NOT C's** — `&`/`|`/`^` share the `+`/`-` tier. `>>` is LOGICAL,
+  `>>>` is ARITHMETIC. **`#` starts a comment** — the include directive is bare `include`.
+- **A raw agnos syscall number off-agnos is the whole hazard.** #94 is `lchown` on x86_64 and
+  **`exit_group` on aarch64**. The file-level `#ifdef CYRIUS_TARGET_AGNOS` gate is the barrier.
+- **`cyrius lib sync` is refused in this repo** (it would revert every fold) but is the
+  CORRECT mechanism downstream — and it resolves from the **pinned** cyrius version's
+  snapshot, so a downstream repo pinning an old version silently gets old stdlib.
+- **`cyrius distlib` regenerates only the main bundle** — run it per profile and grep each.
 
 ## Process
 
 - The user handles **all** git. Never commit, push, or tag. Never use `gh` — `curl` the API.
-- `release-gate.sh` GREEN before every `.NN`. `--quick` is steps 1–3, explicitly not release-ready.
+- `release-gate.sh` GREEN before every `.NN`. `--quick` is steps 1–3, explicitly not
+  release-ready.
 - Run `cross-os-selfhost.sh` **one host at a time** (fixed /tmp paths clobber).
-- **An audit's output is FIXES, not a backlog** (`CLAUDE.md` "Execution integrity"). File only when
-  the fix genuinely cannot pack into the patch — and NAME the reason.
-- **Mutation-prove every gate**, and prove it against the RELEASE gate, not just its own exit code.
+- **An audit's output is FIXES, not a backlog.** File only when the fix genuinely cannot pack
+  into the patch — and NAME the reason.
+- **Mutation-prove every gate**, and prove it against the RELEASE gate, not just its own exit.
+- **Fix the SOURCE repo, not the fold.** A fix applied only to a vendored `lib/<dep>.cyr`
+  evaporates at the next re-vendor.

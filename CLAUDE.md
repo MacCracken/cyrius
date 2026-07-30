@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 6.5.0
+- **Version**: 6.5.3
 
 ## Goal
 
@@ -50,6 +50,15 @@ cyrius bench                       # run .bcyr benchmarks
 - **Version lives in `VERSION` + `--version`, never in binary names** — at v6.0.0 both compiler binaries got descriptive, version-agnostic names: the bootstrap compiler (formerly `cyrc`) is now **`cybs`** (Cyrius Bootstrap) and the top compiler (formerly `cc5`) is now **`cycc`** (Cyrius Computer Compiler). These names are *forever*. No `cycc6` at v7.0.0, no `cybs7` at v8.0.0, no funny business. The cc3 → cc5 rename (v5.0.0) and the cyrc → cybs + cc5 → cycc rename (v6.0.0) sequence was the LAST name-change penalty paid. Anyone tempted to add a version digit to a binary name (compiler, bootstrap, linker, formatter, anything) is reintroducing the bug we explicitly removed. `VERSION` file + binary `--version` output are the only sources of truth.
 
 ## Release & Slot Discipline
+
+> **Do NOT pre-write `VERSION` before running `version-bump.sh`.** The script rewrites
+> `CLAUDE.md`'s version line, `install.sh`'s fallback, the CHANGELOG header and the roadmap
+> stamp **only when it sees a version CHANGE**. Writing `VERSION` by hand first makes
+> `NEW == OLD`, so it takes the same-version path and silently skips all of them — which is
+> how `CLAUDE.md` sat at 6.5.0 while three releases shipped. Run
+> `sh scripts/version-bump.sh <new>` and let it write `VERSION` itself. (v6.5.3 fixed the
+> other half of that path: it used to `exit 0` before its own force-rebuild, so every binary
+> built from `version_str.cyr` — including the `cyrius` CLI — kept a stale version string.)
 
 **Atomic commits, packed releases.** Two different granularities — don't
 conflate them (the v6.0.33 mistake):
