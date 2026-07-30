@@ -55,6 +55,25 @@ Deferred: error message line numbers, performance pass, block scoping.
 - Benchmarks and documentation updated
 ---
 
+## v6.x minors — per-minor summary
+
+Added 2026-07-29, when `roadmap_6.md` was re-scoped to forward-only (v6.6.x+) and its
+per-minor narrative for v6.0.x–v6.4.x was removed. That narrative duplicated
+[`CHANGELOG.md`](../../CHANGELOG.md), which stays the per-patch source of truth; this is the
+one-line-per-minor retrospective index. Close numbers verified against the CHANGELOG's
+per-minor max heading, not carried over from the deleted text.
+
+| Minor | Theme | Closed at | Notes |
+|---|---|---|---|
+| **v6.0.x** | Language cleanup + stdlib + native TLS arc | **v6.0.91** | Opened the cycle (2026-05-19). The `cyrc → cybs` / `cc5 → cycc` rename landed here — the last binary-name change ever paid for. |
+| **v6.1.x** | Backend codegen multi-arc | **v6.1.41** | PIE codegen x86→aarch64, `.gnu.hash`, TS/TSX→JS emit, bayan/ganita carve-outs. |
+| **v6.2.x** | Platform expansion — bare-metal + dependency model | **v6.2.52** | Bare-metal target formalization, growable heap regions, the modules/module-groupings dependency foundation. **Bare-metal deliverable #4 (forbidden-module check) never shipped** — `CHANGELOG [6.3.4]` says so, and its issue was later archived without a resolution banner. Carried as an open question in [roadmap.md](roadmap.md). |
+| **v6.3.x** | Language refinements | **v6.3.45** | Closures with lexical capture, monomorphized generics, async/await syntax, native f64/f32 arithmetic. The opt-in bounds-checked memory mode was *designed* here and never shipped (still 0 hits for `CYRIUS_BOUNDS` in `src/`). |
+| **v6.4.x** | Staging minor → long reactive minor | **v6.4.86** | 86 releases. Closeout cut at **.85**; **.86** was the post-closeout sandhi fold. The SIMD compute arc and the other v6.4.x sections below cover it in more detail. |
+| **v6.5.x** | Performance quality / generated-code | *active* | See [roadmap.md](roadmap.md). |
+
+---
+
 ## v6.4.x — SIMD Compute Arc (all four backends)
 
 The one notable cross-release *arc* of the v6.4.x minor worth a single-glance

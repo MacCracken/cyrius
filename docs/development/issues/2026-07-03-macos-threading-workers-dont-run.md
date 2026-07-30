@@ -8,7 +8,7 @@ anywhere in `lib/` (the only hits are comments in `alloc.cyr`, `sync.cyr`, `sync
 (`tests/tcyr/vr01_thread_spawn.tcyr:31/:46`, `vr01_sync_mutex.tcyr:41/:44`), so the gap stays
 smoke-covered rather than silently green.
 **Placement:** **v6.5.x — "macOS-arm64 threading backend"** (`roadmap.md`, v6.5.x table; also
-`roadmap_6.md:1125`). Distinct from the Intel-Mac x86 toolchain tail, which closed at v6.4.59.
+`roadmap_6.md`, whose per-minor v6.4.x detail was removed in the 2026-07-29 re-scope — see `CHANGELOG.md` [6.4.x] for the shipped record). Distinct from the Intel-Mac x86 toolchain tail, which closed at v6.4.59.
 No consumer is blocked yet, which is why it sits behind the IR-substrate anchor. 6.x line, never 7.x.
 
 **Filed:** 2026-07-03 (surfaced by the v6.3.43 VR-01 platform-variant tcyr —

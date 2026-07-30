@@ -54,12 +54,15 @@ for t in alloc_str_extras alloc_collections bigint; do
     check "$t" 0 "$?"
 done
 
-# ── AXIS 3: the capstone — CYRIUS_IR=3 must build a cycc that is byte-identical to the
-# default-built one. This is the strongest available statement that the IR pipeline is
-# semantics-preserving on the largest program we have. Before the fix, the IR=3-built
-# compiler rejected its own source with bogus "fn return type must be struct or i8/..."
-# errors and emitted 0 bytes.
-echo "axis 3 — CYRIUS_IR=3 self-hosts a byte-correct compiler:"
+# ── AXIS 3: the capstone — a CYRIUS_IR=3-built cycc must REPRODUCE the default-built cycc
+# byte-identically. Read that precisely: the assertion is about the IR=3-built compiler's
+# OUTPUT, not its own bytes. The IR=3-built binary is itself ~4.7 % LARGER (1,182,520 B vs
+# 1,129,272 B at v6.5.2) — IR=3 is semantics-preserving here, not size-neutral, and an
+# earlier version of this comment wrongly claimed the latter. What the axis proves is the
+# strongest available semantics statement on the largest program in the tree. Before the fix
+# the IR=3-built compiler rejected its own source with bogus "fn return type must be struct
+# or i8/..." errors and emitted 0 bytes.
+echo "axis 3 — an IR=3-built cycc reproduces build/cycc byte-identically (its OWN bytes differ, ~+4.7%):"
 cat src/main.cyr | CYRIUS_IR=3 "$CC" > "$D/ir3cc" 2>/dev/null
 if [ ! -s "$D/ir3cc" ]; then
     echo "  FAIL: CYRIUS_IR=3 produced no compiler"; fails=$((fails + 1))
@@ -85,7 +88,7 @@ echo "  math_pack_integration, subword_signed_load, switch_dispatch, types"
 
 echo ""
 if [ "$fails" = "0" ]; then
-    echo "PASS: ir3-fold-jump-span — const-fold preserves following jumps; IR=3 self-hosts"
+    echo "PASS: ir3-fold-jump-span — const-fold preserves following jumps; IR=3 output is byte-correct"
     exit 0
 fi
 echo "FAIL: ir3-fold-jump-span — $fails assertion(s) failed"

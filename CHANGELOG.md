@@ -10,8 +10,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 **The `CYRIUS_IR=3` substrate, unblocked — plus the agnos ABI class the 6.5.1 arity
 error exposed.** The perf arc has been pinned behind "CYRIUS_IR=3 miscompiles real
-programs" for two minors. It does not any more: **IR=3 now self-hosts a byte-identical
-cycc**, and default-vs-IR=3 exit-code mismatches across the corpus went **35 → 8**.
+programs" for two minors. It does not any more: **an IR=3-built compiler now reproduces
+`build/cycc` byte-identically**, and default-vs-IR=3 exit-code mismatches across the corpus
+went **35 → 8**.
+
+> **Stated precisely, because an earlier draft of this entry overstated it.** IR=3 does *not*
+> produce a byte-identical compiler — the IR=3-built cycc is **1,182,520 B against the default
+> build's 1,129,272 B, i.e. +53,248 B / +4.7 % LARGER**. What is byte-identical is that
+> compiler's **output**: pipe `src/main.cyr` through it and you get 1,129,272 B, matching
+> `build/cycc` exactly. So the correct claim is semantics-preserving, not size-neutral — and
+> the +4.7 % is a live data point for a minor whose theme is generated-code quality, not a
+> footnote. Measured 2026-07-29.
 
 ### Fixed — `ir_const_fold` erased the jump that followed a folded constant
 
@@ -130,7 +139,7 @@ coverage of the shape, not that the fix is inert.
   than dropped. Mutation-proven twice; attributes a failure to the file the compiler names,
   not to the probe under test.
 - **`tests/ir3_fold_jump_span.sh`** — 6 assertions, capstoned by "IR=3 builds a cycc
-  byte-identical to the default-built one", which is the strongest semantics-preserving
+  reproduces the default-built one byte-identically", which is the strongest semantics-preserving
   statement available on the largest program in the tree. Mutation-proven against the 6.5.1
   binary: 5 of 6 fail there. Its `default mode` assertion passes on both, so it is a
   regression guard rather than a bug detector.
