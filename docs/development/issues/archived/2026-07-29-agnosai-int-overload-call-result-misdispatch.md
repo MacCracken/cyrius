@@ -1,3 +1,30 @@
+# RESOLVED at v6.5.2 — the `_int` route was guessing at a condition the language already declares
+
+**Status:** ✅ **RESOLVED v6.5.2.** The filed repro exits 0. Note v6.5.1's arity fix did NOT
+cover this: `take(a)` and `take_int(a)` have the **same arity**, so the arity gate passed and
+the route still fired.
+
+**Root cause.** The `_int` route fires **only** when argument 1 is a bare fn call — never a
+literal, never a variable. So `take(v)` and `take(42)` were correct while `take(mk())` ran
+`take_int`: the same value dispatched differently depending on whether it passed through a
+variable. What the route is really trying to express is "this parameter wants a POINTER, so
+convert the number for it", and `_fnt_cstrmask` already records precisely that (`: cstring`).
+The route is now gated on it, so `println(str_len(s))` still routes (its param IS annotated)
+and unannotated user pairs no longer do.
+
+**Found alongside, and fixed here too:** `println(42)` compiled with no diagnostic and
+**SIGSEGV'd** — the existing type-check was IDENT-only so literals skipped it. Now a hard
+error with a hint; `0` stays legal as NULL. And `PARSE_RETURN`'s tail path skipped that check,
+the **third** time that path has been found missing something `PARSE_FNCALL` does.
+
+**Do NOT re-file as "implicit dispatch should be removed."** Removing it was tested and
+regresses `println(fncall())` from printing `5` to printing nothing — the corpus differential
+is 0/253 and would have hidden that. The annotation gate is the fix.
+
+Gate: `tests/overload_arity_dispatch.sh` axes 5-6 (mutation-proven). See CHANGELOG [6.5.2].
+
+---
+
 # `X(f(), …)` silently dispatches to `X_int` — a bare call result routes differently from a variable holding the same value
 
 **Status:** 🟡 **OPEN** — verified against cyrius **6.4.86** on x86-64 Linux by A/B compiling

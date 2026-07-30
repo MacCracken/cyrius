@@ -70,6 +70,50 @@ before → after with `CYRIUS_STATS=1` on `alloc_str_extras`:
 The knobs isolate individual passes again, which is what makes the remaining 8 mismatches
 bisectable rather than guesswork.
 
+### Fixed — the `_int` overload route was guessing, and a literal to `: cstring` crashed
+
+Two halves of one hole, closing the consumer-filed High
+(`2026-07-29-agnosai-int-overload-call-result-misdispatch`) that v6.5.1's arity gate did
+**not** cover: `take(a)` and `take_int(a)` have the SAME arity, so it sailed straight through.
+
+**1. The `_int` route now requires the base's param 0 to be explicitly `: cstring`.**
+Investigating showed the route is far narrower than its comments imply — it fires **only**
+for a bare fn-call first argument, never a literal, never a variable:
+
+```
+base(42)            -> stays on base
+var v = 7; base(v)  -> stays on base
+base(mk())          -> ROUTED to base_int
+```
+
+The same value dispatched differently depending on whether it had passed through a variable,
+and for any user-defined pair it silently ran the wrong body. The route's real purpose is
+"this parameter wants a POINTER, so convert the number for it" — and `_fnt_cstrmask` already
+records exactly that declaration. Gating on it turns a guess into an explicit condition:
+`println(str_len(s))` still routes and still prints `5`, while `take(mk())` now calls `take`.
+
+**2. An integer literal passed to a `: cstring` param is now a hard error.** `println(42)`
+previously compiled with **no diagnostic at all** and **SIGSEGV'd**, because the callee
+dereferences the number as a `char*`. The existing type-check (v5.10.24) was gated on
+`PEEKT(S) == 2` — IDENT-only — so literals skipped it entirely. A literal is the one case
+cyrius genuinely *can* judge: an i64 variable or a fn-call result is indistinguishable from a
+pointer under ADR-002, but a literal is known at parse time to be a number. `0` stays legal,
+being the idiomatic NULL. Error rather than warning, because a warning is precisely what let
+the crash ship.
+
+**3. `PARSE_RETURN`'s tail path skipped that check too — the THIRD occurrence of the class.**
+`return want(42);` compiled clean while `var r = want(42);` errored. Same shape as v6.3.36
+(plain-struct params), v6.4.53 (value-form SIMD params) and v6.5.1 (overload dispatch): a
+transformation that lives in `PARSE_FNCALL` and the tail path never sees. Diverted narrowly —
+only when the callee actually annotates a param `: cstring` **and** the call actually passes a
+literal — so every other call to a cstring-taking fn keeps its TCO. The literal detect rides
+on the arg scan that loop already performs, so it costs nothing.
+
+Gate: `tests/overload_arity_dispatch.sh` axes 5-6, both mutation-proven; each mutation leaves
+its sibling assertion green, so each axis carries a discriminator *and* a regression guard.
+Corpus **0 of 253** codegen changes, 253/253 pass — which again means the corpus had no
+coverage of the shape, not that the fix is inert.
+
 ### Added — `xrmdir`, and the agnos parity gate that should have existed
 
 - **`xrmdir(path)` in `lib/io.cyr`** — portable rmdir, mirroring `xunlink`. agnos's raw
@@ -112,9 +156,9 @@ does only the main bundle, the same trap that left sandhi's profiles stale.
 
 Self-host fixpoint byte-identical · seed-derive `seed→cybs→cycc` OK · check.sh **150/0** ·
 **0 of 253** default-mode codegen changes against 6.5.1 (every fix is IR=3-only, an
-agnos-only branch, or additive) · cycc 1,124,968 → **1,129,072 B**.
+agnos-only branch, or additive) · cycc 1,124,968 → **1,129,272 B**.
 
-**Bench: self_compile 638 ms** · cycc **1,129,072 B**. This also **retires the perf flag
+**Bench: self_compile 638 ms** (two independent gate runs, same figure) · cycc **1,129,272 B**. This also **retires the perf flag
 raised at 6.5.1**, which recorded 649/667/688 ms on a busy box and warned that another
 reading near 690 would mean bisecting rather than shrugging. 638 ms — on a quieter box, with
 +4 KB more compiler — puts the series back at the historical 614–634 band and says those

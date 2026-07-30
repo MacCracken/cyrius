@@ -404,12 +404,28 @@ fn PARSE_RETURN(S): i64 {
                             if (L64(_fnt_ovstr + _tc_cfi * 8) != 0) { tc_has_addr = 1; }
                             if (L64(_fnt_ovint + _tc_cfi * 8) != 0) { tc_has_addr = 1; }
                         }
+                        # v6.5.2 — also note an integer LITERAL anywhere in the arg list.
+                        # The literal-to-`: cstring` error lives in PARSE_FNCALL, and this
+                        # tail path would skip it — the THIRD time this path has been found
+                        # missing something PARSE_FNCALL does (v6.3.36 plain-struct params,
+                        # v6.4.53 value-form SIMD params, v6.5.1 overload dispatch). Free:
+                        # the scan below already walks the same tokens looking for `&`.
+                        var tc_has_lit = 0;
                         var tc_addrscan = ti_after + 1;
                         while (tc_addrscan < GTCNT(S)) {
                             if (TOKTYP(S, tc_addrscan) == 10) { tc_depth = tc_depth + 1; }
                             if (TOKTYP(S, tc_addrscan) == 11) { tc_depth = tc_depth - 1; if (tc_depth == 0) { break; } }
                             if (TOKTYP(S, tc_addrscan) == 27) { tc_has_addr = 1; }
+                            if (TOKTYP(S, tc_addrscan) == 1) { tc_has_lit = 1; }
                             tc_addrscan = tc_addrscan + 1;
+                        }
+                        # Divert to PARSE_FNCALL only when the callee ACTUALLY annotates a
+                        # param `: cstring` and this call actually passes a literal. Narrow
+                        # on purpose: every other call to a cstring-taking fn keeps its TCO.
+                        if (_tc_cfi >= 0) {
+                            if (tc_has_lit == 1) {
+                                if (L64(_fnt_cstrmask + _tc_cfi * 8) != 0) { tc_has_addr = 1; }
+                            }
                         }
                         # Reset tc_depth for the original tail-detect scan below.
                         tc_depth = 1;
@@ -1261,7 +1277,7 @@ fn PARSE_FNCALL(S, noff): i64 {
             # is the only such base in the stdlib; this gate blocks exactly
             # it while keeping `println`/`log_info`/… (i64 return) routing.
             # See CHANGELOG [6.0.3].
-            if (GFRS(S, fi) == 0 - 8) {
+            if (GFRS(S, fi) == 0 - 8 && (L64(_fnt_cstrmask + fi * 8) & 1) != 0) {
                 var _od_int_target = L64(_fnt_ovint + fi * 8);
                 if (_od_int_target > 0) {
                     # v6.5.1 — arity-gate the redirect (see _OV_ARITY_OK).
@@ -1569,6 +1585,34 @@ fn PARSE_FNCALL(S, noff): i64 {
             # Flipped default-on at v5.10.5 — the v5.10.4 stdlib
             # param-side annotations + v5.10.5 overload dispatch
             # remove the false-positive flood.
+            # v6.5.3 — an integer LITERAL passed to a param explicitly annotated
+            # `: cstring` is unambiguously wrong. Unlike an i64 variable or a fn-call
+            # result — which cyrius genuinely cannot distinguish from a pointer, per
+            # ADR-002's i64-everywhere tenet — a literal is known at parse time to be a
+            # NUMBER. Previously this compiled with NO diagnostic and SIGSEGV'd at
+            # runtime, because the callee dereferences it as a char*: `println(42)`
+            # printed nothing and died with signal 11. The `_int` overload route never
+            # covered it either, since that route only ever fires for a bare fn-call
+            # argument (never a literal, never a variable).
+            #
+            # `0` is EXEMPT — it is the idiomatic NULL for a cstring param.
+            # Hard error, not a warning: there is no reading of this program under which
+            # the call is correct, and a warning here is what let the crash ship.
+            if (_TYPE_CHECK_ENABLED() == 1) { if (PEEKT(S) == 1) {
+                if ((L64(_fnt_cstrmask + fi * 8) & (1 << argc)) != 0) {
+                    if (PEEKV(S) != 0) {
+                        syscall(SYS_WRITE, 2, "error:", 6);
+                        _err_head(S);
+                        syscall(SYS_WRITE, 2, ": passing integer literal ", 26);
+                        PRNUM(PEEKV(S));
+                        syscall(SYS_WRITE, 2, " to '", 5);
+                        PRSTR(S + 0x60000 + noff);
+                        syscall(SYS_WRITE, 2, "' which expects a cstring (a POINTER, not a number)\n", 52);
+                        syscall(SYS_WRITE, 2, "  hint: the value is a NUMBER — use the _int variant if one exists (e.g. println_int), or fmt_int_buf to render it\n", 117);
+                        _had_error = 1;
+                    }
+                }
+            } }
             if (_TYPE_CHECK_ENABLED() == 1) { if (PEEKT(S) == 2) {
                 # v5.10.24 — Phase 2: gate the warning on cstring_mask
                 # being explicitly SET (param annotated `: cstring`)

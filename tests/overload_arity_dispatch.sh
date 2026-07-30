@@ -113,6 +113,43 @@ check "1-arg Str call reaches _str sibling" 22 \
 check "2-arg cstr+len call stays on base"  11 \
     "$(run "$HDR$PAIR"'fn main(): i64 { var r = w(0, 0); return r; }')"
 
+# ---------------------------------------------------------------------------
+# AXIS 5 — the `_int` route must fire ONLY when the base's param 0 is explicitly
+# annotated `: cstring`. That annotation IS the condition the route was guessing at:
+# "this param wants a POINTER, so convert the number for it". Without the gate, ANY
+# base declaring an i64 return got its calls rerouted to a `_int` sibling whenever
+# argument 1 was a bare fn call — so a plain user pair silently ran the wrong body
+# (`take(make())` executed `take_int`), while `take(v)` and `take(42)` did not. The
+# same value, routed differently depending on whether it passed through a variable.
+# Mutation: drop the `& 1` cstrmask test from the _int arm in parse_fn.cyr → 22.
+echo "axis 5 — the _int route requires an explicit ': cstring' param 0:"
+UNANN='fn take(a): i64 { return 11; }
+fn take_int(a): i64 { return 22; }
+fn mk(): i64 { return 7; }
+'
+check "unannotated user pair stays on base" 11 \
+    "$(run "$UNANN"'fn main(): i64 { var r = take(mk()); return r; }')"
+ANN='fn emit(a: cstring): i64 { return 11; }
+fn emit_int(a): i64 { return 22; }
+fn mk(): i64 { return 7; }
+'
+check "cstring-annotated base still routes"  22 \
+    "$(run "$ANN"'fn main(): i64 { var r = emit(mk()); return r; }')"
+
+# ---------------------------------------------------------------------------
+# AXIS 6 — an integer LITERAL passed to a `: cstring` param is a hard error.
+# It used to compile with NO diagnostic and SIGSEGV, because the callee dereferences
+# the number as a char*: `println(42)` printed nothing and died on signal 11. A literal
+# is the one case cyrius CAN judge — an i64 variable or a fn-call result is genuinely
+# indistinguishable from a pointer under ADR-002, but a literal is known at parse time
+# to be a number. `0` stays legal: it is the idiomatic NULL.
+# Mutation: revert `_had_error = 1` to a `warning:` prefix → an exit code, not NOEMIT.
+echo "axis 6 — integer literal to a ': cstring' param is fatal:"
+LIT='fn want(a: cstring): i64 { return 11; }
+'
+check "literal 42 to cstring param"  NOEMIT "$(run "$LIT"'fn main(): i64 { return want(42); }')"
+check "literal 0 (NULL) still legal" 11     "$(run "$LIT"'fn main(): i64 { return want(0); }')"
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: overload-arity-dispatch — arity-aware and consistent across assign / return / nested"
