@@ -303,10 +303,33 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     done
 
     _refreshed=0
+    # v6.5.3 — install via temp + ATOMIC RENAME, never `cp` over the file in place,
+    # and never let one failure kill the loop.
+    #
+    # `cp` onto a binary that any process is currently executing fails with ETXTBSY
+    # ("Text file busy"). Under this script's `set -e` that aborted the WHOLE loop at the
+    # first offender — and `cycc` is the FIRST entry in cyrius.cyml's `bins`, so in
+    # practice every one of the 17 binaries after it was silently left stale. It was
+    # invisible because version-bump.sh invoked this script with `2>/dev/null`.
+    #
+    # Observed at 6.5.2: `build/cyrius` was correctly 6.5.2 while
+    # `~/.cyrius/bin/cyrius` sat at 6.5.1, and the wrapper's own drift detector
+    # reported `manifest-pin: 6.5.2 (drift — wrapper is 6.5.1)`.
+    #
+    # `mv` replaces the directory ENTRY rather than writing through it, so a process
+    # executing the old inode cannot block it (and keeps running the old image, which is
+    # correct). A failure now warns and continues instead of stranding the rest.
     for bin in $_R_BINS $_R_CROSS; do
         if [ -x "build/$bin" ]; then
-            cp "build/$bin" "$CYRIUS_HOME/versions/$VERSION/bin/"
-            _refreshed=$((_refreshed + 1))
+            _dst="$CYRIUS_HOME/versions/$VERSION/bin"
+            if cp "build/$bin" "$_dst/.$bin.new" 2>/dev/null \
+               && chmod +x "$_dst/.$bin.new" 2>/dev/null \
+               && mv -f "$_dst/.$bin.new" "$_dst/$bin" 2>/dev/null; then
+                _refreshed=$((_refreshed + 1))
+            else
+                rm -f "$_dst/.$bin.new" 2>/dev/null || true
+                warn "could not install $bin into $_dst (continuing)"
+            fi
         fi
     done
     [ -f bootstrap/asm ] && cp bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin/"

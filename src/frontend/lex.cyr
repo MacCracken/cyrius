@@ -61,7 +61,23 @@ fn FM_BUILD(S): i64 {
                             else { ci = ci + 1; }
                         }
                         store64(S + 0x71A040 + _fm_count * 24, line + 1);
-                        store64(S + 0x71A040 + _fm_count * 24 + 8, 0);
+                        # v6.5.3 — parse the trailing ` BASE` the marker now carries and
+                        # stash it in the HIGH 32 bits of the line-count word. The entry
+                        # MUST stay 24 B (1024 of them have to fit 0x71A040..0x721000), and
+                        # a line count never approaches 2^32, so the word has room. Pass 2
+                        # ORs the count into the low half. Absent/garbage -> 1, i.e. the
+                        # pre-v6.5.3 behaviour, so an old marker still parses.
+                        var _fb = 0;
+                        var _fp = fend + 1;
+                        if (_fp < bl) { if (load8(buf + _fp) == 32) {
+                            _fp = _fp + 1;
+                            while (_fp < bl && load8(buf + _fp) >= 48 && load8(buf + _fp) <= 57) {
+                                _fb = _fb * 10 + (load8(buf + _fp) - 48);
+                                _fp = _fp + 1;
+                            }
+                        } }
+                        if (_fb < 1) { _fb = 1; }
+                        store64(S + 0x71A040 + _fm_count * 24 + 8, _fb * 4294967296);
                         if (canon >= 0) {
                             store64(S + 0x71A040 + _fm_count * 24 + 16, canon);
                         } else {
@@ -97,10 +113,10 @@ fn FM_BUILD(S): i64 {
         var next_start = 0;
         if (i + 1 < _fm_count) {
             next_start = load64(S + 0x71A040 + (i + 1) * 24);
-            store64(S + 0x71A040 + i * 24 + 8, next_start - start - 1);
+            store64(S + 0x71A040 + i * 24 + 8, (next_start - start - 1) | (load64(S + 0x71A040 + i * 24 + 8) & 0xFFFFFFFF00000000));
         } else {
             # Last file: count remaining lines to EOF
-            store64(S + 0x71A040 + i * 24 + 8, line - start);
+            store64(S + 0x71A040 + i * 24 + 8, (line - start) | (load64(S + 0x71A040 + i * 24 + 8) & 0xFFFFFFFF00000000));
         }
         i = i + 1;
     }
@@ -133,7 +149,12 @@ fn FM_FILEID(S, expanded_line): i64 {
     var i = 0;
     while (i < cnt) {
         var start = load64(S + 0x71A040 + i * 24);
-        var lines = load64(S + 0x71A040 + i * 24 + 8);
+        # v6.5.3: MASK — the high 32 bits now carry the span's source-line base. Left
+        # unmasked, `start + lines` overflows into the billions, the range check below is
+        # true for the FIRST entry always, and every line resolves to one file id. That is
+        # silent `private` mis-scoping (two different files judged same-file, access
+        # wrongly ALLOWED), not just a bad diagnostic.
+        var lines = load64(S + 0x71A040 + i * 24 + 8) & 0xFFFFFFFF;
         if (expanded_line >= start) {
             if (expanded_line < start + lines) {
                 # Canonical: the NAME offset, not the entry index — one file spans
@@ -157,7 +178,11 @@ fn FM_LOOKUP(S, expanded_line): i64 {
     var i = 0;
     while (i < cnt) {
         var start = load64(S + 0x71A040 + i * 24);
-        var lines = load64(S + 0x71A040 + i * 24 + 8);
+        # v6.5.3: low 32 = line count, high 32 = the source line this span STARTS on.
+        var _lw = load64(S + 0x71A040 + i * 24 + 8);
+        var lines = _lw & 0xFFFFFFFF;
+        var _base = _lw >> 32;          # `>>` is LOGICAL in cyrius (`>>>` is arithmetic)
+        if (_base < 1) { _base = 1; }
         if (expanded_line >= start && expanded_line < start + lines) {
             var foff = load64(S + 0x71A040 + i * 24 + 16);
             var fptr = S + 0x721000 + foff;
@@ -165,7 +190,7 @@ fn FM_LOOKUP(S, expanded_line): i64 {
             while (load8(fptr + flen) != 0) { flen = flen + 1; }
             syscall(SYS_WRITE, 2, fptr, flen);
             syscall(SYS_WRITE, 2, ":", 1);
-            PRNUM(expanded_line - start + 1);
+            PRNUM(expanded_line - start + _base);
             return 1;
         }
         i = i + 1;

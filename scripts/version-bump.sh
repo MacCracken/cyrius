@@ -55,10 +55,34 @@ var _VERSION_TOOLCHAIN       = "$NEW";
 EOF
 fi
 
+# v6.5.3 — the same-version path must NOT exit here.
+#
+# It used to `exit 0` right after regenerating src/version_str.cyr. That is exactly
+# half the job: version_str.cyr is only a SOURCE file, and every binary built from it
+# — the seven src/main*.cyr forks and the cbt/cyrius.cyr CLI wrapper — kept whatever
+# version string it was last compiled with. Result observed at 6.5.2:
+#
+#     $ cyrius --version
+#     cyrius 6.5.1
+#     manifest-pin: 6.5.2 (drift — wrapper is 6.5.1)
+#
+# i.e. the wrapper's own drift detector firing on drift this script caused. This is the
+# SAME papercut v5.11.58 fixed for the version-CHANGE path (it added the touch loop
+# below); the same-version path was left exiting before ever reaching it.
+#
+# It also silently falsified CLAUDE.md's snapshot-ping-pong remedy, which tells you to
+# run `version-bump.sh "$(cat VERSION)"` "which re-runs install.sh --refresh-only" —
+# it never got there, so the documented fix for a `lib/` edit reverting under you did
+# nothing.
+#
+# So: only the steps that genuinely require a version CHANGE are skipped (the VERSION
+# file and the four doc/CHANGELOG rewrites, all of which are no-ops or actively wrong
+# when NEW == OLD). Everything from the force-rebuild onward runs unconditionally,
+# because "regenerate the version string" without "rebuild its consumers" is not a
+# meaningful operation.
 if [ "$NEW" = "$OLD" ]; then
-    echo "Already at $OLD (regenerated src/version_str.cyr)"
-    exit 0
-fi
+    echo "Already at $OLD — regenerating src/version_str.cyr and REBUILDING its consumers"
+else
 
 # 1. VERSION file (source of truth)
 echo "$NEW" > VERSION
@@ -89,6 +113,8 @@ fi
 
 # 5. Roadmap header
 sed -i "s/> \*\*v$OLD\.\*\*/> **v$NEW.**/" docs/development/roadmap.md 2>/dev/null || true
+
+fi   # end version-CHANGE-only steps (1-5); everything below runs for both paths
 
 # v5.11.58: force-rebuild binaries whose version_str.cyr dep
 # install.sh::_rebuild_stale can't see. The `-nt source` check
@@ -132,7 +158,9 @@ fi
 # Skipped silently if install.sh is missing (shouldn't happen in a
 # normal cyrius checkout).
 if [ -x scripts/install.sh ]; then
-    sh scripts/install.sh --refresh-only 2>/dev/null || \
+    # v6.5.3: do NOT swallow stderr. This suppression is why an ETXTBSY `cp` failure
+    # that stranded all 17 installed binaries went unseen across multiple releases.
+    sh scripts/install.sh --refresh-only || \
         echo "  warning: install-snapshot refresh failed (non-fatal)" >&2
 fi
 

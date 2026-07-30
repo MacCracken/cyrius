@@ -2,13 +2,15 @@
 
 **Status:** 🟡 **OPEN** — filed 2026-07-29. Verified against live code: `lib/sync.cyr:72-78` calls
 `syscall(SYS_FUTEX, m, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0)` unconditionally, with no
-waiter-present check and no third mutex state to base one on. Measured on cycc 6.5.0.
+waiter-present check and no third mutex state to base one on. First measured on cycc 6.5.0;
+**re-verified on cycc 6.5.2 (2026-07-29, after the bayan/sandhi release): `mutex_lock_unlock` is
+392ns, unchanged, and `lib/sync.cyr:72-78` still issues the unconditional wake.**
 **Placement:** unpinned — 6.x-line backlog. Self-contained fix inside `lib/sync.cyr`; no ABI or
 surface change (`MUTEX_SIZE` stays 8, `mutex_new`/`_lock`/`_unlock` signatures stay).
 **Discovered:** 2026-07-29 while benchmarking agnosai's M5 orchestration layer.
 **Severity:** Medium — silent perf gap, measured 8.6× on the primitive and it compounds. No consumer-side
 workaround exists short of not using the stdlib mutex.
-**Affects:** cycc 6.5.0 and every earlier version carrying `lib/sync.cyr`'s two-state futex mutex
+**Affects:** cycc 6.5.2 and every earlier version carrying `lib/sync.cyr`'s two-state futex mutex
 (Linux backend only — the Windows SRWLOCK and macOS spinlock backends are not affected).
 
 ## Summary

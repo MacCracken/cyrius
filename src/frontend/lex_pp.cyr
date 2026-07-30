@@ -304,6 +304,14 @@ fn PP_ALREADY_INCLUDED(S, fname): i64 {
 # (the v6.4.10 contract — this is 512*8 = 4096, not 512).
 var _pp_curfile[512];
 var _pp_curfile_set = 0;
+# v6.5.3 — where the CURRENT file's marker sat in this pass's input, and the source line
+# it declared. PP_IFDEF_PASS's input is PP_PASS's OUTPUT, i.e. already expanded, so
+# counting newlines from offset 0 yields the EXPANDED line, not the file's own. A file
+# that itself contains an include therefore reported lines inflated by that include's
+# whole body (lib/mid.cyr:2 came out as :4). Anchoring to the file's own marker and
+# adding the base it carried fixes that without needing a per-file line counter.
+var _pp_curfile_anchor = 0;
+var _pp_curfile_base = 1;
 
 fn _pp_curfile_ptr(): i64 {
     if (_pp_curfile_set == 0) { return "<source>"; }
@@ -323,6 +331,17 @@ fn _pp_curfile_note(name): i64 {
     return 0;
 }
 
+# v6.5.3 — newlines in [from, upto) of `buf`.
+fn _pp_count_nl(buf, from, upto): i64 {
+    var n = 0;
+    var i = from;
+    while (i < upto) {
+        if (load8(buf + i) == 10) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
 # Parse a `#@file "NAME"` line at `dip` and record NAME as the current file.
 # Tolerant by design: anything that is not exactly this shape is ignored, so an
 # ordinary `#@`-starting comment cannot corrupt the tracker.
@@ -336,9 +355,10 @@ fn _pp_note_marker(tmp, dip, bl): i64 {
     if (load8(tmp + p + 5) != 34) { return 0; }   # '"'
     p = p + 6;
     var i = 0;
+    var qpos = 0;
     while (p < bl) {
         var ch = load8(tmp + p);
-        if (ch == 34) { p = bl; }
+        if (ch == 34) { qpos = p; p = bl; }
         else {
             if (i < 4090) { store8(&_pp_curfile + i, ch); i = i + 1; }
             p = p + 1;
@@ -346,10 +366,49 @@ fn _pp_note_marker(tmp, dip, bl): i64 {
     }
     store8(&_pp_curfile + i, 0);
     _pp_curfile_set = 1;
+    # v6.5.3 — record the base this marker carries and the offset just past its line, so
+    # a RESUME emitted later in THIS pass can be expressed relative to the current file's
+    # own first line instead of the expanded-buffer line. `qpos` is the closing quote —
+    # the loop breaks by setting `p = bl`, so `p` cannot be used for this.
+    var bp = qpos + 1;
+    var bv = 0;
+    if (bp < bl) { if (load8(tmp + bp) == 32) {
+        bp = bp + 1;
+        while (bp < bl && load8(tmp + bp) >= 48 && load8(tmp + bp) <= 57) {
+            bv = bv * 10 + (load8(tmp + bp) - 48);
+            bp = bp + 1;
+        }
+    } }
+    if (bv < 1) { bv = 1; }
+    _pp_curfile_base = bv;
+    while (bp < bl && load8(tmp + bp) != 10) { bp = bp + 1; }
+    _pp_curfile_anchor = bp + 1;
     return 0;
 }
 
-fn PP_FMARK(S, out, op, name): i64 {
+# v6.5.3 — count the 1-based line number at input offset `upto` in the buffer at `base`.
+# Used to give a RESUME marker the line the enclosing file actually resumes ON. Computed
+# on demand rather than threaded through PP_PASS's loop: that loop advances `ip` at 17
+# distinct sites and an off-by-one in any one of them would be invisible here, which is
+# exactly how the first attempt at this fix (reverted, see the issue) went wrong.
+# O(input) per include and includes are few, so the cost is irrelevant next to being right.
+fn _pp_lineno_at(S, base, upto): i64 {
+    var n = 1;
+    var i = 0;
+    while (i < upto) {
+        if (load8(base + i) == 10) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# v6.5.3 — `base` is the source line the span AFTER this marker starts on.
+#   ENTER  (a fresh include)  -> 1, the included file's own first line
+#   RESUME (back to the parent) -> the parent's line just past the include directive
+# Emitted as `#@file "NAME" BASE`. FM_BUILD parses it; FM_LOOKUP adds it instead of
+# assuming 1. Without it the parent's numbering RESTARTS at 1 after every include, so a
+# diagnostic in the main source reported `actual_line - includes_before_it`.
+fn PP_FMARK(S, out, op, name, base): i64 {
     store8(out + op, 35); op = op + 1;    # '#'
     store8(out + op, 64); op = op + 1;    # '@'
     store8(out + op, 102); op = op + 1;   # 'f'
@@ -364,6 +423,16 @@ fn PP_FMARK(S, out, op, name): i64 {
         op = op + 1; i = i + 1;
     }
     store8(out + op, 34); op = op + 1;    # '"'
+    store8(out + op, 32); op = op + 1;    # ' '
+    # base as decimal, most-significant first
+    var d = base;
+    if (d < 1) { d = 1; }
+    var div = 1;
+    while (d / div >= 10) { div = div * 10; }
+    while (div > 0) {
+        store8(out + op, 48 + (d / div) % 10); op = op + 1;
+        div = div / 10;
+    }
     store8(out + op, 10); op = op + 1;    # '\n'
     return op;
 }
@@ -1859,29 +1928,16 @@ fn PP_PASS(S): i64 {
     # state machine.
     var pp_depth = 0;
     var had_include = 0;
-    var source_marked = 0;
     # Emit an initial `#@file "<source>"` marker so the main source is
     # ALWAYS covered by the file map — even if no includes fire. Fixes
     # bote feedback item 6 where a parse error in main source with no
     # preceding includes fell through to the raw preprocessed line number.
-    store8(out + op, 35); op = op + 1;   # '#'
-    store8(out + op, 64); op = op + 1;   # '@'
-    store8(out + op, 102); op = op + 1;  # 'f'
-    store8(out + op, 105); op = op + 1;  # 'i'
-    store8(out + op, 108); op = op + 1;  # 'l'
-    store8(out + op, 101); op = op + 1;  # 'e'
-    store8(out + op, 32); op = op + 1;   # ' '
-    store8(out + op, 34); op = op + 1;   # '"'
-    store8(out + op, 60); op = op + 1;   # '<'
-    store8(out + op, 115); op = op + 1;  # 's'
-    store8(out + op, 111); op = op + 1;  # 'o'
-    store8(out + op, 117); op = op + 1;  # 'u'
-    store8(out + op, 114); op = op + 1;  # 'r'
-    store8(out + op, 99); op = op + 1;   # 'c'
-    store8(out + op, 101); op = op + 1;  # 'e'
-    store8(out + op, 62); op = op + 1;   # '>'
-    store8(out + op, 34); op = op + 1;   # '"'
-    store8(out + op, 10); op = op + 1;   # '\n'
+    # v6.5.3 — through PP_FMARK, so this carries a base like every other marker.
+    # Hand-rolled bytes here meant no base field, which FM_BUILD reads as 0 -> 1.
+    # Correct for THIS one (the main source really does start at line 1), but it was
+    # the same hand-rolling in the one-shot below (deleted at v6.5.3) that silently
+    # defeated the resume-line fix.
+    op = PP_FMARK(S, out, op, "<source>", 1);
     # v5.8.40 — string-literal awareness. `in_string` flips on
     # unescaped `"`; `escape_next` suppresses the toggle for the
     # byte immediately following `\` while inside a string. The
@@ -2098,7 +2154,7 @@ fn PP_PASS(S): i64 {
                             # Include-once: skip if already included
                             if (PP_ALREADY_INCLUDED(S, fname) == 0) {
                                 PP_MARK_INCLUDED(S, fname);
-                                op = PP_FMARK(S, out, op, fname);
+                                op = PP_FMARK(S, out, op, fname, 1);
                                 var nr = READFILE(fname, out + op, 8388608 - op);
                                 if (nr < 0) {
                                     syscall(SYS_WRITE, 2, "error: cannot open include file: ", 33);
@@ -2122,8 +2178,17 @@ fn PP_PASS(S): i64 {
                                 # included file's own `include` lines are copied verbatim
                                 # into `out` and expanded later by PP_IFDEF_PASS), so the
                                 # file being resumed here is always the main source.
-                                op = PP_FMARK(S, out, op, "<source>");
+                                op = PP_FMARK(S, out, op, "<source>", _pp_lineno_at(S, S, ip));
                                 had_include = 1;
+                            } else {
+                                # v6.5.3 — include-once SKIP still consumes the directive
+                                # LINE, so the enclosing file's numbering advances by one
+                                # with no marker to record it. Without this the base set by
+                                # an earlier RESUME goes stale by one per skipped include
+                                # and every later diagnostic drifts. Re-anchor with a RESUME
+                                # marker; there is no ENTER to pair it with, which is fine —
+                                # it only re-states where the parent now is.
+                                op = PP_FMARK(S, out, op, "<source>", _pp_lineno_at(S, S, ip));
                             }
                         }
                         bol = 1; handled = 1;
@@ -2132,28 +2197,17 @@ fn PP_PASS(S): i64 {
         # Default: copy byte to output (if not skipping)
         if (handled == 0) {
             if (skip_depth == 0) {
-                # Emit source marker once, before first non-directive line after includes
-                if (source_marked == 0 && had_include == 1 && bol == 1 && c != 10 && c != 35) {
-                    source_marked = 1;
-                    store8(out + op, 35); op = op + 1;
-                    store8(out + op, 64); op = op + 1;
-                    store8(out + op, 102); op = op + 1;
-                    store8(out + op, 105); op = op + 1;
-                    store8(out + op, 108); op = op + 1;
-                    store8(out + op, 101); op = op + 1;
-                    store8(out + op, 32); op = op + 1;
-                    store8(out + op, 34); op = op + 1;
-                    store8(out + op, 60); op = op + 1;
-                    store8(out + op, 115); op = op + 1;
-                    store8(out + op, 111); op = op + 1;
-                    store8(out + op, 117); op = op + 1;
-                    store8(out + op, 114); op = op + 1;
-                    store8(out + op, 99); op = op + 1;
-                    store8(out + op, 101); op = op + 1;
-                    store8(out + op, 62); op = op + 1;
-                    store8(out + op, 34); op = op + 1;
-                    store8(out + op, 10); op = op + 1;
-                }
+                # v6.5.3 — the `source_marked` one-shot USED to emit a bare
+                # `#@file "<source>"` here, before the first non-directive line after an
+                # include. It was an earlier, partial attempt at this same problem and it
+                # is now actively harmful: it fired at the very point the RESUME marker
+                # had just correctly marked, adding a SECOND entry for the same place
+                # carrying no base — so FM_LOOKUP matched the base-less one and restarted
+                # the main source's numbering at 1. That is precisely why the first
+                # attempt at this fix "changed nothing": the fix was right and this
+                # overwrote it. Deleted rather than patched — RESUME markers cover every
+                # case it covered, and the issue's own note said to fold it into whatever
+                # landed rather than leave two mechanisms.
                 store8(out + op, c); op = op + 1;
             }
             # v5.8.40 — string-literal state machine. Track `"`
@@ -2476,7 +2530,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                 }
                                 if (PP_ALREADY_INCLUDED(S, fname) == 0) {
                                     PP_MARK_INCLUDED(S, fname);
-                                    op = PP_FMARK(S, out, op, fname);
+                                    op = PP_FMARK(S, out, op, fname, 1);
                                     var nr = READFILE(fname, out + op, 8388608 - op);
                                     if (nr < 0) {
                                         syscall(SYS_WRITE, 2, "error: cannot open include file: ", 33);
@@ -2493,8 +2547,12 @@ fn PP_IFDEF_PASS(S): i64 {
                                     # INPUT stream, tracked in `_pp_curfile` as this pass
                                     # copies markers through. Falls back to "<source>"
                                     # when no marker has been seen yet.
-                                    op = PP_FMARK(S, out, op, _pp_curfile_ptr());
+                                    op = PP_FMARK(S, out, op, _pp_curfile_ptr(), (_pp_curfile_base + _pp_count_nl(tmp, _pp_curfile_anchor, ip)));
                                     had_new_include = 1;
+                                } else {
+                                    # v6.5.3 — see the PP_PASS skip path: an include-once
+                                    # SKIP still consumes its directive line, so re-anchor.
+                                    op = PP_FMARK(S, out, op, _pp_curfile_ptr(), (_pp_curfile_base + _pp_count_nl(tmp, _pp_curfile_anchor, ip)));
                                 }
                             }
                             bol = 1; handled = 1;

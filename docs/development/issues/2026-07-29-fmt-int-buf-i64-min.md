@@ -3,7 +3,9 @@
 **Status:** 🟡 **OPEN** — filed 2026-07-29. Verified against live code and at runtime on cycc 6.5.1:
 `lib/fmt.cyr:99` negates with `n = 0 - n`, which is a no-op at `i64::MIN`, so both the `n == 0` and
 `while (n > 0)` arms are skipped and only the sign byte is emitted. Confirmed end to end — the repro
-prints `{"n":-}`.
+prints `{"n":-}`. **Re-verified on cycc 6.5.2 (2026-07-29, after the bayan 1.3.0 release): the repro
+still exits 1 and still prints `{"n":-}`, so bayan 1.3.0's `_parse_str` -> `_parse_buf` rename did not
+touch this path.**
 **Placement:** unpinned — 6.x-line backlog. Self-contained fix in `lib/fmt.cyr`, supplied and
 verified below (11/11 cases); a matching guard in `lib/bayan.cyr`'s `_jp_atoi` is a separate, larger
 question (see the end).

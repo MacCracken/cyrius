@@ -1,3 +1,25 @@
+# RESOLVED at v6.5.3
+
+**Status:** ✅ **RESOLVED v6.5.3.** All 10 shapes in `tests/diag_line_after_include.sh` pass;
+8 of them fail on the 6.5.2 binary.
+
+**The disproved theory in this file was actually CORRECT.** "Carry the resume line in the
+marker" was the right fix and it had been implemented properly. It appeared to do nothing
+because `lex_pp.cyr` had a SECOND, hand-rolled marker emitter — the `source_marked` one-shot
+this file itself flagged as "a partial, earlier attempt … fold it into whatever lands" —
+which fired at the same point and wrote a base-less duplicate that `FM_LOOKUP` matched
+instead. The fix was overwritten, not wrong.
+
+**Lesson worth more than the fix:** before concluding a change "does not work", check
+whether something else writes the same record afterwards. The verification that it was
+"present in the built compiler" was true and irrelevant.
+
+Also fixed en route: include-once skips left the base stale by one per skip; nested includes
+reported expanded lines (`lib/mid.cyr:2` as `:4`) because `PP_IFDEF_PASS` reads already-expanded
+text. See CHANGELOG [6.5.3].
+
+---
+
 # Diagnostics report the wrong LINE for the main source once any `include` is present
 
 **Status:** 🟡 **OPEN** — pre-existing, reproduced against released **6.4.86** and against the

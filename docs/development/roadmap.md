@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.2** (2026-07-29) — cycc **1,129,272 B** · check.sh **150 passed / 0
+**Current head: v6.5.3** (2026-07-29) — cycc **1,129,288 B** · check.sh **150 passed / 0
 failed** · self_compile **638 ms** · **253** `.tcyr` (31 `vr01_`) · **99** `lib/*.cyr` ·
 api-surface **4,761** public fns · heap map **100 regions / 0 overlaps** (unchanged across
 6.5.0–.2 — the visibility file-id substrate is a lazy `alloc`, the `_fnt_tparams`/`_vsgn_base`
@@ -81,14 +81,14 @@ not a single release.
   `tests/folds_agnos_parity.sh`, and yukti 2.2.10 → 2.3.0 (six agnos ABI defects, including
   `sys_mount` fabricating `Ok()` for a filesystem that was never mounted). Corpus
   default-vs-IR=3 exit mismatches **35 → 8**. Bench 638 ms, retiring the 6.5.1 perf flag.
-  cycc **1,129,272 B**.
+  cycc **1,129,288 B**.
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 
 Measured at 6.5.2, not quoted: `cat src/main.cyr | CYRIUS_IR=3 build/cycc` produces a
-**1,182,520 B** compiler — **+53,248 B / +4.7 %** over the default build (1,129,272 B, which
+**1,182,520 B** compiler — **+53,248 B / +4.7 %** over the default build (1,129,288 B, which
 is itself byte-identical to `build/cycc`), differing from byte 42. Pipe `src/main.cyr` through
-*that* IR=3-built compiler and its output is **1,129,272 B, byte-identical to `build/cycc`**.
+*that* IR=3-built compiler and its output is **1,129,288 B, byte-identical to `build/cycc`**.
 
 So the true and load-bearing claim is: **CYRIUS_IR=3 builds a compiler that reproduces
 `build/cycc` byte-identically** — a semantics-preserving statement about the IR=3-built
@@ -583,12 +583,18 @@ ships today; that is 6.x tooling.
 Six decisions this document deliberately does **not** make. Rows above reference these by
 number. Nothing here blocks starting Slot 1; items 1 and 5 are owed by Slot 3 entry.
 
-1. **The self_compile budget — half of the committed acceptance anchor is unstated.**
+1. **The self_compile budget — ✅ ANSWERED (user, 2026-07-29): the later performance track
+   owns it.** Not a decision owed at Slot 3 entry after all — the budget gets set as part of
+   that track rather than pinned up front, and **open question 5 below is to be reviewed
+   together with it**, the two being the same subject. The material below stays as the input
+   that track should start from.
+
+   *Original framing:* half of the committed acceptance anchor is unstated.
    roadmap_6.md's anchor has two clauses: the svara formant bench closing to single-digit-× of
    the Rust baseline, **and** *"self_compile stays inside a stated budget"*. The svara figure is
    carried above; the budget is not, and the whole point of a *stated* budget is that it is
    stated before the arcs land rather than reconstructed after. Verified baseline to set it
-   against: **638 ms · 1,129,272 B** at 6.5.2. A defensible pair is *≤ 700 ms and ≤ 1.20 MB at
+   against: **638 ms · 1,129,288 B** at 6.5.2. A defensible pair is *≤ 700 ms and ≤ 1.20 MB at
    minor close* — but the number is the maintainer's, not mine.
    **Note the live counter-pressure:** an IR=3-built cycc is currently **+4.7 % larger**
    (1,182,520 B), so if IR=3 ever becomes the default path the size half of any budget is
@@ -615,7 +621,14 @@ number. Nothing here blocks starting Slot 1; items 1 and 5 are owed by Slot 3 en
    waiting**, it mirrors an already-shipped split (`thread_win`), and the VR-01 guards mean it
    cannot rot silently. Keep it last, or pull it forward if a consumer appears?
 
-5. **v6.5.x committed item 5 — the self-compile growth-tax audit — has no slot.**
+5. **v6.5.x committed item 5 — the self-compile growth-tax audit — ✅ ANSWERED (user,
+   2026-07-29): likely dropped, but re-review it WITH open question 1's performance track,
+   since the two are related.** So it is explicitly *not* silently dropped — it is parked
+   against that track's opening review, which decides whether it still earns a bite. Whoever
+   opens the perf track: read this row and question 1 together, and record the outcome here
+   either way.
+
+   *Original framing:* it has no slot.
    roadmap_6.md:1323-1369 commits v6.5.x to items **1–5** and its pull-forward note says
    v6.5.x carries *"the FULL shape, items 1–5, not just the substrate half."* Items 1–4 map to
    Slots 3/5/6. Item 5 does not appear in any slot, bite, or backlog row, and this document

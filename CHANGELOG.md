@@ -6,6 +6,100 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.3] — 2026-07-30
+
+### Verification
+
+Self-host fixpoint byte-identical · seed-derive `seed→cybs→cycc` OK · check.sh **150/0** ·
+cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on ecb / ach / cass / pi.
+
+**Bench: self_compile 654 ms · cycc 1,129,272 → 1,129,288 B (+16).** Within the run-to-run
+spread this series has shown (638 / 654 at 6.5.2–6.5.3, against a historical 614–634 band);
++16 B for a preprocessor change that adds a decimal field to a marker and two small helpers
+is the expected shape. No bisect indicated.
+
+The seed gate matters more than usual here: the marker FORMAT changed, and `cybs` — the
+hand-assembly bootstrap compiler — parses it too. A format change that `build/cycc` handles
+and `cybs` does not is exactly the class the cycc fixpoint cannot see.
+
+### Fixed — diagnostics reported the wrong LINE once any `include` was present
+
+A main-source error reported `actual_line - (number of includes before it)`: with one
+include a line-2 error said **line 1**, with two it still said 1. The file, excerpt and
+caret were always correct — only the number was wrong, which is why it was livable and
+easy to misdiagnose. It affected essentially every real program, since almost every file
+has an include.
+
+**Why the previous attempt was reverted as "disproved", because that is the reusable
+part.** The obvious fix — have the preprocessor's RESUME marker carry the line to resume
+on — is *correct*, and it had been implemented, verified present in the built compiler,
+and reverted because the output did not change. It did not change because `lex_pp.cyr`
+contained a **second, hand-rolled marker emitter**: the `source_marked` one-shot, which
+fired at exactly the same point and emitted a base-less `#@file "<source>"` immediately
+after the correct marker. `FM_LOOKUP` matched the base-less duplicate and restarted the
+enclosing file's numbering at 1. Two mechanisms for one job, and the older one silently
+won. The issue's own note had flagged `source_marked` as "a partial, earlier attempt —
+fold it into whatever lands"; it is now deleted, and every marker goes through
+`PP_FMARK`.
+
+Mechanism: markers are `#@file "NAME" BASE`. `FM_BUILD` packs BASE into the **high 32
+bits** of the entry's line-count word — the entry has to stay 24 B so 1024 of them fit
+`0x71A040..0x721000` — and `FM_LOOKUP` adds it instead of assuming 1. `FM_FILEID` masks
+the low half; left unmasked, `start + lines` overflows into the billions, the range check
+matches the first entry always, and every line collapses to one file id, which is silent
+`private` mis-scoping in the direction of wrongly *allowing* access.
+
+Three sub-cases the first attempt never reached:
+- **include-once skips** still consume their directive line, so a repeat include left the
+  base stale by one; the skip path now emits a RESUME too.
+- **Nested includes** — `PP_IFDEF_PASS` reads `PP_PASS`'s *output*, which is already
+  expanded, so counting newlines from offset 0 yields the expanded line: `lib/mid.cyr:2`
+  came out as `:4`. Now anchored to the current file's own marker plus the base it
+  carried.
+- An error inside an include still names that file and its own line.
+
+Gate: `tests/diag_line_after_include.sh`, 10 shapes, **mutation-proven — 8 of 10 fail on
+the 6.5.2 binary**, and the 2 that pass are the regression guards. Note the gate's
+programs must call the erroring fn: an unreachable fn is DCE'd and its body error never
+surfaces, which would make the whole gate vacuous.
+
+### Fixed — `install.sh` silently stranded every binary after the first busy one
+
+Reported from the CLI itself:
+
+```
+$ cyrius --version
+cyrius 6.5.1
+manifest-pin: 6.5.2 (drift — wrapper is 6.5.1)
+```
+
+— the wrapper's own drift detector firing on drift the toolchain caused. Two defects, both
+long-standing:
+
+**1. `install.sh --refresh-only` aborted its install loop on the first `cp` failure.**
+Copying onto a binary that any process is currently executing fails with **ETXTBSY**
+("Text file busy"), and under the script's `set -e` that killed the whole loop. `cycc` is
+the **first** entry in `cyrius.cyml`'s `bins`, so in practice *all 17* binaries after it
+were left stale — `cyrius`, `cyrfmt`, `cyrlint`, everything. It stayed invisible because
+`version-bump.sh` invoked the script with `2>/dev/null`. Now each binary is written to a
+temp name and moved into place with an **atomic rename**, which replaces the directory
+entry rather than writing through it and therefore cannot be blocked by a running process;
+a failure warns and the loop continues. The stderr suppression is also gone. Verified: the
+refresh went from aborting at bin #1 to **24 bins refreshed**, and `cyrius --version` now
+reads `6.5.2` with no drift line.
+
+**2. `version-bump.sh`'s same-version path exited before doing half its job.** Running
+`version-bump.sh "$(cat VERSION)"` regenerated `src/version_str.cyr` and then `exit 0`'d —
+skipping the `touch` loop that forces the seven `src/main*.cyr` forks and `cbt/cyrius.cyr`
+to rebuild, the cycc rebuild, the seed-derive gate, and the install refresh. Regenerating a
+version STRING without rebuilding its consumers is not a meaningful operation, and this is
+the same papercut **v5.11.58** fixed for the version-*change* path — that fix added the
+touch loop, and this path exited before reaching it. It also silently falsified
+`CLAUDE.md`'s snapshot-ping-pong remedy, which tells you to run exactly this command
+"which re-runs `install.sh --refresh-only`" — it never got there. Only the steps that
+genuinely require a version change are skipped now.
+
+
 ## [6.5.2] — 2026-07-29
 
 **The `CYRIUS_IR=3` substrate, unblocked — plus the agnos ABI class the 6.5.1 arity

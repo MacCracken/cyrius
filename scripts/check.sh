@@ -122,3 +122,9 @@ sh "$ROOT/tests/folds_agnos_parity.sh"
 # IR=3 self-hosts a byte-identical cycc — the strongest semantics-preserving statement
 # available on the largest program in the tree.
 sh "$ROOT/tests/ir3_fold_jump_span.sh"
+
+# v6.5.3: a diagnostic's LINE must survive include expansion. Main-source errors used to
+# report `actual - includes_before_it` (line 2 said 1; two includes still said 1). Ten
+# shapes, incl. include-once skips and a NESTED include — mutation-proven: 8 of 10 fail on
+# the 6.5.2 binary, and the 2 that pass are the regression guards.
+sh "$ROOT/tests/diag_line_after_include.sh"
