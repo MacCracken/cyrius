@@ -1,4 +1,4 @@
-# Handoff — **v6.5.3 is out.** v6.5.x continues; nothing is mid-arc.
+# Handoff — **v6.5.4 is out.** v6.5.x continues; nothing is mid-arc.
 
 > **Written 2026-07-30.** Read this, then `CLAUDE.md`, then [`state.md`](state.md), then
 > [`roadmap.md`](roadmap.md) for the slot sequence. **Refresh or delete this file when the
@@ -10,13 +10,13 @@
 
 | | |
 |---|---|
-| Version | **6.5.3** — release gate GREEN, all 5 steps |
-| cycc x86_64 | **1,129,288 B** — seed 29,024 B → cybs → cycc byte-identical |
-| Gates | `check.sh` **150 / 0** + **10** shell gates · bench 654 ms |
+| Version | **6.5.4** — release gate GREEN, all 5 steps |
+| cycc x86_64 | **1,133,440 B** — seed 29,024 B → cybs → cycc byte-identical |
+| Gates | `check.sh` **150 / 0** + **10** shell gates · bench 644 ms |
 | Cross-OS | ecb · ach · cass · pi — all `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware |
-| Corpus | **253** `.tcyr` · 99 `lib/*.cyr` · api-surface **4761** · heap 100 regions / 0 overlaps |
-| Queue | **15** open issues · 2 proposals · 277 archived |
-| Mid-arc work | **None.** 6.5.3 is complete; the next slot is open. |
+| Corpus | **254** `.tcyr` · 99 `lib/*.cyr` · api-surface **4771** · heap 100 regions / 0 overlaps |
+| Queue | **16** open issues · 2 proposals · 278 archived |
+| Mid-arc work | **None.** 6.5.4 is complete; the next slot is open. |
 
 ## What v6.5.x has shipped
 
@@ -29,6 +29,12 @@
   six agnos ABI defects.
 - **.3** — diagnostic lines surviving `include` expansion; `install.sh`'s ETXTBSY strand;
   `version-bump.sh`'s same-version early exit.
+- **.4** — `vec_sort_by` / `vec_select_nth`, the stdlib's first ordering primitive (the agnosai
+  filing; **no fn in any of the 99 `lib/` modules took a comparator**). Folded sigil 3.12.2 /
+  yukti 2.3.2 / sandhi 1.9.8 / mabda 4.0.8. Fixed the sign-efi gate, which was **vacuous**
+  against the exact defect sigil 3.12.2 fixes (single 8-aligned fixture) *and* was grading the
+  installed helper instead of the repo build. Re-derived every folded-dep version table from
+  live `lib/` headers — 3 of 4 had rotted again, and `yantra` was missing from both.
 
 ## ⚠ Read before trusting anything in the tree
 

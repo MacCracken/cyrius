@@ -30,11 +30,11 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.3** (2026-07-29) — cycc **1,129,288 B** · check.sh **150 passed / 0
-failed** · self_compile **638 ms** · **253** `.tcyr` (31 `vr01_`) · **99** `lib/*.cyr` ·
-api-surface **4,761** public fns · heap map **100 regions / 0 overlaps** (unchanged across
+**Current head: v6.5.4** (2026-07-30) — cycc **1,133,440 B** · check.sh **150 passed / 0
+failed** · self_compile **644 ms** · **254** `.tcyr` (31 `vr01_`) · **99** `lib/*.cyr` ·
+api-surface **4,771** public fns · heap map **100 regions / 0 overlaps** (unchanged across
 6.5.0–.2 — the visibility file-id substrate is a lazy `alloc`, the `_fnt_tparams`/`_vsgn_base`
-precedent, not a new fixed band) · **16 open issues + 2 open proposals** (276 archived issues / 27 archived proposals). The visibility proposal was found marked `✅ SHIPPED in v6.5.0` while still sitting in the open `proposals/` dir and was archived on 2026-07-29 — a shipped-but-open item is the exact rot this sweep exists to remove, so it is called out rather than quietly corrected.
+precedent, not a new fixed band) · **16 open issues + 2 open proposals** (278 archived issues / 27 archived proposals). The visibility proposal was found marked `✅ SHIPPED in v6.5.0` while still sitting in the open `proposals/` dir and was archived on 2026-07-29 — a shipped-but-open item is the exact rot this sweep exists to remove, so it is called out rather than quietly corrected.
 `scripts/release-gate.sh` **GREEN on all four hosts** — **ecb** (macOS-arm64), **ach**
 (Intel-Mac x86-Mach-O), **cass** (Windows/PE), **pi** (aarch64), real hardware, sequential.
 

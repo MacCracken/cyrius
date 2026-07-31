@@ -1,0 +1,294 @@
+# Test: vec_sort_by + vec_select_nth — the v6.5.4 ordering primitives.
+#
+# Closes docs/development/issues/2026-07-28-agnosai-no-nlogn-sort-in-stdlib.md.
+# Every case is checked against an INDEPENDENT reference (ref_sort below, a plain
+# insertion sort written against vec_get/vec_set and sharing no code with the
+# implementation), so a bug in the introsort cannot alias into the expected value.
+#
+# The shapes here are the ones that actually break sorts, not just the happy path:
+#   - all-identical keys      — hangs a naive Lomuto partition outright
+#   - heavy duplicates        — the case that degrades a two-way partition
+#   - already / reverse order — the O(n^2) pivot traps median-of-3 exists for
+#   - the 16-element cutoff   — the insertion/introsort seam, checked either side
+#   - a multiset checksum     — proves elements were permuted, not invented or lost
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/vec.cyr"
+
+alloc_init();
+
+# --- comparators -----------------------------------------------------------
+fn cmp_asc(a, b): i64 { return a - b; }
+fn cmp_desc(a, b): i64 { return b - a; }
+
+# --- independent reference: insertion sort via the public accessors ---------
+fn ref_sort(v): i64 {
+    var n = vec_len(v);
+    for (var i = 1; i < n; i = i + 1) {
+        var x = vec_get(v, i);
+        var j = i - 1;
+        while (j >= 0) {
+            if (vec_get(v, j) <= x) { break; }
+            vec_set(v, j + 1, vec_get(v, j));
+            j = j - 1;
+        }
+        vec_set(v, j + 1, x);
+    }
+    return 0;
+}
+
+# Order-independent multiset fingerprint: sum + sum of squares + xor.
+# Two different multisets agreeing on all three is not something a permutation
+# bug produces, so this catches "sorted but an element was duplicated/dropped".
+fn fingerprint(v): i64 {
+    var n = vec_len(v);
+    var s = 0;
+    var q = 0;
+    var x = 0;
+    for (var i = 0; i < n; i = i + 1) {
+        var e = vec_get(v, i);
+        s = s + e;
+        q = q + e * e;
+        x = x ^ e;
+    }
+    return s + q * 31 + x * 7;
+}
+
+fn is_ordered(v): i64 {
+    var n = vec_len(v);
+    for (var i = 1; i < n; i = i + 1) {
+        if (vec_get(v, i - 1) > vec_get(v, i)) { return 0; }
+    }
+    return 1;
+}
+
+fn is_ordered_desc(v): i64 {
+    var n = vec_len(v);
+    for (var i = 1; i < n; i = i + 1) {
+        if (vec_get(v, i - 1) < vec_get(v, i)) { return 0; }
+    }
+    return 1;
+}
+
+fn vec_clone(v): i64 {
+    var c = vec_new();
+    var n = vec_len(v);
+    for (var i = 0; i < n; i = i + 1) { vec_push(c, vec_get(v, i)); }
+    return c;
+}
+
+fn vecs_equal(a, b): i64 {
+    if (vec_len(a) != vec_len(b)) { return 0; }
+    var n = vec_len(a);
+    for (var i = 0; i < n; i = i + 1) {
+        if (vec_get(a, i) != vec_get(b, i)) { return 0; }
+    }
+    return 1;
+}
+
+# Deterministic LCG — the corpus must not vary run to run.
+var RND = 123456789;
+fn next_rand(m): i64 {
+    RND = ((RND * 1103515245) + 12345) & 0x7FFFFFFF;
+    return (RND >> 7) % m;
+}
+
+# Build a vec, sort it with vec_sort_by, and check it against ref_sort on a clone.
+# Returns 1 on success. This is the whole verification protocol in one place.
+fn check_sorted(v, label): i64 {
+    var expect = vec_clone(v);
+    ref_sort(expect);
+    var fp_before = fingerprint(v);
+    vec_sort_by(v, &cmp_asc);
+    assert_eq(is_ordered(v), 1, label);
+    assert_eq(vecs_equal(v, expect), 1, label);
+    assert_eq(fingerprint(v), fp_before, label);
+    return 1;
+}
+
+fn build_range(n, m): i64 {
+    var v = vec_new();
+    for (var i = 0; i < n; i = i + 1) { vec_push(v, next_rand(m)); }
+    return v;
+}
+
+# --------------------------------------------------------------------------
+test_group("vec_sort_by degenerate sizes");
+var v0 = vec_new();
+vec_sort_by(v0, &cmp_asc);
+assert_eq(vec_len(v0), 0, "empty vec stays empty");
+
+var v1 = vec_new();
+vec_push(v1, 42);
+vec_sort_by(v1, &cmp_asc);
+assert_eq(vec_len(v1), 1, "single-element len unchanged");
+assert_eq(vec_get(v1, 0), 42, "single-element value unchanged");
+
+var v2 = vec_new();
+vec_push(v2, 9); vec_push(v2, 4);
+vec_sort_by(v2, &cmp_asc);
+assert_eq(vec_get(v2, 0), 4, "two elements: min first");
+assert_eq(vec_get(v2, 1), 9, "two elements: max last");
+
+var v2b = vec_new();
+vec_push(v2b, 4); vec_push(v2b, 9);
+vec_sort_by(v2b, &cmp_asc);
+assert_eq(vec_get(v2b, 0), 4, "two already-ordered: min first");
+assert_eq(vec_get(v2b, 1), 9, "two already-ordered: max last");
+
+test_group("vec_sort_by all-identical keys (hangs a naive Lomuto partition)");
+var vid = vec_new();
+for (var i = 0; i < 500; i = i + 1) { vec_push(vid, 7); }
+check_sorted(vid, "500 identical keys");
+assert_eq(vec_len(vid), 500, "identical keys: length preserved");
+assert_eq(vec_get(vid, 499), 7, "identical keys: value preserved");
+
+test_group("vec_sort_by ordered / reverse-ordered (the median-of-3 traps)");
+var vasc = vec_new();
+for (var i = 0; i < 300; i = i + 1) { vec_push(vasc, i); }
+check_sorted(vasc, "already ascending");
+
+var vdesc = vec_new();
+for (var i = 300; i > 0; i = i - 1) { vec_push(vdesc, i); }
+check_sorted(vdesc, "reverse ordered");
+
+test_group("vec_sort_by insertion-cutoff seam (cutoff is 16)");
+var vc15 = build_range(15, 1000);
+check_sorted(vc15, "n=15 (below cutoff)");
+var vc16 = build_range(16, 1000);
+check_sorted(vc16, "n=16 (at cutoff)");
+var vc17 = build_range(17, 1000);
+check_sorted(vc17, "n=17 (just above cutoff)");
+var vc33 = build_range(33, 1000);
+check_sorted(vc33, "n=33 (two levels above cutoff)");
+
+test_group("vec_sort_by heavy duplicates");
+var vdup = build_range(600, 5);
+check_sorted(vdup, "600 elements drawn from 5 distinct keys");
+
+test_group("vec_sort_by large random corpus");
+var vbig = build_range(2000, 100000);
+check_sorted(vbig, "2000 random elements");
+
+test_group("vec_sort_by honors the comparator (descending)");
+var vd = build_range(400, 1000);
+var vd_fp = fingerprint(vd);
+vec_sort_by(vd, &cmp_desc);
+assert_eq(is_ordered_desc(vd), 1, "descending comparator produces descending order");
+assert_eq(fingerprint(vd), vd_fp, "descending sort preserves the multiset");
+
+test_group("vec_sort_by is idempotent");
+var vi = build_range(300, 500);
+vec_sort_by(vi, &cmp_asc);
+var vi_snapshot = vec_clone(vi);
+vec_sort_by(vi, &cmp_asc);
+assert_eq(vecs_equal(vi, vi_snapshot), 1, "re-sorting an ordered vec changes nothing");
+
+test_group("vec_select_nth matches the sorted order for EVERY k");
+var vsrc = build_range(120, 400);
+var vsorted = vec_clone(vsrc);
+ref_sort(vsorted);
+var sel_bad = 0;
+for (var k = 0; k < 120; k = k + 1) {
+    var fresh = vec_clone(vsrc);
+    var got = vec_select_nth(fresh, k, &cmp_asc);
+    if (got != vec_get(vsorted, k)) { sel_bad = sel_bad + 1; }
+}
+assert_eq(sel_bad, 0, "quickselect agrees with the reference order at all 120 ranks");
+
+test_group("vec_select_nth edge shapes");
+var vs1 = vec_new();
+vec_push(vs1, 77);
+assert_eq(vec_select_nth(vs1, 0, &cmp_asc), 77, "select_nth on a single element");
+
+var vsid = vec_new();
+for (var i = 0; i < 200; i = i + 1) { vec_push(vsid, 3); }
+assert_eq(vec_select_nth(vsid, 0, &cmp_asc), 3, "select_nth k=0 on all-identical");
+assert_eq(vec_select_nth(vsid, 199, &cmp_asc), 3, "select_nth k=last on all-identical");
+
+var vsdup = build_range(300, 4);
+var vsdup_sorted = vec_clone(vsdup);
+ref_sort(vsdup_sorted);
+assert_eq(vec_select_nth(vsdup, 150, &cmp_asc), vec_get(vsdup_sorted, 150),
+    "select_nth median with heavy duplicates");
+
+var vsasc = vec_new();
+for (var i = 0; i < 250; i = i + 1) { vec_push(vsasc, i); }
+assert_eq(vec_select_nth(vsasc, 249, &cmp_asc), 249, "select_nth max on ascending input");
+assert_eq(vec_select_nth(vsasc, 0, &cmp_asc), 0, "select_nth min on ascending input");
+
+test_group("vec_select_nth preserves the multiset it partitions");
+var vperm = build_range(400, 900);
+var vperm_fp = fingerprint(vperm);
+vec_select_nth(vperm, 200, &cmp_asc);
+assert_eq(fingerprint(vperm), vperm_fp, "partitioning permutes without losing elements");
+assert_eq(vec_len(vperm), 400, "partitioning preserves length");
+
+# The introsort only reaches _vec_heapsort after 2*log2(n) levels of bad pivots,
+# which random and adversarial-but-benign corpora do not produce — so the whole
+# fallback sits UNCOVERED behind the public entry point. Verified: mutating the
+# sift comparison survived the entire suite above until these cases were added.
+# Same for _vec_med3, whose median contract nothing else pins down. Both are
+# reached directly here, through the vec's raw data pointer.
+test_group("_vec_heapsort — the depth-limit fallback, reached directly");
+var vh = build_range(500, 3000);
+var vh_expect = vec_clone(vh);
+ref_sort(vh_expect);
+var vh_fp = fingerprint(vh);
+_vec_heapsort(load64(vh), 0, vec_len(vh) - 1, &cmp_asc);
+assert_eq(is_ordered(vh), 1, "heapsort produces ascending order");
+assert_eq(vecs_equal(vh, vh_expect), 1, "heapsort matches the reference order");
+assert_eq(fingerprint(vh), vh_fp, "heapsort preserves the multiset");
+
+var vh2 = vec_new();
+for (var i = 0; i < 64; i = i + 1) { vec_push(vh2, 11); }
+_vec_heapsort(load64(vh2), 0, 63, &cmp_asc);
+assert_eq(is_ordered(vh2), 1, "heapsort on all-identical keys terminates and is ordered");
+
+var vh3 = vec_new();
+for (var i = 200; i > 0; i = i - 1) { vec_push(vh3, i); }
+var vh3_expect = vec_clone(vh3);
+ref_sort(vh3_expect);
+_vec_heapsort(load64(vh3), 0, 199, &cmp_asc);
+assert_eq(vecs_equal(vh3, vh3_expect), 1, "heapsort on reverse-ordered input");
+
+var vh4 = vec_new();
+vec_push(vh4, 5); vec_push(vh4, 2);
+_vec_heapsort(load64(vh4), 0, 1, &cmp_asc);
+assert_eq(vec_get(vh4, 0), 2, "heapsort n=2 min first");
+assert_eq(vec_get(vh4, 1), 5, "heapsort n=2 max last");
+
+test_group("_vec_med3 — median contract over all six orderings");
+var vm = vec_new();
+vec_push(vm, 0); vec_push(vm, 0); vec_push(vm, 0);
+var med_bad = 0;
+# (a,b,c) permutations of {10,20,30}; the median value is always 20, so the
+# returned index must be the slot holding 20 in each arrangement.
+var perms = vec_new();
+vec_push(perms, 10); vec_push(perms, 20); vec_push(perms, 30);
+vec_push(perms, 10); vec_push(perms, 30); vec_push(perms, 20);
+vec_push(perms, 20); vec_push(perms, 10); vec_push(perms, 30);
+vec_push(perms, 20); vec_push(perms, 30); vec_push(perms, 10);
+vec_push(perms, 30); vec_push(perms, 10); vec_push(perms, 20);
+vec_push(perms, 30); vec_push(perms, 20); vec_push(perms, 10);
+for (var p = 0; p < 6; p = p + 1) {
+    vec_set(vm, 0, vec_get(perms, p * 3));
+    vec_set(vm, 1, vec_get(perms, p * 3 + 1));
+    vec_set(vm, 2, vec_get(perms, p * 3 + 2));
+    var mi = _vec_med3(load64(vm), 0, 1, 2, &cmp_asc);
+    if (vec_get(vm, mi) != 20) { med_bad = med_bad + 1; }
+}
+assert_eq(med_bad, 0, "med3 returns the index of the median in all 6 orderings");
+
+# A vec that is ordered except for its last element defeats vec_sort_by's
+# already-ordered fast path, so the partition path runs on nearly-sorted input —
+# the shape median-of-3 exists to keep out of quicksort's quadratic case.
+test_group("vec_sort_by on nearly-ordered input (partition path, fast path defeated)");
+var vn = vec_new();
+for (var i = 0; i < 400; i = i + 1) { vec_push(vn, i); }
+vec_push(vn, 0 - 1);
+check_sorted(vn, "400 ascending with one trailing out-of-order element");
+
+var r = assert_summary();

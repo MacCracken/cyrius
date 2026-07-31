@@ -92,7 +92,7 @@ stdlib = [
 # capped at 2 MB (v5.6.40) and we just hit it at v5.8.60 over the
 # 445 KB compat-decomp blob. Better to keep dep code opt-in.
 #
-# Mabda folded at 3.0.1 (v6.0.x, post-3.0.0 GA); refreshed to **4.0.2** at v6.3.38
+# Mabda folded at 3.0.1 (v6.0.x, post-3.0.0 GA); refreshed to **4.0.8** at v6.5.4
 # (4.0.0 added a native NVIDIA/nouveau backend — no public-API change): vendored
 # byte-identical into lib/mabda.cyr from its dist, removed from [deps] (sandhi pattern).
 # OPT-IN, NOT auto-prepended (515 KB would blow the preprocess cap) — and

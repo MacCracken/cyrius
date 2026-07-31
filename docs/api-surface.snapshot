@@ -2896,8 +2896,15 @@ sigil::audit_key_rotated/2
 sigil::audit_log_new/0
 sigil::audit_revocation_added/3
 sigil::authenticode_pe_hash/3
+sigil::authenticode_pe_hash_signed/3
 sigil::authenticode_pe_sign/7
+sigil::authenticode_pe_sign_p256/7
+sigil::authenticode_pe_verify/5
+sigil::authenticode_pe_verify_chain/5
+sigil::authenticode_pe_verify_chain_ex/6
+sigil::authenticode_pe_verify_ex/6
 sigil::authenticode_pkcs7_sign/5
+sigil::authenticode_pkcs7_sign_p256/5
 sigil::baseline_entry_new/2
 sigil::bentry_hash/1
 sigil::bentry_path/1
@@ -2921,6 +2928,7 @@ sigil::bn_mod/5
 sigil::bn_modexp/6
 sigil::bn_modinv/4
 sigil::bn_mont_modexp/6
+sigil::bn_mont_modexp_pub/6
 sigil::bn_mul/4
 sigil::bn_shl1/2
 sigil::bn_shr1/2
@@ -4662,7 +4670,9 @@ vec::vec_pop/1
 vec::vec_push/2
 vec::vec_push_a/3
 vec::vec_remove/2
+vec::vec_select_nth/3
 vec::vec_set/3
+vec::vec_sort_by/2
 vec::vec_truncate/2
 ws::ws_close/1
 ws::ws_connect/3

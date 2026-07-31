@@ -87,8 +87,13 @@ else
 # 1. VERSION file (source of truth)
 echo "$NEW" > VERSION
 
-# 2. install.sh fallback version
-sed -i "s/VERSION=\"$OLD\"/VERSION=\"$NEW\"/" scripts/install.sh 2>/dev/null || true
+# 2. (retired v6.5.4) install.sh no longer carries a hardcoded fallback version.
+# It reads the VERSION file (install.sh:36) or resolves the latest tag from the
+# GitHub API / raw VERSION (install.sh:448-455), so there is no constant to
+# rewrite. The old `s/VERSION="$OLD"/VERSION="$NEW"/` matched nothing for an
+# unknown number of releases while the summary below still printed
+# "scripts/install.sh" under "Updated:" — a step that silently does nothing and
+# then reports success is worse than no step. Removed rather than repaired.
 
 # 3. CLAUDE.md
 sed -i "s/- \*\*Version\*\*: $OLD/- **Version**: $NEW/" CLAUDE.md 2>/dev/null || true
@@ -111,8 +116,21 @@ if ! grep -q "## \[$NEW\]" CHANGELOG.md 2>/dev/null; then
 ## [$NEW] — $(date +%Y-%m-%d)" CHANGELOG.md 2>/dev/null || true
 fi
 
-# 5. Roadmap header
-sed -i "s/> \*\*v$OLD\.\*\*/> **v$NEW.**/" docs/development/roadmap.md 2>/dev/null || true
+# 5. Roadmap `Current head:` stamp — the anchor `_doc_stamp_currency_gate` keys on.
+#
+# v6.5.4: the old pattern was `> **vOLD.**`, which has not existed in roadmap.md
+# for a long time; the real line is `**Current head: vX.Y.Z** (YYYY-MM-DD) — ...`.
+# So this silently matched nothing every release while the summary reported the
+# file as Updated, and the doc-stamp gate then went RED right after a "successful"
+# bump (the gate requires the stamp to equal VERSION). Now anchored on the live
+# format, and VERIFIED rather than assumed: if the stamp does not end up matching
+# NEW, say so loudly instead of printing "Updated".
+sed -i "s/\*\*Current head: v$OLD\*\*[[:space:]]*([0-9-]*)/**Current head: v$NEW** ($(date +%Y-%m-%d))/" docs/development/roadmap.md 2>/dev/null || true
+if grep -q "\*\*Current head: v$NEW\*\*" docs/development/roadmap.md 2>/dev/null; then
+    ROADMAP_STAMP="docs/development/roadmap.md"
+else
+    ROADMAP_STAMP="docs/development/roadmap.md  <-- NOT UPDATED, fix by hand (doc-stamp gate will be RED)"
+fi
 
 fi   # end version-CHANGE-only steps (1-5); everything below runs for both paths
 
@@ -196,8 +214,7 @@ echo "Updated:"
 echo "  VERSION"
 echo "  CLAUDE.md"
 echo "  CHANGELOG.md"
-echo "  docs/development/roadmap.md"
-echo "  scripts/install.sh"
+echo "  ${ROADMAP_STAMP:-docs/development/roadmap.md (unchanged — same-version path)}"
 echo "  ~/.cyrius/versions/$NEW/ (install snapshot refreshed)"
 echo ""
 echo "Still manual:"

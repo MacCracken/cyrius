@@ -1,6 +1,12 @@
 # No general-purpose sort in `lib/` — the compiler's own frontend hand-rolls two, and consumers keep re-deriving it
 
-**Status:** 🟡 **OPEN** — verified against cyrius **6.4.86**: an exhaustive grep of `~/.cyrius/lib`
+**Status:** ✅ **RESOLVED in cyrius 6.5.4** — `vec_sort_by(v, cmp)` + `vec_select_nth(v, k, cmp)`
+shipped in `lib/vec.cyr` (introsort: median-of-3 Hoare quicksort, insertion cutoff 16, heapsort
+depth-limit fallback; O(1) extra memory; O(n) already-ordered fast path). Gated by
+`tests/tcyr/vec_sort.tcyr` (59 assertions, mutation-proven 7/8). Named `vec_sort_by` per this
+filing's naming constraint — bare `vec_sort` stays itihas's. See CHANGELOG [6.5.4].
+
+**Original status:** 🟡 OPEN — verified against cyrius **6.4.86**: an exhaustive grep of `~/.cyrius/lib`
 for `sort|qsort|msort|heapsort|merge_sort|sift|partition|pivot|select|nth` finds **no
 general-purpose ordering routine**. The three name hits are unrelated internals (a query-result
 sorter in yukti, a bucket sort in mabda, a scheduler heuristic). `lib/vec.cyr` and `lib/slice.cyr`

@@ -6,6 +6,144 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.4] — 2026-07-30
+
+Bug-catchup at the head of the minor: the consumer-filed ordering-primitive gap, the four
+sibling stdlibs that had moved, and — surfaced by folding one of them — a release gate that
+could not see the defect it was supposed to gate.
+
+### Verification
+
+Self-host fixpoint byte-identical · seed-derive `seed→cybs→cycc` OK · check.sh **150/0** ·
+cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on ecb / ach / cass / pi, real hardware ·
+`folds-agnos-parity` 11/12 (niyama pre-existing SKIP, reported) · full TLS suite + the 3
+capacity fixtures green by exit code (20/20) · api-surface **4761 → 4771**, zero removals.
+
+**Bench: self_compile 654 → 644 ms · cycc 1,129,288 → 1,133,440 B (+4,152).** The time is
+flat-to-better against the 638/654 spread this series has shown. The +4,152 B is the sort
+itself: `lib/vec.cyr` is in the include closure of all seven compiler forks, so 9 new helper
+fns plus 2 public entry points land in `cycc` whether or not the compiler ever calls them.
+Growth-tax by default — one contained addition accounts for the whole delta, so no bisect is
+indicated.
+
+The seed gate is load-bearing again this release: `lib/vec.cyr` is in the include closure of
+all **seven** `src/main*.cyr` forks, so the sort is compiler source, not just stdlib — and
+`cybs`, the hand-assembly bootstrap compiler, has to compile it too. Recursion, an
+`fncall2` through a fn pointer, and a 9-fn helper cluster in a file cybs already parses is
+exactly the shape that passes the cycc fixpoint and fails the seed chain. It does not:
+`seed → cybs → gen1 → gen2 == build/cycc` holds.
+
+### Added — `vec_sort_by` / `vec_select_nth`: lib/ had no ordering primitive at all
+
+Closes the agnosai filing (`2026-07-28-agnosai-no-nlogn-sort-in-stdlib`). Premise re-checked
+against live code before building: **not one fn in `lib/*.cyr` took a comparator parameter** —
+across all 99 modules including the 12 folded dep bundles. The six sorts that did exist are
+private, key-specific and internal to their subsystem (and `lib/unicode/normalize.cyr`'s is
+Unicode-spec-prescribed, so it stays).
+
+The cost of that gap was not hypothetical: ~26 first-party repos each hand-rolled an ordering
+routine, and **darshini and stiva independently built full O(n log n) merge sorts** — two
+teams paying for the same primitive. The compiler's own frontend hand-rolls insertion sort
+twice. At 100k elements through an fnptr comparator the filing measured insertion at
+**36.93 s** against heapsort's 63.4 ms.
+
+- **`vec_sort_by(v, cmp)`** — introsort: median-of-3 quicksort, **Hoare** partition, insertion
+  cutoff at 16, heapsort at a `2*log2(n)` depth limit. O(n log n) worst case, **O(1) extra
+  memory** — deliberately not merge sort, whose n-slot scratch would be *leaked on every call*
+  under the default bump allocator. An O(n) pre-scan returns immediately on already-ordered
+  input, so the nearly-sorted data consumers actually feed it (directory listings, ascending
+  ids) stays linear. Recursion goes into the smaller side and loops on the larger, bounding
+  stack depth to O(log n).
+- **`vec_select_nth(v, k, cmp)`** — Hoare quickselect, median-of-3, sharing the partition.
+  Percentiles never needed a full sort; this is the case that prompted the filing.
+
+**Not named bare `vec_sort`** — that name is occupied by `itihas/src/util.cyr:57` with the
+exact signature a stdlib addition would want, and cyrius has a single flat namespace where
+last-definition-wins would silently displace it.
+
+**The comparator goes through `fncall2`, not the `callptr` builtin, and that is not a style
+choice.** `callptr` is a hard compile error on the cx backend (`ECALLIND`, a fail-loud stub),
+and `lib/vec.cyr` is auto-prepended into every build — so a `callptr` here would break **every
+cx program**, including ones that never sort, because the error fires when the *uncalled* body
+is emitted. Verified by probe. `fncall2` is what `lib/alloc.cyr` and `lib/hashmap.cyr` already
+use. (cx has no indirect-call op at all, so `alloc_via` already returns 0 there and vec is
+already non-functional on cx — this adds no new breakage, and the underlying cx gap is
+pre-existing and broader than the sort. Filed separately rather than silently widened here.)
+
+Gated by `tests/tcyr/vec_sort.tcyr` — 59 assertions against an **independent** reference sort,
+covering all-identical keys (which hangs a naive Lomuto partition), heavy duplicates, ordered
+and reverse-ordered input, both sides of the cutoff seam, a multiset fingerprint proving
+elements are permuted rather than invented, and quickselect at **every** rank.
+
+**Mutation-proven, and the first pass was not good enough.** Of 8 mutants, 5 died immediately
+— but flipping the heapsort sift direction and neutering median-of-3 both **survived the whole
+suite**: the depth-limit fallback is unreachable from the public entry point on any benign
+corpus, so heapsort could have been arbitrarily broken with nothing to notice. `_vec_heapsort`
+and `_vec_med3` are now reached directly through the vec's data pointer. Final battery: 7 of 8
+killed. The survivor is `med3 → always pick lo`, which is *correct* — it degrades performance,
+not results — and a correctness suite should not kill it; the median contract itself is pinned
+by a separate mutant that does die.
+
+### Fixed — the sign-efi release gate was vacuous against the exact defect sigil 3.12.2 fixes
+
+Folding sigil surfaced this rather than the other way round. `scripts/sign-efi-gate.sh` built
+one **512-byte** fixture — 8-aligned, so the alignment pad is empty and the bug is invisible.
+Authenticode hashes the image up to the *start of the certificate table* at `(pe_len + 7) & ~7`,
+which **includes** that pad; sigil ≤ 3.12.1 hashed only `pe[0, pe_len)`, producing a
+structurally valid signature over a byte range no spec verifier checks — an image firmware
+would reject. cyrius calls this from `programs/cyrsign-efi.cyr:70`, a binary we ship in
+`[release].bins`, on the sovereign UEFI Secure Boot path gnoboot depends on.
+
+The gate now runs **aligned (512) and unaligned (509)**. Mutation-proven against the 3.12.1
+signer: aligned **PASS**, unaligned **FAIL** — which is the vacuousness, demonstrated.
+
+**A second defect, found while proving the first.** The gate built `build/cyrsign-efi` and then
+signed via `build/cyrius sign-efi`, a verb that `execve`s the helper out of `_tools_dir` — the
+**installed** `~/.cyrius/bin/cyrsign-efi`. So it graded whatever was last installed and ignored
+the binary it had just built two lines above, leaving it blind in both directions: green on a
+stale-good install over a broken tree, and red on a stale-bad install over a fixed tree. That
+second case is how it surfaced. It now gates the repo build.
+
+### Changed — folded four sibling stdlibs
+
+Drift-checked first: all four vendored copies were byte-identical to the upstream dist at the
+version they claimed, so nothing local was discarded. All four upstreams are released, clean,
+and tagged at HEAD, with **every sub-profile bundle regenerated** — not the v6.4.79 shape where
+a fresh `# Version:` sat on stale sub-profiles. Re-vendored by plain `cp` from `dist/` (never
+`cyrius lib sync`, which is refused in this repo and would revert every fold). Purely additive:
+**zero fn removals, zero arity changes, and 0 new symbol collisions** (146 duplicate names
+before and after).
+
+- **sigil 3.12.1 → 3.12.2** (+26 fns) — the Authenticode unaligned-image hash fix above, plus
+  Authenticode *verification*, a PE-parser hardening pass (optional-header magic is now an
+  allow-list; `NumberOfRvaAndSizes >= 5` required), and a 144-byte-per-call `sha256_init` leak.
+- **yukti 2.3.0 → 2.3.2** (+2 fns) — 20 raw `syscall(87)` sites: `unlink` on x86_64 but
+  **`timerfd_gettime`** on aarch64, where the unset second argument meant the kernel wrote 32
+  bytes of `struct itimerspec` through whatever that register held. It never crashed; it lied.
+  **476 assertions silently vanished from the aarch64 count and two real failures were masked
+  while the suite still reported `182 passed, 0 failed`.** Also resolves a provenance
+  ambiguity: 2.3.0 — the version we vendored — was **never tagged upstream**, and a later
+  commit still labelled 2.3.0 changed the dist. 2.3.2 is a real tag.
+- **sandhi 1.9.7 → 1.9.8** (+6 fns) — every one of five serve loops spun a core forever on any
+  persistent accept error (EMFILE/ENFILE/EBADF/EINVAL/ENOTSOCK), and under EMFILE never
+  dequeued the pending connection, so the peer was never served. 1000 ms of CPU in a 1000 ms
+  EMFILE window → 0. **Consumer note:** this changes the return contract — the serve loops now
+  return 1 on a structurally dead listener or after 200 consecutive resource failures, where
+  before they never returned once listening.
+- **mabda 4.0.7 → 4.0.8** — toolchain pin only; upstream `src/` is byte-identical between the
+  two tags and the dist differs solely by its `# Version:` header. Folded so the vendored
+  header stops misreporting provenance.
+
+### Fixed — folded-dep version tables had rotted again, on 3 of 4 tables
+
+The v6.4.77 rot recurred, so this sweep re-derives every table from the live `lib/` headers
+rather than patching the four rows being folded: `README.md` (two places), `docs/ecosystem.md`,
+`docs/stdlib-reference.md`, `cyrius.cyml`, and vidya's `dependencies.cyml` / `ecosystem.cyml`.
+`docs/stdlib-reference.md` was the worst — sandhi three minors behind at 1.8.2, sankoch at
+2.5.5 — and **`yantra` was missing from both fold tables entirely** despite being folded at
+v6.2.26. Historical narrative (carve points, the v6.4.77 rot record itself, "the mabda 3.0.1
+fold") is deliberately left at its shipped versions.
+
 ## [6.5.3] — 2026-07-30
 
 ### Verification
