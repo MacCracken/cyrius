@@ -1478,7 +1478,7 @@ own canonical API reference in its own repo; this table is a pointer. See
 | `lib/vani.cyr` | vani 1.1.2 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/niyama.cyr` | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
 | `lib/mabda.cyr` | mabda 4.0.8 | GPU / compute (AMD-native) |
-| `lib/bayan.cyr` | bayan 1.3.0 | Data formats + big-int (json / toml / cyml / csv / base64 / yaml / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |
+| `lib/bayan.cyr` | bayan 1.4.0 | Data formats + big-int (json / toml / cyml / csv / base64 / yaml / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |
 | `lib/ganita.cyr` | ganita 1.0.4 | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial) — carved v6.1.26, `ganita_*` + legacy aliases |
 | `lib/yantra.cyr` | yantra 1.0.2 | UI / end-to-end testing (WebDriver + Appium + Chromium-CDP RPC) |
 

@@ -128,3 +128,13 @@ sh "$ROOT/tests/ir3_fold_jump_span.sh"
 # shapes, incl. include-once skips and a NESTED include — mutation-proven: 8 of 10 fail on
 # the 6.5.2 binary, and the 2 that pass are the regression guards.
 sh "$ROOT/tests/diag_line_after_include.sh"
+
+# v6.5.5: an IR_RAW_EMIT marker only shields raw bytes until the NEXT RECORDED node.
+# ESWITCH_DISPATCH_PRE recorded one marker at the top, then emitted four recorded nodes
+# (EPUSHR/EMOVI/EMOVCA/EPOPR) BEFORE its raw `sub rax, rcx` / `cmp rax, rcx` — so those
+# raw bytes had no node and DCE could not see they READ RCX. It eliminated the MOV_CA
+# feeding them and the switch dispatched on a stale rcx. Filed against cyrius-doom as a
+# LASE bug; it is DCE (CYRIUS_LASE_OFF disables the shared NOP-filler for all three
+# passes, which is why the bisection pointed at LASE). CYRIUS_IR=3-only — markers emit no
+# bytes, so default codegen is byte-identical and the default corpus could never see it.
+sh "$ROOT/tests/ir3_switch_dce.sh"

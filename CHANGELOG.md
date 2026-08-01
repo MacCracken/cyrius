@@ -6,6 +6,103 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.5] — 2026-08-01
+
+The `CYRIUS_IR=3` miscompile cyrius-doom filed, plus the bayan fold. The filing's
+bisection was sound and its conclusion was wrong; both are worth recording, because the
+knob it bisected with does not mean what its name says.
+
+### Verification
+
+Self-host fixpoint byte-identical · seed-derive `seed→cybs→cycc` OK · check.sh **150/0** ·
+cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on ecb / ach / cass / pi, real hardware · new
+gate `ir3_switch_dce` (4 axes, mutation-proven) · `folds-agnos-parity` 11/12 (niyama
+pre-existing SKIP) · **default codegen byte-identical** across a 5-program probe.
+
+**Bench: self_compile 644 → 648/663 ms · cycc 1,133,440 B (unchanged).** The size is
+*exactly* flat, which is the point: the fix adds two `_IR_REC0` marker calls that emit no
+bytes, so the compiler's own output does not move at all. The two self_compile figures are
+the release-gate and bench-history runs of the same binary — a 15 ms spread on a series that
+has shown 638–663, so it is run-to-run noise, not a regression. No bisect indicated.
+
+### Fixed — `CYRIUS_IR=3` dispatched `switch` on a stale register (silently wrong arm)
+
+Filed as a LASE bug (`2026-08-01-cyrius-doom-ir3-lase-miscompiles-doom`). **It is DCE.**
+
+`CYRIUS_LASE_OFF=1` is not LASE-specific: `ir_apply_lase` is the **only** NOP-filler in the
+pipeline and it applies `IR_ELIMINATED` marks from **three** passes — `ir_lase`
+(`ir.cyr:596`), DCE (`:997`) and dead-store (`:1252`). Turning it off disables all three, so
+"LASE_OFF fixes it" localises to the shared apply step and no further. The finer knobs
+separate them cleanly, on cyrius-doom:
+
+| build | doom tests |
+|---|---|
+| default | 380 / 380 |
+| `CYRIUS_IR=3` | **377 / 380** |
+| `CYRIUS_IR=3 CYRIUS_DCE_CAP=0` | 380 / 380 |
+| `CYRIUS_IR=3 CYRIUS_DSE_CAP=0` | 377 / 380 |
+
+**Root cause — an `IR_RAW_EMIT` marker only shields raw bytes until the NEXT RECORDED
+node.** `ESWITCH_DISPATCH_PRE` (`src/backend/x86/emit.cyr`) emits the switch range-check
+prelude and recorded one marker at the top, then:
+
+```
+EPUSHR; EMOVI; EMOVCA; EPOPR      <- record four IR nodes (PUSH, LOAD_IMM, MOV_CA, POP_RAX)
+E3(S, 0xC82948)   # sub rax, rcx  <- raw bytes, NO node of its own
+EPUSHR; EMOVI; EMOVCA; EPOPR      <- four more recorded nodes
+E3(S, 0xC83948)   # cmp rax, rcx  <- raw bytes, NO node of its own
+```
+
+Those four recorded nodes sit between the marker and the raw bytes, so the marker stopped
+covering them. DCE could not see that `sub`/`cmp` **read rcx**; scanning the BB backward it
+found the first `MOV_CA`'s rcx dead — genuinely overwritten by the second `MOV_CA` — and
+eliminated it. `sub rax, rcx` then ran against a stale rcx and the switch dispatched on the
+wrong value. Exactly four such eliminations across all of doom.
+
+The fix re-arms the marker before each raw emit. **Markers emit no bytes**, so default
+codegen is byte-identical — verified against a 5-program probe — which is also precisely why
+254 default tests could never have caught this. Sibling `ESWITCH_DISPATCH_TABLE` is correct
+as written *because* no recorded node intervenes between its marker and its raw emits; that
+asymmetry is the invariant, and axis 3 of the new gate pins it structurally rather than
+behaviourally.
+
+**Three corrections to the filing, recorded because each cost real time.** Its root-cause
+section was explicitly flagged as speculation and pointed at `ir_lase`'s `last_store`
+tracking in "long if/else-if ladders" — but `player_try_fire` is a **`switch`**, LASE was
+never involved, and `IR_SWITCH` is defined yet **never emitted** anywhere in the tree. The
+repro commit had also moved on (`7c56b24` → `b5178ae`; 366 tests → 380). None of that
+weakens the report: the symptom table reproduced exactly, and a consumer bisecting to a
+shared knob and saying so is the report working as intended.
+
+**Closes `switch_dispatch`, one of the eight residual default-vs-IR=3 exit mismatches**
+v6.5.2 recorded (it exited 18; now 0). **Seven remain and are not this bug** —
+`const_chained_multiply_fold`, `field_name_shadows_global`, `float`, `math_inverse_trig`,
+`math_pack_integration`, `subword_signed_load`, `types`. The IR=3 binary is still ~9 %
+larger than default (477,072 → 522,128 B on doom); the filing raised that separately and it
+is untouched here — elimination NOP-fills rather than removes, so it cannot shrink output.
+
+Gated by `tests/ir3_switch_dce.sh` (wired into `check.sh`): a 17-line standalone switch
+repro, the `switch_dispatch` corpus test, the structural marker/raw-emit invariant, and a
+default-codegen-determinism axis. Mutation-proven — axes 1 and 2 both fail against the
+6.5.4 binary.
+
+### Changed — folded bayan 1.4.0
+
+Drift-checked clean against tag 1.3.0 first; re-vendored by plain `cp` from `dist/`. Adds
+the allocator-threaded `_a` JSON value surface — `bayan_json_v_obj_set_a`,
+`bayan_json_v_build_a`, `bayan_json_v_build_pretty_a`, `bayan_json_v_parse_ctx_a`,
+`bayan_json_v_parse_buf_a`, `bayan_json_v_parse_a`. The eight value *constructors* have had
+`_a` forms since v5.8.36; what was missing was everything around them, so a caller could
+allocate every cell of a tree through an arena and still leak the pair cells, the parse and
+the serialized output onto the no-free global bump (>100 KB → 0 over 200 parse→set→build
+cycles upstream). +14 fns, zero removals, 146 duplicate names before and after.
+
+**Upstream note, not a cyrius defect:** 6 of bayan's 9 sub-profile bundles
+(`base64`, `bigint`, `csv`, `cyml`, `toml`, `u128`) are still stamped **1.2.1** while the
+main bundle is 1.4.0 — the v6.4.79 sankoch shape recurring. cyrius vendors only the main
+bundle so this fold is unaffected, but a consumer pulling a sub-profile gets two-minor-old
+code.
+
 ## [6.5.4] — 2026-07-30
 
 Bug-catchup at the head of the minor: the consumer-filed ordering-primitive gap, the four

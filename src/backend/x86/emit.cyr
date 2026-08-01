@@ -2684,8 +2684,22 @@ fn EF64_ATAN(S): i64 {
 fn ESWITCH_DISPATCH_PRE(S, case_min, range): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     EPUSHR(S); EMOVI(S, case_min); EMOVCA(S); EPOPR(S);
+    # v6.5.5: RE-ARM the raw marker before EACH raw emit. An IR_RAW_EMIT marker
+    # only shields raw bytes until the NEXT RECORDED node — and the EPUSHR/EMOVI/
+    # EMOVCA/EPOPR above record four (PUSH, LOAD_IMM, MOV_CA, POP_RAX). The `sub`
+    # and `cmp` below therefore sat past the top-of-fn marker with NO IR node of
+    # their own, so DCE could not see that they READ RCX. It then found the
+    # MOV_CA's rcx "dead" (overwritten by the second MOV_CA) and eliminated it,
+    # leaving `sub rax, rcx` reading a stale rcx — a switch dispatching on the
+    # wrong value. That is the CYRIUS_IR=3 miscompile filed against cyrius-doom
+    # (player_try_fire is a `switch`). Markers emit NO bytes, so output is
+    # byte-identical. Sibling ESWITCH_DISPATCH_TABLE is safe precisely because
+    # no recorded node intervenes between its marker and its raw emits.
+    # CHANGELOG [6.5.5]
+    _IR_REC0(S, IR_RAW_EMIT);
     E3(S, 0xC82948);     # sub rax, rcx
     EPUSHR(S); EMOVI(S, range); EMOVCA(S); EPOPR(S);
+    _IR_REC0(S, IR_RAW_EMIT);
     E3(S, 0xC83948);     # cmp rax, rcx
     return 0;
 }

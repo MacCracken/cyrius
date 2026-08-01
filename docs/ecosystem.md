@@ -35,7 +35,7 @@ git entries (see Live deps below).
 | `lib/sankoch.cyr` | v5.8.65 (refold v6.4.79) | sankoch 2.7.6 | Compression |
 | `lib/niyama.cyr` | **v5.9.0** (refold v6.4.65) | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,664 lines) |
 | `lib/mabda.cyr` | **v6.0.45** (refold v6.5.4) | mabda 4.0.8 | GPU/compute (AMD-native GA; array textures + cubemaps + BC arrays; samvada/chitra calls `#ifdef`-gated) |
-| `lib/bayan.cyr` | **v6.1.25** (refold v6.5.1) | bayan 1.3.0 | Data formats + big-int (json / toml / cyml / csv / base64 / **yaml** / bigint `u256` / u128; per-format sublibs @1.2.0). **Carve** out of stdlib: public fns renamed `bayan_*` + legacy aliases. Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must `include "lib/bayan.cyr"`. |
+| `lib/bayan.cyr` | **v6.1.25** (refold v6.5.5) | bayan 1.4.0 | Data formats + big-int (json / toml / cyml / csv / base64 / **yaml** / bigint `u256` / u128; per-format sublibs @1.2.0). **Carve** out of stdlib: public fns renamed `bayan_*` + legacy aliases. Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must `include "lib/bayan.cyr"`. |
 | `lib/ganita.cyr` | **v6.1.26** | ganita 1.0.4 | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial). **Carve** out of stdlib (closes Phase E): renamed `ganita_*` + legacy aliases. Keep stdlib `math` in scope (f64-exp/ln polyfills + F64 constants). |
 | `lib/yantra.cyr` | **v6.2.26** (refold v6.5.1) | yantra 1.0.2 | UI/E2E testing (WebDriver + Appium + Chromium-CDP RPC). Requires its dep chain in order: net / ws / bayan / sandhi / tls / sakshi / sigil. |
 

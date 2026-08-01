@@ -207,7 +207,9 @@ bayan::bayan_json_v_bool/1
 bayan::bayan_json_v_bool_new/1
 bayan::bayan_json_v_bool_new_a/2
 bayan::bayan_json_v_build/1
+bayan::bayan_json_v_build_a/2
 bayan::bayan_json_v_build_pretty/2
+bayan::bayan_json_v_build_pretty_a/3
 bayan::bayan_json_v_float/1
 bayan::bayan_json_v_float_new/1
 bayan::bayan_json_v_float_new_a/2
@@ -229,10 +231,14 @@ bayan::bayan_json_v_obj_len/1
 bayan::bayan_json_v_obj_new/0
 bayan::bayan_json_v_obj_new_a/1
 bayan::bayan_json_v_obj_set/3
+bayan::bayan_json_v_obj_set_a/4
 bayan::bayan_json_v_obj_val/2
 bayan::bayan_json_v_parse/1
+bayan::bayan_json_v_parse_a/2
 bayan::bayan_json_v_parse_buf/2
+bayan::bayan_json_v_parse_buf_a/3
 bayan::bayan_json_v_parse_ctx/3
+bayan::bayan_json_v_parse_ctx_a/4
 bayan::bayan_json_v_parse_ctx_str/2
 bayan::bayan_json_v_pointer/2
 bayan::bayan_json_v_pointer_cstr/3

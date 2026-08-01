@@ -1,4 +1,4 @@
-# Handoff — **v6.5.4 is out.** v6.5.x continues; nothing is mid-arc.
+# Handoff — **v6.5.5 is out.** v6.5.x continues; nothing is mid-arc.
 
 > **Written 2026-07-30.** Read this, then `CLAUDE.md`, then [`state.md`](state.md), then
 > [`roadmap.md`](roadmap.md) for the slot sequence. **Refresh or delete this file when the
@@ -10,13 +10,13 @@
 
 | | |
 |---|---|
-| Version | **6.5.4** — release gate GREEN, all 5 steps |
+| Version | **6.5.5** — release gate GREEN, all 5 steps |
 | cycc x86_64 | **1,133,440 B** — seed 29,024 B → cybs → cycc byte-identical |
 | Gates | `check.sh` **150 / 0** + **10** shell gates · bench 644 ms |
 | Cross-OS | ecb · ach · cass · pi — all `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware |
-| Corpus | **254** `.tcyr` · 99 `lib/*.cyr` · api-surface **4771** · heap 100 regions / 0 overlaps |
-| Queue | **16** open issues · 2 proposals · 278 archived |
-| Mid-arc work | **None.** 6.5.4 is complete; the next slot is open. |
+| Corpus | **254** `.tcyr` · 99 `lib/*.cyr` · api-surface **4777** · heap 100 regions / 0 overlaps |
+| Queue | **16** open issues · 2 proposals · 279 archived |
+| Mid-arc work | **None.** 6.5.5 is complete; the next slot is open. |
 
 ## What v6.5.x has shipped
 
@@ -35,6 +35,13 @@
   against the exact defect sigil 3.12.2 fixes (single 8-aligned fixture) *and* was grading the
   installed helper instead of the repo build. Re-derived every folded-dep version table from
   live `lib/` headers — 3 of 4 had rotted again, and `yantra` was missing from both.
+- **.5** — the `CYRIUS_IR=3` switch-dispatch miscompile filed by cyrius-doom. Filed as LASE;
+  it is **DCE**. `CYRIUS_LASE_OFF=1` is not LASE-specific — `ir_apply_lase` is the only
+  NOP-filler and applies marks from three passes. Root cause: an `IR_RAW_EMIT` marker only
+  shields raw bytes until the **next recorded node**, and `ESWITCH_DISPATCH_PRE` recorded
+  four nodes between its marker and its raw `sub`/`cmp`, hiding their rcx reads from DCE.
+  Closes `switch_dispatch` (18 → 0); **7 of the 8 residual IR=3 mismatches remain**. Also
+  folded bayan 1.4.0.
 
 ## ⚠ Read before trusting anything in the tree
 
