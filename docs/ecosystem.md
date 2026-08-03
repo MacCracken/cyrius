@@ -26,8 +26,8 @@ git entries (see Live deps below).
 
 | Lib | Folded at | Source tag | Domain |
 |-----|-----------|------------|--------|
-| `lib/sandhi.cyr` | v5.7.0 (refold v6.5.4) | sandhi 1.9.8 | HTTP/2 + JSON-RPC + service discovery + TLS policy (ALPN/SPKI on typed native verbs) |
-| `lib/vani.cyr` | v5.8.0 (refold v6.4.50) | vani 1.1.2 | Audio (ALSA PCM + ring buffer + mixer) |
+| `lib/sandhi.cyr` | v5.7.0 (refold v6.5.6) | sandhi 1.9.9 | HTTP/2 + JSON-RPC + service discovery + TLS policy (ALPN/SPKI on typed native verbs) |
+| `lib/vani.cyr` | v5.8.0 (refold v6.5.6) | vani 1.1.3 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/sakshi.cyr` | v5.8.65 (refold v6.5.1) | sakshi 2.4.7 | Tracing |
 | `lib/patra.cyr` | v5.8.65 (refold v6.4.65) | patra 1.12.12 | Storage (thread-local slots allocator-managed @1.12.12) |
 | `lib/sigil.cyr` | v5.8.65 (refold v6.5.4) | sigil 3.12.2 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing; UEFI Secure Boot signing (authenticode_pe_sign) + enrollment (efi_signature_list/efi_auth); crypto-bank slot allocator-managed @3.12.1; Authenticode VERIFY + unaligned-image hash fix @3.12.2) |

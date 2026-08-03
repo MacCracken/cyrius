@@ -370,6 +370,9 @@ fn _run_regression_gates(): i64 {
     _gate("single-owner mutex: thread+sync co-include has 0 duplicate-fn warnings, lock still guards under contention, thread*.cyr delegate to sync (v6.3.44)", "tests/mutex_single_owner.sh");
     _gate("net sock_accept would-block path is alloc-free: 100k no-pending polls grow the bump heap 0 B (accept-per-poll leak, v6.4.61)", "tests/net_accept_no_leak.sh");
     _gate("lib freshness: `cyrius build` NAMES per-lib version skew vs the pin (both header formats, sentinel-independent), silent when fresh, opt-out + --check-lib-sync + source-repo carve-out (v6.4.63)", "tests/lib_freshness.sh");
+    _gate("sys_exit_group on all 3 syscall peers; old per-thread epilogue still hangs (the mutation signal); no init template ships exit(2); macOS-x86 231 translated (v6.5.6)", "tests/exit_group_wrapper.sh");
+    _gate("async_await_readable_ms bounds the wait AND reports readable(1) vs timeout(0); legacy wrapper still returns 0; no hardcoded -1 left (v6.5.6)", "tests/async_await_readable_ms.sh");
+    _gate("cyrius test/bench/fuzz each DISCOVER what `cyrius init` scaffolds into tests/ — fuzz was blind to it, so the scaffolded harness never ran (v6.4.72/.78 + v6.5.6)", "tests/scaffold_verb_discovery.sh");
     println("");
 
     _section("Binary structural lint (VR-04)");

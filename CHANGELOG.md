@@ -6,6 +6,164 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.6] — 2026-08-03
+
+Two consumer filings from the same afternoon, and they are the same story told from two
+ends: agnosai could not make a threaded server **exit**, and could not make one **stop**.
+Both were missing stdlib primitives, not defects in the consumer.
+
+### Verification
+
+Self-host fixpoint byte-identical · seed-derive `seed→cybs→cycc` OK (run twice — the gate
+and again inside `version-bump.sh`) · check.sh **153/0** · three new gates —
+`exit_group_wrapper`, `async_await_readable_ms`, `scaffold_verb_discovery` — **all
+mutation-proven** · per-file `.tcyr` exit-code sweep **254/254** · cross-OS `SELFHOST_OK` +
+VR-01 `LIBTEST_OK` on **ecb / ach / cass / pi**, real hardware.
+
+**Bench: self_compile 643 / 648 ms · cycc 1,133,440 B (unchanged).** The two figures are
+the release-gate and bench-history runs of the same binary, against 644/648 at 6.5.5 — flat
+on a series that has shown 638–663. No bisect indicated.
+
+> ⚠ **The flat size is not evidence the compiler change was inert** — it is padding. The
+> new Mach-O xlat entry left cycc at *exactly* 1,133,440 B while **872,790 bytes differed**
+> under `cmp`. Size equality carried zero information here; the change was confirmed by
+> disassembling the emitted translation chain instead.
+
+### Fixed — a threaded program's idiomatic exit epilogue hung the process
+
+Filed by agnosai (`2026-08-03-agnosai-no-sys-exit-group-wrapper`). `lib/` wrapped
+`sys_exit` — which is **exit(2), and ends only the calling thread** — and had no
+`exit_group(2)` counterpart, though the constant was already defined on every Linux target.
+Any program that had spawned a worker and exited through `syscall(SYS_EXIT, r)` did not
+terminate: the main thread died, the workers kept running, and the process hung with no
+diagnostic. Measured, one token apart:
+
+| epilogue | exit |
+|---|---|
+| `syscall(SYS_EXIT, r)` | **124 (hung)** |
+| `sys_exit_group(r)` | **42** |
+
+**`cyrius init` shipped that epilogue in its templates**, so it was the default a consumer
+copied and then stopped looking at — and it only bites once a program grows its *first*
+thread, long after the epilogue was written. The bug is in the interaction, not the line,
+which is why nothing flagged it.
+
+`sys_exit_group` is now defined on **all three** syscall peer families, because
+`syscalls_linux_common.cyr` reaches only Linux-x86, Linux-aarch64 and macOS-x86 — Windows
+and agnos are standalone, and a single definition would have left them unable to name it:
+
+| peer | routes to | why |
+|---|---|---|
+| `syscalls_linux_common` | `SYS_EXIT_GROUP` | 231 x86 / 94 aarch64; macOS-arm64 resolves 94, which `aarch64/emit.cyr` already maps to BSD `exit` |
+| `syscalls_windows` | `SYS_EXIT` | `ExitProcess` **already** ends every thread; 231 has no PE reroute and would emit a raw `0F 05` |
+| `syscalls_x86_64_agnos` | `SYS_EXIT` | agnos defines no `exit_group`; `#0` tears down the whole proc |
+
+**Seven** templates carried the epilogue, not the two the filing named — the other five
+were found by the new gate's structural axis, which is why that axis exists. Two
+`getting-started` docs taught the old form in prose and now teach the new one.
+`sys_exit`'s own doc comment states it is per-thread.
+
+### Fixed — macOS-x86 `SYS_EXIT_GROUP` was a silent SIGSYS
+
+Found while fixing the above, and shipped with it rather than filed. `syscalls_macos.cyr`
+resolves `SYS_EXIT_GROUP` to 231 and `EMACHO_SYSXLAT` had **no 231 entry**, so the raw
+number reached Darwin *unclassed* (class 0 = `SYSCALL_CLASS_NONE`) and the kernel rejected
+it. Silent at compile time too: the "syscall not routed" warning is gated on
+`_TARGET_MACHO == 2`, i.e. **arm64 only**, so an x86-Mach-O build compiled clean and died
+at runtime. One entry, `231 → 0x2000001`, beside the existing `60 → 1`. General rule: a
+constant being *defined* on a target does not mean it is *routed* there — for Mach-O and
+PE, grep the translation table, not the enum.
+
+This is the only compiler-source change in the release, and the reason a fresh seed-derive
+was mandatory.
+
+### Fixed — a test suite with exactly 256 failures scored PASS
+
+`proj-tcyr` exited with `assert_summary()`'s raw failure **count**, and a wait status is
+only 8 bits — so exactly 256 / 512 / 768 failing assertions truncated to 0 and reported
+success. The template now clamps. Consumers were already working around this by hand,
+which is how it stayed invisible upstream.
+
+### Fixed — `cyrius fuzz` could not see the harness `cyrius init` had just written
+
+Found while fixing the template epilogues, and shipped with them because it is *why* the
+broken `proj-fcyr` epilogue was unobservable: **the file was never run.** `cyrius init`
+writes all three corpora to `tests/` — `_tests_rel` hardcodes that literal for `.tcyr`,
+`.bcyr` *and* `.fcyr`, and no `fuzz/` directory is ever created — but `cmd_fuzz` walked
+only `fuzz/`. Every scaffolded project answered `No fuzz harnesses found in fuzz/` against
+a harness the scaffolder had written seconds earlier.
+
+Third instance of one family, and the first two shipped **ungated**, which is exactly why a
+third survived:
+
+| | verb | the miss |
+|---|---|---|
+| v6.4.72 | `cyrius test` | hardcoded `tests/tcyr/`, missed `tests/<name>.tcyr` |
+| v6.4.78 | `cyrius bench` | `benches/` + `tests/bcyr/` only |
+| **v6.5.6** | `cyrius fuzz` | `fuzz/` only |
+
+`cmd_fuzz`'s loop is now the `_fuzz_walk_dir` helper, mirroring `_bench_walk_dir`, called
+for `fuzz/` and `tests/`. No double-count — `dir_list` is non-recursive, so the two are
+disjoint. `scaffold_verb_discovery` asserts the **family invariant** rather than the
+instance: scaffold a project, require each of the three verbs to find its own artifact. All
+three verbs return **0** when they find nothing, so a green exit is how this stayed
+invisible; the gate greps the "nothing found" text, not the exit code.
+
+### Added — `async_await_readable_ms`, so a cooperative server can be woken
+
+Filed by sandhi/agnosai (`2026-08-03-sandhi-async-await-readable-has-no-timeout`).
+`async_await_readable(fd)` parked in `sys_epoll_wait` with a hardcoded `-1` and
+`lib/async.cyr` exposed no timeout-carrying variant, so a caller was unwakeable by anything
+but data on `fd`. Fine for a server whose only job is to serve; not fine for one that must
+also **stop** — an idle accept loop never observed a shutdown flag set by another thread,
+because control never left the call. A signal handler could fire perfectly and change
+nothing.
+
+`async_with_timeout` does not cover this: it races a spawned *task* against a deadline
+inside a runtime, whereas this is a bare fd-readiness wait on the accept path, outside any
+task.
+
+**The return value mattered as much as the timeout.** The old helper returned a constant
+`0` and discarded `sys_epoll_wait`'s result, so even with a timeout a caller could not tell
+"readable" from "timed out". `async_await_readable_ms(fd, ms)` returns **1** for readable,
+**0** for timeout; negative `ms` blocks forever. `async_await_readable` stays a wrapper
+returning `0`, so no existing call site moves. EINTR reports 0, the same as a timeout — the
+caller's loop re-checks and waits again, correct for both. Linux-path only by construction
+(the epoll body is gated NOT-agnos AND NOT-win; on cx no syscall peer is included at all,
+so it never compiled there).
+
+Both directions are pinned: a variant hardwired to `1`, and one hardwired to `0` (the *old*
+contract), each pass one gate axis and fail the other.
+
+### Changed — folded sandhi 1.9.9 and vani 1.1.3
+
+sandhi 1.9.9 is the **other half of the same filing**: `sandhi_server_options_stop_flag`
+wires a cooperative stop into all five serve loops, returning **0** for a requested stop
+against **1** for every failure. agnosai consumes sandhi through this fold rather than a
+`[deps.sandhi]` pin, so the facility was unreachable until this release re-vendored it —
+agnosai's ADR 012 says so explicitly and is superseded by this entry. 1.9.9 introduces
+**zero** new external symbols, and `run_async`'s 100 ms polling workaround is exactly what
+`async_await_readable_ms` above lets it drop. Verified end-to-end against the vendored
+copy, not just the file hash: flag round-trips, the serve loop returns **0** in 0.4 s, and
+the process exits through `sys_exit_group` with workers still live.
+
+vani 1.1.3 is a version-string-only change (its cyrius pin bump), folded to keep the
+version table honest.
+
+The full **12-fold** drift table was re-derived from live `lib/` headers, not from any doc:
+those two were the only drift. **`lib/sakshi.cyr` uses a third header format**
+(`Bundled distribution of sakshi v2.4.7`) that the usual two-pattern scan misses — the same
+class of miss that has rotted this table repeatedly. api-surface **4777 → 4783**: six
+additions, **zero removals**, verified by set difference rather than by the tool's summary
+line, because the api-surface gate — unlike lint/fmt/cyrdoc — does **not** skip folded
+bundles, and sandhi/sigil/mabda/vani are the majority of its entries.
+
+Stale fold and metric numbers corrected in `README.md` (mabda 4.0.7 → 4.0.8, 251 → 254
+`.tcyr`, 147 → 153 gates, cycc size 3 minors old), `docs/ecosystem.md`,
+`docs/stdlib-reference.md`, and vidya's `dependencies.cyml` / `ecosystem.cyml`.
+`roadmap.md`'s per-release list had **no `.4` or `.5` entry at all**; both were written
+alongside `.6`.
+
 ## [6.5.5] — 2026-08-01
 
 The `CYRIUS_IR=3` miscompile cyrius-doom filed, plus the bayan fold. The filing's

@@ -6,8 +6,24 @@
 > api-surface snapshot regenerated. **Downstream flip DONE (2026-07-09):** setu `buf.cyr`'s
 > agnos branch now calls the native `sys_shm_*` wrappers (0 raw `syscall(71..74)` left); setu +
 > aethersafha pins bumped →6.4.34 (aethersafha needed `cyrius lib sync --full`, not just
-> `cyrius deps`). Re-proven both targets — `aethersafha-setu-smoke.sh` gate 4 green on agnos +
+> `cyrius deps`). Re-proven both targets — ~~`aethersafha-setu-smoke.sh` gate 4 green on agnos~~ +
 > the Linux file-backend PPM unchanged. **Nothing left — archive at v6.4.34 slot close.**
+>
+> ⛔ **RETRACTED 2026-08-03 — the agnos-side CITED EVIDENCE is invalid; the FIX is not.** The
+> `aethersafha-setu-smoke.sh` "gate 4 green" was a **FALSE GREEN**: it passed only because the
+> `AETHERSAFHA_SETU_SELFTEST` kernel hook assigned `net_ip = 0x7F000001`, making src == dst ==
+> `127.0.0.1` so agnos `tcp_find_conn` matched; **before `net_src_for` (agnos 1.56.34)** that
+> handshake could not complete on an ordinary boot.
+> ⭐ **Scope — do NOT restate this as "it never worked on agnos."** After `net_src_for` fixed source
+> selection, the transport DID connect un-rigged: `agnos/scripts/harness/aethersafha-clients-test.py`
+> reached "connected: 2, presented: 2" on 2026-08-02 (QEMU, `-smp 1`; never shown on iron; `-smp 4`
+> fault-kills). That harness byte-scans the kernel and hard-exits if it carries a selftest hook — it
+> is what caught the rigging. TCP-on-loopback is retired as the **WRONG PRIMITIVE** for local display
+> IPC (operator ruling 2026-08-03), **not** because it was broken; replacement is the `anu` agnos
+> socket, agnos `docs/development/planning/ipc.md` §9-§10. The rigged script has been deleted.
+> The cyrius `sys_shm_*` wrappers (71-74) added in
+> v6.4.34 are **unaffected** — only this citation of agnos-side proof must not be relied on. See
+> agnos `docs/development/planning/ipc.md` §10.
 
 **Filed:** 2026-07-09 (setu `buf.cyr` — the sovereign shared-buffer PRESENT backend; agnos kernel
 half shipped + QEMU-proven in agnos 1.53.9).
@@ -26,7 +42,12 @@ hundreds-of-KB payload can't drain through the 2 KB `TCP_RX_RING` while the send
 in `sock_send`#48) or mapping a shared page (a page mapped into a proc's arena is freed by
 `proc_free_address_space` on exit → a client that exits right after present frees a page the
 compositor is still reading). It backs the setu shared-buffer present (dhancha/puka → aethersafha),
-now composited end-to-end on agnos (`aethersafha-setu-smoke.sh` gate 4 green).
+~~now composited end-to-end on agnos (`aethersafha-setu-smoke.sh` gate 4 green)~~.
+⛔ **RETRACTED 2026-08-03 — invalid proof, not an invalid fix.** That gate was a FALSE GREEN
+(it passed only under the `AETHERSAFHA_SETU_SELFTEST` kernel hook's `net_ip = 0x7F000001`
+assignment); the end-to-end-on-agnos claim rested on a TCP connection that could not complete on
+an ordinary boot. The shm band and its wrappers are unaffected — only the citation is void. See
+agnos `docs/development/planning/ipc.md` §10.
 
 The setu backend (`setu/src/buf.cyr`) drives it today with **bare `syscall(71..74)` literals** in
 its `#ifdef CYRIUS_TARGET_AGNOS` branch:

@@ -10,4 +10,6 @@ fn main() {
 }
 
 var r = main();
-syscall(SYS_EXIT, r);
+# sys_exit_group, not syscall(SYS_EXIT, ...): SYS_EXIT ends only the calling
+# thread, so the bare syscall hangs once this program spawns its first worker.
+sys_exit_group(r);

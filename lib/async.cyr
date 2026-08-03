@@ -804,8 +804,18 @@ fn async_read(fd, buf, len): i64 {
     return n;
 }
 
-# Wait for fd to be readable using epoll (blocks efficiently)
-fn async_await_readable(fd): i64 {
+# Wait for fd to be readable, or until `ms` milliseconds elapse. Returns 1 if fd
+# became readable, 0 if the wait ended without it. A negative `ms` blocks forever.
+#
+# Prefer this over async_await_readable whenever the wait must be interruptible: a
+# cooperative server parked on an infinite wait cannot observe a stop flag set by
+# another thread, because control never leaves the epoll call. Bounding the wait is
+# what lets the caller re-check between waits.
+#
+# A signal-interrupted wait (EINTR) reports 0, the same as a timeout — the caller's
+# loop re-checks its own condition and waits again, which is the correct response to
+# both. CHANGELOG [6.5.6]
+fn async_await_readable_ms(fd, ms): i64 {
     var epfd = syscall(SYS_EPOLL_CREATE1, 0);
     # epoll_event: { events: u32, data: u64 } = 12 bytes (padded to 16)
     var ev[16];
@@ -820,8 +830,18 @@ fn async_await_readable(fd): i64 {
     #endif
     syscall(SYS_EPOLL_CTL, epfd, 1, fd, &ev);
     var revents[16];
-    sys_epoll_wait(epfd, &revents, 1, 0 - 1);
+    var n = sys_epoll_wait(epfd, &revents, 1, ms);
     syscall(SYS_CLOSE, epfd);
+    if (n > 0) { return 1; }
+    return 0;
+}
+
+# Wait for fd to be readable using epoll (blocks efficiently, without limit).
+# Always returns 0, discarding whether the fd is actually ready — that contract is
+# preserved for existing callers. Use async_await_readable_ms for a bounded wait
+# that reports which of the two happened.
+fn async_await_readable(fd): i64 {
+    async_await_readable_ms(fd, 0 - 1);
     return 0;
 }
 

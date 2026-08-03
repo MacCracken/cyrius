@@ -65,6 +65,7 @@ assert::panic/1
 assert::test_group/1
 async::async_accept/2
 async::async_await_readable/1
+async::async_await_readable_ms/2
 async::async_connect/3
 async::async_interval/5
 async::async_join_all/4
@@ -2510,6 +2511,7 @@ sandhi::sandhi_server_options_get_idle_ms/1
 sandhi::sandhi_server_options_get_max_conns/1
 sandhi::sandhi_server_options_get_max_request/1
 sandhi::sandhi_server_options_get_req_arena/1
+sandhi::sandhi_server_options_get_stop_flag/1
 sandhi::sandhi_server_options_get_tls/1
 sandhi::sandhi_server_options_idle_ms/2
 sandhi::sandhi_server_options_max_conns/2
@@ -2517,6 +2519,7 @@ sandhi::sandhi_server_options_max_request/2
 sandhi::sandhi_server_options_new/0
 sandhi::sandhi_server_options_new_a/1
 sandhi::sandhi_server_options_req_arena/2
+sandhi::sandhi_server_options_stop_flag/2
 sandhi::sandhi_server_options_tls/5
 sandhi::sandhi_server_path_only/1
 sandhi::sandhi_server_path_only_a/2
@@ -4106,6 +4109,7 @@ syscalls_linux_common::sys_epoll_ctl/4
 syscalls_linux_common::sys_execve/3
 syscalls_linux_common::sys_execveat/5
 syscalls_linux_common::sys_exit/1
+syscalls_linux_common::sys_exit_group/1
 syscalls_linux_common::sys_fchmod/2
 syscalls_linux_common::sys_fchmodat/4
 syscalls_linux_common::sys_fstat/2
@@ -4185,6 +4189,7 @@ syscalls_windows::sys_close/1
 syscalls_windows::sys_dup2/2
 syscalls_windows::sys_execve/3
 syscalls_windows::sys_exit/1
+syscalls_windows::sys_exit_group/1
 syscalls_windows::sys_fork/0
 syscalls_windows::sys_getpeername/3
 syscalls_windows::sys_getrandom/3
@@ -4223,6 +4228,7 @@ syscalls_x86_64_agnos::sys_epoll_wait/3
 syscalls_x86_64_agnos::sys_exec_redirect/2
 syscalls_x86_64_agnos::sys_execwait/2
 syscalls_x86_64_agnos::sys_exit/1
+syscalls_x86_64_agnos::sys_exit_group/1
 syscalls_x86_64_agnos::sys_fbinfo/2
 syscalls_x86_64_agnos::sys_flock/2
 syscalls_x86_64_agnos::sys_fstat/2

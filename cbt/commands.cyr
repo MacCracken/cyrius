@@ -230,14 +230,14 @@ fn cmd_tests(dir): i64 {
     return 0;
 }
 
-fn cmd_fuzz(): i64 {
-    # Discover fuzz/*.fcyr harnesses, compile and run each
-    _status("=== cyrius fuzz ===");
-    var entries = dir_list(str_from("fuzz"));
+# Walk `dir` for `*.fcyr` harnesses, compile and run each.
+# Updates *passcnt / *failcnt / *found via caller-owned i64 storage.
+# Returns the number of harnesses attempted.
+fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
+    if (file_exists(dir) == 0) { return 0; }
+    var entries = dir_list(str_from(dir));
     var fi = 0;
-    var fuzz_pass = 0;
-    var fuzz_fail = 0;
-    var found = 0;
+    var n = 0;
     while (fi < vec_len(entries)) {
         var name = vec_get(entries, fi);
         var nd = str_data(name);
@@ -245,8 +245,9 @@ fn cmd_fuzz(): i64 {
         # Check if .fcyr file
         if (nl > 5) {
             if (memeq(nd + nl - 5, ".fcyr", 5) == 1) {
-                found = 1;
-                var path = make_path("fuzz", nd);
+                store64(found_ptr, 1);
+                n = n + 1;
+                var path = make_path(dir, nd);
                 var tmpbin = _cbt_tmpfile("fuzz");
                 sys_write(STDOUT_FD, "  ", 2);
                 sys_write(STDOUT_FD, nd, nl);
@@ -257,23 +258,46 @@ fn cmd_fuzz(): i64 {
                     sys_unlink(tmpbin);
                     if (ec == 0) {
                         println("PASS");
-                        fuzz_pass = fuzz_pass + 1;
+                        store64(passcnt_ptr, load64(passcnt_ptr) + 1);
                     } else {
                         println("FAIL");
-                        fuzz_fail = fuzz_fail + 1;
+                        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
                     }
                 } else {
                     println("COMPILE FAIL");
-                    fuzz_fail = fuzz_fail + 1;
+                    store64(failcnt_ptr, load64(failcnt_ptr) + 1);
                     sys_unlink(tmpbin);
                 }
             }
         }
         fi = fi + 1;
     }
-    if (found == 0) {
-        println("  No fuzz harnesses found in fuzz/");
-        println("  Create fuzz/*.fcyr files to test library functions.");
+    return n;
+}
+
+fn cmd_fuzz(): i64 {
+    # Discover *.fcyr harnesses, compile and run each
+    _status("=== cyrius fuzz ===");
+    var pass_store[1];
+    var fail_store[1];
+    var found_store[1];
+    store64(&pass_store, 0);
+    store64(&fail_store, 0);
+    store64(&found_store, 0);
+    _fuzz_walk_dir("fuzz", &pass_store, &fail_store, &found_store);
+    # v6.5.6 — also walk `tests/`. `cyrius init` scaffolds its fuzz harness to
+    # `tests/<proj>.fcyr` (`_tests_rel` hardcodes "tests/" for ALL THREE extensions
+    # and no fuzz/ dir is created), so every scaffolded project reported
+    # "No fuzz harnesses found" against a harness the scaffolder had just written.
+    # Exactly the gap v6.4.72 closed for the TEST corpus and v6.4.78 for BENCH —
+    # fuzz was the third sibling that never got the same treatment. No double-count:
+    # dir_list is non-recursive, so "fuzz" and "tests" are disjoint.
+    _fuzz_walk_dir("tests", &pass_store, &fail_store, &found_store);
+    var fuzz_pass = load64(&pass_store);
+    var fuzz_fail = load64(&fail_store);
+    if (load64(&found_store) == 0) {
+        println("  No fuzz harnesses found (looked in fuzz/ and tests/).");
+        println("  Create `fuzz/*.fcyr` files to test library functions.");
         return 0;
     }
     sys_write(STDOUT_FD, "\n=== ", 5);

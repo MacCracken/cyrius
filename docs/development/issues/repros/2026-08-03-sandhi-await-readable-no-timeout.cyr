@@ -1,0 +1,20 @@
+var STOP = 0;
+
+fn _stopper(arg) { sleep_ms(250); STOP = 1; return 0; }
+
+fn main(): i64 {
+    alloc_init();
+    var sfd = payload(tcp_socket());
+    sock_reuse(sfd);
+    sock_bind(sfd, INADDR_LOOPBACK(), 0);
+    sock_listen(sfd, 16);
+    sock_set_nonblocking(sfd);
+    thread_create(&_stopper, 0);
+    while (1 == 1) {
+        if (STOP != 0) { println("stopped"); return 0; }
+        async_await_readable(sfd);
+    }
+    return 0;
+}
+var r = main();
+syscall(SYS_EXIT_GROUP, r);

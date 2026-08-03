@@ -20,4 +20,4 @@ fn main(): i64 {
 }
 
 var r = main();
-syscall(60, r);
+sys_exit_group(r);

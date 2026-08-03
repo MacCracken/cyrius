@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.5** (2026-08-01) — cycc **1,133,440 B** · check.sh **150 passed / 0
+**Current head: v6.5.6** (2026-08-03) — cycc **1,133,440 B** · check.sh **150 passed / 0
 failed** · self_compile **648 ms** · **254** `.tcyr` (31 `vr01_`) · **99** `lib/*.cyr` ·
 api-surface **4,777** public fns · heap map **100 regions / 0 overlaps** (unchanged across
 6.5.0–.2 — the visibility file-id substrate is a lazy `alloc`, the `_fnt_tparams`/`_vsgn_base`
@@ -94,6 +94,34 @@ not a single release.
   `cp` and `cycc` is first in `bins`, so **all 17 later binaries were left stale** (the
   `cyrius --version` drift a consumer reported); `version-bump.sh`'s same-version path exited
   before its own force-rebuild. cycc 1,129,272 → 1,129,288 B.
+- **v6.5.4** — **`vec_sort_by` / `vec_select_nth`**, the stdlib's first ordering primitive
+  (the agnosai filing; **no fn in any of the 99 `lib/` modules took a comparator**). Named
+  `vec_sort_by` rather than bare `vec_sort` because `itihas/src/util.cyr:57` already defines
+  the latter and last-definition-wins would break it. Folded sigil 3.12.2 / yukti 2.3.2 /
+  sandhi 1.9.8 / mabda 4.0.8. Fixed the sign-efi gate, which was **vacuous** against the
+  exact defect sigil 3.12.2 fixes *and* was grading the installed helper instead of the repo
+  build. Re-derived every folded-dep version table from live `lib/` headers — 3 of 4 had
+  rotted again, and `yantra` was missing from both.
+- **v6.5.5** — **the `CYRIUS_IR=3` switch-dispatch miscompile** filed by cyrius-doom. Filed
+  as LASE; it is **DCE**. `CYRIUS_LASE_OFF=1` is not LASE-specific — `ir_apply_lase` is the
+  only NOP-filler and applies marks from three passes. Root cause: an `IR_RAW_EMIT` marker
+  only shields raw bytes until the **next recorded node**, and `ESWITCH_DISPATCH_PRE`
+  recorded four nodes between its marker and its raw `sub`/`cmp`, hiding their rcx reads from
+  DCE. Closes `switch_dispatch` (18 → 0); **7 of the 8 residual IR=3 mismatches remain**.
+  Also folded bayan 1.4.0. cycc flat at 1,133,440 B.
+- **v6.5.6** — **the agnosai/sandhi pair, both filed and fixed the same day** (W1 reserve).
+  `sys_exit_group` on **all three** syscall peer families — `sys_exit` is exit(2) and ends
+  only the calling thread, so every threaded program's idiomatic epilogue hung, and `cyrius
+  init` shipped that epilogue in **seven** templates. `async_await_readable_ms` — the old
+  helper parked on a hardcoded `-1` and returned a constant `0`, so a cooperative server
+  could neither be woken nor told which way its wait ended. Three defects found while fixing
+  those and shipped with them rather than filed: macOS-x86's **untranslated 231 → silent
+  SIGSYS** (the unrouted-syscall warning is arm64-only), `proj-tcyr`'s 8-bit exit truncation
+  (exactly 256 / 512 / 768 failing assertions scored **PASS**), and `cyrius fuzz` being blind
+  to the harness `cyrius init` had just written — the third member of a family whose first
+  two fixes (v6.4.72 test, v6.4.78 bench) had both shipped **ungated**. Folded sandhi 1.9.9
+  (the stop facility — the other half of the same filing) + vani 1.1.3. Three new gates, all
+  mutation-proven. cycc flat at 1,133,440 B.
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 
@@ -340,6 +368,19 @@ Known drain queue (~3 releases' worth; the rest is reserve). Six of the 16 open 
 filed on 2026-07-28/29, and five are self-contained stdlib fixes with supplied patches — per
 *an audit's output is fixes, not a backlog*, these are pack-into-a-release material, not
 roadmap rows.
+
+> **Window status at 6.5.6 — 3 of 5 patches spent, item 4 done, the reserve half-used.**
+> `.4` took **item 4** (`vec_sort_by` / `vec_select_nth`). `.5` was displaced by the
+> cyrius-doom IR=3 miscompile — a live consumer bug, not a queue item. `.6` spent a second
+> reserve patch on the agnosai `sys_exit_group` + sandhi `async_await_readable_ms` pair,
+> both filed *and* shipped on 2026-08-03. **Items 1, 2, 3, 5, 6, 7, 8 and 9 below are all
+> still unstarted** with `.7`–`.8` left, so this window is now oversubscribed: either it
+> widens or the remainder moves to W2. That is a maintainer call — flagged, not decided.
+>
+> Note item 1(vi): `sys_chdir` is *called* at `lib/regression.cyr:658` and **defined
+> nowhere**, so that `cyrius deps`-shipped stdlib file cannot compile for any consumer
+> reaching `regression_exec_in_dir3`. It is still true at 6.5.6 (the LSP flags it on every
+> `programs/checks/main.cyr` edit) and is the sharpest item in the queue.
 
 1. **Syscall-wrapper pass**, in this fixed internal order:
    (i) repoint `lib/yantra.cyr:453`'s bare-literal `syscall(54, fd, 6, 1, one, 4)` at

@@ -10,7 +10,9 @@ cyrius test                              # run [build].test + tests/*.tcyr
 
 ## Layout
 
-- `src/main.cyr` — entry point. Top-level `var r = main(); syscall(SYS_EXIT, r);`.
+- `src/main.cyr` — entry point. Top-level `var r = main(); sys_exit_group(r);`.
+  Use `sys_exit_group`, not `syscall(SYS_EXIT, r)` — the latter is exit(2) and ends
+  only the calling thread, so it hangs once the program spawns its first worker.
 - `src/test.cyr` — top-level test entry referenced by `cyrius.cyml [build].test`. Add unit cases here or in `tests/{PROJ}.tcyr`.
 - `tests/{PROJ}.tcyr` — primary test suite (`cyrius test` auto-discovers).
 - `tests/{PROJ}.bcyr` — benchmarks (`cyrius bench`).

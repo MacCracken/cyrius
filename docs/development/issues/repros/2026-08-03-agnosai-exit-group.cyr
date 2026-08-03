@@ -1,0 +1,15 @@
+fn _spin(arg) {
+    while (1 == 1) { sleep_ms(1000); }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    thread_create(&_spin, 0);
+    sleep_ms(100);
+    println("main returning");
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);       # the idiomatic epilogue — swap to SYS_EXIT_GROUP to see the fix
