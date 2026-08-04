@@ -73,8 +73,17 @@ to the **later performance track** — to be reviewed **together** when it opens
 
 ## Where the next slot is likely to start
 
-W1 (v6.5.4 → .8) still has its named queue; .6 spent one of its reserve patches on the
-agnosai/sandhi pair. Unstarted W1 items: the **syscall-wrapper pass** (item 1 — `fchownat`,
+**W1 was WIDENED 5 → 13 patches (`.4` → `.16`) by maintainer decision on 2026-08-03**, and
+everything downstream shifted **+8** (IR substrate `.17–.18`, W2 `.19–.21`, closeout band
+`.40+`). The reason matters for how you treat the queue: these patch fixes are **the early
+moat the agnosai port is moving through** — each one unblocks something the port hit, and
+the alternative to fixing them now is the port stalling. Do not "protect the arc" by
+deferring a consumer-filed repair out of this window; absorbing them IS the window's job,
+and ~4 of the 13 are held as reserve for filings that have not arrived yet.
+
+**3 of 13 spent** (`.4`, `.5`, `.6`), so `.7`–`.16` remain. Unstarted W1 items — run **item
+6 (`distlib --all`/`--check`) EARLY**, before any re-vendor in this window, and item 7 rides
+with item 1: the **syscall-wrapper pass** (item 1 — `fchownat`,
 `sys_chdir`, `xmkdir`/`xmkdir_p`, `xsymlink`/`xreadlink`/`xlink`; note `sys_chdir` is called
 at `lib/regression.cyr:658` and **defined nowhere**, so that stdlib file cannot compile for
 any consumer reaching it), the **`i64::MIN` formatter class** (all 7 sites), the

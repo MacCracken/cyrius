@@ -241,19 +241,19 @@ ran 86 releases and 6.5.x is expected in the same class.
 | # | Indicative | Slot | Contains (phases = internal commits) | Absorbs |
 |:-:|:-:|---|---|---|
 | **1** | **.3** | **Diagnostics finish-out** | (a) the include-line delta; (b) the 7 fail-fast `SYS_EXIT` parser sites → `_had_error` + `_panic` + return; (c) `_sync_skip` statement-start-keyword resync; (d) the inverted-sign typed-pointer warning; (e) the `ERR_MSG` hardcoded-length audit sweep | `2026-07-28-main-source-diagnostic-line-wrong-after-an-include`, `2026-07-12-dx-multi-error-reporting` |
-| **2** | **.4–.8** | **▣ W1 — reactive window #1** (5) | Known drain queue (~3 releases) + ~2 reserve. See the window block below. | `2026-07-29-no-portable-xmkdir-in-io-cyr` **[UNVETTED]**, `2026-07-26-no-lchown-wrapper…`, `2026-07-29-fmt-int-buf-i64-min` **[UNVETTED]**, `2026-07-29-mutex-unlock-unconditional-futex-wake` **[UNVETTED]**, `2026-07-28-agnosai-no-nlogn-sort-in-stdlib`, `2026-07-26-agora-fs-dir-list-per-call-alloc`, `2026-07-26-distlib-has-no-all-profiles-mode`, `2026-07-14-release-gate-cross-os-runs-only-vr01-glob`, `proposals/2026-06-25-source-level-version-constant` |
-| **3** | **.9–.10** | **IR substrate productionization** (2) — **the perf anchor** | Opening bite: D1/D2 dead-code removal + record the new `note: N unreachable fns` floor. Then Wall 2 (local-access opcode model; `IR_SWITCH` + unresolved-edge CFG completion). Then Wall 1 (`ir_lower_all` mode-2 activation, proven byte-identical on `differential.sh`). Then a `CYRIUS_IR=3` axis added to `differential.sh` and the 8 residual mismatches closed with it. Plus the visibility→DCE feed. | `2026-07-02-ir-regalloc-rewrite-needs-reemit` (Walls 1+2), `2026-07-07-v6415-closeout-residuals` (D1/D2) |
-| **4** | **.11–.13** | **▣ W2 — reactive window #2** (3) | At the substrate/regalloc seam. Mostly reserve. Named fold-ins: bare-metal forbidden-module check; the two cyrlint gates; visibility adoption files. | — |
-| **5** | **.14–.15** | **Cross-BB regalloc with a vector register class** (2) | The vector class is planned in **from the start, not retrofitted** — standing decision from roadmap_6.md. Copy-propagation and cross-BB DSE land as bites inside (both proven inert-if-sound / miscompiling-if-not on the raw substrate at v6.3.28). Plus the `_cur_fn_ret_stash` 19-site `_disp_adj` consolidation. | (downstream half of `…ir-regalloc-rewrite-needs-reemit`) |
-| **6** | **.16–.17** | **SIMD register residency** (2) — the substrate's payoff | Register-resident value-form f64v arithmetic; wrapper inlining so `f64v_add(&r, a, b, 2)` stops round-tripping through memory; f64v4 widened to `vmulpd`/`vaddpd` **ymm** under `simd_has_avx2()`. Scope = fix-list items 1–3 only. | `2026-07-06-simd-f64v-memory-operand-no-register-residency` |
-| **7** | **.18–.22** | **▣ W3 — reactive window #3** (5) | The burst-risk window. See the window block below. | (reserve; `sock_accept`#57 VFS-fd bridge is the named candidate) |
-| **8** | **.23–.24** | **Stackless coroutines / mid-body suspend-resume across `await`** (2) | CPS transform + poll-runtime rework + force-once memoization as bites. Folds in the async **single-waiter-per-fd multiplex** (the same `_async_wait_events` rewrite) and the shipped async arc's "gap 6". Acceptance = stiva's `exec -it` TTY relay + a true multiplexed streaming server. | `2026-07-25-stiva-stackless-coroutines-interactive-exec` — **stays OPEN as the acceptance record until this slot ships; do not archive it in a rot sweep** |
-| **9** | **.25–.26** | **Sum-type variant unboxing** (2) — *retitle at pin time* | Filed as "`sock_send` allocates"; it is the compiler's variant **lowering**. Fix option 1 only: unbox the scalar case (tag + i64 payload in a register pair, no allocation). Options 2/3 are traps — arena variants push the cost onto every consumer; a singleton silently breaks any caller storing a `Result` past the next call. **Full ecosystem ABI cross-walk at arc-open, one coordinated filing, not drip.** | `2026-07-28-sock-send-result-allocates-per-call` |
-| **10** | **.27–.30** | **▣ W4 — reactive window #4** (4) | Feeds the closeout — a drained queue going in, so the closeout's re-triage doesn't displace releases. | (reserve) |
-| **11** | **.31** | **macOS-arm64 concurrency** (1) — last in the minor | **Both** gaps in one release: `lib/thread_macos.cyr` driving `bsdthread_create` + `bsdthread_register` (mirroring the `thread_win.cyr` split) for `thread_create`/`thread_join`, **and** `__ulock_wait`/`__ulock_wake` replacing `sync_macos.cyr`'s spinlock for the mutex + channel wait/wake. Acceptance = un-guard the four VR-01 assertions and get the full worker/counter/channel checks green on **real ecb** — not a hello-world smoke. | `2026-07-03-macos-threading-workers-dont-run` |
-| **12** | **.32+** | **Closeout band** | Not a single release. `release-gate.sh` mechanical gates, then the judgment passes (heap map, dead code, refactor, code review, cleanup), then security re-scan + downstream check, then doc sync + backlog re-triage. Run it per [cycle-discipline.md](cycle-discipline.md)'s runnable checklist and **record the run in the ledger**. | — |
+| **2** | **.4–.16** | **▣ W1 — reactive window #1** (**13** — widened from 5, 2026-08-03) | Known drain queue (~6 releases) + ~4 reserve held for the **agnosai port**. See the window block below. | `2026-07-29-no-portable-xmkdir-in-io-cyr` **[UNVETTED]**, `2026-07-26-no-lchown-wrapper…`, `2026-07-29-fmt-int-buf-i64-min` **[UNVETTED]**, `2026-07-29-mutex-unlock-unconditional-futex-wake` **[UNVETTED]**, `2026-07-28-agnosai-no-nlogn-sort-in-stdlib`, `2026-07-26-agora-fs-dir-list-per-call-alloc`, `2026-07-26-distlib-has-no-all-profiles-mode`, `2026-07-14-release-gate-cross-os-runs-only-vr01-glob`, `proposals/2026-06-25-source-level-version-constant` |
+| **3** | **.17–.18** | **IR substrate productionization** (2) — **the perf anchor** | Opening bite: D1/D2 dead-code removal + record the new `note: N unreachable fns` floor. Then Wall 2 (local-access opcode model; `IR_SWITCH` + unresolved-edge CFG completion). Then Wall 1 (`ir_lower_all` mode-2 activation, proven byte-identical on `differential.sh`). Then a `CYRIUS_IR=3` axis added to `differential.sh` and the 8 residual mismatches closed with it. Plus the visibility→DCE feed. | `2026-07-02-ir-regalloc-rewrite-needs-reemit` (Walls 1+2), `2026-07-07-v6415-closeout-residuals` (D1/D2) |
+| **4** | **.19–.21** | **▣ W2 — reactive window #2** (3) | At the substrate/regalloc seam. Mostly reserve. Named fold-ins: bare-metal forbidden-module check; the two cyrlint gates; visibility adoption files. | — |
+| **5** | **.22–.23** | **Cross-BB regalloc with a vector register class** (2) | The vector class is planned in **from the start, not retrofitted** — standing decision from roadmap_6.md. Copy-propagation and cross-BB DSE land as bites inside (both proven inert-if-sound / miscompiling-if-not on the raw substrate at v6.3.28). Plus the `_cur_fn_ret_stash` 19-site `_disp_adj` consolidation. | (downstream half of `…ir-regalloc-rewrite-needs-reemit`) |
+| **6** | **.24–.25** | **SIMD register residency** (2) — the substrate's payoff | Register-resident value-form f64v arithmetic; wrapper inlining so `f64v_add(&r, a, b, 2)` stops round-tripping through memory; f64v4 widened to `vmulpd`/`vaddpd` **ymm** under `simd_has_avx2()`. Scope = fix-list items 1–3 only. | `2026-07-06-simd-f64v-memory-operand-no-register-residency` |
+| **7** | **.26–.30** | **▣ W3 — reactive window #3** (5) | The burst-risk window. See the window block below. | (reserve; `sock_accept`#57 VFS-fd bridge is the named candidate) |
+| **8** | **.31–.32** | **Stackless coroutines / mid-body suspend-resume across `await`** (2) | CPS transform + poll-runtime rework + force-once memoization as bites. Folds in the async **single-waiter-per-fd multiplex** (the same `_async_wait_events` rewrite) and the shipped async arc's "gap 6". Acceptance = stiva's `exec -it` TTY relay + a true multiplexed streaming server. | `2026-07-25-stiva-stackless-coroutines-interactive-exec` — **stays OPEN as the acceptance record until this slot ships; do not archive it in a rot sweep** |
+| **9** | **.33–.34** | **Sum-type variant unboxing** (2) — *retitle at pin time* | Filed as "`sock_send` allocates"; it is the compiler's variant **lowering**. Fix option 1 only: unbox the scalar case (tag + i64 payload in a register pair, no allocation). Options 2/3 are traps — arena variants push the cost onto every consumer; a singleton silently breaks any caller storing a `Result` past the next call. **Full ecosystem ABI cross-walk at arc-open, one coordinated filing, not drip.** | `2026-07-28-sock-send-result-allocates-per-call` |
+| **10** | **.35–.38** | **▣ W4 — reactive window #4** (4) | Feeds the closeout — a drained queue going in, so the closeout's re-triage doesn't displace releases. | (reserve) |
+| **11** | **.39** | **macOS-arm64 concurrency** (1) — last in the minor | **Both** gaps in one release: `lib/thread_macos.cyr` driving `bsdthread_create` + `bsdthread_register` (mirroring the `thread_win.cyr` split) for `thread_create`/`thread_join`, **and** `__ulock_wait`/`__ulock_wake` replacing `sync_macos.cyr`'s spinlock for the mutex + channel wait/wake. Acceptance = un-guard the four VR-01 assertions and get the full worker/counter/channel checks green on **real ecb** — not a hello-world smoke. | `2026-07-03-macos-threading-workers-dont-run` |
+| **12** | **.40+** | **Closeout band** | Not a single release. `release-gate.sh` mechanical gates, then the judgment passes (heap map, dead code, refactor, code review, cleanup), then security re-scan + downstream check, then doc sync + backlog re-triage. Run it per [cycle-discipline.md](cycle-discipline.md)'s runnable checklist and **record the run in the ledger**. | — |
 
-**Totals**: ~12 releases of pinned arc work + ~17 of reactive window = **~29**, plus the
+**Totals**: ~12 releases of pinned arc work + ~**25** of reactive window = **~37**, plus the
 closeout band, in a minor expected to run 45–99. The remaining headroom is repair tails (the
 6.4.x precedent says every codegen arc grows one) and whatever the user pivots to. **Only the
 user pivots focus.**
@@ -362,25 +362,65 @@ shut; **four, not three**, because the arity-divergence class is live, the kriya
 un-gate is armed, and Slots 3/5/6 are a long mechanical stretch during which a consumer filing
 would otherwise have nowhere to land.
 
-### ▣ W1 — v6.5.4 → .8 (5 patches) · pre-IR-arc · drains the known queue
+**⚠ The baseline above measures the WRONG generator for what is actually filing now
+(recorded 2026-08-03, at the W1 widening).** Every figure in it is counted from releases
+touching `lib/syscalls_x86_64_agnos.cyr` — i.e. **agnos-kernel-facing ABI work** — and on
+that basis it correctly concludes the biggest 6.4.x generator is closed by design. That
+conclusion still holds *for syscall numbers*. It does not describe the class currently
+producing filings.
+
+**The agnosai PORT is a second, independent generator, and it files a different shape.**
+Not syscall numbers: **missing stdlib primitives and codegen gaps** hit while porting real
+Rust code — `vec_sort_by` (6.5.4: no fn in any of the 99 `lib/` modules took a comparator),
+`sys_exit_group` (6.5.6: `sys_exit` is exit(2)), `async_await_readable_ms` (6.5.6: no
+timeout variant existed). Three releases of W1 in the window's first week, none of them
+agnos-ABI, none of them predicted by the measured baseline.
+
+**Sizing rule for this class**: it is bounded by *how much of the port remains*, not by
+agnos's syscall surface — and it arrives in bursts, because a port hits a whole subsystem's
+worth of gaps at once (the 6.5.6 pair were filed the same afternoon, from the same bite).
+Each fix is small and self-contained; the risk is **stalling the port**, not blast radius.
+That is why W1 was widened to 13 rather than the remainder being pushed to W2: deferring
+these behind a two-release compiler arc blocks the consumer the window exists to serve.
+Re-check this paragraph at the next window — if the port has moved past its moat, W3/W4 can
+shrink back toward the agnos-ABI baseline.
+
+### ▣ W1 — v6.5.4 → .16 (13 patches) · pre-IR-arc · drains the known queue
 
 Known drain queue (~3 releases' worth; the rest is reserve). Six of the 16 open issues were
 filed on 2026-07-28/29, and five are self-contained stdlib fixes with supplied patches — per
 *an audit's output is fixes, not a backlog*, these are pack-into-a-release material, not
 roadmap rows.
 
-> **Window status at 6.5.6 — 3 of 5 patches spent, item 4 done, the reserve half-used.**
-> `.4` took **item 4** (`vec_sort_by` / `vec_select_nth`). `.5` was displaced by the
-> cyrius-doom IR=3 miscompile — a live consumer bug, not a queue item. `.6` spent a second
-> reserve patch on the agnosai `sys_exit_group` + sandhi `async_await_readable_ms` pair,
-> both filed *and* shipped on 2026-08-03. **Items 1, 2, 3, 5, 6, 7, 8 and 9 below are all
-> still unstarted** with `.7`–`.8` left, so this window is now oversubscribed: either it
-> widens or the remainder moves to W2. That is a maintainer call — flagged, not decided.
+> **WIDENED 5 → 13 patches (`.4` → `.16`) — maintainer decision, 2026-08-03.** Everything
+> downstream shifts **+8** (the IR substrate arc moves `.9–.10` → `.17–.18`, and so on
+> through the closeout band at `.40+`).
 >
-> Note item 1(vi): `sys_chdir` is *called* at `lib/regression.cyr:658` and **defined
-> nowhere**, so that `cyrius deps`-shipped stdlib file cannot compile for any consumer
-> reaching `regression_exec_in_dir3`. It is still true at 6.5.6 (the LSP flags it on every
-> `programs/checks/main.cyr` edit) and is the sharpest item in the queue.
+> **The reason is the agnosai port, and it is a deliberate sequencing choice, not scope
+> creep.** These patch fixes are the early moat the port is currently moving through: each
+> one unblocks something agnosai hit while porting, and the alternative to fixing them now
+> is the port stalling out on them. A reactive window exists precisely to absorb
+> consumer-filed repairs — narrowing it while the consumer is actively filing would push
+> the work behind a two-release compiler arc and stall the thing the window is protecting.
+> So W1 keeps ~4 patches of genuine reserve rather than being sized to the *known* queue
+> alone; the queue is expected to grow while the port runs.
+>
+> **Spent: 3 of 13.** `.4` took **item 4** (`vec_sort_by` / `vec_select_nth`, the agnosai
+> filing). `.5` was displaced by the cyrius-doom IR=3 miscompile — a live consumer bug, not
+> a queue item. `.6` took the agnosai `sys_exit_group` + sandhi `async_await_readable_ms`
+> pair, both filed *and* shipped on 2026-08-03, plus three defects found while fixing them.
+> **Items 1, 2, 3, 5, 6, 7, 8 and 9 below are all still unstarted**, with `.7`–`.16` to run
+> them in.
+>
+> **Sequencing note — item 6 (`distlib --all`/`--check`) should go EARLY**, before this
+> window's re-vendors, per its own entry: without it you re-run the N+1 ritual whose
+> omission shipped sankoch 2.7.6's buggy encoder under a fixed version string. Item 7 rides
+> with item 1 (same release), and items 8/9 are fold-ins that need no slot of their own.
+>
+> **Sharpest item in the queue — item 1(vi): `sys_chdir` is *called* at
+> `lib/regression.cyr:658` and defined NOWHERE**, so that `cyrius deps`-shipped stdlib file
+> cannot compile for any consumer reaching `regression_exec_in_dir3`. Still true at 6.5.6
+> (the LSP flags it on every `programs/checks/main.cyr` edit).
 
 1. **Syscall-wrapper pass**, in this fixed internal order:
    (i) repoint `lib/yantra.cyr:453`'s bare-literal `syscall(54, fd, 6, 1, one, 4)` at
@@ -452,7 +492,7 @@ roadmap rows.
    it currently reports 11 of 12 (`SKIP: niyama — undefined variable 'NFD'`), so one fold's
    agnos exposure is still unmeasured.
 
-### ▣ W2 — v6.5.11 → .13 (3 patches) · at the substrate/regalloc seam
+### ▣ W2 — v6.5.19 → .21 (3 patches) · at the substrate/regalloc seam
 
 Deliberately the low end: this is **reserve, not a known queue** — W1 drains the queue, and the
 one named forward agnos candidate (`lstat`, the last half of the old `readlink` pair, agnos:
@@ -473,7 +513,7 @@ instead of ~20. Named fold-ins if nothing arrives:
   intentional bare-local-array sites in-tree.
 - **Visibility adoption**, a file or two at a time where it pays.
 
-### ▣ W3 — v6.5.18 → .22 (5 patches) · post-residency · the burst-risk window
+### ▣ W3 — v6.5.26 → .30 (5 patches) · post-residency · the burst-risk window
 
 Sized at the top of the range because this is where the historical burst lands and where cyrius
 is the **named blocker** on an agnos item. The next new-number pressure is agnos 1.57.x/1.6x —
@@ -491,7 +531,7 @@ changing meaning**, which is the silent class: a new number fails loudly (undefi
 hard-errors on arity since 6.5.1, but a widen is invisible on both sides. `net.cyr` churn is
 also easier once the vector-residency work is stable, hence post-Slot-6 rather than mid.
 
-### ▣ W4 — v6.5.27 → .30 (4 patches) · feeding the closeout
+### ▣ W4 — v6.5.35 → .38 (4 patches) · feeding the closeout
 
 A window **in front of** the closeout so the closeout's backlog re-triage and doc sync reflect a
 drained queue rather than discovering one and displacing releases — which is exactly what
