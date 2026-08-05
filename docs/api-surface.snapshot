@@ -4082,6 +4082,7 @@ syscalls_aarch64_linux::sys_access/2
 syscalls_aarch64_linux::sys_chmod/2
 syscalls_aarch64_linux::sys_dup2/2
 syscalls_aarch64_linux::sys_epoll_wait/4
+syscalls_aarch64_linux::sys_fchownat/5
 syscalls_aarch64_linux::sys_fdatasync/1
 syscalls_aarch64_linux::sys_fork/0
 syscalls_aarch64_linux::sys_fsync/1
@@ -4172,6 +4173,7 @@ syscalls_macos::is_err/1
 syscalls_macos::sys_access/2
 syscalls_macos::sys_chmod/2
 syscalls_macos::sys_dup2/2
+syscalls_macos::sys_fchownat/5
 syscalls_macos::sys_fork/0
 syscalls_macos::sys_fsync/1
 syscalls_macos::sys_link/2
@@ -4198,6 +4200,7 @@ syscalls_windows::sys_dup2/2
 syscalls_windows::sys_execve/3
 syscalls_windows::sys_exit/1
 syscalls_windows::sys_exit_group/1
+syscalls_windows::sys_fchownat/5
 syscalls_windows::sys_fork/0
 syscalls_windows::sys_getpeername/3
 syscalls_windows::sys_getrandom/3
@@ -4239,6 +4242,7 @@ syscalls_x86_64_agnos::sys_execwait/2
 syscalls_x86_64_agnos::sys_exit/1
 syscalls_x86_64_agnos::sys_exit_group/1
 syscalls_x86_64_agnos::sys_fbinfo/2
+syscalls_x86_64_agnos::sys_fchownat/5
 syscalls_x86_64_agnos::sys_flock/2
 syscalls_x86_64_agnos::sys_fstat/2
 syscalls_x86_64_agnos::sys_getdents/3
@@ -4333,6 +4337,7 @@ syscalls_x86_64_linux::sys_access/2
 syscalls_x86_64_linux::sys_chmod/2
 syscalls_x86_64_linux::sys_dup2/2
 syscalls_x86_64_linux::sys_epoll_wait/4
+syscalls_x86_64_linux::sys_fchownat/5
 syscalls_x86_64_linux::sys_fdatasync/1
 syscalls_x86_64_linux::sys_fork/0
 syscalls_x86_64_linux::sys_fsync/1

@@ -422,10 +422,43 @@ roadmap rows.
 > cannot compile for any consumer reaching `regression_exec_in_dir3`. Still true at 6.5.6
 > (the LSP flags it on every `programs/checks/main.cyr` edit).
 
+> ⛔ **STEPS (i) AND (ii) ARE DISPROVEN — do NOT execute them (measured 2026-08-05, v6.5.7).**
+> The premise is that repointing `lib/yantra.cyr:453` leaves the aarch64 `54 → 208` remap
+> with "no consumer", freeing native `54` for `SYS_FCHOWNAT`. It does not, and the gap is not
+> close:
+> - `lib/net.cyr:15` has an unconditional `var NSYS_SETSOCKOPT = 54;` with **9** call sites
+>   (`:222 :252 :277 :435 :450 :463 :476 :488 :501`) — `sock_reuse`, both timeouts,
+>   `SO_REUSEPORT` and all four multicast verbs.
+> - **51 repos** across `~/Repos` carry a raw `syscall(54, …)` emitter, and it is not all
+>   vendored yantra: `argonaut/src/notify.cyr:122` writes it in its **own source**
+>   (`setsockopt(fd, SOL_SOCKET, SO_PASSCRED, …)`).
+>
+> So the remap is **load-bearing ecosystem infrastructure**, not dead weight, and deleting it
+> would silently break sockets on native aarch64-Linux for consumer code this repo does not
+> control — with the cross-OS leg running only 31 of 254 `.tcyr`, so it very likely would not
+> be caught. It is ALSO the mechanism that lets one source number work on both aarch64-Linux
+> and macOS-arm64 (the macho leg maps both `54 → 105` at `emit.cyr:719` and `208 → 105` at
+> `:742`).
+>
+> **A second candidate was tried and is also wrong**: `SYS_FCHOWNAT = 260` (the x86 number,
+> the usual house pattern) collides with `SYS_WAIT4 = 260` at
+> `lib/syscalls_aarch64_linux.cyr:102` — a `260 → 54` entry would rewrite every `wait4` into
+> `fchownat` and break process reaping (`syscalls_linux_common.cyr:190`, `async.cyr:883/:888`).
+>
+> **What remains is a genuine design decision, and it is the maintainer's**: aarch64
+> `fchownat` needs a source number that is neither `54` (owned by the setsockopt shim) nor a
+> live native aarch64 number, i.e. a new sentinel convention in the ESYSXLAT source space.
+> Until that is decided, `fchownat` ships on **x86-Linux / macOS-x86 / agnos / Windows** where
+> there is no collision, and the aarch64 arm stays open. The v6.4.64 precedent at
+> `lib/syscalls_aarch64_linux.cyr:174-178` ("native numbers pass through untranslated; the
+> macho backend dual-maps") is the right shape and simply has no free number here.
+
 1. **Syscall-wrapper pass**, in this fixed internal order:
-   (i) repoint `lib/yantra.cyr:453`'s bare-literal `syscall(54, fd, 6, 1, one, 4)` at
+   ~~(i) repoint `lib/yantra.cyr:453`'s bare-literal `syscall(54, fd, 6, 1, one, 4)` at
    `SYS_SETSOCKOPT` so the aarch64 `54 → 208` remap at `src/backend/aarch64/emit.cyr:840` has
-   no consumer; (ii) **only then** claim aarch64-native `54` for `SYS_FCHOWNAT`;
+   no consumer; (ii) **only then** claim aarch64-native `54` for `SYS_FCHOWNAT`;~~
+   **(i)/(ii) DISPROVEN — see the banner above.** Repointing `lib/yantra.cyr:453` upstream is
+   still worth doing as bare-literal hygiene, but it unlocks nothing and is not a prerequisite.
    (iii) `fchownat` as the single wrapped primitive (x86 260 / aarch64 54; `AT_FDCWD` +
    `AT_SYMLINK_NOFOLLOW` gives `lchown` semantics) rather than the legacy trio — two of the
    agnos `92`–`95` band *terminate the caller* on ARM; (iv) explicit `-ENOSYS` agnos stubs,

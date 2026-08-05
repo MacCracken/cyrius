@@ -481,6 +481,18 @@ fn sys_fdatasync(fd): i64 {
     return syscall(SYS_FDATASYNC, fd);
 }
 
+# fchownat — DELIBERATELY STUBBED on aarch64. Returns -ENOSYS (-38).
+#
+# aarch64's native fchownat is 54, and the backend rewrites 54 -> 208 (setsockopt)
+# before the svc. That shim cannot be removed: 51 ecosystem repos emit raw
+# `syscall(54, ...)`, including argonaut/src/notify.cyr:122 in its own source, and
+# it is also what makes one source number work on both aarch64-Linux and
+# macOS-arm64. The x86 number 260 is taken here by SYS_WAIT4 (:102), so the usual
+# fallback collides too. An explicit stub rather than a missing symbol: a consumer
+# gets -ENOSYS it can test for, not a link error that reads as "the stdlib does not
+# build for aarch64". See roadmap.md W1 item 1. CHANGELOG [6.5.7]
+fn sys_fchownat(dirfd, path, uid, gid, flags): i64 { return 0 - 38; }
+
 # Create a symbolic link at `linkpath` pointing to `target`.
 # Translates to symlinkat(target, AT_FDCWD, linkpath).
 # Returns 0 on success, negative errno on failure.

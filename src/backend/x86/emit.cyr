@@ -848,6 +848,8 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 110, 0x2000027);  # getppid  110 → 39  (v6.3.44: Linux 110 was untranslated → ran BSD 110, wrong)
     _msx(S, 59, 0x200003B);   # execve   59 → 59
     _msx(S, 60, 0x2000001);   # exit     60 → 1
+    _msx(S, 260, 0x20001D4);  # fchownat 260 → 468 (Darwin number read off ecb + ach,
+                              # $(xcrun --show-sdk-path)/usr/include/sys/syscall.h; v6.5.7)
     _msx(S, 231, 0x2000001);  # exit_group 231 → 1 (Darwin exit() ends the whole task;
                               # v6.5.6: untranslated 231 reached Darwin unclassed → SIGSYS)
     _msx(S, 61, 0x2000007);   # wait4    61 → 7
