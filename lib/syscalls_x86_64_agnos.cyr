@@ -314,6 +314,16 @@ fn sys_exit(code): i64 { return syscall(SYS_EXIT, code); }
 # CHANGELOG [6.5.6]
 fn sys_exit_group(code): i64 { return syscall(SYS_EXIT, code); }
 
+# Change the working directory — NOT IMPLEMENTED on agnos.
+#
+# agnos ring-3 has no cwd concept and no chdir number, so this returns
+# -ENOSYS (-38) rather than mis-dispatching to whatever occupies the Linux
+# number. An EXPLICIT stub is the point: without it a consumer calling
+# sys_chdir gets a link error on agnos only, which surfaces as "the stdlib
+# does not build for agnos" rather than "this call is unavailable here".
+# CHANGELOG [6.5.7]
+fn sys_chdir(path): i64 { return 0 - 38; }
+
 # Write `count` bytes from `buf` to `fd` (fd 1/2 → console). Returns
 # bytes written, or -1. Same shape as Linux → portable. v6.2.3: a TAGGED
 # socket fd routes to sock_send(#48) over its conn_id (the TLS/HTTP write

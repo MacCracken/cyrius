@@ -1,0 +1,40 @@
+# Repro: alloc_reset() invalidates the memoized default Allocator.
+#
+#   cyrius build 2026-08-05-alloc-reset-default-allocator-segv.cyr build/repro
+#   ./build/repro; echo $?
+#
+# Expected on 6.5.6 (x86_64):
+#   first vec ok
+#   reset ok
+#   <SIGSEGV>          exit 139
+#
+# Setting `_default_allocator = 0;` immediately after alloc_reset() makes it
+# print "second vec ok" and exit 0 — that store is the whole bug.
+#
+# [deps] stdlib = ["syscalls", "alloc", "vec", "io", "str", "string", "fmt"]
+
+fn main() {
+    alloc_init();
+
+    # Materialises the 40-byte Allocator struct INSIDE the arena and memoizes
+    # its address in the `_default_allocator` global.
+    var v1 = vec_new();
+    vec_push(v1, 1);
+    println("first vec ok");
+
+    # Zeroes [_heap_first_base, _heap_ptr) — which contains that struct — and
+    # rewinds the bump pointer over it. `_default_allocator` still points there.
+    alloc_reset();
+    println("reset ok");
+
+    # default_alloc() returns the stale pointer; vec_new_a() loads slot 0 of the
+    # now-zeroed vtable and calls it.
+    var v2 = vec_new();
+    vec_push(v2, 2);
+    println("second vec ok");
+
+    return 0;
+}
+
+var exit_code = main();
+sys_exit_group(exit_code);

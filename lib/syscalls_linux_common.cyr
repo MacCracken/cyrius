@@ -157,6 +157,20 @@ fn sys_exit_group(code): i64 {
     return 0;
 }
 
+# Change the calling process's working directory. Returns 0, or -errno.
+#
+# One definition covers x86-Linux (80), aarch64-Linux (49) and macOS-x86 —
+# each peer resolves SYS_CHDIR to its own number, and the Mach-O backend
+# renumbers to Darwin 12. Windows and agnos are STANDALONE peers and carry
+# their own (see lib/syscalls_windows.cyr / lib/syscalls_x86_64_agnos.cyr).
+#
+# This was CALLED at lib/regression.cyr:658 and DEFINED NOWHERE, so
+# regression_exec_in_dir3 could not compile for any consumer that reached it.
+# CHANGELOG [6.5.7]
+fn sys_chdir(path): i64 {
+    return syscall(SYS_CHDIR, path);
+}
+
 # execve: replace process image. argv and envp are null-terminated
 # arrays of pointers.
 fn sys_execve(path, argv, envp): i64 {
