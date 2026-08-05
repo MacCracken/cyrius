@@ -2,8 +2,23 @@
 # Usage: include "lib/syscalls.cyr" (the selector picks this peer when
 #        CYRIUS_TARGET_AGNOS is defined; do NOT include directly).
 #
-# Faithful mirror of agnos/docs/development/agnos-userland-abi.md
-# (agnos 1.41.x). STANDALONE — does NOT include syscalls_linux_common.cyr:
+# Mirrors agnos's SYSCALL DISPATCH — `agnos/kernel/core/syscall.cyr` — which is the
+# single canonical source. `agnos/docs/development/agnos-userland-abi.md` is a
+# secondary reference: useful, but it documents 65 of the kernel's 96 arms and is
+# NOT authority.
+#
+# ⛔ v6.5.7 — this header used to read "faithful mirror of …/agnos-userland-abi.md",
+# and that doc in turn names "the cyrius syscalls_x86_64_agnos.cyr peer" as part of
+# ITS authority. For agnos syscalls 45-59 the chain was doc → cyrius → doc:
+# **neither file was canonical and each named the other**, so a wrong number
+# introduced in either could then be "verified" against the other. The kernel
+# dispatch is the tiebreak, and always was — §5 below already said so; the header
+# contradicted it. (Verified at agnos 1.56.39 / cycc 6.5.6: 96 kernel arms #0-#95,
+# 96 SysNrAgnos constants, ZERO gaps — this file is complete and correct; only its
+# stated provenance was wrong. The old `(agnos 1.41.x)` stamp was 15 minors stale,
+# which is worse than no stamp because it invites distrust of a file that is right.)
+#
+# STANDALONE — does NOT include syscalls_linux_common.cyr:
 # agnos has its own syscall numbers, exit=0 (not Linux 60), the a4=r10
 # 4-arg convention (§1a), AO_* open flags (NOT Linux O_*, §3.3), and the
 # explicit-length invariant (every path arg carries its length — no
@@ -11,10 +26,20 @@
 # x86_64-Linux (rax=num, rdi/rsi/rdx/r10 = a1..a4), so the syscall
 # instruction emit is unchanged — only the NUMBERS differ.
 #
-# RE-FREEZE RULE (§5): the agnos kernel is canonical; this file mirrors
-# the doc. If a number / signature / struct layout changes in the doc's
-# §2/§3/§4, update this file in the same change. Return convention:
-# rax >= 0 on success, -1 on error (NOT Linux -errno).
+# RE-FREEZE RULE (§5): the agnos KERNEL is canonical — `kernel/core/syscall.cyr`.
+# If a number / signature / struct layout changes there, update this file in the
+# same change; if the ABI doc disagrees with the kernel, the kernel wins and the
+# doc is the bug. Return convention: rax >= 0 on success, -1 on error (NOT
+# Linux -errno).
+#
+# ⚠ NUMBERS RESERVED BUT DELIBERATELY NOT MINTED HERE (agnos, 2026-08-05):
+#   #96 = fork      #97 = chan_op      next free = #98
+# Both are assigned by operator ruling and must NOT be swapped on first-come
+# grounds. Do NOT add either constant until the corresponding agnos kernel arm
+# ships: on agnos an unknown `num` falls THROUGH the dispatch chain and the caller
+# reads the fall-through value as data, so a minted-but-unimplemented constant is
+# strictly worse than an absent one — and a host build of the same consumer looks
+# healthy either way, so nothing off-target catches it.
 
 # ================================================================
 # Syscall numbers — §2 FROZEN (0-28) + §3 (29-33)
