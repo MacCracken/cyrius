@@ -869,7 +869,9 @@ fn main(): i64 {
     }
 
     if (streq(cmd, "fuzz") == 1) {
-        return cmd_fuzz();
+        # v6.5.7: accept an explicit file or subfolder, like bench/tests.
+        if (argc() > 2) { return cmd_fuzz(argv(2)); }
+        return cmd_fuzz(0);
     }
 
     # --- Testing commands ---

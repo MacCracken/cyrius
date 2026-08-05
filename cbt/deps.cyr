@@ -78,11 +78,57 @@ fn _abs_path(src): i64 {
     return out;
 }
 
+# Byte-compare two files. Returns 1 if identical, 0 otherwise (including if either
+# cannot be opened). Short-circuits on the first differing byte. Added v6.5.7 for
+# _dep_copy_file's staleness predicate — see the note there for why this is a byte
+# compare and not a hash. Uses only sys_open / syscall(0) / sys_close, all of which
+# _dep_copy_file already issues unguarded, so this adds no PE cross-compile risk.
+fn _files_identical(a, b): i64 {
+    var fa = sys_open(a, O_RDONLY, 0);
+    if (fa < 0) { return 0; }
+    var fb = sys_open(b, O_RDONLY, 0);
+    if (fb < 0) { sys_close(fa); return 0; }
+    var ba = alloc(32768);
+    var bb = alloc(32768);
+    var same = 1;
+    var go = 1;
+    while (go == 1) {
+        var na = syscall(0, fa, ba, 32768);
+        var nb = syscall(0, fb, bb, 32768);
+        if (na != nb) { same = 0; go = 0; }
+        if (go == 1) {
+            if (na <= 0) { go = 0; }
+            else {
+                if (memeq(ba, bb, na) == 0) { same = 0; go = 0; }
+            }
+        }
+    }
+    sys_close(fa);
+    sys_close(fb);
+    return same;
+}
+
 fn _dep_copy_file(src, dst): i64 {
-    # Skip if destination exists and same size (already resolved)
+    # Skip only if the destination is byte-identical. v6.5.7: this was SIZE-ONLY,
+    # so any change that preserves file length was never vendored while `lib sync`
+    # printed "copied 99 .cyr files" and exited 0. The most common size-neutral
+    # change is the one that happens on EVERY patch release — a version stamp in a
+    # header comment (`# Version: 1.1.2` -> `# Version: 1.1.3` is the same byte
+    # count), which is exactly how a consumer's lib/vani.cyr sat a release behind
+    # with every command reporting success. `cyrius deps --verify` cannot catch it
+    # and structurally never could: cyrius.lock is written FROM lib/ on disk, so a
+    # stale file simply gets its stale hash recorded.
+    #
+    # Size stays as a NEGATIVE fast path only (different size => definitely copy);
+    # equal size falls through to a content compare. Deliberately a byte compare
+    # rather than _sha256sum_file: that helper forks /usr/bin/env sha256sum (and
+    # certutil on PE), which would cost ~99 process spawns per sync and make a core
+    # correctness predicate depend on an external binary.
     var src_sz = _file_size(src);
     var dst_sz = _file_size(dst);
-    if (src_sz > 0 && src_sz == dst_sz) { return 2; }
+    if (src_sz > 0 && src_sz == dst_sz) {
+        if (_files_identical(src, dst) == 1) { return 2; }
+    }
     # CVE-04: reject dep writes outside lib/ (path traversal)
     var di = 0;
     while (load8(dst + di) != 0) {

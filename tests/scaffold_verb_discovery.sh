@@ -65,19 +65,50 @@ out=$(run_verb fuzz)
 check "no 'No fuzz harnesses found'" "0" "$(printf '%s' "$out" | grep -ci 'no fuzz harnesses found' || true)"
 check "reports a passing harness" "1" "$(printf '%s' "$out" | grep -c 'passed, 0 failed' || true)"
 
-# ── AXIS 4: structural. Each walker must be invoked for BOTH its own dir and tests/.
-# Behavioural axes above only prove today's layout; this pins the intent so a future
-# refactor that drops one call site fails here.
-echo "axis 4 — each walker is invoked for its own dir AND tests/:"
-n_fuzz=$(grep -cE '_fuzz_walk_dir\("(fuzz|tests)"' cbt/commands.cyr)
-check "_fuzz_walk_dir call sites" 2 "$n_fuzz"
-n_bench=$(grep -cE '_bench_walk_dir\("(benches|tests/bcyr|tests)"' cbt/commands.cyr)
-check "_bench_walk_dir call sites" 3 "$n_bench"
+# ── AXIS 4: SUBFOLDERS. A corpus file at any depth must be found, and an explicit
+# subfolder argument must be honoured. This is the intended contract and always was;
+# `cyrius tests <dir>` has recursed since v6.0.62 and bench/fuzz were simply never
+# brought along, so a benchmark under `benches/perf/` silently never ran while the
+# command reported success. Top-level-only was a defect, not a design choice — do not
+# "fix" this axis back to a flat scan.
+echo "axis 4 — a corpus file in a SUBFOLDER is discovered by the bare verb:"
+mkdir -p "$P/tests/unit" "$P/benches/perf" "$P/fuzz/deep"
+cp "$P/tests/vprobe.tcyr" "$P/tests/unit/nested.tcyr"
+cp "$P/tests/vprobe.bcyr" "$P/benches/perf/nested.bcyr"
+cp "$P/tests/vprobe.fcyr" "$P/fuzz/deep/nested.fcyr"
+rm -f "$P/tests/vprobe.bcyr" "$P/tests/vprobe.fcyr"
+out=$(run_verb bench)
+check "bench finds benches/perf/nested.bcyr" "1" "$(printf '%s' "$out" | grep -c 'perf/nested.bcyr' || true)"
+out=$(run_verb fuzz)
+check "fuzz finds fuzz/deep/nested.fcyr" "0" "$(printf '%s' "$out" | grep -ci 'no fuzz harnesses found' || true)"
+out=$(run_verb tests)
+# Both the scaffolded tests/vprobe.tcyr and the nested tests/unit/nested.tcyr must
+# run, i.e. 2 passed. The string appears on more than one line, so test presence
+# rather than an exact count.
+check "tests finds tests/unit/nested.tcyr" "yes" \
+    "$(printf '%s' "$out" | grep -q '2 passed' && echo yes || echo no)"
 
-# ── AXIS 5: no double-count. dir_list is non-recursive, so fuzz/ and tests/ are
-# disjoint — but this repo has 6 fuzz/*.fcyr and 0 tests/*.fcyr, so a walker that
-# recursed or double-visited would report more than 6.
-echo "axis 5 — this repo's own fuzz corpus is counted exactly once:"
+echo "axis 5 — an explicit SUBFOLDER argument is honoured (the callout form):"
+for pair in "bench:benches/perf" "fuzz:fuzz/deep" "tests:tests/unit"; do
+    v=${pair%%:*}; d=${pair##*:}
+    rc=0; ( cd "$P" && timeout 300 "$CYRIUS" "$v" "$d" >/dev/null 2>&1 ) || rc=$?
+    check "cyrius $v $d" 0 "$rc"
+done
+
+echo "axis 6 — an unusable argument is REFUSED, not silently ignored:"
+for pair in "bench:no-such-dir" "fuzz:no-such.fcyr" "bench:tests"; do
+    v=${pair%%:*}; a=${pair##*:}
+    rc=0; ( cd "$P" && timeout 300 "$CYRIUS" "$v" "$a" >/dev/null 2>&1 ) || rc=$?
+    check "cyrius $v $a exits non-zero" 1 "$rc"
+done
+
+# ── AXIS 7: no double-count. The walks are now RECURSIVE, so `tests/bcyr` must NOT
+# also be walked explicitly — it lives under `tests/` and would be visited twice.
+echo "axis 7 — recursion did not introduce a double-count:"
+n_bench=$(grep -cE '_bench_walk_dir\("(benches|tests)"' cbt/commands.cyr)
+check "_bench_walk_dir roots (benches + tests, NOT tests/bcyr)" 2 "$n_bench"
+n_bcyr=$(grep -c '_bench_walk_dir("tests/bcyr"' cbt/commands.cyr || true)
+check "no explicit tests/bcyr walk" 0 "$n_bcyr"
 n_repo=$(ls fuzz/*.fcyr 2>/dev/null | wc -l | tr -d ' ')
 check "fuzz/*.fcyr on disk" 6 "$n_repo"
 

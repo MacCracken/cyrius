@@ -472,6 +472,24 @@ fn compile(source, output): i64 {
         _err_ctx("compiler not found", cc);
         return 1;
     }
+    # v6.5.7: guard the SOURCE the same way the compiler is guarded, two lines up.
+    # Without this, `cyrius build <path-that-does-not-exist>.cyr out` printed OK,
+    # exited 0 and wrote a ~15 MB do-nothing binary: the stdlib is auto-prepended
+    # BEFORE the entry file is read, so a path that matched nothing still yields a
+    # valid translation unit containing the whole stdlib and no `main`. It presents
+    # as a RUNTIME bug — a program that printed five lines a moment ago goes silent
+    # and exits 0 — so the debugging goes into the library, not the build.
+    # `is_dir` is required as a SECOND test: file_exists is open-then-close and
+    # returns 1 for a directory. One site covers build / run / test / check / soak /
+    # smoke, which all route through compile().
+    if (file_exists(source) == 0) {
+        _err_ctx("no such file", source);
+        return 1;
+    }
+    if (is_dir(str_from(source)) == 1) {
+        _err_ctx("not a file", source);
+        return 1;
+    }
     if (_verbose == 1) {
         sys_write(STDERR_FD, "[verbose] compiler: ", 20);
         sys_write(STDERR_FD, cc, strlen(cc));

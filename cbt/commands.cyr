@@ -233,6 +233,36 @@ fn cmd_tests(dir): i64 {
 # Walk `dir` for `*.fcyr` harnesses, compile and run each.
 # Updates *passcnt / *failcnt / *found via caller-owned i64 storage.
 # Returns the number of harnesses attempted.
+# Compile + run one .fcyr harness, updating the caller-owned counters.
+# Factored out of _fuzz_walk_dir at v6.5.7 so an explicit file argument runs
+# through exactly the same path as a discovered one.
+fn _fuzz_run_one(path, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
+    store64(found_ptr, 1);
+    var tmpbin = _cbt_tmpfile("fuzz");
+    var pl = strlen(path);
+    sys_write(STDOUT_FD, "  ", 2);
+    sys_write(STDOUT_FD, path, pl);
+    var pad = 26 - pl;
+    while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
+    if (compile(path, tmpbin) == 0) {
+        var ec = run_binary(tmpbin);
+        sys_unlink(tmpbin);
+        if (ec == 0) {
+            println("PASS");
+            store64(passcnt_ptr, load64(passcnt_ptr) + 1);
+            return 0;
+        }
+        println("FAIL");
+        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+        return 1;
+    }
+    println("COMPILE FAIL");
+    store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+    sys_unlink(tmpbin);
+    return 1;
+}
+
+# v6.5.7: RECURSIVE, matching `_tests_walk` — see the note on _bench_walk_dir.
 fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
     if (file_exists(dir) == 0) { return 0; }
     var entries = dir_list(str_from(dir));
@@ -242,32 +272,15 @@ fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
         var name = vec_get(entries, fi);
         var nd = str_data(name);
         var nl = str_len(name);
+        var sub = make_path(dir, nd);
+        if (is_dir(str_from(sub)) == 1) {
+            n = n + _fuzz_walk_dir(sub, passcnt_ptr, failcnt_ptr, found_ptr);
+        }
         # Check if .fcyr file
         if (nl > 5) {
             if (memeq(nd + nl - 5, ".fcyr", 5) == 1) {
-                store64(found_ptr, 1);
                 n = n + 1;
-                var path = make_path(dir, nd);
-                var tmpbin = _cbt_tmpfile("fuzz");
-                sys_write(STDOUT_FD, "  ", 2);
-                sys_write(STDOUT_FD, nd, nl);
-                var pad = 26 - nl;
-                while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
-                if (compile(path, tmpbin) == 0) {
-                    var ec = run_binary(tmpbin);
-                    sys_unlink(tmpbin);
-                    if (ec == 0) {
-                        println("PASS");
-                        store64(passcnt_ptr, load64(passcnt_ptr) + 1);
-                    } else {
-                        println("FAIL");
-                        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
-                    }
-                } else {
-                    println("COMPILE FAIL");
-                    store64(failcnt_ptr, load64(failcnt_ptr) + 1);
-                    sys_unlink(tmpbin);
-                }
+                _fuzz_run_one(make_path(dir, nd), passcnt_ptr, failcnt_ptr, found_ptr);
             }
         }
         fi = fi + 1;
@@ -275,7 +288,7 @@ fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
     return n;
 }
 
-fn cmd_fuzz(): i64 {
+fn cmd_fuzz(source): i64 {
     # Discover *.fcyr harnesses, compile and run each
     _status("=== cyrius fuzz ===");
     var pass_store[1];
@@ -284,6 +297,23 @@ fn cmd_fuzz(): i64 {
     store64(&pass_store, 0);
     store64(&fail_store, 0);
     store64(&found_store, 0);
+    # v6.5.7: an explicit file or SUBFOLDER argument, symmetric with bench/tests.
+    if (source != 0) {
+        if (file_exists(source) == 0) {
+            _err_ctx("no such file or directory", source);
+            return 1;
+        }
+        if (is_dir(str_from(source)) == 1) {
+            _fuzz_walk_dir(source, &pass_store, &fail_store, &found_store);
+        } else {
+            _fuzz_run_one(source, &pass_store, &fail_store, &found_store);
+        }
+        if (load64(&found_store) == 0) {
+            _err_ctx("no fuzz harnesses found under", source);
+            return 1;
+        }
+        return _bench_summary(load64(&pass_store), load64(&fail_store));
+    }
     _fuzz_walk_dir("fuzz", &pass_store, &fail_store, &found_store);
     # v6.5.6 — also walk `tests/`. `cyrius init` scaffolds its fuzz harness to
     # `tests/<proj>.fcyr` (`_tests_rel` hardcodes "tests/" for ALL THREE extensions
@@ -309,6 +339,19 @@ fn cmd_fuzz(): i64 {
     return 0;
 }
 
+# Print the `=== N passed, M failed ===` tail. Factored out at v6.5.7 so EVERY
+# form that runs a harness prints it — it used to live inline in the no-arg path
+# only, which made the single-file form unscriptable.
+fn _bench_summary(passed, failed): i64 {
+    sys_write(STDOUT_FD, "\n=== ", 5);
+    fmt_int(passed);
+    sys_write(STDOUT_FD, " passed, ", 9);
+    fmt_int(failed);
+    println(" failed ===");
+    if (failed > 0) { return 1; }
+    return 0;
+}
+
 # Run one .bcyr file: compile, execute, propagate exit code.
 # Returns 0 on success, 1 on compile error, or the binary's exit code.
 fn _bench_run_one(path): i64 {
@@ -327,6 +370,11 @@ fn _bench_run_one(path): i64 {
 # Walk `dir` for `*.bcyr` files and run each via _bench_run_one.
 # Updates *passcnt / *failcnt / *found via caller-owned i64 storage.
 # Returns the number of benches attempted.
+# v6.5.7: RECURSIVE, matching `_tests_walk`. It was `dir_list`-flat, so a
+# benchmark in a subfolder was invisible — `benches/perf/core.bcyr` simply never
+# ran, and the command reported success over it. A subfolder callout has always
+# been intended to work; the plural `cyrius tests <dir>` verb has recursed since
+# v6.0.62 and bench/fuzz were never brought along.
 fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
     if (file_exists(dir) == 0) { return 0; }
     var entries = dir_list(str_from(dir));
@@ -336,6 +384,10 @@ fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
         var name = vec_get(entries, fi);
         var nd = str_data(name);
         var nl = str_len(name);
+        var sub = make_path(dir, nd);
+        if (is_dir(str_from(sub)) == 1) {
+            n = n + _bench_walk_dir(sub, passcnt_ptr, failcnt_ptr, found_ptr);
+        }
         if (nl > 5) {
             if (memeq(nd + nl - 5, ".bcyr", 5) == 1) {
                 store64(found_ptr, 1);
@@ -358,8 +410,37 @@ fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
 }
 
 fn cmd_bench(source): i64 {
+    # v6.5.7: a DIRECTORY argument is now honoured — `cyrius bench benches/perf`
+    # walks that subtree, symmetric with `cyrius tests <dir>`. It previously ran
+    # nothing, printed nothing and exited 0, so a gate written that way passed
+    # over zero benchmarks. A path that does not exist is refused rather than
+    # silently building the auto-prepended stdlib into a do-nothing program.
     if (source != 0) {
-        return _bench_run_one(source);
+        if (file_exists(source) == 0) {
+            _err_ctx("no such file or directory", source);
+            return 1;
+        }
+        if (is_dir(str_from(source)) == 1) {
+            _status("=== cyrius bench ===");
+            var dpass[1];
+            var dfail[1];
+            var dfound[1];
+            store64(&dpass, 0);
+            store64(&dfail, 0);
+            store64(&dfound, 0);
+            _bench_walk_dir(source, &dpass, &dfail, &dfound);
+            if (load64(&dfound) == 0) {
+                _err_ctx("no benchmarks found under", source);
+                return 1;
+            }
+            return _bench_summary(load64(&dpass), load64(&dfail));
+        }
+        var ec = _bench_run_one(source);
+        # Print the summary for the single-file form too — only the no-arg form
+        # used to, so a script grepping for it found nothing on a run that worked.
+        if (ec == 0) { return _bench_summary(1, 0); }
+        _bench_summary(0, 1);
+        return ec;
     }
     # No-arg mode: discover and run every `*.bcyr` in `benches/`
     # and `tests/bcyr/`. Mirrors `cmd_fuzz` / `cmd_test` shape so
@@ -375,32 +456,23 @@ fn cmd_bench(source): i64 {
     store64(&fail_store, 0);
     var found_store[1];
     store64(&found_store, 0);
+    # v6.4.78 added `tests/` alongside `benches/` + `tests/bcyr/` because a bench
+    # at `tests/<name>.bcyr` was invisible (stiva's layout). v6.5.7 made the walk
+    # RECURSIVE, which subsumes `tests/bcyr` under `tests` — so the explicit
+    # `tests/bcyr` walk is DROPPED here. Keeping it would double-count every
+    # bench under it, which the v6.4.78 comment's "no double-count: the walk is
+    # non-recursive" reasoning explicitly depended on and which is now false.
+    # `benches/` and `tests/` remain disjoint roots.
     _bench_walk_dir("benches", &pass_store, &fail_store, &found_store);
-    _bench_walk_dir("tests/bcyr", &pass_store, &fail_store, &found_store);
-    # v6.4.78 — also walk `tests/` ITSELF. `_bench_walk_dir` is non-recursive
-    # (dir_list), and only benches/ + tests/bcyr/ were consulted, so a benchmark
-    # sitting directly at `tests/<name>.bcyr` was invisible: stiva reported
-    # "No benchmarks found" while `cyrius bench tests/stiva.bcyr` — the layout its
-    # own bench-history.sh drives, and the layout the explicit-path form documents —
-    # ran fine. Exactly the class v6.4.72 fixed for the TEST corpus (hardcoded
-    # tests/tcyr/ missed a suite at tests/<name>.tcyr, hoosh's layout); the bench
-    # walker was the sibling that never got the same treatment. No double-count:
-    # the walk is non-recursive, so "tests" and "tests/bcyr" are disjoint.
-    # (issues/2026-07-24-audit-sweep-fmt-lint-walks-vendored-lib.md, "Also seen".)
     _bench_walk_dir("tests", &pass_store, &fail_store, &found_store);
     if (load64(&found_store) == 0) {
-        println("  No benchmarks found (looked in benches/, tests/ and tests/bcyr/).");
+        println("  No benchmarks found (looked in benches/, tests/ and tests/bcyr/, recursively).");
         println("  Create `benches/*.bcyr` files, or pass an explicit path:");
         println("    cyrius bench path/to/my_bench.bcyr");
+        println("    cyrius bench path/to/subfolder");
         return 0;
     }
-    sys_write(STDOUT_FD, "\n=== ", 5);
-    fmt_int(load64(&pass_store));
-    sys_write(STDOUT_FD, " passed, ", 9);
-    fmt_int(load64(&fail_store));
-    println(" failed ===");
-    if (load64(&fail_store) > 0) { return 1; }
-    return 0;
+    return _bench_summary(load64(&pass_store), load64(&fail_store));
 }
 
 fn cmd_check(source, with_deps): i64 {
@@ -1309,6 +1381,14 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
         return 1;
     }
     if (file_exists(source) == 0) { _err_ctx("file not found", source); return 1; }
+    # v6.5.7: capacity does NOT route through compile() — it calls
+    # _materialize_source and forks cycc itself — so it does not inherit that
+    # function's guard and needs its own. file_exists returns 1 for a directory
+    # (open-then-close), so `cyrius capacity benches` printed a full, plausible
+    # stats block (var_table / fixup_table / code_size, all measuring the
+    # auto-prepended stdlib) and exited 0 — a green placebo of exactly the kind
+    # the v6.4.73 note below exists to prevent.
+    if (is_dir(str_from(source)) == 1) { _err_ctx("not a file", source); return 1; }
 
     # Compile with CYRIUS_STATS=1, capture stderr.
     # v6.4.73: feed the compiler the MATERIALIZED source (manifest dep includes +

@@ -149,19 +149,36 @@ summary — the obvious way to check a `bench` run programmatically — finds
 nothing for a form that *did* work. Whatever is decided about the argument
 handling, emitting the summary in both forms would make the command scriptable.
 
-## What is NOT a defect here, recorded so it is not "fixed" by mistake
+## ~~What is NOT a defect here, recorded so it is not "fixed" by mistake~~
 
-No-arg discovery scans `benches/` and `tests/` at their **top level only**, and
-that is fine — but it is worth stating, because it is easy to misread as
-recursion and then "fix". Probes confirm it:
+> ⛔ **THIS SECTION WAS WRONG AND HAS BEEN RETRACTED (2026-08-05, maintainer
+> ruling).** It read: *"No-arg discovery scans `benches/` and `tests/` at their
+> top level only, and that is fine … Consumers document this as 'do not put
+> `.bcyr` files in subdirectories'."*
+>
+> **A subfolder callout was ALWAYS the intended behaviour.** Top-level-only
+> scanning is a defect, not a design choice. The probes in this section measured
+> the bug correctly and then labelled it correct — which is worse than not
+> measuring it, because it told the next reader not to fix it. It is at least
+> several minors old.
+>
+> The tell was in the tree the whole time: `cyrius tests <dir>` has recursed
+> since **v6.0.62** (`_tests_walk`, `cbt/commands.cyr`). `bench` and `fuzz` were
+> simply never brought along, and each time the gap surfaced it was patched one
+> directory at a time — v6.4.72 added `tests/` to the test walk, v6.4.78 added it
+> to bench, v6.5.6 added it to fuzz — three fixes that each treated a *symptom of
+> flatness* as a missing root. The recursion was the fix all three wanted.
+>
+> **Fixed in v6.5.7**: `_bench_walk_dir` and `_fuzz_walk_dir` now recurse like
+> `_tests_walk`, and `bench`/`fuzz` accept an explicit subfolder argument the way
+> `tests` always has. The `tests/bcyr` root was dropped from the bench walk
+> because recursion under `tests/` now subsumes it (keeping both would
+> double-count). Gated by `tests/scaffold_verb_discovery.sh` axes 4-7,
+> mutation-proven.
 
-- a `.bcyr` planted at `benches/zzsub/probe.bcyr` is **not** discovered — still
-  `6 passed`, and its benchmark name is absent from the output;
-- a `.bcyr` planted at the repo root is **not** discovered either.
-
-Consumers document this as "do not put `.bcyr` files in subdirectories". The ask
-in this filing is only that an argument the command cannot use be **refused**,
-not that discovery change.
+The ask in this filing was that an argument the command cannot use be
+**refused** — that is also fixed in v6.5.7 (`no such file or directory`, exit 1;
+a directory containing no harnesses exits 1 rather than reporting success).
 
 ## Root cause — behavioural, not speculative
 
