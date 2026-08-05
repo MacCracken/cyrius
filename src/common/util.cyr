@@ -850,10 +850,16 @@ fn PRNUM(n): i64 {
     var buf[24];
     var i = 23;
     var neg = 0;
-    if (n < 0) { neg = 1; n = 0 - n; }
+    # i64::MIN — see lib/fmt.cyr:fmt_int. Diagnostic-only here, but it is the same
+    # defect and the roadmap's seven-site list never named the two in-compiler ones.
+    # Kept inside the existing body (no new globals or calls) so cybs still compiles it
+    # — this file is on the seed path. CHANGELOG [6.5.8]
+    if (n < 0) { neg = 1; }
     if (n == 0) { store8(&buf + i, 48); i = i - 1; }
-    while (n > 0) {
-        store8(&buf + i, 48 + n % 10);
+    while (n != 0) {
+        var d = n % 10;
+        if (d < 0) { d = 0 - d; }
+        store8(&buf + i, 48 + d);
         i = i - 1;
         n = n / 10;
     }

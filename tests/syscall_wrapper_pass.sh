@@ -196,10 +196,28 @@ for n in 83 84 86 87 88 89 80 260; do
     check "EMACHO_SYSXLAT covers $n" 1 "$(grep -c "_msx(S, $n," src/backend/x86/emit.cyr)"
 done
 
-# ── AXIS 5: agnos #96/#97 must NOT be minted before their kernel arms exist.
-echo "axis 5 — agnos 96/97 reserved but NOT minted (a bad constant is worse than none):"
-n_96=$(grep -cE '=[[:space:]]*9[67];' lib/syscalls_x86_64_agnos.cyr || true)
-check "no SysNrAgnos constant on 96/97" 0 "$n_96"
+# ── AXIS 5: a number is minted WHEN ITS KERNEL ARM EXISTS — not before, not after.
+# The rule cuts both ways and the gate must too: on agnos an unknown `num` falls THROUGH
+# the dispatch chain and the caller reads the fall-through value as DATA, so minting early
+# is worse than not minting; but leaving a shipped arm unminted strands the feature.
+echo "axis 5 — agnos numbers track their kernel arms (#97 minted, #96 not):"
+# #97 chan_op — kernel arm shipped in agnos 1.56.40, so the constant and its five op
+# wrappers must be present.
+check "SYS_CHAN_OP = 97 minted" 1 \
+    "$(grep -c 'SYS_CHAN_OP          = 97;' lib/syscalls_x86_64_agnos.cyr || true)"
+for op in caps mint send recv close; do
+    check "sys_chan_$op wrapper present" 1 \
+        "$(grep -c "^fn sys_chan_$op(" lib/syscalls_x86_64_agnos.cyr || true)"
+done
+# ⛔ The prefix guard. `chan_send`/`chan_recv`/`chan_close`/`chan_new` are the in-process
+# MPSC thread channel in lib/thread.cyr, and cyrius resolves duplicate fns
+# last-definition-wins — so a bare `chan_send` in the agnos peer would silently REPLACE
+# the thread channel's, on agnos only, for any consumer including both files.
+n_bare=$(grep -cE '^fn chan_(send|recv|close|new)\(' lib/syscalls_x86_64_agnos.cyr || true)
+check "no bare chan_* in the agnos peer (would shadow thread.cyr)" 0 "$n_bare"
+# #96 fork — NO kernel arm exists in agnos 1.56.40. Must stay unminted.
+n_96=$(grep -cE '=[[:space:]]*96;' lib/syscalls_x86_64_agnos.cyr || true)
+check "no SysNrAgnos constant on 96 (fork has no kernel arm)" 0 "$n_96"
 
 # ── AXIS 6: cross-target. This is the axis a host-only test cannot replace.
 echo "axis 6 — every wrapper compiles on every target the peers claim:"

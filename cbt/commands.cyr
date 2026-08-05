@@ -1065,7 +1065,23 @@ fn cmd_api_surface(update_flag, scope_project, snapshot_arg): i64 {
     return run_tool(tool, u, s, snapshot_arg);
 }
 
+# v6.5.8: validate the target BEFORE delegating. `cyrius doc <missing-file>` printed
+# NOTHING and exited 0 — the worst shape in the fail-open family, because empty output
+# from a doc generator is indistinguishable from "this file has no documentation", so a
+# mistyped path reads as a finding about the code. The file argument is whichever of
+# arg1/arg2 is not a flag.
+fn _cmd_target_ok(a1, a2, verb): i64 {
+    var t = 0;
+    if (a1 != 0) { if (load8(a1) != 45) { t = a1; } }
+    if (t == 0) { if (a2 != 0) { if (load8(a2) != 45) { t = a2; } } }
+    if (t == 0) { return 1; }                      # no positional: the tool's own usage applies
+    if (file_exists(t) == 1) { return 1; }
+    _err_ctx(verb, t);
+    return 0;
+}
+
 fn cmd_doc(arg1, arg2): i64 {
+    if (_cmd_target_ok(arg1, arg2, "doc: cannot read") == 0) { return 1; }
     var cyrdoc = make_path(_tools_dir, "cyrdoc");
     return run_tool(cyrdoc, arg1, arg2, 0);
 }
@@ -1076,11 +1092,15 @@ fn cmd_doc(arg1, arg2): i64 {
 # ignored the argv, read stdin, and emitted a stray ELF to stdout. Route
 # to cyaudit. See CHANGELOG [6.1.25].
 fn cmd_vet(file): i64 {
+    # v6.5.8: `cyrius vet <missing>` reported "no dependencies" and exited 0 — a clean
+    # bill of health for a file that was never opened.
+    if (_cmd_target_ok(file, 0, "vet: cannot read") == 0) { return 1; }
     var cyaudit = make_path(_tools_dir, "cyaudit");
     return run_tool(cyaudit, "vet", file, 0);
 }
 
 fn cmd_deny(file): i64 {
+    if (_cmd_target_ok(file, 0, "deny: cannot read") == 0) { return 1; }
     var cyaudit = make_path(_tools_dir, "cyaudit");
     return run_tool(cyaudit, "deny", file, 0);
 }

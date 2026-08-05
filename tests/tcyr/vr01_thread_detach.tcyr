@@ -1,0 +1,125 @@
+# vr01_thread_detach.tcyr — v6.5.8: a fire-and-forget thread must reclaim ALL of its own
+# memory. Runs on real hardware via the release gate's cross-OS leg.
+#
+# THE LEAK THIS GUARDS. `munmap_stack` had exactly three call sites — two `thread_create`
+# failure paths and `thread_join` — so a thread nobody joined never had its stack unmapped.
+# Measured on this very probe before the fix: 100 unjoined threads grew VA by
+# **210,124,800 B**, i.e. exactly 100 x 2,101,248 (THREAD_STACK_SIZE + THREAD_GUARD_SIZE)
+# to the byte. After: **0**. The ceiling was `vm.max_map_count` (65530 by default), so a
+# thread-per-request server degraded to `thread_create` returning 0 after ~65K spawns, and
+# no consumer could work around it — the thread runs on the stack it would need to unmap.
+#
+# ⭐ WHY THE ASSERTION IS "ZERO GROWTH" AND NOT "LESS LEAK". The detached child unmaps its
+# stack AND the TLS block carved from the top of that same mapping, and allocates no
+# handle at all (no CLEARTID slot is needed when nobody joins). So the correct number here
+# is 0, and anything else means one of those three reclaim paths regressed. A threshold
+# like "< 20 MiB" would still pass with the TLS or handle leaking — measured, not assumed.
+#
+# ⚠ VA, not RSS, is the thing to measure: stack pages are touch-on-demand, so the leak
+# showed as ~200 resident pages while VA grew 51,300. An RSS-based test would have missed
+# it entirely.
+#
+# ⛔ DO NOT TRUST qemu-aarch64 FOR THIS TEST — it reports a FALSE LEAK. Under qemu-user
+# this file fails with ~1,665 residual pages per detached thread, which is not even the
+# 513-page stack: qemu maps its own per-thread emulator state into the same address space
+# and /proc/self/statm measures the HOST process, not the guest. On real pi hardware the
+# identical binary reports a delta of exactly 0 and the file passes 115/0. Same class as
+# the v6.4.42 aarch64 epoll bug that only real pi could surface. If this goes red, run it
+# on pi before believing it.
+#
+# The per-target detach mechanisms differ completely and all three are exercised: Linux
+# unmaps in an asm trampoline tail (musl's __unmapself shape), Windows CloseHandles and
+# lets the OS reclaim, agnos ran the body inline at create so there is nothing to reclaim.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/thread.cyr"
+include "lib/chrono.cyr"
+
+var _td_hits = 0;
+
+fn _td_body(a): i64 {
+    _td_hits = _td_hits + 1;
+    return 0;
+}
+
+# Virtual size in pages, from /proc/self/statm field 1. Linux-only.
+fn _td_vpages(): i64 {
+    var fd = sys_open("/proc/self/statm", O_RDONLY, 0);
+    if (fd < 0) { return 0 - 1; }
+    var b[64];
+    var n = syscall(0, fd, &b, 63);
+    sys_close(fd);
+    if (n <= 0) { return 0 - 1; }
+    store8(&b + n, 0);
+    var v = 0;
+    var i = 0;
+    while (load8(&b + i) >= 48) {
+        v = v * 10 + (load8(&b + i) - 48);
+        i = i + 1;
+    }
+    return v;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    # ── Functional, every target: a detached spawn reports success and the body runs.
+    var k = 0;
+    while (k < 8) {
+        assert_eq(thread_create_detached(&_td_body, 0), 1, "thread_create_detached returns 1");
+        k = k + 1;
+    }
+    # Let these finish BEFORE the baseline is sampled. Without this the warm-up threads
+    # are still unwinding when `before` is read and then unmap during the measurement,
+    # which showed up as a NEGATIVE growth of -513 pages (exactly one thread) — the
+    # measurement racing the thing it measures.
+    sleep_ms(200);
+
+    # ── The leak assertion. Linux-only: /proc/self/statm is where VA is observable, and
+    # the asm unmap trampoline being tested is the Linux path. Windows/agnos reclaim by
+    # construction (CloseHandle / inline body) and have nothing to measure.
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_AGNOS
+    var before = _td_vpages();
+    assert(before > 0, "/proc/self/statm readable");
+    var i = 0;
+    while (i < 100) {
+        assert_eq(thread_create_detached(&_td_body, 0), 1, "detached spawn ok");
+        i = i + 1;
+    }
+    # ⚠ POLL UNTIL IT SETTLES — do not sample at a fixed instant. A spin loop is not a
+    # synchronisation primitive: under qemu-aarch64 it left 1,073 pages still mapped
+    # simply because the children had not reached their munmap yet, which is a slow
+    # machine, not a leak. The property that actually distinguishes fixed from broken is
+    # that VA comes BACK DOWN at all — with the leak it never does, so this loop would
+    # exhaust every retry and fail. 400 x 5 ms = 2 s ceiling.
+    var settled = 0;
+    var tries = 0;
+    while (tries < 400) {
+        if (_td_vpages() <= before) { settled = 1; break; }
+        sleep_ms(5);
+        tries = tries + 1;
+    }
+    assert_eq(settled, 1, "VA returns to baseline after 100 detached threads (leak = never)");
+    assert(_td_vpages() - before <= 0, "no residual growth once settled");
+    #endif
+    #endif
+    #endif
+
+    # ── thread_is_done: the non-blocking predicate that makes a reaper writable at all.
+    # A joinable thread must eventually report done, and joining it must still work.
+    var t = thread_create(&_td_body, 0);
+    assert(t != 0, "thread_create returned a handle");
+    assert_eq(thread_join(t), 0, "thread_join returned 0");
+    assert_eq(thread_is_done(t), 1, "thread_is_done is 1 after join");
+    assert_eq(thread_is_done(0), 0 - 1, "thread_is_done(0) is -1");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

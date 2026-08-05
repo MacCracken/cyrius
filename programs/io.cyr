@@ -62,10 +62,13 @@ fn print_num(n: i64): i64 {
     var pnbuf[24];
     var i: i64 = 23;
     var neg: i64 = 0;
-    if (n < 0) { neg = 1; n = 0 - n; }
+    # i64::MIN — see lib/fmt.cyr:fmt_int. CHANGELOG [6.5.8]
+    if (n < 0) { neg = 1; }
     if (n == 0) { store8(&pnbuf + i, 48); i = i - 1; }
-    while (n > 0) {
-        store8(&pnbuf + i, 48 + n % 10);
+    while (n != 0) {
+        var d = n % 10;
+        if (d < 0) { d = 0 - d; }
+        store8(&pnbuf + i, 48 + d);
         i = i - 1;
         n = n / 10;
     }

@@ -886,9 +886,10 @@ if (_ts_lex_only_mode == 1) {
 
 # Emit a non-negative i64 as decimal to stderr (fd 2).
 fn _emit_decimal(n): i64 {
+    # i64::MIN — see lib/fmt.cyr:fmt_int. The sign is emitted eagerly here, so only the
+    # negation and the loop condition change. CHANGELOG [6.5.8]
     if (n < 0) {
         syscall(SYS_WRITE, 2, "-", 1);
-        n = 0 - n;
     }
     if (n == 0) {
         syscall(SYS_WRITE, 2, "0", 1);
@@ -896,8 +897,10 @@ fn _emit_decimal(n): i64 {
     }
     var buf[24];
     var i = 0;
-    while (n > 0) {
-        store8(&buf + i, 48 + n % 10);
+    while (n != 0) {
+        var d = n % 10;
+        if (d < 0) { d = 0 - d; }
+        store8(&buf + i, 48 + d);
         n = n / 10;
         i = i + 1;
     }

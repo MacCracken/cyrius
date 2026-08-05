@@ -112,6 +112,35 @@ check "no explicit tests/bcyr walk" 0 "$n_bcyr"
 n_repo=$(ls fuzz/*.fcyr 2>/dev/null | wc -l | tr -d ' ')
 check "fuzz/*.fcyr on disk" 6 "$n_repo"
 
+
+# ── v6.5.8: ARGUMENT HYGIENE ACROSS THE VERB SURFACE.
+# A sweep of all 17 verbs with a bogus target found FIVE that silently ignored it and
+# exited 0: coverage, doc, audit, vet and deny. The worst was `doc`, which printed NOTHING
+# and returned success — empty output from a doc generator is indistinguishable from "this
+# file has no documentation", so a mistyped path read as a finding about the code rather
+# than a user error. Same family as the `bench` fail-open fixed at v6.5.7 and the
+# `capacity` green-placebo at v6.4.73: a tool that accepts an argument it does not act on
+# is worse than one that rejects it, because the output looks like an answer to the
+# question that was asked.
+#
+# ⚠ Exit codes are captured WITHOUT a pipe. `cmd | tail` yields tail's status, not the
+# CLI's — that mistake made an earlier run of this very sweep report rc=0 for all 17 verbs
+# and conclude, wrongly, that nothing was broken.
+echo "verb argument hygiene — a bogus target is rejected, never absorbed:"
+CYB="$ROOT/build/cyrius"
+VD=$(mktemp -d)
+( cd "$VD" && printf '[package]\nname = "vh"\nversion = "0.1.0"\n' > cyrius.cyml )
+for v in doc vet deny audit coverage; do
+    ( cd "$VD" && timeout 30 "$CYB" "$v" __no_such_target_xyz__ > vh.out 2>&1 )
+    vrc=$?
+    check "$v rejects a bogus target" 1 "$([ "$vrc" -ne 0 ] && echo 1 || echo 0)"
+    check "$v says error:" 1 "$(grep -c 'error:' "$VD/vh.out" || true)"
+done
+# The good paths must still work — a rejection that also breaks valid invocations is not a fix.
+( cd "$ROOT" && timeout 60 "$CYB" doc lib/fmt.cyr > "$VD/ok.out" 2>&1 )
+check "doc on a real file still succeeds" 1 "$([ -s "$VD/ok.out" ] && echo 1 || echo 0)"
+rm -rf "$VD"
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: scaffold-verb-discovery — test/bench/fuzz each find what cyrius init writes"

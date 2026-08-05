@@ -1,0 +1,81 @@
+# thread_join_single_load.tcyr — v6.5.8: `thread_join` must park only on a tid it has
+# positively observed LIVE.
+#
+# THE BUG THIS GUARDS (szal-filed 2026-07-29; permanent silent deadlock, ~1 join in 150k).
+# `thread_join` read the tid word TWICE per iteration — once for the `while` condition and
+# again, independently, as the FUTEX_WAIT expected-value. When the worker exits between the
+# two loads, the kernel's one-shot CLONE_CHILD_CLEARTID wake fires with nobody parked and is
+# discarded; the joiner's second load then reads 0, passes 0 as the expected value, and
+# FUTEX_WAIT(t, 0) finds *t == 0 == val and parks on an address that will never be woken
+# again. No timeout, no error, no log line — SIGKILL is the only recovery.
+#
+# ⭐ WHY THIS TEST IS NOT A STRESS LOOP. A race that loses once in 150k joins cannot be
+# proven absent by hammering it; a green stress run is consistent with the bug still being
+# there. So the load-bearing assertions below are DETERMINISTIC: they drive the two futex
+# calls the fix depends on, with a timeout so nothing can hang, and check the kernel's own
+# return codes. Case A is what the fixed code does, case B is what the broken code did.
+# Neither races. The stress loop at the end is a coarse backstop for gross regressions only
+# — it is explicitly NOT the proof.
+#
+# Linux-only: this drives the raw futex ABI. macOS/Windows join through
+# bsdthread/WaitForSingleObject (lib/thread_win.cyr), covered by vr01_thread_spawn.tcyr.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/thread.cyr"
+
+var _tj_hits = 0;
+
+fn _tj_worker(arg): i64 {
+    _tj_hits = _tj_hits + 1;
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_MACOS
+    # A word standing in for the tid slot, already cleared to 0 — i.e. the worker has
+    # exited and its one-shot wake is already spent. This is the state the joiner finds
+    # itself in after losing the race; the only question is whether it parks.
+    var word: i64[1];
+    store64(&word, 0);
+
+    # 200 ms timeout so a park is observable as ETIMEDOUT instead of hanging the suite.
+    var ts: i64[2];
+    store64(&ts, 0);
+    store64(&ts + 8, 200000000);
+
+    # ── CASE A — the FIXED behaviour. Expected-val is a tid we positively observed live
+    # (nonzero). *word is 0, so kernel compares 0 != 12345 and returns EAGAIN (-11)
+    # IMMEDIATELY without parking. The joiner then re-reads 0 and leaves the loop.
+    var ra = syscall(SYS_FUTEX, &word, FUTEX_WAIT, 12345, &ts, 0, 0);
+    assert_eq(ra, 0 - 11, "FUTEX_WAIT with a live tid returns EAGAIN, does not park");
+
+    # ── CASE B — the BROKEN behaviour, proven to be a park. Expected-val 0 is what the
+    # second load produced. *word == 0 == val, so the kernel PARKS; with the wake already
+    # spent, only our timeout releases it. In the shipped code there was no timeout
+    # argument, which is exactly why it was a permanent deadlock.
+    var rb = syscall(SYS_FUTEX, &word, FUTEX_WAIT, 0, &ts, 0, 0);
+    assert_eq(rb, 0 - 110, "FUTEX_WAIT with expected-val 0 PARKS (this was the deadlock)");
+    #endif
+    #endif
+
+    # ── Backstop only: joins must still work and must not leak the worker's effects.
+    var i = 0;
+    while (i < 64) {
+        var t = thread_create(&_tj_worker, 0);
+        assert(t != 0, "thread_create returned a handle");
+        assert_eq(thread_join(t), 0, "thread_join returned 0");
+        i = i + 1;
+    }
+    assert_eq(_tj_hits, 64, "all 64 workers ran to completion");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

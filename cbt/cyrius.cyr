@@ -862,7 +862,14 @@ fn main(): i64 {
         var _aai = cmd_idx + 1;
         while (_aai < argc()) {
             if (streq(argv(_aai), "--internal") == 1) { _amode = 1; }
-            if (streq(argv(_aai), "--internal=platform-check") == 1) { _amode = 2; }
+            elif (streq(argv(_aai), "--internal=platform-check") == 1) { _amode = 2; }
+            else {
+                # v6.5.8: `audit` used to absorb ANY extra argument silently and sweep the
+                # whole project anyway, so a mistyped flag or a stray path produced a
+                # full-looking PASS for something nobody asked for.
+                _err_ctx("audit: unknown argument", argv(_aai));
+                return 1;
+            }
             _aai = _aai + 1;
         }
         return cmd_audit(_amode);

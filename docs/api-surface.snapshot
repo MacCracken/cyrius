@@ -4230,6 +4230,11 @@ syscalls_x86_64_agnos::sys_blk_info/2
 syscalls_x86_64_agnos::sys_blk_open/2
 syscalls_x86_64_agnos::sys_blk_read/4
 syscalls_x86_64_agnos::sys_blk_write/4
+syscalls_x86_64_agnos::sys_chan_caps/2
+syscalls_x86_64_agnos::sys_chan_close/1
+syscalls_x86_64_agnos::sys_chan_mint/1
+syscalls_x86_64_agnos::sys_chan_recv/3
+syscalls_x86_64_agnos::sys_chan_send/3
 syscalls_x86_64_agnos::sys_chdir/1
 syscalls_x86_64_agnos::sys_chmod/2
 syscalls_x86_64_agnos::sys_close/1
@@ -4380,6 +4385,8 @@ thread::gettid/0
 thread::mmap_stack/1
 thread::munmap_stack/2
 thread::thread_create/2
+thread::thread_create_detached/2
+thread::thread_is_done/1
 thread::thread_join/1
 thread_agnos::chan_close/1
 thread_agnos::chan_new/1
@@ -4389,6 +4396,8 @@ thread_agnos::chan_try_recv/1
 thread_agnos::chan_try_send/2
 thread_agnos::gettid/0
 thread_agnos::thread_create/2
+thread_agnos::thread_create_detached/2
+thread_agnos::thread_is_done/1
 thread_agnos::thread_join/1
 thread_local::thread_local_alloc/0
 thread_local::thread_local_get/1
@@ -4406,6 +4415,8 @@ thread_win::chan_try_recv/1
 thread_win::chan_try_send/2
 thread_win::gettid/0
 thread_win::thread_create/2
+thread_win::thread_create_detached/2
+thread_win::thread_is_done/1
 thread_win::thread_join/1
 tls::tls_accept/5
 tls::tls_accept_alloc/4

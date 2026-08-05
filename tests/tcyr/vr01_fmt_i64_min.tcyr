@@ -1,0 +1,92 @@
+# vr01_fmt_i64_min.tcyr — v6.5.8: every decimal formatter must render i64::MIN.
+#
+# THE BUG. `n = 0 - n` is a NO-OP at i64::MIN — two's-complement negation of the most
+# negative value overflows back to itself. So `n` stayed negative, both the `n == 0` guard
+# and the `while (n > 0)` digit loop were skipped, and every decimal formatter in the
+# stdlib emitted the sign byte and NOTHING ELSE: `str_from_int(i64::MIN)` was the
+# one-character string "-", and bayan then serialised `{"n":-}`, which is not JSON, with
+# no error raised at any layer. A valid i64 in, silent corruption out.
+#
+# ⭐ IT IS A CLASS, NOT A SITE — that is the whole point of this file. Nine places carried
+# the identical shape: lib/fmt.cyr x4, lib/string.cyr, lib/log.cyr, lib/sakshi.cyr (a FOLD
+# — fixed upstream at sakshi 2.4.8, never in the vendored copy), plus TWO the roadmap's
+# seven-site list never named, inside the compiler itself (src/common/util.cyr PRNUM,
+# src/main.cyr _emit_decimal), and three shipped demos under programs/. `fmt_hex` right
+# below `fmt_int` had already been fixed for exactly this `> 0` vs `!= 0` reason at
+# v6.4.69 and its decimal siblings were simply never brought along. Grep the SHAPE, not
+# the symbol.
+#
+# ⚠ i64::MIN is written `0 - 9223372036854775807 - 1` because the literal 9223372036854775808
+# does not fit an i64 token. MIN+1 and MAX are pinned too: the fix changes the loop
+# condition for EVERY value, so the ordinary cases are the regression risk, not the corner.
+#
+# The fix relies on `/` and `%` truncating toward zero for negative operands. Verified on
+# x86_64, aarch64 AND the cx bytecode backend (cx's `%` was only repaired at v6.4.58) —
+# this file runs cross-OS via the release gate's vr01_ glob so the assumption is re-tested
+# on every target, every release.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+
+fn _len_of(n): i64 {
+    var b[24];
+    return fmt_int_buf(n, &b);
+}
+
+fn _eq_str(n, want): i64 {
+    var b[24];
+    var l = fmt_int_buf(n, &b);
+    if (l != strlen(want)) { return 0; }
+    var i = 0;
+    while (i < l) {
+        if (load8(&b + i) != load8(want + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    var imin = 0 - 9223372036854775807 - 1;
+    var imax = 9223372036854775807;
+
+    # ── The corner the whole class turns on. Pre-fix this was length 1, the string "-".
+    assert_eq(_len_of(imin), 20, "fmt_int_buf(i64::MIN) is 20 chars, not 1");
+    assert_eq(_eq_str(imin, "-9223372036854775808"), 1, "i64::MIN renders in full");
+
+    # ── The neighbours. MIN+1 always worked; MAX exercises the same loop unsigned-side.
+    assert_eq(_eq_str(imin + 1, "-9223372036854775807"), 1, "i64::MIN+1 renders");
+    assert_eq(_eq_str(imax, "9223372036854775807"), 1, "i64::MAX renders");
+
+    # ── Ordinary values — the regression surface. The loop condition changed for these
+    # too, so a fix that only special-cased MIN would still be caught here.
+    assert_eq(_eq_str(0, "0"), 1, "zero");
+    assert_eq(_eq_str(0 - 1, "-1"), 1, "minus one");
+    assert_eq(_eq_str(1, "1"), 1, "one");
+    assert_eq(_eq_str(0 - 10, "-10"), 1, "minus ten (digit 0 via negated modulo)");
+    assert_eq(_eq_str(0 - 100, "-100"), 1, "trailing zeros survive");
+    assert_eq(_eq_str(1234567890, "1234567890"), 1, "ten digits");
+    assert_eq(_eq_str(0 - 1234567890, "-1234567890"), 1, "ten digits negative");
+
+    # ── str_from_int is the consumer-facing path the filing was written against.
+    var s = str_from_int(imin);
+    assert_eq(str_len(s), 20, "str_from_int(i64::MIN) is 20 chars");
+    assert_eq(load8(str_data(s)), 45, "starts with '-'");
+    assert_eq(load8(str_data(s) + 19), 56, "ends with '8'");
+
+    # ── The truncation premise the fix rests on, asserted rather than assumed. If a
+    # backend ever floors instead of truncating, the digit-negation trick breaks and
+    # this fails loudly here instead of silently corrupting output.
+    assert_eq(imin % 10, 0 - 8, "negative modulo truncates toward zero");
+    assert_eq((0 - 7) / 10, 0, "negative division truncates toward zero");
+    assert_eq((0 - 7) % 10, 0 - 7, "modulo keeps the sign of the dividend");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

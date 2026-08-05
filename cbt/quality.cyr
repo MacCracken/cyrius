@@ -20,20 +20,40 @@
 fn cmd_coverage(): i64 {
     var full = 0;
     var min_pct = 0 - 1;                      # -1 = no gate
+    var root_arg = 0;
     var ai = 2;
     while (argc() > ai) {
         var a = argv(ai);
         if (streq(a, "--full") == 1) { full = 1; }
         elif (streq(a, "--min") == 1) {
             if (argc() > ai + 1) { min_pct = atoi(argv(ai + 1)); ai = ai + 1; }
+            else { _err("--min needs a percentage, e.g. `cyrius coverage --min 80`"); return 1; }
+        }
+        # v6.5.8: a SUBFOLDER CALLOUT — `cyrius coverage src/sub` scans that directory.
+        # This used to be dropped on the floor: any positional was silently ignored, the
+        # scan ran against ./ anyway, and the run exited 0. An argument the tool accepts
+        # and does not act on is worse than one it rejects, because the output looks like
+        # an answer to the question that was asked.
+        elif (load8(a) != 45) { root_arg = a; }
+        else {
+            _err_ctx("unknown option", a);
+            return 1;
         }
         ai = ai + 1;
     }
 
-    # Scan root: lib/ for --full, else the project's own src/ (recursive).
+    # Scan root: an explicit callout wins, then lib/ for --full, else the project's own
+    # src/ (recursive).
     var root = "src";
     if (full == 1) { root = "lib"; }
-    if (is_dir(str_from(root)) != 1) {
+    if (root_arg != 0) {
+        root = root_arg;
+        if (is_dir(str_from(root)) != 1) {
+            _err_ctx("not a directory", root);
+            return 1;
+        }
+    }
+    elif (is_dir(str_from(root)) != 1) {
         # No src/ (e.g. a flat project) — fall back to '.', still excluding lib/.
         root = ".";
     }
@@ -56,7 +76,23 @@ fn cmd_coverage(): i64 {
     # from load64(ptr+8) = garbage. NOT an allocator / "heap regime" issue; fixed in
     # lib/fs.cyr by annotating `ext: Str`. The inline walk stays as the equivalent,
     # simplest form.)
-    var corpus = alloc(1048576);
+    # ⛔ v6.5.8: GROW-AND-RETRY. This was a FIXED 1 MiB buffer, and the corpus silently
+    # stopped growing once it filled: `file_read_all` returns exactly `maxlen` on
+    # truncation and 0 once `avail` reaches 0, so `if (n > 0)` made truncation, a
+    # whole-file drop and a failed open indistinguishable — and all three silent. Every
+    # symbol whose only reference lived in the discarded tail then read as unreferenced,
+    # so the reported percentage fell with no diagnostic and `--min` still exited 0.
+    #
+    # The failure is ANTI-CORRELATED with the signal, which is what makes it worse than a
+    # plain cap: coverage degrades as the test suite GROWS, so it punishes the projects
+    # testing most and reads as "someone deleted a test". It was mis-measuring THIS repo.
+    #
+    # Grow-and-retry rather than the filing's "sum file sizes first": there is no portable
+    # file-size primitive in lib/ — the only candidate, `xlseek`, is a bare SYS_LSEEK that
+    # is wrong on PE, and cbt/cyrius.cyr cross-compiles to PE and Mach-O. Doubling needs no
+    # size call at all and uses only alloc + memcpy, both already available here.
+    var corpus_cap = 1048576;
+    var corpus = alloc(corpus_cap);
     var corpus_len = 0;
     if (is_dir(str_from("tests")) == 1) {
         var tests = vec_new();
@@ -65,10 +101,32 @@ fn cmd_coverage(): i64 {
         while (ti < vec_len(tests)) {
             var tf = vec_get(tests, ti);
             if (str_ends_with(tf, ".tcyr") == 1) {
-                var n = file_read_all(str_data(tf), corpus + corpus_len, 1048576 - corpus_len - 1);
-                if (n > 0) { corpus_len = corpus_len + n; }
+                var avail = corpus_cap - corpus_len - 1;
+                var n = file_read_all(str_data(tf), corpus + corpus_len, avail);
+                if (n >= avail) {
+                    # Filled to the brim — the read may have been truncated, and we cannot
+                    # tell from the return value alone. Grow and retry the SAME file
+                    # rather than accept a possibly-partial read.
+                    if (corpus_cap >= 268435456) {
+                        _err_ctx("coverage corpus exceeded 256 MiB while reading", str_data(tf));
+                        return 1;
+                    }
+                    var nb = alloc(corpus_cap * 2);
+                    if (nb == 0) {
+                        _err("coverage: out of memory growing the test corpus");
+                        return 1;
+                    }
+                    memcpy(nb, corpus, corpus_len);
+                    corpus = nb;
+                    corpus_cap = corpus_cap * 2;
+                    # Do NOT advance ti — re-read this file into the larger buffer.
+                } else {
+                    if (n > 0) { corpus_len = corpus_len + n; }
+                    ti = ti + 1;
+                }
+            } else {
+                ti = ti + 1;
             }
-            ti = ti + 1;
         }
     }
     store8(corpus + corpus_len, 0);
@@ -107,8 +165,17 @@ fn cmd_coverage(): i64 {
         var pos = 0;
         while (pos < ln) {
             if (pos == 0 || load8(lbuf + pos - 1) == 10) {
-                if (memeq(lbuf + pos, "fn ", 3) == 1) {
-                    var ns = pos + 3;
+                # ⛔ v6.5.8: `pub fn` COUNTS TOO. This matched only a bare `fn ` at line
+                # start, so every `pub fn` — the explicit-public spelling that shipped
+                # with file-scoped public/private at v6.5.0 — was INVISIBLE. A project
+                # that adopted `pub` got "0/0 public functions" from the tool whose whole
+                # job is counting public functions, and (before the fail-open fix above)
+                # exit 0 with it. The native-header generator in this same file already
+                # handled both spellings at :433, so the two scanners disagreed.
+                var ns = 0 - 1;
+                if (memeq(lbuf + pos, "fn ", 3) == 1) { ns = pos + 3; }
+                elif (memeq(lbuf + pos, "pub fn ", 7) == 1) { ns = pos + 7; }
+                if (ns >= 0) {
                     var ne = ns;
                     while (ne < ln) {
                         var nc = load8(lbuf + ne);
@@ -122,7 +189,11 @@ fn cmd_coverage(): i64 {
                             total_fns = total_fns + 1;
                             var found = 0;
                             var ci = 0;
-                            while (ci < corpus_len - fname_len) {
+                            # `<=`, not `<`: a symbol occurring at the very END of the
+                            # corpus was never found. Normally masked by trailing
+                            # newlines, but the truncation bug above made the corpus end
+                            # at an arbitrary cut point, so the two compounded. v6.5.8.
+                            while (ci <= corpus_len - fname_len) {
                                 if (memeq(corpus + ci, lbuf + ns, fname_len) == 1) { found = 1; break; }
                                 ci = ci + 1;
                             }
@@ -172,10 +243,14 @@ fn cmd_coverage(): i64 {
     fmt_int(pct);
     println("%)  [reference coverage — a floor, not a correctness proof]");
 
+    # ⛔ v6.5.8: MEASURING NOTHING IS NOT PASSING. This printed a `note:` and returned 0,
+    # so `cyrius coverage --min 80` in a directory with no sources — a mistyped path, a CI
+    # job with the wrong working directory — reported a percentage computed from an empty
+    # set and exited GREEN. Same green-placebo shape as `capacity` at v6.4.73. An empty
+    # measurement is a failed measurement, with or without --min.
     if (total_fns == 0) {
-        sys_write(STDERR_FD, "  note: no public functions found under ", 40);
-        sys_write(STDERR_FD, root, strlen(root));
-        sys_write(STDERR_FD, "/ — is this a project root?\n", 28);
+        _err_ctx("no public functions found — nothing was measured, so this is not a pass; check the path", root);
+        return 1;
     }
     if (min_pct >= 0) {
         if (pct < min_pct) {
