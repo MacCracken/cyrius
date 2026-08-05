@@ -1,6 +1,7 @@
 # `alloc_reset()` scrubs and rewinds over the memoized default `Allocator`, so the next `vec_new()` calls through a zeroed vtable
 
-**Status:** 🔴 **OPEN** — filed 2026-08-05, worked around consumer-side with a one-line store.
+**Status:** ✅ **SHIPPED v6.5.7** — vtable moved to `_default_allocator_storage`, outside any resettable region; the CAS went with it (the published address is now a compile-time constant). Gate `tests/alloc_reset_default_allocator.sh`.
+**Filed as:** filed 2026-08-05, worked around consumer-side with a one-line store.
 **Placement:** unpinned, but this is a hard crash in two stdlib calls used exactly as documented —
 it wants a patch release, not the 6.x backlog. One store fixes it (see below).
 **Discovered:** 2026-08-05 building a hisab 2.9.0 differential harness that had to reset the arena

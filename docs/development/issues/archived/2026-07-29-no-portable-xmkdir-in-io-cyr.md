@@ -1,6 +1,7 @@
 # No portable `xmkdir` in `lib/io.cyr` — `sys_mkdir`'s second argument means `mode` on Linux and `pathlen` on agnos
 
-**Status:** 🟡 **OPEN** — filed 2026-07-29. Verified against live code: `lib/syscalls_x86_64_linux.cyr:350`
+**Status:** ✅ **SHIPPED v6.5.7** — `xmkdir` / `xmkdir_p` / `_xdir_exists` / `xsymlink` / `xreadlink` / `xlink` added, each mirroring `xrmdir`'s per-target shape. Axis 4b asserts every agnos arm computes a strlen — the divergence is semantic, not arity, so nothing else can see it.
+**Filed as:** filed 2026-07-29. Verified against live code: `lib/syscalls_x86_64_linux.cyr:350`
 declares `fn sys_mkdir(path, mode)`, `lib/syscalls_x86_64_agnos.cyr:468` declares
 `fn sys_mkdir(path, pathlen)`. Same name, incompatible second parameter, no wrapper between them —
 `lib/io.cyr`'s `x*` set is `xopen, xunlink, xfsync, xstat, xgetdents, xlseek, xflock` and has no

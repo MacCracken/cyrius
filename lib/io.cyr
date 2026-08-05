@@ -212,13 +212,41 @@ fn xmkdir_p(path, mode): i64 {
 # directory as success. Kept private: consumers want `is_dir` from lib/fs.cyr,
 # which takes a Str; this one takes a raw cstr because that is what xmkdir_p holds.
 fn _xdir_exists(path): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    # Windows has no POSIX stat — `xstat` returns -1 here — so ask the filesystem
+    # directly, the same way fs_win.cyr's `is_dir` does. Without this arm `xmkdir_p`
+    # loses its idempotence on Windows: CreateDirectoryW fails on an existing directory
+    # and nothing else can tell "already there" from "could not create".
+    # ⚠ The 0xF019 reroute takes an ALREADY-WIDE path, unlike the mkdir/unlink reroutes
+    # which widen inline — hence the widen loop here. ASCII-only, matching `_fs_widen`.
+    var wp = alloc(1024);
+    var wi = 0;
+    while (load8(path + wi) != 0) {
+        if (wi >= 510) { break; }
+        store16(wp + wi * 2, load8(path + wi));
+        wi = wi + 1;
+    }
+    store16(wp + wi * 2, 0);
+    var attrs = syscall(61465, wp);             # GetFileAttributesW
+    if (attrs == 4294967295) { return 0; }      # INVALID_FILE_ATTRIBUTES
+    if ((attrs & 16) != 0) { return 1; }        # FILE_ATTRIBUTE_DIRECTORY
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     var st[144];
     if (xstat(path, &st) != 0) { return 0; }
-    # st_mode sits at offset 24 on the Linux/agnos stat layouts xstat normalises to;
+    # ⚠ MUST go through STAT_MODE — `xstat` does NOT normalise the struct, it only
+    # normalises the CALL. st_mode is at 24 on x86-Linux, **16** on aarch64-Linux, and
+    # **4** on macOS-arm64's stat64. A hardcoded 24 reads st_uid on aarch64 and quietly
+    # reports every directory as not-a-directory; found by running
+    # vr01_syscall_wrappers.tcyr under aarch64 (it returned uid 1000 as the mode), never
+    # by the host suite. This is the exact rule the x86 peer's Stat enum is annotated
+    # with — "must use the Stat enum to stay arch-clean", v5.4.11 chunk-A.
     # S_IFMT 0xF000, S_IFDIR 0x4000.
-    var mode = load32(&st + 24);
+    var mode = load32(&st + STAT_MODE);
     if (mode & 0xF000 == 0x4000) { return 1; }
     return 0;
+    #endif
 }
 
 # Create a symlink at `linkpath` pointing to `target`.

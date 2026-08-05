@@ -638,8 +638,18 @@ fn ESYSXLAT(S): i64 {
         EW(S, 0xF103711F); EW(S, 0x54000041); EW(S, 0xD2800050);  # clone 220→fork 2 (x1-fixup post-svc)
         # mkdirat 34 → mkdir 136 (arg-shift x0=path,x1=mode; b.ne +16)
         EW(S, 0xF100891F); EW(S, 0x54000081); EW(S, 0xAA0103E0); EW(S, 0xAA0203E1); EW(S, 0xD2801110);
-        # unlinkat 35 → unlink 10 (arg-shift x0=path; b.ne +12)
-        EW(S, 0xF1008D1F); EW(S, 0x54000061); EW(S, 0xAA0103E0); EW(S, 0xD2800150);
+        # v6.5.7: unlinkat 35 → Darwin unlinkat 472, a PURE RENUMBER. It used to map to
+        # Darwin unlink(10) with an x1→x0 arg-shift that DROPPED the dirfd and the flag —
+        # right for `unlink`, and fatal for `rmdir`, which is the same syscall with
+        # AT_REMOVEDIR. So on macOS-arm64 `sys_rmdir` ran unlink(AT_FDCWD) — the dirfd
+        # -2 reinterpreted as the path pointer — and returned -1 for every directory.
+        # `xrmdir` therefore never worked on this target from the day it shipped (v6.5.2);
+        # found the first time vr01_syscall_wrappers.tcyr ran on ecb.
+        # All three callers (syscalls_aarch64_linux.cyr:489/:495, linux_common.cyr:91) pass
+        # the full (dirfd, path, flags) form, and Darwin's unlinkat takes the same three, so
+        # the renumber is safe and strictly more faithful than the shift it replaces.
+        # cmp x8,#35; b.ne +8; movz x16,#472 = 0xD2803B10 (aarch64-linux-gnu-as verified).
+        EW(S, 0xF1008D1F); EW(S, 0x54000041); EW(S, 0xD2803B10);  # unlinkat 35→472
         # fchmodat 53 → chmod 15 (arg-shift x0=path,x1=mode; b.ne +16)
         EW(S, 0xF100D51F); EW(S, 0x54000081); EW(S, 0xAA0103E0); EW(S, 0xAA0203E1); EW(S, 0xD28001F0);
         # ── v6.0.34: raw x86-number syscalls the cbt wrapper hardcodes
@@ -694,6 +704,28 @@ fn ESYSXLAT(S): i64 {
         EW(S, 0xF104191F); EW(S, 0x54000041); EW(S, 0xD2803AD0);  # newfstatat 262→fstatat64 470
         EW(S, 0xF100951F); EW(S, 0x54000041); EW(S, 0xD2803AF0);  # linkat 37→471
         EW(S, 0xF100991F); EW(S, 0x54000041); EW(S, 0xD2803A30);  # renameat 38→465
+        # v6.5.7: fchownat, reached through the private alias 1054 (see the
+        # aarch64-Linux arm at the end of this fn, and the SYS_FCHOWNAT comment in
+        # lib/syscalls_aarch64_linux.cyr — macOS-arm64 resolves THAT peer, so the
+        # alias arrives here too and an absent row leaves a stale x16). No ordering
+        # hazard on this branch: the chain compares x8 and writes x16, so the 468 it
+        # produces can never be re-caught. cmp x8,#1054 = 0xF110791F;
+        # movz x16,#468 = 0xD2803A90 (aarch64-linux-gnu-as verified).
+        EW(S, 0xF110791F); EW(S, 0x54000041); EW(S, 0xD2803A90);  # fchownat 1054→468
+        # v6.5.7: chdir alias → Darwin 12. macOS-arm64 resolves the aarch64-Linux peer, so
+        # the alias arrives here too; without this row x16 is stale.
+        # cmp x8,#1049 = 0xF110651F; movz x16,#12 = 0xD2800190 (aarch64-linux-gnu-as verified).
+        EW(S, 0xF110651F); EW(S, 0x54000041); EW(S, 0xD2800190);  # chdir 1049→12
+        # v6.5.7: symlinkat + readlinkat. The aarch64 peer's sys_symlink/sys_readlink have
+        # always issued 36 / 78, and this branch never mapped either — so on macOS-arm64
+        # they ran with a stale x16 and the compiler warned "syscall not routed" on every
+        # build that touched them. Newly REACHABLE this release via xsymlink/xreadlink, and
+        # found the first time vr01_syscall_wrappers.tcyr ran on ecb. Pure renumbers: Linux
+        # symlinkat(target, newdirfd, linkpath) and readlinkat(dirfd, path, buf, sz) have
+        # the same arg layout as Darwin's. Numbers read off ecb's SDK sys/syscall.h.
+        # cmp x8,#36 = 0xF100911F; movz x16,#474 = 0xD2803B50 (aarch64-linux-gnu-as verified).
+        EW(S, 0xF100911F); EW(S, 0x54000041); EW(S, 0xD2803B50);  # symlinkat  36→474
+        EW(S, 0xF101391F); EW(S, 0x54000041); EW(S, 0xD2803B30);  # readlinkat 78→473
         # v6.0.84: socketpair. arm-macho pulls syscalls_aarch64_linux.cyr (see
         # lib/syscalls.cyr — there is no syscalls_aarch64_macos.cyr), so the
         # number is the aarch64-Linux 199, NOT the x86/macos 53 (which is
@@ -961,6 +993,23 @@ fn ESYSXLAT(S): i64 {
     # cmp x8,#232; b.ne +16 (skip 3); movz x4,#0; movz x5,#0; movz x8,#22.
     EW(S, 0xF103A11F); EW(S, 0x54000081);
     EW(S, 0xD2800004); EW(S, 0xD2800005); EW(S, 0xD28002C8);
+    # v6.5.7: fchownat via the PRIVATE ALIAS 1054 → native 54. aarch64's real
+    # fchownat number (54) is unreachable from source because the x86-compat shim
+    # above rewrites 54→208 (setsockopt) — load-bearing for 51 ecosystem repos — and
+    # the usual escape hatch (borrow the x86 number, 260) is this peer's own native
+    # SYS_WAIT4. Hence a number no OS mints; see lib/syscalls_aarch64_linux.cyr's
+    # SYS_FCHOWNAT comment. ⚠ THIS ENTRY MUST STAY LAST IN THE CHAIN: it produces
+    # x8=54, and the setsockopt entry compares against 54 — placed above it, every
+    # fchownat would be re-caught and issued as setsockopt. Same ordering rule as
+    # flock-before-poll and epoll_wait-after-pipe.
+    # cmp x8,#1054 = 0xF110791F; movz x8,#54 = 0xD28006C8 (aarch64-linux-gnu-as verified).
+    EW(S, 0xF110791F); EW(S, 0x54000041); EW(S, 0xD28006C8);  # fchownat 1054→54
+    # v6.5.7: chdir via the private alias 1049 → native 49. Second occupant of the band,
+    # and the same trap twice: native 49 is eaten by the x86-compat bind(49→200) entry, and
+    # the x86 number 80 is this peer's own SYS_FSTAT. ⚠ SAME ORDERING RULE — this produces
+    # x8=49 and the bind entry compares against 49, so it must stay below it.
+    # cmp x8,#1049 = 0xF110651F; movz x8,#49 = 0xD2800628 (aarch64-linux-gnu-as verified).
+    EW(S, 0xF110651F); EW(S, 0x54000041); EW(S, 0xD2800628);  # chdir 1049→49
     return 0;
 }
 
@@ -998,6 +1047,9 @@ fn _macho_arm_routes(n): i64 {
     if (n == 222) { return 1; }  if (n == 226) { return 1; }  # mmap(a64) / mprotect(a64)
     if (n == 228) { return 1; }  if (n == 260) { return 1; }  # clock_gettime(__got) / wait4
     if (n == 278) { return 1; }  if (n == 318) { return 1; }  # getrandom(a64/x86)→getentropy 500 (v6.0.75)
+    if (n == 1054) { return 1; }                               # fchownat private alias →468 (v6.5.7)
+    if (n == 1049) { return 1; }                               # chdir private alias →12 (v6.5.7)
+    if (n == 36) { return 1; }   if (n == 78) { return 1; }   # symlinkat →474 / readlinkat →473 (v6.5.7)
     if (n == 37) { return 1; }   if (n == 38) { return 1; }   # linkat→471 / renameat→465 (v6.1.20)
     if (n == 262) { return 1; }                                # newfstatat→fstatat64 470 (v6.1.20)
     return 0;

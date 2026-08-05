@@ -2695,7 +2695,72 @@ fn PP_REF_PASS(S): i64 {
     return 0;
 }
 
+# v6.5.7: read the `#@incdir <dir>` marker off line 1 of the raw source.
+#
+# ONLY at byte 0. `cyrius build` writes the marker as the very first bytes of the
+# materialised temp file, ahead of the dep-include prepend, so the CLI's value is
+# the one that lands there; a second marker further down the file — the shape a
+# hostile include would use — is past byte 0 and stays an ordinary comment. That
+# positional rule is what keeps the trusted value trusted.
+#
+# Rejects are SILENT and simply leave the marker unset, so a bad value costs the
+# same as no value: the include fails where it already fails today, with the
+# existing "cannot open include file" error naming the path. See the _pp_incdir
+# comment in common/util.cyr for why relative-and-`..`-free is the whole guard.
+fn PP_SCAN_INCDIR(S): i64 {
+    _pp_incdir_len = 0;
+    if (GBL(S) < 10) { return 0; }
+    if (load8(S) != 35) { return 0; }        # '#'
+    if (load8(S + 1) != 64) { return 0; }    # '@'
+    if (load8(S + 2) != 105) { return 0; }   # 'i'
+    if (load8(S + 3) != 110) { return 0; }   # 'n'
+    if (load8(S + 4) != 99) { return 0; }    # 'c'
+    if (load8(S + 5) != 100) { return 0; }   # 'd'
+    if (load8(S + 6) != 105) { return 0; }   # 'i'
+    if (load8(S + 7) != 114) { return 0; }   # 'r'
+    if (load8(S + 8) != 32) { return 0; }    # ' '
+    var p = 9;
+    var n = 0;
+    while (p < GBL(S)) {
+        var c = load8(S + p);
+        if (c == 10) { break; }
+        if (c == 13) { break; }
+        if (n >= 480) { return 0; }          # over-long → unset, not truncated
+        store8(&_pp_incdir + n, c);
+        n = n + 1;
+        p = p + 1;
+    }
+    while (n > 0) {                          # strip trailing spaces / separators
+        var t = load8(&_pp_incdir + n - 1);
+        if (t != 32 && t != 47 && t != 92) { break; }
+        n = n - 1;
+    }
+    if (n == 0) { return 0; }
+    # ⛔ THE GUARD (see common/util.cyr). Absolute → CVE-16 bypass; `..` → CVE-02
+    # bypass. Either one makes the marker a read-anything primitive, so both are
+    # refused outright rather than sanitised.
+    if (load8(&_pp_incdir) == 47) { return 0; }    # '/' — POSIX absolute
+    if (load8(&_pp_incdir) == 92) { return 0; }    # '\' — UNC / rooted on Windows
+    if (n > 1) { if (load8(&_pp_incdir + 1) == 58) { return 0; } }   # 'X:' drive
+    var i = 0;
+    while (i < n) {
+        if (load8(&_pp_incdir + i) == 46) {
+            if (load8(&_pp_incdir + i + 1) == 46) {
+                if (i == 0) { return 0; }
+                if (load8(&_pp_incdir + i - 1) == 47) { return 0; }
+                if (load8(&_pp_incdir + i - 1) == 92) { return 0; }
+            }
+        }
+        i = i + 1;
+    }
+    store8(&_pp_incdir + n, 0);
+    _pp_incdir_len = n;
+    return 0;
+}
+
 fn PREPROCESS(S): i64 {
+    # v6.5.7: before any include is resolved — READFILE consults _pp_incdir.
+    PP_SCAN_INCDIR(S);
     # Pre-pass: expand #ref directives (TOML → var declarations)
     PP_REF_PASS(S);
     PP_PASS(S);

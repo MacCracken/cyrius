@@ -1,6 +1,7 @@
 # `cyrius bench` accepts an argument it cannot use — a directory, or a path that does not exist — and reports success
 
-**Status:** 🟡 **OPEN** — filed 2026-08-05. Behaviour verified against live 6.5.6 the same day across all nine argument forms in the table below, exit code of each recorded.
+**Status:** ✅ **SHIPPED v6.5.7** — `_bench_summary` + directory-argument honouring + recursive walk; the fail-open exit-0 is closed.
+**Filed as:** filed 2026-08-05. Behaviour verified against live 6.5.6 the same day across all nine argument forms in the table below, exit code of each recorded.
 **Placement:** unpinned — 6.x-line backlog, never 7.x (CLI/runtime behaviour). **Triage with [`2026-08-03-agnosai-build-of-a-missing-source-file-reports-OK.md`](./2026-08-03-agnosai-build-of-a-missing-source-file-reports-OK.md) — they share a root cause and the `build` fix closes most of this one.**
 **Discovered:** 2026-08-05, running agnosai's benchmarks after the M7 sandbox audit remediation.
 **Severity:** Low-to-medium — ergonomic, but it is the fail-open direction, and it is the second observed symptom of one underlying defect rather than an independent papercut.

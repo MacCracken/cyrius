@@ -65,6 +65,27 @@ check "sys_chdir(/tmp)" 42 "$(runhost)"
 n_def=$(grep -lE '^fn sys_chdir' lib/syscalls_linux_common.cyr lib/syscalls_windows.cyr \
     lib/syscalls_x86_64_agnos.cyr 2>/dev/null | wc -l | tr -d ' ')
 check "defined on all 3 peer families" 3 "$n_def"
+# ⚠ chdir is the SECOND occupant of the ≥1000 private-alias band, and it got there the same
+# way fchownat did: native 49 is eaten by the x86-compat bind(49→200) shim (so a
+# native-numbered call ran bind(path,…) → -EBADF) and the x86 number 80 is this peer's own
+# SYS_FSTAT. The host cannot see any of this — the constant reads fine and compiles on every
+# target, and only the BACKEND rewrite makes it wrong. Assert every lockstep site.
+check "aarch64 peer uses the chdir alias" 1 \
+    "$(grep -c '^    SYS_CHDIR = 1049;' lib/syscalls_aarch64_linux.cyr)"
+check "aarch64-Linux ESYSXLAT arm 1049→49" 1 \
+    "$(grep -c '0xF110651F); EW(S, 0x54000041); EW(S, 0xD2800628)' src/backend/aarch64/emit.cyr)"
+check "macho ESYSXLAT arm 1049→12" 1 \
+    "$(grep -c '0xF110651F); EW(S, 0x54000041); EW(S, 0xD2800190)' src/backend/aarch64/emit.cyr)"
+check "_macho_arm_routes whitelists 1049" 1 \
+    "$(grep -c 'if (n == 1049) { return 1; }' src/backend/aarch64/emit.cyr)"
+# macOS-x86 resolves the shared linux_common peer, so it needs its own Darwin row — an
+# untranslated 80 reaches Darwin unclassed and SIGSYSes, exactly as 231 did at v6.5.6.
+check "EMACHO_SYSXLAT maps chdir 80→Darwin 12" 1 \
+    "$(grep -c '_msx(S, 80, 0x200000C);' src/backend/x86/emit.cyr)"
+ln_bind=$(grep -n '0xD2801908);  # bind        49→200' src/backend/aarch64/emit.cyr | cut -d: -f1)
+ln_cd=$(grep -n '0xD2800628);  # chdir 1049→49' src/backend/aarch64/emit.cyr | cut -d: -f1)
+if [ -n "$ln_bind" ] && [ -n "$ln_cd" ] && [ "$ln_cd" -gt "$ln_bind" ]; then ord2=after; else ord2=BEFORE; fi
+check "chdir arm sits after bind 49→200 (else re-caught)" after "$ord2"
 
 # ── AXIS 2: signal_default — the counterpart signal_ignore never had. SIG_IGN is
 # INHERITED across execve (a handler is not), so without this a process that ignores a
@@ -112,12 +133,26 @@ mkprobe 'fn main(): i64 {
 var r = main();
 sys_exit_group(r);'
 check "fchownat(AT_FDCWD, …, -1, -1, NOFOLLOW)" 42 "$(runhost)"
-# The aarch64 arm is a DELIBERATE -ENOSYS stub, not an oversight: native 54 is owned by the
-# setsockopt shim (load-bearing for 51 ecosystem repos incl. consumer-authored source), and
-# the x86 number 260 collides with aarch64 SYS_WAIT4. See roadmap.md W1 item 1.
-n_stub=$(grep -c 'fn sys_fchownat(dirfd, path, uid, gid, flags): i64 { return 0 - 38; }' \
-    lib/syscalls_aarch64_linux.cyr)
-check "aarch64 stubs to -ENOSYS (documented block, not an oversight)" 1 "$n_stub"
+# v6.5.7: the aarch64 arm goes through the PRIVATE ALIAS 1054 (native 54 is owned by the
+# setsockopt shim, load-bearing for 51 ecosystem repos; the x86 number 260 is this peer's own
+# native SYS_WAIT4). An alias is only correct if THREE sites move in lockstep, and a missing
+# one is a stale-x16 garbage call that no host test can see — so assert all three, plus the
+# ordering rule that makes the Linux arm work at all.
+check "aarch64 peer uses the alias" 1 \
+    "$(grep -c '^    SYS_FCHOWNAT = 1054;' lib/syscalls_aarch64_linux.cyr)"
+check "aarch64-Linux ESYSXLAT arm 1054→54" 1 \
+    "$(grep -c '0xF110791F); EW(S, 0x54000041); EW(S, 0xD28006C8)' src/backend/aarch64/emit.cyr)"
+check "macho ESYSXLAT arm 1054→468 (macOS-arm64 resolves this peer)" 1 \
+    "$(grep -c '0xF110791F); EW(S, 0x54000041); EW(S, 0xD2803A90)' src/backend/aarch64/emit.cyr)"
+check "_macho_arm_routes whitelists 1054" 1 \
+    "$(grep -c 'if (n == 1054) { return 1; }' src/backend/aarch64/emit.cyr)"
+# ⚠ ORDERING. The Linux arm emits x8=54 and the setsockopt entry compares against 54, so an
+# arm placed ABOVE it is re-caught and every fchownat is issued as setsockopt — silently, on
+# hardware this suite does not run on. Assert it comes after.
+ln_sock=$(grep -n '0xD2801A08);  # setsockopt  54→208' src/backend/aarch64/emit.cyr | cut -d: -f1)
+ln_own=$(grep -n '0xD28006C8);  # fchownat 1054→54' src/backend/aarch64/emit.cyr | cut -d: -f1)
+if [ -n "$ln_sock" ] && [ -n "$ln_own" ] && [ "$ln_own" -gt "$ln_sock" ]; then ord=after; else ord=BEFORE; fi
+check "Linux arm sits after setsockopt 54→208 (else re-caught)" after "$ord"
 
 # ── AXIS 4b: STRUCTURAL, and it exists because axis 6 provably CANNOT catch this.
 # The agnos divergence is SEMANTIC, not arity: `sys_mkdir(path, mode)` and agnos's
@@ -135,6 +170,30 @@ for fn in xmkdir xsymlink xreadlink xlink; do
     want=1
     if [ "$fn" = "xsymlink" ] || [ "$fn" = "xlink" ]; then want=2; fi
     check "$fn agnos arm computes $want length(s)" "$want" "$n_len"
+done
+
+# ── AXIS 4c: the DARWIN divergences, every one of which was found by RUNNING
+# vr01_syscall_wrappers.tcyr on ecb/ach and none of which the host suite can see. A
+# missing Mach-O route does not fail — it SIGSYSes the process (128+12), and a Linux-valued
+# AT_* flag does not fail either, it just returns EINVAL forever.
+echo "axis 4c — Darwin routes + AT_* flags (found-by-ports class; host-invisible):"
+check "AT_* flags are per-target (Darwin 0x20/0x40/0x80)" 1 \
+    "$(awk '/ifdef CYRIUS_TARGET_MACOS/,/endif/' lib/syscalls_linux_common.cyr | grep -c 'AT_SYMLINK_NOFOLLOW = 32;')"
+check "macOS-x86 stat offsets match syscall 188 (legacy struct, not stat64)" 1 \
+    "$(awk '/^enum Stat/,/^}/' lib/syscalls_macos.cyr | grep -c 'STAT_MODE = 8;')"
+# unlinkat must be a PURE renumber: the old arg-shift to unlink(10) dropped the dirfd and
+# the flag, so every rmdir on macOS-arm64 ran unlink(AT_FDCWD) and returned -1.
+check "macho unlinkat 35→472 is a pure renumber (no arg-shift to unlink)" 1 \
+    "$(grep -c '0xF1008D1F); EW(S, 0x54000041); EW(S, 0xD2803B10)' src/backend/aarch64/emit.cyr)"
+check "macho symlinkat 36→474" 1 \
+    "$(grep -c '0xD2803B50);  # symlinkat  36→474' src/backend/aarch64/emit.cyr)"
+check "macho readlinkat 78→473" 1 \
+    "$(grep -c '0xD2803B30);  # readlinkat 78→473' src/backend/aarch64/emit.cyr)"
+check "EMACHO_SYSXLAT maps link 86→9 (an unmapped number SIGSYSes)" 1 \
+    "$(grep -c '_msx(S, 86, 0x2000009);' src/backend/x86/emit.cyr)"
+# Every number the x86-macOS peer can emit for the x* family must have a Darwin row.
+for n in 83 84 86 87 88 89 80 260; do
+    check "EMACHO_SYSXLAT covers $n" 1 "$(grep -c "_msx(S, $n," src/backend/x86/emit.cyr)"
 done
 
 # ── AXIS 5: agnos #96/#97 must NOT be minted before their kernel arms exist.

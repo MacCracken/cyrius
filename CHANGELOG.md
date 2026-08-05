@@ -6,6 +6,142 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.7] — 2026-08-05
+
+The repair side of the release, driven by consumer filings: two codegen/runtime defects
+(hisab's allocator, agnosai's syscall wrappers), the long-standing `include` resolution
+limit that forced agnos into a shell workaround, and the tool defects found alongside them.
+
+### Verification
+
+Release gate **GREEN, all 5 steps**. Self-host fixpoint byte-identical (**1,141,696 B**) ·
+seed-derive `seed→cybs→cycc` OK, run twice (the gate, then again inside `version-bump.sh`) ·
+check.sh **156 / 0** · cross-OS `SELFHOST_OK` + VR-01 `LIBTEST_OK` on **ecb / ach / cass /
+pi**, real hardware — **32 vr01 tests per host**, one more than last release, and that one
+found seven defects (see *found by ports* below). Two new shell gates —
+`syscall_wrapper_pass`, `include_dir_resolution` — **both mutation-proven** (five distinct
+mutations, each caught on its intended axis).
+
+**Bench: self_compile 649 / 670 / 701 ms · cycc 1,141,696 B (+8,208 B vs 6.5.6).** Three runs
+of the SAME binary, spanning 52 ms, against 643/648 at 6.5.6 — which is the honest headline:
+the run-to-run spread on this box is WIDER than the release-over-release delta, so a single
+number from this series carries no signal and should not be quoted as one. Growth
+tax across six independent additions (a preprocessor scan, a `READFILE` fallback, four
+syscall wrappers, six `x*` helpers, and ~10 backend xlat rows); no single patch dominates,
+so no bisect indicated.
+
+### Fixed
+
+- **`alloc_reset()` left the memoized default allocator pointing at freed memory**
+  (hisab-filed, High). `default_alloc()` cached its vtable *in the bump arena it describes*,
+  so the reset that arena is for invalidated the allocator itself — every subsequent
+  `default_alloc()` returned a dangling pointer, reproducibly SIGSEGV. The vtable now lives
+  in a dedicated `_default_allocator_storage` global, outside any resettable region. The CAS
+  went with it: the published address is now a compile-time constant, so a plain store is
+  race-safe. `alloc_reset`'s doc comment now says outright that it invalidates every pointer
+  it has handed out.
+- **`sys_chdir` was called by `lib/regression.cyr:658` and defined nowhere**, so any consumer
+  reaching `regression_exec_in_dir3` could not compile that stdlib file at all. Defined on
+  all three peer families.
+- **aarch64 `fchownat` was unreachable — now routed via a private alias.** Its native number
+  (54) is consumed by the x86-compat setsockopt shim, which is load-bearing for 51 ecosystem
+  repos that emit raw `syscall(54, …)`, and the usual escape (borrow the x86 number, 260) is
+  the aarch64 peer's own native `SYS_WAIT4`. With both candidates owned, source numbers
+  **≥1000 are now cyrius-private aliases** that no OS mints, renumbered by ESYSXLAT;
+  `SYS_FCHOWNAT = 1054` (= 1000 + the native number, so the alias documents itself).
+  ⚠ The aarch64-Linux arm must stay **last** in its chain — it produces `x8=54` and the
+  setsockopt entry compares against 54, so placed earlier every `fchownat` is silently
+  reissued as `setsockopt`. Mutation-verified: the misordered build returns `ENOPROTOOPT`.
+- **`cyrius build` resolved every `include` against the process CWD**, so a source in a
+  subfolder could not include a file sitting next to it. The entry file's directory now
+  rides in-band as `#@incdir` on line 1 (`#` opens a comment in cyrius, so older cycc, cybs
+  and the cx/JS forks skip it untaught — the two out-of-band channels are both dead here:
+  `chdir` breaks the root-relative dep prepend, and `_read_env` is stubbed on Windows and
+  cx). Resolution is **CWD-first**: the retry sits after every existing step in `READFILE`,
+  so no include that resolves today can change meaning — it can only turn an error into a
+  success.
+  ⛔ **The marker is in-band, so a hostile `.cyr` can write one**, and the original filing
+  was wrong to call it a trusted channel. Honouring an absolute directory would have rebuilt
+  the read-anything primitive CVE-16 removed. Two rules close it: the directory must be
+  **relative and `..`-free**, and it is read **only at byte 0** (the CLI writes it ahead of
+  the dep prepend, so a marker further down stays a comment). Both mutation-proven against a
+  real escape target. The cost is stated plainly: `cyrius build /abs/dir/x.cyr` gets no
+  marker and keeps today's behaviour — no reach was bought with a hole.
+- **A missing output *directory* printed a bare `FAIL`** with no `error:` line: the child had
+  already dup2'd its stdout away before opening the output, so `sys_exit(1)` was its only
+  channel. The parent now proves the output writable before forking and names the absent
+  directory.
+- **`cyrius test` / `bench` / `fuzz` ignored a subfolder callout.** Discovery was top-level
+  only; the walkers are now recursive and honour a directory argument. A subfolder callout
+  was always intended to work.
+
+### Fixed — found by ports, all six by ONE new test actually running on hardware
+
+`tests/syscall_wrapper_pass.sh` proves these wrappers *compile* on five targets, which is
+most of the risk. It is not most of the bugs. The release gate's cross-OS leg executes only
+the `vr01_` glob, so a wrapper with no `vr01_` file is never RUN off-host — the exact shape
+of the macOS rot the cross-OS principle was written after. Adding
+`tests/tcyr/vr01_syscall_wrappers.tcyr` turned the gate **RED on ecb, then RED on ach**, and
+each red was a real defect no host test could see:
+
+- **`SYS_CHDIR = 49` on aarch64 ran `bind`.** Native 49 is eaten by the x86-compat
+  `bind(49→200)` shim; `chdir` returned `-EBADF`. Second occupant of the ≥1000 alias band
+  (`1049`). The x86 number 80 was no escape either — that is this peer's own `SYS_FSTAT`.
+- **`chdir` was unmapped on macOS-x86** — untranslated 80 reaches Darwin unclassed and
+  **SIGSYS**es, identical to the 231 defect one release earlier.
+- **`link(86)` was unmapped on macOS-x86.** `unlink`, `symlink` and `readlink` were all
+  mapped, so the run read as complete; the one hole killed the process with 128+12 and no
+  output at all, rather than returning an error.
+- **`symlinkat(36)` / `readlinkat(78)` were unrouted on Mach-O ARM.** The aarch64 peer has
+  always issued them and the macho branch never mapped either, so they ran with a stale
+  `x16` while the compiler warned "syscall not routed" on every build that touched them.
+- **⭐ `xrmdir` never worked on macOS-arm64 — since the day it shipped at v6.5.2.** The macho
+  branch mapped `unlinkat(35)` to Darwin `unlink(10)` with an arg-shift that DROPPED the
+  dirfd and the flag. Right for `unlink`; fatal for `rmdir`, which is the same syscall
+  distinguished only by `AT_REMOVEDIR`. So `sys_rmdir` ran `unlink(AT_FDCWD)` — the dirfd
+  `-2` reinterpreted as the path pointer — and returned -1 for every directory. Now a pure
+  renumber to Darwin `unlinkat(472)`, which fixes `unlink` and `rmdir` together.
+- **⭐ The `AT_*` FLAGS diverge on Darwin, and only the dirfd half was ever fixed.**
+  `AT_FDCWD` was corrected to `-2` when ports found it; `AT_SYMLINK_NOFOLLOW` (0x20 vs
+  0x100), `AT_SYMLINK_FOLLOW` (0x40 vs 0x400) and `AT_REMOVEDIR` (0x80 vs 0x200) were left
+  Linux-valued. They reach Darwin untranslated — the at-family entries are pure renumbers
+  that pass flags straight through — so a Linux value is simply an invalid flag: EINVAL,
+  forever, silently. `sys_fchownat` returned -22 the first time it was ever run on macOS.
+- **⭐ The macOS-x86 `Stat` enum was a mix of two different structs.** The backend maps
+  `stat(4)` to Darwin **188** (the legacy non-INODE64 struct), but the enum carried
+  **stat64** offsets. Only `STAT_SIZE` was ever corrected (v6.0.41, empirically) — which is
+  exactly why the half-fix looked finished. `STAT_MODE` read the low half of `st_ino`, so
+  every mode test on Intel-Mac was silently false, and `STAT_MTIME` read mtime's
+  *nanoseconds* as its seconds. Re-dumped against a real 0755 directory on ach and corrected
+  to 188's layout (`mode@8`, `nlink@10`, `uid@12`, `gid@16`, `mtime@40`).
+
+> The through-line: **five of the seven are half-fixes that stopped at the first symptom** —
+> `AT_FDCWD` without its flags, `STAT_SIZE` without its siblings, `unlink` without `rmdir`,
+> three of four link syscalls mapped. Each looked complete because the thing that prompted it
+> started working. `vr01_syscall_wrappers.tcyr` is now the thing that disagrees.
+
+### Added
+
+- `sys_chdir`, `signal_default` (the counterpart `signal_ignore` never had — `SIG_IGN` is
+  inherited across `execve`, so without it a process hands its ignore to every child it
+  execs), and the `x*` family: `xmkdir`, `xmkdir_p`, `_xdir_exists`, `xsymlink`, `xreadlink`,
+  `xlink` — each mirroring `xrmdir`'s per-target shape. `_xdir_exists` gets a real Windows
+  arm (GetFileAttributesW), without which `xmkdir_p` loses its idempotence there.
+- `tests/tcyr/vr01_syscall_wrappers.tcyr` — 15 assertions, run on all four hosts by the
+  release gate. Axis 4c of `syscall_wrapper_pass.sh` now pins every Darwin route and AT_*
+  value it uncovered.
+- `tests/syscall_wrapper_pass.sh` and `tests/include_dir_resolution.sh`.
+
+### Notes
+
+- **agnos `#96` (fork) and `#97` (chan_op) are reserved but deliberately NOT minted.** On
+  agnos an unknown `num` falls through the dispatch chain and the caller reads the
+  fall-through value as data, so a minted-but-unimplemented constant is strictly worse than
+  an absent one — and a host build of the same consumer looks healthy either way. Gated.
+- The agnos peer's header now points at `agnos/kernel/core/syscall.cyr` as canonical,
+  breaking a doc→cyrius→doc circular authority in which each file named the other as its
+  source.
+
 ## [6.5.6] — 2026-08-03
 
 Two consumer filings from the same afternoon, and they are the same story told from two

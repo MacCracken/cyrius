@@ -1,6 +1,7 @@
 # `cyrius build` on a source file that does not exist reports OK and emits a do-nothing binary
 
-**Status:** 🟡 **OPEN** — filed 2026-08-03.
+**Status:** ✅ **SHIPPED v6.5.7** — source guard in `cbt/build.cyr` — `file_exists` is open-then-close and returns 1 for a directory, so `is_dir` is required as a second test.
+**Filed as:** filed 2026-08-03.
 **Placement:** unpinned — 6.x-line backlog. Small fix.
 **Severity:** Low — ergonomic, but it costs real debugging time because the failure looks like a *runtime* bug in the program.
 **Discovered:** 2026-08-03, verifying a kavach security fix from agnosai.

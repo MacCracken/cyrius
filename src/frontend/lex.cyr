@@ -709,6 +709,33 @@ fn READFILE(path, dst, maxsz): i64 {
                         } } } }
         }
     }
+    # v6.5.7: LAST-RESORT fallback — retry relative to the top-level source's own
+    # directory (`#@incdir`, see common/util.cyr). Placed after every existing
+    # resolution step ON PURPOSE: CWD-first means no path that resolves today can
+    # change where it resolves to, so this is provably additive — it can only turn
+    # a build that fails into one that succeeds. It is what makes
+    # `cyrius build src/sub/a.cyr` able to `include "b.cyr"` for the sibling file
+    # sitting next to it.
+    #
+    # `path` has already cleared the CVE-02 (`..`) and CVE-16 (absolute) guards
+    # above, and `_pp_incdir` is relative and `..`-free by construction, so the
+    # composed path cannot escape the CWD subtree. The open is direct rather than
+    # recursive: re-entering READFILE would re-run guards that both halves have
+    # already passed, and would recurse.
+    if (fd < 0) {
+        if (_pp_incdir_len > 0) {
+            var ibuf[4096];
+            var ii2 = 0;
+            while (ii2 < _pp_incdir_len) { if (ii2 >= 4094) { break; } store8(&ibuf + ii2, load8(&_pp_incdir + ii2)); ii2 = ii2 + 1; }
+            store8(&ibuf + ii2, 47);
+            ii2 = ii2 + 1;
+            var pj = 0;
+            while (load8(path + pj) != 0) { if (ii2 >= 4095) { break; } store8(&ibuf + ii2, load8(path + pj)); ii2 = ii2 + 1; pj = pj + 1; }
+            store8(&ibuf + ii2, 0);
+            if (SYS_OPEN == 2) { fd = syscall(SYS_OPEN, &ibuf, 0, 0); }
+            else { fd = syscall(SYS_OPEN, 0 - 100, &ibuf, 0, 0); }
+        }
+    }
     # CVE-31: distinguish open-fail from a legitimately-empty file. Return -1
     # when the path could not be opened (after the CYRIUS_HOME/lib fallback);
     # the PP include sites hard-error on -1. A successfully-opened empty file

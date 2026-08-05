@@ -1,6 +1,7 @@
 # `lib/syscalls.cyr` ships `signal_ignore` with no counterpart, so a process that ignores a signal cannot hand the default back to a child it execs
 
-**Status:** 🟡 **OPEN** — filed 2026-08-05, worked around consumer-side with a private copy.
+**Status:** ✅ **SHIPPED v6.5.7** — `signal_default` added; gated in `tests/syscall_wrapper_pass.sh` axis 2 (ignore→default round-trip).
+**Filed as:** filed 2026-08-05, worked around consumer-side with a private copy.
 **Placement:** unpinned — 6.x-line backlog. Additive, ~20 lines, no blast radius.
 **Discovered:** 2026-08-05 fixing an agnosai `SIGPIPE` defect found by the M7 sandbox audit.
 **Severity:** Low — a gap, not a bug. Nothing in the stdlib is wrong; something is missing.

@@ -295,12 +295,85 @@ fn _sections_base_env(): i64 {
 # Returns the path to actually hand the compiler: `source` itself when there is
 # nothing to prepend, else a /tmp temp holding [dep includes][defines][build
 # modules][source]. Honors _skip_deps exactly as before. CHANGELOG [6.4.73].
+# v6.5.7: the directory component of `source`, or 0 if there is nothing useful to
+# say. cycc compiles from STDIN and so cannot know where its input lives; this is
+# the value that rides in-band as `#@incdir` so an `include` can find a file
+# sitting next to the source. See common/util.cyr for the full why.
+#
+# Returns 0 — meaning "emit no marker", which leaves today's behaviour exactly as
+# it is — for anything cycc would refuse anyway:
+#   - no directory component (already CWD-relative; the marker would be a no-op)
+#   - an ABSOLUTE path. ⛔ Deliberate, and the one real limit of this feature.
+#     The marker is in-band, so a hostile .cyr can write one; honouring an absolute
+#     directory would rebuild the read-anything primitive CVE-16 removed, and cycc
+#     rejects it for that reason. Relativising against CWD instead would need a
+#     `getcwd` wrapper that does not exist on the PE/Mach-O targets cbt/cyrius.cyr
+#     cross-compiles to. So `cyrius build /abs/dir/x.cyr` keeps resolving includes
+#     against CWD, as it does today — no regression, and no hole bought with reach.
+#   - a `..` component, for the CVE-02 half of the same argument.
+fn _source_incdir(source): i64 {
+    var n = strlen(source);
+    if (n == 0) { return 0; }
+    if (load8(source) == 47) { return 0; }
+    if (load8(source) == 92) { return 0; }
+    if (n > 1) { if (load8(source + 1) == 58) { return 0; } }
+    var cut = 0 - 1;
+    var i = 0;
+    while (i < n) {
+        var c = load8(source + i);
+        if (c == 47) { cut = i; }
+        if (c == 92) { cut = i; }
+        i = i + 1;
+    }
+    if (cut <= 0) { return 0; }
+    var j = 0;
+    while (j < cut) {
+        if (load8(source + j) == 46) {
+            if (load8(source + j + 1) == 46) {
+                if (j == 0) { return 0; }
+                if (load8(source + j - 1) == 47) { return 0; }
+                if (load8(source + j - 1) == 92) { return 0; }
+            }
+        }
+        j = j + 1;
+    }
+    var sb = str_builder_new();
+    var k = 0;
+    while (k < cut) { str_builder_add_byte(sb, load8(source + k)); k = k + 1; }
+    return str_data(str_builder_build(sb));
+}
+
+# v6.5.7: the directory component of any path, or 0 when there is none. Unlike
+# `_source_incdir` this has NO security constraints to honour — it feeds an error
+# message, not a file open — so absolute paths and `..` are reported as-is.
+fn _parent_dir(path): i64 {
+    var n = strlen(path);
+    var cut = 0 - 1;
+    var i = 0;
+    while (i < n) {
+        var c = load8(path + i);
+        if (c == 47) { cut = i; }
+        if (c == 92) { cut = i; }
+        i = i + 1;
+    }
+    if (cut < 0) { return 0; }
+    if (cut == 0) { return "/"; }
+    var sb = str_builder_new();
+    var k = 0;
+    while (k < cut) { str_builder_add_byte(sb, load8(path + k)); k = k + 1; }
+    return str_data(str_builder_build(sb));
+}
+
 fn _materialize_source(source): i64 {
     # Build temp file if we have dep includes or defines to prepend.
     # v5.7.8: _skip_deps suppresses the manifest auto-prepend; defines
     # and build-modules still apply.
     var actual_source = source;
     var need_tmp = 0;
+    # v6.5.7: a source in a subdirectory needs the temp file even with nothing to
+    # prepend, because the `#@incdir` marker is the thing being prepended.
+    var incdir = _source_incdir(source);
+    if (incdir != 0) { need_tmp = 1; }
     if (_skip_deps == 0) {
         if (_dep_includes != 0) { if (vec_len(_dep_includes) > 0) { need_tmp = 1; } }
     }
@@ -317,6 +390,15 @@ fn _materialize_source(source): i64 {
         sys_unlink(tmp);
         var tfd = sys_open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0x180);
         if (tfd >= 0) {
+            # v6.5.7: `#@incdir` FIRST — cycc honours the marker only at byte 0, so
+            # that the CLI's value is the one it reads and a marker further down the
+            # file (what a hostile include would write) stays an ordinary comment.
+            # Nothing may be emitted above this line.
+            if (incdir != 0) {
+                sys_write(tfd, "#@incdir ", 9);
+                sys_write(tfd, incdir, strlen(incdir));
+                sys_write(tfd, "\n", 1);
+            }
             # Prepend dep includes (v5.7.8: skipped under _skip_deps)
             if (_skip_deps == 0) {
                 if (_dep_includes != 0) {
@@ -526,6 +608,26 @@ fn compile(source, output): i64 {
     sys_unlink(tmp_out);
     # v6.3.3 #5: resolve `[sections] base` from the manifest before fork (parent does
     # the file I/O; the child just appends the result to envp). Bare-metal only.
+    # v6.5.7: prove the output is writable BEFORE forking. The child opens `tmp_out`
+    # and, on failure, could only `sys_exit(1)` — it has already dup2'd its stdout
+    # away and has no channel back — so `cyrius build x.cyr build/nope/deeper/out`
+    # printed a bare `FAIL` with no `error:` line and no hint that a directory was
+    # missing. Doing the open here costs one syscall on the success path, tells the
+    # user which directory is absent, and catches the other reasons (permissions,
+    # read-only fs) with an honest message instead of the same silent 1.
+    var probe_fd = sys_open(tmp_out, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
+    if (probe_fd < 0) {
+        var odir = _parent_dir(output);
+        if (odir != 0) {
+            if (is_dir(str_from(odir)) == 0) {
+                _err_ctx("output directory does not exist", odir);
+                return 1;
+            }
+        }
+        _err_ctx("cannot write output", output);
+        return 1;
+    }
+    sys_close(probe_fd);
     if (_baremetal_target == 1) { _section_base_env_ptr = _sections_base_env(); }
     var pid = sys_fork();
     if (pid == 0) {

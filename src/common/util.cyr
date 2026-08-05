@@ -1120,6 +1120,38 @@ var _panic = 0;
 var _wd_last = 0;
 var _wd_stall = 0;
 
+# ── v6.5.7: the include directory of the top-level source (`#@incdir`).
+#
+# THE PROBLEM. cycc reads its source from STDIN (`cyrius build` dup2's the file
+# onto fd 0, cbt/build.cyr:516), so it never learns where that file LIVES, and
+# every `include "…"` resolves against the process CWD. Build `src/sub/a.cyr` from
+# the project root and its `include "b.cyr"` — a file sitting right next to it —
+# does not resolve. Three fixes were considered and two are dead: `chdir` breaks
+# the dep prepend (`_materialize_source` emits `include "lib/…"` lines that are
+# root-relative), and an env var is unreadable on two targets (`_read_env` is
+# stubbed on Windows and cx). What every target DOES read identically is the source
+# text itself, so the directory rides in-band as `#@incdir <dir>` on line 1.
+#
+# WHY IT IS INERT EVERYWHERE ELSE. `#` opens a comment in cyrius, so the marker is
+# already ignored by every compiler that does not look for it — older cycc, cybs,
+# and the cx/JS forks all skip the line. Nothing needs to be taught to tolerate it.
+#
+# ⛔ THE SECURITY RULE, AND WHY IT IS NOT NEGOTIABLE. The marker is in-band, so a
+# HOSTILE .cyr can write one. If an absolute directory were honoured, `#@incdir
+# /home/u/.ssh` + `include "id_rsa"` would reconstruct exactly the read-anything
+# primitive CVE-16 was filed to remove. So `PP_SCAN_INCDIR` accepts only a
+# RELATIVE, `..`-free directory: composed with an include name that has itself
+# already passed the CVE-02/CVE-16 guards, the result is relative and `..`-free,
+# i.e. confined to the CWD subtree — provably not one file more than a plain
+# relative include could already reach. The CLI relativises an absolute source
+# against CWD and emits no marker when it cannot; that path keeps today's
+# behaviour rather than buying reach with a hole.
+#
+# Bounded at 480 on purpose: a top-level `var x[N]` is N*8 bytes under cycc but N
+# BYTES under cybs, and this file is on the seed path — 480 is inside 512 either way.
+var _pp_incdir[512];
+var _pp_incdir_len = 0;
+
 # The anti-hang backstop. After the FIRST error, PEEKT calls this every read. A
 # desynced parse loop that spins on hostile input reads the SAME token forever →
 # GTI stalls; _wd_stall accumulates and, past a bound FAR above any legal recursive-

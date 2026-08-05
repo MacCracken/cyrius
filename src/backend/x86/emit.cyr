@@ -852,6 +852,11 @@ fn EMACHO_SYSXLAT(S): i64 {
                               # $(xcrun --show-sdk-path)/usr/include/sys/syscall.h; v6.5.7)
     _msx(S, 231, 0x2000001);  # exit_group 231 → 1 (Darwin exit() ends the whole task;
                               # v6.5.6: untranslated 231 reached Darwin unclassed → SIGSYS)
+    _msx(S, 80, 0x200000C);   # chdir    80 → 12 (v6.5.7: sys_chdir was added to the shared
+                              # linux_common peer, and macOS-x86 resolves it — untranslated
+                              # 80 reaches Darwin unclassed → SIGSYS, the same shape as 231
+                              # one release earlier. Found by running the new vr01 wrapper
+                              # test on aarch64, which surfaced the sibling defect.)
     _msx(S, 61, 0x2000007);   # wait4    61 → 7
     _msx(S, 72, 0x200005C);   # fcntl    72 → 92
     _msx(S, 77, 0x20000C9);   # ftruncate 77 → 201
@@ -862,6 +867,12 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 87, 0x200000A);   # unlink   87 → 10
     _msx(S, 88, 0x2000039);   # symlink  88 → 57
     _msx(S, 89, 0x200003A);   # readlink 89 → 58
+    _msx(S, 86, 0x2000009);   # link     86 → 9  (v6.5.7: `link` was the ONE hole in this
+                              # run — unlink/symlink/readlink were all mapped, so the gap
+                              # read as complete. An unmapped number reaches Darwin
+                              # unclassed and SIGSYSes the process, which is why `xlink`
+                              # killed vr01_syscall_wrappers.tcyr on ach with 128+12 and no
+                              # output rather than returning an error.)
     _msx(S, 90, 0x200000F);   # chmod    90 → 15
     # v6.0.58: process family for the cyrius wrapper's fork-exec (cbt/build.cyr).
     # dup2 needs translating (Linux 33 == BSD `access`!). fork + pipe also get a

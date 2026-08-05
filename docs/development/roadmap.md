@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.6** (2026-08-03) — cycc **1,133,440 B** · check.sh **150 passed / 0
+**Current head: v6.5.7** (2026-08-05) — cycc **1,133,440 B** · check.sh **150 passed / 0
 failed** · self_compile **648 ms** · **254** `.tcyr` (31 `vr01_`) · **99** `lib/*.cyr` ·
 api-surface **4,777** public fns · heap map **100 regions / 0 overlaps** (unchanged across
 6.5.0–.2 — the visibility file-id substrate is a lazy `alloc`, the `_fnt_tparams`/`_vsgn_base`
@@ -445,13 +445,29 @@ roadmap rows.
 > `lib/syscalls_aarch64_linux.cyr:102` — a `260 → 54` entry would rewrite every `wait4` into
 > `fchownat` and break process reaping (`syscalls_linux_common.cyr:190`, `async.cyr:883/:888`).
 >
-> **What remains is a genuine design decision, and it is the maintainer's**: aarch64
-> `fchownat` needs a source number that is neither `54` (owned by the setsockopt shim) nor a
-> live native aarch64 number, i.e. a new sentinel convention in the ESYSXLAT source space.
-> Until that is decided, `fchownat` ships on **x86-Linux / macOS-x86 / agnos / Windows** where
-> there is no collision, and the aarch64 arm stays open. The v6.4.64 precedent at
+> ⭐ **RESOLVED v6.5.7 — the private alias band.** Both candidate numbers are owned, so the
+> fix is to stop borrowing real numbers: source numbers **≥1000 are cyrius-private aliases**
+> that no OS will ever mint (Linux is in the 400s, growing ~5/yr; Darwin routes separately),
+> renumbered to the true target by ESYSXLAT. The convention is **1000 + the native aarch64
+> number**, so `SYS_FCHOWNAT = 1054` reads as its own documentation. An alias costs three
+> lockstep edits — the aarch64-Linux arm (`1054 → 54`), the `_TARGET_MACHO == 2` arm
+> (`1054 → 468`, because macOS-arm64 resolves this same peer), and a `_macho_arm_routes` row;
+> any one of them missing is a stale-`x16` garbage call. ⚠ The Linux arm must sit **last** in
+> its chain: it produces `x8=54` and the setsockopt entry compares against `54`, so placed
+> earlier every `fchownat` would be re-caught and issued as `setsockopt` — the ordering trap
+> already documented on flock/poll and epoll_wait. The v6.4.64 precedent at
 > `lib/syscalls_aarch64_linux.cyr:174-178` ("native numbers pass through untranslated; the
-> macho backend dual-maps") is the right shape and simply has no free number here.
+> macho backend dual-maps") is the right shape and simply had no free number here.
+
+1. ✅ **Syscall-wrapper pass — SHIPPED v6.5.7, complete end-to-end.** All ten sub-items, plus
+   the `vr01_`-named tcyr the item asked for. That last line was the load-bearing one: the
+   cross-OS leg runs only the `vr01_` glob, so without it these wrappers would have been
+   compiled on four hosts and RUN on none. It turned the gate red on ecb and again on ach and
+   surfaced **seven** host-invisible defects — two of them (`xrmdir` on macOS-arm64, the
+   macOS-x86 `Stat` offsets) pre-existing rot unrelated to this item's own work. Sub-item (x)
+   needed nothing: yukti's `_yk_mkdir` bridge already landed upstream at 2.3.1 and is vendored
+   at 2.3.2. See CHANGELOG [6.5.7] "found by ports".
+   <details><summary>Original plan (kept for the reasoning)</summary>
 
 1. **Syscall-wrapper pass**, in this fixed internal order:
    ~~(i) repoint `lib/yantra.cyr:453`'s bare-literal `syscall(54, fd, 6, 1, one, 4)` at
@@ -459,7 +475,7 @@ roadmap rows.
    no consumer; (ii) **only then** claim aarch64-native `54` for `SYS_FCHOWNAT`;~~
    **(i)/(ii) DISPROVEN — see the banner above.** Repointing `lib/yantra.cyr:453` upstream is
    still worth doing as bare-literal hygiene, but it unlocks nothing and is not a prerequisite.
-   (iii) `fchownat` as the single wrapped primitive (x86 260 / aarch64 54; `AT_FDCWD` +
+   (iii) `fchownat` as the single wrapped primitive (x86 260 / aarch64 alias 1054 → 54; `AT_FDCWD` +
    `AT_SYMLINK_NOFOLLOW` gives `lchown` semantics) rather than the legacy trio — two of the
    agnos `92`–`95` band *terminate the caller* on ARM; (iv) explicit `-ENOSYS` agnos stubs,
    keeping the **FILE-level** `#ifdef` in `lib/syscalls.cyr` intact (do not weaken it to an
@@ -470,6 +486,8 @@ roadmap rows.
    measured 43 µs → 6.0 µs); (ix) `xsymlink`/`xreadlink`/`xlink`; (x) fix `lib/yukti.cyr:1801`
    and `:5270` **upstream** in `~/Repos/yukti`, then re-vendor. One `vr01_`-named `.tcyr` so
    the cross-OS leg actually executes it on pi.
+   </details>
+
 2. **`i64::MIN` formatter class — all 7 sites, not 1.** `n = 0 - n` is a no-op at `i64::MIN`,
    so both the `n == 0` and `while (n > 0)` arms are skipped and the output is a bare `-`.
    Sites: `lib/fmt.cyr:10` (`fmt_int`), `:25` (`fmt_int_fd`), `:41` (`efmt_int`), `:103`

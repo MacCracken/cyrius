@@ -1,6 +1,7 @@
 # `cyrius lib sync` decides "already up to date" by file SIZE, so a same-size change is silently never synced
 
-**Status:** 🟡 **OPEN** — filed 2026-08-03, worked around consumer-side with a content-diff gate.
+**Status:** ✅ **SHIPPED v6.5.7** — `_files_identical` (32 KB chunked byte compare) in `cbt/deps.cyr`; the size check survives only as a negative fast path.
+**Filed as:** filed 2026-08-03, worked around consumer-side with a content-diff gate.
 **Placement:** unpinned — 6.x-line backlog. Small fix, low blast radius; pick it up when convenient.
 **Discovered:** 2026-08-03 bumping agnosai's pin 6.5.5 → 6.5.6.
 **Severity:** Low — ergonomic. See the impact note below before prioritising this.

@@ -1,7 +1,11 @@
 # `cyrius build` resolves every `include` against the process CWD, so a source file in a subfolder cannot include its own sibling
 
-**Status:** 🔴 **OPEN** — filed 2026-08-05. Design settled (see *Proposed fix*); implementation pending.
-**Placement:** v6.5.7 (W1). Compiler change → seed-derive gated, and **cybs must parse the new marker**.
+**Status:** ✅ **SHIPPED v6.5.7** — implemented as designed below, with one correction to the
+CVE analysis (see the ⛔ banner in *CVE posture*, which was wrong in the filing and is the
+single most important thing on this page). Gate: `tests/include_dir_resolution.sh`, 12 axes,
+three mutation-proven.
+**Placement:** v6.5.7 (W1). Compiler change → seed-derive gated; cybs compiles the new scanner
+and `gen2 == build/cycc` verified green.
 **Discovered:** 2026-08-05. Maintainer ruling: a subfolder callout was **always** intended to work.
 **Severity:** Medium — no data loss, but it forces the flagship consumer (agnos) into a shell workaround that costs it dependency resolution.
 **Affects:** cycc 6.5.6 and every earlier release. Long-standing, at least several minors.
@@ -94,6 +98,13 @@ For the IFDEF pass, `_pp_curfile` (already maintained there, `:322`) gives the t
 including file, so that site can use the *including file's* directory. In `PP_PASS` the
 enclosing file is always the main source, so the entry `incdir` is exactly right.
 
+⚠ **Deviation, shipped deliberately:** one global `incdir` (the top-level source's directory)
+rather than a per-including-file one. Putting the retry inside `READFILE` covers both PP sites
+and the `#ref` reader from a single place, which is what makes the CWD-first ordering provable
+rather than a property to re-check per call site. True per-file resolution — where a file two
+levels down includes relative to *itself* — is a strictly larger change and is not what the
+filing asked for. The filed repro and the agnos case are both entry-relative.
+
 ## CVE posture — unchanged by construction
 
 **No guard is bypassed, weakened, or duplicated.** The fallback path is fed to the same
@@ -112,21 +123,76 @@ Consequences, stated explicitly so nothing is assumed:
   Consumers relying on `..` includes (`~/Repos/chakshu/ai/main.cyr:16-21` has six
   `../src/*.cyr`; `~/Repos/agnos/tests/gpu/moderaster.cyr:35-36` has `../../kernel/…`)
   keep needing `CYRIUS_ALLOW_PARENT_INCLUDES=1` — **no regression, and no new permission.**
-- **Do NOT implement the retry as a bare `open`/`close` probe.** That would resolve the
-  path outside the guards, which is precisely the hole they exist to close — a hostile
-  `.cyr` chooses the include text. The retry must go through `READFILE`.
-- `incdir` is derived by `cbt` from a path the user passed on the command line, not from
-  file content, so it is not itself an untrusted-input channel.
+- **Do NOT implement the retry as a bare `open`/`close` probe** *outside* the guards. The
+  shipped retry lives INSIDE `READFILE`, after every existing resolution step, so the
+  include name has already cleared CVE-02 and CVE-16 before the prefix is joined to it.
+  (Re-entering `READFILE` recursively was considered and rejected: it would re-run guards
+  both halves have already passed, and recurse.)
 
-## Acceptance
+### ⛔ The filing was WRONG about the trust model — this is the correction
 
-- `src/deep/main.cyr` with `include "helper.cyr"` builds from the project root.
-- agnos builds from its **repo root** with `entry = "kernel/agnos.cyr"`, no `cd`, and
-  **without** `--no-deps` — the workaround at `scripts/build.sh:570` is deletable.
-- All 2,503 in-tree includes unchanged; cycc self-hosts byte-identical apart from the
-  intended edit; **`seed → cybs → cycc` green** (cybs parses the new marker — the v6.5.3
-  `#@file`-format change is the standing precedent for why this is seed-derive-gated).
-- A `..` include still errors identically without `CYRIUS_ALLOW_PARENT_INCLUDES=1`.
+> ~~`incdir` is derived by `cbt` from a path the user passed on the command line, not from
+> file content, so it is not itself an untrusted-input channel.~~
+
+**It is exactly an untrusted-input channel, and reasoning otherwise would have reopened
+CVE-16 through the front door.** The marker is *in-band* — that is the whole reason it was
+chosen over env/chdir — so the thing that writes it is whatever text arrives on stdin, and a
+hostile `.cyr` can write its own. `#@incdir /home/u/.ssh` + `include "id_rsa"` reconstructs
+precisely the read-anything primitive CVE-16 was filed to remove. The claim above confused
+"the CLI is the *intended* writer" with "the CLI is the *only possible* writer".
+
+Two rules restore the property the filing assumed it already had:
+
+1. **Relative and `..`-free, or refused.** Composed with an include name that has itself
+   passed CVE-02/CVE-16, a relative `..`-free prefix yields a path confined to the CWD
+   subtree — provably not one file more than a plain relative include could already reach.
+2. **Byte 0 only.** `cyrius build` writes the marker as the first bytes of the materialised
+   temp, ahead of the dep prepend, so the CLI's value is the one cycc reads; a marker
+   further down — the shape a hostile include would use — stays an ordinary comment.
+
+**Cost of rule 1, stated plainly:** `cyrius build /abs/dir/x.cyr` gets no marker, so its
+includes still resolve against CWD exactly as they do today. Relativising an absolute source
+against CWD would need a `getcwd` wrapper that does not exist on the PE/Mach-O targets
+`cbt/cyrius.cyr` cross-compiles to. That is a real limit, and it is the right trade: no reach
+was bought with a hole.
+
+Both guards are mutation-proven. Deleting the absolute check, or the mid-path `..` check,
+each turns `tests/include_dir_resolution.sh` red with the escape file's sentinel value.
+
+⚠ **The escape axes cost this gate a round, and the lesson generalises.** They first pointed
+at `/etc/hostname`, and *passed against a compiler with the guard removed* — a hostname is
+not parseable cyrius, so the escape succeeded, the file was read, and the compile then failed
+for an unrelated reason that looked identical to a refusal. A security test whose failure mode
+aliases its success mode proves nothing. The target must be valid cyrius, so a breach is
+visible as a distinct exit code rather than as the same red as a block.
+
+## What shipped
+
+| | |
+|---|---|
+| `src/common/util.cyr` | `_pp_incdir[512]` / `_pp_incdir_len` — declared here (the `_had_error` precedent) so every fork sees them. Bounded at 480: a top-level `var x[N]` is N*8 bytes under cycc but N **bytes** under cybs, and this file is on the seed path. |
+| `src/frontend/lex_pp.cyr` | `PP_SCAN_INCDIR(S)`, called first in `PREPROCESS` — one site, all seven forks. Reads the marker at byte 0 and applies the guard; rejects are silent, so a bad value costs exactly what no value costs. |
+| `src/frontend/lex.cyr` | the retry inside `READFILE`, placed **after** every existing resolution step. |
+| `cbt/build.cyr` | `_source_incdir(source)` + the marker write, ahead of the dep prepend. A directory component now forces `need_tmp = 1` on its own. |
+
+`#` opens a comment in cyrius, so the marker needed no tolerance work anywhere: older cycc,
+cybs, and the cx/JS forks all skip the line untaught.
+
+## Acceptance — all met at v6.5.7
+
+- ✅ `src/sub/app.cyr` with `include "helper.cyr"` **and** `include "deeper/more.cyr"` builds
+  from the project root and runs (gate axis 1). Verified end-to-end through `cyrius build`,
+  not just through cycc.
+- ⏳ agnos builds from its **repo root** with `entry = "kernel/agnos.cyr"`, no `cd`, and
+  **without** `--no-deps` — the workaround at `scripts/build.sh:570` is deletable. Deletable
+  as of this release; the deletion itself is agnos-side and is theirs to make.
+- ✅ All in-tree includes unchanged — `check.sh` **156 / 0**. `seed → cybs → cycc` green,
+  `gen2 == build/cycc`, and the cycc fixpoint holds at 1,141,696 B.
+- ✅ A `..` include still errors identically without `CYRIUS_ALLOW_PARENT_INCLUDES=1`, **and
+  still errors with a valid marker set** (gate axis 7 — the marker must not become a way to
+  smuggle a hostile name past a guard that already exists).
+- ✅ CWD-first proven, not asserted: with the same basename present in both places, the CWD
+  copy wins (axis 3), and making the fallback unconditional turns that axis red.
 
 ## Adjacent, same command, smaller
 

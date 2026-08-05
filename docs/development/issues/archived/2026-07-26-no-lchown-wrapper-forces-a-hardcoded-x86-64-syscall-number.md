@@ -1,6 +1,7 @@
 # No `lchown`/`fchownat` wrapper, so consumers hardcode an x86_64 syscall number that is `exit_group` on aarch64
 
-**Status:** 🟡 **OPEN, and RE-SCOPED UPWARD from the filing** — the filing names `lchown`; the whole
+**Status:** ✅ **SHIPPED v6.5.7** — `sys_fchownat` on all five peers (aarch64 via the new ≥1000 private-alias band, since both real candidate numbers were owned) plus `sys_chdir`, which was called at `lib/regression.cyr:658` and defined nowhere. Gated in `tests/syscall_wrapper_pass.sh`.
+**Filed as:** the filing names `lchown`; the whole
 **chown family is absent from all six syscall peers**. Re-verified against live code at the v6.4.82
 closeout (`grep -rn 'chown\|CHOWN' lib/*.cyr` returns only agnos GPU-band comments; there is no
 `fn sys_lchown` / `sys_fchown` / `sys_fchownat` and no `SYS_*CHOWN*` constant anywhere). See

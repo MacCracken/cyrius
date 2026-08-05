@@ -1,0 +1,100 @@
+# vr01_syscall_wrappers.tcyr — v6.5.7: the syscall-wrapper pass, EXECUTED on real hardware.
+#
+# WHY THIS FILE EXISTS AT ALL. `tests/syscall_wrapper_pass.sh` proves these wrappers COMPILE
+# on all five targets, which is most of the risk — the peers diverge and a wrapper added to
+# one is missing from two others. But compiling is not running, and the release gate's
+# cross-OS leg executes only the `vr01_` glob. Without a `vr01_` file, `sys_chdir` /
+# `signal_default` / the `x*` family / `sys_fchownat` were never once RUN on macOS-arm64,
+# Intel-Mac, Windows or aarch64 — exactly the shape of the macOS rot that CLAUDE.md's
+# cross-OS principle was written after (a green check on hello-world while the real thing
+# was broken for nine minors).
+#
+# ⭐ THE SHARPEST CASE HERE IS `sys_fchownat` ON aarch64, and it can only fail on hardware.
+# aarch64's native fchownat is 54, but the x86-compat shim rewrites source-54 to 208
+# (setsockopt) before the svc, so the wrapper goes through the v6.5.7 PRIVATE ALIAS 1054,
+# renumbered by ESYSXLAT to 54 on Linux and to Darwin 468 on macOS-arm64. If that alias arm
+# is missing, mis-encoded, or ORDERED WRONG (it must sit after the setsockopt entry, or its
+# own x8=54 output is re-caught and reissued as setsockopt), this returns a socket errno
+# instead of 0 — silently, and only on ARM. Mutation-verified: the misordered build returns
+# -ENOPROTOOPT (-92) here.
+#
+# Kept deliberately non-destructive: everything lands under one temp dir that is removed at
+# the end, and the chown is a no-op (-1/-1 = "leave both unchanged") on a file we just made.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    # ── sys_chdir. Called at lib/regression.cyr:658 and defined NOWHERE before .7, so that
+    # cyrius-deps-shipped stdlib file could not compile for any consumer reaching
+    # regression_exec_in_dir3.
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(sys_chdir("/"), 0, "sys_chdir to / succeeds");
+    assert_eq(sys_chdir("/tmp"), 0, "sys_chdir to /tmp succeeds");
+    assert(sys_chdir("/nonexistent_cyrius_probe_dir") != 0, "sys_chdir to a missing dir fails");
+    #endif
+
+    # ── signal_default — the counterpart signal_ignore never had. SIG_IGN is INHERITED
+    # across execve (a handler is not), so without a way back a process hands its ignore to
+    # every child it ever execs.
+    assert_eq(signal_ignore(SIGPIPE), 0, "signal_ignore(SIGPIPE)");
+    assert_eq(signal_default(SIGPIPE), 0, "signal_default(SIGPIPE) restores SIG_DFL");
+    assert_eq(signal_default(SIGPIPE), 0, "signal_default is idempotent");
+
+    # ── the x* family. These are the wrappers whose agnos arms are LENGTH-carrying at the
+    # same arity as the POSIX ones, so a wrong call compiles clean everywhere.
+    #ifndef CYRIUS_TARGET_WIN
+    xrmdir("/tmp/cyr_vr01_wrap/a/b");
+    xrmdir("/tmp/cyr_vr01_wrap/a");
+    xunlink("/tmp/cyr_vr01_wrap/lnk");
+    xunlink("/tmp/cyr_vr01_wrap/hard");
+    xunlink("/tmp/cyr_vr01_wrap/f");
+    xrmdir("/tmp/cyr_vr01_wrap");
+
+    assert_eq(xmkdir_p("/tmp/cyr_vr01_wrap/a/b", 493), 0, "xmkdir_p builds a nested tree");
+    assert_eq(_xdir_exists("/tmp/cyr_vr01_wrap/a/b"), 1, "the nested tree exists");
+    assert_eq(xmkdir_p("/tmp/cyr_vr01_wrap/a/b", 493), 0, "xmkdir_p on an existing tree is success");
+
+    var fd = sys_open("/tmp/cyr_vr01_wrap/f", O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    assert(fd >= 0, "probe file created");
+    sys_write(fd, "x", 1);
+    sys_close(fd);
+
+    assert_eq(xsymlink("/tmp/cyr_vr01_wrap/f", "/tmp/cyr_vr01_wrap/lnk"), 0, "xsymlink");
+    var rb[256];
+    assert(xreadlink("/tmp/cyr_vr01_wrap/lnk", &rb, 256) > 0, "xreadlink returns a length");
+    assert_eq(xlink("/tmp/cyr_vr01_wrap/f", "/tmp/cyr_vr01_wrap/hard"), 0, "xlink");
+
+    # ── sys_fchownat. AT_FDCWD + AT_SYMLINK_NOFOLLOW is lchown semantics — the reason this is
+    # the ONE wrapped primitive of the chown family rather than the legacy trio (two of the
+    # agnos 92-95 band terminate the caller on ARM). uid/gid -1 leaves both unchanged, so on
+    # a file we just created this is a permitted no-op for any user.
+    #
+    # On aarch64 THIS is the alias test: a wrong/missing/misordered 1054 arm surfaces here as
+    # a socket errno rather than 0.
+    #ifndef CYRIUS_TARGET_AGNOS
+    var ch = sys_fchownat(AT_FDCWD, "/tmp/cyr_vr01_wrap/f", 0 - 1, 0 - 1, AT_SYMLINK_NOFOLLOW);
+    assert_eq(ch, 0, "sys_fchownat(AT_FDCWD, -1, -1, NOFOLLOW) is a permitted no-op");
+    #endif
+
+    xunlink("/tmp/cyr_vr01_wrap/lnk");
+    xunlink("/tmp/cyr_vr01_wrap/hard");
+    xunlink("/tmp/cyr_vr01_wrap/f");
+    xrmdir("/tmp/cyr_vr01_wrap/a/b");
+    xrmdir("/tmp/cyr_vr01_wrap/a");
+    xrmdir("/tmp/cyr_vr01_wrap");
+    assert_eq(_xdir_exists("/tmp/cyr_vr01_wrap"), 0, "cleanup removed the probe tree");
+    #endif
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
