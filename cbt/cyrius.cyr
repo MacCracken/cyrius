@@ -48,6 +48,7 @@ fn usage(): i64 {
     println("  bench <bench.cyr>               compile + run benchmarks");
     println("  check [--with-deps] <src.cyr>  syntax check (default: standalone)");
     println("  sign-efi <pe> <key.der> <cert.der> <out>   Authenticode-sign a PE for UEFI Secure Boot (via cyrsign-efi)");
+    println("  distlib [--all|--check] [--modular] [profile]   bundle src/ into dist/ (--all = base + every [lib.X]; --check = verify, don't write)");
     println("  self                            self-hosting check (cycc==cycc)");
     println("  clean                           remove build/ contents");
     println("  lib sync [--dry-run] [--full]   vendor declared [deps].stdlib from pin (--full = whole snapshot)");
@@ -334,12 +335,37 @@ fn main(): i64 {
         # the first non-flag arg is the profile.
         _distlib_modular = 0;
         var dprof = 0;
+        var dall = 0;
+        var dchk = 0;
         var _di = cmd_idx + 1;
         while (_di < argc()) {
             var _a = argv(_di);
             if (streq(_a, "--modular") == 1) { _distlib_modular = 1; }
-            elif (dprof == 0 && load8(_a) != 45) { dprof = _a; }
+            # v6.5.8: `--all` regenerates the base bundle AND every [lib.<name>] profile;
+            # `--check` verifies them instead of writing. Before this, BOTH were silently
+            # swallowed by the `load8(_a) != 45` guard below and ran the base-bundle-only
+            # path — so `cyrius distlib --all` already "succeeded" while doing the wrong
+            # thing, which is the worst possible shape for the command the issue tells
+            # people to reach for.
+            elif (streq(_a, "--all") == 1) { dall = 1; }
+            elif (streq(_a, "--check") == 1) { dall = 1; dchk = 1; }
+            elif (load8(_a) == 45) {
+                _err_ctx("distlib: unknown option", _a);
+                return 1;
+            }
+            elif (dprof == 0) { dprof = _a; }
+            else {
+                _err_ctx("distlib: unexpected extra argument", _a);
+                return 1;
+            }
             _di = _di + 1;
+        }
+        if (dall == 1) {
+            if (dprof != 0) {
+                _err("distlib: --all/--check cover every profile; do not also name one");
+                return 1;
+            }
+            return cmd_distlib_all(dchk);
         }
         return cmd_distlib(dprof);
     }

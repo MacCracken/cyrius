@@ -6,6 +6,109 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.8] — 2026-08-05
+
+The repair release, driven by consumer filings and a tool sweep. Twelve triaged filings, four
+of which premise-checked as already-fixed or not-ours and were closed rather than worked.
+
+### Verification
+
+Release gate **GREEN, all 5 steps**. Self-host fixpoint byte-identical (**1,141,696 B**) ·
+seed-derive `seed→cybs→cycc` OK · check.sh **159 / 0** · cross-OS `SELFHOST_OK` +
+`LIBTEST_OK` on **ecb / ach / cass / pi**, real hardware. Four new gates, all
+mutation-proven.
+
+**Bench: self_compile 672 / 678 ms · cycc 1,141,696 B (unchanged).** Against 649/670/701 at
+6.5.7 — inside that release's own three-run spread, which is the honest read: this box cannot
+resolve a delta this small.
+
+### Fixed — runtime
+
+- **`thread_join` lost-wakeup deadlock** (P1, szal-filed). It read the tid word TWICE per
+  iteration — once for the loop condition, once as the `FUTEX_WAIT` expected value — under a
+  comment asserting the two were "in lockstep". They are the opposite: a worker exiting
+  between the loads let the kernel's one-shot `CLONE_CHILD_CLEARTID` wake fire with nobody
+  parked, after which the second load returned 0 and `FUTEX_WAIT(t, 0)` parked on an address
+  that would never be woken again. Permanent, silent, log-less; ~1 join in 150k; SIGKILL the
+  only recovery. One load now feeds both uses, so the joiner can only park on a tid it
+  positively observed live. The comment was rewritten — it would have invited a revert.
+- **`thread_create_detached` + `thread_is_done`.** 100 unjoined threads leaked
+  **210,124,800 B** of VA — exactly 100 × 2,101,248 — now **0**. The child unmaps its own
+  stack in the trampoline tail (musl's `__unmapself` shape) and the TLS block is carved from
+  the top of that same mapping so one `munmap` frees both; no handle is allocated at all.
+  Fixing only the 2 MiB and leaving 4 KB behind would have been the same half-fix shape that
+  cost 6.5.7 seven found-by-ports defects. ⚠ `thread_is_done` is valid only BEFORE
+  `thread_join` — join consumes the handle, and on Windows CloseHandle()s it.
+- **`i64::MIN` rendered as a bare `-` — 12 sites, not the 7 the roadmap named.** `n = 0 - n`
+  is a no-op at `i64::MIN`, so both the `n == 0` guard and the `while (n > 0)` loop were
+  skipped and every decimal formatter emitted the sign byte and nothing else;
+  `str_from_int(i64::MIN)` was the one-character string `-`, and bayan then serialised
+  `{"n":-}`, which is not JSON, with no error raised at any layer. Four in `lib/fmt.cyr`,
+  plus `string.cyr`, `log.cyr`, sakshi (fixed upstream at **2.4.8**, re-vendored), **two
+  inside the compiler itself** the roadmap never listed (`PRNUM`, `_emit_decimal`), and three
+  shipped demos. `fmt_hex`, directly below `fmt_int`, had already been fixed for this exact
+  `> 0` vs `!= 0` reason at v6.4.69 — the decimal siblings were never brought along.
+  Truncation toward zero for negative `/` and `%` was verified on x86_64, aarch64 AND cx
+  before relying on it.
+- **agnos `#97 chan_op` minted.** Verified against the kernel (`agnos/kernel/core/syscall.cyr:7620`,
+  all five ops CAPS/MINT/SEND/RECV/CLOSE dispatching, `CH_OP_SUPPORTED` = 0x1F), not against
+  the ABI doc. `#96 fork` stays UNMINTED — no arm exists — and the gate now asserts both
+  directions. ⚠ The wrappers are `sys_chan_*`: `chan_send`/`chan_recv`/`chan_close` are
+  already the in-process MPSC thread channel, and last-definition-wins would have silently
+  replaced it on agnos only.
+
+### Fixed — tools
+
+- **`cyrius coverage` had four defects, every one of which printed a number and exited 0.**
+  A fixed 1 MiB corpus that silently truncated (mis-measuring THIS repo by 33 functions,
+  179 → 212) — and the failure is ANTI-CORRELATED with the signal, degrading as the suite
+  grows, so it punished the projects testing most; an off-by-one that missed a symbol at the
+  corpus end; **`pub fn` invisible to the tool whose job is counting public functions** (the
+  v6.5.0 explicit-public spelling, while the header generator in the same file already
+  handled it); and fail-open on an empty measurement.
+- **The fail-open verb family.** `doc`, `vet`, `deny`, `audit` and `coverage` all absorbed a
+  bogus argument and exited 0. `doc` printed NOTHING — empty output from a doc generator
+  reads as "this file has no documentation" rather than "you mistyped the path". `coverage`
+  now also honours a subfolder callout instead of ignoring it.
+- **`cyrius distlib --all` / `--check`** (W1 item 6). distlib regenerated exactly one bundle
+  per invocation and nothing could ask the manifest which `[lib.X]` profiles exist — the N+1
+  ritual that nearly shipped sankoch 2.7.6's gzip fix with all nine sub-bundles still
+  carrying the buggy encoder under a fresh version string. `--check` compares **bytes**, not
+  version strings, which is exactly what let those profiles look fresh. ⛔ Both flags were
+  previously swallowed by the arg loop and ran the base-bundle-only path, exiting 0 — the
+  command the issue told people to reach for already "succeeded" while doing the wrong thing.
+  Dogfooded: all 9 bayan bundles regenerated in one command.
+- **Cross-OS gate: batched and honest.** It opened a fresh SSH connection PER TEST (~1.8 s of
+  handshake on cass, 0.9 s on pi) and printed a bare `LIBTEST_OK` with no numerator — so a
+  gate running 34 of 258 tcyr read as authoritative. Now one connection per POSIX host, and
+  the coverage is printed on every run. cass keeps its per-test loop deliberately: cmd.exe
+  quoting does not transfer. Full-corpus running is available via `CYRIUS_CROSS_OS_FULL=1`
+  (75 s on ecb, affordable only because of the batching).
+
+### Folded
+
+- **sakshi 2.4.8** — the `_sk_fmt_int` half of the `i64::MIN` class, fixed upstream.
+- **bayan 1.4.1** — `json_v_obj_get` takes a cstring while `obj_set` stores a `Str`, so the
+  symmetric-looking pair is memory-unsafe. A `: cstring` annotation arms cyrius's EXISTING
+  Str→cstring diagnostic (inert only because the parameter was untyped; output byte-identical),
+  `obj_set`'s doc now states it stores a `Str`, and `bayan_json_v_obj_get_by_str` adds the
+  symmetric spelling. ⚠ NOT the filing's rename-to-`_cstr` proposal: ~115 non-literal call
+  sites across ~16 repos would break silently, each worse than the current defect.
+
+### Notes
+
+- **Four filings closed without code**, each premise-checked against live code rather than its
+  own claim: hisab's two lexer filings (fixed at v6.4.77/.78), jalwa's agnos syscall numbers
+  (the peer is correct on all 8 — jalwa's own bug), sandhi's accept-spin (re-vendored at
+  v6.5.4), and aethersafha's portability blocker (kavach 3.10.0/3.11.x).
+- **First measurement of the cross-OS blind region**: 235 pass / 23 fail on ecb's full corpus,
+  filed with the list. Most are downstream of the open macOS-threading issue. `--full` stays
+  opt-in until that reaches zero rather than wedging every release behind a separate arc.
+- ⚠ Two gates were rewritten after mutation testing showed they could not detect their own
+  defect: the `thread_join` `.tcyr` passes 131/0 against the broken code (the structural axis
+  is what catches it), and the first coverage axes passed against the truncating build because
+  `dir_walk` gives no ordering guarantee.
+
 ## [6.5.7] — 2026-08-05
 
 The repair side of the release, driven by consumer filings: two codegen/runtime defects

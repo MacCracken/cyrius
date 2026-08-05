@@ -310,28 +310,76 @@ if [ -n "$LIBTEST" ]; then
   esac
 fi
 if [ -n "$LIBTEST" ]; then
+  CORPUS_TOTAL=$(ls tests/tcyr/*.tcyr 2>/dev/null | wc -l | tr -d ' ')
+  # v6.5.8: CYRIUS_CROSS_OS_FULL=1 runs the WHOLE tcyr corpus instead of the glob.
+  # Opt-in, not the default, and the reason is measured rather than assumed: a full run on
+  # ecb takes 75 s (affordable only because the ssh loop is now batched — it was ~1.8 s of
+  # handshake PER TEST before) and reports 235 pass / 23 fail. Those 23 are pre-existing
+  # platform gaps, most of them downstream of the open macOS-threading issue, not
+  # regressions from this release — so defaulting to full would wedge every release behind
+  # a separate arc. Filed with the measured list; flip the default when it reaches zero.
+  if [ "${CYRIUS_CROSS_OS_FULL:-0}" = "1" ]; then LIBTEST=""; fi
   TESTS=$(ls tests/tcyr/${LIBTEST}*.tcyr 2>/dev/null || true)
   [ -n "$TESTS" ] || { echo "LIBTEST_FAIL: no tests/tcyr matched '${LIBTEST}'"; exit 1; }
-  echo "── lib-test fallback on $HOST (native cycc, real hardware) ──"
-  for t in $TESTS; do
-    base=$(basename "$t")
-    case "$HOST" in
-      ecb)
-        ssh $SSHO ecb "cd ~/_cyaud && cat $t | CYRIUS_MACHO_ARM=1 ./r1r > _lt 2>/dev/null && chmod +x _lt && codesign -s - -f _lt >/dev/null 2>&1 && (rc=0; ./_lt >/dev/null 2>&1 || rc=\$?; [ \$rc -eq 0 ])" \
-          || { echo "  LIBTEST_FAIL: $base on ecb"; exit 1; }
-        ;;
-      ach|pi)
-        ssh $SSHO $HOST "cd ~/_cyaud && cat $t | ./r1 > _lt 2>/dev/null && chmod +x _lt && (rc=0; ./_lt >/dev/null 2>&1 || rc=\$?; [ \$rc -eq 0 ])" \
-          || { echo "  LIBTEST_FAIL: $base on $HOST"; exit 1; }
-        ;;
-      cass)
-        # PE: the glob MUST select PE-safe tests (fork/socketpair are POSIX-only).
-        wt=$(echo "$t" | tr '/' '\\')
-        ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\_cyaud && c2.exe < $wt > _lt.exe && _lt.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" \
-          || { echo "  LIBTEST_FAIL: $base on cass (PE-incompatible? fork/socketpair are POSIX-only)"; exit 1; }
-        ;;
-    esac
-    echo "  PASS: $base on $HOST"
-  done
-  echo "LIBTEST_OK: $HOST ($(echo "$TESTS" | wc -l | tr -d ' ') tests)"
+  SEL_N=$(echo "$TESTS" | wc -l | tr -d ' ')
+  echo "── lib-test on $HOST (native cycc, real hardware) ──"
+  # ⛔ v6.5.8: SAY WHAT IS AND IS NOT COVERED. This used to print a bare "LIBTEST_OK:
+  # <host>" with no numerator, denominator or the word "subset", so a gate running 32 of
+  # 255 tcyr read as authoritative — and 6.5.7 proved the blind region holds real,
+  # multi-release-shipped defects (xrmdir was broken on macOS-arm64 for five releases).
+  # No silent caps: if a glob narrows the corpus, the number dropped is printed.
+  if [ -z "$LIBTEST" ]; then
+    echo "  corpus: ALL $SEL_N of $CORPUS_TOTAL tcyr (CYRIUS_CROSS_OS_FULL=1)"
+  else
+    echo "  corpus: $SEL_N of $CORPUS_TOTAL tcyr selected by glob '${LIBTEST}*' ($((CORPUS_TOTAL - SEL_N)) NOT run on $HOST — set CYRIUS_CROSS_OS_FULL=1 for the whole corpus)"
+  fi
+
+  case "$HOST" in
+    ecb) LT_CC='CYRIUS_MACHO_ARM=1 ./r1r'; LT_SIGN=1 ;;
+    ach) LT_CC='./r1';                     LT_SIGN=0 ;;
+    pi)  LT_CC='./r1';                     LT_SIGN=0 ;;
+    *)   LT_CC='';                         LT_SIGN=0 ;;
+  esac
+
+  if [ -n "$LT_CC" ]; then
+    # ── ONE ssh for the whole corpus (v6.5.8). The loop it replaces opened a fresh
+    # connection PER TEST: ~1.8 s of handshake on cass, ~0.9 s on pi, with zero test
+    # value. Batching is what pays for widening the corpus — the tests were never the
+    # cost driver, the connections were. The runner is scp'd rather than inlined because
+    # nesting a remote for-loop inside ssh quoting is exactly the class of bug the cass
+    # notes in CLAUDE.md warn about.
+    scp -q $SSHO scripts/cross-os-libtest-runner.sh "$HOST:~/_cyaud/_lt_run.sh" || {
+      echo "LIBTEST_FAIL: could not ship the runner to $HOST"; exit 1; }
+    LT_OUT=$(ssh $SSHO "$HOST" "cd ~/_cyaud && sh _lt_run.sh '$LT_CC' '$LT_SIGN' '$LIBTEST'" 2>&1) || true
+    ssh $SSHO "$HOST" 'rm -f ~/_cyaud/_lt_run.sh' >/dev/null 2>&1 || true
+    LT_SUM=$(printf '%s\n' "$LT_OUT" | grep '__LIBTEST_SUMMARY__' | tail -1)
+    if [ -z "$LT_SUM" ]; then
+      printf '%s\n' "$LT_OUT" | tail -8
+      echo "LIBTEST_FAIL: $HOST produced no summary (runner did not complete)"
+      exit 1
+    fi
+    LT_PASS=$(echo "$LT_SUM" | awk '{print $2}')
+    LT_FAIL=$(echo "$LT_SUM" | awk '{print $3}')
+    echo "  ran $LT_PASS passed, $LT_FAIL failed on $HOST"
+    if [ "$LT_FAIL" != "0" ]; then
+      printf '%s\n' "$LT_OUT" | grep '__LIBTEST_FAILED__' | sed 's/__LIBTEST_FAILED__/  failing:/'
+      echo "  LIBTEST_FAIL: $LT_FAIL test(s) on $HOST"
+      exit 1
+    fi
+    echo "LIBTEST_OK: $HOST ($LT_PASS tests)"
+  else
+    # cass keeps the per-test loop DELIBERATELY. Its remote shell is cmd.exe, where
+    # `prog & echo %errorlevel%` reports 0 at parse time and a redirect inside a
+    # backgrounded compound corrupts the output — the quoting rules that make a batched
+    # remote loop safe on POSIX do not transfer, and this leg is the one that most needs
+    # to stay trustworthy. See the cass notes in CLAUDE.md.
+    for t in $TESTS; do
+      base=$(basename "$t")
+      wt=$(echo "$t" | tr '/' '\\')
+      ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\_cyaud && c2.exe < $wt > _lt.exe && _lt.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" \
+        || { echo "  LIBTEST_FAIL: $base on cass (PE-incompatible? fork/socketpair are POSIX-only)"; exit 1; }
+      echo "  PASS: $base on cass"
+    done
+    echo "LIBTEST_OK: cass ($SEL_N tests)"
+  fi
 fi

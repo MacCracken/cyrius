@@ -429,6 +429,12 @@ fn thread_create_detached(fp, arg): i64 {
 # reaper — "collect whichever workers have finished, keep serving the rest" — impossible
 # to write without a detached thread and a side channel. Pass a handle from
 # `thread_create`; a detached thread has no handle by design.
+# ⛔ VALID ONLY BEFORE `thread_join`. Join CONSUMES the handle — on Windows it
+# CloseHandle()s it, so a post-join query inspects a closed handle and reports "not
+# done" (caught on real cass hardware, by a test that asserted the wrong contract).
+# The intended use is the reaper shape: poll while running, then join once this
+# returns 1. After joining, the thread is done by definition and there is nothing
+# left to ask.
 fn thread_is_done(t): i64 {
     if (t == 0) { return 0 - 1; }
     if (load64(t) == 0) { return 1; }

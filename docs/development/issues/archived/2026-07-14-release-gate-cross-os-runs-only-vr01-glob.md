@@ -1,6 +1,16 @@
 # Release gate's cross-OS leg runs only the `vr01_` glob — CI runs the full corpus, so the gate can be green while CI is red
 
-**Status:** 🟡 **OPEN** — systemic gate gap; **re-verified live at the v6.4.82 closeout** (the gate
+**Status:** ✅ **SHIPPED v6.5.8** — the two defects are fixed: the per-test SSH loop is
+batched into one connection per POSIX host (cass keeps its per-test loop; cmd.exe quoting
+does not transfer safely), and the gate now PRINTS its own coverage ("34 of 258 … 224 NOT
+run") so a subset can no longer read as authoritative. Full-corpus running is available
+via `CYRIUS_CROSS_OS_FULL=1` — 75 s on ecb, affordable only because of the batching.
+⛔ It is opt-in rather than default because the first measurement found **23 of 258**
+failing on ecb, pre-existing and mostly downstream of the open macOS-threading issue;
+those are filed separately as
+[`2026-08-05-cross-os-full-corpus-23-failures-on-ecb`](2026-08-05-cross-os-full-corpus-23-failures-on-ecb.md)
+with the measured list. Flip the default when that count reaches zero.
+**Filed as:** systemic gate gap; **re-verified live at the v6.4.82 closeout** (the gate
 still passes the glob, and the counts below are re-derived, not carried over).
 **Placement:** unpinned — 6.x-line release-engineering backlog, no dedicated slot; option (3) below
 is a one-line change that folds into any release. Never 7.x.

@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.7** (2026-08-05) — cycc **1,133,440 B** · check.sh **150 passed / 0
+**Current head: v6.5.8** (2026-08-05) — cycc **1,133,440 B** · check.sh **150 passed / 0
 failed** · self_compile **648 ms** · **254** `.tcyr` (31 `vr01_`) · **99** `lib/*.cyr` ·
 api-surface **4,777** public fns · heap map **100 regions / 0 overlaps** (unchanged across
 6.5.0–.2 — the visibility file-id substrate is a lazy `alloc`, the `_fnt_tparams`/`_vsgn_base`

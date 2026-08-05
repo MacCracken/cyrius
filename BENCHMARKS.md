@@ -7,12 +7,12 @@
 
 | | Run 1 | Run 2 | Run 3 |
 |---|---|---|---|
-| **Date** | `2026-08-05T20:18:36Z` | `2026-08-05T20:24:10Z` | `2026-08-05T20:36:01Z` |
-| **Commit** | `79900338` | `79900338` | `79900338` |
+| **Date** | `2026-08-05T22:52:46Z` | `2026-08-05T23:06:20Z` | `2026-08-05T23:06:37Z` |
+| **Commit** | `64a69255` | `64a69255` | `64a69255` |
 
 ## alloc
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | 1KB | 1us | 1us | 1us | - |
 | 64B | 1us | 1us | 1us | - |
@@ -21,25 +21,25 @@
 
 ## compiler
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
-| ark | 34ms | 34ms | 34ms | - |
+| ark | 35ms | 35ms | 35ms | - |
 | cyrdoc | 41ms | 41ms | 41ms | - |
-| cyrfmt | 30ms | 30ms | 30ms | - |
-| cyrlint | 48ms | 48ms | 48ms | - |
+| cyrfmt | 31ms | 31ms | 31ms | - |
+| cyrlint | 49ms | 49ms | 49ms | - |
 | phase_emit | 4ms | 4ms | 4ms | - |
-| phase_fixup | 133ms | 133ms | 133ms | - |
-| phase_gvar | 273ms | 273ms | 273ms | - |
-| phase_lex | 115ms | 115ms | 115ms | - |
-| phase_parse | 3ms | 3ms | 3ms | - |
-| phase_pp | 114ms | 114ms | 114ms | - |
+| phase_fixup | 138ms | 138ms | 138ms | - |
+| phase_gvar | 290ms | 290ms | 290ms | - |
+| phase_lex | 122ms | 122ms | 122ms | - |
+| phase_parse | 4ms | 4ms | 4ms | - |
+| phase_pp | 119ms | 119ms | 119ms | - |
 | phase_write | 0ns | 0ns | 0ns | - |
-| self_compile | 649ms | 649ms | 649ms | - |
+| self_compile | 678ms | 678ms | 678ms | - |
 | trivial | 8ms | 8ms | 8ms | - |
 
 ## dispatch
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | chain_16 | 1us | 1us | 1us | - |
 | chain_8 | 1us | 1us | 1us | - |
@@ -48,7 +48,7 @@
 
 ## float
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | f64_add | 1us | 1us | 1us | - |
 | f64_div | 1us | 1us | 1us | - |
@@ -60,7 +60,7 @@
 
 ## fmt
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | hex | 1us | 1us | 1us | - |
 | int_large | 1us | 1us | 1us | - |
@@ -71,7 +71,7 @@
 
 ## freelist
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | alloc_free_1KB | 1us | 1us | 1us | - |
 | alloc_free_64 | 1us | 1us | 1us | - |
@@ -79,7 +79,7 @@
 
 ## hashmap
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | delete | 2us | 2us | 2us | - |
 | has | 1us | 1us | 1us | - |
@@ -89,7 +89,7 @@
 
 ## intern
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | classify | 1us | 1us | 1us | - |
 | ptr_eq | 1us | 1us | 1us | - |
@@ -98,30 +98,30 @@
 
 ## keccak
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
-| shake128/4KB | 201us | 201us | 201us | - |
-| shake256/4KB | 256us | 256us | 256us | - |
+| shake128/4KB | 208us | 208us | 208us | - |
+| shake256/4KB | 266us | 266us | 266us | - |
 | shake256/empty | 10us | 10us | 10us | - |
-| shake256/extend_1KB | 62us | 62us | 62us | - |
+| shake256/extend_1KB | 65us | 65us | 65us | - |
 
 ## miller_rabin
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
-| fast | 1us | 1us | 1us | - |
+| fast | 2us | 2us | 2us | - |
 | slow | 11us | 11us | 11us | - |
 
 ## mulmod
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | binary_slow | 1us | 1us | 1us | - |
 | u64_fast | 1us | 1us | 1us | - |
 
 ## regalloc
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | fnv_plain | 2us | 2us | 2us | - |
 | fnv_regalloc | 2us | 2us | 2us | - |
@@ -132,7 +132,7 @@
 
 ## shortcircuit
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | and_both | 1us | 1us | 1us | - |
 | and_chain_all | 1us | 1us | 1us | - |
@@ -143,13 +143,13 @@
 
 ## size
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | cc5_bytes | 1ms | 1ms | 1ms | - |
 
 ## str
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | builder | 1us | 1us | 1us | - |
 | cat | 1us | 1us | 1us | - |
@@ -160,7 +160,7 @@
 
 ## tagged
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | Err | 1us | 1us | 1us | - |
 | Ok | 1us | 1us | 1us | - |
@@ -172,13 +172,13 @@
 
 ## vec
 
-| Benchmark | `79900338` | `79900338` | `79900338` | Delta |
+| Benchmark | `64a69255` | `64a69255` | `64a69255` | Delta |
 |---|---|---|---|---|
 | find_100 | 1us | 1us | 1us | - |
 | get | 1us | 1us | 1us | - |
 | push_10 | 1us | 1us | 1us | - |
 | push_100 | 3us | 3us | 3us | - |
-| push_1000 | 20us | 20us | 20us | - |
+| push_1000 | 21us | 21us | 21us | - |
 
 ---
 

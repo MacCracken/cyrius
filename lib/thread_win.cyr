@@ -71,6 +71,12 @@ fn thread_create_detached(fp, arg): i64 {
 
 # v6.5.8: non-blocking completion test. WaitForSingleObject with a 0 timeout returns
 # WAIT_OBJECT_0 (0) if signalled, WAIT_TIMEOUT (0x102 = 258) if still running.
+# ⛔ VALID ONLY BEFORE `thread_join`. Join CONSUMES the handle — on Windows it
+# CloseHandle()s it, so a post-join query inspects a closed handle and reports "not
+# done" (caught on real cass hardware, by a test that asserted the wrong contract).
+# The intended use is the reaper shape: poll while running, then join once this
+# returns 1. After joining, the thread is done by definition and there is nothing
+# left to ask.
 fn thread_is_done(t): i64 {
     if (t == 0) { return 0 - 1; }
     if (syscall(61441, t, 0) == 0) { return 1; }

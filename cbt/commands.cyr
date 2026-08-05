@@ -1967,6 +1967,137 @@ fn _distlib_scan_umbrella(leaves, path): i64 {
 }
 
 var _distlib_modular = 0;   # v6.2.50 Phase C: `--modular` → per-module dist + index
+# v6.5.8: `--check` regenerates into a sibling temp and byte-compares instead of writing.
+var _distlib_check = 0;
+var _distlib_drift = 0;     # names of bundles that differed, for the final report
+
+# v6.5.8: enumerate every `[lib.<name>]` profile declared in the manifest.
+#
+# WHY THIS DID NOT EXIST AND WHY IT MATTERS. `cyrius distlib` regenerates exactly ONE
+# bundle per invocation, and nothing could ask the manifest which profiles exist — so
+# every multi-profile repo ran an N+1 ritual maintained by hand in its release script.
+# That is how sankoch 2.7.6's silent-data-corruption gzip fix nearly shipped with all NINE
+# sub-bundles still carrying the buggy encoder under a fresh version string: the main
+# bundle was regenerated, the profiles were not, and nothing compared them.
+#
+# ⚠ LINE-ANCHORED ON PURPOSE. The neighbouring `_distlib_named_deps` scans unanchored,
+# which would match `[lib.x]` inside a comment or a string. Skip leading whitespace,
+# skip `#` comment lines, then require the line to START with `[lib.`. Bare `[lib]`
+# correctly does not match, since the base bundle is not a profile.
+#
+# Writes NUL-terminated names into `out` (a caller-owned buffer of `outcap` bytes) and
+# returns the count, or -1 if the buffer would overflow.
+fn _distlib_enum_profiles(mbuf, mlen, out, outcap): i64 {
+    var count = 0;
+    var w = 0;
+    var p = 0;
+    while (p < mlen) {
+        var ls = p;
+        while (p < mlen && load8(mbuf + p) != 10) { p = p + 1; }
+        var le = p;
+        if (p < mlen) { p = p + 1; }
+        var lp = ls;
+        while (lp < le) {
+            var c = load8(mbuf + lp);
+            if (c != 32 && c != 9) { break; }
+            lp = lp + 1;
+        }
+        if (lp >= le) { continue; }
+        if (load8(mbuf + lp) == 35) { continue; }              # comment
+        if (le - lp < 6) { continue; }                          # shortest is `[lib.x]`
+        if (memeq(mbuf + lp, "[lib.", 5) == 0) { continue; }
+        var ns = lp + 5;
+        var ne = ns;
+        while (ne < le && load8(mbuf + ne) != 93) { ne = ne + 1; }   # `]`
+        if (ne >= le) { continue; }                             # unterminated header
+        var nlen = ne - ns;
+        if (nlen <= 0) { continue; }
+        # Dedup against what we already captured.
+        var dup = 0;
+        var q = 0;
+        var seen = 0;
+        while (seen < count) {
+            var slen = strlen(out + q);
+            if (slen == nlen) { if (memeq(out + q, mbuf + ns, nlen) == 1) { dup = 1; } }
+            q = q + slen + 1;
+            seen = seen + 1;
+        }
+        if (dup == 1) { continue; }
+        if (w + nlen + 1 > outcap) { return 0 - 1; }
+        memcpy(out + w, mbuf + ns, nlen);
+        store8(out + w + nlen, 0);
+        # Reuse the existing name-safety rule rather than a second copy of it.
+        if (_distlib_valid_profile(out + w) == 0) { continue; }
+        w = w + nlen + 1;
+        count = count + 1;
+    }
+    return count;
+}
+
+# v6.5.8: byte-compare two files. Returns 1 if identical, 0 otherwise (including when
+# either cannot be read). No such helper existed — and it is the load-bearing half of
+# `--check`: comparing VERSION STRINGS is exactly what let sankoch's stale profiles look
+# fresh. Content is the only thing that answers "was this bundle regenerated".
+fn _distlib_files_same(a, b): i64 {
+    var abuf = alloc(1048576);
+    var bbuf = alloc(1048576);
+    var an = file_read_all(a, abuf, 1048575);
+    var bn = file_read_all(b, bbuf, 1048575);
+    if (an < 0 || bn < 0) { return 0; }
+    if (an != bn) { return 0; }
+    return memeq(abuf, bbuf, an);
+}
+
+# v6.5.8: regenerate (or verify) the base bundle AND every declared profile.
+#
+# `check` = 0 writes them; `check` = 1 regenerates into a sibling temp, byte-compares, and
+# reports every bundle that DIFFERS — the CI shape, so a release cannot ship a stale
+# profile the way sankoch 2.7.6 nearly did. Exits non-zero on drift, naming each offender.
+fn cmd_distlib_all(check): i64 {
+    var mf = "cyrius.cyml";
+    if (file_exists(mf) == 0) { mf = "cyrius.toml"; }
+    if (file_exists(mf) == 0) {
+        _err("no cyrius.cyml or cyrius.toml found");
+        return 1;
+    }
+    var mbuf = alloc(32768);
+    var mlen = file_read_all(mf, mbuf, 32767);
+    if (mlen <= 0) { _err("cannot read manifest"); return 1; }
+    store8(mbuf + mlen, 0);
+
+    var names = alloc(4096);
+    var n = _distlib_enum_profiles(mbuf, mlen, names, 4096);
+    if (n < 0) { _err("too many [lib.*] profiles for the 4 KB name buffer"); return 1; }
+
+    _distlib_check = check;
+    _distlib_drift = 0;
+    var failures = 0;
+
+    # The base bundle first — it is the one every consumer resolves by default.
+    if (cmd_distlib(0) != 0) { failures = failures + 1; }
+
+    var i = 0;
+    var off = 0;
+    while (i < n) {
+        var nm = names + off;
+        if (cmd_distlib(nm) != 0) { failures = failures + 1; }
+        off = off + strlen(nm) + 1;
+        i = i + 1;
+    }
+    _distlib_check = 0;
+
+    sys_write(STDOUT_FD, "  ", 2);
+    fmt_int(n + 1);
+    if (check == 1) { println(" bundle(s) checked (base + profiles)"); }
+    else { println(" bundle(s) regenerated (base + profiles)"); }
+
+    if (_distlib_drift > 0) {
+        _err("distlib --check: bundle(s) are STALE — regenerate with `cyrius distlib --all`");
+        return 1;
+    }
+    if (failures > 0) { return 1; }
+    return 0;
+}
 
 # v6.2.51 (closeout refactor): the named-dep exclude set — a captured `lib/X`
 # matching a `[deps.X]` block is a fold (resolved transitively), not a stdlib
@@ -2384,6 +2515,24 @@ fn cmd_distlib(profile): i64 {
     str_builder_add_cstr(out_sb, ".cyr");
     var out_path = str_data(str_builder_build(out_sb));
 
+    # v6.5.8 `--check`: regenerate into a SIBLING temp and byte-compare, so a CI job can
+    # ask "is every committed bundle current?" without dirtying the tree.
+    # ⚠ The temp lives inside dist/, not /tmp: cbt/cyrius.cyr cross-compiles to PE and both
+    # Mach-O flavours, and a hardcoded /tmp is wrong on Windows. A sibling path sidesteps
+    # the platform temp-dir question entirely and keeps the rename-free compare local.
+    var real_path = out_path;
+    if (_distlib_check == 1) {
+        var chk_sb = str_builder_new();
+        str_builder_add_cstr(chk_sb, "dist/.check-");
+        str_builder_add_cstr(chk_sb, pkg_name);
+        if (profile != 0) {
+            str_builder_add_cstr(chk_sb, "-");
+            str_builder_add_cstr(chk_sb, profile);
+        }
+        str_builder_add_cstr(chk_sb, ".cyr");
+        out_path = str_data(str_builder_build(chk_sb));
+    }
+
     var ofd = sys_open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     if (ofd < 0) {
         _err_ctx("cannot create", out_path);
@@ -2607,6 +2756,50 @@ fn cmd_distlib(profile): i64 {
     # Prior behavior exited 1 here, which broke patra 1.5.5's
     # release CI (the release workflow runs `cyrius distlib` as a
     # step; every consumer-bundle shape tripped the same check).
+    # v6.5.8: in --check mode compare against the committed bundle and clean up. Skipped
+    # for the informational compile below — it would be N spurious compiles (14 for sigil)
+    # of a temp we are about to delete.
+    if (_distlib_check == 1) {
+        var same = _distlib_files_same(out_path, real_path);
+        var dp_sb = str_builder_new();
+        var dopl = strlen(out_path);
+        if (dopl > 4) {
+            var dstem = alloc(dopl - 3);
+            memcpy(dstem, out_path, dopl - 4);
+            store8(dstem + dopl - 4, 0);
+            str_builder_add_cstr(dp_sb, dstem);
+        }
+        str_builder_add_cstr(dp_sb, ".deps");
+        var chk_deps = str_data(str_builder_build(dp_sb));
+        # The .deps sidecar counts too — sigil's CI already diff-checks dist/sigil.deps,
+        # and a stale sidecar mis-resolves a consumer's stdlib leaves.
+        if (file_exists(chk_deps) == 1) {
+            var rd_sb = str_builder_new();
+            var ropl = strlen(real_path);
+            if (ropl > 4) {
+                var rstem = alloc(ropl - 3);
+                memcpy(rstem, real_path, ropl - 4);
+                store8(rstem + ropl - 4, 0);
+                str_builder_add_cstr(rd_sb, rstem);
+            }
+            str_builder_add_cstr(rd_sb, ".deps");
+            if (_distlib_files_same(chk_deps, str_data(str_builder_build(rd_sb))) == 0) { same = 0; }
+            xunlink(chk_deps);
+        }
+        xunlink(out_path);
+        if (same == 0) {
+            _distlib_drift = _distlib_drift + 1;
+            sys_write(STDERR_FD, "  STALE: ", 9);
+            sys_write(STDERR_FD, real_path, strlen(real_path));
+            sys_write(STDERR_FD, "\n", 1);
+            return 0;
+        }
+        sys_write(STDOUT_FD, "  current: ", 11);
+        sys_write(STDOUT_FD, real_path, strlen(real_path));
+        sys_write(STDOUT_FD, "\n", 1);
+        return 0;
+    }
+
     var check_r = compile(out_path, "/dev/null");
     if (check_r != 0) {
         _info("note: bundle has unresolved symbols (expected for consumer-included");
