@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Version** | **6.5.6** — the agnosai/sandhi pair, both filed and fixed on 2026-08-03: `sys_exit_group` (a threaded program's idiomatic epilogue hung — `sys_exit` is exit(2)) and `async_await_readable_ms` (a cooperative server could not be woken to stop), plus three defects found while fixing them and the sandhi 1.9.9 / vani 1.1.3 folds. |
-| **cycc** | x86 **1,133,440 B** · seed 29,024 B → cybs → cycc byte-identical |
+| **cycc** | x86 **1,133,488 B** · seed 29,024 B → cybs → cycc byte-identical |
 | **Bootstrap / cross-OS** | **ecb** (macOS-arm64) · **ach** (Intel-Mac x86-macho) · **cass** (Windows PE) · **pi** (aarch64) — all `SELFHOST_OK` + VR-01 `LIBTEST_OK` on REAL hardware at 6.5.6 |
 | **Gates** | `check.sh` **153 / 0** + **10** shell gate scripts (new: `exit_group_wrapper`, `async_await_readable_ms`, `scaffold_verb_discovery` — all mutation-proven) · release gate GREEN all 5 steps · bench 643/648 ms |
 | **Corpus** | **254** `.tcyr` · **99** `lib/*.cyr` · api-surface **4783** · heap **100** regions / 0 overlaps |
