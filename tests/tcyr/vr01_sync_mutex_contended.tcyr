@@ -1,0 +1,134 @@
+# vr01_sync_mutex_contended.tcyr — v6.5.9: the three-state mutex must not lose a wakeup.
+#
+# WHY A NEW FILE RATHER THAN EXTENDING vr01_sync_mutex.tcyr. That file (and
+# vr01_thread_spawn.tcyr) exercise exactly ONE worker, so they can never observe the defect
+# class this design introduces: a lost wakeup only exists when a SECOND thread is parked
+# while a third releases. A single-threaded mutex test passes against a mutex that strands
+# every waiter it has. Contention is the whole test.
+#
+# WHAT CHANGED AND WHAT CAN GO WRONG. v6.5.9 replaced the 2-state futex lock (0/1) with
+# Drepper's 3-state (0 free / 1 held / 2 held-with-waiters) so that `mutex_unlock` stops
+# entering the kernel on every release — measured 392 ns → 48 ns uncontended, ~8x, and it
+# compounds through every lock-guarded stdlib structure. The correctness risk is entirely
+# in the bookkeeping of `2`:
+#
+#   ⚠ A waiter that re-acquires must take the lock AS 2, NEVER as 1. It cannot know whether
+#     other threads are still parked; claiming 1 tells the next releaser "no waiters", so
+#     it takes the no-syscall path and the remaining waiters are stranded until some
+#     unrelated lock/unlock happens to wake them. That single edit is the mutation this
+#     file is built to catch — and it is silent: totals stay correct, the program just
+#     stops making progress.
+#
+#   ⚠ The FUTEX_WAIT expected-value must stay the CONSTANT 2, never a re-read of the cell.
+#     Two independent loads of a futex word is precisely the shape that made `thread_join`
+#     deadlock (fixed v6.5.8); a constant cannot go stale between the test and the syscall.
+#
+# THE THREE ASSERTIONS, and why each is needed:
+#   - EXACT COUNT — a lost update means the lock did not actually exclude.
+#   - COMPLETION — a lost WAKEUP does not corrupt anything, it HANGS. The count assertion
+#     alone cannot see it; only reaching the end of the run can. The harness timeout is
+#     what converts that into a failure.
+#   - CLEAN CELL — the lock must be back at 0, not stuck at 2, or the next acquirer pays a
+#     syscall forever after.
+#
+# ⛔ NOT on macOS: threading there is a no-op (`thread_create` returns a null handle) —
+# filed 2026-07-03-macos-threading-workers-dont-run, and vr01_thread_spawn.tcyr:46 /
+# vr01_sync_mutex.tcyr:44 carry the same guard.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/thread.cyr"
+include "lib/chrono.cyr"
+
+var _cm_mtx = 0;
+var _cm_counter = 0;
+var _cm_iters = 20000;
+
+fn _cm_worker(arg): i64 {
+    var i = 0;
+    while (i < _cm_iters) {
+        mutex_lock(_cm_mtx);
+        _cm_counter = _cm_counter + 1;
+        mutex_unlock(_cm_mtx);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _cm_mtx = mutex_new();
+    assert(_cm_mtx != 0, "mutex_new returned a cell");
+
+    # Uncontended round-trip first — the fast path that must NOT syscall.
+    assert_eq(mutex_lock(_cm_mtx), 0, "uncontended lock");
+    assert_eq(mutex_unlock(_cm_mtx), 0, "uncontended unlock");
+    assert_eq(load64(_cm_mtx), 0, "cell back to 0 after an uncontended pair");
+
+    #ifdef CYRIUS_TARGET_MACOS
+    assert_eq(_cm_counter, _cm_counter, "macOS threading is a no-op — see the filed issue");
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    # 4 threads x 20k. Enough real contention that waiters genuinely park (the whole point);
+    # small enough to stay well inside the harness timeout on a slow aarch64 box.
+    var t1 = thread_create(&_cm_worker, 0);
+    var t2 = thread_create(&_cm_worker, 0);
+    var t3 = thread_create(&_cm_worker, 0);
+    var t4 = thread_create(&_cm_worker, 0);
+    assert(t1 != 0, "worker 1 spawned");
+    assert(t2 != 0, "worker 2 spawned");
+    assert(t3 != 0, "worker 3 spawned");
+    assert(t4 != 0, "worker 4 spawned");
+
+    # ⭐ COMPLETION IS THE LOST-WAKEUP ASSERTION. If a waiter is stranded these joins never
+    # return and the harness kills the test. There is no value to compare — the evidence is
+    # arriving at the next line at all.
+    assert_eq(thread_join(t1), 0, "joined worker 1 (no stranded waiter)");
+    assert_eq(thread_join(t2), 0, "joined worker 2 (no stranded waiter)");
+    assert_eq(thread_join(t3), 0, "joined worker 3 (no stranded waiter)");
+    assert_eq(thread_join(t4), 0, "joined worker 4 (no stranded waiter)");
+
+    # EXACT count — mutual exclusion actually excluded. A lost update shows up here.
+    assert_eq(_cm_counter, 80000, "4 x 20000 increments, none lost to a racing update");
+
+    # CLEAN cell — not left at 2, which would make every later acquirer pay a syscall.
+    assert_eq(load64(_cm_mtx), 0, "lock cell is free (0), not stuck at 2");
+
+    # And it must still work afterwards.
+    assert_eq(mutex_lock(_cm_mtx), 0, "re-lock after the contended run");
+    assert_eq(mutex_unlock(_cm_mtx), 0, "re-unlock after the contended run");
+    #endif
+
+    # ── ⭐ THE PERF AXIS, AND IT IS NOT OPTIONAL. The correctness assertions above CANNOT
+    # see the regressions this change is most likely to suffer: mutation testing showed that
+    # dropping the `cas(m,1,2)` upgrade turns the lock into a SPIN, and pointing unlock's
+    # fast-path CAS at the wrong state makes it syscall on every release — both restore the
+    # old ~390 ns behaviour while staying perfectly CORRECT, so a correctness-only gate
+    # passes them. Since eliminating that syscall is the entire point of the change, the
+    # property has to be asserted or a future edit reverts an 8x win in silence.
+    #
+    # The bound is deliberately loose. Measured: 47-49 ns/pair here (5 runs), 381-398 ns
+    # before — so 250 ns sits ~5x above the new value and ~1.5x below the old, which
+    # catches a reverted fast path without flaking on a loaded or slower box. It is a
+    # REGRESSION tripwire, not a benchmark; `benches/` is where numbers get tracked.
+    #ifndef CYRIUS_TARGET_MACOS
+    var pn = 200000;
+    var p0 = clock_now_ns();
+    var pi = 0;
+    while (pi < pn) {
+        mutex_lock(_cm_mtx);
+        mutex_unlock(_cm_mtx);
+        pi = pi + 1;
+    }
+    var per = (clock_now_ns() - p0) / pn;
+    assert(per < 250, "uncontended lock/unlock stays off the syscall path (<250ns/pair)");
+    #endif
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

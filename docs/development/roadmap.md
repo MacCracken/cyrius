@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.8** (2026-08-05) — cycc **1,133,440 B** · check.sh **150 passed / 0
+**Current head: v6.5.9** (2026-08-06) — cycc **1,133,440 B** · check.sh **150 passed / 0
 failed** · self_compile **648 ms** · **254** `.tcyr` (31 `vr01_`) · **99** `lib/*.cyr` ·
 api-surface **4,777** public fns · heap map **100 regions / 0 overlaps** (unchanged across
 6.5.0–.2 — the visibility file-id substrate is a lazy `alloc`, the `_fnt_tparams`/`_vsgn_base`
@@ -496,6 +496,17 @@ roadmap rows.
    **`lib/sakshi.cyr` is a FOLD** — patch `~/Repos/sakshi/src/format.cyr:40` → sakshi 2.4.8 →
    regen dist → re-vendor. Never patch the fold. Mind the snapshot-ping-pong rule for the
    `lib/` edits.
+3. ✅ **Three-state mutex — SHIPPED v6.5.9.** 0 = free / 1 = held / 2 = held-with-waiters;
+   `mutex_unlock` no longer syscalls on every release. **392 ns → 48 ns** uncontended.
+   ⛔ **THIS ITEM'S STATED PREREQUISITE WAS WRONG AND COST IT A PIN.** It was recorded here
+   as blocked on `atomic_swap` plus a value-returning CAS, "single instructions on both
+   arches" — real work with real-pi asm-review risk. Neither is needed: a SUCCESSFUL
+   boolean `atomic_cas(m, 1, 0)` already proves the pre-value was exactly 1, which is the
+   information `atomic_swap` would have returned. The item was cheaper than pinned, and the
+   prerequisite is what kept it waiting. Adding `atomic_swap` remains worth doing on its own
+   merits (it saves one CAS here) but it gates nothing.
+   <details><summary>Original plan (kept for the reasoning)</summary>
+
 3. **Three-state mutex.** Prerequisite first: `lib/atomic.cyr` exposes only
    `atomic_load`/`atomic_store`/`atomic_cas` (returns 0/1 via `sete`, discarding the observed
    value)/`atomic_fetch_add`/`atomic_fence` — so add `atomic_swap` and a **value-returning**
@@ -505,6 +516,8 @@ roadmap rows.
    the pre-store value) are genuinely load-bearing. **Verify the new aarch64 asm on real pi,
    not qemu.** Blast radius is measured, not inferred: `lib/thread.cyr` calls `mutex_lock` at
    `:335`/`:411`/`:434`/`:459`/`:488`, so every `chan_send`/`chan_recv`/`chan_try_*` pays it.
+   </details>
+
 4. **`vec_sort_by` + `vec_select_nth`.** ~55 lines, additive. Two hard constraints from the
    filing, both correct: name it **`vec_sort_by`, NOT bare `vec_sort`** — `itihas/src/util.cyr:57`
    already defines `vec_sort(v, cmp)` in the flat namespace and last-definition-wins would break

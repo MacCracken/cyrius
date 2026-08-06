@@ -1,0 +1,122 @@
+# vr01_arena_growable.tcyr — v6.5.9: exhausting an arena must not be a segfault.
+#
+# THE FILED DEFECT (agnosai, 2026-08-06). The primitives handled exhaustion correctly —
+# `arena_alloc` returns 0, `str_from_a` returns 0, `vec_push_a` returns -1 — and none of
+# that was the bug. The bug is what the 0 does NEXT: a `Str` of 0 is indistinguishable
+# from a valid `Str`, there is no option type and no error channel through the `_a`
+# families, so the 0 flows on and the first thing that touches it dereferences it. The
+# observable behaviour of "arena too small" was a SIGSEGV several layers from the
+# allocation, in a JSON walker with no indication which allocator ran out.
+#
+# ⭐ THE REGRESSION DIRECTION IS THE POINT. Before threading a route onto an arena, an
+# oversized response was a LEAK on the no-free global bump. After threading — a change
+# whose whole purpose is to stop leaking — the same response became a CRASH. Adopting the
+# feature correctly made the failure worse and quieter. A 5,500-assertion suite missed it
+# because allocation tests are small-fixture by nature: they assert `bytes == 0` over a
+# handful of items, and nothing about that shape probes the ceiling. It took a deliberate
+# 200-item fixture. This file is that fixture, kept.
+#
+# WHAT IS ASSERTED, and why each matters:
+#   - the fixed arena still returns 0 (UNCHANGED default — no existing consumer moves)
+#   - GROW serves past the initial capacity, so unbounded work can use an arena at all
+#   - ⭐ reset RE-USES the chain rather than re-allocating: capacity after a second
+#     identical cycle must be IDENTICAL. If chunks were freed and re-made, an arena would
+#     re-allocate every cycle and the whole point would be lost.
+#   - SPILL degrades to the pre-arena cost instead of faulting
+#   - arena_free actually invalidates a GROW arena — without clearing the policy and the
+#     chunk chain, a "freed" growable arena takes the grow path on the next alloc and
+#     SUCCEEDS, and reset would resurrect it from a stale first_chunk
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    # ── The filed repro, verbatim in shape: exhaust a fixed arena, then allocate.
+    # It must still answer 0 — this is the DEFAULT and it is deliberately unchanged.
+    var fx = arena_new(256);
+    while (arena_alloc(fx, 8) != 0) { }
+    assert_eq(arena_alloc(fx, 8), 0, "fixed arena still returns 0 when exhausted (default unchanged)");
+    assert_eq(arena_on_full(fx), ARENA_FULL_NULL, "fixed arenas default to ARENA_FULL_NULL");
+
+    # ── GROW: the capability that was missing. 500 x 64 B against a 256 B initial chunk
+    # is ~125x the initial capacity, which no fixed arena could serve.
+    var g = arena_new_growable(256);
+    assert_eq(arena_on_full(g), ARENA_FULL_GROW, "growable arena carries ARENA_FULL_GROW");
+    var i = 0;
+    var failures = 0;
+    while (i < 500) {
+        if (arena_alloc(g, 64) == 0) { failures = failures + 1; }
+        i = i + 1;
+    }
+    assert_eq(failures, 0, "500 x 64B all served from a 256B-initial growable arena");
+    var cap1 = arena_capacity_total(g);
+    assert(cap1 >= 32000, "the chain grew to hold them");
+
+    # ⭐ RESET RE-USES THE CHUNKS. Same work again must allocate NOTHING new — a request
+    # loop converges on its high-water mark and then stops allocating. Freeing chunks on
+    # reset would mean re-allocating them every cycle, which is the opposite of an arena.
+    arena_reset(g);
+    assert_eq(arena_used(g), 0, "reset rewinds to the first chunk");
+    var j = 0;
+    while (j < 500) { arena_alloc(g, 64); j = j + 1; }
+    assert_eq(arena_capacity_total(g), cap1, "second identical cycle allocated ZERO new chunks");
+
+    # ── An allocation LARGER than the chunk size gets its own right-sized chunk;
+    # otherwise every oversize request would fail against a too-small fresh chunk.
+    # ⚠ A non-zero pointer is NOT enough. Mutation testing showed a grow path can hand
+    # back a pointer backed by a chunk far smaller than requested — a silent heap
+    # overflow that `!= 0` cannot distinguish from success. Write to the FIRST and LAST
+    # byte and read them back: that only survives if the memory is really there.
+    var big = arena_alloc(g, 200000);
+    assert(big != 0, "an allocation larger than the chunk grain still succeeds");
+    # Guarded: assert() does NOT abort, so an unguarded store on a failed allocation
+    # would SIGSEGV here and the run would die before printing its summary — turning a
+    # clean "1 failed" into an exit-139 with no report.
+    if (big != 0) {
+        store8(big, 65);
+        store8(big + 199999, 90);
+        assert_eq(load8(big), 65, "oversize allocation is writable at its first byte");
+        assert_eq(load8(big + 199999), 90, "and at its LAST byte — the chunk really is that big");
+    }
+
+    # ── SPILL: overflow served from the global bump. Weaker than GROW (spilled bytes are
+    # not reclaimed by reset) but it restores the pre-arena cost instead of the crash.
+    var sp = arena_new(256);
+    arena_set_on_full(sp, ARENA_FULL_SPILL);
+    while (arena_used(sp) < 200) { arena_alloc(sp, 8); }
+    var spilled = arena_alloc(sp, 4096);
+    assert(spilled != 0, "SPILL serves an oversize request from the global allocator");
+
+    # ── The `_a` families are the real consumer surface: a Str built from a growable
+    # arena past its initial capacity must be VALID, not 0.
+    var ga = arena_allocator_growable(128);
+    var k = 0;
+    while (k < 200) { alloc_via(ga, 64); k = k + 1; }
+    var s = str_from_a(ga, "hello");
+    assert(s != 0, "str_from_a past capacity returns a Str, not 0");
+    assert_eq(str_len(s), 5, "and that Str is valid (str_len does not fault)");
+
+    # ── arena_free must INVALIDATE a growable arena. Clearing only base/ptr/end would
+    # leave the policy set, so the next alloc would take the grow path and succeed.
+    var fg = arena_new_growable(256);
+    arena_alloc(fg, 8);
+    arena_free(fg);
+    assert_eq(arena_alloc(fg, 8), 0, "a freed growable arena refuses to allocate");
+    assert_eq(arena_on_full(fg), ARENA_FULL_NULL, "arena_free reverts the policy");
+    assert_eq(arena_capacity_total(fg), 0, "arena_free drops the chunk chain");
+
+    # ── Policy setter rejects nonsense rather than storing it.
+    assert_eq(arena_set_on_full(fg, 99), 0 - 1, "an out-of-range policy is refused");
+    assert_eq(arena_set_on_full(0, ARENA_FULL_GROW), 0 - 1, "a null arena is refused");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

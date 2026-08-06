@@ -11,10 +11,16 @@ alloc::allocator_reset_fn/1
 alloc::allocator_state/1
 alloc::arena_alloc/2
 alloc::arena_allocator/1
+alloc::arena_allocator_growable/1
+alloc::arena_allocator_set_on_full/2
+alloc::arena_capacity_total/1
 alloc::arena_free/1
 alloc::arena_new/1
+alloc::arena_new_growable/1
+alloc::arena_on_full/1
 alloc::arena_remaining/1
 alloc::arena_reset/1
+alloc::arena_set_on_full/2
 alloc::arena_used/1
 alloc::bump_allocator/0
 alloc::default_alloc/0
@@ -4233,6 +4239,7 @@ syscalls_x86_64_agnos::sys_blk_read/4
 syscalls_x86_64_agnos::sys_blk_write/4
 syscalls_x86_64_agnos::sys_chan_caps/2
 syscalls_x86_64_agnos::sys_chan_close/1
+syscalls_x86_64_agnos::sys_chan_endow/1
 syscalls_x86_64_agnos::sys_chan_mint/1
 syscalls_x86_64_agnos::sys_chan_recv/3
 syscalls_x86_64_agnos::sys_chan_send/3
@@ -4316,6 +4323,7 @@ syscalls_x86_64_agnos::sys_sock_recv/3
 syscalls_x86_64_agnos::sys_sock_send/3
 syscalls_x86_64_agnos::sys_spawn/2
 syscalls_x86_64_agnos::sys_spawn_path/2
+syscalls_x86_64_agnos::sys_spawn_path_env/4
 syscalls_x86_64_agnos::sys_stat/3
 syscalls_x86_64_agnos::sys_symlink/4
 syscalls_x86_64_agnos::sys_sync/0

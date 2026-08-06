@@ -1,6 +1,7 @@
 # `mutex_unlock` issues a FUTEX_WAKE syscall on every release — 394ns for an uncontended lock
 
-**Status:** 🟡 **OPEN** — filed 2026-07-29. Verified against live code: `lib/sync.cyr:72-78` calls
+**Status:** ✅ **SHIPPED v6.5.9** — Three-state futex lock: 392 -> 48 ns uncontended. ⭐ It needed NO new primitive — a successful boolean CAS 1->0 already proves the pre-value, so the roadmap's `atomic_swap` prerequisite was wrong and the item was cheaper than pinned. Gates: tests/sync_mutex_three_state.sh + tests/tcyr/vr01_sync_mutex_contended.tcyr.
+**Filed as:** filed 2026-07-29. Verified against live code: `lib/sync.cyr:72-78` calls
 `syscall(SYS_FUTEX, m, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0)` unconditionally, with no
 waiter-present check and no third mutex state to base one on. First measured on cycc 6.5.0;
 **re-verified on cycc 6.5.2 (2026-07-29, after the bayan/sandhi release): `mutex_lock_unlock` is

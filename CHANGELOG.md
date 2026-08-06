@@ -6,6 +6,109 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.9] — 2026-08-06
+
+Two agnos-side filings and one long-waiting item, all consumer-blocking.
+
+### Verification
+
+Release gate **GREEN, all 5 steps**. Self-host fixpoint byte-identical (**1,141,784 B**) ·
+seed-derive `seed→cybs→cycc` OK · check.sh **160 / 0** · cross-OS `SELFHOST_OK` +
+`LIBTEST_OK` on **ecb / ach / cass / pi**, real hardware. Two new gates, both
+mutation-proven — and both mutation passes changed the code under test, not just the gate.
+
+**Bench: self_compile 669 / 682 ms · cycc 1,141,784 B (+88 B).** Against 672/678 at 6.5.8 —
+inside the run-to-run spread this box has shown all release.
+
+### Added — agnos channel band (filed 2026-08-06, blocks agnos bite 7)
+
+- **`CH_ENDOW = 0x05` + `sys_chan_endow(fd)`.** The op landed in agnos 1.56.40 *after*
+  6.5.8 minted the band, so the caps mask already advertised it (0x1F → 0x3F) while the
+  peer had no name for it. Endowment is what makes the band's authority model usable at
+  all: an inherited fd is inert by construction, so without it a child can hold no channel.
+  ⚠ It returns an **fd, not 0** — the one op in the band that does, because the kernel
+  cannot announce the number itself (the child's env is baked into its init stack before
+  placement), so the parent does, Wayland's `WAYLAND_SOCKET` shape.
+  ⭐ The kernel's own enum comment at `syscall.cyr:4588` still says "→ 0"; its ARM at
+  `:7898` does `return tfd` and the design note at `:4615` says the fd. Code wins — the
+  peer follows the code, and the stale comment is reported back.
+- **`sys_spawn_path_env(path, len, env, envlen)`.** `#43` has accepted an env blob in
+  `a3`/`a4` since agnos 1.44.19; the wrapper reached two of four arguments. This is how an
+  endowed channel reaches its child (`AGNOS_CHAN=<fd>`). The 2-arg form is kept for every
+  existing caller. ⛔ The kernel treats a garbage `a3`/`a4` as fallback-to-default-env,
+  **never an error**, so a mis-shaped call degrades silently — which is the argument for a
+  named wrapper, not against it.
+
+### Changed — the three-state mutex (W1 item 3)
+
+`lib/sync.cyr`'s Linux mutex was a 2-state futex lock, so `mutex_unlock` entered the kernel
+with `FUTEX_WAKE` on **every** release — a 0/1 cell cannot tell the releaser whether anyone
+is parked. Measured: **392 ns** per uncontended lock/unlock pair against a **7 ns**
+`atomic_cas`, i.e. the syscall was ~98 % of it, on a primitive every lock-guarded structure
+in the stdlib sits on. Now 0 = free / 1 = held / 2 = held-with-waiters: **392 → 48 ns**,
+independently re-measured at 398/381 → 50/47.
+
+⭐ **It needed no new primitive, and the roadmap said otherwise.** W1 item 3 recorded this as
+blocked on `atomic_swap` plus a value-returning CAS, neither of which `lib/atomic.cyr`
+ships. That premise is wrong: a **successful boolean `atomic_cas(m, 1, 0)` already proves
+the pre-value was exactly 1** — precisely the information `atomic_swap` would return. So the
+item was cheaper than pinned, not blocked. `MUTEX_SIZE` stays 8; no ABI change; the macOS /
+Windows / agnos branches are untouched.
+
+### Fixed — the arena could not be exhausted safely (filed 2026-08-06 from agnosai)
+
+The primitives handled exhaustion correctly — `arena_alloc` returns 0, `str_from_a` returns
+0, `vec_push_a` returns -1 — and none of that was the bug. The bug is what the 0 does next:
+a `Str` of 0 is **indistinguishable from a valid `Str`**, there is no option type and no
+error channel through the `_a` families, so it flows on and the first thing that touches it
+dereferences it. "Arena too small" was observable as a SIGSEGV several layers away, in a
+JSON walker, with no indication which allocator ran out.
+
+⭐ **The regression direction is what made it serious.** Before threading a route onto an
+arena, an oversized response was a *leak* on the no-free global bump. After threading — a
+change whose entire purpose is to stop leaking — the same response was a *crash*. Adopting
+the feature correctly made the failure worse and quieter, and a 5,500-assertion suite missed
+it because allocation tests are small-fixture by nature: they assert `bytes == 0` over a
+handful of items and nothing about that shape probes the ceiling.
+
+The filing asked for three things — a growable arena, a spilling arena, and an exhaustion
+policy. They collapse into **one policy field**, which is why all three ship together:
+
+| policy | behaviour |
+|---|---|
+| `ARENA_FULL_NULL` (0) | return 0 — **today's behaviour, still the default**, so no existing arena moves |
+| `ARENA_FULL_GROW` (1) | chain another chunk (`arena_new_growable` / `arena_allocator_growable`) |
+| `ARENA_FULL_SPILL` (2) | serve overflow from the global allocator — weaker, but the crash becomes the pre-arena cost |
+| `ARENA_FULL_ABORT` (3) | die loudly at the allocation instead of faulting three layers away |
+
+⚠ **GROW retains its chunks across `arena_reset`.** The bump allocator underneath has no
+`free()`, so releasing them is not expressible — and it is not what an arena wants anyway.
+Reset rewinds to the first chunk and re-uses the chain, so a request loop converges on its
+high-water mark and then allocates nothing: verified, 500 allocations twice over produce
+identical total capacity. Also added `arena_capacity_total` (the whole chain, which
+`arena_used` cannot show once it has grown) and hardened `arena_free`, which previously
+cleared only base/ptr/end — leaving the policy set, a "freed" growable arena would take the
+grow path and **succeed**.
+
+⚠ `lib/alloc.cyr` is inside cycc's include closure and on the seed path, so this carried the
+full fixpoint + seed-derive gate: cybs compiles it and `gen2 == build/cycc`.
+
+### Notes
+
+- ⭐ **Mutation testing changed the code twice this release, not just the gates.** The arena
+  mutation "grow ignores an oversize request" passed — because `arena_alloc` returned the
+  post-grow pointer *without re-checking the bound*, so a too-small chunk would have handed
+  back a pointer with less memory behind it than was asked for: a silent heap overflow, not
+  a failed allocation. The test could not see it either, asserting only `!= 0`. Both were
+  fixed — a defensive bound re-check, and a first/last-byte write-and-read-back that only
+  survives if the memory is really there.
+- The mutex gate needed **three different axes** because each plausible regression is visible
+  to exactly one: unlock-never-wakes and a re-read expected-value **hang**; a wrong
+  fast-path state is caught only by the **perf tripwire** (it stays perfectly correct and
+  8x slower); and dropping the `1→2` upgrade is caught only **structurally** — it degrades
+  contended throughput alone, which no stable runtime assertion can measure. The first
+  mutation I tried was not fatal at all, because the upgrade line self-heals it.
+
 ## [6.5.8] — 2026-08-05
 
 The repair release, driven by consumer filings and a tool sweep. Twelve triaged filings, four

@@ -215,6 +215,29 @@ done
 # the thread channel's, on agnos only, for any consumer including both files.
 n_bare=$(grep -cE '^fn chan_(send|recv|close|new)\(' lib/syscalls_x86_64_agnos.cyr || true)
 check "no bare chan_* in the agnos peer (would shadow thread.cyr)" 0 "$n_bare"
+# v6.5.9: CH_ENDOW landed in the kernel AFTER 6.5.8 minted the band, so the peer had no name
+# for an op the caps mask already advertised (0x1F -> 0x3F). Endowment is what makes the
+# band's authority model usable at all — an inherited fd is inert by construction, so without
+# it a child can hold no channel.
+check "CH_ENDOW = 0x05 minted" 1 \
+    "$(grep -c 'CH_ENDOW  = 0x05;' lib/syscalls_x86_64_agnos.cyr || true)"
+check "sys_chan_endow wrapper present" 1 \
+    "$(grep -c '^fn sys_chan_endow(' lib/syscalls_x86_64_agnos.cyr || true)"
+# ⚠ ENDOW is the ONE op in the band that returns an FD rather than 0 — the kernel cannot
+# announce the number itself (the child's env is baked into its init stack before placement),
+# so the parent does. A doc comment claiming "-> 0" here would propagate the kernel's own
+# stale enum comment (syscall.cyr:4588) over what its ARM actually does (`return tfd`, :7898).
+check "sys_chan_endow documents the fd return, not 0" 1 \
+    "$(grep -c 'The return is an FD, not a' lib/syscalls_x86_64_agnos.cyr || true)"
+check "the enum row says fd, not 0" 1 \
+    "$(grep -c 'CH_ENDOW  = 0x05;   # (fd) → the fd index the CHILD will hold' lib/syscalls_x86_64_agnos.cyr || true)"
+# #43 has accepted an env blob in a3/a4 since agnos 1.44.19; the 2-arg wrapper reached two of
+# four. ⛔ The kernel treats a garbage a3/a4 as fallback-to-default-env, NEVER an error, so a
+# mis-shaped call degrades silently — which is the argument for a named wrapper.
+check "sys_spawn_path_env (4-arg) present" 1 \
+    "$(grep -c '^fn sys_spawn_path_env(path, len, env, envlen)' lib/syscalls_x86_64_agnos.cyr || true)"
+check "the 2-arg sys_spawn_path is KEPT (existing callers)" 1 \
+    "$(grep -c '^fn sys_spawn_path(path, len)' lib/syscalls_x86_64_agnos.cyr || true)"
 # #96 fork — NO kernel arm exists in agnos 1.56.40. Must stay unminted.
 n_96=$(grep -cE '=[[:space:]]*96;' lib/syscalls_x86_64_agnos.cyr || true)
 check "no SysNrAgnos constant on 96 (fork has no kernel arm)" 0 "$n_96"
