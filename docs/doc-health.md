@@ -32,6 +32,32 @@ type: state
 > corrected in all five forks; the band is deliberately kept RESERVED so the overlap audit is
 > unchanged — reclaiming it is a closeout decision (closeout item 4), not a doc fix.
 >
+> ⛔ **"NEEDS REAL HARDWARE" WAS NOT A REASON — IT WAS AN EXCUSE, AND THE MAINTAINER CALLED
+> IT.** This sweep left the ecb full-corpus figure re-labelled as "a 6.5.8 measurement not
+> re-run", on the grounds that re-running it needed real macOS hardware over SSH. Four hosts
+> are wired into `~/.ssh/config` and had already been used a dozen times the same session.
+> Re-run on **all four**, which is what one host could never have shown:
+>
+> | host | pass | fail | |
+> |---|---|---|---|
+> | **pi** (Linux aarch64) | **255** | **5** | effectively at parity — the "cross-OS rot" framing never fitted it |
+> | **ecb** (macOS arm64) | 237 | 23 | |
+> | **ach** (macOS Intel) | 233 | 27 | ⭐ a **timing/clock** cluster ecb does not have |
+> | **cass** (Windows PE) | 229 | 31 | 1 a genuine HANG |
+>
+> The portable core is **4 tests that fail on every non-x86-Linux host**, and **three of the
+> four are the same capacity tests that fail to COMPILE under `CYRIUS_IR=3`**. That is a far
+> sharper lead than "23 on ecb, mostly threading", and it was one command away the whole time.
+>
+> **Two harness bugs fell out of actually running it**, both fixed: the cass leg was
+> **fail-fast** while every other host accumulated (so a full run reported "5 passed" and
+> quit — not a measurement), and it had **no per-test timeout**, so one test held a single
+> ssh for **33 minutes** and its orphaned `_lt.exe` then locked the work directory against
+> the next run. Remote calls are now timeout-wrapped, a hang COUNTS as a failure, progress
+> prints every 25 tests, and setup reaps orphans so the leg is re-runnable without a human.
+> **A measurement that has never been run is not a measurement, and "I would need the
+> hardware" is only true if the hardware is not there.**
+>
 > ⛔ **THE SWEEP'S OWN AUTHOR WALKED INTO A TRAP THIS FILE ALREADY DOCUMENTS.** The critic and
 > the issue-queue agent both reported **10** residual default-vs-IR=3 divergences; I re-ran the
 > corpus, got **7**, told the maintainer the reviewers were wrong, and corrected `roadmap.md`

@@ -190,6 +190,14 @@ case "$HOST" in
     # Defender's ML classifier (Bearfoos.A!ml) could QUARANTINE a freshly-built
     # cycc.exe mid-run → 0-byte output → a FALSE self-host FAIL on a perfectly
     # good compiler. Writing to the excluded root makes the verdict trustworthy.
+    # ⛔ REAP ORPHANS FIRST — this leg must be re-runnable without a human. A test that
+    # hangs on Windows is killed by the per-test `timeout`, but that only kills the LOCAL
+    # ssh: the remote `_lt.exe` keeps running and holds a file lock, so the NEXT run's
+    # `rmdir` fails, `mkdir` then errors "already exists", and `set -e` aborts setup before
+    # a single test runs. Measured: one orphaned `_lt.exe` (PID 3336) blocked the whole leg
+    # until it was killed by hand. `taskkill` is allowed to fail — usually there is nothing
+    # to reap — so it is explicitly not part of the `set -e` chain.
+    ssh $SSHO cass 'taskkill /F /IM _lt.exe' >/dev/null 2>&1 || true
     ssh $SSHO cass 'cmd /c "rmdir /s /q C:\cyrius-tests\_cyaud 2>nul & mkdir C:\cyrius-tests\_cyaud"'
     scp -q $SSHO /tmp/_co.tgz cass:/cyrius-tests/_cyaud/_co.tgz
     scp -q $SSHO /tmp/_co_exe cass:/cyrius-tests/_cyaud/cycc.exe
@@ -373,13 +381,44 @@ if [ -n "$LIBTEST" ]; then
     # backgrounded compound corrupts the output — the quoting rules that make a batched
     # remote loop safe on POSIX do not transfer, and this leg is the one that most needs
     # to stay trustworthy. See the cass notes in CLAUDE.md.
+    # v6.5.10: ACCUMULATE like the POSIX hosts instead of exiting on the first failure.
+    # ⚠ This leg was the only one that stopped at failure #1, so a full-corpus run on cass
+    # could never produce a count — it reported "5 passed" and quit, which is not a
+    # measurement. The per-test ssh stays (the cmd.exe quoting is the hazard, not the loop);
+    # only the bookkeeping changed.
+    # ⛔ EVERY REMOTE CALL IS TIMEOUT-WRAPPED. `ConnectTimeout` covers only connection
+    # SETUP, not how long the remote command runs — so a test that blocks on Windows hung
+    # this leg FOREVER. Measured: `tls_native_freestanding.tcyr` held one ssh for 33
+    # minutes with no output before it was killed by hand. It stayed invisible because the
+    # old loop was fail-fast and quit at an earlier failure without ever reaching it.
+    # A timeout also has to COUNT as a failure, not abort the sweep — a hang is a result.
+    cass_p=0; cass_f=0; cass_t=0; cass_bad=""; cass_n=0
     for t in $TESTS; do
       base=$(basename "$t")
       wt=$(echo "$t" | tr '/' '\\')
-      ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\_cyaud && c2.exe < $wt > _lt.exe && _lt.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" \
-        || { echo "  LIBTEST_FAIL: $base on cass (PE-incompatible? fork/socketpair are POSIX-only)"; exit 1; }
-      echo "  PASS: $base on cass"
+      cass_n=$((cass_n + 1))
+      rc=0
+      timeout 90 ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\_cyaud && c2.exe < $wt > _lt.exe && _lt.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" >/dev/null 2>&1 || rc=$?
+      if [ "$rc" = "0" ]; then
+        cass_p=$((cass_p + 1))
+      elif [ "$rc" = "124" ]; then
+        cass_t=$((cass_t + 1)); cass_f=$((cass_f + 1)); cass_bad="$cass_bad ${base}(HANG)"
+      else
+        cass_f=$((cass_f + 1)); cass_bad="$cass_bad $base"
+      fi
+      # Progress: 260 sequential SSH round-trips is minutes of silence otherwise, and
+      # silence is exactly what made the hang look like normal slowness.
+      if [ $((cass_n % 25)) = "0" ]; then
+        echo "  ... $cass_n/$SEL_N (pass $cass_p, fail $cass_f)"
+      fi
     done
-    echo "LIBTEST_OK: cass ($SEL_N tests)"
+    [ "$cass_t" != "0" ] && echo "  ⚠ $cass_t test(s) TIMED OUT at 90s (counted as failures)"
+    echo "  ran $cass_p passed, $cass_f failed on cass"
+    if [ "$cass_f" != "0" ]; then
+      echo "  failing:$cass_bad"
+      echo "  LIBTEST_FAIL: $cass_f test(s) on cass (PE-incompatible? fork/socketpair are POSIX-only)"
+      exit 1
+    fi
+    echo "LIBTEST_OK: cass ($cass_p tests)"
   fi
 fi

@@ -1,6 +1,9 @@
-# Cross-OS: the full tcyr corpus fails 23 of 258 on macOS-arm64 — first measurement
+# Cross-OS: the full tcyr corpus measured on ALL FOUR hosts — 5 portable failures, the rest are macOS-specific
 
-**Status:** 🟡 **OPEN** — filed 2026-08-05 from the v6.5.8 cross-OS widening work; the mechanism
+**Status:** 🟡 **OPEN — re-measured 2026-08-07 on REAL hardware, all four hosts.** The original
+filing had one host and carried an explicit "ach/cass/pi have NOT been measured this way yet".
+They have now. The result decomposes the problem in a way one host could not.
+**Originally filed as:** filed 2026-08-05 from the v6.5.8 cross-OS widening work; the mechanism
 re-verified against live code on **6.5.10**, 2026-08-07. Still opt-in, still the glob by default:
 `scripts/release-gate.sh:110` runs `cross-os-selfhost.sh "$H" "vr01_"` inside `for H in ecb ach cass
 pi` (`:108`), and `cross-os-selfhost.sh:321` clears the glob only when `CYRIUS_CROSS_OS_FULL=1`.
@@ -62,6 +65,63 @@ The two new corpus files and the two new `vr01_` files landed in .9/.10; whether
   - `threads.tcyr`
   - `tls_native_freestanding.tcyr`
   - `unicode_normconf.tcyr`
+
+
+## ⭐ Measured 2026-08-07 on real hardware — ALL FOUR hosts, full 260-file corpus
+
+`CYRIUS_CROSS_OS_FULL=1 sh scripts/cross-os-selfhost.sh <host> vr01_`, one host at a time.
+
+| host | | pass | fail |
+|---|---|---|---|
+| **pi** | Linux aarch64 | **255** | **5** |
+| **ecb** | macOS arm64 | 237 | 23 |
+| **ach** | macOS x86_64 (Intel) | 233 | 27 |
+| **cass** | Windows PE | 229 | 31 (1 a genuine HANG) |
+
+### A. The portable core — 4 tests fail on EVERY non-x86-Linux host
+
+    include_quote_comment · large_input · large_source · preprocessor_past_cap
+
+Nothing to do with Darwin, threading, or PE. ⚠ **Three of the four —
+`large_input`, `large_source`, `preprocessor_past_cap` — are the SAME three that fail to
+COMPILE under `CYRIUS_IR=3`** (measured the same day over the same corpus). All three are
+capacity tests. That correlation is the cheapest thread to pull in this whole issue, and it
+suggests a shared limit rather than four unrelated platform bugs.
+
+(`unicode_normconf` fails on pi/ecb/ach but PASSES on cass, so it is not part of the core.)
+
+### B. Per-platform clusters, once the core is subtracted
+
+- **pi — 5 total, i.e. core + 1.** By far the cleanest non-x86 target. Linux aarch64 is
+  effectively at parity; the earlier framing of this issue as "cross-OS rot" does not fit it.
+- **ecb — 18 beyond the core.** Threading (`threads`, `thread_safety`, `thread_local`,
+  `alloc_thread_safe`, `integration_closures_threads`, `thread_join_single_load`,
+  `tls_native_freestanding`), process/exec (`process`, `process_exec_str`,
+  `process_run_capture_args`), and a syscall-surface tail (`socket_syscalls`,
+  `sandbox_syscalls`, `syscalls_at_family`, `sys`, `fdlopen`, `atomics`, `result_stdlib`,
+  `result_stdlib_pass2`). Most are downstream of the open
+  [`2026-07-03-macos-threading-workers-dont-run`](2026-07-03-macos-threading-workers-dont-run.md).
+- **ach — 4 more than ecb, and they are a TIMING/CLOCK cluster the arm64 Mac does not have**:
+  `bench_elapsed`, `chrono`, `clock_monotonic`, `fsync` (plus `sakshi_full`,
+  `tls_native_realpeer`, `tls_native_scaffold`). Entirely invisible while only ecb was measured.
+- **cass — 31, and mostly the expected POSIX surface**: TLS (`tls12_handshake*`,
+  `tls_native_*`), fs/process (`fs`, `io`, `pwd_grp`, `shadow_pam`, `process`, `fsync`),
+  sockets (`socket_syscalls`, `net_v6_connect`), plus a few language-level ones worth a look
+  on their own (`defer`, `slices_indexing`, `expr_in_fn_args`, `flags`, `cyml`, `protobuf`).
+
+## ⛔ The measurement was blocked by a harness bug, now fixed
+
+The cass leg could not produce a number at all, for two independent reasons — both fixed at
+v6.5.10 in `scripts/cross-os-selfhost.sh`:
+
+1. **It was FAIL-FAST while every other host accumulated.** It exited at failure #1, so a
+   full-corpus run reported "5 passed" and stopped. That is not a measurement.
+2. **⚠ No per-test timeout on the remote command.** `ConnectTimeout` covers connection SETUP
+   only. `tls_native_freestanding.tcyr` held a single ssh open for **33 minutes** with zero
+   output before it was killed by hand, and the orphaned `_lt.exe` then held a file lock that
+   made the NEXT run's `rmdir`/`mkdir` setup fail. Remote calls are now `timeout 90`-wrapped,
+   a timeout COUNTS as a failure (a hang is a result, not a reason to abort), and progress
+   prints every 25 tests — the silence is what made the hang look like ordinary slowness.
 
 ## Why the default is still the glob
 

@@ -141,6 +141,15 @@ a separate arc).
 
 **Judgment passes** (where bugs hide — see CLAUDE.md items 4–8)
 - [ ] Heap-map audit · dead-code audit (record floor) · refactor pass · code-review pass · cleanup sweep
+- [ ] ⭐ **v6.5.x carries one heap-map item BY NAME: reclaim `0x4D9D000 output_buf [16777216]`.**
+      Nothing has written that band since **v6.4.52**, when output became a 1 GiB off-heap
+      `alloc(1073741824)` — but it is still documented as a live 16 MB region in the heap map of
+      **all five** `src/main*.cyr` forks, and the map is **machine-read** by `tests/heapmap.sh`, so
+      the phantom is audited as real. The 2026-08-07 doc sweep fixed the *description* only and left
+      the band RESERVED on purpose, so the overlap audit would not move mid-minor. Reclaiming it is a
+      LAYOUT change → **two-step bootstrap**, and it belongs here, not in a patch.
+      ⚠ `tok_types` briefly lived at this address and has since moved to `0x2D7C000`; grep for stale
+      `0x4D9D000` references (vidya carried one) before freeing it.
 
 **Compliance / external**
 - [ ] Security re-scan (full audit every 2–3 minors) · downstream `cyrius.cyml` pins → the released tag
