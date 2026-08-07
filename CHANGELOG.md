@@ -6,6 +6,93 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.10] — 2026-08-07
+
+Both bugs filed against cyrius since 6.5.9 shipped. Both were measured before they were
+filed, and both filings did work I did not have to repeat.
+
+### Verification
+
+Release gate **GREEN, all 5 steps**. Self-host fixpoint byte-identical (**1,141,792 B**;
+the +8 is the longer version string, not code) · seed-derive `seed→cybs→cycc` OK · check.sh **162 / 0** · cross-OS
+`SELFHOST_OK` + `LIBTEST_OK` on **ecb / ach / cass / pi**, real hardware. Two new gates,
+both mutation-proven.
+
+**Bench: self_compile 648 / 652 ms · cycc 1,141,792 B (+8 = the longer version string).** Against 669/682 at
+6.5.9 — inside this box's spread.
+
+### Fixed — `distlib`'s `.deps` sidecar under-reported (filed from setu 0.8.2)
+
+`dist/<lib>.deps` says it lists "stdlib leaves this fold requires in scope", but it was
+built ONLY by scanning bundled module sources for literal `include "lib/X.cyr"` lines — so
+it captured what a module **includes**, never what it **references** through the
+declaration. setu emitted **8** leaves against a declared **12**; the four missing
+(`result`, `net`, `chrono`, `args`) are all referenced at top level in `src/client.cyr`.
+
+⭐ **A wrong sidecar switches OFF cyrius's own consumer check.** `cyrius deps` validates a
+consumer's `[deps] stdlib` against the dep's sidecar — correctly and loudly. The filer
+measured both directions: with a corrected 12-leaf sidecar an under-declaring consumer got
+a hard error naming `chrono` and `args`; with the raw 8-leaf one the **same** consumer
+built `OK`, silently, on agnos. So this did not merely mislead a human reader — it disabled
+the machine check that exists to catch exactly this mistake.
+
+The sidecar is now the declared `[deps] stdlib` **unioned** with the include-scan, not
+either alone: the scan can legitimately catch a leaf the author forgot to declare, so the
+union can never under-report relative to either source. Verified against setu's own
+manifest — 8 → **12**, exactly the four that were missing.
+
+⚠ **Base bundle only.** A profile is a narrow subset of modules, so its true dep set is a
+subset of the declaration; unioning the whole declaration into a `sha` profile would
+OVER-report and could fail a legitimately-narrow consumer against the very check this
+re-enables. Profiles keep the pruned inference, and the gate asserts it.
+
+⚠ Three hypotheses were measured and **falsified by the filer** before filing — it is not
+the declaration, not an inline-comment parse bug, not a direct-symbol scan. Recorded in the
+gate so none of them gets re-investigated.
+
+### Changed — `alloc_via` was two-thirds call plumbing (filed from agnosai)
+
+`alloc_via` cost **15.1 ns** while `arena_alloc`'s bump is about eight instructions. The
+gap was a five-call chain, three levels of which were pure plumbing — and cyrius does not
+inline, so each was a real frame:
+
+| removed | what it was |
+|---|---|
+| `allocator_alloc_fn(a)` | a CALL, to perform one `load64(a)` |
+| `allocator_state(a)` | a CALL, to perform one `load64(a + 32)` |
+| `_arena_alloc` | a trampoline whose entire body was `return arena_alloc(state, size)` |
+
+The four dispatch helpers now read the vtable inline, and `arena_allocator*` registers
+`&arena_alloc` / `&arena_reset` directly. Measured on this box, 200k iterations of 10
+allocations: **15–16 → 12 ns** from the inlining, **→ 11 ns** with the trampolines gone —
+the accessor inlining is the large half. The accessors themselves remain as public API;
+only the hot path stopped calling them.
+
+⚠ `_bump_alloc` and `_bump_reset` are NOT removed and must not be: they adapt arity
+(`alloc(size)` and `alloc_reset()` take fewer arguments), so they genuinely translate
+rather than pass through. Removing them would corrupt the call. Asserted in the gate.
+
+Why a few nanoseconds earned a slot: `_a` threading multiplies it by the size of the object
+graph, which is the entire point of the `_a` families. agnosai counted 112 allocations on
+one route — **32 % of the request** — with a counting allocator wrapped around the arena's
+own vtable, and that was *after* a hoisting pass. `bayan_json_v_obj_new_a` alone is three
+`alloc_via` calls.
+
+### Notes
+
+- ⚠ **A gate axis failed to catch its mutation twice this release, both times for an
+  ordering reason.** The sidecar's decoy-manifest axis appended a bogus `stdlib` mention
+  *after* the real declaration — but the scan stops at its first match, so the decoy was
+  never reached and the axis passed against a build with the comment guard deleted. Moved
+  before the real key. Same shape as 6.5.8's `dir_walk` ordering assumption; worth
+  remembering that "the fixture is in the wrong order" is a recurring way for a gate to be
+  quietly vacuous.
+- ⚠ `grep -c` prints `0` **and** exits 1 on no-match, so `$(grep -c … || echo 0)` yields
+  the two-line string `"0\n0"` and every comparison against it fails. Cost one debug cycle;
+  noted in the gate.
+- `--check` was re-verified not to write: setu's `dist/` was already dirty from its own
+  hand-correction, and both md5s were identical before and after the run.
+
 ## [6.5.9] — 2026-08-06
 
 Two agnos-side filings and one long-waiting item, all consumer-blocking.

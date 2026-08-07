@@ -1,6 +1,7 @@
 # `cyrius distlib`'s `dist/<lib>.deps` sidecar under-reports, and is neither declaration-driven nor a complete inference
 
-**Status:** 🔴 **OPEN — cyrius defect, filed from setu 0.8.2.** Filed 2026-08-07.
+**Status:** ✅ **SHIPPED v6.5.10** — The sidecar is now the declared `[deps] stdlib` UNIONED with the include-scan (setu: 8 -> 12, exactly the four that were missing). Base bundle only — profiles keep the pruned inference so a narrow bundle cannot over-report. Gate: tests/distlib_deps_sidecar.sh.
+**Filed as:** Filed 2026-08-07.
 **Cross-repo:** cyrius (`cyrius distlib`) + setu (the lib that exposed it) + aethersafha / crab (the
 consumers it misled). Mirror of `setu/docs/development/issues/2026-08-07-distlib-deps-sidecar-under-reports.md`.
 **Severity:** Medium — it does not corrupt output, but it hands consumers a **wrong** dep list that

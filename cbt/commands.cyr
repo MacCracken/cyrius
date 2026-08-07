@@ -2368,6 +2368,87 @@ fn _distlib_leaf_referenced(leaf, bundle, blen): i64 {
 }
 
 # Prune `leaves` to those a profile bundle at `bundle_path` actually references.
+# v6.5.10: union the manifest's DECLARED `[deps] stdlib` into the sidecar's leaf set.
+#
+# THE FILED DEFECT (setu 0.8.2, 2026-08-07). `dist/<lib>.deps` says it lists "stdlib
+# leaves this fold requires in scope", but it was built ONLY by scanning the bundled
+# module sources for literal `include "lib/X.cyr"` lines — so it captured what a module
+# INCLUDES, never what it REFERENCES through the declaration. setu emitted 8 leaves
+# against a declared 12; the four missing (`result`, `net`, `chrono`, `args`) are all
+# referenced at top level in `src/client.cyr`.
+#
+# Three hypotheses were measured and falsified by the filer before it was filed: it is
+# not the declaration (deleting `assert` from `[deps] stdlib` left it in the sidecar), it
+# is not an inline-comment parse bug (adding a comment to `vec` left it present), and it
+# is not a direct-symbol scan either. It was simply a different, smaller thing than its
+# own header claimed.
+#
+# ⭐ AND A WRONG SIDECAR SWITCHES OFF cyrius's OWN CONSUMER CHECK. `cyrius deps` validates
+# a consumer's `[deps] stdlib` against the dep's sidecar — correctly and loudly. Measured:
+# with a corrected 12-leaf sidecar an under-declaring consumer got a hard error naming
+# `chrono` and `args`; with the raw 8-leaf one the same consumer built **OK**, silently,
+# on agnos. So this did not merely mislead a human reader — it disabled the machine check
+# that exists to catch exactly this mistake.
+#
+# UNION, not replace: the inferred include-scan can legitimately catch a leaf the author
+# forgot to declare, so taking both can never under-report relative to either source.
+fn _distlib_union_declared_stdlib(leaves, mbuf, mlen): i64 {
+    var found = 0 - 1;
+    var si = 0;
+    while (si < mlen) {
+        if (memeq(mbuf + si, "stdlib", 6) == 1) {
+            var ok = 1;
+            if (si > 0) {
+                # Same key-boundary rules cmd_deps uses: not a longer identifier, and not
+                # inside a comment — a prose mention of "stdlib" must not match.
+                var pc = load8(mbuf + si - 1);
+                if (pc >= 48 && pc <= 57)  { ok = 0; }
+                if (pc >= 65 && pc <= 90)  { ok = 0; }
+                if (pc >= 97 && pc <= 122) { ok = 0; }
+                if (pc == 95)              { ok = 0; }
+                if (ok == 1) {
+                    var ls = si;
+                    while (ls > 0) {
+                        if (load8(mbuf + ls - 1) == 10) { break; }
+                        ls = ls - 1;
+                    }
+                    while (ls < si) {
+                        var wc = load8(mbuf + ls);
+                        if (wc == 35) { ok = 0; break; }
+                        if (wc != 32 && wc != 9) { break; }
+                        ls = ls + 1;
+                    }
+                }
+            }
+            if (ok == 1 && si + 6 < mlen) {
+                var nc = load8(mbuf + si + 6);
+                if (nc == 32 || nc == 61) { found = si; si = mlen; }
+            }
+        }
+        si = si + 1;
+    }
+    if (found < 0) { return 0; }
+    # Expand `[groups]` refs so a declared group name lands as its LEAVES, not as a
+    # bogus leaf named after the group.
+    _dep_parse_groups(mbuf, mlen);
+    _dep_register_default_std_group();
+    var mods = _dep_expand_groups(_parse_toml_str_array(mbuf, mlen, found));
+    var added = 0;
+    var i = 0;
+    while (i < vec_len(mods)) {
+        var nm = vec_get(mods, i);
+        var dup = 0;
+        var j = 0;
+        while (j < vec_len(leaves)) {
+            if (streq(vec_get(leaves, j), nm) == 1) { dup = 1; }
+            j = j + 1;
+        }
+        if (dup == 0) { vec_push(leaves, nm); added = added + 1; }
+        i = i + 1;
+    }
+    return added;
+}
+
 fn _distlib_prune_profile_leaves(leaves, bundle_path): i64 {
     if (file_exists(bundle_path) == 0) { return leaves; }
     var bb = alloc(4194304);
@@ -2687,6 +2768,19 @@ fn cmd_distlib(profile): i64 {
     # == 0) keeps the umbrella's complete set unchanged.
     if (profile != 0) {
         req_leaves = _distlib_prune_profile_leaves(req_leaves, out_path);
+    }
+    # v6.5.10: fold the DECLARED `[deps] stdlib` into the full-bundle sidecar. ⚠ Base
+    # bundle ONLY. A profile is a narrow subset of the modules, so its true dep set is a
+    # subset of the declaration too — unioning the whole declaration into a `sha` profile
+    # would over-report and could make a legitimately-narrow consumer fail the very check
+    # this fix exists to re-enable. Profiles keep the pruned inference.
+    if (profile == 0) {
+        var _decl_added = _distlib_union_declared_stdlib(req_leaves, mbuf, mlen);
+        if (_verbose == 1 && _decl_added > 0) {
+            sys_write(STDOUT_FD, "  sidecar: +", 12);
+            fmt_int(_decl_added);
+            println(" leaf/leaves from the declared [deps] stdlib");
+        }
     }
 
     # v6.2.47 (deps lever 1, Phase A producer side): emit the dep sidecar

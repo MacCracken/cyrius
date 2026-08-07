@@ -1,6 +1,7 @@
 # `alloc_via` costs 15.1 ns and roughly two-thirds of that is call plumbing, not allocation
 
-**Status:** 🟡 **OPEN** — filed 2026-08-07.
+**Status:** ✅ **SHIPPED v6.5.10** — Suggested fixes 1 and 2 both shipped: the four dispatch helpers read the vtable inline, and arena_allocator* registers &arena_alloc/&arena_reset instead of pass-through trampolines. Measured 15-16 -> 12 (inlining) -> 11 ns. Fix 3 (monomorphic fast path) NOT taken — the filing itself rates it not worth the design change, and 1+2 got most of it. Gate: tests/alloc_via_no_plumbing.sh.
+**Filed as:** filed 2026-08-07.
 **Filed as:** filed 2026-08-07 from agnosai, whose HTTP routes are fully
 allocator-threaded and where `alloc_via` is now the single largest line item on
 every request. Measured on live 6.5.9.
