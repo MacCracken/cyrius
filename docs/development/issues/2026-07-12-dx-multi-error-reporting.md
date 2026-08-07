@@ -1,13 +1,16 @@
 # DX diagnostics: multi-error reporting — RESIDUAL ONLY (the recovery core shipped)
 
-**Status:** 🟡 **OPEN — residual only, and much smaller than this file used to claim.** The
+**Status:** 🟡 **OPEN — residual only, and much smaller than this file used to claim. Re-counted
+live on cycc 6.5.10, 2026-08-07: still exactly 7, but every line number below had drifted.** The
 recovery core shipped **v6.4.62** and the EOF-cascade half shipped **v6.4.78**. What remains is
-**7 inline `SYS_EXIT` error sites in the parser** (re-counted live at the v6.4.82 closeout — this
-file said 25, which was the count of *all* `error:` writes in `src/frontend/`, 18 of them in the
-lexer, which are pre-parse and stay fatal by design) plus the `_sync_skip` coalescing refinement.
-**Placement:** unpinned follow-up, P3. `roadmap.md`'s v6.4.x slot 4 records the arc as **COMPLETE**
-with this as the explicit non-blocking follow-up; it rides an adjacent DX/parser release rather than
-owning a slot. 6.x line — never 7.x.
+**7 inline `SYS_EXIT` error sites in the parser** (the file once said 25, which was the count of
+*all* `error:` writes in `src/frontend/`, most of them in the lexer, which are pre-parse and stay
+fatal by design) plus the `_sync_skip` coalescing refinement.
+**Placement:** **v6.5.x — Slot 1b / fold into W1's remaining `.11`–`.16`.** ⚠ `roadmap.md`'s v6.5.x
+slot 1 ("Diagnostics finish-out") is marked **PARTIAL**: only the include-line delta shipped
+(v6.5.3); items (b)–(e), which include this residual, **did not ship and have no new slot**. The
+roadmap names that as the sliced-fix shape the discipline forbids. It rides an adjacent DX/parser
+release rather than owning a slot. 6.x line — never 7.x.
 
 **Filed:** 2026-07-12 (at v6.4.60, when DX Release 1 — column + source-excerpt — shipped).
 **Severity:** P3 — DX consistency; not a correctness bug, and no consumer is blocked.
@@ -42,29 +45,48 @@ cascade from **166 670 reported lines to 5**. The clamp costs −0.07 % because 
 ### R1 — 7 inline `SYS_EXIT` error sites in the parser (the whole residual)
 
 These print their own diagnostic and exit rather than routing through the four recovering emitters,
-so a semantic error still fails fast while a syntax error multi-reports. Verified live at v6.4.82
-(`grep -n 'syscall(SYS_WRITE, 2, "error:", 6)'` restricted to `src/frontend/parse*.cyr`):
+so a semantic error still fails fast while a syntax error multi-reports. **Re-derived live on
+6.5.10, 2026-08-07** — the command, so the next sweep can re-run it rather than trust the table:
 
-| site | message |
-|---|---|
-| `parse.cyr:732` | `#assert failed` |
-| `parse.cyr:1278` | `undefined variable` |
-| `parse_types.cyr:742` | `variable '…' shadows an enum constant` (`CHK_ENUM_SHADOW`) |
-| `parse_decl.cyr:324` | `undefined variable` |
-| `parse_decl.cyr:462` | `undefined variable` |
-| `parse_expr.cyr:577` | `undefined variable` |
-| `parse_expr.cyr:685` | `undefined variable` |
+```sh
+grep -n 'syscall(SYS_WRITE, 2, "error:", 6)' src/frontend/parse*.cyr   # → 11 hits
+# then read each: 7 end in syscall(SYS_EXIT, 1) — those are the residual;
+#                 4 end in `_had_error = 1;` + return — those already recover.
+```
+
+| site | message | *(as filed / v6.4.82)* |
+|---|---|---|
+| `parse.cyr:809` | `#assert failed` | was `:732` |
+| `parse.cyr:1355` | `undefined variable` | was `:1278` |
+| `parse_types.cyr:772` | `variable '…' shadows an enum constant` (`CHK_ENUM_SHADOW`) | was `:742` |
+| `parse_decl.cyr:324` | `undefined variable` | unchanged |
+| `parse_decl.cyr:462` | `undefined variable` | unchanged |
+| `parse_expr.cyr:587` | `undefined variable` | was `:577` |
+| `parse_expr.cyr:695` | `undefined variable` | was `:685` |
 
 Five of the seven are the same `undefined variable` diagnostic, which is the common case a user
 hits — so converting them is most of the perceived inconsistency for a small, uniform change: print,
 set `_had_error` + `_panic`, return, and let the `PARSE_STMT` chokepoint resync.
 
-**The lexer's stay fatal, deliberately — and they are the other 18.** The `grep` this file used to
-cite (`syscall(SYS_WRITE, 2, "error:", 6)` over `src/frontend/`) returns 25: **7 in `parse*.cyr`**,
-the table above, and **18 in `lex.cyr`**. `lex_pp.cyr` adds 12 more in the single-string form
-(`"error: include/#ref filename exceeds 4095 bytes\n"` and friends). All of those run *before*
-parsing, so there is no token cursor to resync and no statement boundary to recover to. **They are
-not part of this issue** — counting them as residual is what inflated 7 to 25.
+**Four MORE `error:` printers now live in `parse*.cyr` and are NOT residual — they already
+recover.** The raw grep count in `parse*.cyr` rose 7 → 11 since this was filed, but the four
+additions all set `_had_error = 1` and return instead of exiting, so the residual is unchanged at
+7. They are listed so a future sweep does not re-inflate the number by counting hits instead of
+reading them:
+
+| site | message | behaviour |
+|---|---|---|
+| `parse_types.cyr:688` | `'…' is private to its file` (v6.5.0 `private`) | `_had_error = 1; return 1;` |
+| `parse_fn.cyr:1043` | `'…' expects N argument(s), got M` (arity check) | `_had_error = 1; return 0;` |
+| `parse_fn.cyr:1127` | `'…' is private to its file` | `_had_error = 1; return 1;` |
+| `parse_fn.cyr:1604` | `passing integer literal … which expects a cstring` | `_had_error = 1;` |
+
+**The lexer's stay fatal, deliberately.** The same `grep` over all of `src/frontend/` returns
+**29** at 6.5.10 (was 25): 11 in `parse*.cyr` (above) and **18 in `lex.cyr`**. `lex_pp.cyr` adds
+more in the single-string form (`"error: include/#ref filename exceeds 4095 bytes\n"` and friends).
+All of those run *before* parsing, so there is no token cursor to resync and no statement boundary
+to recover to. **They are not part of this issue** — counting them as residual is what inflated 7
+to 25 the first time.
 
 ### R2 — dense consecutive errors coalesce
 
@@ -72,10 +94,15 @@ not part of this issue** — counting them as residual is what inflated 7 to 25.
 (three dense errors → one report). Bounded recovery is honest behaviour, but stopping at
 statement-start keywords as well would report more of them. Refinement, not a defect.
 
+**Still open, re-read live 2026-08-07:** `_sync_skip` (`src/common/util.cyr:1188-1200`) stops on
+exactly three things — `;` (tok 5, consumed), `}` (tok 14) and EOF (tok 12). There is no
+statement-start-keyword arm.
+
 ## Not this issue — full arbitrary recovery
 
-Expression-interior recovery needs error-return threading through the **328** live `ERR_EXPECT` call
-sites in `src/` (the file previously said 346) plus every parse-chain caller — parse fns return `i64`
+Expression-interior recovery needs error-return threading through the **329** live `ERR_EXPECT` call
+sites in `src/` (`grep -rn "ERR_EXPECT(" src/ | wc -l`, run 2026-08-07 on 6.5.10; this file has said
+346, then 328) plus every parse-chain caller — parse fns return `i64`
 but callers ignore it — or exceptions, and that door is closed
 (`project_no_try_catch_door_closed`). It is cybs-hostile: it adds call/return references to already
 large parse fns that cybs mis-compiles **silently**, which the seed-derive gate exists to catch.

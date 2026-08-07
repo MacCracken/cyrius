@@ -1,16 +1,20 @@
 # `lib/syscalls_x86_64_agnos.cyr` — two new numbers are coming, and the file's stated authority is circular with the doc it mirrors
 
-**Status:** 🔴 **ACTIONABLE NOW — item 2 is BLOCKING agnos.** Filed 2026-08-05 from a full agnos ↔ cyrius
-syscall coverage audit; **updated the same day: `#97`'s kernel arm has LANDED**, so the precondition this
-ticket set for minting the constant is met and agnos `check.sh` is red until cyrius moves. Item 1
-(`fork`/`#96`) is still forward notice. See §2.
-**Placement:** ⭐ **Item 2 is ready to land NOW** — its agnos arm shipped in 1.56.40, which is the
-lockstep condition this ticket set. Item 1 (`fork`) still waits for its own arm. Item 3 is a one-line
-header correction available any time.
-**Severity:** ⭐ **Item 2 is now BLOCKING a consumer** (agnos `check.sh` red). Items 1 and 3 remain low —
-forward notice and a provenance fix. The file is not *wrong*; it is one constant behind a kernel that
-shipped today.
-**Affects:** cycc 6.5.7 and earlier.
+**Status:** 🟡 **OPEN for ITEM 1 ONLY — items 2 and 3 have SHIPPED; nothing here blocks agnos any
+more.** Re-verified against live code on cycc **6.5.10**, 2026-08-07:
+
+| item | state | evidence (live, 2026-08-07) |
+|---|---|---|
+| **2 — `SYS_CHAN_OP = 97`** | ✅ **SHIPPED v6.5.8** | `lib/syscalls_x86_64_agnos.cyr:147` `SYS_CHAN_OP = 97;` plus six wrappers driving it (`:207` CAPS, `:212` MINT, `:217` SEND, `:223` RECV, `:229` CLOSE, `:238` **ENDOW**, the last added v6.5.9). ⚠ They are spelled `sys_chan_*`, **not** `chan_send`/`chan_recv`/`chan_close` — those names are already the in-process MPSC thread channel and last-definition-wins would have silently replaced it on agnos only (CHANGELOG [6.5.8]). |
+| **3 — circular authority + stale stamp** | ✅ **SHIPPED v6.5.7** | `lib/syscalls_x86_64_agnos.cyr:1-20`: the header now reads *"Mirrors agnos's SYSCALL DISPATCH — `agnos/kernel/core/syscall.cyr` — which is the single canonical source"* and demotes the ABI doc to *"a secondary reference … NOT authority"*, with the doc→cyrius→doc loop written up in place. The `(agnos 1.41.x)` stamp is gone. |
+| **1 — `SYS_FORK = 96`** | 🟡 **OPEN, correctly** | `grep -n 'SYS_FORK' lib/syscalls_x86_64_agnos.cyr` → nothing; `fn sys_fork` exists on the linux/aarch64/macos/windows peers but **not** the agnos one. This is deliberate: the header at `:42` records *"#96 = fork — STILL NOT MINTED. No dispatch arm exists in agnos 1.56.40 (`grep 'num == 96'` finds nothing)"*, and CHANGELOG [6.5.8] states the gate now asserts **both** directions. Unblocked only when the agnos kernel arm lands. |
+
+**Placement:** unpinned — 6.x-line stdlib backlog, never 7.x. Item 1 is gated on an **agnos-side**
+precondition, not on cyrius scheduling; it is not work cyrius can pull forward. Keep this file open
+as the record of the reserved `#96` so nobody assigns it elsewhere.
+**Severity:** Low. Nothing here blocks a consumer today — agnos `check.sh` went green when `#97`
+minted at v6.5.8.
+**Affects:** item 1 — cycc 6.5.10 and earlier. Items 2/3 — fixed at 6.5.8 / 6.5.7.
 **Filed from:** agnos. Originals — [`2026-08-05-syscall-96-fork.md`](https://github.com/MacCracken/agnos/blob/main/docs/development/issues/2026-08-05-syscall-96-fork.md) ·
 [`2026-08-05-syscall-97-chan-op.md`](https://github.com/MacCracken/agnos/blob/main/docs/development/issues/2026-08-05-syscall-97-chan-op.md) ·
 [`2026-08-05-abi-doc-covers-two-thirds-of-the-syscalls.md`](https://github.com/MacCracken/agnos/blob/main/docs/development/issues/2026-08-05-abi-doc-covers-two-thirds-of-the-syscalls.md).
@@ -46,7 +50,14 @@ and the caller reads the fall-through value as data — so a minted-but-unimplem
 than none. A host build of the same consumer looks perfectly healthy either way; see
 [[reference_target_arm_contract_bugs_are_invisible_offtarget]].
 
-## 2. `SYS_CHAN_OP = 97` — ⭐ **THE KERNEL ARM HAS LANDED. MINT IT.**
+## 2. `SYS_CHAN_OP = 97` — ✅ **MINTED v6.5.8. CLOSED.**
+
+> **SHIPPED.** `SYS_CHAN_OP = 97` landed at v6.5.8 exactly as specified below, verified against
+> `agnos/kernel/core/syscall.cyr:7620` (all five ops CAPS/MINT/SEND/RECV/CLOSE dispatching,
+> `CH_OP_SUPPORTED = 0x1F`) rather than against the ABI doc. v6.5.9 added the sixth op,
+> `CH_ENDOW` (`lib/syscalls_x86_64_agnos.cyr:174`, `:238`), and `sys_spawn_path_env`
+> (`:1026`) alongside it. The wrapper naming diverges from the sketch below — see the Status
+> table. **Do not re-open this section.**
 
 ⭐ **UPDATED 2026-08-05 — this is no longer forward notice.** agnos **1.56.40** ships `#97 chan_op` with
 a live dispatch arm, a boot-reserved 2 MB region, and `CH_CAPS`. The condition this ticket itself set —
@@ -90,7 +101,13 @@ implementation is agnos 1.56.40. setu 0.8.0 will consume it and will declare a h
 `#98`. Whichever is built first must **not** take the other's number on the grounds that it got there
 first — the operator assigned both, on 2026-08-05.
 
-## 3. ⛔ The circular authority, and a 15-version-stale provenance stamp
+## 3. ✅ The circular authority, and a 15-version-stale provenance stamp — **FIXED v6.5.7**
+
+> **SHIPPED.** Cyrius's half is done exactly as §3 recommended — the header now names the agnos
+> kernel dispatch as canonical and the ABI doc as a secondary reference, and the stale
+> `(agnos 1.41.x)` stamp is gone (`lib/syscalls_x86_64_agnos.cyr:1-20`). The **agnos-side** half —
+> `agnos-userland-abi.md:191` still naming the cyrius peer as part of its authority — is an agnos
+> edit, not a cyrius one, and is not tracked by this file.
 
 - **This file, line 5** — *"**Faithful mirror of** `agnos/docs/development/agnos-userland-abi.md` (agnos 1.41.x)"*
 - **That doc, line 191** — *"authoritative map is `kernel/core/syscall.cyr`'s header **+ the cyrius `syscalls_x86_64_agnos.cyr` peer**"*

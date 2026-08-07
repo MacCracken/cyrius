@@ -1,16 +1,22 @@
 # `fs.cyr` `dir_list` allocates its whole working set per call — the last unbounded path in a long-running consumer
 
-**Status:** 🟡 **OPEN** — nothing has shipped for it. Re-verified against live code at the v6.4.82
-closeout: `lib/fs.cyr` still allocates per call in both branches (`:110` / `:150` `vec_new()`,
-`:114` / `:153` `alloc(4096)`, `:158` `alloc(8)`), the per-entry `str_from_buf` push is unchanged,
-and there is **no `dir_list_into` or any other caller-owned-buffer variant** anywhere in `lib/`.
-`dir_list_full` (`:199`), `dir_walk` (`:248`), `find_files` (`:280`) and the `_with_prunes` variants
-(`:307` / `:342`) still share the shape.
-**Placement:** unpinned — **6.x-line stdlib backlog**, no dedicated slot as of the v6.4.82 closeout.
-It is the direct follow-on to the `sock_accept` per-poll leak that shipped in v6.4.61, so its
-natural home is the next stdlib-allocation slot; the cheap half (a file-scope `getdents` scratch,
-mirroring .61's lazy `Err(EAGAIN)` singleton) can fold into an adjacent release on its own. Never
-7.x.
+**Status:** 🟡 **OPEN** — nothing has shipped for it. **Re-verified against live code on cycc
+6.5.10, 2026-08-07: every line number below is still exact.** `lib/fs.cyr` still allocates per call
+in both branches (`:110` / `:150` `vec_new()`, `:114` / `:153` `alloc(4096)`, `:158` `alloc(8)`),
+the per-entry `str_from_buf` push is unchanged (`:138`), and `grep -rn dir_list_into lib/ src/`
+returns **nothing** — no caller-owned-buffer variant exists. `dir_list_full` (`:199`), `dir_walk`
+(`:248`), `find_files` (`:280`) and the `_with_prunes` variants (`:307` / `:342`) still share the
+shape; `dir_list_full` and `dir_walk` carry their own `alloc(4096)` / `alloc(8)` at `:221` and
+`:236`–`:237`.
+⚠ Neither v6.5.9's growable arena / exhaustion policy nor v6.5.10's `alloc_via` call-plumbing work
+touches this: both are about the *allocator*, and `dir_list` does not thread one — it calls bare
+`alloc()` / `vec_new()`. Do not read the 6.5.9/.10 allocator entries as narrowing this.
+**Placement:** **v6.5.x — W1 reactive window, `.11`–`.16`.** `roadmap.md`'s W1 row (verified live
+2026-08-07) lists this file under "⏳ still owed", alongside
+`proposals/2026-06-25-source-level-version-constant`; 7 of the window's 13 slots are spent and 6
+remain. It is the direct follow-on to the `sock_accept` per-poll leak that shipped in v6.4.61. The
+cheap half (a file-scope `getdents` scratch, mirroring .61's lazy `Err(EAGAIN)` singleton) can fold
+into an adjacent release on its own. Never 7.x.
 
 **Discovered:** 2026-07-26 while closing out agora's 1.6.x memory work (the 2026-07-26 P(-1) audit)
 **Severity:** Medium — no hard failure, but it is unbounded growth in a shipping server with **no

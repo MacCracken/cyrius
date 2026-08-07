@@ -1,9 +1,20 @@
 # Cross-OS: the full tcyr corpus fails 23 of 258 on macOS-arm64 — first measurement
 
-**Status:** 🟡 **OPEN** — filed 2026-08-05 from the v6.5.8 cross-OS widening work.
-**Placement:** unpinned. Needs its own arc — most of the 23 are downstream of one open issue.
+**Status:** 🟡 **OPEN** — filed 2026-08-05 from the v6.5.8 cross-OS widening work; the mechanism
+re-verified against live code on **6.5.10**, 2026-08-07. Still opt-in, still the glob by default:
+`scripts/release-gate.sh:110` runs `cross-os-selfhost.sh "$H" "vr01_"` inside `for H in ecb ach cass
+pi` (`:108`), and `cross-os-selfhost.sh:321` clears the glob only when `CYRIUS_CROSS_OS_FULL=1`.
+⚠ **The two counts in the table below have both moved and are NOT re-measured here** — at 6.5.10
+the corpus is **260** tcyr and the `vr01_` glob selects **36**, so the gate's blind region is
+**224 unrun on every gated host**, not 224 of 258. The `235 pass / 23 fail` figure is a **6.5.8
+measurement on ecb and has not been re-run since**; treat it as a floor-of-record, not a current
+number. ⚠ `scripts/release-gate.sh:107` also still says the ach vr01 leg "fires its VR-01 libtest
+(25 tests)" — that comment is stale too; the glob is 36.
+**Placement:** unpinned — 6.x-line, never 7.x. No dedicated slot in `roadmap.md` at 6.5.10; the
+largest cluster is downstream of Slot 11 (macOS-arm64 concurrency, `.39`), and the **pi**
+full-corpus leg is tracked as W1 item 7. Needs its own arc once those land.
 **Severity:** Medium — nothing regressed; this is **previously-unmeasured** territory now measured.
-**Affects:** cycc 6.5.8. Reproduce with `CYRIUS_CROSS_OS_FULL=1 sh scripts/cross-os-selfhost.sh ecb x`.
+**Affects:** measured on cycc 6.5.8. Reproduce with `CYRIUS_CROSS_OS_FULL=1 sh scripts/cross-os-selfhost.sh ecb x`.
 
 ## What changed, and why this is newly answerable
 
@@ -17,11 +28,14 @@ v6.5.8 batched the loop into one ssh per host and made the report state its own 
 A full-corpus run then costs **75 s on ecb**, which is affordable. So for the first time
 there is a number for the blind region:
 
-| | |
-|---|---|
-| corpus | **258** tcyr |
-| run by the gate today | **34** (`vr01_*`) |
-| full-corpus result on ecb | **235 pass / 23 fail** |
+| | at filing (6.5.8) | live 2026-08-07 (6.5.10) |
+|---|---|---|
+| corpus | **258** tcyr | **260** (`ls tests/tcyr/*.tcyr \| wc -l`) |
+| run by the gate today | **34** (`vr01_*`) | **36** (`ls tests/tcyr/vr01_*.tcyr \| wc -l`) |
+| full-corpus result on ecb | **235 pass / 23 fail** | **not re-measured** — needs a run on real ecb |
+
+The two new corpus files and the two new `vr01_` files landed in .9/.10; whether either changes the
+23 is unknown until someone re-runs it on ecb.
 
 ## The 23
 
@@ -68,9 +82,17 @@ part that was a defect. Closing the 23 is a separate arc.
 
 ## Acceptance
 
-- Triage the 23 into clusters and confirm each root cause (do not assume the threading issue
-  explains all of them — three clusters are visible and at least six files are unclassified).
+- **Re-measure on ecb first.** The 23 is a 6.5.8 number and v6.5.7/.8 landed macOS-relevant fixes
+  that plausibly touch the list — `link(86)` and `chdir` unmapped on macOS-x86, `symlinkat(36)` /
+  `readlinkat(78)` unrouted on Mach-O ARM, `xrmdir` broken on macOS-arm64 since v6.5.2, the Darwin
+  `AT_*` flag divergence, and the macOS-x86 `Stat` enum (all CHANGELOG [6.5.7], "found by ports").
+  `sys.tcyr`, `syscalls_at_family.tcyr` and `process*.tcyr` are the candidates. **Do not size the
+  arc off the stale 23.**
+- Triage whatever the re-measurement gives into clusters and confirm each root cause (do not assume
+  the threading issue explains all of them — three clusters are visible and at least six files were
+  unclassified at filing).
 - As each cluster closes, the count drops; when it reaches zero, make
   `CYRIUS_CROSS_OS_FULL=1` the default and delete the env var.
-- ach/cass/pi have **not** been measured this way yet — ecb is the only host with a number.
-  Do those before sizing the arc.
+- ach/cass/pi have **not** been measured this way — ecb is the only host with a number, and it is a
+  6.5.8 one. The **pi** leg is tracked separately as `roadmap.md` W1 item 7. Do those before sizing
+  the arc.

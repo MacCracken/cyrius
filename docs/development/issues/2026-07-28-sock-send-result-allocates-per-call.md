@@ -4,9 +4,20 @@
 `sock_send` grows `alloc_used()` by **exactly 16 bytes per call**, warm, with a zero-length
 payload. The cost is the `Result` return value, not the payload. Every `Result`-returning
 socket primitive in `lib/net.cyr` has the same shape.
-**Placement:** unpinned — **6.x-line stdlib backlog**. Touches the `Result` representation or
-`net.cyr`'s use of it, so it wants a slot rather than a drive-by; but it is the last unbounded
-per-request allocation left in a sandhi-based server after that project fixed its own.
+**Re-verified against live code on cycc 6.5.10, 2026-08-07:** `sock_send` (`lib/net.cyr:384`) and
+`sock_recv` (`:391`) still return bare `Ok(n)` / `Err(0 - n)`; there is **no `sock_send_a` /
+`sock_recv_a`** anywhere in `lib/` and the `Result` construction is untouched. Neither v6.5.9's
+growable arena nor v6.5.10's `alloc_via` call plumbing changes it — those make allocation *cheaper*
+(15.1 → 11 ns) and *reclaimable when threaded*, but nothing threads an allocator through these
+wrappers, so the per-call 16 B still lands on the no-free global bump.
+**Placement:** **v6.5.x Slot 9 (`.33`–`.34`) — "Sum-type variant unboxing"** (`roadmap.md` v6.5.x
+slot table, verified live 2026-08-07; *retitle at pin time*). ⭐ **The triage confirmed this file's
+own "speculation" and rejected two of its three fixes:** it is the compiler's variant **lowering**,
+not `net.cyr`'s use of it, so the slot takes **fix option 1 only** (unbox the scalar case — tag +
+i64 payload in a register pair, no allocation). Options 2 and 3 are recorded there as traps —
+arena variants push the cost onto every consumer, and a singleton silently breaks any caller
+storing a `Result` past the next call, which is the trap this file itself flagged. Full ecosystem
+ABI cross-walk at arc-open, one coordinated filing, not drip. Never 7.x.
 **Discovered:** 2026-07-28 while closing sandhi's per-request allocations for the AgnosAI
 Rust→Cyrius port (port-plan blocker #3). Found by a regression test that asserts a serve loop's
 global-bump delta is flat — the test failed at 16 B/response after the sandhi-side fix was
@@ -79,6 +90,9 @@ cyrius lib sync && cyrius build src/main.cyr build/sockprobe && ./build/sockprob
 ```
 
 fd 2 is used so the write itself always succeeds; the 16 B is the `Result`, not the payload.
+
+**Re-run verbatim on cycc 6.5.10, 2026-08-07** (with `cyrius = "6.5.10"` in the manifest): byte-for-byte
+the same output — `100x sock_send global-bump delta=1600  per call=16`. Unchanged in two minors.
 
 ## Root cause (speculation — flagging as such)
 

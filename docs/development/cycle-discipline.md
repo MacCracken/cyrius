@@ -54,7 +54,10 @@ When SSH-ing to cass (Win64) to capture an exit code, the obvious
 at **parse time** and falsely reports `exit=0`. Use either:
 - `cmd /v /c "prog.exe & echo exit=!errorlevel!"` (delayed expansion)
 - `.bat` indirection (newlines split parse passes; what
-  `_pe_exit_gate` in `programs/check.cyr` always used correctly)
+  `_pe_exit_gate` — now `programs/checks/platform_win_macho.cyr`, since
+  `programs/check.cyr` was split into `programs/checks/` — always used
+  correctly: it scp's a `.bat` that echoes `exit=%ERRORLEVEL%` and runs it
+  with `cmd /c`)
 
 Memory pin: `feedback_windows_errorlevel_test_wrapper`.
 
@@ -82,10 +85,23 @@ Then the new minor opens at `vN.(M+1).0`.
 absorbed the six-distlib sandhi foldin (sakshi 2.2.3 / patra
 1.9.3 / sigil 3.1.0 / vani 0.9.2 / yukti 2.2.2 / sankoch 2.2.4).
 v5.9.x close at v5.9.43 absorbed niyama 1.0.1. v5.10.x close at
-v5.10.50 absorbed the wrap-up + .49 PE debunk. v5.11.x is
-following the same shape: heap-map full reorg at v5.11.68
-(engineering), conditional mabda 3.0 fold at v5.11.69 (or .69
-stays unused).
+v5.10.50 absorbed the wrap-up + .49 PE debunk. **v6.4.x is the
+cleanest recent instance of all three steps**: the engineering
+band ran .80–.84, **v6.4.85** was the closeout-complete cut
+(docs / ledger / handoff reconciled, cycc byte-identical to .84
+at 1,112,464 B — no code change), and **v6.4.86** was the
+fold-applied tag (sandhi 1.9.3 → 1.9.5, byte-identical vendor,
+cycc unchanged because `lib/sandhi.cyr` is outside cycc's
+include closure).
+
+**The conditional third step really is conditional.** v5.11.x
+was pinned here as "heap-map full reorg at v5.11.68
+(engineering), conditional mabda 3.0 fold at v5.11.69" — the
+mabda 3.0 fold was **dropped at user direction post-.67**, and
+v5.11.69 shipped instead as the v5.x cycle-close doc / scripts /
+vidya sweep (see CHANGELOG [5.11.69]). Neither outcome is a
+deviation: `vN.M.K+1` either carries a fold or carries nothing
+that needs engineering.
 
 **Exceptions are explicit, not accidental**. The v5.11.1–.7
 stdlib annotation arc landed at the **start** of v5.11.x, not
@@ -107,8 +123,21 @@ across cycles. Copy the block into a new ledger entry and tick as you go. Ship t
 closeout as the last engineering patch of the current minor (e.g. `6.4.NN` before `6.5.0`).
 
 **Mechanical gates (fail-fast) — `sh scripts/release-gate.sh`**
-- [ ] Self-host fixpoint byte-identical · seed-derive (`seed→cybs→cycc`) byte-identical
-- [ ] check.sh all-green (record N) · cross-OS **ecb + cass + pi** [+ **ach** for the Intel-Mac tail] `SELFHOST_OK`+`LIBTEST_OK` on REAL hardware · bench recorded (self_compile ms + cycc B)
+
+Five steps, fail-fast, in this order (`--quick` runs 1–3 only and is NOT release-ready):
+
+- [ ] **1** self-host fixpoint byte-identical (and `build/cycc == cycc(src)`) · **2** seed-derive (`seed→cybs→cycc`) byte-identical
+- [ ] **3** check.sh all-green (record N) — the gate checks check.sh's **exit status**, not just its `N passed, 0 failed` line, because the shell gates run *after* the check binary and its summary does not cover them
+- [ ] **4** cross-OS on all **four** hosts, sequentially — **ecb** (macOS-arm64) · **ach** (Intel-Mac x86-macho) · **cass** (Windows PE) · **pi** (aarch64) — each `SELFHOST_OK` **and** VR-01 `LIBTEST_OK` on REAL hardware
+- [ ] **5** bench recorded (self_compile ms + cycc B) — non-blocking, but the number goes in the CHANGELOG
+
+`ach` is a **first-class gate host, not a tail** — it was added to this loop at v6.4.59 after
+the Intel-Mac toolchain rotted ungated for ~2.5 minors (`scripts/release-gate.sh:108` is a flat
+`for H in ecb ach cass pi`). Step 4 runs the `vr01_` glob and **prints its own coverage** —
+"corpus: N of M tcyr selected by glob" — so a subset can no longer read as authoritative;
+`CYRIUS_CROSS_OS_FULL=1` runs the whole corpus instead (opt-in: ~75 s on ecb, and the blind
+region still holds known platform gaps, so defaulting to full would wedge every release behind
+a separate arc).
 
 **Judgment passes** (where bugs hide — see CLAUDE.md items 4–8)
 - [ ] Heap-map audit · dead-code audit (record floor) · refactor pass · code-review pass · cleanup sweep
@@ -128,24 +157,21 @@ floor, a re-triage that keeps re-pinning the same item).
 
 <!-- TEMPLATE — copy for each closeout:
 ### vX.Y.0 closeout — YYYY-MM-DD
-- Gates: check.sh NNN · cross-OS ecb/cass/pi green · self_compile NNN ms · cycc NNN B · dead-code floor NN fns
+- Gates: check.sh NNN · cross-OS ecb/ach/cass/pi green · self_compile NNN ms · cycc NNN B · dead-code floor NN fns
 - Judgment / compliance: <findings, or "clean">
 - Backlog re-triage: N archived, N re-pinned — <notes>
 - Follow-ups spawned: <issues / patches>
 -->
 
-### v6.4.x → v6.5.0 closeout — 2026-07-27 (shipped as **v6.4.82**)
+### v6.4.x → v6.5.0 closeout — 2026-07-27 → 2026-07-28 (ran **v6.4.80 → v6.4.85**, fold tag **v6.4.86**)
 
 - **Gates**: check.sh **150** (was 147 at .72; +`lib_freshness`-era growth, +`_doc_stamp_currency_gate`
   and the `valform_simd_crosstarget` shell gate this cycle) · self-host fixpoint + seed-derive
   byte-identical · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + VR-01 `LIBTEST_OK` on REAL hardware ·
   self_compile **622 ms** · cycc **1,108,368 B** · heap **100 regions, 0 overlaps** · corpus **251
   .tcyr** (verified by a per-file exit-code loop, not check.sh's grep summary) · api-surface **4749**.
-- **The closeout did not fit in one release.** It ran as an audit at .80, and the audit kept finding
-  live bugs: .80 became `1 - 2 + 3` == 5, .81 became a fourth `_cfo` occurrence + CVE-32/33/34, and
-  .82 is the closeout proper plus the TS-arena fix and agnos #94/#95. Two consecutive releases were
-  displaced by their own closeout audit — **that is the argument FOR running these passes, not
-  against**, and it is the single most useful thing this ledger entry records.
+  (Figures are the **.82** measurement. The band ran on to .85 at check.sh 150/0 and cycc
+  **1,112,464 B**; see the five-release bullet below.)
 - **Judgment findings** (all FIXED, not filed — see the feedback rule below):
   fourth `_cfo` rewind occurrence in `EMIT_OP_DISPATCH` (`p * 3 + 1` == 4; `add`/`sub` cleared the
   flag, `mul`/`div` never did) · CVE-32/33/34 three unbounded copies reachable from untrusted source
@@ -178,8 +204,17 @@ floor, a re-triage that keeps re-pinning the same item).
   documented claim) · **.84** `chan_try_send` + the non-blocking channel surface SIGSYS-ing on
   macOS (the new gate was the first `vr01_` ever to exercise channels there, and it caught
   both the new fn AND pre-existing breakage in `chan_try_recv`/`chan_close`).
+  **.85** then carried no code at all — the closeout-complete cut that reconciled this ledger,
+  `state.md`, `roadmap.md`, `doc-health.md` and `handoff.md`, cycc byte-identical to .84.
   **Three of those five were found by verification work, not by feature work.** That is the
   case for running these passes at all, and it is the number to remember next cycle.
+- **Fold-applied tag: v6.4.86** — sandhi 1.9.3 → **1.9.5**, vendored byte-identical from
+  upstream's committed dist (1.9.4 is the substance: `sandhi_server_recv_request` had one
+  failure value and dispatched three distinct incomplete-request cases as if whole; now
+  `-2` TOO_LARGE → 413, `-3` INCOMPLETE → 400, unsupported transfer coding → 501). cycc
+  byte-identical — `lib/sandhi.cyr` is outside its include closure. api-surface 4752 → **4755**,
+  0 removed. This is step 3 of the [Cycle-close shape](#cycle-close-shape) — the closeout proper
+  is .80–.85, and .86 is the separate fold-applied tag, which is why the heading names both.
 - **Follow-ups**: none deferred silently. Everything not fixed is filed with a NAMED reason.
 
 - _v6.3.x → v6.4.0 and earlier: full gate detail predates this ledger — canonical in

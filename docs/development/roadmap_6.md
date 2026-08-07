@@ -24,7 +24,11 @@ gave the v6.5.x plan two homes that had already drifted apart.
 > unscheduled 6.x backlog. **Nothing codegen is EVER parked to 7.x** — 7.x is the language
 > book plus legal-for-public-release, only that. The v6.4.82 closeout found and corrected two
 > violations here (DWARF, incremental compilation); the DWARF bullet in "What comes after v6.x"
-> below still carries its correction note for that reason.
+> below still carries its correction note for that reason. **The 2026-08-07 doc sweep found
+> two more in the same closing paragraph** — LSP/formatter/linter evolution and agnos-v2.0
+> alignment — and re-homed both to the 6.x line. Four violations, all in this one file, all
+> found by a sweep rather than by the rule catching them: **if you are about to write a
+> capability under a 7.x heading, you are almost certainly making violation number five.**
 
 ## See also
 
@@ -57,10 +61,12 @@ late v5.x cycles when a minor's substantive new-code surface
 warrants it (notably v6.2.x platform expansion + v6.4.x ABI+Perf
 arcs).
 
-Reference points, **updated at the v6.4.82 close** — this line used to call v5.11.x's
-70 slots "longest in history", which two v6.x minors have since passed. By closing
-patch number: **v6.0.x ran to .91** and **v6.4.x to .82**, then v5.11.x (.69),
-v6.2.x (.52), v5.7.x, v6.3.x (.45), v6.1.x (.41). Every v6.x minor except v6.1.x has
+Reference points, **updated at the v6.4.x close, corrected 2026-08-07** — this line used to
+call v5.11.x's 70 slots "longest in history", which two v6.x minors have since passed. By
+closing patch number: **v6.0.x ran to .91** and **v6.4.x to .86** (this line said `.82` until
+2026-08-07 while the table below already said `.86` — the same one-copy-drifts-from-the-other
+failure the table's own header warns about), then v5.11.x (.69), v6.2.x (.52), v5.7.x,
+v6.3.x (.45), v6.1.x (.41). Every v6.x minor except v6.1.x has
 exceeded the "30-40 range" target — the working rule (user 2026-06-10) is *"no worries
 about patch size, just hardening and adding features"*, and large minors are the norm,
 so read the budget as a planning aid, not a cap.
@@ -68,7 +74,7 @@ so read the budget as a planning aid, not a cap.
 ---
 ---
 
-## Closed minors — v6.0.x through v6.5.x
+## Closed minors — v6.0.x through v6.4.x
 
 Per-minor narrative used to live here in full. It does not any more: it duplicated
 `CHANGELOG.md` (the source of truth) and `completed-phases.md` (the retrospective), and being
@@ -82,10 +88,10 @@ minor actually closed at **v6.4.86**, which is exactly the failure a second copy
 | v6.2.x | Platform expansion (bare-metal + dependency model) | **v6.2.52** |
 | v6.3.x | Language refinements | **v6.3.45** |
 | v6.4.x | Staging minor → long reactive minor | **v6.4.86** (closeout cut at .85; .86 was the post-closeout sandhi fold) |
-| v6.5.x | **ACTIVE** — see [roadmap.md](roadmap.md) | — |
+| v6.5.x | **ACTIVE** — see [roadmap.md](roadmap.md) | — (head **v6.5.10**, 2026-08-07) |
 
 Every close number above was verified against `CHANGELOG.md` on 2026-07-29 (the per-minor max
-`## [6.Y.N]` heading), not carried over from the previous text.
+`## [6.Y.N]` heading), not carried over from the previous text, and re-verified 2026-08-07.
 
 **One item salvaged out of the deleted v6.2.x detail, because it was never built and was
 quietly archived unfixed:** bare-metal deliverable **#4, the forbidden-module check**.
@@ -227,9 +233,10 @@ landed first in v6.2.x).
 ## What comes after v6.x
 
 **v6.x is not capped at 6 minors.** Per user direction 2026-06-11, the cycle
-**grows further before any major bump** — v6.4.x (CLOSED at .82) → **v6.5.x
-(next: `pub`/`private` opener, then performance quality)** → **v6.6.x (language
-ergonomics)** → **v6.7.x/v6.8.x
+**grows further before any major bump** — v6.4.x (CLOSED at **.86**) → **v6.5.x
+(ACTIVE at .10: the `public`/`private` opener SHIPPED at v6.5.0, and the minor is
+now running its reactive-window drain ahead of the performance-quality arcs)** →
+**v6.6.x (language ergonomics)** → **v6.7.x/v6.8.x
 (RISC-V rv64, re-homed there 2026-07-07)** are the current pins, and more v6.x
 minors can still follow (consumer pressure, language refinements, platform work)
 before v7.0.0. v7 is *further out* than the original
@@ -281,16 +288,34 @@ any committed public-launch date. The deep-dive surfaced it
   multi-error recovery that never hangs or crashes on hostile input. **v6.4.77** then
   made the reserved-word diagnostic name the token you hit (all **67** of them) instead
   of `got unknown`.
-- **Debug-info (DWARF) — still absent** (verified at the v6.4.82 close: zero `dwarf`
-  references anywhere in `src/`, `cbt/`, `programs/`), and crash-localization is still
+- **Debug-info (DWARF) — still absent** (re-verified 2026-08-07 at v6.5.10:
+  `grep -rni dwarf src/ cbt/ programs/` → **0**), and crash-localization is still
   x86-ELF-only. **This is 6.x-line work, NOT a v7 item** — DWARF is codegen, and per the
   placement rule nothing codegen is ever parked to 7.x. It sits under this heading only
   because the *adoption* framing surfaced it; the slot belongs in a 6.x minor or
   roadmap.md's potential backlog. Unpinned today; no consumer has filed.
-- **stdlib-reference** covers ~65/88 modules — the rest need authoring. Docs work, so
-  this one genuinely can ride the public-release track.
+- **stdlib-reference** covers **65 of 99** `lib/*.cyr` modules (`docs/stdlib-reference.md:1501`,
+  re-derived 2026-08-07; this line read "~65/88" while the live module count is **99**, so the
+  gap it describes was understated by 11 modules). Docs work, so this one genuinely can ride
+  the public-release track.
 
-Beyond that, v7.x is open territory. Likely candidates: more language
-refinements based on consumer pressure from v6.x ship; toolchain
-improvements (LSP / formatter / linter evolution); agnos v2.0 alignment
-if AGNOS's roadmap creates pull.
+Beyond that, v7.x is open territory for **book + legal content**. Likely candidates: the
+manuscript itself, the licensing decision, and whatever public-release invariants come with
+them.
+
+> ⛔ **CORRECTED 2026-08-07 — this paragraph used to end by parking "toolchain improvements
+> (LSP / formatter / linter evolution)" and "agnos v2.0 alignment" at 7.x.** Both are
+> **PLACEMENT RULE violations** and both are hereby **re-homed to the 6.x line**:
+> - **LSP / formatter / linter evolution** — `cbt/`-resident tooling that reads and rewrites
+>   cyrius source. The two cyrlint gates already have a named W2 fold-in slot in
+>   [roadmap.md](roadmap.md); the rest belongs in that file's *potential backlog*, unscheduled
+>   but 6.x. (Live evidence that this is real 6.x work, not a far-future aspiration: v6.5.7's
+>   entry notes the LSP flags `sys_chdir` on every `programs/checks/main.cyr` edit, and v6.5.8
+>   shipped fixes to five `cyrius` verbs.)
+> - **agnos v2.0 alignment** — the syscall peer, i.e. runtime/ABI work, and the single most
+>   active reactive generator in the whole cycle (`#97 chan_op` minted v6.5.8, `CH_ENDOW`
+>   v6.5.9). It rides the reactive windows, exactly as agnos 1.5x alignment does today.
+>
+> This is the **third and fourth** instance of the identical pattern in this file — DWARF and
+> incremental compilation were the first two, corrected at the v6.4.82 closeout. The far-future
+> label is how real work stops being scheduled.

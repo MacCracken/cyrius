@@ -4,8 +4,37 @@
 **Reporter:** sandhi 1.9.7 (via bote 3.2.1)
 **Cyrius version at time of report:** 6.5.3
 **Affected stdlib:** `lib/net.cyr` (lines 10–16, 350), `src/backend/aarch64/emit.cyr` (`ESYSXLAT`, the v6.2.10 socket block)
+**Status:** 🟡 **OPEN — but the §3 collision was DISARMED at v6.5.7 by a different mechanism than
+§4 proposed.** Re-verified against live code on cycc **6.5.10**, 2026-08-07:
+
+- **Still true (the filing's core):** `lib/net.cyr:10-16` carries the same seven bare x86 numbers,
+  `grep -c CYRIUS_ARCH lib/net.cyr` → **0**, and the nine `ESYSXLAT` x86-compat socket rows are
+  still live (`src/backend/aarch64/emit.cyr:865-873`, `41→198 · 42→203 · 43→202 · 49→200 ·
+  50→201 …`). No `net.cyr` call was moved onto a per-arch peer wrapper. §4 is unshipped.
+- **No longer true (§3's armed collision):** `fn sys_chdir` now exists
+  (`lib/syscalls_linux_common.cyr:191`) — W1 landed it at **v6.5.7** — and it does **not** call
+  `bind`. The escape was a **new ≥1000 cyrius-private alias band**: `SYS_CHDIR = 1049` on the
+  aarch64 peer (`lib/syscalls_aarch64_linux.cyr:122`), renumbered by ESYSXLAT to native 49 on
+  aarch64 and to 12 on Darwin. So the trap this file predicted **fired for real** — CHANGELOG
+  [6.5.7] records `chdir` returning `-EBADF` on ecb/pi when `vr01_syscall_wrappers.tcyr` first ran
+  it — and was closed by making the x86-compat shim unreachable from source instead of by
+  retiring it. The remaining nine x86 numbers stay burned for any future aarch64-peer constant.
+- **Severity accordingly: still Medium, no longer escalating.** The "bump to High if W1 lands a
+  `sys_chdir` wrapper before this is fixed" trigger in §6 **did** fire; it was neutralised at the
+  same release, so do not re-read §6 as an open escalation. The residual risk is the one the alias
+  band now formalises: nine numbers permanently unavailable to the aarch64 peer.
+
+⭐ **Two items added 2026-08-07 (see §5a and §9), from setu 0.8.4:** (1) the ESYSXLAT socket block is
+**easy to audit wrongly** — it is split across a macho branch and a Linux branch a hundred lines apart,
+and a consumer read the wrong one and shipped a confident wrong claim; the block also covers only nine
+numbers, so adjacent calls (`recvfrom` 45, `unlink` 87) get **no** rescue and mis-dispatch silently.
+(2) `net.cyr` has **no AF_UNIX support at all**, which is the root reason both known consumers left the
+stdlib rather than a preference for raw syscalls.
+
+**Placement:** unpinned — 6.x-line stdlib backlog, never 7.x. No dedicated slot in `roadmap.md` at
+6.5.10. It is a finite cleanup that rides an adjacent net/stdlib release; the ≥1000 alias band has
+removed the deadline pressure that §6 rested on.
 **Severity:** Medium — nothing is broken *today*, but the mechanism keeping it working is the one the stdlib has twice documented as the wrong answer, and it has now armed a collision against planned work (roadmap W1). See Severity rationale.
-**Status:** open
 
 ## 1. Summary
 
@@ -62,13 +91,29 @@ grep -c CYRIUS_ARCH lib/net.cyr          # → 0
 # The only thing making them correct on aarch64:
 grep -n "41→198\|43→202\|49→200" src/backend/aarch64/emit.cyr
 
-# The armed collision (see §3):
+# The armed collision (see §3) — AS FILED, 2026-07-30:
 grep -n "SYS_CHDIR" lib/syscalls_aarch64_linux.cyr   # → 95:    SYS_CHDIR = 49;
 grep -rn "sys_chdir" lib/regression.cyr              # → 658:        sys_chdir(work_dir);
 grep -rn "fn sys_chdir" lib/ src/                    # → nothing: the wrapper does not exist yet
 ```
 
+⚠ **Those last two lines no longer reproduce** — re-run 2026-08-07 on 6.5.10 they give
+`lib/syscalls_aarch64_linux.cyr:122:    SYS_CHDIR = 1049;` (the private alias) and
+`lib/syscalls_linux_common.cyr:191:fn sys_chdir(path): i64 {`. The first two lines — the seven
+bare x86 constants and `grep -c CYRIUS_ARCH lib/net.cyr` → 0 — still reproduce exactly.
+
 ## 3. Root cause — and the collision this has already armed
+
+> ⚠ **The prediction in this section came true and has since been closed — read it as history.**
+> W1 landed `fn sys_chdir` at **v6.5.7**, `vr01_syscall_wrappers.tcyr` turned RED on ecb and pi,
+> and the diagnosis was exactly the one below: native 49 eaten by the `bind(49→200)` shim,
+> `chdir` returning `-EBADF`. The fix was **not** §4's retirement of the shim (51 ecosystem repos
+> emit raw `syscall(54, …)` and the rows are load-bearing) but a new **≥1000 cyrius-private alias
+> band**: `SYS_CHDIR = 1049` on the aarch64 peer, ESYSXLAT-renumbered to 49. The x86 number 80 was
+> no escape either — that is the aarch64 peer's own `SYS_FSTAT`. Live at
+> `lib/syscalls_aarch64_linux.cyr:122`. The table below is therefore **no longer an open hazard**;
+> the burned-number analysis around it still is.
+
 
 A runtime renumber chain is **arch-blind to source origin**. `ESYSXLAT` emits `cmp x8,#N /
 b.ne / movz x8,#M` ahead of every `svc`, so it rewrites *any* code path that lands N in x8, not
@@ -138,6 +183,41 @@ stdlib to make it unnecessary for the next consumer to rediscover.
 sandhi is **not** shipping a workaround: it composes `sock_accept()` from five serve loops and
 routing around the stdlib there would be worse than the hazard.
 
+### 5a. Second consumer, 2026-08-07 — setu 0.8.4, and it went WRONG first
+
+setu (the AGNOS display-protocol contract lib) moved its Linux transport off TCP onto
+**AF_UNIX / SOCK_SEQPACKET** and hit §9 immediately: there is no AF_UNIX support in `net.cyr` to
+call. It reached for raw `syscall(41, …)` — **the exact shape this filing is about** — and did so
+after reading `net.cyr` and finding nothing, *without checking the syscall peers*, where
+`sys_socket` / `sys_connect` / `sys_bind` / `sys_listen` / `sys_accept4` / `sys_recvfrom` /
+`sys_unlinkat` all already exist and are per-arch correct.
+
+⛔ **THE INSTRUCTIVE PART IS THE MIS-DIAGNOSIS, AND IT IS A HAZARD THIS FILING SHOULD NAME.** The
+setu author checked whether `ESYSXLAT` would rescue the raw numbers on aarch64, read the **macho**
+block (`emit.cyr:760-773`), found no socket rows there, and concluded *"ESYSXLAT contains no socket
+numbers at all"* — then wrote that into a shipped CHANGELOG. The Linux x86-compat socket block is a
+hundred lines further down at `:865-873` and contains exactly those rows. **The renumber chain is
+hard to audit from the outside**: it lives in the backend, it is split across two target branches,
+and a consumer checking "am I safe on aarch64?" can read the wrong half and reach a confident wrong
+answer in either direction.
+
+⭐ **And the half-truth is the dangerous shape.** Of the seven numbers setu hardcoded, five (41 socket,
+42 connect, 43 accept, 49 bind, 50 listen) **are** in the block and would have worked. Two are not:
+
+| x86 number | call | in the ESYSXLAT socket block? | aarch64 outcome |
+|---|---|---|---|
+| 45 | `recvfrom` | ⛔ **no** | not renumbered — silent mis-dispatch |
+| 87 | `unlink` | ⛔ **no** | aarch64 Linux has no `unlink(2)` at all; needs `unlinkat(AT_FDCWD, path, 0)` — a different ARITY, which no renumber chain can express |
+
+So a consumer that copies `net.cyr`'s pattern gets a **partially** working result: the socket calls
+survive, the adjacent ones do not, and nothing fails at build time. That is worse than a uniformly
+broken one, because the working majority reads as evidence the pattern is sound.
+
+⚠ **Arity is the hard limit on the whole mechanism.** `ESYSXLAT` renumbers `x8`; it cannot add an
+argument. Any x86 syscall whose aarch64 replacement takes different arguments — `unlink`→`unlinkat`,
+`open`→`openat`, `stat`→`fstatat` — is permanently outside what the renumber chain can fix, no matter
+how many rows are added. That is an argument for §4 independent of the burned-number analysis.
+
 ## 6. Severity rationale
 
 **Medium, not High** — nothing is miscompiled today. Every path `net.cyr` exercises gets the
@@ -156,11 +236,65 @@ right syscall on every supported target.
 **Bump to High if** W1 lands a `sys_chdir` wrapper before this is fixed, or if any new
 aarch64-peer constant takes a value in {41, 42, 43, 48, 50, 51, 54, 55}.
 
+> ⚠ **The first trigger fired and was handled — see the Status block.** W1 landed `sys_chdir` at
+> v6.5.7 and the collision was closed the same release via the ≥1000 private-alias band, so this
+> is **not** an open escalation. The second trigger stands: the eight remaining burned values are
+> still unavailable to the aarch64 peer, and the alias band is now the documented escape from
+> them (`SYS_FCHOWNAT = 1054`, `SYS_CHDIR = 1049`).
+
+## 9. NEW (2026-08-07) — `net.cyr` has no AF_UNIX at all, which is why consumers keep leaving it
+
+Separate from the arch-guard defect, and surfaced by the same setu work: **the stdlib has no
+Unix-domain socket support whatsoever.**
+
+```bash
+grep -rn "AF_UNIX\|sockaddr_un\|SOCK_SEQPACKET" lib/     # → nothing
+sed -n '30,34p' lib/net.cyr
+#   enum SockDomain { AF_INET = 2; AF_INET6 = 10; }
+#   enum SockType   { SOCK_STREAM = 1; SOCK_DGRAM = 2; }
+```
+
+`SockDomain` has no `AF_UNIX = 1`; `SockType` has no `SOCK_SEQPACKET = 5`; there is no `sockaddr_un`
+builder anywhere. So a consumer wanting a **local** socket has no stdlib path at all and must
+hand-roll the address structure and reach past `net.cyr` — which is precisely how both known
+consumer workarounds (§5, §5a) came about.
+
+⭐ **This is not a niche ask.** It is the correct primitive for local IPC, and it is what the two
+in-tree consumers actually need: bote's transport is Unix-socket; setu's host transport is now
+AF_UNIX/SOCK_SEQPACKET because TCP-on-loopback was ruled the wrong primitive for local display IPC.
+`socketpair(SOCK_SEQPACKET)` is also what agnos's own channel-band semantic proof is written against,
+so the semantics are already load-bearing in the ecosystem — just not expressible through the stdlib.
+
+**Proposed shape** (small, and independent of §4):
+
+```
+enum SockDomain { AF_INET = 2; AF_INET6 = 10; AF_UNIX = 1; }
+enum SockType   { SOCK_STREAM = 1; SOCK_DGRAM = 2; SOCK_SEQPACKET = 5; }
+
+fn sockaddr_un(path, sa): i64          # build sockaddr_un, return addrlen (2 + len + 1)
+fn unix_socket(type): Result           # AF_UNIX socket, SOCK_STREAM or SOCK_SEQPACKET
+fn unix_connect(fd, path): Result
+fn unix_bind(fd, path): Result         # unlinks the stale node first — see below
+fn unix_listen(fd, backlog): Result
+```
+
+⚠ **`unix_bind` must unlink before binding.** An AF_UNIX node is a filesystem entry that OUTLIVES its
+process, so a server killed without a clean shutdown leaves it and every later bind fails
+`EADDRINUSE`. Leaving that to each consumer reproduces, per-consumer, the "second run hosts nothing
+and otherwise looks completely healthy" failure — setu hit exactly that shape with a leaked TCP
+listener and now unlinks at bind time, because a shutdown path is skipped by a crash.
+
+⚠ **Missing peer wrappers this also needs:** `sys_shutdown` (§4 already notes it) and nothing else —
+`sys_socket`/`sys_connect`/`sys_bind`/`sys_listen`/`sys_accept4`/`sys_recvfrom`/`sys_unlinkat` are all
+present and per-arch already, which is the point: the wrappers exist, `net.cyr` just doesn't use them
+and doesn't expose AF_UNIX on top of them.
+
 ## 7. Related issues
 
-- [`2026-07-26-no-lchown-wrapper-forces-a-hardcoded-x86-64-syscall-number.md`](2026-07-26-no-lchown-wrapper-forces-a-hardcoded-x86-64-syscall-number.md)
-  — same family; documents that `fn sys_chdir` exists nowhere. **Cross-blocking: closing that
-  one first fires the collision in §3.**
+- [`archived/2026-07-26-no-lchown-wrapper-forces-a-hardcoded-x86-64-syscall-number.md`](archived/2026-07-26-no-lchown-wrapper-forces-a-hardcoded-x86-64-syscall-number.md)
+  — same family; documented that `fn sys_chdir` existed nowhere. **RESOLVED and archived at
+  v6.5.7.** Its landing did fire the §3 collision as predicted, and the same release neutralised
+  it with the ≥1000 alias band.
 - [`archived/2026-07-14-sandhi-peer-api-use-stdlib-getpeername.md`](archived/2026-07-14-sandhi-peer-api-use-stdlib-getpeername.md)
   — the precedent. Resolved by adding per-arch wrappers and explicitly *rejecting* an ESYSXLAT
   entry.
@@ -170,12 +304,18 @@ aarch64-peer constant takes a value in {41, 42, 43, 48, 50, 51, 54, 55}.
 
 ## 8. Pointers
 
-- `lib/net.cyr:10-16` — the seven unguarded constants; `:350` — `syscall(SYS_ACCEPT, fd, 0, 0)`
-- `lib/syscalls_linux_common.cyr:407-480` — every replacement wrapper except `sys_shutdown`
-- `lib/syscalls_linux_common.cyr:423-432` — the `getpeername` note; the argument this filing rests on
-- `lib/syscalls_x86_64_linux.cyr:109` / `lib/syscalls_aarch64_linux.cyr:184` — `SYS_ACCEPT4` 288 / 242
-- `lib/syscalls_aarch64_linux.cyr:95` — `SYS_CHDIR = 49`, the armed collision
-- `src/backend/aarch64/emit.cyr` — `ESYSXLAT`, v6.2.10 socket block (Linux) and v6.0.59 block (macho)
+*(Line numbers re-derived live 2026-08-07 on 6.5.10; the as-filed numbers had drifted.)*
+
+- `lib/net.cyr:10-16` — the seven unguarded constants; `:350` — `syscall(SYS_ACCEPT, fd, 0, 0)` *(both unchanged)*
+- `lib/syscalls_linux_common.cyr:456` `sys_socket` · `:496` `sys_setsockopt` · `:501` `sys_connect` ·
+  `:517` `sys_bind` · `:522` `sys_listen` · `:528` `sys_accept4` — every replacement wrapper except `sys_shutdown`
+- `lib/syscalls_linux_common.cyr` — the `getpeername` note ("do NOT solve this with an ESYSXLAT
+  entry for x86-52"); the argument this filing rests on
+- `lib/syscalls_x86_64_linux.cyr:109` / `lib/syscalls_aarch64_linux.cyr:211` — `SYS_ACCEPT4` 288 / 242
+- `lib/syscalls_aarch64_linux.cyr:122` — `SYS_CHDIR = 1049` (**was** `= 49` when filed; the v6.5.7
+  private-alias band, which is what disarmed §3)
+- `src/backend/aarch64/emit.cyr:865-873` — `ESYSXLAT`, v6.2.10 x86-compat socket block (Linux);
+  `:760-773` — the v6.0.59 macho block
 - Consumer precedent: `bote/src/transport_unix.cyr` (bote 3.2.1, `sys_accept4` swap + rationale)
 - Reported alongside sandhi's accept-loop hardening — sandhi CHANGELOG `[Unreleased]`,
   `sandhi/docs/development/issues/2026-07-30-accept-loop-unguarded-spin.md`

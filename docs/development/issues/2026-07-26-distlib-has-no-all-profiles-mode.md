@@ -1,16 +1,23 @@
-# `cyrius distlib` regenerates ONE bundle per invocation, so multi-profile repos ship stale sub-bundles under a fresh version string
+# `cyrius distlib` regenerates ONE bundle per invocation, so multi-profile repos ship stale sub-bundles under a fresh version string — RESOLVED
 
-**Status:** 🟡 **OPEN** — nothing has shipped for it. Re-verified against live code at the v6.4.82
-closeout: `cmd_distlib(profile)` (`cbt/commands.cyr:2131`) still takes one profile and emits one
-bundle, and the CLI dispatch (`cbt/cyrius.cyr:332-344`) still scans only for `--modular` and takes
-the first non-flag arg as the profile. There is **no `--all` and no `--check`**, and nothing reads
-the `[lib.<name>]` section headers as a set.
-**Placement:** unpinned — **6.x-line tooling backlog**, no dedicated slot as of the v6.4.82
-closeout. This is `cbt/` build tooling, so per CLAUDE.md's "non-blocking cosmetic/tooling fixes fold
-into adjacent work" rule it rides a convenient release rather than owning one; `--all` (fix 1) is
-the piece that removes the ritual and both hand-rolled CI loops, and `--check` (fix 2) is what makes
-the sibling repos' staleness steps un-driftable. Never 7.x. The sibling-repo profile-list
-corrections in "Also worth fixing while here" are *not* cyrius edits and must be done in those repos.
+**Status:** ✅ **RESOLVED — both proposed fixes shipped v6.5.8.** Re-verified against live code on
+cycc **6.5.10**, 2026-08-07:
+
+- `cmd_distlib_all(check)` exists at `cbt/commands.cyr:2056`, and it does exactly what fix 1 asked
+  for — `_distlib_enum_profiles()` reads the `[lib.<name>]` section headers out of the manifest as
+  a set, so the list **cannot drift from `cyrius.cyml`**.
+- The CLI dispatch (`cbt/cyrius.cyr:333-370`) now parses `--all` and `--check`, routes both to
+  `cmd_distlib_all(dchk)`, and rejects `--all`/`--check` combined with a named profile.
+- `cyrius --help` line (`cbt/cyrius.cyr:51`) documents it:
+  `distlib [--all|--check] [--modular] [profile]   … (--all = base + every [lib.X]; --check = verify, don't write)`.
+
+Fix 3 (making bare `cyrius distlib` mean `--all`) was **not** taken — it was flagged in this file
+as a judgement call, and the single-profile default is preserved. Fix 4 and the "Also worth fixing
+while here" profile-list corrections are sibling-repo edits and are not cyrius's to close.
+**Follow-on already shipped too:** v6.5.10 fixed `distlib`'s `.deps` sidecar under-reporting, and
+`--check` was re-verified not to write (CHANGELOG [6.5.10] Notes).
+**Placement:** closed — ready to archive. Any remaining work is in the sibling repos (sankoch's
+`zip`/`zipall`, sigil's `argon2`, and re-pointing both CI loops at `--check`), not here.
 
 **Discovered:** 2026-07-26 while cutting sankoch 2.7.6 (the batch-gzip block-boundary corruption fix,
 folded into cyrius v6.4.79).

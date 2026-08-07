@@ -1,24 +1,33 @@
-> **v6.5.2 UPDATE — Wall 3 is CLOSED; Walls 1 and 2 still hold.** This file's line
-> "CYRIUS_IR=3 still miscompiles real programs" is no longer true: the const_fold/jump-span
-> bug is fixed and **IR=3 self-hosts a byte-identical cycc** (see
-> `2026-07-02-ir3-fixpoint-cascade-overelimination.md`). Re-verified live at 6.5.2 and still
-> blocking: `ir_lower_all` (`src/common/ir.cyr:361`) has **zero callers**; `IR_SENABLE(S,2)`
-> — record-only/re-emit mode — is **never activated** (only mode 1, at `main.cyr:1499` and
-> `main_win.cyr:715`); there are **24** `IR_RAW_EMIT` recording sites on the x86 path, not
-> the "~15 in parse_*.cyr" this file claims, and most are in `backend/x86/emit.cyr`; and
-> `ir_build_edges` still handles only `IR_JMP`/`IR_JMP_BACK`/`IR_JCC`, giving `IR_SWITCH` a
-> single fall-through edge, so the CFG remains incomplete for a regalloc rewrite.
+> **v6.5.2 UPDATE, RE-VERIFIED LIVE ON 6.5.10 (2026-08-07) — Wall 3 is CLOSED; Walls 1 and 2 still
+> hold.** This file's line "CYRIUS_IR=3 still miscompiles real programs" is **no longer true**: the
+> const_fold/jump-span bug is fixed and **IR=3 self-hosts a byte-identical cycc** (see
+> `archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md`, resolved at v6.5.2). ⛔ **Wherever
+> the body below still says otherwise — §Wall 3 and step 3 of the productionization list — it is
+> STALE prose contradicting this header; the header is right.** Measured again today on all three
+> programs the body names: `alloc_str_extras`, `alloc_collections` and `bigint` each exit **0**
+> under `CYRIUS_IR=3` *and* by default, and each IR=3 binary differs from its default build (so the
+> mode really ran). Still blocking, all re-derived today:
+> `ir_lower_all` (`src/common/ir.cyr:361`) has **zero callers**; `IR_SENABLE(S,2)` — record-only /
+> re-emit mode — is **never activated** (only mode 1, at `main.cyr:1514` and `main_win.cyr:715`);
+> there are **24** `IR_RAW_EMIT` recording sites in `src/backend/x86/emit.cyr` (64 mentions
+> repo-wide, 13 of them in `ir.cyr` itself), not the "~15 in parse_*.cyr" this file claims —
+> `parse.cyr` and `parse_expr.cyr` have **one each**; and `ir_build_edges`
+> (`src/common/ir.cyr:~1401`) still handles only `IR_JMP` / `IR_JMP_BACK` / `IR_JCC`, giving
+> `IR_SWITCH` a single fall-through edge, so the CFG remains incomplete for a regalloc rewrite.
 
 # IR substrate productionization — the whole IR-optimizer perf arc gates on it (→ v6.5.x)
 
-**Status:** 🟡 **OPEN** — the capability is genuinely unshipped; re-verified against live code at
-the v6.4.82 closeout. `ir_lower_all` still has **zero** callers (`grep -rn 'ir_lower_all(' src/` →
-one definition, no call site), so Wall 1's re-emit path is still dark, and `CYRIUS_IR=3` still
-miscompiles real programs (see the sibling below).
-**Placement:** **v6.5.x — "IR substrate productionization"**, the anchor slot of the
-Performance-Quality minor (`roadmap.md`, v6.5.x table). It is the *prerequisite* slot: it also
-absorbs D1/D2 from [`2026-07-07-v6415-closeout-residuals.md`](2026-07-07-v6415-closeout-residuals.md)
-and gates [`2026-07-06-simd-f64v-memory-operand-no-register-residency.md`](2026-07-06-simd-f64v-memory-operand-no-register-residency.md).
+**Status:** 🟡 **OPEN** — the capability is genuinely unshipped; re-verified against live code on
+cycc **6.5.10**, 2026-08-07. `ir_lower_all` still has **zero** callers (`grep -rn 'ir_lower_all' src/`
+→ one definition at `ir.cyr:361` plus one prose mention at `:37`, no call site), so Wall 1's re-emit
+path is still dark. **Wall 3 is closed** — see the header; do not read this Status as endorsing the
+stale Wall-3 body.
+**Placement:** **v6.5.x Slot 3 (`.17`–`.18`) — "IR substrate productionization"**, the perf anchor
+(`roadmap.md`, v6.5.x slot table; verified live 2026-08-07). It is the *prerequisite* slot: its
+opening bite is D1/D2 from
+[`2026-07-07-v6415-closeout-residuals.md`](2026-07-07-v6415-closeout-residuals.md), then Wall 2,
+then Wall 1, then a `CYRIUS_IR=3` axis in `differential.sh`. It gates Slot 6's
+[`2026-07-06-simd-f64v-memory-operand-no-register-residency.md`](2026-07-06-simd-f64v-memory-operand-no-register-residency.md).
 Codegen work → 6.x line, never 7.x.
 
 > **STATUS (2026-07-07): re-scoped — the original framing is materially stale; the
@@ -102,12 +111,28 @@ local N is known. Two fatal facts make that impossible on the current IR:
 
 ## Wall 3 — CYRIUS_IR=3 can't compile real programs (pre-existing, unrelated to any pass)
 
-> **Superseded in detail, not in substance (see the STATUS header).** The "0 bytes" symptom below is
-> the v6.3.27-era observation; v6.3.28 fixed *that*, and the defect moved one generation down — an
-> IR=3-built cycc now emits a binary, and the binary is miscompiled. Re-verified at v6.4.82:
-> `alloc_str_extras` and `alloc_collections` exit **0** by default and **139 (SIGSEGV)** under
-> `CYRIUS_IR=3`; `bigint` still **hangs (124)**. Owned by the sibling
-> [`2026-07-02-ir3-fixpoint-cascade-overelimination.md`](2026-07-02-ir3-fixpoint-cascade-overelimination.md).
+> ⛔ **THIS WALL IS CLOSED — v6.5.2. The paragraph below is kept only as history; do not act on
+> it.** The sibling that owned it,
+> [`archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md`](archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md),
+> is RESOLVED and archived: the root cause was *not* a fixpoint cascade but `ir_const_fold` alone —
+> `EJCC`/`EJMP0` (`src/backend/x86/jump.cyr`) recorded their IR node AFTER emitting bytes, so
+> const_fold's NOP-fill span ran 5–6 bytes long and erased the jump. `CYRIUS_IR=3` now self-hosts a
+> **byte-identical** cycc.
+>
+> **Live re-measurement, 2026-08-07 on 6.5.10** (whole corpus, default vs `CYRIUS_IR=3`, comparing
+> both compile and run exit codes): **10 mismatches of 260** — `const_chained_multiply_fold` (0/1),
+> `field_name_shadows_global` (0/139), `float` (0/3), `math_inverse_trig` (0/2),
+> `math_pack_integration` (0/1), `subword_signed_load` (0/1), `types` (0/3), plus three that fail at
+> **IR=3 compile time** rather than at run time — `large_input`, `large_source`,
+> `preprocessor_past_cap`. Against the archived sibling's closing figure of 8-of-253:
+> `switch_dispatch` has since gone green and the three compile-time failures are new (they are
+> capacity tests, so they may be an IR-recording-table limit rather than a miscompile — **unverified,
+> do not assume**). ⚠ `roadmap.md` Slot 3 still says "the 8 residual mismatches"; the live number is
+> **10 of 260**.
+>
+> *(Original v6.4.82 text, now stale and disproved: "alloc_str_extras and alloc_collections exit 0
+> by default and 139 (SIGSEGV) under CYRIUS_IR=3; bigint still hangs (124)". All three exit 0 under
+> IR=3 today.)*
 
 Both the v6.3.27 AND the (reverted) v6.3.28 cycc produce **0 bytes** compiling cycc itself under
 `CYRIUS_IR=3`, and **SIGILL (132)** on `derive_str_deserialize`. This is pre-existing and
@@ -143,12 +168,14 @@ A dedicated slot (**v6.5.x IR substrate productionization**, roadmap.md) must ma
    drive down `IR_RAW_EMIT`(98) pervasiveness or give it a precise read/write set. Complete the
    CFG for `IR_SWITCH`(74, case targets) + unresolved JMP/JCC edges. Goal: liveness-based passes
    are SOUND without bailing on every function.
-3. **Fix CYRIUS_IR=3 compiling real programs + add it to the differential corpus** (Wall 3). As of
-   v6.4.82 the residual is not "0 bytes" but *silent miscompilation*: `alloc_str_extras` /
-   `alloc_collections` SIGSEGV (139) and `bigint` hangs (124) under IR=3 while all three are exit 0
-   by default. Fix that (the sibling issue carries the cascade root-cause), then add a
-   `CYRIUS_IR=3` mode to `differential.sh` so the mode is verified byte-correct on every cut —
-   not experimental scaffolding.
+3. **Add `CYRIUS_IR=3` to the differential corpus and close the residual mismatches** (Wall 3 —
+   *mostly done*). The "0 bytes" and the SIGSEGV/hang symptoms this step used to name are both
+   gone: v6.5.2 fixed `ir_const_fold`'s jump-span erasure and IR=3 now self-hosts a byte-identical
+   cycc. What is left is the tail measured live 2026-08-07 — **10 of 260 tcyr** differ in exit code
+   between default and IR=3 (7 at run time, 3 at IR=3 *compile* time; named in the Wall 3 block
+   above) — plus the still-unbuilt `CYRIUS_IR=3` axis in `differential.sh`, without which the mode
+   stays unverified on every cut. Gate `tests/ir3_fold_jump_span.sh` (mutation-proven, shipped
+   v6.5.2) is the model.
 
 **Then** (a later v6.5.x slot) land the IR-level passes on the sound substrate:
 

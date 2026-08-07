@@ -30,11 +30,25 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.10** (2026-08-07) — cycc **1,133,440 B** · check.sh **150 passed / 0
-failed** · self_compile **648 ms** · **254** `.tcyr` (31 `vr01_`) · **99** `lib/*.cyr` ·
-api-surface **4,777** public fns · heap map **100 regions / 0 overlaps** (unchanged across
-6.5.0–.2 — the visibility file-id substrate is a lazy `alloc`, the `_fnt_tparams`/`_vsgn_base`
-precedent, not a new fixed band) · **16 open issues + 2 open proposals** (279 archived issues / 27 archived proposals). The visibility proposal was found marked `✅ SHIPPED in v6.5.0` while still sitting in the open `proposals/` dir and was archived on 2026-07-29 — a shipped-but-open item is the exact rot this sweep exists to remove, so it is called out rather than quietly corrected.
+**Current head: v6.5.10** (2026-08-07) — cycc **1,141,792 B** · check.sh **162 passed / 0
+failed** · self_compile **648 / 652 ms** · **260** `.tcyr` (36 `vr01_`) · **99** `lib/*.cyr` ·
+**97** `programs/**/*.cyr` · **41** shell gate scripts in `tests/*.sh` (31 registered by exact
+path in `programs/checks/main.cyr`, the other 10 through named gate fns such as
+`_heapmap_gate` — **all 41 are live**; several docs said "10" or "19", a number nobody ever
+re-derived and everyone kept incrementing) · api-surface **4,817** public fns · heap map
+**100 regions / 0 overlaps** (unchanged across all of 6.5.0–.10 — the visibility file-id
+substrate, the lazy fn-table bases and the growable arena are all `alloc`-backed, the
+`_fnt_tparams`/`_vsgn_base` precedent, not new fixed bands) · **16 open issues + 2 open
+proposals** (295 archived issues / 27 archived proposals). The visibility proposal was found marked `✅ SHIPPED in v6.5.0` while still sitting in the open `proposals/` dir and was archived on 2026-07-29 — a shipped-but-open item is the exact rot this sweep exists to remove, so it is called out rather than quietly corrected.
+
+> ⚠ **Four of the 16 open issues were SHIPPED-but-unarchived when this sweep counted them**
+> (2026-08-07) — `2026-07-26-distlib-has-no-all-profiles-mode` and
+> `2026-07-29-fmt-int-buf-i64-min` (both v6.5.8), `2026-08-05-no-thread-detach…` and
+> `2026-08-05-coverage-corpus…` (both v6.5.8). Same shape as the visibility proposal above.
+> Archiving them is an `issues/` job, not a roadmap one, so this file states their real
+> **status** and leaves the move to that sweep — meaning **the 16 above is a ceiling, not a
+> working-queue depth**. Re-derive it (`ls docs/development/issues/*.md`, minus `README.md`)
+> rather than quoting this line.
 `scripts/release-gate.sh` **GREEN on all four hosts** — **ecb** (macOS-arm64), **ach**
 (Intel-Mac x86-Mach-O), **cass** (Windows/PE), **pi** (aarch64), real hardware, sequential.
 
@@ -122,19 +136,82 @@ not a single release.
   two fixes (v6.4.72 test, v6.4.78 bench) had both shipped **ungated**. Folded sandhi 1.9.9
   (the stop facility — the other half of the same filing) + vani 1.1.3. Three new gates, all
   mutation-proven. cycc flat at 1,133,440 B.
+- **v6.5.7** — **the syscall-wrapper pass (W1 item 1), complete end-to-end**, plus the
+  `include`-resolution limit and the tool defects found alongside. `sys_chdir` (called at
+  `lib/regression.cyr:658`, defined nowhere), `signal_default`, and the `x*` family
+  (`xmkdir`, `xmkdir_p`, `_xdir_exists`, `xsymlink`, `xreadlink`, `xlink`). ⭐ **The
+  ≥1000 private-alias band**: both candidate numbers for aarch64 `fchownat` are owned (native
+  54 by the x86-compat setsockopt shim, x86 260 by the aarch64 peer's own `SYS_WAIT4`), so
+  source numbers ≥1000 are now cyrius-private aliases ESYSXLAT renumbers — `SYS_FCHOWNAT =
+  1054`, `SYS_CHDIR = 1049`. `#@incdir` gives file-relative `include` resolution, in-band on
+  line 1 (a `#` comment, so older cycc / cybs / the cx+JS forks skip it untaught), **CWD-first
+  and hardened** — relative and `..`-free, read only at byte 0, both mutation-proven, because
+  honouring an absolute directory would have rebuilt the primitive CVE-16 removed. Also
+  `alloc_reset()` leaving the memoized default allocator pointing into the arena it resets,
+  and `cyrius test`/`bench`/`fuzz` ignoring a subfolder callout.
+  ⭐ **`tests/tcyr/vr01_syscall_wrappers.tcyr` — ONE new test actually RUNNING on hardware —
+  turned the gate RED on ecb and again on ach and found SEVEN defects**, two of them
+  pre-existing rot unrelated to this item (`xrmdir` never worked on macOS-arm64 since the day
+  it shipped at 6.5.2; the macOS-x86 `Stat` enum mixed two different structs). Five of the
+  seven were **half-fixes that stopped at the first symptom** — `AT_FDCWD` without its flags,
+  `STAT_SIZE` without its siblings, `unlink` without `rmdir`, three of four link syscalls
+  mapped. cycc 1,133,440 → **1,141,696 B** (+8,208, six independent additions, no bisect).
+- **v6.5.8** — **the repair release**: twelve triaged filings, four of which premise-checked
+  as already-fixed or not-ours and were **closed rather than worked**. `thread_join`
+  lost-wakeup deadlock (it read the tid word twice per iteration under a comment asserting the
+  two were "in lockstep"; ~1 join in 150k, permanent and silent, SIGKILL the only recovery) ·
+  `thread_create_detached` + `thread_is_done` (100 unjoined threads leaked 210,124,800 B of
+  VA → 0) · **the `i64::MIN` formatter class — 12 sites, not the 7 this roadmap named**,
+  including **two inside the compiler itself** (`PRNUM`, `_emit_decimal`) that were never
+  listed · agnos `#97 chan_op` minted (`#96 fork` deliberately NOT — an unknown `num` falls
+  through agnos's dispatch and the caller reads the fall-through value as data). Tools:
+  `cyrius coverage`'s four defects (a fixed 1 MiB corpus whose failure is **anti-correlated
+  with the signal**, so it punished the projects testing most) · the `doc`/`vet`/`deny`/
+  `audit`/`coverage` **fail-open family** · `distlib --all`/`--check` (W1 item 6) · the
+  cross-OS gate batched to one SSH connection per POSIX host and made to **print its own
+  coverage**. Folded sakshi 2.4.8 + bayan 1.4.1. check.sh 156 → **159 / 0**; cycc flat at
+  1,141,696 B.
+- **v6.5.9** — **agnos `CH_ENDOW` + `sys_spawn_path_env`, the three-state mutex, and the
+  growable arena.** `CH_ENDOW = 0x05` landed in agnos 1.56.40 *after* 6.5.8 minted the band,
+  so the caps mask already advertised it while the peer had no name for it; it returns an
+  **fd, not 0** — the one op in the band that does. `sys_spawn_path_env` finally reaches all
+  four arguments of `#43`, which has accepted an env blob in `a3`/`a4` since agnos 1.44.19.
+  **The three-state mutex (W1 item 3): 392 → 48 ns** uncontended — and ⭐ **it needed no new
+  primitive, contradicting this roadmap's own pin**, because a *successful* boolean
+  `atomic_cas(m, 1, 0)` already proves the pre-value was exactly 1. The **growable arena +
+  exhaustion policy** (`ARENA_FULL_NULL`/`GROW`/`SPILL`/`ABORT`, NULL still the default so no
+  existing arena moves): a `Str` of 0 is indistinguishable from a valid `Str`, so arena
+  exhaustion surfaced as a SIGSEGV several layers away — and ⭐ the *regression direction* is
+  what made it serious, since threading a route onto an arena to stop a leak turned that leak
+  into a crash. `lib/alloc.cyr` is inside cycc's include closure, so it carried the full
+  fixpoint + seed-derive. check.sh **160 / 0**; cycc **1,141,784 B**.
+- **v6.5.10** — **two filings, both measured before they were filed.** `distlib`'s `.deps`
+  sidecar under-reported because it was built ONLY by scanning bundled sources for literal
+  `include "lib/X.cyr"` lines — it captured what a module *includes*, never what it
+  *references*; setu emitted 8 leaves against a declared 12. ⭐ **A wrong sidecar switches OFF
+  cyrius's own consumer check**: `cyrius deps` validates a consumer's `[deps] stdlib` against
+  it, so an under-declaring consumer built `OK` silently. Now the declaration **unioned** with
+  the scan — base bundle only, because unioning the whole declaration into a narrow profile
+  would over-report. And `alloc_via` was two-thirds call plumbing: **15.1 → 11 ns** by reading
+  the vtable inline and deleting the `_arena_alloc` trampoline (`_bump_alloc`/`_bump_reset`
+  stay — they adapt arity, so removing them would corrupt the call). check.sh **162 / 0**;
+  cycc **1,141,792 B** (+8 = the longer version string).
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 
-Measured at 6.5.2, not quoted: `cat src/main.cyr | CYRIUS_IR=3 build/cycc` produces a
-**1,182,520 B** compiler — **+53,248 B / +4.7 %** over the default build (1,129,288 B, which
-is itself byte-identical to `build/cycc`), differing from byte 42. Pipe `src/main.cyr` through
-*that* IR=3-built compiler and its output is **1,129,288 B, byte-identical to `build/cycc`**.
+**Re-measured at 6.5.10** (2026-08-07), not quoted: `cat src/main.cyr | CYRIUS_IR=3
+build/cycc` produces a **1,199,136 B** compiler — **+57,344 B / +5.02 %** over the default
+build (1,141,792 B, which is itself byte-identical to `build/cycc`), differing from byte 42.
+Pipe `src/main.cyr` through *that* IR=3-built compiler and its output is **1,141,792 B,
+byte-identical to `build/cycc`**. (At 6.5.2 the same measurement read 1,182,520 B / +53,248 B
+/ +4.7 % against a 1,129,288 B default — so the overhead has grown slightly in both absolute
+and relative terms across eight releases; re-measure it, don't quote this paragraph.)
 
 So the true and load-bearing claim is: **CYRIUS_IR=3 builds a compiler that reproduces
 `build/cycc` byte-identically** — a semantics-preserving statement about the IR=3-built
 compiler's *output*, not about its own bytes. That is what `tests/ir3_fold_jump_span.sh`
 asserts and what it passes. Read it the loose way and you conclude IR=3 is byte-neutral, when
-it currently makes the compiler **4.7 % larger** — which is a live data point for a minor whose
+it currently makes the compiler **5 % larger** — which is a live data point for a minor whose
 whole theme is generated-code quality, and one of the things Slot 3 has to explain.
 
 ---
@@ -145,35 +222,40 @@ whole theme is generated-code quality, and one of the things Slot 3 has to expla
 > slot goes in the potential backlog (still 6.x-cycle work), never a far-future version. The
 > far-future label is how real work stops being scheduled: DWARF and incremental compilation
 > were both mis-parked there and corrected at the v6.4.82 closeout, and roadmap_6.md's closing
-> paragraph still parks LSP/formatter/linter evolution + agnos-v2.0 alignment at 7.x — three
-> more instances of the identical pattern, to be corrected in the roadmap_6.md pass.
+> paragraph parked LSP/formatter/linter evolution + agnos-v2.0 alignment at 7.x — **both
+> corrected in roadmap_6.md on 2026-08-07 and re-homed to the 6.x line** (linter → this file's
+> W2 fold-in; agnos alignment → the reactive windows). Four violations, all in that one file,
+> all found by a sweep rather than by the rule catching them.
 
 ---
 
-## Carried over from v6.4.x — verified open at 6.5.2
+## Carried over from v6.4.x — re-verified at 6.5.10 (2026-08-07)
 
 Every status below was checked against live code, a live run, or `CHANGELOG.md` — never
 against a roadmap or issue file's own assertion. **Items the sweep proved already shipped are
 in the "explicitly not carried" list at the end of this section, so nobody re-files them.**
+Rows that shipped during 6.5.3–.10 are struck through in the "Lands in" column and carry the
+release that closed them; every remaining row was re-grepped against the live tree on
+2026-08-07 and its line references corrected.
 
-| Carried item | Verified status at 6.5.2 | Lands in |
+| Carried item | Verified status | Lands in |
 |---|---|:-:|
 | **DX diagnostics residual** — fail-fast inline `SYS_EXIT` parser sites + `_sync_skip` coalescing | **7 sites, not 25.** Classified all 11 `syscall(SYS_WRITE, 2, "error:", 6)` sites in `src/frontend/parse*.cyr`: 7 reach `SYS_EXIT` (`parse.cyr:809`, `:1355`; `parse_decl.cyr:324`, `:462`; `parse_expr.cyr:587`, `:695`; `parse_types.cyr:772`), 4 already `_had_error`-recover. The 18 lexer sites are pre-parse and fatal by design. Probe: 3 undefined vars in 3 statements → 1 error, exit 1. `_sync_skip` still coalesces 3 dense syntax errors into 1 report. | **Slot 1** |
-| **Wrong LINE for the main source once any `include` is present** | Reproduced and **characterized further than filed**: reported line = actual line − (number of `include` directives preceding the token). Measured: 1 include + error on line 2 → `<source>:1`; 2 includes + error on line 3 → `<source>:1`; 1 include + error on line 6 → `<source>:5`; error *inside* the include → correct. Independent of include size, which kills the "FM_BUILD counts the expanded body" variant. Excerpt + caret are correct in every case — only the line path is wrong. | **Slot 1** |
+| ✅ **Wrong LINE for the main source once any `include` is present** — **SHIPPED v6.5.3** | Was: reported line = actual line − (number of `include` directives preceding the token). Fixed by giving the `#@file` marker a base (`#@file "NAME" BASE`, packed into the high 32 bits of the map entry's line-count word) and deleting the second hand-rolled emitter that had been silently overwriting the correct marker — which is why an earlier correct attempt at this fix was reverted as "disproved". Re-probed 2026-08-07 at 6.5.10: 1 include + error on line 3 → `<source>:3:13`, correct. Issue archived (`2026-07-28-main-source-diagnostic-line-wrong-after-an-include`). | ~~Slot 1~~ |
 | **NEW (found by this sweep)** — inverted sign test makes `assigning non-pointer to typed pointer` fire on every width/float-annotated local and **never** on a real typed-pointer local | `src/frontend/parse.cyr:1336-1337` gates on `lt > 0`, but in the local SLTYPE scheme **positive** means narrow width or a float tag (`F64_TYID`/`F32_TYID`) and **negative** (`0 - sid`) is the pointer-like case. Siblings use the other convention (`parse.cyr:1363` tests `vt < 0`; `parse_decl.cyr:2194` tests `pscale > 0`). Probes: `var x: i32 = 5; x = 6;` → bogus warning; `var x: f64 …; x += y;` → bogus warning; struct-typed local → **no** warning, i.e. the case the check exists for is unreachable. | **Slot 1** |
 | **`ERR_MSG` hardcoded-length audit** — the never-done half of the v6.4.57 follow-on | v6.4.57 fixed the one filed site (`parse_fn.cyr:3732`, now 92 bytes == 92 passed, verified byte-exact). The archived issue's closing suggestion — audit every other `ERR_MSG`/`WARN` literal against its passed length — was never run. Same over-read class. | **Slot 1** (bite) |
 | **Source-level version constant** (`CYRIUS_PKG_VERSION`) | `grep -rn PKG_VERSION src cbt lib scripts` → **0**. Nothing in the CHANGELOG. `src/version_str.cyr` is the *compiler's* own `--version` string, not a consumer-reachable constant. `proposals/2026-06-25-source-level-version-constant.md` is still open, pinned to "the next 6.4.x arc's closeout / an absorber band" — **that host minor closed at .86 without it**, so the pin lapsed. | **W1** (fold-in) |
 | **Bare-metal deliverable #4 — forbidden-module check** | **Never built, and now invisible.** `grep -rn forbidden src/ cbt/` → one unrelated comment; `grep -rn 'host_only\|kernel_ok' src lib cbt` → 0. roadmap.md claimed the visibility arc would fold it in; v6.5.0 shipped complete with no mention of it. Its issue was bulk-renamed into `issues/archived/` on 2026-07-10 (commit `79bae42f`, an 8-file rename) **with no resolution banner** — archived unfixed. roadmap_6.md still lists it as bare-metal deliverable #4 *and* as an arc acceptance criterion. | **W2** (fold-in) — see open question 2 |
-| **v6.4.15 closeout residuals D1/D2** — dead IR helpers + the speculative decoder CFG API | R2 (PE prologue) shipped v6.4.26. D1 still dead: `ir_lower_all`, `_ir_lower_node`, `ir_emit2`, `IR_BB_ID`, `IR_EDGE_FROM` are definition-only. **TRAP the file does not carry:** `ir_dce`/`ir_dead_store` are dead only as *thin uncapped wrappers* — `ir_dce_capped`/`ir_dead_store_capped` are **LIVE**, called from `src/main.cyr:2064`/`:2066`. A name-based delete sweep would take live passes with it. D2 still dead: `CLASSIFY_CF` (`decode.cyr:238`) / `CF_TARGET` (`:279`). | **Slot 3** (opening bite) |
+| **v6.4.15 closeout residuals D1/D2** — dead IR helpers + the speculative decoder CFG API | R2 (PE prologue) shipped v6.4.26. D1 still dead: `ir_lower_all`, `_ir_lower_node`, `ir_emit2`, `IR_BB_ID`, `IR_EDGE_FROM` are definition-only. **TRAP the file does not carry:** `ir_dce`/`ir_dead_store` are dead only as *thin uncapped wrappers* — `ir_dce_capped`/`ir_dead_store_capped` are **LIVE**, called from `src/main.cyr:2067`/`:2069`. A name-based delete sweep would take live passes with it. D2 still dead: `CLASSIFY_CF` (`decode.cyr:238`) / `CF_TARGET` (`:279`). | **Slot 3** (opening bite) |
 | **`_cur_fn_ret_stash` disp↔local-index adjustment duplicated 19×** | **NOT a defect and there is no issue file** — state.md lists it as a "filed follow-on" that was never filed, and the *bug* shipped at v6.4.31. What is live is duplication: `grep -c '_cur_fn_ret_stash > 0) { disp' src/backend/x86/emit.cyr` → **19** copies of the same guard. Reframe as a one-helper (`_disp_adj`) consolidation, provable byte-identical. | **Slot 5** (bite) |
-| **macOS-arm64 threading backend** | No `lib/thread_macos.cyr`; `grep -rn 'bsdthread\|__ulock' lib/` → comments only. **WIDER THAN FILED:** `lib/sync_macos.cyr:2` is a 2-state `atomic_cas` **spinlock** and its own header at `:9` records that a blocking lock is a separate follow-on — macOS concurrency is **two** gaps and the filing names one. VR-01 guards at `vr01_thread_spawn.tcyr:31/:46` and `vr01_sync_mutex.tcyr:41/:44` keep it from rotting silently. | **Slot 11** |
-| **Release gate's cross-OS leg runs only the `vr01_` glob** | `scripts/release-gate.sh:110` runs `cross-os-selfhost.sh "$H" "vr01_"` inside `for H in ecb ach cass pi` at `:108`. **31** `vr01_` of **253** `.tcyr` ⇒ **222 unrun** on three of the four gated hosts, and the step prints no coverage statement, so the gate reads as authoritative when it is a subset. (Filed line/counts `:92-94`, 30/251/221 — all drifted.) | **W1** (fold-in) |
-| **`cyrius distlib` has no all-profiles mode** | `cbt/commands.cyr:2131` `cmd_distlib(profile)` is single-profile; `cbt/cyrius.cyr:332-344` scans only `--modular`. Drift re-verified in the siblings **today**: `~/Repos/sankoch` declares 9 profiles, `ci.yml:91` loops **7** (zip, zipall missing); `~/Repos/sigil` declares 13, `ci.yml:173` loops **12** (argon2 missing). | **W1** (fold-in, **before** that window's re-vendors) |
-| **Missing syscall wrappers — one pass** | chown family: `grep -rn 'chown\|CHOWN' lib/*.cyr` → agnos GPU-band **comments only**, zero wrappers across all six syscall peers. `fn sys_chdir` defined **nowhere**, yet called at `lib/regression.cyr:658` — a `cyrius deps`-shipped stdlib file that cannot compile for any consumer reaching `regression_exec_in_dir3`. `xmkdir` absent. `xsymlink`/`xreadlink`/`xlink` absent (agnos arities 4/4/4 vs POSIX 2/3/2). One member of the family — `xrmdir` — landed at 6.5.2 without the slot being opened. | **W1** |
-| **IR substrate walls + the 8 residual IR=3 mismatches** | Wall 3 (correctness) CLOSED at 6.5.2. Walls 1+2 live: `ir_lower_all` (`src/common/ir.cyr:361`) has **zero callers** (only other mention is the how-to comment at `:37`); `IR_SENABLE(S,2)` is **never activated** — and only **2 of 7 forks** call `IR_SENABLE` at all (`main.cyr:1511`, `main_win.cyr:715`, both mode 1), so the record-only/re-emit path is unreachable on aarch64, both Mach-O forks, and cx; **23** `_IR_REC0(S, IR_RAW_EMIT)` sites on the x86 path (21 `x86/emit.cyr` + `parse.cyr:1101` + `parse_expr.cyr:1968`), 13 aarch64, 7 cx; `ir_build_edges` (`ir.cyr:1388-1455`) special-cases `IR_JMP`/`IR_JMP_BACK`/`IR_JCC` only, so **`IR_SWITCH` gets exactly one fall-through edge** despite being a listed terminator at `ir.cyr:1157`. | **Slot 3** |
+| **macOS-arm64 threading backend** | Still open at 6.5.10. No `lib/thread_macos.cyr`; `grep -rn 'bsdthread\|__ulock' lib/` → comments only. **WIDER THAN FILED:** `lib/sync_macos.cyr:2` is a 2-state `atomic_cas` **spinlock** and its own header at `:9` records that a blocking lock is a separate follow-on — macOS concurrency is **two** gaps and the filing names one. **Neither 6.5.8's thread work nor 6.5.9's three-state mutex touched it** — the mutex CHANGELOG states outright that "the macOS / Windows / agnos branches are untouched", so the Linux/macOS gap is now WIDER (48 ns futex vs a spinlock), not narrower. VR-01 guards at `vr01_thread_spawn.tcyr:31/:46` and `vr01_sync_mutex.tcyr:41/:44` keep it from rotting silently, and `2026-08-05-cross-os-full-corpus-23-failures-on-ecb` records that most of ecb's 23 full-corpus failures are downstream of this. | **Slot 11** |
+| ⚠ **Release gate's cross-OS leg runs only the `vr01_` glob** — **HALF SHIPPED v6.5.8** | The **honesty half shipped**: `cross-os-selfhost.sh:326-334` now prints `corpus: N of M tcyr selected by glob 'vr01_*' (M−N NOT run on $HOST …)` on every run, and connections are batched one-per-POSIX-host instead of one-per-test. The **coverage half did not**: `scripts/release-gate.sh:110` still runs `cross-os-selfhost.sh "$H" "vr01_"` inside `for H in ecb ach cass pi` at `:108`, so at 6.5.10 that is **36** `vr01_` of **260** `.tcyr` ⇒ **224 unrun** on all four gated hosts. `CYRIUS_CROSS_OS_FULL=1` runs the whole corpus (`:321`) but is opt-in, deliberately, until ecb's 23 full-corpus failures reach zero. The issue was archived at the print half. | see W1 item 7 — the **pi full-corpus** leg is still owed, tracked by `2026-08-05-cross-os-full-corpus-23-failures-on-ecb` |
+| ✅ **`cyrius distlib` has no all-profiles mode** — **SHIPPED v6.5.8** | `--all` enumerates `[lib.<name>]` from the manifest so the list cannot drift; `--check` compares **bytes**, not version strings — which is exactly what let sankoch 2.7.6's nine sub-bundles look fresh while still carrying the buggy encoder. ⛔ Both flags had previously been **swallowed by the arg loop** and silently ran the base-bundle-only path, exiting 0 — the command the issue told people to reach for already "succeeded" while doing the wrong thing. Dogfooded on all 9 bayan bundles in one command. v6.5.10 then fixed the `.deps` sidecar the same command emits. Issue file still open and awaiting archive. | ~~W1~~ |
+| ✅ **Missing syscall wrappers — one pass** — **SHIPPED v6.5.7, all ten sub-items** | `sys_chdir`, `signal_default`, `fchownat`, and the whole `x*` family (`xmkdir`, `xmkdir_p`, `_xdir_exists`, `xsymlink`, `xreadlink`, `xlink`). aarch64 `fchownat` reached via the **new ≥1000 private-alias band** (`SYS_FCHOWNAT = 1054`) after both candidate numbers proved owned. Sub-item (x) needed nothing — yukti's `_yk_mkdir` bridge landed upstream at 2.3.1, vendored at 2.3.2. The `vr01_`-named tcyr the item asked for was the load-bearing line: it turned the gate red on ecb and ach and surfaced **seven** host-invisible defects. | ~~W1~~ |
+| **IR substrate walls + the 7 residual IR=3 mismatches** | Wall 3 (correctness) CLOSED at 6.5.2. Walls 1+2 live: `ir_lower_all` (`src/common/ir.cyr:361`) has **zero callers** (only other mention is the how-to comment at `:37`); `IR_SENABLE(S,2)` is **never activated** — and only **2 of 7 forks** call `IR_SENABLE` at all (`main.cyr:1511`, `main_win.cyr:715`, both mode 1), so the record-only/re-emit path is unreachable on aarch64, both Mach-O forks, and cx; **23** `_IR_REC0(S, IR_RAW_EMIT)` sites on the x86 path (21 `x86/emit.cyr` + `parse.cyr:1101` + `parse_expr.cyr:1968`), 13 aarch64, 7 cx; `ir_build_edges` (`ir.cyr:1388-1455`) special-cases `IR_JMP`/`IR_JMP_BACK`/`IR_JCC` only, so **`IR_SWITCH` gets exactly one fall-through edge** despite being a listed terminator at `ir.cyr:1157`. | **Slot 3** |
 | **SIMD register residency** | `EMIT_F64V_LOOP` (`src/backend/x86/float.cyr:152`) is still memory → xmm → op → memory, `rsi += 2`, **no AVX branch**; there is no value-form f64v arithmetic emitter at all (only `EMIT_F64V_{LOOP,UNARY,DOT,SCALE,AXPY,FMADD}`, all memory-loop). `lib/simd.cyr`'s **value-form** wrappers still round-trip through it — **25** sites (`grep -c "(&r, &a, &b" lib/simd.cyr`): f64v2 `:519 :526 :533 :540 :548`, f64v4 `:592 :599 :606 :613 :620`, f32v4 `:667 :674 :681 :688`, plus the int-vec one-liners from `:709`. The **33 `_ptr`-form** round-trips (`:63` `:77` `:152` `:166`, … — all inside `f64v2_add_ptr`/`_mul_ptr`/`f64v4_add_ptr`/`_mul_ptr`) **stay memory-loop by design**, per roadmap_6.md item 3: *the memory-loop kernels stay for the `_ptr`/bulk forms*. Editing those is the wrong set and measures no consumer win. f32/f32v8 **did** widen to ymm during 6.4.x; f64v4 did not. | **Slot 6** |
-| **Stackless coroutines / mid-body suspend across `await`** | Untouched by 6.5.0/.1/.2. `await` lowers to a `future_force` call (`parse_expr.cyr:1701-1706`) and `future_force` (`lib/async.cyr:994`) is a straight `fncall0..N` on the stored fn pointer — deferred-then-forced, run-to-completion, **no CPS transform and no force-once memoization**. Pin live at `roadmap-future.md` ("▲ PINNED v6.5.x", user 2026-07-26). | **Slot 8** |
-| **Async single-waiter-per-fd multiplex** | `_async_wait_events` (`lib/async.cyr:240-275`) stores the task pointer **into the epoll `data` slot** and then calls `EPOLL_CTL_ADD` unconditionally — the data slot *is* the waiter identity, so two tasks parking one fd hit `EEXIST` and one starves. Currently double-tracked (roadmap-future watching row **and** this file's potential backlog). | **Slot 8** (bite — resolve the double-tracking there) |
+| **Stackless coroutines / mid-body suspend across `await`** | Untouched through 6.5.10. `await` lowers to a `future_force` call (`parse_expr.cyr:1701`) and `future_force` (`lib/async.cyr:1014`) is a straight `fncall0..N` on the stored fn pointer — deferred-then-forced, run-to-completion, **no CPS transform and no force-once memoization**. Pin live at `roadmap-future.md` ("▲ PINNED v6.5.x", user 2026-07-26). ⚠ 6.5.6's `async_await_readable_ms` is a *timeout* variant on the same run-to-completion runtime — it does not touch this. | **Slot 8** |
+| **Async single-waiter-per-fd multiplex** | `_async_wait_events` (`lib/async.cyr:254-273`) stores the task pointer **into the epoll `data` slot** and then calls `EPOLL_CTL_ADD` unconditionally — the data slot *is* the waiter identity, so two tasks parking one fd hit `EEXIST` and one starves. Currently double-tracked (roadmap-future watching row **and** this file's potential backlog). | **Slot 8** (bite — resolve the double-tracking there) |
 
 ### v6.5.0 arc residuals — the visibility arc shipped, three sub-commitments did not
 
@@ -222,7 +304,7 @@ without naming them would be a silent subset:
   **#7** (v6.3.4), **`defer`** (v3.8.0 — residual is only that it is fn-scoped, not
   block-scoped), **per-block scoping + shadowing** (v3.7.4 era — residual is only that
   same-scope redecl is a deliberate hard error).
-- **aarch64 native 256-bit `EMIT_F32V8_*`** (`src/backend/aarch64/emit.cyr:2639-2641`, three
+- **aarch64 native 256-bit `EMIT_F32V8_*`** (`src/backend/aarch64/emit.cyr:2691-2693`, three
   `return 0`) are **intentional and unreachable** — aarch64 has no 256-bit register and
   `lib/simd.cyr` routes f32v8 through 2×128 NEON. Not an item. The only open question is
   whether the closeout dead-code pass deletes them or documents them; recorded in the backlog
@@ -240,9 +322,9 @@ ran 86 releases and 6.5.x is expected in the same class.
 
 | # | Indicative | Slot | Contains (phases = internal commits) | Absorbs |
 |:-:|:-:|---|---|---|
-| **1** | **.3** | **Diagnostics finish-out** | (a) the include-line delta; (b) the 7 fail-fast `SYS_EXIT` parser sites → `_had_error` + `_panic` + return; (c) `_sync_skip` statement-start-keyword resync; (d) the inverted-sign typed-pointer warning; (e) the `ERR_MSG` hardcoded-length audit sweep | `2026-07-28-main-source-diagnostic-line-wrong-after-an-include`, `2026-07-12-dx-multi-error-reporting` |
-| **2** | **.4–.16** | **▣ W1 — reactive window #1** (**13** — widened from 5, 2026-08-03) | Known drain queue (~6 releases) + ~4 reserve held for the **agnosai port**. See the window block below. | `2026-07-29-no-portable-xmkdir-in-io-cyr` **[UNVETTED]**, `2026-07-26-no-lchown-wrapper…`, `2026-07-29-fmt-int-buf-i64-min` **[UNVETTED]**, `2026-07-29-mutex-unlock-unconditional-futex-wake` **[UNVETTED]**, `2026-07-28-agnosai-no-nlogn-sort-in-stdlib`, `2026-07-26-agora-fs-dir-list-per-call-alloc`, `2026-07-26-distlib-has-no-all-profiles-mode`, `2026-07-14-release-gate-cross-os-runs-only-vr01-glob`, `proposals/2026-06-25-source-level-version-constant` |
-| **3** | **.17–.18** | **IR substrate productionization** (2) — **the perf anchor** | Opening bite: D1/D2 dead-code removal + record the new `note: N unreachable fns` floor. Then Wall 2 (local-access opcode model; `IR_SWITCH` + unresolved-edge CFG completion). Then Wall 1 (`ir_lower_all` mode-2 activation, proven byte-identical on `differential.sh`). Then a `CYRIUS_IR=3` axis added to `differential.sh` and the 8 residual mismatches closed with it. Plus the visibility→DCE feed. | `2026-07-02-ir-regalloc-rewrite-needs-reemit` (Walls 1+2), `2026-07-07-v6415-closeout-residuals` (D1/D2) |
+| **1** | **.3** ⚠ **PARTIAL** | **Diagnostics finish-out** | ✅ (a) the include-line delta — **shipped v6.5.3**. ⛔ **(b)–(e) DID NOT SHIP and have no new slot.** Re-verified live 2026-08-07: (b) the 7 fail-fast `SYS_EXIT` parser sites are all still there (`parse.cyr:809`, `:1355`; `parse_decl.cyr:324`, `:462`; `parse_expr.cyr:587`, `:695`; `parse_types.cyr:772`); (c) `_sync_skip` (`src/common/util.cyr:1188`) still resyncs on `;` / `}` / EOF only, with no statement-start-keyword arm; (d) the inverted-sign typed-pointer warning is still `lt > 0` at `parse.cyr:1336-1337`; (e) the `ERR_MSG` hardcoded-length audit sweep has no CHANGELOG entry anywhere in the 6.5.x band. **This is the sliced-fix shape the discipline forbids — one release took the easy quarter and the rest went unpinned.** They need a home: fold into W1's remaining `.11`–`.16` or open Slot 1b. | `2026-07-12-dx-multi-error-reporting` (still open). `2026-07-28-main-source-diagnostic-line-wrong-after-an-include` archived at .3. |
+| **2** | **.4–.16** | **▣ W1 — reactive window #1** (**13** — widened from 5, 2026-08-03) · **7 SPENT, 6 LEFT (`.11`–`.16`)** | Known drain queue + reserve held for the **agnosai port**. See the window block below. | ✅ closed: `2026-07-29-no-portable-xmkdir-in-io-cyr` (.7), `2026-07-26-no-lchown-wrapper…` (.7), `2026-07-28-agnosai-no-nlogn-sort-in-stdlib` (.4), `2026-07-14-release-gate-cross-os-runs-only-vr01-glob` (.8, print half), `2026-07-29-fmt-int-buf-i64-min` (.8), `2026-07-29-mutex-unlock-unconditional-futex-wake` (.9), `2026-07-26-distlib-has-no-all-profiles-mode` (.8). ⏳ still owed: `2026-07-26-agora-fs-dir-list-per-call-alloc`, `proposals/2026-06-25-source-level-version-constant` |
+| **3** | **.17–.18** | **IR substrate productionization** (2) — **the perf anchor** | Opening bite: D1/D2 dead-code removal + record the new `note: N unreachable fns` floor. Then Wall 2 (local-access opcode model; `IR_SWITCH` + unresolved-edge CFG completion). Then Wall 1 (`ir_lower_all` mode-2 activation, proven byte-identical on `differential.sh`). Then a `CYRIUS_IR=3` axis added to `differential.sh` and the 7 residual mismatches closed with it. Plus the visibility→DCE feed. | `2026-07-02-ir-regalloc-rewrite-needs-reemit` (Walls 1+2), `2026-07-07-v6415-closeout-residuals` (D1/D2) |
 | **4** | **.19–.21** | **▣ W2 — reactive window #2** (3) | At the substrate/regalloc seam. Mostly reserve. Named fold-ins: bare-metal forbidden-module check; the two cyrlint gates; visibility adoption files. | — |
 | **5** | **.22–.23** | **Cross-BB regalloc with a vector register class** (2) | The vector class is planned in **from the start, not retrofitted** — standing decision from roadmap_6.md. Copy-propagation and cross-BB DSE land as bites inside (both proven inert-if-sound / miscompiling-if-not on the raw substrate at v6.3.28). Plus the `_cur_fn_ret_stash` 19-site `_disp_adj` consolidation. | (downstream half of `…ir-regalloc-rewrite-needs-reemit`) |
 | **6** | **.24–.25** | **SIMD register residency** (2) — the substrate's payoff | Register-resident value-form f64v arithmetic; wrapper inlining so `f64v_add(&r, a, b, 2)` stops round-tripping through memory; f64v4 widened to `vmulpd`/`vaddpd` **ymm** under `simd_has_avx2()`. Scope = fix-list items 1–3 only. | `2026-07-06-simd-f64v-memory-operand-no-register-residency` |
@@ -257,6 +339,12 @@ ran 86 releases and 6.5.x is expected in the same class.
 closeout band, in a minor expected to run 45–99. The remaining headroom is repair tails (the
 6.4.x precedent says every codegen arc grows one) and whatever the user pivots to. **Only the
 user pivots focus.**
+
+**Burn-down at 6.5.10 (2026-08-07)**: **11 of ~37 spent** — `.0`–`.2` (the opener arcs, before
+the sequence was pinned), `.3` (Slot 1, partial), `.4`–`.10` (W1, 7 of 13). **26 to go before
+the closeout band**, which still sits at `.40+`. Slot 1's unshipped (b)–(e) and W1 item 7's
+second half are the two pieces of already-counted work that currently have no release to land
+in — count them before assuming the `.11`–`.16` reserve is free.
 
 ### Why the sequence is ordered this way
 
@@ -273,19 +361,22 @@ user pivots focus.**
 - **W1 before the IR arc (Slot 2).** Landing it **before** the substrate arc means it cannot
   perturb the `CYRIUS_IR=3` differential baseline; landing it after adds noise to every
   default-vs-IR=3 comparison.
-  **Two of its bites are NOT byte-identity-free, and the window must treat them that way.**
-  cycc's *transitive* lib closure from `src/main.cyr` is **seven** files —
-  `alloc`, `alloc_agnos`, `alloc_macos`, `alloc_windows`, `atomic`, `fnptr`, `vec` — because
-  `lib/alloc.cyr:44` includes `lib/atomic.cyr` (and `:113/:117/:123` the platform allocators,
-  `:380` `fnptr.cyr`). A one-level grep of `src/` reports only four and additionally reports
-  `slice` and `syscalls_macos`, which appear in `src/` **only inside comments**
-  (`parse_expr.cyr:516`, `backend/macho/emit.cyr:18`) and are not compiled into cycc at all.
-  So: the `vec_sort_by` bite touches `lib/vec.cyr` **and** the three-state-mutex bite touches
-  `lib/atomic.cyr` — both inside the closure. Each needs an explicit **self-host fixpoint AND
-  seed-derive** confirmation, not just a corpus differential. New top-level fns in a
-  cycc-included file are also precisely the shape that trips cybs's global/call-reference
-  ceiling, which only seed-derive catches. This is the v6.4.1 lesson restated: *a lib fix is
-  NOT automatically byte-identical when cycc includes it.*
+  **Several of its bites are NOT byte-identity-free, and the window must treat them that way.**
+  cycc's *transitive* lib closure from `src/main.cyr` is **seven** files (re-derived
+  2026-08-07) — `alloc`, `alloc_agnos`, `alloc_macos`, `alloc_windows`, `atomic`, `fnptr`,
+  `vec` — because `lib/alloc.cyr:44` includes `lib/atomic.cyr` (and `:113/:117/:123` the
+  platform allocators, `:573` `fnptr.cyr`). A one-level grep of `src/` reports only four, and
+  two of those four are `slice` and `syscalls_macos`, which appear in `src/` **only inside
+  comments** (`parse_expr.cyr:516`, `backend/macho/emit.cyr:18`) and are not compiled into
+  cycc at all. So: the `vec_sort_by` bite touched `lib/vec.cyr`, the three-state-mutex bite
+  `lib/atomic.cyr`, and the v6.5.9 growable arena and v6.5.10 `alloc_via` rework both
+  `lib/alloc.cyr` — all inside the closure. **All four carried the explicit self-host fixpoint
+  AND seed-derive and all four passed** (`.9`'s CHANGELOG states it outright: "cybs compiles
+  it and `gen2 == build/cycc`"), so the discipline held — record it as a positive result, not
+  as a rule nobody has tested. New top-level fns in a cycc-included file remain precisely the
+  shape that trips cybs's global/call-reference ceiling, which only seed-derive catches. This
+  is the v6.4.1 lesson restated: *a lib fix is NOT automatically byte-identical when cycc
+  includes it.*
 - **IR substrate is Slot 3, not Slot 1.** Its blocking premise ("CYRIUS_IR=3 miscompiles real
   programs") died at 6.5.2 for a mundane reason, so it is now *unblocked work* rather than a
   blocked prerequisite — and everything downstream (regalloc, vector class, residency,
@@ -345,22 +436,40 @@ the windows for the bursts and for the gnarly-bug half** (6.4.74's `_cfo` re-arm
 the compiler* during unrelated work, each displacing a planned slot), and treat agnos wrapper
 adds as the cheap ride-along. That is how 6.4.x actually absorbed them.
 
-**Parity is currently FULL — there is no outstanding wrapper gap.** agnos is at 1.56.31; its
-canonical dispatch (`grep -oE "num == [0-9]+" kernel/core/syscall.cyr`) is 0–43 + 45–95;
+**Parity is currently FULL — there is no outstanding wrapper gap** (re-derived 2026-08-07).
+agnos is at **1.56.40**; its canonical dispatch
+(`grep -oE "num == [0-9]+" kernel/core/syscall.cyr`) is **0–43 + 45–95 + 97**;
 `lib/syscalls_x86_64_agnos.cyr` wraps all of those plus `#44` (`sched_yield`, which lives in
-agnos's SYSCALL entry stub). Band contiguous `#82`–`#95`, asserted on both legs by
-`scripts/agnos-crossbuild-gate.sh:354-391`, mutation-proven.
+agnos's SYSCALL entry stub). The GPU band `#82`–`#95` is contiguous and asserted on both legs
+by `scripts/agnos-crossbuild-gate.sh:354-443`, mutation-proven. **`#97 chan_op` was minted at
+v6.5.8** (five ops CAPS/MINT/SEND/RECV/CLOSE, verified against the kernel at
+`syscall.cyr:7620`, not against the ABI doc) and **`CH_ENDOW = 0x05` added at v6.5.9** — it
+landed in agnos 1.56.40 *after* .8 minted the band, so the caps mask advertised an op the peer
+had no name for. **`#96` (fork) stays deliberately UNMINTED**: on agnos an unknown `num` falls
+through the dispatch chain and the caller reads the fall-through value as data, so a
+minted-but-unimplemented constant is strictly worse than an absent one. The gate asserts both
+directions. ⚠ The `sys_chan_*` prefix is load-bearing — `chan_send`/`chan_recv`/`chan_close`
+are already the in-process MPSC thread channel and last-definition-wins would have silently
+replaced them on agnos only.
 
 **And the biggest 6.4.x generator is closed by design.** agnos `planning/gpu.md:979`: *"**No
 new syscall number.** D-3 already settled this … `#92 gpu_shader_op` takes an array of
 **64-byte** records with the op code inside the record, and the op code IS its bit index in the
 `#89 gpu_caps` support word at `+28`."* MD-4 re-minted `#93` on the same descriptor-array
-shape. The ten remaining 1.56.x cuts (1.56.24–.33: bilinear, depth, persp-correct, pilot,
-cold-modeset, HDMI audio, invalidate hoist) add **op codes, not numbers** — HDMI audio routes
-through the existing snd band `#64`–`#69`. **Four windows, not five**, because that door is
-shut; **four, not three**, because the arity-divergence class is live, the kriya symlink
-un-gate is armed, and Slots 3/5/6 are a long mechanical stretch during which a consumer filing
-would otherwise have nowhere to land.
+shape. The 1.56.x cuts through **.40** (bilinear, depth, persp-correct, pilot, cold-modeset,
+HDMI audio, invalidate hoist) added **op codes, not numbers** — HDMI audio routes through the
+existing snd band `#64`–`#69`. **Four windows, not five**, because that door is shut; **four,
+not three**, because the arity-divergence class is live, the kriya symlink un-gate is armed,
+and Slots 3/5/6 are a long mechanical stretch during which a consumer filing would otherwise
+have nowhere to land.
+
+⚠ **The GPU door being shut did NOT stop new numbers — it moved them.** Two arrived in
+2026-08: **`#97 chan_op`** (v6.5.8) and the `CH_ENDOW` op + 4-arg `sys_spawn_path_env`
+(v6.5.9), from agnos's **channel/capability** band, not its GPU band. Neither cost more than a
+ride-along, so the *unit-cost* half of the model held exactly — but the prediction that the
+number generator was closed did not. Read "the biggest 6.4.x generator is closed" as
+retrospective, not as a forecast (this paragraph was written before .8/.9; corrected
+2026-08-07).
 
 **⚠ The baseline above measures the WRONG generator for what is actually filing now
 (recorded 2026-08-03, at the W1 widening).** Every figure in it is counted from releases
@@ -385,12 +494,14 @@ these behind a two-release compiler arc blocks the consumer the window exists to
 Re-check this paragraph at the next window — if the port has moved past its moat, W3/W4 can
 shrink back toward the agnos-ABI baseline.
 
-### ▣ W1 — v6.5.4 → .16 (13 patches) · pre-IR-arc · drains the known queue
+### ▣ W1 — v6.5.4 → .16 (13 patches) · pre-IR-arc · drains the known queue · **7 spent, 6 left**
 
-Known drain queue (~3 releases' worth; the rest is reserve). Six of the 16 open issues were
-filed on 2026-07-28/29, and five are self-contained stdlib fixes with supplied patches — per
-*an audit's output is fixes, not a backlog*, these are pack-into-a-release material, not
-roadmap rows.
+Known drain queue (~3 releases' worth; the rest is reserve). When this window opened, six of
+the then-16 open issues had been filed on 2026-07-28/29 and five were self-contained stdlib
+fixes with supplied patches — per *an audit's output is fixes, not a backlog*, that class is
+pack-into-a-release material, not roadmap rows, and `.7`–`.10` are what that looks like in
+practice. **Only two of that burst are still open at 6.5.10** (`…sock-send-result-allocates`,
+pinned to Slot 9, and `…fmt-int-buf-i64-min`, which shipped at `.8` and is awaiting archive).
 
 > **WIDENED 5 → 13 patches (`.4` → `.16`) — maintainer decision, 2026-08-03.** Everything
 > downstream shifts **+8** (the IR substrate arc moves `.9–.10` → `.17–.18`, and so on
@@ -405,22 +516,36 @@ roadmap rows.
 > So W1 keeps ~4 patches of genuine reserve rather than being sized to the *known* queue
 > alone; the queue is expected to grow while the port runs.
 >
-> **Spent: 3 of 13.** `.4` took **item 4** (`vec_sort_by` / `vec_select_nth`, the agnosai
-> filing). `.5` was displaced by the cyrius-doom IR=3 miscompile — a live consumer bug, not
-> a queue item. `.6` took the agnosai `sys_exit_group` + sandhi `async_await_readable_ms`
-> pair, both filed *and* shipped on 2026-08-03, plus three defects found while fixing them.
-> **Items 1, 2, 3, 5, 6, 7, 8 and 9 below are all still unstarted**, with `.7`–`.16` to run
-> them in.
+> **Spent: 7 of 13 — `.4` through `.10`. Six left: `.11`–`.16`.** (Updated 2026-08-07 against
+> the CHANGELOG, not against this block's own prior count.)
 >
-> **Sequencing note — item 6 (`distlib --all`/`--check`) should go EARLY**, before this
-> window's re-vendors, per its own entry: without it you re-run the N+1 ritual whose
-> omission shipped sankoch 2.7.6's buggy encoder under a fixed version string. Item 7 rides
-> with item 1 (same release), and items 8/9 are fold-ins that need no slot of their own.
+> | patch | what it took | queue item |
+> |:-:|---|:-:|
+> | `.4` | `vec_sort_by` / `vec_select_nth`, the agnosai filing | **item 4** ✅ |
+> | `.5` | displaced by the cyrius-doom IR=3 miscompile — a live consumer bug, not a queue item | — |
+> | `.6` | agnosai `sys_exit_group` + sandhi `async_await_readable_ms`, both filed *and* shipped 2026-08-03, plus three defects found while fixing them | — (reserve) |
+> | `.7` | the syscall-wrapper pass, all ten sub-items + the `vr01_` tcyr; `#@incdir`; `alloc_reset` | **item 1** ✅ |
+> | `.8` | `i64::MIN` (12 sites), `distlib --all`/`--check`, the cross-OS coverage print, `thread_join`, `thread_create_detached`, the coverage + fail-open tool family | **items 2, 6** ✅ · **item 7 half** |
+> | `.9` | agnos `CH_ENDOW` + `sys_spawn_path_env`; the three-state mutex; the growable arena + exhaustion policy | **item 3** ✅ |
+> | `.10` | `distlib`'s `.deps` sidecar; `alloc_via` call plumbing | — (reserve) |
 >
-> **Sharpest item in the queue — item 1(vi): `sys_chdir` is *called* at
-> `lib/regression.cyr:658` and defined NOWHERE**, so that `cyrius deps`-shipped stdlib file
-> cannot compile for any consumer reaching `regression_exec_in_dir3`. Still true at 6.5.6
-> (the LSP flags it on every `programs/checks/main.cyr` edit).
+> **Still owed, with `.11`–`.16` to run them in: item 5 (`dir_list`, both halves), item 7's
+> second half (full corpus on pi), item 8 (`CYRIUS_PKG_VERSION`), item 9
+> (`folds_agnos_parity.sh` PREAMBLE).** Plus Slot 1's unshipped (b)–(e), which have no other
+> home — see the slot table.
+>
+> ⚠ **The window is spending faster than its queue drains.** Three of the seven patches
+> (`.5`, `.6`, `.10`) went to work that was *not* in the queue at all, which is what a
+> reactive window is for — but it means "6 patches left" and "4 items left" are not the same
+> arithmetic. Re-check the sizing before assuming `.16` still lands the IR arc at `.17`.
+>
+> ~~**Sequencing note — item 6 (`distlib --all`/`--check`) should go EARLY**~~ — **satisfied
+> at `.8`**, and correctly: it landed before this window's sakshi 2.4.8 / bayan 1.4.1
+> re-vendors. `.10` then found that the `.deps` sidecar the same command emits was itself
+> under-reporting.
+>
+> ~~**Sharpest item in the queue — item 1(vi): `sys_chdir` … defined NOWHERE**~~ — **FIXED at
+> v6.5.7**, defined on all three peer families.
 
 > ⛔ **STEPS (i) AND (ii) ARE DISPROVEN — do NOT execute them (measured 2026-08-05, v6.5.7).**
 > The premise is that repointing `lib/yantra.cyr:453` leaves the aarch64 `54 → 208` remap
@@ -435,8 +560,8 @@ roadmap rows.
 >
 > So the remap is **load-bearing ecosystem infrastructure**, not dead weight, and deleting it
 > would silently break sockets on native aarch64-Linux for consumer code this repo does not
-> control — with the cross-OS leg running only 31 of 254 `.tcyr`, so it very likely would not
-> be caught. It is ALSO the mechanism that lets one source number work on both aarch64-Linux
+> control — with the cross-OS leg running only 36 of 260 `.tcyr` (re-derived 2026-08-07), so
+> it very likely would not be caught. It is ALSO the mechanism that lets one source number work on both aarch64-Linux
 > and macOS-arm64 (the macho leg maps both `54 → 105` at `emit.cyr:719` and `208 → 105` at
 > `:742`).
 >
@@ -488,14 +613,23 @@ roadmap rows.
    the cross-OS leg actually executes it on pi.
    </details>
 
-2. **`i64::MIN` formatter class — all 7 sites, not 1.** `n = 0 - n` is a no-op at `i64::MIN`,
-   so both the `n == 0` and `while (n > 0)` arms are skipped and the output is a bare `-`.
-   Sites: `lib/fmt.cyr:10` (`fmt_int`), `:25` (`fmt_int_fd`), `:41` (`efmt_int`), `:103`
+2. ✅ **`i64::MIN` formatter class — SHIPPED v6.5.8, and it was 12 sites, not the 7 this item
+   named.** The `n > 0` → `n != 0` loop-condition change was the load-bearing part, as pinned.
+   ⛔ **THE COUNT IN THIS ITEM WAS WRONG AND THE MISSING FIVE WERE THE INTERESTING ONES** —
+   **two of them are inside the compiler itself** (`PRNUM`, `_emit_decimal`), which this item
+   never considered because it enumerated `lib/` only, and three were shipped demos.
+   `str_from_int(i64::MIN)` was the one-character string `-`, and bayan then serialised
+   `{"n":-}` — not JSON, with no error raised at any layer. sakshi was fixed upstream at
+   **2.4.8** and re-vendored, per *never patch the fold*.
+   ⭐ The through-line worth keeping: `fmt_hex`, sitting **directly below `fmt_int`**, had
+   already been fixed for this exact `> 0` vs `!= 0` reason at **v6.4.69** — and its decimal
+   siblings were never brought along. Grep the shape, not the function.
+   <details><summary>Original site list (kept for the reasoning)</summary>
+
+   `lib/fmt.cyr:10` (`fmt_int`), `:25` (`fmt_int_fd`), `:41` (`efmt_int`), `:103`
    (`fmt_int_buf`), `lib/string.cyr:98` (`print_num`), `lib/log.cyr:137`, `lib/sakshi.cyr:415`
-   (`_sk_fmt_int`). The `n > 0` → `n != 0` loop-condition change is the load-bearing part.
-   **`lib/sakshi.cyr` is a FOLD** — patch `~/Repos/sakshi/src/format.cyr:40` → sakshi 2.4.8 →
-   regen dist → re-vendor. Never patch the fold. Mind the snapshot-ping-pong rule for the
-   `lib/` edits.
+   (`_sk_fmt_int`).
+   </details>
 3. ✅ **Three-state mutex — SHIPPED v6.5.9.** 0 = free / 1 = held / 2 = held-with-waiters;
    `mutex_unlock` no longer syscalls on every release. **392 ns → 48 ns** uncontended.
    ⛔ **THIS ITEM'S STATED PREREQUISITE WAS WRONG AND COST IT A PIN.** It was recorded here
@@ -518,14 +652,14 @@ roadmap rows.
    `:335`/`:411`/`:434`/`:459`/`:488`, so every `chan_send`/`chan_recv`/`chan_try_*` pays it.
    </details>
 
-4. **`vec_sort_by` + `vec_select_nth`.** ~55 lines, additive. Two hard constraints from the
-   filing, both correct: name it **`vec_sort_by`, NOT bare `vec_sort`** — `itihas/src/util.cyr:57`
-   already defines `vec_sort(v, cmp)` in the flat namespace and last-definition-wins would break
-   it; and take the **hybrid** (merge/heap with an insertion cutoff ~16) so the O(n)
-   nearly-sorted case consumers get today from hand-rolled insertion sorts is not lost.
-   `vec_select_nth` = Hoare quickselect, median-of-3 (percentiles were the motivating case and
-   never needed a full sort). Exclude `drishti/src/av1_mv.cyr:358` from any migration —
-   AV1-spec-prescribed sort.
+4. ✅ **`vec_sort_by` + `vec_select_nth` — SHIPPED v6.5.4**, the stdlib's first ordering
+   primitive; no fn in any of the 99 `lib/` modules had taken a comparator before it. Both hard
+   constraints from the filing held: named **`vec_sort_by`, NOT bare `vec_sort`** —
+   `itihas/src/util.cyr:57` already defines `vec_sort(v, cmp)` in the flat namespace and
+   last-definition-wins would have broken it; and the **hybrid** (merge/heap with an insertion
+   cutoff ~16) so the O(n) nearly-sorted case consumers get from hand-rolled insertion sorts is
+   not lost. `vec_select_nth` = Hoare quickselect, median-of-3. `drishti/src/av1_mv.cyr:358`
+   stays excluded from any migration — AV1-spec-prescribed sort.
 5. **`dir_list` — both halves in one release.** Cheap half: a file-scope 4 KB `getdents`
    scratch (`dir_list` is already non-re-entrant, holding one fd and one buffer — the v6.4.61
    lazy `Err(EAGAIN)` singleton precedent) + a shared `basep`, which takes agora's 1-entry case
@@ -533,21 +667,33 @@ roadmap rows.
    offsets, existing `dir_list` kept as a thin wrapper, and the same treatment threaded through
    `dir_list_full`/`dir_walk`/`find_files`/`_with_prunes` (`dir_walk` recurses, so it
    multiplies). Taking only the cheap half would be the sliced-fix antipattern.
-6. **`distlib --all` + `--check` — BEFORE this window's re-vendors.** This window folds sakshi
-   2.4.8 and yukti; without `--all` you re-run the exact N+1 ritual whose omission shipped
-   sankoch 2.7.6's buggy gzip encoder under a 2.7.6 version string. `--all` enumerates
-   `[lib.<name>]` from the manifest so the list cannot drift; `--check` regenerates to a temp
-   location, diffs against the committed copy, exits non-zero on drift and **names** the
-   offending bundles (the v6.4.78 lesson). `--check` must verify **content** — after any
-   regeneration the version string matches whether or not the fix is in. Fix the sankoch
-   zip/zipall and sigil argon2 CI lists in *those* repos in the same pass.
-7. **Release-gate coverage, both halves in one bite** — print
-   `cross-OS: vr01_ subset only (31 of 253) — CI runs the full corpus`, deriving both numbers
-   from the globs so they cannot go stale, **and** run the FULL corpus on **pi** (cheapest
-   aarch64, where per-arch numbering bites) while ecb/ach/cass keep the glob. Record the
-   wall-clock delta in the CHANGELOG. Do not delete the filter. This belongs in the same
-   release as the wrapper pass — per-arch syscall numbers on aarch64 and macOS are the exact
-   failure class (v6.4.64 `fchmod`/`getpeername`) the blind spot let through.
+6. ✅ **`distlib --all` + `--check` — SHIPPED v6.5.8**, and it did land before this window's
+   sakshi 2.4.8 / bayan 1.4.1 re-vendors, as the sequencing note asked. `--all` enumerates
+   `[lib.<name>]` from the manifest so the list cannot drift; `--check` compares **bytes**, not
+   version strings — the content requirement this item stated, and exactly what let sankoch
+   2.7.6's nine sub-bundles look fresh while carrying the buggy encoder. Dogfooded on all 9
+   bayan bundles in one command.
+   ⛔ **The defect was worse than filed: both flags were previously swallowed by the arg loop
+   and silently ran the base-bundle-only path, exiting 0** — so the command the issue told
+   people to reach for already "succeeded" while doing the wrong thing.
+   ⏳ **Residual owed elsewhere:** fixing the sankoch zip/zipall and sigil argon2 CI lists in
+   *those* repos was part of this item and is not recorded as done in any 6.5.x CHANGELOG
+   entry — re-check it in a remaining W1 patch.
+7. ⚠ **Release-gate coverage — HALF SHIPPED v6.5.8. This item said "both halves in one bite"
+   and got one.**
+   ✅ Shipped: `cross-os-selfhost.sh:326-334` prints the coverage on every run, derived from
+   the globs so it cannot go stale (`corpus: N of M tcyr selected by glob 'vr01_*' — M−N NOT
+   run on $HOST`), plus one SSH connection per POSIX host instead of one per test (~1.8 s of
+   handshake per test on cass, 0.9 s on pi). `CYRIUS_CROSS_OS_FULL=1` runs the whole corpus.
+   ⛔ **Not shipped: the FULL corpus on pi.** `scripts/release-gate.sh:110` still passes the
+   `vr01_` glob for all four hosts, so at 6.5.10 that is 36 of 260 — **224 tcyr unrun on every
+   gated host**. `--full` was left opt-in deliberately, because ecb's first full-corpus run
+   scored **235 pass / 23 fail** and wedging every release behind that is a separate arc
+   (`2026-08-05-cross-os-full-corpus-23-failures-on-ecb`). That is a defensible call for
+   *ecb* — it is **not** an argument against turning it on for **pi**, which is what this item
+   actually asked for and which is where per-arch syscall numbering bites (v6.4.64
+   `fchmod`/`getpeername`). ⭐ v6.5.7 proved the point twice over: one new `vr01_` file found
+   seven host-invisible defects. Do not delete the filter; do finish the second half.
 8. **Fold-in:** `CYRIUS_PKG_VERSION` — option 1 of the proposal only: surface
    `[package].version` (which already resolves `${file:VERSION}`) as one injected
    source-visible cstring. No new manifest surface, explicitly **not** const-eval. Keep it
@@ -572,9 +718,9 @@ instead of ~20. Named fold-ins if nothing arrives:
 - **Two cyrlint gates, one bite** — the bare-local-array slot-write lint and the syscall-write
   byte-length gate. Both are byte-length-vs-declared-size static checks. The argument for
   acting rather than watching is the trajectory: `grep -rn "syscall(SYS_WRITE" --include='*.cyr' .`
-  went **543** (filed) → 593 (.82) → **609** (6.5.2), i.e. the unguarded surface grows every
-  release while the gate waits for consumer pressure that never comes for a lint. ~21
-  intentional bare-local-array sites in-tree.
+  went **543** (filed) → 593 (v6.4.82) → **609** (re-derived 2026-08-07 at 6.5.10, flat since
+  6.5.2), i.e. the unguarded surface grows across a minor while the gate waits for consumer
+  pressure that never comes for a lint. ~21 intentional bare-local-array sites in-tree.
 - **Visibility adoption**, a file or two at a time where it pays.
 
 ### ▣ W3 — v6.5.26 → .30 (5 patches) · post-residency · the burst-risk window
@@ -630,31 +776,52 @@ passes are their own work, and a minor-close slot still has to carry real code d
   `_cfo` escalation shape — *"declared fixed, fourth occurrence in a path nobody enumerated"*.
   **Any new `PARSE_FNCALL`-resident transformation must be grepped against the tail path before
   it ships** — grep the SHAPE, not the operator.
-- **A 0/253 codegen differential is not evidence a fix is inert — it is evidence of a corpus
-  blind spot.** Three consecutive releases now: 6.5.0 was 0/253, 6.5.1's arity fix 0/253,
+- **An all-identical codegen differential is not evidence a fix is inert — it is evidence of a
+  corpus blind spot.** Three consecutive releases: 6.5.0 was 0/253, 6.5.1's arity fix 0/253,
   6.5.2 0/253 — each a real wrong-answer-or-crash fix. Same finding as v6.4.80's 251/251. When
-  a fix measures 0 diffs, add the shape to the corpus in the same release.
+  a fix measures 0 diffs, add the shape to the corpus in the same release. (The corpus is
+  **260** at 6.5.10; quote the live count, not these historical denominators.) The 6.5.8
+  `i64::MIN` sweep is the same lesson from the other side: a **5,500-assertion suite** missed
+  arena exhaustion because allocation tests are small-fixture by nature and nothing in them
+  probed the ceiling.
 - **A green CI checkmark is not verification.** The macOS compiler self-host rotted for ~9
   minors behind a job named "Mach-O ARM64 Native ✓" that only ran hello-world. `ach` became a
   first-class gate host at v6.4.59 after the Intel-Mac toolchain rotted ungated for ~2.5
   minors. Run the compiler on the hardware.
-- **Every one of the 16 open issue files still carries a "re-verified against live code at the
-  v6.4.82 closeout" header.** That is three minors of releases stale, and it is exactly how the
-  xmkdir filing came to re-assert `xrmdir` as missing **two days after 6.5.2 shipped it**. The
-  header pattern is load-bearing — it is what makes a file trustworthy at a glance — so the
-  re-verification stamp must move with each sweep or it becomes the rot it was designed to
-  prevent.
+- **7 of the 16 open issue files still carry a "re-verified against live code at the v6.4.82
+  closeout" header** (re-counted 2026-08-07; the other 9 were filed after that closeout and
+  carry no re-verification stamp at all, which is the same problem wearing different clothes).
+  v6.4.82 is three minors of releases stale, and it is exactly how the xmkdir filing came to
+  re-assert `xrmdir` as missing **two days after 6.5.2 shipped it**. The header pattern is
+  load-bearing — it is what makes a file trustworthy at a glance — so the re-verification stamp
+  must move with each sweep or it becomes the rot it was designed to prevent. **Four of the 16
+  are outright shipped-but-unarchived** — see the ⚠ note under *Where we are*.
+- **A "found by ports" test is worth more than the gate that says the code compiles.**
+  v6.5.7 shipped `tests/syscall_wrapper_pass.sh`, which proves the new wrappers *compile* on
+  five targets — most of the risk, and none of the bugs. The one `.tcyr` that actually RAN
+  them on hardware found **seven** defects, two of them pre-existing rot (`xrmdir` broken on
+  macOS-arm64 since the day it shipped; a macOS-x86 `Stat` enum mixing two structs). Five of
+  the seven were **half-fixes that stopped at the first symptom**. Whenever a slot adds a
+  platform-facing verb, the `vr01_` file is the deliverable, not the nice-to-have.
+- **A gate fixture in the wrong order is a vacuous gate.** Twice in v6.5.10 a mutation axis
+  passed against deliberately-broken code because the fixture's decoy sat *after* the real key
+  and the scan stops at its first match; v6.5.8 hit the same shape assuming `dir_walk` ordering.
+  Mutation-prove the gate *and* check that the mutation is reachable.
 - **When a rule in `CLAUDE.md` tells you to work around codegen, the rule is the bug report.**
   The retired "≤6 args" rule was a Win64 codegen P0 in disguise for about a year, and it got
   cited to file against *sigil*. This is the language repo: when the compiler cannot compile
   valid cyrius, fix the compiler. Premise-check **rules**, not just pins.
 
-### UNVETTED filings
+### UNVETTED filings — ✅ all three now CLOSED (kept for the lesson)
 
-Three open issues were authored by subagents and have **not** been reviewed by the maintainer.
-They are marked **[UNVETTED]** wherever they appear above. All three were reproduced by running
-code or a bench at 6.5.2 and all three describe **real** defects — but treat their evidence, not
-their conclusions, as suspect:
+Three issues were authored by subagents and never reviewed by the maintainer. **All three
+have since shipped** — xmkdir at **v6.5.7**, the `i64::MIN` formatter class at **v6.5.8**, the
+mutex wake at **v6.5.9** — so the `[UNVETTED]` marks are retired from the slot table above.
+The section stays because **what the outcomes proved is the durable part**: every one of the
+three was *understated or mis-evidenced in the same direction*, and each shipped fix was
+bigger than its filing. All three were reproduced by running code or a bench at 6.5.2 and all
+three described **real** defects — but their evidence, not their conclusions, was the suspect
+half:
 
 - **`2026-07-29-no-portable-xmkdir-in-io-cyr`** — two false claims. It says the `x*` set has no
   `xrmdir` (it does — `lib/io.cyr:134`, shipped 6.5.2, with a CHANGELOG heading of its own) and
@@ -694,19 +861,40 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
 - **DWARF debug-info emission** — backend/codegen work; it emits debug sections into the object
   file. Slot it when a real debugger story is needed. Distinct from the DX diagnostics arc,
   which was only the error-reporting layer.
+- **cx has no indirect call** (`2026-07-30-cx-backend-has-no-indirect-call`, open) — **added to
+  this list by the 2026-08-07 sweep, which found it had no roadmap home at all.** `ECALLIND`
+  (`src/backend/cx/emit.cyr`) + `programs/cxvm.cyr` + `lib/fnptr.cyr`: every fn-pointer stdlib
+  path is dead on cx, **silently**. Filed by this repo against itself while building
+  `vec_sort_by` for v6.5.4. Medium — cx is not a shipping consumer target today — but the
+  blast radius is the whole allocator/callback layer, and v6.5.9's arena + v6.5.10's
+  `alloc_via` work both sit squarely in it.
+- **`lib/net.cyr` hardcodes seven x86-only socket syscall numbers with zero arch guards**
+  (`2026-07-30-net-cyr-x86-only-socket-syscall-numbers`, open; filed by sandhi 1.9.7 via bote
+  3.2.1) — **also homeless until this sweep.** Re-verified on the issue itself at 6.5.10:
+  `lib/net.cyr:10-16` still carries the bare x86 numbers, `grep -c CYRIUS_ARCH lib/net.cyr` →
+  **0**, and the nine `ESYSXLAT` x86-compat socket rows are live at
+  `src/backend/aarch64/emit.cyr:865-873`. The §3 collision it worried about was **disarmed at
+  v6.5.7 by a different mechanism** (the ≥1000 private-alias band, not the per-arch peer
+  wrappers §4 proposed), so the sharp edge is gone but the §4 work is unshipped. Note the
+  direct tension with the W1 "steps (i)/(ii) disproven" banner above: that remap is
+  **load-bearing for 51 ecosystem repos**, so this is a migration, not a deletion.
 - **Incremental compilation** — compiler work. Unpin condition: reconsider when cycc self-host
-  crosses ~2 s. It is **638 ms at 6.5.2** after 90+ releases, so the whole-program model is
-  nowhere near the threshold. The reporting obligation is live: **every 6.5.x release's
-  mandatory bench run IS the report.**
+  crosses ~2 s. It is **648 / 652 ms at 6.5.10** (638 ms at 6.5.2) after 100+ releases, so the
+  whole-program model is nowhere near the threshold. ⚠ Read that trend with care: 6.5.7 ran
+  the SAME binary three times for **649 / 670 / 701 ms**, a 52 ms spread — **wider than any
+  release-over-release delta this minor**, so a single number from this series carries no
+  signal. The reporting obligation is live: **every 6.5.x release's mandatory bench run IS the
+  report.**
 - **Bare `var a[N]` byte-vs-slot convention** — a user design decision, not an arc. The typed
   spelling `var a: T[N]` shipped v6.2.1 and resolved the common case; what stays undecided is
   whether to lint the address-taken bare-local per-slot idiom or audit stdlib/consumers.
 - **Reclaim the FREED compiler-state scalar holes** (fill-as-you-go, not a slot) — live count is
-  **19** FREED regions in `src/main.cyr` at 6.5.2, roughly twice what roadmap-future.md
-  enumerates. Policy: the next new compiler-state scalar goes into a hole rather than growing
-  the band. Cite the live count and the heap map; do not maintain an enumerated list that goes
-  stale every minor.
-- **aarch64 `EMIT_F32V8_*` unreachable stubs** (`src/backend/aarch64/emit.cyr:2639-2641`) — the
+  **18** FREED regions in `src/main.cyr` at 6.5.10 (`grep -n FREED src/main.cyr`), roughly twice
+  what roadmap-future.md enumerates. Policy: the next new compiler-state scalar goes into a hole
+  rather than growing the band. Cite the live count and the heap map; do not maintain an
+  enumerated list that goes stale every minor. (This line read "19 at 6.5.2" until 2026-08-07 —
+  re-derive it, don't carry it.)
+- **aarch64 `EMIT_F32V8_*` unreachable stubs** (`src/backend/aarch64/emit.cyr:2691-2693`) — the
   verb works via 2×128 NEON and there is no correctness gap, but three never-reached functions
   are what the closeout dead-code audit exists to find. Decide once: delete them, or leave one
   comment saying why they exist. Recorded here so the next closeout does not re-litigate it.
@@ -750,12 +938,16 @@ number. Nothing here blocks starting Slot 1; items 1 and 5 are owed by Slot 3 en
    roadmap_6.md's anchor has two clauses: the svara formant bench closing to single-digit-× of
    the Rust baseline, **and** *"self_compile stays inside a stated budget"*. The svara figure is
    carried above; the budget is not, and the whole point of a *stated* budget is that it is
-   stated before the arcs land rather than reconstructed after. Verified baseline to set it
-   against: **638 ms · 1,129,288 B** at 6.5.2. A defensible pair is *≤ 700 ms and ≤ 1.20 MB at
-   minor close* — but the number is the maintainer's, not mine.
-   **Note the live counter-pressure:** an IR=3-built cycc is currently **+4.7 % larger**
-   (1,182,520 B), so if IR=3 ever becomes the default path the size half of any budget is
-   already under strain.
+   stated before the arcs land rather than reconstructed after. Baseline **re-measured
+   2026-08-07: 648 / 652 ms · 1,141,792 B at 6.5.10** (it was 638 ms · 1,129,288 B at 6.5.2 —
+   **+12,504 B across eight releases**, all triaged growth tax). A defensible pair is
+   *≤ 700 ms and ≤ 1.20 MB at minor close* — but the number is the maintainer's, not mine, and
+   note that 6.5.10 is already **1.09 MB**, i.e. ~10 % of headroom under that candidate cap
+   with the three biggest codegen arcs (Slots 3/5/6) still to land.
+   **Note the live counter-pressure:** an IR=3-built cycc is currently **+5.02 % larger**
+   (1,199,136 B, re-measured 2026-08-07), so if IR=3 ever becomes the default path the size
+   half of any budget is already under strain — and the overhead has grown in both absolute
+   and relative terms since 6.5.2 (+53,248 B / +4.7 % then).
 
 2. **Bare-metal deliverable #4 — the forbidden-module check.** Never built; its issue was
    bulk-renamed into `issues/archived/` on 2026-07-10 (`79bae42f`, an 8-file rename) with **no
@@ -786,7 +978,9 @@ number. Nothing here blocks starting Slot 1; items 1 and 5 are owed by Slot 3 en
    either way.
 
    *Original framing:* it has no slot.
-   roadmap_6.md:1323-1369 commits v6.5.x to items **1–5** and its pull-forward note says
+   roadmap_6.md's *"v6.5.x — ACTIVE MINOR"* section (`roadmap_6.md:115-118` at 2026-08-07 —
+   the old `:1323-1369` reference here was dangling, that file is **321** lines since the
+   2026-07-29 re-scope) commits v6.5.x to items **1–5** and its pull-forward note says
    v6.5.x carries *"the FULL shape, items 1–5, not just the substrate half."* Items 1–4 map to
    Slots 3/5/6. Item 5 does not appear in any slot, bite, or backlog row, and this document
    elsewhere reframes the minor's theme from self-compile growth tax to generated-code quality —

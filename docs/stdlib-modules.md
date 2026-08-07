@@ -10,10 +10,10 @@
 Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
 vendor at the patched tag, removed from `[deps]`):
 
-- v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy, ~10,500 lines)
+- v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy; 15,092 lines at the current 1.9.9 fold)
 - v5.8.0 — `vani` (audio distlib; replaced inlined `lib/audio.cyr`)
 - **v5.8.65 stdlib foldin** — sakshi 2.2.3 (tracing), patra 1.9.3 (storage), sigil 3.0.1 (security), yukti 2.2.2 (hardware enumeration), sankoch 2.2.4 (compression), and re-folded vani at 0.9.2
-- **v5.9.0** — niyama 1.0.1 (regex; 5 engines: bre / re2 / pcre / fuzzy / vim; ~6,664 lines)
+- **v5.9.0** — niyama 1.0.1 (regex; 5 engines: bre / re2 / pcre / fuzzy / vim; 6,689 lines at the current 1.0.6 fold)
 - **v6.0.x** — mabda 3.0.1 (GPU integration)
 - **v6.1.25** — bayan 1.0.0 (data-format & big-integer **carve** OUT of stdlib: json / toml / cyml / csv / base64 / bigint / u128 → `lib/bayan.cyr`, public fns renamed `bayan_*` with back-compat aliases; opt-in `include "lib/bayan.cyr"`).
 - **v6.1.26** — ganita 1.0.0 (linear-algebra & advanced-math **carve**: matrix + linalg + the advanced half of math → `lib/ganita.cyr`, renamed `ganita_*` with aliases. Closes Phase E — the stdlib data/math carve).
@@ -45,12 +45,20 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
   (`tls_native_set_transport`); v6.2.5 split the 5,857-line monolith into a
   302-line hub + 6 focused modules (`tls_native_{lowlevel,keysched,ctx,hs13,
   hs12,conn}.cyr`) — logic-preserving, the public API is unchanged.
+- **v6.5.7–.9 — no new module files; new surface inside existing ones.** The
+  syscall-wrapper pass extended `lib/io.cyr`'s portable `x*` family with
+  `xmkdir` / `xmkdir_p` / `xsymlink` / `xreadlink` / `xlink`, added
+  `signal_default` to `lib/syscalls.cyr` and `sys_chdir` to the syscall peers
+  (v6.5.7); `lib/thread.cyr` gained `thread_create_detached` + `thread_is_done`
+  (v6.5.8); `lib/alloc.cyr` gained growable arenas and the `ARENA_FULL_*`
+  exhaustion policy (v6.5.9). Per-function detail in
+  [`stdlib-reference.md`](stdlib-reference.md).
 
 ## Categories
 
 | Category | Modules |
 |----------|---------|
-| Core | string, fmt, alloc, io, vec, slice, str, args, fnptr, flags |
+| Core | string, fmt, **alloc** (global bump + arenas + the `Allocator` vtable; growable arenas + `ARENA_FULL_*` exhaustion policy since v6.5.9), io, vec, slice, str, args, fnptr, flags |
 | Types | tagged (Option), result (Result + ? operator; v5.8.28-.32), hashmap, hashmap_fast, trait, assert, bounds |
 | System | syscalls, callback, process, bench, **sys** (uname / sysinfo / is_root introspection; v6.1.28) |
 | Concurrency | thread (clone+mmap, mutex, MPSC), thread_local, atomic, async, sync (mutex/once over futex), freelist |
@@ -77,7 +85,7 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
 | Hardware | **yukti** (folded v5.8.65), **dxgi** (Windows DXGI GPU/adapter enumeration) |
 | UI / E2E testing | **yantra** (folded v6.2.26; UI + end-to-end test framework) |
 | Compression | **sankoch** (folded v5.8.65) |
-| GPU | **mabda** (folded v6.0.x, now 4.0.2; opt-in `include "lib/mabda.cyr"`) |
+| GPU | **mabda** (folded v6.0.x, now 4.0.8; opt-in `include "lib/mabda.cyr"`) |
 
 ## See also
 

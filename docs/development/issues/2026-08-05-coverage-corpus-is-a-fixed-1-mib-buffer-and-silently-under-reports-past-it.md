@@ -1,6 +1,9 @@
 # `cyrius coverage` reads the test corpus into a fixed 1 MiB buffer and silently under-reports once the corpus exceeds it
 
-**Status:** ✅ **FIXED** — shipped in 6.5.8, re-verified on 6.5.9 from agnosai
+**Status:** ✅ **FIXED** — shipped in 6.5.8; cyrius-side re-verified against live code on **6.5.10**
+(2026-08-07): the fixed `alloc(1048576)` quoted below is gone from `cbt/quality.cyr`, replaced by a
+**grow-and-retry** loop whose in-place comment names this filing and records why the filing's own
+suggestion 2 ("sum the file sizes first") was not taken. Also re-verified on 6.5.9 from agnosai
 2026-08-07 by this file's own repro. agnosai's corpus is 1,125,915 bytes today,
 77 KB past the old cap, and padded to **1,765,916** — well beyond the 1,376,773
 that used to report 85% and 64/75 files — `cyrius coverage --min 80` still reads

@@ -6,11 +6,20 @@ none will before v6.5.x); it stays un-archived because archiving is how we asser
 *done*, and doing that here would hide the consumer requirement from whoever opens the slot.
 **Do not "clean this up" in a future rot sweep** — verify instead that the roadmap pin still exists,
 and archive only when the v6.5.x coroutine work actually lands.
-**Placement:** **▲ PINNED v6.5.x** — confirmed live at the v6.4.82 closeout at
-`roadmap-future.md:116`, where the row's original unpin condition (*"No live consumer; pull forward
-on a real suspend-across-await need"*) is recorded as **met** by this filing. Bound into the v6.5.x
-arc because the poll-runtime rework it needs is the same IR/runtime substrate that minor opens, and
-it subsumes the mid-body-suspend "gap 6" of the shipped async "W" arc. 6.x line, never 7.x.
+**Placement:** **▲ PINNED — v6.5.x Slot 8 (`.31`–`.32`).** Re-checked live 2026-08-07 on 6.5.10, in
+both places: `roadmap-future.md:137` still carries the row as *"▲ PINNED v6.5.x (user,
+2026-07-26)"* with this filing named as the consumer that met its unpin condition, **and**
+`roadmap.md`'s v6.5.x slot table now gives it a concrete slot — *"CPS transform + poll-runtime
+rework + force-once memoization as bites; folds in the async single-waiter-per-fd multiplex and the
+shipped async arc's gap 6; acceptance = stiva's `exec -it` TTY relay + a true multiplexed streaming
+server"* — and annotates it **"stays OPEN as the acceptance record until this slot ships; do not
+archive it in a rot sweep."**
+**Premise re-verified, not inferred:** the gap is real at 6.5.10 — `await` still lowers to a
+`future_force` call (`src/frontend/parse_expr.cyr:1701`) and `future_force` (`lib/async.cyr:1014`)
+is still a straight `fncall0..N` on the stored fn pointer. Deferred-then-forced, run-to-completion,
+no CPS transform and no force-once memoization. ⚠ 6.5.6's `async_await_readable_ms` is a *timeout*
+variant on the same run-to-completion runtime — it does **not** touch this.
+6.x line, never 7.x.
 
 > **✅ ACCEPTED for the v6.5.x arc** (user, 2026-07-26). This filing did exactly what it set out to do:
 > `roadmap-future.md:116` parked stackless coroutines with the unpin condition *"No live consumer;
@@ -28,9 +37,13 @@ it subsumes the mid-body-suspend "gap 6" of the shipped async "W" arc. 6.x line,
 
 **Discovered:** 2026-07-25 during stiva's v3.0.x → v3.1.0 roadmap review
 **Severity:** Medium (hard blocker on two shipping features; workaround exists but forecloses them)
-**Affects:** cycc 6.3.11 → 6.4.78 (the whole async-as-deferred-Futures era)
+**Affects:** cycc 6.3.11 → **6.5.10** (the whole async-as-deferred-Futures era; untouched through
+6.5.10, re-verified 2026-08-07)
 
 ## Summary
+
+*(The row has since moved: it is `roadmap-future.md:137` at 6.5.10, and it is no longer
+"unpinned" — it reads ▲ **PINNED v6.5.x**. The paragraph below is the state at filing.)*
 
 `roadmap-future.md:116` parks **Stackless coroutines** as an *Unpinned follow-on* with the note
 *"No live consumer; pull forward on a real suspend-across-await need."*

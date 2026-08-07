@@ -94,6 +94,24 @@ var r = add(20, 22);   # r = 42
 - Relaxed ordering: functions can appear after statements (v1.11.0+)
 - All functions return a value (`return 0;` if nothing to return)
 
+**Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` in
+`src/common/util.cyr` is the single source of truth — **67** builtin/intrinsic names, plus
+the statement keywords, and `IS_KEYWORD_TOK` *derives* from that table so the two sets
+cannot drift. It covers `syscall`, the `load8/16/32/64` + `store8/16/32/64` family, every
+`f64_*` / `f64v_*` / `f32_*` / `f32v_*` / `f32v8_*` / `iv_*` intrinsic, and `union`,
+`defer`, `secret`, `async`, `await`, `u128`, `bitget`/`bitset`/`bitclr`, `ret2`/`rethi`,
+`pub`, `public`, `private`, `shared`, `match`, `in`, `default`, `stack`. Using any of them
+as an identifier is an error, and since v6.4.77 the message **names** the one you hit:
+
+```
+var f64_add = 1;
+# error:<source>:1:5: expected identifier, got reserved keyword 'f64_add'
+#   (cannot be used as an identifier; rename the variable/field/fn)
+```
+
+Read the table rather than memorising a subset — the partial lists that used to appear in
+docs were the reason people were surprised by the other sixty.
+
 ## Control Flow
 
 ```
@@ -518,6 +536,33 @@ include "lib/string.cyr"
 # Textual inclusion — file contents replace the include line
 ```
 
+### File-relative resolution — `#@incdir` (v6.5.7)
+
+cycc reads its source from **stdin**, so it never learns where that source lives, and an
+`include` resolves against the process CWD. Building `src/sub/a.cyr` from the project root
+therefore could not resolve its `include "b.cyr"` — a file sitting right next to it.
+
+`cyrius build` now passes the entry file's directory in-band, as a `#@incdir <dir>` marker
+written as the **very first bytes** of the materialised source:
+
+```
+#@incdir src/sub
+```
+
+You do not write this yourself — the CLI emits it. What matters for using the language:
+
+- Resolution is **CWD-first**. The `#@incdir` retry sits *after* every existing step, so no
+  include that resolves today can change meaning; it can only turn an error into a success.
+- `#` opens a comment in cyrius, so the marker is inert in every compiler that does not look
+  for it — older cycc, cybs, and the cx/JS forks all skip the line.
+- ⛔ **The marker is in-band, so a hostile `.cyr` can write one.** Two rules close that: the
+  directory must be **relative and `..`-free** (an absolute one would rebuild the
+  read-anything primitive CVE-16 removed), and it is read **only at byte 0** — a second
+  marker further down the file stays an ordinary comment. A rejected marker is simply unset,
+  so the include fails exactly where it fails today.
+- `cyrius build /abs/dir/x.cyr` gets no marker when the CLI cannot relativise the path
+  against CWD, and keeps the old behaviour. No reach was bought with a hole.
+
 ## Visibility — `private` / `public` (v6.5.0)
 
 By default every fn and global var is visible everywhere, exactly as it always
@@ -655,14 +700,21 @@ myproject/
   build/               compiled binaries (gitignored)
 ```
 
-**Important**: test/bench/fuzz/soak/smoke files MUST be in the correct subdirectories.
-- `.tcyr` files → `tests/tcyr/` (NOT `tests/` root)
-- `.bcyr` files → `benches/` (NOT `tests/bcyr/`)
-- `.fcyr` files → `fuzz/`
-- `.scyr` files → `tests/scyr/` or `soak/`
-- `.smcyr` files → `tests/smcyr/` or `smoke/`
+**Discovery roots** — a harness outside every root for its extension is silently ignored:
+- `.tcyr` → `tests/` (`tests/tcyr/` is the convention)
+- `.bcyr` → `benches/` or `tests/`
+- `.fcyr` → `fuzz/` or `tests/`
+- `.scyr` → `tests/scyr/` or `soak/`
+- `.smcyr` → `tests/smcyr/` or `smoke/`
 
-Files in the wrong location will be silently ignored by the toolchain.
+**Subfolders work (v6.5.7).** `cyrius test` / `bench` / `fuzz` walk their roots
+**recursively**, and each also honours an explicit directory argument
+(`cyrius bench benches/perf`). Before v6.5.7 the bench and fuzz walkers were flat, so
+`benches/perf/core.bcyr` simply never ran *and the command reported success over it*; a
+directory argument ran nothing, printed nothing and exited 0. A path that does not exist is
+now refused rather than silently building a do-nothing program, and every form prints the
+`=== N passed, M failed ===` summary — the single-file form used not to, which made it
+unscriptable.
 
 ## Build Tool & Dependencies
 
@@ -672,14 +724,29 @@ cyrius build src/main.cyr build/myapp   # resolves deps + compiles
 cyrius deps                              # manually resolve deps
 cyrius build -v src/main.cyr build/myapp # verbose (shows compiler, binary size)
 cyrius test tests/test.tcyr             # resolve deps + compile + run
-cyrius bench                             # discover + run benches/*.bcyr
-cyrius fuzz                              # discover + run fuzz/*.fcyr harnesses
+cyrius tests [dir]                       # recursively run every .tcyr under dir (default tests/)
+cyrius bench [path|dir]                  # discover + run *.bcyr (recursive; v6.5.7)
+cyrius fuzz [path|dir]                   # discover + run *.fcyr harnesses (recursive; v6.5.7)
 cyrius soak [N]                          # N-iter built-in self-host + tests/scyr/*.scyr (v5.7.38)
 cyrius smoke                             # tests/smcyr/*.smcyr fail-fast (v5.7.38)
-cyrius distlib                           # bundle src/ modules into dist/{name}.cyr
+cyrius distlib [profile]                 # bundle src/ modules into dist/{name}.cyr
+cyrius distlib --all                     # regenerate the base bundle AND every [lib.X] profile (v6.5.8)
+cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
+cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min gates CI)
 cyrius capacity [--check] <src>          # report compiler capacity / CI gate
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
 ```
+
+⚠ `distlib --check` compares **bytes**, not version strings — a sub-profile can carry a stale
+encoder under a fresh version string, which is exactly how sankoch 2.7.6's gzip fix nearly
+shipped with all nine sub-bundles still buggy. `--all` replaces the N+1 per-profile ritual.
+
+Each bundle also emits a `dist/<lib>.deps` sidecar naming the stdlib leaves the fold needs in
+scope. Since v6.5.10 the base bundle's sidecar is the declared `[deps] stdlib` **unioned** with
+an include-scan of the bundled sources, so it cannot under-report against either — an
+under-reporting sidecar silently switched OFF `cyrius deps`' own consumer check. Profiles keep
+the pruned inference (a profile is a narrow module subset, so unioning the whole declaration in
+would over-report and fail a legitimately-narrow consumer).
 
 ```toml
 # cyrius.cyml
@@ -1259,18 +1326,106 @@ println(s)             # Print string + newline
 ```
 include "lib/string.cyr"  # strlen, streq, memcpy, memset, memchr, strchr, print_num, println
 include "lib/alloc.cyr"   # alloc_init, alloc, alloc_reset, alloc_used (bump allocator)
+                          # + arenas (arena_new/_growable, arena_alloc, arena_reset, arena_free)
+                          # + the allocator vtable (allocator_new, alloc_via/realloc_via/free_via/reset_via)
 include "lib/str.cyr"     # Str type: str_from, str_len, str_eq, str_cat, str_sub, str_print
 include "lib/vec.cyr"     # Dynamic array: vec_new, vec_push, vec_pop, vec_get, vec_set, vec_len
 include "lib/io.cyr"      # File I/O: file_open, file_read, file_write, file_close, file_read_all
+                          # + the portable x* wrapper set (see below)
 include "lib/fmt.cyr"     # Formatting: fmt_int, fmt_hex, fmt_hex0x, fmt_bool, fmt_byte
 include "lib/args.cyr"    # CLI args: args_init, argc, argv
 include "lib/fnptr.cyr"   # Function pointers: fncall0, fncall1, fncall2
-include "lib/thread.cyr"  # Threads (clone+mmap), mutex (futex), MPSC channels
+include "lib/thread.cyr"  # Threads (clone+mmap) incl. thread_create_detached / thread_is_done,
+                          # mutex (three-state futex), MPSC channels (chan_send/recv + try_ variants)
 include "lib/async.cyr"   # Async primitives
 include "lib/freelist.cyr"# Freelist allocator (free + reuse, O(1) alloc/free)
 include "lib/math.cyr"    # Math functions: f64_atan and extended math ops
 include "lib/protobuf.cyr"# proto3 wire codec: pb_write_*/pb_read_* (needs string.cyr + str.cyr)
 ```
+
+### The portable `x*` wrapper set — never hand-roll `sys_*`
+
+`lib/io.cyr` exports a length-carrying, per-target-bridged wrapper for each filesystem
+primitive: `xopen`, `xunlink`, `xrmdir`, `xmkdir`, `xmkdir_p`, `xsymlink`, `xreadlink`,
+`xlink`, `xfsync`, `xstat`, `xgetdents`, `xlseek`, `xflock`. Call these instead of the raw
+`sys_*` — agnos's syscalls carry an **explicit byte length** and reorder flags, so a
+Linux-shaped `sys_open(path, O_RDONLY, 0)` lands `O_RDONLY` in `namelen`: a silent ABI
+miscompile, no trap, that breaks every file op off Linux. Windows reroutes through kernel32
+(`DeleteFileW`, `MoveFileExW`, …) behind the same names. `cyrlint` flags a raw `sys_open`
+with literal flags for exactly this reason and points at the wrappers.
+
+The set was **completed at v6.5.7** (`xmkdir`, `xmkdir_p`, `xsymlink`, `xreadlink`, `xlink`,
+plus `sys_chdir` and `signal_default`, which had no counterpart to `signal_ignore` even
+though `SIG_IGN` is inherited across `execve`). ⚠ That release is also the cautionary tale
+for this whole family: `xrmdir` had been **broken on macOS-arm64 since the day it shipped**,
+because the Mach-O branch mapped `unlinkat` to Darwin's `unlink` with an arg-shift that
+dropped the dirfd and the flag — right for `unlink`, fatal for `rmdir`, which is the same
+syscall distinguished only by `AT_REMOVEDIR`. Five of the seven defects found there were
+half-fixes that stopped at the first symptom. If you add a wrapper, add a `vr01_` test with
+it, or it is never run off-host.
+
+## Allocators & Arenas
+
+`lib/alloc.cyr` ships three layers: the process-wide bump allocator (`alloc`), independent
+**arenas**, and an **allocator vtable** so a library can take its memory source as a parameter.
+
+### `alloc_reset()` invalidates everything
+
+```
+alloc_reset();     # rewinds the global bump arena to its first chunk
+```
+
+⚠ **This invalidates every pointer the allocator has ever handed out**, including ones the
+stdlib itself is holding. Any `Str`, `Vec`, `HashMap`, arena or struct built before the reset
+is dangling afterwards — the span is zeroed *and re-issuable*, so a stale pointer reads zeros
+until something else is allocated over it, then reads that. Reset only when nothing from the
+previous epoch will be read again. (v6.5.7 fixed one instance of this biting the stdlib: the
+memoized default allocator cached its vtable *inside the arena it describes*, so `alloc_reset`
+invalidated the allocator itself. The vtable now lives in static storage — but consumer-held
+pointers are still the caller's problem.)
+
+### Arenas and the exhaustion policy (v6.5.9)
+
+```
+var a = arena_new(65536);              # fixed-size
+var b = arena_new_growable(65536);     # chains another chunk instead of failing
+arena_set_on_full(a, ARENA_FULL_ABORT);
+
+var p = arena_alloc(a, 128);
+arena_reset(a);                        # rewind; the chunk chain is RETAINED
+arena_free(a);
+```
+
+| policy | behaviour |
+|---|---|
+| `ARENA_FULL_NULL` (0) | return 0 — **the default**, unchanged from every prior release |
+| `ARENA_FULL_GROW` (1) | chain another chunk (`arena_new_growable` / `arena_allocator_growable`) |
+| `ARENA_FULL_SPILL` (2) | serve overflow from the global allocator — spilled bytes are never reclaimed by reset |
+| `ARENA_FULL_ABORT` (3) | die loudly at the allocation instead of faulting three layers away |
+
+Why the policy matters: a returned 0 is **indistinguishable from a valid `Str`** — there is
+no option type and no error channel through the `_a` families — so it flows on and the first
+thing that touches it dereferences it. "Arena too small" was observable as a SIGSEGV several
+layers away, with no indication which allocator ran out.
+
+⚠ **GROW retains its chunks across `arena_reset`.** The bump allocator underneath has no
+`free()`, so releasing them is not expressible — and it is not what an arena wants: reset
+rewinds to the first chunk and re-uses the chain, so a request loop converges on its
+high-water mark and then allocates nothing. Use `arena_capacity_total(a)` for the whole
+chain (`arena_used` cannot show it once the arena has grown).
+
+### The allocator vtable
+
+```
+var al = arena_allocator(65536);       # or bump_allocator() / arena_allocator_growable(n)
+var p = alloc_via(al, 128);
+reset_via(al);
+```
+
+`alloc_via` / `realloc_via` / `free_via` / `reset_via` read the vtable inline (v6.5.10 — the
+dispatch was previously five call frames deep, ~15 ns, and cyrius does not inline, so each was
+real; it is now ~11 ns). `allocator_alloc_fn` / `allocator_state` and friends remain as public
+accessors — the hot path simply stopped calling them.
 
 ## Protobuf (proto3 wire codec)
 
@@ -1379,7 +1534,10 @@ offsets past the params.
 - Max 4096 global vars with *non-literal* initializers per compilation unit
   (raised from 1024 at v6.3.41; integer-literal inits and enum members are free
   — see **Global Initializers** for the counting rule)
-- `default`, `match`, `in`, `shared` are keywords
+- **67** builtin/intrinsic names plus the statement keywords are reserved and cannot be used
+  as identifiers — `TOKNAME_BUILTIN` in `src/common/util.cyr` is the list; see the
+  reserved-word note under **Functions**. (This bullet used to name four of them, which is
+  how the other sixty came as a surprise.)
 - Closures (`|x| body`) support lexical capture by value (v6.3.8) — a body may
   reference enclosing locals, captured by value at construction (Windows PE is
   the exception: capturing closures are a compile error there — pass the values
@@ -1409,7 +1567,7 @@ sh scripts/check.sh              # Full audit: self-host + heap + tests + lint
 sh tests/heapmap.sh              # Heap map overlap detection
 
 # Boot kernel
-qemu-system-x86_64 -kernel build/agnos -serial stdio -display none
+qemu-system-x86_64 -kernel build/kernel -serial stdio -display none
 ```
 
 ## Targeting Windows (PE) (v6.1.16+)
@@ -1479,9 +1637,13 @@ convert back to UTF-8 for the cyrius API.
 **Threading & Synchronization**
 - `thread_create(fp, arg)` → thread handle (CreateThread)
 - `thread_join(handle)` → exit code
+- `thread_create_detached(fp, arg)` → fire-and-forget; no handle to join or leak (v6.5.8)
+- `thread_is_done(handle)` → 1 once the worker has exited. ⚠ Valid only **before**
+  `thread_join` — join consumes the handle, and on Windows `CloseHandle()`s it
 - `gettid()` → current thread id (GetCurrentThreadId)
 - `mutex_new()`, `mutex_lock(m)`, `mutex_unlock(m)` — SRWLOCK (8-byte exclusive lock)
-- `chan_new(cap)`, `chan_send(ch, val)`, `chan_recv(ch)`, `chan_try_recv(ch)` — thread-safe FIFO ring
+- `chan_new(cap)`, `chan_send(ch, val)`, `chan_recv(ch)`, `chan_try_recv(ch)`,
+  `chan_try_send(ch, val)`, `chan_close(ch)` — thread-safe FIFO ring
 
 Mutexes are preemptive-safe (block contending threads). Channel `recv` is
 non-blocking (returns 0 when empty); blocking variants require condition
@@ -1685,13 +1847,18 @@ code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at e
 
 ### AGNOS Syscall ABI
 
-agnos defines an append-only syscall surface (numbers 0–91, agnos 1.55.x; the latest
-additions are the GPU-compute band #82–#91). The register
+agnos defines an append-only syscall surface: **#0–#95 contiguous, plus #97**, at agnos
+1.56.x (`lib/syscalls_x86_64_agnos.cyr`). Beyond the GPU-compute band #82–#91 it now carries
+`gpu_shader_op` (#92), `gpu_modeset_op` (#93), `gpu_recover_op` (#94), `uptime_us` (#95) and
+the local-IPC **channel band** `chan_op` (#97, minted at v6.5.8). ⚠ **#96 (`fork`) is
+reserved but deliberately NOT minted** — on agnos an unknown number falls *through* the
+dispatch chain and the caller reads the fall-through value as data, so a
+minted-but-unimplemented constant is strictly worse than an absent one. The register
 convention is x86_64 SysV (rax=number, rdi/rsi/rdx/r10=args 1–4, rax returns
 result ≥0 on success, -1 on error). Key differences from Linux:
 
 ```
-# agnos syscall numbers — append-only, 0–91 (lib/syscalls_x86_64_agnos.cyr)
+# agnos syscall numbers — append-only, #0–#95 + #97 (lib/syscalls_x86_64_agnos.cyr)
 SYS_EXIT = 0       (not Linux 60)
 SYS_WRITE = 1
 SYS_READ = 5
@@ -1738,11 +1905,16 @@ lib/process.cyr           → lib/process_agnos.cyr
 lib/io.cyr (getenv)       → delegates to lib/args_agnos.cyr::_agnos_getenv
 ```
 
-**`lib/syscalls_x86_64_agnos.cyr`**: the full agnos syscall surface (0–91),
+**`lib/syscalls_x86_64_agnos.cyr`**: the full agnos syscall surface (#0–#95 + #97),
 with wrappers (`sys_write`, `sys_read`, `sys_open`, `sys_spawn`, `sys_waitpid`,
 `sys_mmap`, `sys_stat`, the socket/UDP/ICMP networking band, framebuffer/blit/keyboard,
-the GPU-compute band `sys_gpu_dispatch`..`sys_gpu_blit_bb` (#82–#91), etc.) and the
-agnos `stat` / `getdents` record layouts.
+the GPU-compute band `sys_gpu_dispatch`..`sys_gpu_blit_bb` (#82–#91), the
+`sys_gpu_shader_op` / `sys_gpu_modeset_op` / `sys_gpu_recover_op` / `sys_uptime_us`
+tail (#92–#95), and the `sys_chan_*` channel band over #97) and the
+agnos `stat` / `getdents` record layouts. ⚠ The **agnos kernel dispatch**
+(`agnos/kernel/core/syscall.cyr`) is the single canonical source for every number and
+signature — `agnos-userland-abi.md` is a secondary reference, and where the two disagree
+the kernel wins.
 
 **`lib/alloc_agnos.cyr`**: bump allocator over agnos's `sys_mmap(27)` chunks
 (2 MB-granular, kernel-picked base, no hints). Successive mmaps are discontiguous;
@@ -1792,32 +1964,51 @@ branching internally. Avoid platform-specific syscall numbers, flags, or struct 
 ### Capabilities and Limitations
 
 **Works on agnos**:
-- Syscall wrappers (all 0–91)
+- Syscall wrappers (all of #0–#95, plus #97)
 - Heap allocation (bump, 2 MB chunks)
 - File I/O (read, write, open, close, stat, getdents/readdir)
-- Process spawn and wait (in-memory ELF)
+- Process spawn and wait (in-memory ELF, or from disk via `sys_spawn_path`)
 - Arguments and environment variables
+- **Passing an environment to a spawned child** — `sys_spawn_path_env(path, len, env, envlen)`
+  (v6.5.9). The blob is packed `KEY=VALUE\0…`, ≤1024 B, ≤16 entries. ⛔ The kernel treats a
+  garbage `a3`/`a4` as *fallback to the default env*, **never an error**, so a mis-shaped call
+  degrades silently — which is why the named wrapper exists rather than a raw 4-arg `syscall()`.
+- **Local-IPC channels** — the `sys_chan_*` band over #97 (`caps` / `mint` / `send` / `recv` /
+  `close` / `endow`). A channel is minted as a **pair** and has no name, which deletes the
+  unlink-before-bind race class AF_UNIX carries. ⛔ Negotiate on the CAPS mask, do not assume:
+  one bit per *implemented* op, and a merely-reserved op reads 0. ⚠ `sys_chan_endow` returns an
+  **fd, not 0** — the one op in the band that does; the parent passes it to the child as
+  `AGNOS_CHAN=<fd>` in the `sys_spawn_path_env` blob. ⚠ The `sys_chan_` prefix is deliberate:
+  bare `chan_send`/`chan_recv`/`chan_close` are already the in-process MPSC thread channel, and
+  cyrius resolves duplicate fns last-definition-wins.
 - Pipes, epoll, signalfd, timerfd (the event loop primitives)
 - Signals (sigprocmask, kill, pause)
 - Filesystem (mkdir, rmdir, unlink, rename, link on ext2)
 - Networking (sockets, UDP, ICMP; #47–#61)
-- Framebuffer, blit, keyboard (#38–#42) and the GPU-compute band (`sys_gpu_dispatch`..`sys_gpu_blit_bb`, #82–#91)
+- Framebuffer, blit, keyboard (#38–#42), the GPU-compute band (`sys_gpu_dispatch`..`sys_gpu_blit_bb`, #82–#91) and the #92–#95 tail
 - SIMD, function pointers, inline asm (same as Linux/macOS)
 
-**Does NOT work on agnos** (either absent from syscalls 0–91 or stubbed):
-- Process arguments to spawned programs (`sys_spawn` is elf_addr, elf_size only)
-- stdout/stderr redirection (`sys_dup` is a stub; pipe → spawn → wait works, but
-  output goes to the terminal, not a buffer; `run_capture` returns 0 bytes)
+**Does NOT work on agnos** (either absent from the surface or stubbed):
+- Process **arguments** to spawned programs (`sys_spawn` is elf_addr, elf_size only; the
+  from-disk `sys_spawn_path` takes a path and, since v6.5.9, an env blob — but still no argv)
+- stdout/stderr redirection (`sys_dup` is a stub returning `fd` unchanged; pipe → spawn → wait
+  works, but output goes to the terminal, not a buffer; `run_capture` returns 0 bytes)
 - `getppid` (no getppid in the surface; returns 0)
 - `getuid` (always 0 / root)
 - `chmod` (no permission model; `sys_chmod` is a no-op stub returning 0)
 - Thread-local storage (not modeled in agnos ring-3)
 - Dynamic linking (`dlopen`, auxv machinery), only static binaries
 
-The agnos syscall surface is **append-only, currently through #91 at agnos 1.55.x** per its
-`docs/development/agnos-userland-abi.md` protocol (§5): any number/signature change in that doc
-is authoritative, and this guide + `lib/syscalls_x86_64_agnos.cyr` must be updated in sync. See `docs/development/issues/` for
-follow-up arcs (e.g., "2026-06-03-agnos-followup-after-boot.md" covers the spawn-argv gap).
+The agnos syscall surface is **append-only, currently #0–#95 + #97 at agnos 1.56.x**. The
+re-freeze rule (§5) names the agnos **kernel dispatch** — `agnos/kernel/core/syscall.cyr` —
+as canonical: any number / signature / struct-layout change there must land in this guide and
+`lib/syscalls_x86_64_agnos.cyr` in the same change. `agnos/docs/development/agnos-userland-abi.md`
+is a *secondary* reference and where it disagrees with the kernel, the doc is the bug. (Until
+v6.5.7 the peer's header named that doc as its authority while the doc named the peer as part
+of *its* authority — a doc → cyrius → doc circle in which a wrong number could be "verified"
+against itself. The kernel was always the tiebreak.) Follow-up arcs are tracked in
+`docs/development/issues/`; the spawn-argv gap's original filing
+("2026-06-03-agnos-followup-after-boot.md") has since moved to `issues/archived/`.
 
 ## Position-Independent Executables (PIE) (v6.1.6)
 
@@ -2107,7 +2298,11 @@ See `programs/` for 97 examples:
 - **Algorithms**: fizzbuzz, primes, sieve, collatz, ackermann, gcd, brainfuck, life, xor
 - **Data structures**: struct_list (linked list), alloctest (heap), strtype (fat strings)
 - **Systems**: bitfield (PTE/GDT/IDT), asmtest (18 mnemonics), points (nested structs + typed ptrs)
-- **Kernel**: kernel_hello (VGA), isr_stub (interrupt patterns), boot_serial, agnos (full kernel)
+- **Kernel**: kernel_hello (VGA), isr_stub (interrupt patterns), boot_serial (the `kernel;`
+  program `scripts/qemu-boot-gate.sh` really boots under QEMU)
+
+The AGNOS kernel itself is **not** in this repo — it lives in the separate `agnos` repo and
+is built with this toolchain.
 
 ## Architecture
 
@@ -2117,7 +2312,8 @@ bootstrap/asm (29KB seed)
     → cycc (modular compiler + IR)
       → cycc_aarch64 (Linux + macOS Mach-O cross-compiler)
       → cycc_win    (Windows PE32+ cross-compiler)
-      → agnos.cyr  (AGNOS kernel)
+      → cycc_cx     (cyrius-x bytecode; run by programs/cxvm.cyr)
+      → the AGNOS kernel (separate `agnos` repo)
 ```
 
 Current cycc size, IR pipeline state, and cross-compiler stats live in

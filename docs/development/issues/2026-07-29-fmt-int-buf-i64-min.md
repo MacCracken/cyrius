@@ -1,14 +1,28 @@
-# `fmt_int_buf` renders `i64::MIN` as the single byte `-`, and bayan turns that into invalid JSON
+# `fmt_int_buf` renders `i64::MIN` as the single byte `-`, and bayan turns that into invalid JSON — RESOLVED
 
-**Status:** 🟡 **OPEN** — filed 2026-07-29. Verified against live code and at runtime on cycc 6.5.1:
-`lib/fmt.cyr:99` negates with `n = 0 - n`, which is a no-op at `i64::MIN`, so both the `n == 0` and
-`while (n > 0)` arms are skipped and only the sign byte is emitted. Confirmed end to end — the repro
-prints `{"n":-}`. **Re-verified on cycc 6.5.2 (2026-07-29, after the bayan 1.3.0 release): the repro
-still exits 1 and still prints `{"n":-}`, so bayan 1.3.0's `_parse_str` -> `_parse_buf` rename did not
-touch this path.**
-**Placement:** unpinned — 6.x-line backlog. Self-contained fix in `lib/fmt.cyr`, supplied and
-verified below (11/11 cases); a matching guard in `lib/bayan.cyr`'s `_jp_atoi` is a separate, larger
-question (see the end).
+**Status:** ✅ **RESOLVED — shipped v6.5.8.** Re-verified live on cycc **6.5.10** (2026-08-07) by
+running this file's own repro:
+
+```
+$ cyrius build docs/development/issues/repros/2026-07-29-fmt-int-buf-i64-min.cyr /tmp/imin && /tmp/imin
+str_from_int(i64::MIN) = [-9223372036854775808]
+bayan_json_v_build     = {"n":-9223372036854775808}
+$ echo $?
+0
+```
+
+`lib/fmt.cyr:133-156` now carries exactly the candidate fix proposed below (`while (n != 0)`,
+per-digit `if (d < 0) { d = 0 - d; }`, sign byte written from the `neg` flag), with a comment
+naming this filing. **The fix was wider than this file asked for:** CHANGELOG [6.5.8] records
+**12 sites**, not one — four in `lib/fmt.cyr`, plus `string.cyr`, `log.cyr`, sakshi (fixed
+upstream at **2.4.8** and re-vendored), **two inside the compiler itself** (`PRNUM`,
+`_emit_decimal`) and three shipped demos. So the "worth checking whether `fmt_int` and any other
+integer formatter shares the same `0 - n` shape" note at the end of §Proposed fix was the right
+instinct and was acted on.
+**Residual (NOT this issue):** bayan's `_jp_atoi` still has no overflow check — live at
+`lib/bayan.cyr:3585-3595`, unchanged. That was filed below as *"related but separate"* and a bayan
+design question, not part of this fix. Do not hold this file open for it.
+**Placement:** closed — ready to archive.
 **Discovered:** 2026-07-29 while porting agnosai's `orchestrator/durable_state` and auditing the
 integer path its JSON snapshots go through.
 **Severity:** Medium — silent data corruption, but only at one input value. It produces a JSON
@@ -116,6 +130,10 @@ Worth checking whether `fmt_int` and any other integer formatter in `lib/fmt.cyr
 `0 - n` shape — this repro only exercises the `fmt_int_buf` path that `str_from_int` and bayan use.
 
 ## Related but separate: bayan's parser has no overflow check
+
+**STILL TRUE at 6.5.10** — re-read live 2026-08-07; the fn has moved to `lib/bayan.cyr:3585`
+but its body is unchanged and still has no overflow check. Not closed by the v6.5.8 fix and not
+a reason to keep this file open.
 
 While confirming the above I read `lib/bayan.cyr:3504`'s `_jp_atoi`:
 

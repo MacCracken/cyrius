@@ -1,15 +1,26 @@
 # v6.4.15 closeout residuals — R2 (PE prologue refactor) + D1/D2 (dead IR/decode code)
 
-**Status:** 🟡 **OPEN for D1/D2 only** — R2 shipped v6.4.26. Re-verified against live code at the
-v6.4.82 closeout, by counting definitions vs. call sites in `src/`:
+**Status:** 🟡 **OPEN for D1/D2 only** — R2 shipped v6.4.26. **Re-verified against live code on cycc
+6.5.10, 2026-08-07** — nothing has moved, and every line number below is still exact:
+
+```sh
+grep -rn '\bir_lower_all\b\|\bir_dce\b\|\bir_dead_store\b\|\bir_emit2\b\|\bIR_BB_ID\b\|\bIR_EDGE_FROM\b' src/
+#   ir.cyr:37  (prose)  :234 IR_BB_ID  :314 ir_emit2  :341 IR_EDGE_FROM
+#   :361 ir_lower_all  :1014 ir_dce  :1263 ir_dead_store        → definitions only, zero call sites
+grep -rn '\bCLASSIFY_CF\b\|\bCF_TARGET\b' src/
+#   decode.cyr:12 / :19 (header comment)  :238 CLASSIFY_CF  :277 (cross-ref)  :279 CF_TARGET
+```
+
 **D1** — `ir_lower_all`, `ir_dce`, `ir_dead_store`, `ir_emit2`, `IR_BB_ID`, `IR_EDGE_FROM` each have
 **1 definition and 0 call sites**; `_ir_lower_node`'s single reference is from `ir_lower_all`, so it
 is dead transitively. **D2** — `CLASSIFY_CF` / `CF_TARGET` (`src/backend/x86/decode.cyr:238` / `:279`)
-have **no consumer at all**; their only other mentions are the header comment at `:12`/`:19` and a
-cross-reference at `:277`. Both still dead exactly as filed.
-**Placement:** **v6.5.x — "IR substrate productionization"** (`roadmap.md`, v6.5.x table, which names
-this file as folded into that slot). `ir.cyr` is the delicate substrate, so the removal rides the
-slot that already owns it rather than a closeout. 6.x line, never 7.x.
+have **no consumer at all**. Both still dead exactly as filed.
+⚠ Note `ir_dce` and `ir_dead_store` are one-line wrappers over `ir_dce_capped` / `ir_dead_store_capped`,
+which **are** live — remove the wrappers, not the capped forms.
+**Placement:** **v6.5.x Slot 3 (`.17`–`.18`) — "IR substrate productionization"**, where D1/D2 are
+the *opening bite* ("D1/D2 dead-code removal + record the new `note: N unreachable fns` floor";
+`roadmap.md` v6.5.x slot table, verified live 2026-08-07). `ir.cyr` is the delicate substrate, so
+the removal rides the slot that already owns it rather than a closeout. 6.x line, never 7.x.
 
 > **R2 SHIPPED v6.4.26** (2026-07-08) — `_pe_fd_to_handle_rcx` extracted from `EWRITE_PE` +
 > `EREAD_PE` (`src/backend/x86/emit.cyr`); `EREAD_PE` byte-identical, `EWRITE_PE` re-emitted;

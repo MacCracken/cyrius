@@ -1,18 +1,20 @@
 # SIMD `f64v_*` ops are memory-operand array kernels — no register-resident vector-value arithmetic, so hand-SIMD of a tight per-element chain gets ~no speedup
 
-**Status:** 🟡 **OPEN** — the root cause is unchanged. Re-read live at the v6.4.82 closeout:
+**Status:** 🟡 **OPEN** — the root cause is unchanged. **Re-read live on cycc 6.5.10, 2026-08-07:**
 `EMIT_F64V_LOOP` (`src/backend/x86/float.cyr:152`) still emits exactly the
 `movupd xmm0,[rdx+rsi*8]` → `addpd/subpd/mulpd/divpd` → `movupd [rdx+rsi*8],xmm0` shape described
 below, with **no AVX branch and no register-residency path**, and there is no value-form f64v
 arithmetic emitter.
 **One correction to the fix list, not to the verdict:** item 3 ("true 256-bit AVX") has since landed
-**for f32 only** — `EMIT_F32V_LOOP` and the FMA/dot emitters widened to `vmovups/vfmadd231ps ymm`
-during the v6.4.x SIMD arc. `f64v4` was not widened and is still a two-iteration `xmm` loop, so both
-item 3 (for f64) and the load-bearing items 1–2 remain open. The v6.4.31/.53 work on value-form SIMD
-*params and returns* is a different thing from register-resident *arithmetic chains* — do not read it
-as closing this.
-**Placement:** **v6.5.x — "SIMD register residency"** (`roadmap.md`, v6.5.x table). Explicitly
-**gated behind** the IR-substrate anchor
+**for f32 only** — `EMIT_F32V_LOOP` (`float.cyr:191`, widened at `:217-248` to
+`vmovups`/`vaddps`/`vsubps`/`vmulps` **ymm** + `vzeroupper`) and the FMA/dot emitters (`:271-278`
+`vfmadd231ps ymm`, `:295-304`) during the v6.4.x SIMD arc. `f64v4` was **not** widened and is still a
+two-iteration `xmm` loop, so both item 3 (for f64) and the load-bearing items 1–2 remain open. The
+v6.4.31/.53 work on value-form SIMD *params and returns* is a different thing from register-resident
+*arithmetic chains* — do not read it as closing this.
+**Placement:** **v6.5.x Slot 6 (`.24`–`.25`) — "SIMD register residency"** (`roadmap.md` v6.5.x slot
+table, verified live 2026-08-07; scope recorded there as **fix-list items 1–3 only**). Explicitly
+**gated behind** the IR-substrate anchor at Slot 3
 ([`2026-07-02-ir-regalloc-rewrite-needs-reemit.md`](2026-07-02-ir-regalloc-rewrite-needs-reemit.md)):
 this is a codegen-QUALITY gap — bit-identical output, no wrong results — so it cannot batch ahead of
 the substrate that has to model a vector register class. 6.x line, never 7.x.
@@ -50,8 +52,8 @@ barely dented it.
 ## Root cause
 
 The `f64v_*` primitives are **bulk-array kernels**, not register-resident
-vector-value operations. `EMIT_F64V_LOOP` (`src/backend/x86/float.cyr` ~139–152)
-emits, per operation:
+vector-value operations. `EMIT_F64V_LOOP` (`src/backend/x86/float.cyr:152-184`,
+re-derived 2026-08-07) emits, per operation:
 
 ```
 # rdx = a base;  movupd xmm0, [rdx+rsi*8]     # load operand A from MEMORY
@@ -70,9 +72,10 @@ i.e. every op is *memory → xmm → op → memory*, indexed off pointers, loope
    those intermediates in `xmm`/`ymm` and touches memory only at the chain's edges.
 2. **f64v4 is emitted as SSE2 (`xmm`, 2-wide) looped**, not one 256-bit AVX op —
    `movupd xmm` + a loop over `n`, so a 4-lane op is 2 iterations with loop
-   overhead, even when `simd_has_avx2()` is true. (`EMIT_F64V_DOT` ~489–509,
-   `EMIT_F64V_SCALE` ~545–574, `EMIT_F64V_FMADD` ~590–606 all follow the same
-   xmm-loop shape.)
+   overhead, even when `simd_has_avx2()` is true. (`EMIT_F64V_DOT:533`,
+   `EMIT_F64V_SCALE:569`, `EMIT_F64V_FMADD:634` — line numbers re-derived
+   2026-08-07, all still the same xmm-loop shape. The f32 siblings did get the
+   ymm treatment; the f64 ones did not.)
 3. **No auto-vectorizer** — a scalar SOA loop is emitted lane-by-lane; there is no
    pass that packs it. So the *only* way to vectorize is by hand, and (1)+(2) then
    throttle the hand-written version.

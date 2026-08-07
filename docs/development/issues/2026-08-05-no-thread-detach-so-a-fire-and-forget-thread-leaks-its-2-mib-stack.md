@@ -1,7 +1,39 @@
-# No `thread_detach`, so a fire-and-forget thread permanently leaks its 2 MiB stack and its TLS block
+# No `thread_detach`, so a fire-and-forget thread permanently leaks its 2 MiB stack and its TLS block — RESOLVED
 
-**Status:** 🟡 **OPEN** — filed 2026-08-05, verified against `lib/thread.cyr` at cycc 6.5.6. `grep -nE '^fn thread_' lib/thread.cyr` returns exactly two lines: `thread_create` and `thread_join`.
-**Placement:** unpinned — 6.x-line backlog, never 7.x (runtime/stdlib). Additive; no existing signature changes.
+**Status:** ✅ **RESOLVED — shipped v6.5.8** (fix shape **2**, `thread_create_detached`, plus the
+`thread_is_done` predicate this file asked for under "Worth fixing alongside"). Re-verified live on
+cycc **6.5.10**, 2026-08-07: the same `grep -nE '^fn thread_' lib/thread.cyr` that returned two
+lines when this was filed now returns **four** —
+
+```
+304:fn thread_create(fp, arg): i64 {
+389:fn thread_create_detached(fp, arg): i64 {
+438:fn thread_is_done(t): i64 {
+456:fn thread_join(t): i64 {
+```
+
+CHANGELOG [6.5.8] measures the close: 100 unjoined threads leaked **210,124,800 B** of VA
+(exactly 100 × 2,101,248) and now leak **0**. **Both** resources named in this file's table are
+covered, not just the 2 MiB: the child unmaps its own stack in the trampoline tail (musl's
+`__unmapself` shape) and the TLS block is carved from the **top of that same mapping**, so one
+`munmap` releases stack and TLS together; and no 24 B handle is allocated at all, because
+`CLONE_PARENT_SETTID`/`CLONE_CHILD_CLEARTID` come off for a thread nobody joins
+(`lib/thread.cyr:380-422`). The half-fix this file warned against — reclaiming the 2 MiB and
+leaving 4 KB behind — was explicitly avoided.
+⚠ **`thread_is_done` is valid only BEFORE `thread_join`**: join consumes the handle and on
+Windows `CloseHandle()`s it, so a post-join query inspects a closed handle. The intended shape is
+the reaper this file described — poll while running, join once it returns 1.
+
+⛔ **ONE sub-note below did NOT ship, and it is not the filed defect.** §Root cause's last
+paragraph — *"TLS is leaked on **every** thread including joined ones"* — is **still true at
+6.5.10**. The **joined** path is unchanged: `thread_create` still takes its TLS block from the
+bump allocator (`lib/thread.cyr:327`, `var tls = alloc(THREAD_TLS_SIZE);`) and `thread_join`'s
+tail still calls only `munmap_stack(load64(t + 8), load64(t + 16))` — 4 KiB per joined thread
+ever created, never reclaimed. Only the **detached** path carves TLS from the stack mapping. That
+is a separate, much smaller item (4 KiB vs 2 MiB, and it needs `thread_create` to change where the
+block comes from); it does not keep this file open. Re-file it on its own if a consumer measures it.
+
+**Placement:** closed — ready to archive.
 **Discovered:** 2026-08-05, building asynchronous crew submission in agnosai (a worker thread per delegated crew, with no caller to join it).
 **Severity:** Medium — a real, unbounded leak in the one thread shape that has no other spelling, with no consumer-side fix available.
 **Affects:** cycc 6.5.6 and earlier.
@@ -84,6 +116,9 @@ stack. 4 KiB per thread ever created is small, but it is unbounded in a
 long-running server and is arguably a separate one-line fix.
 
 ## Proposed fix
+
+> **Shape 2 is what shipped**, with exactly the `SYS_MUNMAP`-then-`SYS_EXIT` trampoline tail
+> described below. Shape 1 (a reaper / free-list) was not needed. `thread_is_done` shipped too.
 
 Two shapes, either of which closes it. The second is the smaller change.
 

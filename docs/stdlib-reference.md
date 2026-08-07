@@ -28,6 +28,66 @@ Bump allocator over anonymous-mmap chunks (v6.1.19; was `brk`-backed — switche
 | `alloc` | `alloc(size) → ptr` | Allocate size bytes (8-byte aligned) |
 | `alloc_reset` | `alloc_reset()` | Free all allocations (batch reset) |
 | `alloc_used` | `alloc_used() → bytes` | Current allocation total |
+| `default_alloc` | `default_alloc() → Allocator` | Process-wide default `Allocator` (static storage since v6.5.7 — see the reset warning) |
+
+> ⚠ **`alloc_reset()` invalidates every pointer the allocator has ever handed
+> out**, including ones the stdlib itself is holding — any `Str`, `vec`,
+> hashmap, arena or struct built before the reset is dangling afterwards, and
+> the reused span is zeroed *and* re-issuable, so a stale read returns zeros
+> until something else is allocated over it. Reset only when nothing from the
+> previous epoch will be read again. (v6.5.7 moved the default-`Allocator`
+> vtable to static storage so the stdlib's own memo survives; consumer-held
+> pointers remain the caller's problem.)
+
+**Arenas** — independent bump pools. Freeing or resetting one arena doesn't
+touch other arenas or the global allocator. The backing chunks come from the
+global bump.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `arena_new` | `arena_new(capacity) → arena` | Fixed-size arena; `arena_alloc` returns 0 once exhausted |
+| `arena_new_growable` | `arena_new_growable(initial) → arena` | v6.5.9 — chains another `initial`-sized chunk instead of failing |
+| `arena_set_on_full` | `arena_set_on_full(a, policy) → 0/-1` | v6.5.9 — set the exhaustion policy (`ARENA_FULL_*`) |
+| `arena_on_full` | `arena_on_full(a) → policy/-1` | v6.5.9 — read the policy back (-1 on a null handle) |
+| `arena_alloc` | `arena_alloc(a, size) → ptr` | Allocate from the arena (8-byte aligned); on exhaustion follows the policy |
+| `arena_reset` | `arena_reset(a) → 0` | Rewind. For a GROW arena this rewinds to the FIRST chunk and **keeps** the chain, so a request loop converges on its high-water mark |
+| `arena_capacity_total` | `arena_capacity_total(a) → bytes` | v6.5.9 — bytes across **every** chunk (what `arena_used`/`arena_remaining`, which see only the current chunk, cannot show once grown) |
+| `arena_used` | `arena_used(a) → bytes` | Bytes used in the current chunk |
+| `arena_remaining` | `arena_remaining(a) → bytes` | Bytes left in the current chunk |
+| `arena_free` | `arena_free(a) → 0` | Invalidate the handle — zeroes bounds, policy **and** the chunk chain so later `arena_alloc` fails. Backing memory stays in the global bump until `alloc_reset` / exit |
+
+Exhaustion policy constants (v6.5.9). Default is `ARENA_FULL_NULL`, so every
+pre-existing arena behaves exactly as before:
+
+| Constant | Value | Behaviour when the current chunk can't serve the request |
+|----------|-------|---------------------------------------------------------|
+| `ARENA_FULL_NULL` | `0` | Return 0 (the historical behaviour, still the default) |
+| `ARENA_FULL_GROW` | `1` | Chain another chunk |
+| `ARENA_FULL_SPILL` | `2` | Serve from the global allocator — spilled bytes are **never** reclaimed by `arena_reset` |
+| `ARENA_FULL_ABORT` | `3` | Write a diagnostic to stderr and exit at the allocation site |
+
+**Allocator interface** (v5.8.33) — a 40-byte vtable `{alloc_fn, realloc_fn,
+free_fn, reset_fn, state}` threaded as a parameter (the `_a` convention).
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `allocator_new` | `allocator_new(alloc_fn, realloc_fn, free_fn, reset_fn, state) → Allocator` | Build one from 4 fn pointers + state |
+| `alloc_via` | `alloc_via(a, size) → ptr` | Allocate through the vtable |
+| `realloc_via` | `realloc_via(a, old_ptr, old_size, new_size) → ptr` | Reallocate through the vtable |
+| `free_via` | `free_via(a, ptr) → 0` | Free through the vtable (bump + arena impls treat as a no-op) |
+| `reset_via` | `reset_via(a) → 0` | Reset through the vtable |
+| `allocator_alloc_fn` / `allocator_realloc_fn` / `allocator_free_fn` / `allocator_reset_fn` / `allocator_state` | `(a) → slot` | Vtable slot accessors (+0/+8/+16/+24/+32) |
+| `bump_allocator` | `bump_allocator() → Allocator` | Wraps the global bump — `reset_via` clears **every** global allocation |
+| `arena_allocator` | `arena_allocator(capacity) → Allocator` | Wraps a fresh fixed arena |
+| `arena_allocator_growable` | `arena_allocator_growable(initial) → Allocator` | v6.5.9 — wraps a fresh growable arena |
+| `arena_allocator_set_on_full` | `arena_allocator_set_on_full(al, policy) → 0/-1` | v6.5.9 — set the policy through the allocator handle |
+| `test_allocator` | `test_allocator() → Allocator` | Counting allocator for failing-allocator tests |
+| `test_allocator_fail_after` | `test_allocator_fail_after(a, n) → 0` | Fail every alloc after the nth (-1 disables) |
+| `test_allocator_alloc_count` / `test_allocator_bytes_total` | `(a) → n` | Read the counters |
+
+v6.5.10 inlined the two accessor loads inside `alloc_via` / `realloc_via` /
+`free_via` / `reset_via` (cyrius does not inline, so each accessor was a real
+call): `alloc_via` went 15.1 ns → 11 ns. The accessors remain public API.
 
 ### str.cyr
 
@@ -106,6 +166,10 @@ Dynamic array. Elements are i64. Requires alloc.cyr.
 | `vec_set` | `vec_set(v, idx, val)` | Write at index (bounds-checked) |
 | `vec_find` | `vec_find(v, val) → idx/-1` | Linear search |
 | `vec_remove` | `vec_remove(v, idx)` | Remove + shift left |
+| `vec_truncate` | `vec_truncate(v, new_len) → 0` | Shrink to `new_len` (no-op if already shorter); keeps capacity + buffer, so it's the bounded-memory save/restore primitive under a bump allocator |
+| `vec_sort_by` | `vec_sort_by(v, cmp) → 0` | In-place sort by comparator. **Not** named `vec_sort` — that name is occupied in cyrius's flat namespace and last-definition-wins would displace it. O(n) pre-scan returns immediately on already-ordered input |
+| `vec_select_nth` | `vec_select_nth(v, k, cmp) → val` | Element that would sit at index `k` if sorted, partitioning in place (Hoare quickselect, median-of-3; O(n) expected). Aborts on out-of-range `k` |
+| `vec_new_a` / `vec_push_a` | `vec_new_a(a)` / `vec_push_a(a, v, val)` | Allocator-threaded variants (v5.8.35). `vec_push_a` returns -1 on grow OOM where `vec_push` aborts the process |
 
 ### io.cyr
 
@@ -120,8 +184,45 @@ File I/O wrappers around Linux syscalls.
 | `file_read_all` | `file_read_all(path, buf, max) → n` | Read entire file |
 | `file_write_all` | `file_write_all(path, buf, len) → n` | Write entire file |
 | `file_exists` | `file_exists(path) → 0/1` | Check if file exists |
+| `getenv` | `getenv(name) → cstr/0` | Look up an environment variable |
 | `print` | `print(msg, len)` | Write to stdout |
 | `eprint` | `eprint(msg, len)` | Write to stderr |
+
+**Portable syscall bridges — the `x*` family.** These exist because the raw
+`sys_*` wrappers do **not** share one signature across targets: agnos's are
+length-carrying (`sys_mkdir(path, pathlen)`, no mode) where POSIX takes
+`(path, mode)`, so a consumer calling `sys_*` directly is correct on Linux and
+silently wrong on agnos, with the surplus argument binding to garbage. Call
+these instead of the raw wrappers — the cyrlint `xsys` rule nudges raw sites
+here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `xopen` | `xopen(path, flags) → fd` | Open a regular file (namelen-bridged; 0644 default create mode) |
+| `xunlink` | `xunlink(path) → 0/-errno` | Unlink. Windows routes to `DeleteFileW` (v6.4.58) |
+| `xrmdir` | `xrmdir(path) → 0/-errno` | Remove an empty directory. **-1 on Windows** (no `RemoveDirectoryW` reroute wired) |
+| `xmkdir` | `xmkdir(path, mode) → 0/-errno` | v6.5.7 — create a directory. Windows **does** route here |
+| `xmkdir_p` | `xmkdir_p(path, mode) → 0/-1` | v6.5.7 — `mkdir -p`. Existing directory is success; tries the full path first, walks parents only on failure; paths >1023 bytes return -1 rather than truncating |
+| `xsymlink` | `xsymlink(target, linkpath) → 0/-errno` | v6.5.7 — symlink. **-1 on Windows** |
+| `xreadlink` | `xreadlink(path, buf, bufsize) → n/-errno` | v6.5.7 — read a symlink target. **NOT NUL-terminated** (readlink(2)'s contract). **-1 on Windows** |
+| `xlink` | `xlink(oldpath, newpath) → 0/-errno` | v6.5.7 — hard link. **-1 on Windows** |
+| `file_rename` | `file_rename(oldpath, newpath) → 0/-errno` | Rename/replace. Windows routes to `MoveFileExW(REPLACE_EXISTING)` |
+| `xfsync` | `xfsync(fd) → 0/-errno` | Flush to stable storage. agnos has no per-fd fsync → whole-fs `sync` (documented residual); Windows is a no-op |
+| `xstat` | `xstat(path, buf) → 0/-errno` | stat into `buf`. **-1 on Windows.** Read fields via `STAT_MODE` etc. — the offsets differ per arch (st_mode @24 x86-Linux, @16 aarch64, @4 macOS-arm64) |
+| `xgetdents` | `xgetdents(fd, buf, n) → n/-errno` | Raw directory entries (caller parses the per-target record). **-1 on Windows** — use `dir_list` |
+| `xlseek` | `xlseek(fd, off, whence) → off/-errno` | Reposition (whence 0=SET / 1=CUR / 2=END) |
+| `xflock` | `xflock(fd, op) → 0/-errno` | Advisory whole-file lock (LOCK_SH=1 / LOCK_EX=2 / LOCK_UN=8, +LOCK_NB=4). **-1 on Windows** |
+
+**Crash-safe write + locking helpers (v6.4.57–.58):**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `file_write_atomic` | `file_write_atomic(path, buf, len) → 0/-errno` | Write a unique sibling temp → fsync → close → rename over `path`. On any failure the temp is unlinked and `path` is left intact |
+| `file_create_exclusive` | `file_create_exclusive(path, mode) → fd/-17` | No-clobber create. Kernel-atomic on Linux/macOS (`O_CREAT\|O_EXCL`) and Windows (`CREATE_NEW`); **agnos degrades to a non-atomic `file_exists` pre-check** |
+| `file_lock` / `file_unlock` | `(fd) → 0/-errno` | Exclusive lock / release (blocking on Linux+macOS; agnos flock is **non-blocking** — a contended `LOCK_EX` returns -1) |
+| `file_trylock` | `file_trylock(fd) → 0/-1` | Non-blocking exclusive lock |
+| `file_lock_shared` | `file_lock_shared(fd) → 0/-errno` | Shared (read) lock |
+| `file_append_locked` | `file_append_locked(path, buf, len) → n/-errno` | Append under an exclusive lock (kernel `O_APPEND` off agnos; explicit SEEK_END under the lock on agnos) |
 
 **Result-returning variants (v5.8.30):** Each `*_r` returns
 `Result<T, IoError>`. The `IoError` enum has variants
@@ -175,9 +276,7 @@ Indirect function calls via inline assembly.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `fncall0` | `fncall0(fp) → ret` | Call function pointer (0 args) |
-| `fncall1` | `fncall1(fp, a) → ret` | Call with 1 arg |
-| `fncall2` | `fncall2(fp, a, b) → ret` | Call with 2 args |
+| `fncall0` … `fncall8` | `fncallN(fp, a1, …, aN) → ret` | Call a function pointer with N arguments, **N = 0 through 8** |
 
 ---
 
@@ -452,14 +551,33 @@ Pure-cyrius ELF shared-object loader (no libc, no dlopen).
 
 ### regex.cyr
 
-Glob matching and string search/replace.
+Glob matching, string search/replace, **and** a Thompson-NFA / Pike regex
+engine (v5.7.18). `private`-by-default since v6.5.0: 41 of its 52 fns are
+`_re_*` implementation detail and calling one from outside the file is now a
+diagnostic. The 11 `public` fns below are the whole API surface.
+(`lib/niyama.cyr` is the separate 5-engine regex fold — see
+[ecosystem.md](ecosystem.md); this module is the stdlib primitive.)
+
+**Glob + search/replace:**
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `glob_match` | `glob_match(pattern, text) → 0/1` | Glob (* and ?) |
+| `glob_match` | `glob_match(pattern, text) → 0/1` | Glob (`*` and `?`) against a C string |
+| `str_glob` | `str_glob(s, pattern) → 0/1` | Same, taking a `Str` |
 | `find_all` | `find_all(haystack, needle) → vec` | All occurrences |
 | `str_replace` | `str_replace(s, old, new) → Str` | Replace first |
 | `str_replace_all` | `str_replace_all(s, old, new) → Str` | Replace all |
+
+**Regex engine:**
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `regex_compile` | `regex_compile(pat) → nfa/0` | Compile a null-terminated pattern to an opaque heap NFA; 0 on syntax error |
+| `regex_match` | `regex_match(nfa, s) → 0/1` | Anchored at position 0 |
+| `regex_search` | `regex_search(nfa, s) → start/-1` | First match anywhere |
+| `regex_search_at` | `regex_search_at(nfa, s, len, from) → start/-1` | As `regex_search`, starting at `from` |
+| `regex_group_start` | `regex_group_start(nfa, n) → off/-1` | Capture-group `n` start (group 0 = whole match; `n` 0–9) |
+| `regex_group_end` | `regex_group_end(nfa, n) → off/-1` | Capture-group `n` end |
 
 ---
 
@@ -467,13 +585,34 @@ Glob matching and string search/replace.
 
 ### syscalls.cyr
 
-Linux syscall bindings (arch-dispatched x86_64 / aarch64). 61 syscall numbers + 65 `sys_*` wrappers (x86_64).
+The single public include point for syscalls; it delegates to a per-target peer
+(`syscalls_x86_64_linux` / `syscalls_aarch64_linux` / `syscalls_macos` /
+`syscalls_windows` / `syscalls_x86_64_agnos`, the last two **standalone**) plus
+the shared `syscalls_linux_common`. Never include a peer directly. On x86_64
+Linux that resolves to **96 `SYS_*` number constants + 84 `sys_*` wrappers**
+(23 in the x86_64 peer, 61 in linux_common).
 
 See [agnosys documentation](guides/cyrius-guide.md#agnos-system-libraries) for full API.
 
-Key functions: `sys_open`, `sys_close`, `sys_read`, `sys_write`, `sys_fork`, `sys_execve`, `sys_pipe`, `sys_waitpid`, `sys_kill`, `sys_mount`, `sys_mkdir`, `sys_rmdir`, `sys_sigprocmask`, `sys_signalfd`, `sys_epoll_create`, `sys_epoll_ctl`, `sys_epoll_wait`, `sys_timerfd_create`.
+Key functions: `sys_open`, `sys_close`, `sys_read`, `sys_write`, `sys_fork`, `sys_execve`, `sys_pipe`, `sys_waitpid`, `sys_kill`, `sys_mount`, `sys_mkdir`, `sys_rmdir`, `sys_chdir` (v6.5.7), `sys_sigprocmask`, `sys_signalfd`, `sys_epoll_create`, `sys_epoll_ctl`, `sys_epoll_wait`, `sys_timerfd_create`, `sys_fchownat`.
 
 Helper functions: `sigset_new`, `sigset_add`, `sigset_has`, `epoll_event_new`, `timerspec_new`, `WIFEXITED`, `WEXITSTATUS`, `WIFSIGNALED`, `WTERMSIG`, `is_err`, `err_code`.
+
+Signal disposition (defined in `syscalls.cyr` itself, per-target routed inside
+one fn so the `#ifdef`-blind static checker sees a single definition):
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `signal_ignore` | `signal_ignore(signum) → 0/-errno` | Set the disposition to `SIG_IGN` |
+| `signal_default` | `signal_default(signum) → 0/-errno` | v6.5.7 — set it back to `SIG_DFL`. **Not optional alongside `signal_ignore`**: `SIG_IGN` is *inherited across `execve`* (a handler is reset, an ignore is not), so a process that ignores a signal then fork+execve's a child hands that child a disposition its own code never chose. Call it in the child between fork and execve |
+
+**agnos-only additions (`lib/syscalls_x86_64_agnos.cyr`, v6.5.9)** — the agnos
+peer is standalone, so these exist on no other target:
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `sys_chan_endow` | `sys_chan_endow(fd) → child_fd / -CH_E_*` | Arm a channel endpoint for placement into the next `sys_spawn_path*` child. ⚠ The return is an **fd**, not a status — the parent must announce it to the child itself (canonically `AGNOS_CHAN=<fd>` in the env blob) |
+| `sys_spawn_path_env` | `sys_spawn_path_env(path, len, env, envlen) → pid` | `sys_spawn_path` (non-blocking from-disk spawn, returns the pid immediately) with a per-process env blob (packed `KEY=VALUE\0…`, ≤1024 B, ≤16 entries). ⛔ The kernel treats a mis-shaped `env`/`envlen` as *fall back to the default environment*, **never** as an error — a bad call degrades silently, which is why this is a named wrapper rather than a raw 4-arg `syscall()` |
 
 ## Identity & Authentication
 
@@ -620,7 +759,9 @@ OS thread creation and synchronization using clone/futex on Linux (v6.0.53: Wind
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `thread_create` | `thread_create(fp, arg) → ptr` | Create and spawn a thread running `fn(arg)`; returns thread struct pointer or 0 on failure |
+| `thread_create_detached` | `thread_create_detached(fp, arg) → 1/0` | v6.5.8 — spawn a thread nobody joins; the child releases its own stack + TLS on exit. **Returns a boolean, not a handle, deliberately** — a handle would invite `thread_join`, whose `munmap_stack` would double-unmap a range the child already released. Fixes the leak that degraded a thread-per-request server to `thread_create` returning 0 after ~65 K spawns (`vm.max_map_count`) |
 | `thread_join` | `thread_join(t) → 0/-1` | Block until thread completes; frees its stack |
+| `thread_is_done` | `thread_is_done(t) → 1/0/-1` | v6.5.8 — non-blocking "has it finished?" on a `thread_create` handle (-1 if null). Enables the reaper shape — poll while running, join once it returns 1. ⛔ **Valid only BEFORE `thread_join`**: join consumes the handle (on Windows it `CloseHandle`s it), so a post-join query inspects a closed handle and reports "not done". A detached thread has no handle by design |
 | `gettid` | `gettid() → i64` | Get current thread ID |
 | `mmap_stack` | `mmap_stack(size) → ptr` | Allocate thread stack via mmap (returns base or MAP_FAILED) |
 | `munmap_stack` | `munmap_stack(addr, size) → 0/-errno` | Free thread stack via munmap |
@@ -632,6 +773,11 @@ OS thread creation and synchronization using clone/futex on Linux (v6.0.53: Wind
 | `chan_recv` | `chan_recv(ch) → val` | Receive from channel (blocks if empty; returns 0 if closed) |
 | `chan_try_recv` | `chan_try_recv(ch) → val/0` | Non-blocking receive (returns 0 if empty or closed) |
 | `chan_close` | `chan_close(ch) → 0` | Close channel; wakes all blocked receivers |
+
+⚠ `chan_*` here is the **in-process MPSC thread channel**. agnos's kernel
+channel syscalls (`#97 chan_op`, minted v6.5.8) are deliberately named
+`sys_chan_*` — reusing `chan_send`/`chan_recv`/`chan_close` would have let
+last-definition-wins silently replace the MPSC channel on agnos only.
 
 ### thread_local.cyr (v6.0.61)
 
@@ -657,13 +803,24 @@ Atomic memory primitives for concurrent code. Provides race-safe 8-byte load-mod
 
 ### sync.cyr (v6.1.16)
 
-Portable process-internal mutex with acquire/release memory ordering. Linux/aarch64 use futex 2-state lock; Windows uses SRWLOCK; macOS uses atomic_cas spinlock (no blocking futex available). Requires atomic.cyr + alloc.cyr.
+Portable process-internal mutex with acquire/release memory ordering. Linux
+x86_64/aarch64 use a **three-state** futex lock (v6.5.9 — Drepper "Futexes Are
+Tricky", Mutex Take 3: `0` free / `1` held-no-waiters / `2` held-waiters-may-be-parked);
+Windows uses SRWLOCK; macOS uses an atomic_cas spinlock (no routed blocking
+futex / `__ulock` primitive, so it **spins** — correct for short, low-contention
+sections). Requires atomic.cyr + alloc.cyr. No `trylock`: SRWLOCK has no routed
+TryAcquire, so the surface stays to what every backend supports.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `mutex_new` | `mutex_new() → ptr` | Create mutex (8-byte cell, 0=unlocked) |
-| `mutex_lock` | `mutex_lock(m) → 0` | Acquire mutex (blocking; acquire barrier; FUTEX_WAIT or spinlock) |
-| `mutex_unlock` | `mutex_unlock(m) → 0` | Release mutex (release barrier; FUTEX_WAKE or spinlock) |
+| `mutex_new` | `mutex_new() → ptr` | Create mutex (8-byte cell = `MUTEX_SIZE`, 0=unlocked) |
+| `mutex_lock` | `mutex_lock(m) → 0` | Acquire (blocking; acquire barrier). Uncontended = one CAS, no syscall |
+| `mutex_unlock` | `mutex_unlock(m) → 0` | Release (release barrier). Syscalls **only** when the cell says a waiter may be parked |
+
+The third state is what removes the syscall from the uncontended release path:
+an uncontended lock/unlock pair went **392 ns → 48 ns** (against ~7 ns for a bare
+`atomic_cas`), and that tax compounded through every lock-guarded structure in
+the stdlib.
 
 ### async.cyr
 
@@ -700,36 +857,44 @@ Scalar f64 math, SIMD vector types, matrices/linear algebra, and big numbers.
 
 ### math.cyr
 
-Scalar f64 math: trigonometric (inverse on x86), hyperbolic, exponential, power, logarithmic, integer helpers (gcd, lcm, Fibonacci, binomial), and f64 parsing.
+Scalar f64 primitives that stayed in the stdlib after the v6.1.26 **ganita
+carve**: the `F64_*` bit-pattern constants, comparison / rounding / clamping
+ops, integer gcd+lcm, the private `f64`-builtin polyfills (exp / ln / log2 /
+exp2 / sin / cos / atan cores), and f64 parsing. All values are f64 **bit
+patterns** carried in i64.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `f64_sinh` | `f64_sinh(x) → i64` | Hyperbolic sine |
-| `f64_cosh` | `f64_cosh(x) → i64` | Hyperbolic cosine |
-| `f64_tanh` | `f64_tanh(x) → i64` | Hyperbolic tangent |
-| `f64_pow` | `f64_pow(base, exp) → i64` | Power: base^exp |
 | `f64_clamp` | `f64_clamp(x, lo, hi) → i64` | Clamp x to [lo, hi] |
 | `f64_min` | `f64_min(a, b) → i64` | Minimum of two f64 values |
 | `f64_max` | `f64_max(a, b) → i64` | Maximum of two f64 values |
 | `f64_le` | `f64_le(a, b) → i64` | Less-than-or-equal (NaN-safe) |
 | `f64_ge` | `f64_ge(a, b) → i64` | Greater-than-or-equal (NaN-safe) |
-| `f64_asin` | `f64_asin(x) → i64` | Arcsine (x86 only) |
-| `f64_acos` | `f64_acos(x) → i64` | Arccosine (x86 only) |
-| `f64_atan2` | `f64_atan2(y, x) → i64` | Two-argument arctangent (x86 only) |
-| `f64_asinh` | `f64_asinh(x) → i64` | Inverse hyperbolic sine |
-| `f64_acosh` | `f64_acosh(x) → i64` | Inverse hyperbolic cosine |
-| `f64_atanh` | `f64_atanh(x) → i64` | Inverse hyperbolic tangent |
 | `f64_lerp` | `f64_lerp(a, b, t) → i64` | Linear interpolation |
-| `f64_hypot` | `f64_hypot(x, y) → i64` | Euclidean norm sqrt(x²+y²) |
 | `f64_sign` | `f64_sign(x) → i64` | Sign: -1.0, 0.0, or 1.0 |
 | `f64_trunc` | `f64_trunc(x) → i64` | Truncate toward zero |
 | `f64_fract` | `f64_fract(x) → i64` | Fractional part |
 | `gcd` | `gcd(a, b) → i64` | Greatest common divisor |
 | `lcm` | `lcm(a, b) → i64` | Least common multiple |
-| `fibonacci` | `fibonacci(n) → i64` | nth Fibonacci number (-1 if n > 92) |
-| `binomial` | `binomial(n, k) → i64` | Binomial coefficient C(n, k) |
 | `f64_parse` | `f64_parse(s) → i64` | Parse null-terminated string to f64 |
 | `f64_parse_ok` | `f64_parse_ok(s, out) → i64` | Parse with success flag |
+
+Constants include `F64_ONE` / `F64_TWO` / `F64_HALF` / `F64_PI` (+ `PI_2`,
+`PI_4`, `PI_6`, `2_PI`) / `F64_TAU` / `F64_E` / `F64_LN2` / `F64_LN10` /
+`F64_LOG2E` / `F64_SQRT2` / `F64_FRAC_1_SQRT2`, plus the Dekker
+double-double reduction constants used by the large-argument trig path.
+
+> ⛔ **Carved out — no longer in `lib/math.cyr`.** The transcendental,
+> hyperbolic, power and combinatorial fns moved into `lib/ganita.cyr` at
+> ganita 1.0.0 / **v6.1.26** and are reachable only via
+> `include "lib/ganita.cyr"` (canonical `ganita_*`, with the legacy names
+> below retained as aliases):
+> `f64_sinh`, `f64_cosh`, `f64_tanh`, `f64_asinh`, `f64_acosh`, `f64_atanh`,
+> `f64_asin`, `f64_acos`, `f64_atan2`, `f64_pow`, `f64_hypot`, `fibonacci`,
+> `binomial`.
+> This section listed all thirteen as `math.cyr` surface for four minors after
+> the carve; they were verified out of `lib/math.cyr` and into `lib/ganita.cyr`
+> on 2026-08-07.
 
 ### simd.cyr
 
@@ -1063,7 +1228,7 @@ Structured logging wrapper with level filtering (TRACE/DEBUG/INFO/WARN/ERROR/FAT
 
 ### hashmap_fast.cyr
 
-SIMD-accelerated hash table with Swiss-table-inspired design (metadata + separate key/value arrays). Requires alloc.cyr, string.cyr, fnptr.cyr. **Status (v5.8.62): experimental, zero consumers—not in stdlib auto-prepend; use hashmap.cyr for production.**
+SIMD-accelerated hash table with Swiss-table-inspired design (metadata + separate key/value arrays). Requires alloc.cyr, string.cyr, fnptr.cyr. **Status (v5.8.62): experimental, no production consumers — not in the `[deps].stdlib` auto-prepend list, and the only in-repo caller is `tests/tcyr/hashmap_ext.tcyr`. Use hashmap.cyr for production.**
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1471,14 +1636,14 @@ own canonical API reference in its own repo; this table is a pointer. See
 |--------|-----------|--------|
 | `lib/sandhi.cyr` | sandhi 1.9.9 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
 | `lib/sigil.cyr` | sigil 3.12.2 | Security / x509 / Ed25519 — powers native TLS + release/UEFI signing |
-| `lib/sakshi.cyr` | sakshi 2.4.7 | Tracing / structured logging |
+| `lib/sakshi.cyr` | sakshi 2.4.8 | Tracing / structured logging |
 | `lib/patra.cyr` | patra 1.12.12 | Storage |
 | `lib/sankoch.cyr` | sankoch 2.7.6 | Compression |
 | `lib/yukti.cyr` | yukti 2.3.2 | Hardware enumeration |
 | `lib/vani.cyr` | vani 1.1.3 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/niyama.cyr` | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
 | `lib/mabda.cyr` | mabda 4.0.8 | GPU / compute (AMD-native) |
-| `lib/bayan.cyr` | bayan 1.4.0 | Data formats + big-int (json / toml / cyml / csv / base64 / yaml / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |
+| `lib/bayan.cyr` | bayan 1.4.1 | Data formats + big-int (json / toml / cyml / csv / base64 / yaml / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |
 | `lib/ganita.cyr` | ganita 1.0.4 | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial) — carved v6.1.26, `ganita_*` + legacy aliases |
 | `lib/yantra.cyr` | yantra 1.0.2 | UI / end-to-end testing (WebDriver + Appium + Chromium-CDP RPC) |
 
@@ -1490,22 +1655,44 @@ documented separately** — their public surface is the parent module's (above):
 - `args.cyr` → `args_win` / `args_macos` / `args_agnos`
 - `process.cyr` → `process_win` / `process_agnos`
 - `fs.cyr` → `fs_win` (Windows `dir_list`/`is_dir`/`dir_walk`, v6.1.18)
-- `sync.cyr` → `sync_windows` / `sync_macos`; `thread.cyr` → `thread_win`
+- `sync.cyr` → `sync_windows` / `sync_macos`
+- `thread.cyr` → `thread_win` / `thread_agnos`
+- `async.cyr` → `async_win` / `async_agnos`
+- `regression.cyr` → `regression_agnos`
 - `alloc.cyr` → `alloc_windows` / `alloc_macos` / `alloc_agnos`
 - `syscalls.cyr` → `syscalls_{x86_64,aarch64}_linux` / `syscalls_windows` / `syscalls_macos` / `syscalls_x86_64_agnos` / `syscalls_linux_common`
 
 ---
 
-> **Coverage note**: this reference now documents the **core, concurrency,
+> **Coverage note**: this reference documents the **core, concurrency,
 > math/SIMD, crypto, data/encoding, networking (TLS + WebSocket), systems/FFI,
-> and testing** surfaces — roughly **65 of 99 `lib/*.cyr` modules** (was ~33).
-> What remains undocumented here is so by design:
-> - **Folded sibling distfiles** (`sigil` / `sandhi` / `patra` / `sankoch` /
->   `yukti` / `vani` / `niyama` / `mabda` / `sakshi`, listed above) — the
->   canonical API for each lives in its own repo.
+> and testing** surfaces — **56 of the 99 `lib/*.cyr` modules** have their own
+> section here. (There are 65 `### <name>.cyr` headings, but nine of them —
+> `json` / `toml` / `cyml` / `base64` / `csv` / `bigint` / `u128` / `matrix` /
+> `linalg` — describe modules that were **carved out** into the `bayan` and
+> `ganita` folds and no longer ship as `lib/*.cyr`. Counting headings instead
+> of modules is what made this line read "roughly 65".)
+>
+> Of the 43 without a section, most are so by design:
+> - **Folded sibling distfiles** — all **12** (`sandhi` / `sigil` / `sakshi` /
+>   `patra` / `sankoch` / `yukti` / `vani` / `niyama` / `mabda` / `bayan` /
+>   `ganita` / `yantra`, listed above) — the canonical API for each lives in
+>   its own repo.
 > - **Platform sub-modules** (`*_win` / `*_macos` / `*_agnos` / `syscalls_*`) —
 >   their public surface is the parent module's.
-> - A few generated / internal files (e.g. `agnosys`, a bundled distribution).
+> - The six `tls_native_*` split modules — their public surface is
+>   `tls_native.cyr`'s (above).
+>
+> Genuinely not yet written up here, and NOT by design: `overflow.cyr`,
+> `protobuf.cyr`, `sys.cyr`.
+>
+> **The per-module tables are curated, not exhaustive** — do not read a table as
+> a module's full public surface. Measured 2026-08-07, the largest gaps are
+> `simd` (75 public fns not tabulated — the f32v4/f32v8/integer-vector families
+> and the flat-array packed verbs are described in prose above but not row by
+> row), `str` (44, mostly the `_a` allocator-threaded variants), `chrono` (31,
+> the `dt_*` datetime surface), `hashmap` (24), `async` (23), `net` (18) and
+> `tls` (14, session-resumption + server-side).
 >
 > For any fn not listed, the source files are the canonical signature reference
 > — `cyrdoc <file.cyr>` emits markdown from the doc-comment header on every

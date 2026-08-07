@@ -118,7 +118,7 @@
 #                                        cap raised 2 MB → 8 MB. The 2 MB hole was
 #                                        absorbed by v5.11.68's full heap-map reorg.)
 #   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
-#   0x4D9D000 output_buf    [16777216]   16MB ELF output — RELOCATED to heap-top from 0x71A000 (2MB→16MB) @ v6.1.27 phylax binary-cap (v3.5.2)
+#   0x4D9D000 output_buf    [16777216]   RETIRED at v6.4.52 — output is now a 1 GiB off-heap alloc(1073741824) on ALL platforms (see _output_base). Band kept RESERVED so the overlap audit is unchanged; a closeout may reclaim it (CLAUDE.md closeout item 4) (v3.5.2)
 #   (tok arrays RETIRED here v5.8.46 — see main.cyr for canonical layout;
 #    relocated to 0x2D7C000 / 0x357C000 / 0x3D7C000 with cap 1048576)
 #

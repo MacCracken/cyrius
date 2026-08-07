@@ -6,7 +6,57 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-08-03 (**v6.5.6**). Release sweep alongside the agnosai/sandhi repair
+> **Last refresh**: 2026-08-07 (**v6.5.10**). Handoff-prep sweep across the whole doc
+> surface + vidya, run as 11 parallel area agents plus an independent critic. **The find was
+> `handoff.md` itself** — four releases stale at 6.5.6, under its own instruction that "a
+> stale handoff is worse than none". Rewritten in full.
+>
+> ⭐ **The systemic find: a COUNT NOBODY RE-DERIVES.** `state.md` claimed **19** shell gate
+> scripts; `tests/*.sh` holds **41**. The number was inherited wrong and had been *incremented*
+> across three releases (10 → 16 → 19) without anyone running `ls`. It rotted precisely
+> because it looked maintained. `CLAUDE.md` now carries an explicit instruction never to quote
+> a shell-gate count that was not just derived.
+>
+> ⛔ **THE SWEEP COMMITTED THE EXACT ERROR IT EXISTS TO PREVENT, and that is the most useful
+> thing on this page.** An agent stamped vidya's `diagnostics_caps.cyml` **"re-verified live at
+> v6.5.10 — still 16 MiB at S+0x4D9D000, unchanged"** — having verified it against the
+> `src/main.cyr` heap-map COMMENT, which was itself stale. Live code has been
+> `alloc(1073741824)` — a **1 GiB off-heap** buffer — since **v6.4.52**. A second agent, given
+> the same fact, read the code and got it right. **Verifying a doc against another doc
+> reproduces the error with a fresh timestamp on it, which is strictly worse than leaving it
+> unstamped.** Both entries corrected; the failure mode is now recorded inside the entry.
+>
+> **The source was lying too.** `src/main.cyr:338` (and the four sibling forks) still
+> documented `0x4D9D000 output_buf [16777216]` as a live 16 MB region. The heap map is
+> **machine-read** by `tests/heapmap.sh`, so a phantom region is audited as real. Description
+> corrected in all five forks; the band is deliberately kept RESERVED so the overlap audit is
+> unchanged — reclaiming it is a closeout decision (closeout item 4), not a doc fix.
+>
+> **The critic was wrong once, and checking mattered.** It reported **10** residual
+> default-vs-IR=3 mismatches against the sweep's 7. I re-ran the full 260-file corpus myself:
+> **7**, and the names match `check.sh`'s own `ir3-switch-dce` output exactly
+> (`const_chained_multiply_fold`, `field_name_shadows_global`, `float`, `math_inverse_trig`,
+> `math_pack_integration`, `subword_signed_load`, `types`). `roadmap.md` said 8 and was
+> corrected to 7; applying the critic's number would have made it worse. **Do not take a
+> reviewer's count on faith either.**
+>
+> **A "could not be measured" claim that was false.** `size-comparisons.md` was given the line
+> "the Go and Zig rows could not be re-measured — neither toolchain is installed here". Both
+> are on PATH. Re-measured: `go build` default 2,182,601 → **2,183,116** (go 1.26.2 → 1.26.5)
+> and `zig build-exe` debug 7,388,344 → **10,196,002** (zig 0.15.2 → **0.16.0**, +38 %); the
+> two `-OReleaseSmall`/`-s -w` rows are byte-identical across both toolchain versions. Check
+> before declaring a measurement impossible.
+>
+> Also this pass: `CLAUDE.md`'s project-structure tree was missing **three backend directories
+> and the whole TS front end** (`backend/macho`, `backend/pe`, `backend/common`,
+> `frontend/ts`), and its `issues/` + `proposals/` paths pointed at directories that do not
+> exist at the repo root; the gen1-vs-cycc size note had the **sign backwards** (gen1 is
+> ~45 KB *larger*, re-measured); `README.md`, `faq.md` and `adr/001` all carried cycc sizes
+> stamped between **v6.4.62 and v6.4.72**; `platform-status.md` said ~34 vr01 tests (live 36);
+> `issues/README.md` was given "17 open" (live 16); vidya's entry count read "90+" against a
+> live **565**.
+>
+> **Prior refresh**: 2026-08-03 (**v6.5.6**). Release sweep alongside the agnosai/sandhi repair
 > pair. **README.md was the find**, and it had rotted on four independent axes at once: mabda
 > `4.0.7` (folded 4.0.8) in two places, `251 .tcyr` (254), `147 check.sh gates` (153), and a cycc
 > size + version stamp (`1,103,512 B at v6.4.72`) **three minors** behind, in both the headline
@@ -54,7 +104,7 @@ This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change.
 
 ## At a glance — inventory (bucket counts last fully re-tallied 2026-06-04 at the v6.0.62 sweep; per-tier sections re-anchored to the 2026-06-12 v6.1.41 closeout doc-sync — the rollup counts here lag and are approximate)
 
-**~105 markdown files** across the repo (+1 from 2026-05-18: `scripts/shims/README.md` added at v5.11.69 alongside the 3 CLI-shim moves). The 4 guide-shape docs (`tutorial`, `editor-integration`, `faq`, `cyrius-guide`) moved from `docs/` flat → `docs/guides/` subdirectory; no count delta. **Current-cycle anchors (2026-08-03, v6.5.6)**: check.sh **153 gates** + QEMU boot · cycc x86_64 fixpoint **1,133,440 B** · **254 .tcyr** · **99 lib/*.cyr** · heap **100 regions** · api-surface **4783** · cross-OS ecb/**ach**/cass/pi `SELFHOST_OK` on real hardware · self_compile ~643-648 ms · **16** open issues / **281** archived. (**Prior anchors, 2026-07-23, v6.4.72**: check.sh 147 gates + QEMU boot · cycc x86_64 fixpoint 1,103,512 B · 251 .tcyr · 99 lib/*.cyr · 97 programs · heap 100 regions · highest SIMD builtin token 151 (`f32v8_dot`) · SIMD Phase 5 complete on all four backends (x86/aarch64/PE/cx) · cross-OS ecb/cass/pi `SELFHOST_OK` · self_compile ~620 ms.) (.63→.72 band: agnos GPU-syscall band **#82–#91** contiguous, bayan 1.2.1 f64 JSON round-trip, sandhi 1.9.1 getpeername fold, `cyrius coverage` project-`src/`-scope fix.) (**Prior anchors, 2026-07-12, v6.4.62**: check.sh 146 · cycc 1,103,568 B · 246 .tcyr · self_compile ~627 ms.) (**Prior anchors, 2026-07-10, v6.4.48**: check.sh 141 · cycc 1,091,000 B · 241 .tcyr · self_compile ~649 ms.) (**Prior anchors, 2026-07-09, v6.4.32**: check.sh 132 · cycc 1,077,592 B · 240 .tcyr · 98 lib/*.cyr · self_compile ~616 ms.) (**Prior anchors, 2026-07-06, v6.4.10**: check.sh 130 · cycc 1,057,568 B · 227 .tcyr · self_compile ~561 ms.) (**Prior anchors, 2026-06-28, v6.3.0**: check.sh **100/100** gates + QEMU boot gate · **192 .tcyr** · **98 lib/*.cyr** modules · cycc x86_64 **1,075,136 B** · cross `cycc_aarch64` 627,376 B / `cycc_win` 851,968 B / `cycc-native-aarch64` 947,280 B · api-surface **4352**.) Bucket counts:
+**~105 markdown files** across the repo (+1 from 2026-05-18: `scripts/shims/README.md` added at v5.11.69 alongside the 3 CLI-shim moves). The 4 guide-shape docs (`tutorial`, `editor-integration`, `faq`, `cyrius-guide`) moved from `docs/` flat → `docs/guides/` subdirectory; no count delta. **Current-cycle anchors (2026-08-07, v6.5.10)**: check.sh **162 gates** · **41** shell gate scripts in `tests/` · cycc x86_64 fixpoint **1,141,792 B** · **260 .tcyr** (36 `vr01_`) · **99 lib/*.cyr** · **97** programs · heap **100 regions** · api-surface **4817** · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware · self_compile ~648-652 ms (⚠ 648-701 observed within one release — treat a single figure as noise) · **16** open issues / **295** archived. (**Prior anchors, 2026-08-03, v6.5.6**: check.sh 153 · cycc 1,133,440 B · 254 .tcyr · api-surface 4783 · 281 archived.) (**Prior anchors, 2026-07-23, v6.4.72**: check.sh 147 gates + QEMU boot · cycc x86_64 fixpoint 1,103,512 B · 251 .tcyr · 99 lib/*.cyr · 97 programs · heap 100 regions · highest SIMD builtin token 151 (`f32v8_dot`) · SIMD Phase 5 complete on all four backends (x86/aarch64/PE/cx) · cross-OS ecb/cass/pi `SELFHOST_OK` · self_compile ~620 ms.) (.63→.72 band: agnos GPU-syscall band **#82–#91** contiguous, bayan 1.2.1 f64 JSON round-trip, sandhi 1.9.1 getpeername fold, `cyrius coverage` project-`src/`-scope fix.) (**Prior anchors, 2026-07-12, v6.4.62**: check.sh 146 · cycc 1,103,568 B · 246 .tcyr · self_compile ~627 ms.) (**Prior anchors, 2026-07-10, v6.4.48**: check.sh 141 · cycc 1,091,000 B · 241 .tcyr · self_compile ~649 ms.) (**Prior anchors, 2026-07-09, v6.4.32**: check.sh 132 · cycc 1,077,592 B · 240 .tcyr · 98 lib/*.cyr · self_compile ~616 ms.) (**Prior anchors, 2026-07-06, v6.4.10**: check.sh 130 · cycc 1,057,568 B · 227 .tcyr · self_compile ~561 ms.) (**Prior anchors, 2026-06-28, v6.3.0**: check.sh **100/100** gates + QEMU boot gate · **192 .tcyr** · **98 lib/*.cyr** modules · cycc x86_64 **1,075,136 B** · cross `cycc_aarch64` 627,376 B / `cycc_win` 851,968 B / `cycc-native-aarch64` 947,280 B · api-surface **4352**.) Bucket counts:
 
 | Bucket | Count | What it means |
 |---|---|---|

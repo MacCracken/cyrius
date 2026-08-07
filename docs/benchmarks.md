@@ -8,7 +8,7 @@
 
 | You want… | Read this | Refreshed |
 |-----------|-----------|-----------|
-| **Current** compiler self-host + stdlib microbench timings (3-tier auto-gen, machine-readable run history) | [`/BENCHMARKS.md`](../BENCHMARKS.md) at repo root | Every `sh scripts/bench-history.sh` invocation; CSV history in `bench-history.csv` |
+| **Current** compiler self-host + stdlib microbench timings (3-tier auto-gen, machine-readable run history) | [`/BENCHMARKS.md`](../BENCHMARKS.md) at repo root | Every `sh scripts/bench-history.sh` invocation; CSV history in `bench-history.csv`. Mandatory on every release (release-gate step 5) |
 | `exit42` binary size across languages (C / Rust / Go / Zig / Cyrius) on Linux ELF + Windows PE | [`docs/size-comparisons.md`](size-comparisons.md) | Every minor / major release |
 | Compiler perf-arc narrative (v5.6.x optimization arc: peephole / regalloc / DCE per-pass deltas) | [`docs/development/benchmarks.md`](development/benchmarks.md) — historical | Frozen — bounded to v5.6.x; do NOT quote as current state |
 | Toolchain disk footprint (cycc + cyrius + cyrfmt + cyrlint + …) | [`docs/size-comparisons.md`](size-comparisons.md) §"Cyrius self-host context" | Every minor / major release |
@@ -30,9 +30,21 @@ sh scripts/bench-history.sh --tier2   # + data structures (~10s)
 BENCH_ITERS=1000 sh scripts/bench-history.sh   # override iter count
 ```
 
-Run at minor closeout (P(-1) "Post-audit benchmarks" step) + whenever
+Run on **every `.NN` release**, not just at closeout — it is step 5 of
+`scripts/release-gate.sh`, run before `version-bump.sh`, and the headline
+delta (self_compile ms + cycc size) goes into that release's CHANGELOG
+entry. (Policy set 2026-06-08 after a +65 % self_compile growth-tax went
+unnoticed for a whole minor because benchmarking was treated as a
+closeout-only / CI-only step. The script marks step 5 non-blocking — that
+means it won't fail the gate, NOT that it is optional to run and record.)
+Also run it whenever
 you suspect a regression. The delta column in `BENCHMARKS.md`
 auto-highlights drift between the most recent three runs.
+
+⚠ Read a single run with suspicion. The v6.5.7 entry recorded 649 / 670 /
+701 ms for three runs of the **same binary** — a 52 ms spread, wider than
+the release-over-release delta — so quote a range, and triage a perf move
+as growth-tax by default rather than bisecting on one number.
 
 ## Why this stub exists
 

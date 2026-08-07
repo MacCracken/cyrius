@@ -6,7 +6,33 @@
 **Affected:** `src/backend/cx/emit.cyr` (`ECALLIND`), `programs/cxvm.cyr`, `lib/fnptr.cyr`
 **Severity:** Medium — cx is the portable bytecode target, not a shipping-consumer target today,
 but the breakage is silent and its blast radius is the whole allocator/callback layer.
-**Status:** open
+**Status:** 🟡 **OPEN — every claim in this file re-reproduced on cycc 6.5.10, 2026-08-07.**
+`ECALLIND` (`src/backend/cx/emit.cyr:408-412`) is still the four-line print-and-exit stub quoted in
+§1; `grep -n CYRIUS_TARGET_CX lib/fnptr.cyr` returns **nothing**, so `fncall2` still has no cx arm
+and silently returns 0; and both repros below still fire —
+
+```
+$ build/cycc_cx < /tmp/cxvec.cyr > /tmp/cxvec.cyx      # exit 0, 49,293 bytes
+warning: undefined function 'alloc'
+warning: undefined function 'alloc_reset'
+$ timeout 30 build/cxvm /tmp/cxvec.cyx ; echo $?
+124                                                    # HANGS, exactly as filed
+
+$ printf 'fn helper(a,b): i64 { return a+b; }\nfn never_called(fp): i64 { return callptr(fp,1,2); }\nvar r = helper(3,4);\n' | build/cycc_cx > /dev/null
+error: callptr (indirect call) is not supported on the cx backend   (exit 1)
+```
+
+⚠ **Two updates to §2's mechanism, neither of which narrows the bug.** (a) `alloc_via` was
+rewritten at v6.5.10 to read the vtable inline — `lib/alloc.cyr:600-602` is now
+`fncall2(load64(a), load64(a + 32), size)` rather than the `:399` trampoline this file cites — but
+it is still `fncall2`, so it still returns 0 on cx. (b) The `cxvec.cyr` compile now also emits two
+`warning: undefined function` lines for `alloc`/`alloc_reset`; the compile still exits 0 and the
+run still hangs, so the warnings are not a gate.
+**Placement:** unpinned — 6.x-line codegen backlog, never 7.x. No dedicated slot in `roadmap.md` at
+6.5.10. §4 names the reason it cannot pack into a patch: item (2), *what a cx fn pointer IS*, is a
+permanent bytecode-ISA design decision that is the maintainer's call, and a new opcode is `.cyx`
+surface forever. **Do not close this by adding a `fncallN` cx arm alone** — that would make the
+silent-zero into a silent-wrong.
 
 ## 1. Summary
 
@@ -35,8 +61,9 @@ predicate matchers, async dispatch, and (as of 6.5.4) ordering.
 
 ## 2. The consequence that matters: vec is already broken on cx
 
-`lib/alloc.cyr:399` is `alloc_via(a, size) → fncall2(allocator_alloc_fn(a), ...)`. On cx that
-returns **0**. So:
+`lib/alloc.cyr:600` is `alloc_via(a, size) → fncall2(load64(a), load64(a + 32), size)` — the
+v6.5.10 inlined form; when filed it was `:399`, `fncall2(allocator_alloc_fn(a), ...)`. Either way
+it is a `fncall2`, and on cx that returns **0**. So:
 
 ```
 vec_new_a():  var v = alloc_via(a, 24);  if (v == 0) { return 0; }   # → 0

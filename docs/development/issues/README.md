@@ -108,10 +108,23 @@ working.
 ## Status + placement lines (required, added at the v6.4.82 sweep)
 
 **Every file in this directory carries a `**Status:**` line and a
-`**Placement:**` line directly under its `#` heading.** Before the
-v6.4.82 closeout sweep only two of eleven did, which made
-open-vs-resolved unreadable at a glance and let a shipped-but-still-
-framed-as-pending file sit in the queue.
+`**Placement:**` line in its header block, ideally directly under the
+`#` heading.** Before the v6.4.82 closeout sweep only two of eleven
+did, which made open-vs-resolved unreadable at a glance and let a
+shipped-but-still-framed-as-pending file sit in the queue.
+
+Re-verified 2026-08-07 (v6.5.10): **17 of 17 have both.** The two that
+did not — `2026-07-30-cx-backend-has-no-indirect-call.md` and
+`2026-07-30-net-cyr-x86-only-socket-syscall-numbers.md`, both filed
+cyrius-side in the older `**Filed:** / **Reporter:** / **Status:** open`
+shape — gained theirs in that sweep. Check with:
+
+```sh
+for f in *.md; do [ "$f" = README.md ] && continue
+  printf '%-72s %s %s\n' "$f" \
+    "$(grep -c '^\*\*Status:\*\*' "$f")" "$(grep -c '^\*\*Placement:\*\*' "$f")"
+done            # every row must read "1 1"
+```
 
 - `**Status:**` — `🟡 **OPEN** — <why, one line>`, and say **what you
   verified and when**, e.g. *"re-verified against live code at the
@@ -144,9 +157,33 @@ quoting a 27-of-248 test ratio that was really 30 of 251. Re-derive
 the numbers, then write the command you used into the file so the next
 sweep can re-run it.
 
-Keep this directory a lean working queue (~10–12 files). Consolidate
-the P3 / "someday" tail into roadmap entries rather than leaving
-issue files for it.
+**What the 2026-08-07 sweep (v6.5.10, 16 open) found, as the working
+examples of each rot shape:**
+
+- **Four files were fully SHIPPED and still framed as open** — all
+  closed in the v6.5.7/.8 burst: `fmt-int-buf-i64-min`,
+  `no-thread-detach…`, `distlib-has-no-all-profiles-mode`, and the
+  already-corrected `coverage-corpus…`. This is the shape the rule
+  exists for; four in one minor is the fastest it has ever accumulated.
+- **Two files were PARTIALLY shipped** and read as wholly open:
+  `agnos-syscall-peer…` (items 2 and 3 landed, item 1 correctly still
+  waits on an agnos kernel arm) and `net-cyr-x86-only-socket-syscall-
+  numbers` (its predicted collision *fired for real* at v6.5.7 and was
+  closed by a mechanism the filing never proposed — the ≥1000
+  private-alias band — while the filing's own core stayed open).
+- **One file's prose contradicted its own header two screens above:**
+  `ir-regalloc-rewrite-needs-reemit` carried a v6.5.2 header saying
+  Wall 3 was closed and two later sections still asserting the
+  SIGSEGV/hang it closed. **Run the thing rather than reading either.**
+- **Line numbers drift even when the finding does not.** Every
+  still-open file needed its `file:line` pointers re-derived; the
+  findings themselves all survived.
+
+Keep this directory a lean working queue (~10–12 files) — it is at
+**16** open as of 2026-08-07 (plus 2 in `../proposals/`, 295 in
+`archived/`), which is over. Archiving the four resolved files above
+brings it to 13. Consolidate the P3 / "someday" tail into roadmap
+entries rather than leaving issue files for it.
 
 ## Recommended security floor
 

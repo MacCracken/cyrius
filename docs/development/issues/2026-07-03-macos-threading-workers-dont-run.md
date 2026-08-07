@@ -1,15 +1,33 @@
 # macOS/arm64: `thread_create` does not run the worker (threading broken on ecb)
 
-**Status:** 🟡 **OPEN** — no macOS thread backend exists. Re-verified against live code at the
-v6.4.82 closeout: `lib/` contains `thread.cyr`, `thread_agnos.cyr`, `thread_local.cyr` and
-`thread_win.cyr` — **there is no `thread_macos.cyr`** — and no `bsdthread_*` or `__ulock_*` call
-anywhere in `lib/` (the only hits are comments in `alloc.cyr`, `sync.cyr`, `sync_macos.cyr` and
-`thread_local.cyr` naming the gap). The VR-01 guards described below are still in place
+**Status:** 🟡 **OPEN** — no macOS thread backend exists. **Re-verified against live code on cycc
+6.5.10, 2026-08-07:** `lib/` contains `thread.cyr`, `thread_agnos.cyr`, `thread_local.cyr` and
+`thread_win.cyr` — **there is still no `thread_macos.cyr`** — and `grep -rn 'bsdthread_\|__ulock_'
+lib/` now returns exactly **one** line, the comment at `lib/alloc.cyr:37` naming the gap. *(This
+file previously listed four comment hits — `alloc.cyr`, `sync.cyr`, `sync_macos.cyr`,
+`thread_local.cyr`; three of those have since been reworded away. Re-derive the grep, don't trust
+the list.)* The VR-01 guards described below are still in place
 (`tests/tcyr/vr01_thread_spawn.tcyr:31/:46`, `vr01_sync_mutex.tcyr:41/:44`), so the gap stays
 smoke-covered rather than silently green.
-**Placement:** **v6.5.x — "macOS-arm64 threading backend"** (`roadmap.md`, v6.5.x table; also
-`roadmap_6.md`, whose per-minor v6.4.x detail was removed in the 2026-07-29 re-scope — see `CHANGELOG.md` [6.4.x] for the shipped record). Distinct from the Intel-Mac x86 toolchain tail, which closed at v6.4.59.
-No consumer is blocked yet, which is why it sits behind the IR-substrate anchor. 6.x line, never 7.x.
+
+⚠ **WIDER THAN THIS FILE STATES, and the 6.5.x concurrency work made the gap BIGGER, not smaller.**
+macOS concurrency is **two** gaps and this filing names one. `lib/sync_macos.cyr` is a 2-state
+`atomic_cas` **spinlock**, and its own header records that a blocking lock is a separate follow-on.
+Neither v6.5.8's `thread_create_detached` work nor v6.5.9's three-state futex mutex touched it —
+the v6.5.9 CHANGELOG says outright that "the macOS / Windows / agnos branches are untouched" — so
+the Linux↔macOS mutex gap widened from parity to **48 ns futex vs a spinlock**. Both halves must
+land together; see the Placement slot.
+
+**Placement:** **v6.5.x Slot 11 (`.39`) — "macOS-arm64 concurrency", last in the minor**
+(`roadmap.md` v6.5.x slot table, verified live 2026-08-07). Scoped there as **both** gaps in one
+release: `lib/thread_macos.cyr` driving `bsdthread_create` + `bsdthread_register` (mirroring the
+`thread_win.cyr` split), **and** `__ulock_wait`/`__ulock_wake` replacing `sync_macos.cyr`'s spinlock
+for the mutex + channel wait/wake. Distinct from the Intel-Mac x86 toolchain tail, which closed at
+v6.4.59. No consumer is blocked yet, which is why it sits behind the IR-substrate anchor. 6.x line,
+never 7.x.
+**Downstream:** most of the 23 full-corpus ecb failures in
+[`2026-08-05-cross-os-full-corpus-23-failures-on-ecb.md`](2026-08-05-cross-os-full-corpus-23-failures-on-ecb.md)
+are downstream of this — that count drops when this slot lands.
 
 **Filed:** 2026-07-03 (surfaced by the v6.3.43 VR-01 platform-variant tcyr —
 `tests/tcyr/vr01_sync_mutex.tcyr` + `vr01_thread_spawn.tcyr` — running on real ecb
@@ -49,9 +67,11 @@ Mirror the `thread_win.cyr` split: a `lib/thread_macos.cyr` that drives
 channel wait/wake. Validate on ecb with the VR-01 threading tcyr (restore their
 `#ifdef CYRIUS_TARGET_MACOS`-guarded worker/counter assertions to the full checks).
 
-## Coverage today (v6.3.43)
+## Coverage today (unchanged since v6.3.43; re-checked 2026-08-07 on 6.5.10)
 
 `vr01_sync_mutex` + `vr01_thread_spawn` guard the worker-ran / counter / channel
 assertions to `#ifndef CYRIUS_TARGET_MACOS`, and on macOS assert only that the thread
 API is **callable without faulting**. So the gap is documented + smoke-covered, not
-silently green. When the macOS thread backend lands, un-guard those assertions.
+silently green. When the macOS thread backend lands, un-guard those assertions —
+`vr01_thread_spawn.tcyr:31`/`:46` and `vr01_sync_mutex.tcyr:41`/`:44`, four guards, which is
+the roadmap's stated acceptance for Slot 11 (green on **real ecb**, not a hello-world smoke).

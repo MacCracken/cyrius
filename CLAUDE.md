@@ -30,9 +30,9 @@ sh bootstrap/bootstrap.sh          # bootstrap from seed
 cat src/main.cyr | build/cycc > /tmp/cycc && chmod +x /tmp/cycc  # build compiler
 cat src/main.cyr | /tmp/cycc > /tmp/cc5b && cmp /tmp/cycc /tmp/cc5b  # self-hosting verify
 sh scripts/check.sh                # full audit
-cyrius test                        # run .tcyr suite
-cyrius fuzz                        # run .fcyr harnesses
-cyrius bench                       # run .bcyr benchmarks
+cyrius test                        # run .tcyr suite   (recursive; takes a dir arg since v6.5.7)
+cyrius fuzz                        # run .fcyr harnesses (ditto)
+cyrius bench                       # run .bcyr benchmarks (ditto)
 ```
 
 ## Key Principles
@@ -40,7 +40,7 @@ cyrius bench                       # run .bcyr benchmarks
 - **Self-hosting is non-negotiable** — cycc==cycc byte-identical after every compiler change
 - **Cross-OS self-host is non-negotiable, on REAL hardware** — "self-hosting" means cycc reproduces itself byte-identical on **every target it claims to support**, not just x86_64 Linux. After ANY compiler-backend or stdlib change, verify cycc self-hosts on **ecb (macOS, arm64)** + **ach (Intel-Mac, x86-macho)** + **cass (Windows, PE)** + **pi (aarch64)** via SSH — they're wired in `~/.ssh/config`, one `ssh` away, every slot. **A green CI checkmark is NOT verification.** The macOS compiler self-host rotted silently for ~9 minors (v5.3.13 → v6.0.32, 400+ patches) behind a CI job named "Mach-O ARM64 Native ✓" that only ran hello-world / exit-code programs and never once built or self-hosted `cycc`. It surfaced only when a human installed on a Mac and got a broken toolchain — the exact "found by ports" failure. Hello-world smoke is a placebo; the compiler self-hosting on the target IS the test. Never trust a checkmark over running the compiler on the hardware. See `feedback_macos_windows_ci_gate_mandatory`, `reference_verification_hosts_ssh`, Closeout 3b.
 - **Two-step bootstrap for heap changes** — cycc compiles cc5b, cycc==cc5b
-- **Never use raw `cat | cycc` for projects** — always invoke `cyrius build`. The CLI wrapper resolves deps, auto-prepends includes from `cyrius.cyml`, handles cross-arch + strict flags, and produces consistent output naming. Raw `cat | cycc` is for compiler-internal self-host (the verifier script + bootstrap chain) — not consumer code.
+- **Never use raw `cat | cycc` for projects** — always invoke `cyrius build`. The CLI wrapper resolves deps, auto-prepends includes from `cyrius.cyml`, handles cross-arch + strict flags, produces consistent output naming, and (since v6.5.7) writes the in-band `#@incdir` marker at byte 0 that makes `include` resolve **relative to the entry file's directory** — so a source in a subfolder can include its neighbour. Raw `cat | cycc` gets no marker and silently keeps CWD-only resolution. Raw `cat | cycc` is for compiler-internal self-host (the verifier script + bootstrap chain) — not consumer code.
 - **Assembly is the cornerstone** — understand every instruction the compiler emits
 - **Test after EVERY change** — not after the feature is "done"
 - **ONE change at a time** — never bundle unrelated changes
@@ -131,9 +131,12 @@ Gates, fail-fast:
    assembles) is far more limited than `build/cycc` and fails **SILENTLY** on
    things `build/cycc` compiles fine — too many global/call references in one
    function, tail calls. **Mandatory for ANY `src/` change, on EVERY release — not
-   only at minor/major closeouts.** (`gen1`, cybs's output, being ~72 KB smaller
-   than `build/cycc` is NORMAL — it's the bootstrap intermediate, only `gen2 ==
-   build/cycc` matters; don't chase it.) See
+   only at minor/major closeouts.** (`gen1`, cybs's output, DIFFERING IN SIZE from
+   `build/cycc` is NORMAL — it's the bootstrap intermediate, and the *sign* of that
+   difference has flipped over the project's life. This line read "~72 KB smaller"
+   until it was re-measured at 6.5.10, where gen1 is 1,187,488 B against
+   `build/cycc`'s 1,141,792 B — ~45 KB **LARGER**. Only `gen2 == build/cycc`
+   matters; don't chase the gen1 delta in either direction.) See
    `feedback_seed_derive_mandatory_cybs_limits`.
 3. **check.sh** — all gates green.
 4. **Cross-OS self-host** — ecb (macOS-arm64) + ach (Intel-Mac) + cass (Windows) + pi (aarch64), REAL
@@ -156,7 +159,7 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 1. **Self-host verify** — cycc compiles itself byte-identical
 2. **Bootstrap closure (seed-derive)** — `seed → cybs → cycc` byte-identical (`seed-derive-cycc.sh`). NOT covered by the cycc self-host fixpoint — see the Release Gate above; this is item 2 of the gate and is mandatory EVERY release, not just at closeout.
 3. **Full check.sh** — all gates green (count grows per minor; record the number)
-3b. **Cross-OS self-host (NON-NEGOTIABLE — added v6.0.x after the macOS rot incident)** — cycc must build from the correct per-target source AND **self-host byte-identical on real macOS-arm64 (ecb) + Intel-Mac (ach) + Windows (cass) + aarch64 (pi)**, not just x86_64 Linux. Hello-world/exit-code smoke is NOT self-host — the macOS port rotted v5.3.13→v6.0.31 precisely because the `macho-arm64-native`/`windows-native` CI jobs only ran tiny programs, never the compiler. Verify via the `macos-14`/`windows-latest` CI jobs (once extended to self-host) AND/OR SSH to ecb/ach/cass/pi. (`scripts/release-gate.sh:92` runs all FOUR — `for H in ecb ach cass pi`; ach became a first-class gate at v6.4.59 after the Intel-Mac toolchain rotted ungated for ~2.5 minors, which is the same rot these bullets exist to prevent.) A minor does NOT close with macOS/Windows self-host unverified or red. See [reference: verification hosts, `feedback_macos_windows_ci_gate_mandatory`].
+3b. **Cross-OS self-host (NON-NEGOTIABLE — added v6.0.x after the macOS rot incident)** — cycc must build from the correct per-target source AND **self-host byte-identical on real macOS-arm64 (ecb) + Intel-Mac (ach) + Windows (cass) + aarch64 (pi)**, not just x86_64 Linux. Hello-world/exit-code smoke is NOT self-host — the macOS port rotted v5.3.13→v6.0.31 precisely because the `macho-arm64-native`/`windows-native` CI jobs only ran tiny programs, never the compiler. Verify via the `macos-14`/`windows-latest` CI jobs (once extended to self-host) AND/OR SSH to ecb/ach/cass/pi. (`scripts/release-gate.sh:108` runs all FOUR — `for H in ecb ach cass pi`; ach became a first-class gate at v6.4.59 after the Intel-Mac toolchain rotted ungated for ~2.5 minors, which is the same rot these bullets exist to prevent.) A minor does NOT close with macOS/Windows self-host unverified or red. See [reference: verification hosts, `feedback_macos_windows_ci_gate_mandatory`].
 
 ### Judgment-call passes (where bugs hide)
 4. **Heap map audit** — beyond "verify the map matches usage", evaluate:
@@ -170,7 +173,7 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
 8. **Cleanup sweep** — stale comments (grep for old version refs, outdated TODOs, references to renamed fns), dead `#ifdef` branches, unused includes, orphaned files in `build/` / `tests/`.
 
 ### Compliance / external
-9. **Security re-scan** — quick grep for new `sys_system`, `READFILE`, unchecked writes. Full audit every 2-3 minors. **Last full audit: `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82**; the one before it was `docs/audit/2026-06-10-deep-dive-review.md` (…CVE-31) at cycc 6.1.31. *(This line read "last: v5.0.1" until v6.4.82 — three minors stale, which is how the re-scan cadence quietly slipped. The 2026-07-27 pass found three unbounded copies reachable from untrusted source, one of them a `SIGSEGV` from an `include` path.)*
+9. **Security re-scan** — quick grep for new `sys_system`, `READFILE`, unchecked writes. Full audit every 2-3 minors. **Last full audit: `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82**; the one before it was `docs/audit/2026-06-10-deep-dive-review.md` (…CVE-31) at cycc 6.1.31. *(This line read "last: v5.0.1" until v6.4.82 — three minors stale, which is how the re-scan cadence quietly slipped. The 2026-07-27 pass found three unbounded copies reachable from untrusted source, one of them a `SIGSEGV` from an `include` path.)* ⚠ **The next CVE number is 39, not 37.** That file also carries `CVE-37` and `CVE-38`, both marked **(withdrawn)** — withdrawn findings still consume their identifier, so re-using 37/38 would collide.
 10. **Downstream check** — all `cyrius.cyml` `cyrius` fields across ecosystem repos point to the released tag.
 
 ### Docs (silent-rot prevention)
@@ -181,7 +184,7 @@ Run a closeout pass before tagging x.Y.0 or x.0.0. Ship as the last patch of the
    - **`vidya/content/cyrius/types.cyml`** (note: `implementation.toml` is retired — archived at `archive/implementation.cyml`) — bump version refs and any structural changes (heap map, fixup table, fn table caps, IR opcode count, backend modules).
    - **`vidya/content/cyrius/dependencies.cyml`** / **`ecosystem.cyml`** — refresh when deps bump (sigil 3.12.1 → next, etc.) and when downstream consumer counts / test counts change.
    - **Cross-check the version**: every vidya file mentioning a `cc?` version (`cc3 4.8.5`, `cycc 5.4.x`, etc.) should match the current `VERSION` file. `version-bump.sh` doesn't touch vidya — that's manual at closeout.
-12. **Backlog re-triage (rot sweep)** — sweep the open `issues/` + `proposals/` queue and re-pin the roadmap. **Verify each item's resolved-status against LIVE code / CHANGELOG — NOT the file's own claim** (a shipped-but-still-framed-as-pending entry is the exact rot: cx sat target-less for a couple majors when it was ready, TS→JS emit shipped v6.1.10 but stayed "minor TBD" in `roadmap-future.md` for months). Archive the resolved (`issues/archived/`, `proposals/archived/`); batch the rest by theme + dependency; re-pin them into an ordered roadmap sequence (arc **finish-out** items soonest, big new arcs after the queue is clean). **Enforce the placement rule: every technical / codegen / runtime item lives in the 6.x line or the `roadmap.md` "potential backlog" — NOTHING codegen is EVER parked to 7.x** (7.x = the language book + legal-for-public-release, that's it). Also re-scan the `roadmap-future.md` "watching" list for stale-shipped entries and mark them SHIPPED. Keep the open dir lean (~10–12). See [`feedback_no_codegen_parking_in_v7`]. (Cheap to run any time on request — "re-triage the backlog" — but MANDATORY at minor/major closeout, when a release burst has piled up drift.)
+12. **Backlog re-triage (rot sweep)** — sweep the open `docs/development/issues/` + `docs/development/proposals/` queue and re-pin the roadmap. **Verify each item's resolved-status against LIVE code / CHANGELOG — NOT the file's own claim** (a shipped-but-still-framed-as-pending entry is the exact rot: cx sat target-less for a couple majors when it was ready, TS→JS emit shipped v6.1.10 but stayed "minor TBD" in `roadmap-future.md` for months). Archive the resolved (`docs/development/issues/archived/`, `docs/development/proposals/archived/`); batch the rest by theme + dependency; re-pin them into an ordered roadmap sequence (arc **finish-out** items soonest, big new arcs after the queue is clean). **Enforce the placement rule: every technical / codegen / runtime item lives in the 6.x line or the `roadmap.md` "potential backlog" — NOTHING codegen is EVER parked to 7.x** (7.x = the language book + legal-for-public-release, that's it). Also re-scan the `roadmap-future.md` "watching" list for stale-shipped entries and mark them SHIPPED. Keep the open dir lean (~10–12). See [`feedback_no_codegen_parking_in_v7`]. (Cheap to run any time on request — "re-triage the backlog" — but MANDATORY at minor/major closeout, when a release burst has piled up drift.)
 
 Order matters: mechanical checks fail-fast (if self-host breaks, stop). Judgment passes uncover scope for a follow-up patch if needed (landing the refactor during closeout is fine IF it stays byte-identical; otherwise defer to the next minor's first patch). Doc sync is last so it reflects whatever the judgment passes changed.
 
@@ -241,15 +244,29 @@ src/
                      main_x86_macho.cyr, main_cx.cyr) + version_str.cyr (generated)
   frontend/          lex.cyr, lex_pp.cyr, parse.cyr + the parse_* split
                      (parse_ctrl/decl/expr/fn/types.cyr)
+  frontend/ts/       lex.cyr, parse.cyr — the TypeScript front end (`--lex-ts`,
+                     feeds backend/js)
   backend/x86/       emit.cyr, jump.cyr, fixup.cyr, decode.cyr (length-decoder),
                      float.cyr (SSE/AVX FP + ALL SIMD emitters — the v6.4.x arc)
   backend/aarch64/   emit.cyr, jump.cyr, fixup.cyr
+  backend/macho/     emit.cyr (macOS Mach-O output; CYRIUS_MACHO=1)
+  backend/pe/        emit.cyr (Windows PE/COFF output; CYRIUS_TARGET_WIN=1 →
+                     _TARGET_PE, dispatched from EMITELF in x86/fixup.cyr)
+  backend/common/    runtime.cyr, tokens.cyr — shared across backends (the
+                     v6.0.8 de-duplication collapse; don't re-fork these)
   backend/cx/        emit.cyr (cyrius-x bytecode; runner: programs/cxvm.cyr)
   backend/js/        emit.cyr (TS/TSX → JS, `cycc --emit-js`)
   common/            util.cyr, ir.cyr
 lib/                 Standard library (~99 lib/*.cyr modules)
-programs/            ~83 program files + subdirs (tools, tests, demos, algorithms)
-tests/               Test suites (tcyr/*.tcyr, heapmap.sh)
+programs/            ~83 top-level *.cyr (tools, demos, algorithms, port probes)
+                     + subdirs: checks/ (the check.sh gate driver — see
+                     programs/checks/main.cyr) and cyrius-init-templates/
+tests/               Test suites: tcyr/*.tcyr, the tests/*.sh shell gates (incl.
+                     heapmap.sh — ALL of them are live; some are registered by
+                     exact path in programs/checks/main.cyr and the rest via
+                     named gate fns, so NEVER quote a shell-gate count you did
+                     not just derive with `ls tests/*.sh | wc -l`), plus
+                     fixtures/, data/, scyr/, smcyr/, win/
 benches/             Benchmarks (*.bcyr)
 fuzz/                Fuzz harnesses (*.fcyr)
 build/               Generated binaries (gitignored except `cycc`, `cc5`,
@@ -281,14 +298,14 @@ docs/                Architecture, roadmap, benchmarks, language guide
 
 - `docs/guides/cyrius-guide.md` — Complete language reference
 - `docs/development/roadmap.md` — **Active minor** (current v6.x.y), slot-by-slot
-- `docs/development/roadmap_6.md` — Whole-v6.x-cycle reference (framing, per-minor budgeting, v6.2.x → v6.5.x, the closed v6.0.x summary)
+- `docs/development/roadmap_6.md` — **FORWARD-ONLY** cycle reference: the minors *after* the active one (v6.6.x, v6.7.x/v6.8.x) and the shape of what follows v6.x. Re-scoped 2026-07-29 — it no longer carries per-minor history or a duplicate spec for the active minor (that drift is why it was cut); closed-minor detail lives in `CHANGELOG.md` + `completed-phases.md`
 - `docs/development/roadmap-future.md` — Long-term watching list (unpinned items, speculative work, v7.0+ aspirations)
 - `docs/development/cycle-discipline.md` — Evergreen operating principles (slot acceptance, bottom-to-top priority, premise-check, cross-host smoke, cycle-close shape) **+ the runnable Closeout checklist + per-closeout ledger** (the doc you open/run/record against at every minor/major bump)
 - `docs/development/state.md` — Volatile cycle / pin / sweep state (refreshed every release)
 - `docs/development/dev-tools-linux.md` — per-environment dev toolchain (Linux x86_64 first; `qemu-user`/`wine` to reproduce aarch64/PE self-host bugs locally, `llvm-objdump` disasm, SSH cross-host verify). macOS/Windows siblings to follow. Install these before cross-target codegen work.
 - `docs/doc-health.md` — Living doc-currency ledger (per-tier fresh / stale / archived; refreshed when docs are touched)
 - `CHANGELOG.md` — Source of truth for all changes
-- `../vidya/content/cyrius/*.cyml` (+ the `language/` and `field_notes/{compiler,language}/` subdirs) — 90+ cyrius vidya entries
+- `../vidya/content/cyrius/*.cyml` (+ the `language/` and `field_notes/{compiler,language}/` subdirs) — 500+ cyrius vidya entries (this line read "90+" for years while the corpus grew past 500; re-derive with `grep -rc '^\[\[entries\]\]'` rather than trusting the number)
 
 ## Working Agreements (distilled 2026-07-07 from session-feedback memory)
 
@@ -347,7 +364,7 @@ per-session memory files so they survive environment changes.
 
 ### Docs & issues hygiene
 - CHANGELOG is canonical history; state.md is current-cycle volatile only; **archive docs, don't delete** — and grep `.github/workflows/` + release scripts for hard-coded path deps first.
-- Issues archive to `issues/archived/` at slot close; keep the open dir a lean working queue (~10–12); consolidate the P3/"someday" deferral tail into roadmap entries, not issue files.
+- Issues archive to `docs/development/issues/archived/` at slot close; keep the open dir (`docs/development/issues/`) a lean working queue (~10–12); consolidate the P3/"someday" deferral tail into roadmap entries, not issue files.
 - Source comments keep the WHY-invariant plus a one-line `CHANGELOG [X.Y.Z]` pointer — not history blocks.
 
 ## Language & test conventions (recurring gotchas)
@@ -370,14 +387,33 @@ per-session memory files so they survive environment changes.
   `IS_KEYWORD_TOK` *derives* from it so the two sets cannot drift. It covers `syscall`,
   `load8/16/32/64`, `store8/16/32/64`, every `f64_*` / `f64v_*` / `f32_*` / `f32v_*` / `f32v8_*` /
   `iv_*` intrinsic, plus `union`, `defer`, `secret`, `async`, `await`, `u128`,
-  `bitget/bitset/bitclr`, `ret2/rethi` — and `pub`/`shared`/`match`/`in`/`default`/`stack`. The
+  `bitget/bitset/bitclr`, `ret2/rethi` — and `pub`/`public`/`private`/`shared`/`match`/`in`/
+  `default`/`stack`. (`pub` and `public` are the same token 73 and `private` is token 153,
+  both from the v6.5.0 visibility work.) The
   parser rejects any of them as an identifier and (since v6.4.77) NAMES the one you hit.
   This line used to read "`secret`, `pub`, `shared` are reserved keywords" — three names for a
   67-name class, which is structurally the same error as the retired "≤6 args" rule: a partial
   observation written down as a language rule. Read the table, don't extend the list here.
 - tcyr files MUST end `var r = assert_summary();` (or an explicit exit syscall) so success exits 0. Name tests topically, never temporally ("pass2"/"v3" — 20-yr QA pet peeve).
 - cyrfmt flattens multi-line call continuations to 4-space indent — write them that way up front.
-- aarch64 stdlib syscall numbers that collide with an x86 number in ESYSXLAT get silently mis-remapped — use the x86 number + an ESYSXLAT entry.
+- aarch64 stdlib syscall numbers that collide with an x86 number in ESYSXLAT get silently
+  mis-remapped — use the x86 number + an ESYSXLAT entry. **When BOTH candidates are already
+  owned** (the native aarch64 number is eaten by an x86-compat shim *and* the x86 number is
+  the aarch64 peer's own native syscall), use the **private alias band added at v6.5.7**:
+  source numbers **≥1000 are cyrius-private aliases no OS will ever mint**, renumbered by
+  ESYSXLAT, spelled `1000 + the native number` so the alias documents itself
+  (`SYS_FCHOWNAT = 1054`, `SYS_CHDIR = 1049` — see `lib/syscalls_aarch64_linux.cyr:90`).
+  ⚠ The aarch64-Linux arm must stay **LAST** in its ESYSXLAT chain: it produces the native
+  number, and an x86-compat entry compares against that same number, so placed earlier the
+  alias is silently reissued as the shim's syscall.
+- **A wrapper that COMPILES on five targets is not a wrapper that RUNS.** The release gate's
+  cross-OS leg executes only the `vr01_` glob, so a syscall wrapper with no `vr01_` file is
+  never run off-host — the exact shape of the macOS rot. v6.5.7 added
+  `tests/tcyr/vr01_syscall_wrappers.tcyr` and it turned the gate RED on ecb, then on ach,
+  surfacing seven real defects; five of the seven were half-fixes that stopped at the first
+  symptom (`AT_FDCWD` without its sibling `AT_*` flags, `STAT_SIZE` without the rest of the
+  struct, `unlink` without `rmdir`, three of four link syscalls mapped). Every new syscall
+  wrapper needs a `vr01_` companion.
 - When restoring/fixing user configs, restore only what was there — no unrequested "sensible defaults".
 
 ## DO NOT

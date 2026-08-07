@@ -25,6 +25,15 @@ misdiagnosed, and fixing the real causes roughly doubled cx correctness) and **.
 for *every* modulo, plus 64-bit immediates via cxvm opcode 253). Detail in
 [CHANGELOG.md](../../CHANGELOG.md) + completed-phases.md.
 
+> ⚠ **"SHIPPED" is not "closed" — a NEW cx gap was filed 2026-07-30 and is still open**
+> (added by the 2026-08-07 sweep, because this section read as a finished arc with nothing
+> outstanding). [`issues/2026-07-30-cx-backend-has-no-indirect-call.md`](issues/2026-07-30-cx-backend-has-no-indirect-call.md):
+> **cx has no indirect call**, so every fn-pointer stdlib path is dead there —
+> `ECALLIND` (`src/backend/cx/emit.cyr`), `programs/cxvm.cyr`, `lib/fnptr.cyr`. Filed by this
+> repo itself while building `vec_sort_by` for v6.5.4; Medium, because cx is not a shipping
+> consumer target today, but **the breakage is silent** and the blast radius is the whole
+> allocator/callback layer. It has **no roadmap slot yet** — 6.x-line work, unscheduled.
+
 ---
 
 ## SIMD Phase 5 — aarch64 NEON + cx/PE — ✅ SHIPPED (v6.4.28–.32, finish-outs .53)
@@ -35,11 +44,12 @@ SIMD XFAIL removed**), **Win64 PE value-form params + returns** (.31), and **cx 
 emitters** (.32). Packed SIMD now runs on all four backends; all `simd_*` ARM XFAILs are gone and the
 `vr01_simd_*` fixtures run real emitters cross-OS on ecb/pi/cass. **Finish-outs at .53**: the duplicate-arg
 `f(v, v)` bug — root cause was the *tail-call* path taking no second XMM pass, fixed on all targets — plus
-i64v2 packed multiply. Only caveat, still true at the v6.4.82 close (verified in
-`src/backend/aarch64/emit.cyr`): the aarch64 *native* 256-bit `EMIT_F32V8_*` emitters are `return 0`
-stubs that are never reached, because `lib/simd.cyr` routes f32v8 through native f32v4 NEON (the verb
-works; a native 256-bit path is x86-AVX2-only). Detail in [CHANGELOG.md](../../CHANGELOG.md) +
-completed-phases.md.
+i64v2 packed multiply. Only caveat, **re-verified 2026-08-07 at v6.5.10**
+(`src/backend/aarch64/emit.cyr:2691-2693` — the line numbers moved from `:2639-2641`, so
+re-grep rather than jumping to a cited line): the aarch64 *native* 256-bit `EMIT_F32V8_*`
+emitters are `return 0` stubs that are never reached, because `lib/simd.cyr` routes f32v8
+through native f32v4 NEON (the verb works; a native 256-bit path is x86-AVX2-only). Detail in
+[CHANGELOG.md](../../CHANGELOG.md) + completed-phases.md.
 
 ---
 
@@ -50,9 +60,13 @@ refactor/code-review/security/downstream — all otherwise clean). **Status
 2026-06-10:** the first three shipped — `aarch64 EADDRA_IMM` @ v6.1.2,
 `_emit_fmt`/`_entry_base` hoist @ v6.1.4, DCE consolidation @ v6.1.5. The
 freed-scalar-holes reclaim (informational) stays a fill-as-you-go item.
-**Re-verified against live code at the v6.4.82 close** — each bullet below now
-carries its shipped status inline, because the write-ups themselves still read as
-pending work and this list is meant to stay honest about what is done:
+**Re-verified against live code at the v6.4.82 close, and again 2026-08-07 at v6.5.10** —
+each bullet below now carries its shipped status inline, because the write-ups themselves
+still read as pending work and this list is meant to stay honest about what is done. The
+2026-08-07 re-check: `_emit_fmt` is still a single definition
+(`src/backend/common/runtime.cyr:61`), `_entry_base` still deliberately two
+(`x86/fixup.cyr:35` + `aarch64/fixup.cyr:29`), `_dce_hash_lookup`/`_dce_host_fn` still single
+(`runtime.cyr:444`/`:466`) — all three bullets hold:
 
 - **`aarch64` ADD/SUB-immediate 12-bit-mask class — CLOSED.** `EADDRA_IMM` was
   fixed at v6.0.91 (three-way split); the two remaining unguarded siblings
@@ -83,14 +97,19 @@ pending work and this list is meant to stay honest about what is done:
   two backends, and within each the open-addressing hash-probe + the linear host-fn scan
   were each written twice; the shared pair collapsed 4 probe-blocks → 1 and 4 host-scans
   → 1 (arch delta is only `E8/E9`+`DECODE_LEN` vs `BL/B` 4-byte stride).
-- **Reclaim the FREED scalar holes** (informational, **still open — fill as you go**) —
+- **Reclaim the FREED scalar holes** (informational, **still open — fill as you go**; live
+  total **18** FREED regions at v6.5.10, `grep -n FREED src/main.cyr`, re-derived 2026-08-07) —
   the compiler-state scalar band has the ~2 KB v6.0.88 `ret_patches` hole + the v6.0.47
   holes (`0x18E630`/`0x18EE30`/`0x18F900`/`0x18F908`); allocate the next new
   compiler-state scalar into the `.88` hole rather than growing the band. All four v6.0.47
   holes are still marked FREED in the `src/main.cyr` heap map at the v6.4.82 close, and
   v6.4.75 added six more (`0x100000`, `0x14A000`, `0x15A000`, `0x16A000`, `0x17A000`,
   `0x1C8000`) when the fn-indexed side tables went lazy-alloc — so there is more reclaimable
-  band now, not less.
+  band now, not less. All four + six re-confirmed present 2026-08-07; the other eight FREED
+  regions are v6.0.88 (2), v6.1.40 (3), v6.3.41, v6.3.28 and v6.4.21. **None of 6.5.0–.10
+  grew the fixed band** — the visibility file-id substrate, the lazy fn-table bases and the
+  v6.5.9 growable arena are all `alloc`-backed, so the heap map has held at 100 regions / 0
+  overlaps across the whole minor so far.
 
 ---
 
@@ -124,19 +143,22 @@ unpinned at v5.8.65 close (2026-05-05) — consumer pressure either
 didn't materialize or workarounds proved sufficient. Re-evaluate
 at each cycle-open per [`feedback_premise_check_at_slot_entry`].
 
-> **Re-verified against LIVE code at the v6.4.82 close** (not against each row's own
-> text — that is exactly how the TS→JS row above went stale). Every "stays unpinned"
-> row below was checked in the tree; nothing in this table has silently shipped.
+> **Re-verified against LIVE code at the v6.4.82 close, and again on 2026-08-07 at v6.5.10**
+> (not against each row's own text — that is exactly how the TS→JS row above went stale).
+> ⚠ **The 2026-08-07 pass found this promise had NOT held**: *per-block scoping* was pinned
+> here to v6.6.x while roadmap_6.md had struck the same item as shipped nine days earlier,
+> and the *128-bit div-mod* row described code that had a hardware fast path. Two of eight
+> rows wrong. **Re-run the probes; do not trust this banner.**
 
 | Feature | Effort | Status / Notes |
 |---|---|---|
-| **Hardware 128-bit div-mod** | Medium | Stays unpinned — **verified still software at v6.4.82**: `u128_div`/`u128_divmod` in `lib/bayan.cyr` are shift-based, no `div`-family emitter exists. abaco / sigil work around via u128 shifts; not blocking. Pull forward if a real perf regression surfaces. |
+| **Hardware 128-bit div-mod** | Medium | Stays unpinned, but **the description was wrong and is corrected here (2026-08-07)**. It said "shift-based". Live: `bayan_u128_divmod` (`lib/bayan.cyr:618`) has an **x86-only hardware fast path** for the `b_hi == 0` case — two back-to-back unsigned `div`s written as **raw machine-code bytes in an `asm { }` block inside a stdlib file**, `#ifdef CYRIUS_ARCH_X86`-gated precisely because those bytes would SIGILL elsewhere. Only the full 128/128 case still runs the 128-iteration shift-subtract loop, and **aarch64/cx get the slow path for everything**. What remains true — and is now the sharper argument — is that **no `div`-family emitter exists in any backend**, so the fastest u128 division in the ecosystem is hand-assembled x86 in a library. Pull forward if a real perf regression surfaces, or if aarch64 numeric work makes the arch asymmetry bite. |
 | **Phase 3-full varargs** (`va_arg` for structs-by-value + nested) | Medium | Phase 3-min shipped v5.5.36. Stays unpinned — niche. Most consumers use array-of-args pattern instead. |
-| **cycc per-block scoping** | Medium | ▲ **PINNED v6.6.x** (2026-07-07 horizon session — item 3 of the Language-Ergonomics minor, with shadowing; see [roadmap_6.md](roadmap_6.md)). |
-| **Incremental compilation** | High | Stays **watching**. Whole-program self-host is fast (~500 ms @ v6.1.x). Reconsider when cycc self-host crosses ~2 sec (**~622 ms @ v6.4.82** — the trend across the whole reactive minor is flat: ~617 ms @ .72, 631 ms @ .81, all inside the historical 614–634 band, so 83 releases of feature/bug work cost essentially nothing here) — and per user 2026-06-11, **the next few arcs will inform the timing**: the v6.5.x perf-quality minor + RISC-V (now v6.7/v6.8) will show whether self-host is approaching the threshold (the bench harness is un-blind since v6.2.15/v6.3.17, phase-resolved). Don't pin now; let those arcs report. Same posture for the **bus-factor / institutional-memory** question (vidya + memory-pins live outside the repo) — revisit as those arcs land. |
+| ~~**cycc per-block scoping**~~ | — | ✅ **ALREADY SHIPPED — struck 2026-08-07.** This row still said "▲ PINNED v6.6.x" while [roadmap_6.md](roadmap_6.md) had already struck the same item on 2026-07-29 as shipped since the v3.7.4 era — **two docs, opposite statuses, neither checked against the compiler**, which is the exact rot the header above claims this table is free of. Re-verified by RUNNING the compiler on 2026-08-07: `if (1) { var inner = 5; } return inner;` → `error:<source>:3:15: undefined variable 'inner'`, and `var x = 1; if (1) { var x = 5; return x; }` exits **5** (the inner binding). What remains is that a **same-scope** redeclaration is a hard error — which is the documented rule in CLAUDE.md, deliberate, and not an unshipped item. Do not re-plan it. |
+| **Incremental compilation** | High | Stays **watching**. Whole-program self-host is fast (~500 ms @ v6.1.x). Reconsider when cycc self-host crosses ~2 sec (**648 / 652 ms @ v6.5.10**, 2026-08-07; ~622 ms @ v6.4.82, 638 ms @ v6.5.2 — still ~3× under the threshold after another minor's worth of work). ⚠ **Do not read a trend off single numbers here**: v6.5.7 ran the SAME binary three times for **649 / 670 / 701 ms**, a 52 ms spread that is *wider than any release-over-release delta this minor*, so this box cannot resolve deltas at that scale. Quote the pair, not a point. Per user 2026-06-11, **the next few arcs will inform the timing**: the v6.5.x perf-quality minor + RISC-V (now v6.7/v6.8) will show whether self-host is approaching the threshold (the bench harness is un-blind since v6.2.15/v6.3.17, phase-resolved). Don't pin now; let those arcs report. Same posture for the **bus-factor / institutional-memory** question (vidya + memory-pins live outside the repo) — revisit as those arcs land. |
 | **Stackless coroutines** (suspend/resume across `await`) | Medium (poll-runtime rework) | ▲ **PINNED v6.5.x** (user, 2026-07-26). The unpin condition this row carried — *"No live consumer; pull forward on a real suspend-across-await need"* — **has been met**: stiva filed [`2026-07-25-stiva-stackless-coroutines-interactive-exec.md`](issues/2026-07-25-stiva-stackless-coroutines-interactive-exec.md) naming two blocked v3.1.0 features, after carrying *"stiva is that consumer and has not filed; filing is the unblock lever"* as an open action for weeks. Bound into the v6.5.x arc alongside the IR-substrate work it depends on — the poll-runtime rework (+ force-once memoization) is the same substrate the perf-quality minor opens. v6.3.11 shipped async/await as deferred-then-forced Futures over a run-to-completion epoll runtime, explicitly NOT stackless CPS. Subsumes the mid-body-suspend "gap 6" of the shipped async "W" arc. |
 | **Async reactor-fd `O_CLOEXEC`** | — | ✅ **SHIPPED v6.4.43** — epfd (EPOLL_CLOEXEC), connect/resolve + UDP sockets (SOCK_CLOEXEC), accept fd (F_SETFD FD_CLOEXEC), and reactor timerfds (TFD_CLOEXEC) are all close-on-exec; a fork-in-reactor child no longer inherits reactor fds. No longer a watching item. |
-| **Async single-waiter-per-fd** | Low–Medium | **Unpinned follow-on** (parked from the same issue) — **verified still live at v6.4.82**: `lib/async.cyr:254` `_async_wait_events` still stores the current task pointer straight into the epoll `data` slot and calls `EPOLL_CTL_ADD` unconditionally, so the `data` slot IS the waiter identity and two tasks parking the SAME fd hit `EEXIST` with one starving. Needs a real per-fd waiter list (reconsidered 2026-07-09 as NOT a cheap hygiene bite). No consumer exercises concurrent same-fd waiters today. |
+| **Async single-waiter-per-fd** | Low–Medium | ▲ **BOUND INTO the v6.5.x Slot 8 coroutine arc** as a bite (same `_async_wait_events` rewrite) — see [roadmap.md](roadmap.md); this row is the watching-list half of a double-tracked item and Slot 8 is where the double-tracking gets resolved. **Verified still live at v6.5.10** (2026-08-07): `lib/async.cyr:254-273` `_async_wait_events` still stores the current task pointer straight into the epoll `data` slot and calls `EPOLL_CTL_ADD` unconditionally, so the `data` slot IS the waiter identity and two tasks parking the SAME fd hit `EEXIST` with one starving. Untouched by v6.5.6's `async_await_readable_ms`, which is a timeout variant on the same runtime. Needs a real per-fd waiter list (reconsidered 2026-07-09 as NOT a cheap hygiene bite). No consumer exercises concurrent same-fd waiters today. |
 | **f32 scalar arithmetic** (native-float Tier A tail) | — | ✅ **SHIPPED v6.4.56** — f32 scalar arith/compare + WARN-only typecheck, together with scalar-`f64` return type (v6.4.55). The scalar-float completion slot is closed; no longer a watching item. |
 
 ---
@@ -151,8 +173,12 @@ clamp that killed the 166,670-line truncated-input cascade v6.4.78 — so these
 lint gates are the remaining unpinned tail, not part of that arc.) Consolidated
 here from standalone issues at the v6.4.15 absorber-band hygiene pass — no
 urgency, no consumer blocked; the underlying bugs each already have a real fix.
-**Both verified un-shipped at the v6.4.82 close** (no lint source in `cbt/`
-implements either check).
+**Both verified un-shipped at the v6.4.82 close and again at v6.5.10** (2026-08-07;
+no lint source in `cbt/` implements either check). They now have a **named W2
+fold-in slot** in [roadmap.md](roadmap.md) — "the two cyrlint gates, one bite" —
+so they are pinned 6.x work, not watching. ⛔ And per the placement rule,
+**linter / formatter / LSP evolution is 6.x-line work**: roadmap_6.md parked it
+at 7.x until 2026-08-07, when it was corrected and re-homed.
 
 - **Bare-local-array slot-write lint** (was `issues/2026-06-25-bare-local-array-slot-write-lint.md`)
   — warn when a bare `var a[N]` (N *bytes*, rounded to 8) is written past its byte
@@ -161,9 +187,9 @@ implements either check).
   the lint half).
 - **Syscall-write byte-length gate** (was `issues/2026-06-25-syscall-write-byte-length-gate.md`)
   — a permanent DOTALL check that `syscall(SYS_WRITE, fd, buf, LEN)`'s LEN matches the
-  literal's byte length; **593 sites repo-wide at v6.4.82** (was ~543 when filed). Batch
-  with the bare-local-array lint as one cyrlint line — both are
-  byte-length-vs-declared-size static checks.
+  literal's byte length; **609 sites repo-wide** (re-derived 2026-08-07 at v6.5.10; 593 at
+  v6.4.82, ~543 when filed). Batch with the bare-local-array lint as one cyrlint line — both
+  are byte-length-vs-declared-size static checks.
 
 ---
 
