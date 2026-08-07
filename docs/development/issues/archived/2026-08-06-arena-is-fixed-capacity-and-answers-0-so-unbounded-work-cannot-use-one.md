@@ -61,10 +61,23 @@ The measurement that started this:
 
 | | bytes |
 |---|---|
-| allocated per 4-task crew run | **32,608** |
-| retained afterwards (serialised state) | **894** |
+| allocated per 4-task crew run (audit + events on) | **33,008** |
+| same run, audit chain and event bus disabled | **14,096** |
+| retained *content*, serialised: crew state + 6 audit entries | **3,662** |
 
-~97% transient. That is precisely the workload an arena exists for, and it cannot have one: a crew's transient allocation scales with task count, prompt sizes and LLM response sizes, all unbounded at the type level. Any fixed capacity is either wasteful or a crash — and the spill wrapper does not help here, because you would spill most of it, which is the same as not having the arena.
+**⚠ Correction, added 2026-08-06 after this shipped.** An earlier revision said
+"~97% transient", from comparing total allocation against the serialised crew
+state alone (894 B). That was wrong twice: it ignored the audit chain — the
+single largest consumer on this path, ~18 KB of a 4-task run — and it treated
+*serialised* size as a proxy for *allocated* footprint, which excludes struct
+overhead, 16-byte `Str` headers and vec capacity.
+
+The defensible statement is weaker and still carries the case: retained content
+serialises to 3.7 KB against 33 KB allocated, so **the majority is transient —
+on the order of two thirds to four fifths.** Pinning it exactly needs the
+retained structures allocated from a separate allocator, which is the work this
+capability enables rather than a precondition for it. The ask was correct; the
+headline number was not. That is precisely the workload an arena exists for, and it cannot have one: a crew's transient allocation scales with task count, prompt sizes and LLM response sizes, all unbounded at the type level. Any fixed capacity is either wasteful or a crash — and the spill wrapper does not help here, because you would spill most of it, which is the same as not having the arena.
 
 So ~30 KB per crew run stays on the no-free bump indefinitely, in a long-lived server process, purely for want of an arena that can grow.
 

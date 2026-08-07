@@ -1,6 +1,11 @@
 # `cyrius coverage` reads the test corpus into a fixed 1 MiB buffer and silently under-reports once the corpus exceeds it
 
-**Status:** 🟡 **OPEN** — filed 2026-08-05.
+**Status:** ✅ **FIXED** — shipped in 6.5.8, re-verified on 6.5.9 from agnosai
+2026-08-07 by this file's own repro. agnosai's corpus is 1,125,915 bytes today,
+77 KB past the old cap, and padded to **1,765,916** — well beyond the 1,376,773
+that used to report 85% and 64/75 files — `cyrius coverage --min 80` still reads
+**75/75 files, 1099/1099 functions, 100%**. The consumer-side workaround
+(`scripts/check-coverage.sh` and a corpus-size gate) is removed.
 **Filed as:** filed 2026-08-05 from agnosai, whose `.tcyr` corpus crossed the buffer that day. Root cause read directly from `cbt/quality.cyr`; the size effect measured across seven corpus sizes on live 6.5.7.
 **Placement:** unpinned — 6.x-line backlog (tooling behaviour, no language surface).
 **Discovered:** 2026-08-05, adding ~9 KB of allocation-measurement assertions to agnosai's `tests/server_serve.tcyr`.
