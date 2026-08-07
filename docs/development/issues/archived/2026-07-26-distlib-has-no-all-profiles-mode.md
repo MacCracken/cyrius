@@ -1,6 +1,7 @@
 # `cyrius distlib` regenerates ONE bundle per invocation, so multi-profile repos ship stale sub-bundles under a fresh version string — RESOLVED
 
-**Status:** ✅ **RESOLVED — both proposed fixes shipped v6.5.8.** Re-verified against live code on
+**Status:** ✅ **SHIPPED — archived 2026-08-07 at v6.5.10.** shipped v6.5.8. `cmd_distlib_all(check)` enumerates `[lib.*]` from the manifest so the list cannot drift, and the CLI parses `--all`/`--check`; `--check` compares BYTES, not version strings. Fix 3 deliberately not taken. Gate: tests/distlib_all_profiles.sh.
+**Originally filed as:** Re-verified against live code on
 cycc **6.5.10**, 2026-08-07:
 
 - `cmd_distlib_all(check)` exists at `cbt/commands.cyr:2056`, and it does exactly what fix 1 asked

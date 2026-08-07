@@ -1,6 +1,7 @@
 # `cyrius coverage` reads the test corpus into a fixed 1 MiB buffer and silently under-reports once the corpus exceeds it
 
-**Status:** ✅ **FIXED** — shipped in 6.5.8; cyrius-side re-verified against live code on **6.5.10**
+**Status:** ✅ **SHIPPED — archived 2026-08-07 at v6.5.10.** shipped v6.5.8. The fixed `alloc(1048576)` is gone from cbt/quality.cyr, replaced by grow-and-retry; three further defects were found and fixed in the same pass (an off-by-one at the corpus end, `pub fn` being invisible to the scanner, and fail-open on an empty measurement). It was mis-measuring THIS repo by 33 functions. Gate: tests/coverage_corpus_and_failopen.sh.
+**Originally filed as:** shipped in 6.5.8; cyrius-side re-verified against live code on **6.5.10**
 (2026-08-07): the fixed `alloc(1048576)` quoted below is gone from `cbt/quality.cyr`, replaced by a
 **grow-and-retry** loop whose in-place comment names this filing and records why the filing's own
 suggestion 2 ("sum the file sizes first") was not taken. Also re-verified on 6.5.9 from agnosai

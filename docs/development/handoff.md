@@ -16,7 +16,7 @@
 | Gates | `check.sh` **162 / 0** + **41** shell gate scripts in `tests/` · bench 648/652 ms |
 | Cross-OS | ecb · ach · cass · pi — all `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware |
 | Corpus | **260** `.tcyr` · 99 `lib/*.cyr` · api-surface **4817** · heap 100 regions / 0 overlaps |
-| Queue | **16** open issues · 2 proposals · 295 archived |
+| Queue | **12** open issues · 2 proposals · 299 archived |
 | Mid-arc work | **None.** 6.5.10 is complete; the next slot is open. |
 
 ## What .7 → .10 shipped
@@ -89,7 +89,7 @@ budget needs a quieter machine or a many-run median first.
 done). Remaining W1 items: **5** (`dir_list`, both halves — taking only the cheap half is the
 sliced-fix antipattern), **7**, **8**, **9**, across the remaining **6** patches `.11`–`.16`.
 
-Then the IR substrate (Slot 3): **7 residual default-vs-IR=3 exit mismatches** (measured 2026-08-07 over all 260 tcyr: const_chained_multiply_fold, field_name_shadows_global, float, math_inverse_trig, math_pack_integration, subword_signed_load, types) and the
+Then the IR substrate (Slot 3): **10 residual default-vs-IR=3 divergences** (measured 2026-08-07 over all 260 tcyr with unique output paths: **3 fail to COMPILE** under IR=3 — `large_input`, `large_source`, `preprocessor_past_cap` — and **7 differ at RUNTIME** — `const_chained_multiply_fold`, `field_name_shadows_global`, `float`, `math_inverse_trig`, `math_pack_integration`, `subword_signed_load`, `types`) and the
 regalloc walls (`ir_lower_all` has zero callers; `IR_SENABLE(S,2)` never activated;
 `ir_build_edges` gives `IR_SWITCH` a single fall-through edge).
 

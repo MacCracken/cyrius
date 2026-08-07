@@ -1,6 +1,7 @@
 # No `thread_detach`, so a fire-and-forget thread permanently leaks its 2 MiB stack and its TLS block — RESOLVED
 
-**Status:** ✅ **RESOLVED — shipped v6.5.8** (fix shape **2**, `thread_create_detached`, plus the
+**Status:** ✅ **SHIPPED — archived 2026-08-07 at v6.5.10.** shipped v6.5.8 as `thread_create_detached` + `thread_is_done`, both live on all three peers. 100 unjoined threads leaked 210,124,800 B of VA; now 0 — the child unmaps its own stack in the trampoline tail and the TLS is carved from that same mapping, so nothing is stranded. ⚠ `thread_is_done` is valid only BEFORE `thread_join`. Gate: tests/tcyr/vr01_thread_detach.tcyr.
+**Originally filed as:** (fix shape **2**, `thread_create_detached`, plus the
 `thread_is_done` predicate this file asked for under "Worth fixing alongside"). Re-verified live on
 cycc **6.5.10**, 2026-08-07: the same `grep -nE '^fn thread_' lib/thread.cyr` that returned two
 lines when this was filed now returns **four** —

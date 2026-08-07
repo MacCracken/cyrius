@@ -1,6 +1,7 @@
 # `fmt_int_buf` renders `i64::MIN` as the single byte `-`, and bayan turns that into invalid JSON — RESOLVED
 
-**Status:** ✅ **RESOLVED — shipped v6.5.8.** Re-verified live on cycc **6.5.10** (2026-08-07) by
+**Status:** ✅ **SHIPPED — archived 2026-08-07 at v6.5.10.** shipped v6.5.8 and WIDER than filed — the roadmap named 7 sites, the class held 12 (four in lib/fmt.cyr, plus string.cyr, log.cyr, sakshi upstream at 2.4.8, TWO inside the compiler that the list never named, and three shipped demos). Re-verified live at 6.5.10: fmt_int_buf(i64::MIN) returns length 20. Gate: tests/tcyr/vr01_fmt_i64_min.tcyr.
+**Originally filed as:** Re-verified live on cycc **6.5.10** (2026-08-07) by
 running this file's own repro:
 
 ```

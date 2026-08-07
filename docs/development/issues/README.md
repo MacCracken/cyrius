@@ -157,7 +157,7 @@ quoting a 27-of-248 test ratio that was really 30 of 251. Re-derive
 the numbers, then write the command you used into the file so the next
 sweep can re-run it.
 
-**What the 2026-08-07 sweep (v6.5.10, 16 open) found, as the working
+**What the 2026-08-07 sweep (v6.5.10, 12 open) found, as the working
 examples of each rot shape:**
 
 - **Four files were fully SHIPPED and still framed as open** — all
@@ -180,7 +180,7 @@ examples of each rot shape:**
   findings themselves all survived.
 
 Keep this directory a lean working queue (~10–12 files) — it is at
-**16** open as of 2026-08-07 (plus 2 in `../proposals/`, 295 in
+**12** open as of 2026-08-07 (plus 2 in `../proposals/`, 299 in
 `archived/`), which is over. Archiving the four resolved files above
 brings it to 13. Consolidate the P3 / "someday" tail into roadmap
 entries rather than leaving issue files for it.
