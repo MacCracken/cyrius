@@ -1,5 +1,40 @@
 # Cross-OS: the full tcyr corpus measured on ALL FOUR hosts — 5 portable failures, the rest are macOS-specific
 
+> ## 📉 v6.5.11 re-measurement on real ecb: **23 → 11 failures**
+>
+> The headline number in this file is stale — v6.5.11 fixed two of its causes. Measured with
+> `CYRIUS_CROSS_OS_FULL=1 sh scripts/cross-os-selfhost.sh ecb crossos` at v6.5.11:
+> **`ran 250 passed, 11 failed`** of 261.
+>
+> | stage | failures | what closed |
+> |---|:--:|---|
+> | filed / 6.5.10 | **23** | — |
+> | + tar packaging fix | **18** | 5 tests whose INPUTS were never shipped to the host — `programs/vidya.cyr` (3 tests), `tests/fixtures/`, `tests/data/`. A PACKAGING bug counted as platform failures. `cross-os-selfhost.sh:108` now ships them. |
+> | + macOS serial threading | **11** | 7 concurrency tests — `concurrency/{atomics,integration_closures_threads,thread_join_single_load,thread_local,thread_safety,threads}`, `memory/alloc_thread_safe`. macOS now routes to `lib/thread_macos.cyr` and thread bodies actually run. |
+>
+> The arithmetic closes exactly: 23 − 5 − 7 = 11.
+>
+> ### The 11 that remain — one coherent family, not a grab-bag
+>
+> ```
+> crypto/tls_native_freestanding   platform/sandbox_syscalls   stdlib/result_stdlib
+> platform/fdlopen                 platform/socket_syscalls    stdlib/result_stdlib_pass2
+> platform/process                 platform/sys
+> platform/process_exec_str        platform/syscalls_at_family
+> platform/process_run_capture_args
+> ```
+>
+> These are almost entirely **process / syscall surface**, which is the macOS-arm64 constant-peer
+> problem: `lib/syscalls.cyr:69` imports `syscalls_aarch64_linux.cyr` on Darwin-arm64, and
+> `ESYSXLAT` renumbers SYSCALLS but never VALUES. Tracked at
+> [`2026-08-07-macos-arm64-inherits-linux-signal-and-errno-constants`](2026-08-07-macos-arm64-inherits-linux-signal-and-errno-constants.md).
+> ⚠ That is the same "macOS tool-surface follow-up" `lib/syscalls.cyr:61` claims to track — and
+> which never existed as a file, partly because its own reference contains a Cyrillic `О`.
+>
+> **Bearing on the flip-to-default question this issue exists to answer:** the blocker is now 11,
+> not 23, and it is one root cause rather than several. The pi full-corpus leg (W1 item 7's second
+> half) is still owed.
+
 **Status:** 🟡 **OPEN — re-measured 2026-08-07 on REAL hardware, all four hosts.** The original
 filing had one host and carried an explicit "ach/cass/pi have NOT been measured this way yet".
 They have now. The result decomposes the problem in a way one host could not.
