@@ -6,6 +6,196 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.11] — 2026-08-08
+
+The test suite reorganised into subfolders, and then a catch-up batch off the open queue.
+The theme that emerged, unplanned: **three of the five fixes were masked by something
+else that was broken**, and one of them was masked by a bug this release fixed.
+
+### Verification
+
+Release gate **GREEN, all 5 steps** (`GATE_EXIT=0`). Self-host fixpoint byte-identical
+(**1,141,792 B**, unchanged) · seed-derive `seed→cybs→cycc` OK · check.sh **163 / 0** ·
+cross-OS `SELFHOST_OK` + `crossos LIBTEST_OK` on **ecb / ach / cass / pi**, real hardware.
+
+**Bench: self_compile 646 ms · cycc 1,141,792 B — size UNCHANGED.** Every change landed in
+`lib/`, `tests/`, `scripts/` or `programs/checks/`, none in cycc's include closure, so there
+is no growth tax to triage.
+
+Corpus **260 → 261** `.tcyr` · gates **162 → 163** · api-surface **4817 → 4828** (+11,
+non-breaking) · **ecb full corpus 23 → 11 failures**.
+
+### Changed — the test suite is in subfolders, and `vr01_` is now a directory
+
+260 `.tcyr` into 15 topical buckets under `tests/tcyr/`, 41 shell gates into 8 buckets under
+`tests/gates/`, all via `git mv`. The cross-host set moved to **`tests/tcyr/crossos/`** and the
+`vr01_` filename prefix is **retired**: the release gate's selector is now a DIRECTORY
+(`cross-os-selfhost.sh` / `cross-os-libtest-runner.sh` take a subdir, not a prefix).
+
+⛔ **A naive move would have gone SILENTLY GREEN in three places, not red.** All were fixed
+before anything moved:
+
+1. `programs/checks/selfhost.cyr` `_testsuite_gate` was a flat `dir_list` — and it is the
+   ONLY `.tcyr` driver in the 162-gate audit. A subfoldered corpus would have printed
+   `test suite (N files)` PASS over a shrinking N.
+2. `.github/workflows/ci.yml` — all three loops used the flat `tests/tcyr/*.tcyr` glob. An
+   unmatched glob stays literal, `cat` fails, but **cycc on EMPTY stdin exits 0 and emits a
+   runnable 4448-byte binary**, so the one fake iteration scored PASS: `1 passed, 0 failed`,
+   gate green, zero tests run. `release.yml` gates on this file.
+3. `cross-os-libtest-runner.sh` re-globs on the REMOTE host; a no-match yielded
+   `__LIBTEST_SUMMARY__ 0 0`, which printed **`LIBTEST_OK: <host> (0 tests)`** — green,
+   having run nothing. **This was reachable before any file moved.**
+
+Every reader is now recursive and every loop carries an absolute corpus **floor** —
+deliberately not derived from the loop's own glob, because the old denominator shrank in
+lockstep with the bug and stayed self-consistent. The cross-OS leg additionally cross-checks
+the remote's ran-count against the count selected locally.
+
+Also made recursive, same defect family, missed by the v6.5.7 pass: bare `cyrius test`
+(found 2 of 4 in a mixed-depth probe tree), `cyrius soak`, and the `.scyr` / `.smcyr` walks.
+
+⚠ **`CLAUDE.md`'s Quick Start was wrong on both counts** and had been for four releases:
+`cyrius test` was *not* recursive and `cyrius test <dir>` errors `not a file`. Fixed the
+code up to the documented promise rather than the doc down to the behaviour.
+
+### Fixed — `MAP_ANONYMOUS` was Linux's 32 on Darwin, so `mmap_anon()` returned 0 for every caller
+
+`lib/mmap.cyr` declared `MAP_ANONYMOUS = 32` in an **unguarded** enum. Darwin's is `0x1000`.
+Consumers include `syscalls.cyr` first and `mmap.cyr` second, and duplicates are last-wins, so
+the 32 **shadowed** the correct value: every `MAP_PRIVATE | MAP_ANONYMOUS` became `0x22`, a
+FILE mapping with `fd = -1` ⇒ `EBADF`. `mmap_anon()` returned 0 on macOS for
+`lib/dynlib.cyr:728/:764`, `lib/fdlopen.cyr:467`, `lib/freelist.cyr:86` — not just the
+threading path the filing named.
+
+Measured on real ecb, a probe encoding flag-value and mapping-success separately: **1 → 4**
+(flag now `0x1000`, mapping usable); Linux unchanged at 5.
+
+⚠ **Deleting the declaration would NOT have fixed it.** On macOS **arm64**,
+`lib/syscalls.cyr:69` includes `syscalls_aarch64_linux.cyr` — the `syscalls_macos.cyr` arm is
+x86-only — so the 32 arrives from there regardless. `mmap.cyr` is included last and is what
+actually decides the value.
+
+New gate `tests/tcyr/crossos/mmap_anon_flag.tcyr`, mutation-proven on macOS (both axes fire).
+It asserts the resolved CONSTANT, not just that a call succeeded, because on Linux the wrong
+value IS the right value — a host-side test can never see this defect.
+
+### Fixed — macOS threading: the worker now actually runs
+
+⭐ **The most instructive bug of the release, and it was invisible until the fix above.**
+
+`lib/thread.cyr` routes Windows to `thread_win.cyr` (v6.0.53) and agnos to `thread_agnos.cyr`
+(v6.2.3) — both serial fallbacks — because neither has `clone`/futex. **macOS has neither
+either, and was never routed away**, so it fell through to the Linux `SYS_CLONE` body.
+
+It looked harmless because `mmap_stack` maps with `MAP_PRIVATE | MAP_ANONYMOUS`: with the
+broken 32 the mmap FAILED on Darwin, `thread_create` bailed at `sbase < 0`, and the result
+read as the documented "macOS threading is a no-op". **A broken constant was acting as the
+accidental safety net for a missing backend.** Fixing `MAP_ANONYMOUS` removed the net — the
+mapping succeeded, execution reached the clone, and Darwin answered **SIGSYS**. Bisected on
+real ach with only `lib/mmap.cyr` swapped: `exit=0` → `exit=140` (128 + 12).
+
+The repair is **not** a guard that makes `thread_create` fail politely — that re-creates the
+same silence deliberately. New `lib/thread_macos.cyr` routes macOS to the serial fallback, so
+the thread body **runs inline**. Verified on real ach, exit code encoding four separate facts
+(handle non-null · join==0 · worker ran once · worker got its arg):
+
+```
+Linux (real clone threads) : 15
+ach   (serial fallback)    : 15   ← identical
+```
+
+The three cross-host guards that asserted only a TAUTOLOGY on macOS (`assert_eq(rj, rj)`,
+`assert_eq(_vs_counter, _vs_counter)`, `assert_eq(mrc, mrc)`) are **removed** —
+`crossos/thread_spawn`, `crossos/sync_mutex` and `crossos/thread_detach` now run the SAME
+assertions on macOS as everywhere else, including `_vs_counter == 8000`. That is also why the
+SIGSYS was catchable at all: a tautology cannot distinguish "works" from "did nothing".
+
+⚠ **Scope, stated plainly:** macOS threading is now **correct but UNPARALLELIZED**. A real
+concurrent Darwin backend (`bsdthread_create` / `__ulock_wait`) remains Slot 11, as does
+`sync_macos.cyr`'s spinlock. `2026-07-03-macos-threading-workers-dont-run` is **narrowed, not
+closed**. All three fallbacks now export an **identical 11-fn surface** (machine-checked
+against the api-surface snapshot).
+
+### Fixed — 4 corpus tests could not pass off-host because their inputs were never shipped
+
+`cross-os-selfhost.sh:108` tarred `tests/tcyr` but not `programs/vidya.cyr` (included by 3
+tests) or `tests/fixtures/` + `tests/data/` (needed by 2). Those tests were being counted as
+**platform** failures for months. The tar now ships them.
+
+Combined with the threading fix, ecb's full corpus went **23 → 18 → 11**, and the arithmetic
+closes exactly: 23 − 5 (packaging) − 7 (concurrency) = 11. The remaining 11 are one coherent
+family — process / syscall surface — tracked by the new constant-divergence issue below.
+
+### Fixed — `dir_list` / `is_dir` allocated 4 KB per call under a bump allocator
+
+`lib/fs.cyr` used `alloc(4096)` + `alloc(8)` for scratch that is dead at return. The default
+allocator has no free, so every call burned 4104 B permanently. Now stack locals.
+
+⭐ **The filing named `dir_list`; the dominant cost was `is_dir`, which it did not mention.**
+`dir_walk` calls `is_dir` once per entry, so `is_dir` was ~25× the `dir_list` it wraps.
+Measured on a 41-entry directory:
+
+| | before | after |
+|---|--:|--:|
+| `is_dir` | 4,104 B/call | **0 B** |
+| `dir_walk` | 4,443 B/entry | **239 B/entry** |
+| `find_files` | 4,466 B/entry | 262 B/entry |
+| `dir_list` | 176 B/entry | 75 B/entry |
+
+Whole walk: **182,200 B → 9,832 B.** Fixing only what was filed would have moved `dir_walk` to
+~4,267 B/entry and looked complete.
+
+A stack local — not a file-scope scratch — because it is inherently per-call and therefore
+**per-thread**: a shared buffer would have traded a leak for a thread-safety regression, and a
+thread-local slot is a scarce, collision-prone resource here. ⚠ It also makes a latent hazard
+live: the heap buffer's never-freeing was masking that `str_new_a` **borrows** rather than
+copies. Both arms do copy out (`str_clone` → `memcpy`; `str_from_buf` → `alloc` + `memcpy`),
+verified by listing a directory, deliberately stomping that stack region, and re-reading —
+41/41 intact.
+
+### Added — gate: `net.cyr` ⇄ ESYSXLAT coupling is asserted structurally
+
+Premise-checked `2026-07-30-net-cyr-x86-only-socket-syscall-numbers` and **did not implement
+its proposed §4 fix**, because it is the wrong direction. `net.cyr`'s x86 numbers are
+renumbered by the `ESYSXLAT` block at `src/backend/aarch64/emit.cyr:865-873` — which is in the
+**aarch64-Linux** arm, not the Mach-O one. Verified by running the project's own net tests on
+real pi: `net_v6_connect` and `socket_syscalls` both `rc=0`. Per-arch peer wrappers with
+NATIVE numbers would move `net.cyr` off the pattern CLAUDE.md mandates and into the hazard that
+rule exists to prevent, to fix nothing observable.
+
+What IS real is that the coupling is silent — delete a row and the INET surface dies with no
+signal. New `tests/gates/platform/net_esysxlat_coupling.sh` (11 assertions, registered),
+mutation-proven by reproducing the v6.2.10 defect: deleting the aarch64-Linux socket-41 row
+turns 2 axes red. It asserts **2** rows per number, not ≥1 — the v6.2.10 bug WAS "1 row, macho
+only", which a ≥1 assertion would have called healthy.
+
+### Filed — two decisions for the maintainer
+
+- **`2026-08-07-macos-arm64-inherits-linux-signal-and-errno-constants`** — macOS-arm64 imports
+  the Linux aarch64 constant peer wholesale, and `ESYSXLAT` renumbers SYSCALLS but never
+  VALUES. **10 constants confirmed wrong on real ecb**: `EAGAIN` 11 vs 35, `SIGCHLD` 17 vs 20,
+  `SIGSTOP` 19 vs 17, `SIGUSR1/2`, `SIG_BLOCK/SETMASK/UNBLOCK`, `MAP_STACK`. `MAP_ANONYMOUS`
+  was one instance of this class; `io.cyr`'s O_* flags (v6.2.17) were another. ⚠ Derived by
+  RUNNING a constant-reporting probe, not by parsing — a first pass claimed 18 including the
+  whole `STAT_*` family, and **`STAT_*` is correct** (`syscalls_aarch64_linux.cyr:426` has its
+  own macOS arm). Incidental: `syscalls.cyr:61`'s "macОS tool-surface follow-up" contains a
+  **Cyrillic О**, so the reference is ungreppable — and no such issue ever existed.
+- **`2026-08-07-cyx-indirect-call-opcode-design-decision`** — `.cyx` needs a PERMANENT
+  indirect-call opcode; assignment is a one-way door in a shipped versioned format, so it is
+  the maintainer's call. Pinned next release. Opcode space measured: 54 in use, highest normal
+  band 129, `253/254/255` taken.
+
+### Corrected — three documents that were misleading
+
+- `2026-07-30-cx-backend-has-no-indirect-call`: its `run=124` evidence is a **harness
+  artefact** — `programs/cxvm.cyr` has **zero** `argv()` calls (usage is `cat prog.cyx | ./cxvm`),
+  so `cxvm prog.cyx` blocks on stdin until timeout. Every `run=124`, including its 2026-08-07
+  re-verification, is that. And `ECALLIND` **hard-errors**; it is not "silently" dead, as both
+  that file and `roadmap.md:865` claimed.
+- `2026-08-05-agnos-syscall-peer-…`: retitled to the one item that remains (`SYS_FORK = 96`
+  reserved). Items 2 and 3 verified shipped in live code at v6.5.8 / v6.5.7.
+- 35 `crossos/` test headers still named their pre-rename `vr01_*` filenames.
+
 ## [6.5.10] — 2026-08-07
 
 Both bugs filed against cyrius since 6.5.9 shipped. Both were measured before they were
