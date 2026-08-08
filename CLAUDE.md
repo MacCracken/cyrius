@@ -30,10 +30,20 @@ sh bootstrap/bootstrap.sh          # bootstrap from seed
 cat src/main.cyr | build/cycc > /tmp/cycc && chmod +x /tmp/cycc  # build compiler
 cat src/main.cyr | /tmp/cycc > /tmp/cc5b && cmp /tmp/cycc /tmp/cc5b  # self-hosting verify
 sh scripts/check.sh                # full audit
-cyrius test                        # run .tcyr suite   (recursive; takes a dir arg since v6.5.7)
-cyrius fuzz                        # run .fcyr harnesses (ditto)
-cyrius bench                       # run .bcyr benchmarks (ditto)
+cyrius test                        # run the whole .tcyr suite (recursive since v6.5.11)
+cyrius test <file>                 # run ONE .tcyr — singular takes a FILE, never a dir
+cyrius tests <dir>                 # run a subtree, e.g. `cyrius tests tests/tcyr/crossos`
+cyrius fuzz                        # run .fcyr harnesses (recursive)
+cyrius bench                       # run .bcyr benchmarks (recursive)
 ```
+
+> ⚠ **`test` (singular) takes a FILE; `tests` (plural) takes a DIRECTORY.** This block
+> read *"`cyrius test` — recursive; takes a dir arg since v6.5.7"* until v6.5.11, and
+> **both halves were wrong**: bare `cyrius test` was two depth-1 `dir_list` scans (it
+> found 2 of 4 files in a mixed-depth probe tree), and `cyrius test <dir>` errors
+> `not a file` and exits 1. v6.5.11 made the bare verb genuinely recursive, so the
+> promise this line had been making for four releases is now true — the dir-arg half
+> stays with the plural verb. `docs/guides/cyrius-guide.md` carried the same error.
 
 ## Key Principles
 
@@ -261,12 +271,29 @@ lib/                 Standard library (~99 lib/*.cyr modules)
 programs/            ~83 top-level *.cyr (tools, demos, algorithms, port probes)
                      + subdirs: checks/ (the check.sh gate driver — see
                      programs/checks/main.cyr) and cyrius-init-templates/
-tests/               Test suites: tcyr/*.tcyr, the tests/*.sh shell gates (incl.
-                     heapmap.sh — ALL of them are live; some are registered by
-                     exact path in programs/checks/main.cyr and the rest via
-                     named gate fns, so NEVER quote a shell-gate count you did
-                     not just derive with `ls tests/*.sh | wc -l`), plus
-                     fixtures/, data/, scyr/, smcyr/, win/
+tests/               Test suites, REORGANISED INTO SUBFOLDERS at v6.5.11:
+                     tcyr/<bucket>/*.tcyr — 15 topical buckets (codegen,
+                     compiler, concurrency, crossos, crypto, derive, formats,
+                     frontend, lang, math, memory, platform, simd, stdlib,
+                     text). ⭐ `tcyr/crossos/` is the CROSS-HOST set the release
+                     gate runs on real ecb/ach/cass/pi — it REPLACED the `vr01_`
+                     filename prefix, and the selector is now the DIRECTORY
+                     (scripts/cross-os-selfhost.sh + cross-os-libtest-runner.sh
+                     take a subdir, not a prefix). Adding a syscall wrapper still
+                     needs a companion test — put it in `tcyr/crossos/`.
+                     gates/<bucket>/*.sh — the shell gates in 8 buckets
+                     (codegen, concurrency, diagnostics, frontend, ir-opt,
+                     memory, platform, toolchain). ALL of them are live; some are
+                     registered by exact path in programs/checks/main.cyr and the
+                     rest driven from scripts/check.sh, so NEVER quote a
+                     shell-gate count you did not just derive with
+                     `find tests/gates -name '*.sh' | wc -l`.
+                     Plus fixtures/, data/, scyr/, smcyr/, win/ (unchanged).
+                     ⛔ EVERY reader of this tree is RECURSIVE and every gate
+                     carries a corpus FLOOR — a flat `tests/tcyr/*.tcyr` glob
+                     matches nothing here and used to fail SILENTLY GREEN (cycc
+                     on empty stdin exits 0 and emits a runnable binary, so an
+                     unmatched glob scored a fake PASS). Do not reintroduce one.
 benches/             Benchmarks (*.bcyr)
 fuzz/                Fuzz harnesses (*.fcyr)
 build/               Generated binaries (gitignored except `cycc`, `cc5`,

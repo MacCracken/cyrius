@@ -4,7 +4,7 @@
 # fields, truncations, garbage) into a fresh server ctx each iteration; a parser
 # bug = SIGSEGV (harness exit 139); a graceful TLS_ERR_* return is a PASS.
 # Deterministic LCG so a crash reproduces. Assembled by scripts, cert/key reused
-# from tests/tcyr/tls12_handshake.tcyr.
+# from tests/tcyr/crypto/tls12_handshake.tcyr.
 include "lib/tls_native.cyr"
 include "lib/str.cyr"
 include "lib/chrono.cyr"

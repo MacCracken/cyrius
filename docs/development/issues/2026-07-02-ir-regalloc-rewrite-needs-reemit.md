@@ -150,7 +150,7 @@ mode is added to the differential corpus.
 - **Spill-interval detection** (`_ir_find_spill_intervals`): counts clean intra-BB
   `PUSH`..`POP` intervals (the future allocation targets); abandons any span containing an
   opaque stack/reg op. Analysis-only — records nothing, allocates nothing.
-- Gate `tests/ir_liveness_cfg.sh`; both gated under `CYRIUS_IR`.
+- Gate `tests/gates/ir-opt/ir_liveness_cfg.sh`; both gated under `CYRIUS_IR`.
 
 ## The productionization slot — v6.5.x (superseded from v6.3.29, see header) (prerequisite for regalloc / copy-prop / cross-BB DSE)
 
@@ -174,7 +174,7 @@ A dedicated slot (**v6.5.x IR substrate productionization**, roadmap.md) must ma
    cycc. What is left is the tail measured live 2026-08-07 — **10 of 260 tcyr** differ in exit code
    between default and IR=3 (7 at run time, 3 at IR=3 *compile* time; named in the Wall 3 block
    above) — plus the still-unbuilt `CYRIUS_IR=3` axis in `differential.sh`, without which the mode
-   stays unverified on every cut. Gate `tests/ir3_fold_jump_span.sh` (mutation-proven, shipped
+   stays unverified on every cut. Gate `tests/gates/ir-opt/ir3_fold_jump_span.sh` (mutation-proven, shipped
    v6.5.2) is the model.
 
 **Then** (a later v6.5.x slot) land the IR-level passes on the sound substrate:

@@ -206,12 +206,18 @@ jobs:
           chmod +x scripts/cyrius
           ./scripts/cyrius deps
       - name: Heap map audit
-        run: sh tests/heapmap.sh
+        run: sh tests/gates/memory/heapmap.sh
       - name: Test suite (.tcyr)
         run: |
           pass=0; fail=0
-          for t in tests/tcyr/*.tcyr; do
-            name=$(basename "$t" .tcyr)
+          # v6.5.11: RECURSIVE find, not the flat `tests/tcyr/*.tcyr` glob. The corpus
+          # lives in topical subfolders now, and the flat glob would match NONE of them.
+          # That failure was SILENT-GREEN, not red: an unmatched glob stays literal, `cat`
+          # fails, but cycc on EMPTY stdin exits 0 and emits a runnable 4448-byte binary
+          # that exits 0 — so the one fake iteration scored PASS and the gate reported
+          # "1 passed, 0 failed" having run zero tests. release.yml gates on this file.
+          for t in $(find tests/tcyr -name '*.tcyr' | sort); do
+            name="${t#tests/tcyr/}"; name="${name%.tcyr}"   # bucket/name — NOT basename: two same-named tests in different buckets must be distinguishable in the log
             tmpbin="/tmp/ci_t_$$"
             cat "$t" | ./build/cycc > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
             if [ $? -ne 0 ]; then echo "FAIL (compile): $name"; fail=$((fail+1)); continue; fi
@@ -225,6 +231,10 @@ jobs:
             fi
           done
           echo "$pass passed, $fail failed"
+          # ⛔ NO SILENT CAPS. A count alone cannot raise the alarm — "1 passed, 0 failed"
+          # reads as green. The floor turns a blind reader into a hard failure.
+          ran=$((pass+fail))
+          test "$ran" -ge 250 || { echo "corpus floor: ran $ran .tcyr, expected >= 250 — a reader went blind"; exit 1; }
           test $fail -eq 0
       - name: Fuzz harnesses (VR-02, v6.2.29)
         run: |
@@ -456,15 +466,17 @@ jobs:
         # (2026-07-08-io-file-open-agnos-rdwr...). Linux O_RDWR round-trip + agnos build
         # clean + source integrity; the mirshi read-after-write leg runs where mirshi is
         # checked out (local dev) — CI does the build + integrity legs.
-        run: sh tests/io_rdwr_agnos.sh
+        run: sh tests/gates/platform/io_rdwr_agnos.sh
       - name: Test suite (.tcyr)
         run: |
-          pass=0; fail=0
-          for t in tests/tcyr/*.tcyr; do
+          pass=0; fail=0; skip=0
+          # v6.5.11: RECURSIVE find — see the note on the ubuntu Test suite step above
+          # for why the flat glob failed SILENTLY GREEN rather than red.
+          for t in $(find tests/tcyr -name '*.tcyr' | sort); do
+            name="${t#tests/tcyr/}"; name="${name%.tcyr}"   # bucket/name, unambiguous in the log
+            base="${t##*/}"; base="${base%.tcyr}"           # bare name, for the deps SKIP match
             # Skip tests requiring deps if deps not resolved
-            name=$(basename "$t" .tcyr)
-            case "$name" in sakshi|sakshi_full) [ ! -f lib/sakshi.cyr ] && echo "SKIP: $name (no deps)" && continue ;; esac
-            name=$(basename "$t" .tcyr)
+            case "$base" in sakshi|sakshi_full) [ ! -f lib/sakshi.cyr ] && echo "SKIP: $name (no deps)" && skip=$((skip+1)) && continue ;; esac
             tmpbin="/tmp/ci_t_$$"
             cat "$t" | ./build/cycc > "$tmpbin" 2>/dev/null && chmod +x "$tmpbin"
             if [ $? -ne 0 ]; then echo "FAIL (compile): $name"; fail=$((fail+1)); continue; fi
@@ -477,7 +489,10 @@ jobs:
               echo "PASS: $name"; pass=$((pass+1))
             fi
           done
-          echo "$pass passed, $fail failed"
+          echo "$pass passed, $fail failed, $skip skipped"
+          # ⛔ NO SILENT CAPS — a blind reader must fail, not report a small green number.
+          seen=$((pass+fail+skip))
+          test "$seen" -ge 250 || { echo "corpus floor: saw $seen .tcyr, expected >= 250 — a reader went blind"; exit 1; }
           test $fail -eq 0
       - name: Functional gate (real consumer flow — AGNOS userland container)
         # Tracking gate inside the sovereign AGNOS x86 userland container. Same
@@ -641,11 +656,18 @@ jobs:
           # imm9 large-frame limit that had blocked simd_ints from compiling on aarch64.)
           XFAIL=""
           pass=0; fail=0; xfail=0; xpass=0; skip=0
-          for t in tests/tcyr/*.tcyr; do
-            name=$(basename "$t" .tcyr)
-            case " $SKIP " in *" $name "*) skip=$((skip+1)); continue;; esac
-            isx=0; case " $XFAIL " in *" $name "*) isx=1;; esac
-            bin="/tmp/at_$name"
+          # v6.5.11: RECURSIVE find — the flat glob matched no subfoldered test and went
+          # silently green on a single fake iteration (cycc on empty stdin exits 0 and
+          # emits a runnable binary). SKIP/XFAIL stay keyed on the BARE name so existing
+          # entries keep working wherever a test lives; the log prints bucket/name so two
+          # same-named tests are never confused, and the temp binary path is derived from
+          # the FULL relative path (a basename-derived /tmp/at_$name collides across buckets).
+          for t in $(find tests/tcyr -name '*.tcyr' | sort); do
+            name="${t#tests/tcyr/}"; name="${name%.tcyr}"
+            base="${t##*/}"; base="${base%.tcyr}"
+            case " $SKIP " in *" $base "*) skip=$((skip+1)); continue;; esac
+            isx=0; case " $XFAIL " in *" $base "*) isx=1;; esac
+            bin="/tmp/at_$(printf '%s' "$name" | tr '/' '_')"
             if cat "$t" | $CC > "$bin" 2>/dev/null && chmod +x "$bin"; then
               # set-e-safe: the GHA shell is `bash -eo pipefail`, so a test that
               # exits non-zero (e.g. an XFAIL test that legitimately fails on ARM)
@@ -666,7 +688,13 @@ jobs:
               if [ $isx -eq 1 ]; then echo "  XPASS: $name — now PASSES on ARM; REMOVE it from XFAIL (see docs/development/issues/)"; xpass=$((xpass+1)); else pass=$((pass+1)); fi
             fi
           done
-          echo "tcyr-native: $pass pass / $fail fail / $xfail xfail / $xpass xpass / $skip skip (of $(ls tests/tcyr/*.tcyr | wc -l))"
+          corpus=$(find tests/tcyr -name '*.tcyr' | wc -l)
+          echo "tcyr-native: $pass pass / $fail fail / $xfail xfail / $xpass xpass / $skip skip (of $corpus)"
+          # ⛔ NO SILENT CAPS. The denominator used to be the SAME flat glob as the loop,
+          # so a blind reader stayed self-consistent: "1 pass … (of 1)" reads fine. The
+          # floor is an absolute number precisely so it cannot shrink along with the bug.
+          seen=$((pass+fail+xfail+xpass+skip))
+          test "$seen" -ge 250 || { echo "corpus floor: saw $seen .tcyr, expected >= 250 — a reader went blind"; exit 1; }
           # STRICT XFAIL (xfail_strict): an XPASS is a HARD failure, not a soft log
           # line. A test parked in XFAIL that starts passing MUST be removed — and CI
           # going RED is what forces someone to do it. A green check with a buried
@@ -1122,7 +1150,7 @@ jobs:
           #
           # This job cross-builds PE on Linux and cannot execute it, so the byte checks
           # below are a cheap per-push canary for encoding typos. The BEHAVIOURAL gate
-          # is tests/tcyr/vr01_win64_stack_args.tcyr, which runs on real cass via the
+          # is tests/tcyr/crossos/win64_stack_args.tcyr, which runs on real cass via the
           # release gate's vr01_ glob (arity 5/9/10/17 + nested).
           pass=0; fail=0
           for test in \

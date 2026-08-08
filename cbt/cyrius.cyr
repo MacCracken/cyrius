@@ -554,32 +554,25 @@ fn main(): i64 {
         if (argc() > ai) {
             return cmd_test(argv(ai));
         }
-        # No args: auto-discover tests/tcyr/*.tcyr
+        # No args: auto-discover every .tcyr under tests/, at ANY depth.
+        #
+        # v6.5.11: RECURSIVE, via the same `_tests_walk` the plural `cyrius tests`
+        # verb has used since v6.0.62. This was two depth-1 `dir_list` scans
+        # (tests/tcyr, then tests), so a test in a subfolder silently never ran
+        # while the verb still exited 0 — the same defect the v6.5.7 pass fixed for
+        # bench/fuzz and never brought this verb along with. See axis 4 of
+        # tests/gates/toolchain/scaffold_verb_discovery.sh: top-level-only is a
+        # defect, not a design choice.
+        #
+        # ONE root, deliberately: tests/tcyr lives UNDER tests/, so walking both
+        # recursively would visit every file in it TWICE (axis 7's double-count).
         _pass = 0; _fail = 0;
-        var found = 0;
-        var dirs = vec_new();
-        vec_push(dirs, "tests/tcyr");
-        vec_push(dirs, "tests");
-        var di = 0;
-        while (di < vec_len(dirs)) {
-            var tdir = vec_get(dirs, di);
-            if (is_dir(str_from(tdir)) == 1) {
-                var entries = dir_list(str_from(tdir));
-                var ei = 0;
-                while (ei < vec_len(entries)) {
-                    var name = vec_get(entries, ei);
-                    if (str_ends_with(name, str_from(".tcyr")) == 1) {
-                        found = 1;
-                        var path = make_path(tdir, str_data(name));
-                        cmd_test(path);
-                    }
-                    ei = ei + 1;
-                }
-            }
-            di = di + 1;
+        _tests_found = 0;
+        if (is_dir(str_from("tests")) == 1) {
+            _tests_walk("tests");
         }
-        if (found == 0) {
-            println("No .tcyr files found in tests/tcyr/ or tests/");
+        if (_tests_found == 0) {
+            println("No .tcyr files found under tests/");
             return 1;
         }
         sys_write(STDOUT_FD, "\n", 1);

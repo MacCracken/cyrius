@@ -15,7 +15,7 @@
 **Scope:** the untrusted-input surface of the compiler front end
 (`src/frontend/`), the CLI's temp-file and dependency-integrity surface
 (`cbt/`), and the gates that are supposed to be watching both
-(`tests/heapmap.sh`, `programs/checks/`, `scripts/*-gate.sh`).
+(`tests/gates/memory/heapmap.sh`, `programs/checks/`, `scripts/*-gate.sh`).
 **Methodology:** targeted re-scan of the CLAUDE.md item-2 patterns
 (`sys_system`/`sys_execve` on user-controlled args, `READFILE`/`sys_open` on
 unvalidated paths, `store8`/`store64` near region boundaries, predictable temp
@@ -43,7 +43,7 @@ something other than what the code did.**
    the wrong side of the only trust boundary the tool has (**CVE-32**).
 2. **The heap map hid it for three minors.** `src/main.cyr` documented that
    scratch at `0x190500 [256]` — an address **no code has ever written** (every
-   use is `0x190400`, unbounded). `tests/heapmap.sh` validated the comment,
+   use is `0x190400`, unbounded). `tests/gates/memory/heapmap.sh` validated the comment,
    found no overlap, and reported PASS across every closeout since.
 3. **The security control was the subvertible part.** `cyrius deps --verify`
    read its SHA-256 digests, and the force-pushed-tag refusal read its git HEAD,
@@ -106,7 +106,7 @@ the shape that passes the cycc fixpoint and then fails `seed-derive` silently.
 
 **Why it lived three minors: the map documented a fiction.** `src/main.cyr:90`
 recorded this region as `0x190500  include_fname [256]` — one page high and 16×
-too small. No code has ever written `0x190500`. `tests/heapmap.sh` therefore
+too small. No code has ever written `0x190500`. `tests/gates/memory/heapmap.sh` therefore
 validated a region that exists only in a comment, found no overlap, and reported
 PASS at every closeout. The map is corrected in all five forks to
 `0x190400  include_fname [4096]`.
@@ -277,8 +277,8 @@ the code did.*
 | Gate | What it described | What the code did |
 |---|---|---|
 | `src/main.cyr:90` heap map | `include_fname` at `0x190500`, 256 B | `0x190400`, unbounded — **no code has ever written `0x190500`** |
-| `tests/heapmap.sh:70` size parser | regions sized `[N]` | skipped every unit-suffixed entry — **blind to 20.02 MB of live heap**, incl. `ir_nodes [16 MB]`, and reported a phantom free gap that is fully occupied |
-| `tests/heapmap.sh:70` (again) | the region's size | took the *last* bracketed number, so a trailing prose `issue [5]` parsed `fn_param_struct_mask` as **5 bytes** — off by 13,107× |
+| `tests/gates/memory/heapmap.sh:70` size parser | regions sized `[N]` | skipped every unit-suffixed entry — **blind to 20.02 MB of live heap**, incl. `ir_nodes [16 MB]`, and reported a phantom free gap that is fully occupied |
+| `tests/gates/memory/heapmap.sh:70` (again) | the region's size | took the *last* bracketed number, so a trailing prose `issue [5]` parsed `fn_param_struct_mask` as **5 bytes** — off by 13,107× |
 | `scripts/agnos-crossbuild-gate.sh:401` | "syscall #84 is emitted" | `0x52`–`0x55` are ASCII `R`–`U`, so a **string-literal byte store** matched `mov eax,0x54` — mutating #84 → 99 still reported PASS (fixed v6.4.70) |
 | `programs/checks/platform_win_macho.cyr:471,693` | "the PE compiler works" | existence-only rebuild trigger on `build/cycc_win_cross`; nothing else in the repo refreshes it, so both PE gates ran a **`cycc 5.11.69`** binary for the whole v6.x line |
 | the six native forks' `CYRIUS_HAS_VAL_SIMD_PARAMS` | "value-form SIMD is tested" | tcyr run **natively**, so they exercised `main_win.cyr` (always correct) and never `src/main.cyr`'s cross arms (silently dropped the feature) |
@@ -303,7 +303,7 @@ valform-SIMD gate by reverting the two predefines (fails exactly the `pe` and
 That is the bar; it is cheap, and it is the only thing that distinguishes a gate
 from a comment.
 
-Related, and unresolved by fixes alone: `tests/heapmap.sh` can only audit what
+Related, and unresolved by fixes alone: `tests/gates/memory/heapmap.sh` can only audit what
 the map *has an entry for*. The v6.4.82 TS-arena finding — a 10,027,008-byte
 overlap with `tok_types` — was structurally invisible to it because the arena
 base was a **code literal**, not a map line. Sized regions that live as literals

@@ -66,8 +66,8 @@ times.** `dir_walk` gives no ordering guarantee, so a coverage axis with one sym
 passed against deliberately broken builds. When a fixture depends on position, say so and
 prove it.
 
-**CI runs neither `check.sh` nor `build/cyrius_check`** — only `tests/heapmap.sh` and
-`tests/io_rdwr_agnos.sh`. Everything else is local / release-gate only.
+**CI runs neither `check.sh` nor `build/cyrius_check`** — only `tests/gates/memory/heapmap.sh` and
+`tests/gates/platform/io_rdwr_agnos.sh`. Everything else is local / release-gate only.
 
 ## Two things owed to the maintainer
 

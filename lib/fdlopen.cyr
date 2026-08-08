@@ -805,7 +805,7 @@ fn fdlopen_init(state): i64 {
 # prot-bit encoding bug in `_fdlopen_mmap_elf` (PF_R / PF_X are
 # swapped relative to PROT_READ / PROT_EXEC); v5.5.34 fixed the
 # extraction and the full round-trip works — see the per-byte
-# reasoning at lines 405-413. `tests/tcyr/fdlopen.tcyr` exercises
+# reasoning at lines 405-413. `tests/tcyr/platform/fdlopen.tcyr` exercises
 # the full path end-to-end (real `dlopen("libc.so.6")` →
 # `dlsym("getpid")` → `fncall0(...) == syscall(39)` round-trip).
 fn fdlopen_init_full(state): i64 {

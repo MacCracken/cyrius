@@ -28,7 +28,7 @@ type: state
 >
 > **The source was lying too.** `src/main.cyr:338` (and the four sibling forks) still
 > documented `0x4D9D000 output_buf [16777216]` as a live 16 MB region. The heap map is
-> **machine-read** by `tests/heapmap.sh`, so a phantom region is audited as real. Description
+> **machine-read** by `tests/gates/memory/heapmap.sh`, so a phantom region is audited as real. Description
 > corrected in all five forks; the band is deliberately kept RESERVED so the overlap audit is
 > unchanged — reclaiming it is a closeout decision (closeout item 4), not a doc fix.
 >

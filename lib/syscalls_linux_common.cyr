@@ -478,7 +478,7 @@ fn sys_socketpair(domain, type, protocol, fds): i64 {
 # which is what this file's per-arch split is for. Do NOT "solve" this with an
 # ESYSXLAT entry for x86-52: it collides with the aarch64 peer's SYS_FCHMOD = 52 and
 # remaps fchmod to getpeername (CI caught precisely that — sandbox_syscalls RED on pi).
-# Gate: tests/tcyr/vr01_getpeername_xlat.tcyr.
+# Gate: tests/tcyr/crossos/getpeername_xlat.tcyr.
 fn sys_getpeername(fd, addr, addrlen): i64 {
     return syscall(SYS_GETPEERNAME, fd, addr, addrlen);
 }

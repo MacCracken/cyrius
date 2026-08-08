@@ -1,0 +1,61 @@
+# v5.6.2 regression — explicit overflow operators.
+# Covers all 9 operators: +% -% *% / +| -| *| / +? -? *?
+# Run via: cat tests/tcyr/lang/overflow_ops.tcyr | build/cc5 > /tmp/ovt && chmod +x /tmp/ovt && /tmp/ovt; echo $?
+# Expected exit: 0 (assert_summary returns 0 on all-pass).
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/overflow.cyr"
+
+fn main() {
+    alloc_init();
+
+    test_group("wrapping (+% -% *% — identical to + - *)");
+    assert_eq(3 +% 4, 7, "3 +% 4 == 7");
+    assert_eq(10 -% 3, 7, "10 -% 3 == 7");
+    assert_eq(6 *% 7, 42, "6 *% 7 == 42");
+
+    var i64_max = 0x7FFFFFFFFFFFFFFF;
+    var i64_min = 0 - 0x7FFFFFFFFFFFFFFF - 1;
+
+    # Wrapping must actually wrap — no trap, no clamp.
+    assert_eq(i64_max +% 1, i64_min, "i64_max +% 1 wraps to i64_min");
+    assert_eq(i64_min -% 1, i64_max, "i64_min -% 1 wraps to i64_max");
+
+    test_group("saturating (+| -| *|)");
+    assert_eq(3 +| 4, 7, "3 +| 4 == 7 (no overflow)");
+    assert_eq(10 -| 3, 7, "10 -| 3 == 7 (no overflow)");
+    assert_eq(6 *| 7, 42, "6 *| 7 == 42 (no overflow)");
+
+    # Overflow cases clamp to INT64_MAX / INT64_MIN.
+    assert_eq(i64_max +| 5, i64_max, "i64_max +| 5 clamps to MAX");
+    assert_eq(i64_min -| 1, i64_min, "i64_min -| 1 clamps to MIN");
+    assert_eq(i64_max *| 2, i64_max, "i64_max *| 2 clamps to MAX");
+    assert_eq(i64_min *| 2, i64_min, "i64_min *| 2 clamps to MIN");
+
+    # INT64_MIN * -1 is the pathological case (divide-back-trick
+    # misses it). _sat_mul_i64 guards explicitly — must clamp to MAX.
+    assert_eq(i64_min *| (0 - 1), i64_max, "i64_min *| -1 clamps to MAX (pathological)");
+
+    test_group("checked (+? -? *? — non-overflowing cases only)");
+    # We can't call _chk_* on overflow here without killing the test
+    # process (by design — panic exits with code 57). The panic path
+    # is covered by the standalone inline scenarios in the v5.6.2
+    # closeout. These assertions only check the happy path.
+    assert_eq(3 +? 4, 7, "3 +? 4 == 7 (no overflow)");
+    assert_eq(10 -? 3, 7, "10 -? 3 == 7 (no overflow)");
+    assert_eq(6 *? 7, 42, "6 *? 7 == 42 (no overflow)");
+    assert_eq((i64_max - 1) +? 1, i64_max, "(MAX-1) +? 1 == MAX (on the edge)");
+    assert_eq((i64_min + 1) -? 1, i64_min, "(MIN+1) -? 1 == MIN (on the edge)");
+
+    return assert_summary();
+}
+
+var r = main();
+syscall(60, r);

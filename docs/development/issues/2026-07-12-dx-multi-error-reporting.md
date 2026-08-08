@@ -31,7 +31,7 @@ guards kept missing one. The mechanism that works is a `_had_error`-gated watchd
 depth, so it never false-fires on valid code — cycc aborts cleanly. That universally bounds **any**
 desync spin rather than enumerating loops. It is inert until the first error, so valid input stays
 byte-identical. **The VR-02 fuzz gate is the acceptance bar** (`CYCC_FUZZ_ITERS=300
-sh tests/cycc_parser_fuzz.sh` = 0 crashes, 0 hangs); hand-crafted garbage tests missed the hangs
+sh tests/gates/diagnostics/cycc_parser_fuzz.sh` = 0 crashes, 0 hangs); hand-crafted garbage tests missed the hangs
 twice. Any future conversion of an inline site is safe by construction because the watchdog cannot
 be reintroduced-around.
 
@@ -114,7 +114,7 @@ line, never 7.x.
 A file whose errors are all semantic (e.g. several distinct undefined variables in separate
 statements) reports **N** `error:<source>:LINE:COL:` diagnostics with excerpts and exits 1, matching
 what the syntax class already does. Valid input stays byte-identical (self-host fixpoint +
-seed-derive). `CYCC_FUZZ_ITERS=300 sh tests/cycc_parser_fuzz.sh` stays green. Negative corpus green
+seed-derive). `CYCC_FUZZ_ITERS=300 sh tests/gates/diagnostics/cycc_parser_fuzz.sh` stays green. Negative corpus green
 on ecb / ach / cass / pi — and note that check.sh's grep summary masks segfaults, so use a per-file
 exit-code loop.
 

@@ -6,13 +6,37 @@
 # All lib includes + the 18 globals + the dispatcher/driver live in
 # programs/checks/main.cyr, which includes this file. See CHANGELOG [6.0.90].
 
+# Callers pass a BARE basename ("core.tcyr"). v6.5.11: the corpus lives in topical
+# subfolders, so resolve by SEARCH instead of pinning tests/tcyr/<basename> — that
+# concatenation could no longer reach any test in the tree. This fn has had no callers
+# since v5.9.25 (see main.cyr:391), which is exactly why it needed fixing rather than
+# leaving: a dead path-builder that cannot work is a trap for whoever revives it.
 fn _tcyr_relay_gate(gate_name, inner_label, tcyr_basename): i64 {
-    var tcyr_abs = _root_path("");
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, ROOT_PATH);
-    str_builder_add_cstr(sb, "/tests/tcyr/");
-    str_builder_add_cstr(sb, tcyr_basename);
-    var tcyr_path = str_data(str_builder_build(sb));
+    var root_dir = str_from(_root_path("tests/tcyr"));
+    var want = str_from(tcyr_basename);
+    var cands = find_files(root_dir, str_from(".tcyr"));
+    var tcyr_path = 0;
+    var ci = 0;
+    while (ci < vec_len(cands)) {
+        var cand = vec_get(cands, ci);
+        if (str_eq(path_basename(cand), want) == 1) {
+            tcyr_path = str_data(cand);
+            ci = vec_len(cands);
+        }
+        ci = ci + 1;
+    }
+    if (tcyr_path == 0) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(inner_label);
+        _p(" — no such .tcyr under tests/tcyr: ");
+        println(tcyr_basename);
+        _check(gate_name, 1);
+        return 1;
+    }
 
     var bin_path = _tmp_path("audit_relay_");
     var rc1 = _self_host_pipe(tcyr_path, CC_PATH, bin_path);
@@ -940,7 +964,7 @@ fn _self_host_gate(): i64 {
 
 fn _heapmap_gate(): i64 {
     _section("Heap Map");
-    _gate("no heap overlaps", "tests/heapmap.sh");
+    _gate("no heap overlaps", "tests/gates/memory/heapmap.sh");
     println("");
     return 0;
 }
@@ -1002,38 +1026,61 @@ fn _testsuite_gate(): i64 {
     _section("Test Suite");
     var dir = _root_path("tests/tcyr");
     var dir_str = str_from(dir);
-    var entries = dir_list(dir_str);
+    # v6.5.11: RECURSIVE (find_files walks subdirs; path_join → str_builder_build,
+    # which allocates total+1 and NUL-terminates, so str_data is a valid cstr).
+    # Was a flat dir_list: a subdirectory entry failed the extension test and was
+    # dropped with no recursion, no warning and no error. This is the ONLY .tcyr
+    # driver in the 162-gate audit, so a subfoldered corpus went invisible while
+    # the gate still printed PASS over a shrunken count.
+    var files = find_files(dir_str, str_from(".tcyr"));
+    var prefix_len = str_len(dir_str) + 1;
     var fail_count = 0;
     var total = 0;
     var i = 0;
-    while (i < vec_len(entries)) {
-        var name = vec_get(entries, i);
-        if (path_has_ext(name, str_from(".tcyr")) == 1) {
-            var full = path_join(dir_str, name);
-            var basename = path_basename(full);
-            var bn_data = str_data(basename);
-            var bn_len = str_len(basename);
-            var label_len = bn_len - 5;   # remove ".tcyr"
-            _p("  ");
-            print(bn_data, label_len);
-            # Pad to 22 columns.
-            var pad = 22 - label_len;
-            while (pad > 0) { _p(" "); pad = pad - 1; }
-            var failed = _tcyr_compile_and_run(str_data(full));
-            if (failed < 0) {
-                println("FAIL (compile)");
+    while (i < vec_len(files)) {
+        var full = vec_get(files, i);
+        # Label is the path RELATIVE to tests/tcyr (minus ".tcyr"), not the
+        # basename: two same-named tests in different buckets must not print the
+        # same line, or a failure names a file nobody can find.
+        var full_data = str_data(full);
+        var rel_data = full_data + prefix_len;
+        var label_len = str_len(full) - prefix_len - 5;
+        _p("  ");
+        print(rel_data, label_len);
+        # Pad to 34 columns (was 22 — bucket/name is longer than a bare name).
+        var pad = 34 - label_len;
+        while (pad > 0) { _p(" "); pad = pad - 1; }
+        var failed = _tcyr_compile_and_run(full_data);
+        if (failed < 0) {
+            println("FAIL (compile)");
+            fail_count = fail_count + 1;
+        } else { if (failed > 0) {
+                _p("FAIL (");
+                print_num(failed);
+                println(" failed)");
                 fail_count = fail_count + 1;
-            } else { if (failed > 0) {
-                    _p("FAIL (");
-                    print_num(failed);
-                    println(" failed)");
-                    fail_count = fail_count + 1;
-                } else {
-                    println("PASS");
-                } }
-            total = total + 1;
-        }
+            } else {
+                println("PASS");
+            } }
+        total = total + 1;
         i = i + 1;
+    }
+    # ⛔ NO SILENT CAPS. A corpus that SHRINKS is the failure this gate exists to
+    # catch, and a count alone cannot raise it — "test suite (160 files)" reads as
+    # green. The floor turns a blind reader into a hard FAIL. Raise it deliberately
+    # when the corpus grows; never lower it to make a run pass.
+    var floor = 250;
+    if (total < floor) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": corpus floor — found ");
+        print_num(total);
+        _p(" .tcyr, expected >= ");
+        print_num(floor);
+        println(" (a shrinking corpus means a reader went blind, not that tests passed)");
+        fail_count = fail_count + 1;
     }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "test suite (");

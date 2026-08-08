@@ -358,7 +358,7 @@ fn _sections_base_override_gate(): i64 {
 # libssl-free (no dlopen / no ld.so / no glibc TCB), which is the whole reason
 # in-kernel TLS is structurally possible where the libssl wrapper isn't. The
 # RUNNING proof (a full handshake over the hooks, zero socket/getrandom syscalls)
-# is tests/tcyr/tls_native_freestanding.tcyr in the testsuite walk.
+# is tests/tcyr/crypto/tls_native_freestanding.tcyr in the testsuite walk.
 fn _tls_freestanding_link_gate(): i64 {
     var label = "v6.3.4 #7: lib/tls_native links freestanding into a bare-metal kernel object (no libssl / dlopen / ld.so)";
     var src_path = _root_path("tests/fixtures/freestanding_tls/kernel_link.cyr");

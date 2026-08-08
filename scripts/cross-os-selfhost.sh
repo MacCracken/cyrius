@@ -318,8 +318,9 @@ if [ -n "$LIBTEST" ]; then
   esac
 fi
 if [ -n "$LIBTEST" ]; then
-  CORPUS_TOTAL=$(ls tests/tcyr/*.tcyr 2>/dev/null | wc -l | tr -d ' ')
-  # v6.5.8: CYRIUS_CROSS_OS_FULL=1 runs the WHOLE tcyr corpus instead of the glob.
+  # v6.5.11: RECURSIVE — the corpus lives in topical subfolders under tests/tcyr.
+  CORPUS_TOTAL=$(find tests/tcyr -name '*.tcyr' | wc -l | tr -d ' ')
+  # v6.5.8: CYRIUS_CROSS_OS_FULL=1 runs the WHOLE tcyr corpus instead of the subset.
   # Opt-in, not the default, and the reason is measured rather than assumed: a full run on
   # ecb takes 75 s (affordable only because the ssh loop is now batched — it was ~1.8 s of
   # handshake PER TEST before) and reports 235 pass / 23 fail. Those 23 are pre-existing
@@ -327,7 +328,16 @@ if [ -n "$LIBTEST" ]; then
   # regressions from this release — so defaulting to full would wedge every release behind
   # a separate arc. Filed with the measured list; flip the default when it reaches zero.
   if [ "${CYRIUS_CROSS_OS_FULL:-0}" = "1" ]; then LIBTEST=""; fi
-  TESTS=$(ls tests/tcyr/${LIBTEST}*.tcyr 2>/dev/null || true)
+  # v6.5.11: LIBTEST is a SUBDIRECTORY under tests/tcyr (it was the filename prefix
+  # "vr01_"). A missing directory is a hard error here; a prefix that matches nothing
+  # is indistinguishable from a prefix that matched a shrinking set, which is how a
+  # partial move would have reported "12 of 12 (0 NOT run)" — a self-consistent lie.
+  if [ -n "$LIBTEST" ]; then
+    [ -d "tests/tcyr/$LIBTEST" ] || { echo "LIBTEST_FAIL: no such directory tests/tcyr/$LIBTEST"; exit 1; }
+    TESTS=$(find "tests/tcyr/$LIBTEST" -name '*.tcyr' | sort)
+  else
+    TESTS=$(find tests/tcyr -name '*.tcyr' | sort)
+  fi
   [ -n "$TESTS" ] || { echo "LIBTEST_FAIL: no tests/tcyr matched '${LIBTEST}'"; exit 1; }
   SEL_N=$(echo "$TESTS" | wc -l | tr -d ' ')
   echo "── lib-test on $HOST (native cycc, real hardware) ──"
@@ -335,11 +345,11 @@ if [ -n "$LIBTEST" ]; then
   # <host>" with no numerator, denominator or the word "subset", so a gate running 32 of
   # 255 tcyr read as authoritative — and 6.5.7 proved the blind region holds real,
   # multi-release-shipped defects (xrmdir was broken on macOS-arm64 for five releases).
-  # No silent caps: if a glob narrows the corpus, the number dropped is printed.
+  # No silent caps: if the selection narrows the corpus, the number dropped is printed.
   if [ -z "$LIBTEST" ]; then
     echo "  corpus: ALL $SEL_N of $CORPUS_TOTAL tcyr (CYRIUS_CROSS_OS_FULL=1)"
   else
-    echo "  corpus: $SEL_N of $CORPUS_TOTAL tcyr selected by glob '${LIBTEST}*' ($((CORPUS_TOTAL - SEL_N)) NOT run on $HOST — set CYRIUS_CROSS_OS_FULL=1 for the whole corpus)"
+    echo "  corpus: $SEL_N of $CORPUS_TOTAL tcyr selected by subdir 'tests/tcyr/${LIBTEST}' ($((CORPUS_TOTAL - SEL_N)) NOT run on $HOST — set CYRIUS_CROSS_OS_FULL=1 for the whole corpus)"
   fi
 
   case "$HOST" in
@@ -369,12 +379,25 @@ if [ -n "$LIBTEST" ]; then
     LT_PASS=$(echo "$LT_SUM" | awk '{print $2}')
     LT_FAIL=$(echo "$LT_SUM" | awk '{print $3}')
     echo "  ran $LT_PASS passed, $LT_FAIL failed on $HOST"
+    # ⛔ v6.5.11: THE REMOTE MUST HAVE RUN WHAT WE SELECTED. Nothing used to compare the
+    # locally-computed SEL_N against the remote's pass+fail, so a corpus of 260 and a
+    # corpus of 0 were indistinguishable to this gate: the runner re-globs on the far
+    # side, an unmatched glob yields "__LIBTEST_SUMMARY__ 0 0", LT_FAIL=0 skips the
+    # failure branch, and the next line printed "LIBTEST_OK: <host> (0 tests)" — GREEN,
+    # having run nothing. That is precisely the macOS-rot shape this whole gate exists
+    # to prevent, and it was reachable before any file moved.
+    LT_RAN=$((LT_PASS + LT_FAIL))
+    if [ "$LT_RAN" -ne "$SEL_N" ]; then
+      printf '%s\n' "$LT_OUT" | tail -8
+      echo "  LIBTEST_FAIL: $HOST ran $LT_RAN test(s) but $SEL_N were selected — the remote saw a different corpus (stale checkout, or a selector that matches here and not there)"
+      exit 1
+    fi
     if [ "$LT_FAIL" != "0" ]; then
       printf '%s\n' "$LT_OUT" | grep '__LIBTEST_FAILED__' | sed 's/__LIBTEST_FAILED__/  failing:/'
       echo "  LIBTEST_FAIL: $LT_FAIL test(s) on $HOST"
       exit 1
     fi
-    echo "LIBTEST_OK: $HOST ($LT_PASS tests)"
+    echo "LIBTEST_OK: $HOST ($LT_PASS tests of $CORPUS_TOTAL corpus)"
   else
     # cass keeps the per-test loop DELIBERATELY. Its remote shell is cmd.exe, where
     # `prog & echo %errorlevel%` reports 0 at parse time and a redirect inside a

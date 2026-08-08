@@ -11,7 +11,7 @@
 # ================================================================
 # Check here FIRST before allocating new state.
 # Last full audit: v6.4.62 — monotonic layout, 100 regions
-# (0 overlaps, 0 warnings) verified by tests/heapmap.sh. The
+# (0 overlaps, 0 warnings) verified by tests/gates/memory/heapmap.sh. The
 # auditor's parser was last fixed in v5.5.40 (regex required 2+
 # spaces after hex offset, silently dropped every region past
 # 0x1FC000). Layout reads top-to-bottom matching runtime offsets;
@@ -837,7 +837,7 @@ SBL(S, bl);
 # survivable only because all three TS modes SYS_EXIT before PREPROCESS and LEX,
 # so the token arrays are never populated in TS mode: a TEMPORAL invariant
 # guarding a spatial collision, held by nothing but call ordering, and invisible
-# to tests/heapmap.sh because the base was a code literal rather than a map entry.
+# to tests/gates/memory/heapmap.sh because the base was a code literal rather than a map entry.
 #
 # Origin: 0x298B000 - 0x207B000 = 9,502,720 = exactly the 9.06 MB the v5.11.68
 # reorg shrank the heap by. That reorg moved ~35 region bases and MISSED THIS ONE
@@ -1505,7 +1505,7 @@ var _ir_env = _read_env("CYRIUS_IR");
 # instead of '3' and the ENTIRE CYRIUS_IR=3 fixpoint block silently did not run.
 # That is why the ir3 issue's bisection table showed five identical hashes — every one of
 # those rows was the same no-op, so the table pointed at a "pass cascade" that had never
-# executed. The real defect was in const_fold alone (see tests/ir3_fold_jump_span.sh).
+# executed. The real defect was in const_fold alone (see tests/gates/ir-opt/ir3_fold_jump_span.sh).
 var _ir_mode = 0;
 if (_ir_env != 0) {
     _ir_mode = load8(_ir_env);

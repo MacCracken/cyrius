@@ -277,7 +277,7 @@ fn PP_ALREADY_INCLUDED(S, fname): i64 {
 # source text with no flag, which is the whole threat model for a compiler.
 #
 # The heap map hid it: it documented this scratch at 0x190500 [256] — an address
-# NO code has ever written (every use is 0x190400) — so `tests/heapmap.sh`
+# NO code has ever written (every use is 0x190400) — so `tests/gates/memory/heapmap.sh`
 # validated a fiction and reported PASS through three minors of audits. The map
 # entry is corrected alongside this bound. See CHANGELOG [6.4.81].
 #

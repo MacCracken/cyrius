@@ -1,0 +1,972 @@
+# tests/tcyr/frontend/ts_parse_core.tcyr — TS parser core (AST + expr/stmt/type).
+#
+# v5.7.37: groups the 4 foundational parse tests — AST node
+# scaffolding (P2.1), expression parser (P2.2), statement
+# parser (P2.3), type-expression parser (P2.4). Includes both
+# `src/frontend/ts/lex.cyr` and `parse.cyr` once; bodies run
+# sequentially against a shared `ts_base`. See
+# `docs/development/roadmap.md §v5.7.37` for the grouping
+# rationale.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+include "src/frontend/ts/lex.cyr"
+include "src/frontend/ts/parse.cyr"
+
+alloc_init();
+var ts_base = alloc(TS_HEAP_SIZE + 4096);
+
+# ── helpers from ts_parse_p22 ──
+fn _ts_parse_p22_parse_expr(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    TS_PARSE_INIT(ts_base);
+    return TS_PARSE_EXPR(ts_base);
+}
+
+# ── helpers from ts_parse_p23 ──
+fn _ts_parse_p23_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+fn _ts_parse_p23_top_count() {
+    return TS_AST_PAYLOAD(ts_base, 0, 1);
+}
+fn _ts_parse_p23_parse_expr(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    TS_PARSE_INIT(ts_base);
+    return TS_PARSE_EXPR(ts_base);
+}
+
+# ── helpers from ts_parse_p24 ──
+fn _ts_parse_p24_parse_type(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    TS_PARSE_INIT(ts_base);
+    TS_AST_PUSH(ts_base, TS_AST_NONE, 0);    # placeholder at idx 0
+    return TS_PARSE_TYPE(ts_base);
+}
+fn _ts_parse_p24_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+fn _ts_parse_p24_parse_expr(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    TS_PARSE_INIT(ts_base);
+    TS_AST_PUSH(ts_base, TS_AST_NONE, 0);    # placeholder at idx 0
+    return TS_PARSE_EXPR(ts_base);
+}
+
+# ── ts_parse_p21 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p21() {
+    
+    
+    
+    # ─── AST node push + read ────────────────────────────────────────
+    test_group("AST node push + read");
+    
+    # Init state (zero counts)
+    TS_PARSE_INIT(ts_base);
+    assert_eq(TS_AST_NODE_COUNT(ts_base), 0, "node count starts 0");
+    
+    # Push three nodes; expect indices 0, 1, 2
+    var n0 = TS_AST_PUSH(ts_base, TS_AST_EXPR_INT,    100);     # span=100
+    var n1 = TS_AST_PUSH(ts_base, TS_AST_EXPR_IDENT,  200);
+    var n2 = TS_AST_PUSH(ts_base, TS_AST_EXPR_BINARY, 300);
+    assert_eq(n0, 0, "first push -> 0");
+    assert_eq(n1, 1, "second push -> 1");
+    assert_eq(n2, 2, "third push -> 2");
+    assert_eq(TS_AST_NODE_COUNT(ts_base), 3, "count = 3");
+    
+    # Read back kinds + spans
+    assert_eq(TS_AST_KIND(ts_base, 0), TS_AST_EXPR_INT,    "n0 kind = INT");
+    assert_eq(TS_AST_KIND(ts_base, 1), TS_AST_EXPR_IDENT,  "n1 kind = IDENT");
+    assert_eq(TS_AST_KIND(ts_base, 2), TS_AST_EXPR_BINARY, "n2 kind = BINARY");
+    assert_eq(TS_AST_SPAN(ts_base, 0), 100, "n0 span = 100");
+    assert_eq(TS_AST_SPAN(ts_base, 1), 200, "n1 span = 200");
+    assert_eq(TS_AST_SPAN(ts_base, 2), 300, "n2 span = 300");
+    
+    # Default payloads are zero
+    assert_eq(TS_AST_PAYLOAD(ts_base, 0, 0), 0, "n0.p0 = 0 (default)");
+    assert_eq(TS_AST_PAYLOAD(ts_base, 0, 3), 0, "n0.p3 = 0 (default)");
+    
+    # Set payloads on the binary node: op=PLUS, lhs=n0, rhs=n1
+    TS_AST_SET_PAYLOAD(ts_base, 2, 0, TS_TOK_PLUS);
+    TS_AST_SET_PAYLOAD(ts_base, 2, 1, n0);
+    TS_AST_SET_PAYLOAD(ts_base, 2, 2, n1);
+    assert_eq(TS_AST_PAYLOAD(ts_base, 2, 0), TS_TOK_PLUS, "binary.op = PLUS");
+    assert_eq(TS_AST_PAYLOAD(ts_base, 2, 1), n0,          "binary.lhs = n0");
+    assert_eq(TS_AST_PAYLOAD(ts_base, 2, 2), n1,          "binary.rhs = n1");
+    # p3 untouched
+    assert_eq(TS_AST_PAYLOAD(ts_base, 2, 3), 0, "binary.p3 still 0");
+    
+    # Verify n0 and n1 weren't disturbed by writes to n2
+    assert_eq(TS_AST_KIND(ts_base, 0), TS_AST_EXPR_INT, "n0 kind preserved");
+    assert_eq(TS_AST_KIND(ts_base, 1), TS_AST_EXPR_IDENT, "n1 kind preserved");
+    
+    # ─── Children-array helpers ──────────────────────────────────────
+    test_group("AST children array");
+    
+    TS_PARSE_INIT(ts_base);
+    
+    # Reserve a 3-child slot, write [0, 1, 2, -1], commit
+    var off = TS_AST_CHILDREN_RESERVE(ts_base, 3);
+    assert_eq(off, 0, "first reserve at offset 0");
+    TS_AST_CHILDREN_SET(ts_base, off + 0, 10);
+    TS_AST_CHILDREN_SET(ts_base, off + 1, 20);
+    TS_AST_CHILDREN_SET(ts_base, off + 2, 30);
+    TS_AST_CHILDREN_SET(ts_base, off + 3, 0 - 1);
+    TS_AST_CHILDREN_COMMIT(ts_base, 4);   # 3 children + sentinel
+    
+    assert_eq(TS_AST_CHILDREN_GET(ts_base, 0), 10, "child[0] = 10");
+    assert_eq(TS_AST_CHILDREN_GET(ts_base, 1), 20, "child[1] = 20");
+    assert_eq(TS_AST_CHILDREN_GET(ts_base, 2), 30, "child[2] = 30");
+    assert_eq(TS_AST_CHILDREN_GET(ts_base, 3), 0 - 1, "child[3] = -1 (sentinel)");
+    
+    # Reserve another after committing the first
+    var off2 = TS_AST_CHILDREN_RESERVE(ts_base, 2);
+    assert_eq(off2, 4, "second reserve at offset 4 (after first 4 entries)");
+    
+    # ─── Token-stream helpers ────────────────────────────────────────
+    test_group("token-stream helpers");
+    
+    # Lex a simple input first so the parser has tokens to walk
+    var src = "var x";
+    var n_toks = TS_LEX(ts_base, src, strlen(src));
+    assert(n_toks > 0, "lex produced tokens");
+    
+    TS_PARSE_INIT(ts_base);
+    
+    # At idx 0: KW_VAR
+    assert_eq(TS_PARSE_PEEK(ts_base), TS_TOK_KW_VAR, "PEEK[0] = KW_VAR");
+    assert_eq(TS_PARSE_PEEK_AHEAD(ts_base, 1), TS_TOK_IDENT, "PEEK_AHEAD[1] = IDENT");
+    
+    # MATCH succeeds + advances
+    assert_eq(TS_PARSE_MATCH(ts_base, TS_TOK_KW_VAR), 1, "MATCH KW_VAR -> 1, advances");
+    assert_eq(TS_PARSE_PEEK(ts_base), TS_TOK_IDENT, "now PEEK = IDENT");
+    
+    # MATCH on wrong type doesn't advance
+    assert_eq(TS_PARSE_MATCH(ts_base, TS_TOK_KW_LET), 0, "MATCH KW_LET -> 0 (no match)");
+    assert_eq(TS_PARSE_PEEK(ts_base), TS_TOK_IDENT, "still PEEK = IDENT");
+    
+    # EXPECT succeeds + advances
+    assert_eq(TS_PARSE_EXPECT(ts_base, TS_TOK_IDENT), 0, "EXPECT IDENT -> 0 (ok)");
+    assert_eq(TS_PARSE_PEEK(ts_base), TS_TOK_EOF, "consumed past IDENT, now EOF");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err after successful EXPECT");
+    
+    # EXPECT failure sets err code 3
+    assert_eq(TS_PARSE_EXPECT(ts_base, TS_TOK_KW_LET), 0 - 1, "EXPECT KW_LET (mismatch) -> -1");
+    assert_eq(TS_PARSE_GETERR(ts_base), 3, "err code 3 = unexpected token");
+    
+    # ─── TS_PARSE end-to-end (P2.3 behavior; was P2.1 stub / P2.2 expr) ──
+    test_group("TS_PARSE end-to-end");
+    
+    # Re-lex (parser state was dirtied by prior tests). With P2.3, a bare
+    # expression input parses as one top-level expression statement.
+    #   ROOT.payload[0]      -> children-array offset (head)
+    #   children[head]       -> first STMT_EXPR
+    #   STMT_EXPR.payload[0] -> the actual expression
+    n_toks = TS_LEX(ts_base, "99", 2);
+    assert(n_toks > 0, "lex OK for parse test");
+    
+    var n_nodes = TS_PARSE(ts_base);
+    assert(n_nodes >= 3, "TS_PARSE allocates ROOT + STMT_EXPR + EXPR_INT");
+    assert_eq(TS_AST_KIND(ts_base, 0), TS_AST_ROOT, "node[0] = ROOT");
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    var stmt = TS_AST_CHILDREN_GET(ts_base, head);
+    assert_eq(TS_AST_KIND(ts_base, stmt), TS_AST_STMT_EXPR, "first child = STMT_EXPR");
+    var top_expr = TS_AST_PAYLOAD(ts_base, stmt, 0);
+    assert_eq(TS_AST_KIND(ts_base, top_expr), TS_AST_EXPR_INT, "STMT_EXPR.payload[0] -> EXPR_INT");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no parse err");
+    
+    return 0;
+}
+
+# ── ts_parse_p22 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p22() {
+    
+    
+    
+    # Lex `src` then parse it directly as an expression. This bypasses
+    # TS_PARSE's statement-level dispatch — important so that test inputs
+    # starting with `{` resolve as object literals, not as block statements
+    # (which is the correct JS/TS interpretation at statement context).
+    
+    # ─── primary literals ────────────────────────────────────────────
+    test_group("primary literals");
+    
+    var n = _ts_parse_p22_parse_expr("42");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_INT, "42 -> EXPR_INT");
+    
+    n = _ts_parse_p22_parse_expr("0xDEAD");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_INT, "0xDEAD -> EXPR_INT");
+    
+    n = _ts_parse_p22_parse_expr("\"hello\"");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_STRING, "\"hello\" -> EXPR_STRING");
+    
+    n = _ts_parse_p22_parse_expr("true");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_TRUE, "true -> EXPR_TRUE");
+    
+    n = _ts_parse_p22_parse_expr("false");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_FALSE, "false -> EXPR_FALSE");
+    
+    n = _ts_parse_p22_parse_expr("null");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_NULL, "null -> EXPR_NULL");
+    
+    n = _ts_parse_p22_parse_expr("undefined");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNDEFINED, "undefined");
+    
+    n = _ts_parse_p22_parse_expr("this");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_THIS, "this");
+    
+    n = _ts_parse_p22_parse_expr("super");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_SUPER, "super");
+    
+    n = _ts_parse_p22_parse_expr("foo");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_IDENT, "foo -> IDENT");
+    
+    # Contextual keyword as ident
+    n = _ts_parse_p22_parse_expr("from");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_IDENT, "from as ident");
+    
+    n = _ts_parse_p22_parse_expr("/regex/g");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_REGEX, "/regex/g");
+    
+    # ─── parens, array, object, template ─────────────────────────────
+    test_group("paren / array / object / template");
+    
+    n = _ts_parse_p22_parse_expr("(42)");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_PAREN, "(42) -> PAREN");
+    var inner = TS_AST_PAYLOAD(ts_base, n, 0);
+    assert_eq(TS_AST_KIND(ts_base, inner), TS_AST_EXPR_INT, "PAREN.inner = INT");
+    
+    n = _ts_parse_p22_parse_expr("[1, 2, 3]");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARRAY, "[1,2,3] -> ARRAY");
+    
+    n = _ts_parse_p22_parse_expr("[]");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARRAY, "empty array");
+    
+    n = _ts_parse_p22_parse_expr("{}");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_OBJECT, "empty object");
+    
+    n = _ts_parse_p22_parse_expr("{x: 1, y: 2}");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_OBJECT, "object literal");
+    
+    n = _ts_parse_p22_parse_expr("`plain`");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_TEMPLATE, "plain template");
+    
+    n = _ts_parse_p22_parse_expr("`hi ${x}`");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_TEMPLATE, "template with interp");
+    
+    # ─── member chain + index + call ─────────────────────────────────
+    test_group("member / index / call / new");
+    
+    n = _ts_parse_p22_parse_expr("a.b");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_MEMBER, "a.b -> MEMBER");
+    var receiver = TS_AST_PAYLOAD(ts_base, n, 0);
+    assert_eq(TS_AST_KIND(ts_base, receiver), TS_AST_EXPR_IDENT, "MEMBER.receiver = IDENT");
+    
+    n = _ts_parse_p22_parse_expr("a.b.c");
+    # Outermost is MEMBER (.c), receiver = MEMBER (a.b)
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_MEMBER, "a.b.c -> MEMBER (left-assoc)");
+    var inner_member = TS_AST_PAYLOAD(ts_base, n, 0);
+    assert_eq(TS_AST_KIND(ts_base, inner_member), TS_AST_EXPR_MEMBER, "inner = MEMBER (a.b)");
+    
+    n = _ts_parse_p22_parse_expr("a?.b");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_OPTIONAL_MEMBER, "a?.b -> OPTIONAL_MEMBER");
+    
+    n = _ts_parse_p22_parse_expr("arr[0]");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_INDEX, "arr[0] -> INDEX");
+    
+    n = _ts_parse_p22_parse_expr("f()");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_CALL, "f() -> CALL");
+    
+    n = _ts_parse_p22_parse_expr("f(1, 2, 3)");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_CALL, "f(1,2,3) -> CALL");
+    
+    n = _ts_parse_p22_parse_expr("f(...args)");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_CALL, "spread arg");
+    
+    n = _ts_parse_p22_parse_expr("a?.()");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_OPTIONAL_CALL, "a?.()");
+    
+    n = _ts_parse_p22_parse_expr("new Foo()");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_NEW, "new Foo()");
+    
+    n = _ts_parse_p22_parse_expr("new Foo");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_NEW, "new Foo (no args)");
+    
+    # Chained: f(a).b[0]
+    n = _ts_parse_p22_parse_expr("f(a).b[0]");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_INDEX, "f(a).b[0] -> outermost INDEX");
+    
+    # ─── postfix ─────────────────────────────────────────────────────
+    test_group("postfix");
+    
+    n = _ts_parse_p22_parse_expr("x++");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_POSTFIX, "x++ -> POSTFIX");
+    
+    n = _ts_parse_p22_parse_expr("x--");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_POSTFIX, "x--");
+    
+    n = _ts_parse_p22_parse_expr("x!");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_NON_NULL, "x! -> NON_NULL");
+    
+    n = _ts_parse_p22_parse_expr("arr[0]!.foo");
+    # After arr[0]!, we have MEMBER (?.foo? no — just .foo).
+    # Outermost is MEMBER (.foo), receiver = NON_NULL (arr[0]!),
+    #                                         which has operand INDEX.
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_MEMBER, "arr[0]!.foo -> MEMBER");
+    
+    # ─── unary prefix ────────────────────────────────────────────────
+    test_group("unary prefix");
+    
+    n = _ts_parse_p22_parse_expr("!x");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNARY, "!x -> UNARY");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_BANG, "op = BANG");
+    
+    n = _ts_parse_p22_parse_expr("~x");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNARY, "~x");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_TILDE, "op = TILDE");
+    
+    n = _ts_parse_p22_parse_expr("-x");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNARY, "-x");
+    
+    n = _ts_parse_p22_parse_expr("++x");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNARY, "++x prefix");
+    
+    n = _ts_parse_p22_parse_expr("typeof x");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNARY, "typeof x");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_KW_TYPEOF, "op = TYPEOF");
+    
+    n = _ts_parse_p22_parse_expr("void 0");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNARY, "void 0");
+    
+    n = _ts_parse_p22_parse_expr("delete obj.x");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNARY, "delete obj.x");
+    
+    n = _ts_parse_p22_parse_expr("await p");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNARY, "await p");
+    
+    # Stacked unary
+    n = _ts_parse_p22_parse_expr("!!x");
+    # Outer = UNARY (BANG), operand = UNARY (BANG)
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_UNARY, "!!x outer UNARY");
+    var stacked = TS_AST_PAYLOAD(ts_base, n, 1);
+    assert_eq(TS_AST_KIND(ts_base, stacked), TS_AST_EXPR_UNARY, "!!x inner UNARY");
+    
+    # ─── binary precedence ───────────────────────────────────────────
+    test_group("binary precedence");
+    
+    n = _ts_parse_p22_parse_expr("1 + 2");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_BINARY, "1+2 -> BINARY");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_PLUS, "op = PLUS");
+    
+    # Precedence: 1 + 2 * 3 should be 1 + (2 * 3)
+    n = _ts_parse_p22_parse_expr("1 + 2 * 3");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_BINARY, "1+2*3 outer BINARY");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_PLUS, "outer op = +");
+    var rhs = TS_AST_PAYLOAD(ts_base, n, 2);
+    assert_eq(TS_AST_KIND(ts_base, rhs), TS_AST_EXPR_BINARY, "RHS is BINARY");
+    assert_eq(TS_AST_PAYLOAD(ts_base, rhs, 0), TS_TOK_STAR, "inner op = *");
+    
+    # 1 * 2 + 3 -> (1 * 2) + 3
+    n = _ts_parse_p22_parse_expr("1 * 2 + 3");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_PLUS, "outer op = + (after *)");
+    var lhs = TS_AST_PAYLOAD(ts_base, n, 1);
+    assert_eq(TS_AST_PAYLOAD(ts_base, lhs, 0), TS_TOK_STAR, "inner op = *");
+    
+    # Left-assoc: 1 - 2 - 3 -> (1 - 2) - 3
+    n = _ts_parse_p22_parse_expr("1 - 2 - 3");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_MINUS, "outer = -");
+    var lhs2 = TS_AST_PAYLOAD(ts_base, n, 1);
+    assert_eq(TS_AST_KIND(ts_base, lhs2), TS_AST_EXPR_BINARY, "LHS is also BINARY (left-assoc)");
+    
+    # Right-assoc: 2 ** 3 ** 4 -> 2 ** (3 ** 4)
+    n = _ts_parse_p22_parse_expr("2 ** 3 ** 4");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_STAR_STAR, "** op");
+    var rhs2 = TS_AST_PAYLOAD(ts_base, n, 2);
+    assert_eq(TS_AST_KIND(ts_base, rhs2), TS_AST_EXPR_BINARY, "RHS is BINARY (right-assoc)");
+    assert_eq(TS_AST_PAYLOAD(ts_base, rhs2, 0), TS_TOK_STAR_STAR, "RHS op = **");
+    
+    # Logical: a && b || c -> (a && b) || c (|| has lower prec)
+    n = _ts_parse_p22_parse_expr("a && b || c");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_PIPE_PIPE, "outer = ||");
+    
+    # Comparison: a < b == c
+    n = _ts_parse_p22_parse_expr("a < b == c");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_EQ_EQ, "outer = ==");
+    
+    # Bitwise + shift
+    n = _ts_parse_p22_parse_expr("a | b & c");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_PIPE, "outer = | (& higher prec)");
+    
+    n = _ts_parse_p22_parse_expr("a << 1 + 2");
+    # << prec=11, + prec=12, so + binds tighter: a << (1 + 2)
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_LT_LT, "outer = << (+ binds tighter)");
+    
+    # instanceof / in
+    n = _ts_parse_p22_parse_expr("x instanceof Foo");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_KW_INSTANCEOF, "instanceof");
+    
+    n = _ts_parse_p22_parse_expr("k in obj");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_KW_IN, "in");
+    
+    # Nullish ??
+    n = _ts_parse_p22_parse_expr("a ?? b");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_QQ, "??");
+    
+    # ─── ternary ─────────────────────────────────────────────────────
+    test_group("ternary");
+    
+    n = _ts_parse_p22_parse_expr("a ? b : c");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_TERNARY, "ternary");
+    
+    # Right-assoc: a ? b : c ? d : e -> a ? b : (c ? d : e)
+    n = _ts_parse_p22_parse_expr("a ? b : c ? d : e");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_TERNARY, "outer ternary");
+    var els = TS_AST_PAYLOAD(ts_base, n, 2);
+    assert_eq(TS_AST_KIND(ts_base, els), TS_AST_EXPR_TERNARY, "else is ternary (right-assoc)");
+    
+    # ─── assignment ──────────────────────────────────────────────────
+    test_group("assignment");
+    
+    n = _ts_parse_p22_parse_expr("x = 1");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ASSIGN, "x = 1");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_EQ, "op = =");
+    
+    n = _ts_parse_p22_parse_expr("x += 1");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_PLUS_EQ, "+=");
+    
+    n = _ts_parse_p22_parse_expr("x ??= y");
+    assert_eq(TS_AST_PAYLOAD(ts_base, n, 0), TS_TOK_QQ_EQ, "??=");
+    
+    # Right-assoc: a = b = c -> a = (b = c)
+    n = _ts_parse_p22_parse_expr("a = b = c");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ASSIGN, "a=b=c outer ASSIGN");
+    var rhs3 = TS_AST_PAYLOAD(ts_base, n, 2);
+    assert_eq(TS_AST_KIND(ts_base, rhs3), TS_AST_EXPR_ASSIGN, "rhs is ASSIGN (right-assoc)");
+    
+    # ─── error paths ─────────────────────────────────────────────────
+    test_group("error paths");
+    
+    # Missing close paren
+    n = _ts_parse_p22_parse_expr("(1 + 2");
+    assert_eq(n, 0 - 1, "missing ) -> error");
+    assert(TS_PARSE_GETERR(ts_base) > 0, "err code set");
+    
+    # Missing close bracket
+    n = _ts_parse_p22_parse_expr("[1, 2");
+    assert_eq(n, 0 - 1, "missing ]");
+    
+    # Unexpected token at primary
+    n = _ts_parse_p22_parse_expr(";");
+    assert_eq(n, 0 - 1, "; not a primary -> error");
+    
+    # Missing colon in ternary
+    n = _ts_parse_p22_parse_expr("a ? b");
+    assert_eq(n, 0 - 1, "missing :");
+    
+    return 0;
+}
+
+# ── ts_parse_p23 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p23() {
+    
+    
+    
+    # Lex `src` then run TS_PARSE. Returns the index of the FIRST top-level
+    # statement (peeled out of ROOT.payload[0] / children-array).
+    
+    # Returns the count of top-level statements parsed by the most recent
+    # _ts_parse_p23_parse_first_stmt call.
+    
+    # Lex + parse as expression (bypasses statement dispatch). Used to test
+    # arrow functions in expression context.
+    
+    # ─── var / let / const ───────────────────────────────────────────
+    test_group("var/let/const declarations");
+    
+    var s = _ts_parse_p23_parse_first_stmt("var x = 1;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "var x = 1 -> VAR_DECL");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on var");
+    
+    s = _ts_parse_p23_parse_first_stmt("let y;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "let y -> VAR_DECL");
+    
+    s = _ts_parse_p23_parse_first_stmt("const z = 42;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "const z = 42 -> VAR_DECL");
+    
+    # Comma-list of bindings: `let a = 1, b = 2, c;`
+    s = _ts_parse_p23_parse_first_stmt("let a = 1, b = 2, c;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "comma-list of bindings parses");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on comma-list");
+    
+    # Object destructuring: `const { a, b } = obj;`
+    s = _ts_parse_p23_parse_first_stmt("const { a, b } = obj;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "object destructure parses");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on object destructure");
+    
+    # Array destructuring: `const [x, y] = arr;`
+    s = _ts_parse_p23_parse_first_stmt("const [x, y] = arr;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "array destructure parses");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on array destructure");
+    
+    # Rest in destructure: `const [first, ...rest] = arr;`
+    s = _ts_parse_p23_parse_first_stmt("const [first, ...rest] = arr;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "array rest pattern parses");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on rest in array");
+    
+    # Type annotation: `let n: number = 42;`
+    s = _ts_parse_p23_parse_first_stmt("let n: number = 42;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "typed binding parses");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on typed binding");
+    
+    # ─── if / else ───────────────────────────────────────────────────
+    test_group("if / else");
+    
+    s = _ts_parse_p23_parse_first_stmt("if (x > 0) y = 1;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_IF, "if -> STMT_IF");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on if");
+    
+    s = _ts_parse_p23_parse_first_stmt("if (x) { a; } else { b; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_IF, "if/else -> STMT_IF");
+    # The else branch should be a non-zero payload[2]
+    var else_node = TS_AST_PAYLOAD(ts_base, s, 2);
+    assert(else_node != 0, "if/else has else branch");
+    
+    # ─── for (3 variants) ────────────────────────────────────────────
+    test_group("for variants");
+    
+    # C-style
+    s = _ts_parse_p23_parse_first_stmt("for (let i = 0; i < 10; i = i + 1) sum = sum + i;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_FOR, "C-style for -> STMT_FOR");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on C-for");
+    
+    # for-of
+    s = _ts_parse_p23_parse_first_stmt("for (const x of arr) y = x;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_FOR_OF, "for-of -> STMT_FOR_OF");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on for-of");
+    
+    # for-in
+    s = _ts_parse_p23_parse_first_stmt("for (const k in obj) y = k;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_FOR_IN, "for-in -> STMT_FOR_IN");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on for-in");
+    
+    # ─── while / do-while ────────────────────────────────────────────
+    test_group("while / do-while");
+    
+    s = _ts_parse_p23_parse_first_stmt("while (x > 0) x = x - 1;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_WHILE, "while -> STMT_WHILE");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on while");
+    
+    s = _ts_parse_p23_parse_first_stmt("do { x = x + 1; } while (x < 10);");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_DO_WHILE, "do-while -> STMT_DO_WHILE");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on do-while");
+    
+    # ─── return / throw / break / continue ────────────────────────────
+    test_group("return / throw / break / continue");
+    
+    s = _ts_parse_p23_parse_first_stmt("return 42;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_RETURN, "return -> STMT_RETURN");
+    
+    s = _ts_parse_p23_parse_first_stmt("return;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_RETURN, "bare return parses");
+    
+    s = _ts_parse_p23_parse_first_stmt("throw err;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_THROW, "throw -> STMT_THROW");
+    
+    s = _ts_parse_p23_parse_first_stmt("break;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_BREAK, "break -> STMT_BREAK");
+    
+    s = _ts_parse_p23_parse_first_stmt("continue;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_CONTINUE, "continue -> STMT_CONTINUE");
+    
+    # ─── try / catch / finally ───────────────────────────────────────
+    test_group("try / catch / finally");
+    
+    s = _ts_parse_p23_parse_first_stmt("try { a; } catch (e) { b; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_TRY, "try-catch -> STMT_TRY");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on try-catch");
+    
+    s = _ts_parse_p23_parse_first_stmt("try { a; } finally { c; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_TRY, "try-finally -> STMT_TRY");
+    
+    s = _ts_parse_p23_parse_first_stmt("try { a; } catch (e) { b; } finally { c; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_TRY, "try-catch-finally -> STMT_TRY");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on full try");
+    
+    # ─── switch ──────────────────────────────────────────────────────
+    test_group("switch");
+    
+    s = _ts_parse_p23_parse_first_stmt("switch (x) { case 1: a; case 2: b; default: c; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_SWITCH, "switch -> STMT_SWITCH");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on switch");
+    
+    # ─── blocks ──────────────────────────────────────────────────────
+    test_group("blocks");
+    
+    s = _ts_parse_p23_parse_first_stmt("{ a; b; c; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_BLOCK, "{ ... } at stmt context -> STMT_BLOCK");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on block");
+    
+    # Empty block
+    s = _ts_parse_p23_parse_first_stmt("{}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_BLOCK, "{} -> STMT_BLOCK");
+    
+    # ─── arrow functions ─────────────────────────────────────────────
+    test_group("arrow functions");
+    
+    # Bare-ident arrow
+    var n = _ts_parse_p23_parse_expr("x => x + 1");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARROW, "x => x+1 -> EXPR_ARROW");
+    assert_eq(TS_PARSE_GETERR(ts_base), 0, "no err on bare-ident arrow");
+    
+    # Paren arrow with no params
+    n = _ts_parse_p23_parse_expr("() => 42");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARROW, "() => 42 -> EXPR_ARROW");
+    
+    # Paren arrow with multiple params
+    n = _ts_parse_p23_parse_expr("(a, b) => a + b");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARROW, "(a, b) => a+b -> EXPR_ARROW");
+    
+    # Paren arrow with type annotations
+    n = _ts_parse_p23_parse_expr("(a: number, b: number) => a + b");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARROW, "(a: T, b: T) => ... -> EXPR_ARROW");
+    
+    # Paren arrow with return type — P2.4 changed payload[2] from a 0/1
+    # marker to the actual return-type AST node index.
+    n = _ts_parse_p23_parse_expr("(x: number): number => x * 2");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARROW, "(x: T): T => ... -> EXPR_ARROW");
+    var ret_node = TS_AST_PAYLOAD(ts_base, n, 2);
+    assert(ret_node > 0, "arrow with return type stores node idx (P2.4)");
+    assert_eq(TS_AST_KIND(ts_base, ret_node), TS_AST_TYPE_REF, "return type -> TYPE_REF");
+    
+    # Arrow with block body
+    n = _ts_parse_p23_parse_expr("(x) => { return x + 1; }");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARROW, "arrow with block body parses");
+    
+    # Arrow with default param
+    n = _ts_parse_p23_parse_expr("(x = 0) => x");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARROW, "arrow with default param parses");
+    
+    # Arrow with rest param
+    n = _ts_parse_p23_parse_expr("(...args) => args");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_ARROW, "arrow with rest param parses");
+    
+    # Arrow vs paren-expr disambiguation: `(1 + 2)` is NOT an arrow
+    n = _ts_parse_p23_parse_expr("(1 + 2)");
+    assert_eq(TS_AST_KIND(ts_base, n), TS_AST_EXPR_PAREN, "(1+2) -> PAREN, not ARROW");
+    
+    # ─── multi-statement programs ────────────────────────────────────
+    test_group("multi-stmt programs");
+    
+    s = _ts_parse_p23_parse_first_stmt("var x = 1; var y = 2; var z = 3;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "first of three stmts");
+    assert_eq(_ts_parse_p23_top_count(), 3, "three top-level statements counted");
+    
+    s = _ts_parse_p23_parse_first_stmt("if (x) y; else z; while (a) b;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_IF, "first stmt is IF");
+    assert_eq(_ts_parse_p23_top_count(), 2, "two top-level stmts");
+    
+    # Empty input -> 0 statements, ROOT only
+    var nt = TS_LEX(ts_base, "", 0);
+    assert(nt >= 0, "lex empty OK");
+    var nn = TS_PARSE(ts_base);
+    assert(nn >= 1, "TS_PARSE on empty -> at least ROOT");
+    assert_eq(_ts_parse_p23_top_count(), 0, "empty input -> 0 stmts");
+    
+    # ─── error path ──────────────────────────────────────────────────
+    test_group("statement parse errors");
+    
+    # Invalid statement (lonely operator) should set err
+    nt = TS_LEX(ts_base, "+", 1);
+    assert(nt > 0, "lex single + OK");
+    nn = TS_PARSE(ts_base);
+    assert(TS_PARSE_GETERR(ts_base) != 0, "lonely + sets parse err");
+    
+    return 0;
+}
+
+# ── ts_parse_p24 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p24() {
+    
+    
+    
+    # Push a placeholder node-0 (NONE) before parsing so real AST nodes
+    # start at index 1. This sidesteps a 0-vs-default-zero-payload
+    # ambiguity: payload slots zero-default, so we want index 0 to never
+    # be a real result. (TS_PARSE itself takes care of this by allocating
+    # ROOT at index 0 — but _ts_parse_p24_parse_type/_ts_parse_p24_parse_expr below skip TS_PARSE.)
+    
+    # Lex `src` then parse it directly as a type expression.
+    
+    # Parse `src` as a top-level statement; return first stmt index.
+    
+    # Parse `src` as an expression (bypasses statement dispatch).
+    
+    # ─── primitives, refs, literal types ─────────────────────────────
+    test_group("primitives / refs / literals");
+    
+    var t = _ts_parse_p24_parse_type("void");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_PRIMITIVE, "void -> TYPE_PRIMITIVE");
+    
+    t = _ts_parse_p24_parse_type("number");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_REF, "number -> TYPE_REF");
+    
+    t = _ts_parse_p24_parse_type("string");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_REF, "string -> TYPE_REF");
+    
+    t = _ts_parse_p24_parse_type("MyType");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_REF, "MyType -> TYPE_REF");
+    
+    t = _ts_parse_p24_parse_type("Foo.Bar.Baz");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_REF, "qualified ref parses");
+    
+    t = _ts_parse_p24_parse_type("\"literal\"");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_LITERAL, "string literal type");
+    
+    t = _ts_parse_p24_parse_type("42");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_LITERAL, "int literal type");
+    
+    t = _ts_parse_p24_parse_type("true");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_LITERAL, "true literal type");
+    
+    t = _ts_parse_p24_parse_type("null");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_LITERAL, "null literal type");
+    
+    # ─── generic refs ────────────────────────────────────────────────
+    test_group("generic refs");
+    
+    t = _ts_parse_p24_parse_type("Array<number>");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_REF, "Array<number> -> TYPE_REF");
+    assert(TS_AST_PAYLOAD(ts_base, t, 1) >= 0, "type-args offset stored");
+    
+    t = _ts_parse_p24_parse_type("Map<string, number>");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_REF, "Map<K,V>");
+    
+    t = _ts_parse_p24_parse_type("Promise<Array<string>>");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_REF, "nested generics");
+    
+    # ─── postfix array ───────────────────────────────────────────────
+    test_group("array postfix");
+    
+    t = _ts_parse_p24_parse_type("number[]");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_ARRAY, "number[] -> TYPE_ARRAY");
+    
+    t = _ts_parse_p24_parse_type("number[][]");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_ARRAY, "number[][] outer -> TYPE_ARRAY");
+    
+    t = _ts_parse_p24_parse_type("Array<T>[]");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_ARRAY, "Array<T>[]");
+    
+    # ─── tuples ──────────────────────────────────────────────────────
+    test_group("tuples");
+    
+    t = _ts_parse_p24_parse_type("[number, string]");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_TUPLE, "[number, string] -> TYPE_TUPLE");
+    
+    t = _ts_parse_p24_parse_type("[number, string?]");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_TUPLE, "tuple with optional");
+    
+    t = _ts_parse_p24_parse_type("[number, ...string[]]");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_TUPLE, "tuple with rest");
+    
+    t = _ts_parse_p24_parse_type("[]");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_TUPLE, "empty tuple");
+    
+    # ─── unions / intersections ──────────────────────────────────────
+    test_group("unions / intersections");
+    
+    t = _ts_parse_p24_parse_type("string | number");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_UNION, "T | U -> UNION");
+    
+    t = _ts_parse_p24_parse_type("string | number | boolean");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_UNION, "T | U | V -> UNION");
+    
+    t = _ts_parse_p24_parse_type("A & B");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_INTERSECTION, "T & U -> INTERSECTION");
+    
+    t = _ts_parse_p24_parse_type("A & B & C");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_INTERSECTION, "T & U & V");
+    
+    # Mixed: precedence is union-of-intersections (& binds tighter than |)
+    t = _ts_parse_p24_parse_type("A & B | C & D");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_UNION, "A&B | C&D -> UNION at top");
+    
+    # Leading | is allowed
+    t = _ts_parse_p24_parse_type("| string | number");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_UNION, "leading | accepted");
+    
+    # Single member (no |) -> the member directly, not a UNION wrapper
+    t = _ts_parse_p24_parse_type("string");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_REF, "single type not wrapped");
+    
+    # ─── object types ────────────────────────────────────────────────
+    test_group("object types");
+    
+    t = _ts_parse_p24_parse_type("{ x: number }");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_OBJECT, "{x:T} -> TYPE_OBJECT");
+    
+    t = _ts_parse_p24_parse_type("{ x: number; y: string }");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_OBJECT, "two props");
+    
+    t = _ts_parse_p24_parse_type("{ x?: number, readonly y: string }");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_OBJECT, "optional + readonly modifiers");
+    
+    t = _ts_parse_p24_parse_type("{}");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_OBJECT, "empty object type");
+    
+    # Index signature
+    t = _ts_parse_p24_parse_type("{ [k: string]: number }");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_OBJECT, "index sig in object");
+    
+    # ─── function types ──────────────────────────────────────────────
+    test_group("function types");
+    
+    t = _ts_parse_p24_parse_type("() => void");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_FN, "() => void -> TYPE_FN");
+    
+    t = _ts_parse_p24_parse_type("(x: number) => string");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_FN, "single-arg fn type");
+    
+    t = _ts_parse_p24_parse_type("(a: number, b: number) => number");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_FN, "two-arg fn type");
+    
+    t = _ts_parse_p24_parse_type("(...args: number[]) => void");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_FN, "rest param fn type");
+    
+    # Paren type vs fn type — disambiguation
+    t = _ts_parse_p24_parse_type("(number)");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_PAREN, "(number) -> TYPE_PAREN, not FN");
+    
+    t = _ts_parse_p24_parse_type("(string | number)");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_PAREN, "(union) -> TYPE_PAREN");
+    
+    # ─── keyof / typeof ──────────────────────────────────────────────
+    test_group("keyof / typeof");
+    
+    t = _ts_parse_p24_parse_type("keyof T");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_KEYOF, "keyof T -> TYPE_KEYOF");
+    
+    t = _ts_parse_p24_parse_type("keyof Array<number>");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_KEYOF, "keyof generic");
+    
+    t = _ts_parse_p24_parse_type("typeof obj");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_TYPEOF, "typeof x -> TYPE_TYPEOF");
+    
+    t = _ts_parse_p24_parse_type("typeof obj.prop");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_TYPEOF, "typeof qualified");
+    
+    # ─── integration: var bindings carry type in payload[1] ──────────
+    test_group("var binding type integration");
+    
+    var s = _ts_parse_p24_parse_first_stmt("let x: number = 42;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "let x: number = 42 parses");
+    # Navigate: STMT_VAR_DECL.payload[1] = bindings list (children offset)
+    var bindings = TS_AST_PAYLOAD(ts_base, s, 1);
+    var first_binding = TS_AST_CHILDREN_GET(ts_base, bindings);
+    assert_eq(TS_AST_KIND(ts_base, first_binding), TS_AST_DECL_VAR_BINDING, "binding -> VAR_BINDING");
+    var t_node = TS_AST_PAYLOAD(ts_base, first_binding, 1);
+    assert(t_node > 0, "binding has type node");
+    assert_eq(TS_AST_KIND(ts_base, t_node), TS_AST_TYPE_REF, "type stored as TYPE_REF");
+    
+    # Binding without explicit type
+    s = _ts_parse_p24_parse_first_stmt("let y = 1;");
+    bindings = TS_AST_PAYLOAD(ts_base, s, 1);
+    first_binding = TS_AST_CHILDREN_GET(ts_base, bindings);
+    var no_t = TS_AST_PAYLOAD(ts_base, first_binding, 1);
+    assert_eq(no_t, 0, "no type -> payload[1] = 0");
+    
+    # Complex type: union
+    s = _ts_parse_p24_parse_first_stmt("let z: string | number = 1;");
+    bindings = TS_AST_PAYLOAD(ts_base, s, 1);
+    first_binding = TS_AST_CHILDREN_GET(ts_base, bindings);
+    t_node = TS_AST_PAYLOAD(ts_base, first_binding, 1);
+    assert_eq(TS_AST_KIND(ts_base, t_node), TS_AST_TYPE_UNION, "binding type = UNION");
+    
+    # Array type
+    s = _ts_parse_p24_parse_first_stmt("let arr: number[] = [];");
+    bindings = TS_AST_PAYLOAD(ts_base, s, 1);
+    first_binding = TS_AST_CHILDREN_GET(ts_base, bindings);
+    t_node = TS_AST_PAYLOAD(ts_base, first_binding, 1);
+    assert_eq(TS_AST_KIND(ts_base, t_node), TS_AST_TYPE_ARRAY, "binding type = ARRAY");
+    
+    # ─── integration: catch clause carries type in payload[2] ────────
+    test_group("catch clause type integration");
+    
+    s = _ts_parse_p24_parse_first_stmt("try { } catch (e: unknown) { }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_TRY, "try-catch typed parses");
+    var catch_clause = TS_AST_PAYLOAD(ts_base, s, 1);
+    var catch_t = TS_AST_PAYLOAD(ts_base, catch_clause, 2);
+    assert(catch_t > 0, "catch has type node");
+    assert_eq(TS_AST_KIND(ts_base, catch_t), TS_AST_TYPE_REF, "catch type = TYPE_REF");
+    
+    # ─── integration: arrow return type now stores node idx ──────────
+    test_group("arrow return type integration");
+    
+    var ar = _ts_parse_p24_parse_expr("(): void => 1");
+    assert_eq(TS_AST_KIND(ts_base, ar), TS_AST_EXPR_ARROW, "() : void => 1 parses");
+    var ret = TS_AST_PAYLOAD(ts_base, ar, 2);
+    assert(ret > 0, "return-type node stored");
+    assert_eq(TS_AST_KIND(ts_base, ret), TS_AST_TYPE_PRIMITIVE, "void return -> TYPE_PRIMITIVE");
+    
+    ar = _ts_parse_p24_parse_expr("(x: number) => x");
+    ret = TS_AST_PAYLOAD(ts_base, ar, 2);
+    assert_eq(ret, 0, "no return-type -> payload[2] = 0");
+    
+    ar = _ts_parse_p24_parse_expr("(x: number): number[] => [x]");
+    ret = TS_AST_PAYLOAD(ts_base, ar, 2);
+    assert_eq(TS_AST_KIND(ts_base, ret), TS_AST_TYPE_ARRAY, "return-type ARRAY");
+    
+    # ─── integration: function-type param has type in payload[1] ─────
+    test_group("function-type param type integration");
+    
+    t = _ts_parse_p24_parse_type("(x: number, y: string) => boolean");
+    assert_eq(TS_AST_KIND(ts_base, t), TS_AST_TYPE_FN, "fn type top");
+    var params = TS_AST_PAYLOAD(ts_base, t, 0);
+    var first_param = TS_AST_CHILDREN_GET(ts_base, params);
+    assert_eq(TS_AST_KIND(ts_base, first_param), TS_AST_DECL_PARAM, "first param -> PARAM");
+    var pt = TS_AST_PAYLOAD(ts_base, first_param, 1);
+    assert(pt > 0, "param has type node");
+    assert_eq(TS_AST_KIND(ts_base, pt), TS_AST_TYPE_REF, "param type -> REF");
+    # ret type stored on the FN node at payload[1]
+    var fn_ret = TS_AST_PAYLOAD(ts_base, t, 1);
+    assert(fn_ret > 0, "fn-type return node stored");
+    assert_eq(TS_AST_KIND(ts_base, fn_ret), TS_AST_TYPE_REF, "fn return = REF");
+    
+    # ─── error path ──────────────────────────────────────────────────
+    test_group("type parse errors");
+    
+    # Bare `=` is not a type
+    var nt = TS_LEX(ts_base, "=", 1);
+    assert(nt > 0, "lex = OK");
+    TS_PARSE_INIT(ts_base);
+    var bad = TS_PARSE_TYPE(ts_base);
+    assert(bad < 0, "= is not a type -> error");
+    assert(TS_PARSE_GETERR(ts_base) != 0, "type parse err set");
+    
+    return 0;
+}
+
+ts_parse_test_ts_parse_p21();
+ts_parse_test_ts_parse_p22();
+ts_parse_test_ts_parse_p23();
+ts_parse_test_ts_parse_p24();
+
+var exit_code = assert_summary();
+syscall(60, exit_code);

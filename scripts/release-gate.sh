@@ -94,29 +94,34 @@ if [ "$QUICK" = "1" ]; then
     exit 0
 fi
 
-# 4. cross-OS self-host + VR-01 platform LIBTEST (SEQUENTIAL — fixed /tmp+_cyaud
-# paths clobber if concurrent). v6.3.43: the `vr01_` glob promotes LIBTEST from an
-# opt-in fallback to a STANDING per-host gate — the 8 platform-variant tcyr
-# (fs/thread/sync/alloc/args/process/syscalls on cass+ecb) run on real hardware every
-# release, so macOS/Windows stdlib rot is caught here, not by ports.
-step "4/5" "cross-OS self-host + VR-01 platform tcyr: ecb (macOS-arm64) + ach (Intel-Mac x86-macho) + cass (Windows) + pi (aarch64) — REAL hardware"
+# 4. cross-OS self-host + cross-host platform LIBTEST (SEQUENTIAL — fixed /tmp+_cyaud
+# paths clobber if concurrent). v6.3.43 promoted LIBTEST from an opt-in fallback to a
+# STANDING per-host gate — the platform-variant tcyr (fs/thread/sync/alloc/args/process/
+# syscalls on cass+ecb) run on real hardware every release, so macOS/Windows stdlib rot
+# is caught here, not by ports.
+#
+# v6.5.11: the selector is the SUBDIRECTORY tests/tcyr/crossos (it was the filename
+# prefix "vr01_"). A directory is checked for existence and cannot silently under-match;
+# cross-os-selfhost.sh additionally cross-checks the remote's ran-count against the count
+# selected locally, closing the "LIBTEST_OK: <host> (0 tests)" green-over-nothing path.
+step "4/5" "cross-OS self-host + cross-host platform tcyr: ecb (macOS-arm64) + ach (Intel-Mac x86-macho) + cass (Windows) + pi (aarch64) — REAL hardware"
 # v6.4.59: ach (Intel Mac, x86_64 Mach-O) added — its compiler self-hosts + the
 # usable toolchain works (wrapper argv/env/arch via r15). Without it in this
 # ONE mandated pre-tag gate, x86-macho could rot green behind a CI check exactly
 # like macOS-arm64 did for ~9 minors (the found-by-ports incident). The ach recipe
-# has the exit-42 rot-guard + the vr01_ glob fires its VR-01 libtest (25 tests).
+# has the exit-42 rot-guard + the crossos subdir fires its platform libtest.
 for H in ecb ach cass pi; do
     echo "  --- $H ---"
-    sh scripts/cross-os-selfhost.sh "$H" "vr01_" > "$T/co.out" 2>&1
+    sh scripts/cross-os-selfhost.sh "$H" "crossos" > "$T/co.out" 2>&1
     if ! grep -q "SELFHOST_OK: $H" "$T/co.out"; then
         tail -8 "$T/co.out"
         fail "cross-OS self-host FAILED on $H (a green CI check is NOT this — run the compiler on the hardware)"
     fi
     if ! grep -q "LIBTEST_OK: $H" "$T/co.out"; then
         tail -8 "$T/co.out"
-        fail "VR-01 platform tcyr FAILED on $H (found-by-ports stdlib rot — see the failing vr01_ test)"
+        fail "cross-host platform tcyr FAILED on $H (found-by-ports stdlib rot — see the failing tests/tcyr/crossos test)"
     fi
-    echo "  OK: $H SELFHOST_OK + VR-01 LIBTEST_OK"
+    echo "  OK: $H SELFHOST_OK + crossos LIBTEST_OK"
 done
 
 # 5. bench (non-blocking — record the delta, triage per the growth-tax rule) ---

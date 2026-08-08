@@ -10,7 +10,7 @@
 # HEAP MAP — Authoritative offset registry (v3.6.10)
 # ================================================================
 # Check here FIRST before allocating new state.
-# Last full audit: v3.6.10. Verified by tests/heapmap.sh (47 regions, 0 warnings).
+# Last full audit: v3.6.10. Verified by tests/gates/memory/heapmap.sh (47 regions, 0 warnings).
 #
 # --- Low heap: I/O + identifiers ---
 #   0x00000  input_buf     [1048576]      1MB raw stdin input (v3.6.7, was 256KB)

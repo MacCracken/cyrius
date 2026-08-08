@@ -70,21 +70,21 @@ sh "$ROOT/scripts/sign-efi-gate.sh"
 # since v6.4.31, so the same source built differently depending on WHERE it was
 # built. Host-side by necessity: a tcyr runs natively on each host and therefore
 # exercises main_win.cyr (always correct), never the cross path.
-sh "$ROOT/tests/valform_simd_crosstarget.sh"
+sh "$ROOT/tests/gates/platform/valform_simd_crosstarget.sh"
 
 # v6.5.0 Phase 1 (public/private visibility): every fn must be attributed to the
 # source file its `fn` keyword is in. Phase 2 turns that partition into a visibility
 # boundary, so a wrong stamp means `private` silently mis-scopes. Gated here at
 # Phase 1 — while the table is still recorded-not-enforced — so the substrate is
 # never write-only and never unverified.
-sh "$ROOT/tests/fileid_substrate.sh"
+sh "$ROOT/tests/gates/frontend/fileid_substrate.sh"
 
 # v6.5.0 Phase 2: file-scoped `private` / per-item `public`, WARN mode. Asserts
 # per-RESOLUTION-PATH (ordinary / tail / operator), because enforcement that covers
 # only the obvious path is the v6.4.81 `_cfo` shape repeating — that class was
 # declared fixed three times before the fourth occurrence turned up in a path nobody
 # had enumerated.
-sh "$ROOT/tests/visibility_private.sh"
+sh "$ROOT/tests/gates/frontend/visibility_private.sh"
 
 # v6.5.1: overload-suffix dispatch must be ARITY-AWARE and POSITION-CONSISTENT.
 # Asserts across assign / return-tail / nested-arg because the two defects it covers
@@ -93,7 +93,7 @@ sh "$ROOT/tests/visibility_private.sh"
 # call spelled two ways ran two different functions. The 253-file corpus changes 0 bytes
 # under the arity fix, i.e. it had ZERO coverage of the shape, which is why this must be
 # a gate and not a .tcyr.
-sh "$ROOT/tests/overload_arity_dispatch.sh"
+sh "$ROOT/tests/gates/frontend/overload_arity_dispatch.sh"
 
 # v6.5.1: the agnos O_RDWR flag-map gate (v6.4.27) was CI-ONLY — `ci.yml` ran it and
 # nothing local did, so `release-gate.sh` could report GREEN while CI went RED. It did
@@ -101,9 +101,9 @@ sh "$ROOT/tests/overload_arity_dispatch.sh"
 # into a hard error (agnos's wrapper is length-carrying and takes 2 args), and the local
 # gate never noticed. A gate CI runs but the release gate does not is the same blind spot
 # as grading check.sh by its stdout instead of its exit status — fixed the same way, by
-# making the local gate actually run it. `tests/heapmap.sh` is the only other CI-only
+# making the local gate actually run it. `tests/gates/memory/heapmap.sh` is the only other CI-only
 # script and it is genuinely redundant: `_heapmap_gate()` in the check binary covers it.
-sh "$ROOT/tests/io_rdwr_agnos.sh"
+sh "$ROOT/tests/gates/platform/io_rdwr_agnos.sh"
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called
@@ -112,7 +112,7 @@ sh "$ROOT/tests/io_rdwr_agnos.sh"
 # target. Parity (Linux-OK-but-agnos-broken) rather than "must build", since the distlib
 # bundles deliberately do not carry their own stdlib deps. Reports its own coverage: 11/12
 # today, niyama skipped and named.
-sh "$ROOT/tests/folds_agnos_parity.sh"
+sh "$ROOT/tests/gates/platform/folds_agnos_parity.sh"
 
 # v6.5.2: ir_const_fold must not erase a following jump. EJCC/EJMP0 were the only two
 # x86 emitters that recorded their IR node AFTER emitting bytes, so the node's CP was the
@@ -121,13 +121,13 @@ sh "$ROOT/tests/folds_agnos_parity.sh"
 # corpus was 0/253 unaffected and could never have caught it. Capstone assertion is that
 # IR=3 self-hosts a byte-identical cycc — the strongest semantics-preserving statement
 # available on the largest program in the tree.
-sh "$ROOT/tests/ir3_fold_jump_span.sh"
+sh "$ROOT/tests/gates/ir-opt/ir3_fold_jump_span.sh"
 
 # v6.5.3: a diagnostic's LINE must survive include expansion. Main-source errors used to
 # report `actual - includes_before_it` (line 2 said 1; two includes still said 1). Ten
 # shapes, incl. include-once skips and a NESTED include — mutation-proven: 8 of 10 fail on
 # the 6.5.2 binary, and the 2 that pass are the regression guards.
-sh "$ROOT/tests/diag_line_after_include.sh"
+sh "$ROOT/tests/gates/diagnostics/diag_line_after_include.sh"
 
 # v6.5.5: an IR_RAW_EMIT marker only shields raw bytes until the NEXT RECORDED node.
 # ESWITCH_DISPATCH_PRE recorded one marker at the top, then emitted four recorded nodes
@@ -137,4 +137,4 @@ sh "$ROOT/tests/diag_line_after_include.sh"
 # LASE bug; it is DCE (CYRIUS_LASE_OFF disables the shared NOP-filler for all three
 # passes, which is why the bisection pointed at LASE). CYRIUS_IR=3-only — markers emit no
 # bytes, so default codegen is byte-identical and the default corpus could never see it.
-sh "$ROOT/tests/ir3_switch_dce.sh"
+sh "$ROOT/tests/gates/ir-opt/ir3_switch_dce.sh"

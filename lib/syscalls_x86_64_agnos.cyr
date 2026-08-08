@@ -46,7 +46,7 @@
 #                   minted-but-unimplemented constant is strictly worse than an absent
 #                   one — and a host build of the same consumer looks healthy either
 #                   way, so nothing off-target catches it. Gated by
-#                   tests/syscall_wrapper_pass.sh axis 5.
+#                   tests/gates/platform/syscall_wrapper_pass.sh axis 5.
 
 # ================================================================
 # Syscall numbers — §2 FROZEN (0-28) + §3 (29-33)

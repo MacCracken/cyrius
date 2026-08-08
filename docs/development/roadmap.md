@@ -92,8 +92,8 @@ not a single release.
   one hash — all five were the same no-op run. Plus the `_int` overload route gated on an
   explicit `: cstring` param, integer-literal-to-cstring now a hard error (`println(42)`
   previously compiled with no diagnostic and SIGSEGV'd), the `PARSE_RETURN` tail path **again**,
-  `xrmdir` in `lib/io.cyr`, new gates `tests/ir3_fold_jump_span.sh` +
-  `tests/folds_agnos_parity.sh`, and yukti 2.2.10 → 2.3.0 (six agnos ABI defects, including
+  `xrmdir` in `lib/io.cyr`, new gates `tests/gates/ir-opt/ir3_fold_jump_span.sh` +
+  `tests/gates/platform/folds_agnos_parity.sh`, and yukti 2.2.10 → 2.3.0 (six agnos ABI defects, including
   `sys_mount` fabricating `Ok()` for a filesystem that was never mounted). Corpus
   default-vs-IR=3 exit mismatches **35 → 8**. Bench 638 ms, retiring the 6.5.1 perf flag.
   cycc **1,129,288 B**.
@@ -210,7 +210,7 @@ and relative terms across eight releases; re-measure it, don't quote this paragr
 
 So the true and load-bearing claim is: **CYRIUS_IR=3 builds a compiler that reproduces
 `build/cycc` byte-identically** — a semantics-preserving statement about the IR=3-built
-compiler's *output*, not about its own bytes. That is what `tests/ir3_fold_jump_span.sh`
+compiler's *output*, not about its own bytes. That is what `tests/gates/ir-opt/ir3_fold_jump_span.sh`
 asserts and what it passes. Read it the loose way and you conclude IR=3 is byte-neutral, when
 it currently makes the compiler **5 % larger** — which is a live data point for a minor whose
 whole theme is generated-code quality, and one of the things Slot 3 has to explain.
@@ -285,7 +285,7 @@ without naming them would be a silent subset:
    the clause from both documents; leaving it silently mis-parsing is the one outcome to avoid).
 3. **Adoption** — phase (3) "per-file adoption where it pays" is 1 file of 99
    (`grep -rln '^private$' lib/ src/ cbt/ programs/ tests/` → `lib/regex.cyr` +
-   `tests/visibility_private.sh` only). → rides the reactive windows a file at a time; not a slot.
+   `tests/gates/frontend/visibility_private.sh` only). → rides the reactive windows a file at a time; not a slot.
 
 ### Explicitly NOT carried — proved shipped, do not re-file
 
@@ -354,7 +354,7 @@ in — count them before assuming the `.11`–`.16` reserve is free.
   (`parse_fn.cyr:1127`, `parse_types.cyr:772`) print through `_err_head` — which means the
   first thing a consumer adopting the new feature meets is a wrong line number. The bug is
   wrong on essentially every real program. Batching (a)–(e) means **one** negative-corpus run
-  across ecb/ach/cass/pi, **one** `CYCC_FUZZ_ITERS=300 sh tests/cycc_parser_fuzz.sh`, and one
+  across ecb/ach/cass/pi, **one** `CYCC_FUZZ_ITERS=300 sh tests/gates/diagnostics/cycc_parser_fuzz.sh`, and one
   seed-derive (the preprocessor is in cybs's path). Five of the seven `SYS_EXIT` sites are the
   same `undefined variable` diagnostic, and the recovering pattern is already established
   in-tree — the four error sites added by the 6.5.x arcs (`parse_fn.cyr:1043`, `:1127`,
@@ -699,7 +699,7 @@ pinned to Slot 9, and `…fmt-int-buf-i64-min`, which shipped at `.8` and is awa
    `[package].version` (which already resolves `${file:VERSION}`) as one injected
    source-visible cstring. No new manifest surface, explicitly **not** const-eval. Keep it
    distinct from `proposals/2026-07-05-const-eval-comptime` (v6.6.x).
-9. **Fold-in:** extend `tests/folds_agnos_parity.sh`'s PREAMBLE until the SKIP list is empty —
+9. **Fold-in:** extend `tests/gates/platform/folds_agnos_parity.sh`'s PREAMBLE until the SKIP list is empty —
    it currently reports 11 of 12 (`SKIP: niyama — undefined variable 'NFD'`), so one fold's
    agnos exposure is still unmeasured.
 
@@ -798,7 +798,7 @@ passes are their own work, and a minor-close slot still has to carry real code d
   must move with each sweep or it becomes the rot it was designed to prevent. **Four of the 16
   are outright shipped-but-unarchived** — see the ⚠ note under *Where we are*.
 - **A "found by ports" test is worth more than the gate that says the code compiles.**
-  v6.5.7 shipped `tests/syscall_wrapper_pass.sh`, which proves the new wrappers *compile* on
+  v6.5.7 shipped `tests/gates/platform/syscall_wrapper_pass.sh`, which proves the new wrappers *compile* on
   five targets — most of the risk, and none of the bugs. The one `.tcyr` that actually RAN
   them on hardware found **seven** defects, two of them pre-existing rot (`xrmdir` broken on
   macOS-arm64 since the day it shipped; a macOS-x86 `Stat` enum mixing two structs). Five of

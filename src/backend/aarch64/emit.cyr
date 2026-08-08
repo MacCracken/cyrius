@@ -844,7 +844,7 @@ fn ESYSXLAT(S): i64 {
     # v6.2.27: pipe 22 → pipe2 59 + flags=0. aarch64-Linux has NO pipe(2)
     # (22 is epoll_pwait there); only pipe2(fds, flags). Raw `syscall(22, &fds)`
     # is a sanctioned x86-canonical call (_SC_ARITY n==22 → 1 arg, parse_expr.cyr:24)
-    # used by tests/tcyr/process.tcyr's fork+pipe group and any consumer issuing a
+    # used by tests/tcyr/platform/process.tcyr's fork+pipe group and any consumer issuing a
     # bare pipe. Untranslated, x8=22 ran epoll_pwait(garbage) → -EINVAL, garbage
     # rfd/wfd → downstream SIGSEGV/SIGILL. Same self-host-blind class as the v6.2.10
     # socket + v6.2.24 getdents64 gaps (cycc self-host never issues pipe). pipe(fds)

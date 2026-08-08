@@ -1564,7 +1564,7 @@ cyrius build --aarch64 src/main.cyr build/myapp_arm
 
 # Run tests
 sh scripts/check.sh              # Full audit: self-host + heap + tests + lint
-sh tests/heapmap.sh              # Heap map overlap detection
+sh tests/gates/memory/heapmap.sh              # Heap map overlap detection
 
 # Boot kernel
 qemu-system-x86_64 -kernel build/kernel -serial stdio -display none

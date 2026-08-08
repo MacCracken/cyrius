@@ -1,0 +1,1033 @@
+# tests/tcyr/frontend/ts_parse_advanced.tcyr — TS parser advanced types + JSX.
+#
+# v5.7.37: groups the 9 advanced-feature tests — JSX (P4.3b),
+# instantiation expressions (P4.6), generic fn types (P4.8),
+# template literal types (P4.9), array destructure defaults
+# (P5.0), SY corpus 100% polish bundle (P5.1), `asserts`
+# predicate signatures (v5.7.24), mapped types (v5.7.25),
+# decorators (v5.7.26). Includes lex.cyr + parse.cyr once;
+# bodies share `ts_base`.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+include "lib/test.cyr"   # v5.7.47: pulls assert.cyr + fnptr.cyr; provides test_each
+
+include "src/frontend/ts/lex.cyr"
+include "src/frontend/ts/parse.cyr"
+
+alloc_init();
+var ts_base = alloc(TS_HEAP_SIZE + 4096);
+
+# ── helpers from ts_parse_p43 ──
+fn _ts_parse_p43_parse_jsx(src) {
+    var n = TS_LEX(ts_base, src, strlen(src));
+    if (n < 0) { return 0 - 1; }
+    return TS_PARSE(ts_base);
+}
+fn _ts_parse_p43_find_first_jsx(ts_base) {
+    var i = 0;
+    var count = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_NODE_COUNT);
+    while (i < count) {
+        var k = load64(ts_base + TS_AST_NODES_OFF + i * TS_AST_NODE_SIZE);
+        if (k == TS_AST_JSX_ELEMENT) { return i; }
+        if (k == TS_AST_JSX_FRAGMENT) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+fn _ts_parse_p43_node_kind(ts_base, idx) {
+    return load64(ts_base + TS_AST_NODES_OFF + idx * TS_AST_NODE_SIZE);
+}
+fn _ts_parse_p43_node_payload(ts_base, idx, slot) {
+    return load64(ts_base + TS_AST_NODES_OFF + idx * TS_AST_NODE_SIZE + 16 + slot * 8);
+}
+fn _ts_parse_p43_count_children(ts_base, off) {
+    # Convention (TS_PARSE_INIT): offset 0 means "no list" — children[0]
+    # is reserved as a permanent sentinel so all real RESERVE() calls
+    # return offset >= 1. Empty unset payload[X] == 0 → 0 children.
+    if (off == 0) { return 0; }
+    var i = 0;
+    while (1 == 1) {
+        var v = load64(ts_base + TS_AST_CHILDREN_OFF + (off + i) * 8);
+        if (v == 0 - 1) { return i; }
+        i = i + 1;
+        if (i > 1000) { return 0 - 1; }
+    }
+    return i;
+}
+fn _ts_parse_p43_nth_child(ts_base, off, i) {
+    return load64(ts_base + TS_AST_CHILDREN_OFF + (off + i) * 8);
+}
+
+# ── helpers from ts_parse_p46 ──
+fn _ts_parse_p46_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+
+# ── helpers from ts_parse_p48 ──
+fn _ts_parse_p48_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+
+# ── helpers from ts_parse_p49 ──
+fn _ts_parse_p49_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+
+# ── helpers from ts_parse_p50 ──
+fn _ts_parse_p50_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+
+# ── helpers from ts_parse_p51 ──
+fn _ts_parse_p51_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+
+# ── helpers from ts_parse_p52 ──
+fn _ts_parse_p52_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+
+# ── helpers from ts_parse_p53 ──
+fn _ts_parse_p53_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+
+# ── helpers from ts_parse_p54 ──
+fn _ts_parse_p54_parse_first_stmt(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    var nn = TS_PARSE(ts_base);
+    if (nn < 0) { return 0 - 1; }
+    var head = TS_AST_PAYLOAD(ts_base, 0, 0);
+    return TS_AST_CHILDREN_GET(ts_base, head);
+}
+
+# ── helpers from ts_parse_p55 (v5.7.44 variadic tuple AST) ──
+fn _ts_parse_p55_parse(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    return TS_PARSE(ts_base);
+}
+
+# ── helpers from ts_parse_p56 (v5.7.45 const type params) ──
+# v5.7.47 refactor: migrated 14 parallel-shape parse-rc cases to
+# `test_each` via lib/test.cyr. _ts_parse_p56_check is the per-case
+# fn dispatched by test_each; case shape is alloc(16) with payload
+# +0=source-cstr, +8=label-cstr.
+fn _ts_parse_p56_parse(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    return TS_PARSE(ts_base);
+}
+fn _ts_parse_p56_case(src, label) {
+    var c = alloc(16);
+    store64(c,     src);
+    store64(c + 8, label);
+    return c;
+}
+fn _ts_parse_p56_check(c) {
+    var src   = load64(c);
+    var label = load64(c + 8);
+    var rc    = _ts_parse_p56_parse(src);
+    assert(rc >= 0, label);
+    return 0;
+}
+
+# ── helpers from ts_parse_p57 (v5.7.46 audit-pass: 4 stale-pin items) ──
+fn _ts_parse_p57_parse(src) {
+    var nt = TS_LEX(ts_base, src, strlen(src));
+    if (nt < 0) { return 0 - 1; }
+    return TS_PARSE(ts_base);
+}
+# Walk node table forward, return idx of FIRST TS_AST_TYPE_TUPLE, or -1.
+fn _ts_parse_p55_find_tuple(ts_base) {
+    var i = 0;
+    var count = TS_AST_NODE_COUNT(ts_base);
+    while (i < count) {
+        if (TS_AST_KIND(ts_base, i) == TS_AST_TYPE_TUPLE) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# Read the n-th child idx of a tuple's elements list (terminated by -1).
+fn _ts_parse_p55_tuple_child(ts_base, tuple_idx, n) {
+    var elems_off = TS_AST_PAYLOAD(ts_base, tuple_idx, 0);
+    return TS_AST_CHILDREN_GET(ts_base, elems_off + n);
+}
+
+# ── ts_parse_p43 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p43() {
+    
+    
+    
+    # Lex+parse a snippet (wrapped as `<jsx>`), returns root node idx.
+    
+    # After parse, find the first JSX_ELEMENT or JSX_FRAGMENT in the AST.
+    # AST is laid out in TS_AST_NODES_OFF; root is at index 0 by convention,
+    # but we just scan all nodes to find the first JSX one.
+    
+    # Read AST node kind.
+    
+    # Read AST node payload[slot].
+    
+    # Walk a children-list (sentinel-terminated by -1), count entries.
+    
+    # Get i-th child idx from list at off.
+    
+    # ─── self-close ─────────────────────────────────────────────────
+    test_group("self-close");
+    var rc = _ts_parse_p43_parse_jsx("<Foo />;");
+    assert_eq(rc >= 0, 1, "parse <Foo />");
+    var jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    assert_eq(_ts_parse_p43_node_kind(ts_base, jsx), TS_AST_JSX_ELEMENT, "kind = JSX_ELEMENT");
+    assert_eq(_ts_parse_p43_node_payload(ts_base, jsx, 3), 1, "self_close = 1");
+    assert_eq(_ts_parse_p43_count_children(ts_base, _ts_parse_p43_node_payload(ts_base, jsx, 1)), 0, "0 attrs");
+    assert_eq(_ts_parse_p43_node_payload(ts_base, jsx, 2), 0, "no body children");
+    
+    # ─── open/close ─────────────────────────────────────────────────
+    test_group("open/close");
+    rc = _ts_parse_p43_parse_jsx("<Foo>x</Foo>;");
+    assert_eq(rc >= 0, 1, "parse <Foo>x</Foo>");
+    jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    assert_eq(_ts_parse_p43_node_kind(ts_base, jsx), TS_AST_JSX_ELEMENT, "kind");
+    assert_eq(_ts_parse_p43_node_payload(ts_base, jsx, 3), 0, "self_close = 0");
+    var body_off = _ts_parse_p43_node_payload(ts_base, jsx, 2);
+    assert_eq(_ts_parse_p43_count_children(ts_base, body_off), 1, "1 body child");
+    var first_child = _ts_parse_p43_nth_child(ts_base, body_off, 0);
+    assert_eq(_ts_parse_p43_node_kind(ts_base, first_child), TS_AST_JSX_TEXT, "child = JSX_TEXT");
+    
+    # ─── fragment ───────────────────────────────────────────────────
+    test_group("fragment");
+    rc = _ts_parse_p43_parse_jsx("<>x</>;");
+    assert_eq(rc >= 0, 1, "parse <>x</>");
+    jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    assert_eq(_ts_parse_p43_node_kind(ts_base, jsx), TS_AST_JSX_FRAGMENT, "kind = JSX_FRAGMENT");
+    body_off = _ts_parse_p43_node_payload(ts_base, jsx, 0);
+    assert_eq(_ts_parse_p43_count_children(ts_base, body_off), 1, "1 frag child");
+    first_child = _ts_parse_p43_nth_child(ts_base, body_off, 0);
+    assert_eq(_ts_parse_p43_node_kind(ts_base, first_child), TS_AST_JSX_TEXT, "frag child = TEXT");
+    
+    # ─── string attr ────────────────────────────────────────────────
+    test_group("string attr");
+    rc = _ts_parse_p43_parse_jsx("<Foo a=\"b\" />;");
+    assert_eq(rc >= 0, 1, "parse <Foo a=\"b\" />");
+    jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    var attrs_off = _ts_parse_p43_node_payload(ts_base, jsx, 1);
+    assert_eq(_ts_parse_p43_count_children(ts_base, attrs_off), 1, "1 attr");
+    var attr = _ts_parse_p43_nth_child(ts_base, attrs_off, 0);
+    assert_eq(_ts_parse_p43_node_kind(ts_base, attr), TS_AST_JSX_ATTRIBUTE, "attr = ATTRIBUTE");
+    assert_eq(_ts_parse_p43_node_payload(ts_base, attr, 1), 1, "value-kind = 1 (string)");
+    
+    # ─── expr attr ──────────────────────────────────────────────────
+    test_group("expr attr");
+    rc = _ts_parse_p43_parse_jsx("<Foo a={1} />;");
+    assert_eq(rc >= 0, 1, "parse <Foo a={1} />");
+    jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    attrs_off = _ts_parse_p43_node_payload(ts_base, jsx, 1);
+    attr = _ts_parse_p43_nth_child(ts_base, attrs_off, 0);
+    assert_eq(_ts_parse_p43_node_payload(ts_base, attr, 1), 2, "value-kind = 2 (expr)");
+    
+    # ─── bare attr ──────────────────────────────────────────────────
+    test_group("bare attr");
+    rc = _ts_parse_p43_parse_jsx("<Foo bar />;");
+    assert_eq(rc >= 0, 1, "parse <Foo bar />");
+    jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    attrs_off = _ts_parse_p43_node_payload(ts_base, jsx, 1);
+    attr = _ts_parse_p43_nth_child(ts_base, attrs_off, 0);
+    assert_eq(_ts_parse_p43_node_payload(ts_base, attr, 1), 0, "value-kind = 0 (none)");
+    
+    # ─── spread attr ────────────────────────────────────────────────
+    test_group("spread attr");
+    rc = _ts_parse_p43_parse_jsx("<Foo {...y} />;");
+    assert_eq(rc >= 0, 1, "parse <Foo {...y} />");
+    jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    attrs_off = _ts_parse_p43_node_payload(ts_base, jsx, 1);
+    attr = _ts_parse_p43_nth_child(ts_base, attrs_off, 0);
+    assert_eq(_ts_parse_p43_node_kind(ts_base, attr), TS_AST_JSX_SPREAD_ATTR, "attr = SPREAD_ATTR");
+    
+    # ─── expr child ─────────────────────────────────────────────────
+    test_group("expr child");
+    rc = _ts_parse_p43_parse_jsx("<Foo>{y}</Foo>;");
+    assert_eq(rc >= 0, 1, "parse <Foo>{y}</Foo>");
+    jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    body_off = _ts_parse_p43_node_payload(ts_base, jsx, 2);
+    first_child = _ts_parse_p43_nth_child(ts_base, body_off, 0);
+    assert_eq(_ts_parse_p43_node_kind(ts_base, first_child), TS_AST_JSX_EXPR_CONTAINER, "child = EXPR_CONTAINER");
+    
+    # ─── nested ─────────────────────────────────────────────────────
+    test_group("nested");
+    rc = _ts_parse_p43_parse_jsx("<a><b /></a>;");
+    assert_eq(rc >= 0, 1, "parse <a><b /></a>");
+    jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    body_off = _ts_parse_p43_node_payload(ts_base, jsx, 2);
+    first_child = _ts_parse_p43_nth_child(ts_base, body_off, 0);
+    assert_eq(_ts_parse_p43_node_kind(ts_base, first_child), TS_AST_JSX_ELEMENT, "nested = ELEMENT");
+    assert_eq(_ts_parse_p43_node_payload(ts_base, first_child, 3), 1, "nested.self_close = 1");
+    
+    # ─── generic-arrow disambig ─────────────────────────────────────
+    test_group("generic-arrow disambig");
+    # `<T>(x) => x` — looks like JSX open/text/close at byte level, but
+    # the post-`>` `(` heuristic in TS_LEX_JSX bails so the lex emits
+    # LT, IDENT, GT, LPAREN, etc. The parser reads it as a generic arrow.
+    rc = _ts_parse_p43_parse_jsx("<T>(y: T) => y;");
+    assert_eq(rc >= 0, 1, "parse <T>(y) => y as generic arrow");
+    # The first JSX node should NOT exist — _ts_parse_p43_find_first_jsx returns -1.
+    jsx = _ts_parse_p43_find_first_jsx(ts_base);
+    assert_eq(jsx, 0 - 1, "no JSX nodes — bailed to generic arrow");
+    
+    return 0;
+}
+
+# ── ts_parse_p46 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p46() {
+    
+    
+    
+    # Try to parse `src` as one top-level statement; return first stmt idx
+    # or -1 on failure.
+    
+    # ─── instantiation expressions in type position ──────────────────
+    test_group("typeof X<TypeArgs> in type position");
+    
+    var s = _ts_parse_p46_parse_first_stmt("let f: typeof foo<string>;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "typeof foo<string>");
+    
+    s = _ts_parse_p46_parse_first_stmt("let g: typeof foo<A, B>;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "typeof foo<A, B> (multi-arg)");
+    
+    s = _ts_parse_p46_parse_first_stmt("let h: typeof y.foo<typeof z, 'lit'>;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "typeof y.foo<typeof z, 'lit'>");
+    
+    # ─── nested in ReturnType (the SY repro) ─────────────────────────
+    test_group("nested in ReturnType");
+    
+    s = _ts_parse_p46_parse_first_stmt("let r: ReturnType<typeof foo<A>>;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "ReturnType<typeof foo<A>>");
+    
+    s = _ts_parse_p46_parse_first_stmt("let r: ReturnType<typeof vi.spyOn<typeof globalThis, 'fetch'>>;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "ReturnType<typeof vi.spyOn<typeof globalThis, 'fetch'>>");
+    
+    # ─── regression: plain typeof type-query still works ─────────────
+    test_group("regression: plain typeof type-query");
+    
+    s = _ts_parse_p46_parse_first_stmt("let a: typeof foo;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "typeof foo (no args)");
+    
+    s = _ts_parse_p46_parse_first_stmt("let b: typeof y.foo;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "typeof y.foo (no args)");
+    
+    s = _ts_parse_p46_parse_first_stmt("let c: typeof import('mod');");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "typeof import('mod')");
+    
+    # ─── regression: plain type-ref with type args still works ───────
+    test_group("regression: type-ref type-args");
+    
+    s = _ts_parse_p46_parse_first_stmt("let p: Partial<Config>;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "Partial<Config>");
+    
+    s = _ts_parse_p46_parse_first_stmt("let q: Map<string, number>;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "Map<string, number>");
+    
+    return 0;
+}
+
+# ── ts_parse_p48 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p48() {
+    
+    
+    
+    
+    # ─── top-level generic fn type ──────────────────────────────────
+    test_group("top-level generic fn type");
+    
+    var s = _ts_parse_p48_parse_first_stmt("let f: <T>(x: T) => T;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "<T>(x: T) => T");
+    
+    s = _ts_parse_p48_parse_first_stmt("let g: <T, U>(t: T, u: U) => [T, U];");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "<T, U>(t, u) => [T, U]");
+    
+    s = _ts_parse_p48_parse_first_stmt("let h: <T extends Base = Default>(x: T) => T;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "<T extends Base = Default>");
+    
+    # ─── generic method type inside object type (the SY repro) ──────
+    test_group("generic method type in object type");
+    
+    s = _ts_parse_p48_parse_first_stmt("let c: { post: <T>(path: string, body?: unknown) => Promise<T> };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "{ post: <T>(...) => Promise<T> }");
+    
+    s = _ts_parse_p48_parse_first_stmt("let v: { fetch: <K>(k: K) => K; ping: () => void };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "two members, one generic, one not");
+    
+    # ─── regression: plain fn types still work ──────────────────────
+    test_group("regression: plain fn types");
+    
+    s = _ts_parse_p48_parse_first_stmt("let f: (x: number) => string;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "(x: number) => string");
+    
+    s = _ts_parse_p48_parse_first_stmt("let m: { run: (x: number) => string };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "{ run: (x) => string }");
+    
+    # ─── regression: type-ref with type-args still works ────────────
+    test_group("regression: type-ref type-args");
+    
+    s = _ts_parse_p48_parse_first_stmt("let p: Promise<string>;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "Promise<string>");
+    
+    return 0;
+}
+
+# ── ts_parse_p49 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p49() {
+    
+    
+    
+    
+    # ─── template literal types ──────────────────────────────────────
+    test_group("template literal types");
+    
+    var s = _ts_parse_p49_parse_first_stmt("type T = `static`;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "type T = `static` (no interp)");
+    
+    s = _ts_parse_p49_parse_first_stmt("type T = `prefix:${string}`;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "type T = `prefix:${string}`");
+    
+    s = _ts_parse_p49_parse_first_stmt("type T = `${A}-${B}`;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "type T = `${A}-${B}` (multi-interp)");
+    
+    s = _ts_parse_p49_parse_first_stmt("type ThemeId = 'dark' | 'light' | `custom:${string}`;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "ThemeId union with template literal type");
+    
+    # ─── as a property type ──────────────────────────────────────────
+    test_group("template literal type as object-type property");
+    
+    s = _ts_parse_p49_parse_first_stmt("let x: { id: `route-${string}` };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "{ id: `route-${string}` }");
+    
+    # ─── regression: regular string literal types still work ────────
+    test_group("regression: string literal types");
+    
+    s = _ts_parse_p49_parse_first_stmt("type T = 'foo';");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "type T = 'foo'");
+    
+    s = _ts_parse_p49_parse_first_stmt("type T = 'a' | 'b' | 'c';");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "type T = 'a' | 'b' | 'c'");
+    
+    # ─── regression: expr template literal still works ──────────────
+    test_group("regression: expr template literal");
+    
+    s = _ts_parse_p49_parse_first_stmt("let s = `hello, ${name}!`;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "let s = `hello, ${name}!`");
+    
+    return 0;
+}
+
+# ── ts_parse_p50 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p50() {
+    
+    
+    
+    
+    # ─── element-level defaults in array destructure ────────────────
+    test_group("element-level defaults in array destructure");
+    
+    var s = _ts_parse_p50_parse_first_stmt("const [a, b = 1] = arr;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "[a, b = 1]");
+    
+    s = _ts_parse_p50_parse_first_stmt("const [a = 0, b = 1] = arr;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "[a = 0, b = 1]");
+    
+    s = _ts_parse_p50_parse_first_stmt("const [first, second = 'default', ...rest] = parts;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "[a, b = 'default', ...rest]");
+    
+    # ─── nested patterns with defaults ───────────────────────────────
+    test_group("nested array destructure with defaults");
+    
+    s = _ts_parse_p50_parse_first_stmt("const [{x}, [y, z = 0]] = arr;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "[{x}, [y, z = 0]]");
+    
+    # ─── as a function param ─────────────────────────────────────────
+    test_group("array destructure as fn param");
+    
+    s = _ts_parse_p50_parse_first_stmt("function f([a, b = 1] = []) { return; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_FUNCTION, "f([a, b = 1] = [])");
+    
+    # ─── regression: holes still work ────────────────────────────────
+    test_group("regression: holes");
+    
+    s = _ts_parse_p50_parse_first_stmt("const [, x] = arr;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "[, x]");
+    
+    s = _ts_parse_p50_parse_first_stmt("const [a, , c] = arr;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "[a, , c]");
+    
+    # ─── regression: object destructure defaults still work ────────
+    test_group("regression: object destructure");
+    
+    s = _ts_parse_p50_parse_first_stmt("const {a, b = 1} = obj;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "{a, b = 1}");
+    
+    return 0;
+}
+
+# ── ts_parse_p51 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p51() {
+    
+    
+    
+    
+    # ─── labeled tuple elements ──────────────────────────────────────
+    test_group("labeled tuple elements (TS 4.0+)");
+    
+    var s = _ts_parse_p51_parse_first_stmt("let x: [prefix: string, resource: string] = ['a', 'b'];");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "[prefix: string, resource: string]");
+    
+    s = _ts_parse_p51_parse_first_stmt("let x: readonly [prefix: string, resource: string][] = [];");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "readonly [a: T, b: U][]");
+    
+    s = _ts_parse_p51_parse_first_stmt("let x: [a: string, b?: number, ...rest: boolean[]];");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "[a, b?, ...rest] labeled");
+    
+    # ─── labeled statements ──────────────────────────────────────────
+    test_group("labeled statements");
+    
+    s = _ts_parse_p51_parse_first_stmt("outer: for (let i = 0; i < 10; i = i + 1) { break outer; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_FOR, "outer: for(...) { break outer; }");
+    
+    s = _ts_parse_p51_parse_first_stmt("label: while (true) { continue label; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_WHILE, "label: while { continue label; }");
+    
+    # ─── computed-key destructure ────────────────────────────────────
+    test_group("computed-key destructure");
+    
+    s = _ts_parse_p51_parse_first_stmt("const { [id]: target } = obj;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "{ [id]: target }");
+    
+    s = _ts_parse_p51_parse_first_stmt("const { [id]: _, ...rest } = obj;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "{ [id]: _, ...rest }");
+    
+    s = _ts_parse_p51_parse_first_stmt("const { x = 1, [k]: y = 2 } = obj;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "computed-key with default");
+    
+    # ─── string/numeric-keyed destructure ───────────────────────────
+    test_group("string/numeric-keyed destructure");
+    
+    s = _ts_parse_p51_parse_first_stmt("const { 'literal-key': val } = obj;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "{ 'literal-key': val }");
+    
+    s = _ts_parse_p51_parse_first_stmt("const { 'a': x, 'b': y } = obj;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "two string-keys");
+    
+    # ─── arrow with object return-type ──────────────────────────────
+    test_group("arrow with object-literal return type");
+    
+    s = _ts_parse_p51_parse_first_stmt("const f = (): { tab: T; subTab: U } => ({ tab: 'a', subTab: 'b' });");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "(): { tab; subTab } => obj");
+    
+    s = _ts_parse_p51_parse_first_stmt("const g = (a: number): { x: T } => ({ x: 1 });");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "(a): { x } => obj");
+    
+    # ─── regression: plain forms still work ─────────────────────────
+    test_group("regressions");
+    
+    s = _ts_parse_p51_parse_first_stmt("const f = () => { return 1; };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "plain arrow with body");
+    
+    s = _ts_parse_p51_parse_first_stmt("const f = (x: number): number => x + 1;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "arrow with simple return type");
+    
+    s = _ts_parse_p51_parse_first_stmt("let x: [string, number] = ['a', 1];");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "unlabeled tuple");
+    
+    s = _ts_parse_p51_parse_first_stmt("const { a, b } = obj;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "plain destructure");
+    
+    return 0;
+}
+
+# ── ts_parse_p52 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p52() {
+    
+    
+    
+    
+    # ─── asserts <ident> is <Type> ──────────────────────────────────
+    test_group("asserts <ident> is <Type>");
+    
+    var s = _ts_parse_p52_parse_first_stmt("function isString(x: any): asserts x is string {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_FUNCTION, "asserts x is string");
+    
+    s = _ts_parse_p52_parse_first_stmt("function chk(x: unknown): asserts x is number | bigint {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_FUNCTION, "asserts x is union");
+    
+    s = _ts_parse_p52_parse_first_stmt("function notNull<T>(x: T | null): asserts x is T {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_FUNCTION, "asserts x is generic param");
+    
+    # ─── asserts <ident> (bare) ──────────────────────────────────────
+    test_group("asserts <ident> bare predicate");
+    
+    s = _ts_parse_p52_parse_first_stmt("function ok(cond: boolean): asserts cond {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_FUNCTION, "asserts cond bare");
+    
+    s = _ts_parse_p52_parse_first_stmt("function defined<T>(x: T | undefined): asserts x {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_FUNCTION, "asserts x bare with generic");
+    
+    # ─── asserts this is <Type> ─────────────────────────────────────
+    test_group("asserts this method predicates");
+    
+    s = _ts_parse_p52_parse_first_stmt("class C { check(): asserts this is C { return; } }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "method asserts this is C");
+    
+    s = _ts_parse_p52_parse_first_stmt("class Loaded<T> { ensure(): asserts this is Loaded<T> { return; } }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "method asserts this is generic");
+    
+    # ─── polymorphic this-type ──────────────────────────────────────
+    test_group("this-type in return position");
+    
+    s = _ts_parse_p52_parse_first_stmt("interface Builder { build(): this; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_INTERFACE, "interface method returning this");
+    
+    s = _ts_parse_p52_parse_first_stmt("class B { chain(): this { return this; } }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "class method returning this");
+    
+    s = _ts_parse_p52_parse_first_stmt("class P { is(): this is P { return; } }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "class method `this is P` predicate");
+    
+    # ─── asserts as ident name ──────────────────────────────────────
+    test_group("asserts ident-eligibility");
+    
+    s = _ts_parse_p52_parse_first_stmt("var asserts = 1;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "var asserts = 1");
+    
+    s = _ts_parse_p52_parse_first_stmt("let x: asserts;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_STMT_VAR_DECL, "let x: asserts (type-ref)");
+    
+    s = _ts_parse_p52_parse_first_stmt("type T = asserts;");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "type T = asserts (type-ref)");
+    
+    # ─── regressions ────────────────────────────────────────────────
+    test_group("regressions — pre-v5.7.24 forms still pass");
+    
+    s = _ts_parse_p52_parse_first_stmt("function isStr(x: any): x is string {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_FUNCTION, "<id> is <T> predicate (existing)");
+    
+    s = _ts_parse_p52_parse_first_stmt("function f(x: number): number { return x; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_FUNCTION, "regular return type");
+    
+    return 0;
+}
+
+# ── ts_parse_p53 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p53() {
+    
+    
+    
+    
+    # ─── bare mapped type ───────────────────────────────────────────
+    test_group("bare mapped type [K in T]: V");
+    
+    var s = _ts_parse_p53_parse_first_stmt("type Pick<T, K extends keyof T> = { [P in K]: T[P] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "[P in K]: T[P]");
+    
+    s = _ts_parse_p53_parse_first_stmt("type R<T> = { [K in keyof T]: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "[K in keyof T]: T[K]");
+    
+    s = _ts_parse_p53_parse_first_stmt("type U = { [K in 'a' | 'b']: number };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "[K in union literal]: V");
+    
+    # ─── as-clause key remapping ───────────────────────────────────
+    test_group("as-clause key remapping");
+    
+    s = _ts_parse_p53_parse_first_stmt("type R<T> = { [K in keyof T as Capitalize<string & K>]: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "[K in keyof T as <remap>]: T[K]");
+    
+    s = _ts_parse_p53_parse_first_stmt("type Filter<T, U> = { [K in keyof T as T[K] extends U ? K : never]: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "as-clause with conditional");
+    
+    s = _ts_parse_p53_parse_first_stmt("type Prefix<T> = { [K in keyof T as `_${string & K}`]: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "as-clause with template literal");
+    
+    # ─── readonly modifier (incl. explicit +/-) ────────────────────
+    test_group("readonly modifiers");
+    
+    s = _ts_parse_p53_parse_first_stmt("type R<T> = { readonly [K in keyof T]: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "readonly [K in T]: V");
+    
+    s = _ts_parse_p53_parse_first_stmt("type AddR<T> = { +readonly [K in keyof T]: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "+readonly [K in T]: V");
+    
+    s = _ts_parse_p53_parse_first_stmt("type Mut<T> = { -readonly [K in keyof T]: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "-readonly [K in T]: V");
+    
+    # ─── optional modifier (incl. explicit +/-) ────────────────────
+    test_group("? modifiers");
+    
+    s = _ts_parse_p53_parse_first_stmt("type P<T> = { [K in keyof T]?: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "[K in T]?: V");
+    
+    s = _ts_parse_p53_parse_first_stmt("type Opt<T> = { [K in keyof T]+?: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "[K in T]+?: V");
+    
+    s = _ts_parse_p53_parse_first_stmt("type Req<T> = { [K in keyof T]-?: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "[K in T]-?: V");
+    
+    # ─── combined modifiers + as-clause ────────────────────────────
+    test_group("combined forms");
+    
+    s = _ts_parse_p53_parse_first_stmt("type X<T> = { -readonly [K in keyof T as `_${string & K}`]-?: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "-readonly + as + -? combined");
+    
+    s = _ts_parse_p53_parse_first_stmt("type Y<T> = { +readonly [K in keyof T as Lowercase<K & string>]+?: T[K] };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "+readonly + as + +? combined");
+    
+    # ─── regressions: index signatures + plain props ───────────────
+    test_group("regressions — pre-v5.7.25 forms still pass");
+    
+    s = _ts_parse_p53_parse_first_stmt("type R = { [k: string]: number };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "[k: string]: number index sig");
+    
+    s = _ts_parse_p53_parse_first_stmt("type S = { readonly [k: number]: string };");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_TYPE_ALIAS, "readonly index sig");
+    
+    s = _ts_parse_p53_parse_first_stmt("interface I { readonly name: string; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_INTERFACE, "readonly property");
+    
+    return 0;
+}
+
+# ── ts_parse_p54 ───────────────────────────────────────────
+fn ts_parse_test_ts_parse_p54() {
+    
+    
+    
+    
+    # ─── decorators on class declarations ──────────────────────────
+    test_group("decorators on class declarations");
+    
+    var s = _ts_parse_p54_parse_first_stmt("@foo class X {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo class X {}");
+    
+    s = _ts_parse_p54_parse_first_stmt("@foo() class X {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo() class X {}");
+    
+    s = _ts_parse_p54_parse_first_stmt("@foo @bar @baz class X {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo @bar @baz class X {}");
+    
+    s = _ts_parse_p54_parse_first_stmt("@foo.bar class X {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo.bar class X {}");
+    
+    s = _ts_parse_p54_parse_first_stmt("@foo.bar.baz({ a: 1, b: [1, 2] }) class X {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo.bar.baz(obj) class X {}");
+    
+    s = _ts_parse_p54_parse_first_stmt("@foo<T>() class X {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo<T>() class X {}");
+    
+    s = _ts_parse_p54_parse_first_stmt("@foo abstract class X {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo abstract class X {}");
+    
+    # ─── decorators on class members ───────────────────────────────
+    test_group("decorators on class members");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { @foo method() {} }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo method()");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { @foo prop: number = 1; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo prop");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { @foo() public bar: string; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo() public bar (factory + modifier)");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { @foo @bar.factory() async qux(): Promise<void> {} }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "multi-decorator async method");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { @foo get name(): string { return ''; } }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "@foo get accessor");
+    
+    # ─── decorators on parameters ──────────────────────────────────
+    test_group("decorators on parameters");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { method(@foo x: number) {} }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "method(@foo x)");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { ctor(@foo x: number, @bar.dec() y: string) {} }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "method(@foo x, @bar.dec() y)");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { method(@foo public p: T, q: U) {} }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "decorator + ctor-prop modifier");
+    
+    # ─── decorators after export / export default ─────────────────
+    test_group("decorators after export keyword");
+    
+    s = _ts_parse_p54_parse_first_stmt("export @foo class X {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_EXPORT, "export @foo class X");
+    
+    s = _ts_parse_p54_parse_first_stmt("export default @foo class {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_EXPORT_DEFAULT, "export default @foo class");
+    
+    # ─── regressions: pre-v5.7.26 forms ─────────────────────────────
+    test_group("regressions — class without decorators still works");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { method() {} prop: T = 1; }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "plain class");
+    
+    s = _ts_parse_p54_parse_first_stmt("export default class X {}");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_EXPORT_DEFAULT, "export default class");
+    
+    s = _ts_parse_p54_parse_first_stmt("class X { ctor(public x: number, readonly y: T) {} }");
+    assert_eq(TS_AST_KIND(ts_base, s), TS_AST_DECL_CLASS, "ctor params with modifiers");
+    
+    return 0;
+}
+
+# ── ts_parse_p55 (v5.7.44 variadic tuple AST) ─────────────
+fn ts_parse_test_ts_parse_p55() {
+    # ─── single rest: [...A] ───────────────────────────────────────
+    test_group("variadic: single rest [...A]");
+    var rc = _ts_parse_p55_parse("type T = [...A];");
+    assert(rc >= 0, "[...A] parses");
+    var tup = _ts_parse_p55_find_tuple(ts_base);
+    assert(tup >= 0, "TS_AST_TYPE_TUPLE present");
+    var c0 = _ts_parse_p55_tuple_child(ts_base, tup, 0);
+    assert_eq(TS_AST_KIND(ts_base, c0), TS_AST_TYPE_REST, "elem[0] = TS_AST_TYPE_REST");
+    var inner = TS_AST_PAYLOAD(ts_base, c0, 0);
+    assert_eq(TS_AST_KIND(ts_base, inner), TS_AST_TYPE_REF, "inner = TS_AST_TYPE_REF");
+
+    # ─── trailing spread: [T, ...U] ────────────────────────────────
+    test_group("variadic: trailing spread [T, ...U]");
+    rc = _ts_parse_p55_parse("type T = [A, ...B];");
+    assert(rc >= 0, "[A, ...B] parses");
+    tup = _ts_parse_p55_find_tuple(ts_base);
+    var t0 = _ts_parse_p55_tuple_child(ts_base, tup, 0);
+    var t1 = _ts_parse_p55_tuple_child(ts_base, tup, 1);
+    assert_eq(TS_AST_KIND(ts_base, t0), TS_AST_TYPE_REF, "elem[0] = REF (non-spread)");
+    assert_eq(TS_AST_KIND(ts_base, t1), TS_AST_TYPE_REST, "elem[1] = REST");
+
+    # ─── leading spread: [...U, T] ─────────────────────────────────
+    test_group("variadic: leading spread [...U, T]");
+    rc = _ts_parse_p55_parse("type T = [...A, B];");
+    assert(rc >= 0, "[...A, B] parses");
+    tup = _ts_parse_p55_find_tuple(ts_base);
+    t0 = _ts_parse_p55_tuple_child(ts_base, tup, 0);
+    t1 = _ts_parse_p55_tuple_child(ts_base, tup, 1);
+    assert_eq(TS_AST_KIND(ts_base, t0), TS_AST_TYPE_REST, "elem[0] = REST");
+    assert_eq(TS_AST_KIND(ts_base, t1), TS_AST_TYPE_REF, "elem[1] = REF (non-spread)");
+
+    # ─── multi-spread: [...A, ...B] ────────────────────────────────
+    test_group("variadic: multi-spread [...A, ...B]");
+    rc = _ts_parse_p55_parse("type T = [...A, ...B];");
+    assert(rc >= 0, "[...A, ...B] parses");
+    tup = _ts_parse_p55_find_tuple(ts_base);
+    t0 = _ts_parse_p55_tuple_child(ts_base, tup, 0);
+    t1 = _ts_parse_p55_tuple_child(ts_base, tup, 1);
+    assert_eq(TS_AST_KIND(ts_base, t0), TS_AST_TYPE_REST, "elem[0] = REST");
+    assert_eq(TS_AST_KIND(ts_base, t1), TS_AST_TYPE_REST, "elem[1] = REST");
+
+    # ─── mixed: [T, ...A, ...B, U] ─────────────────────────────────
+    test_group("variadic: mixed [T, ...A, ...B, U]");
+    rc = _ts_parse_p55_parse("type T = [P, ...A, ...B, Q];");
+    assert(rc >= 0, "[P, ...A, ...B, Q] parses");
+    tup = _ts_parse_p55_find_tuple(ts_base);
+    var m0 = _ts_parse_p55_tuple_child(ts_base, tup, 0);
+    var m1 = _ts_parse_p55_tuple_child(ts_base, tup, 1);
+    var m2 = _ts_parse_p55_tuple_child(ts_base, tup, 2);
+    var m3 = _ts_parse_p55_tuple_child(ts_base, tup, 3);
+    assert_eq(TS_AST_KIND(ts_base, m0), TS_AST_TYPE_REF,  "elem[0] = REF");
+    assert_eq(TS_AST_KIND(ts_base, m1), TS_AST_TYPE_REST, "elem[1] = REST");
+    assert_eq(TS_AST_KIND(ts_base, m2), TS_AST_TYPE_REST, "elem[2] = REST");
+    assert_eq(TS_AST_KIND(ts_base, m3), TS_AST_TYPE_REF,  "elem[3] = REF");
+
+    # ─── labeled spread: [first: string, ...rest: number[]] ───────
+    test_group("variadic: labeled spread");
+    rc = _ts_parse_p55_parse("type T = [first: string, ...rest: number[]];");
+    assert(rc >= 0, "labeled spread parses");
+    tup = _ts_parse_p55_find_tuple(ts_base);
+    var lk1 = TS_AST_KIND(ts_base, _ts_parse_p55_tuple_child(ts_base, tup, 1));
+    assert_eq(lk1, TS_AST_TYPE_REST, "labeled spread elem[1] = REST");
+
+    # ─── optional + spread: [T?, ...U] ─────────────────────────────
+    test_group("variadic: optional + spread [T?, ...U]");
+    rc = _ts_parse_p55_parse("type T = [A?, ...B];");
+    assert(rc >= 0, "[A?, ...B] parses");
+    tup = _ts_parse_p55_find_tuple(ts_base);
+    var o0 = _ts_parse_p55_tuple_child(ts_base, tup, 0);
+    var o1 = _ts_parse_p55_tuple_child(ts_base, tup, 1);
+    assert_eq(TS_AST_KIND(ts_base, o0), TS_AST_TYPE_OPTIONAL, "elem[0] = OPTIONAL");
+    assert_eq(TS_AST_KIND(ts_base, o1), TS_AST_TYPE_REST,     "elem[1] = REST");
+
+    # ─── regression: plain tuple still works (no false REST) ─────
+    test_group("regression: plain tuple [A, B] no false REST");
+    rc = _ts_parse_p55_parse("type T = [A, B];");
+    assert(rc >= 0, "[A, B] parses");
+    tup = _ts_parse_p55_find_tuple(ts_base);
+    var p0 = _ts_parse_p55_tuple_child(ts_base, tup, 0);
+    var p1 = _ts_parse_p55_tuple_child(ts_base, tup, 1);
+    assert_eq(TS_AST_KIND(ts_base, p0), TS_AST_TYPE_REF, "elem[0] = REF (no false REST)");
+    assert_eq(TS_AST_KIND(ts_base, p1), TS_AST_TYPE_REF, "elem[1] = REF (no false REST)");
+
+    return 0;
+}
+
+# ── ts_parse_p56 (v5.7.45 const type params — TS 5.0) ─────
+# v5.7.47 refactor: 14 parallel-shape parse-rc cases collapsed
+# from ~70 lines of inline assertions to a single test_each call
+# over (source, label) pairs. Each case is identical shape:
+# parse → assert rc>=0. test_group fires per-case for granular
+# failure attribution.
+fn ts_parse_test_ts_parse_p56() {
+    test_group("const type params (v5.7.45 — table-driven via test_each)");
+    var cases = vec_new();
+    vec_push(cases, _ts_parse_p56_case("function id<const T>(x: T): T { return x; }",                                "function <const T>"));
+    vec_push(cases, _ts_parse_p56_case("function pick<const K extends string>(key: K) { return key; }",              "function <const K extends string>"));
+    vec_push(cases, _ts_parse_p56_case("function f<const T = \"x\">(x: T): T { return x; }",                         "function <const T = default>"));
+    vec_push(cases, _ts_parse_p56_case("function mix<T, const U, V>(a: T, b: U, c: V) {}",                           "function <T, const U, V>"));
+    vec_push(cases, _ts_parse_p56_case("class Box<const T> { constructor(public v: T) {} }",                         "class Box<const T>"));
+    vec_push(cases, _ts_parse_p56_case("type Wrap<const T> = T;",                                                    "type Wrap<const T>"));
+    vec_push(cases, _ts_parse_p56_case("const f = <const T>(x: T): T => x;",                                         "arrow <const T>"));
+    vec_push(cases, _ts_parse_p56_case("class C { method<const T>(x: T): T { return x; } }",                         "class method <const T>"));
+    vec_push(cases, _ts_parse_p56_case("interface I { method<const T>(x: T): T; }",                                  "interface method <const T>"));
+    vec_push(cases, _ts_parse_p56_case("function f<const A, const B>(a: A, b: B) {}",                                "function <const A, const B>"));
+    vec_push(cases, _ts_parse_p56_case("function f<const T extends string = \"x\">(x: T): T { return x; }",          "<const T extends string = default>"));
+    # Regressions: plain (no `const` modifier) still works.
+    vec_push(cases, _ts_parse_p56_case("function id<T>(x: T): T { return x; }",                                      "regression: plain <T>"));
+    vec_push(cases, _ts_parse_p56_case("function f<T extends U, V = W>(x: T) {}",                                    "regression: plain <T extends U, V = W>"));
+    test_each(cases, &_ts_parse_p56_check);
+    return 0;
+}
+
+# ── ts_parse_p57 (v5.7.46 audit-pass — 4 stale-pin items) ─
+# Premise-check at v5.7.45 entry empirically established that
+# the 4 items below all parse rc=0 against current cc5. This
+# group locks the finding via assertions so future regressions
+# in any of the shapes are caught at tcyr level. v5.7.46 adds
+# zero compiler change; just gates + this group.
+fn ts_parse_test_ts_parse_p57() {
+    # ─── `as const` assertion expressions ──────────────────────────
+    test_group("as const: scalar / object / array / nested");
+    var rc = _ts_parse_p57_parse("const c1 = \"foo\" as const;");
+    assert(rc >= 0, "scalar 'foo' as const");
+    rc = _ts_parse_p57_parse("const c2 = { kind: \"user\", id: 42 } as const;");
+    assert(rc >= 0, "obj { ... } as const");
+    rc = _ts_parse_p57_parse("const c3 = [1, 2, 3] as const;");
+    assert(rc >= 0, "arr [1,2,3] as const");
+    rc = _ts_parse_p57_parse("const c4 = { tag: \"a\", items: [1, 2] as const } as const;");
+    assert(rc >= 0, "nested obj+arr as const");
+
+    # ─── `satisfies` postfix operator ──────────────────────────────
+    test_group("satisfies: literal / call-expr / arrow-call");
+    rc = _ts_parse_p57_parse("const palette = { red: \"#f00\" } satisfies Record<string, string>;");
+    assert(rc >= 0, "obj satisfies Record");
+    rc = _ts_parse_p57_parse("type Cfg = { name: string }; const c = { name: \"x\" } satisfies Cfg;");
+    assert(rc >= 0, "literal satisfies type-alias");
+    rc = _ts_parse_p57_parse("const v = (() => 42)() satisfies number;");
+    assert(rc >= 0, "call-expr satisfies primitive");
+    rc = _ts_parse_p57_parse("const arr = [1, \"two\", true] satisfies [number, string, boolean];");
+    assert(rc >= 0, "tuple-literal satisfies tuple-type");
+
+    # ─── `never` / `unknown` primitives in type position ───────────
+    test_group("never / unknown: type alias / fn return / array / union");
+    rc = _ts_parse_p57_parse("type T1 = never;");
+    assert(rc >= 0, "type T = never");
+    rc = _ts_parse_p57_parse("type T2 = unknown;");
+    assert(rc >= 0, "type T = unknown");
+    rc = _ts_parse_p57_parse("function fail(): never { throw 0; }");
+    assert(rc >= 0, "fn returns never");
+    rc = _ts_parse_p57_parse("function val(): unknown { return 1; }");
+    assert(rc >= 0, "fn returns unknown");
+    rc = _ts_parse_p57_parse("type T3 = never[]; type T4 = unknown[];");
+    assert(rc >= 0, "never[] / unknown[]");
+    rc = _ts_parse_p57_parse("type T5 = string | never; type T6 = string | unknown;");
+    assert(rc >= 0, "never / unknown in union");
+    rc = _ts_parse_p57_parse("type T7 = { a: never; b: unknown };");
+    assert(rc >= 0, "never / unknown in object type");
+
+    # ─── conditional types: basic ──────────────────────────────────
+    test_group("conditional types: basic ternary");
+    rc = _ts_parse_p57_parse("type IsString<T> = T extends string ? true : false;");
+    assert(rc >= 0, "basic T extends X ? Y : Z");
+    rc = _ts_parse_p57_parse("type R1 = IsString<\"foo\">; type R2 = IsString<42>;");
+    assert(rc >= 0, "instantiate conditional");
+
+    # ─── conditional types: nested ─────────────────────────────────
+    test_group("conditional types: nested");
+    rc = _ts_parse_p57_parse("type Triage<T> = T extends string ? \"s\" : T extends number ? \"n\" : \"o\";");
+    assert(rc >= 0, "right-nested chain");
+    rc = _ts_parse_p57_parse("type Deep<T> = T extends Array<infer U> ? U extends string ? \"sa\" : \"oa\" : \"none\";");
+    assert(rc >= 0, "infer + nested ternary");
+
+    # ─── conditional types: `infer T` ──────────────────────────────
+    test_group("conditional types: infer T");
+    rc = _ts_parse_p57_parse("type Unwrap<T> = T extends Promise<infer U> ? U : T;");
+    assert(rc >= 0, "Unwrap via infer U");
+    rc = _ts_parse_p57_parse("type ArgsOf<F> = F extends (...args: infer A) => any ? A : never;");
+    assert(rc >= 0, "ArgsOf via infer A in rest position");
+    rc = _ts_parse_p57_parse("type ReturnT<F> = F extends (...args: any[]) => infer R ? R : never;");
+    assert(rc >= 0, "ReturnT via infer R in return position");
+
+    # ─── conditional types: distributive ───────────────────────────
+    test_group("conditional types: distributive");
+    rc = _ts_parse_p57_parse("type ToArr<T> = T extends any ? T[] : never;");
+    assert(rc >= 0, "ToArr distributes");
+    rc = _ts_parse_p57_parse("type Filter<T, U> = T extends U ? T : never;");
+    assert(rc >= 0, "Filter via T extends U distributes");
+    rc = _ts_parse_p57_parse("type Box<T> = [T] extends [string] ? \"yes\" : \"no\";");
+    assert(rc >= 0, "[T] extends [string] non-distributive form");
+
+    return 0;
+}
+
+ts_parse_test_ts_parse_p43();
+ts_parse_test_ts_parse_p46();
+ts_parse_test_ts_parse_p48();
+ts_parse_test_ts_parse_p49();
+ts_parse_test_ts_parse_p50();
+ts_parse_test_ts_parse_p51();
+ts_parse_test_ts_parse_p52();
+ts_parse_test_ts_parse_p53();
+ts_parse_test_ts_parse_p54();
+ts_parse_test_ts_parse_p55();
+ts_parse_test_ts_parse_p56();
+ts_parse_test_ts_parse_p57();
+
+var exit_code = assert_summary();
+syscall(60, exit_code);

@@ -1162,14 +1162,15 @@ fn _cross_os_selfhost(): i64 {
     # retraction was a codesign-comparison artifact (codesign mutates the
     # binary with LC_CODE_SIGNATURE). The gate runs UNSIGNED — see
     # scripts/cross-os-selfhost.sh.
-    # v6.4.59: pass the vr01_ glob so ach also runs the VR-01 platform libtest
-    # (the 25 fs/thread/sync/alloc/args/process/syscalls tcyr on native x86-macho),
+    # v6.4.59: pass the cross-host selector so ach also runs the platform libtest
+    # (the fs/thread/sync/alloc/args/process/syscalls tcyr on native x86-macho),
     # matching ecb/cass/pi — the x86-macho stdlib is now gated on real Intel, not
     # just the bare compiler self-host. The ach recipe also carries the exit-42
     # rot-guard (scripts/cross-os-selfhost.sh).
-    var ach_rc = _co_run_sh("sh scripts/cross-os-selfhost.sh ach vr01_");
+    # v6.5.11: the selector is the SUBDIR tests/tcyr/crossos, not the "vr01_" prefix.
+    var ach_rc = _co_run_sh("sh scripts/cross-os-selfhost.sh ach crossos");
     if (ach_rc == 0) {
-        println("  PASS: ach (macOS x86_64) cycc self-host byte-identical + VR-01 libtest");
+        println("  PASS: ach (macOS x86_64) cycc self-host byte-identical + crossos libtest");
     } elif (ach_rc == 3) {
         println("  FAIL: ach (macOS x86_64) UNREACHABLE — host down/unresolvable, cannot verify (publish blocked)");
         fails = fails + 1;
@@ -1671,32 +1672,32 @@ fn cmd_soak(iters): i64 {
         sys_unlink(cc4_t);
 
         # 2. Test suite
+        # v6.5.11: RECURSIVE. Was a flat dir_list over tests/tcyr, so a subfoldered
+        # test was invisible to EVERY soak iteration while the run still reported
+        # success — soak was never brought along by the v6.5.7 bench/fuzz pass.
+        # find_files returns full paths (path_join → str_builder_build, NUL-terminated).
         if (iter_ok == 1) {
-            var tent = dir_list(str_from("tests/tcyr"));
+            var tent = find_files(str_from("tests/tcyr"), str_from(".tcyr"));
             var ti = 0;
             while (ti < vec_len(tent)) {
-                var tn = str_data(vec_get(tent, ti));
-                var tl = str_len(vec_get(tent, ti));
-                if (tl > 5) {
-                    if (memeq(tn + tl - 5, ".tcyr", 5) == 1) {
-                        var tp = make_path("tests/tcyr", tn);
-                        var tmpbin = _cbt_tmpfile("soak_t");
-                        if (compile(tp, tmpbin) == 0) {
-                            var ec = run_binary(tmpbin);
-                            sys_unlink(tmpbin);
-                            if (ec != 0) {
-                                sys_write(STDOUT_FD, "FAIL: ", 6);
-                                sys_write(STDOUT_FD, tn, tl);
-                                sys_write(STDOUT_FD, "\n", 1);
-                                iter_ok = 0;
-                                break;
-                            }
-                        } else {
-                            sys_unlink(tmpbin);
-                            iter_ok = 0;
-                            break;
-                        }
+                var tpath = vec_get(tent, ti);
+                var tn = str_data(tpath);
+                var tl = str_len(tpath);
+                var tmpbin = _cbt_tmpfile("soak_t");
+                if (compile(tn, tmpbin) == 0) {
+                    var ec = run_binary(tmpbin);
+                    sys_unlink(tmpbin);
+                    if (ec != 0) {
+                        sys_write(STDOUT_FD, "FAIL: ", 6);
+                        sys_write(STDOUT_FD, tn, tl);
+                        sys_write(STDOUT_FD, "\n", 1);
+                        iter_ok = 0;
+                        break;
                     }
+                } else {
+                    sys_unlink(tmpbin);
+                    iter_ok = 0;
+                    break;
                 }
                 ti = ti + 1;
             }

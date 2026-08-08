@@ -214,7 +214,7 @@ process-global, so it assumes cyrius thread-local code runs on a single thread
 inside the host (the C launcher runs mabda on `main`); a foreign multi-thread
 consumer would need a pthread-key backing (tracked follow-up).
 
-Regression gate: `tests/ffi_stack_protected_extern_c.sh` (check.sh) — a
+Regression gate: `tests/gates/platform/ffi_stack_protected_extern_c.sh` (check.sh) — a
 stack-protected extern-C `.so` via `fncall4/5/6/7` **and** the foreign-`%fs`
 no-clobber / canary-intact proof.
 

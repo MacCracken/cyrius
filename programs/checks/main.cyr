@@ -7,7 +7,7 @@
 #
 # What we run:
 #   1. Self-host two-step (cycc → cc5b byte-identical)
-#   2. Heap-map audit (sh tests/heapmap.sh)
+#   2. Heap-map audit (sh tests/gates/memory/heapmap.sh)
 #   3. Test suite (every .tcyr file under tests/tcyr/)
 #   4. ~50 regression gates (sh tests/regression-X.sh)
 #   5. Format walk (cyrfmt across lib/)
@@ -318,70 +318,70 @@ fn _run_regression_gates(): i64 {
     println("");
 
     _section("Jump-target cap (CVE-09)");
-    _gate("x86 jump-target overflow hard-errors past 1023, compiles under it (CVE-09, v6.3.21)", "tests/jump_target_cap.sh");
+    _gate("x86 jump-target overflow hard-errors past 1023, compiles under it (CVE-09, v6.3.21)", "tests/gates/codegen/jump_target_cap.sh");
     println("");
 
     _section("Preprocessor flag-table cap (L1)");
-    _gate("PP #define/flag table hard-errors past 16 entries; small sets compile clean (L1, v6.4.15)", "tests/pp_flag_cap.sh");
+    _gate("PP #define/flag table hard-errors past 16 entries; small sets compile clean (L1, v6.4.15)", "tests/gates/frontend/pp_flag_cap.sh");
     println("");
 
     _section("cx CLI exposure (cx arc A)");
-    _gate("cyrius build --target=cx -> versioned .cyx -> cyrius run (right exit); float hard-errors (cx arc A)", "tests/cx_cli.sh");
+    _gate("cyrius build --target=cx -> versioned .cyx -> cyrius run (right exit); float hard-errors (cx arc A)", "tests/gates/toolchain/cx_cli.sh");
     println("");
 
     _section("Parser fuzz (VR-02)");
-    _gate("cycc stdin-parser survives byte-mutated hostile input, no crash (VR-02, v6.3.22)", "tests/cycc_parser_fuzz.sh");
+    _gate("cycc stdin-parser survives byte-mutated hostile input, no crash (VR-02, v6.3.22)", "tests/gates/diagnostics/cycc_parser_fuzz.sh");
     println("");
 
     _section("SIMD vector sentinel guards (v6.4.4)");
-    _gate("f32v4 .field hard-errors (no OOB struct-table escape) + mismatched SIMD arg rejected (v6.4.4)", "tests/simd_vec_reject.sh");
-    _gate("f32v8 256-bit AVX2 emitter produces exact VEX bytes (vmovups/vaddps/vsubps/vmulps ymm + vzeroupper, v6.4.8)", "tests/simd_f32v8_disasm.sh");
+    _gate("f32v4 .field hard-errors (no OOB struct-table escape) + mismatched SIMD arg rejected (v6.4.4)", "tests/gates/codegen/simd_vec_reject.sh");
+    _gate("f32v8 256-bit AVX2 emitter produces exact VEX bytes (vmovups/vaddps/vsubps/vmulps ymm + vzeroupper, v6.4.8)", "tests/gates/codegen/simd_f32v8_disasm.sh");
     println("");
 
     _section("Symbol-dump parity (DX-01)");
-    _gate("CYRIUS_SYMS function-symbol dump emits on x86 + aarch64 (DX-01 parity, v6.3.23)", "tests/dx01_syms_parity.sh");
+    _gate("CYRIUS_SYMS function-symbol dump emits on x86 + aarch64 (DX-01 parity, v6.3.23)", "tests/gates/codegen/dx01_syms_parity.sh");
     println("");
 
     _section("DX diagnostics: column + source excerpt (v6.4.60)");
-    _gate("error output carries :LINE:COL: + a source excerpt with a caret; no at-fail dump (v6.4.60)", "tests/dx_diag_format.sh");
+    _gate("error output carries :LINE:COL: + a source excerpt with a caret; no at-fail dump (v6.4.60)", "tests/gates/diagnostics/dx_diag_format.sh");
     println("");
 
     _section("DX diagnostics: multi-error recovery (v6.4.62)");
-    _gate("reports N>=2 errors per compile (panic-mode), no output on error, no crash/hang on garbage, valid emits (v6.4.62)", "tests/dx_multi_error.sh");
+    _gate("reports N>=2 errors per compile (panic-mode), no output on error, no crash/hang on garbage, valid emits (v6.4.62)", "tests/gates/diagnostics/dx_multi_error.sh");
     println("");
 
     _section("Enum-shadow hard-error");
-    _gate("non-int var shadowing an enum constant hard-errors; int same-value shadow allowed (v6.3.24)", "tests/enum_shadow_error.sh");
+    _gate("non-int var shadowing an enum constant hard-errors; int same-value shadow allowed (v6.3.24)", "tests/gates/frontend/enum_shadow_error.sh");
     println("");
 
     _section("Thread-local slot collision");
-    _gate("sigil crypto-bank thread-local slot is clear of patra's 0-4 (v6.3.25 TLS RECORD_LAYER fix)", "tests/thread_local_slot_collision.sh");
+    _gate("sigil crypto-bank thread-local slot is clear of patra's 0-4 (v6.3.25 TLS RECORD_LAYER fix)", "tests/gates/concurrency/thread_local_slot_collision.sh");
     println("");
 
     _section("Extern-C FFI (fncallN + foreign-%fs coexistence)");
-    _gate("stack-protected extern-C via fncall4/5/6/7 + foreign-TLS coexistence, no %fs clobber (v6.3.26)", "tests/ffi_stack_protected_extern_c.sh");
+    _gate("stack-protected extern-C via fncall4/5/6/7 + foreign-TLS coexistence, no %fs clobber (v6.3.26)", "tests/gates/platform/ffi_stack_protected_extern_c.sh");
     println("");
 
     _section("IR cross-BB liveness + spill detection (perf-arc substrate)");
-    _gate("ir_liveness_cfg fixpoint converges + precise (exit BBs live_out==0) + spill-interval detection, behavior-safe (v6.3.27)", "tests/ir_liveness_cfg.sh");
-    _gate("callee-saved frame-trim: trimmed cycc self-hosts, shrinks vs CYRIUS_FRAMETRIM=0, behavior-preserving (v6.3.29)", "tests/frametrim.sh");
-    _gate("redundant-reload elimination: self-hosts, shrinks vs CYRIUS_RELOADELIM=0, control-flow-safe, behavior-preserving (v6.3.30)", "tests/reloadelim.sh");
-    _gate("freelist agnos mmap-ABI: Linux round-trip=42, agnos build clean, _fl_mmap routes the single-arg agnos mmap (v6.3.31)", "tests/freelist_agnos_mmap.sh");
-    _gate("single-owner mutex: thread+sync co-include has 0 duplicate-fn warnings, lock still guards under contention, thread*.cyr delegate to sync (v6.3.44)", "tests/mutex_single_owner.sh");
-    _gate("net sock_accept would-block path is alloc-free: 100k no-pending polls grow the bump heap 0 B (accept-per-poll leak, v6.4.61)", "tests/net_accept_no_leak.sh");
-    _gate("lib freshness: `cyrius build` NAMES per-lib version skew vs the pin (both header formats, sentinel-independent), silent when fresh, opt-out + --check-lib-sync + source-repo carve-out (v6.4.63)", "tests/lib_freshness.sh");
-    _gate("sys_exit_group on all 3 syscall peers; old per-thread epilogue still hangs (the mutation signal); no init template ships exit(2); macOS-x86 231 translated (v6.5.6)", "tests/exit_group_wrapper.sh");
-    _gate("async_await_readable_ms bounds the wait AND reports readable(1) vs timeout(0); legacy wrapper still returns 0; no hardcoded -1 left (v6.5.6)", "tests/async_await_readable_ms.sh");
-    _gate("cyrius test/bench/fuzz each DISCOVER what `cyrius init` scaffolds into tests/, at any DEPTH, and honour an explicit subfolder argument; an unusable argument is refused (v6.4.72/.78 + v6.5.6/.7)", "tests/scaffold_verb_discovery.sh");
-    _gate("alloc_reset() no longer strands the default Allocator (hisab SIGSEGV); storage is TYPED i64[5] so cybs and cycc reserve the same 5 slots — a bare [5] clobbers gen1 while gen2==gen3 stays green (v6.5.7)", "tests/alloc_reset_default_allocator.sh");
-    _gate("syscall-wrapper pass: sys_chdir / signal_default / x* family / sys_fchownat behave AND cross-compile on all 5 targets; agnos length-carrying arms asserted structurally (arity matches, so nothing else can see it); agnos #96/#97 not minted early (v6.5.7)", "tests/syscall_wrapper_pass.sh");
-    _gate("include dir resolution: a subfolder source includes its own neighbours via #@incdir, CWD still resolves first (additive), and the in-band marker cannot reopen CVE-02/CVE-16 — escape axes target a REAL valid-cyrius file so 'refused' is distinguishable from 'read then choked' (v6.5.7)", "tests/include_dir_resolution.sh");
-    _gate("distlib .deps sidecar: the sidecar reports the DECLARED [deps] stdlib UNIONED with the include-scan, so a leaf referenced through the declaration (setu: 4 of 12 missing) is no longer dropped. ⭐ A wrong sidecar switched OFF cyrius deps' own consumer check — an under-declaring consumer built OK, silently. Profiles keep the pruned inference so a narrow bundle cannot over-report. Axis 5's decoy must precede the real key: the scan stops at its first match, and the appended form passed against a build with the guard deleted (v6.5.10)", "tests/distlib_deps_sidecar.sh");
-    _gate("alloc_via no plumbing: the dispatch helpers read the vtable inline instead of through accessor CALLS, and arena_allocator registers the real fn rather than a pass-through trampoline — 15.1ns -> ~11ns on the hottest path the _a convention has. Structural axes guard both halves; the perf tripwire alone cannot say which regressed, and _bump_alloc/_bump_reset must STAY (they adapt arity, they are not pass-throughs) (v6.5.10)", "tests/alloc_via_no_plumbing.sh");
-    _gate("sync mutex three-state: the Linux futex lock is 0/1/2 so unlock stops syscalling on EVERY release (392ns -> 48ns uncontended). Needed NO new primitive — a successful boolean CAS 1->0 already proves the pre-value, correcting the roadmap. Mutation-verified across three axes: unlock-never-wakes and a re-read expected-value HANG; a wrong fast-path state is caught only by the perf tripwire; dropping the 1->2 upgrade is caught only STRUCTURALLY (it stays correct and degrades contended throughput alone) (v6.5.9)", "tests/sync_mutex_three_state.sh");
-    _gate("distlib --all/--check: every declared [lib.X] bundle is regenerated, and --check names any STALE one and exits non-zero — the sankoch 2.7.6 shape where a source fix reached the main bundle and none of the nine profiles. Compares BYTES, not version strings, which is exactly what let those profiles look fresh. Before this, --all and --check were swallowed by the arg loop and ran the base-bundle-only path, exiting 0 (v6.5.8)", "tests/distlib_all_profiles.sh");
-    _gate("coverage corpus + fail-open: the >1 MiB test corpus is searched in full (grow-and-retry), a symbol flush against the corpus end is found (<= bound), `pub fn` counts, a subfolder callout is honoured, and an EMPTY measurement fails instead of reporting a percentage and exiting 0. Axes 1-2 are order-independent by construction — dir_walk gives no ordering guarantee and the first version passed against the truncating build (v6.5.8)", "tests/coverage_corpus_and_failopen.sh");
-    _gate("thread_join single-load: the FUTEX_WAIT expected-value must be a tid observed LIVE, never a second load — two independent loads let the kernel's one-shot CLEARTID wake be discarded and the joiner park forever. STRUCTURAL by necessity: the companion .tcyr passes 131/0 against the broken code (mutation-verified), and the race is ~1 in 150k so a stress loop cannot prove absence (v6.5.8)", "tests/thread_join_single_load.sh");
+    _gate("ir_liveness_cfg fixpoint converges + precise (exit BBs live_out==0) + spill-interval detection, behavior-safe (v6.3.27)", "tests/gates/ir-opt/ir_liveness_cfg.sh");
+    _gate("callee-saved frame-trim: trimmed cycc self-hosts, shrinks vs CYRIUS_FRAMETRIM=0, behavior-preserving (v6.3.29)", "tests/gates/ir-opt/frametrim.sh");
+    _gate("redundant-reload elimination: self-hosts, shrinks vs CYRIUS_RELOADELIM=0, control-flow-safe, behavior-preserving (v6.3.30)", "tests/gates/ir-opt/reloadelim.sh");
+    _gate("freelist agnos mmap-ABI: Linux round-trip=42, agnos build clean, _fl_mmap routes the single-arg agnos mmap (v6.3.31)", "tests/gates/memory/freelist_agnos_mmap.sh");
+    _gate("single-owner mutex: thread+sync co-include has 0 duplicate-fn warnings, lock still guards under contention, thread*.cyr delegate to sync (v6.3.44)", "tests/gates/concurrency/mutex_single_owner.sh");
+    _gate("net sock_accept would-block path is alloc-free: 100k no-pending polls grow the bump heap 0 B (accept-per-poll leak, v6.4.61)", "tests/gates/memory/net_accept_no_leak.sh");
+    _gate("lib freshness: `cyrius build` NAMES per-lib version skew vs the pin (both header formats, sentinel-independent), silent when fresh, opt-out + --check-lib-sync + source-repo carve-out (v6.4.63)", "tests/gates/toolchain/lib_freshness.sh");
+    _gate("sys_exit_group on all 3 syscall peers; old per-thread epilogue still hangs (the mutation signal); no init template ships exit(2); macOS-x86 231 translated (v6.5.6)", "tests/gates/platform/exit_group_wrapper.sh");
+    _gate("async_await_readable_ms bounds the wait AND reports readable(1) vs timeout(0); legacy wrapper still returns 0; no hardcoded -1 left (v6.5.6)", "tests/gates/concurrency/async_await_readable_ms.sh");
+    _gate("cyrius test/bench/fuzz each DISCOVER what `cyrius init` scaffolds into tests/, at any DEPTH, and honour an explicit subfolder argument; an unusable argument is refused (v6.4.72/.78 + v6.5.6/.7)", "tests/gates/toolchain/scaffold_verb_discovery.sh");
+    _gate("alloc_reset() no longer strands the default Allocator (hisab SIGSEGV); storage is TYPED i64[5] so cybs and cycc reserve the same 5 slots — a bare [5] clobbers gen1 while gen2==gen3 stays green (v6.5.7)", "tests/gates/memory/alloc_reset_default_allocator.sh");
+    _gate("syscall-wrapper pass: sys_chdir / signal_default / x* family / sys_fchownat behave AND cross-compile on all 5 targets; agnos length-carrying arms asserted structurally (arity matches, so nothing else can see it); agnos #96/#97 not minted early (v6.5.7)", "tests/gates/platform/syscall_wrapper_pass.sh");
+    _gate("include dir resolution: a subfolder source includes its own neighbours via #@incdir, CWD still resolves first (additive), and the in-band marker cannot reopen CVE-02/CVE-16 — escape axes target a REAL valid-cyrius file so 'refused' is distinguishable from 'read then choked' (v6.5.7)", "tests/gates/frontend/include_dir_resolution.sh");
+    _gate("distlib .deps sidecar: the sidecar reports the DECLARED [deps] stdlib UNIONED with the include-scan, so a leaf referenced through the declaration (setu: 4 of 12 missing) is no longer dropped. ⭐ A wrong sidecar switched OFF cyrius deps' own consumer check — an under-declaring consumer built OK, silently. Profiles keep the pruned inference so a narrow bundle cannot over-report. Axis 5's decoy must precede the real key: the scan stops at its first match, and the appended form passed against a build with the guard deleted (v6.5.10)", "tests/gates/toolchain/distlib_deps_sidecar.sh");
+    _gate("alloc_via no plumbing: the dispatch helpers read the vtable inline instead of through accessor CALLS, and arena_allocator registers the real fn rather than a pass-through trampoline — 15.1ns -> ~11ns on the hottest path the _a convention has. Structural axes guard both halves; the perf tripwire alone cannot say which regressed, and _bump_alloc/_bump_reset must STAY (they adapt arity, they are not pass-throughs) (v6.5.10)", "tests/gates/memory/alloc_via_no_plumbing.sh");
+    _gate("sync mutex three-state: the Linux futex lock is 0/1/2 so unlock stops syscalling on EVERY release (392ns -> 48ns uncontended). Needed NO new primitive — a successful boolean CAS 1->0 already proves the pre-value, correcting the roadmap. Mutation-verified across three axes: unlock-never-wakes and a re-read expected-value HANG; a wrong fast-path state is caught only by the perf tripwire; dropping the 1->2 upgrade is caught only STRUCTURALLY (it stays correct and degrades contended throughput alone) (v6.5.9)", "tests/gates/concurrency/sync_mutex_three_state.sh");
+    _gate("distlib --all/--check: every declared [lib.X] bundle is regenerated, and --check names any STALE one and exits non-zero — the sankoch 2.7.6 shape where a source fix reached the main bundle and none of the nine profiles. Compares BYTES, not version strings, which is exactly what let those profiles look fresh. Before this, --all and --check were swallowed by the arg loop and ran the base-bundle-only path, exiting 0 (v6.5.8)", "tests/gates/toolchain/distlib_all_profiles.sh");
+    _gate("coverage corpus + fail-open: the >1 MiB test corpus is searched in full (grow-and-retry), a symbol flush against the corpus end is found (<= bound), `pub fn` counts, a subfolder callout is honoured, and an EMPTY measurement fails instead of reporting a percentage and exiting 0. Axes 1-2 are order-independent by construction — dir_walk gives no ordering guarantee and the first version passed against the truncating build (v6.5.8)", "tests/gates/toolchain/coverage_corpus_and_failopen.sh");
+    _gate("thread_join single-load: the FUTEX_WAIT expected-value must be a tid observed LIVE, never a second load — two independent loads let the kernel's one-shot CLEARTID wake be discarded and the joiner park forever. STRUCTURAL by necessity: the companion .tcyr passes 131/0 against the broken code (mutation-verified), and the race is ~1 in 150k so a stress loop cannot prove absence (v6.5.8)", "tests/gates/concurrency/thread_join_single_load.sh");
     println("");
 
     _section("Binary structural lint (VR-04)");
