@@ -214,6 +214,113 @@ fn dir_list(path: Str): i64 {
 #endif
 #endif
 
+# List a directory into CALLER-OWNED buffers — allocates NOTHING.
+#
+# `dir_list` returns a vec of Str, so it costs one heap Str per entry and the default
+# allocator is a bump allocator with no free. v6.5.11 removed the FIXED ~4.1 KB per call
+# (the getdents scratch moved to the stack), but the per-entry cost is inherent to that
+# return shape and is the half a long-running server actually feels — a directory listing
+# inside a request loop grows the heap forever. This is the caller-owned form the agora
+# filing asked for (2026-07-26-agora-fs-dir-list-per-call-alloc §"Proposed fix").
+#
+#   path        directory to list
+#   scratch     caller buffer for the raw getdents batch (>= 1024; 4096 recommended)
+#   scratch_len size of `scratch`
+#   names       caller buffer receiving NUL-terminated entry names, packed
+#   names_cap   size of `names`
+#   offs        caller i64 buffer receiving each name's offset into `names`
+#   max_entries capacity of `offs`, in entries
+#
+# Returns the entry count (>= 0), or negative on error:
+#   -1 open failed   -2 scratch too small   -3 names buffer full   -4 offs full
+#
+# ⛔ Truncation is an ERROR, never a short read: a silent partial listing is how a caller
+# ends up believing a directory is smaller than it is. `.` and `..` are skipped, matching
+# `dir_list`.
+fn dir_list_into(path: Str, scratch, scratch_len, names, names_cap, offs, max_entries): i64 {
+    if (scratch_len < 1024) { return 0 - 2; }
+    var count = 0;
+    var npos = 0;
+    #ifdef CYRIUS_TARGET_AGNOS
+    var dp = str_data(path);
+    var fd = sys_open(dp, strlen(dp), AO_DIRECTORY);
+    if (fd < 0) { return 0 - 1; }
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_getdents(fd, scratch, scratch_len);
+        if (n <= 0) { rgo = 0; }
+        else {
+            var pos = 0;
+            while (pos < n) {
+                var reclen = load16(scratch + pos);
+                var namelen = load8(scratch + pos + 3);
+                var name = scratch + pos + 8;
+                var skip = 0;
+                if (namelen == 1) { if (load8(name) == 46) { skip = 1; } }
+                if (namelen == 2) {
+                    if (load8(name) == 46) { if (load8(name + 1) == 46) { skip = 1; } }
+                }
+                if (skip == 0) {
+                    if (count >= max_entries) { sys_close(fd); return 0 - 4; }
+                    if (npos + namelen + 1 > names_cap) { sys_close(fd); return 0 - 3; }
+                    store64(offs + count * 8, npos);
+                    memcpy(names + npos, name, namelen);
+                    store8(names + npos + namelen, 0);
+                    npos = npos + namelen + 1;
+                    count = count + 1;
+                }
+                pos = pos + reclen;
+            }
+        }
+    }
+    sys_close(fd);
+    return count;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    var fd2 = sys_open(str_data(path), O_RDONLY, 0);
+    if (fd2 < 0) { return 0 - 1; }
+    var basep[8];
+    store64(&basep, 0);
+    var rgo2 = 1;
+    while (rgo2 == 1) {
+        var n2 = syscall(FSYS_GETDENTS64, fd2, scratch, scratch_len, &basep);
+        if (n2 <= 0) { rgo2 = 0; }
+        else {
+            var pos2 = 0;
+            while (pos2 < n2) {
+                var reclen2 = load16(scratch + pos2 + 16);
+                #ifdef CYRIUS_TARGET_MACOS
+                var name2 = scratch + pos2 + 21;
+                #endif
+                #ifndef CYRIUS_TARGET_MACOS
+                var name2 = scratch + pos2 + 19;
+                #endif
+                var skip2 = 0;
+                if (load8(name2) == 46) {
+                    if (load8(name2 + 1) == 0) { skip2 = 1; }
+                    if (load8(name2 + 1) == 46) {
+                        if (load8(name2 + 2) == 0) { skip2 = 1; }
+                    }
+                }
+                if (skip2 == 0) {
+                    var nl2 = strlen(name2);
+                    if (count >= max_entries) { sys_close(fd2); return 0 - 4; }
+                    if (npos + nl2 + 1 > names_cap) { sys_close(fd2); return 0 - 3; }
+                    store64(offs + count * 8, npos);
+                    memcpy(names + npos, name2, nl2);
+                    store8(names + npos + nl2, 0);
+                    npos = npos + nl2 + 1;
+                    count = count + 1;
+                }
+                pos2 = pos2 + reclen2;
+            }
+        }
+    }
+    sys_close(fd2);
+    return count;
+    #endif
+}
+
 # List directory entries with full paths
 fn dir_list_full(path: Str): i64 {
     var names = dir_list(path);
@@ -292,6 +399,46 @@ fn is_dir(path: Str): i64 {
 # api-surface snapshot and every caller stay as they were.
 var DIR_WALK_MAX_DEPTH = 64;
 
+# Return 1 if `path` is a SYMLINK, else 0.
+#
+# ⛔ v6.5.12: tree walks must LIST a symlink but not DESCEND it. `is_dir` opens with
+# plain `O_RDONLY`, which resolves the link and reports 1, so a link to an ancestor made
+# `dir_walk` re-enter the same subtree forever. The depth cap alone was not a fix: it
+# bounded the runaway but the pass count stayed inflated (a tree holding ONE .tcyr still
+# reported 32), and an inflated count reading as coverage is the failure being fixed.
+#
+# This matches `find`'s default and the `find`-based CI loops, so the walkers and the
+# tooling around them finally agree.
+#
+# readlink is the portable test — it returns the target length (>= 0) for a symlink and
+# -EINVAL for anything else. Present on x86-linux (#89), macOS (#89), aarch64-linux (via
+# readlinkat #78) and agnos. Windows has no readlink wrapper and `fs_win.cyr` supplies
+# its own dir_list/is_dir, so the PE arm returns 0 (junction handling is a separate
+# concern tracked with the Windows fs surface).
+# ⚠ agnos's peer is the LENGTH-CARRYING form — `sys_readlink(path, pathlen, buf, buflen)`,
+# 4 args, mirroring its `sys_open(name, namelen, flags)` ABI — while Linux/macOS take 3.
+# Caught by `folds_agnos_parity.sh`, which compiles every folded stdlib for agnos as well
+# as Linux; a 3-arg call here broke `lib/fs.cyr` for EVERY fold (sigil, patra, sankoch,
+# sakshi, …) because fs.cyr is a PREAMBLE dep. That gate exists because yukti shipped six
+# agnos ABI errors for months — this is the same class, caught the same way.
+fn is_symlink(path: Str): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var lbuf[8];
+    #ifdef CYRIUS_TARGET_AGNOS
+    var pd = str_data(path);
+    if (sys_readlink(pd, strlen(pd), &lbuf, 8) >= 0) { return 1; }
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    if (sys_readlink(str_data(path), &lbuf, 8) >= 0) { return 1; }
+    return 0;
+    #endif
+    #endif
+}
+
 fn _dir_walk_d(path: Str, results, depth): i64 {
     # Stop, but do NOT pretend the tree ended: a silent truncation here would be the
     # same lie as the inflated count, one level down.
@@ -305,7 +452,11 @@ fn _dir_walk_d(path: Str, results, depth): i64 {
     var wi = 0;
     while (wi < vec_len(entries)) {
         var full = path_join(path, vec_get(entries, wi));
-        if (is_dir(full) == 1) {
+        # v6.5.12: a symlinked DIRECTORY is recorded but never DESCENDED (loop guard);
+        # a symlinked FILE is recorded exactly as before. See is_symlink.
+        if (is_dir(full) == 1 && is_symlink(full) == 1) {
+            vec_push(results, full);
+        } elif (is_dir(full) == 1) {
             _dir_walk_d(full, results, depth + 1);
         } else {
             vec_push(results, full);
@@ -390,7 +541,10 @@ fn _dir_walk_prunes_d(path: Str, results, prunes, depth): i64 {
         }
         if (pruned == 0) {
             var full = path_join(path, name);
-            if (is_dir(full) == 1) {
+            # v6.5.12: symlinked DIRECTORIES recorded, not descended — see is_symlink.
+            if (is_dir(full) == 1 && is_symlink(full) == 1) {
+                vec_push(results, full);
+            } elif (is_dir(full) == 1) {
                 _dir_walk_prunes_d(full, results, prunes, depth + 1);
             } else {
                 vec_push(results, full);

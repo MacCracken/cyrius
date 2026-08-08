@@ -852,6 +852,12 @@ evidence does not.** Re-derive every line reference and count before acting on o
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **`lib/net.cyr` AF_UNIX surface** (was §9 of `2026-07-30-net-cyr-x86-only-socket-syscall-numbers`,
+  archived v6.5.12) — a yes/no DESIGN call for the maintainer, not a defect: whether `net.cyr`
+  grows a Unix-domain socket surface alongside INET. Landed here rather than left in the issue
+  queue when the rest of that filing resolved — §3 disarmed at v6.5.7, §4 premise-disproved on
+  real pi, and the silent net.cyr ⇄ ESYSXLAT coupling gated at v6.5.11. Nothing blocks on it.
+
 - **DRY the per-target pass-1/pass-2 top-level scanners** — `ls src/main*.cyr` = **7** forks
   (`main`, `main_aarch64`, `main_aarch64_macho`, `main_aarch64_native`, `main_cx`, `main_win`,
   `main_x86_macho`); no shared pass-1 dispatch helper. This is a recurring-bug class, not

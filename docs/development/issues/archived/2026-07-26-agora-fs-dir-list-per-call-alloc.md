@@ -1,3 +1,36 @@
+> ## ✅ RESOLVED — v6.5.11 + v6.5.12. Archived 2026-08-08.
+>
+> Both halves the filing named are shipped. Verified by measurement, not by reading:
+>
+> | | before | after |
+> |---|--:|--:|
+> | `is_dir` | 4,104 B/call | **0 B** |
+> | `dir_walk` | 4,443 B/entry | **239 B/entry** |
+> | `dir_list` fixed scratch | 4,104 B/call | **0 B** (stack) |
+> | `dir_list_into` (whole listing, 41 entries) | — | **0 B** |
+>
+> **v6.5.11 — the fixed cost.** The `alloc(4096)` + `alloc(8)` getdents scratch moved to
+> STACK locals in both `dir_list` arms and both `is_dir` arms. A stack local rather than
+> the file-scope scratch §"Proposed fix" option 1 suggested: it is inherently per-call and
+> therefore per-THREAD, so it costs no thread-safety, and it needs no thread-local slot.
+> ⭐ **Wider than filed** — the filing named `dir_list`, but `is_dir` was the DOMINANT cost
+> (`dir_walk` calls it once per entry, ~25x the `dir_list` it wraps). Fixing only what was
+> filed would have left `dir_walk` at ~4,267 B/entry and looked complete.
+>
+> **v6.5.12 — the per-entry cost**, which this file correctly called "the harder half and
+> the one that genuinely needs the caller-owned form". `fn dir_list_into(path, scratch,
+> scratch_len, names, names_cap, offs, max_entries)` is that form, with the signature
+> proposed here. It allocates **nothing**: measured 41 entries at 0 B heap growth.
+> Truncation is an ERROR (`-3` names full, `-4` offs full, `-2` scratch too small), never a
+> silent short read — a partial listing that looks complete is how a caller ends up
+> believing a directory is smaller than it is. `dir_list` keeps its signature unchanged, so
+> nothing downstream moved.
+>
+> Also fixed in passing (same walkers): `dir_walk`/`dir_walk_with_prunes` were unbounded on
+> symlink loops — a tree with ONE file reported **41 passed**. Now depth-capped AND
+> symlinked directories are listed but not descended, matching `find`. A symlinked FILE
+> still runs.
+
 # `fs.cyr` `dir_list` allocates its whole working set per call — the last unbounded path in a long-running consumer
 
 **Status:** 🟡 **OPEN** — nothing has shipped for it. **Re-verified against live code on cycc

@@ -204,8 +204,12 @@ fn _tests_walk_d(dir, depth): i64 {
     while (ei < vec_len(entries)) {
         var name = vec_get(entries, ei);
         var full = make_path(dir, str_data(name));
+        # v6.5.12: never DESCEND a symlink (lib/fs.cyr:is_symlink). A link to an
+        # ancestor previously re-entered the same subtree, inflating the pass count.
         if (is_dir(str_from(full)) == 1) {
-            _tests_walk_d(full, depth + 1);
+            # Descend only a REAL directory. A symlinked dir is skipped (loop guard);
+            # a symlinked FILE falls through to the .tcyr arm below and still runs.
+            if (is_symlink(str_from(full)) == 0) { _tests_walk_d(full, depth + 1); }
         }
         elif (str_ends_with(name, str_from(".tcyr")) == 1) {
             _tests_found = 1;
@@ -291,7 +295,9 @@ fn _fuzz_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
         var nl = str_len(name);
         var sub = make_path(dir, nd);
         if (is_dir(str_from(sub)) == 1) {
-            n = n + _fuzz_walk_dir_d(sub, passcnt_ptr, failcnt_ptr, found_ptr, depth + 1);
+            if (is_symlink(str_from(sub)) == 0) {
+                n = n + _fuzz_walk_dir_d(sub, passcnt_ptr, failcnt_ptr, found_ptr, depth + 1);
+            }
         }
         # v6.5.12: `elif`, NOT a second `if`. A DIRECTORY named `x.fcyr` satisfied BOTH
         # arms — recursed into, then handed to compile() as a file — giving
@@ -415,7 +421,9 @@ fn _bench_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
         var nl = str_len(name);
         var sub = make_path(dir, nd);
         if (is_dir(str_from(sub)) == 1) {
-            n = n + _bench_walk_dir_d(sub, passcnt_ptr, failcnt_ptr, found_ptr, depth + 1);
+            if (is_symlink(str_from(sub)) == 0) {
+                n = n + _bench_walk_dir_d(sub, passcnt_ptr, failcnt_ptr, found_ptr, depth + 1);
+            }
         }
         # v6.5.12: `elif` — see the note in _fuzz_walk_dir. Same divergence.
         elif (nl > 5) {

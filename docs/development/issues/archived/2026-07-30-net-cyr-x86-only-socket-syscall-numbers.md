@@ -1,3 +1,30 @@
+> ## ✅ RESOLVED — v6.5.7 + v6.5.11. Archived 2026-08-08.
+>
+> Closed on evidence, and NOT by implementing §4 — which premise-checking showed to be the
+> wrong direction:
+>
+> - **§3 (the armed collision)** — disarmed at **v6.5.7** by the ≥1000 private-alias band,
+>   a different mechanism than §4 proposed.
+> - **§4 (per-arch peer wrappers)** — **deliberately NOT implemented.** The seven x86
+>   numbers are already renumbered for aarch64-Linux by the `ESYSXLAT` block at
+>   `src/backend/aarch64/emit.cyr:865-873`, which sits in the **aarch64-Linux** arm (added
+>   v6.2.10), not the Mach-O one. Verified by running the project's own net tests on **real
+>   pi**: `net_v6_connect` and `socket_syscalls` both `rc=0`. Replacing that with per-arch
+>   NATIVE numbers would move `net.cyr` OFF the pattern CLAUDE.md mandates ("use the x86
+>   number + an ESYSXLAT entry") and INTO the hazard that rule exists to prevent — to fix
+>   nothing observable.
+> - **The real defect** was that the coupling was SILENT: delete a row and the whole INET
+>   surface dies with no signal until someone runs sockets on that hardware. Closed at
+>   **v6.5.11** by `tests/gates/platform/net_esysxlat_coupling.sh` (11 assertions,
+>   registered in `programs/checks/main.cyr`), mutation-proven by reproducing the v6.2.10
+>   defect: deleting the aarch64-Linux socket-41 row turns 2 axes red. It asserts **2** rows
+>   per number, not ≥1 — the v6.2.10 bug WAS "1 row, macho only", which a ≥1 assertion would
+>   have called healthy.
+>
+> ⚠ **Carried forward, NOT closed here:** §9's AF_UNIX surface is a separate yes/no for the
+> maintainer and is unaffected by any of the above. It belongs in the roadmap backlog rather
+> than an issue file (per the "consolidate the someday tail into roadmap entries" rule).
+
 # `lib/net.cyr` hardcodes seven x86-only socket syscall numbers with zero arch guards
 
 **Filed:** 2026-07-30
