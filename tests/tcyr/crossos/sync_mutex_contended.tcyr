@@ -1,7 +1,7 @@
-# vr01_sync_mutex_contended.tcyr — v6.5.9: the three-state mutex must not lose a wakeup.
+# sync_mutex_contended.tcyr — v6.5.9: the three-state mutex must not lose a wakeup.
 #
-# WHY A NEW FILE RATHER THAN EXTENDING vr01_sync_mutex.tcyr. That file (and
-# vr01_thread_spawn.tcyr) exercise exactly ONE worker, so they can never observe the defect
+# WHY A NEW FILE RATHER THAN EXTENDING crossos/sync_mutex.tcyr. That file (and
+# crossos/thread_spawn.tcyr) exercise exactly ONE worker, so they can never observe the defect
 # class this design introduces: a lost wakeup only exists when a SECOND thread is parked
 # while a third releases. A single-threaded mutex test passes against a mutex that strands
 # every waiter it has. Contention is the whole test.
@@ -32,8 +32,8 @@
 #     syscall forever after.
 #
 # ⛔ NOT on macOS: threading there is a no-op (`thread_create` returns a null handle) —
-# filed 2026-07-03-macos-threading-workers-dont-run, and vr01_thread_spawn.tcyr:46 /
-# vr01_sync_mutex.tcyr:44 carry the same guard.
+# filed 2026-07-03-macos-threading-workers-dont-run, and crossos/thread_spawn.tcyr:46 /
+# crossos/sync_mutex.tcyr:44 carry the same guard.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"

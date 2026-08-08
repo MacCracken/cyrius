@@ -104,8 +104,20 @@ printf 'fn main(): i64 { var A[24]; var B[16]; var R[16]; store64(&A + 0, f64_fr
 cat /tmp/_co_cx.cyr | /tmp/_co_ccx > /tmp/_co_cx.cyx
 # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
 # lib/assert.cyr only ride along when the lib-test fallback is triggered.
+#
+# ⛔ v6.5.11: THIS TAR IS PART OF THE CORPUS CONTRACT. It shipped tests/tcyr but not the
+# inputs some of those tests read, so four tests could not pass off-host no matter how
+# healthy the platform was — and they were being counted as PLATFORM failures:
+#   programs/vidya.cyr  ← include'd by tcyr/compiler/large_input.tcyr,
+#                          tcyr/compiler/large_source.tcyr,
+#                          tcyr/frontend/preprocessor_past_cap.tcyr
+#   tests/fixtures/     ← tcyr/frontend/include_quote_comment.tcyr
+#   tests/data/         ← tcyr/text/unicode_normconf.tcyr
+# That is 4 of the 23 CYRIUS_CROSS_OS_FULL=1 failures on ecb: a PACKAGING bug, not a
+# portability gap. If you add a corpus test that reads a file, its input belongs here —
+# a missing input is indistinguishable from a broken port in the failure list.
 if [ -n "$LIBTEST" ]; then
-  tar czf /tmp/_co.tgz src lib tests/win tests/tcyr VERSION programs/cxvm.cyr
+  tar czf /tmp/_co.tgz src lib tests/win tests/tcyr tests/fixtures tests/data VERSION programs/cxvm.cyr programs/vidya.cyr
 else
   tar czf /tmp/_co.tgz src lib tests/win VERSION programs/cxvm.cyr
 fi

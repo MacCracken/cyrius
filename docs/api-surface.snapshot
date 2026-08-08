@@ -4416,6 +4416,17 @@ thread_local::thread_local_init/0
 thread_local::thread_local_set/2
 thread_local::thread_local_set/2
 thread_local::thread_local_use_foreign_tls/0
+thread_macos::chan_close/1
+thread_macos::chan_new/1
+thread_macos::chan_recv/1
+thread_macos::chan_send/2
+thread_macos::chan_try_recv/1
+thread_macos::chan_try_send/2
+thread_macos::gettid/0
+thread_macos::thread_create/2
+thread_macos::thread_create_detached/2
+thread_macos::thread_is_done/1
+thread_macos::thread_join/1
 thread_win::chan_close/1
 thread_win::chan_new/1
 thread_win::chan_recv/1

@@ -1,7 +1,7 @@
-# vr01_chrono_datetime.tcyr — v6.4.67: the chrono DateTime / Duration / strftime API
+# chrono_datetime.tcyr — v6.4.67: the chrono DateTime / Duration / strftime API
 # (docs/development/proposals/2026-07-18-chrono-datetime-duration-format.md).
 # Pure i64 + alloc + string math (no clocks), so it runs identically on every target;
-# in the vr01_ glob for real-hardware coverage.
+# in the crossos subdir for real-hardware coverage.
 
 include "lib/assert.cyr"
 include "lib/alloc.cyr"

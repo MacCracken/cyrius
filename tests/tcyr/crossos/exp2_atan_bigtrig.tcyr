@@ -1,4 +1,4 @@
-# vr01_exp2_atan_bigtrig.tcyr — VR-01: f64_exp2 / f64_atan on aarch64 (ecb
+# exp2_atan_bigtrig.tcyr — VR-01: f64_exp2 / f64_atan on aarch64 (ecb
 # macOS-arm64 + pi) route through lib/math.cyr's _f64_exp2_polyfill /
 # _f64_atan_polyfill (v6.4.25 — closes the last two aarch64 transcendental gaps,
 # issues/2026-07-07-aarch64-f64-exp2-atan-hard-error.md); x86 (Linux + cass) keeps

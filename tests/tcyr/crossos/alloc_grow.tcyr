@@ -1,4 +1,4 @@
-# vr01_alloc_grow.tcyr — VR-01: the bump allocator (lib/alloc.cyr → alloc_macos.cyr
+# alloc_grow.tcyr — VR-01: the bump allocator (lib/alloc.cyr → alloc_macos.cyr
 # vm_allocate/mmap on ecb; alloc_windows.cyr VirtualAlloc on cass; brk/mmap on Linux).
 # Allocates past a page, writes a sentinel at both ends, reads it back, checks
 # alloc_used accounting, and that alloc_reset rewinds. Linux + cass + ecb.

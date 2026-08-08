@@ -1,6 +1,50 @@
 # macOS/arm64: `thread_create` does not run the worker (threading broken on ecb)
 
-**Status:** 🟡 **OPEN** — no macOS thread backend exists. **Re-verified against live code on cycc
+> ## ✅ v6.5.11 — THE FILED SYMPTOM IS FIXED. The worker now runs.
+>
+> `lib/thread_macos.cyr` now exists: macOS routes to a **serial fallback**, exactly as Windows
+> has since v6.0.53 (`thread_win.cyr`) and agnos since v6.2.3 (`thread_agnos.cyr`). The thread
+> body runs INLINE, so `thread_create` executes the worker and `thread_join` returns 0.
+>
+> Measured on **real ach (Intel Mac)**, encoding four separate facts in the exit code —
+> handle non-null (+1), join==0 (+2), worker ran exactly once (+4), worker received its arg (+8):
+>
+> ```
+> Linux (real clone threads) : 15
+> ach   (serial fallback)    : 15   ← identical
+> ```
+>
+> The three cross-host guards that asserted only a TAUTOLOGY on macOS
+> (`assert_eq(rj, rj)`, `assert_eq(_vs_counter, _vs_counter)`, `assert_eq(mrc, mrc)`) have been
+> **removed** — `crossos/thread_spawn`, `crossos/sync_mutex` and `crossos/thread_detach` now run
+> the SAME assertions on macOS as on every other target, including `_vs_counter == 8000`. All
+> three pass on ach. (`thread_detach`'s VA-leak assertion stays Linux-only, correctly: it reads
+> `/proc/self/statm` and exercises the Linux asm unmap trampoline.)
+>
+> ### How it surfaced, because the sequence matters
+>
+> This was NOT found by looking for it. v6.5.11 fixed `MAP_ANONYMOUS` (Linux `32` was shadowing
+> Darwin's `0x1000`), and that fix turned macOS threading from a silent no-op into a **SIGSYS
+> crash** — `mmap_stack` had been FAILING on Darwin, so `thread_create` bailed at `sbase < 0`
+> and never reached the clone. **A broken constant was acting as the accidental safety net for a
+> missing backend.** Bisected on ach with only `lib/mmap.cyr` swapped: pre-fix `exit=0`, post-fix
+> `exit=140` (128+12 = SIGSYS).
+>
+> The first proposed repair was to guard `thread_create` into a polite no-op. The maintainer
+> rejected that — correctly: it would have re-created the same silence deliberately, and the
+> serial fallback (a twice-proven existing pattern) makes the thing actually work instead.
+>
+> ### ⚠ WHAT REMAINS OPEN — this issue does NOT close
+>
+> Threading on macOS is now **correct but UNPARALLELIZED**. Consumers using threads for
+> throughput get right answers, serially. A genuinely concurrent Darwin backend
+> (`bsdthread_create` / `__ulock_wait`) is still unwritten and remains the **Slot 11** item, as
+> does the second gap this file's own body records: `lib/sync_macos.cyr` is a 2-state
+> `atomic_cas` spinlock, not a blocking lock.
+
+**Status:** 🟡 **OPEN — narrowed at v6.5.11.** The filed symptom (worker never runs) is FIXED via
+the serial fallback; what remains is REAL CONCURRENCY on Darwin, plus the blocking-lock gap.
+Original status follows: no macOS thread backend exists. **Re-verified against live code on cycc
 6.5.10, 2026-08-07:** `lib/` contains `thread.cyr`, `thread_agnos.cyr`, `thread_local.cyr` and
 `thread_win.cyr` — **there is still no `thread_macos.cyr`** — and `grep -rn 'bsdthread_\|__ulock_'
 lib/` now returns exactly **one** line, the comment at `lib/alloc.cyr:37` naming the gap. *(This

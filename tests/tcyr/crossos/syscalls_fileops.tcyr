@@ -1,4 +1,4 @@
-# vr01_syscalls_fileops.tcyr — VR-01 platform-variant stdlib coverage.
+# syscalls_fileops.tcyr — VR-01 platform-variant stdlib coverage.
 # Exercises the raw syscall shims (lib/syscalls.cyr dispatcher → syscalls_windows.cyr
 # on cass, syscalls_macos.cyr on ecb, the Linux path on Linux): a file open/write/
 # lseek/read/close/unlink round-trip. Zero of the pre-.43 tcyr touched these files,

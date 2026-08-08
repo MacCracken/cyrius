@@ -1,6 +1,6 @@
-# vr01_tls_alloc.tcyr — v6.4.65: the thread-local SLOT ALLOCATOR.
+# tls_alloc.tcyr — v6.4.65: the thread-local SLOT ALLOCATOR.
 #
-# Runs on real hardware via the release gate's `vr01_` glob (cass/ecb/pi), so
+# Runs on real hardware via the release gate's crossos subdir (cass/ecb/pi), so
 # the bumped per-platform backing (Windows 1024-byte TlsSetValue block; the
 # 128-slot macOS/agnos/foreign arrays) is exercised where it actually lives,
 # not just on x86-Linux %fs.

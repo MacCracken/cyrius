@@ -1,4 +1,4 @@
-# vr01_simd_ints_neon.tcyr — cross-OS gate for packed integer ops via the RAW flat-array
+# simd_ints_neon.tcyr — cross-OS gate for packed integer ops via the RAW flat-array
 # intrinsics (iv_add/iv_sub/iv_mul over pointers + lane count + element width, and iv_dp8).
 # Exercises the width-dispatched packed emitters directly — x86 SSE (padd/psub/pmull + the
 # pmaddubsw/pmaddwd int8 dot) and aarch64 NEON (add/sub/mul .16b/.8h/.4s/.2d + the

@@ -1,4 +1,4 @@
-# vr01_f64v2_ctor.tcyr — VR-01: f64v2/f64v4 intrinsic constructor syntax + splat
+# f64v2_ctor.tcyr — VR-01: f64v2/f64v4 intrinsic constructor syntax + splat
 # (v6.4.3, agnos FP issue §2). `f64v2(a,b)` / `f64v4(a,b,c,d)` resolve via the FINDFN
 # sugar to the lib f64v2_make/f64v4_make constructors; f64v2_splat/f64v4_splat
 # broadcast; value/pointer lane-extract round-trips.

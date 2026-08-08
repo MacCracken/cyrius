@@ -6,6 +6,35 @@
 **Affected:** `src/backend/cx/emit.cyr` (`ECALLIND`), `programs/cxvm.cyr`, `lib/fnptr.cyr`
 **Severity:** Medium — cx is the portable bytecode target, not a shipping-consumer target today,
 but the breakage is silent and its blast radius is the whole allocator/callback layer.
+
+> ## ⛔ v6.5.11 premise-check — TWO CORRECTIONS, one of which invalidates the repro
+>
+> Picked up for the v6.5.11 catch-up triage. The **bug is real**, but two things this file asserts
+> are not, and both survived the 2026-08-07 re-verification because that pass re-ran the same
+> broken command:
+>
+> **1. `ECALLIND` HARD-ERRORS — it is not "silent".** `src/backend/cx/emit.cyr:408` writes
+> `error: callptr (indirect call) is not supported on the cx backend` to stderr and exits 1. A
+> program that reaches `callptr` on cx fails LOUDLY at compile time. It is invisible only when DCE
+> drops the path as unreachable. The severity line above and `roadmap.md:865` both say "silent";
+> that is wrong and it weakens the case made here.
+>
+> **2. THE `run=124` EVIDENCE IS AN ARTEFACT OF THE HARNESS, NOT THE CODE.** This file reads
+> `run=124` as a hang. `programs/cxvm.cyr` **takes no argv** — `grep -c 'argv(' programs/cxvm.cyr`
+> → **0** — and its own usage line at `:2` is `echo 'bytecode' | ./cxvm` / `cat prog.cyx | ./cxvm`.
+> So `cxvm /tmp/x.cyx` blocks reading stdin from the terminal until `timeout` fires. **Every
+> `run=124` in this file is that.** Re-do the repros as `cat prog.cyx | ./cxvm` before drawing any
+> conclusion from an exit code.
+>
+> **3. A separate defect found alongside, needing its own file:** calling an **undefined function**
+> on cx silently restarts the program at offset 0 rather than faulting (a probe printed its
+> "before" marker ~700x and never reached "after"). Independent of indirect call.
+>
+> **The FIX half of this issue has moved** to
+> [`2026-08-07-cyx-indirect-call-opcode-design-decision`](2026-08-07-cyx-indirect-call-opcode-design-decision.md)
+> — it requires a PERMANENT `.cyx` opcode assignment, which is the maintainer's one-way-door
+> decision, pinned to the next release. This file stays open as the bug record.
+
 **Status:** 🟡 **OPEN — every claim in this file re-reproduced on cycc 6.5.10, 2026-08-07.**
 `ECALLIND` (`src/backend/cx/emit.cyr:408-412`) is still the four-line print-and-exit stub quoted in
 §1; `grep -n CYRIUS_TARGET_CX lib/fnptr.cyr` returns **nothing**, so `fncall2` still has no cx arm

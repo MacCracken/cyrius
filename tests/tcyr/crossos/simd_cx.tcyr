@@ -1,4 +1,4 @@
-# vr01_simd_cx.tcyr — cross-OS gate for the FLAT-ARRAY SIMD intrinsics over LOCAL arrays.
+# simd_cx.tcyr — cross-OS gate for the FLAT-ARRAY SIMD intrinsics over LOCAL arrays.
 # Every packed op here is pure-memory (`&dst,&a,&b,n` pointers) — no value-form params or
 # returns — so it runs on all four backends: x86 SSE, aarch64 NEON, Win64 PE, and (the point
 # of this gate) the cx bytecode VM, where v6.4.32 added the scalar per-lane emitters. Uses

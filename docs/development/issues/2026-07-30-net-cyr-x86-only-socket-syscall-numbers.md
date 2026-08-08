@@ -4,6 +4,40 @@
 **Reporter:** sandhi 1.9.7 (via bote 3.2.1)
 **Cyrius version at time of report:** 6.5.3
 **Affected stdlib:** `lib/net.cyr` (lines 10–16, 350), `src/backend/aarch64/emit.cyr` (`ESYSXLAT`, the v6.2.10 socket block)
+> ## ⛔ v6.5.11 premise-check: §4 IS THE WRONG DIRECTION — do not implement it
+>
+> Picked up for the v6.5.11 catch-up batch, premise-checked **on real hardware**, and the
+> conclusion is that the proposed fix must NOT be written. Two findings:
+>
+> **1. There is no live bug on any gated target.** The seven x86 numbers are renumbered for
+> aarch64-Linux by the `ESYSXLAT` block at `src/backend/aarch64/emit.cyr:865-873` — which lives in
+> the **aarch64-Linux** arm, not the `_TARGET_MACHO == 2` arm (it was added at v6.2.10 for exactly
+> this reason; read the comment at `:854-864`). Verified by running the project's own net tests on
+> **real pi (Linux aarch64)** at v6.5.11:
+>
+> ```
+> net_v6_connect.tcyr  -> rc=0
+> socket_syscalls.tcyr -> rc=0
+> ```
+>
+> macOS is covered by the `_TARGET_MACHO == 2` arm, and x86 is native. So "zero arch guards" is
+> true as written and yet costs nothing: the guard is the compiler's translation table, by design.
+>
+> **2. §4 would move `net.cyr` OFF the sanctioned pattern and INTO a documented hazard.** CLAUDE.md
+> states the convention outright: *"aarch64 stdlib syscall numbers that collide with an x86 number
+> in ESYSXLAT get silently mis-remapped — use the x86 number + an ESYSXLAT entry."* `net.cyr`
+> already does precisely that. Replacing it with per-arch peer wrappers carrying **native** numbers
+> is the shape that rule exists to prevent, and it would do so to fix nothing observable.
+>
+> **What is genuinely real here** is the *silence* of the coupling, not the numbers: `net.cyr` has
+> no way to state that it depends on those nine rows, so deleting a row or adding a target breaks
+> the socket surface with no signal until someone runs net on that hardware. That is a **missing
+> gate**, not a missing abstraction — and the fix for a missing gate is to add the gate.
+>
+> **Recommended disposition:** re-scope this issue to "assert the net.cyr ⇄ ESYSXLAT coupling
+> structurally" and drop §4. §9 (the AF_UNIX surface) is unaffected and remains a separate yes/no
+> for the maintainer.
+
 **Status:** 🟡 **OPEN — but the §3 collision was DISARMED at v6.5.7 by a different mechanism than
 §4 proposed.** Re-verified against live code on cycc **6.5.10**, 2026-08-07:
 

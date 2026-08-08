@@ -1,4 +1,4 @@
-# vr01_win_capturing_closure.tcyr — VR-01: lexical-capture closures dispatched via
+# win_capturing_closure.tcyr — VR-01: lexical-capture closures dispatched via
 # callptr on EVERY target, including Windows PE (v6.4.26). Pre-v6.4.26 a capturing
 # closure hard-errored on PE ("capturing closures not yet supported on Windows PE");
 # now PE routes them through ECALLPTR_PE (fn pointer as the callee, env object as

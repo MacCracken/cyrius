@@ -1,4 +1,16 @@
-# `lib/syscalls_x86_64_agnos.cyr` — two new numbers are coming, and the file's stated authority is circular with the doc it mirrors
+# `SYS_FORK = 96` is reserved on the agnos peer, awaiting the agnos kernel arm
+
+> **Retitled at v6.5.11.** This opened as *"two new numbers are coming, and the file's stated
+> authority is circular with the doc it mirrors"*. Two of those three items have shipped, so the
+> old title advertised work that no longer exists — the exact shape of a stale-but-open issue.
+> **Only item 1 remains**, and it is gated on an agnos-side precondition, not on cyrius
+> scheduling. The file stays open as the RESERVATION RECORD for `#96` so nobody assigns it
+> elsewhere; the audit detail below is kept rather than deleted (archive, don't delete).
+>
+> Re-verified against live code at v6.5.11: `SYS_CHAN_OP = 97`
+> (`lib/syscalls_x86_64_agnos.cyr:147`) with all six wrappers at `:207`/`:212`/`:217`/`:223`/
+> `:229`/`:238`, and the authority header at `:5-8` naming `agnos/kernel/core/syscall.cyr` as the
+> single canonical source. `SYS_FORK`/`#96` still absent, correctly.
 
 **Status:** 🟡 **OPEN for ITEM 1 ONLY — items 2 and 3 have SHIPPED; nothing here blocks agnos any
 more.** Re-verified against live code on cycc **6.5.10**, 2026-08-07:

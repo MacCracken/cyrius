@@ -1,4 +1,4 @@
-# vr01_fmt_i64_min.tcyr — v6.5.8: every decimal formatter must render i64::MIN.
+# fmt_i64_min.tcyr — v6.5.8: every decimal formatter must render i64::MIN.
 #
 # THE BUG. `n = 0 - n` is a NO-OP at i64::MIN — two's-complement negation of the most
 # negative value overflows back to itself. So `n` stayed negative, both the `n == 0` guard
@@ -22,7 +22,7 @@
 #
 # The fix relies on `/` and `%` truncating toward zero for negative operands. Verified on
 # x86_64, aarch64 AND the cx bytecode backend (cx's `%` was only repaired at v6.4.58) —
-# this file runs cross-OS via the release gate's vr01_ glob so the assumption is re-tested
+# this file runs cross-OS via the release gate's crossos subdir so the assumption is re-tested
 # on every target, every release.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"

@@ -1,4 +1,4 @@
-# vr01_chan_try_send.tcyr — v6.4.84: the bounded channel must have a non-blocking SEND,
+# chan_try_send.tcyr — v6.4.84: the bounded channel must have a non-blocking SEND,
 # not just a non-blocking receive.
 #
 # THE GAP THIS CLOSES (filed 2026-07-28 by the AgnosAI port, blocker #4):
@@ -23,7 +23,7 @@
 # (agnos/Windows chan_send returns -1 on full and never checks `closed`), silently
 # diverging the contract per-backend. Both were written out properly instead.
 #
-# Runs on real hardware via the release gate's `vr01_` glob, so the Windows SRW-lock
+# Runs on real hardware via the release gate's crossos subdir, so the Windows SRW-lock
 # backend and the aarch64 futex path are both exercised where they live.
 
 include "lib/assert.cyr"

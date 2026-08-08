@@ -1,4 +1,4 @@
-# vr01_fs_dirlist.tcyr — VR-01: the directory-listing layer (lib/fs.cyr → fs_win.cyr
+# fs_dirlist.tcyr — VR-01: the directory-listing layer (lib/fs.cyr → fs_win.cyr
 # FindFirstFileW/GetFileAttributesW on cass; getdents64 on Linux; getdirentries on
 # ecb). Before v6.1.18 dir_list/is_dir were silent no-ops on Windows. Runs on
 # Linux + cass + ecb; paths (VERSION, tests/win) exist in the LIBTEST bundle CWD.

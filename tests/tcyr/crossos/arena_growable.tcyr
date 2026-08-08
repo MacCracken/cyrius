@@ -1,4 +1,4 @@
-# vr01_arena_growable.tcyr — v6.5.9: exhausting an arena must not be a segfault.
+# arena_growable.tcyr — v6.5.9: exhausting an arena must not be a segfault.
 #
 # THE FILED DEFECT (agnosai, 2026-08-06). The primitives handled exhaustion correctly —
 # `arena_alloc` returns 0, `str_from_a` returns 0, `vec_push_a` returns -1 — and none of

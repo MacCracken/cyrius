@@ -1,4 +1,4 @@
-# vr01_f32v4_ctor.tcyr — VR-01: f32v4 construct + splat + lane-extract, CROSS-OS.
+# f32v4_ctor.tcyr — VR-01: f32v4 construct + splat + lane-extract, CROSS-OS.
 # (v6.4.5, SIMD Phase 2.) The f32v4 TYPE, `f32v4_make`/`_splat`, and lane-extract
 # (`f32v4_laneN`, value + `&`-routed pointer form) are ARCH-NEUTRAL — they lower to
 # store32/load32 + the 128-bit value-form param ABI, NOT to EMIT_F32V_LOOP. So they

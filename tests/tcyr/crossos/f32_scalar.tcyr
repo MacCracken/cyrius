@@ -1,4 +1,4 @@
-# vr01_f32_scalar.tcyr — v6.4.56: f32 scalar arithmetic (+,-,*,/) + comparison. cyrius boxes an
+# f32_scalar.tcyr — v6.4.56: f32 scalar arithmetic (+,-,*,/) + comparison. cyrius boxes an
 # f32 as its IEEE-754 bit-pattern in the low 32 bits of the GP accumulator; an f32-typed value
 # routes +,-,*,/ to EMIT_F32_BINOP (x86 addss/subss/mulss/divss, aarch64 NEON fadd/fsub/fmul/fdiv
 # on S-regs, cx widen-op-narrow) and comparisons to EF32_CMP (ucomiss / fcmp / widen+fcmp), with

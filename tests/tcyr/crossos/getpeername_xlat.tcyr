@@ -1,5 +1,5 @@
-# vr01_getpeername_xlat.tcyr — v6.4.64: getpeername/getsockname must reach the REAL syscall on
-# every target. Runs on real hardware via the release gate's `vr01_` glob (cass/ecb/ach/pi) —
+# getpeername_xlat.tcyr — v6.4.64: getpeername/getsockname must reach the REAL syscall on
+# every target. Runs on real hardware via the release gate's crossos subdir (cass/ecb/ach/pi) —
 # the only place the per-target syscall translation is actually exercised.
 #
 # THE BUG THIS GUARDS (silent, and it fabricates data rather than failing):

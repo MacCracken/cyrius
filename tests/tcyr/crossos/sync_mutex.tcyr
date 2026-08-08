@@ -1,4 +1,4 @@
-# vr01_sync_mutex.tcyr — VR-01: mutex mutual exclusion under contention (lib/thread.cyr
+# sync_mutex.tcyr — VR-01: mutex mutual exclusion under contention (lib/thread.cyr
 # mutex → sync_windows.cyr CRITICAL_SECTION on cass; sync_macos.cyr on ecb; futex on
 # Linux). 8 workers each increment a shared counter 1000× under the lock; the total
 # must be exact (no lost updates) — a broken mutex loses increments. Linux + cass + ecb.
@@ -38,16 +38,13 @@ fn main(): i64 {
     var t7 = thread_create(&_vs_worker, 0);
     thread_join(t0); thread_join(t1); thread_join(t2); thread_join(t3);
     thread_join(t4); thread_join(t5); thread_join(t6); thread_join(t7);
-#ifndef CYRIUS_TARGET_MACOS
+    # v6.5.11: macOS takes the SAME assertion as every other target. It used to assert
+    # the tautology `assert_eq(_vs_counter, _vs_counter)` because Darwin threading was a
+    # no-op and the counter stayed 0. macOS now routes to the serial fallback
+    # (lib/thread_macos.cyr): the bodies run inline, so every increment lands and the
+    # total is 8000 exactly as on Linux — unparallelized, but CORRECT, which is what
+    # this assertion is about.
     assert_eq(_vs_counter, 8000, "all 8000 locked increments landed (no lost updates)");
-#endif
-#ifdef CYRIUS_TARGET_MACOS
-    # VR-01 found macOS/arm64 threading is a no-op: thread_create returns a null handle
-    # (0) and the worker never runs (counter stays 0) — filed
-    # 2026-07-03-macos-threading-workers-dont-run. The create/join calls don't FAULT
-    # (we reached here), so assert only that; tighten to ==8000 when macOS threading lands.
-    assert_eq(_vs_counter, _vs_counter, "macOS thread create/join ran without faulting (threading broken — see filed issue)");
-#endif
 
     var rc = assert_summary();
     return rc;

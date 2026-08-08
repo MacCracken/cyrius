@@ -4,7 +4,7 @@
 # JSON emit/parse now route through — replacing the 6-decimal fmt_float_buf(,6)
 # (lossy on 1/3, flushed |x|<5e-7 to 0, emitted the non-JSON "-.00000-" for
 # Inf/NaN/>=2^63) and the two divergent-by-1-ULP atofs. Runs on real hardware
-# via the vr01_ glob. See issues 2026-07-19-f64-json-roundtrip-6-decimal-cap.md
+# via the crossos subdir. See issues 2026-07-19-f64-json-roundtrip-6-decimal-cap.md
 # + -derive-serialize-f64-second-implementation.md.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"

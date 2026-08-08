@@ -1,4 +1,4 @@
-# vr01_signal_ignore.tcyr — signal_ignore(SIGPIPE) verified on REAL hardware
+# signal_ignore.tcyr — signal_ignore(SIGPIPE) verified on REAL hardware
 # (v6.4.51). The macOS leg exercises the ESYSXLAT rt_sigaction(134/13)→BSD
 # sigaction(46) translation: without it a write to a disconnected peer would
 # SIGPIPE-kill the process (unauthenticated server DoS). Socketpair (POSIX) is

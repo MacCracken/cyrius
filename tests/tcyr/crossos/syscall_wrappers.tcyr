@@ -1,9 +1,9 @@
-# vr01_syscall_wrappers.tcyr — v6.5.7: the syscall-wrapper pass, EXECUTED on real hardware.
+# syscall_wrappers.tcyr — v6.5.7: the syscall-wrapper pass, EXECUTED on real hardware.
 #
 # WHY THIS FILE EXISTS AT ALL. `tests/syscall_wrapper_pass.sh` proves these wrappers COMPILE
 # on all five targets, which is most of the risk — the peers diverge and a wrapper added to
 # one is missing from two others. But compiling is not running, and the release gate's
-# cross-OS leg executes only the `vr01_` glob. Without a `vr01_` file, `sys_chdir` /
+# cross-OS leg executes only tests/tcyr/crossos/. Without a file in that directory, `sys_chdir` /
 # `signal_default` / the `x*` family / `sys_fchownat` were never once RUN on macOS-arm64,
 # Intel-Mac, Windows or aarch64 — exactly the shape of the macOS rot that CLAUDE.md's
 # cross-OS principle was written after (a green check on hello-world while the real thing

@@ -1,4 +1,4 @@
-# vr01_f32v8_ctor.tcyr — VR-01: f32v8 (256-bit) construct + splat + lane-extract, CROSS-OS.
+# f32v8_ctor.tcyr — VR-01: f32v8 (256-bit) construct + splat + lane-extract, CROSS-OS.
 # (v6.4.8, SIMD Phase 4 R1.) The f32v8 TYPE, construct (make/splat), and pointer-form
 # lane-extract are ARCH-NEUTRAL — they lower to store/load + the 256-bit value-form
 # return ABI (shared with f64v4), NOT to EMIT_F32V8_LOOP. So they work on aarch64/macOS

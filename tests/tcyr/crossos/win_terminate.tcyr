@@ -1,4 +1,4 @@
-# vr01_win_terminate.tcyr — VR-01: Windows TerminateProcess timeout-kill (v6.4.26).
+# win_terminate.tcyr — VR-01: Windows TerminateProcess timeout-kill (v6.4.26).
 # The 0xF01D PE reroute (kernel32!TerminateProcess) + lib/process_win.cyr's
 # _win_terminate / _win_wait_timeout verbs — the Windows SIGKILL analogue that lets
 # a spawned child which ran past a wall-clock deadline be force-terminated (thoth's

@@ -1,4 +1,4 @@
-# vr01_simd_f32v4_neon.tcyr — cross-OS gate for f32v4 packed ops. Two groups:
+# simd_f32v4_neon.tcyr — cross-OS gate for f32v4 packed ops. Two groups:
 #   1) RAW flat-array intrinsics (f32v_add/sub/mul/fmadd/dot over pointers) — exercises the
 #      packed-op emitters directly: x86 SSE (addps/subps/mulps + haddps) and aarch64 NEON
 #      (.4s fadd/fsub/fmul + faddp, SIMD Phase 5 v6.4.28).

@@ -44,8 +44,23 @@ include "lib/thread_win.cyr"
 include "lib/thread_agnos.cyr"
 #endif
 
+# v6.5.11: Darwin has no clone/futex either, and was never routed away from the Linux
+# body below — so thread_create reached SYS_CLONE, which does not exist on Darwin.
+# Until v6.5.11 that was masked: mmap.cyr's unguarded Linux MAP_ANONYMOUS made
+# mmap_stack FAIL on Darwin, so thread_create bailed at `sbase < 0` and looked like a
+# harmless no-op. Fixing MAP_ANONYMOUS removed the accidental net and the call reached
+# the clone → SIGSYS on real ach (exit 140), bisected against only mmap.cyr swapped.
+# Routed here to the same serial fallback Windows (v6.0.53) and agnos (v6.2.3) use, so
+# the thread body ACTUALLY RUNS — which is the symptom
+# 2026-07-03-macos-threading-workers-dont-run reports. A real concurrent Darwin backend
+# (bsdthread_create / __ulock_wait) is still the roadmapped Slot 11 item.
+#ifdef CYRIUS_TARGET_MACOS
+include "lib/thread_macos.cyr"
+#endif
+
 #ifndef CYRIUS_TARGET_WIN
 #ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_MACOS
 
 # mmap.cyr supplies the PROT_READ/PROT_WRITE enum for the thread-stack mmap
 # below (explicit since v6.0.52; previously free-rode on alloc.cyr's Linux
@@ -699,5 +714,6 @@ fn chan_try_recv(ch): i64 {
     return result;
 }
 
+#endif
 #endif
 #endif

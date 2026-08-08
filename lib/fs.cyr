@@ -111,7 +111,11 @@ fn dir_list(path: Str): i64 {
     var dp = str_data(path);
     var fd = sys_open(dp, strlen(dp), AO_DIRECTORY);   # agnos: (name, namelen, AO_DIRECTORY)
     if (fd < 0) { return entries; }
-    var buf = alloc(4096);
+    # v6.5.11: STACK scratch, not alloc(). The getdents buffer is dead the moment
+    # this fn returns, but under the bump allocator alloc() never gives it back —
+    # so every call leaked 4 KB. See the note on the non-agnos arm below.
+    var sbuf[4096];
+    var buf = &sbuf;
     var rgo = 1;
     while (rgo == 1) {
         var n = sys_getdents(fd, buf, 4096);
@@ -150,12 +154,27 @@ fn dir_list(path: Str): i64 {
     var entries = vec_new();
     var fd = sys_open(str_data(path), O_RDONLY, 0);
     if (fd < 0) { return entries; }
-    var buf = alloc(4096);
+    # ⛔ v6.5.11: STACK scratch, not alloc(). Both buffers are dead the moment this fn
+    # returns, but the default allocator is a BUMP allocator — it has no free — so each
+    # call permanently burned 4104 B. Measured before the fix: dir_list 176 B/entry,
+    # is_dir 4104 B PER CALL, and because dir_walk calls is_dir once per entry,
+    # dir_walk cost 4443 B/entry — ~25x the dir_list it wraps.
+    #
+    # A stack local is the right answer rather than a file-scope scratch buffer: it is
+    # inherently per-call and therefore per-THREAD, so it costs no thread-safety (today
+    # every caller owns its own buffer and a shared scratch would have taken that away),
+    # and it needs no thread-local slot — those are a scarce, collision-prone resource
+    # here (tests/gates/concurrency/thread_local_slot_collision.sh exists for that reason).
+    # Safe under dir_walk's recursion: dir_list/is_dir are leaves, so their frames pop
+    # before the recursive call and the 4 KB is never held down the stack.
+    var sbuf[4096];
+    var buf = &sbuf;
     # v6.0.60: Darwin getdirentries64 takes a 4th basep out-param (the new dir
     # position); Linux getdents64 ignores a 4th arg, so passing it is portable.
     # The Mach-O backends translate 217 → getdirentries64 (344). See
     # 2026-06-02-macos-getdirentries-dir-listing-port.md.
-    var basep = alloc(8);
+    var sbasep[8];
+    var basep = &sbasep;
     store64(basep, 0);
     var rgo = 1;
     while (rgo == 1) {
@@ -218,7 +237,10 @@ fn is_dir(path: Str): i64 {
     var dp = str_data(path);
     var fd = sys_open(dp, strlen(dp), AO_DIRECTORY);   # agnos: (name, namelen, AO_DIRECTORY)
     if (fd < 0) { return 0; }
-    var buf = alloc(4096);
+    # v6.5.11: STACK scratch — see the note in dir_list. is_dir was the DOMINANT
+    # allocation cost in this file, not dir_list: dir_walk calls it once per entry.
+    var sbuf[4096];
+    var buf = &sbuf;
     var n = sys_getdents(fd, buf, 4096);
     sys_close(fd);
     if (n >= 0) { return 1; }
@@ -233,8 +255,15 @@ fn is_dir(path: Str): i64 {
     # first entry in a 32-byte buffer, but Darwin getdirentries64 fails on a
     # buffer that small (verified on ecb: 32 → error, dir misreported as
     # non-dir); 4096 matches dir_list and works on both.
-    var buf = alloc(4096);
-    var basep = alloc(8);
+    #
+    # ⛔ v6.5.11: STACK scratch, not alloc(). THIS fn was the dominant cost in fs.cyr
+    # and the filing did not name it — dir_walk (:253) calls is_dir once PER ENTRY, so
+    # a 41-entry walk burned 4104 B x 41. Fixing dir_list alone would have moved
+    # dir_walk 4443 -> ~4267 B/entry and looked complete.
+    var sbuf[4096];
+    var buf = &sbuf;
+    var sbasep[8];
+    var basep = &sbasep;
     store64(basep, 0);
     var n = syscall(FSYS_GETDENTS64, fd, buf, 4096, basep);
     sys_close(fd);

@@ -1,4 +1,4 @@
-# vr01_alloc_1gib.tcyr — the large-single-allocation path (v6.4.52) on REAL hardware.
+# alloc_1gib.tcyr — the large-single-allocation path (v6.4.52) on REAL hardware.
 # alloc(1 GiB) must succeed + be usable end-to-end on macOS (dedicated unhinted
 # mmap), Windows (dedicated VirtualAlloc), and Linux (fresh chunk). This is what
 # unblocks output_buf 1 GiB on macOS/Windows. See issue

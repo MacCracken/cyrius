@@ -1,4 +1,4 @@
-# vr01_f64_scalar_return.tcyr — v6.4.55: scalar `f64` as a function RETURN type, returned in
+# f64_scalar_return.tcyr — v6.4.55: scalar `f64` as a function RETURN type, returned in
 # xmm0 per SysV (return-type sentinel -9). The double round-trips through the call, and a bare
 # arithmetic op on the call result dispatches to the f64 emitters (mulsd), not integer ops.
 # cyrius boxes an f64 as its IEEE-754 bit-pattern in the GP accumulator; at the return boundary

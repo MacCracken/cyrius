@@ -1,4 +1,4 @@
-# vr01_args_smoke.tcyr — VR-01 SMOKE: the argv capture path (lib/args.cyr →
+# args_smoke.tcyr — VR-01 SMOKE: the argv capture path (lib/args.cyr →
 # args_macos.cyr _macho_capture_args on ecb; args_win.cyr on cass; the Linux
 # stack-walk on Linux). SMOKE, not a round-trip: the LIBTEST runner invokes the
 # test with no extra argv, so the strongest portable assertion is that the capture

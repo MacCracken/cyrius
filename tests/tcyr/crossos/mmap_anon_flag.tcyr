@@ -1,0 +1,57 @@
+# mmap_anon_flag.tcyr — cross-host: MAP_ANONYMOUS must carry the value the HOST
+# kernel actually interprets, and mmap_anon() must return usable memory.
+#
+# v6.5.11. `lib/mmap.cyr` declared MAP_ANONYMOUS = 32 UNGUARDED. Darwin's is 0x1000.
+# On macOS every `MAP_PRIVATE | MAP_ANONYMOUS` therefore became 0x22 — a FILE mapping
+# with fd = -1, i.e. EBADF — so mmap_anon() returned 0 for EVERY caller
+# (lib/dynlib.cyr:728/:764, lib/fdlopen.cyr:467, lib/freelist.cyr:86), not just the
+# threading path the filing named. Measured on real ecb before the fix: flag 32,
+# no pointer; after: 0x1000, pointer usable.
+#
+# ⚠ WHY THIS MUST BE A CROSS-HOST GATE AND CANNOT BE A LINUX .tcyr: on Linux the
+# value 32 is CORRECT, so a host-side test passes against the bug. The defect is only
+# observable where the constant diverges. This is the class the cross-host set exists
+# for — and note ESYSXLAT renumbers SYSCALLS, never flag VALUES, so no translation
+# layer can ever mask a wrong flag.
+#
+# ⚠ On macOS-arm64 the 32 does NOT come from mmap.cyr alone: lib/syscalls.cyr:69
+# includes syscalls_aarch64_linux.cyr (the macos file is the x86-only arm), which
+# declares 32 at :243. mmap.cyr is included after and duplicates are last-wins, so
+# mmap.cyr is what decides the value. Deleting its declaration does NOT fix this.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/mmap.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("MAP_ANONYMOUS carries the host kernel's value");
+#ifdef CYRIUS_TARGET_MACOS
+    # Darwin: MAP_ANON == 0x1000. Asserting the VALUE (not just that mmap works) is
+    # deliberate — it fails loudly the moment someone reintroduces an unguarded 32,
+    # even on a host where the mapping would happen to succeed anyway.
+    assert_eq(MAP_ANONYMOUS, 4096, "Darwin MAP_ANONYMOUS is 0x1000, not Linux's 32");
+#endif
+#ifndef CYRIUS_TARGET_MACOS
+    assert_eq(MAP_ANONYMOUS, 32, "Linux/agnos MAP_ANONYMOUS is 32");
+#endif
+
+    # Windows has no mmap — cyr_mmap's syscall(9) is not a PE path. Value check only.
+#ifndef CYRIUS_TARGET_WIN
+    test_group("mmap_anon returns memory that is actually writable");
+    var p = mmap_anon(4096);
+    assert_neq(p, 0, "mmap_anon(4096) returned a mapping (0 = the EBADF-shaped failure)");
+    store64(p, 305419896);
+    assert_eq(load64(p), 305419896, "start of the mapping round-trips");
+    store64(p + 4088, 2596069104);
+    assert_eq(load64(p + 4088), 2596069104, "last 8 bytes of the page round-trip");
+    var rc = cyr_munmap(p, 4096);
+    assert_eq(rc, 0, "cyr_munmap released the mapping");
+#endif
+
+    var r = assert_summary();
+    return r;
+}

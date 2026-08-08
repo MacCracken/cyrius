@@ -1,4 +1,4 @@
-# vr01_thread_detach.tcyr — v6.5.8: a fire-and-forget thread must reclaim ALL of its own
+# thread_detach.tcyr — v6.5.8: a fire-and-forget thread must reclaim ALL of its own
 # memory. Runs on real hardware via the release gate's cross-OS leg.
 #
 # THE LEAK THIS GUARDS. `munmap_stack` had exactly three call sites — two `thread_create`
@@ -70,20 +70,20 @@ fn main(): i64 {
     # no-op — `thread_create` returns a null handle and the worker never runs — filed as
     # 2026-07-03-macos-threading-workers-dont-run, still open (there is no
     # `lib/thread_macos.cyr` and no `bsdthread_*`/`__ulock_*` call anywhere in lib/).
-    # `vr01_thread_spawn.tcyr:46` and `vr01_sync_mutex.tcyr:44` carry the same guard for
+    # `crossos/thread_spawn.tcyr:46` and `crossos/sync_mutex.tcyr:44` carry the same guard for
     # the same reason. Detach cannot work where create does not, so assert only that the
     # calls do not FAULT, and restore the real checks when the backend lands.
-    #ifdef CYRIUS_TARGET_MACOS
-    var mrc = thread_create_detached(&_td_body, 0);
-    assert_eq(mrc, mrc, "macOS detached spawn ran without faulting (threading broken — see filed issue)");
-    #endif
-    #ifndef CYRIUS_TARGET_MACOS
+    # v6.5.11: macOS takes the SAME assertion as every other target — it used to assert
+    # only the tautology `assert_eq(mrc, mrc)`. macOS now routes to the serial fallback
+    # (lib/thread_macos.cyr), whose thread_create_detached returns 1 like every peer.
+    # ⚠ The VA-LEAK assertion further down stays Linux-only, and that is NOT the same
+    # carve-out: it reads /proc/self/statm and exercises the Linux asm unmap trampoline,
+    # neither of which exists on Darwin. Serial backends reclaim by construction.
     var k = 0;
     while (k < 8) {
         assert_eq(thread_create_detached(&_td_body, 0), 1, "thread_create_detached returns 1");
         k = k + 1;
     }
-    #endif
     # Let these finish BEFORE the baseline is sampled. Without this the warm-up threads
     # are still unwinding when `before` is read and then unmap during the measurement,
     # which showed up as a NEGATIVE growth of -513 pages (exactly one thread) — the

@@ -1,4 +1,4 @@
-# vr01_process_smoke.tcyr — VR-01 SMOKE: process identity path (lib/process.cyr
+# process_smoke.tcyr — VR-01 SMOKE: process identity path (lib/process.cyr
 # getpid / getppid → process_win.cyr on cass; getpid/getppid syscalls on Linux/ecb).
 # SMOKE, not a spawn round-trip: cross-platform spawning (CreateProcess vs fork/exec)
 # is out of scope for a portable exit-0 test.

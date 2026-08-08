@@ -1,4 +1,4 @@
-# vr01_syscalls_meta.tcyr — VR-01: filesystem-metadata syscalls (sys_mkdir / sys_chmod
+# syscalls_meta.tcyr — VR-01: filesystem-metadata syscalls (sys_mkdir / sys_chmod
 # / sys_unlink → syscalls_windows.cyr CreateDirectory/DeleteFile on cass; syscalls_macos.cyr
 # on ecb; Linux path on Linux). Distinct from the file-I/O test. is_dir (lib/fs.cyr)
 # confirms mkdir landed. Idempotent (asserts is_dir, not mkdir's return, so a re-run
