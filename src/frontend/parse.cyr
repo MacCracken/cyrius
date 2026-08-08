@@ -284,10 +284,33 @@ fn _ensure_stack_arrays(S): i64 {
     # get a one-slot parity pad so `pxor/aesenc xmm,[arr]` stays #GP-free (see PARSE_ARRAY);
     # (2) `secret var` zeroise now addresses the LOCAL (ELOAD_LOCAL_ADDR), not the global.
     # CYRIUS_STACK_ARRAYS=0 opts back to legacy global (.bss) arrays. See CHANGELOG [6.3.15].
+    # ⛔ v6.5.12: THE OPT-OUT IS NOT SILENT ANY MORE — it can re-open a fixed CVE-class
+    # defect in a DOWNSTREAM library, and nothing said so.
+    #
+    # sigil 3.12.3 fixed an RSA authentication bypass (`rsa_pkcs1v15_verify_sha256`
+    # returning 1 for INVALID signatures — 888 of 400,000 forged signatures accepted,
+    # measured by agnosai) and the ENTIRE fix is "make the verify scratch buffers
+    # function-LOCAL": `var nbuf[512]` / `var embuf[512]` / `var expbuf[512]`. That fix
+    # only holds because array locals are per-thread STACK slots. Setting
+    # CYRIUS_STACK_ARRAYS=0 turns them back into shared .bss globals — the two operands
+    # of the verify decision land in one lane-indexed global again and the bypass
+    # RETURNS, with no diagnostic anywhere.
+    #
+    # The flag stays (it is a real debugging escape hatch and has been default-on since
+    # v6.3.15), but a security property must not be revocable in silence. Warn, name what
+    # it costs, and let the caller decide — the same reasoning as the v6.5.11 "no silent
+    # caps" work.
     _STACK_ARRAYS = 1;
     var e = _read_env("CYRIUS_STACK_ARRAYS");
     if (e == 0) { return _STACK_ARRAYS; }
-    if (load8(e) == 48) { if (load8(e + 1) == 0) { _STACK_ARRAYS = 0; } }
+    if (load8(e) == 48) {
+        if (load8(e + 1) == 0) {
+            _STACK_ARRAYS = 0;
+            syscall(SYS_WRITE, 2, "warning: CYRIUS_STACK_ARRAYS=0 — `var arr[N]` locals are shared .bss globals, not per-thread stack.\n", 102);
+            syscall(SYS_WRITE, 2, "  This REVERTS the mechanism sigil 3.12.3 relies on to fix its RSA verify bypass; crypto scratch\n", 97);
+            syscall(SYS_WRITE, 2, "  buffers become cross-thread shared again. Do not use for anything that verifies signatures.\n", 94);
+        }
+    }
     return _STACK_ARRAYS;
 }
 

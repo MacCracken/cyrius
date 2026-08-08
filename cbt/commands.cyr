@@ -188,14 +188,24 @@ fn cmd_test(source): i64 {
 # proven shallow-discover pattern (dir_list + make_path → NUL-terminated cstr
 # for cmd_test's strlen; dir_list already skips . / ..) rather than find_files,
 # whose path_join Strs are not guaranteed NUL-terminated.
-fn _tests_walk(dir): i64 {
+# v6.5.12: depth-bounded. `is_dir` follows symlinks (lib/fs.cyr, plain O_RDONLY), so a
+# link to an ancestor made this re-descend until PATH_MAX — measured as **41 passed** for
+# a tree holding ONE .tcyr. An inflated pass count reads as coverage, which is the worst
+# possible failure for a test runner.
+fn _tests_walk_d(dir, depth): i64 {
+    if (depth > 64) {
+        sys_write(STDERR_FD, "warning: test walk depth cap (64) hit — symlink loop? subtree skipped: ", 73);
+        sys_write(STDERR_FD, dir, strlen(dir));
+        sys_write(STDERR_FD, "\n", 1);
+        return 0;
+    }
     var entries = dir_list(str_from(dir));
     var ei = 0;
     while (ei < vec_len(entries)) {
         var name = vec_get(entries, ei);
         var full = make_path(dir, str_data(name));
         if (is_dir(str_from(full)) == 1) {
-            _tests_walk(full);
+            _tests_walk_d(full, depth + 1);
         }
         elif (str_ends_with(name, str_from(".tcyr")) == 1) {
             _tests_found = 1;
@@ -205,6 +215,8 @@ fn _tests_walk(dir): i64 {
     }
     return 0;
 }
+
+fn _tests_walk(dir): i64 { return _tests_walk_d(dir, 0); }
 
 fn cmd_tests(dir): i64 {
     _pass = 0; _fail = 0; _tests_found = 0;
@@ -263,7 +275,12 @@ fn _fuzz_run_one(path, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
 }
 
 # v6.5.7: RECURSIVE, matching `_tests_walk` — see the note on _bench_walk_dir.
-fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
+# v6.5.12: depth-bounded — see _tests_walk_d.
+fn _fuzz_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
+    if (depth > 64) {
+        sys_write(STDERR_FD, "warning: fuzz walk depth cap (64) hit — symlink loop? subtree skipped\n", 72);
+        return 0;
+    }
     if (file_exists(dir) == 0) { return 0; }
     var entries = dir_list(str_from(dir));
     var fi = 0;
@@ -274,10 +291,13 @@ fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
         var nl = str_len(name);
         var sub = make_path(dir, nd);
         if (is_dir(str_from(sub)) == 1) {
-            n = n + _fuzz_walk_dir(sub, passcnt_ptr, failcnt_ptr, found_ptr);
+            n = n + _fuzz_walk_dir_d(sub, passcnt_ptr, failcnt_ptr, found_ptr, depth + 1);
         }
-        # Check if .fcyr file
-        if (nl > 5) {
+        # v6.5.12: `elif`, NOT a second `if`. A DIRECTORY named `x.fcyr` satisfied BOTH
+        # arms — recursed into, then handed to compile() as a file — giving
+        # `error: not a file` + COMPILE FAIL + a non-zero exit over a healthy tree.
+        # `_tests_walk` (:199) already used `elif`; these two were the divergent siblings.
+        elif (nl > 5) {
             if (memeq(nd + nl - 5, ".fcyr", 5) == 1) {
                 n = n + 1;
                 _fuzz_run_one(make_path(dir, nd), passcnt_ptr, failcnt_ptr, found_ptr);
@@ -286,6 +306,10 @@ fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
         fi = fi + 1;
     }
     return n;
+}
+
+fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
+    return _fuzz_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, 0);
 }
 
 fn cmd_fuzz(source): i64 {
@@ -375,7 +399,12 @@ fn _bench_run_one(path): i64 {
 # ran, and the command reported success over it. A subfolder callout has always
 # been intended to work; the plural `cyrius tests <dir>` verb has recursed since
 # v6.0.62 and bench/fuzz were never brought along.
-fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
+# v6.5.12: depth-bounded — see _tests_walk_d.
+fn _bench_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
+    if (depth > 64) {
+        sys_write(STDERR_FD, "warning: bench walk depth cap (64) hit — symlink loop? subtree skipped\n", 73);
+        return 0;
+    }
     if (file_exists(dir) == 0) { return 0; }
     var entries = dir_list(str_from(dir));
     var fi = 0;
@@ -386,9 +415,10 @@ fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
         var nl = str_len(name);
         var sub = make_path(dir, nd);
         if (is_dir(str_from(sub)) == 1) {
-            n = n + _bench_walk_dir(sub, passcnt_ptr, failcnt_ptr, found_ptr);
+            n = n + _bench_walk_dir_d(sub, passcnt_ptr, failcnt_ptr, found_ptr, depth + 1);
         }
-        if (nl > 5) {
+        # v6.5.12: `elif` — see the note in _fuzz_walk_dir. Same divergence.
+        elif (nl > 5) {
             if (memeq(nd + nl - 5, ".bcyr", 5) == 1) {
                 store64(found_ptr, 1);
                 var path = make_path(dir, nd);
@@ -407,6 +437,10 @@ fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
         fi = fi + 1;
     }
     return n;
+}
+
+fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
+    return _bench_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, 0);
 }
 
 fn cmd_bench(source): i64 {
@@ -639,6 +673,74 @@ fn _libsync_wanted(name, declared): i64 {
         di = di + 1;
     }
     return 0;
+}
+
+# v6.5.12: EXACT match of a snapshot entry against the declared list, with no
+# ".cyr" requirement — the package-DIRECTORY counterpart of `_libsync_wanted`,
+# which returns 0 for any name lacking the suffix (`:631`) and so could never see
+# `lib/unicode/`. Returns the declared INDEX (>= 0) so the caller can mark it
+# satisfied, or -1.
+fn _libsync_declared_idx(name, declared): i64 {
+    var nlen = strlen(name);
+    var di = 0;
+    while (di < vec_len(declared)) {
+        var d = vec_get(declared, di);
+        var dl = strlen(d);
+        if (dl == nlen) {
+            if (memeq(name, d, dl) == 1) { return di; }
+        }
+        di = di + 1;
+    }
+    return 0 - 1;
+}
+
+# v6.5.12: copy a stdlib PACKAGE DIRECTORY (`<snapshot>/lib/<name>/*.cyr`).
+#
+# ⛔ WHY THIS EXISTS. `cyrius deps` learned about package directories at v6.1.x —
+# `deps.cyr:_dep_copy_stdlib_recursive` has the expansion and its comment names the
+# exact consumer bug ("declaring bare `unicode` in [deps].stdlib … dropped the whole
+# family"). `cyrius lib sync` was the UN-UPDATED TWIN and kept a flat, `.cyr`-only
+# scan, so a consumer declaring `unicode` got a SUCCESS message and no unicode:
+# reproduced at 6.5.11 as `copied 12 .cyr files` with `lib/unicode/` absent.
+#
+# This is the second time this pair has diverged — v6.4.77 found `cmd_lib_sync` was
+# likewise the unguarded twin of `_check_lib_freshness`'s source-repo carve-out.
+# When you change one, check the other.
+#
+# Returns the number of files copied.
+fn _libsync_copy_pkg(src_dir, name): i64 {
+    var s_sb = str_builder_new();
+    str_builder_add_cstr(s_sb, src_dir);
+    str_builder_add_cstr(s_sb, "/");
+    str_builder_add_cstr(s_sb, name);
+    var pkg_src = str_builder_build(s_sb);          # Str — dir_list takes a Str
+    var entries = dir_list(pkg_src);
+    if (entries == 0) { return 0; }
+    var pkg_src_c = str_data(pkg_src);
+    var dst_dir = make_path("lib", name);
+    if (is_dir(str_from(dst_dir)) == 0) { sys_mkdir(dst_dir, 0x1ED); }
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var e = vec_get(entries, i);
+        var ed = str_data(e);
+        var el = str_len(e);
+        if (el > 4) {
+            if (memeq(ed + el - 4, ".cyr", 4) == 1) {
+                var sp = make_path(pkg_src_c, ed);
+                var dp = make_path(dst_dir, ed);
+                if (_dry_run == 1) {
+                    sys_write(STDOUT_FD, "  would sync: ", 14);
+                    println(dp);
+                } else {
+                    _dep_copy_file(sp, dp);
+                }
+                n = n + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return n;
 }
 
 # ================================================================
@@ -894,6 +996,19 @@ fn cmd_lib_sync(): i64 {
     var entries = dir_list(str_from(src_dir));
     var li = 0;
     var copied = 0;
+    # v6.5.12: per-declared-module SATISFIED flags. Without this, a declared module
+    # the scan cannot see is dropped and the command still prints a success line —
+    # which is exactly how `unicode` went unnoticed. Same shape as the v6.5.10
+    # distlib-sidecar defect: an under-reporting producer silently disabling the
+    # check that exists to catch it.
+    var nd = 0;
+    if (declared != 0) { nd = vec_len(declared); }
+    var sat = 0;
+    if (nd > 0) {
+        sat = alloc(nd * 8);
+        var zi = 0;
+        while (zi < nd) { store64(sat + zi * 8, 0); zi = zi + 1; }
+    }
     while (li < vec_len(entries)) {
         var name_str = vec_get(entries, li);
         var name = str_data(name_str);
@@ -925,9 +1040,72 @@ fn cmd_lib_sync(): i64 {
                 # v6.2.40: count in BOTH modes — pre-fix the dry-run
                 # summary always printed 0 (counter lived in the else).
                 copied = copied + 1;
+                # Mark the declared entry this file satisfied. The stem may be a
+                # per-OS peer (`syscalls_macos.cyr` ← `syscalls`), so re-use the
+                # same prefix rule `_libsync_wanted` matched on.
+                if (nd > 0) {
+                    var mi = 0;
+                    while (mi < nd) {
+                        var dm = vec_get(declared, mi);
+                        var dml = strlen(dm);
+                        if (dml < nlen) {
+                            if (memeq(name, dm, dml) == 1) { store64(sat + mi * 8, 1); }
+                        }
+                        mi = mi + 1;
+                    }
+                }
+            }
+        } else {
+            # v6.5.12: PACKAGE DIRECTORY (`lib/<name>/*.cyr`, e.g. unicode). The
+            # `.cyr` filter above can never match one, and neither can
+            # `_libsync_wanted` — hence the dedicated path.
+            var pidx = 0 - 1;
+            if (declared != 0) { pidx = _libsync_declared_idx(name, declared); }
+            var pkg_want = 0;
+            if (declared == 0) { pkg_want = 1; }
+            if (pidx >= 0) { pkg_want = 1; }
+            if (pkg_want == 1) {
+                var pkg_path = make_path(src_dir, name);
+                if (is_dir(str_from(pkg_path)) == 1) {
+                    var got = _libsync_copy_pkg(src_dir, name);
+                    if (got > 0) {
+                        copied = copied + got;
+                        if (pidx >= 0) { store64(sat + pidx * 8, 1); }
+                    }
+                }
             }
         }
         li = li + 1;
+    }
+    # ⛔ v6.5.12: FAIL LOUD on a declared module the scan never satisfied. Reporting
+    # a copy count while silently dropping a declared dependency is the failure this
+    # whole change exists to end — the consumer then hits unresolved symbols with no
+    # link back to `lib sync`.
+    if (nd > 0) {
+        var missing = 0;
+        var ci = 0;
+        while (ci < nd) {
+            if (load64(sat + ci * 8) == 0) {
+                if (missing == 0) {
+                    sys_write(STDERR_FD, "error: declared [deps].stdlib module(s) not found in the snapshot:\n", 67);
+                }
+                sys_write(STDERR_FD, "  - ", 4);
+                var mn = vec_get(declared, ci);
+                sys_write(STDERR_FD, mn, strlen(mn));
+                sys_write(STDERR_FD, "\n", 1);
+                missing = missing + 1;
+            }
+            ci = ci + 1;
+        }
+        if (missing > 0) {
+            sys_write(STDERR_FD, "  snapshot: ", 12);
+            sys_write(STDERR_FD, src_dir, strlen(src_dir));
+            # 68, not 66: the em-dash is THREE UTF-8 bytes. A short count here
+            # silently truncates the tail of the message (this one lost ".\n" on
+            # first write) — the `ERR_MSG` hardcoded-length class.
+            sys_write(STDERR_FD, "\n  nothing was dropped silently — fix the declaration or the pin.\n", 68);
+            return 1;
+        }
     }
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: would sync ", 20);

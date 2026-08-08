@@ -14,14 +14,27 @@ var _large = "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz01";
 fn work_strlen_small() { strlen(_small); return 0; }
 fn work_strlen_large() { strlen(_large); return 0; }
 
+# ⛔ v6.5.12: these were `var dst[8]` — EIGHT BYTES, not eight slots — while both
+# calls write SIXTY-FOUR. A 56-byte overflow past the destination.
+#
+# It looked harmless for years because array locals were `.bss` globals: the spill
+# scribbled adjacent globals and nothing visibly broke. v6.3.15 moved `var arr[N]`
+# locals to per-thread STACK slots (`_STACK_ARRAYS = 1`), which turned the same
+# write into a smashed return address — `cyrius bench` has been reporting
+# `17 passed, 1 failed` with bench_string exiting **139 (SIGSEGV)** ever since.
+# The release gate's bench step is non-blocking and `bench-history.sh` runs its own
+# 3-tier selection, so nothing turned red over it.
+#
+# Same shape as the rest of this release: a latent defect unmasked by a correctness
+# fix elsewhere. The sizes are now what the benchmark's own name says it measures.
 fn work_memcpy_64() {
-    var dst[8];
+    var dst[64];
     memcpy(&dst, _large, 64);
     return 0;
 }
 
 fn work_memset_64() {
-    var dst[8];
+    var dst[64];
     memset(&dst, 0, 64);
     return 0;
 }

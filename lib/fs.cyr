@@ -274,19 +274,53 @@ fn is_dir(path: Str): i64 {
 #endif
 
 # Walk a directory tree, push all file paths to a vec
-fn dir_walk(path: Str, results): i64 {
+# ⛔ v6.5.12: DEPTH-BOUNDED. This recursion had no depth cap, no visited set, and
+# `is_dir` (:251) opens with plain `O_RDONLY` — no `O_NOFOLLOW` — so a symlink to an
+# ancestor resolves and reports 1. A loop therefore re-descended until the accumulated
+# path exhausted PATH_MAX; termination was a property of path-string arithmetic, not of
+# any decision. Measured: a tree holding ONE .tcyr plus `ln -s .. tests/sub/loop` ran
+# **41 passed, 0 failed** — the count that reads as proof of coverage IS the bug
+# inflating it, which is the silent-green shape this release keeps finding.
+#
+# A depth cap rather than a visited-inode set: it needs no allocation, and it bounds
+# every cause (symlink loop, bind mount, Windows directory junction — `fs_win.cyr:146`
+# treats a reparse point as a directory), not just the one we reproduced. O_NOFOLLOW was
+# rejected because it would refuse LEGITIMATE symlinked directories, which real projects
+# use. 64 is far past any real tree (`tests/tcyr/crossos/x.tcyr` is depth 3).
+#
+# The public signature is UNCHANGED — the depth rides on a private helper, so the
+# api-surface snapshot and every caller stay as they were.
+var DIR_WALK_MAX_DEPTH = 64;
+
+fn _dir_walk_d(path: Str, results, depth): i64 {
+    # Stop, but do NOT pretend the tree ended: a silent truncation here would be the
+    # same lie as the inflated count, one level down.
+    if (depth > DIR_WALK_MAX_DEPTH) {
+        syscall(SYS_WRITE, 2, "warning: dir_walk depth cap (64) hit at: ", 41);
+        syscall(SYS_WRITE, 2, str_data(path), str_len(path));
+        syscall(SYS_WRITE, 2, "\n  a symlink loop or a pathologically deep tree — subtree NOT walked.\n", 72);
+        return vec_len(results);
+    }
     var entries = dir_list(path);
     var wi = 0;
     while (wi < vec_len(entries)) {
         var full = path_join(path, vec_get(entries, wi));
         if (is_dir(full) == 1) {
-            dir_walk(full, results);
+            _dir_walk_d(full, results, depth + 1);
         } else {
             vec_push(results, full);
         }
         wi = wi + 1;
     }
     return vec_len(results);
+}
+
+# Walk a directory tree, pushing every file path found into `results`.
+# Recursion is depth-bounded at DIR_WALK_MAX_DEPTH (see `_dir_walk_d`); a
+# deeper subtree is skipped with a warning rather than walked forever.
+# Returns the total number of entries in `results`.
+fn dir_walk(path: Str, results): i64 {
+    return _dir_walk_d(path, results, 0);
 }
 
 # Find files matching an extension in a directory tree.
@@ -333,7 +367,15 @@ fn find_files(path: Str, ext: Str): i64 {
 # node_modules, dist, build, .next, coverage. Signature picked
 # to mirror `dir_walk(path, results)` so callers can use the
 # same shape.
-fn dir_walk_with_prunes(path: Str, results, prunes): i64 {
+# v6.5.12: depth-bounded, same reasoning as `_dir_walk_d` above — pruning by NAME does
+# not stop a loop, because the symlink that closes it need not be named in `prunes`.
+fn _dir_walk_prunes_d(path: Str, results, prunes, depth): i64 {
+    if (depth > DIR_WALK_MAX_DEPTH) {
+        syscall(SYS_WRITE, 2, "warning: dir_walk_with_prunes depth cap (64) hit at: ", 53);
+        syscall(SYS_WRITE, 2, str_data(path), str_len(path));
+        syscall(SYS_WRITE, 2, "\n  a symlink loop or a pathologically deep tree — subtree NOT walked.\n", 72);
+        return vec_len(results);
+    }
     var entries = dir_list(path);
     var wi = 0;
     while (wi < vec_len(entries)) {
@@ -349,7 +391,7 @@ fn dir_walk_with_prunes(path: Str, results, prunes): i64 {
         if (pruned == 0) {
             var full = path_join(path, name);
             if (is_dir(full) == 1) {
-                dir_walk_with_prunes(full, results, prunes);
+                _dir_walk_prunes_d(full, results, prunes, depth + 1);
             } else {
                 vec_push(results, full);
             }
@@ -357,6 +399,14 @@ fn dir_walk_with_prunes(path: Str, results, prunes): i64 {
         wi = wi + 1;
     }
     return vec_len(results);
+}
+
+# Walk a directory tree like `dir_walk`, skipping any subtree whose entry
+# name matches a member of `prunes` (a vec of Str; exact match, no glob).
+# Depth-bounded identically — pruning by name cannot stop a symlink loop,
+# because the link that closes it need not be named in `prunes`.
+fn dir_walk_with_prunes(path: Str, results, prunes): i64 {
+    return _dir_walk_prunes_d(path, results, prunes, 0);
 }
 
 # Find files matching an extension under `path`, pruning any

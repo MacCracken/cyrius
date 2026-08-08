@@ -424,6 +424,50 @@ var spos = GSPOS(S);
 # Data base = cp (data starts right after bytecode in the loaded .cyx)
 var dbase = cp;
 
+# ⛔ v6.5.12: REACHABLE UNDEFINED CALLS ARE A HARD ERROR ON cx TOO.
+#
+# The native backends have gated this since v6.3.2 (src/backend/x86/fixup.cyr:725,
+# aarch64/fixup.cyr:558). cx had NO equivalent, and the consequence was not a missing
+# diagnostic — it was a corrupt program emitted with exit 0:
+#
+#   `var r = nosuchfn(1);`  →  compile exit 0, ZERO stderr, a 215-byte .cyx; running it
+#   printed the pre-call marker **1026 times** and never reached the post-call one.
+#
+# Mechanism: an undefined fn leaves **-1** in `_fnt_offsets`, and the ftype==2 arm below
+# computed `off = (target - coff) / 4` from it with no check, patching a garbage backward
+# offset into the call — so control jumped to roughly offset 0 and the program restarted.
+# The warn loop further down could never catch this either: it walks REGISTERED fns, and
+# it fired for none of them in the repro.
+#
+# Counted here rather than errored inline so the message names EVERY missing fn in one
+# pass, matching the native gate's `undef_count` shape. cx has no `--allow-undef` (that
+# flag lives in the main.cyr fork), so this is unconditional — which is correct: there is
+# no useful `.cyx` to emit when a call target does not exist.
+var cx_undef = 0;
+var ufi = 0;
+while (ufi < GFCNT(S)) {
+    var ufaddr = S + 0x150B000 + ufi * 16;
+    var uraw = L64(ufaddr + 8);
+    var uft = uraw >> 56;
+    var uidx = uraw & 0x00FFFFFFFFFFFFFF;
+    if (uft == 2 || uft == 3) {
+        if (L64(_fnt_offsets + uidx * 8) < 0) {
+            if (cx_undef == 0) {
+                syscall(SYS_WRITE, 2, "error: undefined function(s) called (cx backend):\n", 50);
+            }
+            syscall(SYS_WRITE, 2, "  - ", 4);
+            PRSTR(S + 0x60000 + L64(_fnt_names + uidx * 8));
+            syscall(SYS_WRITE, 2, "\n", 1);
+            cx_undef = cx_undef + 1;
+        }
+    }
+    ufi = ufi + 1;
+}
+if (cx_undef > 0) {
+    syscall(SYS_WRITE, 2, "  refusing to emit .cyx — an unresolved call patches a garbage offset and restarts the program.\n", 98);
+    syscall(SYS_EXIT, 1);
+}
+
 var fcnt = GFCNT(S);
 var fi = 0;
 while (fi < fcnt) {
