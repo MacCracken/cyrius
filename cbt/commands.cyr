@@ -1740,41 +1740,39 @@ fn cmd_soak(iters): i64 {
     while (sd < vec_len(sdirs)) {
         var sdir = vec_get(sdirs, sd);
         if (file_exists(sdir) == 1) {
-            var sentries = dir_list(str_from(sdir));
+            # v6.5.11: RECURSIVE. Was a depth-1 dir_list, so tests/scyr/<sub>/x.scyr
+            # never ran and cmd_soak still reported success — the same defect the
+            # v6.5.7 pass fixed for bench/fuzz without bringing scyr/smcyr along.
+            var sentries = find_files(str_from(sdir), str_from(".scyr"));
             var sei = 0;
             while (sei < vec_len(sentries)) {
-                var sname = vec_get(sentries, sei);
-                var snd = str_data(sname);
-                var snl = str_len(sname);
-                if (snl > 5) {
-                    if (memeq(snd + snl - 5, ".scyr", 5) == 1) {
-                        if (scyr_found == 0) {
-                            println("");
-                            println("=== cyrius soak harnesses ===");
-                        }
-                        scyr_found = 1;
-                        var spath = make_path(sdir, snd);
-                        var stmpbin = _cbt_tmpfile("scyr");
-                        sys_write(STDOUT_FD, "  ", 2);
-                        sys_write(STDOUT_FD, snd, snl);
-                        var spad = 30 - snl;
-                        while (spad > 0) { sys_write(STDOUT_FD, " ", 1); spad = spad - 1; }
-                        if (compile(spath, stmpbin) == 0) {
-                            var sec = run_binary(stmpbin);
-                            sys_unlink(stmpbin);
-                            if (sec == 0) {
-                                println("PASS");
-                                scyr_pass = scyr_pass + 1;
-                            } else {
-                                println("FAIL");
-                                scyr_fail = scyr_fail + 1;
-                            }
-                        } else {
-                            println("COMPILE FAIL");
-                            scyr_fail = scyr_fail + 1;
-                            sys_unlink(stmpbin);
-                        }
+                var spath_s = vec_get(sentries, sei);
+                var snd = str_data(spath_s);
+                var snl = str_len(spath_s);
+                if (scyr_found == 0) {
+                    println("");
+                    println("=== cyrius soak harnesses ===");
+                }
+                scyr_found = 1;
+                var stmpbin = _cbt_tmpfile("scyr");
+                sys_write(STDOUT_FD, "  ", 2);
+                sys_write(STDOUT_FD, snd, snl);
+                var spad = 44 - snl;
+                while (spad > 0) { sys_write(STDOUT_FD, " ", 1); spad = spad - 1; }
+                if (compile(snd, stmpbin) == 0) {
+                    var sec = run_binary(stmpbin);
+                    sys_unlink(stmpbin);
+                    if (sec == 0) {
+                        println("PASS");
+                        scyr_pass = scyr_pass + 1;
+                    } else {
+                        println("FAIL");
+                        scyr_fail = scyr_fail + 1;
                     }
+                } else {
+                    println("COMPILE FAIL");
+                    scyr_fail = scyr_fail + 1;
+                    sys_unlink(stmpbin);
                 }
                 sei = sei + 1;
             }
@@ -1811,46 +1809,45 @@ fn cmd_smoke(): i64 {
     while (sd < vec_len(sdirs)) {
         var sdir = vec_get(sdirs, sd);
         if (file_exists(sdir) == 1) {
-            var entries = dir_list(str_from(sdir));
+            # v6.5.11: RECURSIVE — see the matching note in cmd_soak. The printed
+            # path is now dir-relative rather than a bare basename; the smoke gate
+            # (programs/checks/services.cyr) matches on a SUBSTRING, so the
+            # basename it looks for is still present.
+            var entries = find_files(str_from(sdir), str_from(".smcyr"));
             var ei = 0;
             while (ei < vec_len(entries)) {
                 var name = vec_get(entries, ei);
                 var nd = str_data(name);
                 var nl = str_len(name);
-                if (nl > 6) {
-                    if (memeq(nd + nl - 6, ".smcyr", 6) == 1) {
-                        found = 1;
-                        var path = make_path(sdir, nd);
-                        var tmpbin = _cbt_tmpfile("smoke");
-                        sys_write(STDOUT_FD, "  ", 2);
-                        sys_write(STDOUT_FD, nd, nl);
-                        var pad = 30 - nl;
-                        while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
-                        if (compile(path, tmpbin) == 0) {
-                            var ec = run_binary(tmpbin);
-                            sys_unlink(tmpbin);
-                            if (ec == 0) {
-                                println("PASS");
-                                smoke_pass = smoke_pass + 1;
-                            } else {
-                                println("FAIL");
-                                smoke_fail = smoke_fail + 1;
-                                # Smoke tests exit non-zero on first sign
-                                # of trouble. Bail out — don't run the
-                                # remainder; the canonical pattern is
-                                # "fail fast, surface the first issue."
-                                sys_write(STDOUT_FD, "\n=== smoke aborted: ", 20);
-                                fmt_int(smoke_pass);
-                                sys_write(STDOUT_FD, " passed before fail ===\n", 24);
-                                return 1;
-                            }
-                        } else {
-                            println("COMPILE FAIL");
-                            smoke_fail = smoke_fail + 1;
-                            sys_unlink(tmpbin);
-                            return 1;
-                        }
+                found = 1;
+                var tmpbin = _cbt_tmpfile("smoke");
+                sys_write(STDOUT_FD, "  ", 2);
+                sys_write(STDOUT_FD, nd, nl);
+                var pad = 44 - nl;
+                while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
+                if (compile(nd, tmpbin) == 0) {
+                    var ec = run_binary(tmpbin);
+                    sys_unlink(tmpbin);
+                    if (ec == 0) {
+                        println("PASS");
+                        smoke_pass = smoke_pass + 1;
+                    } else {
+                        println("FAIL");
+                        smoke_fail = smoke_fail + 1;
+                        # Smoke tests exit non-zero on first sign
+                        # of trouble. Bail out — don't run the
+                        # remainder; the canonical pattern is
+                        # "fail fast, surface the first issue."
+                        sys_write(STDOUT_FD, "\n=== smoke aborted: ", 20);
+                        fmt_int(smoke_pass);
+                        sys_write(STDOUT_FD, " passed before fail ===\n", 24);
+                        return 1;
                     }
+                } else {
+                    println("COMPILE FAIL");
+                    smoke_fail = smoke_fail + 1;
+                    sys_unlink(tmpbin);
+                    return 1;
                 }
                 ei = ei + 1;
             }
