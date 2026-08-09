@@ -292,8 +292,22 @@ fn sys_setresgid(rgid, egid, sgid): i64 { return syscall(SYS_SETRESGID, rgid, eg
 
 # Per-process control verbs (PR_SET_NO_NEW_PRIVS, PR_SET_PDEATHSIG,
 # PR_SET_KEEPCAPS, etc.). 5-arg.
+# prctl is a Linux-only concept — Darwin has no `prctl` anywhere in the SDK's
+# sys/*.h and no equivalent. v6.5.15: the macOS build used to emit the raw svc
+# anyway. Because the Mach-O chain writes x16 only on a MATCH and has no
+# `mov x16, x8` fallback, an unrouted number does not fault cleanly — it fires
+# whatever BSD number the PREVIOUS syscall left in x16, with prctl's arguments.
+# In sandbox_syscalls.tcyr the preceding call is sys_unlink, so PR_GET_DUMPABLE
+# ran as unlinkat(3, NULL, 0). Return -ENOSYS instead. Same two-#ifdef shape as
+# sys_utimensat above, which keeps syscall(167) out of the Mach-O emit entirely
+# (no "syscall not routed" warning). See CHANGELOG [6.5.15].
 fn sys_prctl(option, arg2, arg3, arg4, arg5): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 38;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
     return syscall(SYS_PRCTL, option, arg2, arg3, arg4, arg5);
+    #endif
 }
 
 # Install a seccomp BPF filter; `op` is SECCOMP_SET_MODE_FILTER (1)

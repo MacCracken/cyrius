@@ -631,9 +631,16 @@ fn sys_chmod(path, mode): i64 {
 }
 
 # Check file access permissions.
-# Translates to faccessat(AT_FDCWD, path, mode).
+# Translates to faccessat(AT_FDCWD, path, mode, 0).
+# v6.5.15: the flags word used to be OMITTED. Linux's faccessat syscall really is
+# 3-arg (faccessat2/439 is the 4-arg one), so the register was simply ignored there
+# — but Darwin's faccessat IS 4-arg and VALIDATES flags, so the stale value left in
+# x3 by the previous call made every macOS-arm64 sys_access return -22 EINVAL
+# (measured on ecb: flags=0 → 0; flags=1/420/0xDEADBEEF → -22). Passing an explicit
+# 0 is inert on Linux and required on Darwin — the same shape sys_chmod above has
+# always used for fchmodat. Surfaced once ESYSXLAT actually routed 269→466.
 fn sys_access(path, mode): i64 {
-    return syscall(SYS_FACCESSAT, AT_FDCWD, path, mode);
+    return syscall(SYS_FACCESSAT, AT_FDCWD, path, mode, 0);
 }
 
 # Process operations.

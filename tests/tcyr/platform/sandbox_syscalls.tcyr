@@ -30,7 +30,11 @@ fn main(): i64 {
 
     test_group("sys_fchmod — fd-based chmod");
     var tmp_path = "/tmp/cyrius_v511_sandbox_fchmod_test";
-    var fd = sys_open(tmp_path, 65, 384);    # O_WRONLY|O_CREAT, 0o600
+    # v6.5.15: was the literal 65. Darwin's O_CREAT is 0x200, not 0x40, so 65
+    # there means O_WRONLY|O_SHLOCK — the file was never created and sys_fchmod
+    # was then handed fd -2 (the -9 EBADF this test reported on macOS-arm64 was
+    # the bad fd, not the fchmod mapping). Named constants resolve per-target.
+    var fd = sys_open(tmp_path, O_WRONLY | O_CREAT, 384);    # 0o600
     assert(fd >= 0, "open temp file at 0o600");
     var rc = sys_fchmod(fd, 420);            # 0o644
     assert_eq(rc, 0, "sys_fchmod fd 0o644 returns 0");
@@ -38,8 +42,16 @@ fn main(): i64 {
     sys_unlink(tmp_path);
 
     test_group("sys_prctl — 5-arg wrapper (PR_GET_DUMPABLE probe)");
+    # prctl is Linux-only; Darwin has no equivalent, so the wrapper returns
+    # -ENOSYS there (v6.5.15 — it used to emit an unrouted svc that fired the
+    # previous syscall's BSD number). Assert the documented contract per target.
     var dump = sys_prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+    #ifndef CYRIUS_TARGET_MACOS
     assert(dump == 0 || dump == 1 || dump == 2, "prctl PR_GET_DUMPABLE returns 0/1/2");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    assert_eq(dump, 0 - 38, "prctl is -ENOSYS on Darwin (no such syscall)");
+    #endif
 
     test_group("compile-time callability of remaining wrappers");
     # Linker / fixup catches missing fns. We don't INVOKE these —

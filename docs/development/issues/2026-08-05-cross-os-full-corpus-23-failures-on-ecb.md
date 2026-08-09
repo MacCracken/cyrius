@@ -83,6 +83,30 @@
 > grep does not resolve. This is the SECOND time this file's own warning has caught someone —
 > resolve the preprocessor or probe the hardware; never grep a peer file for a value.
 >
+> ## ✅ v6.5.15 RESULT — 11 → 6 on real ecb (`ran 257 passed, 6 failed` of 263)
+>
+> Closed by the macho-ESYSXLAT gap fix: `platform/process`, `process_exec_str`,
+> `process_run_capture_args`, `syscalls_at_family`, `sandbox_syscalls` (+ `result_stdlib`
+> earlier). ⚠ A first full-corpus run reported `245 passed, 6 failed` but the gate's own
+> honesty check fired — `ecb ran 251 test(s) but 263 were selected` (partial staging race).
+> The re-run is complete at 263/263. **Quote the 257/6 run, not the 251 one.**
+>
+> ### ⭐ `crypto/tls_native_scaffold` newly RED — a de-masking, not a regression
+> It is a pre-existing test that was NOT in the failing 11, and it now fails. It is not a
+> regression: both its OpenSSL-interop blocks are gated on
+> `if (sys_access("/usr/bin/openssl", 0) == 0)`, and **`sys_access` returned -22 on every
+> macOS call** until this release (the wrapper passed 3 args; Darwin's `faccessat` takes 4
+> and validates the flags word off the stale register). The guard was therefore permanently
+> false and the whole block **never executed** — a vacuous pass. Fixing the wrapper made the
+> dormant body run, and the real failures surfaced.
+> ⚠ Before chasing them as TLS bugs: ecb ships **LibreSSL 3.3.6**, not OpenSSL. The
+> assertions expect OpenSSL `s_client` behaviour (TLS 1.3 handshake, `negotiated TLS 1.2`
+> = 771), so triage test-portability FIRST. Same accidental-skip shape as v6.5.11's
+> `MAP_ANONYMOUS`, where a wrong constant was the safety net hiding a missing backend.
+>
+> **Remaining 6:** `tls_native_freestanding`, `tls_native_scaffold`, `fdlopen`,
+> `socket_syscalls`, `sys`, `result_stdlib_pass2`.
+>
 > **Consequence for the flip-to-default question:** **10 of 11 are genuine macOS platform gaps**
 > (unmapped `uname`, Darwin's register-returning `pipe`, Linux-only `prctl`/`SOCK_CLOEXEC`, the
 > setjmp asm, an mmap segfault, `/etc/passwd`-only pwd) and exactly **1 was a Linux assumption

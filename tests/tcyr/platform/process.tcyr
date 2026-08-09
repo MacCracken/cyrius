@@ -23,7 +23,13 @@ assert_eq(WEXITSTATUS(status), 42, "exit code 42");
 
 test_group("fork + pipe");
 var pipefd[8];
-syscall(22, &pipefd);
+# v6.5.15: was a raw `syscall(22, &pipefd)`. 22 is the *x86* pipe number; on
+# aarch64 (Linux and macOS alike) the peer issues SYS_PIPE2 = 59, so the raw
+# form ran an unrelated syscall off-host and the two fds were never written —
+# "pipe read 4 (got -9)". Go through the wrapper, which is the portable spelling
+# on every target (x86 → syscall(22), aarch64 → syscall(59), and the Mach-O
+# backend renumbers to Darwin `pipe` 42 + the x0/x1 → buffer fixup).
+sys_pipe(&pipefd);
 var rfd = load32(&pipefd);
 var wfd = load32(&pipefd + 4);
 var pid2 = sys_fork();

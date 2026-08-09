@@ -84,6 +84,46 @@ fn main(): i64 {
     assert_eq(ch, 0, "sys_fchownat(AT_FDCWD, -1, -1, NOFOLLOW) is a permitted no-op");
     #endif
 
+    # ── v6.5.15: pipe / fchmod / access ─────────────────────────────────────
+    # These three had NO cross-host coverage and all three were BROKEN on
+    # macOS-arm64 until this release — which is why they belong here and not in a
+    # Linux-only .tcyr: on Linux every one passes against the bug.
+    #
+    # pipe: `sys_pipe` issues pipe2(59), which the macho ESYSXLAT never mapped, so on
+    # Darwin it reached BSD 59 = execve — it failed, left the fd buffer unwritten, and
+    # the caller read garbage descriptors. Even once mapped, DARWIN RETURNS BOTH FDS IN
+    # REGISTERS (x0/x1) and never touches the buffer, so a renumber alone is not enough.
+    # Assert the ROUND TRIP, not just the return code — a fixup that writes the wrong
+    # register still returns 0.
+    var pfds[16];
+    assert_eq(sys_pipe(&pfds), 0, "sys_pipe returns 0");
+    var prd = load32(&pfds);
+    var pwr = load32(&pfds + 4);
+    assert(prd >= 0, "pipe read fd is valid (garbage fd = the unwritten-buffer bug)");
+    assert(pwr >= 0, "pipe write fd is valid");
+    assert_neq(prd, pwr, "the two pipe fds are distinct");
+    assert_eq(sys_write(pwr, "pq", 2), 2, "wrote 2 bytes into the pipe");
+    var pbuf[8];
+    assert_eq(sys_read(prd, &pbuf, 2), 2, "read 2 bytes back out of the pipe");
+    assert_eq(load8(&pbuf) & 0xFF, 112, "pipe round-trips byte 0");
+    assert_eq(load8(&pbuf + 1) & 0xFF, 113, "pipe round-trips byte 1");
+    sys_close(prd);
+    sys_close(pwr);
+
+    # fchmod: 52 was unmapped on macho, so it returned -9 (EBADF).
+    var fmfd = sys_open("/tmp/cyr_vr01_wrap/f", O_WRONLY, 0);
+    assert(fmfd >= 0, "opened the probe file for fchmod");
+    assert_eq(sys_fchmod(fmfd, 420), 0, "sys_fchmod(fd, 0644) returns 0");
+    sys_close(fmfd);
+
+    # access: faccessat(269) was unmapped on macho AND the wrapper passed only 3 args.
+    # Linux's faccessat ignores the 4th; DARWIN'S VALIDATES IT, so a stale register made
+    # every macOS sys_access return -22. Assert BOTH directions — a wrapper that always
+    # returns non-zero would pass a present-file-only check.
+    assert_eq(sys_access("/tmp/cyr_vr01_wrap/f", 0), 0, "sys_access on an existing file is 0");
+    assert(sys_access("/tmp/cyr_vr01_wrap/absent_probe", 0) < 0,
+        "sys_access on a missing file is negative");
+
     xunlink("/tmp/cyr_vr01_wrap/lnk");
     xunlink("/tmp/cyr_vr01_wrap/hard");
     xunlink("/tmp/cyr_vr01_wrap/f");

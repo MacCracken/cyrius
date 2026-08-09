@@ -22,7 +22,11 @@ sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_c", 0);
 sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_d", AT_REMOVEDIR);
 
 # sys_openat(AT_FDCWD, ...) with O_CREAT creates the file. mode 0644 = 0x1A4.
-var fd = sys_openat(AT_FDCWD, "/tmp/cyr_at_a", 65, 420);   # O_CREAT|O_WRONLY=64|1, 0644
+# v6.5.15: was the literal 65 (Linux O_WRONLY|O_CREAT). Darwin's O_CREAT is 0x200,
+# not 0x40 — 65 there means O_WRONLY|O_SHLOCK, so the file was never created and
+# every later step in this chain failed. The named constants resolve per-target
+# (syscalls_aarch64_linux.cyr:288 vs :306); on Linux they still compute 65.
+var fd = sys_openat(AT_FDCWD, "/tmp/cyr_at_a", O_WRONLY | O_CREAT, 420);
 assert_gte(fd, 0, "sys_openat(AT_FDCWD, O_CREAT) returns a fd");
 sys_close(fd);
 assert_eq(sys_access("/tmp/cyr_at_a", 0), 0, "file exists after sys_openat");
@@ -46,8 +50,16 @@ assert_eq(sys_access("/tmp/cyr_at_d", 0), 0, "dir exists after mkdirat");
 assert_eq(sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_d", AT_REMOVEDIR), 0, "sys_unlinkat AT_REMOVEDIR rmdir");
 assert_neq(sys_access("/tmp/cyr_at_d", 0), 0, "dir gone after unlinkat AT_REMOVEDIR");
 
-# sys_utimensat with NULL times = set both to now.
+# sys_utimensat with NULL times = set both to now. Darwin has NO utimensat syscall
+# (absent from MacOSX.sdk sys/syscall.h), so the wrapper returns -ENOSYS there by
+# design — assert that documented contract rather than dropping the call entirely.
+# See syscalls_linux_common.cyr:105-113.
+#ifndef CYRIUS_TARGET_MACOS
 assert_eq(sys_utimensat(AT_FDCWD, "/tmp/cyr_at_a", 0, 0), 0, "sys_utimensat NULL times = now");
+#endif
+#ifdef CYRIUS_TARGET_MACOS
+assert_eq(sys_utimensat(AT_FDCWD, "/tmp/cyr_at_a", 0, 0), 0 - 78, "sys_utimensat is -ENOSYS on Darwin");
+#endif
 
 # Cleanup: a and c are two names for the same inode (a, then hardlink->b, renamed->c).
 assert_eq(sys_unlinkat(AT_FDCWD, "/tmp/cyr_at_a", 0), 0, "sys_unlinkat removes file");
