@@ -369,6 +369,19 @@ fn PARSE_RETURN(S): i64 {
                         # Scan inside the call's argument list for `&`
                         # (token type 27); if present, force normal call.
                         var tc_has_addr = 0;
+                        # v6.5.14 — the §8 scan below is SYNTACTIC: it only sees `&`
+                        # spelled inside this call's own arg list. A pointer to a local
+                        # laundered through a variable reaches the callee with no `&` in
+                        # sight, and the tail-call epilogue frees the frame under it:
+                        #     var p = &buf;  ...  return f(p);      # silently reads dead stack
+                        #     return f(&buf);                       # guarded since v5.8.16
+                        # Same source semantics, opposite results — a silent wrong answer,
+                        # not a crash. `_fn_local_addr` is set wherever this fn materialises
+                        # `&<own local>` (parse_expr.cyr), so it covers every laundering
+                        # path (through vars, arithmetic, structs, globals). Fns that never
+                        # take a local's address keep the flag at 0 → byte-identical.
+                        # Found via sigil's RSA-PSS verify. See CHANGELOG [6.5.14].
+                        if (_fn_local_addr == 1) { tc_has_addr = 1; }
                         # v6.3.36 (issue [5]) — a callee with plain-struct params
                         # ADDRESS-passes those args (pointers into the CURRENT frame);
                         # the tail-call epilogue frees that frame before the callee
@@ -3333,6 +3346,7 @@ fn PARSE_FN_DEF(S): i64 {
     SINFN(S, 1);
     SFLC(S, 0);
     _flc_hwm = 0;   # v6.3.37 (A3) — reset the inline param-slot high-water per fn
+    _fn_local_addr = 0;   # v6.5.14 — reset the escaped-frame-address flag per fn
     # v6.0.7 — return-patch storage migrated from fixed array
     # (S + 0x18DA20, cap 256) to rp_vec. Per-fn reset is now
     # vec_truncate(rp_vec, 0); same semantic, bounded memory under the

@@ -3078,10 +3078,71 @@ fn cmd_distlib(profile): i64 {
         return 0;
     }
 
-    var check_r = compile(out_path, "/dev/null");
+    # v6.5.14: this compiled to `/dev/null` and therefore NEVER RAN. compile()
+    # writes an intermediate `<output>.tmp.<pid>` for the atomic rename, and
+    # `/dev/null.tmp.<pid>` cannot be created (/dev/ is not writable), so the
+    # call failed on the WRITE every time — before cycc ever saw the bundle.
+    # The note below then attributed that failure to unresolved symbols, so a
+    # syntactically broken bundle and a perfect one printed the same reassuring
+    # line. This is the identical defect v5.7.8 fixed for `cyrius check`
+    # (~line 566 of this file); distlib never got the same treatment.
+    # ...and it is checked the way a CONSUMER actually uses it: through a
+    # generated one-line entry that `include`s the bundle. Piping the bundle
+    # itself down stdin (what this used to do) also hits cycc's 1 MB input_buf
+    # — sigil's main bundle passed 1 MB and reported `input exceeds 1MB buffer`
+    # — whereas `include` is resolved by cycc from DISK and has no such cap. So
+    # the stdin form was doubly wrong: it never ran, and had it run it would
+    # have failed the largest bundles for a reason no consumer ever meets.
+    # The entry lands NEXT TO the bundle so the v6.5.7 `#@incdir` marker
+    # resolves the include relative to the entry's own directory.
+    var dl_pid = syscall(39);
+    var dl_ob = str_builder_new();
+    str_builder_add_cstr(dl_ob, _cbt_tmpfile("distchk_"));
+    str_builder_add_int(dl_ob, dl_pid);
+    var dl_out = str_data(str_builder_build(dl_ob));
+
+    var dl_base = out_path;
+    var dl_bi = strlen(out_path);
+    while (dl_bi > 0) {
+        if (load8(out_path + dl_bi - 1) == 47) { dl_base = out_path + dl_bi; dl_bi = 0; }
+        else { dl_bi = dl_bi - 1; }
+    }
+    var dl_eb = str_builder_new();
+    str_builder_add_cstr(dl_eb, out_path);
+    str_builder_add_cstr(dl_eb, ".distchk");
+    str_builder_add_int(dl_eb, dl_pid);
+    str_builder_add_cstr(dl_eb, ".cyr");
+    var dl_entry = str_data(str_builder_build(dl_eb));
+
+    var dl_sb = str_builder_new();
+    str_builder_add_cstr(dl_sb, "include \"");
+    str_builder_add_cstr(dl_sb, dl_base);
+    str_builder_add_cstr(dl_sb, "\"\n");
+    var dl_src = str_data(str_builder_build(dl_sb));
+    # Undefined fns are the ONE expected failure (a bundle ships no stdlib), so
+    # downgrade exactly that and let everything else stay fatal. Previously any
+    # non-zero result printed the reassuring "unresolved symbols (expected)"
+    # note and distlib still exited 0 — so a bundle that did not parse shipped
+    # looking identical to a good one.
+    var check_r = 0 - 1;
+    var dl_wrote = 0;
+    if (file_write_all(dl_entry, dl_src, strlen(dl_src)) >= 0) {
+        dl_wrote = 1;
+        _cc_allow_undef = 1;
+        check_r = compile(dl_entry, dl_out);
+        _cc_allow_undef = 0;
+        xunlink(dl_entry);
+    }
+    sys_unlink(dl_out);
+    if (dl_wrote == 0) {
+        _err_ctx("distlib: cannot write the bundle self-check entry", dl_entry);
+        return 1;
+    }
     if (check_r != 0) {
-        _info("note: bundle has unresolved symbols (expected for consumer-included");
-        _info("      bundles; stdlib is supplied by the consumer's `[deps] stdlib` list).");
+        _err_ctx("distlib: the generated bundle does not compile", out_path);
+        _info("      (undefined fns are already downgraded — this is a REAL defect");
+        _info("       in the bundle, not the consumer's missing stdlib).");
+        return 1;
     }
 
     # Report

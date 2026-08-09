@@ -68,6 +68,14 @@ var _cur_fn_regalloc = 0;
 # records the peak so the frame reserves it. Raised ONLY in the flagged replay
 # path; stays 0 on default builds → frame size byte-identical.
 var _flc_hwm = 0;
+# v6.5.14 — set when this fn materialises the address of one of its OWN locals
+# (`&local`, incl. `&arr` / `&param`). The tail-call epilogue frees the frame
+# BEFORE jumping, so a callee reading through such a pointer sees dead stack.
+# v5.8.16 §8 guarded only the SYNTACTIC form `return f(&local)`; a pointer
+# laundered through a variable (`var p = &buf; ... return f(p);`) walked straight
+# past it. Reset per fn in PARSE_FN_DEF; read by the tail-call guard in
+# parse_fn.cyr. See CHANGELOG [6.5.14].
+var _fn_local_addr = 0;
 # v6.3.39 (B3) — per-fn bitmask: bit i set = param i's declared type is a type-param
 # (`fn wrap<T>(p: T)` → bit 0). Populated in PARSE_FN_DEF's param loop (gated
 # _MONOMORPH_OK) and read by _body_field_accesses_tparam to decide whether the i64

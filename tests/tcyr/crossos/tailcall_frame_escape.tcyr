@@ -1,0 +1,121 @@
+# tailcall_frame_escape.tcyr -- a tail call must not free a frame the callee
+# still reads through.
+#
+# THE BUG (fixed 6.5.14). `return f(args)` takes cycc's tail-call path: the
+# epilogue tears the frame down and JMPs, so the callee runs on a frame that
+# has already been released. v5.8.16 §8 guarded that by scanning the call's
+# argument list for a literal `&` and declining TCO if it found one. The scan
+# is SYNTACTIC, so it only ever saw the direct spelling:
+#
+#     return f(&buf);          # guarded since v5.8.16   -> correct
+#     var p = &buf;
+#     return f(p);             # guard blind             -> reads dead stack
+#
+# Same source semantics, opposite results, no diagnostic — a silent wrong
+# answer. The two forms are the control pair below: if `direct` and `aliased`
+# ever disagree, the guard has regressed.
+#
+# WHY THIS IS IN crossos/. The tail-call epilogue exists on every backend
+# (x86, aarch64, mach-o, PE), and the frame it frees is ABI-shaped, so this
+# runs on ecb / ach / cass / pi via the release gate rather than x86-Linux only.
+#
+# FOUND BY sigil. Its RSA-PSS verify buffers could not be moved off shared
+# `cbank()` lanes for three releases (3.12.3-3.12.5) because every attempt
+# "failed the tests"; the failure was this defect, and the shared lanes it
+# forced sigil to keep were an authentication bypass (a forged PSS signature
+# verifying under lane aliasing). The arity is why it hid so long: cycc already
+# declines TCO above 6 arguments, so sigil's 10-arg wrappers localised cleanly
+# while their 6-arg twins broke. See cyrius CHANGELOG [6.5.14], sigil [3.12.6].
+
+include "lib/assert.cyr"
+
+# Fills p[0..n) with a known pattern.
+fn fill(p, n): i64 {
+    var i = 0;
+    while (i < n) { store8(p + i, (i * 7 + 3) & 0xFF); i = i + 1; }
+    return 0;
+}
+
+# Reads back through a pointer into the CALLER's frame and counts mismatches.
+# The locals exist so this callee has a frame of its own to lay over the
+# caller's, which is what makes a freed caller frame observable.
+fn checker(p, n): i64 {
+    var s1 = 0;
+    var s2 = 0;
+    var s3 = 0;
+    var s4 = 0;
+    var bad = 0;
+    var i = 0;
+    while (i < n) {
+        if ((load8(p + i) & 0xFF) != ((i * 7 + 3) & 0xFF)) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad + s1 + s2 + s3 + s4;
+}
+
+# CONTROL A: `&` spelled at the call site. Guarded since v5.8.16.
+fn tc_direct(): i64 {
+    var buf[512];
+    fill(&buf, 512);
+    return checker(&buf, 512);
+}
+
+# CONTROL B: result assigned, so no tail call at all.
+fn tc_assigned(): i64 {
+    var buf[512];
+    var p = &buf;
+    fill(p, 512);
+    var r = checker(p, 512);
+    return r;
+}
+
+# THE CASE: address taken into a local, then passed. 6.5.14 target.
+fn tc_aliased(): i64 {
+    var buf[512];
+    var p = &buf;
+    fill(p, 512);
+    return checker(p, 512);
+}
+
+# The address may be laundered arbitrarily far from the call — through
+# arithmetic and a second variable — and must still suppress TCO.
+fn tc_laundered(): i64 {
+    var buf[512];
+    var base = &buf;
+    var off = base + 256;
+    var back = off - 256;
+    fill(back, 512);
+    return checker(back, 512);
+}
+
+# A tail call in a fn that never takes a local's address MUST still be a tail
+# call (this is the byte-identity side of the fix, not just the correctness
+# side) — and must of course still compute the right answer.
+fn tc_no_local_addr(a, b): i64 {
+    return checker(a, b);
+}
+
+fn main(): i64 {
+    test_group("tail call must not free a frame the callee reads");
+
+    assert_eq(tc_direct(), 0, "control: &buf spelled at the call site");
+    assert_eq(tc_assigned(), 0, "control: assigned result (no tail call)");
+    assert_eq(tc_aliased(), 0, "&buf via a local, then tail-called");
+    assert_eq(tc_laundered(), 0, "&buf laundered through arithmetic");
+
+    # The controls and the case must AGREE. Asserting each against 0 alone
+    # would still pass if the whole harness stopped detecting corruption.
+    assert_eq(tc_aliased(), tc_direct(), "aliased and direct forms agree");
+    assert_eq(tc_laundered(), tc_assigned(), "laundered and assigned forms agree");
+
+    # A frame that outlives the call is fine to tail-call into: `gbuf` is a
+    # global, so no frame is freed under it.
+    var gp = &gbuf;
+    fill(gp, 512);
+    assert_eq(tc_no_local_addr(gp, 512), 0, "tail call with no local address taken");
+
+    var r = assert_summary();
+    return r;
+}
+
+var gbuf[512];

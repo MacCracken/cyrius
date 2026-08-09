@@ -59,6 +59,11 @@ var _strict_pin = 0;
 # behavior under both archs; previously the user had to invoke cycc
 # directly and pipe stdin/stdout themselves.
 var _strict = 0;
+# v6.5.14: internal-only — makes compile() pass cycc `--allow-undef`. Set by the
+# `distlib` bundle self-check, which EXPECTS undefined fns (a bundle deliberately
+# omits the stdlib; the consumer supplies it) and needs every OTHER failure to
+# stay a failure. Not user-facing: no CLI flag sets it.
+var _cc_allow_undef = 0;
 # v6.0.49: `cyrius build --agnos` → inject CYRIUS_TARGET_AGNOS=1 into cycc's
 # envp so it emits an AGNOS ring-3 binary (cbt's _envp is empty, so the env
 # var must be added explicitly — same mechanism as --strict-pin).

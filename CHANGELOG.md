@@ -6,6 +6,124 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.14] — 2026-08-08
+
+### Verification
+
+**Release gate GREEN, all 5 steps** (`GATE_EXIT=0`): self-host fixpoint byte-identical
+(**1,142,104 B**, +16 B) · seed-derive `seed→cybs→cycc` OK (mandatory — `src/` changed) ·
+check.sh **165 / 0** · cross-OS `SELFHOST_OK` + `crossos LIBTEST_OK` on **ecb / ach / cass /
+pi**, real hardware — so the new tail-call test ran on macOS-arm64, Intel-Mac, Windows PE
+and aarch64, not just x86-Linux.
+
+**Bench: self_compile 678 ms · cycc 1,142,104 B.** ⚠ The gate's own bench step read
+**726 ms and should be disregarded** — sigil's 65-file suite was running concurrently on
+the same box, and CLAUDE.md says to bench on a quiet one. Re-measured idle, back-to-back
+against the 6.5.13 binary: **678 ms new vs 676 ms old**, i.e. no delta, which is what a
++16 B change that adds one flag test per tail-call site at PARSE time should look like.
+The drift from .12's 646 ms is not attributable to this release — both binaries measure
+the same here.
+
+Also verified downstream: sigil **65 / 65** test files at 3.12.6.
+
+---
+
+One codegen bug, shipped complete: **a tail call could free a frame the callee was still
+reading through**, and the result was a silent wrong answer rather than a crash. Plus the
+sigil 3.12.6 fold it unblocked.
+
+### Fixed — P0: tail-call epilogue frees a frame the callee dereferences
+
+`return f(args)` takes cycc's tail-call path: the epilogue tears the frame down and JMPs,
+so the callee runs on released stack. v5.8.16 §8 already knew this and guarded it — by
+scanning the call's argument list for a literal `&`. **The scan is syntactic**, so it only
+ever saw the direct spelling:
+
+```
+return f(&buf);              # guarded since v5.8.16   -> correct
+var p = &buf;  ...
+return f(p);                 # guard blind             -> reads dead stack
+```
+
+Same source semantics, opposite results, no diagnostic. The fix replaces the syntactic
+test with a semantic one: `_fn_local_addr` (`src/frontend/parse.cyr`) is set wherever a fn
+materialises the address of one of its own locals (`parse_expr.cyr`, the single
+`ELOAD_LOCAL_ADDR` site — so it covers laundering through variables, arithmetic, structs
+and globals alike), reset per fn in `PARSE_FN_DEF`, and read by the tail-call guard. A fn
+that never takes a local's address keeps the flag at 0, so its codegen is byte-identical.
+
+**Arity is why this hid for so long.** cycc already declines TCO above 6 arguments
+(stack args are clobbered by the epilogue), so the bug is reachable only at **≤6 args** —
+and the same helper called with 7 args was fine. Downstream that looked like the *buffer*
+was cursed, not the call.
+
+### How it was found — three sigil releases misdiagnosed it as sigil's bug
+
+sigil could not move its RSA-PSS verify buffers off shared `cbank()` lanes across 3.12.3,
+3.12.4 and 3.12.5. Each release shipped a comment in `rsa.cyr` saying localisation
+"regressed tests, cause not understood", and the shared lanes that comment justified were
+an **authentication bypass** — under lane aliasing a forged PSS signature verifies. The
+tell was two addresses: a callee's local sat *above* every one of the caller's locals,
+which only happens if the caller's frame is already gone.
+
+⚠ **The earlier theory was wrong in a specific, instructive way.** 3.12.3 recorded that
+"callee-clobbers-caller was ruled out" — measured with a probe window over the first 8
+bytes of the buffer. The corruption was at offset 223. A probe that cannot see the defect
+is not evidence of absence, and it froze a security fix for three releases.
+
+### Added — `tests/tcyr/crossos/tailcall_frame_escape.tcyr` (7 assertions)
+
+In `crossos/`, not `codegen/`: the tail-call epilogue exists on every backend and the
+frame it frees is ABI-shaped, so the release gate runs this on **ecb / ach / cass / pi**
+rather than x86-Linux only. Acceptance is **aliased ≡ direct**, not aliased ≡ a literal —
+asserting each against 0 alone would still pass if the harness stopped detecting
+corruption. Carries three controls: the `&`-at-call-site form, the assigned-result form,
+and a tail call in a fn that takes no local address (which must *stay* a tail call).
+
+**Mutation-verified** against the 6.5.13 binary: 4 of 7 fail there (both aliased cases and
+both agreement assertions), all three controls pass. Under 6.5.14, 7/7.
+
+### Fixed — `distlib`'s bundle self-check had never once run
+
+Found while folding sigil. The check was `compile(out_path, "/dev/null")`, and `compile()`
+writes an intermediate `<output>.tmp.<pid>` for its atomic rename — `/dev/null.tmp.<pid>`
+cannot be created, so the call failed on the **write**, every time, before cycc ever saw a
+bundle. The handler then printed `note: bundle has unresolved symbols (expected for
+consumer-included bundles...)` and exited 0, so a syntactically broken bundle and a perfect
+one produced byte-identical reassuring output. This is the same defect **v5.7.8 already
+fixed for `cyrius check`**, 2,500 lines earlier in the same file; distlib never got it.
+
+⚠ **Fixing only the temp path exposes a second half.** Piping a bundle down cycc's stdin
+hits the 1 MB `input_buf` cap, and sigil's main bundle has passed 1 MB (1,079,068 B) — so
+the largest bundle in the ecosystem would have started failing for a reason no consumer
+ever meets, since consumers `include` the bundle and cycc resolves that from **disk**. The
+check now compiles through a generated one-line entry that includes the bundle, i.e. the
+consumer path. Undefined fns — the one legitimately expected failure — are downgraded with
+`--allow-undef`; everything else is now fatal and names the bundle.
+
+Gate: `tests/gates/toolchain/distlib_bundle_selfcheck.sh`, 5 axes, mutation-proven (a
+bundle with a syntax error goes from "note + exit 0" to a hard error with file:line and
+exit 1). Axis 5 asserts a >1 MB bundle is *genuinely* checked, and asserts the fixture
+really exceeds 1 MB — a first version came 2,599 B short and proved nothing.
+
+The residual 1 MB stdin cap is filed, with the reason it is not fixed here named:
+`docs/development/issues/2026-08-08-stdin-input-buf-1mb-cap-reached-by-sigil-bundle.md`
+(raising `input_buf` relocates `tok_names`, which is nested in the same megabyte ⇒ heap
+layout change ⇒ two-step bootstrap).
+
+### Changed — sigil 3.12.6 folded
+
+The fix unblocks the whole PSS workspace (14 buffers) plus the two v1.5 sign wrappers;
+sigil deletes 12 banked globals (196,096 B of `.bss`) and PSS verify loses its 63-lane
+ceiling. sigil's `cyrius.cyml` now pins **>= 6.5.14** because its `rsa.cyr` depends on
+this fix for correctness.
+
+⚠ PSS verify was carrying the **same authentication bypass** 3.12.3 fixed for v1.5:
+measured on the pinned-lane harness at 3.12.5, **1 of 800 forged PSS signatures was
+accepted** and 791/800 valid ones verified. Localising `_rsa_em` alone got to 798/800 —
+the residual 2 was the rest of the workspace still shared, which is why the gate asserts
+800/800 rather than "mostly".
+
 ## [6.5.13] — 2026-08-08
 
 ## [6.5.12] — 2026-08-08

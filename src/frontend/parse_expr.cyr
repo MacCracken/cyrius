@@ -663,6 +663,10 @@ fn PARSE_FACTOR(S): i64 {
                 if (_cur_fn_ret_stash > 0) { adisp = adisp - _cur_fn_ret_stash; }
                 # v5.11.36 path-A: dispatch lives in
                 # <backend>/emit.cyr::ELOAD_LOCAL_ADDR.
+                # v6.5.14: this frame's address has now escaped into a value.
+                # Any tail call in this fn would free the frame before the
+                # callee dereferences it — disable TCO for the rest of the fn.
+                _fn_local_addr = 1;
                 ELOAD_LOCAL_ADDR(S, adisp);
                 return 0;
             }

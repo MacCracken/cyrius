@@ -646,12 +646,18 @@ fn compile(source, output): i64 {
         # (since v5.4.19 / v5.11.63 respectively) — a single
         # `--strict` token anywhere past argv[0] sets _strict_mode,
         # which fixup.cyr's strict-exit reads after the patch loop.
-        # argv[24] = 3 × 8 B (cc + optional "--strict" + NUL).
-        var argv[24];
+        # argv[32] = 4 × 8 B (cc + optional "--strict" + optional
+        # "--allow-undef" + NUL). v6.5.14 widened this from 24 for the
+        # distlib self-check; keep it in step with the flags below.
+        var argv[32];
         store64(&argv, cc);
         var ax = 1;
         if (_strict == 1) {
             store64(&argv + ax * 8, "--strict");
+            ax = ax + 1;
+        }
+        if (_cc_allow_undef == 1) {
+            store64(&argv + ax * 8, "--allow-undef");
             ax = ax + 1;
         }
         store64(&argv + ax * 8, 0);
