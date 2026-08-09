@@ -120,6 +120,26 @@ enum SysNr {
     # constant read correctly, compiled on every target, and was wrong only after the
     # backend rewrote it. CHANGELOG [6.5.7]
     SYS_CHDIR = 1049;       # private alias → ESYSXLAT 1049→49 (a64) / →12 (Darwin)
+    # v6.5.16: sysctl + gettimeofday — the two Darwin-ONLY occupants of the band.
+    # Both back lib/sys.cyr's macOS sys_uname/sys_sysinfo (Darwin has neither
+    # uname(2) nor sysinfo(2); the data comes from sysctl, and uptime needs a
+    # wall-clock "now" to subtract kern.boottime from).
+    # ⚠ These two DEVIATE from the band's "1000 + native aarch64 number" spelling,
+    # deliberately: Linux has no live sysctl (x86 _sysctl 156 is removed, aarch64
+    # never had one), so there is no native number to build on. They are spelled
+    # 1000 + the DARWIN BSD number instead, which is the only self-documenting
+    # choice available — do not read 202/116 as aarch64-Linux numbers.
+    # Consequence: unlike FCHOWNAT/CHDIR these get NO aarch64-Linux ESYSXLAT arm
+    # (there is nothing to renumber to), so the "Linux arm must sit LAST" ordering
+    # rule above has no arm to apply to here. That is safe ONLY because every call
+    # site sits inside `#ifdef CYRIUS_TARGET_MACOS` and cyrius's #ifdef is a real
+    # preprocessor (src/frontend/lex_pp.cyr) — the lines are REMOVED before parse
+    # on Linux, so an untranslated `svc x8=1202` can never be emitted for
+    # aarch64-Linux. Calling either outside that guard breaks the invariant.
+    # Still requires the macho ESYSXLAT row + the `_macho_arm_routes` row, because
+    # macOS-arm64 resolves THIS peer. CHANGELOG [6.5.16]
+    SYS_GETTIMEOFDAY = 1116;  # private alias → ESYSXLAT →116 (Darwin); no Linux arm
+    SYS_SYSCTL = 1202;        # private alias → ESYSXLAT →202 (Darwin); no Linux arm
 
     # Process control
     SYS_CLONE = 220;        # → sys_fork (clone(SIGCHLD,...)); also thread spawning

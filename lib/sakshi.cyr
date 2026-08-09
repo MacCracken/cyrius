@@ -1,5 +1,5 @@
 # sakshi.cyr — tracing, error handling, and structured logging for Cyrius
-# Bundled distribution of sakshi v2.4.9
+# Bundled distribution of sakshi v2.4.10
 # Source: https://github.com/MacCracken/sakshi
 # License: GPL-3.0-only
 #
@@ -1490,11 +1490,12 @@ fn sakshi_log_kv(level, msg, msg_len, key, key_len, val, val_len): i64 {
 # Depends: clock.cyr, format.cyr, output.cyr, trace.cyr (included via lib.cyr)
 #
 # Recommended usage with defer (Cyrius >= 3.2.0):
+#
 #   fn my_function() {
-    #       sakshi_span_enter("my_function", 11);
-    #       defer { sakshi_span_exit(); }
-    #       # ... function body — span_exit guaranteed on return
-    #   }
+#       sakshi_span_enter("my_function", 11);
+#       defer { sakshi_span_exit(); }
+#       # ... function body — span_exit guaranteed on return
+#   }
 
 # Span stack — fixed depth of 16.
 # Each entry: { name_ptr: i64, name_len: i64, start_ns: i64 } = 24 bytes

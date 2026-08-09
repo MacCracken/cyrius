@@ -1636,7 +1636,7 @@ own canonical API reference in its own repo; this table is a pointer. See
 |--------|-----------|--------|
 | `lib/sandhi.cyr` | sandhi 1.9.9 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
 | `lib/sigil.cyr` | sigil 3.12.6 | Security / x509 / Ed25519 — powers native TLS + release/UEFI signing |
-| `lib/sakshi.cyr` | sakshi 2.4.9 | Tracing / structured logging |
+| `lib/sakshi.cyr` | sakshi 2.4.10 | Tracing / structured logging |
 | `lib/patra.cyr` | patra 1.12.12 | Storage |
 | `lib/sankoch.cyr` | sankoch 2.7.6 | Compression |
 | `lib/yukti.cyr` | yukti 2.3.2 | Hardware enumeration |

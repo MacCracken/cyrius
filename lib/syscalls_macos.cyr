@@ -123,6 +123,20 @@ enum SysNr {
     SYS_LINKAT = 265;
     SYS_FCHMODAT = 268;
     SYS_UTIMENSAT = 280;
+    # v6.5.16: sysctl + gettimeofday, backing lib/sys.cyr's macOS sys_uname /
+    # sys_sysinfo (Darwin has neither uname(2) nor sysinfo(2)). These are the ONLY
+    # two entries in this enum that are NOT Linux numbers: this peer's convention
+    # (see the header) is "Linux number, EMACHO_SYSXLAT rewrites it", but Linux has
+    # no live sysctl to borrow (x86 _sysctl 156 is removed), so they use the
+    # private alias band — source numbers >=1000 that no OS will ever mint, spelled
+    # 1000 + the DARWIN BSD number so the alias documents itself. Identical values
+    # in lib/syscalls_aarch64_linux.cyr (the peer macOS-arm64 resolves), which is
+    # what keeps lib/sys.cyr free of an arch #ifdef inside its macOS branch.
+    # Each needs a matching _msx32 row in EMACHO_SYSXLAT (src/backend/x86/emit.cyr);
+    # without one the number reaches Darwin unclassed and SIGSYSes the process
+    # (rc 140) — the v6.5.15 fchmod shape. CHANGELOG [6.5.16]
+    SYS_GETTIMEOFDAY = 1116;  # private alias → EMACHO_SYSXLAT → BSD 116
+    SYS_SYSCTL = 1202;        # private alias → EMACHO_SYSXLAT → BSD 202
 }
 
 # ================================================================

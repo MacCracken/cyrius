@@ -6,6 +6,69 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.16] — 2026-08-09
+
+`sys_uname` / `sys_sysinfo` implemented on macOS via sysctl — **`platform/sys.tcyr` 2/9 → 11/11
+on BOTH Mach-O targets**, which was the last item deliberately left open at 6.5.15.
+
+### Fixed — macOS uname/sysinfo, with a separate route per architecture
+
+Darwin has neither `uname(2)` nor `sysinfo(2)`; both stubs returned `-38`. They now read sysctl:
+`kern.ostype` / `osrelease` / `version` / `hostname` and `hw.machine` synthesise the same
+Linux-shaped 390-byte `utsname` the accessors already expect, so `uname_hostname` /
+`uname_release` / `uname_machine` are unchanged. `sysinfo` takes uptime from `kern.boottime`,
+total memory from `hw.memsize`.
+
+**x86-macOS and arm64-macOS are separate architectures and each got its own route** — `_msx32`
+entries in `EMACHO_SYSXLAT` for ach, `cmp/b.ne/movz` triples in `ESYSXLAT`'s `_TARGET_MACHO == 2`
+branch plus a `_macho_arm_routes` row for ecb. A route on one and not the other is the shape
+that turned the 6.5.15 gate RED. `SYS_SYSCTL = 1202` / `SYS_GETTIMEOFDAY = 1116` use the private
+alias band; both deviate from its usual `1000 + native aarch64` spelling to `1000 + DARWIN`
+because no Linux equivalent exists to borrow, and that is documented at the declaration.
+
+Values are verified against the kernel rather than asserted non-empty — `arm64` vs `x86_64`,
+release 25.6.0 vs 22.6.0, and uptime equal to the exact `now − boottime` difference on each
+host. A constant stub would satisfy a non-empty check; differing values across two hosts cannot.
+
+⚠ **A silent arbitrary-memory-write, introduced and caught on hardware.** Darwin's
+`gettimeofday` is `(tp, tzp, uint64_t *mach_abs)` — the **third** argument is an out-pointer.
+Called with two, the kernel writes 8 bytes through whatever stale value the third register
+holds; here it was `sys_sysinfo`'s own boottime buffer, so `tv_sec` was overwritten while
+`tv_usec` survived — a plausible-but-wrong timestamp, negative uptime, and `rc=0` throughout.
+Proven with a sentinel (ecb wrote a 24 MHz mach-absolute tick count, ach wrote nanoseconds),
+fixed with an explicit NULL.
+
+⚠ **Free memory is real, not faked.** `vm.page_free_count` is an `OID_AUTO` node whose oid
+differs by kernel — `{2,292}` on ecb, `{2,259}` on ach — and the WRONG oid returns
+`rc=0, value=0`, which would have passed a `free >= 0` assertion green on both hosts. The name is
+resolved at runtime via `{CTL_UNSPEC,3}` name2oid, reusing the one alias. `procs` stays 0 with a
+comment saying why. No assertion was weakened to make this pass.
+
+### Added — `tests/tcyr/crossos/sysinfo_uname.tcyr`
+
+25 assertions, in `crossos/` because `tests/tcyr/platform/` is NOT in the cross-OS selector.
+**Mutation-proven**: compiling the new `lib/sys.cyr` with the route-less 6.5.15 compiler gives
+**SIGSYS (rc 140) on ach** and **2/9 with rc −22 on ecb**, with two extra "syscall not routed"
+warnings — proving both the `ESYSXLAT` row and the `_macho_arm_routes` registration are
+load-bearing.
+
+### Changed — sakshi 2.4.9 → 2.4.10 folded
+
+Regenerated upstream first (dist was already current), verified green under 6.5.15, re-vendored.
+All 12 fold-table rows re-derived from `lib/` headers.
+
+### Filed — two issues, both from measurement rather than suspicion
+
+- **`macho-backend-route-tables-have-drifted-and-nothing-compares-them`** — aarch64 macho carries
+  **65** routes, x86 macho **47**, and nothing compares them; that asymmetry produced both
+  6.5.15 gate failures. The filing records that the obvious comparisons are wrong (source
+  numbers differ by design; the destination diff over-reports because aarch64 uses at-family
+  where x86 uses bare) and that the gate must compare *capability*.
+- **`getuid-geteuid-broken-on-both-macho-targets-hidden-by-a-hardcoded-is-root`** — `-9` on ecb,
+  **SIGSYS** on ach, invisible because `is_root()` hardcodes `return 0` on macOS so nothing
+  calls them. Pre-existing; measured identical on the 6.5.15 baseline.
+
+
 ## [6.5.15] — 2026-08-09
 
 ### Verification

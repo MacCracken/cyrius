@@ -1,0 +1,145 @@
+# sysinfo_uname.tcyr — v6.5.16: sys_uname / sys_sysinfo, EXECUTED on real hardware.
+#
+# WHY THIS FILE EXISTS. tests/tcyr/platform/sys.tcyr already covers these two, but
+# `platform/` is NOT in the release gate's cross-OS selector — the gate passes
+# "crossos" (scripts/release-gate.sh), so anything outside this directory is only
+# ever run on the Linux dev box. macOS reached v6.5.15 with both wrappers stubbed
+# to -ENOSYS and nothing in the gate could see it. Per CLAUDE.md ("a wrapper that
+# COMPILES on five targets is not a wrapper that RUNS"), the macOS implementation
+# lands with a companion here.
+#
+# ⭐ THE SHARPEST CASE IS UPTIME, and it can only fail on hardware. Darwin has no
+# sysinfo(2), so uptime is `gettimeofday().tv_sec - kern.boottime.tv_sec` over two
+# separate syscalls. Darwin's gettimeofday is
+#     gettimeofday(struct timeval *tp, struct timezone *tzp, uint64_t *mach_abs)
+# and the THIRD parameter is an out-pointer: called with only two arguments, the
+# kernel writes 8 bytes of mach_absolute_time through whatever stale value the
+# third arg register happens to hold. During development that register held the
+# kern.boottime buffer, so boottime's tv_sec was silently overwritten and uptime
+# came out NEGATIVE — rc=0 throughout, nothing to check. The bare `uptime > 0` in
+# platform/sys.tcyr caught that instance only by luck of the sign; the range and
+# cross-call checks below are what make it deterministic. Mutation-verified: with
+# the third argument dropped, `uptime in range` fails on both Mach-O hosts.
+#
+# Windows has neither call (GetVersionEx / GlobalMemoryStatusEx are unwired), so
+# it asserts the -ENOSYS contract instead — the same shape lib/sys.cyr documents.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+include "lib/sys.cyr"
+
+alloc_init();
+
+#ifdef CYRIUS_TARGET_WIN
+test_group("uname/sysinfo — Windows ENOSYS contract");
+var wu[390];
+var wru = sys_uname(&wu);
+assert_eq(wru, 0 - 38, "sys_uname is -ENOSYS on Windows");
+var wsi[120];
+var wrs = sys_sysinfo(&wsi);
+assert_eq(wrs, 0 - 38, "sys_sysinfo is -ENOSYS on Windows");
+#endif
+
+#ifndef CYRIUS_TARGET_WIN
+# ---- uname ----------------------------------------------------------------
+# Canaries either side of the 390-byte struct: a field filled from a scratch
+# buffer must never run past UTS_SIZE. On macOS kern.version alone is 103-104
+# bytes against a 65-byte field, so the truncation path is load-bearing.
+test_group("uname");
+var pre[64];
+var uts[390];
+var post[64];
+store64(&pre, 0x1122334455667788);
+store64(&post, 0x99AABBCCDDEEFF00);
+
+var ru = sys_uname(&uts);
+assert_eq(ru, 0, "sys_uname returns 0");
+assert_eq(load64(&pre), 0x1122334455667788, "no underrun before utsname");
+assert_eq(load64(&post), 0x99AABBCCDDEEFF00, "no overrun past utsname");
+
+var host_ok = (load8(uname_hostname(&uts)) != 0);
+assert_eq(host_ok, 1, "hostname is a non-empty cstring");
+var rel_ok = (load8(uname_release(&uts)) != 0);
+assert_eq(rel_ok, 1, "release is a non-empty cstring");
+var mach_ok = (load8(uname_machine(&uts)) != 0);
+assert_eq(mach_ok, 1, "machine is a non-empty cstring");
+
+# Every field must terminate INSIDE its own 65-byte slot, or an accessor reads
+# on into its neighbour. This is what proves the macOS truncate-and-NUL path.
+var hlen = strlen(uname_hostname(&uts));
+var hlen_ok = (hlen < 65);
+assert_eq(hlen_ok, 1, "hostname terminates inside its field");
+var rlen = strlen(uname_release(&uts));
+var rlen_ok = (rlen < 65);
+assert_eq(rlen_ok, 1, "release terminates inside its field");
+var mlen = strlen(uname_machine(&uts));
+var mlen_ok = (mlen < 65);
+assert_eq(mlen_ok, 1, "machine terminates inside its field");
+
+# ---- sysinfo --------------------------------------------------------------
+test_group("sysinfo");
+var sipre[64];
+var si[120];
+var sipost[64];
+store64(&sipre, 0x0F1E2D3C4B5A6978);
+store64(&sipost, 0x8796A5B4C3D2E1F0);
+
+var sr = sys_sysinfo(&si);
+assert_eq(sr, 0, "sys_sysinfo returns 0");
+assert_eq(load64(&sipre), 0x0F1E2D3C4B5A6978, "no underrun before sysinfo");
+assert_eq(load64(&sipost), 0x8796A5B4C3D2E1F0, "no overrun past sysinfo");
+
+# Range, not just sign. A corrupted boottime/gettimeofday pair lands here.
+var up = sysinfo_uptime(&si);
+var up_pos = (up > 0);
+assert_eq(up_pos, 1, "uptime > 0");
+var up_sane = (up < 3153600000);
+assert_eq(up_sane, 1, "uptime is under 100 years (catches a corrupted clock pair)");
+
+var tm = sysinfo_total_memory(&si);
+var tm_ok = (tm > 67108864);
+assert_eq(tm_ok, 1, "total memory is at least 64 MiB");
+
+# freeram may legitimately be 0 where the platform exposes no stable node for it
+# (Darwin publishes free pages only through an OID_AUTO oid / a Mach trap), so
+# this is a floor, not a positivity check. It must never exceed total.
+var fm = sysinfo_free_memory(&si);
+var fm_lo = (fm >= 0);
+assert_eq(fm_lo, 1, "free memory >= 0");
+var fm_hi = (fm <= tm);
+assert_eq(fm_hi, 1, "free memory does not exceed total");
+
+# Second call: uptime must move forward, never backward, and by a small amount.
+# Total memory must be identical — a differing value means one call's buffers
+# corrupted the other's, which is exactly how the gettimeofday bug presented.
+var si2[120];
+var sr2 = sys_sysinfo(&si2);
+assert_eq(sr2, 0, "second sys_sysinfo returns 0");
+var up2 = sysinfo_uptime(&si2);
+var up_fwd = (up2 >= up);
+assert_eq(up_fwd, 1, "uptime does not go backwards across calls");
+var up_delta = (up2 - up < 10);
+assert_eq(up_delta, 1, "uptime is stable across two calls");
+var tm2 = sysinfo_total_memory(&si2);
+assert_eq(tm2, tm, "total memory is identical across calls");
+
+# ---- convenience wrappers (independent re-entry of the same path) ----------
+test_group("convenience");
+var su = system_uptime();
+var su_ok = (su > 0);
+assert_eq(su_ok, 1, "system_uptime() > 0");
+var su_sane = (su < 3153600000);
+assert_eq(su_sane, 1, "system_uptime() is in range");
+var stm = system_total_memory();
+assert_eq(stm, tm, "system_total_memory() agrees with sysinfo_total_memory()");
+#endif
+
+test_group("is_root");
+var ir = is_root();
+var ir_ok = (ir < 2);
+assert_eq(ir_ok, 1, "is_root() is 0 or 1");
+
+var r = assert_summary();

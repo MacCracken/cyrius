@@ -921,6 +921,21 @@ fn EMACHO_SYSXLAT(S): i64 {
     # 0-on-success → byte-count return is normalized in sys_getrandom (stdlib),
     # so no x86 post-syscall fixup is needed.
     _msx32(S, 318, 0x20001F4);  # getrandom 318 → getentropy 500
+    # v6.5.16: sysctl + gettimeofday — the x86 fork of the arm64 rows landed in the
+    # same release, backing lib/sys.cyr's macOS sys_uname/sys_sysinfo. Both arrive as
+    # private aliases (>=1000, see lib/syscalls_macos.cyr) because Linux has no live
+    # sysctl number to borrow, so _msx32 is required — the imm8 cmp in _msx cannot
+    # reach them (it auto-delegates anyway; called explicitly here to match the
+    # getdents64/getrandom precedent above).
+    # ⚠ The 0x2000000 Unix-class prefix is NOT optional: live-probed on ach, a raw
+    # `syscall` with rax=202 unprefixed is KILLED by SIGSYS (shell rc 140), while
+    # rax=0x20000CA returns "Darwin". That is the exact v6.5.15 fchmod bug.
+    # gettimeofday rather than clock_gettime: syscall(228) is unrouted on THIS arch
+    # (lib/chrono.cyr:27 — "x86-macOS does not route 228 → clock stays dead there"),
+    # so uptime's "now" has to come from 116, which measured identically on ach and
+    # ecb (rc 0, tv_sec i64 @ +0 matching libc time(0)).
+    _msx32(S, 1202, 0x20000CA); # sysctl       1202 (private alias) → BSD 202
+    _msx32(S, 1116, 0x2000074); # gettimeofday 1116 (private alias) → BSD 116
     return 0;
 }
 
