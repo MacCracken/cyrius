@@ -4,7 +4,19 @@
 **Reporter:** cyrius (found while fixing `MAP_ANONYMOUS` for v6.5.11)
 **Cyrius version:** 6.5.11
 **Affected:** `lib/syscalls.cyr:64-71` (the macOS-arm64 peer selection), `lib/syscalls_aarch64_linux.cyr` (the `Signal` / errno enums it exports to Darwin)
-**Status:** 🟡 **OPEN** — measured on real ecb (macOS 26.5.2, arm64) at v6.5.11. **7 constants confirmed wrong.**
+**Status:** ✅ **FIXED in v6.5.15** — all ten split per-OS in `lib/syscalls_aarch64_linux.cyr`
+(mirroring the `Stat` precedent already in that file), **re-probed on real ecb after the fix: all
+ten now resolve to the Darwin column.** Gated by `tests/tcyr/crossos/signal_errno_peer_values.tcyr`,
+which runs on ecb/ach/cass/pi via the release gate and is **mutation-proven** (putting Linux's
+SIGCHLD=17 back into the Darwin arm turns ecb red at 12/1, naming the assertion).
+⭐ Two extras the filing's table did not list, both found by re-deriving the divergence set
+preprocessor-aware rather than by grepping: **`SIGPWR` was 30 on the Darwin side, which IS Darwin's
+`SIGUSR1`** — so `kill(pid, SIGPWR)` silently delivered SIGUSR1; it is now inert `0`, matching the
+`MAP_STACK = 0` precedent for a flag the OS does not have. And `MAP_ANONYMOUS` is now correct in
+the PEER too, not only in `lib/mmap.cyr`'s shadowing declaration, so both include orders are right.
+aarch64-**Linux** is byte-for-byte unchanged (verified by cross-compiling the same probe and running
+it under qemu: every Linux value preserved), so pi cannot regress.
+*(Historical status below.)* 🟡 OPEN — measured on real ecb (macOS 26.5.2, arm64) at v6.5.11. **7 constants confirmed wrong.**
 **Severity:** Medium. No *currently gated* consumer reads them, which is precisely why it has survived — see "Why nothing is red today".
 **Related:** `2026-07-03-macos-threading-workers-dont-run` (the signal constants are a prerequisite for any real macOS thread/signal work, but that issue is scoped to the missing `thread_macos.cyr` backend and does **not** cover these values). Archived precedent — `2026-06-17-io-cyr-o-flags-not-darwin-translated` is the SAME class, third occurrence.
 

@@ -17854,7 +17854,7 @@ fn pem_decode_privkey(pem, pem_len, key_out, key_max, out_algo): i64 {
 #   `_rsa_pkcs1v15_check`  em/expected 2x512 = 1,024 B   (0.8%)
 #   `rsa_pkcs1v15_verify_sha256/384`   64+24 =    88 B   (0.07%)
 #   `rsa_pkcs1v15_sign_sha256/384`     64+24 =    88 B   (0.07%)   [3.12.6]
-#   the ENTIRE PSS workspace (12 buffers)   4,664 B      (3.8%)    [3.12.6]
+#   the ENTIRE PSS workspace (14 buffers)   4,664 B      (3.8%)    [3.12.6]
 #
 # ⚠ **3.12.6 IS A SECURITY FIX, NOT A CLEANUP — PSS VERIFY HAD THE SAME
 # AUTHENTICATION BYPASS 3.12.3 FIXED FOR v1.5.** With the workspace banked and
@@ -18563,7 +18563,8 @@ fn _rsa_pss_hash(hid, msg, msg_len, out): i64 {
 #   `_rsa_emsa_pss_verify` dbmask/db/M'/H  1,688 B
 #   `_rsa_pss_verify`      EM + mHash        576 B
 #   `_rsa_pss_sign`        6 buffers       2,264 B
-# ~110 KB of .bss retired with them.
+# 12 banked globals deleted = 196,096 B (191.5 KiB) of .bss, replaced by 14
+# function-scope buffers totalling 4,664 B per call.
 
 # MGF1 (RFC 8017 §B.2.1) with the id-`hid` hash. Writes `mask_len` bytes
 # of mask to `mask_out`. seed is `seed_len` bytes.

@@ -1,0 +1,101 @@
+# signal_errno_peer_values.tcyr — cross-host: signal / errno / mmap-flag VALUES must
+# be the ones the HOST kernel interprets, not the ones its syscall-number peer happens
+# to ship with.
+#
+# v6.5.15. `lib/syscalls.cyr:64-71` gives macOS-arm64 the *Linux aarch64* constant peer
+# wholesale. That is correct BY DESIGN for syscall NUMBERS — the backend's `ESYSXLAT`
+# renumbers Linux numbers to BSD. ⛔ But ESYSXLAT renumbers NUMBERS ONLY; it never
+# touches VALUES. A signal number, an errno, or an mmap flag passes through to the
+# Darwin kernel verbatim, so every value where Linux and Darwin disagree was simply
+# wrong on macOS-arm64, with no layer that could ever notice. Ten were wrong.
+#
+# ⭐ WRONG HERE DOES NOT MEAN "FAILS" — IT MEANS "SIGNALS THE WRONG THING". Linux
+# SIGCHLD is 17; on Darwin 17 is SIGSTOP. A process waiting for a child to exit was
+# waiting on a stop instead. Nothing errors, nothing logs, the number is simply a
+# different signal. That is why this survived from the macOS port to v6.5.15.
+#
+# ⚠ WHY THIS CANNOT BE A LINUX .tcyr: on Linux every one of these values is CORRECT,
+# so a host-side test passes against the bug in full. The defect exists only where the
+# constant diverges — the exact class the cross-host set exists for, and the same shape
+# as `crossos/mmap_anon_flag.tcyr` (v6.5.11).
+#
+# ⚠ DERIVE THE EXPECTED VALUES FROM THE OS, NOT FROM THE PEER FILES. A first pass at
+# the filing grepped the peers and produced a table that was substantially wrong — it
+# claimed the whole `STAT_*` family diverged, because `syscalls_aarch64_linux.cyr`
+# carries its own `#ifdef CYRIUS_TARGET_MACOS` arm and a naive parse reads the branch
+# that is not taken. `STAT_*` is correct and is deliberately NOT asserted here.
+# See issues/2026-08-07-macos-arm64-inherits-linux-signal-and-errno-constants.md.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+
+var _armed = 0;
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("signal / errno / mmap-flag values match the host OS");
+
+#ifdef CYRIUS_TARGET_MACOS
+    # Darwin truth, probed on real ecb (macOS 26.5.2, arm64). Every one of these
+    # resolved to the Linux column before v6.5.15.
+    assert_eq(EAGAIN, 35, "Darwin EAGAIN is 35 (Linux 11 is EDEADLK on Darwin)");
+    assert_eq(SIGCHLD, 20, "Darwin SIGCHLD is 20 (Linux 17 is Darwin SIGSTOP)");
+    assert_eq(SIGCONT, 19, "Darwin SIGCONT is 19");
+    assert_eq(SIGSTOP, 17, "Darwin SIGSTOP is 17");
+    assert_eq(SIGUSR1, 30, "Darwin SIGUSR1 is 30");
+    assert_eq(SIGUSR2, 31, "Darwin SIGUSR2 is 31");
+    assert_eq(SIG_BLOCK, 1, "Darwin SIG_BLOCK is 1");
+    assert_eq(SIG_UNBLOCK, 2, "Darwin SIG_UNBLOCK is 2");
+    assert_eq(SIG_SETMASK, 3, "Darwin SIG_SETMASK is 3");
+    assert_eq(MAP_STACK, 0, "Darwin has no MAP_STACK; 0 is inert in the flags OR");
+    # Darwin has no SIGPWR either. The x86-macOS peer declares it 30 — which IS
+    # Darwin's SIGUSR1 — so `kill(pid, SIGPWR)` delivered SIGUSR1. 0 makes it the
+    # liveness probe instead of a wrong delivery: fail-inert, not fail-wrong.
+    assert_eq(SIGPWR, 0, "Darwin SIGPWR is inert 0, NOT 30 (that is SIGUSR1)");
+    assert_eq(MAP_ANONYMOUS, 4096, "Darwin MAP_ANONYMOUS is 0x1000");
+    _armed = 1;
+#endif
+
+#ifdef CYRIUS_TARGET_LINUX
+    assert_eq(EAGAIN, 11, "Linux EAGAIN is 11");
+    assert_eq(SIGCHLD, 17, "Linux SIGCHLD is 17");
+    assert_eq(SIGCONT, 18, "Linux SIGCONT is 18");
+    assert_eq(SIGSTOP, 19, "Linux SIGSTOP is 19");
+    assert_eq(SIGUSR1, 10, "Linux SIGUSR1 is 10");
+    assert_eq(SIGUSR2, 12, "Linux SIGUSR2 is 12");
+    assert_eq(SIG_BLOCK, 0, "Linux SIG_BLOCK is 0");
+    assert_eq(SIG_UNBLOCK, 1, "Linux SIG_UNBLOCK is 1");
+    assert_eq(SIG_SETMASK, 2, "Linux SIG_SETMASK is 2");
+    assert_eq(MAP_STACK, 131072, "Linux MAP_STACK is 0x20000");
+    assert_eq(SIGPWR, 30, "Linux SIGPWR is 30");
+    assert_eq(MAP_ANONYMOUS, 32, "Linux MAP_ANONYMOUS is 32");
+    _armed = 1;
+#endif
+
+#ifdef CYRIUS_TARGET_WIN
+    # The Windows peer defines NONE of these — there is no POSIX signal or errno
+    # surface to check. Say so out loud rather than reporting a silent pass.
+    println("SKIP: windows peer defines no POSIX signal/errno/mmap constants");
+    _armed = 1;
+#endif
+
+#ifdef CYRIUS_TARGET_AGNOS
+    # agnos uses POSIX/Linux signal numbering but ships no EAGAIN / MAP_STACK.
+    assert_eq(SIGCHLD, 17, "agnos SIGCHLD is 17 (Linux numbering)");
+    assert_eq(SIG_BLOCK, 0, "agnos SIG_BLOCK is 0");
+    _armed = 1;
+#endif
+
+    # ⚠ ANTI-VACUOUS GUARD. Every assertion above sits inside a `#ifdef`, so on a
+    # target none of them match this file compiles to an empty main and exits 0 —
+    # a PASS for a test that checked nothing. That is the failure mode this repo
+    # keeps rediscovering (the empty-stdin fake PASS at v6.5.11, the 0-test
+    # LIBTEST_OK). Fail loudly instead, naming the cause.
+    assert_eq(_armed, 1, "a platform arm ran (0 = this test compiled into nothing)");
+
+    var r = assert_summary();
+    return r;
+}

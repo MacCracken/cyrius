@@ -44,9 +44,17 @@ alloc_init();
 
 # ---- file_open_r ----
 
+# v6.5.15: was `/etc/hostname`, which does NOT EXIST ON macOS — the test was
+# asserting the host OS, not the language, and failed on ecb for that reason
+# alone (found while diagnosing the 11 cross-OS full-corpus failures). A test
+# must not depend on an OS-provided path; write the fixture, like the bayan
+# cases further down already do.
+var _rs_fixture = "/tmp/cyrius_result_stdlib_fixture.txt";
+file_write_all_r(_rs_fixture, "cyrius\n", 7);
+
 test_group("file_open_r — Ok on existing file");
-var ok_fd = file_open_r("/etc/hostname", 0, 0);
-assert_eq(is_ok(ok_fd), 1, "/etc/hostname is Ok");
+var ok_fd = file_open_r(_rs_fixture, 0, 0);
+assert_eq(is_ok(ok_fd), 1, "existing file is Ok");
 assert(load64(ok_fd + 8) >= 0, "fd payload is non-negative");
 sys_close(load64(ok_fd + 8));
 
@@ -58,8 +66,8 @@ assert_eq(load64(bad_fd + 8), IoNotFound, "Err payload = IoNotFound");
 # ---- file_read_r / file_close_r ----
 
 test_group("file_read_r — Ok bytes on valid fd");
-var rfd_r = file_open_r("/etc/hostname", 0, 0);
-assert_eq(is_ok(rfd_r), 1, "open hostname Ok");
+var rfd_r = file_open_r(_rs_fixture, 0, 0);
+assert_eq(is_ok(rfd_r), 1, "open fixture Ok");
 var rfd = load64(rfd_r + 8);
 var rbuf[256];
 var rd_r = file_read_r(rfd, &rbuf, 256);
@@ -107,8 +115,8 @@ fn _read_byte_count(path) {
 }
 
 test_group("? chain — Ok path");
-var chain_ok = _read_byte_count("/etc/hostname");
-assert_eq(is_ok(chain_ok), 1, "chain on /etc/hostname is Ok");
+var chain_ok = _read_byte_count(_rs_fixture);
+assert_eq(is_ok(chain_ok), 1, "chain on the fixture is Ok");
 assert(load64(chain_ok + 8) >= 0, "byte count non-negative");
 
 test_group("? chain — Err short-circuits at file_open_r");
@@ -157,5 +165,6 @@ file_write_all_r("/tmp/cyrius_v5_8_30_test.cyml", csrc, strlen(csrc));
 var cok = bayan_cyml_parse_file_r("/tmp/cyrius_v5_8_30_test.cyml");
 assert_eq(is_ok(cok), 1, "synthetic CYML file Ok");
 sys_unlink("/tmp/cyrius_v5_8_30_test.cyml");
+sys_unlink(_rs_fixture);
 
 var r = assert_summary();

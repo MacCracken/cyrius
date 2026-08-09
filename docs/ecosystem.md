@@ -28,9 +28,9 @@ git entries (see Live deps below).
 |-----|-----------|------------|--------|
 | `lib/sandhi.cyr` | v5.7.0 (refold v6.5.6) | sandhi 1.9.9 | HTTP/2 + JSON-RPC + service discovery + TLS policy (ALPN/SPKI on typed native verbs) |
 | `lib/vani.cyr` | v5.8.0 (refold v6.5.6) | vani 1.1.3 | Audio (ALSA PCM + ring buffer + mixer) |
-| `lib/sakshi.cyr` | v5.8.65 (refold v6.5.8) | sakshi 2.4.8 | Tracing (`_sk_fmt_int` half of the `i64::MIN` formatter class, fixed upstream @2.4.8) |
+| `lib/sakshi.cyr` | v5.8.65 (refold v6.5.15) | sakshi 2.4.9 | Tracing (`_sk_fmt_int` half of the `i64::MIN` formatter class, fixed upstream @2.4.8) |
 | `lib/patra.cyr` | v5.8.65 (refold v6.4.65) | patra 1.12.12 | Storage (thread-local slots allocator-managed @1.12.12) |
-| `lib/sigil.cyr` | v5.8.65 (refold v6.5.4) | sigil 3.12.2 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing; UEFI Secure Boot signing (authenticode_pe_sign) + enrollment (efi_signature_list/efi_auth); crypto-bank slot allocator-managed @3.12.1; Authenticode VERIFY + unaligned-image hash fix @3.12.2) |
+| `lib/sigil.cyr` | v5.8.65 (refold v6.5.14) | sigil 3.12.6 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing; UEFI Secure Boot signing (authenticode_pe_sign) + enrollment (efi_signature_list/efi_auth); crypto-bank slot allocator-managed @3.12.1; Authenticode VERIFY + unaligned-image hash fix @3.12.2; **RSA verify authentication-bypass closed across 3.12.3-3.12.6** — v1.5 @3.12.3, bignum scratch @3.12.4/.5, the whole PSS workspace @3.12.6, which needed cyrius 6.5.14's tail-call fix to be expressible) |
 | `lib/yukti.cyr` | v5.8.65 (refold v6.5.4) | yukti 2.3.2 | Hardware enumeration |
 | `lib/sankoch.cyr` | v5.8.65 (refold v6.4.79) | sankoch 2.7.6 | Compression |
 | `lib/niyama.cyr` | **v5.9.0** (refold v6.4.65) | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,689 lines vendored) |

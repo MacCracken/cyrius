@@ -35,6 +35,60 @@
 > not 23, and it is one root cause rather than several. The pi full-corpus leg (W1 item 7's second
 > half) is still owed.
 
+> ## 🔬 v6.5.15 re-measurement: still **11**, and the stated root cause is DISPROVEN
+>
+> `CYRIUS_CROSS_OS_FULL=1 sh scripts/cross-os-selfhost.sh ecb crossos` at v6.5.15:
+> **`ran 252 passed, 11 failed`** of 263. The corpus grew 261 → 263 (two new cross-host tests,
+> both passing), so **the failure count did not move: the same 11 tests, by name.**
+>
+> ⛔ **This release FIXED all ten macOS-arm64 constant divergences** (signals, errno, mmap flags —
+> `2026-08-07-macos-arm64-inherits-linux-signal-and-errno-constants`, verified on real ecb and
+> mutation-proven) **and it changed NOTHING here.** The paragraph above — *"these are almost
+> entirely process/syscall surface, which is the macOS-arm64 constant-peer problem"* — was a
+> plausible reading of the test NAMES, and it is wrong. Do not re-derive it.
+>
+> **What one of them actually is.** `stdlib/result_stdlib.tcyr` on ecb: `24 passed, 5 failed`,
+> first failure `chain on /etc/hostname is Ok (got 0, expected 1)`. **macOS has no
+> `/etc/hostname`** (confirmed on ecb; `/etc/hosts` exists and is the portable alternative).
+> That is a TEST-FIXTURE portability defect — a Linux-only path hardcoded in a test — not a
+> platform, constant, or codegen defect. The test is asserting the OS, not the language.
+>
+> **So the 11 are not one family.** At minimum they split into (a) tests hardcoding Linux-only
+> paths/behaviour, which want fixing in the TEST, and (b) whatever genuinely needs platform work.
+> Triage each against its actual output before assuming which. The remaining 10 have not been
+> individually diagnosed at v6.5.15 — that is the next step, and it is cheap now that the corpus
+> stages on ecb at `~/_cyaud` and a single test can be run there directly:
+> `cd ~/_cyaud && cat tests/tcyr/<t>.tcyr | ./_co_m > /tmp/t && codesign -s - -f /tmp/t && /tmp/t`.
+>
+> ### All 11 diagnosed (v6.5.15) — FOUR causes, none of them the constant peer
+>
+> | # | test | actual failure | class |
+> |---|---|---|---|
+> | 1 | `stdlib/result_stdlib` | `chain on /etc/hostname is Ok` — **macOS has no `/etc/hostname`** | **TEST** hardcoded a Linux path — ✅ **FIXED v6.5.15**: writes its own `/tmp` fixture (the convention the bayan cases in the same file already used). Re-run on real ecb: **29/29**, was 24/5. |
+> | 2 | `stdlib/result_stdlib_pass2` | `self uid is Ok` fails | **PLATFORM**, not test (corrected after probing ecb): `pwd_getpwuid_r` parses `/etc/passwd`, and macOS keeps real accounts in **Open Directory** — uid 501 is absent, the highest uid in that file is 441 (system accounts only). A `/etc/passwd` parser cannot resolve a normal macOS user; closing this means Directory Services integration. |
+> | 3 | `platform/sys` | `sys_uname returns 0 (got -38)` — **-38 = ENOSYS**, `SYS_UNAME` has no Darwin mapping in ESYSXLAT | **PLATFORM** — unmapped syscall |
+> | 4 | `platform/process` | `pipe read 4 (got -9)` — Darwin's `pipe()` returns **both fds in registers (rax/rdx)**, not through a caller buffer like Linux | **PLATFORM** — ABI shape differs |
+> | 5 | `platform/process_exec_str` | captures 0 bytes | downstream of #4 |
+> | 6 | `platform/process_run_capture_args` | captures 0 bytes | downstream of #4 |
+> | 7 | `platform/sandbox_syscalls` | `sys_fchmod (got -9)` after the open fails; `prctl PR_GET_DUMPABLE` | **PLATFORM** — `prctl` is Linux-only |
+> | 8 | `platform/socket_syscalls` | `AF_UNIX, SOCK_DGRAM\|SOCK_CLOEXEC` | **PLATFORM** — Darwin has no `SOCK_CLOEXEC` in the type field |
+> | 9 | `platform/syscalls_at_family` | `sys_openat` / `sys_lstat` fail | **PLATFORM** — NOT `AT_FDCWD`; see below |
+> | 10 | `platform/fdlopen` | `dl_setjmp` saves a zero rip/rsp; `dl_longjmp` returns | **PLATFORM** — hand-rolled setjmp asm |
+> | 11 | `crypto/tls_native_freestanding` | **SIGSEGV (139)** at `mmap MAP_SHARED loopback region` | **PLATFORM** |
+>
+> ⚠ **`AT_FDCWD` IS NOT THE CAUSE OF #9, THOUGH IT LOOKS LIKE IT.** `syscalls_aarch64_linux.cyr`
+> greps as `AT_FDCWD = -100` and the macOS peer never defines it, which reads exactly like the
+> inherited-Linux-value bug. **Probed on real ecb: it compiles to `-2` (Darwin's value) and
+> `openat(AT_FDCWD, "/etc/hosts", O_RDONLY)` returns a valid fd.** There is a `#ifdef` arm the
+> grep does not resolve. This is the SECOND time this file's own warning has caught someone —
+> resolve the preprocessor or probe the hardware; never grep a peer file for a value.
+>
+> **Consequence for the flip-to-default question:** **10 of 11 are genuine macOS platform gaps**
+> (unmapped `uname`, Darwin's register-returning `pipe`, Linux-only `prctl`/`SOCK_CLOEXEC`, the
+> setjmp asm, an mmap segfault, `/etc/passwd`-only pwd) and exactly **1 was a Linux assumption
+> baked into a TEST** — now fixed, leaving **10**. They are independent: no single fix moves more
+> than the three `pipe`-dependent ones together, so this is an arc, not a patch.
+
 **Status:** 🟡 **OPEN — re-measured 2026-08-07 on REAL hardware, all four hosts.** The original
 filing had one host and carried an explicit "ach/cass/pi have NOT been measured this way yet".
 They have now. The result decomposes the problem in a way one host could not.
