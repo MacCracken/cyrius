@@ -58,6 +58,7 @@
 #   0x61 = ret                    pop PC
 #   0x62 = pushc  ra              push ra to call stack (for fp save)
 #   0x63 = popc   ra              pop from call stack to ra
+#   0x69 = callind ra             push PC, PC = ra (absolute code offset; v6.5.13)
 #   0x70 = syscall ra             syscall(r1, r2, r3, r4, r5, r6), result in r0. ra = arg count.
 #   0x80 = push   ra              push ra to stack
 #   0x81 = pop    ra              pop to ra
@@ -268,6 +269,20 @@ fn cx_run(code, code_len): i64 {
         # pushc/popc: save/restore register to/from call stack
         elif (op == 0x62) { cx_call_push(cx_reg_get(ra)); }
         elif (op == 0x63) { cx_reg_set(ra, cx_call_pop()); }
+        # v6.5.13 — callind ra (0x69 = 105): indirect call through the CODE OFFSET in ra.
+        # PERMANENT opcode; see backend/cx/emit.cyr:ECALLIND for the encoding rationale.
+        # Unlike op 96 (call) this is ABSOLUTE — the register holds `_fnt_offsets[idx]`,
+        # already in `_cx_pc`'s numbering. A non-positive target means an unresolved fn
+        # pointer: trap, rather than jump to offset 0 and silently restart the program,
+        # which is precisely the defect v6.5.12 fixed on the compile side.
+        elif (op == 0x69) {
+            if (cx_reg_get(ra) <= 0) {
+                syscall(1, 2, "cxvm: callind through a null/unresolved fn pointer\n", 51);
+                syscall(60, 1);
+            }
+            cx_call_push(_cx_pc);
+            _cx_pc = cx_reg_get(ra);
+        }
 
         # syscall: r0 = syscall(r1, r2, r3, r4, r5, r6)
         # r1=syscall number. Pointer args need virtual→real translation.

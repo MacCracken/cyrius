@@ -4295,6 +4295,7 @@ syscalls_x86_64_agnos::sys_net_netmask/0
 syscalls_x86_64_agnos::sys_open/3
 syscalls_x86_64_agnos::sys_pause/0
 syscalls_x86_64_agnos::sys_pipe/1
+syscalls_x86_64_agnos::sys_ptrscan/2
 syscalls_x86_64_agnos::sys_read/3
 syscalls_x86_64_agnos::sys_readdir/3
 syscalls_x86_64_agnos::sys_readlink/4

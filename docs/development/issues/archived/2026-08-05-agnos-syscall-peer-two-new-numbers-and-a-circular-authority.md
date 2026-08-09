@@ -1,3 +1,26 @@
+> ## ✅ CLOSED — v6.5.13. Archived 2026-08-08. Nothing here is cyrius-actionable.
+>
+> All three items are resolved or enforced:
+>
+> - **Item 2 (`SYS_CHAN_OP = 97`)** — shipped v6.5.8, six wrappers live.
+> - **Item 3 (circular authority)** — shipped v6.5.7; the peer header names
+>   `agnos/kernel/core/syscall.cyr` as the single canonical source.
+> - **Item 1 (`SYS_FORK = 96`)** — re-checked against agnos **1.56.42**:
+>   `grep -c 'num == 96' kernel/core/syscall.cyr` → **0**. Still no kernel arm, so the
+>   correct cyrius state is exactly what it is today: **unminted**.
+>
+> ⭐ **Why this archives rather than staying open as a reservation record.** The
+> do-not-mint constraint is MACHINE-CHECKED, not doc-checked:
+> `tests/gates/platform/syscall_wrapper_pass.sh` axis 5 asserts
+> `no SysNrAgnos constant on 96 (fork has no kernel arm)` and fails the build if anyone
+> adds one. An issue file cannot enforce that; the gate does, on every run. Keeping a file
+> open to restate an invariant a gate already holds is how a queue fills with things nobody
+> can act on — and the same axis now asserts the positive direction too (`#98` MUST be
+> present, since agnos minted it), so the pair tracks the kernel in both directions.
+>
+> When agnos mints `#96`, the gate turns RED by design and names the number — that is the
+> signal to add it, and it does not depend on anyone remembering this file exists.
+
 # `SYS_FORK = 96` is reserved on the agnos peer, awaiting the agnos kernel arm
 
 > **Retitled at v6.5.11.** This opened as *"two new numbers are coming, and the file's stated

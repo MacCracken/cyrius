@@ -238,9 +238,19 @@ check "sys_spawn_path_env (4-arg) present" 1 \
     "$(grep -c '^fn sys_spawn_path_env(path, len, env, envlen)' lib/syscalls_x86_64_agnos.cyr || true)"
 check "the 2-arg sys_spawn_path is KEPT (existing callers)" 1 \
     "$(grep -c '^fn sys_spawn_path(path, len)' lib/syscalls_x86_64_agnos.cyr || true)"
-# #96 fork — NO kernel arm exists in agnos 1.56.40. Must stay unminted.
+# #96 fork — NO kernel arm exists in agnos (re-checked at 1.56.42: `grep -c 'num == 96'
+# agnos/kernel/core/syscall.cyr` -> 0). Must stay unminted. This assertion IS the
+# enforcement for the reserved-#96 record; it is machine-checked, unlike a doc note.
 n_96=$(grep -cE '=[[:space:]]*96;' lib/syscalls_x86_64_agnos.cyr || true)
 check "no SysNrAgnos constant on 96 (fork has no kernel arm)" 0 "$n_96"
+# #98 ptrscan — agnos 1.56.42 DID mint it (kernel/core/syscall.cyr:8776), so the peer must
+# carry it. The two halves of this axis are deliberate opposites: mint what the kernel has,
+# refuse what it does not. A number tracking neither direction is how a consumer ends up
+# hard-coding one.
+n_98=$(grep -cE 'SYS_PTRSCAN[[:space:]]*=[[:space:]]*98;' lib/syscalls_x86_64_agnos.cyr || true)
+check "SYS_PTRSCAN = 98 present (agnos 1.56.42 minted it)" 1 "$n_98"
+n_98w=$(grep -c '^fn sys_ptrscan(buf, max)' lib/syscalls_x86_64_agnos.cyr || true)
+check "sys_ptrscan(buf, max) wrapper present" 1 "$n_98w"
 
 # ── AXIS 6: cross-target. This is the axis a host-only test cannot replace.
 echo "axis 6 — every wrapper compiles on every target the peers claim:"

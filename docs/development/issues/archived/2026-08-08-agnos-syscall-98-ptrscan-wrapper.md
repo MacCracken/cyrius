@@ -1,3 +1,23 @@
+> ## ✅ RESOLVED — v6.5.13. Archived 2026-08-08.
+>
+> agnos **1.56.42** minted the kernel arm (`kernel/core/syscall.cyr:8776`, `if (num == 98)`),
+> so the cyrius peer now carries it: `SYS_PTRSCAN = 98` plus `fn sys_ptrscan(buf, max)` in
+> `lib/syscalls_x86_64_agnos.cyr`. Verified to compile for agnos (`CYRIUS_TARGET_AGNOS=1`,
+> rc=0) — presence is not compatibility, and this release already learned that the hard way
+> when agnos's `sys_readlink` turned out to take 4 args, not 3.
+>
+> The wrapper header carries the ABI the kernel actually owns: 16-byte little-endian record
+> (`dx` s32 · `dy` s32, POSITIVE = DOWN · `buttons` u32 · `buttons_seen` u32), returning 16
+> on activity, 0 when idle, -1 on a bad range or a buffer under one record. And it records
+> the constraint that is a correctness matter rather than tidiness: **it must not share
+> `kbscan #42`'s ring**, because a one-pixel-right motion is `dX = 0x01`, which through a
+> Set-1 decoder is HID 0x29 = ESCAPE — sharing that pipe would mean moving the mouse quits
+> the compositor, and that pipe also feeds cyrius-doom's `input_poll`.
+>
+> **Gated, not just shipped:** `tests/gates/platform/syscall_wrapper_pass.sh` axis 5 now
+> asserts both the constant and the wrapper exist. That axis is deliberately two-directional
+> — mint what the kernel has, refuse what it does not (see the `#96` note below).
+
 # agnos peer: `SYS_PTRSCAN = 98` + a `sys_ptrscan` wrapper for the pointer band
 
 **Status:** 🔵 **REQUEST, unbuilt.** Filed 2026-08-08.

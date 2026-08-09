@@ -300,8 +300,27 @@ fn EDROPI64(S): i64 {
 # improvement over the pre-refactor fn-addr site, which bumped
 # SFCNT for cx outside the arch dispatch; closure-fn-addr already
 # skipped SFCNT on cx, so this aligns the two sites.)
+# ⛔ v6.5.13 — WAS A RETURN-0 STUB, exactly like `ELOAD_LOCAL_ADDR` below before v6.4.32.
+# `&fn_name` therefore materialised as **0** on cx: `var f = &helper; return f;` returned 0,
+# so every fn-pointer value was null long before anything tried to CALL through it. Only
+# x86 (`backend/x86/emit.cyr:2555`) and aarch64 (`:1268`) ever recorded the ftype==3
+# fn-pointer fixup — `main_cx.cyr` has the handler for it in its fixup loop, but nothing on
+# the cx side ever produced one, so that arm was dead code.
+#
+# This is the PREREQUISITE for the callind opcode (see ECALLIND): an indirect call is
+# useless while the pointer is always 0. Both halves land together.
+#
+# Emit `movi r0, <fn code offset>` and record an ftype==3 fixup pointing at it. The fixup
+# loop patches bytes 2-3 of the movi with `_fnt_offsets[fni]` (main_cx.cyr), which is why
+# the placeholder is emitted as a bare 4-byte movi and NOT via CX_MOVI — CX_MOVI would
+# append movhi/movhh words for large constants and the patcher writes only the low 16 bits
+# of the FIRST word. Code offsets are well under 64 KB for any real .cyx.
 fn ELOAD_FN_ADDR(S, fnaddr, fc, fni): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
+    S64(fnaddr, GCP(S));                 # fixup patches the movi at this code offset
+    S64(fnaddr + 8, (3 << 56) | fni);    # ftype 3 = function pointer
+    SFCNT(S, fc + 1);
+    CX_EMIT(S, 1, 0, 0, 0);              # movi r0, 0  (imm16 patched by the fixup loop)
     return 0;
 }
 
@@ -402,12 +421,39 @@ fn ECALLFIX(S, fnidx): i64 {
     return 0;
 }
 
-# v6.0.70 §0 — the cx bytecode has no indirect-call op (call-through-ptr).
-# callptr targets native COM/DXGI; it is not expressible in cx. Fail loud
-# rather than silently emit no call (the found-by-ports anti-pattern).
+# v6.5.13 — cx indirect call. `.cyx` opcode **105 (0x69) = callind**.
+#
+# ⛔ OPCODE 105 IS PERMANENT. `.cyx` is a shipped, versioned format: every file ever
+# produced encodes this number and `cxvm` must honour it forever — the same one-way door
+# as the binary-naming rule.
+#
+# ⚠ HOW TO PICK A FREE OPCODE (learned the hard way). cxvm's dispatch writes some arms in
+# DECIMAL (`op == 97`) and others in HEX (`op == 0x62`). A decimal-only scan reports 98/99
+# as free when they are `pushc`/`popc` — and an arm added for 98 SHADOWS pushc, silently
+# corrupting every program that saves a register. Scan with a regex covering BOTH forms:
+#     grep -oE 'op == (0x[0-9A-Fa-f]+|[0-9]+)' programs/cxvm.cyr
+# 105 was verified free against that scan and against a frequency count of the opcodes an
+# actual .cyx contains.
+#
+# ENCODING: [105][ra][0][0] — call through the CODE OFFSET held in register `ra`.
+# Semantics mirror op 96 (call): push the return address, then set pc. 96 is PC-relative
+# (`off*4`, instruction units); 105 is ABSOLUTE, because the register holds whatever the
+# ftype==3 fn-pointer fixup wrote — `_fnt_offsets[idx]`, a byte offset in the same
+# numbering `_cx_pc` uses (op 96's `_cx_pc - 4 + off*4` is what proves the spaces coincide).
+#
+# `idx` is a LOCAL SLOT, matching x86's `call [rbp+disp]` (backend/x86/emit.cyr:2888):
+# the caller spilled the callee address there. So materialise `fp - _cx_ldisp(idx)`, load
+# the slot, call through it. r14/r15 are the established scratch pair (see :555).
+#
+# ⚠ callptr-to-NATIVE (COM/DXGI) is still impossible on cx and always will be — a `.cyx`
+# has no machine addresses. This covers cyrius-internal fn pointers, which is what
+# lib/fnptr.cyr / vec_sort_by / the Allocator vtable actually need.
 fn ECALLIND(S, idx): i64 {
-    syscall(SYS_WRITE, 2, "error: callptr (indirect call) is not supported on the cx backend\n", 66);
-    syscall(SYS_EXIT, 1);
+    CX_EMIT(S, 2, 14, 253, 0);            # mov  r14, fp
+    CX_MOVI(S, 15, _cx_ldisp(idx));       # movi r15, slot displacement
+    CX_EMIT(S, 17, 14, 14, 15);           # sub  r14, r14, r15
+    CX_EMIT(S, 65, 14, 14, 0);            # load64 r14, [r14]   (callee code offset)
+    CX_EMIT(S, 105, 14, 0, 0);            # callind r14
     return 0;
 }
 

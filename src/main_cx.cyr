@@ -99,6 +99,16 @@ _venid_base = S + 0x204000;
 _var_cap = 8192;
 _vsgn_base = alloc(1048576 * 8);   # v6.4.23 signed-global sign-ext: max-sized (var-grow cap) so it never grows → NO cybs-fragile grow-chain change; 8MB lazy-mapped
 _codebuf_cap = 3145728;
+# ⛔ v6.5.13 — cx never set these. `_fixup_base` stayed 0, so the SHARED
+# `ELOAD_FN_ADDR` path (parse_expr.cyr:687 `var fnaddr = _fixup_base + fc * 16`)
+# computed an address near NULL and SIGSEGV'd the compiler the moment cx tried to
+# record a fn-pointer fixup — which is why cx's ELOAD_FN_ADDR was a return-0 stub
+# and `&fn` silently produced 0. cx's own writers (RECFIX / ECALLFIX / the closure
+# fixup in backend/cx/emit.cyr) all hardcode `S + 0x150B000`, so point the shared
+# base at the SAME table; the two addressing schemes must not diverge. Cap matches
+# ECALLFIX's own `fc >= 1048576` guard.
+_fixup_base = S + 0x150B000;
+_fixup_cap = 1048576;
 
 # Read input (256KB, v3.4.19 — see src/main.cyr for rationale)
 var bl = 0;

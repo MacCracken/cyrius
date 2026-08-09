@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.13] — 2026-08-08
+
 ## [6.5.12] — 2026-08-08
 
 A security fold and the deferred-repair queue. The theme carried over from .11 and got
