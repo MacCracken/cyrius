@@ -6,6 +6,175 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.12] — 2026-08-08
+
+A security fold and the deferred-repair queue. The theme carried over from .11 and got
+sharper: **five of the seven fixes were things that had been masked** — by a wrong
+constant, by a non-blocking gate, by an opt-out flag, or by a fix that landed on only one
+fork.
+
+### Verification
+
+**Release gate GREEN, all 5 steps** (`GATE_EXIT=0`): self-host fixpoint byte-identical
+(**1,142,088 B**) · seed-derive `seed→cybs→cycc` OK (mandatory — `src/` changed twice) ·
+check.sh **163 / 0** · cross-OS `SELFHOST_OK` + `crossos LIBTEST_OK` on **ecb / ach / cass /
+pi**, real hardware.
+
+**Bench: self_compile 647 ms · cycc 1,142,088 B** (646 ms / 1,141,792 B at 6.5.11 — the
++296 B is the `CYRIUS_STACK_ARRAYS=0` warning strings; no codegen change).
+
+⚠ **The gate's summary line does not cover the ten shell gates `check.sh` runs after the
+binary.** `folds_agnos_parity.sh` went RED while the tally still read `163 passed, 0
+failed` and only `EXIT=1` disagreed — which is exactly why `release-gate.sh:79-85` grades
+check.sh by exit STATUS as well as its summary. Reading the tally alone would have shipped
+a broken agnos build.
+
+Corpus **261** `.tcyr` · gates **42** · api-surface 4828 → **4830** (+2, non-breaking) ·
+open issues **15 → 13**, archived **301**.
+
+### Security — sigil 3.12.4 folded (RSA verify: forged-signature bypass + the DoS it left)
+
+`rsa_pkcs1v15_verify_sha256` could return 1 for an INVALID signature — an authentication
+bypass, not a DoS. `_rsa_pkcs1v15_check` ended with **both operands of its decision** in the
+same lane-indexed file-scope global (`rem = &_rsa_em + bk*512`, `rexp = &_rsa_expected +
+bk*512`), so a colliding thread that left a consistent valid pair there made the next
+thread's compare succeed on bytes that were never its own. Measured upstream by agnosai:
+**888 of 400,000 forged signatures accepted** (~1 in 450).
+
+⚠ **Collisions are structural, not a load threshold** — `cbank()` never releases a lane, so
+the ceiling is **63 LIFETIME crypto-touching threads**, not 63 concurrent.
+
+3.12.3 converted the fail-open bypass into a fail-closed DoS (0 forged accepted, but only 1
+of 2,000 VALID verified under two threads on one lane) — **3.12.4, below, addresses that
+residual.** cyrius is a CALLER, not a passthrough (`tls_native_hs13.cyr:263`/`:265`), though
+its runtime exposure is nil today: no sigil consumer here spawns threads.
+
+**⭐ 3.12.4 was written for this release, in sigil, and it closes the residual 3.12.3 left.**
+The engine's scratch (`_bn_mont_mul`'s CIOS accumulator + `_nmul64` slot;
+`bn_mont_modexp_pub`'s five buffers) is now STACK LOCALS, so the public verify path shares
+no mutable state between threads — no lane to collide on, no 63-thread ceiling.
+
+⭐⭐ **The root cause was OUR quirk, fixed eight releases ago and never propagated.** sigil's
+banking existed for cyrius quirk #1 — "function-scope `var X[N]` arrays are static globals",
+confirmed under cycc 6.0.52. **cyrius 6.3.15 moved array locals to per-thread STACK slots**
+(`_STACK_ARRAYS = 1`) and sigil never revisited it. Verified on 6.5.12: two real threads,
+own `var buf[64]` each → 111111 / 222222, no collision. The workaround outlived the defect,
+and the workaround is what shipped the bypass. (Which is also why `CYRIUS_STACK_ARRAYS=0`
+now warns — see below.)
+
+⚠ **NOT claimed: that the DoS is measured fixed.** Three harness attempts failed to
+reproduce the two-threads-on-one-lane case; instrumenting the last showed the workers landed
+on lanes 0 and 1, never colliding, so it would have passed against the unfixed code.
+Recorded rather than dropped — a green test that cannot fail is worse than none. What IS
+verified: the shared state is gone, sigil 64/64 suites + `rsa.tcyr` 38/38, sigil `check.sh`
+69 PASS / 0 FAIL. Consumers should re-run their staging before dropping a serialising mutex.
+
+Fold was `cp` + snapshot refresh — cyrius has no `[deps.*]`, sigil is a folded distlib, and
+`lib sync` deliberately refuses in this repo. Upstream verified first: clean tree, all 14
+dist profiles regenerated at 3.12.4. sigil was the ONLY dep behind.
+
+**Residuals still open in sigil** (unchanged): PSS `_rsa_em` still banked — and that is the
+lane cyrius's own TLS 1.3 CertificateVerify uses; the secret ladder and the two sign
+wrappers still banked; `cbank()` still aliases silently past lane 63.
+
+### Fixed — `CYRIUS_STACK_ARRAYS=0` silently re-opened the bypass sigil had just fixed
+
+sigil 3.12.3's ENTIRE fix is making the verify scratch buffers function-LOCAL, which only
+holds because array locals are per-thread STACK slots (v6.3.15). `CYRIUS_STACK_ARRAYS=0`
+turns them back into shared `.bss` globals — the two operands land in one lane-indexed
+global again and the bypass RETURNS, with no diagnostic anywhere. **Our flag, silently
+revoking their security property.** The flag stays (a real debugging escape hatch) but now
+warns and names what it costs. Silent by default and on `=1`; fires only on opt-out.
+
+### Fixed — `lib sync` silently dropped any stdlib module that is a DIRECTORY
+
+Reported by a consumer: declaring `unicode` in `[deps].stdlib` did not bring the files in.
+`lib/unicode/` is the only package DIRECTORY in `lib/`; `cmd_lib_sync` scanned flat and
+filtered for names ending `.cyr`, and `_libsync_wanted:631` *also* hard-requires that
+suffix — so it was rejected twice over. Reproduced: `copied 12 .cyr files`, `lib/unicode/`
+absent, **exit 0**.
+
+⭐ **`cyrius deps` already handled this** (`deps.cyr:426`, v6.1.x, whose comment names the
+same consumer symptom). `lib sync` was the UN-UPDATED TWIN — the second time this pair has
+diverged, after v6.4.77 found it was likewise the unguarded twin of `_check_lib_freshness`.
+
+**The class is closed too, not just unicode**: every declared module now carries a satisfied
+flag and an unsatisfied one is a hard error naming it. Reporting a copy count while dropping
+a declared dependency is the v6.5.10 distlib-sidecar shape — an under-reporting producer
+silently disabling the check meant to catch it.
+
+### Fixed — cx emitted a self-restarting program for an undefined call, at exit 0
+
+`var r = nosuchfn(1);` on the cx backend: compile **exit 0, ZERO stderr**, a 215-byte
+`.cyx`; running it printed the pre-call marker **1026 times** and never reached the
+post-call one. An undefined fn leaves **-1** in `_fnt_offsets`, and the forward-call fixup
+computed `off = (target - coff) / 4` from it unchecked, patching a garbage backward offset
+so control jumped to ~offset 0 and the program restarted.
+
+The native backends have gated this since **v6.3.2** (`x86/fixup.cyr:725`,
+`aarch64/fixup.cyr:558`); cx is the fork that never got it — the same all-forks-but-one
+shape as the v6.4.26 `E*_PE` stubs. ⚠ The existing warn loop could never have caught it: it
+walks REGISTERED fns and fired for none in the repro. Now a hard error naming every missing
+fn, emitting nothing.
+
+### Fixed — tree walks followed symlinks, inflating pass counts
+
+A tree holding ONE `.tcyr` plus `ln -s .. tests/sub/loop` reported **41 passed, 0 failed**.
+`is_dir` opens with plain `O_RDONLY`, so a link to an ancestor resolves and reports 1;
+termination was a property of PATH_MAX arithmetic, not any decision. **An inflated pass
+count reading as coverage is the worst possible failure for a test runner.**
+
+Fixed in two parts, because a depth cap alone was NOT a fix — it bounded the runaway but
+left the count inflated (41 → 32):
+- New `is_symlink()` (readlink-based) and all five walkers now LIST a symlinked directory
+  without DESCENDING it, matching `find`'s default and the `find`-based CI loops.
+- Depth cap (64) retained as the backstop for genuinely deep trees and Windows junctions,
+  which readlink cannot see. It warns and names the path rather than truncating silently.
+
+⚠ Only symlinked **directories** are skipped — a symlinked `.tcyr`/`.fcyr`/`.bcyr` FILE
+still runs. Skipping every symlink would have traded one silent coverage loss for another.
+Verified: 1 real + 1 symlinked FILE + 1 symlinked dir loop → **2 passed**.
+
+### Fixed — `benches/bench_string.bcyr` SIGSEGV'd (56-byte stack overflow)
+
+`var dst[8]` — eight BYTES, not eight slots — with `memcpy(&dst, _large, 64)` and
+`memset(&dst, 0, 64)`. Harmless while array locals were `.bss` globals; **v6.3.15 moved
+them to the stack**, turning it into a smashed return address. `cyrius bench` had been
+reporting `17 passed, 1 failed` with exit **139** ever since. Nothing went red because the
+release gate's bench step is non-blocking and `bench-history.sh` runs its own 3-tier
+selection. Confirmed pre-existing by bisecting against the committed 6.5.11 toolchain.
+Now **18 passed, 0 failed**.
+
+### Fixed — `cyrius fuzz` / `bench` compiled a DIRECTORY named `*.fcyr` / `*.bcyr`
+
+The `is_dir` recursion and the suffix test were two separate `if`s, so a directory named
+`x.fcyr` satisfied BOTH — recursed into, then handed to `compile()` as a file, producing
+`error: not a file` + a non-zero exit over a healthy tree. `_tests_walk` already used
+`elif`; these two were the divergent siblings.
+
+### Added — `dir_list_into`: a listing that allocates NOTHING
+
+The caller-owned form the agora filing asked for. v6.5.11 removed the FIXED ~4.1 KB per
+call; this closes what that file correctly called "the harder half" — the per-entry `Str`,
+which is what a long-running server actually feels. Measured: 41 entries, **0 B heap
+growth** (vs 3,112 B). Truncation is an ERROR (`-2`/`-3`/`-4`), never a silent short read.
+`dir_list` keeps its signature, so nothing downstream moved.
+
+⚠ **agnos's `sys_readlink` is the LENGTH-CARRYING form** — `(path, pathlen, buf, buflen)`,
+4 args vs 3 — and a 3-arg call broke `lib/fs.cyr` for EVERY fold, since fs.cyr is a preamble
+dep. Checking the wrapper EXISTED was not enough; presence is not compatibility. Caught by
+`folds_agnos_parity.sh`, which exists because yukti shipped six agnos ABI errors for months.
+
+### Archived — 2 issues, verified against live code
+
+- `2026-07-26-agora-fs-dir-list-per-call-alloc` — both halves shipped (.11 fixed cost, .12
+  per-entry). Went WIDER than filed: `is_dir` was the dominant cost (~25x the `dir_list` it
+  wraps) and the filing never named it.
+- `2026-07-30-net-cyr-x86-only-socket-syscall-numbers` — closed WITHOUT implementing §4,
+  which premise-checking on real pi disproved (`net_v6_connect` + `socket_syscalls` both
+  `rc=0`; the ESYSXLAT rows are in the aarch64-Linux arm). §9's AF_UNIX surface moved to the
+  roadmap backlog rather than vanishing with the archive.
+
 ## [6.5.11] — 2026-08-08
 
 The test suite reorganised into subfolders, and then a catch-up batch off the open queue.
