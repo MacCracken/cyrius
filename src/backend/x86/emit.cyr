@@ -862,6 +862,14 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 77, 0x20000C9);   # ftruncate 77 → 201
     _msx(S, 82, 0x2000080);   # rename   82 → 128
     _msx(S, 74, 0x200005F);   # fsync    74 → BSD 95 (v6.4.57 xfsync durability half of file_write_atomic)
+    # v6.5.15: fchmod 91 → BSD 124. `lib/syscalls_linux_common.cyr:152` issues SYS_FCHMOD,
+    # which the x86-macOS peer sets to the x86-LINUX number 91 per this table's convention
+    # (see fsync above) — but no route existed, so the number reached Darwin unprefixed and
+    # every `sys_fchmod` on Intel-Mac died with SIGSYS (rc 140). Nothing in the corpus called
+    # it off-host, so it sat broken until v6.5.15 added a crossos assertion for it. This is
+    # the x86 fork of the aarch64 `fchmod 52→124` route landed in the same release — the
+    # "fixed one fork, not the other" shape, caught by ach's leg of the release gate.
+    _msx(S, 91, 0x200007C);   # fchmod   91 → BSD 124
     _msx(S, 83, 0x2000088);   # mkdir    83 → 136
     _msx(S, 84, 0x2000089);   # rmdir    84 → 137
     _msx(S, 87, 0x200000A);   # unlink   87 → 10

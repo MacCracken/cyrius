@@ -1,5 +1,12 @@
 # `.cyx` needs a PERMANENT indirect-call opcode — maintainer design decision
 
+> ✅ **RESOLVED v6.5.13.** Opcode **105 (0x69)** minted and shipped — permanent, per the
+> `.cyx` opcode-stability rule. The decision this file asked for was made and implemented;
+> the radix-blind duplicate-opcode check in `tests/gates/codegen/cx_indirect_call.sh` axis 4
+> guards against re-minting a number already in use (the decimal-only scan that missed the
+> hex arms is exactly the mistake it exists to prevent).
+
+
 **Filed:** 2026-08-07
 **Reporter:** cyrius (raised out of the v6.5.11 catch-up triage)
 **Cyrius version:** 6.5.11

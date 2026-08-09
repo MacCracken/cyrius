@@ -28,6 +28,50 @@ a path the peer controls**, with no consumer-side workaround. Same class as the 
 **Affects:** cyrius 6.4.86 (`lib/net.cyr` `sock_send` :384, `sock_recv` :391, and the rest of the
 `Result`-returning socket surface); every earlier version with the same shape.
 
+## ⛔ v6.5.15: IMPLEMENTED, REFUTED, REVERTED — read this before trying again
+
+An unboxing implementation was written, passed **every gate**, and was then killed by an
+adversarial verifier. It is reverted; the tree is unchanged. What it proves is a DESIGN fact,
+so do not re-attempt the same shape:
+
+**It passed:** `delta=0 percall=0` · `result_stdlib` 29/29 · `result_stdlib_pass2` 24/24 ·
+self-host fixpoint byte-identical · seed-derive OK · check.sh **165/0** · full suite 264/264 ·
+plus a new mutation-proven cross-OS test. Green everywhere.
+
+**It was wrong anyway.** The box was a per-call-site anonymous **global**, so every Result from
+one call site shares one slot for the life of the process. Retained across iterations:
+
+```
+3 results collected in a loop:  NEW → 3, 3, 3     OLD → 1, 2, 3
+3 file_open_r, middle missing:  is_ok → 1, 1, 1   OLD → 1, 0, 1
+```
+
+**A failed file open reported as SUCCESS**, with a payload belonging to a different call — in
+`lib/io.cyr`, in the primitive whose entire job is reporting failure. And two functions with
+byte-identical bodies differing ONLY in the `: Result` annotation behaved differently, which is
+a language soundness break, not a documented narrowing. Every gate was green because the corpus
+has zero coverage of the retention shape — the v6.4.80 lesson verbatim ("251/251 byte-identical
+= the corpus had ZERO coverage of the shape, not reassurance").
+
+### ⭐ What this SETTLES about the fix
+
+Both relocations have now been tried and both fail, for opposite reasons:
+- **Caller frame slot — too SHORT.** Tried first; `result_stdlib` killed it in one run. `?`
+  inside an *unannotated* helper returns the box out of that helper's own frame. That is the
+  IDIOMATIC Result shape (`?`, and `if (is_err_result(r)) { return r; }`), not an edge case.
+- **Static/global — too SHARED.** Above.
+
+The heap box buys **per-value lifetime**, and escaping-plus-retained values need exactly that.
+**So "unbox the scalar case" cannot be done by relocating storage at all.** A real fix needs
+escape analysis, or a scope-tied arena with reclaim — a different and larger design than this
+filing or the roadmap slot assumes. Retitle the slot accordingly.
+
+### Two tree facts corrected along the way
+- There are **THREE** instruction backends, not five: `backend/macho/` and `backend/pe/`
+  contain no `E*` emitters — they reuse x86's.
+- **cx has no second return register.** `backend/cx/emit.cyr:771,775` hard-error and the pair
+  emitters at `:211,212` are `return 0;` no-ops. Any pair-return ABI must exclude cx.
+
 ## ⛔ v6.5.15 ARC-OPEN CROSS-WALK — the fix has a PREREQUISITE the filing did not know about
 
 Premise re-confirmed on **6.5.14**: the repro is byte-for-byte unchanged (`per call=16`), three

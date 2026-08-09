@@ -1,5 +1,13 @@
 # The cx backend has no indirect call, so every fn-pointer stdlib path is dead there
 
+> ✅ **RESOLVED v6.5.13.** `ECALLIND` implements `.cyx` opcode **105 (0x69)** at
+> `src/backend/cx/emit.cyr:451`; `programs/cxvm.cyr` has the matching arm. Three defects had
+> to land together — `ELOAD_FN_ADDR` was a return-0 stub, `src/main_cx.cyr` never set
+> `_fixup_base` (which is *why* it was stubbed), and `ECALLIND` hard-errored. Gated by
+> `tests/gates/codegen/cx_indirect_call.sh` (8 assertions, acceptance = indirect ≡ direct),
+> re-run green at v6.5.15.
+
+
 **Filed:** 2026-07-30
 **Reporter:** cyrius (surfaced building `vec_sort_by` for v6.5.4)
 **Cyrius version:** 6.5.4

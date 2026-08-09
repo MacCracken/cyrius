@@ -6,6 +6,114 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.15] — 2026-08-09
+
+### Verification
+
+**Release gate GREEN, all 5 steps** (`GATE_EXIT=0`): self-host fixpoint byte-identical
+(**1,142,104 B**) · seed-derive `seed→cybs→cycc` OK · check.sh **165 / 0** · cross-OS
+`SELFHOST_OK` + `crossos LIBTEST_OK` on **ecb / ach / cass / pi**, real hardware.
+
+**Bench: self_compile 647 ms · cycc 1,142,104 B** — size UNCHANGED from 6.5.14, which is the
+point: every codegen edit here sits inside a macho branch, so the x86 compiler is byte-identical
+and the aarch64-Linux compiler built from old vs new source is byte-identical too. That is how
+pi and x86 are proven safe rather than asserted.
+
+⚠ **The first gate run was RED** (ach 37/2) and the two failures are recorded below as fixes,
+not hidden. **ecb full corpus: `ran 257 passed, 6 failed` of 263** (was 11 failing). An earlier
+run of that measurement read `245 passed, 6 failed` and the gate's own honesty check caught it —
+`ecb ran 251 test(s) but 263 were selected`, a partial staging race. **Quote the 257/6 run.**
+
+The **macOS-arm64 constant + syscall gap closure**: ecb's full-corpus failures **11 → 6**. Plus a
+`Result`-unboxing attempt that passed every gate and was reverted anyway.
+
+### Fixed — macOS-arm64 inherited Linux constant VALUES (10 of them)
+
+`lib/syscalls.cyr:64-71` gives macOS-arm64 the *Linux aarch64* constant peer wholesale. That is
+correct BY DESIGN for syscall NUMBERS — `ESYSXLAT` renumbers them. ⛔ But it renumbers NUMBERS
+ONLY; a signal number, an errno or an mmap flag passes to the Darwin kernel verbatim. Ten were
+simply wrong, split per-OS now (mirroring the `Stat` precedent already in that file):
+`EAGAIN` 11→35 · `SIGCHLD` 17→20 · `SIGCONT` 18→19 · `SIGSTOP` 19→17 · `SIGUSR1` 10→30 ·
+`SIGUSR2` 12→31 · `SIG_BLOCK` 0→1 · `SIG_UNBLOCK` 1→2 · `SIG_SETMASK` 2→3 · `MAP_STACK` →0.
+
+⭐ **Wrong here did not mean "fails" — it meant "signals the wrong thing".** Linux `SIGCHLD` is
+17; on Darwin 17 is `SIGSTOP`. A process waiting for a child to exit was waiting on a stop.
+Nothing errored. That is why it survived from the macOS port to now.
+
+Two the filing had not listed, found by re-deriving the divergence set preprocessor-aware:
+**`SIGPWR` was 30 — which IS Darwin's `SIGUSR1`**, so `kill(pid, SIGPWR)` silently delivered
+SIGUSR1; now inert `0`, matching the `MAP_STACK = 0` precedent for a flag the OS lacks. And
+`MAP_ANONYMOUS` is now correct in the PEER too, not only in `lib/mmap.cyr`'s shadowing
+declaration, so both include orders are right.
+
+Verified on real ecb; aarch64-**Linux** byte-for-byte unchanged (same probe cross-compiled and
+run under qemu), so pi cannot regress. Gated by
+`tests/tcyr/crossos/signal_errno_peer_values.tcyr` — **mutation-proven** (Linux `SIGCHLD` back
+in the Darwin arm turns ecb red at 12/1) and carrying an anti-vacuous guard so a target matching
+no `#ifdef` arm fails loudly instead of compiling to an empty `main`.
+
+### Fixed — the macho ESYSXLAT gap set (5 tests)
+
+Searching the Mach-O branch by exact `cmp x8,#N` encoding found several numbers never mapped.
+`pipe2 59` → BSD `pipe 42`, `fchmod 52` → 124, `faccessat 269` → 466.
+
+⭐ **`pipe` needed more than a renumber.** Measured on ecb with a raw `svc #0x80` probe:
+`pipe -> x0=3 x1=4` — **Darwin returns both fds in registers and never writes the caller's
+buffer**. Untranslated, 59 reached Darwin as **`execve`**, which failed and left the buffer
+unwritten, so the caller read garbage descriptors and the next read returned `-9`. The backend
+now carries a pre/post-`svc` fixup (cross-arch twin of x86's existing `EMACHO_PROC_FIXUP` pipe
+arm, which arm64 never got): stash x0 before, write `w0`/`w1` into the buffer after. Push and
+pop gate on the identical condition so `sp` balances on every path including `-errno`. Every
+encoding was produced by Darwin's own `as -arch arm64` and read back with `otool`.
+
+Four more defects surfaced and were fixed: `sys_access` passed only **3** args — Linux's
+`faccessat` ignores the 4th, **Darwin's validates it**, so every macOS call returned `-22` off a
+stale register; `sys_prctl` emitted an unrouted `svc` that fired **the previous syscall's** BSD
+number; a test hardcoded the x86 pipe number; and `65` was used for `O_WRONLY|O_CREAT`, which on
+Darwin is `O_WRONLY|O_SHLOCK`.
+
+### Added — cross-host coverage for the wrappers that had none
+
+`crossos/syscall_wrappers.tcyr` 15 → **27** assertions: `pipe` (asserting the **round trip**, not
+the return code — a fixup writing the wrong register still returns 0), `fchmod`, and `access` in
+**both** directions. All three were broken on macOS and had zero cross-host coverage — the exact
+"compiles on five targets, never runs" shape the cross-OS set exists for.
+
+### Fixed — two of the above, one fork behind, caught by ach's leg of the gate
+
+The first full gate for this release went **RED on ach** with both of the new cross-host tests
+failing — and neither was a bad test:
+
+- **`SIGPWR = 30` was still live on the x86-macOS peer.** The aarch64 Darwin arm was fixed above;
+  `lib/syscalls_macos.cyr` was not. 30 IS Darwin's `SIGUSR1`, so `kill(pid, SIGPWR)` delivered
+  the wrong signal on Intel-Mac. Now inert `0` on both peers.
+- **`sys_fchmod` SIGSYS'd (`rc=140`) on every Intel-Mac.** Not an assertion failure — the process
+  died. `syscalls_linux_common.cyr:152` issues `SYS_FCHMOD`, which the x86-macOS peer sets to the
+  x86-Linux number **91** per that table's own convention (cf. `fsync` 74→95), but **no route
+  existed**, so it reached Darwin unprefixed. Added `_msx(S, 91, 0x200007C)` — the x86 fork of
+  the aarch64 `fchmod 52→124` route landed earlier in this same release.
+
+⭐ **`sys_fchmod` had been broken on ach for as long as it has existed**, and nothing caught it
+because nothing in the corpus CALLED it off-host. It surfaced only because this release added the
+first crossos assertion that does. That is the same "found by ports" shape the cross-OS principle
+was written after — and this time the gate, not a user, found it.
+
+### Changed — sakshi 2.4.9 folded; fold tables de-rotted
+
+Both fold-version tables were stale: sakshi read 2.4.8, and **sigil read 3.12.2 while 3.12.6 was
+folded**. All 12 rows now match their `lib/` headers, derived by parsing the headers rather than
+trusting the table.
+
+### Reverted — `Result` unboxing (Slot 9)
+
+Implemented, passed **every** gate (`delta=0`, check.sh 165/0, self-host, seed-derive, 264/264),
+then refuted by an adversarial verifier and reverted. A per-call-site global box made Results
+from one site share a slot, so a retaining loop reported **a failed file open as success**. Both
+storage relocations are now disproven — frame slot too short, static too shared — which settles
+that the fix needs escape analysis or a scope-tied arena, not relocation. Full detail in
+`docs/development/issues/2026-07-28-sock-send-result-allocates-per-call.md`.
+
+
 ## [6.5.14] — 2026-08-08
 
 ### Verification

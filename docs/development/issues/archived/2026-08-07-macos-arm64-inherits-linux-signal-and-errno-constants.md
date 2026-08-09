@@ -1,5 +1,9 @@
 # macOS-arm64 inherits Linux signal / errno / mmap constant VALUES, and no translation layer can catch it
 
+> ✅ **RESOLVED v6.5.15** — see the status block below. All ten split per-OS, re-probed on
+> real ecb, mutation-proven, aarch64-Linux byte-identical.
+
+
 **Filed:** 2026-08-07
 **Reporter:** cyrius (found while fixing `MAP_ANONYMOUS` for v6.5.11)
 **Cyrius version:** 6.5.11

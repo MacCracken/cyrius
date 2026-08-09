@@ -197,7 +197,13 @@ enum Signal {
     SIGCHLD = 20;
     SIGCONT = 19;
     SIGSTOP = 17;
-    SIGPWR = 30;
+    # v6.5.15: Darwin has NO SIGPWR, and 30 IS Darwin's SIGUSR1 — so `kill(pid, SIGPWR)`
+    # silently delivered SIGUSR1. 0 makes it the liveness probe instead of a wrong
+    # delivery: fail-inert beats fail-wrong, matching the MAP_STACK = 0 precedent for a
+    # flag this OS does not have. Fixed on the aarch64 Darwin arm in the same release;
+    # this is the x86-macOS fork of the identical defect, and ach's crossos leg is what
+    # caught it one fork behind.
+    SIGPWR = 0;
 }
 
 enum SigAction {
