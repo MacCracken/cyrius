@@ -28,6 +28,91 @@ a path the peer controls**, with no consumer-side workaround. Same class as the 
 **Affects:** cyrius 6.4.86 (`lib/net.cyr` `sock_send` :384, `sock_recv` :391, and the rest of the
 `Result`-returning socket surface); every earlier version with the same shape.
 
+## ⛔ v6.5.15 ARC-OPEN CROSS-WALK — the fix has a PREREQUISITE the filing did not know about
+
+Premise re-confirmed on **6.5.14**: the repro is byte-for-byte unchanged (`per call=16`), three
+minors running. The lowering is now read (the filing flagged its root-cause section as
+speculation — it was right): `PARSE_ENUM_DEF` (`src/frontend/parse_types.cyr:333-400`) generates a
+real constructor FUNCTION per payload variant which calls `alloc(8 + arity*8)`, stores tag@+0 and
+payloads at +8.., and returns the pointer. So the 16 B is the box, exactly as measured.
+
+**But the chosen fix cannot be keyed on the `: Result` annotation, because most producers do not
+carry it.** Measured across `lib/`:
+
+| | count |
+|---|--:|
+| fns declared `: Result` | **39** |
+| fns returning `Ok()`/`Err()` with NO annotation (declared plain `i64`) | **106** |
+| …of those, every return is `Ok`/`Err` (transitively inferable) | 41 |
+| …of those, ALSO return something else | **65** |
+
+The 65 are mostly not really mixed — they return `err_unknown(msg)`,
+`err_invalid_argument("…")`, `err_from_syscall_ret(ret)`, i.e. *other* Result-producing helpers —
+so classification needs a **transitive fixpoint over the call graph**, not a local test. But at
+least one is genuinely mixed: `bayan_cyml_expand_value` returns `Ok(...)`, `0` and `val` from the
+same body. Under any changed Result ABI that function is ill-typed **today**.
+
+⚠ **Why this bites every candidate design, not just one.** Whether the unboxed form is a register
+pair (the filing's option 1) or the existing hidden-retptr convention, codegen has to know at the
+`return` site whether it is returning a Result. With 106 of 145 producers undeclared, it does not.
+Give those a Result ABI they don't declare and they hand back a pointer into a dead frame — the
+same failure shape as the tail-call escape fixed in 6.5.14.
+
+✅ **The prerequisite is safe and cheap to verify.** `: Result` is a **no-op for codegen today**:
+`parse_fn.cyr:3135-3145` (v5.10.23) explicitly classifies `Result`/`Option`/`Tagged`/`cstring` as
+i64-shape scalars returning a raw pointer — "rax-via-i64 ABI not retptr-stash" — precisely so an
+annotated fn does NOT silently get retptr. So annotating the 106 changes no generated code and can
+land, and be gate-verified, entirely ahead of the ABI work.
+
+**Therefore Slot 9 is two phases, and the second cannot start first:**
+- **9a — normalise the producer set.** Annotate the 106, resolve the genuinely-mixed ones. Spans
+  cyrius `lib/` **and the upstream repos** (sigil, mabda, bayan, yukti…) since those arrive by fold
+  — fix-at-source, not in the fold. Byte-identical by construction; a gate can assert "every fn
+  containing `return Ok(`/`return Err(` is declared `: Result`" and mutation-prove it.
+- **9b — unbox.** Only once 9a makes the signal reliable.
+
+### Where the 106 live — 9a is ENTIRELY upstream, none of it is cyrius's to fix
+
+| repo (folded lib) | unannotated producers |
+|---|--:|
+| yukti | 49 |
+| sigil | 48 |
+| bayan / mabda / vani | 3 / 3 / 3 |
+| **cyrius-owned `lib/*.cyr`** | **0** |
+
+Every cyrius-owned Result producer is already declared `: Result` — including `sock_send` /
+`sock_recv`, the subject of this filing. So 9a is a **five-repo coordinated upstream change**
+(fix-at-source; a fix in the vendored `lib/<dep>.cyr` evaporates at the next re-vendor), which is
+a named file-don't-pack reason. It is NOT a cyrius patch.
+
+### ⭐ …which means 9b can land WITHOUT waiting for 9a, if the unboxed form stays a POINTER
+
+The trap in a register-pair ABI is that a program includes cyrius's `lib/net.cyr` *and* the folded
+`lib/sigil.cyr` in one translation unit. If annotated fns returned a pair and unannotated ones a
+heap pointer, `is_ok(r)` would face two incompatible representations and break.
+
+That disappears if the unboxed form is still **a pointer to {tag@+0, payload@+8}** — just into the
+CALLER'S FRAME instead of the heap:
+
+- annotated `: Result` fn → caller reserves a 16-byte frame slot per call site, passes it as the
+  hidden retptr; callee writes tag/payload through it. **Zero allocation.**
+- unannotated producer → unchanged heap box.
+- **Both are pointers with identical layout**, so every consumer (`is_ok`, `result_unwrap`, `?`,
+  `load64(res+8)`) works untouched, and mixed programs are correct by construction.
+
+This makes 9b incremental and independently shippable: it takes `sock_send` to a flat bump delta —
+the exact acceptance sandhi's `test_server_reject_arena_is_flat` encodes — while 9a merely widens
+the win to the folded libs later.
+
+⚠ **The one hazard to gate before shipping 9b:** a Result outliving the frame that boxed it.
+Measured at 6.5.15: **0 sites** assign a `: Result` fn's output to a global in `lib/`. The
+remaining shape to handle in codegen is `return <result-returning-call>(...)` — the retptr must be
+threaded through, not re-boxed, or the pointer dangles. That is the same failure class as the
+tail-call frame escape fixed in 6.5.14, so the guard already exists to model it (`_fn_local_addr`).
+
+The filing's estimate ("widest win, deepest change") holds; what it missed is that the depth is in
+the **consumers' declarations**, not the compiler. Roadmap slot text should be retitled accordingly.
+
 ## Summary
 
 `sock_send` returns a `Result`. Constructing it costs a 16-byte allocation from the global bump
