@@ -6,6 +6,115 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.17] — 2026-08-10
+
+### Verification
+
+**Release gate GREEN, all 5 steps** (`EXIT=0`): self-host fixpoint byte-identical
+(**1,142,016 B**) · seed-derive OK · check.sh **168 / 0** · `SELFHOST_OK` + `crossos LIBTEST_OK`
+on **ecb / ach / cass / pi**, real hardware (42/42 each) · bench **646 ms**.
+
+⭐ **cycc got SMALLER while gaining two fixes** — 1,146,200 → **1,142,016 B** (−4,184). The
+closure fix retired `CLOSURE_TYID` and the dead-fn fix deleted an 8 KB bitmap pre-scan.
+
+The closure fix was verified against **20 shapes the implementer had not written** — a captured
+param, two levels of nesting, a recursive chain, a struct field, a local slot array, repeated
+calls after escape, `fncall3`/`fncall4` — every one SIGSEGV (139) on 6.5.16 and correct here.
+The hisab motivation was checked end-to-end: a capturing comparator through stdlib `vec_sort_by`
+(which dispatches via `fncall2` *inside a lib function*) went 139 → correct, and the capture was
+proven genuinely READ by flipping the captured flag and watching the sort order reverse — not by
+accepting a plausible number.
+
+⚠ **One gate went RED before this and it was bookkeeping**: `state.md` cited the previous cycc
+size. Recorded because `release-gate.sh` logs only check.sh's summary, so diagnosing a check.sh
+failure always needs a separate direct run — and `_check` wraps its verdict in ANSI colour, so a
+literal `grep "FAIL:"` matches nothing and looks exactly like success.
+
+Three hisab filings and one from kavach — and **not one of them was what its filing said**. Every
+root cause sat somewhere other than where the symptom pointed.
+
+### Fixed — capturing closure SIGSEGV (hisab, High)
+
+The filing's trigger, *"passed through another function"*, was **one of eleven shapes**.
+Minimisation reproduced the crash with no boundary at all. The real cause: *"is this callee a
+closure"* was decided **at compile time** from the declaring local's `CLOSURE_TYID`. That is a
+fact about a **binding**, and the value outlives it — through a param, a return, a global,
+`store64`/`load64`, or plain `g = f`. Every escape jumped to the env object on the NX heap. It
+also mis-fired the other way: `callptr(f + 0, …)` still looked like a closure.
+
+Now a **runtime tag** (bit 63 on the env object), normalised at every indirect call site, env
+passed as a hidden trailing argument. `CLOSURE_TYID` is retired — which also killed a pointer-
+scale leak that made `(f + 1) - f` evaluate to 1,073,741,827.
+
+Three constraints found by measurement, not reasoning:
+- **`fncallN` could not be fixed in `lib/fnptr.cyr`.** The ladder needs a 7-argument call and
+  **cybs caps call expressions at 6** (bisected) — it would have capped at `fncall4` and shipped
+  `fncall5`–`fncall7` silently broken. `fncallN(…)` is now lowered in the compiler, so every
+  arity works and the stdlib's `vec_sort_by` / `hashmap` callbacks accept closures for free.
+- **`return fncall1(f, 1);` is a tail call**, emitted as a direct `jmp` — the filing's case 4 was
+  still segfaulting after the expression lowering landed.
+- **The env rides a register or not at all.** SysV anchors stack args on the last one, so a
+  trailing extra arg slid a 7-arg `callptr`. Capturing closures now cap at 5 params (3 on Win64)
+  as a **compile error** rather than a garbage env.
+
+Bonus, unfiled: `fncallN` silently returned **0** on cx (no cx branch in the asm) — now correct.
+
+### Fixed — a syntax error in an uncalled fn was accepted by every gate (hisab, Medium)
+
+Not a privacy heuristic: a **name-mangling bail-out**. `mod_fn` definitions intern a different
+string than their call sites, so the guard treated any `_` as possibly-mangled — and snake_case
+then covered nearly everything, leaving camelCase exposed. That is why the rule looked keyed on a
+character. Fork-divergent too (absent from all three aarch64 drivers). Measured with an injection
+oracle: 9 unchecked fns in cycc's own TU and **28 of 56** underscore-free stdlib names, including
+`unwrap` and `eprint`, never syntax-checked by any TU, ever.
+
+### Fixed — `distlib` rejected correct bundles (hisab + kavach, High) — ONE bug, and it was ours
+
+hisab hit an undefined stdlib **global** (`F64_ONE`); kavach a **slice subscript** helper. Same
+cause: 6.5.14's repaired self-check compiled the bundle with no stdlib in scope and downgraded
+undefined **fns** with `--allow-undef` — but an undefined *variable* is a **parse-time abort**
+that flag can never reach, since it only gates the fixup stage.
+
+The mechanism was one level deeper than either filing guessed: **`distlib` was never in the
+`_auto_deps()` gate**, so `_dep_includes` was empty and no prepend was possible. That is the
+**fourth** instance of this class — the comment above that gate already records `fuzz` (v5.7.21),
+`soak`/`smoke` (v5.7.38) and `audit`/`capacity` (v6.4.73). ⚠ Setting `_skip_deps = 0` alone
+changes nothing; `_materialize_source` needs *both* the flag and a populated `_dep_includes`. A
+first attempt did exactly that and moved nothing.
+
+### Fixed — bayan got no auto-prepend at all, and bayan was not at fault
+
+The `stdlib` key was found by scanning **raw manifest bytes**, guarded only against identifier
+boundaries and `#` comments — with no guard for *inside a quoted string*. bayan's `[package]
+description` reads *"…foldable into **stdlib** per the sandhi pattern"*; that match passed both
+guards, `_parse_toml_str_array` skipped forward to the next `[` — the **`[build]` section
+header** — returned empty, and the scan `break`ed **unconditionally**, so the genuine
+`stdlib = [` 540 bytes later was never reached. It failed **silently**: `errors` never
+incremented, so the "N deps resolved" line was simply absent, and that absence was the only tell.
+
+Two defects fixed: a new `_toml_key_at` helper adding the quoted-string guard (and tab as a
+separator), and no longer committing to a zero-length parse.
+
+⭐ **The measurement that shaped the gate:** reverting the quoted-string guard alone left bayan's
+own repro **GREEN** — its mis-parse lands on a section header and returns empty, so the second fix
+rescues it. **A gate built only from the filed repro would never have pinned that guard.** So the
+gate mis-parses onto a *real, non-empty* array (the v5.5.26 patra shape) and uses a trailing
+inline comment, which passes all three boundary guards. 15 assertions, mutation-proven three ways.
+
+### Changed — sankoch 2.7.7 folded
+
+Regenerated upstream first (`distlib --all`, 10 bundles), upstream suite 23/0, re-vendored, both
+fold tables updated.
+
+### Added — gates
+
+`frontend/dead_fn_body_syntax_checked.sh`, `toolchain/stdlib_key_scan_boundary.sh`,
+`crossos/closure_escape_dispatch.tcyr`. All mutation-proven. Also filed:
+`2026-08-10-cyrlint-never-parses-so-syntax-errors-are-invisible` — `cyrius lint` still reports
+`0 warnings` on a file that does not parse, because cyrlint is a line scanner with no parser.
+Giving it one is a design fork, so it was filed rather than guessed at.
+
+
 ## [6.5.16] — 2026-08-09
 
 ### Verification

@@ -1,6 +1,36 @@
-# A capturing closure SIGSEGVs when passed through another function — OPEN
+# A capturing closure SIGSEGVs when passed through another function — ✅ FIXED
 
-**Status:** 🔴 **OPEN** — compiles clean, dies at runtime. No diagnostic.
+**Status:** ✅ **FIXED** (6.5.17). All four filed programs and the captured-pointer
+variant exit 42 on x86_64, aarch64 (qemu) and Windows PE (wine).
+
+**Resolution.** The trigger was NOT "crossing a function boundary" — that was one of
+eleven shapes. "Is this callee a closure?" was decided at COMPILE time from the
+declaring local's `CLOSURE_TYID` SLTYPE, so the answer was lost the instant the value
+moved: through a parameter, a return, a global, `store64`/`load64`, or a plain
+`g = f` assignment. Minimisation reproduced the SIGSEGV with no function boundary at
+all (`fn main(): i64 { var b = 41; var f = |x| b + x; return fncall1(f, 1); }`).
+
+v6.5.17 moved the decision to RUN time: a capturing closure's value is its heap
+environment object with bit 63 set, every indirect call site normalizes it
+(`ECLTAG`/`ECLENV`/`ECLNORM` per backend), and the environment is passed as a hidden
+TRAILING argument so one marshalling sequence serves closures and plain function
+pointers alike. `fncallN` is lowered by the compiler to the same sequence — it could
+not be fixed inside `lib/fnptr.cyr`, because the ladder shape needs a 7-argument call
+and cybs caps at 6. `CLOSURE_TYID` is retired, which also fixes the pointer-scale leak
+that made `(f + 1) - f` evaluate to 1,073,741,827.
+
+⚠ The environment rides an argument REGISTER or not at all — under SysV a trailing
+stack argument slides an ordinary callee's stack arguments. A capturing closure
+therefore caps at 5 parameters (3 on Win64) and declaring more is now a compile error.
+
+Gate: `tests/tcyr/crossos/closure_escape_dispatch.tcyr` (20 assertions), mutation-proven.
+Full detail in `CHANGELOG.md`.
+
+---
+
+**Original filing follows.**
+
+**Status:** 🔴 OPEN — compiles clean, dies at runtime. No diagnostic.
 **Placement:** unpinned — 6.5.x line. Silent crash on a documented language feature, so it wants a
 patch release rather than the backlog.
 **Discovered:** 2026-08-10 from hisab, while checking a four-file claim that "Cyrius has no closures"

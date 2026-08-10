@@ -3107,8 +3107,15 @@ fn cmd_distlib(profile): i64 {
         if (load8(out_path + dl_bi - 1) == 47) { dl_base = out_path + dl_bi; dl_bi = 0; }
         else { dl_bi = dl_bi - 1; }
     }
+    # v6.5.17: the entry lives in the PROJECT ROOT, not beside the bundle, and
+    # includes the bundle by its full relative path. v6.5.14 put it in dist/ so
+    # the #@incdir marker would resolve the bundle's own name — but that also
+    # rooted the manifest's auto-prepended `lib/<leaf>.cyr` lines at dist/lib/,
+    # which does not exist, so the stdlib silently failed to prepend. bayan is
+    # the case that exposed it: its bundle compiles clean when the same leaves
+    # are included by hand, and `cyrius check --with-deps` fails identically —
+    # i.e. the bundle was always correct and only the check's CWD was wrong.
     var dl_eb = str_builder_new();
-    str_builder_add_cstr(dl_eb, out_path);
     str_builder_add_cstr(dl_eb, ".distchk");
     str_builder_add_int(dl_eb, dl_pid);
     str_builder_add_cstr(dl_eb, ".cyr");
@@ -3116,7 +3123,7 @@ fn cmd_distlib(profile): i64 {
 
     var dl_sb = str_builder_new();
     str_builder_add_cstr(dl_sb, "include \"");
-    str_builder_add_cstr(dl_sb, dl_base);
+    str_builder_add_cstr(dl_sb, out_path);
     str_builder_add_cstr(dl_sb, "\"\n");
     var dl_src = str_data(str_builder_build(dl_sb));
     # Undefined fns are the ONE expected failure (a bundle ships no stdlib), so

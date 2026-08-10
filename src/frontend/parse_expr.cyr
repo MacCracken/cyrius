@@ -271,6 +271,137 @@ fn LOOKAHEAD_IS_TYPE_ARG_CALL(S): i64 {
     return 0;
 }
 
+# v6.5.17 — how many arguments this target passes in registers. SysV and AAPCS64
+# use six (cyrius's own subset of AAPCS64's eight); Win64 uses four. The closure
+# ABI needs it in two places that MUST agree: the call site, which appends the
+# hidden env argument only when it lands in a register, and the closure prologue,
+# which reads it from that same index.
+fn _ARG_REG_COUNT(): i64 {
+    if (_TARGET_PE == 1) { return 4; }
+    return 6;
+}
+
+# v6.5.17 — is `noff` the name `fncall0` … `fncall8`? Packed little-endian u64
+# compare, the same 8-byte trick the `sizeof` / `mulh64` intrinsics use below:
+# 'f','n','c','a','l','l' occupy the low 48 bits (0x6C6C61636E66), the ASCII digit
+# sits at byte 6, and byte 7 must be NUL so `fncall2x` cannot match.
+fn _IS_FNCALL_NAME(S, noff): i64 {
+    var w = L64(S + 0x60000 + noff);
+    if ((w & 0xFFFFFFFFFFFF) != 0x6C6C61636E66) { return 0; }
+    if (((w >> 56) & 0xFF) != 0) { return 0; }
+    var d = (w >> 48) & 0xFF;
+    if (d < 48) { return 0; }
+    if (d > 56) { return 0; }
+    return 1;
+}
+
+# v6.5.17 — the shared indirect-call lowering behind BOTH `callptr(callee, …)` and
+# `fncall0(callee)` … `fncall8(callee, …)`. The cursor enters just past the `(` and
+# leaves just past the `)`; the callee's return lands in rax/x0 like any call.
+#
+# Evaluate the callee FIRST and spill it to a FRESH frame slot (re-entrant: nested
+# indirect calls get distinct slots) so it survives ECALLPOPS — which on Win64
+# `sub`s rsp for the 32 B shadow home and would bury a stack-pushed callee. Then
+# push args, marshal, and call through the slot via ECALLIND (`call [rbp-disp]` /
+# `ldur x6; blr x6`). The spill is a frame local, so an indirect call needs a
+# function frame — top-level vars are globals (no rbp frame). Fail loud, not crash.
+#
+# RUNTIME CLOSURE DISPATCH. The spilled callee value is read TWICE: once through
+# ECLENV for the hidden env argument, once through ECLNORM for the real code
+# address. A capturing closure carries its heap env object with BIT 63 SET, so both
+# reads answer correctly no matter where the value came from.
+#
+# This REPLACES a compile-time test (v6.3.8/v6.3.36) that peeked at the declaring
+# local's CLOSURE_TYID SLTYPE. That test could only see a closure while it was still
+# sitting in the `var` it was built in: pass it to a fn, return it, stash it in a
+# global, round-trip it through store64/load64, or even copy it with `g = f` (as
+# opposed to `var g = f`) and the tag was gone — so the value was dispatched as a
+# bare fn pointer, i.e. a jump INTO the env object and a SIGSEGV on the NX heap,
+# with no diagnostic. It was wrong in the other direction too: `callptr(f + 0, …)`
+# still looked like a closure. See
+# hisab-capturing-closure-segv-across-fn-boundary.md.
+#
+# THE ENV ARGUMENT IS ALWAYS PUSHED, AND ALWAYS LAST. Passing it last (rather than
+# as the hidden FIRST arg it used to be) is what lets ONE marshalling sequence serve
+# both cases: a plain fn pointer or non-capturing closure simply ignores one extra
+# register argument, which every ABI we emit for (SysV, Win64, AAPCS64) permits
+# because the CALLER cleans the argument area. Leading it would shift every user
+# argument of every non-closure indirect call.
+fn PINDIRECT_CALL(S): i64 {
+    if (_cur_fn_ix < 0) {
+        syscall(SYS_WRITE, 2, "error: an indirect call (callptr / fncallN) must be inside a function, not at top level\n", 88);
+        syscall(SYS_EXIT, 1);
+    }
+    PCMPE(S);                               # eval callee → rax
+    var cp_v = GFLC(S);
+    S64(S + 0x5D9D000 + cp_v * 8, 0 - 1);   # anonymous (stale-name guard)
+    SLDEP(S, cp_v, 0);
+    SFLC(S, cp_v + 1);
+    EFLSTORE(S, cp_v);                      # spill the callee VALUE
+    var cp_idx = 0;
+    var cp_argc = 0;
+    # v6.0.86: on PE the callee goes on the STACK (pushed FIRST, below the args),
+    # NOT a frame slot — a GFLC slot could alias a `&`-taken local (the COM
+    # out-param AV; see ECALLPTR_PE). Non-PE keeps the frame-slot spill (its
+    # ECALLPOPS shadow would otherwise bury a stack-pushed callee).
+    if (_TARGET_PE == 1) {
+        EFLLOAD(S, cp_v);
+        ECLNORM(S, cp_v);                   # rax = real code address
+        EPUSHR(S);                          # push callee (consumed by ECALLPTR_PE)
+    }
+    while (PEEKT(S) == 31) {                # ',' → another arg
+        STI(S, GTI(S) + 1);                 # consume ','
+        PCMPE(S);                           # eval arg → rax
+        EPUSHR(S);                          # push arg
+        cp_argc = cp_argc + 1;
+    }
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);                     # consume ')'
+    # The env rides in an argument REGISTER or not at all. Under SysV the caller
+    # places stack arguments anchored on the LAST one (ECALLPOPS puts a_n at
+    # [rsp+0]) and the callee reads them back the same way (ESTORESTACKPARM's
+    # `si = nstack - 1 - (pidx - 6)`), so a trailing extra argument slides every
+    # stack argument of an ordinary callee by 8 bytes. Measured, not reasoned:
+    # `callptr(&nargs7, 1,2,3,4,5,6,21)` in tests/tcyr/codegen/callptr.tcyr returned
+    # a code address instead of 42, because nargs7's 7th parameter read the env.
+    # Below the register ceiling nothing moves, so the extra argument is free — and
+    # a capturing closure that needs more parameters than that is rejected where it
+    # is DEFINED (see the closure prologue), not silently miscompiled here.
+    if (cp_argc < _ARG_REG_COUNT()) {
+        EFLLOAD(S, cp_v);
+        ECLENV(S);                          # rax = env pointer (no-op on a bare fn ptr)
+        EPUSHR(S);                          # push the hidden env arg — LAST
+        cp_argc = cp_argc + 1;
+    }
+    # v6.0.71: on PE/Win64, an indirect call can target a REAL Win64 callee (a COM
+    # vtable method) whose aligned SSE spills need rsp ≡ 0 at the `call`. The generic
+    # marshal+call below runs at cyrius's constant body alignment, which lands callees
+    # at ≡ 0 entry (off by 8) — fine for cyrius callees (no SSE), fatal for real Win64
+    # ones. ECALLPTR_PE force-aligns the call with an rbx-anchored `and rsp,-16` (the
+    # kernel32-reroute pattern), so the callee is entered ABI-correct regardless of
+    # caller alignment. See
+    # 2026-06-05-windows-com-vtable-real-callee-frame-corruption.md.
+    if (_TARGET_PE == 1) {
+        # v6.4.26/v6.5.17: capturing and non-capturing callees share one path on PE —
+        # cp_argc counts the user args PLUS the trailing env, and the already-
+        # normalized code address was pushed as the callee (deepest).
+        ECALLPTR_PE(S, cp_argc);            # pop args + pop callee (rax) + call rax
+    } else {
+        EFLLOAD(S, cp_v);
+        ECLNORM(S, cp_v);                   # rax = real code address
+        cp_idx = GFLC(S);                   # fresh frame slot for the callee ptr
+        S64(S + 0x5D9D000 + cp_idx * 8, 0 - 1);   # anonymous (stale-name guard)
+        SLDEP(S, cp_idx, 0);
+        SFLC(S, cp_idx + 1);
+        EFLSTORE(S, cp_idx);                # spill callee → [rbp-disp(cp_idx)]
+        ECALLPOPS(S, cp_argc);              # marshal args into arg regs (+ Win64 shadow)
+        ECALLIND(S, cp_idx);                # load callee from the slot + call/blr
+        ECALLCLEAN(S, cp_argc);             # unwind the arg frame
+    }
+    _cfo = 0;
+    return 0;
+}
+
 fn PARSE_FACTOR(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -362,6 +493,37 @@ fn PARSE_FACTOR(S): i64 {
             _cfo = 0;
             return 0;
         } }
+    # v6.5.17 — fncall0..fncall8 lower to the SAME sequence as `callptr`, so a
+    # capturing closure reaches the callee through them too.
+    #
+    # Why here and not in lib/fnptr.cyr: the closure needs its env as a TRAILING
+    # argument, so `fncallN` would have to re-enter at `fncall(N+1)` — and cybs, the
+    # bootstrap compiler that must parse lib/fnptr.cyr on the seed chain, cannot
+    # parse a call with more than 6 arguments. That caps the ladder at fncall4 and
+    # would have left fncall5-7 silently broken, which is exactly the half-fix shape
+    # this bug already went through once. Lowering here fixes every arity at once,
+    # gives the stdlib's own higher-order fns (vec_sort_by, vec_each, hashmap
+    # iteration — all `fncallN(cb, …)`) closure support for free, and inherits
+    # ECALLPOPS/ECALLPTR_PE's marshalling, which is strictly better than the hand
+    # asm for >4 args on Win64 and >6 on SysV.
+    #
+    # Gated on FINDFN so a program that never included lib/fnptr.cyr still gets its
+    # "undefined function" diagnostic instead of silently compiling, and on
+    # `_cur_fn_ix >= 0` because the lowering spills the callee to a FRAME slot and a
+    # top-level statement has no frame. At top level `fncallN` therefore keeps its
+    # pre-v6.5.17 meaning — an ordinary call into lib/fnptr.cyr — which is the only
+    # thing that ever worked there anyway (a closure literal needs a frame too, and
+    # `callptr` at top level has always been a hard error). Without this gate the
+    # extern-C driver in tests/gates/platform/ffi_stack_protected_extern_c.sh, which
+    # calls fncall4..7 at top level, stopped compiling.
+    if (typ == 2) { if (_cur_fn_ix >= 0) { if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) {
+                if (TOKTYP(S, GTI(S) + 1) == 10) { if (FINDFN(S, PEEKV(S)) >= 0) {
+                            STI(S, GTI(S) + 1);   # consume fncallN
+                            STI(S, GTI(S) + 1);   # consume '('
+                            PINDIRECT_CALL(S);
+                            return 0;
+                } }
+        } } }
     if (typ == 1) {
         var val = PEEKV(S);
         STI(S, GTI(S) + 1);
@@ -710,106 +872,10 @@ fn PARSE_FACTOR(S): i64 {
     }
     if (typ == 111) {
         # callptr(callee, arg1, ..., argN) — v6.0.70 §0 indirect call.
-        # Evaluate the callee FIRST and spill it to a FRESH frame slot
-        # (re-entrant: nested callptr → distinct slots), so it survives
-        # ECALLPOPS — which on Win64 sub's rsp for the 32 B shadow home and
-        # would bury a stack-pushed callee. Then push args, marshal, and call
-        # through the slot via ECALLIND (call [rbp-disp] / ldr x6;blr x6).
-        # Result (the callee's return) lands in rax/x0 like any call.
-        # The spill is a frame local, so callptr needs a function frame —
-        # top-level vars are globals (no rbp frame). Fail loud, not crash.
-        if (_cur_fn_ix < 0) {
-            syscall(SYS_WRITE, 2, "error: callptr() must be used inside a function, not at top level\n", 66);
-            syscall(SYS_EXIT, 1);
-        }
         STI(S, GTI(S) + 1);                     # consume 'callptr'
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
         STI(S, GTI(S) + 1);                     # consume '('
-        # v6.3.8 — detect a CAPTURING-closure callee (a CLOSURE_TYID local): the
-        # value is the heap env object, so dispatch as (*obj)(obj, args…) — load the
-        # fn pointer from [obj+0] and pass obj as the hidden first (env) arg.
-        var cp_is_closure = 0;
-        if (PEEKT(S) == 2) {
-            var cp_cli = FINDLOCAL(S, PEEKV(S));
-            if (cp_cli >= 0) { if (GLTYPE(S, cp_cli) == CLOSURE_TYID) { cp_is_closure = 1; } }
-        }
-        # v6.4.26: capturing closures now supported on PE — they route through
-        # ECALLPTR_PE (the 16-byte-aligned path) with the fn pointer pushed as the
-        # callee and the env object as arg 0. The v6.3.8 fail-loud guard is removed.
-        # See 2026-07-07-capturing-closures-windows-pe.md.
-        PCMPE(S);                               # eval callee → rax (the env object if closure)
-        # v6.0.86: on PE the callee goes on the STACK (pushed FIRST, below the
-        # args), NOT a frame slot — a GFLC slot could alias a `&`-taken local
-        # (the COM-out-param AV; see ECALLPTR_PE). Non-PE keeps the frame-slot
-        # spill (its ECALLPOPS shadow would otherwise bury a stack-pushed callee).
-        var cp_idx = 0;
-        var cp_argc = 0;
-        if (cp_is_closure == 1) {
-            var cp_obj_slot = GFLC(S);
-            S64(S + 0x5D9D000 + cp_obj_slot * 8, 0 - 1);   # anonymous (stale-name guard)
-            SLDEP(S, cp_obj_slot, 0);
-            SFLC(S, cp_obj_slot + 1);
-            EFLSTORE(S, cp_obj_slot);           # spill the env object
-            if (_TARGET_PE == 1) {
-                # v6.4.26: PE closures use ECALLPTR_PE, which wants the callee
-                # pushed FIRST (deepest) and the args on top. Push the fn pointer
-                # as the callee, then the env object as arg 0 (→rcx); user args
-                # follow in the while-loop. cp_idx stays 0 (callee is on the stack,
-                # not a frame slot — same as the PE non-capturing path).
-                EFLLOAD(S, cp_obj_slot);        # rax = obj
-                ELOAD64(S);                     # rax = [obj+0] = closure fn pointer
-                EPUSHR(S);                      # push fn pointer as callee (deepest)
-                EFLLOAD(S, cp_obj_slot);        # rax = obj
-                EPUSHR(S);                      # push obj as arg 0 (env)
-                cp_argc = 1;
-            } else {
-                EFLLOAD(S, cp_obj_slot);        # rax = obj
-                ELOAD64(S);                     # rax = [obj+0] = closure fn pointer
-                cp_idx = GFLC(S);
-                S64(S + 0x5D9D000 + cp_idx * 8, 0 - 1);
-                SLDEP(S, cp_idx, 0);
-                SFLC(S, cp_idx + 1);
-                EFLSTORE(S, cp_idx);            # spill fn pointer (the callee)
-                EFLLOAD(S, cp_obj_slot);        # rax = obj
-                EPUSHR(S);                      # push obj as arg 1 (env)
-                cp_argc = 1;
-            }
-        } else {
-            if (_TARGET_PE == 1) {
-                EPUSHR(S);                      # push callee (consumed by ECALLPTR_PE)
-            } else {
-                cp_idx = GFLC(S);               # fresh frame slot for the callee ptr
-                SFLC(S, cp_idx + 1);
-                EFLSTORE(S, cp_idx);            # spill callee → [rbp-disp(cp_idx)]
-            }
-        }
-        while (PEEKT(S) == 31) {                # ',' → another arg
-            STI(S, GTI(S) + 1);                 # consume ','
-            PCMPE(S);                           # eval arg → rax
-            EPUSHR(S);                          # push arg
-            cp_argc = cp_argc + 1;
-        }
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-        STI(S, GTI(S) + 1);                     # consume ')'
-        # v6.0.71: on PE/Win64, callptr targets REAL Win64 callees (COM vtable
-        # methods) whose aligned SSE spills need rsp ≡ 0 at the `call`. The
-        # generic marshal+call below runs at cyrius's constant body alignment,
-        # which lands callees at ≡ 0 entry (off by 8) — fine for cyrius callees
-        # (no SSE), fatal for real Win64 ones. ECALLPTR_PE force-aligns the
-        # call with an rbx-anchored `and rsp,-16` (the kernel32-reroute pattern),
-        # so the callee is entered ABI-correct regardless of caller alignment.
-        # See issue 2026-06-05-windows-com-vtable-real-callee-frame-corruption.md.
-        if (_TARGET_PE == 1) {
-            # v6.4.26: both capturing and non-capturing closures on PE use
-            # ECALLPTR_PE — for capturing, cp_argc counts the env (arg 0) + user
-            # args, and the fn pointer was pushed as the callee (deepest).
-            ECALLPTR_PE(S, cp_argc);            # pop args + pop callee (rax) + call rax
-        } else {
-            ECALLPOPS(S, cp_argc);              # marshal args into arg regs (+ Win64 shadow)
-            ECALLIND(S, cp_idx);               # load callee from the slot + call/blr
-            ECALLCLEAN(S, cp_argc);            # unwind the arg frame
-        }
-        _cfo = 0;
+        PINDIRECT_CALL(S);
         return 0;
     }
     if (typ == 24) {
@@ -1823,15 +1889,21 @@ fn PARSE_FACTOR(S): i64 {
         var cl_jmp = EJMP0(S);
         S64(_fnt_offsets + clfi * 8, GCP(S));
         EFNPRO(S);
-        # v6.3.8 — a capturing closure takes the heap env object as a hidden first
-        # param (arg-reg 0 → slot 0, anonymous); user params shift to arg-reg 1+.
-        # Captured-var reads in the body load from this slot (see PARSE_FACTOR).
+        # v6.3.8 — a capturing closure takes the heap env object as a HIDDEN param;
+        # captured-var reads in the body load from its slot (see PARSE_FACTOR).
+        # v6.5.17 — that param moved from FIRST to LAST. The frame slot is still
+        # allocated here (the body needs `_cl_env_lidx` while parsing), but the
+        # arg-register store is emitted after the user params, once `clpc` is known.
+        # Why last: the call site cannot know at compile time whether a callee is a
+        # closure, so it always passes the env — and only a TRAILING extra argument
+        # is invisible to a callee that does not want it. Leading it would shift
+        # every user argument of every non-closure indirect call.
         _cl_env_lidx = 0 - 1;
+        var cl_env_slot = 0 - 1;
         if (_cl_capturing == 1) {
-            var cl_env_slot = GFLC(S);
+            cl_env_slot = GFLC(S);
             S64(S + 0x5D9D000 + cl_env_slot * 8, 0 - 1);
             SLDEP(S, cl_env_slot, 0);
-            ESTOREPARM(S, 0, cl_env_slot, 0);
             SFLC(S, cl_env_slot + 1);
             _cl_env_lidx = cl_env_slot;
         }
@@ -1846,12 +1918,30 @@ fn PARSE_FACTOR(S): i64 {
                 var cpli = GFLC(S);
                 S64(S + 0x5D9D000 + cpli * 8, cpnoff);
                 SLDEP(S, cpli, 0);
-                if (clpc + cl_cap_shift < 6) { ESTOREPARM(S, clpc + cl_cap_shift, cpli, 0); }
+                if (clpc < 6) { ESTOREPARM(S, clpc, cpli, 0); }
                 SFLC(S, cpli + 1);
                 clpc = clpc + 1;
                 if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                 else { cpgo = 0; }
             }
+        }
+        # v6.5.17 — the hidden env param lands in arg register `clpc`, i.e. one past
+        # the user params, matching the call site's trailing push. Emitting it here
+        # (rather than at slot-allocation time) is safe: every ESTOREPARM is an
+        # independent arg-register → frame-slot store, so their order is free.
+        # The env must land in an argument REGISTER — see the matching note in
+        # PINDIRECT_CALL: under SysV an extra STACK argument would slide the stack
+        # arguments of every ordinary callee, so the call site only appends the env
+        # below the register ceiling. A capturing closure with more parameters than
+        # that is rejected HERE, loudly, instead of receiving a garbage environment.
+        # This is not a new restriction: with the env as the hidden FIRST argument
+        # (v6.3.8 - v6.5.16) the user params occupied registers 1..5 and the
+        # `clpc + cl_cap_shift < 6` guard dropped anything beyond, silently.
+        if (_cl_capturing == 1) {
+            if (clpc >= _ARG_REG_COUNT()) {
+                ERR_MSG(S, "capturing closure has too many parameters — its captured environment needs one more argument register than this target has", 124);
+            }
+            ESTOREPARM(S, clpc, cl_env_slot, clpc + 1);
         }
         S64(_fnt_params + clfi * 8, clpc + cl_cap_shift);
         # A `||` zero-param closure already consumed both bars as one token 54;
@@ -1957,6 +2047,12 @@ fn PARSE_FACTOR(S): i64 {
                 cl_ci = cl_ci + 1;
             }
             EFLLOAD(S, cl_obj_slot);          # closure value = the object pointer
+            # v6.5.17 — TAG IT. Bit 63 makes the value self-identifying, so any
+            # indirect call site can dispatch it (load [obj+0], pass obj as the
+            # trailing env arg) without knowing where the value came from. Without
+            # this bit the whole scheme is the old static SLTYPE peek, which the
+            # value outlives the moment it is passed, returned or stored.
+            ECLTAG(S);
         } else {
             # Non-capturing closure: a bare fn pointer (same fixup-type-3 op as
             # `&fn_name`). v6.3.7-stable path.
@@ -1968,9 +2064,8 @@ fn PARSE_FACTOR(S): i64 {
             var clfaddr = _fixup_base + clfc * 16;
             ELOAD_FN_ADDR(S, clfaddr, clfc, clfi);
         }
-        # v6.3.8 — flag a capturing closure so the enclosing var-decl tags the var
-        # CLOSURE_TYID (callptr auto-dispatch). Non-capturing → 0 (bare fn pointer).
-        _expr_closure_obj = cl_cap_shift;
+        # v6.5.17 — nothing to hand back to the enclosing var-decl any more: the
+        # closure value carries its own tag (ECLTAG above), so no SLTYPE is needed.
         return 0;
     }
     ERR(S);

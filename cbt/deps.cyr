@@ -549,6 +549,65 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
     return 0;
 }
 
+# Is the `klen`-byte match at buf[si] a REAL TOML key, not a lookalike?
+# A raw-byte manifest scan can land on the key's spelling in three places
+# that are not keys, so all four tests must pass:
+#   1. separator — the next byte is ` `, tab or `=`.
+#   2. left boundary — the previous byte is not `[0-9A-Za-z_]`, so
+#      `my_stdlib` does not read as `stdlib`.
+#   3. not a comment — the line's first non-space byte is not `#`.
+#   4. NOT INSIDE A STRING VALUE — an even number of unescaped `"` between
+#      line start and `si`. Tests 2+3 alone accept a key spelled inside a
+#      quoted value: bayan's `description = "... foldable into stdlib per
+#      the sandhi pattern"` put `stdlib` after a space on a non-comment
+#      line, so the Phase-1 scan below took it as the key, handed the
+#      offset to `_parse_toml_str_array` (which is positional and grabbed
+#      the `[build]` SECTION HEADER as its array), got an empty vec, and
+#      committed to it — leaving `_dep_includes` empty and silently
+#      dropping every stdlib auto-prepend. See CHANGELOG [6.5.17].
+fn _toml_key_at(buf, n, si, klen): i64 {
+    if (si + klen >= n) { return 0; }
+    var sep = load8(buf + si + klen);
+    if (sep != 32 && sep != 9 && sep != 61) { return 0; }
+    if (si > 0) {
+        var pc = load8(buf + si - 1);
+        if (pc >= 48 && pc <= 57)   { return 0; }   # 0-9
+        if (pc >= 65 && pc <= 90)   { return 0; }   # A-Z
+        if (pc >= 97 && pc <= 122)  { return 0; }   # a-z
+        if (pc == 95)               { return 0; }   # _
+    }
+    # Walk back to the start of the line holding `si`.
+    var ls = si;
+    while (ls > 0) {
+        var lc = load8(buf + ls - 1);
+        if (lc == 10) { break; }
+        ls = ls - 1;
+    }
+    # Leading whitespace then `#` = comment line.
+    var ws = ls;
+    while (ws < si) {
+        var wc = load8(buf + ws);
+        if (wc == 35) { return 0; }              # '#'
+        if (wc != 32 && wc != 9) { break; }
+        ws = ws + 1;
+    }
+    # Count unescaped `"` from line start to the match. Odd = the match sits
+    # inside a string value.
+    var quotes = 0;
+    while (ls < si) {
+        var c = load8(buf + ls);
+        if (c == 92) {
+            ls = ls + 1;                          # '\' escapes the next byte
+        } else {
+            if (c == 34) { quotes = quotes + 1; } # '"'
+        }
+        ls = ls + 1;
+    }
+    var odd = quotes - ((quotes / 2) * 2);
+    if (odd == 1) { return 0; }
+    return 1;
+}
+
 # Parse a TOML array of strings: ["a", "b", "c"] starting at buf[pos]
 # Returns a vec of cstrings. Advances pos past the closing ].
 fn _parse_toml_str_array(buf, len, pos): i64 {
@@ -1645,43 +1704,25 @@ fn cmd_deps(): i64 {
     var si = 0;
     while (si < n) {
         if (memeq(buf + si, "stdlib", 6) == 1) {
-            var pre_ok = 1;
-            if (si > 0) {
-                var pc = load8(buf + si - 1);
-                # alnum/underscore = continuation of a longer identifier,
-                # so "stdlib" is a substring, not a key.
-                if (pc >= 48 && pc <= 57)   { pre_ok = 0; }   # 0-9
-                if (pc >= 65 && pc <= 90)   { pre_ok = 0; }   # A-Z
-                if (pc >= 97 && pc <= 122)  { pre_ok = 0; }   # a-z
-                if (pc == 95)               { pre_ok = 0; }   # _
-                # Line must not be a comment. Scan back to line start
-                # and check if the first non-space is `#`.
-                if (pre_ok == 1) {
-                    var ls = si;
-                    while (ls > 0) {
-                        var lc = load8(buf + ls - 1);
-                        if (lc == 10) { break; }
-                        ls = ls - 1;
-                    }
-                    while (ls < si) {
-                        var wc = load8(buf + ls);
-                        if (wc == 35) { pre_ok = 0; break; }  # '#'
-                        if (wc != 32 && wc != 9) { break; }
-                        ls = ls + 1;
-                    }
-                }
-            }
-            if (pre_ok == 1 && si + 6 < n && (load8(buf + si + 6) == 32 || load8(buf + si + 6) == 61)) {
+            if (_toml_key_at(buf, n, si, 6) == 1) {
                 var stdlib_dir = _dep_find_stdlib_dir();
                 if (stdlib_dir == 0) {
                     println("  error: cannot find cyrius stdlib");
                     errors = errors + 1;
-                } else {
-                    # v5.10.19: per-cmd_deps invocation visited-set
-                    # for the include-chain follower below.
-                    _dep_stdlib_seen_init();
-                    var mods = _parse_toml_str_array(buf, n, si);
-                    mods = _dep_expand_groups(mods);   # v6.2.49 Phase B: expand [groups] refs → leaves
+                    break;
+                }
+                # v5.10.19: per-cmd_deps invocation visited-set
+                # for the include-chain follower below.
+                _dep_stdlib_seen_init();
+                var mods = _parse_toml_str_array(buf, n, si);
+                mods = _dep_expand_groups(mods);   # v6.2.49 Phase B: expand [groups] refs → leaves
+                # v6.5.17 defence-in-depth: a key that yields ZERO leaves is
+                # not the `stdlib` key — `_parse_toml_str_array` is purely
+                # positional and returns empty when it lands on a section
+                # header instead of an array. Keep scanning rather than
+                # committing; the old code `break`ed unconditionally, so one
+                # false positive silently disabled the whole auto-prepend.
+                if (vec_len(mods) > 0) {
                     var mi = 0;
                     while (mi < vec_len(mods)) {
                         var mod_name = vec_get(mods, mi);
@@ -1703,8 +1744,8 @@ fn cmd_deps(): i64 {
                         }
                         mi = mi + 1;
                     }
+                    break;
                 }
-                break;
             }
         }
         si = si + 1;

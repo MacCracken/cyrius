@@ -1682,6 +1682,26 @@ fn ECALLFIX(S, fnidx): i64 {
 # cyrius's 6 arg regs x0-x5 and isn't the x9 >6-arg shuffle scratch), then
 # blr x6. aarch64 emits directly (no IR record layer; cf. ECALLFIX). disp
 # matches EFLLOAD_W exactly (ret_stash only — aarch64 has no regalloc slots).
+# ── v6.5.17 closure ABI — aarch64 peer of the x86 ECLTAG/ECLENV/ECLNORM trio.
+# A capturing closure's value is its heap env object with bit 63 SET, so an
+# indirect call site decides "closure or bare fn pointer" at RUNTIME instead of
+# from the declaring var's static type (which was lost through params, returns,
+# globals and memory — the SIGSEGV in
+# hisab-capturing-closure-segv-across-fn-boundary.md). See backend/x86/emit.cyr
+# for the full note. Encodings verified against llvm-mc / binutils aarch64-as.
+fn ECLTAG(S): i64 { EW(S, 0xB2410000); return 0; }    # orr x0, x0, #0x8000000000000000
+fn ECLENV(S): i64 { EW(S, 0x9240F800); return 0; }    # and x0, x0, #0x7fffffffffffffff
+# ECLNORM: x0 = callee value -> x0 = real code address.
+# TBZ skips the load outright when bit 63 is clear, so a bare fn pointer is never
+# dereferenced. x9 is scratch here only (ECALLPOPS reuses it, but not across this
+# sequence); `idx` is unused on aarch64 — the cx backend needs it.
+fn ECLNORM(S, idx): i64 {
+    EW(S, 0x9240F809);   # and x9, x0, #0x7fffffffffffffff
+    EW(S, 0xB6F80040);   # tbz x0, #63, .+8   (untagged -> skip the load)
+    EW(S, 0xF9400120);   # ldr x0, [x9]       (x0 = env[0] = fn pointer)
+    return 0;
+}
+
 fn ECALLIND(S, idx): i64 {
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }

@@ -1,6 +1,41 @@
-# A syntax error inside an uncalled function is accepted by every gate — OPEN
+# A syntax error inside an uncalled function is accepted by every gate — ✅ FIXED (compiler); lint still open
 
-**Status:** 🔴 **OPEN** — `build`, `lint`, `vet` and `check` all report green on a file that does not parse, when the offending function is uncalled and its name contains no underscore.
+**Status:** ✅ **FIXED** (6.5.17) for `build` / `check`. ⚠ `cyrius lint` is NOT fixed —
+see the residual below.
+
+**Resolution.** The skip was not a privacy heuristic, it was a name-mangling bail-out.
+`PARSE_FN_DEF` builds a module-scoped name as `mod` + `_` + `fn`, so a mangled
+definition and its call sites intern DIFFERENT strings and the offset-keyed reference
+bitmap would wrongly call the definition unreferenced; the guard treated **any** name
+containing `_` as possibly-mangled. Ordinary snake_case then covered nearly all real
+code, which is how it survived — and for names without an underscore the answer came
+down to whether some unrelated file happened to use that word as a local (`fn n(x)`
+was checked because `lib/string.cyr` has a local `n`; `fn name(x)` was not). It was
+also fork-divergent: present in `main.cyr` / `main_win.cyr` / `main_x86_macho.cyr` /
+`main_cx.cyr`, absent from all three aarch64 drivers.
+
+Measured blast radius (injection oracle, not grep): 9 unchecked fns in cycc's own TU,
+**28 of 56** underscore-free names in a realistic 25-module stdlib set — `atoi`,
+`getenv`, `print`, `strstr`, `unwrap`, `memchr`, the `x*` family. `unwrap` and
+`eprint` had never been syntax-checked by any translation unit in the project.
+
+v6.5.17 removes the parse-time skip and its 8 KB reference-bitmap pre-scan from all
+four x86-family drivers. Reachability is a codegen concern: `CYRIUS_DCE=1` acts on the
+compiled result. cycc got smaller, not larger (1,146,200 → 1,142,016 B).
+
+Gate: `tests/gates/frontend/dead_fn_body_syntax_checked.sh` — judged on the compiler's
+EXIT CODE across six name shapes, with an anti-vacuous axis. Mutation-proven: restoring
+the skip reproduces the filed truth table exactly.
+
+⚠ **RESIDUAL — `cyrius lint` still reports `0 warnings` on a file that does not parse.**
+The filing calls this the sharp edge and it is correct: cyrlint never runs a full parse,
+so the compiler fix does not reach it. That is a cyrlint change, tracked separately.
+
+---
+
+**Original filing follows.**
+
+**Status:** 🔴 OPEN — `build`, `lint`, `vet` and `check` all report green on a file that does not parse, when the offending function is uncalled and its name contains no underscore.
 **Placement:** unpinned — 6.5.x line. No consumer is blocked, but it silently removes a whole category of source from checking.
 **Discovered:** 2026-08-09 while re-verifying hisab's tracked toolchain filings at the 6.5.16 bump (hisab v2.9.2)
 **Severity:** **Medium** — no miscompilation; the defect is that unreachable code is never checked and nothing says so. `cyrius lint` reporting "0 warnings" on a file that does not parse is the sharp edge.

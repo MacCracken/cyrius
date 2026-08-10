@@ -1115,6 +1115,13 @@ include "lib/fnptr.cyr"
 var result = fncall2(&add, 20, 22);  # result = 42
 ```
 
+Since v6.5.17 a `fncallN(…)` call written **inside a function** compiles to the
+same indirect-call sequence as `callptr` rather than to a call into
+`lib/fnptr.cyr` — the include is still required (it is what makes the name
+resolve), but the marshalling is the compiler's, which is the better one for
+more than four arguments on Windows and more than six elsewhere. At top level
+it stays an ordinary call into the library.
+
 ## Closures
 
 A closure literal `|params| body` is an anonymous function; its value is a
@@ -1137,10 +1144,11 @@ doesn't clobber it).
 **Lexical capture by value (v6.3.8).** A closure body may reference a variable
 from the enclosing scope (a *free variable*). Each such variable is captured
 **by value** at the point the closure is constructed — copied into a small
-heap environment object `[fn_ptr, cap0, cap1, …]`; the closure value *is* that
-object. `callptr` auto-detects a captured closure and dispatches it (loads the
-fn pointer from the object and passes the object itself as the hidden first
-argument), so call sites look identical to the non-capturing case:
+heap environment object `[fn_ptr, cap0, cap1, …]`. The closure value is an
+**opaque handle** to that object, and `callptr` / `fncallN` recognise it and
+dispatch it (load the real code address from the object, pass the object itself
+as a hidden trailing argument), so call sites look identical to the
+non-capturing case:
 
 ```
 fn run(): i64 {
@@ -1153,17 +1161,46 @@ fn run(): i64 {
 A non-capturing closure stays a bare function pointer (no allocation); only
 closures that actually read an enclosing local build an environment object.
 
+**The handle is opaque — do not do arithmetic on it, dereference it, or print
+it as an address (v6.5.17).** It is the environment pointer with its top bit
+set, which is how any call site can tell a closure from a plain function
+pointer *at run time* rather than from the type of the variable it happens to be
+sitting in. That is what makes a capturing closure keep working after it leaves
+the `var` it was built in — passed to another function, returned, stored in a
+global, or round-tripped through `store64`/`load64`:
+
+```
+fn apply(f): i64 { return callptr(f, 1); }   # or fncall1(f, 1)
+fn make(n): i64 { var f = |x| n + x; return f; }
+
+fn run(): i64 {
+    var base = 41;
+    var f = |x| base + x;
+    return apply(f) + callptr(make(0), 0);   # 42 + 0
+}
+```
+
+Before v6.5.17 every one of those escapes segfaulted: the "is this a closure"
+decision was made at compile time from the declaring variable's type, and the
+value outlived that fact.
+
 Capture is **by value**: the closure sees the value the variable held at
 construction. Mutating the original afterward does not change what the closure
-returns, and the closure cannot write back to the enclosing variable.
+returns, and the closure cannot write back to the enclosing variable. Two
+closures built from the same literal have independent environments.
 
 Because the environment is heap-allocated, a translation unit that constructs a
 capturing closure must `include "lib/alloc.cyr"` and call `alloc_init()` before
 the closure is built. (A non-capturing closure needs neither.)
 
-**Limitations.** Capturing closures are not yet supported on the Windows PE
-target — constructing one there is a compile error; pass the needed values as
-parameters instead. Captured closures are flat (no capture of a capture across
+**Limitations.** A capturing closure takes at most **five** parameters on
+Linux/macOS (x86_64 and aarch64) and **three** on Windows — the hidden
+environment argument occupies the next argument register, and it is a compile
+error to declare more. A capturing closure with eight arguments cannot be
+called through `fncall8` (there is no `fncall9` for the environment to ride in);
+use `callptr`, which has no arity ladder. `fncallN` at **top level** is an
+ordinary call into `lib/fnptr.cyr` and does not dispatch closures — call it from
+inside a function. Captured closures are flat (no capture of a capture across
 two nested closure levels).
 
 ## Generic Functions
@@ -1539,10 +1576,12 @@ offsets past the params.
   reserved-word note under **Functions**. (This bullet used to name four of them, which is
   how the other sixty came as a surprise.)
 - Closures (`|x| body`) support lexical capture by value (v6.3.8) — a body may
-  reference enclosing locals, captured by value at construction (Windows PE is
-  the exception: capturing closures are a compile error there — pass the values
-  as parameters). Closures must be written inside a function. See the
-  **Closures** section.
+  reference enclosing locals, captured by value at construction. Windows PE has
+  supported capturing closures since v6.4.26 (this bullet claimed otherwise for
+  eight minors). A capturing closure is capped at five parameters on
+  Linux/macOS and three on Windows, its value is an opaque handle rather than an
+  address, and it must be written inside a function. See the **Closures**
+  section.
 
 ## Gotchas
 

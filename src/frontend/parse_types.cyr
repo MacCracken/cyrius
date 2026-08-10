@@ -45,10 +45,12 @@ fn _scalar_name_width(name64): i64 {
 # type-only — converted via f32_from/f32_to, no f32 arithmetic).
 var F64_TYID = 0x40000001;
 var F32_TYID = 0x40000002;
-# v6.3.8 — a local holding a CAPTURING closure's heap env object. callptr/fncallN
-# on such a local auto-dispatch: load the fn pointer from [obj+0] and pass obj as
-# the hidden first (env) arg. Non-capturing closures stay bare fn pointers (no tag).
-var CLOSURE_TYID = 0x40000003;
+# 0x40000003 was CLOSURE_TYID (v6.3.8 - v6.5.16) — RETIRED, do not reuse. A local
+# holding a capturing closure was stamped with it so callptr could recognise the
+# value. That only worked while the value sat in its declaring `var`, and the
+# sentinel additionally leaked into SPSC as a pointer scale (`(f + 1) - f` == 2^30+3).
+# v6.5.17 moved the decision to RUNTIME — bit 63 of the value itself; see ECLNORM
+# in backend/x86/emit.cyr.
 # v6.3.11 (G) — a value holding an async Future object `[impl_ptr, argc, args…]`
 # (built by an `async fn`'s synthesized constructor). `await fut` forces it via the
 # runtime's future_force. The tag is informational in v1 (await calls future_force

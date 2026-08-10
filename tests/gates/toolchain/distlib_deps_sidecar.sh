@@ -44,11 +44,18 @@ check() {
 
 mkdir -p "$D/p/src" "$D/p/dist"
 cd "$D/p" || exit 2
-# `used_only` is DECLARED but never `include`d by a module — it is the shape the filing is
-# about: referenced through the declaration, invisible to an include-scan. `inc_only` is
-# the reverse: included by a module but NOT declared, which is what makes union (rather
-# than replacement) the right call.
-printf '[package]\nname = "dp"\nversion = "0.1.0"\n\n[deps]\nstdlib = [\n    "string",\n    "fmt",\n    "used_only",   # referenced, never included — the filed case\n]\n\n[lib]\nmodules = ["src/a.cyr"]\n\n[lib.narrow]\nmodules = ["src/b.cyr"]\n' > cyrius.cyml
+# `chrono` is DECLARED but never `include`d by a module — it is the shape the filing is
+# about: referenced through the declaration, invisible to an include-scan. The reverse
+# (included by a module but NOT declared, axis 3's `vec`) is what makes union rather than
+# replacement the right call.
+#
+# ⚠ IT MUST BE A **REAL** STDLIB LEAF. This fixture named a synthetic `used_only` until
+# v6.5.17, which worked only while `distlib` skipped dep resolution. distlib now runs
+# `_auto_deps`, so a declared leaf that cannot be found is a hard error — `error: cannot
+# read ~/.cyrius/lib/used_only.cyr`, `0 deps resolved, 1 errors`, exit 1 — and all four
+# axes went red on a CORRECT build. `chrono` is real and is pulled in by neither
+# `string` nor `fmt`, so the declared-but-not-included property still holds.
+printf '[package]\nname = "dp"\nversion = "0.1.0"\n\n[deps]\nstdlib = [\n    "string",\n    "fmt",\n    "chrono",   # referenced, never included — the filed case\n]\n\n[lib]\nmodules = ["src/a.cyr"]\n\n[lib.narrow]\nmodules = ["src/b.cyr"]\n' > cyrius.cyml
 printf 'include "lib/string.cyr"\nfn a_one(): i64 { return 1; }\n' > src/a.cyr
 printf 'include "lib/fmt.cyr"\nfn b_two(): i64 { return 2; }\n' > src/b.cyr
 
@@ -58,7 +65,7 @@ check "distlib exits 0" 0 "$?"
 DEPS="$D/p/dist/dp.deps"
 check "sidecar written" 1 "$([ -f "$DEPS" ] && echo 1 || echo 0)"
 # ⭐ THE ASSERTION THE DEFECT WOULD FAIL. Pre-fix this leaf was absent.
-check "declared-only leaf 'used_only' is present" 1 "$(grep -cx 'used_only' "$DEPS" || true)"
+check "declared-only leaf 'chrono' is present" 1 "$(grep -cx 'chrono' "$DEPS" || true)"
 check "declared 'fmt' is present (not included by src/a.cyr)" 1 "$(grep -cx 'fmt' "$DEPS" || true)"
 
 echo "axis 2 — the include-scan's own finding is KEPT (union, not replacement):"
@@ -69,15 +76,15 @@ echo "axis 3 — a leaf INCLUDED but not declared survives (why union is the rig
 printf 'include "lib/string.cyr"\ninclude "lib/vec.cyr"\nfn a_one(): i64 { return 1; }\n' > src/a.cyr
 CYRIUS_RESOLVED=1 timeout 300 "$CY" distlib > "$D/o3" 2>&1
 check "undeclared-but-included 'vec' is present" 1 "$(grep -cx 'vec' "$DEPS" || true)"
-check "and the declared ones are still there" 1 "$(grep -cx 'used_only' "$DEPS" || true)"
+check "and the declared ones are still there" 1 "$(grep -cx 'chrono' "$DEPS" || true)"
 
 echo "axis 4 — ⚠ a PROFILE keeps the pruned inference, not the whole declaration:"
 CYRIUS_RESOLVED=1 timeout 300 "$CY" distlib narrow > "$D/o4" 2>&1
 NDEPS="$D/p/dist/dp-narrow.deps"
 if [ -f "$NDEPS" ]; then
-    # `used_only` is declared but has nothing to do with the narrow profile's module.
+    # `chrono` is declared but has nothing to do with the narrow profile's module.
     # Over-reporting here would fail a legitimately-narrow consumer.
-    check "profile sidecar does NOT absorb the whole declaration" 0 "$(grep -cx 'used_only' "$NDEPS" || true)"
+    check "profile sidecar does NOT absorb the whole declaration" 0 "$(grep -cx 'chrono' "$NDEPS" || true)"
 else
     check "profile sidecar emitted (or legitimately empty)" 1 1
 fi
@@ -91,14 +98,14 @@ echo "axis 5 — the manifest scan does not match prose or a longer identifier:"
 # of this axis did exactly that and passed against a build with the comment guard DELETED.
 # Mutation-verified. Fresh project so the ordering is unambiguous.
 mkdir -p "$D/decoy/src" "$D/decoy/dist" && cd "$D/decoy" || exit 2
-printf '# this leading comment mentions stdlib and must not match\nmy_stdlib = ["bogus_leaf"]\n\n[package]\nname = "dc"\nversion = "0.1.0"\n\n[deps]\nstdlib = ["string", "used_only"]\n\n[lib]\nmodules = ["src/a.cyr"]\n' > cyrius.cyml
+printf '# this leading comment mentions stdlib and must not match\nmy_stdlib = ["bogus_leaf"]\n\n[package]\nname = "dc"\nversion = "0.1.0"\n\n[deps]\nstdlib = ["string", "chrono"]\n\n[lib]\nmodules = ["src/a.cyr"]\n' > cyrius.cyml
 printf 'include "lib/string.cyr"\nfn c_one(): i64 { return 1; }\n' > src/a.cyr
 CYRIUS_RESOLVED=1 timeout 300 "$CY" distlib > "$D/o5" 2>&1
 DDEPS="$D/decoy/dist/dc.deps"
 # ⚠ `grep -c` PRINTS 0 and EXITS 1 on no-match, so `|| echo 0` appends a SECOND line and
 # the comparison sees "0\n0". Capture plainly and default only when the var is empty.
 NB=$(grep -cx 'bogus_leaf' "$DDEPS" 2>/dev/null); NB=${NB:-0}
-NU=$(grep -cx 'used_only' "$DDEPS" 2>/dev/null); NU=${NU:-0}
+NU=$(grep -cx 'chrono' "$DDEPS" 2>/dev/null); NU=${NU:-0}
 check "a prose/identifier 'stdlib' does not inject leaves" 0 "$NB"
 check "the real declaration still resolved" 1 "$NU"
 

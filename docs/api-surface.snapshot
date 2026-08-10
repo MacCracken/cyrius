@@ -2793,6 +2793,9 @@ sankoch::zip_add/5
 sankoch::zip_add_any/5
 sankoch::zip_add_any_meta/7
 sankoch::zip_add_meta/7
+sankoch::zip_allocator/1
+sankoch::zip_bound/3
+sankoch::zip_bound_member/2
 sankoch::zip_count/1
 sankoch::zip_enc_begin/5
 sankoch::zip_enc_end/1
@@ -2811,10 +2814,13 @@ sankoch::zip_extract_any/4
 sankoch::zip_extract_any_capped/5
 sankoch::zip_extract_capped/5
 sankoch::zip_find/2
+sankoch::zip_last_error/0
 sankoch::zip_method_supported/1
 sankoch::zip_open/2
+sankoch::zip_open_a/3
 sankoch::zip_writer_finish/1
 sankoch::zip_writer_init/2
+sankoch::zip_writer_init_a/3
 sankoch::zlib_compress/4
 sankoch::zlib_compress_level/5
 sankoch::zlib_dec_finish/1

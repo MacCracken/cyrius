@@ -1,0 +1,137 @@
+# closure_escape_dispatch.tcyr — VR-01: a CAPTURING closure dispatches correctly no
+# matter where its value came from (v6.5.17).
+#
+# THE FILED DEFECT (hisab, 2026-08-10). A capturing closure worked when called in the
+# function that built it and SIGSEGV'd when passed to another function and called
+# there. Root cause: "is this callee a closure" was decided at COMPILE time, by
+# reading the declaring local's CLOSURE_TYID SLTYPE — a fact the value outlived the
+# instant it moved. Every escape below dispatched the ENV OBJECT as if it were a code
+# address, i.e. jumped into the NX heap. No diagnostic, at any gate.
+#
+# v6.5.17 moved the decision to RUNTIME: a capturing closure's value is its heap env
+# object with BIT 63 SET, the call site strips the tag for the hidden env argument and
+# loads the real code address from env[0], and the closure body takes the env as its
+# TRAILING parameter.
+#
+# ⭐ WHY THIS IS A CROSS-HOST TEST AND NOT A tcyr/lang ONE. Everything here is ABI:
+# the tag test is three different instruction sequences (x86 `btr`+`cmov`, aarch64
+# `tbz`, cx arithmetic select), the hidden env argument is a real argument register,
+# and the register ceiling that bounds it DIFFERS BY TARGET — six under SysV/AAPCS64,
+# four under Win64. A Linux-only pass proves one third of that.
+#
+# ⚠ The env only rides in a REGISTER. Under SysV the caller anchors stack arguments on
+# the LAST one, so an extra trailing argument would slide the stack arguments of an
+# ordinary callee — measured, not reasoned: it broke `callptr(&seven, 1..7)` in
+# tests/tcyr/codegen/callptr.tcyr. Hence a capturing closure is capped at
+# (arg registers - 1) parameters, which is 5 on SysV/AAPCS64 and 3 on Win64 — so the
+# 5-parameter arm below is Windows-guarded.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+
+var g_clos = 0;
+
+# The two shapes the filing reported verbatim: a capturing closure crossing a
+# function boundary, dispatched through callptr and through fncallN.
+fn takes_callptr(f): i64 { return callptr(f, 1); }
+fn takes_fncall(f): i64 { return fncall1(f, 1); }
+# `return fncall1(f, 1);` above is deliberately in TAIL position — the tail-call path
+# bypasses PARSE_FACTOR entirely, and it was the one repro of the four that still
+# segfaulted after the expression lowering landed.
+fn takes_copy(f): i64 { var g = f; return callptr(g, 1); }
+
+fn make_adder(n): i64 { var f = |x| n + x; return f; }
+fn plain_add(a, b): i64 { return a + b; }
+fn seven(a, b, c, d, e, f, g): i64 { return a + b + c + d + e + f + g; }
+
+fn esc_param_callptr(): i64 { var base = 41; var f = |x| base + x; return takes_callptr(f); }
+fn esc_param_fncall(): i64 { var base = 41; var f = |x| base + x; return takes_fncall(f); }
+fn esc_param_copy(): i64 { var base = 41; var f = |x| base + x; return takes_copy(f); }
+fn esc_return(): i64 { var g = make_adder(41); return callptr(g, 1); }
+fn esc_global(): i64 { var base = 41; var f = |x| base + x; g_clos = f; return callptr(g_clos, 1); }
+fn esc_memory(): i64 {
+    var base = 41;
+    var f = |x| base + x;
+    var cell = alloc(8);
+    store64(cell, f);
+    return callptr(load64(cell), 1);
+}
+fn esc_assign(): i64 { var base = 41; var f = |x| base + x; var g = 0; g = f; return callptr(g, 1); }
+fn esc_inline(): i64 { var base = 41; var f = |x| base + x; return callptr(f, 1); }
+fn esc_two_captures(): i64 { var a = 20; var b = 21; var f = |x| a + b + x; return takes_callptr(f); }
+fn esc_captured_ptr(): i64 {
+    var pts = alloc(32);
+    store64(pts + 8, 42);
+    var f = |i| load64(pts + i * 8);
+    return takes_callptr(f);
+}
+fn esc_three_params(): i64 { var base = 36; var f = |p, q, r| base + p + q + r; return callptr(f, 1, 2, 3); }
+
+# Per-instance environments: two closures from ONE literal must not share captures.
+# A design that baked the env into a per-literal global would return 82 here.
+fn instances(): i64 { var a = make_adder(1); var b = make_adder(41); return callptr(a, 0) + callptr(b, 1); }
+
+# Controls — a value that is NOT a capturing closure must be dispatched untouched.
+fn ctl_noncapturing(): i64 { var f = |x| 41 + x; return takes_callptr(f); }
+fn ctl_fnptr_callptr(): i64 { var p = &plain_add; return callptr(p, 20, 22); }
+fn ctl_fnptr_fncall(): i64 { var p = &plain_add; return fncall2(p, 20, 22); }
+# 7 args is past the SysV register file, so this one rides the stack-argument
+# shuffle — the path the trailing env argument must NOT disturb.
+fn ctl_stack_args(): i64 { var p = &seven; return callptr(p, 1, 2, 3, 4, 5, 6, 21); }
+
+# The closure value is a tagged pointer, but it is not a TYPED pointer: arithmetic on
+# it must use scale 1. The retired CLOSURE_TYID sentinel (0x40000003) leaked into the
+# pointer-scale path, so `(f + 1) - f` evaluated to 1073741827.
+fn ctl_scale(): i64 { var base = 7; var f = |x| base + x; var d = f + 1; return d - f; }
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("a capturing closure survives leaving its declaring binding");
+    assert_eq(esc_inline(), 42, "called inline (the shape that already worked)");
+    assert_eq(esc_param_callptr(), 42, "passed as a parameter, called with callptr");
+    assert_eq(esc_param_fncall(), 42, "passed as a parameter, called with fncall1 (TAIL position)");
+    assert_eq(esc_param_copy(), 42, "copied into a local inside the callee");
+    assert_eq(esc_return(), 42, "RETURNED from the function that built it");
+    assert_eq(esc_global(), 42, "stored in a file-scope global");
+    assert_eq(esc_memory(), 42, "round-tripped through store64/load64");
+    assert_eq(esc_assign(), 42, "plain assignment (not a var-decl copy)");
+    assert_eq(esc_two_captures(), 42, "two captures across the boundary");
+    assert_eq(esc_captured_ptr(), 42, "captured POINTER, dereferenced in the callee");
+    assert_eq(esc_three_params(), 42, "3 params + env (fits Win64's 4 arg registers)");
+    assert_eq(instances(), 43, "two instances of one literal keep DISTINCT captures");
+
+    test_group("non-closure callees are dispatched untouched");
+    assert_eq(ctl_noncapturing(), 42, "non-capturing closure through a fn");
+    assert_eq(ctl_fnptr_callptr(), 42, "&fn via callptr");
+    assert_eq(ctl_fnptr_fncall(), 42, "&fn via fncall2");
+    assert_eq(ctl_stack_args(), 42, "&fn with 7 args — stack-argument layout undisturbed");
+    assert_eq(ctl_scale(), 1, "closure arithmetic uses scale 1, not a type sentinel");
+
+    # ⚠ WINDOWS: Win64 passes four arguments in registers, so a capturing closure
+    # there tops out at THREE parameters — the fourth would push the env onto the
+    # stack. Compiling this arm for PE is a hard error by design (the compiler says
+    # so), which would take the release gate's cass leg RED. Say the skip out loud.
+    var _armed = 0;
+#ifdef CYRIUS_TARGET_WIN
+    println("SKIP: Win64 has 4 argument registers — a capturing closure caps at 3 params");
+    _armed = 1;
+#endif
+#ifndef CYRIUS_TARGET_WIN
+    test_group("the env rides the LAST argument register (SysV/AAPCS64: 6 regs → 5 params)");
+    var base5 = 27;
+    var f5 = |a, b, c, d, e| base5 + a + b + c + d + e;
+    assert_eq(callptr(f5, 1, 2, 3, 4, 5), 42, "5 params + env in the sixth register");
+    assert_eq(fncall5(f5, 1, 2, 3, 4, 5), 42, "same closure through fncall5");
+    _armed = 1;
+#endif
+
+    # ⚠ ANTI-VACUOUS GUARD. The block above is entirely inside #ifdef arms; on a
+    # target none of them match, it compiles to nothing and reports a silent pass.
+    assert_eq(_armed, 1, "an arg-register arm ran (0 = this section compiled into nothing)");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

@@ -3058,6 +3058,60 @@ fn ECALLFIX(S, fnidx): i64 {
     return 0;
 }
 
+# ── v6.5.17 closure ABI (BUG: capturing closure SIGSEGV across a fn boundary) ──
+#
+# A CAPTURING closure's value is its heap env object `[fn_ptr, cap0, …]` with
+# BIT 63 SET. That one bit is the whole fix: it makes "is this callee a closure
+# or a bare fn pointer" a RUNTIME question. It used to be a compile-time one —
+# the declaring `var`'s SLTYPE was stamped CLOSURE_TYID and `callptr` peeked at
+# it — so the answer was lost the moment the value left that binding: through a
+# parameter, a return, a global, memory, or a plain assignment. Every one of
+# those escapes jumped to the OBJECT instead of `[obj+0]` and died on the NX
+# heap. See hisab-capturing-closure-segv-across-fn-boundary.md.
+#
+# Bit 63 is free on every target we emit for: user-space pointers are < 2^48 on
+# Linux/macOS/Windows, x86_64 and aarch64 alike, and `alloc()` hands back heap
+# addresses far below that. A bare fn pointer (`&fn`, a non-capturing closure)
+# is a .text address, so it is never tagged and normalizes to itself.
+#
+# ECLTAG — stamp the tag on a freshly built env object (rax).
+fn ECLTAG(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBA); EB(S, 0xE8); EB(S, 0x3F);   # bts rax, 63
+    _flags_reflect_rax = 0;
+    return 0;
+}
+# ECLENV — strip the tag, yielding the env pointer the closure body reads its
+# captures from. On a bare fn pointer this is a no-op (bit 63 already clear), so
+# the call site can push it unconditionally as the hidden trailing argument.
+fn ECLENV(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBA); EB(S, 0xF0); EB(S, 0x3F);   # btr rax, 63
+    _flags_reflect_rax = 0;
+    return 0;
+}
+# ECLNORM — rax holds a callee value; leave the REAL code address in rax.
+#   tagged   → rax = [rax & ~bit63]   (the fn pointer at env[0])
+#   untagged → rax unchanged          (already a code address)
+# Branchless, and it never dereferences a non-closure: `btr` leaves the old bit
+# in CF, and the first cmov swaps the load address to rsp — always mapped, always
+# readable — when the value is a plain pointer, so the load is issued but its
+# result is discarded by the second cmov. `mov`/`cmov` do not write flags, so CF
+# survives the whole sequence. r11 is caller-saved under SysV and volatile under
+# Win64; regalloc only pins to callee-saved registers, so it is free here.
+# `idx` (the callee's spill slot) is unused on x86 — the cx backend needs it.
+fn ECLNORM(S, idx): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);                              # mov rcx, rax
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBA); EB(S, 0xF1); EB(S, 0x3F);    # btr rcx, 63   (CF = was tagged)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xE3);                              # mov r11, rsp
+    EB(S, 0x49); EB(S, 0x0F); EB(S, 0x43); EB(S, 0xCB);                 # cmovnc rcx, r11
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x09);                              # mov rcx, [rcx]
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0x42); EB(S, 0xC1);                 # cmovc rax, rcx
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
 # v6.0.70 §0 — indirect call through a callee pointer spilled to local
 # `idx`. The callptr builtin evaluates the callee + stores it to a FRESH
 # frame slot BEFORE pushing the args, so it survives ECALLPOPS — which on

@@ -466,6 +466,15 @@ fn PARSE_RETURN(S): i64 {
                                 }
                             }
                         }
+                        # v6.5.17: fncall0..fncall8 are lowered as INDIRECT calls (see
+                        # _IS_FNCALL_NAME / PINDIRECT_CALL in parse_expr.cyr), never as a
+                        # direct call to the lib fn — so they must not take this shortcut,
+                        # which emits `jmp fncallN` and skips the closure dispatch
+                        # entirely. `return fncall1(f, 1);` is verbatim the shape the
+                        # hisab filing reported, and it is the ONLY one of the four repro
+                        # programs that still segfaulted after the parse_expr lowering
+                        # landed: a tail call looks nothing like a factor.
+                        if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) { tc_is_tail = 0; }
                         if (tc_is_tail == 1) {
                             # Tail call: return fn(args); → evaluate args, epilogue, jmp fn
                             var tcnoff = PEEKV(S);

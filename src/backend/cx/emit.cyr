@@ -448,6 +448,43 @@ fn ECALLFIX(S, fnidx): i64 {
 # ⚠ callptr-to-NATIVE (COM/DXGI) is still impossible on cx and always will be — a `.cyx`
 # has no machine addresses. This covers cyrius-internal fn pointers, which is what
 # lib/fnptr.cyr / vec_sort_by / the Allocator vtable actually need.
+# ── v6.5.17 closure ABI — cx peer of the x86 ECLTAG/ECLENV/ECLNORM trio.
+# A capturing closure's value is its heap env object with bit 63 SET, so an
+# indirect call site decides "closure or bare fn pointer" at RUNTIME rather than
+# from the declaring var's static type. See backend/x86/emit.cyr for the note.
+fn ECLTAG(S): i64 {
+    CX_MOVI(S, 1, 0x8000000000000000);
+    CX_EMIT(S, 33, 0, 0, 1);              # or  r0, r0, r1
+    return 0;
+}
+fn ECLENV(S): i64 {
+    CX_MOVI(S, 1, 0x7FFFFFFFFFFFFFFF);
+    CX_EMIT(S, 32, 0, 0, 1);              # and r0, r0, r1
+    return 0;
+}
+# ECLNORM: r0 = callee value -> r0 = real code offset.
+# cx has no flags and no cmov, so the select is arithmetic:
+#   mask = asr(v, 63)                 0 (plain) or -1 (tagged)
+#   addr = p ^ ((p ^ u) & mask)       p = &slot(idx) (which HOLDS v), u = untag(v)
+#   r0   = load64(addr)               plain -> v itself; tagged -> env[0]
+# `idx` is the callee's spill slot, so the plain arm loads a value it already
+# knows — no code offset is ever used as a data address (a cx guest has no
+# machine addresses, so dereferencing one would be a VM fault, not junk).
+fn ECLNORM(S, idx): i64 {
+    CX_MOVI(S, 1, 63);
+    CX_EMIT(S, 37, 2, 0, 1);              # asr  r2, r0, r1        (mask)
+    CX_MOVI(S, 1, 0x7FFFFFFFFFFFFFFF);
+    CX_EMIT(S, 32, 15, 0, 1);             # and  r15, r0, r1       (u = untag(v))
+    CX_EMIT(S, 2, 14, 253, 0);            # mov  r14, fp
+    CX_MOVI(S, 1, _cx_ldisp(idx));
+    CX_EMIT(S, 17, 14, 14, 1);            # sub  r14, r14, r1      (p = &slot)
+    CX_EMIT(S, 34, 15, 14, 15);           # xor  r15, r14, r15     (p ^ u)
+    CX_EMIT(S, 32, 15, 15, 2);            # and  r15, r15, r2      (& mask)
+    CX_EMIT(S, 34, 14, 14, 15);           # xor  r14, r14, r15     (addr)
+    CX_EMIT(S, 65, 0, 14, 0);             # load64 r0, [r14]
+    return 0;
+}
+
 fn ECALLIND(S, idx): i64 {
     CX_EMIT(S, 2, 14, 253, 0);            # mov  r14, fp
     CX_MOVI(S, 15, _cx_ldisp(idx));       # movi r15, slot displacement
