@@ -1,0 +1,31 @@
+# Repro — a syntax error in an uncalled function is accepted when the fn name has no underscore.
+# Filed with: docs/development/issues/hisab-dead-fn-bodies-never-syntax-checked.md
+# Discovered from hisab, 2026-08-09, on cycc 6.5.16.
+#
+# Build with `[deps] stdlib = ["syscalls"]`:
+#
+#   cyrius build src/g.cyr build/g       -> exit 0, "OK"        <- the defect
+#   cyrius lint  src/g.cyr               -> exit 0, "0 warnings"
+#   cyrius vet   src/g.cyr               -> exit 0
+#   cyrius check --with-deps src/g.cyr   -> exit 0
+#
+# Now rename `gg` to `g_g` and change NOTHING else:
+#
+#   cyrius build src/g.cyr build/g       -> exit 1, error at the garbage
+#
+# Or leave the name alone and call gg() from main():
+#
+#   fn main() { return gg(); }           -> exit 1, error at the garbage
+#
+# So the skip requires BOTH: the function is uncalled, AND its name contains no
+# underscore. Read exit codes without shell redirection; and note that line numbers
+# for the top-level file are offset by (stdlib dep count + 1) because they index the
+# concatenated translation unit.
+
+fn gg() { var x = ; this is not cyrius at all ]] ((
+    return 0; }
+
+fn main() { return 0; }
+
+var r = main();
+sys_exit_group(r);
