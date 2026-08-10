@@ -32,7 +32,7 @@ git entries (see Live deps below).
 | `lib/patra.cyr` | v5.8.65 (refold v6.4.65) | patra 1.12.12 | Storage (thread-local slots allocator-managed @1.12.12) |
 | `lib/sigil.cyr` | v5.8.65 (refold v6.5.14) | sigil 3.12.6 | Security (x509 + Ed25519 sign/verify — powers native TLS + cyrsign release signing; UEFI Secure Boot signing (authenticode_pe_sign) + enrollment (efi_signature_list/efi_auth); crypto-bank slot allocator-managed @3.12.1; Authenticode VERIFY + unaligned-image hash fix @3.12.2; **RSA verify authentication-bypass closed across 3.12.3-3.12.6** — v1.5 @3.12.3, bignum scratch @3.12.4/.5, the whole PSS workspace @3.12.6, which needed cyrius 6.5.14's tail-call fix to be expressible) |
 | `lib/yukti.cyr` | v5.8.65 (refold v6.5.4) | yukti 2.3.2 | Hardware enumeration |
-| `lib/sankoch.cyr` | v5.8.65 (refold v6.4.79) | sankoch 2.7.6 | Compression |
+| `lib/sankoch.cyr` | v5.8.65 (refold v6.4.79) | sankoch 2.7.7 | Compression |
 | `lib/niyama.cyr` | **v5.9.0** (refold v6.4.65) | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim; 6,689 lines vendored) |
 | `lib/mabda.cyr` | **v6.0.45** (refold v6.5.4) | mabda 4.0.8 | GPU/compute (AMD-native GA; array textures + cubemaps + BC arrays; samvada/chitra calls `#ifdef`-gated) |
 | `lib/bayan.cyr` | **v6.1.25** (refold v6.5.8) | bayan 1.4.1 | Data formats + big-int (json / toml / cyml / csv / base64 / **yaml** / bigint `u256` / u128; per-format sublibs @1.2.0; `bayan_json_v_obj_get_by_str` + the cstring/`Str` key contract spelled out @1.4.1). **Carve** out of stdlib: public fns renamed `bayan_*` + legacy aliases. Consumers of `ws`/`sigil`/`patra`/`tls` (which call carved fns) must `include "lib/bayan.cyr"`. |

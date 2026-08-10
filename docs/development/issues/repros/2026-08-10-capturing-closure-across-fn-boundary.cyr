@@ -1,0 +1,23 @@
+# Repro — a CAPTURING closure segfaults when passed through another function.
+# Filed with: docs/development/issues/hisab-capturing-closure-segv-across-fn-boundary.md
+# Discovered from hisab, 2026-08-10, on cycc 6.5.16.
+#
+# Build with [deps] stdlib = ["syscalls", "io", "alloc", "math"]. As written this
+# is case 3 and SIGSEGVs (139). The two controls each isolate one half and PASS:
+#
+#   control 1 - NON-capturing across the boundary:  var f = |x| 41 + x;   -> 42
+#   control 2 - capturing, called INLINE:           return callptr(f, 1); -> 42
+#
+# Swapping callptr for fncall1 in `takes` crashes identically, which points at the
+# shared dispatch rather than at callptr.
+
+fn takes(f): i64 { return callptr(f, 1); }
+
+fn main(): i64 {
+    var base = 41;
+    var f = |x| base + x;     # captures `base` by value
+    return takes(f);          # <- SIGSEGV here; expected 42
+}
+
+var r = main();
+sys_exit_group(r);

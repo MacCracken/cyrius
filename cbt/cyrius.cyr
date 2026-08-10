@@ -292,7 +292,24 @@ fn main(): i64 {
     # includes and never needed the auto-prepend — a textbook "found by
     # ports" gap. `capacity` needs it for the same reason (see
     # _materialize_source). CHANGELOG [6.4.73].
-    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1) {
+    # v6.5.17: `distlib` joins the gate — the FOURTH instance, filed by hisab.
+    # v6.5.14 repaired distlib's bundle self-check (it had compiled to /dev/null
+    # and never once run). The repaired check compiles the bundle through a
+    # generated entry and downgrades undefined FNS with --allow-undef. But a
+    # bundle ships no stdlib GLOBALS either, and an undefined variable is a
+    # PARSE-TIME abort (src/frontend/parse_expr.cyr:589) that --allow-undef
+    # cannot reach — it only gates the fixup stage. So the check needed the
+    # manifest auto-prepend, and distlib was never in this list, so
+    # _dep_includes was empty and no prepend was possible. Any bundle reading a
+    # stdlib `var` or enum constant was reported as a DEFECTIVE BUNDLE and
+    # distlib exited 1 — hisab's `F64_ONE` (the ordinary way to write 1.0 in a
+    # language with no float literals), 44 of 69 [lib] repos on the filer s
+    # machine. The bundle was correct; the check asked the wrong question.
+    # ⚠ Setting _skip_deps = 0 is NOT sufficient on its own — _materialize_source
+    # (cbt/build.cyr:378) also requires _dep_includes to be non-empty, and only
+    # _auto_deps() fills it. Both halves are needed; a first attempt at this fix
+    # set the flag alone and changed nothing.
+    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1) {
         var dr = _auto_deps();
         if (dr > 0) { return dr; }
         # v6.4.63: name any version skew between ./lib/ and the version-pinned

@@ -3124,6 +3124,19 @@ fn cmd_distlib(profile): i64 {
     # non-zero result printed the reassuring "unresolved symbols (expected)"
     # note and distlib still exited 0 — so a bundle that did not parse shipped
     # looking identical to a good one.
+    # v6.5.17: compile the entry WITH the manifest's [deps] stdlib in scope.
+    # 6.5.14's repaired check compiled the bundle ALONE and downgraded undefined
+    # FNS with --allow-undef. But a bundle ships no stdlib GLOBALS either, and an
+    # undefined variable is a PARSE-TIME abort (parse_expr.cyr:589) that
+    # --allow-undef cannot reach — it only gates the fixup stage. So any bundle
+    # reading a stdlib `var` or enum constant was reported as defective and
+    # distlib exited 1: hisab's `F64_ONE` (the ordinary way to write 1.0 in a
+    # language with no float literals), and 44 of 69 [lib] repos on the filer's
+    # machine. The bundle was correct; the check was asking the wrong question.
+    # Prepending deps asks the RIGHT one — "does this compile the way a consumer
+    # will use it" — and makes the check STRONGER, not weaker.
+    var dl_saved_skip = _skip_deps;
+    _skip_deps = 0;
     var check_r = 0 - 1;
     var dl_wrote = 0;
     if (file_write_all(dl_entry, dl_src, strlen(dl_src)) >= 0) {
@@ -3133,6 +3146,7 @@ fn cmd_distlib(profile): i64 {
         _cc_allow_undef = 0;
         xunlink(dl_entry);
     }
+    _skip_deps = dl_saved_skip;
     sys_unlink(dl_out);
     if (dl_wrote == 0) {
         _err_ctx("distlib: cannot write the bundle self-check entry", dl_entry);

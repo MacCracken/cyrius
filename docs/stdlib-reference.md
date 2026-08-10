@@ -1638,7 +1638,7 @@ own canonical API reference in its own repo; this table is a pointer. See
 | `lib/sigil.cyr` | sigil 3.12.6 | Security / x509 / Ed25519 — powers native TLS + release/UEFI signing |
 | `lib/sakshi.cyr` | sakshi 2.4.10 | Tracing / structured logging |
 | `lib/patra.cyr` | patra 1.12.12 | Storage |
-| `lib/sankoch.cyr` | sankoch 2.7.6 | Compression |
+| `lib/sankoch.cyr` | sankoch 2.7.7 | Compression |
 | `lib/yukti.cyr` | yukti 2.3.2 | Hardware enumeration |
 | `lib/vani.cyr` | vani 1.1.3 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/niyama.cyr` | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
