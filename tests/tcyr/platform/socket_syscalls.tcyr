@@ -23,7 +23,19 @@ include "lib/assert.cyr"
 # AF_UNIX = 1, SOCK_DGRAM = 2, SOCK_CLOEXEC = 0o2000000 = 524288
 var AF_UNIX = 1;
 var SOCK_DGRAM = 2;
+# v6.5.16: SOCK_CLOEXEC is a LINUX-ONLY type flag. BSD/Darwin's socket(2) validates the
+# type argument strictly and rejects any flag bits in it — live-probed on ach, the
+# CLOEXEC form returns -43 (EPROTONOSUPPORT) while plain SOCK_DGRAM returns a good fd.
+# This is the same class as the MAP_ANONYMOUS divergence: a VALUE the kernel interprets
+# directly, which ESYSXLAT cannot help with because it renumbers syscalls, never
+# arguments. Set it to 0 on macOS so the round-trip below tests the socket call itself;
+# the CLOEXEC bit is not what this test is about.
+#ifdef CYRIUS_TARGET_MACOS
+var SOCK_CLOEXEC = 0;
+#endif
+#ifndef CYRIUS_TARGET_MACOS
 var SOCK_CLOEXEC = 524288;
+#endif
 
 fn main(): i64 {
     alloc_init();

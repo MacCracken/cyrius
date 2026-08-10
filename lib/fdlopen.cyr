@@ -841,6 +841,16 @@ fn _fdlopen_verify_trusted(path): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     return 0;   # Linux-host-only (raw lstat mis-dispatches on agnos)
     #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    # v6.5.16: same reason as the agnos arm, and now load-bearing. The field offsets
+    # below (st_mode @24, st_uid @28) are x86_64-LINUX; Darwin's legacy struct stat puts
+    # mode @8 and uid @12. Until this release raw `syscall(6)` was unrouted on x86-macOS
+    # so the call SIGSYS'd; now that lstat 6→190 is routed the call would SUCCEED and this
+    # trust check would read the wrong words — a security predicate silently misreading
+    # mode/uid is strictly worse than one that fails. fdlopen is an ELF/Linux facility, so
+    # decline rather than port the offsets.
+    return 0;
+    #endif
     var st[144];
     var r = syscall(6, path, &st);              # lstat(path, &st)
     if (r < 0) { return 0; }

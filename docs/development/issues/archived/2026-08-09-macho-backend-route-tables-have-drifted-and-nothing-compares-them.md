@@ -1,7 +1,53 @@
 # The two Mach-O backends' syscall route tables have drifted, and NOTHING compares them
 
 **Filed:** 2026-08-09 (v6.5.16 cycle), from the v6.5.15 post-mortem
-**Status:** 🟡 OPEN
+**Status:** ✅ **RESOLVED in v6.5.16** — archived 2026-08-09, same cycle it was filed.
+
+## Resolution
+
+`tests/gates/platform/macho_route_parity.sh` (registered in `programs/checks/main.cyr`, so
+`check.sh` runs it — static, no Mac required), **plus the drift it surfaced, fixed**. All
+five acceptance criteria are met; the gate is keyed on **capability**, not source number,
+exactly as this file argued.
+
+**Three axes.** (1) every `SYS_*` a wrapper issues is routed on its OWN backend — this is
+what catches a facility unreachable on both; (2) no capability is routed on exactly one
+Mach-O backend; (3) `_macho_arm_routes` mirrors the `ESYSXLAT` sources exactly. Both parse
+traps this file warned about are handled: the parser anchors on `fn ESYSXLAT` rather than
+the `_TARGET_MACHO == 2` string (which also appears in `ESYSCALL`), decodes `cmp x8,#N`
+with the full `0xF1000000 | (N<<10) | (8<<5) | 0x1F` mask, and carries a **corpus floor**
+so a parse that silently returns 0 routes fails loudly instead of passing vacuously.
+The allow-list carries a one-line reason per entry (criterion 4).
+
+**Mutation-proven** (criterion 3): deleting `_msx(S, 91, 0x200007C)` — the real v6.5.15
+fchmod bug — turns axes 1 and 2 RED and the gate exits **1**; restoring it exits **0**.
+
+**The drift it found, all fixed rather than filed:**
+
+| gap | backend | fix |
+|---|---|---|
+| whole credential family unrouted | both | see the companion issue |
+| `sys_fstat` — peer issues 80, unrouted ⇒ dead on ecb | arm64 | `80 → fstat64 **339**`, NOT `fstat 189`: this peer uses the **stat64** layout (MODE=4, SIZE=96) and 189 fills the legacy one. Live-probed both on ecb — 189 would have returned rc=0 with every field silently wrong |
+| whole at-family unrouted ⇒ SIGSYS on ach | x86 | `257→463 258→475 262→**469** 263→472 264→465 265→471 268→467`. ⚠ `262→469` (legacy `fstatat`), NOT the arm64 target 470 (`fstatat64`) — mirror-image of the fstat trap, live-probed on ach |
+| `sys_fcntl` — peer issues 25, only raw x86 72 routed ⇒ every async O_NONBLOCK/CLOEXEC setup dead | arm64 | `25 → 92` |
+| `sys_fdatasync` absent from the x86 peer ⇒ `platform/fsync` failed to **compile** on ach | x86 | added the wrapper + `75 → 187` on both |
+| `lstat`, `dup`, `ioctl`, `kill`, `sync`, `gettid`, `recvfrom`, `recvmsg`, `setuid`, `setgid`, `setsid`, `setgroups` | both | routed on both backends |
+| `file_lock` issued raw `syscall(92)` labelled "BSD flock" — Darwin 92 is **fcntl**, flock is 131, and 92 was unrouted ⇒ SIGSYS on ach | both | `lib/io.cyr` now issues the x86 number 73; `73 → 131` on both |
+| 7 socket numbers live in `ESYSXLAT` but unregistered in `_macho_arm_routes` ⇒ spurious "not routed" warning on working code | arm64 | registered (axis 3 now blocks this) |
+
+Route counts: **aarch64 67 → 86, x86 51 → 76.**
+
+**Also fixed, found by the same sweep:** `programs/cyrius-lsp.cyr` called raw `syscall(80)`
+for chdir on an "LSP is x86-only" assumption — 80 is the aarch64 peer's `SYS_FSTAT`, so the
+new fstat route would have silently turned that chdir into an fstat. Now `sys_chdir()`.
+And `lib/fdlopen.cyr`'s trust check reads x86-Linux `struct stat` offsets from a raw
+`lstat`; once `6 → 190` was routed the call would have SUCCEEDED and read the wrong words,
+so its macOS arm now declines — a security predicate misreading uid/mode is worse than one
+that fails.
+
+**Verified:** ach full corpus **252 pass / 12 fail → 264 / 0**; ecb crossos 41/41.
+Every Darwin number used came from the SDK table on ecb and was live-probed; nothing was
+taken from memory or a header grep alone.
 **Severity:** Medium — each missing route is a **SIGSYS kill or a wrong-syscall** on one Mac
 architecture only, invisible on the other and invisible on Linux.
 **Affects:** `src/backend/x86/emit.cyr` (`EMACHO_SYSXLAT`, ach / Intel-Mac) and

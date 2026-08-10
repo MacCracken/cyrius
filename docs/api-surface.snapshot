@@ -4183,6 +4183,7 @@ syscalls_macos::sys_access/2
 syscalls_macos::sys_chmod/2
 syscalls_macos::sys_dup2/2
 syscalls_macos::sys_fchownat/5
+syscalls_macos::sys_fdatasync/1
 syscalls_macos::sys_fork/0
 syscalls_macos::sys_fsync/1
 syscalls_macos::sys_link/2

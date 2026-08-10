@@ -1,0 +1,98 @@
+# uid_identity.tcyr — the credential family (sys_getuid / sys_geteuid / sys_getgid /
+# sys_getegid) and is_root(), on real hardware. v6.5.16.
+#
+# ⭐ WHY THIS TEST IS SHAPED THE WAY IT IS. The whole family was BROKEN on both Mach-O
+# targets — SIGSYS (rc 140) on Intel-Mac, -9 on Apple Silicon — and no test caught it,
+# because lib/sys.cyr's is_root() hardcoded `return 0` on macOS. The only consumer that
+# would have exercised the wrapper short-circuited past it, so the wrapper was never
+# called and the test in the area passed vacuously.
+#
+# So a `uid >= 0` assertion is NOT enough: a wrapper that returns a CONSTANT satisfies it.
+# The load-bearing assertion below cross-checks sys_getuid() against the owner uid the
+# kernel reports for a file this test just created — an INDEPENDENT path into the kernel.
+# A stubbed/constant/garbage getuid cannot agree with it except by coincidence, and the
+# host's real uid is never hardcoded here, so the test is portable across ecb/ach/pi/cass
+# and Linux without knowing `id -u` in advance.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/sys.cyr"
+
+fn main(): i64 {
+    # ⚠ WINDOWS: the PE peer (lib/syscalls_windows.cyr) defines NO credential syscalls at
+    # all — there is no getuid/geteuid on Win32, identity comes from OpenProcessToken. Without
+    # this guard the file does not COMPILE for PE and the release gate's cass leg goes RED,
+    # which is exactly what happened on the first run of this test. Say the skip out loud
+    # rather than reporting a silent pass.
+    var _armed = 0;
+#ifdef CYRIUS_TARGET_WIN
+    println("SKIP: windows peer defines no getuid/geteuid (identity is OpenProcessToken)");
+    _armed = 1;
+#endif
+#ifndef CYRIUS_TARGET_WIN
+    alloc_init();
+
+    test_group("credential wrappers return a self-consistent identity");
+    var uid = sys_getuid();
+    var euid = sys_geteuid();
+    var gid = sys_getgid();
+    var egid = sys_getegid();
+    # Reaching these four lines at all is already the x86-macOS half of the gate: an
+    # unrouted number there reaches Darwin without the 0x2000000 class prefix and the
+    # process is KILLED with SIGSYS, so a missing route means no output and rc 140.
+    assert_eq(uid < 0, 0, "sys_getuid is not an errno/garbage negative");
+    assert_eq(euid < 0, 0, "sys_geteuid is not an errno/garbage negative");
+    assert_eq(gid < 0, 0, "sys_getgid is not an errno/garbage negative");
+    assert_eq(egid < 0, 0, "sys_getegid is not an errno/garbage negative");
+    # The arm64 half: an unrouted number there runs with a stale x16 and returns whatever
+    # the neighbouring call left behind (-9 EBADF was the observed value on ecb), which the
+    # negativity checks above catch, and a wild positive, which the range check below does.
+    assert_eq(uid < 65536, 1, "sys_getuid is in the plausible uid range");
+    assert_eq(gid < 65536, 1, "sys_getgid is in the plausible gid range");
+    # Nothing in the harness is setuid/setgid, so real and effective must agree.
+    assert_eq(uid, euid, "real uid == effective uid (nothing here is setuid)");
+    assert_eq(gid, egid, "real gid == effective gid (nothing here is setgid)");
+
+    test_group("sys_getuid agrees with the kernel's own idea of who owns our files");
+    # ⭐ THE ASSERTION A CONSTANT CANNOT PASS. Create a file and ask the kernel — through
+    # fstat, a completely separate syscall — who owns it. A newly created file is owned by
+    # the caller's effective uid on every platform under test, so st_uid MUST equal
+    # sys_geteuid(). If the credential route is missing, mis-numbered, or stubbed to a
+    # constant, the two values disagree and this fails on that host specifically.
+    # (STAT_UID is the peer's own offset — 12 on x86-macOS's legacy struct, 16 on the
+    # aarch64 peer's stat64, 28 on x86-Linux — so this also exercises that sys_fstat
+    # itself is routed to the variant matching the peer's layout. On macOS-arm64 it was
+    # not: SYS_FSTAT=80 was unrouted until this release.)
+    var fd = sys_open("_uid_identity_probe.bin", 577, 384);   # O_CREAT|O_WRONLY|O_TRUNC, 0600
+    assert_eq(fd < 0, 0, "created the ownership probe file");
+    sys_write(fd, "x", 1);
+    var st[160];
+    var sr = sys_fstat(fd, &st);
+    assert_eq(sr < 0, 0, "sys_fstat on the probe file succeeded");
+    var owner = load32(&st + STAT_UID);
+    assert_eq(owner, euid, "the file we just created is owned by sys_geteuid()");
+    sys_close(fd);
+    sys_unlink("_uid_identity_probe.bin");
+
+    test_group("is_root() is derived from the euid, not hardcoded");
+    # lib/sys.cyr's macOS arm was `return 0` — correct-looking on an unprivileged box and
+    # wrong in substance, since it never consulted the kernel. Now every non-Windows arm
+    # computes it, so is_root() must equal the euid==0 predicate on every host.
+    var expect_root = 0;
+    if (euid == 0) { expect_root = 1; }
+    assert_eq(is_root(), expect_root, "is_root() matches (sys_geteuid() == 0)");
+
+    _armed = 1;
+#endif
+
+    # ⚠ ANTI-VACUOUS GUARD. Every assertion above sits inside a #ifdef, so on a target none
+    # of them match this compiles to an empty main and exits 0 — a PASS for a test that
+    # checked nothing. Fail loudly instead, naming the cause.
+    assert_eq(_armed, 1, "a platform arm ran (0 = this test compiled into nothing)");
+    var r = assert_summary();
+    return r;
+}

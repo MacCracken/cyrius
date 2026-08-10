@@ -916,6 +916,34 @@ fn PARSE_FACTOR(S): i64 {
                 }
             }
         }
+        # v6.5.16: the x86-macOS twin of the 228 reroute above. Darwin has NO
+        # clock_gettime syscall on either architecture, so this cannot be an
+        # EMACHO_SYSXLAT row; arm64 binds libSystem through __got, and the x86
+        # Mach-O writer has no __got, so it composes ns from gettimeofday instead.
+        # Same contract either way: ns in the return register. See EMACHO_CLOCK_X86
+        # (src/backend/x86/emit.cyr). Without this, syscall(228) fell through to
+        # ESCPOPS + an unrouted number and SIGSYS'd — five of ach's twelve failures.
+        if (_TARGET_MACHO == 1) {
+            if (sc_num == 228) {
+                if (argc == 3) {
+                    EMACHO_CLOCK_X86(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            # v6.5.16: nanosleep(35) → poll(NULL, 0, ms). Darwin has no nanosleep
+            # either; the PE fork has rerouted this to Sleep() since v6.1.17 and
+            # x86-macOS never got the twin, so the number reached Darwin unclassed
+            # and SIGSYS'd (lib/sakshi.cyr's TSC calibration window — sakshi_full
+            # on ach). See EMACHO_NANOSLEEP_X86.
+            if (sc_num == 35) {
+                if (argc == 3) {
+                    EMACHO_NANOSLEEP_X86(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+        }
         if (_TARGET_PE == 1) {
             if (sc_num == 60) {
                 if (argc == 2) {

@@ -1900,7 +1900,16 @@ if (sys_access("/usr/bin/openssl", 0) == 0) {
     assert_eq(load64(s77a + TLS_CTX_OFF_VERSION), TLS_VERSION_1_2, "negotiated TLS 1.2 (AES)");
     assert_eq(ara, TLS_OK, "TLS 1.2 ECDHE-ECDSA-AES256-GCM vs OpenSSL s_client -> TLS_OK");
     assert_eq(tls_native_get_state(s77a), TLS_STATE_CONNECTED, "server CONNECTED vs OpenSSL (AES)");
+    # v6.5.16: EMS is a property of what the PEER offers, not of our stack. macOS's
+    # /usr/bin/openssl is **LibreSSL** (3.3.6 on ach), which does not implement
+    # extended_master_secret (RFC 7627) and therefore never sends the extension — so this
+    # asserts the interop peer's feature set, not ours. The handshake assertions above
+    # (TLS_OK + CONNECTED + negotiated version) still run on macOS and are the ones that
+    # test cyrius. Verified on ach: `openssl version` -> LibreSSL 3.3.6, `s_client -help`
+    # has no EMS flag at all, and both handshakes complete with TLS_OK.
+    #ifndef CYRIUS_TARGET_MACOS
     assert_eq(load64(s77a + TLS_CTX_OFF_USE_EMS), 1, "EMS negotiated vs OpenSSL (AES)");
+    #endif
     sys_close(cfa); sys_close(lfa);
     var sta[4]; sys_waitpid(pa, &sta, 0);
 
@@ -1934,7 +1943,10 @@ if (sys_access("/usr/bin/openssl", 0) == 0) {
     var arb = tls_native_accept(s77b, cfb);
     assert_eq(arb, TLS_OK, "TLS 1.2 ECDHE-ECDSA-CHACHA20 vs OpenSSL s_client -> TLS_OK");
     assert_eq(tls_native_get_state(s77b), TLS_STATE_CONNECTED, "server CONNECTED vs OpenSSL (ChaCha)");
+    # v6.5.16: skipped on macOS — LibreSSL peer, no extended_master_secret. See the AES arm.
+    #ifndef CYRIUS_TARGET_MACOS
     assert_eq(load64(s77b + TLS_CTX_OFF_USE_EMS), 1, "EMS negotiated vs OpenSSL (ChaCha)");
+    #endif
     sys_close(cfb); sys_close(lfb);
     var stb[4]; sys_waitpid(pb, &stb, 0);
 } else {

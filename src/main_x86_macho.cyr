@@ -380,7 +380,7 @@ while (topgo == 1) {
                                         }
                                         else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
                                             else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
-                                                else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }   # v6.2.27: +128 #naked (consume-and-ignore)
+                                                else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { if (PEEKT(S) == 133) { _naked_pending = 1; } STI(S, GTI(S) + 1); }   # v6.5.16: ARM #naked (was consume-and-ignore since v6.2.27 — a SILENT MISCOMPILE)
                             else { if (_IS_FN_KW(S) == 1) {
                                     var _blk_async = 0;   # v6.3.11 (G): consume `async` (cursor→`fn`) before the DCE name-read
                                     if (PEEKT(S) == 134) { _blk_async = 1; STI(S, GTI(S) + 1); }
@@ -468,6 +468,16 @@ while (topgo == 1) {
                                         var stub_fi = FINDFN(S, stub_noff);
                                         if (stub_fi < 0) { stub_fi = REGFN(S, stub_noff); }
                                         if (_regalloc_pending == 1) { _regalloc_pending = 0; }
+                                        # v6.5.16: mirrors main.cyr's v6.2.27 clear. MANDATORY now that
+                                        # the pass-2 dispatch above ARMS _naked_pending on this fork: a
+                                        # DCE-stubbed #naked fn would otherwise leak the flag into the
+                                        # next LIVE fn, which is then emitted frameless and faults on its
+                                        # rbp-relative arg stores against rbp=0. Verified on ach — with
+                                        # the arm but without this clear, a #naked fn that DCE removes
+                                        # made the following `fn main` inherit the naked contract and the
+                                        # compiler rejected its `return` ("return is not allowed in a
+                                        # #naked fn"). Arming without clearing is worse than neither.
+                                        if (_naked_pending == 1) { _naked_pending = 0; }
                                         S64(_fnt_offsets + stub_fi * 8, GCP(S));
                                         EB(S, 0x31); EB(S, 0xC0); EB(S, 0xC3);
                                         var sdep = 0;

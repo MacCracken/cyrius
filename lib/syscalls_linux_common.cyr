@@ -539,6 +539,35 @@ fn sys_listen(fd, backlog): i64 {
 
 # Accept a connection on a listening socket; `flags` accepts
 # SOCK_CLOEXEC | SOCK_NONBLOCK to set them atomically.
+# v6.5.16: Darwin has NO accept4 — it is absent from the syscall table on both macOS
+# hosts, so the number reached the kernel unclassed and SIGSYS-killed the process (this
+# is what took out tests/tcyr/crypto/tls_native_scaffold on ach: its OpenSSL interop
+# branch calls sys_accept4(lfd,0,0,0)). Compose it from plain accept + fcntl, which is
+# what accept4 is a fusion of and what Darwin actually offers. The bare `43` is the
+# sanctioned "x86 number + an ESYSXLAT entry" form (CLAUDE.md): both Mach-O backends
+# already route 43 -> BSD accept 30, so one spelling serves both.
+# ⚠ The FLAG VALUES are Linux's and must be translated, not passed through — ESYSXLAT
+# renumbers syscalls, never arguments. Darwin's O_NONBLOCK is 4 (Linux 2048), and CLOEXEC
+# is an fd-level F_SETFD bit rather than a status flag at all.
+# The atomicity accept4 buys is lost; there is no Darwin primitive that keeps it.
+# ⚠ ONE definition with the arms INSIDE the body, not two under #ifdef/#ifndef: the
+# api-surface tool scans SOURCE TEXT rather than post-preprocessor output, so a pair of
+# guarded definitions registers the same fn TWICE in docs/api-surface.snapshot. Same
+# in-body shape lib/io.cyr's file_lock uses.
 fn sys_accept4(fd, srcaddr, srcaddrlen, flags): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var afd = syscall(43, fd, srcaddr, srcaddrlen);
+    if (afd < 0) { return afd; }
+    if ((flags & 2048) != 0) {                          # Linux SOCK_NONBLOCK
+        var fl = syscall(SYS_FCNTL, afd, 3, 0);         # F_GETFL
+        syscall(SYS_FCNTL, afd, 4, fl | 4);             # F_SETFL |= Darwin O_NONBLOCK (4)
+    }
+    if ((flags & 524288) != 0) {                        # Linux SOCK_CLOEXEC
+        syscall(SYS_FCNTL, afd, 2, 1);                  # F_SETFD FD_CLOEXEC
+    }
+    return afd;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
     return syscall(SYS_ACCEPT4, fd, srcaddr, srcaddrlen, flags);
+    #endif
 }

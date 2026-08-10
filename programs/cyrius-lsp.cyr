@@ -942,8 +942,14 @@ fn _compile_via_wrapper(filepath, project_root): i64 {
         if (nfdo >= 0) { sys_dup2(nfdo, 1); sys_close(nfdo); }
         sys_dup2(pipe_write, 2);
         sys_close(pipe_write);
-        # SYS_CHDIR = 80 on x86_64 Linux; LSP is x86-only currently.
-        syscall(80, project_root);
+        # v6.5.16: was a raw `syscall(80, ...)` on the "LSP is x86-only" assumption.
+        # A raw x86 number is not portable AND it collides: 80 is the aarch64 peer's
+        # SYS_FSTAT, so once the Mach-O arm branch routes 80→fstat64 this call would
+        # have silently become an fstat on a path pointer instead of a chdir. The
+        # wrapper renumbers per peer (x86-Linux 80, arm-macho alias 1049→12,
+        # x86-macho 80→12) and is correct on every target. See the macho route
+        # parity gate, tests/gates/platform/macho_route_parity.sh.
+        sys_chdir(project_root);
         var argv[40];   # N BYTES per CLAUDE.md buffer contract: 5 ptrs = 40 B
         store64(&argv, _cyrius_path);
         store64(&argv + 8, "check");

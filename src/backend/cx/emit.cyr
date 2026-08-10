@@ -1488,6 +1488,8 @@ fn EINITSRW_PE(S): i64 { return 0; }
 fn ELOCALFREE_PE(S): i64 { return 0; }
 fn ELSEEK_PE(S): i64 { return 0; }
 fn EMACHO_CLOCK_ARM(S): i64 { return 0; }
+fn EMACHO_CLOCK_X86(S): i64 { return 0; }      # v6.5.16 — see the aarch64 stub
+fn EMACHO_NANOSLEEP_X86(S): i64 { return 0; }  # v6.5.16 — see the aarch64 stub
 fn EMACHO_EXIT_ARM(S): i64 { return 0; }
 fn EMACHO_READ_ARM(S): i64 { return 0; }
 fn EMACHO_WRITE_ARM(S): i64 { return 0; }

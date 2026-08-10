@@ -403,7 +403,10 @@ fn sys_gettid(): i64 {
 # Root check
 # ================================================================
 # Linux: effective uid == 0. AGNOS: uid == 0 (no separate euid concept —
-# capability gates, not euid perms). macOS/Windows: stubbed false.
+# capability gates, not euid perms). Windows: stubbed false (no getuid;
+# identity is OpenProcessToken). macOS: REAL as of v6.5.16 — computes
+# sys_geteuid() == 0 (was hardcoded 0, which made the whole credential
+# family untestable — see issues/archived/2026-08-09-getuid-geteuid-*).
 fn is_root(): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     if (sys_getuid() == 0) { return 1; }
@@ -414,6 +417,14 @@ fn is_root(): i64 {
     return 0;
     #endif
     #ifdef CYRIUS_TARGET_MACOS
+    # v6.5.16: was a hardcoded `return 0`. Darwin is a real POSIX system with a real
+    # euid, so there was never a reason to stub it — and the stub was actively harmful:
+    # it was the ONLY consumer of sys_geteuid on macOS, so short-circuiting it meant the
+    # wrapper was never called, and the fact that sys_geteuid was UNROUTED on both
+    # Mach-O backends (SIGSYS on Intel-Mac, -9 on Apple Silicon) stayed invisible while
+    # the test in the area passed vacuously. Both routes landed this release; this arm is
+    # now identical to the Linux one. See tests/tcyr/crossos/uid_identity.tcyr.
+    if (sys_geteuid() == 0) { return 1; }
     return 0;
     #endif
     #ifdef CYRIUS_TARGET_WIN

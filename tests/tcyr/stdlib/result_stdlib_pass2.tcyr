@@ -78,11 +78,27 @@ assert_eq(load64(sm_null + 8), DynlibNotFound, "payload = DynlibNotFound");
 # Used to drive a self-lookup that's guaranteed Ok.
 var my_uid = sys_getuid();
 
-test_group("pwd_getpwuid_r — Ok for caller's own uid");
+# v6.5.16: which uid is guaranteed to be RESOLVABLE differs by platform, and this is a
+# Result/`?`-plumbing test, not a passwd-database test. `pwd_getpwuid_r` reads
+# /etc/passwd, and on macOS regular accounts are NOT in that file — they live in
+# OpenDirectory, so /etc/passwd holds only system entries (live-checked on ach: `:501:`
+# appears 0 times, while `root:*:0:0:` is present). uid 0 is in the local passwd file on
+# every platform under test, and the suite already relies on that for the gid-0 group
+# lookup below. So resolve uid 0 on macOS and the caller's own uid elsewhere.
+# `my_uid` is still read above, so sys_getuid stays exercised on every host — this
+# release routed it on both Mach-O backends and it must not go untested again.
+#ifdef CYRIUS_TARGET_MACOS
+var lookup_uid = 0;
+#endif
+#ifndef CYRIUS_TARGET_MACOS
+var lookup_uid = my_uid;
+#endif
+
+test_group("pwd_getpwuid_r — Ok for a uid present in the local passwd database");
 var pw1[56];
 var sb1[1024];
-var pw_self = pwd_getpwuid_r(my_uid, &pw1, &sb1, 1024);
-assert_eq(is_ok(pw_self), 1, "self uid is Ok");
+var pw_self = pwd_getpwuid_r(lookup_uid, &pw1, &sb1, 1024);
+assert_eq(is_ok(pw_self), 1, "a resolvable uid is Ok");
 
 test_group("pwd_getpwuid_r — Err(PwdNotFound) on bogus uid");
 var pw2[56];
@@ -163,9 +179,9 @@ fn _self_uid_via_chain(uid, pwbuf, sbuf, sbufsz) {
 test_group("? chain — pwd_getpwuid_r + accessor");
 var pw_q[56];
 var sb_q[1024];
-var chain_ok = _self_uid_via_chain(my_uid, &pw_q, &sb_q, 1024);
-assert_eq(is_ok(chain_ok), 1, "chain on self uid is Ok");
-assert_eq(load64(chain_ok + 8), my_uid, "chain returns own uid");
+var chain_ok = _self_uid_via_chain(lookup_uid, &pw_q, &sb_q, 1024);
+assert_eq(is_ok(chain_ok), 1, "chain on a resolvable uid is Ok");
+assert_eq(load64(chain_ok + 8), lookup_uid, "chain returns the uid it looked up");
 
 var chain_err = _self_uid_via_chain(2147483647, &pw_q, &sb_q, 1024);
 assert_eq(is_err_result(chain_err), 1, "chain on bogus uid is Err");

@@ -8,6 +8,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.5.16] — 2026-08-09
 
+### Verification
+
+**Release gate GREEN, all 5 steps** (`EXIT=0`): self-host fixpoint byte-identical
+(**1,146,200 B**) · seed-derive OK · check.sh **166 / 0** · `SELFHOST_OK` +
+`crossos LIBTEST_OK` on **ecb / ach / cass / pi**, real hardware · bench **654 ms**.
+
+| full corpus | before | after |
+|---|--:|--:|
+| **ecb** (macOS-arm64) | 259 / 5 | **264 / 1** |
+| **ach** (Intel-Mac) | 252 / 12 | **264 / 1** |
+
+The two Macs match for the first time. `platform/fdlopen` is the sole remaining failure on
+each, and its SIGSEGV is fixed — it runs 25/7 rather than crashing; the 7 residuals are the
+`dl_setjmp`/`dl_longjmp` assertions, genuinely stubbed off-Linux.
+
+⚠ **cycc grew 1,142,104 → 1,146,200 B and that is expected**: `EMACHO_SYSXLAT` and `ESYSXLAT`
+compile INTO cycc, so adding 44 routes moves its code. Byte-identity with the previous release
+is NOT the invariant — the **fixpoint** is, and it holds.
+
+⚠ **The gate went RED three times before this, all on integration rather than the work**: the
+new `uid_identity.tcyr` did not compile for PE (cass 40/1) and needed a `CYRIUS_TARGET_WIN`
+guard; `build/cycc` was left stale because the rebuild was verified but never installed; and
+the `is_root()` doc-comment fix pushed `lib/sys.cyr:406` past the 120-char lint limit. Recorded
+because each was invisible from the change itself.
+
+⚠ **Four test files were modified and two of them NARROW macOS coverage** —
+`tls_native_freestanding`, `tls_native_scaffold` (both `#ifndef CYRIUS_TARGET_MACOS`),
+`socket_syscalls`, `result_stdlib_pass2`. That is the shape of editing a repro to fit a fix, so
+it was checked specifically: all four were already failing at baseline on both Macs, and each
+rationale is hardware-true — `/usr/bin/openssl` on both Macs is **LibreSSL 3.3.6** with zero EMS
+references in `s_client -help`; Darwin returns `EPROTONOSUPPORT` for
+`socket(AF_UNIX, SOCK_DGRAM|SOCK_CLOEXEC)` while plain `SOCK_DGRAM` succeeds; and uid 501 is
+absent from `/etc/passwd` on both (macOS keeps accounts in Open Directory). Legitimate, but it
+belongs in the record rather than only in a verifier's report.
+
 `sys_uname` / `sys_sysinfo` implemented on macOS via sysctl — **`platform/sys.tcyr` 2/9 → 11/11
 on BOTH Mach-O targets**, which was the last item deliberately left open at 6.5.15.
 

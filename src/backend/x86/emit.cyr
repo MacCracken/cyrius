@@ -936,6 +936,64 @@ fn EMACHO_SYSXLAT(S): i64 {
     # ecb (rc 0, tv_sec i64 @ +0 matching libc time(0)).
     _msx32(S, 1202, 0x20000CA); # sysctl       1202 (private alias) → BSD 202
     _msx32(S, 1116, 0x2000074); # gettimeofday 1116 (private alias) → BSD 116
+    # ── v6.5.16: the credential family (the x86 fork of the arm64 rows landed in the
+    # same release). Unrouted here since forever, so every sys_getuid/geteuid/getgid/
+    # getegid on Intel-Mac reached Darwin unclassed and died with SIGSYS (rc 140). It
+    # stayed invisible because lib/sys.cyr's is_root() hardcoded `return 0` on macOS,
+    # so the only consumer never called the wrapper and the one test in the area passed
+    # vacuously. Darwin numbers live-probed on ach (raw syscall with the 0x2000000
+    # prefix → 501/501/20/20, matching id -u / id -g; the same numbers unprefixed all
+    # SIGSYS, which is the standing proof the class prefix is mandatory).
+    # ⚠ getegid is 43 and getgid is 47 — NOT sequential. A guessed value would be wrong.
+    _msx(S, 102, 0x2000018);  # getuid  102 → BSD 24
+    _msx(S, 107, 0x2000019);  # geteuid 107 → BSD 25
+    _msx(S, 104, 0x200002F);  # getgid  104 → BSD 47
+    _msx(S, 108, 0x200002B);  # getegid 108 → BSD 43
+    # ── v6.5.16: the at-family. syscalls_linux_common.cyr issues SYS_OPENAT/MKDIRAT/
+    # NEWFSTATAT/UNLINKAT/RENAMEAT/LINKAT/FCHMODAT, which this peer sets to the x86-Linux
+    # numbers 257/258/262/263/264/265/268 — NONE routed, so sys_fstatat / sys_unlinkat /
+    # sys_renameat / sys_linkat / sys_openat / sys_mkdirat / sys_fchmodat all SIGSYS'd on
+    # every Intel-Mac (this is what killed tests/tcyr/platform/syscalls_at_family on its
+    # first statement, before any output). The arm64 peer routes its own spellings of the
+    # same calls, which is the asymmetry the parity gate now blocks.
+    # ⚠⚠ newfstatat targets **fstatat (469)**, NOT fstatat64 (470) — the number the arm64
+    # branch uses. The two macOS peers carry DIFFERENT struct stat layouts and both are
+    # correct: this peer is legacy (STAT_MODE=8, STAT_SIZE=72, syscalls_macos.cyr:253) and
+    # the aarch64 peer is stat64 (MODE=4, SIZE=96). Live-probed on ach against /etc/hosts:
+    # 469 → mode@8=0100644 + size@72=400 (legacy ✓), 470 → mode@4 + size@96 (stat64 ✗).
+    # Copying the arm64 target here would have returned rc=0 with every field silently
+    # wrong — a half-broken stat family no existing test would catch.
+    _msx(S, 257, 0x20001CF);  # openat     257 → 463
+    _msx(S, 258, 0x20001DB);  # mkdirat    258 → 475
+    _msx(S, 262, 0x20001D5);  # newfstatat 262 → fstatat 469 (legacy struct — NOT 470)
+    _msx(S, 263, 0x20001D8);  # unlinkat   263 → 472
+    _msx(S, 264, 0x20001D1);  # renameat   264 → 465
+    _msx(S, 265, 0x20001D7);  # linkat     265 → 471
+    _msx(S, 268, 0x20001D3);  # fchmodat   268 → 467
+    # v6.5.16: lstat. This peer's SYS_LSTAT is 6; Darwin's lstat is **190** (legacy
+    # struct), not the stat64 spelling 340 — same layout argument as newfstatat above,
+    # live-probed on ach (190 → mode@8=0100644, size@72=400).
+    _msx(S, 6, 0x20000BE);    # lstat 6 → 190
+    # v6.5.16: the remaining unrouted-but-Darwin-reachable sweep. Each number is the
+    # x86-Linux value this peer already declares; each target was read off the SDK
+    # syscall.h on ecb AND cross-checked on ach. All pure renumbers (arg layouts match).
+    _msx(S, 75,  0x20000BB);  # fdatasync 75  → 187
+    _msx(S, 32,  0x2000029);  # dup       32  → 41
+    _msx(S, 16,  0x2000036);  # ioctl     16  → 54
+    _msx(S, 62,  0x2000025);  # kill      62  → 37
+    _msx(S, 162, 0x2000024);  # sync      162 → 36
+    _msx(S, 186, 0x2000174);  # gettid    186 → thread_selfid 372
+    _msx(S, 45,  0x200001D);  # recvfrom  45  → 29
+    _msx(S, 47,  0x200001B);  # recvmsg   47  → 27
+    _msx(S, 105, 0x2000017);  # setuid    105 → 23
+    _msx(S, 106, 0x20000B5);  # setgid    106 → 181
+    _msx(S, 112, 0x2000093);  # setsid    112 → 147
+    _msx(S, 116, 0x2000050);  # setgroups 116 → 80
+    # v6.5.16: flock — see the aarch64 twin. lib/io.cyr's macOS arm issued a raw
+    # `syscall(92)` labelled "BSD flock", but Darwin 92 is fcntl and flock is 131; the
+    # unrouted 92 reached Darwin unprefixed and SIGSYS'd. io.cyr now issues the x86-Linux
+    # flock number 73 on macOS so a single source serves both Mach-O backends.
+    _msx(S, 73, 0x2000083);   # flock 73 → 131
     return 0;
 }
 
@@ -964,6 +1022,106 @@ fn EMACHO_READ_ARM(S): i64 {
 # _TARGET_MACHO == 2 branch in parse_expr.cyr is arm64-only). Must
 # link to keep shared parse.cyr arch-portable.
 fn EMACHO_CLOCK_ARM(S): i64 {
+    return 0;
+}
+
+# v6.5.16 — x86-macOS `syscall(228, clock_id, &ts)` → ns, composed from gettimeofday.
+#
+# WHY A REROUTE AND NOT AN EMACHO_SYSXLAT ROW: **Darwin has no clock_gettime syscall
+# at all.** It is absent from the macOS SDK's syscall.h on both hosts (the only clock
+# entries in the whole table are gettimeofday 116 / settimeofday 122 / utimes 138), so
+# there is no number to renumber 228 *to*. The arm64 backend solves this with a __got
+# bind to libSystem `_clock_gettime_nsec_np` (EMACHO_CLOCK_ARM), but that machinery —
+# LC_LOAD_DYLIB + dyld bind opcodes + indirect symtab — lives entirely in
+# EMITMACHO_ARM64; the x86 Mach-O writer (EMITMACHO_EXEC) emits a static LC_UNIXTHREAD
+# binary with no dylib and no __got at all, so there is nothing to bind through.
+# That is why syscall(228) has been dead on this target ("that arch is HELD",
+# lib/chrono.cyr:27) and why chrono / clock_monotonic / bench_elapsed / sakshi_full /
+# tls_native_realpeer — five of ach's twelve corpus failures — all died with SIGSYS.
+#
+# The composition below returns ns in rax, which is EXACTLY the contract the macOS arm
+# of lib/chrono.cyr already expects from the arm64 reroute (`return syscall(228, 6, &ts)`
+# — the ns come back in the return register, the buffer is a placeholder). So chrono.cyr,
+# bench.cyr, sakshi.cyr and sigil's cert-window clock all work unchanged, with no lib
+# edit and no cross-repo coordination.
+#
+# ⚠ HONEST LIMITATION: gettimeofday is the REALTIME clock, so on Intel-Mac only,
+# clock_now_ns() is wall-clock-backed rather than monotonic and can step under NTP.
+# Darwin exposes no monotonic clock through the syscall table (mach_absolute_time is a
+# commpage/libSystem routine, not a syscall), so this is the platform's ceiling short of
+# porting the whole dyld-bind machinery to the x86 writer. A working realtime-backed
+# clock is strictly better than SIGSYS, and this is the same trade v6.5.16 already made
+# for sys_sysinfo's uptime on both backends.
+#
+# Stack top-down on entry (argc==3): [arg2=&tv][arg1=clock_id][sc_num=228].
+# The 16-byte `var ts[16]` every caller passes is exactly Darwin's struct timeval
+# (i64 tv_sec @0, i32 tv_usec @8). Live-probed on ach: rdi=&tv, rsi=0, rax=0x2000074
+# → rc 0, tv_sec matching libc gettimeofday exactly, and the qword at +8 clean in its
+# high half — the 32-bit load below is correct regardless of the padding word.
+fn EMACHO_CLOCK_X86(S): i64 {
+    EB(S, 0x5F);                                          # pop rdi         (&tv)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x10);   # add rsp, 16     (drop clock_id + sc_num)
+    EB(S, 0x57);                                          # push rdi        (save &tv across the call)
+    EB(S, 0x31); EB(S, 0xF6);                             # xor esi, esi    (tzp = NULL)
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);                # mov rax, 0x2000074 (BSD gettimeofday,
+    EB(S, 0x74); EB(S, 0x00); EB(S, 0x00); EB(S, 0x02);   #   Unix class prefix NOT optional)
+    EB(S, 0x0F); EB(S, 0x05);                             # syscall
+    EB(S, 0x5F);                                          # pop rdi         (restore &tv)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x07);                # mov rax, [rdi]      tv_sec
+    EB(S, 0x48); EB(S, 0x69); EB(S, 0xC0);                # imul rax, rax, 1000000000
+    EB(S, 0x00); EB(S, 0xCA); EB(S, 0x9A); EB(S, 0x3B);
+    EB(S, 0x8B); EB(S, 0x4F); EB(S, 0x08);                # mov ecx, [rdi+8]    tv_usec (zero-extends)
+    EB(S, 0x48); EB(S, 0x69); EB(S, 0xC9);                # imul rcx, rcx, 1000
+    EB(S, 0xE8); EB(S, 0x03); EB(S, 0x00); EB(S, 0x00);
+    EB(S, 0x48); EB(S, 0x01); EB(S, 0xC8);                # add rax, rcx        → ns in rax
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
+# v6.5.16 — x86-macOS `syscall(35, &timespec, rem)` → poll(NULL, 0, ms).
+#
+# Darwin has no nanosleep syscall either (absent from the SDK table on both hosts), so
+# like clock_gettime this cannot be an EMACHO_SYSXLAT row. cyrius ALREADY promises this
+# reroute on the other targets — the PE backend maps nanosleep(35) to kernel32 Sleep, and
+# the aarch64 note next to _macho_arm_routes states outright that "portable sleeping goes
+# through lib/chrono.cyr sleep_ms (poll)". x86-macOS was the fork that never got it, so
+# `syscall(35, ...)` reached Darwin unclassed and SIGSYS'd — which is what killed
+# tests/tcyr/stdlib/sakshi_full on ach: lib/sakshi.cyr:272 sleeps 10 ms to calibrate the
+# TSC, and its comment explicitly relies on this reroute existing ("the number 35 MUST be
+# a literal … so the PE reroute (and the macOS reroute) fires").
+#
+# Rerouted to poll(NULL, 0, timeout_ms), which IS routed here (7 → BSD 230) and is the
+# same primitive lib/chrono.cyr's portable sleep_ms uses. Sub-millisecond resolution is
+# lost (poll's timeout is an int ms); every caller in-tree sleeps >= 1 ms, and a coarse
+# sleep is what the PE fork has always done via Sleep().
+#
+# ⚠ NOT a concern on aarch64-macOS, and the reason is worth recording: source 35 there is
+# already routed — to **unlinkat 472** (the aarch64 peer's SYS_UNLINKAT is 35). A raw
+# syscall(35, &ts, 0) on that target would silently attempt an unlink through a timespec
+# pointer rather than sleeping. sakshi's window is inside `#ifdef CYRIUS_ARCH_X86`
+# (aarch64 calibrates off CNTFRQ_EL0 with no syscall), so nothing reaches it today.
+#
+# Stack top-down (argc==3): [arg2=rem][arg1=&timespec][sc_num=35].
+fn EMACHO_NANOSLEEP_X86(S): i64 {
+    EB(S, 0x58);                                          # pop rax         (rem — ignored)
+    EB(S, 0x5F);                                          # pop rdi         (&timespec)
+    EB(S, 0x58);                                          # pop rax         (drop sc_num)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x47); EB(S, 0x08);   # mov rax, [rdi+8]   tv_nsec
+    EB(S, 0x31); EB(S, 0xD2);                             # xor edx, edx       (clear rdx for div)
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC1);                # mov rcx, 1000000
+    EB(S, 0x40); EB(S, 0x42); EB(S, 0x0F); EB(S, 0x00);
+    EB(S, 0x48); EB(S, 0xF7); EB(S, 0xF1);                # div rcx            rax = tv_nsec / 1e6 (ms)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x37);                # mov rsi, [rdi]     tv_sec
+    EB(S, 0x48); EB(S, 0x69); EB(S, 0xF6);                # imul rsi, rsi, 1000
+    EB(S, 0xE8); EB(S, 0x03); EB(S, 0x00); EB(S, 0x00);
+    EB(S, 0x48); EB(S, 0x01); EB(S, 0xF0);                # add rax, rsi       total ms
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);                # mov rdx, rax       poll timeout
+    EB(S, 0x31); EB(S, 0xFF);                             # xor edi, edi       fds = NULL
+    EB(S, 0x31); EB(S, 0xF6);                             # xor esi, esi       nfds = 0
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);                # mov rax, 0x20000E6 (BSD poll 230)
+    EB(S, 0xE6); EB(S, 0x00); EB(S, 0x00); EB(S, 0x02);
+    EB(S, 0x0F); EB(S, 0x05);                             # syscall
+    _flags_reflect_rax = 0;
     return 0;
 }
 

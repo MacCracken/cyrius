@@ -1,7 +1,42 @@
 # `sys_getuid` / `sys_geteuid` are broken on BOTH Mach-O targets, hidden by a hardcoded `is_root()`
 
 **Filed:** 2026-08-09 (v6.5.16 cycle)
-**Status:** 🟡 OPEN
+**Status:** ✅ **RESOLVED in v6.5.16** — archived 2026-08-09, same cycle it was filed.
+
+## Resolution
+
+Routed the whole credential family on **both** Mach-O backends, using only numbers read off
+the SDK `syscall.h` on ecb AND live-probed with a raw syscall on both hosts (501/501/20/20,
+matching `id -u` / `id -g`). ⚠ Darwin's numbers are not sequential — `getegid` is 43 and
+`getgid` is 47.
+
+- `src/backend/aarch64/emit.cyr` — `ESYSXLAT`'s `_TARGET_MACHO == 2` branch: `174→24`,
+  `175→25`, `176→47`, `177→43`, plus their `_macho_arm_routes` registration rows.
+  Every encoding came from `as -arch arm64` on ecb and was read back with `otool -t -X`;
+  the shipped `getpid 172→20` row was re-assembled as a control and matched the committed
+  bytes exactly.
+- `src/backend/x86/emit.cyr` — `EMACHO_SYSXLAT`: `_msx(S, 102, 0x2000018)`,
+  `(107, 0x2000019)`, `(104, 0x200002F)`, `(108, 0x200002B)`.
+- `lib/sys.cyr` — `is_root()`'s macOS arm now computes `sys_geteuid() == 0` instead of
+  returning a hardcoded 0. That hardcode was the whole reason the breakage was invisible.
+- `tests/tcyr/crossos/uid_identity.tcyr` — **new**, and deliberately not a `uid >= 0`
+  check, since a constant-returning wrapper satisfies that. It creates a file and compares
+  `sys_geteuid()` against the owner uid the kernel reports through `fstat` — an independent
+  path into the kernel — so a stubbed or garbage credential cannot agree with it. The host's
+  real uid is never hardcoded, so it is portable across ecb/ach/pi/cass and Linux.
+
+**Verified:** ecb crossos 41/41, ach crossos 41/41, both on real hardware.
+**Mutation-proven:** deleting the arm64 `174→24` row turns `uid_identity` RED on ecb
+specifically (12 pass / 0 fail → 10 / 2) while ach stays green.
+
+The sibling structural issue — nothing compared the two route tables — is also resolved in
+this release by `tests/gates/platform/macho_route_parity.sh`, which is what found the
+remaining drift (`sys_fstat` dead on ecb, the entire at-family dead on ach) beyond the
+credential family this file reported.
+
+The `_uts_field` 384-byte scratch note at the bottom of this file was NOT addressed and is
+not a deferral of this issue: it is a separate hardening idea with ample headroom today
+(104 B measured against a 384 B buffer) and no failure to reproduce.
 **Severity:** Medium — a privilege check that cannot read the uid. No consumer is currently
 wrong *because* `is_root()` doesn't call it, but that is a coincidence, not a design.
 **Affects:** `lib/sys.cyr` (`sys_getuid`, `sys_geteuid`, `is_root` ~line 416), both Mach-O

@@ -113,6 +113,7 @@ enum SysNr {
     SYS_LSTAT = 6;
     SYS_RENAME = 82;
     SYS_FSYNC = 74;         # v6.4.57 — x86 number; EMACHO_SYSXLAT maps 74→BSD 95
+    SYS_FDATASYNC = 75;     # v6.5.16 — x86 number; EMACHO_SYSXLAT maps 75→BSD 187
     SYS_LINK = 86;
     SYS_OPENAT = 257;
     SYS_MKDIRAT = 258;
@@ -414,6 +415,16 @@ fn sys_rename(oldpath, newpath): i64 {
 # EMACHO_SYSXLAT (backend/x86/emit.cyr) renumbers it to Darwin BSD fsync (95).
 fn sys_fsync(fd): i64 {
     return syscall(SYS_FSYNC, fd);
+}
+
+# v6.5.16 — flush file DATA only (not metadata). The x86_64-Linux and aarch64-Linux
+# peers have carried `sys_fdatasync` since v6.2.14; this peer never got it, so
+# tests/tcyr/platform/fsync.tcyr did not merely fail on Intel-Mac — it failed to
+# COMPILE ("refusing to emit binary with 1 reachable undefined function(s)"), which
+# is why it never showed up as a runtime SIGSYS like its siblings. Darwin HAS the
+# call: BSD 187, live-probed rc 0 on ach. EMACHO_SYSXLAT maps 75→187.
+fn sys_fdatasync(fd): i64 {
+    return syscall(SYS_FDATASYNC, fd);
 }
 
 # Read the target of a symbolic link into `buf` (cap `bufsize`).

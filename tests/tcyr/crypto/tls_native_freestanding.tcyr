@@ -115,7 +115,12 @@ var fs_key = hex_decode("302e020100300506032b657004220420ea5da8171db67e4e169e246
 test_group("TLS 1.3 freestanding handshake over hooks (no socket / no getrandom / no clock)");
 
 # shared loopback page (MAP_SHARED|MAP_ANONYMOUS, prot RW) — inherited by the fork.
-_shm = syscall(9, 0, 16 + 2 * LB_CAP, 3, 0x21, 0 - 1, 0);
+# v6.5.16: the flags word was the literal 0x21 = MAP_SHARED(1) | Linux MAP_ANONYMOUS(0x20).
+# Darwin's MAP_ANON is 0x1000, so on Intel-Mac 0x21 asked for a FILE mapping with fd -1 →
+# -9 EBADF, and the test then dereferenced -9 and died with SIGSEGV. Exactly the divergence
+# lib/mmap.cyr:57 documents (and the one v6.5.11 fixed for mmap_anon). Use the peer's own
+# MAP_* constants rather than a literal so this cannot drift per platform again.
+_shm = syscall(9, 0, 16 + 2 * LB_CAP, 3, MAP_SHARED | MAP_ANONYMOUS, 0 - 1, 0);
 assert(_shm > 65536, "mmap MAP_SHARED loopback region");
 assert_eq(tls_native_set_transport(&_lb_read, &_lb_write, &_lb_now), TLS_OK, "install in-memory transport (read/write/now hooks)");
 assert_eq(tls_native_set_entropy(&_lb_rand), TLS_OK, "install deterministic entropy hook");
