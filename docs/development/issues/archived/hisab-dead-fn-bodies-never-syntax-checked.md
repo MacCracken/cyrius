@@ -1,5 +1,20 @@
 # A syntax error inside an uncalled function is accepted by every gate — ✅ FIXED (compiler); lint still open
 
+> ⚠ **RE-MEASURED 2026-08-10 on 6.5.17 by the original reporter — PARTIALLY FIXED, not fully.**
+> `cyrius build` and `cyrius check --with-deps` now both reject the repro (exit 1), which is the
+> load-bearing half: a file that does not parse can no longer be built or shipped. But **`cyrius lint`
+> and `cyrius vet` still exit 0** on it, so the release note's "accepted by every gate" is not yet
+> fully discharged. `lint` is the sharper of the two — analysing code that never runs is much of what
+> a linter is for. Not reopening: if lint/vet deliberately skip a full parse, saying so closes this.
+>
+> | gate | 6.5.16 | 6.5.17 |
+> |---|---|---|
+> | `build` | exit 0 | **exit 1** ✅ |
+> | `check --with-deps` | exit 0 | **exit 1** ✅ |
+> | `lint` | exit 0 | exit 0 ❌ |
+> | `vet` | exit 0 | exit 0 ❌ |
+
+
 **Status:** ✅ **FIXED** (6.5.17) for `build` / `check`. ⚠ `cyrius lint` is NOT fixed —
 see the residual below.
 

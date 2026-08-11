@@ -6,6 +6,80 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.18] — 2026-08-10
+
+### Verification
+
+**Release gate GREEN, all 5 steps** (`EXIT=0`): self-host fixpoint byte-identical
+(**1,142,016 B**, unchanged — the .18 driver edits live in forks not compiled into x86_64-Linux
+cycc) · seed-derive OK · check.sh **169 / 0** · `SELFHOST_OK` + `crossos LIBTEST_OK` on
+**ecb / ach / cass / pi**, real hardware (43/43 each) · bench **647 ms**.
+
+**Full corpus 267 / 0 on Linux, ecb and ach** — zero residuals on every host for the first time.
+
+⚠ **A long-quoted baseline was wrong.** ecb's pre-fix full corpus was **265 passed / 1 failed of
+266**, not the 264/1 repeated across several releases — off by one. And `platform/fdlopen` goes
+32 assertions → 30 legitimately: the two `unreachable: dl_longjmp returned` assertions only
+*execute* when longjmp wrongly returns.
+
+⚠ **`setjmp` semantics diverge by ARCH, not OS**, found by an adversarial probe: a local written
+after `setjmp` and read after `longjmp` reverts to `0` on x86_64 (Linux and ach — it lived in a
+callee-saved register `longjmp` restores) but keeps its value on arm64. Both are legal C
+semantics; `lib/fdlopen.cyr` documented the FP-state gap and not this one.
+
+`platform/fdlopen` closed — **the last full-corpus failure on both Macs** — plus a formatter
+that was silently rewriting string literals, and the sigil 3.12.7 fold.
+
+### Fixed — dl_setjmp / dl_longjmp really work off-Linux (`platform/fdlopen` 25/7 → 30/0)
+
+The 7 residual assertions were stubbed `#ifndef CYRIUS_TARGET_LINUX` → `xor eax,eax; ret`. The
+guards are now cut **by ABI, not by OS** (`#ifndef CYRIUS_TARGET_WIN` for the real assembly, with
+explicit PE and cx stub arms), and `#naked` — which `src/main_aarch64_macho.cyr` and
+`src/main_win.cyr` had been **consuming and ignoring since v6.2.27** — is armed on both.
+
+**Full corpus is now 267 / 0 on Linux, ecb AND ach.** cass and pi unaffected (crossos 43/43 each).
+
+⚠ **The paired-clear instruction in the brief was STALE and was correctly refused.** v6.5.17
+(`cd50baa4`) deleted the only `_naked_pending = 0` when it removed the DCE body-skip arm, so no
+fork has one — including the v6.5.16 x86-macho fork the brief named as the model. Adding one
+would have been cargo-cult. The no-leak property was verified by **disassembly** instead: the
+naked fn emits no prologue while the very next fn keeps its `stp x29, x30`, on Linux, ecb, ach
+and cass.
+
+### Fixed — `cyrius fmt` corrupted multi-line string literals (agnosai, High)
+
+A continuation line was treated as ordinary code and given the enclosing statement's indentation,
+putting spaces **inside the string**. `in_string` is now carried across lines and all four
+mutating steps are gated on it.
+
+⚠ **The filing under-reported this three ways**, all found by measurement: cyrius has no
+line-splice rule at all, so **raw newlines** continue literals too, not just a trailing
+backslash; fmt **deleted** as well as inserted; and it desynced the brace ledger. It was
+rewriting **1,239 lines of this repo's own `src/main.cyr`** — now 98, all ordinary drift, with
+the 1 GiB error literal intact. A gate built only from the filed shape would have missed
+two-thirds of the bug.
+
+### Changed — sigil 3.12.7 folded
+
+`distlib --check` verified current **before** folding (the 3.12.6 fold shipped stale sub-profiles
+because only the main bundle was regenerated). Upstream suite 65/0; agnos parity 11/12.
+
+### Added — two gates, and one of them was vacuous on arrival
+
+`tests/tcyr/crossos/setjmp_naked.tcyr` and `tests/gates/toolchain/cyrfmt_string_continuation.sh`.
+
+⭐ **Both hit the vacuity trap, and both were caught — one by its author, one by review.** The
+crossos test passed with the ecb arming reverted, because a *framed* `dl_setjmp` still receives
+`buf` in x0 and still records a real return address; every semantic assertion held. The actual
+breakage is a never-popped prologue, so it now asserts two `dl_setjmp` calls from one frame
+record the **same** caller sp — equal when armed, 32 bytes apart when not.
+
+And axis 7 of the cyrfmt gate invoked `cyrfmt <file> --check`, but cyrfmt tests `argv(1)` for the
+flag, so check mode never engaged: it formatted to stdout and exited 0 against **any** formatter,
+`cat` included. It passed in the *baseline* tree while advertising the filing's sharpest symptom.
+Argument order corrected; the axis is now mutation-proven (old rc=1, new rc=0).
+
+
 ## [6.5.17] — 2026-08-10
 
 ### Verification

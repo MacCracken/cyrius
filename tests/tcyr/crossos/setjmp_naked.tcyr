@@ -1,0 +1,121 @@
+# Cross-host gate: #naked codegen + dl_setjmp / dl_longjmp (v6.5.18).
+#
+# WHY THIS IS IN crossos/ AND NOT platform/. The release gate's cross-OS leg runs
+# THIS DIRECTORY on real ecb / ach / cass / pi. tests/tcyr/platform/fdlopen.tcyr
+# is never executed off-host, so `#naked` — the attribute this whole feature
+# rests on — was silently CONSUMED-AND-IGNORED on three of the seven driver
+# forks for nine minors. Ignored `#naked` is not inert: the fn gets a full frame,
+# and its hand-written `ret` then pops a stack local instead of the return
+# address. Measured before the fix: arm64-macOS returned the wrong value and a
+# bounded call loop SIGSEGV'd; PE returned 5 where 42 was correct. Both exited
+# quietly. That is the exact shape of the macOS rot this directory exists for.
+#
+# The stub arms are ASSERTED, not skipped. A `#ifdef CYRIUS_TARGET_WIN` that
+# prints SKIP and returns proves nothing about the platform it skipped, and a
+# test that can only pass is worth less than no test. Windows keeps the stub
+# because Win64 is a genuinely different ABI (arg 1 is rcx not rdi, callee-saved
+# adds rdi/rsi/xmm6-15, 32-byte shadow space) — so the SysV encoding in
+# lib/fdlopen.cyr would read the wrong register for `buf`. What IS asserted
+# there is the documented stub contract, including that #naked is honoured.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/mmap.cyr"
+include "lib/fnptr.cyr"
+include "lib/dynlib.cyr"
+include "lib/fdlopen.cyr"
+
+alloc_init();
+
+# Anti-vacuous guard. Exactly one platform arm below must compile in and RUN.
+# If the preprocessor eats both (a mis-spelled target macro, a stray #endif),
+# every assertion vanishes and the file would otherwise exit 0 with a perfect
+# score — the empty-corpus failure mode this suite has hit before.
+var _armed = 0;
+# Set only if dl_longjmp wrongly RETURNS on a target where it must branch.
+var _fell_through = 0;
+
+test_group("#naked + dl_setjmp / dl_longjmp (cross-host)");
+
+var buf = alloc(128);
+assert(buf != 0, "jmp_buf allocated");
+var zi = 0;
+while (zi < 128) { store8(buf + zi, 0); zi = zi + 1; }
+
+#ifdef CYRIUS_TARGET_WIN
+# ---- Windows / PE: the documented STUB contract -------------------------
+# dl_setjmp returns 0 and writes NOTHING; dl_longjmp returns 0 NORMALLY.
+# The two load64 assertions are what distinguish a stub from a real setjmp,
+# so this arm cannot be satisfied by the working implementation either — it
+# is a contract test in both directions, not a rubber stamp.
+_armed = 1;
+var w_r = dl_setjmp(buf);
+assert_eq(w_r, 0, "PE stub: dl_setjmp returns 0");
+assert_eq(load64(buf + 56), 0, "PE stub: return-address slot untouched");
+assert_eq(load64(buf + 48), 0, "PE stub: caller-sp slot untouched");
+var w_l = dl_longjmp(buf, 42);
+assert_eq(w_l, 0, "PE stub: dl_longjmp returns 0 rather than branching");
+# #naked IS armed on PE as of v6.5.18. If it were still ignored, the framed
+# body's `ret` would pop a local and control would not reach here at all —
+# so simply arriving with the counters intact is the codegen assertion.
+assert_eq(_fell_through, 0, "PE stub: control flow intact after the stub calls");
+#endif
+
+#ifndef CYRIUS_TARGET_WIN
+# ---- Linux + macOS (x86_64 SysV and aarch64 AAPCS64): the REAL thing -----
+# Both Macs ran the stub until v6.5.18. This arm is what turns that red.
+_armed = 1;
+var d_r = dl_setjmp(buf);
+assert_eq(d_r, 0, "dl_setjmp direct call returns 0");
+assert(load64(buf + 56) != 0, "dl_setjmp saved a non-zero return address (+56)");
+assert(load64(buf + 48) != 0, "dl_setjmp saved a non-zero caller sp (+48)");
+
+# ⭐ THE #naked ASSERTION. Everything above passes even when `#naked` is
+# IGNORED and the fn is emitted with a frame: x0 still holds `buf` after the
+# prologue, and x30/rip still hold the real return address, so the saved values
+# look right and a couple of round-trips still work. Reverting the arming in
+# src/main_aarch64_macho.cyr was measured GREEN against those assertions alone —
+# the gate was vacuous exactly where it mattered most.
+# What a framed body DOES break is the stack: the prologue pushes a frame that
+# the hand-written `ret` never pops, so EVERY call permanently leaks it. Two
+# dl_setjmp calls from the SAME frame must therefore record the SAME caller sp.
+# Measured on ecb: equal when armed; 32 bytes apart (16 for the fp/lr pair + 16
+# of frame) when ignored. Deterministic — it needs no crash and no repetition.
+var sp_a = alloc(128);
+var sp_b = alloc(128);
+var si = 0;
+while (si < 128) { store8(sp_a + si, 0); store8(sp_b + si, 0); si = si + 1; }
+var sj_a = dl_setjmp(sp_a);
+var sj_b = dl_setjmp(sp_b);
+assert_eq(load64(sp_a + 48), load64(sp_b + 48), "#naked honoured: two dl_setjmp calls in one frame record the SAME caller sp");
+
+# Round trip: longjmp(42) must re-enter setjmp with 42, exactly once.
+var rt_count = 0;
+var rt_val = dl_setjmp(buf);
+rt_count = rt_count + 1;
+if (rt_count == 1) {
+    dl_longjmp(buf, 42);
+    _fell_through = 1;
+}
+assert_eq(_fell_through, 0, "dl_longjmp branched instead of returning");
+assert_eq(rt_val, 42, "dl_longjmp(buf, 42) -> setjmp returns 42");
+assert_eq(rt_count, 2, "loop re-entered exactly once via longjmp");
+
+# longjmp(0) must surface as 1 (POSIX).
+var z_count = 0;
+var z_val = dl_setjmp(buf);
+z_count = z_count + 1;
+if (z_count == 1) {
+    dl_longjmp(buf, 0);
+    _fell_through = 1;
+}
+assert_eq(_fell_through, 0, "dl_longjmp(0) branched instead of returning");
+assert_eq(z_val, 1, "dl_longjmp(buf, 0) -> setjmp returns 1 (POSIX)");
+#endif
+
+assert_eq(_armed, 1, "anti-vacuous: exactly one platform arm compiled in and ran");
+
+var r = assert_summary();

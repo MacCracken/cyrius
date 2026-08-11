@@ -1,6 +1,29 @@
 # `cyrius fmt` reindents INSIDE a multi-line string literal, changing what the program does
 
-**Status:** 🔴 OPEN — filed from a consumer (agnosai), not fixed here.
+**Status:** ✅ RESOLVED in v6.5.18 — `programs/cyrfmt.cyr` now carries `in_string`
+across physical lines and gates all four mutating steps (indent, leading strip,
+trailing trim, blank collapse) on that state. Gated by
+`tests/gates/toolchain/cyrfmt_string_continuation.sh`, registered in
+`programs/checks/main.cyr`.
+
+> **The filing under-reported the blast radius, in three ways found while fixing it.**
+> 1. **It is not only the trailing backslash.** cyrius has no backslash-newline splice
+>    rule at all (`src/frontend/lex.cyr:1796` is a catch-all escape store, `:1797` stores
+>    a raw newline verbatim), so a literal spans lines with a bare newline and no
+>    backslash too, and `\\` at EOL continues as well. The exposed construct is *any*
+>    string literal containing a newline, however spelled.
+> 2. **It deletes as well as inserts.** Trailing whitespace inside a literal was trimmed,
+>    a whitespace-only interior line was collapsed to empty, and a continuation indented
+>    deeper than `depth*4` LOST bytes. An insertion-only fix leaves those broken.
+> 3. **It desynced the brace ledger.** The closing quote of a continuation line was read
+>    as an *opening* quote, so the depth counter never recovered and every LATER line in
+>    the file was re-indented. This repo's own `src/main.cyr` carries the raw-newline
+>    shape at line 777 and `cyrfmt` rewrote **2478 lines** of it; the same in all six
+>    `src/main*.cyr` driver forks. Post-fix that is 196 lines of ordinary drift, and the
+>    error string is byte-identical.
+>
+> Differential check: old vs new `cyrfmt` over 599 repo sources disagree on exactly those
+> 6 files and nothing else.
 **Discovered:** 2026-08-09, v6.5.16, porting `agnosai/src/definitions/loader.cyr` and
 its YAML test fixtures.
 **Severity:** High — `fmt` is expected to be behaviour-preserving, and this is a silent

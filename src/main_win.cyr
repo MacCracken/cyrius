@@ -745,6 +745,14 @@ while (topgo == 1) {
                             # registers. #deprecated (124) consumes its optional ("msg").
                             else { if (PEEKT(S) == 109 || PEEKT(S) == 122 || PEEKT(S) == 124 || PEEKT(S) == 125 || PEEKT(S) == 126 || PEEKT(S) == 127 || PEEKT(S) == 133) {
                                     if (PEEKT(S) == 109) { _regalloc_pending = 1; }
+                                    # v6.5.18: ARM #naked on PE too. Consume-and-ignore emitted a
+                                    # FRAMED body for a naked fn, so the fn's raw `ret` popped a
+                                    # local instead of the return address — a silent wrong answer
+                                    # (measured on cass: probe returned 5, not 42). Same defect and
+                                    # same one-line shape as main_x86_macho.cyr (v6.5.16) and
+                                    # main_aarch64_macho.cyr. No paired clear needed — see the note
+                                    # there; PARSE_FN_DEF consumes the flag for the next fn.
+                                    if (PEEKT(S) == 133) { _naked_pending = 1; }
                                     if (PEEKT(S) == 124) {
                                         STI(S, GTI(S) + 1);
                                         if (PEEKT(S) == 10) { STI(S, GTI(S) + 1); if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); } if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); } }

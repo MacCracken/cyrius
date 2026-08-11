@@ -60,6 +60,20 @@ fn emit_spaces(n): i64 {
 fn format_file(buf, total): i64 {
     var depth = 0;
     var pos = 0;
+    # v6.5.18: literal state is CARRIED ACROSS physical lines. A cyrius string
+    # literal may span lines two ways — a trailing `\` (which KEEPS the newline;
+    # it is NOT a C-style splice) and a bare raw newline. The bytes on such a
+    # continuation line are program DATA, not code, so re-indenting them,
+    # stripping their leading/trailing spaces, or collapsing them when blank are
+    # all silent data changes. These two used to be re-initialised to 0 on EVERY
+    # physical line, so the state was thrown away at each newline and the
+    # continuation line was formatted as ordinary code (agnosai YAML fixture:
+    # four injected spaces re-nested the document). See CHANGELOG [6.5.18].
+    # `in_char` is deliberately NOT carried: a char literal cannot span a line
+    # (cycc rejects a multi-byte char literal), so carrying it could only let a
+    # stray apostrophe run away over the rest of the file.
+    var in_string = 0;
+    var in_char = 0;
 
     while (pos < total) {
         # Find end of line
@@ -69,20 +83,88 @@ fn format_file(buf, total): i64 {
             eol += 1;
         }
 
-        # Trim trailing whitespace
+        # Does THIS physical line BEGIN inside a string literal? Captured before
+        # the scan below advances the state.
+        var starts_in_str = in_string;
+        in_char = 0;
+
+        # Count all braces on this line — but skip any inside `#`
+        # comments, `"..."` string literals, and `'...'` char
+        # literals so doc lines that quote inline asm (`# asm
+        # { mov cr3, rax; }`), string literals, and char
+        # literals like `'}'` don't fool the indenter.
+        # v5.7.22 fix added `#`-comment + `"..."`-string skip;
+        # v5.10.6 added `'...'`-char skip — repro was
+        # `str_builder_putc(sb, '}'); var x = 1;` where the
+        # `}` inside the char literal decremented the brace
+        # depth and the next statement lost its indent.
+        # v6.5.18: this scan now runs BEFORE the trim/strip, over the RAW line
+        # (pos..eol), and is SEEDED with the carried in_string instead of 0.
+        # Order matters: the trailing trim has to know whether the line ENDS
+        # inside a literal, which only the scan can tell it. Scanning raw is
+        # equivalent to the old start..end scan for ordinary code, because
+        # leading and trailing whitespace contain none of `#`, `"`, `'`, {, }.
+        var opens = 0;
+        var closes = 0;
+        var bi = pos;
+        while (bi < eol) {
+            var bc = load8(buf + bi);
+            if (in_string == 1) {
+                if (bc == 92) {
+                    # Backslash escape: skip next byte (covers \" \\).
+                    bi += 1;
+                }
+                elif (bc == 34) {
+                    in_string = 0;
+                }
+            }
+            elif (in_char == 1) {
+                if (bc == 92) {
+                    # Backslash escape: skip next byte (covers \' \\
+                    # \n \t \xNN \u{...} prefix-byte; the rest of
+                    # the escape body is handled by the same
+                    # byte-at-a-time loop, which won't see a `}` /
+                    # `{` / `'` / `"` inside the escape body
+                    # because those chars are not part of any
+                    # cyrius escape grammar).
+                    bi += 1;
+                }
+                elif (bc == 39) {
+                    in_char = 0;
+                }
+            }
+            else {
+                if (bc == 35) { break; }            # `#` — comment to end of line
+                if (bc == 34) { in_string = 1; }     # opening `"` of a string literal
+                elif (bc == 39) { in_char = 1; }     # opening `'` of a char literal
+                elif (bc == 123) { opens += 1; }
+                elif (bc == 125) { closes += 1; }
+            }
+            bi += 1;
+        }
+        # ...and does it END inside one (making the NEXT line interior)?
+        var ends_in_str = in_string;
+
+        # Trim trailing whitespace — UNLESS the line ends inside a literal, where
+        # those spaces are string content and deleting them changes the program.
         var end = eol;
-        while (end > pos) {
-            var tc = load8(buf + end - 1);
-            if (tc != 32 && tc != 9 && tc != 13) { break; }
-            end -= 1;
+        if (ends_in_str == 0) {
+            while (end > pos) {
+                var tc = load8(buf + end - 1);
+                if (tc != 32 && tc != 9 && tc != 13) { break; }
+                end -= 1;
+            }
         }
 
-        # Skip leading whitespace
+        # Skip leading whitespace — UNLESS the line BEGINS inside a literal, for
+        # the same reason (this is the half the agnosai filing reported).
         var start = pos;
-        while (start < end) {
-            var sc = load8(buf + start);
-            if (sc != 32 && sc != 9) { break; }
-            start += 1;
+        if (starts_in_str == 0) {
+            while (start < end) {
+                var sc = load8(buf + start);
+                if (sc != 32 && sc != 9) { break; }
+                start += 1;
+            }
         }
 
         var content_len = end - start;
@@ -90,68 +172,23 @@ fn format_file(buf, total): i64 {
         if (content_len == 0) {
             emit("\n", 1);
         } else {
-            # Count all braces on this line — but skip any inside `#`
-            # comments, `"..."` string literals, and `'...'` char
-            # literals so doc lines that quote inline asm (`# asm
-            # { mov cr3, rax; }`), string literals, and char
-            # literals like `'}'` don't fool the indenter.
-            # v5.7.22 fix added `#`-comment + `"..."`-string skip;
-            # v5.10.6 added `'...'`-char skip — repro was
-            # `str_builder_putc(sb, '}'); var x = 1;` where the
-            # `}` inside the char literal decremented the brace
-            # depth and the next statement lost its indent.
-            var opens = 0;
-            var closes = 0;
-            var bi = start;
-            var in_string = 0;
-            var in_char = 0;
-            while (bi < end) {
-                var bc = load8(buf + bi);
-                if (in_string == 1) {
-                    if (bc == 92) {
-                        # Backslash escape: skip next byte (covers \" \\).
-                        bi += 1;
-                    }
-                    elif (bc == 34) {
-                        in_string = 0;
-                    }
-                }
-                elif (in_char == 1) {
-                    if (bc == 92) {
-                        # Backslash escape: skip next byte (covers \' \\
-                        # \n \t \xNN \u{...} prefix-byte; the rest of
-                        # the escape body is handled by the same
-                        # byte-at-a-time loop, which won't see a `}` /
-                        # `{` / `'` / `"` inside the escape body
-                        # because those chars are not part of any
-                        # cyrius escape grammar).
-                        bi += 1;
-                    }
-                    elif (bc == 39) {
-                        in_char = 0;
-                    }
-                }
-                else {
-                    if (bc == 35) { break; }            # `#` — comment to end of line
-                    if (bc == 34) { in_string = 1; }     # opening `"` of a string literal
-                    elif (bc == 39) { in_char = 1; }     # opening `'` of a char literal
-                    elif (bc == 123) { opens += 1; }
-                    elif (bc == 125) { closes += 1; }
-                }
-                bi += 1;
-            }
-
             # Indent BEFORE this line: decrement for leading closes
             var leading_close = 0;
-            if (load8(buf + start) == 125) { leading_close = 1; }
+            # v6.5.18: a `}` that is string INTERIOR must not move the depth.
+            if (starts_in_str == 0) {
+                if (load8(buf + start) == 125) { leading_close = 1; }
+            }
             # For this line's indent: subtract closes that come before opens
             # Simple rule: if line starts with }, dedent first
             if (leading_close == 1) {
                 if (depth > 0) { depth -= 1; }
             }
 
-            # Emit
-            emit_spaces(depth * 4);
+            # Emit. v6.5.18: NO indent is written in front of a line that begins
+            # inside a string literal — those leading bytes are the program's data.
+            if (starts_in_str == 0) {
+                emit_spaces(depth * 4);
+            }
             emit(buf + start, content_len);
             emit("\n", 1);
 
