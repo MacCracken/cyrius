@@ -171,11 +171,31 @@ fn cmd_test(source): i64 {
         sys_unlink(tmpbin);
         return 1;
     }
-    var exit_code = run_binary(tmpbin);
+    # v6.5.19: BOUNDED. A .tcyr that spins used to hang the whole suite with no
+    # deadline of any kind, and the only way out was to kill the runner — which
+    # orphaned the child to PID 1, where it kept burning a core indefinitely (19 of
+    # them were found during this release, and they turned a release-gate perf
+    # tripwire red). See `run_binary_timed` in cbt/build.cyr for both halves of the
+    # fix. Report the timeout BY NAME: a bare nonzero code here would read as an
+    # ordinary assertion failure and send the reader into the test's logic.
+    var exit_code = run_binary_timed(tmpbin, _run_timeout_ms());
     sys_unlink(tmpbin);
     if (exit_code == 0) {
         _pass = _pass + 1;
         return 0;
+    }
+    if (exit_code == _RUN_TIMEOUT_KILLED) {
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        sys_write(STDERR_FD, " (timed out after ", 18);
+        var tbuf[24];
+        var tlen = fmt_int_buf(_run_timeout_ms() / 1000, &tbuf);
+        sys_write(STDERR_FD, &tbuf, tlen);
+        # strlen, not a hand-counted literal: the first cut of this line counted 61
+        # for a 63-byte string (the em-dash is 3 bytes) and truncated its own hint
+        # mid-word. There is no reason to count bytes by hand when strlen is in scope.
+        var tmsg = "s — killed; set CYRIUS_TEST_TIMEOUT=<seconds>, 0 to disable)\n";
+        sys_write(STDERR_FD, tmsg, strlen(tmsg));
     }
     _fail = _fail + 1;
     return exit_code;
@@ -261,7 +281,7 @@ fn _fuzz_run_one(path, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
     var pad = 26 - pl;
     while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
     if (compile(path, tmpbin) == 0) {
-        var ec = run_binary(tmpbin);
+        var ec = run_binary_timed(tmpbin, _run_timeout_ms());
         sys_unlink(tmpbin);
         if (ec == 0) {
             println("PASS");
@@ -392,7 +412,7 @@ fn _bench_run_one(path): i64 {
         sys_unlink(tmpbin);
         return 1;
     }
-    var ec = run_binary(tmpbin);
+    var ec = run_binary_timed(tmpbin, _run_timeout_ms());
     sys_unlink(tmpbin);
     return ec;
 }
@@ -1218,7 +1238,180 @@ fn cmd_hooks(action): i64 {
     return r;
 }
 
+# ================================================================
+# lint — syntax pre-pass (v6.5.19)
+# ================================================================
+# THE FILED DEFECT (hisab, the residual half of the dead-fn-body filing).
+# `cyrius lint` reported `0 warnings`, exit 0, on a file `cyrius build` rejects with
+# `unexpected ';'`. `programs/cyrlint.cyr` is a LINE-BASED SCANNER — 929 lines of
+# `memeq` at raw byte offsets, one `brace_depth` counter, no token stream and no AST —
+# so "does this file parse?" is not a question it can ask. `0 warnings` was an honest
+# report about its own nine rules and a false one about the file.
+#
+# THE FORK, AND WHY (a). The filing named three options and left the choice open:
+#   (a) run a compiler syntax pre-pass  <- CHOSEN
+#   (b) give cyrlint a real front end
+#   (c) just reword the summary
+# (b) is a SECOND PARSER for one language, forever, in the repo whose thesis is one
+# toolchain: src/frontend/ is 17,703 lines carrying ~1,040 `E*(S, ...)` emitter call
+# sites and threads `S` (the compiler heap base) through every function — the parser IS
+# the emitter, so there is no parse-only slice to lift. This tree already has the
+# receipt for what a divergent copy costs: the v6.5.17 dead-fn-body bug was fork-
+# divergent across the 7 `main*` forks and shipped green for months. (c) leaves the
+# linter still unable to answer the question. (a) reuses the component that is already
+# correct and stays entirely inside cbt/.
+#
+# ⭐ THE TRAP, AND THE RULE THAT AVOIDS IT: **classify on the MESSAGE, never on the
+# exit code.** 38 of the 191 files `cyrius audit` lints in this very repo exit non-zero
+# standalone, 27 of them with `undefined variable 'X' (missing include or enum?)` —
+# emitted through the SAME `_err_head` as `unexpected ';'`, identical shape, identical
+# exit 1. Gating on the exit code would make lint REFUSE 20 % of the stdlib, which is
+# the "linter that refuses to lint" the filing explicitly warned against; a lint of ONE
+# file in isolation, with no manifest and no lib/, is the whole point of the verb.
+# So: `_skip_deps = 1` (never drag the dep graph into a lint), `--allow-undef`, and a
+# POSITIVE allow-list of syntax-class message prefixes.
+#
+# ⭐ THE ALLOW-LIST IS ONLY AS HONEST AS THE COMPILER'S MESSAGE CLASSES, AND AT 6.5.19
+# IT WAS NOT. This block used to claim the failure direction was the safe one —
+# "never a false accusation against a file that merely lacks context" — and cited
+# "0 false positives across all 191 files". **Both halves were an artefact of
+# measuring only IN-REPO.** Six struct-field sites in `src/frontend/parse_decl.cyr`
+# reported resolution failures through `ERR(S)`, the SYNTAX emitter, so
+# `total = total + e.size;` — with `Entry` declared in a SIBLING file, the ordinary
+# shape for any project whose manifest concatenates modules — came back
+# `unexpected ';'` and was condemned. In-repo exposure really is zero (cyrius' own
+# modules include their struct definitions), which is exactly why 191/191 looked
+# clean; the sweep that found it ran 472 files across NINE repos and hit 3, all in
+# stiva — the repo that filed this issue. Fixed at the ROOT (v6.5.19: `ERR_IDENT`
+# in src/common/util.cyr; those six sites now emit `no struct type in scope for
+# 'e'` / `unknown field 'x' on struct 'Y'`), NOT by weakening the predicate here —
+# the filed repro is literally `unexpected ';'`, so dropping that prefix would have
+# gutted the detection the issue asked for.
+# RE-MEASURED at 6.5.19: 0 refusals across all 472 files, 6/6 detection on broken
+# shapes. Gate axis 6 in tests/gates/frontend/lint_reports_unparseable.sh pins the
+# cross-file shape so the hole cannot reopen silently.
+#
+# COST: ~89 ms per lint against ~6 ms for cyrlint alone. It does NOT touch
+# `cyrius audit`: `audit_lint_walk` (lib/audit_walk.cyr) execs the cyrlint BINARY
+# directly and never routes through this function.
+
+fn _lint_pfx(p, n, s): i64 {
+    var sl = strlen(s);
+    if (n < sl) { return 0; }
+    return memeq(p, s, sl);
+}
+
+# The allow-list. Every entry is a message a SYNTAX error produces; nothing here can be
+# produced by name resolution, type checking or capacity. Grep `src/frontend/` for
+# `syscall(SYS_WRITE, 2, ": ` to see the full message table this is drawn from.
+fn _lint_msg_is_syntax(p, n): i64 {
+    if (_lint_pfx(p, n, "unexpected ") == 1) { return 1; }
+    if (_lint_pfx(p, n, "expected ") == 1) { return 1; }
+    if (_lint_pfx(p, n, "unterminated ") == 1) { return 1; }
+    if (_lint_pfx(p, n, "unknown char escape") == 1) { return 1; }
+    if (_lint_pfx(p, n, "non-ASCII byte ") == 1) { return 1; }
+    if (_lint_pfx(p, n, "multi-byte char literal") == 1) { return 1; }
+    if (_lint_pfx(p, n, "\\x escape") == 1) { return 1; }
+    if (_lint_pfx(p, n, "\\u escape") == 1) { return 1; }
+    if (_lint_pfx(p, n, "\\u{...}") == 1) { return 1; }
+    if (_lint_pfx(p, n, "nested @unsafe") == 1) { return 1; }
+    return 0;
+}
+
+# Does the captured stderr carry a syntax-class error? Diagnostics are
+# `error:<file>:<line>:<col>: <message>`; the location can never contain a COLON
+# FOLLOWED BY A SPACE (line and column are digits), so the first `": "` ends it — the
+# message itself may well contain more, e.g. `expected ';', got ...`.
+fn _lint_capture_has_syntax(buf, n): i64 {
+    var p = 0;
+    while (p < n) {
+        var ls = p;
+        while (p < n) { if (load8(buf + p) == 10) { break; } p = p + 1; }
+        var le = p;
+        if (p < n) { p = p + 1; }
+        if (le - ls > 6) {
+            if (memeq(buf + ls, "error:", 6) == 1) {
+                var q = ls + 6;
+                var mstart = 0;
+                while (q + 1 < le && mstart == 0) {
+                    if (load8(buf + q) == 58) { if (load8(buf + q + 1) == 32) { mstart = q + 2; } }
+                    q = q + 1;
+                }
+                if (mstart > 0) {
+                    if (_lint_msg_is_syntax(buf + mstart, le - mstart) == 1) { return 1; }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+# Forward the compiler's OWN diagnostic rather than inventing a new one: the `error:`
+# lines plus their indented source excerpt / caret / hint continuations.
+fn _lint_forward_diag(buf, n): i64 {
+    var p = 0;
+    while (p < n) {
+        var ls = p;
+        while (p < n) { if (load8(buf + p) == 10) { break; } p = p + 1; }
+        var le = p;
+        if (p < n) { p = p + 1; }
+        var ll = le - ls;
+        var emit = 0;
+        if (ll >= 6) { if (memeq(buf + ls, "error:", 6) == 1) { emit = 1; } }
+        if (ll >= 1) { if (load8(buf + ls) == 32) { emit = 1; } }
+        if (emit == 1) {
+            sys_write(STDERR_FD, buf + ls, ll);
+            sys_write(STDERR_FD, "\n", 1);
+        }
+    }
+    return 0;
+}
+
+# 0 = parses (or we could not tell) -> run the line checks exactly as before.
+# 1 = a syntax error was reported -> the caller must not pretend to have linted.
+fn _lint_syntax_prepass(file): i64 {
+    if (file_exists(file) == 0) { return 0; }        # let cyrlint report the missing file
+    var cc = current_cc();
+    if (cc == 0) { return 0; }                       # no compiler -> lint as before
+    if (file_exists(cc) == 0) { return 0; }
+    var errf = _cbt_tmpfile("lint_err");
+    var outf = _cbt_tmpfile("lint_out");
+    var sv_skip = _skip_deps;
+    var sv_undef = _cc_allow_undef;
+    var sv_syn = _cc_syntax_only;
+    _skip_deps = 1;          # ⭐ lint ONE file in isolation — never resolve the dep graph
+    _cc_allow_undef = 1;     # undefined FNS are expected with no stdlib in scope
+    # v6.5.19: undefined VARIABLES are expected too, and unlike undefined fns they
+    # were a PARSE-TIME abort that --allow-undef cannot reach. Without this the
+    # compiler stopped at the first missing include and never reached the file's
+    # syntax errors, so lint printed `0 warnings` on a file that does not parse —
+    # verbatim the filed defect. See _syntax_only (src/common/util.cyr).
+    _cc_syntax_only = 1;
+    _cc_stderr_to = errf;
+    var cr = compile(file, outf);
+    _cc_stderr_to = 0;
+    _cc_syntax_only = sv_syn;
+    _cc_allow_undef = sv_undef;
+    _skip_deps = sv_skip;
+    sys_unlink(outf);
+    if (cr == 0) { sys_unlink(errf); return 0; }
+    var buf = alloc(65536);
+    var n = file_read_all(errf, buf, 65535);
+    sys_unlink(errf);
+    if (n <= 0) { return 0; }                        # no capture (or none possible) -> lint
+    store8(buf + n, 0);
+    if (_lint_capture_has_syntax(buf, n) == 0) { return 0; }   # resolution error -> lint
+    _err_ctx("does not parse, so lint checks were NOT run", file);
+    _info("  cyrlint is a line-based scanner with no parser, so its \"0 warnings\" would");
+    _info("  describe its own rules rather than the file. The compiler reports:");
+    _lint_forward_diag(buf, n);
+    return 1;
+}
+
 fn cmd_lint(file, strict): i64 {
+    # v6.5.19: syntax pre-pass BEFORE the line checks. See the block above for why the
+    # verdict keys on the message class and not on the exit code.
+    if (_lint_syntax_prepass(file) != 0) { return 1; }
     var cyrlint = make_path(_tools_dir, "cyrlint");
     # --strict makes cyrlint exit 2 when warnings are present (default is
     # a conventional 0/1 rc — see programs/cyrlint.cyr). CHANGELOG [6.0.36].
@@ -1640,6 +1833,10 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     }
     var status_buf[8];
     sys_waitpid(pid, &status_buf, 0);
+    # v6.5.19: the second _materialize_source caller, same leak as compile()'s —
+    # the preprocessed temp was never removed. Same "we made it" test (the fn returns
+    # `source` itself when no prepend was needed).
+    if (cap_source != source) { sys_unlink(cap_source); }
     var cap_status = load32(&status_buf);
     var cap_failed = 1;
     if (WIFEXITED(cap_status) == 1) { if (WEXITSTATUS(cap_status) == 0) { cap_failed = 0; } }
@@ -1871,7 +2068,7 @@ fn cmd_soak(iters): i64 {
                 var tl = str_len(tpath);
                 var tmpbin = _cbt_tmpfile("soak_t");
                 if (compile(tn, tmpbin) == 0) {
-                    var ec = run_binary(tmpbin);
+                    var ec = run_binary_timed(tmpbin, _run_timeout_ms());
                     sys_unlink(tmpbin);
                     if (ec != 0) {
                         sys_write(STDOUT_FD, "FAIL: ", 6);
@@ -1946,7 +2143,7 @@ fn cmd_soak(iters): i64 {
                 var spad = 44 - snl;
                 while (spad > 0) { sys_write(STDOUT_FD, " ", 1); spad = spad - 1; }
                 if (compile(snd, stmpbin) == 0) {
-                    var sec = run_binary(stmpbin);
+                    var sec = run_binary_timed(stmpbin, _run_timeout_ms());
                     sys_unlink(stmpbin);
                     if (sec == 0) {
                         println("PASS");
@@ -2012,7 +2209,7 @@ fn cmd_smoke(): i64 {
                 var pad = 44 - nl;
                 while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
                 if (compile(nd, tmpbin) == 0) {
-                    var ec = run_binary(tmpbin);
+                    var ec = run_binary_timed(tmpbin, _run_timeout_ms());
                     sys_unlink(tmpbin);
                     if (ec == 0) {
                         println("PASS");
@@ -3204,7 +3401,16 @@ fn cmd_publish(): i64 {
             }
             if (has_modules == 1) {
                 _status("  distlib...");
-                cmd_distlib(0);
+                # v6.5.19: was a bare `cmd_distlib(0);`. distlib's return value is
+                # its bundle self-check verdict (commands.cyr, "the generated
+                # bundle does not compile"), and dropping it meant publish printed
+                # that error, then went on to `git tag` the release and exit 0.
+                # A defective bundle must not get tagged. CHANGELOG [6.5.19].
+                var pub_dr = cmd_distlib(0);
+                if (pub_dr != 0) {
+                    _err("publish: distlib failed — not tagging");
+                    return pub_dr;
+                }
             }
         }
     }

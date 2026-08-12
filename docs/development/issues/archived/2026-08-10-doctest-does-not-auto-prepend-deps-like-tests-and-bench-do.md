@@ -1,6 +1,21 @@
 # `cyrius doctest` auto-prepends nothing, where `tests` and `bench` prepend `[deps]`
 
-**Status:** 🔴 OPEN — filed from a consumer (agnosai), measured against v6.5.18.
+**Status:** ✅ **RESOLVED — v6.5.19.** `doctest` (plus `publish`, `package` and `lsp`) joined the
+`_auto_deps()` gate in `cbt/cyrius.cyr`, and the list is now bounded by `AUTO_DEPS_VERBS`
+markers that `tests/gates/toolchain/auto_deps_verb_gate.sh` parses. That gate is the actual
+fix: it derives every verb `main()` dispatches, computes which ones transitively reach
+`compile()` / `_materialize_source()` over the whole of `cbt/`, and FAILS on any that is
+missing — because this was the FIFTH instance of the same class and a doctest-only patch would
+have been the fifth of five. Auditing the full verb set found two more already live, one of
+them (`publish`) created by the v6.5.17 patch that added `distlib`: `cmd_publish` calls
+`cmd_distlib()` one call frame away. Exemptions are allow-listed with a reason each and are
+re-derived against live code so they cannot rot.
+Verified: `cyrius doctest lib/hashmap.cyr` 0 passed/1 failed exit 1 → **1 passed/0 failed exit
+0**, with `lib/hashmap.cyr` untouched; the filing's consumer repro likewise. Both side-questions
+answered below are confirmed: `cyrius audit` does NOT run doctests, and `doctest` still takes
+exactly one file. See CHANGELOG [Unreleased].
+
+**Status (as filed):** 🔴 OPEN — filed from a consumer (agnosai), measured against v6.5.18.
 **Severity:** Medium. Not a wrong answer — a usability cliff that makes the feature
 impractical on any project with dependencies, and it has already broken cyrius's own
 `lib/hashmap.cyr` doctest.

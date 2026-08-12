@@ -309,7 +309,37 @@ fn main(): i64 {
     # (cbt/build.cyr:378) also requires _dep_includes to be non-empty, and only
     # _auto_deps() fills it. Both halves are needed; a first attempt at this fix
     # set the flag alone and changed nothing.
-    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1) {
+    # v6.5.19: `doctest` (filed by agnosai) is the FIFTH instance, and auditing the
+    # WHOLE verb set for it found two more already live — `publish` and `package`.
+    # `publish` was created BY the v6.5.17 patch: cmd_publish calls cmd_distlib()
+    # one call frame away, so adding the `distlib` STRING left the identical defect
+    # (and the identical misleading "the generated bundle does not compile" text)
+    # reachable through a different verb. That is the whole lesson of five patches:
+    # **the requirement is a property of the CALL GRAPH, not of the verb string.**
+    # Adding one more name to this list is not what stops the sixth instance —
+    # tests/gates/toolchain/auto_deps_verb_gate.sh is. It enumerates every verb
+    # main() dispatches, computes which ones transitively reach compile() /
+    # _materialize_source() across all of cbt/, and FAILS if any of them is absent
+    # from the list below. Exemptions live in that gate's allow-list, one reason
+    # each — `pulsar` is the load-bearing one (auto-prepend makes it build a
+    # 434,360-byte-larger cycc that is NOT the self-host fixpoint binary).
+    #
+    # ⚠ THE LIST IS NOT A FREE ADD. `lsp` was added here earlier in this same
+    # release and taken straight back out: `cyrius lsp` compiles
+    # programs/cyrius-lsp.cyr, which self-declares its 11 includes and only exists
+    # inside this repo (the dispatcher hard-codes the path), so it never had the
+    # missing-prepend bug — and it INSTALLS what it builds into CYRIUS_HOME/bin.
+    # Gating it unioned the whole [deps].stdlib into a binary that already had
+    # everything it needed: 119,584 B -> 507,144 B (4.24x, 516 unreachable fns),
+    # measured at 6.5.19. That is precisely the `pulsar` condition, so `lsp` now
+    # sits in the gate's EXEMPT_LIST with that reason. A verb belongs on the line
+    # below when auto-prepend is REQUIRED for it to compile, not merely harmless.
+    # The BEGIN/END markers are the gate's parse anchors: keep the verbs between
+    # them and keep every OTHER streq(cmd, ...) a real dispatch site.
+    # CHANGELOG [6.5.19].
+    # AUTO_DEPS_VERBS BEGIN
+    if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1 || streq(cmd, "doctest") == 1 || streq(cmd, "publish") == 1 || streq(cmd, "package") == 1) {
+        # AUTO_DEPS_VERBS END
         var dr = _auto_deps();
         if (dr > 0) { return dr; }
         # v6.4.63: name any version skew between ./lib/ and the version-pinned
@@ -771,11 +801,6 @@ fn main(): i64 {
 
     if (streq(cmd, "package") == 1) {
         return cmd_package();
-    }
-
-    if (streq(cmd, "publish") == 1) {
-        println("Package registry not yet available.");
-        return 0;
     }
 
     if (streq(cmd, "install") == 1) {

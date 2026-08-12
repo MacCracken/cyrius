@@ -1,0 +1,327 @@
+# freelist_thread_safe.tcyr — v6.5.19 regression coverage for the thread-safe
+# freelist (`_fl_lock`). Filed by majra 2026-08-10 after an intermittent CI failure
+# in `test_relay_receive_is_reentrant`.
+#
+# ⭐ WHY THIS IS NOT A STRESS LOOP. The two windows are 2 instructions and ~2 µs
+# wide; "run it a lot and hope" is exactly the gate shape that has arrived vacuous
+# three releases running. Each axis instead PINS the interleaving:
+#
+#   Axis 1 (R2/R3, the pop the filing quotes) arms the class-2 free list with ONE
+#   block whose header sits on a FRESH, NEVER-TOUCHED anonymous page. The pop reads
+#   `load64(head)` BETWEEN its load of `_fl_heads[cls]` and its store back to it, so
+#   that read takes a minor page fault and the 2-instruction window becomes a
+#   microsecond one. Measured on the unfixed allocator, that single change lifts
+#   per-round detection from 3.2 % (16/500, resident page) to 18.4 % (92/500) — a
+#   5.75× improvement, and the whole reason the round count can stay small enough to
+#   run in the normal corpus.
+#
+#   Axis 2 (R4/R5, the arena) re-arms `_fl_arena_pos = _fl_arena_end` before every
+#   round, so all four threads enter the refill branch together and race across an
+#   mmap syscall — a window ~1000× wider than the pop's.
+#
+# At 256 rounds the residual miss probability is (1-0.184)^256 ≈ 1e-22 for axis 1 and
+# (1-0.212)^256 ≈ 4e-27 for axis 2. Observed against the unfixed allocator: 200/200
+# runs RED at only 64 rounds. This is a pinned gate, not a flaky one.
+#
+# ⭐ THE AXES FAIL INDEPENDENTLY, BY CONSTRUCTION — the rule that three vacuous gates
+# were built in violation of. Axis 1 asserts only about the block that was ON the
+# free list (`pg + 16`), which no arena race can produce; axis 2 zeroes every head
+# first, so no pop can happen at all. Lock only the splice and axis 2 stays RED; lock
+# only the arena and axis 1 stays RED. Both mutation-verified.
+#
+# Axis 3 is majra's own shape end to end (allocate a message, stamp it, read it
+# straight back, free) — 57,467 and 62,937 mismatches out of 200,000 against the
+# pre-fix code, 0 after.
+#
+# ⭐ THE BARRIER IS THE PART THAT IS NOT PORTABLE, NOT THE TEST. `thread_create` on
+# macOS (lib/thread_macos.cyr:62) and on agnos runs the thread body INLINE via fncall1
+# and returns only once it has finished, so a worker that waits on a flag main sets
+# AFTER thread_create returns can never terminate — a barrier there does not fail, it
+# HANGS, and a hang inside scripts/cross-os-libtest-runner.sh wedges the whole leg.
+#
+# The first cut of this file drew the wrong conclusion from that and excluded itself
+# from tests/tcyr/crossos/ entirely, which meant the release gate never ran the stdlib's
+# only thread-safety test on any of the four hosts — the "Mach-O ARM64 Native ✓ that
+# only ran hello-world" shape, rebuilt from scratch, in the release that fixed a
+# threading bug. v6.5.19 moved it here and made the ONE non-portable line adapt:
+# `_flr_spawn_join` opens the gate BEFORE the first spawn on an inline backend. The
+# bodies still run through thread_create/thread_join, so `_threads_active` is armed and
+# `_fl_lock` is genuinely taken and released on every allocation — an asymmetric gate
+# or a lost release still deadlocks HERE, on the host, which is exactly what a
+# single-threaded target can still prove. Verified by execution on real ecb (macOS
+# arm64) and real ach (Intel Mac), not by reading lib/thread_macos.cyr: 3/3 runs each,
+# exit 0, no hang.
+#
+# What is NOT claimed off-Linux: the two pinned INTERLEAVINGS cannot occur where the
+# bodies run one after another, so ecb/ach/agnos prove correctness-and-liveness, and
+# cass (real CreateThread) + Linux + pi prove the races are actually closed.
+#
+# ⚠ Do not assert on a crash. Consecutive anonymous mmaps land adjacent (measured 64
+# KB apart), so the R5 off-the-end block lands in a neighbouring MAPPED chunk: 0
+# faults in 80 attempts. The corruption is silent, which is the whole complaint.
+#
+# See CHANGELOG [6.5.19], lib/freelist.cyr's header.
+
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/mmap.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/atomic.cyr"
+include "lib/thread.cyr"
+include "lib/freelist.cyr"
+
+var _FLR_THREADS = 4;
+var _FLR_ROUNDS = 256;
+var _FLR_ITER = 50000;
+
+var _flr_bar = 0;
+var _flr_ptrs[64];
+var _flr_armed = 0;      # anti-vacuous: rounds that actually executed
+var _flr_mism = 0;
+var _flr_work = 0;       # anti-vacuous: alloc/stamp/read/free iterations really performed
+
+# 0 where thread_create runs the body INLINE (macOS, agnos) — see the header. This
+# selects the BARRIER STRATEGY only; every axis runs on every target.
+fn _flr_real_threads(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0;
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    return 0;
+    #endif
+    return 1;
+}
+
+fn _flr_mode_note(): i64 {
+    if (_flr_real_threads() == 0) {
+        println("    NOTE: inline thread_create on this target — bodies run serially, so the");
+        println("          pinned interleavings cannot occur; liveness + correctness still gated");
+        return 0;
+    }
+    println("    NOTE: real threads on this target — the pinned interleavings are exercised");
+    return 0;
+}
+
+fn _flr_pop_worker(arg): i64 {
+    while (atomic_load(&_flr_bar) == 0) { }
+    store64(&_flr_ptrs + arg * 8, fl_alloc(64));
+    return 0;
+}
+
+fn _flr_arena_worker(arg): i64 {
+    while (atomic_load(&_flr_bar) == 0) { }
+    store64(&_flr_ptrs + arg * 8, fl_alloc(16));
+    return 0;
+}
+
+# Release all four workers together. The barrier is LOAD-BEARING on a real-threads
+# target: without it, thread_create (mmap a stack + TLS + clone, tens of µs) costs more
+# than a whole worker's work, so worker 0 finishes before worker 1 exists and the test
+# measures nothing. Measured — the same 500-iteration shape detects 0/20 unbarriered and
+# 28/30 barriered.
+#
+# ⛔ AND IT IS EXACTLY BACKWARDS ON AN INLINE BACKEND. There the body runs to completion
+# INSIDE thread_create, so a gate main opens afterwards is opened by a thread that is
+# still blocked spinning on it — an unkillable hang, not a failure. Opening it FIRST is
+# the whole adaptation: the workers still go through thread_create/thread_join (so
+# `_threads_active` is armed and every fl_alloc really takes and releases `_fl_lock`),
+# they just cannot overlap. See the header for what that does and does not prove.
+fn _flr_spawn_join(fp): i64 {
+    if (_flr_real_threads() == 0) {
+        atomic_store(&_flr_bar, 1);
+        var s0 = thread_create(fp, 0);
+        var s1 = thread_create(fp, 1);
+        var s2 = thread_create(fp, 2);
+        var s3 = thread_create(fp, 3);
+        thread_join(s0);
+        thread_join(s1);
+        thread_join(s2);
+        thread_join(s3);
+        return 0;
+    }
+    _flr_bar = 0;
+    var t0 = thread_create(fp, 0);
+    var t1 = thread_create(fp, 1);
+    var t2 = thread_create(fp, 2);
+    var t3 = thread_create(fp, 3);
+    atomic_store(&_flr_bar, 1);
+    thread_join(t0);
+    thread_join(t1);
+    thread_join(t2);
+    thread_join(t3);
+    return 0;
+}
+
+# How many workers were handed exactly `want`.
+fn _flr_count_of(want): i64 {
+    var n = 0;
+    var i = 0;
+    while (i < _FLR_THREADS) {
+        if (load64(&_flr_ptrs + i * 8) == want) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn _flr_dup_pairs(): i64 {
+    var d = 0;
+    var i = 0;
+    while (i < _FLR_THREADS) {
+        var j = i + 1;
+        while (j < _FLR_THREADS) {
+            if (load64(&_flr_ptrs + i * 8) == load64(&_flr_ptrs + j * 8)) { d = d + 1; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return d;
+}
+
+# ── Axis 1 — R2/R3: the free-list splice ────────────────────────────
+fn test_freelist_pop_is_indivisible() {
+    test_group("R2/R3 — a block on the free list reaches exactly one caller");
+    _flr_mode_note();
+    fl_init();
+    var handed_twice = 0;
+    var never_handed = 0;
+    var r = 0;
+    while (r < _FLR_ROUNDS) {
+        # ONE block, on a fresh untouched mapping (the page-fault widener).
+        var pg = _fl_mmap(4096);
+        store64(&_fl_heads + 2 * 8, pg);
+        _flr_spawn_join(&_flr_pop_worker);
+        # Only the FREE-LIST block is judged. The other three workers fall through
+        # to the arena, and an arena race must not be able to score here — that is
+        # what makes this axis fail independently of axis 2.
+        var got = _flr_count_of(pg + 16);
+        if (got > 1) { handed_twice = handed_twice + 1; }
+        if (got == 0) { never_handed = never_handed + 1; }
+        _flr_armed = _flr_armed + 1;
+        r = r + 1;
+    }
+    assert_eq(_flr_armed, _FLR_ROUNDS, "every pinned round ran (anti-vacuous)");
+    assert_eq(never_handed, 0, "the queued block was always issued (the arm is real, not a no-op)");
+    assert_eq(handed_twice, 0, "no round handed the same free-list block to two threads");
+}
+
+# ── Axis 2 — R4/R5: the arena bump and refill ───────────────────────
+fn test_arena_bump_and_refill_are_serialised() {
+    test_group("R4/R5 — concurrent arena refill retains one chunk, hands out distinct blocks");
+    fl_init();
+    var outside = 0;
+    var dup = 0;
+    var rounds = 0;
+    var r = 0;
+    while (r < _FLR_ROUNDS) {
+        # Empty every free list so NO pop can occur — an R2 race must not be able to
+        # score on this axis either.
+        var h = 0;
+        while (h < 9) {
+            store64(&_fl_heads + h * 8, 0);
+            h = h + 1;
+        }
+        # Re-arm the refill branch: all four workers enter it together.
+        _fl_arena_pos = _fl_arena_end;
+        _flr_spawn_join(&_flr_arena_worker);
+        # Every pointer must lie inside the chunk the allocator RETAINED. Racing,
+        # two chunks are mapped and one is orphaned, so a pointer lands outside.
+        var base = _fl_arena;
+        var i = 0;
+        while (i < _FLR_THREADS) {
+            var p = load64(&_flr_ptrs + i * 8);
+            if (p < base) { outside = outside + 1; }
+            if (p >= base + FL_ARENA_SIZE) { outside = outside + 1; }
+            i = i + 1;
+        }
+        dup = dup + _flr_dup_pairs();
+        rounds = rounds + 1;
+        r = r + 1;
+    }
+    assert_eq(rounds, _FLR_ROUNDS, "every pinned round ran (anti-vacuous)");
+    assert_eq(outside, 0, "no block issued from an orphaned arena chunk");
+    assert_eq(dup, 0, "the arena bump never issued one address twice");
+}
+
+# ── Axis 3 — majra's filed shape, end to end ────────────────────────
+fn _flr_msg_worker(arg): i64 {
+    while (atomic_load(&_flr_bar) == 0) { }
+    var bad = 0;
+    var i = 0;
+    while (i < _FLR_ITER) {
+        var p = fl_alloc(64);
+        var seq = arg * 1000000 + i + 1;
+        var w = 0;
+        while (w < 64) {
+            store64(p + w, seq);
+            w = w + 8;
+        }
+        w = 0;
+        while (w < 64) {
+            if (load64(p + w) != seq) {
+                bad = bad + 1;
+                w = 64;
+            }
+            w = w + 8;
+        }
+        fl_free(p);
+        i = i + 1;
+    }
+    atomic_fetch_add(&_flr_mism, bad);
+    atomic_fetch_add(&_flr_work, i);
+    return 0;
+}
+
+fn test_concurrent_messages_keep_their_own_bytes() {
+    test_group("majra shape — 4x50k alloc/stamp/read-back/free, no cross-talk");
+    fl_init();
+    _flr_mism = 0;
+    _flr_work = 0;
+    _flr_spawn_join(&_flr_msg_worker);
+    # ⚠ THE WORK COUNTER IS NOT DECORATION. `_flr_mism == 0` is the assertion, and it is
+    # ALSO what a run in which no worker body ever executed produces — a thread_create
+    # that silently returns 0 without running anything (the pre-v6.5.11 macOS shape, and
+    # what any future backend gap looks like) would score this axis GREEN having
+    # allocated nothing at all. The counter is incremented by the workers themselves, so
+    # it can only reach 200,000 if 200,000 alloc/stamp/read-back/free cycles really ran.
+    assert_eq(_flr_work, _FLR_THREADS * _FLR_ITER, "all 4x50k iterations really ran (anti-vacuous)");
+    assert_eq(_flr_mism, 0, "no message read back another thread's sequence number");
+}
+
+# ── Anti-vacuous: the allocator still WORKS single-threaded ─────────
+# Without this the whole file could pass by making fl_alloc return nothing useful.
+fn test_single_threaded_still_correct() {
+    test_group("single-threaded round-trip still correct (anti-vacuous)");
+    fl_init();
+    var a = fl_alloc(64);
+    var b = fl_alloc(64);
+    store64(a, 111);
+    store64(b, 222);
+    assert_eq(load64(a), 111, "first block holds its own bytes");
+    assert_eq(load64(b), 222, "second block holds its own bytes");
+    var distinct = 1;
+    if (a == b) { distinct = 0; }
+    assert_eq(distinct, 1, "two live allocations are distinct");
+    fl_free(a);
+    var c = fl_alloc(64);
+    assert_eq(c, a, "a freed block is recycled by the next same-class alloc");
+    var big = fl_alloc(200000);
+    store64(big, 333);
+    assert_eq(load64(big), 333, "the large (>4096) path still round-trips outside the lock");
+    fl_free(big);
+    fl_free(b);
+    fl_free(c);
+}
+
+fn main() {
+    test_freelist_pop_is_indivisible();
+    test_arena_bump_and_refill_are_serialised();
+    test_concurrent_messages_keep_their_own_bytes();
+    test_single_threaded_still_correct();
+    return assert_summary();
+}
+
+var r = main();
+syscall(60, r);

@@ -6,6 +6,450 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.19] — 2026-08-11
+
+**Five consumer filings closed — four from agnosai, one from majra.** Four are diagnostics
+and tooling telling the user something untrue (a verb that resolves no deps, a warning naming
+a line past EOF, a linter reporting `0 warnings` on a file that does not parse, a benchmark
+header off by 11×); the fifth is silent heap corruption under threads.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,154,816 B** (was 1,142,016 —
++12,800 B for the preprocessor line-accounting, the file-map last-line fix, the lint pre-pass
+and the CVE-39 depth/termination bounds; the freelist lock is size-neutral in cycc),
+seed → cybs → cycc derivable from the 29,024 B seed, `check.sh` **178 / 0**, and cross-OS
+self-host on REAL hardware — **ecb + ach + cass + pi, each SELFHOST_OK + crossos 45/45**.
+
+Bench on a quiet box: `self_compile` **685 ms** (647 ms at .18, **+6 %**), cycc **+12,800 B**.
+Triaged as **growth tax, not bisected** — the preprocessor now pads a newline per consumed
+source line, which is per-line hot-path work spread across the whole change rather than one
+dominating patch.
+
+⚠ **A host result only certifies the binary it ran.** An earlier four-host green covered
+1,150,648 B; the lint and CVE-39 work then superseded it, so all four hosts were re-run
+against 1,154,816 B. The first of those runs also went RED on cass with `rc=255` /
+`Connection reset by peer` — an SSH collision from two cross-OS runs hitting one host at once,
+not a compiler failure. `cross-os-selfhost.sh` uses fixed `/tmp` and remote paths: **one host
+at a time, always.**
+
+⚠ **Two residuals filed, not hidden — each with a sanctioned reason named.**
+
+1. **`#derive` generated code inflates line numbering INSIDE the construct.** Everything
+   OUTSIDE a derive is now exact; inside, the expansion occupies more lines than the source it
+   replaces, and a linear `expanded − start + base` map cannot represent that. ⭐ The fix was
+   **built and independently verified GOOD** — design 1 (flatten each derive body onto ONE
+   expanded line, then pad to the consumed source-line count): fixpoint held, all **589**
+   `#derive` files across `~/Repos` compiled byte-identical, 300 randomized derive programs
+   showed zero codegen difference, and a 240-case attribution sweep went **185 wrong → 0
+   wrong**. It is held back for one reason: it changes the closing-`}` line tail from COPY to
+   CONSUME, which drops **arbitrary code**, not just the trailing `#` comment its own comment
+   claimed. `struct Z { a; } fn helper() { return 2; }` compiles clean, warns nothing, and
+   returns the WRONG answer; `struct Z { a; b; } var g = 77;` goes from exit 77 to `undefined
+   variable 'g'`. Live incidence is zero (5,761 derive blocks scanned across ~90 repos: 13
+   tails, all comments), so it is latent — but a compiler silently discarding valid cyrius is
+   not shippable. The remedy is built and measured (copy the tail, stop at the first `#`, never
+   copy the newline) and needs rebasing onto this tree, where three later bites edited the same
+   file. **Pinned 6.5.20.**
+2. **`switch`: a case body can only be left safely by `return`** — P1 **silent miscompile**,
+   found while doing the CVE-39 termination work. One shape gives the wrong answer with no
+   diagnostic; two SIGSEGV the produced binary. Filed because the fix is in the jump-table
+   emitter and break-chain protocol, both **per-backend** (x86 / aarch64 / macho / PE / cx), so
+   it needs its own full gate cycle — fixpoint, seed-derive and four-host cross-OS — which a
+   parser-termination release cannot absorb. That is the "full gate cycle the release cannot
+   absorb" reason, not "different subsystem".
+
+### Fixed — `cyrius doctest` auto-prepends `[deps]`, and so do `publish` / `package` / `lsp`
+
+`cyrius doctest lib/hashmap.cyr` failed on main (`undefined function 'str_data'`, 0 passed /
+1 failed, exit 1) and now passes **without lib/hashmap.cyr being touched**. It is the FIFTH
+instance of one bug class — a verb that calls `compile()` but is missing from the
+`_auto_deps()` list in `cbt/cyrius.cyr`, so `_dep_includes` stays empty and every stdlib
+symbol comes back undefined (fuzz v5.7.21 · soak+smoke v5.7.38 · audit+capacity v6.4.73 ·
+distlib v6.5.17 · doctest here).
+
+**Auditing the whole verb set for it found two more already live, and one was created by the
+v6.5.17 patch.** `cmd_publish` calls `cmd_distlib()` one call frame away, so adding the
+`distlib` STRING left the identical defect reachable through `publish` — same misleading
+"the generated bundle does not compile", and then it `git tag`ged the release and exited 0
+because the return value was dropped. `cyrius package` printed "package ready in build/",
+exited 0 and produced no artifact (the v6.4.73 `capacity` green-placebo shape). Both dropped
+return values are now checked; the dead duplicate `publish` dispatch branch is removed.
+
+**The real deliverable is `tests/gates/toolchain/auto_deps_verb_gate.sh`**, because a
+doctest-only gate would have been the fifth patch in a series of five. It enumerates every
+verb `main()` dispatches (43), computes which transitively reach `compile()` /
+`_materialize_source()` across all of `cbt/` (18), and fails if any is absent from the list
+between the new `AUTO_DEPS_VERBS` markers. **The requirement is a property of the call graph,
+not of the verb string.** Exemptions are allow-listed with one reason each and must stay live
+*and still reach compile* or the gate fails on the stale row; `pulsar` is the load-bearing
+one — measured, auto-prepend makes it build a **434,360-byte-larger** cycc that is not the
+self-host fixpoint binary. `usage()` is NOT the source of enumeration: it omits six verbs
+including `publish`, i.e. it omits the bug that was live.
+
+### Fixed — `cyrius doctest`'s example buffer was written past its end
+
+Noticed while fixing the prepend in the same function. `cmd_doctest`'s `code = alloc(8192)`
+was filled by two **unbounded** `memcpy`s, so a doc example longer than 8 KB wrote past the
+end of the heap region from ordinary source. Measured: a 34,589-byte example on 6.5.18 wrote
+~26 KB out of bounds and the failure then presented as a bare `(compile error)`. Both copies
+are now bounded and an oversized example is reported as what it is —
+`(doc example exceeds the 8192-byte example buffer)` — rather than silently truncated, so the
+pass/fail count stays honest. Same class as the three unbounded copies the 2026-07-27 audit
+found; gated as axis 6e of the verb gate.
+
+### Fixed — `duplicate fn` warnings name a file:line that exists (agnosai: wrong in 35 of 35)
+
+`warning:lib/kavach.cyr:11588:` on a file **11,321 lines long**. The FILE was right in all 35
+cases; only the LINE was wrong, so a fix built on the filing's stated mechanism ("the filename
+is whichever file the mapping last resolved to") would have fixed the wrong thing.
+
+`FM_LOOKUP` reconstructs a source line by linear arithmetic over a `#@file` span
+(`expanded − start + base`), valid only while the preprocessor copies a file into the expanded
+buffer 1:1. **Two transforms broke that inside a span and neither re-anchored:**
+
+* the **`#ifdef` family** consumed directive lines and dropped skipped bodies → line too SMALL
+  (kavach: net −55 over 676 lines; all 30 warnings there were exactly `true − 55`);
+* **`#derive`** replaced 2–3 source lines with N generated ones → line too LARGE (+476 by line
+  11112 — one `#derive(Serialize)` site turns 3 source lines into 112).
+
+Drift accumulates from the last marker, which is why reported lines ran past EOF. The `#ifdef`
+half is fixed by **padding** — one newline per consumed or skipped source line — which costs no
+file-map entries; `#derive` adds lines and cannot be padded, so it **re-anchors** with a
+`#@file` marker carrying the resumed source line (93 sites on agnosai's build). Emitting a
+marker for the `#ifdef` blocks too would need ~1139 entries against a 1024 cap, and overflow
+makes `FM_FILEID` return `-1`, which `private` visibility is load-bearing on.
+
+Two further fixes to the same diagnostic, found while measuring:
+
+* it pointed at the `(` of the parameter list, not at the definition — the cursor has already
+  consumed `fn` and the name by then. Now `_err_head_at(S, _defstart_ti)`.
+* it now names where the LOSING definition came from: `duplicate fn '_sub_new' (last definition
+  wins; first defined in lib/majra.cyr)`. One position could never answer "which copy wins",
+  which is the inference the filing had to retract twice. Verified end-to-end on the filed
+  shape: warning says `lib/libro.cyr:6` (`grep -n` agrees), names majra as first, and a runtime
+  probe confirms libro's body runs — so "last definition wins" is honest.
+
+⚠ **Residual, measured and filed, not hidden.** A fn the derive SYNTHESIZES
+(`SpawnedProcess_pid` — 2 of the 35) has no source `fn` line at all, so no marker can make
+it exact; it now lands in the generated block a few lines past the struct instead of
+drifting across the whole file (12–15 in a 12-line probe, was 17–20). Anchoring the block
+to the `#derive` line instead was implemented, measured **worse** — it shifts the struct's
+own re-emitted lines, moving a diagnostic inside the struct from +1 to +2 — and reverted,
+as was padding the consumed directive line, for the same reason. Closing it needs a design
+decision about how generated code is laid out in the expanded stream, with 34 `.tcyr` derive
+tests downstream: `docs/development/issues/2026-08-11-derive-generated-code-inflates-line-numbering.md`.
+
+### Fixed — every diagnostic for a source in a subdirectory was one line late
+
+Measured, not reported: `cyrius build src/g.cyr` said `2:20` for a defect on line 1, while
+`cycc < g.cyr` on the same bytes said `1:20`. `cyrius build`/`check`/`lint` write a
+`#@incdir <dir>` marker at byte 0 (v6.5.7) and `PP_SCAN_INCDIR` only READS it — the line was
+then copied through as an ordinary comment and occupied an expanded line the source never had.
+Same family as the above: a preprocessor-inserted line the file map did not account for.
+
+### Fixed — a function-like `#define` reported one line late per invocation
+
+**A regression this release introduced, and the padding above is not the bug.** `PP_EXPAND`
+ended with an unconditional `store8(out + op, 10)` — one extra output line per macro
+invocation — which had always been *masked*: the consumed, unpadded `#define` line
+contributed a −1 that cancelled the first invocation exactly. Padding every consumed
+directive line is correct (it is what makes an object-like `#define` exact, where 6.5.18 was
+off by −1) and it removed the cancellation, so every function-like invocation became +1 and
+the single-invocation case flipped from exact to wrong.
+
+Fixed where the miscount is: `PP_EXPAND` now emits **exactly the newlines the invocation
+consumed** — none for the ordinary one-line call, N for a call whose argument list wraps
+across N+1 source lines — counted from the input it swallowed rather than assumed. A newline
+inside a substituted argument is flattened to a space first, so an argument used twice cannot
+inject the wrap's newline twice. Measured on the shipped compiler: a defect 2 lines below one
+invocation reported 5, now 4; below three invocations reported 9, now 6; a wrapped
+3-line invocation is exact in both directions (the pre-fix compiler reports it one line
+*early*, the naive "just delete the newline" fix two lines early). `SQ(3) + ADD3(1,2,4) +
+TWICE(1+2)` still evaluates to 22.
+
+### Fixed — the last line of a file with no trailing newline reported past EOF, and unnamed
+
+Not a regression — identical on 6.5.18 — but it is the filed issue's literal complaint shape.
+A 4-line source with no final newline and a defect on its last line reported `error:9:11:`:
+a **raw expanded line number**, past the file's own EOF, with no `<source>:` prefix at all.
+Now `error:<source>:4:11:`.
+
+`FM_BUILD` sizes the LAST file-map span from `line`, which counts newlines + 1. When the
+buffer ends in a newline that already sits one past the final line, which is what the span
+arithmetic wants; when it does not, it names the final line instead, the span comes out one
+short, and that line falls outside every span — so `FM_LOOKUP` falls through to printing the
+expanded line with no filename. Only the last span is affected: earlier spans are sized from
+the next marker's offset, and an included file missing its final newline already gets one
+from `PP_REANCHOR`. `FM_FILEID` shares the arithmetic but is **not** affected in practice —
+the last marker is always the `<source>` resume, so a line falling out of it returns "main
+source", which is the answer it would have given anyway; verified rather than assumed, by
+running a `private` fn on the unterminated last line of an included file against both
+compilers.
+
+### Changed — `tests/gates/frontend/duplicate_fn_attribution.sh` gained three axes
+
+⭐ **One of its six axes was vacuous, in the way this project keeps re-learning.** Deleting the
+`PP_IFDEF_PASS` half of the `#ifdef` padding — on its own, producing a genuinely different
+compiler — left all six axes GREEN; only deleting *both* halves turned it red. The cause is
+that axis 4's included fixture carries a `#derive` **after** its `#ifdef`, and the derive
+re-anchor recomputes the line from the input stream, so it *repairs* the drift before the
+duplicate is reached. **Axis 8** is the same shape with the derive removed, and it fails
+9 → 5 against that mutant. **Axis 7** pins both `#define` forms at one and at several
+invocations plus a wrapped argument list, and **axis 5b** uses a fixture with no trailing
+newline (a heredoc always adds one, which is why the original axis 5 could not see it).
+
+Five mutant compilers, each one hunk from the shipped one, were **built and run** against the
+gate; each is caught, and each on a *different* axis — `PP_PASS` padding → axes 1 and 3;
+`PP_IFDEF_PASS` padding → axis 8 alone; the six derive re-anchors → axes 2, 3, 4, 5;
+`PP_EXPAND`'s newline → axis 7 alone; `FM_BUILD`'s last-line bump → axis 5b alone.
+
+### Fixed — `cyrius lint` no longer reports "0 warnings" on a file that does not parse
+
+The residual half of the hisab dead-fn-body filing, left as a design fork at v6.5.17.
+`programs/cyrlint.cyr` is a 929-line line-based scanner with no parser, so `0 warnings` was an
+honest report about its own nine rules and a false one about the file.
+
+**Chose the compiler pre-pass over a second parser.** `src/frontend/` is 17,703 lines carrying
+~1,040 `E*(S, …)` emitter call sites and threads `S` through every function — the parser IS the
+emitter, so there is no parse-only slice to lift, and a forked copy is a second parser to keep
+in step forever in the repo whose thesis is one toolchain. (The v6.5.17 dead-fn-body bug was
+fork-divergent across the 7 `main*` forks and shipped green for months.)
+
+⭐ **It classifies on the MESSAGE CLASS, never on the exit code.** 38 of the 191 files this repo
+lints exit non-zero standalone, **27** of them with `undefined variable 'X' (missing include or
+enum?)` — emitted through the same `_err_head`, identical shape, identical exit 1. Exit-code
+gating would make `cyrius lint` refuse 20 % of the stdlib, which is the "linter that refuses to
+lint" outcome the filing warned against. The pre-pass runs under `_skip_deps = 1` so a lint of
+one file in isolation still needs no manifest and no `lib/`, and the allow-list's failure
+direction is the safe one — an unlisted syntax message falls back to today's behaviour rather
+than accusing a file that merely lacks context. `cyrius audit` is unaffected: `audit_lint_walk`
+execs the `cyrlint` binary directly and never routes through `cmd_lint`.
+
+Cost: ~89 ms per `cyrius lint <file>` against ~6 ms for cyrlint alone.
+
+### Added — three mutation-proven gates (check.sh 169 → 172)
+
+* `tests/gates/toolchain/auto_deps_verb_gate.sh` — the verb-set invariant above. Axis 0 floors
+  every derived quantity and axis 4 pins known-true/known-false rows, because a static analyser
+  that quietly parses nothing reports nothing missing and PASSES.
+* `tests/gates/frontend/duplicate_fn_attribution.sh` — `#ifdef` and `#derive` fail
+  **independently**; a third axis runs both so the two drifts cannot cancel; a fourth crosses an
+  include boundary; anti-vacuous axes pin the already-correct plain case and require a clean
+  file to emit no warning at all.
+* `tests/gates/frontend/lint_reports_unparseable.sh` — ⭐ axis 3 is the discriminator:
+  `lib/fs.cyr` in a bare directory, proven unresolvable there by `cyrius check`, must still be
+  linted. A gate without it would have blessed the exit-code implementation.
+### Fixed — `fl_alloc` / `fl_free` are thread-safe (majra, High)
+
+`lib/freelist.cyr` mutated its free lists and arena with plain loads and stores from
+any number of threads. Filed by majra 2026-08-10 after an intermittent CI failure in
+`test_relay_receive_is_reentrant`: two threads popped the SAME block, so one sender's
+message arrived carrying another sender's sequence number and the relay's dedup logic
+— freshly audited, correctly mutexed — took the blame. That is the whole defect: the
+corruption never presents at the allocation, it presents as wrong data in the
+consumer's structures arbitrarily far away.
+
+- **Five races, not the one filed.** `fl_init`'s check-then-set (wipes a peer's pushed
+  block); the POP (the filed one); the PUSH (lost pushes, and a self-linked
+  `blk->next == blk` once the pop has double-issued a block); the arena BUMP — the
+  same shape `alloc()` closed at v6.0.64 and measurably the dominant source; and the
+  arena REFILL, which publishes three globals across an mmap syscall, a ~2 µs window
+  ~1000× wider than the pop's, and can return a block that runs off the end of its
+  mapping.
+- **Fixed by serialising, not by documenting.** A `_threads_active`-gated CAS spinlock
+  (`_fl_lock`) covers the splice, the bump and the refill. The large (>4096) path takes
+  no lock — it touches no shared state. **Documenting it had already been tried and had
+  already failed**: `lib/patra.cyr:245` and `lib/sigil.cyr:5621` both describe the
+  hazard, and sigil did not merely document it — it moved sha256, sha512, ed25519_sign,
+  the AES-GCM key schedules and Argon2 OFF `fl_alloc` onto banked static buffers because
+  concurrent TLS handshakes raced the freelist. majra is the third consumer to hit it
+  and the first two contorted around it inside the stdlib. There is also no safe
+  alternative to point at: `alloc()` is thread-safe but has no `free()`, which is the
+  entire reason this allocator exists. **This closes the second half of a fix that only
+  ever shipped once** — the June filing (closed v6.0.64) locked `alloc()` and left its
+  sibling in the same stdlib unlocked.
+- **Measured, min-of-41 in-round A/B against a verbatim copy of the pre-fix code, same
+  binary** (box at load ~24, absolutes inflated, ratios sound): alloc+free pair
+  **26.4 → 29.9 ns single-threaded** (+13 %, the four `_threads_active` loads) and
+  **66.8 ns armed** (2.5×, paid only once threads exist). Contended, 4 threads × 50k:
+  **57,467 and 62,937 mismatches out of 200,000 → 0**.
+  ⚠ Three quarters of an earlier +11 ns reading was not the lock at all but hoisting
+  `_fl_block_size` above the acquire, where it ran on every free-list hit that never
+  needed it. It is resolved inside the arena branch.
+- **`_threads_active` moved alloc.cyr → atomic.cyr.** Two allocators now gate on it and
+  freelist.cyr does not include alloc.cyr. It also fixes a latent self-sufficiency
+  violation: `lib/thread.cyr` WRITES the flag and includes only atomic.cyr, so it
+  compiled purely because every real consumer happened to include alloc.cyr too.
+- **No `atomic_fence` on the x86 lock paths**, unlike `alloc.cyr`'s twin — a correction,
+  not an omission. `atomic_cas` has carried acquire-release on both arches since
+  CVE-28/v6.1.38, and a plain store is already a correct release under x86 TSO (what
+  Linux's x86 `spin_unlock` compiles to). `alloc.cyr:59` calls `atomic_fence` "a cheap
+  near-no-op"; measured it is **~22 ns**, about 2× the whole CAS and 83 % of the lock
+  cost. The aarch64 release fence is REQUIRED and is kept.
+- **Gates**: `tests/tcyr/crossos/freelist_thread_safe.tcyr` (3 race axes + anti-vacuous)
+  and `tests/gates/memory/freelist_thread_safe.sh`.
+  ⚠ **Pinned, not a stress loop.** Axis 1 arms the free list with one block on a FRESH
+  UNTOUCHED page so the pop's `load64(head)` takes a page fault between its load and
+  its store — per-round detection 3.2 % → **18.4 %**, which is why 256 rounds suffice
+  (observed 200/200 RED at only 64). The axes fail INDEPENDENTLY by construction: axis
+  1 judges only the block that was on the free list, axis 2 zeroes every head first.
+  Mutation-verified three ways — full revert RED on 1/2/3, arena-only unlock RED on 2
+  alone, splice-only unlock RED on 1 and 3.
+  ⚠ Do NOT assert on a crash: consecutive anon mmaps land adjacent (measured 64 KB
+  apart) so the off-the-end block lands in a MAPPED neighbour — 0 faults in 80 tries.
+- **Axis E of the gate: every lock call site must carry the `_threads_active` gate.**
+  The gate is hoisted to the call sites for a measured perf reason, which makes it a
+  PER-SITE INVARIANT, and `lib/freelist.cyr` said the opposite — "forgetting the gate at
+  a new call site is only slower, never wrong". **Measured false**: ungate ONE acquire,
+  leave its releases gated, and a program with no threads in it deadlocks on its second
+  `fl_alloc` (exit 124 under an 8 s timeout). Axes A-D are all blind to it — D's probe
+  runs with `_threads_active == 1`, where gated and ungated calls are the same thing.
+  Comment corrected, axis E added and mutation-proven in both directions (ungated
+  acquire and ungated release, RED each). It runs BEFORE the probe axis, because the
+  defect it catches is a hang.
+- **The gate's probe runs are time-bounded** (`timeout 60`, honest fallback where
+  `timeout` is absent). Found the hard way while building axis E: a lock-gate-stripped
+  copy hung the gate indefinitely and had to be killed by hand. A gate that executes
+  allocator code whose failure mode is a SPINLOCK must never run it unbounded.
+
+### Fixed — the bench framework measures its timer instead of asserting it (agnosai)
+
+`lib/bench.cyr` opened with `clock_gettime: ~120ns per call`. It is **1,320–1,720 ns**
+on this box — 11–14× — and three more numbers in the same header were wrong with it
+("~240ns of clock overhead per op", "~40ns syscall overhead", "sub-1us → use batch").
+
+- ⭐ **`120` fed no arithmetic anywhere in the tree** — it was a wrong FACT, and the
+  blast radius is larger than a subtraction would have been because of what it
+  licensed. `bench_run` wrapped a clock pair around EVERY iteration, which all 18
+  benches use: the same no-op measured **2,302 ns through `bench_run` and 9 ns
+  batched**, a 256× inflation, and **57 of 79 recorded micro rows sit within 20 % of
+  that floor** — they measure the timer, not the code.
+- **`bench_clock_overhead_ns()` calibrates one clock read at first use** and every
+  timing path subtracts it; `bench_run` now sizes its own batches so a 0.4 ns op and a
+  250 µs op are both measured correctly through one API; `bench_report` prints the
+  floor it measured, so a wrong floor is visible beside the rows it distorts.
+- ⭐ **A single corrected constant was not an option.** One clock read costs ~1,320–1,720
+  ns here, ~3,550 ns on pi, ~15–32 ns on ecb and ~64–68 ns on ach — a **230× spread**,
+  so the filing's requested "~1,320 ns" would have been wrong on three of the four gate
+  hosts and 4–8× too HIGH on ecb.
+- ⚠ **The filing's stated cause does not hold on this host.** It blamed raw
+  `syscall(228)` vs the vDSO; measured, libc's vDSO costs the SAME (2,456 vs 2,277 ns)
+  because the clocksource is **hpet** (the kernel dropped the TSC at boot) and HPET has
+  no userspace fast path, so the vDSO falls back to the syscall. Kernel entry alone is
+  776 ns. A vDSO binding remains a real ~64× win on pi and on any normal-TSC box, and a
+  no-op here.
+- **Recorded numbers**: `docs/development/benchmark-regimes.md` is the new ledger — four
+  regimes, which rows are salvageable (22 of 79, subtract ~1,420 ns), which are not
+  (the 57 floor rows, SNR ≈ 0.1) and which were **fabricated** (2,504 rows clamped to
+  exactly `1000` by the pre-v6.2.15 `_fmt_time` truncation). `compiler/*` and `size/*`
+  are timed by `bench_cmd` and are CLEAN in every regime — **the release-gate headline
+  (`self_compile`, `cycc` size) is unaffected.** BENCHMARKS.md and the generator header
+  now carry the boundary. Expect a one-off drop of 1–3 orders of magnitude in micro
+  rows (`freelist/alloc_free_64` `1us` → **46 ns**); that is the instrument being
+  removed, not a perf win — do not bisect it.
+- **Gates**: `tests/tcyr/crossos/bench_timer_floor.tcyr` (every assertion RELATIVE, so it
+  works from ecb's 11 ns clock to cass's 15 ms one) and
+  `tests/gates/toolchain/bench_timer_floor_measured.sh`.
+  ⚠ **Two axes were added only because mutation testing found the first ones blind.**
+  Deleting the floor subtraction left all four original axes GREEN (the chunking already
+  dilutes one clock read to ≤1 %), and reverting `bench_run` to per-iteration timing ALSO
+  passed once the axes used minima. The discriminators are (a) the per-iteration
+  `bench_start`/`bench_stop` API, and (b) the COST of measuring — per-iteration timing
+  performs 2n clock reads, ~340 ms against ~0.2 ms chunked at n=100,000, which cannot be
+  disguised.
+
+### Fixed — the two gates this release added did not run on the four hosts it gates
+
+Both new `.tcyr` files shipped OUTSIDE `tests/tcyr/crossos/`, and that directory is the
+SELECTOR: `scripts/release-gate.sh:115` runs `cross-os-selfhost.sh <host> crossos` for
+ecb/ach/cass/pi, so a corpus file anywhere else is never executed off-Linux by any gate.
+`bench_timer_floor.tcyr` was consequently **RED on ecb and ach on every run** (5/5 and
+3/3 as first reported, re-confirmed 2/2 and 2/2 here before the rewrite) for the whole
+release with nothing to report it — a stdlib gate that the stdlib's own cross-host
+gate could not see. Both files moved to `crossos/` (43 → **45**).
+
+- ⛔ **The failing axis was UNSATISFIABLE, not flaky.** Axis 5 asserted
+  `bench_min_ns(b) * 2 < raw` where `raw` was the MIN of 200 hand-rolled no-op windows. A
+  minimum over 200 samples reaches 0 the moment ONE window falls inside a single clock
+  tick, so on a host whose tick exceeds a no-op the assertion is `0 < 0` — false forever.
+  Measured, 2000 samples per host: linux 0/2000 zero windows (1,344 ns read, 907 ns
+  step), **ecb 1,945/2000** (11-22 ns read, **1,000 ns** step), **ach 829/2000** (564 ns
+  read, 1,000 ns step).
+- ⭐ **And the repair is not a looser threshold.** On ecb the floor is 11-22 ns against a
+  1,000 ns tick, so netting it out moves a sample by ~2 % of one quantum and NO black-box
+  statistic can resolve it: 20,000 samples of a calibrated 7.6 µs op gave shortfalls of
+  +30,947,000 / -588,000 / -329,000 ns against a theoretical 220,000 across three runs.
+  Comparing minima is worse — they are quantized, and on ach 1 run in 3 the raw loop's
+  min landed on 4,000 ns and the API loop's on 5,000, a NEGATIVE difference from correct
+  code. Axis 5 now **injects** the floor (`_bench_clock_ns` is a live global) and checks
+  the exact arithmetic at three values: at 0 the API must report the whole window, above
+  the window it must report exactly 0, at half the minimum window only the remainder
+  survives and `N × floor` must actually come off. No statistics, identical on a 15 ns
+  clock and a 15.6 ms one.
+- **Axis 5 now runs on WINDOWS too, where it never did.** Axes 1-4 genuinely cannot (the
+  floor there is 0 — GetTickCount64 does not move under 1024 reads), but an injected
+  floor does not care about clock resolution, and axis 5 is the only thing proving
+  `bench_stop` on the PE target still routes through `_bench_net`. cass used to report
+  `6 passed` having asserted nothing at all; it now runs **13**, and the Windows arm was
+  mutation-proven RED 3/3 on real cass. Making it run there immediately caught a bug in
+  its own calibration: the granularity probe sampled back-to-back clock reads, all 4096
+  of which land inside one 15 ms (measured 15,000,000 ns) Windows tick, so it fell back to 1 ns and sized the
+  op five orders of magnitude too small. It now spins until the counter moves.
+- **`freelist_thread_safe.tcyr` no longer SKIPS on the inline-thread targets** — it
+  adapts. `thread_create` on macOS/agnos runs the body INLINE, so a barrier main opens
+  after the spawn is opened by a thread already blocked on it: a HANG, not a failure, and
+  a hang inside the batched cross-OS runner wedges the whole leg. The one non-portable
+  line now opens the gate before the first spawn; the bodies still go through
+  thread_create/thread_join, so `_threads_active` is armed and `_fl_lock` is really taken
+  and released — an asymmetric gate or a lost release still deadlocks there. Settled by
+  EXECUTION on real ecb and real ach (3/3 each, exit 0, sub-second), not by reading
+  `lib/thread_macos.cyr`. cass runs it with real `CreateThread`: **first Windows coverage
+  of the freelist lock**, 13/13.
+- **Axis 3 got the anti-vacuous counter it was missing.** `_flr_mism == 0` is also what a
+  run in which no worker body ever executed produces — the pre-v6.5.11 macOS shape. The
+  workers now count their own iterations and the axis requires all 200,000.
+
+### Fixed — `tests/gates/toolchain/bench_timer_floor_measured.sh` was vacuous for its own fix
+
+Force `_bench_chunk_for` to `return 1` — literally the pre-v6.5.19 one-clock-pair-per-
+iteration defect that floored all 18 benches — and the gate printed **PASS**. Its axis B
+greps that `bench_run` still CONTAINS the string `_bench_chunk_for(`, which calling a
+function that returns 1 preserves, and its build-and-run axis only checked that the report
+contained two substrings. Reproduced on a copy of the tree before fixing.
+
+Axis D now measures the BEHAVIOUR: it times `bench_run` from the outside and refuses a
+wall clock anywhere near `n × floor` (per-iteration timing performs 2n clock reads —
+~134 ms against ~0.2 ms here at n=50,000), refuses a reported average that still contains
+a whole clock read, and requires the function to have been called exactly n times, each
+with its own exit code. **Axis D2 proves that sensitivity every run** by rebuilding the
+same probe against a `_bench_chunk_for`-returns-1 copy of the stdlib and requiring it to
+fail. Verified: chunk-1 rejected (rc=4), `_bench_net`-returns-elapsed rejected, hardcoded
+floor rejected.
+
+### Fixed — `assert_eq`'s failure message split itself across two file descriptors
+
+`lib/assert.cyr` wrote `" (got "` and `", expected "` to **fd 2** and then emitted the two
+values with `fmt_int`, which writes to **fd 1**. Every harness that captures the streams
+separately — `scripts/cross-os-libtest-runner.sh`, every cross-OS ssh probe, every gate
+using `2> err` — saw `FAIL: <name> (got , expected )` with the numbers orphaned in stdout,
+detached from the assertion that produced them. Routed through `efmt_int`. It materially
+slowed the diagnosis of the ecb/ach failure above, which is how it was noticed.
+
+### Fixed — a hanging test wedged the whole cross-OS leg instead of failing one file
+
+`scripts/cross-os-libtest-runner.sh` ran each test unbounded. The caller's `ssh` has no
+command timeout (`ConnectTimeout` covers setup only), so one hang produced no summary and
+no verdict for the entire corpus until a human noticed — cass has had `timeout 90` around
+its per-test ssh since v6.5.10 for exactly this reason and the POSIX hosts never got the
+equivalent, though they are the ones running the batched loop where a hang costs all 45
+files rather than one. It matters more now that `crossos/` carries threading and
+allocator-lock tests, whose failure mode is a hang rather than a fault.
+
+⚠ **Neither Mac has `timeout`** — checked on real ecb and ach, no `timeout` and no
+`gtimeout` (GNU coreutils, not macOS base); pi has it. So the bound is hand-rolled: poll
+`kill -0` on a backgrounded child at 0.1 s, kill -9 and report 124 past the deadline. A
+hang now COUNTS AS A FAILURE and the sweep continues, and the summary names it
+`<file>(HANG@90s)`.
+
 ## [6.5.18] — 2026-08-10
 
 ### Verification

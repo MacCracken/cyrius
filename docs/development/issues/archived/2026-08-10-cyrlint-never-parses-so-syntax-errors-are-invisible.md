@@ -1,6 +1,32 @@
-# `cyrius lint` reports "0 warnings" on a file that does not parse — OPEN
+# `cyrius lint` reports "0 warnings" on a file that does not parse
 
-**Status:** 🔴 **OPEN** — the residual half of the hisab dead-fn-body filing.
+**Status:** ✅ **RESOLVED — v6.5.19. Option 1 (shell out to cycc) was chosen**, implemented in
+`cmd_lint` (`cbt/commands.cyr`) as a syntax pre-pass whose verdict keys on the **message class**,
+never on the exit code.
+
+**Why not option 2 (a real front end):** `src/frontend/` is 17,703 lines carrying ~1,040
+`E*(S, …)` emitter call sites and threads `S` (the compiler heap base) through every function —
+the parser IS the emitter, so there is no parse-only slice to lift. A forked copy is a second
+parser to keep in step forever, in the repo whose thesis is one toolchain; the v6.5.17
+dead-fn-body bug was fork-divergent across the 7 `main*` forks and shipped green for months.
+Option 3 leaves the linter still unable to answer the question.
+
+**The filing's objection to option 1 is real and is what the implementation is built around.**
+Lint must not need a resolvable project, so the pre-pass runs under `_skip_deps = 1` with
+`--allow-undef` and only reports messages on a positive syntax allow-list (`unexpected `,
+`expected `, `unterminated `, the escape family, `non-ASCII byte `, `multi-byte char literal`,
+`nested @unsafe`). Measured: **38 of the 191 files this repo lints exit non-zero standalone, 27
+of them with `undefined variable`** through the same `_err_head` and the same exit 1 — so
+exit-code gating would have made lint refuse 20 % of the stdlib. Anything not on the list falls
+back to today's behaviour, so the failure direction is under-report, never false accusation.
+`cyrius audit` is unaffected — `audit_lint_walk` execs the `cyrlint` binary directly.
+
+All three acceptance criteria met, gate at
+`tests/gates/frontend/lint_reports_unparseable.sh`; its axis 3 (`lib/fs.cyr` alone in a bare
+directory, proven unresolvable there by `cyrius check`, must still be linted) is what rejects
+the exit-code implementation. See CHANGELOG [Unreleased].
+
+**Status (as filed):** 🔴 **OPEN** — the residual half of the hisab dead-fn-body filing.
 **Placement:** unpinned — 6.5.x line. Not blocking a consumer; it is a trust problem.
 **Discovered:** 2026-08-09 (hisab), re-confirmed 2026-08-10 while fixing the compiler half.
 **Severity:** **Medium** — no miscompilation. A linter that says "0 warnings" about a file

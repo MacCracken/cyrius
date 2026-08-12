@@ -533,6 +533,38 @@ fn _cbt_tmpfile(name): i64 {
     return str_data(str_builder_build(sb));
 }
 
+# v6.5.19 — when non-zero, compile() sends the COMPILER's stderr to this path instead
+# of inheriting ours. Opt-in and reset by the caller; every existing call site leaves
+# it 0 and is unaffected. `cyrius lint`'s syntax pre-pass is the only user: it has to
+# READ cycc's diagnostics to tell a syntax error (report it) from a resolution error
+# (stay quiet and lint anyway), and it must not spray either onto the user's terminal.
+var _cc_stderr_to = 0;
+
+# The Windows twin of the child-side dup2 below. lib/process_win.cyr's
+# `_win_compile_spawn` builds `cmd /s /c ""cc" < "src" > "out""` and leaves stderr on
+# the console; this adds the `2> "err"` leg. Kept HERE rather than in lib/ so the
+# capture lands with its only caller — fold it back into `_win_compile_spawn` as a
+# 4th parameter when that file is next touched. CHANGELOG [6.5.19].
+#ifdef CYRIUS_TARGET_WIN
+fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
+    var wbuf = alloc(16384);
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
+    o = _w_append_cstr(wbuf, o, cc);
+    o = _w_append_cstr(wbuf, o, "\" < \"");
+    o = _w_append_cstr(wbuf, o, source);
+    o = _w_append_cstr(wbuf, o, "\" > \"");
+    o = _w_append_cstr(wbuf, o, output);
+    o = _w_append_cstr(wbuf, o, "\" 2> \"");
+    o = _w_append_cstr(wbuf, o, errfile);
+    o = _w_append_cstr(wbuf, o, "\"\"");
+    _w_terminate(wbuf, o);
+    var pi[24];
+    if (_win_create_process(wbuf, 0, 0, &pi) == 0) { return 1; }
+    return _win_wait_close(&pi);
+}
+#endif
+
 fn compile(source, output): i64 {
     var cc = current_cc();
     # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64
@@ -584,6 +616,26 @@ fn compile(source, output): i64 {
         sys_write(STDERR_FD, "\n", 1);
     }
     var actual_source = _materialize_source(source);
+    # v6.5.19 — the preprocessed source is a TEMP, and nothing ever deleted it.
+    # `_materialize_source` returns `source` unchanged when no prepend was needed and
+    # a fresh `<tmpdir>/cpp_<pid>` when it was, so the pointer inequality below is the
+    # exact "we created it" test. Measured on the maintainer's box before this line
+    # existed: 21,289 leftover /tmp/cyrius-* directories holding 2.8 GB, one per
+    # compiling CLI invocation ever run. `test_bin` was always unlinked by the
+    # callers; the preprocessed source never was.
+    # ⚠ THERE ARE THREE EXITS, NOT TWO. This comment used to say "on BOTH the success
+    # and failure paths — see the two sites below", counting only the split after
+    # `sys_waitpid`. The Windows branch is a third (it unlinks before its own returns),
+    # and the pre-fork output-probe bail-out is a fourth that was leaking: it returns
+    # above the fork, so the post-waitpid unlink is unreachable from it. When adding an
+    # early return anywhere after this point, add the unlink with it — the sites are
+    # the `#ifdef CYRIUS_TARGET_WIN` block, the `probe_fd < 0` block, and the one above
+    # the success/failure split.
+    # (The directory itself is left: `sys_rmdir` is not on the Windows peer and this
+    # file cross-compiles to PE — same constraint _cbt_tmpdir documents. An empty
+    # 0700 directory costs an inode; the 2.8 GB was the files.)
+    var tmp_src = 0;
+    if (actual_source != source) { tmp_src = actual_source; }
     # v6.0.85 — Windows path. Win32 has no fork/dup2/execve, and SYS_RENAME(82)
     # + getpid(39) are not PE reroutes, so the POSIX fork+atomic-rename block
     # below can't run here. Spawn `cc < actual_source > output` via cmd.exe
@@ -591,7 +643,10 @@ fn compile(source, output): i64 {
     # apply above (actual_source); a dep build needs a writable temp the Windows
     # path doesn't yet have — tracked for follow-up. See CHANGELOG [6.0.85].
     #ifdef CYRIUS_TARGET_WIN
-    var wrc = _win_compile_spawn(cc, actual_source, output);
+    var wrc = 0;
+    if (_cc_stderr_to != 0) { wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to); }
+    else { wrc = _win_compile_spawn(cc, actual_source, output); }
+    if (tmp_src != 0) { sys_unlink(tmp_src); }
     if (wrc != 0) { sys_unlink(output); return 1; }
     return 0;
     #endif
@@ -617,6 +672,16 @@ fn compile(source, output): i64 {
     # read-only fs) with an honest message instead of the same silent 1.
     var probe_fd = sys_open(tmp_out, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
     if (probe_fd < 0) {
+        # v6.5.19: the preprocessed temp has to go on THIS path too. The unlink added
+        # further down sits after `sys_waitpid`, deliberately above the success/failure
+        # split — but this bail-out returns BEFORE the fork ever happens, so it never
+        # reached that line. Two `return 1;`s below (missing output directory, and
+        # unwritable output) both leaked one `<tmpdir>/cpp_<pid>` per invocation, which
+        # is the same leak the fork path was fixed for. One unlink here covers both
+        # because neither return can be taken without passing through it.
+        # `tmp_out` needs no cleanup: `probe_fd < 0` means the open FAILED, so there is
+        # no partial file, and it was already unlinked before the probe.
+        if (tmp_src != 0) { sys_unlink(tmp_src); }
         var odir = _parent_dir(output);
         if (odir != 0) {
             if (is_dir(str_from(odir)) == 0) {
@@ -641,6 +706,14 @@ fn compile(source, output): i64 {
         sys_dup2(ofd, 1);
         sys_close(ofd);
 
+        # v6.5.19 — opt-in stderr capture (see _cc_stderr_to). Fails OPEN: if the file
+        # cannot be created the child keeps our stderr, exactly as before, rather than
+        # losing the diagnostic entirely.
+        if (_cc_stderr_to != 0) {
+            var efd = sys_open(_cc_stderr_to, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
+            if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
+        }
+
         # v5.11.63: pass --strict in argv when the wrapper flag was
         # set. cycc/cycc_aarch64 read /proc/self/cmdline at startup
         # (since v5.4.19 / v5.11.63 respectively) — a single
@@ -658,6 +731,14 @@ fn compile(source, output): i64 {
         }
         if (_cc_allow_undef == 1) {
             store64(&argv + ax * 8, "--allow-undef");
+            ax = ax + 1;
+        }
+        # v6.5.19: `cyrius lint`'s pre-pass only. Makes cycc answer "does this PARSE?"
+        # without resolution, so a missing include cannot hide the file's syntax
+        # errors. THE OUTPUT IS GARBAGE UNDER THIS FLAG — the only caller compiles to
+        # a temp and unlinks it. See _cc_syntax_only / _syntax_only.
+        if (_cc_syntax_only == 1) {
+            store64(&argv + ax * 8, "--syntax-only");
             ax = ax + 1;
         }
         store64(&argv + ax * 8, 0);
@@ -701,6 +782,9 @@ fn compile(source, output): i64 {
     }
     var status_buf[1];
     sys_waitpid(pid, &status_buf, 0);
+    # The compiler child has been reaped, so it is done with the preprocessed source.
+    # Unlink here, ABOVE the success/failure split, so neither return path can skip it.
+    if (tmp_src != 0) { sys_unlink(tmp_src); }
     var status = load32(&status_buf);
     if (WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
@@ -776,14 +860,95 @@ fn _macho_codesign(path): i64 {
     return 0;
 }
 
-fn run_binary(path): i64 {
+# ── Bounded child execution (v6.5.19) ────────────────────────────────────────
+#
+# THE INCIDENT. `run_binary` was fork + execve + BLOCKING waitpid with no deadline
+# and nothing tying the child's lifetime to ours. Two consequences, and the second
+# one poisoned this very release:
+#
+#   1. A test that hangs hangs the whole suite. There was no timeout at all, so
+#      `cyrius test` on a spinning fixture waits forever and the only way out is to
+#      kill the runner.
+#   2. Killing the runner ORPHANS the child. It is reparented to PID 1 and keeps
+#      running at full CPU indefinitely. The v6.5.19 non-regression verifier found
+#      19 of them, the oldest at 1h42m, together eating ~13 of 16 cores (load
+#      20.66) — and they turned the release gate's `alloc_via_no_plumbing` 14 ns
+#      tripwire RED. Two separate implementers wrote that off as "environmental
+#      load" without anyone asking what the environment was doing. A release gate
+#      whose perf tripwires can be flipped by its own leaked children is not a gate.
+#
+# THE TWO HALVES, AND WHY BOTH ARE NEEDED:
+#
+#   * TIMEOUT (`timeout_ms > 0`) — poll `waitpid(WNOHANG)` on a widening interval
+#     (1 ms while a fast test is still plausible, then 10 ms, then 50 ms) and SIGKILL
+#     on the deadline. The widening keeps the cost off the common path: the corpus is
+#     269 files and each one costs a compile of ~100 ms, so a first-millisecond poll
+#     is noise. Returns 0-2 on timeout, which the callers report as a FAIL.
+#   * PR_SET_PDEATHSIG (Linux) — the timeout alone does NOT fix (2). A parent that is
+#     SIGKILLed runs no cleanup, ever, so nothing the parent does at exit can help;
+#     the kernel has to do it. PDEATHSIG makes the kernel SIGKILL the child the moment
+#     the forking thread dies. The getppid() re-check closes the race where the parent
+#     dies between fork and prctl (the signal would already have been delivered, so
+#     the child must notice for itself and exit).
+#
+# `timeout_ms = 0` means "no deadline" and is what `cyrius run` uses — a user running
+# a server through the CLI must not be shot at 5 minutes. PDEATHSIG applies to every
+# path including `cyrius run`; if the CLI dies the program it launched should die too.
+#
+# Deliberately NOT setpgid + kill(-pgid): setpgid needs a syscall number this file
+# does not have on all four targets (109 x86-Linux / 154 aarch64 / 82 BSD, and none
+# of them routed on PE), and it would not survive the SIGKILL case anyway. PDEATHSIG
+# reuses SYS_PRCTL, which is already in the x86-Linux and aarch64 tables.
+# CHANGELOG [6.5.19].
+var _RUN_TIMEOUT_KILLED = 0 - 2;
+
+# Default deadline for the batch verbs (test/tests/bench/fuzz/soak/smoke/doctest).
+# 5 minutes: the same figure tests/gates/**.sh already uses for `timeout`, and ~2
+# orders of magnitude above the slowest .tcyr in the corpus. `CYRIUS_TEST_TIMEOUT`
+# (seconds; 0 disables) overrides it for a genuinely long-running harness.
+fn _run_timeout_ms(): i64 {
+    var v = _cbt_env_int("CYRIUS_TEST_TIMEOUT", 0 - 1);
+    if (v >= 0) { return v * 1000; }
+    return 300000;
+}
+
+# Portable ms sleep. Same per-target bodies as lib/chrono.cyr's `sleep_ms`, inlined
+# here because cbt/ must not pull a Linux-syscall lib include (CLAUDE.md) and chrono
+# is not in the wrapper's include set. poll(NULL, 0, ms) is the portable form: raw
+# nanosleep(35) is NOT a Darwin BSD syscall and was never routed on PE.
+fn _run_sleep_ms(ms): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    syscall(0xF00F, ms);            # kernel32 Sleep(ms)
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    syscall(7, 0, 0, ms);           # poll(NULL, 0, ms) — 7→230 on Darwin
+    return 0;
+    #endif
+}
+
+fn run_binary_timed(path, timeout_ms): i64 {
     var argv[40];   # N BYTES per CLAUDE.md buffer contract: cmd + arg + NUL ≤ 24 B
     # Bug 2 (v6.0.66): cmd_test/run/bench/fuzz/doctest compile to /tmp and run via
     # run_binary without signing — only cmd_build signed (6.0.38). On arm64 macOS an
     # unsigned binary is AMFI-SIGKILL'd (128+9=137). Sign here so EVERY run path works.
     _macho_codesign(path);
+    var ppid_before = 0;
+    #ifdef CYRIUS_TARGET_LINUX
+    ppid_before = syscall(39);      # our pid == the child's ppid after fork
+    #endif
     var pid = sys_fork();
     if (pid == 0) {
+        # Die with the parent. PR_SET_PDEATHSIG = 1, SIGKILL = 9. It survives execve
+        # (the binary is not setuid), so the exec'd test inherits it. Linux only —
+        # prctl is not a BSD/Darwin syscall and is not routed on PE; SYS_PRCTL is in
+        # the x86-Linux and aarch64-Linux tables only.
+        #ifdef CYRIUS_TARGET_LINUX
+        sys_prctl(1, 9, 0, 0, 0);
+        # The race: if the parent died between fork and the prctl above, the death
+        # signal has already been delivered to nobody and will never fire. Notice it.
+        if (syscall(110) != ppid_before) { sys_exit(1); }   # SYS_GETPPID
+        #endif
         # Bug 1 (v6.0.66): qemu-aarch64 is the x86-Linux-host cross-run path for an
         # aarch64 TARGET. A native Mach-O host (Apple Silicon) has NO qemu-aarch64 and
         # runs its own arch directly; find_tools() forces _arch=AARCH64 on arm64-macOS,
@@ -804,11 +969,38 @@ fn run_binary(path): i64 {
         sys_exit(127);
     }
     var status_buf[1];
+    if (timeout_ms <= 0) {
+        sys_waitpid(pid, &status_buf, 0);
+        var status0 = load32(&status_buf);
+        if (WIFEXITED(status0) == 1) { return WEXITSTATUS(status0); }
+        if (WIFSIGNALED(status0) == 1) { return 128 + WTERMSIG(status0); }
+        return 1;
+    }
+    var waited = 0;
+    var slice = 1;
+    while (waited < timeout_ms) {
+        var w = sys_waitpid(pid, &status_buf, WNOHANG);
+        if (w == pid) {
+            var status = load32(&status_buf);
+            if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+            if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+            return 1;
+        }
+        if (w < 0) { return 1; }        # no such child — nothing left to wait on
+        _run_sleep_ms(slice);
+        waited = waited + slice;
+        if (waited >= 50)   { slice = 10; }
+        if (waited >= 2000) { slice = 50; }
+    }
+    # Deadline. SIGKILL (not SIGTERM): the child may be spinning in a tight loop with
+    # no handler, and a TERM it ignores leaves exactly the orphan this exists to stop.
+    sys_kill(pid, 9);
     sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
-    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
-    return 1;
+    return _RUN_TIMEOUT_KILLED;
+}
+
+fn run_binary(path): i64 {
+    return run_binary_timed(path, 0);
 }
 
 # Run an external tool by path, passing through args

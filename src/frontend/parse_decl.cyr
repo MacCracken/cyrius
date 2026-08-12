@@ -7,6 +7,33 @@
 # LOC under ~1500. Included by parse.cyr at the same textual position
 # the original content lived; self-host byte-identical.
 
+# v6.5.19 (--syntax-only) — consume a trailing `.field` chain, DOT = token 41.
+#
+# The resolvable field paths walk a chained access (`o.inner.size`) inside
+# `_resolve_leaf_field`, and the assignment path additionally consumes `= expr` AND the
+# statement's `;`. A `--syntax-only` early return therefore cannot simply `return 0`:
+# whatever the resolvable path would have consumed and this one does not becomes a
+# DANGLING token that the statement layer reports as a syntax error the file does not
+# contain. That is the same class of self-inflicted false positive as the panic-mode
+# attempt described in `_syntax_only` (src/common/util.cyr) — an INVENTED error is
+# indistinguishable from a real one to a message-based classifier, and it puts
+# `cyrius lint` straight back to refusing valid downstream source.
+# Measured while building this: without the chain walk, `return o.inner.size;` came
+# back `expected ';', got '.'`; without the `;` consumption, `e.size = 7;` came back
+# `unexpected ';'`. Both were gate axis 6 failures, both were pure fiction.
+fn _synonly_skip_chain(S): i64 {
+    var sgo = 1;
+    while (sgo == 1) {
+        if (PEEKT(S) != 41) { sgo = 0; }
+        else {
+            STI(S, GTI(S) + 1);                                  # consume '.'
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); sgo = 0; }
+            else { STI(S, GTI(S) + 1); }                         # consume field name
+        }
+    }
+    return 0;
+}
+
 fn PARSE_ARRAY(S, noff, ew): i64 {
     STI(S, GTI(S) + 1);  # consume [
     # v5.10.48: accept either NUM literal OR an IDENT that resolves
@@ -236,7 +263,13 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
             STI(S, GTI(S) + 1);
             var isi = ft - 1;
             var ifi = FINDFIELD(S, isi, ifnoff);
-            if (ifi < 0) { ERR(S); }
+            # v6.5.19: a resolution failure, not a syntax one — see ERR_IDENT in
+            # src/common/util.cyr for why the message class is load-bearing.
+            if (ifi < 0) {
+                ERR_IDENT(S, "unknown field ", ifnoff, " on struct ", L64(S + 0x1A6018 + isi * 8));
+                _rlf_off = off;
+                return ft;
+            }
             off = off + FIELDOFF(S, isi, ifi);
             ft = GETFTYPE(S, isi, ifi);
         } }
@@ -321,17 +354,47 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
     if (idx == 0 - 1) {
         idx = FINDVAR(S, noff);
         if (idx < 0) {
-            syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-            PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
+            # v6.5.19: --syntax-only treats the unknown base as an opaque value; the
+            # `sid == 0` arm below then consumes the field access without emitting a
+            # diagnostic, keeping the stream in sync. See _syntax_only.
+            if (_syntax_only == 1) { sid = 0; }
+            else {
+                syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
+                PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
+            }
         }
-        sid = GVTYPE(S, idx);
+        else { sid = GVTYPE(S, idx); }
     }
     var si = 0;
     if (sid > 0) { si = sid - 1; }
 
     # Method call: ident.method(args)
     if (PEEKT(S) == 10) {
-        if (sid == 0) { ERR(S); }
+        # v6.5.19: see ERR_IDENT (src/common/util.cyr). `e.render()` where `e`'s
+        # struct is declared in a sibling file is a resolution failure; reporting it
+        # as `unexpected '('` blamed the grammar for a missing include. Bail out
+        # rather than fall through with si = -1 into an out-of-bounds FINDFIELD.
+        if (sid == 0) {
+            # v6.5.19 --syntax-only: stay SILENT and do not set _panic (which would
+            # swallow the next genuine syntax error), but still CONSUME the argument
+            # list through PCMPE so a grammar error inside it is caught.
+            if (_syntax_only == 1) {
+                STI(S, GTI(S) + 1);            # consume (
+                if (PEEKT(S) != 11) {
+                    var sogo = 1;
+                    while (sogo == 1) {
+                        PCMPE(S);
+                        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                        else { sogo = 0; }
+                    }
+                }
+                if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+                STI(S, GTI(S) + 1);            # consume )
+                return 0;
+            }
+            ERR_IDENT(S, "no struct type in scope for ", noff, "; a method call needs its struct declaration (missing include?)", 0 - 1);
+            return 0;
+        }
         var mname = BUILD_METHOD_NAME(S, si, fnoff);
         # Push &var as first arg (self) — handle locals and globals
         if (idx < 0 - 1) {
@@ -366,9 +429,23 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         return 0;
     }
 
-    if (sid == 0) { ERR(S); }
+    # v6.5.19: `e.size` where `e`'s struct is declared in a sibling file — a
+    # resolution failure, reported as one. See ERR_IDENT (src/common/util.cyr).
+    if (sid == 0) {
+        # v6.5.19 --syntax-only: silent, no _panic — but walk any chained `.field`
+        # tail first (see _synonly_skip_chain) so nothing is left dangling.
+        if (_syntax_only == 1) { _synonly_skip_chain(S); return 0; }
+        ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1);
+        return 0;
+    }
     var fi = FINDFIELD(S, si, fnoff);
-    if (fi < 0) { ERR(S); }
+    if (fi < 0) {
+        # v6.5.19 --syntax-only: a wrong field NAME is not a grammar error, so stay
+        # silent and do not _panic (which would swallow the next real syntax error).
+        if (_syntax_only == 1) { _synonly_skip_chain(S); return 0; }
+        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", L64(S + 0x1A6018 + si * 8));
+        return 0;
+    }
     var off = FIELDOFF(S, si, fi);
     # Check for chained access: s.inner.field — leaf retype (R1, v6.4.15).
     var ft = _resolve_leaf_field(S, si, fi, off);
@@ -459,15 +536,52 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     if (idx == 0 - 1) {
         idx = FINDVAR(S, noff);
         if (idx < 0) {
-            syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-            PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
+            # v6.5.19: --syntax-only treats the unknown base as an opaque value; the
+            # `sid == 0` arm below then consumes the field access without emitting a
+            # diagnostic, keeping the stream in sync. See _syntax_only.
+            if (_syntax_only == 1) { sid = 0; }
+            else {
+                syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
+                PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
+            }
         }
-        sid = GVTYPE(S, idx);
+        else { sid = GVTYPE(S, idx); }
     }
-    if (sid == 0) { ERR(S); }
+    # v6.5.19: the assignment side of the same class — `e.size = 1;` with the
+    # struct declared elsewhere. See ERR_IDENT (src/common/util.cyr).
+    if (sid == 0) {
+        # v6.5.19 --syntax-only: silent, no _panic — but the `= expr` tail has NOT been
+        # consumed at this point, so it must be parsed exactly as the resolvable path
+        # below does or the leftover `=` becomes an INVENTED syntax error.
+        if (_syntax_only == 1) {
+            _synonly_skip_chain(S);
+            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+            STI(S, GTI(S) + 1);
+            PCMPE(S);
+            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+            STI(S, GTI(S) + 1);
+            return 0;
+        }
+        ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field =' assignment needs its struct declaration (missing include?)", 0 - 1);
+        return 0;
+    }
     var si = sid - 1;
     var fi = FINDFIELD(S, si, fnoff);
-    if (fi < 0) { ERR(S); }
+    if (fi < 0) {
+        # v6.5.19 --syntax-only: silent, no _panic — and consume the `= expr` tail, or
+        # the leftover `=` is reported as a syntax error this file does not have.
+        if (_syntax_only == 1) {
+            _synonly_skip_chain(S);
+            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+            STI(S, GTI(S) + 1);
+            PCMPE(S);
+            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+            STI(S, GTI(S) + 1);
+            return 0;
+        }
+        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", L64(S + 0x1A6018 + si * 8));
+        return 0;
+    }
     var off = FIELDOFF(S, si, fi);
     # Check for chained access: s.inner.field = expr — leaf retype (R1, v6.4.15).
     var ft = _resolve_leaf_field(S, si, fi, off);

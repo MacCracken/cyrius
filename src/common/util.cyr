@@ -1122,9 +1122,101 @@ fn IS_KEYWORD_TOK(typ): i64 {
 # recovery never fires, the watchdog is inert → the self-compile output is unchanged.
 var _had_error = 0;
 var _panic = 0;
+
+# ── v6.5.19: `--syntax-only` — answer "does this file PARSE?" without resolution.
+#
+# THE PROBLEM IT SOLVES (hisab, the residual half of the lint filing). `cyrius lint`
+# runs a compiler pre-pass and classifies on the compiler's message. But an undefined
+# VARIABLE is a parse-time `SYS_EXIT` — `--allow-undef` only reaches the fixup stage,
+# so it cannot downgrade one — and the compiler stops at the FIRST error. So a file
+# whose first diagnostic is a resolution failure never reached its syntax errors at
+# all, and lint printed `0 warnings`, exit 0, on a file that does not parse. That is
+# verbatim the shape the filing reported and v6.5.19 exists to close.
+#
+# ⛔ WHY NOT JUST MAKE THE RESOLUTION SITES REPORT-AND-CONTINUE (panic-mode). Tried
+# first, and it REGRESSED the P1 this release had already fixed. Routing the five
+# `undefined variable` sites through `ERR_IDENT` sets `_panic`, and `_sync_skip`
+# resyncs to the next `;`/`}` — which lands BEFORE an `else`, so `lib/fs.cyr` (a
+# perfectly well-formed file that merely lacks its includes) started reporting
+# `unexpected else`. A MANUFACTURED syntax error is indistinguishable from a real one
+# to any message-based classifier, so lint went straight back to refusing valid
+# downstream source. Gate axis 3 of tests/gates/frontend/lint_reports_unparseable.sh
+# caught it. Cascade recovery cannot be the substrate for this question.
+#
+# WHAT THIS MODE DOES INSTEAD: an unresolved name is not an error and not a panic —
+# it RESOLVES to a benign constant, and the parse continues in perfect sync, taking
+# exactly the control flow a resolvable name would (`emit; return 0`, the same shape
+# as every sibling success path). No message, no `_panic`, no `_sync_skip`, so no
+# cascade and no invented syntax error. What survives is the genuine grammar errors,
+# which is precisely the question lint needs answered.
+#
+# Codegen under this flag is deliberately WRONG (every unresolved read is 0) and the
+# output must never be used — `cmd_lint` compiles to a temp and unlinks it. It is a
+# QUESTION-ANSWERING mode, not a build mode.
+#
+# Default 0, so `cyrius build` is untouched and the self-host stays byte-identical.
+var _syntax_only = 0;
 # Anti-hang watchdog state (see _wd_tick / PEEKT).
 var _wd_last = 0;
 var _wd_stall = 0;
+# v6.5.19: past-EOF read counter (see _wd_eof_tick / PEEKT).
+var _wd_eof = 0;
+
+# ── v6.5.19 (CVE-40): recursive-descent DEPTH bound.
+#
+# THE DEFECT. Neither watchdog above can see this one. `_wd_tick` bounds a parse that
+# STALLS (GTI stops advancing) and `_wd_eof_tick` bounds reads PAST EOF — but a deeply
+# nested source advances GTI at every level and never reads past the end, so both stay
+# inert while the native stack runs out. `fn f() { ` repeated 514 times SIGSEGVs cycc;
+# so do nested blocks, `if`, `while`, parenthesised expressions, unary-minus chains and
+# call chains, at their own depths. Reachable from ordinary untrusted stdin
+# (`cat hostile.cyr | cycc`), which is the CVE-32/33 threat model exactly.
+#
+# PROVEN TO BE STACK EXHAUSTION, NOT A TABLE. The crash depth scales LINEARLY with
+# RLIMIT_STACK — 512 at 8 MB, 1026 at 16 MB, 2053 at 32 MB — i.e. ~16 KB of stack per
+# nesting level for the `fn` vector, which is the most expensive of the six. Cheaper
+# vectors (parens, `if`) cost ~500 B and survive past 16384.
+#
+# WHY A DEPTH COUNTER AND NOT A STACK-POINTER PROBE. Measuring `&local` against a
+# high-water mark would adapt per-vector and is what a C compiler would do, but it
+# assumes a single downward-growing native stack — an assumption the cx bytecode target
+# does not owe us, and a wrong delta there would FALSE-FIRE on valid input. A counter is
+# pure arithmetic and behaves identically on all seven forks.
+#
+# THE BOUND. 256 levels. Real source nests O(10) — the deepest in cycc's own tree is
+# ~12 — so 256 is >20x any legitimate program and cannot false-fire; and at the worst
+# observed 16 KB/level it caps stack use at ~4.2 MB, inside the 8 MB default of Linux,
+# macOS and aarch64. Windows reserved only 1 MB, which no depth bound above ~60 could
+# fit, so `SizeOfStackReserve` was raised to 8 MB in the same patch (src/backend/pe/
+# emit.cyr) — reserve is address space, not committed memory, so the cost is nil. The
+# bound is worthless without that change and the change is pointless without the bound;
+# they ship together.
+#
+# NO UNWINDING. Like every other guard here, tripping means SYS_EXIT: we are mid-parse,
+# before EMITELF, so nothing has been written and every diagnostic already found is
+# printed. The counter still decrements on the normal path so a long FLAT file (which is
+# not nested at all) can never accumulate its way to the bound.
+var _rdepth = 0;
+
+# Called from the two recursive-descent chokepoints — the PARSE_STMT and PEXPR wrappers
+# — which between them cover all six crashing vectors. Returns 1 if the caller must not
+# descend (it never returns at all once the bound trips, but the shape keeps the call
+# sites honest).
+fn _rd_enter(S): i64 {
+    _rdepth = _rdepth + 1;
+    if (_rdepth > 256) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        syscall(SYS_WRITE, 2, ": nesting too deep (over 256 levels — truncated or hostile source)\n", 67);
+        syscall(SYS_EXIT, 1);
+    }
+    return 0;
+}
+
+fn _rd_exit(): i64 {
+    _rdepth = _rdepth - 1;
+    return 0;
+}
 
 # ── v6.5.7: the include directory of the top-level source (`#@incdir`).
 #
@@ -1181,6 +1273,55 @@ fn _wd_tick(S): i64 {
     return 0;
 }
 
+# v6.5.19 — THE SECOND BACKSTOP, AND THE ONE THAT IS NOT GATED ON `_had_error`.
+#
+# `_wd_tick` above only fires after the first error, because it is recovery machinery
+# and calling it on every clean-path PEEKT would be a real cost. That gate is what let
+# 40 truncated constructs crash or hang at 6.5.18: `SKIP_GENERICS`, `_capture_tparams`
+# and the `var`/`match` skippers are SILENT — they consume tokens without emitting any
+# diagnostic — so `_had_error` was still 0, the watchdog was inert, and the loop ran
+# forever. `fn`, `var x` and `async` SIGSEGV'd with zero bytes of stderr.
+#
+# This one is called from PEEKT's PAST-EOF branch, unconditionally. That costs nothing
+# on a clean compile because a clean compile NEVER takes that branch: LEX appends the
+# EOF token (`ADDTOK(S, 12, 0)`, lex.cyr:1730) so the EOF token itself sits at
+# GTCNT - 1 and reading it leaves GTI < GTCNT. Past-EOF PEEKT reads on valid input are
+# exactly ZERO — measured, not assumed (the self-host is byte-identical either way).
+#
+# THE BOUND. A legitimate unwind after truncation reads EOF a few times per nesting
+# level as each recursive-descent frame checks its terminator and returns; real source
+# nests O(100) deep, so O(1000) reads is the plausible ceiling. 20000 is >10x that and
+# still small enough to bound a runaway promptly. It is deliberately NOT the 500000 of
+# the stall bound: a spinning loop that WRITES a bounded table (the enum member loop
+# walks a 1024-entry table off its region) must be stopped in the low thousands, not
+# the high hundred-thousands. The loops that write tables also carry their own explicit
+# EOF guards now — this is the net beneath them, not a substitute for them.
+# The message is deliberately in the STANDARD `error:<file>:<line>:<col>: <msg>` shape
+# rather than a bare `error: …`, for two reasons. It is a real diagnostic a user will
+# see (a file missing its final `;` reaches it), so it should carry a location like
+# every other one. And `cyrius lint`'s pre-pass classifies on the message, matching the
+# `unexpected ` prefix through `_lint_capture_has_syntax` — which parses exactly this
+# shape and would silently ignore a bare `error:` line, letting lint bless a file that
+# does not parse. That is the very defect v6.5.19 exists to close, so the format is
+# load-bearing: see `_lint_msg_is_syntax` in cbt/commands.cyr.
+fn _wd_eof_tick(S): i64 {
+    _wd_eof = _wd_eof + 1;
+    if (_wd_eof > 20000) {
+        # Rewind the cursor to the LAST REAL token before reporting. `_err_head` reads
+        # the token at GTI, and past the end that is zeroed heap — it printed a
+        # locationless `error:0:1:`. The EOF token carries the true end-of-file
+        # position, which is exactly where "input ended unexpectedly" happened. Safe to
+        # clobber GTI: the next statement exits.
+        var _wn = GTCNT(S);
+        if (_wn > 0) { STI(S, _wn - 1); }
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        syscall(SYS_WRITE, 2, ": unexpected end of input (truncated or unbalanced source)\n", 59);
+        syscall(SYS_EXIT, 1);
+    }
+    return 0;
+}
+
 # Skip tokens to the next recovery point after an error: consume up to and INCLUDING
 # the next ';' (statement end), or stop AT '}' (block end, token 14) / EOF (token 12)
 # so the enclosing block loop still sees its terminator. Bounded by GTCNT — can NEVER
@@ -1220,7 +1361,15 @@ fn _err_col(S, off): i64 {
 # "warning:" prefix — each caller writes its own). Routing all five emitters
 # through this gives every one of the 432 error sites a column for free.
 fn _err_head(S): i64 {
-    var ti = GTI(S);
+    return _err_head_at(S, GTI(S));
+}
+
+# v6.5.19 — the same head for a diagnostic about a token OTHER than the cursor.
+# `_err_head` reads GTI(S), which is correct for a parse error (the cursor IS the
+# problem) and wrong for a warning raised after the parser has already walked past the
+# thing it is describing: the `duplicate fn` warning fires once the fn NAME has been
+# consumed, so it used to point at the `(` rather than at the definition.
+fn _err_head_at(S, ti): i64 {
     FM_LOOKUP(S, GTLINE(S, ti));
     syscall(SYS_WRITE, 2, ":", 1);
     PRNUM(_err_col(S, GTOFF(S, ti)));
@@ -1393,6 +1542,49 @@ fn ERR_EXPECT(S, expected_type): i64 {
             syscall(SYS_WRITE, 2, "  hint: a string literal where ',' is expected often means a nested call inside a fn argument confused the parser; stage the inner call into a `var` first.\n", 156);
         }
     }
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+
+# v6.5.19 — a NAME-RESOLUTION diagnostic that NAMES the identifier at fault.
+#
+# WHY IT EXISTS, AND WHY THE MESSAGE CLASS MATTERS. Six struct-field sites in
+# parse_decl.cyr reported through `ERR(S)` — i.e. `unexpected ';'`, the SYNTAX
+# emitter — for what is a resolution failure. `total = total + e.size;` where the
+# struct `e` belongs to is declared in a SIBLING FILE is well-formed cyrius that
+# merely lacks context, and calling it a syntax error was wrong twice over:
+#   1. it sent the reader hunting for a typo that does not exist, and
+#   2. `cyrius lint` classifies on the message CLASS (a lint of ONE file in
+#      isolation has no manifest and no lib/, so it cannot key on the exit code —
+#      see cbt/commands.cyr `_lint_msg_is_syntax`), so lint REFUSED to lint those
+#      files. Measured at 6.5.18 across 472 files in nine repos: 3 refusals, all
+#      in stiva — the repo that filed the original "lint never parses" issue.
+# Messages emitted here are deliberately NOT of the `unexpected …` / `expected …`
+# syntax class, so the classifier's stated invariant ("an `unexpected` message
+# means a token the grammar cannot accept") is true again rather than aspirational.
+#
+# PRSTR everywhere, no explicit lengths: the ERR_MSG(msg, len) shape makes the
+# caller hand-count bytes, and a miscount silently truncates or over-reads.
+# `tail` = 0 for none; `noff2` = -1 for none (else a second name, quoted).
+# CHANGELOG [6.5.19].
+fn ERR_IDENT(S, msg, noff, tail, noff2): i64 {
+    if (_panic == 1) { return 0; }   # v6.4.62: swallow the cascade until _sync_skip resyncs
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    PRSTR(msg);
+    syscall(SYS_WRITE, 2, "'", 1);
+    PRSTR(S + 0x60000 + noff);
+    syscall(SYS_WRITE, 2, "'", 1);
+    if (tail != 0) { PRSTR(tail); }
+    if (noff2 >= 0) {
+        syscall(SYS_WRITE, 2, "'", 1);
+        PRSTR(S + 0x60000 + noff2);
+        syscall(SYS_WRITE, 2, "'", 1);
+    }
+    syscall(SYS_WRITE, 2, "\n", 1);
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;

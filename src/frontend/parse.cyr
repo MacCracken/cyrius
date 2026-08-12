@@ -345,6 +345,34 @@ include "src/frontend/parse_fn.cyr"
 # ASM_MNEMONIC and helpers are in arch-specific emit files:
 # src/backend/x86/emit.cyr and src/backend/aarch64/emit.cyr
 
+# v6.5.19 (CVE-39) — bound the jump-end arrays of PARSE_SWITCH and PARSE_MATCH.
+#
+# Both fns collect one "jump to end of construct" patch site per case/arm into a LOCAL
+# `ends: i64[256]`, then walk it once the construct closes. The counter `ec` was never
+# checked against 256 at ANY of the four write sites, so case 257 wrote straight off the
+# stack frame. This needs no hostile input: a 400-case `switch` and a 400-arm `match`
+# are ordinary valid cyrius — exactly the opcode-dispatch shape this compiler's own
+# sources use — and both killed cycc with a SIGSEGV and ZERO diagnostic bytes.
+#
+# v6.2.1 is the near-miss worth recording: it found the same arrays overflowing at 32
+# entries, correctly diagnosed the `var ends[256]` = 256 BYTES = 32 slots trap (see
+# CLAUDE.md), and resized them to `i64[256]`. But resizing MOVED the cliff from 32 to
+# 256 without ever fencing it, and added a `seen_count < 256` guard on the neighbouring
+# dedup array — so the file already shows the author knew a bound was needed, one
+# declaration away. A capacity fix is not a bounds fix.
+#
+# HARD ERROR, never a silent skip: dropping a jump-end patch leaves that arm falling
+# through into the next one, i.e. a silent miscompile, which is strictly worse than
+# refusing the file. Shared by all four sites so the limit cannot drift between them.
+fn _ends_guard(S, ec): i64 {
+    if (ec >= 256) {
+        syscall(SYS_WRITE, 2, "error:", 6); _err_head(S);
+        syscall(SYS_WRITE, 2, ": too many case/arm bodies in one switch/match (max 256)\n", 57);
+        syscall(SYS_EXIT, 1);
+    }
+    return 0;
+}
+
 fn PARSE_SWITCH(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
@@ -469,6 +497,7 @@ fn PARSE_SWITCH(S): i64 {
                             else { if (PEEKT(S) == 12) { cgo = 0; }
                                 else { PARSE_STMT(S); } } } }
                 }
+                _ends_guard(S, ec);
                 store64(&ends + ec * 8, EJMP0(S));
                 ec = ec + 1;
             }
@@ -484,6 +513,7 @@ fn PARSE_SWITCH(S): i64 {
                         if (PEEKT(S) == 12) { break; }
                         PARSE_STMT(S);
                     }
+                    _ends_guard(S, ec);
                     store64(&ends + ec * 8, EJMP0(S));
                     ec = ec + 1;
                 }
@@ -539,6 +569,7 @@ fn PARSE_SWITCH(S): i64 {
                             else { if (PEEKT(S) == 12) { cgo = 0; }
                                 else { PARSE_STMT(S); } } } }
                 }
+                _ends_guard(S, ec);
                 store64(&ends + ec * 8, EJMP0(S));
                 ec = ec + 1;
                 EPATCH(S, skip);
@@ -602,6 +633,11 @@ fn PARSE_MATCH(S): i64 {
     var mgo = 1;
     while (mgo == 1) {
         if (PEEKT(S) == 14) { mgo = 0; }
+        # v6.5.19: EOF guard (CVE-39). `fn f() { match` and `fn f() { match (` SIGSEGV'd
+        # at 6.5.18 — and this one bit FASTEST of the whole class, because the arm loop
+        # writes `ends`/`seen_vcnt`, which are 256-slot LOCAL (stack) arrays: a runaway
+        # arm count smashes the frame long before any heap table overflows.
+        elif (PEEKT(S) == 12) { mgo = 0; }
         else {
             # Check for _ (wildcard/default)
             var is_default = 0;
@@ -694,6 +730,7 @@ fn PARSE_MATCH(S): i64 {
                 SCOPE_POP(S);
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
                 STI(S, GTI(S) + 1);
+                _ends_guard(S, ec);
                 store64(&ends + ec * 8, EJMP0(S));
                 ec = ec + 1;
                 EPATCH(S, skip);
@@ -778,7 +815,12 @@ fn _EVAL_CONST_ATOM(S): i64 {
 # input _panic is never set and every statement advances → pure pass-through (byte-id).
 fn PARSE_STMT(S): i64 {
     var before = GTI(S);
+    # v6.5.19 (CVE-40): this wrapper is already the one place every statement descent
+    # passes through, which makes it the natural home for the depth bound too. See
+    # _rd_enter (src/common/util.cyr). Covers nested fn / blocks / if / while.
+    _rd_enter(S);
     _PARSE_STMT_IMPL(S);
+    _rd_exit();
     if (_panic == 1) { _sync_skip(S); }
     if (GTI(S) == before) {
         if (GTI(S) < GTCNT(S)) { STI(S, GTI(S) + 1); }
@@ -1379,6 +1421,18 @@ fn _PARSE_STMT_IMPL(S): i64 {
         else {
             idx = FINDVAR(S, noff);
             if (idx < 0) {
+                # v6.5.19: --syntax-only drops the STORE (there is nowhere to store to)
+                # but must still consume the statement's `;`, exactly as the tail of
+                # this fn does below. Returning without it left the `;` dangling and
+                # the statement layer reported `unexpected ';'` — a FALSE ACCUSATION
+                # against valid code, measured on `lib/thread_win.cyr`'s
+                # `_threads_active = 1;` (a global declared in a sibling module) and
+                # therefore on all 74 repos that vendor it. See _syntax_only.
+                if (_syntax_only == 1) {
+                    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+                    STI(S, GTI(S) + 1);
+                    return 0;
+                }
                 syscall(SYS_WRITE, 2, "error:", 6);
                 _err_head(S);
                 syscall(SYS_WRITE, 2, ": undefined variable '", 22);

@@ -286,10 +286,18 @@ fn cmd_doctest(arg): i64 {
     var dt_pass = 0;
     var dt_fail = 0;
     var dt_total = 0;
-    var code = alloc(8192);
+    # v6.5.19 — `_DT_CODE_CAP` and the two guards below. Both memcpys into `code` were
+    # unbounded: a doc example longer than the buffer wrote past the end of an 8 KB heap
+    # region from ordinary (if unusual) source. Same class as the three unbounded copies
+    # the 2026-07-27 audit found, and noticed while fixing the auto-prepend in this
+    # function. Overflowing an example is reported as a failed doc test rather than
+    # silently truncated, so the count stays honest.
+    var _DT_CODE_CAP = 8192;
+    var code = alloc(_DT_CODE_CAP);
     var code_len = 0;
     var in_example = 0;
     var line_num = 0;
+    var dt_over = 0;
 
     var pos = 0;
     while (pos < fn_read) {
@@ -309,7 +317,8 @@ fn cmd_doctest(arg): i64 {
                 # New or continuation example line
                 var snippet = fbuf + ls + 6;
                 var slen = ll - 6;
-                if (in_example == 0) { code_len = 0; }
+                if (in_example == 0) { code_len = 0; dt_over = 0; }
+                if (code_len + slen + 2 > _DT_CODE_CAP) { dt_over = 1; in_example = 1; continue; }
                 memcpy(code + code_len, snippet, slen);
                 code_len = code_len + slen;
                 store8(code + code_len, 10);
@@ -320,6 +329,21 @@ fn cmd_doctest(arg): i64 {
         }
         if (ll >= 6) {
             if (memeq(fbuf + ls, "# === ", 6) == 1) {
+                if (in_example == 1 && dt_over == 1) {
+                    dt_total = dt_total + 1;
+                    dt_fail = dt_fail + 1;
+                    sys_write(STDERR_FD, "  FAIL: ", 8);
+                    sys_write(STDERR_FD, arg, strlen(arg));
+                    sys_write(STDERR_FD, ":", 1);
+                    fmt_int_fd(STDERR_FD, line_num);
+                    sys_write(STDERR_FD, " (doc example exceeds the ", 26);
+                    fmt_int_fd(STDERR_FD, _DT_CODE_CAP);
+                    sys_write(STDERR_FD, "-byte example buffer)\n", 22);
+                    code_len = 0;
+                    in_example = 0;
+                    dt_over = 0;
+                    continue;
+                }
                 if (in_example == 1) {
                     # Parse expected exit code
                     var exp_str = fbuf + ls + 6;
@@ -335,7 +359,7 @@ fn cmd_doctest(arg): i64 {
                         syscall(3, fd);
                         var tmpbin = _cbt_tmpfile("dt_bin");
                         if (compile(tmpf, tmpbin) == 0) {
-                            var ec = run_binary(tmpbin);
+                            var ec = run_binary_timed(tmpbin, _run_timeout_ms());
                             if (ec == expected) {
                                 dt_pass = dt_pass + 1;
                             } else {
@@ -374,6 +398,7 @@ fn cmd_doctest(arg): i64 {
                     # Continuation comment line
                     var snippet = fbuf + ls + 2;
                     var slen = ll - 2;
+                    if (code_len + slen + 2 > _DT_CODE_CAP) { dt_over = 1; continue; }
                     memcpy(code + code_len, snippet, slen);
                     code_len = code_len + slen;
                     store8(code + code_len, 10);

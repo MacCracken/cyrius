@@ -256,7 +256,19 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
     for bin in $_R_BINS; do
         case "$bin" in
             cycc)    : ;;  # seed-bootstrapped, never rebuilt by --refresh-only
-            cyrius) _rebuild_stale "cyrius" "cbt/cyrius.cyr" ;;
+            # v6.5.19: deproots MUST include `cbt` — this is the v6.2.34 bug one
+            # directory over, and it silently withheld every CLI fix. `cbt/cyrius.cyr`
+            # is a 45 KB shim that `include`s six siblings (core/build/commands/
+            # project/quality/deps/pulsar, ~250 KB); the real code lives in THOSE.
+            # With deproots left at the "lib" default, editing `cbt/build.cyr` left
+            # `build/cyrius` newer than its unchanged direct source and newer than
+            # every `lib/*.cyr`, so `--refresh-only` reported "no rebuild needed" and
+            # kept shipping the old binary. MEASURED at 6.5.19: after a `cbt/build.cyr`
+            # fix, `--refresh-only` exited 0 with `build/cyrius` still 2.5 hours stale.
+            # That breaks the contract this function documents ("never ships stale")
+            # AND the CLAUDE.md build recipe, which tells you `--refresh-only`
+            # "rebuilds the CLI after cbt/ changes" — it did not.
+            cyrius) _rebuild_stale "cyrius" "cbt/cyrius.cyr" "lib cbt" ;;
             *)      _rebuild_stale "$bin"    "programs/${bin}.cyr" ;;
         esac
     done

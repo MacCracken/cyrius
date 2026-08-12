@@ -1,6 +1,37 @@
 # `lib/bench.cyr` documents `clock_gettime: ~120ns`; it is ~1,320ns on x86_64 Linux
 
-**Status:** 🔴 OPEN — filed from a consumer (agnosai), measured against v6.5.18.
+**Status:** ✅ RESOLVED v6.5.19 — the framework measures its own floor.
+
+> **Resolution.** `bench_clock_overhead_ns()` calibrates one clock read at first use;
+> every timing path subtracts it; `bench_run` sizes its own batches; `bench_report`
+> prints the floor it measured. `docs/development/benchmark-regimes.md` is the ledger
+> for the historical rows. Gates: `tests/tcyr/crossos/bench_timer_floor.tcyr`,
+> `tests/gates/toolchain/bench_timer_floor_measured.sh`.
+>
+> **Three corrections to this filing, all measured rather than argued:**
+>
+> 1. ⚠ **"Correct the constant" was not implementable.** One clock read costs
+>    ~1,320–1,720 ns here, ~3,550 ns on pi, ~15–32 ns on ecb and ~64–68 ns on ach — a
+>    **230× spread across the four hosts the release gate runs on**. The requested
+>    ~1,320 ns would have been wrong on three of them and 4–8× too HIGH on ecb.
+> 2. ⚠ **The stated cause is wrong on this host.** libc's vDSO `clock_gettime` measured
+>    the SAME as the raw syscall (2,456 vs 2,277 ns in one paired run): the clocksource
+>    is `hpet` — the kernel dropped the TSC at boot — and HPET has no userspace fast
+>    path, so Linux's vDSO falls back to the syscall. Kernel entry alone is 776 ns; the
+>    rest is the HPET read. The cost is the box's clocksource, not the syscall choice.
+>    A vDSO binding is still a real ~64× win on pi and on any normal-TSC box.
+> 3. ⭐ **It was not "a single wrong line", and the interesting part is not the comment.**
+>    Four numbers and two thresholds derived from the same figure. `120` fed **no
+>    arithmetic anywhere in the tree** — but it is what made per-iteration timing look
+>    affordable, and all 18 benches use `bench_run`, which wrapped a clock pair around
+>    every iteration. The same no-op read **2,302 ns through `bench_run` and 9 ns
+>    batched**; **57 of 79 recorded micro rows** are that floor rather than the code.
+>    Fixing only line 6 would have left every one of them wrong.
+>
+> `compiler/*` and `size/*` rows are timed by `bench_cmd` and are unaffected — the
+> release-gate `self_compile` / `cycc`-size series is intact.
+
+**Filed as:** 🔴 OPEN — from a consumer (agnosai), measured against v6.5.18.
 **Severity:** Medium. The constant is wrong by **11x**, it is the one every benchmark in the
 ecosystem implicitly subtracts, and it is stated as fact in the header consumers are told to
 read for "the full overhead-vs-batching guidance".

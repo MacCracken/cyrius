@@ -24,22 +24,42 @@ fn TOKVAL(S, i): i64 { return L64(S + 0x357C000 + i * 8); }
 # stderr lines before the watchdog aborted. Not a hang, but unusable output that
 # buries the real error. (issues/2026-07-24-truncated-input-166k-line-error-cascade.md)
 #
-# WHY THE GUARD-INSIDE-GUARD IS SOUND, not a shortcut: LEX unconditionally appends an
-# EOF token (`ADDTOK(S, 12, 0)`, lex.cyr:1730), and every parse loop stops on type 12,
-# so a WELL-FORMED parse never advances past it — GTI < GTCNT holds until an error
-# occurs. The runaway is exclusively a post-error recovery phenomenon, which is the
-# same reason the v6.4.62 watchdog could be gated this way. Clamping unconditionally
-# in TOKTYP would also work but taxes every lookahead (`TOKTYP(S, GTI(S) + 1)`) on
-# clean compiles for no benefit.
+# ⛔ v6.5.19 — THE `_had_error` GATE ON THE CLAMP WAS WRONG, AND IT HID 40 CRASHES.
+# v6.4.78 placed the clamp INSIDE the watchdog's `_had_error == 1` guard and justified
+# it with: "a WELL-FORMED parse never advances past [EOF] — GTI < GTCNT holds until an
+# error occurs. The runaway is exclusively a post-error recovery phenomenon." **That
+# premise is false.** Several parse paths walk off the end of the token array BEFORE
+# emitting any diagnostic at all — `_prescan_fn_sig` and the type/generic skippers run
+# ahead of the error machinery — so `_had_error` is still 0, the clamp is bypassed,
+# TOKTYP's unchecked `L64` returns zeroed heap as token type 0, and every `t == 12`
+# EOF test in the codebase silently fails. MEASURED at 6.5.18: of 103 truncated
+# top-level constructs, **40 crashed or hung**, and `fn`, `var x`, `async` (2-5 bytes)
+# SIGSEGV'd with **ZERO bytes of stderr** — no error line, no diagnostic, nothing.
+# That is a bare `cat file.cyr | cycc` on a clipped file, i.e. reachable from untrusted
+# source, which is the CVE-32/33/34 class. See docs/audit/2026-08-11-security-audit.md
+# (CVE-39) and tests/gates/diagnostics/truncated_input_terminates.sh.
 #
-# The watchdog is KEPT deliberately: it bounds ANY future desync this clamp does not
-# anticipate, and it is what broke the VR-02 fuzz wall that stopped two prior
-# attempts at multi-error recovery. Defence in depth, at zero clean-path cost.
+# So the clamp is now UNCONDITIONAL. The cost objection in the old comment does not
+# apply to it: it was written about clamping inside TOKTYP, which would tax the
+# `TOKTYP(S, GTI(S) + 1)` lookahead sites too. Here it is one compare against a global
+# in PEEKT only — measured at self_compile −0.4 % / +0.2 % across runs, i.e. inside
+# noise, against a whole crash class removed. Correctness of a compiler reading
+# untrusted stdin is not a hot-path trade.
+#
+# The watchdog stays gated on `_had_error` (it is post-error recovery machinery, and
+# `_wd_tick` on every clean-path PEEKT would be a real cost) — but it now also counts
+# advancing-past-EOF as non-progress, so a desynced loop that keeps INCREMENTING GTI
+# is bounded too. Before v6.5.19 it only detected a STALL, so the enum/struct/union
+# member loops (which advance every iteration) ran free and overflowed a 1024-entry
+# table into a SIGSEGV at ~1027 iterations, long before the 500000 stall bound.
+# Defence in depth: the clamp makes existing EOF guards work, the loops below have
+# their own guards, and the watchdog bounds anything still missed.
 fn PEEKT(S): i64 {
-    if (_had_error == 1) {
-        _wd_tick(S);
-        if (GTI(S) >= GTCNT(S)) { return 12; }
+    if (GTI(S) >= GTCNT(S)) {
+        _wd_eof_tick(S);
+        return 12;
     }
+    if (_had_error == 1) { _wd_tick(S); }
     return TOKTYP(S, GTI(S));
 }
 fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }

@@ -312,6 +312,13 @@ var _pp_curfile_set = 0;
 # adding the base it carried fixes that without needing a per-file line counter.
 var _pp_curfile_anchor = 0;
 var _pp_curfile_base = 1;
+# v6.5.19 — 1 when the raw input opened with a `#@incdir <dir>` line (v6.5.7; written at
+# byte 0 by `cyrius build` / `check` / `lint` for any source with a directory component).
+# That line is a DIRECTIVE, not source, so raw input line N+1 is source line N. Without
+# this every diagnostic for such a source was reported one line late — measured at 6.5.18:
+# `cyrius build src/g.cyr` said 2:20 for a defect on line 1, while `cycc < g.cyr` on the
+# same bytes said 1:20.
+var _pp_srcline_bias = 0;
 
 fn _pp_curfile_ptr(): i64 {
     if (_pp_curfile_set == 0) { return "<source>"; }
@@ -435,6 +442,43 @@ fn PP_FMARK(S, out, op, name, base): i64 {
     }
     store8(out + op, 10); op = op + 1;    # '\n'
     return op;
+}
+
+# v6.5.19 — RE-ANCHOR the file map at a point where the expansion changed the line
+# count, so FM_LOOKUP's `expanded - start + base` arithmetic stays exact.
+#
+# THE DEFECT (agnosai, 35 duplicate-fn warnings). FM_LOOKUP reconstructs a source line
+# by linear arithmetic over a `#@file` span, which is only valid while the preprocessor
+# copies a file's lines into the expanded buffer 1:1. Two transforms broke that INSIDE a
+# span and neither re-anchored: the `#ifdef` family (directive lines consumed, skipped
+# bodies dropped -> reported line too SMALL) and `#derive` (2-3 source lines replaced by
+# N generated ones -> reported line too LARGE). Drift accumulates from the last marker,
+# so `lib/kavach.cyr:11588` named a line 267 past that file's EOF.
+#
+# The `#ifdef` half is fixed by PADDING (one newline per consumed/skipped source line)
+# at the call sites — no marker, no cost against the 1024-entry cap. `#derive` cannot be
+# padded (it ADDS lines), so it re-anchors here. Emitting a marker per `#ifdef` block
+# too would need ~1139 entries on agnosai's build against a 1024 cap, and overflow makes
+# FM_FILEID return -1, which `private` visibility is load-bearing on. CHANGELOG [6.5.19].
+fn PP_REANCHOR(S, out, op, name, srcline): i64 {
+    # A marker must own its line. Derive bodies end in `\n`, but an INCLUDED file that
+    # does not end in a newline would otherwise glue the marker onto its last line of
+    # code — where `#` comments the marker out and the span start lands one line early.
+    if (op > 0) { if (load8(out + op - 1) != 10) { store8(out + op, 10); op = op + 1; } }
+    return PP_FMARK(S, out, op, name, srcline);
+}
+
+# Re-anchor to the MAIN source at input offset `ip` (PP_PASS: its input is the raw
+# source, so the line number is exact by counting).
+fn PP_REANCHOR_SRC(S, out, op, ip): i64 {
+    return PP_REANCHOR(S, out, op, "<source>", _pp_lineno_at(S, S, ip) - _pp_srcline_bias);
+}
+
+# Re-anchor to whichever file PP_IFDEF_PASS is currently copying from. Its input is the
+# PREVIOUS pass's output, so the offset is expressed against the last marker seen —
+# correct precisely because the padding keeps that stream line-faithful.
+fn PP_REANCHOR_CUR(S, out, op, tmp, ip): i64 {
+    return PP_REANCHOR(S, out, op, _pp_curfile_ptr(), _pp_curfile_base + _pp_count_nl(tmp, _pp_curfile_anchor, ip));
 }
 
 fn PP_FNAME_TOO_LONG(): i64 {
@@ -1656,6 +1700,18 @@ fn PP_FIND_MACRO(S, ip): i64 {
 # Reads args from input at ip, substitutes into body, writes to out+op
 # Returns new ip position (after the closing paren)
 fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
+    # v6.5.19 — line-faithful expansion. This fn used to end with an
+    # unconditional `store8(out + op, 10)`, i.e. +1 output line per
+    # invocation. That was only ever *masked*: the `#define` directive line
+    # was consumed WITHOUT padding, contributing −1, so a single-invocation
+    # file happened to balance. v6.5.19 pads every consumed directive line
+    # (PP_PASS / PP_IFDEF_PASS), which is correct and fixes object-like
+    # `#define`, and thereby unmasked this: each function-like invocation
+    # became +1. Anchor the input/output positions here so the tail can emit
+    # exactly as many newlines as the invocation CONSUMED — 0 for the usual
+    # single-line call, N for a call whose arg list spans N+1 source lines.
+    var _ip_start = ip;
+    var _op_start = op;
     var def = S + 0x193000 + load64(S + 0x192080 + mi * 8);
     # Skip name in definition to find (
     var dp = 0;
@@ -1740,8 +1796,18 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
             var aoff = 0;
             var ai2 = 0;
             while (ai2 < matched) { while (load8(&args + aoff) != 0) { aoff = aoff + 1; } aoff = aoff + 1; ai2 = ai2 + 1; }
-            # Copy arg text to output
-            while (load8(&args + aoff) != 0) { store8(out + op, load8(&args + aoff)); op = op + 1; aoff = aoff + 1; }
+            # Copy arg text to output. v6.5.19 — a newline INSIDE an arg (a call
+            # whose arg list wraps) is flattened to a space here so the substituted
+            # text can never inject a line of its own, and can never inject it a
+            # different number of times than the source had it (a param used twice
+            # would otherwise double the wrap's newline). The invocation's real line
+            # count is restored once, at the tail, from the consumed input.
+            while (load8(&args + aoff) != 0) {
+                var _ac = load8(&args + aoff);
+                if (_ac == 10) { _ac = 32; }
+                elif (_ac == 13) { _ac = 32; }
+                store8(out + op, _ac); op = op + 1; aoff = aoff + 1;
+            }
             # Skip param name in body
             var poff2 = 0;
             var pi3 = 0;
@@ -1753,7 +1819,25 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
             store8(out + op, bc); op = op + 1; bi = bi + 1;
         }
     }
-    store8(out + op, 10); op = op + 1;
+    # v6.5.19 — emit exactly the newlines this invocation CONSUMED, no more.
+    # `_nl_in` counts source lines swallowed between the macro name and the
+    # closing paren (0 for the ordinary one-line call); `_nl_out` counts what
+    # the substitution already wrote, so a wrapped arg that carried its own
+    # newline through is not double-counted. The old unconditional newline
+    # here is what made every function-like invocation report one line late.
+    var _nl_in = 0;
+    var _sk = _ip_start;
+    while (_sk < ip) {
+        if (load8(S + _sk) == 10) { _nl_in = _nl_in + 1; }
+        _sk = _sk + 1;
+    }
+    var _nl_out = 0;
+    var _ok = _op_start;
+    while (_ok < op) {
+        if (load8(out + _ok) == 10) { _nl_out = _nl_out + 1; }
+        _ok = _ok + 1;
+    }
+    while (_nl_out < _nl_in) { store8(out + op, 10); op = op + 1; _nl_out = _nl_out + 1; }
     # Return new ip via storing op in a known location
     store64(S + 0x190700, op);
     return ip;
@@ -1938,6 +2022,19 @@ fn PP_PASS(S): i64 {
     # the same hand-rolling in the one-shot below (deleted at v6.5.3) that silently
     # defeated the resume-line fix.
     op = PP_FMARK(S, out, op, "<source>", 1);
+    # v6.5.19 — DROP a leading `#@incdir <dir>` line. PP_SCAN_INCDIR only READS it; it
+    # was then copied through as an ordinary `#` comment and occupied an expanded line
+    # the source did not have, so `<source>` numbering ran one line late for every file
+    # `cyrius build`/`check`/`lint` materialised with the marker (i.e. every source with
+    # a directory component). Setting the bias here rather than reading _pp_incdir_len
+    # is deliberate: a marker REJECTED by PP_SCAN_INCDIR's path guards still occupied its
+    # line, so the line count and the marker's validity are different questions.
+    if (bl >= 9) {
+        if (load8(S) == 35 && load8(S + 1) == 64 && load8(S + 2) == 105 && load8(S + 3) == 110 && load8(S + 4) == 99 && load8(S + 5) == 100 && load8(S + 6) == 105 && load8(S + 7) == 114 && load8(S + 8) == 32) {
+            ip = PP_SKIPLINE(S, ip, bl);
+            _pp_srcline_bias = 1;
+        }
+    }
     # v5.8.40 — string-literal awareness. `in_string` flips on
     # unescaped `"`; `escape_next` suppresses the toggle for the
     # byte immediately following `\` while inside a string. The
@@ -2003,6 +2100,11 @@ fn PP_PASS(S): i64 {
                 } else {
                     ip = PP_SKIPLINE(S, ip, bl);
                 }
+                # v6.5.19 — a consumed directive line still OCCUPIED a source line.
+                # Emit a blank line in its place so the expanded stream stays 1:1 with
+                # the source and FM_LOOKUP's span arithmetic stays exact. All three
+                # arms above consume exactly one line, so one newline covers them.
+                store8(out + op, 10); op = op + 1;
                 bol = 1; handled = 1;
             }
             # #ifdef / #ifndef / #ifplat / #if (v5.6.1 state-stack
@@ -2025,7 +2127,7 @@ fn PP_PASS(S): i64 {
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S, ip, bl); bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             if (handled == 0) { if (ISIFNDEF(S, dip, bl) == 1) {
                     var _s = 3;
@@ -2036,7 +2138,7 @@ fn PP_PASS(S): i64 {
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S, ip, bl); bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             # #ifplat PLAT (v5.4.19) — sugar for #ifdef CYRIUS_ARCH_<UPPER>.
             # Must come before ISIF so "#ifp..." doesn't match the 4-byte
@@ -2051,7 +2153,7 @@ fn PP_PASS(S): i64 {
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S, ip, bl); bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             if (handled == 0) { if (ISIF(S, dip, bl) == 1) {
                     var _s = 3;
@@ -2062,7 +2164,7 @@ fn PP_PASS(S): i64 {
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S, ip, bl); bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             # #else (v5.6.1) — flip current level's state.
             #   0 → 2 (was emit; done-skip now)           skip_depth++
@@ -2078,7 +2180,7 @@ fn PP_PASS(S): i64 {
                         if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
                         elif (_s == 1) { store8(S + 0x197F10 + pp_depth - 1, 0); skip_depth = skip_depth - 1; }
                     }
-                    ip = PP_SKIPLINE(S, ip, bl); bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             # #elif COND (v5.6.1) — transition like #else for states 0/2/3
             # but state 1 evaluates COND: if true, flip 1→0 (emit now);
@@ -2094,7 +2196,7 @@ fn PP_PASS(S): i64 {
                             }
                         }
                     }
-                    ip = PP_SKIPLINE(S, ip, bl); bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             if (handled == 0) { if (ISENDIF(S, dip, bl) == 1) {
                     if (pp_depth > 0) {
@@ -2102,7 +2204,7 @@ fn PP_PASS(S): i64 {
                         if (_s != 0) { skip_depth = skip_depth - 1; }
                         pp_depth = pp_depth - 1;
                     }
-                    ip = PP_SKIPLINE(S, ip, bl); bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             # #endplat — semantically identical to #endif, visually pairs
             # with #ifplat. Must come after ISENDIF because "#endp" would
@@ -2113,21 +2215,35 @@ fn PP_PASS(S): i64 {
                         if (_s != 0) { skip_depth = skip_depth - 1; }
                         pp_depth = pp_depth - 1;
                     }
-                    ip = PP_SKIPLINE(S, ip, bl); bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
+            # v6.5.19 — a `#derive` replaces 2-3 source lines with N generated ones, so
+            # unlike the directives above it cannot be padded back to 1:1. RE-ANCHOR
+            # instead: the text after the expansion resumes at the source line `ip` now
+            # points to. One marker per derive site (93 on agnosai's build) is well
+            # inside the 1024-entry file-map cap.
+            # ⚠ A fn SYNTHESIZED by the derive (agnosai's `SpawnedProcess_pid`) has no
+            # `fn` line in the source at all, so this marker cannot make it exact — it
+            # lands in the generated block, a few lines past the struct. Anchoring the
+            # block to the `#derive` line instead was tried and MEASURED WORSE (it shifts
+            # the struct's own lines, so a diagnostic inside the struct moved from +1 to
+            # +2). See issues/2026-08-11-derive-generated-code-inflates-line-numbering.
             if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE(S, dip, bl) == 1) {
                         ip = PP_DERIVE_SERIALIZE(S, S, dip, bl, out, op);
                         op = load64(S + 0x197008);
+                        op = PP_REANCHOR_SRC(S, out, op, ip);
                         bol = 1; handled = 1;
                     } } }
             if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_DE(S, dip, bl) == 1) {
                         ip = PP_DERIVE_DESER(S, S, dip, bl, out, op);
                         op = load64(S + 0x197008);
+                        op = PP_REANCHOR_SRC(S, out, op, ip);
                         bol = 1; handled = 1;
                     } } }
             if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_ACC(S, dip, bl) == 1) {
                         ip = PP_DERIVE_ACCESSORS(S, S, dip, bl, out, op);
                         op = load64(S + 0x197008);
+                        op = PP_REANCHOR_SRC(S, out, op, ip);
                         bol = 1; handled = 1;
                     } } }
             if (handled == 0) { if (skip_depth == 0) { if (ISINCLUDE(S, ip, bl) == 1) {
@@ -2178,7 +2294,7 @@ fn PP_PASS(S): i64 {
                                 # included file's own `include` lines are copied verbatim
                                 # into `out` and expanded later by PP_IFDEF_PASS), so the
                                 # file being resumed here is always the main source.
-                                op = PP_FMARK(S, out, op, "<source>", _pp_lineno_at(S, S, ip));
+                                op = PP_REANCHOR_SRC(S, out, op, ip);
                                 had_include = 1;
                             } else {
                                 # v6.5.3 — include-once SKIP still consumes the directive
@@ -2188,7 +2304,7 @@ fn PP_PASS(S): i64 {
                                 # and every later diagnostic drifts. Re-anchor with a RESUME
                                 # marker; there is no ENTER to pair it with, which is fine —
                                 # it only re-states where the parent now is.
-                                op = PP_FMARK(S, out, op, "<source>", _pp_lineno_at(S, S, ip));
+                                op = PP_REANCHOR_SRC(S, out, op, ip);
                             }
                         }
                         bol = 1; handled = 1;
@@ -2210,6 +2326,12 @@ fn PP_PASS(S): i64 {
                 # landed rather than leave two mechanisms.
                 store8(out + op, c); op = op + 1;
             }
+            # v6.5.19 — a SKIPPED body line still occupied a source line. Keep its
+            # newline so the expanded stream stays 1:1 with the source; the rest of the
+            # line is dropped as before. Without this, `#ifdef`-excluded bodies shrank
+            # the stream inside a `#@file` span and every later diagnostic in that file
+            # reported a line too small (agnosai: 30 warnings, uniformly true − 55).
+            elif (c == 10) { store8(out + op, 10); op = op + 1; }
             # v5.8.40 — string-literal state machine. Track `"`
             # boundaries so the directive block above can skip
             # detection while inside a literal. `\` inside a
@@ -2428,7 +2550,7 @@ fn PP_IFDEF_PASS(S): i64 {
                 }
                 if (ISDEFINE(tmp, dip, bl) == 1) {
                     if (skip_depth == 0) { PP_DEFINE(S, tmp, dip + 8); }
-                    ip = PP_SKIPLINE(tmp, ip, bl); bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 }
                 if (handled == 0) { if (ISIFDEF(tmp, dip, bl) == 1) {
                         var _s = 3;
@@ -2439,7 +2561,7 @@ fn PP_IFDEF_PASS(S): i64 {
                         store8(S + 0x197F10 + pp_depth, _s);
                         pp_depth = pp_depth + 1;
                         if (_s != 0) { skip_depth = skip_depth + 1; }
-                        ip = PP_SKIPLINE(tmp, ip, bl); bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISIFNDEF(tmp, dip, bl) == 1) {
                         var _s = 3;
@@ -2450,7 +2572,7 @@ fn PP_IFDEF_PASS(S): i64 {
                         store8(S + 0x197F10 + pp_depth, _s);
                         pp_depth = pp_depth + 1;
                         if (_s != 0) { skip_depth = skip_depth + 1; }
-                        ip = PP_SKIPLINE(tmp, ip, bl); bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISIF(tmp, dip, bl) == 1) {
                         var _s = 3;
@@ -2461,7 +2583,7 @@ fn PP_IFDEF_PASS(S): i64 {
                         store8(S + 0x197F10 + pp_depth, _s);
                         pp_depth = pp_depth + 1;
                         if (_s != 0) { skip_depth = skip_depth + 1; }
-                        ip = PP_SKIPLINE(tmp, ip, bl); bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISELSE(tmp, dip, bl) == 1) {
                         if (pp_depth > 0) {
@@ -2469,7 +2591,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
                             elif (_s == 1) { store8(S + 0x197F10 + pp_depth - 1, 0); skip_depth = skip_depth - 1; }
                         }
-                        ip = PP_SKIPLINE(tmp, ip, bl); bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISELIF(tmp, dip, bl) == 1) {
                         if (pp_depth > 0) {
@@ -2482,7 +2604,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                 }
                             }
                         }
-                        ip = PP_SKIPLINE(tmp, ip, bl); bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISENDIF(tmp, dip, bl) == 1) {
                         if (pp_depth > 0) {
@@ -2490,21 +2612,27 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (_s != 0) { skip_depth = skip_depth - 1; }
                             pp_depth = pp_depth - 1;
                         }
-                        ip = PP_SKIPLINE(tmp, ip, bl); bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                     } }
+                # v6.5.19 — re-anchor after every derive expansion; see the PP_PASS twin.
+                # This is the pass that sees derives inside INCLUDED files, which is where
+                # all 93 of agnosai's live (kavach alone turned 3 source lines into 112).
                 if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE(tmp, dip, bl) == 1) {
                             ip = PP_DERIVE_SERIALIZE(S, tmp, dip, bl, out, op);
                             op = load64(S + 0x197008);
+                            op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
                             bol = 1; handled = 1;
                         } } }
                 if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_DE(tmp, dip, bl) == 1) {
                             ip = PP_DERIVE_DESER(S, tmp, dip, bl, out, op);
                             op = load64(S + 0x197008);
+                            op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
                             bol = 1; handled = 1;
                         } } }
                 if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_ACC(tmp, dip, bl) == 1) {
                             ip = PP_DERIVE_ACCESSORS(S, tmp, dip, bl, out, op);
                             op = load64(S + 0x197008);
+                            op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
                             bol = 1; handled = 1;
                         } } }
                 if (handled == 0) { if (skip_depth == 0) { if (ISINCLUDE(tmp, ip, bl) == 1) {
@@ -2547,12 +2675,12 @@ fn PP_IFDEF_PASS(S): i64 {
                                     # INPUT stream, tracked in `_pp_curfile` as this pass
                                     # copies markers through. Falls back to "<source>"
                                     # when no marker has been seen yet.
-                                    op = PP_FMARK(S, out, op, _pp_curfile_ptr(), (_pp_curfile_base + _pp_count_nl(tmp, _pp_curfile_anchor, ip)));
+                                    op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
                                     had_new_include = 1;
                                 } else {
                                     # v6.5.3 — see the PP_PASS skip path: an include-once
                                     # SKIP still consumes its directive line, so re-anchor.
-                                    op = PP_FMARK(S, out, op, _pp_curfile_ptr(), (_pp_curfile_base + _pp_count_nl(tmp, _pp_curfile_anchor, ip)));
+                                    op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
                                 }
                             }
                             bol = 1; handled = 1;
@@ -2560,6 +2688,8 @@ fn PP_IFDEF_PASS(S): i64 {
             }
             if (handled == 0) {
                 if (skip_depth == 0) { store8(out + op, c); op = op + 1; }
+                # v6.5.19 — keep a skipped line's newline; see the PP_PASS twin.
+                elif (c == 10) { store8(out + op, 10); op = op + 1; }
                 # v5.8.40 — string-literal state machine; mirrors
                 # PP_PASS. See PP_PASS for the rationale.
                 # v5.9.34 — comment-aware + reset on newline.

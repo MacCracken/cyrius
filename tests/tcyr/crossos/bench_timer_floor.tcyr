@@ -1,0 +1,620 @@
+# bench_timer_floor.tcyr — v6.5.19 regression coverage for the bench framework's
+# timer floor. Filed by agnosai 2026-08-11: `lib/bench.cyr` documented
+# `clock_gettime: ~120ns per call`; it is ~1,320-1,720 ns on this box, and the three
+# derived thresholds in the same header were wrong with it.
+#
+# ⭐ EVERY ASSERTION HERE IS RELATIVE, ON PURPOSE. One clock read costs 11-39 ns on ecb,
+# ~570 ns on ach, ~1,330 ns here and ~3,690 ns on pi — a 335× spread across the four
+# POSIX gate hosts, and on cass it is under the tick entirely. A gate pinning an absolute
+# nanosecond figure
+# would be the same defect wearing a test's clothes: correct on one host, wrong on
+# three, and rotting silently on all four. So the properties asserted are ones that
+# hold on ANY host:
+#
+#   1. the framework's self-measured floor agrees with an independent measurement
+#      taken here — it is not reporting a number it was told;
+#   2. the SAME operation costs the same through `bench_run` and through explicit
+#      batching — the property that was violated 256× (2,302 ns vs 9 ns for a no-op);
+#   3. a sub-floor operation reports FAR BELOW the floor — i.e. the floor is actually
+#      subtracted, not merely calculated;
+#   4. an operation far ABOVE the floor is still measured accurately — the adaptive
+#      chunking must not have traded slow-op accuracy for fast-op accuracy;
+#   5. the per-iteration `bench_start`/`bench_stop` API — the one a consumer drives by
+#      hand — nets the floor out of its OWN samples;
+#   6. anti-vacuous: real work does not report 0, so "report 0 for everything" cannot
+#      score green on axes 2, 3 and 5.
+#
+# ⚠ AXIS 5 EXISTS BECAUSE AXES 1-4 WERE BLIND TO HALF THE FIX. Mutation-testing found
+# it: deleting the floor subtraction from `_bench_net` left all four GREEN, because
+# `bench_run`'s adaptive chunking already dilutes one clock read to ≤1 % of the window
+# — so through that path the subtraction is a rounding correction, not the fix. It is
+# the fix for the DIRECT per-iteration API (what agnosai's fleet.bcyr drives), where a
+# sub-floor op is otherwise reported as a whole clock read.
+#
+# ⛔ AND AXIS 5'S FIRST SHAPE WAS UNSATISFIABLE ON HALF THE GATE HOSTS — v6.5.19 shipped
+# it RED on ecb and ach, on every run anyone made (5/5 and 3/3 when first reported, 2/2
+# and 2/2 when re-confirmed here before the rewrite; it cannot be otherwise, see below).
+# It asserted `bench_min_ns(b) * 2 < raw`, where
+# `raw` was the MIN of 200 hand-rolled no-op windows. A minimum over 200 samples reaches
+# 0 the instant ONE window falls inside a single clock tick, so on any host whose
+# GRANULARITY exceeds a no-op the assertion is `0 < 0` — false every run, forever, by
+# construction. Measured here (2026-08-11, 2000 samples per host):
+#
+#     host   one clock read   the clock's TICK (step of now_ns)   no-op windows == 0
+#     linux    1,332-1,344 ns      1,397 ns                            0 / 2000
+#     ecb         11-39 ns         1,000 ns                        1,945 / 2000
+#     ach        540-571 ns        1,000 ns                          829 / 2000
+#     pi          3,691 ns         3,723 ns                        (not sampled)
+#     cass            0 ns    15,000,000 ns                        (below the tick)
+#
+# Every figure above was measured on the host on 2026-08-11, not quoted.
+#
+# ⭐ AND THE REPAIR IS NOT A LOOSER THRESHOLD. On ecb the floor is 11-39 ns against a
+# 1,000 ns tick, so netting it out moves a sample by ~2 % of one quantum: ANY black-box
+# statistic is 45× too coarse to see it. Measured, again rather than assumed — 20,000
+# samples of a calibrated 7.6 µs op, raw loop against API loop, three runs on ecb:
+# the shortfall came out +30,947,000 / -588,000 / -329,000 ns against a theoretical
+# 20,000 × fl of 220,000. The signal is two orders of magnitude under the drift between
+# two loops. Comparing MINIMA instead is worse, not better: the minima are quantized, so
+# on ach run 1 of 3 the raw loop's min landed on the 4,000 ns quantum and the API loop's
+# on 5,000, giving a NEGATIVE difference from perfectly correct code.
+#
+# So axis 5 stopped guessing at the arithmetic from outside and now DRIVES it. The floor
+# is a live global (`_bench_clock_ns`), so the test sets it to values it chooses and
+# checks the exact result at each: at 0 the API must report the whole window, above the
+# window it must report exactly 0, and at 1 ns it must still report the window (which is
+# what kills the `if (floor == 0)` switch). Axis 1 remains the check that the floor VALUE
+# is honest; axis 5 is the check that the value is APPLIED; axis 6 is the check that the
+# subtraction ITSELF is right.
+#
+# ⛔ AND AXIS 5'S SECOND SHAPE WAS FLAKY — v6.5.19 shipped that too, and the two failures
+# are the same mistake twice: a timing STATISTIC used as a proof. The first shape was
+# unsatisfiable (`0 < 0`); the replacement asserted that
+# `(raw_total - partial_total) * 4 > N * raw_min`, a difference of totals from two
+# SEPARATE executions. The signal there is `N × floor`; the noise is the run-to-run
+# spread of the identical loop — and the noise is larger. Measured 2026-08-11, 20
+# consecutive runs of this file on x86_64 Linux under 16-way load: `raw_total` ranged
+# 2,729,078 - 5,733,466 ns (2.1x) against an `N × floor` of ~2.47M, and 3 of the 20 came
+# out NEGATIVE — the floor-subtracted run totalling MORE than the floor-0 run. On real
+# ecb: 2 of 6 RED on a busy box, 0 of 30 on an idle one. The release gate runs this file
+# immediately after 44 other tests, so it runs it on the busy box; a single-run gate then
+# reports GREEN about two times in three, which is worse than a gate that always fails.
+#
+# ⭐ THE LESSON, WHICH IS THE SAME ONE THE HEADER ALREADY CARRIED: do not gate on a
+# statistic whose noise exceeds its signal. That cannot be fixed by moving the threshold
+# — loosen it until it stops failing and it has stopped discriminating. The cross-run
+# subtraction was therefore DELETED rather than retuned, and the property it wanted (the
+# subtraction is arithmetic, not a switch) is now proved exactly by axis 6, which hands
+# `_bench_net` both operands and asserts the result. No clock, no load sensitivity, no
+# statistics. The old claim in this header that axis 5 had "no statistics anywhere" was
+# true of legs (a) and (b) and false of leg (c) — which is exactly how it shipped.
+#
+# ⚠ AXES 1-4 ARE SKIPPED ON WINDOWS, AXIS 5 IS NOT. `now_ns` on cass is
+# kernel32!GetTickCount64 (lib/bench.cyr:82), whose counter advances in **15 ms** steps
+# (measured: 15,000,000 ns) — vastly coarser than a clock read there — so the floor
+# genuinely calibrates to 0 and the four axes that measure a ns-scale floor have nothing
+# to measure. Axis 5 INJECTS the floor instead of measuring it, so it is exactly as sharp
+# on a 15 ms clock as on an 11 ns one, and it is the only thing in this file that proves
+# `bench_stop` on the PE target still routes through `_bench_net`. It was guarded too until v6.5.19, which made
+# cass report `6 passed` having asserted nothing at all — a green placebo on one of the
+# four gate hosts, in the release whose subject IS green placebos. It now runs 13
+# assertions there; verified RED 3/3 on real cass against a `_bench_net` with the
+# subtraction deleted.
+#
+# ⭐ THIS FILE LIVES IN tests/tcyr/crossos/ BECAUSE THAT DIRECTORY IS THE SELECTOR.
+# scripts/release-gate.sh:115 runs `cross-os-selfhost.sh <host> crossos` — a file
+# anywhere else in tests/tcyr is never executed on ecb/ach/cass/pi by any gate. It
+# shipped in tests/tcyr/stdlib/ first and was RED on both Macs for the entire release
+# without a single gate noticing.
+#
+# See CHANGELOG [6.5.19], docs/development/benchmark-regimes.md.
+
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+include "lib/bench.cyr"
+
+var _btf_sink = 0;
+var _btf_spin = 20000;
+
+# Sub-floor: a couple of nanoseconds on every host.
+fn _btf_tiny(): i64 {
+    _btf_sink = _btf_sink + 1;
+    return 0;
+}
+
+# Far above the floor on every host (~20-60 µs), so `bench_run` keeps chunk == 1 and
+# the per-iteration path is what gets exercised.
+fn _btf_chunky(): i64 {
+    var i = 0;
+    while (i < _btf_spin) {
+        _btf_sink = _btf_sink + i;
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _btf_supported(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0;
+    #endif
+    return 1;
+}
+
+# Two values agree if neither is more than 3× the other, with an 8 ns absolute floor so
+# single-nanosecond jitter on a fast-clock host cannot fail it. Deliberately loose: the
+# defect it must catch is 256×, and a tight bound here would make the gate flaky on a
+# loaded box, which is how gates get deleted.
+fn _btf_agree(a, b): i64 {
+    if (a > b * 3 + 8) { return 0; }
+    if (b > a * 3 + 8) { return 0; }
+    return 1;
+}
+
+# Independent floor measurement: min-of-5 batches of 4096 clock reads, net of an
+# identical empty loop. Deliberately NOT `_bench_calibrate_clock` — a gate that calls
+# the code under test to produce its own expected value proves nothing.
+fn _btf_measure_floor(): i64 {
+    var best = 0x7FFFFFFFFFFFFFFF;
+    var base = 0x7FFFFFFFFFFFFFFF;
+    var r = 0;
+    while (r < 5) {
+        var t = now_ns();
+        var i = 0;
+        while (i < 4096) {
+            now_ns();
+            i = i + 1;
+        }
+        var d = now_ns() - t;
+        if (d < best) { best = d; }
+        t = now_ns();
+        i = 0;
+        while (i < 4096) {
+            i = i + 1;
+        }
+        d = now_ns() - t;
+        if (d < base) { base = d; }
+        r = r + 1;
+    }
+    return (best - base) / 4096;
+}
+
+fn test_reported_floor_matches_an_independent_measurement() {
+    test_group("the framework's floor is measured, not asserted");
+    if (_btf_supported() == 0) {
+        println("    SKIP: now_ns is GetTickCount64 here (measured 15 ms tick) — no ns-scale floor to measure; axis 5 still runs");
+        assert_eq(1, 1, "SKIPPED on Windows — see the header");
+        return;
+    }
+    var mine = _btf_measure_floor();
+    var theirs = bench_clock_overhead_ns();
+    var positive = 0;
+    if (mine > 0) { positive = 1; }
+    assert_eq(positive, 1, "an independent measurement of one clock read is > 0 (anti-vacuous)");
+    assert_eq(_btf_agree(mine, theirs), 1, "bench_clock_overhead_ns() agrees with an independent measurement");
+}
+
+fn test_the_two_measurement_paths_agree() {
+    test_group("bench_run and explicit batching measure the same op the same");
+    if (_btf_supported() == 0) {
+        assert_eq(1, 1, "SKIPPED on Windows — see the header");
+        return;
+    }
+    var a = bench_new("tiny_via_bench_run");
+    bench_run(a, &_btf_tiny, 100000);
+
+    var b = bench_new("tiny_via_batch");
+    var r = 0;
+    while (r < 5) {
+        bench_batch_start(b);
+        var i = 0;
+        while (i < 20000) {
+            _btf_tiny();
+            i = i + 1;
+        }
+        bench_batch_stop(b, 20000);
+        r = r + 1;
+    }
+
+    # Pre-v6.5.19 this was 2,302 ns against 9 ns — a 256× disagreement between two
+    # documented ways of measuring one no-op.
+    #
+    # ⚠ MINIMA, and five batches rather than one. Comparing the two AVERAGES flaked at
+    # ~3 % under load 28: on an 8 ns operation a single scheduler preemption inside a
+    # 40 µs window moves the mean by more than the 3× tolerance while nothing is wrong.
+    # The counts are also large enough that each window is hundreds of microseconds, so
+    # one hiccup is diluted rather than decisive.
+    #
+    # ⛔ ONE-SIDED, AND THAT IS THE WHOLE POINT. This was a SYMMETRIC `_btf_agree`, and
+    # it was the third instance in this file of the same unsound shape: a MINIMUM over
+    # many samples reaches 0 the moment ONE sample clamps, so on a host whose clock read
+    # is expensive and jittery the `bench_run` path legitimately reports 0 while the
+    # batched path reports ~16 — and a symmetric tolerance calls correct code broken.
+    # Measured on real pi (aarch64, 4 cores) under 4-way load, 2026-08-11, 12 runs:
+    #
+    #     min via bench_run : 0 0 3 22 0 0 0 0 0 0 0 0      (0 in TEN of twelve)
+    #     min via batching  : 15 16 17 17 17 18 16 17 17 16 16 16
+    #     measured floor    : 4,207 - 13,609 ns  (one clock read, on a loaded Pi)
+    #
+    # `_btf_agree(0, 16)` is false because 16 > 0*3+8, so the axis failed 13 of 25 runs
+    # on pi — while the OLD file failed 15 of 25 on exactly the same assertion. That 0
+    # is not a defect: `_bench_net` clamps a chunk whose window fell inside the
+    # inflated floor, which is the documented, correct behaviour this file's own axis 3
+    # separately REQUIRES ("a sub-floor op reports far below the floor").
+    #
+    # The defect this axis exists for is DIRECTIONAL: charging a clock read per
+    # iteration makes `bench_run` report far MORE than batching (2,302 against 9), never
+    # less. So only the upper direction is asserted. Nothing is lost — "bench_run
+    # reports implausibly little" is already covered, twice and on a slow op where the
+    # numbers are large and stable, by axis 4's "a 20k-iteration loop does not measure
+    # as 0 ns" and "the slow op measures above one clock read".
+    var inflated = 0;
+    if (bench_min_ns(a) > bench_min_ns(b) * 3 + 8) { inflated = 1; }
+    assert_eq(inflated, 0, "bench_run does not report MORE than the batched path for a sub-floor op (it was 256x)");
+}
+
+fn test_measuring_n_fast_iterations_costs_far_less_than_n_clock_reads() {
+    test_group("bench_run does not spend a clock read per sub-floor iteration");
+    if (_btf_supported() == 0) {
+        assert_eq(1, 1, "SKIPPED on Windows — see the header");
+        return;
+    }
+    var fl = bench_clock_overhead_ns();      # calibrate BEFORE the outer window
+    var n = 100000;
+    var a = bench_new("tiny_cost_of_measuring");
+    var t = now_ns();
+    bench_run(a, &_btf_tiny, n);
+    var wall = now_ns() - t;
+    # ⭐ THE DISCRIMINATOR IS THE COST OF MEASURING, NOT THE NUMBER REPORTED. Mutation
+    # testing found that the min-based axes above are BLIND to a revert of the adaptive
+    # chunking: with the floor still subtracted, the MINIMUM of 100,000 single-iteration
+    # windows is also ~0, so per-iteration timing looks identical there and only the
+    # jittery mean differs — which is exactly the statistic too noisy to gate on.
+    # What cannot be disguised is that per-iteration timing performs 2n clock reads.
+    # At n = 100,000 that is ~340 ms here against ~0.2 ms chunked, a 1,700× gap, and
+    # the same relative gap on a host whose clock is 15 ns.
+    var cheap = 0;
+    if (wall < n * fl / 2) { cheap = 1; }
+    assert_eq(cheap, 1, "measuring 100k sub-floor iterations costs well under 100k clock reads");
+}
+
+fn test_the_floor_is_subtracted_not_merely_known() {
+    test_group("a sub-floor op reports far below the floor");
+    if (_btf_supported() == 0) {
+        assert_eq(1, 1, "SKIPPED on Windows — see the header");
+        return;
+    }
+    var fl = bench_clock_overhead_ns();
+    var a = bench_new("tiny_vs_floor");
+    bench_run(a, &_btf_tiny, 100000);
+    var avg = bench_min_ns(a);
+    # A no-op is nanoseconds; the floor is one clock read. Anything at or near the
+    # floor means the instrument is still in the number. Threshold is a QUARTER of the
+    # floor, so the old two-clock-pairs-per-iteration shape (~2× the floor) misses it
+    # by 8×, on any host.
+    var below = 0;
+    if (avg < fl / 4 + 8) { below = 1; }
+    assert_eq(below, 1, "bench_run on a no-op reports well under one clock read");
+}
+
+fn test_a_slow_op_is_still_measured_accurately() {
+    test_group("adaptive chunking did not cost slow-op accuracy");
+    if (_btf_supported() == 0) {
+        assert_eq(1, 1, "SKIPPED on Windows — see the header");
+        return;
+    }
+    # Independent timing of one call, best of 24. Both sides need ENOUGH samples for
+    # their minimum to be a real floor rather than whatever the scheduler allowed —
+    # at 5 raw samples against 3 chunks this axis still flaked ~7 % under load 28.
+    var best = 0x7FFFFFFFFFFFFFFF;
+    var r = 0;
+    while (r < 24) {
+        var t = now_ns();
+        _btf_chunky();
+        var d = now_ns() - t;
+        if (d < best) { best = d; }
+        r = r + 1;
+    }
+    var a = bench_new("chunky_via_bench_run");
+    bench_run(a, &_btf_chunky, 64);
+    var avg = bench_avg_ns(a);
+    # ⚠ MIN against MIN, not min against avg. Comparing this box's min-of-5 raw timing
+    # against bench_run's AVERAGE flaked at ~5 % under load 28: one scheduler
+    # preemption inside twelve iterations drags the mean past 3× the floor while
+    # nothing is wrong. A minimum is the only statistic on a loaded box that means the
+    # same thing on both sides of the comparison.
+    assert_eq(_btf_agree(best, bench_min_ns(a)), 1, "bench_run matches an independently timed slow op");
+    # Anti-vacuous for axes 2 and 3: real work must not report 0, or "return 0 from
+    # every timing path" would pass everything above.
+    var nonzero = 0;
+    if (avg > 0) { nonzero = 1; }
+    assert_eq(nonzero, 1, "a 20k-iteration loop does not measure as 0 ns");
+    var above_floor = 0;
+    if (avg > bench_clock_overhead_ns()) { above_floor = 1; }
+    assert_eq(above_floor, 1, "the slow op measures above one clock read (the corpus is not all sub-floor)");
+}
+
+# ── Axis 5's calibrated window ──────────────────────────────────────
+# Every leg below needs a window that is unambiguously nonzero on the host's clock, and
+# "unambiguously" spans four orders of magnitude: a 1,397 ns tick here, 1,000 ns on both
+# Macs, 3,723 ns on pi and **15,000,000 ns** on cass (all measured). A fixed iteration
+# count cannot serve that range — 20,000 increments is a fat window here and three orders
+# of magnitude BELOW THE TICK on cass — so the op sizes itself.
+# This is also what lets axis 5 run on Windows at all, where axes 1-4 cannot: the floor
+# there really is 0 (GetTickCount64 does not move under 1024 reads), so there is no
+# ns-scale floor to measure, but there is still a `_bench_net` to prove is WIRED IN.
+var _btf_cal = 64;
+var _BTF_NETN = 400;
+
+fn _btf_cal_op(): i64 {
+    var i = 0;
+    while (i < _btf_cal) {
+        _btf_sink = _btf_sink + i;
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The clock's TICK PERIOD — how far apart two now_ns() values can be, as opposed to how
+# much it costs to read it. Different numbers, and the difference is the whole reason
+# the old axis was unsatisfiable: on ecb one read costs 11-22 ns and the counter moves
+# in steps of 1,000.
+#
+# ⛔ SPIN UNTIL IT MOVES; do NOT sample back-to-back reads and take the smallest nonzero
+# gap. That is what this function did first, and on real cass it returned NOTHING: 4096
+# GetTickCount64 calls take well under a millisecond and the measured Windows tick is
+# 15,000,000 ns, so every one of them landed inside a single tick, the probe fell back to
+# its 1 ns floor, and the op got
+# sized five orders of magnitude too small. The samples were then all sub-tick, which
+# `raw_min == 0` caught on the host — the same 0-vs-0 shape that this axis was rewritten
+# to escape, reintroduced through the back door of a granularity probe.
+fn _btf_tick(): i64 {
+    var g = 0x7FFFFFFFFFFFFFFF;
+    var r = 0;
+    while (r < 4) {
+        var a = now_ns();
+        var b = a;
+        var guard = 0;
+        while (b == a) {
+            b = now_ns();
+            guard = guard + 1;
+            if (guard > 100000000) { b = a + 1; }
+        }
+        var d = b - a;
+        if (d < g) { g = d; }
+        r = r + 1;
+    }
+    return g;
+}
+
+# Milli-nanoseconds per iteration of the spin loop, over the first batch big enough to
+# register on the clock. Milli-ns (x1000) because on every host here one iteration is
+# well under 1 ns and integer division would round the cost to zero.
+fn _btf_iter_cost(): i64 {
+    var k = 4096;
+    var guard = 0;
+    while (guard < 30) {
+        _btf_cal = k;
+        var best = 0x7FFFFFFFFFFFFFFF;
+        var r = 0;
+        while (r < 3) {
+            var t = now_ns();
+            _btf_cal_op();
+            var d = now_ns() - t;
+            if (d < best) { best = d; }
+            r = r + 1;
+        }
+        if (best > 0) { return best * 1000 / k; }
+        k = k * 2;
+        guard = guard + 1;
+    }
+    return 1000;
+}
+
+# Best-of-3 window for one `_btf_cal_op` at the current count.
+fn _btf_cal_window(): i64 {
+    var best = 0x7FFFFFFFFFFFFFFF;
+    var r = 0;
+    while (r < 3) {
+        var t = now_ns();
+        _btf_cal_op();
+        var d = now_ns() - t;
+        if (d < best) { best = d; }
+        r = r + 1;
+    }
+    return best;
+}
+
+# Size `_btf_cal_op` to at least 4 clock ticks AND 8 clock reads — 4 ticks so that no
+# sample can quantize to 0 (leg (a)'s `raw_min > 0` and leg (c)'s survival both need a
+# window the clock can actually see), 8 reads so the window is not dominated by the
+# instrument on a host
+# whose read costs more than its tick moves. Then pick a sample count that keeps one leg
+# near 200 ms whatever that window turned out to be: 400 samples of a ~10 µs op here,
+# 16 of a ~60 ms one on cass. Computed from a measured per-iteration cost rather than
+# reached by doubling, because a doubling search re-measures at the FINAL size every
+# step and that is seconds per probe once the op is tick-sized. Returns the window.
+fn _btf_finish_calibration(w): i64 {
+    if (w <= 0) { return 0; }
+    _BTF_NETN = 200000000 / w;
+    if (_BTF_NETN > 400) { _BTF_NETN = 400; }
+    if (_BTF_NETN < 16) { _BTF_NETN = 16; }
+    return w;
+}
+
+fn _btf_calibrate_window(): i64 {
+    var target = _btf_tick() * 4;
+    var fl8 = bench_clock_overhead_ns() * 8;
+    if (fl8 > target) { target = fl8; }
+    var per = _btf_iter_cost();
+    if (per < 1) { per = 1; }
+    var want = target * 1000 / per;
+    if (want < 64) { want = 64; }
+    if (want > 2000000000) { want = 2000000000; }
+    _btf_cal = want;
+    # One corrective pass: a spin loop that turns out slower than the pilot measured
+    # (frequency scaling, a cold cache) can land under HALF the target, which is where
+    # quantization starts to matter again. Anything above half is accepted as-is.
+    var w = _btf_cal_window();
+    var fix = 0;
+    while (w * 2 < target) {
+        if (fix > 4) { w = _btf_cal_window(); return _btf_finish_calibration(w); }
+        _btf_cal = _btf_cal * 2;
+        fix = fix + 1;
+        w = _btf_cal_window();
+    }
+    return _btf_finish_calibration(w);
+}
+
+fn _btf_net_run(name): i64 {
+    var b = bench_new(name);
+    var i = 0;
+    while (i < _BTF_NETN) {
+        bench_start(b);
+        _btf_cal_op();
+        bench_stop(b);
+        i = i + 1;
+    }
+    return b;
+}
+
+fn test_per_iteration_api_nets_out_the_timer() {
+    test_group("bench_start/bench_stop subtract the floor from their own samples");
+    # ⭐ NO `_btf_supported()` GUARD — this axis runs on Windows too, and deliberately.
+    # Axes 1-4 cannot: they measure a ns-scale floor and cass's clock has none. But this
+    # axis injects the floor rather than measuring it, so it is exactly as sharp on a
+    # 1 ms clock as on a 15 ns one, and it is the ONLY thing in this file that proves
+    # `bench_stop` on the PE target still routes through `_bench_net` at all. Leaving it
+    # guarded made cass score `6 passed` having asserted nothing — a green placebo on one
+    # of the four gate hosts, in the release whose whole subject is green placebos.
+    var window = _btf_calibrate_window();
+    var window_real = 0;
+    if (window > 0) { window_real = 1; }
+    assert_eq(window_real, 1, "the calibrated op spans a measurable window on this clock (anti-vacuous)");
+
+    # The live calibration, restored before the assertions so a later reader of this
+    # process (or a leg added below) never sees an injected value.
+    var real_fl = bench_clock_overhead_ns();
+
+    # (a) FLOOR FORCED TO 0 — the API must report the whole window. This is the
+    #     anti-vacuous leg and it is what makes (b) mean something: it establishes that
+    #     these samples are NOT already 0, so (b)'s zero is a subtraction and not the
+    #     clock failing to move. It also kills a `_bench_net` that returns a constant.
+    _bench_clock_ns = 0;
+    var zero = _btf_net_run("floor_forced_to_zero");
+    var raw_total = bench_total_ns(zero);
+    var raw_min = bench_min_ns(zero);
+
+    # (b) FLOOR FORCED ABOVE ANY POSSIBLE WINDOW (1,000 s) — every sample must clamp to
+    #     exactly 0. THIS IS THE MUTATION DETECTOR: with the subtraction deleted from
+    #     `_bench_net` the total is the raw total, which (a) has just proved is large.
+    #     An equality on a total, not a threshold on a statistic — no host, clock or
+    #     load can move it.
+    _bench_clock_ns = 1000000000000;
+    var clamped = _btf_net_run("floor_forced_above_the_window");
+    var clamped_total = bench_total_ns(clamped);
+    var clamped_iters = bench_iterations(clamped);
+
+    # (c) FLOOR FORCED TO ONE NANOSECOND — negligible, but NOT zero. This is what kills
+    #     the `if (floor == 0) { return elapsed; } return 0;` switch, which passes both
+    #     (a) and (b). A 1 ns floor removes nothing measurable from a window calibrated
+    #     to four clock ticks, so correct code still reports essentially the whole
+    #     window; the switch reports 0. Everything compared here comes out of ONE run.
+    #
+    # ⛔ THIS LEG USED TO SUBTRACT TWO SEPARATE RUNS AND IT WAS FLAKY — v6.5.19 shipped
+    #     that, and it is the second unsound shape this axis has carried. It set the
+    #     floor to `raw_min / 2` and asserted `(raw_total - partial_total) * 4 >
+    #     N * raw_min`, i.e. that a difference of totals from TWO DIFFERENT EXECUTIONS
+    #     was large. The quantity it wanted is `N × floor`; the noise it was measured
+    #     against is the run-to-run spread of the SAME loop, and the noise is bigger.
+    #     Measured 2026-08-11, 20 consecutive executions of this file's own axis 5 on
+    #     x86_64 Linux under 16-way load: `raw_total` ranged 2,729,078 - 5,733,466 ns
+    #     (a 2.1x spread, a 3.0M ns swing) while `N × floor` was ~2.47M ns. In 3 of the
+    #     20 the difference came out NEGATIVE — the run WITH a floor subtracted totalled
+    #     MORE than the floor-0 run (-307,302 and -267,194 ns) — so the assertion failed
+    #     on perfectly correct code. On real ecb it failed 2 of 6 runs when the box was
+    #     busy and 0 of 30 when idle; the release gate runs it right after 44 other
+    #     tests, i.e. on the busy box.
+    #
+    #     Note what that means for the gate that shipped: it is not that the assertion
+    #     was too tight. A statistic whose noise exceeds its signal cannot be rescued by
+    #     moving the threshold — loosen it enough to stop failing and it stops
+    #     discriminating. So the cross-run subtraction is GONE rather than retuned, and
+    #     the property it was reaching for — that the subtraction is arithmetic and not
+    #     a switch — is now proved exactly, with no clock in the loop at all, by
+    #     `test_the_floor_arithmetic_is_exact` below. The header's old claim that this
+    #     axis had "no statistics anywhere" was true of (a) and (b) and false of (c).
+    _bench_clock_ns = 1;
+    var tiny = _btf_net_run("floor_forced_to_one_nanosecond");
+    var tiny_total = bench_total_ns(tiny);
+    var tiny_min = bench_min_ns(tiny);
+
+    _bench_clock_ns = real_fl;
+
+    var raw_positive = 0;
+    if (raw_total > 0) { raw_positive = 1; }
+    assert_eq(raw_positive, 1, "floor forced to 0: the API reports the whole window (anti-vacuous)");
+    var min_positive = 0;
+    if (raw_min > 0) { min_positive = 1; }
+    assert_eq(min_positive, 1, "floor forced to 0: even the fastest sample is a nonzero window");
+    assert_eq(clamped_iters, _BTF_NETN, "every sample of the clamped run was recorded (anti-vacuous)");
+    assert_eq(clamped_total, 0, "floor forced above the window: every per-iteration sample nets to exactly 0");
+    var tiny_survives = 0;
+    if (tiny_total > 0) { tiny_survives = 1; }
+    assert_eq(tiny_survives, 1, "floor of 1ns: the window still survives (not a zero switch)");
+    var tiny_min_survives = 0;
+    if (tiny_min > 0) { tiny_min_survives = 1; }
+    assert_eq(tiny_min_survives, 1, "floor of 1ns: even the fastest sample still survives (not a zero switch)");
+    assert_eq(bench_clock_overhead_ns(), real_fl, "the live calibration was restored");
+}
+
+# ── Axis 6 — the subtraction itself, with no clock anywhere in it ────
+# What axis 5 leg (c) was reaching for, proved directly instead of inferred from two
+# timed loops: `_bench_net` is a pure function of (elapsed, floor), so the test can
+# hand it both operands and assert the exact result. Deterministic on every host, at
+# any load, on a 15 ms clock or an 11 ns one — there is no clock in it.
+#
+# ⭐ THIS IS THE AXIS THAT MAKES THE SWITCH-MUTANT KILL HONEST. `if (floor == 0)
+# { return elapsed; } return 0;` passes axis 5 (a) and (b) by construction; it fails
+# the second assertion here by 4000 against 0. Two different floors and four different
+# windows are used, so a `_bench_net` that returns a hardcoded constant, ignores its
+# `elapsed`, or ignores the floor cannot satisfy the set.
+fn test_the_floor_arithmetic_is_exact() {
+    test_group("_bench_net subtracts the floor exactly, at chosen operands");
+    var real_fl = bench_clock_overhead_ns();
+
+    _bench_clock_ns = 0;
+    assert_eq(_bench_net(5000), 5000, "floor 0: nothing is removed");
+
+    _bench_clock_ns = 1000;
+    assert_eq(_bench_net(5000), 4000, "floor 1000: exactly the floor is removed");
+    assert_eq(_bench_net(1001), 1, "floor 1000: one nanosecond above the floor survives");
+    assert_eq(_bench_net(1000), 0, "floor 1000: a window exactly at the floor nets to 0");
+    assert_eq(_bench_net(400), 0, "floor 1000: a sub-floor window clamps to 0, never negative");
+
+    # A SECOND floor, so the result has to track both operands rather than one.
+    _bench_clock_ns = 3;
+    assert_eq(_bench_net(10), 7, "a different floor: the result tracks the floor, not a constant");
+    assert_eq(_bench_net(3), 0, "a different floor: the clamp moves with it");
+
+    _bench_clock_ns = real_fl;
+    assert_eq(bench_clock_overhead_ns(), real_fl, "the live calibration was restored");
+}
+
+fn main() {
+    test_reported_floor_matches_an_independent_measurement();
+    test_the_two_measurement_paths_agree();
+    test_measuring_n_fast_iterations_costs_far_less_than_n_clock_reads();
+    test_the_floor_is_subtracted_not_merely_known();
+    test_a_slow_op_is_still_measured_accurately();
+    test_per_iteration_api_nets_out_the_timer();
+    test_the_floor_arithmetic_is_exact();
+    return assert_summary();
+}
+
+var r = main();
+syscall(60, r);

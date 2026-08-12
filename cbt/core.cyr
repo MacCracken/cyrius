@@ -64,6 +64,10 @@ var _strict = 0;
 # omits the stdlib; the consumer supplies it) and needs every OTHER failure to
 # stay a failure. Not user-facing: no CLI flag sets it.
 var _cc_allow_undef = 0;
+# v6.5.19: internal-only — makes compile() pass cycc `--syntax-only`. Set by
+# `cmd_lint`'s pre-pass and by nothing else; the binary it produces is deliberately
+# wrong and is unlinked immediately. See _syntax_only in src/common/util.cyr.
+var _cc_syntax_only = 0;
 # v6.0.49: `cyrius build --agnos` → inject CYRIUS_TARGET_AGNOS=1 into cycc's
 # envp so it emits an AGNOS ring-3 binary (cbt's _envp is empty, so the env
 # var must be added explicitly — same mechanism as --strict-pin).
@@ -344,6 +348,54 @@ fn _cbt_env_is_1(name): i64 {
     }
     return 0;
     #endif
+}
+
+# v6.5.19 — the same portable reach, returning an INTEGER value instead of a
+# yes/no. `run_binary_timed`'s CYRIUS_TEST_TIMEOUT override needs a number, and
+# `_cbt_env_is_1` above can only answer "is it exactly 1". Returns `dflt` when the
+# variable is unset, empty, or not a run of ASCII digits — a malformed value must
+# not silently become 0 (which would mean "no deadline", i.e. the very bug this
+# was added to fix). Digits only: no sign, no whitespace, no units.
+#ifdef CYRIUS_TARGET_WIN
+var _cbt_envi_buf[512];
+#endif
+fn _cbt_env_int(name, dflt): i64 {
+    var v = 0;
+    #ifdef CYRIUS_TARGET_WIN
+    v = _win_getenv_into(name, &_cbt_envi_buf);
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var eb = alloc(32768);
+    var en = file_read_all("/proc/self/environ", eb, 32767);
+    #ifdef CYRIUS_TARGET_MACOS
+    en = _macho_fill_environ(eb, 32768);
+    #endif
+    if (en <= 0) { return dflt; }
+    store8(eb + en, 0);
+    var nl = strlen(name);
+    var ei = 0;
+    while (ei < en) {
+        if (memeq(eb + ei, name, nl) == 1) {
+            if (load8(eb + ei + nl) == 61) { v = eb + ei + nl + 1; ei = en; }
+        }
+        while (ei < en) {
+            if (load8(eb + ei) == 0) { ei = ei + 1; break; }
+            ei = ei + 1;
+        }
+    }
+    #endif
+    if (v == 0) { return dflt; }
+    var acc = 0;
+    var di = 0;
+    while (load8(v + di) != 0) {
+        var c = load8(v + di);
+        if (c < 48) { return dflt; }
+        if (c > 57) { return dflt; }
+        acc = acc * 10 + (c - 48);
+        di = di + 1;
+    }
+    if (di == 0) { return dflt; }
+    return acc;
 }
 
 fn find_tools(): i64 {

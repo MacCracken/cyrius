@@ -402,7 +402,20 @@ fn PINDIRECT_CALL(S): i64 {
     return 0;
 }
 
+# v6.5.19 (CVE-40): the bottom expression tier, and the last of the five chokepoints.
+# Unary `-` recurses HERE, not in PARSE_TERM — `- - - … 1` compiled fine at 1024 with the
+# PEXPR and PARSE_TERM bounds in place and still SIGSEGV'd at 16384, because a unary
+# operand descends straight back into this tier. Guarding PEXPR/PARSE_TERM/PARSE_FACTOR
+# together covers the whole expression ladder named in this file's header comment.
+# See _rd_enter (src/common/util.cyr).
 fn PARSE_FACTOR(S): i64 {
+    _rd_enter(S);
+    var _rc = _PARSE_FACTOR_IMPL(S);
+    _rd_exit();
+    return _rc;
+}
+
+fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
     SESTYPE(S, 0);
@@ -746,6 +759,11 @@ fn PARSE_FACTOR(S): i64 {
         }
         var idx = FINDVAR(S, noff);
         if (idx < 0) {
+            # v6.5.19: under --syntax-only an unresolved read becomes the constant 0
+            # and we return exactly as the sibling success paths above do, so the
+            # token stream stays in sync and no cascade is invented. See _syntax_only
+            # (src/common/util.cyr) for why report-and-continue was rejected here.
+            if (_syntax_only == 1) { EMOVI(S, 0); return 0; }
             syscall(SYS_WRITE, 2, "error:", 6);
             _err_head(S);
             syscall(SYS_WRITE, 2, ": undefined variable '", 22);
@@ -858,6 +876,7 @@ fn PARSE_FACTOR(S): i64 {
             return 0;
         }
         # Nothing of this name exists in any scope.
+        if (_syntax_only == 1) { EMOVI(S, 0); return 0; }   # v6.5.19: see _syntax_only
         syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
         PRSTR(S + 0x60000 + anoff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
         return 0;
@@ -2651,7 +2670,19 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     return 0;
 }
 
+# v6.5.19 (CVE-40): the unary/term tier needs its OWN depth entry — PEXPR's wrapper does
+# not cover it. A `-`/`!` chain and a `g(g(g(...)))` call chain recurse INSIDE this tier
+# without ever returning to PEXPR, so `- - - … 1` at 16384 deep still SIGSEGV'd with the
+# PEXPR bound in place. Same wrapper shape as PARSE_STMT/PEXPR; the return value is
+# propagated because callers read it. See _rd_enter (src/common/util.cyr).
 fn PARSE_TERM(S): i64 {
+    _rd_enter(S);
+    var _rt = _PARSE_TERM_IMPL(S);
+    _rd_exit();
+    return _rt;
+}
+
+fn _PARSE_TERM_IMPL(S): i64 {
     _cfo = 0;
     # Extended builtins — checked first
     var ptyp = PEEKT(S);
@@ -2956,7 +2987,20 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
     return 0;
 }
 
+# v6.5.19 (CVE-40): the expression-tier depth chokepoint, shaped exactly like the
+# PARSE_STMT wrapper in parse.cyr (v6.4.62) so there is one pattern, not two. PARSE_STMT
+# alone does NOT cover the expression vectors — nested parens, unary-minus chains and
+# call chains recurse through PEXPR/PARSE_TERM without ever re-entering a statement — so
+# a bound placed only on statements would have left three of the six crashing shapes
+# live. See _rd_enter (src/common/util.cyr).
 fn PEXPR(S): i64 {
+    _rd_enter(S);
+    _PEXPR_IMPL(S);
+    _rd_exit();
+    return 0;
+}
+
+fn _PEXPR_IMPL(S): i64 {
     PARSE_TERM(S);
     var ps = GPSC(S);
     var go = 1;

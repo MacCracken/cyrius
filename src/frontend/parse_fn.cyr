@@ -1812,6 +1812,11 @@ fn SKIP_GENERICS(S): i64 {
         var ggo = 1;
         while (ggo == 1) {
             if (PEEKT(S) == 20) { ggo = 0; }
+            # v6.5.19: EOF guard. `fn f<`, `struct S<`, `enum E<` truncated here span
+            # a loop whose only exit was `>`; this skipper emits no diagnostic, so
+            # `_had_error` stayed 0 and the v6.4.62 watchdog never ticked — cycc HUNG
+            # outright. See _wd_eof_tick (src/common/util.cyr) and CVE-39.
+            elif (PEEKT(S) == 12) { ggo = 0; }
             else { STI(S, GTI(S) + 1); }
         }
         STI(S, GTI(S) + 1);  # consume >
@@ -1835,6 +1840,10 @@ fn _capture_tparams(S): i64 {
     var go = 1;
     while (go == 1) {
         if (PEEKT(S) == 20) { go = 0; }
+        # v6.5.19: EOF guard — the monomorph twin of SKIP_GENERICS above, same hang.
+        # It must consume EXACTLY what SKIP_GENERICS does (see the comment on this fn),
+        # so the two guards have to stay in lockstep.
+        elif (PEEKT(S) == 12) { go = 0; }
         else {
             if (PEEKT(S) == 2) {
                 if (n == 0) { off0 = PEEKV(S) + 1; }
@@ -2803,7 +2812,20 @@ fn _fileid_dump_arm(): i64 {
     return _fileid_dump;
 }
 
+# v6.5.19 (CVE-40): the fn-definition tier. `fn f() { ` repeated 514 times SIGSEGV'd —
+# the cheapest of the six vectors at ~16 KB of stack per level, and the one neither the
+# PARSE_STMT nor the PEXPR bound caught, because a nested definition recurses through
+# THIS function rather than the statement wrapper (a top-level `fn` is dispatched from
+# PARSE_PROG, and a nested one re-enters here). Wrapper shape identical to the other
+# three chokepoints. See _rd_enter (src/common/util.cyr).
 fn PARSE_FN_DEF(S): i64 {
+    _rd_enter(S);
+    var _rf = _PARSE_FN_DEF_IMPL(S);
+    _rd_exit();
+    return _rf;
+}
+
+fn _PARSE_FN_DEF_IMPL(S): i64 {
     var _is_async = 0;
     var _async_noff_f = 0;
     # v6.3.11 (G): the pass-2 dispatch already consumed the leading `async` (token
@@ -2874,11 +2896,23 @@ fn PARSE_FN_DEF(S): i64 {
     else {
         var _dup_off = L64(_fnt_offsets + fi * 8);
         if (_dup_off >= 0) {
+            # v6.5.19 (agnosai filing) — TWO fixes to this one warning:
+            #  * `_err_head_at(S, _defstart_ti)` instead of `_err_head(S)`. The cursor
+            #    has already consumed `fn` and the NAME by here, so the plain head put
+            #    the column on the `(` of the parameter list rather than on the
+            #    definition. `_defstart_ti` is the `fn` keyword itself.
+            #  * name the file the FIRST definition came from. GFFI still holds it —
+            #    SFFI for THIS definition is written further down, after `fi` resolves —
+            #    so the consumer gets both ends of the collision instead of having to
+            #    infer "which copy wins" from a single position, which is the wrong
+            #    inference the filing had to retract twice.
             syscall(SYS_WRITE, 2, "warning:", 8);
-            _err_head(S);
+            _err_head_at(S, _defstart_ti);
             syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
             PRSTR(S + 0x60000 + noff);
-            syscall(SYS_WRITE, 2, "' (last definition wins)\n", 25);
+            syscall(SYS_WRITE, 2, "' (last definition wins; first defined in ", 42);
+            _fm_print_fid(S, GFFI(S, fi));
+            syscall(SYS_WRITE, 2, ")\n", 2);
         }
     }
     if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
@@ -3751,6 +3785,18 @@ fn PARSE_FN_DEF(S): i64 {
             # leaves the value in rax). Struct-typed generic returns (retptr ABI)
             # ride the struct-interaction work (v6.3.10). Non-tparam unknowns error.
             if (_is_tparam_of(S, fi, rt_noff) == 1) { _rtc = 0 - 8; }
+            # v6.5.19: `: T` where T is a struct declared in a SIBLING FILE is a
+            # RESOLUTION failure, and under --syntax-only it must not become an error at
+            # all. Measured on agnosai, which BUILDS GREEN yet had 3 of its files
+            # condemned by `cyrius lint`: this ERR_MSG sets _panic, _sync_skip then
+            # resyncs mid-declaration, and the desynced parse MANUFACTURES
+            # `expected ';', got '='` — which IS in the syntax class, so lint refused a
+            # module whose only sin was lacking its includes. Same shape as the struct
+            # FIELD sites fixed earlier this release, at the return-type site they
+            # missed; and the same cascade hazard `_syntax_only`'s comment documents.
+            # Treating it as an i64 scalar return keeps the token stream in sync, which
+            # is all the pre-pass needs. A real build is untouched — _syntax_only is 0.
+            elif (_syntax_only == 1) { _rtc = 0 - 8; }
             else {
                 ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64/f64v2/f64v4", 92);
             }

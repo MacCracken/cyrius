@@ -106,6 +106,24 @@ fn FM_BUILD(S): i64 {
         if (load8(buf + pos) == 10) { line = line + 1; }
         pos = pos + 1;
     }
+    # v6.5.19 — a buffer that does not END in a newline still has a final, REAL line.
+    # `line` counts newlines + 1, so when the last byte is `\n` it already sits one past
+    # the last line, which is what the span arithmetic below wants. When it is not, it
+    # names the last line instead of one past it, the LAST entry's count comes out one
+    # short, and that final line falls OUT of every span. FM_LOOKUP then fell through to
+    # PRNUM(expanded_line): a source with no trailing newline reported its last line as
+    # a RAW EXPANDED line — past the file's own EOF, and with no `<file>:` prefix at all.
+    # Measured on a 4-line source ending in an unterminated defect: `error:9:11:`, now
+    # `error:<source>:4:11:`. Only the LAST span is affected; earlier spans are sized by
+    # `next_start - start - 1` and an included file that lacks its final newline already
+    # gets one from PP_REANCHOR.
+    # NOT a `private`-visibility bug, though FM_FILEID shares this arithmetic: the last
+    # marker in the stream is always the `<source>` RESUME (every include and every
+    # derive re-anchors after itself), so a line falling out of it returns 0 = main
+    # source, which is the same answer it would have given. Verified, not assumed —
+    # a private fn on the unterminated last line of an included file warns identically
+    # with and without this line. CHANGELOG [6.5.19].
+    if (bl > 0) { if (load8(buf + bl - 1) != 10) { line = line + 1; } }
     # Second: compute line counts from start_line gaps
     var i = 0;
     while (i < _fm_count) {
@@ -197,6 +215,22 @@ fn FM_LOOKUP(S, expanded_line): i64 {
     }
     # Line not in any included file — it's the main source
     PRNUM(expanded_line);
+    return 0;
+}
+
+# v6.5.19 — print the file that a stored `_fnt_fileid` value names. SFFI stores
+# FM_FILEID(...) + 1, and FM_FILEID returns the filename-scratch offset + 1 (0 = main
+# source, -1 = the map overflowed), so the stored word is `foff + 2` for an included
+# file, 1 for the main source, and 0 when nothing was recorded.
+# Used by the `duplicate fn` warning to name where the LOSING definition came from —
+# the filing's point was that one position cannot answer "which copy wins" on its own.
+fn _fm_print_fid(S, v): i64 {
+    if (v <= 0) { syscall(SYS_WRITE, 2, "<unknown>", 9); return 0; }
+    if (v == 1) { syscall(SYS_WRITE, 2, "<source>", 8); return 0; }
+    var p = S + 0x721000 + (v - 2);
+    var n = 0;
+    while (load8(p + n) != 0) { n = n + 1; }
+    syscall(SYS_WRITE, 2, p, n);
     return 0;
 }
 

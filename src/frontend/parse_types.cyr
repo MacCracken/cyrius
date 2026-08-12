@@ -295,6 +295,12 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
     var ego = 1;
     while (ego == 1) {
         if (PEEKT(S) == 14) { ego = 0; }
+        # v6.5.19: EOF guard. Without it `enum` (FOUR BYTES) SIGSEGV'd: the loop's only
+        # exit was `}`, so at EOF it re-registered the same member forever, and the
+        # per-member write walked the 1024-entry enum-const table off its region at
+        # ~1027 iterations. The v6.4.62 watchdog could not catch it — that one detects a
+        # STALL, and this loop ADVANCES GTI every iteration. See CVE-39.
+        elif (PEEKT(S) == 12) { ego = 0; }
         else {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var vnoff = PEEKV(S);
@@ -458,6 +464,11 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
             if (PEEKT(S) == 5 || PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
         }
     }
+    # v6.5.19: the loop can now exit on EOF as well as on `}` (the CVE-39 guard above),
+    # so the closing brace has to be VERIFIED rather than assumed. Without this,
+    # `enum E {` truncated mid-body exited 0 and cycc emitted a binary for a file that
+    # simply stops — trading a SIGSEGV for silent acceptance, which is worse.
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
     return 0;
 }
@@ -499,6 +510,9 @@ fn PARSE_STRUCT_DEF(S): i64 {
     var go = 1;
     while (go == 1) {
         if (PEEKT(S) == 14) { go = 0; }
+        # v6.5.19: EOF guard — same class as the enum member loop above (CVE-39).
+        # `struct`, `struct S`, `struct S {`, `struct S { a` all SIGSEGV'd at 6.5.18.
+        elif (PEEKT(S) == 12) { go = 0; }
         else {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var fnoff = PEEKV(S);
@@ -568,6 +582,8 @@ fn PARSE_STRUCT_DEF(S): i64 {
             if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
         }
     }
+    # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
     return 0;
 }
@@ -588,6 +604,8 @@ fn PARSE_UNION_DEF(S): i64 {
     var go = 1;
     while (go == 1) {
         if (PEEKT(S) == 14) { go = 0; }
+        # v6.5.19: EOF guard — the union twin of the struct loop above (CVE-39).
+        elif (PEEKT(S) == 12) { go = 0; }
         else {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var fnoff = PEEKV(S);
@@ -636,6 +654,8 @@ fn PARSE_UNION_DEF(S): i64 {
             if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
         }
     }
+    # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
     return 0;
 }

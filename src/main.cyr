@@ -635,6 +635,19 @@ if (_vn > 0) {
                 }
             }
         }
+        # "--sy" (--syntax-only, v6.5.19) — answer "does this file PARSE?" without
+        # resolution: an unresolved name becomes a benign constant instead of a
+        # parse-time abort, so the file's real SYNTAX errors are reachable. Used by
+        # `cyrius lint`'s pre-pass. THE OUTPUT IS DELIBERATELY WRONG — never build
+        # with it. chars s(115) y(121); distinct from "--st" (--strict) above.
+        # See _syntax_only in src/common/util.cyr.
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 121) {
+                    _syntax_only = 1;
+                }
+            }
+        }
         # "--al" (--allow-undef, v6.3.2) — downgrade the default reachable-
         # undefined-fn hard error back to a warning. chars a(97) l(108).
         if (_vi + 4 <= _vn) {

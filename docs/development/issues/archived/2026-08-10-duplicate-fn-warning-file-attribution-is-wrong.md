@@ -1,6 +1,45 @@
 # `duplicate fn` warnings report a file:line that cannot be in that file
 
-**Status:** 🔴 OPEN — filed from a consumer (agnosai).
+**Status:** ✅ **RESOLVED — v6.5.19.** Expected outcomes 1 AND 2 both shipped.
+
+⚠ **The filed mechanism was not the real one, and it matters.** The FILE was correct in all 35
+cases; only the LINE was wrong (35 of 35). A fix built on "the filename is whichever file the
+mapping last resolved to" would have fixed the wrong thing. `FM_LOOKUP` reconstructs a source
+line by linear arithmetic over a `#@file` span (`expanded − start + base`), which holds only
+while the preprocessor copies a file 1:1 — and two transforms broke that INSIDE a span with no
+re-anchor: the `#ifdef` family consumed directive lines and dropped skipped bodies (line too
+SMALL; kavach's 30 warnings were uniformly `true − 55`) and `#derive` replaced 2–3 source lines
+with N generated ones (too LARGE; +476 by line 11112, which is how `:11588` landed 267 past
+EOF). Fixed in `src/frontend/lex_pp.cyr`: the `#ifdef` family now PADS one newline per consumed
+or skipped source line, and `#derive` — which adds lines and cannot be padded — RE-ANCHORS with
+a `#@file` marker. A marker per `#ifdef` block would have needed ~1139 entries against a 1024
+cap, and overflow makes `FM_FILEID` return `-1`, which `private` visibility is load-bearing on.
+
+Expected outcome 2 also shipped: the message is now
+`duplicate fn 'X' (last definition wins; first defined in <file>)`, and the caret moved off the
+`(` onto the `fn` keyword (`_err_head_at(S, _defstart_ti)`).
+
+**§6 of this filing is answered: `last definition wins` is honest.** On the exact `_sub_new`
+shape the warning names `lib/libro.cyr:6` (`grep -n` agrees), names majra as the first
+definition, and a runtime probe returns libro's value. Whatever the original probe showed, it
+is not explained by this defect.
+
+⚠ **One measured residual, filed:** a fn the derive SYNTHESIZES (`SpawnedProcess_pid` /
+`_set_pid` — 2 of the 35) has no source `fn` line at all, so no marker can make it exact. It
+now lands in the generated block a few lines past its struct instead of drifting across the
+file. Two candidate repairs were implemented, measured WORSE, and reverted (both shift the
+struct's own lines, moving a diagnostic inside the struct from +1 to +2). Closing it is a
+design decision about generated-code layout with 34 derive tests downstream:
+`docs/development/issues/2026-08-11-derive-generated-code-inflates-line-numbering.md`.
+
+**NOT done, deliberately — the "adjacent" suggestion.** Promoting an arity-differing duplicate
+from warning to error is a behaviour change that can break existing builds; it is the
+maintainer's call, not a bug fix, and is left unpinned.
+
+Gate: `tests/gates/frontend/duplicate_fn_attribution.sh` (both halves mutation-proven
+independently). See CHANGELOG [Unreleased].
+
+**Status (as filed):** 🔴 OPEN — filed from a consumer (agnosai).
 **Discovered:** 2026-08-10, v6.5.18, auditing 35 duplicate-fn warnings across seven bundles.
 **Severity:** Medium. It is a diagnostic, but it is the diagnostic a consumer uses to decide
 whether a collision matters, and it led directly to two wrong conclusions that had to be

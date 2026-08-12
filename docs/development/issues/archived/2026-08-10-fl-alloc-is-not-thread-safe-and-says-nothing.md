@@ -1,6 +1,38 @@
 # `fl_alloc` / `fl_free` are not thread-safe, and nothing says so
 
-**Status:** 🔴 OPEN — filed from a consumer (majra), not fixed here.
+**Status:** ✅ RESOLVED v6.5.19 — option 1 (made thread-safe), not option 3.
+
+> **Resolution.** `lib/freelist.cyr` now serialises on a `_threads_active`-gated CAS
+> spinlock. **Five races, not the one quoted here**: `fl_init`'s check-then-set, the
+> POP (this filing's), the PUSH, the arena BUMP — measurably the dominant source — and
+> the arena REFILL, which publishes three globals across an mmap syscall, a window
+> ~1000× wider than the pop's, and can return a block that runs off the end of its
+> mapping.
+>
+> **Option 3 was rejected because it had already been tried.** `lib/patra.cyr:245` and
+> `lib/sigil.cyr:5621` both documented the hazard; patra paid a mutex for it and sigil
+> rewrote six crypto primitives onto banked static buffers. This filing is the third
+> consumer. There is also no safe alternative to point at — `alloc()` has no `free()`,
+> which is why this allocator exists. **This closed the second half of the v6.0.64 fix**
+> (`archived/2026-06-04-cyrius-global-allocator-not-thread-safe.md`), which locked
+> `alloc()` and left its sibling alone.
+>
+> Cost, measured in-round against a verbatim copy of the pre-fix code: alloc+free
+> **26.4 → 29.9 ns** single-threaded, **66.8 ns** armed. This filing's shape:
+> **57,467 / 62,937 mismatches out of 200,000 → 0**.
+>
+> Gates: `tests/tcyr/crossos/freelist_thread_safe.tcyr`,
+> `tests/gates/memory/freelist_thread_safe.sh`.
+>
+> ⚠ **Two notes correcting this filing.** "Under heavier load the same test *faulted*"
+> is real but not reliable and a gate must not assert on it: consecutive anonymous
+> mmaps land adjacent (measured 64 KB apart), so an off-the-end block lands in a
+> neighbouring MAPPED chunk — 0 SIGSEGVs in 80 attempts. And "any two threads calling
+> `fl_alloc` in a loop" is NOT a sufficient repro: without a start barrier,
+> `thread_create` costs more than the whole loop, so worker 0 finishes before worker 1
+> exists (0/20 detections at 500 iterations, 28/30 with a barrier).
+
+**Filed as:** 🔴 OPEN — from a consumer (majra), not fixed at filing time.
 **Discovered:** 2026-08-10, v6.5.18, chasing an intermittent CI failure in majra's
 `test_relay_receive_is_reentrant`.
 **Severity:** High — silent memory corruption, and the failure mode looks like a bug in

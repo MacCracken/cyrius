@@ -206,6 +206,16 @@ fn WIFEXITED(status): i64 { return 1; }
 fn WIFSIGNALED(status): i64 { return 0; }
 # POSIX wait-status accessor: no terminating signal on Windows. 0.
 fn WTERMSIG(status): i64 { return 0; }
+# v6.5.19: `cyrius test`'s child deadline polls `sys_waitpid(pid, &st, WNOHANG)`
+# and SIGKILLs on expiry (cbt/build.cyr `run_binary_timed`). Both names are
+# referenced OUTSIDE any target guard so the shared code stays single-path; on
+# Windows the loop is unreachable anyway (`sys_fork` above returns -1, so the poll
+# takes the `w < 0` exit on its first pass). Same stub contract as the block above:
+# degrade safely rather than leave an undefined reference for the PE cross-build.
+var WNOHANG = 1;
+# No POSIX signals on Windows; a process is terminated via TerminateProcess
+# (PE reroute 0xF01D), not kill(2). Returns -1.
+fn sys_kill(pid, sig): i64 { return 0 - 1; }
 # chmod has no Windows equivalent (ACL model differs); no-op success.
 fn sys_chmod(path, mode): i64 { return 0; }
 # Best-effort dup2 stub: returns the requested newfd (handle dup is rerouted).

@@ -1589,7 +1589,14 @@ fn EMITPE_EXEC(S): i64 {
     # otherwise firmware honors ImageBase = 0x140000000 directly.
     if (_TARGET_EFI_APPLICATION == 1 && _pe_reloc_vsize == 0) { _dllc = 0x0100; }
     o = _pe_w16(O, o, _dllc);
-    o = _pe_w64(O, o, 0x100000);        # SizeOfStackReserve (1 MB)
+    # v6.5.19 (CVE-40): 8 MB, was 1 MB. RESERVE is address space, not committed memory
+    # (SizeOfStackCommit below stays 4 KB), so this costs nothing at runtime. It exists
+    # so the recursive-descent depth bound in `_rd_enter` is actually reachable on
+    # Windows: at the worst-measured ~16 KB of stack per nesting level, 256 levels needs
+    # ~4.2 MB, which fits the 8 MB default of Linux/macOS/aarch64 but NOT a 1 MB reserve.
+    # Without this, a PE cycc would still SIGSEGV at ~60 levels, i.e. the bound would
+    # have been a Linux-only fix — the half-fix shape CLAUDE.md forbids.
+    o = _pe_w64(O, o, 0x800000);        # SizeOfStackReserve (8 MB)
     o = _pe_w64(O, o, 0x1000);          # SizeOfStackCommit  (4 KB)
     o = _pe_w64(O, o, 0x100000);        # SizeOfHeapReserve  (1 MB)
     o = _pe_w64(O, o, 0x1000);          # SizeOfHeapCommit   (4 KB)
