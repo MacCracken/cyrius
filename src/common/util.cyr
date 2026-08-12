@@ -1398,10 +1398,31 @@ fn _err_excerpt(S): i64 {
         if (load8(S + 0x459D000 + le) == 10) { break; }
         le = le + 1;
     }
+    # v6.5.20 — WINDOW a long line. `#derive` now emits its whole generated block on ONE
+    # expanded line (the construct's closing-`}` line, which is what makes the block's
+    # line accounting exact); a 10-field `#derive(Serialize)` flattens to ~9.5 KB. Printed
+    # whole that was ~19 KB of stderr for ONE diagnostic — the line, then one space per
+    # column for the caret. Lines up to 200 bytes take the ORIGINAL path byte-for-byte:
+    # `lead`/`trail` stay 0, `ws`/`we` stay `ls`/`le`, and the writes are identical.
+    var ws = ls;
+    var we = le;
+    var lead = 0;
+    var trail = 0;
+    if (le - ls > 200) {
+        ws = off - 60;
+        if (ws < ls) { ws = ls; }
+        we = ws + 160;
+        if (we > le) { we = le; }
+        if (ws > ls) { lead = 1; }
+        if (we < le) { trail = 1; }
+    }
     syscall(SYS_WRITE, 2, "    ", 4);
-    syscall(SYS_WRITE, 2, S + 0x459D000 + ls, le - ls);
+    if (lead == 1) { syscall(SYS_WRITE, 2, "...", 3); }
+    syscall(SYS_WRITE, 2, S + 0x459D000 + ws, we - ws);
+    if (trail == 1) { syscall(SYS_WRITE, 2, "...", 3); }
     syscall(SYS_WRITE, 2, "\n    ", 5);
-    var nsp = off - ls;
+    var nsp = off - ws;
+    if (lead == 1) { nsp = nsp + 3; }
     var sp = 0;
     while (sp < nsp) { syscall(SYS_WRITE, 2, " ", 1); sp = sp + 1; }
     syscall(SYS_WRITE, 2, "^\n", 2);

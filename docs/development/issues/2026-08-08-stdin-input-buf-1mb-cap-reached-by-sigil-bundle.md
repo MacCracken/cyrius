@@ -4,6 +4,15 @@
 therefore needs a two-step bootstrap. That is one of the named reasons in CLAUDE.md's
 *an audit's output is fixes* rule for filing rather than packing; it is not a
 "different subsystem" dodge. Everything else found in this pass shipped in 6.5.14.
+**Re-measured 2026-08-11 (v6.5.19):** the bundle is now **1,079,160 B** — it has grown another
+**92 B** since filing, so it is **30,584 B over the cap** and still `rc=1`,
+`error: input exceeds 1MB buffer (raise input_buf in src/main.cyr)`. The headroom is not
+merely gone, it is receding.
+**Placement:** **v6.5.21 — the heap-layout release**, packed with the retired `output_buf`
+band reclamation (roadmap Slot 12's carried-in item). ⭐ **Both are heap-LAYOUT changes and
+each carries its own two-step bootstrap; doing them in ONE two-step bootstrap is materially
+cheaper than two.** Pinning them to the same release is the whole reason this now has a slot
+instead of drifting to closeout. See roadmap.md's slot sequence.
 **Discovered:** 2026-08-08, v6.5.14, while fixing `distlib`'s bundle self-check.
 **Severity:** Medium — no consumer is broken TODAY (see *Why nothing is on fire*), but
 the headroom is gone and the failure mode when it lands is a hard error at the entry.

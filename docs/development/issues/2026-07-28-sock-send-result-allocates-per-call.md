@@ -10,7 +10,49 @@ socket primitive in `lib/net.cyr` has the same shape.
 growable arena nor v6.5.10's `alloc_via` call plumbing changes it — those make allocation *cheaper*
 (15.1 → 11 ns) and *reclaimable when threaded*, but nothing threads an allocator through these
 wrappers, so the per-call 16 B still lands on the no-free global bump.
-**Placement:** **v6.5.x Slot 9 (`.33`–`.34`) — "Sum-type variant unboxing"** (`roadmap.md` v6.5.x
+**Placement:** ⚖️ **BLOCKED ON A MAINTAINER DESIGN DECISION — not schedulable until it exists.**
+The slot survives in roadmap.md's sequence, but it **cannot be scoped** until the design below
+is chosen, so it is deliberately pinned *after* the codegen spine rather than given a band it
+would miss. See the correction box.
+
+> ### ⛔ THE COMMITTED DESIGN WAS TRIED AT v6.5.15 AND REVERTED — the placement below is stale
+>
+> The line under this box commits the slot to **"fix option 1 only: unbox the scalar case (tag +
+> i64 payload in a register pair)"**. That was **implemented at v6.5.15, passed every gate, and
+> was then refuted and reverted.** From the CHANGELOG, verbatim:
+>
+> > *Implemented, passed **every** gate (`delta=0`, check.sh 165/0, self-host, seed-derive,
+> > 264/264), then refuted by an adversarial verifier and reverted. A per-call-site global box
+> > made Results from one site share a slot, so a retaining loop reported **a failed file open
+> > as success**. Both storage relocations are now disproven — frame slot too short, static too
+> > shared — which settles that the fix needs escape analysis or a scope-tied arena, not
+> > relocation.*
+>
+> **What is actually left is NOT a storage relocation of any kind.** The caller frame slot is
+> too **short** (`?` inside an unannotated helper returns the box out of that helper's own
+> frame — the idiomatic `Result` shape, not an edge case); static/global is too **shared** (a
+> failed file open reported as SUCCESS, in the primitive whose job is reporting failure). The
+> heap box buys per-value lifetime, and escaping-plus-retained values need exactly that.
+>
+> ⚠ This file's own later ARC-OPEN section proposes *"9b: keep it a pointer but into the
+> CALLER'S FRAME via a hidden retptr per call site"* — that is the same relocation the ⛔ block
+> disproved. It is **superseded, not a third option.**
+>
+> **Surviving designs: escape analysis, or a scope-tied arena with reclaim.** Both are a
+> different size class from "unbox the scalar case into a register pair". Choosing between them
+> is the maintainer's call — a design decision is a *named* file-don't-pack reason.
+>
+> Second consequence: the **9a prerequisite is entirely upstream.** Every unannotated `Ok`/`Err`
+> producer in `lib/` lives in a **folded** module (sigil, yukti, vani, mabda, bayan) and **zero**
+> are in cyrius-owned files, so 9a is a five-repo coordinated fix-at-source, not a cyrius patch.
+> (Re-derived 2026-08-11: 39 fns declared `: Result` in `lib/*.cyr`. An approximate count of
+> *unannotated* producers disagreed with this file's 106 — **do not quote either number**; it
+> wants a real call-graph derivation at slot open.)
+>
+> Repro re-run unchanged at 6.5.19: `100x sock_send global-bump delta=1600  per call=16` —
+> byte-for-byte identical to the 6.4.86 filing and the .10/.14 re-measurements.
+
+**Placement (superseded — see box above):** **v6.5.x Slot 9 (`.33`–`.34`) — "Sum-type variant unboxing"** (`roadmap.md` v6.5.x
 slot table, verified live 2026-08-07; *retitle at pin time*). ⭐ **The triage confirmed this file's
 own "speculation" and rejected two of its three fixes:** it is the compiler's variant **lowering**,
 not `net.cyr`'s use of it, so the slot takes **fix option 1 only** (unbox the scalar case — tag +

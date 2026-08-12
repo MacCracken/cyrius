@@ -177,6 +177,21 @@
 #   0x1AC018  struct_field_pooltop[8]     next free packed-pool entry index (NEW v6.0.47)
 #   0x1AC020  defer_count   [8]           deferred/secret blocks per fn (cap 8→64; was 0x18F900)
 #   0x1AC028  defer_addrs   [1536]        64 × 24B {block_start, end_jmp, flag_local} (was 0x18F908)
+#   0x1AC800  sw_tbl_cnt    [8]           v6.5.20: per-fn count of switch jump tables emitted
+#                                        by PARSE_SWITCH's x86 table path. Reset at fn start
+#                                        alongside jump_src_cnt / nop_run_cnt.
+#   0x1AC808  sw_tbl        [4096]        v6.5.20: 256 × 16B (table_cp, entry_count). Read by
+#                                        _sw_tbl_repair (parse_fn.cyr, compaction stage 3b) —
+#                                        the table holds `target_cp - table_cp` offsets, which
+#                                        the v5.6.27 NOP-harvest compaction moved BOTH ends of
+#                                        without repairing, so every case body past the first
+#                                        was entered at a stale offset (P1 silent miscompile).
+#                                        The count deliberately keeps incrementing past 256 so
+#                                        the compaction gate sees the overflow and skips the
+#                                        whole pass for that fn (correct, just unoptimised)
+#                                        rather than silently dropping a table. Lives in the
+#                                        free band between defer_addrs end (0x1AC628) and
+#                                        gvar_byte_off (0x1B0000).
 #   0x1FC000  PP #derive field-name scratch [8KB]  reuses the v5.11.19-freed fn_flags band; owned by lex_pp.cyr, cap 256 fields
 #   0x1FE000  PP #derive field-types  [8KB]         (paired with the above)
 #   0x200000  PP #derive field-offsets [2KB]        (paired with the above)

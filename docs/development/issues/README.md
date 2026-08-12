@@ -102,6 +102,16 @@ When the fix lands, the issue file:
 - Moves to [`archived/`](./archived/).
 - Gets a row in `archived/README.md`'s index table.
 
+  > ⚖️ **MAINTAINER DECISION OWED — this rule has not been kept for a whole minor.** Counted
+  > per-file 2026-08-11: `archived/README.md` indexes **40 of 316** archived issues — **276
+  > unindexed** — and the newest indexed row is from the v6.4.79 era, so **every issue archived
+  > across the entire 6.5.x line is missing**, including the six most recent. Two honest
+  > options, and the choice is the maintainer's: **(a)** backfill only the 6.5.x-era archives
+  > and index forward from here, or **(b)** drop the all-files promise from this line and state
+  > plainly that the index is a *curated highlights* table. Silently leaving a rule nobody
+  > follows is the worse third option — it is the same shape as a half-shipped gate that still
+  > reports green.
+
 Filename stays stable across the move so external links keep
 working.
 
@@ -113,7 +123,16 @@ working.
 did, which made open-vs-resolved unreadable at a glance and let a
 shipped-but-still-framed-as-pending file sit in the queue.
 
-Re-verified 2026-08-07 (v6.5.10): **17 of 17 have both.** The two that
+⛔ **Re-run 2026-08-11 (v6.5.19): 3 of 11 open issues FAILED this self-check** — and the two
+failing on `Placement` were **both `.20`-pinned filings**, so the next reader of that slot got
+no placement line from either. The switch-case filing used a different header dialect entirely
+(`**Status** open`, no colon-bold, no `Placement`), making it invisible to this file's own grep.
+All fixed; **12 of 12 pass now** (the queue gained one on a restore-from-archive). ⭐ The rule was
+also **extended to `../proposals/`**, where all three open files lacked a `**Placement:**` line —
+which is precisely how the version-constant proposal lapsed **two** pins with nobody noticing:
+its placement lived only in prose.
+
+*(Historical)* Re-verified 2026-08-07 (v6.5.10): **17 of 17 have both.** The two that
 did not — `2026-07-30-cx-backend-has-no-indirect-call.md` and
 `2026-07-30-net-cyr-x86-only-socket-syscall-numbers.md`, both filed
 cyrius-side in the older `**Filed:** / **Reporter:** / **Status:** open`
@@ -179,11 +198,27 @@ examples of each rot shape:**
   still-open file needed its `file:line` pointers re-derived; the
   findings themselves all survived.
 
-Keep this directory a lean working queue (~10–12 files) — it is at
-**12** open as of 2026-08-07 (plus 2 in `../proposals/`, 299 in
-`archived/`), which is over. Archiving the four resolved files above
-brings it to 13. Consolidate the P3 / "someday" tail into roadmap
-entries rather than leaving issue files for it.
+Keep this directory a lean working queue (~10–12 files). **Derived
+2026-08-11 (v6.5.19): 12 open** (plus **3** in `../proposals/`, **316**
+in `archived/`) — at the top of the target band. ⚠ The line here
+previously read "**12** open … plus 2 … 299 archived" while also
+claiming "17 of 17" two paragraphs above: **self-contradictory and wrong
+in all three components.** Derive, never quote:
+
+```sh
+ls docs/development/issues/*.md | grep -vc README
+ls docs/development/proposals/*.md | wc -l
+find docs/development/issues/archived -name '*.md' ! -name README.md | wc -l
+```
+
+⛔ **The 6.5.19 count went UP by one, and that is correct.**
+`2026-06-28-bare-metal-forbidden-module-check-unbuilt.md` was **restored
+from `archived/`**, where it had been bulk-renamed on 2026-07-10 with no
+resolution banner **for work that was never built**. Archiving is how we
+assert something is done, so an unbuilt requirement in `archived/` is
+hidden from whoever opens the slot — the exact failure this file warns
+about. Consolidate the P3 / "someday" tail into roadmap entries rather
+than leaving issue files for it.
 
 ## Recommended security floor
 

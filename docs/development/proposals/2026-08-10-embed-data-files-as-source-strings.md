@@ -6,6 +6,15 @@ surfaced porting `definitions/loader.rs`, whose 18 built-in presets are
 **Status:** PROPOSED — an **ergonomics gap**, not a capability gap. Everything
 below is already achievable with a generated `.cyr`; the ask is to stop every
 consumer hand-rolling the same generator.
+**Placement:** **roadmap.md → Potential backlog**, and a candidate for the **v6.6.x ergonomics
+list** alongside `CYRIUS_PKG_VERSION`, which this file itself names as its sibling ("same
+shape, one value: a build-time value that source cannot read"). Sequence it **after** the
+version-constant fold-in — both are the same file-read-to-source mechanism, and the smaller
+one should define the shape.
+⚠ **Placement rule enforcement (2026-08-11):** this proposal was referenced in **none** of
+`roadmap.md`, `roadmap_6.md`, `roadmap-future.md` or `state.md` — it was **homeless**. CLAUDE.md
+requires every technical item to live in the 6.x line or roadmap.md's potential backlog; it now
+does. Not urgent — agnosai shipped its generator workaround and pins cyrius 6.5.19.
 **Priority:** low / not a release-blocker. agnosai ships its own generator and is
 not waiting on this.
 **Siblings:** [`2026-06-25-source-level-version-constant.md`](2026-06-25-source-level-version-constant.md)

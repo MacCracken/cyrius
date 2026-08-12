@@ -1,5 +1,25 @@
 # Bare-metal deliverable #4 (forbidden-module check) was never built
 
+> ### ⛔ RESTORED to the open queue 2026-08-11 — it had been archived UNFIXED
+>
+> This file was bulk-renamed into `issues/archived/` on 2026-07-10 (commit `79bae42f`, an
+> 8-file rename) **with no resolution banner, for work that was never built.** It sat in the
+> resolved graveyard while `roadmap.md` simultaneously named it a live W2 fold-in with a spec
+> and a negative fixture, and `roadmap_6.md` listed it as an acceptance criterion for a
+> *closed* arc.
+>
+> `issues/README.md` states the principle exactly: **archiving is how we assert something is
+> done, so archiving an unbuilt requirement hides it from whoever opens the slot.** This is
+> that case — and it was caught by the roadmap, not by the archive sweep.
+>
+> Premise re-checked against live code at v6.5.19 before restoring:
+> `grep -rn 'host_only\|kernel_ok' src cbt lib` → **no implementation**, and the only
+> `forbidden` hit in `src/` is an unrelated comment at `parse_fn.cyr:3901`. Still unbuilt.
+
+**Status:** 🔴 OPEN — never built; restored from `archived/` 2026-08-11.
+**Placement:** **v6.5.22 — the DX / diagnostics finish-out release**, as a fold-in bite. It is
+a compile-time safety rail, so it packs naturally with the diagnostics work rather than
+needing a slot of its own.
 **Filed:** 2026-06-28 (surfaced during the v6.3.4 #7 premise-check).
 **Severity:** P3 (DX / safety-rail; no consumer is blocked — agnos builds its
 kernel today without it).

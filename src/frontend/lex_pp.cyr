@@ -602,6 +602,30 @@ fn ISDERIVE_DE(S, pos, bl): i64 {
 var _pp_derive_count = 0;
 var _pp_derive_sizes = 0;   # alloc(512*8)  lazily on first #derive registration
 var _pp_derive_names = 0;   # alloc(512*32) ditto
+# v6.5.20 — FLATTEN mode for PP_EMIT_STR: newline -> space. Set only around the
+# `#derive` BODY emitters (the generated fns), never around the struct copy.
+#
+# WHY. `#derive` is the one preprocessor transform that ADDS lines, so unlike the
+# `#ifdef` family it could not be padded back to 1:1 and had to re-anchor the file map
+# after itself (v6.5.19). A re-anchor makes everything AFTER the construct exact but
+# nothing INSIDE it: the expansion still occupies more expanded lines than the source it
+# replaced, and FM_LOOKUP's `expanded - start + base` is linear, so it cannot represent
+# a span that stretches in the middle. Emitting the whole generated block on ONE
+# expanded line — the line of the struct's closing `}` — removes the stretch entirely:
+# the block now occupies exactly the source lines it consumed, the arithmetic is exact
+# everywhere including inside, and the re-anchor markers are no longer needed at all.
+#
+# ⚠ `#` IS A COMMENT in cyrius, so any `#` in a flattened literal comments out the rest
+# of the block. Every PP_EMIT_STR literal was audited (191 call sites, 178 with a string
+# literal); exactly one carried a `#` — a `# nested struct` comment in the generated
+# from_json body, deleted rather than escaped. The 13 non-literal arguments are struct
+# names, field names and field type names read from source, i.e. identifiers.
+var _pp_flatten = 0;
+# v6.5.20 — offset (relative to the handler's `src_base`) of the first byte AFTER the
+# `#derive`d struct's closing `}`, i.e. the start of that line's tail. PP_PARSE_STRUCT_DEF
+# records it; the entry-point handler copies the tail with PP_COPY_TAIL *after* it has
+# emitted the generated bodies. See PP_COPY_TAIL for why the tail must come LAST.
+var _pp_tail_ip = 0;
 var _pp_vecdec_int_done = 0;  # v6.4.x R2 — emitted the shared _cy_vecdec_int JSON-array helper yet?
 var _pp_vecdec_f64_done = 0;  # v6.4.x R2 — emitted the shared _cy_vecdec_f64 JSON-array helper yet?
 var _pp_skipval_done = 0;     # v6.4.x R3 — emitted the shared _cy_json_skipval value-skip helper yet?
@@ -626,14 +650,76 @@ fn PP_EMIT_INT(out, op, val): i64 {
     return dc;
 }
 
-# Helper: copy C string bytes to output, return length
+# Helper: copy C string bytes to output, return length.
+# v6.5.20 — honours `_pp_flatten` (newline -> space). See the flag's declaration.
 fn PP_EMIT_STR(out, op, cstr): i64 {
     var i = 0;
     while (load8(cstr + i) != 0) {
-        store8(out + op + i, load8(cstr + i));
+        var ch = load8(cstr + i);
+        if (_pp_flatten == 1) { if (ch == 10) { ch = 32; } }
+        store8(out + op + i, ch);
         i = i + 1;
     }
     return i;
+}
+
+# v6.5.20 — copy the REMAINDER of the struct's closing-`}` line, stopping at a `#`
+# that is outside a string literal, and WITHOUT copying the newline.
+#
+# ⚠ COPY, never consume. The obvious implementation of design 1 consumes this tail so
+# the generated bodies can own the line, and that is SILENT CODE LOSS, not merely a
+# dropped comment: `struct Z { a; } fn helper() { return 2; }` is legal cyrius, and
+# consuming the tail deletes `helper` with no diagnostic — the program compiles clean
+# and returns the wrong answer. Measured: `struct Z { a; b; } var g = 77;` went from
+# exit 77 to `undefined variable 'g'`.
+#
+# ⚠ THE TAIL GOES LAST, AFTER THE GENERATED BODIES. This call is made by the ENTRY-POINT
+# handler once its bodies are emitted, never by PP_PARSE_STRUCT_DEF mid-way — the tail's
+# offset travels in `_pp_tail_ip`. The first cut copied the tail first and appended the
+# bodies behind it, which is correct only while the tail is SELF-CONTAINED. A tail that
+# OPENS a construct continuing on later source lines —
+#     struct Z { a; } fn helper() {
+#         return 42;
+#     }
+# — then had every generated fn spliced INSIDE `helper`'s body: nested fn definitions,
+# `rc=0`, no diagnostic, and a binary that SIGSEGVs. Emitting the bodies first makes the
+# user's opener the last thing on the expanded line, so the lines that continue it follow
+# it verbatim, exactly as written. This ordering needs no look-ahead and no guess about
+# what the tail opens — `fn`, `if`, `while`, another `struct`, or nothing at all.
+#
+# The `#` stop is what makes copying safe on a flattened line: everything after a `#`
+# is a comment, and on one expanded line a copied comment would eat whatever follows it.
+# Dropping a trailing comment is semantically inert (the lexer discards it either way).
+# The scan is string-aware so a `#` inside a literal — say `} var s = "#!/bin/sh";` — is
+# copied through rather than truncating the string.
+#
+# The newline is deliberately not copied: the caller terminates the line itself, which is
+# what keeps the block's expanded line count equal to its source line count. `ip` is
+# advanced past the newline by PP_PARSE_STRUCT_DEF with PP_SKIPLINE, so only the new `op`
+# needs returning.
+fn PP_COPY_TAIL(src_base, ip, bl, out, op): i64 {
+    var q = 0;
+    var esc = 0;
+    while (ip < bl) {
+        var ch = load8(src_base + ip);
+        if (ch == 10) { return op; }
+        # v6.5.20: NO `#` stop here. The first cut copied the tail BEFORE the
+        # generated bodies, so a `#` comment in the tail would have commented the
+        # bodies out — hence the stop. The multi-line-tail fix inverted that: the
+        # tail is now the LAST thing on the expanded line and the newline is written
+        # immediately after it, so a `#` can no longer swallow anything. Keeping the
+        # stop was a REGRESSION against 6.5.19 — `q` tracks `"` but never `'`, so a
+        # `'#'` char literal on the closing-`}` line was cut mid-literal, leaving a
+        # dangling quote that the lexer carried across the newline and reported as a
+        # bogus `multi-byte char literal not supported`. `#` mid-line is not always a
+        # comment; only the newline ends the tail.
+        store8(out + op, ch); op = op + 1;
+        if (esc == 1) { esc = 0; }
+        elif (ch == 92) { if (q == 1) { esc = 1; } }
+        elif (ch == 34) { q = 1 - q; }
+        ip = ip + 1;
+    }
+    return op;
 }
 
 # Shared struct parser for #derive handlers. Skips derive lines, parses struct
@@ -653,6 +739,17 @@ fn PP_EMIT_STR(out, op, cstr): i64 {
 # S+0x200000 offsets, S+0x197008 op-out, S+0x197010 field count) stay addressed
 # relative to `S` — those regions are well below 0x100000 and always in sync.
 fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
+    # v6.5.20 — LINE ACCOUNTING (design 1). The block is made to occupy exactly the
+    # source lines it consumes, in three parts:
+    #   1. every consumed `#derive(...)` directive line is PADDED with one newline
+    #      (the `#ifdef` mechanism from v6.5.19; those lines emit no text of their own),
+    #   2. the struct itself is copied byte-for-byte, so its lines land 1:1, and
+    #   3. the closing-`}` line is left UNTERMINATED here — the caller flattens the
+    #      generated bodies onto it and writes the single closing newline.
+    # Total emitted newlines == total consumed newlines, so FM_LOOKUP's linear span
+    # arithmetic is exact INSIDE the construct as well as after it, and the v6.5.19
+    # re-anchor markers are gone.
+    var ndir = 1;
     ip = PP_SKIPLINE(src_base, ip, bl);
     # v5.10.14 — collect stacked `#derive(...)` flags so the
     # entry-point handler can run additional codegen passes.
@@ -682,8 +779,12 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
                         S64(S + 0x197F08, L64(S + 0x197F08) | 4);
                     } } }
             ip = PP_SKIPLINE(src_base, ip, bl);
+            ndir = ndir + 1;
         } else { break; }
     }
+    # Pad the consumed directive lines (part 1 above). Must precede any other output.
+    var dpad = 0;
+    while (dpad < ndir) { store8(out + op, 10); op = op + 1; dpad = dpad + 1; }
     while (ip < bl) { if (load8(src_base + ip) == 32) { ip = ip + 1; } else { break; } }
     ip = ip + 7;
     var sni = 0;
@@ -707,7 +808,15 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         if (past_brace == 1 && depth == 1) {
             if (ch == 123 || ch == 59) {
                 var fp = cp + 1;
-                while (fp < bl) { var xc = load8(src_base + fp); if (xc != 32 && xc != 10 && xc != 13 && xc != 9) { break; } store8(out + op, xc); op = op + 1; fp = fp + 1; }
+                # v6.5.20 — LOOK-AHEAD ONLY. This scan used to copy the whitespace run
+                # it walks into `out`, and the enclosing loop then copied the same bytes
+                # again when `cp` reached them — so every field-terminating `;` (and the
+                # opening `{`) DUPLICATED its trailing newline. That is where the struct's
+                # +N line inflation came from: `struct Z { a; b = ; }` over 4 source lines
+                # occupied 7 expanded ones, and the error on `b` reported 7 for line 6.
+                # Duplicated whitespace is inert to the lexer, so dropping the copy is
+                # codegen-neutral; it is the line count that had to be repaired.
+                while (fp < bl) { var xc = load8(src_base + fp); if (xc != 32 && xc != 10 && xc != 13 && xc != 9) { break; } fp = fp + 1; }
                 if (load8(src_base + fp) != 125) {
                     # v5.11.24: hard-cap diagnostic (was silent clobber pre-fix).
                     # agnos 1.28.3 Process struct (22 fields with
@@ -741,7 +850,12 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         cp = cp + 1;
     }
     ip = cp;
-    while (ip < bl) { var ch = load8(src_base + ip); store8(out + op, ch); op = op + 1; ip = ip + 1; if (ch == 10) { break; } }
+    # v6.5.20 — the closing-`}` line's tail (part 3 above). Its offset is HANDED OFF; the
+    # entry-point handler flattens the generated bodies onto this same line, copies the
+    # tail behind them, then writes the single newline. See PP_COPY_TAIL for why the tail
+    # must be copied rather than consumed AND why it has to come after the bodies.
+    _pp_tail_ip = ip;
+    ip = PP_SKIPLINE(src_base, ip, bl);
     # v5.9.36: derive-side offset table must use the same per-field
     # widths as the parser-side `FIELDSZ` so PP_DERIVE_SERIALIZE's
     # `load32`/`store32` etc target the actual struct-literal byte
@@ -1526,7 +1640,12 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                 op = op + PP_EMIT_STR(out, op, ", _iv);\n");
             } else {
                 # Nested struct: skip value (fall through to json_get path)
-                op = op + PP_EMIT_STR(out, op, "# nested struct — skip for single-pass\n");
+                # v6.5.20 — an emitted `# nested struct` COMMENT LINE used to sit here and
+                # was deleted: the generated block is now flattened onto one expanded line,
+                # `#` starts a comment in cyrius, and it would have commented out every fn
+                # after it. This comment — in the compiler, not in the generated code —
+                # carries the same information. It was the ONLY `#`-bearing literal of the
+                # 178 audited PP_EMIT_STR string arguments.
                 op = op + PP_EMIT_STR(out, op, "while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; }\n");
             } } } }
         } else {
@@ -1553,32 +1672,61 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
 fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
+    # v6.5.20 — the generated block goes onto the ONE expanded line PP_PARSE_STRUCT_DEF
+    # left open (the struct's closing-`}` line), then the user's tail, then that line is
+    # terminated. Every synthesized fn therefore reports the line of the construct that
+    # produced it, and the block consumes exactly the source lines it replaced.
+    _pp_flatten = 1;
     op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
     var _stacked = L64(S + 0x197F08);
     if ((_stacked & 4) != 0) {
         op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
     }
+    _pp_flatten = 0;
+    op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
+    store8(out + op, 10); op = op + 1;
     store64(S + 0x197008, op);
     return ip;
 }
 
-# Emit #derive(Deserialize) — generates Name_from_json function after struct def
-# Reuses same struct parsing as Serialize. Generates:
-#   fn Name_from_json(pairs) {
-#       var ptr = alloc(SIZE);
-#       var v = json_get(pairs, "field1");
-#       if (v != 0) { store64(ptr + 0, str_to_int(v)); }
-#       ...
-#       return ptr;
-#   }
+# `#derive(Deserialize)` entry point. The `_from_json` decoder is emitted by
+# `#derive(Serialize)` (PP_DERIVE_SERIALIZE_BODY emits both codecs), so this handler adds
+# no bodies of its own — but it MUST still route through PP_PARSE_STRUCT_DEF, which is
+# what copies the struct into the expanded stream.
+#
+# ⚠ v6.5.20 — until now it did not, and the struct was DELETED. The handler hand-rolled
+# "skip the directive line, then scan forward to the first `}`" and emitted only newline
+# padding, so:
+#   (a) the type was unusable — `#derive(Deserialize) struct D { x; y; }` followed by
+#       `D { 5, 7 }` failed with `undefined variable 'D'`, i.e. the ONE directive whose
+#       name says "this struct is data" was the one that threw the struct away; and
+#   (b) worse, a MALFORMED field inside it was silently accepted. `struct D { x; y = ; }`
+#       compiled rc=0 with zero diagnostics, because the parser is what diagnoses field
+#       syntax and the parser never saw the text. Silent acceptance of malformed source.
+# Bite 2 of this release gave the handler PP_COPY_TAIL + newline padding and its comment
+# claimed it had been "dropping its tail *and the struct* since forever" — but only the
+# tail half was actually repaired. This is the struct half.
+#
+# Routing through the shared parser also fixes stacking in this direction: `#derive(
+# Deserialize)` above `#derive(Serialize)` / `#derive(accessors)` used to drop the stacked
+# handler entirely (the flag bits were never even collected), while the reverse order
+# worked. Both orders now emit the same bodies.
 fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op): i64 {
-    # #derive(Deserialize) is a no-op — #derive(Serialize) already emits _from_json.
-    # Just skip the directive line + struct definition.
-    ip = PP_SKIPLINE(src_base, ip, bl);
-    # Skip to closing } of struct
-    while (ip < bl) { if (load8(src_base + ip) == 125) { ip = ip + 1; break; } ip = ip + 1; }
-    # Skip trailing whitespace/newline
-    while (ip < bl) { var c = load8(src_base + ip); if (c == 10) { ip = ip + 1; break; } ip = ip + 1; }
+    ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
+    op = load64(S + 0x197008);
+    # v6.5.20 — see PP_DERIVE_SERIALIZE: bodies flattened onto the open closing-`}` line,
+    # then the user's tail, then the single newline.
+    _pp_flatten = 1;
+    var _stacked = L64(S + 0x197F08);
+    if ((_stacked & 1) != 0) {
+        op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
+    }
+    if ((_stacked & 4) != 0) {
+        op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
+    }
+    _pp_flatten = 0;
+    op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
+    store8(out + op, 10); op = op + 1;
     store64(S + 0x197008, op);
     return ip;
 }
@@ -1643,6 +1791,8 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
 fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
+    # v6.5.20 — see PP_DERIVE_SERIALIZE: flattened onto the open closing-`}` line.
+    _pp_flatten = 1;
     op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
     # v5.10.14 — multi-stack support. If the source had stacked
     # `#derive(Serialize)` above this directive, PP_PARSE_STRUCT_DEF's
@@ -1653,6 +1803,9 @@ fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
     if ((_stacked & 1) != 0) {
         op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
     }
+    _pp_flatten = 0;
+    op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
+    store8(out + op, 10); op = op + 1;
     store64(S + 0x197008, op);
     return ip;
 }
@@ -2217,33 +2370,29 @@ fn PP_PASS(S): i64 {
                     }
                     ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
-            # v6.5.19 — a `#derive` replaces 2-3 source lines with N generated ones, so
-            # unlike the directives above it cannot be padded back to 1:1. RE-ANCHOR
-            # instead: the text after the expansion resumes at the source line `ip` now
-            # points to. One marker per derive site (93 on agnosai's build) is well
-            # inside the 1024-entry file-map cap.
-            # ⚠ A fn SYNTHESIZED by the derive (agnosai's `SpawnedProcess_pid`) has no
-            # `fn` line in the source at all, so this marker cannot make it exact — it
-            # lands in the generated block, a few lines past the struct. Anchoring the
-            # block to the `#derive` line instead was tried and MEASURED WORSE (it shifts
-            # the struct's own lines, so a diagnostic inside the struct moved from +1 to
-            # +2). See issues/2026-08-11-derive-generated-code-inflates-line-numbering.
+            # v6.5.20 — `#derive` is now LINE-EXACT and carries NO marker. v6.5.19 had it
+            # re-anchor here, because the expansion added lines and could not be padded;
+            # that made everything AFTER a derive exact but nothing INSIDE it (a linear
+            # `expanded - start + base` cannot describe a span that stretches in the
+            # middle, so a diagnostic in the struct stayed +1 and a SYNTHESIZED fn landed
+            # in the generated block past the struct). The handlers now emit the whole
+            # generated block on the struct's closing-`}` line and pad the consumed
+            # directive lines, so the construct occupies exactly the source lines it
+            # replaced — no marker, and one less entry per derive against the 1024-entry
+            # file-map cap. See PP_PARSE_STRUCT_DEF and `_pp_flatten`.
             if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE(S, dip, bl) == 1) {
                         ip = PP_DERIVE_SERIALIZE(S, S, dip, bl, out, op);
                         op = load64(S + 0x197008);
-                        op = PP_REANCHOR_SRC(S, out, op, ip);
                         bol = 1; handled = 1;
                     } } }
             if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_DE(S, dip, bl) == 1) {
                         ip = PP_DERIVE_DESER(S, S, dip, bl, out, op);
                         op = load64(S + 0x197008);
-                        op = PP_REANCHOR_SRC(S, out, op, ip);
                         bol = 1; handled = 1;
                     } } }
             if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_ACC(S, dip, bl) == 1) {
                         ip = PP_DERIVE_ACCESSORS(S, S, dip, bl, out, op);
                         op = load64(S + 0x197008);
-                        op = PP_REANCHOR_SRC(S, out, op, ip);
                         bol = 1; handled = 1;
                     } } }
             if (handled == 0) { if (skip_depth == 0) { if (ISINCLUDE(S, ip, bl) == 1) {
@@ -2614,25 +2763,22 @@ fn PP_IFDEF_PASS(S): i64 {
                         }
                         ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                     } }
-                # v6.5.19 — re-anchor after every derive expansion; see the PP_PASS twin.
-                # This is the pass that sees derives inside INCLUDED files, which is where
-                # all 93 of agnosai's live (kavach alone turned 3 source lines into 112).
+                # v6.5.20 — line-exact, no marker; see the PP_PASS twin. This is the pass
+                # that sees derives inside INCLUDED files, which is where all 93 of
+                # agnosai's live (kavach alone turned 3 source lines into 112).
                 if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE(tmp, dip, bl) == 1) {
                             ip = PP_DERIVE_SERIALIZE(S, tmp, dip, bl, out, op);
                             op = load64(S + 0x197008);
-                            op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
                             bol = 1; handled = 1;
                         } } }
                 if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_DE(tmp, dip, bl) == 1) {
                             ip = PP_DERIVE_DESER(S, tmp, dip, bl, out, op);
                             op = load64(S + 0x197008);
-                            op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
                             bol = 1; handled = 1;
                         } } }
                 if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_ACC(tmp, dip, bl) == 1) {
                             ip = PP_DERIVE_ACCESSORS(S, tmp, dip, bl, out, op);
                             op = load64(S + 0x197008);
-                            op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
                             bol = 1; handled = 1;
                         } } }
                 if (handled == 0) { if (skip_depth == 0) { if (ISINCLUDE(tmp, ip, bl) == 1) {

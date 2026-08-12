@@ -129,7 +129,13 @@ while (x < 10) { x = x + 1; }
 # forms are the counted `for` above and (where supported) `for x in …`.
 for (var i = 0; i < 10; i = i + 1) { ... }
 
-# Break / Continue (in while and for)
+# Break / Continue
+# `break` leaves the NEAREST ENCLOSING while, for, switch or match (v6.5.20 — C
+#   semantics; before that a `break` inside a switch/match was a MISCOMPILE, see
+#   "Switch" below).
+# `continue` always belongs to the nearest enclosing LOOP. A switch or match in
+#   between is transparent to it — `continue` inside a case skips to the loop's next
+#   iteration, it does not fall out of the switch.
 # continue works correctly in all loop types (v1.11.1 bug #13 fix)
 while (1 == 1) {
     if (done == 1) { break; }
@@ -1026,6 +1032,51 @@ fn classify(n) {
 
 Note: case values must be integer literals. No fallthrough — each case is independent.
 
+### Leaving a case (v6.5.20)
+
+A case body may be left by **any** of `return`, running off the end of the body, or
+`break;` — all three are correct, in both dispatch regimes (`switch` compiles to an
+if-chain under 4 cases and to a jump table at 4 or more dense cases).
+
+```
+fn pick(x) {
+    var r = 0;
+    switch (x) {
+        case 0: { r = 10; }          # falls out of the body
+        case 1: { r = 11; break; }   # break leaves the SWITCH
+        case 2: { return 12; }       # return leaves the FUNCTION
+        default: { r = 99; }
+    }
+    return r;
+}
+```
+
+`break` inside a `switch` or `match` leaves **that construct**, exactly as in C — not
+the enclosing loop. `continue` is unaffected: it belongs to the nearest enclosing loop
+and treats an intervening switch/match as transparent.
+
+```
+while (i < 3) {
+    switch (x) {
+        case 1: { n = n + 1; break; }   # breaks the SWITCH; the while keeps running
+        default: { n = n + 100; }
+    }
+    n = n + 10;
+    i = i + 1;
+}
+```
+
+> ⚠ **Before v6.5.20 none of this was true, and it failed silently.** Falling out of a
+> case body in the table regime jumped into the middle of an instruction (SIGSEGV with a
+> `default:` present, the WRONG ANSWER with no `default:` and no diagnostic at all), and
+> `break` in a case either broke the enclosing loop or, with no loop to attach to, left
+> an unpatched jump — also a SIGSEGV. Only `return` bodies were safe, which is why the
+> corpus did not catch it. If you are reading code written against an older compiler,
+> case bodies phrased entirely as `case N: { return …; }` are likely a workaround.
+> **Whether `break` should break the switch (C semantics, what ships today) or be
+> rejected outright remains open to the maintainer** — this section documents what the
+> compiler does now.
+
 ## Match (Pattern Match, v5.8.22+)
 
 ```
@@ -1041,6 +1092,10 @@ fn label(s) {
     return r;
 }
 ```
+
+A `match` arm body is left the same three ways a `switch` case is — `return`, running
+off the end, or `break;` — and `break` leaves the `match`, not an enclosing loop
+(v6.5.20; `match` shared the pre-v6.5.20 miscompile described under *Leaving a case*).
 
 The compiler verifies coverage when at least one arm is a variant of an enum. Missing variants emit a warning; opt out with `_ =>`:
 

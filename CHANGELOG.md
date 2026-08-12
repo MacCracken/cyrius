@@ -6,6 +6,118 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.20] — 2026-08-12
+
+**Two silent miscompiles closed, and every one of this slot's worst defects was found by
+attacking a FIX rather than the filing it came from.** Three of the four were introduced by
+the patch immediately before them.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,154,784 B** (**−32 B** vs .19),
+seed → cybs → cycc derivable from the 29,024 B seed, `check.sh` **178 / 0**, cross-OS
+self-host on REAL hardware — **ecb + ach + cass + pi, each SELFHOST_OK + crossos 46/46** —
+and bench on a quiet box: `self_compile` **688 ms** (686 at .19, +0.3 %, noise).
+
+### Fixed — `switch` / `match`: a case body could only be left safely by `return` (P1)
+
+`p(2)` returned **exit 0** where it should return **2** — wrong answer, no diagnostic — and
+`p(1)` / `p(3)` **SIGSEGV**'d. On real hardware the same program was `0xC0000005` ×5 on
+Windows, `139` ×5 on Intel-Mac, `132` (SIGILL) ×5 on aarch64: broken on **every** target.
+
+⭐ **The filing's diagnosis and its blast radius were both wrong, and checking that is what
+made the slot cheap.** Its two suspects — the `load32(te)==0` gap sentinel and the 8-byte
+`S64` into a 4-byte table — are *both fine* (the whole table is emitted before any body, so
+every entry is strictly positive; the `S64` RMW deliberately preserves the high 32 bits,
+which on little-endian *is* the neighbour). And it is not per-backend: `parse.cyr` sets
+`use_table = 0` for `_AARCH64_BACKEND` and `_TARGET_CX`, so the jump-table path is
+**x86-family only** and both defective halves live in the shared frontend.
+
+The real cause is the **v5.6.27 regalloc NOP-harvest compactor** (`parse_fn.cyr`, "Stage 4:
+compact bytes"). It deletes the 4-byte NOPs the register picker leaves behind and repairs
+jump disp32s, fixup CPs and jump-target CPs — but it never knew the switch jump table
+existed. Measured: entries `16, 30, 47, 64` where correct is `16, 26, 39, 52`, **off by
+exactly +4 per preceding case body**, one harvested `mov [rbp-disp],rax` → `mov rbx,rax`
+each. `case 0` has nothing deleted ahead of it, which is why it alone worked. Proof:
+`CYRIUS_REGALLOC_AUTO_CAP=0` (picker off ⇒ no NOPs ⇒ no compaction) compiles the identical
+source correctly at 6.5.19. **This is also why bodies of `{ return N; }` never saw it** — no
+local store, no NOP, no shift.
+
+Fixed with `_sw_tbl_repair()` as compaction **stage 3b**, recomputing every entry from
+pre-compaction CPs. `match` shared the defect and is fixed. `break` now leaves the
+switch/match (C semantics) via `_brk_chain_end()`; `continue` still belongs to the loop.
+
+⚖️ **`break` semantics are a language-surface change and remain the maintainer's call** — the
+filing said so explicitly. What SHIPPED is documented in `docs/guides/cyrius-guide.md` and
+vidya `language/core.cyml`; rejecting it is a revert, not an edit.
+
+### Fixed — `#derive` generated code no longer inflates line numbering (design 1)
+
+Each derive body is emitted on ONE expanded line and padded to the consumed source-line
+count, so `FM_LOOKUP`'s linear span arithmetic stays exact with **no markers** — the six
+`PP_REANCHOR` calls are gone, one fewer file-map entry per derive against the 1024 cap. The
+`+N` was not the generated bodies at all: the field look-ahead scan was *also* copying the
+whitespace run after every `{` and field-terminating `;`, and the enclosing loop copied the
+same bytes again, **duplicating a newline per field**. Duplicated whitespace is inert to the
+lexer, so removing the copy is codegen-neutral. Verified byte-identical output across **790**
+`#derive` files under `~/Repos` (0 binary diffs, 0 stderr diffs).
+
+### Fixed — three defects the derive work itself introduced or exposed
+
+* **A MULTI-LINE tail after a derived struct's `}` produced a crashing binary.** Root cause
+  was ordering: the tail was copied *before* the generated bodies, correct only while it is
+  self-contained. When the tail OPENED a construct continuing on later lines, the generated
+  fns landed **inside the user's function body** — rc=0, no diagnostic, SIGSEGV at runtime.
+  The tail offset now travels in `_pp_tail_ip` and each handler emits its bodies, *then*
+  copies the tail, so the user's opener is last on the line and its continuation follows
+  verbatim — no look-ahead, no guess about what the tail opens. ⚠ **The gate axis that should
+  have caught this is literally labelled "THE LOAD-BEARING AXIS"** and every one of its
+  sub-cases put the tail on one line.
+* **`PP_COPY_TAIL`'s `#` stop became a regression the moment that ordering was inverted.**
+  With the tail now last and the newline written immediately after it, a `#` can no longer
+  swallow anything — but the stop remained, and it tracked `"` while never tracking `'`. A
+  `'#'` char literal on the closing-`}` line was cut mid-literal, leaving a dangling quote the
+  lexer carried across the newline into a bogus `multi-byte char literal not supported`.
+  Valid 6.5.19 source, rejected. Removed: `#` mid-line is not always a comment, and only the
+  newline ends a tail.
+* **`#derive(Deserialize)` deleted the struct it was deriving.** It hand-rolled "skip to the
+  first `}`" instead of routing through `PP_PARSE_STRUCT_DEF`, so (a) the type was unusable
+  (`undefined variable 'D'`) and, worse, (b) **a syntactically malformed field inside it was
+  accepted silently at rc=0 with zero diagnostics**. Both fixed; stacking in the
+  Deserialize-*first* direction never collected the flag bits either (reverse order always
+  worked, which is why it went unnoticed).
+
+### Fixed — five of seven compiler forks never built the file map
+
+`FM_BUILD(S)` existed only in `main.cyr` and `main_win.cyr`. The other five never built it, so
+`FM_LOOKUP`'s `cnt == 0` early-return printed the **raw expanded-buffer line** and dropped the
+`<source>:` prefix entirely — every diagnostic on ecb, ach and pi was wrong. And never by a
+constant: the skew grows with everything the preprocessor splices in (**+1** bare, **+4** with
+one include, **+6** with two). Pre-existing, but the derive work removed a compensating error
+that had been masking it on that path, so it would have shipped as a visible regression on
+three of five targets.
+
+### Changed — patra 1.13.0 folded
+
+Honest scope: **a near-no-op for anything cyrius compiles.** patra is outside cycc's closure,
+the fn surface is 223 → 223 identical names, and the whole vendored diff is 32 lines of
+version header and re-indentation. The real content was upstream — a stale `[deps.sakshi]`
+pin at 2.4.2, **eight patches behind** the sakshi the same snapshot ships, pushed onto
+anything reaching patra transitively. That pin lives in patra's `cyrius.cyml`, never in
+`lib/patra.cyr`, so this fold's job is keeping the stdlib copy's version record honest.
+
+### Added — gates, including the corpus blind spot the filing named
+
+* `tests/tcyr/crossos/switch_case_exit_routes.tcyr` — exit routes across both dispatch
+  regimes. ⚠ It shipped **untracked**: `cross-os-selfhost.sh` tars the WORKING TREE, so it
+  rode to all four hosts and reported 46/46 while a CI checkout would have silently dropped
+  the only cross-host gate for the switch fix. Now staged.
+* `tests/tcyr/codegen/switch_dispatch.tcyr` **extended** — the filing named this file by name
+  as the blind spot ("every one of its case bodies currently ends in `return`") and the first
+  pass wrote a new fixture instead, leaving it at 82 `return`s and **zero** `break;`. On the
+  6.5.19 compiler the pre-extension file scores 47/0 green; the extended file prints one group
+  header and **exit 139**. A filed repro is the spec.
+* `duplicate_fn_attribution.sh` axes 11b (multi-line tails: `fn`, `if`, `while`, `struct`
+  openers) and 14 (Deserialize), each mutation-proven RED on exactly its own axis.
+
 ## [6.5.19] — 2026-08-11
 
 **Five consumer filings closed — four from agnosai, one from majra.** Four are diagnostics

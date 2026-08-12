@@ -2252,6 +2252,77 @@ fn IS_JUMP_TARGET(S, off): i64 {
     return 0;
 }
 
+# v6.5.20 — shift helper for the NOP-harvest compactor: total bytes deleted BEFORE
+# code position `p`. Same linear scan the jump/fixup/target stages run inline (runs
+# are emit-order, not CP-sorted, at the point these stages execute).
+fn _nop_shift_at(S, nrn, p): i64 {
+    var sh = 0;
+    var i = 0;
+    while (i < nrn) {
+        if (L64(S + 0x1A2010 + i * 16) < p) { sh = sh + L64(S + 0x1A2010 + i * 16 + 8); }
+        i = i + 1;
+    }
+    return sh;
+}
+
+# v6.5.20 — compaction stage 3b: repair switch jump-table entries.
+#
+# THE P1 SILENT MISCOMPILE. A table-regime `switch` embeds a (range+1) x 4 byte
+# table of `target_cp - table_cp` displacements, dispatched by
+# `movsxd rax,[rcx+rax*4] ; add rax,rcx ; jmp rax`. The v5.6.27 compactor deletes
+# the 4-byte NOPs the regalloc picker leaves behind and repairs jump disp32s, fixup
+# CPs and jump-target CPs — but it never knew about this table. Every NOP harvested
+# between the table and a case body therefore left that body's entry pointing 4 bytes
+# too far, cumulatively: `case 0` (offset 0 deletions) stayed correct while every
+# later case landed mid-instruction. With a `default:` that is a SIGSEGV; without one
+# the strayed target fell off the end of the switch and the program returned the wrong
+# answer with no diagnostic. Only bodies that assign a register-allocated local produce
+# NOPs, which is exactly why a corpus of `case N: { return N; }` bodies never saw it.
+#
+# Runs BEFORE stage 4 (the byte copy) and reads pre-compaction CPs, like every other
+# stage. Both ends move independently, so each entry is recomputed from scratch rather
+# than adjusted by a single delta. x86-family only — parse.cyr forces the chain path
+# for aarch64/cx, so `swn` is 0 there and this is a no-op. CHANGELOG [6.5.20]
+# v6.5.20 — does the 4-byte window at code position `p` touch any switch jump TABLE?
+# The tables live in the code stream as DATA (`nent` × 4-byte displacements, jumped over
+# by the dispatch), so any byte-pattern scan over a fn's range walks them as if they were
+# instructions. Used by _ra_frame_trim to refuse a match that overlaps table bytes.
+fn _sw_tbl_hits(S, swn, p): i64 {
+    var si = 0;
+    while (si < swn) {
+        var tcp = L64(S + 0x1AC808 + si * 16);
+        if (p + 3 >= tcp) {
+            if (p < tcp + L64(S + 0x1AC808 + si * 16 + 8) * 4) { return 1; }
+        }
+        si = si + 1;
+    }
+    return 0;
+}
+
+fn _sw_tbl_repair(S, nrn, swn): i64 {
+    var si = 0;
+    while (si < swn) {
+        var tcp = L64(S + 0x1AC808 + si * 16);
+        var nent = L64(S + 0x1AC808 + si * 16 + 8);
+        var new_tcp = tcp - _nop_shift_at(S, nrn, tcp);
+        var ei = 0;
+        while (ei < nent) {
+            var ea = _codebuf_base + tcp + ei * 4;
+            var rel = load8(ea) | (load8(ea + 1) << 8) | (load8(ea + 2) << 16) | (load8(ea + 3) << 24);
+            if (rel >= 0x80000000) { rel = rel - 0x100000000; }
+            var tgt = tcp + rel;
+            var nrel = tgt - _nop_shift_at(S, nrn, tgt) - new_tcp;
+            store8(ea + 0, nrel & 0xFF);
+            store8(ea + 1, (nrel >> 8) & 0xFF);
+            store8(ea + 2, (nrel >> 16) & 0xFF);
+            store8(ea + 3, (nrel >> 24) & 0xFF);
+            ei = ei + 1;
+        }
+        si = si + 1;
+    }
+    return 0;
+}
+
 # v6.3.29 callee-saved frame-trim (CYRIUS_FRAMETRIM). A #regalloc fn's prologue/epilogue
 # save+restore ALL _cur_fn_regalloc callee-saved regs (rbx,r12-r15), but the linear-scan
 # picker used only _ra_used_n of them (it allocates lowest-first → the used set is the
@@ -2284,14 +2355,42 @@ fn _ra_frame_trim(S, fn_start, fi): i64 {
     if (_ra_used_n >= _cur_fn_regalloc) { return 0; }
     var cb = _codebuf_base;
     var lim = GCP(S) - 4;
+    # v6.5.20 — switch jump tables emitted by THIS fn (see _sw_tbl_hits). The scan below
+    # is an UNALIGNED byte-pattern walk of the whole fn range, and since v6.5.20 that
+    # range can contain table DATA as well as instructions; a 4-byte window landing on
+    # table bytes must not be recorded as a NOP run. Clamped to the 256-record cap for
+    # the same reason the compaction gate tests it — past that the tail is unrecorded.
+    var _swtn = L64(S + 0x1AC800);
+    if (_swtn > 256) { _swtn = 256; }
     var k = _ra_used_n;
     while (k < _cur_fn_regalloc) {
         # Per-reg save/restore bytes: [rex, 89(save)/8B(restore), modrm, disp8].
         # k: 0=rbx 1=r12 2=r13 3=r14 4=r15. An UNUSED reg (k>=_ra_used_n) is never
         # touched by the body (only the picker writes callee-saved regs, and it didn't
-        # assign this one), so these 4-byte patterns appear ONLY as its real prologue
-        # save + epilogue restore(s) — pattern-scanning finds ALL of them (handles
-        # multiple epilogues) with no body false-match.
+        # assign this one), so among the EMITTED INSTRUCTIONS these 4-byte patterns
+        # appear ONLY as its real prologue save + epilogue restore(s) — pattern-scanning
+        # finds ALL of them (handles multiple epilogues) with no body false-match.
+        #
+        # ⚠ v6.5.20 — that argument is about EMITTED INSTRUCTIONS and says nothing about
+        # anything else in the range, and since v6.5.20 the range is no longer all
+        # instructions: a table-regime `switch` embeds its jump table INLINE as `nent`
+        # 4-byte displacements. This walk is UNALIGNED, so it reads those displacement
+        # bytes as opcodes, and the four-byte window can straddle an entry pair or the
+        # code/table boundary. Nothing about the picker constrains data. The near miss is
+        # concrete: `4C 89 | 6D E8` is an exact `mov [rbp-8],r13` window whose second half
+        # is the low 16 bits of displacement −6035, an entirely ordinary backward offset
+        # from a table to a case body. A match would record a phantom 4-byte NOP run and
+        # the compactor would DELETE FOUR BYTES OF THE TABLE — the same silent-miscompile
+        # class stage 3b (_sw_tbl_repair) exists to close.
+        #
+        # An impossibility proof is available in principle — it turns on displacement
+        # magnitudes keeping bytes 2-3 at 0x00/0xFF and on which bytes precede each table
+        # — but it would have to be re-derived every time either emitter's layout moves,
+        # which is precisely the kind of standing obligation that rots. Excluding the
+        # range costs one comparison per window and retires the question:
+        # `_sw_tbl_hits` refuses any window touching a table. Refusing is safe in the
+        # other direction too — a genuine save/restore cannot overlap a table (the
+        # dispatch jumps over it), so no real save is ever skipped.
         var rex = 0x4C;   if (k == 0) { rex = 0x48; }
         var modrm = 0x5D; if (k == 1) { modrm = 0x65; }
         if (k == 2) { modrm = 0x6D; }
@@ -2304,6 +2403,7 @@ fn _ra_frame_trim(S, fn_start, fi): i64 {
         var p = fn_start;
         while (p <= lim) {
             var hit = 0;
+            if (_swtn == 0 || _sw_tbl_hits(S, _swtn, p) == 0) {
             if (load8(cb + p) == rex) {
                 if (load8(cb + p + 2) == modrm) {
                     if (load8(cb + p + 3) == disp) {
@@ -2320,6 +2420,7 @@ fn _ra_frame_trim(S, fn_start, fi): i64 {
                         }
                     }
                 }
+            }
             }
             if (hit == 1) { p = p + 4; } else { p = p + 1; }
         }
@@ -3399,6 +3500,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     S64(S + 0x19E000, 0);  # jump_target_count = 0
     S64(S + 0x1A0000, 0);  # v5.6.27: jump_src_cnt = 0 (per-fn compaction)
     S64(S + 0x1A2008, 0);  # v5.6.27: nop_run_cnt = 0
+    S64(S + 0x1AC800, 0);  # v6.5.20: sw_tbl_cnt = 0 (per-fn switch-table repair)
     S64(S + 0x1A6010, GFCNT(S));  # v5.6.27: fn_start_fcnt baseline
     # Emit prologue (v6.2.27: #naked skips it — the body is the raw ISR; no
     # rbp frame, no `sub rsp`. frame_patch stays 0 so the EPATCHFRAME at fn end
@@ -4472,7 +4574,23 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (_FRAMETRIM_OK == 1) { _ra_frame_trim(S, fn_start, fi); }
                 var _nrn = L64(S + 0x1A2008);
                 var _jsn = L64(S + 0x1A0000);
-                if (_nrn > 0 && _nrn < 1024 && _jsn < 1024) {
+                # v6.5.20: `_swn <= 256` is the switch-table overflow gate. PARSE_SWITCH
+                # keeps counting past the 256-record cap, so an over-full fn fails this
+                # test and skips compaction entirely — correct code, just unoptimised.
+                # Dropping the pass is the ONLY safe response: compacting with an
+                # unrecorded table is the miscompile this stage exists to prevent.
+                #
+                # ⚠ IT IS UNREACHABLE TODAY — kept as a cap-coupling guard, not as a
+                # live limit, and it must not be quoted as one. A table switch costs 5
+                # jump targets, so the x86 LASE cap in backend/x86/jump.cyr bites first:
+                # measured on this build, 204 table switches in one fn compile and 205
+                # give `error: function exceeds 1023 jump targets`. 204 < 256, so `_swn`
+                # cannot reach 257. The test earns its place only because the two caps
+                # live in different modules — raise the LASE cap without resizing the
+                # 4096-byte sw_tbl region (main.cyr heap map) and this becomes the thing
+                # standing between that change and a silent miscompile.
+                var _swn = L64(S + 0x1AC800);
+                if (_nrn > 0 && _nrn < 1024 && _jsn < 1024 && _swn <= 256) {
                     # Stage 1: update intra-fn jump disp32s.
                     # For each tracked source CP: decode disp32, compute
                     # target, recompute new disp using shift_at(src) and
@@ -4542,6 +4660,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         S64(_jta, _jcp - _jsh);
                         _jti = _jti + 1;
                     }
+                    # Stage 3b (v6.5.20): repair switch jump-table entries. MUST run
+                    # before stage 4 — it reads pre-compaction CPs like stages 1-3.
+                    _sw_tbl_repair(S, _nrn, _swn);
                     # Stage 4: compact bytes. Sort NOP runs by CP first
                     # (insertion sort; nrn ≤ 1024). Picker emit order isn't
                     # strictly CP-monotone (multiple intervals patched in

@@ -218,5 +218,258 @@ assert_eq(forty_cases(32), 132, "arm 32 (past old cap)");
 assert_eq(forty_cases(39), 139, "arm 39 (40th)");
 assert_eq(forty_cases(40), 0 - 1, "default beyond range");
 
+# ════════════════════════════════════════════════════════════════════════════
+# v6.5.20 — NON-`return` EXIT ROUTES, one mirror per regime above.
+#
+# Acceptance criterion 4 of
+# docs/development/issues/2026-08-11-switch-case-body-only-exits-safely-via-return.md:
+# every case body in this file ended in `return`, "which is precisely the blind spot".
+# That is why 269 .tcyr and four hosts stayed green while a table-regime switch whose
+# bodies FELL OUT jumped into the middle of an instruction (SIGSEGV with a `default:`,
+# silently WRONG ANSWER without one) and `break` in a case jumped to an unpatched
+# placeholder. Root cause was the v5.6.27 regalloc NOP-harvest compactor: it repaired
+# jump disp32s, fixup CPs and jump-target CPs but not the switch jump TABLE, so each
+# entry was stale by 4 bytes per NOP harvested before it. `return` bodies hid it twice
+# over — they leave through the epilogue rather than the table's fall-out edge, and a
+# body that does nothing but return allocates no register, so it harvests no NOP.
+#
+# These mirrors keep this file's job — one shape per DISPATCH REGIME — and remove the
+# blind spot from it. The exhaustive exit-route matrix (nesting, `continue`, `match`,
+# empty bodies) lives in tests/tcyr/crossos/switch_case_exit_routes.tcyr, which the
+# cross-host gate runs; the two are complementary, not duplicates.
+#
+# Every body below assigns a register-allocatable local before leaving, which is what
+# makes the compactor run at all.
+
+# Chain regime (<4 cases), bodies fall out instead of returning.
+fn chain3_fallout(x) {
+    var r = 99;
+    switch (x) {
+        case 1: { r = 10; }
+        case 2: { r = 20; }
+        case 3: { r = 30; }
+        default: { r = 99; }
+    }
+    return r;
+}
+
+# Chain regime, bodies leave with `break` (C semantics — leaves the switch).
+fn chain3_break(x) {
+    var r = 99;
+    switch (x) {
+        case 1: { r = 10; break; }
+        case 2: { r = 20; break; }
+        case 3: { r = 30; break; }
+        default: { r = 99; break; }
+    }
+    return r;
+}
+
+# Dense table regime (4 consecutive), fall out, `default:` PRESENT.
+# This is repro 1 of the filing: pre-fix every case but 0 exited 139.
+fn dense4_fallout(x) {
+    var r = 0;
+    switch (x) {
+        case 0: { r = 100; }
+        case 1: { r = 101; }
+        case 2: { r = 102; }
+        case 3: { r = 103; }
+        default: { r = 999; }
+    }
+    return r;
+}
+
+# Dense table regime, fall out, NO `default:`. This is repro 2 — the worst shape,
+# because pre-fix it exited 0 with the WRONG ANSWER and no diagnostic at all.
+fn dense4_nodefault(x) {
+    var r = 0 - 7;
+    switch (x) {
+        case 0: { r = 100; }
+        case 1: { r = 101; }
+        case 2: { r = 102; }
+        case 3: { r = 103; }
+    }
+    return r;
+}
+
+# Dense table regime, bodies leave with `break` (repro 3).
+fn dense4_break(x) {
+    var r = 0;
+    switch (x) {
+        case 0: { r = 100; break; }
+        case 1: { r = 101; break; }
+        case 2: { r = 102; break; }
+        case 3: { r = 103; break; }
+        default: { r = 999; break; }
+    }
+    return r;
+}
+
+# Table regime with a non-zero case_min (the case_min-adjust arithmetic).
+fn dense_offset_fallout(x) {
+    var r = 0;
+    switch (x) {
+        case 10: { r = 1; }
+        case 11: { r = 2; }
+        case 12: { r = 3; }
+        case 13: { r = 4; }
+        case 14: { r = 5; }
+        default: { r = 0; }
+    }
+    return r;
+}
+
+# Sparse >=4 cases — chain regime despite the case count.
+fn sparse4_fallout(x) {
+    var r = 0 - 1;
+    switch (x) {
+        case 1: { r = 11; }
+        case 4: { r = 44; }
+        case 7: { r = 77; }
+        case 10: { r = 100; }
+        default: { r = 0 - 1; }
+    }
+    return r;
+}
+
+# 8-case dense — a longer table, so a stale entry is further off.
+fn dense8_fallout(x) {
+    var r = 0 - 1;
+    switch (x) {
+        case 0: { r = 0; }
+        case 1: { r = 1; }
+        case 2: { r = 4; }
+        case 3: { r = 9; }
+        case 4: { r = 16; }
+        case 5: { r = 25; }
+        case 6: { r = 36; }
+        case 7: { r = 49; }
+        default: { r = 0 - 1; }
+    }
+    return r;
+}
+
+# 40 dense cases — the >32-arm `ends` array, now with fall-out bodies. The drift is
+# cumulative in the number of NOPs harvested BEFORE each entry, so the late arms of a
+# long table are where a partial repair shows up first.
+fn forty_fallout(x) {
+    var r = 0 - 1;
+    switch (x) {
+        case 0: { r = 100; }
+        case 1: { r = 101; }
+        case 2: { r = 102; }
+        case 3: { r = 103; }
+        case 4: { r = 104; }
+        case 5: { r = 105; }
+        case 6: { r = 106; }
+        case 7: { r = 107; }
+        case 8: { r = 108; }
+        case 9: { r = 109; }
+        case 10: { r = 110; }
+        case 11: { r = 111; }
+        case 12: { r = 112; }
+        case 13: { r = 113; }
+        case 14: { r = 114; }
+        case 15: { r = 115; }
+        case 16: { r = 116; }
+        case 17: { r = 117; }
+        case 18: { r = 118; }
+        case 19: { r = 119; }
+        case 20: { r = 120; }
+        case 21: { r = 121; }
+        case 22: { r = 122; }
+        case 23: { r = 123; }
+        case 24: { r = 124; }
+        case 25: { r = 125; }
+        case 26: { r = 126; }
+        case 27: { r = 127; }
+        case 28: { r = 128; }
+        case 29: { r = 129; }
+        case 30: { r = 130; }
+        case 31: { r = 131; }
+        case 32: { r = 132; }
+        case 33: { r = 133; }
+        case 34: { r = 134; }
+        case 35: { r = 135; }
+        case 36: { r = 136; }
+        case 37: { r = 137; }
+        case 38: { r = 138; }
+        case 39: { r = 139; }
+        default: { r = 0 - 1; }
+    }
+    return r;
+}
+
+test_group("chain regime, non-return exit routes");
+assert_eq(chain3_fallout(1), 10, "chain fallout c1");
+assert_eq(chain3_fallout(2), 20, "chain fallout c2");
+assert_eq(chain3_fallout(3), 30, "chain fallout c3");
+assert_eq(chain3_fallout(0), 99, "chain fallout default below");
+assert_eq(chain3_fallout(4), 99, "chain fallout default above");
+assert_eq(chain3_break(1), 10, "chain break c1");
+assert_eq(chain3_break(2), 20, "chain break c2");
+assert_eq(chain3_break(3), 30, "chain break c3");
+assert_eq(chain3_break(9), 99, "chain break default");
+
+test_group("dense table regime, fall out, default present (filing repro 1)");
+assert_eq(dense4_fallout(0), 100, "dense fallout c0");
+assert_eq(dense4_fallout(1), 101, "dense fallout c1 (was SIGSEGV)");
+assert_eq(dense4_fallout(2), 102, "dense fallout c2 (was SIGSEGV)");
+assert_eq(dense4_fallout(3), 103, "dense fallout c3 (was SIGSEGV)");
+assert_eq(dense4_fallout(4), 999, "dense fallout default above");
+assert_eq(dense4_fallout(0 - 1), 999, "dense fallout default below");
+
+test_group("dense table regime, fall out, NO default (filing repro 2 — silent)");
+assert_eq(dense4_nodefault(0), 100, "nodefault c0");
+assert_eq(dense4_nodefault(1), 101, "nodefault c1");
+assert_eq(dense4_nodefault(2), 102, "nodefault c2 (was 0 - 7, silently)");
+assert_eq(dense4_nodefault(3), 103, "nodefault c3");
+assert_eq(dense4_nodefault(4), 0 - 7, "nodefault unmatched keeps init");
+assert_eq(dense4_nodefault(0 - 1), 0 - 7, "nodefault negative keeps init");
+
+test_group("dense table regime, break (filing repro 3)");
+assert_eq(dense4_break(0), 100, "dense break c0");
+assert_eq(dense4_break(1), 101, "dense break c1");
+assert_eq(dense4_break(2), 102, "dense break c2");
+assert_eq(dense4_break(3), 103, "dense break c3");
+assert_eq(dense4_break(7), 999, "dense break default");
+
+test_group("table regime, non-zero case_min, fall out");
+assert_eq(dense_offset_fallout(10), 1, "offset fallout 10");
+assert_eq(dense_offset_fallout(11), 2, "offset fallout 11");
+assert_eq(dense_offset_fallout(12), 3, "offset fallout 12");
+assert_eq(dense_offset_fallout(13), 4, "offset fallout 13");
+assert_eq(dense_offset_fallout(14), 5, "offset fallout 14");
+assert_eq(dense_offset_fallout(9), 0, "offset fallout below");
+assert_eq(dense_offset_fallout(15), 0, "offset fallout above");
+
+test_group("sparse regime (chain despite >=4 cases), fall out");
+assert_eq(sparse4_fallout(1), 11, "sparse fallout c1");
+assert_eq(sparse4_fallout(4), 44, "sparse fallout c4");
+assert_eq(sparse4_fallout(7), 77, "sparse fallout c7");
+assert_eq(sparse4_fallout(10), 100, "sparse fallout c10");
+assert_eq(sparse4_fallout(5), 0 - 1, "sparse fallout gap");
+
+test_group("8-case dense table, fall out");
+assert_eq(dense8_fallout(0), 0, "sq fallout 0");
+assert_eq(dense8_fallout(1), 1, "sq fallout 1");
+assert_eq(dense8_fallout(2), 4, "sq fallout 2");
+assert_eq(dense8_fallout(3), 9, "sq fallout 3");
+assert_eq(dense8_fallout(4), 16, "sq fallout 4");
+assert_eq(dense8_fallout(5), 25, "sq fallout 5");
+assert_eq(dense8_fallout(6), 36, "sq fallout 6");
+assert_eq(dense8_fallout(7), 49, "sq fallout 7");
+assert_eq(dense8_fallout(8), 0 - 1, "sq fallout above");
+
+test_group("40 dense cases, fall out (late arms drift furthest)");
+assert_eq(forty_fallout(0), 100, "arm 0 fallout");
+assert_eq(forty_fallout(1), 101, "arm 1 fallout");
+assert_eq(forty_fallout(19), 119, "arm 19 fallout");
+assert_eq(forty_fallout(31), 131, "arm 31 fallout");
+assert_eq(forty_fallout(32), 132, "arm 32 fallout");
+assert_eq(forty_fallout(38), 138, "arm 38 fallout");
+assert_eq(forty_fallout(39), 139, "arm 39 fallout");
+assert_eq(forty_fallout(40), 0 - 1, "arm default fallout");
+
 var _exit_code = assert_summary();
 syscall(60, _exit_code);

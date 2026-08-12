@@ -2,8 +2,19 @@
 
 **Status:** ▲ SCHEDULED (minimal cut) 2026-07-10 — committed scope is the injected source-visible
 `CYRIUS_PKG_VERSION` constant (the `${file:VERSION}` file-read surfaced to source), NOT a general
-const-eval. No dedicated release; fold into the next 6.4.x arc's closeout / an absorber band. See
-[roadmap_6.md](../roadmap_6.md) (candidate list).
+const-eval.
+**Placement:** **v6.5.22 — the DX / diagnostics finish-out release**, as a fold-in bite.
+⚠ **This proposal has now lapsed TWO soft pins and this is the third; it gets a hard slot, not
+another window.** Pin 1 said "fold into the next 6.4.x arc's closeout / an absorber band" — that
+minor closed at **v6.4.86** without it. Pin 2 re-homed it as roadmap.md W1 item 8, window
+`.4`–`.16` — we are at **.19** and it is unspent. The mechanism of both lapses is the same and
+structural: its placement lived only in prose, in a slot-table row nobody re-derived. Hence the
+`**Placement:**` line you are reading, now required on proposals as well as issues.
+Premise re-checked 2026-08-11 at v6.5.19: `grep -rn PKG_VERSION src cbt lib scripts` → **0
+hits**, and there is no partial implementation to build on — `PP_PREDEFINE`
+(`src/frontend/lex_pp.cyr:1892`) stores value `0` unconditionally and `PP_DEFINE` (`:1907`)
+parses values as **decimal digits only**, so even a `-D NAME=VALUE` workaround cannot carry a
+version string.
 **Filed:** 2026-06-25 (by a sit consumer — sit 1.0.4, the `/sit/v1/capabilities`
 server-identity banner)
 **Severity:** Build/manifest ergonomics gap — `cyrius.cyml`'s `${file:VERSION}`

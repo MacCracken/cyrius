@@ -1,0 +1,396 @@
+# switch_case_exit_routes.tcyr — v6.5.20: a `switch`/`match` case body must be
+# leavable by EVERY route, not just `return`.
+#
+# THE BUG THIS GUARDS (P1 silent miscompile, latent for multiple minors):
+#
+#  (1) TABLE REGIME (>= 4 dense cases; x86-family only — parse.cyr forces the chain
+#      path for aarch64 and cx). The dispatch is
+#          movsxd rax,[rcx+rax*4] ; add rax,rcx ; jmp rax
+#      over a table of `target_cp - table_cp` displacements. The v5.6.27 regalloc
+#      NOP-harvest compactor (parse_fn.cyr) deletes the 4-byte NOPs the register
+#      picker leaves behind and repairs jump disp32s, fixup CPs and jump-target CPs
+#      — but it never knew about that table. Every harvested NOP between the table
+#      and a case body pushed that body's entry 4 bytes further out, CUMULATIVELY:
+#      `case 0` (nothing deleted ahead of it) stayed correct while every later case
+#      landed mid-instruction. With a `default:` that is a SIGSEGV; without one the
+#      strayed target fell off the end of the switch and the program returned the
+#      WRONG ANSWER with no diagnostic.
+#      Only a body that ASSIGNS A LOCAL produces NOPs — which is exactly why
+#      tests/tcyr/codegen/switch_dispatch.tcyr, with 77 `case` lines and every body
+#      written `case N: { return N; }`, never saw any of it. Keep the assignments.
+#
+#  (2) `break` INSIDE A CASE, both regimes and every target. `break` threads a linked
+#      list through the rel32 field of each placeholder jmp (head at S+0x18F840);
+#      the enclosing construct saves the head, zeroes it, parses the body, then walks
+#      and patches. PARSE_WHILE / PARSE_FOR did that. PARSE_SWITCH and PARSE_MATCH
+#      never touched the slot, so a `break` in a case either broke the ENCLOSING LOOP
+#      or — with no enclosing loop — was never patched at all and jumped to its own
+#      chain link: SIGSEGV on Linux/macOS, an infinite HANG on cx.
+#
+#  (3) A `match` `_ =>` arm that is NOT written last. A wildcard matches everything,
+#      so the arms after it are unreachable — but the wildcard arm emitted no jump to
+#      the end of the match, so control FELL INTO the next arm's comparison and a
+#      later arm could win. Silent wrong answer. (A `switch` `default:` before another
+#      arm is a different story: it is REJECTED outright with `unexpected case`, which
+#      is loud, so it is deliberately not covered here.)
+#
+# Measured on x86_64 Linux with the 6.5.19 compiler, one binary per argument, for the
+# 4-case + default table shape with `case N: { r = N; }` bodies:
+#     p(0) -> 0 ok   p(1) -> 139 SIGSEGV   p(2) -> 0 WRONG (want 2)
+#     p(3) -> 139 SIGSEGV   p(99) -> 7 ok
+#
+# This file lives in crossos/ because the jump table is emitted by the x86 backend
+# shared by ELF, PE and x86 Mach-O, while aarch64/cx take the chain path — so the two
+# regimes are only BOTH covered by running it on every host.
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+# ---------------------------------------------------------------- table regime ----
+# 4 dense cases + default. `r` is a register-allocated local, so each body emits the
+# `mov [rbp-disp],rax` the picker rewrites to `mov REG,rax` + a 4-byte NOP — the NOP
+# whose harvest used to invalidate this switch's table.
+fn tbl_default(x) {
+    var r = 0;
+    switch (x) {
+        case 0: { r = 100; }
+        case 1: { r = 101; }
+        case 2: { r = 102; }
+        case 3: { r = 103; }
+        default: { r = 7; }
+    }
+    return r;
+}
+
+# Same shape with NO default: an unmatched value must fall out of the switch leaving
+# `r` at its initial value, and a MATCHED value must still reach its body.
+fn tbl_nodefault(x) {
+    var r = 55;
+    switch (x) {
+        case 0: { r = 200; }
+        case 1: { r = 201; }
+        case 2: { r = 202; }
+        case 3: { r = 203; }
+    }
+    return r;
+}
+
+# Wider table (8 cases, one gap at 5) so the repair is exercised over more than the
+# minimum entry count and over a gap-filled slot.
+fn tbl_wide(x) {
+    var r = 0;
+    switch (x) {
+        case 10: { r = 1; }
+        case 11: { r = 2; }
+        case 12: { r = 3; }
+        case 13: { r = 4; }
+        case 14: { r = 5; }
+        case 16: { r = 6; }
+        case 17: { r = 7; }
+        case 18: { r = 8; }
+        default: { r = 99; }
+    }
+    return r;
+}
+
+# Two locals mutated per body: more than one live interval => more than one NOP run
+# ahead of the later table entries, so the per-entry shift is not a constant.
+fn tbl_multistore(x) {
+    var a = 0;
+    var b = 0;
+    switch (x) {
+        case 0: { a = 1; b = 2; }
+        case 1: { a = 3; b = 4; }
+        case 2: { a = 5; b = 6; }
+        case 3: { a = 7; b = 8; }
+        default: { a = 0; b = 0; }
+    }
+    return a * 10 + b;
+}
+
+# ---------------------------------------------------------------- chain regime ----
+# 3 cases stays under the >= 4 threshold, so this is the linear-comparison path — the
+# one aarch64 and cx always take.
+fn chain_default(x) {
+    var r = 0;
+    switch (x) {
+        case 1: { r = 11; }
+        case 2: { r = 22; }
+        default: { r = 7; }
+    }
+    return r;
+}
+
+fn chain_nodefault(x) {
+    var r = 44;
+    switch (x) {
+        case 1: { r = 11; }
+        case 2: { r = 22; }
+    }
+    return r;
+}
+
+# ------------------------------------------------------------- empty + no fall ----
+# A cyrius `switch` does NOT fall through: an empty body leaves the switch. If it
+# ever did fall through, `case 1` would run case 2's body and return 22.
+fn no_fallthrough(x) {
+    var r = 0;
+    switch (x) {
+        case 0: { }
+        case 1: { }
+        case 2: { r = 22; }
+        case 3: { r = 33; }
+        default: { r = 9; }
+    }
+    return r;
+}
+
+# ------------------------------------------------------------------- break ----
+fn brk_chain(x) {
+    var r = 0;
+    switch (x) {
+        case 1: { r = 11; break; }
+        case 2: { r = 22; break; }
+        default: { r = 7; break; }
+    }
+    return r;
+}
+
+fn brk_table(x) {
+    var r = 0;
+    switch (x) {
+        case 0: { r = 10; break; }
+        case 1: { r = 11; break; }
+        case 2: { r = 12; break; }
+        case 3: { r = 13; break; }
+        default: { r = 7; break; }
+    }
+    return r;
+}
+
+# `break` must leave the SWITCH and nothing else: the enclosing loop keeps running.
+# Before v6.5.20 this returned 1 (the break broke the LOOP on its first iteration).
+fn brk_inside_loop(x) {
+    var n = 0;
+    var i = 0;
+    while (i < 3) {
+        switch (x) {
+            case 1: { n = n + 1; break; }
+            default: { n = n + 100; }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+# ... and `continue` must still belong to the LOOP, not the switch (they are separate
+# chains: 0x18F898/0x18F8A0 vs 0x18F840).
+fn cont_inside_switch() {
+    var n = 0;
+    var i = 0;
+    while (i < 5) {
+        i = i + 1;
+        switch (i) {
+            case 1: { continue; }
+            case 2: { n = n + 2; }
+            case 3: { n = n + 3; }
+            case 4: { n = n + 4; }
+            default: { n = n + 100; }
+        }
+        n = n + 1;
+    }
+    return n;
+}
+
+# A `for` loop is a different break/continue owner than `while` — cover it too.
+fn brk_inside_for(x) {
+    var n = 0;
+    for (var i = 0; i < 4; i = i + 1) {
+        switch (x) {
+            case 0: { n = n + 1; break; }
+            case 1: { n = n + 2; break; }
+            case 2: { n = n + 4; break; }
+            case 3: { n = n + 8; break; }
+            default: { n = n + 1000; }
+        }
+        n = n + 100;
+    }
+    return n;
+}
+
+# ------------------------------------------------------------------ nested ----
+# Inner switch is a table, outer is a table: two tables inside ONE fn, both recorded
+# for the compaction repair, both with non-return bodies.
+fn nested(x, y) {
+    var r = 0;
+    switch (x) {
+        case 0: { r = 1000; }
+        case 1: {
+            switch (y) {
+                case 0: { r = 10; }
+                case 1: { r = 11; }
+                case 2: { r = 12; }
+                case 3: { r = 13; }
+                default: { r = 19; }
+            }
+        }
+        case 2: { r = 2000; }
+        case 3: { r = 3000; }
+        default: { r = 9000; }
+    }
+    return r;
+}
+
+# Nested with `break` in BOTH bodies: the inner break must leave the inner switch and
+# let the outer body finish (r gets the +1), not unwind to the outer switch or a loop.
+fn nested_break(x, y) {
+    var r = 0;
+    switch (x) {
+        case 1: {
+            switch (y) {
+                case 1: { r = 5; break; }
+                case 2: { r = 6; break; }
+                default: { r = 7; break; }
+            }
+            r = r + 1;
+        }
+        case 2: { r = 50; break; }
+        default: { r = 90; }
+    }
+    return r;
+}
+
+# ------------------------------------------------------------------- match ----
+# `match` shares the arm/end-jump machinery and the break chain.
+fn m_plain(x) {
+    var r = 0;
+    match x {
+        1 => { r = 11; }
+        2 => { r = 22; }
+        3 => { r = 33; }
+        _ => { r = 7; }
+    }
+    return r;
+}
+
+fn m_break(x) {
+    var r = 0;
+    match x {
+        1 => { r = 11; break; }
+        2 => { r = 22; break; }
+        _ => { r = 7; break; }
+    }
+    return r;
+}
+
+# A wildcard arm matches everything, so arms after it are unreachable — it must jump
+# to the end of the match rather than falling into the next arm's comparison.
+fn m_wildcard_mid(x) {
+    var r = 0;
+    match x {
+        1 => { r = 11; }
+        _ => { r = 7; }
+        2 => { r = 22; }
+    }
+    return r;
+}
+
+fn main(): i64 {
+    test_group("table regime, non-return bodies, default present");
+    assert_eq(tbl_default(0), 100, "table case 0 (the one that always worked)");
+    assert_eq(tbl_default(1), 101, "table case 1 — SIGSEGV before v6.5.20");
+    assert_eq(tbl_default(2), 102, "table case 2 — SIGSEGV before v6.5.20");
+    assert_eq(tbl_default(3), 103, "table case 3 — SIGSEGV before v6.5.20");
+    assert_eq(tbl_default(99), 7, "table default");
+    assert_eq(tbl_default(0 - 1), 7, "table default, below case_min");
+
+    test_group("table regime, non-return bodies, no default");
+    assert_eq(tbl_nodefault(0), 200, "no-default case 0");
+    assert_eq(tbl_nodefault(1), 201, "no-default case 1 — returned 55 before v6.5.20");
+    assert_eq(tbl_nodefault(2), 202, "no-default case 2 — returned 55 before v6.5.20");
+    assert_eq(tbl_nodefault(3), 203, "no-default case 3 — returned 55 before v6.5.20");
+    assert_eq(tbl_nodefault(4), 55, "no-default unmatched falls out of the switch");
+
+    test_group("table regime, wider table with a gap");
+    assert_eq(tbl_wide(10), 1, "wide case 10 (= case_min)");
+    assert_eq(tbl_wide(11), 2, "wide case 11");
+    assert_eq(tbl_wide(12), 3, "wide case 12");
+    assert_eq(tbl_wide(13), 4, "wide case 13");
+    assert_eq(tbl_wide(14), 5, "wide case 14");
+    assert_eq(tbl_wide(15), 99, "wide gap slot routes to default");
+    assert_eq(tbl_wide(16), 6, "wide case 16 (after the gap)");
+    assert_eq(tbl_wide(17), 7, "wide case 17");
+    assert_eq(tbl_wide(18), 8, "wide case 18 (= case_max, last table entry)");
+    assert_eq(tbl_wide(19), 99, "wide above case_max");
+
+    test_group("table regime, two stores per body");
+    assert_eq(tbl_multistore(0), 12, "multistore case 0");
+    assert_eq(tbl_multistore(1), 34, "multistore case 1");
+    assert_eq(tbl_multistore(2), 56, "multistore case 2");
+    assert_eq(tbl_multistore(3), 78, "multistore case 3");
+    assert_eq(tbl_multistore(9), 0, "multistore default");
+
+    test_group("chain regime, non-return bodies");
+    assert_eq(chain_default(1), 11, "chain case 1");
+    assert_eq(chain_default(2), 22, "chain case 2");
+    assert_eq(chain_default(5), 7, "chain default");
+    assert_eq(chain_nodefault(1), 11, "chain no-default case 1");
+    assert_eq(chain_nodefault(2), 22, "chain no-default case 2");
+    assert_eq(chain_nodefault(3), 44, "chain no-default unmatched");
+
+    test_group("empty bodies do not fall through");
+    assert_eq(no_fallthrough(0), 0, "empty body leaves the switch (case 0)");
+    assert_eq(no_fallthrough(1), 0, "empty body does NOT run case 2 (would be 22)");
+    assert_eq(no_fallthrough(2), 22, "case 2 body still runs");
+    assert_eq(no_fallthrough(3), 33, "case 3 body still runs");
+    assert_eq(no_fallthrough(8), 9, "default after empty bodies");
+
+    test_group("break inside a case");
+    assert_eq(brk_chain(1), 11, "break, chain case 1 — SIGSEGV before v6.5.20");
+    assert_eq(brk_chain(2), 22, "break, chain case 2 — SIGSEGV before v6.5.20");
+    assert_eq(brk_chain(9), 7, "break, chain default");
+    assert_eq(brk_table(0), 10, "break, table case 0");
+    assert_eq(brk_table(1), 11, "break, table case 1");
+    assert_eq(brk_table(2), 12, "break, table case 2");
+    assert_eq(brk_table(3), 13, "break, table case 3");
+    assert_eq(brk_table(9), 7, "break, table default");
+
+    test_group("break/continue interaction with the enclosing loop");
+    assert_eq(brk_inside_loop(1), 3, "break leaves the SWITCH; loop runs all 3 times");
+    assert_eq(brk_inside_loop(2), 300, "same, via the default arm");
+    assert_eq(cont_inside_switch(), 113, "continue still belongs to the loop");
+    assert_eq(brk_inside_for(0), 404, "break inside a for-loop switch, case 0");
+    assert_eq(brk_inside_for(3), 432, "break inside a for-loop switch, case 3");
+    assert_eq(brk_inside_for(7), 4400, "break inside a for-loop switch, default");
+
+    test_group("nested switch");
+    assert_eq(nested(0, 0), 1000, "outer case 0");
+    assert_eq(nested(1, 0), 10, "inner case 0");
+    assert_eq(nested(1, 1), 11, "inner case 1");
+    assert_eq(nested(1, 2), 12, "inner case 2");
+    assert_eq(nested(1, 3), 13, "inner case 3");
+    assert_eq(nested(1, 9), 19, "inner default");
+    assert_eq(nested(2, 0), 2000, "outer case 2 after the nested switch");
+    assert_eq(nested(3, 0), 3000, "outer case 3 after the nested switch");
+    assert_eq(nested(9, 0), 9000, "outer default");
+    assert_eq(nested_break(1, 1), 6, "inner break resumes the OUTER body (5 + 1)");
+    assert_eq(nested_break(1, 2), 7, "inner break resumes the OUTER body (6 + 1)");
+    assert_eq(nested_break(1, 9), 8, "inner break from the inner default (7 + 1)");
+    assert_eq(nested_break(2, 0), 50, "outer break");
+    assert_eq(nested_break(9, 0), 90, "outer default");
+
+    test_group("match arms, non-return bodies");
+    assert_eq(m_plain(1), 11, "match arm 1");
+    assert_eq(m_plain(2), 22, "match arm 2");
+    assert_eq(m_plain(3), 33, "match arm 3");
+    assert_eq(m_plain(9), 7, "match wildcard");
+    assert_eq(m_break(1), 11, "break in a match arm");
+    assert_eq(m_break(2), 22, "break in a match arm");
+    assert_eq(m_break(9), 7, "break in the wildcard arm");
+    assert_eq(m_wildcard_mid(1), 11, "arm before a mid wildcard");
+    assert_eq(m_wildcard_mid(2), 7, "mid wildcard matches everything after it");
+    assert_eq(m_wildcard_mid(9), 7, "mid wildcard selected");
+
+    return assert_summary();
+}
+var rc = main();
+syscall(60, rc);

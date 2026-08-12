@@ -373,6 +373,43 @@ fn _ends_guard(S, ec): i64 {
     return 0;
 }
 
+# v6.5.20 — patch the pending `break` chain to the CURRENT code position and
+# restore the enclosing construct's chain head. `break` threads a linked list
+# through the rel32 field of each placeholder jmp, head at S+0x18F840; the
+# construct that owns the chain saves the head, zeroes it, parses the body, then
+# walks and patches. PARSE_WHILE / PARSE_FOR did this; PARSE_SWITCH / PARSE_MATCH
+# never touched the slot at all, so a `break` inside a switch either broke the
+# ENCLOSING LOOP or — with no enclosing loop — was never patched and kept the
+# chain link in its displacement field: a wild jump, SIGSEGV at runtime.
+# CHANGELOG [6.5.20]
+fn _brk_chain_end(S, saved_brk): i64 {
+    var bp = L64(S + 0x18F840);
+    while (bp > 0) {
+        var _ba = _codebuf_base + bp;
+        var _nb = L64(_ba) & 0xFFFFFFFF;
+        EPATCH(S, bp);
+        bp = _nb;
+    }
+    S64(S + 0x18F840, saved_brk);
+    return 0;
+}
+
+# v6.5.20 — register a switch jump table for the per-fn NOP-compaction repair
+# (_sw_tbl_repair, parse_fn.cyr). Entries hold `target_cp - table_cp`; the
+# v5.6.27 compactor shifts code but knew nothing about this table, so harvesting
+# a 4-byte NOP run between the table and a case body left every later entry
+# stale. Overflow past the 256 cap keeps counting so the compaction gate trips
+# and skips the pass for that fn — never a silent drop. CHANGELOG [6.5.20]
+fn _sw_tbl_reg(S, table_cp, nent): i64 {
+    var n = L64(S + 0x1AC800);
+    if (n < 256) {
+        S64(S + 0x1AC808 + n * 16, table_cp);
+        S64(S + 0x1AC808 + n * 16 + 8, nent);
+    }
+    S64(S + 0x1AC800, n + 1);
+    return 0;
+}
+
 fn PARSE_SWITCH(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
@@ -458,6 +495,12 @@ fn PARSE_SWITCH(S): i64 {
     S64(_vars_base + swidx * 8, 8);
     SVCNT(S, swidx + 1);
     EVSTORE(S, swidx);
+    # v6.5.20: own the `break` chain for the duration of the case bodies so a
+    # `break` inside a case leaves the SWITCH (C semantics), not the enclosing
+    # loop. `continue` is a separate chain (0x18F898/0x18F8A0) and is deliberately
+    # NOT captured — it must still continue the enclosing loop.
+    var saved_brk = L64(S + 0x18F840);
+    S64(S + 0x18F840, 0);
     if (use_table == 1) {
         # === JUMP TABLE PATH ===
         # v5.11.39 path-A: dispatch sequence + reserved zero table
@@ -468,6 +511,12 @@ fn PARSE_SWITCH(S): i64 {
         ESWITCH_DISPATCH_PRE(S, case_min, range);
         var default_patch = EJCC(S, 0x87);   # ja default
         var table_cp = ESWITCH_DISPATCH_TABLE(S, range);
+        # v6.5.20: hand the table to the compaction repair. The `lea rcx,[rip+d32]`
+        # inside ESWITCH_DISPATCH_TABLE needs no repair — the nine bytes between its
+        # disp32 and table_cp are raw (`movsxd`/`add`/`jmp rax`) and can never match
+        # the picker's `48 8B|89 85` probe, so no NOP run can be harvested between
+        # them and the disp is shift-invariant.
+        _sw_tbl_reg(S, table_cp, range + 1);
         var ti = 0;
         # Parse case bodies, patching table entries
         var ends: i64[256];   # v6.2.1: 256 jump-end slots (was bare [256]=256B=32 slots → OOB at >32 cases)
@@ -578,6 +627,14 @@ fn PARSE_SWITCH(S): i64 {
                     STI(S, GTI(S) + 1);
                     if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
                     STI(S, GTI(S) + 1);
+                    # NOTE (v6.5.20): unlike the table path, this body deliberately gets
+                    # NO jump to the end of the switch — the chain path REACHES its
+                    # default by falling out of the last comparison, so the default body
+                    # must be emitted last and control already lands past it. A
+                    # `default:` written before another arm is rejected outright
+                    # (`unexpected case`) by the `!= 14` loop above, so there is no
+                    # silent fall-through here. Do not "fix" this into an EJMP0 without
+                    # also giving a non-last default a jump-over + backward entry.
                     while (PEEKT(S) != 14) {
                         if (PEEKT(S) == 12) { break; }
                         PARSE_STMT(S);
@@ -589,6 +646,7 @@ fn PARSE_SWITCH(S): i64 {
         STI(S, GTI(S) + 1);
         for (var ei = 0; ei < ec; ei = ei + 1) { EPATCH(S, load64(&ends + ei * 8)); }
     }
+    _brk_chain_end(S, saved_brk);
     return 0;
 }
 
@@ -607,6 +665,11 @@ fn PARSE_MATCH(S): i64 {
     S64(_vars_base + midx * 8, 8);
     SVCNT(S, midx + 1);
     EVSTORE(S, midx);
+    # v6.5.20: `break` inside a match arm leaves the MATCH — same chain protocol
+    # as PARSE_SWITCH / PARSE_WHILE. Untouched before this, so it either broke the
+    # enclosing loop or left an unpatched wild jump. CHANGELOG [6.5.20]
+    var saved_brk = L64(S + 0x18F840);
+    S64(S + 0x18F840, 0);
     var ends: i64[256];   # v6.2.1: 256 match-arm jump-end slots (was [256]=32 slots → OOB at >32 arms)
     var ec = 0;
     # v5.8.22 bite #2 — exhaustive-match coverage tracking. When the
@@ -666,6 +729,16 @@ fn PARSE_MATCH(S): i64 {
                 SCOPE_POP(S);
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
                 STI(S, GTI(S) + 1);
+                # v6.5.20: the `_ =>` arm emitted no jump to the end of the match,
+                # so a wildcard arm written before another arm FELL THROUGH into
+                # that arm's comparison and a LATER arm could win — a silent wrong
+                # answer (`match 2 { 1 => 11  _ => 7  2 => 22 }` gave 22, not 7).
+                # A wildcard matches everything, so the arms after it are dead.
+                # PARSE_SWITCH's chain-path `default:` looks like the same shape but
+                # is NOT: a non-last `default:` is rejected there at parse time.
+                _ends_guard(S, ec);
+                store64(&ends + ec * 8, EJMP0(S));
+                ec = ec + 1;
             } else {
                 # v5.8.22 bite #2 — pre-PCMPE peek: if the arm pattern's
                 # first token is a variant-of-enum ident, record its
@@ -739,6 +812,7 @@ fn PARSE_MATCH(S): i64 {
     }
     STI(S, GTI(S) + 1);
     for (var ei = 0; ei < ec; ei = ei + 1) { EPATCH(S, load64(&ends + ei * 8)); }
+    _brk_chain_end(S, saved_brk);
     # v5.8.22 bite #2 — exhaustive-match coverage check. Warning (not
     # error) so v5.8.x downstream consumers can adopt incrementally —
     # same trade-off as #must_use / #deprecated / #pure→#io. Promotes

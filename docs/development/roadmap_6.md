@@ -88,7 +88,7 @@ minor actually closed at **v6.4.86**, which is exactly the failure a second copy
 | v6.2.x | Platform expansion (bare-metal + dependency model) | **v6.2.52** |
 | v6.3.x | Language refinements | **v6.3.45** |
 | v6.4.x | Staging minor → long reactive minor | **v6.4.86** (closeout cut at .85; .86 was the post-closeout sandhi fold) |
-| v6.5.x | **ACTIVE** — see [roadmap.md](roadmap.md) | — (head **v6.5.10**, 2026-08-07) |
+| v6.5.x | **ACTIVE** — see [roadmap.md](roadmap.md) | — (head **v6.5.19**, 2026-08-11) |
 
 Every close number above was verified against `CHANGELOG.md` on 2026-07-29 (the per-minor max
 `## [6.Y.N]` heading), not carried over from the previous text, and re-verified 2026-08-07.
@@ -234,8 +234,9 @@ landed first in v6.2.x).
 
 **v6.x is not capped at 6 minors.** Per user direction 2026-06-11, the cycle
 **grows further before any major bump** — v6.4.x (CLOSED at **.86**) → **v6.5.x
-(ACTIVE at .10: the `public`/`private` opener SHIPPED at v6.5.0, and the minor is
-now running its reactive-window drain ahead of the performance-quality arcs)** →
+(ACTIVE at .19: the `public`/`private` opener SHIPPED at v6.5.0; BOTH reactive
+windows are now fully consumed — 16 of the 20 releases shipped were reactive — and
+the performance-quality arcs are still ahead, re-pinned from `.20`)** →
 **v6.6.x (language ergonomics)** → **v6.7.x/v6.8.x
 (RISC-V rv64, re-homed there 2026-07-07)** are the current pins, and more v6.x
 minors can still follow (consumer pressure, language refinements, platform work)

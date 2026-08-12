@@ -163,6 +163,16 @@ PP_PREDEFINE(S, "CYRIUS_TARGET_MACOS");
 PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 PREPROCESS(S);
 
+# Build file map from #@file markers (for file:line error messages)
+# v6.5.20: this call existed ONLY in main.cyr and main_win.cyr. The other five
+# forks never built the map, so FM_LOOKUP's `cnt == 0` early-return printed the
+# RAW EXPANDED-BUFFER line and dropped the `<source>:` prefix entirely — every
+# diagnostic on ecb / ach / pi was wrong, and not by a constant: the skew grows
+# with everything the preprocessor splices in (+1 bare, +4 with one include,
+# +6 with two). Measured pre-existing, but 6.5.20 removed a compensating error
+# that had been masking it on the derive path, so it must not ship unfixed.
+FM_BUILD(S);
+
 # Lex
 LEX(S);
 

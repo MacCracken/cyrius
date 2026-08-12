@@ -6,6 +6,22 @@ surfaced porting `dictionary/static_dict.rs`, which is `phf`-feature-gated)
 narrow immediate payoff; wants maintainer direction on scope before any work.
 **Priority:** low / not a release-blocker. The generated-`.cyr` idiom already covers the
 *bulk* of compile-time-data needs; this is about the residual *computation* gap.
+**Placement:** **v6.6.x item 2** (`roadmap_6.md:144`) — "the const-eval ladder, option 1",
+already flagged there as an **early-riser candidate** and the natural v6.6.x opener. Not a
+6.5.x item; nothing in the active minor depends on it.
+
+> ### Currency corrections (re-triage 2026-08-11, v6.5.19) — neither changes the verdict
+>
+> 1. **Stale line reference.** This file cites `ir_const_fold` at `src/main.cyr:1986`. It lives
+>    at **`src/common/ir.cyr:735`**.
+> 2. **"Current state" understates what already ships.** This file says global initializers are
+>    "literals (plus that folding)". Since v6.4.74's `_CF_TRY`, a module-scope **computed**
+>    initializer really is folded — probe at 6.5.19: `var A = 6; var B = A * 7;` at module
+>    scope, `syscall(60, B, 0, 0)` → **exits 42**. Scope the v6.6.x arc to the actual residual,
+>    which is *computation* (`const fn` / `#phf`), not data that already folds.
+>
+> Premise otherwise holds: `grep -rniE 'comptime|const fn' src cbt` → 0; `grep -rn phf` → 0;
+> `const fn two() { return 2; }` → `error:<source>:1:7: expected '=', got fn`.
 **Template:** sibling to `2026-06-25-source-level-version-constant.md` (another "value known
 at build time isn't reachable from source" gap) — but broader: this is about *evaluating*
 at build time, not just *injecting a file*.

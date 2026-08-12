@@ -1,6 +1,65 @@
-# Cross-OS: the full tcyr corpus measured on ALL FOUR hosts — 5 portable failures, the rest are macOS-specific
+# Cross-OS full-corpus residuals: **ecb, ach and pi are at ZERO — only cass remains, at 7**
 
-> ## 📉 v6.5.11 re-measurement on real ecb: **23 → 11 failures**
+**Status:** 🟡 LARGELY SHIPPED — kept open as the gate for one decision, not as a bug.
+**Placement:** the **full-corpus default flip is a MAINTAINER DECISION** (see the box below),
+cheap to make at **v6.5.20**. The residual cass 7 rides the reactive window. Do NOT archive:
+archiving would erase the flip-to-default decision this file exists to gate.
+
+> ## ✅ 2026-08-11 re-measurement, v6.5.19, all four hosts, real hardware: **ecb 0 · ach 0 · pi 0 · cass 7**
+>
+> **The title of this file was dead and has been rewritten.** ecb is not at 23, or 11, or 6 —
+> it is at **ZERO**, and so are ach and pi. Measured with
+> `CYRIUS_CROSS_OS_FULL=1 sh scripts/cross-os-selfhost.sh <host> crossos`, **one host at a
+> time, sequentially** (fixed `/tmp` + remote paths clobber under concurrency):
+>
+> | host | result |
+> |---|---|
+> | **ecb** (macOS arm64) | `SELFHOST_OK` · corpus ALL 269 of 269 · **ran 269 passed, 0 failed** · `LIBTEST_OK` · EXIT=0 |
+> | **ach** (Intel-Mac) | `SELFHOST_OK` · **ran 269 passed, 0 failed** · `LIBTEST_OK` · EXIT=0 |
+> | **pi** (aarch64) | `SELFHOST_OK` · **ran 269 passed, 0 failed** · `LIBTEST_OK` · EXIT=0 |
+> | **cass** (Windows PE) | `SELFHOST_OK` · **ran 262 passed, 7 failed** · 1 HANG at the 90 s timeout · `LIBTEST_FAIL` · EXIT=1 |
+>
+> The ecb leg was independently re-run a second time by the 2026-08-11 re-triage before this
+> rewrite landed, and reproduced **269/0** exactly. state.md's standing instruction — "settle
+> it with a real `CYRIUS_CROSS_OS_FULL=1` run on ecb before archiving, do NOT close it on the
+> CHANGELOG line alone" — is hereby **answered**, and extended to all four hosts. The v6.5.18
+> CHANGELOG's "267/0 on Linux, ecb and ach" was *not* the crossos subset as was suspected; it
+> holds under a real full-corpus run. **pi had never been measured this way before** — this
+> file's own "the pi leg is owed" is now discharged.
+>
+> ### The failure COMPOSITION changed, not just the count
+>
+> This file's central claim — a "**portable core** of 4 tests failing on EVERY non-x86-Linux
+> host" — **is gone.** `include_quote_comment` and `preprocessor_past_cap` now pass everywhere
+> (closed by the v6.5.11 tar packaging fix). What remains is **2 tests on 1 host**, plus a TLS
+> cluster:
+>
+> ```
+> capacity pair   large_input.tcyr   large_source.tcyr
+> TLS cluster     tls12_handshake  tls12_handshake_msgs  tls_native_alpn
+>                 tls_native_ed25519  tls_native_freestanding (HANG)
+> ```
+>
+> Down from **31** measured 2026-08-07. The capacity pair is the **same shape that fails under
+> `CYRIUS_IR=3`**, so this file's "cheapest thread to pull" correlation survives — on cass.
+>
+> ### ⚖️ MAINTAINER DECISION — the acceptance criterion is now met on 3 of 4 hosts
+>
+> This file's stated acceptance criterion is: *"when it reaches zero, flip
+> `CYRIUS_CROSS_OS_FULL=1` to default and delete the env var."* That is now reachable for
+> **ecb, ach and pi**. Two defensible calls, and it is the maintainer's:
+>
+> 1. **Flip full-corpus to default for ecb/ach/pi now**, hold the `crossos` selector for cass
+>    until its 7 close. Gets three hosts' worth of coverage immediately and makes any future
+>    regression on them a hard gate failure.
+> 2. **Hold all four behind the cass 7**, flip once, keep the gate uniform across hosts.
+>
+> Option 1 buys coverage now; option 2 keeps one rule for all hosts. Either way the env var
+> survives until cass is clean.
+>
+> ---
+>
+> ## 📉 (historical) v6.5.11 re-measurement on real ecb: **23 → 11 failures**
 >
 > The headline number in this file is stale — v6.5.11 fixed two of its causes. Measured with
 > `CYRIUS_CROSS_OS_FULL=1 sh scripts/cross-os-selfhost.sh ecb crossos` at v6.5.11:
@@ -113,7 +172,12 @@
 > baked into a TEST** — now fixed, leaving **10**. They are independent: no single fix moves more
 > than the three `pipe`-dependent ones together, so this is an arc, not a patch.
 
-**Status:** 🟡 **OPEN — re-measured 2026-08-07 on REAL hardware, all four hosts.** The original
+*(Historical header, superseded by the 2026-08-11 measurement at the top of this file. Retained
+for the audit trail; the live Status/Placement are the ones in the header block above. ⚠ Every
+`vr01_` reference and line number below is stale — the selector became the `tests/tcyr/crossos`
+**directory** at v6.5.11, and `release-gate.sh:115` now passes `crossos`.)*
+
+**Status (2026-08-07, superseded):** 🟡 **OPEN — re-measured on REAL hardware, all four hosts.** The original
 filing had one host and carried an explicit "ach/cass/pi have NOT been measured this way yet".
 They have now. The result decomposes the problem in a way one host could not.
 **Originally filed as:** filed 2026-08-05 from the v6.5.8 cross-OS widening work; the mechanism
@@ -126,9 +190,11 @@ the corpus is **260** tcyr and the `vr01_` glob selects **36**, so the gate's bl
 measurement on ecb and has not been re-run since**; treat it as a floor-of-record, not a current
 number. ⚠ `scripts/release-gate.sh:107` also still says the ach vr01 leg "fires its VR-01 libtest
 (25 tests)" — that comment is stale too; the glob is 36.
-**Placement:** unpinned — 6.x-line, never 7.x. No dedicated slot in `roadmap.md` at 6.5.10; the
-largest cluster is downstream of Slot 11 (macOS-arm64 concurrency, `.39`), and the **pi**
-full-corpus leg is tracked as W1 item 7. Needs its own arc once those land.
+**Placement (2026-08-07, superseded):** unpinned — 6.x-line, never 7.x. No dedicated slot in
+`roadmap.md` at 6.5.10; the largest cluster is downstream of Slot 11 (macOS-arm64 concurrency,
+`.39`), and the **pi** full-corpus leg is tracked as W1 item 7. Needs its own arc once those land.
+⛔ **Refuted 2026-08-11:** ecb, ach AND pi are all at **269/0**, so nothing is downstream of
+Slot 11 any more and this needs no arc — only the cass 7 and the default-flip decision remain.
 **Severity:** Medium — nothing regressed; this is **previously-unmeasured** territory now measured.
 **Affects:** measured on cycc 6.5.8. Reproduce with `CYRIUS_CROSS_OS_FULL=1 sh scripts/cross-os-selfhost.sh ecb x`.
 

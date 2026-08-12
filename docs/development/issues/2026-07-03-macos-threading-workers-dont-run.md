@@ -69,9 +69,29 @@ release: `lib/thread_macos.cyr` driving `bsdthread_create` + `bsdthread_register
 for the mutex + channel wait/wake. Distinct from the Intel-Mac x86 toolchain tail, which closed at
 v6.4.59. No consumer is blocked yet, which is why it sits behind the IR-substrate anchor. 6.x line,
 never 7.x.
-**Downstream:** most of the 23 full-corpus ecb failures in
+**Downstream:** ~~most of the 23 full-corpus ecb failures in
 [`2026-08-05-cross-os-full-corpus-23-failures-on-ecb.md`](2026-08-05-cross-os-full-corpus-23-failures-on-ecb.md)
-are downstream of this — that count drops when this slot lands.
+are downstream of this — that count drops when this slot lands.~~
+⛔ **STRUCK 2026-08-11 — this is now false.** A real `CYRIUS_CROSS_OS_FULL=1` run on ecb at
+v6.5.19 returns **`ran 269 passed, 0 failed`**. Nothing is downstream of this issue any more.
+**That removes the last argument for pulling this slot earlier**: no consumer is blocked, no
+gate is red, and the v6.5.11 serial fallback makes macOS threading correct-but-unparallelized
+rather than broken. It stays **last in the minor**.
+
+> ### v6.5.19 premise re-check — the freelist work does NOT close any of this
+>
+> `tests/tcyr/crossos/freelist_thread_safe.tcyr` now RUNS on ecb/ach instead of skipping, and
+> its bodies really do go through `thread_create`/`thread_join`, so `_threads_active` is armed
+> and `_fl_lock` is genuinely taken and released. But its own `_flr_real_threads()` returns 0
+> on macOS and it prints *"inline thread_create on this target — bodies run serially, so the
+> pinned interleavings cannot occur."* That is added **evidence for** the remaining gap, not
+> closure of it.
+>
+> Still absent at v6.5.19: `grep -rn 'bsdthread\|__ulock' lib/` → **9 hits, all comments, zero
+> call sites**. `lib/sync_macos.cyr:2` is still "A 2-state atomic_cas SPINLOCK". And
+> `lib/thread_macos.cyr`'s own header states it "is not the concurrent Darwin backend
+> (`bsdthread_create` / `__ulock_wait`), which remains the roadmapped Slot 11 item and which
+> this file does not attempt."
 
 **Filed:** 2026-07-03 (surfaced by the v6.3.43 VR-01 platform-variant tcyr —
 `tests/tcyr/vr01_sync_mutex.tcyr` + `vr01_thread_spawn.tcyr` — running on real ecb
