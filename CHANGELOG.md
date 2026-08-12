@@ -45,9 +45,12 @@ Fixed with `_sw_tbl_repair()` as compaction **stage 3b**, recomputing every entr
 pre-compaction CPs. `match` shared the defect and is fixed. `break` now leaves the
 switch/match (C semantics) via `_brk_chain_end()`; `continue` still belongs to the loop.
 
-⚖️ **`break` semantics are a language-surface change and remain the maintainer's call** — the
-filing said so explicitly. What SHIPPED is documented in `docs/guides/cyrius-guide.md` and
-vidya `language/core.cyml`; rejecting it is a revert, not an edit.
+⚖️ **`break` leaving the switch/match is CONFIRMED language surface** (maintainer, 2026-08-12:
+"break should leave — expected"). The filing had reserved it as an open call; it is now
+settled and no longer a decision owed. C semantics: `break` leaves the nearest enclosing
+`while` / `for` / `switch` / `match`, `continue` always belongs to the nearest enclosing LOOP
+and treats an intervening switch/match as transparent. Documented in
+`docs/guides/cyrius-guide.md` and vidya `language/core.cyml`.
 
 ### Fixed — `#derive` generated code no longer inflates line numbering (design 1)
 
