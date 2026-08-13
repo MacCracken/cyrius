@@ -1634,7 +1634,7 @@ own canonical API reference in its own repo; this table is a pointer. See
 
 | Module | Folded dep | Domain |
 |--------|-----------|--------|
-| `lib/sandhi.cyr` | sandhi 1.9.9 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
+| `lib/sandhi.cyr` | sandhi 1.9.10 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
 | `lib/sigil.cyr` | sigil 3.12.7 | Security / x509 / Ed25519 — powers native TLS + release/UEFI signing |
 | `lib/sakshi.cyr` | sakshi 2.4.10 | Tracing / structured logging |
 | `lib/patra.cyr` | patra 1.13.0 | Storage |

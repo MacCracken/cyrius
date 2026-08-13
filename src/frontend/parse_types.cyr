@@ -45,6 +45,11 @@ fn _scalar_name_width(name64): i64 {
 # type-only — converted via f32_from/f32_to, no f32 arithmetic).
 var F64_TYID = 0x40000001;
 var F32_TYID = 0x40000002;
+# v6.5.21 — GFRS marker for a MULTI-VALUE return signature, `fn f(): (f64, f64)`.
+# The arity and element types live in GFRN / GFRT (util.cyr); this only says
+# "look there". -40 sits in the gap between the scalar sentinels (-1 .. -19) and
+# the SIMD descriptor band (-2092 .. -2178).
+var MULTIRET_SID = 0 - 40;
 # 0x40000003 was CLOSURE_TYID (v6.3.8 - v6.5.16) — RETIRED, do not reuse. A local
 # holding a capturing closure was stamped with it so callptr could recognise the
 # value. That only worked while the value sat in its declaring `var`, and the

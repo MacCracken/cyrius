@@ -354,6 +354,10 @@ fn ECMPR(S): i64 { EW(S, 0xEB01001F); return 0; }     # cmp x0, x1
 fn ETESTAZ(S): i64 { EW(S, 0xF100001F); return 0; }  # cmp x0, #0 (sets ZF)
 fn EMOVRDXRAX(S): i64 { EW(S, 0xAA0003E2); return 0; }  # mov x2, x0
 fn EMOVRA_RDX(S): i64 { EW(S, 0xAA0203E0); return 0; }  # mov x0, x2 (read second return value — aarch64 multi-return uses x0, x2)
+# v6.5.21 — THIRD multi-value return slot = x3. `mov xd, xn` is ORR xd, xzr, xn:
+# 0xAA0003E0 | (n << 16) | d.
+fn EMOVR3RAX(S): i64 { EW(S, 0xAA0003E3); return 0; }  # mov x3, x0
+fn EMOVRA_R3(S): i64 { EW(S, 0xAA0303E0); return 0; }  # mov x0, x3
 
 # === Load/Store through x1 (pointer register) ===
 # ldr x0, [x1]

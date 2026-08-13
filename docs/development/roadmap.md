@@ -1006,6 +1006,27 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
   the proposal names that as its sibling, both are "a build-time value that source cannot
   read", and the smaller one should define the shape. Candidate for the v6.6.x ergonomics list.
 
+- **Tuples — lightweight multi-value returns**
+  (`proposals/2026-08-13-tuple-multi-value-returns`) — filed 2026-08-13 by an abaco consumer
+  implementing Dekker double-double arithmetic for its decimal parser. Ergonomics, not
+  capability: `struct` covers the persistent case and the out-parameter idiom covers the
+  transient one, so nothing is blocked — abaco 2.4.0 shipped with out-params and pins 6.5.20.
+  The narrow-but-real case is **numeric** code, the domain Cyrius already serves with f64-only
+  arithmetic and no FMA: two-product, two-sum, double-double and compensated summation are all
+  built from intrinsically two-valued primitives, and each one is currently a heap buffer plus a
+  positional contract the checker cannot verify. Concrete cost in the filing consumer: an
+  `alloc(8)` per numeric literal purely to receive a second return value, and an overflow
+  condition smuggled back as a **negative sentinel** in an otherwise-unsigned count — a hazard
+  that exists only because there was no way to return "count AND did-it-overflow". Scope is
+  deliberately call-boundary only (returned then immediately destructured; no tuples in structs,
+  `vec`, or globals), which keeps it inside the calling convention with no heap traffic.
+  **Sequence it after `CYRIUS_PKG_VERSION` and the `[embed]` section** — those are manifest /
+  build-time mechanisms with no type-system surface, whereas this touches the type checker and
+  the calling convention. Candidate for the v6.6.x ergonomics list. Supporting datum: both
+  `lib/math.cyr`'s float parser and abaco's land ~1 ulp short at the top of the f64 range for
+  exactly this reason — the remedy is standard, the language makes it verbose enough that both
+  chose the approximation.
+
 - **`lib/net.cyr` AF_UNIX surface** (was §9 of `2026-07-30-net-cyr-x86-only-socket-syscall-numbers`,
   archived v6.5.12) — a yes/no DESIGN call for the maintainer, not a defect: whether `net.cyr`
   grows a Unix-domain socket surface alongside INET. Landed here rather than left in the issue

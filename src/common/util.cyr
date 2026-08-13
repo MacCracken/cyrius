@@ -288,6 +288,8 @@ var _fnt_cap = 0;
 var _fndep_base = 0;      # was 0x100000 fn_deprecated_msg (string-lit token: off<<16|len)
 var _fnreg_base = 0;      # was 0x14A000 fn_regalloc (#regalloc opt-in flag)
 var _fnret_base = 0;      # was 0x15A000 fn_ret_sid (struct-return StructName id)
+var _fnretn_base = 0;     # v6.5.21 multi-value return ARITY  (0 = not multi-value)
+var _fnrett_base = 0;     # v6.5.21 multi-value return ELEMENT TYPES (4 slots per fn)
 var _fnvar_base = 0;      # was 0x16A000 fn_variadic (1 = fn f(a, ...))
 var _fnflg_base = 0;      # was 0x17A000 fn_flags (must_use/deprecated/pure/io/alloc bits)
 var _fnvb_base = 0;       # was 0x1C8000 fn_var_bytes (per-fn array-bytes attribution)
@@ -608,6 +610,21 @@ fn SFNE(S, fi, v): i64 { S64(_fnt_codeend + fi * 8, v); return 0; }
 # RDI (SysV) or RCX (Win64).
 fn GFRS(S, fi): i64 { if (_fnret_base == 0) { return 0; } return L64(_fnret_base + fi * 8); }
 fn SFRS(S, fi, v): i64 { if (_fnret_base == 0) { _fnret_base = alloc(32768 * 8); } S64(_fnret_base + fi * 8, v); return 0; }
+
+# v6.5.21 — per-fn MULTI-VALUE return record, for `fn f(a, b): (f64, f64)`.
+# GFRS holds the marker MULTIRET_SID (0 - 40); the arity and the per-element
+# types live here. Two lazily-allocated side tables, the `_fnt_tparams` /
+# `_fnret_base` shape (v6.4.75): `alloc()` is OFF the fixed heap map, so adding
+# these is NOT a heap-LAYOUT change and needs no two-step bootstrap.
+# Arity is known at the DECLARATION, which is the whole point — a fn may mix
+# `return 5;` and `return (a, b);` in different branches, and a forward call has
+# no body parsed yet, so scanning bodies could never give the call site an answer.
+# GFRT's element codes are `_classify_return_type` values (0 = plain i64).
+# 4 slots per fn (max arity 3) keeps the index arithmetic a shift-friendly *4.
+fn GFRN(S, fi): i64 { if (_fnretn_base == 0) { return 0; } return L64(_fnretn_base + fi * 8); }
+fn SFRN(S, fi, v): i64 { if (_fnretn_base == 0) { _fnretn_base = alloc(32768 * 8); } S64(_fnretn_base + fi * 8, v); return 0; }
+fn GFRT(S, fi, k): i64 { if (_fnrett_base == 0) { return 0; } return L64(_fnrett_base + (fi * 4 + k) * 8); }
+fn SFRT(S, fi, k, v): i64 { if (_fnrett_base == 0) { _fnrett_base = alloc(32768 * 4 * 8); } S64(_fnrett_base + (fi * 4 + k) * 8, v); return 0; }
 
 # v5.5.36 Phase 3 — per-fn variadic marker. 0 = fixed-arity;
 # 1 = `fn f(a, ...)` (ellipsis terminator on the param list).

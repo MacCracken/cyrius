@@ -208,8 +208,21 @@ fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline
 # truthiness test. ETESTAZ only fires on the bare-boolean condition path (r1 is
 # scratch there — both callers, parse_ctrl.cyr:48 + parse_fn.cyr:3409, are truthiness).
 fn ETESTAZ(S): i64 { CX_MOVI(S, 1, 0); return 0; }  # r1 = 0 so EJCC's eq r0,r0,r1 tests r0==0
-fn EMOVRDXRAX(S): i64 { return 0; }  # no-op for bytecode
-fn EMOVRA_RDX(S): i64 { return 0; }  # no-op for bytecode
+# v6.5.21: these were `return 0;` stubs, so multi-return (`return (a, b);` and
+# the legacy `ret2`/`rethi`) SILENTLY returned the FIRST value twice on cx —
+# `return (5, 9)` scored 59 on x86/aarch64/PE and 55 under cxvm, exit 0, no
+# diagnostic. The macOS-rot shape: a stub that compiles clean and lies.
+# r4 is cx's rdx (EPOPRDX pops call-arg 3 into it), and it survives a call —
+# cxvm's `call` (op 96) pushes only the PC and EFNPRO/EFNEPI touch only
+# fp/sp, so nothing between the callee's write and the caller's read
+# clobbers it. Opcode 2 is `mov ra, rb` with ra = DEST.
+fn EMOVRDXRAX(S): i64 { CX_EMIT(S, 2, 4, 0, 0); return 0; }  # mov rdx, rax → mov r4, r0
+fn EMOVRA_RDX(S): i64 { CX_EMIT(S, 2, 0, 4, 0); return 0; }  # mov rax, rdx → mov r0, r4
+# v6.5.21 — THIRD multi-value return slot = r5 (cx's r10 peer; EPOPR10 pops into
+# it). Same survivability argument as r4: cxvm's `call` pushes only the PC, and
+# EFNPRO/EFNEPI touch only fp/sp.
+fn EMOVR3RAX(S): i64 { CX_EMIT(S, 2, 5, 0, 0); return 0; }  # mov r5, r0
+fn EMOVRA_R3(S): i64 { CX_EMIT(S, 2, 0, 5, 0); return 0; }  # mov r0, r5
 fn ESETCC(S, op): i64 {
     if (op == 17) { CX_EMIT(S, 48, 0, 0, 1); }  # eq
     if (op == 18) { CX_EMIT(S, 49, 0, 0, 1); }  # ne

@@ -146,6 +146,13 @@ enum IROp {
     # IR is walked.
     IR_RAW_EMIT    = 98;
     IR_ELIMINATED  = 99;  # LASE-eliminated node (NOP-fill in codebuf)
+    # v6.5.21 — THIRD multi-value return slot, for `fn f(): (a, b, c)`.
+    # Peer of IR_MOV_RDX_RAX / IR_MOV_RAX_RDX (91/92); the physical register
+    # is r8 on x86-family, x3 on aarch64, r5 on cx. Every opcode-keyed table
+    # below gains an arm alongside its 91/92 sibling — the replay dispatch,
+    # the name table, the defines-rax set and the reads-rax set.
+    IR_MOV_R3_RAX  = 100;  # mov <ret3>, rax
+    IR_MOV_RAX_R3  = 101;  # mov rax, <ret3>
 }
 
 # Helper: record IR node and return 1 if should skip x86 (mode 2), 0 if should emit
@@ -450,6 +457,8 @@ fn _ir_lower_node(S, op, fl, a1, a2): i64 {
     if (op == IR_RAX_CLOBBER)   { return 0; }
     if (op == IR_MOV_RDX_RAX)   { EMOVRDXRAX(S); return 0; }
     if (op == IR_MOV_RAX_RDX)   { EMOVRA_RDX(S); return 0; }
+    if (op == IR_MOV_R3_RAX)    { EMOVR3RAX(S); return 0; }
+    if (op == IR_MOV_RAX_R3)    { EMOVRA_R3(S); return 0; }
     if (op == IR_XOR_AA)        { EXORAA(S); return 0; }
     if (op == IR_STORE_PARM)    { ESTOREPARM(S, a1, a2, 0); return 0; }
     if (op == IR_ADD_IMM_X1)    { EADDIMM_X1(S, a2); return 0; }
@@ -510,6 +519,8 @@ fn _ir_opname(op): i64 {
     if (op == IR_EPILOGUE)     { return "EPILOG"; }
     if (op == IR_MOV_RDX_RAX)  { return "MVDXA"; }
     if (op == IR_MOV_RAX_RDX)  { return "MVAXD"; }
+    if (op == IR_MOV_R3_RAX)   { return "MVR3A"; }
+    if (op == IR_MOV_RAX_R3)   { return "MVAR3"; }
     if (op == IR_XOR_AA)       { return "XOR_AA"; }
     if (op == IR_JMP)          { return "JMP"; }
     if (op == IR_JCC)          { return "JCC"; }
@@ -560,6 +571,7 @@ fn _ir_clobbers_rax(op): i64 {
     if (op == IR_SETCC)        { return 1; }
     if (op == IR_XOR_AA)       { return 1; }
     if (op == IR_MOV_RAX_RDX)  { return 1; }
+    if (op == IR_MOV_RAX_R3)   { return 1; }   # v6.5.21 — writes rax, like its 92 peer
     if (op == IR_CALL)         { return 1; }
     if (op == IR_CALL_KNOWN)   { return 1; }
     if (op == IR_CALL_INDIRECT) { return 1; }
@@ -898,6 +910,7 @@ fn _ir_uses_rax(op): i64 {
     if (op == IR_LOAD32)       { return 1; }
     if (op == IR_LOAD64)       { return 1; }
     if (op == IR_MOV_RDX_RAX)  { return 1; }
+    if (op == IR_MOV_R3_RAX)   { return 1; }   # v6.5.21 — reads rax, like its 91 peer
     # SYSCALL reads RAX (sc_num); CALL/TAIL_JMP/RET implicitly read RAX
     # (return value flows via rax). RAW_EMIT / RAX_CLOBBER are opaque —
     # treat conservatively as readers so DCE can't kill a preceding def

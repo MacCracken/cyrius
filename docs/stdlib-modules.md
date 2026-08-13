@@ -10,7 +10,7 @@
 Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
 vendor at the patched tag, removed from `[deps]`):
 
-- v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy; 15,092 lines at the current 1.9.9 fold)
+- v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy; 15,119 lines at the current 1.9.10 fold)
 - v5.8.0 — `vani` (audio distlib; replaced inlined `lib/audio.cyr`)
 - **v5.8.65 stdlib foldin** — sakshi 2.2.3 (tracing), patra 1.9.3 (storage), sigil 3.0.1 (security), yukti 2.2.2 (hardware enumeration), sankoch 2.2.4 (compression), and re-folded vani at 0.9.2
 - **v5.9.0** — niyama 1.0.1 (regex; 5 engines: bre / re2 / pcre / fuzzy / vim; 6,689 lines at the current 1.0.6 fold)

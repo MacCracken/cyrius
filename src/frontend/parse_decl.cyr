@@ -1428,33 +1428,108 @@ fn PARSE_VAR(S): i64 {
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);
-    # Multi-var destructure: var x, y = fn()
+    # Multi-var destructure: var x, y[, z] = fn()
     if (PEEKT(S) == 31) {
         STI(S, GTI(S) + 1);  # consume ,
         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
         var noff2 = PEEKV(S);
         STI(S, GTI(S) + 1);
+        # v6.5.21 — optional THIRD target: `var x, y, z = f();`
+        var noff3 = 0;
+        var _dt_n = 2;
+        if (PEEKT(S) == 31) {
+            STI(S, GTI(S) + 1);  # consume ,
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            noff3 = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            _dt_n = 3;
+        }
         if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
         STI(S, GTI(S) + 1);  # consume =
+        # v6.5.21 — peek the callee's return annotation BEFORE PCMPE consumes the
+        # call, mirroring `_ti_inferred_sid` on the single-binding path. Without
+        # this both destructured locals were registered SLTYPE 0, so
+        # `var p, s = two(x, y); var d: f64 = p + s;` emitted an INTEGER add over
+        # two IEEE-754 bit patterns and produced garbage — the transport was
+        # always correct, the TYPE was what got dropped.
+        var _dt_ftype = 0;
+        var _dt_t1 = 0;
+        var _dt_t2 = 0;
+        var _dt_t3 = 0;
+        # v6.5.21 — THE DESTRUCTURE CONTRACT. Before this there was none at all:
+        # `var q, r = 42;` compiled, `var q, r = dm(17,5) + (k/9) - 11;` put the
+        # idiv REMAINDER in r, and `var q, r = inner()?;` yielded garbage — every
+        # one silently, because the second target simply read whatever rdx held.
+        # A non-call right-hand side can never produce a second value, so it is
+        # now rejected outright.
+        if (PEEKT(S) != 2) {
+            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 58);
+        }
+        if (TOKTYP(S, GTI(S) + 1) != 10) {
+            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 58);
+        }
+        # ...and the call must be the WHOLE right-hand side. `dm(17, 5) + (k / 9) - 11`
+        # opens with the same two tokens, and used to compile silently with the
+        # trailing arithmetic's leftovers in rdx landing in the second target —
+        # measured as an idiv REMAINDER arriving in `r`. Walk to the call's
+        # matching ')' and require ';' immediately after it.
+        var _dt_sc = GTI(S) + 1;
+        var _dt_d = 0;
+        while (_dt_sc < GTCNT(S)) {
+            var _dt_tk = TOKTYP(S, _dt_sc);
+            if (_dt_tk == 10) { _dt_d = _dt_d + 1; }
+            if (_dt_tk == 11) { _dt_d = _dt_d - 1; if (_dt_d == 0) { break; } }
+            _dt_sc = _dt_sc + 1;
+        }
+        if (TOKTYP(S, _dt_sc + 1) != 5) {
+            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 58);
+        }
+        var _dt_fi = FINDFN(S, PEEKV(S));
+        if (_dt_fi >= 0) {
+            var _dt_rs = GFRS(S, _dt_fi);
+            if (_dt_rs == 0 - 9) { _dt_ftype = F64_TYID; _dt_t1 = F64_TYID; _dt_t2 = F64_TYID; _dt_t3 = F64_TYID; }
+            if (_dt_rs == MULTIRET_SID) {
+                # Declared `: (T1, T2[, T3])` — enforce arity exactly and take the
+                # element types from the signature, so the bindings need no
+                # annotation of their own.
+                var _dt_decl = GFRN(S, _dt_fi);
+                if (_dt_decl != _dt_n) {
+                    ERR_MSG(S, "multi-value destructure count does not match the fn's declared return arity", 76);
+                }
+                if (GFRT(S, _dt_fi, 0) == 0 - 9) { _dt_t1 = F64_TYID; }
+                if (GFRT(S, _dt_fi, 1) == 0 - 9) { _dt_t2 = F64_TYID; }
+                if (GFRT(S, _dt_fi, 2) == 0 - 9) { _dt_t3 = F64_TYID; }
+            }
+        }
         PCMPE(S);
         # rax = first value, rdx = second value (from ret2/return (a,b))
         if (GINFN(S) == 1) {
             # Register first local
             var li1 = GFLC(S);
+            var li2 = li1 + 1;
+            var li3 = li1 + 2;
+            # First value: already in rax from the call.
             S64(S + 0x5D9D000 + li1 * 8, noff);
             SLDEP(S, li1, GSDEP(S));
-            SLTYPE(S, li1, 0);
+            SLTYPE(S, li1, _dt_t1);
             EFLSTORE(S, li1);
-            SFLC(S, li1 + 1);
+            # v6.5.21: drain the THIRD slot BEFORE rdx. EMOVRA_R3 and EMOVRA_RDX
+            # both land in rax, so reading rdx first would be overwritten by the
+            # ret3 read. EFLSTORE only touches rax, so ret3 is still live here.
+            if (_dt_n == 3) {
+                EMOVRA_R3(S);
+                S64(S + 0x5D9D000 + li3 * 8, noff3);
+                SLDEP(S, li3, GSDEP(S));
+                SLTYPE(S, li3, _dt_t3);
+                EFLSTORE(S, li3);
+            }
             # mov rax, rdx (get second return value)
             EMOVRA_RDX(S);
-            # Register second local
-            var li2 = GFLC(S);
             S64(S + 0x5D9D000 + li2 * 8, noff2);
             SLDEP(S, li2, GSDEP(S));
-            SLTYPE(S, li2, 0);
+            SLTYPE(S, li2, _dt_t2);
             EFLSTORE(S, li2);
-            SFLC(S, li2 + 1);
+            if (_dt_n == 3) { SFLC(S, li1 + 3); } else { SFLC(S, li1 + 2); }
         } else {
             ERR_MSG(S, "multi-var destructure only supported inside functions", 52);
         }
@@ -2413,6 +2488,21 @@ fn PARSE_VAR(S): i64 {
                 # before tracking i64-as-i64 vs i64-as-pointer).
                 if (_ti_inferred_sid > 0) {
                     SLTYPE(S, li, 0 - _ti_inferred_sid);
+                } elif (_ti_inferred_sid == 0 - 9) {
+                    # v6.5.21 — `var x = f();` where f is `: f64` now types x as
+                    # f64. Before this, the annotation bought the caller NOTHING:
+                    # the local came back untagged, so `x + x` emitted an INTEGER
+                    # add over the IEEE-754 bit pattern and returned garbage. That
+                    # is why the `: f64` RETURN annotation shipped at v6.4.55 and
+                    # then sat at TWO uses ecosystem-wide, both in our own tests —
+                    # it was unusable, not unpopular.
+                    # ⚠ This is deliberately NARROWER than the scalar-return
+                    # inference reverted at v5.10.5 (see the note above): that one
+                    # encoded `: i64` as a positive WIDTH (8), which tripped the
+                    # width-aware load path at parse_expr.cyr:263 and narrowed
+                    # downstream arithmetic. F64_TYID is 0x40000001, not a small
+                    # positive width, so it cannot reach that path.
+                    SLTYPE(S, li, F64_TYID);
                 } else {
                     SLTYPE(S, li, pscale);
                 }
