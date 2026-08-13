@@ -1266,6 +1266,14 @@ fn _rd_exit(): i64 {
 # BYTES under cybs, and this file is on the seed path — 480 is inside 512 either way.
 var _pp_incdir[512];
 var _pp_incdir_len = 0;
+# v6.5.21 — `#@pkgver <version>`: the package version cbt resolves from
+# `[package].version`, surfaced to source as `CYRIUS_PKG_VERSION`. Same in-band
+# shape as `#@incdir` and for the same reason (common/util.cyr's note above): the
+# source text is the ONE channel every target reads identically — `_read_env` is
+# dead on the PE fork and stubbed on cx, and the macOS forks do not honour the
+# CLI-flag scan.
+var _pp_pkgver[128];
+var _pp_pkgver_len = 0;
 
 # The anti-hang backstop. After the FIRST error, PEEKT calls this every read. A
 # desynced parse loop that spins on hostile input reads the SAME token forever →

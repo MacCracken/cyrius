@@ -248,6 +248,98 @@ fn _dep_read_cyml_cyrius_field(): i64 {
     return 0;
 }
 
+# v6.5.21 — read `[package].version` and resolve it to a literal, for the
+# `#@pkgver` marker that surfaces `CYRIUS_PKG_VERSION` to source.
+#
+# ⚠ NOTHING in the toolchain resolved `[package].version` before this. The only
+# `${file:VERSION}` expander in the tree (`bayan_cyml_expand_value`,
+# lib/bayan.cyr) has ZERO callers, bayan is not in cbt's include set, and
+# `cyrius package` printed "unknown" for a manifest that plainly declares a
+# version. The roadmap's "which already resolves `${file:VERSION}`" described no
+# live code path — the expander had to be written, not merely plumbed.
+#
+# Handles the one interpolation the manifests actually use: `${file:PATH}` reads
+# PATH (relative to cwd) and trims surrounding whitespace. Returns 0 when the
+# field is absent or the referenced file is unreadable, so the caller emits NO
+# marker and the constant is simply ABSENT — a use site then fails honestly with
+# `undefined variable`. A silently WRONG version banner is the exact failure the
+# sit consumer filed; absent beats wrong.
+fn _dep_read_cyml_package_version(): i64 {
+    if (file_exists("cyrius.cyml") == 0) { return 0; }
+    var buf = alloc(32768);
+    var n = file_read_all("cyrius.cyml", buf, 32767);
+    if (n <= 0) { return 0; }
+    var pos = 0;
+    while (pos < n) {
+        if (memeq(buf + pos, "[package]", 9) == 1) { break; }
+        pos = pos + 1;
+    }
+    if (pos >= n) { return 0; }
+    pos = pos + 9;
+    while (pos < n) {
+        while (pos < n && (load8(buf + pos) == 10 || load8(buf + pos) == 32 || load8(buf + pos) == 9)) {
+            pos = pos + 1;
+        }
+        if (pos >= n) { return 0; }
+        if (load8(buf + pos) == 91) { return 0; }      # `[` → next section
+        if (memeq(buf + pos, "version", 7) == 1) {
+            var after = pos + 7;
+            while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) {
+                after = after + 1;
+            }
+            if (after < n && load8(buf + after) == 61) {
+                after = after + 1;
+                while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) {
+                    after = after + 1;
+                }
+                if (after < n && load8(buf + after) == 34) {
+                    after = after + 1;
+                    var start = after;
+                    while (after < n && load8(buf + after) != 34) { after = after + 1; }
+                    var vlen = after - start;
+                    var raw = alloc(vlen + 1);
+                    var i = 0;
+                    while (i < vlen) { store8(raw + i, load8(buf + start + i)); i = i + 1; }
+                    store8(raw + vlen, 0);
+                    return _dep_expand_file_interp(raw, vlen);
+                }
+            }
+        }
+        while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+    }
+    return 0;
+}
+
+# `${file:PATH}` → the trimmed contents of PATH. Anything else passes through
+# unchanged, so a plain `version = "1.2.3"` works with no special case.
+fn _dep_expand_file_interp(raw, rlen): i64 {
+    if (rlen < 8) { return raw; }
+    if (memeq(raw, "${file:", 7) == 0) { return raw; }
+    if (load8(raw + rlen - 1) != 125) { return raw; }      # '}'
+    var plen = rlen - 8;
+    if (plen <= 0) { return 0; }
+    var path = alloc(plen + 1);
+    var i = 0;
+    while (i < plen) { store8(path + i, load8(raw + 7 + i)); i = i + 1; }
+    store8(path + plen, 0);
+    if (file_exists(path) == 0) { return 0; }
+    var fb = alloc(512);
+    var fn_read = file_read_all(path, fb, 511);
+    if (fn_read <= 0) { return 0; }
+    store8(fb + fn_read, 0);
+    var s = 0;
+    while (s < fn_read && (load8(fb + s) == 32 || load8(fb + s) == 10 || load8(fb + s) == 13 || load8(fb + s) == 9)) { s = s + 1; }
+    var e = fn_read;
+    while (e > s && (load8(fb + e - 1) == 32 || load8(fb + e - 1) == 10 || load8(fb + e - 1) == 13 || load8(fb + e - 1) == 9)) { e = e - 1; }
+    var olen = e - s;
+    if (olen <= 0) { return 0; }
+    var out = alloc(olen + 1);
+    var k = 0;
+    while (k < olen) { store8(out + k, load8(fb + s + k)); k = k + 1; }
+    store8(out + olen, 0);
+    return out;
+}
+
 # v5.11.17 — stdlib_dir resolution order (Part 1 of per-repo
 # isolation arc; Parts 2-3 at v5.11.23/24). Closes the snapshot-
 # ping-pong wipe wedge that landed multiple times in the v5.11.x

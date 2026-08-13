@@ -2151,6 +2151,70 @@ fn PP_SKIPLINE(S, ip, bl): i64 {
 }
 
 # Builds expanded source into a new buffer, then copies back.
+# v6.5.21 — turn a `#@pkgver <version>` marker into a real, source-visible
+# constant: `var CYRIUS_PKG_VERSION = "<version>";`.
+#
+# ONE line in, ONE line out. That is the whole reason this is a directive rather
+# than cbt simply prepending the `var` line: every other thing cbt prepends shifts
+# `<source>` diagnostics by one (measured at 6.5.20: `-D FOO=1` moves a line-5
+# error to :6, a one-include `[deps] stdlib` does the same), and only `#@incdir`
+# was ever compensated. Replacing the line in place costs the file map nothing.
+#
+# ⚠ The value is STRICTLY validated — `[0-9A-Za-z._+-]`, max 64. It lands inside a
+# `"..."` literal and it comes from a manifest, which is consumer-controlled input:
+# an unfiltered `"` would close the string and let a `version` field inject
+# arbitrary cyrius into the compile. Anything unexpected emits a bare newline
+# instead, so the constant is simply ABSENT and the use site fails honestly with
+# `undefined variable 'CYRIUS_PKG_VERSION'` rather than compiling something forged.
+fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
+    var p = ip + 9;
+    var n = 0;
+    var ok = 1;
+    while (p < bl) {
+        var c = load8(S + p);
+        if (c == 10) { break; }
+        if (c == 13) { break; }
+        var good = 0;
+        if (c >= 48) { if (c <= 57) { good = 1; } }
+        if (c >= 65) { if (c <= 90) { good = 1; } }
+        if (c >= 97) { if (c <= 122) { good = 1; } }
+        if (c == 46) { good = 1; }
+        if (c == 95) { good = 1; }
+        if (c == 43) { good = 1; }
+        if (c == 45) { good = 1; }
+        if (good == 0) { ok = 0; break; }
+        if (n >= 64) { ok = 0; break; }
+        store8(&_pp_pkgver + n, c);
+        n = n + 1;
+        p = p + 1;
+    }
+    if (n == 0) { ok = 0; }
+    if (ok == 0) {
+        _pp_pkgver_len = 0;
+        return op;
+    }
+    store8(&_pp_pkgver + n, 0);
+    _pp_pkgver_len = n;
+    op = op + PP_EMIT_STR(out, op, "var CYRIUS_PKG_VERSION = ");
+    store8(out + op, 34); op = op + 1;         # '"'
+    var i = 0;
+    while (i < n) {
+        store8(out + op, load8(&_pp_pkgver + i));
+        op = op + 1;
+        i = i + 1;
+    }
+    store8(out + op, 34); op = op + 1;         # '"'
+    store8(out + op, 59); op = op + 1;         # ';'
+    # ⚠ NO trailing newline, deliberately. Emitting one would make this a 1-for-1
+    # line REPLACEMENT, which is NOT line-neutral: cbt ADDS this marker above the
+    # user's file, so any line the marker occupies pushes every user line down by
+    # one — exactly the +N shift `-D` and `[deps] stdlib` already cause today.
+    # Emitting zero newlines merges the declaration onto the front of the user's
+    # first line, so expanded line N is user line N. Same technique as the v6.5.20
+    # `#derive` fix. Statements are `;`-terminated, so sharing the line is legal.
+    return op;
+}
+
 fn PP_PASS(S): i64 {
     var bl = GBL(S);
     var out = S + 0x459D000;
@@ -2186,6 +2250,17 @@ fn PP_PASS(S): i64 {
         if (load8(S) == 35 && load8(S + 1) == 64 && load8(S + 2) == 105 && load8(S + 3) == 110 && load8(S + 4) == 99 && load8(S + 5) == 100 && load8(S + 6) == 105 && load8(S + 7) == 114 && load8(S + 8) == 32) {
             ip = PP_SKIPLINE(S, ip, bl);
             _pp_srcline_bias = 1;
+        }
+    }
+    # v6.5.21 — `#@pkgver <version>`, accepted at byte 0 or on the line directly
+    # after `#@incdir` (cbt emits both, incdir first — that one is byte-0-ONLY and
+    # its writer is guarded by "Nothing may be emitted above this line").
+    # No `_pp_srcline_bias` bump here: PP_EMIT_PKGVER writes a replacement line,
+    # so the expanded stream keeps the same line count as the source.
+    if (bl - ip >= 10) {
+        if (load8(S + ip) == 35 && load8(S + ip + 1) == 64 && load8(S + ip + 2) == 112 && load8(S + ip + 3) == 107 && load8(S + ip + 4) == 103 && load8(S + ip + 5) == 118 && load8(S + ip + 6) == 101 && load8(S + ip + 7) == 114 && load8(S + ip + 8) == 32) {
+            op = PP_EMIT_PKGVER(S, out, op, ip, bl);
+            ip = PP_SKIPLINE(S, ip, bl);
         }
     }
     # v5.8.40 — string-literal awareness. `in_string` flips on
@@ -2473,7 +2548,36 @@ fn PP_PASS(S): i64 {
                 # overwrote it. Deleted rather than patched — RESUME markers cover every
                 # case it covered, and the issue's own note said to fold it into whatever
                 # landed rather than leave two mechanisms.
+                # v6.5.21 — NEUTRALISE a user-authored `#@file` marker.
+                #
+                # FM_BUILD scans the FINAL buffer for `#@file` at ANY offset — no
+                # byte-0 rule and no beginning-of-line rule, unlike `#@incdir`. So
+                # ordinary source could FORGE a file-map entry claiming its code came
+                # from another file, which DEFEATS `private` file visibility: a forged
+                # `#@file "hidden.cyr" 3` — even sitting as a trailing comment
+                # mid-line — turned a correct `'secret_fn' is private to its file`
+                # rejection into a clean build that ran the private fn.
+                #
+                # Done HERE rather than in the final PP_MACRO_PASS because this loop
+                # is the one that knows about string literals (`in_string`); the macro
+                # pass has no such state, so rewriting there would silently mangle a
+                # string that happens to contain `#@file`. PP_MACRO_PASS only copies,
+                # so neutralising the source once here is sufficient. Real markers are
+                # unaffected: PP_FMARK writes them straight to `out`, never through
+                # this copy of the input.
+                #
+                # `# @file` stays a comment and is inert to the scanner; the extra
+                # byte shifts columns only INSIDE a comment, where nothing is reported.
+                # Not a sandbox escape — a forger already controls the source being
+                # compiled — but `private` is meant to be a checkable guarantee.
+                var _ff = 0;
+                if (in_string == 0) { if (c == 35) { if (ip + 5 < bl) {
+                    if (load8(S + ip + 1) == 64 && load8(S + ip + 2) == 102 && load8(S + ip + 3) == 105 && load8(S + ip + 4) == 108 && load8(S + ip + 5) == 101) {
+                        _ff = 1;
+                    }
+                } } }
                 store8(out + op, c); op = op + 1;
+                if (_ff == 1) { store8(out + op, 32); op = op + 1; }
             }
             # v6.5.19 — a SKIPPED body line still occupied a source line. Keep its
             # newline so the expanded stream stays 1:1 with the source; the rest of the
@@ -2582,6 +2686,23 @@ fn PP_MACRO_PASS(S): i64 {
                         } }
                 }
             } }
+        # v6.5.21 — NEUTRALISE a user-authored `#@file` marker.
+        #
+        # FM_BUILD scans the EXPANDED buffer for `#@file` at ANY offset — no byte-0
+        # rule and no beginning-of-line rule, unlike `#@incdir`. So ordinary source
+        # could FORGE a file-map entry claiming its code came from another file,
+        # which DEFEATS `private` file visibility: a forged
+        # `#@file "hidden.cyr" 3` — even sitting as a trailing comment mid-line —
+        # turned a correct `'secret_fn' is private to its file` rejection into a
+        # clean build that ran the private fn.
+        #
+        # Only PP_FMARK may mint these, and it writes to `out` directly rather than
+        # through this copy, so breaking the sequence here cannot damage a real
+        # marker. `# @file` remains a comment and is inert to the scanner; the extra
+        # byte only shifts columns INSIDE a comment, where nothing is reported.
+        # Not a sandbox escape — whoever forges it already controls the source being
+        # compiled — but it is a soundness hole in `private`, which is supposed to be
+        # a checkable guarantee rather than a convention.
         if (expanded == 0) {
             store8(out + op, c);
             op = op + 1;

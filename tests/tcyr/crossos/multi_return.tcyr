@@ -1,0 +1,110 @@
+# multi_return.tcyr — cross-host: multi-value return must carry EVERY value on
+# EVERY target, and the `: f64` / signature-typed forms must not lose or corrupt one.
+#
+# v6.5.21. Multi-value return has shipped since v3.7.2 (`return (a, b);` +
+# `var q, r = f();`) and had THREE lines of coverage in the whole tree —
+# `tests/tcyr/lang/regression.tcyr`, integer-only, and NOTHING in `crossos/`. It was
+# never run off-Linux. Three defects were living in that gap, all silent:
+#
+#   1. cx returned the FIRST value TWICE. `EMOVRDXRAX` / `EMOVRA_RDX` were literal
+#      `return 0;` stubs (src/backend/cx/emit.cyr), so `return (5, 9)` scored 59 on
+#      x86 / aarch64 / PE and 55 under cxvm — exit 0, no diagnostic. The macOS-rot
+#      shape exactly: a stub that compiles clean, runs clean, and lies.
+#   2. A `: f64` fn returning a tuple lost its FIRST value on x86/PE. The tuple path
+#      returned before the callee's `movq xmm0, rax` box, while the CALL SITE
+#      unboxes `movq rax, xmm0` unconditionally for any `: f64` callee — so value 1
+#      arrived as whatever f64 op last touched xmm0. aarch64 was UNAFFECTED (the
+#      moves are no-ops there), i.e. the bug was backend-divergent and a Linux-only
+#      or ARM-only run would each have seen half of it.
+#   3. f64 type was lost at the binding, so arithmetic on a returned f64 was an
+#      INTEGER add over the bit pattern.
+#
+# ⚠ WHY THIS BELONGS IN crossos/ AND NOT lang/: every one of the three was
+# target-dependent. (1) was cx-only, (2) was x86-family-only, and a host-side test on
+# any single target passes against at least one of them in full. This file is the
+# thing that makes "multi-return works" a claim about the toolchain rather than about
+# one box.
+#
+# ⚠ The `(5, 9) -> 59` shape is deliberate: the two values must be DISTINGUISHABLE
+# and ORDER-SENSITIVE. A test using `(1, 1)` or summing the values passes against
+# defect 1 — the first-value-twice bug is invisible unless the values differ and the
+# assertion can tell which slot each landed in.
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+
+# --- arity 2, undeclared (the legacy form, ~200 sites across 24 consumer repos) ---
+fn mr_divmod(a, b) { return (a / b, a % b); }
+
+# --- arity 2, declared ---
+fn mr_pair(a, b): (i64, i64) { return (a, b); }
+
+# --- arity 3 (v6.5.21; abaco's `_dd_pow10` is the motivating 3-valued primitive) ---
+fn mr_triple(a): (i64, i64, i64) { return (a, a + 1, a + 2); }
+
+# --- f64 pair, types carried BY THE SIGNATURE (no annotation on the bindings) ---
+fn mr_f64pair(a, b): (f64, f64) { return (f64_mul(a, b), f64_add(a, b)); }
+
+# --- `: f64` scalar annotation + tuple return — defect 2's exact shape ---
+fn mr_f64tagged(a: f64, b: f64): f64 { return (f64_mul(a, b), f64_add(a, b)); }
+
+# --- legacy ret2 / rethi builtins (share the same register pair) ---
+fn mr_ret2(a, b) { ret2(a / b, a % b); }
+
+# --- `: f64` SINGLE return. Defect 3's discriminator in pre-6.5.21 syntax: this
+# shape parses on 6.5.20 and gets the wrong answer there, so it is the assertion
+# that mutation-proves the type-propagation fix rather than merely exercising it.
+fn mr_f64one(a, b): f64 { return f64_mul(a, b); }
+
+fn main(): i64 {
+    # 1. undeclared arity 2 — order-sensitive
+    var q, r = mr_divmod(10, 3);
+    assert_eq(q, 3, "undeclared arity2: first value (quotient)");
+    assert_eq(r, 1, "undeclared arity2: second value (remainder)");
+
+    # 2. declared arity 2 — distinguishable values, so first-twice cannot pass
+    var p1, p2 = mr_pair(5, 9);
+    assert_eq(p1, 5, "declared arity2: first value");
+    assert_eq(p2, 9, "declared arity2: second value (cx returned 5 pre-6.5.21)");
+
+    # 3. arity 3 — all three slots distinct
+    var t1, t2, t3 = mr_triple(40);
+    assert_eq(t1, 40, "arity3: first value");
+    assert_eq(t2, 41, "arity3: second value");
+    assert_eq(t3, 42, "arity3: third value");
+
+    # 4. f64 pair typed by the signature. 3.0 * 4.0 = 12.0, 3.0 + 4.0 = 7.0.
+    var fp, fs = mr_f64pair(f64_from(3), f64_from(4));
+    assert_eq(f64_to(fp), 12, "f64 pair: product arrives in slot 1");
+    assert_eq(f64_to(fs), 7, "f64 pair: sum arrives in slot 2");
+
+    # 4b. arithmetic on the bindings must be FLOAT arithmetic, not an integer add
+    # over the bit patterns (defect 3: this returned 0 before v6.5.21).
+    var fsum: f64 = fp + fs;
+    assert_eq(f64_to(fsum), 19, "f64 pair: bindings carry the f64 type");
+
+    # 5. `: f64` + tuple — defect 2. Pre-6.5.21 BOTH slots came back as the second
+    # value (7) on x86/PE, because the caller read a stale xmm0.
+    var gp, gs = mr_f64tagged(f64_from(3), f64_from(4));
+    assert_eq(f64_to(gp), 12, ": f64 tuple: first value not clobbered by stale xmm0");
+    assert_eq(f64_to(gs), 7, ": f64 tuple: second value");
+
+    # 5b. `: f64` SINGLE return must type its binding too. Mutation-proven: on the
+    # 6.5.20 compiler this shape parses and yields 0 (an INTEGER add over two
+    # IEEE-754 bit patterns); on 6.5.21 it yields 24.
+    var op1 = mr_f64one(f64_from(3), f64_from(4));
+    var od: f64 = op1 + op1;
+    assert_eq(f64_to(od), 24, ": f64 single return types the binding");
+
+    # 6. legacy ret2 / rethi — same register pair, same cx stub
+    var lq = mr_ret2(10, 3);
+    var lr = rethi();
+    assert_eq(lq, 3, "ret2: rax value");
+    assert_eq(lr, 1, "rethi: second value (cx returned 3 pre-6.5.21)");
+
+    var r2 = assert_summary();
+    return r2;
+}

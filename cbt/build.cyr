@@ -399,6 +399,18 @@ fn _materialize_source(source): i64 {
                 sys_write(tfd, incdir, strlen(incdir));
                 sys_write(tfd, "\n", 1);
             }
+            # v6.5.21 — `#@pkgver <version>` directly after `#@incdir`, surfacing
+            # `[package].version` to source as `CYRIUS_PKG_VERSION`. cycc REPLACES
+            # this line with the declaration and emits no newline for it, so unlike
+            # every other prepend below it does not shift `<source>` line numbers.
+            # Emitted only when the manifest actually resolves a version — no
+            # marker beats a wrong one.
+            var _pkgver = _dep_read_cyml_package_version();
+            if (_pkgver != 0) {
+                sys_write(tfd, "#@pkgver ", 9);
+                sys_write(tfd, _pkgver, strlen(_pkgver));
+                sys_write(tfd, "\n", 1);
+            }
             # Prepend dep includes (v5.7.8: skipped under _skip_deps)
             if (_skip_deps == 0) {
                 if (_dep_includes != 0) {
