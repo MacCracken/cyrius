@@ -346,6 +346,26 @@ syscall(60, 0);                      # exit(0)
 fn divmod(a, b) { return (a / b, a % b); }
 var q, r = divmod(10, 3);       # q = 3, r = 1 — destructuring bind
 
+# ⚠ Parens are REQUIRED on the return and FORBIDDEN on the bind:
+#   return a, b;        → error: expected ';', got ','
+#   var (q, r) = f();   → error: expected identifier, got '('
+
+# Declared multi-value return (v6.5.21) — arity 2 or 3, types in the signature
+fn two_product(a, b): (f64, f64) { return (f64_mul(a, b), f64_add(a, b)); }
+var prod, err = two_product(x, y);   # both bindings are typed f64
+fn dd_pow10(k): (i64, i64, i64) { return (hi, lo, bexp); }
+var hi, lo, bexp = dd_pow10(k);
+
+# Declaring the return type is what lets the compiler check a FORWARD call's
+# arity and type the bindings. An undeclared `return (a, b);` still works and
+# leaves the bindings untyped.
+
+# The destructure requires a CALL as the whole right-hand side (v6.5.21).
+# These are rejected rather than silently reading whatever rdx held:
+#   var q, r = 42;                    # not a call
+#   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS
+#   var x, y, z = f();                # count disagrees with f's declared arity
+
 # Legacy builtins still work
 fn divmod_old(a, b) { ret2(a / b, a % b); }
 var q2 = divmod_old(10, 3);     # q2 = 3 (rax)

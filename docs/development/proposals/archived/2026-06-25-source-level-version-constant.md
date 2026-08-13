@@ -1,9 +1,55 @@
-# Source-level VERSION constant — build-time injection of the package version into Cyrius source
+# Source-level VERSION constant — build-time injection of the package version into Cyrius source — ✅ SHIPPED v6.5.21
 
-**Status:** ▲ SCHEDULED (minimal cut) 2026-07-10 — committed scope is the injected source-visible
-`CYRIUS_PKG_VERSION` constant (the `${file:VERSION}` file-read surfaced to source), NOT a general
-const-eval.
-**Placement:** **v6.5.22 — the DX / diagnostics finish-out release**, as a fold-in bite.
+> **✅ SHIPPED in v6.5.21** (CHANGELOG `[6.5.21]`), one release EARLIER than its
+> `.22` pin — pulled forward by maintainer direction. Option 1 as committed: a
+> single injected source-visible cstring, no new manifest surface, no const-eval.
+>
+> **Mechanism:** cbt resolves `[package].version` and emits `#@pkgver <version>`
+> into the materialized source; cycc's `PP_EMIT_PKGVER` replaces that line with
+> `var CYRIUS_PKG_VERSION = "X.Y.Z";`.
+>
+> ⭐ **It emits ZERO newlines, and that is the whole design.** Every other thing
+> cbt prepends shifts `<source>` diagnostics down by one — measured at 6.5.20,
+> `-D FOO=1` moves a line-5 error to `:6` and a one-include `[deps] stdlib` does
+> the same, uncompensated; only `#@incdir` was ever accounted for. The declaration
+> is merged onto the front of the user's first line instead, so a defect on user
+> line 3 still reports `:3:`. (A first cut replaced the line 1-for-1 and was NOT
+> neutral — adding a line shifts everything regardless of what the line contains.)
+>
+> ⛔ **This proposal's premise — and the roadmap's — was FALSE in one load-bearing
+> respect.** `roadmap.md` scoped the work as surfacing "`[package].version`
+> (which already resolves `${file:VERSION}`)". Nothing resolved it. The only
+> `${file:VERSION}` expander in the tree, `bayan_cyml_expand_value`
+> (`lib/bayan.cyr`), has **zero callers**; bayan is not in cbt's include set; and
+> `cyrius package` printed **"unknown"** for a manifest plainly declaring a
+> version. So the slot had to WRITE a `[package].version` reader and a portable
+> `${file:}` expander, not plumb an existing one.
+>
+> **The value is strictly validated** — `[0-9A-Za-z._+-]`, max 64 — because it
+> lands inside a `"..."` literal and a manifest is consumer-controlled input. A
+> `version` field of `1.0"; syscall(60,42); var z = "` cannot inject; the constant
+> is simply absent and the use site fails with `undefined variable`. Absent beats
+> wrong, which is precisely the failure sit filed.
+>
+> **Known limitation, stated rather than papered over:** the marker rides the
+> existing source-materialization path, so it reaches any project with deps,
+> defines, modules, or a subdir source — including sit — but not a bare flat
+> `cyrius build one.cyr out` with no manifest deps. Forcing materialization there
+> would create a `/tmp/cyrius-<pid>` directory on EVERY invocation, and those are
+> never `rmdir`'d (`sys_rmdir` is absent on the Windows peer and `cbt/` cross-
+> compiles to PE — see `cbt/build.cyr` `_cbt_tmpdir`). Turning a bounded leak into
+> a per-build one to widen a convenience was the wrong trade; closing it needs a
+> PE `rmdir` reroute.
+>
+> **Downstream:** sit can now drop the hand-bumped `serve.cyr` banner literal and
+> its CI guard. Note sit has moved to **1.3.5** and pins cyrius **6.5.4**, so it
+> needs a pin bump before it can consume this.
+
+**Status:** ✅ **SHIPPED in v6.5.21.** Committed scope was the injected
+source-visible `CYRIUS_PKG_VERSION` constant (the `${file:VERSION}` file-read
+surfaced to source), NOT a general const-eval — delivered as scoped.
+**Placement:** ~~v6.5.22 — the DX / diagnostics finish-out release~~ → **landed
+v6.5.21** (pulled forward; the third pin held).
 ⚠ **This proposal has now lapsed TWO soft pins and this is the third; it gets a hard slot, not
 another window.** Pin 1 said "fold into the next 6.4.x arc's closeout / an absorber band" — that
 minor closed at **v6.4.86** without it. Pin 2 re-homed it as roadmap.md W1 item 8, window

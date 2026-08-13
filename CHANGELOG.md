@@ -6,6 +6,130 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.21] — 2026-08-13
+
+**Two proposals completed and retired — and the one filed as "ergonomics, not capability"
+turned out to be sitting on three silent miscompiles.** Both proposals' stated premises
+were wrong in a load-bearing way, and both errors were ours, not the consumers'.
+
+**Self-host fixpoint 1,168,360 B** (+13,576 vs .20), **seed → cybs → cycc byte-identical
+from the 29,024 B seed**, corpus **271/271**, gate scripts **58** (0 orphans, 0 dangling,
+re-derived both ways).
+
+### Fixed — multi-value return: three silent miscompiles
+
+Multi-value return has shipped since **v3.7.2** and had **three lines** of coverage in the
+whole tree (`tests/tcyr/lang/regression.tcyr`, integer-only) and **nothing** in `crossos/`.
+It had never been run off-Linux. Three defects were living in that gap:
+
+* **cx returned the FIRST value TWICE.** `EMOVRDXRAX` / `EMOVRA_RDX` were literal
+  `return 0;` stubs (`src/backend/cx/emit.cyr`), so `return (5, 9)` scored 59 on
+  x86/aarch64/PE and **55** under cxvm — exit 0, no diagnostic. Legacy `ret2`/`rethi`
+  share the pair and were broken identically. The macOS-rot shape exactly.
+* **A `: f64` fn returning a tuple lost its FIRST value** on x86/PE. The tuple path
+  returns before the callee's `movq xmm0, rax` box (`parse_fn.cyr`), while the CALL SITE
+  unboxes `movq rax, xmm0` unconditionally for any `: f64` callee (`parse_expr.cyr:609`) —
+  so value 1 arrived as whatever f64 op last touched xmm0. `two_product(3.0, 4.0)` returned
+  **7 for both values** instead of 12 and 7. aarch64 was unaffected (the moves are no-ops
+  there), so the bug was backend-divergent. ⭐ **This is the exact Dekker shape the tuple
+  proposal motivates** — a consumer writing it would naturally annotate `: f64`.
+* **f64 type was lost at the binding.** Arithmetic on a returned f64 was an INTEGER add
+  over the bit pattern. **Not destructure-specific** — plain `var p = f();` on a `: f64`
+  callee lost it too. That is why the `: f64` RETURN annotation, shipped at v6.4.55, had
+  **two uses ecosystem-wide, both in our own tests**: it was unusable, not unpopular.
+
+### Added — declared multi-value returns, arity 3, and a destructure contract
+
+* `fn f(a, b): (f64, f64)` — arity 2 or 3, element types in the signature. Recorded at the
+  DECLARATION (new lazy `GFRN`/`GFRT` tables, `alloc()`-backed, so **no heap-layout change
+  and no two-step bootstrap**), which is what lets a **forward** call be arity-checked; a fn
+  may mix `return 5;` and `return (a, b);` across branches, so a body scan could never answer.
+* **Arity 3** end-to-end: third slot is **r8** (x86/PE), **x3** (aarch64), **r5** (cx), with
+  a new IR opcode pair (100/101) wired through all four opcode-keyed tables. Verified by
+  running on all four backends: x86 123, aarch64 (qemu) 123, PE (wine) 123, cx (cxvm) 123.
+* **A destructure contract, which did not exist at all.** Now rejected with a caret
+  diagnostic: `var q, r = 42;`; `var q, r = dm(17,5) + (k/9) - 11;` (which used to put the
+  **idiv remainder** in `r`); `var q, r = inner()?;`; and any count disagreeing with a
+  declared arity. Undeclared 2-value returns stay permissive — ~200 sites across 24 repos.
+* ⚠ **A `: (…)` return initially shifted every parameter by one.** The rough-scan that
+  decides the retptr ABI treats any return type that is not a bare IDENT as a big-struct
+  return, so `: (` reserved arg-reg 0 for a hidden pointer: `f(7, 9)` gave `a = 9, b = 0`.
+  The comment three lines above that branch describes this exact failure for the `: T`
+  generic case — same trap, second occurrence, in the arm catching everything non-IDENT.
+
+### Added — `CYRIUS_PKG_VERSION` (closes the 2026-06-25 proposal, third pin)
+
+cbt resolves `[package].version` and emits `#@pkgver <version>`; cycc's `PP_EMIT_PKGVER`
+replaces that line with `var CYRIUS_PKG_VERSION = "X.Y.Z";`.
+
+* ⭐ **It emits ZERO newlines, and that is the design.** Every other cbt prepend shifts
+  `<source>` diagnostics down by one — measured at 6.5.20, `-D FOO=1` moves a line-5 error
+  to `:6` and a one-include `[deps] stdlib` does the same, uncompensated; only `#@incdir`
+  was accounted for. The declaration merges onto the front of the user's first line, so a
+  defect on user line 3 still reports `:3:`. A first cut replaced the line 1-for-1 and was
+  **not** neutral — adding a line shifts everything regardless of its content.
+* ⛔ **The roadmap's premise was false.** It scoped this as surfacing `[package].version`
+  "which already resolves `${file:VERSION}`". Nothing resolved it: `bayan_cyml_expand_value`
+  has **zero callers**, bayan is not in cbt's include set, and `cyrius package` printed
+  **"unknown"** for a manifest declaring a version. The reader and the `${file:}` expander
+  both had to be written.
+* The value is validated to `[0-9A-Za-z._+-]`, max 64 — it lands inside a `"..."` literal
+  and a manifest is consumer-controlled input. `1.0"; syscall(60,42); var z = "` cannot
+  inject; the constant is absent and the use site fails honestly. Absent beats wrong.
+* **Known limitation:** rides the existing source-materialization path, so it reaches any
+  project with deps/defines/modules/subdir source (including sit) but not a bare flat
+  `cyrius build one.cyr out`. Forcing materialization would create a `/tmp/cyrius-<pid>`
+  directory on every invocation, and those are never `rmdir`'d (`sys_rmdir` absent on the
+  Windows peer, `cbt/` cross-compiles to PE) — a bounded leak should not become per-build.
+
+### Fixed — a forged `#@file` marker no longer defeats `private`
+
+`FM_BUILD` scans the final buffer for `#@file` at ANY offset — no byte-0 and no BOL rule,
+unlike `#@incdir`. A forged `#@file "hidden.cyr" 3`, **even as a trailing mid-line comment**,
+turned a correct `'secret_fn' is private to its file` rejection into a clean build that ran
+the private fn. Neutralized in `PP_PASS`'s copy — the pass that tracks string literals; the
+final `PP_MACRO_PASS` has no such state and rewriting there would mangle a string containing
+`#@file`. Real markers are unaffected (`PP_FMARK` writes straight to `out`). Verified:
+`"#@file x"` survives byte-exact and include diagnostics still attribute to `inc.cyr:2`.
+⚠ **Not a CVE** — a forger already controls the source being compiled; this is a soundness
+hole in `private`, not a sandbox escape. **The next CVE number remains 41.**
+
+### Changed — sandhi 1.9.10 folded
+
+Closes an agnosai-reported P1: `_sandhi_resp_frame_a` returned `SANDHI_OK` carrying
+`body_ptr = 0` on an OOM body copy — reachable on ordinary arena-backed exchanges because
+`rbuf` is allocated eagerly at the full cap, so **every response body over ~1 MiB** took the
+null path. Reproduced by running a binary built from the `lib/sandhi.cyr` we shipped.
+Public fn surface identical (836 → 836), and sandhi is not in cycc's closure, so the fold
+cannot move the compiler. ⚠ Upstream's CHANGELOG also claims the chunked branch shares the
+defect; verified against live code, **it does not** — that guard is defensive only.
+
+### Added — gates
+
+* `tests/tcyr/crossos/multi_return.tcyr` — 15 assertions, all four backends. Values are
+  distinguishable and order-sensitive on purpose: `(1,1)` or a sum passes against the
+  first-value-twice defect. Mutation-proven on the 6.5.20 compiler (the `: f64` tuple and
+  the f64-typing assertions go red).
+* `tests/gates/codegen/cx_multi_return.sh` — the cx arm, 4 axes. **Must** be a shell gate:
+  a `.tcyr` pulls in assert/fmt, which the cx backend cannot compile, so the cross-host
+  `.tcyr` structurally cannot cover the one target the bug lived on.
+  ⚠ **Swapping `build/cycc` does NOT mutate this gate** — it builds the cx compiler from
+  `src/backend/cx/emit.cyr` in the working tree, so an old host compiler still picks up the
+  current emitter and it passes **vacuously**. Proven by reverting the emitters to their
+  stubs: 3 of 4 axes go red (55 vs 59, 133 vs 123), single-return stays green.
+
+### Fixed — docs that caused the mis-filing
+
+`vidya language/features.cyml → ret2_rethi` documented native multi-return as
+`return a / b, a % b;` — **no parens, a parse error** — under a heading reading "ALTERNATIVE
+— NATIVE MULTI-RETURN", and had since v3.7.2. A consumer following CLAUDE.md's
+search-vidya-before-reimplementing rule got the wrong syntax from the authoritative source,
+and filed a proposal for a feature that had shipped four majors earlier. Also: the four
+vidya vendored-pin blocks had been carried forward unchanged since the v6.5.10 stamp —
+**4 of 12 pins stale** (sigil 3.12.2→3.12.7, patra 1.12.12→1.13.0, sankoch 2.7.6→2.7.7,
+sakshi 2.4.8→2.4.10) with `yantra` missing entirely; `docs/ecosystem.md`'s refold-at column
+was stale on sigil and sankoch.
+
 ## [6.5.20] — 2026-08-12
 
 **Two silent miscompiles closed, and every one of this slot's worst defects was found by

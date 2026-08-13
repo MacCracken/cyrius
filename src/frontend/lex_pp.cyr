@@ -2167,6 +2167,31 @@ fn PP_SKIPLINE(S, ip, bl): i64 {
 # instead, so the constant is simply ABSENT and the use site fails honestly with
 # `undefined variable 'CYRIUS_PKG_VERSION'` rather than compiling something forged.
 fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
+    # v6.5.21 — emit NOTHING unless the source actually names the constant.
+    # cbt writes `#@pkgver` on every materialized build, so declaring
+    # unconditionally put an unused global + its string data into EVERY binary
+    # built through `cyrius build` — which changed their bytes and turned
+    # `tests/gates/toolchain/auto_deps_verb_gate.sh` axis 5 red ("lsp: installed
+    # binary is byte-identical to the no-prepend build — expected yes, got no").
+    # That gate is right: a build-time convenience must not perturb the output of
+    # a program that never asked for it. A literal scan is the honest test — the
+    # name is reserved-ish and 18 bytes, so a false positive costs one unused
+    # global and a false negative is impossible.
+    var sp = 0;
+    var seen = 0;
+    while (sp + 18 <= bl) {
+        if (load8(S + sp) == 67) {
+            if (load8(S + sp + 1) == 89 && load8(S + sp + 2) == 82 && load8(S + sp + 3) == 73 && load8(S + sp + 4) == 85 && load8(S + sp + 5) == 83 && load8(S + sp + 6) == 95 && load8(S + sp + 7) == 80 && load8(S + sp + 8) == 75 && load8(S + sp + 9) == 71 && load8(S + sp + 10) == 95) {
+                seen = 1;
+                break;
+            }
+        }
+        sp = sp + 1;
+    }
+    if (seen == 0) {
+        _pp_pkgver_len = 0;
+        return op;
+    }
     var p = ip + 9;
     var n = 0;
     var ok = 1;

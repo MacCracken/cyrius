@@ -1006,26 +1006,25 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
   the proposal names that as its sibling, both are "a build-time value that source cannot
   read", and the smaller one should define the shape. Candidate for the v6.6.x ergonomics list.
 
-- **Tuples — lightweight multi-value returns**
-  (`proposals/2026-08-13-tuple-multi-value-returns`) — filed 2026-08-13 by an abaco consumer
-  implementing Dekker double-double arithmetic for its decimal parser. Ergonomics, not
-  capability: `struct` covers the persistent case and the out-parameter idiom covers the
-  transient one, so nothing is blocked — abaco 2.4.0 shipped with out-params and pins 6.5.20.
-  The narrow-but-real case is **numeric** code, the domain Cyrius already serves with f64-only
-  arithmetic and no FMA: two-product, two-sum, double-double and compensated summation are all
-  built from intrinsically two-valued primitives, and each one is currently a heap buffer plus a
-  positional contract the checker cannot verify. Concrete cost in the filing consumer: an
-  `alloc(8)` per numeric literal purely to receive a second return value, and an overflow
-  condition smuggled back as a **negative sentinel** in an otherwise-unsigned count — a hazard
-  that exists only because there was no way to return "count AND did-it-overflow". Scope is
-  deliberately call-boundary only (returned then immediately destructured; no tuples in structs,
-  `vec`, or globals), which keeps it inside the calling convention with no heap traffic.
-  **Sequence it after `CYRIUS_PKG_VERSION` and the `[embed]` section** — those are manifest /
-  build-time mechanisms with no type-system surface, whereas this touches the type checker and
-  the calling convention. Candidate for the v6.6.x ergonomics list. Supporting datum: both
-  `lib/math.cyr`'s float parser and abaco's land ~1 ulp short at the top of the f64 range for
-  exactly this reason — the remedy is standard, the language makes it verbose enough that both
-  chose the approximation.
+- ~~**Tuples — lightweight multi-value returns**~~ — ✅ **SHIPPED v6.5.21**, archived to
+  `proposals/archived/2026-08-13-tuple-multi-value-returns`. ⛔ **This entry, as originally
+  written here, repeated the proposal's FALSE premise** ("ergonomics, not capability... nothing
+  is blocked") and is kept only as the correction. Two-value multi-value return with
+  destructuring had shipped at **v3.7.2** — `return (a, b);` + `var q, r = f();` — four majors
+  before the filing; the proposal's table tested `return a, b;` and `var (x, y) = f();`, which
+  differ only in where the parens go. Our own vidya entry (`language/features.cyml →
+  ret2_rethi`) documented the paren-less form under a heading reading "NATIVE MULTI-RETURN",
+  so a consumer following CLAUDE.md's search-vidya-first rule got the wrong syntax from the
+  authoritative source. What was genuinely missing and shipped at `.21`: **arity 3** (the one
+  real capability gap — `_dd_pow10`), a **declared return type** `fn f(): (f64, f64)` making
+  arity checkable at a forward call, a **destructure contract** (there was none — `var q, r = 42;`
+  compiled, and `dm(17,5) + (k/9) - 11` put the idiv REMAINDER in `r`), and **three silent
+  miscompiles** the proposal never knew about: cx returned the first value twice (return-0
+  emitter stubs), a `: f64` tuple lost its first value to a stale xmm0 on x86/PE — the exact
+  Dekker shape — and f64 type was lost at the binding, which is why the `: f64` RETURN
+  annotation had two uses ecosystem-wide, both in our own tests. **The lesson worth keeping:
+  a consumer-filed capability table is a report about OUR docs as much as about the language —
+  premise-check it against a RUN BINARY, not against the filing.**
 
 - **`lib/net.cyr` AF_UNIX surface** (was §9 of `2026-07-30-net-cyr-x86-only-socket-syscall-numbers`,
   archived v6.5.12) — a yes/no DESIGN call for the maintainer, not a defect: whether `net.cyr`

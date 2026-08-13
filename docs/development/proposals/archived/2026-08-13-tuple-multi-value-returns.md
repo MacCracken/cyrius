@@ -1,13 +1,70 @@
-# Tuples — lightweight multi-value returns
+# Tuples — lightweight multi-value returns — ✅ SHIPPED v6.5.21
+
+> **✅ SHIPPED in v6.5.21** (CHANGELOG `[6.5.21]`). Gated by
+> `tests/tcyr/crossos/multi_return.tcyr` (15 assertions, all four backends) and
+> `tests/gates/codegen/cx_multi_return.sh` (4 axes, mutation-proven).
+>
+> ⛔ **THIS PROPOSAL'S CENTRAL CLAIM WAS WRONG, AND THE ERROR WAS OURS.**
+> Two-value multi-value return with destructuring had shipped at **v3.7.2** —
+> four majors before this was filed. `return (a, b);` + `var q, r = f();` worked
+> at 6.5.20 and is documented in `docs/guides/cyrius-guide.md`. The proposal's
+> "What Cyrius has today (verified against 6.5.20, not assumed)" table is correct
+> only as *spelled*: it tested `return a, b;` and `var (x, y) = f();`, and those
+> two spellings are indeed parse errors. The supported spellings differ only in
+> where the parentheses go.
+>
+> **Root cause of the mis-filing is on our side, not the consumer's.** The vidya
+> entry `language/features.cyml → ret2_rethi`, under a heading literally reading
+> "ALTERNATIVE — NATIVE MULTI-RETURN", documented the form as
+> `return a / b, a % b;` — no parens, a parse error — and had done so since
+> v3.7.2. A consumer following CLAUDE.md's instruction to search vidya before
+> reimplementing got the wrong syntax from the authoritative source. Corrected at
+> v6.5.21.
+>
+> **What was genuinely missing, and what v6.5.21 shipped:**
+> * **Arity 3** — the one real capability gap. `_dd_pow10` is genuinely
+>   three-valued; it is now `fn f(): (i64, i64, i64)`. Third slot is r8 (x86/PE),
+>   x3 (aarch64), r5 (cx).
+> * **A declared return type** `fn f(a, b): (f64, f64)`, which is what makes
+>   arity checkable at a FORWARD call and types the bindings from the signature.
+> * **Three silent miscompiles the proposal did not know were there** — and these,
+>   not the ergonomics, were the real content of this slot:
+>   1. **cx returned the first value twice.** `EMOVRDXRAX`/`EMOVRA_RDX` were
+>      `return 0;` stubs, so `return (5, 9)` scored 59 on x86/aarch64/PE and 55
+>      on cx, exit 0, no diagnostic.
+>   2. **A `: f64` fn returning a tuple lost its first value** on x86/PE — the
+>      caller unboxed a stale `xmm0`. This is the *exact* Dekker shape the
+>      proposal motivates: a consumer writing `two_product` would naturally
+>      annotate `: f64` and get silently wrong numbers.
+>   3. **f64 type was lost at the binding**, so arithmetic on a returned f64 was
+>      an integer add over the bit pattern. Not destructure-specific — plain
+>      `var p = f();` on a `: f64` callee lost it too, which is why the `: f64`
+>      RETURN annotation had **two uses ecosystem-wide, both in our own tests**:
+>      it was unusable, not unpopular.
+> * **A destructure contract**, which did not exist at all. `var q, r = 42;`
+>   compiled; `var q, r = dm(17,5) + (k/9) - 11;` put the **idiv remainder** in
+>   `r`. Both now rejected.
+>
+> **Two factual corrections to the filing's evidence**, recorded so the next
+> reader does not inherit them: the `_two_product(a, b, out)` row describes code
+> that **does not exist in abaco** — there is no such function and no 16-byte
+> buffer; the real primitive is single-return `_dd_prod_err`. And of the sites
+> that do exist, two of three were already expressible with zero heap, plus two
+> more 2-valued sites in `src/dsp.cyr` the filing did not list. The consumer-side
+> facts (the `alloc(8)` per numeric literal, the negative-sentinel hazard, the six
+> structs, the 6.5.20 pin) all check out.
+>
+> **Not shipped, deliberately:** tuples as first-class storable values. The
+> proposal's own "Not asking for" section holds — this stays a call-boundary
+> construct.
 
 **Filed:** 2026-08-13 (by an abaco consumer, surfaced implementing Dekker
 double-double arithmetic for `parse_number` during abaco 2.4.0 — every
 error-compensated primitive in that family is intrinsically two-valued and had
 to be routed through heap buffers)
-**Status:** PROPOSED — an **ergonomics gap**, not a capability gap. Everything
-below is achievable today with `alloc` + `store64`/`load64` or a named `struct`;
-the ask is to stop paying a heap allocation and a named type for values whose
-whole lifetime is one expression.
+**Status:** ✅ **SHIPPED in v6.5.21** — filed as an **ergonomics gap**; the
+ergonomics half had largely shipped at v3.7.2 and the slot's real content turned
+out to be three silent miscompiles underneath it (see the banner above).
 **Placement:** **roadmap.md → Potential backlog**, candidate for the **v6.6.x
 ergonomics list** alongside `CYRIUS_PKG_VERSION` and the `[embed]` manifest
 section. Sequence it **after** those two — both are manifest/build-time
