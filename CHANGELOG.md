@@ -13,8 +13,19 @@ turned out to be sitting on three silent miscompiles.** Both proposals' stated p
 were wrong in a load-bearing way, and both errors were ours, not the consumers'.
 
 **Self-host fixpoint 1,168,360 B** (+13,576 vs .20), **seed → cybs → cycc byte-identical
-from the 29,024 B seed**, corpus **271/271**, gate scripts **58** (0 orphans, 0 dangling,
-re-derived both ways).
+from the 29,024 B seed**, `check.sh` **179 / 0**, corpus **271/271**, gate scripts **58**
+(0 orphans, 0 dangling, re-derived both ways), and cross-OS on REAL hardware —
+**ecb + ach + cass + pi, each SELFHOST_OK + crossos 47/47**.
+
+⚠ **BENCH NOT VALID FOR THIS RELEASE — RE-MEASURE BEFORE TRUSTING ANY PERF DELTA.** The
+3-tier suite ran with an unrelated `cargo` build on the box at ~184 % CPU and load 4.6
+(a 25-minute wait for a quiet window expired without one). It reported `self_compile`
+**788 ms** against .20's 688 ms — **+14.5 %**, which is exactly the size of delta that
+must not be recorded from a contaminated box. `bench-history.csv` / `BENCHMARKS.md` carry
+that run; treat the compiler tier as noise until re-run on a quiet box. The v6.5.19 scar
+is the precedent: leaked test children flipped a perf tripwire red and TWO implementers
+wrote it off as "environmental load". No orphaned children were present this time — the
+contention was genuinely foreign work.
 
 ### Fixed — multi-value return: three silent miscompiles
 
