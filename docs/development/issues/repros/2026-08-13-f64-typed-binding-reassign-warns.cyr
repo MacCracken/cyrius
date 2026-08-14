@@ -1,0 +1,61 @@
+# Repro: `assigning non-pointer to typed pointer` on an f64-typed binding.
+#
+# Build from a directory WITH a cyrius.cyml declaring [deps].stdlib (any list
+# containing math), so `f64_*` resolve:
+#   cyrius build 2026-08-13-f64-typed-binding-reassign-warns.cyr out && ./out
+#
+# Expected: 447, 780, 7 — and NO warning. Actual: correct values, one warning
+# on the `e1` line only (the declared-tuple case). Values are right; the
+# diagnostic is the defect.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+
+# Declared element types — the destructured bindings are typed whether the
+# caller asked or not.
+fn declared(): (f64, f64) {
+    return (f64_from(10), f64_from(3));
+}
+
+# The legacy v3.7.2 undeclared form — bindings stay untyped.
+fn undeclared() {
+    return (f64_from(10), f64_from(3));
+}
+
+# WARNS. There is no way to decline the type: it comes from the callee's
+# signature, and dropping the signature costs the arity checking .21 added.
+fn from_declared() {
+    var p1, e1 = declared();
+    e1 = f64_add(e1, f64_from(444));
+    return f64_to(e1);
+}
+
+# Does NOT warn — same statement, untyped binding.
+fn from_undeclared() {
+    var p2, e2 = undeclared();
+    e2 = f64_add(e2, f64_from(777));
+    return f64_to(e2);
+}
+
+# Also warns, and is NOT tuple-related: a plain `: f64` local reassigned from
+# an f64_* builtin. This is the underlying trigger; tuples merely make it
+# unavoidable.
+fn plain_typed_local() {
+    var x: f64 = f64_from(3);
+    x = f64_add(x, f64_from(4));
+    return f64_to(x);
+}
+
+fn main() {
+    alloc_init();
+    println_int(from_declared());      # 447
+    println_int(from_undeclared());    # 780
+    println_int(plain_typed_local());  # 7
+    return 0;
+}
+
+var r = main();
+sys_exit(r);
