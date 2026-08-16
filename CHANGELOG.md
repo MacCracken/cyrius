@@ -17,15 +17,20 @@ from the 29,024 B seed**, `check.sh` **179 / 0**, corpus **271/271**, gate scrip
 (0 orphans, 0 dangling, re-derived both ways), and cross-OS on REAL hardware —
 **ecb + ach + cass + pi, each SELFHOST_OK + crossos 47/47**.
 
-⚠ **BENCH NOT VALID FOR THIS RELEASE — RE-MEASURE BEFORE TRUSTING ANY PERF DELTA.** The
-3-tier suite ran with an unrelated `cargo` build on the box at ~184 % CPU and load 4.6
-(a 25-minute wait for a quiet window expired without one). It reported `self_compile`
-**788 ms** against .20's 688 ms — **+14.5 %**, which is exactly the size of delta that
-must not be recorded from a contaminated box. `bench-history.csv` / `BENCHMARKS.md` carry
-that run; treat the compiler tier as noise until re-run on a quiet box. The v6.5.19 scar
-is the precedent: leaked test children flipped a perf tripwire red and TWO implementers
-wrote it off as "environmental load". No orphaned children were present this time — the
-contention was genuinely foreign work.
+**Bench on a quiet box: `self_compile` 683 ms** (688 at .20 — **−0.7 %**, flat within
+noise), **cycc 1,168,360 B**. `phase_pp` **114 ms** (117 at .20), which specifically
+clears the per-byte `#@file` check added to `PP_PASS`'s hot copy loop.
+
+⚠ **`bench-history.csv` carries an INVALID row for this release — 2026-08-13T23:43:28Z,
+`self_compile` 788 ms / `phase_pp` 134 ms. Ignore it.** That run happened with an
+unrelated `cargo` build on the box at ~184 % CPU and load 4.6 (a 25-minute wait for a
+quiet window expired without one). It was NOT recorded as the release delta, and the
+2026-08-14 re-run on a verified-idle box is the real measurement. Note the contaminated
+run inflated *both* numbers by ~15 % — a box-wide scale factor, not a code change, which
+is the tell. The v6.5.19 scar is the precedent: leaked test children flipped a perf
+tripwire red and TWO implementers wrote it off as "environmental load". ⭐ Orphan check
+came back CLEAN this time — the contention was genuinely foreign work, so the .19 failure
+mode did not recur; verify which it is before attributing a delta either way.
 
 ### Fixed — multi-value return: three silent miscompiles
 
