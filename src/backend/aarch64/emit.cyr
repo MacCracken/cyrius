@@ -1496,7 +1496,7 @@ fn EF64_NEG(S): i64 {
 fn EF64_SIN(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_sin_polyfill", 17);
     if (pf < 0) {
-        ERR_MSG(S, "f64_sin on aarch64 requires include \"lib/math.cyr\" (provides _f64_sin_polyfill)", 78);
+        ERR_MSG(S, "f64_sin on aarch64 requires include \"lib/math.cyr\" (provides _f64_sin_polyfill)", 79);
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -1507,7 +1507,7 @@ fn EF64_SIN(S): i64 {
 fn EF64_COS(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_cos_polyfill", 17);
     if (pf < 0) {
-        ERR_MSG(S, "f64_cos on aarch64 requires include \"lib/math.cyr\" (provides _f64_cos_polyfill)", 78);
+        ERR_MSG(S, "f64_cos on aarch64 requires include \"lib/math.cyr\" (provides _f64_cos_polyfill)", 79);
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -1522,7 +1522,7 @@ fn EF64_COS(S): i64 {
 fn EF64_EXP2(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_exp2_polyfill", 18);
     if (pf < 0) {
-        ERR_MSG(S, "f64_exp2 on aarch64 requires include \"lib/math.cyr\" (provides _f64_exp2_polyfill)", 80);
+        ERR_MSG(S, "f64_exp2 on aarch64 requires include \"lib/math.cyr\" (provides _f64_exp2_polyfill)", 81);
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -1533,7 +1533,7 @@ fn EF64_EXP2(S): i64 {
 fn EF64_ATAN(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_atan_polyfill", 18);
     if (pf < 0) {
-        ERR_MSG(S, "f64_atan on aarch64 requires include \"lib/math.cyr\" (provides _f64_atan_polyfill)", 80);
+        ERR_MSG(S, "f64_atan on aarch64 requires include \"lib/math.cyr\" (provides _f64_atan_polyfill)", 81);
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -1551,7 +1551,7 @@ fn EF64_ATAN(S): i64 {
 fn EF64_EXP(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_exp_polyfill", 17);
     if (pf < 0) {
-        ERR_MSG(S, "f64_exp on aarch64 requires include \"lib/math.cyr\" (provides _f64_exp_polyfill)", 78);
+        ERR_MSG(S, "f64_exp on aarch64 requires include \"lib/math.cyr\" (provides _f64_exp_polyfill)", 79);
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -1562,7 +1562,7 @@ fn EF64_EXP(S): i64 {
 fn EF64_LN(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_ln_polyfill", 16);
     if (pf < 0) {
-        ERR_MSG(S, "f64_ln on aarch64 requires include \"lib/math.cyr\" (provides _f64_ln_polyfill)", 76);
+        ERR_MSG(S, "f64_ln on aarch64 requires include \"lib/math.cyr\" (provides _f64_ln_polyfill)", 77);
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -1573,7 +1573,7 @@ fn EF64_LN(S): i64 {
 fn EF64_LOG2(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_log2_polyfill", 18);
     if (pf < 0) {
-        ERR_MSG(S, "f64_log2 on aarch64 requires include \"lib/math.cyr\" (provides _f64_log2_polyfill)", 80);
+        ERR_MSG(S, "f64_log2 on aarch64 requires include \"lib/math.cyr\" (provides _f64_log2_polyfill)", 81);
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);

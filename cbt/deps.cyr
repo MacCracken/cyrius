@@ -765,11 +765,35 @@ fn _dep_pull_leaves(stdlib_dir, dep_name, leaves): i64 {
         var leaf = vec_get(leaves, i);
         var r = _dep_copy_stdlib_recursive(stdlib_dir, leaf, 1);
         if (r == 1) {
+            # v6.5.24 — SAY WHICH CONDITION ACTUALLY HELD. This printed
+            # "but it is not in the cyrius stdlib" for every failure, which was FALSE
+            # for the ones consumers actually hit: `bench`, `test`, `patra`, `random`,
+            # `chrono`, `slice` and `ct` are all present in the stdlib, and the real
+            # condition was an unpopulated resolution dir. The line above it already
+            # said `cannot read <path>` — but this one is phrased as a CONCLUSION, so
+            # it wins, and it pointed maintainers at deleting a correct
+            # `[deps].stdlib` declaration. Filed from bote CI (also agnosai, majra).
+            # Probe the SOURCE dir: if the module is there, the stdlib is fine and the
+            # copy is what failed — a different problem with a different fix.
+            var _lp_sb = str_builder_new();
+            str_builder_add_cstr(_lp_sb, stdlib_dir);
+            str_builder_add_cstr(_lp_sb, "/");
+            str_builder_add_cstr(_lp_sb, leaf);
+            str_builder_add_cstr(_lp_sb, ".cyr");
+            var _lp_src = str_data(str_builder_build(_lp_sb));
             sys_write(STDERR_FD, "error: dep ", 11);
             sys_write(STDERR_FD, dep_name, strlen(dep_name));
             sys_write(STDERR_FD, " requires '", 11);
             sys_write(STDERR_FD, leaf, strlen(leaf));
-            sys_write(STDERR_FD, "' but it is not in the cyrius stdlib\n", 37);
+            if (file_exists(_lp_src) == 1) {
+                sys_write(STDERR_FD, "' — it IS in the stdlib (", 26);
+                sys_write(STDERR_FD, _lp_src, strlen(_lp_src));
+                sys_write(STDERR_FD, ") but could not be brought into ./lib. Run `cyrius lib sync --full`; do NOT remove the declaration.\n", 100);
+            } else {
+                sys_write(STDERR_FD, "' but it is not in the cyrius stdlib (looked in ", 47);
+                sys_write(STDERR_FD, stdlib_dir, strlen(stdlib_dir));
+                sys_write(STDERR_FD, ")\n", 2);
+            }
             errs = errs + 1;
         }
         i = i + 1;

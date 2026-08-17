@@ -585,10 +585,10 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                                 # non-i64: monomorphize on demand + call the specialized fn.
                                 var _spec = _instantiate_generic_fn(S, _eta_fi, _ta_conc, _ta_conc1);
                                 if (_spec == 0 - 2) {
-                                    ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 92);
+                                    ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 91);
                                 }
                                 if (_spec == 0 - 3) {
-                                    ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 119);
+                                    ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 123);
                                 }
                                 PARSE_FNCALL(S, L64(_fnt_names + _spec * 8));
                             }
@@ -696,7 +696,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         if (sw == 8)  { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_8",  16); }
                         if (sw == 16) { idx_fn = _FINDFN_CSTR(S, "_slice_idx_get_16", 17); }
                         if (idx_fn < 0) {
-                            ERR_MSG(S, "slice subscript requires include \"lib/slice.cyr\" (provides _slice_idx_get_W helpers)", 92);
+                            ERR_MSG(S, "slice subscript requires include \"lib/slice.cyr\" (provides _slice_idx_get_W helpers)", 84);
                         }
                         ECALLPOPS(S, 2);
                         ECALLFIX(S, idx_fn);
@@ -1816,7 +1816,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (_ASYNC_OK == 0) { ERR_MSG(S, "await requires CYRIUS_ASYNC=1 (async/await are gated)", 53); }
         STI(S, GTI(S) + 1);                       # consume `await`
         var _aw_ff = _FINDFN_CSTR(S, "future_force", 12);
-        if (_aw_ff < 0) { ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force", 50); }
+        if (_aw_ff < 0) { ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force", 52); }
         PARSE_FACTOR(S);                          # rax = the Future object
         EPUSHR(S);                                # push the future as the sole arg
         ECALLPOPS(S, 1);                          # marshal into arg-reg 0
@@ -1958,7 +1958,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # `clpc + cl_cap_shift < 6` guard dropped anything beyond, silently.
         if (_cl_capturing == 1) {
             if (clpc >= _ARG_REG_COUNT()) {
-                ERR_MSG(S, "capturing closure has too many parameters — its captured environment needs one more argument register than this target has", 124);
+                ERR_MSG(S, "capturing closure has too many parameters — its captured environment needs one more argument register than this target has", 122);
             }
             ESTOREPARM(S, clpc, cl_env_slot, clpc + 1);
         }
@@ -2028,7 +2028,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # obj passed as the hidden first arg — see the callptr handler.)
             var cl_alloc_fi = _FINDFN_CSTR(S, "alloc", 5);
             if (cl_alloc_fi < 0) {
-                ERR_MSG(S, "a capturing closure needs include \"lib/alloc.cyr\" for its heap env", 64);
+                ERR_MSG(S, "a capturing closure needs include \"lib/alloc.cyr\" for its heap env", 66);
             }
             EMOVI(S, (1 + _cl_ncap) * 8);   # rax = size
             EPUSHR(S);
@@ -2702,7 +2702,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
     if (PEEKT(S) == 124) {
         STI(S, GTI(S) + 1);
         if (GINFN(S) == 0) {
-            ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 56);
+            ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 55);
         }
         # Hidden temp slot to hold the Result ptr across the
         # tag-check / unwrap branches (same idiom as PARSE_MATCH).

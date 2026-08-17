@@ -819,11 +819,11 @@ fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
 # returns; for now error so consumers fail loudly rather than
 # silently miscompiling.
 fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
-    ERR_MSG(S, "cx: int-class 16B struct pair-return ABI not supported", 53);
+    ERR_MSG(S, "cx: int-class 16B struct pair-return ABI not supported", 54);
     return 0;
 }
 fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
-    ERR_MSG(S, "cx: int-class 16B struct pair-return ABI not supported", 53);
+    ERR_MSG(S, "cx: int-class 16B struct pair-return ABI not supported", 54);
     return 0;
 }
 

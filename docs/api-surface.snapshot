@@ -694,6 +694,16 @@ ganita::f64_sinh/1
 ganita::f64_tanh/1
 ganita::fibonacci/1
 ganita::ganita_binomial/2
+ganita::ganita_f32_abs/1
+ganita::ganita_f32_ceil/1
+ganita::ganita_f32_clamp/3
+ganita::ganita_f32_floor/1
+ganita::ganita_f32_lerp/3
+ganita::ganita_f32_max/2
+ganita::ganita_f32_min/2
+ganita::ganita_f32_neg/1
+ganita::ganita_f32_sign/1
+ganita::ganita_f32_trunc/1
 ganita::ganita_f64_acos/1
 ganita::ganita_f64_acosh/1
 ganita::ganita_f64_asin/1

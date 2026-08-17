@@ -1,6 +1,37 @@
 # ganita has no f32 math surface — every f32 consumer widens to f64 and narrows back
 
-**Status:** 🟡 **OPEN** — surfaced while planning the ranga (image processing) Rust→Cyrius port.
+**Status:** 🟡 **OPEN — TIER 1 SHIPPED at v6.5.24 (ganita 1.1.0); tiers 2-3 remain.**
+
+> **✅ TIER 1 SHIPPED — ganita 1.1.0, folded at cyrius v6.5.24.** Ten `ganita_f32_*` helpers
+> in the new `src/math_f32.cyr`: `_abs`, `_neg`, `_sign` (pure bit ops), `_min`, `_max`,
+> `_clamp` (one signed compare on a monotone key), `_lerp`, `_floor`, `_ceil`, `_trunc`.
+> api-surface 4843 -> 4853 (+10, no accidental surface). **MINOR bump, not a patch** — new
+> public API. Fixed UPSTREAM first per CLAUDE.md, then re-vendored; the toolchain pin also
+> went 6.4.69 -> 6.5.23 (it was 15 patches behind and warning).
+>
+> ⚠ **THIS FILING'S OWN HINT WAS THE TRAP.** It says "for non-negative finite f32 the raw
+> 32-bit pattern orders identically to an unsigned integer, so min/max/clamp are integer
+> compares". True — and precisely why a naive implementation is dangerous: IEEE-754 is
+> SIGN-MAGNITUDE, so for two NEGATIVES the order REVERSES and any negative compares HIGH
+> against every positive. Pixel data is non-negative, so the naive version passes every
+> plausible test and breaks the first time a consumer subtracts. Shipped with the standard
+> monotone-key transform and verified on the both-negative and mixed-sign cases.
+>
+> ⚠ **`ganita_f32_lerp` WIDENS, and not by choice:** there is no callable `f32_add` /
+> `f32_sub` / `f32_mul`. cyrius dispatches f32 arithmetic through the OPERATORS on an
+> `F32_TYID`-typed value (`EMIT_F32_BINOP`), reachable only from a `var x: f32` binding —
+> and library params arrive as untyped bit patterns. A first cut called `f32_add(...)` as a
+> builtin; `cyrius distlib` caught it as `undefined function`. **That is a real adjacent
+> gap: the f32 tier cannot be written in native f32 arithmetic today.**
+>
+> ⭐ **Its dependency was discharged in the same release.** This tier was GATED on
+> `2026-08-13-f64-typed-binding-reassign-warns-as-pointer` — `F32_TYID` (0x40000002) is
+> positive, so `lt > 0` at `parse.cyr:1498` counted every f32 local as a typed pointer.
+> Shipping f32 helpers first would have made every f32 accumulator in every consumer emit a
+> bogus warning. Guard landed at v6.5.24 ahead of this.
+>
+> **Remaining:** tier 2 (`f32_sqrt` via `sqrtss`) and tier 3 (the `ganita_f32_*`
+> transcendentals). Both are interleaved reactive fold-ins, not blockers. — surfaced while planning the ranga (image processing) Rust→Cyrius port.
 **Placement:** **Split — do NOT bounce the whole thing to ganita.** Tier 1 (f32 scalar helpers) rides **v6.5.24 — band C**, in the same bite-cluster as the typed-binding guard it depends on. Tiers 2–3 are interleaved reactive fold-ins.
 
 > **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Gap verified UPSTREAM as well as in the fold, per the fix-the-source-repo rule. ⚠ GATED ON `2026-08-13-f64-typed-binding-reassign-warns-as-pointer`.

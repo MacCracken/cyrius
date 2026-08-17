@@ -667,11 +667,11 @@ fn PARSE_RETURN(S): i64 {
     # passed around as pointers, not by-value).
     if (_cur_fn_ret_sid > 0 && _cur_fn_ret_stash > 0) {
         if (PEEKT(S) != 2) {
-            ERR_MSG(S, "struct-return fn: return must be a bare local identifier", 57);
+            ERR_MSG(S, "struct-return fn: return must be a bare local identifier", 56);
         }
         var srn_noff = PEEKV(S);
         if (TOKTYP(S, GTI(S) + 1) != 5) {
-            ERR_MSG(S, "struct-return fn: return must be a bare local identifier", 57);
+            ERR_MSG(S, "struct-return fn: return must be a bare local identifier", 56);
         }
         var srn_lli = FINDLOCAL(S, srn_noff);
         if (srn_lli < 0) {
@@ -737,10 +737,10 @@ fn PARSE_RETURN(S): i64 {
         #     regalloc cap of 5, stash_disp is in [-48,-8] — safe.
         if (_AARCH64_BACKEND == 1) {
             if (srn_aligned > 65535) {
-                ERR_MSG(S, "struct return by value: struct >= 64 KB pending Phase 2c (movz/movk chain)", 76);
+                ERR_MSG(S, "struct return by value: struct >= 64 KB pending Phase 2c (movz/movk chain)", 74);
             }
             if (srn_stash_disp < 0 - 256) {
-                ERR_MSG(S, "struct return by value: stash_disp out of LDUR imm9 range — increase regalloc-aware fallback", 95);
+                ERR_MSG(S, "struct return by value: stash_disp out of LDUR imm9 range — increase regalloc-aware fallback", 92);
             }
         }
         ESTRUCT_BYVAL_COPY(S, srn_src_disp, srn_stash_disp, srn_aligned);
@@ -1575,7 +1575,7 @@ fn PARSE_FNCALL(S, noff): i64 {
             var _fc_class = (_fc_simd_mask >> (argc * 2)) & 3;
             if (_fc_class > 0) {
                 if (PEEKT(S) != 2) {
-                    ERR_MSG(S, "value-form SIMD arg must be a local IDENT (caller-side scratch + addr-eval path not in v5.10.38 scope)", 100);
+                    ERR_MSG(S, "value-form SIMD arg must be a local IDENT (caller-side scratch + addr-eval path not in v5.10.38 scope)", 102);
                 }
                 var _fc_arg_noff = PEEKV(S);
                 STI(S, GTI(S) + 1);  # consume IDENT
@@ -2858,7 +2858,7 @@ fn _mint_impl_name(S, base_noff): i64 {
 fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     var alloc_fi = _FINDFN_CSTR(S, "alloc", 5);
     if (alloc_fi < 0) {
-        ERR_MSG(S, "an async fn needs include \"lib/alloc.cyr\" for its Future heap object", 67);
+        ERR_MSG(S, "an async fn needs include \"lib/alloc.cyr\" for its Future heap object", 68);
     }
     var fi_f = FINDFN(S, noff_f);
     if (fi_f < 0) { fi_f = REGFN(S, noff_f); }
@@ -3845,7 +3845,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # Bound check: SysV SIMD arg-regs are XMM0..XMM7
                     # (8 regs); f64v2 uses 1, f64v4 uses 2.
                     if (simd_pc + pt_simd_class > 8) {
-                        ERR_MSG(S, "too many f64v2/f64v4 params (SIMD arg-reg budget XMM0..XMM7 exceeded)", 70);
+                        ERR_MSG(S, "too many f64v2/f64v4 params (SIMD arg-reg budget XMM0..XMM7 exceeded)", 69);
                     }
                     # Emit register-pair store at fn entry. ESTOREPARM_F64V2
                     # / F64V4 takes the SIMD ordinal + named slot's local idx.

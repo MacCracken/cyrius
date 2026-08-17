@@ -58,10 +58,10 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
                     asz = as_ecv & 0x7FFFFFFFFFFFFFFF;
                     STI(S, GTI(S) + 1);
                 } else {
-                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 113);
+                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
                 }
             } else {
-                ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 113);
+                ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
             }
         } else {
             ERR_EXPECT(S, 1);
@@ -343,7 +343,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
                 var fld_off = 0 - 1;
                 if (fname & 0xFFFFFFFF == 0x00727470) { fld_off = 0; }      # "ptr\0"
                 elif (fname & 0xFFFFFFFF == 0x006E656C) { fld_off = 8; }    # "len\0"
-                else { ERR_MSG(S, "slice has only .ptr and .len fields", 36); }
+                else { ERR_MSG(S, "slice has only .ptr and .len fields", 35); }
                 EFLADDR_X1(S, lli);
                 if (fld_off > 0) { EADDIMM_X1(S, fld_off); }
                 ELODC(S);
@@ -518,7 +518,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
                 var fld_off = 0 - 1;
                 if (fname & 0xFFFFFFFF == 0x00727470) { fld_off = 0; }      # "ptr\0"
                 elif (fname & 0xFFFFFFFF == 0x006E656C) { fld_off = 8; }    # "len\0"
-                else { ERR_MSG(S, "slice has only .ptr and .len fields", 36); }
+                else { ERR_MSG(S, "slice has only .ptr and .len fields", 35); }
                 if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
                 STI(S, GTI(S) + 1);
                 PCMPE(S);
@@ -775,10 +775,10 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
                     sz_raw = gas_ecv & 0x7FFFFFFFFFFFFFFF;
                     STI(S, GTI(S) + 1);
                 } else {
-                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 113);
+                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
                 }
             } else {
-                ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 113);
+                ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
             }
         } else {
             ERR_EXPECT(S, 1);
@@ -830,10 +830,10 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
                 if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }
                 var bv = PEEKV(S);
                 if (bv < 0 || bv > 255) {
-                    ERR_MSG(S, "byte-array literal value must be in [0, 255]", 47);
+                    ERR_MSG(S, "byte-array literal value must be in [0, 255]", 44);
                 }
                 if (bi >= sz) {
-                    ERR_MSG(S, "byte-array literal has more bytes than the array's declared capacity (cap is [N]*8 bytes)", 95);
+                    ERR_MSG(S, "byte-array literal has more bytes than the array's declared capacity (cap is [N]*8 bytes)", 89);
                 }
                 STI(S, GTI(S) + 1);
                 bi = bi + 1;
@@ -1317,7 +1317,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         # error text doesn't depend on where the bare-decl appears.
         if (PEEKT(S) != 4) {
             if (PEEKT(S) == 5) {
-                ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 70);
+                ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 69);
             }
             ERR_EXPECT(S, 4);
         }
@@ -1463,10 +1463,10 @@ fn PARSE_VAR(S): i64 {
         # A non-call right-hand side can never produce a second value, so it is
         # now rejected outright.
         if (PEEKT(S) != 2) {
-            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 58);
+            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
         }
         if (TOKTYP(S, GTI(S) + 1) != 10) {
-            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 58);
+            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
         }
         # ...and the call must be the WHOLE right-hand side. `dm(17, 5) + (k / 9) - 11`
         # opens with the same two tokens, and used to compile silently with the
@@ -1482,7 +1482,7 @@ fn PARSE_VAR(S): i64 {
             _dt_sc = _dt_sc + 1;
         }
         if (TOKTYP(S, _dt_sc + 1) != 5) {
-            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 58);
+            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
         }
         var _dt_fi = FINDFN(S, PEEKV(S));
         if (_dt_fi >= 0) {
@@ -1494,7 +1494,7 @@ fn PARSE_VAR(S): i64 {
                 # annotation of their own.
                 var _dt_decl = GFRN(S, _dt_fi);
                 if (_dt_decl != _dt_n) {
-                    ERR_MSG(S, "multi-value destructure count does not match the fn's declared return arity", 76);
+                    ERR_MSG(S, "multi-value destructure count does not match the fn's declared return arity", 75);
                 }
                 if (GFRT(S, _dt_fi, 0) == 0 - 9) { _dt_t1 = F64_TYID; }
                 if (GFRT(S, _dt_fi, 1) == 0 - 9) { _dt_t2 = F64_TYID; }
@@ -1531,7 +1531,7 @@ fn PARSE_VAR(S): i64 {
             EFLSTORE(S, li2);
             if (_dt_n == 3) { SFLC(S, li1 + 3); } else { SFLC(S, li1 + 2); }
         } else {
-            ERR_MSG(S, "multi-var destructure only supported inside functions", 52);
+            ERR_MSG(S, "multi-var destructure only supported inside functions", 53);
         }
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);
@@ -1791,7 +1791,7 @@ fn PARSE_VAR(S): i64 {
     # which is where field 0 lives.
     if (pscale < 0 && PEEKT(S) == 5) {
         if (GINFN(S) != 1) {
-            ERR_MSG(S, "uninitialized struct locals only allowed inside a function", 60);
+            ERR_MSG(S, "uninitialized struct locals only allowed inside a function", 58);
         }
         var sv_sid = 0 - pscale;
         var sv_sz = 0;
@@ -2136,7 +2136,7 @@ fn PARSE_VAR(S): i64 {
         # Now `got` is allocated. Parse `= IDENT(args);`.
         STI(S, GTI(S) + 1);                         # consume '='
         if (PEEKT(S) != 2) {
-            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 47);
+            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
         var asv_fnoff = PEEKV(S);
         STI(S, GTI(S) + 1);                         # consume fn-name IDENT
@@ -2150,7 +2150,7 @@ fn PARSE_VAR(S): i64 {
             _consume_gt(S);
         } }
         if (PEEKT(S) != 10) {
-            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 47);
+            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
         var asv_fi = FINDFN(S, asv_fnoff);
         if (asv_fi < 0) { asv_fi = REGFN(S, asv_fnoff); }
@@ -2159,7 +2159,7 @@ fn PARSE_VAR(S): i64 {
             ERR_MSG(S, "fn does not declare a struct return type", 40);
         }
         if (asv_callee_sid != asv_sid) {
-            ERR_MSG(S, "fn return struct-id differs from declared var type", 51);
+            ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
         }
         STI(S, GTI(S) + 1);                         # consume '('
         # Push hidden retptr as first arg on x86 (SysV: RDI, Win64:
@@ -2237,7 +2237,7 @@ fn PARSE_VAR(S): i64 {
         # Parse `= IDENT(args);`
         STI(S, GTI(S) + 1);                         # consume '='
         if (PEEKT(S) != 2) {
-            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 47);
+            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
         var asp_fnoff = PEEKV(S);
         STI(S, GTI(S) + 1);                         # consume fn-name IDENT
@@ -2250,7 +2250,7 @@ fn PARSE_VAR(S): i64 {
             _consume_gt(S);
         } }
         if (PEEKT(S) != 10) {
-            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 47);
+            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
         var asp_fi = FINDFN(S, asp_fnoff);
         if (asp_fi < 0) { asp_fi = REGFN(S, asp_fnoff); }
@@ -2259,7 +2259,7 @@ fn PARSE_VAR(S): i64 {
             ERR_MSG(S, "fn does not declare a struct return type", 40);
         }
         if (asp_callee_sid != asp_sid) {
-            ERR_MSG(S, "fn return struct-id differs from declared var type", 51);
+            ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
         }
         STI(S, GTI(S) + 1);                         # consume '('
         # NO hidden retptr — pair-return uses rax/rdx, not RDI.
@@ -2305,7 +2305,7 @@ fn PARSE_VAR(S): i64 {
     # the specific fix.
     if (PEEKT(S) != 4) {
         if (PEEKT(S) == 5) {
-            ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 70);
+            ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 69);
         }
         ERR_EXPECT(S, 4);
     }
