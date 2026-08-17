@@ -4,7 +4,55 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [Unreleased] — `.26` in flight
+
+**Band D finish-out + the stiva coroutine re-scope.**
+
+### Fixed — the PE base-relocation ceiling blocked ALL full-stdlib Windows builds
+
+`_pe_layout` collected DIR64 sites into a FIXED 8192-slot window at `S + 0x1DC000`;
+overflowing it was a hard error with no binary, and the 27-module preamble + any fold is past
+it. Now lazily allocated (`_pe_reloc_base`, `_PE_RELOC_CAP` = 65536) per the v6.4.75
+`_fnvb_base` precedent. mabda / yukti / sigil all build for Windows (2.2–2.8 MB).
+
+⚠ **An in-place raise was impossible**: the window was exactly 64 KB and `0x1DC000 + 0x10000`
+**is** `0x1EC000` (`gvar_initval`) — zero slack — so growing it would have MOVED a region and
+cost a two-step bootstrap. Cap measured, not guessed: 8192 FULL, 16384 fits. Added a 75 %
+warning, because the reason this cost a release to find is that it was silent until fatal.
+
+⛔ **Two heap-map lies fell out of it, both invisible to the heapmap gate:**
+`enum_const_val` was documented `[8192]` (8192 **bytes**) while v6.3.0 made it a vcnt-indexed
+growable table of 8192 **slots** = 65,536 B — a 57 KB understatement that HID a 49 KB overlap
+with the old reloc window, dormant only by pass-ordering and by cycc's var_table peaking at
+518/8192. And `0x1DA000 "DCE bitmap"` was a **phantom**: two map comments, zero code accesses
+(the real `live[]` is a stack array). Freeing 0x1DC000 resolved the overlap *by accident*;
+correcting both entries is what stops the next allocation in that band recreating it.
+
+### Fixed — the async reactor could hold only ONE waiter per fd (stiva Half A)
+
+`_async_wait_events` put the TASK POINTER in the epoll data slot, so an fd identified exactly
+one waiter, and its `EPOLL_CTL_ADD` return was UNCHECKED — a second waiter got `-EEXIST` and
+was **silently lost**. The wake path then `EPOLL_CTL_DEL`'d unconditionally, dropping the
+registration for anyone still parked on the other direction, with `maxevents` = 1.
+
+Now: data carries the **fd**, the wake path walks the task list waking every waiter whose mask
+intersects what fired, DEL only when none remain (MOD the remainder otherwise), ADD falls back
+to MOD on `-EEXIST`, maxevents 8, and `EPOLLERR`/`EPOLLHUP` wake everyone. New `async_wait_rw`
+and `async_relay_once`, ported to the Windows and agnos backends as no-op parks.
+
+⭐ **This is what stiva's `exec -it` was blocked on** — filed 2026-07-25 as needing STACKLESS
+COROUTINES and pinned to `.33`–`.34` behind an IR substrate. **The pin's justification was
+false**: band E is confined to `ir.cyr` and only runs under `CYRIUS_IR` (5 of 7 forks never
+enable it), `lib/async.cyr` is **not included by cycc at all** so "built twice" had no
+referent, and the park/resume runtime already worked. A missing-language-feature filing that
+was a lost-wakeup bug in ~20 lines of lib code.
+
+⛔ **The reactor had ZERO corpus coverage before this** — four minors, no test.
+⚠ **Verified on LINUX ONLY:** the reactor is epoll-only (PE has no `sys_pipe`, Mach-O no
+`sys_epoll_wait`), so the test cannot live in `crossos/` and the gate does not run it
+off-Linux. ⚠ Mutation-testing showed the two re-registration paths are redundant individually
+and jointly load-bearing — disable either and every axis stays green; disable both and it
+hangs. Recorded in the test header so neither gets "simplified" away.
 
 ## [6.5.25] — 2026-08-17
 

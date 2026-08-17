@@ -55,7 +55,41 @@
 > Estimated ~150-220 lines in `lib/async.cyr`, ~60-90 in `lib/async_win.cyr`, ~30 in
 > `lib/async_agnos.cyr`, ~150 of crossos gate. One release, cycc byte-identical.
 >
-> **Status: SPECIFIED, NOT BUILT.** The re-scope is the deliverable here; the code is not written.
+> ### ✅ HALF A BUILT AND SHIPPED — v6.5.26
+>
+> `epoll_data` now carries the **fd** instead of the task pointer, and the wake path walks the
+> task list waking EVERY parked task whose mask intersects what fired; `EPOLL_CTL_DEL` only
+> when no waiter remains (MOD the remainder otherwise); `EPOLL_CTL_ADD`'s `-EEXIST` falls back
+> to MOD; `epoll_wait` maxevents 1 → 8; `EPOLLERR`/`EPOLLHUP` wake every waiter on the fd (a
+> peer closing mid-relay delivers HUP only). New task field `wait_ev` @56 (TASK_SIZE 56 → 64,
+> heap-allocated so no layout change). New `async_wait_rw` + `async_relay_once`, ported to
+> `lib/async_win.cyr` and `lib/async_agnos.cyr` as no-op parks per those files' convention so
+> consumer code stays target-agnostic.
+>
+> **Both stiva shapes now work**: two waiters on ONE fd, and two waiters on one fd wanting
+> OPPOSITE directions (the `exec -it` TTY-relay shape) — `tests/tcyr/concurrency/
+> async_multi_waiter.tcyr`, 23 assertions.
+>
+> ⭐ **The async reactor had ZERO corpus coverage before this** — `grep -rln
+> 'async_run\|async_spawn' tests/tcyr/` returned nothing. Four minors of reactor untested,
+> which is how a one-waiter-per-fd limit with an unchecked syscall return survived.
+>
+> ⚠ **VERIFIED ON LINUX ONLY, and that is a real limit, not a formality.** The reactor is
+> epoll-only: PE has no `sys_pipe`, Mach-O has no `sys_epoll_wait`, so the test CANNOT go in
+> `crossos/` (tried; PE and Mach-O both rc=1) and the release gate does not execute it
+> off-Linux. Windows/agnos got the new names and compile clean, but neither has a
+> multi-waiter registry to fix and macOS async is a separate unbuilt gap.
+>
+> ⚠ **What mutation-testing established, against the first assumption:** the ADD→MOD fallback
+> and the wake-path MOD-the-remainder are REDUNDANT INDIVIDUALLY and JOINTLY LOAD-BEARING —
+> disabling either alone leaves all axes green (each covers the other), disabling BOTH hangs.
+> The part carrying axes 1-4 alone is `epoll_data = fd` + the list walk. Recorded in the test
+> header so nobody "simplifies" one away on the grounds the suite stays green.
+>
+> **Half B (a compiler-level CPS transform) remains unbuilt and, on this evidence, unneeded
+> for the two filed features.**
+
+> **Status: HALF A SHIPPED (v6.5.26). Half B not built and not currently justified.**
 > ⚖️ **Maintainer decision owed:** this can now ship far earlier than `.33`–`.34`. The roadmap row
 > and this file's Placement line should move only on your call.
 

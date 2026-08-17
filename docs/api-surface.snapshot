@@ -113,6 +113,7 @@ async_agnos::async_new/0
 async_agnos::async_new_in/1
 async_agnos::async_read/3
 async_agnos::async_recv/4
+async_agnos::async_relay_once/5
 async_agnos::async_resolve/4
 async_agnos::async_run/1
 async_agnos::async_run_process/5
@@ -123,6 +124,7 @@ async_agnos::async_spawn/3
 async_agnos::async_spawn_process/4
 async_agnos::async_timeout/3
 async_agnos::async_wait_fd/2
+async_agnos::async_wait_rw/2
 async_agnos::async_wait_writable/2
 async_agnos::async_with_timeout/3
 async_agnos::task_join/2
@@ -135,6 +137,7 @@ async_win::async_new/0
 async_win::async_new_in/1
 async_win::async_read/3
 async_win::async_recv/4
+async_win::async_relay_once/5
 async_win::async_resolve/4
 async_win::async_run/1
 async_win::async_run_process/5
@@ -145,6 +148,7 @@ async_win::async_spawn/3
 async_win::async_spawn_process/4
 async_win::async_timeout/3
 async_win::async_wait_fd/2
+async_win::async_wait_rw/2
 async_win::async_wait_writable/2
 async_win::async_with_timeout/3
 async_win::task_join/2

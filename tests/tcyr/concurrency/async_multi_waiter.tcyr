@@ -19,24 +19,48 @@
 # waiter REGISTRY just could not hold two entries. A missing-language-feature filing that
 # was really a lost-wakeup bug in ~20 lines of lib code.
 #
-# ⚠ COVERAGE GAP, FOUND BY MUTATION-TESTING THIS FILE AND NOT YET CLOSED.
-# Disabling the `EPOLL_CTL_ADD -EEXIST -> EPOLL_CTL_MOD` fallback in `_async_wait_events`
-# leaves all 19 assertions below GREEN. That is not a bad mutation, it is an honest gap:
-# every waiter here asks for the SAME event bit (EPOLLIN), so the first ADD registers the
-# fd correctly and the second waiter's failed ADD changes nothing — the wake path finds it
-# by walking the task list either way. What actually makes these axes pass is
-# `epoll_data = FD` plus the list walk, NOT the MOD fallback.
+# ⭐ WHAT MUTATION-TESTING ACTUALLY ESTABLISHED, which is not what the first pass assumed.
+# The v6.5.26 fix has THREE parts: (a) `epoll_data = FD` + walking the task list on wake,
+# (b) an `EPOLL_CTL_ADD -EEXIST -> MOD` fallback at REGISTRATION, (c) MOD-the-remainder
+# instead of an unconditional DEL at WAKE. Measured, one mutation at a time:
+#   * disable (b) alone  -> all axes GREEN. (c) re-registers the surviving waiter's mask one
+#     wake later, so the runtime self-heals with a single extra epoll round trip.
+#   * disable (c) alone  -> all axes GREEN. (b) had already registered the UNION mask, so a
+#     single event carries both directions and both waiters wake from it.
+#   * disable BOTH       -> HANGS (killed at the 30 s timeout, no summary printed).
+# So (b) and (c) are REDUNDANT INDIVIDUALLY and JOINTLY LOAD-BEARING — each covers the
+# other's absence. That is defence in depth, not dead code, and it is the honest description:
+# a green axis here does not prove (b) or (c) separately, and no single-line mutation can.
+# (a) is the part that carries axes 1-4 on its own.
 #
-# The MOD fallback is only load-bearing when two waiters on ONE fd want DIFFERENT
-# directions (one EPOLLIN, one EPOLLOUT) — which is exactly the `exec -it` TTY-relay shape
-# this work exists to enable. That axis needs a socketpair (readable AND writable on the
-# same fd) and is NOT written yet. Until it is, the MOD fallback is reasoned-correct but
-# UNPROVEN. Do not treat this file as full coverage of the v6.5.26 change.
+# ⚠ Do not "simplify" by deleting either (b) or (c) on the grounds that the suite stays
+# green — the suite stays green for EITHER deletion and hangs for BOTH.
+#
+# ⛔ WHY THIS IS NOT IN crossos/, having been tried there and moved back. The release gate's
+# cross-OS leg runs the crossos/ directory on real ecb/ach/cass/pi, so a file placed there
+# must COMPILE on all four. This one cannot: PE has no `sys_pipe` (Windows makes pipes via
+# CreatePipe/0xF004) and Mach-O has no `sys_epoll_wait` (Darwin is kqueue). Measured — PE and
+# Mach-O both rc=1. The async reactor is epoll-only by construction: `lib/async.cyr` hands
+# Windows to async_win.cyr (IOCP) and agnos to async_agnos.cyr, and macOS falls through to
+# the epoll body it has no syscall for. Putting this in crossos/ would turn the gate RED for
+# a pre-existing platform gap that has nothing to do with the waiter-list fix.
+# ⚠ So the v6.5.26 waiter-list change is verified on LINUX ONLY. The Windows and agnos
+# backends got the new `async_wait_rw` / `async_relay_once` names (both no-op parks there, per
+# those files' existing convention) so consumer code links and runs, and both were verified to
+# COMPILE for PE — but neither has a multi-waiter registry to fix, and macOS async is a
+# separate unbuilt gap. Do not read "23 passed" as cross-platform coverage.
 #
 # Each axis below is a shape that CANNOT pass against the pre-fix runtime.
-include "lib/assert.cyr"
 include "lib/syscalls.cyr"
+include "lib/string.cyr"
 include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+# ⚠ `lib/vec.cyr` is explicit and load-bearing for the NON-Linux targets. Without it this
+# file compiles on Linux (the undefined `vec_get` is pruned as unreachable, warning only)
+# and HARD-FAILS on PE and Mach-O, where the same reference is a reachable-undef error.
+# That per-target disagreement is filed separately; here the fix is simply to declare what
+# is used. It is also why this file could not just be dropped into crossos/ unchanged.
 include "lib/async.cyr"
 
 var _fds_a[2];          # pipe A. ⚠ pipe(2) writes two i32 fds (8 B total), so the
@@ -55,7 +79,8 @@ var _order = 0;         # packed wake order, to prove BOTH ran (not just one twi
 # marks a task DONE if it is still TASK_READY when its fn returns, so a parked-and-fallen-
 # through task never completes and `async_run` never returns. (Documented at
 # `_async_wait_events`; costing a debug cycle here is why it is restated at the call site.)
-var _p1 = 0; var _p2 = 0; var _pb = 0; var _prw = 0;
+var _p1 = 0; var _p2 = 0; var _pb = 0; var _prw = 0; var _psr = 0; var _psw = 0;
+var _sp[2];             # socketpair — readable AND writable on ONE fd
 
 # Two tasks that park on the SAME read fd. Before the fix, exactly one of these could ever
 # be registered; the other parked forever and was never woken.
@@ -106,6 +131,30 @@ fn _waiter_rw(arg): i64 {
     return 4;
 }
 
+# Axis-5 pair: two waiters on ONE socketpair fd wanting OPPOSITE directions. This is the
+# case the MOD fallback exists for — the reader ADDs EPOLLIN, then the writer's ADD gets
+# -EEXIST and must MOD the registration to EPOLLIN|EPOLLOUT or one of them never wakes.
+fn _waiter_sp_read(arg): i64 {
+    if (_psr == 0) {
+        _psr = 1;
+        if (async_wait_fd(arg, load32(&_sp)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    _hits = _hits + 1;
+    _order = _order | 16;
+    return 5;
+}
+fn _waiter_sp_write(arg): i64 {
+    if (_psw == 0) {
+        _psw = 1;
+        if (async_wait_writable(arg, load32(&_sp)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    _hits = _hits + 1;
+    _order = _order | 32;
+    return 6;
+}
+
 fn main(): i64 {
     test_group("async reactor: multiple waiters, including two on one fd (v6.5.26)");
 
@@ -154,6 +203,24 @@ fn main(): i64 {
     async_run(rt4);
     assert_eq(_hits, 3, "all THREE waiters woke (two of them sharing one fd)");
     assert_eq(_order, 7, "all three distinct tasks ran");
+
+    # --- axis 5 (THE `exec -it` SHAPE): one fd, two waiters, OPPOSITE directions ---
+    # A connected socketpair end is immediately WRITABLE, and becomes READABLE once its peer
+    # writes — so both waiters have real work and neither can be starved. This is the axis
+    # the MOD fallback is load-bearing for; see the note at the top of this file.
+    if (sys_socketpair(1, 1, 0, &_sp) == 0) {          # AF_UNIX, SOCK_STREAM
+        var rt5 = async_new();
+        _hits = 0; _order = 0; _psr = 0; _psw = 0;
+        assert(async_spawn(rt5, &_waiter_sp_read, rt5) != 0, "spawned the READ waiter on the socketpair fd");
+        assert(async_spawn(rt5, &_waiter_sp_write, rt5) != 0, "spawned the WRITE waiter on the SAME fd");
+        sys_write(load32(&_sp + 4), "q", 1);           # peer writes -> our end becomes readable
+        async_run(rt5);
+        assert_eq(_hits, 2, "BOTH opposite-direction waiters on ONE fd woke (the exec -it shape)");
+        assert_eq(_order, 48, "the reader AND the writer each ran exactly once");
+        sys_close(load32(&_sp)); sys_close(load32(&_sp + 4));
+    } else {
+        println("    SKIP axis 5: sys_socketpair unavailable on this target");
+    }
 
     sys_close(load32(&_fds_a)); sys_close(load32(&_fds_a + 4));
     sys_close(load32(&_fds_b)); sys_close(load32(&_fds_b + 4));
