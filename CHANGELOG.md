@@ -4,9 +4,22 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — `.26` in flight
+## [Unreleased]
+
+## [6.5.26] — 2026-08-17
 
 **Band D finish-out + the stiva coroutine re-scope.**
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,178,024 B**, **seed → cybs → cycc
+byte-identical from the 29,024 B seed**, `check.sh` **188 / 0**, corpus **273 / 273**, and
+cross-OS on REAL hardware against this exact binary — **ecb + ach + cass + pi, each
+`SELFHOST_OK` + crossos 48/48**.
+
+Bench on a settled box (load **0.34**): `self_compile` **708 ms** (703 at `.25`, **+0.7 %**)
+with `phase_pp` **121 ms** (118 at `.25`). cycc **+216 B**. ⭐ The gate's own bench run,
+taken immediately after cross-OS at load 1.11, also read **709 ms** — the two agree, so this
+is a REAL delta and not the contention artifact that has bitten three releases. +0.7 % for
++216 B is growth tax, triaged as such: no single patch dominates.
 
 ### Fixed — the PE base-relocation ceiling blocked ALL full-stdlib Windows builds
 
