@@ -1,8 +1,9 @@
 # `x = f64_add(x, y)` on an f64-typed binding warns about pointers
 
 **Status:** 🟡 **OPEN**
-**Placement:** unpinned — 6.x-line backlog; a candidate rider on any v6.6.x
-diagnostics pass
+**Placement:** **v6.5.24 — band C.** One-line guard at `src/frontend/parse.cyr:1479` excluding F64_TYID/F32_TYID from the pointer test.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Reproduces verbatim at 6.5.21. ⭐ REVERSE DEPENDENCY: `2026-08-13-ranga-ganita-f32-math-surface` is GATED ON THIS — F32_TYID trips the identical warning, so an f32 tier without this guard makes every f32 accumulator in every consumer emit a bogus pointer warning.
 **Discovered:** 2026-08-13, abaco 2.4.1 adopting the v6.5.21 tuples it proposed
 **Severity:** Low — **diagnostic only, values are correct** (verified against a
 run binary, not inferred). It earns a filing because v6.5.21 is what makes it

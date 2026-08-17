@@ -62,13 +62,9 @@ the v6.5.9 CHANGELOG says outright that "the macOS / Windows / agnos branches ar
 the Linux↔macOS mutex gap widened from parity to **48 ns futex vs a spinlock**. Both halves must
 land together; see the Placement slot.
 
-**Placement:** **v6.5.x Slot 11 (`.39`) — "macOS-arm64 concurrency", last in the minor**
-(`roadmap.md` v6.5.x slot table, verified live 2026-08-07). Scoped there as **both** gaps in one
-release: `lib/thread_macos.cyr` driving `bsdthread_create` + `bsdthread_register` (mirroring the
-`thread_win.cyr` split), **and** `__ulock_wait`/`__ulock_wake` replacing `sync_macos.cyr`'s spinlock
-for the mutex + channel wait/wake. Distinct from the Intel-Mac x86 toolchain tail, which closed at
-v6.4.59. No consumer is blocked yet, which is why it sits behind the IR-substrate anchor. 6.x line,
-never 7.x.
+**Placement:** **v6.5.36 — band J, Slot 11.** Last in the minor; nothing is blocked on it.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** The banner is right and the body is stale: `lib/thread_macos.cyr` EXISTS (serial fallback, so the worker runs). ⛔ The 'most of the 23 ecb full-corpus failures are downstream of this' argument is DEAD — ecb measures **271/0** at 6.5.21. Remaining: `bsdthread_create`/`bsdthread_register`, and `__ulock_wait`/`__ulock_wake` replacing the `sync_macos.cyr` spinlock.
 **Downstream:** ~~most of the 23 full-corpus ecb failures in
 [`2026-08-05-cross-os-full-corpus-23-failures-on-ecb.md`](2026-08-05-cross-os-full-corpus-23-failures-on-ecb.md)
 are downstream of this — that count drops when this slot lands.~~

@@ -22,13 +22,9 @@ cycc **6.5.10**, 2026-08-07. `ir_lower_all` still has **zero** callers (`grep -r
 → one definition at `ir.cyr:361` plus one prose mention at `:37`, no call site), so Wall 1's re-emit
 path is still dark. **Wall 3 is closed** — see the header; do not read this Status as endorsing the
 stale Wall-3 body.
-**Placement:** **v6.5.x Slot 3 (`.17`–`.18`) — "IR substrate productionization"**, the perf anchor
-(`roadmap.md`, v6.5.x slot table; verified live 2026-08-07). It is the *prerequisite* slot: its
-opening bite is D1/D2 from
-[`2026-07-07-v6415-closeout-residuals.md`](2026-07-07-v6415-closeout-residuals.md), then Wall 2,
-then Wall 1, then a `CYRIUS_IR=3` axis in `differential.sh`. It gates Slot 6's
-[`2026-07-06-simd-f64v-memory-operand-no-register-residency.md`](2026-07-06-simd-f64v-memory-operand-no-register-residency.md).
-Codegen work → 6.x line, never 7.x.
+**Placement:** **v6.5.26–.28 — band E, Slot 3 'IR substrate productionization'. THE SPINE OPENS HERE.** Widened from 2 releases to 3: this slot has been budgeted 2 twice and spent 0 both times.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⛔ FIVE CORRECTIONS. (1) **The residual is 11 of 271, not '10 of 260'** (full-corpus default-vs-IR=3 run 2026-08-14). (2) **3 of the 11 are NOT miscompiles** — they print `error: IR block table full` from `src/common/ir.cyr:274` (`if (bi >= 32768)`); a one-constant raise clears all three, which SETTLES this file's standing 'unverified, do not assume' note. (3) **v6.5.21 ADDED one**: `tests/tcyr/crossos/multi_return.tcyr` is IR=3-broken (`IR=1` exit 0, `IR=2` exit 0, `IR=3` exit 2 → the OPTIMIZER erasing the `movq xmm0↔rax` unbox, not the recorder). (2) and (3) are pulled FORWARD to band B (.23), so this slot opens facing **7 pre-existing miscompiles**, not 11. (4) ✅ **Wall 3 stays CLOSED, re-verified at 6.5.21** — an IR=3-built cycc (1,225,704 B, +57 KB, so the mode genuinely ran) compiles src/main.cyr to a binary `cmp`-identical to build/cycc. Do not reopen. (5) **DRIFTED CITES:** `ir_lower_all` :361→**:368** (still ZERO callers); `IR_SENABLE` :1514/:715→**main.cyr:1526 / main_win.cyr:693**, both mode 1, and 5 of 7 forks never call it; live `_IR_REC0(S, IR_RAW_EMIT)` sites are **48** (x86 26 · aarch64 13 · cx 7 · parse 1 · parse_expr 1), not the 24 claimed.
 
 > **STATUS (2026-07-07): re-scoped — the original framing is materially stale; the
 > CAPABILITY is still open and correctly homed at v6.5.x.** Corrections:

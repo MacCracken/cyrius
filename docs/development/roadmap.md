@@ -418,7 +418,52 @@ numbers. Sizes are `.NN` releases, each bundling several bites. **Arcs are 1–2
 phases landing as commits inside them** — not one release per phase. Minors flex long; 6.4.x
 ran 86 releases and 6.5.x is expected in the same class.
 
-> ## 🔁 RE-PINNED 2026-08-11 (at v6.5.19) — read this before the table
+> ## 🔁🔁 RE-PINNED 2026-08-14 (at v6.5.21) — **THIS BLOCK SUPERSEDES THE TABLE BELOW**
+>
+> Re-derived after a full premise-check of all 14 open issues + 2 open proposals against
+> LIVE code at 6.5.21. **Not one came back already-shipped** — the queue is entirely live,
+> which is itself the finding: there is no dead weight to archive, so the sequence below is
+> the real remaining cost of 6.5.x.
+>
+> **Measured spend, `.0`–`.21` (22 releases):** opener 3 · diagnostics 1 · **reactive /
+> consumer repair 16** · pinned bugs 1 · folds+proposals 1 · **codegen spine (Slots 3/5/6):
+> ZERO**. `.17`–`.18` were the pinned IR-substrate band and both went to consumer repairs.
+> With **124 consumer repos** carrying a `cyrius.cyml` (45 pinned to 6.5.x) the ~73 %
+> reactive rate is the LOAD, not a budgeting error — and it rises as ports land. Maintainer
+> direction 2026-08-14: *"get moving on what has been roadmapped to clean up some of the
+> backlog before more port over"*, and **6.5.x grows to whatever wraps up the workload**.
+> Consequence: the spine is SCHEDULED FIRST, and reactive capacity INTERLEAVES rather than
+> holding a slot — a burst must not silently eat a spine release the way it ate `.17`/`.18`.
+>
+> ⛔ **NOTHING LEAVES 6.5.x.** Later minors have their own focus. This is a resequencing, not
+> a deferral. (`proposals/2026-07-05-const-eval-comptime` is the one exception and is NOT an
+> exit: it was already pinned to v6.6.x with its rung chosen 2026-07-07 — option 1 `const fn`,
+> `#phf` fallback — so leaving it there is honouring the pin, not moving 6.5.x work out.)
+>
+> | # | band | slot | why here |
+> |---|---|---|---|
+> | **A** | `.22` | **Heap layout + sigil 3.12.9 — DELIBERATELY NOTHING ELSE** | `input_buf` raise + retired `output_buf` band reclaim share **ONE** two-step bootstrap. Maintainer 2026-08-14: keeping the release clean means any heap breakage has exactly one candidate cause. **Consumer-blocking NOW** — sigil, drishti (+355 KB) and mabda (+211 KB) bundles are all over the 1 MB cap. sigil **3.12.9** rides along because it provably cannot touch the compiler (not in cycc's closure): a security fold closing the RSA sign path banking (the Bellcore verify-after-sign guard compared both operands in ONE shared lane — the v1.5 bypass shape), +9.53 MiB `.bss` reclaimed, api-surface **+2**. Retires `distlib`'s load-bearing cap workaround. |
+> | **B** | `.23` | **Parser diagnostic residual + the IR=3 bleed** (Slot 1 (b)/(c)) | ⭐ **OPENS WITH TWO IR=3 BITES THAT MUST NOT WAIT FOR `.26`.** (1) **`crossos/multi_return` is IR=3-broken by 6.5.21's own headline feature** — `IR=1` exit 0, `IR=2` exit 0, **`IR=3` exit 2**, so it is the OPTIMIZER pass erasing the `movq xmm0↔rax` unbox, not the recorder. Exactly the class v6.5.2 already fixed once, and `tests/gates/ir-opt/ir3_fold_jump_span.sh` is the mutation-proven template. Leaving it until `.26` means the minor's newest feature stays IR=3-broken for a dozen releases. (2) **Raise the `ir_bb_new` block cap** (`ir.cyr:274`, `if (bi >= 32768)`) — one constant that removes **3 of the 11** divergences outright. ⚠ **THE FILE'S "UNVERIFIED, DO NOT ASSUME" NOTE IS NOW SETTLED**: those 3 are NOT miscompiles, they print `error: IR block table full`. Then: ⚠ **THE DX FILE HAS ITS DEPENDENCY BACKWARDS — R2 BEFORE R1.** `util.cyr:1152-1165` records that converting the fail-fast sites without the `_sync_skip` statement-start-keyword arm regresses the v6.5.19 lint P1 and manufactures `unexpected else` on valid `lib/fs.cyr`. ⚠ The residual **GREW 7 → 8**: `.19`'s `_ends_guard` added one. Owed decision at slot open: does a CAPACITY limit belong in the same class as `undefined variable`, or is it fail-fast by design? Answer it or a ninth appears next sweep. |
+> | **C** | `.24` | **Small-fix cluster — the cheap consumer wins, batched** | Typed-pointer warning guard at `parse.cyr:1479` (one line; **also fixes** the f64/f32-typed-binding false warning, which currently **gates** the ranga/ganita f32 tier) · `agnosai` deps misleading stdlib error (cbt-only, no cycc exposure) · `source-diag` line shift ⚠ **the filed fix is FORECLOSED by 6.5.21's `#@file` neutralisation — needs a new `#@incdir`-family directive** · bare-metal forbidden-module check (its W2 arm is dead; `.24` is the only remaining home for a never-built acceptance criterion) · f32 tier-1 helpers · Slot 1 (d)/(e). |
+> | **D** | `.25` | **Cross-OS parity + the full-corpus flip** | Take the `CYRIUS_CROSS_OS_FULL=1` decision (measured cost of flipping ecb/ach/pi: **+547 s** per gate) and close the cass residual: `SYS_IOCTL` / `sys_access`→`0xF019` / `sys_getpid`→`0xF01C` / `sys_socketpair`, each with its `crossos` companion per the wrapper rule, plus the one undiagnosed `tls_native_freestanding` HANG. **ecb/ach/pi are already 271/0**; this is Windows-peer stdlib rot the gate exists to catch. |
+> | **E** | `.26`–`.28` | **⭐ Slot 3 — IR substrate productionization. THE SPINE OPENS.** | Opening bite: D1/D2 dead-code removal (byte-identical-safe; DCE already NOPs the bytes). Then Wall 2 (local-access opcode model, `IR_SWITCH` + unresolved-edge CFG). Then Wall 1 (`ir_lower_all` mode-2 — **ZERO callers today**, `ir.cyr:368`; the high-risk half). Then the IR=3 residual. ⛔ **RE-MEASURED 2026-08-14 ON THE FULL CORPUS: 11 of 271, not the "10 of 260" this roadmap and the issue both still claim.** Of those 11, **3 are a capacity limit** (`error: IR block table full`) cleared by the one-constant raise in band B, and **8 are real miscompiles** — one of which, `crossos/multi_return`, 6.5.21 ADDED and band B closes. So Slot 3 opens facing **7 pre-existing miscompiles**, not 11: `subword_signed_load`, `const_chained_multiply_fold`, `field_name_shadows_global`, `types`, `float`, `math_inverse_trig`, `math_pack_integration`. ✅ **Wall 3 stays CLOSED — re-verified at 6.5.21**: an IR=3-built cycc (1,225,704 B, +57 KB, so the mode genuinely ran) compiles `src/main.cyr` to a binary `cmp`-identical to `build/cycc`. Do not reopen it. ⚠ Stale counts to re-derive when this opens: live `_IR_REC0(S, IR_RAW_EMIT)` sites are **48** (x86 26 · aarch64 13 · cx 7 · parse 1 · parse_expr 1), not the 23–24 claimed; and six D1 line cites have drifted +7/+13. Widened to 3 releases: the roadmap has budgeted 2 for this twice and spent 0 both times. |
+> | **F** | `.29`–`.30` | **Slot 5 — cross-BB regalloc + vector register class** | Vector class planned in from the start, never retrofitted (standing decision). Copy-prop + cross-BB DSE as bites. Plus the `_cur_fn_ret_stash` 19-site `_disp_adj` consolidation. Hard-gated on E. |
+> | **G** | `.31`–`.32` | **Slot 6 — SIMD register residency** · the minor's acceptance anchor | Fix-list items **1 and 2 only** (register-resident value-form f64v arithmetic; wrapper inlining). ⭐ **Item 3 is NOT here — it was pulled forward to `.24`/`.25`**: widening f64v4 to `vmulpd`/`vaddpd` ymm is a self-contained emitter mirroring `EMIT_F32V8_LOOP` (`float.cyr:226-250`), substrate-INDEPENDENT, and buys a measured **15.9 → ~7.9 ns** today. The roadmap gated all three behind Slot 3 for no reason. ⚠ the ymm loop advances `rsi += 4` so it cannot be selected for the n=2 f64v2 caller. |
+> | **H** | `.33`–`.34` | **Slot 8 — stackless coroutines / mid-body suspend** | CPS transform + poll-runtime rework + force-once memoization. Folds in the async single-waiter-per-fd multiplex (`_async_wait_events` still writes the task ptr into the epoll `data` slot, so that slot IS waiter identity). Acceptance = stiva's `exec -it` TTY relay. Bound to E's substrate so the poll runtime isn't built twice. |
+> | **I** | `.35` | **Slot 9 — sum-type variant unboxing** | ⭐ **NO LONGER ARC-SIZED, AND NO LONGER UNSCHEDULABLE.** The pair-return substrate it needed **shipped at 6.5.21**, dropping it from "arc" to **1 release**. The maintainer decision should be TAKEN AT SLOT OPEN, not treated as a blocker — the thing that made it unschedulable is gone. Defect still reproduces byte-identical (`per call = 16`). ⚠ Do NOT write the re-triage's proposed correction text into the file: it asserted aarch64 uses x0/x1/x3; live is **x0/x2/x3** (`aarch64/emit.cyr:355`) — a wrong tree fact replacing a wrong tree fact, in the slot that has already suffered that twice. |
+> | **J** | `.36` | **Slot 11 — macOS-arm64 concurrency** · last in the minor | `bsdthread_create`/`register` + `__ulock_wait`/`__ulock_wake` replacing the spinlock. The "downstream of the ecb failures" argument is **dead** (ecb 271/0). Nothing is blocked on it. |
+> | **K** | `.37`+ | **Closeout band** | Per cycle-discipline.md's runnable checklist; record the run in the ledger. |
+>
+> **▣ Reactive capacity: INTERLEAVED, not slotted.** At the measured rate a `.NN` of repair
+> lands roughly every 3rd release. It is deliberately NOT given band numbers — naming bands
+> is what let `.17`/`.18` be consumed while the table still claimed the spine was progressing.
+> **A reactive release inserts and pushes the spine right; it never replaces a spine slot.**
+> `embed-data-files` (its `CYRIUS_PKG_VERSION` prerequisite discharged at `.21`) is the named
+> fold-in candidate; `ranga`/ganita f32 tiers 2–3 are the second.
+>
+> ---
+>
+> ## 🔁 RE-PINNED 2026-08-11 (at v6.5.19) — superseded by the block above, kept for lineage
 >
 > The table below was written against a project that stopped at `.10`. Nine releases then
 > shipped and consumed every band from `.11` onward. The re-triage re-pinned the whole

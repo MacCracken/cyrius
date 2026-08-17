@@ -17,10 +17,9 @@ is dead transitively. **D2** — `CLASSIFY_CF` / `CF_TARGET` (`src/backend/x86/d
 have **no consumer at all**. Both still dead exactly as filed.
 ⚠ Note `ir_dce` and `ir_dead_store` are one-line wrappers over `ir_dce_capped` / `ir_dead_store_capped`,
 which **are** live — remove the wrappers, not the capped forms.
-**Placement:** **v6.5.x Slot 3 (`.17`–`.18`) — "IR substrate productionization"**, where D1/D2 are
-the *opening bite* ("D1/D2 dead-code removal + record the new `note: N unreachable fns` floor";
-`roadmap.md` v6.5.x slot table, verified live 2026-08-07). `ir.cyr` is the delicate substrate, so
-the removal rides the slot that already owns it rather than a closeout. 6.x line, never 7.x.
+**Placement:** **v6.5.26 — band E**, the opening bite of Slot 3.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⛔ **THIS FILE'S CLAIM THAT 'EVERY LINE NUMBER BELOW IS STILL EXACT' IS FALSE AT 6.5.21.** Six of the eight D1 cites drifted +7/+13, re-derived: `ir_lower_all` :361→**:368** · `IR_BB_ID` :234→**:241** · `ir_emit2` :314→**:321** · `IR_EDGE_FROM` :341→**:348** · `ir_dce` :1014→**:1027** · `ir_dead_store` :1263→**:1276**. D2's `decode.cyr:238`/`:279` ARE still exact. D1 and D2 both re-verified genuinely dead (definition-only, zero call sites); R2 confirmed shipped. ⚖️ D2 needs a maintainer call that has outlived three closeouts: wire `CLASSIFY_CF`/`CF_TARGET` into a decoder-based CFG pass, or delete them.
 
 > **R2 SHIPPED v6.4.26** (2026-07-08) — `_pe_fd_to_handle_rcx` extracted from `EWRITE_PE` +
 > `EREAD_PE` (`src/backend/x86/emit.cyr`); `EREAD_PE` byte-identical, `EWRITE_PE` re-emitted;

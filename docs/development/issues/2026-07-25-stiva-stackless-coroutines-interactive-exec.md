@@ -6,14 +6,9 @@ none will before v6.5.x); it stays un-archived because archiving is how we asser
 *done*, and doing that here would hide the consumer requirement from whoever opens the slot.
 **Do not "clean this up" in a future rot sweep** — verify instead that the roadmap pin still exists,
 and archive only when the v6.5.x coroutine work actually lands.
-**Placement:** **▲ PINNED — v6.5.x Slot 8 (`.31`–`.32`).** Re-checked live 2026-08-07 on 6.5.10, in
-both places: `roadmap-future.md:137` still carries the row as *"▲ PINNED v6.5.x (user,
-2026-07-26)"* with this filing named as the consumer that met its unpin condition, **and**
-`roadmap.md`'s v6.5.x slot table now gives it a concrete slot — *"CPS transform + poll-runtime
-rework + force-once memoization as bites; folds in the async single-waiter-per-fd multiplex and the
-shipped async arc's gap 6; acceptance = stiva's `exec -it` TTY relay + a true multiplexed streaming
-server"* — and annotates it **"stays OPEN as the acceptance record until this slot ships; do not
-archive it in a rot sweep."**
+**Placement:** **v6.5.33–.34 — band H, Slot 8.** Bound to band E's substrate so the poll runtime is not built twice.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Premise holds in full at 6.5.21; the file is honest and STAYS OPEN as the acceptance record until the slot ships — do not archive in a rot sweep. ⚠ Drifted cite: the `await` → `future_force` lowering is live at `src/frontend/parse_expr.cyr:1811-1823`, not the `:1701` cited.
 **Premise re-verified, not inferred:** the gap is real at 6.5.10 — `await` still lowers to a
 `future_force` call (`src/frontend/parse_expr.cyr:1701`) and `future_force` (`lib/async.cyr:1014`)
 is still a straight `fncall0..N` on the stored fn pointer. Deferred-then-forced, run-to-completion,

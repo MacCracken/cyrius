@@ -1,8 +1,9 @@
 # `<source>` diagnostic line numbers shift by one per declared stdlib module
 
 **Status:** 🟡 **OPEN**
-**Placement:** unpinned — 6.x-line backlog. Companion to the `CYRIUS_PKG_VERSION`
-zero-newline design note in the v6.5.21 changelog, which describes this class.
+**Placement:** **v6.5.24 — band C.**
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⛔ **THE FIX THIS FILE PROPOSES IS NOW INERT.** v6.5.21 neutralises user-authored `#@file` markers in `PP_PASS` (closing a forged-marker bypass of `private`), which forecloses the remedy as filed. The magnitude claim still reproduces. A new `#@incdir`-family directive is required instead. Touches `lex_pp.cyr`, so it carries the full cycc cost (self-host + seed-derive + four-host cross-OS) — pack it with other cycc work.
 **Discovered:** 2026-08-13, abaco 2.4.1, while writing a minimal repro for a
 separate warning
 **Severity:** Low-Medium — diagnostic only, but it points at a line that can be

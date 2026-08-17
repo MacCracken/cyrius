@@ -6,15 +6,9 @@ surfaced porting `definitions/loader.rs`, whose 18 built-in presets are
 **Status:** PROPOSED — an **ergonomics gap**, not a capability gap. Everything
 below is already achievable with a generated `.cyr`; the ask is to stop every
 consumer hand-rolling the same generator.
-**Placement:** **roadmap.md → Potential backlog**, and a candidate for the **v6.6.x ergonomics
-list** alongside `CYRIUS_PKG_VERSION`, which this file itself names as its sibling ("same
-shape, one value: a build-time value that source cannot read"). Sequence it **after** the
-version-constant fold-in — both are the same file-read-to-source mechanism, and the smaller
-one should define the shape.
-⚠ **Placement rule enforcement (2026-08-11):** this proposal was referenced in **none** of
-`roadmap.md`, `roadmap_6.md`, `roadmap-future.md` or `state.md` — it was **homeless**. CLAUDE.md
-requires every technical item to live in the 6.x line or roadmap.md's potential backlog; it now
-does. Not urgent — agnosai shipped its generator workaround and pins cyrius 6.5.19.
+**Placement:** **Interleaved reactive fold-in, v6.5.x — named first candidate.**
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⭐ **ITS PREREQUISITE HAS CLEARED.** Sequenced behind `2026-06-25-source-level-version-constant`, which **SHIPPED at v6.5.21** and is archived — so it is now schedulable. `PP_EMIT_PKGVER` (`src/frontend/lex_pp.cyr`) is the template for a `#@embed` arm and cbt's `_materialize_source` marker write for the emission side. ⚠ HARD CONSTRAINT LEARNED AT .21: an injected directive must emit **ZERO newlines** (merge onto the following source line) or it shifts every `<source>` diagnostic by one — a 1-for-1 line replacement is NOT line-neutral.
 **Priority:** low / not a release-blocker. agnosai ships its own generator and is
 not waiting on this.
 **Siblings:** [`2026-06-25-source-level-version-constant.md`](2026-06-25-source-level-version-constant.md)

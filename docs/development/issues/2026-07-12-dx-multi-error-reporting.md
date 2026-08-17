@@ -6,11 +6,9 @@ recovery core shipped **v6.4.62** and the EOF-cascade half shipped **v6.4.78**. 
 **7 inline `SYS_EXIT` error sites in the parser** (the file once said 25, which was the count of
 *all* `error:` writes in `src/frontend/`, most of them in the lexer, which are pre-parse and stay
 fatal by design) plus the `_sync_skip` coalescing refinement.
-**Placement:** **v6.5.x — Slot 1b / fold into W1's remaining `.11`–`.16`.** ⚠ `roadmap.md`'s v6.5.x
-slot 1 ("Diagnostics finish-out") is marked **PARTIAL**: only the include-line delta shipped
-(v6.5.3); items (b)–(e), which include this residual, **did not ship and have no new slot**. The
-roadmap names that as the sliced-fix shape the discipline forbids. It rides an adjacent DX/parser
-release rather than owning a slot. 6.x line — never 7.x.
+**Placement:** **v6.5.23 — band B**, the parser diagnostic residual. Owns most of that release.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⛔ TWO CORRECTIONS. (1) **THE DEPENDENCY IS BACKWARDS AS WRITTEN — R2 MUST LAND BEFORE R1.** `src/common/util.cyr:1152-1165` records that converting the fail-fast sites without the `_sync_skip` statement-start-keyword arm regresses the v6.5.19 lint P1 and MANUFACTURES `unexpected else` on well-formed `lib/fs.cyr`. (2) **The residual GREW 7 → 8** — v6.5.19's `_ends_guard` added a site. Owed at slot open: does a CAPACITY limit belong in the same class as `undefined variable`, or is it fail-fast by design? Answer it or a ninth appears next sweep.
 
 **Filed:** 2026-07-12 (at v6.4.60, when DX Release 1 — column + source-excerpt — shipped).
 **Severity:** P3 — DX consistency; not a correctness bug, and no consumer is blocked.

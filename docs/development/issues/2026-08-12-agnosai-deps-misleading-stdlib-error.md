@@ -1,7 +1,9 @@
 # `cyrius deps` blames the stdlib for a module that is in the stdlib
 
 **Status:** 🟡 **OPEN**
-**Placement:** unpinned — 6.x-line backlog
+**Placement:** **v6.5.24 — band C**; cbt-only, so no cycc / self-host / seed-derive exposure.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Reproduced verbatim at 6.5.21 — and it is NOT diagnostic-only: it is a functional resolution failure with a nonzero exit.
 **Discovered:** 2026-08-12, bote CI failing after a libro/majra bump
 **Severity:** Medium — diagnostic only, but it points at the wrong fix
 **Affects:** cycc 6.5.20 (present at least since the 6.5.10 sidecar union)

@@ -8,11 +8,9 @@ therefore needs a two-step bootstrap. That is one of the named reasons in CLAUDE
 **92 B** since filing, so it is **30,584 B over the cap** and still `rc=1`,
 `error: input exceeds 1MB buffer (raise input_buf in src/main.cyr)`. The headroom is not
 merely gone, it is receding.
-**Placement:** **v6.5.21 — the heap-layout release**, packed with the retired `output_buf`
-band reclamation (roadmap Slot 12's carried-in item). ⭐ **Both are heap-LAYOUT changes and
-each carries its own two-step bootstrap; doing them in ONE two-step bootstrap is materially
-cheaper than two.** Pinning them to the same release is the whole reason this now has a slot
-instead of drifting to closeout. See roadmap.md's slot sequence.
+**Placement:** **v6.5.22 — band A**, paired with the `output_buf` band reclaim in ONE two-step bootstrap, plus the sigil 3.12.9 fold. That release carries NOTHING else, so any heap breakage has exactly one candidate cause (maintainer, 2026-08-14).
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Defect re-verified at 6.5.21 — still reproduces. Three ecosystem bundles are now over the 1 MB cap (drishti +355 KB, mabda +211 KB, sigil +36 KB and growing): consumer-blocking, not latent.
 **Discovered:** 2026-08-08, v6.5.14, while fixing `distlib`'s bundle self-check.
 **Severity:** Medium — no consumer is broken TODAY (see *Why nothing is on fire*), but
 the headroom is gone and the failure mode when it lands is a hard error at the entry.

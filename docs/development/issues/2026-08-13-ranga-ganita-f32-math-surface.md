@@ -1,7 +1,9 @@
 # ganita has no f32 math surface — every f32 consumer widens to f64 and narrows back
 
 **Status:** 🟡 **OPEN** — surfaced while planning the ranga (image processing) Rust→Cyrius port.
-**Placement:** unpinned — ganita 1.x backlog. Belongs in **ganita**, not cyrius core.
+**Placement:** **Split — do NOT bounce the whole thing to ganita.** Tier 1 (f32 scalar helpers) rides **v6.5.24 — band C**, in the same bite-cluster as the typed-binding guard it depends on. Tiers 2–3 are interleaved reactive fold-ins.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Gap verified UPSTREAM as well as in the fold, per the fix-the-source-repo rule. ⚠ GATED ON `2026-08-13-f64-typed-binding-reassign-warns-as-pointer`.
 **Discovered:** 2026-08-13 during the ranga → Cyrius port capability audit
 **Severity:** Medium — hard requirement with a known workaround; costs 2 conversions per call in a per-pixel hot path
 **Affects:** cycc 6.5.21, ganita 1.0.4 (as folded into `lib/ganita.cyr`)

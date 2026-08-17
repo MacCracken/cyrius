@@ -1,9 +1,9 @@
 # Cross-OS full-corpus residuals: **ecb, ach and pi are at ZERO — only cass remains, at 7**
 
 **Status:** 🟡 LARGELY SHIPPED — kept open as the gate for one decision, not as a bug.
-**Placement:** the **full-corpus default flip is a MAINTAINER DECISION** (see the box below),
-cheap to make at **v6.5.20**. The residual cass 7 rides the reactive window. Do NOT archive:
-archiving would erase the flip-to-default decision this file exists to gate.
+**Placement:** **v6.5.25 — band D.** Take the `CYRIUS_CROSS_OS_FULL=1` decision AND close the cass residual in the same release.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⭐ RE-MEASURED ALL FOUR HOSTS AT 6.5.21 ON THE FULL 271 CORPUS: **ecb 271/0 · ach 271/0 · pi 271/0**; cass carries the residual. Cost of flipping ecb/ach/pi to full corpus: **+547 s** per release gate. ⛔ The linkage to `2026-07-03-macos-threading-workers-dont-run` is REFUTED — ecb is 271/0, nothing is downstream of it.
 
 > ## ✅ 2026-08-11 re-measurement, v6.5.19, all four hosts, real hardware: **ecb 0 · ach 0 · pi 0 · cass 7**
 >

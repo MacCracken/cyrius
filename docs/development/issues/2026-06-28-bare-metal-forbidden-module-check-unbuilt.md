@@ -17,9 +17,9 @@
 > `forbidden` hit in `src/` is an unrelated comment at `parse_fn.cyr:3901`. Still unbuilt.
 
 **Status:** 🔴 OPEN — never built; restored from `archived/` 2026-08-11.
-**Placement:** **v6.5.22 — the DX / diagnostics finish-out release**, as a fold-in bite. It is
-a compile-time safety rail, so it packs naturally with the diagnostics work rather than
-needing a slot of its own.
+**Placement:** **v6.5.24 — band C**, the small-fix cluster.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Premise re-verified UNBUILT (`grep -rn 'host_only\|kernel_ok' src cbt lib` → 0 hits). ⚠ Its former W2 arm is DEAD (W2 consumed at .19), so band C is the only remaining home for what is otherwise a never-built acceptance criterion of a shipped arc.
 **Filed:** 2026-06-28 (surfaced during the v6.3.4 #7 premise-check).
 **Severity:** P3 (DX / safety-rail; no consumer is blocked — agnos builds its
 kernel today without it).

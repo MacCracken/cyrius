@@ -6,9 +6,9 @@ surfaced porting `dictionary/static_dict.rs`, which is `phf`-feature-gated)
 narrow immediate payoff; wants maintainer direction on scope before any work.
 **Priority:** low / not a release-blocker. The generated-`.cyr` idiom already covers the
 *bulk* of compile-time-data needs; this is about the residual *computation* gap.
-**Placement:** **v6.6.x item 2** (`roadmap_6.md:144`) — "the const-eval ladder, option 1",
-already flagged there as an **early-riser candidate** and the natural v6.6.x opener. Not a
-6.5.x item; nothing in the active minor depends on it.
+**Placement:** **v6.6.x item 2 — UNCHANGED, and NOT an exit from 6.5.x.** It was pinned to 6.6.x before this re-triage with its scope already chosen; leaving it there honours the pin rather than moving 6.5.x work out.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⛔ **CORRECTS A MIS-CLASSIFICATION.** A first pass labelled this BLOCKED-ON-MAINTAINER for 'which rung'; an adversarial re-check REFUTED it: **the rung was chosen 2026-07-07**, recorded at `roadmap_6.md:144-149` — **option 1 `const fn`** primary, **option 3 `#phf`** fallback, option 4 declined. **No maintainer decision is outstanding.** Premise otherwise holds (0 hits at 6.5.21). ⚠ Rungs 1–2 reuse the `ir_const_fold` fixpoint (`src/common/ir.cyr:747`) which Slot 3 rewrites — build const-eval AFTER Slot 3 or pay the churn twice.
 
 > ### Currency corrections (re-triage 2026-08-11, v6.5.19) — neither changes the verdict
 >

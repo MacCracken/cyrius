@@ -12,8 +12,9 @@ arithmetic emitter.
 two-iteration `xmm` loop, so both item 3 (for f64) and the load-bearing items 1–2 remain open. The
 v6.4.31/.53 work on value-form SIMD *params and returns* is a different thing from register-resident
 *arithmetic chains* — do not read it as closing this.
-**Placement:** **v6.5.x Slot 6 (`.24`–`.25`) — "SIMD register residency"** (`roadmap.md` v6.5.x slot
-table, verified live 2026-08-07; scope recorded there as **fix-list items 1–3 only**). Explicitly
+**Placement:** **SPLIT — the three fix-list items do NOT share a slot.** Items 1–2 (register-resident value-form arithmetic; wrapper inlining) are **v6.5.31–.32 — band G, Slot 6**, hard-gated on the IR substrate. ⭐ **Item 3 is NOT gated and moves to v6.5.24/.25 (bands C/D).**
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⭐ **FIX-LIST ITEM 3 NEVER NEEDED THE SUBSTRATE.** Widening f64v4 to `vmulpd`/`vaddpd` ymm is a self-contained emitter mirroring `EMIT_F32V8_LOOP` (`src/backend/x86/float.cyr:226-250`), needing only a `simd_has_avx2()`-gated wrapper and a distinct builtin. Measured **15.9 → ~7.9 ns** available today. The roadmap gated all three behind Slot 3 for no reason. ⚠ The ymm loop advances `rsi += 4`, so it CANNOT be selected for the n=2 f64v2 caller. Items 1–2 genuinely need the substrate.
 **gated behind** the IR-substrate anchor at Slot 3
 ([`2026-07-02-ir-regalloc-rewrite-needs-reemit.md`](2026-07-02-ir-regalloc-rewrite-needs-reemit.md)):
 this is a codegen-QUALITY gap — bit-identical output, no wrong results — so it cannot batch ahead of

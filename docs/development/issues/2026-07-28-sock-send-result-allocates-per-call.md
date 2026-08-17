@@ -10,10 +10,9 @@ socket primitive in `lib/net.cyr` has the same shape.
 growable arena nor v6.5.10's `alloc_via` call plumbing changes it — those make allocation *cheaper*
 (15.1 → 11 ns) and *reclaimable when threaded*, but nothing threads an allocator through these
 wrappers, so the per-call 16 B still lands on the no-free global bump.
-**Placement:** ⚖️ **BLOCKED ON A MAINTAINER DESIGN DECISION — not schedulable until it exists.**
-The slot survives in roadmap.md's sequence, but it **cannot be scoped** until the design below
-is chosen, so it is deliberately pinned *after* the codegen spine rather than given a band it
-would miss. See the correction box.
+**Placement:** **v6.5.35 — band I, Slot 9.** ⭐ **NO LONGER UNSCHEDULABLE:** take the design decision AT SLOT OPEN rather than treating it as a blocker.
+
+> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⭐ **THIS ITEM SHRANK.** The pair-return substrate it needed **shipped in v6.5.21** (declared multi-value returns, `fn f(): (T, T)`), dropping it from 'arc' to **1 release** and discharging the framing that made it unschedulable. Defect still reproduces byte-identical (`per call = 16`). The 9a prerequisite (~106 unannotated Ok/Err producers across five folded repos) is required ONLY under a uniform-representation design. ⛔ Do NOT record the re-triage's proposed correction text: it asserted aarch64 uses x0/x1/x3; live is **x0/x2/x3** (`src/backend/aarch64/emit.cyr:355` = `mov x2, x0`) — a wrong tree fact replacing a wrong tree fact, in the slot that has already suffered that twice.
 
 > ### ⛔ THE COMMITTED DESIGN WAS TRIED AT v6.5.15 AND REVERTED — the placement below is stale
 >
