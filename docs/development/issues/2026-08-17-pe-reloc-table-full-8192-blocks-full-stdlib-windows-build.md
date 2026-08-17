@@ -1,11 +1,45 @@
 # `error: PE reloc table full (8192)` blocks a full-stdlib Windows build
 
-**Status:** 🔴 OPEN — filed, not fixed. **Named reason:** it is a backend capacity/layout
-change in the PE emitter needing its own full gate cycle (self-host + seed-derive + four-host
-cross-OS), and v6.5.25 already carries one compiler change to the PE syscall path. Packing a
-second, independent PE change into the same release would leave two candidate causes for any
-Windows breakage — the exact reason the maintainer scoped `.22` to a single heap change.
-**Placement:** next available `.NN` in the 6.x line. ⛔ **NOT 7.x** — this is codegen.
+> ### ✅ RESOLVED — FIXED in v6.5.26
+>
+> The relocation coff buffer is now **lazily allocated** (`_pe_reloc_base`, cap
+> `_PE_RELOC_CAP` = 65536) instead of a fixed 64 KB window at `S + 0x1DC000`. All three large
+> folds now build for Windows against the full 27-module preamble: mabda 2,792,448 B,
+> yukti 2,186,240 B, sigil 2,181,120 B. Linux builds of the same sources unaffected.
+>
+> **Cap chosen by MEASUREMENT, not guess:** cap 8192 reports FULL, cap 16384 fits, so the
+> real requirement for the largest fold is between 8k and 16k slots. 65536 is 4× the
+> known-sufficient figure and 8× the old ceiling.
+>
+> ⚠ **An in-place raise was impossible, exactly as this file predicted.** The window was
+> exactly 64 KB and `0x1DC000 + 0x10000` **is** `0x1EC000` (`gvar_initval`) — zero adjacent
+> slack — so growing it would have MOVED a region: a heap LAYOUT change and a two-step
+> bootstrap. The v6.4.75 `_fnvb_base` lazy-alloc precedent this file named is what avoided
+> both; 0x1DC000 is now recorded FREED in the heap map and the heapmap gate still reports
+> 100 regions / 0 overlaps.
+>
+> **On the "silent wrap" question this file asked to check:** the old bound was `>= 8192`
+> tested AFTER the write, which was safe only by arithmetic coincidence (the insertion shift
+> tops out at index count-1, so the last legal write is slot 8191 and the error fires before
+> 8192 is touched). It is now compared against the cap and no longer depends on that.
+>
+> ⭐ **Added the capacity WARNING this class needed.** The reason this cost a release to find
+> is that it was silent right up to fatal: no signal at 90 % full, then a hard error and no
+> binary. It now warns at 75 %, mirroring the fn-table warning in `src/common/util.cyr`.
+> ⚠ Deliberately WITHOUT `_emit_decimal` in the message: that fn lives in `src/main.cyr`
+> only, while this file is also included by `main_win.cyr` and `main_x86_macho.cyr`, neither
+> of which defines it — calling it would have broken those two forks and only a real
+> cass / Intel-Mac build would have caught it (the v6.4.26 fork-stub trap). All three
+> PE-capable forks verified building.
+>
+> Gate `tests/gates/platform/pe_reloc_cap_full_stdlib.sh` — which is also **the `cycc_win`
+> axis `folds_agnos_parity.sh` never had**, the gap this file identified as the reason a
+> PE-only ceiling could sit unnoticed. Mutation-proven: at cap 8192, mabda and yukti go red.
+>
+> ⚠ **The related reachable-undef ASYMMETRY is still open and is a maintainer decision** — an
+> undefined `random_bytes` makes PE exit 1 while Linux exits 0. Not touched here.
+
+**Status:** ✅ RESOLVED in v6.5.26 — archive at slot close.
 **Discovered:** 2026-08-17, v6.5.25, while verifying the `SYS_IOCTL` PE fix against the
 folded stdlib.
 **Severity:** Medium-High — it is a hard ceiling, not a degrade: no binary is produced. It

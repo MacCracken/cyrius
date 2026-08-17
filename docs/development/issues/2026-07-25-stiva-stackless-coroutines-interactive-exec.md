@@ -1,35 +1,69 @@
 # stiva: stackless coroutines — the live consumer for suspend-across-await — ACCEPTED, PINNED v6.5.x
 
-**Status:** 🟡 **OPEN — DELIBERATELY, and it is not rot.** This file is the **acceptance record for a
-pinned arc**, not an untriaged report. It is open because no cyrius change has shipped for it (and
-none will before v6.5.x); it stays un-archived because archiving is how we assert something is
-*done*, and doing that here would hide the consumer requirement from whoever opens the slot.
-**Do not "clean this up" in a future rot sweep** — verify instead that the roadmap pin still exists,
-and archive only when the v6.5.x coroutine work actually lands.
-**Placement:** **v6.5.33–.34 — band H, Slot 8.** Bound to band E's substrate so the poll runtime is not built twice.
-
-> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Premise holds in full at 6.5.21; the file is honest and STAYS OPEN as the acceptance record until the slot ships — do not archive in a rot sweep. ⚠ Drifted cite: the `await` → `future_force` lowering is live at `src/frontend/parse_expr.cyr:1811-1823`, not the `:1701` cited.
-**Premise re-verified, not inferred:** the gap is real at 6.5.10 — `await` still lowers to a
-`future_force` call (`src/frontend/parse_expr.cyr:1701`) and `future_force` (`lib/async.cyr:1014`)
-is still a straight `fncall0..N` on the stored fn pointer. Deferred-then-forced, run-to-completion,
-no CPS transform and no force-once memoization. ⚠ 6.5.6's `async_await_readable_ms` is a *timeout*
-variant on the same run-to-completion runtime — it does **not** touch this.
-6.x line, never 7.x.
-
-> **✅ ACCEPTED for the v6.5.x arc** (user, 2026-07-26). This filing did exactly what it set out to do:
-> `roadmap-future.md:116` parked stackless coroutines with the unpin condition *"No live consumer;
-> pull forward on a real suspend-across-await need"*, and this is that consumer and that need. The row
-> is now **▲ PINNED v6.5.x**.
+> ### ⛔ THE "BOUND TO BAND E" PREMISE IS FALSE — re-scoped 2026-08-17 (v6.5.26)
 >
-> Bound into v6.5.x rather than taken as a patch because the poll-runtime rework (+ force-once
-> memoization) it requires is the **same IR/runtime substrate the v6.5.x perf-quality minor opens** —
-> doing it earlier would mean building that substrate twice. It also subsumes the mid-body-suspend
-> "gap 6" of the shipped async "W" arc, so the two land together.
+> This file, and the roadmap row it feeds, place the work at **`.33`–`.34` (band H)** and justify
+> that placement as *"bound to band E's substrate so the poll runtime is not built twice"*.
+> **Premise-checked against live code and the coupling does not exist.** Verdict INDEPENDENT,
+> and an adversarial pass could not refute it across ~60 checked file:line references and five
+> distinct refutation attempts.
 >
-> No cyrius change ships for this before v6.5.x; stiva's documented workaround stands until then.
-> Left OPEN deliberately (not archived) — it is the acceptance record for a pinned arc, and archiving
-> it would hide the consumer requirement from whoever opens that slot.
+> Three independent disproofs:
+>
+> 1. **Band E's substrate is unreachable by default and confined to one file.** It lives entirely
+>    in `src/common/ir.cyr` and only runs when the `CYRIUS_IR` env var is set
+>    (`src/main.cyr:1510-1529` is the sole enable path, plus `src/main_win.cyr:695`). **5 of the 7
+>    compiler forks never call `IR_SENABLE` at all**, and `_IR_REC0` is a no-op at mode 0. All
+>    shipped codegen — including every part of async — comes from the direct-emit `E*` path.
+> 2. **The "poll runtime" is `lib/async.cyr`, which cycc does not include.**
+>    `grep -rn 'include "lib/async' src/` → **zero hits**; CHANGELOG [6.4.38] states it outright
+>    ("cycc byte-identical (async is not in the compiler)"). A file the compiler never compiles
+>    into itself cannot share an artifact with the compiler's IR optimizer, so **"built twice" has
+>    no referent.**
+> 3. **The park/resume runtime ALREADY EXISTS AND WORKS.** `_async_wait_events`
+>    (`lib/async.cyr:254-273`) parks the current task; `_async_step` (`:127-171`) blocks on the
+>    shared epfd and re-enters it. `lib/async.cyr` already contains **five hand-written CPS state
+>    machines**.
+>
+> ⭐ The refutation that came closest, and why it failed: a CPS transform must know which locals
+> are live across a suspend point, and the IR *does* carry cross-BB liveness
+> (`ir_liveness_cfg`, `IR_LIVEIN`/`IR_LIVEOUT`). If that were local-variable liveness, band H
+> would genuinely sit on band E. It is not — `ir.cyr:250-256` documents them as per-BB
+> **REGISTER** bitmaps (bit0=RAX, bit1=RCX, …). They would not help a locals-to-frame transform.
+>
+> ### ⭐ AND THE REAL BLOCKER IS A BUG, NOT A MISSING LANGUAGE FEATURE
+>
+> `_async_wait_events` stores **the task pointer** in the epoll data slot, so an fd has room for
+> exactly ONE waiter, and the `EPOLL_CTL` return is **unchecked** — a second waiter on the same
+> fd gets `-EEXIST` and is **silently lost**. That is precisely why "two independent directions
+> inside one task" (the `-t` half of `exec -it`, and `select!` over N streams) has no expressible
+> shape. It is a lost-wakeup defect in a waiter registry, not an absent CPS transform.
+>
+> ### Re-scoped plan — HALF A IS LIB-ONLY AND UNBLOCKS BOTH stiva FEATURES
+>
+> No compiler change, no band-E anything, so it does NOT need `.33`–`.34`:
+> 1. `_async_wait_events`: hold a per-fd waiter-LIST head instead of the task pointer, and check
+>    the `EPOLL_CTL` return so a second waiter `MOD`s instead of losing its `-EEXIST`; matching
+>    multi-wake in `_async_step:145-170`.
+> 2. Add `async_wait_rw` (read+write on one fd), which the waiter list makes possible.
+> 3. Ship a reusable `async_relay(rt, rfd, wfd, buf, len)` as a sixth ctx-state-machine peer to
+>    `_async_recv_task`/`_async_send_task`, so a TTY relay is a library call, not consumer-written.
+> 4. Port the same contract to `lib/async_win.cyr` (IOCP) and `lib/async_agnos.cyr`.
+> 5. Gate with a `tests/tcyr/crossos/` companion (two-direction relay + same-fd read/write) so it
+>    is EXECUTED on real ecb/ach/cass/pi.
+>
+> Estimated ~150-220 lines in `lib/async.cyr`, ~60-90 in `lib/async_win.cyr`, ~30 in
+> `lib/async_agnos.cyr`, ~150 of crossos gate. One release, cycc byte-identical.
+>
+> **Status: SPECIFIED, NOT BUILT.** The re-scope is the deliverable here; the code is not written.
+> ⚖️ **Maintainer decision owed:** this can now ship far earlier than `.33`–`.34`. The roadmap row
+> and this file's Placement line should move only on your call.
 
+**Status:** 🟡 **OPEN — re-scoped, NOT built.** Was "OPEN deliberately as the acceptance record for
+a pinned arc"; it stays open for the same reason, but the pin's stated justification has been
+disproved and the work is now known to be lib-only.
+**Placement:** ⚖️ **was v6.5.33–.34 (band H, "bound to band E") — that binding is FALSE.**
+Eligible for any `.NN` from `.26`; maintainer's call.
 **Discovered:** 2026-07-25 during stiva's v3.0.x → v3.1.0 roadmap review
 **Severity:** Medium (hard blocker on two shipping features; workaround exists but forecloses them)
 **Affects:** cycc 6.3.11 → **6.5.10** (the whole async-as-deferred-Futures era; untouched through

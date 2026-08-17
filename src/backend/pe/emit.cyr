@@ -84,15 +84,44 @@ var _pe_rdata_spos       = 0;   # snapshot of GSPOS(S)
 # in PE kmode=0). Listing every DIR64 site lets the loader fix up
 # addresses if it chooses a non-default ImageBase, which in turn
 # lets us set IMAGE_DLL_CHARACTERISTICS_DYNAMIC_BASE (ASLR) and
-# eventually emit DLLs. Collection buffer at S + 0x1DC000 (heap map
-# free gap between DCE scratch and var_noffs — 64 KB = 8192 u64
-# slots, sorted ascending during _pe_layout so the emit pass can
-# group by 4 KB page in a single linear walk).
+# eventually emit DLLs. Sorted ascending during _pe_layout so the emit pass can
+# group by 4 KB page in a single linear walk.
+#
+# ⛔ v6.5.26 — WAS a FIXED 64 KB window at S + 0x1DC000 (8192 u64 slots), and that ceiling
+# HARD-BLOCKED a full-stdlib Windows build: the 26-module `folds_agnos_parity.sh` preamble
+# plus `lib/random.cyr` plus any one fold dies with `error: PE reloc table full (8192)`,
+# rc=1, no binary. It surfaced only at v6.5.25, because until then a PE build of the folded
+# stdlib died EARLIER on `undefined variable 'SYS_IOCTL'` — a ceiling sitting behind a hard
+# error is invisible.
+#
+# ⚠ RAISING IT IN PLACE WAS IMPOSSIBLE. The window was exactly 64 KB and its neighbour
+# starts exactly where it ends: `0x1DC000 + 0x10000 == 0x1EC000` = `gvar_initval`. So there
+# was ZERO adjacent slack, and growing the window would have MOVED a region — a heap LAYOUT
+# change, which costs a two-step bootstrap.
+#
+# So the table is now LAZILY ALLOCATED off the heap (`_pe_reloc_base`), following the
+# v6.4.75 `_fnvb_base` / `_fnt_tparams` precedent: no region moves, no heap-map layout
+# change, no two-step bootstrap, and the allocation only ever happens on a PE build that
+# actually emits relocations. The 0x1DC000 window is now FREE (recorded in the heap map).
+#
+# CAP CHOICE, MEASURED not guessed: with the 26-module preamble + lib/random.cyr + mabda
+# (the largest fold), cap 8192 reports FULL and cap 16384 fits — so the real requirement is
+# between 8k and 16k slots. 65536 is 4x the known-sufficient figure and 8x the old ceiling.
+# The multiple is deliberate: this ceiling was invisible for as long as it was, and the cost
+# of over-provisioning is one 512 KB allocation on PE builds only.
+#
+# ⚠ A first attempt to bracket this with a shell loop reported "cap 8192: fits", which is
+# FALSE — the loop rebuilt and re-tested in a way that scored a stale binary. Every number
+# above comes from a single clean build-then-run per cap. If you re-measure, do it that way;
+# do not trust a loop that reuses a compiler it did not just build.
+var _PE_RELOC_CAP        = 65536;
+var _pe_reloc_base       = 0;
 var _pe_reloc_rva        = 0;
 var _pe_reloc_file_off   = 0;
 var _pe_reloc_vsize      = 0;
 var _pe_reloc_file_size  = 0;
 var _pe_reloc_count      = 0;
+var _pe_reloc_hwm        = 0;   # high-water mark, for the capacity diagnostic below
 
 # Sub-regions within .idata. Offsets are relative to _pe_idata_file_off
 # (equivalently, to _pe_idata_rva — .idata sub-layout is
@@ -1356,6 +1385,10 @@ fn _pe_layout(S): i64 {
     # Insertion-sort keeps the coff buffer ascending so the emit
     # pass can group by 4 KB page in one linear walk.
     _pe_reloc_count = 0;
+    # v6.5.26 — lazily allocate the coff buffer (see _PE_RELOC_CAP). Allocated here, once,
+    # before the collection walk, so every access below has a valid base. Only a PE build
+    # reaches this fn at all, so a Linux/macOS/aarch64 build pays nothing.
+    if (_pe_reloc_base == 0) { _pe_reloc_base = alloc(_PE_RELOC_CAP * 8); }
     var rl_fcnt = GFCNT(S);
     var rl_fi = 0;
     var rl_raw = 0;
@@ -1373,7 +1406,7 @@ fn _pe_layout(S): i64 {
             rl_k = _pe_reloc_count;
             var rl_j = 0;
             while (rl_j < _pe_reloc_count) {
-                rl_prev = L64(S + 0x1DC000 + rl_j * 8);
+                rl_prev = L64(_pe_reloc_base + rl_j * 8);
                 if (rl_prev > rl_coff) {
                     rl_k = rl_j;
                     rl_j = _pe_reloc_count;  # break
@@ -1384,19 +1417,40 @@ fn _pe_layout(S): i64 {
             # Shift tail right from rl_k..count by one
             rl_shift = _pe_reloc_count;
             while (rl_shift > rl_k) {
-                S64(S + 0x1DC000 + rl_shift * 8,
-                L64(S + 0x1DC000 + (rl_shift - 1) * 8));
+                S64(_pe_reloc_base + rl_shift * 8,
+                L64(_pe_reloc_base + (rl_shift - 1) * 8));
                 rl_shift = rl_shift - 1;
             }
-            S64(S + 0x1DC000 + rl_k * 8, rl_coff);
+            S64(_pe_reloc_base + rl_k * 8, rl_coff);
             _pe_reloc_count = _pe_reloc_count + 1;
-            if (_pe_reloc_count >= 8192) {
+            if (_pe_reloc_count > _pe_reloc_hwm) { _pe_reloc_hwm = _pe_reloc_count; }
+            # v6.5.26 — the cap check. It was `>= 8192` AFTER the write, which happened to be
+            # safe (the insertion shift tops out at index count-1, so the last legal write is
+            # slot 8191 and the error fires before slot 8192 is ever touched) — but it was safe
+            # only by arithmetic coincidence, and the v6.4.75 fn_table P0 was exactly this
+            # shape one step worse: an off-by-one there aliased index 8192 onto index 0 of the
+            # neighbouring region, a SILENT miscompile. Comparing against the cap keeps the
+            # same fail-closed behaviour without depending on that coincidence.
+            if (_pe_reloc_count >= _PE_RELOC_CAP) {
                 syscall(SYS_WRITE, 2,
-                "error: PE reloc table full (8192)\n", 34);
+                "error: PE base-relocation table full - raise _PE_RELOC_CAP in src/backend/pe/emit.cyr\n", 86);
                 syscall(SYS_EXIT, 1);
             }
         }
         rl_fi = rl_fi + 1;
+    }
+
+    # v6.5.26 — WARN BEFORE THE WALL. The whole reason this ceiling cost a release to find is
+    # that it was silent right up to the point it was fatal: no signal at 90 % full, then a
+    # hard error and no binary. The 75 % threshold mirrors the fn-table capacity warning in
+    # src/common/util.cyr, so growth is visible while there is still room to act.
+    # ⚠ NO `_emit_decimal` HERE, deliberately. It is defined in src/main.cyr only, and this
+    # file is included by main_win.cyr and main_x86_macho.cyr TOO — neither of which defines
+    # it. Calling it would break those two forks, and only a real cass / Intel-Mac build would
+    # catch that (the v6.4.26 fork-stub trap). The threshold signal is the point; the exact
+    # count is recoverable from a debugger or by lowering the cap.
+    if (_pe_reloc_count * 4 > _PE_RELOC_CAP * 3) {
+        syscall(SYS_WRITE, 2, "warning: PE base-relocation table is over 75% full - raise _PE_RELOC_CAP in src/backend/pe/emit.cyr before it becomes a hard error\n", 131);
     }
 
     # Compute .reloc virtual size — group sorted coffs by 4 KB
@@ -1406,13 +1460,13 @@ fn _pe_layout(S): i64 {
     _pe_reloc_vsize = 0;
     if (_pe_reloc_count > 0) {
         var rl_pi = 0;
-        var rl_cur_page = (L64(S + 0x1DC000) + _pe_text_rva) >> 12;
+        var rl_cur_page = (L64(_pe_reloc_base) + _pe_text_rva) >> 12;
         var rl_cur_cnt = 0;
         var rl_this_rva = 0;
         var rl_this_page = 0;
         var rl_blk_bytes = 0;
         while (rl_pi < _pe_reloc_count) {
-            rl_this_rva = L64(S + 0x1DC000 + rl_pi * 8) + _pe_text_rva;
+            rl_this_rva = L64(_pe_reloc_base + rl_pi * 8) + _pe_text_rva;
             rl_this_page = rl_this_rva >> 12;
             if (rl_this_page != rl_cur_page) {
                 rl_blk_bytes = 8 + rl_cur_cnt * 2;
@@ -1900,7 +1954,7 @@ fn EMITPE_EXEC(S): i64 {
     # .reloc section — per-4KB-page DIR64 blocks (v5.5.35).
     # ============================================================
     # Walks the coff array collected in _pe_layout (stored at
-    # S + 0x1DC000, sorted ascending). Emits one base-relocation
+    # _pe_reloc_base, sorted ascending). Emits one base-relocation
     # block per 4 KB page of code, matching PE32+ spec:
     #
     #   Block header (8 B):  DWORD PageRVA; DWORD BlockSize
@@ -1923,13 +1977,13 @@ fn EMITPE_EXEC(S): i64 {
         var rl_off = 0;
         var rl_ent = 0;
         while (rl_ei < _pe_reloc_count) {
-            rl_rva_i = L64(S + 0x1DC000 + rl_ei * 8) + _pe_text_rva;
+            rl_rva_i = L64(_pe_reloc_base + rl_ei * 8) + _pe_text_rva;
             rl_page = rl_rva_i >> 12;
             # Walk forward to find end of this page's entries.
             rl_rj = rl_ei + 1;
             var rl_same = 1;
             while (rl_same == 1 && rl_rj < _pe_reloc_count) {
-                rl_rva_k = L64(S + 0x1DC000 + rl_rj * 8) + _pe_text_rva;
+                rl_rva_k = L64(_pe_reloc_base + rl_rj * 8) + _pe_text_rva;
                 if ((rl_rva_k >> 12) == rl_page) {
                     rl_rj = rl_rj + 1;
                 } else {
@@ -1945,7 +1999,7 @@ fn EMITPE_EXEC(S): i64 {
             # Entries
             rl_k2 = rl_ei;
             while (rl_k2 < rl_rj) {
-                rl_rva_k = L64(S + 0x1DC000 + rl_k2 * 8) + _pe_text_rva;
+                rl_rva_k = L64(_pe_reloc_base + rl_k2 * 8) + _pe_text_rva;
                 rl_off = rl_rva_k & 0xFFF;
                 # DIR64 type = 10 → top nibble 0xA; combine with offset
                 rl_ent = 0xA000 | rl_off;

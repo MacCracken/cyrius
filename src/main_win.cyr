@@ -98,7 +98,14 @@
 #                                        stores (1<<63)|val per variant; read
 #                                        by PARSE_FACTOR to const-fold enum
 #                                        identifiers at parse time (v5.5.2)
-#   0x1DA000  DCE bitmap    [8192]        dead-code-elimination scratch (pass 2 only)
+#   0x1DA000  (PHANTOM, removed from the map v6.5.26 — was "DCE bitmap [8192]".
+#             NOTHING in the tree ever read or wrote S + 0x1DA000: the only two hits
+#             were this map line and its main_win.cyr twin. The real DCE live set is a
+#             STACK array, `var live[4096]` in src/backend/x86/fixup.cyr and
+#             src/backend/aarch64/fixup.cyr. Because the map is MACHINE-READ, a phantom
+#             entry is not harmless: it reserved 8 KB that the corrected enum_const_val
+#             extent legitimately needs, so it manufactured a false overlap the moment a
+#             neighbouring size was told the truth. Second phantom of the v6.4.81 class.)
 #
 # --- Variable tables ---
 #   0x11A000 var_noffs     [65536]       8192 variable name offsets
