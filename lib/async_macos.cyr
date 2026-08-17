@@ -97,10 +97,16 @@ fn async_spawn(rt, fp, arg): i64 {
     return t;
 }
 
-# One serial step (mirror async.cyr _async_step, v6.4.37). Runs every TASK_READY task
-# to completion, capturing its return into the result slot (@40); returns the count of
-# tasks not yet DONE. AGNOS has no epoll/parking, so there is no wait phase — the
-# `ran == 0` guard returns 0 (a task never parks here).
+# One reactor step (mirror of async.cyr _async_step). Runs every TASK_READY task, capturing
+# its return into the result slot (@40); a task that parks via async_wait_fd stays
+# TASK_WAITING. If nothing ran and tasks are parked, block in kevent() once and wake whoever
+# fired. Returns the count of tasks still live (0 = idle).
+#
+# ⛔ THIS DOC BLOCK USED TO DESCRIBE A SERIAL LOOP, AND IT WAS COPIED FROM THE AGNOS BACKEND
+# ALONG WITH THE BODY. v6.5.27 replaced the body with a real kqueue reactor but the comment
+# still said "AGNOS has no epoll/parking, so there is no wait phase" — describing behaviour
+# the code no longer had. Caught by cyrlint flagging the stale wording, which is the only
+# reason it did not ship as a lie about a file nobody re-reads. See CHANGELOG [6.5.27].
 fn _async_step(rt): i64 {
     var kq = load64(rt);
     var active = 0;
@@ -154,7 +160,6 @@ fn _async_step(rt): i64 {
     }
     return active;
 }
-
 
 # Drive the serial loop until either watched handle is DONE, or — both 0 — until idle.
 fn _async_pump(rt, until_a, until_b): i64 {
@@ -244,7 +249,6 @@ fn async_run_process(rt, path, argv, envp, ms): i64 {
 fn async_wait_writable(rt, fd): i64 {
     return _async_kev_register(rt, fd, 4);
 }
-
 
 # Async TCP connect (agnos): no reactor / BSD non-blocking connect on the serial client
 # model — unsupported, returns 0 (no handle). Present so consumers stay target-agnostic.
@@ -371,13 +375,11 @@ fn async_wait_fd(rt, fd): i64 {
     return _async_kev_register(rt, fd, 1);
 }
 
-
 # Park until `fd` is readable OR writable. On kqueue this is two independent filter
 # registrations on one ident — no union mask, no -EEXIST, unlike epoll.
 fn async_wait_rw(rt, fd): i64 {
     return _async_kev_register(rt, fd, 5);
 }
-
 
 # v6.5.26 — one direction of a byte relay (agnos). The blocking read IS the wait on this
 # target, so this is the epoll body minus the park. Returns bytes WRITTEN, 0 on clean EOF.

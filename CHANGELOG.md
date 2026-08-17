@@ -4,7 +4,9 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — `.27` in flight
+## [Unreleased]
+
+## [6.5.27] — 2026-08-17
 
 **Completing the async work across ALL platforms — the half `.26` left on the table.**
 
@@ -14,6 +16,45 @@ test needed nothing but building for aarch64 and pushing it. **23/23 on real pi 
 first try. It was never run because nobody built it, not because of any platform gap. That is
 the fix-spread-across-releases antipattern the project exists to prevent, and the "reactor is
 epoll-only" line I wrote was a rationalisation covering an omission.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,178,024 B**, **seed → cybs →
+cycc byte-identical**, `check.sh` **188 / 0**, corpus **273 / 273**, cross-OS on REAL
+hardware — **ecb + ach + cass + pi, each `SELFHOST_OK` + crossos 49/49**. Bench (settled,
+load 0.28): `self_compile` **716 ms** (708 at `.26`), `phase_pp` **123 ms**; cycc size
+UNCHANGED, so that is noise/growth-tax rather than a code cost.
+
+### Added — macOS gets a REAL reactor: kqueue (`sys_kqueue` / `sys_kevent`)
+
+`lib/async_macos.cyr` is now a kqueue multi-waiter, not the serial fallback `.27` opened
+with. `sys_kqueue`/`sys_kevent` are routed through BOTH macho backends via the private-alias
+band (**1362 → BSD 362**, **1363 → BSD 363**), the convention CLAUDE.md prescribes when no
+Linux source number has matching semantics.
+
+⭐ **kqueue needs no union mask and no modify-on-conflict.** epoll keys its registration by
+fd alone, so two waiters collide and the second `EPOLL_CTL_ADD` returns `-EEXIST` — the bug
+this whole arc began with. kqueue keys by **(ident, filter)**, so the two directions of one
+fd are independent registrations and repeated `EV_ADD` is an idempotent update. The defect
+is structurally impossible there.
+
+**Verified on real hardware: ach (Intel-Mac) 23/23 and ecb (arm64-Mac) 23/23.**
+
+⚠ **arm64-macOS resolves `lib/syscalls_aarch64_linux.cyr`, NOT `syscalls_macos.cyr`**
+(`syscalls.cyr:68-70`) — so the first kqueue pass worked on Intel-Mac and failed on ecb with
+`undefined sys_kqueue`. The wrappers there are `#ifdef CYRIUS_TARGET_MACOS`-guarded so real
+aarch64-Linux, which has epoll and no kqueue, is untouched.
+
+⚠ The macOS peer's `SYS_EPOLL_*` constants are documented as **dead-but-armed**: Linux
+numbers, unrouted by the macho translators, so reaching them issues RAW Darwin syscalls.
+Left in place (removing a public enum member is a consumer-visible break) with a pointer to
+`SYS_KQUEUE`/`SYS_KEVENT`.
+
+### Changed — sankoch 2.7.7 → 2.7.8 fold
+
+Language-pin update only (`cyrius = "6.5.26"`); the bundle differs from the vendored copy by
+its version line alone — byte-identical otherwise, verified with `cmp`. All **nine**
+sub-profiles are also at 2.7.8 upstream, so the v6.4.79 trap (`cyrius distlib` regenerating
+only the main bundle and leaving sub-profiles stale) did not recur. cyrius vendors only the
+main bundle.
 
 ### Added — `lib/async_macos.cyr`, so macOS async EXISTS
 
@@ -36,8 +77,6 @@ handles Darwin (`poll(NULL,0,ms)`, 7→230 — XNU has no plain `nanosleep`).
 It compiles on all four targets and RUNS wherever epoll does. Windows and macOS print a SKIP
 that NAMES the missing capability rather than the file quietly being absent from the gate — a
 skip you can read beats a test you deleted.
-
-## [Unreleased]
 
 ## [6.5.26] — 2026-08-17
 

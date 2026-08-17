@@ -4161,6 +4161,8 @@ syscalls_aarch64_linux::sys_fsync/1
 syscalls_aarch64_linux::sys_inotify_add_watch/3
 syscalls_aarch64_linux::sys_inotify_init/0
 syscalls_aarch64_linux::sys_inotify_rm_watch/2
+syscalls_aarch64_linux::sys_kevent/6
+syscalls_aarch64_linux::sys_kqueue/0
 syscalls_aarch64_linux::sys_link/2
 syscalls_aarch64_linux::sys_lstat/2
 syscalls_aarch64_linux::sys_mkdir/2
@@ -4249,6 +4251,8 @@ syscalls_macos::sys_fchownat/5
 syscalls_macos::sys_fdatasync/1
 syscalls_macos::sys_fork/0
 syscalls_macos::sys_fsync/1
+syscalls_macos::sys_kevent/6
+syscalls_macos::sys_kqueue/0
 syscalls_macos::sys_link/2
 syscalls_macos::sys_lstat/2
 syscalls_macos::sys_mkdir/2
