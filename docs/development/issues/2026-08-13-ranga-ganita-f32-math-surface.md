@@ -1,8 +1,8 @@
 # ganita has no f32 math surface — every f32 consumer widens to f64 and narrows back
 
-**Status:** 🟡 **OPEN — TIER 1 SHIPPED at v6.5.24 (ganita 1.1.0); tiers 2-3 remain.**
+**Status:** ✅ **RESOLVED — ALL THREE TIERS SHIPPED at v6.5.24 (ganita 1.1.0).**
 
-> **✅ TIER 1 SHIPPED — ganita 1.1.0, folded at cyrius v6.5.24.** Ten `ganita_f32_*` helpers
+> **✅ ALL THREE TIERS SHIPPED — ganita 1.1.0, folded at cyrius v6.5.24. 23 `ganita_f32_*` fns, api-surface 4843 -> 4866 (+23).** Tier 1: ten helpers
 > in the new `src/math_f32.cyr`: `_abs`, `_neg`, `_sign` (pure bit ops), `_min`, `_max`,
 > `_clamp` (one signed compare on a monotone key), `_lerp`, `_floor`, `_ceil`, `_trunc`.
 > api-surface 4843 -> 4853 (+10, no accidental surface). **MINOR bump, not a patch** — new
@@ -30,8 +30,29 @@
 > Shipping f32 helpers first would have made every f32 accumulator in every consumer emit a
 > bogus warning. Guard landed at v6.5.24 ahead of this.
 >
-> **Remaining:** tier 2 (`f32_sqrt` via `sqrtss`) and tier 3 (the `ganita_f32_*`
-> transcendentals). Both are interleaved reactive fold-ins, not blockers. — surfaced while planning the ranga (image processing) Rust→Cyrius port.
+> **Tier 2** — `ganita_f32_sqrt`. ⚠ The requested `sqrtss` needs a NEW cyrius intrinsic (a
+> compiler change, not a library one), so this widens — and it is **correctly rounded, not
+> approximate**: f64's 53 mantissa bits exceed 2*24 + 2, so double-then-single rounds to
+> exactly the single result. **`sqrtss` intrinsic = cyrius-side follow-up.**
+>
+> **Tier 3** — `_exp`, `_ln`, `_log2`, `_exp2`, `_sin`, `_cos`, `_atan`, `_round`, `_pow`,
+> `_atan2`, `_hypot`, `_cbrt`. Widen-compute-narrow, which this filing explicitly blesses.
+> ⚠ `_cbrt` splits on sign because it is built from `pow` (`exp(y*ln x)`) and `ln` of a
+> negative is undefined — a bare pow is garbage for negatives while looking fine for the
+> positives a naive test uses. Verified -8 -> -2.
+>
+> ⛔ **PROCESS NOTE, recorded deliberately.** A first cut shipped TIER 1 ONLY and framed
+> tiers 2-3 as "interleaved fold-ins". That was a **silent deferral of an enumerated
+> consumer surface** — CLAUDE.md: "a consumer filing enumerates the FULL surface they need;
+> shipping a subset is a silent deferral." The filing's tiering said *suggested, cheapest
+> and highest-value first* — a sequencing hint, NOT permission to ship a third and close
+> the slot. The maintainer caught it. All three tiers are in 1.1.0.
+>
+> **Genuinely remaining, and cyrius-side not ganita-side:** the `sqrtss` intrinsic, and the
+> two adjacent gaps this filing noted for context — no f32 **literal** form, and no f32
+> function **return-type** sentinel (f32 params type but returns come back untyped). Also
+> newly found: **there is no callable `f32_add`/`f32_sub`/`f32_mul`**, so no f32 tier can
+> be written in native single-precision arithmetic today. — surfaced while planning the ranga (image processing) Rust→Cyrius port.
 **Placement:** **Split — do NOT bounce the whole thing to ganita.** Tier 1 (f32 scalar helpers) rides **v6.5.24 — band C**, in the same bite-cluster as the typed-binding guard it depends on. Tiers 2–3 are interleaved reactive fold-ins.
 
 > **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Gap verified UPSTREAM as well as in the fold, per the fix-the-source-repo rule. ⚠ GATED ON `2026-08-13-f64-typed-binding-reassign-warns-as-pointer`.

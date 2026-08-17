@@ -6,6 +6,162 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.24] — 2026-08-17
+
+**Band C: the small-fix cluster — cheap consumer wins, batched.** Four items, each of
+which had a check that could not see it, which is why each survived. The recurring shape
+of this whole cycle showed up twice more: a hand-maintained value duplicating a derivable
+fact, and a test that passes whether or not the code works.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,177,760 B**, **seed → cybs →
+cycc byte-identical from the 29,024 B seed** (run after each `lex_pp.cyr` change — its cybs
+ceiling is real), `check.sh` **185 / 0**, corpus **272 / 272**, cross-OS on REAL hardware —
+**ecb + ach + cass + pi, each `SELFHOST_OK` + crossos 48/48**, ran-count cross-checked
+against the local 48 — and bench on a verified-quiet box (load **0.06**, no orphan test
+children): `self_compile` **696 ms** (701 at `.23`, **−0.7 %**, flat) with `phase_pp`
+**117 ms** (116 at `.23`). ⭐ **`phase_pp` did not regress** despite `.24` adding a
+directive-chain arm (`ISSRCLINE`) to `PP_PASS`'s hot loop and a bounded per-include
+`#host_only` scan — the scan is capped at the first 4096 bytes precisely so it stays off the
+hot path. cycc **+5,312 B**.
+
+⚠ **One band-C item did not land, and is not deferred silently.** The `agnosai`
+misleading-stdlib-error filing could not be REPRODUCED in three attempts — the message path
+(`_dep_pull_leaves`) was never reached — so there is no verified fix to ship. It needs a
+real git-dep-with-sidecar shape to reproduce first; the issue records this and says do not
+archive it on the implementer's word.
+
+⭐ **f64v4 SIMD widened to 256-bit ymm** (fix-list item 3, pulled forward from band G) ·
+⭐ **`<source>` diagnostics stop shifting by one per prepended line** — abaco's 18-module
+manifest was off by **+17**, pointing past EOF · ⭐ **bare-metal deliverable #4 built**
+after ~2 months unbuilt and briefly lost in `archived/` · ⭐ **ganita 1.1.0** f32 math tier
+(23 fns, all three tiers).
+
+### Added — f64v4 arithmetic on 256-bit ymm, behind the AVX2 gate
+
+`EMIT_F64V4_LOOP` (`src/backend/x86/float.cyr`) emits `vaddpd`/`vsubpd`/`vmulpd`/`vdivpd`
+on **ymm**, four f64 lanes per iteration instead of two, reached through four new builtins
+(`f64v256_add`/`sub`/`mul`/`div`, tokens 154-157) whose `lib/simd.cyr` wrappers gate on
+`simd_has_avx2()`. All eight f64v4 wrappers — 4 ops × value/`_ptr` — take the wide kernel
+when the host has AVX2 and the 128-bit path otherwise. Measured **15.9 → ~7.9 ns**.
+
+⛔ **The roadmap gated this behind Slot 3's IR/regalloc substrate for no reason.** It is a
+self-contained emitter mirroring `EMIT_F32V8_LOOP` and needed no substrate at all; the
+substrate sat unbuilt while a measured 2× was available.
+
+⚠ **Named for the register WIDTH, not the lane count.** The obvious name — the f32v8
+family's own convention — is already a lib fn: `lib/simd.cyr` defines the value-form
+`f64v4_add`. f64v4 shipped years before its widening and f32v8 shipped after, so only
+f32v8 ever got the plain name; reserving `f64v4_add` as a keyword would make that lib
+definition a "reserved word as identifier" parse error and break every consumer calling
+the value form. Leaves `f64v512_*` free for an AVX-512 tier.
+
+⚠ **The ymm loop strides its index by 4, so it can never serve an f64v2 caller** — a
+4-lane stride over a 16-byte vector runs off the end. f64v2 keeps tokens 89-91.
+aarch64 and cx get **delegating** stubs (to the 128-bit NEON/portable loop), deliberately
+not the `return 0;` shape, which would make the verb a silent no-op.
+
+⚠ **A value test cannot see this working.** On an AVX2 host the wide and narrow kernels
+return identical results, so `crossos/f64v4_ymm.tcyr` (23 assertions, both kernels
+compared in one run by forcing `_avx2_cache = 0`) proves correctness but NOT that ymm is
+selected. `tests/gates/codegen/f64v4_ymm_disasm.sh` is what proves that, host-CPU-
+independently — there is no in-tree VEX oracle, `decode.cyr` excludes VEX by design. It
+pins bytes AND mnemonics, because `pd` and `ps` differ by **one bit** in the second VEX
+byte (`FD` vs `FC`) and emitting the wrong one silently makes every f64 op a
+packed-single operation on double bit patterns. Mutation-proven both ways: the `pd→ps`
+flip and a stride of 2 each turn it red — and **the stride mutation left the value test
+passing 23/23** while writing 16 bytes past the end of the vector, which is the whole
+argument for the disasm gate.
+
+### Fixed — `<source>` diagnostic lines shifted by one per prepended line
+
+`cyrius build` prepends `#@incdir`, `#@pkgver`, one `include` per `[deps].stdlib` module,
+one `#define` per `-D`, and the **entire text** of every `[build].modules` file. Only
+`#@incdir` was ever compensated, so every `<source>` diagnostic was reported one line late
+per prepended line. On abaco (18 modules) that is **+17**, and on a 23-line file it pointed
+at line 30 — **past EOF**, which reads as a compiler fault, so the reader stops trusting
+line numbers instead of adjusting them.
+
+cbt now writes **`#@srcline`** as the last thing before the entry file, and cycc
+re-anchors the `<source>` span to line 1 there.
+
+⚠ **Not the remedy the filing proposed** — re-emitting `#@file` is foreclosed by v6.5.21's
+neutralisation of user-authored `#@file` markers (which closed a forged-marker bypass of
+`private`). `#@srcline` cannot re-open that hole: it carries no filename and can only move
+line attribution.
+
+⭐ **The marker deliberately carries NO COUNT.** Having cbt declare "I prepended N lines"
+would make N a hand-maintained value duplicating something derivable — the exact shape
+that had silently drifted in three separate places this cycle — and it is unworkable the
+moment `[build].modules` is used, since those splice in whole files. cycc derives the bias
+from the marker's own line position, so cbt counts nothing.
+
+⚠ **Setting the bias alone does nothing**, which cost a build cycle to learn: the bias is
+only consumed when an `include` RETURNS, and cbt's prepended includes all sit above the
+marker, so the last re-anchor has already happened with the old bias. The marker must
+re-anchor outright. Gate `diagnostics/srcline_no_line_shift.sh` uses 0 / 6 / **18** modules
+and a subdir entry and demands the same line from all four, so a fix that merely shifted
+the constant by one cannot pass; mutation-proven, dropping cbt's write reproduces the
+filed signature exactly (+7 at 6 modules, +16 at 18, +4 for a subdir entry).
+
+### Fixed — the typed-pointer warning tested the wrong SIGN (Slot 1 item (d))
+
+`assigning non-pointer to typed pointer` gated on `lt > 0`, but a positive local SLTYPE is
+a narrow **width** (1/2/4) or a **float tag** (`F64_TYID`/`F32_TYID`); the pointer-like
+case is stored NEGATIVE as `0 - sid`. Inverted in **both directions at once**: it fired on
+every width- or float-annotated local and **never** on a real typed-pointer local, so the
+check was unreachable for its own purpose — while the GLOBAL arm of the same warning had
+always used the correct `vt < 0`. The two arms had silently disagreed.
+
+⭐ The float half **gated a consumer feature**: `acc = f32_op(acc, ...)` is the canonical
+ranga/ganita f32 loop body, so shipping the f32 math tier while this warned would have put
+a bogus warning in every consumer's f32 loop.
+
+⛔ No `.tcyr` can catch this — a warning changes no exit code — which is how it survived.
+Gate `diagnostics/typed_pointer_warn_sign.sh`; its axis 4 is the anti-vacuous one, since
+axes 1-3 all assert an absence and would pass if the warning were deleted outright.
+
+### Added — bare-metal forbidden-module check (bare-metal deliverable #4)
+
+A host-OS-only stdlib module marks itself `#host_only` (first column; `#` opens a comment,
+so it is inert for host targets). A kernel build that pulls one now fails with a message
+naming the module, instead of compiling silently and faulting at runtime inside the kernel.
+Annotated: `lib/fs.cyr`, `lib/process.cyr`, `lib/net.cyr`.
+
+⭐ **An annotation, not a central deny-list.** The filing offered both and preferred the
+annotation; it is also the anti-drift choice — the fact lives in the module it describes
+and moves with the file. Unannotated modules stay allowed, so the default is unchanged
+rather than breaking every kernel build on day one.
+
+⚠ **The check is at end-of-`PARSE_PROG`, NOT the include site.** `PREPROCESS(S)` runs at
+`main.cyr:1189` and `CYRIUS_KERNEL` is not read until `:1217`, so `kernel_mode` is still 0
+while includes expand — the first cut checked it there and the gate **silently never
+fired**, the same always-green shape this work exists to prevent. End-of-parse also catches
+the source `kernel;` directive, which is not known until every top-level statement is
+parsed. One shared site, no per-fork duplication.
+
+This closes an acceptance criterion that was **unbuilt for ~2 months and briefly lost**:
+bulk-renamed into `issues/archived/` on 2026-07-10 with no resolution banner, for work
+never built, while the roadmap still listed it live. Gate
+`platform/bare_metal_forbidden_module.sh` runs the arc's own `freestanding_tls` #7 fixture
+as its positive case.
+
+### Added — ganita 1.1.0, the f32 scalar math tier
+
+23 fns across three tiers (`ganita_f32_abs`/`neg`/`sign`/`min`/`max`/`clamp`/`lerp`/
+`floor`/`ceil`/`trunc`, `sqrt`, and the transcendental set), folded byte-identical into
+`lib/ganita.cyr`; api-surface **4843 → 4866**. A **minor** bump, not a patch — new API.
+
+⚠ **min/max/clamp are not a bare unsigned compare.** IEEE-754 is sign-magnitude, so raw
+patterns order correctly only among non-negatives — and pixel data is non-negative, so the
+naive version passes every plausible test and is wrong the first time a consumer
+subtracts. `_f32_key` applies the standard monotone transform.
+
+⚠ **There is no callable `f32_add`/`f32_sub`/`f32_mul`** — f32 arithmetic dispatches
+through the operators on an `F32_TYID`-typed binding, so `lerp` widens through f64 (exact
+on the inputs). `sqrt` widens too and is still **correctly rounded**: f64's 53 mantissa
+bits exceed 2×24+2, so double-rounding cannot bite. A direct `sqrtss` intrinsic is a
+compiler-side follow-up, recorded in the issue.
+
 ## [6.5.23] — 2026-08-17
 
 **Band B: the IR=3 bleed and the parser diagnostic residual.** The spine's first release —

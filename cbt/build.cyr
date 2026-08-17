@@ -454,6 +454,23 @@ fn _materialize_source(source): i64 {
                     mi = mi + 1;
                 }
             }
+            # v6.5.24 — `#@srcline` marks where the ENTRY FILE's own line 1 begins, so
+            # every prepend above stops shifting `<source>` diagnostics. MUST be the last
+            # thing written before the source itself.
+            #
+            # Until now only `#@incdir` was compensated, so a diagnostic was reported one
+            # line late per prepended line: abaco's 18-module `[deps].stdlib` shifted every
+            # diagnostic by +17 and pointed PAST EOF on a 23-line file, which reads as a
+            # compiler fault rather than a source defect
+            # (2026-08-13-source-diag-line-shift-scales-with-deps-stdlib).
+            #
+            # ⭐ Deliberately carries NO COUNT. cycc derives the bias from the marker's own
+            # line position, so nothing here has to know how many lines were prepended —
+            # which is the only workable design once `[build].modules` is in play, since
+            # those splice in whole files of unknown length. A hand-maintained count would
+            # be exactly the self-drifting-value shape that bit three separate places this
+            # cycle.
+            sys_write(tfd, "#@srcline\n", 10);
             # Append source file (stream copy for large files)
             var sfd2 = sys_open(source, O_RDONLY, 0);
             if (sfd2 >= 0) {

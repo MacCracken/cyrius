@@ -1,9 +1,31 @@
 # `x = f64_add(x, y)` on an f64-typed binding warns about pointers
 
-**Status:** 🟡 **OPEN**
-**Placement:** **v6.5.24 — band C.** One-line guard at `src/frontend/parse.cyr:1479` excluding F64_TYID/F32_TYID from the pointer test.
+> ### ✅ RESOLVED — SHIPPED in v6.5.24
+>
+> Verified against the filed repro: the warning is gone for `f64`- and `f32`-typed
+> bindings, and for width-annotated locals (`i32`, `i16`, `u8`).
+>
+> ⛔ **The filed one-line remedy was only HALF the bug, and shipping just that half would
+> have left the check broken in the other direction.** Excluding `F64_TYID`/`F32_TYID` from
+> a `lt > 0` test fixes the float symptom but leaves the sign inverted: in the local SLTYPE
+> scheme a POSITIVE `lt` is a narrow WIDTH (1/2/4) or a float tag, and the pointer-like case
+> is stored NEGATIVE as `0 - sid`. So `lt > 0` meant "narrow or float" — the exact set of
+> locals the warning should ignore. Measured before the fix: `var w: i32 = 5; w = 6;`
+> warned, and a STRUCT-typed local — a genuine typed pointer, the case the check exists for
+> — did **not** warn at all. The condition is now `lt < 0`, which is what the GLOBAL arm of
+> this same warning (`vt < 0`, ~40 lines below) had always used; the two arms had silently
+> disagreed. Recorded on the roadmap as Slot 1 item (d).
+>
+> ⭐ **The reverse dependency is discharged**: `2026-08-13-ranga-ganita-f32-math-surface`
+> was gated on this, and ganita 1.1.0's f32 tier shipped in the same release.
+>
+> ⛔ **No `.tcyr` could ever have caught this** — a warning changes no exit code — which is
+> how a check that was wrong in both directions survived. Gate
+> `tests/gates/diagnostics/typed_pointer_warn_sign.sh`; axis 4 is the anti-vacuous one,
+> because axes 1-3 all assert an ABSENCE and would pass if the warning were deleted
+> outright. Mutation-proven: restoring the pre-fix condition turns axes 1 and 4 red.
 
-> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Reproduces verbatim at 6.5.21. ⭐ REVERSE DEPENDENCY: `2026-08-13-ranga-ganita-f32-math-surface` is GATED ON THIS — F32_TYID trips the identical warning, so an f32 tier without this guard makes every f32 accumulator in every consumer emit a bogus pointer warning.
+**Status:** ✅ RESOLVED in v6.5.24 — archive at slot close.
 **Discovered:** 2026-08-13, abaco 2.4.1 adopting the v6.5.21 tuples it proposed
 **Severity:** Low — **diagnostic only, values are correct** (verified against a
 run binary, not inferred). It earns a filing because v6.5.21 is what makes it

@@ -1335,6 +1335,11 @@ fn _PARSE_STMT_IMPL(S): i64 {
     if (typ >= 147) { if (typ <= 149) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
     # v6.4.9 (SIMD Phase 4 R2): f32v8_fma/f32v8_dot as statements (150-151).
     if (typ >= 150) { if (typ <= 151) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    # v6.5.24 (ymm widening): f64v256_add/sub/mul/div as statements (154-157). The lib
+    # wrappers call these in STATEMENT position (`f64v256_add(&r, a_ptr, b_ptr, 4);`), so
+    # without this band the builtin lexes and emits fine yet is a syntax error at every
+    # real call site. 152/153 (`>>>`, `private`) are deliberately not in the range.
+    if (typ >= 154) { if (typ <= 157) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
     if (typ == 2) {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);
@@ -1495,15 +1500,23 @@ fn _PARSE_STMT_IMPL(S): i64 {
             idx = FINDLOCAL(S, noff);
             if (idx >= 0) {
                 var lt = GLTYPE(S, idx);
-                # v6.5.24 — F64_TYID (0x40000001) and F32_TYID (0x40000002) are FLOAT
-                # type tags, not pointer scales, and both land POSITIVE — so `lt > 0`
-                # counted every f64/f32 local as a typed pointer and warned on ordinary
-                # reassignment (`var acc: f64 = 0.0; acc = f64_add(acc, x);`). Filed as
-                # 2026-08-13-f64-typed-binding-reassign-warns-as-pointer.
-                # ⭐ This also GATED the ranga/ganita f32 tier: `acc = f32_op(acc, ..)` is
-                # the canonical loop body there, so shipping f32 helpers first would have
-                # made every f32 accumulator in every consumer emit a bogus warning.
-                if (lt > 0 && lt != F64_TYID && lt != F32_TYID) {
+                # v6.5.24 — THE SIGN TEST WAS INVERTED, so this warning fired on exactly
+                # the locals it should ignore and never once on the case it exists for.
+                # In the local SLTYPE scheme a POSITIVE lt is a narrow width in bytes
+                # (1/2/4) or a float tag (F64_TYID 0x40000001 / F32_TYID 0x40000002);
+                # the pointer-like case is stored NEGATIVE, as `0 - sid`
+                # (parse_decl.cyr:2490). `lt > 0` therefore meant "narrow or float".
+                # Measured before the fix: `var w: i32 = 5; w = 6;` warned, `var a: f64
+                # = ...; a = ...;` warned, and a struct-typed local — the actual typed
+                # pointer — did NOT, i.e. the check was unreachable for its own purpose.
+                # `lt < 0` is also what the GLOBAL arm of this very warning already uses
+                # (`vt < 0`, ~40 lines below); the two arms had silently disagreed.
+                # ⭐ Fixing the float half UNGATED the ranga/ganita f32 tier: `acc =
+                # f32_op(acc, ..)` is the canonical loop body there, so every f32
+                # accumulator in every consumer would have emitted a bogus warning.
+                # Filed as 2026-08-13-f64-typed-binding-reassign-warns-as-pointer plus
+                # the wider inverted-sign finding (roadmap Slot 1 item (d)).
+                if (lt < 0) {
                     if (aps == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); }
                 }
             }
@@ -1628,6 +1641,35 @@ fn PARSE_PROG(S): i64 {
                                 EPATCH(S, fn_skip);
                             }
                             else { PARSE_STMT(S); } } } } } } } } } }
+    }
+    # v6.5.24 — bare-metal forbidden-module check (bare-metal deliverable #4), reported
+    # HERE rather than at the include site. The preprocessor records which host-only
+    # module was pulled (PP_IS_HOST_ONLY / PP_NOTE_HOST_ONLY in lex_pp.cyr) but CANNOT
+    # decide: `PREPROCESS(S)` runs at main.cyr:1189 and the CYRIUS_KERNEL env is not read
+    # until :1217, so kernel_mode (S+0x18FCA0) is still 0 while includes expand — the
+    # first cut checked it there and the gate never fired.
+    # ⭐ End-of-PARSE_PROG catches BOTH declaration paths: the
+    # `--target=<arch>-bare-metal-elf` triple (env, set before parse) AND the source
+    # `kernel;` directive, which is only known once every top-level statement above has
+    # been parsed. One shared site, so no per-fork duplication.
+    # ⛔ Only the USER's own includes count. cbt prepends one `include` per `[deps].stdlib`
+    # module to EVERY build regardless of target, so when a `#@srcline` marker is present
+    # (i.e. cbt materialised this compiland) the pre-marker prepends are NOT the kernel
+    # author's choice and must not fail the build — the first cut ignored that and turned
+    # this repo's own `programs/boot_serial.cyr` red via a manifest-supplied `lib/fs.cyr`.
+    # With no marker (raw `cat | cycc`) every include is the user's, so the plain latch
+    # applies. See PP_NOTE_HOST_ONLY.
+    var _ho = _pp_hostonly_hit;
+    if (_pp_srcline_seen == 1) { _ho = _pp_hostonly_user; }
+    if (_ho == 1) {
+        if (L64(S + 0x18FCA0) == 1) {
+            syscall(SYS_WRITE, 2, "error: bare-metal build includes host-only module: ", 51);
+            var _hol = 0;
+            while (load8(&_pp_hostonly_name + _hol) != 0) { _hol = _hol + 1; }
+            syscall(SYS_WRITE, 2, &_pp_hostonly_name, _hol);
+            syscall(SYS_WRITE, 2, " (marked #host_only; not available under CYRIUS_KERNEL)\n", 56);
+            syscall(SYS_EXIT, 1);
+        }
     }
     return 0;
 }

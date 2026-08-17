@@ -991,6 +991,14 @@ fn TOKNAME_BUILTIN(typ): i64 {
     if (typ == 149) { return "f32v8_mul"; }
     if (typ == 150) { return "f32v8_fma"; }
     if (typ == 151) { return "f32v8_dot"; }
+    # v6.5.24 — the 256-bit packed-double kernel. Named for its register width, not its
+    # lane count, because the lane-count name (`f64v4_add`) is a pre-existing lib fn; see
+    # LEXKW_EXT in src/frontend/lex.cyr. IS_KEYWORD_TOK derives from this table, so these
+    # four entries are what actually reserves the names.
+    if (typ == 154) { return "f64v256_add"; }
+    if (typ == 155) { return "f64v256_sub"; }
+    if (typ == 156) { return "f64v256_mul"; }
+    if (typ == 157) { return "f64v256_div"; }
     return 0;
 }
 

@@ -223,6 +223,50 @@ fn EMIT_F32V_LOOP(S, op, vbase): i64 {
 # SIGILLs on pre-AVX2 CPUs — the lib f32v8_* wrappers gate on simd_has_avx2() and fall
 # back to the SSE (EMIT_F32V_LOOP, n=8 = 2 iters) path. cycc has no f32v8 → its own
 # self-host never emits a VEX byte (byte-identical, same as every prior SIMD phase).
+# v6.5.24 (SIMD fix-list item 3, pulled forward from band G) — f64v4 widened to 256-bit
+# ymm. dst[i] = a[i] OP b[i] over FOUR f64 lanes per iteration instead of two.
+#
+# ⭐ THIS NEEDED NO IR/REGALLOC SUBSTRATE. The filing bundles it with two items that do
+# (register-resident value-form arithmetic, wrapper inlining), and the roadmap gated all
+# three behind Slot 3 — but this one is a self-contained emitter mirroring
+# EMIT_F32V8_LOOP, and it was measured at 15.9 -> ~7.9 ns while the substrate sat unbuilt.
+#
+# Encoding is the `pd` sibling of the f32v8 loop: 2-byte VEX C5, second byte FD instead of
+# FC (pp=01, the 66-prefix slot) so every op is packed-DOUBLE; SIB 0xF2 = [rdx+rsi*8]
+# (scale 8, index rsi, base rdx), the same addressing the SSE f64v loop uses.
+#
+# ⚠ rsi ADVANCES BY 4, so this emitter can NEVER serve the n=2 f64v2 caller — a 4-lane
+# stride over a 2-element vector walks off the end. It is reached only through a distinct
+# builtin whose lib wrapper gates on simd_has_avx2(); f64v2 keeps EMIT_F64V_LOOP.
+# ⚠ vzeroupper before returning, or every later SSE instruction pays the AVX-SSE
+# transition penalty — the same reason EMIT_F32V8_LOOP ends with it.
+fn EMIT_F64V4_LOOP(S, op, vbase): i64 {
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);   # rcx = n
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);   # rsi = 0
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);   # cmp rsi, rcx
+    EB(S, 0x0F); EB(S, 0x8D);                 # jge done
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);   # vmovupd ymm0, [rdx+rsi*8]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xF2);   # vmovupd ymm1, [rdx+rsi*8]
+    EB(S, 0xC5); EB(S, 0xFD);                                          # vaddpd/vsubpd/vmulpd/vdivpd
+    if (op == 0) { EB(S, 0x58); }
+    if (op == 1) { EB(S, 0x5C); }
+    if (op == 2) { EB(S, 0x59); }
+    if (op == 3) { EB(S, 0x5E); }
+    EB(S, 0xC1);                                                       # ymm0 = ymm0 OP ymm1
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x11); EB(S, 0x04); EB(S, 0xF2);   # vmovupd [rdx+rsi*8], ymm0
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x04);                # rsi += 4
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    EB(S, 0xC5); EB(S, 0xF8); EB(S, 0x77);                             # vzeroupper
+    return 0;
+}
+
 fn EMIT_F32V8_LOOP(S, op, vbase): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);   # rcx = n
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);   # rsi = 0 (loop counter)

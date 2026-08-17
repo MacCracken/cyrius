@@ -959,6 +959,48 @@ fn LEXKW_EXT(kw, klen, S, ws): i64 {
             }
         }
     }
+    # v6.5.24 (ymm widening) — f64v256_add/sub/mul/div(dst, a, b, n): the 256-bit AVX2
+    # packed-DOUBLE kernel (vaddpd/vsubpd/vmulpd/vdivpd ymm) → EMIT_F64V4_LOOP. Tokens
+    # 154-157, CONSECUTIVE so `ptyp - 154` IS the op index (0=add 1=sub 2=mul 3=div),
+    # matching how every other SIMD family derives its op from the token.
+    #
+    # ⚠ WHY NOT NAMED `f64v4_add`. That is the f32v8 family's own convention — the
+    # 256-bit TYPE names the builtin — but for f64 the name is already taken:
+    # `lib/simd.cyr:590` defines the value-form `fn f64v4_add(a: f64v4, b: f64v4): f64v4`.
+    # f64v4 shipped years before its widening and f32v8 shipped after, so only f32v8 ever
+    # got the plain name. Reserving `f64v4_add` here would turn that lib definition into a
+    # "reserved word as identifier" parse error and break every consumer calling the value
+    # form, so the 256-bit KERNEL is named for its register WIDTH instead. That also
+    # leaves `f64v512_*` free for an AVX-512 tier without a third collision.
+    #
+    # 11-char names → klen==11: shared 8-byte prefix "f64v256_" plus a 3-byte op tail.
+    # Byte 8 alone (a/s/m/d) is already unique across the four, but all three tail bytes
+    # are checked so a user identifier like `f64v256_ann` can't be silently stolen by the
+    # `add` arm — the lexer's other multi-byte arms check every byte for the same reason.
+    if (klen == 11) {
+        if (kw == 0x5F36353276343666) {
+            if (load8(S + 0x60000 + ws + 8) == 97) {
+                if (load8(S + 0x60000 + ws + 9) == 100) {
+                    if (load8(S + 0x60000 + ws + 10) == 100) { return 154; }
+                }
+            }
+            if (load8(S + 0x60000 + ws + 8) == 115) {
+                if (load8(S + 0x60000 + ws + 9) == 117) {
+                    if (load8(S + 0x60000 + ws + 10) == 98) { return 155; }
+                }
+            }
+            if (load8(S + 0x60000 + ws + 8) == 109) {
+                if (load8(S + 0x60000 + ws + 9) == 117) {
+                    if (load8(S + 0x60000 + ws + 10) == 108) { return 156; }
+                }
+            }
+            if (load8(S + 0x60000 + ws + 8) == 100) {
+                if (load8(S + 0x60000 + ws + 9) == 105) {
+                    if (load8(S + 0x60000 + ws + 10) == 118) { return 157; }
+                }
+            }
+        }
+    }
     return 0;
 }
 

@@ -1163,6 +1163,9 @@ fn _CX_VLOOP_BIN(S, dslot, aslot, bslot, stride, ldop, stop, arop, is_f32): i64 
 fn EMIT_F64V_LOOP(S, op, vbase): i64 { _CX_VLOOP_BIN(S, vbase, vbase + 1, vbase + 2, 8, 65, 67, 84 + op, 0); return 0; }
 fn EMIT_F32V_LOOP(S, op, vbase): i64 { _CX_VLOOP_BIN(S, vbase, vbase + 1, vbase + 2, 4, 69, 71, 84 + op, 1); return 0; }
 fn EMIT_F32V8_LOOP(S, op, vbase): i64 { EMIT_F32V_LOOP(S, op, vbase); return 0; }
+# v6.5.24 — f64v4: cx SIMD is a per-lane scalar loop driven by `n`, so lane width per
+# iteration is irrelevant and delegating to the f64v loop is exactly correct.
+fn EMIT_F64V4_LOOP(S, op, vbase): i64 { EMIT_F64V_LOOP(S, op, vbase); return 0; }
 
 fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
     var ldop = 64; var stop = 66;         # w==1: load8/store8 (store truncates → low-w)

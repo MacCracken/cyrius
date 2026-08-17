@@ -238,6 +238,43 @@ fn ISENDPLAT(S, pos, bl): i64 {
     return 1;
 }
 
+# v6.5.24 — `#@srcline`: "the entry file's own line 1 starts on the NEXT line".
+#
+# WHY. cbt prepends a variable number of lines in front of the entry file — `#@incdir`,
+# `#@pkgver`, one `include` per `[deps].stdlib` module, one `#define` per `-D`, and the
+# ENTIRE TEXT of every `[build].modules` file — and only `#@incdir` was ever compensated.
+# So `<source>` diagnostics were reported one line late per prepended line: measured at
+# 6.5.21, abaco's 18-module manifest shifted every diagnostic by +17, pointing PAST EOF
+# on a 23-line file, which reads as a compiler fault rather than a source defect. Filed as
+# 2026-08-13-source-diag-line-shift-scales-with-deps-stdlib.
+#
+# ⭐ WHY A POSITION MARKER AND NOT A COUNT. The obvious design — have cbt declare "I
+# prepended N lines" — makes N a hand-maintained value duplicating something derivable,
+# and this cycle alone three such values had all silently drifted (heap-map sizes, gate
+# counts, ERR_MSG lengths). It would also be wrong the moment `[build].modules` appears,
+# since those contribute whole FILES of unknown length. This marker instead says only
+# "the real source starts here" and the compiler DERIVES the bias from the marker's own
+# line position, so cbt counts nothing and cannot drift.
+#
+# ⚠ NOT the foreclosed remedy. The filing proposed re-emitting `#@file`, which v6.5.21
+# deliberately neutralises in PP_PASS/PP_MACRO_PASS to close a forged-marker bypass of
+# `private`. This is a distinct directive that cannot re-enter that hole: it carries no
+# filename, cannot open or rename a file span, and only ever moves `<source>` line
+# attribution. See the honour-once guard at the PP_PASS call site.
+fn ISSRCLINE(S, pos, bl): i64 {
+    if (pos + 9 >= bl) { return 0; }
+    if (load8(S + pos)     != 35)  { return 0; }   # '#'
+    if (load8(S + pos + 1) != 64)  { return 0; }   # '@'
+    if (load8(S + pos + 2) != 115) { return 0; }   # 's'
+    if (load8(S + pos + 3) != 114) { return 0; }   # 'r'
+    if (load8(S + pos + 4) != 99)  { return 0; }   # 'c'
+    if (load8(S + pos + 5) != 108) { return 0; }   # 'l'
+    if (load8(S + pos + 6) != 105) { return 0; }   # 'i'
+    if (load8(S + pos + 7) != 110) { return 0; }   # 'n'
+    if (load8(S + pos + 8) != 101) { return 0; }   # 'e'
+    return 1;
+}
+
 # Include-once: track included filenames to skip duplicates.
 # v4.8.4-alpha2: relocated to 0x1C0000 (formerly fn-tables, freed in
 # 4.7.1 — 144 KB available). Capacity raised 64 → 256 entries.
@@ -319,6 +356,114 @@ var _pp_curfile_base = 1;
 # `cyrius build src/g.cyr` said 2:20 for a defect on line 1, while `cycc < g.cyr` on the
 # same bytes said 1:20.
 var _pp_srcline_bias = 0;
+# v6.5.24 — honour-once latch for `#@srcline` (see ISSRCLINE + its PP_PASS call site).
+var _pp_srcline_seen = 0;
+
+# v6.5.24 — bare-metal forbidden-module check (bare-metal deliverable #4, filed
+# 2026-06-28 as never-built and restored from `archived/` 2026-08-11 after being
+# archived UNFIXED). A `--target=<arch>-bare-metal-elf` build sets CYRIUS_KERNEL=1 and
+# used to place NO restriction on which `lib/*.cyr` an `include` could pull, so a kernel
+# that included a host-OS module compiled silently and faulted at runtime in the kernel.
+#
+# ⭐ AN ANNOTATION, NOT A DENY-LIST. The filing offered both and preferred the
+# annotation, and it is also the anti-drift choice: a central list of host-only modules
+# is a hand-maintained value that goes stale every time a module is added or renamed —
+# the exact shape that had silently drifted in three separate places this cycle. With
+# `#host_only` the fact lives IN the module it describes, so it moves with the file.
+# Unannotated modules stay allowed, which keeps the default behaviour identical to
+# before (a missing annotation is no worse than today) rather than breaking every
+# kernel build on day one.
+#
+# `#host_only` is inert to everything else in the pipeline: `#` opens a comment in
+# cyrius, so an annotated module still compiles normally for host targets.
+var _pp_hostonly_hit = 0;      # 1 once a #host_only module has been pulled at all
+var _pp_hostonly_user = 0;     # 1 if the pull came from the USER's own source
+var _pp_hostonly_name[128];    # the filename to name in the diagnostic (1024 B in .bss)
+
+# Does the freshly-read include text carry a first-column `#host_only` line?
+# Bounded to the first 4096 bytes: this is a FILE-level annotation and belongs at the
+# top, and a bounded scan keeps it off the hot path. Requires column 0 so prose that
+# merely mentions the directive (this comment included) cannot trip it.
+fn PP_IS_HOST_ONLY(buf, n): i64 {
+    var lim = n;
+    if (lim > 4096) { lim = 4096; }
+    var i = 0;
+    var bol = 1;
+    while (i < lim) {
+        if (bol == 1) {
+            if (i + 10 <= lim) {
+                if (load8(buf + i) == 35) {              # '#'
+                    if (load8(buf + i + 1) == 104) {      # 'h'
+                        if (load8(buf + i + 2) == 111) {  # 'o'
+                            if (load8(buf + i + 3) == 115) {  # 's'
+                                if (load8(buf + i + 4) == 116) {  # 't'
+                                    if (load8(buf + i + 5) == 95) {   # '_'
+                                        if (load8(buf + i + 6) == 111) {  # 'o'
+                                            if (load8(buf + i + 7) == 110) {  # 'n'
+                                                if (load8(buf + i + 8) == 108) {  # 'l'
+                                                    if (load8(buf + i + 9) == 121) { return 1; }  # 'y'
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (load8(buf + i) == 10) { bol = 1; } else { bol = 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Record the first host-only module pulled, and error immediately IF this build already
+# knows it is a kernel build. kernel_mode (S+0x18FCA0) is set from CYRIUS_KERNEL by
+# main.cyr BEFORE preprocessing, which is the `--target=...-bare-metal-elf` path the
+# arc's acceptance names.
+# ⚠ HONEST LIMITATION: a build that declares itself with the SOURCE `kernel;` directive
+# instead of the triple sets kernel_mode during PARSE, i.e. after this runs, so that
+# path is not caught here. Recording the name in `_pp_hostonly_name` is what leaves a
+# later parse-time check possible without re-reading any file.
+fn _pp_ho_copy_name(fname): i64 {
+    var i = 0;
+    while (i < 127) {
+        var c = load8(fname + i);
+        store8(&_pp_hostonly_name + i, c);
+        if (c == 0) { i = 127; } else { i = i + 1; }
+    }
+    store8(&_pp_hostonly_name + 127, 0);
+    return 0;
+}
+
+# ⛔ WHOSE include is it? cbt prepends one `include` per `[deps].stdlib` module to EVERY
+# build regardless of target, so this repo's own `programs/boot_serial.cyr` — a kernel with
+# NO includes of its own — got `lib/fs.cyr` from the manifest and the first cut of this
+# check FAILED it. check.sh's qemu-boot gate caught that ("FAIL: plain kernel build"); left
+# in, it would have broken every kernel build in every repo whose manifest happens to list a
+# host-only module, which makes the feature unusable rather than useful.
+#
+# The arc's acceptance is about "bare-metal CODE pulling host-OS modules" — the kernel
+# source's own choice, not a build-system default the author never wrote. `#@srcline` splits
+# the two exactly: everything above it is cbt's prepend, everything below is the user's file.
+# So a pull is attributed to the USER only once the marker has been seen.
+#
+# With no marker at all (raw `cat | cycc`, the compiler-internal path) every include IS the
+# user's, so `_pp_hostonly_hit` is the one consulted — see the reporting site in PARSE_PROG.
+fn PP_NOTE_HOST_ONLY(fname): i64 {
+    if (_pp_srcline_seen == 1) {
+        if (_pp_hostonly_user == 1) { return 0; }
+        _pp_hostonly_user = 1;
+        _pp_ho_copy_name(fname);
+        return 0;
+    }
+    if (_pp_hostonly_hit == 1) { return 0; }
+    _pp_hostonly_hit = 1;
+    if (_pp_hostonly_user == 0) { _pp_ho_copy_name(fname); }
+    return 0;
+}
 
 fn _pp_curfile_ptr(): i64 {
     if (_pp_curfile_set == 0) { return "<source>"; }
@@ -2451,6 +2596,43 @@ fn PP_PASS(S): i64 {
                     }
                     ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
+            # v6.5.24 — `#@srcline`: set the `<source>` line bias from THIS marker's own
+            # position, so every cbt prepend above it stops shifting diagnostics. See
+            # ISSRCLINE for why this is a position marker rather than a count.
+            #
+            # `_pp_lineno_at` is 1-based, so a marker on raw line L means the entry file's
+            # line 1 is raw line L+1, and `PP_REANCHOR_SRC`'s `raw_line - bias` yields the
+            # user's own numbering exactly when bias == L. Assigned ABSOLUTELY, which also
+            # SUBSUMES the `#@incdir` bias of 1 set above — L already counts that line.
+            #
+            # ⚠ HONOUR-ONCE (`_pp_srcline_seen`). A hostile include could contain the
+            # marker text; accepting a second one would let it re-point line attribution.
+            # Worst case is still only wrong line numbers — it carries no filename and
+            # cannot open a file span, unlike the `#@file` hole v6.5.21 closed — but
+            # first-one-wins costs one flag and keeps cbt's marker authoritative.
+            if (handled == 0) { if (ISSRCLINE(S + _SRCB, dip, bl) == 1) {
+                    if (_pp_srcline_seen == 0) {
+                        _pp_srcline_bias = _pp_lineno_at(S, S + _SRCB, dip);
+                        _pp_srcline_seen = 1;
+                        # ⭐ RE-ANCHOR HERE, don't just set the bias. Setting `bias` alone
+                        # does nothing for the common case: the bias is only consumed by
+                        # PP_REANCHOR_SRC when an include RETURNS, and cbt's prepended
+                        # `include` lines all sit ABOVE this marker — so the last reanchor
+                        # has already happened by the time the marker is read, with the old
+                        # bias, and nothing recomputes it. Measured while building this:
+                        # bias-only reported the RAW line (8) instead of the user's (3).
+                        # Declaring the span outright — "what follows is <source> line 1" —
+                        # is what actually moves the numbering. Costs ONE map entry per
+                        # compile, which the 1024-entry cap absorbs (that cap is why
+                        # v6.5.19 pads #ifdef blocks instead of marking them).
+                        op = PP_REANCHOR(S, out, op, "<source>", 1);
+                    }
+                    # The bias assignment above still matters for what comes AFTER: a user
+                    # `include` inside the entry file re-anchors on return via
+                    # PP_REANCHOR_SRC, which needs raw→user in the bias. L subsumes the
+                    # `#@incdir` bias of 1 set before the loop — L already counts that line.
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); bol = 1; handled = 1;
+                } }
             if (handled == 0) { if (ISENDIF(S + _SRCB, dip, bl) == 1) {
                     if (pp_depth > 0) {
                         var _s = load8(S + 0x197F10 + pp_depth - 1);
@@ -2529,6 +2711,12 @@ fn PP_PASS(S): i64 {
                                     syscall(SYS_WRITE, 2, "\n", 1);
                                     syscall(SYS_EXIT, 1);
                                 }
+                                # v6.5.24 — bare-metal forbidden-module check: RECORD only.
+                                # Scanning the bytes just read means no file is opened
+                                # twice. The decision cannot be made here — kernel_mode is
+                                # still 0 during preprocessing (see the reporting site at
+                                # the end of PARSE_PROG in parse.cyr for why).
+                                if (PP_IS_HOST_ONLY(out + op, nr) == 1) { PP_NOTE_HOST_ONLY(fname); }
                                 op = op + nr;
                                 # v6.5.0 Phase 1 — RESUME marker. Without this the
                                 # enclosing file's remaining text inherits the INCLUDED

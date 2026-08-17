@@ -1,0 +1,99 @@
+# f64v4_ymm.tcyr — v6.5.24: f64v4 add/sub/mul/div widened to 256-bit ymm
+# (vaddpd/vsubpd/vmulpd/vdivpd) behind the simd_has_avx2() runtime gate.
+#
+# ⭐ WHY THIS LIVES IN crossos/ AND NOT simd/. This release put a runtime CPU gate in
+# front of arithmetic that EVERY target already used: all eight f64v4 wrappers (4 ops ×
+# value/_ptr) now branch on simd_has_avx2() before choosing a kernel. On x86-with-AVX2
+# that picks the new ymm emitter; on pre-AVX2 x86 and on EVERY non-x86 target the probe
+# returns 0 and the old 128-bit f64v_* path must still be taken. So a mistake in the gate
+# does not break an exotic new feature — it breaks all f64v4 arithmetic on ARM, Windows
+# and Mach-O. That is precisely the "compiles on five targets is not runs on five
+# targets" failure the crossos bucket exists to catch (v6.5.7, seven real defects).
+#
+# ⚠ WHAT MAKES THIS TEST NON-VACUOUS. On an AVX2 host the ymm path and the SSE path
+# return the SAME values, so a value check alone would pass even if the gate never
+# selected ymm at all. Two things close that hole:
+#   1. `_avx2_cache = 0` forces the fallback and every result is re-asserted, so BOTH
+#      kernels are executed and proven to agree lane-for-lane in one run.
+#   2. The exact VEX bytes are checked separately and host-CPU-independently by
+#      tests/gates/codegen/f64v4_ymm_disasm.sh — that gate, not this file, is what
+#      proves ymm is actually emitted.
+# ⚠ The cache is only ever forced to 0, NEVER to 1: forcing 1 on a pre-AVX2 x86 host
+# would execute VEX and SIGILL. Real detection is restored (= 2) at the end.
+#
+# Inputs are chosen so every op is EXACT in binary floating point (no rounding, so the
+# two kernels must agree bit-for-bit and the expected values are unarguable):
+#   a = [10, 20, 30, 40]   b = [2, 4, 5, 8]
+#   add [12, 24, 35, 48]   sub [8, 16, 25, 32]   mul [20, 80, 150, 320]   div [5, 5, 6, 5]
+# Lanes 2 and 3 are asserted on every op because they are the half a broken 4-lane
+# stride would leave untouched — a two-lane-only bug passes if you only check lane 0.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    test_group("f64v4 256-bit ymm arithmetic (AVX2 path or fallback, per host)");
+    var a: f64v4 = f64v4_make(f64_from(10), f64_from(20), f64_from(30), f64_from(40));
+    var b: f64v4 = f64v4_make(f64_from(2), f64_from(4), f64_from(5), f64_from(8));
+
+    # --- pointer forms ---
+    var s: f64v4 = f64v4_add_ptr(&a, &b);
+    assert_eq(f64_to(f64v4_lane0_ptr(&s)), 12, "add_ptr lane0 = 10+2 = 12");
+    assert_eq(f64_to(f64v4_lane1_ptr(&s)), 24, "add_ptr lane1 = 20+4 = 24");
+    assert_eq(f64_to(f64v4_lane2_ptr(&s)), 35, "add_ptr lane2 = 30+5 = 35");
+    assert_eq(f64_to(f64v4_lane3_ptr(&s)), 48, "add_ptr lane3 = 40+8 = 48 (4th lane)");
+    var d: f64v4 = f64v4_sub_ptr(&a, &b);
+    assert_eq(f64_to(f64v4_lane2_ptr(&d)), 25, "sub_ptr lane2 = 30-5 = 25");
+    assert_eq(f64_to(f64v4_lane3_ptr(&d)), 32, "sub_ptr lane3 = 40-8 = 32");
+    var m: f64v4 = f64v4_mul_ptr(&a, &b);
+    assert_eq(f64_to(f64v4_lane2_ptr(&m)), 150, "mul_ptr lane2 = 30*5 = 150");
+    assert_eq(f64_to(f64v4_lane3_ptr(&m)), 320, "mul_ptr lane3 = 40*8 = 320");
+    var q: f64v4 = f64v4_div_ptr(&a, &b);
+    assert_eq(f64_to(f64v4_lane2_ptr(&q)), 6, "div_ptr lane2 = 30/5 = 6");
+    assert_eq(f64_to(f64v4_lane3_ptr(&q)), 5, "div_ptr lane3 = 40/8 = 5");
+
+    # --- value forms (same gate; the `&` call idiom is the one the codegen tests use) ---
+    var vs: f64v4 = f64v4_add(&a, &b);
+    assert_eq(f64_to(f64v4_lane3(&vs)), 48, "add value-form lane3 = 48");
+    var vm: f64v4 = f64v4_mul(&a, &b);
+    assert_eq(f64_to(f64v4_lane2(&vm)), 150, "mul value-form lane2 = 150");
+    var vq: f64v4 = f64v4_div(&a, &b);
+    assert_eq(f64_to(f64v4_lane3(&vq)), 5, "div value-form lane3 = 5");
+    var vd: f64v4 = f64v4_sub(&a, &b);
+    assert_eq(f64_to(f64v4_lane2(&vd)), 25, "sub value-form lane2 = 25");
+
+    # --- forced 128-bit fallback: both kernels must agree lane-for-lane ---
+    # This is the half that makes the run meaningful on an AVX2 host.
+    test_group("f64v4 forced 128-bit fallback parity (simd_has_avx2 = 0)");
+    _avx2_cache = 0;
+    var s2: f64v4 = f64v4_add_ptr(&a, &b);
+    assert_eq(f64_to(f64v4_lane0_ptr(&s2)), 12, "fallback add lane0 = 12");
+    assert_eq(f64_to(f64v4_lane2_ptr(&s2)), 35, "fallback add lane2 = 35");
+    assert_eq(f64_to(f64v4_lane3_ptr(&s2)), 48, "fallback add lane3 = 48");
+    var d2: f64v4 = f64v4_sub_ptr(&a, &b);
+    assert_eq(f64_to(f64v4_lane3_ptr(&d2)), 32, "fallback sub lane3 = 32");
+    var m2: f64v4 = f64v4_mul_ptr(&a, &b);
+    assert_eq(f64_to(f64v4_lane3_ptr(&m2)), 320, "fallback mul lane3 = 320");
+    var q2: f64v4 = f64v4_div_ptr(&a, &b);
+    assert_eq(f64_to(f64v4_lane2_ptr(&q2)), 6, "fallback div lane2 = 6");
+    var vs2: f64v4 = f64v4_add(&a, &b);
+    assert_eq(f64_to(f64v4_lane3(&vs2)), 48, "fallback add value-form lane3 = 48");
+    _avx2_cache = 2;   # restore real detection
+
+    # --- f64v2 must NOT have been widened: the ymm stride is 4, a 2-lane vector is not ---
+    # If someone ever points the f64v2 wrappers at the 256-bit kernel, this reads or
+    # writes 16 bytes past a 16-byte vector. Cheap permanent guard against that edit.
+    test_group("f64v2 stays on the 128-bit kernel");
+    var p: f64v2 = f64v2_make(f64_from(7), f64_from(9));
+    var pb: f64v2 = f64v2_make(f64_from(3), f64_from(4));
+    var ps: f64v2 = f64v2_add_ptr(&p, &pb);
+    # f64v2 has no lane-extractor wrappers (only f64v4/f32v4/f32v8 do) — read the lanes
+    # directly, which is what the other f64v2 tests do.
+    assert_eq(f64_to(load64(&ps + 0)), 10, "f64v2 add lane0 = 7+3 = 10");
+    assert_eq(f64_to(load64(&ps + 8)), 13, "f64v2 add lane1 = 9+4 = 13");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

@@ -1,6 +1,32 @@
 # `cyrius deps` blames the stdlib for a module that is in the stdlib
 
-**Status:** 🟡 **OPEN**
+**Status:** 🟡 **OPEN — FIX WRITTEN at v6.5.24 but NOT REPRODUCED. Do not archive on my word.**
+
+> **⚠ HONEST VERIFICATION STATE (v6.5.24).** The message is rewritten at
+> `cbt/deps.cyr` in `_dep_pull_leaves` — which IS the right site: it serves both the
+> `requires` key (deps.cyr:1441) and the `dist/<pkg>.deps` sidecar (deps.cyr:1691), and the
+> sidecar is the path bote/agnosai/majra hit through their `[deps.libro]` git deps. It now
+> probes the SOURCE dir and distinguishes two conditions instead of asserting one:
+> *"it IS in the stdlib (<path>) but could not be brought into ./lib. Run `cyrius lib sync
+> --full`; do NOT remove the declaration."* versus *"not in the cyrius stdlib (looked in
+> <dir>)"*.
+>
+> ⛔ **BUT I NEVER SAW EITHER MESSAGE FIRE.** Three repro attempts failed to reach the code:
+> (1) `[deps].stdlib` with a bogus module — that path prints only its own accurate
+> `cannot read <exact path>` line and never touches `_dep_pull_leaves`; (2) a local
+> `path`-source dep carrying `dist/<pkg>.deps` naming a real leaf — resolved clean, rc=0;
+> (3) the same with a bogus leaf, and again with the source file `chmod 000` — both rc=0,
+> no message. So a `path` source does not route through the sidecar reader the way a git
+> dep does, and I could not construct the git-dep shape locally.
+>
+> **What IS verified:** cbt builds (640,408 B), still cross-compiles to PE (706,048) and
+> Mach-O (831,488), every success path stays rc=0, corpus 271/271, `check.sh` 181/0. The
+> change cannot break a working resolve — it only rewrites text on a failure branch.
+>
+> **What is NOT verified:** that either new message is correct in situ. **Reproduce with the
+> real bote or agnosai tree (a git dep whose `dist/*.deps` names a stdlib leaf, against an
+> unsynced `./lib`) before archiving this.** Reasoned, not measured — and this session
+> produced enough wrong-but-plausible reasoning that the distinction is the point.
 **Placement:** **v6.5.24 — band C**; cbt-only, so no cycc / self-host / seed-derive exposure.
 
 > **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Reproduced verbatim at 6.5.21 — and it is NOT diagnostic-only: it is a functional resolution failure with a nonzero exit.

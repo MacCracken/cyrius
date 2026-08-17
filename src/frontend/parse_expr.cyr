@@ -2667,6 +2667,29 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 1;
         } }
+    # v6.5.24 (ymm widening) — f64v256_add/sub/mul/div(dst, a, b, n): 256-bit AVX2 packed
+    # DOUBLE (vaddpd/vsubpd/vmulpd/vdivpd ymm). Identical 4-arg stash shape to the f32v8
+    # arm above; tokens 154-157 are consecutive so `ptyp - 154` is the op index.
+    # ⚠ n MUST be a multiple of 4 — EMIT_F64V4_LOOP strides rsi by 4, so a 2-element
+    # vector here would walk off the end. Only the AVX2-gated f64v4 lib wrappers (n=4)
+    # reach this; f64v2 keeps tokens 89-91 → EMIT_F64V_LOOP. See the emitter's own
+    # warning in src/backend/x86/float.cyr.
+    if (ptyp >= 154) { if (ptyp <= 157) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+            var vb256 = GFLC(S);
+            PCMPE(S); _SIMD_STASH(S, vb256);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S); _SIMD_STASH(S, vb256 + 1);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S); _SIMD_STASH(S, vb256 + 2);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S);
+            SFLC(S, vb256 + 3);
+            EMIT_F64V4_LOOP(S, ptyp - 154, vb256);
+            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            return 1;
+        } }
     return 0;
 }
 

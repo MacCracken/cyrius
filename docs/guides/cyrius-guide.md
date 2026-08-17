@@ -589,6 +589,52 @@ You do not write this yourself — the CLI emits it. What matters for using the 
 - `cyrius build /abs/dir/x.cyr` gets no marker when the CLI cannot relativise the path
   against CWD, and keeps the old behaviour. No reach was bought with a hole.
 
+### Entry-file line attribution — `#@srcline` (v6.5.24)
+
+`cyrius build` prepends lines in front of your entry file: `#@incdir`, `#@pkgver`, one
+`include` per `[deps].stdlib` module, one `#define` per `-D`, and the **entire text** of
+every `[build].modules` file. Until v6.5.24 only `#@incdir` was compensated, so every
+`<source>` diagnostic was reported one line late **per prepended line** — with an 18-module
+manifest that is +17, and on a short file the reported line can be **past EOF**, which looks
+like a compiler fault rather than a defect in your source.
+
+The CLI now writes `#@srcline` as the last thing before your file, and cycc re-anchors
+`<source>` to line 1 there. Diagnostics match your editor's line numbers regardless of how
+many modules you declare.
+
+- **You never write this marker.** It is emitted by `cyrius build`; it exists in the guide
+  only so an unexpected `#@srcline` in a preprocessed dump is recognisable.
+- It carries **no line count** — cycc derives the shift from the marker's own position — so
+  the accounting cannot drift, and `[build].modules` files of unknown length are handled.
+- Raw `cat file.cyr | cycc` gets no marker and keeps the old numbering, which is one more
+  reason to build through `cyrius build` rather than piping by hand.
+- `#` opens a comment, so the marker is inert to older compilers, cybs and the cx/JS forks.
+- Honoured **once**, and it carries no filename, so unlike the `#@file` marker it cannot be
+  used to re-point a file span (the hole v6.5.21 closed for `private`). The worst a forged
+  `#@srcline` can do is misreport line numbers.
+
+### Kernel-mode module restriction — `#host_only` (v6.5.24)
+
+A stdlib module that depends on a host OS marks itself with `#host_only` in column 0. A
+bare-metal build — `--target=<arch>-bare-metal-elf` (which sets `CYRIUS_KERNEL=1`) or a
+source `kernel;` declaration — that **includes** such a module now fails with a message
+naming it, instead of compiling silently and faulting at runtime inside the kernel:
+
+```
+error: bare-metal build includes host-only module: lib/fs.cyr (marked #host_only; not available under CYRIUS_KERNEL)
+```
+
+Currently annotated: `lib/fs.cyr`, `lib/process.cyr`, `lib/net.cyr`.
+
+- Only **your own** includes are checked. Modules `cyrius build` prepends from your
+  manifest's `[deps].stdlib` are not your kernel's choice and do not fail the build — so an
+  existing manifest that lists `fs` keeps working for a kernel target.
+- Unannotated modules are always allowed, so adding the marker to a module is opt-in and
+  nothing breaks by default.
+- `#` opens a comment, so an annotated module compiles normally for every host target.
+- Add `#host_only` to your own modules to get the same protection; remove it if a module is
+  ever made freestanding.
+
 ## Visibility — `private` / `public` (v6.5.0)
 
 By default every fn and global var is visible everywhere, exactly as it always

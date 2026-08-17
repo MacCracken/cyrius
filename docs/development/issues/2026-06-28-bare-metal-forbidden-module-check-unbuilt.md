@@ -1,22 +1,31 @@
 # Bare-metal deliverable #4 (forbidden-module check) was never built
 
-> ### ⛔ RESTORED to the open queue 2026-08-11 — it had been archived UNFIXED
+> ### ✅ RESOLVED — BUILT and SHIPPED in v6.5.24
 >
-> This file was bulk-renamed into `issues/archived/` on 2026-07-10 (commit `79bae42f`, an
-> 8-file rename) **with no resolution banner, for work that was never built.** It sat in the
-> resolved graveyard while `roadmap.md` simultaneously named it a live W2 fold-in with a spec
-> and a negative fixture, and `roadmap_6.md` listed it as an acceptance criterion for a
-> *closed* arc.
+> A host-OS-only stdlib module now marks itself with a first-column `#host_only` line; a
+> kernel build that pulls one fails with a message naming the module. Annotated:
+> `lib/fs.cyr`, `lib/process.cyr`, `lib/net.cyr`.
 >
-> `issues/README.md` states the principle exactly: **archiving is how we assert something is
-> done, so archiving an unbuilt requirement hides it from whoever opens the slot.** This is
-> that case — and it was caught by the roadmap, not by the archive sweep.
+> **Chose the annotation, which this file preferred** ("or, better, mark each `lib/*.cyr`")
+> — and it is also the anti-drift choice: the fact lives in the module it describes and
+> moves with the file, whereas a central deny-list is a hand-maintained value that goes
+> stale on every module add or rename. Unannotated modules stay allowed, so the default
+> behaviour is unchanged rather than breaking every kernel build on day one.
 >
-> Premise re-checked against live code at v6.5.19 before restoring:
-> `grep -rn 'host_only\|kernel_ok' src cbt lib` → **no implementation**, and the only
-> `forbidden` hit in `src/` is an unrelated comment at `parse_fn.cyr:3901`. Still unbuilt.
+> ⚠ **The check is at end-of-`PARSE_PROG`, NOT the include site**, and the first cut got
+> this wrong: `PREPROCESS(S)` runs at `main.cyr:1189` but `CYRIUS_KERNEL` is not read until
+> `:1217`, so `kernel_mode` is still 0 while includes expand — the check compiled, ran, and
+> **silently never fired**. End-of-parse also catches the source `kernel;` directive, which
+> is not known until every top-level statement is parsed, so both declaration paths are
+> covered from one shared site with no per-fork duplication.
+>
+> This file's own prediction held: the #7 fixture became the positive case. Gate
+> `tests/gates/platform/bare_metal_forbidden_module.sh` — 5 axes, including
+> `tests/fixtures/freestanding_tls/kernel_link.cyr` passing the check (the arc's stated
+> acceptance) and two negatives (host builds, and clean kernel builds) so it cannot
+> degenerate into a blanket rejection.
 
-**Status:** 🔴 OPEN — never built; restored from `archived/` 2026-08-11.
+**Status:** ✅ RESOLVED in v6.5.24 — archive at slot close.
 **Placement:** **v6.5.24 — band C**, the small-fix cluster.
 
 > **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Premise re-verified UNBUILT (`grep -rn 'host_only\|kernel_ok' src cbt lib` → 0 hits). ⚠ Its former W2 arm is DEAD (W2 consumed at .19), so band C is the only remaining home for what is otherwise a never-built acceptance criterion of a shipped arc.

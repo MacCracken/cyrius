@@ -1,10 +1,43 @@
 # `<source>` diagnostic line numbers shift by one per declared stdlib module
 
-**Status:** 🟡 **OPEN**
-**Placement:** **v6.5.24 — band C.**
+> ### ✅ RESOLVED — SHIPPED in v6.5.24
+>
+> cbt now writes **`#@srcline`** as the last thing before the entry file, and cycc
+> re-anchors the `<source>` span to line 1 there. Verified end-to-end: the same probe with
+> an error on its own line 3 reports `:3` with **0, 6 and 18** declared stdlib modules and
+> with a subdirectory entry file (which adds `#@incdir`); before the fix those reported
+> `:3`, `:10`, `:19` and `:7`.
+>
+> **This file's magnitude claim was right and load-bearing** — the changelog's "+1" framing
+> was what made it look like a rounding error. The measured shift is one line per prepended
+> line, and cbt prepends `#@incdir`, `#@pkgver`, one `include` per `[deps].stdlib` module,
+> one `#define` per `-D`, **and the entire text of every `[build].modules` file**.
+>
+> ⚠ **Not the remedy proposed here.** Re-emitting `#@file` stayed foreclosed — v6.5.21
+> neutralises user-authored `#@file` markers to close a forged-marker bypass of `private`.
+> `#@srcline` cannot re-open that hole: it carries no filename and can only move line
+> attribution, and it is honoured once.
+>
+> ⭐ **The marker carries NO COUNT, deliberately.** Having cbt declare "I prepended N lines"
+> would make N a hand-maintained value duplicating a derivable fact — the shape that had
+> silently drifted in three separate places this cycle — and it is unworkable once
+> `[build].modules` is in play. cycc derives the bias from the marker's own line position.
+>
+> ⚠ **Setting the bias alone does nothing**, which cost a build cycle: the bias is only
+> consumed when an `include` RETURNS, and cbt's prepended includes all sit ABOVE the marker,
+> so the last re-anchor has already happened with the old bias. The marker must re-anchor
+> outright. A bias-only first cut reported the RAW line (8) instead of the user's (3).
+>
+> Gate `tests/gates/diagnostics/srcline_no_line_shift.sh` — 0/6/**18** modules plus a subdir
+> entry must all report the SAME line, so a fix that merely shifted the constant by one
+> cannot pass. Mutation-proven: dropping cbt's write reproduces the filed signature exactly
+> (+7 at 6 modules, +16 at 18, +4 for a subdir entry).
+>
+> **Not claimed / still true:** not measured on aarch64 / PE / cx (front-end line
+> accounting, no reason to expect a difference), and `-D` scaling was not separately
+> measured — though `-D` prepends go through the same path and now sit above the marker.
 
-> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⛔ **THE FIX THIS FILE PROPOSES IS NOW INERT.** v6.5.21 neutralises user-authored `#@file` markers in `PP_PASS` (closing a forged-marker bypass of `private`), which forecloses the remedy as filed. The magnitude claim still reproduces. A new `#@incdir`-family directive is required instead. Touches `lex_pp.cyr`, so it carries the full cycc cost (self-host + seed-derive + four-host cross-OS) — pack it with other cycc work.
-**Discovered:** 2026-08-13, abaco 2.4.1, while writing a minimal repro for a
+**Status:** ✅ RESOLVED in v6.5.24 — archive at slot close.
 separate warning
 **Severity:** Low-Medium — diagnostic only, but it points at a line that can be
 **past EOF**, which reads as a compiler bug rather than a source defect
