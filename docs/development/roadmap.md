@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.24** (2026-08-17) — cycc **1,154,816 B** · check.sh **178 passed / 0
+**Current head: v6.5.25** (2026-08-17) — cycc **1,154,816 B** · check.sh **178 passed / 0
 failed** · self_compile **685 ms** · **270** `.tcyr` (**46** in `crossos/`) · **100**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **57** shell gate scripts under
 `tests/gates/<bucket>/` (48 registered by exact path in `programs/checks/*.cyr`, 10 driven

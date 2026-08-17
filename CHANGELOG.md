@@ -4,9 +4,11 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — band D in flight (`.25`)
+## [Unreleased]
 
-**Windows/PE stdlib parity.** The band-D premise-check found all five pinned items real but
+## [6.5.25] — 2026-08-17
+
+**Band D: Windows/PE stdlib parity.** The premise-check found all five pinned items real but
 **at the stdlib layer, not the compiler layer** the roadmap implied — and two of them were
 initially mislabelled "already shipped" because the *reroute* was live while the *wrapper*
 was missing. Adversarial verification caught both mislabels.
