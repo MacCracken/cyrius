@@ -1,0 +1,165 @@
+# async_multi_waiter.tcyr — v6.5.26: the async reactor must support MORE THAN ONE waiter,
+# including two on the SAME fd.
+#
+# ⛔ THIS IS THE FIRST TEST OF THE ASYNC RUNTIME. `grep -rln 'async_run\|async_spawn'
+# tests/tcyr/` returned NOTHING before this file — the whole reactor (async_spawn,
+# async_run, _async_step, _async_wait_events) shipped from v6.4.33 with zero corpus
+# coverage. That is how the defect below survived four minors.
+#
+# THE DEFECT. `_async_wait_events` stored the TASK POINTER in the epoll data slot, so an fd
+# identified exactly ONE waiter, and its `EPOLL_CTL_ADD` return was UNCHECKED — a second
+# waiter on the same fd got `-EEXIST` and was SILENTLY LOST: it parked and nothing ever woke
+# it. The wake path then `EPOLL_CTL_DEL`'d the fd unconditionally, dropping the registration
+# for anyone still parked on the other direction, and `epoll_wait` had maxevents=1.
+#
+# ⭐ WHY IT MATTERS BEYOND A LOST WAKEUP. This is what made stiva's `exec -it` (a TTY relay:
+# two independent directions inside one task) and a select!-style multiplexed server
+# inexpressible — filed 2026-07-25 as needing STACKLESS COROUTINES and pinned to v6.5.33-.34
+# behind an IR substrate. It needed neither: the park/resume runtime already worked, the
+# waiter REGISTRY just could not hold two entries. A missing-language-feature filing that
+# was really a lost-wakeup bug in ~20 lines of lib code.
+#
+# ⚠ COVERAGE GAP, FOUND BY MUTATION-TESTING THIS FILE AND NOT YET CLOSED.
+# Disabling the `EPOLL_CTL_ADD -EEXIST -> EPOLL_CTL_MOD` fallback in `_async_wait_events`
+# leaves all 19 assertions below GREEN. That is not a bad mutation, it is an honest gap:
+# every waiter here asks for the SAME event bit (EPOLLIN), so the first ADD registers the
+# fd correctly and the second waiter's failed ADD changes nothing — the wake path finds it
+# by walking the task list either way. What actually makes these axes pass is
+# `epoll_data = FD` plus the list walk, NOT the MOD fallback.
+#
+# The MOD fallback is only load-bearing when two waiters on ONE fd want DIFFERENT
+# directions (one EPOLLIN, one EPOLLOUT) — which is exactly the `exec -it` TTY-relay shape
+# this work exists to enable. That axis needs a socketpair (readable AND writable on the
+# same fd) and is NOT written yet. Until it is, the MOD fallback is reasoned-correct but
+# UNPROVEN. Do not treat this file as full coverage of the v6.5.26 change.
+#
+# Each axis below is a shape that CANNOT pass against the pre-fix runtime.
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/async.cyr"
+
+var _fds_a[2];          # pipe A. ⚠ pipe(2) writes two i32 fds (8 B total), so the
+                        # ends are load32(@0) and load32(@4) — a load64 here packs BOTH
+                        # fds into one garbage value, which parks the reactor on an fd that
+                        # does not exist and hangs async_run. Cost a debug cycle.
+var _fds_b[2];          # pipe B
+var _hits = 0;          # how many waiter tasks observed their fd ready
+var _order = 0;         # packed wake order, to prove BOTH ran (not just one twice)
+
+# ⚠ THE POLL-STRUCTURED CONTRACT, which the first draft of this file got wrong and hung on:
+# `async_wait_fd` PARKS the task and RETURNS — it does not block. A task must therefore
+# return immediately after parking and resume FROM THE TOP when woken, using its own
+# progress flag to know which step it is on. Falling through after the park call makes the
+# body run once, park, run again from the top, park again... forever. `_async_step` only
+# marks a task DONE if it is still TASK_READY when its fn returns, so a parked-and-fallen-
+# through task never completes and `async_run` never returns. (Documented at
+# `_async_wait_events`; costing a debug cycle here is why it is restated at the call site.)
+var _p1 = 0; var _p2 = 0; var _pb = 0; var _prw = 0;
+
+# Two tasks that park on the SAME read fd. Before the fix, exactly one of these could ever
+# be registered; the other parked forever and was never woken.
+fn _waiter_same_1(arg): i64 {
+    if (_p1 == 0) {
+        _p1 = 1;
+        if (async_wait_fd(arg, load32(&_fds_a)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    _hits = _hits + 1;
+    _order = _order | 1;
+    return 1;
+}
+fn _waiter_same_2(arg): i64 {
+    if (_p2 == 0) {
+        _p2 = 1;
+        if (async_wait_fd(arg, load32(&_fds_a)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    _hits = _hits + 1;
+    _order = _order | 2;
+    return 2;
+}
+
+# Two tasks on DIFFERENT fds — the case that worked before, kept so a fix that broke it
+# cannot pass.
+fn _waiter_pipe_b(arg): i64 {
+    if (_pb == 0) {
+        _pb = 1;
+        if (async_wait_fd(arg, load32(&_fds_b)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    _hits = _hits + 1;
+    _order = _order | 4;
+    return 3;
+}
+
+# A task parked on read-OR-write of one fd via the new async_wait_rw. Registering both
+# directions is two event bits on one fd, which the single-waiter design could not express.
+fn _waiter_rw(arg): i64 {
+    if (_prw == 0) {
+        _prw = 1;
+        if (async_wait_rw(arg, load32(&_fds_b + 4)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    _hits = _hits + 1;
+    _order = _order | 8;
+    return 4;
+}
+
+fn main(): i64 {
+    test_group("async reactor: multiple waiters, including two on one fd (v6.5.26)");
+
+    # --- axis 1: TWO waiters on the SAME fd both wake ---
+    # The core of the fix. Pre-fix: one is silently dropped.
+    assert_eq(sys_pipe(&_fds_a), 0, "pipe A created");
+    var rt = async_new();
+    assert(rt != 0, "runtime created");
+    _hits = 0; _order = 0; _p1 = 0; _p2 = 0; _pb = 0; _prw = 0;
+    assert(async_spawn(rt, &_waiter_same_1, rt) != 0, "spawned waiter 1 on pipe A");
+    assert(async_spawn(rt, &_waiter_same_2, rt) != 0, "spawned waiter 2 on the SAME fd");
+    sys_write(load32(&_fds_a + 4), "x", 1);          # make pipe A readable
+    async_run(rt);
+    assert_eq(_hits, 2, "BOTH waiters on one fd woke (pre-fix: 1, the second was lost)");
+    assert_eq(_order, 3, "both distinct tasks ran, not one of them twice");
+
+    # --- axis 2: waiters on DIFFERENT fds both wake (no regression) ---
+    assert_eq(sys_pipe(&_fds_b), 0, "pipe B created");
+    var rt2 = async_new();
+    _hits = 0; _order = 0; _p1 = 0; _p2 = 0; _pb = 0; _prw = 0;
+    assert(async_spawn(rt2, &_waiter_same_1, rt2) != 0, "spawned a pipe-A waiter");
+    assert(async_spawn(rt2, &_waiter_pipe_b, rt2) != 0, "spawned a pipe-B waiter");
+    sys_write(load32(&_fds_b + 4), "y", 1);
+    async_run(rt2);
+    assert_eq(_hits, 2, "waiters on two different fds both woke");
+    assert_eq(_order, 5, "the pipe-A and pipe-B tasks both ran");
+
+    # --- axis 3: async_wait_rw parks on both directions of one fd ---
+    # A pipe write end is immediately writable, so this must wake on EPOLLOUT.
+    var rt3 = async_new();
+    _hits = 0; _order = 0; _p1 = 0; _p2 = 0; _pb = 0; _prw = 0;
+    assert(async_spawn(rt3, &_waiter_rw, rt3) != 0, "spawned an async_wait_rw waiter");
+    async_run(rt3);
+    assert_eq(_hits, 1, "async_wait_rw woke on the writable direction");
+    assert_eq(_order, 8, "the rw task is the one that ran");
+
+    # --- axis 4: three waiters, two sharing an fd, all in ONE runtime ---
+    # The multiplexed-server shape: N waiters, one runtime, no direction starved.
+    var rt4 = async_new();
+    _hits = 0; _order = 0; _p1 = 0; _p2 = 0; _pb = 0; _prw = 0;
+    assert(async_spawn(rt4, &_waiter_same_1, rt4) != 0, "spawned share-1");
+    assert(async_spawn(rt4, &_waiter_same_2, rt4) != 0, "spawned share-2 (same fd)");
+    assert(async_spawn(rt4, &_waiter_pipe_b, rt4) != 0, "spawned the other-fd waiter");
+    sys_write(load32(&_fds_a + 4), "z", 1);
+    sys_write(load32(&_fds_b + 4), "w", 1);
+    async_run(rt4);
+    assert_eq(_hits, 3, "all THREE waiters woke (two of them sharing one fd)");
+    assert_eq(_order, 7, "all three distinct tasks ran");
+
+    sys_close(load32(&_fds_a)); sys_close(load32(&_fds_a + 4));
+    sys_close(load32(&_fds_b)); sys_close(load32(&_fds_b + 4));
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

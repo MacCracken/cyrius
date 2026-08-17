@@ -80,6 +80,7 @@ async::async_new_in/1
 async::async_read/3
 async::async_read_unlock/1
 async::async_recv/4
+async::async_relay_once/5
 async::async_resolve/4
 async::async_run/1
 async::async_run_process/5
@@ -94,6 +95,7 @@ async::async_timeout/3
 async::async_try_read_lock/1
 async::async_try_write_lock/1
 async::async_wait_fd/2
+async::async_wait_rw/2
 async::async_wait_writable/2
 async::async_with_timeout/3
 async::async_write_unlock/1
