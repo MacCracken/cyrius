@@ -32,7 +32,17 @@ var TASK_DONE = 2;
 # Task struct: { fp, arg, state, next, wait_fd, result } = 48 bytes (mirror async.cyr).
 # wait_fd is unused on agnos (no epoll parking; tasks run to completion inline);
 # result (@40, v6.4.34 F2) carries the task fn's return so task_join hands it back.
-var TASK_SIZE = 48;
+# v6.5.27 — 48 -> 64 to match lib/async.cyr's task layout exactly: wait_fd@32, result@40,
+# owned_fd@48, wait_ev@56. The kqueue reactor below needs wait_ev for the same reason the
+# epoll one does — to know which DIRECTION a parked task is waiting on, so a read-waiter is
+# not woken by a write-readiness event. Tasks are heap-allocated, so this is not a layout
+# change in the heap-map sense.
+var TASK_SIZE = 64;
+
+# Darwin kevent struct (64-bit): { ident@0 u64, filter@8 i16, flags@10 u16, fflags@12 u32,
+# data@16 i64, udata@24 ptr } = 32 bytes. EVFILT_READ = -1, EVFILT_WRITE = -2 (int16, so
+# stored as 0xFFFF / 0xFFFE). EV_ADD = 1, EV_DELETE = 2.
+var KEV_SIZE = 32;
 
 # Runtime struct: { epfd, tasks, task_count, active, allocator, current } = 48
 # bytes (mirror async.cyr F1). epfd is unused on agnos (no epoll for arbitrary
@@ -54,7 +64,7 @@ var RT_SIZE = 48;
 fn async_new_in(a): i64 {
     var rt = alloc_via(a, RT_SIZE);
     if (rt == 0) { return 0; }
-    store64(rt, 0 - 1);          # epfd: unused on Darwin (no epoll)
+    store64(rt, sys_kqueue());   # v6.5.27: a REAL kqueue fd (was -1 / no reactor)
     store64(rt + 8, 0);
     store64(rt + 16, 0);
     store64(rt + 24, 0);
@@ -75,6 +85,9 @@ fn async_spawn(rt, fp, arg): i64 {
     store64(t, fp);
     store64(t + 8, arg);
     store64(t + 16, TASK_READY);
+    store64(t + 32, 0 - 1);          # wait_fd: not fd-waiting
+    store64(t + 48, 0 - 1);          # owned_fd
+    store64(t + 56, 0);              # wait_ev: not parked on any filter
     store64(t + 24, load64(rt + 8));
     store64(t + 32, 0 - 1);          # wait_fd: unused on agnos (mirror layout)
     store64(t + 40, 0);              # result: captured on done (F2)
@@ -89,24 +102,59 @@ fn async_spawn(rt, fp, arg): i64 {
 # tasks not yet DONE. AGNOS has no epoll/parking, so there is no wait phase — the
 # `ran == 0` guard returns 0 (a task never parks here).
 fn _async_step(rt): i64 {
+    var kq = load64(rt);
     var active = 0;
     var ran = 0;
     var t = load64(rt + 8);
     while (t != 0) {
         if (load64(t + 16) == TASK_READY) {
+            store64(rt + 40, t);            # current task, for async_wait_fd
             var r = fncall1(load64(t), load64(t + 8));
             ran = 1;
-            store64(t + 40, r);         # capture result (F2)
-            store64(t + 16, TASK_DONE);
+            if (load64(t + 16) == TASK_READY) {
+                store64(t + 40, r);
+                store64(t + 16, TASK_DONE);
+            }
         }
-        if (load64(t + 16) != TASK_DONE) {
-            active = active + 1;
-        }
+        if (load64(t + 16) != TASK_DONE) { active = active + 1; }
         t = load64(t + 24);
     }
-    if (ran == 0) { return 0; }
+    if (active > 0) {
+        if (ran == 0) {
+            # Every live task is parked. Block in kevent() and wake whoever fired.
+            # kqueue reports ONE event per (fd, filter) pair, so the two directions of one
+            # fd arrive as two distinct events — the multi-waiter problem epoll needed a
+            # union mask and a MOD dance for is structurally absent here.
+            var evb[256];                   # 8 events x 32 B
+            var nr = sys_kevent(kq, 0, 0, &evb, 8, 0);
+            var ei = 0;
+            while (ei < nr) {
+                var eo = ei * KEV_SIZE;
+                var wfd = load64(&evb + eo);
+                var filt = load16(&evb + eo + 8);
+                # int16 filter: 0xFFFF = EVFILT_READ (-1), 0xFFFE = EVFILT_WRITE (-2).
+                var want = 1;
+                if (filt == 65534) { want = 4; }
+                var t2 = load64(rt + 8);
+                while (t2 != 0) {
+                    if (load64(t2 + 16) == TASK_WAITING) {
+                        if (load64(t2 + 32) == wfd) {
+                            if ((load64(t2 + 56) & want) != 0) {
+                                store64(t2 + 32, 0 - 1);
+                                store64(t2 + 56, 0);
+                                store64(t2 + 16, TASK_READY);
+                            }
+                        }
+                    }
+                    t2 = load64(t2 + 24);
+                }
+                ei = ei + 1;
+            }
+        }
+    }
     return active;
 }
+
 
 # Drive the serial loop until either watched handle is DONE, or — both 0 — until idle.
 fn _async_pump(rt, until_a, until_b): i64 {
@@ -192,10 +240,11 @@ fn async_run_process(rt, path, argv, envp, ms): i64 {
     return 0 - 1;
 }
 
-# Cooperative write-readiness wait (agnos): no epoll — no-op, like async_wait_fd. v6.4.38.
+# Park until `fd` is WRITABLE (EVFILT_WRITE). Mirror of the epoll backend.
 fn async_wait_writable(rt, fd): i64 {
-    return 0;
+    return _async_kev_register(rt, fd, 4);
 }
+
 
 # Async TCP connect (agnos): no reactor / BSD non-blocking connect on the serial client
 # model — unsupported, returns 0 (no handle). Present so consumers stay target-agnostic.
@@ -270,19 +319,65 @@ fn async_await_readable(fd): i64 {
     return 0;
 }
 
-# Cooperative fd-wait (mirror async.cyr F1). AGNOS has no epoll and its reads
-# block until data, so parking is a no-op — the task's subsequent blocking read
-# already waits. Present so consumers stay target-agnostic.
-fn async_wait_fd(rt, fd): i64 {
+# v6.5.27 — REAL kqueue registration (these were no-op parks; macOS had no reactor at all).
+# Registers (fd, filter) on the runtime's kqueue keyed to the current task and parks it.
+# `events` uses the SAME bits as the epoll backend (1 = readable, 4 = writable) so consumer
+# code is identical across targets; they are translated to EVFILT_READ / EVFILT_WRITE here.
+#
+# ⭐ kqueue needs NO union mask and NO modify-on-conflict. epoll keys its registration by fd
+# alone, so two waiters on one fd collide and the second `EPOLL_CTL_ADD` returns -EEXIST —
+# the bug v6.5.26 fixed. kqueue keys by (ident, filter), so read and write are independent
+# registrations and repeated EV_ADD of the same pair is an idempotent update, not an error.
+fn _async_kev_register(rt, fd, events): i64 {
+    var cur = load64(rt + 40);
+    if (cur == 0) { return 0 - 1; }
+    var kq = load64(rt);
+    store64(cur + 32, fd);
+    store64(cur + 56, events);
+    store64(cur + 16, TASK_WAITING);
+    var ch[64];                          # up to 2 changes x 32 B
+    var n = 0;
+    if ((events & 1) != 0) {
+        store64(&ch + n * KEV_SIZE, fd);
+        store16(&ch + n * KEV_SIZE + 8, 65535);   # EVFILT_READ (-1)
+        store16(&ch + n * KEV_SIZE + 10, 1);      # EV_ADD
+        store32(&ch + n * KEV_SIZE + 12, 0);
+        store64(&ch + n * KEV_SIZE + 16, 0);
+        store64(&ch + n * KEV_SIZE + 24, 0);
+        n = n + 1;
+    }
+    if ((events & 4) != 0) {
+        store64(&ch + n * KEV_SIZE, fd);
+        store16(&ch + n * KEV_SIZE + 8, 65534);   # EVFILT_WRITE (-2)
+        store16(&ch + n * KEV_SIZE + 10, 1);      # EV_ADD
+        store32(&ch + n * KEV_SIZE + 12, 0);
+        store64(&ch + n * KEV_SIZE + 16, 0);
+        store64(&ch + n * KEV_SIZE + 24, 0);
+        n = n + 1;
+    }
+    # changelist-only call: nevents 0, so it registers and returns without blocking.
+    var rc = sys_kevent(kq, &ch, n, 0, 0, 0);
+    if (rc < 0) {
+        store64(cur + 16, TASK_READY);   # un-park rather than sleep on an unwatched fd
+        store64(cur + 32, 0 - 1);
+        store64(cur + 56, 0);
+        return 0 - 1;
+    }
     return 0;
 }
 
-# v6.5.26 — read-OR-write wait (agnos): no epoll, and reads block, so parking is a no-op
-# exactly like async_wait_fd / async_wait_writable above. Present so a consumer written
-# against the epoll backend still links and runs on agnos.
-fn async_wait_rw(rt, fd): i64 {
-    return 0;
+# Park until `fd` is READABLE. Mirror of the epoll backend's async_wait_fd.
+fn async_wait_fd(rt, fd): i64 {
+    return _async_kev_register(rt, fd, 1);
 }
+
+
+# Park until `fd` is readable OR writable. On kqueue this is two independent filter
+# registrations on one ident — no union mask, no -EEXIST, unlike epoll.
+fn async_wait_rw(rt, fd): i64 {
+    return _async_kev_register(rt, fd, 5);
+}
+
 
 # v6.5.26 — one direction of a byte relay (agnos). The blocking read IS the wait on this
 # target, so this is the epoll body minus the park. Returns bytes WRITTEN, 0 on clean EOF.

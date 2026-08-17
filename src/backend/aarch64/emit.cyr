@@ -886,6 +886,13 @@ fn ESYSXLAT(S): i64 {
         # cmp x8,#1116 = 0xF111711F; movz x16,#116 = 0xD2800E90 (as -arch arm64 verified).
         EW(S, 0xF112C91F); EW(S, 0x54000041); EW(S, 0xD2801950);  # sysctl       1202→202
         EW(S, 0xF111711F); EW(S, 0x54000041); EW(S, 0xD2800E90);  # gettimeofday 1116→116
+        # v6.5.27 — kqueue/kevent (Darwin readiness API), private-alias band 1000+native.
+        # cmp x8,#1362 = 0xF115491F; movz x16,#362 = 0xD2802D50
+        # cmp x8,#1363 = 0xF1154D1F; movz x16,#363 = 0xD2802D70
+        # Encodings derived with the same SUBS/MOVZ field layout as the rows above, and the
+        # deriver was cross-checked by re-computing those rows' known-good values first.
+        EW(S, 0xF115491F); EW(S, 0x54000041); EW(S, 0xD2802D50);  # kqueue 1362→362
+        EW(S, 0xF1154D1F); EW(S, 0x54000041); EW(S, 0xD2802D70);  # kevent 1363→363
         # ── v6.5.16: the credential family. `is_root()` hardcoded `return 0` on macOS
         # (lib/sys.cyr), so the ONE consumer that would have exercised these never called
         # them and the whole family sat unrouted on BOTH Mach-O backends since forever:
@@ -1192,6 +1199,8 @@ fn _macho_arm_routes(n): i64 {
     if (n == 269) { return 1; }                                # faccessat→466 (v6.5.15)
     if (n == 1202) { return 1; }                               # sysctl private alias →202 (v6.5.16)
     if (n == 1116) { return 1; }                               # gettimeofday private alias →116 (v6.5.16)
+    if (n == 1362) { return 1; }                               # kqueue private alias →362 (v6.5.27)
+    if (n == 1363) { return 1; }                               # kevent private alias →363 (v6.5.27)
     # v6.5.16: the aarch64-Linux socket numbers were LIVE in ESYSXLAT (v6.2.24/v6.4.64)
     # but never registered here, so every build touching them printed a bogus "syscall not
     # routed" warning while the route worked fine. A warning that cries wolf on working

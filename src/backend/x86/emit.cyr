@@ -944,6 +944,12 @@ fn EMACHO_SYSXLAT(S): i64 {
     # ecb (rc 0, tv_sec i64 @ +0 matching libc time(0)).
     _msx32(S, 1202, 0x20000CA); # sysctl       1202 (private alias) → BSD 202
     _msx32(S, 1116, 0x2000074); # gettimeofday 1116 (private alias) → BSD 116
+    # v6.5.27 — kqueue/kevent, Darwin's readiness API. Private-alias band (1000 + native),
+    # the same convention as sysctl/gettimeofday above: epoll has no Darwin equivalent, so
+    # there is no Linux source number with matching semantics to reuse and an alias is the
+    # honest spelling. 362/363 are the BSD numbers.
+    _msx32(S, 1362, 0x200016A); # kqueue 1362 (private alias) → BSD 362
+    _msx32(S, 1363, 0x200016B); # kevent 1363 (private alias) → BSD 363
     # ── v6.5.16: the credential family (the x86 fork of the arm64 rows landed in the
     # same release). Unrouted here since forever, so every sys_getuid/geteuid/getgid/
     # getegid on Intel-Mac reached Darwin unclassed and died with SIGSYS (rc 140). It
