@@ -6,12 +6,131 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.23] — 2026-08-17
+
+**Band B: the IR=3 bleed and the parser diagnostic residual.** The spine's first release —
+and both of its opening bites turned out to be misfiled in the backlog.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,172,448 B**, **seed -> cybs ->
+cycc byte-identical from the 29,024 B seed**, `check.sh` **180 / 0**, corpus **271 / 271**,
+cross-OS on REAL hardware — **ecb + ach + cass + pi, each SELFHOST_OK + crossos 47/47** —
+and bench on a quiet box (load 0.52): `self_compile` **701 ms** (695 at .22, **+0.9 %**,
+noise) with `phase_pp` **116 ms** (118 at .22, slightly FASTER). No measurable cost from the
+five `_ends_guard` call-site branches or the six new `PARSE_INTRIN` markers.
+
+⚠ **`bench-history.csv` carries a CONTENDED row for this release — 2026-08-17T05:46:04Z,
+`self_compile` 727 ms / `phase_pp` 128 ms, measured at load 1.06. Ignore it**; the
+05:56:38Z row at load 0.52 is the real measurement. Same commit, +4.6 % apart. Both metrics
+moved together by ~8 %, which is the box-wide-contention signature, not a code change —
+the identical tell as the .21 cargo-build incident.
+
+⭐ **IR=3 divergences 11 -> 4.** Remaining: `subword_signed_load`,
+`const_chained_multiply_fold`, `field_name_shadows_global`, `types`.
+⭐ **Fail-fast parser sites 7 -> 1.**
+
+### Fixed — the IR block table was a capacity limit, not three miscompiles
+
+`large_input`, `large_source` and `preprocessor_past_cap` all died under `CYRIUS_IR=3` with
+`error: IR block table full` (`ir_bb_new`, `src/common/ir.cyr`). They were never
+miscompiles. This **settles the "unverified, do not assume" note** the ir-regalloc issue has
+carried through three closeouts.
+
+⛔ **The re-triage called this "a one-constant raise at ir.cyr:274". It is not.** 32768 is
+coupled across **four** regions sized by BLOCK COUNT — `ir_blocks` (32 B each), `ir_edges`,
+`ir_live_in`, `ir_live_out` (8 B each) — plus a second bounds check at `ir.cyr:307`. Raising
+the constant alone would have overrun three neighbours. All four moved together:
+
+* `ir_blocks` `0xE3A000` -> **`0xB3A000`**, 1 MB -> **4 MB** (grew DOWN into the free gap)
+* `ir_edges` 256 KB -> **1 MB**; `ir_live_in` 256 KB -> **1 MB**
+* `ir_live_out` `0x5E5D000` -> **`0x217B000`**, 256 KB -> **1 MB**
+* cap 32768 -> **131072**
+
+⚠ **My own gap analysis reintroduced a bug this repo already fixed.** The scan required
+`\[(\d+)\]`, so it SKIPPED every map line whose size carries a unit suffix and missed
+`ir_nodes` (16 MB at `0x5E9D000`) entirely — placing the liveness pair straight through it.
+That is verbatim the hole the heapmap gate itself closed at v6.4.81, documented in its own
+source. Caught by the overlap gate on the first run. **Use the gate's parser, not a new one.**
+
+### Fixed — PARSE_INTRIN raw-emitted invisibly to the IR (4 divergences, not 1)
+
+Scoped to fix `crossos/multi_return`; it also cleared **`float`**, **`math_inverse_trig`**
+and **`math_pack_integration`** — all four were the same root cause, sitting in the residual
+list as separate unexplained miscompiles.
+
+⛔ **NOT a v6.5.21 regression, as the issue records it.** `float.cyr` has **zero** IR
+awareness in the entire file; the codebase handles that by recording a blanket
+`IR_RAW_EMIT` marker at the CALL SITE before raw float sequences. `PF64CMP` does this
+(`parse_expr.cyr:2114`); **`PARSE_INTRIN` — holding `f64_to` / `f64_from` / `sqrt` / `floor`
+/ `ceil` / `round` — never did**, since the intrinsics were written. v6.5.21's `: f64` tuple
+fix is merely the first caller whose correctness depended on it. Six sites now marked.
+
+Bisected with the per-pass knobs the substrate provides for exactly this: `FOLD_OFF`,
+`DCE_CAP=0`, `DSE_CAP=0` all still failed; **`CYRIUS_LASE_OFF=1` passed** — LASE alone.
+⚠ A first fix added `IR_RAX_CLOBBER` to `EMOVQ_A_X0` on the theory that `movq rax, xmm0`
+writes rax untracked. Plausible and precedented; it changed nothing, and was REVERTED
+rather than left in as a speculative edit.
+
+### Fixed — `_sync_skip` recovers at statement boundaries (R2)
+
+Recovery resynced only on `;` / `}` / EOF, so an error in a construct with no `;` before the
+next statement swallowed whole statements and lost every error inside them. Ten
+statement-start keywords are now stop tokens.
+
+⛔ **`else` (23) and `elif` (50) are DELIBERATELY EXCLUDED.** They are CONTINUATIONS, not
+statement starts: stopping in front of one hands the statement loop a bare `else` with no
+`if`, which is the MANUFACTURED `unexpected else` on well-formed `lib/fs.cyr` that got the
+earlier attempt reverted. Do not "complete" this set.
+
+### Fixed — resolution errors report and continue (R1)
+
+Five `undefined variable` sites converted from `SYS_EXIT` to report-and-continue: one
+compile now names every unresolved symbol instead of dying on the first.
+
+⛔ **R2 was NOT the enabler, contrary to the re-triage.** The documented rejection was
+specifically about routing through `ERR_IDENT -> _panic -> _sync_skip`, whose resync lands
+before an `else`. What works is report-and-continue **without panic-mode** — emit a benign
+constant, set `_had_error`, return in sync — the shape `--syntax-only` already used.
+Verified against the exact regression: `lib/fs.cyr` reports 9 real errors and **0**
+manufactured `unexpected else`.
+
+⚠ Derived, not quoted: **7** fail-fast sites, not the 8 claimed (12 error sites total, 5
+already recovering). `parse_types.cyr:799` (`CHK_ENUM_SHADOW`) stays fail-fast **by design**
+— its own comment says "fail loud", and it guards a real miscompile hazard.
+
+### Changed — a capacity limit is now a RECOVERABLE diagnostic (maintainer decision)
+
+`_ends_guard` (`>256` case/arm bodies) reports and keeps parsing instead of exiting, so it
+appears alongside every other error — measured: **46 errors in one compile**, capacity and
+resolution together.
+
+⚠ **This required fixing all FIVE call sites, not just the guard.** Each did
+`_ends_guard(S, ec); store64(&ends + ec * 8, EJMP0(S));` — removing the `SYS_EXIT` without
+guarding the store would have turned a hard error into a **buffer overflow** past a
+256-slot array. A fail-fast guard often IS the bounds check. (The guard's comment says
+"shared by all four sites"; there are **five**.)
+⚠ It does NOT weaken the fall-through hazard the guard documents: `_had_error` withholds the
+binary, so no broken executable can ship. Verified on a 300-arm switch: reported with
+location, rc=1, **no binary emitted**.
+⛔ **THE 256 CAP ITSELF IS UNRESOLVED and must be RE-REVIEWED when it becomes the
+bottleneck** (maintainer, 2026-08-17). v6.2.1 already moved this cliff 32 -> 256 without
+fencing it, and noted "a capacity fix is not a bounds fix" — the converse holds here: **this
+is a bounds fix, not a capacity fix.** The limit is shared through one fn so it can be
+raised in one place.
+
+### Changed — a gate was asserting the defect R1 removed
+
+`tests/gates/frontend/lint_reports_unparseable.sh` had two PREMISE axes pinning
+"a compile stops at the first resolution error" and "never reports the syntax error". R1
+deliberately removed that limitation, so the gate went red while every axis testing its
+actual subject stayed green. Premises restated to assert the error CLASS and R1's
+continuation; the anti-vacuous axes are untouched.
+
 ## [6.5.22] — 2026-08-14
 
 **The heap-layout release, carrying nothing but the layout change and one security fold** —
 so that if the new heap misbehaves there is exactly one candidate cause (maintainer, 2026-08-14).
 
-**Release gate GREEN.** Self-host fixpoint **1,168,352 B**, **seed -> cybs -> cycc
+**Release gate GREEN.** Self-host fixpoint **1,172,448 B**, **seed -> cybs -> cycc
 byte-identical from the 29,024 B seed**, `check.sh` **180 / 0**, corpus **271 / 271**,
 heap-map overlap audit **101 regions / 0 warnings**, cross-OS on REAL hardware —
 **ecb + ach + cass + pi, each SELFHOST_OK + crossos 47/47** — and bench on a quiet box:
@@ -89,13 +208,13 @@ so including both now yields **0 duplicate-fn warnings**. api-surface **4841 -> 
 turned out to be sitting on three silent miscompiles.** Both proposals' stated premises
 were wrong in a load-bearing way, and both errors were ours, not the consumers'.
 
-**Self-host fixpoint 1,168,352 B** (+13,576 vs .20), **seed → cybs → cycc byte-identical
+**Self-host fixpoint 1,172,448 B** (+13,576 vs .20), **seed → cybs → cycc byte-identical
 from the 29,024 B seed**, `check.sh` **179 / 0**, corpus **271/271**, gate scripts **58**
 (0 orphans, 0 dangling, re-derived both ways), and cross-OS on REAL hardware —
 **ecb + ach + cass + pi, each SELFHOST_OK + crossos 47/47**.
 
 **Bench on a quiet box: `self_compile` 683 ms** (688 at .20 — **−0.7 %**, flat within
-noise), **cycc 1,168,352 B**. `phase_pp` **114 ms** (117 at .20), which specifically
+noise), **cycc 1,172,448 B**. `phase_pp` **114 ms** (117 at .20), which specifically
 clears the per-byte `#@file` check added to `PP_PASS`'s hot copy loop.
 
 ⚠ **`bench-history.csv` carries an INVALID row for this release — 2026-08-13T23:43:28Z,

@@ -15,191 +15,191 @@
 
 | | Run 1 | Run 2 | Run 3 |
 |---|---|---|---|
-| **Date** | `2026-08-13T23:43:28Z` | `2026-08-14T17:26:19Z` | `2026-08-17T02:26:24Z` |
-| **Commit** | `7cc0997d` | `23379e27` | `c1fd0d9a` |
+| **Date** | `2026-08-17T02:26:24Z` | `2026-08-17T05:46:04Z` | `2026-08-17T05:56:38Z` |
+| **Commit** | `c1fd0d9a` | `ec41d312` | `ec41d312` |
 
 ## alloc
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| 1KB | 37ns | 11ns | 12ns | -67.6% |
-| 64B | 37ns | 11ns | 11ns | -70.3% |
-| 8B | 38ns | 11ns | 10ns | -73.7% |
-| burst_100x64 | 1us | 967ns | 992ns | -38.6% |
+| 1KB | 12ns | 12ns | 12ns | - |
+| 64B | 11ns | 12ns | 12ns | +9.1% |
+| 8B | 10ns | 11ns | 11ns | +10.0% |
+| burst_100x64 | 992ns | 1us | 1us | +3.3% |
 
 ## compiler
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| ark | 43ms | 38ms | 39ms | -8.6% |
-| cyrdoc | 57ms | 46ms | 47ms | -17.3% |
-| cyrfmt | 55ms | 35ms | 36ms | -34.3% |
-| cyrlint | 133ms | 53ms | 54ms | -58.9% |
-| phase_emit | 4ms | 4ms | 3ms | -25.0% |
-| phase_fixup | 152ms | 135ms | 139ms | -8.6% |
-| phase_gvar | 346ms | 303ms | 309ms | -10.7% |
-| phase_lex | 141ms | 116ms | 118ms | -16.3% |
-| phase_parse | 4ms | 3ms | 3ms | -25.0% |
-| phase_pp | 134ms | 114ms | 118ms | -11.9% |
+| ark | 39ms | 39ms | 39ms | -0.2% |
+| cyrdoc | 47ms | 47ms | 47ms | -0.2% |
+| cyrfmt | 36ms | 36ms | 36ms | +0.5% |
+| cyrlint | 54ms | 54ms | 54ms | -0.0% |
+| phase_emit | 3ms | 3ms | 3ms | - |
+| phase_fixup | 139ms | 138ms | 138ms | -0.7% |
+| phase_gvar | 309ms | 311ms | 311ms | +0.6% |
+| phase_lex | 118ms | 117ms | 117ms | -0.8% |
+| phase_parse | 3ms | 3ms | 3ms | - |
+| phase_pp | 118ms | 116ms | 116ms | -1.7% |
 | phase_write | 0ns | 0ns | 0ns | - |
-| self_compile | 788ms | 683ms | 695ms | -11.8% |
-| trivial | 10ms | 9ms | 10ms | -6.8% |
+| self_compile | 695ms | 701ms | 701ms | +0.9% |
+| trivial | 10ms | 10ms | 10ms | +0.3% |
 
 ## dispatch
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| chain_16 | 128ns | 98ns | 100ns | -21.9% |
-| chain_8 | 57ns | 35ns | 37ns | -35.1% |
-| switch_16 | 93ns | 61ns | 64ns | -31.2% |
-| switch_8 | 39ns | 34ns | 33ns | -15.4% |
+| chain_16 | 100ns | 101ns | 101ns | +1.0% |
+| chain_8 | 37ns | 35ns | 35ns | -5.4% |
+| switch_16 | 64ns | 75ns | 75ns | +17.2% |
+| switch_8 | 33ns | 32ns | 32ns | -3.0% |
 
 ## float
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| f64_add | 6ns | 3ns | 3ns | -50.0% |
-| f64_div | 6ns | 4ns | 4ns | -33.3% |
-| f64_eq | 7ns | 4ns | 4ns | -42.9% |
-| f64_from | 5ns | 4ns | 4ns | -20.0% |
-| f64_lt | 6ns | 5ns | 4ns | -33.3% |
-| f64_mul | 6ns | 3ns | 4ns | -33.3% |
-| f64_to | 5ns | 4ns | 4ns | -20.0% |
+| f64_add | 3ns | 3ns | 3ns | - |
+| f64_div | 4ns | 5ns | 5ns | +25.0% |
+| f64_eq | 4ns | 4ns | 4ns | - |
+| f64_from | 4ns | 4ns | 4ns | - |
+| f64_lt | 4ns | 4ns | 4ns | - |
+| f64_mul | 4ns | 3ns | 3ns | -25.0% |
+| f64_to | 4ns | 4ns | 4ns | - |
 
 ## fmt
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| hex | 47ns | 41ns | 42ns | -10.6% |
-| int_large | 74ns | 60ns | 60ns | -18.9% |
-| int_small | 30ns | 18ns | 20ns | -33.3% |
-| sprintf | 250ns | 159ns | 161ns | -35.6% |
-| str_cat | 182ns | 164ns | 154ns | -15.4% |
-| str_from_int | 78ns | 53ns | 53ns | -32.1% |
+| hex | 42ns | 42ns | 42ns | - |
+| int_large | 60ns | 62ns | 62ns | +3.3% |
+| int_small | 20ns | 18ns | 18ns | -10.0% |
+| sprintf | 161ns | 166ns | 166ns | +3.1% |
+| str_cat | 154ns | 164ns | 164ns | +6.5% |
+| str_from_int | 53ns | 54ns | 54ns | +1.9% |
 
 ## freelist
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| alloc_free_1KB | 57ns | 18ns | 18ns | -68.4% |
-| alloc_free_64 | 53ns | 18ns | 17ns | -67.9% |
-| calloc_64 | 114ns | 108ns | 113ns | -0.9% |
+| alloc_free_1KB | 18ns | 18ns | 18ns | - |
+| alloc_free_64 | 17ns | 18ns | 18ns | +5.9% |
+| calloc_64 | 113ns | 115ns | 115ns | +1.8% |
 
 ## hashmap
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| delete | 996ns | 712ns | 748ns | -24.9% |
-| has | 278ns | 240ns | 248ns | -10.8% |
-| insert_10 | 1us | 908ns | 1us | -17.3% |
-| lookup_hit | 279ns | 241ns | 249ns | -10.8% |
-| lookup_miss | 128ns | 111ns | 114ns | -10.9% |
+| delete | 748ns | 751ns | 751ns | +0.4% |
+| has | 248ns | 255ns | 255ns | +2.8% |
+| insert_10 | 1us | 939ns | 939ns | -10.3% |
+| lookup_hit | 249ns | 254ns | 254ns | +2.0% |
+| lookup_miss | 114ns | 116ns | 116ns | +1.8% |
 
 ## intern
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| classify | 8ns | 6ns | 6ns | -25.0% |
-| ptr_eq | 9ns | 4ns | 4ns | -55.6% |
-| str_eq | 204ns | 125ns | 128ns | -37.3% |
-| streq | 196ns | 77ns | 80ns | -59.2% |
+| classify | 6ns | 6ns | 6ns | - |
+| ptr_eq | 4ns | 5ns | 5ns | +25.0% |
+| str_eq | 128ns | 138ns | 138ns | +7.8% |
+| streq | 80ns | 81ns | 81ns | +1.2% |
 
 ## keccak
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| shake128/4KB | 227us | 194us | 198us | -12.7% |
-| shake256/4KB | 282us | 247us | 245us | -13.0% |
-| shake256/empty | 9us | 8us | 8us | -10.9% |
-| shake256/extend_1KB | 71us | 60us | 63us | -10.8% |
+| shake128/4KB | 198us | 202us | 202us | +2.4% |
+| shake256/4KB | 245us | 256us | 256us | +4.4% |
+| shake256/empty | 8us | 8us | 8us | -0.2% |
+| shake256/extend_1KB | 63us | 64us | 64us | +1.3% |
 
 ## miller_rabin
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| fast | 554ns | 477ns | 492ns | -11.2% |
-| slow | 11us | 9us | 10us | -11.7% |
+| fast | 492ns | 505ns | 505ns | +2.6% |
+| slow | 10us | 10us | 10us | +3.2% |
 
 ## mulmod
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| binary_slow | 232ns | 204ns | 206ns | -11.2% |
-| u64_fast | 11ns | 10ns | 10ns | -9.1% |
+| binary_slow | 206ns | 221ns | 221ns | +7.3% |
+| u64_fast | 10ns | 10ns | 10ns | - |
 
 ## regalloc
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| fnv_plain | 1us | 1us | 1us | -9.6% |
-| fnv_regalloc | 1us | 1us | 1us | -11.0% |
-| nested_plain | 5us | 4us | 4us | -12.7% |
-| nested_regalloc | 5us | 4us | 4us | -11.9% |
-| sum_plain | 1us | 906ns | 1us | -6.3% |
-| sum_regalloc | 1us | 1us | 1us | -5.2% |
+| fnv_plain | 1us | 1us | 1us | +6.4% |
+| fnv_regalloc | 1us | 1us | 1us | +6.8% |
+| nested_plain | 4us | 5us | 5us | +3.6% |
+| nested_regalloc | 4us | 5us | 5us | +1.1% |
+| sum_plain | 1us | 1us | 1us | +4.2% |
+| sum_regalloc | 1us | 1us | 1us | +1.8% |
 
 ## shortcircuit
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| and_both | 102ns | 92ns | 93ns | -8.8% |
-| and_chain_all | 8ns | 5ns | 5ns | -37.5% |
-| and_chain_skip | 6ns | 5ns | 5ns | -16.7% |
-| and_skip | 6ns | 4ns | 4ns | -33.3% |
-| or_both | 88ns | 76ns | 79ns | -10.2% |
-| or_skip | 6ns | 5ns | 5ns | -16.7% |
+| and_both | 93ns | 93ns | 93ns | - |
+| and_chain_all | 5ns | 5ns | 5ns | - |
+| and_chain_skip | 5ns | 5ns | 5ns | - |
+| and_skip | 4ns | 4ns | 4ns | - |
+| or_both | 79ns | 79ns | 79ns | - |
+| or_skip | 5ns | 5ns | 5ns | - |
 
 ## size
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| cc5_bytes | 1ms | 1ms | 1ms | -0.0% |
+| cc5_bytes | 1ms | 1ms | 1ms | +0.4% |
 
 ## str
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| builder | 241ns | 178ns | 181ns | -24.9% |
-| cat | 154ns | 115ns | 118ns | -23.4% |
-| contains | 172ns | 146ns | 149ns | -13.4% |
-| eq | 177ns | 118ns | 118ns | -33.3% |
-| from+len | 92ns | 46ns | 46ns | -50.0% |
-| split | 368ns | 229ns | 231ns | -37.2% |
+| builder | 181ns | 186ns | 186ns | +2.8% |
+| cat | 118ns | 118ns | 118ns | - |
+| contains | 149ns | 152ns | 152ns | +2.0% |
+| eq | 118ns | 124ns | 124ns | +5.1% |
+| from+len | 46ns | 46ns | 46ns | - |
+| split | 231ns | 237ns | 237ns | +2.6% |
 
 ## string
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| memchr_64 | 84ns | 39ns | 40ns | -52.4% |
-| memcpy_64 | 149ns | 112ns | 117ns | -21.5% |
-| memeq_64 | 128ns | 115ns | 119ns | -7.0% |
-| memset_64 | 98ns | 90ns | 93ns | -5.1% |
-| strchr | 71ns | 48ns | 55ns | -22.5% |
-| streq_small | 99ns | 39ns | 40ns | -59.6% |
-| strlen_large | 54ns | 25ns | 26ns | -51.9% |
-| strlen_small | 40ns | 15ns | 15ns | -62.5% |
+| memchr_64 | 40ns | 41ns | 41ns | +2.5% |
+| memcpy_64 | 117ns | 119ns | 119ns | +1.7% |
+| memeq_64 | 119ns | 121ns | 121ns | +1.7% |
+| memset_64 | 93ns | 96ns | 96ns | +3.2% |
+| strchr | 55ns | 50ns | 50ns | -9.1% |
+| streq_small | 40ns | 40ns | 40ns | - |
+| strlen_large | 26ns | 26ns | 26ns | - |
+| strlen_small | 15ns | 16ns | 16ns | +6.7% |
 
 ## tagged
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| Err | 42ns | 13ns | 14ns | -66.7% |
-| Ok | 43ns | 13ns | 13ns | -69.8% |
-| Some | 25ns | 13ns | 13ns | -48.0% |
-| chain | 50ns | 30ns | 31ns | -38.0% |
-| is_ok | 25ns | 15ns | 15ns | -40.0% |
-| unwrap | 29ns | 15ns | 15ns | -48.3% |
-| unwrap_or | 27ns | 18ns | 18ns | -33.3% |
+| Err | 14ns | 14ns | 14ns | - |
+| Ok | 13ns | 13ns | 13ns | - |
+| Some | 13ns | 13ns | 13ns | - |
+| chain | 31ns | 33ns | 33ns | +6.5% |
+| is_ok | 15ns | 15ns | 15ns | - |
+| unwrap | 15ns | 15ns | 15ns | - |
+| unwrap_or | 18ns | 18ns | 18ns | - |
 
 ## vec
 
-| Benchmark | `7cc0997d` | `23379e27` | `c1fd0d9a` | Delta |
+| Benchmark | `c1fd0d9a` | `ec41d312` | `ec41d312` | Delta |
 |---|---|---|---|---|
-| find_100 | 341ns | 247ns | 256ns | -24.9% |
-| get | 14ns | 6ns | 7ns | -50.0% |
-| push_10 | 304ns | 136ns | 164ns | -46.1% |
-| push_100 | 2us | 1us | 1us | -39.1% |
-| push_1000 | 26us | 13us | 13us | -50.4% |
+| find_100 | 256ns | 259ns | 259ns | +1.2% |
+| get | 7ns | 6ns | 6ns | -14.3% |
+| push_10 | 164ns | 142ns | 142ns | -13.4% |
+| push_100 | 1us | 1us | 1us | -0.8% |
+| push_1000 | 13us | 13us | 13us | +3.1% |
 
 ---
 

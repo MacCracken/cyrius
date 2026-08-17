@@ -364,11 +364,30 @@ include "src/frontend/parse_fn.cyr"
 # HARD ERROR, never a silent skip: dropping a jump-end patch leaves that arm falling
 # through into the next one, i.e. a silent miscompile, which is strictly worse than
 # refusing the file. Shared by all four sites so the limit cannot drift between them.
+# v6.5.23 — CAPACITY joins the RECOVERABLE diagnostic class (maintainer decision,
+# 2026-08-17: "recoverable"). Reported once and the parse continues, so ONE compile names
+# this alongside every other error in the file instead of stopping here.
+#
+# ⚠ THIS DOES NOT WEAKEN THE HAZARD THE NOTE ABOVE DESCRIBES. `_had_error` withholds the
+# binary (the v6.4.62 multi-error contract), so the fall-through miscompile it warns about
+# — an unpatched jump-end letting one arm fall into the next — can never reach an
+# executable. "Recoverable" means the DIAGNOSTIC recovers, not that a broken binary ships.
+# Returning 1 lets the caller skip recording a patch it has no slot for, rather than
+# writing past the 256-slot array, which is what the guard existed to prevent.
+#
+# ⛔ THE 256 CAP ITSELF IS UNRESOLVED AND MUST BE RE-REVIEWED WHEN IT BECOMES THE
+# BOTTLENECK (maintainer, 2026-08-17). This change makes hitting it survivable and
+# legible; it does not raise it. v6.2.1 already moved this cliff once (32 → 256) without
+# fencing it, and the note above records that "a capacity fix is not a bounds fix" — the
+# converse also holds: this is a bounds fix, not a capacity fix. When a real consumer
+# needs >256 arms, the arrays are `i64[256]` in four sites and the limit is shared through
+# this fn precisely so it can be raised in one place.
 fn _ends_guard(S, ec): i64 {
     if (ec >= 256) {
         syscall(SYS_WRITE, 2, "error:", 6); _err_head(S);
         syscall(SYS_WRITE, 2, ": too many case/arm bodies in one switch/match (max 256)\n", 57);
-        syscall(SYS_EXIT, 1);
+        _had_error = 1;
+        return 1;
     }
     return 0;
 }
@@ -546,9 +565,9 @@ fn PARSE_SWITCH(S): i64 {
                             else { if (PEEKT(S) == 12) { cgo = 0; }
                                 else { PARSE_STMT(S); } } } }
                 }
-                _ends_guard(S, ec);
-                store64(&ends + ec * 8, EJMP0(S));
-                ec = ec + 1;
+                var _eg = _ends_guard(S, ec);
+                var _ep = EJMP0(S);
+                if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
             }
             else { if (PEEKT(S) == 59) {
                     STI(S, GTI(S) + 1);
@@ -562,9 +581,9 @@ fn PARSE_SWITCH(S): i64 {
                         if (PEEKT(S) == 12) { break; }
                         PARSE_STMT(S);
                     }
-                    _ends_guard(S, ec);
-                    store64(&ends + ec * 8, EJMP0(S));
-                    ec = ec + 1;
+                    var _eg = _ends_guard(S, ec);
+                    var _ep = EJMP0(S);
+                    if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
                 }
                 else { sgo = 0; } }
         }
@@ -618,9 +637,9 @@ fn PARSE_SWITCH(S): i64 {
                             else { if (PEEKT(S) == 12) { cgo = 0; }
                                 else { PARSE_STMT(S); } } } }
                 }
-                _ends_guard(S, ec);
-                store64(&ends + ec * 8, EJMP0(S));
-                ec = ec + 1;
+                var _eg = _ends_guard(S, ec);
+                var _ep = EJMP0(S);
+                if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
                 EPATCH(S, skip);
             }
             else { if (PEEKT(S) == 59) {
@@ -736,9 +755,9 @@ fn PARSE_MATCH(S): i64 {
                 # A wildcard matches everything, so the arms after it are dead.
                 # PARSE_SWITCH's chain-path `default:` looks like the same shape but
                 # is NOT: a non-last `default:` is rejected there at parse time.
-                _ends_guard(S, ec);
-                store64(&ends + ec * 8, EJMP0(S));
-                ec = ec + 1;
+                var _eg = _ends_guard(S, ec);
+                var _ep = EJMP0(S);
+                if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
             } else {
                 # v5.8.22 bite #2 — pre-PCMPE peek: if the arm pattern's
                 # first token is a variant-of-enum ident, record its
@@ -803,9 +822,9 @@ fn PARSE_MATCH(S): i64 {
                 SCOPE_POP(S);
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
                 STI(S, GTI(S) + 1);
-                _ends_guard(S, ec);
-                store64(&ends + ec * 8, EJMP0(S));
-                ec = ec + 1;
+                var _eg = _ends_guard(S, ec);
+                var _ep = EJMP0(S);
+                if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
                 EPATCH(S, skip);
             }
         }
