@@ -135,15 +135,16 @@ _codebuf_cap = 8388608;
 var bl = 0;
 var done = 0;
 while (done == 0) {
-    var n = syscall(SYS_READ, 0, S + bl, 1048576 - bl);
+    var n = syscall(SYS_READ, 0, S + _SRCB + bl, _SRC_CAP - bl);
     if (n <= 0) { done = 1; }
     else {
         bl = bl + n;
-        if (bl >= 1048576) {
+        if (bl >= _SRC_CAP) {
             var probe[1];
             var pn = syscall(SYS_READ, 0, &probe, 1);
             if (pn > 0) {
-                syscall(SYS_WRITE, 2, "error: input exceeds 1MB buffer (raise input_buf in src/main.cyr)\n", 66);
+                syscall(SYS_WRITE, 2, "error: input exceeds the 16MB source buffer
+", 44);
                 syscall(SYS_EXIT, 1);
             }
             done = 1;

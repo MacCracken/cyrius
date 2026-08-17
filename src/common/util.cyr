@@ -1264,6 +1264,28 @@ fn _rd_exit(): i64 {
 #
 # Bounded at 480 on purpose: a top-level `var x[N]` is N*8 bytes under cycc but N
 # BYTES under cybs, and this file is on the seed path — 480 is inside 512 either way.
+# v6.5.22 — BASE OFFSET of the raw-stdin / preprocessor WORKING buffer.
+#
+# It was 0 (S + 0) with a 1 MB cap, and that cap became consumer-blocking: sigil's
+# bundle is 1,084,265 B, mabda's 1,259,999 B and drishti's 1,403,806 B — all three
+# refused with `input exceeds 1MB buffer`. It could not simply grow in place: the
+# 0x100000-0x18F830 gap above it is OCCUPIED (fn_name_hash 0x110000, fn_start_hash
+# 0x114000, var_noffs 0x11A000, var_sizes 0x12A000, var_types 0x13A000).
+#
+# So it moves into the RETIRED `output_buf` band — 16 MB at 0x4D9D000, written by
+# nothing since v6.4.52, contiguous immediately above preprocess_out (0x459D000 +
+# 8 MB) and ending exactly at the locals table (0x5D9D000). That is why the two
+# roadmap items were ONE change: reclaiming the band and raising the cap are the
+# same edit. ⭐ It also retires the old `tok_names`-nested-inside-input_buf hazard
+# and its "pool end must stay <= 0x100000" constraint — the buffer no longer
+# overlaps tok_names at all.
+#
+# ⚠ This is the base for RAW INPUT *and* for every preprocessor pass, because the
+# passes write to preprocess_out and COPY BACK here (PP_MACRO_PASS). Anything
+# reading the source stream reads `S + _SRCB + <offset>`.
+var _SRCB = 0x4D9D000;
+var _SRC_CAP = 16777216;
+
 var _pp_incdir[512];
 var _pp_incdir_len = 0;
 # v6.5.21 — `#@pkgver <version>`: the package version cbt resolves from

@@ -6,19 +6,96 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.5.22] — 2026-08-14
+
+**The heap-layout release, carrying nothing but the layout change and one security fold** —
+so that if the new heap misbehaves there is exactly one candidate cause (maintainer, 2026-08-14).
+
+**Release gate GREEN.** Self-host fixpoint **1,168,352 B**, **seed -> cybs -> cycc
+byte-identical from the 29,024 B seed**, `check.sh` **180 / 0**, corpus **271 / 271**,
+heap-map overlap audit **101 regions / 0 warnings**, cross-OS on REAL hardware —
+**ecb + ach + cass + pi, each SELFHOST_OK + crossos 47/47** — and bench on a quiet box:
+`self_compile` **695 ms** (683 at .21, **+1.8 %**) and `phase_pp` **118 ms** (114, +3.5 %).
+⚠ That delta is a REAL cost, not noise: every source read now carries a base offset. Stated
+rather than waved away.
+
+### Changed — `input_buf` relocated and raised 1 MB -> 16 MB (heap LAYOUT change)
+
+The 1 MB stdin buffer was consumer-blocking: **sigil 1,084,265 B**, **mabda 1,259,999 B**,
+**drishti 1,403,806 B** all died with `error: input exceeds 1MB buffer`. It could not grow in
+place — `0x100000`-`0x18F830` is occupied (`fn_name_hash` 0x110000, `fn_start_hash` 0x114000,
+`var_noffs` 0x11A000, `var_sizes` 0x12A000, `var_types` 0x13A000).
+
+* **The two roadmap items were ONE change.** The retired `output_buf` band (`0x4D9D000`,
+  16 MB, written by nothing since v6.4.52) is contiguous immediately above `preprocess_out`
+  and ends exactly at the locals table (`0x5D9D000`) — reclaiming the band *is* the raise.
+* It retires the old `input_buf`/`tok_names` **overlap** and its `pool end <= 0x100000`
+  constraint; the buffer no longer touches `tok_names`.
+* New `_SRCB` / `_SRC_CAP` in `src/common/util.cyr`. This is the working buffer for **every**
+  preprocessor pass (they write to `preprocess_out` and copy BACK), not just raw input.
+
+### Fixed — eight rebase misses, none found by reading code
+
+The method is the durable lesson: eyeballing which arguments are source bases does not work.
+
+* **15 helper call sites in `PP_PASS`** still passed bare `S`; a hand-written list caught 6
+  of 21. Found by the corpus (`frontend/ifplat.tcyr`).
+* **`PP_DEFINED`** slipped a regex matching `PP_DEFINE(S, S,` — the trailing `D`. Broke
+  **every `#ifdef`**.
+* **`ISREF`** — `#ref` silently stopped expanding. **271/271 tcyr passed against the broken
+  compiler**, because `#ref` needs an external `.toml` and no `.tcyr` sets one up. New
+  mutation-proven gate `tests/gates/frontend/ref_directive_expands.sh`.
+* **`TS_LEX`** — the TS frontend takes the source pointer straight from `main.cyr`, outside
+  the preprocessor. Killed all **2053** `.ts` tests.
+* **`PP_FIND_MACRO`** — holds `S` as STATE (macro table at `S + 0x192000`) but forwards it to
+  `PP_HASH_ID` as a source BASE. Every function-like macro stopped expanding.
+* **`TS_JS_EMIT`** — second TS entry point; broke `--emit-js`.
+* **`PP_REANCHOR_SRC`** — `_pp_lineno_at(S, S, ip)` counted newlines from the old address, so
+  every include resumed at base 1: **7 of 10** diagnostic-line shapes wrong.
+* **An over-correction**: a file-wide automated pass rebased 14 sites when 1 was real, and
+  would have DOUBLE-offset `PP_PASS` / `PP_EXPAND` / `PP_IFPLAT_MATCH` / the derive helpers.
+  Caught by reading the report before building.
+
+**The correct discriminator:** a parameter is a source base iff the body contains
+`load8(<param> + ...)` — *but* a function that also touches `S + 0x<table>` holds STATE, so
+its base must be rebased INSIDE it, never at its call site.
+
+### Fixed — the cap-drift gate had never verified `input_buf`
+
+`programs/checks/heap_audit.cyr` scanned `lex.cyr` for `>= 1048576`. The only such literal
+there is the **token-count** cap (`lex.cyr:240`), so the check passed by coincidence and
+verified nothing. Now scans `main.cyr` for the real bound (`_SRC_CAP - bl`). Surfaced only
+because the region moved.
+
+### Changed — sigil 3.12.9 folded (security)
+
+Closes the last of the 3.12.3-3.12.6 authentication-bypass arc. RSA sign/blind/CRT workspace
+(23 banked globals) and the bignum engine (17 more) localised to stack frames; secret
+zeroization per CALL not per lane; `crypto_banks_exhausted()` / `crypto_banks_claimed()` make
+lane exhaustion detectable. **9.53 MiB of `.bss`** reclaimed.
+
+⚠ **The Bellcore verify-after-sign guard compared both operands in ONE shared bank lane** —
+the v1.5 verify-bypass shape fixed at 3.12.3 — so a colliding thread could wave through
+precisely the faulty signature the guard exists to catch.
+
+⭐ It also closes a latent **duplicate symbol across two folded stdlibs**: sigil 3.12.7 and
+`lib/yukti.cyr` both defined `err_io`. sigil namespaced its 14 `err_*` fns to `sigil_err_*`,
+so including both now yields **0 duplicate-fn warnings**. api-surface **4841 -> 4843**
+(+2 new, 14 RENAMED — not removals, as a first pass mis-read).
+
 ## [6.5.21] — 2026-08-13
 
 **Two proposals completed and retired — and the one filed as "ergonomics, not capability"
 turned out to be sitting on three silent miscompiles.** Both proposals' stated premises
 were wrong in a load-bearing way, and both errors were ours, not the consumers'.
 
-**Self-host fixpoint 1,168,360 B** (+13,576 vs .20), **seed → cybs → cycc byte-identical
+**Self-host fixpoint 1,168,352 B** (+13,576 vs .20), **seed → cybs → cycc byte-identical
 from the 29,024 B seed**, `check.sh` **179 / 0**, corpus **271/271**, gate scripts **58**
 (0 orphans, 0 dangling, re-derived both ways), and cross-OS on REAL hardware —
 **ecb + ach + cass + pi, each SELFHOST_OK + crossos 47/47**.
 
 **Bench on a quiet box: `self_compile` 683 ms** (688 at .20 — **−0.7 %**, flat within
-noise), **cycc 1,168,360 B**. `phase_pp` **114 ms** (117 at .20), which specifically
+noise), **cycc 1,168,352 B**. `phase_pp` **114 ms** (117 at .20), which specifically
 clears the per-byte `#@file` check added to `PP_PASS`'s hot copy loop.
 
 ⚠ **`bench-history.csv` carries an INVALID row for this release — 2026-08-13T23:43:28Z,

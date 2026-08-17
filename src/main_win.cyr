@@ -13,11 +13,8 @@
 # Last full audit: v3.6.10. Verified by tests/gates/memory/heapmap.sh (47 regions, 0 warnings).
 #
 # --- Low heap: I/O + identifiers ---
-#   0x00000  input_buf     [1048576]      1MB raw stdin input (v3.6.7, was 256KB)
-#                                         NOTE: input_buf extends past 0x60000 (tok_names).
-#                                         tok_names is REBUILT by LEX after preprocessing —
-#                                         the overlap is tolerated because preprocessing reads
-#                                         from 0x459D000, not S+0.
+#   (0x00000-0x60000 is FREE since v6.5.22 — input_buf relocated to 0x4D9D000.
+#    Deliberately NOT a map entry: it is no longer a region.)
 #   0x60000  tok_names     [524288]      512KB packed identifier strings (nested in input_buf — rebuilt by LEX; v5.11.18 128KB→256KB, v6.4.76 256KB→512KB; grows 0x60000-0xE0000)
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
@@ -118,17 +115,18 @@
 #                                        cap raised 2 MB → 8 MB. The 2 MB hole was
 #                                        absorbed by v5.11.68's full heap-map reorg.)
 #   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
-#   0x4D9D000 output_buf    [16777216]   RETIRED at v6.4.52 — output is now a 1 GiB off-heap alloc(1073741824) on ALL platforms (see _output_base). Band kept RESERVED so the overlap audit is unchanged; a closeout may reclaim it (CLAUDE.md closeout item 4) (v3.5.2)
-#   (tok arrays RETIRED here v5.8.46 — see main.cyr for canonical layout;
-#    relocated to 0x2D7C000 / 0x357C000 / 0x3D7C000 with cap 1048576)
-#
-# --- Token arrays (v3.6.2 layout RETIRED v5.8.46) ---
-#   (was 0xB4A000 tok_types — code overlapped tok_types with output_buf at 0x4D9D000)
-#   (was 0xD4A000 tok_values [2097152] 262144 entries × 8 bytes)
-#   (was 0xF4A000 tok_lines  [2097152] 262144 entries × 8 bytes)
-#   See main.cyr for the new layout (high block at 0x2D7C000, cap 1048576).
-#
-# --- Relocated struct field tables (v3.6.6) ---
+#   0x4D9D000 input_buf     [16777216]   16MB raw stdin + preprocessor WORKING buffer.
+#                                        v6.5.22: RELOCATED here from 0x00000, where a 1MB cap
+#                                        refused sigil (1,084,265 B), mabda (1,259,999 B) and
+#                                        drishti (1,403,806 B). It could not grow in place —
+#                                        0x100000-0x18F830 is occupied (fn_name_hash 0x110000 ..
+#                                        var_types 0x13A000). This is the RETIRED output_buf band
+#                                        (dead since v6.4.52), contiguous above preprocess_out and
+#                                        ending exactly at locals (0x5D9D000) — so reclaiming the
+#                                        band and raising the cap are ONE change.
+#                                        Passes write to preprocess_out and copy BACK here.
+#                                        Also retires the old input_buf/tok_names OVERLAP and its
+#                                        "pool end <= 0x100000" constraint.
 #   0x91A000 struct_ftypes [65536]       PACKED field pool (v6.0.47), 8192 flat entries × 8B, addr=(field_base[si]+fc)*8
 #   0x92A000 struct_fnames [65536]       PACKED field pool (v6.0.47), 8192 flat entries × 8B, addr=(field_base[si]+fc)*8
 #
@@ -417,16 +415,17 @@ _codebuf_cap = 8388608;
 var bl = 0;
 var done = 0;
 while (done == 0) {
-    var n = syscall(SYS_READ, 0, S + bl, 1048576 - bl);
+    var n = syscall(SYS_READ, 0, S + _SRCB + bl, _SRC_CAP - bl);
     if (n <= 0) { done = 1; }
     else {
         bl = bl + n;
-        if (bl >= 1048576) {
+        if (bl >= _SRC_CAP) {
             # One more read to distinguish "exactly 256KB" from "more coming"
             var probe[1];
             var pn = syscall(SYS_READ, 0, &probe, 1);
             if (pn > 0) {
-                syscall(SYS_WRITE, 2, "error: input exceeds 1MB buffer (raise input_buf in src/main.cyr)\n", 66);
+                syscall(SYS_WRITE, 2, "error: input exceeds the 16MB source buffer
+", 44);
                 syscall(SYS_EXIT, 1);
             }
             done = 1;

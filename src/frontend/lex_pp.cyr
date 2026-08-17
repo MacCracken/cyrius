@@ -471,7 +471,7 @@ fn PP_REANCHOR(S, out, op, name, srcline): i64 {
 # Re-anchor to the MAIN source at input offset `ip` (PP_PASS: its input is the raw
 # source, so the line number is exact by counting).
 fn PP_REANCHOR_SRC(S, out, op, ip): i64 {
-    return PP_REANCHOR(S, out, op, "<source>", _pp_lineno_at(S, S, ip) - _pp_srcline_bias);
+    return PP_REANCHOR(S, out, op, "<source>", _pp_lineno_at(S, S + _SRCB, ip) - _pp_srcline_bias);
 }
 
 # Re-anchor to whichever file PP_IFDEF_PASS is currently copying from. Its input is the
@@ -1840,7 +1840,7 @@ fn PP_HASH_ID(S, pos): i64 {
 
 # Find macro by name hash at input position, return index or -1
 fn PP_FIND_MACRO(S, ip): i64 {
-    var h = PP_HASH_ID(S, ip);
+    var h = PP_HASH_ID(S + _SRCB, ip);
     var mi = 0;
     while (mi < _pp_macro_count) {
         if (load64(S + 0x192000 + mi * 8) == h) { return mi; }
@@ -1886,7 +1886,7 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     var body = def + dp;
     # Skip name in input to find (
     while (ip < bl) {
-        if (load8(S + ip) == 40) { break; }
+        if (load8(S + _SRCB + ip) == 40) { break; }
         ip = ip + 1;
     }
     ip = ip + 1;  # skip (
@@ -1896,7 +1896,7 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     var ap = 0;
     var depth = 0;
     while (ip < bl) {
-        var c = load8(S + ip);
+        var c = load8(S + _SRCB + ip);
         if (c == 40) { depth = depth + 1; store8(&args + ap, c); ap = ap + 1; }
         elif (c == 41) {
             if (depth == 0) { store8(&args + ap, 0); ap = ap + 1; acnt = acnt + 1; ip = ip + 1; break; }
@@ -1981,7 +1981,7 @@ fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
     var _nl_in = 0;
     var _sk = _ip_start;
     while (_sk < ip) {
-        if (load8(S + _sk) == 10) { _nl_in = _nl_in + 1; }
+        if (load8(S + _SRCB + _sk) == 10) { _nl_in = _nl_in + 1; }
         _sk = _sk + 1;
     }
     var _nl_out = 0;
@@ -2113,21 +2113,21 @@ fn PP_DEFINED(S, src_base, pos): i64 {
 # the same literal strings that compiler bootstrap would register.
 fn PP_IFPLAT_MATCH(S, pos): i64 {
     # Skip leading whitespace
-    while (load8(S + pos) == 32) { pos = pos + 1; }
+    while (load8(S + _SRCB + pos) == 32) { pos = pos + 1; }
     var target_hash = 0;
     # "x86" = 78 38 36 — 3 chars, must be followed by a terminator
-    if (load8(S + pos) == 120 && load8(S + pos + 1) == 56 && load8(S + pos + 2) == 54) {
-        var nc = load8(S + pos + 3);
+    if (load8(S + _SRCB + pos) == 120 && load8(S + _SRCB + pos + 1) == 56 && load8(S + _SRCB + pos + 2) == 54) {
+        var nc = load8(S + _SRCB + pos + 3);
         if (nc == 32 || nc == 10 || nc == 13 || nc == 0) {
             target_hash = PP_HASH_CSTR("CYRIUS_ARCH_X86");
         }
     }
     # "aarch64" = 61 61 72 63 68 36 34 — 7 chars, must be followed by a terminator
     if (target_hash == 0) {
-        if (load8(S + pos) == 97 && load8(S + pos + 1) == 97 && load8(S + pos + 2) == 114
-        && load8(S + pos + 3) == 99 && load8(S + pos + 4) == 104
-        && load8(S + pos + 5) == 54 && load8(S + pos + 6) == 52) {
-            var nc = load8(S + pos + 7);
+        if (load8(S + _SRCB + pos) == 97 && load8(S + _SRCB + pos + 1) == 97 && load8(S + _SRCB + pos + 2) == 114
+        && load8(S + _SRCB + pos + 3) == 99 && load8(S + _SRCB + pos + 4) == 104
+        && load8(S + _SRCB + pos + 5) == 54 && load8(S + _SRCB + pos + 6) == 52) {
+            var nc = load8(S + _SRCB + pos + 7);
             if (nc == 32 || nc == 10 || nc == 13 || nc == 0) {
                 target_hash = PP_HASH_CSTR("CYRIUS_ARCH_AARCH64");
             }
@@ -2272,8 +2272,8 @@ fn PP_PASS(S): i64 {
     # is deliberate: a marker REJECTED by PP_SCAN_INCDIR's path guards still occupied its
     # line, so the line count and the marker's validity are different questions.
     if (bl >= 9) {
-        if (load8(S) == 35 && load8(S + 1) == 64 && load8(S + 2) == 105 && load8(S + 3) == 110 && load8(S + 4) == 99 && load8(S + 5) == 100 && load8(S + 6) == 105 && load8(S + 7) == 114 && load8(S + 8) == 32) {
-            ip = PP_SKIPLINE(S, ip, bl);
+        if (load8(S + _SRCB) == 35 && load8(S + _SRCB + 1) == 64 && load8(S + _SRCB + 2) == 105 && load8(S + _SRCB + 3) == 110 && load8(S + _SRCB + 4) == 99 && load8(S + _SRCB + 5) == 100 && load8(S + _SRCB + 6) == 105 && load8(S + _SRCB + 7) == 114 && load8(S + _SRCB + 8) == 32) {
+            ip = PP_SKIPLINE(S + _SRCB, ip, bl);
             _pp_srcline_bias = 1;
         }
     }
@@ -2283,9 +2283,9 @@ fn PP_PASS(S): i64 {
     # No `_pp_srcline_bias` bump here: PP_EMIT_PKGVER writes a replacement line,
     # so the expanded stream keeps the same line count as the source.
     if (bl - ip >= 10) {
-        if (load8(S + ip) == 35 && load8(S + ip + 1) == 64 && load8(S + ip + 2) == 112 && load8(S + ip + 3) == 107 && load8(S + ip + 4) == 103 && load8(S + ip + 5) == 118 && load8(S + ip + 6) == 101 && load8(S + ip + 7) == 114 && load8(S + ip + 8) == 32) {
-            op = PP_EMIT_PKGVER(S, out, op, ip, bl);
-            ip = PP_SKIPLINE(S, ip, bl);
+        if (load8(S + _SRCB + ip) == 35 && load8(S + _SRCB + ip + 1) == 64 && load8(S + _SRCB + ip + 2) == 112 && load8(S + _SRCB + ip + 3) == 107 && load8(S + _SRCB + ip + 4) == 103 && load8(S + _SRCB + ip + 5) == 118 && load8(S + _SRCB + ip + 6) == 101 && load8(S + _SRCB + ip + 7) == 114 && load8(S + _SRCB + ip + 8) == 32) {
+            op = PP_EMIT_PKGVER(S + _SRCB, out, op, ip, bl);
+            ip = PP_SKIPLINE(S + _SRCB, ip, bl);
         }
     }
     # v5.8.40 — string-literal awareness. `in_string` flips on
@@ -2301,7 +2301,7 @@ fn PP_PASS(S): i64 {
     var escape_next = 0;
     var in_comment = 0;
     while (ip < bl) {
-        var c = load8(S + ip);
+        var c = load8(S + _SRCB + ip);
         var handled = 0;
         # Preprocessor directives at start of line. `dip` lets
         # `#`-prefixed directives tolerate leading whitespace
@@ -2310,15 +2310,15 @@ fn PP_PASS(S): i64 {
         # not a directive. v5.8.40 — also gated on `in_string == 0`
         # so directive prefixes inside string literals aren't
         # processed.
-        var dip = PP_SKIP_WS(S, ip, bl);
+        var dip = PP_SKIP_WS(S + _SRCB, ip, bl);
         if (bol == 1 && in_string == 0) {
-            if (ISDEFINE(S, dip, bl) == 1) {
+            if (ISDEFINE(S + _SRCB, dip, bl) == 1) {
                 if (skip_depth == 0) {
                     # Check for macro with args: #define NAME(
                     var dp = dip + 8;
                     var is_macro = 0;
                     while (dp < bl) {
-                        var dc = load8(S + dp);
+                        var dc = load8(S + _SRCB + dp);
                         if (dc == 40) { is_macro = 1; break; }
                         if (dc == 32) { break; }
                         if (dc == 10) { break; }
@@ -2329,14 +2329,14 @@ fn PP_PASS(S): i64 {
                         var msi = _pp_macro_count;
                         if (msi < 16) {
                             var mip = dip + 8;
-                            store64(S + 0x192000 + msi * 8, PP_HASH_ID(S, mip));
+                            store64(S + 0x192000 + msi * 8, PP_HASH_ID(S + _SRCB, mip));
                             store64(S + 0x192080 + msi * 8, _pp_macro_text_pos);
                             var mdst = S + 0x193000 + _pp_macro_text_pos;
                             var mlen = 0;
                             var mcp = mip;
                             while (mcp < bl) {
-                                if (load8(S + mcp) == 10) { break; }
-                                store8(mdst + mlen, load8(S + mcp));
+                                if (load8(S + _SRCB + mcp) == 10) { break; }
+                                store8(mdst + mlen, load8(S + _SRCB + mcp));
                                 mlen = mlen + 1;
                                 mcp = mcp + 1;
                             }
@@ -2345,13 +2345,13 @@ fn PP_PASS(S): i64 {
                             _pp_macro_text_pos = _pp_macro_text_pos + mlen + 1;
                             _pp_macro_count = _pp_macro_count + 1;
                         }
-                        ip = PP_SKIPLINE(S, ip, bl);
+                        ip = PP_SKIPLINE(S + _SRCB, ip, bl);
                     } else {
-                        PP_DEFINE(S, S, dip + 8);
-                        ip = PP_SKIPLINE(S, ip, bl);
+                        PP_DEFINE(S, S + _SRCB, dip + 8);
+                        ip = PP_SKIPLINE(S + _SRCB, ip, bl);
                     }
                 } else {
-                    ip = PP_SKIPLINE(S, ip, bl);
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl);
                 }
                 # v6.5.19 — a consumed directive line still OCCUPIED a source line.
                 # Emit a blank line in its place so the expanded stream stays 1:1 with
@@ -2371,33 +2371,33 @@ fn PP_PASS(S): i64 {
             # with state != 0). Push-site logic below is identical
             # across the four ISIF* variants — only the cond-eval
             # callee differs.
-            if (handled == 0) { if (ISIFDEF(S, dip, bl) == 1) {
+            if (handled == 0) { if (ISIFDEF(S + _SRCB, dip, bl) == 1) {
                     var _s = 3;  # default: OUTER_SKIP
                     if (skip_depth == 0) {
-                        if (PP_DEFINED(S, S, dip + 7) == 1) { _s = 0; }
+                        if (PP_DEFINED(S, S + _SRCB, dip + 7) == 1) { _s = 0; }
                         else { _s = 1; }
                     }
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
-            if (handled == 0) { if (ISIFNDEF(S, dip, bl) == 1) {
+            if (handled == 0) { if (ISIFNDEF(S + _SRCB, dip, bl) == 1) {
                     var _s = 3;
                     if (skip_depth == 0) {
-                        if (PP_DEFINED(S, S, dip + 8) == 0) { _s = 0; }
+                        if (PP_DEFINED(S, S + _SRCB, dip + 8) == 0) { _s = 0; }
                         else { _s = 1; }
                     }
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             # #ifplat PLAT (v5.4.19) — sugar for #ifdef CYRIUS_ARCH_<UPPER>.
             # Must come before ISIF so "#ifp..." doesn't match the 4-byte
             # "#if " prefix check (ISIF explicitly rejects byte 4 == 'd'
             # but not 'p'). Paired with ISENDPLAT below.
-            if (handled == 0) { if (ISIFPLAT(S, dip, bl) == 1) {
+            if (handled == 0) { if (ISIFPLAT(S + _SRCB, dip, bl) == 1) {
                     var _s = 3;
                     if (skip_depth == 0) {
                         if (PP_IFPLAT_MATCH(S, dip + 8) == 1) { _s = 0; }
@@ -2406,18 +2406,18 @@ fn PP_PASS(S): i64 {
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
-            if (handled == 0) { if (ISIF(S, dip, bl) == 1) {
+            if (handled == 0) { if (ISIF(S + _SRCB, dip, bl) == 1) {
                     var _s = 3;
                     if (skip_depth == 0) {
-                        if (PP_EVAL_IF(S, S, dip + 4) == 1) { _s = 0; }
+                        if (PP_EVAL_IF(S, S + _SRCB, dip + 4) == 1) { _s = 0; }
                         else { _s = 1; }
                     }
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             # #else (v5.6.1) — flip current level's state.
             #   0 → 2 (was emit; done-skip now)           skip_depth++
@@ -2427,48 +2427,48 @@ fn PP_PASS(S): i64 {
             # Unbalanced #else (pp_depth == 0) is a programmer error;
             # ignore silently rather than abort — matches existing
             # ISENDIF behavior when skip_depth underflows.
-            if (handled == 0) { if (ISELSE(S, dip, bl) == 1) {
+            if (handled == 0) { if (ISELSE(S + _SRCB, dip, bl) == 1) {
                     if (pp_depth > 0) {
                         var _s = load8(S + 0x197F10 + pp_depth - 1);
                         if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
                         elif (_s == 1) { store8(S + 0x197F10 + pp_depth - 1, 0); skip_depth = skip_depth - 1; }
                     }
-                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             # #elif COND (v5.6.1) — transition like #else for states 0/2/3
             # but state 1 evaluates COND: if true, flip 1→0 (emit now);
             # if false, stay 1 (keep searching for a later #elif/#else).
-            if (handled == 0) { if (ISELIF(S, dip, bl) == 1) {
+            if (handled == 0) { if (ISELIF(S + _SRCB, dip, bl) == 1) {
                     if (pp_depth > 0) {
                         var _s = load8(S + 0x197F10 + pp_depth - 1);
                         if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
                         elif (_s == 1) {
-                            if (PP_EVAL_IF(S, S, dip + 6) == 1) {
+                            if (PP_EVAL_IF(S, S + _SRCB, dip + 6) == 1) {
                                 store8(S + 0x197F10 + pp_depth - 1, 0);
                                 skip_depth = skip_depth - 1;
                             }
                         }
                     }
-                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
-            if (handled == 0) { if (ISENDIF(S, dip, bl) == 1) {
+            if (handled == 0) { if (ISENDIF(S + _SRCB, dip, bl) == 1) {
                     if (pp_depth > 0) {
                         var _s = load8(S + 0x197F10 + pp_depth - 1);
                         if (_s != 0) { skip_depth = skip_depth - 1; }
                         pp_depth = pp_depth - 1;
                     }
-                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             # #endplat — semantically identical to #endif, visually pairs
             # with #ifplat. Must come after ISENDIF because "#endp" would
             # match "#end" prefix but we only want ISENDPLAT catching it.
-            if (handled == 0) { if (ISENDPLAT(S, dip, bl) == 1) {
+            if (handled == 0) { if (ISENDPLAT(S + _SRCB, dip, bl) == 1) {
                     if (pp_depth > 0) {
                         var _s = load8(S + 0x197F10 + pp_depth - 1);
                         if (_s != 0) { skip_depth = skip_depth - 1; }
                         pp_depth = pp_depth - 1;
                     }
-                    ip = PP_SKIPLINE(S, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
                 } }
             # v6.5.20 — `#derive` is now LINE-EXACT and carries NO marker. v6.5.19 had it
             # re-anchor here, because the expansion added lines and could not be padded;
@@ -2480,24 +2480,24 @@ fn PP_PASS(S): i64 {
             # directive lines, so the construct occupies exactly the source lines it
             # replaced — no marker, and one less entry per derive against the 1024-entry
             # file-map cap. See PP_PARSE_STRUCT_DEF and `_pp_flatten`.
-            if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE(S, dip, bl) == 1) {
-                        ip = PP_DERIVE_SERIALIZE(S, S, dip, bl, out, op);
+            if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE(S + _SRCB, dip, bl) == 1) {
+                        ip = PP_DERIVE_SERIALIZE(S, S + _SRCB, dip, bl, out, op);
                         op = load64(S + 0x197008);
                         bol = 1; handled = 1;
                     } } }
-            if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_DE(S, dip, bl) == 1) {
-                        ip = PP_DERIVE_DESER(S, S, dip, bl, out, op);
+            if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_DE(S + _SRCB, dip, bl) == 1) {
+                        ip = PP_DERIVE_DESER(S, S + _SRCB, dip, bl, out, op);
                         op = load64(S + 0x197008);
                         bol = 1; handled = 1;
                     } } }
-            if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_ACC(S, dip, bl) == 1) {
-                        ip = PP_DERIVE_ACCESSORS(S, S, dip, bl, out, op);
+            if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_ACC(S + _SRCB, dip, bl) == 1) {
+                        ip = PP_DERIVE_ACCESSORS(S, S + _SRCB, dip, bl, out, op);
                         op = load64(S + 0x197008);
                         bol = 1; handled = 1;
                     } } }
-            if (handled == 0) { if (skip_depth == 0) { if (ISINCLUDE(S, ip, bl) == 1) {
+            if (handled == 0) { if (skip_depth == 0) { if (ISINCLUDE(S + _SRCB, ip, bl) == 1) {
                         ip = ip + 8;
-                        if (load8(S + ip) == 34) {
+                        if (load8(S + _SRCB + ip) == 34) {
                             ip = ip + 1;
                             var fname = S + 0x190400;
                             var fi = 0;
@@ -2505,7 +2505,7 @@ fn PP_PASS(S): i64 {
                             while (fgo == 1) {
                                 if (ip >= bl) { fgo = 0; }
                                 if (fgo == 1) {
-                                    var fc = load8(S + ip);
+                                    var fc = load8(S + _SRCB + ip);
                                     if (fc == 34) { ip = ip + 1; fgo = 0; }
                                     else { if (fi >= 4095) { PP_FNAME_TOO_LONG(); } store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
                                 }
@@ -2514,7 +2514,7 @@ fn PP_PASS(S): i64 {
                             var sgo = 1;
                             while (sgo == 1) {
                                 if (ip >= bl) { sgo = 0; }
-                                if (sgo == 1) { if (load8(S + ip) == 10) { ip = ip + 1; sgo = 0; } else { ip = ip + 1; } }
+                                if (sgo == 1) { if (load8(S + _SRCB + ip) == 10) { ip = ip + 1; sgo = 0; } else { ip = ip + 1; } }
                             }
                             # Include-once: skip if already included
                             if (PP_ALREADY_INCLUDED(S, fname) == 0) {
@@ -2597,7 +2597,7 @@ fn PP_PASS(S): i64 {
                 # compiled — but `private` is meant to be a checkable guarantee.
                 var _ff = 0;
                 if (in_string == 0) { if (c == 35) { if (ip + 5 < bl) {
-                    if (load8(S + ip + 1) == 64 && load8(S + ip + 2) == 102 && load8(S + ip + 3) == 105 && load8(S + ip + 4) == 108 && load8(S + ip + 5) == 101) {
+                    if (load8(S + _SRCB + ip + 1) == 64 && load8(S + _SRCB + ip + 2) == 102 && load8(S + _SRCB + ip + 3) == 105 && load8(S + _SRCB + ip + 4) == 108 && load8(S + _SRCB + ip + 5) == 101) {
                         _ff = 1;
                     }
                 } } }
@@ -2687,7 +2687,7 @@ fn PP_MACRO_PASS(S): i64 {
     var op = 0;
     var ip = 0;
     while (ip < bl) {
-        var c = load8(S + ip);
+        var c = load8(S + _SRCB + ip);
         var expanded = 0;
         # Check for uppercase-starting identifier that might be a macro
         if (c >= 65) { if (c <= 90) {
@@ -2696,7 +2696,7 @@ fn PP_MACRO_PASS(S): i64 {
                     # Verify ( follows the name (skip alpha chars to find it)
                     var mp = ip;
                     while (mp < bl) {
-                        var mc = load8(S + mp);
+                        var mc = load8(S + _SRCB + mp);
                         if (mc == 40) { break; }
                         if (mc >= 65) { if (mc <= 90) { mp = mp + 1; } else { break; } }
                         elif (mc >= 97) { if (mc <= 122) { mp = mp + 1; } else { break; } }
@@ -2704,7 +2704,7 @@ fn PP_MACRO_PASS(S): i64 {
                         elif (mc == 95) { mp = mp + 1; }
                         else { break; }
                     }
-                    if (mp < bl) { if (load8(S + mp) == 40) {
+                    if (mp < bl) { if (load8(S + _SRCB + mp) == 40) {
                             ip = PP_EXPAND(S, mmi, ip, bl, out, op);
                             op = load64(S + 0x190700);
                             expanded = 1;
@@ -2807,7 +2807,7 @@ fn PP_IFDEF_PASS(S): i64 {
         var cap = bl;
         if (cap > 1048576) { cap = 1048576; }
         ci = 0;
-        while (ci < cap) { store8(S + ci, load8(tmp + ci)); ci = ci + 1; }
+        while (ci < cap) { store8(S + _SRCB + ci, load8(tmp + ci)); ci = ci + 1; }
         var out = S + 0x459D000;
         var op = 0;
         var ip = 0;
@@ -3050,22 +3050,22 @@ fn PP_REF_PASS(S): i64 {
     var found = 0;
     var bol = 1;
     while (ip < bl) {
-        var _refc = load8(S + ip);
+        var _refc = load8(S + _SRCB + ip);
         if (bol == 1) {
-            if (ISREF(S, ip, bl) == 1) {
+            if (ISREF(S + _SRCB, ip, bl) == 1) {
                 ip = ip + 5;
-                if (load8(S + ip) == 34) {
+                if (load8(S + _SRCB + ip) == 34) {
                     ip = ip + 1;
                     var rfn = S + 0x190400;
                     var rfi = 0;
                     while (ip < bl) {
-                        var rc = load8(S + ip);
+                        var rc = load8(S + _SRCB + ip);
                         if (rc == 34) { ip = ip + 1; break; }
                         if (rfi >= 4095) { PP_FNAME_TOO_LONG(); }
                         store8(rfn + rfi, rc); rfi = rfi + 1; ip = ip + 1;
                     }
                     store8(rfn + rfi, 0);
-                    while (ip < bl) { if (load8(S + ip) == 10) { ip = ip + 1; break; } ip = ip + 1; }
+                    while (ip < bl) { if (load8(S + _SRCB + ip) == 10) { ip = ip + 1; break; } ip = ip + 1; }
                     var rnr = READFILE(rfn, S + 0x191800, 16384);
                     if (rnr < 0) {
                         syscall(SYS_WRITE, 2, "error: cannot open #ref file: ", 30);
@@ -3111,7 +3111,7 @@ fn PP_REF_PASS(S): i64 {
     }
     if (found == 1) {
         var ci = 0;
-        while (ci < op) { store8(S + ci, load8(out + ci)); ci = ci + 1; }
+        while (ci < op) { store8(S + _SRCB + ci, load8(out + ci)); ci = ci + 1; }
         SBL(S, op);
     }
     return 0;
@@ -3132,19 +3132,19 @@ fn PP_REF_PASS(S): i64 {
 fn PP_SCAN_INCDIR(S): i64 {
     _pp_incdir_len = 0;
     if (GBL(S) < 10) { return 0; }
-    if (load8(S) != 35) { return 0; }        # '#'
-    if (load8(S + 1) != 64) { return 0; }    # '@'
-    if (load8(S + 2) != 105) { return 0; }   # 'i'
-    if (load8(S + 3) != 110) { return 0; }   # 'n'
-    if (load8(S + 4) != 99) { return 0; }    # 'c'
-    if (load8(S + 5) != 100) { return 0; }   # 'd'
-    if (load8(S + 6) != 105) { return 0; }   # 'i'
-    if (load8(S + 7) != 114) { return 0; }   # 'r'
-    if (load8(S + 8) != 32) { return 0; }    # ' '
+    if (load8(S + _SRCB) != 35) { return 0; }        # '#'
+    if (load8(S + _SRCB + 1) != 64) { return 0; }    # '@'
+    if (load8(S + _SRCB + 2) != 105) { return 0; }   # 'i'
+    if (load8(S + _SRCB + 3) != 110) { return 0; }   # 'n'
+    if (load8(S + _SRCB + 4) != 99) { return 0; }    # 'c'
+    if (load8(S + _SRCB + 5) != 100) { return 0; }   # 'd'
+    if (load8(S + _SRCB + 6) != 105) { return 0; }   # 'i'
+    if (load8(S + _SRCB + 7) != 114) { return 0; }   # 'r'
+    if (load8(S + _SRCB + 8) != 32) { return 0; }    # ' '
     var p = 9;
     var n = 0;
     while (p < GBL(S)) {
-        var c = load8(S + p);
+        var c = load8(S + _SRCB + p);
         if (c == 10) { break; }
         if (c == 13) { break; }
         if (n >= 480) { return 0; }          # over-long → unset, not truncated
