@@ -11,10 +11,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 initially mislabelled "already shipped" because the *reroute* was live while the *wrapper*
 was missing. Adversarial verification caught both mislabels.
 
-`check.sh` **187 / 0**, self-host fixpoint **1,177,808 B**, seed → cybs → cycc
-byte-identical. ⚠ **Cross-OS on the four hosts is NOT yet re-run against this binary** —
-it was green for `.24`'s 1,177,760 B, and a green result on a superseded binary is not
-verification. Owed before any `.25` tag.
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,177,808 B**, **seed → cybs →
+cycc byte-identical from the 29,024 B seed**, `check.sh` **187 / 0**, corpus **272 / 272**,
+and cross-OS on REAL hardware **against this exact binary** — **ecb + ach + cass + pi, each
+`SELFHOST_OK` + crossos 48/48**, ran-count cross-checked. cass being green is the load-bearing
+leg here: this release changes the PE syscall path and the Windows peer.
+
+Bench on a settled box (load **0.25**): `self_compile` **703 ms** (696 at `.24`, **+1.0 %**,
+noise) with `phase_pp` **118 ms** (117 at `.24`). cycc **+48 B**.
+
+⚠ **`bench-history.csv` carries a CONTENDED row for this release — `self_compile` 729 ms /
+`phase_pp` 121 ms, measured at load 2.12 immediately after the cross-OS run's ssh/scp work.
+Ignore it**; the load-0.25 row is the real measurement. Both metrics moved together by ~4 %,
+which is the box-wide-contention signature rather than a code change — the identical tell as
+the `.23` and `.21` incidents. Waiting 4 minutes for the load to drop below 0.35 was the
+whole difference between "+4.7 % regression" and "flat".
 
 ### Fixed — `cyrius deps` blamed the stdlib for modules that ARE in the stdlib
 
@@ -59,10 +70,23 @@ including it (measured rc=1 / 4 errors; clean on Linux). The constant could **no
 added alone — that converts the compile error into 39 raw `syscall` instructions, a runtime
 crash instead of a build failure, strictly worse. Both halves shipped together.
 
-⚠ **Scope stated honestly:** `SYS_IOCTL` was **not** "the sole symbol blocking every fold",
-as the premise-check claimed. yukti / vani / patra now build for PE; **mabda and sigil
-still fail on separate gaps** (`PROT_READ`/`PROT_WRITE`/`MAP_SHARED` absent from the Windows
-peer, plus undefined fns). Not fixed here, not silently dropped.
+⚠ **Scope stated honestly, and my first two readings of it were both wrong.**
+`SYS_IOCTL` was **not** "the sole symbol blocking every fold", as the premise-check claimed.
+Nor were `mabda`/`sigil` blocked by "`PROT_READ`/`PROT_WRITE`/`MAP_SHARED` absent from the
+Windows peer" — that was **my own broken probe**, which included a fold without its declared
+dependencies, so ordinary stdlib names (`alloc`, `memcpy`, `file_open`, `map_new`,
+`fncall1..6`) read as platform gaps. Re-run with the `folds_agnos_parity.sh`
+dependency-ordered preamble, the truth is different and simpler: **11 of 12 folds stop on one
+symbol, `random_bytes`** (the preamble omits `lib/random.cyr`), and `niyama` on `NFD`.
+⭐ Note the asymmetry that makes it a PE issue rather than a preamble typo: with the same
+preamble **Linux exits 0** on that undefined reference (pruned as unreachable) while **PE
+exits 1** — the reachable-undef analysis disagrees per target.
+
+⛔ **And past that lies a real capacity ceiling, newly found and NOT fixed here:**
+`error: PE reloc table full (8192)` when the full stdlib preamble plus a fold is compiled for
+Windows. Same shape as the `fn_table` 8192 P0 of v6.4.75. Filed rather than packed, for a
+named reason: it is a backend capacity/layout change needing its own full gate cycle, and
+this release already carries a compiler change to the PE syscall path.
 
 ### Added — the Windows peer's missing raw-floor wrappers (band D)
 
@@ -77,6 +101,39 @@ into reading them as *already shipped*: the reroutes were live, but this standal
 never defined the names, so each was a hard compile error on PE. `sys_access` models
 **existence only** — `W_OK` is deliberately not inferred from `FILE_ATTRIBUTE_READONLY`,
 since a wrong "writable" answer is worse than an unmodelled one.
+
+### Fixed — the `tls_native_freestanding` HANG (the last undiagnosed cross-OS failure)
+
+Two defects in one test, both of which had to go:
+
+**The root cause:** `if (pid == 0)` treated a FAILED `sys_fork()` as "I am the parent". On
+Windows `sys_fork()` returns -1 unconditionally, so no server endpoint was ever created and
+the client ran against a shared page nobody was writing.
+
+**The amplifier:** both blocking reads were bare `while (cond) { }` — no cap, no timeout, no
+syscall, no yield. So the missing peer became an infinite spin, killed only by the runner's
+`timeout 90`. Now bounded at 2e9 iterations, a ceiling far above any legal lock-step
+handshake so it cannot false-fire on a slow host — the same universal-bound reasoning as the
+v6.4.62 `PEEKT` watchdog.
+
+A failed fork now prints a NAMED SKIP and exits 0, because the test's premise (two address
+spaces sharing a `MAP_SHARED` page) is structurally unavailable on Windows.
+⚠ Kept as a RUNTIME check on the return value, deliberately NOT an `#ifdef
+CYRIUS_TARGET_WIN`: the defect is "fork failed", not "the target is Windows" — a `#ifdef`
+would leave every other fork-less environment (a sandbox denying clone, an exhausted process
+table) hanging identically, and would compile the path out so a future PE fork emulation
+would never be exercised. Mutation-proven: forcing the fork to fail on Linux now **skips in
+0 s** where it previously wedged for 90, and the unmutated test still passes 11/11.
+
+### Added — a Windows-VISIBLE crossos arm for `sys_getpid` + `sys_access`
+
+⛔ `tests/tcyr/crossos/syscall_wrappers.tcyr` already had `sys_access` assertions — inside a
+`#ifndef CYRIUS_TARGET_WIN` block, so they were **compiled out on cass** and Windows had ZERO
+execution coverage for access. They cannot simply be unguarded (the enclosing block needs
+`xsymlink`/`xlink`/`xmkdir_p`, which degrade to -1 on PE), so the new arm builds its probe
+with `sys_open` alone and runs everywhere. Both directions asserted for access, since a
+wrapper that always returns 0 passes a present-file check and one that always returns -1
+passes a missing-file check. 26 → **33** assertions.
 
 ### Fixed — the declared-length audit was scoped too narrowly, twice
 

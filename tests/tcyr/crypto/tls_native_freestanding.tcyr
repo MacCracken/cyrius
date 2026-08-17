@@ -62,9 +62,31 @@ fn _lb_write(handle, buf, n): i64 {
 
 # blocking read: spin until >=1 byte (lock-step → never deadlocks), fence (acquire),
 # then copy up to n bytes. Matches the sys_read contract _tn_sock_read_full expects.
+# ⛔ v6.5.25 — BOTH SPINS ARE NOW BOUNDED. They were bare `while (cond) { }` with no cap,
+# no timeout, no syscall and no yield, so if the peer never appears this fn NEVER RETURNS.
+# That is exactly what happened on cass: `sys_fork()` returns -1 on Windows
+# (lib/syscalls_windows.cyr), the `pid == 0` test below is false, so no server endpoint was
+# ever created and the client span here forever — the one undiagnosed
+# `tls_native_freestanding` HANG in the ecb/cass full-corpus issue, killed only by the
+# runner's `timeout 90`. A test that hangs costs the whole suite its wall-clock budget and
+# tells you nothing about what failed.
+#
+# The bound is deliberately enormous (the handshake is strictly lock-step, so a correct run
+# observes the peer's length bump within a handful of iterations) — large enough that it can
+# never fire on a slow or loaded host, small enough to abort in well under the runner's
+# deadline. Returning 0 surfaces as a read failure the TLS layer already reports, instead of
+# a wedge. This is the same universal-bound reasoning as the v6.4.62 `PEEKT` watchdog:
+# pick a ceiling far above any legal value so it cannot false-fire, and the spin stops
+# being unbounded.
+var LB_SPIN_MAX = 2000000000;
+
 fn _lb_read(handle, buf, n): i64 {
     if (handle == 1) {                          # client reads s2c
-        while (load64(_shm + 8) <= _s2c_rd) { }
+        var spin = 0;
+        while (load64(_shm + 8) <= _s2c_rd) {
+            spin = spin + 1;
+            if (spin > LB_SPIN_MAX) { return 0; }
+        }
         _lb_fence();
         var avail = load64(_shm + 8) - _s2c_rd;
         var take = n; if (take > avail) { take = avail; }
@@ -72,7 +94,11 @@ fn _lb_read(handle, buf, n): i64 {
         _s2c_rd = _s2c_rd + take;
         return take;
     }
-    while (load64(_shm + 0) <= _c2s_rd) { }      # server reads c2s
+    var spin2 = 0;
+    while (load64(_shm + 0) <= _c2s_rd) {        # server reads c2s
+        spin2 = spin2 + 1;
+        if (spin2 > LB_SPIN_MAX) { return 0; }
+    }
     _lb_fence();
     var avail2 = load64(_shm + 0) - _c2s_rd;
     var take2 = n; if (take2 > avail2) { take2 = avail2; }
@@ -126,6 +152,27 @@ assert_eq(tls_native_set_transport(&_lb_read, &_lb_write, &_lb_now), TLS_OK, "in
 assert_eq(tls_native_set_entropy(&_lb_rand), TLS_OK, "install deterministic entropy hook");
 
 var pid = sys_fork();
+# ⛔ v6.5.25 — CHECK THE FORK RETURN. `if (pid == 0)` alone treats a FAILED fork as "I am
+# the parent", so on any platform without fork the client ran with no server on the other
+# end of the shared page and the bounded-now spin in `_lb_read` was reached with nothing to
+# read. On Windows `sys_fork()` returns -1 unconditionally
+# (lib/syscalls_windows.cyr — Windows has no fork; the CLI spawns via CreateProcessW), and
+# this test's whole premise is two address spaces sharing a MAP_SHARED page, which Windows
+# offers no equivalent of (EMMAP_PE drops MAP_SHARED). So the honest outcome is a NAMED SKIP,
+# not a fabricated pass and not a 90-second wedge.
+#
+# ⚠ Kept as a RUNTIME check on the return value rather than an `#ifdef CYRIUS_TARGET_WIN`
+# on purpose: the defect is "fork failed", not "the target is Windows". A `#ifdef` would
+# leave every other fork-less or fork-restricted environment (a sandbox denying clone, an
+# exhausted process table) hanging in exactly the same way, and it would compile the code
+# out on Windows so a future PE fork emulation would silently never be exercised.
+if (pid < 0) {
+    println("    SKIP: sys_fork() unavailable (returned < 0) — this test needs two address spaces sharing a MAP_SHARED page; no fork means no server endpoint. Not a TLS failure.");
+    tls_native_set_transport(0, 0, 0);
+    tls_native_set_entropy(0);
+    var rskip = assert_summary();
+    syscall(60, rskip);
+}
 if (pid == 0) {
     # CHILD: server — separate address space → isolated crypto state.
     _rng = 0x9E3779B97F4A7C15;                  # reseed so server randoms differ from client's

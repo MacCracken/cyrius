@@ -133,6 +133,48 @@ fn main(): i64 {
     assert_eq(_xdir_exists("/tmp/cyr_vr01_wrap"), 0, "cleanup removed the probe tree");
     #endif
 
+    # ── v6.5.25: the Windows-VISIBLE arm for sys_getpid + sys_access ──────────────────
+    #
+    # ⛔ WHY A SEPARATE BLOCK AND NOT JUST UNGUARDING THE ASSERTIONS ABOVE. The `sys_access`
+    # assertions already in this file sit inside the `#ifndef CYRIUS_TARGET_WIN` block that
+    # opens ~line 52, so they are COMPILED OUT on cass — Windows had ZERO execution coverage
+    # for access. They cannot simply be unguarded, because the enclosing block depends on
+    # `xsymlink`/`xlink`/`xmkdir_p`, which degrade to -1 on PE. This block builds its probe
+    # file with `sys_open` only, so it runs on every target.
+    #
+    # These two wrappers were band-D (.25) items and BOTH reroutes (0xF01C
+    # GetCurrentProcessId, 0xF019 GetFileAttributesW) had been live for minors — only the raw
+    # floor names were missing from the standalone Windows peer, which made each a hard
+    # compile error for PE. The wrapper rule is the reason this arm exists at all: a wrapper
+    # that COMPILES on five targets is not a wrapper that RUNS, and the release gate's
+    # cross-OS leg only executes what is in this directory.
+    test_group("sys_getpid + sys_access — Windows-visible (crossos)");
+
+    # getpid: assert a plausible pid, both directions. A stub returning 0 or -1 fails this,
+    # which is the whole point — the Windows peer had no sys_getpid at all until .25.
+    var mypid = sys_getpid();
+    assert(mypid > 0, "sys_getpid() returns a positive pid");
+    assert_eq(sys_getpid(), mypid, "sys_getpid() is stable across calls");
+
+    # access: create a probe file with sys_open (portable on PE), then assert BOTH
+    # directions. A wrapper that always returns 0 passes a present-file check alone, and one
+    # that always returns -1 passes a missing-file check alone — so neither assertion is
+    # sufficient by itself. This is the same both-directions requirement the macOS
+    # faccessat fix documented above.
+    var pfd = sys_open("cyr_vr01_access_probe", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    assert(pfd >= 0, "created the access probe file");
+    if (pfd >= 0) {
+        sys_write(pfd, "x", 1);
+        sys_close(pfd);
+        assert_eq(sys_access("cyr_vr01_access_probe", 0), 0,
+            "sys_access on an existing file is 0 (runs on Windows too)");
+        assert(sys_access("cyr_vr01_access_probe_absent", 0) < 0,
+            "sys_access on a missing file is negative (runs on Windows too)");
+        sys_unlink("cyr_vr01_access_probe");
+        assert(sys_access("cyr_vr01_access_probe", 0) < 0,
+            "sys_access is negative again once the file is unlinked");
+    }
+
     var rc = assert_summary();
     return rc;
 }
