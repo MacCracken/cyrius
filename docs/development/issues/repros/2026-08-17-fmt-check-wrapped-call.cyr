@@ -1,0 +1,17 @@
+# 2026-08-17-fmt-check-wrapped-call.cyr — `cyrius fmt --check` rejects a WRAPPED call.
+#
+#   cyrius fmt this-file.cyr --check   -> exit 1, NO output
+#   cyrius fmt this-file.cyr           -> rewrites nothing (byte-identical)
+#
+# Put the second argument back on line 1 and --check exits 0. That is the whole difference.
+fn t_ge(a, b): i64 { if (a >= b) { return 1; } return 0; }
+
+fn main() {
+    alloc_init();
+    assert_eq(t_ge(2, 1), 1,
+              "a call whose arguments continue on the next line");
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

@@ -93,7 +93,8 @@
 > ⚖️ **Maintainer decision owed:** this can now ship far earlier than `.33`–`.34`. The roadmap row
 > and this file's Placement line should move only on your call.
 
-**Status:** 🟡 **OPEN — re-scoped, NOT built.** Was "OPEN deliberately as the acceptance record for
+**Status:** 🟡 **OPEN — Half A SHIPPED v6.5.26 and completed cross-platform in v6.5.27;
+Half B not built and, on this evidence, not justified.** Was "OPEN deliberately as the acceptance record for
 a pinned arc"; it stays open for the same reason, but the pin's stated justification has been
 disproved and the work is now known to be lib-only.
 **Placement:** ⚖️ **was v6.5.33–.34 (band H, "bound to band E") — that binding is FALSE.**

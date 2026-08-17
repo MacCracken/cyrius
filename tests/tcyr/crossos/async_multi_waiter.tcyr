@@ -36,21 +36,23 @@
 # ⚠ Do not "simplify" by deleting either (b) or (c) on the grounds that the suite stays
 # green — the suite stays green for EITHER deletion and hangs for BOTH.
 #
-# ⛔ WHY THIS IS NOT IN crossos/, having been tried there and moved back. The release gate's
-# cross-OS leg runs the crossos/ directory on real ecb/ach/cass/pi, so a file placed there
-# must COMPILE on all four. This one cannot: PE has no `sys_pipe` (Windows makes pipes via
-# CreatePipe/0xF004) and Mach-O has no `sys_epoll_wait` (Darwin is kqueue). Measured — PE and
-# Mach-O both rc=1. The async reactor is epoll-only by construction: `lib/async.cyr` hands
-# Windows to async_win.cyr (IOCP) and agnos to async_agnos.cyr, and macOS falls through to
-# the epoll body it has no syscall for. Putting this in crossos/ would turn the gate RED for
-# a pre-existing platform gap that has nothing to do with the waiter-list fix.
-# ⚠ So the v6.5.26 waiter-list change is verified on LINUX ONLY. The Windows and agnos
-# backends got the new `async_wait_rw` / `async_relay_once` names (both no-op parks there, per
-# those files' existing convention) so consumer code links and runs, and both were verified to
-# COMPILE for PE — but neither has a multi-waiter registry to fix, and macOS async is a
-# separate unbuilt gap. Do not read "23 passed" as cross-platform coverage.
+# ⛔ PLATFORM REALITY, MEASURED ON THE REAL HOSTS — not reasoned from source.
+# v6.5.26 shipped this file OUTSIDE crossos/ on the claim that "the reactor is epoll-only",
+# and that claim was half wrong and cost a release of coverage:
+#   * pi (aarch64 LINUX) runs it — epoll exists there. **23/23 on real hardware.** It was
+#     never run only because nobody built it for aarch64 and pushed it. Pure omission.
+#   * cass (Windows/PE) cannot COMPILE it: the Windows peer has no `sys_pipe` (Windows makes
+#     pipes via CreatePipe/0xF004), and async_win.cyr is IOCP with no readiness registry.
+#   * ecb / ach (macOS) cannot COMPILE it: no `sys_epoll_wait` wrapper exists for Darwin, and
+#     there is no `lib/async_macos.cyr` at all. macOS async is UNBUILT, not merely different.
+#     ⚠ Worse, `lib/syscalls_macos.cyr:77-83` DECLARES SYS_EPOLL_WAIT=232 / SYS_EPOLL_CTL=233
+#     / SYS_EPOLL_CREATE1=291 — LINUX numbers, UNROUTED by the macho translators — so code
+#     that used them on Darwin would issue raw Darwin syscalls 232/233/291. Dead-but-armed
+#     constants, the same class as the SIGCHLD=17-is-Darwin's-SIGSTOP incident.
+# So the guards below are per-CAPABILITY, and each SKIP NAMES the missing capability instead
+# of the file quietly not existing in the gate. A skip you can read beats a test you deleted.
 #
-# Each axis below is a shape that CANNOT pass against the pre-fix runtime.
+# Each axis below is a shape that CANNOT pass against the pre-fix runtime.# Each axis below is a shape that CANNOT pass against the pre-fix runtime.
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -157,6 +159,14 @@ fn _waiter_sp_write(arg): i64 {
 
 fn main(): i64 {
     test_group("async reactor: multiple waiters, including two on one fd (v6.5.26)");
+    #ifdef CYRIUS_TARGET_WIN
+    println("    SKIP: Windows has no sys_pipe and async_win.cyr is IOCP (completion, not readiness) - no waiter registry to exercise");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    println("    SKIP: macOS async is UNBUILT - no sys_epoll_wait wrapper and no lib/async_macos.cyr (Darwin is kqueue)");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_MACOS
 
     # --- axis 1: TWO waiters on the SAME fd both wake ---
     # The core of the fix. Pre-fix: one is silently dropped.
@@ -224,6 +234,9 @@ fn main(): i64 {
 
     sys_close(load32(&_fds_a)); sys_close(load32(&_fds_a + 4));
     sys_close(load32(&_fds_b)); sys_close(load32(&_fds_b + 4));
+
+    #endif
+    #endif
 
     var r = assert_summary();
     return r;

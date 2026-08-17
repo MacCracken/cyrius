@@ -4,6 +4,39 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — `.27` in flight
+
+**Completing the async work across ALL platforms — the half `.26` left on the table.**
+
+⛔ **`.26` shipped the reactor fix "Linux only" with four verification hosts sitting idle,
+and that framing was itself wrong.** pi is aarch64 **Linux** — epoll exists there — so the
+test needed nothing but building for aarch64 and pushing it. **23/23 on real pi hardware**,
+first try. It was never run because nobody built it, not because of any platform gap. That is
+the fix-spread-across-releases antipattern the project exists to prevent, and the "reactor is
+epoll-only" line I wrote was a rationalisation covering an omission.
+
+### Added — `lib/async_macos.cyr`, so macOS async EXISTS
+
+Before this, macOS fell through to `lib/async.cyr`'s **epoll** body on a kernel with no
+epoll: any macOS program using async carried an undefined `sys_epoll_wait`. Worse,
+`lib/syscalls_macos.cyr` DECLARES `SYS_EPOLL_WAIT=232` / `SYS_EPOLL_CTL=233` /
+`SYS_EPOLL_CREATE1=291` — **Linux numbers the macho translators do not route** — so code
+reaching them would issue raw Darwin syscalls. Dead-but-armed constants, the same class as
+the Linux `SIGCHLD=17` that is Darwin's `SIGSTOP` (v6.5.15).
+
+macOS now routes to a serial/blocking backend on the established `async_agnos.cyr` precedent,
+and the epoll body is gated `#ifndef CYRIUS_TARGET_MACOS`. ⚠ **A fallback, not a reactor** —
+Darwin's readiness API is kqueue and cyrius has no kqueue wrappers at all; a real macOS
+reactor replaces this file. ⚠ Copying the agnos backend inherited `sys_sleep_ms`, an
+**agnos-only** syscall; it now uses `lib/chrono.cyr`'s portable `sleep_ms`, which already
+handles Darwin (`poll(NULL,0,ms)`, 7→230 — XNU has no plain `nanosleep`).
+
+### Changed — the reactor test moved INTO `crossos/`, with per-capability skips
+
+It compiles on all four targets and RUNS wherever epoll does. Windows and macOS print a SKIP
+that NAMES the missing capability rather than the file quietly being absent from the gate — a
+skip you can read beats a test you deleted.
+
 ## [Unreleased]
 
 ## [6.5.26] — 2026-08-17

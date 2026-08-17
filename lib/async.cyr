@@ -39,8 +39,17 @@ include "lib/async_agnos.cyr"
 include "lib/async_win.cyr"
 #endif
 
+# v6.5.27: macOS (Darwin) has no epoll either — its readiness API is kqueue, which cyrius has
+# no wrappers for. Before this guard macOS fell into the epoll body below and carried an
+# undefined `sys_epoll_wait`; route it to a serial/blocking peer, the same per-target split as
+# agnos and win. See lib/async_macos.cyr for why a fallback rather than a kqueue reactor.
+#ifdef CYRIUS_TARGET_MACOS
+include "lib/async_macos.cyr"
+#endif
+
 #ifndef CYRIUS_TARGET_AGNOS
 #ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_MACOS
 
 # Task states
 var TASK_READY = 0;
@@ -1014,6 +1023,7 @@ fn async_timeout(fp, arg, ms): i64 {
     return 0 - 1;
 }
 
+#endif
 #endif
 #endif
 
