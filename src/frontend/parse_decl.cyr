@@ -360,7 +360,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             if (_syntax_only == 1) { sid = 0; }
             else {
                 syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-                PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
+                PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2); _had_error = 1; sid = 0;
             }
         }
         else { sid = GVTYPE(S, idx); }
@@ -542,7 +542,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
             if (_syntax_only == 1) { sid = 0; }
             else {
                 syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-                PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
+                PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2); _had_error = 1; sid = 0;
             }
         }
         else { sid = GVTYPE(S, idx); }

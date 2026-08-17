@@ -384,9 +384,12 @@
 # --- cycc IR region (v5.0.0; relocated v6.3.28 — see src/common/ir.cyr for the
 #     current bases. ir_nodes/ir_cp moved to the arena top (0x5E9D000/0x6E9D000);
 #     0xA3A000 was reclaimed by fn_param_struct_mask above. ir_blocks etc. unchanged.) ---
-#   0xE3A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
+#   0xB3A000 ir_blocks    [4194304]     131072 basic blocks × 32 bytes (v6.5.23: 32768 -> 131072;
+#                                        grew DOWN into the free 0xA4A000-0xE3A000 gap. The cap is NOT one
+#                                        constant — it is coupled to ir_edges + ir_live_in + ir_live_out,
+#                                        all sized by BLOCK COUNT, and all four moved together.)
 #   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
-#   0xF3B000 ir_edges     [262144]      32768 CFG edges × 8 bytes
+#   0xF3B000 ir_edges     [1048576]     131072 CFG edges × 8 bytes (v6.5.23; into the 0xF7B000 gap)
 #   0xF7B000 (FREED v6.3.28)             was ir_cp → relocated to 0x6E9D000 (arena top)
 #
 # --- Fixup table — NEW slot (v5.5.37) ---
@@ -472,8 +475,10 @@
 #   0x5DFD000 local_slice_widths[131072]  16384 slice-width slots × 8B (was 0x193400) → ends 0x5E1D000
 #
 # --- IR cross-BB liveness arrays (v6.3.27; analysis-only, touched only under CYRIUS_IR) ---
-#   0x5E1D000 ir_live_in         [262144]  32768 BB live-in reg-bitmaps × 8B (u64; bit0=RAX..bit6=R15)
-#   0x5E5D000 ir_live_out        [262144]  32768 BB live-out reg-bitmaps × 8B → ends 0x5E9D000
+#   0x207B000 ir_live_in         [1048576] 131072 BB live-in reg-bitmaps × 8B (v6.5.23: RELOCATED
+#                                        from 0x5E1D000 — at 1 MB it would have run into ir_nodes @ 0x5E9D000;
+#                                        the 13 MB gap after fixup_tbl is the only place the PAIR fits)
+#   0x217B000 ir_live_out        [1048576] 131072 BB live-out reg-bitmaps × 8B → ends 0x227B000 (v6.5.23)
 #   0x5E9D000 ir_nodes           [16 MB]   relocated from 0xA3A000 to the arena top (v6.3.28; see src/common/ir.cyr)
 #   0x6E9D000 ir_cp              [4 MB]    relocated from 0xF7B000 to the arena top (v6.3.28); ends 0x729D000
 #

@@ -1383,6 +1383,30 @@ fn _sync_skip(S): i64 {
             if (t == 12) { go = 0; }                       # EOF — stop
             elif (t == 14) { go = 0; }                     # '}' — stop (block loop consumes it)
             elif (t == 5) { STI(S, GTI(S) + 1); go = 0; }  # ';' — consume, then stop
+            # v6.5.23 (R2) — STOP AT A STATEMENT-START KEYWORD, without consuming it.
+            #
+            # Until now recovery only resynced on ';' / '}' / EOF, so an error inside a
+            # construct with no ';' before the next statement swallowed whole statements
+            # looking for one, and every error they contained was lost. Stopping here
+            # lets the statement loop re-enter cleanly at the next real statement.
+            #
+            # ⛔ `else` (23) and `elif` (50) are DELIBERATELY NOT IN THIS SET, and that
+            # omission is the whole reason the earlier attempt at R1 was reverted: they
+            # are CONTINUATIONS, not statement starts. Stopping in front of one hands the
+            # statement loop a bare `else` with no `if` to attach to, which is exactly the
+            # MANUFACTURED `unexpected else` on well-formed `lib/fs.cyr` that made
+            # `cyrius lint` refuse valid downstream source. Skip past them like any other
+            # token and let the enclosing `if` handler own them.
+            elif (t == 32) { go = 0; }                     # fn
+            elif (t == 3) { go = 0; }                      # var
+            elif (t == 15) { go = 0; }                     # if
+            elif (t == 16) { go = 0; }                     # while
+            elif (t == 55) { go = 0; }                     # for
+            elif (t == 33) { go = 0; }                     # return
+            elif (t == 57) { go = 0; }                     # switch
+            elif (t == 75) { go = 0; }                     # match
+            elif (t == 40) { go = 0; }                     # struct
+            elif (t == 60) { go = 0; }                     # enum
             else { STI(S, GTI(S) + 1); }
         }
     }

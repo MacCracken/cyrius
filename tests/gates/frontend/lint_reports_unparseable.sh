@@ -130,8 +130,12 @@ crc=0
 ( cd "$T/w" && timeout 300 "$CYRIUS" check fs_copy.cyr > "$T/co" 2> "$T/ce" ) || crc=$?
 check "premise: the file really does not resolve here (check exits non-zero)" "yes" \
     "$([ "$crc" != 0 ] && echo yes || echo no)"
-check "premise: and it is a RESOLUTION error, not a syntax one" 1 \
-    "$(grep -c 'undefined variable' "$T/ce" || true)"
+# v6.5.23 (R1): the resolution sites became REPORT-AND-CONTINUE, so a compile now
+# names EVERY unresolved symbol instead of dying on the first. This axis asserts the
+# errors are the RESOLUTION class — not how many there are. Pinning the count to 1 was
+# pinning the old stop-at-first-error limitation that R1 deliberately removed.
+check "premise: and they are RESOLUTION errors, not syntax ones" "yes" \
+    "$([ "$(grep -c 'undefined variable' "$T/ce" || true)" -ge 1 ] && echo yes || echo no)"
 rc=$(lint fs_copy.cyr)
 check "lint still runs (exit 0)" 0 "$rc"
 check "lint still reports a count" 1 "$(grep -c 'warnings' "$T/o" || true)"
@@ -270,10 +274,16 @@ printf 'fn a() { return SOME_UNDEFINED_CONST; }\nfn b() { var x = ; this is not 
 CYCC="$T/home/bin/cycc"
 p_rc=0
 ( cd "$T/w" && "$CYCC" < "$T/w/both.cyr" > /dev/null 2> "$T/be" ) || p_rc=$?
-check "premise: a plain compile stops at the RESOLUTION error" 1 \
-    "$(grep -c 'undefined variable' "$T/be" || true)"
-check "premise: …and therefore never reports the syntax error" 0 \
-    "$(grep -c "unexpected ';'" "$T/be" || true)"
+# v6.5.23 (R1): a plain compile no longer STOPS at the resolution error — it reports it
+# and keeps parsing, so it now reaches the syntax error too. Both premises are restated
+# for the post-R1 compiler. ⭐ The axis's real subject is UNCHANGED and still below: lint
+# must REFUSE this file and NAME the syntax error. What changed is only that the raw
+# compiler no longer hides the second error behind the first — which is the whole point
+# of R1, so asserting the old behaviour here would assert the defect.
+check "premise: a plain compile reports the RESOLUTION error" "yes" \
+    "$([ "$(grep -c 'undefined variable' "$T/be" || true)" -ge 1 ] && echo yes || echo no)"
+check "premise: …and R1 means it now reaches the syntax error too" "yes" \
+    "$([ "$(grep -c "unexpected ';'" "$T/be" || true)" -ge 1 ] && echo yes || echo no)"
 rc=$(lint both.cyr)
 check "lint REFUSES it (exit non-zero)" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
 check "no bare '0 warnings' on stdout" 0 "$(grep -c '^0 warnings' "$T/o" || true)"

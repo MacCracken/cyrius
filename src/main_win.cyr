@@ -134,9 +134,12 @@
 #
 # --- cycc IR region (v5.0.0) ---
 #   0xA3A000 ir_nodes      [4194304]     262144 IR nodes × 16 bytes
-#   0xE3A000 ir_blocks    [1048576]     32768 basic blocks × 32 bytes
+#   0xB3A000 ir_blocks    [4194304]     131072 basic blocks × 32 bytes (v6.5.23: 32768 -> 131072;
+#                                        grew DOWN into the free 0xA4A000-0xE3A000 gap. The cap is NOT one
+#                                        constant — it is coupled to ir_edges + ir_live_in + ir_live_out,
+#                                        all sized by BLOCK COUNT, and all four moved together.)
 #   0xF3A000 ir_state     [4096]        IR builder state (counters, current BB)
-#   0xF3B000 ir_edges     [262144]      32768 CFG edges × 8 bytes
+#   0xF3B000 ir_edges     [1048576]     131072 CFG edges × 8 bytes (v6.5.23; into the 0xF7B000 gap)
 #   0xF7B000 ir_cp        [1048576]     262144 node CP offsets × 4 bytes
 #
 #

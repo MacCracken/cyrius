@@ -769,7 +769,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             syscall(SYS_WRITE, 2, ": undefined variable '", 22);
             PRSTR(S + 0x60000 + noff);
             syscall(SYS_WRITE, 2, "' (missing include or enum?)\n", 29);
-            syscall(SYS_EXIT, 1);
+            _had_error = 1; EMOVI(S, 0); return 0;
         }
         var vt = GVTYPE(S, idx);
         if (vt < 0) { SPSC(S, 0 - vt); }
@@ -878,7 +878,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # Nothing of this name exists in any scope.
         if (_syntax_only == 1) { EMOVI(S, 0); return 0; }   # v6.5.19: see _syntax_only
         syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-        PRSTR(S + 0x60000 + anoff); syscall(SYS_WRITE, 2, "'\n", 2); syscall(SYS_EXIT, 1);
+        PRSTR(S + 0x60000 + anoff); syscall(SYS_WRITE, 2, "'\n", 2); _had_error = 1; EMOVI(S, 0); return 0;
         return 0;
     }
     if (typ == 30) {
@@ -2576,12 +2576,12 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     # polyfill-call / hard-error, cx is no-op. parse_expr.cyr is
     # arch-agnostic for these ops.
     if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 1; } }
-    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
-    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 1; } }
     if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_sqrt(x) — sqrtsd xmm0, xmm0
-    if (ptyp == 79) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 79) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_abs(x) — v5.11.40 path-A peephole. Dispatch lives in
     # <backend>/emit.cyr::EF64_ABS: x86 movabs+and (saves 5 B vs
     # the prior 5-instr push/movabs/movca/pop/and = 18 B); aarch64
@@ -2589,11 +2589,11 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     # MOVK-chain + shuttle); cx no-op stub. See CHANGELOG [5.11.40].
     if (ptyp == 80) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_ABS(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_floor(x) — roundsd xmm0, xmm0, 1 (SSE4.1)
-    if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_ceil(x) — roundsd xmm0, xmm0, 2 (SSE4.1)
-    if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_round(x) — roundsd xmm0, xmm0, 0 (round to nearest)
-    if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f32_from(x): f64 → f32 bit pattern (cvtsd2ss). f32_to(x): f32 → f64 (cvtss2sd).
     # v6.2.18 native-float math arc. Backend emit takes the value in rax, returns
     # the converted bits in rax (full move/cvt/move sequence lives per-arch).

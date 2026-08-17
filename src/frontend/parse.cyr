@@ -1512,7 +1512,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 syscall(SYS_WRITE, 2, ": undefined variable '", 22);
                 PRSTR(S + 0x60000 + noff);
                 syscall(SYS_WRITE, 2, "'\n", 2);
-                syscall(SYS_EXIT, 1);
+                _had_error = 1; if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0;
             }
             var vt = GVTYPE(S, idx);
             if (vt < 0) {
