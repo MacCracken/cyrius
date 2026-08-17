@@ -1644,8 +1644,33 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) today; others crash with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on Windows.\n",
-            617);
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) today; others return -38/-ENOSYS on Windows (v6.5.25; before that they CRASHED with STATUS_ILLEGAL_INSTRUCTION 0xC000001D).\n",
+            1233);
+            # v6.5.25 — DEGRADE HONESTLY INSTEAD OF FALLING THROUGH TO `0F 05`.
+            #
+            # A LITERAL unrouted syscall number used to warn and then emit a raw Linux
+            # `syscall` instruction, which on Windows is STATUS_ILLEGAL_INSTRUCTION
+            # (0xC000001D) — a hard crash at the first call, from a warning nobody sees in a
+            # 600-byte wall of text. The NON-literal arm directly above has emitted an honest
+            # -38/-ENOSYS since v6.1.17 for exactly this reason; the literal arm never got
+            # the same treatment, so the two halves of one decision disagreed.
+            #
+            # This is what made `SYS_IOCTL` unfixable in the stdlib: adding the constant to
+            # the Windows peer so `lib/yukti.cyr` would COMPILE would have converted a loud
+            # compile error into a runtime crash. With this in place the constant is safe —
+            # yukti's Linux-only CD-ROM eject path returns -38 on Windows and its caller's
+            # existing `if (r < 0)` check reports the failure it already knows how to report.
+            #
+            # Reusing EPE_SYSCALL_DYNAMIC rather than minting a new emitter is deliberate:
+            # it already ends in `_pe_dyn_nomatch` (drop args, `mov rax, -38`), and a NEW
+            # cross-fork symbol called from parse_expr.cyr would need return-0 stubs in the
+            # aarch64 AND cx forks — a miss only real cass/cycc_cx catches. A known-unrouted
+            # literal cannot match any comparison in the emitted switch, so it lands on that
+            # -38 tail by construction; the dead compares cost bytes on a path that is by
+            # definition dead on Windows.
+            EPE_SYSCALL_DYNAMIC(S, argc);
+            _cfo = 0;
+            return 0;
         }
         ESCPOPS(S, argc);
         _cfo = 0;
@@ -1958,7 +1983,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # `clpc + cl_cap_shift < 6` guard dropped anything beyond, silently.
         if (_cl_capturing == 1) {
             if (clpc >= _ARG_REG_COUNT()) {
-                ERR_MSG(S, "capturing closure has too many parameters — its captured environment needs one more argument register than this target has", 122);
+                ERR_MSG(S, "capturing closure has too many parameters — its captured environment needs one more argument register than this target has", 124);
             }
             ESTOREPARM(S, clpc, cl_env_slot, clpc + 1);
         }

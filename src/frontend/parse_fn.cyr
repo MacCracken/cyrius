@@ -740,7 +740,7 @@ fn PARSE_RETURN(S): i64 {
                 ERR_MSG(S, "struct return by value: struct >= 64 KB pending Phase 2c (movz/movk chain)", 74);
             }
             if (srn_stash_disp < 0 - 256) {
-                ERR_MSG(S, "struct return by value: stash_disp out of LDUR imm9 range — increase regalloc-aware fallback", 92);
+                ERR_MSG(S, "struct return by value: stash_disp out of LDUR imm9 range — increase regalloc-aware fallback", 94);
             }
         }
         ESTRUCT_BYVAL_COPY(S, srn_src_disp, srn_stash_disp, srn_aligned);
@@ -1211,7 +1211,7 @@ var _vis_degraded_said = 0;
 fn _vis_degraded_note(): i64 {
     if (_vis_degraded_said != 0) { return 0; }
     _vis_degraded_said = 1;
-    syscall(SYS_WRITE, 2, "warning: file map full -- `private` enforcement is DISABLED past the 1024-file cap\n", 82);
+    syscall(SYS_WRITE, 2, "warning: file map full -- `private` enforcement is DISABLED past the 1024-file cap\n", 83);
     return 0;
 }
 

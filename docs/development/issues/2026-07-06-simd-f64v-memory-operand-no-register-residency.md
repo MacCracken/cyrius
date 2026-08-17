@@ -1,15 +1,35 @@
 # SIMD `f64v_*` ops are memory-operand array kernels — no register-resident vector-value arithmetic, so hand-SIMD of a tight per-element chain gets ~no speedup
 
-**Status:** 🟡 **OPEN** — the root cause is unchanged. **Re-read live on cycc 6.5.10, 2026-08-07:**
-`EMIT_F64V_LOOP` (`src/backend/x86/float.cyr:152`) still emits exactly the
-`movupd xmm0,[rdx+rsi*8]` → `addpd/subpd/mulpd/divpd` → `movupd [rdx+rsi*8],xmm0` shape described
-below, with **no AVX branch and no register-residency path**, and there is no value-form f64v
-arithmetic emitter.
-**One correction to the fix list, not to the verdict:** item 3 ("true 256-bit AVX") has since landed
-**for f32 only** — `EMIT_F32V_LOOP` (`float.cyr:191`, widened at `:217-248` to
-`vmovups`/`vaddps`/`vsubps`/`vmulps` **ymm** + `vzeroupper`) and the FMA/dot emitters (`:271-278`
-`vfmadd231ps ymm`, `:295-304`) during the v6.4.x SIMD arc. `f64v4` was **not** widened and is still a
-two-iteration `xmm` loop, so both item 3 (for f64) and the load-bearing items 1–2 remain open. The
+**Status:** 🟡 **OPEN — item 3 SHIPPED at v6.5.24; items 1 and 2 remain, and they are the
+load-bearing ones.**
+
+> ### ✅ Item 3 (256-bit AVX for f64) is DONE — v6.5.24
+>
+> `EMIT_F64V4_LOOP` (`src/backend/x86/float.cyr`) emits `vaddpd`/`vsubpd`/`vmulpd`/`vdivpd`
+> on **ymm**, four f64 lanes per iteration, reached through four builtins
+> (`f64v256_add`/`sub`/`mul`/`div`) whose `lib/simd.cyr` wrappers gate on
+> `simd_has_avx2()`. All eight f64v4 wrappers (4 ops × value/`_ptr`) take it when the host
+> has AVX2. **Measured 15.9 → ~7.9 ns.** Named for register width, not lane count, because
+> `f64v4_add` is already a lib value-form fn.
+>
+> ⛔ **AND IT NEEDED NO SUBSTRATE.** This filing bundles item 3 with items 1-2, and the
+> roadmap gated all three behind Slot 3's IR/regalloc work — so a self-contained emitter
+> mirroring `EMIT_F32V8_LOOP`, worth a measured 2×, sat unbuilt waiting on machinery it never
+> required. **Bundling a substrate-independent item with substrate-dependent ones is what
+> delayed it**; that is the transferable lesson, not the encoding.
+>
+> Gate `tests/gates/codegen/f64v4_ymm_disasm.sh` pins the exact VEX bytes AND mnemonics
+> (`pd` vs `ps` is one bit in the second VEX byte) plus the 4-lane stride — mutation-proven,
+> and the stride mutation is the one a value test cannot catch: it left
+> `crossos/f64v4_ymm.tcyr` passing 23/23 while writing 16 bytes past the vector.
+
+**Still open — items 1 and 2, unchanged and genuinely substrate-dependent.** Re-read live on
+cycc 6.5.25: `EMIT_F64V_LOOP` remains the `movupd xmm0,[rdx+rsi*8]` → `addpd` → `movupd`
+memory-loop shape for the 128-bit path, and there is **still no value-form f64v arithmetic
+emitter** — only `EMIT_F64V_{LOOP,UNARY,DOT,SCALE,AXPY,FMADD}`, all memory-loop. The 25
+value-form `lib/simd.cyr` wrappers still round-trip through memory. Those two need the
+register-residency substrate (roadmap band F/Slot 5) and are correctly pinned there; the
+`_ptr`/bulk forms stay memory-loop by design.
 v6.4.31/.53 work on value-form SIMD *params and returns* is a different thing from register-resident
 *arithmetic chains* — do not read it as closing this.
 **Placement:** **SPLIT — the three fix-list items do NOT share a slot.** Items 1–2 (register-resident value-form arithmetic; wrapper inlining) are **v6.5.31–.32 — band G, Slot 6**, hard-gated on the IR substrate. ⭐ **Item 3 is NOT gated and moves to v6.5.24/.25 (bands C/D).**

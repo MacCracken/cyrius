@@ -4,7 +4,92 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [Unreleased] — band D in flight (`.25`)
+
+**Windows/PE stdlib parity.** The band-D premise-check found all five pinned items real but
+**at the stdlib layer, not the compiler layer** the roadmap implied — and two of them were
+initially mislabelled "already shipped" because the *reroute* was live while the *wrapper*
+was missing. Adversarial verification caught both mislabels.
+
+`check.sh` **187 / 0**, self-host fixpoint **1,177,808 B**, seed → cybs → cycc
+byte-identical. ⚠ **Cross-OS on the four hosts is NOT yet re-run against this binary** —
+it was green for `.24`'s 1,177,760 B, and a green result on a superseded binary is not
+verification. Owed before any `.25` tag.
+
+### Fixed — `cyrius deps` blamed the stdlib for modules that ARE in the stdlib
+
+Reproduced verbatim on the real bote tree, which is what the `.24` note asked for and what
+three earlier attempts had failed to do by constructing synthetic shapes instead:
+`4 deps resolved, 3 errors` on `bench`/`test` (via libro) and `patra` (via majra). After:
+**0 errors**, with all three copied in at the exact snapshot sizes the filing recorded.
+Also clean on agnosai (8 deps) and majra (1 dep).
+
+⛔ **`.24` FIXED THE WRONG LAYER.** The filing is titled as a misleading message, so `.24`
+rewrote the message — leaving the resolve broken and merely rewording a false claim. This
+was a **functional resolution failure**. The filing's own "Root cause (speculation)"
+section was exactly right and should have been believed.
+
+`_dep_find_stdlib_dir()` decided "am I the cyrius source repo?" with
+`file_exists("src/main.cyr")` — true for essentially every cyrius project, since that is
+the entry the init templates generate. So for a downstream repo it returned the consumer's
+OWN half-populated `./lib` **as** the stdlib and never consulted the version-pinned
+snapshot. Fixed with `_dep_is_cyrius_source_repo()`, which matches `[package].name` exactly.
+
+⚠ **Third occurrence of this identical conflation** (v6.0.1, `cyrius audit` v6.4.63, now
+the resolver). The helper was written for the audit fix and never applied here.
+
+⚠ Gate `toolchain/deps_stdlib_dir_not_consumer_lib.sh` — its FIRST version shipped
+**vacuous** and passed against the pre-fix CLI: with an empty `./lib` the old code fell
+through to the snapshot on its own, so the fixture needs a non-empty `[deps].stdlib` to
+pre-populate `./lib` before the bug can reproduce. Caught only by mutation-testing.
+
+### Fixed — a PE binary could contain raw Linux `syscall` instructions
+
+An unrouted **literal** syscall number under `CYRIUS_TARGET_WIN=1` warned and then fell
+through to `ESCPOPS`, emitting `0F 05` — **STATUS_ILLEGAL_INSTRUCTION (0xC000001D)** on
+Windows, a hard crash at the first call. The **non-literal** arm has emitted an honest
+-38/-ENOSYS since v6.1.17 for exactly this reason, so the two halves of one decision
+disagreed for four minors. The literal arm now routes through the same `_pe_dyn_nomatch`
+tail. Verified by disassembly: **0** syscall instructions in PE output, 89 still on Linux.
+
+⭐ **This is what unblocked the folded stdlib on Windows.** `lib/syscalls_windows.cyr` is a
+STANDALONE peer and had no `SYS_IOCTL` constant, so `lib/yukti.cyr` made `undefined
+variable 'SYS_IOCTL'` a **hard compile error** for a PE build of yukti and anything
+including it (measured rc=1 / 4 errors; clean on Linux). The constant could **not** be
+added alone — that converts the compile error into 39 raw `syscall` instructions, a runtime
+crash instead of a build failure, strictly worse. Both halves shipped together.
+
+⚠ **Scope stated honestly:** `SYS_IOCTL` was **not** "the sole symbol blocking every fold",
+as the premise-check claimed. yukti / vani / patra now build for PE; **mabda and sigil
+still fail on separate gaps** (`PROT_READ`/`PROT_WRITE`/`MAP_SHARED` absent from the Windows
+peer, plus undefined fns). Not fixed here, not silently dropped.
+
+### Added — the Windows peer's missing raw-floor wrappers (band D)
+
+`sys_getpid` (0xF01C → GetCurrentProcessId, reroute live since v6.3.44), `sys_getppid`
+(honest degrade — Windows does not retain a parent), `sys_access` (0xF019 →
+GetFileAttributesW, live since v6.1.18; ⚠ that reroute takes an **already-wide UTF-16**
+path, the one non-obvious part), and `sys_socketpair` (honest degrade). api-surface
+4866 → 4870.
+
+For `sys_getpid` and `sys_access` the roadmap's `→0xF0xx` notation misled the first pass
+into reading them as *already shipped*: the reroutes were live, but this standalone peer
+never defined the names, so each was a hard compile error on PE. `sys_access` models
+**existence only** — `W_OK` is deliberately not inferred from `FILE_ATTRIBUTE_READONLY`,
+since a wrong "writable" answer is worse than an unmodelled one.
+
+### Fixed — the declared-length audit was scoped too narrowly, twice
+
+The `.24` gate scanned `ERR_MSG` under `src/` **per line**. Widened to three call forms
+(`ERR_MSG`, `sys_write`, and `syscall(SYS_WRITE, …)` — the dominant form), three trees
+(`src/`, `cbt/`, `programs/`), **whole-file** (every long message is line-wrapped), and
+**byte** comparison (an em-dash is 3 bytes). Sites scanned 104 → **1017**; found **28 more
+wrong**, all corrected.
+
+⭐ **The biggest one had been printing half of itself in every Windows build:** the PE
+routes warning declared **617** bytes for a **1233**-byte string, cutting off mid-word at
+`0xF01F-0xF021 (IOCP: Create`. It is in this session's own terminal output repeatedly and
+was read past every time. Two others were introduced by `.24` itself.
 
 ## [6.5.24] — 2026-08-17
 

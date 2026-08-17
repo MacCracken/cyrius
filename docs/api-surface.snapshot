@@ -4235,6 +4235,7 @@ syscalls_windows::WEXITSTATUS/1
 syscalls_windows::WIFEXITED/1
 syscalls_windows::WIFSIGNALED/1
 syscalls_windows::WTERMSIG/1
+syscalls_windows::sys_access/2
 syscalls_windows::sys_brk/1
 syscalls_windows::sys_chdir/1
 syscalls_windows::sys_chmod/2
@@ -4246,6 +4247,8 @@ syscalls_windows::sys_exit_group/1
 syscalls_windows::sys_fchownat/5
 syscalls_windows::sys_fork/0
 syscalls_windows::sys_getpeername/3
+syscalls_windows::sys_getpid/0
+syscalls_windows::sys_getppid/0
 syscalls_windows::sys_getrandom/3
 syscalls_windows::sys_getsockname/3
 syscalls_windows::sys_kill/2
@@ -4255,6 +4258,7 @@ syscalls_windows::sys_mmap/6
 syscalls_windows::sys_munmap/2
 syscalls_windows::sys_open/3
 syscalls_windows::sys_read/3
+syscalls_windows::sys_socketpair/4
 syscalls_windows::sys_unlink/1
 syscalls_windows::sys_waitpid/3
 syscalls_windows::sys_write/3

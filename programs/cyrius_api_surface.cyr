@@ -67,11 +67,11 @@ fn _push_entry(module_off, module_len, name_off, name_len, arity): i64 {
     # Fail loud rather than silently overflow the fixed buffers. Worst-case
     # entry = module + "::" + name + "/" + up-to-24-digit arity; +64 covers it.
     if (ENTRIES_COUNT >= ENTRIES_MAX) {
-        syscall(SYS_WRITE, 2, "error: api-surface entry table full (raise ENTRIES_MAX)\n", 55);
+        syscall(SYS_WRITE, 2, "error: api-surface entry table full (raise ENTRIES_MAX)\n", 56);
         syscall(60, 3);
     }
     if (ENTRIES_BUF_USED + module_len + name_len + 64 > ENTRIES_BUF_CAP) {
-        syscall(SYS_WRITE, 2, "error: api-surface buffer full (raise ENTRIES_BUF_CAP)\n", 54);
+        syscall(SYS_WRITE, 2, "error: api-surface buffer full (raise ENTRIES_BUF_CAP)\n", 55);
         syscall(60, 3);
     }
     var off = ENTRIES_BUF_USED;
@@ -563,7 +563,7 @@ fn _print_entries(fd) {
 fn _read_snapshot(path) {
     var n = file_read_all(path, SNAPSHOT_BUF, SNAPSHOT_CAP);
     if (n >= SNAPSHOT_CAP) {
-        syscall(SYS_WRITE, 2, "error: api-surface snapshot too large to read (raise SNAPSHOT_CAP)\n", 66);
+        syscall(SYS_WRITE, 2, "error: api-surface snapshot too large to read (raise SNAPSHOT_CAP)\n", 67);
         syscall(60, 3);
     }
     return n;

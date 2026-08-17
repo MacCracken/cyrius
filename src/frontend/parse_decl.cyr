@@ -710,7 +710,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
             }
             if (found < 0) { ERR_MSG(S, "unknown struct field in initializer", 35); }
             var ft = GETFTYPE(S, si, found);
-            if (ft > 0) { ERR_MSG(S, "named init not supported for nested struct fields — use positional", 66); }
+            if (ft > 0) { ERR_MSG(S, "named init not supported for nested struct fields — use positional", 68); }
             var bit = 1 << found;
             if ((initialized & bit) != 0) { ERR_MSG(S, "struct field initialized twice", 30); }
             initialized = initialized | bit;

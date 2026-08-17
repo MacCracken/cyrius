@@ -1,16 +1,25 @@
 # cycc's 1 MB stdin `input_buf` has been reached — sigil's dist bundle is 1,079,068 B
 
-**Status:** 🔴 OPEN — filed, not fixed, because the fix is a **heap LAYOUT change** and
-therefore needs a two-step bootstrap. That is one of the named reasons in CLAUDE.md's
-*an audit's output is fixes* rule for filing rather than packing; it is not a
-"different subsystem" dodge. Everything else found in this pass shipped in 6.5.14.
-**Re-measured 2026-08-11 (v6.5.19):** the bundle is now **1,079,160 B** — it has grown another
-**92 B** since filing, so it is **30,584 B over the cap** and still `rc=1`,
-`error: input exceeds 1MB buffer (raise input_buf in src/main.cyr)`. The headroom is not
-merely gone, it is receding.
-**Placement:** **v6.5.22 — band A**, paired with the `output_buf` band reclaim in ONE two-step bootstrap, plus the sigil 3.12.9 fold. That release carries NOTHING else, so any heap breakage has exactly one candidate cause (maintainer, 2026-08-14).
+> ### ✅ RESOLVED — SHIPPED in v6.5.22, exactly as this file's Placement line planned
+>
+> `input_buf` is **16 MB** (`_SRC_CAP = 16777216`, `src/common/util.cyr`; heap map
+> `0x4D9D000 input_buf [16777216]`), raised into the band reclaimed from `output_buf` so
+> both heap-LAYOUT changes shared ONE two-step bootstrap — the packing this file asked for.
+>
+> **Re-verified empirically at v6.5.25, not from the changelog:** cycc ingests sigil's
+> current bundle (**1,084,265 B**, another 5 KB of growth since the last re-measure) with
+> **no cap error at all**. The former `error: input exceeds 1MB buffer` is absent. (The
+> bundle still reports undefined functions under a raw `cycc < file` pipe, but that is the
+> documented consequence of bypassing `cyrius build` — no stdlib includes are prepended —
+> not this defect. The 16× headroom is what was filed and it is delivered.)
+>
+> ⚠ **This file's status line said `🔴 OPEN — filed, not fixed` for three releases after it
+> shipped.** It was correct to file rather than pack (a heap layout change is one of
+> CLAUDE.md's named reasons), but nothing moved the status when the planned release landed —
+> which is precisely the rot the closeout rule targets: *verify resolved-status against LIVE
+> code, never the file's own claim.* Caught here by reading `_SRC_CAP`, not the banner.
 
-> **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** Defect re-verified at 6.5.21 — still reproduces. Three ecosystem bundles are now over the 1 MB cap (drishti +355 KB, mabda +211 KB, sigil +36 KB and growing): consumer-blocking, not latent.
+**Status:** ✅ RESOLVED in v6.5.22 — archive at slot close.
 **Discovered:** 2026-08-08, v6.5.14, while fixing `distlib`'s bundle self-check.
 **Severity:** Medium — no consumer is broken TODAY (see *Why nothing is on fire*), but
 the headroom is gone and the failure mode when it lands is a hard error at the entry.

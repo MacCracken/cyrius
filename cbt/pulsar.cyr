@@ -118,7 +118,7 @@ fn cmd_pulsar(): i64 {
     sys_chmod("build/cycc", 0x1ED);
     sys_unlink(cc5_a); sys_unlink(cc5_b);
 
-    sys_write(STDOUT_FD, "  cycc: ", 7);
+    sys_write(STDOUT_FD, "  cycc: ", 8);
     fmt_int(_file_size("build/cycc"));
     println(" bytes (self-host OK)");
 
@@ -126,7 +126,7 @@ fn cmd_pulsar(): i64 {
     if (file_exists("src/main_aarch64.cyr") == 1) {
         _status("  cycc_aarch64 (cross)...");
         compile("src/main_aarch64.cyr", "build/cycc_aarch64");
-        sys_write(STDOUT_FD, "  cycc_aarch64: ", 15);
+        sys_write(STDOUT_FD, "  cycc_aarch64: ", 16);
         fmt_int(_file_size("build/cycc_aarch64"));
         println(" bytes");
     }
@@ -144,7 +144,7 @@ fn cmd_pulsar(): i64 {
             set_arch(ARCH_AARCH64);
             compile("src/main_aarch64_native.cyr", "build/cycc-native-aarch64");
             set_arch(ARCH_X86);
-            sys_write(STDOUT_FD, "  cycc-native-aarch64: ", 22);
+            sys_write(STDOUT_FD, "  cycc-native-aarch64: ", 23);
             fmt_int(_file_size("build/cycc-native-aarch64"));
             println(" bytes");
         }

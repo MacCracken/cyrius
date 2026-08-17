@@ -375,12 +375,31 @@ fn _dep_dir_has_stdlib(dir_cstr): i64 {
 }
 
 fn _dep_find_stdlib_dir(): i64 {
-    # (a) cyrius source-repo dev mode: `./lib` if we're in the
-    # cyrius repo itself (signaled by src/main.cyr existing). The
-    # `./lib` check has to come AFTER the src/main.cyr check —
-    # downstream repos sometimes have a `./lib` directory of
-    # resolved deps but no src/main.cyr.
-    if (file_exists("src/main.cyr") == 1) {
+    # (a) cyrius source-repo dev mode: `./lib` if we're in the cyrius repo ITSELF.
+    #
+    # ⛔ v6.5.25 — THIS WAS THE ROOT CAUSE OF THE bote/agnosai/majra FILING, and it was a
+    # functional resolution failure, not the diagnostic problem it was filed as. The test
+    # used to be `file_exists("src/main.cyr")`, which is TRUE for essentially every cyrius
+    # project — `src/main.cyr` is the default entry the init templates generate. So for
+    # bote, agnosai and majra this branch fired, found the consumer's OWN partially-
+    # populated `./lib` (the `[deps].stdlib` phase has already copied into it by this
+    # point), and returned it AS "the stdlib". Branch (b), the version-pinned snapshot
+    # this was all supposed to read from, was never reached.
+    #
+    # Everything downstream followed from that: a sidecar leaf not yet in `./lib` looked
+    # ABSENT, so `cyrius deps` reported `dep libro requires 'bench' but it is not in the
+    # cyrius stdlib` about a module that ships in the stdlib, and pointed maintainers at
+    # deleting a correct `[deps].stdlib` declaration. Reproduced verbatim on the real bote
+    # tree: 3 errors on `bench`/`test` (libro) and `patra` (majra). With the identity test
+    # corrected, those leaves are copied out of the pinned snapshot and the resolve
+    # SUCCEEDS — the message was a symptom, the wrong directory was the bug.
+    #
+    # ⚠ This is the SAME `file_exists("src/main.cyr")` ≠ cyrius-repo conflation fixed in
+    # `cyrius audit` at v6.4.63 (and originally at v6.0.1). `_dep_is_cyrius_source_repo()`
+    # exists precisely for this and matches `[package].name` exactly (so `cyrius-x` does
+    # not qualify) — it was written for the audit fix and never applied here. When a
+    # "am I the cyrius repo?" test is needed, use that helper; never a filename probe.
+    if (_dep_is_cyrius_source_repo() == 1) {
         if (_dep_dir_has_stdlib("./lib") == 1) { return "./lib"; }
     }
 
@@ -785,12 +804,20 @@ fn _dep_pull_leaves(stdlib_dir, dep_name, leaves): i64 {
             sys_write(STDERR_FD, dep_name, strlen(dep_name));
             sys_write(STDERR_FD, " requires '", 11);
             sys_write(STDERR_FD, leaf, strlen(leaf));
+            # ⚠ BOTH declared lengths here were off by one and BOTH truncated visibly —
+            # measured on the real bote tree at v6.5.24, which printed `(looked in./lib)`
+            # with the trailing space eaten. The em-dash in the first string is 3 UTF-8
+            # BYTES, so its literal is 27 bytes, not the 26 characters it looks like.
+            # This is the same hardcoded-length class the v6.5.24 `ERR_MSG` audit found 49
+            # of 104 wrong — and it slipped through because that gate scans
+            # `ERR_MSG(S, "...", N)` under `src/` only, so `sys_write(STDERR_FD, "...", N)`
+            # under `cbt/` is invisible to it. Gate widened at v6.5.25.
             if (file_exists(_lp_src) == 1) {
-                sys_write(STDERR_FD, "' — it IS in the stdlib (", 26);
+                sys_write(STDERR_FD, "' — it IS in the stdlib (", 27);
                 sys_write(STDERR_FD, _lp_src, strlen(_lp_src));
                 sys_write(STDERR_FD, ") but could not be brought into ./lib. Run `cyrius lib sync --full`; do NOT remove the declaration.\n", 100);
             } else {
-                sys_write(STDERR_FD, "' but it is not in the cyrius stdlib (looked in ", 47);
+                sys_write(STDERR_FD, "' but it is not in the cyrius stdlib (looked in ", 48);
                 sys_write(STDERR_FD, stdlib_dir, strlen(stdlib_dir));
                 sys_write(STDERR_FD, ")\n", 2);
             }
@@ -1511,7 +1538,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         }
                     }
                     if (git_ok == 0) {
-                        sys_write(STDERR_FD, "error: unsafe characters in git URL or tag — skipping ", 54);
+                        sys_write(STDERR_FD, "error: unsafe characters in git URL or tag — skipping ", 56);
                         sys_write(STDERR_FD, dep_name, strlen(dep_name));
                         sys_write(STDERR_FD, "\n", 1);
                         errors += 1;
@@ -1575,7 +1602,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         if (_exp == -1) {
                             sys_write(STDERR_FD, "error: corrupt commit-pin line for dep '", 40);
                             sys_write(STDERR_FD, dep_name, strlen(dep_name));
-                            sys_write(STDERR_FD, "' in cyrius.lock — refusing (delete cyrius.lock to re-pin intentionally).\n", 73);
+                            sys_write(STDERR_FD, "' in cyrius.lock — refusing (delete cyrius.lock to re-pin intentionally).\n", 76);
                             dep_pin_ok = 0;
                             errors = errors + 1;
                         } elif (_exp != 0 && _cstr_eq(_exp, _head) == 0) {
@@ -1587,15 +1614,15 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             sys_write(STDERR_FD, _exp, strlen(_exp));
                             sys_write(STDERR_FD, " but the tag now resolves to ", 29);
                             sys_write(STDERR_FD, _head, strlen(_head));
-                            sys_write(STDERR_FD, " (force-pushed/repointed tag) — refusing. Delete cyrius.lock to re-pin intentionally.\n", 85);
+                            sys_write(STDERR_FD, " (force-pushed/repointed tag) — refusing. Delete cyrius.lock to re-pin intentionally.\n", 88);
                             dep_pin_ok = 0;
                             errors = errors + 1;
                         } elif (_git_worktree_clean(clone_dir) == 0) {
-                            sys_write(STDERR_FD, "error: cached checkout for dep '", 31);
+                            sys_write(STDERR_FD, "error: cached checkout for dep '", 32);
                             sys_write(STDERR_FD, dep_name, strlen(dep_name));
                             sys_write(STDERR_FD, "' has local modifications (working tree != HEAD ", 48);
                             sys_write(STDERR_FD, _head, strlen(_head));
-                            sys_write(STDERR_FD, ") — refusing tampered cache. Remove the cached clone and re-resolve.\n", 68);
+                            sys_write(STDERR_FD, ") — refusing tampered cache. Remove the cached clone and re-resolve.\n", 71);
                             dep_pin_ok = 0;
                             errors = errors + 1;
                         } else {

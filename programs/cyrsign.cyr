@@ -102,7 +102,7 @@ fn _cs_err(msg) {
 }
 
 fn _cs_usage() {
-    sys_write(2, "usage: cyrsign keygen | sign <file> | verify <file> <file.sig> <pubkeyfile>\n", 75);
+    sys_write(2, "usage: cyrsign keygen | sign <file> | verify <file> <file.sig> <pubkeyfile>\n", 76);
 }
 
 # Read a whole file into a freshly-allocated buffer. Returns the buffer ptr;

@@ -844,7 +844,7 @@ fn compile(source, output): i64 {
     # `output` (if any) is preserved untouched.
     sys_unlink(tmp_out);
     if (_verbose == 1) {
-        sys_write(STDERR_FD, "[verbose] compile failed (exit ", 30);
+        sys_write(STDERR_FD, "[verbose] compile failed (exit ", 31);
         var ebuf[24];
         var elen = fmt_int_buf(WEXITSTATUS(status), &ebuf);
         sys_write(STDERR_FD, &ebuf, elen);

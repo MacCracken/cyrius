@@ -169,7 +169,7 @@ fn _try_redirect_to_pinned(): i64 {
 
     sys_execve(pinned_bin, nargv, nenvp);
     # execve only returns on failure.
-    sys_write(STDERR_FD, "error: cyrius execve to pinned version failed\n", 47);
+    sys_write(STDERR_FD, "error: cyrius execve to pinned version failed\n", 46);
     sys_exit(1);
     return 0;
 }

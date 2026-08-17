@@ -410,7 +410,7 @@ fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
             syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
             PRNUM(GFNC(S) * 100 / 32768);
             syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
-            syscall(SYS_WRITE, 2, "/32768) — approaching the hard fn limit; split into compilation units\n", 71);
+            syscall(SYS_WRITE, 2, "/32768) — approaching the hard fn limit; split into compilation units\n", 72);
         }
         if (GNPOS(S) * 100 / 524288 >= 85) {
             syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);
@@ -1232,7 +1232,7 @@ fn _rd_enter(S): i64 {
     if (_rdepth > 256) {
         syscall(SYS_WRITE, 2, "error:", 6);
         _err_head(S);
-        syscall(SYS_WRITE, 2, ": nesting too deep (over 256 levels — truncated or hostile source)\n", 67);
+        syscall(SYS_WRITE, 2, ": nesting too deep (over 256 levels — truncated or hostile source)\n", 69);
         syscall(SYS_EXIT, 1);
     }
     return 0;
@@ -1318,7 +1318,7 @@ fn _wd_tick(S): i64 {
     if (g == _wd_last) {
         _wd_stall = _wd_stall + 1;
         if (_wd_stall > 500000) {
-            syscall(SYS_WRITE, 2, "error: parser recovery aborted (desync — too many errors)\n", 59);
+            syscall(SYS_WRITE, 2, "error: parser recovery aborted (desync — too many errors)\n", 60);
             syscall(SYS_EXIT, _had_error);
         }
     } else {

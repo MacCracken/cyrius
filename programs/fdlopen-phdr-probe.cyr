@@ -81,7 +81,7 @@ fn main(): i64 {
     var pbuf = alloc(4096);
     var plen = _fdlopen_helper_path(pbuf, 4096);
     if (plen <= 0) {
-        syscall(SYS_WRITE, 2, "helper path not resolvable (no $HOME?)\n", 40);
+        syscall(SYS_WRITE, 2, "helper path not resolvable (no $HOME?)\n", 39);
         syscall(SYS_EXIT, 1);
     }
     syscall(SYS_WRITE, 1, "helper: ", 8);
@@ -168,8 +168,8 @@ fn main(): i64 {
     }
 
     if (first_diff < 0) {
-        syscall(SYS_WRITE, 1, "VERDICT: file[0..0x350] == mapped[0..0x350] — phdr copy CORRECT\n", 64);
-        syscall(SYS_WRITE, 1, "         bug is not in the copy pass; investigate stack/auxv\n", 62);
+        syscall(SYS_WRITE, 1, "VERDICT: file[0..0x350] == mapped[0..0x350] — phdr copy CORRECT\n", 66);
+        syscall(SYS_WRITE, 1, "         bug is not in the copy pass; investigate stack/auxv\n", 61);
     } else {
         syscall(SYS_WRITE, 1, "VERDICT: first divergence at offset 0x", 38);
         fmt_int(first_diff);

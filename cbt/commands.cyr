@@ -1184,7 +1184,7 @@ fn cmd_clean(): i64 {
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: would remove ", 22);
     } else {
-        sys_write(STDOUT_FD, "cleaned build/ (preserved cycc, cybs, asm, cyrius) — removed ", 62);
+        sys_write(STDOUT_FD, "cleaned build/ (preserved cycc, cybs, asm, cyrius) — removed ", 63);
     }
     fmt_int(cleaned);
     println(" files");
@@ -1777,7 +1777,7 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     if (cc == 0) { _err("cycc not found"); return 1; }
     if (source == 0) {
         _err("no file given");
-        sys_write(STDERR_FD, "usage: cyrius capacity [--check] [--json] [file.cyr]\n", 54);
+        sys_write(STDERR_FD, "usage: cyrius capacity [--check] [--json] [file.cyr]\n", 53);
         return 1;
     }
     if (file_exists(source) == 0) { _err_ctx("file not found", source); return 1; }
@@ -3448,7 +3448,7 @@ fn cmd_publish(): i64 {
     println("    # or if CI creates releases automatically, just push the tag");
     println("");
     println("  To create release manually:");
-    sys_write(STDOUT_FD, "    gh release create v", 22);
+    sys_write(STDOUT_FD, "    gh release create v", 23);
     sys_write(STDOUT_FD, ver, strlen(ver));
     println(" --generate-notes dist/* cyrius.lock");
 
