@@ -517,8 +517,48 @@ fn _dep_stdlib_seen_add(name): i64 {
 # warnings cascading + binaries running with the
 # wrong arch's syscall numbers. Top-level-only push
 # preserves the dispatcher pattern.
+# v6.5.28 — push `include "lib/<mod>.cyr"` onto `_dep_includes` unless it is already there.
+# Needed because the seen-guard below now has to service a TOP-LEVEL request for a module that
+# a transitive pull already copied; without the once-check that would double-prepend.
+fn _dep_push_include_once(mod_name): i64 {
+    var pib = str_builder_new();
+    str_builder_add_cstr(pib, make_path("lib", mod_name));
+    str_builder_add_cstr(pib, ".cyr");
+    var want = str_data(str_builder_build(pib));
+    var pi = 0;
+    while (pi < vec_len(_dep_includes)) {
+        if (streq(vec_get(_dep_includes, pi), want) == 1) { return 0; }
+        pi = pi + 1;
+    }
+    vec_push(_dep_includes, want);
+    return 0;
+}
+
 fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
-    if (_dep_stdlib_seen_has(mod_name) == 1) { return 0; }
+    if (_dep_stdlib_seen_has(mod_name) == 1) {
+        # ⛔ v6.5.28 — THE SEEN-GUARD USED TO `return 0` UNCONDITIONALLY, which conflated two
+        # different jobs this fn does: COPY the file, and PUSH its top-level include. Once a
+        # module had been pulled TRANSITIVELY (is_top=0) it was marked seen, so when the
+        # resolver later reached that module's own `[deps].stdlib` entry it short-circuited
+        # here and never pushed the include. `lib/X.cyr` was on disk, `cyrius deps` reported
+        # success, the lockfile listed it — and every symbol in X was an undefined function,
+        # with nothing in the output naming X.
+        #
+        # ⚠ Purely an ORDERING artifact: the SAME declared module set builds or fails on which
+        # entry comes first, which is what made it expensive to diagnose — the manifest looks
+        # correct because it IS correct. Filed from kavach 3.11.14, whose whole tree stopped
+        # building on a 6.5.21 -> 6.5.27 pin move.
+        # ⛔ Not confined to `[deps].stdlib`: `_dep_pull_leaves` calls this with is_top=1 for
+        # the `requires` key and the `dist/<pkg>.deps` sidecar, so a bundle whose sidecar lists
+        # leaves in an unlucky order handed the identical failure to EVERY consumer.
+        #
+        # The copy is genuinely already done, so only the push is owed. Top-level-only push is
+        # preserved deliberately — prepending TRANSITIVE includes overrides the
+        # `#ifdef CYRIUS_TARGET_*` arch dispatchers and was itself a prior bug (see the header
+        # comment above this fn).
+        if (is_top == 1) { _dep_push_include_once(mod_name); }
+        return 0;
+    }
     _dep_stdlib_seen_add(mod_name);
 
     var sb = str_builder_new();

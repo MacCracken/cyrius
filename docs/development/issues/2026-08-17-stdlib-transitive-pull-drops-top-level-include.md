@@ -1,6 +1,26 @@
 # A `[deps].stdlib` entry reached transitively never gets its top-level `include` prepended
 
-**Status:** 🟡 **OPEN** — filed from kavach 3.11.14; worked around with an explicit `include "lib/chrono.cyr"`. Verified against live code 2026-08-17: `cbt/deps.cyr:521` still returns before the `is_top` push at `cbt/deps.cyr:582`, and the repro script below still reproduces on 6.5.27.
+**Status:** ✅ **RESOLVED in v6.5.28 — archive at slot close.**
+
+> ### ✅ FIXED — the seen-guard conflated two jobs
+>
+> `_dep_copy_stdlib_recursive` both COPIES the module and PUSHES its top-level include, and the
+> seen-guard `return 0` ran before the push. Once a module was pulled transitively it was
+> marked seen, so its own `[deps].stdlib` entry short-circuited and never pushed the include.
+> The seen path now services a top-level request via `_dep_push_include_once`.
+>
+> **The filed repro passes both ways.** Before: CASE A (async before chrono) 2 undefined
+> symbols / no binary, CASE B fine. After: both cases 0 undefined, both emit a binary — the
+> ordering artifact is gone.
+>
+> ⚠ **Top-level-only push preserved deliberately.** Pushing transitive includes too would have
+> made the repro green while re-opening a PRIOR bug: an explicit include overrides the
+> `#ifdef CYRIUS_TARGET_*` arch dispatchers, so both syscall peers parse at once (duplicate
+> fns, wrong-arch syscall numbers). Gate axis 3 pins that BOTH push sites keep their `is_top`
+> gate, so the easy over-fix cannot pass.
+>
+> Gate: `tests/gates/toolchain/stdlib_transitive_include_pushed.sh` (drives the filed repro;
+> axis 0 is anti-vacuous because a repro that printed nothing would otherwise score clean).
 **Placement:** unpinned — 6.5.x-line backlog. Resolver/toolchain item, so 6.x line — never 7.x.
 **Discovered:** 2026-08-17 during kavach's `6.5.21 → 6.5.27` pin move (the whole tree stopped building).
 **Severity:** Medium — hard build failure on a shipping consumer, with a known workaround. It would be High without the workaround: the failure is order-dependent, the diagnostic names a *symbol* rather than the module that went missing, and it propagates to every downstream consumer of an affected `dist/*.deps` sidecar.

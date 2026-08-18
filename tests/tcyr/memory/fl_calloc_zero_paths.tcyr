@@ -1,0 +1,46 @@
+# fl_calloc_zero_paths.tcyr — v6.5.28: fl_calloc must return ZEROED memory on BOTH of its
+# paths, after the fast path that stopped it re-zeroing kernel-zeroed pages.
+#
+# THE DEFECT. fl_calloc byte-looped over the WHOLE allocation unconditionally. Measured on an
+# 8,294,400-byte buffer (one 1080p RGBA8 frame): fl_alloc 29.633 us vs fl_calloc 10.946 ms —
+# 369x slower than the allocation it follows, spent re-zeroing memory the kernel had already
+# prepared. After the fix the two are statistically identical (measured 90 us vs 80 us here).
+#
+# ⚠ THE RISK OF THE FIX IS THE POINT OF THIS TEST. Skipping the zero-fill is only safe on the
+# LARGE path, where `_fl_class(size) < 0` means fl_alloc returns a fresh `_fl_mmap` mapping
+# that the kernel guarantees zero. The RECYCLED size-class path can hand back dirty memory and
+# still owes a real zero-fill — so a fix that skipped both paths would be a silent
+# use-of-uninitialised-memory bug that a large-allocation-only test would happily pass.
+# The small case below deliberately DIRTIES a block with 0xAB, frees it, then re-callocs to
+# force the recycled path. The odd-size case exercises the byte tail after the 8-byte loop.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/assert.cyr"
+fn main(): i64 {
+    alloc_init();
+    test_group("fl_calloc correctness after the v6.5.28 fast path");
+    # large (mmap) path — must be zero
+    var N = 100000;
+    var p = fl_calloc(N);
+    assert(p != 0, "large fl_calloc returned a pointer");
+    var bad = 0; var i = 0;
+    while (i < N) { if (load8(p + i) != 0) { bad = bad + 1; } i = i + 8; }
+    assert_eq(bad, 0, "large (mmap) fl_calloc block reads back all-zero");
+    # small (size-class) path, forced dirty by free+realloc
+    var s1 = fl_alloc(64); var j = 0;
+    while (j < 64) { store8(s1 + j, 0xAB); j = j + 1; }
+    fl_free(s1);
+    var s2 = fl_calloc(64);
+    var bad2 = 0; var k = 0;
+    while (k < 64) { if (load8(s2 + k) != 0) { bad2 = bad2 + 1; } k = k + 1; }
+    assert_eq(bad2, 0, "RECYCLED small block is zeroed (the path that still owes work)");
+    # odd size exercises the byte tail
+    var s3 = fl_calloc(37);
+    var bad3 = 0; var m = 0;
+    while (m < 37) { if (load8(s3 + m) != 0) { bad3 = bad3 + 1; } m = m + 1; }
+    assert_eq(bad3, 0, "odd-size block fully zeroed (8-byte loop + byte tail)");
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

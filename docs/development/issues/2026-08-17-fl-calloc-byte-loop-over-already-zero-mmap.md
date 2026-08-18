@@ -1,6 +1,28 @@
 # `fl_calloc` re-zeroes mmap'd pages one byte at a time — 369x slower than the allocation itself
 
-**Status:** 🟡 **OPEN** — found while benchmarking the ranga Rust→Cyrius port; worked around in consumer code.
+**Status:** ✅ **RESOLVED in v6.5.28 — archive at slot close.**
+
+> ### ✅ FIXED — and the 369x is gone, not merely reduced
+>
+> `fl_calloc` now skips the zero-fill entirely on the LARGE path (`_fl_class(size) < 0` means
+> a fresh `_fl_mmap` mapping, which is kernel-zeroed — verified against fl_alloc's own large
+> branch, not assumed), and uses 8-byte stores with a byte tail on the recycled size-class
+> path that genuinely still owes the work.
+>
+> **Measured here: `fl_alloc` 90 us vs `fl_calloc` 80 us for the same 8,294,400-byte buffer —
+> statistically identical.** The filing measured 29.633 us vs 10.946 ms on its box; the ratio
+> is now ~1.0 instead of 369.
+>
+> ⚠ **The dangerous half of this fix is the skip.** Skipping BOTH paths would be a silent
+> use-of-uninitialised-memory bug that a large-allocation-only test passes happily.
+> `tests/tcyr/memory/fl_calloc_zero_paths.tcyr` deliberately dirties a small block with 0xAB,
+> frees it, and re-callocs to force the RECYCLED path, plus an odd size to exercise the byte
+> tail after the 8-byte loop.
+>
+> ⚠ **No `memset`.** It lives in `lib/string.cyr`, which freelist does not include — this
+> module depends on `mmap` + `atomic` only, and an allocator reaching into the string library
+> to zero memory is a dependency edge worth not adding. The 8-byte loop gets the same
+> order-of-magnitude win self-contained.
 **Placement:** unpinned — 6.5.x backlog. `lib/freelist.cyr`.
 **Discovered:** 2026-08-17 benchmarking ranga's image buffers against the frozen Rust baseline
 **Severity:** **Medium** — silent >2x perf regression on a very common path; no correctness impact

@@ -1,6 +1,25 @@
 # `_distlib_named_deps` scans the manifest unanchored, so a `[deps.X]` written in COMMENT PROSE deletes X from the sidecar
 
-**Status:** 🟡 **OPEN** — reproduced against **cyrius 6.5.27**, filed by **patra**
+**Status:** ✅ **RESOLVED in v6.5.28 — archive at slot close.**
+
+> ### ✅ FIXED — scan anchored to a line start AND made comment-aware
+>
+> `_distlib_named_deps` matched the literal `[deps.` anywhere in the buffer. It now requires a
+> line start (TOML allows leading whitespace) and skips `#` comment lines. **Both guards are
+> needed**: anchoring alone still matches a comment that BEGINS with `[deps.x]`, which is
+> exactly how documentation examples are written.
+>
+> ⚠ **THE UPSTREAM SYMPTOM NO LONGER REPRODUCES, and that is recorded rather than papered
+> over.** At patra **1.13.8** the manifest contains no `[deps.` text at all — the triggering
+> comment was removed upstream — so the filing's end-to-end repro (11 leaves against 12
+> declared, `sakshi` missing) is gone. Verified three other ways instead: the defect is plain
+> on reading, patra's real sidecar is byte-unchanged after the fix (12 leaves, no regression),
+> and the gate tests the parser rule directly. A defect whose only witness has been edited
+> away still needs a regression test — and one that depends on a third-party file staying
+> wrong is not a test.
+>
+> Gate: `tests/gates/toolchain/distlib_named_deps_anchored.sh` (axis 3 anti-vacuous — deleting
+> the whole scan would satisfy the two guard axes).
 (v1.13.2) and confirmed in **libro** (v2.8.6).
 
 **Severity:** **Medium** — silent packaging corruption. The bundle is correct; the
