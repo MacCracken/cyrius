@@ -4,7 +4,37 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [Unreleased] — `.28` in flight
+
+### Fixed — decimal float literals past ~9 significant digits parsed to a DIFFERENT number
+
+**HIGH: silent numerical corruption.** A decimal float literal did not error, did not warn and
+did not saturate — it produced a wrong value and compiled clean:
+`3.1415926535` → **0.95822**, `3.141592653589793` → **0.061575** (off by a factor of 51).
+`cyrius build` succeeded, `cyrius lint` was clean, and the program produced plausible output.
+Found porting ranga's Oklab colour matrices — exactly the range where real physical and
+colour constants live.
+
+**TWO overflows in one line.** The token packed the literal as a 32/32 rational,
+`(denom << 32) | (numer & 0xFFFFFFFF)`, divided at runtime: the mask TRUNCATES `numer`, and
+`denom << 32` overflows the i64 outright once denom passes 2^32 (more than 9 fractional
+digits). Fixed by widening both fields to full i64 through a lazily-allocated side table
+(`FLIT_ADD`, `src/common/util.cyr`, v6.4.75 `_fnvb_base` precedent — no heap-map region, no
+layout change), with all **three** `EMIT_FLOAT_LIT` backends (x86, aarch64, cx) re-pointed at
+it. Verified to 16 significant digits.
+
+⚠ **A "cap the digit count" fix would have been smaller and still wrong** — it keeps fewer
+digits and loses the rest silently, which is the same defect class one notch quieter. It also
+fails outright for `100.123456789`, where `numer = val*denom + frac` overflows 32 bits no
+matter how few fractional digits are kept. `tests/tcyr/crossos/float_literal_precision.tcyr`
+asserts that case specifically so the shortcut cannot pass, and lives in `crossos/` because
+the defective unpack was duplicated in all three backends — a Linux-only test would have
+proved one third of the fix.
+
+### Changed — patra 1.13.0 → 1.13.8 fold
+
+A real code delta (+34,638 B), not a pin-only bump; upstream pin already reads
+`cyrius = "6.5.27"`. Verified byte-identical to `dist/patra.cyr` after folding.
 
 ## [6.5.27] — 2026-08-17
 

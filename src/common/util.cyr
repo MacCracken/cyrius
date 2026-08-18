@@ -293,6 +293,47 @@ var _fnrett_base = 0;     # v6.5.21 multi-value return ELEMENT TYPES (4 slots pe
 var _fnvar_base = 0;      # was 0x16A000 fn_variadic (1 = fn f(a, ...))
 var _fnflg_base = 0;      # was 0x17A000 fn_flags (must_use/deprecated/pure/io/alloc bits)
 var _fnvb_base = 0;       # was 0x1C8000 fn_var_bytes (per-fn array-bytes attribution)
+
+# v6.5.28 — FLOAT LITERAL side table. Two i64 slots per literal: numer @0, denom @8.
+#
+# ⛔ WHY THIS EXISTS. A decimal float literal used to be packed into ONE token value as
+# `(denom << 32) | (numer & 0xFFFFFFFF)` — a 32/32 rational. Both halves overflowed silently
+# past ~9 significant digits: `numer & 0xFFFFFFFF` TRUNCATES, and `denom << 32` overflows the
+# i64 outright once denom > 2^32 (i.e. more than 9 fractional digits). The result was not a
+# rounding error and not a saturation — `3.1415926535` became `0.95822` and
+# `3.141592653589793` became `0.061575`, off by a factor of 51, with NO diagnostic: the build
+# succeeded, lint was clean, and the program produced plausible-looking output.
+# Filed from the ranga colour-space port, where 10-17 significant digits is the norm
+# (2026-08-17-decimal-float-literal-silent-precision-loss).
+#
+# Widening to full i64 per field is what buys real f64 precision: `3.141592653589793` needs
+# denom 1e15 and numer 3141592653589793, both comfortably inside i64. Capping the digit count
+# instead would have been a smaller change but would still LOSE precision silently — the
+# defect class, just quieter.
+#
+# Lazily allocated per the v6.4.75 `_fnvb_base` precedent above: no heap-map region, no
+# layout change, no two-step bootstrap, and a program with no float literals allocates nothing.
+var _flit_base = 0;
+var _flit_n = 0;
+var _FLIT_CAP = 16384;
+
+# Intern a float literal's numer/denom, returning its index (the token value). Fails CLOSED:
+# past the cap it returns -1 and the caller emits a hard error rather than aliasing slot 0,
+# which is the v6.4.75 fn_table lesson (index N aliasing index 0 of the neighbour was a SILENT
+# miscompile, and silence is exactly what this whole fix is removing).
+fn FLIT_ADD(numer, denom): i64 {
+    if (_flit_base == 0) { _flit_base = alloc(_FLIT_CAP * 16); }
+    if (_flit_n >= _FLIT_CAP) { return 0 - 1; }
+    var i = _flit_n;
+    S64(_flit_base + i * 16, numer);
+    S64(_flit_base + i * 16 + 8, denom);
+    _flit_n = i + 1;
+    return i;
+}
+# Numerator of interned float literal `i`.
+fn FLIT_NUM(i): i64 { if (_flit_base == 0) { return 0; } return L64(_flit_base + i * 16); }
+# Denominator of interned float literal `i`.
+fn FLIT_DEN(i): i64 { if (_flit_base == 0) { return 1; } return L64(_flit_base + i * 16 + 8); }
 # v6.3.5 AR-01 — monomorphization substrate (gated proof). Opt-in flag that
 # re-enables the inline body-token CAPTURE (SFBS/SFBE/SFINL in PARSE_FN_DEF) so
 # the still-intact emit-time replay path (PARSE_FNCALL, GFINL!=0 branch) fires.

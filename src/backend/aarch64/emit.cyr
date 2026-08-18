@@ -2649,8 +2649,11 @@ fn EMIT_F32_BINOP(S, fop): i64 {
 # Mirrors the EMIT_FLOAT_LIT in x86/float.cyr — same input shape,
 # same output (f64 bit pattern in x0/rax), aarch64 FP instructions.
 fn EMIT_FLOAT_LIT(S, fval): i64 {
-    var numer = fval & 0xFFFFFFFF;
-    var denom = (fval >> 32) & 0xFFFFFFFF;
+    # v6.5.28 — `fval` is now an INDEX into the float-literal side table, not a packed 32/32
+    # rational (which overflowed silently past ~9 significant digits). See FLIT_ADD in
+    # src/common/util.cyr.
+    var numer = FLIT_NUM(fval);
+    var denom = FLIT_DEN(fval);
     EMOVI(S, numer);           # x0 = numer
     EW(S, 0x9E620000);         # scvtf d0, x0   — d0 = (double) numer
     EMOVI(S, denom);           # x0 = denom (clobbers x0; that's fine)

@@ -1,0 +1,48 @@
+# Repro: the typed-pointer warning does not consult the callee's DECLARED
+# return type on an assignment.
+#
+# Deliberately uses ONLY lib/str.cyr. No bayan, no consumer code — both sides of
+# the assignment are stdlib, and `str_new` is declared `: Str`:
+#     fn str_new(data, len): Str        (lib/str.cyr)
+#
+# Build from a directory with a cyrius.cyml declaring [deps].stdlib:
+#   cyrius build 2026-08-14-typed-ptr-warn-ignores-declared-return.cyr out && ./out
+#
+# Expected: 4, 2, and NO <source> warning.
+# Actual (6.5.27): correct values; one warning on the REASSIGNMENT line only.
+#
+# NOTE: warnings attributed to lib/bayan.cyr will also appear, because
+# [deps].stdlib prepends bayan regardless of what this file includes. They are
+# the same defect seen from a folded dep, not a separate one — ignore them when
+# reading this repro.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+
+# Does NOT warn — declaration. The declaration path clearly knows `str_new`
+# returns Str, because that is what types `t`.
+fn init_only() {
+    var t = str_new("abcdef", 4);
+    return str_len(t);
+}
+
+# WARNS. Same callee, same declared `: Str`, same local — only now it is an
+# assignment rather than an initialiser.
+fn reassign() {
+    var t = str_new("abcdef", 4);
+    t = str_new("abcdef", 2);
+    return str_len(t);
+}
+
+fn main() {
+    alloc_init();
+    println_int(init_only());   # 4
+    println_int(reassign());    # 2
+    return 0;
+}
+
+var r = main();
+sys_exit(r);

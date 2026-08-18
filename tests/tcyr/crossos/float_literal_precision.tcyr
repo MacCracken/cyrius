@@ -1,0 +1,56 @@
+# float_literal_precision.tcyr — v6.5.28: a decimal float literal must parse to the RIGHT value
+# at full f64 precision, on every backend.
+#
+# THE DEFECT. A float literal was packed into ONE token value as
+# `(denom << 32) | (numer & 0xFFFFFFFF)` — a 32/32 rational divided at runtime. Both halves
+# overflowed SILENTLY past ~9 significant digits: the mask truncates `numer`, and
+# `denom << 32` overflows the i64 outright once denom exceeds 2^32 (more than 9 fractional
+# digits). Not a rounding error and not a saturation — a DIFFERENT NUMBER:
+#     3.1415926535      -> 0.95822     (measured)
+#     3.141592653589793 -> 0.061575    (measured, off by a factor of 51)
+# with no error, no warning, a clean `cyrius lint`, and plausible-looking program output.
+# Found porting ranga's Oklab colour matrices, which is exactly where 10-17 significant
+# digits is normal (2026-08-17-decimal-float-literal-silent-precision-loss).
+#
+# ⛔ WHY crossos/. `EMIT_FLOAT_LIT` is implemented THREE times — x86 (float.cyr), aarch64
+# (emit.cyr) and cx (emit.cyr) — and each carried its own copy of the 32/32 unpack. A
+# Linux-only test would have proved one third of the fix. The release gate runs this
+# directory on real ecb / ach / cass / pi.
+#
+# ⚠ EVERY ASSERTION SCALES-AND-TRUNCATES to an exact integer. Comparing floats directly would
+# make the test pass on a value that is merely CLOSE, and "close" is precisely what the old
+# encoding was not — but a capped-digit fix WOULD be close, and must also fail here.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    test_group("decimal float literals parse at full f64 precision (v6.5.28)");
+
+    # Inside the old 32-bit ceiling — these always worked; kept so a fix cannot regress them.
+    assert_eq(f64_to(f64_mul(3.14, f64_from(100))), 314, "3.14");
+    assert_eq(f64_to(f64_mul(3.141592, f64_from(1000000))), 3141592, "3.141592 (7 sig)");
+    assert_eq(f64_to(f64_mul(3.14159265, f64_from(100000000))), 314159265, "3.14159265 (9 sig, the old limit)");
+
+    # PAST the old ceiling — each of these produced a WRONG NUMBER before v6.5.28.
+    assert_eq(f64_to(f64_mul(3.1415926535, f64_from(10000000000))), 31415926535,
+        "3.1415926535 (11 sig) — was 0.95822");
+    assert_eq(f64_to(f64_mul(3.141592653589793, f64_from(1000000000000000))), 3141592653589793,
+        "3.141592653589793 (16 sig) — was 0.061575, off by 51x");
+
+    # ⭐ Integer part > 1 with many fractional digits. This is the case a "just cap the digit
+    # count" fix silently gets WRONG: numer = val*denom + frac must hold 100 * 1e9, which
+    # overflows any 32-bit numerator regardless of how few fractional digits are kept.
+    assert_eq(f64_to(f64_mul(100.123456789, f64_from(1000000000))), 100123456789,
+        "100.123456789 — int part > 1 defeats a digit-cap fix");
+
+    # Small magnitudes: leading fractional zeros must not be lost.
+    assert_eq(f64_to(f64_mul(0.000001234, f64_from(1000000000))), 1234, "0.000001234 (leading zeros)");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

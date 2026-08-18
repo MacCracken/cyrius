@@ -81,8 +81,11 @@ fn EMIT_F32_BINOP(S, fop): i64 {
 }
 
 fn EMIT_FLOAT_LIT(S, fval): i64 {
-    var numer = fval & 0xFFFFFFFF;
-    var denom = (fval >> 32) & 0xFFFFFFFF;
+    # v6.5.28 — `fval` is now an INDEX into the float-literal side table, not a packed
+    # 32/32 rational. The old unpack could not represent more than ~9 significant digits and
+    # corrupted silently past that; see FLIT_ADD in src/common/util.cyr.
+    var numer = FLIT_NUM(fval);
+    var denom = FLIT_DEN(fval);
     E2(S, 0xB848); E8(S, numer);
     EI2F(S);
     E2(S, 0xB948); E8(S, denom);

@@ -882,8 +882,21 @@ fn LEXDEC(S, p): i64 {
                                 else { fgo = 0; }
                             }
                         }
+                        # v6.5.28 — full-i64 numer/denom via the side table (see FLIT_ADD in
+                        # src/common/util.cyr). This line used to be
+                        #   ADDTOK(S, 61, (denom << 32) | (numer & 0xFFFFFFFF));
+                        # which overflowed TWICE past ~9 significant digits — the mask
+                        # truncated numer, and `denom << 32` overflowed the i64 once denom
+                        # exceeded 2^32 — turning 3.141592653589793 into 0.061575 with no
+                        # diagnostic at all. The token now carries an INDEX, so both fields
+                        # keep their full width and real f64 precision survives.
                         var numer = val * denom + frac;
-                        ADDTOK(S, 61, (denom << 32) | (numer & 0xFFFFFFFF));
+                        var fidx = FLIT_ADD(numer, denom);
+                        if (fidx < 0) {
+                            syscall(SYS_WRITE, 2, "error: too many distinct float literals (raise _FLIT_CAP in src/common/util.cyr)\n", 81);
+                            syscall(SYS_EXIT, 1);
+                        }
+                        ADDTOK(S, 61, fidx);
                         return p;
                     } } }
         } }

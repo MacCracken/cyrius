@@ -1033,8 +1033,11 @@ fn _cx_float_unsupported(S): i64 {
 # float literal: fval = numer(low 32) | denom(high 32) (a rational); the value is
 # (f64)numer / (f64)denom — mirrors the x86 EMIT_FLOAT_LIT (movabs/cvtsi2sd/divsd).
 fn EMIT_FLOAT_LIT(S, v): i64 {
-    var numer = v & 0xFFFFFFFF;
-    var denom = (v >> 32) & 0xFFFFFFFF;
+    # v6.5.28 — `v` is now an INDEX into the float-literal side table, not a packed 32/32
+    # rational (which overflowed silently past ~9 significant digits). See FLIT_ADD in
+    # src/common/util.cyr.
+    var numer = FLIT_NUM(v);
+    var denom = FLIT_DEN(v);
     CX_MOVI(S, 1, numer);
     CX_EMIT(S, 88, 1, 1, 0);        # i2f r1, r1  = (f64)numer
     CX_MOVI(S, 2, denom);
