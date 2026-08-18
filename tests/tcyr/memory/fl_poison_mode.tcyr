@@ -1,0 +1,67 @@
+# fl_poison_mode.tcyr — v6.5.28: an opt-in allocator poison fill, so an out-of-bounds READ is
+# observable to `cyrius fuzz`.
+#
+# ⛔ THE BLIND SPOT. A fresh mmap is kernel-zeroed and a recycled block holds OLD HEAP
+# CONTENTS, so an overread returns *plausible* bytes and a fuzz harness sails straight past
+# it. sit's `.git` packfile delta interpreter leaked heap memory for three minor versions with
+# a fuzz suite running over it (2026-08-18-fuzz-cannot-see-oob-reads-from-sit). Not a cyrius
+# defect — a tooling gap that applies to every consumer in the ecosystem.
+#
+# ⭐ THE FIRST ASSERTION IS THE POINT: with poison OFF it asserts the recycled block still
+# returns 0x42, i.e. it DEMONSTRATES the blind spot rather than merely testing around it. A
+# test that only checked the ON case would pass just as happily if poison were always on, and
+# would not show why the mode is needed.
+#
+# ⚠ THE fl_calloc INTERACTION IS THE DANGEROUS PART, and it is this release's own doing.
+# v6.5.28 made fl_calloc skip zeroing on the large path because a fresh mapping is
+# kernel-zeroed — a precondition POISON FILL INVALIDATES. Left unhandled, poison mode would
+# hand back 0xA5 where a caller asked for zeroed memory, turning a debugging aid into a
+# correctness bug in the exact mode meant to FIND correctness bugs. Both calloc assertions
+# below exist for that.
+#
+# ⚠ SCOPE: alloc-side fill only. Quarantine-on-free (use-after-free) and redzone bounds
+# checks are NOT implemented — a free-side poison needs the block's original size and the
+# size-class path stores only its class, so doing it properly means a layout change. The
+# filing explicitly scopes full ASAN-grade shadow memory as not required and says the fill
+# alone would have caught the sit defect.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/assert.cyr"
+fn main(): i64 {
+    alloc_init();
+    test_group("fl poison mode (v6.5.28)");
+    assert_eq(fl_poison_active(), 0, "poison off by default");
+    # OFF: a recycled block still holds old contents (the invisible-overread condition)
+    var a = fl_alloc(64); var i = 0;
+    while (i < 64) { store8(a + i, 0x42); i = i + 1; }
+    fl_free(a);
+    var b = fl_alloc(64);
+    assert_eq(load8(b), 0x42, "OFF: recycled block returns OLD heap contents (the blind spot)");
+    fl_free(b);
+    # ON: the same recycle now yields poison, so an overread is observable
+    fl_poison_enable();
+    assert_eq(fl_poison_active(), 1, "poison enabled");
+    var c = fl_alloc(64);
+    assert_eq(load8(c), fl_poison_byte(), "ON: recycled block is poisoned, not old contents");
+    assert_eq(load8(c + 63), fl_poison_byte(), "ON: poison covers the full requested size");
+    fl_free(c);
+    # large path too
+    var d = fl_alloc(100000);
+    assert_eq(load8(d + 99999), fl_poison_byte(), "ON: large (mmap) block poisoned to the end");
+    fl_free(d);
+    # fl_calloc must STILL be zero in poison mode — the interaction that could have bitten
+    var e = fl_calloc(100000);
+    var bad = 0; var k = 0;
+    while (k < 100000) { if (load8(e + k) != 0) { bad = bad + 1; } k = k + 997; }
+    assert_eq(bad, 0, "ON: fl_calloc large path is STILL zeroed despite poison");
+    var f = fl_calloc(64);
+    var bad2 = 0; var m = 0;
+    while (m < 64) { if (load8(f + m) != 0) { bad2 = bad2 + 1; } m = m + 1; }
+    assert_eq(bad2, 0, "ON: fl_calloc small path is STILL zeroed despite poison");
+    fl_poison_disable();
+    assert_eq(fl_poison_active(), 0, "poison disabled again");
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

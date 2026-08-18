@@ -693,6 +693,10 @@ freelist::fl_alloc/1
 freelist::fl_calloc/1
 freelist::fl_free/1
 freelist::fl_init/0
+freelist::fl_poison_active/0
+freelist::fl_poison_byte/0
+freelist::fl_poison_disable/0
+freelist::fl_poison_enable/0
 fs::dir_list/1
 fs::dir_list/1
 fs::dir_list_full/1
