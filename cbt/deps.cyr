@@ -1980,8 +1980,17 @@ fn _auto_deps(): i64 {
     var _ad_manifest = "cyrius.cyml";
     if (file_exists(_ad_manifest) == 0) { _ad_manifest = "cyrius.toml"; }
     if (file_exists(_ad_manifest) == 0) { return 0; }
-    var buf = alloc(4096);
-    var n = file_read_all(_ad_manifest, buf, 4095);
+    # v6.5.28 — was `alloc(4096)` / read 4095. A manifest longer than that had its tail
+    # SILENTLY dropped, so a `[deps]` section past byte 4095 was invisible and the build
+    # failed with a diagnostic pointing nowhere near the cause. Real manifests reach this
+    # easily once a project carries prose comments (filed from kavach). 16x the buffer AND
+    # fail CLOSED on truncation — a silent short read is the exact defect being removed, so
+    # hitting the new ceiling must be loud. 65535 matches the lock-file read below.
+    var buf = alloc(65536);
+    var n = file_read_all(_ad_manifest, buf, 65535);
+    if (n >= 65535) {
+        sys_write(STDERR_FD, "error: cyrius.cyml is larger than 65535 bytes - raise the manifest read buffer in cbt/deps.cyr (a [deps] section past the cut would be silently invisible)\n", 155);
+    }
     if (n <= 0) { return 0; }
     store8(buf + n, 0);
     # Check if [deps] section exists
@@ -2050,8 +2059,17 @@ fn cmd_package(): i64 {
     var _pkg_manifest = "cyrius.cyml";
     if (file_exists(_pkg_manifest) == 0) { _pkg_manifest = "cyrius.toml"; }
     if (file_exists(_pkg_manifest) == 1) {
-        var buf = alloc(4096);
-        var n = file_read_all(_pkg_manifest, buf, 4095);
+        # v6.5.28 — was `alloc(4096)` / read 4095. A manifest longer than that had its tail
+        # SILENTLY dropped, so a `[deps]` section past byte 4095 was invisible and the build
+        # failed with a diagnostic pointing nowhere near the cause. Real manifests reach this
+        # easily once a project carries prose comments (filed from kavach). 16x the buffer AND
+        # fail CLOSED on truncation — a silent short read is the exact defect being removed, so
+        # hitting the new ceiling must be loud. 65535 matches the lock-file read below.
+        var buf = alloc(65536);
+        var n = file_read_all(_pkg_manifest, buf, 65535);
+        if (n >= 65535) {
+            sys_write(STDERR_FD, "error: cyrius.cyml is larger than 65535 bytes - raise the manifest read buffer in cbt/deps.cyr (a [deps] section past the cut would be silently invisible)\n", 155);
+        }
         store8(buf + n, 0);
     }
     if (file_exists("VERSION") == 1) {

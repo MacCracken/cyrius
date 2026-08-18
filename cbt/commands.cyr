@@ -2486,8 +2486,24 @@ fn cmd_distlib_all(check): i64 {
 fn _distlib_named_deps(mbuf, mlen): i64 {
     var named_deps = vec_new();
     var ndi = 0;
+    # v6.5.28 — ANCHOR THE SCAN TO A SECTION HEADER. This matched "[deps." ANYWHERE in the
+    # manifest, so a `[deps.X]` written in COMMENT PROSE registered X as a named dep. Filed
+    # from patra, where a comment explaining the layout silently deleted a real dep from the
+    # generated sidecar — the bundle stayed correct, so nothing failed; the packaging just
+    # quietly lost an entry.
+    # A real section header is at the START of a line (TOML allows leading whitespace) and is
+    # never inside a `#` comment. `bol` tracks line starts; `in_cmt` suppresses the rest of a
+    # comment line. Both are needed: anchoring alone still matches a comment that BEGINS with
+    # `[deps.x]`, which is exactly how documentation examples are usually written.
+    var bol = 1;
+    var in_cmt = 0;
     while (ndi < mlen) {
-        if (ndi + 6 <= mlen && memeq(mbuf + ndi, "[deps.", 6) == 1) {   # v6.2.52: bound the tail read
+        var ndc = load8(mbuf + ndi);
+        if (ndc == 10) { bol = 1; in_cmt = 0; ndi = ndi + 1; }
+        elif (in_cmt == 1) { ndi = ndi + 1; }
+        elif (ndc == 35) { in_cmt = 1; ndi = ndi + 1; }        # '#' opens a comment
+        elif (bol == 1 && (ndc == 32 || ndc == 9)) { ndi = ndi + 1; }   # leading indent keeps bol
+        elif (bol == 1 && ndi + 6 <= mlen && memeq(mbuf + ndi, "[deps.", 6) == 1) {
             var nns = ndi + 6;
             var nne = nns;
             while (nne < mlen && load8(mbuf + nne) != 93) { nne = nne + 1; }
@@ -2499,7 +2515,8 @@ fn _distlib_named_deps(mbuf, mlen): i64 {
                 vec_push(named_deps, nd);
             }
             ndi = nne;
-        } else { ndi = ndi + 1; }
+            bol = 0;
+        } else { bol = 0; ndi = ndi + 1; }
     }
     return named_deps;
 }
