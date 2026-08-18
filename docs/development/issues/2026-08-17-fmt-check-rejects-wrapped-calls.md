@@ -1,6 +1,52 @@
-# `cyrius fmt --check` rejects any wrapped call, silently, and `cyrius fmt` cannot fix it
+# `cyrius fmt --check` fails silently on continuation indent, and `cyrius fmt` cannot fix it in place
 
-**Status:** 🟡 **OPEN** — filed from rupa 0.1.3; worked around by un-wrapping every call.
+**Status:** 🟡 **OPEN — RE-TITLED and SCOPED 2026-08-18; maintainer decisions taken, implementation is the next bite.**
+
+> ### ⚠ THE ORIGINAL HEADLINE IS WRONG, AND SO WAS THE FIRST REFUTATION OF IT
+>
+> Wrapped calls are **not** rejected as such — cyrfmt PRESERVES the line break. What it
+> normalises is the continuation **indent**. But a premise-check that concluded "headline
+> refuted, nothing to see" was also wrong, and measurement settles it:
+>
+> ```
+> $ cyrius fmt w.cyr            # prints canonical form to stdout, file UNCHANGED
+> $ cyrius fmt w.cyr --check    # exit 1, ZERO bytes of output
+> ```
+>
+> So there IS a state the tool flags and offers no in-place way to fix, which is exactly what
+> the consumer reported ("worked around by un-wrapping every call"). Both the filing and its
+> refutation were half right.
+>
+> ### Root cause
+>
+> `programs/cyrfmt.cyr` re-indents every line to `depth * 4` where `depth` is **BRACE** depth.
+> It does not track paren depth at all, so a continuation line inside an unclosed `(` is
+> emitted at the enclosing statement's indent — the flattening. `--check` then compares the
+> file against that output and exits 1 on any difference, silently.
+>
+> ### ⚖️ MAINTAINER DECISIONS (2026-08-18) — implement to these
+>
+> **1. Canonical continuation indent is TWO spaces; FOUR is accepted; deeper is REJECTED.**
+> Maintainer: *"I'd rather have 2-space indents and accept 4 but nothing more; else it
+> wouldn't be a format check."* So `--check` carries a deliberate, bounded tolerance rather
+> than a byte-for-byte equality — accepting *anything* would make it not a check, and
+> accepting only one form would churn every already-formatted file in the ecosystem.
+> ⇒ cyrfmt must track PAREN depth and emit statement-indent + 2 for continuations.
+>
+> **2. `cyrius fmt <file>` REWRITES IN PLACE by default**, plus:
+>    * `--verbose` — rewrite in place AND echo the result to stdout.
+>    * `--dry` — leave the file alone and report what would change.
+> ⇒ This is a deliberate behaviour change from stdout-only; scripts relying on the old
+> default must move to `--dry`/`--verbose`. Note it in the CHANGELOG as a breaking CLI change.
+>
+> **3. `--check` must SAY WHAT DIFFERS** — file and first differing line, not exit 1 in
+> silence. The silence is the uncontested half of the original filing.
+>
+> ⛔ **AND THE CLAUDE.md LINE IS PART OF THE FIX.** It currently reads "cyrfmt flattens
+> multi-line call continuations to 4-space indent — write them that way up front", i.e. the
+> workaround written down as a rule for authors to pre-comply with. That is the same shape as
+> the retired "≤6 args" rule. Once the formatter emits 2 and accepts 4, that line must be
+> rewritten as a formatter contract, not an authoring instruction.
 **Placement:** unpinned — 6.5.x-line backlog.
 **Discovered:** 2026-08-17 while adding `tests/tcyr/motion.tcyr` to rupa (CI's format gate failed).
 **Severity:** Medium — hard CI failure with a known workaround, and the workaround fights the lint gate.
