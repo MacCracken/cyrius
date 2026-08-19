@@ -1,6 +1,6 @@
 # A `[deps].stdlib` entry reached transitively never gets its top-level `include` prepended
 
-**Status:** ✅ **RESOLVED in v6.5.28 — archive at slot close.**
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
 
 > ### ✅ FIXED — the seen-guard conflated two jobs
 >

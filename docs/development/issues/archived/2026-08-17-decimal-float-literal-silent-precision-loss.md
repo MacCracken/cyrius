@@ -1,6 +1,6 @@
 # Decimal float literals past ~9 significant digits parse to a silently wrong value
 
-**Status:** ✅ **RESOLVED in v6.5.28 — archive at slot close.**
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
 
 > ### ✅ FIXED — root cause was TWO overflows in ONE line
 >

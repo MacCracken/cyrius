@@ -1,6 +1,6 @@
 # `fl_calloc` re-zeroes mmap'd pages one byte at a time — 369x slower than the allocation itself
 
-**Status:** ✅ **RESOLVED in v6.5.28 — archive at slot close.**
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
 
 > ### ✅ FIXED — and the 369x is gone, not merely reduced
 >

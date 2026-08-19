@@ -109,11 +109,23 @@ sed -i "s/- \*\*Version\*\*: $OLD/- **Version**: $NEW/" CLAUDE.md 2>/dev/null ||
 # inserting 3 spurious version headers inside the v5.8.48 body
 # before being cleaned up by hand. Anchored pattern matches ONLY
 # the literal Unreleased header line.
+# v6.5.28: the anchor was `^## \[Unreleased\]$` — an EXACT match, no trailing text. But the
+# working convention in this file is `## [Unreleased] — \`.NN\` in flight`, so the anchor never
+# matched and this whole block was a silent no-op (`|| true` swallowed it) for every release
+# that used the suffix. The header was then hand-corrected at each cut, which is why it looked
+# like it worked. Now: RENAME the in-flight header in place when one exists (that is what a cut
+# actually means), and fall back to inserting a fresh section when it does not.
 if ! grep -q "## \[$NEW\]" CHANGELOG.md 2>/dev/null; then
-    # Insert new version header after the [Unreleased] header line
-    sed -i "/^## \[Unreleased\]$/a\\
-\\
-## [$NEW] — $(date +%Y-%m-%d)" CHANGELOG.md 2>/dev/null || true
+    if grep -qE "^## \[Unreleased\]" CHANGELOG.md 2>/dev/null; then
+        # Promote the in-flight section to the released version. Anchored to the start of the
+        # line and applied ONCE (0,/re/) so narrative body text quoting the header cannot match.
+        sed -i "0,/^## \[Unreleased\].*$/s||## [$NEW] — $(date +%Y-%m-%d)|" CHANGELOG.md 2>/dev/null || true
+    else
+        # No in-flight section: insert a fresh one BEFORE the newest existing version header.
+        # (`1,/^$/a` was tried here and double-inserts — that range spans two lines and `a`
+        # appends after each of them.) `0,/re/` bounds it to the FIRST match.
+        sed -i "0,/^## \[[0-9]/s||## [$NEW] — $(date +%Y-%m-%d)\n\n&|" CHANGELOG.md 2>/dev/null || true
+    fi
 fi
 
 # 5. Roadmap `Current head:` stamp — the anchor `_doc_stamp_currency_gate` keys on.

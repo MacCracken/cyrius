@@ -99,5 +99,46 @@ n=$(warns)
 if [ "$n" -lt 1 ]; then echo "  FAIL axis 4 (anti-vacuous): struct-typed local assigned a non-pointer did NOT warn — the check is unreachable again, or was deleted"; fail=1
 else echo "  ok axis 4: struct-typed local assigned a non-pointer warns (check is reachable)"; fi
 
+# --- axis 5 (v6.5.28): the assignment path must consult the callee's DECLARED return type ---
+# v6.5.27's sign fix made this check reach real typed-pointer locals for the FIRST time, and
+# exposed the gap behind it: the DECLARATION path resolves the callee's return sid
+# (parse_decl.cyr: peek `IDENT (`, FINDFN, GFRS) but the ASSIGNMENT path did not. So
+# `var t: Str = mk();` was accepted while `t = mk();` — the same call, the same binding —
+# warned. Two paths disagreeing about one expression. Filed from abaco.
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+struct Str { p: i64; n: i64; }
+fn mk(): Str { var s: Str = 0; return s; }
+fn main(): i64 {
+    var t: Str = mk();
+    t = mk();
+    return 0;
+}
+var ec = main();
+syscall(60, ec);
+EOF
+build
+n=$(warns)
+if [ "$n" -ne 0 ]; then echo "  FAIL axis 5: 't = mk()' warned $n time(s) — the assignment path still ignores the callee's declared return type"; fail=1
+else echo "  ok axis 5: assigning a call whose declared return is a struct does not warn"; fi
+
+# --- axis 6 (ANTI-VACUOUS for axis 5): a genuine non-pointer assignment MUST still warn ---
+# Axis 5 asserts an absence; without this, suppressing the warning entirely would pass it.
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+struct Str { p: i64; n: i64; }
+fn main(): i64 {
+    var p: Str = 0;
+    p = 7;
+    return 0;
+}
+var ec = main();
+syscall(60, ec);
+EOF
+build
+n=$(warns)
+if [ "$n" -lt 1 ]; then echo "  FAIL axis 6 (anti-vacuous): 'p = 7' on a struct-typed local did NOT warn — the check was suppressed, not fixed"; fail=1
+else echo "  ok axis 6: a genuine non-pointer assignment still warns"; fi
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
 echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals"

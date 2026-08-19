@@ -1,6 +1,6 @@
 # `_distlib_named_deps` scans the manifest unanchored, so a `[deps.X]` written in COMMENT PROSE deletes X from the sidecar
 
-**Status:** ✅ **RESOLVED in v6.5.28 — archive at slot close.**
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
 
 > ### ✅ FIXED — scan anchored to a line start AND made comment-aware
 >

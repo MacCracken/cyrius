@@ -4,7 +4,43 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — `.28` in flight
+## [6.5.28] — 2026-08-18
+
+**Eight consumer-filed defects, fixed complete.** Seven of the eight were **silent** — wrong
+numbers, empty bundles, a check that failed with no message, a warning that fired on correct
+code. None of them failed loudly, which is why every one arrived from a consumer rather than
+from this repo's own gates.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,178,136 B**, **seed → cybs → cycc
+byte-identical**, `check.sh` **191 / 0**, corpus **276 / 276** (per-file exit-code loop, not the
+grep summary), cross-OS on REAL hardware — **ecb + ach + cass + pi, each `SELFHOST_OK`**.
+Bench (settled, load 0.31): `self_compile` **706 ms** (716 at `.27`), cycc size **unchanged at
+1,178,136 B**.
+
+⚠ **That "unchanged" size is real but needs reading correctly.** The text segment DID grow
+(0x0FBD88 → 0x0FBEC0, **+312 B**); the file size is identical only because the RW segment
+starts at the page-aligned file offset 0x0FC000 and the growth fit in the padding. There are
+**320 bytes of slack left** before the next code growth pushes the data segment onto a new page
+and the file size jumps a full 4 KB. A future release seeing a sudden +4096 B should look here
+first rather than hunting for bloat.
+
+### Fixed — `assigning non-pointer to typed pointer` fired on correct code (filed from abaco)
+
+`t = str_new(..)` warned; the identical initializer `var t: Str = str_new(..)` did not. Two
+paths disagreeing about one expression: the DECLARATION path resolves the callee's declared
+return sid (`parse_decl.cyr` — peek `IDENT (`, `FINDFN`, `GFRS`) and types the binding
+correctly, but the ASSIGNMENT path never looked at the callee at all, so a call returning
+exactly that pointer type read as "non-pointer".
+
+**This is the gap that was sitting BEHIND `.24`'s sign fix.** Until `.24` the local arm tested
+the wrong sign and so never reached a real typed-pointer local; making it reachable is what
+exposed this. A fix that had only silenced the warning would have re-hidden it, so the new gate
+axis 6 requires `p = 7` on a struct-typed local to still warn — mutation-proven against the
+pre-fix compiler (1 warning before, 0 after, axis 6 green throughout).
+
+⚠ The lookup **must** run before `PCMPE` consumes the RHS; afterwards the token cursor has
+moved past the callee name and `FINDFN` resolves nothing.
+
 
 ### Fixed — decimal float literals past ~9 significant digits parsed to a DIFFERENT number
 
@@ -30,6 +66,72 @@ matter how few fractional digits are kept. `tests/tcyr/crossos/float_literal_pre
 asserts that case specifically so the shortcut cannot pass, and lives in `crossos/` because
 the defective unpack was duplicated in all three backends — a Linux-only test would have
 proved one third of the fix.
+
+### Changed — ⚠ BREAKING: `cyrius fmt` now REWRITES FILES IN PLACE
+
+`cyrius fmt` was stdout-only, so there was no in-place way to fix a tree that `fmt --check`
+rejected. It now writes the file. `--dry` reports without touching anything (the old
+behaviour, if you were piping), `--verbose` writes *and* echoes to stdout. Scripts that
+relied on `cyrius fmt f.cyr > f.new` must move to `--dry`.
+
+### Fixed — `cyrfmt` never tracked parentheses, so its own output failed its own `--check`
+
+Every line was indented at `brace_depth * 4`, so a continuation line inside an unclosed `(`
+came out at the enclosing statement's indent — then `--check` compared byte-for-byte and
+exited **1 in complete silence**: no diff, no message, no line number. A consumer's CI failed
+with nothing to act on (filed from rupa 0.1.3, worked around by un-wrapping every call).
+
+**Maintainer contract:** canonical is **2 spaces per open-paren level**, **4 is ACCEPTED**,
+deeper is REJECTED — a tolerance exactly two shapes wide, so already-formatted trees do not
+churn and the check remains a check. Implemented by re-running the formatter at the comparison
+step rather than teaching the comparison to ignore indent differences, which would have
+accepted 8 and 12 too; the 12-space gate axis is the anti-vacuous one. `--check` now also
+NAMES the file and line it rejected.
+
+⚠ **Both the filing's headline and my first refutation of it were half wrong.** Wrapped calls
+are not rejected outright (the line break survives), but `fmt`'s own output really did fail
+`fmt --check`, so the unfixable-in-place state the filing described was real.
+
+### Fixed — `cyrius deps` read only the first 4095 bytes of a manifest
+
+A `cyrius.cyml` whose `[deps]` section sat past byte 4095 resolved to **zero** dependencies and
+said so in a line that was itself suppressed — a build that silently compiled against nothing.
+Raised to 65535 with **fail-closed** guards: a manifest that exceeds the window now errors
+instead of parsing a prefix. `audit` and `capacity` were also never in the `_auto_deps()` gate
+(the third instance of that omission).
+
+### Fixed — a transitive stdlib pull dropped the consumer's own top-level include
+
+Pulling a dep that itself pulled a dep discarded the include the consumer had asked for
+directly, so a symbol the consumer had explicitly included went undefined. Fixed with
+`_dep_push_include_once` plus a seen-guard that services top-level pushes rather than letting
+the transitive walk own the list.
+
+### Fixed — `cyrius distlib` scanned for named deps unanchored, and emitted empty sidecars
+
+Two distinct filings, one subsystem. The `[deps] stdlib` key-scan matched the key spelled
+**inside a quoted value** — bayan's `[package] description` says "foldable into stdlib per the
+sandhi pattern" 533 bytes above the real `[deps]`, so the parse grabbed the `[build]` section
+header, returned empty, and `break`ed anyway: `cyrius distlib` exited 1 on a bundle that was
+provably correct, with errors never incremented so even the "N deps resolved" line was
+suppressed. Now anchored and comment-aware. Separately, named profile sidecars came out empty
+under auto-prepend. ⭐ The two fixes **overlap on the filed repro** — reverting either alone
+still passes it — so the gate carries a mis-parse-onto-a-real-array axis and a
+trailing-inline-comment axis to separate them. Mutation-verified three ways.
+
+### Fixed — `fl_calloc` byte-looped over memory the kernel had already zeroed
+
+A fresh `mmap` is already zero, so the byte loop was pure cost on the allocation path. Now a
+fast path returns directly when the class is fresh and poison mode is off, and the remaining
+zeroing runs 8 bytes at a time. Added an explicit **poison mode** (`fl_poison_enable` /
+`fl_poison_disable` / `fl_poison_active` / `fl_poison_byte`, fill `0xA5`) so use-after-free is
+findable without paying for it in production builds.
+
+### Changed — Windows syscall surface + stdlib re-vendor sweep
+
+`SYS_IOCTL`, `sys_getpid`, `sys_getppid`, `sys_access` and `sys_socketpair` added to
+`lib/syscalls_windows.cyr`. sankoch folded at **2.7.8** (pin-only, upstream now reads
+`cyrius = "6.5.26"`); sandhi, vani, yukti and ganita re-vendored in the same sweep.
 
 ### Changed — patra 1.13.0 → 1.13.8 fold
 

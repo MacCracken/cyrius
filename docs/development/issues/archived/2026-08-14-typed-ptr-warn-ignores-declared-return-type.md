@@ -1,6 +1,6 @@
 # Assignment does not consult the callee's declared return type, so `t = str_new(…)` warns
 
-**Status:** 🟡 **OPEN**
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
 **Placement:** unpinned — 6.x-line backlog. Direct follow-up to
 [`archived/2026-08-13-f64-typed-binding-reassign-warns-as-pointer.md`](archived/2026-08-13-f64-typed-binding-reassign-warns-as-pointer.md),
 fixed at v6.5.27 ("the typed-pointer warning tested the wrong SIGN").

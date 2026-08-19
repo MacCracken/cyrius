@@ -1,6 +1,6 @@
 # `distlib` profile sidecars are EMPTY for any project that follows the auto-prepend convention
 
-**Status:** 🟡 **OPEN** — found while adding optional-feature bundle profiles to the ranga Rust→Cyrius port.
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
 **Placement:** unpinned — 6.5.x backlog. `cbt/commands.cyr` (distlib sidecar generation).
 **Discovered:** 2026-08-18, ranga M5 (`[lib.spectral]` / `[lib.hwaccel]` profiles)
 **Severity:** **Medium** — published metadata is false, silently. No build breaks, which is why it survives.

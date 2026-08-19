@@ -1,6 +1,6 @@
 # `cyrius fmt --check` fails silently on continuation indent, and `cyrius fmt` cannot fix it in place
 
-**Status:** 🟡 **OPEN — RE-TITLED and SCOPED 2026-08-18; maintainer decisions taken, implementation is the next bite.**
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
 
 > ### ⚠ THE ORIGINAL HEADLINE IS WRONG, AND SO WAS THE FIRST REFUTATION OF IT
 >

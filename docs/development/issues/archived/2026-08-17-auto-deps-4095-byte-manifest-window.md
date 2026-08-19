@@ -1,6 +1,6 @@
 # `_auto_deps` reads only the first 4095 bytes of `cyrius.cyml`, so a `[deps]` past that is invisible
 
-**Status:** 🟡 **OPEN** — filed from kavach 3.11.14, where it cost a bisect; worked around by moving commentary below the `[deps]` array and adding a repo-side CI gate. Verified against live code 2026-08-17: `cbt/deps.cyr:1983-1984` still allocates 4096 and reads 4095, and the repro below still reproduces on 6.5.27.
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
 **Placement:** unpinned — 6.x-line backlog. Resolver/toolchain item — never 7.x.
 **Discovered:** 2026-08-17 while documenting a *different* dep bug in kavach's `cyrius.cyml`. The comment explaining that bug pushed `[deps]` from byte 3676 to 5288 and broke the build.
 **Severity:** Medium — hard build failure with a workaround, but the diagnostic is actively misleading and the trigger is *writing a comment*. See the amplifier note below.

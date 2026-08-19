@@ -1491,6 +1491,23 @@ fn _PARSE_STMT_IMPL(S): i64 {
             elif (compound_op == 39) { ESHRCL(S); }
             }   # close the v6.4.57 non-float (integer-op) else
         } else {
+            # v6.5.28 — capture the callee's DECLARED return sid BEFORE the RHS is consumed.
+            # The declaration path already does this (parse_decl.cyr:2352-2362: peek
+            # `IDENT (`, FINDFN, GFRS) — which is why `var t = str_new(..)` correctly types
+            # `t` as a Str. The ASSIGNMENT path never did, so `t = str_new(..)` on that same
+            # binding warned "assigning non-pointer to typed pointer" about a call that
+            # returns exactly that pointer. Filed from abaco after v6.5.27's sign fix made
+            # the check reach real typed-pointer locals for the FIRST time and exposed the
+            # gap sitting behind it (2026-08-14-typed-ptr-warn-ignores-declared-return-type).
+            # ⚠ Must be read BEFORE PCMPE — afterwards the token cursor has moved past the
+            # callee name and FINDFN would resolve nothing.
+            _asg_ret_sid = 0;
+            if (PEEKT(S) == 2) {
+                if (TOKTYP(S, GTI(S) + 1) == 10) {
+                    var _ar_fi = FINDFN(S, PEEKV(S));
+                    if (_ar_fi >= 0) { _asg_ret_sid = GFRS(S, _ar_fi); }
+                }
+            }
             PCMPE(S);
         }
         # Type check at assignment
@@ -1516,7 +1533,12 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # accumulator in every consumer would have emitted a bogus warning.
                 # Filed as 2026-08-13-f64-typed-binding-reassign-warns-as-pointer plus
                 # the wider inverted-sign finding (roadmap Slot 1 item (d)).
-                if (lt < 0) {
+                # v6.5.28 — a call whose DECLARED return sid is a struct (> 0) IS a typed
+                # pointer, even though the call itself leaves the expression pointer-scale at
+                # 0. Without this the warning fired on `t = str_new(..)` while the identical
+                # initializer `var t = str_new(..)` was accepted — the two paths disagreeing
+                # about the same expression.
+                if (lt < 0 && _asg_ret_sid <= 0) {
                     if (aps == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); }
                 }
             }
