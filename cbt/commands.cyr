@@ -1195,8 +1195,30 @@ fn cmd_clean(): i64 {
 # Quality commands — delegate to companion tools
 # ================================================================
 
+# v6.5.28 — `mode`: 0 = WRITE IN PLACE (the new default), 1 = --check, 2 = --dry
+# (report what would change, touch nothing), 3 = --verbose (write in place AND echo to stdout).
+#
+# ⚠ BREAKING CLI CHANGE, taken deliberately (maintainer 2026-08-18). `cyrius fmt <file>` used
+# to print to stdout and never touch the file, so `--check` could flag a file the tool gave
+# you no in-place way to fix — the state rupa hit and worked around by un-wrapping every call.
+# Scripts that relied on the old stdout-only behaviour move to `--dry` (report) or
+# `--verbose` (write + echo).
 fn cmd_fmt(file, check_mode): i64 {
     var cyrfmt = make_path(_tools_dir, "cyrfmt");
+    if (check_mode == 2) {
+        # --dry: run the CHECK (which never writes) and translate its verdict, so "would
+        # change" and "is not canonical" cannot drift apart — they are the same question.
+        var drc = run_tool(cyrfmt, "--check", file, 0);
+        if (drc == 0) { println("cyrius fmt --dry: already canonically formatted"); return 0; }
+        println("cyrius fmt --dry: WOULD reformat (see the diagnostic above); file left unchanged");
+        return drc;
+    }
+    if (check_mode == 3) {
+        # --verbose: write in place, then echo the canonical result to stdout.
+        var vrc = run_tool(cyrfmt, "--write", file, 0);
+        if (vrc != 0) { return vrc; }
+        return run_tool(cyrfmt, file, 0, 0);
+    }
     if (check_mode == 1) {
         # v5.8.42: cyrfmt main parses `--check` ONLY at argv(1).
         # Pre-fix this arg order was reversed (file, "--check"),
@@ -1209,7 +1231,8 @@ fn cmd_fmt(file, check_mode): i64 {
         # exit non-zero on drift.
         return run_tool(cyrfmt, "--check", file, 0);
     }
-    return run_tool(cyrfmt, file, 0, 0);
+    # DEFAULT: rewrite in place (was: print to stdout and leave the file alone).
+    return run_tool(cyrfmt, "--write", file, 0);
 }
 
 # cyrius hooks install — copy the repo's build-artifact pre-commit hook

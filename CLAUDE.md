@@ -422,7 +422,7 @@ per-session memory files so they survive environment changes.
   67-name class, which is structurally the same error as the retired "≤6 args" rule: a partial
   observation written down as a language rule. Read the table, don't extend the list here.
 - tcyr files MUST end `var r = assert_summary();` (or an explicit exit syscall) so success exits 0. Name tests topically, never temporally ("pass2"/"v3" — 20-yr QA pet peeve).
-- cyrfmt flattens multi-line call continuations to 4-space indent — write them that way up front.
+- **cyrfmt continuation indent is a FORMATTER CONTRACT, not an authoring chore (v6.5.28).** A wrapped call's continuation lines are indented **2 spaces per open paren level** (canonical, what `cyrius fmt` emits); **4 per level is also accepted** by `--check`; anything deeper is rejected — accepting everything would stop it being a check. `cyrius fmt <file>` now **rewrites in place**; `--dry` reports without touching the file, `--verbose` writes and echoes, `--check` exits 1 **and says which line**. ⚠ This line used to read *"cyrfmt flattens multi-line call continuations to 4-space indent — write them that way up front"* — i.e. the tool's limitation written down as a rule for authors to pre-comply with, the same shape as the retired "≤6 args" rule. cyrfmt indented from BRACE depth only and never tracked parens; it does now.
 - aarch64 stdlib syscall numbers that collide with an x86 number in ESYSXLAT get silently
   mis-remapped — use the x86 number + an ESYSXLAT entry. **When BOTH candidates are already
   owned** (the native aarch64 number is eaten by an x86-compat shim *and* the x86 number is

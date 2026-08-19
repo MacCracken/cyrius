@@ -20,6 +20,12 @@ include "lib/args.cyr"
 var _out_buf: i64 = 0;
 var _out_pos: i64 = 0;
 var _check_mode: i64 = 0;
+# v6.5.28 — spaces of indent added per open-paren level on a continuation line.
+# 2 is CANONICAL (what cyrfmt emits). `--check` also ACCEPTS 4 by re-running with this set to
+# 4; anything else is rejected. Maintainer 2026-08-18: "I'd rather have 2-space indents and
+# accept 4 but nothing more; else it wouldn't be a format check." A single accepted alternate
+# keeps already-formatted trees from churning without turning the check into a no-op.
+var _cont_step: i64 = 2;
 var _write_mode: i64 = 0;
 # Max file size cyrfmt will read/format in one pass (1028KB). Largest real
 # source today is ~160KB; vendored stdlib bundles (mabda ~834KB) are the real
@@ -59,6 +65,15 @@ fn emit_spaces(n): i64 {
 
 fn format_file(buf, total): i64 {
     var depth = 0;
+    # v6.5.28 — PAREN depth, tracked across lines alongside brace depth. cyrfmt indented
+    # every line at `depth * 4` from BRACE depth alone and did not look at parens at all, so
+    # a continuation line inside an unclosed `(` came out at the enclosing statement's indent
+    # — the "flattening" consumers hit. Filed from rupa 0.1.3, where `fmt --check` failed CI
+    # on every wrapped call with zero bytes of output.
+    # Maintainer decision 2026-08-18: canonical continuation indent is TWO spaces per open
+    # paren level; FOUR is ACCEPTED by --check; anything deeper is REJECTED — "else it
+    # wouldn't be a format check".
+    var pdepth = 0;
     var pos = 0;
     # v6.5.18: literal state is CARRIED ACROSS physical lines. A cyrius string
     # literal may span lines two ways — a trailing `\` (which KEEPS the newline;
@@ -106,6 +121,8 @@ fn format_file(buf, total): i64 {
         # leading and trailing whitespace contain none of `#`, `"`, `'`, {, }.
         var opens = 0;
         var closes = 0;
+        var popens = 0;
+        var pcloses = 0;
         var bi = pos;
         while (bi < eol) {
             var bc = load8(buf + bi);
@@ -139,6 +156,8 @@ fn format_file(buf, total): i64 {
                 elif (bc == 39) { in_char = 1; }     # opening `'` of a char literal
                 elif (bc == 123) { opens += 1; }
                 elif (bc == 125) { closes += 1; }
+                elif (bc == 40) { popens += 1; }     # v6.5.28: `(`
+                elif (bc == 41) { pcloses += 1; }    # v6.5.28: `)`
             }
             bi += 1;
         }
@@ -187,7 +206,10 @@ fn format_file(buf, total): i64 {
             # Emit. v6.5.18: NO indent is written in front of a line that begins
             # inside a string literal — those leading bytes are the program's data.
             if (starts_in_str == 0) {
-                emit_spaces(depth * 4);
+                # `pdepth` is the paren depth as of the START of this line, so the statement
+                # that OPENS the call keeps its own brace indent and only its continuations
+                # are stepped in.
+                emit_spaces(depth * 4 + pdepth * _cont_step);
             }
             emit(buf + start, content_len);
             emit("\n", 1);
@@ -201,9 +223,33 @@ fn format_file(buf, total): i64 {
             }
             if (depth < 0) { depth = 0; }
         }
+        # v6.5.28 — carry paren depth. Done for EVERY line including blank/comment ones, so a
+        # comment inside a wrapped argument list does not reset the continuation indent.
+        pdepth = pdepth + popens - pcloses;
+        if (pdepth < 0) { pdepth = 0; }
 
         pos = eol + 1;
     }
+    return 0;
+}
+
+
+# v6.5.28 — print a small non-negative number without pulling in a dependency.
+# ⚠ NOT `fmt_int`: cyrfmt includes string/fmt/alloc/io/args but NOT `lib/vec.cyr`, and
+# fmt_int reaches `vec_get`, so calling it here SIGSEGVs (measured: exit 139, part-way
+# through the message). A four-line local routine beats adding a vec dependency to a tool
+# this small.
+fn _cf_print_num(v): i64 {
+    var d[24];
+    var i = 24;
+    var x = v;
+    if (x == 0) { print("0", 1); return 0; }
+    while (x > 0) {
+        i = i - 1;
+        store8(&d + i, 48 + (x % 10));
+        x = x / 10;
+    }
+    print(&d + i, 24 - i);
     return 0;
 }
 
@@ -260,11 +306,49 @@ fn main(): i64 {
 
     if (_check_mode == 1) {
         _out_buf = alloc(_MAX_FILE);
+        # Pass 1: the CANONICAL form (2-space continuation step).
         _out_pos = 0;
+        _cont_step = 2;
         format_file(buf, n);
-        # Compare formatted output against original
-        if (_out_pos != n) { return 1; }
-        if (memeq(buf, _out_buf, n) == 1) { return 0; }
+        if (_out_pos == n) {
+            if (memeq(buf, _out_buf, n) == 1) { return 0; }
+        }
+        # Pass 2: the ACCEPTED alternate (4-space step). Re-formatting is cheaper and far
+        # simpler than teaching the comparison to tolerate a range per line, and it keeps the
+        # tolerance EXACTLY two shapes wide — a comparison that "skipped indent differences"
+        # would accept 8 and 12 too, which is precisely what makes it not a check.
+        _out_pos = 0;
+        _cont_step = 4;
+        format_file(buf, n);
+        if (_out_pos == n) {
+            if (memeq(buf, _out_buf, n) == 1) { return 0; }
+        }
+        # ⛔ SAY WHAT DIFFERS. This used to `return 1` in SILENCE — no diff, no message, no
+        # line number — so a consumer's CI failed with nothing to act on. That silence was the
+        # uncontested half of the rupa filing; the indent rule above is the other half.
+        # Re-format canonically so the reported line refers to the form we actually want.
+        _out_pos = 0;
+        _cont_step = 2;
+        format_file(buf, n);
+        var dl = 1;
+        var di = 0;
+        var lim = n;
+        if (_out_pos < lim) { lim = _out_pos; }
+        while (di < lim) {
+            if (load8(buf + di) != load8(_out_buf + di)) { di = lim; }
+            else {
+                if (load8(buf + di) == 10) { dl = dl + 1; }
+                di = di + 1;
+            }
+        }
+        print("cyrfmt: ", 8);
+        print(path, strlen(path));
+        print(":", 1);
+        _cf_print_num(dl);
+        println(": not canonically formatted (first differing line)");
+        println("  canonical continuation indent is 2 spaces per open paren (4 also accepted)");
+        println("  run: cyrius fmt <file>            (rewrites in place)");
+        println("       cyrius fmt <file> --dry      (report only)");
         return 1;
     }
 

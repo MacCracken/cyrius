@@ -1769,7 +1769,7 @@ fn sandhi_conn_open_timed(addr, port, use_tls, sni_host, read_ms, write_ms): i64
 # the open-error classification ride it via the _sandhi_reqctx_*
 # helpers, so concurrent dispatches don't share those words.
 fn _sandhi_conn_finalize_with_early_data_a(a, fd, use_tls, sni_host,
-read_ms, write_ms, early_data, early_data_len, ctx): i64 {
+  read_ms, write_ms, early_data, early_data_len, ctx): i64 {
     if (read_ms > 0)  { _sandhi_conn_set_timeout_ms_a(a, fd, read_ms,  _SANDHI_SO_RCVTIMEO); }
     if (write_ms > 0) { _sandhi_conn_set_timeout_ms_a(a, fd, write_ms, _SANDHI_SO_SNDTIMEO); }
 
@@ -1884,7 +1884,7 @@ read_ms, write_ms, early_data, early_data_len, ctx): i64 {
 # routes cred-digest + open-error through the module globals.
 fn _sandhi_conn_finalize_a(a, fd, use_tls, sni_host, read_ms, write_ms): i64 {
     return _sandhi_conn_finalize_with_early_data_a(a, fd, use_tls, sni_host,
-    read_ms, write_ms, 0, 0, 0);
+      read_ms, write_ms, 0, 0, 0);
 }
 
 fn _sandhi_conn_finalize(fd, use_tls, sni_host, read_ms, write_ms): i64 {
@@ -1945,13 +1945,13 @@ fn _sandhi_conn_open_v6_fully_timed_a(a, addr16, port, use_tls, sni_host, connec
 
 fn _sandhi_conn_open_v6_fully_timed(addr16, port, use_tls, sni_host, connect_ms, read_ms, write_ms): i64 {
     return _sandhi_conn_open_v6_fully_timed_a(
-    default_alloc(), addr16, port, use_tls, sni_host,
-    connect_ms, read_ms, write_ms, 0);
+      default_alloc(), addr16, port, use_tls, sni_host,
+      connect_ms, read_ms, write_ms, 0);
 }
 
 # 1.3.2 — v6 variant of the early-data-aware open path.
 fn _sandhi_conn_open_v6_fully_timed_with_early_data_a(a, addr16, port,
-use_tls, sni_host, connect_ms, read_ms, write_ms, early_data, early_data_len, ctx): i64 {
+  use_tls, sni_host, connect_ms, read_ms, write_ms, early_data, early_data_len, ctx): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS is IPv4-only today (no AF_INET6; SYS_SOCKET / SYS_CONNECT undefined).
     # Fail the v6 early-data path cleanly; the client falls back to v4.
@@ -1994,7 +1994,7 @@ use_tls, sni_host, connect_ms, read_ms, write_ms, early_data, early_data_len, ct
         }
     }
     return _sandhi_conn_finalize_with_early_data_a(a, fd, use_tls, sni_host,
-    read_ms, write_ms, early_data, early_data_len, ctx);
+      read_ms, write_ms, early_data, early_data_len, ctx);
     #endif
 }
 
@@ -2004,7 +2004,7 @@ use_tls, sni_host, connect_ms, read_ms, write_ms, early_data, early_data_len, ct
 # are byte-identical to pre-1.6.9.
 fn sandhi_conn_open_fully_timed_a(a, addr, port, use_tls, sni_host, connect_ms, read_ms, write_ms): i64 {
     return _sandhi_conn_open_fully_timed_ctx_a(a, addr, port, use_tls, sni_host,
-    connect_ms, read_ms, write_ms, 0);
+      connect_ms, read_ms, write_ms, 0);
 }
 
 # 1.6.9 — ctx-threading v4 timed open. Internal: the buffered dispatch
@@ -2047,8 +2047,8 @@ fn _sandhi_conn_open_fully_timed_ctx_a(a, addr, port, use_tls, sni_host, connect
 
 fn sandhi_conn_open_fully_timed(addr, port, use_tls, sni_host, connect_ms, read_ms, write_ms): i64 {
     return sandhi_conn_open_fully_timed_a(
-    default_alloc(), addr, port, use_tls, sni_host,
-    connect_ms, read_ms, write_ms);
+      default_alloc(), addr, port, use_tls, sni_host,
+      connect_ms, read_ms, write_ms);
 }
 
 # 1.3.2 — open with early-data attached. Internal-only; the public
@@ -2060,7 +2060,7 @@ fn sandhi_conn_open_fully_timed(addr, port, use_tls, sni_host, connect_ms, read_
 # check (`tls_session_get_max_early_data >= len`) happens inside
 # finalize against the cached session.
 fn _sandhi_conn_open_fully_timed_with_early_data_a(a, addr, port, use_tls,
-sni_host, connect_ms, read_ms, write_ms, early_data, early_data_len, ctx): i64 {
+  sni_host, connect_ms, read_ms, write_ms, early_data, early_data_len, ctx): i64 {
     _sandhi_reqctx_set_err(ctx, SANDHI_CONN_OPEN_OK);
 
     var sfd_r = tcp_socket();
@@ -2092,7 +2092,7 @@ sni_host, connect_ms, read_ms, write_ms, early_data, early_data_len, ctx): i64 {
     }
 
     return _sandhi_conn_finalize_with_early_data_a(a, fd, use_tls, sni_host,
-    read_ms, write_ms, early_data, early_data_len, ctx);
+      read_ms, write_ms, early_data, early_data_len, ctx);
 }
 
 # Send `len` bytes through the connection. Returns bytes sent, 0 on
@@ -2967,9 +2967,9 @@ fn _sandhi_resp_headers_end(buf, blen): i64 {
     var i = 0;
     while (i + 3 < blen) {
         if (load8(buf + i) == 13
-        && load8(buf + i + 1) == 10
-        && load8(buf + i + 2) == 13
-        && load8(buf + i + 3) == 10) {
+          && load8(buf + i + 1) == 10
+          && load8(buf + i + 2) == 13
+          && load8(buf + i + 3) == 10) {
             return i;
         }
         i = i + 1;
@@ -3177,8 +3177,8 @@ fn _sandhi_resp_merge_trailers_a(a, buf, blen, start, headers): i64 {
         # Find ':' separating name from value.
         var colon = off;
         while (colon < blen && load8(buf + colon) != 58
-        && load8(buf + colon) != 13
-        && load8(buf + colon) != 10) {
+          && load8(buf + colon) != 13
+          && load8(buf + colon) != 10) {
             colon = colon + 1;
         }
         if (colon >= blen || load8(buf + colon) != 58) { return 0; }
@@ -3231,12 +3231,12 @@ fn _sandhi_resp_is_chunked(headers): i64 {
     var i = 0;
     while (load8(te + i) != 0) {
         if (load8(te + i) == 99
-        && load8(te + i + 1) == 104
-        && load8(te + i + 2) == 117
-        && load8(te + i + 3) == 110
-        && load8(te + i + 4) == 107
-        && load8(te + i + 5) == 101
-        && load8(te + i + 6) == 100) {
+          && load8(te + i + 1) == 104
+          && load8(te + i + 2) == 117
+          && load8(te + i + 3) == 110
+          && load8(te + i + 4) == 107
+          && load8(te + i + 5) == 101
+          && load8(te + i + 6) == 100) {
             return 1;
         }
         i = i + 1;
@@ -3574,13 +3574,13 @@ fn _sandhi_resolve_read_resolv_conf_a(a): i64 {
             while (i < n && load8(buf + i) != 10) { i = i + 1; }
             i = i + 1;
         } elif (i + 10 < n && memeq(buf + i, "nameserver", 10) == 1
-        && (load8(buf + i + 10) == 32 || load8(buf + i + 10) == 9)) {
+          && (load8(buf + i + 10) == 32 || load8(buf + i + 10) == 9)) {
             # Found "nameserver" — advance past whitespace, read up to ws/EOL.
             i = i + 10;
             while (i < n && (load8(buf + i) == 32 || load8(buf + i) == 9)) { i = i + 1; }
             var ns_start = i;
             while (i < n && load8(buf + i) != 32 && load8(buf + i) != 9
-            && load8(buf + i) != 13 && load8(buf + i) != 10) {
+              && load8(buf + i) != 13 && load8(buf + i) != 10) {
                 i = i + 1;
             }
             var nlen = i - ns_start;
@@ -3759,7 +3759,7 @@ fn _sandhi_resolve_name_eq_a(a, buf, blen, off_a, off_b): i64 {
     var la_cell = alloc_via(a, 8);
     var lb_cell = alloc_via(a, 8);
     if (pa_cell == 0 || pb_cell == 0 || ha_cell == 0 || hb_cell == 0
-    || la_buf  == 0 || lb_buf  == 0 || la_cell == 0 || lb_cell == 0) { return 0; }
+      || la_buf  == 0 || lb_buf  == 0 || la_cell == 0 || lb_cell == 0) { return 0; }
     store64(pa_cell, off_a);
     store64(pb_cell, off_b);
     store64(ha_cell, 0);
@@ -3810,7 +3810,7 @@ fn _sandhi_resolve_name_eq(buf, blen, off_a, off_b): i64 {
 # The owner-name match is the anti-answer-substitution guard: a record
 # is only ever considered for a name we are already asking about.
 fn _sandhi_resolve_find_rr_a(a, buf, blen, ancount, ans_start, name_off, want_type,
-rdata_cell, rdlen_cell, cname_cell): i64 {
+  rdata_cell, rdlen_cell, cname_cell): i64 {
     var found_cname = 0;
     var off = ans_start;
     var i = 0;
@@ -3897,7 +3897,7 @@ fn _sandhi_resolve_parse_response_a(a, buf, blen, expected_id): i64 {
     var hops = 0;
     while (hops <= _SANDHI_RESOLVE_MAX_CNAME_HOPS) {
         var r = _sandhi_resolve_find_rr_a(a, buf, blen, ancount, ans_start, cur,
-        _SANDHI_RR_A, rdata_cell, rdlen_cell, cname_cell);
+          _SANDHI_RR_A, rdata_cell, rdlen_cell, cname_cell);
         if (r < 0) { return 0 - 1; }
         if (r == 1) {
             if (load64(rdlen_cell) != 4) { return 0 - 1; }
@@ -3978,7 +3978,7 @@ fn _sandhi_resolve_parse_response_aaaa_a(a, buf, blen, expected_id): i64 {
     var hops = 0;
     while (hops <= _SANDHI_RESOLVE_MAX_CNAME_HOPS) {
         var r = _sandhi_resolve_find_rr_a(a, buf, blen, ancount, ans_start, cur,
-        _SANDHI_RR_AAAA, rdata_cell, rdlen_cell, cname_cell);
+          _SANDHI_RR_AAAA, rdata_cell, rdlen_cell, cname_cell);
         if (r < 0) { return 0; }
         if (r == 1) {
             if (load64(rdlen_cell) != 16) { return 0; }
@@ -4263,7 +4263,7 @@ fn _sandhi_client_build_request(method, full_path, host_header, user_headers, bo
 
 fn _sandhi_client_build_request_v(method, full_path, host_header, user_headers, body_len, keep_alive): i64 {
     return _sandhi_client_build_request_va(default_alloc(), method, full_path,
-    host_header, user_headers, body_len, keep_alive);
+      host_header, user_headers, body_len, keep_alive);
 }
 
 fn _sandhi_client_build_request_va(a, method, full_path, host_header, user_headers, body_len, keep_alive): i64 {
@@ -4363,10 +4363,10 @@ fn _sandhi_client_build_request_va(a, method, full_path, host_header, user_heade
 # Outer trace wrapper — opt-in span via sandhi_trace_enable(1). Span
 # no-op by default; the inner does all the work either way.
 fn _sandhi_http_do_a(a, method, url, user_headers, body, body_len, max_bytes,
-connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
+  connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
     sandhi_trace_begin("sandhi.http");
     var r = _sandhi_http_do_impl_a(a, method, url, user_headers, body, body_len,
-    max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx);
+      max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx);
     sandhi_trace_end();
     return r;
 }
@@ -4374,9 +4374,9 @@ connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
 # Bare wrapper — ctx=0 routes the per-request state (0-RTT / cred /
 # policy / open-err) through the module globals (single-threaded).
 fn _sandhi_http_do(method, url, user_headers, body, body_len, max_bytes,
-connect_ms, read_ms, write_ms, total_ms, pool): i64 {
+  connect_ms, read_ms, write_ms, total_ms, pool): i64 {
     return _sandhi_http_do_a(default_alloc(), method, url, user_headers, body, body_len,
-    max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, 0);
+      max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, 0);
 }
 
 # 1.3.2 — request-method safety check for TLS 1.3 0-RTT. Per
@@ -4469,7 +4469,7 @@ fn _sandhi_http_clamp_ms(raw_ms, deadline_ms): i64 {
 # buffer. Pool ops keep using the pool's own allocator (per
 # `_sandhi_pool_alloc`) — pool entries outlive any per-request arena.
 fn _sandhi_http_do_impl_a(a, method, url, user_headers, body, body_len, max_bytes,
-connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
+  connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
     sandhi_prof_reset();
     var u = sandhi_url_parse_a(a, url);
     sandhi_prof_capture(SANDHI_PROF_PHASE_URL_PARSE_END);
@@ -4526,7 +4526,7 @@ connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
     var full_path = _sandhi_client_full_path_a(a, u);
     var host_hdr = _sandhi_client_host_header_a(a, u);
     var req = _sandhi_client_build_request_va(a, method, full_path, host_hdr,
-    user_headers, body_len, keep_alive);
+      user_headers, body_len, keep_alive);
     sandhi_prof_capture(SANDHI_PROF_PHASE_REQ_BUILD_END);
 
     if (conn == 0) {
@@ -4553,11 +4553,11 @@ connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
         # for finalize to consider 0-RTT.
         var use_0rtt = 0;
         if (has_policy == 0
-        && _sandhi_reqctx_allow_0rtt(ctx) == 1
-        && use_tls == 1
-        && _sandhi_method_is_replay_safe(method) == 1
-        && tls_supports_early_data() == 1
-        && sandhi_session_cache_enabled() == 1) {
+          && _sandhi_reqctx_allow_0rtt(ctx) == 1
+          && use_tls == 1
+          && _sandhi_method_is_replay_safe(method) == 1
+          && tls_supports_early_data() == 1
+          && sandhi_session_cache_enabled() == 1) {
             use_0rtt = 1;
         }
         var ed_ptr = 0;
@@ -4569,18 +4569,18 @@ connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
         if (addr6 != 0) {
             if (use_0rtt == 1) {
                 conn = _sandhi_conn_open_v6_fully_timed_with_early_data_a(a, addr6,
-                port, use_tls, host, eff_connect, read_ms, write_ms, ed_ptr, ed_len, ctx);
+                  port, use_tls, host, eff_connect, read_ms, write_ms, ed_ptr, ed_len, ctx);
             } else {
                 conn = _sandhi_conn_open_v6_fully_timed_a(a, addr6, port, use_tls, host,
-                eff_connect, read_ms, write_ms, ctx);
+                  eff_connect, read_ms, write_ms, ctx);
             }
         } else {
             if (use_0rtt == 1) {
                 conn = _sandhi_conn_open_fully_timed_with_early_data_a(a, addr,
-                port, use_tls, host, eff_connect, read_ms, write_ms, ed_ptr, ed_len, ctx);
+                  port, use_tls, host, eff_connect, read_ms, write_ms, ed_ptr, ed_len, ctx);
             } else {
                 conn = _sandhi_conn_open_fully_timed_ctx_a(a, addr, port, use_tls, host,
-                eff_connect, read_ms, write_ms, ctx);
+                  eff_connect, read_ms, write_ms, ctx);
             }
         }
         # 1.4.6 — clear the policy hook override + run the post-handshake
@@ -4604,7 +4604,7 @@ connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
     var resp = 0;
     if (keep_alive == 1) {
         resp = _sandhi_http_exchange_keepalive_a(a, conn, req, body, body_len, max_bytes,
-        deadline_ms, pool, host, port, use_tls);
+          deadline_ms, pool, host, port, use_tls);
     } else {
         resp = _sandhi_http_exchange_a(a, conn, req, body, body_len, max_bytes, deadline_ms);
     }
@@ -4613,9 +4613,9 @@ connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
 }
 
 fn _sandhi_http_do_impl(method, url, user_headers, body, body_len, max_bytes,
-connect_ms, read_ms, write_ms, total_ms, pool): i64 {
+  connect_ms, read_ms, write_ms, total_ms, pool): i64 {
     return _sandhi_http_do_impl_a(default_alloc(), method, url, user_headers, body, body_len,
-    max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, 0);
+      max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, 0);
 }
 
 # Send request, receive response, close connection. Extracted so the
@@ -4720,7 +4720,7 @@ fn _sandhi_http_exchange(conn, req, body, body_len, max_bytes, deadline_ms): i64
 # allocator (`_sandhi_pool_alloc`) — pool entries outlive any per-
 # request arena, so the put-back path is intentionally arena-skipping.
 fn _sandhi_http_exchange_keepalive_a(a, conn, req, body, body_len, max_bytes,
-deadline_ms, pool, host, port, use_tls): i64 {
+  deadline_ms, pool, host, port, use_tls): i64 {
     if (deadline_ms > 0 && clock_now_ms() >= deadline_ms) {
         sandhi_conn_close(conn);
         return _sandhi_resp_err_a(a, SANDHI_ERR_TIMEOUT);
@@ -4798,7 +4798,7 @@ deadline_ms, pool, host, port, use_tls): i64 {
     var ek = sandhi_http_err_kind(resp);
     var put_back = 0;
     if (ek == SANDHI_OK && server_sent_close == 0
-    && status >= 200 && status < 400) {
+      && status >= 200 && status < 400) {
         put_back = 1;
     }
     if (put_back == 1) {
@@ -4810,9 +4810,9 @@ deadline_ms, pool, host, port, use_tls): i64 {
 }
 
 fn _sandhi_http_exchange_keepalive(conn, req, body, body_len, max_bytes,
-deadline_ms, pool, host, port, use_tls): i64 {
+  deadline_ms, pool, host, port, use_tls): i64 {
     return _sandhi_http_exchange_keepalive_a(default_alloc(), conn, req, body, body_len,
-    max_bytes, deadline_ms, pool, host, port, use_tls);
+      max_bytes, deadline_ms, pool, host, port, use_tls);
 }
 
 # ================================================================
@@ -5019,7 +5019,7 @@ fn _sandhi_is_redirect(status): i64 {
 fn _sandhi_resolve_location_a(a, base_url, location): i64 {
     if (location == 0) { return 0; }
     if (_sandhi_url_sceq(location, "http://", 7) == 1
-    || _sandhi_url_sceq(location, "https://", 8) == 1) {
+      || _sandhi_url_sceq(location, "https://", 8) == 1) {
         var llen = strlen(location);
         var out = alloc_via(a, llen + 1);
         if (out == 0) { return 0; }
@@ -5096,7 +5096,7 @@ fn _sandhi_url_is_https_downgrade(prev_url, next_url): i64 {
     var nu = sandhi_url_parse(next_url);
     if (pu == 0 || nu == 0) { return 0; }
     if (sandhi_url_scheme(pu) == SANDHI_URL_HTTPS
-    && sandhi_url_scheme(nu) == SANDHI_URL_HTTP) { return 1; }
+      && sandhi_url_scheme(nu) == SANDHI_URL_HTTP) { return 1; }
     return 0;
 }
 
@@ -5146,7 +5146,7 @@ fn _sandhi_strip_sensitive_headers(src): i64 {
 #     the same; matches RFC 7235 §2.2 spirit even though the spec
 #     doesn't mandate.)
 fn _sandhi_http_follow_a(a, method, url, headers, body, body_len, max_hops,
-max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
+  max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
     var m = method;
     var u = url;
     var b = body;
@@ -5154,7 +5154,7 @@ max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
     var h = headers;
     var hops = 0;
     var r = _sandhi_http_do_a(a, m, u, h, b, bl, max_bytes,
-    connect_ms, read_ms, write_ms, total_ms, pool, ctx);
+      connect_ms, read_ms, write_ms, total_ms, pool, ctx);
     while (hops < max_hops) {
         if (_sandhi_is_redirect(sandhi_http_status(r)) == 0) { return r; }
         var loc = sandhi_headers_get(sandhi_http_headers(r), "Location");
@@ -5179,15 +5179,15 @@ max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx): i64 {
         u = next;
         hops = hops + 1;
         r = _sandhi_http_do_a(a, m, u, h, b, bl, max_bytes,
-        connect_ms, read_ms, write_ms, total_ms, pool, ctx);
+          connect_ms, read_ms, write_ms, total_ms, pool, ctx);
     }
     return r;
 }
 
 fn _sandhi_http_follow(method, url, headers, body, body_len, max_hops,
-max_bytes, connect_ms, read_ms, write_ms, total_ms, pool): i64 {
+  max_bytes, connect_ms, read_ms, write_ms, total_ms, pool): i64 {
     return _sandhi_http_follow_a(default_alloc(), method, url, headers, body, body_len,
-    max_hops, max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, 0);
+      max_hops, max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, 0);
 }
 
 # ================================================================
@@ -5231,10 +5231,10 @@ fn _sandhi_http_dispatch_a(a, method, url, headers, body, body_len, opts): i64 {
     if (sandhi_http_options_follow(opts) == 1) {
         var hops = sandhi_http_options_hops(opts);
         r = _sandhi_http_follow_a(a, method, url, headers, body, body_len, hops,
-        max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx);
+          max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx);
     } else {
         r = _sandhi_http_do_a(a, method, url, headers, body, body_len,
-        max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx);
+          max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, ctx);
     }
     return r;
 }
@@ -5565,7 +5565,7 @@ fn _sandhi_pool_take(pool, host, port, tls): i64 {
         var conn = load64(ic + SANDHI_IDLE_OFF_CONN);
         var last = load64(ic + SANDHI_IDLE_OFF_LAST_MS);
         store64(pool + SANDHI_POOL_OFF_TOTAL_IDLE,
-        load64(pool + SANDHI_POOL_OFF_TOTAL_IDLE) - 1);
+          load64(pool + SANDHI_POOL_OFF_TOTAL_IDLE) - 1);
         if (now - last > idle_to) {
             # Stale — peer may have closed it. Close + try next.
             if (conn != 0) { sandhi_conn_close(conn); }
@@ -5602,7 +5602,7 @@ fn _sandhi_pool_put(pool, host, port, tls, conn): i64 {
         }
         vec_remove(v, 0);
         store64(pool + SANDHI_POOL_OFF_TOTAL_IDLE,
-        load64(pool + SANDHI_POOL_OFF_TOTAL_IDLE) - 1);
+          load64(pool + SANDHI_POOL_OFF_TOTAL_IDLE) - 1);
     }
     var ic = _sandhi_pool_idle_conn_new_a(_sandhi_pool_alloc(pool), conn, clock_now_ms());
     if (ic == 0) {
@@ -5615,7 +5615,7 @@ fn _sandhi_pool_put(pool, host, port, tls, conn): i64 {
     }
     vec_push(v, ic);
     store64(pool + SANDHI_POOL_OFF_TOTAL_IDLE,
-    load64(pool + SANDHI_POOL_OFF_TOTAL_IDLE) + 1);
+      load64(pool + SANDHI_POOL_OFF_TOTAL_IDLE) + 1);
     return 0;
 }
 
@@ -6396,7 +6396,7 @@ fn sandhi_hpack_table_add_a(a, t, name, value): i64 {
     store64(t + SANDHI_HPACK_TBL_OFF_NAMES, new_names);
     store64(t + SANDHI_HPACK_TBL_OFF_VALUES, new_values);
     store64(t + SANDHI_HPACK_TBL_OFF_CUR_SIZE,
-    load64(t + SANDHI_HPACK_TBL_OFF_CUR_SIZE) + sz);
+      load64(t + SANDHI_HPACK_TBL_OFF_CUR_SIZE) + sz);
     return 0;
 }
 
@@ -7278,7 +7278,7 @@ fn sandhi_h2_conn_apply_settings_payload(c, payload, payload_len): i64 {
 
 fn sandhi_h2_conn_send_settings_ack_a(a, c): i64 {
     return sandhi_h2_conn_send_frame_a(a, c,
-    SANDHI_H2_FRAME_SETTINGS, SANDHI_H2_FLAG_ACK, 0, 0, 0);
+      SANDHI_H2_FRAME_SETTINGS, SANDHI_H2_FLAG_ACK, 0, 0, 0);
 }
 
 fn sandhi_h2_conn_send_settings_ack(c): i64 {
@@ -7368,7 +7368,7 @@ fn _h2_emit_method(h2c, method, hbuf, off): i64 {
     }
     # PUT / DELETE / PATCH / HEAD — emit literal with name idx 2 + value.
     return sandhi_hpack_encode_literal_indexed_name(enc, hbuf, off,
-    _SANDHI_H2_REQ_IDX_METHOD_GET, ":method", method);
+      _SANDHI_H2_REQ_IDX_METHOD_GET, ":method", method);
 }
 
 fn _h2_emit_scheme(h2c, scheme, hbuf, off): i64 {
@@ -7380,7 +7380,7 @@ fn _h2_emit_scheme(h2c, scheme, hbuf, off): i64 {
     }
     var enc = sandhi_h2_conn_enc_table(h2c);
     return sandhi_hpack_encode_literal_indexed_name(enc, hbuf, off,
-    _SANDHI_H2_REQ_IDX_SCHEME_HTTP, ":scheme", scheme);
+      _SANDHI_H2_REQ_IDX_SCHEME_HTTP, ":scheme", scheme);
 }
 
 fn _h2_emit_path(h2c, path, hbuf, off): i64 {
@@ -7389,13 +7389,13 @@ fn _h2_emit_path(h2c, path, hbuf, off): i64 {
     }
     var enc = sandhi_h2_conn_enc_table(h2c);
     return sandhi_hpack_encode_literal_indexed_name(enc, hbuf, off,
-    _SANDHI_H2_REQ_IDX_PATH_ROOT, ":path", path);
+      _SANDHI_H2_REQ_IDX_PATH_ROOT, ":path", path);
 }
 
 fn _h2_emit_authority(h2c, authority, hbuf, off): i64 {
     var enc = sandhi_h2_conn_enc_table(h2c);
     return sandhi_hpack_encode_literal_indexed_name(enc, hbuf, off,
-    _SANDHI_H2_REQ_IDX_AUTHORITY, ":authority", authority);
+      _SANDHI_H2_REQ_IDX_AUTHORITY, ":authority", authority);
 }
 
 # Emit one user header, allocating the lowercased-name copy from `a`.
@@ -7433,7 +7433,7 @@ fn _h2_emit_user_header(h2c, name, value, hbuf, off): i64 {
 # emitted in that exact order per RFC 7540 §8.1.2.1.
 
 fn sandhi_h2_request_encode_headers_a(a, h2c, method, scheme, path, authority,
-user_headers, hbuf): i64 {
+  user_headers, hbuf): i64 {
     var off = 0;
     off = _h2_emit_method(h2c, method, hbuf, off);
     off = _h2_emit_scheme(h2c, scheme, hbuf, off);
@@ -7464,9 +7464,9 @@ user_headers, hbuf): i64 {
 }
 
 fn sandhi_h2_request_encode_headers(h2c, method, scheme, path, authority,
-user_headers, hbuf): i64 {
+  user_headers, hbuf): i64 {
     return sandhi_h2_request_encode_headers_a(default_alloc(), h2c, method, scheme, path, authority,
-    user_headers, hbuf);
+      user_headers, hbuf);
 }
 
 # 1 if (name, value) is forbidden in an h2 header block per RFC 7540
@@ -7540,11 +7540,11 @@ fn _h2_streq_ci(a, b): i64 {
 # `_SANDHI_H2_ERR_*` sentinel on failure.
 
 fn sandhi_h2_request_send_a(a, h2c, method, scheme, path, authority,
-user_headers, body, body_len): i64 {
+  user_headers, body, body_len): i64 {
     var hbuf = alloc_via(a, _SANDHI_H2_REQ_HBUF_CAP);
     if (hbuf == 0) { return _SANDHI_H2_ERR_MALFORMED; }
     var hlen = sandhi_h2_request_encode_headers_a(a, h2c, method, scheme, path,
-    authority, user_headers, hbuf);
+      authority, user_headers, hbuf);
     if (hlen <= 0) { return _SANDHI_H2_ERR_MALFORMED; }
 
     var stream_id = sandhi_h2_conn_next_stream_id(h2c);
@@ -7554,7 +7554,7 @@ user_headers, body, body_len): i64 {
     var hflags = SANDHI_H2_FLAG_END_HEADERS;
     if (has_body == 0) { hflags = hflags | SANDHI_H2_FLAG_END_STREAM; }
     var hr = sandhi_h2_conn_send_frame(h2c, SANDHI_H2_FRAME_HEADERS,
-    hflags, stream_id, hbuf, hlen);
+      hflags, stream_id, hbuf, hlen);
     if (hr < 0) { return hr; }
 
     if (has_body == 1) {
@@ -7567,17 +7567,17 @@ user_headers, body, body_len): i64 {
             return _SANDHI_H2_ERR_BAD_LENGTH;
         }
         var dr = sandhi_h2_conn_send_frame(h2c, SANDHI_H2_FRAME_DATA,
-        SANDHI_H2_FLAG_END_STREAM,
-        stream_id, body, body_len);
+          SANDHI_H2_FLAG_END_STREAM,
+          stream_id, body, body_len);
         if (dr < 0) { return dr; }
     }
     return stream_id;
 }
 
 fn sandhi_h2_request_send(h2c, method, scheme, path, authority,
-user_headers, body, body_len): i64 {
+  user_headers, body, body_len): i64 {
     return sandhi_h2_request_send_a(default_alloc(), h2c, method, scheme, path, authority,
-    user_headers, body, body_len);
+      user_headers, body, body_len);
 }
 
 # --- response.cyr ---
@@ -7716,7 +7716,7 @@ fn _h2_handle_ping(h2c, hdr, payload): i64 {
     var flags = sandhi_h2_hdr_flags(hdr);
     if ((flags & SANDHI_H2_FLAG_ACK) != 0) { return 0; }
     return sandhi_h2_conn_send_frame(h2c, SANDHI_H2_FRAME_PING,
-    SANDHI_H2_FLAG_ACK, 0, payload, 8);
+      SANDHI_H2_FLAG_ACK, 0, payload, 8);
 }
 
 # ================================================================
@@ -7991,8 +7991,8 @@ fn sandhi_h2_request_a(a, h2c, method, url, user_headers, body, body_len): i64 {
     }
 
     var stream_id = sandhi_h2_request_send_a(a, h2c, method, scheme, full_path,
-    authority, user_headers,
-    body, body_len);
+      authority, user_headers,
+      body, body_len);
     if (stream_id < 0) { return _sandhi_resp_err_a(a, SANDHI_ERR_PROTOCOL); }
     return sandhi_h2_response_recv_a(a, h2c, stream_id);
 }
@@ -8064,10 +8064,10 @@ fn _sandhi_http_try_h2_promote_a(a, url, opts, host, port, pool): i64 {
         # (no SANDHI_REQCTX_* in scope), so pass 0 — the ctx==0 fallback, exactly
         # what the IPv4 sibling's public sandhi_conn_open_fully_timed_a defaults to.
         conn = _sandhi_conn_open_v6_fully_timed_a(a, addr6, port, 1, host,
-        connect_ms, read_ms, write_ms, 0);
+          connect_ms, read_ms, write_ms, 0);
     } else {
         conn = sandhi_conn_open_fully_timed_a(a, addr, port, 1, host,
-        connect_ms, read_ms, write_ms);
+          connect_ms, read_ms, write_ms);
     }
     _sandhi_alpn_advertise_h2 = 0;
 
@@ -8143,7 +8143,7 @@ fn _sandhi_http_auto_once_a(a, method, url, user_headers, body, body_len, opts):
     # drives the buffered `_sandhi_http_dispatch_a` path, not this one). The
     # 1.1 fallback reads those globals via do_impl's ctx==0 branch.
     return _sandhi_http_do_a(a, method, url, user_headers, body, body_len,
-    max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, 0);
+      max_bytes, connect_ms, read_ms, write_ms, total_ms, pool, 0);
 }
 
 fn _sandhi_http_auto_once(method, url, user_headers, body, body_len, opts): i64 {
@@ -8750,7 +8750,7 @@ fn _sandhi_sse_apply_line_a(a, ctx, buf, line_start, line_end): i64 {
     } elif (streq(name, "data") == 1) {
         var prev_data = load64(ctx + _SANDHI_SSE_CTX_OFF_DATA);
         store64(ctx + _SANDHI_SSE_CTX_OFF_DATA,
-        _sandhi_sse_data_append_a(a, prev_data, value));
+          _sandhi_sse_data_append_a(a, prev_data, value));
     } elif (streq(name, "id") == 1) {
         if (_sandhi_sse_value_has_nul(buf, line_start, line_end) == 0) {
             store64(ctx + _SANDHI_SSE_CTX_OFF_ID, value);
@@ -8798,9 +8798,9 @@ fn sandhi_sse_parse_a(a, buf, blen, remaining_out): i64 {
                     var d = load64(ctx + _SANDHI_SSE_CTX_OFF_DATA);
                     if (d == 0) { d = _sandhi_sse_dup_a(a, ""); }
                     var ev = sandhi_sse_event_new_a(a,
-                    load64(ctx + _SANDHI_SSE_CTX_OFF_EVENT), d,
-                    load64(ctx + _SANDHI_SSE_CTX_OFF_ID),
-                    load64(ctx + _SANDHI_SSE_CTX_OFF_RETRY));
+                      load64(ctx + _SANDHI_SSE_CTX_OFF_EVENT), d,
+                      load64(ctx + _SANDHI_SSE_CTX_OFF_ID),
+                      load64(ctx + _SANDHI_SSE_CTX_OFF_RETRY));
                     vec_push_a(a, events, ev);
                     _sandhi_sse_ctx_reset_a(a, ctx);
                 }
@@ -8944,7 +8944,7 @@ fn _sandhi_stream_headers_end(sb): i64 {
     var i = 0;
     while (i + 3 < n) {
         if (load8(p + i) == 13 && load8(p + i + 1) == 10
-        && load8(p + i + 2) == 13 && load8(p + i + 3) == 10) {
+          && load8(p + i + 2) == 13 && load8(p + i + 3) == 10) {
             return i + 4;
         }
         i = i + 1;
@@ -9127,7 +9127,7 @@ fn sandhi_http_stream_opts_a(a, url, method, user_headers, body, body_len, cb, c
         }
     }
     var conn = sandhi_conn_open_fully_timed_a(a, addr, sandhi_url_port(u), use_tls, sandhi_url_host(u),
-    eff_connect, read_ms, write_ms);
+      eff_connect, read_ms, write_ms);
     if (has_policy == 1) {
         conn = _sandhi_policy_post_open_a(a, conn, policy, 0);
     }
@@ -9295,8 +9295,8 @@ fn _sandhi_stream_body_loop_a(a, conn, body_sb, scratch, chunked, status, cb, ct
 
 fn _sandhi_stream_body_loop(conn, body_sb, scratch, chunked, status, cb, ctx, cap, deadline_ms): i64 {
     return _sandhi_stream_body_loop_a(
-    default_alloc(), conn, body_sb, scratch, chunked, status,
-    cb, ctx, cap, deadline_ms);
+      default_alloc(), conn, body_sb, scratch, chunked, status,
+      cb, ctx, cap, deadline_ms);
 }
 
 # Decode as many chunked frames as possible out of `in_sb` into
@@ -9504,7 +9504,7 @@ fn _sandhi_dl_open_drain_a(a, url, headers, opts): i64 {
         }
     }
     var conn = sandhi_conn_open_fully_timed_a(a, addr, sandhi_url_port(u), use_tls,
-    sandhi_url_host(u), eff_connect, read_ms, write_ms);
+      sandhi_url_host(u), eff_connect, read_ms, write_ms);
     if (has_policy == 1) {
         conn = _sandhi_policy_post_open_a(a, conn, policy, 0);
     }
@@ -10077,9 +10077,9 @@ fn _sandhi_json_dup(s): i64 {
 # Append a string field to `o`, allocating the dup'd key + value into `a`.
 fn sandhi_json_add_string_a(a, o, key, value): i64 {
     vec_push_a(a, o, _sandhi_json_entry_new_a(a,
-    _sandhi_json_dup_a(a, key),
-    _sandhi_json_dup_a(a, value),
-    SANDHI_JSON_STRING));
+        _sandhi_json_dup_a(a, key),
+        _sandhi_json_dup_a(a, value),
+        SANDHI_JSON_STRING));
     return 0;
 }
 
@@ -10095,9 +10095,9 @@ fn sandhi_json_add_int_a(a, o, key, value): i64 {
     memcpy(out, &tmp, n);
     store8(out + n, 0);
     vec_push_a(a, o, _sandhi_json_entry_new_a(a,
-    _sandhi_json_dup_a(a, key),
-    out,
-    SANDHI_JSON_RAW));
+        _sandhi_json_dup_a(a, key),
+        out,
+        SANDHI_JSON_RAW));
     return 0;
 }
 
@@ -10109,9 +10109,9 @@ fn sandhi_json_add_bool_a(a, o, key, value): i64 {
     var raw = "false";
     if (value == 1) { raw = "true"; }
     vec_push_a(a, o, _sandhi_json_entry_new_a(a,
-    _sandhi_json_dup_a(a, key),
-    _sandhi_json_dup_a(a, raw),
-    SANDHI_JSON_RAW));
+        _sandhi_json_dup_a(a, key),
+        _sandhi_json_dup_a(a, raw),
+        SANDHI_JSON_RAW));
     return 0;
 }
 
@@ -10121,9 +10121,9 @@ fn sandhi_json_add_bool(o, key, value): i64 {
 
 fn sandhi_json_add_null_a(a, o, key): i64 {
     vec_push_a(a, o, _sandhi_json_entry_new_a(a,
-    _sandhi_json_dup_a(a, key),
-    _sandhi_json_dup_a(a, "null"),
-    SANDHI_JSON_RAW));
+        _sandhi_json_dup_a(a, key),
+        _sandhi_json_dup_a(a, "null"),
+        SANDHI_JSON_RAW));
     return 0;
 }
 
@@ -10137,9 +10137,9 @@ fn sandhi_json_add_null(o, key): i64 {
 fn sandhi_json_add_object_a(a, o, key, child): i64 {
     var rendered = sandhi_json_build_a(a, child);
     vec_push_a(a, o, _sandhi_json_entry_new_a(a,
-    _sandhi_json_dup_a(a, key),
-    rendered,
-    SANDHI_JSON_RAW));
+        _sandhi_json_dup_a(a, key),
+        rendered,
+        SANDHI_JSON_RAW));
     return 0;
 }
 
@@ -10150,9 +10150,9 @@ fn sandhi_json_add_object(o, key, child): i64 {
 # Embed a pre-built raw JSON fragment, dup'd into `a`.
 fn sandhi_json_add_raw_a(a, o, key, raw_cstr): i64 {
     vec_push_a(a, o, _sandhi_json_entry_new_a(a,
-    _sandhi_json_dup_a(a, key),
-    _sandhi_json_dup_a(a, raw_cstr),
-    SANDHI_JSON_RAW));
+        _sandhi_json_dup_a(a, key),
+        _sandhi_json_dup_a(a, raw_cstr),
+        SANDHI_JSON_RAW));
     return 0;
 }
 
@@ -10265,7 +10265,7 @@ fn _sandhi_json_find_key(body, blen, start, key, key_len): i64 {
         if (load8(body + i) == 34) {
             # At a quote — check if it starts the target key.
             if (memeq(body + i + 1, key, key_len) == 1
-            && load8(body + i + 1 + key_len) == 34) {
+              && load8(body + i + 1 + key_len) == 34) {
                 # Skip "key"
                 var p = i + 2 + key_len;
                 # Skip whitespace + colon.
@@ -11904,8 +11904,8 @@ fn _sandhi_local_qname_a(a, name): i64 {
         var c5 = load8(s + 5);
         if (c0 == 46) {  # '.'
             if ((c1 == 108 || c1 == 76) && (c2 == 111 || c2 == 79)
-            && (c3 == 99 || c3 == 67) && (c4 == 97 || c4 == 65)
-            && (c5 == 108 || c5 == 76)) {
+              && (c3 == 99 || c3 == 67) && (c4 == 97 || c4 == 65)
+              && (c5 == 108 || c5 == 76)) {
                 has_suffix = 1;
             }
         }
@@ -12431,8 +12431,8 @@ fn sandhi_server_find_header_a(a, buf, blen, name): i64 {
     while (line_start < headers_end) {
         var line_end = _hsv_next_nl(buf, line_start, headers_end);
         if (line_start + nlen + 1 <= line_end
-        && _hsv_iceq(buf + line_start, name, nlen) == 1
-        && load8(buf + line_start + nlen) == 58) {
+          && _hsv_iceq(buf + line_start, name, nlen) == 1
+          && load8(buf + line_start + nlen) == 58) {
             var vs = line_start + nlen + 1;
             while (vs < line_end && load8(buf + vs) == 32) { vs = vs + 1; }
             var ve = line_end;
@@ -12658,8 +12658,8 @@ fn sandhi_server_get_param_a(a, path, name): i64 {
     pi = qmark;
     while (pi < plen) {
         if (pi + nlen + 1 <= plen
-        && memeq(path + pi, name, nlen) == 1
-        && load8(path + pi + nlen) == 61) {
+          && memeq(path + pi, name, nlen) == 1
+          && load8(path + pi + nlen) == 61) {
             var vs = pi + nlen + 1;
             var ve = vs;
             while (ve < plen && load8(path + ve) != 38) { ve = ve + 1; }
@@ -12765,7 +12765,7 @@ fn sandhi_server_send_response_a(a, cfd, code, msg, content_type, body, body_len
 
 fn sandhi_server_send_response(cfd, code, msg, content_type, body, body_len, extra_headers): i64 {
     return sandhi_server_send_response_a(default_alloc(), cfd, code, msg,
-    content_type, body, body_len, extra_headers);
+      content_type, body, body_len, extra_headers);
 }
 
 # 204 No Content with optional extra headers (CRLF-terminated cstr or 0).
@@ -13314,7 +13314,7 @@ fn _sandhi_server_stop_requested(ptr): i64 {
 fn _sandhi_server_arm_stop_poll(sfd, stop_ptr): i64 {
     if (stop_ptr == 0) { return 0; }
     return _sandhi_conn_set_timeout_ms(sfd, SANDHI_SERVER_STOP_POLL_MS,
-    _SANDHI_SO_RCVTIMEO);
+      _SANDHI_SO_RCVTIMEO);
 }
 
 # Resolve the cap for the server about to start and publish it to `_hsv_req_max`
@@ -14673,7 +14673,7 @@ fn sandhi_server_send_response_c_a(a, conn, code, msg, content_type, body, body_
 
 fn sandhi_server_send_response_c(conn, code, msg, content_type, body, body_len, extra_headers): i64 {
     return sandhi_server_send_response_c_a(default_alloc(), conn, code, msg,
-    content_type, body, body_len, extra_headers);
+      content_type, body, body_len, extra_headers);
 }
 
 fn sandhi_server_send_status_c_a(a, conn, code, msg): i64 {

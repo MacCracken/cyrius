@@ -2616,7 +2616,7 @@ fn where_validate_types(schema, ncols, pr): i64 {
     for (var i = 0; i < wcount; i = i + 1) {
         var cond = pr + PR_WHERE + i * WH_ENTRY_SZ;
         var ci = _wh_resolve_col(schema, ncols,
-        load64(cond + WH_COL_PTR), load64(cond + WH_COL_LEN));
+          load64(cond + WH_COL_PTR), load64(cond + WH_COL_LEN));
         if (ci >= 0) {
             var ct = load64(schema + SCH_START + ci * SCH_ENTRY_SZ + SCH_CTYPE);
             var vt = load64(cond + WH_VAL_TYPE);
@@ -2644,7 +2644,7 @@ fn where_eval(row, schema, ncols, pr): i64 {
     for (var i = 0; i < wcount; i = i + 1) {
         var cond = pr + PR_WHERE + i * WH_ENTRY_SZ;
         var col_idx = _wh_resolve_col(schema, ncols,
-        load64(cond + WH_COL_PTR), load64(cond + WH_COL_LEN));
+          load64(cond + WH_COL_PTR), load64(cond + WH_COL_LEN));
         if (col_idx < 0) {
             if (join == WH_AND) { result = 0; }
             continue;
@@ -2663,7 +2663,7 @@ fn where_eval(row, schema, ncols, pr): i64 {
         } elif (col_type == COL_STR) {
             if (val_type == COL_STR) {
                 hit = _cmp_str(row_read_str(row, off),
-                load64(cond + WH_STR_PTR), load64(cond + WH_STR_LEN), cmp);
+                  load64(cond + WH_STR_PTR), load64(cond + WH_STR_LEN), cmp);
             }
         }
         # COL_BYTES / COL_TEXT: WHERE never matches — variable-length values
@@ -3116,7 +3116,7 @@ fn _bt_rwalk(fd, hdr, pg, lo, hi, out, max, cp, depth): i64 {
             if (stop == 0) {
                 if (load64(cp) < max) {
                     _bt_rwalk(fd, hdr, load64(buf + BT_VALS + i * 8),
-                    lo, hi, out, max, cp, depth + 1);
+                      lo, hi, out, max, cp, depth + 1);
                     if (i < nk) {
                         if (load64(buf + BT_KEYS + i * 8) > hi) {
                             stop = 1;
@@ -3188,7 +3188,7 @@ fn _bt_mut_walk(fd, hdr, pg, key, oldref, newref, cp, depth): i64 {
         for (var i = first; i <= nk; i = i + 1) {
             if (stop == 0) {
                 _bt_mut_walk(fd, hdr, load64(buf + BT_VALS + i * 8),
-                key, oldref, newref, cp, depth + 1);
+                  key, oldref, newref, cp, depth + 1);
                 if (i < nk) {
                     if (load64(buf + BT_KEYS + i * 8) > key) { stop = 1; }
                 }
@@ -3313,8 +3313,8 @@ fn _bt_compact_walk(fd, hdr, pg, depth): i64 {
     var total = 0;
     for (var i = 0; i <= nk; i = i + 1) {
         total = total + _bt_compact_walk(fd, hdr,
-        load64(buf + BT_VALS + i * 8),
-        depth + 1);
+          load64(buf + BT_VALS + i * 8),
+          depth + 1);
     }
     pg_free(buf);
     return total;
@@ -3700,7 +3700,7 @@ fn tbl_update(fd, hdr, idx, row_sz, schema, ncols, pr): i64 {
     for (var vs = 0; vs < nsets; vs = vs + 1) {
         var vset = pr + PR_ITEMS + vs * SET_SZ;
         var vci = _wh_resolve_col(schema, ncols,
-        load64(vset + SET_CPTR), load64(vset + SET_CLEN));
+          load64(vset + SET_CPTR), load64(vset + SET_CLEN));
         if (vci < 0) { pg_free(buf); return PATRA_ERR_NOTFOUND; }
         var vct = load64(schema + SCH_START + vci * SCH_ENTRY_SZ + SCH_CTYPE);
         var vvt = load64(vset + SET_VTYPE);
@@ -3762,7 +3762,7 @@ fn tbl_update(fd, hdr, idx, row_sz, schema, ncols, pr): i64 {
                 for (var s = 0; s < nsets; s = s + 1) {
                     var set = pr + PR_ITEMS + s * SET_SZ;
                     var cidx = _wh_resolve_col(schema, ncols,
-                    load64(set + SET_CPTR), load64(set + SET_CLEN));
+                      load64(set + SET_CPTR), load64(set + SET_CLEN));
                     if (cidx < 0) {
                         pg_free(buf);
                         return PATRA_ERR_NOTFOUND;
@@ -3865,7 +3865,7 @@ fn tbl_delete(fd, hdr, idx, row_sz, schema, ncols, pr): i64 {
                         if (dir != 0) {
                             var mkey = _idx_key_from_row(schema, ncols, dic, rptr);
                             btree_update_ref(fd, hdr, dir, mkey,
-                            _bt_mkref(cur, i), _bt_mkref(cur, kept));
+                              _bt_mkref(cur, i), _bt_mkref(cur, kept));
                         }
                     }
                     memcpy(buf + DP_DATA + kept * row_sz, rptr, row_sz);
@@ -4559,7 +4559,7 @@ fn _db_record_insert(db, schema, ncols, row): i64 {
         var acol = aic - 1;
         if (acol < ncols) {
             store64(db + DB_LAST_ID,
-            row_read_int(row, row_field_offset(schema, ncols, acol)));
+              row_read_int(row, row_field_offset(schema, ncols, acol)));
         }
     }
     return 0;
@@ -4672,7 +4672,7 @@ fn _exec_create(db): i64 {
     }
 
     var r = tbl_create(fd, hdr, load64(_spr() + PR_TNAME),
-    load64(_spr() + PR_TNLEN), names, types, ncols, load64(_spr() + PR_AUTOINC));
+      load64(_spr() + PR_TNLEN), names, types, ncols, load64(_spr() + PR_AUTOINC));
     _pt_free(names);
     _pt_free(types);
 
@@ -5172,7 +5172,7 @@ fn _exec_alter_add(db): i64 {
         var pn = load64(buf + DP_NROWS);
         for (var i = 0; i < pn; i = i + 1) {
             memcpy(scratch + written * rsz_new,
-            buf + DP_DATA + i * rsz_old, rsz_old);
+              buf + DP_DATA + i * rsz_old, rsz_old);
             written = written + 1;
         }
         cur = load64(buf + DP_NEXT);
@@ -5872,7 +5872,7 @@ fn _idx_plan(fd, hdr, schema, ncols, nrows, refs): i64 {
                     if (ictype_eq == COL_STR) {
                         if (load64(cond + WH_CMP_OP) == CMP_EQ) {
                             var hk = _str_hash64(load64(cond + WH_STR_PTR),
-                            load64(cond + WH_STR_LEN));
+                              load64(cond + WH_STR_LEN));
                             idx_lo = hk;
                             idx_hi = hk;
                             idx_found = 1;
@@ -5936,7 +5936,7 @@ fn _patra_query_exec(db): i64 {
         var agg_off = 0;
         if (agg != AGG_COUNT) {
             var aci = _wh_resolve_col(schema, ncols,
-            load64(_spr() + PR_AGG_COL_PTR), load64(_spr() + PR_AGG_COL_LEN));
+              load64(_spr() + PR_AGG_COL_PTR), load64(_spr() + PR_AGG_COL_LEN));
             if (aci < 0) { pg_free(schema); _tx_unlock(db, fd); return 0; }
             agg_off = row_field_offset(schema, ncols, aci);
         }
@@ -6175,7 +6175,7 @@ fn _patra_query_exec(db): i64 {
             var pj_ci3 = load64(pj_idxs + pji3 * 8);
             store64(pj_t + pji3 * 8, load64(pj_types + pji3 * 8));
             memcpy(pj_nm + pji3 * SCH_CNAME_MAX,
-            pj_names_src + pj_ci3 * SCH_CNAME_MAX, SCH_CNAME_MAX);
+              pj_names_src + pj_ci3 * SCH_CNAME_MAX, SCH_CNAME_MAX);
         }
 
         var pj_old_data = load64(rs + RS_DATA);

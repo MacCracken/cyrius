@@ -830,14 +830,31 @@ fn main(): i64 {
     # --- Quality commands ---
     if (streq(cmd, "fmt") == 1) {
         if (argc() < 3) {
-            println("Usage: cyrius fmt <file.cyr> [--check]");
+            println("Usage: cyrius fmt <file.cyr> [--check | --dry | --verbose]");
+            println("  (no flag)   rewrite the file in place");
+            println("  --check     exit 1 if not canonically formatted, and say where");
+            println("  --dry       report what would change; leave the file alone");
+            println("  --verbose   rewrite in place AND echo the result to stdout");
             return 1;
         }
+        # v6.5.28 — flags scanned across ALL args, not just argv(3), so
+        # `cyrius fmt --dry f.cyr` works as well as `cyrius fmt f.cyr --dry`.
         var check = 0;
-        if (argc() > 3) {
-            if (streq(argv(3), "--check") == 1) { check = 1; }
+        var ffile = 0;
+        var fi = 2;
+        while (fi < argc()) {
+            var fa = argv(fi);
+            if (streq(fa, "--check") == 1) { check = 1; }
+            elif (streq(fa, "--dry") == 1) { check = 2; }
+            elif (streq(fa, "--verbose") == 1) { check = 3; }
+            elif (ffile == 0) { ffile = fa; }
+            fi = fi + 1;
         }
-        return cmd_fmt(argv(2), check);
+        if (ffile == 0) {
+            println("Usage: cyrius fmt <file.cyr> [--check | --dry | --verbose]");
+            return 1;
+        }
+        return cmd_fmt(ffile, check);
     }
 
     if (streq(cmd, "lint") == 1) {

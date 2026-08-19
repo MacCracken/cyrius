@@ -625,7 +625,7 @@ fn _fdlopen_hex64(v, out): i64 {
 # RSP must be 16-byte aligned at ld.so entry.
 # ---------------------------------------------------------------
 fn _fdlopen_build_stack(region, region_size, helper_info, ldso_info,
-auxv_buf, auxv_len, state_addr, cb_addr) {
+  auxv_buf, auxv_len, state_addr, cb_addr) {
     var region_top = region + region_size;
 
     # String table at the high end
@@ -792,9 +792,9 @@ fn _fdlopen_run_loader(state): i64 {
     # Build startup stack layout
     var cb_addr = &_fdlopen_cb;
     var new_rsp = _fdlopen_build_stack(stk_region, stack_sz,
-    helper_info, ldso_info,
-    auxv, auxv_len,
-    state, cb_addr);
+      helper_info, ldso_info,
+      auxv, auxv_len,
+      state, cb_addr);
     if (new_rsp == 0) { return 0 - 3; }
 
     # Capture return state — longjmp from callback comes back here
