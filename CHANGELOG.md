@@ -4,6 +4,128 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.29] — 2026-08-19
+
+**Band T finished: the last two consumer-filed tooling defects — which turned out to be one
+defect and one genuinely missing capability.** Plus a compiler warning that fired on the one
+expression form that cannot possibly be wrong.
+
+### Fixed — `distlib` profile sidecars: TWO filings, ONE root cause
+
+ranga (M5) reported header-only `.deps` for its `[lib.spectral]`/`[lib.hwaccel]` profiles; sit
+(v1.4.0) reported that `dist/sit-read.deps` never appeared at all and located it — explicitly
+as a hypothesis — in `out_path`. **`out_path` is innocent**: the path derivation always
+produced the right name. Measured with a probe, `req_leaves` was empty for a profile run
+(`0 -> 0` across the prune), so the `vec_len(req_leaves) > 0` guard wrote nothing. Nothing was
+"overwritten" either — the `dist/sit.deps` carrying 38 leaves the reporter saw was the BASE
+sidecar, untouched from the previous command in the same shell session.
+
+⛔ **The root cause is two individually-reasonable rules that compose into a guaranteed-empty
+file.** v6.5.10 unioned the declared `[deps] stdlib` into the sidecar **base-only**, reasoning
+that a profile is a narrow subset so unioning the whole declaration would over-report. That
+left profiles on include-scan inference — and the toolchain's own guide says *"includes are
+auto-prepended; source files only need project includes"*, so a project that follows the
+documented convention has **no stdlib include lines to scan**. Anyone taking the advice got an
+empty sidecar.
+
+The fix keeps v6.5.10's intent and inverts its mechanism: **union for profiles too, then prune
+the union to what the profile bundle actually references.** Over-reporting is prevented by a
+positive filter instead of by withholding the leaves entirely. Two further defects surfaced
+behind it and are fixed here as well:
+
+- **A dispatcher leaf was always dropped.** The prune keeps a leaf if the bundle references a
+  symbol that leaf DEFINES — but `lib/syscalls.cyr` is 8 KB of `#ifdef` + `include` with
+  **two** top-level definitions, every `sys_*` wrapper living in a per-arch peer. Judged
+  literally it defines nothing, so it was pruned: exactly the leaf a consumer cannot build
+  without. The prune now recurses one level into a leaf's **private (name-prefixed)** peers.
+- ⚠ **The prefix guard is load-bearing, not decoration.** `lib/tls_native.cyr` also includes
+  `alloc`/`string`/`io`/`sigil`, so an unguarded recursion kept `tls_native` in sit's `read`
+  profile — the profile that exists to drop the TLS stack — though none of its 27 top-level
+  symbols appear anywhere in the bundle. Caught by checking, not by reasoning.
+- **An empty profile now still emits its sidecar.** A missing file made a consumer silently
+  inherit the BASE sidecar, the superset the profile exists to avoid. An empty sidecar is a
+  true statement; a missing one is an invitation to the wrong answer.
+
+Verified against the filed reproducer: `dist/sit-read.deps` exists with **16** leaves against
+the base's 38, all six of `net`/`tls`/`tls_native`/`ws`/`http`/`sandhi` gone, and the 16 match
+an **independent reimplementation** of the intended semantics exactly. All four mutations RED.
+
+⚠ **`2026-08-18-distlib-profile-sidecar-empty-under-auto-prepend` was WRONGLY ARCHIVED as
+fixed at `.28`.** It was not: `.28`'s `cbt/commands.cyr` diff touches only the `fmt` CLI modes
+and the `[deps.` anchoring, and the defect reproduced verbatim against the shipped 6.5.28 CLI.
+The archive was done from the issue list rather than from live code — the exact inversion of
+this repo's own re-triage rule. The `.28` entry above has been corrected and the issue file
+carries the correction.
+
+### Added — `cyrius fuzz --poison`: out-of-bounds READS and use-after-free become observable
+
+sit's `.git` packfile delta interpreter bounds-checked its destination but not its source, so
+a crafted delta copied **127 bytes of adjacent heap** — including a live heap pointer, an
+ASLR-defeating disclosure — into output an ordinary read-only command printed. The module had
+**10 million rounds/run** of fuzzing over it and passed, for three minor versions. It was
+found by reading the code.
+
+Nothing was wrong with the runtime: **the read landed in mapped memory, so there was no fault
+to catch.** Generalised, an out-of-bounds WRITE is caught only if it reaches an unmapped page
+and an out-of-bounds READ essentially never is — so every `fuzz: no crashes` line in every
+consumer's CI carries that asterisk.
+
+`.28` shipped the alloc-side fill and deferred redzones and quarantine-on-free, stating that a
+free-side poison "needs the block's original size, and the size-class path stores only its
+class". ⛔ **That was wrong about the more valuable half.** The class yields the block's
+CAPACITY (`_fl_block_size(cls) - 16`), and filling the whole capacity on free is not merely
+possible but strictly *safer* than filling the requested size — it cannot leave a live tail
+unpoisoned. Quarantine needed no size at all. The redzone genuinely does need the size, and
+the class table has **zero slack** (`_fl_class(16) = 0`, capacity exactly 16), so poison mode
+**bumps the class** and stores the requested size in the last 8 bytes of capacity. No header
+change, so no heap-layout change and no two-step bootstrap.
+
+Delivered as a **compile-time predefine on all SEVEN forks** — `lib/freelist.cyr` depends on
+mmap + atomic only and must not read the environment, and a fuzz mode that exists on x86-Linux
+alone tells three other platforms' consumers nothing. `cyrius fuzz --poison` injects
+`CYRIUS_POISON=1` into the child compile, the same mechanism as `--agnos`/`--win`.
+
+### Changed — bayan 1.4.2, ganita 1.1.1, mabda 4.0.9 folds
+
+All three vendored byte-identical from their `dist/` bundles. ⚠ **bayan 1.4.2 is a breaking
+change for hand-written include lists**: its `_toml_parse_*` family now returns `Str` rather
+than an `i64` carrying one, so the type is NAMED and `lib/str.cyr` must be in scope. `str` was
+**already declared in bayan's sidecar before 1.4.2** — the requirement did not appear, it
+merely became fatal — so a sidecar-resolved consumer is unaffected and only under-including
+callers break.
+
+Seven such callers existed in this repo and are fixed: five `.tcyr`, `benches/bench_mulmod.bcyr`
+and `lib/tls_native.cyr`. (A bundle strips its own includes by contract, the consumer supplying
+leaves from the sidecar, so the include belongs at the call site rather than upstream.)
+
+⭐ **The bench is why this release gained a gate.** The five `.tcyr` were caught by the corpus
+loop; `bench_mulmod.bcyr` was caught only because it was compiled by hand while chasing them.
+`.bcyr`/`.fcyr` sources are in no corpus and the bench step is non-blocking, so had the tests
+not also broken, a broken bench would have shipped silently — the same shape as the v6.5.12
+`bench_string` SIGSEGV that hid behind that step from v6.3.15 onward.
+`tests/gates/toolchain/bench_fuzz_sources_compile.sh` now compiles all 24, mutation-proven
+against this exact breakage.
+
+⚠ mabda's `cyrius.cyml` still pins **6.5.20** (bayan and ganita are at 6.5.28). Left as-is —
+downstream pin currency is a closeout sweep, not a patch-level edit — but flagged so it is not
+discovered as rot later.
+
+### Fixed — `assigning non-pointer to typed pointer` fired on `&x`
+
+`var p: *i64 = &nodes;` — the canonical address-of idiom — warned, because the address-of
+branch of `parse_expr` never set a pointer scale. Found by **measuring the warning's blast
+radius** across `programs/` after `.28`'s fix rather than from a filing: 9 warnings, of which
+these were the only two with no defensible reading. The other seven assign an `i64`-DECLARED
+value to a declared pointer, where the warning is type-accurate whatever one thinks of the
+ergonomics under ADR-002; those are left alone.
+
+⚠ **Scale 1 (byte), deliberately, not 8.** `EPTR_SCALE` multiplies the addend by the scale, so
+any value above 1 would silently re-scale every existing `&x + n` site and change what
+compiled code DOES. Proven by **differential corpus**: all **277** emitted binaries are
+byte-identical before and after. (The compiler binary itself differs, but only because
+`parse_expr.cyr` gained code — that is offset shift, not semantic change, and conflating the
+two is how a clean proof gets mistaken for a regression.)
+
 ## [6.5.28] — 2026-08-18
 
 **Eight consumer-filed defects, fixed complete.** Seven of the eight were **silent** — wrong
@@ -114,8 +236,9 @@ Two distinct filings, one subsystem. The `[deps] stdlib` key-scan matched the ke
 sandhi pattern" 533 bytes above the real `[deps]`, so the parse grabbed the `[build]` section
 header, returned empty, and `break`ed anyway: `cyrius distlib` exited 1 on a bundle that was
 provably correct, with errors never incremented so even the "N deps resolved" line was
-suppressed. Now anchored and comment-aware. Separately, named profile sidecars came out empty
-under auto-prepend. ⭐ The two fixes **overlap on the filed repro** — reverting either alone
+suppressed. Now anchored and comment-aware. Separately, named profile sidecars came out empty under
+auto-prepend — **this half did NOT ship here; see [6.5.29]**, where it turned out to be the
+same root cause as sit's missing-sidecar filing. ⭐ The two fixes **overlap on the filed repro** — reverting either alone
 still passes it — so the gate carries a mis-parse-onto-a-real-array axis and a
 trailing-inline-comment axis to separate them. Mutation-verified three ways.
 

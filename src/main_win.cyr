@@ -450,6 +450,16 @@ _init_cyrius_lib();
 # Register compiler-builtin arch marker so lib files can `#ifdef
 # CYRIUS_ARCH_X86` to select x86-specific asm over aarch64 asm.
 PP_PREDEFINE(S, "CYRIUS_ARCH_X86");
+var _poison_env_early = _read_env("CYRIUS_POISON");
+# v6.5.29 — CYRIUS_POISON: opt-in allocator poison mode (redzones, poison fill,
+# quarantine-on-free) so an out-of-bounds READ or a use-after-free is OBSERVABLE to
+# `cyrius fuzz`. Filed by sit after a heap disclosure its fuzz suite ran past for three
+# minor versions: the read landed in mapped memory, so there was no fault to catch.
+# A COMPILE-TIME predefine, not a runtime env read — `lib/freelist.cyr` deliberately
+# depends on mmap + atomic only, and an allocator should not be parsing the environment.
+# Costs nothing when off. Set on all SEVEN forks, because a fuzz mode that exists only on
+# x86-Linux tells three other platforms' consumers nothing.
+if (_poison_env_early != 0) { PP_PREDEFINE(S, "CYRIUS_POISON"); }
 # v5.5.0: cycc_win also defines CYRIUS_TARGET_WIN so stdlib can
 # `#ifdef CYRIUS_TARGET_WIN` to select Windows-shaped includes
 # (syscalls_windows.cyr + alloc_windows.cyr) instead of the

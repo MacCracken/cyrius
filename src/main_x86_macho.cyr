@@ -156,6 +156,16 @@ SBL(S, bl);
 # Preprocess includes
 _init_cyrius_lib();
 PP_PREDEFINE(S, "CYRIUS_ARCH_X86");
+var _poison_env_early = _read_env("CYRIUS_POISON");
+# v6.5.29 — CYRIUS_POISON: opt-in allocator poison mode (redzones, poison fill,
+# quarantine-on-free) so an out-of-bounds READ or a use-after-free is OBSERVABLE to
+# `cyrius fuzz`. Filed by sit after a heap disclosure its fuzz suite ran past for three
+# minor versions: the read landed in mapped memory, so there was no fault to catch.
+# A COMPILE-TIME predefine, not a runtime env read — `lib/freelist.cyr` deliberately
+# depends on mmap + atomic only, and an allocator should not be parsing the environment.
+# Costs nothing when off. Set on all SEVEN forks, because a fuzz mode that exists only on
+# x86-Linux tells three other platforms' consumers nothing.
+if (_poison_env_early != 0) { PP_PREDEFINE(S, "CYRIUS_POISON"); }
 # Dedicated x86 Mach-O compiler — always a Mach-O build. Predefine
 # CYRIUS_TARGET_MACOS so compiled programs get the macОS stdlib dispatch
 # (alloc_macos, syscalls_macos, _read_env's macOS branch). Hardcoded,

@@ -138,6 +138,16 @@ _init_cyrius_lib();
 # ESTOREPARM_F64V2/V4 + ELOAD_F64V2/V4_TO_XMM in backend/cx/emit.cyr), so lib/simd.cyr's
 # value-form typed wrappers compile on cx — matches every other fork (main.cyr:1021, etc.).
 PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
+var _poison_env_early = _read_env("CYRIUS_POISON");
+# v6.5.29 — CYRIUS_POISON: opt-in allocator poison mode (redzones, poison fill,
+# quarantine-on-free) so an out-of-bounds READ or a use-after-free is OBSERVABLE to
+# `cyrius fuzz`. Filed by sit after a heap disclosure its fuzz suite ran past for three
+# minor versions: the read landed in mapped memory, so there was no fault to catch.
+# A COMPILE-TIME predefine, not a runtime env read — `lib/freelist.cyr` deliberately
+# depends on mmap + atomic only, and an allocator should not be parsing the environment.
+# Costs nothing when off. Set on all SEVEN forks, because a fuzz mode that exists only on
+# x86-Linux tells three other platforms' consumers nothing.
+if (_poison_env_early != 0) { PP_PREDEFINE(S, "CYRIUS_POISON"); }
 PREPROCESS(S);
 
 # Build file map from #@file markers (for file:line error messages)

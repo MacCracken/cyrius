@@ -1,6 +1,24 @@
 # `cyrius distlib <profile>` writes the BASE profile's sidecar path, with the BASE profile's leaf set
 
-**Status:** 🟡 **OPEN** — reproduced against live **cycc 6.5.26** (wrapper), filed by **sit**
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.29**. See `CHANGELOG.md` [6.5.29].
+
+> **The reporter's hypothesis was wrong, and correctly flagged as a hypothesis.** `out_path` is
+> innocent — the sidecar path derivation always produced `dist/sit-read.deps` correctly. What
+> happened is that `req_leaves` was EMPTY for a profile run (measured: `0 -> 0` across the
+> prune), so the `vec_len(req_leaves) > 0` guard wrote no file at all. Nothing was
+> "overwritten": the `dist/sit.deps` carrying 38 leaves that the reporter saw was the BASE
+> sidecar, untouched from the previous command in the same session.
+>
+> **The two symptoms do share a cause, and it is a third filing's cause too.** Symptom 2 (the
+> sidecar carrying all the leaves the profile excludes) was not a pruning miss — it was symptom
+> 1 plus a stale file being read. The real root cause is the one ranga filed separately in
+> `2026-08-18-distlib-profile-sidecar-empty-under-auto-prepend`: v6.5.10's declared-`stdlib`
+> union is base-only, and the auto-prepend convention leaves profiles with nothing to
+> include-scan. Both filings closed by the same change.
+>
+> Verified against the filed reproducer: `dist/sit-read.deps` now exists with **16** leaves
+> against the base's 38, and **all six** of `net`/`tls`/`tls_native`/`ws`/`http`/`sandhi` are
+> gone. The 16 match an independent reimplementation of the intended semantics exactly.
 (v1.4.0) which ships two `distlib` profiles.
 
 **Severity:** **Low** — packaging correctness, not a build break. A superset sidecar always

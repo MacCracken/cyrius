@@ -12,6 +12,12 @@ include "lib/string.cyr"
 include "lib/result.cyr"
 include "lib/fnptr.cyr"
 include "lib/io.cyr"
+# v6.5.29 — bayan REQUIRES lib/str.cyr. It always declared `str` in its dist sidecar; the
+# requirement only became fatal at bayan 1.4.2, when the `_toml_parse_*` family changed from
+# returning an `i64` that carried a Str to returning `Str` outright, so the type is now NAMED
+# rather than merely passed through. A bundle strips its own includes by contract (the
+# consumer supplies leaves from the sidecar), so this include belongs here, at the consumer.
+include "lib/str.cyr"
 include "lib/bayan.cyr"
 include "lib/math.cyr"
 include "lib/ganita.cyr"

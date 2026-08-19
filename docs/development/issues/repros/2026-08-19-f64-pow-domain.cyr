@@ -1,0 +1,49 @@
+# Repro: f64_pow (lib/ganita.cyr fold) is NaN for a zero or negative base.
+#
+#   cyrius build --no-deps docs/development/issues/repros/2026-08-19-f64-pow-domain.cyr /tmp/powdomain
+#   /tmp/powdomain
+#
+# f64_pow is exp(y * ln base), and ln is undefined at and below zero, so every
+# base <= 0 returns NaN instead of the defined real result.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/math.cyr"
+include "lib/ganita.cyr"
+
+fn p(s) { syscall(1, 1, s, strlen(s)); return 0; }
+fn D(n): i64 { return f64_from(n); }
+
+fn isnan(b): i64 {
+    if (((b >> 52) & 0x7FF) != 0x7FF) { return 0; }
+    if ((b & 0x000FFFFFFFFFFFFF) == 0) { return 0; }
+    return 1;
+}
+
+fn show(label, want, v) {
+    p(label); p("  got=");
+    if (isnan(v) == 1) { p("NaN"); } else { fmt_float(v, 6); }
+    p("  want="); p(want); p("\n");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    # --- broken: base <= 0 ---
+    show("f64_pow(0, 2)  ", "0.000000",    f64_pow(D(0), D(2)));
+    show("f64_pow(0, 3)  ", "0.000000",    f64_pow(D(0), D(3)));
+    show("f64_pow(-2, 2) ", "4.000000",    f64_pow(D(0 - 2), D(2)));
+    show("f64_pow(-2, 3) ", "-8.000000",   f64_pow(D(0 - 2), D(3)));
+    # --- unaffected, for contrast (base > 0, or exp == 0) ---
+    show("f64_pow(2, 10) ", "1024.000000", f64_pow(D(2), D(10)));
+    show("f64_pow(9, 0.5)", "3.000000",    f64_pow(D(9), f64_div(D(1), D(2))));
+    show("f64_pow(2, 0)  ", "1.000000",    f64_pow(D(2), D(0)));
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

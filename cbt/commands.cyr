@@ -2742,6 +2742,10 @@ fn _distlib_bundle_refs(bundle, blen, name, nlen): i64 {
 # a top-level `fn NAME(` or a `var NAME`. Conservative: on any read failure or
 # a leaf we can't inspect, keep it (return 1) so we never drop a real dep.
 fn _distlib_leaf_referenced(leaf, bundle, blen): i64 {
+    return _distlib_leaf_referenced_d(leaf, bundle, blen, 0);
+}
+
+fn _distlib_leaf_referenced_d(leaf, bundle, blen, depth): i64 {
     # Resolve the leaf: repo-vendored lib/<leaf>.cyr first, else the global
     # stdlib snapshot <CYRIUS_HOME>/lib/<leaf>.cyr (a package vendors only its
     # declared deps, but the umbrella can name others that live only globally).
@@ -2764,6 +2768,50 @@ fn _distlib_leaf_referenced(leaf, bundle, blen): i64 {
     var llen = file_read_all(path, lbuf, 1048575);
     if (llen <= 0) { return 1; }
     store8(lbuf + llen, 0);
+    # v6.5.29 — a leaf that is a DISPATCHER defines almost nothing itself. `lib/syscalls.cyr`
+    # is 8 KB of `#ifdef` + `include` with TWO top-level definitions; every `sys_*` wrapper
+    # lives in a per-arch peer it includes. Scanning only this file therefore found no
+    # referenced symbol and the leaf was pruned away — dropping exactly the leaf a consumer
+    # cannot build without. Recurse one level into the leaf's own `include "lib/X.cyr"` lines
+    # so a dispatcher is judged by what it BRINGS, not by what it literally spells.
+    # Depth 1 is enough for every dispatcher in the tree and cannot loop.
+    if (depth < 1) {
+        var leaflen = strlen(leaf);
+        var ip = 0;
+        while (ip < llen) {
+            var ibol = 0;
+            if (ip == 0) { ibol = 1; } elif (load8(lbuf + ip - 1) == 10) { ibol = 1; }
+            if (ibol == 1 && ip + 13 < llen && memeq(lbuf + ip, "include \"lib/", 13) == 1) {
+                var ns2 = ip + 13;
+                var ne2 = ns2;
+                while (ne2 < llen && load8(lbuf + ne2) != 34) { ne2 = ne2 + 1; }
+                # Strip the trailing ".cyr" so the peer is named the way a leaf is named.
+                if (ne2 - ns2 > 4 && memeq(lbuf + ne2 - 4, ".cyr", 4) == 1) { ne2 = ne2 - 4; }
+                # ⛔ ONLY recurse into a leaf's PRIVATE peers — those whose name starts with
+                # the leaf's own name. That is the convention throughout the tree
+                # (`syscalls` → `syscalls_x86_64_linux`, `tls_native` → `tls_native_hs13`) and
+                # the guard is load-bearing, not decoration: a dispatcher like `tls_native`
+                # ALSO includes common leaves (`alloc`, `string`, `io`, `sigil`, …), so an
+                # unguarded recursion keeps `tls_native` alive merely because the bundle
+                # references `io`. Measured: without this, sit's `read` profile — which exists
+                # precisely to drop the TLS stack — retained `tls_native` while none of its 27
+                # top-level symbols appeared anywhere in the bundle.
+                var plen2 = ne2 - ns2;
+                var isown = 0;
+                if (plen2 > leaflen) {
+                    if (memeq(lbuf + ns2, leaf, leaflen) == 1) { isown = 1; }
+                }
+                if (isown == 1 && plen2 > 0) {
+                    var peer = alloc(plen2 + 1);
+                    memcpy(peer, lbuf + ns2, plen2);
+                    store8(peer + plen2, 0);
+                    if (_distlib_leaf_referenced_d(peer, bundle, blen, depth + 1) == 1) { return 1; }
+                }
+            }
+            while (ip < llen && load8(lbuf + ip) != 10) { ip = ip + 1; }
+            ip = ip + 1;
+        }
+    }
     var p = 0;
     while (p < llen) {
         var bol = 0;
@@ -3183,24 +3231,42 @@ fn cmd_distlib(profile): i64 {
     # Collect the named-dep names so they're EXCLUDED from the sidecar below.
     var named_deps = _distlib_named_deps(mbuf, mlen);   # v6.2.51 closeout: shared helper (was duplicated here + in _distlib_modular_emit)
 
-    # v6.4.48 — for a `[lib.<profile>]` subset, prune the umbrella-captured leaves to
-    # only those the profile bundle actually references. Without this a `sha` profile's
-    # sidecar carried the whole crypto suite's stdlib chain. Full-bundle path (profile
-    # == 0) keeps the umbrella's complete set unchanged.
-    if (profile != 0) {
-        req_leaves = _distlib_prune_profile_leaves(req_leaves, out_path);
+    # v6.5.10: fold the DECLARED `[deps] stdlib` into the sidecar's leaf set.
+    #
+    # v6.5.29 — THIS NOW RUNS FOR PROFILES TOO, and the ORDER is the fix. It used to be
+    # base-only, with the stated reason that a profile is a narrow subset so unioning the
+    # whole declaration would over-report. That reasoning was sound about over-reporting and
+    # wrong about the remedy: it left profiles on include-scan inference ALONE, and the
+    # toolchain's own documented convention (`cyrius-guide.md`: "includes are auto-prepended —
+    # source files only need project includes") means a conforming project has NO stdlib
+    # include lines to scan. Two individually-reasonable rules that jointly guarantee an
+    # EMPTY profile sidecar for anyone who follows the guide. Filed twice — ranga (M5,
+    # header-only sidecars for `[lib.spectral]`/`[lib.hwaccel]`) and sit (v1.4.0, no sidecar
+    # file at all for `[lib.read]`) — and they are ONE defect, not two.
+    #
+    # ⛔ The union must come BEFORE the prune, not instead of it. Over-reporting is prevented
+    # by the prune NARROWING the union to what the profile bundle actually references — a
+    # positive filter — rather than by withholding the leaves entirely, which under-reports to
+    # zero. Same intent, achieved by construction.
+    var _decl_added = _distlib_union_declared_stdlib(req_leaves, mbuf, mlen);
+    if (_verbose == 1 && _decl_added > 0) {
+        sys_write(STDOUT_FD, "  sidecar: +", 12);
+        fmt_int(_decl_added);
+        println(" leaf/leaves from the declared [deps] stdlib");
     }
-    # v6.5.10: fold the DECLARED `[deps] stdlib` into the full-bundle sidecar. ⚠ Base
-    # bundle ONLY. A profile is a narrow subset of the modules, so its true dep set is a
-    # subset of the declaration too — unioning the whole declaration into a `sha` profile
-    # would over-report and could make a legitimately-narrow consumer fail the very check
-    # this fix exists to re-enable. Profiles keep the pruned inference.
-    if (profile == 0) {
-        var _decl_added = _distlib_union_declared_stdlib(req_leaves, mbuf, mlen);
-        if (_verbose == 1 && _decl_added > 0) {
-            sys_write(STDOUT_FD, "  sidecar: +", 12);
-            fmt_int(_decl_added);
-            println(" leaf/leaves from the declared [deps] stdlib");
+
+    # v6.4.48 — for a `[lib.<profile>]` subset, prune the leaf set to only those the profile
+    # bundle actually references. Without this a `sha` profile's sidecar carried the whole
+    # crypto suite's stdlib chain. Full-bundle path (profile == 0) keeps the complete set.
+    if (profile != 0) {
+        var _pre_prune = vec_len(req_leaves);
+        req_leaves = _distlib_prune_profile_leaves(req_leaves, out_path);
+        if (_verbose == 1) {
+            sys_write(STDOUT_FD, "  sidecar: profile prune ", 25);
+            fmt_int(_pre_prune);
+            sys_write(STDOUT_FD, " -> ", 4);
+            fmt_int(vec_len(req_leaves));
+            println(" leaf/leaves");
         }
     }
 
@@ -3210,7 +3276,14 @@ fn cmd_distlib(profile): i64 {
     # auto-resolve a fold's stdlib leaves for a consumer that declares just
     # `[deps.<pkg>]` (no hand-authored `requires`). Folds destroy their
     # includes at fold time, so this index is the only record.
-    if (vec_len(req_leaves) > 0) {
+    # v6.5.29 — a PROFILE always emits its sidecar, even when the pruned set is empty.
+    # The `> 0` guard meant an empty result wrote no file at all, so `dist/<pkg>-<prof>.deps`
+    # simply never appeared and a consumer following the sidecar silently fell back to the
+    # BASE sidecar — the superset the profile exists to avoid. An empty profile sidecar is a
+    # true and useful statement ("this profile needs no stdlib leaves"); a missing one is an
+    # invitation to inherit the wrong answer. The base path keeps the `> 0` guard so a
+    # package with genuinely no leaves does not gain a stray file.
+    if (vec_len(req_leaves) > 0 || profile != 0) {
         var dep_sb = str_builder_new();
         var opl = strlen(out_path);
         if (opl > 4 && memeq(out_path + opl - 4, ".cyr", 4) == 1) {

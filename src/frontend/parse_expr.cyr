@@ -848,6 +848,17 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # callee dereferences it — disable TCO for the rest of the fn.
                 _fn_local_addr = 1;
                 ELOAD_LOCAL_ADDR(S, adisp);
+                # v6.5.29 — `&x` IS a pointer, so say so. This branch never set a pointer
+                # scale, so `var p: *i64 = &nodes;` — the canonical address-of idiom — tripped
+                # `assigning non-pointer to typed pointer`, the compiler warning about the one
+                # expression form that cannot possibly be a non-pointer.
+                # ⚠ Scale 1 (BYTE-addressed), deliberately, not 8. Pointer arithmetic in this
+                # tree is written in BYTES at the source level (`&nodes + i * 16`), and
+                # EPTR_SCALE multiplies the addend by the scale — so any value above 1 would
+                # silently re-scale every existing `&x + n` site and change what compiled code
+                # DOES. Scale 1 multiplies by 1 and divides by 1: arithmetic-neutral by
+                # construction, which is why the self-host stays byte-identical.
+                SPSC(S, 1);
                 return 0;
             }
         }
@@ -855,6 +866,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         var aidx = FINDVAR(S, anoff);
         if (aidx >= 0) {
             EVADDR(S, aidx);
+            SPSC(S, 1);   # v6.5.29 — see the note above: `&global` is a pointer too.
             return 0;
         }
         # Neither a local nor a global of this name → function pointer

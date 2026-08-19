@@ -1,0 +1,40 @@
+# Repro: fmt_float drops the carry when the fraction rounds up to a full unit.
+#
+#   cyrius build docs/development/issues/repros/2026-08-19-fmt-float-carry.cyr /tmp/fmtcarry
+#   /tmp/fmtcarry
+#
+# Expected: every line prints the value rounded to 6 decimals.
+# Actual:   the near-integer lines print SEVEN fraction digits with the carry
+#           dropped — 2.9999999 renders as "2.1000000" instead of "3.000000".
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+
+fn p(s) { syscall(1, 1, s, strlen(s)); return 0; }
+fn D(n): i64 { return f64_from(n); }
+
+fn show(label, want, v) {
+    p(label); p("  got='"); fmt_float(v, 6); p("'  want='"); p(want); p("'\n");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    # --- broken: the fraction rounds up to 1000000 and is emitted verbatim ---
+    show("3 - 1e-7   ", "3.000000",   f64_sub(D(3), f64_div(D(1), D(10000000))));
+    show("2 - 1e-7   ", "2.000000",   f64_sub(D(2), f64_div(D(1), D(10000000))));
+    show("1 - 1e-8   ", "1.000000",   f64_sub(D(1), f64_div(D(1), D(100000000))));
+    show("-(3 - 1e-7)", "-3.000000",  f64_neg(f64_sub(D(3), f64_div(D(1), D(10000000)))));
+    show("10 - 1e-7  ", "10.000000",  f64_sub(D(10), f64_div(D(1), D(10000000))));
+    # --- unaffected, for contrast (no carry out of the fraction) ---
+    show("3 exactly  ", "3.000000",   D(3));
+    show("0.5        ", "0.500000",   f64_div(D(1), D(2)));
+    show("123.456    ", "123.456000", f64_div(D(123456), D(1000)));
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

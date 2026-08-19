@@ -1,0 +1,76 @@
+# poison_redzone.tcyr — v6.5.29 CROSS-HOST: the allocator poison mode must behave identically
+# on every target, not just x86-Linux.
+#
+# ⛔ WHY THIS LIVES IN crossos/. `CYRIUS_POISON` is a predefine wired into ALL SEVEN compiler
+# forks, and `lib/freelist.cyr` is ONE shared file across targets — which is precisely the
+# shape that rots silently. CLAUDE.md's rule, learned from the macOS port rotting for ~9
+# minors behind a green CI check: a feature that COMPILES on five targets is not a feature
+# that RUNS on them. The release gate's cross-OS leg executes the `crossos/` directory and
+# nothing else, so a poison test in `memory/` would never once run on ecb, ach, cass or pi.
+#
+# ⚠ This asserts the DEFAULT (poison OFF) behaviour plus the runtime-enabled path, because a
+# .tcyr is compiled without CYRIUS_POISON. The compile-time predefine itself is covered by
+# tests/gates/memory/poison_mode_observable.sh on the build host; what has to hold everywhere
+# is that the allocator's redzone arithmetic and quarantine are correct on each target's
+# pointer/mmap behaviour.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("poison redzone + quarantine (cross-host, v6.5.29)");
+
+    assert_eq(fl_poison_active(), 0, "poison is OFF by default on this target");
+
+    fl_poison_enable();
+    fl_poison_reset();
+
+    # Exactly-sized write: clean on every target.
+    var a = fl_alloc(64);
+    var i = 0;
+    while (i < 64) { store8(a + i, 0x37); i = i + 1; }
+    fl_free(a);
+    assert_eq(fl_poison_violations(), 0, "exact-size write reports no violation");
+
+    # One-byte overflow: detected on every target.
+    fl_poison_reset();
+    var b = fl_alloc(64);
+    i = 0;
+    while (i < 65) { store8(b + i, 0x37); i = i + 1; }
+    fl_free(b);
+    assert_eq(fl_poison_violations(), 1, "one-byte overflow detected");
+
+    # Overread returns the pattern — the filed sit shape.
+    fl_poison_reset();
+    var c = fl_alloc(32);
+    i = 0;
+    while (i < 32) { store8(c + i, 0x11); i = i + 1; }
+    assert_eq(load8(c + 32), fl_poison_byte(), "read past the request yields poison");
+
+    # Quarantine: use-after-free reads poison, not the old contents.
+    fl_poison_reset();
+    var d = fl_alloc(64);
+    i = 0;
+    while (i < 64) { store8(d + i, 0x5A); i = i + 1; }
+    fl_free(d);
+    assert_eq(load8(d + 32), fl_poison_byte(), "use-after-free reads poison");
+
+    # The LARGE (mmap) path — a separate branch with its own header convention, and the one
+    # most likely to differ per target (Darwin's MAP_ANON is 0x1000, Linux's is 0x20).
+    fl_poison_reset();
+    var e = fl_alloc(8192);
+    i = 0;
+    while (i < 8193) { store8(e + i, 0x77); i = i + 1; }
+    fl_free(e);
+    assert_eq(fl_poison_violations(), 1, "LARGE-path one-byte overflow detected");
+
+    fl_poison_disable();
+    assert_eq(fl_poison_active(), 0, "mode turns back off");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

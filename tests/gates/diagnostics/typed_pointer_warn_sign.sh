@@ -140,5 +140,57 @@ n=$(warns)
 if [ "$n" -lt 1 ]; then echo "  FAIL axis 6 (anti-vacuous): 'p = 7' on a struct-typed local did NOT warn — the check was suppressed, not fixed"; fail=1
 else echo "  ok axis 6: a genuine non-pointer assignment still warns"; fi
 
+# --- axis 7 (v6.5.29): `&x` IS a pointer — the one expression that cannot be a non-pointer ---
+# The address-of branch of parse_expr never called SPSC, so `var p: *i64 = &nodes;` — the
+# canonical idiom — warned. Found by MEASURING the warning's blast radius across programs/
+# after the .28 fix, not by a filing: 9 warnings, of which these were the only ones with no
+# defensible reading (the rest assign an `i64`-DECLARED value to a pointer, where the warning
+# is type-accurate whatever one thinks of the ergonomics).
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+var nodes[80];
+fn main(): i64 {
+    var p: *i64 = &nodes;
+    var q: *i64 = &nodes + 16;
+    var loc = 7;
+    var r: *i64 = &loc;
+    store64(p, 1);
+    return 0;
+}
+var ec = main();
+syscall(60, ec);
+EOF
+build
+n=$(warns)
+if [ "$n" -ne 0 ]; then echo "  FAIL axis 7: '&x' assigned to a *i64 warned $n time(s) — address-of still reports no pointer scale"; fail=1
+else echo "  ok axis 7: &global, &global+n and &local are all recognised as pointers"; fi
+
+# --- axis 8 (ANTI-VACUOUS for axis 7): scale 1, not 8 — the arithmetic must not re-scale ---
+# EPTR_SCALE multiplies the addend by the scale, so any value above 1 silently re-scales every
+# existing `&x + n` site. This asserts the ARITHMETIC, not the warning: bytes, not slots.
+# ⚠ Must exercise the ADDRESS-OF expression itself, not a `*i64`-declared local: a local
+# declared `*i64` carries its own DECLARED scale of 8, so `p + 3` is slot arithmetic by
+# design and says nothing about what `&buf` reports. (First draft of this axis made exactly
+# that conflation and failed against correct code.)
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+var buf[64];
+fn main(): i64 {
+    store8(&buf + 3, 42);
+    var v = load8(&buf + 3);
+    return v;
+}
+var ec = main();
+syscall(60, ec);
+EOF
+build
+chmod +x "$O" 2>/dev/null || true
+# ⚠ `set -e` is on: a bare `"$O"; rc=$?` ABORTS the gate the moment the fixture exits 42 —
+# which is the PASSING case here. The `|| rc=$?` form is the only one that survives it.
+rc=0
+"$O" >/dev/null 2>&1 || rc=$?
+if [ "$rc" -ne 42 ]; then echo "  FAIL axis 8 (anti-vacuous): '&buf + 3' addressed byte $rc, not byte 3 — the pointer scale is re-scaling byte arithmetic"; fail=1
+else echo "  ok axis 8: &x + n stays BYTE arithmetic (scale 1)"; fi
+
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
 echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals"

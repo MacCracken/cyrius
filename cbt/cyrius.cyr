@@ -955,8 +955,21 @@ fn main(): i64 {
 
     if (streq(cmd, "fuzz") == 1) {
         # v6.5.7: accept an explicit file or subfolder, like bench/tests.
-        if (argc() > 2) { return cmd_fuzz(argv(2)); }
-        return cmd_fuzz(0);
+        # v6.5.29: `--poison` turns on the allocator poison mode for every harness compiled
+        # in this run — redzones, poison fill and quarantine-on-free — so an out-of-bounds
+        # READ or a use-after-free becomes observable. Scanned across ALL args (not just
+        # argv(2)) so `cyrius fuzz fuzz/x.fcyr --poison` and `cyrius fuzz --poison` both work,
+        # and the flag is not mistaken for the path argument.
+        var _fzi = 2;
+        var _fzpath = 0;
+        while (_fzi < argc()) {
+            var _fza = argv(_fzi);
+            if (streq(_fza, "--poison") == 1) { _poison_mode = 1; }
+            elif (_fzpath == 0) { _fzpath = _fza; }
+            _fzi = _fzi + 1;
+        }
+        if (_poison_mode == 1) { println("poison mode: redzones + fill + quarantine-on-free ACTIVE"); }
+        return cmd_fuzz(_fzpath);
     }
 
     # --- Testing commands ---

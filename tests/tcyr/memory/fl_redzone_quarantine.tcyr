@@ -1,0 +1,106 @@
+# fl_redzone_quarantine.tcyr — v6.5.29: the half of the fuzz-blind-spot filing that `.28`
+# deferred — REDZONES (catch an out-of-bounds WRITE) and QUARANTINE-ON-FREE (catch a
+# use-after-free READ).
+#
+# ⛔ `.28` deferred these stating that a free-side poison "needs the block's original size,
+# and the size-class path stores only its class". That was wrong about the more valuable
+# half: the class yields the block's CAPACITY (`_fl_block_size(cls) - 16`), and filling the
+# whole capacity on free is not just possible, it is strictly SAFER than filling the requested
+# size — it cannot leave a live tail unpoisoned. Quarantine needed no size at all.
+#
+# The redzone genuinely does need the size, and the class table has ZERO slack
+# (`_fl_class(16) = 0`, capacity exactly 16), so poison mode classifies `size + _FL_RZ` and
+# stores the requested size in the last 8 bytes of capacity. No header change, so no
+# heap-layout change and no two-step bootstrap.
+#
+# ⭐ THE OFF-CASE ASSERTIONS ARE THE POINT. Each ON assertion is paired with the same
+# operation under poison OFF, where it must NOT be detected. Without that pairing a build
+# that simply always reported a violation would pass every ON check — and the whole value of
+# this mode is that it is opt-in and quiet by default.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/freelist.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("fl redzone + quarantine (v6.5.29)");
+
+    # ---- OFF: an overflowing write is invisible, which is the condition being fixed ----
+    fl_poison_reset();
+    assert_eq(fl_poison_active(), 0, "poison off by default");
+    var a = fl_alloc(64);
+    var i = 0;
+    while (i < 96) { store8(a + i, 0x42); i = i + 1; }   # 32 bytes PAST the request
+    fl_free(a);
+    assert_eq(fl_poison_violations(), 0, "OFF: a 32-byte overflow is NOT detected (the blind spot)");
+
+    fl_poison_enable();
+    fl_poison_reset();
+
+    # ---- ON: an exactly-sized write is clean ----
+    var b = fl_alloc(64);
+    i = 0;
+    while (i < 64) { store8(b + i, 0x37); i = i + 1; }
+    fl_free(b);
+    assert_eq(fl_poison_violations(), 0, "ON: writing exactly `size` bytes reports no violation");
+
+    # ---- ON: a one-byte overflow IS detected ----
+    # One byte, not a big smear — an off-by-one is the shape that actually ships.
+    fl_poison_reset();
+    var c = fl_alloc(64);
+    i = 0;
+    while (i < 65) { store8(c + i, 0x37); i = i + 1; }
+    fl_free(c);
+    assert_eq(fl_poison_violations(), 1, "ON: a ONE-byte overflow is detected");
+
+    # ---- ON: an overREAD past the request returns the poison pattern, not live heap ----
+    # This is the sit defect's exact shape: the leaked bytes become recognisable instead of
+    # plausible, so a harness asserting "output contains no poison bytes" turns an invisible
+    # disclosure into a loud one.
+    fl_poison_reset();
+    var d = fl_alloc(32);
+    i = 0;
+    while (i < 32) { store8(d + i, 0x11); i = i + 1; }
+    assert_eq(load8(d + 32), fl_poison_byte(), "ON: a read one byte past the request yields poison");
+    assert_eq(load8(d + 40), fl_poison_byte(), "ON: further past the request is poison too");
+    fl_free(d);
+
+    # ---- ON: use-after-free reads poison, not the block's old contents ----
+    # The quarantine half. Under OFF the recycled block still holds 0x5A (asserted below), so
+    # this pair also demonstrates that the mode is what changed the answer.
+    fl_poison_reset();
+    var e = fl_alloc(64);
+    i = 0;
+    while (i < 64) { store8(e + i, 0x5A); i = i + 1; }
+    fl_free(e);
+    assert_eq(load8(e), fl_poison_byte(), "ON: use-after-free reads poison, not the old contents");
+    assert_eq(load8(e + 32), fl_poison_byte(), "ON: the whole capacity is quarantined, not just the head");
+
+    # ---- OFF again: the same UAF still reads the stale value ----
+    fl_poison_disable();
+    fl_poison_reset();
+    var f = fl_alloc(64);
+    i = 0;
+    while (i < 64) { store8(f + i, 0x5A); i = i + 1; }
+    fl_free(f);
+    assert_eq(load8(f + 32), 0x5A, "OFF: use-after-free still reads the stale value (mode is opt-in)");
+    assert_eq(fl_poison_violations(), 0, "OFF: no violations counted while disabled");
+
+    # ---- ON: the LARGE (mmap) path arms its redzone too ----
+    # A separate code path in fl_alloc with its own header convention; `.28`'s fill covered it
+    # and the redzone must as well, or every allocation over 4096 bytes is unguarded.
+    fl_poison_enable();
+    fl_poison_reset();
+    var g = fl_alloc(8192);
+    i = 0;
+    while (i < 8193) { store8(g + i, 0x77); i = i + 1; }
+    fl_free(g);
+    assert_eq(fl_poison_violations(), 1, "ON: a one-byte overflow on the LARGE path is detected");
+    fl_poison_disable();
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

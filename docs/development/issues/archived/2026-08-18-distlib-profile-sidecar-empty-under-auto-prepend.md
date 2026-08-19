@@ -1,6 +1,13 @@
 # `distlib` profile sidecars are EMPTY for any project that follows the auto-prepend convention
 
-**Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.29**. See `CHANGELOG.md` [6.5.29].
+
+> ⚠ **Correction.** This file was archived at `.28` marked resolved there. It was NOT fixed in
+> `.28` — `git diff` over that release's `cbt/commands.cyr` touches only the `fmt` CLI modes and
+> the `[deps.` section anchoring, and the defect reproduced verbatim against the shipped 6.5.28
+> CLI. The archive was done from the issue LIST rather than from live code, which is the exact
+> inversion of this repo's own re-triage rule. Actually fixed at `.29`, where it turned out to
+> share a root cause with sit's `2026-08-18-distlib-named-profile-sidecar-from-sit`.
 **Placement:** unpinned — 6.5.x backlog. `cbt/commands.cyr` (distlib sidecar generation).
 **Discovered:** 2026-08-18, ranga M5 (`[lib.spectral]` / `[lib.hwaccel]` profiles)
 **Severity:** **Medium** — published metadata is false, silently. No build breaks, which is why it survives.
