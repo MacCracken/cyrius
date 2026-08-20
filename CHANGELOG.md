@@ -6,6 +6,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.5.32] — 2026-08-20
 
+### Changed — vani 1.1.3 → 1.1.4 fold
+
+Vendored byte-identical from `dist/vani.cyr`; upstream pins cyrius 6.5.31. Verified through
+its own sidecar (21 declared leaves, clean compile), api-surface unchanged at 4917, corpus
+282/282.
+
+### Follow-up — the util.cyr / cybs constraint is FILED, not settled (P1, v6.5.33)
+
+The note this release added to CLAUDE.md has been rewritten as a **hazard warning, not a
+language rule**, because the mechanism is not known: "position-specific to util.cyr" restates
+the symptom. Nine measured rounds, a reproducer, and the two cybs tables already ruled out by
+inspection are in `issues/2026-08-20-cybs-util-branching-fn-breaks-seed-chain.md`, pinned P1 to
+`.33` together with a refactoring sweep over util.cyr and its neighbours. It is P1 because it
+is a bootstrap-compiler defect that fails SILENTLY and is caught by exactly one gate — not
+because anything is broken for a consumer today.
+
+⚠ Also open in that filing: whether `(x >> 62)` is a **second, independent** cybs bug. That
+probe broke the chain with no `if` in it at all, so the shift may be its own defect rather than
+another instance of the branch case.
+
 ### Added — enum members may have NEGATIVE values
 
 `enum E { NONE = -1; }` was `error: expected number, got '-'`, and the obvious workaround

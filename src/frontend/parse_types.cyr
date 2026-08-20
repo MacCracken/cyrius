@@ -290,13 +290,15 @@ fn FIELDOFF(S, si, fi): i64 {
 # three files; fixing four of them would have been this cycle's `_cfo` / `stdlib`-key-scan
 # lesson a third time. Grep the shape, not the site.
 #
-# ⚠⚠ THIS FUNCTION MUST NOT LIVE IN `src/common/util.cyr`. Placing it there — ANY function
-# with a BRANCH, regardless of its body — makes **cybs** emit a `gen1` that builds fine and
-# then dies with SIGILL/SIGSEGV compiling `src/main.cyr`. Verified by bisection: the identical
-# fn is fine here in parse_types.cyr and fine in parse_expr.cyr, and a branch-free fn is fine
-# in util.cyr, so it is neither a capacity ceiling nor the function's content but something
-# position-specific to util.cyr in the bootstrap compiler. build/cycc compiles every variant
-# correctly, so ONLY `seed-derive-cycc.sh` catches it. Do not "tidy" this into util.cyr.
+# ⚠⚠ IT LIVES HERE, NOT IN `src/common/util.cyr`, FOR A REASON THAT IS NOT YET UNDERSTOOD.
+# Placing any BRANCHING fn in util.cyr makes cybs emit a `gen1` that links and then dies with
+# SIGILL/SIGSEGV compiling `src/main.cyr`. Bisected at v6.5.32: identical fn fine here and in
+# parse_expr.cyr, branch-FREE fn fine in util.cyr — so it is neither a capacity ceiling nor
+# this function's content. ⛔ That is where the evidence stops: "position-specific to util.cyr"
+# restates the symptom and is NOT a diagnosis. Tracked as P1 for v6.5.33
+# (`issues/2026-08-20-cybs-util-branching-fn-breaks-seed-chain.md`); when the real cause is
+# found this placement may well be free to change. build/cycc compiles every variant fine, so
+# only `seed-derive-cycc.sh` catches it.
 fn ENUM_CONST_VAL(ecv): i64 {
     if ((ecv & 0x4000000000000000) != 0) { return ecv; }
     return ecv & 0x7FFFFFFFFFFFFFFF;

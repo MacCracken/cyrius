@@ -132,3 +132,33 @@ promising it does — the two currently disagree.
 
 No workaround needed beyond copying the files from a conforming sibling (agnosai, majra, patra all
 carry them), which is what this port did.
+
+### And the scaffold's own source trips the flat-namespace discipline
+
+`cyrius init` writes this as the generated entry point:
+
+```cyrius
+var r = main();
+sys_exit_group(r);
+```
+
+`r` is a **bare top-level `var` in Cyrius's single flat symbol table**. The ecosystem treats that as a
+hazard serious enough to gate in CI — agnosai's `src/main.cyr` carries a comment explaining why its
+equivalent is named `_agnosai_exit_code`:
+
+> Prefixed like everything else: this is a top-level `var` in Cyrius's single flat namespace, so a
+> bare `r` here is a global that could shadow — or be shadowed by — any dep that happens to use the
+> same name.
+
+and `scripts/check-symbols.sh` exists precisely to catch it, after a 2026-07-31 audit found four
+duplicated enum constants, three with different values, three of them struct sizes passed straight to
+`alloc()`. Running that gate against a freshly-initialised repo fails immediately on the scaffolder's
+own output.
+
+Separately, `init` emits `main` and `r` into **both** `src/main.cyr` and `src/test.cyr`. Those are
+distinct translation units (`[build].test` compiles alone), so it is not a real collision — but any
+whole-`src/` symbol scan reports it as one, which is a false positive every consumer adopting the
+gate has to special-case.
+
+Suggested: name the generated global `_{project}_exit_code`, matching what every conforming repo in
+the ecosystem already does.

@@ -30,11 +30,11 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.32** (2026-08-20) — cycc **1,182,416 B** · check.sh **196 passed / 0
-failed** · self_compile **716 ms** · **280** `.tcyr` (**53** in `crossos/`) · **101**
-`lib/*.cyr` · **97** `programs/**/*.cyr` · **75** shell gate scripts under
-`tests/gates/<bucket>/` · heap map **100 regions / 0 overlaps** · **9 open issues + 2 open
-proposals** (338 archived issues / 29 archived proposals).
+**Current head: v6.5.32** (2026-08-20) — cycc **1,182,928 B** · check.sh **197 passed / 0
+failed** · self_compile **735 ms** · **282** `.tcyr` (**54** in `crossos/`) · **101**
+`lib/*.cyr` · **97** `programs/**/*.cyr` · **76** shell gate scripts under
+`tests/gates/<bucket>/` · heap map **100 regions / 0 overlaps** · **10 open issues + 2 open
+proposals** (340 archived issues / 29 archived proposals).
 
 > ⚠ **cycc crossed a PAGE BOUNDARY at `.30`.** 1,178,160 → 1,182,416 is **+4,256 B** for
 > roughly 200 bytes of new code: the text segment passed 0x0FC000, so the page-aligned RW
@@ -426,6 +426,35 @@ repair tails land, and the reactive windows are anchored to *arc boundaries*, no
 numbers. Sizes are `.NN` releases, each bundling several bites. **Arcs are 1–2 releases with
 phases landing as commits inside them** — not one release per phase. Minors flex long; 6.4.x
 ran 86 releases and 6.5.x is expected in the same class.
+
+> ## 📌 PINNED 2026-08-20 (at v6.5.32) — **`.33` = BOOTSTRAP REPAIR + REFACTOR SWEEP**
+>
+> **`.33` is a repair slot, not a feature slot** (maintainer, 2026-08-20). Two items, both
+> arising from the v6.5.32 negative-enum work:
+>
+> **1. P1 — diagnose why a BRANCHING fn in `src/common/util.cyr` breaks the seed chain**
+> (`issues/2026-08-20-cybs-util-branching-fn-breaks-seed-chain`). cybs emits a `gen1` that
+> links and then dies with SIGILL compiling `src/main.cyr`; the identical fn is fine in two
+> other files and a branch-free fn is fine in util.cyr. ⛔ **The mechanism is NOT known** —
+> "position-specific to util.cyr" restates the symptom. Nine measured rounds are in the issue,
+> along with a reproducer and the two cybs tables already ruled out by inspection. Direct
+> route: disassemble the bad `gen1` at its crash site against the good one. Also determine
+> whether `(x >> 62)` is a SECOND, independent cybs bug — that row broke with no `if` in it.
+> **P1 because it is a bootstrap-compiler defect that fails SILENTLY and is caught by exactly
+> one gate**; nothing is broken for a consumer today, but the constraint is invisible and was
+> found by accident.
+>
+> **2. A REFACTORING SWEEP over `src/common/util.cyr` and its neighbours.** The P1 above means
+> a core shared-helper file is currently closed to new branching code, and that is not a state
+> to design around — it is a state to understand and remove. The sweep should also ask the
+> question the P1 raises anyway: what is util.cyr for now, what belongs in it, and what has
+> accreted there because it was the convenient place. ⚠ Any refactor here is proven the usual
+> way — byte-identical self-host plus the differential corpus — and **`seed-derive-cycc.sh`
+> after every step**, because it is the only gate that sees this class of breakage.
+>
+> ⚠ Do not treat the CLAUDE.md hazard bullet as a settled rule while this slot is open. It is
+> a warning written from the symptom, and when the cause is found the placement constraint may
+> simply disappear.
 
 > ## 🔁🔁 RE-PINNED 2026-08-14 (at v6.5.21) — **THIS BLOCK SUPERSEDES THE TABLE BELOW**
 >

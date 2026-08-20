@@ -49,14 +49,15 @@ cyrius bench                       # run .bcyr benchmarks (recursive)
 
 - **Self-hosting is non-negotiable** — cycc==cycc byte-identical after every compiler change
 - **Cross-OS self-host is non-negotiable, on REAL hardware** — "self-hosting" means cycc reproduces itself byte-identical on **every target it claims to support**, not just x86_64 Linux. After ANY compiler-backend or stdlib change, verify cycc self-hosts on **ecb (macOS, arm64)** + **ach (Intel-Mac, x86-macho)** + **cass (Windows, PE)** + **pi (aarch64)** via SSH — they're wired in `~/.ssh/config`, one `ssh` away, every slot. **A green CI checkmark is NOT verification.** The macOS compiler self-host rotted silently for ~9 minors (v5.3.13 → v6.0.32, 400+ patches) behind a CI job named "Mach-O ARM64 Native ✓" that only ran hello-world / exit-code programs and never once built or self-hosted `cycc`. It surfaced only when a human installed on a Mac and got a broken toolchain — the exact "found by ports" failure. Hello-world smoke is a placebo; the compiler self-hosting on the target IS the test. Never trust a checkmark over running the compiler on the hardware. See `feedback_macos_windows_ci_gate_mandatory`, `reference_verification_hosts_ssh`, Closeout 3b.
-- **⚠ `src/common/util.cyr` cannot take a NEW BRANCHING FUNCTION** (found v6.5.32). Adding any
-  fn containing an `if` to util.cyr makes **cybs** emit a `gen1` that links fine and then dies
-  with SIGILL/SIGSEGV compiling `src/main.cyr`. Bisected: the identical fn is fine in
-  `parse_types.cyr` and in `parse_expr.cyr`, and a branch-FREE fn is fine in util.cyr — so it
-  is neither a capacity ceiling nor the fn's content, but something position-specific to
-  util.cyr in the bootstrap compiler. `build/cycc` compiles every variant correctly, so **only
-  `seed-derive-cycc.sh` catches it**. Put shared helpers that branch in the module that owns
-  the data instead, and never "tidy" one into util.cyr.
+- **⚠ UNEXPLAINED, UNDER INVESTIGATION (P1, v6.5.33): adding a branching fn to
+  `src/common/util.cyr` breaks the seed chain.** Measured at v6.5.32 — a fn containing an `if`
+  in util.cyr makes **cybs** emit a `gen1` that links fine and then dies with SIGILL/SIGSEGV
+  compiling `src/main.cyr`; the identical fn is fine in `parse_types.cyr` and `parse_expr.cyr`,
+  and a branch-FREE fn is fine in util.cyr. ⛔ **The MECHANISM IS NOT KNOWN** — "position-
+  specific to util.cyr" is a restatement of the symptom, not a diagnosis, and this bullet is a
+  hazard warning, NOT a language rule. Do not design around it as though it were settled: see
+  `issues/2026-08-20-cybs-util-branching-fn-breaks-seed-chain.md`. Until it is understood,
+  `seed-derive-cycc.sh` is the only thing that catches it, so run it for ANY `src/` change.
 - **Two-step bootstrap for heap changes** — cycc compiles cc5b, cycc==cc5b
 - **Never use raw `cat | cycc` for projects** — always invoke `cyrius build`. The CLI wrapper resolves deps, auto-prepends includes from `cyrius.cyml`, handles cross-arch + strict flags, produces consistent output naming, and (since v6.5.7) writes the in-band `#@incdir` marker at byte 0 that makes `include` resolve **relative to the entry file's directory** — so a source in a subfolder can include its neighbour. Raw `cat | cycc` gets no marker and silently keeps CWD-only resolution. Raw `cat | cycc` is for compiler-internal self-host (the verifier script + bootstrap chain) — not consumer code.
 - **Assembly is the cornerstone** — understand every instruction the compiler emits
