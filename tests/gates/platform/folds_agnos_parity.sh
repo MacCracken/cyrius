@@ -30,6 +30,12 @@ trap 'rm -rf "$D"' EXIT
 
 # Dependency-ordered. sigil before yantra, yukti before vani, tls before sandhi,
 # sakshi before mabda — the bundles reference each other's constants.
+# v6.5.30 — `lib/patra.cyr` sits BEFORE yukti because yukti 2.3.8 references `PATRA_OK`.
+# yukti has declared `[deps.patra]` in its manifest all along, so a consumer resolving through
+# `cyrius deps` is unaffected; this hand-listed, dependency-ORDERED preamble is not, and it
+# broke the moment the fold landed. Second instance of the shape this release cycle (bayan
+# 1.4.2 needing `lib/str.cyr` at .29 broke five .tcyr and a bench the same way): when a fold
+# names a new type or constant, every hand-written include list in the tree is a caller.
 PREAMBLE='include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -55,6 +61,7 @@ include "lib/fdlopen.cyr"
 include "lib/tls.cyr"
 include "lib/sakshi.cyr"
 include "lib/sigil.cyr"
+include "lib/patra.cyr"
 include "lib/yukti.cyr"'
 
 DEPS="sigil patra sankoch sakshi bayan ganita mabda niyama yantra vani sandhi yukti"

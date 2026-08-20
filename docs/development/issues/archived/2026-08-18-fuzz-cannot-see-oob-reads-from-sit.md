@@ -1,6 +1,23 @@
 # `cyrius fuzz` cannot see an out-of-bounds READ — every overread in every consumer is invisible to it
 
-**Status:** 🟡 **OPEN** — filed by **sit** (v1.4.0) after a security audit found a heap
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.29** as `cyrius fuzz --poison`. See `CHANGELOG.md` [6.5.29].
+
+> Delivered exactly what the filing asked for and no more: redzones around `fl_alloc`
+> allocations poisoned with a known pattern (0xA5), a check that COUNTS violations at free
+> (`fl_poison_violations()`), and quarantine-on-free so use-after-free reads the pattern
+> instead of the block's old contents. No shadow memory, per the filing's own "full ASAN-grade
+> shadow memory is not required".
+>
+> ⛔ `.28` had shipped the alloc-side fill and deferred the rest, stating a free-side poison
+> "needs the block's original size, and the size-class path stores only its class". That was
+> wrong about the more valuable half: the class yields the block's CAPACITY, and filling the
+> whole capacity on free is strictly SAFER than filling the requested size. The redzone does
+> need the size, and the class table has zero slack, so poison mode bumps the class and stores
+> the size in the last 8 bytes of capacity — no header change, no heap-layout change.
+>
+> Wired as a COMPILE-TIME predefine on all SEVEN forks (`lib/freelist.cyr` depends on mmap +
+> atomic only and must not read the environment), and `tests/tcyr/crossos/poison_redzone.tcyr`
+> RAN on ecb, ach, cass and pi — verified off-host, not merely compiled there.
 disclosure that its fuzz suite had been running past for three minor versions.
 
 **Severity:** **Medium–High as a tooling gap.** No cyrius defect; the runtime does exactly

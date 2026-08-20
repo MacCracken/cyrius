@@ -1,0 +1,1 @@
+fn fakedep_ping(): i64 { return 7; }

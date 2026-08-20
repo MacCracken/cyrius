@@ -92,7 +92,14 @@ fi
 # --- axis 4: the folds that CAN build for PE must keep building, with no raw 0F 05 ---
 # yukti is the one SYS_IOCTL blocked; vani reaches ioctl through it (so it must follow
 # yukti, which is the include order `cyrius distlib` emits); patra is an unrelated control.
-for spec in "yukti" "yukti vani" "patra"; do
+#
+# ⚠ v6.5.30 — `patra` now leads the yukti specs. yukti 2.3.8 references `PATRA_OK`, and it has
+# declared `[deps.patra]` in its manifest all along, so a consumer resolving through
+# `cyrius deps` was never affected — but these hand-listed include sets were, and a build
+# failure here reads as "yukti broke on Windows" when the truth is "this list is stale".
+# Second instance in two releases (bayan 1.4.2 needing `lib/str.cyr` at .29): when a fold
+# names a new type or constant, EVERY hand-written include list in the tree is a caller.
+for spec in "patra yukti" "patra yukti vani" "patra"; do
     {
         printf 'include "lib/syscalls.cyr"\n'
         for m in $spec; do printf 'include "lib/%s.cyr"\n' "$m"; done

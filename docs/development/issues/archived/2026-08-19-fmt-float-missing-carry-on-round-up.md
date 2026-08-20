@@ -1,6 +1,18 @@
 # `fmt_float` drops the carry when the fraction rounds up to a full unit
 
-**Status:** 🟡 **OPEN** — found by ganita 1.1.3 while testing the linalg tier; not yet triaged.
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.30**. See `CHANGELOG.md` [6.5.30].
+
+> Root cause exactly as filed: `fmt_float_buf` emitted the integer part BEFORE rounding the
+> fraction, so when the fraction carried there was nothing left to carry into and the raw
+> `10^decimals` went out as the fraction field. Fixed by computing the fraction first, then
+> applying the carry, then emitting — reordering, not special-casing. All eight rows of the
+> filed table now correct, including the three that already passed.
+>
+> Guarded by `tests/tcyr/crossos/fmt_float_carry.tcyr`, in `crossos/` because the bug lives in
+> `f64_round` handling and float rounding is the canonical x86-vs-aarch64 divergence. Mutation-
+> proven three ways: removing the carry, carrying without subtracting, and carrying
+> unconditionally each turn a distinct set of rows RED — the last one hitting only the
+> anti-vacuous rows, which is what earns them their place.
 **Placement:** unpinned — 6.5.x backlog. Stdlib (`lib/fmt.cyr`), not the compiler.
 **Discovered:** 2026-08-19 during ganita's linalg test pass (every near-integer solver result printed wrong)
 **Severity:** Low — display only, no wrong computation. See "Why this punches above Low" below.

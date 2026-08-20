@@ -1,6 +1,18 @@
 # `#derive(Serialize)` on an enum compiles clean and emits no codec at all
 
-**Status:** 🟡 **OPEN** — found re-verifying a stale note during ranga's M7 parity audit.
+**Status:** ✅ **RESOLVED (as a loud rejection)** — shipped in **v6.5.30**. See `CHANGELOG.md` [6.5.30].
+Enum codec GENERATION is tracked separately as a feature: `2026-08-19-derive-serialize-enum-support.md`.
+
+> **Mechanism, which no one had pinned down.** `PP_PARSE_STRUCT_DEF` advanced `ip + 7` — the
+> width of `"struct "` — with NO check that the keyword was `struct`. On `enum probe_e` it
+> skipped `"enum pr"` and read the name as `obe_e`. That is precisely where the older
+> "misnamed, crashing codec" symptom came from, so the port plan's note was not wrong when it
+> was written; the downstream emit later stopped producing anything, which is why the symptom
+> changed to silence. Both symptoms, one cause.
+>
+> Per the filing's own ranking, option 2 ships now: the derive is rejected, the diagnostic
+> names the enum, and it says what to do instead. Option 1 (generate the codec) is a feature
+> whose JSON wire shape is a maintainer design call, and is filed with that question stated.
 **Placement:** unpinned — 6.5.x backlog. Derive expansion, not stdlib.
 **Discovered:** 2026-08-19, ranga M7 (the port hand-writes four enum codecs because of this)
 **Severity:** **Medium** — silent. rc=0, no diagnostic, and the absence only surfaces at link time.

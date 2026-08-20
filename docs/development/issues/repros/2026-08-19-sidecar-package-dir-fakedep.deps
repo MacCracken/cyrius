@@ -1,0 +1,5 @@
+# Companion sidecar for 2026-08-19-sidecar-package-dir-fakedep.cyr
+# Place as dist/fakedep.deps next to dist/fakedep.cyr.
+# See 2026-08-19-agnostic-sidecar-package-dir-double-declare.md
+str
+unicode

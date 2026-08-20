@@ -1092,6 +1092,7 @@ mabda::gfx9_reg/2
 mabda::gfx9_reg_lastuse/2
 mabda::gfx9_regalloc/9
 mabda::gfx9_rsrc1/2
+mabda::gfx9_rsrc1_ex/4
 mabda::gfx9_rsrc2/6
 mabda::gfx9_sgpr/1
 mabda::gfx9_vgpr/1
@@ -1179,6 +1180,7 @@ mabda::gpu_err_new/2
 mabda::gpu_err_print_name/1
 mabda::gpu_err_result/1
 mabda::gpu_err_result_msg/2
+mabda::gpu_last_shader_error/0
 mabda::gpu_ok/1
 mabda::gpu_queue_barrier/3
 mabda::gpu_queue_get/2
@@ -1198,6 +1200,8 @@ mabda::gpu_sampler_addr/1
 mabda::gpu_sampler_create/3
 mabda::gpu_sampler_filter/1
 mabda::gpu_sampler_is_valid/1
+mabda::gpu_shader_error_name/1
+mabda::gpu_shader_error_print/0
 mabda::gpu_shader_module_create/3
 mabda::gpu_shader_module_create_spirv/3
 mabda::gpu_shader_module_release/2
@@ -1315,6 +1319,7 @@ mabda::mir_is_vector/2
 mabda::mir_mod_init/9
 mabda::mir_n_instrs/1
 mabda::mir_n_ptrs/1
+mabda::mir_op_is_icmp/1
 mabda::mir_ptr_binding/2
 mabda::mir_ptr_const_off/2
 mabda::mir_ptr_dynamic/2
@@ -4910,4 +4915,3 @@ yantra::yantra_web_set_host/1
 yantra::yantra_web_set_tls_pin_ed25519/3
 yantra::yantra_web_set_tls_pin_hybrid/5
 yantra::yantra_web_set_wd_port/1
-yukti::str_starts_with_cstr/2

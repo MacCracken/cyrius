@@ -1,6 +1,17 @@
 # `f64_pow` returns NaN for a zero or negative base
 
-**Status:** 🟢 **FIXED UPSTREAM, awaiting refold** — landed in ganita **1.1.4** (2026-08-19),
+**Status:** ✅ **RESOLVED** — cleared in **v6.5.30** by refolding ganita **1.1.4**. See `CHANGELOG.md` [6.5.30].
+
+> Verified against the fold: `pow(0,2)=0`, `pow(0,0)=1`, `pow(-2,2)=4`, `pow(-2,3)=-8`, and the
+> positive path unchanged (`pow(2,10)=1024`). Guarded on the cyrius side by
+> `tests/tcyr/crossos/f64_pow_domain.tcyr` — anything vendored into `lib/` is stdlib and
+> carries stdlib discipline, so a future re-vendor from a branch that lost the fix would
+> otherwise reintroduce it silently. Mutation-proven: the test goes RED against the 1.1.1 fold.
+>
+> ⚠ Worth knowing for anyone writing similar tests: `f64_pow` is `exp(y·ln|base|)` with the
+> sign reapplied, so integer results land a few ULP off — `pow(-2,3)` is -7.999999999999999.
+> `f64_to` TRUNCATES TOWARD ZERO and reports -7, while `pow(2,3)` (8.000000000000001) reports
+> 8. Round before converting; that asymmetry is f64_to's rounding mode, not a pow defect.
 pinned to cyrius 6.5.29. Nothing to change in the compiler or in `lib/` by hand; cyrius clears
 this by refolding `dist/ganita.cyr`. Until then `f64_pow` in `lib/ganita.cyr` still returns NaN
 for a zero or negative base.

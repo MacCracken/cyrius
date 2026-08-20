@@ -4,6 +4,109 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.30] — 2026-08-19
+
+**A stdlib fold sweep and the three consumer bugs it surfaced.** `.30` sits in the W3 reactive
+window, which is deliberately unallocated capacity for exactly this.
+
+⭐ **The `.29` page-boundary prediction came true, to the byte.** `.29` recorded that the text
+segment had ~320 bytes of slack before the RW segment would be pushed onto a new page and the
+file size would jump a full 4 KB. The derive diagnostic below consumed it: text went
+0x0FBEC0 → 0x0FC5E0, the RW segment moved from file offset 0x0FC000 to 0x0FD000, and cycc went
+**1,178,160 → 1,182,416 B (+4,256)**. A +4 KB step is the page boundary, not bloat.
+
+### Changed — seven stdlib folds
+
+sakshi 2.4.11, patra 1.13.9, **yukti 2.3.2 → 2.3.8**, niyama 1.0.7, **mabda 4.0.9 → 4.1.0**,
+ganita 1.1.4, yantra 1.0.3 — all vendored byte-identical from their `dist/` bundles, all now
+pinned to cyrius 6.5.29 (mabda's stale 6.5.20 pin was bumped upstream, so the `.29` flag is
+cleared).
+
+⚠ **One deliberate API removal**, flagged BREAKING by the api-surface gate and verified benign:
+yukti dropped the unprefixed `str_starts_with_cstr/2` in favour of the internal
+`_yk_starts_with_cstr`, specifically so it could not collide with a future stdlib name. It was
+accidental public surface; there are no in-repo callers, and `lib/str.cyr` has the real
+`str_starts_with`. Five additions, all mabda GPU diagnostics.
+
+### Fixed — `cyrius distlib` wrote NO sidecar when a manifest mentioned "stdlib" in prose
+
+niyama's `[package] description` reads *"...foldable into stdlib per sandhi pattern"*, eleven
+lines above its real `[deps] stdlib` key. The scan's two guards — identifier boundary, comment
+line — both accepted it (preceded by a space, not a `#` line), so it locked onto the
+**description**, `_parse_toml_str_array` walked forward to the next `[` (a section header) and
+returned empty. Zero leaves meant the `vec_len(req_leaves) > 0` guard was false and `distlib`
+emitted **no sidecar at all**, silently, for a bundle that was otherwise correct.
+
+⛔ **This is the same bug, the same phrase, and the same manifest shape as the bayan defect
+fixed at v6.5.17.** That fix corrected `cmd_deps` and introduced the shared, quote-aware
+`_toml_key_at` helper — and did not sweep the other two copies of the scan. So the identical
+defect sat in `_distlib_union_declared_stdlib` and `_libsync_declared_mods` for thirteen
+releases and re-surfaced through a different consumer. Both now route through `_toml_key_at`,
+with `cmd_deps`' "a key yielding zero leaves is not the key, keep scanning" defence carried
+across too.
+
+**The lesson is the `_cfo` lesson** — grep the SHAPE, not the site — so the gate carries a
+**structural** axis that fails if any `"stdlib", 6` site drifts back to a hand-rolled boundary
+check, even while the behavioural axes stay green. An ecosystem sweep found **drishti** in the
+same state; it now emits 9 leaves. (sakshi, abaco and stiva also ship bundles without sidecars,
+but for an unrelated and legitimate reason: they have no `[lib]` section, so `distlib` never
+runs for them.)
+
+### Fixed — `fmt_float` dropped the carry when the fraction rounded up to a full unit
+
+`3 - 1e-7` printed **`2.1000000`** at 6 decimals: one digit too many, and a different number.
+`fmt_float_buf` emitted the integer part *before* rounding the fraction, so when the rounding
+carried there was nothing left to carry into and the raw `10^decimals` went out verbatim as the
+fraction field. Fixed by computing the fraction first, applying the carry, then emitting —
+reordering, not special-casing. Long-standing: `de22b4af` added the zero-padding and nothing
+since touched the carry case.
+
+Found by ganita 1.1.3's linalg pass, where every near-integer solver result printed wrong —
+which is exactly where near-integers cluster: identity matrices, residuals, unit vectors.
+Guarded in `crossos/` because the bug is in `f64_round` handling and float rounding is the
+canonical x86-vs-aarch64 divergence.
+
+### Fixed — `#derive(...)` on an enum compiled clean and generated nothing
+
+`PP_PARSE_STRUCT_DEF` advanced `ip + 7` — the width of `"struct "` — with **no check that the
+keyword was `struct`**. On `enum probe_e` it skipped `"enum pr"` and read the name as `obe_e`.
+
+⭐ **That single mechanism explains both recorded symptoms.** ranga's port plan has said since
+the port began that this produced *"a misnamed, crashing codec"*; by 6.5.27 it produced nothing
+at all. Same cause — the misnamed codec came from the 7-byte skip, and the downstream emit
+later stopped producing anything. The stale note was right when it was written, which is only
+knowable because the M7 audit re-tested the claim instead of quoting it.
+
+Now rejected loudly, naming the enum and saying what to do instead. Per the filing's own
+ranking (support it, else reject loudly, else warn) this is option 2, and the filing states that
+rejecting *"would be strictly better than the current silence, even if enum support never
+lands"*. Codec **generation** for enums is filed separately
+(`2026-08-19-derive-serialize-enum-support.md`) because its JSON wire shape is a contract
+decision the maintainer owns — the format is fixed the moment a consumer persists or transmits
+anything, so choosing it wrong is worse than not shipping it.
+
+⚠ No `.tcyr` can catch this class: the old behaviour was rc=0 with clean output, indistinguishable
+from a derive that worked. The gate asserts on the diagnostic and on the exit code of a compile
+that must fail, with two anti-vacuous rows keeping struct derives working.
+
+### Fixed — `f64_pow` returned NaN for a zero or negative base (via the ganita fold)
+
+`f64_pow` is `exp(y·ln base)`, an identity that only holds for `base > 0`, so every base at or
+below zero fell out of `ln`'s domain and NaN propagated out. Reachable under the plain
+stdlib-looking name — `lib/ganita.cyr` aliases `f64_pow` onto `ganita_f64_pow`. Fixed upstream
+in ganita 1.1.4 and delivered by the fold; `pow(0,2)=0`, `pow(0,0)=1`, `pow(-2,2)=4`,
+`pow(-2,3)=-8`, positive path unchanged.
+
+Guarded on **this** side by `tests/tcyr/crossos/f64_pow_domain.tcyr`: anything vendored into
+`lib/` is stdlib and carries stdlib discipline, so a future re-vendor from a branch that lost
+the fix would otherwise reintroduce a silent-wrongness bug with nothing here noticing.
+Mutation-proven — the test goes RED against the 1.1.1 fold.
+
+⚠ Trap for anyone writing similar tests: `f64_pow` lands a few ULP off, so `pow(-2,3)` is
+-7.999999999999999. `f64_to` **truncates toward zero** and reports -7, while `pow(2,3)`
+(8.000000000000001) reports 8. Round before converting — that asymmetry is `f64_to`'s rounding
+mode, not a pow defect, and a test built on it fails against a correct implementation.
+
 ## [6.5.29] — 2026-08-19
 
 **Band T finished: the last two consumer-filed tooling defects — which turned out to be one

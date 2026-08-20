@@ -1,0 +1,73 @@
+# f64_pow_domain.tcyr — v6.5.30: `f64_pow` must handle a zero or negative base.
+#
+# ⛔ THE DEFECT (ganita, filed 2026-08-19). `f64_pow` is `exp(y · ln base)`, an identity that
+# only holds for `base > 0` — so every base at or below zero fell out of `ln`'s domain and the
+# NaN propagated out through `exp`. Reachable under the plain stdlib-looking name:
+# `lib/ganita.cyr` aliases `fn f64_pow` onto `ganita_f64_pow`, so a consumer who never heard
+# of ganita still hit it. Silently wrong — a defined real result replaced by NaN, no diagnostic.
+#
+# Fixed UPSTREAM in ganita 1.1.4 and delivered to cyrius by refolding `dist/ganita.cyr`.
+#
+# ⭐ WHY A CYRIUS-SIDE TEST FOR AN UPSTREAM FIX. Anything vendored into `lib/` IS stdlib and
+# carries full stdlib discipline. Without a test here, a future re-vendor from a ganita branch
+# that lost the fix would reintroduce a Medium silent-wrongness bug with nothing on this side
+# noticing — which is exactly the fold-regression shape the ecosystem rules exist to prevent.
+#
+# ⚠ In crossos/ because this is f64 transcendental math: the aarch64 path uses different
+# emitters from x86 SSE, and NaN handling is precisely where they diverge.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+include "lib/ganita.cyr"
+include "lib/assert.cyr"
+
+# NaN is the only value not equal to itself.
+fn is_nan(v): i64 { if (f64_eq(v, v) == 1) { return 0; } return 1; }
+
+# ⚠ ROUND, never `f64_to` alone. `f64_pow` is exp(y·ln|base|) with the sign reapplied, so an
+# "integer" result lands a few ULP off — `pow(-2,3)` is -7.999999999999999, exact to 12
+# decimal places. `f64_to` TRUNCATES TOWARD ZERO, so it reports -7 and a test built on it
+# fails against a correct implementation while `pow(2,3)` (8.000000000000001 -> 8) passes.
+# That asymmetry is a property of f64_to's rounding mode, not of pow's domain handling, and
+# this test is about the domain.
+fn pow_i(b, e): i64 { return f64_to(f64_round(f64_pow(b, e))); }
+
+fn main(): i64 {
+    alloc_init();
+    test_group("f64_pow domain (v6.5.30)");
+
+    var zero = f64_from(0);
+    var two  = f64_from(2);
+    var neg2 = f64_sub(zero, two);
+
+    # Zero base — the filed case.
+    assert_eq(is_nan(f64_pow(zero, two)), 0, "pow(0, 2) is not NaN");
+    assert_eq(pow_i(zero, two), 0, "pow(0, 2) == 0");
+
+    # 0^0 is 1 by the usual convention.
+    assert_eq(is_nan(f64_pow(zero, zero)), 0, "pow(0, 0) is not NaN");
+    assert_eq(pow_i(zero, zero), 1, "pow(0, 0) == 1");
+
+    # Negative base, EVEN exponent -> positive.
+    assert_eq(is_nan(f64_pow(neg2, two)), 0, "pow(-2, 2) is not NaN");
+    assert_eq(pow_i(neg2, two), 4, "pow(-2, 2) == 4");
+
+    # Negative base, ODD exponent -> negative. The sign is the half a naive
+    # |base|-then-exp fix gets wrong, so it is asserted separately.
+    assert_eq(is_nan(f64_pow(neg2, f64_from(3))), 0, "pow(-2, 3) is not NaN");
+    assert_eq(pow_i(neg2, f64_from(3)), 0 - 8, "pow(-2, 3) == -8");
+
+    # ⭐ ANTI-VACUOUS: the ordinary positive-base path must be unchanged. Without this, a fix
+    # that returned 0 for everything would satisfy every assertion above.
+    assert_eq(pow_i(two, f64_from(10)), 1024, "pow(2, 10) == 1024 (positive path intact)");
+    assert_eq(pow_i(f64_from(3), two), 9, "pow(3, 2) == 9");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

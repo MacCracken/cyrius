@@ -30,15 +30,24 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.29** (2026-08-19) — cycc **1,154,816 B** · check.sh **178 passed / 0
-failed** · self_compile **685 ms** · **270** `.tcyr` (**46** in `crossos/`) · **100**
-`lib/*.cyr` · **97** `programs/**/*.cyr` · **57** shell gate scripts under
-`tests/gates/<bucket>/` (48 registered by exact path in `programs/checks/*.cyr`, 10 driven
-from `scripts/check.sh`, `heapmap.sh` in both — **all 57 live, 0 orphans**) · heap map
-**100 regions / 0 overlaps** · **12 open issues + 3 open proposals** (316 archived issues /
-27 archived proposals).
+**Current head: v6.5.30** (2026-08-19) — cycc **1,182,416 B** · check.sh **196 passed / 0
+failed** · self_compile **716 ms** · **280** `.tcyr` (**53** in `crossos/`) · **101**
+`lib/*.cyr` · **97** `programs/**/*.cyr` · **75** shell gate scripts under
+`tests/gates/<bucket>/` · heap map **100 regions / 0 overlaps** · **9 open issues + 2 open
+proposals** (338 archived issues / 29 archived proposals).
 
-> ⚠ **Every number in the paragraph above was re-derived 2026-08-11, not incremented.**
+> ⚠ **cycc crossed a PAGE BOUNDARY at `.30`.** 1,178,160 → 1,182,416 is **+4,256 B** for
+> roughly 200 bytes of new code: the text segment passed 0x0FC000, so the page-aligned RW
+> segment moved a full page. `.29` predicted this to the byte (it recorded ~320 bytes of slack
+> remaining). Read a sudden +4 KB step as the boundary, never as bloat — and expect the next
+> several hundred bytes of growth to be free.
+
+> ⚠ **Every number in the paragraph above was re-derived 2026-08-19, not incremented.**
+> ⛔ **It had rotted AGAIN by `.30`** — the block still read 1,154,816 B / 178 gates / 270
+> `.tcyr` / 57 gate scripts / 12 open issues while claiming a 2026-08-11 derivation, i.e. every
+> figure was wrong and the freshness stamp was the only thing keeping it plausible. That is the
+> second occurrence of the exact failure the warning below describes, so treat the stamp as a
+> claim to re-check, not as evidence.
 > Commands: `stat -c%s build/cycc` · `find tests/gates -name '*.sh' | wc -l` ·
 > `find tests/tcyr -name '*.tcyr' | wc -l` · `ls lib/*.cyr | wc -l` ·
 > `ls docs/development/issues/*.md | grep -vc README` ·
@@ -1080,6 +1089,23 @@ evidence does not.** Re-derive every line reference and count before acting on o
 
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
+
+- **`#derive(Serialize)` / `#derive(Deserialize)` on an ENUM — generate the codec**
+  (`issues/2026-08-19-derive-serialize-enum-support`) — ⚖️ **BLOCKED ON ONE MAINTAINER
+  DECISION, not on effort: the JSON wire shape.** Requested by ranga (M7 parity audit), which
+  hand-writes four enum codecs today. The *silent* half shipped at `.30` — a derive on a
+  non-struct is now rejected with a diagnostic naming the enum — so nothing is failing quietly
+  any more and this is a clean feature request rather than a bug.
+  The choice is name-string (`"Multiply"`), number (`3`), or tagged object
+  (`{"BlendMode":"Multiply"}`). **It cannot be changed later**: the format becomes the wire
+  contract the moment a consumer persists or transmits anything, which is exactly why the
+  rejection shipped and the generation did not. Recommendation if no preference: **name
+  string** — the only option where `E_from_json_str` is meaningful without a separate schema,
+  and it matches the Rust `Serialize` behaviour the ranga port is measured against.
+  Implementation is modest once chosen: `PP_PARSE_STRUCT_DEF` already collects member names,
+  an enum body parses on the same shape as a struct field with a default, and the `is_struct`
+  branch added at `.30` is where the enum arm hangs. ranga needs **both** directions — the
+  parse side is the one it cannot emulate.
 
 - **Embed data files as source strings — an `[embed]` / assets manifest section**
   (`proposals/2026-08-10-embed-data-files-as-source-strings`) — ⛔ **added 2026-08-11 by the

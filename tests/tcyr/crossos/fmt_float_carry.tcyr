@@ -1,0 +1,75 @@
+# fmt_float_carry.tcyr — v6.5.30: `fmt_float` must carry into the integer part when the
+# rounded fraction reaches a full unit.
+#
+# ⛔ THE DEFECT. `fmt_float_buf` computed `whole = floor(val)` and EMITTED it, then rounded
+# the fraction. When that rounding carried — `3 - 1e-7` → fraction `1000000` at 6 decimals —
+# there was no longer an integer part to carry into, so the raw `10^decimals` was written
+# verbatim as the fraction field. `3 - 1e-7` printed **`2.1000000`**: one digit too many and
+# a completely different number. The fix reorders the computation so the fraction is known
+# BEFORE the integer is emitted.
+#
+# Long-standing — `de22b4af` added the zero-padding and nothing since touched the carry case.
+# Found by ganita 1.1.3's linalg pass, where every near-integer solver result printed wrong,
+# which is precisely where near-integers cluster: identity matrices, residuals, unit vectors.
+#
+# ⭐ IN crossos/ DELIBERATELY. The bug is in `f64_round` handling, and float rounding is the
+# canonical thing that differs between x86 SSE and aarch64 NEON. A carry test that only ever
+# runs on the build host proves one target's rounding, not the contract.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+# Format into a buffer and compare against an expected literal.
+fn check(val, decimals, want, label): i64 {
+    var buf[64];
+    var n = fmt_float_buf(val, &buf, decimals);
+    store8(&buf + n, 0);
+    # `streq` + assert_eq rather than a string-assert helper: lib/assert.cyr has no
+    # assert_str_eq, and inventing one here would be a second thing to get wrong.
+    return assert_eq(streq(&buf, want), 1, label);
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("fmt_float carry (v6.5.30)");
+
+    # 1e-7 below an integer: the fraction rounds up to a full unit at 6 decimals.
+    var eps7 = f64_div(f64_from(1), f64_from(10000000));
+    var eps8 = f64_div(f64_from(1), f64_from(100000000));
+
+    check(f64_sub(f64_from(3), eps7), 6, "3.000000", "3 - 1e-7 carries to 3.000000");
+    check(f64_sub(f64_from(2), eps7), 6, "2.000000", "2 - 1e-7 carries to 2.000000");
+    check(f64_sub(f64_from(1), eps8), 6, "1.000000", "1 - 1e-8 carries to 1.000000");
+
+    # Negative: the sign is tracked separately from the magnitude, so the carry must apply
+    # to the absolute value and the '-' must survive it.
+    check(f64_sub(f64_from(0), f64_sub(f64_from(3), eps7)), 6, "-3.000000", "-(3 - 1e-7) carries with the sign kept");
+
+    # A carry that crosses a DIGIT boundary in the integer part (9 -> 10).
+    check(f64_sub(f64_from(10), eps7), 6, "10.000000", "10 - 1e-7 carries across the digit boundary");
+
+    # ⭐ ANTI-VACUOUS: values that never carry must be untouched. Without these, deleting the
+    # fraction entirely — or always rounding up — would satisfy every assertion above.
+    check(f64_from(3), 6, "3.000000", "an exact integer is unchanged");
+    check(f64_div(f64_from(1), f64_from(2)), 6, "0.500000", "0.5 is unchanged");
+    check(f64_add(f64_from(123), f64_div(f64_from(456), f64_from(1000))), 6, "123.456000", "123.456 is unchanged");
+
+    # The digit COUNT is the tell the filing named: 7 fraction digits for decimals=6 was the
+    # visible symptom. Assert the length directly so a future regression cannot hide behind a
+    # value that merely looks plausible.
+    var b2[64];
+    var n2 = fmt_float_buf(f64_sub(f64_from(3), eps7), &b2, 6);
+    assert_eq(n2, 8, "'3.000000' is exactly 8 bytes (1 + '.' + 6), not 9");
+
+    # Other decimal widths must carry too — the bug was not specific to 6.
+    check(f64_sub(f64_from(5), f64_div(f64_from(1), f64_from(1000))), 2, "5.00", "2 decimals carry");
+    check(f64_sub(f64_from(7), f64_div(f64_from(1), f64_from(100000))), 3, "7.000", "3 decimals carry");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

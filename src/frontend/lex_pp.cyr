@@ -931,6 +931,68 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     var dpad = 0;
     while (dpad < ndir) { store8(out + op, 10); op = op + 1; dpad = dpad + 1; }
     while (ip < bl) { if (load8(src_base + ip) == 32) { ip = ip + 1; } else { break; } }
+    # v6.5.30 — REJECT a `#derive(...)` that is not sitting on a `struct`.
+    #
+    # ⛔ `ip = ip + 7` below blindly skips the width of `"struct "`. On an `enum` it therefore
+    # skipped `"enum pr"` and read the NAME as `obe_e` — which is where ranga's long-recorded
+    # "misnamed, crashing codec" symptom came from. By 6.5.27 the downstream emit no longer
+    # produced anything at all, so `#derive(Serialize)` above an enum compiled with rc=0, no
+    # diagnostic, and NO codec: the caller discovered it as `undefined function
+    # <name>_to_json` at link time, possibly long after writing the derive, and only if the
+    # codec was ever called. ranga hand-writes four enum codecs because of this.
+    #
+    # The filing (2026-08-19-derive-serialize-on-enum-emits-nothing) ranks the outcomes:
+    # support it, else reject loudly, else warn — and says explicitly that rejecting "would be
+    # strictly better than the current silence, even if enum support never lands". Enum
+    # support is a real feature (a name<->value codec, plus the parse direction ranga also
+    # needs) whose JSON shape is a design call the maintainer owns, so it is pinned separately.
+    # What ships here is the end of the silence.
+    # ⚠ Byte-compared inline rather than with `memeq`: that lives in lib/string.cyr, which
+    # cycc does not include, so a call here is an undefined symbol in the compiler itself.
+    # Every other keyword probe in this file (ISDERIVE and friends) is written the same way.
+    var is_struct = 0;
+    if (ip + 7 <= bl) {
+        is_struct = 1;
+        if (load8(src_base + ip)     != 115) { is_struct = 0; }   # s
+        if (load8(src_base + ip + 1) != 116) { is_struct = 0; }   # t
+        if (load8(src_base + ip + 2) != 114) { is_struct = 0; }   # r
+        if (load8(src_base + ip + 3) != 117) { is_struct = 0; }   # u
+        if (load8(src_base + ip + 4) != 99)  { is_struct = 0; }   # c
+        if (load8(src_base + ip + 5) != 116) { is_struct = 0; }   # t
+        if (load8(src_base + ip + 6) != 32)  { is_struct = 0; }   # ' '
+    }
+    if (ip + 7 <= bl) {
+        if (is_struct == 0) {
+            # ⚠ Lengths computed, not eyeballed. The first draft of this line passed 76 for a
+            # 77-byte string and the diagnostic read "is not on" — the exact off-by-one class
+            # this repo keeps re-learning. Any edit to these strings must re-count them.
+            syscall(SYS_WRITE, 2, "error: #derive(...) applies to a struct; the following declaration is not one", 77);
+            var is_enum = 0;
+            if (ip + 5 <= bl) {
+                is_enum = 1;
+                if (load8(src_base + ip)     != 101) { is_enum = 0; }   # e
+                if (load8(src_base + ip + 1) != 110) { is_enum = 0; }   # n
+                if (load8(src_base + ip + 2) != 117) { is_enum = 0; }   # u
+                if (load8(src_base + ip + 3) != 109) { is_enum = 0; }   # m
+                if (load8(src_base + ip + 4) != 32)  { is_enum = 0; }   # ' '
+            }
+            if (ip + 5 <= bl) {
+                if (is_enum == 1) {
+                    syscall(SYS_WRITE, 2, " (enum '", 8);
+                    var eni = ip + 5;
+                    while (eni < bl) {
+                        var ec2 = load8(src_base + eni);
+                        if (ec2 == 32 || ec2 == 123 || ec2 == 10 || ec2 == 59) { break; }
+                        syscall(SYS_WRITE, 2, src_base + eni, 1);
+                        eni = eni + 1;
+                    }
+                    syscall(SYS_WRITE, 2, "') -- enum codecs must be hand-written, see docs/guides/cyrius-guide.md", 71);
+                }
+            }
+            syscall(SYS_WRITE, 2, "\n", 1);
+            syscall(SYS_EXIT, 1);
+        }
+    }
     ip = ip + 7;
     var sni = 0;
     while (ip < bl) {

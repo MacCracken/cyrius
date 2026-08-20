@@ -647,32 +647,21 @@ fn _libsync_declared_mods(): i64 {
     var buf = alloc(32768);
     var n = file_read_all("cyrius.cyml", buf, 32767);
     if (n <= 0) { return 0; }
+    # v6.5.30 — route through the SHARED `_toml_key_at` (cbt/deps.cyr) instead of a
+    # hand-rolled guard pair. The inline version checked the identifier boundary and the
+    # comment line but NOT whether the match sits inside a QUOTED VALUE, so a
+    # `description = "... foldable into stdlib per sandhi pattern"` matched as the key.
+    # `_toml_key_at` counts unescaped quotes from line start and rejects an odd count.
+    # ⛔ Third copy of one scan; `cmd_deps` was fixed at v6.5.17/.29 and these two were not.
     var si = 0;
     while (si < n) {
         if (memeq(buf + si, "stdlib", 6) == 1) {
-            var pre_ok = 1;
-            if (si > 0) {
-                var pc = load8(buf + si - 1);
-                if (pc >= 48 && pc <= 57)  { pre_ok = 0; }
-                if (pc >= 65 && pc <= 90)  { pre_ok = 0; }
-                if (pc >= 97 && pc <= 122) { pre_ok = 0; }
-                if (pc == 95)              { pre_ok = 0; }
-                if (pre_ok == 1) {
-                    var ls = si;
-                    while (ls > 0) {
-                        if (load8(buf + ls - 1) == 10) { break; }
-                        ls = ls - 1;
-                    }
-                    while (ls < si) {
-                        var wc = load8(buf + ls);
-                        if (wc == 35) { pre_ok = 0; break; }
-                        if (wc != 32 && wc != 9) { break; }
-                        ls = ls + 1;
-                    }
-                }
-            }
-            if (pre_ok == 1 && si + 6 < n && (load8(buf + si + 6) == 32 || load8(buf + si + 6) == 61)) {
-                return _parse_toml_str_array(buf, n, si);
+            if (_toml_key_at(buf, n, si, 6) == 1) {
+                # Keep scanning when the key yields nothing: `_parse_toml_str_array` is
+                # positional and returns empty if it lands on a section header, so
+                # committing to the first match can silently disable the whole result.
+                var mods = _parse_toml_str_array(buf, n, si);
+                if (vec_len(mods) > 0) { return mods; }
             }
         }
         si = si + 1;
@@ -2862,36 +2851,31 @@ fn _distlib_leaf_referenced_d(leaf, bundle, blen, depth): i64 {
 # UNION, not replace: the inferred include-scan can legitimately catch a leaf the author
 # forgot to declare, so taking both can never under-report relative to either source.
 fn _distlib_union_declared_stdlib(leaves, mbuf, mlen): i64 {
+    # v6.5.30 — the comment above USED to say "same key-boundary rules cmd_deps uses". It
+    # was not the same: cmd_deps moved to the shared `_toml_key_at` helper, which also
+    # rejects a match sitting inside a QUOTED VALUE, and this hand-rolled copy never did.
+    #
+    # ⛔ THE FILED CONSEQUENCE. niyama's `[package] description` reads "...foldable into
+    # stdlib per sandhi pattern" ELEVEN LINES above the real `[deps] stdlib` key. The
+    # identifier-boundary guard passes (preceded by a space), the comment guard passes (not a
+    # `#` line), so the scan locked onto the description, `_parse_toml_str_array` walked
+    # forward to the next `[` — a SECTION HEADER — and returned empty. Zero leaves meant
+    # `vec_len(req_leaves) > 0` was false and `cyrius distlib` wrote **no sidecar at all**,
+    # silently, on a bundle that was otherwise correct.
+    #
+    # ⚠ THIS IS THE SAME BUG, THE SAME PHRASE AND THE SAME FILE-SHAPE AS THE bayan DEFECT
+    # FIXED AT v6.5.17 — bayan's description says "foldable into stdlib per the sandhi
+    # pattern" too. That fix corrected `cmd_deps` and introduced `_toml_key_at`; it did not
+    # sweep the other two copies of the scan, so the identical defect sat here for thirteen
+    # releases and re-surfaced through a different consumer. GREP THE SHAPE, NOT THE SITE.
     var found = 0 - 1;
     var si = 0;
     while (si < mlen) {
         if (memeq(mbuf + si, "stdlib", 6) == 1) {
-            var ok = 1;
-            if (si > 0) {
-                # Same key-boundary rules cmd_deps uses: not a longer identifier, and not
-                # inside a comment — a prose mention of "stdlib" must not match.
-                var pc = load8(mbuf + si - 1);
-                if (pc >= 48 && pc <= 57)  { ok = 0; }
-                if (pc >= 65 && pc <= 90)  { ok = 0; }
-                if (pc >= 97 && pc <= 122) { ok = 0; }
-                if (pc == 95)              { ok = 0; }
-                if (ok == 1) {
-                    var ls = si;
-                    while (ls > 0) {
-                        if (load8(mbuf + ls - 1) == 10) { break; }
-                        ls = ls - 1;
-                    }
-                    while (ls < si) {
-                        var wc = load8(mbuf + ls);
-                        if (wc == 35) { ok = 0; break; }
-                        if (wc != 32 && wc != 9) { break; }
-                        ls = ls + 1;
-                    }
-                }
-            }
-            if (ok == 1 && si + 6 < mlen) {
-                var nc = load8(mbuf + si + 6);
-                if (nc == 32 || nc == 61) { found = si; si = mlen; }
+            if (_toml_key_at(mbuf, mlen, si, 6) == 1) {
+                # Defence-in-depth, mirroring cmd_deps: a key that yields ZERO leaves is not
+                # the `stdlib` key. Keep scanning instead of committing to the first match.
+                if (vec_len(_parse_toml_str_array(mbuf, mlen, si)) > 0) { found = si; si = mlen; }
             }
         }
         si = si + 1;
