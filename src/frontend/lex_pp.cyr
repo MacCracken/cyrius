@@ -745,6 +745,8 @@ fn ISDERIVE_DE(S, pos, bl): i64 {
 # codegen → Illegal instruction. The fixed scratch band stays packed, so alloc() remains
 # the right home even though 0x198000 itself is now free.)
 var _pp_derive_count = 0;
+# v6.5.31: emit the shared enum name-compare helper once per compilation.
+var _pp_enum_helper_done = 0;
 var _pp_derive_sizes = 0;   # alloc(512*8)  lazily on first #derive registration
 var _pp_derive_names = 0;   # alloc(512*32) ditto
 # v6.5.20 — FLATTEN mode for PP_EMIT_STR: newline -> space. Set only around the
@@ -961,39 +963,37 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         if (load8(src_base + ip + 5) != 116) { is_struct = 0; }   # t
         if (load8(src_base + ip + 6) != 32)  { is_struct = 0; }   # ' '
     }
-    if (ip + 7 <= bl) {
-        if (is_struct == 0) {
-            # ⚠ Lengths computed, not eyeballed. The first draft of this line passed 76 for a
-            # 77-byte string and the diagnostic read "is not on" — the exact off-by-one class
-            # this repo keeps re-learning. Any edit to these strings must re-count them.
-            syscall(SYS_WRITE, 2, "error: #derive(...) applies to a struct; the following declaration is not one", 77);
-            var is_enum = 0;
-            if (ip + 5 <= bl) {
-                is_enum = 1;
-                if (load8(src_base + ip)     != 101) { is_enum = 0; }   # e
-                if (load8(src_base + ip + 1) != 110) { is_enum = 0; }   # n
-                if (load8(src_base + ip + 2) != 117) { is_enum = 0; }   # u
-                if (load8(src_base + ip + 3) != 109) { is_enum = 0; }   # m
-                if (load8(src_base + ip + 4) != 32)  { is_enum = 0; }   # ' '
-            }
-            if (ip + 5 <= bl) {
-                if (is_enum == 1) {
-                    syscall(SYS_WRITE, 2, " (enum '", 8);
-                    var eni = ip + 5;
-                    while (eni < bl) {
-                        var ec2 = load8(src_base + eni);
-                        if (ec2 == 32 || ec2 == 123 || ec2 == 10 || ec2 == 59) { break; }
-                        syscall(SYS_WRITE, 2, src_base + eni, 1);
-                        eni = eni + 1;
-                    }
-                    syscall(SYS_WRITE, 2, "') -- enum codecs must be hand-written, see docs/guides/cyrius-guide.md", 71);
-                }
-            }
-            syscall(SYS_WRITE, 2, "\n", 1);
-            syscall(SYS_EXIT, 1);
-        }
+    # v6.5.30/.31 — `enum` is a FIRST-CLASS derive target; anything else is rejected.
+    #
+    # ⭐ The member-name collection below needs NO enum-specific code. `enum E { A = 0; B = 1; }`
+    # walks the same copy loop as a struct: after each `{` or `;` it skips whitespace, reads an
+    # identifier and stops at the space before `=`, so `A` and `B` land in the field-name table
+    # exactly as struct fields do, with an empty type slot. The ONLY differences are the
+    # keyword width (5 vs 7) and a flag telling the emitter which codec shape to generate.
+    #
+    # ⛔ `ip + 7` below skips the width of `"struct "`. Before v6.5.30 it ran unconditionally,
+    # so on an enum it skipped `"enum pr"` and read the name as `obe_e` — which is where the
+    # long-recorded "misnamed, crashing codec" symptom came from; the downstream emit later
+    # produced nothing at all, turning it into a silent no-op. One mechanism, both symptoms.
+    var kwlen = 0;
+    if (ip + 7 <= bl) { if (is_struct == 1) { kwlen = 7; } }
+    var is_enum = 0;
+    if (ip + 5 <= bl) {
+        is_enum = 1;
+        if (load8(src_base + ip)     != 101) { is_enum = 0; }   # e
+        if (load8(src_base + ip + 1) != 110) { is_enum = 0; }   # n
+        if (load8(src_base + ip + 2) != 117) { is_enum = 0; }   # u
+        if (load8(src_base + ip + 3) != 109) { is_enum = 0; }   # m
+        if (load8(src_base + ip + 4) != 32)  { is_enum = 0; }   # ' '
     }
-    ip = ip + 7;
+    if (kwlen == 0) { if (is_enum == 1) { kwlen = 5; } }
+    S64(S + 0x197F10, is_enum);
+    if (kwlen == 0) {
+        # Neither struct nor enum. Still rejected loudly, naming nothing we cannot name.
+        syscall(SYS_WRITE, 2, "error: #derive(...) applies to a struct or an enum; the following declaration is neither\n", 89);
+        syscall(SYS_EXIT, 1);
+    }
+    ip = ip + kwlen;
     var sni = 0;
     while (ip < bl) {
         var c = load8(src_base + ip);
@@ -1001,7 +1001,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         store8(S + 0x197020 + sni, c); sni = sni + 1; ip = ip + 1;
     }
     store8(S + 0x197020 + sni, 0);
-    var struct_start = ip - 7 - sni;
+    var struct_start = ip - kwlen - sni;
     while (struct_start > 0) { if (load8(src_base + struct_start - 1) == 10) { break; } struct_start = struct_start - 1; }
     var depth = 0;
     var cp = struct_start;
@@ -1203,9 +1203,88 @@ fn PP_EMIT_VEC_ELEM(out, op, t): i64 {
 # S+0x1FE000 (field types) / S+0x200000 (offsets). Caller is
 # responsible for having called PP_PARSE_STRUCT_DEF first to
 # populate that metadata.
+# v6.5.31 — emit `E_to_json(v, sb)` + `E_from_json_str(json)` for a `#derive`d enum.
+#
+# Shape (name string, Result on parse — see the note in PP_DERIVE_SERIALIZE_BODY):
+#   fn E_to_json(v, sb) {
+#       if (v == A) { str_builder_add_cstr(sb, "\"A\""); return 0; }
+#       ...
+#       str_builder_add_cstr(sb, "null");     # unrecognised value, still valid JSON
+#       return 0;
+#   }
+#   fn E_from_json_str(json) {
+#       if (_cy_enum_name_eq(json, "A") == 1) { return Ok(A); }
+#       ...
+#       return Err(0 - 1);
+#   }
+#
+# ⚠ `null` for an out-of-range value, not a crash and not a bogus name: `to_json` writing
+# invalid JSON would corrupt the whole document around it, and an enum value can legitimately
+# be out of range (a cast, a wire value from an older peer). ranga's hand-written Display side
+# does the same thing with "unknown".
+fn PP_DERIVE_ENUM_BODY(S, out, op): i64 {
+    var mcount = load64(S + 0x197010);
+    # The name-compare helper is emitted ONCE per compilation, like the Vec decode helpers.
+    # It skips a leading quote so the same fn works whether the caller hands it a raw JSON
+    # value (`"A"`) or a bare name (`A`), which is what makes `from_json_str` usable both
+    # inside a decoded document and directly on a config string.
+    if (_pp_enum_helper_done == 0) {
+        op = op + PP_EMIT_STR(out, op, "fn _cy_enum_name_eq(json, name) {\nvar p = json;\nif (load8(p) == 34) { p = p + 1; }\nvar i = 0;\nwhile (load8(name + i) != 0) {\nif (load8(p + i) != load8(name + i)) { return 0; }\ni = i + 1;\n}\nvar c = load8(p + i);\nif (c == 34) { return 1; }\nif (c == 0) { return 1; }\nreturn 0;\n}\n");
+        _pp_enum_helper_done = 1;
+    }
+    # === E_to_json(v, sb) ===
+    op = op + PP_EMIT_STR(out, op, "fn ");
+    op = op + PP_EMIT_STR(out, op, S + 0x197020);
+    op = op + PP_EMIT_STR(out, op, "_to_json(v, sb) {\n");
+    var mi = 0;
+    while (mi < mcount) {
+        op = op + PP_EMIT_STR(out, op, "if (v == ");
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + mi * 32);
+        op = op + PP_EMIT_STR(out, op, ") { str_builder_add_cstr(sb, \"\\\"");
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + mi * 32);
+        op = op + PP_EMIT_STR(out, op, "\\\"\"); return 0; }\n");
+        mi = mi + 1;
+    }
+    op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"null\");\nreturn 0;\n}\n");
+    # === E_from_json_str(json) -> Result ===
+    op = op + PP_EMIT_STR(out, op, "fn ");
+    op = op + PP_EMIT_STR(out, op, S + 0x197020);
+    op = op + PP_EMIT_STR(out, op, "_from_json_str(json) {\n");
+    mi = 0;
+    while (mi < mcount) {
+        op = op + PP_EMIT_STR(out, op, "if (_cy_enum_name_eq(json, \"");
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + mi * 32);
+        op = op + PP_EMIT_STR(out, op, "\") == 1) { return Ok(");
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + mi * 32);
+        op = op + PP_EMIT_STR(out, op, "); }\n");
+        mi = mi + 1;
+    }
+    op = op + PP_EMIT_STR(out, op, "return Err(0 - 1);\n}\n");
+    return op;
+}
+
 fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
     var field_count = load64(S + 0x197010);
     var cumul_off = load64(S + 0x197018);
+    # v6.5.31 — ENUM codecs. A C-like enum is an integer with names, so the codec is the
+    # name<->value table the compiler already holds; the generated code compares against the
+    # ENUM CONSTANTS THEMSELVES rather than baking in numbers, so renumbering a variant cannot
+    # desynchronise the codec from the enum.
+    #
+    # ⚖️ WIRE SHAPE: a bare NAME STRING (`"Multiply"`), settled by the maintainer 2026-08-19.
+    # It matches what ranga's hand-written codecs already emit (`pixel_format_name` returns
+    # "RGBA8"), it keeps derived structs flat — `{"fmt":"RGBA8"}` rather than
+    # `{"fmt":{"PixelFormat":"RGBA8"}}`, where the tag merely restates the field name — and it
+    # is serde's representation for unit-variant enums, which is the Rust line the ranga port
+    # is measured against. The number form was rejected as ambiguous: a JSON consumer cannot
+    # tell it from any other integer field.
+    #
+    # ⚖️ PARSE FAILURE: `Result`, also the maintainer's call — `E_from_json_str` returns
+    # `Ok(value)` or `Err(0 - 1)`, composable with `?`. This DIFFERS from the struct
+    # deserializer, which returns a raw pointer: an enum parse can genuinely fail on an
+    # unrecognised name, where a struct decode yields a zeroed struct. The generated code
+    # therefore needs `lib/result.cyr` in scope.
+    if (L64(S + 0x197F10) == 1) { return PP_DERIVE_ENUM_BODY(S, out, op); }
     # Aliases: sname=S+0x197020, names=S+0x1FC000, types=S+0x1FE000, offsets=S+0x200000
     # v6.4.x R2 — emit the shared Vec<primitive> JSON-array decode helper(s) ONCE per
     # compilation, only for the element kinds actually present. Each takes a byte-ptr at
@@ -1925,9 +2004,20 @@ fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op): i64 {
     # then the user's tail, then the single newline.
     _pp_flatten = 1;
     var _stacked = L64(S + 0x197F08);
-    if ((_stacked & 1) != 0) {
-        op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
-    }
+    # v6.5.31 — emit the codec body UNCONDITIONALLY, not only when `Serialize` is also
+    # stacked.
+    #
+    # ⛔ A bare `#derive(Deserialize)` emitted NOTHING — the same silent no-op the enum case
+    # was filed for, in the same subsystem, and pre-existing on the STRUCT path too:
+    # `#derive(Deserialize) struct P { a; b; }` compiled clean and left `P_from_json_str`
+    # undefined until link time. It only ever worked when `#derive(Serialize)` happened to be
+    # stacked with it, because this body is what emits BOTH codecs.
+    #
+    # Found while wiring the enum arm: the enum path inherited the identical wart, and fixing
+    # it for enums alone would have left the struct half of one directive still silent.
+    # `PP_DERIVE_SERIALIZE_BODY` is called exactly ONCE here regardless of stacking, so the
+    # both-stacked case is unchanged and no fn is emitted twice.
+    op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
     if ((_stacked & 4) != 0) {
         op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
     }

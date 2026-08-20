@@ -556,7 +556,35 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
         # preserved deliberately — prepending TRANSITIVE includes overrides the
         # `#ifdef CYRIUS_TARGET_*` arch dispatchers and was itself a prior bug (see the header
         # comment above this fn).
-        if (is_top == 1) { _dep_push_include_once(mod_name); }
+        # ⛔ v6.5.31 — DIRECTORY FAMILIES MUST NOT GET A FLAT INCLUDE HERE.
+        #
+        # `unicode` is the one stdlib module that is a package DIRECTORY (`lib/unicode/*.cyr`)
+        # with no `lib/unicode.cyr`. The expansion below handles that — but only on the FIRST
+        # arrival, because this seen-guard returns before reaching it. So when `unicode` came
+        # in via BOTH a dep's `.deps` sidecar AND the consumer's own `[deps].stdlib`, the first
+        # route expanded the family correctly and the second route landed here and pushed a
+        # flat `include "lib/unicode.cyr"` — a file that legitimately does not exist. The build
+        # died with `cannot open include file: lib/unicode.cyr` while `lib/unicode/` sat there
+        # fully populated, sending the reader after a missing stdlib module instead of a
+        # double declaration. Filed from agnostic 2.0.1 consuming agnosai 2.0.2.
+        #
+        # ⚠ INTRODUCED AT v6.5.28, not v6.2.47 as the filing reasonably guessed: this push is
+        # what the transitive-include fix added, and it was written for flat leaves only.
+        # Either declaration alone worked; only the combination reached it.
+        #
+        # The family members were already pushed by whichever route arrived first, so the
+        # correct action here is to push NOTHING — guarded by the same file_exists test the
+        # expansion itself keys on, so the two cannot disagree about what a family is.
+        if (is_top == 1) {
+            var gsb = str_builder_new();
+            str_builder_add_cstr(gsb, stdlib_dir);
+            str_builder_add_cstr(gsb, "/");
+            str_builder_add_cstr(gsb, mod_name);
+            str_builder_add_cstr(gsb, ".cyr");
+            if (file_exists(str_data(str_builder_build(gsb))) == 1) {
+                _dep_push_include_once(mod_name);
+            }
+        }
         return 0;
     }
     _dep_stdlib_seen_add(mod_name);

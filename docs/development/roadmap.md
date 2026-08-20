@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.30** (2026-08-19) — cycc **1,182,416 B** · check.sh **196 passed / 0
+**Current head: v6.5.31** (2026-08-19) — cycc **1,182,416 B** · check.sh **196 passed / 0
 failed** · self_compile **716 ms** · **280** `.tcyr` (**53** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **75** shell gate scripts under
 `tests/gates/<bucket>/` · heap map **100 regions / 0 overlaps** · **9 open issues + 2 open
@@ -1090,22 +1090,13 @@ evidence does not.** Re-derive every line reference and count before acting on o
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
-- **`#derive(Serialize)` / `#derive(Deserialize)` on an ENUM — generate the codec**
-  (`issues/2026-08-19-derive-serialize-enum-support`) — ⚖️ **BLOCKED ON ONE MAINTAINER
-  DECISION, not on effort: the JSON wire shape.** Requested by ranga (M7 parity audit), which
-  hand-writes four enum codecs today. The *silent* half shipped at `.30` — a derive on a
-  non-struct is now rejected with a diagnostic naming the enum — so nothing is failing quietly
-  any more and this is a clean feature request rather than a bug.
-  The choice is name-string (`"Multiply"`), number (`3`), or tagged object
-  (`{"BlendMode":"Multiply"}`). **It cannot be changed later**: the format becomes the wire
-  contract the moment a consumer persists or transmits anything, which is exactly why the
-  rejection shipped and the generation did not. Recommendation if no preference: **name
-  string** — the only option where `E_from_json_str` is meaningful without a separate schema,
-  and it matches the Rust `Serialize` behaviour the ranga port is measured against.
-  Implementation is modest once chosen: `PP_PARSE_STRUCT_DEF` already collects member names,
-  an enum body parses on the same shape as a struct field with a default, and the `is_struct`
-  branch added at `.30` is where the enum arm hangs. ranga needs **both** directions — the
-  parse side is the one it cannot emulate.
+- ~~**`#derive(Serialize)` / `#derive(Deserialize)` on an ENUM — generate the codec**~~ —
+  ✅ **SHIPPED v6.5.31**, archived to `issues/archived/2026-08-19-derive-serialize-enum-support`.
+  The blocker was never effort, it was the wire-shape contract; the maintainer settled it
+  (**name string** + **`Result`**) and the implementation followed the same day. Both
+  directions shipped — the parse side is the half ranga could not emulate. A pre-existing
+  sibling defect went with it: a bare `#derive(Deserialize)` emitted nothing on **structs**
+  too, because the codec body was only reached when `Serialize` happened to be stacked.
 
 - **Embed data files as source strings — an `[embed]` / assets manifest section**
   (`proposals/2026-08-10-embed-data-files-as-source-strings`) — ⛔ **added 2026-08-11 by the

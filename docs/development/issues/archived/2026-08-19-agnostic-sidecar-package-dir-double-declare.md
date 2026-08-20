@@ -1,6 +1,25 @@
 # A package-DIRECTORY stdlib leaf declared in BOTH `[deps].stdlib` and a dep's `.deps` sidecar emits an unexpanded `lib/<name>.cyr` include — build fails
 
-**Status:** 🟡 **OPEN** — reproduced against the shipped 6.5.29 CLI with a 2-line synthetic dep; consumer has a one-line workaround, so it is not a blocker.
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.31**. See `CHANGELOG.md` [6.5.31].
+
+> Reproduced verbatim (Variant C: `cannot open include file: lib/unicode.cyr` with
+> `lib/unicode/` fully populated) and fixed at the seen-guard: a top-level request for an
+> ALREADY-SEEN module now pushes a flat `include "lib/<mod>.cyr"` only when that file actually
+> exists, guarded by the same `file_exists` test the directory-family expansion itself keys on
+> so the two cannot disagree about what a family is. The family members were already pushed by
+> whichever route arrived first, so the correct action on the second route is to push nothing.
+>
+> ⚠ **Bisected: introduced at v6.5.28, not v6.2.47** as the filing reasonably assumed. That
+> push did not exist before — it was added by the v6.5.28 "transitive stdlib pull drops the
+> consumer's own top-level include" fix, which was written for flat leaves and never
+> considered the one package-directory module. Either declaration alone worked precisely
+> because only the combination reaches the seen path.
+>
+> Both halves are now pinned in ONE gate, deliberately: axes 1-2 require the seen path to
+> push (the .28 fix), axis 4 requires it not to push a family name (this fix). They share a
+> code path and must be read together. Axis 3 was also rewritten — it grepped for a literal
+> one-liner and went RED against correct code when the guard grew multi-line, so it now checks
+> the is_top invariant scoped to the enclosing function rather than the formatting.
 **Placement:** unpinned — 6.5.x backlog. `cbt/deps.cyr` (sidecar consumption vs. directory-family expansion).
 **Discovered:** 2026-08-19 while wiring **agnostic 2.0.1** (Python → Cyrius port) to consume **agnosai 2.0.2**'s new `dist/agnosai.cyr` bundle.
 **Severity:** Medium — hard build failure, known workaround, and the error names a file that legitimately does not exist so the reader is sent looking for a missing stdlib module rather than a double-declaration.

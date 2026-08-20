@@ -1,6 +1,30 @@
 # `#derive(Serialize)` / `#derive(Deserialize)` on an enum — generate the codec
 
-**Status:** 🟡 **OPEN — feature, blocked on ONE maintainer decision (the wire shape).**
+**Status:** ✅ **RESOLVED** — shipped in **v6.5.31**. See `CHANGELOG.md` [6.5.31].
+
+> ⚖️ **Decisions taken by the maintainer 2026-08-19**, which is what unblocked this:
+> **name string** for the wire shape (`"Multiply"`) and **`Result`** for the parse side. The
+> number form was rejected as ambiguous — a JSON consumer cannot tell it from any other
+> integer field. Tagged objects were rejected because a struct's field key already names the
+> type, so the tag only restates it: `{"fmt":"RGBA8"}` rather than
+> `{"fmt":{"PixelFormat":"RGBA8"}}`.
+>
+> Both directions shipped, which is what ranga needed — the parse side is the half it could
+> not emulate. `E_to_json(v, sb)` writes the quoted name (`null` for an unrecognised value, so
+> the surrounding document stays valid JSON); `E_from_json_str(json)` returns `Ok(value)` /
+> `Err(-1)` and accepts either a quoted JSON value or a bare name.
+>
+> ⭐ **Smaller than the sketch predicted.** The member-name collection needed NO enum-specific
+> code: an enum body walks the same copy loop as a struct, so `A` and `B` land in the
+> field-name table exactly as struct fields do. The only parser differences were the keyword
+> width (5 vs 7) and a flag selecting the codec shape. The generated code compares against the
+> enum CONSTANTS rather than baked-in numbers, so renumbering cannot desynchronise it.
+>
+> ⛔ **One pre-existing defect surfaced while wiring this and is fixed here too:** a bare
+> `#derive(Deserialize)` emitted NOTHING — on **structs** as well as enums — because the codec
+> body was only reached when `Serialize` happened to be stacked with it. Same silent-no-op
+> family, one directive away, and fixing it only for enums would have left the struct half
+> still silent.
 The silent-no-op half was closed at v6.5.30: a derive on a non-struct is now rejected with a
 diagnostic naming the enum. What remains is generating the codec.
 **Placement:** unpinned — 6.5.x backlog. Derive expansion (`src/frontend/lex_pp.cyr`).

@@ -4,6 +4,91 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.31] — 2026-08-19
+
+**The enum-codec decision, taken and executed the same day — plus two silent no-ops it
+exposed on the way.**
+
+### Added — `#derive(Serialize)` / `#derive(Deserialize)` generate a codec for an ENUM
+
+⚖️ **The blocker was never effort, it was a wire-format contract**, which is why `.30` shipped
+a loud rejection and not this. The maintainer settled it: **name string** (`"Multiply"`) and
+**`Result`** on the parse side.
+
+- The **number** form was rejected as ambiguous — a JSON consumer cannot tell it from any
+  other integer field.
+- The **tagged object** was rejected because in a struct the field key already names the type,
+  so the tag only restates it: `{"fmt":"RGBA8"}`, not `{"fmt":{"PixelFormat":"RGBA8"}}`.
+  Name-string also matches what ranga's hand-written codecs already emit and is serde's
+  representation for unit-variant enums — the Rust line the port is measured against.
+
+```
+#derive(Serialize)
+enum BlendMode { MULTIPLY = 0; SCREEN = 1; OVERLAY = 2; }
+
+BlendMode_to_json(SCREEN, sb);                    # sb: "SCREEN"
+var r = BlendMode_from_json_str("\"OVERLAY\"");   # Ok(OVERLAY)
+```
+
+`E_to_json(v, sb)` writes `null` for an unrecognised value rather than a bogus name, so the
+surrounding document stays valid JSON — an out-of-range enum is reachable via a cast or an
+older peer's wire value. `E_from_json_str(json)` returns `Ok(value)` / `Err(-1)`, composes with
+`?`, and accepts either a quoted JSON value or a bare name, so the same fn reads a config
+string and a value lifted out of a document. Generated enum code needs `lib/result.cyr`.
+
+⚠ `Result` here differs from the **struct** deserializer, which returns a raw pointer. That is
+deliberate: an enum parse can genuinely fail on an unrecognised name; a struct decode yields a
+zeroed struct.
+
+⭐ **Much smaller than the implementation sketch predicted.** The member-name collection needed
+**no enum-specific code at all** — an enum body walks the same copy loop as a struct, so `A`
+and `B` land in the field-name table exactly as struct fields do, with an empty type slot. The
+only parser differences were the keyword width (5 vs 7) and a flag selecting the codec shape.
+The generated code compares against the **enum constants**, never baked-in numbers, so
+renumbering a variant cannot desynchronise the codec; values need not be contiguous.
+
+⚠ Negative enum values are untested because the **language** does not accept them
+(`enum E { B = -1; }` is `error: expected number, got '-'`, and `0 - 1` is an expression an
+enum body will not take). A pre-existing parser limit, unrelated to derive, recorded so the
+omission does not read as an untested case.
+
+### Fixed — a bare `#derive(Deserialize)` emitted NOTHING, on structs as well as enums
+
+Found while wiring the enum arm. The codec body was only reached when `Serialize` happened to
+be **stacked** with it, so `#derive(Deserialize) struct P { a; b; }` compiled clean and left
+`P_from_json_str` undefined until link time — the same silent-no-op family as the enum case,
+one directive away, and pre-existing on the struct path. Fixing it only for enums would have
+left the struct half still silent. The body is now emitted unconditionally; it is called
+exactly once regardless of stacking, so the both-stacked case is unchanged.
+
+### Fixed — a package-DIRECTORY leaf declared in BOTH places broke the build
+
+`unicode` is the one stdlib module that is a package directory (`lib/unicode/*.cyr`) with no
+flat `lib/unicode.cyr`. The expansion that handles it sits *below* the seen-guard, so when
+`unicode` arrived via a dep's `.deps` sidecar **and** the consumer's own `[deps] stdlib`, the
+first route expanded the family correctly and the second landed on the seen path and pushed a
+flat `include "lib/unicode.cyr"` — a file that legitimately does not exist. Hard build
+failure, with an error naming a missing stdlib module rather than the double declaration,
+while `lib/unicode/` sat fully populated. Filed from agnostic 2.0.1 consuming agnosai 2.0.2.
+
+⚠ **Bisected to v6.5.28, not v6.2.47 as the filing reasonably assumed.** That push did not
+exist before: it was added by `.28`'s "transitive stdlib pull drops the consumer's own
+top-level include" fix, which was written for flat leaves and never considered the one
+package-directory module. Either declaration alone worked precisely because only the
+combination reaches the seen path. The seen path now pushes a flat include only when that file
+actually exists, guarded by the same `file_exists` test the expansion itself keys on so the
+two cannot disagree about what a family is.
+
+Both halves are pinned in **one** gate deliberately — axes 1-2 require the seen path to push,
+axis 4 requires it not to push a family name; they share a code path and must be read together.
+
+⚠ **Axis 3 of that gate was itself wrong** and is rewritten. It grepped for a literal
+one-liner, so it went RED against correct code the moment the guard grew multi-line — a
+structural axis failing for the one reason a structural axis must not. It now checks the
+`is_top` invariant scoped to the enclosing function. Two drafts of the replacement also
+matched the wrong lines (the helper's own definition; a named-dep push reusing the same
+variable name) before being scoped properly.
+
 ## [6.5.30] — 2026-08-19
 
 **A stdlib fold sweep and the three consumer bugs it surfaced.** `.30` sits in the W3 reactive

@@ -396,27 +396,56 @@ struct Config { host: Str; port; timeout; }
 #            Config_port(p), Config_set_port(p, v), etc.
 ```
 
-### `#derive(...)` applies to a **struct** only (v6.5.30)
+## Derive Serialize on an enum (v6.5.31)
 
-Every `#derive` directive — `accessors`, `Serialize`, `Deserialize` — expects a `struct` on the
-following line. Anything else is now a hard error naming the declaration:
+`#derive(Serialize)` and `#derive(Deserialize)` work on an **enum** as well as a struct, and
+generate a name-string codec pair:
+
+```
+include "lib/result.cyr"        # required — the parse side returns Result
+
+#derive(Serialize)
+enum BlendMode { MULTIPLY = 0; SCREEN = 1; OVERLAY = 2; }
+
+var sb = str_builder_new();
+BlendMode_to_json(SCREEN, sb);          # sb now holds:  "SCREEN"
+
+var r = BlendMode_from_json_str("\"OVERLAY\"");
+if (is_ok(r) == 1) { var v = result_unwrap(r); }   # v == OVERLAY
+```
+
+- **`E_to_json(v, sb)`** writes the quoted variant **name**. An unrecognised value writes
+  `null` rather than a bogus name, so the surrounding document stays valid JSON.
+- **`E_from_json_str(json)`** returns `Ok(value)` or `Err(-1)`, so it composes with `?`. It
+  accepts a quoted JSON value (`"OVERLAY"`) or a bare name (`OVERLAY`), which lets the same fn
+  read a config string as well as a value lifted out of a document.
+
+The generated code compares against the **enum constants**, never against baked-in numbers, so
+renumbering a variant cannot desynchronise the codec. Values need not be contiguous.
+
+⚠ **Why a name and not a number.** `{"fmt":"RGBA8"}` is self-describing; `{"fmt":3}` is
+indistinguishable from any other integer field. A tagged object (`{"PixelFormat":"RGBA8"}`)
+was rejected because in a struct the field key already names the type, so the tag only
+restates it. This matches serde's representation for unit-variant enums.
+
+⚠ `Result` here differs from the **struct** deserializer, which returns a raw pointer. That is
+deliberate: an enum parse can genuinely fail on an unrecognised name, where a struct decode
+yields a zeroed struct.
+
+### `#derive(...)` applies to a struct or an enum — nothing else
+
+Anything other declaration is a hard error:
 
 ```
 #derive(Serialize)
-enum Blend { MULTIPLY = 0; SCREEN = 1; }
-# error: #derive(...) applies to a struct; the following declaration is not one
-#        (enum 'Blend') -- enum codecs must be hand-written, see docs/guides/cyrius-guide.md
+fn helper(): i64 { return 0; }
+# error: #derive(...) applies to a struct or an enum; the following declaration is neither
 ```
 
-⚠ Until v6.5.30 this was **silently accepted and generated nothing**: the build was green and
-the missing `Blend_to_json` only surfaced as an undefined symbol at link time — and only if
-something actually called it. (Earlier still it generated a *misnamed* codec, because the
-parser skipped the width of `"struct "` and read `enum Blend` as a struct named `lend`.)
-
-Hand-write enum codecs for now, following the `device_class_to_str` pattern in
-`lib/yukti.cyr`. Generated enum codecs are a tracked feature
-(`docs/development/issues/2026-08-19-derive-serialize-enum-support.md`); the open question is
-the JSON wire shape, which is a contract decision rather than an implementation detail.
+⚠ Until v6.5.30 a derive on a non-struct was **silently accepted and generated nothing** — the
+build was green and the missing codec surfaced as an undefined symbol at link time, if at all.
+(Earlier still it generated a *misnamed* codec, because the parser skipped the width of
+`"struct "` and read `enum Blend` as a name of `lend`.) Both symptoms had the same cause.
 
 ## Defer
 
