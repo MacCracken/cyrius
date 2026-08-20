@@ -1,6 +1,6 @@
 # A branching fn in `src/common/util.cyr` makes cybs emit a broken `gen1` — mechanism UNKNOWN
 
-**Status:** 🔴 **OPEN — P1, pinned to v6.5.33.** Reproduced repeatedly at v6.5.32; **not diagnosed**.
+**Status:** 🔴 **OPEN — P1, in progress at v6.5.33.** LOCALISED to `patch_rel32` called from `parse_if_else` with a stale/clobbered offset; leading hypothesis is cybs 8-byte-store emit spill. **Not yet root-caused, not fixed.**
 **Placement:** v6.5.33. `bootstrap/cybs.cyr` (the seed-assembled bootstrap compiler).
 **Discovered:** 2026-08-20, while adding `ENUM_CONST_VAL` for the negative-enum work (v6.5.32).
 **Severity:** **P1 — it constrains where compiler code may be written, for a reason nobody understands.**
@@ -26,6 +26,72 @@ Nine `seed-derive-cycc.sh` runs, each after a full `build/cycc` rebuild:
 Failure mode: **cybs exits 0 and produces a `gen1` that links**, then `gen1` dies with
 `SIGILL` (sometimes `SIGSEGV`) at step [4/5], compiling `src/main.cyr`. `build/cycc` compiles
 every one of these variants correctly, so **only `seed-derive-cycc.sh` sees it**.
+
+## Investigation, v6.5.33 — LOCALISED, not yet fixed
+
+Worked with a debug cybs (assembled from an instrumented `cybs.cyr` via the seed) plus
+conditional gdb breakpoints. What is now **established by measurement**:
+
+**1. The corruption is 5 bytes, in `SENUMC`.** The affected function is
+`SENUMC(S, v)` in `src/common/util.cyr` — two params, `if (v >= 1024)`, which matches the
+emitted prologue (stores `rdi`/`rsi`), `movabs $0x400`, compare, `jl`. At file offset 0x877
+(codebuf 0x7FF):
+
+```
+good: 48 89 c1 58 48 39 c8      mov %rax,%rcx ; pop %rax ; cmp %rcx,%rax
+bad:  48 db 8e 0e 00 39 c8      <garbage>     ;              cmp %rcx,%rax
+```
+
+**2. `fixup_vars` is INNOCENT.** A debug cybs dumping codebuf either side of `fixup_vars`
+produced identical bytes both times, in both the good and bad builds. The corruption is
+already present when the parser finishes.
+
+**3. The writer is `patch_rel32`, called with codebuf offset `0x800`.** Caught on a
+conditional breakpoint: `patch_rel32(off=0x800)` with `code_pos=0xe96df`, writing
+`rel32=0xe8edb` — exactly the observed bytes `db 8e 0e 00`. ⚠ An earlier attempt at this
+breakpoint used FILE offsets and never fired; `patch_rel32` takes CODEBUF offsets, which are
+file offset − 0x78 (the ELF header).
+
+**4. The call site is `parse_if_else`'s deferred patch** (`bootstrap/cybs.cyr:3011`, return
+address 0x402e71). That routine emits `E9` + a 4-byte hole for the skip-over-else jump,
+records the hole's offset in `rbx`, recursively parses the else body, and only then patches.
+
+**5. `parse_if`'s register discipline is CORRECT.** `parse_if_clause` pushes `r8`/`r9`/`rbx`
+at entry and pops at `parse_if_done`; `parse_if_elif` recurses with a proper `call`, not a
+tail jump. So the saved-offset path is not obviously the defect.
+
+**6. `code_pos` is never rewound during parsing.** Only two sites assign `r13`
+(`cybs.cyr:4630`, `:4744`) and both are in the emit/write phase.
+
+## The leading hypothesis — the 8-byte-store emit idiom
+
+cybs emits short instructions with a **full qword store and a partial advance**:
+
+```asm
+mov rax, 0xE9
+mov [rsi], rax     # writes EIGHT bytes: E9 00 00 00 00 00 00 00
+inc r13            # advances ONE
+```
+
+Every such emit therefore writes up to 7 bytes PAST the instruction. That is normally
+harmless because subsequent emission overwrites the spill — but it is not harmless for any
+byte in the spill zone that is already final, which includes a rel32 hole whose offset has
+been handed to a deferred `patch_rel32`. The observed failure is exactly that shape: a
+recorded patch offset (0x800) whose bytes were later rewritten by a neighbouring emit, so the
+patch lands in the middle of `mov/pop/cmp`.
+
+⛔ **NOT yet proven**, and it must be before anything is changed: a speculative fix to the
+bootstrap compiler is worse than the bug. What would prove it: log every emit's
+(offset, advance) and every deferred patch offset, then find the emit whose spill zone covers
+a live patch offset.
+
+## Still open
+
+- Which specific emit clobbers 0x800, and whether the `if`-with-`else` that recorded it is in
+  `util.cyr` or elsewhere. Instrumenting `parse_if_else` directly was attempted; the debug
+  build died early (the scratch address used for logging collides with a live cybs region —
+  pick stack space, not `r15+0x7F00000`, next time).
+- Whether `(x >> 62)` is a **second, independent** cybs bug. Still untested.
 
 ## What is NOT established
 
