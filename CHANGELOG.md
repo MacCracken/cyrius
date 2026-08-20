@@ -4,6 +4,52 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.32] — 2026-08-20
+
+### Added — enum members may have NEGATIVE values
+
+`enum E { NONE = -1; }` was `error: expected number, got '-'`, and the obvious workaround
+`NONE = 0 - 1` is an expression an enum body will not take either — so a negative constant
+could not be spelled **at all**. Sentinels (-1 for "none", negative errno families) are
+ordinary.
+
+⛔ **`.31` recorded this as a language limitation and moved on. That was wrong**: this is the
+repo that owns the parser, and writing a parser limit down as a language fact is precisely the
+antipattern CLAUDE.md records. The `.31` entry above has been corrected.
+
+⭐ **The encoding was the real work, not the parse.** `enum_const_val` packs a presence marker
+into **bit 63** (`(1 << 63) | val`) and five separate readers recovered the value with a bare
+`& 0x7FFFFFFFFFFFFFFF`. For -1 (0xFFFF…F) the marker is indistinguishable from the value's own
+sign bit, so the mask yields `0x7FFF_FFFF_FFFF_FFFF` — a colossal **positive** — and the
+constant silently becomes the wrong number that compares *greater* than zero.
+
+The fix is smaller than it sounds: bit 63 is always set on a live entry, so for a negative
+value the marker **already is** the sign bit the result needs — return the slot unchanged;
+only a positive value needs it cleared. Representable range is −2^62 … 2^62−1. All six readers
+now route through one decoder, because fixing five of six would have been this cycle's `_cfo`
+lesson a third time.
+
+A negative constant used as an **array size** is now a hard error naming the reason, at both
+the local and top-level sites. Making negatives spellable made that reachable for the first
+time, and silent acceptance of a nonsensical size is the failure mode this release line keeps
+removing.
+
+⚠⚠ **The decoder must not live in `src/common/util.cyr`.** Adding *any* function with a branch
+there makes **cybs** emit a `gen1` that links fine and then dies with SIGILL/SIGSEGV compiling
+`src/main.cyr`. Bisected across nine seed-derive runs: the identical fn is fine in
+`parse_types.cyr` and in `parse_expr.cyr`, and a branch-*free* fn is fine in `util.cyr` — so it
+is neither a capacity ceiling nor the function's content, but something position-specific to
+util.cyr in the bootstrap compiler. `build/cycc` compiles every variant correctly, so **only
+`seed-derive-cycc.sh` catches it**; the constraint is now recorded in CLAUDE.md and beside the
+function itself.
+
+⚠ One of the bisection rounds was invalid and had to be redone: a `re.sub` with `DOTALL` ate
+~80 lines of `util.cyr`, and every "BROKEN" result after it was measuring a file that no longer
+compiled at all. Caught by checking the artifact (line count, and whether `cycc` still built)
+rather than trusting the run.
+
+The derive test's negative variant, removed at `.31` when the language rejected it, is back.
+
 ## [6.5.31] — 2026-08-19
 
 **The enum-codec decision, taken and executed the same day — plus two silent no-ops it
@@ -47,10 +93,11 @@ only parser differences were the keyword width (5 vs 7) and a flag selecting the
 The generated code compares against the **enum constants**, never baked-in numbers, so
 renumbering a variant cannot desynchronise the codec; values need not be contiguous.
 
-⚠ Negative enum values are untested because the **language** does not accept them
-(`enum E { B = -1; }` is `error: expected number, got '-'`, and `0 - 1` is an expression an
-enum body will not take). A pre-existing parser limit, unrelated to derive, recorded so the
-omission does not read as an untested case.
+⚠ Negative enum values were untested here because the **language** did not accept them
+(`enum E { B = -1; }` was `error: expected number, got '-'`). ⛔ **That was the wrong call and
+`.32` fixes it** — writing a parser limit down as a language fact, in the repo that owns the
+parser, is the antipattern CLAUDE.md records. See [6.5.32]; the derive test now covers a
+negative variant.
 
 ### Fixed — a bare `#derive(Deserialize)` emitted NOTHING, on structs as well as enums
 

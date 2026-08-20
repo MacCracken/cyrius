@@ -1,0 +1,69 @@
+# enum_negative_values.tcyr — v6.5.32: an enum member may have a NEGATIVE value.
+#
+# ⛔ `enum E { B = -1; }` was `error: expected number, got '-'`, and the obvious workaround
+# `B = 0 - 1` is an expression an enum body will not take either — so there was NO WAY to
+# spell a negative constant. Sentinel values (-1 for "none", negative errno families) are
+# ordinary, and this is the repo that owns the parser. `.31` wrote the limitation down as a
+# language fact instead of fixing it, which is the antipattern CLAUDE.md records: when the
+# compiler cannot compile valid cyrius, fix the compiler.
+#
+# ⭐ THE ENCODING IS THE INTERESTING HALF, not the parse. `enum_const_val` packs a presence
+# marker into BIT 63 (`(1 << 63) | val`) and five separate readers recovered the value with a
+# bare `& 0x7FFFFFFFFFFFFFFF`. For -1 (0xFFFF...F) the marker is indistinguishable from the
+# value's own sign bit, so the mask yielded 0x7FFF_FFFF_FFFF_FFFF — a colossal positive — and
+# the constant silently became the wrong number. Fixed by sign-extending from bit 62 in ONE
+# shared decoder that all five sites now call. Representable range is -2^62 .. 2^62-1.
+#
+# ⚠ In crossos/ because the fold table feeds CONSTANT FOLDING in the emitters: a folded
+# negative immediate is an EMOVI on every backend, and the aarch64/PE paths encode large and
+# negative immediates differently from x86. A fold bug here would be target-specific.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+enum Sentinel { NONE = -1; ZERO = 0; ONE = 1; }
+enum Errno { E_PERM = -1; E_NOENT = -2; E_BIG = -4096; }
+enum Mixed { NEG_LARGE = -1000000; POS_LARGE = 1000000; }
+
+fn main(): i64 {
+    alloc_init();
+    test_group("negative enum values (v6.5.32)");
+
+    # --- the value is what was written, not a masked positive ---
+    assert_eq(NONE, 0 - 1, "NONE == -1 (not 0x7FFFFFFFFFFFFFFF)");
+    assert_eq(E_PERM, 0 - 1, "E_PERM == -1");
+    assert_eq(E_NOENT, 0 - 2, "E_NOENT == -2");
+    assert_eq(E_BIG, 0 - 4096, "a larger negative survives");
+    assert_eq(NEG_LARGE, 0 - 1000000, "a big negative survives");
+
+    # ⭐ ANTI-VACUOUS: positives in the SAME enum must be untouched. Without these, a decoder
+    # that sign-extended unconditionally — or returned -1 for everything — would pass above.
+    assert_eq(ZERO, 0, "0 is still 0");
+    assert_eq(ONE, 1, "1 is still 1");
+    assert_eq(POS_LARGE, 1000000, "a big positive is still positive");
+
+    # A negative constant must be strictly less than a positive one. This catches the exact
+    # old failure mode, where -1 masked to a huge POSITIVE and compared greater.
+    assert_eq(NONE < ZERO, 1, "-1 compares LESS than 0 (the masked value compared greater)");
+    assert_eq(E_BIG < E_PERM, 1, "-4096 < -1");
+    assert_eq(NEG_LARGE < POS_LARGE, 1, "a negative is less than a positive");
+
+    # --- folded arithmetic on negative constants ---
+    assert_eq(NONE + 1, 0, "-1 + 1 == 0");
+    assert_eq(ZERO - NONE, 1, "0 - (-1) == 1");
+    assert_eq(E_NOENT * 2, 0 - 4, "-2 * 2 == -4");
+    assert_eq(0 - NONE, 1, "negating -1 gives 1");
+
+    # --- as a runtime value through a variable, not only as a folded literal ---
+    var v = NONE;
+    assert_eq(v, 0 - 1, "a negative constant assigned to a var keeps its value");
+    var sum = 0;
+    var i = 0;
+    while (i < 3) { sum = sum + E_PERM; i = i + 1; }
+    assert_eq(sum, 0 - 3, "accumulating a negative constant in a loop");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

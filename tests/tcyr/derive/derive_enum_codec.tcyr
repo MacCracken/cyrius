@@ -18,10 +18,10 @@
 # is the row that proves it: values 5 / 900 / 12345 are non-contiguous and far from any index,
 # so a codec that assumed 0..n or carried its own literals would fail on it.
 #
-# ⚠ Negative enum values are NOT tested because the LANGUAGE does not accept them —
-# `enum E { B = -1; }` is `error: expected number, got '-'`, and `0 - 1` is an expression an
-# enum body will not take either. That is a pre-existing parser limit, unrelated to derive,
-# and noted here so the omission does not read as an untested case.
+# ⭐ v6.5.32 — the negative variant is BACK. `.31` recorded that the language would not accept
+# `enum E { B = -1; }` and left it there; that was writing a parser limit down as a language
+# fact in the repo that OWNS the parser. Negative values are now spellable, and a sentinel
+# variant is the shape most likely to have one, so the codec is tested against it directly.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -36,7 +36,7 @@ enum BlendMode { MULTIPLY = 0; SCREEN = 1; OVERLAY = 2; }
 
 # Non-contiguous and negative values — nothing about the codec may assume 0..n.
 #derive(Deserialize)
-enum Sparse { LOW = 5; HIGH = 900; HIGHEST = 12345; }
+enum Sparse { NONE = -1; LOW = 5; HIGH = 900; HIGHEST = 12345; }
 
 fn json_of(v): i64 {
     var sb = str_builder_new();
@@ -51,7 +51,7 @@ fn sparse_json_of(v): i64 {
 
 fn main(): i64 {
     alloc_init();
-    test_group("derive enum codec (v6.5.31)");
+    test_group("derive enum codec (v6.5.31, negative variants v6.5.32)");
 
     # --- to_json: a quoted variant NAME ---
     assert_eq(streq(json_of(MULTIPLY), "\"MULTIPLY\""), 1, "to_json emits the quoted name");
@@ -110,6 +110,14 @@ fn main(): i64 {
 
     assert_eq(streq(sparse_json_of(5), "\"LOW\""), 1, "to_json maps a non-contiguous value back to its name");
     assert_eq(streq(sparse_json_of(900), "\"HIGH\""), 1, "to_json handles the middle of a sparse enum");
+
+    # ⭐ NEGATIVE variant (v6.5.32). A sentinel like NONE = -1 is the commonest reason to want
+    # one, and it is also the value that broke the enum_const_val encoding: bit 63 is the
+    # presence marker, so -1 masked to 0x7FFF_FFFF_FFFF_FFFF before the decoder sign-extended.
+    var s3 = Sparse_from_json_str("\"NONE\"");
+    assert_eq(is_ok(s3), 1, "a negative variant parses");
+    assert_eq(result_unwrap(s3), 0 - 1, "NONE round-trips as -1, not a masked huge positive");
+    assert_eq(streq(sparse_json_of(0 - 1), "\"NONE\""), 1, "to_json maps -1 back to its name");
 
     var r2 = assert_summary();
     return r2;

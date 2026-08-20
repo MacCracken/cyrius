@@ -646,7 +646,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     if (vi < 1024) {
                         var _ecvq = L64(_vecv_base + vi * 8);
                         if (_ecvq < 0) {
-                            var _evq = _ecvq & 0x7FFFFFFFFFFFFFFF;
+                            var _evq = ENUM_CONST_VAL(_ecvq);
                             _cfp = GCP(S);
                             EMOVI(S, _evq);
                             if (_evq < 0x10000) { _cfv = _evq; _cfo = 1; }
@@ -800,7 +800,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (idx < 1024) {
             var _ecv = L64(_vecv_base + idx * 8);
             if (_ecv < 0) {
-                var _ev = _ecv & 0x7FFFFFFFFFFFFFFF;
+                var _ev = ENUM_CONST_VAL(_ecv);
                 _cfp = GCP(S);
                 EMOVI(S, _ev);
                 if (_ev < 0x10000) { _cfv = _ev; _cfo = 1; }
