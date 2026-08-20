@@ -4,6 +4,67 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.33] — 2026-08-20
+
+**The P1 is root-caused and FIXED in the bootstrap compiler.** `.32` shipped it as a hazard
+note saying the mechanism was unknown; that note is now deleted, because the mechanism is known
+and the constraint it described no longer exists.
+
+### Fixed — cybs stray-wrote into the code stream from `parse_if_else`
+
+`parse_if_else` (`bootstrap/cybs.cyr`) emits an `E9` plus a 4-byte hole for the skip-over-else
+jump, records the hole's offset in **`rbx`**, recursively parses the else body with
+`call parse_program`, and only then calls `patch_rel32`. Something inside that recursive parse
+**clobbers `rbx`**, so the deferred patch fired with a stale value and wrote a 4-byte rel32
+into an arbitrary place in the emitted compiler.
+
+⭐ **It corrupted every build, not only the failing ones.** A debug cybs logging each
+SET/PATCH pair found exactly **one orphan patch** — a PATCH with no matching SET — in the
+ordinary build too: `rbx=0x800`, `code_pos=0xe96df`. It merely landed inside a `movabs`
+immediate, where a wrong constant in that particular spot was survivable. Shift the layout by
+~80 bytes (adding any branching fn to `src/common/util.cyr` did it) and the identical write
+lands on an **instruction boundary**; `gen1` then links fine and dies with SIGILL/SIGSEGV
+compiling `src/main.cyr`.
+
+So "util.cyr cannot take a branching function" was never a rule — it was a position-dependent
+symptom of a register-discipline bug three layers down. **The `(x >> 62)` probe that also broke
+the chain was not a second bug** either: same stray write, different landing site. Both derive
+clean now.
+
+**Fix:** save `rbx` across the recursive else-body parse. Seed closure re-verified
+(`cybs(asm.cyr) == bootstrap/asm`), orphan count **1 → 0**, and a branching fn in `util.cyr`
+now derives the full chain — so `ENUM_CONST_VAL` moved back beside the table it decodes and the
+`.32` placement comment is gone.
+
+⚠ **The gate's behavioural axis must have `gen1` compile `src/main.cyr`, not a toy program.** A
+first draft used a three-line probe and **survived the mutation**, because the stray patch lands
+in one region that a toy input never executes. The bug's whole character is that `gen1` links
+and looks healthy until it does real work.
+
+⚠ Two of my own diagnostic rounds were invalid before this landed and are worth recording: a
+`re.sub` with `DOTALL` ate ~80 lines of `util.cyr` (four "BROKEN" results were measuring a file
+that no longer compiled), and the first instrumented cybs died because `syscall` clobbers `rcx`
+and **`r11`** — and `r11` is cybs's token index.
+
+### Changed — vani 1.1.4 → 1.2.2 fold
+
+Vendored byte-identical, sidecar-verified (21 leaves), corpus 282/282. One new public fn
+(`vani::audio_set_params_fmt/6`); snapshot updated.
+
+### Not shipped — `CYRIUS_PKG_VERSION` in included files (root-caused, fix reverted)
+
+`PP_EMIT_PKGVER` decides whether to declare the constant by scanning for `CYRIUS_PKG_` **in the
+marker's own buffer** — the entry file's text, before includes are expanded. So it declares when
+the entry file names the symbol and silently omits when only an included file does.
+
+A fix was attempted (record at the marker, append the declaration after expansion) and
+**reverted**: globals declared below their use are visible, so the shape is sound, but the
+appended bytes never reached the parser — proven with an unconditional probe global that also
+failed to resolve. Something downstream of `PP_PASS` re-derives the buffer tail, and that was
+not pinned down. `cycc` is byte-identical to shipped 6.5.32 on this path. The conditional scan
+must be kept in any real fix — declaring unconditionally changes the bytes of every binary built
+through `cyrius build`, which `auto_deps_verb_gate.sh` axis 5 exists to catch.
+
 ## [6.5.32] — 2026-08-20
 
 ### Changed — vani 1.1.3 → 1.1.4 fold

@@ -273,37 +273,6 @@ fn FIELDOFF(S, si, fi): i64 {
 # Called from BOTH pass 1 (register vars) and pass 2 (emit init code).
 # Pass 1: just register var names + sizes (no code)
 # Pass 2: emit mov rax, val; evstore for each variant
-# v6.5.32 — decode an enum_const_val slot into its SIGNED value.
-#
-# ⛔ THE ENCODING PROBLEM NEGATIVE ENUM VALUES CREATE. The slot packs a presence marker into
-# BIT 63 (`(1 << 63) | val`) and five separate readers recovered the value with a bare
-# `ecv & 0x7FFFFFFFFFFFFFFF`. For a negative `val` that is lossy: -1 is 0xFFFF...F, so the
-# marker is indistinguishable from the value's own sign bit and the mask yields
-# 0x7FFF_FFFF_FFFF_FFFF — a colossal positive — instead of -1.
-#
-# The fix is smaller than it looks: bit 63 is ALWAYS set on a live entry, so for a NEGATIVE
-# value the marker bit is already exactly the sign bit the result needs — return the slot
-# unchanged. Only a positive value needs the marker cleared. Representable range is
-# -2^62 .. 2^62-1, which no real enum approaches.
-#
-# ⭐ ONE decoder, called by every site. There were FIVE hand-rolled copies of the mask across
-# three files; fixing four of them would have been this cycle's `_cfo` / `stdlib`-key-scan
-# lesson a third time. Grep the shape, not the site.
-#
-# ⚠⚠ IT LIVES HERE, NOT IN `src/common/util.cyr`, FOR A REASON THAT IS NOT YET UNDERSTOOD.
-# Placing any BRANCHING fn in util.cyr makes cybs emit a `gen1` that links and then dies with
-# SIGILL/SIGSEGV compiling `src/main.cyr`. Bisected at v6.5.32: identical fn fine here and in
-# parse_expr.cyr, branch-FREE fn fine in util.cyr — so it is neither a capacity ceiling nor
-# this function's content. ⛔ That is where the evidence stops: "position-specific to util.cyr"
-# restates the symptom and is NOT a diagnosis. Tracked as P1 for v6.5.33
-# (`issues/2026-08-20-cybs-util-branching-fn-breaks-seed-chain.md`); when the real cause is
-# found this placement may well be free to change. build/cycc compiles every variant fine, so
-# only `seed-derive-cycc.sh` catches it.
-fn ENUM_CONST_VAL(ecv): i64 {
-    if ((ecv & 0x4000000000000000) != 0) { return ecv; }
-    return ecv & 0x7FFFFFFFFFFFFFFF;
-}
-
 fn PARSE_ENUM_DEF(S, emit_code): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }

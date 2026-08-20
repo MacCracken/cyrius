@@ -1,6 +1,32 @@
 # `CYRIUS_PKG_VERSION` resolves only in the entry file, not in `include`d files
 
-**Status:** 🟡 **OPEN**
+**Status:** 🟡 **OPEN — ROOT-CAUSED at v6.5.33, fix attempted and REVERTED.**
+
+> **Mechanism (confirmed).** `PP_EMIT_PKGVER` (`src/frontend/lex_pp.cyr`) decides whether to
+> declare the constant by scanning for the literal `CYRIUS_PKG_` **in the marker's own
+> buffer** — which at that moment is the ENTRY FILE's text, because includes have not been
+> expanded yet. So the declaration is emitted when the entry file names the symbol and silently
+> omitted when only an included file does. That is exactly the filed symptom, and the reverse
+> of what the marker's position suggests.
+>
+> The conditional scan is not incidental: declaring unconditionally puts an unused global plus
+> its string data into every binary built through `cyrius build`, which changes the bytes of
+> programs that never asked for the feature — `auto_deps_verb_gate.sh` axis 5 catches that and
+> is right to. So the fix must keep "declare only if referenced" while widening what "referenced"
+> is scanned over.
+>
+> **Attempted at .33 and reverted**: record the version at the marker, then append
+> `var CYRIUS_PKG_VERSION = "…";` at the end of `PP_PASS` once includes are expanded. Globals
+> declared below their use ARE visible (verified separately), so the shape is sound — but the
+> appended bytes **never reached the parser**, proven with an unconditional probe global that
+> also failed to resolve. Something downstream of `PP_PASS` re-derives or discards the buffer
+> tail; `PREPROCESS` runs `PP_PASS` → `PP_IFDEF_PASS` → `PP_MACRO_PASS` and the interaction was
+> not pinned down before the attempt was backed out. Reverted rather than shipped half-working:
+> `cycc` is byte-identical to the shipped 6.5.32 on the pkgver path.
+>
+> **Next step for whoever picks this up:** find which pass owns the final buffer and append
+> there, or thread a "referenced" flag out of the expansion so the marker site can decide with
+> full knowledge. Do NOT drop the conditional — axis 5 of the auto-deps gate depends on it.
 **Placement:** unpinned — 6.5.x backlog. `cbt/build.cyr:402-413` (marker emission) + the cycc side that replaces it.
 **Discovered:** 2026-08-20 in **agnostic**, wiring a `/ready` endpoint that reports its own version.
 **Severity:** Low — a one-line workaround exists. The cost is that the feature does not work where it is most useful.

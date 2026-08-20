@@ -2999,7 +2999,9 @@ parse_if_else:
     cmp rax, 13
     jne parse_err
     inc r11
+    push rbx
     call parse_program
+    pop rbx
     call peek_tok_type
     cmp rax, 14
     jne parse_err

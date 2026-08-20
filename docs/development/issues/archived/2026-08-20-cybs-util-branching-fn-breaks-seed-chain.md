@@ -1,6 +1,33 @@
 # A branching fn in `src/common/util.cyr` makes cybs emit a broken `gen1` — mechanism UNKNOWN
 
-**Status:** 🔴 **OPEN — P1, in progress at v6.5.33.** LOCALISED to `patch_rel32` called from `parse_if_else` with a stale/clobbered offset; leading hypothesis is cybs 8-byte-store emit spill. **Not yet root-caused, not fixed.**
+**Status:** ✅ **RESOLVED — root-caused and FIXED in `bootstrap/cybs.cyr` at v6.5.33.** See `CHANGELOG.md` [6.5.33].
+
+> **ROOT CAUSE: a clobbered register in `parse_if_else`.** That routine emits an `E9` plus a
+> 4-byte hole for the skip-over-else jump, records the hole's offset in **`rbx`**, recursively
+> parses the else body with `call parse_program`, and only then calls `patch_rel32`. Something
+> inside that recursive parse clobbers `rbx`, so the deferred patch fired with a stale value
+> and wrote a 4-byte rel32 into an arbitrary place in the emitted compiler.
+>
+> **It corrupted EVERY build, not only the failing ones.** Instrumented tracing of `gen1`
+> (a debug cybs logging each SET/PATCH pair) found exactly **one orphan patch** — a PATCH with
+> no matching SET — in the ordinary build too: `rbx=0x800`, `code_pos=0xe96df`. It merely
+> landed inside a `movabs` immediate, where a wrong constant in that particular spot was
+> survivable. Shift the layout ~80 bytes and the identical write lands on an INSTRUCTION
+> BOUNDARY; `gen1` then links fine and dies with SIGILL/SIGSEGV compiling `src/main.cyr`.
+>
+> So "util.cyr cannot take a branching function" was never a rule — it was a position-dependent
+> symptom of a register-discipline bug three layers down. **The `(x >> 62)` probe was NOT a
+> second bug** either: same stray write, different landing site. Both derive clean after the fix.
+>
+> **Fix:** save `rbx` across the recursive else-body parse. Seed closure re-verified
+> (`cybs(asm.cyr) == bootstrap/asm`), orphan count **1 → 0**, and a branching fn in
+> `src/common/util.cyr` now derives the full chain — so `ENUM_CONST_VAL` moved back beside the
+> table it decodes. Guarded by `tests/gates/toolchain/cybs_if_else_rbx.sh`.
+>
+> ⚠ The gate's axis 3 must have `gen1` compile **src/main.cyr**, not a toy program: a first
+> draft used a three-line probe and survived the mutation, because the stray patch lands in a
+> region a toy input never executes. The bug's whole character is that `gen1` links and looks
+> healthy until it does real work.
 **Placement:** v6.5.33. `bootstrap/cybs.cyr` (the seed-assembled bootstrap compiler).
 **Discovered:** 2026-08-20, while adding `ENUM_CONST_VAL` for the negative-enum work (v6.5.32).
 **Severity:** **P1 — it constrains where compiler code may be written, for a reason nobody understands.**

@@ -34,6 +34,30 @@ var _vars_base = 0;    # 0x12A000 var_sizes
 var _vart_base = 0;    # 0x13A000 var_types
 var _vgoff_base = 0;   # 0x1B0000 gvar_byte_off
 var _vecv_base = 0;    # 0x1D8000 enum_const_val
+
+# v6.5.32 — decode an enum_const_val slot into its SIGNED value.
+#
+# The slot packs a presence marker into BIT 63 (`(1 << 63) | val`) and five readers used to
+# recover the value with a bare `& 0x7FFFFFFFFFFFFFFF`. For a negative `val` that is lossy:
+# -1 is 0xFFFF...F, so the marker is indistinguishable from the value's own sign bit and the
+# mask yields 0x7FFF_FFFF_FFFF_FFFF — a colossal positive that compares GREATER than zero.
+#
+# The fix is smaller than it looks: bit 63 is ALWAYS set on a live entry, so for a NEGATIVE
+# value the marker bit already IS the sign bit the result needs — return the slot unchanged.
+# Only a positive value needs the marker cleared. Range: -2^62 .. 2^62-1.
+#
+# ⭐ ONE decoder, called by every site. There were FIVE hand-rolled copies of the mask across
+# three files; fixing four would have been the `_cfo` lesson a third time.
+#
+# ⚠ v6.5.33 — this lived in `parse_types.cyr` for one release because putting ANY branching fn
+# in this file made cybs emit a broken `gen1`. That was a real cybs defect (a stray
+# `patch_rel32` from a clobbered `rbx` in `parse_if_else`), root-caused and FIXED in
+# `bootstrap/cybs.cyr` at v6.5.33 — so the placement taboo is gone and the helper is back
+# where it belongs, beside the table it decodes.
+fn ENUM_CONST_VAL(ecv): i64 {
+    if ((ecv & 0x4000000000000000) != 0) { return ecv; }
+    return ecv & 0x7FFFFFFFFFFFFFFF;
+}
 var _vgsi_base = 0;    # 0x1EC000 gvar_initval
 var _venid_base = 0;   # 0x204000 var_enum_id
 var _vsgn_base = 0;    # v6.4.23: per-var signedness (1 = signed sub-i64 iN scalar, 0 = uN/other).
