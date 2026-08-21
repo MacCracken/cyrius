@@ -46,6 +46,40 @@ and looks healthy until it does real work.
 that no longer compiled), and the first instrumented cybs died because `syscall` clobbers `rcx`
 and **`r11`** — and `r11` is cybs's token index.
 
+### Docs — currency sweep + handoff prep
+
+Every figure re-derived from live artifacts, not copied between documents.
+
+⭐ **The find: three of four cross-OS hosts are at ZERO full-corpus failures, and the issue
+tracking it still said 23.** `2026-08-05-cross-os-full-corpus-23-failures-on-ecb` had carried a
+**v6.5.10** number for twenty-three releases. Re-measured on real hardware
+(`CYRIUS_CROSS_OS_FULL=1`): **ecb 282/0 · ach 282/0 · pi 282/0 · cass 250/32**. The failures
+were fixed incrementally and nobody re-ran the measurement; `platform-status.md` repeated the
+stale rows verbatim. The issue's own decision gate was "flip the default when it reaches zero" —
+it has, for three hosts, so that maintainer call is now well-posed rather than open-ended.
+cass's 32 are labelled PE-incompatible by the runner (`fork`/`socketpair` are POSIX-only) and
+need triaging into "skip with a named reason" versus "real" before any blanket flip.
+
+⭐ **`handoff.md` was stale for the third consecutive sweep** — thirteen releases this time
+(6.5.20 → 6.5.33), under its own instruction that a stale handoff is worse than none. It is
+stale because **there is no gate for handoff staleness**, unlike every other currency claim
+here. Rewritten in full, with the gap stated inside the file instead of rediscovered each time.
+
+Also corrected: `roadmap.md`'s head block had rotted a second time (claimed a 2026-08-14
+derivation while citing 1,154,816 B / 178 gates / 270 `.tcyr` / 12 open issues — every figure
+wrong), and now carries a dated derivation plus a **superseding re-pin** for post-`.33` work;
+`size-comparisons.md` and `platform-status.md` moved off **1,141,792 B** (v6.5.10) to the live
+**1,182,928 B**; `roadmap-future.md`'s byte-length-lint entry re-derived to **532 sites, 0
+mismatches** — the tree is clean, so that lint is preventive rather than remedial.
+
+⚠ **Historical narrative and past-sweep changelog entries were deliberately left alone.** A
+figure stamped "as of v6.4.82" is a record, not a claim, and rewriting it would destroy the
+only evidence of what was true then. Only live claims were touched.
+
+⚠ **Not re-verified, and said plainly rather than implied:** `vidya/` was not touched (sibling
+repo; its per-minor refresh is a closeout item), and `doc-health.md`'s Tier 2–7 inventories
+still carry their 2026-06 anchors.
+
 ### Changed — vani 1.1.4 → 1.2.2 fold
 
 Vendored byte-identical, sidecar-verified (21 leaves), corpus 282/282. One new public fn

@@ -30,11 +30,16 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.33** (2026-08-20) — cycc **1,182,928 B** · check.sh **197 passed / 0
-failed** · self_compile **735 ms** · **282** `.tcyr` (**54** in `crossos/`) · **101**
-`lib/*.cyr` · **97** `programs/**/*.cyr` · **76** shell gate scripts under
-`tests/gates/<bucket>/` · heap map **100 regions / 0 overlaps** · **10 open issues + 2 open
-proposals** (340 archived issues / 29 archived proposals).
+**Current head: v6.5.33** (2026-08-20) — cycc **1,182,928 B** · check.sh **198 passed / 0
+failed** · self_compile **711 ms** · **282** `.tcyr` (**54** in `crossos/`) · **101**
+`lib/*.cyr` · **97** `programs/**/*.cyr` · **77** shell gate scripts under
+`tests/gates/<bucket>/` · api-surface **4918** · heap map **100 regions / 0 overlaps** ·
+**10 open issues + 2 open proposals** (341 archived issues / 29 archived proposals).
+
+⭐ **CROSS-OS FULL CORPUS, re-measured on real hardware 2026-08-20 (`CYRIUS_CROSS_OS_FULL=1`):
+ecb 282/282 · ach 282/282 · pi 282/282 · cass 250/282.** Three of four hosts are at ZERO. The
+long-standing "23 failures on ecb" figure was from **v6.5.10** and had been carried, never
+re-derived — see the head-block warning below, which is about exactly this.
 
 > ⚠ **cycc crossed a PAGE BOUNDARY at `.30`.** 1,178,160 → 1,182,416 is **+4,256 B** for
 > roughly 200 bytes of new code: the text segment passed 0x0FC000, so the page-aligned RW
@@ -427,34 +432,56 @@ numbers. Sizes are `.NN` releases, each bundling several bites. **Arcs are 1–2
 phases landing as commits inside them** — not one release per phase. Minors flex long; 6.4.x
 ran 86 releases and 6.5.x is expected in the same class.
 
-> ## 📌 PINNED 2026-08-20 (at v6.5.32) — **`.33` = BOOTSTRAP REPAIR + REFACTOR SWEEP**
+> ## 📌 RE-PINNED 2026-08-20 (at v6.5.33) — **THIS BLOCK SUPERSEDES EVERY PIN BELOW**
 >
-> **`.33` is a repair slot, not a feature slot** (maintainer, 2026-08-20). Two items, both
-> arising from the v6.5.32 negative-enum work:
+> Re-derived after the `.33` doc sweep, with every open issue premise-checked against LIVE
+> code and the cross-OS corpus re-measured on all four hosts. **`.33` closed the bootstrap P1**
+> (cybs `parse_if_else` stray patch) — that pin is spent.
 >
-> **1. P1 — diagnose why a BRANCHING fn in `src/common/util.cyr` breaks the seed chain**
-> (`issues/2026-08-20-cybs-util-branching-fn-breaks-seed-chain`). cybs emits a `gen1` that
-> links and then dies with SIGILL compiling `src/main.cyr`; the identical fn is fine in two
-> other files and a branch-free fn is fine in util.cyr. ⛔ **The mechanism is NOT known** —
-> "position-specific to util.cyr" restates the symptom. Nine measured rounds are in the issue,
-> along with a reproducer and the two cybs tables already ruled out by inspection. Direct
-> route: disassemble the bad `gen1` at its crash site against the good one. Also determine
-> whether `(x >> 62)` is a SECOND, independent cybs bug — that row broke with no `if` in it.
-> **P1 because it is a bootstrap-compiler defect that fails SILENTLY and is caught by exactly
-> one gate**; nothing is broken for a consumer today, but the constraint is invisible and was
-> found by accident.
+> ### ✅ Spent / closed since the 2026-08-14 re-pin
+> - **Band T (consumer tooling/DX)** — drained across `.28`–`.31`: typed-pointer warn, float
+>   literals, `fmt` contract, deps manifest window, transitive includes, distlib sidecars
+>   (profile + quoted-key), `fl_calloc`, `fuzz --poison`, enum derive codecs.
+> - **The cybs bootstrap P1** — root-caused and fixed at `.33`, not deferred.
+> - **`2026-08-05-cross-os-full-corpus`** — premise obsolete: ecb/ach/pi are at **zero**.
 >
-> **2. A REFACTORING SWEEP over `src/common/util.cyr` and its neighbours.** The P1 above means
-> a core shared-helper file is currently closed to new branching code, and that is not a state
-> to design around — it is a state to understand and remove. The sweep should also ask the
-> question the P1 raises anyway: what is util.cyr for now, what belongs in it, and what has
-> accreted there because it was the convenient place. ⚠ Any refactor here is proven the usual
-> way — byte-identical self-host plus the differential corpus — and **`seed-derive-cycc.sh`
-> after every step**, because it is the only gate that sees this class of breakage.
+> ### ▶ NEXT: `.34` — band E, the IR substrate
+> The spine, and the thing that has been displaced by reactive work since `.17`. **Premise is
+> FRESH as of `.33`: 7 of 254 default-vs-IR=3 exit mismatches**
+> (`const_chained_multiply_fold`, `field_name_shadows_global`, `float`, `math_inverse_trig`,
+> `math_pack_integration`, `subword_signed_load`, `types`). That count was re-derived this
+> release — re-derive it again at slot entry, because one slot is all its freshness lasts.
+> Depends on nothing else in this list.
 >
-> ⚠ Do not treat the CLAUDE.md hazard bullet as a settled rule while this slot is open. It is
-> a warning written from the symptom, and when the cause is found the placement constraint may
-> simply disappear.
+> ### ⚖️ Owed to the maintainer — decisions, not work
+> 1. **`CYRIUS_CROSS_OS_FULL=1` as the default.** Now a narrow call: flip it for ecb/ach/pi
+>    (all at 282/282) and decide cass separately. cass sits at **32** failures, which the
+>    runner labels PE-incompatible (`fork`/`socketpair` are POSIX-only) — they need triaging
+>    into "skip with a named reason" versus "real" before any blanket flip, and 32 is a bigger
+>    number than the 7 previously recorded.
+> 2. **The seven residual `assigning non-pointer to typed pointer` warnings** where the source
+>    is an `i64`-DECLARED value. Type-accurate as written; whether the warning should fire at
+>    all under ADR-002 is a language-design call.
+> 3. **Enum codec wire shape** — ✅ ANSWERED at `.31` (name string + `Result`) and shipped.
+>    Listed only so it is not re-opened.
+>
+> ### 📥 Reactive queue — consumer filings awaiting a slot
+> - **`2026-08-20-pkgver-not-visible-in-included-files`** — ROOT-CAUSED at `.33`, fix attempted
+>   and reverted. `PP_EMIT_PKGVER` scans the entry file before includes expand. An
+>   append-after-expansion fix is the right shape but the appended bytes never reached the
+>   parser; find which pass owns the final buffer. ⚠ Keep the conditional — declaring
+>   unconditionally changes every `cyrius build` binary and `auto_deps_verb_gate.sh` axis 5
+>   catches that.
+> - **`2026-08-20-cyrius-port-language-python`** — new, untriaged.
+>
+> ### 🔧 Standing repair backlog (unchanged, still live)
+> `ir-regalloc-rewrite-needs-reemit` · `macos-threading-workers-dont-run` (narrowed at `.11`) ·
+> `simd-f64v-memory-operand` (items 1-2) · `v6415-closeout-residuals` (D1/D2) ·
+> `dx-multi-error-reporting` (residual 7) · `stiva-stackless-coroutines` (Half B — unbuilt and,
+> on `.26`/`.27` evidence, unjustified) · `sock-send-result-allocates-per-call`.
+>
+> ⚠ **Every figure in this block was derived on 2026-08-20, not carried.** The block it
+> replaces claimed a 2026-08-14 derivation and had already rotted.
 
 > ## 🔁🔁 RE-PINNED 2026-08-14 (at v6.5.21) — **THIS BLOCK SUPERSEDES THE TABLE BELOW**
 >

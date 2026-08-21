@@ -191,10 +191,20 @@ at 7.x until 2026-08-07, when it was corrected and re-homed.
   sites in-tree today (the v6.4.10 top-level-array fix closed the codegen half; this is
   the lint half).
 - **Syscall-write byte-length gate** (was `issues/2026-06-25-syscall-write-byte-length-gate.md`)
-  — a permanent DOTALL check that `syscall(SYS_WRITE, fd, buf, LEN)`'s LEN matches the
-  literal's byte length; **609 sites repo-wide** (re-derived 2026-08-07 at v6.5.10; 593 at
-  v6.4.82, ~543 when filed). Batch with the bare-local-array lint as one cyrlint line — both
-  are byte-length-vs-declared-size static checks.
+  — a permanent check that `syscall(SYS_WRITE, fd, "literal", LEN)`'s LEN matches the literal's
+  byte length. **Re-derived 2026-08-20 at v6.5.33: 532 literal-arg sites, 0 mismatches.** The
+  tree is currently CLEAN, so this is preventive, not remedial. (The earlier "609 sites" figure
+  counted a looser pattern; 532 is the count of sites this lint could actually check.)
+  ⭐ **Worth more than its Low priority suggests.** Two off-by-one message lengths were written
+  during v6.5.30–.32 alone — `"…is not one"` passed 76 for a 77-byte string and shipped a
+  diagnostic reading `"is not on"`, and a second was caught the same way. Both were found by
+  *reading the output*, which is the only detector there is today.
+  ⚠ **Implementation trap, learned deriving that count**: a naive checker that round-trips the
+  literal through `unicode_escape` reports 23 false mismatches, all off by exactly 3 — every
+  string containing an em dash, whose 3 UTF-8 bytes get double-decoded. Count raw bytes and
+  collapse only two-char backslash escapes.
+  Batch with the bare-local-array lint as one cyrlint line — both are
+  byte-length-vs-declared-size static checks.
 
 ---
 

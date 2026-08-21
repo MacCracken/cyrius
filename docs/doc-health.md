@@ -6,137 +6,57 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-08-07 (**v6.5.10**). Handoff-prep sweep across the whole doc
-> surface + vidya, run as 11 parallel area agents plus an independent critic. **The find was
-> `handoff.md` itself** — four releases stale at 6.5.6, under its own instruction that "a
-> stale handoff is worse than none". Rewritten in full.
+> **Last refresh**: 2026-08-20 (**v6.5.33**). Doc sweep + handoff prep, run directly rather
+> than fanned out to agents. **Every figure below was derived from live artifacts** — binaries
+> `stat`'d, hosts run over SSH, counts `find`-ed — not read out of another doc. That rule is
+> the standing lesson of the v6.5.10 sweep recorded further down, where an agent stamped a
+> vidya entry "re-verified live" against a stale *source comment* and reproduced the error with
+> a fresh timestamp on it.
 >
-> ⭐ **The systemic find: a COUNT NOBODY RE-DERIVES.** `state.md` claimed **19** shell gate
-> scripts; `tests/*.sh` holds **41**. The number was inherited wrong and had been *incremented*
-> across three releases (10 → 16 → 19) without anyone running `ls`. It rotted precisely
-> because it looked maintained. `CLAUDE.md` now carries an explicit instruction never to quote
-> a shell-gate count that was not just derived.
+> ⭐ **THE FIND: three of four cross-OS hosts are at ZERO full-corpus failures, and nobody
+> knew.** `2026-08-05-cross-os-full-corpus-23-failures-on-ecb` had carried "23 failures on ecb"
+> since **v6.5.10**. Re-measured on real hardware this sweep:
 >
-> ⛔ **THE SWEEP COMMITTED THE EXACT ERROR IT EXISTS TO PREVENT, and that is the most useful
-> thing on this page.** An agent stamped vidya's `diagnostics_caps.cyml` **"re-verified live at
-> v6.5.10 — still 16 MiB at S+0x4D9D000, unchanged"** — having verified it against the
-> `src/main.cyr` heap-map COMMENT, which was itself stale. Live code has been
-> `alloc(1073741824)` — a **1 GiB off-heap** buffer — since **v6.4.52**. A second agent, given
-> the same fact, read the code and got it right. **Verifying a doc against another doc
-> reproduces the error with a fresh timestamp on it, which is strictly worse than leaving it
-> unstamped.** Both entries corrected; the failure mode is now recorded inside the entry.
+> | host | v6.5.10 | **v6.5.33** |
+> |---|---|---|
+> | ecb (macOS arm64) | 237 / 23 of 260 | **282 / 0 of 282** |
+> | ach (macOS Intel) | 233 / 27 of 260 | **282 / 0 of 282** |
+> | pi (Linux aarch64) | 255 / 5 of 260 | **282 / 0 of 282** |
+> | cass (Windows PE) | 263 / 7 | 250 / **32** (runner labels them PE-incompatible) |
 >
-> **The source was lying too.** `src/main.cyr:338` (and the four sibling forks) still
-> documented `0x4D9D000 output_buf [16777216]` as a live 16 MB region. The heap map is
-> **machine-read** by `tests/gates/memory/heapmap.sh`, so a phantom region is audited as real. Description
-> corrected in all five forks; the band is deliberately kept RESERVED so the overlap audit is
-> unchanged — reclaiming it is a closeout decision (closeout item 4), not a doc fix.
+> The failures were fixed incrementally across twenty-three releases and the issue was never
+> re-derived — it was only ever carried forward. `platform-status.md` repeated the same stale
+> rows verbatim. **A number that is copied between docs decays silently; only re-running it
+> resets the clock.** Both documents now carry the measured figures, and the maintainer
+> decision the issue was holding (flip `CYRIUS_CROSS_OS_FULL=1`) is finally well-posed.
 >
-> ⛔ **"NEEDS REAL HARDWARE" WAS NOT A REASON — IT WAS AN EXCUSE, AND THE MAINTAINER CALLED
-> IT.** This sweep left the ecb full-corpus figure re-labelled as "a 6.5.8 measurement not
-> re-run", on the grounds that re-running it needed real macOS hardware over SSH. Four hosts
-> are wired into `~/.ssh/config` and had already been used a dozen times the same session.
-> Re-run on **all four**, which is what one host could never have shown:
+> ⭐ **`handoff.md` was stale AGAIN — thirteen releases this time** (6.5.20 → 6.5.33), under
+> its own instruction that "a stale handoff is worse than none". That is the *second*
+> consecutive sweep to find it as the worst offender (the last found it four releases stale at
+> 6.5.6, and before that ten at 6.5.10). It is stale because **there is no gate for handoff
+> staleness** — every other currency claim in this repo has one. Rewritten in full; the gap is
+> now stated inside the file rather than rediscovered each time.
 >
-> | host | pass | fail | |
-> |---|---|---|---|
-> | **pi** (Linux aarch64) | **255** | **5** | effectively at parity — the "cross-OS rot" framing never fitted it |
-> | **ecb** (macOS arm64) | 237 | 23 | |
-> | **ach** (macOS Intel) | 233 | 27 | ⭐ a **timing/clock** cluster ecb does not have |
-> | **cass** (Windows PE) | 229 | 31 | 1 a genuine HANG |
+> **Also corrected this sweep:**
+> - `roadmap.md`'s head block had rotted a second time (claimed a 2026-08-14 derivation while
+>   citing 1,154,816 B / 178 gates / 270 `.tcyr` / 12 open issues — every figure wrong). The
+>   block now carries a dated derivation and a superseding re-pin for post-`.33` work.
+> - `size-comparisons.md` and `platform-status.md` cited **1,141,792 B** (v6.5.10). Live is
+>   **1,182,928 B**. Historical narrative and past-sweep changelog entries were deliberately
+>   left alone — those are records, not claims.
+> - The `CLAUDE.md` bullet asserting that `src/common/util.cyr` "cannot take a new branching
+>   function" is **deleted**: `.33` root-caused it to a cybs register-clobber and fixed it. It
+>   was a symptom written up as a layout rule, which is the antipattern
+>   `feedback_dont_encode_codegen_bugs_as_language_rules` exists to catch.
+> - `roadmap-future.md`'s syscall-write-byte-length entry re-derived: **532 sites, 0
+>   mismatches** — the tree is clean, so that lint is preventive. Deriving it exposed a trap
+>   worth writing down: a checker that round-trips literals through `unicode_escape` reports 23
+>   false positives, all off by 3, one per em dash.
 >
-> The portable core is **4 tests that fail on every non-x86-Linux host**, and **three of the
-> four are the same capacity tests that fail to COMPILE under `CYRIUS_IR=3`**. That is a far
-> sharper lead than "23 on ecb, mostly threading", and it was one command away the whole time.
->
-> **Two harness bugs fell out of actually running it**, both fixed: the cass leg was
-> **fail-fast** while every other host accumulated (so a full run reported "5 passed" and
-> quit — not a measurement), and it had **no per-test timeout**, so one test held a single
-> ssh for **33 minutes** and its orphaned `_lt.exe` then locked the work directory against
-> the next run. Remote calls are now timeout-wrapped, a hang COUNTS as a failure, progress
-> prints every 25 tests, and setup reaps orphans so the leg is re-runnable without a human.
-> **A measurement that has never been run is not a measurement, and "I would need the
-> hardware" is only true if the hardware is not there.**
->
-> ⛔ **THE SWEEP'S OWN AUTHOR WALKED INTO A TRAP THIS FILE ALREADY DOCUMENTS.** The critic and
-> the issue-queue agent both reported **10** residual default-vs-IR=3 divergences; I re-ran the
-> corpus, got **7**, told the maintainer the reviewers were wrong, and corrected `roadmap.md`
-> from 8 to 7. **They were right and I was wrong.** My loop reused ONE output path for every
-> test — the exact `ETXTBSY` / stale-binary trap recorded in `handoff.md`'s standing-traps list,
-> which I had rewritten hours earlier — and it never distinguished a compile-time divergence
-> from a runtime one. Re-run with unique paths per test: **3 fail to COMPILE under IR=3**
-> (`large_input`, `large_source`, `preprocessor_past_cap`) and **7 differ at RUNTIME**, so the
-> honest figure is **10**, and "mismatches" was the wrong word for it. Corrected in
-> `roadmap.md`, `state.md` and `handoff.md`.
->
-> Two lessons, and the second is the load-bearing one. **(1)** Knowing a trap is written down
-> is not the same as not falling into it — the countermeasure has to be in the command you
-> type, not in a document you have read. **(2) A disagreement between a reviewer and yourself
-> is not resolved by re-running your own method.** I reproduced my own number and treated the
-> agreement with myself as confirmation; what settled it was changing the METHOD (unique paths,
-> compile status tracked separately) and finding the reviewers' number.
->
-> **A "could not be measured" claim that was false.** `size-comparisons.md` was given the line
-> "the Go and Zig rows could not be re-measured — neither toolchain is installed here". Both
-> are on PATH. Re-measured: `go build` default 2,182,601 → **2,183,116** (go 1.26.2 → 1.26.5)
-> and `zig build-exe` debug 7,388,344 → **10,196,002** (zig 0.15.2 → **0.16.0**, +38 %); the
-> two `-OReleaseSmall`/`-s -w` rows are byte-identical across both toolchain versions. Check
-> before declaring a measurement impossible.
->
-> Also this pass: `CLAUDE.md`'s project-structure tree was missing **three backend directories
-> and the whole TS front end** (`backend/macho`, `backend/pe`, `backend/common`,
-> `frontend/ts`), and its `issues/` + `proposals/` paths pointed at directories that do not
-> exist at the repo root; the gen1-vs-cycc size note had the **sign backwards** (gen1 is
-> ~45 KB *larger*, re-measured); `README.md`, `faq.md` and `adr/001` all carried cycc sizes
-> stamped between **v6.4.62 and v6.4.72**; `platform-status.md` said ~34 vr01 tests (live 36);
-> `issues/README.md` was given "17 open" (live 16); vidya's entry count read "90+" against a
-> live **565**.
->
-> **Prior refresh**: 2026-08-03 (**v6.5.6**). Release sweep alongside the agnosai/sandhi repair
-> pair. **README.md was the find**, and it had rotted on four independent axes at once: mabda
-> `4.0.7` (folded 4.0.8) in two places, `251 .tcyr` (254), `147 check.sh gates` (153), and a cycc
-> size + version stamp (`1,103,512 B at v6.4.72`) **three minors** behind, in both the headline
-> paragraph and the Metrics table. None of it is gated — the `_doc_stamp_currency_gate` covers
-> `roadmap.md`'s `Current head:` anchor only, so every number in README drifts silently.
-> **`roadmap.md`'s own per-release list had no `.4` or `.5` entry at all** (state.md and
-> handoff.md both had them, so the rot was invisible from the operational surface); both were
-> written alongside `.6`. Also this pass: vidya's fold-version grid
-> (`dependencies.cyml:306` — a LIVE table two lines above the parenthetical a prior sweep read
-> instead) and `ecosystem.cyml:113`; `docs/ecosystem.md` + `docs/stdlib-reference.md` fold rows;
-> `handoff.md` rewritten for 6.5.6; vidya gained 3 field notes and its `gotchas.cyml` header
-> count was corrected (claimed 104, held 106).
->
-> **New trap recorded this pass** (see vidya `field_notes/compiler/gotchas.cyml`): an
-> **identical cycc byte-SIZE is not byte-identity** — padding absorbed a one-line change while
-> 872,790 bytes moved. `cmp`, never `ls -l`.
->
-> **Prior refresh**: 2026-07-30 (**v6.5.3**). Session-handoff sweep. **state.md was the find**:
-> its `cycc` size row was current — the `_doc_stamp_currency_gate` enforces exactly that field —
-> while every prose row still described **v6.4.x** (Active minor, In-flight arc, Next up,
-> Committed after), three releases stale. That is the precise shape of gate-shaped rot: the
-> stamped field stays honest and the unstamped prose beside it drifts, which reads as current
-> because the numbers next to it are. Rewritten in full for 6.5.x.
-> Also this pass: `handoff.md` rewritten for 6.5.3 (it still announced "v6.5.0 is out");
-> `roadmap.md` gained its .3 entry; **`CLAUDE.md`'s `**Version**:` line was stuck at 6.5.0** —
-> see the note below, it is a workflow trap, not a one-off; `state.md` now names the **three
-> UNVETTED subagent-filed issues** so nobody treats them as triaged. Verified NOT stale: the
-> `1,124,968` figures in roadmap.md are historical records of what .0 and .1 shipped, and were
-> deliberately left alone.
->
-> **Workflow trap worth keeping**: `version-bump.sh` rewrites `CLAUDE.md`, `install.sh` and the
-> CHANGELOG header **only on the version-CHANGE path**. Writing `VERSION` by hand and *then*
-> running `version-bump.sh <same>` — which is how every release this session was cut — takes the
-> same-version path and skips all of them. The 6.5.3 fix made that path fall through to the
-> force-rebuild (so binaries stop going stale), but the doc rewrites are still correctly
-> change-only. **Let `version-bump.sh` do the bump; do not pre-write VERSION.**
-> **Prior refreshes**: 2026-07-29 (**v6.5.1**) · 2026-07-27 (**v6.4.82 — the v6.4.x CLOSEOUT**). The .80/.81/.82 band was dominated by the closeout audit finding live bugs and displacing two releases: **.80** `1 - 2 + 3` == **5** (the `_cfo` rewind class, PEXPR tier, 16 sites; 251/251 tcyr were byte-identical across the fix because the corpus had ZERO coverage of the failing shape). **.81** a **FOURTH** `_cfo` occurrence — `EMIT_OP_DISPATCH` never cleared the flag for `mul`/`div` while `add`/`sub` did, so `p * 3 + 1` compiled to **4**, the operator CALL rewound over — plus **CVE-32/33/34** (three unbounded copies reachable from untrusted source; `include "<31490 chars>"` SIGSEGV'd cycc), the heap map documenting that scratch at an address **no code has ever written** (`0x190500 [256]` vs the live unbounded `0x190400`) so `heapmap.sh` validated a fiction for three minors, `heapmap.sh` blind to **20 MB** of live heap, the Windows PE gates validating a **cycc 5.11.69** binary for the whole v6.x line, value-form SIMD silently dropped on the PE/Mach-O CROSS paths since .31, CVE-35/36, and `_doc_stamp_currency_gate` (a checklist entry is not a gate — .77 fixed this rot class, added a checklist item, and a row went stale again two releases later). **.82** the TS arena moved off a fixed base to `alloc()` (it overlapped `tok_types` by 10,027,008 B, safe only by a temporal invariant) + agnos **#94/#95** (band contiguous #82-#95) + the closeout passes: 11 open issues re-triaged against LIVE code with an explicit `**Status:**` added to each, `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36; CVE-37/38 REFUTED), the v7-PARKED placement-rule violation corrected, and vidya `gotchas.cyml` refreshed after **30 releases** with no entry. Live stamps: cycc **1,108,368 B** · check.sh **150/0** · **251** .tcyr · **100** heap regions · api-surface **4749** · **11** open issues.
-> **Scope**: This repo only (`cyrius`) — the entire `docs/` tree plus root-level files (README, CHANGELOG, CLAUDE.md, VERSION). Per-stdlib-dep docs live in their own repos and are not audited here. Cross-repo cycle / pin / sweep state lives in [`development/state.md`](development/state.md), not here.
->
-> **Convention adopted from agnosticos** (2026-05-10): pattern from `agnosticos/docs/doc-health.md`. Per `first-party-documentation.md` codification, smaller repos can adopt the same shape. Cyrius's tree is ~61 markdown files (vs agnosticos's ~265) so the tier structure here is leaner.
-
-This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change.
-
----
+> ⚖️ **Not re-verified this sweep, and stated rather than implied**: `vidya/` was not touched
+> (it is a sibling repo and its per-minor refresh is a closeout item), and the Tier 2–7
+> inventories below still carry their 2026-06 anchors. The tier tables are approximate by
+> construction — the rollup counts lag.
 
 ## At a glance — inventory (bucket counts last fully re-tallied 2026-06-04 at the v6.0.62 sweep; per-tier sections re-anchored to the 2026-06-12 v6.1.41 closeout doc-sync — the rollup counts here lag and are approximate)
 

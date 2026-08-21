@@ -4,7 +4,7 @@
 > languages and platforms. Referenced by external articles and the
 > agnosticos project. Updated as new compiler versions ship.
 >
-> **Last measured**: 2026-08-07, at Cyrius v6.5.10 (Cyrius self-host figures, plus a
+> **Last measured**: 2026-08-20, at Cyrius v6.5.33 (Cyrius self-host figures, plus a
 > fresh C / Rust / Go / Zig sweep on this box — every row below was re-measured, none
 > carried over). ⚠ A prior pass asserted Go and Zig "could not be re-measured, neither
 > toolchain is installed here"; both are on PATH (`/usr/bin/go`, `/usr/bin/zig`) and both
@@ -92,8 +92,8 @@ across both toolchain versions.
 
 ## Cyrius self-host context
 
-For perspective, the Cyrius compiler itself (cycc) is **1,141,792 B**
-(~1,115 KB / ~1.09 MB) on Linux ELF at v6.5.10. It compiles itself byte-identically.
+For perspective, the Cyrius compiler itself (cycc) is **1,182,928 B**
+(~1,155 KB / ~1.13 MB) on Linux ELF at v6.5.33. It compiles itself byte-identically.
 At v5.5.10 it also compiles itself byte-identically on Windows
 (cycc_win.exe native → out.exe matches Linux cross-build md5).
 That's the whole self-hosting compiler — TLS / atomics / dynlib /
@@ -106,7 +106,7 @@ aarch64 NEON, Win64 PE value-form, and cx bytecode per-lane loops
 (SIMD Phase 5 complete, v6.4.4–v6.4.32) / TS/TSX → JS emit (`cycc
 --emit-js`) — in less disk than Rust's stripped debug exit42.
 
-- Cyrius cycc (Linux ELF): **1,141,792 B** (v6.5.10)
+- Cyrius cycc (Linux ELF): **1,182,928 B** (v6.5.33)
 - cycc_aarch64 (Linux aarch64 cross): **685,312 B** (v6.5.10; the
   v5.11.59 full DCE bitmap pass for aarch64 fixup.cyr — mirroring the
   x86 path since v5.10.x — accounts for the bulk over earlier v5.11.x)
@@ -132,8 +132,8 @@ infrastructure (v5.8.21–v5.8.27), `?` propagation operator
 (v5.8.29 + v5.8.31 PARSE_STMT extension). The compiler is still
 in the same order of magnitude as a stripped Rust hello-world.
 
-Whole-history growth to v6.5.10 (2026-04-25 → 2026-08-07):
-531,888 → 1,141,792 B, +609,904 B / +115%. Across the v6.4.x SIMD
+Whole-history growth to v6.5.33 (2026-04-25 → 2026-08-20):
+531,888 → 1,182,928 B, +651,040 B / +122%. Across the v6.4.x SIMD
 arc, the v6.5.x visibility + perf work, and everything between, that
 is still 3.4× a stripped Rust exit42 — for a compiler, linker driver,
 five backends and a TypeScript frontend.

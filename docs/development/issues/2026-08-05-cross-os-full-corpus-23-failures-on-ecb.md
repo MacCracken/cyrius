@@ -1,6 +1,28 @@
-# Cross-OS full-corpus residuals: **ecb, ach and pi are at ZERO — only cass remains, at 7**
+# Cross-OS full-corpus residuals: **ecb, ach and pi are at ZERO — only cass remains, at 32**
 
-**Status:** 🟡 LARGELY SHIPPED — kept open as the gate for one decision, not as a bug.
+**Status:** 🟢 **PREMISE OBSOLETE — re-measured live 2026-08-20 at v6.5.33. The failures are GONE.**
+⚖️ What remains is purely the maintainer decision this issue was holding open.
+
+> **Re-measured on all four hosts, full corpus, real hardware (`CYRIUS_CROSS_OS_FULL=1`):**
+>
+> | host | result |
+> |---|---|
+> | **ecb** (macOS arm64) | **282 / 282**, 0 failed |
+> | **ach** (macOS Intel) | **282 / 282**, 0 failed |
+> | **pi** (Linux aarch64) | **282 / 282**, 0 failed |
+> | **cass** (Windows PE) | 250 / 282, **32 failed** — the runner labels these PE-incompatible (`fork`/`socketpair` are POSIX-only) |
+>
+> The title's "23 failures on ecb" was a **v6.5.10** figure and is three-and-a-bit weeks and
+> twenty-three releases out of date; ecb is now clean. This is the re-triage rule working:
+> the number was never re-derived, only carried.
+>
+> ⚖️ **The decision is now unambiguous for three of four hosts.** This issue's own gate was
+> "flip the default when it reaches zero" — it has, for ecb/ach/pi. The open question is
+> narrower than when it was filed: flip `CYRIUS_CROSS_OS_FULL=1` to the default for
+> ecb/ach/pi now, and decide separately what cass's 32 are. Those 32 need triaging into
+> "genuinely PE-inapplicable, so they should be SKIPPED with a named reason" versus "real",
+> and a count that is 32 rather than the 7 recorded earlier deserves that look before any
+> blanket flip. **Not making that call here — it is the maintainer's.**
 **Placement:** **v6.5.25 — band D.** Take the `CYRIUS_CROSS_OS_FULL=1` decision AND close the cass residual in the same release.
 
 > **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⭐ RE-MEASURED ALL FOUR HOSTS AT 6.5.21 ON THE FULL 271 CORPUS: **ecb 271/0 · ach 271/0 · pi 271/0**; cass carries the residual. Cost of flipping ecb/ach/pi to full corpus: **+547 s** per release gate. ⛔ The linkage to `2026-07-03-macos-threading-workers-dont-run` is REFUTED — ecb is 271/0, nothing is downstream of it.
