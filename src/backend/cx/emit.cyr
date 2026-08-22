@@ -1566,3 +1566,12 @@ fn EWAIT_PE(S): i64 { return 0; }
 fn EWRITE_PE(S): i64 { return 0; }
 fn _macho_arm_routes(n): i64 { return 0; }
 fn _pe_pending_imp_add(S, name): i64 { return 0; }
+
+# v6.5.35 — stub. `RA_SCAN_LOOPS` really lives in src/backend/x86/decode.cyr, which this
+# fork does not include; `parse_fn.cyr` is shared by every fork and calls it. Returning -1
+# means "no loop information", which the caller must already handle by falling back to the
+# conservative whole-function interval extent — so the picker behaves exactly as it did
+# before v6.5.35 here. (The x86 regalloc post-pass does not run on these targets anyway;
+# this exists so the shared frontend RESOLVES, the same reason the E*_PE reroutes carry
+# return-0 stubs in these two files.)
+fn RA_SCAN_LOOPS(base, lo, hi, out_t, out_s, cap): i64 { return 0 - 1; }

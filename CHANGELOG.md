@@ -4,6 +4,115 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.35] — 2026-08-22
+
+**Band F: the register allocator finally uses the live intervals it has been computing since
+v5.6.19.** A Poletto-Sarkar linear-scan picker has shipped and been default-on for every
+function since v5.6.21, and it could never time-share a register. Two independent things
+prevented it — and the roadmap's long-standing *"the cross-BB defect is localised to ONE line"*
+named only the first.
+
+### Fixed — the picker could not time-share, for two reasons
+
+**1. Every interval's end was force-set to the function end, so expire never fired.**
+⛔ **That line was NOT an oversight, and deleting it is a miscompile.** v5.6.22 put it there
+because naive time-sharing is unsound across a backward edge: when the picker reuses a
+register for a later interval, a `JMP_BACK` into a position inside an *earlier* interval
+re-reads the register expecting the earlier value and finds the later one. Measured this
+release by mutation — restoring naive expire fails **69 of the 282 corpus tests**, across 13
+buckets (crypto 13, formats 11, text 10, stdlib 8, derive 8, frontend 5 …), with wrong answers
+rather than crashes. Anyone who reads "one line" and reverts it ships that.
+
+Replaced with real loop-aware liveness: `RA_SCAN_LOOPS` (`src/backend/x86/decode.cyr`) walks a
+function's emitted range with `DECODE_LEN` and records every backward `JMP`/`Jcc` as a
+(target, branch) pair; `_ra_loop_extend` (`parse_fn.cyr`) extends an interval overlapping a
+loop body to that loop's branch, iterating to a fixpoint so an outer loop pulled in by an
+inner extension is also honoured. ⚠ **Fail-safe by contract**: `RA_SCAN_LOOPS` returns −1 for
+an undecodable range *or* more edges than its cap, and −1 means "no information", not "no
+loops" — the caller then extends to the whole function, i.e. exactly the pre-v6.5.35
+behaviour. A partial edge list would be worse than none.
+
+**2. `picked` was a LIFETIME cap, so expire freeing a register changed nothing.** It counted
+assignments over the whole function and was capped at `_cur_fn_regalloc` (5) — once five
+locals had *ever* received a register, every later interval was blocked however many registers
+had just been freed. ⭐ **This is why fixing (1) alone changed not one byte of any consumer
+program**: `json_engine`, `math_pack_integration` and `sakshi_full` all compiled
+byte-identical, which is what sent this investigation looking for a second cause. The knob's
+own comment already documented `-1 = uncapped`; the code did not implement it. The lifetime
+cap now applies only when the `CYRIUS_REGALLOC_PICKER_CAP` bisection knob asks for it —
+simultaneity is enforced where it belongs, by `free_r == -1` falling through to the spill
+heuristic.
+
+### Fixed — the per-candidate safety scan, which the above made unaffordable
+
+"Is this local safe to promote?" was answered by walking the *whole function's bytes once per
+candidate*. That was only affordable because the lifetime cap stopped the loop after five
+picks; lifting the cap made it run for every interval, at O(candidates × function bytes).
+**Measured on a quiet box: self_compile 712 ms → 770 ms, +8.1 %.** The question is per-local
+and independent of which candidate is asking, so it is now answered once per function into a
+per-local flag, with an O(1) lookup at each candidate. Behaviour-preserving — verified by
+compiling 60 corpus files with the pre- and post-hoist compilers and getting byte-identical
+output — and it recovers the whole regression: **+58 ms → +0–4 ms, flat within noise.**
+
+### What this actually bought, measured rather than assumed
+
+| | .34 | .35 |
+|---|---|---|
+| cycc size | 1,182,944 B | **1,178,848 B** (−4,096) |
+| frame accesses in cycc | 32,527 | **30,932** (−4.9 %) |
+| frame accesses, json_engine | 9,510 | **8,679** (−8.7 %) |
+| frame accesses, math_pack_integration | 10,275 | **9,415** (−8.4 %) |
+| self_compile (quiet box, best-of-7 ×3) | 712–721 ms | 719–722 ms (flat) |
+
+⚠ **Runtime of generated code did NOT measurably improve, and the first measurement saying it
+did was wrong.** A best-of-7 A/B suggested json_engine −11.2 % and math_pack_integration
+−12.1 %; repeating at best-of-25 collapsed both to ±2 %, i.e. noise on 1.3 ms programs. The
+honest result is: binaries are smaller and use more registers, and no runtime win is
+demonstrable on this corpus.
+
+⚠ **In-loop time-sharing is still absent, by construction.** The conservative rule extends
+*every* interval overlapping a loop body, so locals declared inside a hot loop cannot share a
+register — a purpose-built 12-local hot loop shows 23 → 24 frame accesses, unchanged. The win
+is concentrated in straight-line regions: the gate's fixture goes **24 → 0**. That is the
+remaining increment, and it is where a runtime win would come from.
+
+### Deliberately NOT shipped — a refinement that passes every test
+
+Extending only values defined *before* the loop top (`first < t`) passes the full corpus
+**282/282** and takes cycc a further 4,096 B smaller. It is not shipped. The rule assumes any
+local whose first reference is inside the body is redefined every iteration, and the byte scan
+this pass is built on cannot prove that — it sees `48 89 85` (a store) and `48 8B 85` (a load)
+but has no dominance information, so it cannot tell a definition that dominates all in-body
+uses from one guarded by a branch. Given that v5.6.22's register-reuse defect was exactly this
+class and took releases to surface, passing 282 tests is not sufficient evidence. Recorded
+with its measurement so the next attempt starts from the evidence rather than repeating it.
+
+### Release gate
+
+Self-host fixpoint **1,178,848 B** (−4,096 from `.34`) · seed 29,024 B → cybs → cycc
+byte-identical · `check.sh` **199 / 0** · corpus **282 / 282** by per-file exit code · all six
+`main*.cyr` forks compile with zero errors (the three aarch64 forks and cx take the
+`RA_SCAN_LOOPS` **stub** — they do not include `decode.cyr` — while main/win/x86_macho take the
+real scanner) · cross-OS on REAL hardware, sequential — **ecb · ach · cass · pi, each
+`SELFHOST_OK` + crossos 54/54**.
+
+⚠ **The recorded bench delta is −6.6 % and it is NOT a real speed-up.** `bench-history.csv`
+compares this release's `self_compile` **716 ms** (quiet box, load 0.03) against `.34`'s
+recorded **767 ms** — and `.34`'s CHANGELOG says in as many words that 767 was a *loaded-box*
+reading kept deliberately unmassaged, with its controlled A/B showing 740–742 ms. Against a
+like-for-like A/B (interleaved, best-of-7, three rounds, load 0.22) the honest figure is
+**.34 = 717–721 ms, .35 = 719–722 ms: flat.** Neither the −6.6 % in the CSV nor the +8.1 %
+seen mid-slot before the safety-scan hoist is a property of this release.
+
+### Fixed — a stale roadmap figure, re-derived
+
+The band F pin claimed the `_disp_adj` consolidation was **57 sites tree-wide, of which 44
+helper-replaceable**. Live: `_disp_adj` does not exist under that name at all, and the shape it
+described (`_cur_fn_regalloc * 8` frame-displacement adjustment) is **37** sites — 19 in
+`backend/x86/emit.cyr`, 9 in `parse_fn.cyr`, the rest scattered. Both halves of the pinned
+number were wrong, which is what the roadmap's own "a number you did not just derive is stale"
+warning exists for.
+
 ## [6.5.34] — 2026-08-22
 
 **Band E: the IR substrate. `CYRIUS_IR=3` now agrees with the default backend on the entire

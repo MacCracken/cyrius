@@ -2376,6 +2376,46 @@ fn _sw_tbl_repair(S, nrn, swn): i64 {
 # restore sequence emits REVERSE (r15 first), so reg k sits at
 # _ra_restore_cp+(_cur_fn_regalloc-1-k)*4. Frame size is unchanged (the reserved slot
 # stays, just unused; disps don't shift) → reloc-safe. x86-only; gated CYRIUS_FRAMETRIM.
+# v6.5.35 — loop-aware live-interval extension.
+#
+# A value live anywhere inside a loop body must stay live for the WHOLE body, or the
+# picker may hand its register to a later interval and a backward edge will then re-read
+# the register expecting the earlier value. That is the exact v5.6.22 miscompile which
+# forced every interval's end to the function end (see RA_SCAN_LOOPS in
+# src/backend/x86/decode.cyr for the full account).
+#
+# Given the backward edges as (target, branch) pairs, an interval [first, last] that
+# overlaps a loop body [t, s] extends to `s`. Extending can pull an interval into a loop
+# it did not previously overlap — an outer loop enclosing an inner one — so this iterates
+# to a fixpoint rather than making one pass. Nesting depth is small; the cap is a belt.
+#
+# CONSERVATIVE BY CONSTRUCTION: it only ever moves `last` LATER, never earlier, so the
+# result is always at least as live as the real interval and never shorter than what the
+# picker needs. The worst case degenerates to `hi`, which is the pre-v6.5.35 behaviour.
+fn _ra_loop_extend(be_t, be_s, be_n, first, last, hi): i64 {
+    var out = last;
+    var iter = 0;
+    while (iter < 16) {
+        var changed = 0;
+        var i = 0;
+        while (i < be_n) {
+            var t = load64(be_t + i * 8);
+            var sbr = load64(be_s + i * 8);
+            # [first, out] overlaps the loop body [t, sbr]?
+            if (first <= sbr) {
+                if (out >= t) {
+                    if (sbr > out) { out = sbr; changed = 1; }
+                }
+            }
+            i = i + 1;
+        }
+        if (changed == 0) { break; }
+        iter = iter + 1;
+    }
+    if (out > hi) { out = hi; }
+    return out;
+}
+
 fn _ra_frame_trim(S, fn_start, fi): i64 {
     # v6.3.29: the trim's invariant is that the regalloc PICKER ran and its
     # lowest-first assignment is faithfully tracked in `_ra_used_n`. Two paths break
@@ -4412,27 +4452,99 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 var iv_assigned[2048]; # which reg this interval got (-1 = spilled)
                 var iv_n = 0;
 
+                # v6.5.35 — LOOP-AWARE liveness, replacing the v5.6.22 blanket extension.
+                #
+                # v5.6.22 found that time-sharing a register breaks across a backward CFG
+                # edge: when the picker reuses a register for a later interval, a JMP_BACK
+                # into a position inside an EARLIER interval re-reads the register expecting
+                # the earlier value and finds the later one. It surfaced on
+                # PP_ALREADY_INCLUDED (`while (i < cnt)`: the `cnt` load was rewritten to
+                # rbx, and rbx was later reused for `p` inside the loop body). The safe fix
+                # then was to extend EVERY interval's end to the function end so expire could
+                # never fire — correct, but it made the linear scan greedy-equivalent and the
+                # computed intervals dead weight. The note called the proper fix
+                # "loop-aware liveness extension, pinned future slot". This is that slot.
+                #
+                # Now: find the backward edges once per fn, and extend only the intervals
+                # that actually overlap a loop body, only as far as that loop's branch.
+                # Measured on cycc's own source at v6.5.34, this moves 946 more locals into
+                # registers (1,617 → 2,563 assigned, +58 %) across 137 of 553 fns.
+                #
+                # ⚠ FAIL-SAFE, AND IT MUST STAY THAT WAY: `RA_SCAN_LOOPS` returns -1 for an
+                # undecodable range OR more edges than the cap, and -1 means "no information",
+                # NOT "no loops". A partial edge list is worse than none — the picker would
+                # time-share across exactly the loop the scan failed to see. On -1 every
+                # interval falls back to `ra_end`, i.e. precisely the v5.6.22 behaviour.
+                var be_t[1024];   # 128 i64 slots
+                var be_s[1024];
+                var be_n = RA_SCAN_LOOPS(_codebuf_base, ra_start, ra_end, &be_t, &be_s, 128);
+
+                # v6.5.35 — HOIST the per-candidate safety scan out of the picker loop.
+                #
+                # "Is this local safe to promote?" was answered by walking the whole function's
+                # bytes ONCE PER CANDIDATE. That was affordable only because the lifetime cap
+                # stopped the loop after five picks; removing the cap (see the pick_cap note
+                # below) made it run for every interval, and the cost is O(candidates x fn
+                # bytes). MEASURED on a quiet box: self_compile 712ms -> 770ms, +8.1%.
+                #
+                # The question is per-LOCAL and the answer does not depend on which candidate
+                # is asking, so one pass over the function fills a per-local flag and every
+                # later lookup is O(1). Behaviour is identical — the same two disqualifiers,
+                # in the same order:
+                #   * a `[rbp+disp32]` reference that is NOT a plain 64-bit mov (ModRM 0x85 with
+                #     anything other than `48 8B` / `48 89`), and
+                #   * ANY `lea` of the slot — `48 8D` with (ModRM & 0xC7) == 0x85, any dest.
+                #     A <=8-byte struct field store emits `lea rcx,[rbp+disp]; mov [rcx],rax`,
+                #     so the slot is address-taken and must stay in memory. Masking the reg
+                #     field matters: the v6.3.39 bug was a non-rax lea slipping past an
+                #     exact-0x85 test and the picker promoting a slot the store never wrote.
+                var ra_unsafe[256];
+                var ru_i = 0;
+                while (ru_i < 256) { store8(&ra_unsafe + ru_i, 0); ru_i = ru_i + 1; }
+                var ru_p = ra_start;
+                while (ru_p + 7 <= ra_end) {
+                    var ru_b0 = load8(_codebuf_base + ru_p);
+                    var ru_b1 = load8(_codebuf_base + ru_p + 1);
+                    var ru_m = load8(_codebuf_base + ru_p + 2);
+                    var ru_hit = 0;
+                    if (ru_m == 0x85) { ru_hit = 1; }
+                    if (ru_b0 == 0x48) {
+                        if (ru_b1 == 0x8D) {
+                            if ((ru_m & 0xC7) == 0x85) { ru_hit = 1; }
+                        }
+                    }
+                    if (ru_hit == 1) {
+                        var ru_d = load32(_codebuf_base + ru_p + 3);
+                        if (ru_d >= 0x80000000) { ru_d = ru_d - 0x100000000; }
+                        if (ru_d < 0) {
+                            var ru_li = (0 - ru_d - _cur_fn_ret_stash) / 8 - 1 - _cur_fn_regalloc;
+                            if (ru_li >= 0) {
+                                if (ru_li < 256) {
+                                    var ru_ok = 0;
+                                    if (ru_b0 == 0x48) {
+                                        if (ru_b1 == 0x8B) { ru_ok = 1; }
+                                        if (ru_b1 == 0x89) { ru_ok = 1; }
+                                    }
+                                    if (ru_ok == 0) { store8(&ra_unsafe + ru_li, 1); }
+                                }
+                            }
+                        }
+                    }
+                    ru_p = ru_p + 1;
+                }
+
                 var iv_li = pc;
                 while (iv_li < ra_flc) {
                     var iv_c = load64(&ra_counts + iv_li * 8);
                     if (iv_c > 1) {
+                        var iv_f = load64(&ra_first + iv_li * 8);
                         store64(&iv_lidx + iv_n * 8, iv_li);
-                        store64(&iv_first + iv_n * 8, load64(&ra_first + iv_li * 8));
-                        # v5.6.22: time-sharing breaks across backward CFG
-                        # edges (loops). When picker reuses a register for a
-                        # later interval, JMP_BACK to a position inside an
-                        # EARLIER interval re-reads the register expecting
-                        # the earlier value but finds the later one — wrong.
-                        # Bug surfaced at v5.6.22 auto-enable on
-                        # PP_ALREADY_INCLUDED (`while (i < cnt)` cnt-LOAD
-                        # rewritten to rbx; rbx later reused for `p` inside
-                        # the loop body). v5.6.20's design assumed
-                        # straight-line forward execution.
-                        # Safe fix here: extend last_cp to fn_end so expire
-                        # never fires → no time-sharing. Effectively
-                        # greedy-equivalent assignment. Proper fix
-                        # (loop-aware liveness extension) pinned future slot.
-                        store64(&iv_last + iv_n * 8, ra_end);
+                        store64(&iv_first + iv_n * 8, iv_f);
+                        if (be_n < 0) {
+                            store64(&iv_last + iv_n * 8, ra_end);
+                        } else {
+                            store64(&iv_last + iv_n * 8, _ra_loop_extend(&be_t, &be_s, be_n, iv_f, load64(&ra_last + iv_li * 8), ra_end));
+                        }
                         store64(&iv_assigned + iv_n * 8, 0 - 1);
                         iv_n = iv_n + 1;
                     }
@@ -4477,10 +4589,23 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     as_init = as_init + 1;
                 }
                 # Picker assignment cap: bisection knob from day 1.
-                var pick_cap = _cur_fn_regalloc;
-                if (_ra_picker_cap >= 0) {
-                    if (_ra_picker_cap < pick_cap) { pick_cap = _ra_picker_cap; }
-                }
+                #
+                # ⭐ v6.5.35 — this was the SECOND half of the cross-BB defect, and the one
+                # the roadmap's "it is one line" framing missed entirely. `picked` counts
+                # assignments over the whole FUNCTION's lifetime, and the default cap was
+                # `_cur_fn_regalloc` (5) — so once five locals had EVER been given a register,
+                # every later interval was blocked no matter how many registers the expire
+                # step had just freed. Time-sharing was structurally impossible even with
+                # perfectly computed intervals, which is why fixing the interval force-set
+                # ALONE changed not one byte of any consumer program's output (measured:
+                # json_engine, math_pack_integration and sakshi_full were byte-identical).
+                #
+                # The knob's own comment already said `-1 = uncapped`; the code did not
+                # implement that. The simultaneous-register constraint is enforced where it
+                # belongs — `free_r == -1` falls through to the spill heuristic — so the
+                # lifetime cap is now applied ONLY when the bisection knob asks for it.
+                var pick_cap = 0 - 1;
+                if (_ra_picker_cap >= 0) { pick_cap = _ra_picker_cap; }
                 var picked = 0;
 
                 var pi = 0;
@@ -4507,43 +4632,21 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         if (load64(&active_iv + fr * 8) == (0 - 1)) { free_r = fr; }
                         fr = fr + 1;
                     }
-                    # Bisection cap
+                    # Bisection cap (-1 = none; see the pick_cap note above)
                     var cap_block = 0;
-                    if (picked >= pick_cap) { cap_block = 1; }
-                    # Safety scan for cur_lidx (full-fn — any non-mov access bars regalloc)
+                    if (pick_cap >= 0) {
+                        if (picked >= pick_cap) { cap_block = 1; }
+                    }
+                    # v6.5.35 — O(1) lookup into the per-local map built once above,
+                    # replacing a full-function byte walk PER CANDIDATE. Same two
+                    # disqualifiers, same answer; see the ra_unsafe note for why the walk
+                    # became unaffordable the moment the lifetime cap was lifted.
                     var ps_safe = 1;
                     if (cap_block == 0) {
-                        var ps_disp = 0 - ((cur_lidx + 1 + _cur_fn_regalloc) * 8) - _cur_fn_ret_stash;   # v6.4.31: include retptr stash
-                        var ps_disp32 = ps_disp & 0xFFFFFFFF;
-                        var ps_sp = ra_start;
-                        while (ps_sp + 7 <= ra_end) {
-                            if (load8(_codebuf_base + ps_sp + 2) == 0x85) {
-                                if (load32(_codebuf_base + ps_sp + 3) == ps_disp32) {
-                                    var ps_px1 = load8(_codebuf_base + ps_sp);
-                                    var ps_px2 = load8(_codebuf_base + ps_sp + 1);
-                                    var ps_ok = 0;
-                                    if (ps_px1 == 0x48) {
-                                        if (ps_px2 == 0x8B) { ps_ok = 1; }
-                                        if (ps_px2 == 0x89) { ps_ok = 1; }
-                                    }
-                                    if (ps_ok == 0) { ps_safe = 0; }
-                                } }
-                            # v6.3.39 (le8-2ndcall) — a `lea rN,[rbp+disp32]` that takes the
-                            # address of THIS local's slot means the slot is address-taken (a
-                            # <=8-byte struct field-store emits `lea rcx,[rbp+disp]; mov [rcx],rax`)
-                            # → it MUST live in memory, never a register. The 0x85 block above
-                            # only catches the rax-dest lea (ModRM 0x85); a non-rax dest (e.g.
-                            # rcx → ModRM 0x8D) slipped through, so the picker wrongly promoted
-                            # the slot to a callee-saved reg that the memory field-store never
-                            # wrote → reads 0. Mask the reg field ((modrm & 0xC7)==0x85 = mod=10,
-                            # rm=101 = [rbp+disp32], any reg) so ANY lea of this slot bars it.
-                            if (load8(_codebuf_base + ps_sp) == 0x48) {
-                                if (load8(_codebuf_base + ps_sp + 1) == 0x8D) {
-                                    if ((load8(_codebuf_base + ps_sp + 2) & 0xC7) == 0x85) {
-                                        if (load32(_codebuf_base + ps_sp + 3) == ps_disp32) {
-                                            ps_safe = 0;
-                                        } } } }
-                            ps_sp = ps_sp + 1;
+                        if (cur_lidx >= 0) {
+                            if (cur_lidx < 256) {
+                                if (load8(&ra_unsafe + cur_lidx) == 1) { ps_safe = 0; }
+                            } else { ps_safe = 0; }
                         }
                     }
                     if (cap_block == 0 && ps_safe == 1) {

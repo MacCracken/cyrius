@@ -30,9 +30,9 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.34** (2026-08-22) — cycc **1,182,944 B** · check.sh **199 passed / 0
+**Current head: v6.5.35** (2026-08-22) — cycc **1,178,848 B** · check.sh **199 passed / 0
 failed** · **282** `.tcyr` (**54** in `crossos/`) · **101**
-`lib/*.cyr` · **97** `programs/**/*.cyr` · **80** shell gate scripts under
+`lib/*.cyr` · **97** `programs/**/*.cyr` · **81** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5070** · heap map **100 regions / 0 overlaps** ·
 **9 open issues + 2 open proposals** (343 archived issues / 29 archived proposals).
 
@@ -437,7 +437,62 @@ numbers. Sizes are `.NN` releases, each bundling several bites. **Arcs are 1–2
 phases landing as commits inside them** — not one release per phase. Minors flex long; 6.4.x
 ran 86 releases and 6.5.x is expected in the same class.
 
-> ## 📌 RE-PINNED 2026-08-22 (at v6.5.34) — **THIS BLOCK SUPERSEDES EVERY PIN BELOW**
+> ## 📌 RE-PINNED 2026-08-22 (at v6.5.35) — **THIS BLOCK SUPERSEDES EVERY PIN BELOW**
+>
+> ### ✅ Spent at `.35` — band F, cross-BB regalloc
+> The picker now TIME-SHARES registers. ⛔ **Two corrections to this file's own pin, both
+> material:**
+> - **"The cross-BB defect is localised to ONE line" was HALF the story and dangerous as
+>   written.** That line — force-setting every interval's end to the fn end — is a DELIBERATE
+>   v5.6.22 guard, and reverting it alone fails **69 of 282** corpus tests (mutation-measured
+>   at `.35`, wrong answers not crashes). The second blocker was never named here: `picked`
+>   was a LIFETIME cap of 5, so expire freeing a register changed nothing. Fixing the "one
+>   line" alone changed **not one byte** of any consumer program's output.
+> - **The `_disp_adj` figure — "57 sites, 44 helper-replaceable" — was wrong in both halves.**
+>   `_disp_adj` does not exist under that name; the shape it described is **37** sites
+>   (19 in `backend/x86/emit.cyr`, 9 in `parse_fn.cyr`). Re-derived, not carried.
+>
+> **Delivered:** cycc −4,096 B, frame accesses −4.9 % in cycc and −8.5 % in consumer programs,
+> self_compile flat (a +8.1 % regression from the now-unmasked per-candidate safety scan was
+> found and hoisted away in-slot). ⚠ **No measurable runtime win** — a best-of-7 A/B claiming
+> −11 % collapsed to noise at best-of-25. ⚠ **In-loop time-sharing remains absent by
+> construction**, which is where a runtime win would come from.
+>
+> ⚖️ **Recorded, not shipped:** the finer rule (extend only values defined before the loop top)
+> passes **282/282** and saves another 4,096 B, but rests on an assumption a byte scan cannot
+> prove — it has store/load information but no DOMINANCE. v5.6.22's defect was this exact
+> class, so a passing corpus is not sufficient evidence. See the `.35` CHANGELOG.
+>
+> ### ▶ NEXT: `.36` — band G, SIMD register residency (Slot 6)
+> ✅ Item 3 shipped at `.24`. **Item 1** (register-resident value-form f64v arithmetic) is
+> genuinely unbuilt — all 15 `float.cyr` emitters are memory→register→op→memory loops, ymm
+> included. ⛔ **Item 2 is a GATE-WIDENING question, not a build**: the wrapper inliner is live
+> and fires today, gated to generics. ⚠ Re-derive the simd-site count at slot entry (last
+> measured **29**, not 25) and check `f64v4_fmadd`, which item 3 never widened.
+> ⭐ **Band F hands band G a concrete opening**: the picker's byte matcher still recognises only
+> REX.W mov to/from `[rbp+disp32]`, so no xmm/ymm local is a register candidate at all. The
+> vector register class is band G's now that time-sharing works for the integer file.
+>
+> ### 📥 Still un-absorbed, per the maintainer — later in the release line
+> - **`2026-08-22-versioned-wrapper-does-not-pin-cycc`** (agnosai 2.0.5 certification): the
+>   versioned wrapper resolves `cycc` through `$CYRIUS_HOME/bin` rather than relative to itself,
+>   so a release cannot be certified against its own manifest pin. It warns, so nothing is
+>   silent. Untriaged.
+>
+> ### ⚖️ Owed to the maintainer — unchanged
+> 1. `CYRIUS_CROSS_OS_FULL=1` as the default (ecb/ach/pi 282/282; cass 250/32, PE-incompatible
+>    labels need triage). 2. The seven residual typed-pointer warnings on `i64` sources.
+> 3. Slot 9's design (both relocations disproven). 4. stiva Half B — unbuilt and, on `.26`/`.27`
+>    evidence, unjustified. 5. Per-item `private` still compiles with no diagnostic.
+>
+> ### 🔧 Standing repair backlog (8 open, all roadmap-pinned)
+> `ir-regalloc-rewrite-needs-reemit` (band F closed its cross-BB half; the re-emit half remains) ·
+> `macos-threading-workers-dont-run` · `simd-f64v-memory-operand` (items 1-2 — now band G) ·
+> `v6415-closeout-residuals` (D1/D2) · `dx-multi-error-reporting` (residual 7) ·
+> `stiva-stackless-coroutines` (Half B) · `sock-send-result-allocates-per-call` ·
+> `cross-os-full-corpus` (premise now the cass 32).
+
+> ## 🔁 RE-PINNED 2026-08-22 (at v6.5.34) — superseded by the block above, kept for lineage
 >
 > Re-derived at `.34` slot close. Every figure measured, none carried.
 >

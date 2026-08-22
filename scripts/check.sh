@@ -155,3 +155,12 @@ sh "$ROOT/tests/gates/ir-opt/ir3_switch_dce.sh"
 # liveness cannot see. All three are IR=3-only, so all 282 corpus files passed throughout.
 # With this, default-vs-IR=3 is at ZERO divergences across the whole corpus.
 sh "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"
+
+# v6.5.35: the linear-scan register allocator finally USES the intervals it has computed
+# since v5.6.19. Two things blocked it, and the roadmap's "it is one line" framing named only
+# the first: every interval's end was force-set to the fn end (a DELIBERATE v5.6.22 guard —
+# naive time-sharing miscompiles across a backward edge; measured, it fails 69 of 282), and
+# `picked` was a LIFETIME cap of 5 that blocked assignment however many registers expire had
+# freed. Loop-aware extension via RA_SCAN_LOOPS replaces the blanket guard; the lifetime cap
+# now applies only when the bisection knob asks. -8.5% frame accesses on consumer programs.
+sh "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"

@@ -318,3 +318,59 @@ fn CF_TARGET(buf, off, kind): i64 {
     }
     return 0 - 1;
 }
+
+# ----------------------------------------------------------------
+# v6.5.35 — backward-edge (loop) discovery, for the linear-scan register
+# allocator's live-interval extension.
+#
+# WHY THIS EXISTS. `PARSE_FN_DEF`'s Poletto-Sarkar picker computes real live
+# intervals (`ra_first` / `ra_last`) and then, since v5.6.22, THREW THEM AWAY —
+# every interval's end was force-set to the function end so the expire step could
+# never fire. That was not an oversight: naive time-sharing is UNSOUND across a
+# backward edge. When the picker reuses a register for a later interval, a
+# `JMP_BACK` into a position inside an EARLIER interval re-reads the register
+# expecting the earlier value and finds the later one. It surfaced on
+# `PP_ALREADY_INCLUDED` (`while (i < cnt)`: the `cnt` load was rewritten to rbx,
+# and rbx was later reused for `p` inside the loop body).
+#
+# The v5.6.22 note called the fix "extend last_cp to fn_end so expire never fires
+# → effectively greedy-equivalent assignment", with the proper fix — loop-aware
+# liveness extension — deferred. This is the substrate for that proper fix: find
+# every backward branch in a function's emitted range so an interval overlapping a
+# loop body can be extended to the loop's end instead of to the whole function's.
+#
+# ⚠ Read "the cross-BB defect is ONE line" with care: reverting that one line
+# alone REINTRODUCES the v5.6.22 miscompile. The line is a correct, conservative
+# guard; what replaces it has to be at least as safe.
+#
+# Walks [lo, hi) instruction by instruction via DECODE_LEN, and records every
+# JMP rel / Jcc whose target lands at or after `lo` and strictly BEFORE the branch
+# itself. Writes targets to `out_t` and branch offsets to `out_s`.
+#
+# Returns the edge count, or -1 if the range could not be walked reliably (an
+# undecodable instruction) or there are more edges than `cap`. **-1 means "no
+# information", and every caller must then fall back to the conservative
+# whole-function extent** — a partial edge list is worse than none, because the
+# picker would time-share across the loop this function failed to see.
+fn RA_SCAN_LOOPS(base, lo, hi, out_t, out_s, cap): i64 {
+    var n = 0;
+    var p = lo;
+    while (p < hi) {
+        var ilen = DECODE_LEN(base, p);
+        if (ilen <= 0) { return 0 - 1; }
+        var k = CLASSIFY_CF(base, p);
+        if (k == 1 || k == 2) {
+            var tg = CF_TARGET(base, p, k);
+            if (tg >= lo) {
+                if (tg < p) {
+                    if (n >= cap) { return 0 - 1; }
+                    store64(out_t + n * 8, tg);
+                    store64(out_s + n * 8, p);
+                    n = n + 1;
+                }
+            }
+        }
+        p = p + ilen;
+    }
+    return n;
+}
