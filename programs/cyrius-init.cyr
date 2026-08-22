@@ -14,16 +14,21 @@
 #   greenfield dir-exists guard, the toolchain-version cascade, stdlib
 #   vendoring (lib/*.cyr copy), and the starship cmtools integration.
 # port feature set:
-#   --language=<lang> (rust; others decline), --dry-run, Cargo.toml +
-#   rust-old/ preconditions, Rust LOC count, move-to-rust-old/, the full
-#   doc-tree + CI scaffold.
+#   --language=<lang> (rust, python; others decline), --dry-run, the language's
+#   marker file (Cargo.toml / pyproject.toml|setup.py|setup.cfg) + <lang>-old/
+#   preconditions, source LOC count, move-to-<lang>-old/, the full doc-tree + CI
+#   scaffold. v6.5.34 added the python arm and parameterised the language-specific
+#   surface — marker, preserved-tree name, source extension, display name — so the
+#   next language is a branch in _run_port plus nothing else.
 #
 # Template substitution: data files under
 # `programs/cyrius-init-templates/` carry `{KEY}` placeholders. The render
 # pass walks each byte and replaces `{KEY}` from the module-level _sv_*
 # context globals (set once per scaffold before any render). Known keys:
 #   {PROJ} {DESCRIPTION} {CYRIUS_VER} {DATE} {PROJ_TYPE} {BUILD_HINT}
-#   {RUST_LOC} {CI_SRC} {CI_OUT}
+#   {RUST_LOC} {SRC_LOC} {SRC_LANG} {OLD_DIR} {CI_SRC} {CI_OUT}
+# {SRC_LOC} is the language-neutral name for {RUST_LOC}; both resolve to the same
+# value and {RUST_LOC} is kept only so an out-of-tree template does not break.
 # ci.yml / release.yml use {CI_SRC}/{CI_OUT} so --lib swaps the build
 # target without a post-render edit (the bash sed pass is gone). Both the
 # init and port CI templates already carry `workflow_call:` + the
@@ -52,6 +57,13 @@ var _sv_bhint   = 0;
 var _sv_rustloc = 0;
 var _sv_ci_src  = 0;
 var _sv_ci_out  = 0;
+# v6.5.34 — `cyrius port` is no longer Rust-only, so the port templates cannot keep saying
+# "Rust" and "rust-old/". SRC_LANG is the display name of the language being ported FROM and
+# OLD_DIR is where its tree is preserved. Both are substitution keys; the port templates use
+# them instead of hardcoded strings, which is what makes adding the next language a table
+# entry rather than a template fork.
+var _sv_srclang = 0;
+var _sv_olddir  = 0;
 
 # ────────────────────────────────────────────────────────────
 # tiny IO helpers
@@ -318,6 +330,11 @@ fn _subst_lookup(keyptr, keylen): i64 {
     }
     if (keylen == 8) {
         if (memeq(keyptr, "RUST_LOC", 8) == 1) { return _sv_rustloc; }
+        if (memeq(keyptr, "SRC_LANG", 8) == 1) { return _sv_srclang; }
+    }
+    if (keylen == 7) {
+        if (memeq(keyptr, "OLD_DIR", 7) == 1) { return _sv_olddir; }
+        if (memeq(keyptr, "SRC_LOC", 7) == 1) { return _sv_rustloc; }
     }
     if (keylen == 6) {
         if (memeq(keyptr, "CI_SRC", 6) == 1) { return _sv_ci_src; }
@@ -394,10 +411,32 @@ fn _write_file(path, content): i64 {
 }
 
 # Render tpl and write to proj_root/rel (always — clobber). 0/-1.
+# v6.5.34 — count the failures. `_rw` has always returned -1 for a template that could not
+# be rendered, and not one of its ~20 call sites has ever looked: each prints "Created <x>"
+# unconditionally, so a scaffold missing files reported itself as a clean success and exited
+# 0. The counter is checked once at the end of each scaffold, which is cheaper than
+# threading a result through every call site and cannot be forgotten by the next one added.
+var _rw_fails = 0;
+
 fn _rw(templates_dir, tpl, proj_root, rel): i64 {
     var content = _render_template(templates_dir, tpl);
-    if (content == 0) { return 0 - 1; }
-    return _write_file(_join(proj_root, rel), content);
+    if (content == 0) { _rw_fails = _rw_fails + 1; return 0 - 1; }
+    var wr = _write_file(_join(proj_root, rel), content);
+    if (wr < 0) {
+        _rw_fails = _rw_fails + 1;
+        _eprint("error: cannot write "); _eprint(rel); _eprint("\n");
+    }
+    return wr;
+}
+
+# Report an incomplete scaffold instead of claiming success. Returns 1 if anything failed.
+fn _rw_report(): i64 {
+    if (_rw_fails == 0) { return 0; }
+    _eprint("\nerror: scaffold INCOMPLETE — ");
+    _eprint(str_data(str_from_int(_rw_fails)));
+    _eprint(" file(s) could not be created (see the errors above)\n");
+    _eprint("  the project tree is partial; do not treat it as ready\n");
+    return 1;
 }
 
 # Skip-if-exists variant (in-place mode). Prints a skip line.
@@ -861,7 +900,7 @@ fn _run_init(start): i64 {
         _print("  cyrius build src/main.cyr build/"); _print(proj); _print("\n");
     }
     _print("  cyrius test\n");
-    return 0;
+    return _rw_report();
 }
 
 fn _tests_rel(proj, ext): i64 {
@@ -880,16 +919,22 @@ fn _port_usage() {
     _print("\n");
     _print("Options:\n");
     _print("  --language=<x>  source language being ported FROM (default: rust)\n");
-    _print("                  supported: rust  (future: go, python, …)\n");
+    _print("                  supported: rust, python  (future: go, c, …)\n");
     _print("  --dry-run       show what would be moved/created without writing\n");
     _print("\n");
     _print("Greenfield (no source to port) \xE2\x86\x92 use 'cyrius init [--language=none] <name>'\n");
 }
 
-fn _count_rust_loc(target): i64 {
+# v6.5.34 — count lines of the language being ported FROM. Was `_count_rust_loc` with `.rs`
+# baked in; the extension is now a parameter, because that (plus the marker file and the
+# preserved-tree name) is the entire language-specific surface of a port.
+fn _count_src_loc(target, ext): i64 {
     var srcdir = _join(target, "src");
-    if (is_dir(str_from(srcdir)) == 0) { return 0; }
-    var files = find_files(str_from(srcdir), str_from(".rs"));
+    var scan = srcdir;
+    # Python projects commonly keep modules at the repo root or in a package dir rather
+    # than under src/, so fall back to the project root instead of reporting 0 lines.
+    if (is_dir(str_from(srcdir)) == 0) { scan = target; }
+    var files = find_files(str_from(scan), str_from(ext));
     var total = 0;
     var i = 0;
     while (i < vec_len(files)) {
@@ -902,9 +947,9 @@ fn _count_rust_loc(target): i64 {
 fn _port_dry_run(name, loc) {
     _print("Dry run: cyrius port "); _print(name); _print("\n");
     _print("\n");
-    _print("Would move to rust-old/:\n");
-    _print("  src/, Cargo.toml, Cargo.lock, tests/, benches/ etc.\n");
-    _print("  Rust source: "); _print(str_data(str_from_int(loc))); _print(" lines\n");
+    _print("Would move to "); _print(_sv_olddir); _print("/:\n");
+    _print("  src/, project manifests, tests/, benches/ etc.\n");
+    _print("  "); _print(_sv_srclang); _print(" source: "); _print(str_data(str_from_int(loc))); _print(" lines\n");
     _print("\n");
     _print("Would create:\n");
     _print("  src/main.cyr              (entry point skeleton)\n");
@@ -917,7 +962,7 @@ fn _port_dry_run(name, loc) {
 }
 
 fn _port_move(target) {
-    var ro = _join(target, "rust-old");
+    var ro = _join(target, _sv_olddir);
     var items = vec_new();
     vec_push(items, "src");
     vec_push(items, "benches");
@@ -937,6 +982,23 @@ fn _port_move(target) {
     vec_push(items, "benchmarks.md");
     vec_push(items, "target");
     vec_push(items, "rust_out");
+    # v6.5.34 — Python's equivalents. Listing both languages' items unconditionally is
+    # deliberate: every move is guarded by `file_exists`, so a name that does not apply
+    # costs one stat, and a shared list cannot drift out of sync with a per-language one.
+    vec_push(items, "pyproject.toml");
+    vec_push(items, "setup.py");
+    vec_push(items, "setup.cfg");
+    vec_push(items, "requirements.txt");
+    vec_push(items, "requirements-dev.txt");
+    vec_push(items, "Pipfile");
+    vec_push(items, "Pipfile.lock");
+    vec_push(items, "poetry.lock");
+    vec_push(items, "tox.ini");
+    vec_push(items, "pytest.ini");
+    vec_push(items, "conftest.py");
+    vec_push(items, "MANIFEST.in");
+    vec_push(items, ".venv");
+    vec_push(items, "venv");
     var i = 0;
     while (i < vec_len(items)) {
         var it = vec_get(items, i);
@@ -977,34 +1039,62 @@ fn _run_port(start): i64 {
         return 1;
     }
 
+    # v6.5.34 — a real Python→Cyrius port was under way (agnostic) and the tool declined the
+    # job while agnosticos's first-party standard mandates using it: "Always use Cyrius
+    # tooling to scaffold and port… If the tools are missing something, fix the tools."
+    # The decline also cited a milestone — "planned for future v5.6.x" — that the toolchain
+    # passed a whole major line ago.
+    var src_ext = ".rs";
     if (streq(language, "rust") == 1) {
-        # ok
+        _sv_srclang = "Rust";
+        _sv_olddir = "rust-old";
+        src_ext = ".rs";
+    } elif (streq(language, "python") == 1) {
+        _sv_srclang = "Python";
+        _sv_olddir = "python-old";
+        src_ext = ".py";
     } elif (streq(language, "none") == 1) {
         _print("error: --language=none has no source to port\n");
         _print("  hint: use 'cyrius init --language=none "); _print(target); _print("' for greenfield scaffold\n");
         return 1;
-    } elif (streq(language, "go") == 1 || streq(language, "python") == 1 || streq(language, "c") == 1 || streq(language, "cpp") == 1 || streq(language, "zig") == 1 || streq(language, "ocaml") == 1 || streq(language, "haskell") == 1) {
-        _print("error: --language="); _print(language); _print(" not yet supported (planned for future v5.6.x)\n");
-        _print("  currently supported: rust\n");
+    } elif (streq(language, "go") == 1 || streq(language, "c") == 1 || streq(language, "cpp") == 1 || streq(language, "zig") == 1 || streq(language, "ocaml") == 1 || streq(language, "haskell") == 1) {
+        _print("error: --language="); _print(language); _print(" not yet supported\n");
+        _print("  currently supported: rust, python\n");
         return 1;
     } else {
-        _print("error: unsupported --language="); _print(language); _print(" (supported: rust)\n");
+        _print("error: unsupported --language="); _print(language); _print(" (supported: rust, python)\n");
         return 1;
     }
 
     var name = _basename_cstr(target);
     if (streq(name, ".") == 1 || strlen(name) == 0) { name = _basename_cstr(_cwd_path()); }
 
-    if (file_exists(_join(target, "Cargo.toml")) == 0) {
-        _print("error: no Cargo.toml found in "); _print(target); _print(" (--language=rust expects a Rust project)\n");
-        return 1;
+    # Marker file: proof the target really is a project in the named language. Python has
+    # three in circulation (PEP 621 pyproject, and the two setuptools forms still shipping),
+    # so any of them counts — requiring pyproject.toml alone would decline the older half of
+    # the ecosystem, which is the same shape of gap this release is closing.
+    if (streq(language, "rust") == 1) {
+        if (file_exists(_join(target, "Cargo.toml")) == 0) {
+            _print("error: no Cargo.toml found in "); _print(target); _print(" (--language=rust expects a Rust project)\n");
+            return 1;
+        }
+    } else {
+        var has_py = 0;
+        if (file_exists(_join(target, "pyproject.toml")) == 1) { has_py = 1; }
+        if (file_exists(_join(target, "setup.py")) == 1) { has_py = 1; }
+        if (file_exists(_join(target, "setup.cfg")) == 1) { has_py = 1; }
+        if (has_py == 0) {
+            _print("error: no pyproject.toml, setup.py or setup.cfg found in "); _print(target);
+            _print(" (--language=python expects a Python project)\n");
+            return 1;
+        }
     }
-    if (file_exists(_join(target, "rust-old")) == 1) {
-        _print("error: rust-old/ already exists — project may already be ported\n");
+    if (file_exists(_join(target, _sv_olddir)) == 1) {
+        _print("error: "); _print(_sv_olddir); _print("/ already exists — project may already be ported\n");
         return 1;
     }
 
-    var loc = _count_rust_loc(target);
+    var loc = _count_src_loc(target, src_ext);
 
     # version (needed by dry-run for the pin line)
     var templates_dir = _resolve_templates_dir(argv(0));
@@ -1016,16 +1106,16 @@ fn _run_port(start): i64 {
     if (dry == 1) { _port_dry_run(name, loc); return 0; }
 
     _print("=== Porting "); _print(name); _print(" to Cyrius ===\n");
-    _print("  Rust source: "); _print(str_data(str_from_int(loc))); _print(" lines\n");
+    _print("  "); _print(_sv_srclang); _print(" source: "); _print(str_data(str_from_int(loc))); _print(" lines\n");
 
-    # move rust → rust-old/
-    sys_mkdir(_join(target, "rust-old"), 493);
+    # move the original tree aside, under the language's preserved-source directory
+    sys_mkdir(_join(target, _sv_olddir), 493);
     _port_move(target);
-    _print("  Moved Rust to rust-old/\n");
+    _print("  Moved "); _print(_sv_srclang); _print(" to "); _print(_sv_olddir); _print("/\n");
     var locbuf = str_builder_new();
     str_builder_add_cstr(locbuf, str_data(str_from_int(loc)));
     str_builder_add_cstr(locbuf, "\n");
-    _write_file(_join(_join(target, "rust-old"), "LINES_OF_RUST.txt"), str_data(str_builder_build(locbuf)));
+    _write_file(_join(_join(target, _sv_olddir), "LINES_OF_SOURCE.txt"), str_data(str_builder_build(locbuf)));
 
     # structure
     _mkdir(target, "src");
@@ -1044,7 +1134,11 @@ fn _run_port(start): i64 {
     _sv_proj = name;
     _sv_date = _iso_date();
     _sv_rustloc = str_data(str_from_int(loc));
-    _sv_ptype = "Port (Rust \xE2\x86\x92 Cyrius)";
+    var ptbuf = str_builder_new();
+    str_builder_add_cstr(ptbuf, "Port (");
+    str_builder_add_cstr(ptbuf, _sv_srclang);
+    str_builder_add_cstr(ptbuf, " \xE2\x86\x92 Cyrius)");
+    _sv_ptype = str_data(str_builder_build(ptbuf));
     _sv_ci_src = "src/main.cyr";
     _sv_ci_out = "${{ github.event.repository.name }}";
 
@@ -1073,10 +1167,20 @@ fn _run_port(start): i64 {
         var gn = file_read_all(gi, gbuf, 131071);
         if (gn < 0) { gn = 0; }
         store8(gbuf + gn, 0);
-        if (strstr(gbuf, "rust-old/target") == 0) {
-            var add = "\n# Cyrius port\n/rust-old/target/\n/build/\n";
+        var marker = str_builder_new();
+        str_builder_add_cstr(marker, _sv_olddir);
+        str_builder_add_cstr(marker, "/");
+        var markerc = str_data(str_builder_build(marker));
+        if (strstr(gbuf, markerc) == 0) {
+            var ab = str_builder_new();
+            str_builder_add_cstr(ab, "\n# Cyrius port\n/");
+            str_builder_add_cstr(ab, _sv_olddir);
+            str_builder_add_cstr(ab, "/target/\n/");
+            str_builder_add_cstr(ab, _sv_olddir);
+            str_builder_add_cstr(ab, "/**/__pycache__/\n/build/\n");
+            var add = str_data(str_builder_build(ab));
             file_append_locked(gi, add, strlen(add));
-            _print("  Appended /rust-old/target/ and /build/ to existing .gitignore\n");
+            _print("  Appended /"); _print(_sv_olddir); _print("/ and /build/ to existing .gitignore\n");
         }
     }
 
@@ -1094,18 +1198,18 @@ fn _run_port(start): i64 {
 
     _print("\n");
     _print("=== "); _print(name); _print(" ready for porting ===\n");
-    _print("  Rust (rust-old/): "); _print(str_data(str_from_int(loc))); _print(" lines\n");
+    _print("  "); _print(_sv_srclang); _print(" ("); _print(_sv_olddir); _print("/): "); _print(str_data(str_from_int(loc))); _print(" lines\n");
     _print("  Cyrius (src/):    skeleton + test + bench + fuzz\n");
     _print("  Toolchain:        "); _print(ver); _print(" (cyrius.cyml)\n");
     _print("\n");
     _print("Next steps:\n");
-    _print("  1. Read rust-old/src/ to understand the API\n");
+    _print("  1. Read "); _print(_sv_olddir); _print("/ to understand the API\n");
     _print("  2. Port module by module into src/main.cyr\n");
     _print("  3. Add deps to cyrius.cyml as needed\n");
     _print("  4. Build: cyrius build src/main.cyr build/"); _print(name); _print("\n");
     _print("  5. Test:  cyrius test tests/"); _print(name); _print(".tcyr\n");
     _print("  6. Bench: cyrius bench tests/"); _print(name); _print(".bcyr\n");
-    return 0;
+    return _rw_report();
 }
 
 # ────────────────────────────────────────────────────────────

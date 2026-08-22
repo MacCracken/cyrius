@@ -2464,31 +2464,23 @@ fn PP_SKIPLINE(S, ip, bl): i64 {
 # instead, so the constant is simply ABSENT and the use site fails honestly with
 # `undefined variable 'CYRIUS_PKG_VERSION'` rather than compiling something forged.
 fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
-    # v6.5.21 — emit NOTHING unless the source actually names the constant.
-    # cbt writes `#@pkgver` on every materialized build, so declaring
-    # unconditionally put an unused global + its string data into EVERY binary
-    # built through `cyrius build` — which changed their bytes and turned
-    # `tests/gates/toolchain/auto_deps_verb_gate.sh` axis 5 red ("lsp: installed
-    # binary is byte-identical to the no-prepend build — expected yes, got no").
-    # That gate is right: a build-time convenience must not perturb the output of
-    # a program that never asked for it. A literal scan is the honest test — the
-    # name is reserved-ish and 18 bytes, so a false positive costs one unused
-    # global and a false negative is impossible.
-    var sp = 0;
-    var seen = 0;
-    while (sp + 18 <= bl) {
-        if (load8(S + sp) == 67) {
-            if (load8(S + sp + 1) == 89 && load8(S + sp + 2) == 82 && load8(S + sp + 3) == 73 && load8(S + sp + 4) == 85 && load8(S + sp + 5) == 83 && load8(S + sp + 6) == 95 && load8(S + sp + 7) == 80 && load8(S + sp + 8) == 75 && load8(S + sp + 9) == 71 && load8(S + sp + 10) == 95) {
-                seen = 1;
-                break;
-            }
-        }
-        sp = sp + 1;
-    }
-    if (seen == 0) {
-        _pp_pkgver_len = 0;
-        return op;
-    }
+    # v6.5.34 — the reference scan MOVED to the end of PP_PASS; this function now only
+    # VALIDATES the version and stashes it in `_pp_pkgver`, emitting nothing.
+    #
+    # It used to scan for the literal `CYRIUS_PKG_` right here, in the marker's own buffer
+    # — which at this moment is the ENTRY FILE's raw text, because includes have not been
+    # expanded yet. So the declaration appeared when the entry file named the symbol and
+    # was silently omitted when only an `include`d file did, which is the exact reverse of
+    # what the marker's byte-0 position suggests. Reported by agnostic wiring a `/ready`
+    # endpoint whose handler lived in `src/routes/health.cyr`:
+    #   error: undefined variable 'CYRIUS_PKG_VERSION' (missing include or enum?)
+    #
+    # ⚠ The conditional itself is NOT incidental and must survive any rework: declaring
+    # unconditionally puts an unused global plus its string data into EVERY binary built
+    # through `cyrius build`, changing the bytes of programs that never asked for the
+    # feature. `tests/gates/toolchain/auto_deps_verb_gate.sh` axis 5 catches exactly that
+    # and is right to. The fix widens what "referenced" is scanned OVER; it does not drop
+    # the test. See PP_RESOLVE_PKGVER at the tail of PP_PASS.
     var p = ip + 9;
     var n = 0;
     var ok = 1;
@@ -2517,6 +2509,11 @@ fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
     }
     store8(&_pp_pkgver + n, 0);
     _pp_pkgver_len = n;
+    # Emit OPTIMISTICALLY, and record the span so PP_PASS's tail can blank it if the
+    # finished unit turns out never to name the constant. The declaration has to be here,
+    # at the top — a global is not visible above its declaration — but whether it is wanted
+    # is not knowable until the includes are expanded.
+    _pp_pkgver_at = op;
     op = op + PP_EMIT_STR(out, op, "var CYRIUS_PKG_VERSION = ");
     store8(out + op, 34); op = op + 1;         # '"'
     var i = 0;
@@ -2527,6 +2524,7 @@ fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
     }
     store8(out + op, 34); op = op + 1;         # '"'
     store8(out + op, 59); op = op + 1;         # ';'
+    _pp_pkgver_declen = op - _pp_pkgver_at;
     # ⚠ NO trailing newline, deliberately. Emitting one would make this a 1-for-1
     # line REPLACEMENT, which is NOT line-neutral: cbt ADDS this marker above the
     # user's file, so any line the marker occupies pushes every user line down by
@@ -2534,6 +2532,64 @@ fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
     # Emitting zero newlines merges the declaration onto the front of the user's
     # first line, so expanded line N is user line N. Same technique as the v6.5.20
     # `#derive` fix. Statements are `;`-terminated, so sharing the line is legal.
+    return op;
+}
+
+# v6.5.34 — decide whether the `CYRIUS_PKG_VERSION` declaration PP_EMIT_PKGVER wrote
+# optimistically should stay, now that the unit is fully expanded. Called at the tail of
+# PP_PASS, where `out[0..op]` holds the entry file with every top-level `include` expanded
+# in place — so an included file naming the constant is finally visible to the test, which
+# is the whole bug.
+#
+# ⚠ THE DECLARATION CANNOT MOVE. A global is NOT visible above its declaration in cyrius:
+#     fn f(): i64 { return XYZ; }  var _r = f();  var XYZ = 7;
+#     → error: undefined variable 'XYZ'
+# The v6.5.33 attempt appended it after expansion on the issue file's recorded (and wrong)
+# claim that forward globals resolve, and could never have worked. So the declaration stays
+# where it must be — at the top — and this pass BLANKS it to spaces when unwanted. Same byte
+# count, so no line and no column moves, and whitespace emits no code.
+#
+# ⚠ Scanning for the 11-byte prefix `CYRIUS_PKG_` rather than the full name is deliberate
+# and unchanged from v6.5.21: a false positive costs one unused global, a false negative is
+# impossible, and the prefix is distinctive enough that neither happens in practice.
+fn PP_RESOLVE_PKGVER(out, op): i64 {
+    if (_pp_pkgver_len == 0) { return op; }
+    if (_pp_pkgver_declen == 0) { return op; }
+    # Scan the FULLY EXPANDED unit — this is the whole fix. The v6.5.21 scan ran inside
+    # PP_EMIT_PKGVER, whose buffer at that moment is the ENTRY FILE's raw text, includes
+    # not yet expanded. So the constant resolved when the entry file named it and failed
+    # when only an `include`d file did — the exact reverse of what the byte-0 marker
+    # position suggests. Reported by agnostic against a `/ready` handler in
+    # `src/routes/health.cyr`.
+    #
+    # ⚠ SKIP THE DECLARATION'S OWN BYTES. It contains the very prefix being searched for,
+    # so scanning the whole buffer would match itself and every build would keep the global
+    # — silently restoring the unconditional behaviour axis 5 of auto_deps_verb_gate.sh
+    # exists to forbid, while looking like it still had a test.
+    var declo = _pp_pkgver_at;
+    var dechi = _pp_pkgver_at + _pp_pkgver_declen;
+    var sp = 0;
+    var seen = 0;
+    while (sp + 11 <= op) {
+        if (sp >= declo && sp < dechi) { sp = dechi; continue; }
+        if (load8(out + sp) == 67) {
+            if (load8(out + sp + 1) == 89 && load8(out + sp + 2) == 82 && load8(out + sp + 3) == 73 && load8(out + sp + 4) == 85 && load8(out + sp + 5) == 83 && load8(out + sp + 6) == 95 && load8(out + sp + 7) == 80 && load8(out + sp + 8) == 75 && load8(out + sp + 9) == 71 && load8(out + sp + 10) == 95) {
+                seen = 1;
+                break;
+            }
+        }
+        sp = sp + 1;
+    }
+    if (seen == 1) { return op; }
+    # Not referenced: blank the declaration to spaces. Same byte count, so no line and no
+    # column moves, and whitespace emits no code — the produced binary is byte-identical to
+    # a build that never saw the marker, which is what axis 5 measures.
+    var b = declo;
+    while (b < dechi) {
+        store8(out + b, 32);
+        b = b + 1;
+    }
+    _pp_pkgver_len = 0;
     return op;
 }
 
@@ -3012,6 +3068,11 @@ fn PP_PASS(S): i64 {
         syscall(SYS_WRITE, 2, " bytes)\n", 8);
         syscall(SYS_EXIT, 1);
     }
+    # v6.5.34 — the `#@pkgver` declaration was written optimistically at the marker; only
+    # HERE, with every top-level include expanded, can "does this unit reference the
+    # constant?" be answered honestly. Blanks it to spaces if not. Length is unchanged, so
+    # this neither grows the buffer nor affects the 8 MB guard above.
+    op = PP_RESOLVE_PKGVER(out, op);
     # No copy-back — data stays at S+0x459D000.
     # PP_IFDEF_PASS reads from 0x459D000, writes to S+0.
     SBL(S, op);

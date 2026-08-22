@@ -1372,6 +1372,16 @@ var _pp_incdir_len = 0;
 # CLI-flag scan.
 var _pp_pkgver[128];
 var _pp_pkgver_len = 0;
+# v6.5.34 — where PP_EMIT_PKGVER put the declaration in the expanded buffer, and how long
+# it is. PP_PASS revisits that span at its tail: the declaration must be emitted at the TOP
+# (a global is NOT visible above its declaration — the assumption that it is, is what sent
+# the v6.5.33 attempt at this bug down an append-at-the-end path that could never work),
+# but "is it referenced?" cannot be answered until every include has been expanded. So it
+# is written optimistically and BLANKED WITH SPACES if the finished unit never names it —
+# same byte count, so no line or column moves, and whitespace emits no code, which is what
+# `auto_deps_verb_gate.sh` axis 5 actually requires.
+var _pp_pkgver_at = 0;
+var _pp_pkgver_declen = 0;
 
 # The anti-hang backstop. After the FIRST error, PEEKT calls this every read. A
 # desynced parse loop that spins on hostile input reads the SAME token forever →

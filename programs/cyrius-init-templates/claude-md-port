@@ -8,9 +8,9 @@
 
 ## Project Identity
 
-**{PROJ}** — Cyrius port of a Rust project ({RUST_LOC} lines preserved at `rust-old/`).
+**{PROJ}** — Cyrius port of a {SRC_LANG} project ({SRC_LOC} lines preserved at `{OLD_DIR}/`).
 
-- **Type**: Port (Rust → Cyrius)
+- **Type**: Port ({SRC_LANG} → Cyrius)
 - **License**: GPL-3.0-only
 - **Language**: Cyrius (toolchain pinned in `cyrius.cyml [package].cyrius`)
 - **Version**: `VERSION` at the project root is the source of truth — do not inline the number here
@@ -29,7 +29,7 @@ This file (`CLAUDE.md`) is durable rules.
 
 ## Scaffolding
 
-Project was scaffolded with `cyrius port`. Original Rust at `rust-old/` is the reference oracle — do not modify it; cross-check the port against it.
+Project was scaffolded with `cyrius port`. Original {SRC_LANG} at `{OLD_DIR}/` is the reference oracle — do not modify it; cross-check the port against it.
 
 ## Quick Start
 
@@ -41,8 +41,8 @@ cyrius test                              # run tests/*.tcyr
 
 ## Key Principles
 
-- **Cross-check against `rust-old/`** — the port's correctness bar is "matches what Rust did". Diverge only with an ADR.
-- **Correctness over cleverness** — if the Cyrius behavior diverges silently from Rust, the bugs win
+- **Cross-check against `{OLD_DIR}/`** — the port's correctness bar is "matches what {SRC_LANG} did". Diverge only with an ADR.
+- **Correctness over cleverness** — if the Cyrius behavior diverges silently from {SRC_LANG}, the bugs win
 - Test after every change, not after the feature is "done"
 - ONE change at a time — never bundle unrelated changes
 - Build with `cyrius build`, not raw `cat file | cc5` — the manifest auto-resolves deps
@@ -53,7 +53,7 @@ cyrius test                              # run tests/*.tcyr
 
 - **Do not commit or push** — the user handles all git operations
 - **Never use `gh` CLI** — use `curl` to the GitHub API if needed
-- Do not modify `rust-old/` — it's the parity oracle
+- Do not modify `{OLD_DIR}/` — it's the parity oracle
 - Do not skip tests before claiming changes work
 - Do not modify `lib/` files (vendored stdlib / dep symlinks)
 - Do not hardcode toolchain versions in CI YAML — `cyrius = "X.Y.Z"` in `cyrius.cyml` is the source of truth

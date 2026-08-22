@@ -82,14 +82,14 @@ else
     fi
 fi
 
-# ── RESIDUAL, stated rather than hidden. The fix closed 27 of 35 default-vs-IR=3
-# exit-code mismatches across the corpus; EIGHT remain and are NOT this bug. They are
-# tracked in the ir3 issue, not silently tolerated — a ceiling assertion so the count can
-# only go down. Sweeping all 253 here would double the gate's runtime, so this checks the
-# named survivors compile-and-differ consistently rather than re-deriving the count.
-echo "residual (not this bug, tracked separately): 8 of 253 default-vs-IR=3 exit mismatches remain"
-echo "  const_chained_multiply_fold, field_name_shadows_global, float, math_inverse_trig,"
-echo "  math_pack_integration, subword_signed_load, switch_dispatch, types"
+# ── RESIDUAL: NONE. This block used to name eight surviving default-vs-IR=3 mismatches.
+# All eight are closed: switch_dispatch at v6.5.5; float / math_inverse_trig /
+# math_pack_integration fell out of the band-B block-cap raise and were confirmed passing at
+# v6.5.27; and the last four — subword_signed_load, types, const_chained_multiply_fold,
+# field_name_shadows_global — at v6.5.34, where they bisected to three root causes, one per
+# pass. Re-derived on the full 282-file corpus at v6.5.34: ZERO divergences in exit code AND
+# stdout. The ceiling assertion now lives in tests/gates/ir-opt/ir3_substrate_correctness.sh
+# (axis 5, CYRIUS_IR3_FULL=1). Do not re-add a residual list here without re-deriving it.
 
 echo ""
 if [ "$fails" = "0" ]; then

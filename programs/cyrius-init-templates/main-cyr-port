@@ -1,5 +1,5 @@
 # {PROJ} — Cyrius port
-# Ported from {RUST_LOC} lines of Rust
+# Ported from {SRC_LOC} lines of {SRC_LANG}
 
 # Stdlib auto-included via cyrius.cyml
 

@@ -1,6 +1,37 @@
 # `CYRIUS_PKG_VERSION` resolves only in the entry file, not in `include`d files
 
-**Status:** 🟡 **OPEN — ROOT-CAUSED at v6.5.33, fix attempted and REVERTED.**
+**Status:** ✅ **RESOLVED — FIXED at v6.5.34.** See `CHANGELOG.md` [6.5.34].
+
+> **THE BLOCKER WAS A FALSE PREMISE IN THIS FILE, not the plumbing.** The note below says
+> "Globals declared below their use ARE visible (verified separately)". **They are not.**
+> Measured on the 6.5.33 binary:
+>
+> ```
+> $ printf 'fn f(): i64 { return XYZ; }\nvar _r = f();\nsyscall(60, _r);\nvar XYZ = 7;\n' | cycc
+> error:<source>:1:25: undefined variable 'XYZ' (missing include or enum?)
+> ```
+>
+> So append-after-expansion could never work, and the "find which pass owns the final buffer"
+> next step was chasing the wrong thing — the appended bytes DO reach the lexer (instrumented:
+> `PP_PASS` op 121 → 156, `PP_IFDEF_PASS` preserves 156). The parser simply cannot see a global
+> declared below its use. Two attempts were spent on that path.
+>
+> **THE FIX.** The declaration stays at the TOP, where it must be, emitted optimistically by
+> `PP_EMIT_PKGVER`, which now also records its span. At the tail of `PP_PASS` — the first point
+> at which every top-level `include` has been expanded — the finished unit is scanned, and if
+> nothing names the constant the declaration is **blanked to spaces**. Identical byte count, so
+> no line and no column moves, and whitespace emits no code: the binary of a program that never
+> asked for the feature is unchanged, which is what `auto_deps_verb_gate.sh` axis 5 measures
+> (verified green).
+>
+> ⚠ **The tail scan must skip the declaration's OWN bytes.** It contains the `CYRIUS_PKG_`
+> prefix it searches for, so a whole-buffer scan matches itself, keeps the global on every
+> build, and silently restores the unconditional behaviour while still appearing to be tested.
+>
+> Gate: `tests/gates/frontend/pkgver_visible_in_includes.sh` — four axes (include-file
+> reference, entry-file regression guard, byte-neutrality, line-neutrality), mutation-proven
+> against a faithful reconstruction of the v6.5.21 behaviour, which turns axis 1 red while
+> leaving axis 2 green: the filed bug's exact signature.
 
 > **Mechanism (confirmed).** `PP_EMIT_PKGVER` (`src/frontend/lex_pp.cyr`) decides whether to
 > declare the constant by scanning for the literal `CYRIUS_PKG_` **in the marker's own

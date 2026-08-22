@@ -4,6 +4,186 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.34] — 2026-08-22
+
+**Band E: the IR substrate. `CYRIUS_IR=3` now agrees with the default backend on the entire
+corpus — 282 of 282, exit code AND stdout.** Plus both open consumer filings and two stdlib
+folds.
+
+### Fixed — three CYRIUS_IR=3 miscompiles, one per optimizer pass
+
+The pinned premise said **7 divergences**; the live re-derivation at slot entry found **4**,
+and they bisected to **3 root causes**. All three are IR=3-only, so all 282 corpus files
+passed throughout — `cyrius test` runs the default backend, which is exactly why these
+survived. A fifth apparent hit, `stdlib/sakshi_full.tcyr`, is a **false positive**: it prints
+nanosecond timestamps and so differs from ITSELF between runs. Any future stdout-comparing
+differential must exclude it by name rather than tolerate stdout mismatches generally.
+
+- **LASE ate loads whose width conversion IS the semantics.** `ir_lase` eliminated an
+  `IR_LOAD_LOCAL` following an `IR_STORE_LOCAL` of the same slot, reasoning that the value is
+  still in rax from the store. True only at full width: a sub-i64 store narrows into memory
+  (`mov [rbp+d], al`) and leaves the UNTRUNCATED value in rax, while the matching load is the
+  `movzx`/`movsx`/`movsxd` that gives the value its declared type. So `var x: i8 = 256` read
+  back **256**, and an i16 holding `0xFFFF` read **65535** instead of −1.
+  `EFLLOAD_W`/`EFLSTORE_W` had recorded the width in the node's flags since v6.3.35 — LASE
+  simply never read it. ⚠ `IR_NODE_FL` is a `load16` and `_ir_pack_op` masks `0xFFFF`, so the
+  v6.3.35 SIGNED widths (negative) read back as 65535/65534/65532; the guard is `fl == 0`,
+  never a width comparison. Closed `subword_signed_load` + `types` — 2 tests, 4 assertions,
+  1 defect, as the `.27` re-triage predicted.
+
+- **`ir_const_fold` folded against a stale operand across the NOPs it wrote itself.** The
+  pass rewrites folded nodes to `IR_NOP`, and its top-of-loop skip stepped over them while
+  PRESERVING the state machine's `st`. On the fixpoint driver's second iteration a `LOAD_IMM`
+  from BEFORE a fold could pair with the `PUSH`/`LOAD_IMM` AFTER it — the real left operand
+  being in rax and invisible — so `3 + 1 - 5 + 2` folded to **5**. Requires 4+ terms AND an
+  intermediate crossing zero: shorter or all-positive chains fold in ONE iteration and never
+  take the second pass, which is why 3-term chains always looked fine and the corpus never
+  caught it. `IR_NOP` now breaks the pattern, which also closes a second, independent
+  unsoundness: `IR_NOP` is the landing pad `ir_build_bbs` splits blocks on, so a jump can
+  arrive there and the preceding `LOAD_IMM` may never have executed.
+
+- **`ESTOC` recorded no IR node, so DCE killed the pointer it stores through.** `ESTOC` —
+  `mov [rcx], rax`, the struct field store — emits bytes byte-identical to `ESTORE64`, which
+  records `IR_STORE64`. `ESTOC` recorded **nothing**, so liveness never saw that the store
+  reads rcx; DCE classified the preceding `mov rcx, rax` as a pure RCX def nothing reads,
+  killed it, and the store wrote through a garbage pointer. **SIGSEGV on any struct with two
+  or more field stores.** Its sibling `ELODC` (`mov rax, [rcx]`) had recorded
+  `IR_RAX_CLOBBER` all along; this was the store half, never brought along.
+  ⭐ **This is the SECOND occurrence of the class `tests/gates/ir-opt/ir3_switch_dce.sh`
+  documents at v6.5.5** — bytes emitted with no IR node are bytes liveness cannot see.
+  ⚠ The test that caught it is named `field_name_shadows_global` and **the shadowing is
+  irrelevant**: it reproduces with the field renamed and the global deleted. A name-resolution
+  hunt would have been wasted.
+
+Gate: `tests/gates/ir-opt/ir3_substrate_correctness.sh`, five axes, all three mutation-proven.
+⚠ Recording a mutation lesson: reverting only the LOAD arm of the LASE guard **survives** the
+gate. The STORE arm is the load-bearing half — refusing to TRACK a narrow store means no load
+can match it. The LOAD-arm conjunct is kept because "only a full-width pair is redundant" is
+the correct rule to state, not because a fixture forces it; anyone re-mutating must revert
+both arms or conclude the fix is untested. The stale residual list in
+`ir3_fold_jump_span.sh` (8 named survivors) is deleted — all eight are closed.
+
+### Fixed — `CYRIUS_PKG_VERSION` did not resolve from included files
+
+Filed by **agnostic** wiring a `/ready` endpoint whose handler lived in
+`src/routes/health.cyr`. `PP_EMIT_PKGVER`'s "is the constant referenced?" scan ran on the
+marker's own buffer — which at that moment is the ENTRY FILE's raw text, because includes have
+not been expanded. So the declaration appeared when the entry file named the symbol and was
+silently omitted when only an included file did: the exact reverse of what a byte-0 marker
+suggests.
+
+⛔ **The v6.5.33 attempt rested on a false premise and this release disproves it.** That
+attempt appended the declaration after include expansion, on the issue's recorded claim that
+"globals declared below their use ARE visible (verified separately)". **They are not** —
+`fn f() { return XYZ; } … var XYZ = 7;` fails with `undefined variable 'XYZ'`. Two attempts
+went down a path that could never work; the claim, not the plumbing, was the blocker.
+
+The fix keeps the declaration at the TOP, emitted optimistically, and blanks it to **spaces**
+at the tail of `PP_PASS` if the finished unit never names it — identical byte count, so no
+line and no column moves, and whitespace emits no code. ⚠ The conditional is not optional:
+declaring unconditionally puts an unused global into every binary built through `cyrius build`,
+which `auto_deps_verb_gate.sh` axis 5 catches and is right to. ⚠ And the tail scan must SKIP
+the declaration's own bytes — it contains the prefix being searched for, so a whole-buffer scan
+matches itself and silently restores the unconditional behaviour while still looking tested.
+Gate: `tests/gates/frontend/pkgver_visible_in_includes.sh`, four axes, mutation-proven against
+a faithful reconstruction of the v6.5.21 behaviour.
+
+### Added — `cyrius port --language=python`
+
+Filed by **agnostic**, starting a real Python→Cyrius port. `cyrius port` declined every
+language but rust, citing a milestone — *"planned for future v5.6.x"* — the toolchain had
+passed a major line earlier, while agnosticos's first-party standard mandates the tool:
+*"Always use Cyrius tooling to scaffold and port… If the tools are missing something, fix the
+tools."*
+
+⭐ **The flag was the small half.** The port TEMPLATES hardcoded "Rust" and "rust-old/" in
+**17 places across 7 files**, so a flag-only fix would scaffold a Python project whose
+CLAUDE.md, roadmap, state and getting-started all named `rust-old/` as the parity oracle while
+the tree on disk was `python-old/` — a lie written into every new port. Templates now take
+`{SRC_LANG}` / `{OLD_DIR}` / `{SRC_LOC}`, so the next language is a branch in `_run_port` and
+nothing else. Python's marker is `pyproject.toml`, `setup.py` **or** `setup.cfg` — requiring
+PEP 621 alone would decline the older half of the ecosystem, the same shape of gap being
+closed here. Gate: `tests/gates/toolchain/port_language_arms.sh`, five axes; axis 3 asserts a
+Python scaffold contains no Rust vocabulary, with an anti-vacuous companion.
+
+- **Fold-in, found while in the file: `_rw` was fail-open.** It has always returned −1 for a
+  template it could not render, and not one of its ~20 call sites ever looked — each prints
+  `Created <x>` unconditionally. A scaffold missing files reported itself as a clean success
+  and exited 0. Failures are now counted and reported, and both `cyrius init` and
+  `cyrius port` exit non-zero on a partial tree.
+
+### Changed — stdlib folds
+
+- **bayan 1.4.2 → 1.5.2** (215,533 → 641,083 B). Carries real security and correctness work
+  from three upstream releases: two heap buffer overflows in `csv` (CWE-787), a one-byte
+  remote crash in `base64`, an unchecked allocation in `yaml`, an out-of-bounds read in
+  `cyml`, a remote memory-exhaustion DoS in `json`, dropped carries in `bigint`'s
+  `u256_mul`, and `bayan_u64_mulmod` taking **SIGFPE on ordinary inputs** (x86 `DIV` raises
+  `#DE` when the QUOTIENT does not fit, not only on a zero divisor — and the aarch64 path
+  disagreed, so code written and tested on one target died on the other). 1.5.0 added the PDF
+  writer/reader, which is most of the size. Reference coverage upstream went 51 % → 100 %.
+- **patra 1.13.9 → 1.13.10.** `patra_init` no longer calls `sakshi_set_level(SK_WARN)` — a
+  process-global call that silently reset the host's configured log level the moment it opened
+  a database. Agnostic lost every `SK_INFO` line, `listening` included, by adding a
+  `patra_open` at start-up.
+
+Both folded byte-identical from upstream `dist/`, both fixed AT SOURCE first. Neither is in
+cycc's include closure, so the compiler is unaffected: the self-host fixpoint is byte-identical
+across the fold.
+
+### Fixed — a release gate that could fail on its own debris
+
+`tests/gates/toolchain/test_runner_bounded.sh` axis 4 asserts that a compiling run leaves no
+`cpp_<pid>` preprocessed source behind. It scanned the **three globally-newest**
+`/tmp/cyrius-*` directories — which makes it flaky by construction, and self-inflicted:
+**axis 1 of the same gate deliberately SIGKILLs a runner**, and as the gate's own header
+explains, a SIGKILLed parent runs no cleanup ever, so it leaves exactly a `cpp_<pid>` +
+`test_bin.tmp.<pid>` pair. Whether that debris was still inside the global top-3 by the time
+axis 4 ran depended on how many unrelated cyrius processes had started in between.
+
+Observed here: `check.sh` red on `/tmp/cyrius-828621`, the same gate green standalone minutes
+later, no code difference. Axis 4 now diffs the directory listing across its own build and
+inspects only what that build created, with an anti-vacuous premise row so a build that creates
+no temp dir cannot pass for the wrong reason. Mutation-proven both ways: stale debris in an
+unrelated new directory no longer trips it, and a planted `cpp_` inside the build's own
+directory still does.
+
+This is the shape the gate's header already warns about in four other places — "FOUR of this
+gate's own assertions shipped broken and three FAILED OPEN". This one failed *closed*, which is
+the better direction, but a gate that reports a failure the tree did not cause trains people to
+wave it away.
+
+### Release gate
+
+Self-host fixpoint **1,182,944 B** (+16 over `.33`) · seed 29,024 B → cybs → cycc
+byte-identical · `check.sh` **199 / 0** · corpus **282 / 282** by per-file exit code · cross-OS
+on REAL hardware, sequential, one host at a time — **ecb · ach · cass · pi, each
+`SELFHOST_OK` + crossos 54/54**.
+
+⚠ **The bench needs reading carefully, and the naive number is wrong.** The suite reported
+`self_compile` **767 ms** against `.33`'s recorded **711 ms** — an apparent +8 % — but `.33`
+was measured at load **0.34** and this box would not settle below **1.4**. Comparing a number
+to one taken under different conditions is not a measurement, so both compilers were run
+**interleaved, back-to-back, best-of-5, three rounds** on the same loaded box:
+
+```
+round 1:  .33=743ms   .34=741ms   delta=-2ms
+round 2:  .33=742ms   .34=740ms   delta=-2ms
+round 3:  .33=742ms   .34=739ms   delta=-3ms
+```
+
+**`.34` is 2-3 ms FASTER.** There is no regression; the delta was entirely the box. The
+`bench-history.csv` row is kept as recorded (767 ms) rather than massaged — it is a true
+reading of a loaded machine — but do not triage it as a growth tax. When a bench delta appears
+and the box is not quiet, A/B the two binaries under the *current* conditions before believing
+either number.
+
+⚠ **ecb and ach were re-run** after a late comment-and-rename edit (`PP_APPEND_PKGVER` →
+`PP_RESOLVE_PKGVER`, whose old header still described the abandoned append design and restated
+the very false premise this release disproves). cass and pi were not re-run, and the reason is
+measured rather than assumed: the pre- and post-edit compilers are **byte-identical**, so their
+verification stands on exactly the shipping binary.
+
 ## [6.5.33] — 2026-08-20
 
 **The P1 is root-caused and FIXED in the bootstrap compiler.** `.32` shipped it as a hazard

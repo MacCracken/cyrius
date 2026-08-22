@@ -285,7 +285,14 @@ fn EIDIV(S): i64 { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return
 fn EMOVDR(S): i64 { if (_IR_REC0(S, IR_MOV_RAX_RDX) == 1) { return 0; } E3(S, 0xD08948); _flags_reflect_rax = 0; return 0; }
 # v5.6.14: ELODC emits `mov rax, [rcx]` → record IR_RAX_CLOBBER.
 fn ELODC(S): i64 { _IR_REC0(S, IR_RAX_CLOBBER); if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0x018B48); _flags_reflect_rax = 0; return 0; }
-fn ESTOC(S): i64 { if (IR_ENABLED(S) == 2) { return 0; } E3(S, 0x018948); return 0; }
+# v6.5.34 — `mov [rcx], rax` reads BOTH rax and rcx, and must say so. This recorded NO IR
+# node while emitting bytes byte-identical to ESTORE64 (which records IR_STORE64), so under
+# CYRIUS_IR=3 every struct field store was invisible to liveness: DCE saw the `mov rcx, rax`
+# setting up the address as a pure RCX def that nothing reads, killed it, and the store wrote
+# through whatever rcx happened to hold — SIGSEGV on any struct with two or more field
+# stores. Its sibling ELODC (`mov rax, [rcx]`) already recorded IR_RAX_CLOBBER; this was the
+# store half of that pair, never brought along.
+fn ESTOC(S): i64 { if (_IR_REC0(S, IR_STORE64) == 1) { return 0; } E3(S, 0x018948); return 0; }
 fn ECMPR(S): i64 { if (_IR_REC0(S, IR_CMP) == 1) { return 0; } E3(S, 0xC83948); _flags_reflect_rax = 0; return 0; }
 fn ETESTAZ(S): i64 { if (_IR_REC0(S, IR_TEST_AZ) == 1) { return 0; } E3(S, 0xC08548); _flags_reflect_rax = 1; return 0; }
 fn EMOVRDXRAX(S): i64 { if (_IR_REC0(S, IR_MOV_RDX_RAX) == 1) { return 0; } E3(S, 0xC28948); return 0; }

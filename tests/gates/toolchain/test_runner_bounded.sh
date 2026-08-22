@@ -281,17 +281,32 @@ echo "axis 4 — a compiling run does not leave its preprocessed source behind:"
 mkdir -p "$T/pj/src"
 printf '[package]\nname = "pj"\nversion = "0.1.0"\n\n[deps]\nstdlib = ["syscalls","alloc","string","io"]\n' > "$T/pj/cyrius.cyml"
 printf 'fn main() { return 0; }\nvar r = main();\n' > "$T/pj/src/main.cyr"
-before=$(ls -d /tmp/cyrius-* 2>/dev/null | wc -l)
+# ⚠ v6.5.34 — SCOPE THIS TO THE DIRECTORY THIS BUILD CREATES. The original scanned the
+# three globally-newest /tmp/cyrius-* dirs, which made the axis **flaky by construction and
+# self-inflicted**: AXIS 1 ABOVE DELIBERATELY SIGKILLS A RUNNER, and — as this gate's own
+# header explains — a SIGKILLed parent runs no cleanup, ever, so it leaves exactly a
+# `cpp_<pid>` + `test_bin.tmp.<pid>` pair behind. Whether that debris was still inside the
+# global top-3 when axis 4 ran depended on how many unrelated cyrius processes had started
+# in between, so the gate failed inside a full `check.sh` run and PASSED when run on its own.
+# Observed at v6.5.34: `check.sh` red on `/tmp/cyrius-828621`, the same gate green standalone
+# minutes later, with no code difference. Diff the directory listing across the build instead.
+ls -d /tmp/cyrius-* 2>/dev/null | sort > "$T/dirs_before"
 ( cd "$T/pj" && timeout 300 "$CY" build src/main.cyr "$T/pj/out" > "$T/pj.out" 2> "$T/pj.err" ) || true
 check "premise: the build really did use the manifest prepend" 1 \
     "$([ -f "$T/pj/out" ] && echo 1 || echo 0)"
-after=$(ls -d /tmp/cyrius-* 2>/dev/null | wc -l)
+ls -d /tmp/cyrius-* 2>/dev/null | sort > "$T/dirs_after"
 leftover=0
-for d in $(ls -dt /tmp/cyrius-* 2>/dev/null | head -3); do
+newdirs=$(comm -13 "$T/dirs_before" "$T/dirs_after")
+for d in $newdirs; do
     n=$(ls -A "$d" 2>/dev/null | grep -c '^cpp_' || true)
     leftover=$((leftover + n))
 done
-check "no cpp_* preprocessed source left in the newest temp dirs" 0 "$leftover"
+# ANTI-VACUOUS: if the build created no temp dir at all there is nothing to leak and the
+# check would pass for the wrong reason — the exact failure mode the header records for the
+# hermetic-CYRIUS_HOME bug that made an earlier axis vacuous.
+check "premise: the build created a temp dir to inspect" 1 \
+    "$([ -n "$newdirs" ] && echo 1 || echo 0)"
+check "no cpp_* preprocessed source left by THIS build" 0 "$leftover"
 
 echo ""
 if [ "$fails" = "0" ]; then

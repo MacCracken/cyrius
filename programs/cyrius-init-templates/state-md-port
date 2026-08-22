@@ -5,7 +5,7 @@
 
 ## Version
 
-**0.1.0** — ported from Rust ({DATE}) via `cyrius port`. {RUST_LOC} lines of Rust preserved at `rust-old/` for parity reference.
+**0.1.0** — ported from {SRC_LANG} ({DATE}) via `cyrius port`. {SRC_LOC} lines of {SRC_LANG} preserved at `{OLD_DIR}/` for parity reference.
 
 ## Toolchain
 
@@ -13,7 +13,7 @@
 
 ## Source
 
-- Rust reference: {RUST_LOC} lines at `rust-old/` (frozen, do not edit).
+- {SRC_LANG} reference: {SRC_LOC} lines at `{OLD_DIR}/` (frozen, do not edit).
 - Cyrius port: scaffold only — `src/main.cyr` stub.
 
 ## Tests
@@ -32,4 +32,4 @@ _None yet._
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). The first milestone is typically Rust→Cyrius surface parity for the {RUST_LOC}-line subset.
+See [`roadmap.md`](roadmap.md). The first milestone is typically {SRC_LANG}→Cyrius surface parity for the {SRC_LOC}-line subset.

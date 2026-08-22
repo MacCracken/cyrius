@@ -30,11 +30,16 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.33** (2026-08-20) — cycc **1,182,928 B** · check.sh **198 passed / 0
-failed** · self_compile **711 ms** · **282** `.tcyr` (**54** in `crossos/`) · **101**
-`lib/*.cyr` · **97** `programs/**/*.cyr` · **77** shell gate scripts under
-`tests/gates/<bucket>/` · api-surface **4918** · heap map **100 regions / 0 overlaps** ·
-**10 open issues + 2 open proposals** (341 archived issues / 29 archived proposals).
+**Current head: v6.5.34** (2026-08-22) — cycc **1,182,944 B** · check.sh **199 passed / 0
+failed** · **282** `.tcyr` (**54** in `crossos/`) · **101**
+`lib/*.cyr` · **97** `programs/**/*.cyr` · **80** shell gate scripts under
+`tests/gates/<bucket>/` · api-surface **5070** · heap map **100 regions / 0 overlaps** ·
+**9 open issues + 2 open proposals** (343 archived issues / 29 archived proposals).
+
+> ⏳ **`.34` is code-complete and locally green; its cross-OS leg and bench run are still
+> outstanding, so `self_compile` is deliberately NOT quoted above rather than carried from
+> `.33`.** The version stamp on this line is rewritten by `version-bump.sh`, which has not run
+> yet — see the warning below about treating that stamp as evidence about the stamp only.
 
 ⭐ **CROSS-OS FULL CORPUS, re-measured on real hardware 2026-08-20 (`CYRIUS_CROSS_OS_FULL=1`):
 ecb 282/282 · ach 282/282 · pi 282/282 · cass 250/282.** Three of four hosts are at ZERO. The
@@ -432,7 +437,72 @@ numbers. Sizes are `.NN` releases, each bundling several bites. **Arcs are 1–2
 phases landing as commits inside them** — not one release per phase. Minors flex long; 6.4.x
 ran 86 releases and 6.5.x is expected in the same class.
 
-> ## 📌 RE-PINNED 2026-08-20 (at v6.5.33) — **THIS BLOCK SUPERSEDES EVERY PIN BELOW**
+> ## 📌 RE-PINNED 2026-08-22 (at v6.5.34) — **THIS BLOCK SUPERSEDES EVERY PIN BELOW**
+>
+> Re-derived at `.34` slot close. Every figure measured, none carried.
+>
+> ### ✅ Spent / closed at `.34`
+> - **Band E — the IR substrate. DONE.** ⛔ **The pinned premise of 7 divergences was STALE**;
+>   the slot-entry re-derivation found **4**, matching the `.27` re-triage, and they bisected
+>   to **3 root causes**, one per pass: LASE eliminating a load whose width conversion is the
+>   semantics; `ir_const_fold` carrying its state machine across the `IR_NOP`s it writes
+>   itself; and `ESTOC` recording no IR node at all, so DCE killed the `mov rcx, rax` that
+>   addresses every struct field store. **Default-vs-`CYRIUS_IR=3` is now 0 divergences across
+>   all 282 files, on exit code AND stdout.** ⚠ `stdlib/sakshi_full.tcyr` is a FALSE POSITIVE
+>   in any stdout-comparing sweep — nanosecond timestamps, differs from itself; exclude it by
+>   name, never by tolerating stdout mismatches generally.
+> - **Both `.33` consumer filings** — `pkgver-not-visible-in-included-files` and
+>   `cyrius-port-language-python` — fixed and archived. The reactive queue is drained.
+>
+> ### ▶ NEXT: `.35` — band F, cross-BB regalloc + a vector register class
+> ⛔ **Not greenfield, and the size estimate should reflect that**: a Poletto-Sarkar
+> linear-scan picker is already shipped and DEFAULT-ON for every fn. The cross-BB defect is
+> **one line** — the picker computes real live intervals (`ra_first`/`ra_last`) and then
+> force-sets every interval's end to the fn end, so the expire step never fires and assignment
+> is greedy-forever. The **vector register class is genuinely absent** (the byte matcher only
+> recognises REX.W mov to/from `[rbp+disp32]`). ⚠ **Re-derive `_disp_adj`'s site count at slot
+> entry** — last measured **57** tree-wide, not the 19 an older pin carried, of which 44 are
+> helper-replaceable. Depends on nothing else in this list; band E was never actually its
+> prerequisite.
+>
+> ### ⚖️ Owed to the maintainer — unchanged by `.34`
+> 1. **`CYRIUS_CROSS_OS_FULL=1` as the default** — ecb/ach/pi at 282/282, cass at 250/32 with
+>    the 32 labelled PE-incompatible (`fork`/`socketpair` are POSIX-only) and needing triage
+>    into skip-with-a-reason versus real.
+> 2. **The seven residual `assigning non-pointer to typed pointer` warnings** on `i64`-declared
+>    sources — type-accurate as written; whether the warning should fire at all under ADR-002
+>    is a language-design call.
+> 3. **Slot 9's design** — both storage relocations are disproven, so the survivors (escape
+>    analysis, or a scope-tied arena with reclaim) are a different size class and the slot
+>    cannot be scoped until one is chosen.
+> 4. **stiva Half B** — unbuilt and, on `.26`/`.27` evidence, unjustified for the two filed
+>    features; re-confirm it is wanted before spending a release.
+> 5. **Per-item `private`** — `private fn h()` still compiles with no diagnostic and privatises
+>    the whole file including `main`. Ten releases live.
+>
+> ### 📥 Arrived mid-slot, NOT in `.34` — first input for `.35`
+> - **`2026-08-22-versioned-wrapper-does-not-pin-cycc`** — filed while certifying agnosai
+>   2.0.5. `~/.cyrius/versions/<pin>/bin/cyrius` resolves `cycc` through `$CYRIUS_HOME/bin`
+>   (a symlink to whatever `current` says) rather than relative to its own location, and never
+>   consults `PATH` — so the *versioned* wrapper silently builds with the *current* compiler and
+>   a release cannot be certified against its own manifest pin without mutating the global
+>   install. It DOES warn, so nothing is silent; what is missing is a way to act on the warning.
+>   Untriaged. Deliberately not absorbed into `.34`, whose gate had already run.
+>
+> ### 🔧 Standing repair backlog (8 open, all roadmap-pinned)
+> `ir-regalloc-rewrite-needs-reemit` · `macos-threading-workers-dont-run` (narrowed at `.11`) ·
+> `simd-f64v-memory-operand` (items 1-2) · `v6415-closeout-residuals` (D1/D2) ·
+> `dx-multi-error-reporting` (residual 7) · `stiva-stackless-coroutines` (Half B) ·
+> `sock-send-result-allocates-per-call` · `cross-os-full-corpus` (retitled; premise now the
+> cass 32).
+>
+> ⚠ **A lesson from `.34` worth carrying into every future premise-check**: the blocker on the
+> `CYRIUS_PKG_VERSION` bug was a **false claim written in the issue file itself** — "globals
+> declared below their use ARE visible (verified separately)". They are not, and two attempts
+> were spent on a path that could never work. Premise-check the CLAIMS in issue files, not just
+> the pins.
+
+> ## 🔁 RE-PINNED 2026-08-20 (at v6.5.33) — superseded by the block above, kept for lineage
 >
 > Re-derived after the `.33` doc sweep, with every open issue premise-checked against LIVE
 > code and the cross-OS corpus re-measured on all four hosts. **`.33` closed the bootstrap P1**
@@ -483,7 +553,7 @@ ran 86 releases and 6.5.x is expected in the same class.
 > ⚠ **Every figure in this block was derived on 2026-08-20, not carried.** The block it
 > replaces claimed a 2026-08-14 derivation and had already rotted.
 
-> ## 🔁🔁 RE-PINNED 2026-08-14 (at v6.5.21) — **THIS BLOCK SUPERSEDES THE TABLE BELOW**
+> ## 🔁🔁 RE-PINNED 2026-08-14 (at v6.5.21) — superseded twice over, kept for lineage
 >
 > Re-derived after a full premise-check of all 14 open issues + 2 open proposals against
 > LIVE code at 6.5.21. **Not one came back already-shipped** — the queue is entirely live,

@@ -599,11 +599,22 @@ fn ir_lase(S): i64 {
         while (ni < first + count) {
             var op = IR_NODE_OP(S, ni);
             var a1 = IR_NODE_A1(S, ni);
+            # v6.5.34: EFLLOAD_W / EFLSTORE_W record the access WIDTH in the node's
+            # flags field. Only a full-width (fl == 0) pair is a redundant reload —
+            # see the guard below.
+            var fl = IR_NODE_FL(S, ni);
 
             if (op == IR_STORE_LOCAL) {
-                last_store_idx = a1;
+                # A sub-i64 store narrows into memory (`mov [rbp+d], al`) and leaves the
+                # UNTRUNCATED value in rax, so rax is no longer a faithful image of the
+                # slot. Don't track it — otherwise the reload below gets eliminated and
+                # the truncation silently never happens.
+                if (fl == 0) { last_store_idx = a1; } else { last_store_idx = 0 - 1; }
             } elif (op == IR_LOAD_LOCAL) {
-                if (a1 == last_store_idx) {
+                # A width-carrying load IS the truncation/sign-extension that gives the
+                # value its declared type (movzx/movsx/movsxd) — never redundant, however
+                # recently the slot was stored.
+                if (a1 == last_store_idx && fl == 0) {
                     # Redundant load — value still in rax from the store
                     _ir_set_node(S, ni, _ir_pack_op(IR_ELIMINATED, 0), a1, 0);
                     eliminated = eliminated + 1;
@@ -764,8 +775,30 @@ fn ir_const_fold(S): i64 {
     while (ni < ncnt) {
         var op = IR_NODE_OP(S, ni);
 
-        if (op == IR_NOP || op == IR_ELIMINATED) {
-            # Skip — these are no-ops that don't break the pattern.
+        if (op == IR_ELIMINATED) {
+            # A LASE- or DCE-eliminated node leaves rax exactly as it was (LASE removes a
+            # reload of a value already in rax; DCE removes a def nothing reads), so it
+            # cannot separate a LOAD_IMM from the PUSH that consumes it. Skip it.
+            ni = ni + 1;
+            continue;
+        }
+        if (op == IR_NOP) {
+            # v6.5.34 — an IR_NOP must BREAK the pattern, for two independent reasons.
+            #
+            # (1) This pass writes IR_NOP over every node it folds, and stashes the folded
+            # value in the LHS node's a2 — so a NOP can mean "rax = <folded value>", a def
+            # of rax the state machine cannot see. Skipping it while KEEPING `st` let a
+            # LOAD_IMM from BEFORE a fold pair with the PUSH AFTER it. On the fixpoint
+            # driver's second iteration `3 + 1 - 5 + 2` therefore matched the leftover
+            # `LOAD_IMM(3)` against `LOAD_IMM(2)` and rewrote the whole expression to 5,
+            # the real left operand being in rax and invisible here. Any chain of 4+ terms
+            # whose intermediate crossed zero was affected — the shorter and all-positive
+            # chains fold in ONE iteration and never take the second pass.
+            #
+            # (2) IR_NOP is also the landing pad ir_build_bbs splits basic blocks on, so a
+            # jump can arrive at one and the preceding LOAD_IMM may never have executed.
+            # Folding across a landing pad was unsound independently of (1).
+            st = 0;
             ni = ni + 1;
             continue;
         }

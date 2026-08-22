@@ -129,6 +129,14 @@ sh "$ROOT/tests/gates/ir-opt/ir3_fold_jump_span.sh"
 # the 6.5.2 binary, and the 2 that pass are the regression guards.
 sh "$ROOT/tests/gates/diagnostics/diag_line_after_include.sh"
 
+# v6.5.34: `#@pkgver`'s "is the constant referenced?" scan ran on the ENTRY FILE's raw text,
+# before includes expanded — so CYRIUS_PKG_VERSION resolved from the entry file and failed
+# from an included one, the reverse of what a byte-0 marker implies. Filed by agnostic. The
+# scan moved to the tail of PP_PASS, where the unit is expanded; the declaration is emitted
+# optimistically at the top and BLANKED TO SPACES if unused, so the binary of a program that
+# never asked for the feature is unchanged (auto_deps_verb_gate axis 5) and no line moves.
+sh "$ROOT/tests/gates/frontend/pkgver_visible_in_includes.sh"
+
 # v6.5.5: an IR_RAW_EMIT marker only shields raw bytes until the NEXT RECORDED node.
 # ESWITCH_DISPATCH_PRE recorded one marker at the top, then emitted four recorded nodes
 # (EPUSHR/EMOVI/EMOVCA/EPOPR) BEFORE its raw `sub rax, rcx` / `cmp rax, rcx` — so those
@@ -138,3 +146,12 @@ sh "$ROOT/tests/gates/diagnostics/diag_line_after_include.sh"
 # passes, which is why the bisection pointed at LASE). CYRIUS_IR=3-only — markers emit no
 # bytes, so default codegen is byte-identical and the default corpus could never see it.
 sh "$ROOT/tests/gates/ir-opt/ir3_switch_dce.sh"
+
+# v6.5.34: the three remaining CYRIUS_IR=3 divergences, one per pass — LASE eliminating a
+# load whose width conversion IS the semantics, const_fold pairing operands across the NOPs
+# it wrote itself, and ESTOC (`mov [rcx], rax`, the struct field store) recording no IR node
+# so DCE killed the `mov rcx, rax` addressing it. That last one is the SECOND occurrence of
+# the class the ir3_switch_dce gate above documents: bytes emitted with no node are bytes
+# liveness cannot see. All three are IR=3-only, so all 282 corpus files passed throughout.
+# With this, default-vs-IR=3 is at ZERO divergences across the whole corpus.
+sh "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"

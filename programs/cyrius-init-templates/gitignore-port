@@ -1,6 +1,17 @@
 # Build output
 /build/
-/rust-old/target/
+
+# Preserved source tree: keep the sources, ignore whatever the old toolchain built
+# inside it. Listing every language's artifact dir is harmless — an entry that does
+# not apply to this project simply never matches.
+/{OLD_DIR}/target/
+/{OLD_DIR}/**/__pycache__/
+/{OLD_DIR}/**/*.pyc
+/{OLD_DIR}/.venv/
+/{OLD_DIR}/venv/
+/{OLD_DIR}/**/*.egg-info/
+/{OLD_DIR}/.pytest_cache/
+/{OLD_DIR}/.tox/
 
 # IDE
 .idea/

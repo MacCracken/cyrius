@@ -1,6 +1,33 @@
 # `cyrius port --language=python` — declined, but the first-party standard mandates using the tool
 
-**Status:** 🟡 **OPEN** — a real Python→Cyrius port is underway and has no supported scaffolding path.
+**Status:** ✅ **RESOLVED — SHIPPED at v6.5.34.** See `CHANGELOG.md` [6.5.34].
+
+> **The sizing in this file was right about the driver and missed the templates.** Steps 1-5
+> are indeed the only language-specific logic — but the port TEMPLATES hardcoded "Rust" and
+> "rust-old/" in **17 places across 7 files** (`claude-md-port`, `state-md-port`,
+> `roadmap-md-port`, `getting-started-port`, `cyrius-cyml-port`, `main-cyr-port`,
+> `gitignore-port`). Shipping the flag alone would have produced a Python project whose
+> CLAUDE.md, roadmap, state and getting-started all named `rust-old/` as the parity oracle
+> while the tree on disk was `python-old/` — a lie scaffolded into every new port.
+>
+> Templates now take `{SRC_LANG}` / `{OLD_DIR}` / `{SRC_LOC}`, so adding the next language is
+> a branch in `_run_port` and nothing else.
+>
+> **Marker file:** `pyproject.toml`, `setup.py` **or** `setup.cfg`. Requiring PEP 621 alone
+> would decline the older half of the ecosystem — the same shape of gap this issue reports.
+>
+> **The stale milestone is gone.** The decline no longer cites "planned for future v5.6.x";
+> it names what IS supported, and the gate asserts the absence of that string so the next
+> language cannot reintroduce a dated promise.
+>
+> **Folded in, found while in the file:** `_rw` returned −1 for a template it could not render
+> and not one of its ~20 call sites ever looked — each printed `Created <x>` unconditionally,
+> so an incomplete scaffold reported success and exited 0. Failures are now counted and both
+> `init` and `port` exit non-zero on a partial tree.
+>
+> Gate: `tests/gates/toolchain/port_language_arms.sh` — five axes; axis 3 asserts a Python
+> scaffold contains **no** Rust vocabulary, with an anti-vacuous companion proving the same
+> grep does find it in a Rust scaffold.
 **Placement:** unpinned — 6.5.x backlog. `programs/cyrius-init.cyr` (`cmd_port`).
 **Discovered:** 2026-08-20 while starting the **agnostic** Python→Cyrius port.
 **Severity:** Low — `cyrius init --language=none .` is a working substitute; the gap is that the
