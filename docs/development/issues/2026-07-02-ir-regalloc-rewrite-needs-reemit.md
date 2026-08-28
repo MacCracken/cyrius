@@ -1,3 +1,23 @@
+> **v6.5.35 UPDATE — the REGALLOC half of this file is now SHIPPED; what remains is the
+> RE-EMIT substrate (Wall 1 + Wall 2) only.** Band F landed cross-BB register allocation
+> WITHOUT the `ir_lower_all` re-emit path this file has always named as its prerequisite —
+> which disproves the dependency for the regalloc half specifically. The picker time-shares
+> registers today: `RA_SCAN_LOOPS` (`src/backend/x86/decode.cyr`) finds backward edges and
+> `_ra_loop_extend` (`parse_fn.cyr`) extends intervals over loop bodies. ⛔ **Two things in
+> this file's framing were wrong and must not be re-derived from it**: (1) the roadmap's
+> "the cross-BB defect is ONE line" was HALF the story — that line is a deliberate v5.6.22
+> guard and reverting it alone fails **69 of 282** corpus tests; the unnamed second blocker
+> was a LIFETIME assignment cap of 5. (2) The `_disp_adj` consolidation figure ("57 sites,
+> 44 helper-replaceable") is wrong in both halves — `_disp_adj` does not exist under that
+> name, and the shape it described is **37** sites.
+>
+> ⚖️ **Still open here, and genuinely unshipped:** `ir_lower_all` re-emit (Wall 1) and the
+> local-access opcode model + `IR_SWITCH` CFG completion (Wall 2). ⭐ **Also inherited from
+> band F: the VECTOR REGISTER CLASS is unbuilt** — the picker's byte matcher recognises only
+> REX.W mov to/from `[rbp+disp32]`, so no xmm/ymm local is a candidate at all. That is now
+> band G's opening, not this file's. ✅ Band E (v6.5.34) separately took the IR=3 divergence
+> count to **0**. See CHANGELOG [6.5.35], [6.5.34].
+
 > **v6.5.2 UPDATE, RE-VERIFIED LIVE ON 6.5.10 (2026-08-07) — Wall 3 is CLOSED; Walls 1 and 2 still
 > hold.** This file's line "CYRIUS_IR=3 still miscompiles real programs" is **no longer true**: the
 > const_fold/jump-span bug is fixed and **IR=3 self-hosts a byte-identical cycc** (see

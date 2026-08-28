@@ -4,6 +4,54 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.36] — 2026-08-28
+
+**The agnos peer for `#101 readdir_at` — a directory listing that can resume.** agnos 1.56.50
+minted it; without the constant and wrapper here it is reachable only by hard-coding the number,
+which is the exact bug class agnos's roadmap tracks (a raw Linux number compiling clean on agnos and
+dispatching a different arm — `read(0)` → `exit` was found shipping).
+
+### Added — `lib/syscalls_x86_64_agnos.cyr`
+
+- **`SYS_READDIR_AT = 101`** in the agnos `Sys` enum.
+- **`fn sys_readdir_at(path, buf, max, cursor)`** — beside `sys_readdir`, same band.
+
+Contract (kernel side; agnos owns it):
+
+```
+readdir_at(path, buf, max, cursor) -> entry count (>=0), or <0
+  cursor points at ONE i64 the kernel reads AND writes:
+    in   0 to start at the top of the directory
+    out  the byte offset to resume from, or -1 when exhausted
+  errors: -1 bad ptr / not ext2 · -2 not found · -4 not a dir · -5 misaligned cursor
+```
+
+⚠ **The cursor is a byte offset into the directory file** — POSIX `telldir`'s cookie, and the only
+value that survives ext2 directories being a chain of variable-length records. It is **not** an
+entry index; do not compute one from it.
+
+⛔ **Do NOT implement this by giving `sys_readdir` a 4th argument.** That is what agnos refused to do
+kernel-side, for the cyrius fact measured on 6.5.35 and recorded against `#100`: the compiler pops
+only as many registers as the call site passes, so unused syscall argument registers carry stale
+values rather than zero. And this edge is sharper than `#55`'s — widening `#55` would have handed a
+garbage *timeout*, whereas widening `#81` hands the kernel a garbage **pointer it writes through**.
+Two wrappers, two arities. `tests/gates/platform/syscall_wrapper_pass.sh` axis 5 asserts that
+`sys_readdir` keeps arity 3, so a future "tidy-up" cannot merge them silently.
+
+⚠ **Guarding:** a kernel older than 1.56.50 has no `#101` arm and the dispatcher returns `-1`.
+Consumers must treat a negative return as *"this kernel cannot resume a listing"* and fall back to
+`sys_readdir`, rather than rendering an empty directory. "No entries" and "this kernel cannot page"
+are different facts — the same lesson `#99` and `#100` record.
+
+### Testing
+
+- `tests/gates/platform/syscall_wrapper_pass.sh` axis 5 gains three rows (constant, wrapper,
+  `sys_readdir` arity). Verified to **fail** when the wrapper is removed, not merely to pass.
+- ⚠ **Presence is not compatibility.** The wrapper is asserted to exist and compile; the path
+  *through it* is unexercised here. agnos's own `tests/readdir/rdat.cyr` proves the kernel contract
+  against a booted 1.56.50 (exit 95), but it calls the raw number because it predates this release.
+  crab is the first consumer that will carry the through-the-wrapper verification.
+
 ## [6.5.35] — 2026-08-22
 
 **Band F: the register allocator finally uses the live intervals it has been computing since

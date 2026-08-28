@@ -1,0 +1,19 @@
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+enum E {
+    A = 0x3FFFFFFFFFFFFFFF;
+    B = 0x4000000000000000;
+    C = 0x7FFFFFFFFFFFFFFE;
+    D = 0x7FFFFFFFFFFFFFFF;
+}
+enum F { G = 9223372036854775807; }
+var vD = 0x7FFFFFFFFFFFFFFF;
+var a1 = fmt_int(A); var x1 = print(" ", 1);
+var a2 = fmt_int(B); var x2 = print(" ", 1);
+var a3 = fmt_int(C); var x3 = print(" ", 1);
+var a4 = fmt_int(D); var x4 = print(" ", 1);
+var a5 = fmt_int(G); var x5 = print(" ", 1);
+var a6 = fmt_int(vD); var x6 = print("\n", 1);
+var z = syscall(60, 0);

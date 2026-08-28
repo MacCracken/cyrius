@@ -252,6 +252,53 @@ check "SYS_PTRSCAN = 98 present (agnos 1.56.42 minted it)" 1 "$n_98"
 n_98w=$(grep -c '^fn sys_ptrscan(buf, max)' lib/syscalls_x86_64_agnos.cyr || true)
 check "sys_ptrscan(buf, max) wrapper present" 1 "$n_98w"
 
+# #99 proclist — agnos 1.56.47 minted it (kernel/core/syscall.cyr, `if (num == 99)`), the
+# first process-enumeration primitive the OS has ever had. Before it there was no procfs
+# and nothing in the ring-3 surface that could answer "what is running?", so a system
+# monitor was impossible on AGNOS. Same two-directional rule as every axis-5 row: mint what
+# the kernel has, and the constant must exist so consumers never hard-code the number.
+n_99=$(grep -cE 'SYS_PROCLIST[[:space:]]*=[[:space:]]*99;' lib/syscalls_x86_64_agnos.cyr || true)
+check "SYS_PROCLIST = 99 present (agnos 1.56.47 minted it)" 1 "$n_99"
+n_99w=$(grep -c '^fn sys_proclist(buf, max)' lib/syscalls_x86_64_agnos.cyr || true)
+check "sys_proclist(buf, max) wrapper present" 1 "$n_99w"
+
+# #100 icmp_echo_ex — agnos 1.56.48 minted it as a SEPARATE NUMBER rather than giving
+# #55 a second argument, and that is the row this gate really protects. Measured on
+# cyrius 6.5.35: the compiler pops only as many registers as a call site passes, so an
+# unused syscall argument register carries stale data, not zero. Widening #55 would have
+# handed every already-shipped one-argument caller a garbage timeout. So the gate asserts
+# BOTH that the new wrapper exists AND that sys_icmp_echo still takes exactly one
+# argument — a future "tidy-up" that merges them would silently reintroduce the hazard.
+n_100=$(grep -cE 'SYS_ICMP_ECHO_EX[[:space:]]*=[[:space:]]*100;' lib/syscalls_x86_64_agnos.cyr || true)
+check "SYS_ICMP_ECHO_EX = 100 present (agnos 1.56.48 minted it)" 1 "$n_100"
+n_100w=$(grep -c '^fn sys_icmp_echo_ex(dst_ip, timeout_ms)' lib/syscalls_x86_64_agnos.cyr || true)
+check "sys_icmp_echo_ex(dst_ip, timeout_ms) wrapper present" 1 "$n_100w"
+n_55w=$(grep -c '^fn sys_icmp_echo(dst_ip)' lib/syscalls_x86_64_agnos.cyr || true)
+check "sys_icmp_echo KEEPS arity 1 (widening it is not ABI-compatible)" 1 "$n_55w"
+
+# #101 readdir_at — agnos 1.56.50 minted it as a SEPARATE NUMBER rather than giving #81 a
+# 4th argument, for the same measured reason as #100 — and with a sharper edge: #55's extra
+# argument would have been a garbage TIMEOUT, whereas #81's would be a garbage POINTER the
+# kernel WRITES THROUGH. So the gate asserts both that the new wrapper exists and that
+# sys_readdir still takes exactly three arguments; a future "tidy-up" merging them would
+# hand every already-shipped three-argument caller a wild write target.
+n_101=$(grep -cE 'SYS_READDIR_AT[[:space:]]*=[[:space:]]*101;' lib/syscalls_x86_64_agnos.cyr || true)
+check "SYS_READDIR_AT = 101 present (agnos 1.56.50 minted it)" 1 "$n_101"
+n_101w=$(grep -c '^fn sys_readdir_at(path, buf, max, cursor)' lib/syscalls_x86_64_agnos.cyr || true)
+check "sys_readdir_at(path, buf, max, cursor) wrapper present" 1 "$n_101w"
+n_81w=$(grep -c '^fn sys_readdir(path, buf, max)' lib/syscalls_x86_64_agnos.cyr || true)
+check "sys_readdir KEEPS arity 3 (widening it hands the kernel a garbage pointer)" 1 "$n_81w"
+
+# net_config#61 fields 4..7 — ICMP counters (agnos 1.56.48). Named readers exist so a
+# consumer never writes a bare field number, the same reason sys_net_ip/_gateway exist
+# for fields 0..3.
+n_cnt=0
+for w in sys_net_icmp_tx sys_net_icmp_rx sys_net_icmp_replies_sent sys_net_icmp_timeouts; do
+    n_cnt=$(( n_cnt + $(grep -c "^fn ${w}(): i64" lib/syscalls_x86_64_agnos.cyr || true) ))
+done
+check "all four sys_net_icmp_* counter readers present (net_config 4..7)" 4 "$n_cnt"
+
+
 # ── AXIS 6: cross-target. This is the axis a host-only test cannot replace.
 echo "axis 6 — every wrapper compiles on every target the peers claim:"
 cat > "$D/x.cyr" <<'EOF'

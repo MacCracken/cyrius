@@ -34,7 +34,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 failed** · **282** `.tcyr` (**54** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **81** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5070** · heap map **100 regions / 0 overlaps** ·
-**9 open issues + 2 open proposals** (343 archived issues / 29 archived proposals).
+**11 open issues + 2 open proposals** (343 archived issues / 29 archived proposals) — 9 at the `.35` tag, plus **two owl filings that arrived after it** and were verified live during handoff prep (`owl-private-fns-still-collide-across-files`, **High**; `owl-getenv-8kb-environ-window`, Medium).
 
 > ⏳ **`.34` is code-complete and locally green; its cross-OS leg and bench run are still
 > outstanding, so `self_compile` is deliberately NOT quoted above rather than carried from

@@ -1,0 +1,52 @@
+# Repro — a user `var SYS_*` that shadows the stdlib's arch-aware value silently
+# emits the WRONG syscall on ELF aarch64. The only diagnostic is a generic
+# "duplicate symbol ... (last definition wins)" warning that reads as cosmetic.
+#
+# Filed with: docs/development/issues/2026-08-23-darshana-aarch64-syscall-shadow-no-diagnostic.md
+# Discovered from darshana, 2026-08-23, on cycc 6.5.35.
+#
+# Build with `[deps] stdlib = ["syscalls"]`. Two variants, identical but for the
+# shadowing line — SHADOWED is this file as written; CLEAN is this file with the
+# `var SYS_IOCTL = 16;` line DELETED (the stdlib then resolves it: 16 on x86_64,
+# 29 on aarch64).
+#
+#   cyrius build          src/g.cyr build/g      -> exit 0, NO warning   <- x86_64: values agree
+#   cyrius build --aarch64 src/g.cyr build/g-a64 -> exit 0, warning:<source>:1:15:
+#         duplicate symbol 'SYS_IOCTL' redefined with conflicting value (last definition wins)
+#
+# The build SUCCEEDS both times. Run the aarch64 binaries under qemu-aarch64 to
+# see that the warning was reporting a real miscompilation-equivalent defect:
+#
+#   # stdout redirected (not a tty):
+#   qemu-aarch64 build/g-a64     > /dev/null; echo $?   -> 242  = -14 EFAULT   <- WRONG
+#   qemu-aarch64 build/clean-a64 > /dev/null; echo $?   -> 231  = -25 ENOTTY   <- correct
+#
+#   # against a real pty:
+#   script -qec "qemu-aarch64 build/g-a64"     /dev/null >/dev/null; echo $?  -> 242  <- WRONG
+#   script -qec "qemu-aarch64 build/clean-a64" /dev/null >/dev/null; echo $?  -> 0    <- correct
+#
+# Two DIFFERENT syscalls, proven by their distinct errnos. On aarch64-Linux
+# 16 is `fremovexattr`, not `ioctl` (29) — see include/uapi/asm-generic/unistd.h.
+# The shadowed build hands 0x5413 (TIOCGWINSZ) to fremovexattr as its `name`
+# pointer, which faults: EFAULT. The clean build issues a real ioctl, which
+# correctly reports ENOTTY off a tty and succeeds (0) on one.
+#
+# Why nothing louder fires: ESYSXLAT's ELF-aarch64 arm
+# (src/backend/aarch64/emit.cyr) has no 16->29 row, and an unmatched number is
+# passed through to the `svc` VERBATIM — which is correct by design for native
+# aarch64 numbers, and silently wrong for a stray x86_64 one. The
+# "syscall not routed" warning (src/frontend/parse_expr.cyr) is Mach-O-only.
+#
+# Note the x86_64 build emits NO warning at all: there the local 16 and the
+# stdlib's 16 agree, so there is no value conflict to report. The warning fires
+# on exactly the target where the shadow is wrong — the signal is already
+# precise, it is only classified too weakly.
+
+var SYS_IOCTL = 16;          # <- DELETE this line for the CLEAN variant
+var TIOCGWINSZ = 0x5413;
+
+fn main() {
+    var ws[8];
+    var rc = syscall(SYS_IOCTL, 1, TIOCGWINSZ, &ws);
+    return rc;
+}
