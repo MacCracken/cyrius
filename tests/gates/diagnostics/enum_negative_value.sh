@@ -109,21 +109,94 @@ else
     fi
 fi
 
-# --- axis 5 (STRUCTURAL): every enum_const_val reader goes through the shared decoder ---
-# There were FIVE hand-rolled `& 0x7FFFFFFFFFFFFFFF` copies across three files. Fixing four of
-# them would have been this cycle's `_cfo` lesson a third time, so this fails if any site
-# re-grows its own mask.
-raw=$(grep -c '_vecv_base' src/frontend/parse_types.cyr src/frontend/parse_decl.cyr src/frontend/parse_expr.cyr | awk -F: '{s+=$2} END{print s}')
-dec=$(grep -c 'ENUM_CONST_VAL(' src/frontend/parse_types.cyr src/frontend/parse_decl.cyr src/frontend/parse_expr.cyr | awk -F: '{s+=$2} END{print s}')
+# --- axis 5 (STRUCTURAL): presence is OUT OF BAND; no site reconstructs a value from a tag ---
+#
+# ⚠ THIS AXIS WAS REWRITTEN AT v6.5.36 AND THE REASON MATTERS. It used to require that every
+# `_vecv_base` reader route through a shared decoder, `ENUM_CONST_VAL` — a guard against the
+# five hand-rolled `& 0x7FFFFFFFFFFFFFFF` copies that once existed. That guard was correct
+# about the symptom and wrong about the disease: the decoder itself could not work. The slot
+# packed `(1 << 63) | val`, i.e. 65 bits of information in 64, so it could not distinguish a
+# negative value from a positive one with bit 62 set. Every enum constant >= 2^62 came back
+# sign-extended — `enum { K = 0x7FFFFFFFFFFFFFFF }` was **-1** — silently, in five shipped
+# releases (6.5.31-6.5.35), with this gate GREEN because one shared decoder was doing the
+# corrupting. **A gate that pins the mechanism rather than the property passes while the
+# mechanism is wrong.**
+#
+# v6.5.36 moved presence out of band: `_vecv_base` holds the RAW i64 and `_vecp_base` (via
+# GVECP/SVECP) holds the flag. So the invariant to defend is no longer "one decoder" — it is
+# that NOTHING derives presence or value from bits inside the value again.
+ENUM_SRC="src/frontend/parse_types.cyr src/frontend/parse_decl.cyr src/frontend/parse_expr.cyr"
+GD=$(mktemp -d)
+# ⚠ CODE ONLY. A first draft of this axis grepped the raw files and went red on its OWN
+# explanatory comments (which necessarily quote the old `(1 << 63) | val` tag) and on
+# `GETFCOUNT`'s unrelated `& 0x7FFF…` over a DIFFERENT table. A structural gate that cannot
+# tell code from prose reports the documentation as the defect.
+for f in $ENUM_SRC src/common/util.cyr; do
+    sed 's/#.*$//' "$f" > "$GD/$(echo "$f" | tr / _)"
+done
+raw=$(grep -c '_vecv_base' $ENUM_SRC | awk -F: '{s+=$2} END{print s}')
 if [ "$raw" -lt 5 ]; then
     echo "  FAIL axis 5 (premise): only $raw _vecv_base sites found — the search is wrong, not the tree"
     fail=1
-elif [ "$dec" -lt 5 ]; then
-    echo "  FAIL axis 5 (structural): $raw enum_const_val sites but only $dec route through ENUM_CONST_VAL — a hand-rolled mask has been reintroduced, and it will silently corrupt negative values"
+else
+    a5=0
+    # (a) the in-band tag must not come back.
+    if grep -nE '\(1 *<< *63\) *\|' "$GD"/* >/dev/null 2>&1; then
+        echo "  FAIL axis 5a: an in-band presence tag has been reintroduced into the value slot"
+        grep -nE '\(1 *<< *63\) *\|' "$GD"/* | head -3 | sed 's/^/      /'
+        a5=1
+    fi
+    # (b) no mask reconstructing a value from a tagged slot. Scoped to lines that actually
+    #     touch the enum table, so unrelated masks elsewhere are not false positives.
+    if grep -n '_vecv_base' "$GD"/* | grep -E '0x7FFFFFFFFFFFFFFF|0x4000000000000000' >/dev/null 2>&1; then
+        echo "  FAIL axis 5b: a hand-rolled tag mask is back on an enum-table access"
+        grep -n '_vecv_base' "$GD"/* | grep -E '0x7FFFFFFFFFFFFFFF|0x4000000000000000' | head -3 | sed 's/^/      /'
+        a5=1
+    fi
+    # (c) presence must be asked for explicitly, never inferred from the value's sign.
+    pres=$(grep -c 'GVECP(' $ENUM_SRC | awk -F: '{s+=$2} END{print s}')
+    if [ "$pres" -lt 5 ]; then
+        echo "  FAIL axis 5c: only $pres of $raw _vecv_base sites test GVECP — presence is being inferred from the value"
+        a5=1
+    fi
+    if [ "$a5" -eq 0 ]; then
+        echo "  ok axis 5: presence is out of band ($pres GVECP tests, no in-band tag, no hand-rolled mask)"
+    else
+        fail=1
+    fi
+fi
+
+# --- axis 6 (BEHAVIOURAL): the full i64 range, which axes 1-5 do not reach ---
+# The 6.5.31-6.5.35 defect lived entirely ABOVE 2^62, so every ordinary enum test passed.
+cat > "$GD/range.cyr" <<'RANGEEOF'
+enum R { LO = 0x3FFFFFFFFFFFFFFF; HI = 0x4000000000000000; MAXV = 0x7FFFFFFFFFFFFFFF; NEG = -1; }
+fn ck(): i64 {
+    if (LO   != 4611686018427387903) { return 1; }
+    if (HI   != 4611686018427387904) { return 2; }
+    if (MAXV != 9223372036854775807) { return 3; }
+    if (NEG  != (0 - 1))             { return 4; }
+    if (MAXV <= 0)                   { return 5; }
+    return 0;
+}
+var q = ck();
+syscall(60, q);
+RANGEEOF
+if ! "$CC" < "$GD/range.cyr" > "$GD/range.bin" 2>"$GD/range.err"; then
+    echo "  FAIL axis 6: the full-range enum fixture does not compile"
+    head -2 "$GD/range.err" | sed 's/^/      /'
     fail=1
 else
-    echo "  ok axis 5: all $dec enum_const_val readers route through the shared decoder"
+    chmod +x "$GD/range.bin"
+    "$GD/range.bin" >/dev/null 2>&1
+    rc6=$?
+    if [ "$rc6" -eq 0 ]; then
+        echo "  ok axis 6: enum constants hold the full i64 range (2^62-1, 2^62, i64 max, -1)"
+    else
+        echo "  FAIL axis 6: member #$rc6 is wrong — 1=2^62-1 2=2^62 3=i64max 4=-1 5=i64max sign"
+        fail=1
+    fi
 fi
+rm -rf "$GD"
 
 [ "$fail" -eq 0 ] || { echo "FAIL: enum-negative-value"; exit 1; }
 echo "PASS: enum-negative-value — negative enum values work, negative array sizes are rejected, one shared decoder"

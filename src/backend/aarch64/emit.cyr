@@ -1153,6 +1153,22 @@ fn ESYSXLAT(S): i64 {
     # x8=49 and the bind entry compares against 49, so it must stay below it.
     # cmp x8,#1049 = 0xF110651F; movz x8,#49 = 0xD2800628 (aarch64-linux-gnu-as verified).
     EW(S, 0xF110651F); EW(S, 0x54000041); EW(S, 0xD2800628);  # chdir 1049→49
+    # v6.5.36: ppoll + signalfd4 via the PRIVATE ALIASES 1073/1074 → native 73/74.
+    # ⛔ THE BUG THESE FIX WAS A TWO-WAY COLLISION THE BAND EXISTS FOR. `lib/syscalls_aarch64_linux.cyr`
+    # declared the NATIVE numbers (73 ppoll, 74 signalfd4) and expected them to pass through
+    # untouched. They did not: the x86-compat rows above rewrite 73 (x86 flock) → 32 and
+    # 74 (x86 fsync) → 82, and a compat row cannot tell a native number from the x86 number it
+    # is matching. So `sys_pause()` issued **flock(2)** and `sys_signalfd()` issued **fsync(2)** —
+    # silently, on every ELF-aarch64 build, with every gate green. Filed by kybernet (PID 1 for
+    # AGNOS), whose entire aarch64 target was non-functional.
+    # ⚠ SAME ORDERING RULE AS THE WHOLE BAND, and it bites harder here than anywhere else: these
+    # produce x8=73 and x8=74, which are EXACTLY the values the flock and fsync compat rows above
+    # compare against. Placed anywhere before them, every ppoll would be reissued as flock and
+    # every signalfd4 as fsync — i.e. the identical bug, reintroduced by a reordering.
+    # cmp x8,#1073 = 0xF110C51F; movz x8,#73 = 0xD2800928 (aarch64-linux-gnu-as verified).
+    EW(S, 0xF110C51F); EW(S, 0x54000041); EW(S, 0xD2800928);  # ppoll     1073→73
+    # cmp x8,#1074 = 0xF110C91F; movz x8,#74 = 0xD2800948 (aarch64-linux-gnu-as verified).
+    EW(S, 0xF110C91F); EW(S, 0x54000041); EW(S, 0xD2800948);  # signalfd4 1074→74
     return 0;
 }
 

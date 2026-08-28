@@ -1,6 +1,6 @@
 # ESYSXLAT's ELF-aarch64 compat rows for x86 `73`/`74` also swallow the NATIVE aarch64 `ppoll`/`signalfd4` the stdlib emits — `sys_signalfd` issues `fsync`, `sys_pause` issues `flock`
 
-**Status:** 🟡 **OPEN** — newly filed. Verified against live code at 6.5.35 on 2026-08-27 by reading the emitted rows in `src/backend/aarch64/emit.cyr` and by running a stdlib-only repro under `qemu-aarch64 -strace`. **No consumer-side workaround exists** — that is established below by experiment, not assumed.
+**Status:** ✅ **RESOLVED v6.5.36** — `SYS_PPOLL` and `SYS_SIGNALFD4` moved to the ≥1000 private alias band (1073/1074) with ESYSXLAT rows appended **last** in the ELF-aarch64 chain (mandatory: they produce x8=73/74, exactly what the flock and fsync compat rows compare against). Encodings assembler-verified. Measured under `qemu-aarch64 -strace`: `fsync(-1) = -1 EBADF` → `signalfd4(…) = 3`; `flock(0,0,…)` → `ppoll(…)`. Confirmed on REAL pi hardware, 55/55.
 **Placement:** unpinned — 6.x-line backlog, but see [Severity rationale](#severity-rationale); this one blocks a consumer's entire aarch64 target.
 **Discovered:** 2026-08-27 during kybernet's P(-1) audit (kybernet v1.6.13, CRITICAL-1 / MEDIUM-9).
 **Severity:** **Critical** for any consumer that uses `signalfd` or `pause` on aarch64; the affected consumer's aarch64 binary is 100% non-functional and every gate was green.

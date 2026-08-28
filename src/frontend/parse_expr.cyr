@@ -644,9 +644,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     # the idx is out of the 1024-slot cap.
                     STI(S, GTI(S) + 1);
                     if (vi < 1024) {
-                        var _ecvq = L64(_vecv_base + vi * 8);
-                        if (_ecvq < 0) {
-                            var _evq = ENUM_CONST_VAL(_ecvq);
+                        if (GVECP(S, vi) == 1) {
+                            var _evq = L64(_vecv_base + vi * 8);
                             _cfp = GCP(S);
                             EMOVI(S, _evq);
                             if (_evq < 0x10000) { _cfv = _evq; _cfo = 1; }
@@ -798,9 +797,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # gvar whose slot has bit 63 set is a fold candidate. Same
         # 1024-slot cap as the qualified path.
         if (idx < 1024) {
-            var _ecv = L64(_vecv_base + idx * 8);
-            if (_ecv < 0) {
-                var _ev = ENUM_CONST_VAL(_ecv);
+            if (GVECP(S, idx) == 1) {
+                var _ev = L64(_vecv_base + idx * 8);
                 _cfp = GCP(S);
                 EMOVI(S, _ev);
                 if (_ev < 0x10000) { _cfv = _ev; _cfo = 1; }

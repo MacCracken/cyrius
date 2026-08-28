@@ -1,6 +1,6 @@
 # `tls_native_set_ca_system` re-reads and re-allocates the whole trust bundle on every call — 1 MiB per TLS connect on the no-free bump
 
-**Status:** 🟡 **OPEN** — `lib/tls_native_hs12.cyr:1594` does `var buf = alloc(cap)` with `cap = 1048576` and caches nothing, and `lib/tls.cyr:316` (`_tls_native_alloc`) calls it on **every** native-backend connect. Measured on a real AGNOS kernel at cycc 6.5.35: **exactly 1,048,576 bytes of permanently-retained heap per TLS connection.**
+**Status:** ✅ **RESOLVED v6.5.36** — the bundle is read and allocated once per process. ⚠ The failure is cached too, deliberately (`_tn_ca_len == -1`): without that, a machine with no trust store re-walks all four candidate paths on every connect, forever.
 **Placement:** unpinned — 6.x-line backlog.
 **Discovered:** 2026-08-27 while closing whirl's roadmap item B3 ("retire the agnos CA hook") — the retirement turned out to be blocked by this.
 **Severity:** Medium — a shipping consumer works around it, but the allocation on the TLS connect path is ~5× what it needs to be and the excess is never reclaimed.

@@ -35,28 +35,39 @@ var _vart_base = 0;    # 0x13A000 var_types
 var _vgoff_base = 0;   # 0x1B0000 gvar_byte_off
 var _vecv_base = 0;    # 0x1D8000 enum_const_val
 
-# v6.5.32 — decode an enum_const_val slot into its SIGNED value.
+# v6.5.36 — enum-constant presence is OUT-OF-BAND. Do not put it back in the value.
 #
-# The slot packs a presence marker into BIT 63 (`(1 << 63) | val`) and five readers used to
-# recover the value with a bare `& 0x7FFFFFFFFFFFFFFF`. For a negative `val` that is lossy:
-# -1 is 0xFFFF...F, so the marker is indistinguishable from the value's own sign bit and the
-# mask yields 0x7FFF_FFFF_FFFF_FFFF — a colossal positive that compares GREATER than zero.
+# ⛔ THE HISTORY IS THE WARNING. `_vecv_base` used to store `(1 << 63) | val` and use the sign
+# bit to mean "this slot holds an enum constant". That is 65 bits of information in a 64-bit
+# slot, and it cannot be made to work:
+#   * v5.5.2 shipped it with a bare `& 0x7FFF...F` decode. Negative values came back as
+#     colossal positives.
+#   * v6.5.32 "fixed" that with a heuristic — if bit 62 is set, assume the slot is a negative
+#     value and return it unchanged — and documented the result as "Range: -2^62 .. 2^62-1",
+#     i.e. it wrote the truncation down as a specification instead of treating it as the defect.
+#     `enum { K = 0x7FFFFFFFFFFFFFFF }` then evaluated to **-1**, silently, in five shipped
+#     releases (6.5.31–6.5.35), with a green 282-file corpus. szal found it, not us.
+# The lesson is the one this repo keeps re-learning: an in-band tag that steals a bit from a
+# full-range value is not a tag, it is a silent truncation waiting for the first consumer to
+# use the top of the range. **Presence and value need separate storage.**
 #
-# The fix is smaller than it looks: bit 63 is ALWAYS set on a live entry, so for a NEGATIVE
-# value the marker bit already IS the sign bit the result needs — return the slot unchanged.
-# Only a positive value needs the marker cleared. Range: -2^62 .. 2^62-1.
-#
-# ⭐ ONE decoder, called by every site. There were FIVE hand-rolled copies of the mask across
-# three files; fixing four would have been the `_cfo` lesson a third time.
-#
-# ⚠ v6.5.33 — this lived in `parse_types.cyr` for one release because putting ANY branching fn
-# in this file made cybs emit a broken `gen1`. That was a real cybs defect (a stray
-# `patch_rel32` from a clobbered `rbx` in `parse_if_else`), root-caused and FIXED in
-# `bootstrap/cybs.cyr` at v6.5.33 — so the placement taboo is gone and the helper is back
-# where it belongs, beside the table it decodes.
-fn ENUM_CONST_VAL(ecv): i64 {
-    if ((ecv & 0x4000000000000000) != 0) { return ecv; }
-    return ecv & 0x7FFFFFFFFFFFFFFF;
+# So: `_vecv_base` now holds the RAW i64 value — every bit pattern, no marker, no decode — and
+# this table holds the presence flag. Lazily allocated on first write with the `_fnt_tparams`
+# precedent, so there is NO new heap region, NO fork edit and NO change to the cybs-fragile
+# `_grow_g*` chain (adding an 8th link to that chain DESYNCED cybs once already — see
+# `_vsgn_base`'s note below). 1024 slots, matching the fold table's own cap, which every reader
+# and the single writer already guard on.
+var _vecp_base = 0;    # per-var "this slot holds a folded enum constant" (1 = yes)
+fn GVECP(S, vi): i64 {
+    if (_vecp_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1024) { return 0; }
+    return L64(_vecp_base + vi * 8);
+}
+fn SVECP(S, vi, v): i64 {
+    if (_vecp_base == 0) { _vecp_base = alloc(1024 * 8); }
+    S64(_vecp_base + vi * 8, v);
+    return 0;
 }
 var _vgsi_base = 0;    # 0x1EC000 gvar_initval
 var _venid_base = 0;   # 0x204000 var_enum_id

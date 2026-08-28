@@ -53,9 +53,8 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
             var as_noff = PEEKV(S);
             var as_idx = FINDVAR(S, as_noff);
             if (as_idx >= 0 && as_idx < 1024) {
-                var as_ecv = L64(_vecv_base + as_idx * 8);
-                if (as_ecv < 0) {
-                    asz = ENUM_CONST_VAL(as_ecv);
+                if (GVECP(S, as_idx) == 1) {
+                    asz = L64(_vecv_base + as_idx * 8);
                     # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
                     # size rather than letting it through. Before negative values existed this
                     # could not arise; the old mask turned such a slot into a colossal positive
@@ -776,9 +775,8 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
             var gas_noff = PEEKV(S);
             var gas_idx = FINDVAR(S, gas_noff);
             if (gas_idx >= 0 && gas_idx < 1024) {
-                var gas_ecv = L64(_vecv_base + gas_idx * 8);
-                if (gas_ecv < 0) {
-                    sz_raw = ENUM_CONST_VAL(gas_ecv);
+                if (GVECP(S, gas_idx) == 1) {
+                    sz_raw = L64(_vecv_base + gas_idx * 8);
                     # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
                     # size rather than letting it through. Before negative values existed this
                     # could not arise; the old mask turned such a slot into a colossal positive

@@ -6,51 +6,194 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.5.36] — 2026-08-28
 
-**The agnos peer for `#101 readdir_at` — a directory listing that can resume.** agnos 1.56.50
-minted it; without the constant and wrapper here it is reachable only by hard-coding the number,
-which is the exact bug class agnos's roadmap tracks (a raw Linux number compiling clean on agnos and
-dispatching a different arm — `read(0)` → `exit` was found shipping).
+**Two Critical defects that were live in shipped releases, the full AGNOS ABI front, and the
+stdlib gaps consumers filed against `.35`.**
 
-### Added — `lib/syscalls_x86_64_agnos.cyr`
+⚠ **This entry replaces an earlier `.36` draft that described only `#101 readdir_at`** while the
+same commit had also added `#99 proclist`, `#100 icmp_echo_ex` and the `net_config` ICMP
+counters. A CHANGELOG that documents one of four shipped additions is worse than none: this is
+the file the next agent premise-checks against, and three undocumented ABI wrappers are three
+things that get re-derived or re-added. Everything actually in the release is below.
 
-- **`SYS_READDIR_AT = 101`** in the agnos `Sys` enum.
-- **`fn sys_readdir_at(path, buf, max, cursor)`** — beside `sys_readdir`, same band.
+### Fixed — 🔴 CRITICAL: enum constants ≥ 2^62 were silently corrupted (shipped in `.31`–`.35`)
 
-Contract (kernel side; agnos owns it):
+`enum { K = 0x7FFFFFFFFFFFFFFF }` evaluated to **-1**. No warning, no error, `--strict` clean,
+282-file corpus green. Reported by **szal** (2.1.0 → 2.1.1) after five test suites and a fuzz
+harness went red with no compiler diagnostic; bisected on released toolchains to **last good
+`.30`, first bad `.31`**.
 
-```
-readdir_at(path, buf, max, cursor) -> entry count (>=0), or <0
-  cursor points at ONE i64 the kernel reads AND writes:
-    in   0 to start at the top of the directory
-    out  the byte offset to resume from, or -1 when exhausted
-  errors: -1 bad ptr / not ext2 · -2 not found · -4 not a dir · -5 misaligned cursor
-```
+**Root cause: an in-band tag.** `_vecv_base` stored each enum member as `(1 << 63) | val` and
+used the sign bit to mean "this slot holds an enum constant" — 65 bits of information in a
+64-bit slot. That cannot distinguish *a negative value* from *a positive value with bit 62 set*.
+v5.5.2 shipped it with a bare `& 0x7FFF…F` decode (negatives came back as colossal positives);
+v6.5.32 replaced that with a heuristic — *if bit 62 is set, assume the slot is negative and
+return it unchanged* — and **wrote the resulting truncation down as a specification**
+("Range: -2^62 .. 2^62-1") instead of treating it as the defect. The threshold is exactly 2^62,
+which is why nothing caught it: every ordinary enum is far below it, and `var` initialisers were
+never affected.
 
-⚠ **The cursor is a byte offset into the directory file** — POSIX `telldir`'s cookie, and the only
-value that survives ext2 directories being a chain of variable-length records. It is **not** an
-entry index; do not compute one from it.
+**Fix: presence moved out of band.** `_vecv_base` now holds the **raw i64** — every bit pattern,
+no marker, no decode — and a new `_vecp_base` holds the presence flag, lazily allocated on first
+write via the `_fnt_tparams` precedent, so there is **no new heap region, no fork edit and no
+change to the cybs-fragile `_grow_g*` chain** (adding an 8th link to that chain desynced cybs
+once already). `ENUM_CONST_VAL` is deleted rather than made an identity — one fewer trap. All
+five reader sites now test `GVECP(S, idx) == 1`.
 
-⛔ **Do NOT implement this by giving `sys_readdir` a 4th argument.** That is what agnos refused to do
-kernel-side, for the cyrius fact measured on 6.5.35 and recorded against `#100`: the compiler pops
-only as many registers as the call site passes, so unused syscall argument registers carry stale
-values rather than zero. And this edge is sharper than `#55`'s — widening `#55` would have handed a
-garbage *timeout*, whereas widening `#81` hands the kernel a garbage **pointer it writes through**.
-Two wrappers, two arities. `tests/gates/platform/syscall_wrapper_pass.sh` axis 5 asserts that
-`sys_readdir` keeps arity 3, so a future "tidy-up" cannot merge them silently.
+⚠ **The lesson, not just the fix:** an in-band tag that steals a bit from a full-range value is
+not a tag, it is a silent truncation waiting for the first consumer to reach the top of the
+range. It is also the third time this line has written a limitation down as a language fact
+rather than fixing it (after the "≤6 args" rule and the cyrfmt continuation indent).
 
-⚠ **Guarding:** a kernel older than 1.56.50 has no `#101` arm and the dispatcher returns `-1`.
-Consumers must treat a negative return as *"this kernel cannot resume a listing"* and fall back to
-`sys_readdir`, rather than rendering an empty directory. "No entries" and "this kernel cannot page"
-are different facts — the same lesson `#99` and `#100` record.
+Gate: `tests/tcyr/frontend/enum_const_full_i64_range.tcyr`, 16 assertions bracketing the 2^62
+threshold. **Mutation-proven against the released 6.5.35 binary: 7 passed / 9 failed there,
+16/16 here.**
+
+### Fixed — 🔴 CRITICAL: on ELF-aarch64, `sys_pause()` issued `flock` and `sys_signalfd()` issued `fsync`
+
+Reported by **kybernet** (PID 1 for AGNOS), whose entire aarch64 target was non-functional while
+every gate stayed green.
+
+`lib/syscalls_aarch64_linux.cyr` declared the **native** aarch64 numbers — `SYS_PPOLL = 73`,
+`SYS_SIGNALFD4 = 74` — and relied on ESYSXLAT passing them through. It does not: the x86-compat
+rows rewrite `73` (x86 `flock`) → 32 and `74` (x86 `fsync`) → 82, and **a compat row cannot tell
+a native number from the x86 number it is matching.** Both candidates were owned in both
+directions, which is precisely the case the **private alias band** exists for.
+
+Both constants move into the ≥1000 band (`SYS_PPOLL = 1073`, `SYS_SIGNALFD4 = 1074`) with
+matching ESYSXLAT rows appended **last** in the ELF-aarch64 chain — mandatory, because those
+rows *produce* x8=73 and x8=74, exactly the values the `flock` and `fsync` compat rows compare
+against; placed anywhere earlier they would reintroduce the identical bug. Encodings
+assembler-verified with `aarch64-linux-gnu-as`.
+
+Measured under `qemu-aarch64 -strace`, before → after:
+
+| call | before | after |
+|---|---|---|
+| `sys_signalfd(-1, &mask, 0)` | `fsync(-1) = -1 EBADF` | `signalfd4(-1,…,8,0,0,0) = 3` |
+| `sys_pause()` | `flock(0,0,…) = -1 EINVAL` | `ppoll((nil),0,(nil),(nil))` |
+
+### Added — the AGNOS ABI front, complete
+
+`lib/syscalls_x86_64_agnos.cyr`. Each of these is reachable only by hard-coding a raw number
+without its constant and wrapper — the bug class where a Linux number compiles clean on agnos
+and dispatches a different arm.
+
+- **`#99 proclist`** (agnos 1.56.47) — `sys_proclist(buf, max)`, a 64-byte-per-record snapshot of
+  the live process table. AGNOS had **no enumeration primitive of any kind** and no procfs, so a
+  system monitor was impossible; chakshu rendered a header and zero rows. ⚠ A snapshot, not a
+  handle — a pid may exit before the caller acts on it.
+- **`#100 icmp_echo_ex`** (agnos 1.56.48) — `sys_icmp_echo_ex(dst_ip, timeout_ms)`, `#55` with a
+  caller-chosen deadline; `timeout_ms <= 0` selects the ~3 s default.
+- **`#101 readdir_at`** (agnos 1.56.50) — `sys_readdir_at(path, buf, max, cursor)`, a **resumable**
+  listing. `#81` always starts at the top and truncates at `max`. The cursor is a **byte offset**
+  into the directory file (POSIX `telldir`'s cookie), not an entry index; it must be 4-byte
+  aligned or the kernel returns -5.
+- **`net_config` fields 4..7** (agnos 1.56.48) — ICMP counters. ⚠ **These are counters, not
+  config**: for fields 0..3 `0` means "unset, fall back", but here `0` legitimately means
+  "nothing has happened yet". Only `-1` means the kernel does not know.
+
+⛔ **`#100` and `#101` are separate numbers rather than extra arguments on `#55`/`#81`, and that
+is a cyrius fact, not an agnos preference:** this compiler pops only as many registers as a call
+site passes, so an unused syscall argument register carries stale data rather than zero.
+Widening a live syscall's arity would hand every already-shipped caller garbage — and for `#101`
+that garbage is a **pointer the kernel writes through**. Two wrappers, two arities.
+
+### Added — `sys_ioctl`, and a latent Mach-O routing bug it exposed
+
+`SYS_IOCTL` had been defined on every peer for years with **no wrapper**, so it was the one place
+in an otherwise fully-wrapped surface where consumer code had to reach for bare `syscall()` —
+which reads like a violation of the no-raw-syscall rule first-party repos audit against.
+kybernet and darshana had both hand-rolled it.
+
+⛔ **Wrapping it surfaced a real bug:** `lib/syscalls_macos.cyr` declared `SYS_IOCTL = 16`, but
+ESYSXLAT's Mach-O arm routes **29 → 54** (Darwin's ioctl) and has **no row for 16** — so the
+number reached Darwin unrouted. Latent only because nothing in the macOS stdlib called it. The
+macOS peer now declares 29, hitting the already-shipped route.
+
+### Fixed — `getenv` saw only the first 8 KB of the environment
+
+Reported by **owl**, investigating why `NO_COLOR=1` was ignored. `lib/io.cyr` read
+`/proc/self/environ` into a fixed 8 KB **stack** buffer with a single `file_read` and scanned
+only what fit. Any variable beginning past byte 8192 was invisible, with no loop, no truncation
+signal, and no way to distinguish "unset" from "beyond the window" — both returned 0. An 8 KB
+environment is ordinary: one large `LS_COLORS`, a CI runner's secrets, or a long `PATH` suffices.
+
+Now read to EOF into a **heap** buffer and cached for the life of the process. ⭐ The cache is not
+just an optimisation: the old code re-read and re-scanned the file on *every* `getenv`, and on
+this no-free bump allocator every successful call also leaked a copy. ⚠ The heap buffer also
+retires the agnos hazard the old comment described — a function-local `var[]` in a statically
+dead region still reserves stack at the prologue, and agnos hands ring-3 only ~12 KB
+(`CHANGELOG [6.1.12]`); a heap buffer reserves no frame. Verified: a marker placed after a 40 KB
+variable is **not found** before and **found** after, with genuinely-unset still reporting unset.
+
+### Fixed — `tls_native_set_ca_system` re-read and re-allocated the trust bundle every call
+
+`alloc(1048576)` with no caching, called from `_tls_native_alloc` on **every** native-backend
+connect — exactly **1 MiB of permanently-retained heap per TLS connection** on the no-free bump
+allocator, measured on a real AGNOS kernel and present unchanged back to 6.2.23. The bundle is a
+file that does not change under a running process, so it is now read and allocated once.
+⚠ The *failure* is cached too, deliberately: without that, a machine with no trust store re-walks
+all four candidate paths on every connect, forever.
+
+### Folded — three stdlibs versioned up, and one of them had to be fixed at source first
+
+- **sandhi 1.9.10 → 1.9.14** — adds `sandhi_client_set_resolver`, a consumer resolve hook filed
+  by bote 3.3.7, which had a tested SSRF classifier it could only apply to IP-literal hosts
+  because `sandhi_http_get` resolves internally. Purely additive.
+- **sankoch 2.7.8 → 2.7.10** — exposes a DEFLATE **sync flush** for RFC 7692 (the machinery
+  existed; only the exposure was missing), and — because measuring the newly-exposed path showed
+  it **+64 % over reference zlib** — changes how the level ≥ 4 encoder picks a block type.
+  @2.7.10 survives a caller's `alloc_reset()`.
+- **sigil 3.12.9 → 3.12.14**, and ⛔ **3.12.14 was written during this release because 3.12.13
+  could not be folded.** Two defects, one class: `agnosys_run_capture_timeout` was guarded for
+  agnos only, but Windows has no fork/execve/`SYS_FCNTL` either — and the cyrius PE peer defines
+  no `SYS_FCNTL`, so by the mechanism sigil's own comment describes (an undefined **variable** is
+  a hard error regardless of reachability) it failed the whole PE compile. Worse,
+  `agnosys_run_checked_timeout` — added by 3.12.13, the release headlined *"every exec in sigil
+  is bounded and status-checked"* — shipped with **no target guard at all**, so the fix and the
+  regression landed together.
+
+⭐ **sigil is in every fold's preamble, so one unguarded line broke 11 of 12 folds on agnos and
+the Windows builds of mabda and yukti** — repos that contain no such line. Both were fixed
+**upstream first** per the fix-at-source rule, with all 14 dist profiles regenerated (`distlib
+--all`; regenerating only the base bundle is how sub-profiles once shipped a known-bad encoder).
+
+⚠ **The gates found both, and the order they were found in is the lesson.** `check.sh` runs its
+shim gates under `set -e`, so `pe_reloc_cap_full_stdlib` failing ABORTED the run before
+`folds_agnos_parity` executed — the agnos break was invisible until the PE break was fixed. Two
+independent root causes, one visible at a time.
 
 ### Testing
 
-- `tests/gates/platform/syscall_wrapper_pass.sh` axis 5 gains three rows (constant, wrapper,
-  `sys_readdir` arity). Verified to **fail** when the wrapper is removed, not merely to pass.
-- ⚠ **Presence is not compatibility.** The wrapper is asserted to exist and compile; the path
-  *through it* is unexercised here. agnos's own `tests/readdir/rdat.cyr` proves the kernel contract
-  against a booted 1.56.50 (exit 95), but it calls the raw number because it predates this release.
-  crab is the first consumer that will carry the through-the-wrapper verification.
+- `tests/tcyr/frontend/enum_const_full_i64_range.tcyr` — 16 assertions; mutation-proven against
+  the released 6.5.35 (9 failures there).
+- `tests/tcyr/crossos/syscall_alias_band_and_ioctl.tcyr` — in `crossos/` per the wrapper rule,
+  because "a wrapper that COMPILES on five targets is not a wrapper that RUNS" is exactly how
+  both Criticals shipped. Every assertion pins a value only the **correct** syscall produces, so
+  a wrong-syscall failure cannot be mistaken for an environment failure. Mutation-proven: the
+  pre-fix aarch64 build fails the signalfd assertion (2 passed / 1 failed), the fixed build is
+  4/4 on x86_64 **and** under `qemu-aarch64`.
+
+### Release gate
+
+**GREEN on all five steps.**
+
+1. **Self-host fixpoint** — `build/cycc` reproduces itself and `== cycc(src)`: **1,178,864 B**
+   (+16 from `.35`; the enum presence table is lazily allocated and the aarch64 alias rows are
+   outside `main.cyr`'s closure).
+2. **Seed derive** — seed 29,024 B → cybs → cycc byte-identical.
+3. **check.sh** — **199 / 0**. Corpus **284 / 284** by per-file exit code.
+4. **Cross-OS, REAL hardware, one host at a time** — **ecb** (macOS-arm64) · **ach** (Intel-Mac)
+   · **cass** (Windows/PE) · **pi** (aarch64 Linux), each `SELFHOST_OK` + crossos **55 / 55**.
+   ⭐ **pi is the leg that matters most this release**: the private-alias fix is aarch64
+   codegen, and CLAUDE.md records that qemu-user could not surface the last aarch64 syscall
+   defect. pi was unreachable on the first attempt (`agnosarm.local` would not resolve) and the
+   gate was held open rather than reported green — a host that cannot be reached is not a host
+   that passed.
+5. **Bench** — `self_compile` **711 ms** on a quiet box (load 0.05), against `.35`'s **716 ms**;
+   interleaved best-of-7 × 3 gives −2 to −6 ms, i.e. **flat**. ⭐ Unlike `.35`, the recorded
+   −0.8 % is a like-for-like comparison: both figures are quiet-box readings, so the CSV row is
+   trustworthy this time. cycc **1,178,864 B**.
 
 ## [6.5.35] — 2026-08-22
 

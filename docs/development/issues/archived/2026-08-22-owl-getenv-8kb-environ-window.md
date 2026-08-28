@@ -1,6 +1,6 @@
 # `getenv` reads only the first 8 KB of `/proc/self/environ` — variables past it are silently invisible
 
-**Status:** 🟡 **OPEN** — reproduced on **cyrius 6.5.35**, 2026-08-22. Fails silently and
+**Status:** ✅ **RESOLVED v6.5.36** — `getenv` now reads `/proc/self/environ` to EOF into a HEAP buffer and caches it for the process. ⭐ The cache is not just an optimisation: the old code re-read and re-scanned on every call, leaking a copy each time on the no-free bump allocator. ⚠ The heap buffer also retires the agnos hazard the old comment described (a function-local `var[]` reserves stack at the prologue even in a statically-dead region). Verified: a marker after a 40 KB variable is NOT found before and IS found after, with genuinely-unset still reporting unset.
 indistinguishably from "unset", so no consumer can detect or work around it.
 **Placement:** unpinned — 6.x-line backlog.
 **Discovered:** 2026-08-22 during the owl 1.4.6 security audit, investigating why `NO_COLOR=1`

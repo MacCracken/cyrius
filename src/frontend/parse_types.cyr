@@ -432,8 +432,13 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 # the syscall-reroute dispatch see sc_num correctly.
                 # Variants registered at idx >= 1024 fall through to the
                 # existing EVLOAD path (correct but not folded).
+                # v6.5.36: RAW value + an OUT-OF-BAND presence flag. The old
+                # `(1 << 63) | val` tag could not represent a value with bit 62 or 63
+                # set, and silently corrupted every enum constant >= 2^62 for five
+                # releases. See util.cyr's GVECP/SVECP note.
                 if (vcnt < 1024) {
-                    S64(_vecv_base + vcnt * 8, (1 << 63) | val);
+                    S64(_vecv_base + vcnt * 8, val);
+                    SVECP(S, vcnt, 1);
                 }
                 # v5.8.22 bite #1 — tag variant with parent enum-id +
                 # bump per-enum variant count. Both keyed for the future
@@ -756,11 +761,10 @@ fn CHKDUPVAL(S, noff, newval): i64 {
     var pi = FINDVAR(S, noff);
     if (pi < 0) { return 0; }
     if (pi >= 1024) { return 0; }   # beyond the enum-const fold table; skip
-    var pecv = L64(_vecv_base + pi * 8);
     var pval = 0;
     var phas = 0;
-    if (pecv < 0) {                   # sign bit set → prior is an enum const
-        pval = ENUM_CONST_VAL(pecv);
+    if (GVECP(S, pi) == 1) {          # out-of-band flag → prior is an enum const
+        pval = L64(_vecv_base + pi * 8);
         phas = 1;
     } else {
         var plit = L64(_vgsi_base + pi * 8);   # prior literal-init global

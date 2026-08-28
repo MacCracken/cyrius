@@ -1,6 +1,6 @@
 # Enum constants ≥ 2^62 are silently corrupted — the fold table packs its "is enum const" tag into bit 63 of the value
 
-**Status:** 🔴 **OPEN** — reproduced on released **6.5.31 → 6.5.35**; **6.5.30 and earlier are correct**.
+**Status:** ✅ **RESOLVED v6.5.36** — presence moved OUT of band. `_vecv_base` now holds the raw i64; a new lazily-allocated `_vecp_base` (GVECP/SVECP, the `_fnt_tparams` precedent — no new heap region, no fork edit, no `_grow_g*` change) carries the flag, and `ENUM_CONST_VAL` is deleted rather than made an identity. Gate `tests/tcyr/frontend/enum_const_full_i64_range.tcyr`, 16 assertions bracketing 2^62, mutation-proven against the released 6.5.35 (9 fail there, 16/16 here). ⚠ `enum_negative_value.sh` axis 5 was REWRITTEN in the same release: it required every reader to route through the shared decoder, which stayed green through all five corrupted releases because the decoder itself was doing the corrupting.
 Silent wrong-code: no warning, no error, `--strict` clean, corpus green. The value is simply wrong at
 runtime.
 **Placement:** unpinned — but this is a live miscompile in five shipped releases and a shipping consumer

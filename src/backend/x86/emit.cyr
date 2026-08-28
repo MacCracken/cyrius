@@ -853,6 +853,14 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 2,  0x2000005);   # open     2  → 5
     _msx(S, 3,  0x2000006);   # close    3  → 6
     _msx(S, 4,  0x20000BC);   # stat     4  → 188
+    # v6.5.36: ioctl. BOTH macOS peers now spell ioctl as 29 (the aarch64-native number) and
+    # ESYSXLAT's Mach-O arm has carried a `29 → 54` row for years — but the x86 peer declared
+    # `SYS_IOCTL = 16` and EMACHO_SYSXLAT had NO row for it, so the number reached Darwin
+    # unrouted. Latent only because nothing in the macOS stdlib called it: the constant existed
+    # with no wrapper, and wrapping it as `sys_ioctl` in this release is what made it reachable.
+    # Same capability, same source number, same Darwin target on both backends — which is what
+    # `macho_route_parity.sh`'s drift axis is for.
+    _msx(S, 29, 0x2000036);   # ioctl   29  → 54
     _msx(S, 5,  0x20000BD);   # fstat    5  → 189
     _msx(S, 8,  0x20000C7);   # lseek    8  → 199
     _msx(S, 9,  0x20000C5);   # mmap     9  → 197

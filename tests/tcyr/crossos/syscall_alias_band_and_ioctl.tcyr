@@ -1,0 +1,133 @@
+# v6.5.36 — the syscall wrappers this release added or moved, RUN rather than merely compiled.
+#
+# ⛔ WHY THIS LIVES IN `crossos/`. CLAUDE.md's rule exists because of exactly the bug this file
+# guards: "a wrapper that COMPILES on five targets is not a wrapper that RUNS." Two Critical
+# defects shipped precisely because nothing executed these calls off the x86-Linux host:
+#
+#   * `sys_pause()` issued **flock(2)** and `sys_signalfd()` issued **fsync(2)** on every
+#     ELF-aarch64 build. `lib/syscalls_aarch64_linux.cyr` declared the NATIVE numbers (73 ppoll,
+#     74 signalfd4) expecting pass-through, but ESYSXLAT's x86-compat rows rewrite 73 (x86
+#     flock) → 32 and 74 (x86 fsync) → 82, and a compat row cannot tell a native number from
+#     the x86 number it is matching. Fixed at v6.5.36 by moving both into the >=1000 private
+#     alias band (1073/1074). kybernet's entire aarch64 target was non-functional; every gate
+#     was green.
+#   * `SYS_IOCTL` was 16 on the macOS peer, but ESYSXLAT's Mach-O arm routes **29 → 54** and had
+#     no row for 16 — so the number reached Darwin unrouted. Latent only because nothing in the
+#     stdlib called it until `sys_ioctl` was wrapped in this same release.
+#
+# ⚠ EVERY ASSERTION HERE IS ABOUT WHICH SYSCALL WAS ISSUED, not whether a call "succeeded".
+# A wrong syscall usually FAILS, and a test that accepts any error cannot tell the two apart —
+# that is how both defects stayed invisible. Each case below pins a value only the CORRECT
+# syscall produces.
+#
+# ⛔ AND THIS FILE IS TARGET-GUARDED FOR A REASON THAT IS ITSELF THE LESSON. A first version
+# asserted the Linux shapes unconditionally and went RED on ecb, ach and cass — because
+# **Darwin and Windows have no signalfd at all** (`macho_route_parity.sh` allow-lists
+# SYS_SIGNALFD4 as "Darwin has no signalfd; the BSD equivalent is kqueue EVFILT_SIGNAL"), so
+# `sys_signalfd` is deliberately UNROUTED there and calling it emits an unclassed number that
+# SIGSYS-kills the process. A cross-host test that calls a capability the host does not have is
+# not testing portability, it is asserting a Linux fact on a Mac. Guard by capability, and say
+# out loud where a capability is absent rather than quietly asserting nothing.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+# ─────────────────────────────────────────────────────────────────────────────
+# signalfd4 — LINUX ONLY. Darwin and Windows have no signalfd; the wrapper is
+# deliberately unrouted there, so this must not even be CALLED off Linux.
+# ─────────────────────────────────────────────────────────────────────────────
+#ifndef CYRIUS_TARGET_MACOS
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+test_group("v6.5.36 — private alias band: signalfd4 is not fsync (Linux)");
+
+# signalfd4(-1, mask, 8, 0) creates a NEW signalfd and returns a fresh descriptor (>= 0).
+# The bug issued fsync(-1), which returns -EBADF (-9). Asserting ">= 0" separates them:
+# the correct call cannot return negative here, and the wrong one cannot return non-negative.
+fn sfd_probe(): i64 {
+    var mask = 1 << 16;                 # an arbitrary non-empty signal mask
+    return sys_signalfd(0 - 1, &mask, 0);
+}
+var sfd = sfd_probe();
+assert_gte(sfd, 0, "sys_signalfd returns a descriptor, not fsync's -EBADF");
+# And it must be a REAL descriptor: closing it succeeds exactly once.
+if (sfd >= 0) {
+    assert_eq(sys_close(sfd), 0, "the signalfd descriptor is closeable (it is a real fd)");
+}
+#endif
+#endif
+#endif
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ioctl — LINUX and macOS. Both have a real ioctl(2); the request word differs.
+# Windows has no ioctl surface at all.
+# ─────────────────────────────────────────────────────────────────────────────
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+test_group("v6.5.36 — sys_ioctl is wrapped and reaches the kernel's ioctl path");
+
+# ⚠ NOT asserting success. `sys_ioctl` on a terminal is environment-dependent and the corpus
+# runs under redirection on every host, so a "returns 0" assertion would go red for the wrong
+# reason. What IS host-independent: an ioctl on a CLOSED fd must be EBADF (-9) — a value only a
+# real ioctl produces. An unrouted number would surface as ENOSYS, a wrong syscall as some
+# other errno entirely.
+#
+# ⚠ THE REQUEST WORD IS PER-OS. Linux TCGETS is 0x5401; Darwin's TIOCGETA is 0x40487413.
+# Passing the Linux constant on Darwin would still return EBADF for a bad fd, so the assertion
+# would pass while proving nothing about the request reaching the driver — use each host's own.
+#ifdef CYRIUS_TARGET_MACOS
+var TTY_GET = 0x40487413;      # Darwin TIOCGETA
+#endif
+#ifndef CYRIUS_TARGET_MACOS
+var TTY_GET = 0x5401;          # Linux TCGETS
+#endif
+
+fn ioctl_badfd(): i64 {
+    var tio[64];
+    return sys_ioctl(0 - 1, TTY_GET, &tio);
+}
+assert_eq(ioctl_badfd(), 0 - 9, "sys_ioctl on a bad fd returns EBADF (-9), i.e. the kernel saw an ioctl");
+
+# A second shape: the call must reach a DRIVER, not merely return some number.
+#
+# ⛔ DO NOT ENUMERATE ERRNOS HERE. A first version of this assertion accepted only
+# {0, ENOTTY(-25), EINVAL(-22)} and went RED on ecb and ach while passing everywhere I ran it
+# by hand — because the errno depends on WHAT fd 1 IS, and the cross-host runner executes every
+# test with `</dev/null >/dev/null`. Measured on real ecb: the identical binary returns **25
+# (ENOTTY) on a pty and 19 (ENODEV) on /dev/null**. So the first version was environment-
+# dependent in exactly the way its own comment claimed to avoid, and it took the cross-host gate
+# to show it — which is the whole reason this file lives in `crossos/`.
+#
+# The invariant that is actually host- and fd-independent: a wrapped, routed ioctl reaches a
+# driver and comes back with 0 or SOME errno. **ENOSYS (-38) is the single answer that means the
+# number never got there** — an unrouted or unwrapped syscall. That is what to assert.
+fn ioctl_dispatched(): i64 {
+    var tio[64];
+    var r = sys_ioctl(1, TTY_GET, &tio);   # a tty when interactive, /dev/null under the runner
+    if (r == (0 - 38)) { return 1; }       # ENOSYS — the number never reached a driver
+    if (r > 0) { return 2; }               # ioctl never returns positive for these requests
+    return 0;
+}
+assert_eq(ioctl_dispatched(), 0, "sys_ioctl reaches a driver, never ENOSYS (errno varies by fd type and OS)");
+#endif
+#endif
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Where a capability is absent, SAY SO. A silent skip is indistinguishable from
+# a test that ran and asserted nothing — which is the failure mode the whole
+# crossos/ set exists to prevent.
+# ─────────────────────────────────────────────────────────────────────────────
+#ifdef CYRIUS_TARGET_MACOS
+test_group("macOS: signalfd SKIPPED — Darwin has no signalfd (kqueue EVFILT_SIGNAL); the wrapper is deliberately unrouted");
+#endif
+#ifdef CYRIUS_TARGET_WIN
+test_group("Windows: signalfd + ioctl SKIPPED — PE has neither; the reroute layer covers neither capability");
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+test_group("agnos: signalfd + ioctl SKIPPED — the agnos peer is standalone and mints neither");
+#endif
+
+var r = assert_summary();

@@ -1,0 +1,79 @@
+# v6.5.36 — an enum constant must hold the FULL i64 range, every bit pattern.
+#
+# ⛔ THE DEFECT THIS GUARDS SHIPPED IN FIVE RELEASES (6.5.31–6.5.35) AND THE CORPUS WAS GREEN.
+# `_vecv_base` stored each enum member as `(1 << 63) | val`, using the sign bit to mean "this
+# slot holds an enum constant" — 65 bits of information in a 64-bit slot. The decoder resolved
+# the resulting ambiguity with a heuristic (if bit 62 is set, assume the slot is a negative
+# value and return it unchanged), which silently sacrificed the entire top quarter of the
+# positive range: `enum { K = 0x7FFFFFFFFFFFFFFF }` evaluated to **-1**. No warning, no error,
+# `--strict` clean. Found by szal, not by us. Fixed at v6.5.36 by moving presence OUT of band.
+#
+# ⚠ THE THRESHOLD IS EXACTLY 2^62, WHICH IS WHY NOTHING CAUGHT IT. Every ordinary enum — flags,
+# small ints, error codes — is far below it, and `var` initialisers were never affected. A test
+# that only checks "enums work" passes on the broken compiler. So these cases are chosen to
+# BRACKET the threshold and to cover each distinguishable region of the range.
+#
+# ⚠ THE NEGATIVE MEMBERS MUST BE SPELLED `-1`, NOT `0 - 1`. The enum initialiser takes a
+# literal, not an expression, so `0 - 1` is `error: expected identifier, got '-'` — a
+# pre-existing limitation unrelated to this defect. Writing them the other way makes this
+# file fail to compile, and a failed compile still leaves a runnable stale binary, so the
+# run would score a fake PASS (the v6.5.11 empty-stdin lesson, one step removed).
+#
+# ⚠ Do not "simplify" this by dropping the `var` mirrors. They are the control: they take a
+# different code path (no fold table), so if a future change breaks BOTH, the mirrors show the
+# defect is not in the enum path specifically.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+enum Range {
+    JUST_BELOW  = 0x3FFFFFFFFFFFFFFF;   # 2^62 - 1  — the largest value the old code got right
+    AT_BOUNDARY = 0x4000000000000000;   # 2^62      — the first value it corrupted
+    NEAR_MAX    = 0x7FFFFFFFFFFFFFFE;   # came back as -2
+    I64_MAX     = 0x7FFFFFFFFFFFFFFF;   # came back as -1
+}
+enum Decimal { MAX_DECIMAL = 9223372036854775807; }   # same value, decimal spelling
+enum Signed {
+    NEG_ONE     = -1;
+    NEG_BIG     = -4611686018427387904;
+    ZERO        = 0;                    # presence must survive a value of 0
+    SMALL       = 7;
+}
+
+# Controls: the identical literals as `var`, which never used the fold table.
+var v_below = 0x3FFFFFFFFFFFFFFF;
+var v_bound = 0x4000000000000000;
+var v_max   = 0x7FFFFFFFFFFFFFFF;
+
+alloc_init();
+
+test_group("enum constants below the old 2^62 threshold (always worked)");
+assert_eq(JUST_BELOW, 4611686018427387903, "2^62-1");
+assert_eq(SMALL, 7, "a small positive");
+
+test_group("enum constants AT and ABOVE 2^62 (silently corrupted in 6.5.31-6.5.35)");
+assert_eq(AT_BOUNDARY, 4611686018427387904, "2^62 exactly — the first corrupted value");
+assert_eq(NEAR_MAX, 9223372036854775806, "i64 max - 1 (used to read -2)");
+assert_eq(I64_MAX, 9223372036854775807, "i64 max (used to read -1)");
+assert_eq(MAX_DECIMAL, 9223372036854775807, "i64 max, decimal spelling (used to read -1)");
+
+test_group("negative and zero enum constants still work (the v6.5.32 feature)");
+assert_eq(NEG_ONE, 0 - 1, "-1");
+assert_eq(NEG_BIG, 0 - 4611686018427387904, "-2^62");
+assert_eq(ZERO, 0, "0 — presence must not be inferred from the value being non-zero");
+
+test_group("enum and var agree on the identical literal");
+assert_eq(JUST_BELOW, v_below, "2^62-1: enum == var");
+assert_eq(AT_BOUNDARY, v_bound, "2^62: enum == var");
+assert_eq(I64_MAX, v_max, "i64 max: enum == var");
+
+test_group("the values are ORDERED correctly (a sign-extension bug inverts comparisons)");
+# The old decode did not merely return a wrong number — it returned a NEGATIVE one, so every
+# ordering test against zero flipped. That is the shape that silently reroutes control flow.
+assert_gt(I64_MAX, 0, "i64 max compares greater than zero");
+assert_gt(AT_BOUNDARY, 0, "2^62 compares greater than zero");
+assert_gt(I64_MAX, JUST_BELOW, "i64 max > 2^62-1");
+assert_gt(0, NEG_ONE, "-1 compares less than zero");
+
+var r = assert_summary();

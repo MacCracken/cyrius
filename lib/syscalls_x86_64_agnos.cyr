@@ -397,9 +397,10 @@ enum SysNrAgnosNet {
     SYS_ICMP_ECHO_EX = 100; # icmp_echo_ex(dst_ip, timeout_ms) → RTT ms (≥0) / -1 (agnos 1.56.48)
     SYS_SOCK_LISTEN = 56;  # sock_listen(port) → listen_id 0..7 / -1; merges bind+listen, non-blocking (1.45.5)
     SYS_SOCK_ACCEPT = 57;  # sock_accept(listen_id) → conn_id / -1 (WOULD_BLOCK / bad id); non-blocking (1.45.5)
-    SYS_NET_CONFIG = 61;   # net_config(field) → packed IPv4 (0..3) / counter (4..7) / -1 bad field
-                           #   0=ip 1=netmask 2=gateway 3=dns_server        (agnos 1.45.16)
-                           #   4=icmp_tx 5=icmp_rx 6=icmp_replies_sent 7=icmp_timeouts (1.56.48)
+    # net_config(field) → packed IPv4 (0..3) / counter (4..7) / -1 bad field.
+    #   0=ip 1=netmask 2=gateway 3=dns_server                      (agnos 1.45.16)
+    #   4=icmp_tx 5=icmp_rx 6=icmp_replies_sent 7=icmp_timeouts    (agnos 1.56.48)
+    SYS_NET_CONFIG = 61;
 }
 
 # ================================================================
@@ -1257,7 +1258,6 @@ fn sys_icmp_echo_ex(dst_ip, timeout_ms): i64 {
     return syscall(SYS_ICMP_ECHO_EX, dst_ip, timeout_ms);
 }
 
-
 # winsize() — live framebuffer character grid (#60). Returns (cols<<16)|rows,
 # or -1. No args, non-blocking, IF=0-safe. Consumed by agnsh / darshana tty
 # sizing / kii / the desktop terminal grid. (agnos 1.45.13)
@@ -1302,7 +1302,6 @@ fn sys_net_icmp_rx(): i64 { return syscall(SYS_NET_CONFIG, 5); }
 fn sys_net_icmp_replies_sent(): i64 { return syscall(SYS_NET_CONFIG, 6); }
 # Echo waits that expired without a matching reply.
 fn sys_net_icmp_timeouts(): i64 { return syscall(SYS_NET_CONFIG, 7); }
-
 
 # Lazily zero the conn table (defensive — globals are zero-init, but the
 # explicit pass mirrors lib/chrono.cyr's _chrono_init_mdays idiom and is

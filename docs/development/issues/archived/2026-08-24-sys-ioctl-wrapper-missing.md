@@ -1,6 +1,6 @@
 # `SYS_IOCTL` is defined for both Linux arches but has no `sys_ioctl` wrapper — stdlib surface gap, two consumers already hand-rolling it
 
-**Status:** 🟢 **OPEN** — confirmed on **cyrius 6.5.35**, 2026-08-24. Not a bug; a coverage hole in the
+**Status:** ✅ **RESOLVED v6.5.36** — `sys_ioctl(fd, request, argp)` added to `lib/syscalls_linux_common.cyr`. ⛔ Wrapping it exposed a latent bug the filing did not know about: `syscalls_macos.cyr` declared `SYS_IOCTL = 16` while ESYSXLAT's Mach-O arm routes **29 → 54** and had no row for 16, so the number reached Darwin unrouted. The macOS peer now declares 29 and EMACHO_SYSXLAT gained the matching x86 row.
 `sys_*` wrapper surface. A three-line consumer workaround exists and is already shipping, so this is a
 consistency filing rather than a blocker.
 **Placement:** unpinned — 6.x-line backlog. Cheap enough to land opportunistically alongside any other

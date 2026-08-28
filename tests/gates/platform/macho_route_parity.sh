@@ -84,6 +84,7 @@ allow_reason() {
     SYS_UNAME)        echo "both|Darwin has no uname(2); lib/sys.cyr reads the same fields via sysctl (routed as the private alias 1202->202)" ;;
     SYS_SYSINFO)      echo "arm|Darwin has no sysinfo(2); lib/sys.cyr derives it from sysctl + gettimeofday (1202/1116, both routed)" ;;
     SYS_PAUSE)        echo "x86|Darwin has no pause(2); the x86 peer declares it but no wrapper reaches it on macOS" ;;
+    SYS_PPOLL)        echo "arm|Darwin has no ppoll(2); the only caller is sys_pause (Linux-only, blocks for a signal), and a bare renumber to poll(230) would be WRONG — our call passes timeout 0, so poll returns immediately instead of blocking. ⛔ Until v6.5.36 the arm peer spelled this 73, which COLLIDED with the flock row 73->131 and so LOOKED routed while silently issuing flock; it is now the private alias 1073, honestly unrouted here. Same shape as the SYS_SIGNALFD4 note above, and on ELF-aarch64 that same collision was a live Critical" ;;
     # ---- a real Darwin call exists but a bare renumber would be WRONG ----
     SYS_RT_SIGPROCMASK)
                       echo "both|Darwin sigprocmask(48) is not a renumber of Linux rt_sigprocmask: Linux takes a 4th sigsetsize arg and a 64-bit sigset_t, Darwin a 32-bit one. Needs a shim, not a row" ;;
