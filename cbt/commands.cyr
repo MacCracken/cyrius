@@ -196,6 +196,46 @@ fn cmd_test(source): i64 {
         # mid-word. There is no reason to count bytes by hand when strlen is in scope.
         var tmsg = "s — killed; set CYRIUS_TEST_TIMEOUT=<seconds>, 0 to disable)\n";
         sys_write(STDERR_FD, tmsg, strlen(tmsg));
+    } else {
+        # ⛔ v6.5.37 — NAME THE FAILING TEST, AND SAY IF IT DIED OF A SIGNAL.
+        #
+        # Only the compile-error and timeout branches printed anything, so an ordinary
+        # non-zero exit — an assertion failure OR a SIGSEGV — was counted and never
+        # announced. The suite printed "283 passed, 1 failed" with no indication of WHICH
+        # file, leaving a hand bisect over 284 tests; the singular `cyrius test <file>`
+        # printed NOTHING AT ALL and merely exited 139.
+        #
+        # ⚠ THE FILING THAT PROMPTED THIS (prani, 2026-08-31) CLAIMED THE RUN WAS SCORED AS
+        # A PASS. IT IS NOT, and that is worth recording so nobody re-fixes it: measured at
+        # 6.5.36, a .tcyr that segfaults gives `cyrius test` exit 139 and the suite exit 1
+        # with the failure counted. The reporter almost certainly read `$?` through a pipe,
+        # which yields the LAST command's status — the same trap CLAUDE.md already warns
+        # about for check.sh's grep summary. The real defect is silence, not mis-scoring.
+        #
+        # A signal is distinguished because it is a different KIND of failure: an assertion
+        # failure is the test's verdict, a SIGSEGV is the test never reaching one.
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        if (exit_code > 128) {
+            var smsg = " (killed by signal ";
+            sys_write(STDERR_FD, smsg, strlen(smsg));
+            var sbuf[24];
+            var slen = fmt_int_buf(exit_code - 128, &sbuf);
+            sys_write(STDERR_FD, &sbuf, slen);
+            if (exit_code == 139) { var s11 = " SIGSEGV"; sys_write(STDERR_FD, s11, strlen(s11)); }
+            if (exit_code == 134) { var s6 = " SIGABRT"; sys_write(STDERR_FD, s6, strlen(s6)); }
+            if (exit_code == 132) { var s4 = " SIGILL"; sys_write(STDERR_FD, s4, strlen(s4)); }
+            if (exit_code == 136) { var s8 = " SIGFPE"; sys_write(STDERR_FD, s8, strlen(s8)); }
+            var send = " — the test never reached a verdict)\n";
+            sys_write(STDERR_FD, send, strlen(send));
+        } else {
+            var emsg = " (exit ";
+            sys_write(STDERR_FD, emsg, strlen(emsg));
+            var ebuf[24];
+            var elen = fmt_int_buf(exit_code, &ebuf);
+            sys_write(STDERR_FD, &ebuf, elen);
+            sys_write(STDERR_FD, ")\n", 2);
+        }
     }
     _fail = _fail + 1;
     return exit_code;

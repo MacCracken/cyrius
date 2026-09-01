@@ -3050,6 +3050,13 @@ fn PARSE_FN_DEF(S): i64 {
     return _rf;
 }
 
+# ⛔ v6.5.37 — carry the FIRST definition's arity and origin file across the parameter
+# list, so a differing-arity duplicate can be reported as an ERROR once the new arity is
+# known. Declared here, above both uses: a global declared BELOW its use is not visible in
+# cyrius. -1 = no duplicate pending for the definition currently being parsed.
+var _dup_prev_pc = 0 - 1;
+var _dup_prev_fid = 0;
+
 fn _PARSE_FN_DEF_IMPL(S): i64 {
     var _is_async = 0;
     var _async_noff_f = 0;
@@ -3116,11 +3123,16 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # registered with offset=-1 by an earlier call site that landed
     # before the definition) leave the offset at -1, so the call
     # below does not fire on them — only on actual re-definitions.
+    _dup_prev_pc = 0 - 1;
     var fi = FINDFN(S, noff);
     if (fi < 0) { fi = REGFN(S, noff); }
     else {
         var _dup_off = L64(_fnt_offsets + fi * 8);
         if (_dup_off >= 0) {
+            # v6.5.37: remember the loser's arity + file; the comparison happens once this
+            # definition's own parameter list has been counted (see _fnt_params store below).
+            _dup_prev_pc = L64(_fnt_params + fi * 8);
+            _dup_prev_fid = GFFI(S, fi);
             # v6.5.19 (agnosai filing) — TWO fixes to this one warning:
             #  * `_err_head_at(S, _defstart_ti)` instead of `_err_head(S)`. The cursor
             #    has already consumed `fn` and the NAME by here, so the plain head put
@@ -3973,6 +3985,50 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
     S64(_fnt_params + fi * 8, pc);
+    # ⛔ v6.5.37 — A DUPLICATE THAT DISAGREES ABOUT ARITY IS AN ERROR, NOT A WARNING.
+    #
+    # `duplicate fn ... last definition wins` is easy to read as benign shadowing, and
+    # usually is. It is not benign when the two definitions disagree about ARITY, because
+    # the duplicate path routes AROUND the call-site arity check that has been a hard error
+    # since v6.5.1: measured at 6.5.36, a 3-arg call bound to a 1-arg duplicate compiled and
+    # ran, silently dropping arguments 2 and 3 (exit 201 where 106 was intended), while the
+    # identical mismatch with no duplicate present is refused outright. This is the one way
+    # to defeat that check.
+    #
+    # Filed from owl 1.4.7 (2026-08-22), where `vyakarana` and `sankoch` each define a
+    # private-by-convention `_stream_grow` and disagree about arity, buffer offsets AND
+    # return-value polarity — a wrong binding there reports every successful buffer grow as
+    # a failure, inside a tokenizer, on file content. `private` does NOT prevent this: it is
+    # enforced on REFERENCE but not on DEFINITION, so both files' internal calls are rebound.
+    #
+    # ⚠ THIS IS THE CHEAP HALF, AND IT IS NOT THE FULL FIX. Same-arity replacement (owl's
+    # §1 and §2) still happens: a private helper can still be silently replaced by another
+    # file's same-named, same-arity function. The real fix is to scope private symbols at
+    # INSERTION — a per-file table or file-unique mangling — which makes the guide's
+    # "omitted from the exported symbol table" claim literally true. That stays open.
+    #
+    # Blast radius measured before landing: building cycc itself and the cyrius CLI produce
+    # ZERO duplicate-fn warnings; the whole 284-file corpus produces 5, of which the only
+    # arity-differing pair was two tests defining a local `fn run()` over lib/process.cyr's
+    # `run(cmd, arg1, arg2)` — renamed in the same change, because a generic name shadowing
+    # a stdlib fn at a different arity is precisely the hazard this now refuses.
+    if (_dup_prev_pc >= 0) {
+        if (_dup_prev_pc != pc) {
+            syscall(SYS_WRITE, 2, "error:", 6);
+            _err_head_at(S, _defstart_ti);
+            syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
+            PRSTR(S + 0x60000 + noff);
+            syscall(SYS_WRITE, 2, "' disagrees about arity: this one takes ", 40);
+            PRNUM(pc);
+            syscall(SYS_WRITE, 2, ", the one in ", 13);
+            _fm_print_fid(S, _dup_prev_fid);
+            syscall(SYS_WRITE, 2, " takes ", 7);
+            PRNUM(_dup_prev_pc);
+            syscall(SYS_WRITE, 2, " (last definition wins, so calls to the other arity would silently mis-bind)\n", 77);
+            _had_error = 1;
+        }
+        _dup_prev_pc = 0 - 1;
+    }
     if (_b3_pl_bound == 1) { _tp_clear(S); }   # v6.3.39 (B3): end the param-loop binding
     # v6.2.x: a #naked fn may take up to 6 register-passed params (the arg-home
     # stores are gated above, so they stay in x0../rdi.. for the asm body — e.g.

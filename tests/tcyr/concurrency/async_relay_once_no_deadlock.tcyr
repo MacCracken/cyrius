@@ -1,0 +1,94 @@
+# `async_relay_once` relays a chunk and RETURNS — it does not park the task and then block
+# on a syscall, which deadlocks the runtime (v6.5.37).
+#
+# THE DEFECT, Linux arm only. The body opened with
+# `if (async_wait_fd(rt, rfd) < 0) { return 0 - 1; }`. That call does NOT wait:
+# `_async_wait_events` marks the current task TASK_WAITING, registers the fd with the
+# reactor, and RETURNS 0 — because cyrius has no mid-body suspend (an open arc). Execution
+# fell straight into a blocking `sys_read` while the task was already parked.
+#
+# ⭐ IT DEADLOCKED EVEN WHEN THE DATA WAS ALREADY THERE, which is what this test pins and
+# what a naive "empty pipe" test would have missed. With bytes waiting, the read and the
+# write both SUCCEED and the function returns normally — but the task is still
+# TASK_WAITING, so `async_run` blocks forever waiting to retire a task that has already
+# finished. Measured at 6.5.36: `timeout 5` killed it (exit 124) with five bytes sitting in
+# the pipe. An empty-pipe test cannot distinguish that from an ordinary blocking read on an
+# fd with no writer, so the fixture deliberately writes first.
+#
+# Outside a task it silently did nothing instead: with no task running `rt + 40` is 0, so
+# `_async_wait_events` bailed on its first line and the function returned -1 without
+# touching either fd. A deadlock in the only context it was built for, a no-op everywhere
+# else, zero tests and zero callers anywhere in the ecosystem.
+#
+# ⭐ THE FIX WAS NOT A DESIGN CHOICE. The three sibling implementations —
+# `lib/async_win.cyr`, `lib/async_macos.cyr`, `lib/async_agnos.cyr` — all already shipped
+# the body WITHOUT the park. The Linux arm was the outlier, so it was aligned with them
+# rather than given a fourth semantics. Mutation-proven: restoring the `async_wait_fd` line
+# makes this file hang, and the runner's deadline reports it by name.
+#
+# ⚠ WHAT IS AND IS NOT PROMISED. This is a straight relay of one chunk: on a non-blocking fd
+# an unready read yields -EAGAIN promptly, on a blocking fd it waits for data like any other
+# read. It is NOT cooperative — it does not yield to other tasks while waiting. A genuinely
+# cooperative relay needs mid-body suspend, which does not exist yet; the honest interim
+# behaviour is the one the other three platforms already had, not a deadlock.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/io.cyr"
+include "lib/fmt.cyr"
+include "lib/atomic.cyr"
+include "lib/fnptr.cyr"
+include "lib/async.cyr"
+include "lib/assert.cyr"
+
+var _aro_rfd = 0;
+var _aro_wfd = 0;
+var _aro_rt  = 0;
+var _aro_out = 0;
+var _aro_ran = 0;
+
+fn _aro_task(arg): i64 {
+    var buf = alloc(64);
+    _aro_ran = 1;
+    _aro_out = async_relay_once(_aro_rt, _aro_rfd, _aro_wfd, buf, 64);
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    _aro_rt = async_new();
+
+    # Two pipes: read from the first, relay into the second. Using ONE pipe would let the
+    # relay's own write satisfy a later read and mask an ordering error.
+    var infds[16];
+    var outfds[16];
+    assert_eq(sys_pipe(&infds) >= 0, 1, "input pipe created");
+    assert_eq(sys_pipe(&outfds) >= 0, 1, "output pipe created");
+    _aro_rfd = load32(&infds);
+    _aro_wfd = load32(&outfds + 4);
+
+    # ⛔ WRITE FIRST. This is the whole point: the pre-fix deadlock happens WITH the data
+    # already available, so an empty pipe would test blocking-read behaviour instead.
+    assert_eq(sys_write(load32(&infds + 4), "hello", 5), 5, "5 bytes staged in the input pipe");
+
+    async_spawn(_aro_rt, &_aro_task, 0);
+    # If the task parks itself and never un-parks, this call never returns and the runner's
+    # deadline kills the file — reported by name since v6.5.37.
+    async_run(_aro_rt);
+
+    assert_eq(_aro_ran, 1, "the spawned task actually ran");
+    assert_eq(_aro_out, 5, "async_relay_once relayed all 5 bytes and returned");
+
+    # The bytes must have landed in the OTHER pipe, not merely been consumed.
+    var rb = alloc(64);
+    var got = sys_read(load32(&outfds), rb, 64);
+    assert_eq(got, 5, "5 bytes arrived on the output pipe");
+    assert_eq(load8(rb), 104, "first byte is 'h'");
+    assert_eq(load8(rb + 4), 111, "last byte is 'o'");
+
+    var r = assert_summary();
+    return 0;
+}

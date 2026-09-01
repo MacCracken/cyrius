@@ -21,7 +21,7 @@ fn rec_new(): i64 {
     return p;
 }
 
-fn run(): i64 {
+fn fnsh_run(): i64 {
     var r: Rec = rec_new();
     # r.exit_code must read the FIELD (7), not the global exit_code (99).
     assert_eq(r.exit_code, 7, "field access reads the field, not the shadowed global");
@@ -33,5 +33,5 @@ fn run(): i64 {
 }
 
 alloc_init();
-var _ = run();
+var _ = fnsh_run();
 var r = assert_summary();

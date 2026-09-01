@@ -12,7 +12,7 @@ var gu8:  u8  = 0;
 var gu16: u16 = 0;
 var gu32: u32 = 0;
 
-fn run(): i64 {
+fn fnsg_run(): i64 {
     gi8 = 0 - 5; gi16 = 0 - 5; gi32 = 0 - 5;
     gu8 = 0 - 5; gu16 = 0 - 5; gu32 = 0 - 5;
     # signed → sign-extend → -5
@@ -26,5 +26,5 @@ fn run(): i64 {
     return 0;
 }
 
-var _ = run();
+var _ = fnsg_run();
 var r = assert_summary();

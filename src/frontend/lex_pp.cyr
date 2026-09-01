@@ -1720,13 +1720,36 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
     # Scans raw JSON string once, matching field names inline.
     op = op + PP_EMIT_STR(out, op, "fn ");
     op = op + PP_EMIT_STR(out, op, S + 0x197020);
-    op = op + PP_EMIT_STR(out, op, "_from_json_str(json) {\nvar ptr = alloc(");
+    # ⛔ v6.5.37 — GUARD THE NULL, AND REFUSE INPUT THAT IS NOT AN OBJECT.
+    #
+    # TWO DEFECTS IN ONE EMITTED BODY, both filed by prani (2026-08-31) against five
+    # generated codecs at once, and neither fixable by a consumer: the body is EMITTED, so a
+    # project can only abandon the derive and hand-write every codec — precisely the
+    # duplication the derive exists to remove.
+    #
+    #   1. NULL DEREF. The first statement dereferenced `json`, so `X_from_json_str(0)`
+    #      segfaulted. Measured at 6.5.36: exit 139. Reachable from any caller passing an
+    #      unvalidated pointer, on a code path every deserializer consumer has.
+    #   2. MALFORMED INPUT SCORED AS SUCCESS. `memset(ptr, 0, N)` runs first, the scan then
+    #      matches nothing, and the zeroed struct comes back as a valid pointer — so
+    #      `X_from_json_str("not json at all")` returned NON-NULL with every field 0 and no
+    #      way for the caller to tell it from a real document. Measured: x = 0, non-null.
+    #
+    # 0 is already the convention for a failed `alloc`, so a caller that checks the return at
+    # all is unaffected, and no currently-working call changes behaviour: the only inputs that
+    # reached defect 1 crashed, and the only ones that reached defect 2 were already garbage.
+    # All 40 in-repo call sites pass well-formed JSON.
+    #
+    # ⚠ Scope deliberately stops at "is this an object?". A well-formed document with the
+    # WRONG KEYS still returns a zeroed struct — that is a schema question, not a parse one,
+    # and answering it here would break round-tripping a legitimately all-default struct.
+    op = op + PP_EMIT_STR(out, op, "_from_json_str(json) {\nif (json == 0) { return 0; }\nvar ptr = alloc(");
     op = op + PP_EMIT_INT(out, op, cumul_off);
     op = op + PP_EMIT_STR(out, op, ");\nmemset(ptr, 0, ");
     op = op + PP_EMIT_INT(out, op, cumul_off);
     op = op + PP_EMIT_STR(out, op, ");\nvar _p = 0;\nvar _neg = 0;\nvar _iv = 0;\nvar _vs = 0;\n");
     # Skip to opening {
-    op = op + PP_EMIT_STR(out, op, "while (load8(json + _p) != 0) { if (load8(json + _p) == 123) { _p = _p + 1; break; } _p = _p + 1; }\n");
+    op = op + PP_EMIT_STR(out, op, "var _sawlb = 0;\nwhile (load8(json + _p) != 0) { if (load8(json + _p) == 123) { _p = _p + 1; _sawlb = 1; break; } _p = _p + 1; }\nif (_sawlb == 0) { return 0; }\n");
     # Main parse loop: read key, match, parse value
     op = op + PP_EMIT_STR(out, op, "while (load8(json + _p) != 0) {\n");
     # Skip whitespace and commas

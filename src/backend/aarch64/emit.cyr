@@ -1169,6 +1169,29 @@ fn ESYSXLAT(S): i64 {
     EW(S, 0xF110C51F); EW(S, 0x54000041); EW(S, 0xD2800928);  # ppoll     1073→73
     # cmp x8,#1074 = 0xF110C91F; movz x8,#74 = 0xD2800948 (aarch64-linux-gnu-as verified).
     EW(S, 0xF110C91F); EW(S, 0x54000041); EW(S, 0xD2800948);  # signalfd4 1074→74
+    # v6.5.37: umount2 + epoll_pwait via the PRIVATE ALIASES 1039/1022 → native 39/22.
+    # ⛔ OCCURRENCES THREE AND FOUR OF EXACTLY THE v6.5.36 CLASS, found by sweeping the whole
+    # table rather than by another filing. `lib/syscalls_aarch64_linux.cyr` declared the
+    # NATIVE numbers and expected them to pass through; the x86-compat rows above rewrite
+    # 39 (x86 getpid) → 172 and 22 (x86 pipe) → 59, and a compat row cannot tell a native
+    # number from the x86 number it matches.
+    # MEASURED under qemu-aarch64 before the fix: `sys_umount2("/nonexistent", 0)` returned
+    # **1179922** — a PID. The call was getpid(2). epoll_pwait was LATENT rather than live
+    # only because nothing calls it: the working epoll path issues x86 232, which the
+    # arg-shift row above extends to epoll_pwait with a NULL sigmask. A future caller of the
+    # declared constant would have got pipe2.
+    # ⚠ SAME ORDERING RULE AS THE WHOLE BAND: these produce x8=39 and x8=22, the exact values
+    # the getpid and pipe compat rows compare against, so they must stay BELOW them — which
+    # here means last in the chain.
+    # ⭐ The sweep that found these also flagged fsync 74, fdatasync 75, newfstatat 262,
+    # faccessat 269 and utimensat 280 as "shadowed". They are NOT: each declares the X86
+    # number and is renumbered to the aarch64 one by design. The discriminator is whether the
+    # declared value is the x86 number for that syscall (intended) or the aarch64 native one
+    # (shadowed) — a raw collision list without that test reports five false positives.
+    # cmp x8,#1039 = 0xF1103D1F; movz x8,#39 = 0xD28004E8.
+    EW(S, 0xF1103D1F); EW(S, 0x54000041); EW(S, 0xD28004E8);  # umount2     1039→39
+    # cmp x8,#1022 = 0xF10FF91F; movz x8,#22 = 0xD28002C8.
+    EW(S, 0xF10FF91F); EW(S, 0x54000041); EW(S, 0xD28002C8);  # epoll_pwait 1022→22
     return 0;
 }
 
