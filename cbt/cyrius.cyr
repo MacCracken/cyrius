@@ -125,6 +125,51 @@ fn _try_redirect_to_pinned(): i64 {
     # Compare with self version (compile-time embed via version_str.cyr).
     if (streq(pin, _VERSION_TOOLCHAIN) == 1) { return 0; }
 
+    # ⛔ v6.5.37 — DO NOT DELEGATE A VENDOR WRITE INTO A SYMLINKED lib/.
+    #
+    # THE INCIDENT (2026-09-01) AND WHY THE GUARD IN _dep_copy_file IS NOT ENOUGH.
+    # `nous/lib` was a directory symlink to `~/.cyrius/lib` -> `versions/6.5.36/lib`, the
+    # LIVE stdlib snapshot. nous pins cyrius 6.3.35, so control never reached this binary's
+    # resolver at all: THIS FUNCTION execve'd into `~/.cyrius/versions/6.3.35/bin/cyrius`
+    # — a binary built months earlier that has no guard and never will — and THAT process
+    # wrote 6.3.35-era stdlib straight through the symlink into the 6.5.36 snapshot. 27
+    # files were replaced; `lib/alloc.cyr` lost `fn _alloc_zero`, the memory-reuse
+    # information-leak fix from v6.4.1 (daimon VULN-007). Because `~/.cyrius/lib` is the
+    # global default source, every other repo then READ the corruption back out — shabda
+    # ingested it 12 seconds later.
+    #
+    # ⭐ So the check has to live HERE, before the execve, in the only binary guaranteed to
+    # be current: `~/.cyrius/bin/cyrius` always points at the newest install. A guard that
+    # exists only in the resolver protects repos pinned at >= 6.5.37 and NOTHING else —
+    # and the repos most likely to carry a stale lib/ are exactly the old-pinned ones.
+    #
+    # Scoped to the verbs that vendor into lib/ so read-only commands still work in an
+    # affected tree; the first non-flag argv entry is the verb (mirrors the cmd_idx loop
+    # in main). ⚠ `is_symlink` returns 0 on Windows — no PE readlink wrapper — so this
+    # does not fire on PE. Stated, not hidden.
+    var _vi = 1;
+    var _verb = 0;
+    while (_vi < argc()) {
+        if (load8(argv(_vi)) != 45) { _verb = argv(_vi); break; }   # 45 = '-'
+        _vi = _vi + 1;
+    }
+    if (_verb != 0) {
+        var _writes = 0;
+        if (streq(_verb, "deps") == 1) { _writes = 1; }
+        if (streq(_verb, "lib") == 1) { _writes = 1; }
+        if (streq(_verb, "install") == 1) { _writes = 1; }
+        if (streq(_verb, "update") == 1) { _writes = 1; }
+        if (_writes == 1 && is_symlink(str_from("lib")) == 1) {
+            _dep_refuse_symlinked_dest("lib");
+            sys_exit(1);
+        }
+    }
+
+    # ⚠ Ordered BEFORE the "is the pinned version installed?" check below: a symlinked
+    # lib/ is wrong regardless of whether the pin resolves, and refusing first makes the
+    # refusal reachable without depending on which versions happen to be installed —
+    # which is what lets tests/gates/toolchain/deps_symlinked_lib_refused.sh pin a
+    # deliberately absent version and still exercise this path deterministically.
     # Build pinned binary path: ~/.cyrius/versions/<pin>/bin/cyrius.
     var sb = str_builder_new();
     str_builder_add_cstr(sb, _home);

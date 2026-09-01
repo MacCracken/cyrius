@@ -6,6 +6,29 @@
 #   [deps.name] path = "../repo" modules = ["src/foo.cyr"] → copy from sibling
 # All deps land in lib/ (created if needed).
 
+# ⛔ v6.5.37 — a vendor destination that is a SYMLINK is refused, never followed.
+# Declared here, above every use: a global declared BELOW its use is NOT visible in
+# cyrius (that false claim, written down in an issue file, cost two whole fix attempts
+# at 6.5.33/.34 — do not move this below _dep_copy_file).
+var _dep_linkdest_reported = 0;
+
+# Print the refusal ONCE (the copy loop calls this ~100x per resolve) and return 1,
+# the same error code the CVE-04 traversal guard uses. Full incident writeup lives at
+# the call site in _dep_copy_file.
+fn _dep_refuse_symlinked_dest(path): i64 {
+    if (_dep_linkdest_reported == 1) { return 1; }
+    _dep_linkdest_reported = 1;
+    var m1 = "error: refusing to vendor into a SYMLINKED directory: ";
+    sys_write(STDERR_FD, m1, strlen(m1));
+    sys_write(STDERR_FD, path, strlen(path));
+    var m2 = "\n  Writing through it overwrites whatever it points at. If that is the shared\n  stdlib under ~/.cyrius, it corrupts every project on this machine: a stale lib/\n  replaces the installed one, and the next `cyrius deps` in any OTHER repo reads\n  the corruption back out.\n  A project's lib/ must be a REAL directory populated by `cyrius deps`.\n  Fix:  rm ";
+    sys_write(STDERR_FD, m2, strlen(m2));
+    sys_write(STDERR_FD, path, strlen(path));
+    var m3 = "     # the LINK only - never `rm -rf`, that follows it\n        cyrius deps\n";
+    sys_write(STDERR_FD, m3, strlen(m3));
+    return 1;
+}
+
 fn _file_size(path): i64 {
     var stat_buf[144];
     var r = syscall(4, path, &stat_buf);
@@ -149,6 +172,32 @@ fn _dep_copy_file(src, dst): i64 {
     # slash (0o755). sys_mkdir returns -EEXIST harmlessly on already-
     # present dirs — same idiom used by sys_mkdir("lib", ...) callers
     # above and below.
+    # ⛔ v6.5.37 — REFUSE TO WRITE THROUGH A SYMLINKED DESTINATION DIRECTORY.
+    #
+    # THE INCIDENT (2026-09-01). `nous/lib` was a directory-level symlink to `~/.cyrius/lib`,
+    # itself a symlink to `~/.cyrius/versions/6.5.36/lib` — the LIVE stdlib snapshot. nous pins
+    # cyrius 6.3.35, so `_dep_find_stdlib_dir()` correctly resolved the SOURCE to
+    # `versions/6.3.35/lib`; the resolver then wrote each leaf to `lib/<mod>.cyr`, straight
+    # through the symlink and INTO the 6.5.36 snapshot. 27 files of 6.3.35-era stdlib replaced
+    # the shipped ones — `lib/alloc.cyr` lost `fn _alloc_zero`, the memory-reuse
+    # information-leak fix from v6.4.1 (daimon VULN-007). `~/.cyrius/lib` is the global default
+    # source, so every other repo then READ the corruption: shabda ingested it 12 seconds later.
+    #
+    # ⚠ CLAUDE.md has forbidden the directory-level `lib` symlink since the v5.5.30–v5.5.33
+    # sakshi corruption and even ships `find` commands to detect it — but the remedy was always
+    # a human noticing. THE TOOL NEVER REFUSED. v5.11.8 switched dep resolution from symlink to
+    # file-copy to stop the snapshot overwriting a project's `lib/`; that guarded ONE direction
+    # and left the reverse — a project's `lib/` overwriting the snapshot — wide open.
+    #
+    # Checked per destination-directory PREFIX in the same walk the mkdir-p below already does,
+    # so `lib` and `lib/unicode` are both covered, and checked BEFORE any mkdir so a refusal
+    # creates nothing. Sibling of the CVE-04 traversal guard above: same choke point, same
+    # `return 1`, so every write path (stdlib leaves, `requires`, `.deps` sidecar, modules,
+    # submodules) inherits it without a per-caller edit.
+    #
+    # ⚠ HONEST LIMIT: `is_symlink` returns 0 on Windows — there is no PE readlink wrapper and
+    # junctions are tracked with the Windows fs surface — so this guard does not fire on PE.
+    # Stated rather than hidden; the Linux/macOS/aarch64/agnos arms all check.
     var dst_len = strlen(dst);
     var prefix_buf = alloc(dst_len + 1);
     var pi = 0;
@@ -156,6 +205,9 @@ fn _dep_copy_file(src, dst): i64 {
         if (load8(dst + pi) == 47) {   # '/'
             memcpy(prefix_buf, dst, pi);
             store8(prefix_buf + pi, 0);
+            if (is_symlink(str_from(prefix_buf)) == 1) {
+                return _dep_refuse_symlinked_dest(prefix_buf);
+            }
             sys_mkdir(prefix_buf, 0x1ED);
         }
         pi = pi + 1;

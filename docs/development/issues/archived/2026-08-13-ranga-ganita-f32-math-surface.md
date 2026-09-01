@@ -140,3 +140,50 @@ its normalised `[0,1]` channels. Documented in `ranga/docs/development/cyrius-po
 That shim is explicitly a stopgap. If a `ganita_f32_*` tier lands, ranga drops the shim and moves
 over — and the other AGNOS graphics consumers (soorat, rasa, tazama, aethersafta) would pick it up
 rather than each re-rolling the same eighty lines.
+
+---
+
+## ⟳ AMENDED 2026-09-01 — the "no native f32 tier is possible" residual was WRONG
+
+This filing closed with:
+
+> **Genuinely remaining, and cyrius-side not ganita-side:** ... Also newly found:
+> **there is no callable `f32_add`/`f32_sub`/`f32_mul`**, so no f32 tier can be written
+> in native single-precision arithmetic today.
+
+The first clause is true. **The conclusion drawn from it is not, and it cost ganita a
+release.** `ganita_f32_lerp` shipped widen-compute-narrow for three releases on the
+strength of that sentence, and the module header repeated it as settled fact.
+
+The reasoning was: f32 arithmetic is reachable only from a `var x: f32` binding, "and
+these params arrive as untyped i64 bit patterns". A parameter can simply **be typed**:
+
+```
+fn ganita_f32_mul(a: f32, b: f32): i64 {
+    var s: f32 = a * b;
+    return s;
+}
+```
+
+Typed params put the incoming pattern in an xmm lane as a single, `var s: f32` emits the
+single-precision op, and returning `s` as `i64` hands the bit pattern back unchanged.
+Verified on cycc 6.5.36: `ganita_f32_add(2^24, 1.0)` returns `0x4B800000` (2^24, ties-to-
+even) where an f64 accumulator gives 2^24+1 — native, not widened. `cyrius distlib`
+accepts the typed params in a bundle. **Shipped as ganita 1.2.0** (`_add` / `_sub` /
+`_mul` / `_div`, and `_lerp` rebuilt on them).
+
+### What is actually still missing, cyrius-side
+
+1. **No f32 function RETURN type.** `fn f(): f32` is rejected —
+   *"fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64/f64v2/f64v4"*.
+   Params type; returns do not. Harmless for a bit-pattern library API (the pattern is the
+   interchange form anyway), but it makes the asymmetry a trap: an author who tries the
+   obvious `fn f(a: f32, b: f32): f32` hits an error whose message does not hint that
+   dropping the return type to `i64` works. **This is very likely what produced the wrong
+   conclusion above** — the first attempt fails, and it reads as "f32 is not usable here".
+2. **No `sqrtss` intrinsic** — `ganita_f32_sqrt` still widens. Correctly rounded (53 > 2·24+2),
+   so this is a cost item, not an accuracy one.
+3. **No f32 literal form** — f32 constants must be built via `f32_from(f64_from(n))`.
+
+Item 1 is the one worth fixing: the error message should name `i64` as the way to return an
+f32 pattern, or `f32` should be accepted as a return type. Either would have prevented this.
