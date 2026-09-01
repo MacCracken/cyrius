@@ -113,11 +113,37 @@ fn usage(): i64 {
 fn _try_redirect_to_pinned(): i64 {
     if (_cyrius_resolved == 1) { return 0; }
 
-    # cyrius repo signal: if src/main.cyr exists, this is the cyrius
-    # source repo itself. cyrius.cyml has no `cyrius` field (cyrius
-    # IS itself); the deps stdlib_dir Part 1 (v5.11.17) already gates
-    # on this signal — match for consistency.
-    if (file_exists("src/main.cyr") == 1) { return 0; }
+    # ⛔ v6.5.37 — THE THIRD OCCURRENCE OF THE `src/main.cyr` ≠ cyrius-repo CONFLATION.
+    #
+    # This used to read `file_exists("src/main.cyr")`, meaning "am I the cyrius source
+    # repo?". It is true for essentially EVERY cyrius project: `src/main.cyr` is the entry
+    # point `cyrius init` generates. So the pin redirect below was skipped for almost every
+    # consumer, and the manifest's `cyrius = "X.Y.Z"` was silently ignored.
+    #
+    # Measured on 6.5.36, same repo, one file's difference:
+    #     pinned 6.3.35, no src/main.cyr  -> `cyrius --version` reports 6.3.35   (honoured)
+    #     pinned 6.3.35, + src/main.cyr   -> reports 6.5.36
+    #                                        "manifest-pin: 6.3.35 (drift — wrapper is 6.5.36)"
+    # The tool PRINTED the pin it was ignoring, which is why this survived: every symptom
+    # said "drift", and drift reads like a stale manifest rather than a defect here.
+    #
+    # ⚠ THE COMMENT THIS REPLACES CITED ITS OWN BUG AS PRECEDENT — "the deps stdlib_dir
+    # Part 1 (v5.11.17) already gates on this signal — match for consistency". That gate was
+    # itself the same defect, and v6.5.25 fixed it (bote/agnosai/majra: the probe matched the
+    # consumer's own half-populated ./lib and returned it AS the stdlib). Its fix note said:
+    # "`_dep_is_cyrius_source_repo()` exists precisely for this ... When a 'am I the cyrius
+    # repo?' test is needed, use that helper; never a filename probe." It was written for the
+    # `cyrius audit` fix (v6.0.1, again v6.4.63), applied to stdlib_dir at v6.5.25, and never
+    # applied here. Three sites, one shape, fixed one at a time — GREP THE SHAPE, NOT THE SITE.
+    #
+    # `_dep_is_cyrius_source_repo()` matches `[package].name` exactly, so `cyrius-x` does not
+    # qualify. Blast radius measured across ~180 sibling repos before landing: 94 begin
+    # honouring a pin they had been ignoring, and ALL 94 have that version installed — zero
+    # would hit the "pinned version is not installed" error below.
+    #
+    # ⭐ This cuts the same way as the symlinked-lib guard added above: honouring pins means
+    # MORE delegation to old binaries, so that guard had to exist first. It does.
+    if (_dep_is_cyrius_source_repo() == 1) { return 0; }
 
     var pin = _dep_read_cyml_cyrius_field();
     if (pin == 0) { return 0; }
@@ -386,7 +412,9 @@ fn main(): i64 {
     if (streq(cmd, "build") == 1 || streq(cmd, "run") == 1 || streq(cmd, "test") == 1 || streq(cmd, "tests") == 1 || streq(cmd, "bench") == 1 || streq(cmd, "fuzz") == 1 || streq(cmd, "soak") == 1 || streq(cmd, "smoke") == 1 || streq(cmd, "check") == 1 || streq(cmd, "audit") == 1 || streq(cmd, "capacity") == 1 || streq(cmd, "distlib") == 1 || streq(cmd, "doctest") == 1 || streq(cmd, "publish") == 1 || streq(cmd, "package") == 1) {
         # AUTO_DEPS_VERBS END
         var dr = _auto_deps();
-        if (dr > 0) { return dr; }
+        # v6.5.37 (A1) — clamp here too: _auto_deps propagates the same raw count, so a
+        # 256-error resolve made `cyrius build` exit 0 as well.
+        if (dr > 0) { return 1; }
         # v6.4.63: name any version skew between ./lib/ and the version-pinned
         # snapshot (yeo-cy-test filing). Sits OUTSIDE _auto_deps deliberately —
         # _auto_deps early-returns when cyrius.cyml has no [deps]/[deps.*]
@@ -1053,7 +1081,19 @@ fn main(): i64 {
         # Install to CYRIUS_HOME/bin/
         if (_home != 0) {
             var dest = make_path(_home, "bin/cyrius-lsp");
-            _dep_copy_file(lsp_out, dest);
+            # v6.5.37 (A0) — CHECK THE COPY. This ignored `_dep_copy_file`'s return and
+            # printed "Installed: <path>" unconditionally, so any failed write reported
+            # success. That is not hypothetical: the first cut of the symlinked-destination
+            # guard (earlier this release) was ungated, and `~/.cyrius/bin` IS a symlink into
+            # `versions/<v>/bin` on a normal install — so the copy was refused and this still
+            # said Installed. The guard is now vendor-gated so it cannot fire here, but a
+            # write that reports success it did not achieve is its own defect: ENOSPC, a
+            # read-only /home, a bad `lsp_out` all took the same silent path.
+            var lcr = _dep_copy_file(lsp_out, dest);
+            if (lcr == 1) {
+                _err("failed to install cyrius-lsp");
+                return 1;
+            }
             sys_chmod(dest, 493);
             sys_write(STDOUT_FD, "Installed: ", 11);
             println(dest);

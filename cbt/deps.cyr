@@ -12,6 +12,16 @@
 # at 6.5.33/.34 — do not move this below _dep_copy_file).
 var _dep_linkdest_reported = 0;
 
+# ⛔ v6.5.37 (A0) — VENDOR MODE. The symlink refusal below must fire for VENDORING (cyrius
+# deps / update / lib sync writing into a project's lib/) and must NOT fire for TOOLCHAIN
+# INSTALLS, because `~/.cyrius/bin` is itself a symlink into `versions/<v>/bin` on a normal
+# install — so an ungated guard refuses `cyrius lsp install` and every sibling that writes
+# there. The first cut of this guard (earlier in v6.5.37) WAS ungated and did exactly that,
+# and it failed in the worst available way: `cbt/cyrius.cyr` ignored `_dep_copy_file`'s
+# return and printed "Installed: <path>" over a copy that never happened. Set to 1 at the
+# top of the vendoring commands only.
+var _dep_vendor_mode = 0;
+
 # Print the refusal ONCE (the copy loop calls this ~100x per resolve) and return 1,
 # the same error code the CVE-04 traversal guard uses. Full incident writeup lives at
 # the call site in _dep_copy_file.
@@ -27,6 +37,39 @@ fn _dep_refuse_symlinked_dest(path): i64 {
     var m3 = "     # the LINK only - never `rm -rf`, that follows it\n        cyrius deps\n";
     sys_write(STDERR_FD, m3, strlen(m3));
     return 1;
+}
+
+# ⛔ v6.5.37 (A0) — is ANY component of `dst` a symlink? Returns the offending path, or 0.
+#
+# ⚠ THE FINAL COMPONENT IS THE HALF THE FIRST CUT MISSED, and it is the shape the ecosystem
+# actually has. The first guard walked directory PREFIXES only, so it caught
+# `lib -> <snapshot>` (the nous shape) and sailed straight past
+# `lib/alloc.cyr -> <snapshot>/alloc.cyr` — a real directory holding a symlinked FILE. That
+# second shape is not exotic: CLAUDE.md calls single-file `lib/<dep>.cyr` symlinks
+# "legitimate `cyrius deps` output", and three live instances sit under
+# `~/.cyrius/deps/sigil/*/lib/sakshi.cyr` today. Measured against the prefix-only guard:
+# `cyrius deps` exit 0, the symlink target overwritten, silent.
+#
+# So a gate written only around the directory shape ships GREEN over the file shape. That is
+# the v6.5.36 lesson verbatim — a gate that pins the mechanism rather than the property
+# passes while the mechanism is wrong — which is why the companion gate asserts BOTH.
+#
+# ⚠ Returns 0 on Windows for every path: `is_symlink` has no PE arm (no readlink wrapper;
+# junctions are tracked with the Windows fs surface). Stated rather than hidden.
+fn _dep_dest_is_linked(dst): i64 {
+    var n = strlen(dst);
+    var buf = alloc(n + 1);
+    var i = 0;
+    while (i < n) {
+        if (load8(dst + i) == 47) {   # '/'
+            memcpy(buf, dst, i);
+            store8(buf + i, 0);
+            if (is_symlink(str_from(buf)) == 1) { return buf; }
+        }
+        i = i + 1;
+    }
+    if (is_symlink(str_from(dst)) == 1) { return dst; }
+    return 0;
 }
 
 fn _file_size(path): i64 {
@@ -198,6 +241,10 @@ fn _dep_copy_file(src, dst): i64 {
     # ⚠ HONEST LIMIT: `is_symlink` returns 0 on Windows — there is no PE readlink wrapper and
     # junctions are tracked with the Windows fs surface — so this guard does not fire on PE.
     # Stated rather than hidden; the Linux/macOS/aarch64/agnos arms all check.
+    if (_dep_vendor_mode == 1) {
+        var linked = _dep_dest_is_linked(dst);
+        if (linked != 0) { return _dep_refuse_symlinked_dest(linked); }
+    }
     var dst_len = strlen(dst);
     var prefix_buf = alloc(dst_len + 1);
     var pi = 0;
@@ -205,9 +252,6 @@ fn _dep_copy_file(src, dst): i64 {
         if (load8(dst + pi) == 47) {   # '/'
             memcpy(prefix_buf, dst, pi);
             store8(prefix_buf + pi, 0);
-            if (is_symlink(str_from(prefix_buf)) == 1) {
-                return _dep_refuse_symlinked_dest(prefix_buf);
-            }
             sys_mkdir(prefix_buf, 0x1ED);
         }
         pi = pi + 1;
@@ -824,6 +868,30 @@ fn _toml_key_at(buf, n, si, klen): i64 {
     }
     # Count unescaped `"` from line start to the match. Odd = the match sits
     # inside a string value.
+    #
+    # ⛔ v6.5.37 (A5) — AND REJECT A MATCH THAT SITS AFTER AN INLINE `#`. THIS IS THE FOURTH
+    # OCCURRENCE OF THE COMMENT-PROSE CLASS, AND IT WAS IN THE HELPER INTRODUCED TO END IT.
+    # v6.5.17 fixed it in cmd_deps (bayan) and introduced this shared helper; v6.5.30 fixed
+    # the un-swept copy in _distlib_union_declared_stdlib (niyama). Both fixes assumed the
+    # guard above — leading whitespace then `#` — covers comments. It does not: it walks ONLY
+    # the leading whitespace and breaks at the first non-space, so a `#` that opens a comment
+    # MID-LINE is never seen. Reproduced at 6.5.36 with one line of ordinary prose:
+    #
+    #     modules = ["src/lib.cyr"]   # TODO: split; stdlib = ["math"] will move here
+    #     [deps]
+    #     stdlib = ["string","fmt","alloc","io","vec","str","syscalls"]
+    #
+    # -> `dist/probe.deps` contained exactly `math`, and `cyrius deps` vendored math.cyr and
+    # NOTHING ELSE, silently, exit 0. Seven declared leaves reduced to one wrong one.
+    #
+    # ⚠ It is indifferent to whether the decoy mentions `stdlib` at all — the scan locks onto
+    # any array literal after the `#`. And it fires in BOTH directions at once, because the
+    # producer sidecar and the consumer resolver share this helper.
+    #
+    # The quote counter already walks exactly the span the comment test needs, so the test is
+    # free: an unescaped `#` seen while the quote count is EVEN (i.e. outside a string value)
+    # starts a comment and everything after it on the line is prose. A `#` with an ODD count
+    # is inside a quoted value and is just a character.
     var quotes = 0;
     while (ls < si) {
         var c = load8(buf + ls);
@@ -831,6 +899,10 @@ fn _toml_key_at(buf, n, si, klen): i64 {
             ls = ls + 1;                          # '\' escapes the next byte
         } else {
             if (c == 34) { quotes = quotes + 1; } # '"'
+            elif (c == 35) {                      # '#'
+                var q_here = quotes - ((quotes / 2) * 2);
+                if (q_here == 0) { return 0; }    # outside a string => comment starts here
+            }
         }
         ls = ls + 1;
     }
@@ -1353,6 +1425,14 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     str_builder_add_cstr(df_sb, submod);
     str_builder_add_cstr(df_sb, ".cyr");
     var dst_full = str_data(str_builder_build(df_sb));
+    # v6.5.37 (A0) — refuse BEFORE the unlink. A symlinked destination must not be
+    # deleted either: unlink on a link removes the link, but the guard exists so a
+    # vendoring run cannot touch a shared target at all, and a delete-then-refuse
+    # leaves the tree worse than either outcome alone.
+    if (_dep_vendor_mode == 1) {
+        var _l1 = _dep_dest_is_linked(dst_full);
+        if (_l1 != 0) { return _dep_refuse_symlinked_dest(_l1); }
+    }
     sys_unlink(dst_full);
     var cr = _dep_copy_file(src, dst_full);
     if (cr == 0 || cr == 2) {
@@ -1870,6 +1950,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     # silently overwrite project lib/ files. Always
                     # copy → distinct inodes at every layer. See
                     # CHANGELOG [5.11.8], roadmap v5.10.37/v5.11.8 pin.
+                    if (_dep_vendor_mode == 1) {
+                        var _l2 = _dep_dest_is_linked(dst);
+                        if (_l2 != 0) { return _dep_refuse_symlinked_dest(_l2); }
+                    }
                     sys_unlink(dst);
                     var cr2 = _dep_copy_file(src, dst);
                     if (cr2 == 0 || cr2 == 2) {
@@ -1899,10 +1983,19 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             si = si + 1;
         }
     }
-    return errors;
+    # ⛔ v6.5.37 (A1) — CLAMP. This returned the raw error COUNT, which becomes the process
+    # exit status, and a wait status carries only the low 8 bits. Measured at 6.5.36:
+    #     1 bad leaf -> exit 1     255 -> exit 255     256 -> exit 0     512 -> exit 0
+    # So a manifest broken badly enough reported SUCCESS, and every count that is a
+    # multiple of 256 was a silent green. This is why a defective sidecar could pass CI
+    # at all — the more wrong it was, the likelier it looked clean. Exit status is a
+    # boolean channel; the count belongs in the message, which it already is.
+    if (errors > 0) { return 1; }
+    return 0;
 }
 
 fn cmd_deps(): i64 {
+    _dep_vendor_mode = 1;   # v6.5.37 (A0): vendoring — symlinked destinations are refused
     if (_dry_run == 1) {
         println("dry-run: would resolve deps from cyrius.cyml into lib/");
         return 0;
@@ -2091,7 +2184,15 @@ fn cmd_deps(): i64 {
             }
         }
     }
-    return errors;
+    # ⛔ v6.5.37 (A1) — CLAMP. This returned the raw error COUNT, which becomes the process
+    # exit status, and a wait status carries only the low 8 bits. Measured at 6.5.36:
+    #     1 bad leaf -> exit 1     255 -> exit 255     256 -> exit 0     512 -> exit 0
+    # So a manifest broken badly enough reported SUCCESS, and every count that is a
+    # multiple of 256 was a silent green. This is why a defective sidecar could pass CI
+    # at all — the more wrong it was, the likelier it looked clean. Exit status is a
+    # boolean channel; the count belongs in the message, which it already is.
+    if (errors > 0) { return 1; }
+    return 0;
 }
 
 # Auto-resolve deps if manifest has [deps] section.
@@ -2276,6 +2377,7 @@ fn _update_walk(src_dir, rel_prefix): i64 {
 }
 
 fn cmd_update(): i64 {
+    _dep_vendor_mode = 1;   # v6.5.37 (A0): vendoring — symlinked destinations are refused
     _status("=== cyrius update ===");
     # Find installed stdlib
     var cur = read_file_str(make_path(_home, "current"));

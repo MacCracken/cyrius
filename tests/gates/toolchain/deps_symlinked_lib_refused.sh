@@ -110,6 +110,32 @@ EOF
     done
 fi
 
+# ── axis 1c: PER-FILE symlink — lib/ is a REAL dir holding a symlinked FILE ─────────
+# ⛔ THE AXIS THE FIRST CUT OF THIS GUARD SHIPPED GREEN OVER. v6.5.37's initial guard walked
+# directory PREFIXES only, so it caught `lib -> <snapshot>` and sailed past
+# `lib/alloc.cyr -> <snapshot>/alloc.cyr`: exit 0, target overwritten, silent. This is not an
+# exotic shape — CLAUDE.md calls single-file `lib/<dep>.cyr` symlinks "legitimate `cyrius
+# deps` output", and three live instances sit under ~/.cyrius/deps/sigil/*/lib/sakshi.cyr.
+# A gate written only around the directory shape passes while the file shape corrupts, which
+# is the v6.5.36 lesson verbatim: a gate pinning the mechanism passes while the mechanism is
+# wrong. Both shapes are asserted, permanently.
+mkdir -p "$WORK/f/snap" "$WORK/f/proj/lib"
+echo "# SENTINEL alloc" > "$WORK/f/snap/alloc.cyr"
+ln -s "$WORK/f/snap/alloc.cyr" "$WORK/f/proj/lib/alloc.cyr"
+cat > "$WORK/f/proj/cyrius.cyml" <<EOF
+[package]
+name = "probe"
+version = "0.1.0"
+cyrius = "$(cat "$ROOT/VERSION")"
+[deps]
+stdlib = ["alloc"]
+EOF
+set +e
+OUTF=$(cd "$WORK/f/proj" && "$CYRIUS" deps 2>&1); RCF=$?
+set -e
+[ "$RCF" -ne 0 ] || fail "axis 1c: exit 0 on a per-FILE symlink — the guard checks directory prefixes only"
+grep -q SENTINEL "$WORK/f/snap/alloc.cyr" || fail "axis 1c: the symlinked FILE's target was overwritten"
+
 # ── axis 2: symlinked lib + CURRENT pin (no re-exec) → the resolver guard catches it ──
 # Exercises _dep_copy_file's guard rather than the dispatcher's. Both must hold; if only
 # one does, an old-pinned repo (axis 1) or a current-pinned one (axis 2) stays exposed.
@@ -165,4 +191,21 @@ set +e
 set -e
 [ "$RC4" -eq 0 ] || fail "axis 4: --version broke inside a symlinked-lib tree (exit $RC4)"
 
-echo "PASS: deps_symlinked_lib_refused (4 axes: delegate-refuse, resolver-refuse, normal-op, read-only)"
+# ── axis 5: a TOOLCHAIN install through a symlinked dir must still WORK ─────────────
+# ⛔ THE OTHER HALF THE FIRST CUT GOT WRONG, in the opposite direction. `~/.cyrius/bin` IS a
+# symlink into `versions/<v>/bin` on every normal install, so an ungated guard refuses
+# `cyrius lsp install` and every sibling that writes there — and `cbt/cyrius.cyr` ignored
+# `_dep_copy_file`'s return, printing "Installed: <path>" over a copy that never happened.
+# The refusal is therefore gated on `_dep_vendor_mode`, set only by deps/update/lib-sync.
+# This axis pins that gating: without it the guard is a self-inflicted outage that REPORTS
+# SUCCESS. Simulated with a non-vendor copy rather than a real install so the gate stays fast
+# and hermetic — `cyrius fmt` writes in place through _dep_copy_file's sibling path.
+mkdir -p "$WORK/g/real" "$WORK/g/proj"
+printf 'fn main() {\n    return 0;\n}\n' > "$WORK/g/real/x.cyr"
+ln -s "$WORK/g/real" "$WORK/g/proj/linkdir"
+set +e
+(cd "$WORK/g" && "$CYRIUS" fmt --check proj/linkdir/x.cyr >/dev/null 2>&1); RCG=$?
+set -e
+[ "$RCG" -le 1 ] || fail "axis 5: a non-vendor path through a symlinked directory hard-failed (exit $RCG) — the guard is not vendor-gated"
+
+echo "PASS: deps_symlinked_lib_refused (6 axes: delegate-refuse, delegate-real, per-file, resolver-refuse, normal-op, read-only, non-vendor-unaffected)"

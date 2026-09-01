@@ -477,8 +477,26 @@ Either command returning a result means a downstream repo is aliasing
 its `lib/` back into this one. Sakshi was confirmed at v5.8.23 ship
 (its `lib` was a directory-level symlink to `~/.cyrius/lib`); fixed
 by `rm sakshi/lib && (cd sakshi && cyrius deps)`. Other downstream
-repos at audit time had only single-file `lib/<dep>.cyr` symlinks
-(legitimate `cyrius deps` output, not the corruption antipattern).
+repos at audit time had only single-file `lib/<dep>.cyr` symlinks.
+
+⛔ **CORRECTED v6.5.37 — that line used to call single-file symlinks "legitimate
+`cyrius deps` output, not the corruption antipattern". They are NOT legitimate, and
+calling them so is what let the file-shaped variant of this bug live.** A symlinked
+`lib/<dep>.cyr` is the same defect one level down: a vendoring write follows it and
+overwrites whatever it points at, which for a link into `~/.cyrius` is the shared
+stdlib. Measured at 6.5.37 against the first cut of the guard — which checked directory
+prefixes only, precisely because this line said the file shape was fine — `cyrius deps`
+exited **0** and silently overwrote the target. Three live instances were found under
+`~/.cyrius/deps/sigil/*/lib/sakshi.cyr` and remediated. Both shapes are now refused
+(`_dep_dest_is_linked`, gated on vendor mode so toolchain installs into the symlinked
+`~/.cyrius/bin` still work), and both are pinned by
+`tests/gates/toolchain/deps_symlinked_lib_refused.sh`.
+
+⚠ The general lesson, which is the reason this correction is written out rather than
+just edited away: **a rule that declares one shape of a defect acceptable prevents the
+fix from covering it.** Same failure as the retired "≤6 args" rule — a codegen bug
+written down as a language rule and therefore never fixed. When a rule here says a
+shape is fine, check whether the tool actually handles it.
 
 ### Snapshot-ping-pong protection (cyrius-side `lib/*.cyr` edits)
 
