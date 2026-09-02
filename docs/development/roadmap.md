@@ -30,16 +30,34 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.37** (2026-09-01) — cycc **1,178,864 B** · check.sh **199 passed / 0
-failed** · **282** `.tcyr` (**54** in `crossos/`) · **101**
-`lib/*.cyr` · **97** `programs/**/*.cyr` · **81** shell gate scripts under
-`tests/gates/<bucket>/` · api-surface **5070** · heap map **100 regions / 0 overlaps** ·
-**11 open issues + 2 open proposals** (343 archived issues / 29 archived proposals) — 9 at the `.35` tag, plus **two owl filings that arrived after it** and were verified live during handoff prep (`owl-private-fns-still-collide-across-files`, **High**; `owl-getenv-8kb-environ-window`, Medium).
+**Current head: v6.5.37** (2026-09-01) — cycc **1,179,104 B** · check.sh **211 passed / 0
+failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
+`lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
+`tests/gates/<bucket>/` · api-surface **5112** ·
+**14 open issues + 3 open proposals** (357 archived issues / 29 archived proposals) — 9 at the `.35` tag, plus **two owl filings that arrived after it** and were verified live during handoff prep (`owl-private-fns-still-collide-across-files`, **High**; `owl-getenv-8kb-environ-window`, Medium).
 
-> ⏳ **`.34` is code-complete and locally green; its cross-OS leg and bench run are still
-> outstanding, so `self_compile` is deliberately NOT quoted above rather than carried from
-> `.33`.** The version stamp on this line is rewritten by `version-bump.sh`, which has not run
-> yet — see the warning below about treating that stamp as evidence about the stamp only.
+> ⛔ **`.36` AND `.37` DID NOT SHIP THE WORK THIS FILE PINNED TO THEM.** `.36` was pinned band G
+> and shipped **two Criticals** (enum constants ≥2^62 read as −1 across `.31`–`.35`; aarch64
+> `sys_pause`→`flock` and `sys_signalfd`→`fsync`). `.37` was pinned Slot 9 and shipped **the
+> `.deps` sidecar subsystem repaired end to end**, four consumer filings, the three AGNOS peers
+> and five stdlib folds. Bands **G, I and J are all re-pinned below** and **`.38` is the next
+> open number**. The codegen spine has not moved since `.35`.
+>
+> ⭐ **Release gate at `.37`: GREEN on all five steps** — fixpoint 1,179,104 B; `seed → cybs →
+> cycc` byte-identical; check.sh 211/0; corpus 286/286; cross-OS **ecb + ach + cass + pi** each
+> `SELFHOST_OK` + crossos **55/55** on REAL hardware; bench `self_compile` **720.5 ms** vs
+> `.36`'s 711.1 — ⚠ **inside noise, NOT a regression**: two runs on commit `fa66d50b` with
+> IDENTICAL code measured 777.9 and 716.9 ms, a **61 ms same-commit spread**.
+>
+> ⚠ **The heap-map count was NOT re-derived in the 2026-09-01 sweep** and has been dropped from
+> the line above rather than carried. The heap audit is green inside check.sh 211/0; if you need
+> the region count, measure it — do not quote a number this file no longer states.
+>
+> ⛔ **The "Shipped in v6.5.x" list below STOPS AT `.19`** — 20 entries, and `.20`–`.37` (eighteen
+> releases, half the minor) are absent. This is the SECOND occurrence: the same section ran
+> `.0`–`.10` and stopped once before, backfilled 2026-08-11 with the note still visible below.
+> It is also the artifact a reactive-rate question gets answered from, and it covers none of the
+> period such a question is about. Backfill it or replace it with a pointer to `CHANGELOG.md`.
 
 ⭐ **CROSS-OS FULL CORPUS, re-measured on real hardware 2026-08-20 (`CYRIUS_CROSS_OS_FULL=1`):
 ecb 282/282 · ach 282/282 · pi 282/282 · cass 250/282.** Three of four hosts are at ZERO. The
@@ -463,7 +481,66 @@ ran 86 releases and 6.5.x is expected in the same class.
 > prove — it has store/load information but no DOMINANCE. v5.6.22's defect was this exact
 > class, so a passing corpus is not sufficient evidence. See the `.35` CHANGELOG.
 >
-> ### ▶ NEXT: `.36` — band G, SIMD register residency (Slot 6)
+> ### ▶ NEXT: `.38` — packed repair release (see the re-pin table below)
+>
+> **`.38` contents — a packed repair release, not a band.** The argument for this shape rather
+> than opening band G: the measured reactive rate over `.20`–`.37` is **11 of 18 releases (61 %)**
+> on a strict count, and only **3 of 18 (17 %)** advanced the codegen spine (`.23`, `.34`, `.35`).
+> The ~80 % figure surfaced at `.19` **held for the next eighteen releases** — it was not a burst.
+> Band slips corroborate: E pinned `.29`–`.31` shipped `.34`; F pinned `.32`–`.33` shipped `.35`;
+> G pinned `.34`–`.35`, re-pinned `.36`, still unshipped at `.37`.
+>
+> 1. **`f64v4_fmadd` / `_dot` / `_scale` / `_abs` → ymm under `simd_has_avx2()`** — band G's one
+>    substrate-free bite. `EMIT_F64V_FMADD` (`src/backend/x86/float.cyr:681`) emits `66 0F 59` /
+>    `66 0F 58` — 128-bit SSE2 with `rsi += 2`, i.e. **two iterations for four lanes** — and every
+>    VEX byte in that file sits at lines 255–361, nothing at 376+. `lib/simd.cyr:642/649/654` have
+>    **no `simd_has_avx2()` gate**, unlike their four `.24` siblings at `:612/620/628/636`. Same
+>    shape, same precedent gate (`tests/gates/codegen/f64v4_ymm_disasm.sh`) as the `.24` work that
+>    measured 15.9 → ~7.9 ns. ⚠ Cover all four ops, not just `fmadd` — the roadmap named only
+>    `fmadd` and the sweep found `dot`, `scale` and `abs` in the same state.
+> 2. **The lazy-init publish-before-fill residual** — `proposals/2026-08-30-lazy-init-publish-before-fill.md`.
+>    Its option (a) fix (fill a local, publish last) **shipped at `.37`** in `_chrono_init_mdays`;
+>    what remains is the memory-ordering half the proposal explicitly flags: *"on aarch64's weak
+>    model this wants a release fence before the publishing store, matching what
+>    `lib/alloc.cyr`'s `_alloc_lock_release` already does — worth deciding explicitly rather than
+>    inheriting x86 behaviour."* `_alloc_lock_release` does `atomic_fence()` then `atomic_store`
+>    on **both** arches; `chrono` publishes with a plain store. On a weak model a racing thread can
+>    observe the published pointer before the twelve `store64`s that fill it — the same month-13
+>    bug, at the hardware level. ⚠ Needs `include "lib/atomic.cyr"` in a widely-included module,
+>    so the include cost is part of the decision. Sweep found the same shape in `lib/tls.cyr:211`
+>    and `lib/regex.cyr:225` — both cyrius-owned; fix the class, not the instance.
+> 3. **`issues/2026-09-01-deps-pulls-stdlib-leaf-from-dep-lib.md`** — freshest filing, same
+>    subsystem `.37` just repaired end to end, so it is cheapest to fix while that context is
+>    loaded. `cyrius deps` pulls a declared *stdlib* leaf from a named dep's own `lib/` instead of
+>    the pinned snapshot: `lib sync` writes sakshi 2.4.12 and the next `deps` reverts it to
+>    2.4.11, byte-identical to the dep's copy. Confirmed in **two** repos (shabdakosh, shabda).
+> 4. **`issues/2026-08-22-owl-private-fns-still-collide-across-files.md` (High)** — `.37` shipped
+>    only the arity-mismatch half; same-arity replacement of a `private` helper remains. ⚠ This is
+>    entangled with owed-decision #5 (per-item `private` compiles with no diagnostic, eleven
+>    releases live), so the clean fix may need that call first.
+>
+> ⚖️ **CANNOT be pinned to `.38` — blocked on a maintainer decision:** Slot 9 (both storage
+> relocations disproven; escape analysis vs scope-tied arena is a different size class with zero
+> compiler substrate — `grep escape src/` = 0); band H / stiva Half B (needs re-confirmation that
+> a CPS transform is wanted); band G items 1+2 as an arc (needs a demand call — see below);
+> `CYRIUS_CROSS_OS_FULL=1` as default (cass's PE-incompatible labels need triage first).
+>
+> ⭐ **NEW for the owed list: band G needs a DEMAND call, not just a schedule.** No call site of
+> any typed SIMD wrapper exists anywhere under `~/Repos` outside cyrius; in-repo the only
+> non-test consumer is `benches/bench_f32v8_gemm.bcyr`, which uses the **bulk** form the filing
+> explicitly excludes. svara — the filing's origin — now records in its own benchmark doc that a
+> bit-identical `f64v4` version "bought only ~5 %… the loop is memory-bound", reverted, and
+> ranks **the scalar f64 GPR↔xmm shuttle (~5–8×) AHEAD of SIMD (~4×)**. That shuttle is outside
+> band G entirely: 7 arithmetic ops measured **21 `movq` shuttles** on live 6.5.37. It may
+> deserve to displace band G rather than queue behind it.
+>
+> ⛔ **This pointer said `.36` — band G, SIMD register residency (Slot 6)** until 2026-09-01.
+> `.36` and `.37` both shipped as reactive repair releases and band G never opened. It is
+> re-pinned rather than moved forward: the premise-check found band G is **not a release** —
+> item 3 is shipped bar a four-op residual, item 2's "gate-widening, not a build" claim is
+> FALSE (three independent disqualifiers bar every value-form SIMD wrapper regardless of the
+> generics gate), and item 1 needs a vector register class that does not exist. See the band G
+> rows below for the measurements.
 > ✅ Item 3 shipped at `.24`. **Item 1** (register-resident value-form f64v arithmetic) is
 > genuinely unbuilt — all 15 `float.cyr` emitters are memory→register→op→memory loops, ymm
 > included. ⛔ **Item 2 is a GATE-WIDENING question, not a build**: the wrapper inliner is live
@@ -680,10 +757,10 @@ ran 86 releases and 6.5.x is expected in the same class.
 > | **T** | `.28` | ⭐ **Consumer-filed repair cluster — RE-SCOPED 2026-08-18: the queue grew 11 → 17 while `.27` was cutting** | ⭐ **LEADS WITH THE ONE HIGH:** **decimal float literals past ~9 significant digits parsed to a DIFFERENT NUMBER** — `3.1415926535` → `0.95822`, `3.141592653589793` → `0.061575` (off by 51×), with no error, no warning, clean lint, and plausible-looking output. Found porting ranga's Oklab matrices, i.e. exactly where 10-17 significant digits is normal. **Root cause: TWO overflows in one line** — the token packed `(denom << 32) | (numer & 0xFFFFFFFF)`, so the mask truncated `numer` AND `denom << 32` overflowed the i64 outright past 9 fractional digits. ✅ **FIXED**: full-i64 numer/denom via a lazily-allocated side table (`FLIT_ADD`), all THREE `EMIT_FLOAT_LIT` backends re-pointed. ⚠ A "cap the digit count" fix would have been smaller and still LOST precision silently — the same defect class, quieter; `crossos/float_literal_precision.tcyr` asserts the `100.123456789` case specifically to kill that shortcut. **Remaining band-T queue, by severity:** `_auto_deps` reads only the first **4095 bytes** of `cyrius.cyml` so a later `[deps]` is invisible (Medium, misleading diagnostic) · a `[deps].stdlib` entry reached TRANSITIVELY never gets its top-level `include` prepended (Medium, hard build failure on a shipping consumer) · `_distlib_named_deps` scans the manifest UNANCHORED, so a `[deps.X]` written in COMMENT PROSE deletes X from the sidecar (Medium, silent packaging corruption) · `fl_calloc` re-zeroes already-zero mmap'd pages a byte at a time, **369× slower than the allocation** (Medium perf, no correctness impact) · `cyrius fuzz` blind to out-of-bounds READS (Medium-High tooling; every premise verified, the best-formed of the filings) · `distlib` named-profile sidecar (Low; title + symptom-2 + hypothesis all refuted by measurement — re-title before scheduling) · assignment ignores the callee's declared return type so `t = str_new(…)` warns (Low, diagnostic only) · `fmt --check` (⚖️ **maintainer decisions taken 2026-08-18, implementation pending**: canonical continuation indent becomes **2 spaces**, **4 accepted**, deeper REJECTED — *"else it wouldn't be a format check"*; `cyrius fmt` **rewrites in place** by default with `--verbose` also echoing to stdout and `--dry` reporting only; and `--check` must SAY what differs. ⚠ BOTH the filing's headline AND its first refutation were half wrong — wrapped calls are not rejected, but `fmt`'s own output still fails `--check`, so there IS an unfixable-in-place state. Requires PAREN-depth tracking in cyrfmt, which today indents from BRACE depth only. Breaking CLI change — note it in the CHANGELOG). |
 > | **E** | `.29`–`.31` | **⭐ Slot 3 — IR substrate productionization. THE SPINE OPENS.** | ⛔ **RE-MEASURED LIVE AT 6.5.27 (273-file corpus, exit code AND stdout): the residual is 4, NOT 7.** Three of the named seven — `float`, `math_inverse_trig`, `math_pack_integration` — now pass under `CYRIUS_IR=3` with 0 failed assertions, and the capacity trio is confirmed gone (`IR block table full` appears in ZERO of 273 IR=3 compiles after band B's raise). ⭐ **The 4 remaining divergences bisect to 3 ROOT CAUSES, isolated by pass with the live knobs**: **LASE apply** owns `subword_signed_load` + `types` (both sub-i64 width semantics — near-certainly ONE defect, so 2 tests / 1 fix); **`ir_const_fold`** owns `const_chained_multiply_fold`; **DCE** owns `field_name_shadows_global` (SIGSEGV). ⚠ `CYRIUS_LASE_OFF` is a COARSE knob — `ir_apply_lase` is the shared NOP-fill applier for DCE+DSE too, so LASE_OFF masks the DCE bug; isolate with fold+DCE+DSE off. ✅ Wall 3 still CLOSED (IR=3-built cycc 1,235,368 B, +57,344 B, `cmp`-identical output). ✅ `ir_lower_all` mode-2 still ZERO callers. ⚠ **`_IR_REC0(IR_RAW_EMIT)` is 54, not 48** — `parse_expr.cyr` has **7**, not 1 (the six missed are f64 intrinsic branches, exactly the raw-emit shape DCE cannot see through). ⛔ **NEW, not previously in the roadmap: `ir_add_edge` SILENTLY drops every edge past 8192** (`ir.cyr:341` returns 0 = success) while `ir_build_edges` increments its count unconditionally — a fabricated edge count on any large fn. ⛔ **The substrate exists ONLY in `src/main.cyr`**: `main_win.cyr` is analysis-only and the other 5 forks have no `IR_SENABLE` at all — which materially changes what "productionization" means. |
 > | **F** | `.32`–`.33` | **Slot 5 — cross-BB regalloc + vector register class** | ⛔ **"Hard-gated on E" is only HALF true — a live regalloc ALREADY EXISTS.** A Poletto-Sarkar linear-scan picker is shipped and DEFAULT-ON for every fn, so this band is not greenfield. ⭐ **The cross-BB defect is live and localised to ONE line**: the picker computes real live intervals (`ra_first`/`ra_last`) then THROWS THEM AWAY — every interval's end is force-set to the fn end, so the expire step never fires and assignment is greedy-forever. Reproduction run. **Vector register class genuinely absent** (the byte matcher only recognises REX.W mov to/from `[rbp+disp32]`). ⚠ `_disp_adj` consolidation is undone and the scope is **57 sites tree-wide, not 19** — of which **44** are helper-replaceable. |
-> | **G** | `.34`–`.35` | **Slot 6 — SIMD register residency** | ✅ **Item 3 SHIPPED at `.24`** (confirmed live). **Item 1** (register-resident value-form f64v arithmetic) genuinely unbuilt — all 15 emitters in `float.cyr` are memory→register→op→memory loops, *including* the ymm one. ⛔ **Item 2 is the biggest correction: the wrapper inliner is NOT unbuilt — it is LIVE and FIRES TODAY**, gated to generics only. The row treated it as work behind the IR substrate; it is a GATE-WIDENING question, not a build. ⚠ The "25 sites" grep is stale — live is **29**, and it grew *because* item 3 shipped (each widened wrapper added a round-trip form). ⚠ **Item 3 has a residual: `f64v4_fmadd` was NOT widened** — still the 128-bit SSE loop with no `simd_has_avx2()` gate. |
+> | **G** | ⛔ **RE-PINNED 2026-09-01 — NOT a release** | **Slot 6 — SIMD register residency** | ✅ **Item 3 SHIPPED at `.24`** (confirmed live). **Item 1** (register-resident value-form f64v arithmetic) genuinely unbuilt — all 15 emitters in `float.cyr` are memory→register→op→memory loops, *including* the ymm one. ⛔ **Item 2 is the biggest correction: the wrapper inliner is NOT unbuilt — it is LIVE and FIRES TODAY**, gated to generics only. The row treated it as work behind the IR substrate; it is a GATE-WIDENING question, not a build. ⚠ The "25 sites" grep is stale — live is **29**, and it grew *because* item 3 shipped (each widened wrapper added a round-trip form). ⚠ **Item 3 has a residual: `f64v4_fmadd` was NOT widened** — still the 128-bit SSE loop with no `simd_has_avx2()` gate. |
 > | **H** | `.36` | ⚠ **RE-CONTEXTUALIZED — Half A SHIPPED at `.26`/`.27`; what remains is NOT what this band said** | ⛔ **The pin's stated justification was FALSE and is now disproved in code**: "bound to band E's substrate so the poll runtime is not built twice" — band E lives entirely in `ir.cyr` and only runs under `CYRIUS_IR` (5 of 7 forks never enable it), and `lib/async.cyr` is **not included by cycc at all**, so "built twice" had no referent. ⭐ **The real blocker was a lost-wakeup BUG, not a missing language feature**: `_async_wait_events` put the TASK POINTER in the epoll data slot so an fd held exactly ONE waiter, and `EPOLL_CTL_ADD`'s `-EEXIST` was UNCHECKED. Fixed lib-only. **Both stiva features are unblocked** — two waiters on one fd, and two waiters on one fd wanting OPPOSITE directions (the `exec -it` TTY shape) — verified on Linux, aarch64, Intel-Mac and arm64-Mac. **Remaining here = Half B only** (a compiler-level CPS transform), which on this evidence is **unjustified for the two filed features** and should be re-confirmed as wanted before any release is spent on it. ⚖️ Maintainer call. |
-> | **I** | `.37` | **Slot 9 — sum-type variant unboxing** | Defect reproduces **byte-identical at 6.5.27** (`per call = 16`) — the filed repro was re-run live. The `.15` unboxing attempt is **fully reverted**, no remnant. ✅ Pair-return substrate confirmed shipped at `.21` and **WIDER than the issue credits**. ⚠ The 9a prerequisite numbers confirmed exactly (**106 unannotated, 0 cyrius-owned**) — but note a naive `^fn ` scan UNDERCOUNTS badly, since yukti alone declares 321 `pub fn`. ⚖️ **Still scopable as ONE release, but ONLY after the maintainer picks a design** — escape analysis and scope-tied arena are both genuinely unbuilt, neither has any compiler substrate today. |
-> | **J** | `.38` | **Slot 11 — macOS-arm64 concurrency** · last in the minor | ⛔ **0 % DONE — and `.27`'s kqueue work did NOT shrink it.** Verified ORTHOGONAL: `lib/async_macos.cyr` has zero occurrences of `thread_create`/`thread_join`/`mutex_lock`; it is a single-threaded cooperative loop. The kqueue work is *prep-knowledge*, not deliverable progress. Both named halves unimplemented: every `bsdthread`/`__ulock` hit in `lib/` is a COMMENT. `lib/sync_macos.cyr` is still the 33-line 2-state `atomic_cas` **spinlock** (`while (atomic_cas(m,0,1) == 0) { }`, no backoff, no kernel wait). ⛔ **The stated ACCEPTANCE CRITERION is already green and no longer discriminates** — re-derive it: the real un-guard list is **SEVEN** macOS guards across four crossos tests, not four, and one of them (`sync_mutex_contended.tcyr:71`) is a **TAUTOLOGY** (`assert_eq(_cm_counter, _cm_counter, ...)`). ⚠ `thread_detach.tcyr:133`'s guard is STALE and removable TODAY with no band-J work. ⚠ Inherits the ecb caveat: unsigned arm64 binaries are SIGKILLed by AMFI, which reads exactly like a miscompile. |
+> | **I** | ⚖️ **NO PIN — blocked on a maintainer design call** | **Slot 9 — sum-type variant unboxing** | Defect reproduces **byte-identical at 6.5.27** (`per call = 16`) — the filed repro was re-run live. The `.15` unboxing attempt is **fully reverted**, no remnant. ✅ Pair-return substrate confirmed shipped at `.21` and **WIDER than the issue credits**. ⚠ The 9a prerequisite numbers confirmed exactly (**106 unannotated, 0 cyrius-owned**) — but note a naive `^fn ` scan UNDERCOUNTS badly, since yukti alone declares 321 `pub fn`. ⚖️ **Still scopable as ONE release, but ONLY after the maintainer picks a design** — escape analysis and scope-tied arena are both genuinely unbuilt, neither has any compiler substrate today. |
+> | **J** | `.39`+ *(was `.38`)* | **Slot 11 — macOS-arm64 concurrency** · last in the minor | ⛔ **0 % DONE — and `.27`'s kqueue work did NOT shrink it.** Verified ORTHOGONAL: `lib/async_macos.cyr` has zero occurrences of `thread_create`/`thread_join`/`mutex_lock`; it is a single-threaded cooperative loop. The kqueue work is *prep-knowledge*, not deliverable progress. Both named halves unimplemented: every `bsdthread`/`__ulock` hit in `lib/` is a COMMENT. `lib/sync_macos.cyr` is still the 33-line 2-state `atomic_cas` **spinlock** (`while (atomic_cas(m,0,1) == 0) { }`, no backoff, no kernel wait). ⛔ **The stated ACCEPTANCE CRITERION is already green and no longer discriminates** — re-derive it: the real un-guard list is **SEVEN** macOS guards across four crossos tests, not four, and one of them (`sync_mutex_contended.tcyr:71`) is a **TAUTOLOGY** (`assert_eq(_cm_counter, _cm_counter, ...)`). ⚠ `thread_detach.tcyr:133`'s guard is STALE and removable TODAY with no band-J work. ⚠ Inherits the ecb caveat: unsigned arm64 binaries are SIGKILLed by AMFI, which reads exactly like a miscompile. |
 > | **K** | `.39`+ | **Closeout band** | Per cycle-discipline.md's runnable checklist; record the run in the ledger. |
 >
 > **▣ Reactive capacity: INTERLEAVED, not slotted.** At the measured rate a `.NN` of repair
@@ -727,7 +804,7 @@ ran 86 releases and 6.5.x is expected in the same class.
 | **7** | **`.29`–`.33`** *(was .26–.30)* | **▣ W3 — reactive window #3** (5) | The burst-risk window. See the window block below. | (reserve; `sock_accept`#57 VFS-fd bridge is the named candidate) |
 | **8** | **`.34`–`.35`** *(was .31–.32)* | **Stackless coroutines / mid-body suspend-resume across `await`** (2) | CPS transform + poll-runtime rework + force-once memoization as bites. Folds in the async **single-waiter-per-fd multiplex** (the same `_async_wait_events` rewrite) and the shipped async arc's "gap 6". Acceptance = stiva's `exec -it` TTY relay + a true multiplexed streaming server. | `2026-07-25-stiva-stackless-coroutines-interactive-exec` — **stays OPEN as the acceptance record until this slot ships; do not archive it in a rot sweep** |
 | **9** | **`.36`–`.37`** ⚖️ **BLOCKED — maintainer design decision** | **Sum-type variant unboxing** (2) — *retitle at pin time* | Filed as "`sock_send` allocates"; it is the compiler's variant **lowering**. ⛔ **THIS SLOT'S COMMITTED DESIGN WAS IMPLEMENTED AT v6.5.15 AND REVERTED — the roadmap had no record of it until 2026-08-11.** ~~Fix option 1 only: unbox the scalar case (tag + i64 payload in a register pair, no allocation).~~ Per `CHANGELOG.md` [6.5.15]: it *"passed **every** gate (`delta=0`, check.sh 165/0, self-host, seed-derive, 264/264), then refuted by an adversarial verifier and reverted. A per-call-site global box made Results from one site share a slot, so a retaining loop reported **a failed file open as success**. Both storage relocations are now disproven — frame slot too short, static too shared — which settles that the fix needs escape analysis or a scope-tied arena, not relocation."* ⚖️ **The surviving designs — escape analysis, or a scope-tied arena with reclaim — are a different SIZE CLASS from "unbox into a register pair", so this slot cannot be scoped until the maintainer chooses.** ⚠ The issue's own later "9b: a hidden retptr into the CALLER's frame" is the same relocation the revert disproved — superseded, not a third option. ⚠ The **9a prerequisite is entirely upstream**: every unannotated `Ok`/`Err` producer in `lib/` is in a **folded** module (sigil, yukti, vani, mabda, bayan), **zero** in cyrius-owned files — a five-repo coordinated fix-at-source, not a cyrius patch. **Full ecosystem ABI cross-walk at arc-open, one coordinated filing, not drip.** | `2026-07-28-sock-send-result-allocates-per-call` |
-| **10** | **`.38`–`.41`** *(was .35–.38)* | **▣ W4 — reactive window #4** (4) | Feeds the closeout — a drained queue going in, so the closeout's re-triage doesn't displace releases. | (reserve) |
+| **10** | **`.39`–`.42`** *(was `.38`–`.41`, was `.35`–`.38`)* | **▣ W4 — reactive window #4** (4) | Feeds the closeout — a drained queue going in, so the closeout's re-triage doesn't displace releases. | (reserve) |
 | **11** | **`.42`** *(was .39)* | **macOS-arm64 concurrency** (1) — last in the minor | ⛔ **PREMISE HALF-FALSE — corrected 2026-08-11.** This row's supporting text asserted *"No `lib/thread_macos.cyr`"*; **the file exists** (8,614 B, added v6.5.11) as a documented single-threaded **SERIAL fallback**, so the worker actually runs. The other half holds exactly as written: `grep -rn 'bsdthread\|__ulock' lib/` → **9 hits, ALL comments, zero call sites**, and `sync_macos.cyr:2` is still "A 2-state atomic_cas SPINLOCK". ⭐ **The last argument for pulling this slot earlier is also gone**: the linked issue claimed "most of the 23 full-corpus ecb failures are downstream of this", and a real full-corpus run on ecb at 6.5.19 returns **269/0**. Nothing is downstream; no consumer is blocked; it stays last. Remaining work, narrowed: `lib/thread_macos.cyr` driving `bsdthread_create` + `bsdthread_register` (mirroring the `thread_win.cyr` split) for `thread_create`/`thread_join`, **and** `__ulock_wait`/`__ulock_wake` replacing `sync_macos.cyr`'s spinlock for the mutex + channel wait/wake. Acceptance = un-guard the four VR-01 assertions and get the full worker/counter/channel checks green on **real ecb** — not a hello-world smoke. | `2026-07-03-macos-threading-workers-dont-run` |
 | **12** | **`.43`+** *(was .40+)* | **Closeout band** | Not a single release. `release-gate.sh` mechanical gates, then the judgment passes (heap map, dead code, refactor, code review, cleanup), then security re-scan + downstream check, then doc sync + backlog re-triage. Run it per [cycle-discipline.md](cycle-discipline.md)'s runnable checklist and **record the run in the ledger**. ⛔ **MOVED OUT 2026-08-11 → Slot 0b (`.21`).** ~~Carried in by name: reclaim the retired `output_buf` band.~~ It is paired there with the `input_buf` raise so the two heap-LAYOUT changes share **ONE** two-step bootstrap instead of paying for two. Retained here for context: `0x4D9D000 output_buf [16777216]` is documented in the heap map of all five `src/main*.cyr` forks but **nothing has written it since v6.4.52**, when output became a 1 GiB off-heap `alloc(1073741824)`. The 6.5.10 doc sweep corrected the *description* only and deliberately left the band RESERVED so the overlap audit stayed unchanged — reclaiming 16 MB of address space is a heap-LAYOUT change, which is closeout item 4's job ("any region no code writes to → candidate for removal") and carries the two-step bootstrap — **which is exactly why it now rides `.21` with the other layout change rather than waiting for closeout.** ⚠ `tok_types` used to live at this address and has since moved to `0x2D7C000`; check for stale references to the old address before reclaiming. | — |
 

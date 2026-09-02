@@ -2,8 +2,7 @@
 
 **Filed:** 2026-08-30 (by a samay consumer during its v1.0.4 concurrency audit —
 surfaced when threaded harnesses over `epoch_to_date` returned **month 13**)
-**Status:** PROPOSED — a **correctness bug in cyrius's own stdlib**, reproduced,
-not a design gap. In-tree prior art already does it the right way.
+**Status:** 🟠 **OPTION (a) SHIPPED at v6.5.37 — the MEMORY-ORDERING half remains, pinned to `.38`.** The prescribed fix (fill a local `t`, publish `_chrono_mdays = t` last) is live verbatim in `_chrono_init_mdays`, and the class was swept: chrono was the only site matching `if (_g != 0) { return }` + `_g = alloc(...)` + stores-after-publish across `lib/`, `cbt/` and `src/`. ⛔ **What this proposal asked for and did NOT get** is its own aarch64 note: *"on aarch64's weak model this wants a release fence before the publishing store, matching what `lib/alloc.cyr`'s `_alloc_lock_release` already does — worth deciding explicitly rather than inheriting x86 behaviour."* Verified 2026-09-01: `_alloc_lock_release` does `atomic_fence()` then `atomic_store` on BOTH arches; `_chrono_init_mdays` publishes with a plain store and `lib/chrono.cyr` does not have `atomic_fence` in scope. On a weak model a racing thread can observe the published pointer before the twelve `store64`s that fill it — the same month-13 result, one level down. ⚠ The fence needs `include "lib/atomic.cyr"` in a widely-included module, so the include cost is part of the decision, and the sweep found the same shape in `lib/tls.cyr:211` and `lib/regex.cyr:225` — fix the class. Pinned in `roadmap.md` under `.38`.
 **Placement:** `lib/chrono.cyr` only — a self-contained reordering inside one
 function; no API, no signature, no behaviour change for single-threaded callers.
 **Scope corrected 2026-08-30:** this originally also covered `lib/patra.cyr:453`.
