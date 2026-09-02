@@ -2933,7 +2933,7 @@ fn PP_PASS(S): i64 {
                             if (PP_ALREADY_INCLUDED(S, fname) == 0) {
                                 PP_MARK_INCLUDED(S, fname);
                                 op = PP_FMARK(S, out, op, fname, 1);
-                                var nr = READFILE(fname, out + op, 8388608 - op);
+                                var nr = READFILE(fname, out + op, 25165824 - op);
                                 if (nr < 0) {
                                     syscall(SYS_WRITE, 2, "error: cannot open include file: ", 33);
                                     var _ifl = 0;
@@ -3085,8 +3085,8 @@ fn PP_PASS(S): i64 {
     # Check preprocess output size. Buffer is 8MB at 0x459D000
     # (v5.11.33 — was 2MB at 0x44A000 pre-relocation; raised to absorb
     # sandhi-folded stdlib growth + headroom into v6.x).
-    if (op > 8388608) {
-        syscall(SYS_WRITE, 2, "error: expanded source exceeds 8MB (", 36);
+    if (op > 25165824) {
+        syscall(SYS_WRITE, 2, "error: expanded source exceeds 24MB (", 37);
         PRNUM(op);
         syscall(SYS_WRITE, 2, " bytes)\n", 8);
         syscall(SYS_EXIT, 1);
@@ -3193,9 +3193,9 @@ fn PP_IFDEF_PASS(S): i64 {
     var prot = 3;     # PROT_READ | PROT_WRITE
     # v5.11.33: tmp buffer sized to match the new 8 MB preprocess_out
     # cap (was 2 MB at 0x44A000 before the relocation).
-    var tmp = syscall(9, 0, 8388608, prot, 34, 0 - 1, 0);
+    var tmp = syscall(9, 0, 25165824, prot, 34, 0 - 1, 0);
     if (tmp < 0) {
-        tmp = syscall(9, 0, 8388608, prot, 0x1002, 0 - 1, 0);
+        tmp = syscall(9, 0, 25165824, prot, 0x1002, 0 - 1, 0);
     }
     # v4.8.4-alpha3: fixpoint loop so nested includes in files expanded
     # during this pass (e.g. registry.cyr → hashmap.cyr → fnptr.cyr)
@@ -3375,7 +3375,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                 if (PP_ALREADY_INCLUDED(S, fname) == 0) {
                                     PP_MARK_INCLUDED(S, fname);
                                     op = PP_FMARK(S, out, op, fname, 1);
-                                    var nr = READFILE(fname, out + op, 8388608 - op);
+                                    var nr = READFILE(fname, out + op, 25165824 - op);
                                     if (nr < 0) {
                                         syscall(SYS_WRITE, 2, "error: cannot open include file: ", 33);
                                         var _ifl = 0;
@@ -3448,8 +3448,8 @@ fn PP_IFDEF_PASS(S): i64 {
         # [deps].stdlib — the cap was sized pre-sandhi-fold and didn't
         # grow with the canonical service-boundary consumer shape.
         # See CHANGELOG [5.11.33].
-        if (op > 8388608) {
-            syscall(SYS_WRITE, 2, "error: expanded source exceeds 8MB (", 36);
+        if (op > 25165824) {
+            syscall(SYS_WRITE, 2, "error: expanded source exceeds 24MB (", 37);
             PRNUM(op);
             syscall(SYS_WRITE, 2, " bytes) in PP_IFDEF_PASS iter=", 30);
             PRNUM(iter);
@@ -3461,7 +3461,7 @@ fn PP_IFDEF_PASS(S): i64 {
     }
     # No copy-back. Output stays at S+0x459D000. LEX reads from there.
     # Free the temp buffer.
-    syscall(11, tmp, 8388608);
+    syscall(11, tmp, 25165824);
     return 0;
 }
 
@@ -3532,6 +3532,20 @@ fn PP_REF_PASS(S): i64 {
             op = op + 1; ip = ip + 1;
             if (_refc == 10) { bol = 1; } else { bol = 0; }
         }
+    }
+    # ⛔ v6.5.39 — BOUND THE COPY-BACK. This was `while (ci < op)` with NO cap anywhere in
+    # PP_REF_PASS: unlike its two sibling passes it never checked `op` against the arena size,
+    # so a `#ref` expansion larger than the buffer wrote past `preprocess_out` into whatever
+    # followed it, and then copied the same overrun into `_SRCB`. It mattered less while the
+    # cap was 8 MB and _SRCB was the 16 MB region directly above (the overflow landed in the
+    # buffer it was copying to anyway); with preprocess_out grown to 24 MB the region above it
+    # is `fn_local_names`, so the same overrun would corrupt the per-fn local tables instead.
+    # Raising the ceiling without this would have converted a contained bug into a live one.
+    if (op > 25165824) {
+        syscall(SYS_WRITE, 2, "error: #ref expansion exceeds 24MB (", 36);
+        PRNUM(op);
+        syscall(SYS_WRITE, 2, " bytes)\n", 8);
+        syscall(SYS_EXIT, 1);
     }
     if (found == 1) {
         var ci = 0;

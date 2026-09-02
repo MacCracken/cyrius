@@ -237,7 +237,12 @@ fn _fm_print_fid(S, v): i64 {
 # Store a token
 fn ADDTOK(S, typ, val): i64 {
     var tc = GTCNT(S);
-    if (tc >= 1048576) {
+    # v6.5.39: 1048576 -> 4194304. The token arrays were 8 MiB each, boxed in between
+    # fixup_tbl and preprocess_out; they are now 32 MiB each at the arena top. With the
+    # preprocess ceiling raised 8 -> 24 MB, the OLD token cap became the new binding wall at
+    # ~12 MB of realistic source (measured: 45 %-comment source tripped it at 12,582,940 B),
+    # so raising preprocess_out alone would have moved the ceiling by only ~30 %, not 3x.
+    if (tc >= 4194304) {
         # v5.8.46 (sit-surfaced): diagnostic prints actual `tc + 1`
         # so the next cap raise can be sized to an empirical M.
         # Cap was 262144 pre-v5.8.46; raised 4× to absorb sandhi-
@@ -246,15 +251,15 @@ fn ADDTOK(S, typ, val): i64 {
         # Tok arrays relocated v5.8.46 from the 0x4D9D000 (overlap
         # with output_buf) / 0xD4A000 / 0xF4A000 trio (each 2 MiB
         # at those addresses) to the post-TS-region high block at
-        # 0x2D7C000 / 0x357C000 / 0x3D7C000 (each 8 MiB), brk
+        # 0x8C00000 / 0xAC00000 / 0xCC00000 (each 8 MiB), brk
         # extended to S + 0x457C000 in every main_*.cyr.
         syscall(SYS_WRITE, 2, "error: token limit exceeded: needed ", 36);
         PRNUM(tc + 1);
-        syscall(SYS_WRITE, 2, ", cap is 1048576\n", 17);
+        syscall(SYS_WRITE, 2, ", cap is 4194304\n", 17);
         syscall(SYS_EXIT, 1);
     }
-    S64(S + 0x2D7C000 + tc * 8, typ);
-    S64(S + 0x357C000 + tc * 8, val);
+    S64(S + 0x8C00000 + tc * 8, typ);
+    S64(S + 0xAC00000 + tc * 8, val);
     # v6.4.60 (DX): pack the token-start byte offset into the high 32 bits, line in
     # the low 32. GTLINE masks it off (line-only readers unaffected); GTOFF reads it.
     STLINE(S, tc, (_tok_start << 32) | GCLINE(S));
@@ -952,23 +957,23 @@ fn LEXKW_EXT(kw, klen, S, ws): i64 {
     }
     if (klen == 9) {
         if (kw == 0x7271735F76343666) {
-            if (load8(S + 0x60000 + ws + 8) == 116) { return 94; }
+            if (load8(S + 0xEC00000 + ws + 8) == 116) { return 94; }
         }
         # v5.10.17: f64v_axpy (y[i] += alpha * x[i])
         if (kw == 0x7078615F76343666) {
-            if (load8(S + 0x60000 + ws + 8) == 121) { return 130; }
+            if (load8(S + 0xEC00000 + ws + 8) == 121) { return 130; }
         }
     }
     if (klen == 10) {
         if (kw == 0x616D665F76343666) {
-            if (load8(S + 0x60000 + ws + 8) == 100) {
-                if (load8(S + 0x60000 + ws + 9) == 100) { return 96; }
+            if (load8(S + 0xEC00000 + ws + 8) == 100) {
+                if (load8(S + 0xEC00000 + ws + 9) == 100) { return 96; }
             }
         }
         # v5.10.17: f64v_scale (dst[i] = a[i] * scalar)
         if (kw == 0x6163735F76343666) {
-            if (load8(S + 0x60000 + ws + 8) == 108) {
-                if (load8(S + 0x60000 + ws + 9) == 101) { return 129; }
+            if (load8(S + 0xEC00000 + ws + 8) == 108) {
+                if (load8(S + 0xEC00000 + ws + 9) == 101) { return 129; }
             }
         }
     }
@@ -994,10 +999,10 @@ fn LEXKW_EXT(kw, klen, S, ws): i64 {
     # 13-char f64v256_ families. Same prefix, 4-byte tail "sqrt", every byte checked.
     if (klen == 12) {
         if (kw == 0x5F36353276343666) {
-            if (load8(S + 0x60000 + ws + 8) == 115) {          # 's'
-                if (load8(S + 0x60000 + ws + 9) == 113) {      # 'q'
-                    if (load8(S + 0x60000 + ws + 10) == 114) { # 'r'
-                        if (load8(S + 0x60000 + ws + 11) == 116) { return 162; }   # 't'
+            if (load8(S + 0xEC00000 + ws + 8) == 115) {          # 's'
+                if (load8(S + 0xEC00000 + ws + 9) == 113) {      # 'q'
+                    if (load8(S + 0xEC00000 + ws + 10) == 114) { # 'r'
+                        if (load8(S + 0xEC00000 + ws + 11) == 116) { return 162; }   # 't'
                     }
                 }
             }
@@ -1012,20 +1017,20 @@ fn LEXKW_EXT(kw, klen, S, ws): i64 {
     # Same reasoning, same trap, as the 11-char family; see its comment.
     if (klen == 13) {
         if (kw == 0x5F36353276343666) {
-            if (load8(S + 0x60000 + ws + 8) == 102) {          # 'f'
-                if (load8(S + 0x60000 + ws + 9) == 109) {      # 'm'
-                    if (load8(S + 0x60000 + ws + 10) == 97) {  # 'a'
-                        if (load8(S + 0x60000 + ws + 11) == 100) {      # 'd'
-                            if (load8(S + 0x60000 + ws + 12) == 100) { return 158; }   # 'd'
+            if (load8(S + 0xEC00000 + ws + 8) == 102) {          # 'f'
+                if (load8(S + 0xEC00000 + ws + 9) == 109) {      # 'm'
+                    if (load8(S + 0xEC00000 + ws + 10) == 97) {  # 'a'
+                        if (load8(S + 0xEC00000 + ws + 11) == 100) {      # 'd'
+                            if (load8(S + 0xEC00000 + ws + 12) == 100) { return 158; }   # 'd'
                         }
                     }
                 }
             }
-            if (load8(S + 0x60000 + ws + 8) == 115) {          # 's'  f64v256_scale -> 160
-                if (load8(S + 0x60000 + ws + 9) == 99) {       # 'c'
-                    if (load8(S + 0x60000 + ws + 10) == 97) {  # 'a'
-                        if (load8(S + 0x60000 + ws + 11) == 108) {      # 'l'
-                            if (load8(S + 0x60000 + ws + 12) == 101) { return 160; }   # 'e'
+            if (load8(S + 0xEC00000 + ws + 8) == 115) {          # 's'  f64v256_scale -> 160
+                if (load8(S + 0xEC00000 + ws + 9) == 99) {       # 'c'
+                    if (load8(S + 0xEC00000 + ws + 10) == 97) {  # 'a'
+                        if (load8(S + 0xEC00000 + ws + 11) == 108) {      # 'l'
+                            if (load8(S + 0xEC00000 + ws + 12) == 101) { return 160; }   # 'e'
                         }
                     }
                 }
@@ -1035,34 +1040,34 @@ fn LEXKW_EXT(kw, klen, S, ws): i64 {
     if (klen == 11) {
         if (kw == 0x5F36353276343666) {
             # v6.5.38 — the two 3-char tails the .24 family did not claim.
-            if (load8(S + 0x60000 + ws + 8) == 100) {          # 'd'  f64v256_dot -> 159
-                if (load8(S + 0x60000 + ws + 9) == 111) {      # 'o'
-                    if (load8(S + 0x60000 + ws + 10) == 116) { return 159; }   # 't'
+            if (load8(S + 0xEC00000 + ws + 8) == 100) {          # 'd'  f64v256_dot -> 159
+                if (load8(S + 0xEC00000 + ws + 9) == 111) {      # 'o'
+                    if (load8(S + 0xEC00000 + ws + 10) == 116) { return 159; }   # 't'
                 }
             }
-            if (load8(S + 0x60000 + ws + 8) == 97) {           # 'a'  f64v256_abs -> 161
-                if (load8(S + 0x60000 + ws + 9) == 98) {       # 'b'
-                    if (load8(S + 0x60000 + ws + 10) == 115) { return 161; }   # 's'
+            if (load8(S + 0xEC00000 + ws + 8) == 97) {           # 'a'  f64v256_abs -> 161
+                if (load8(S + 0xEC00000 + ws + 9) == 98) {       # 'b'
+                    if (load8(S + 0xEC00000 + ws + 10) == 115) { return 161; }   # 's'
                 }
             }
-            if (load8(S + 0x60000 + ws + 8) == 97) {
-                if (load8(S + 0x60000 + ws + 9) == 100) {
-                    if (load8(S + 0x60000 + ws + 10) == 100) { return 154; }
+            if (load8(S + 0xEC00000 + ws + 8) == 97) {
+                if (load8(S + 0xEC00000 + ws + 9) == 100) {
+                    if (load8(S + 0xEC00000 + ws + 10) == 100) { return 154; }
                 }
             }
-            if (load8(S + 0x60000 + ws + 8) == 115) {
-                if (load8(S + 0x60000 + ws + 9) == 117) {
-                    if (load8(S + 0x60000 + ws + 10) == 98) { return 155; }
+            if (load8(S + 0xEC00000 + ws + 8) == 115) {
+                if (load8(S + 0xEC00000 + ws + 9) == 117) {
+                    if (load8(S + 0xEC00000 + ws + 10) == 98) { return 155; }
                 }
             }
-            if (load8(S + 0x60000 + ws + 8) == 109) {
-                if (load8(S + 0x60000 + ws + 9) == 117) {
-                    if (load8(S + 0x60000 + ws + 10) == 108) { return 156; }
+            if (load8(S + 0xEC00000 + ws + 8) == 109) {
+                if (load8(S + 0xEC00000 + ws + 9) == 117) {
+                    if (load8(S + 0xEC00000 + ws + 10) == 108) { return 156; }
                 }
             }
-            if (load8(S + 0x60000 + ws + 8) == 100) {
-                if (load8(S + 0x60000 + ws + 9) == 105) {
-                    if (load8(S + 0x60000 + ws + 10) == 118) { return 157; }
+            if (load8(S + 0xEC00000 + ws + 8) == 100) {
+                if (load8(S + 0xEC00000 + ws + 9) == 105) {
+                    if (load8(S + 0xEC00000 + ws + 10) == 118) { return 157; }
                 }
             }
         }
@@ -1078,10 +1083,15 @@ fn LEXKW_EXT(kw, klen, S, ws): i64 {
 # count for the pending write. See CHANGELOG [5.11.18].
 fn NPOS_GUARD(S, need): i64 {
     var np = GNPOS(S);
-    if (np + need >= 524016) {
+    # v6.5.40: 512 KB -> 8 MB. The pool was boxed in at 0x60000 by fn_name_hash @ 0x110000
+    # ("pool end must stay <= 0x100000"), so it could not grow in place; it is now at the arena
+    # top. Measured on real consumers, the identifier pool was the THIRD wall behind the 8 MB
+    # preprocess ceiling: thoth's lib+src alone needs ~798 KB of pool, agnostic ~797 KB — both
+    # already past the old 512 KB cap for a whole-tree build.
+    if (np + need >= 8388336) {
         syscall(SYS_WRITE, 2, "error: identifier buffer full (", 31);
         PRNUM(np);
-        syscall(SYS_WRITE, 2, "/524288 bytes) — reduce included modules or split into separate units\n", 72);
+        syscall(SYS_WRITE, 2, "/8388608 bytes) — reduce included modules or split into separate units\n", 73);
         syscall(SYS_EXIT, 1);
     }
     return 0;
@@ -1102,10 +1112,10 @@ fn NPOS_GUARD(S, need): i64 {
 # diagnostic (not a clean error) — do NOT bump this past 655088 without
 # relocating the pool base. See issue 2026-07-23-identifier-pool-256kb-cap.
 fn LEXID(S, p, npos): i64 {
-    if (npos >= 524016) {
+    if (npos >= 8388336) {
         syscall(SYS_WRITE, 2, "error: identifier buffer full (", 31);
         PRNUM(npos);
-        syscall(SYS_WRITE, 2, "/524288 bytes) — reduce included modules or split into separate units\n", 72);
+        syscall(SYS_WRITE, 2, "/8388608 bytes) — reduce included modules or split into separate units\n", 73);
         syscall(SYS_EXIT, 1);
     }
     var bl = GBL(S);
@@ -1117,26 +1127,26 @@ fn LEXID(S, p, npos): i64 {
         if (go == 1) {
             c = load8(S + 0x459D000 + p);
             if (ISALNUM(c) == 1) {
-                store8(S + 0x60000 + npos, c);
+                store8(S + 0xEC00000 + npos, c);
                 npos = npos + 1;
                 p = p + 1;
             } else { go = 0; }
         }
     }
-    store8(S + 0x60000 + npos, 0);
+    store8(S + 0xEC00000 + npos, 0);
     # Dedup via length-bucketed chain (v5.10.40). Replaces the prior
     # O(N²) walk-from-zero scan (lex was 58% of compile time per v5.10.0
     # profile, dedup_cmps the inner hot spot). Layout — at offsets past
     # the v5.10.39 brk extension (heap-map in main.cyr §LEXID_DEDUP):
     #   0x457C000  lexid_count   [8]            entries in use
     #   0x457C100  lexid_heads   [2048]         per-length head idx+1 (256 × 8B; 0 = empty)
-    #   0x7300000  lexid_entries [524288]       65536 × 8B; low32 = canonical offset
+    #   0xF400000  lexid_entries [524288]       65536 × 8B; low32 = canonical offset
     #                                            into tok_names @ 0x60000, high32 =
     #                                            next-entry idx+1 (0 = chain tail).
     #   CHANGELOG [6.4.21]: cap 16384 → 65536 (stiva + multi-bundle consumers).
-    #   entries RELOCATED 0x457C900 → 0x7300000 (a fresh arena-top region above the
+    #   entries RELOCATED 0x457C900 → 0xF400000 (a fresh arena-top region above the
     #   x86 IR arena; the old 0x457C900 slot was boxed in by preprocess_out). All 7
-    #   forks' arenas now extend to 0x7400000 (lazy mmap → no physical cost on the
+    #   forks' arenas now extend to 0xF600000 (lazy mmap → no physical cost on the
     #   aarch64/macho/cx forks that don't use the range below it). count/heads stay put.
     # First-occurrence wins (canonical offset preserved across calls →
     # byte-identical) because we only insert when no match found, and
@@ -1149,12 +1159,12 @@ fn LEXID(S, p, npos): i64 {
     var hi = L64(S + 0x457C100 + bucket * 8);
     while (hi > 0) {
         var idx = hi - 1;
-        var ent = L64(S + 0x7300000 + idx * 8);
+        var ent = L64(S + 0xF400000 + idx * 8);
         var eoff = ent & 0xFFFFFFFF;
         var dc = 0;
         c = 1;
         while (dc < klen) {
-            if (load8(S + 0x60000 + eoff + dc) != load8(S + 0x60000 + bl + dc)) { c = 0; break; }
+            if (load8(S + 0xEC00000 + eoff + dc) != load8(S + 0xEC00000 + bl + dc)) { c = 0; break; }
             dc = dc + 1;
         }
         if (c == 1) { ws = eoff; break; }
@@ -1162,19 +1172,24 @@ fn LEXID(S, p, npos): i64 {
     }
     if (ws == bl) {
         var ec = L64(S + 0x457C000);
-        if (ec >= 65536) {
-            syscall(SYS_WRITE, 2, "error: identifier dedup table full (65536 entries) - raise LEXID cap in lex.cyr\n", 80);
+        # v6.5.40: 65536 -> 262144. This was the FIFTH cap behind the 8 MB preprocess
+        # ceiling, reached at ~23 MB of realistic source. Real consumers already sit close:
+        # thoth has 40,641 unique identifiers, agnostic 34,659. lexid_entries relocated
+        # 0x7300000 -> 0xF400000 (arena top) and grown 512 KB -> 2 MiB.
+        # ⚠ The 65536 at lex.cyr:306/:318 is a UTF-8 codepoint WIDTH test, not this cap.
+        if (ec >= 262144) {
+            syscall(SYS_WRITE, 2, "error: identifier dedup table full (262144 entries) - raise LEXID cap in lex.cyr\n", 81);
             syscall(SYS_EXIT, 1);
         }
         var prev_head = L64(S + 0x457C100 + bucket * 8);
-        S64(S + 0x7300000 + ec * 8, bl | (prev_head << 32));
+        S64(S + 0xF400000 + ec * 8, bl | (prev_head << 32));
         S64(S + 0x457C100 + bucket * 8, ec + 1);
         S64(S + 0x457C000, ec + 1);
     }
     if (ws == bl) { npos = npos + 1; SNPOS(S, npos); }
     else { SNPOS(S, bl); }
     # Check keywords
-    var kw = L64(S + 0x60000 + ws);
+    var kw = L64(S + 0xEC00000 + ws);
     # Extended keywords (ret2, rethi, SIMD) in separate function
     if (klen >= 4) {
         var ext_tok = LEXKW_EXT(kw, klen, S, ws);
@@ -1315,46 +1330,46 @@ fn LEXID(S, p, npos): i64 {
     }
     if (klen == 9) {
         if (kw == 0x6F6F6C665F343666) {
-            if (load8(S + 0x60000 + ws + 8) == 114) { ADDTOK(S, 81, 0); return p; }
+            if (load8(S + 0xEC00000 + ws + 8) == 114) { ADDTOK(S, 81, 0); return p; }
         }
         if (kw == 0x6E756F725F343666) {
-            if (load8(S + 0x60000 + ws + 8) == 100) { ADDTOK(S, 92, 0); return p; }
+            if (load8(S + 0xEC00000 + ws + 8) == 100) { ADDTOK(S, 92, 0); return p; }
         }
         if (kw == 8246499246534309478) {
-            if (load8(S + 0x60000 + ws + 8) == 116) { ADDTOK(S, 94, 0); return p; }
+            if (load8(S + 0xEC00000 + ws + 8) == 116) { ADDTOK(S, 94, 0); return p; }
         }
         # v6.4.8 (SIMD Phase 4 R1) — f32v8_add/sub/mul (packed f32 on 256-bit AVX2:
         # vaddps/vsubps/vmulps ymm). 9-char names: 8-byte packed kw + 9th byte 'd'/'b'/'l'.
         # Tokens 147-149 (146=iv_dp8 is the prior max).
         if (kw == 0x64615F3876323366) {
-            if (load8(S + 0x60000 + ws + 8) == 100) { ADDTOK(S, 147, 0); return p; }   # f32v8_add
+            if (load8(S + 0xEC00000 + ws + 8) == 100) { ADDTOK(S, 147, 0); return p; }   # f32v8_add
         }
         if (kw == 0x75735F3876323366) {
-            if (load8(S + 0x60000 + ws + 8) == 98) { ADDTOK(S, 148, 0); return p; }    # f32v8_sub
+            if (load8(S + 0xEC00000 + ws + 8) == 98) { ADDTOK(S, 148, 0); return p; }    # f32v8_sub
         }
         if (kw == 0x756D5F3876323366) {
-            if (load8(S + 0x60000 + ws + 8) == 108) { ADDTOK(S, 149, 0); return p; }   # f32v8_mul
+            if (load8(S + 0xEC00000 + ws + 8) == 108) { ADDTOK(S, 149, 0); return p; }   # f32v8_mul
         }
         # v6.4.9 (SIMD Phase 4 R2) — f32v8_fma (vfmadd231ps ymm) + f32v8_dot (8-lane
         # AVX2 dot). 9-char names → klen==9. Tokens 150-151 (149=f32v8_mul is the R1 max).
         if (kw == 0x6D665F3876323366) {
-            if (load8(S + 0x60000 + ws + 8) == 97) { ADDTOK(S, 150, 0); return p; }    # f32v8_fma
+            if (load8(S + 0xEC00000 + ws + 8) == 97) { ADDTOK(S, 150, 0); return p; }    # f32v8_fma
         }
         if (kw == 0x6F645F3876323366) {
-            if (load8(S + 0x60000 + ws + 8) == 116) { ADDTOK(S, 151, 0); return p; }   # f32v8_dot
+            if (load8(S + 0xEC00000 + ws + 8) == 116) { ADDTOK(S, 151, 0); return p; }   # f32v8_dot
         }
     }
     if (klen == 10) {
         if (kw == 7020379954331530854) {
-            if (load8(S + 0x60000 + ws + 8) == 100) {
-                if (load8(S + 0x60000 + ws + 9) == 100) { ADDTOK(S, 96, 0); return p; }
+            if (load8(S + 0xEC00000 + ws + 8) == 100) {
+                if (load8(S + 0xEC00000 + ws + 9) == 100) { ADDTOK(S, 96, 0); return p; }
             }
         }
         # v6.4.5 (SIMD Phase 2) — f32v_fmadd(dst,a,b,c,n). "f32v_fma" packed +
         # bytes 8,9 == 'd','d'. Token 141 (140=f32v_mul is the last Phase-1 tok).
         if (kw == 0x616D665F76323366) {
-            if (load8(S + 0x60000 + ws + 8) == 100) {
-                if (load8(S + 0x60000 + ws + 9) == 100) { ADDTOK(S, 141, 0); return p; }
+            if (load8(S + 0xEC00000 + ws + 8) == 100) {
+                if (load8(S + 0xEC00000 + ws + 9) == 100) { ADDTOK(S, 141, 0); return p; }
             }
         }
     }

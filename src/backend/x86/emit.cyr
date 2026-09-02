@@ -3981,7 +3981,7 @@ fn EFLSTORE(S, idx): i64 {
 
 fn ASM_MNEMONIC(S): i64 {
     var noff = PEEKV(S);
-    var mnem = L64(S + 0x60000 + noff);
+    var mnem = L64(S + 0xEC00000 + noff);
     STI(S, GTI(S) + 1);
     if (mnem & 0xFFFFFF == 0x696C63) { EB(S, 0xFA); }                          # cli
     elif (mnem & 0xFFFFFF == 0x697473) { EB(S, 0xFB); }                        # sti
@@ -4034,11 +4034,11 @@ fn ASM_CR_MODRM(packed): i64 {
 }
 
 fn ASM_MOV_CR(S): i64 {
-    var o1 = L64(S + 0x60000 + PEEKV(S));
+    var o1 = L64(S + 0xEC00000 + PEEKV(S));
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 31) { ERR(S); }
     STI(S, GTI(S) + 1);
-    var o2 = L64(S + 0x60000 + PEEKV(S));
+    var o2 = L64(S + 0xEC00000 + PEEKV(S));
     STI(S, GTI(S) + 1);
     if (o1 & 0xFFFF == 0x7263) { EB(S, 0x0F); EB(S, 0x22); EB(S, ASM_CR_MODRM(o1)); }
     elif (o2 & 0xFFFF == 0x7263) { EB(S, 0x0F); EB(S, 0x20); EB(S, ASM_CR_MODRM(o2)); }
@@ -4083,12 +4083,12 @@ fn _asm_x86_reg(n): i64 {
 # the mnemonic's name offset — verify the full "param_load" (first-8 matched in the
 # dispatch; check the trailing "ad"). See issue 2026-05-21-asm-block-global-symbol-pseudo.
 fn ASM_PARAM_LOAD(S, noff): i64 {
-    if (load8(S + 0x60000 + noff + 8) != 97) { ERR(S); }    # 'a'
-    if (load8(S + 0x60000 + noff + 9) != 100) { ERR(S); }   # 'd'
+    if (load8(S + 0xEC00000 + noff + 8) != 97) { ERR(S); }    # 'a'
+    if (load8(S + 0xEC00000 + noff + 9) != 100) { ERR(S); }   # 'd'
     if (PEEKT(S) != 10) { ERR(S); }      # (
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 2) { ERR(S); }       # register identifier
-    var reg = _asm_x86_reg(L64(S + 0x60000 + PEEKV(S)));
+    var reg = _asm_x86_reg(L64(S + 0xEC00000 + PEEKV(S)));
     if (reg < 0) { ERR(S); }
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 31) { ERR(S); }      # ,

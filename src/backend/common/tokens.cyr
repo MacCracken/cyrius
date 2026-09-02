@@ -5,11 +5,11 @@
 # src/backend/x86/emit.cyr, src/backend/aarch64/emit.cyr, AND
 # src/backend/cx/emit.cyr. The bodies are pure heap-offset reads
 # with no arch-specific encoding, so they belong in common/.
-# Region offsets (0x2D7C000 / 0x357C000) come from the v5.8.46 +
+# Region offsets (0x8C00000 / 0xAC00000) come from the v5.8.46 +
 # v5.11.68 heap-map layout — shared by all three backends.
 
-fn TOKTYP(S, i): i64 { return L64(S + 0x2D7C000 + i * 8); }
-fn TOKVAL(S, i): i64 { return L64(S + 0x357C000 + i * 8); }
+fn TOKTYP(S, i): i64 { return L64(S + 0x8C00000 + i * 8); }
+fn TOKVAL(S, i): i64 { return L64(S + 0xAC00000 + i * 8); }
 # v6.4.62: anti-hang watchdog (inert until the first error).
 # v6.4.78: past-end EOF clamp, placed INSIDE the existing `_had_error == 1` guard so
 # it costs NOTHING on the hot path — PEEKT is the most-called fn in the parser, and

@@ -13,9 +13,12 @@
 # Last full audit: v3.6.10. Verified by tests/gates/memory/heapmap.sh (47 regions, 0 warnings).
 #
 # --- Low heap: I/O + identifiers ---
-#   (0x00000-0x60000 is FREE since v6.5.22 — input_buf relocated to 0x4D9D000.
+#   (0x00000-0x60000 is FREE since v6.5.22 — input_buf relocated to 0x7400000 (v6.5.39; was 0x4D9D000).
 #    Deliberately NOT a map entry: it is no longer a region.)
-#   0x60000  tok_names     [524288]      512KB packed identifier strings (nested in input_buf — rebuilt by LEX; v5.11.18 128KB→256KB, v6.4.76 256KB→512KB; grows 0x60000-0xE0000)
+#   0xEC00000 tok_names    [8388608]     8MB packed identifier strings — rebuilt by LEX.
+#                                        v6.5.40: 512KB→8MB, RELOCATED 0x60000→0xEC00000 (arena
+#                                        top). Could not grow in place — fn_name_hash sits at
+#                                        0x110000. 0x60000-0x100000 (640KB) is now FREE.
 #
 # --- Struct tables (v3.6.6: expanded to 64 structs) ---
 #   0x18E630  struct_names  [2048]        256 struct name offsets (cap 256, v5.7.17)
@@ -122,10 +125,18 @@
 #                                        cap raised 2 MB → 8 MB. The 2 MB hole was
 #                                        absorbed by v5.11.68's full heap-map reorg.)
 #   0x41A000 codebuf       [3145728]     3MB generated machine code (v5.7.27)
-#   0x4D9D000 input_buf     [16777216]   16MB raw stdin + preprocessor WORKING buffer.
-#                                        v6.5.22: RELOCATED here from 0x00000, where a 1MB cap
-#                                        refused sigil (1,084,265 B), mabda (1,259,999 B) and
-#                                        drishti (1,403,806 B). It could not grow in place —
+#   0x7400000 input_buf     [25165824]   24MB raw stdin + preprocessor WORKING buffer.
+#                                        v6.5.39: RELOCATED here (arena top) from 0x4D9D000, and
+#                                        grown 16 -> 24 MB. It sat directly ON TOP of
+#                                        preprocess_out, which is exactly what capped the
+#                                        preprocessor at 8 MB — a HARD build failure with no flag,
+#                                        whose only consumer-side answer was to hand-vendor a
+#                                        subset of their deps. Moving THIS buffer (one named
+#                                        constant, `_SRCB`) rather than preprocess_out (a bare
+#                                        literal at ~90 sites) is why the change is small.
+#                                        ⚠ Its cap must stay == the preprocess_out cap:
+#                                        PP_REF_PASS copies expanded output back into here.
+#                                        Passes write to preprocess_out and copy BACK here.
 #                                        0x100000-0x18F830 is occupied (fn_name_hash 0x110000 ..
 #                                        var_types 0x13A000). This is the RETIRED output_buf band
 #                                        (dead since v6.4.52), contiguous above preprocess_out and
@@ -156,7 +167,10 @@
 #   0x457C900  lexid_entries [131072]
 #   (Full doc in src/main.cyr §LEXID_DEDUP)
 #
-#   0x459D000 preprocess_out [8388608]   8 MB expanded source buffer.
+#   0x459D000 preprocess_out [25165824]  24 MB expanded source buffer.
+#                                        v6.5.39: 8 -> 24 MB, taking the band input_buf
+#                                        vacated. Ends exactly at fn_local_names (0x5D9D000),
+#                                        which is the ceiling for this placement.
 #                                        Relocated here from 0x44A000 at v5.11.33
 #                                        + cap raised 2 MB → 8 MB. See
 #                                        CHANGELOG [5.11.33].
@@ -362,7 +376,7 @@ if (_vw != 0) {
 # v5.11.68 full heap-map reorg shrunk MMAP 0x5800000 → 0x4F00000 → 0x5F00000 @ v6.1.27
 # (-9.06 MB) tracking the brk reduction. PE EMMAP routes via
 # VirtualAlloc with prot/flags ignored.
-var S = syscall(SYS_MMAP, 0, 0x7400000, 3, 0x22, 0 - 1, 0);   # v6.3.28: +IR arrays @ arena top (0x5E9D000..0x729D000); v6.4.21: +512 KB lexid_entries @ 0x7300000 (LEXID cap 16384→65536)
+var S = syscall(SYS_MMAP, 0, 0xF600000, 3, 0x22, 0 - 1, 0);   # v6.3.28: +IR arrays @ arena top (0x5E9D000..0x729D000); v6.4.21: +512 KB lexid_entries @ 0xF400000 (LEXID cap 16384→65536)
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
 _HEAP_INIT_SCRATCH(S);
@@ -396,8 +410,8 @@ _fnt_codeend = S + 0xA2A000;
 _fnt_structmask = S + 0xA3A000;
 _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
-_fnt_hash_mask = 8191;
-_fnt_cap = 8192;
+_fnt_hash_mask = 4095;   # v6.5.40: hash slots are 4 B now, so the fixed 16 KB regions hold 4096
+_fnt_cap = 4096;        # v6.5.40: was 8192 at 2 B/slot; _fnt_grow doubles from here
 # Growable codebuf (Phase 0 v6.2.0; 8 MiB base + 8 MiB steps @ v6.4.49): base is
 # an off-heap 8 MiB alloc (cap 8388608); EB grows +8 MiB off-heap when cp nears
 # the cap, 64 MiB ceiling (util.cyr _codebuf_grow). Was a fixed 3 MiB in-heap
@@ -434,7 +448,7 @@ while (done == 0) {
             var probe[1];
             var pn = syscall(SYS_READ, 0, &probe, 1);
             if (pn > 0) {
-                syscall(SYS_WRITE, 2, "error: input exceeds the 16MB source buffer
+                syscall(SYS_WRITE, 2, "error: input exceeds the 24MB source buffer
 ", 44);
                 syscall(SYS_EXIT, 1);
             }
@@ -571,17 +585,17 @@ while (scan == 1) {
                             S64(S + 0x18FFD0 + uc * 8, ufn);
                             # Append mangled name to tok_names (after lexing, NPOS is stable)
                             # v5.11.65 (CVE-05): bound by actual source lengths.
-                            var _ulen1 = 0; while (load8(S + 0x60000 + umod + _ulen1) != 0) { _ulen1 = _ulen1 + 1; }
-                            var _ulen2 = 0; while (load8(S + 0x60000 + ufn + _ulen2) != 0) { _ulen2 = _ulen2 + 1; }
+                            var _ulen1 = 0; while (load8(S + 0xEC00000 + umod + _ulen1) != 0) { _ulen1 = _ulen1 + 1; }
+                            var _ulen2 = 0; while (load8(S + 0xEC00000 + ufn + _ulen2) != 0) { _ulen2 = _ulen2 + 1; }
                             NPOS_GUARD(S, _ulen1 + 1 + _ulen2 + 1);
                             var apos = GNPOS(S);
                             var ri = 0;
-                            var rc = load8(S + 0x60000 + umod + ri);
-                            while (rc != 0) { store8(S + 0x60000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0x60000 + umod + ri); }
-                            store8(S + 0x60000 + apos, 95); apos = apos + 1;
-                            ri = 0; rc = load8(S + 0x60000 + ufn + ri);
-                            while (rc != 0) { store8(S + 0x60000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0x60000 + ufn + ri); }
-                            store8(S + 0x60000 + apos, 0); apos = apos + 1;
+                            var rc = load8(S + 0xEC00000 + umod + ri);
+                            while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + umod + ri); }
+                            store8(S + 0xEC00000 + apos, 95); apos = apos + 1;
+                            ri = 0; rc = load8(S + 0xEC00000 + ufn + ri);
+                            while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + ufn + ri); }
+                            store8(S + 0xEC00000 + apos, 0); apos = apos + 1;
                             var alias_noff = GNPOS(S);
                             SNPOS(S, apos);
                             S64(S + 0x1901D0 + uc * 8, alias_noff);
@@ -841,7 +855,7 @@ var wfc = GFNC(S);
 while (wfi < wfc) {
     if (L64(_fnt_offsets + wfi * 8) < 0) {
         syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-        PRSTR(S + 0x60000 + L64(_fnt_names + wfi * 8));
+        PRSTR(S + 0xEC00000 + L64(_fnt_names + wfi * 8));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     wfi = wfi + 1;
@@ -926,7 +940,7 @@ if (_stats_env != 0) {
     if (load8(_stats_env) == 49 && load8(_stats_env + 1) == 0) {
         syscall(SYS_WRITE, 2, "cyrius stats:\n", 14);
         syscall(SYS_WRITE, 2, "  fn_table:    ", 15); PRNUM(GFNC(S));
-        syscall(SYS_WRITE, 2, " / 32768\n",       9);   # v6.4.75: hard ceiling (_fnt_grow max), was a stale 8192
+        syscall(SYS_WRITE, 2, " / 131072\n",      10);   # v6.4.75: hard ceiling (_fnt_grow max), was a stale 8192
         syscall(SYS_WRITE, 2, "  identifiers: ", 15); PRNUM(GNPOS(S));
         syscall(SYS_WRITE, 2, " / 524288\n",     10);   # v6.4.76: pool 256 KB → 512 KB
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));

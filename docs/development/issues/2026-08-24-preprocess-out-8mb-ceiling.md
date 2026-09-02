@@ -1,7 +1,24 @@
 # `preprocess_out` 8 MB ceiling is a hard build failure with no flag — and thoth is already at ~96 % of it
 
-**Status:** 🟡 **OPEN** — reproduced on **cyrius 6.5.35**, 2026-08-24. Hard error, clear message, no
-override. A consumer can only respond by shrinking its own source.
+**Status:** ✅ **FIXED at v6.5.40 — CLOSED.** The usable ceiling is now **24 MB**, verified end to end: a 23 MB realistic source with **65,242 functions** compiles and returns the correct answer. Gate: `tests/gates/memory/preprocess_arena_caps.sh` (mutation-proven three ways). v6.5.40 is dedicated to this cascade and carries nothing else, on the v6.5.22 precedent — if the new heap misbehaves there is exactly one candidate cause.
+
+⭐ **RAISING THE FILED CAP ALONE WOULD HAVE BOUGHT ~30 %, NOT 3x — and would have been reported as 3x.** `preprocess_out` was only the first of FIVE caps stacked behind each other. Each was measured as it became the next wall:
+
+| cap | was | now | where it bit |
+|---|---|---|---|
+| `preprocess_out` | 8 MB | **24 MB** | the filed failure |
+| token table | 1,048,576 | **4,194,304** | ~12 MB of realistic source |
+| identifier pool | 512 KB | **8 MB** | thoth alone needs ~798 KB |
+| function table | 32,768 | **131,072** | ~12 MB (real projects ~1,009 fns/MB) |
+| identifier dedup | 65,536 | **262,144** | ~23 MB (thoth has 40,641 unique identifiers) |
+
+⚠ **The recommended route in this filing was NOT taken** (maintainer, 2026-09-02). Re-splitting the fixed 24 MB span would have shrunk `input_buf` 16 → 12 MB, undoing what v6.5.22 deliberately raised. Instead `input_buf` moved to the arena top and `preprocess_out` grew into the band it vacated — which was cheap for a structural reason worth recording: `preprocess_out`'s base is a bare literal at ~90 code sites, while `input_buf`'s is one named constant. Growing `preprocess_out` in place would instead have moved `fn_local_names` (60 sites). Same pattern the heap map already used twice.
+
+⚠ **A latent overflow had to be fixed FIRST, or the raise would have made it live.** `PP_REF_PASS` copied its expanded output back into `_SRCB` with no cap check at all — unlike its two sibling passes. That was contained while `preprocess_out` was 8 MB and `_SRCB` was the 16 MB region directly above it (the overrun landed in the buffer it was copying to); with `preprocess_out` grown to 24 MB the region above is `fn_local_names`, so the same overrun would corrupt the per-fn local tables.
+
+⚠ **Three false matches would have been silently corrupted by a blanket relocation** of the identifier pool: `0x600000` (`TS_NAMES_OFF`), `0x60000020` (a PE section-characteristics flag) and `scratch + 0x60000` (a different base entirely) all merely *contain* the literal `0x60000`. Only the `S + 0x60000 + ` form was moved.
+
+⚠ **Two stale diagnostics were shipping**: `"input exceeds the 16MB source buffer"` in all seven forks, and the identifier/token cap messages, all now carry the real numbers. The `err-msg-lengths-match` discipline applies — every one is byte-counted, and the em-dash is 3 bytes.
 **Placement:** unpinned — 6.x-line backlog. Worth a look before the next large first-party consumer lands.
 **Discovered:** 2026-08-24 while wiring thoth 0.41.0's OS-sandbox seam over kavach's vendored dist bundle.
 **Severity:** Medium — hard failure, but a real consumer-side workaround exists (a lean `distlib` profile).

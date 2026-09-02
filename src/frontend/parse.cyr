@@ -726,8 +726,8 @@ fn PARSE_MATCH(S): i64 {
             if (PEEKT(S) == 2) {
                 # Check if identifier is "_"
                 var mnoff = PEEKV(S);
-                if (load8(S + 0x60000 + mnoff) == 95) {
-                    if (load8(S + 0x60000 + mnoff + 1) == 0) {
+                if (load8(S + 0xEC00000 + mnoff) == 95) {
+                    if (load8(S + 0xEC00000 + mnoff + 1) == 0) {
                         is_default = 1;
                     }
                 }
@@ -785,7 +785,7 @@ fn PARSE_MATCH(S): i64 {
                                 syscall(SYS_WRITE, 2, "warning:", 8);
                                 _err_head(S);
                                 syscall(SYS_WRITE, 2, ": duplicate match arm '", 23);
-                                PRSTR(S + 0x60000 + arm_noff);
+                                PRSTR(S + 0xEC00000 + arm_noff);
                                 syscall(SYS_WRITE, 2, "'\n", 2);
                             } else {
                                 if (seen_count < 256) {
@@ -848,7 +848,7 @@ fn PARSE_MATCH(S): i64 {
                     syscall(SYS_WRITE, 2, "warning:", 8);
                     FM_LOOKUP(S, match_line);
                     syscall(SYS_WRITE, 2, ": non-exhaustive match over enum '", 34);
-                    PRSTR(S + 0x60000 + GENUMNM(S, match_eid - 1));
+                    PRSTR(S + 0xEC00000 + GENUMNM(S, match_eid - 1));
                     syscall(SYS_WRITE, 2, "' — covers ", 13);
                     PRNUM(match_covered);
                     syscall(SYS_WRITE, 2, " of ", 4);
@@ -873,7 +873,7 @@ fn _EVAL_CONST_ATOM(S): i64 {
     if (t == 2) {
         var noff = PEEKV(S);
         # sizeof(Type)
-        if (L64(S + 0x60000 + noff) & 0xFFFFFFFFFFFF == 0x666F657A6973) {
+        if (L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFF == 0x666F657A6973) {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
             STI(S, GTI(S) + 1);
@@ -881,7 +881,7 @@ fn _EVAL_CONST_ATOM(S): i64 {
             if (PEEKT(S) == 2) {
                 var szn = PEEKV(S);
                 STI(S, GTI(S) + 1);
-                var szname = L64(S + 0x60000 + szn);
+                var szname = L64(S + 0xEC00000 + szn);
                 szval = _scalar_name_width(szname);
                 if (szval == 0) {
                     var szsid = FINDSTRUCT(S, szn);
@@ -1367,7 +1367,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                     syscall(SYS_WRITE, 2, "warning:", 8);
                     _err_head(S);
                     syscall(SYS_WRITE, 2, ": #must_use result of '", 23);
-                    PRSTR(S + 0x60000 + noff);
+                    PRSTR(S + 0xEC00000 + noff);
                     syscall(SYS_WRITE, 2, "' is discarded\n", 15);
                 }
             }
@@ -1583,7 +1583,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 syscall(SYS_WRITE, 2, "error:", 6);
                 _err_head(S);
                 syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-                PRSTR(S + 0x60000 + noff);
+                PRSTR(S + 0xEC00000 + noff);
                 syscall(SYS_WRITE, 2, "'\n", 2);
                 _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
                 _had_error = 1; if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0;

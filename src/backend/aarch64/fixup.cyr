@@ -300,7 +300,7 @@ fn FIXUP(S): i64 {
     # loop stopped at 1024, leaving bits 8192..32767 in uninitialised stack for a
     # >8192-fn unit — a stray 1-bit kept an unreachable fn (non-deterministic
     # counts). See the x86 fixup.cyr twin for the full note.
-    var live[4096];
+    var live[16384];   # v6.5.40: 131072 fns / 8 bits (was 4096 = 32768 fns)
     var ci = 0;
     while (ci < 4096) { store8(&live + ci, 0); ci = ci + 1; }
     # Build fn_start → fi+1 hash table at 0x114000 (16 KB region
@@ -311,7 +311,7 @@ fn FIXUP(S): i64 {
     # guaranteed; explicit per-slot reset.
     var sh_clr = 0;
     while (sh_clr < _fnt_cap) {
-        store16(_fnt_starthash + sh_clr * 2, 0);
+        store32(_fnt_starthash + sh_clr * 4, 0);
         sh_clr = sh_clr + 1;
     }
     var sh_i = 0;
@@ -320,10 +320,10 @@ fn FIXUP(S): i64 {
         if (sh_start >= 0) {
             var sh_h = (sh_start * 0x9E3779B97F4A7C15) >> 16;
             var sh_slot = sh_h & _fnt_hash_mask;
-            while (load16(_fnt_starthash + sh_slot * 2) != 0) {
+            while (load32(_fnt_starthash + sh_slot * 4) != 0) {
                 sh_slot = (sh_slot + 1) & _fnt_hash_mask;
             }
-            store16(_fnt_starthash + sh_slot * 2, sh_i + 1);
+            store32(_fnt_starthash + sh_slot * 4, sh_i + 1);
         }
         sh_i = sh_i + 1;
     }
@@ -500,7 +500,7 @@ fn FIXUP(S): i64 {
                     var dn_live = load8(&live + (dni >> 3)) & (1 << (dni & 7));
                     if (dn_live == 0) {
                         syscall(SYS_WRITE, 2, "  dead: ", 8);
-                        PRSTR(S + 0x60000 + L64(_fnt_names + dni * 8));
+                        PRSTR(S + 0xEC00000 + L64(_fnt_names + dni * 8));
                         syscall(SYS_WRITE, 2, "\n", 1);
                     }
                 }
@@ -536,7 +536,7 @@ fn FIXUP(S): i64 {
                 if (u59_skip == 0) {
                     var u59_ufnoff = L64(_fnt_names + u59_uidx * 8);
                     syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-                    var u59_unptr = S + 0x60000 + u59_ufnoff;
+                    var u59_unptr = S + 0xEC00000 + u59_ufnoff;
                     var u59_unlen = 0;
                     while (load8(u59_unptr + u59_unlen) != 0) { u59_unlen = u59_unlen + 1; }
                     syscall(SYS_WRITE, 2, u59_unptr, u59_unlen);

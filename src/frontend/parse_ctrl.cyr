@@ -282,10 +282,10 @@ fn PARSE_FOR(S): i64 {
                 # Find vec_len — search by building name
                 NPOS_GUARD(S, 16);
                 var vlnp = GNPOS(S);
-                store8(S + 0x60000 + vlnp, 118); store8(S + 0x60000 + vlnp + 1, 101);
-                store8(S + 0x60000 + vlnp + 2, 99); store8(S + 0x60000 + vlnp + 3, 95);
-                store8(S + 0x60000 + vlnp + 4, 108); store8(S + 0x60000 + vlnp + 5, 101);
-                store8(S + 0x60000 + vlnp + 6, 110); store8(S + 0x60000 + vlnp + 7, 0);
+                store8(S + 0xEC00000 + vlnp, 118); store8(S + 0xEC00000 + vlnp + 1, 101);
+                store8(S + 0xEC00000 + vlnp + 2, 99); store8(S + 0xEC00000 + vlnp + 3, 95);
+                store8(S + 0xEC00000 + vlnp + 4, 108); store8(S + 0xEC00000 + vlnp + 5, 101);
+                store8(S + 0xEC00000 + vlnp + 6, 110); store8(S + 0xEC00000 + vlnp + 7, 0);
                 SNPOS(S, vlnp + 8);
                 vlfi = FINDFN(S, vlnp);
                 if (vlfi < 0) { vlfi = REGFN(S, vlnp); }
@@ -302,8 +302,8 @@ fn PARSE_FOR(S): i64 {
                 var fili = GFLC(S);
                 NPOS_GUARD(S, 8);
                 var fiidx_noff = GNPOS(S);
-                store8(S + 0x60000 + fiidx_noff, 95); store8(S + 0x60000 + fiidx_noff + 1, 105);
-                store8(S + 0x60000 + fiidx_noff + 2, 0);
+                store8(S + 0xEC00000 + fiidx_noff, 95); store8(S + 0xEC00000 + fiidx_noff + 1, 105);
+                store8(S + 0xEC00000 + fiidx_noff + 2, 0);
                 SNPOS(S, fiidx_noff + 3);
                 S64(S + 0x5D9D000 + fili * 8, fiidx_noff);
                 SLDEP(S, fili, GSDEP(S));
@@ -347,10 +347,10 @@ fn PARSE_FOR(S): i64 {
                 var vgfi = FINDFN(S, 0);
                 NPOS_GUARD(S, 16);
                 var vgnp = GNPOS(S);
-                store8(S + 0x60000 + vgnp, 118); store8(S + 0x60000 + vgnp + 1, 101);
-                store8(S + 0x60000 + vgnp + 2, 99); store8(S + 0x60000 + vgnp + 3, 95);
-                store8(S + 0x60000 + vgnp + 4, 103); store8(S + 0x60000 + vgnp + 5, 101);
-                store8(S + 0x60000 + vgnp + 6, 116); store8(S + 0x60000 + vgnp + 7, 0);
+                store8(S + 0xEC00000 + vgnp, 118); store8(S + 0xEC00000 + vgnp + 1, 101);
+                store8(S + 0xEC00000 + vgnp + 2, 99); store8(S + 0xEC00000 + vgnp + 3, 95);
+                store8(S + 0xEC00000 + vgnp + 4, 103); store8(S + 0xEC00000 + vgnp + 5, 101);
+                store8(S + 0xEC00000 + vgnp + 6, 116); store8(S + 0xEC00000 + vgnp + 7, 0);
                 SNPOS(S, vgnp + 8);
                 vgfi = FINDFN(S, vgnp);
                 if (vgfi < 0) { vgfi = REGFN(S, vgnp); }

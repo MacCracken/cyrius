@@ -485,17 +485,17 @@ fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
         # exactly with the danger. The six side tables that made 8192 a cliff are
         # fixed (they now run to 32768 too), so the honest signal is distance to the
         # 32768 hard error, which no longer moves.
-        if (GFNC(S) * 100 / 32768 >= 85) {
+        if (GFNC(S) * 100 / 131072 >= 85) {
             syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
-            PRNUM(GFNC(S) * 100 / 32768);
+            PRNUM(GFNC(S) * 100 / 131072);
             syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
-            syscall(SYS_WRITE, 2, "/32768) — approaching the hard fn limit; split into compilation units\n", 72);
+            syscall(SYS_WRITE, 2, "/131072) — approaching the hard fn limit; split into compilation units\n", 73);
         }
-        if (GNPOS(S) * 100 / 524288 >= 85) {
+        if (GNPOS(S) * 100 / 8388608 >= 85) {
             syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);
-            PRNUM(GNPOS(S) * 100 / 524288);
+            PRNUM(GNPOS(S) * 100 / 8388608);
             syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GNPOS(S));
-            syscall(SYS_WRITE, 2, "/524288 bytes) — reduce includes or split soon\n", 49);
+            syscall(SYS_WRITE, 2, "/8388608 bytes) — reduce includes or split soon\n", 50);
         }
         if (GVCNT(S) * 100 / 8192 >= 85) {
             syscall(SYS_WRITE, 2, "warning: var_table at ", 22);
@@ -545,7 +545,7 @@ fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
         var i = 0;
         var eq = 1;
         while (i < str_len) {
-            if (load8(S + 0x60000 + sn + i) != load8(str_ptr + i)) {
+            if (load8(S + 0xEC00000 + sn + i) != load8(str_ptr + i)) {
                 eq = 0;
                 i = str_len;
             } else {
@@ -553,7 +553,7 @@ fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
             }
         }
         if (eq == 1) {
-            if (load8(S + 0x60000 + sn + str_len) == 0) {
+            if (load8(S + 0xEC00000 + sn + str_len) == 0) {
                 return fi;
             }
         }
@@ -593,13 +593,13 @@ fn SFINL(S, fi, v): i64 { S64(_fnt_inline + fi * 8, v); return 0; }
 # case. SFTP lazy-allocs the table (max fn cap) on first use — only ever reached under
 # _MONOMORPH_OK with a `fn foo<T>` definition present.
 fn GFTP(S, fi): i64 { if (_fnt_tparams == 0) { return 0; } return L64(_fnt_tparams + fi * 8); }
-fn SFTP(S, fi, v): i64 { if (_fnt_tparams == 0) { _fnt_tparams = alloc(32768 * 8); } S64(_fnt_tparams + fi * 8, v); return 0; }
+fn SFTP(S, fi, v): i64 { if (_fnt_tparams == 0) { _fnt_tparams = alloc(131072 * 8); } S64(_fnt_tparams + fi * 8, v); return 0; }
 # v6.3.10 (instantiate-once): the base fn's `fn`-keyword token index (lazy-alloc'd).
 fn GFDS(S, fi): i64 { if (_fnt_defstart == 0) { return 0; } return L64(_fnt_defstart + fi * 8); }
-fn SFDS(S, fi, v): i64 { if (_fnt_defstart == 0) { _fnt_defstart = alloc(32768 * 8); } S64(_fnt_defstart + fi * 8, v); return 0; }
+fn SFDS(S, fi, v): i64 { if (_fnt_defstart == 0) { _fnt_defstart = alloc(131072 * 8); } S64(_fnt_defstart + fi * 8, v); return 0; }
 # v6.3.11 (G): per-fn async flag (lazy-alloc'd, 0 = not async / table unallocated).
 fn GFAS(S, fi): i64 { if (_fnt_is_async == 0) { return 0; } return L64(_fnt_is_async + fi * 8); }
-fn SFAS(S, fi, v): i64 { if (_fnt_is_async == 0) { _fnt_is_async = alloc(32768 * 8); } S64(_fnt_is_async + fi * 8, v); return 0; }
+fn SFAS(S, fi, v): i64 { if (_fnt_is_async == 0) { _fnt_is_async = alloc(131072 * 8); } S64(_fnt_is_async + fi * 8, v); return 0; }
 # v6.5.0 Phase 1 (public/private visibility): per-fn ORIGIN FILE, so a call can later
 # be judged same-file or cross-file. Stored as `FM_FILEID(decl line) + 1`, following
 # the _fnt_defstart "+1, 0 = unrecorded" idiom, because every raw FM_FILEID value is
@@ -639,7 +639,7 @@ fn SVFI(S, vi, v): i64 { if (_var_fileid == 0) { _var_fileid = alloc(1048576 * 8
 
 var _fnt_fileid = 0;
 fn GFFI(S, fi): i64 { if (_fnt_fileid == 0) { return 0; } return L64(_fnt_fileid + fi * 8); }
-fn SFFI(S, fi, v): i64 { if (_fnt_fileid == 0) { _fnt_fileid = alloc(32768 * 8); } S64(_fnt_fileid + fi * 8, v); return 0; }
+fn SFFI(S, fi, v): i64 { if (_fnt_fileid == 0) { _fnt_fileid = alloc(131072 * 8); } S64(_fnt_fileid + fi * 8, v); return 0; }
 # v6.3.10 (generic structs): per-struct (0-based si) type-params (packed, like
 # _fnt_tparams) + the `struct`-keyword token (defstart+1; 0=unrecorded). Lazy-alloc'd
 # at 1024 slots (the struct cap). Used to instantiate `Box<Point>` by re-invoking
@@ -688,7 +688,7 @@ fn SFNE(S, fi, v): i64 { S64(_fnt_codeend + fi * 8, v); return 0; }
 # side struct space + pass &space as hidden first arg in
 # RDI (SysV) or RCX (Win64).
 fn GFRS(S, fi): i64 { if (_fnret_base == 0) { return 0; } return L64(_fnret_base + fi * 8); }
-fn SFRS(S, fi, v): i64 { if (_fnret_base == 0) { _fnret_base = alloc(32768 * 8); } S64(_fnret_base + fi * 8, v); return 0; }
+fn SFRS(S, fi, v): i64 { if (_fnret_base == 0) { _fnret_base = alloc(131072 * 8); } S64(_fnret_base + fi * 8, v); return 0; }
 
 # v6.5.21 — per-fn MULTI-VALUE return record, for `fn f(a, b): (f64, f64)`.
 # GFRS holds the marker MULTIRET_SID (0 - 40); the arity and the per-element
@@ -701,13 +701,13 @@ fn SFRS(S, fi, v): i64 { if (_fnret_base == 0) { _fnret_base = alloc(32768 * 8);
 # GFRT's element codes are `_classify_return_type` values (0 = plain i64).
 # 4 slots per fn (max arity 3) keeps the index arithmetic a shift-friendly *4.
 fn GFRN(S, fi): i64 { if (_fnretn_base == 0) { return 0; } return L64(_fnretn_base + fi * 8); }
-fn SFRN(S, fi, v): i64 { if (_fnretn_base == 0) { _fnretn_base = alloc(32768 * 8); } S64(_fnretn_base + fi * 8, v); return 0; }
+fn SFRN(S, fi, v): i64 { if (_fnretn_base == 0) { _fnretn_base = alloc(131072 * 8); } S64(_fnretn_base + fi * 8, v); return 0; }
 fn GFRT(S, fi, k): i64 { if (_fnrett_base == 0) { return 0; } return L64(_fnrett_base + (fi * 4 + k) * 8); }
-fn SFRT(S, fi, k, v): i64 { if (_fnrett_base == 0) { _fnrett_base = alloc(32768 * 4 * 8); } S64(_fnrett_base + (fi * 4 + k) * 8, v); return 0; }
+fn SFRT(S, fi, k, v): i64 { if (_fnrett_base == 0) { _fnrett_base = alloc(131072 * 4 * 8); } S64(_fnrett_base + (fi * 4 + k) * 8, v); return 0; }
 
 # v5.5.36 Phase 3 — per-fn variadic marker. 0 = fixed-arity;
 # 1 = `fn f(a, ...)` (ellipsis terminator on the param list).
-fn SFVA(S, fi, v): i64 { if (_fnvar_base == 0) { _fnvar_base = alloc(32768 * 8); } S64(_fnvar_base + fi * 8, v); return 0; }
+fn SFVA(S, fi, v): i64 { if (_fnvar_base == 0) { _fnvar_base = alloc(131072 * 8); } S64(_fnvar_base + fi * 8, v); return 0; }
 # v6.2.41 — getter for the variadic marker (was write-only). Read by the
 # call-site arity check in PARSE_FNCALL to exempt variadic callees.
 fn GFVA(S, fi): i64 { if (_fnvar_base == 0) { return 0; } return L64(_fnvar_base + fi * 8); }
@@ -715,18 +715,18 @@ fn GFVA(S, fi): i64 { if (_fnvar_base == 0) { return 0; } return L64(_fnvar_base
 # to callee-saved hot-local allocation. Set when `#regalloc` precedes
 # a `fn` definition; read by codegen in subsequent alphas.
 fn GFRA(S, fi): i64 { if (_fnreg_base == 0) { return 0; } return L64(_fnreg_base + fi * 8); }
-fn SFRA(S, fi, v): i64 { if (_fnreg_base == 0) { _fnreg_base = alloc(32768 * 8); } S64(_fnreg_base + fi * 8, v); return 0; }
+fn SFRA(S, fi, v): i64 { if (_fnreg_base == 0) { _fnreg_base = alloc(131072 * 8); } S64(_fnreg_base + fi * 8, v); return 0; }
 
 # v6.4.75 — accessors for the three fn-indexed tables that previously used raw
 # `S + 0xNNNNNN + fi * 8` at their call sites (fn_flags, fn_deprecated_msg,
 # fn_var_bytes). Same lazy-alloc-at-max-cap shape as the accessors above, so the
 # raw sites become GFLG/SFLG/GFDM/SFDM/GFVB/SFVB and the fixed heap bands retire.
 fn GFLG(S, fi): i64 { if (_fnflg_base == 0) { return 0; } return L64(_fnflg_base + fi * 8); }
-fn SFLG(S, fi, v): i64 { if (_fnflg_base == 0) { _fnflg_base = alloc(32768 * 8); } S64(_fnflg_base + fi * 8, v); return 0; }
+fn SFLG(S, fi, v): i64 { if (_fnflg_base == 0) { _fnflg_base = alloc(131072 * 8); } S64(_fnflg_base + fi * 8, v); return 0; }
 fn GFDM(S, fi): i64 { if (_fndep_base == 0) { return 0; } return L64(_fndep_base + fi * 8); }
-fn SFDM(S, fi, v): i64 { if (_fndep_base == 0) { _fndep_base = alloc(32768 * 8); } S64(_fndep_base + fi * 8, v); return 0; }
+fn SFDM(S, fi, v): i64 { if (_fndep_base == 0) { _fndep_base = alloc(131072 * 8); } S64(_fndep_base + fi * 8, v); return 0; }
 fn GFVB(S, fi): i64 { if (_fnvb_base == 0) { return 0; } return L64(_fnvb_base + fi * 8); }
-fn SFVB(S, fi, v): i64 { if (_fnvb_base == 0) { _fnvb_base = alloc(32768 * 8); } S64(_fnvb_base + fi * 8, v); return 0; }
+fn SFVB(S, fi, v): i64 { if (_fnvb_base == 0) { _fnvb_base = alloc(131072 * 8); } S64(_fnvb_base + fi * 8, v); return 0; }
 
 # v5.11.64 — static-init literal value for `var X = INT_LITERAL ;`
 # gvars detected by PARSE_GVAR_REG. FIXUP-time emit paths read these
@@ -806,9 +806,9 @@ fn SCLINE(S, v): i64 { S64(S + 0x18FCB8, v); return 0; }
 # in the high 32 bits + the line number in the low 32. GTLINE masks to the line
 # (all ~30 readers use it purely as a line number); GTOFF reads the offset for the
 # column + source-excerpt. STLINE writes the whole packed word (ADDTOK builds it).
-fn GTLINE(S, ti): i64 { return L64(S + 0x3D7C000 + ti * 8) & 0xFFFFFFFF; }
-fn GTOFF(S, ti): i64 { return L64(S + 0x3D7C000 + ti * 8) >> 32; }
-fn STLINE(S, ti, v): i64 { S64(S + 0x3D7C000 + ti * 8, v); return 0; }
+fn GTLINE(S, ti): i64 { return L64(S + 0xCC00000 + ti * 8) & 0xFFFFFFFF; }
+fn GTOFF(S, ti): i64 { return L64(S + 0xCC00000 + ti * 8) >> 32; }
+fn STLINE(S, ti, v): i64 { S64(S + 0xCC00000 + ti * 8, v); return 0; }
 
 # Block scoping
 fn GSDEP(S): i64 { return L64(S + 0x18FCC0); }
@@ -1169,7 +1169,7 @@ fn TOKNAME(typ): i64 {
 fn _TOK_IS_KERNEL(S): i64 {
     if (PEEKT(S) != 2) { return 0; }
     var noff = PEEKV(S);
-    var p = S + 0x60000 + noff;
+    var p = S + 0xEC00000 + noff;
     if (load8(p)     != 107) { return 0; }  # 'k'
     if (load8(p + 1) != 101) { return 0; }  # 'e'
     if (load8(p + 2) != 114) { return 0; }  # 'r'
@@ -1364,19 +1364,35 @@ fn _rd_exit(): i64 {
 # 0x100000-0x18F830 gap above it is OCCUPIED (fn_name_hash 0x110000, fn_start_hash
 # 0x114000, var_noffs 0x11A000, var_sizes 0x12A000, var_types 0x13A000).
 #
-# So it moves into the RETIRED `output_buf` band — 16 MB at 0x4D9D000, written by
-# nothing since v6.4.52, contiguous immediately above preprocess_out (0x459D000 +
-# 8 MB) and ending exactly at the locals table (0x5D9D000). That is why the two
-# roadmap items were ONE change: reclaiming the band and raising the cap are the
-# same edit. ⭐ It also retires the old `tok_names`-nested-inside-input_buf hazard
+# So it moved (v6.4.52) into the RETIRED `output_buf` band — 16 MB at 0x4D9D000, contiguous
+# immediately above preprocess_out and ending exactly at the locals table. ⚠ THAT PLACEMENT IS
+# HISTORY as of v6.5.39: sitting directly on top of preprocess_out is exactly what capped the
+# preprocessor at 8 MB, so this buffer moved again, to the arena top, and preprocess_out took
+# the vacated band. ⭐ It also retires the old `tok_names`-nested-inside-input_buf hazard
 # and its "pool end must stay <= 0x100000" constraint — the buffer no longer
 # overlaps tok_names at all.
 #
 # ⚠ This is the base for RAW INPUT *and* for every preprocessor pass, because the
 # passes write to preprocess_out and COPY BACK here (PP_MACRO_PASS). Anything
 # reading the source stream reads `S + _SRCB + <offset>`.
-var _SRCB = 0x4D9D000;
-var _SRC_CAP = 16777216;
+# ⭐ v6.5.39 — RELOCATED 0x4D9D000 -> 0x7400000 (the arena top) so `preprocess_out` can grow
+# into the 16 MB this vacates. `preprocess_out`'s 8 MB ceiling was a HARD BUILD FAILURE with no
+# flag, no env var and no manifest key: a project that hit it could only make its source
+# smaller, and in practice that meant hand-vendoring a subset of its dependencies. thoth was at
+# ~96 % of the cap before adding anything, and a dozen sibling repos measure 8-12 MB.
+#
+# ⚠ WHY input_buf MOVED AND preprocess_out DID NOT, which is the whole reason this is a small
+# change: `preprocess_out`'s base is a bare literal `0x459D000` at ~90 code sites across 8
+# files, while this buffer's base is THIS ONE named constant. Growing preprocess_out in place
+# and shifting everything above it would instead have moved `fn_local_names` (60 code sites).
+# Same pattern the map already used twice — lexid_entries and the per-fn local tables were both
+# relocated to the arena top when they were boxed in.
+#
+# ⚠ THE TWO CAPS MUST STAY EQUAL. `PP_REF_PASS` copies its expanded output from preprocess_out
+# back into THIS buffer, so a preprocess_out larger than _SRC_CAP would overflow the arena.
+# `tests/gates/memory/preprocess_arena_caps.sh` fails the build if they diverge.
+var _SRCB = 0x7400000;
+var _SRC_CAP = 25165824;
 
 var _pp_incdir[512];
 var _pp_incdir_len = 0;
@@ -1632,7 +1648,7 @@ fn ERR(S): i64 {
     PRSTR(TOKNAME(typ));
     if (typ == 2) {
         syscall(SYS_WRITE, 2, " '", 2);
-        PRSTR(S + 0x60000 + PEEKV(S));
+        PRSTR(S + 0xEC00000 + PEEKV(S));
         syscall(SYS_WRITE, 2, "'", 1);
     }
     if (typ == 1) {
@@ -1667,7 +1683,7 @@ fn _find_fn_by_name(S, name_cstr, name_len): i64 {
         var eq = 1;
         var ci = 0;
         while (ci < name_len) {
-            if (load8(S + 0x60000 + noff + ci) != load8(name_cstr + ci)) {
+            if (load8(S + 0xEC00000 + noff + ci) != load8(name_cstr + ci)) {
                 eq = 0;
                 ci = name_len;
             } else {
@@ -1677,7 +1693,7 @@ fn _find_fn_by_name(S, name_cstr, name_len): i64 {
         # Require the next byte to be NUL — guards against names
         # like "mainframe" matching when searching for "main".
         if (eq == 1) {
-            if (load8(S + 0x60000 + noff + name_len) == 0) {
+            if (load8(S + 0xEC00000 + noff + name_len) == 0) {
                 return fi;
             }
         }
@@ -1715,7 +1731,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
     PRSTR(TOKNAME(got));
     if (got == 2) {
         syscall(SYS_WRITE, 2, " '", 2);
-        PRSTR(S + 0x60000 + PEEKV(S));
+        PRSTR(S + 0xEC00000 + PEEKV(S));
         syscall(SYS_WRITE, 2, "'", 1);
     }
     if (got == 1) {
@@ -1770,12 +1786,12 @@ fn ERR_IDENT(S, msg, noff, tail, noff2): i64 {
     syscall(SYS_WRITE, 2, ": ", 2);
     PRSTR(msg);
     syscall(SYS_WRITE, 2, "'", 1);
-    PRSTR(S + 0x60000 + noff);
+    PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "'", 1);
     if (tail != 0) { PRSTR(tail); }
     if (noff2 >= 0) {
         syscall(SYS_WRITE, 2, "'", 1);
-        PRSTR(S + 0x60000 + noff2);
+        PRSTR(S + 0xEC00000 + noff2);
         syscall(SYS_WRITE, 2, "'", 1);
     }
     syscall(SYS_WRITE, 2, "\n", 1);

@@ -125,13 +125,13 @@ fn _cap_drift_gate(): i64 {
 
     var fail = 0;
 
-    # Cap 1: input_buf (16 MB).
+    # Cap 1: input_buf (24 MB; v6.5.39 relocated to the arena top + grown from 16 MB).
     # v6.5.22 — RELOCATED from 0x00000 to the retired output_buf band at 0x4D9D000
     # and raised 1 MB -> 16 MB. The 1 MB cap was consumer-blocking (sigil 1,084,265 B,
     # mabda 1,259,999 B, drishti 1,403,806 B all refused), and it could not grow in
     # place because 0x100000-0x18F830 is occupied. The inline literal moved with it:
     # the read loops now bound on `_SRC_CAP`, not a bare 1048576.
-    fail = fail + _verify_heap_map(main_buf, main_n, "0x4D9D000 input_buf", "[16777216]", "16MB", "input_buf");
+    fail = fail + _verify_heap_map(main_buf, main_n, "0x7400000 input_buf", "[25165824]", "24MB", "input_buf");
     # ⚠ This inline check used to scan lex.cyr for ">= 1048576" and PASSED BY
     # COINCIDENCE: the only such literal in lex.cyr is the TOKEN-COUNT cap at
     # lex.cyr:240 (`if (tc >= 1048576)`), which has nothing to do with input_buf.
@@ -139,11 +139,13 @@ fn _cap_drift_gate(): i64 {
     # main.cyr for the actual read-loop bound.
     fail = fail + _verify_inline(main_buf, main_n, "_SRC_CAP - bl", "input_buf");
 
-    # Cap 2: tok_names / identifier buffer (512 KB, v6.4.76 — was 256 KB).
-    # Inline check uses 524016 = 524288 - 272 (LEXID slack for the inner-loop
+    # Cap 2: tok_names / identifier buffer (8 MB, v6.5.40 — relocated to the arena top and
+    # grown from 512 KB; it was the third wall behind the 8 MB preprocess ceiling).
+    # Inline check uses 8388336 = 8388608 - 272 (LEXID slack for the inner-loop; v6.5.40
+    # raised the pool 512 KB -> 8 MB and relocated it to the arena top, keeping the margin)
     # write window — see lex.cyr's NPOS_GUARD).
-    fail = fail + _verify_heap_map(main_buf, main_n, "0x60000  tok_names", "[524288]", "512KB", "tok_names");
-    fail = fail + _verify_inline(lex_buf, lex_n, ">= 524016", "tok_names");
+    fail = fail + _verify_heap_map(main_buf, main_n, "0xEC00000 tok_names", "[8388608]", "8MB", "tok_names");
+    fail = fail + _verify_inline(lex_buf, lex_n, ">= 8388336", "tok_names");
 
     # Cap 3: str_data (2 MB). Inline-only check — str_data's heap-map
     # line is structured differently; a _verify_heap_map call can be

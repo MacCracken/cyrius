@@ -86,8 +86,8 @@ fn DUMP_STRUCTS(S): i64 {
         PRNUM(i);
         syscall(SYS_WRITE, 2, " ", 1);
         var nlen = 0;
-        while (load8(S + 0x60000 + noff + nlen) != 0) { nlen = nlen + 1; }
-        syscall(SYS_WRITE, 2, S + 0x60000 + noff, nlen);
+        while (load8(S + 0xEC00000 + noff + nlen) != 0) { nlen = nlen + 1; }
+        syscall(SYS_WRITE, 2, S + 0xEC00000 + noff, nlen);
         syscall(SYS_WRITE, 2, "\n", 1);
         i = i + 1;
     }
@@ -166,8 +166,8 @@ fn STREQTOK(S, a_off, b_off): i64 {
     if (a_off == b_off) { return 1; }
     var i = 0;
     while (1 == 1) {
-        var ca = load8(S + 0x60000 + a_off + i);
-        var cb = load8(S + 0x60000 + b_off + i);
+        var ca = load8(S + 0xEC00000 + a_off + i);
+        var cb = load8(S + 0xEC00000 + b_off + i);
         if (ca != cb) { return 0; }
         if (ca == 0) { return 1; }
         i = i + 1;
@@ -196,10 +196,10 @@ fn STREQTOK(S, a_off, b_off): i64 {
 fn IS_STR_FIELD(S, ft): i64 {
     if (ft <= 0) { return 0; }
     var sname_off = L64(S + 0x1A6018 + (ft - 1) * 8);
-    if (load8(S + 0x60000 + sname_off)     != 83)  { return 0; }
-    if (load8(S + 0x60000 + sname_off + 1) != 116) { return 0; }
-    if (load8(S + 0x60000 + sname_off + 2) != 114) { return 0; }
-    if (load8(S + 0x60000 + sname_off + 3) != 0)   { return 0; }
+    if (load8(S + 0xEC00000 + sname_off)     != 83)  { return 0; }
+    if (load8(S + 0xEC00000 + sname_off + 1) != 116) { return 0; }
+    if (load8(S + 0xEC00000 + sname_off + 2) != 114) { return 0; }
+    if (load8(S + 0xEC00000 + sname_off + 3) != 0)   { return 0; }
     return 1;
 }
 
@@ -351,14 +351,14 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 if (has_ctor == 1) {
                     # v5.11.65 (CVE-05): bound NPOS_GUARD by actual
                     # variant-name length; was magic-256.
-                    var _vnlen2 = 0; while (load8(S + 0x60000 + vnoff + _vnlen2) != 0) { _vnlen2 = _vnlen2 + 1; }
+                    var _vnlen2 = 0; while (load8(S + 0xEC00000 + vnoff + _vnlen2) != 0) { _vnlen2 = _vnlen2 + 1; }
                     NPOS_GUARD(S, _vnlen2 + 1);
                     var cwp2 = GNPOS(S);
                     var cnoff2 = cwp2;
                     var cri2 = 0;
-                    var crc2 = load8(S + 0x60000 + vnoff + cri2);
-                    while (crc2 != 0) { store8(S + 0x60000 + cwp2, crc2); cwp2 = cwp2 + 1; cri2 = cri2 + 1; crc2 = load8(S + 0x60000 + vnoff + cri2); }
-                    store8(S + 0x60000 + cwp2, 0); cwp2 = cwp2 + 1;
+                    var crc2 = load8(S + 0xEC00000 + vnoff + cri2);
+                    while (crc2 != 0) { store8(S + 0xEC00000 + cwp2, crc2); cwp2 = cwp2 + 1; cri2 = cri2 + 1; crc2 = load8(S + 0xEC00000 + vnoff + cri2); }
+                    store8(S + 0xEC00000 + cwp2, 0); cwp2 = cwp2 + 1;
                     SNPOS(S, cwp2);
                     var cfi = FINDFN(S, cnoff2);
                     if (cfi >= 0) {
@@ -387,9 +387,9 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                         ECALLPOPS(S, 1);
                         NPOS_GUARD(S, 8);
                         var awnp = GNPOS(S);
-                        store8(S + 0x60000 + awnp, 97); store8(S + 0x60000 + awnp + 1, 108);
-                        store8(S + 0x60000 + awnp + 2, 108); store8(S + 0x60000 + awnp + 3, 111);
-                        store8(S + 0x60000 + awnp + 4, 99); store8(S + 0x60000 + awnp + 5, 0);
+                        store8(S + 0xEC00000 + awnp, 97); store8(S + 0xEC00000 + awnp + 1, 108);
+                        store8(S + 0xEC00000 + awnp + 2, 108); store8(S + 0xEC00000 + awnp + 3, 111);
+                        store8(S + 0xEC00000 + awnp + 4, 99); store8(S + 0xEC00000 + awnp + 5, 0);
                         SNPOS(S, awnp + 6);
                         var afi = FINDFN(S, awnp);
                         if (afi < 0) { afi = REGFN(S, awnp); }
@@ -452,14 +452,14 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 if (has_ctor == 1) {
                     # v5.11.65 (CVE-05): bound NPOS_GUARD by actual
                     # variant-name length; was magic-256.
-                    var _vnlen1 = 0; while (load8(S + 0x60000 + vnoff + _vnlen1) != 0) { _vnlen1 = _vnlen1 + 1; }
+                    var _vnlen1 = 0; while (load8(S + 0xEC00000 + vnoff + _vnlen1) != 0) { _vnlen1 = _vnlen1 + 1; }
                     NPOS_GUARD(S, _vnlen1 + 1);
                     var cwp = GNPOS(S);
                     var cnoff = cwp;
                     var cri = 0;
-                    var crc = load8(S + 0x60000 + vnoff + cri);
-                    while (crc != 0) { store8(S + 0x60000 + cwp, crc); cwp = cwp + 1; cri = cri + 1; crc = load8(S + 0x60000 + vnoff + cri); }
-                    store8(S + 0x60000 + cwp, 0); cwp = cwp + 1;
+                    var crc = load8(S + 0xEC00000 + vnoff + cri);
+                    while (crc != 0) { store8(S + 0xEC00000 + cwp, crc); cwp = cwp + 1; cri = cri + 1; crc = load8(S + 0xEC00000 + vnoff + cri); }
+                    store8(S + 0xEC00000 + cwp, 0); cwp = cwp + 1;
                     SNPOS(S, cwp);
                     REGFN(S, cnoff);
                 }
@@ -551,7 +551,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                     }
                 } else {
                     # Check scalar types first
-                    var ftname = L64(S + 0x60000 + tnoff);
+                    var ftname = L64(S + 0xEC00000 + tnoff);
                     var fscalar = _scalar_name_width(ftname);
                     STI(S, GTI(S) + 1);
                     # v6.4.x Pin 2 — Vec<T> array-typed field. `Vec` (0x636556)
@@ -563,7 +563,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                             STI(S, GTI(S) + 1);   # consume <
                             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                             var etoff = PEEKV(S);
-                            var ename = L64(S + 0x60000 + etoff);
+                            var ename = L64(S + 0xEC00000 + etoff);
                             var ew = _scalar_name_width(ename);
                             STI(S, GTI(S) + 1);   # consume element type name
                             var elemc = 0;
@@ -627,7 +627,7 @@ fn PARSE_UNION_DEF(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 var tnoff = PEEKV(S);
-                var ftname = L64(S + 0x60000 + tnoff);
+                var ftname = L64(S + 0xEC00000 + tnoff);
                 var fscalar = _scalar_name_width(ftname);
                 STI(S, GTI(S) + 1);
                 # v6.4.x Pin 2 — Vec<T> array-typed field (PARSE_UNION_DEF
@@ -637,7 +637,7 @@ fn PARSE_UNION_DEF(S): i64 {
                         STI(S, GTI(S) + 1);   # consume <
                         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                         var etoff = PEEKV(S);
-                        var ename = L64(S + 0x60000 + etoff);
+                        var ename = L64(S + 0xEC00000 + etoff);
                         var ew = _scalar_name_width(ename);
                         STI(S, GTI(S) + 1);   # consume element type name
                         var elemc = 0;
@@ -677,8 +677,8 @@ fn STREQ(S, a, b): i64 {
     var i = 0;
     var go = 1;
     while (go == 1) {
-        var ca = load8(S + 0x60000 + a + i);
-        var cb = load8(S + 0x60000 + b + i);
+        var ca = load8(S + 0xEC00000 + a + i);
+        var cb = load8(S + 0xEC00000 + b + i);
         if (ca != cb) { return 0; }
         if (ca == 0) { return 1; }
         i = i + 1;
@@ -723,7 +723,7 @@ fn _vis_check_var(S, vi, noff): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": '", 3);
-    PRSTR(S + 0x60000 + noff);
+    PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
     _had_error = 1;
     return 1;
@@ -775,7 +775,7 @@ fn CHKDUPVAL(S, noff, newval): i64 {
             syscall(SYS_WRITE, 2, "warning:", 8);
             _err_head(S);
             syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
-            PRSTR(S + 0x60000 + noff);
+            PRSTR(S + 0xEC00000 + noff);
             syscall(SYS_WRITE, 2, "' redefined with conflicting value (last definition wins)\n", 58);
         }
     }
@@ -806,7 +806,7 @@ fn CHK_ENUM_SHADOW(S, noff): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": variable '", 12);
-    PRSTR(S + 0x60000 + noff);
+    PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' shadows an enum constant (rename the variable)\n", 49);
     syscall(SYS_EXIT, 1);
     return 0;

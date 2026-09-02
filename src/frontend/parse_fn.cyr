@@ -24,12 +24,12 @@ include "src/frontend/parse_ctrl.cyr"
 fn FNV1A_NOFF(S, noff): i64 {
     var h = 0xcbf29ce484222325;
     var i = 0;
-    var c = load8(S + 0x60000 + noff + i);
+    var c = load8(S + 0xEC00000 + noff + i);
     while (c != 0) {
         h = h ^ c;
         h = h * 0x100000001b3;
         i = i + 1;
-        c = load8(S + 0x60000 + noff + i);
+        c = load8(S + 0xEC00000 + noff + i);
     }
     return h;
 }
@@ -42,10 +42,10 @@ fn FNV1A_NOFF(S, noff): i64 {
 fn _REGFN_HASH(S, noff, fi): i64 {
     var h = FNV1A_NOFF(S, noff);
     var slot = h & _fnt_hash_mask;
-    while (load16(_fnt_namehash + slot * 2) != 0) {
+    while (load32(_fnt_namehash + slot * 4) != 0) {
         slot = (slot + 1) & _fnt_hash_mask;
     }
-    store16(_fnt_namehash + slot * 2, fi + 1);
+    store32(_fnt_namehash + slot * 4, fi + 1);
     return 0;
 }
 
@@ -58,7 +58,7 @@ fn _REGFN_HASH(S, noff, fi): i64 {
 #   3 = _cstr suffix (5 chars)
 #   0 = no recognized suffix
 fn _OVERLOAD_SUFFIX(S, noff): i64 {
-    var p = S + 0x60000 + noff;
+    var p = S + 0xEC00000 + noff;
     var len = 0;
     while (load8(p + len) != 0) { len = len + 1; }
     if (len > 4) {
@@ -97,8 +97,8 @@ fn _OVERLOAD_SUFFIX(S, noff): i64 {
 # 32768 bits. v6.2.0 Phase 0 / AR-03. See util.cyr for the gvar family.
 fn _fnt_grow(S): i64 {
     var nc = _fnt_cap * 2;
-    if (nc > 32768) {
-        syscall(SYS_WRITE, 2, "error: too many functions (max 32768)\n", 38);
+    if (nc > 131072) {
+        syscall(SYS_WRITE, 2, "error: too many functions (max 131072)\n", 39);
         syscall(SYS_EXIT, 1);
     }
     var oc = _fnt_cap;
@@ -121,9 +121,9 @@ fn _fnt_grow(S): i64 {
     _fnt_structmask = _fnt_copy_table(_fnt_structmask, oc, nc);
     # start-hash is rebuilt from scratch each fixup pass — just give it a
     # cap-sized buffer (contents irrelevant; the fixup clear loop zeroes it).
-    _fnt_starthash = alloc(nc * 2);
+    _fnt_starthash = alloc(nc * 4);  # v6.5.40: 4 B/slot
     # name-hash: fresh zeroed buffer at the new mask, then re-insert all live fns.
-    _fnt_namehash = alloc(nc * 2);
+    _fnt_namehash = alloc(nc * 4);   # v6.5.40: 4 B/slot
     _fnt_hash_mask = nc - 1;
     _fnt_cap = nc;
     var i = 0;
@@ -155,7 +155,7 @@ fn REGFN(S, noff): i64 {
     #            that sibling as fc's overload target.
     # Without bidirection, lib/str.cyr's `println_str` defined BEFORE
     # lib/string.cyr's `println` would never get registered.
-    var _ov_p = S + 0x60000 + noff;
+    var _ov_p = S + 0xEC00000 + noff;
     var _ov_my_len = 0;
     while (load8(_ov_p + _ov_my_len) != 0) { _ov_my_len = _ov_my_len + 1; }
     # FORWARD direction
@@ -188,7 +188,7 @@ fn REGFN(S, noff): i64 {
         var _rv_efi = 0;
         while (_rv_efi < fc) {
             var _rv_en = L64(_fnt_names + _rv_efi * 8);
-            var _rv_ep = S + 0x60000 + _rv_en;
+            var _rv_ep = S + 0xEC00000 + _rv_en;
             var _rv_elen = 0;
             while (load8(_rv_ep + _rv_elen) != 0) { _rv_elen = _rv_elen + 1; }
             var _rv_match_prefix = 0;
@@ -274,7 +274,7 @@ fn _findfn_scoped(S, noff, slot, first): i64 {
     var s2 = slot;
     var probes = 0;
     while (probes < _fnt_cap) {
-        var stored = load16(_fnt_namehash + s2 * 2);
+        var stored = load32(_fnt_namehash + s2 * 4);
         if (stored == 0) { probes = _fnt_cap; }
         else {
             var fi = stored - 1;
@@ -299,7 +299,7 @@ fn FINDFN(S, noff): i64 {
     var slot = h & _fnt_hash_mask;
     var probes = 0;
     while (probes < _fnt_cap) {
-        var stored = load16(_fnt_namehash + slot * 2);
+        var stored = load32(_fnt_namehash + slot * 4);
         if (stored == 0) { probes = _fnt_cap; }
         else {
             var fi = stored - 1;
@@ -332,7 +332,7 @@ fn FINDFN(S, noff): i64 {
     # f64v4_make (lib/simd.cyr) — the natural `type(...)` spelling over the
     # proven make (agnos FP issue §2). Only fires as a fallback: a real fn
     # named f64v2 is found by the hash probe above and takes precedence.
-    var _cp = S + 0x60000 + noff;
+    var _cp = S + 0xEC00000 + noff;
     if (load8(_cp) == 0x66) {                 # 'f'
         if (load8(_cp + 1) == 0x36) {         # '6'
             if (load8(_cp + 2) == 0x34) {     # '4'
@@ -598,14 +598,14 @@ fn PARSE_RETURN(S): i64 {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
                                     _err_head(S);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
-                                    PRSTR(S + 0x60000 + tcnoff);
+                                    PRSTR(S + 0xEC00000 + tcnoff);
                                     syscall(SYS_WRITE, 2, "'\n", 2);
                                 }
                                 if (_tcf & 32 != 0) {
                                     syscall(SYS_WRITE, 2, "warning:", 8);
                                     _err_head(S);
                                     syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
-                                    PRSTR(S + 0x60000 + tcnoff);
+                                    PRSTR(S + 0xEC00000 + tcnoff);
                                     syscall(SYS_WRITE, 2, "'\n", 2);
                                 }
                             }
@@ -1062,10 +1062,10 @@ fn _STR_SID(S): i64 {
     var i = 0;
     while (i < npos) {
         # "Str\0" first 4 bytes — bottom 32 bits = 0x00727453
-        if (load8(S + 0x60000 + i)     == 83) {
-            if (load8(S + 0x60000 + i + 1) == 116) {
-                if (load8(S + 0x60000 + i + 2) == 114) {
-                    if (load8(S + 0x60000 + i + 3) == 0) {
+        if (load8(S + 0xEC00000 + i)     == 83) {
+            if (load8(S + 0xEC00000 + i + 1) == 116) {
+                if (load8(S + 0xEC00000 + i + 2) == 114) {
+                    if (load8(S + 0xEC00000 + i + 3) == 0) {
                         var sid = FINDSTRUCT(S, i);
                         if (sid > 0) {
                             _str_sid_cache = sid;
@@ -1076,7 +1076,7 @@ fn _STR_SID(S): i64 {
             }
         }
         # skip to next null terminator
-        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+        while (i < npos) { if (load8(S + 0xEC00000 + i) == 0) { i = i + 1; break; } i = i + 1; }
     }
     _str_sid_cache = 0 - 2;
     return 0;
@@ -1166,7 +1166,7 @@ fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     FM_LOOKUP(S, line);
     syscall(SYS_WRITE, 2, ": '", 3);
-    PRSTR(S + 0x60000 + noff);
+    PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' expects ", 10);
     PRNUM(pc);
     syscall(SYS_WRITE, 2, " argument", 9);
@@ -1250,7 +1250,7 @@ fn _vis_check(S, fi, noff): i64 {
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": '", 3);
-    PRSTR(S + 0x60000 + noff);
+    PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
     _had_error = 1;
     return 1;
@@ -1426,7 +1426,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # the per-fn overload tables). Compile-time cost: O(N) name
     # compare over registered fns per pointer-form call site.
     if (PEEKT(S) == 27) {
-        var _po_base_p = S + 0x60000 + noff;
+        var _po_base_p = S + 0xEC00000 + noff;
         var _po_base_len = 0;
         while (load8(_po_base_p + _po_base_len) != 0) { _po_base_len = _po_base_len + 1; }
         # 128-byte scratch — must hold base_len + len("_ptr") + null.
@@ -1467,7 +1467,7 @@ fn PARSE_FNCALL(S, noff): i64 {
         syscall(SYS_WRITE, 2, "warning:", 8);
         _err_head(S);
         syscall(SYS_WRITE, 2, ": '", 3);
-        PRSTR(S + 0x60000 + noff);
+        PRSTR(S + 0xEC00000 + noff);
         syscall(SYS_WRITE, 2, "' is deprecated", 15);
         var _dep_msg = GFDM(S, fi);
         if (_dep_msg != 0) {
@@ -1487,14 +1487,14 @@ fn PARSE_FNCALL(S, noff): i64 {
             syscall(SYS_WRITE, 2, "warning:", 8);
             _err_head(S);
             syscall(SYS_WRITE, 2, ": #pure fn calls #io fn '", 25);
-            PRSTR(S + 0x60000 + noff);
+            PRSTR(S + 0xEC00000 + noff);
             syscall(SYS_WRITE, 2, "'\n", 2);
         }
         if (_dep_flags & 32 != 0) {
             syscall(SYS_WRITE, 2, "warning:", 8);
             _err_head(S);
             syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
-            PRSTR(S + 0x60000 + noff);
+            PRSTR(S + 0xEC00000 + noff);
             syscall(SYS_WRITE, 2, "'\n", 2);
         }
     }
@@ -1729,7 +1729,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                         syscall(SYS_WRITE, 2, ": passing integer literal ", 26);
                         PRNUM(PEEKV(S));
                         syscall(SYS_WRITE, 2, " to '", 5);
-                        PRSTR(S + 0x60000 + noff);
+                        PRSTR(S + 0xEC00000 + noff);
                         syscall(SYS_WRITE, 2, "' which expects a cstring (a POINTER, not a number)\n", 52);
                         syscall(SYS_WRITE, 2, "  hint: the value is a NUMBER — use the _int variant if one exists (e.g. println_int), or fmt_int_buf to render it\n", 117);
                         _had_error = 1;
@@ -1763,13 +1763,13 @@ fn PARSE_FNCALL(S, noff): i64 {
                             syscall(SYS_WRITE, 2, "warning:", 8);
                             _err_head(S);
                             syscall(SYS_WRITE, 2, ": passing Str-typed '", 21);
-                            PRSTR(S + 0x60000 + _tc_arg_noff);
+                            PRSTR(S + 0xEC00000 + _tc_arg_noff);
                             syscall(SYS_WRITE, 2, "' to '", 6);
-                            PRSTR(S + 0x60000 + noff);
+                            PRSTR(S + 0xEC00000 + noff);
                             syscall(SYS_WRITE, 2, "' which expects a cstring\n  hint: use str_data(", 47);
-                            PRSTR(S + 0x60000 + _tc_arg_noff);
+                            PRSTR(S + 0xEC00000 + _tc_arg_noff);
                             syscall(SYS_WRITE, 2, ") for raw bytes, str_println(", 29);
-                            PRSTR(S + 0x60000 + _tc_arg_noff);
+                            PRSTR(S + 0xEC00000 + _tc_arg_noff);
                             syscall(SYS_WRITE, 2, ") for printing, or annotate the param `: Str`\n", 46);
                         }
                     }
@@ -2053,15 +2053,15 @@ fn _body_field_accesses_tparam(S, fi): i64 {
 # `_mint_generic_name` can append BOTH type-args for a multi-param generic.
 fn _append_conc_name(S, wp, conc): i64 {
     if (conc < 0) {
-        store8(S + 0x60000 + wp, 105); wp = wp + 1;   # 'i'
-        if (conc == 0 - 8) { store8(S + 0x60000 + wp, 54); wp = wp + 1; store8(S + 0x60000 + wp, 52); wp = wp + 1; }
-        elif (conc == 0 - 4) { store8(S + 0x60000 + wp, 51); wp = wp + 1; store8(S + 0x60000 + wp, 50); wp = wp + 1; }
-        elif (conc == 0 - 2) { store8(S + 0x60000 + wp, 49); wp = wp + 1; store8(S + 0x60000 + wp, 54); wp = wp + 1; }
-        elif (conc == 0 - 1) { store8(S + 0x60000 + wp, 56); wp = wp + 1; }
+        store8(S + 0xEC00000 + wp, 105); wp = wp + 1;   # 'i'
+        if (conc == 0 - 8) { store8(S + 0xEC00000 + wp, 54); wp = wp + 1; store8(S + 0xEC00000 + wp, 52); wp = wp + 1; }
+        elif (conc == 0 - 4) { store8(S + 0xEC00000 + wp, 51); wp = wp + 1; store8(S + 0xEC00000 + wp, 50); wp = wp + 1; }
+        elif (conc == 0 - 2) { store8(S + 0xEC00000 + wp, 49); wp = wp + 1; store8(S + 0xEC00000 + wp, 54); wp = wp + 1; }
+        elif (conc == 0 - 1) { store8(S + 0xEC00000 + wp, 56); wp = wp + 1; }
     } else {
         var snoff = L64(S + 0x1A6018 + (conc - 1) * 8);
         var j = 0;
-        while (load8(S + 0x60000 + snoff + j) != 0) { store8(S + 0x60000 + wp, load8(S + 0x60000 + snoff + j)); wp = wp + 1; j = j + 1; }
+        while (load8(S + 0xEC00000 + snoff + j) != 0) { store8(S + 0xEC00000 + wp, load8(S + 0xEC00000 + snoff + j)); wp = wp + 1; j = j + 1; }
     }
     return wp;
 }
@@ -2072,19 +2072,19 @@ fn _append_conc_name(S, wp, conc): i64 {
 # same name as before → byte-identical dedup for the existing single-param instances.
 fn _mint_generic_name(S, base_noff, conc, conc1): i64 {
     var blen = 0;
-    while (load8(S + 0x60000 + base_noff + blen) != 0) { blen = blen + 1; }
+    while (load8(S + 0xEC00000 + base_noff + blen) != 0) { blen = blen + 1; }
     NPOS_GUARD(S, blen + 80);
     var wp = GNPOS(S);
     var noff = wp;
     var i = 0;
-    while (i < blen) { store8(S + 0x60000 + wp, load8(S + 0x60000 + base_noff + i)); wp = wp + 1; i = i + 1; }
-    store8(S + 0x60000 + wp, 36); wp = wp + 1;   # '$'
+    while (i < blen) { store8(S + 0xEC00000 + wp, load8(S + 0xEC00000 + base_noff + i)); wp = wp + 1; i = i + 1; }
+    store8(S + 0xEC00000 + wp, 36); wp = wp + 1;   # '$'
     wp = _append_conc_name(S, wp, conc);
     if (conc1 != 0) {
-        store8(S + 0x60000 + wp, 36); wp = wp + 1;   # '$'
+        store8(S + 0xEC00000 + wp, 36); wp = wp + 1;   # '$'
         wp = _append_conc_name(S, wp, conc1);
     }
-    store8(S + 0x60000 + wp, 0); wp = wp + 1;
+    store8(S + 0xEC00000 + wp, 0); wp = wp + 1;
     SNPOS(S, wp);
     return noff;
 }
@@ -2581,15 +2581,15 @@ fn _ra_frame_trim(S, fn_start, fi): i64 {
 # prescan (_prescan_fn_sig) and the pass-2 definition agree byte-for-byte.
 fn _classify_param_type(S, tnoff): i64 {
     # Str → "Str\0" (low 32 bits = 0x00727453, little-endian)
-    if (L64(S + 0x60000 + tnoff) & 0xFFFFFFFF == 0x00727453) { return 1; }
-    var b0 = load8(S + 0x60000 + tnoff);
-    var b1 = load8(S + 0x60000 + tnoff + 1);
-    var b2 = load8(S + 0x60000 + tnoff + 2);
-    var b3 = load8(S + 0x60000 + tnoff + 3);
-    var b4 = load8(S + 0x60000 + tnoff + 4);
-    var b5 = load8(S + 0x60000 + tnoff + 5);
-    var b6 = load8(S + 0x60000 + tnoff + 6);
-    var b7 = load8(S + 0x60000 + tnoff + 7);
+    if (L64(S + 0xEC00000 + tnoff) & 0xFFFFFFFF == 0x00727453) { return 1; }
+    var b0 = load8(S + 0xEC00000 + tnoff);
+    var b1 = load8(S + 0xEC00000 + tnoff + 1);
+    var b2 = load8(S + 0xEC00000 + tnoff + 2);
+    var b3 = load8(S + 0xEC00000 + tnoff + 3);
+    var b4 = load8(S + 0xEC00000 + tnoff + 4);
+    var b5 = load8(S + 0xEC00000 + tnoff + 5);
+    var b6 = load8(S + 0xEC00000 + tnoff + 6);
+    var b7 = load8(S + 0xEC00000 + tnoff + 7);
     # cstring → 'c','s','t','r','i','n','g',0
     if (b0 == 99) { if (b1 == 115) { if (b2 == 116) { if (b3 == 114) {
         if (b4 == 105) { if (b5 == 110) { if (b6 == 103) { if (b7 == 0) {
@@ -2685,14 +2685,14 @@ fn _parse_multiret_sig(S, fi, quiet): i64 {
 fn _classify_return_type(S, rt_noff): i64 {
     var rt_sid = FINDSTRUCT(S, rt_noff);
     if (rt_sid > 0) { return rt_sid; }
-    var b0 = load8(S + 0x60000 + rt_noff);
-    var b1 = load8(S + 0x60000 + rt_noff + 1);
-    var b2 = load8(S + 0x60000 + rt_noff + 2);
-    var b3 = load8(S + 0x60000 + rt_noff + 3);
-    var b4 = load8(S + 0x60000 + rt_noff + 4);
-    var b5 = load8(S + 0x60000 + rt_noff + 5);
-    var b6 = load8(S + 0x60000 + rt_noff + 6);
-    var b7 = load8(S + 0x60000 + rt_noff + 7);
+    var b0 = load8(S + 0xEC00000 + rt_noff);
+    var b1 = load8(S + 0xEC00000 + rt_noff + 1);
+    var b2 = load8(S + 0xEC00000 + rt_noff + 2);
+    var b3 = load8(S + 0xEC00000 + rt_noff + 3);
+    var b4 = load8(S + 0xEC00000 + rt_noff + 4);
+    var b5 = load8(S + 0xEC00000 + rt_noff + 5);
+    var b6 = load8(S + 0xEC00000 + rt_noff + 6);
+    var b7 = load8(S + 0xEC00000 + rt_noff + 7);
     # scalars: i8 / i16 / i32 / i64 ('i' = 105)
     if (b0 == 105) {
         if (b1 == 56) { if (b2 == 0) { return 0 - 1; } }
@@ -2929,18 +2929,18 @@ fn _prescan_fn_sig(S): i64 {
 # actual body and is only ever reached by pointer (future_force), never by name.
 fn _mint_impl_name(S, base_noff): i64 {
     var blen = 0;
-    while (load8(S + 0x60000 + base_noff + blen) != 0) { blen = blen + 1; }
+    while (load8(S + 0xEC00000 + base_noff + blen) != 0) { blen = blen + 1; }
     NPOS_GUARD(S, blen + 8);
     var wp = GNPOS(S);
     var noff = wp;
     var i = 0;
-    while (i < blen) { store8(S + 0x60000 + wp, load8(S + 0x60000 + base_noff + i)); wp = wp + 1; i = i + 1; }
-    store8(S + 0x60000 + wp, 36); wp = wp + 1;    # '$'
-    store8(S + 0x60000 + wp, 105); wp = wp + 1;   # 'i'
-    store8(S + 0x60000 + wp, 109); wp = wp + 1;   # 'm'
-    store8(S + 0x60000 + wp, 112); wp = wp + 1;   # 'p'
-    store8(S + 0x60000 + wp, 108); wp = wp + 1;   # 'l'
-    store8(S + 0x60000 + wp, 0); wp = wp + 1;
+    while (i < blen) { store8(S + 0xEC00000 + wp, load8(S + 0xEC00000 + base_noff + i)); wp = wp + 1; i = i + 1; }
+    store8(S + 0xEC00000 + wp, 36); wp = wp + 1;    # '$'
+    store8(S + 0xEC00000 + wp, 105); wp = wp + 1;   # 'i'
+    store8(S + 0xEC00000 + wp, 109); wp = wp + 1;   # 'm'
+    store8(S + 0xEC00000 + wp, 112); wp = wp + 1;   # 'p'
+    store8(S + 0xEC00000 + wp, 108); wp = wp + 1;   # 'l'
+    store8(S + 0xEC00000 + wp, 0); wp = wp + 1;
     SNPOS(S, wp);
     return noff;
 }
@@ -3082,7 +3082,7 @@ fn _fileid_dump_note(S, fi, noff): i64 {
     # decision and not merely on the file partition.
     if ((GFLG(S, fi) & 64) != 0) { syscall(SYS_WRITE, 2, "P ", 2); }
     else { syscall(SYS_WRITE, 2, "- ", 2); }
-    PRSTR(S + 0x60000 + noff);
+    PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "\n", 1);
     return 0;
 }
@@ -3146,18 +3146,18 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (mmod != 0) {
         # v5.11.65 (CVE-05): walk source lengths before NPOS_GUARD;
         # replaces magic-256 pessimistic budget. See CHANGELOG [5.11.65].
-        var _mmlen = 0; while (load8(S + 0x60000 + mmod + _mmlen) != 0) { _mmlen = _mmlen + 1; }
-        var _nflen = 0; while (load8(S + 0x60000 + noff + _nflen) != 0) { _nflen = _nflen + 1; }
+        var _mmlen = 0; while (load8(S + 0xEC00000 + mmod + _mmlen) != 0) { _mmlen = _mmlen + 1; }
+        var _nflen = 0; while (load8(S + 0xEC00000 + noff + _nflen) != 0) { _nflen = _nflen + 1; }
         NPOS_GUARD(S, _mmlen + 1 + _nflen + 1);
         var mwp = GNPOS(S);
         var mnoff = mwp;
         var mri = 0;
-        var mrc = load8(S + 0x60000 + mmod + mri);
-        while (mrc != 0) { store8(S + 0x60000 + mwp, mrc); mwp = mwp + 1; mri = mri + 1; mrc = load8(S + 0x60000 + mmod + mri); }
-        store8(S + 0x60000 + mwp, 95); mwp = mwp + 1;
-        mri = 0; mrc = load8(S + 0x60000 + noff + mri);
-        while (mrc != 0) { store8(S + 0x60000 + mwp, mrc); mwp = mwp + 1; mri = mri + 1; mrc = load8(S + 0x60000 + noff + mri); }
-        store8(S + 0x60000 + mwp, 0); mwp = mwp + 1;
+        var mrc = load8(S + 0xEC00000 + mmod + mri);
+        while (mrc != 0) { store8(S + 0xEC00000 + mwp, mrc); mwp = mwp + 1; mri = mri + 1; mrc = load8(S + 0xEC00000 + mmod + mri); }
+        store8(S + 0xEC00000 + mwp, 95); mwp = mwp + 1;
+        mri = 0; mrc = load8(S + 0xEC00000 + noff + mri);
+        while (mrc != 0) { store8(S + 0xEC00000 + mwp, mrc); mwp = mwp + 1; mri = mri + 1; mrc = load8(S + 0xEC00000 + noff + mri); }
+        store8(S + 0xEC00000 + mwp, 0); mwp = mwp + 1;
         SNPOS(S, mwp);
         noff = mnoff;
     }
@@ -3243,7 +3243,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             syscall(SYS_WRITE, 2, "warning:", 8);
             _err_head_at(S, _defstart_ti);
             syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
-            PRSTR(S + 0x60000 + noff);
+            PRSTR(S + 0xEC00000 + noff);
             syscall(SYS_WRITE, 2, "' (last definition wins; first defined in ", 42);
             _fm_print_fid(S, GFFI(S, fi));
             syscall(SYS_WRITE, 2, ")\n", 2);
@@ -3388,7 +3388,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             syscall(SYS_WRITE, 2, "warning:", 8);
             _err_head(S);
             syscall(SYS_WRITE, 2, ": '", 3);
-            PRSTR(S + 0x60000 + noff);
+            PRSTR(S + 0xEC00000 + noff);
             syscall(SYS_WRITE, 2, "': #regalloc skipped — fn contains inline asm (hardcoded stack offsets)\n", 74);
         }
         _regalloc_pending = 0;
@@ -3516,10 +3516,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # annotated with the new types would silently get
                     # retptr/X8 calling convention and corrupt the
                     # is_ok/result_unwrap semantics in callers.
-                    var _rs_b0 = load8(S + 0x60000 + _rs_rt_noff);
-                    var _rs_b1 = load8(S + 0x60000 + _rs_rt_noff + 1);
-                    var _rs_b2 = load8(S + 0x60000 + _rs_rt_noff + 2);
-                    var _rs_b3 = load8(S + 0x60000 + _rs_rt_noff + 3);
+                    var _rs_b0 = load8(S + 0xEC00000 + _rs_rt_noff);
+                    var _rs_b1 = load8(S + 0xEC00000 + _rs_rt_noff + 1);
+                    var _rs_b2 = load8(S + 0xEC00000 + _rs_rt_noff + 2);
+                    var _rs_b3 = load8(S + 0xEC00000 + _rs_rt_noff + 3);
                     var _rs_is_scalar = 0;
                     # v6.4.6 (Phase 3a) — any SIMD VECTOR return type (f64v2/f64v4/
                     # f32v4 + integer vectors i8v16..u64v2) returns register-class
@@ -3567,9 +3567,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         if (_rs_b1 == 101) {
                             if (_rs_b2 == 115) {
                                 if (_rs_b3 == 117) {
-                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 108) {
-                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 116) {
-                                            if (load8(S + 0x60000 + _rs_rt_noff + 6) == 0) {
+                                    if (load8(S + 0xEC00000 + _rs_rt_noff + 4) == 108) {
+                                        if (load8(S + 0xEC00000 + _rs_rt_noff + 5) == 116) {
+                                            if (load8(S + 0xEC00000 + _rs_rt_noff + 6) == 0) {
                                                 _rs_is_scalar = 1;
                                             }
                                         }
@@ -3582,9 +3582,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         if (_rs_b1 == 112) {
                             if (_rs_b2 == 116) {
                                 if (_rs_b3 == 105) {
-                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 111) {
-                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 110) {
-                                            if (load8(S + 0x60000 + _rs_rt_noff + 6) == 0) {
+                                    if (load8(S + 0xEC00000 + _rs_rt_noff + 4) == 111) {
+                                        if (load8(S + 0xEC00000 + _rs_rt_noff + 5) == 110) {
+                                            if (load8(S + 0xEC00000 + _rs_rt_noff + 6) == 0) {
                                                 _rs_is_scalar = 1;
                                             }
                                         }
@@ -3597,9 +3597,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         if (_rs_b1 == 97) {
                             if (_rs_b2 == 103) {
                                 if (_rs_b3 == 103) {
-                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 101) {
-                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 100) {
-                                            if (load8(S + 0x60000 + _rs_rt_noff + 6) == 0) {
+                                    if (load8(S + 0xEC00000 + _rs_rt_noff + 4) == 101) {
+                                        if (load8(S + 0xEC00000 + _rs_rt_noff + 5) == 100) {
+                                            if (load8(S + 0xEC00000 + _rs_rt_noff + 6) == 0) {
                                                 _rs_is_scalar = 1;
                                             }
                                         }
@@ -3612,10 +3612,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         if (_rs_b1 == 115) {
                             if (_rs_b2 == 116) {
                                 if (_rs_b3 == 114) {
-                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 105) {
-                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 110) {
-                                            if (load8(S + 0x60000 + _rs_rt_noff + 6) == 103) {
-                                                if (load8(S + 0x60000 + _rs_rt_noff + 7) == 0) {
+                                    if (load8(S + 0xEC00000 + _rs_rt_noff + 4) == 105) {
+                                        if (load8(S + 0xEC00000 + _rs_rt_noff + 5) == 110) {
+                                            if (load8(S + 0xEC00000 + _rs_rt_noff + 6) == 103) {
+                                                if (load8(S + 0xEC00000 + _rs_rt_noff + 7) == 0) {
                                                     _rs_is_scalar = 1;
                                                 }
                                             }
@@ -3649,8 +3649,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         if (_rs_b1 == 54) {
                             if (_rs_b2 == 52) {
                                 if (_rs_b3 == 118) {
-                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 50) {
-                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 0) {
+                                    if (load8(S + 0xEC00000 + _rs_rt_noff + 4) == 50) {
+                                        if (load8(S + 0xEC00000 + _rs_rt_noff + 5) == 0) {
                                             if (_TARGET_PE == 0) {
                                                 _rs_is_scalar = 1;
                                             }
@@ -3666,8 +3666,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                                     # the retptr-stash path (32B > 16B
                                     # composite cap per MS x64 ABI, just
                                     # like f64v2 on PE).
-                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 52) {
-                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 0) {
+                                    if (load8(S + 0xEC00000 + _rs_rt_noff + 4) == 52) {
+                                        if (load8(S + 0xEC00000 + _rs_rt_noff + 5) == 0) {
                                             if (_TARGET_PE == 0) {
                                                 _rs_is_scalar = 1;
                                             }
@@ -3686,8 +3686,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         if (_rs_b1 == 51) {
                             if (_rs_b2 == 50) {
                                 if (_rs_b3 == 118) {
-                                    if (load8(S + 0x60000 + _rs_rt_noff + 4) == 52) {
-                                        if (load8(S + 0x60000 + _rs_rt_noff + 5) == 0) {
+                                    if (load8(S + 0xEC00000 + _rs_rt_noff + 4) == 52) {
+                                        if (load8(S + 0xEC00000 + _rs_rt_noff + 5) == 0) {
                                             if (_TARGET_PE == 0) {
                                                 _rs_is_scalar = 1;
                                             }
@@ -3898,7 +3898,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # the int-class local's SLTYPE below (scalar f64/f32 travel in an int
                     # arg-reg as the raw IEEE bit-pattern, matching the return convention).
                     if (_ptc == 0) {
-                        var _pfn = L64(S + 0x60000 + tnoff) & 0xFFFFFFFF;
+                        var _pfn = L64(S + 0xEC00000 + tnoff) & 0xFFFFFFFF;
                         if (_pfn == 0x00343666) { pt_float = F64_TYID; }
                         elif (_pfn == 0x00323366) { pt_float = F32_TYID; }
                     }
@@ -4111,7 +4111,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             syscall(SYS_WRITE, 2, "error:", 6);
             _err_head_at(S, _defstart_ti);
             syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
-            PRSTR(S + 0x60000 + noff);
+            PRSTR(S + 0xEC00000 + noff);
             syscall(SYS_WRITE, 2, "' disagrees about arity: this one takes ", 40);
             PRNUM(pc);
             syscall(SYS_WRITE, 2, ", the one in ", 13);

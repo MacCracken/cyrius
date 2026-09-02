@@ -197,33 +197,33 @@ fn BUILD_METHOD_NAME(S, si, mnoff): i64 {
     # bounds the actual write — replaces the pre-v5.11.65 magic-256
     # pessimistic budget that the byte-copy loops below could exceed
     # on a long struct/method identifier. See CHANGELOG [5.11.65].
-    var _snlen = 0; while (load8(S + 0x60000 + snoff + _snlen) != 0) { _snlen = _snlen + 1; }
-    var _mnlen = 0; while (load8(S + 0x60000 + mnoff + _mnlen) != 0) { _mnlen = _mnlen + 1; }
+    var _snlen = 0; while (load8(S + 0xEC00000 + snoff + _snlen) != 0) { _snlen = _snlen + 1; }
+    var _mnlen = 0; while (load8(S + 0xEC00000 + mnoff + _mnlen) != 0) { _mnlen = _mnlen + 1; }
     NPOS_GUARD(S, _snlen + 1 + _mnlen + 1);
     var scratch = GNPOS(S);
     var wp = scratch;
     # Copy struct name
     var ri = 0;
-    var rc = load8(S + 0x60000 + snoff + ri);
+    var rc = load8(S + 0xEC00000 + snoff + ri);
     while (rc != 0) {
-        store8(S + 0x60000 + wp, rc);
+        store8(S + 0xEC00000 + wp, rc);
         wp = wp + 1;
         ri = ri + 1;
-        rc = load8(S + 0x60000 + snoff + ri);
+        rc = load8(S + 0xEC00000 + snoff + ri);
     }
     # Underscore separator
-    store8(S + 0x60000 + wp, 95);
+    store8(S + 0xEC00000 + wp, 95);
     wp = wp + 1;
     # Copy method name
     ri = 0;
-    rc = load8(S + 0x60000 + mnoff + ri);
+    rc = load8(S + 0xEC00000 + mnoff + ri);
     while (rc != 0) {
-        store8(S + 0x60000 + wp, rc);
+        store8(S + 0xEC00000 + wp, rc);
         wp = wp + 1;
         ri = ri + 1;
-        rc = load8(S + 0x60000 + mnoff + ri);
+        rc = load8(S + 0xEC00000 + mnoff + ri);
     }
-    store8(S + 0x60000 + wp, 0);
+    store8(S + 0xEC00000 + wp, 0);
     return scratch;
 }
 
@@ -344,7 +344,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             # regalloc patcher's way.
             var sw = GSLICE_W(S, lli);
             if (sw > 0) {
-                var fname = L64(S + 0x60000 + fnoff);
+                var fname = L64(S + 0xEC00000 + fnoff);
                 var fld_off = 0 - 1;
                 if (fname & 0xFFFFFFFF == 0x00727470) { fld_off = 0; }      # "ptr\0"
                 elif (fname & 0xFFFFFFFF == 0x006E656C) { fld_off = 8; }    # "len\0"
@@ -365,7 +365,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             if (_syntax_only == 1) { sid = 0; }
             else {
                 syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-                PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2);
+                PRSTR(S + 0xEC00000 + noff); syscall(SYS_WRITE, 2, "'\n", 2);
                 _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
                 _had_error = 1; sid = 0;
             }
@@ -521,7 +521,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
             # memory write authoritative.
             var sw = GSLICE_W(S, lli);
             if (sw > 0) {
-                var fname = L64(S + 0x60000 + fnoff);
+                var fname = L64(S + 0xEC00000 + fnoff);
                 var fld_off = 0 - 1;
                 if (fname & 0xFFFFFFFF == 0x00727470) { fld_off = 0; }      # "ptr\0"
                 elif (fname & 0xFFFFFFFF == 0x006E656C) { fld_off = 8; }    # "len\0"
@@ -549,7 +549,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
             if (_syntax_only == 1) { sid = 0; }
             else {
                 syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-                PRSTR(S + 0x60000 + noff); syscall(SYS_WRITE, 2, "'\n", 2);
+                PRSTR(S + 0xEC00000 + noff); syscall(SYS_WRITE, 2, "'\n", 2);
                 _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
                 _had_error = 1; sid = 0;
             }
@@ -1040,7 +1040,7 @@ fn PARSE_GVAR_REG(S): i64 {
         else {
             if (PEEKT(S) == 2) {
                 var ann_sn = PEEKV(S);
-                var ann_tn = L64(S + 0x60000 + ann_sn);
+                var ann_tn = L64(S + 0xEC00000 + ann_sn);
                 # v6.2.1: unsigned widths (u8/u16/u32/u64) added alongside
                 # the signed ones so top-level `var g: u64[N]` element-sizes
                 # like the in-fn path. u128 = 0x38323175.
@@ -1563,7 +1563,7 @@ fn PARSE_VAR(S): i64 {
             # Pointer type: *i64, *i32, *i16, *i8
             STI(S, GTI(S) + 1);  # consume *
             var tnoff = PEEKV(S);
-            var tname = L64(S + 0x60000 + tnoff);
+            var tname = L64(S + 0xEC00000 + tnoff);
             if (tname & 0xFFFFFF == 0x343669) { pscale = 8; }
             if (tname & 0xFFFFFF == 0x323369) { pscale = 4; }
             if (tname & 0xFFFFFF == 0x363169) { pscale = 2; }
@@ -1584,7 +1584,7 @@ fn PARSE_VAR(S): i64 {
             } elif (PEEKT(S) == 2) {
                 # Scalar/struct element: [u8], [i32], [Foo]
                 var elt_noff = PEEKV(S);
-                var elt_name = L64(S + 0x60000 + elt_noff);
+                var elt_name = L64(S + 0xEC00000 + elt_noff);
                 # v6.3.9 (F-fns): `[T]` element under a generic binding (inert default).
                 var _etc = 0;
                 if (_tp_c0 != 0) { _etc = _tp_resolve(S, elt_noff); }
@@ -1615,7 +1615,7 @@ fn PARSE_VAR(S): i64 {
             # u128 type
             scalar_type = 16;
             STI(S, GTI(S) + 1);
-        } elif (PEEKT(S) == 2 && (L64(S + 0x60000 + PEEKV(S)) & 0xFFFFFFFFFF) == 0x6563696C73) {
+        } elif (PEEKT(S) == 2 && (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFF) == 0x6563696C73) {
             # v5.8.10 §2: `slice<T>` ident form — 16-byte {ptr,len} slot.
             # v5.8.14 §6: extract element width from <T> for §7 indexing.
             # Bytes for "slice" = 0x6563696C73 (little-endian load64
@@ -1631,7 +1631,7 @@ fn PARSE_VAR(S): i64 {
                     if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }
                 } elif (PEEKT(S) == 2) {
                     var gtt_noff = PEEKV(S);
-                    var gtt_name = L64(S + 0x60000 + gtt_noff);
+                    var gtt_name = L64(S + 0xEC00000 + gtt_noff);
                     # v6.3.9 (F-fns): `slice<T>` element under a generic binding —
                     # canonical token → width (<0 -width, >0 STRUCTSZ). Inert default.
                     var _gtc = 0;
@@ -1668,7 +1668,7 @@ fn PARSE_VAR(S): i64 {
                 # slot closes. u-bytes: u8=0x3875 u16=0x363175 u32=0x323375
                 # u64=0x343675 (LE name load; see the slice-elt detector
                 # above). Zero existing u-scalar usage → self-host neutral.
-                var ltname = L64(S + 0x60000 + lann);
+                var ltname = L64(S + 0xEC00000 + lann);
                 # v6.3.9 (F-fns): generic `: T` substitution. When a binding is
                 # active and `lann` is a bound type-param, the canonical token
                 # drives scalar_type (<0 → -width) or pscale (>0 → -sid), skipping

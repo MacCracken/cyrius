@@ -35,24 +35,24 @@ include "src/frontend/parse.cyr"
 # + on PE (flags 0x22, the syscall(9) → VirtualAlloc reroute), brk on Linux/agnos.
 # Flat per-target #ifdef blocks (exactly one of MACOS/WIN/LINUX/AGNOS is predefined
 # by the compiling driver) — the alloc.cyr idiom, avoids nested #ifdef. Arena top
-# 0x7400000 maps the relocated lexid_entries @ 0x7300000 (v6.4.21 LEXID cap).
+# 0xF600000 maps the relocated lexid_entries @ 0xF400000 (v6.4.21 LEXID cap).
 #ifdef CYRIUS_TARGET_MACOS
-var S = syscall(9, 0, 0x7400000, 3, 0x1002, 0 - 1, 0);
+var S = syscall(9, 0, 0xF600000, 3, 0x1002, 0 - 1, 0);
 if (S < 0x100000) {
     syscall(1, 2, "cycc_cx: mmap heap init failed\n", 31);
     syscall(60, 1);
 }
 #endif
 #ifdef CYRIUS_TARGET_WIN
-var S = syscall(9, 0, 0x7400000, 3, 0x22, 0 - 1, 0);
+var S = syscall(9, 0, 0xF600000, 3, 0x22, 0 - 1, 0);
 #endif
 #ifdef CYRIUS_TARGET_LINUX
 var S = syscall(SYS_BRK, 0);
-syscall(SYS_BRK, S + 0x7400000);
+syscall(SYS_BRK, S + 0xF600000);
 #endif
 #ifdef CYRIUS_TARGET_AGNOS
 var S = syscall(SYS_BRK, 0);
-syscall(SYS_BRK, S + 0x7400000);
+syscall(SYS_BRK, S + 0xF600000);
 #endif
 
 # Zero scratch state (v5.8.63 extraction; see src/common/util.cyr for slot list)
@@ -83,8 +83,8 @@ _fnt_codeend = S + 0xA2A000;
 _fnt_structmask = S + 0xA3A000;
 _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
-_fnt_hash_mask = 8191;
-_fnt_cap = 8192;
+_fnt_hash_mask = 4095;   # v6.5.40: hash slots are 4 B now, so the fixed 16 KB regions hold 4096
+_fnt_cap = 4096;        # v6.5.40: was 8192 at 2 B/slot; _fnt_grow doubles from here
 # Phase 0 (v6.2.0): growable codebuf — base at the original 3 MB region,
 # cap 3145728 (byte-identical under the old cap; EB grows + relocates off-heap
 # when cp nears it). The cx backend's own 0x54A000 codebuf is separate + fixed.
@@ -122,7 +122,7 @@ while (done == 0) {
             var probe[1];
             var pn = syscall(SYS_READ, 0, &probe, 1);
             if (pn > 0) {
-                syscall(SYS_WRITE, 2, "error: input exceeds the 16MB source buffer
+                syscall(SYS_WRITE, 2, "error: input exceeds the 24MB source buffer
 ", 44);
                 syscall(SYS_EXIT, 1);
             }
@@ -200,17 +200,17 @@ while (scan == 1) {
                             # Append mangled name to tok_names (after lexing, NPOS is stable)
                             # v5.11.65 (CVE-05): no prior tok_names guard
                             # on this path. See main_aarch64.cyr same site.
-                            var _ulen1 = 0; while (load8(S + 0x60000 + umod + _ulen1) != 0) { _ulen1 = _ulen1 + 1; }
-                            var _ulen2 = 0; while (load8(S + 0x60000 + ufn + _ulen2) != 0) { _ulen2 = _ulen2 + 1; }
+                            var _ulen1 = 0; while (load8(S + 0xEC00000 + umod + _ulen1) != 0) { _ulen1 = _ulen1 + 1; }
+                            var _ulen2 = 0; while (load8(S + 0xEC00000 + ufn + _ulen2) != 0) { _ulen2 = _ulen2 + 1; }
                             NPOS_GUARD(S, _ulen1 + 1 + _ulen2 + 1);
                             var apos = GNPOS(S);
                             var ri = 0;
-                            var rc = load8(S + 0x60000 + umod + ri);
-                            while (rc != 0) { store8(S + 0x60000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0x60000 + umod + ri); }
-                            store8(S + 0x60000 + apos, 95); apos = apos + 1;
-                            ri = 0; rc = load8(S + 0x60000 + ufn + ri);
-                            while (rc != 0) { store8(S + 0x60000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0x60000 + ufn + ri); }
-                            store8(S + 0x60000 + apos, 0); apos = apos + 1;
+                            var rc = load8(S + 0xEC00000 + umod + ri);
+                            while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + umod + ri); }
+                            store8(S + 0xEC00000 + apos, 95); apos = apos + 1;
+                            ri = 0; rc = load8(S + 0xEC00000 + ufn + ri);
+                            while (rc != 0) { store8(S + 0xEC00000 + apos, rc); apos = apos + 1; ri = ri + 1; rc = load8(S + 0xEC00000 + ufn + ri); }
+                            store8(S + 0xEC00000 + apos, 0); apos = apos + 1;
                             var alias_noff = GNPOS(S);
                             SNPOS(S, apos);
                             S64(S + 0x1901D0 + uc * 8, alias_noff);
@@ -354,7 +354,7 @@ var wfc = GFNC(S);
 while (wfi < wfc) {
     if (L64(_fnt_offsets + wfi * 8) < 0) {   # v6.4.58: canonical table (0xE92000 was all-zero → never fired)
         syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-        PRSTR(S + 0x60000 + L64(_fnt_names + wfi * 8));
+        PRSTR(S + 0xEC00000 + L64(_fnt_names + wfi * 8));
         syscall(SYS_WRITE, 2, "'\n", 2);
     }
     wfi = wfi + 1;
@@ -414,7 +414,7 @@ while (ufi < GFCNT(S)) {
                 syscall(SYS_WRITE, 2, "error: undefined function(s) called (cx backend):\n", 50);
             }
             syscall(SYS_WRITE, 2, "  - ", 4);
-            PRSTR(S + 0x60000 + L64(_fnt_names + uidx * 8));
+            PRSTR(S + 0xEC00000 + L64(_fnt_names + uidx * 8));
             syscall(SYS_WRITE, 2, "\n", 1);
             cx_undef = cx_undef + 1;
         }

@@ -363,7 +363,7 @@ fn FIXUP(S): i64 {
     # non-deterministic unreachable-fn counts across identical runs. Conservative
     # (an unreachable fn is kept, never a reachable one dropped), but wrong. Clearing
     # the full array makes the count deterministic and correct up to 32768 fns.
-    var live[4096];
+    var live[16384];   # v6.5.40: 131072 fns / 8 bits (was 4096 = 32768 fns)
     var ci = 0;
     while (ci < 4096) { store8(&live + ci, 0); ci = ci + 1; }
     # Call-graph construction is BYTE-SCAN-based, not fixup-based, because
@@ -411,7 +411,7 @@ fn FIXUP(S): i64 {
     # only if a future caller writes here, but defensive reset is cheap).
     var sh_clr = 0;
     while (sh_clr < _fnt_cap) {
-        store16(_fnt_starthash + sh_clr * 2, 0);
+        store32(_fnt_starthash + sh_clr * 4, 0);
         sh_clr = sh_clr + 1;
     }
     var sh_i = 0;
@@ -420,10 +420,10 @@ fn FIXUP(S): i64 {
         if (sh_start >= 0) {
             var sh_h = (sh_start * 0x9E3779B97F4A7C15) >> 16;
             var sh_slot = sh_h & _fnt_hash_mask;
-            while (load16(_fnt_starthash + sh_slot * 2) != 0) {
+            while (load32(_fnt_starthash + sh_slot * 4) != 0) {
                 sh_slot = (sh_slot + 1) & _fnt_hash_mask;
             }
-            store16(_fnt_starthash + sh_slot * 2, sh_i + 1);
+            store32(_fnt_starthash + sh_slot * 4, sh_i + 1);
         }
         sh_i = sh_i + 1;
     }
@@ -637,7 +637,7 @@ fn FIXUP(S): i64 {
                     var dn_live = load8(&live + (dni >> 3)) & (1 << (dni & 7));
                     if (dn_live == 0) {
                         syscall(SYS_WRITE, 2, "  dead: ", 8);
-                        PRSTR(S + 0x60000 + L64(_fnt_names + dni * 8));
+                        PRSTR(S + 0xEC00000 + L64(_fnt_names + dni * 8));
                         syscall(SYS_WRITE, 2, "\n", 1);
                     }
                 }
@@ -703,7 +703,7 @@ fn FIXUP(S): i64 {
                 if (u59_skip == 0) {
                     var u59_ufnoff = L64(_fnt_names + u59_uidx * 8);
                     syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-                    var u59_unptr = S + 0x60000 + u59_ufnoff;
+                    var u59_unptr = S + 0xEC00000 + u59_ufnoff;
                     var u59_unlen = 0;
                     while (load8(u59_unptr + u59_unlen) != 0) { u59_unlen = u59_unlen + 1; }
                     syscall(SYS_WRITE, 2, u59_unptr, u59_unlen);
@@ -1180,7 +1180,7 @@ fn EMITELF_USER(S, etype): i64 {
             syscall(SYS_WRITE, 2, "\n  largest vars:\n    ", 21);
             PRNUM(top1_sz);
             syscall(SYS_WRITE, 2, " bytes: ", 8);
-            var nptr = S + 0x60000 + L64(_varn_base + top1_ix * 8);
+            var nptr = S + 0xEC00000 + L64(_varn_base + top1_ix * 8);
             var nlen = 0;
             while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
             syscall(SYS_WRITE, 2, nptr, nlen);
@@ -1188,7 +1188,7 @@ fn EMITELF_USER(S, etype): i64 {
                 syscall(SYS_WRITE, 2, "\n    ", 5);
                 PRNUM(top2_sz);
                 syscall(SYS_WRITE, 2, " bytes: ", 8);
-                nptr = S + 0x60000 + L64(_varn_base + top2_ix * 8);
+                nptr = S + 0xEC00000 + L64(_varn_base + top2_ix * 8);
                 nlen = 0;
                 while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
                 syscall(SYS_WRITE, 2, nptr, nlen);
@@ -1197,7 +1197,7 @@ fn EMITELF_USER(S, etype): i64 {
                 syscall(SYS_WRITE, 2, "\n    ", 5);
                 PRNUM(top3_sz);
                 syscall(SYS_WRITE, 2, " bytes: ", 8);
-                nptr = S + 0x60000 + L64(_varn_base + top3_ix * 8);
+                nptr = S + 0xEC00000 + L64(_varn_base + top3_ix * 8);
                 nlen = 0;
                 while (load8(nptr + nlen) != 0) { nlen = nlen + 1; }
                 syscall(SYS_WRITE, 2, nptr, nlen);
@@ -1442,7 +1442,7 @@ fn _GNUHASH(np): i64 {
 #     source surface is the point; otherwise `private` is only a comment.
 fn _fn_exported(S, fi): i64 {
     if (L64(_fnt_offsets + fi * 8) < 0) { return 0; }
-    var np = S + 0x60000 + L64(_fnt_names + fi * 8);
+    var np = S + 0xEC00000 + L64(_fnt_names + fi * 8);
     if (load8(np) == 95) { return 0; }
     if ((GFLG(S, fi) & 64) != 0) { return 0; }
     return 1;
@@ -1474,7 +1474,7 @@ fn EMITELF_SHARED(S): i64 {
     while (fi < fnc) {
         var fo = L64(_fnt_offsets + fi * 8);
         var noff = L64(_fnt_names + fi * 8);
-        var np = S + 0x60000 + noff;
+        var np = S + 0xEC00000 + noff;
         if (_fn_exported(S, fi) == 1) {
             # Defined, not underscore-prefixed.
             var nl = 0;
@@ -1581,7 +1581,7 @@ fn EMITELF_SHARED(S): i64 {
     while (fi < fnc) {
         var fo2 = L64(_fnt_offsets + fi * 8);
         var noff2 = L64(_fnt_names + fi * 8);
-        var np2 = S + 0x60000 + noff2;
+        var np2 = S + 0xEC00000 + noff2;
         if (_fn_exported(S, fi) == 1) {
             # st_name = str_cursor (offset into .dynstr)
             store8(sym_p + 0, str_cursor & 0xFF);
@@ -1640,7 +1640,7 @@ fn EMITELF_SHARED(S): i64 {
     while (fi < fnc) {
         var fo3 = L64(_fnt_offsets + fi * 8);
         var noff3 = L64(_fnt_names + fi * 8);
-        var np3 = S + 0x60000 + noff3;
+        var np3 = S + 0xEC00000 + noff3;
         if (_fn_exported(S, fi) == 1) {
             var hh = _GNUHASH(np3);
             # Bloom: bit (h % 64) and bit ((h >> bloom_shift) % 64).
@@ -1750,7 +1750,7 @@ fn EMITELF_OBJ(S): i64 {
     while (fi < fnc) {
         S64(fn_strtab_off + fi * 8, sp);
         var noff = L64(_fnt_names + fi * 8);
-        var np = S + 0x60000 + noff;
+        var np = S + 0xEC00000 + noff;
         si = 0;
         while (load8(np + si) != 0) { store8(strtab + sp, load8(np + si)); sp = sp + 1; si = si + 1; }
         store8(strtab + sp, 0); sp = sp + 1;

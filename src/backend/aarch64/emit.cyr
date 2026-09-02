@@ -2488,7 +2488,7 @@ fn EPATCHFRAME(S, patch, size): i64 {
 
 fn ASM_MNEMONIC(S): i64 {
     var noff = PEEKV(S);
-    var mnem = L64(S + 0x60000 + noff);
+    var mnem = L64(S + 0xEC00000 + noff);
     STI(S, GTI(S) + 1);
     if (mnem & 0xFFFFFF == 0x637673) { EW(S, 0xD4000001); }                    # svc
     elif (mnem & 0xFFFFFF == 0x696677) { EW(S, 0xD503207F); }                  # wfi
@@ -2538,12 +2538,12 @@ fn _asm_aarch64_reg(n): i64 {
 # identical to the old literals when _cur_fn_regalloc==0. ldur's imm9 is signed
 # -256..255; params beyond that ERR (rare). See issue 2026-05-21-asm-block-global-symbol-pseudo.
 fn ASM_PARAM_LOAD(S, noff): i64 {
-    if (load8(S + 0x60000 + noff + 8) != 97) { ERR(S); }    # 'a'
-    if (load8(S + 0x60000 + noff + 9) != 100) { ERR(S); }   # 'd'
+    if (load8(S + 0xEC00000 + noff + 8) != 97) { ERR(S); }    # 'a'
+    if (load8(S + 0xEC00000 + noff + 9) != 100) { ERR(S); }   # 'd'
     if (PEEKT(S) != 10) { ERR(S); }      # (
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 2) { ERR(S); }       # register identifier
-    var reg = _asm_aarch64_reg(L64(S + 0x60000 + PEEKV(S)));
+    var reg = _asm_aarch64_reg(L64(S + 0xEC00000 + PEEKV(S)));
     if (reg < 0) { ERR(S); }
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 31) { ERR(S); }      # ,

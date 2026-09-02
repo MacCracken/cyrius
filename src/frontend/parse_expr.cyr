@@ -63,14 +63,14 @@ fn _STR_FROM_NOFF(S): i64 {
     var npos = GNPOS(S);
     var i = 0;
     while (i < npos) {
-        if (L64(S + 0x60000 + i) == 0x6D6F72665F727473) {
-            if (load8(S + 0x60000 + i + 8) == 0) {
+        if (L64(S + 0xEC00000 + i) == 0x6D6F72665F727473) {
+            if (load8(S + 0xEC00000 + i + 8) == 0) {
                 _str_from_cache = i;
                 return i;
             }
         }
         # Skip to next null terminator
-        while (i < npos) { if (load8(S + 0x60000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+        while (i < npos) { if (load8(S + 0xEC00000 + i) == 0) { i = i + 1; break; } i = i + 1; }
     }
     return 0 - 1;
 }
@@ -286,7 +286,7 @@ fn _ARG_REG_COUNT(): i64 {
 # 'f','n','c','a','l','l' occupy the low 48 bits (0x6C6C61636E66), the ASCII digit
 # sits at byte 6, and byte 7 must be NUL so `fncall2x` cannot match.
 fn _IS_FNCALL_NAME(S, noff): i64 {
-    var w = L64(S + 0x60000 + noff);
+    var w = L64(S + 0xEC00000 + noff);
     if ((w & 0xFFFFFFFFFFFF) != 0x6C6C61636E66) { return 0; }
     if (((w >> 56) & 0xFF) != 0) { return 0; }
     var d = (w >> 48) & 0xFF;
@@ -458,7 +458,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     }
     if (typ == 61) { var fval = PEEKV(S); STI(S, GTI(S) + 1); EMIT_FLOAT_LIT(S, fval); SESTYPE(S, F64_TYID); return 0; }
     # sizeof(Type) — compile-time constant (detected as IDENT "sizeof")
-    if (typ == 2) { if (L64(S + 0x60000 + PEEKV(S)) & 0xFFFFFFFFFFFF == 0x666F657A6973) {
+    if (typ == 2) { if (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF == 0x666F657A6973) {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
             STI(S, GTI(S) + 1);
@@ -471,7 +471,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 var szn = PEEKV(S);
                 STI(S, GTI(S) + 1);
-                var szname = L64(S + 0x60000 + szn);
+                var szname = L64(S + 0xEC00000 + szn);
                 # v6.3.9 (F-fns): sizeof(T) under a generic binding → canonical token
                 # → size (<0 -width, >0 STRUCTSZ). Inert when _tp_c0==0 (byte-identical).
                 var _szc = 0;
@@ -493,7 +493,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         } }
     # mulh64(a, b) — high 64 bits of a 64×64 unsigned multiply
     # Packed LE encoding of "mulh64" = 0x3436686C756D.
-    if (typ == 2) { if (L64(S + 0x60000 + PEEKV(S)) & 0xFFFFFFFFFFFF == 0x3436686C756D) {
+    if (typ == 2) { if (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF == 0x3436686C756D) {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
             STI(S, GTI(S) + 1);
@@ -766,7 +766,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             syscall(SYS_WRITE, 2, "error:", 6);
             _err_head(S);
             syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-            PRSTR(S + 0x60000 + noff);
+            PRSTR(S + 0xEC00000 + noff);
             syscall(SYS_WRITE, 2, "' (missing include or enum?)\n", 29);
             _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
             _had_error = 1; EMOVI(S, 0); return 0;
@@ -889,7 +889,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # Nothing of this name exists in any scope.
         if (_syntax_only == 1) { EMOVI(S, 0); return 0; }   # v6.5.19: see _syntax_only
         syscall(SYS_WRITE, 2, "error:", 6); _err_head(S); syscall(SYS_WRITE, 2, ": undefined variable '", 22);
-        PRSTR(S + 0x60000 + anoff); syscall(SYS_WRITE, 2, "'\n", 2);
+        PRSTR(S + 0xEC00000 + anoff); syscall(SYS_WRITE, 2, "'\n", 2);
         _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
         _had_error = 1; EMOVI(S, 0); return 0;
         return 0;
@@ -1883,16 +1883,16 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         var clid = GFNC(S);
         var clnoff = GNPOS(S);
         var cwp = clnoff;
-        store8(S + 0x60000 + cwp, 95); cwp = cwp + 1;    # _
-        store8(S + 0x60000 + cwp, 95); cwp = cwp + 1;    # _
-        store8(S + 0x60000 + cwp, 99); cwp = cwp + 1;    # c
-        store8(S + 0x60000 + cwp, 108); cwp = cwp + 1;   # l
-        store8(S + 0x60000 + cwp, 48 + (clid / 10000) % 10); cwp = cwp + 1;
-        store8(S + 0x60000 + cwp, 48 + (clid / 1000) % 10); cwp = cwp + 1;
-        store8(S + 0x60000 + cwp, 48 + (clid / 100) % 10); cwp = cwp + 1;
-        store8(S + 0x60000 + cwp, 48 + (clid / 10) % 10); cwp = cwp + 1;
-        store8(S + 0x60000 + cwp, 48 + clid % 10); cwp = cwp + 1;
-        store8(S + 0x60000 + cwp, 0); cwp = cwp + 1;
+        store8(S + 0xEC00000 + cwp, 95); cwp = cwp + 1;    # _
+        store8(S + 0xEC00000 + cwp, 95); cwp = cwp + 1;    # _
+        store8(S + 0xEC00000 + cwp, 99); cwp = cwp + 1;    # c
+        store8(S + 0xEC00000 + cwp, 108); cwp = cwp + 1;   # l
+        store8(S + 0xEC00000 + cwp, 48 + (clid / 10000) % 10); cwp = cwp + 1;
+        store8(S + 0xEC00000 + cwp, 48 + (clid / 1000) % 10); cwp = cwp + 1;
+        store8(S + 0xEC00000 + cwp, 48 + (clid / 100) % 10); cwp = cwp + 1;
+        store8(S + 0xEC00000 + cwp, 48 + (clid / 10) % 10); cwp = cwp + 1;
+        store8(S + 0xEC00000 + cwp, 48 + clid % 10); cwp = cwp + 1;
+        store8(S + 0xEC00000 + cwp, 0); cwp = cwp + 1;
         SNPOS(S, cwp);
         # Register the closure function
         var clfi = REGFN(S, clnoff);
@@ -3064,18 +3064,18 @@ fn BUILD_OP_NAME(S, stype, op_str, op_len): i64 {
     var snoff = L64(S + 0x1A6018 + si * 8);
     # v5.11.65 (CVE-05): bound against actual struct-name length + op
     # suffix; was magic-256 pessimistic budget. See CHANGELOG [5.11.65].
-    var _snlen = 0; while (load8(S + 0x60000 + snoff + _snlen) != 0) { _snlen = _snlen + 1; }
+    var _snlen = 0; while (load8(S + 0xEC00000 + snoff + _snlen) != 0) { _snlen = _snlen + 1; }
     NPOS_GUARD(S, _snlen + 1 + op_len + 1);
     var owp = GNPOS(S);
     var onoff = owp;
     var ori = 0;
-    var orc = load8(S + 0x60000 + snoff + ori);
-    while (orc != 0) { store8(S + 0x60000 + owp, orc); owp = owp + 1; ori = ori + 1; orc = load8(S + 0x60000 + snoff + ori); }
-    store8(S + 0x60000 + owp, 95); owp = owp + 1;
+    var orc = load8(S + 0xEC00000 + snoff + ori);
+    while (orc != 0) { store8(S + 0xEC00000 + owp, orc); owp = owp + 1; ori = ori + 1; orc = load8(S + 0xEC00000 + snoff + ori); }
+    store8(S + 0xEC00000 + owp, 95); owp = owp + 1;
     var oci = 0;
-    while (oci < op_len) { store8(S + 0x60000 + owp + oci, load8(op_str + oci)); oci = oci + 1; }
+    while (oci < op_len) { store8(S + 0xEC00000 + owp + oci, load8(op_str + oci)); oci = oci + 1; }
     owp = owp + op_len;
-    store8(S + 0x60000 + owp, 0); owp = owp + 1;
+    store8(S + 0xEC00000 + owp, 0); owp = owp + 1;
     SNPOS(S, owp);
     return onoff;
 }
@@ -3117,10 +3117,10 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
     var np = GNPOS(S);
     var i = 0;
     while (i < flen) {
-        store8(S + 0x60000 + np + i, load8(fname_str + i));
+        store8(S + 0xEC00000 + np + i, load8(fname_str + i));
         i = i + 1;
     }
-    store8(S + 0x60000 + np + flen, 0);
+    store8(S + 0xEC00000 + np + flen, 0);
     SNPOS(S, np + flen + 1);
     var fi = FINDFN(S, np);
     if (fi < 0) { fi = REGFN(S, np); }

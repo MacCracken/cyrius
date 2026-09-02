@@ -4,6 +4,100 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.40] — 2026-09-02
+
+**The limits cascade — this release carries nothing else.** `preprocess_out`'s 8 MB ceiling was
+a hard build failure with no flag, no env var and no manifest key: a project that hit it had
+exactly one move, make its source smaller, which in practice meant hand-vendoring dependencies
+instead of declaring them. Dedicated release on the v6.5.22 precedent — if the new heap
+misbehaves there is exactly one candidate cause.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,191,512 B**, seed → cybs → cycc
+derivable from the 29,024 B seed, `check.sh` **218 / 0**, cross-OS self-host on REAL hardware —
+**ecb + ach + cass + pi, each SELFHOST_OK + crossos LIBTEST_OK 57/57** — and bench
+`self_compile` **727 ms** (720 at `.39`, noise). `.text` **1,043,312 B**, +184 over `.39`.
+⭐ The cross-OS leg carries unusual weight here: the arena grew 121 → 246 MB of virtual address
+space, and **pi is a Raspberry Pi** — that it self-hosts there is the evidence the lazy-mapping
+assumption actually holds on a small machine, not just on the build box.
+
+⭐ **RAISING THE FILED CAP ALONE WOULD HAVE BOUGHT ~30 %, NOT 3x — and would have been reported
+as 3x.** It was the first of FIVE caps stacked behind one another. Each was measured as it
+became the next wall, by compiling generated source at realistic density:
+
+| cap | was | now | where it bit |
+|---|---|---|---|
+| `preprocess_out` | 8 MB | **24 MB** | the filed failure (thoth at ~96 % of it) |
+| token table | 1,048,576 | **4,194,304** | ~12 MB of realistic source |
+| identifier pool | 512 KB | **8 MB** | thoth alone needs ~798 KB, agnostic ~797 KB |
+| function table | 32,768 | **131,072** | ~12 MB (real projects run ~1,009 fns/MB) |
+| identifier dedup | 65,536 | **262,144** | ~23 MB (thoth has 40,641 unique identifiers) |
+
+**Verified end to end: a 23 MB realistic source with 65,242 functions compiles and returns the
+correct answer.** The gate asserts the answer, not just the exit code — a raised ceiling that
+miscompiles is worse than the hard error it replaced.
+
+### Changed — how the space was found, and why it was cheap
+
+⚠ **The filing's recommended route was NOT taken** (maintainer, 2026-09-02): re-splitting the
+fixed 24 MB span would have shrunk `input_buf` 16 → 12 MB, undoing what v6.5.22 deliberately
+raised. Instead `input_buf` moved to the arena top and `preprocess_out` grew into the band it
+vacated — cheap for a structural reason worth recording: **`preprocess_out`'s base is a bare
+literal at ~90 code sites, while `input_buf`'s is one named constant.** Growing `preprocess_out`
+in place would instead have moved `fn_local_names` (60 sites). The same "relocate to the arena
+top" pattern the heap map had already used twice.
+
+Five regions moved: `input_buf` → `0x7400000` (16 → 24 MB), the three token arrays → the arena
+top (8 → 32 MiB each), `tok_names` → `0xEC00000` (512 KB → 8 MB, it could not grow in place —
+`fn_name_hash` sits at `0x110000`, which is what the old "pool end must stay ≤ 0x100000" rule
+was really about), and `lexid_entries` → `0xF400000` (512 KB → 2 MiB). Arena `0x7400000` →
+`0xF600000` (121 → 246 MB virtual; anonymous mmap is lazy, so no physical cost). Frees
+`0x2D7C000..0x457C000` (24 MiB), `0x60000..0x100000` (640 KB) and the old lexid band.
+
+⚠ **The two-step bootstrap (cycc compiles cc5b, cycc == cc5b) was re-run after EVERY one of the
+five moves**, not once at the end — that is the gate a heap-layout change actually rides on, and
+running it per-move is what makes a failure attributable.
+
+### Fixed — a latent overflow that the raise would have made LIVE
+
+`PP_REF_PASS` copied its expanded output from `preprocess_out` back into `_SRCB` with **no cap
+check at all**, unlike its two sibling passes. That was contained while `preprocess_out` was
+8 MB and `_SRCB` was the 16 MB region directly above it — the overrun landed in the buffer it
+was copying to. With `preprocess_out` grown to 24 MB the region above it is `fn_local_names`, so
+the same overrun would corrupt the per-fn local tables. Bounded before the ceiling was raised.
+
+### Fixed — function-table ceiling: both reasons for it, not a workaround
+
+The 32,768 ceiling existed for two documented reasons and both were addressed rather than argued
+around: the fn-index hash slots were **2 bytes** storing `fi+1` (capping the index below 65536)
+and are now 4 bytes, and the DCE `live[]` bitmap was a fixed 4096-byte local (32,768 bits) and is
+now 16,384. The initial cap drops 8192 → 4096 because the two fixed 16 KB hash regions hold 4096
+slots at 4 B/slot; `_fnt_grow` doubles from there, costing one extra grow on a large program.
+⚠ A widening pass missed one site — `load16(_fnt_starthash …)` in `src/backend/common/runtime.cyr`
+— caught by grepping for surviving 2-byte accesses rather than by testing.
+
+### Fixed — stale diagnostics that had been shipping
+
+`"input exceeds the 16MB source buffer"` in all seven forks, plus every cap message. All are
+byte-counted (the em-dash is 3 bytes UTF-8, so the declared lengths shift by more than the digit
+count suggests).
+
+### Traps recorded
+
+⚠ **Three false matches would have been silently corrupted by a blanket relocation of the
+identifier pool**: `0x600000` (`TS_NAMES_OFF`), `0x60000020` (a PE section-characteristics flag)
+and `scratch + 0x60000` (a different base entirely) all merely *contain* the literal `0x60000`.
+Only the `S + 0x60000 + ` form was moved — checked before the replace, not after.
+
+⚠ **The new gate's own first run failed for the wrong reason**: `if (op > 0)` is an unrelated
+emptiness test in `lex_pp.cyr` and a lexical `sort -u | head -1` picked it, yielding a cap of 0.
+It takes the maximum now.
+
+⚠ **A token-dense synthetic hits the token cap first and a unique-identifier synthetic hits the
+pool first** — both report a wall no real consumer would meet. Every measurement here uses
+generated source at real density (~45 % comment, reused identifier vocabulary), derived from
+this repo's own stdlib.
+
+
 ## [6.5.39] — 2026-09-01
 
 **A packed repair release: the two items `.38` pinned and did not ship, plus a ~1000x

@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.39** (2026-09-01) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.40** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -455,6 +455,22 @@ not a single release.
   undercounts its guards 4 vs 7, one of them a tautology). cycc **1,191,464 B** / `.text`
   **1,043,128 B** (+312; file size moved 0 — quantized), `check.sh` **217/0**, crossos **57/57**
   on ecb + ach + cass + pi.
+- **v6.5.40** — **THE LIMITS CASCADE, and the release carries nothing else** (v6.5.22 precedent:
+  if the new heap misbehaves there is exactly one candidate cause). `preprocess_out`'s 8 MB
+  ceiling was a HARD build failure with no flag, no env var and no manifest key — the only
+  consumer-side answer was to hand-vendor dependencies instead of declaring them, which is what
+  made it a limit on a whole class of bigger projects rather than one filing.
+  ⭐ **RAISING THE FILED CAP ALONE WOULD HAVE BOUGHT ~30 %, NOT 3x — and would have been reported
+  as 3x.** It was the first of FIVE stacked caps, each measured as it became the next wall:
+  preprocess_out 8→**24 MB**, tokens 1,048,576→**4,194,304**, identifier pool 512 KB→**8 MB**,
+  fn table 32,768→**131,072**, identifier dedup 65,536→**262,144**. Verified END TO END: a
+  **23 MB source with 65,242 functions** compiles and returns the right answer.
+  ⚠ The filing's own recommended route was rejected (it would have shrunk `input_buf` 16→12 MB,
+  undoing v6.5.22); `input_buf` moved to the arena top instead and `preprocess_out` grew into the
+  band it vacated — cheap because its base is ONE named constant while `preprocess_out`'s is a
+  bare literal at ~90 sites. ⚠ A latent unbounded copy-back in `PP_REF_PASS` had to be fixed
+  FIRST, or the raise would have converted it from contained to live. cycc **1,191,512 B** /
+  `.text` **1,043,312 B**, `check.sh` **218/0**, crossos 57/57 on all four hosts.
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 
