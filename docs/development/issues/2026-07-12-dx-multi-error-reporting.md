@@ -1,6 +1,15 @@
 # DX diagnostics: multi-error reporting — RESIDUAL ONLY (the recovery core shipped)
 
-**Status:** 🟡 **OPEN — residual only, and much smaller than this file used to claim. Re-counted
+**Status:** ✅ **CLOSED at v6.5.39.** R1 and R2 both substantially shipped at **v6.5.23** — the slot this filing itself pinned — and nobody closed the file; the excerpt gap was the only real residual and it shipped here, along with a latent silent miscompile found in the same function. Gate: `tests/gates/diagnostics/resolution_excerpt_and_assert_skip.sh` (4 axes, mutation-proven both ways).
+
+⚠ **THREE OF THIS FILING'S CLAIMS WERE AFFIRMATIVELY WRONG, not merely stale.** Recorded so a later sweep does not re-inflate them:
+1. **"The residual GREW 7 → 8 — v6.5.19's `_ends_guard` added a site."** False on live code: that site recovers (`_had_error = 1; return 1;`). CHANGELOG v6.5.23 records the conversion as an explicit maintainer decision.
+2. **"THE DEPENDENCY IS BACKWARDS — R2 MUST LAND BEFORE R1."** Directly contradicted by the CHANGELOG of the release that shipped both: *"R2 was NOT the enabler, contrary to the re-triage… what works is report-and-continue **without** panic-mode."* The five sites bypass `ERR_IDENT` precisely to dodge the manufactured-`unexpected else` regression.
+3. **`CHK_ENUM_SHADOW` is not an open residual** — it is fail-fast by design, per its own source comment.
+
+The live residual count was **1**, not 7 or 8. ⚠ **All seven line numbers in the filing's table had drifted again** (second re-stamp for drift): a hand-maintained table of line numbers is the wrong artifact, which is why the fix is pinned by a gate instead.
+
+⛔ **A NEW LATENT SILENT MISCOMPILE was found in the code the last residual sits in, and fixed here.** The `#assert` skip-loop's comment promised *"consume remaining tokens until `;` or newline change"* and the loop tested only `;` and EOF — there was no newline check at all. A `#assert` with no trailing `;` skipped across the following `fn` header and ate the first statement **and its `;`**. Measured: the gate fixture exits **0** pre-fix where **7** is correct — wrong code, no diagnostic, no crash. Latent rather than live only because nothing in the tree uses `#assert` today (all 12 grep hits are compiler implementation or comments). Duplicated at three sites in three files; all three fixed.
 live on cycc 6.5.10, 2026-08-07: still exactly 7, but every line number below had drifted.** The
 recovery core shipped **v6.4.62** and the EOF-cascade half shipped **v6.4.78**. What remains is
 **7 inline `SYS_EXIT` error sites in the parser** (the file once said 25, which was the count of

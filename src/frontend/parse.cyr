@@ -983,7 +983,18 @@ fn _PARSE_STMT_IMPL(S): i64 {
             syscall(SYS_EXIT, 1);
         }
         # Skip to end of line (consume remaining tokens until ; or newline change)
-        while (PEEKT(S) != 5 && PEEKT(S) != 12) { STI(S, GTI(S) + 1); }
+        # ⛔ v6.5.39 — THE NEWLINE CHECK THAT COMMENT PROMISED DID NOT EXIST. The loop tested
+        # only `;` (5) and EOF (12), so a `#assert` with no trailing `;` skipped straight
+        # across the following `fn` header and ate the first statement AND its `;` — silent
+        # wrong code, no diagnostic. Latent rather than live only because nothing in the tree
+        # actually uses `#assert` today (all 12 grep hits are compiler implementation or
+        # comments), so it was waiting for the first consumer who did.
+        # Duplicated at the pass-1 arms in src/main.cyr and src/main_win.cyr; all three fixed.
+        var _as_ln = GTLINE(S, GTI(S));
+        while (PEEKT(S) != 5 && PEEKT(S) != 12) {
+            if (GTLINE(S, GTI(S)) != _as_ln) { break; }
+            STI(S, GTI(S) + 1);
+        }
         if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
         return 0;
     }
@@ -1574,6 +1585,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 syscall(SYS_WRITE, 2, ": undefined variable '", 22);
                 PRSTR(S + 0x60000 + noff);
                 syscall(SYS_WRITE, 2, "'\n", 2);
+                _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
                 _had_error = 1; if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0;
             }
             var vt = GVTYPE(S, idx);

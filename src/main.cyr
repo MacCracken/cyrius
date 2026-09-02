@@ -1455,7 +1455,11 @@ while (scan == 1) {
                                                     }
                                                     else { if (PEEKT(S) == 107) {
                                                             # #assert — skip in pass 1, evaluated in pass 2 via PARSE_STMT
-                                                            while (PEEKT(S) != 5 && PEEKT(S) != 12) { STI(S, GTI(S) + 1); }
+                                                            var _as_ln = GTLINE(S, GTI(S));
+                                                            while (PEEKT(S) != 5 && PEEKT(S) != 12) {
+                                                                if (GTLINE(S, GTI(S)) != _as_ln) { break; }
+                                                                STI(S, GTI(S) + 1);
+                                                            }
                                                             if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
                                                         }
                                                         else { scan = 0; } } } } } } } } } } } } } } } } } } }

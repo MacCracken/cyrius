@@ -1,0 +1,66 @@
+# thread_tls_slot_isolation.tcyr — v6.5.39: a thread body's thread-local writes must not
+# leak back into the caller, for ANY slot in the 0..TLOCAL_MAX_SLOTS-1 range.
+#
+# THE DEFECT. A real spawned thread gets a fresh, zeroed thread-local block (CLONE_SETTLS on
+# Linux), so its `thread_local_set` writes cannot reach the parent. The SERIAL peers — macOS
+# (`lib/thread_macos.cyr`) and agnos (`lib/thread_agnos.cyr`), which run the body inline
+# because neither has a real thread path — emulate that contract by snapshotting the caller's
+# slots, zeroing them for the body, and restoring afterwards. Both peers snapshotted only the
+# first **16** slots while `TLOCAL_MAX_SLOTS` is **128**, so a write to any slot >= 16 leaked
+# straight back into the caller. Measured pre-fix on the serial peer: the caller's 42 comes
+# back as 777, the worker's value.
+#
+# ⭐ WHY SLOT 100 AND NOT SLOT 0. Slots 0-15 are the frozen app/legacy range and were inside
+# the broken window, so a test using slot 0 passes on the buggy build — it is exactly the test
+# that would have been written by someone reading the (also stale) "16 slots" comment. Slots
+# 16-127 are what `thread_local_alloc()` hands out, i.e. what every library added since
+# v6.4.65 actually uses: sigil's crypto bank, patra's SQL scratch. Those are the ones that
+# were leaking.
+#
+# ⚠ THIS ASSERTS THE CONTRACT, NOT THE MECHANISM. It never inspects how isolation is achieved,
+# so it holds identically for the real clone+CLONE_SETTLS path, the Windows TlsAlloc path, and
+# the serial emulation — and it keeps holding if a target later grows a real thread path. A
+# test that checked the snapshot loop instead would pass while the loop was wrong, which is the
+# v6.5.36 lesson (a gate pinning the mechanism stayed green through five bad releases).
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+
+var _TLS_SLOT_HIGH = 100;   # in the allocator range (16..127), above the old broken window
+var _TLS_SLOT_LOW = 3;      # in the frozen legacy range (0..15), inside the old window
+
+fn _tls_worker(arg) {
+    thread_local_set(_TLS_SLOT_HIGH, 777);
+    thread_local_set(_TLS_SLOT_LOW, 555);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    thread_local_init();
+
+    test_group("thread-local slots do not leak from a thread body back into the caller");
+
+    thread_local_set(_TLS_SLOT_HIGH, 42);
+    thread_local_set(_TLS_SLOT_LOW, 7);
+
+    var h = thread_create(&_tls_worker, 1);
+    assert_neq(h, 0, "thread_create returned a usable handle");
+    thread_join(h);
+
+    # The high slot is the regression: pre-fix this reads 777 on every serial-peer target.
+    assert_eq(thread_local_get(_TLS_SLOT_HIGH), 42,
+              "caller's slot 100 survives the thread body (allocator range, above the old 16-slot window)");
+    # The low slot was already covered by the old window — it must not regress either.
+    assert_eq(thread_local_get(_TLS_SLOT_LOW), 7,
+              "caller's slot 3 survives the thread body (legacy range, inside the old window)");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

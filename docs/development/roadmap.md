@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.38** (2026-09-01) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.39** (2026-09-01) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -435,6 +435,26 @@ not a single release.
   (~122 KB of slack before a page-aligned `.rodata`), so the `private` fix's real **+1,488 B** of
   `.text` showed as a **FLAT** size. `.text` is now recorded alongside it.
   cycc **1,191,456 B** / `.text` **1,042,816 B**, `check.sh` **212/0**.
+- **v6.5.39** — **a packed repair release: the two items `.38` pinned and did not ship, plus
+  three defects nobody had filed correctly.** ⛔ **A ~1000x hash-flooding DoS** — every stdlib
+  hash was a published constant with no per-process state and the bucket index is its LOW bits,
+  so a colliding set computed ONCE offline works against every cyrius process forever (4.05 s
+  vs 4.34 ms on 8192 keys). The filing named two hash functions; it was **four**, including an
+  INVERTIBLE splitmix64 and a verbatim second copy in `hashmap_fast.cyr`. ⛔ **A live
+  thread-local leak on macOS + agnos** — the serial peers snapshotted 16 slots while
+  `TLOCAL_MAX_SLOTS` is 128, and 16-127 is exactly what `thread_local_alloc()` hands out; the
+  stale value was documented as correct in **three** places. ⛔ **A latent silent miscompile** —
+  the `#assert` skip-loop's comment promised a newline check that did not exist. Plus the two
+  carried `.38` pins (the `deps` stdlib-leaf clobber and the aarch64 lazy-init release fence).
+  ⭐ **THE RELEASE'S LESSON, and it is about this queue rather than any one bug: slot entry
+  premise-checked all 15 open items against LIVE code with adversarial verification, and EVERY
+  filing acted on had a materially wrong claim** — in three cases fixing what the filing pointed
+  at would have changed nothing. Those corrections now live in the filings, because the wrong
+  claims are what kept the items unfixed. ⚠ Two filings' stated ACCEPTANCE CRITERIA were stale
+  enough to code the wrong thing from (`macos-threading` names files that no longer exist and
+  undercounts its guards 4 vs 7, one of them a tautology). cycc **1,191,464 B** / `.text`
+  **1,043,128 B** (+312; file size moved 0 — quantized), `check.sh` **217/0**, crossos **57/57**
+  on ecb + ach + cass + pi.
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 

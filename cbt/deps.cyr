@@ -630,6 +630,69 @@ fn _dep_push_include_once(mod_name): i64 {
     return 0;
 }
 
+# v6.5.39 — the stem of a "lib/<stem>.cyr" destination, or 0 if `dst` is not that shape.
+# Used to ask "would this copy land on a stdlib leaf?" without re-deriving the name from the
+# dep/module pair, which the caller has already combined three different ways.
+fn _dep_lib_dst_stem(dst): i64 {
+    var n = strlen(dst);
+    if (n < 9) { return 0; }                        # shortest possible is "lib/x.cyr"
+    if (load8(dst) != 108) { return 0; }            # 'l'
+    if (load8(dst + 1) != 105) { return 0; }        # 'i'
+    if (load8(dst + 2) != 98) { return 0; }         # 'b'
+    if (load8(dst + 3) != 47) { return 0; }         # '/'
+    if (load8(dst + n - 4) != 46) { return 0; }     # '.'
+    if (load8(dst + n - 3) != 99) { return 0; }     # 'c'
+    if (load8(dst + n - 2) != 121) { return 0; }    # 'y'
+    if (load8(dst + n - 1) != 114) { return 0; }    # 'r'
+    var sb = str_builder_new();
+    var i = 4;
+    while (i < n - 4) {
+        str_builder_putc(sb, load8(dst + i));
+        i = i + 1;
+    }
+    return str_data(str_builder_build(sb));
+}
+
+# ⭐ v6.5.39 — REFUSE a dep artifact that would overwrite a stdlib leaf Phase 1 already wrote.
+#
+# THE DEFECT (filed 2026-09-01, confirmed in two consumer repos). A named dep whose NAME
+# collides with a declared `[deps] stdlib` leaf lands its own resolved artifact on
+# `lib/<leaf>.cyr` and wins, because the resolver's phase order guarantees it: Phase 1 copies
+# the stdlib from the pinned snapshot, Phase 2 does named deps, Phase 3 the transitive BFS —
+# and Phase 3 is structurally LAST. Measured: `lib sync` writes sakshi 2.4.12 and the very
+# next `cyrius deps` reverts it to the dep's version, exit 0, no diagnostic.
+#
+# ⚠ THE FILING'S NAMED MECHANISM IS WRONG and fixing what it points at would change nothing.
+# It concluded "from the named dep's own lib/" from a byte-identity, but three files share
+# those bytes; a marker probe (a transitive tag that exists ONLY in the git cache) shows the
+# real source is the dep's RESOLVED ARTIFACT — `~/.cyrius/deps/<name>/<tag>/dist/<name>.cyr`.
+# The filing's second-ranked candidate, the fallback at `_dep_pull_module`, is not on this path.
+# It also reads as though the consumer's direct dep is the culprit; in the filed chain sakshi is
+# THREE hops down and appears in no manifest the consumer authored, so the consumer cannot fix
+# it by editing their own file. That is why this must be enforced HERE, in the resolver.
+#
+# ⚠ THE DISCRIMINATOR IS `_dep_stdlib_seen`, NOT "does the file exist in the stdlib dir".
+# Every one of the ~101 stdlib modules exists in the snapshot, so an existence test would also
+# refuse a project that legitimately depends on a package of that name WITHOUT declaring it as
+# a stdlib leaf — leaving it with no `lib/<name>.cyr` at all. The seen-set holds exactly what
+# Phase 1 actually copied, and Phase 1 completes before Phase 3 begins, so by here it is
+# fully populated and order-insensitive for this purpose.
+#
+# ⚠ NAMES PATHS, NOT VERSIONS, and that is deliberate. The filing's own ⚠ records that the
+# obvious version grep (`v?[0-9]+\.[0-9]+\.[0-9]+`) matches an earlier unrelated string in
+# these bundles. Two exact paths cannot be misparsed and say strictly more.
+fn _dep_refuse_stdlib_clobber(stem, src, dst): i64 {
+    sys_write(STDERR_FD, "warning: refusing to overwrite stdlib leaf '", 44);
+    sys_write(STDERR_FD, stem, strlen(stem));
+    sys_write(STDERR_FD, "' -- a dependency resolves a package of the same name.\n", 55);
+    sys_write(STDERR_FD, "  kept (stdlib snapshot): ", 26);
+    sys_write(STDERR_FD, dst, strlen(dst));
+    sys_write(STDERR_FD, "\n  skipped (dep artifact): ", 27);
+    sys_write(STDERR_FD, src, strlen(src));
+    sys_write(STDERR_FD, "\n  declare it in [deps] stdlib OR depend on the package, not both.\n", 67);
+    return 0;
+}
+
 fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
     if (_dep_stdlib_seen_has(mod_name) == 1) {
         # ⛔ v6.5.28 — THE SEEN-GUARD USED TO `return 0` UNCONDITIONALLY, which conflated two
@@ -2022,6 +2085,25 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     if (_dep_vendor_mode == 1) {
                         var _l2 = _dep_dest_is_linked(dst);
                         if (_l2 != 0) { return _dep_refuse_symlinked_dest(_l2); }
+                    }
+                    # v6.5.39 — refuse BEFORE the unlink, same discipline as the v6.5.37
+                    # symlink guard above: a delete-then-refuse would leave the tree worse
+                    # than either outcome, and here the file being deleted IS the snapshot
+                    # copy we are defending.
+                    var _cl_stem = _dep_lib_dst_stem(dst);
+                    if (_cl_stem != 0) {
+                        if (_dep_stdlib_seen_has(_cl_stem) == 1) {
+                            _dep_refuse_stdlib_clobber(_cl_stem, src, dst);
+                            # The DEP resolved fine — only this one module is skipped — so
+                            # `dep_had_success` stays set and the dep is still marked visited
+                            # and queued for the transitive walk below.
+                            # ⚠ Deliberately NO `vec_push(_dep_includes, dst)`: Phase 1
+                            # already pushed this exact path when it copied the snapshot, and
+                            # a second push would emit the include twice.
+                            dep_had_success = 1;
+                            mi = mi + 1;
+                            continue;
+                        }
                     }
                     sys_unlink(dst);
                     var cr2 = _dep_copy_file(src, dst);

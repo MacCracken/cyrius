@@ -1,6 +1,16 @@
 # `lib/hashmap.cyr`'s FNV-1a is unseeded, so one precomputed collision set degrades every consumer's `map_set` to O(n²)
 
-**Status:** 🟠 **OPEN** — no consumer can fix this; `lib/` is vendored, and at least one
+**Status:** ✅ **FIXED at v6.5.39 — CLOSED.** All stdlib hashes now draw a per-process seed (OS CSPRNG via the per-target `SYS_GETRANDOM` / `sys_getrandom` policy, with a time-mix fallback) and pass through a splitmix64 finalizer. Measured with an offline-precomputed 8192-key collision set: **1 distinct bucket before, ~6450 after** (uniform for 8192 keys in 16384 bins is ~6448), and the count differs between processes. Gate: `tests/gates/memory/hash_seed_flood_resistance.sh` (3 axes; mutation-proven three ways).
+
+⚠ **THE FILING SCOPED THIS TO TWO FUNCTIONS. IT WAS FOUR.** Beyond `hash_str` and `hash_str_v`: `hash_u64` is splitmix64 with fixed constants and is **invertible**, so preimages for any target bucket are computed directly with no brute force at all; and `lib/hashmap_fast.cyr`'s `_fhm_hash` was a **verbatim second copy** of the same unseeded FNV-1a — its own comment says "same as hashmap.cyr" — which floods too (N=4096: 22.4 ms colliding vs 1.16 ms distinct). All four now share one `lib/hashseed.cyr`; duplicating the hash is what produced the second unseeded copy in the first place.
+
+⚠ **The measured severity is worse than filed** — 934× on cstr keys against the filing's ~197×, because a fully-colliding set rather than a partially-colliding one.
+
+⭐ **Seeding the basis alone would NOT have been enough, and that is now measured rather than argued.** FNV-1a mod 2^k is closed on the low k bits, and the bucket index uses exactly those bits. Mutation-testing with the seed kept but the finalizer removed leaves the attack set at **3559** buckets against ~6448 uniform — a ~45 % degradation still exploitable. The finalizer is load-bearing.
+
+⚖️ **The Compatibility question is DECIDED: seeded by default, immediately, no opt-out flag.** The filing asked whether to land behind `-D CYRIUS_HASH_SEED=0` for one release. Grounds for deciding now rather than deferring: no in-repo test asserts map iteration order (the one grep hit is a comment), only two call sites anywhere build an ordered vector from `map_keys`, consumers had no way to mitigate the defect themselves, and the amplification is ~1000×. Seeding is published via `atomic_cas` rather than a plain store — two threads racing first-use would otherwise draw *different* seeds and hash the same key to different buckets, which would corrupt maps far worse than the flooding being fixed.
+
+⚠ **Not a bootstrap risk:** cycc does not include `lib/hashmap.cyr` (`src/main.cyr` pulls only `alloc.cyr` and `vec.cyr`), so this cannot perturb the self-host fixpoint or the seed chain. Verified: every hashmap includer still compiles, including the bare-metal `programs/cyrsign-efi.cyr`, and the bare-metal forbidden-module gate stays green.
 first-party project (samay) has a hard rule against modifying it. Requested as a stdlib change.
 **Placement:** `lib/hashmap.cyr` — `hash_str` (`:69`) and `hash_str_v` (`:84`). Self-contained,
 but see [Compatibility](#compatibility--this-is-the-part-that-needs-a-decision): seeding changes

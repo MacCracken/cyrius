@@ -14,7 +14,7 @@
 #   thread_local_get(slot)          → i64 at slot
 #   thread_local_set(slot, val)     → void
 #
-# Slot range: 0 .. TLOCAL_MAX_SLOTS-1 (16 slots × 8B). No bounds
+# Slot range: 0 .. TLOCAL_MAX_SLOTS-1 (128 slots x 8B). No bounds
 # check in the hot path — caller is trusted.
 #
 # === SLOT NAMESPACE + ALLOCATOR (v6.3.25 registry; v6.4.65 allocator) ===

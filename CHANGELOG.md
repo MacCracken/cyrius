@@ -4,6 +4,174 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.39] — 2026-09-01
+
+**A packed repair release: the two items `.38` pinned and did not ship, plus a ~1000x
+hash-flooding DoS, a latent silent miscompile, and a live thread-local data leak on two
+targets.** Slot entry premise-checked the whole open queue against LIVE code rather than the
+filings — 15 items, each verdict adversarially verified. ⭐ **Every filing acted on here had
+at least one materially wrong claim**, and in three cases fixing what the filing pointed at
+would have changed nothing. Those corrections are recorded in each issue file, because the
+wrong claims were what kept the items unfixed.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,191,464 B**, seed → cybs → cycc
+derivable from the 29,024 B seed, `check.sh` **217 / 0** (212 at `.38`; five new gates, every
+one mutation-proven), cross-OS self-host on REAL hardware — **ecb + ach + cass + pi, each
+SELFHOST_OK + crossos LIBTEST_OK 57/57** — and bench `self_compile` **720 ms** (723 at `.38`,
+noise). `.text` **1,043,128 B**, **+312** over `.38` — quote that, not the file size, which
+moved 0 because it is quantized (see `.38`'s note). ⭐ The macOS leg matters more than usual
+this release: `crossos/thread_tls_slot_isolation.tcyr` runs the SERIAL thread peer, which is
+where the thread-local leak actually lived — on x86-linux the real clone path makes it pass
+trivially.
+
+### Fixed — 🔴 hash-flooding DoS: every stdlib hash was a published constant
+
+The bucket index is the LOW bits of the hash (`idx = hash & (cap - 1)`, power-of-2 capacity,
+linear probing), and the hashes had no per-process state. So an attacker who can choose keys
+computes a colliding set **once, offline, from the published constants** and reuses it against
+every cyrius process forever. Measured on `.38` with 8192 distinct 39-byte keys: cstr
+`map_set` **4.05 s colliding vs 4.34 ms distinct — 934x**; `hash_str_v` 329x. Insert and every
+rehash-on-grow degrade to O(n²). Consumers could not mitigate it — no public entry point takes
+a hash function.
+
+⚠ **The filing scoped this to two functions. It was four.** Beyond `hash_str`/`hash_str_v`:
+`hash_u64` is splitmix64 with fixed constants and is **invertible**, so preimages for any
+target bucket are computed directly with no brute force at all; and `lib/hashmap_fast.cyr`'s
+`_fhm_hash` was a **verbatim second copy** the filing never mentioned, which floods too.
+
+All four now draw a per-process seed from one new `lib/hashseed.cyr` — duplicating the hash is
+what produced the second unseeded copy, so there is now one definition and two includers.
+
+⭐ **Seeding the basis alone would NOT have been enough, and that is measured, not argued.**
+FNV-1a mod 2^k is closed on the low k bits — exactly the bits the index uses — so a seeded
+basis leaves the low bits largely seed-invariant. Mutation-testing with the seed kept but the
+finalizer removed leaves the attack set at **3559** buckets against ~6448 uniform. The
+splitmix64 finalizer is load-bearing.
+
+⚠ **The seed is published with `atomic_cas`, not a plain store.** Two threads racing first-use
+would otherwise draw *different* seeds and hash the same key to different buckets — corrupting
+maps far worse than the flooding being fixed.
+
+⚖️ **Decided in-patch: seeded by default, no opt-out flag.** The filing asked whether to land
+behind `-D CYRIUS_HASH_SEED=0` for one release. No in-repo test asserts map iteration order
+(the single grep hit is a comment), only two call sites anywhere build an ordered vector from
+`map_keys`, and the amplification is ~1000x.
+
+Gate: `tests/gates/memory/hash_seed_flood_resistance.sh`. Its fixture is a **real attack** —
+13 block-pairs computed offline from the published constants (a Joux multicollision) giving
+8192 keys in ONE bucket. ⛔ Axis 2 recomputes every key through its own verbatim *unseeded*
+FNV-1a and requires that set to still collapse to exactly 1 bucket, so a fixture that quietly
+stopped being a collision set cannot score axis 1 as a pass. Axis 3 requires two processes to
+disagree, catching a hardcoded "seed" that spreads keys while staying precomputable.
+Measured: **1 bucket before → ~6450 after**, differing per process.
+
+⚠ Not a bootstrap risk: cycc does not include `lib/hashmap.cyr`, so this cannot perturb the
+fixpoint or the seed chain. Every includer still compiles, including the bare-metal
+`programs/cyrsign-efi.cyr`.
+
+### Fixed — a dependency could overwrite a stdlib leaf (carried from `.38`)
+
+A named dep whose NAME collides with a declared `[deps] stdlib` leaf landed its own resolved
+artifact on `lib/<leaf>.cyr` and won, because the phase order guarantees it: Phase 1 copies the
+stdlib snapshot, Phase 3 (transitive BFS) is structurally LAST. Measured: `cyrius lib sync`
+writes sakshi 2.4.12 and the next `cyrius deps` silently reverts it, exit 0, no diagnostic.
+Blast radius: **12 of ~101** stdlib modules share a name with a standalone package repo; **16
+of 126** sibling repos are in the collision shape and **8** already carry a leaf differing from
+their own pin's snapshot.
+
+⚠ **The filing's named mechanism was wrong** and fixing what it pointed at would have changed
+nothing. It concluded "the named dep's own `lib/`" from a byte-identity that several files
+share; a marker probe shows the real source is the dep's **resolved artifact**. Its
+second-ranked candidate is not on this path at all. It also reads as though the consumer's
+direct dep is the culprit — in the filed chain the colliding package is **three hops down** and
+appears in no manifest the consumer authored, so no manifest edit on their side could have
+fixed it.
+
+⛔ **The obvious implementation is wrong and the gate rejects it.** Keying on "does
+`<stdlib_dir>/<name>.cyr` exist" is true for all ~101 modules, so it would also refuse a
+project that legitimately depends on a package of that name *without* declaring it a stdlib
+leaf — leaving it with no `lib/<name>.cyr` at all. The discriminator has to be the stdlib
+seen-set. Gate: `tests/gates/toolchain/deps_stdlib_leaf_not_clobbered.sh` (5 axes, hermetic —
+path deps only, no git or network; axis 4 is what fails for the existence-test version).
+
+### Fixed — lazy-init publishes had no release fence on aarch64 (carried from `.38`)
+
+v6.5.37 fixed the program-order half of this class (fill a local, publish last) — mutation-proven
+at **0 of 400** threaded runs against **29 of 400** for the pre-`.37` shape. It did not fix the
+memory-order half. cyrius emits no ordering at all for ordinary global access on aarch64: a
+threaded aarch64 binary shows the guard read as a plain `ldr`, the publish as a plain `str`, and
+the whole binary carrying zero `stlr`, zero `ldar` and exactly one `dmb`. Three publish sites
+now carry an aarch64-gated release fence.
+
+⚠ **The proposal was wrong three ways.** (1) It named `lib/alloc.cyr` as the model — that is the
+OLD shape, fencing on both arches; x86-TSO already orders store-store, the fence there is pure
+tax (~22 ns, 83 % of the lock cost), and the project deliberately removed it in
+`lib/freelist.cyr`. This copies freelist. (2) `lib/tls.cyr:211` is an *attempt latch*, not the
+readiness flag — and the proposal **missed a second site entirely**. (3) `lib/regex.cyr` is
+deliberately NOT fenced: it publishes a flag with no address dependency, so a writer-side fence
+would not suffice, and the matcher it guards is non-reentrant global state regardless — fencing
+it would manufacture a false thread-safety signal. ⚠ "The include cost is part of the decision"
+was false: measured at **zero bytes** on x86-linux, PE and the bare-metal fixture.
+
+⚠ **No runtime test is possible, and that was proven rather than assumed:** under
+`qemu-aarch64` the known-broken pre-`.37` mutant scores **0 bad runs in 150** — qemu does not
+exhibit the interleaving at all. The property is pinned at the codegen level
+(`tests/gates/concurrency/lazy_init_release_fence.sh`), as a differential, because the baseline
+cannot be zero: `alloc.cyr` already fences on aarch64.
+
+### Fixed — 🔴 a thread body's thread-local writes leaked back into the caller (macOS + agnos)
+
+The serial peers run the body inline and emulate thread-local isolation by hand: snapshot the
+caller's slots, zero them for the body, restore afterwards. Both snapshotted only the first
+**16** slots while `TLOCAL_MAX_SLOTS` is **128** — so a write to any slot ≥ 16 leaked straight
+back into the caller, which is precisely what that code exists to prevent. Slots 16–127 are the
+range `thread_local_alloc()` hands out, i.e. everything added since v6.4.65 (sigil's crypto
+bank, patra's SQL scratch), and four vendored stdlibs are live consumers. Measured: the caller's
+42 comes back as **777**, the worker's value.
+
+⚠ **The stale value was documented as correct in three places** — both peer headers said
+"TLOCAL_MAX_SLOTS (16)" and `thread_local.cyr`'s own slot-range comment said "16 slots", while
+the constant beneath it said 128 and the backing arrays were `[128]`. Three comments agreeing
+with each other and disagreeing with the code.
+
+Gates: `tests/tcyr/crossos/thread_tls_slot_isolation.tcyr` asserts the **contract** (a body's
+writes never reach the caller) rather than the snapshot mechanism, so it holds for real threads,
+TlsAlloc and serial emulation alike — and it uses slot **100**, not slot 0, because slots 0–15
+were inside the broken window and a slot-0 test passes on the buggy build. Plus
+`tests/gates/concurrency/tls_window_matches_max_slots.sh`, because the buffer size must be a
+literal (`#assert` accepts only numbers and `sizeof()`, not a global) and therefore duplicates
+the constant. ⚠ Axis 2 is the half that actually broke and axis 1 cannot see it: a literal loop
+bound *under-copies silently* rather than overflowing.
+
+### Fixed — resolution errors had no source excerpt, and `#assert` could eat the next statement
+
+Two defects one function apart. **(A)** v6.5.23 converted the five `undefined variable` sites to
+report-and-continue, but `_err_excerpt` lives inside `ERR_IDENT` and those sites deliberately
+bypass it (it sets `_panic = 1`, reinstating the `unexpected else` regression that got an
+earlier attempt reverted) — so resolution errors printed a bare message while every syntax error
+got line + caret. **(B)** ⛔ The `#assert` skip-loop's comment promised "until `;` or newline
+change" and the loop tested only `;` and EOF: **no newline check existed**. A `#assert` with no
+trailing `;` skipped across the following `fn` header and ate the first statement and its `;`.
+Measured pre-fix: the gate fixture exits **0** where **7** is correct — wrong code, no
+diagnostic, no crash. Latent only because nothing in the tree uses `#assert` today. Duplicated
+at three sites in three files.
+
+⚠ **That filing was wrong three ways**: its residual count (7, re-stamped to 8) was **1** on live
+code; "`_ends_guard` added a site" is false (that site recovers); and "R2 must land before R1" is
+contradicted by the CHANGELOG of the release that shipped both. All seven line numbers in its
+table had drifted again — a hand-maintained line-number table is the wrong artifact, which is
+why this is pinned by a gate instead.
+
+### Docs
+
+* Five filings updated with what was actually true, not just a status flip —
+  `owl-private-fns` and `deps-pulls-stdlib-leaf` closed, `hashmap-unseeded-fnv1a` closed,
+  `dx-multi-error` closed, `macos-threading-workers` corrected to PARTIAL with its **stale
+  acceptance criterion re-derived** (it names files that no longer exist and undercounts the
+  guards 4 vs 7, one of which is a tautology). The `lazy-init` proposal closed as COMPLETE.
+* `thread_local.cyr`'s slot-range comment corrected from "16 slots" to 128.
+
+
 ## [6.5.38] — 2026-09-01
 
 **`private` becomes a real boundary, and the f64v4 family finishes the ymm widening `.24`
