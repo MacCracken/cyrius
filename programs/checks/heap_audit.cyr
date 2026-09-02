@@ -648,12 +648,23 @@ fn _capacity_gate(): i64 {
     }
     _write_file(big_path, str_data(str_builder_build(big)));
 
-    # Build trip.cyr — the --check >=85% TRIP source (Test3 ONLY). v6.4.75 raised
-    # the fn_table hard ceiling from a fixed 8192 to 32768 (the six fn-indexed side
-    # tables stopped aliasing past 8192 — the P0 fix), and `capacity` reports
-    # fn_table against 32768. So 7000/8192 = 85% no longer fires; 28000/32768 =
-    # 85.4% does. Only THIS source is that big (one ~8s compile); Test4/Test6 stay
-    # on the cheap 7000-fn big.cyr. Keep in sync with the ci.yml capacity step.
+    # Build trip.cyr — the --check >=85% TRIP source (Test3 ONLY).
+    # ⛔ v6.5.40 MOVED THIS FROM fn_table TO string_data, and the reason is cost, not taste.
+    # The fn_table ceiling went 32768 -> 131072 this release, so the old 28000-fn fixture is
+    # now 21 % and no longer trips. Tripping fn_table again would need 111,412 fns — MEASURED
+    # at 2 m 17 s to compile, against ~8 s for the old one, because compile time is
+    # SUPERLINEAR in fn count (4x the fns cost 17x the time). string_data's cap (2 MB) is
+    # untouched by the limits cascade and 1600 unique 1000-char literals reach 1,909,818 /
+    # 2,097,152 = 91 % in ~3 s.
+    # ⚠ The literals must be UNIQUE — string_data DEDUPLICATES, so 1600 copies of the same
+    # string store 1001 bytes, not 1.6 MB, and the trip silently never fires.
+    # ⚠ Stay well under 100 %: at 1850 literals the compile hits the hard "string data
+    # overflow (2MB limit)" error instead, which exits 1 for the WRONG reason and would not
+    # print the ">=85%" line this test greps for. The usable window is roughly 1500-1800.
+    # What this test asserts is unchanged: the >=85% trip fires and --check exits 1. That the
+    # DENOMINATORS themselves are correct is pinned separately by
+    # tests/gates/memory/capacity_meter_denominators.sh — three of them have been stale at
+    # different times. Keep in sync with the ci.yml capacity step.
     var trip_sb_path = str_builder_new();
     str_builder_add_cstr(trip_sb_path, scratch);
     str_builder_add_cstr(trip_sb_path, "/trip.cyr");
@@ -661,12 +672,23 @@ fn _capacity_gate(): i64 {
     var trip = str_builder_new();
     str_builder_add_cstr(trip, "object;\n");
     var tix = 0;
-    while (tix < 28000) {
-        str_builder_add_cstr(trip, "fn f");
+    # ⚠ SIZED FOR A MANIFEST-FREE DIRECTORY, AND THAT IS NOT INTERCHANGEABLE. Inside a repo
+    # with a `cyrius.cyml`, `cyrius` auto-prepends the `[deps].stdlib` includes, which add
+    # ~300 KB of string_data on their own: the SAME file measures 90.9 % in the cyrius repo and
+    # 76.2 % in a bare temp dir. There is no single literal count that works in both — 1600
+    # trips in-repo but under-fills a temp dir, 1850 trips in a temp dir but hits the hard
+    # "string data overflow" in-repo. Both real call sites (this gate's scratch dir and ci.yml's
+    # mktemp -d) are manifest-free, so 1900 -> 1,901,900 / 2,097,152 = 90.7 % is correct HERE.
+    # Do not "verify" this fixture by running it from the repo root.
+    while (tix < 1900) {
+        str_builder_add_cstr(trip, "fn s");
         str_builder_add_int(trip, tix);
-        str_builder_add_cstr(trip, "() { return ");
+        str_builder_add_cstr(trip, "(): i64 { var v = \"");
         str_builder_add_int(trip, tix);
-        str_builder_add_cstr(trip, "; }\n");
+        # 994 filler chars + the index digits = a UNIQUE ~1000-byte literal per fn.
+        var tfill = 0;
+        while (tfill < 994) { str_builder_add_cstr(trip, "x"); tfill = tfill + 1; }
+        str_builder_add_cstr(trip, "\"; return 0; }\n");
         tix = tix + 1;
     }
     _write_file(trip_path, str_data(str_builder_build(trip)));

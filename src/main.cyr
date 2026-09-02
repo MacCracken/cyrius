@@ -2113,9 +2113,15 @@ if (_stats_env != 0) {
         syscall(SYS_WRITE, 2, "  fn_table:    ", 15); PRNUM(GFNC(S));
         syscall(SYS_WRITE, 2, " / 131072\n",      10);   # v6.4.75: hard ceiling (_fnt_grow max), was a stale 8192
         syscall(SYS_WRITE, 2, "  identifiers: ", 15); PRNUM(GNPOS(S));
-        syscall(SYS_WRITE, 2, " / 524288\n",     10);   # v6.4.76: pool 256 KB → 512 KB
+        syscall(SYS_WRITE, 2, " / 8388608\n",    11);   # v6.5.40: pool 512 KB → 8 MB (was a STALE 524288 — CI caught it reporting 200751/524288 against a live 8 MB pool)
         syscall(SYS_WRITE, 2, "  var_table:   ", 15); PRNUM(GVCNT(S));
-        syscall(SYS_WRITE, 2, " / 8192\n",        8);
+        # ⛔ v6.5.40: 8192 was the INITIAL _var_cap, not the ceiling. `_var_grow` doubles it and
+        # refuses only past 1048576 (util.cyr:109), so this meter over-reported utilization by
+        # up to 128x — a project with 20,000 globals read as 244 % while being perfectly fine.
+        # THIRD occurrence of a stale denominator in this one block: code_size showed 269 % for
+        # the same reason until v6.4.73, identifiers was stale until v6.5.40, this was latent.
+        # `tests/gates/memory/capacity_meter_denominators.sh` now derives all six from the caps.
+        syscall(SYS_WRITE, 2, " / 1048576\n",    11);
         syscall(SYS_WRITE, 2, "  fixup_table: ", 15); PRNUM(GFCNT(S));
         syscall(SYS_WRITE, 2, " / 1048576\n",      11);
         syscall(SYS_WRITE, 2, "  string_data: ", 15); PRNUM(GSPOS(S));

@@ -40,7 +40,19 @@ if [ ! -x "$CHECK_BIN" ] || [ -z "$NEWEST_SRC" ] || [ "$NEWEST_SRC" -nt "$CHECK_
         printf "error: build/cycc missing — run 'sh bootstrap/bootstrap.sh' first.\n" >&2
         exit 1
     fi
-    cat "$CHECK_SRC" | "$CC" > "$CHECK_BIN" 2>/dev/null
+    # ⛔ v6.5.40: FAIL LOUDLY. This was `> "$CHECK_BIN" 2>/dev/null` with no status check, so a
+    # compile error in the suite was invisible AND left a truncated $CHECK_BIN that was then
+    # chmod +x'd and run — producing either no output at all or a stale-looking result with no
+    # hint that the suite never built. Cost real time during v6.5.40 (an undefined helper in a
+    # debug edit produced a completely silent run). The compiler's own diagnostics are the
+    # thing you need here, so they are shown.
+    if ! cat "$CHECK_SRC" | "$CC" > "$CHECK_BIN" 2>"$CHECK_BIN.err"; then
+        printf "error: the check suite failed to compile:\n" >&2
+        cat "$CHECK_BIN.err" >&2
+        rm -f "$CHECK_BIN" "$CHECK_BIN.err"
+        exit 1
+    fi
+    rm -f "$CHECK_BIN.err"
     chmod +x "$CHECK_BIN"
 fi
 

@@ -483,8 +483,12 @@ fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
         # fns and then went SILENT the instant the table grew (9000/16384 = 54%) —
         # and back then 8192 was a real corruption cliff, so the silence coincided
         # exactly with the danger. The six side tables that made 8192 a cliff are
-        # fixed (they now run to 32768 too), so the honest signal is distance to the
-        # 32768 hard error, which no longer moves.
+        # fixed (they now run to the ceiling too), so the honest signal is distance to the
+        # hard error, which no longer moves. v6.5.40 raised that ceiling 32768 -> 131072.
+        # ⚠ EVERY denominator below must equal the LIVE cap. Three have been stale here at
+        # different times (code_size until v6.4.73 reported 269 %, identifiers and var_table
+        # until v6.5.40), so `tests/gates/memory/capacity_meter_denominators.sh` derives all
+        # six from the caps rather than trusting these literals.
         if (GFNC(S) * 100 / 131072 >= 85) {
             syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
             PRNUM(GFNC(S) * 100 / 131072);
@@ -497,11 +501,11 @@ fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
             syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GNPOS(S));
             syscall(SYS_WRITE, 2, "/8388608 bytes) — reduce includes or split soon\n", 50);
         }
-        if (GVCNT(S) * 100 / 8192 >= 85) {
+        if (GVCNT(S) * 100 / 1048576 >= 85) {
             syscall(SYS_WRITE, 2, "warning: var_table at ", 22);
-            PRNUM(GVCNT(S) * 100 / 8192);
+            PRNUM(GVCNT(S) * 100 / 1048576);
             syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GVCNT(S));
-            syscall(SYS_WRITE, 2, "/8192) — too many globals + locals\n", 37);
+            syscall(SYS_WRITE, 2, "/1048576) — too many globals + locals\n", 40);
         }
         if (GFCNT(S) * 100 / 1048576 >= 85) {
             syscall(SYS_WRITE, 2, "warning: fixup_table at ", 24);

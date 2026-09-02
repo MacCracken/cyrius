@@ -383,14 +383,27 @@ jobs:
           # big.cyr: a "non-trivial program compiles clean + emits a real binary"
           # source (T4/T6). 7000 fns is plenty for that and cheap to compile.
           ( echo 'object;'; seq 0 6999 | awk '{print "fn f"$1"() { return "$1"; }"}' ) > "$T/big.cyr"
-          # trip.cyr: the --check >=85% TRIP source (T3 only). v6.4.75 raised the
-          # fn_table hard ceiling from a fixed 8192 to 32768 (the six fn-indexed
-          # side tables no longer alias past 8192 — the P0), and `capacity` now
-          # reports fn_table against 32768. So the old 7000/8192 = 85% trip no
-          # longer fires; 28000/32768 = 85.4% does. Only THIS file is that big
-          # (one ~8s compile), so T4/T6 stay on the cheap 7000-fn big.cyr. Keep in
-          # sync with programs/checks/heap_audit.cyr::_capacity_gate.
-          ( echo 'object;'; seq 0 27999 | awk '{print "fn f"$1"() { return "$1"; }"}' ) > "$T/trip.cyr"
+          # trip.cyr: the --check >=85% TRIP source (T3 only).
+          # ⛔ v6.5.40 MOVED THIS FROM fn_table TO string_data, for cost not taste. The
+          # fn_table ceiling went 32768 -> 131072 this release, so the old 28000-fn fixture is
+          # now 21 % and no longer trips. Tripping fn_table again needs 111,412 fns — MEASURED
+          # at 2m17s to compile against ~8s for the old one, because compile time is
+          # SUPERLINEAR in fn count (4x the fns cost 17x the time). string_data's 2 MB cap is
+          # untouched by the cascade, and 1600 UNIQUE 1000-char literals reach
+          # 1,909,818 / 2,097,152 = 91 % in ~3s.
+          # ⚠ The literals must be UNIQUE — string_data DEDUPLICATES, so 1600 copies of one
+          # string store 1001 bytes and the trip silently never fires.
+          # ⚠ SIZED FOR A MANIFEST-FREE DIRECTORY. Inside a repo with a cyrius.cyml, `cyrius`
+          # auto-prepends the [deps].stdlib includes, adding ~300 KB of string_data: the SAME
+          # file measures 90.9 % in the cyrius repo and 76.2 % in a bare temp dir. No single
+          # count works in both. $T is mktemp -d, so 1900 -> 1,901,900 / 2,097,152 = 90.7 %.
+          # ⚠ Stay under 100 %: in a manifest-bearing dir ~1850 literals hits the hard "string data
+          # overflow (2MB limit)" instead, which exits 1 for the WRONG reason and never prints
+          # the ">=85%" line T3 greps for. Usable window is roughly 1500-1800.
+          # Keep in sync with programs/checks/heap_audit.cyr::_capacity_gate.
+          awk 'BEGIN{ printf "object;\n";
+                      f=""; for(i=0;i<994;i++) f=f "x";
+                      for(i=0;i<1900;i++) printf "fn s%d(): i64 { var v = \"%d%s\"; return 0; }\n", i, i, f }' > "$T/trip.cyr"
           # T1: default mode emits 6 stat keys.
           "$CYR" capacity "$T/small.cyr" > "$T/o1" 2>"$T/e1"
           for k in fn_table identifiers var_table fixup_table string_data code_size; do
@@ -400,7 +413,7 @@ jobs:
           set +e; "$CYR" capacity --check "$T/small.cyr" > "$T/o2" 2>&1; rc=$?; set -e
           [ "$rc" -eq 0 ] || { echo "FAIL T2: rc=$rc"; cat "$T/o2"; exit 1; }
           grep -q "ok (all caps under 85%)" "$T/o2" || { echo "FAIL T2: 'ok' missing"; exit 1; }
-          # T3: --check trip.cyr (28000 fns → fn_table 85% of 32768) rc=1 + ">=85%".
+          # T3: --check trip.cyr (1900 unique literals → string_data 90.7% of 2 MB) rc=1 + ">=85%".
           set +e; "$CYR" capacity --check "$T/trip.cyr" > "$T/o3" 2>&1; rc=$?; set -e
           [ "$rc" -eq 1 ] || { echo "FAIL T3: rc=$rc (expected 1)"; cat "$T/o3"; exit 1; }
           grep -q "table(s) at >=85%" "$T/o3" || { echo "FAIL T3: '>=85%' missing"; exit 1; }

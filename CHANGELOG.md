@@ -12,10 +12,10 @@ exactly one move, make its source smaller, which in practice meant hand-vendorin
 instead of declaring them. Dedicated release on the v6.5.22 precedent — if the new heap
 misbehaves there is exactly one candidate cause.
 
-**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,191,512 B**, seed → cybs → cycc
-derivable from the 29,024 B seed, `check.sh` **218 / 0**, cross-OS self-host on REAL hardware —
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,191,504 B**, seed → cybs → cycc
+derivable from the 29,024 B seed, `check.sh` **219 / 0**, cross-OS self-host on REAL hardware —
 **ecb + ach + cass + pi, each SELFHOST_OK + crossos LIBTEST_OK 57/57** — and bench
-`self_compile` **727 ms** (720 at `.39`, noise). `.text` **1,043,312 B**, +184 over `.39`.
+`self_compile` **730 ms** (720 at `.39`, noise). `.text` **1,043,312 B**, +184 over `.39`.
 ⭐ The cross-OS leg carries unusual weight here: the arena grew 121 → 246 MB of virtual address
 space, and **pi is a Raspberry Pi** — that it self-hosts there is the evidence the lazy-mapping
 assumption actually holds on a small machine, not just on the build box.
@@ -80,6 +80,49 @@ slots at 4 B/slot; `_fnt_grow` doubles from there, costing one extra grow on a l
 `"input exceeds the 16MB source buffer"` in all seven forks, plus every cap message. All are
 byte-counted (the em-dash is 3 bytes UTF-8, so the declared lengths shift by more than the digit
 count suggests).
+
+### Fixed — the capacity meter was reporting against STALE denominators (CI caught one)
+
+CI surfaced `identifiers: 200751 / 524288` — the meter still reporting against the old 512 KB
+pool while `_capacity_warnings` had already been updated to 8388608. **The two user-facing
+numbers disagreed with each other.** Auditing the rest of the block found a second, latent one:
+`var_table` reported against **8192**, which is the INITIAL `_var_cap`, not the ceiling —
+`_var_grow` doubles it and refuses only past 1048576, so the meter over-reported utilization by
+up to **128×** and a project with 20,000 globals would read as 244 % while being perfectly fine.
+
+⭐ **This is the THIRD occurrence in this one block**: `code_size` reported against a stale 1 MiB
+until v6.4.73, printing **269 %** for a healthy stiva build and publishing that ratio through
+`cyrius capacity --json`. Each is a hand-maintained duplicate of a cap the compiler already
+enforces elsewhere, shown to users as a percentage. ⚠ A wrong denominator is worse than no meter
+— it reads as authoritative and harms both ways: too small provokes a pointless refactor, too
+large hides a real approach to a hard limit until the build fails.
+
+All six are now DERIVED from their enforcement sites by
+`tests/gates/memory/capacity_meter_denominators.sh`, which also requires the meter and
+`_capacity_warnings` to agree. Mutation-proven three ways, including both historical defects.
+
+### Fixed — the capacity CI fixture, and the trap under it
+
+T3 generated 28,000 fns to trip 85 % of the old 32,768 fn ceiling; at 131,072 that is 21 % and no
+longer fires. Tripping fn_table again would need **111,412 fns — measured at 2 m 17 s** to
+compile against ~8 s before, because compile time is **superlinear in fn count** (4× the fns cost
+17× the time — worth its own look, filed separately). The fixture moves to `string_data`, whose
+2 MB cap the cascade does not touch: 1900 unique 1000-char literals reach 90.7 % in ~3 s.
+
+⚠ **Two traps, both hit while getting there.** The literals must be **UNIQUE** — `string_data`
+deduplicates, so 1900 copies of one string store 1001 bytes and the trip silently never fires.
+And the fixture is **sized for a manifest-free directory**: inside a repo with a `cyrius.cyml`,
+`cyrius` auto-prepends the `[deps].stdlib` includes, adding ~300 KB of string_data, so the SAME
+file measures 90.9 % in the cyrius repo and 76.2 % in a bare temp dir. **No single count works in
+both** — 1600 trips in-repo but under-fills a temp dir; 1850 trips in a temp dir but hits the hard
+overflow in-repo. Both real call sites are manifest-free.
+
+### Fixed — `check.sh` swallowed a compile error in its own suite
+
+It built the check suite with `2>/dev/null` and no status check, so a broken suite produced a
+truncated binary that was then `chmod +x`'d and run — yielding either no output at all or a
+result with no hint the suite never built. It cost real time during this release. It now prints
+the compiler's diagnostics and exits 1.
 
 ### Traps recorded
 
