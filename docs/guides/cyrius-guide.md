@@ -686,7 +686,7 @@ Currently annotated: `lib/fs.cyr`, `lib/process.cyr`, `lib/net.cyr`.
 - Add `#host_only` to your own modules to get the same protection; remove it if a module is
   ever made freestanding.
 
-## Visibility — `private` / `public` (v6.5.0)
+## Visibility — `private` / `public` (v6.5.0; scoped at insertion since v6.5.38)
 
 By default every fn and global var is visible everywhere, exactly as it always
 has been. A file opts IN to encapsulation by declaring `private` at the top:
@@ -727,6 +727,30 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   `nm` output or in `cyrius api-surface`. That is the point — the API surface a
   consumer sees becomes the API surface you declared.
 - `pub` is accepted as a synonym for `public` (it is the same lexer token).
+- **A private fn cannot be replaced by another file's same-named fn (v6.5.38).** Two files
+  may each define a private `_helper`; each file's calls bind to its own, and neither can
+  capture the other's. A public fn of the same name stays reachable from everywhere else:
+
+  ```
+  # a.cyr                          # b.cyr
+  private                          fn _helper(x) { return 7; }   # public
+  fn _helper(x) { return 1; }      fn b_entry() { return _helper(0); }  # -> 7
+  public fn a_entry() {
+      return _helper(0);           # -> 1, always a.cyr's own
+  }
+  ```
+
+  ⚠ Before 6.5.38 this was **not** true, and it is the reason to pin forward if you rely on
+  `private`: the compiler kept one entry per NAME, so `b.cyr`'s definition silently replaced
+  `a.cyr`'s — *including for `a.cyr`'s own internal calls* — under a `duplicate fn ... last
+  definition wins` warning that read as benign shadowing. Declaring `private` on both sides
+  did not help, because visibility was checked only where a name was USED, on top of an
+  unchanged global symbol table. Two libraries that each wrote a private `_stream_grow`
+  disagreeing about return polarity would silently report every success as a failure.
+- Duplicate definitions between two **non-private** files are unchanged: still a
+  `duplicate fn ... last definition wins` warning (a hard error if the two disagree about
+  arity, since v6.5.37). Two definitions **in one file** are likewise still a duplicate —
+  that is a redefinition of one symbol, not a collision between two files.
 
 Both names are reserved words — see the reserved-word note under *Functions*; you
 cannot use `public`, `pub`, or `private` as identifiers.

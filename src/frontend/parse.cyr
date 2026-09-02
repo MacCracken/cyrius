@@ -1339,7 +1339,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
     # wrappers call these in STATEMENT position (`f64v256_add(&r, a_ptr, b_ptr, 4);`), so
     # without this band the builtin lexes and emits fine yet is a syntax error at every
     # real call site. 152/153 (`>>>`, `private`) are deliberately not in the range.
-    if (typ >= 154) { if (typ <= 157) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    if (typ >= 154) { if (typ <= 162) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
     if (typ == 2) {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);

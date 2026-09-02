@@ -1078,6 +1078,11 @@ fn TOKNAME_BUILTIN(typ): i64 {
     if (typ == 155) { return "f64v256_sub"; }
     if (typ == 156) { return "f64v256_mul"; }
     if (typ == 157) { return "f64v256_div"; }
+    if (typ == 158) { return "f64v256_fmadd"; }   # v6.5.38
+    if (typ == 159) { return "f64v256_dot"; }     # v6.5.38
+    if (typ == 160) { return "f64v256_scale"; }   # v6.5.38
+    if (typ == 161) { return "f64v256_abs"; }     # v6.5.38
+    if (typ == 162) { return "f64v256_sqrt"; }    # v6.5.38
     return 0;
 }
 

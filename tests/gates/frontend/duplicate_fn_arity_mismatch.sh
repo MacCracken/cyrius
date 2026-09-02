@@ -22,17 +22,18 @@
 # a tokenizer, on file content. Neither library is doing anything wrong; they collide only
 # because a consumer links both.
 #
-# ⚠ `private` DOES NOT PREVENT THIS, and axis 3 pins that: visibility is enforced on
-# REFERENCE but not on DEFINITION, so declaring both files private changes nothing. That is
-# the half this gate does NOT fix — see below.
+# ⚠ `private` does not exempt an arity mismatch WITHIN ONE FILE, and axis 3 pins that: two
+# definitions in the same file are a genuine redefinition of one symbol, so the arity check
+# still applies however they are marked.
 #
-# ⛔ THIS IS THE CHEAP HALF AND THE GATE SAYS SO ON PURPOSE. Same-arity replacement (owl's
-# §1/§2) still happens: a private helper can still be silently replaced by another file's
-# same-named, same-arity function, including for that file's own internal calls. The real fix
-# is scoping private symbols at INSERTION — a per-file table or file-unique mangling — which
-# would make the guide's "omitted from the exported symbol table" claim literally true.
-# Axis 2 deliberately asserts that a SAME-arity duplicate still only warns, so nobody reads
-# this gate as evidence the whole class is closed.
+# ⛔ THIS WAS THE CHEAP HALF. When written, same-arity replacement (owl's §1/§2) still
+# happened across files and this comment said so. **v6.5.38 closed that half**: `private`
+# now scopes at symbol INSERTION, so a private helper can no longer be replaced by another
+# file's same-named, same-arity function. See `tests/gates/frontend/private_scoped_at_insertion.sh`
+# — and note it must be MULTI-FILE, because every axis here concatenates into ONE file and
+# therefore gets a single origin-file id, which is exactly why this gate could not have
+# caught the other half. Axis 2 still asserts that a same-arity duplicate between two
+# NON-private definitions only warns; that is unchanged and load-bearing.
 #
 # Blast radius measured before landing: cycc itself and the cyrius CLI produce ZERO
 # duplicate-fn warnings; the 284-file corpus produces 5, and the only arity-differing pair

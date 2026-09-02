@@ -4,6 +4,190 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.38] — 2026-09-01
+
+**`private` becomes a real boundary, and the f64v4 family finishes the ymm widening `.24`
+started.** Both are halves that a previous release shipped the easy end of and recorded the
+rest as residual — this closes both, plus the routing half of a consumer syscall filing.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,191,456 B**, seed → cybs → cycc
+derivable from the 29,024 B seed, `check.sh` **212 / 0**, cross-OS self-host on REAL hardware —
+**ecb + ach + cass + pi, each SELFHOST_OK + crossos LIBTEST_OK (55/55)** — and bench:
+`self_compile` **723 ms** (720.5 at `.37`, **+0.3 %, noise** — `.37` recorded a 61 ms
+same-commit spread on identical code, so a 2.5 ms move is not attributable).
+⚠ **Quote the `.text` figure, not the file size, for code growth: `.text` 1,042,816 B, up
+**+11,920 B** over `.37`'s 1,030,896.** The file size rose +12,352, but that is one page-step
+of a quantized metric — see *Changed — the release gate now records cycc's `.text` size*.
+
+### Fixed — 🔴 `private` fns still collided across files: a private helper was silently replaced by another file's same-named fn
+
+`private` shipped at v6.5.0 and was enforced only at the REFERENCE site, layered on an
+unchanged global symbol table. The fn table held exactly ONE entry per NAME, so a second
+definition reused that entry and overwrote its body — `duplicate fn ... last definition
+wins` — and a private helper was silently replaced by any same-named fn in any other file,
+**including for its own file's internal calls**. Declaring `private` on BOTH sides did not
+help, because neither declaration touched insertion. Measured at 6.5.37:
+
+```
+a.cyr:  private fn _helper(s) { return 1; }   b.cyr:  private fn _helper(c) { return 0; }
+        public  fn a_entry(s) { return _helper(s); }   public fn b_entry(c) { return _helper(c); }
+
+a_entry(0) * 10 + b_entry(0)  ->  exit 0.   Correct is 10.
+```
+
+⭐ **THE TELL WAS IN THE DOCS THE WHOLE TIME.** `docs/guides/cyrius-guide.md` promised
+"private fns are omitted from the exported symbol table" — a statement about the SYMBOL
+TABLE, while nothing in the implementation touched the symbol table. When a feature's
+documented guarantee names a data structure the code never modifies, it is a check, not a
+boundary.
+
+⚠ **The warning actively misled.** `duplicate fn ... last definition wins` reads as benign
+shadowing and usually is. It is not benign when the definitions disagree about arity, struct
+layout or RETURN POLARITY, and nothing in it says which case you are in. The filed instance
+(owl 1.4.7: `vyakarana` and `sankoch` each defining a private `_stream_grow`) disagreed about
+all three — a wrong binding there does not fault, it reports every successful buffer grow as
+a FAILURE, inside a tokenizer, on file content.
+
+⚠ **Zero adoption hid it for five minors.** 0 of 292 first-party files across seven repos
+declared `private`, so nothing exercised the boundary. A feature with no users generates no
+bug reports; that is not evidence it works. The first consumer to try it filed this in days.
+
+FIX: definitions now SPLIT into separate symbols at insertion when a private one is involved
+and the origin files differ. Resolution prefers (1) a definition private to the caller's own
+file, (2) the first non-private one, (3) the first match — arm 3 exists so `_vis_check` still
+produces the precise "is private to its file" error instead of a misleading "undefined
+function". The split is flagged per-fn (`fn_flags` bit 7), so a name with a single definition
+costs nothing extra to resolve and the common path is unchanged.
+
+⚠ **Unchanged on purpose, both pinned by the gate:** duplicates between two NON-private files
+still only warn (`_sk_emit_err` collides between `lib/vani.cyr` and `lib/mabda.cyr` at the same
+arity today), and two definitions in ONE file are still a duplicate — a redefinition of one
+symbol, not a collision between two files.
+
+Gate: `tests/gates/frontend/private_scoped_at_insertion.sh`, 7 axes, **multi-file on disk**.
+⚠ That is not a style choice: the defect keys on ORIGIN FILE, and the v6.5.37 gate next door
+builds every probe by CONCATENATING sources into one file, so each probe gets a single file id
+and exercises nothing — which is exactly why that gate could not have caught this half.
+Mutation-proven four ways (no-split; resolution ignoring the caller file; resolution dropping
+the privacy check; `_vis_check` disabled) — each reddens a different axis. Axis 4 is the
+anti-regression that matters most: a fix resolving every name to "whatever is nearest" would
+pass axes 1-3 and silently DELETE the feature.
+
+Closes `docs/development/issues/2026-08-22-owl-private-fns-still-collide-across-files.md`
+§1 and §2; §3 (the arity half) shipped at v6.5.37.
+
+### Added — f64v4 `fmadd` / `dot` / `scale` / `abs` / `sqrt` on 256-bit ymm
+
+v6.5.24 widened f64v4 add/sub/mul/div to ymm behind the `simd_has_avx2()` gate and left the
+rest of the family behind. The roadmap recorded `fmadd` as the residual; a sweep found
+**five** ops in that state, and not merely unwidened — `lib/simd.cyr` had **no
+`simd_has_avx2()` gate on any of them**, unlike their four siblings. So an `f64v4_fmadd` ran
+the 128-bit SSE2 loop at `rsi += 2`: two iterations for four lanes.
+
+All ten remaining wrappers (five ops × value and `_ptr` forms) are now gated, giving 18 of 18
+loop wrappers on the AVX2 path; `f64v4_make`/`_splat` are constructors, not loops, and stay
+ungated. New emitters `EMIT_F64V4_FMADD` / `_UNARY` / `_SCALE` / `_DOT` in
+`src/backend/x86/float.cyr`, with one-line delegations to the 128-bit emitters on aarch64 and
+cx (where `simd_has_avx2()` is 0, so the path is unreachable in practice but every fork links).
+Builtins `f64v256_fmadd` / `_dot` / `_scale` / `_abs` / `_sqrt`, tokens 158–162.
+
+⚠ **`dot` is the only non-pointwise one and the only one that could go quietly wrong.**
+`haddpd` on ymm sums WITHIN each 128-bit lane and never crosses the boundary, so a naive
+widening of the 128-bit tail silently drops the upper two products — the gate asserts 570 for
+a vector whose lane-local fold gives 100, and the mutation run reproduces exactly that.
+The fold is explicit: `vextractf128` + `vaddpd` + `vzeroupper` before the legacy-SSE `haddpd`.
+
+⚠ **Deliberately mulpd+addpd, not `vfmadd231pd`.** FMA3 is a separate cpuid bit (leaf 1 ECX
+bit 12) from AVX2 (leaf 7 EBX bit 5), so emitting it under an AVX2-only gate would fault on an
+AVX2 machine without FMA — and it would change the rounding, so it is not a drop-in for the
+128-bit path this must agree with.
+
+Measured on an AVX2 host, best of three, 200k iterations (ymm → sse128 fallback, same binary,
+`_avx2_cache` forced): `fmadd` 9 / 11 ns · `dot` 8 / 10 · `scale` 9 / 10 · `abs` 9 / 10 ·
+`sqrt` 9 / 13. ⚠ **Honest reading: this is a modest win, not the ~2× `.24` reported for `add`.**
+At n=4 the vector body is one or two iterations and call overhead dominates, and the numbers
+sit close to the harness's 1.3 µs timer floor. `sqrt` (13 → 9) is the clearest gain; `abs` is
+within noise of the fallback.
+
+Gates: `tests/tcyr/crossos/f64v4_ymm.tcyr` extended (43 assertions; runs each op through the
+ymm path AND the forced 128-bit fallback, so both kernels are proven to agree lane-for-lane in
+one run) and `tests/gates/codegen/f64v4_ymm_disasm.sh` extended with a second probe pinning
+the exact VEX bytes and mnemonics host-CPU-independently. ⚠ The value test alone cannot prove
+the widening happened — both kernels return the same answers — which is why the disasm gate,
+not the .tcyr, is the real test.
+
+### Fixed — the raw x86_64 `ioctl` number issued `fremovexattr` on ELF-aarch64
+
+A consumer that hardcodes `var SYS_IOCTL = 16` — the x86_64 number, and a very common thing
+to write — got no remap on ELF-aarch64 and issued raw syscall 16, which on the asm-generic
+table is **fremovexattr**. Silently, with no diagnostic. Added the `16 → 29` x86-compat row
+to `ESYSXLAT`'s ELF-aarch64 arm (encodings `aarch64-linux-gnu-as` verified).
+
+⚠ **Not a live stdlib bug, and the filing's framing implied it was.**
+`lib/syscalls_aarch64_linux.cyr` correctly declares the NATIVE 29, nothing shadows it, and the
+v6.5.37 shadow gate reports it unshadowed — so `sys_ioctl` has always worked *through the
+stdlib*. The gap was real only for source that bypasses the stdlib peer, which is exactly the
+reported case. Checked safe in both directions before claiming the number: nothing in the arm
+does `cmp x8,#16`, no aarch64 declaration uses 16 as a syscall number, and nothing in the tree
+calls `fremovexattr`.
+
+Gate: `tests/tcyr/crossos/syscall_ioctl_x86_compat.tcyr`. ⚠ It asserts an EQUIVALENCE — raw 16
+behaves identically to the peer's own `SYS_IOCTL`, whatever that is on this host — and never
+an errno, because the crossos runner feeds `</dev/null` and the answer is ENOTTY on a pty but
+ENODEV on /dev/null (the v6.5.36 lesson). Mutation-proven under `qemu-aarch64`: removing the
+row gives `-14` (EFAULT, fremovexattr with a NULL name) against `-25` (ENOTTY, real ioctl).
+
+⛔ **The other half of that filing is still open and is NOT a small follow-on.** The
+`syscall not routed` warning remains gated behind `_TARGET_MACHO == 2`, so ELF-aarch64 gets no
+diagnostic for an unrouted raw syscall. On Mach-O "unrouted" reliably means "will fault"; on
+ELF-aarch64 unrouted is the NORMAL case (native numbers pass through by design), so the same
+check would fire on virtually every stdlib syscall. A sound diagnostic needs an
+x86_64→aarch64 correspondence table (~350 entries) that does not exist in `src/` today, and
+whether it is generated from the stdlib peers or hand-maintained is a maintainer design call —
+a hand-maintained duplicate of a derivable fact being the exact self-drifting shape this cycle
+keeps finding. Recorded in the filing rather than guessed at.
+
+### Changed — the release gate now records cycc's `.text` size, not only the file size
+
+⛔ **Found while checking why a 40-line compiler change reported a FLAT cycc size.** It had
+not: `.text` grew 1,488 B and the file size did not move at all. cycc places `.rodata` at a
+page-aligned file offset with **~122 KB of slack** after `.text`, so the file size is
+`.rodata offset + .rodata size` — `.text` growth is invisible in the total until it pushes
+`.rodata` onto a new page, and then it surfaces as a 4 KB STEP rather than as the bytes
+actually added. Measured across this release:
+
+| change | `.text` | file size |
+|---|---|---|
+| `.37` → f64v4 ymm widening | **+10,432** | +12,352 (a 3-page step) |
+| that → `private` scoping | **+1,488** | **0** (absorbed by slack) |
+
+The second row is the problem. The CHANGELOG records this number every release and size/perf
+deltas are triaged from it (the growth-tax rule), so "cycc size unchanged" was being read as
+"no code growth" — which it cannot mean. And a +12,352 jump is not 12,352 bytes of new code;
+it is one alignment step. Same self-drifting shape this cycle keeps finding — a derived number
+quoted as if it measured the thing it is named after (heap-map sizes vs regions, gate counts
+vs files, declared string lengths vs strings).
+
+`scripts/bench-history.sh` now emits `size/cycc_text_bytes` alongside `size/cc5_bytes`. One
+extra ROW, not a new column, so the CSV schema is unchanged and existing readers are
+unaffected. ⚠ The `.text` figure is the one to quote for growth; the file size stays recorded
+because the doc-stamp gate and `state.md` pin it.
+
+### Docs
+
+* **The roadmap's "Shipped in v6.5.x" list backfilled `.20`–`.37`** — eighteen releases, half
+  the minor, absent. ⚠ **Second occurrence**: the same section ran `.0`–`.10` and stopped once
+  before, backfilled 2026-08-11. It is the artifact a reactive-rate question gets answered
+  from, so a stale tail answers that question wrongly. The note above it now says the list is
+  hand-maintained and has silently stopped TWICE, and asks for an entry per release or a
+  pointer to this file instead.
+* `docs/guides/cyrius-guide.md` §Visibility and vidya `language/features.cyml` updated for the
+  insertion-scoping change, with the pre-6.5.38 behaviour recorded as the reason to pin
+  forward. New vidya field note
+  `field_notes/compiler/gotchas.cyml:visibility_enforced_at_reference_not_insertion`.
+* The v6.5.37 gate's scope comment corrected — it stated the same-arity half was still open,
+  which is no longer true.
+
 ## [6.5.37] — 2026-09-01
 
 **The `.deps` sidecar subsystem, root-caused and repaired end to end — plus four consumer-filed

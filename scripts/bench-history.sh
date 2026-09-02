@@ -194,6 +194,31 @@ if [ -f "$REPO_ROOT/build/cycc" ]; then
     local_cc5_size=$(wc -c < "$REPO_ROOT/build/cycc")
     echo "${TIMESTAMP},${COMMIT},${BRANCH},size/cc5_bytes,${local_cc5_size}" >> "$HISTORY_FILE"
     printf "  %-35s %d bytes\n" "size/cycc" "$local_cc5_size"
+    # ⛔ v6.5.38 — ALSO record .text, because the total above is a QUANTIZED metric and on
+    # its own it under-reports code growth.
+    #
+    # cycc places .rodata at a page-aligned file offset with ~122 KB of slack after .text,
+    # so the file size = .rodata offset + .rodata size. .text growth is therefore INVISIBLE
+    # in the total until it pushes .rodata onto a new page, and then it appears as a 4 KB
+    # step rather than as the bytes actually added. Measured across this release:
+    #
+    #   6.5.37  -> f64v4 ymm widening : .text +10,432   total +12,352  (a 3-page step)
+    #   that    -> `private` scoping  : .text  +1,488   total      +0  (absorbed by slack)
+    #
+    # The second row is the problem: a real 1.5 KB code addition reported as a FLAT cycc
+    # size. Since the CHANGELOG records this number every release and perf/size deltas are
+    # triaged from it (the growth-tax rule), "cycc size unchanged" was being read as "no
+    # code growth" when it cannot mean that. Same self-drifting shape this cycle keeps
+    # finding — a derived number quoted as if it measured the thing it is named after.
+    # One extra ROW, not a new column, so the CSV schema is unchanged.
+    if command -v readelf >/dev/null 2>&1; then
+        cc_text=$(readelf -S "$REPO_ROOT/build/cycc" 2>/dev/null \
+                  | awk '/\.text/ { getline; print strtonum("0x" $1); exit }')
+        if [ -n "${cc_text:-}" ] && [ "${cc_text:-0}" -gt 0 ] 2>/dev/null; then
+            echo "${TIMESTAMP},${COMMIT},${BRANCH},size/cycc_text_bytes,${cc_text}" >> "$HISTORY_FILE"
+            printf "  %-35s %d bytes\n" "size/cycc_text" "$cc_text"
+        fi
+    fi
 fi
 
 # Tool compile times. v6.2.15 (PF-01): the guard checked programs/${tool}.bcyr,

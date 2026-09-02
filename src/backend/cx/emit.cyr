@@ -1169,6 +1169,14 @@ fn EMIT_F32V8_LOOP(S, op, vbase): i64 { EMIT_F32V_LOOP(S, op, vbase); return 0; 
 # v6.5.24 — f64v4: cx SIMD is a per-lane scalar loop driven by `n`, so lane width per
 # iteration is irrelevant and delegating to the f64v loop is exactly correct.
 fn EMIT_F64V4_LOOP(S, op, vbase): i64 { EMIT_F64V_LOOP(S, op, vbase); return 0; }
+# v6.5.38: 256-bit fmadd has no meaning off x86 — delegate to the 128-bit emitter, exactly as
+# EMIT_F64V4_LOOP above does. The lib wrapper gates on simd_has_avx2(), which is x86-only, so
+# this path is unreachable in practice; it exists so every fork links and so a future arch with
+# 256-bit vectors has one obvious place to specialise.
+fn EMIT_F64V4_FMADD(S, vbase): i64 { EMIT_F64V_FMADD(S, vbase); return 0; }
+fn EMIT_F64V4_UNARY(S, op, vbase): i64 { EMIT_F64V_UNARY(S, op, vbase); return 0; }
+fn EMIT_F64V4_SCALE(S, vbase): i64 { EMIT_F64V_SCALE(S, vbase); return 0; }
+fn EMIT_F64V4_DOT(S, vbase): i64 { EMIT_F64V_DOT(S, vbase); return 0; }
 
 fn EMIT_IVEC_BINOP(S, op, w, vbase): i64 {
     var ldop = 64; var stop = 66;         # w==1: load8/store8 (store truncates → low-w)

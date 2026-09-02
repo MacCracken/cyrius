@@ -193,33 +193,38 @@ fn f64v4_div_ptr(a_ptr, b_ptr): f64v4 {
 # Pointer form of f64v4_fmadd.
 fn f64v4_fmadd_ptr(a_ptr, b_ptr, c_ptr): f64v4 {
     var r: f64v4;
-    f64v_fmadd(&r, a_ptr, b_ptr, c_ptr, 4);
+    if (simd_has_avx2() == 1) { f64v256_fmadd(&r, a_ptr, b_ptr, c_ptr, 4); }
+    else { f64v_fmadd(&r, a_ptr, b_ptr, c_ptr, 4); }
     return r;
 }
 
 # Pointer form of f64v4_dot.
 fn f64v4_dot_ptr(a_ptr, b_ptr): i64 {
+    if (simd_has_avx2() == 1) { return f64v256_dot(a_ptr, b_ptr, 4); }
     return f64v_dot(a_ptr, b_ptr, 4);
 }
 
 # Pointer form of f64v4_scale.
 fn f64v4_scale_ptr(a_ptr, s): f64v4 {
     var r: f64v4;
-    f64v_scale(&r, a_ptr, s, 4);
+    if (simd_has_avx2() == 1) { f64v256_scale(&r, a_ptr, s, 4); }
+    else { f64v_scale(&r, a_ptr, s, 4); }
     return r;
 }
 
 # Pointer form of f64v4_abs.
 fn f64v4_abs_ptr(a_ptr): f64v4 {
     var r: f64v4;
-    f64v_abs(&r, a_ptr, 4);
+    if (simd_has_avx2() == 1) { f64v256_abs(&r, a_ptr, 4); }
+    else { f64v_abs(&r, a_ptr, 4); }
     return r;
 }
 
 # Pointer form of f64v4_sqrt.
 fn f64v4_sqrt_ptr(a_ptr): f64v4 {
     var r: f64v4;
-    f64v_sqrt(&r, a_ptr, 4);
+    if (simd_has_avx2() == 1) { f64v256_sqrt(&r, a_ptr, 4); }
+    else { f64v_sqrt(&r, a_ptr, 4); }
     return r;
 }
 
@@ -639,35 +644,43 @@ fn f64v4_div(a: f64v4, b: f64v4): f64v4 {
 }
 
 # 4-lane FMA (value form): r[i] = a[i] * b[i] + c[i].
+# v6.5.38: gated onto the 256-bit kernel, matching add/sub/mul/div above. Until now this ran
+# the 128-bit SSE2 loop unconditionally — two iterations for four lanes — because `.24` widened
+# only the four arithmetic ops and left the rest of the family behind.
 fn f64v4_fmadd(a: f64v4, b: f64v4, c: f64v4): f64v4 {
     var r: f64v4;
-    f64v_fmadd(&r, &a, &b, &c, 4);
+    if (simd_has_avx2() == 1) { f64v256_fmadd(&r, &a, &b, &c, 4); }
+    else { f64v_fmadd(&r, &a, &b, &c, 4); }
     return r;
 }
 
 # 4-lane dot product (value form). Returns f64 bit pattern in i64.
 fn f64v4_dot(a: f64v4, b: f64v4): i64 {
+    if (simd_has_avx2() == 1) { return f64v256_dot(&a, &b, 4); }
     return f64v_dot(&a, &b, 4);
 }
 
 # 4-lane scalar scale (value form): r[i] = a[i] * s.
 fn f64v4_scale(a: f64v4, s): f64v4 {
     var r: f64v4;
-    f64v_scale(&r, &a, s, 4);
+    if (simd_has_avx2() == 1) { f64v256_scale(&r, &a, s, 4); }
+    else { f64v_scale(&r, &a, s, 4); }
     return r;
 }
 
 # 4-lane absolute value (value form): r[i] = abs(a[i]).
 fn f64v4_abs(a: f64v4): f64v4 {
     var r: f64v4;
-    f64v_abs(&r, &a, 4);
+    if (simd_has_avx2() == 1) { f64v256_abs(&r, &a, 4); }
+    else { f64v_abs(&r, &a, 4); }
     return r;
 }
 
 # 4-lane square root (value form): r[i] = sqrt(a[i]).
 fn f64v4_sqrt(a: f64v4): f64v4 {
     var r: f64v4;
-    f64v_sqrt(&r, &a, 4);
+    if (simd_has_avx2() == 1) { f64v256_sqrt(&r, &a, 4); }
+    else { f64v_sqrt(&r, &a, 4); }
     return r;
 }
 

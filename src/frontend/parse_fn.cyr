@@ -243,6 +243,57 @@ fn REGFN(S, noff): i64 {
 # probing; stop on empty slot or content match via STREQ. Fall through
 # to the use-alias linear scan only on hash miss — direct fn-name
 # lookups (the >99% hot path) hit the hash and return immediately.
+# v6.5.38 — resolve a name that has MULTIPLE definitions, at least one private.
+#
+# ⭐ THIS IS WHAT MAKES `private` A REAL BOUNDARY. Before this, the fn table held exactly
+# one entry per NAME and a second definition overwrote the first ("last definition wins"),
+# so a private helper was silently replaced by any same-named fn in any other file —
+# INCLUDING for its own file's internal calls. Declaring `private` on both sides did not
+# help, because visibility was enforced only at the REFERENCE site, on top of an unchanged
+# global symbol table. Filed from owl 1.4.7, where vyakarana and sankoch each define a
+# private `_stream_grow` disagreeing about arity, buffer offsets AND return polarity — a
+# wrong binding there reports every successful buffer grow as a FAILURE, inside a
+# tokenizer, on file content. v6.5.37 closed only the arity-differing case, as an error.
+#
+# The caller's file comes from the CURRENT TOKEN, not from `_cur_fn_ix` — the same choice
+# `_vis_check` documents and for the same reason: the inline-replay path re-parses a
+# callee's body while `_cur_fn_ix` still names the enclosing fn, so the fn table would
+# answer for the wrong file.
+#
+# Preference order, and each arm matters:
+#   1. a definition PRIVATE TO THE CALLER'S OWN FILE — the file's own helper always wins
+#      inside that file, which is precisely what §1 of the filing got wrong;
+#   2. otherwise the first NON-private definition — a public fn stays reachable from
+#      everywhere, so splitting a name does not hide an ordinary API;
+#   3. otherwise the first match, so the caller is referencing someone else's private fn
+#      and `_vis_check` produces the existing "is private to its file" error. Returning -1
+#      here instead would turn a precise diagnostic into "undefined function".
+fn _findfn_scoped(S, noff, slot, first): i64 {
+    var caller = FM_FILEID(S, GTLINE(S, GTI(S)));
+    var pub_pick = 0 - 1;
+    var s2 = slot;
+    var probes = 0;
+    while (probes < _fnt_cap) {
+        var stored = load16(_fnt_namehash + s2 * 2);
+        if (stored == 0) { probes = _fnt_cap; }
+        else {
+            var fi = stored - 1;
+            var sn = L64(_fnt_names + fi * 8);
+            if (STREQ(S, sn, noff) == 1) {
+                if ((GFLG(S, fi) & 64) != 0) {
+                    var owner = GFFI(S, fi) - 1;      # GFFI stores fid+1; 0 = unknown
+                    if (owner >= 0) { if (owner == caller) { return fi; } }
+                }
+                else { if (pub_pick < 0) { pub_pick = fi; } }
+            }
+            s2 = (s2 + 1) & _fnt_hash_mask;
+            probes = probes + 1;
+        }
+    }
+    if (pub_pick >= 0) { return pub_pick; }
+    return first;
+}
+
 fn FINDFN(S, noff): i64 {
     var h = FNV1A_NOFF(S, noff);
     var slot = h & _fnt_hash_mask;
@@ -253,7 +304,14 @@ fn FINDFN(S, noff): i64 {
         else {
             var fi = stored - 1;
             var sn = L64(_fnt_names + fi * 8);
-            if (STREQ(S, sn, noff) == 1) { return fi; }
+            if (STREQ(S, sn, noff) == 1) {
+                # v6.5.38 — bit 7 (128) = "this NAME has more than one definition, and at
+                # least one of them is private". Set only by the split in PARSE_FN_DEF, so
+                # it is clear for every fn in a normal program: the common path still
+                # returns on the first match with no extra work and no file-map lookup.
+                if ((GFLG(S, fi) & 128) != 0) { return _findfn_scoped(S, noff, slot, fi); }
+                return fi;
+            }
             slot = (slot + 1) & _fnt_hash_mask;
             probes = probes + 1;
         }
@@ -3123,11 +3181,50 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # registered with offset=-1 by an earlier call site that landed
     # before the definition) leave the offset at -1, so the call
     # below does not fire on them — only on actual re-definitions.
+    # v6.5.38 — visibility is now needed BEFORE the duplicate decision, so it is computed
+    # here rather than after `fi` resolves (where Phase 1 originally stamped it). Whether
+    # this definition is private decides whether a same-named definition SPLITS into its
+    # own symbol or overwrites the existing one.
+    var _vis_fid = FM_FILEID(S, GTLINE(S, _defstart_ti));
+    var _this_priv = 0;
+    if (_pub_pending == 0) { if (_PRIV_FILE(_vis_fid) == 1) { _this_priv = 1; } }
+
     _dup_prev_pc = 0 - 1;
     var fi = FINDFN(S, noff);
     if (fi < 0) { fi = REGFN(S, noff); }
     else {
         var _dup_off = L64(_fnt_offsets + fi * 8);
+        if (_dup_off >= 0) {
+            # v6.5.38 — SPLIT rather than overwrite when a private definition is involved
+            # and the two definitions come from DIFFERENT files. This is the fix for §1/§2
+            # of the owl filing: `private` now scopes at INSERTION, so the guide's
+            # "omitted from the exported symbol table" claim is literally true and a
+            # private helper can no longer be replaced by another file's same-named fn.
+            #
+            # ⚠ BOTH files' ids must be KNOWN. Past the 1024-entry file-map cap FM_FILEID
+            # returns -1, and splitting on an unknown owner would create a symbol that
+            # `_findfn_scoped` can never select (arm 1 requires owner == caller), turning a
+            # working call into a silent rebind to the wrong definition. So an
+            # unattributable definition keeps the old overwrite-and-warn behaviour, which
+            # `_vis_degraded_note()` below already announces.
+            #
+            # ⚠ Same-file redefinition is deliberately NOT split — that is a genuine
+            # redefinition of one symbol and must keep warning.
+            var _prev_fid_raw = GFFI(S, fi);
+            var _split = 0;
+            if (_this_priv == 1) { _split = 1; }
+            if ((GFLG(S, fi) & 64) != 0) { _split = 1; }
+            if (_prev_fid_raw == 0) { _split = 0; }
+            if (_vis_fid < 0) { _split = 0; }
+            if (_split == 1) { if (_prev_fid_raw - 1 == _vis_fid) { _split = 0; } }
+            if (_split == 1) {
+                var _sib_old = fi;
+                fi = REGFN(S, noff);
+                SFLG(S, _sib_old, GFLG(S, _sib_old) | 128);
+                SFLG(S, fi, GFLG(S, fi) | 128);
+                _dup_off = 0 - 1;      # not a redefinition any more: suppress warn + arity check
+            }
+        }
         if (_dup_off >= 0) {
             # v6.5.37: remember the loser's arity + file; the comparison happens once this
             # definition's own parameter list has been counted (see _fnt_params store below).
@@ -3165,8 +3262,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # whatever token happens to be current. Deliberately placed HERE, after `fi` is
     # resolved: a forward reference registers a slot from a CALL SITE, and attributing
     # the fn to the caller's file would be precisely backwards.
-    var _vis_fid = FM_FILEID(S, GTLINE(S, _defstart_ti));
-    SFFI(S, fi, _vis_fid + 1);
+    SFFI(S, fi, _vis_fid + 1);   # v6.5.38: _vis_fid is computed above, before the dup split
     # v6.5.0 Phase 2 — fn_flags bit 6 = PRIVATE. Set when this fn's own file opted in
     # AND no `public` moniker preceded it. Default (no `private` anywhere) leaves the
     # bit clear for every fn, so the whole feature is inert and byte-identical until a
@@ -3175,9 +3271,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # `_pub_pending` is cleared UNCONDITIONALLY, exactly like `_must_use_pending` and
     # friends below: a stale marker left armed by a construct that never reached a
     # definition would otherwise re-expose an unrelated fn later in the file.
-    if (_pub_pending == 0) {
-        if (_PRIV_FILE(_vis_fid) == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
-    }
+    if (_this_priv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
     # An unattributable fn (FM_FILEID -1) can never be marked private, so enforcement
     # would quietly stop applying. Say so once rather than degrade in silence.
     if (_vis_fid < 0) { _vis_degraded_note(); }

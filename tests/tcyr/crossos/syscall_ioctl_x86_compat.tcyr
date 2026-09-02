@@ -1,0 +1,46 @@
+# syscall_ioctl_x86_compat.tcyr — v6.5.38: the raw x86_64 ioctl number (16) must reach
+# ioctl on EVERY target, not just x86.
+#
+# THE DEFECT (darshana, filed 2026-08-23). A consumer that hardcodes its own
+# `var SYS_IOCTL = 16` — the x86_64 number, and a very common thing to write — got no
+# remap on ELF-aarch64 and issued raw syscall 16, which on the asm-generic table is
+# **fremovexattr**. Wrong syscall, silently, with no diagnostic. `lib/syscalls_aarch64_linux.cyr`
+# itself is fine (it declares the native 29), so this only bites source that bypasses the
+# stdlib peer — which is precisely what the filing reported.
+#
+# ⭐ WHY THIS ASSERTS AN EQUIVALENCE AND NEVER AN ERRNO. The obvious test — "ioctl on a
+# non-tty returns -ENOTTY" — is exactly the shape that broke at v6.5.36: the crossos runner
+# feeds `</dev/null`, so the answer is ENOTTY on a pty but ENODEV on /dev/null, and it
+# differs again per OS. So the property pinned here is `raw 16 behaves identically to the
+# peer's own SYS_IOCTL`, whatever that behaviour is on this host. That is capability-free,
+# errno-free, and still fails loudly if 16 routes somewhere else: fremovexattr(fd, NULL)
+# and ioctl(fd, 0) do not agree on a return value for the same fd.
+#
+# ⚠ On x86_64 SYS_IOCTL IS 16, so this arm is a tautology there and cannot fail — that is
+# expected. The test earns its place on aarch64, where SYS_IOCTL is 29 and the assertion
+# only holds because ESYSXLAT now carries the 16→29 row. Keep it in crossos/ for that
+# reason; running it only on the x86 host proves nothing.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    test_group("raw x86_64 ioctl number (16) routes to ioctl on this target");
+
+    # Same fd, same request, same NULL argp — issued twice: once through the peer's own
+    # declared constant, once through the hardcoded x86_64 number a consumer would write.
+    # stdin (0) is whatever the runner gave us; we never inspect WHAT the answer is.
+    var via_const = syscall(SYS_IOCTL, 0, 0, 0);
+    var via_raw16 = syscall(16, 0, 0, 0);
+    assert_eq(via_raw16, via_const, "syscall(16,...) == syscall(SYS_IOCTL,...) on this target");
+
+    # And again on a definitely-invalid fd, so the pair is compared under two different
+    # kernel paths rather than one. Still no errno named — only that the two agree.
+    var bad_const = syscall(SYS_IOCTL, 0 - 1, 0, 0);
+    var bad_raw16 = syscall(16, 0 - 1, 0, 0);
+    assert_eq(bad_raw16, bad_const, "syscall(16,...) == syscall(SYS_IOCTL,...) on a bad fd");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

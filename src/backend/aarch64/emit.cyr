@@ -1136,6 +1136,26 @@ fn ESYSXLAT(S): i64 {
     # cmp x8,#232; b.ne +16 (skip 3); movz x4,#0; movz x5,#0; movz x8,#22.
     EW(S, 0xF103A11F); EW(S, 0x54000081);
     EW(S, 0xD2800004); EW(S, 0xD2800005); EW(S, 0xD28002C8);
+    # v6.5.38: ioctl 16 → 29 (x86-compat), closing the darshana filing's first ask.
+    # A consumer that hardcodes `var SYS_IOCTL = 16` — the x86_64 number, and a very common
+    # thing to write — got NO remap on ELF-aarch64 and issued raw 16, which on the
+    # asm-generic table is **fremovexattr**. Silently, with no diagnostic.
+    # ⚠ NOT a live stdlib bug: `lib/syscalls_aarch64_linux.cyr` correctly declares the
+    # NATIVE 29, nothing compares against 29 in this arm, and the v6.5.37 shadow gate reports
+    # it unshadowed — so `sys_ioctl` has always worked through the stdlib. This row is for
+    # source that bypasses the stdlib peer, which is exactly the reported case and the same
+    # reason the getcwd/symlink compat rows above exist ("cbt issues raw x86 getcwd/symlink").
+    # ⚠ SAFE TO ADD, checked in both directions: nothing in this arm does `cmp x8,#16`, no
+    # aarch64 declaration uses 16 as a syscall number, and nothing in the tree calls
+    # fremovexattr — so this claims a number that was genuinely unused. A consumer that really
+    # wants aarch64 fremovexattr now needs the ≥1000 private alias band, which is the
+    # established escape hatch for exactly this trade.
+    # ⚠ ORDERING: produces x8=29, and NO row in this arm compares against 29, so it cannot be
+    # re-captured wherever it sits — but it stays ABOVE the private-alias band, which must
+    # remain last for the reasons the band's own comments give.
+    # cmp x8,#16 = 0xF100411F; movz x8,#29 = 0xD28003A8 (aarch64-linux-gnu-as verified).
+    EW(S, 0xF100411F); EW(S, 0x54000041); EW(S, 0xD28003A8);  # ioctl 16→29
+
     # v6.5.7: fchownat via the PRIVATE ALIAS 1054 → native 54. aarch64's real
     # fchownat number (54) is unreachable from source because the x86-compat shim
     # above rewrites 54→208 (setsockopt) — load-bearing for 51 ecosystem repos — and
@@ -2945,6 +2965,14 @@ fn EMIT_IVEC_DP8(S, vbase): i64 {
 # the cx multi-return stubs had at v6.5.21 (compiles clean, runs clean, wrong answer, zero
 # diagnostics). Cheap insurance, not a claim that the F32V8 stubs are buggy.
 fn EMIT_F64V4_LOOP(S, op, vbase): i64 { EMIT_F64V_LOOP(S, op, vbase); return 0; }
+# v6.5.38: 256-bit fmadd has no meaning off x86 — delegate to the 128-bit emitter, exactly as
+# EMIT_F64V4_LOOP above does. The lib wrapper gates on simd_has_avx2(), which is x86-only, so
+# this path is unreachable in practice; it exists so every fork links and so a future arch with
+# 256-bit vectors has one obvious place to specialise.
+fn EMIT_F64V4_FMADD(S, vbase): i64 { EMIT_F64V_FMADD(S, vbase); return 0; }
+fn EMIT_F64V4_UNARY(S, op, vbase): i64 { EMIT_F64V_UNARY(S, op, vbase); return 0; }
+fn EMIT_F64V4_SCALE(S, vbase): i64 { EMIT_F64V_SCALE(S, vbase); return 0; }
+fn EMIT_F64V4_DOT(S, vbase): i64 { EMIT_F64V_DOT(S, vbase); return 0; }
 fn EMIT_F32V8_LOOP(S, op, vbase): i64 { return 0; }
 fn EMIT_F32V8_FMADD(S, vbase): i64 { return 0; }
 fn EMIT_F32V8_DOT(S, vbase): i64 { return 0; }

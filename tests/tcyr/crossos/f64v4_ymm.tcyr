@@ -1,6 +1,10 @@
 # f64v4_ymm.tcyr — v6.5.24: f64v4 add/sub/mul/div widened to 256-bit ymm
 # (vaddpd/vsubpd/vmulpd/vdivpd) behind the simd_has_avx2() runtime gate.
 #
+# v6.5.38 — extended to fmadd/dot/scale/abs/sqrt, the five ops `.24` left behind on the
+# 128-bit kernel (and left UNGATED, unlike its four). Same two-path structure: AVX2 path
+# then forced fallback, so both kernels are proven to agree in one run.
+#
 # ⭐ WHY THIS LIVES IN crossos/ AND NOT simd/. This release put a runtime CPU gate in
 # front of arithmetic that EVERY target already used: all eight f64v4 wrappers (4 ops ×
 # value/_ptr) now branch on simd_has_avx2() before choosing a kernel. On x86-with-AVX2
@@ -62,6 +66,52 @@ fn main(): i64 {
     var vd: f64v4 = f64v4_sub(&a, &b);
     assert_eq(f64_to(f64v4_lane2(&vd)), 25, "sub value-form lane2 = 25");
 
+    # --- v6.5.38: the five ops `.24` left on the 128-bit kernel ---
+    # `.24` widened only add/sub/mul/div. fmadd, dot, scale, abs and sqrt kept running the
+    # SSE2 loop at rsi += 2 — two iterations for four lanes — and, unlike their four
+    # siblings, had NO simd_has_avx2() gate at all. All five (× value and _ptr forms) are
+    # now gated onto EMIT_F64V4_{FMADD,DOT,SCALE,UNARY}.
+    # Inputs stay exact in binary FP so both kernels must agree bit-for-bit:
+    #   c  = [1, 2, 3, 4]        fmadd a*b+c = [21, 82, 153, 324]
+    #   dot = 20+80+150+320 = 570        scale a*3 = [30, 60, 90, 120]
+    #   neg = [-10, 20, -30, 40] abs = [10, 20, 30, 40]
+    #   sq  = [4, 16, 36, 64]    sqrt = [2, 4, 6, 8]
+    test_group("f64v4 fmadd/dot/scale/abs/sqrt widened to ymm (v6.5.38)");
+    var c: f64v4 = f64v4_make(f64_from(1), f64_from(2), f64_from(3), f64_from(4));
+    var neg: f64v4 = f64v4_make(f64_from(0 - 10), f64_from(20), f64_from(0 - 30), f64_from(40));
+    var sq: f64v4 = f64v4_make(f64_from(4), f64_from(16), f64_from(36), f64_from(64));
+
+    var fm: f64v4 = f64v4_fmadd_ptr(&a, &b, &c);
+    assert_eq(f64_to(f64v4_lane0_ptr(&fm)), 21, "fmadd_ptr lane0 = 10*2+1 = 21");
+    assert_eq(f64_to(f64v4_lane2_ptr(&fm)), 153, "fmadd_ptr lane2 = 30*5+3 = 153");
+    assert_eq(f64_to(f64v4_lane3_ptr(&fm)), 324, "fmadd_ptr lane3 = 40*8+4 = 324 (4th lane)");
+    var fmv: f64v4 = f64v4_fmadd(&a, &b, &c);
+    assert_eq(f64_to(f64v4_lane3(&fmv)), 324, "fmadd value-form lane3 = 324");
+
+    # dot folds ACROSS the 128-bit lane boundary (vextractf128 + vaddpd). A naive widening
+    # that just reuses haddpd sums within each lane and silently drops lanes 2-3, giving
+    # 100 instead of 570 — which is exactly what this number is here to catch.
+    assert_eq(f64_to(f64v4_dot_ptr(&a, &b)), 570, "dot_ptr = 20+80+150+320 = 570 (all 4 lanes)");
+    assert_eq(f64_to(f64v4_dot(&a, &b)), 570, "dot value-form = 570");
+
+    var sc: f64v4 = f64v4_scale_ptr(&a, f64_from(3));
+    assert_eq(f64_to(f64v4_lane0_ptr(&sc)), 30, "scale_ptr lane0 = 10*3 = 30");
+    assert_eq(f64_to(f64v4_lane3_ptr(&sc)), 120, "scale_ptr lane3 = 40*3 = 120 (broadcast reached lane 3)");
+    var scv: f64v4 = f64v4_scale(&a, f64_from(3));
+    assert_eq(f64_to(f64v4_lane2(&scv)), 90, "scale value-form lane2 = 90");
+
+    var ab: f64v4 = f64v4_abs_ptr(&neg);
+    assert_eq(f64_to(f64v4_lane0_ptr(&ab)), 10, "abs_ptr lane0 = |-10| = 10");
+    assert_eq(f64_to(f64v4_lane2_ptr(&ab)), 30, "abs_ptr lane2 = |-30| = 30 (mask reached upper lane)");
+    var abv: f64v4 = f64v4_abs(&neg);
+    assert_eq(f64_to(f64v4_lane2(&abv)), 30, "abs value-form lane2 = 30");
+
+    var sr: f64v4 = f64v4_sqrt_ptr(&sq);
+    assert_eq(f64_to(f64v4_lane0_ptr(&sr)), 2, "sqrt_ptr lane0 = sqrt(4) = 2");
+    assert_eq(f64_to(f64v4_lane3_ptr(&sr)), 8, "sqrt_ptr lane3 = sqrt(64) = 8 (4th lane)");
+    var srv: f64v4 = f64v4_sqrt(&sq);
+    assert_eq(f64_to(f64v4_lane3(&srv)), 8, "sqrt value-form lane3 = 8");
+
     # --- forced 128-bit fallback: both kernels must agree lane-for-lane ---
     # This is the half that makes the run meaningful on an AVX2 host.
     test_group("f64v4 forced 128-bit fallback parity (simd_has_avx2 = 0)");
@@ -78,6 +128,16 @@ fn main(): i64 {
     assert_eq(f64_to(f64v4_lane2_ptr(&q2)), 6, "fallback div lane2 = 6");
     var vs2: f64v4 = f64v4_add(&a, &b);
     assert_eq(f64_to(f64v4_lane3(&vs2)), 48, "fallback add value-form lane3 = 48");
+    # v6.5.38 — the five new ops through the 128-bit kernel: same answers, both paths.
+    var fm2: f64v4 = f64v4_fmadd_ptr(&a, &b, &c);
+    assert_eq(f64_to(f64v4_lane3_ptr(&fm2)), 324, "fallback fmadd lane3 = 324");
+    assert_eq(f64_to(f64v4_dot_ptr(&a, &b)), 570, "fallback dot = 570");
+    var sc2: f64v4 = f64v4_scale_ptr(&a, f64_from(3));
+    assert_eq(f64_to(f64v4_lane3_ptr(&sc2)), 120, "fallback scale lane3 = 120");
+    var ab2: f64v4 = f64v4_abs_ptr(&neg);
+    assert_eq(f64_to(f64v4_lane2_ptr(&ab2)), 30, "fallback abs lane2 = 30");
+    var sr2: f64v4 = f64v4_sqrt_ptr(&sq);
+    assert_eq(f64_to(f64v4_lane3_ptr(&sr2)), 8, "fallback sqrt lane3 = 8");
     _avx2_cache = 2;   # restore real detection
 
     # --- f64v2 must NOT have been widened: the ymm stride is 4, a 2-lane vector is not ---

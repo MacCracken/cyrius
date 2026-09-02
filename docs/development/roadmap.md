@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.37** (2026-09-01) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.38** (2026-09-01) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -53,11 +53,14 @@ failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 > the line above rather than carried. The heap audit is green inside check.sh 211/0; if you need
 > the region count, measure it — do not quote a number this file no longer states.
 >
-> ⛔ **The "Shipped in v6.5.x" list below STOPS AT `.19`** — 20 entries, and `.20`–`.37` (eighteen
-> releases, half the minor) are absent. This is the SECOND occurrence: the same section ran
-> `.0`–`.10` and stopped once before, backfilled 2026-08-11 with the note still visible below.
-> It is also the artifact a reactive-rate question gets answered from, and it covers none of the
-> period such a question is about. Backfill it or replace it with a pointer to `CHANGELOG.md`.
+> ✅ **The "Shipped in v6.5.x" list below is CURRENT through `.37`** — backfilled 2026-09-01 from
+> `CHANGELOG.md`. It had stopped at `.19`, missing `.20`–`.37` (eighteen releases, half the minor),
+> and that was the SECOND occurrence: the same section ran `.0`–`.10` and stopped once before,
+> backfilled 2026-08-11. ⚠ **This list is hand-maintained and has now silently stopped TWICE**,
+> which is the same self-drifting-duplicate shape this cycle keeps finding (heap-map sizes vs
+> regions, gate counts vs files, declared string lengths vs strings). It is the artifact a
+> reactive-rate question gets answered from, so a stale tail answers that question wrongly.
+> Append an entry as part of each release, or replace the section with a pointer to `CHANGELOG.md`.
 
 ⭐ **CROSS-OS FULL CORPUS, re-measured on real hardware 2026-08-20 (`CYRIUS_CROSS_OS_FULL=1`):
 ecb 282/282 · ach 282/282 · pi 282/282 · cass 250/282.** Three of four hosts are at ZERO. The
@@ -315,6 +318,123 @@ not a single release.
   ordinary untrusted stdin; PROVEN stack exhaustion, ~16 KB per nesting level). Two issues
   filed, both pinned to `.20`. cycc **+12,800 B**, self_compile **685 ms** (+6 %), triaged as
   **growth tax, not bisected**.
+- **v6.5.20** — **two silent miscompiles**, and every one of the slot's worst defects was found
+  by attacking a FIX rather than the filing it came from (three of four were introduced by the
+  patch immediately before them). `switch`/`match` case bodies could only be left safely by
+  `return` — the v5.6.27 regalloc NOP-harvest compactor repaired jump disp32s and fixup CPs but
+  never knew the switch jump table existed, so entries ran `16,30,47,64` where correct is
+  `16,26,39,52`, **+4 per preceding case body**; broken on EVERY target. The filing's own
+  diagnosis and blast radius were both wrong. Plus `#derive` line-number inflation (the cause was
+  duplicated whitespace, not the generated bodies), and five of seven compiler forks never built
+  the file map. cycc **1,154,784 B**, `check.sh` 178/0.
+- **v6.5.21** — **two proposals completed and retired**, and the one filed as "ergonomics, not
+  capability" was sitting on **three silent multi-value-return miscompiles**. Both proposals'
+  stated premises were wrong in a load-bearing way, and both errors were ours. Plus declared
+  multi-value returns at arity 3, `CYRIUS_PKG_VERSION`, and a forged `#@file` marker that
+  defeated `private`. `check.sh` 179/0.
+- **v6.5.22** — **the heap-layout release, carrying nothing but the layout change and one
+  security fold** (maintainer, 2026-08-14) so a misbehaving heap would have exactly one candidate
+  cause. `input_buf` relocated and raised 1 MB → 16 MB; **eight rebase misses, none found by
+  reading code**; the cap-drift gate had never verified `input_buf`. sigil 3.12.9.
+  cycc **1,172,448 B**, `check.sh` 180/0.
+- **v6.5.23** — **band B: the IR=3 bleed and the parser diagnostic residual** — the spine's first
+  release, and **both opening bites were misfiled in the backlog**: the "IR block table = three
+  miscompiles" was a capacity limit, and `PARSE_INTRIN` raw-emitted invisibly to the IR (4
+  divergences, not 1). Plus `_sync_skip` statement-boundary recovery, resolution errors that
+  report and continue, and a gate that was asserting the defect R1 removed.
+  cycc **1,172,448 B**, `check.sh` 180/0.
+- **v6.5.24** — **band C: the small-fix cluster**, four items each of which had a check that
+  could not see it. **f64v4 add/sub/mul/div widened to 256-bit ymm behind the AVX2 gate** (see
+  `.38`, which finished the other five ops). Plus `<source>` diagnostic lines shifted by one per
+  prepended line, the typed-pointer warning testing the wrong SIGN, the bare-metal forbidden-module
+  check, and ganita 1.1.0. cycc **1,177,760 B**, `check.sh` 185/0.
+- **v6.5.25** — **band D: Windows/PE stdlib parity.** The premise-check found all five pinned
+  items real but **at the stdlib layer, not the compiler layer the roadmap implied**, and two were
+  initially mislabelled "already shipped" because the *reroute* was live while the *wrapper* was
+  missing — adversarial verification caught both. Plus a PE binary that could contain raw Linux
+  `syscall` instructions, and the `tls_native_freestanding` HANG (the last undiagnosed cross-OS
+  failure). cycc **1,177,808 B**, `check.sh` 187/0.
+- **v6.5.26** — **band D finish-out + the stiva coroutine re-scope**: the PE base-relocation
+  ceiling blocked ALL full-stdlib Windows builds, and the async reactor could hold only ONE waiter
+  per fd. cycc **1,178,024 B**, `check.sh` 188/0.
+- **v6.5.27** — **completing async across ALL platforms — the half `.26` left on the table.**
+  macOS gets a REAL reactor (kqueue via `sys_kqueue`/`sys_kevent`) and `lib/async_macos.cyr`, so
+  macOS async EXISTS; the reactor test moved INTO `crossos/` with per-capability skips. sankoch
+  2.7.8. cycc **1,178,024 B**, `check.sh` 188/0.
+- **v6.5.28** — **eight consumer-filed defects, fixed complete — seven of the eight SILENT**,
+  which is why every one arrived from a consumer rather than from this repo's gates. Decimal float
+  literals past ~9 significant digits parsed to a DIFFERENT number; `cyrius deps` read only the
+  first 4095 bytes of a manifest; `distlib` scanned for named deps unanchored and emitted empty
+  sidecars. ⚠ **BREAKING: `cyrius fmt` now rewrites files in place**, and cyrfmt — which had never
+  tracked parentheses — stopped failing its own `--check`.
+  cycc **1,178,136 B**, `check.sh` 191/0.
+- **v6.5.29** — **band T finished**: the last two consumer-filed tooling defects were **one root
+  cause and one genuinely missing capability**. Added `cyrius fuzz --poison` (out-of-bounds READS
+  and use-after-free become observable). Plus a warning that fired on `&x`, the one expression form
+  that cannot be wrong. bayan 1.4.2 / ganita 1.1.1 / mabda 4.0.9.
+- **v6.5.30** — **a stdlib fold sweep (seven folds) and the three consumer bugs it surfaced**, in
+  the W3 reactive window that exists for exactly this: `distlib` wrote NO sidecar when a manifest
+  mentioned "stdlib" in prose; `fmt_float` dropped the carry when the fraction rounded up to a full
+  unit; `#derive(...)` on an enum compiled clean and generated nothing; `f64_pow` returned NaN for
+  a zero or negative base.
+- **v6.5.31** — **the enum-codec decision, taken and executed the same day**, plus two silent
+  no-ops it exposed: a bare `#derive(Deserialize)` emitted NOTHING (on structs as well as enums),
+  and a package-DIRECTORY leaf declared in both places broke the build.
+- **v6.5.32** — enum members may have NEGATIVE values; vani 1.1.4 fold. The `util.cyr`/cybs
+  constraint was **filed, not settled** (P1 → `.33`) — and `.33` deleted that note, because the
+  mechanism turned out to be knowable.
+- **v6.5.33** — **the P1 root-caused and FIXED in the bootstrap compiler**: cybs stray-wrote into
+  the code stream from `parse_if_else`. `.32` had shipped it as a hazard note saying the mechanism
+  was unknown. Plus a docs currency sweep + handoff prep and the vani 1.2.2 fold. **Not shipped**:
+  `CYRIUS_PKG_VERSION` in included files (root-caused, fix reverted).
+- **v6.5.34** — **band E: the IR substrate. `CYRIUS_IR=3` now agrees with the default backend on
+  the entire corpus — 282 of 282, exit code AND stdout.** Three miscompiles, **one per optimizer
+  pass**: LASE width elimination, `ir_const_fold` carrying state across its own NOPs, and `ESTOC`
+  recording no IR node so DCE killed the field store's address. Plus `CYRIUS_PKG_VERSION` from
+  included files, `cyrius port --language=python`, and a release gate that could fail on its own
+  debris. cycc **1,182,944 B**, `check.sh` 199/0.
+- **v6.5.35** — **band F: the register allocator finally uses the live intervals it has been
+  computing since v5.6.19.** ⚠ The roadmap's long-standing *"the cross-BB defect is localised to
+  ONE line"* named only the FIRST of two blockers — that line is a deliberate v5.6.22 guard, and
+  reverting it alone fails **69 of 282**; the unnamed second blocker was a LIFETIME cap of 5. Plus
+  the per-candidate safety scan the fix made unaffordable. A refinement that passes every test was
+  **deliberately NOT shipped**. cycc **1,178,848 B**, `check.sh` 199/0.
+- **v6.5.36** — **two Critical defects live in shipped releases**, plus the full AGNOS ABI front:
+  enum constants ≥ 2^62 were silently corrupted in `.31`–`.35` (an in-band tag needing 65 bits in a
+  64-bit slot — and `.32` wrote the truncation down as a spec); on ELF-aarch64 `sys_pause()` issued
+  `flock` and `sys_signalfd()` issued `fsync`. ⭐ **The enum gate stayed green through all five bad
+  releases because it pinned the MECHANISM, not the property** — the one shared decoder was doing
+  the corrupting. Plus `sys_ioctl` and a latent Mach-O routing bug it exposed, `getenv` seeing only
+  the first 8 KB of the environment, and three stdlib folds.
+- **v6.5.37** — **the `.deps` sidecar subsystem, root-caused and repaired end to end**, plus four
+  consumer filings and the AGNOS ABI gap. ⛔ **Two CRITICALs.** A **symlinked `lib/` let one repo
+  overwrite the shared stdlib** — `nous/lib` was a directory symlink into the LIVE snapshot and
+  nous pins 6.3.35, so the resolver read the RIGHT source and wrote through the link (27 files
+  downgraded, `alloc.cyr` losing the v6.4.1 infoleak fix, and every other repo read it back out).
+  An **inline `#` comment replaced a project's whole stdlib set** — the FOURTH occurrence of that
+  class, inside the helper v6.5.17 created to end it. Plus `cyrius deps` reporting failure as an
+  error COUNT (256 errors exited 0) and version pinning silently ignored by nearly every consumer.
+  ⭐ **The release's real lesson: almost every item was a REPEAT of a class already fixed once** —
+  each earlier fix was correct; none swept. cycc **1,179,104 B**, `check.sh` **211/0** (199 → 211,
+  twelve new gates, every one mutation-proven).
+- **v6.5.38** — **two halves a previous release shipped the easy end of, both closed.**
+  (1) **`private` is a real boundary at last**: it had been enforced only where a name is USED,
+  layered on a symbol table that still held ONE entry per NAME — so a private helper was silently
+  replaced by any same-named fn in another file, **including for its own file's internal calls**,
+  and declaring `private` on both sides changed nothing. Definitions now SPLIT at INSERTION.
+  ⭐ **The tell was in the docs the whole time**: the guide promised "omitted from the exported
+  symbol table" while nothing in the implementation touched the symbol table. ⚠ **Zero adoption
+  hid it for five minors** — 0 of 292 first-party files declared `private`, and a feature with no
+  users generates no bug reports. Its gate is multi-file ON DISK, because the v6.5.37 gate next
+  door concatenates every probe into one file and so could never have caught this half.
+  (2) **f64v4 finished the `.24` ymm widening** — the roadmap named `fmadd` as the residual, a
+  sweep found **five** ops (`fmadd`/`dot`/`scale`/`abs`/`sqrt`), and none of them carried a
+  `simd_has_avx2()` gate at all. Plus the ELF-aarch64 `ioctl 16→29` compat row (raw x86 16 was
+  issuing **fremovexattr**), and the roadmap backfill this list's own note asked for.
+  ⛔ **A metric this project gates on was under-reporting**: cycc's FILE size is quantized
+  (~122 KB of slack before a page-aligned `.rodata`), so the `private` fix's real **+1,488 B** of
+  `.text` showed as a **FLAT** size. `.text` is now recorded alongside it.
+  cycc **1,191,456 B** / `.text` **1,042,816 B**, `check.sh` **212/0**.
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 

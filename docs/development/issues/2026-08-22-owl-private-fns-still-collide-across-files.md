@@ -1,11 +1,12 @@
 # `private` fns still collide across files — a private helper is silently replaced by any same-named fn, and the override bypasses the arity check
 
-**Status:** 🟠 **PARTIALLY FIXED at v6.5.37 — STILL OPEN.** The cheap half shipped: a `duplicate fn` whose definitions DISAGREE ABOUT ARITY is now a hard ERROR naming both arities, closing §3 (a 3-arg call bound to a 1-arg duplicate compiled and ran, dropping args 2 and 3 — measured exit 201). Gate: `tests/gates/frontend/duplicate_fn_arity_mismatch.sh`. ⛔ §1 and §2 REMAIN: a private helper can still be silently replaced by another file's same-named, SAME-arity function, and `private` on both sides still does not help. The real fix is scoping private symbols at INSERTION.
+**Status:** ✅ **FIXED at v6.5.38 — CLOSED.** `private` now scopes at symbol INSERTION, which is the fix this filing proposed. When a definition is private and a same-named definition exists in a DIFFERENT file, the two SPLIT into separate symbols instead of the second overwriting the first; resolution then prefers the caller's own private definition, then the first non-private one, then falls through so `_vis_check` still produces the precise "is private to its file" error rather than "undefined function". §1, §2 and §3 all behave as the guide documents. The filed repro now exits **10**, not 0. Gate: `tests/gates/frontend/private_scoped_at_insertion.sh` (7 axes, MULTI-FILE — a concatenated probe gets one file id and exercises nothing, which is why the v6.5.37 gate could not have caught this; mutation-proven four ways). §3's arity half shipped earlier at v6.5.37.
+⚠ Unchanged on purpose, and the gate pins both: duplicates between two NON-private definitions still only warn (`_sk_emit_err` collides between `lib/vani.cyr` and `lib/mabda.cyr` at the same arity today), and a same-FILE redefinition is still a duplicate rather than a split.
 **Placement:** unpinned — 6.x-line backlog, but see §Why this is worse than a normal collision.
 **Discovered:** 2026-08-22 during owl 1.4.7, auditing a `duplicate fn '_stream_grow'` warning
 raised by co-linking `vyakarana` and `sankoch`.
 **Severity:** High
-**Affects:** cycc 6.5.0 (where `private` landed) through 6.5.35
+**Affects:** cycc 6.5.0 (where `private` landed) through 6.5.37. **Fixed in 6.5.38.**
 
 ## Summary
 
@@ -139,7 +140,7 @@ bind to vyakarana's own definition; sankoch's caller is dead in owl's DCE map), 
 outage report. It is a report that the language's own encapsulation feature does not prevent the
 class.
 
-## Proposed fix
+## Proposed fix — ✅ TAKEN
 
 Scope private symbols at insertion, not just at reference. Either a per-file symbol table for
 private items, or file-unique mangling of private names before insertion. Both make §1–§3 above
@@ -152,6 +153,9 @@ check. That alone would have caught `_stream_grow` at the first co-link.
 
 ## Consumer-side workaround (if any)
 
+⚠ Historical — **none is needed from 6.5.38 on**; pin forward instead. What follows is what
+consumers on 6.5.0–6.5.37 had to do.
+
 None that works today. The obvious one — "declare the file `private`" — **does not help**, per
 §1 and §2. The only actual workaround is renaming one of the two helpers upstream, which is what
 `patra` did for the `TK_*` enum collision owl reported at its 1.4.0 (`TK_*` → `SQLT_*`); see
@@ -162,3 +166,8 @@ Worth knowing when weighing priority: **0 of 292** first-party source files acro
 `sankoch`, `sigil`, `patra`, `sakshi`, `sit` and `owl` currently declare `private`. Adoption is
 zero, and until this is fixed adopting it would not buy collision safety anyway — so the fix and
 the adoption push want to land together.
+
+**The fix has now landed (6.5.38), so the adoption half is what remains.** Nothing in this repo
+forces it: `private` is opt-in per file and inert until declared, so those 292 files behave
+exactly as before. The pitch to consumers is now truthful in a way it was not before — declaring
+a file `private` genuinely prevents another library from replacing its helpers.

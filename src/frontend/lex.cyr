@@ -990,8 +990,61 @@ fn LEXKW_EXT(kw, klen, S, ws): i64 {
     # Byte 8 alone (a/s/m/d) is already unique across the four, but all three tail bytes
     # are checked so a user identifier like `f64v256_ann` can't be silently stolen by the
     # `add` arm — the lexer's other multi-byte arms check every byte for the same reason.
+    # v6.5.38 — f64v256_sqrt(dst, a, n): 12 chars, so its own klen arm between the 11- and
+    # 13-char f64v256_ families. Same prefix, 4-byte tail "sqrt", every byte checked.
+    if (klen == 12) {
+        if (kw == 0x5F36353276343666) {
+            if (load8(S + 0x60000 + ws + 8) == 115) {          # 's'
+                if (load8(S + 0x60000 + ws + 9) == 113) {      # 'q'
+                    if (load8(S + 0x60000 + ws + 10) == 114) { # 'r'
+                        if (load8(S + 0x60000 + ws + 11) == 116) { return 162; }   # 't'
+                    }
+                }
+            }
+        }
+    }
+    # v6.5.38 — f64v256_fmadd(dst, a, b, c, n): the 256-bit sibling of f64v_fmadd, token 158.
+    # 13 chars, so its own klen arm; same 8-byte prefix "f64v256_" as the 11-char family above,
+    # then the 5-byte tail "fmadd". Every tail byte is checked, for the reason the 11-char arm
+    # records: a user identifier sharing the prefix must not be silently stolen.
+    # ⚠ NOT named `f64v4_fmadd` — `lib/simd.cyr:642` already defines that as the value form, and
+    # reserving the name here would turn a live lib definition into a reserved-word parse error.
+    # Same reasoning, same trap, as the 11-char family; see its comment.
+    if (klen == 13) {
+        if (kw == 0x5F36353276343666) {
+            if (load8(S + 0x60000 + ws + 8) == 102) {          # 'f'
+                if (load8(S + 0x60000 + ws + 9) == 109) {      # 'm'
+                    if (load8(S + 0x60000 + ws + 10) == 97) {  # 'a'
+                        if (load8(S + 0x60000 + ws + 11) == 100) {      # 'd'
+                            if (load8(S + 0x60000 + ws + 12) == 100) { return 158; }   # 'd'
+                        }
+                    }
+                }
+            }
+            if (load8(S + 0x60000 + ws + 8) == 115) {          # 's'  f64v256_scale -> 160
+                if (load8(S + 0x60000 + ws + 9) == 99) {       # 'c'
+                    if (load8(S + 0x60000 + ws + 10) == 97) {  # 'a'
+                        if (load8(S + 0x60000 + ws + 11) == 108) {      # 'l'
+                            if (load8(S + 0x60000 + ws + 12) == 101) { return 160; }   # 'e'
+                        }
+                    }
+                }
+            }
+        }
+    }
     if (klen == 11) {
         if (kw == 0x5F36353276343666) {
+            # v6.5.38 — the two 3-char tails the .24 family did not claim.
+            if (load8(S + 0x60000 + ws + 8) == 100) {          # 'd'  f64v256_dot -> 159
+                if (load8(S + 0x60000 + ws + 9) == 111) {      # 'o'
+                    if (load8(S + 0x60000 + ws + 10) == 116) { return 159; }   # 't'
+                }
+            }
+            if (load8(S + 0x60000 + ws + 8) == 97) {           # 'a'  f64v256_abs -> 161
+                if (load8(S + 0x60000 + ws + 9) == 98) {       # 'b'
+                    if (load8(S + 0x60000 + ws + 10) == 115) { return 161; }   # 's'
+                }
+            }
             if (load8(S + 0x60000 + ws + 8) == 97) {
                 if (load8(S + 0x60000 + ws + 9) == 100) {
                     if (load8(S + 0x60000 + ws + 10) == 100) { return 154; }

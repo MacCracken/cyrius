@@ -2594,6 +2594,24 @@ fn _TRY_MUL_BY_POW2(S): i64 {
 # callers clear `_cfo` after a handled dispatch. Getting this wrong is the `_cfo`
 # rewind class (four occurrences: 2026-06-11, v6.4.74, .80, .81), whose failure mode
 # is SILENT WRONG CODE rather than a syntax error. Do not simplify those clears away.
+# v6.5.38 — shared body for f64v256_abs / f64v256_sqrt (tokens 161/162). Both are
+# (dst, src, n) and differ only in the op index handed to EMIT_F64V4_UNARY, so the arm is
+# factored out rather than duplicated; `op` is passed in, never derived from the token.
+fn _PARSE_F64V4_UNARY(S, op): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+    var vbu = GFLC(S);
+    PCMPE(S); _SIMD_STASH(S, vbu);
+    if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+    PCMPE(S); _SIMD_STASH(S, vbu + 1);
+    if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+    PCMPE(S);
+    SFLC(S, vbu + 2);
+    EMIT_F64V4_UNARY(S, op, vbu);
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+    return 1;
+}
+
 fn PARSE_INTRIN(S, ptyp): i64 {
     if (ptyp >= 93) { if (ptyp <= 99) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     if (ptyp >= 100) { if (ptyp <= 104) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
@@ -2725,6 +2743,72 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 1;
         } }
+
+    # v6.5.38 — f64v256_fmadd(dst, a, b, c, n): 256-bit fused-shape multiply-add, token 158.
+    # FIVE stash slots (dst, a, b, c) + n, mirroring f64v_fmadd (token 96) in PARSE_SIMD_EXT;
+    # the 154-157 arm above takes four. Kept HERE rather than beside token 96 so the whole
+    # f64v256_ family dispatches from one place.
+    # ⚠ Same multiple-of-4 requirement as its siblings — EMIT_F64V4_FMADD strides rsi by 4.
+    if (ptyp == 158) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+            var vbf = GFLC(S);
+            PCMPE(S); _SIMD_STASH(S, vbf);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S); _SIMD_STASH(S, vbf + 1);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S); _SIMD_STASH(S, vbf + 2);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S); _SIMD_STASH(S, vbf + 3);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S);
+            SFLC(S, vbf + 4);
+            EMIT_F64V4_FMADD(S, vbf);
+            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            return 1;
+    }
+
+    # v6.5.38 — f64v256_dot(a, b, n): THREE args and the only member of the family that
+    # produces a value (f64 bits in rax), so no dst slot; mirrors f64v_dot (token 128).
+    if (ptyp == 159) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+            var vbd = GFLC(S);
+            PCMPE(S); _SIMD_STASH(S, vbd);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S); _SIMD_STASH(S, vbd + 1);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S);
+            SFLC(S, vbd + 2);
+            EMIT_F64V4_DOT(S, vbd);
+            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            return 1;
+    }
+
+    # v6.5.38 — f64v256_scale(dst, a, s, n): four args, but arg 3 is a SCALAR f64 bit
+    # pattern, not a pointer — EMIT_F64V4_SCALE broadcasts it with vbroadcastsd.
+    if (ptyp == 160) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+            var vbs = GFLC(S);
+            PCMPE(S); _SIMD_STASH(S, vbs);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S); _SIMD_STASH(S, vbs + 1);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S); _SIMD_STASH(S, vbs + 2);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+            PCMPE(S);
+            SFLC(S, vbs + 3);
+            EMIT_F64V4_SCALE(S, vbs);
+            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+            return 1;
+    }
+
+    # v6.5.38 — f64v256_abs(dst, a, n) / f64v256_sqrt(dst, a, n): three args, one shared
+    # arm. EMIT_F64V4_UNARY takes op 0 = sqrt, 1 = abs — matching EMIT_F64V_UNARY, so the
+    # op index is NOT `ptyp - 161` (that would map abs->0 = sqrt). Spelled out explicitly.
+    if (ptyp == 161) { return _PARSE_F64V4_UNARY(S, 1); }
+    if (ptyp == 162) { return _PARSE_F64V4_UNARY(S, 0); }
     return 0;
 }
 

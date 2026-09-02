@@ -76,4 +76,52 @@ check "c5 f8 77 *[[:space:]]+vzeroupper"          "vzeroupper (AVX/SSE transitio
 # objdump prints AT&T order here: `add $0x4,%rsi` — immediate first, destination last.
 check "48 83 c6 04 *[[:space:]]+add.*0x4.*rsi"    "add rsi,4 (4-lane stride)"
 
+# ---------------------------------------------------------------------------------------
+# v6.5.38 — the five ops `.24` left on the 128-bit kernel: fmadd, dot, scale, abs, sqrt.
+# Second probe, because these need their own builtins and (for dot/scale/abs) instructions
+# that appear nowhere in the four arithmetic kernels above.
+cat > "$T" <<'EOF'
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    var a[32]; var b[32]; var c[32]; var r[32];
+    f64v256_fmadd(&r, &a, &b, &c, 4);
+    f64v256_scale(&r, &a, 0, 4);
+    f64v256_abs(&r, &a, 4);
+    f64v256_sqrt(&r, &a, 4);
+    return f64v256_dot(&a, &b, 4);
+}
+var ec = main();
+syscall(60, ec);
+EOF
+"$CC" < "$T" > "$B" 2>/dev/null || { echo "FAIL: f64v4 ymm extended-op probe did not compile"; exit 1; }
+objdump -d "$B" 2>/dev/null > "$D" || { echo "SKIP: objdump could not disassemble"; exit 0; }
+LINES=$(wc -l < "$D")
+[ "$LINES" -ge 50 ] || { echo "FAIL: extended-op disassembly only $LINES lines — objdump is blind"; exit 1; }
+
+# sqrt / abs: the mnemonic must be the DOUBLE form. vsqrtps on double bit patterns is the
+# same silent-garbage failure the pd/ps note above describes.
+check "c5 fd 51 c0 *[[:space:]]+vsqrtpd.*ymm"     "vsqrtpd ymm0,ymm0"
+check "c5 fd 54 c2 *[[:space:]]+vandpd.*ymm"      "vandpd ymm0,ymm0,ymm2 (abs mask apply)"
+# The abs sign-mask is built with 256-bit INTEGER ops — these are AVX2, not AVX1, which is
+# why the lib wrapper must stay gated on simd_has_avx2() and never on a bare AVX check.
+check "c5 ed 76 d2 *[[:space:]]+vpcmpeqd.*ymm"    "vpcmpeqd ymm2,ymm2,ymm2 (all-ones)"
+check "c5 ed 73 d2 01 *[[:space:]]+vpsrlq.*ymm"   "vpsrlq ymm2,ymm2,1 (clear sign bit)"
+# scale broadcasts the scalar to all FOUR lanes. The 128-bit kernel uses `unpcklpd`, which
+# fills only two — if that instruction appears here instead, lanes 2-3 get garbage.
+check "c4 e2 7d 19 d2 *[[:space:]]+vbroadcastsd.*ymm" "vbroadcastsd ymm2,xmm2 (4-lane scalar broadcast)"
+# dot's cross-lane fold. haddpd on ymm sums WITHIN each 128-bit lane and never crosses the
+# boundary, so without this extract+add the upper two products are silently dropped and
+# the dot product is simply wrong (the .tcyr asserts 570, which a lane-local fold gets as
+# 100). These two lines are what make the reduction correct.
+check "c4 e3 7d 19 d0 01 *[[:space:]]+vextractf128" "vextractf128 xmm0,ymm2,1 (upper lane)"
+check "c5 e9 58 d0 *[[:space:]]+vaddpd.*xmm"      "vaddpd xmm2,xmm2,xmm0 (fold upper into lower)"
+check "c5 ed 57 d2 *[[:space:]]+vxorpd.*ymm"      "vxorpd ymm2,ymm2,ymm2 (zero accumulator)"
+# vzeroupper must sit BEFORE the legacy-SSE haddpd, or every dot call pays the AVX/SSE
+# transition penalty on the reduction tail.
+check "c5 f8 77 *[[:space:]]+vzeroupper"          "vzeroupper (extended ops)"
+check "66 0f 7c d2 *[[:space:]]+haddpd"           "haddpd xmm2,xmm2 (final scalar fold)"
+# All five extended kernels stride 4, same mutation-proven reasoning as the block above.
+check "48 83 c6 04 *[[:space:]]+add.*0x4.*rsi"    "add rsi,4 (4-lane stride, extended ops)"
+
 echo "PASS: f64v4 256-bit AVX2 emits exact VEX bytes (vmovupd/vaddpd/vsubpd/vmulpd/vdivpd ymm + vzeroupper, stride 4)"
+echo "PASS: f64v4 extended ops (fmadd/dot/scale/abs/sqrt) emit exact 256-bit VEX bytes"

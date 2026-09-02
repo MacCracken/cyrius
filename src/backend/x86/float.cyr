@@ -678,6 +678,150 @@ fn EMIT_F64V_AXPY(S, vbase): i64 {
 
 # EMIT_F64V_FMADD — dst[i] = a[i]*b[i] + c[i] using mulpd + addpd (SSE2)
 # Args at vbase: dst, a, b, c, n(rax)
+# ⭐ v6.5.38 — the 256-bit sibling of EMIT_F64V_FMADD, completing the .24 ymm widening.
+#
+# `.24` widened f64v4 add/sub/mul/div to ymm and measured 15.9 -> ~7.9 ns. It did NOT widen
+# fmadd, dot, scale or abs, and the roadmap recorded only `fmadd` as the residual — a 2026-09-01
+# sweep found all FOUR in the same state: `lib/simd.cyr:642/649/654` had no `simd_has_avx2()`
+# gate at all, unlike their four gated siblings at `:612/620/628/636`, and every VEX byte in
+# this file sat between lines 255-361 with nothing past 376. So an `f64v4_fmadd` ran the 128-bit
+# SSE2 loop at `rsi += 2` — **two iterations for four lanes**.
+#
+# Byte-for-byte the same transposition `.24` used: `66 0F` -> `C5 FD` (2-byte VEX, L=1, pp=01),
+# xmm -> ymm, stride 2 -> 4, and `vzeroupper` on exit.
+# ⚠ VEX.vvvv IS ONE'S-COMPLEMENT. `FD` = 1111_1101: vvvv=1111 inverts to register 0, so
+# `C5 FD 59 C1` is `vmulpd ymm0, ymm0, ymm1` — dest ModRM.reg=0, src1=vvvv=ymm0, src2=rm=1.
+# The same byte is used by EMIT_F64V4_LOOP above; if you hand-derive a different one, you have
+# almost certainly forgotten the inversion (this is a recorded trap in CLAUDE.md).
+# ⚠ n MUST be a multiple of 4 — the stride is 4, so a 2-element vector walks off the end. Only
+# the AVX2-gated f64v4 lib wrappers (n=4) reach here.
+#
+# ⚠ Deliberately mulpd+addpd rather than a single `vfmadd231pd`: FMA3 is a SEPARATE cpuid bit
+# (leaf 1 ECX bit 12) from AVX2 (leaf 7 EBX bit 5), so emitting it under an AVX2-only gate would
+# fault on an AVX2 machine without FMA. It would also change the ROUNDING — one rounding instead
+# of two — so a fused version is not a drop-in for the 128-bit path this must agree with.
+# v6.5.38 — 256-bit sqrt (op 0) / abs (op 1), the ymm sibling of EMIT_F64V_UNARY.
+# ⚠ The abs sign-mask build is AVX2, not just AVX: `vpcmpeqd`/`vpsrlq` on a ymm operand are
+# 256-bit INTEGER ops, which AVX1 does not have. That is fine — the only caller is gated on
+# simd_has_avx2() — but it means this emitter must never be re-gated to a mere AVX check.
+fn EMIT_F64V4_UNARY(S, op, vbase): i64 {
+    if (op == 1) {
+        EB(S, 0xC5); EB(S, 0xED); EB(S, 0x76); EB(S, 0xD2);                # vpcmpeqd ymm2,ymm2,ymm2
+        EB(S, 0xC5); EB(S, 0xED); EB(S, 0x73); EB(S, 0xD2); EB(S, 0x01);   # vpsrlq   ymm2,ymm2,1
+    }
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);
+    EB(S, 0x0F); EB(S, 0x8D);
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);       # vmovupd ymm0,[rdx+rsi*8]
+    if (op == 0) { EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x51); EB(S, 0xC0); }   # vsqrtpd ymm0,ymm0
+    if (op == 1) { EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x54); EB(S, 0xC2); }   # vandpd  ymm0,ymm0,ymm2
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x11); EB(S, 0x04); EB(S, 0xF2);       # vmovupd [rdx+rsi*8],ymm0
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x04);                    # rsi += 4
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    EB(S, 0xC5); EB(S, 0xF8); EB(S, 0x77);                                 # vzeroupper
+    return 0;
+}
+
+# v6.5.38 — 256-bit r[i] = a[i] * s, the ymm sibling of EMIT_F64V_SCALE.
+# The 128-bit version broadcasts with `unpcklpd xmm2,xmm2` (2 lanes). Four lanes cannot be
+# filled that way, so this uses `vbroadcastsd ymm2, xmm2` — a 3-BYTE VEX (C4), because the
+# opcode lives in the 0F38 map which the 2-byte form cannot encode.
+fn EMIT_F64V4_SCALE(S, vbase): i64 {
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);
+    EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x6E); EB(S, 0xD2);       # movq xmm2, rdx
+    EB(S, 0xC4); EB(S, 0xE2); EB(S, 0x7D); EB(S, 0x19); EB(S, 0xD2);       # vbroadcastsd ymm2,xmm2
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);
+    EB(S, 0x0F); EB(S, 0x8D);
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);       # vmovupd ymm0,[rdx+rsi*8]
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x59); EB(S, 0xC2);                    # vmulpd  ymm0,ymm0,ymm2
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x11); EB(S, 0x04); EB(S, 0xF2);       # vmovupd [rdx+rsi*8],ymm0
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x04);                    # rsi += 4
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    EB(S, 0xC5); EB(S, 0xF8); EB(S, 0x77);                                 # vzeroupper
+    return 0;
+}
+
+# v6.5.38 — 256-bit dot product, the ymm sibling of EMIT_F64V_DOT. Result f64 bits -> rax.
+#
+# This is the only op in the family that is not pointwise: the 4-lane accumulator has to be
+# reduced to one scalar. `haddpd` does NOT do that for ymm — the 256-bit form adds within each
+# 128-bit LANE independently and never crosses the lane boundary, so a naive widening of the
+# 128-bit tail silently drops the upper two products. The fold is therefore explicit:
+#   vextractf128 xmm0, ymm2, 1   ; xmm0 = {acc2, acc3}
+#   vaddpd       xmm2, xmm2, xmm0 ; xmm2 = {acc0+acc2, acc1+acc3}
+#   haddpd       xmm2, xmm2       ; xmm2.low = all four summed
+# ⚠ ORDER: vzeroupper sits between the last VEX op and the legacy-SSE `haddpd`. Running legacy
+# SSE with a dirty upper-YMM state is the AVX-SSE transition penalty (tens of cycles per
+# instruction on several microarchitectures) — the very cost this widening exists to avoid.
+# ⚠ FP addition is not associative, so this pairs lanes (0+2, 1+3) and gives results that can
+# differ in the last ulp from the 128-bit path's (0+1)+(2+3). That is inherent to any vector
+# reduction, not a defect; do not "fix" it by serialising.
+fn EMIT_F64V4_DOT(S, vbase): i64 {
+    EB(S, 0xC5); EB(S, 0xED); EB(S, 0x57); EB(S, 0xD2);                    # vxorpd ymm2,ymm2,ymm2
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);
+    EB(S, 0x0F); EB(S, 0x8D);
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);       # vmovupd ymm0,[rdx+rsi*8]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xF2);       # vmovupd ymm1,[rdx+rsi*8]
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x59); EB(S, 0xC1);                    # vmulpd  ymm0,ymm0,ymm1
+    EB(S, 0xC5); EB(S, 0xED); EB(S, 0x58); EB(S, 0xD0);                    # vaddpd  ymm2,ymm2,ymm0
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x04);                    # rsi += 4
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    EB(S, 0xC4); EB(S, 0xE3); EB(S, 0x7D); EB(S, 0x19); EB(S, 0xD0); EB(S, 0x01);  # vextractf128 xmm0,ymm2,1
+    EB(S, 0xC5); EB(S, 0xE9); EB(S, 0x58); EB(S, 0xD0);                    # vaddpd xmm2,xmm2,xmm0
+    EB(S, 0xC5); EB(S, 0xF8); EB(S, 0x77);                                 # vzeroupper
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x7C); EB(S, 0xD2);                    # haddpd xmm2,xmm2
+    EB(S, 0x66); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x7E); EB(S, 0xD0);       # movq   rax, xmm2
+    return 0;
+}
+
+fn EMIT_F64V4_FMADD(S, vbase): i64 {
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);   # rcx = n
+    EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);   # rsi = 0
+    var loop_top = GCP(S);
+    EB(S, 0x48); EB(S, 0x39); EB(S, 0xCE);   # cmp rsi, rcx
+    EB(S, 0x0F); EB(S, 0x8D);                 # jge done
+    var done_patch = GCP(S);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 1);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x10); EB(S, 0x04); EB(S, 0xF2);   # vmovupd ymm0, [rdx+rsi*8]
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 2);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xF2);   # vmovupd ymm1, [rdx+rsi*8]
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x59); EB(S, 0xC1);                # vmulpd  ymm0, ymm0, ymm1
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase + 3);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x10); EB(S, 0x0C); EB(S, 0xF2);   # vmovupd ymm1, [rdx+rsi*8]
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x58); EB(S, 0xC1);                # vaddpd  ymm0, ymm0, ymm1
+    _EMIT_LOAD_RDX_FROM_LOCAL(S, vbase);
+    EB(S, 0xC5); EB(S, 0xFD); EB(S, 0x11); EB(S, 0x04); EB(S, 0xF2);   # vmovupd [rdx+rsi*8], ymm0
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC6); EB(S, 0x04);                # rsi += 4
+    EJMP(S, loop_top);
+    EPATCH(S, done_patch);
+    EB(S, 0xC5); EB(S, 0xF8); EB(S, 0x77);                             # vzeroupper
+    return 0;
+}
+
 fn EMIT_F64V_FMADD(S, vbase): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);
