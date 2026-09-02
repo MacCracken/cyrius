@@ -109,13 +109,24 @@ compile against ~8 s before, because compile time is **superlinear in fn count**
 17× the time — worth its own look, filed separately). The fixture moves to `string_data`, whose
 2 MB cap the cascade does not touch: 1900 unique 1000-char literals reach 90.7 % in ~3 s.
 
-⚠ **Two traps, both hit while getting there.** The literals must be **UNIQUE** — `string_data`
-deduplicates, so 1900 copies of one string store 1001 bytes and the trip silently never fires.
-And the fixture is **sized for a manifest-free directory**: inside a repo with a `cyrius.cyml`,
-`cyrius` auto-prepends the `[deps].stdlib` includes, adding ~300 KB of string_data, so the SAME
-file measures 90.9 % in the cyrius repo and 76.2 % in a bare temp dir. **No single count works in
-both** — 1600 trips in-repo but under-fills a temp dir; 1850 trips in a temp dir but hits the hard
-overflow in-repo. Both real call sites are manifest-free.
+⚠ **Two traps, both hit while getting there — the second one twice.** The literals must be
+**UNIQUE**: `string_data` deduplicates, so 1900 copies of one string store 1001 bytes and the trip
+silently never fires.
+
+⛔ **And the count depends on the CALLER'S CWD, not on the fixture.** `cyrius` picks up a
+`cyrius.cyml` from its working directory and auto-prepends the `[deps].stdlib` includes, adding
+~300 KB of string_data — so the SAME file measures **90.9 % in the cyrius repo and 76.2 % in a
+bare temp dir**, and no single count works in both (1600 trips in-repo but under-fills a temp dir;
+1850 trips in a temp dir but hits the hard overflow in-repo). The in-repo gate already ran in its
+own scratch dir, so it was sized for the manifest-free case — but **CI's `run:` block has the
+checkout as its CWD**, which the first fix got wrong: 1900 overflowed there, exiting 1 for the
+WRONG reason ("string data overflow") and never printing the `>=85%` line the step asserts. That
+looked exactly like a sizing bug and was not. Fixed by running T3 from `"$T"` so CI matches the
+gate, which leaves **one** literal count correct for both instead of two magic numbers that drift.
+
+⚠ **Lesson, recorded because it cost two rounds:** a CI step that generates a fixture and runs a
+CWD-sensitive tool has to be replayed *verbatim* — extracting the whole `run:` block and executing
+it — not approximated by running the same command by hand from a different directory.
 
 ### Fixed — `check.sh` swallowed a compile error in its own suite
 

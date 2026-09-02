@@ -414,7 +414,16 @@ jobs:
           [ "$rc" -eq 0 ] || { echo "FAIL T2: rc=$rc"; cat "$T/o2"; exit 1; }
           grep -q "ok (all caps under 85%)" "$T/o2" || { echo "FAIL T2: 'ok' missing"; exit 1; }
           # T3: --check trip.cyr (1900 unique literals → string_data 90.7% of 2 MB) rc=1 + ">=85%".
-          set +e; "$CYR" capacity --check "$T/trip.cyr" > "$T/o3" 2>&1; rc=$?; set -e
+          # ⛔ RUN FROM "$T", NOT THE REPO ROOT. `cyrius` picks up a `cyrius.cyml` from its CWD
+          # and auto-prepends the [deps].stdlib includes, which add ~300 KB of string_data. This
+          # step's CWD is the checkout, so running it here made the SAME 1900-literal fixture
+          # overflow the 2 MB cap instead of landing at 90.5 % — exiting 1 for the WRONG reason
+          # ("string data overflow") and never printing the ">=85%" line asserted below. That is
+          # precisely the failure this greps for, so it looked like a sizing bug and was not.
+          # programs/checks/heap_audit.cyr::_capacity_gate already runs in its own scratch dir;
+          # matching it here means ONE literal count is correct for both, instead of two magic
+          # numbers that drift apart.
+          set +e; ( cd "$T" && "$CYR" capacity --check "$T/trip.cyr" > "$T/o3" 2>&1 ); rc=$?; set -e
           [ "$rc" -eq 1 ] || { echo "FAIL T3: rc=$rc (expected 1)"; cat "$T/o3"; exit 1; }
           grep -q "table(s) at >=85%" "$T/o3" || { echo "FAIL T3: '>=85%' missing"; exit 1; }
           # T4: 7000-fn source compiles via cycc + binary sane size.
