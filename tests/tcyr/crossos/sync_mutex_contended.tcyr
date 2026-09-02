@@ -68,10 +68,18 @@ fn main(): i64 {
     assert_eq(mutex_unlock(_cm_mtx), 0, "uncontended unlock");
     assert_eq(load64(_cm_mtx), 0, "cell back to 0 after an uncontended pair");
 
-    #ifdef CYRIUS_TARGET_MACOS
-    assert_eq(_cm_counter, _cm_counter, "macOS threading is a no-op — see the filed issue");
-    #endif
-    #ifndef CYRIUS_TARGET_MACOS
+    # ⛔ v6.5.41 — THIS BLOCK WAS SKIPPED ON macOS BEHIND A TAUTOLOGY. The guard stood in
+    # front of it and the "macOS" arm asserted `assert_eq(_cm_counter, _cm_counter, ...)` —
+    # a comparison of a value with ITSELF, which passes unconditionally and covered nothing.
+    # It is removed rather than repaired: verified against live code, every assertion below
+    # holds on the serial peer. macOS runs thread bodies INLINE (lib/thread_macos.cyr), so
+    # four `thread_create` calls run the worker four times sequentially and the exact-count
+    # assertion is still exactly right; `thread_join` returns 0; and `mutex_lock` there is a
+    # pure `atomic_cas` spinlock (lib/sync_macos.cyr) with NO futex, so nothing can park.
+    # macOS now gets real mutual-exclusion coverage instead of a green tick.
+    # ⚠ This does NOT close the macOS-threading issue and must not be read as doing so —
+    # removing a guard changes no concurrency behaviour. The filing's stated acceptance
+    # criterion ("un-guard these tests") stopped discriminating; the backend is the work.
     # 4 threads x 20k. Enough real contention that waiters genuinely park (the whole point);
     # small enough to stay well inside the harness timeout on a slow aarch64 box.
     var t1 = thread_create(&_cm_worker, 0);
@@ -100,7 +108,6 @@ fn main(): i64 {
     # And it must still work afterwards.
     assert_eq(mutex_lock(_cm_mtx), 0, "re-lock after the contended run");
     assert_eq(mutex_unlock(_cm_mtx), 0, "re-unlock after the contended run");
-    #endif
 
     # ── ⭐ THE PERF AXIS, AND IT IS NOT OPTIONAL. The correctness assertions above CANNOT
     # see the regressions this change is most likely to suffer: mutation testing showed that
@@ -114,7 +121,8 @@ fn main(): i64 {
     # before — so 250 ns sits ~5x above the new value and ~1.5x below the old, which
     # catches a reverted fast path without flaking on a loaded or slower box. It is a
     # REGRESSION tripwire, not a benchmark; `benches/` is where numbers get tracked.
-    #ifndef CYRIUS_TARGET_MACOS
+    # v6.5.41: runs on macOS too. Its mutex is a spinlock with no syscall on any path, so the
+    # <250 ns bound is if anything easier to meet there — measured ~46 ns.
     var pn = 200000;
     var p0 = clock_now_ns();
     var pi = 0;
@@ -125,7 +133,6 @@ fn main(): i64 {
     }
     var per = (clock_now_ns() - p0) / pn;
     assert(per < 250, "uncontended lock/unlock stays off the syscall path (<250ns/pair)");
-    #endif
 
     var rc = assert_summary();
     return rc;

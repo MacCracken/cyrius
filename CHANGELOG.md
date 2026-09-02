@@ -4,6 +4,98 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.41] — 2026-09-02
+
+**Queue drain: one consumer-filed fix, and four filings that had rotted in place.** Six
+issues/proposals archived, taking the open queue from 15 to **10 + 2** — inside the ~10-12
+target. ⭐ **Of the four filings re-examined, every one was materially wrong about its own
+subject**, and in two cases the thing it asked for had already shipped and nobody had noticed.
+That is the same finding the `.39` slot-entry sweep produced, holding for a different set.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,191,504 B** (unchanged — every code
+change this release is lib-only), seed → cybs → cycc derivable from the 29,024 B seed,
+`check.sh` **219 / 0**, cross-OS on REAL hardware — **ecb + ach + cass + pi, each SELFHOST_OK +
+crossos LIBTEST_OK 57/57** — bench `self_compile` **732 ms** (730 at `.40`, noise). Corpus
+289/289.
+
+### Fixed — `Ok`/`Err` allocate 16 B per call from the global bump allocator (sandhi)
+
+Every `sock_send` / `sock_recv` boxed its Result in the **global** bump allocator, whose only
+reclaim is `alloc_reset()` — and that invalidates every pointer it has ever handed out, so a
+long-running server can never call it. Measured: 100 × `sock_send` grows the global allocator
+by exactly 1600 B. Added `ok_via(a, v)` / `err_via(a, e)` (`lib/result.cyr`) and
+`sock_send_a` / `sock_recv_a` (`lib/net.cyr`), which box through a caller-supplied allocator.
+**Measured on a real socketpair: 100 × `sock_send_a` → 0 B of global growth.** Layout is
+unchanged, so `is_ok` / `is_err_result` / `result_unwrap` / `?` accept the boxes as-is.
+
+⭐ **The filing called the cause speculation; it is confirmed and WIDER than `Result` or
+`net.cyr`.** The enum payload-variant constructor lowering (`src/frontend/parse_types.cyr:386`)
+unconditionally emits a call to the global `alloc` for ANY payload-carrying variant — a plain
+user `enum Color { Red(v); }` allocates the identical 16 B — and the `: Result` annotation is a
+codegen no-op. Fixing that properly means changing the representation across 24 enum
+declarations and **516** construction sites. ⚠ And cycc's own source cannot catch a mistake
+there: every `enum` in `src/` is constants-only, which is exactly why an earlier attempt reached
+a byte-identical self-host **while being wrong**.
+
+⚠ **An `_a` peer cannot delegate to its plain twin** — that allocates the global box first and
+re-boxes it, leaving the growth untouched. The gate mutation-tests exactly that mistake.
+⚠ **Only send/recv got peers**, and that is a drift argument, not scope: the other seven
+`: Result` fns in `net.cyr` carry `#ifdef CYRIUS_TARGET_AGNOS` branches with genuinely different
+semantics, and cloning them would fork per-target logic into two places.
+
+Gate: `tests/tcyr/stdlib/result_allocator_via.tcyr` — **every zero-growth claim is paired with a
+control** asserting the old path still grows, so it cannot quietly become vacuous.
+
+### Fixed — a macOS test guard was hiding behind a TAUTOLOGY
+
+`sync_mutex_contended.tcyr`'s macOS arm asserted `assert_eq(_cm_counter, _cm_counter, ...)` — a
+value compared with itself, passing unconditionally — in front of a guard that skipped the entire
+4-thread contended block. Both are gone, as is `thread_detach.tcyr`'s guard. Verified against the
+live macOS peer rather than assumed: bodies run INLINE, so four `thread_create` calls run the
+worker four times sequentially and the exact-count assertion still holds; `thread_join` returns 0;
+`thread_is_done` returns 1 for any valid handle; `mutex_lock` is a pure `atomic_cas` spinlock with
+**no futex**. **Confirmed on real ecb: 57/57.** macOS now has genuine mutual-exclusion coverage.
+
+⚠ **One guard the sweep listed as stale is NOT, and was kept.** `chan_try_send.tcyr`'s rationale
+is live: Darwin has no futex, and a raw `SYS_FUTEX` raises **SIGSYS, killing the process**
+(exit 140) rather than failing an assertion — removing it would take down the ecb leg of the
+release gate rather than redden a test.
+
+⛔ **This changes no concurrency behaviour and does not close the macOS-threading item.** Removing
+a guard satisfies that filing's stated acceptance criterion while leaving the backend untouched —
+which is precisely why the criterion no longer discriminates.
+
+### Fixed — two filings whose premises shipped code had already overtaken
+
+* **`v6415-closeout-residuals` D2 is CLOSED.** It claimed `CLASSIFY_CF`/`CF_TARGET` "have no
+  consumer at all", and its v6.5.21 re-stamp escalated that to *"a maintainer call that has
+  outlived three closeouts"*. **That call was made and executed at v6.5.35**: both are consumed by
+  `RA_SCAN_LOOPS` (`decode.cyr:355`, calls at `:361`/`:363`), reached from `parse_fn.cyr:4630`.
+  Only D1 remains. ⚠ The delete-sweep trap is preserved: `ir_dce_capped`/`ir_dead_store_capped`
+  are LIVE (cites re-derived `src/main.cyr:2004`/`:2006`, drifted from :2067/:2069 in **both** the
+  filing and the roadmap).
+* **`stiva-stackless-coroutines`' filed blocker does not reproduce.** Half A (multi-waiter
+  registry) shipped: `_async_wait_events` computes a union mask with an ADD→MOD fallback,
+  `_async_step` walks the entire task list waking every matching waiter, `EPOLL_CTL_MOD`s the
+  remainder, and wakes ALL waiters on EPOLLERR/EPOLLHUP. Only **Half B** (mid-body suspend / the
+  CPS transform) is genuinely absent. ⚠ `roadmap-future.md` carried a **false "Verified still live
+  at v6.5.19"** for the single-waiter item — corrected. ⛔ The file stays OPEN: `roadmap.md`'s
+  Slot 8 designates it the acceptance record.
+
+⭐ **The shared lesson, and why both are written up rather than just re-stamped:** each sat open
+on a premise later releases had overtaken, and each had been *re-stamped* at some point in a way
+that made the stale claim more emphatic instead of re-deriving it. A verification records what was
+true when it was written.
+
+### Docs
+
+* Roadmap **▶ NEXT re-pointed `.38` → `.41`** (it was three releases stale) and archived paths
+  updated. ⛔ **The wrapper-pin item is now flagged as a maintainer call, not a cheap fix:** of 134
+  `cyrius.cyml` files under `~/Repos`, **128 pin something other than current**, and **45 pin into
+  the 6.5.31–6.5.35 band carrying the v6.5.36 enum Critical**. Those repos are today *accidentally
+  protected* by the very defect the fix removes. The code is ~75 lines; the decision is not.
+
+
 ## [6.5.40] — 2026-09-02
 
 **The limits cascade — this release carries nothing else.** `preprocess_out`'s 8 MB ceiling was

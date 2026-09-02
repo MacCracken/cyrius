@@ -91,6 +91,12 @@ fn main(): i64 {
     # the process (exit 140). That gap is pre-existing and tracked as issue
     # 2026-07-03 (macOS threading), pinned to v6.5.x; the NON-BLOCKING pair above
     # runs unguarded on macOS and must keep passing there.
+    # ⚠ v6.5.41 — A DE-ROT SWEEP LISTED THIS GUARD AS STALE. IT IS NOT. The rationale above
+    # is live: Darwin has no futex, and a raw SYS_FUTEX raises SIGSYS which KILLS the process
+    # (exit 140) rather than failing an assertion — so removing this guard does not redden a
+    # test, it takes down the ecb leg of the release gate. The two guards that WERE stale
+    # (sync_mutex_contended's tautology, thread_detach) were removed in the same pass after
+    # checking the live macOS peer; this one was checked and kept.
     #ifndef CYRIUS_TARGET_MACOS
     test_group("blocking chan_send still works (not regressed)");
     var c6 = chan_new(2);

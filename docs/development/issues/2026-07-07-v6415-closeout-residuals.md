@@ -1,6 +1,10 @@
 # v6.4.15 closeout residuals — R2 (PE prologue refactor) + D1/D2 (dead IR/decode code)
 
-**Status:** 🟡 **OPEN for D1/D2 only** — R2 shipped v6.4.26. **Re-verified against live code on cycc
+**Status:** 🟠 **D2 CLOSED, R2 shipped, D1 still live — only ONE of the three parts remains.** ⛔ **D2's central claim is now FALSE and the file did not know it.** It says `CLASSIFY_CF`/`CF_TARGET` "have no consumer at all" and "the DCE call-graph is byte-scan-based, not decoder-based", and its v6.5.21 re-stamp escalated that to *"⚖️ D2 needs a maintainer call that has outlived three closeouts: wire them into a decoder-based CFG pass, or delete them."* **That call was made and executed at v6.5.35** (band F's loop-aware liveness). Live chain, re-derived 2026-09-02: `CLASSIFY_CF` (`src/backend/x86/decode.cyr:238`) and `CF_TARGET` (`:279`) are both consumed by `RA_SCAN_LOOPS` (`:355`, calls at `:361`/`:363`), which `src/frontend/parse_fn.cyr:4630` calls. The three aarch64 forks + cx carry `return 0 - 1;` stubs. R2 (PE prologue) shipped at v6.4.26, which the file already records.
+
+⚠ **D1 IS STILL LIVE exactly as filed** — `ir_lower_all`, `_ir_lower_node`, `ir_emit2`, `IR_BB_ID`, `IR_EDGE_FROM` are definition-only. ⛔ **But do not run a name-based delete sweep**: `ir_dce`/`ir_dead_store` are dead only as *thin uncapped wrappers*; `ir_dce_capped`/`ir_dead_store_capped` are LIVE, called from `src/main.cyr:2004`/`:2006` (cites drifted from the :2067/:2069 this file and the roadmap both carried).
+
+⭐ **The lesson this file is now an example of:** it sat open for two months on a premise that shipped code had already overtaken, and its own re-stamp made the stale claim *more* emphatic rather than re-checking it. Verify against live code, not against the file's last verdict.
 6.5.10, 2026-08-07** — nothing has moved, and every line number below is still exact:
 
 ```sh

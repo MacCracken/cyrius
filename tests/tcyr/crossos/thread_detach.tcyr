@@ -130,7 +130,10 @@ fn main(): i64 {
     # it CloseHandle()s it, so a post-join query inspects a closed handle and reports
     # "not done". An earlier version of this test asserted exactly that and went red on
     # real cass — the test was wrong, not the CLI.
-    #ifndef CYRIUS_TARGET_MACOS
+    # v6.5.41: un-guarded for macOS. Verified against live code rather than assumed —
+    # lib/thread_macos.cyr's `thread_is_done` returns 1 for any valid handle (the body ran
+    # inline at create), and `thread_join` returns 0, so the poll-then-join shape below is
+    # satisfied on the serial peer exactly as it is on a real thread.
     var t = thread_create(&_td_body, 0);
     assert(t != 0, "thread_create returned a handle");
     var polls = 0;
@@ -141,7 +144,6 @@ fn main(): i64 {
     }
     assert_eq(thread_is_done(t), 1, "thread_is_done reports 1 once the worker finished");
     assert_eq(thread_join(t), 0, "thread_join returned 0");
-    #endif
     assert_eq(thread_is_done(0), 0 - 1, "thread_is_done(0) is -1 on every target");
 
     var rc = assert_summary();

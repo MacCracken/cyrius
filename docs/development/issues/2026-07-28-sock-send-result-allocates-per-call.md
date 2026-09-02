@@ -1,6 +1,18 @@
 # `sock_send` / `sock_recv` allocate their `Result` on the no-free global bump — 16 B per call on the hottest path in any server
 
-**Status:** 🟡 **OPEN** — measured against cyrius **6.4.86** with a standalone probe (below):
+**Status:** 🟠 **THE FILED SYMPTOM IS FIXED at v6.5.41 — the ROOT CAUSE is open and is a different size class.** Shipped: `ok_via(a, v)` / `err_via(a, e)` in `lib/result.cyr` and `sock_send_a` / `sock_recv_a` in `lib/net.cyr`, which box through a caller-supplied allocator (`arena_allocator(n)`) so a server can reset a per-request arena. Measured on a real socketpair: **100× `sock_send_a` grows the global allocator by 0 B, against 1600 B for `sock_send`** — exactly the filed 16 B/call. Layout is unchanged, so `is_ok` / `is_err_result` / `result_unwrap` / `?` accept the boxes with no change. Gate: `tests/tcyr/stdlib/result_allocator_via.tcyr` (8 assertions, every zero-growth claim PAIRED with a control that the old path still grows, so it cannot become vacuous; mutation-proven two ways).
+
+⭐ **THE CAUSE IS NOT `Result`, AND NOT `net.cyr` — the filing flagged this as speculation and it is CONFIRMED and WIDER.** The enum payload-variant constructor lowering (`src/frontend/parse_types.cyr:386`) emits `EMOVI(S, 8 + ctor_arity * 8)` followed by a call to the function literally named `alloc` — unconditional, not allocator-parameterised. A plain user `enum Color { Red(v); Green; }` allocates the identical 16 B, and the `: Result` return annotation is a **codegen no-op** (classified as an i64-shape scalar). So this is a property of *every payload-carrying enum in the language*.
+
+⛔ **What remains is the representation change, and it is not packable**: 24 payload-variant enum declarations across 15 files and **516** `Ok(`/`Err(`/`Some(` construction sites. ⚠ And cycc's own source cannot detect a mistake in it — every `enum` in `src/` is constants-only with no payload variants, which is exactly why an earlier attempt reached a byte-identical self-host **while being wrong**.
+
+⚠ **Only `sock_send`/`sock_recv` got `_a` peers, and that is a drift argument, not scope.** The other seven `: Result` fns in `net.cyr` each carry `#ifdef CYRIUS_TARGET_AGNOS` branches with genuinely different semantics (AGNOS merges bind+listen, its accept is non-blocking, its connect does socket()+connect() in one). Cloning those into `_a` copies would fork per-target logic into two places that then drift. If they are ever needed, make the ONE implementation allocator-aware. ⚠ Note also that an `_a` peer **cannot delegate** to its plain twin — that allocates the global box first and re-boxes it, leaving the growth untouched. The gate mutation-tests exactly that mistake.
+
+⚠ **FOUR CLAIMS IN THIS FILE ARE WRONG and two sit under a heading that claims to CORRECT tree facts:**
+1. **"cx has no second return register / any pair-return ABI must exclude cx" is FALSE** since v6.5.21 — verified by RUNNING a pair-return program on cxvm, not by reading. This one is dangerous: an implementer scoping a pair-return design would exclude a target that works.
+2. Counts are 40/107, not 39/106 (the file's own "do not quote either number" advice is right; the shape — 0 cyrius-owned — is correct).
+3. The `Placement:` header contradicts the ⛔ box three lines below it and the live roadmap.
+4. Line cites drifted: `net.cyr:384/:391` → `:392/:399`; `parse_fn.cyr:3135-3145` → `:3511-3580`.
 `sock_send` grows `alloc_used()` by **exactly 16 bytes per call**, warm, with a zero-length
 payload. The cost is the `Result` return value, not the payload. Every `Result`-returning
 socket primitive in `lib/net.cyr` has the same shape.

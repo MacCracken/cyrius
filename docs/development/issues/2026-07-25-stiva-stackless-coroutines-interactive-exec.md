@@ -93,7 +93,15 @@
 > ⚖️ **Maintainer decision owed:** this can now ship far earlier than `.33`–`.34`. The roadmap row
 > and this file's Placement line should move only on your call.
 
-**Status:** 🟠 **RESIDUAL FIXED at v6.5.37; the Half B DECISION remains the maintainer's.** `async_relay_once` (Linux arm) parked the task via `async_wait_fd` — which does NOT wait, it marks TASK_WAITING and returns, since cyrius has no mid-body suspend — then blocked in `sys_read`, deadlocking the runtime. It hung EVEN WITH DATA ALREADY IN THE PIPE (read and write both succeed, but the task stays parked so `async_run` waits forever to retire a task that already finished). ⭐ Not a design choice: the three sibling implementations already shipped the body WITHOUT the park, so the Linux arm was the outlier. Gate: `tests/tcyr/concurrency/async_relay_once_no_deadlock.tcyr`. ⛔ Half B is UNCHANGED.
+**Status:** 🟠 **THE FILED BLOCKER DOES NOT REPRODUCE — only Half B remains.** ⛔ **Do NOT archive this file**: `roadmap.md`'s Slot 8 row designates it the acceptance record until that slot ships. But almost everything it describes as blocking is now live, re-derived from source 2026-09-02 rather than from the file's own verdict:
+
+* **Half A (multi-waiter registry) is SHIPPED.** `_async_wait_events` (`lib/async.cyr:334`) computes a union mask via `_async_fd_mask` (`:322`) with an ADD→MOD fallback; `_async_step` walks the entire task list (`:201-211`) waking every task parked on that fd whose mask matches, `EPOLL_CTL_MOD`s the remainder instead of unconditionally DEL-ing (`:217-230`), and wakes ALL waiters on EPOLLERR/EPOLLHUP (`fired & 24`, `:200`) — a peer that closes mid-relay delivers HUP only.
+* **The v6.5.37 `async_relay_once` residual is fixed and CONSISTENT across all four arms** — byte-identical body in `lib/async.cyr:442`, `async_win.cyr:264`, `async_macos.cyr:386`, `async_agnos.cyr:279` (read, guard, write; no park).
+* **`async_wait_rw` exists in all four arms**, and `async_select(rt, handles, n)` (`lib/async.cyr:286`) provides the composable N-task decomposition for the `select!` shape.
+
+⛔ **What is genuinely absent is Half B: mid-body suspend / the CPS transform.** Proven rather than inferred — park falls through immediately and the body re-enters FROM THE TOP; the contract is documented at `lib/async.cyr:310-315` ("the task must be poll-structured"). That is Slot 8's actual content and it is unbuilt.
+
+⚠ **This file's Placement/pin prose is stale in three places** and `roadmap-future.md`'s companion row carried a **false "Verified still live at v6.5.19"** for the single-waiter item — corrected at v6.5.41. The lesson is the file's own: a verification records what was true when it was written, and re-stamping it without re-deriving makes a stale claim more emphatic instead of correcting it.
 **Placement:** ⚖️ **was v6.5.33–.34 (band H, "bound to band E") — that binding is FALSE.**
 Eligible for any `.NN` from `.26`; maintainer's call.
 **Discovered:** 2026-07-25 during stiva's v3.0.x → v3.1.0 roadmap review

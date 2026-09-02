@@ -2078,9 +2078,11 @@ net::sock_close/1
 net::sock_connect/3
 net::sock_listen/2
 net::sock_recv/3
+net::sock_recv_a/4
 net::sock_reuse/1
 net::sock_reuseport/1
 net::sock_send/3
+net::sock_send_a/4
 net::sock_set_nonblocking/1
 net::sock_set_recv_timeout/3
 net::sock_set_send_timeout/3
@@ -2364,8 +2366,10 @@ regression_agnos::regression_ssh_remote_exec_capture/4
 regression_agnos::regression_ssh_remote_exit/3
 regression_agnos::regression_ssh_skip_check/1
 result::err_code_of/1
+result::err_via/2
 result::is_err_result/1
 result::is_ok/1
+result::ok_via/2
 result::result_print/1
 result::result_unwrap/1
 result::result_unwrap_or/2

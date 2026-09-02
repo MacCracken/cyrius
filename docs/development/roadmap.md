@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.40** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.41** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -471,6 +471,21 @@ not a single release.
   bare literal at ~90 sites. ⚠ A latent unbounded copy-back in `PP_REF_PASS` had to be fixed
   FIRST, or the raise would have converted it from contained to live. cycc **1,191,512 B** /
   `.text` **1,043,312 B**, `check.sh` **218/0**, crossos 57/57 on all four hosts.
+- **v6.5.41** — **queue drain: one consumer-filed fix, four filings that had rotted in place.**
+  Six issues/proposals archived, open queue **15 → 10 + 2**, inside the ~10-12 target for the
+  first time in a while. ⭐ **Of the four filings re-examined, EVERY one was materially wrong
+  about its own subject, and in TWO the thing it asked for had already shipped and nobody had
+  noticed** — the same finding the `.39` slot-entry sweep produced, holding for a different set.
+  sandhi's `Ok`/`Err` 16 B-per-call global-allocator leak got an allocator-parameterised escape
+  hatch (measured 1600 B → **0** on a real socketpair); ⚠ the root cause is not `Result` or
+  `net.cyr` at all but the enum payload-variant lowering, a 516-site representation change, and
+  cycc's own source cannot detect a mistake in it. A macOS test guard was found hiding behind a
+  **tautology** (`assert_eq(x, x, …)`) in front of a skipped 4-thread block; removing it and one
+  more gave macOS genuine mutual-exclusion coverage, confirmed 57/57 on real ecb — while one
+  guard the sweep called stale was KEPT, because Darwin has no futex and `SYS_FUTEX` raises
+  SIGSYS. `v6415`'s D2 and `stiva`'s filed blocker were both already closed by shipped code, each
+  having been re-stamped at some point in a way that made the stale claim *more* emphatic.
+  cycc **1,191,504 B** (unchanged — lib-only), `check.sh` **219/0**, crossos 57/57 on all four.
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 
@@ -521,7 +536,7 @@ release that closed them; every remaining row was re-grepped against the live tr
 | **`ERR_MSG` hardcoded-length audit** — the never-done half of the v6.4.57 follow-on | v6.4.57 fixed the one filed site (`parse_fn.cyr:3732`, now 92 bytes == 92 passed, verified byte-exact). The archived issue's closing suggestion — audit every other `ERR_MSG`/`WARN` literal against its passed length — was never run. Same over-read class. | **Slot 1** (bite) |
 | **Source-level version constant** (`CYRIUS_PKG_VERSION`) | `grep -rn PKG_VERSION src cbt lib scripts` → **0**. Nothing in the CHANGELOG. `src/version_str.cyr` is the *compiler's* own `--version` string, not a consumer-reachable constant. `proposals/2026-06-25-source-level-version-constant.md` is still open, pinned to "the next 6.4.x arc's closeout / an absorber band" — **that host minor closed at .86 without it**, so the pin lapsed. | **W1** (fold-in) |
 | **Bare-metal deliverable #4 — forbidden-module check** | **Never built, and now invisible.** `grep -rn forbidden src/ cbt/` → one unrelated comment; `grep -rn 'host_only\|kernel_ok' src lib cbt` → 0. roadmap.md claimed the visibility arc would fold it in; v6.5.0 shipped complete with no mention of it. Its issue was bulk-renamed into `issues/archived/` on 2026-07-10 (commit `79bae42f`, an 8-file rename) **with no resolution banner** — archived unfixed. roadmap_6.md still lists it as bare-metal deliverable #4 *and* as an arc acceptance criterion. | **W2** (fold-in) — see open question 2 |
-| **v6.4.15 closeout residuals D1/D2** — dead IR helpers + the speculative decoder CFG API | R2 (PE prologue) shipped v6.4.26. D1 still dead: `ir_lower_all`, `_ir_lower_node`, `ir_emit2`, `IR_BB_ID`, `IR_EDGE_FROM` are definition-only. **TRAP the file does not carry:** `ir_dce`/`ir_dead_store` are dead only as *thin uncapped wrappers* — `ir_dce_capped`/`ir_dead_store_capped` are **LIVE**, called from `src/main.cyr:2067`/`:2069`. A name-based delete sweep would take live passes with it. D2 still dead: `CLASSIFY_CF` (`decode.cyr:238`) / `CF_TARGET` (`:279`). | **Slot 3** (opening bite) |
+| **v6.4.15 closeout residuals D1/D2** — dead IR helpers + the speculative decoder CFG API | R2 (PE prologue) shipped v6.4.26. D1 still dead: `ir_lower_all`, `_ir_lower_node`, `ir_emit2`, `IR_BB_ID`, `IR_EDGE_FROM` are definition-only. **TRAP the file does not carry:** `ir_dce`/`ir_dead_store` are dead only as *thin uncapped wrappers* — `ir_dce_capped`/`ir_dead_store_capped` are **LIVE**, called from `src/main.cyr:2004`/`:2006` (cites re-derived 2026-09-02; they had drifted from :2067/:2069). A name-based delete sweep would take live passes with it. ⛔ **D2 IS CLOSED as of v6.5.35 — this row said "D2 still dead" until 2026-09-02 and that is FALSE on live code.** `CLASSIFY_CF` (`decode.cyr:238`) and `CF_TARGET` (`:279`) are both consumed by `RA_SCAN_LOOPS` (`decode.cyr:355`, calls at `:361`/`:363`), reached from `parse_fn.cyr:4630`. The "⚖️ maintainer call that has outlived three closeouts — wire them into a decoder-based CFG pass, or delete them" was MADE AND EXECUTED at v6.5.35 (band F's loop-aware liveness); nobody updated the row. **Only D1 remains.** | **Slot 3** (opening bite) |
 | **`_cur_fn_ret_stash` disp↔local-index adjustment duplicated 19×** | **NOT a defect and there is no issue file** — state.md lists it as a "filed follow-on" that was never filed, and the *bug* shipped at v6.4.31. What is live is duplication: `grep -c '_cur_fn_ret_stash > 0) { disp' src/backend/x86/emit.cyr` → **19** copies of the same guard. Reframe as a one-helper (`_disp_adj`) consolidation, provable byte-identical. | **Slot 5** (bite) |
 | **macOS-arm64 threading backend** | Still open at 6.5.10. No `lib/thread_macos.cyr`; `grep -rn 'bsdthread\|__ulock' lib/` → comments only. **WIDER THAN FILED:** `lib/sync_macos.cyr:2` is a 2-state `atomic_cas` **spinlock** and its own header at `:9` records that a blocking lock is a separate follow-on — macOS concurrency is **two** gaps and the filing names one. **Neither 6.5.8's thread work nor 6.5.9's three-state mutex touched it** — the mutex CHANGELOG states outright that "the macOS / Windows / agnos branches are untouched", so the Linux/macOS gap is now WIDER (48 ns futex vs a spinlock), not narrower. VR-01 guards at `vr01_thread_spawn.tcyr:31/:46` and `vr01_sync_mutex.tcyr:41/:44` keep it from rotting silently, and `2026-08-05-cross-os-full-corpus-23-failures-on-ecb` records that most of ecb's 23 full-corpus failures are downstream of this. | **Slot 11** |
 | ⚠ **Release gate's cross-OS leg runs only the `vr01_` glob** — **HALF SHIPPED v6.5.8** | The **honesty half shipped**: `cross-os-selfhost.sh:326-334` now prints `corpus: N of M tcyr selected by glob 'vr01_*' (M−N NOT run on $HOST …)` on every run, and connections are batched one-per-POSIX-host instead of one-per-test. The **coverage half did not**: `scripts/release-gate.sh:110` still runs `cross-os-selfhost.sh "$H" "vr01_"` inside `for H in ecb ach cass pi` at `:108`, so at 6.5.10 that is **36** `vr01_` of **260** `.tcyr` ⇒ **224 unrun** on all four gated hosts. `CYRIUS_CROSS_OS_FULL=1` runs the whole corpus (`:321`) but is opt-in, deliberately, until ecb's 23 full-corpus failures reach zero. The issue was archived at the print half. | see W1 item 7 — the **pi full-corpus** leg is still owed, tracked by `2026-08-05-cross-os-full-corpus-23-failures-on-ecb` |
@@ -637,58 +652,59 @@ ran 86 releases and 6.5.x is expected in the same class.
 > prove — it has store/load information but no DOMINANCE. v5.6.22's defect was this exact
 > class, so a passing corpus is not sufficient evidence. See the `.35` CHANGELOG.
 >
-> ### ▶ NEXT: `.38` — packed repair release (see the re-pin table below)
+> ### ▶ NEXT: `.41` — queue drain + consumer-facing tooling
 >
-> **`.38` contents — a packed repair release, not a band.** The argument for this shape rather
-> than opening band G: the measured reactive rate over `.20`–`.37` is **11 of 18 releases (61 %)**
-> on a strict count, and only **3 of 18 (17 %)** advanced the codegen spine (`.23`, `.34`, `.35`).
-> The ~80 % figure surfaced at `.19` **held for the next eighteen releases** — it was not a burst.
-> Band slips corroborate: E pinned `.29`–`.31` shipped `.34`; F pinned `.32`–`.33` shipped `.35`;
-> G pinned `.34`–`.35`, re-pinned `.36`, still unshipped at `.37`.
+> **`.38`, `.39` and `.40` all shipped; this pointer said `.38` until 2026-09-02.** What that
+> block pinned is now done: f64v4 ymm and `private`-at-insertion shipped at `.38`, the `deps`
+> stdlib-leaf clobber and the lazy-init aarch64 fence at `.39`, the preprocess ceiling (and the
+> four caps stacked behind it) at `.40`. **Six issues/proposals archived**, taking the open queue
+> to 10 + 2 — inside the ~10-12 target for the first time in a while.
 >
-> 1. **`f64v4_fmadd` / `_dot` / `_scale` / `_abs` → ymm under `simd_has_avx2()`** — band G's one
->    substrate-free bite. `EMIT_F64V_FMADD` (`src/backend/x86/float.cyr:681`) emits `66 0F 59` /
->    `66 0F 58` — 128-bit SSE2 with `rsi += 2`, i.e. **two iterations for four lanes** — and every
->    VEX byte in that file sits at lines 255–361, nothing at 376+. `lib/simd.cyr:642/649/654` have
->    **no `simd_has_avx2()` gate**, unlike their four `.24` siblings at `:612/620/628/636`. Same
->    shape, same precedent gate (`tests/gates/codegen/f64v4_ymm_disasm.sh`) as the `.24` work that
->    measured 15.9 → ~7.9 ns. ⚠ Cover all four ops, not just `fmadd` — the roadmap named only
->    `fmadd` and the sweep found `dot`, `scale` and `abs` in the same state.
-> 2. **The lazy-init publish-before-fill residual** — `proposals/2026-08-30-lazy-init-publish-before-fill.md`.
->    Its option (a) fix (fill a local, publish last) **shipped at `.37`** in `_chrono_init_mdays`;
->    what remains is the memory-ordering half the proposal explicitly flags: *"on aarch64's weak
->    model this wants a release fence before the publishing store, matching what
->    `lib/alloc.cyr`'s `_alloc_lock_release` already does — worth deciding explicitly rather than
->    inheriting x86 behaviour."* `_alloc_lock_release` does `atomic_fence()` then `atomic_store`
->    on **both** arches; `chrono` publishes with a plain store. On a weak model a racing thread can
->    observe the published pointer before the twelve `store64`s that fill it — the same month-13
->    bug, at the hardware level. ⚠ Needs `include "lib/atomic.cyr"` in a widely-included module,
->    so the include cost is part of the decision. Sweep found the same shape in `lib/tls.cyr:211`
->    and `lib/regex.cyr:225` — both cyrius-owned; fix the class, not the instance.
-> 3. **`issues/2026-09-01-deps-pulls-stdlib-leaf-from-dep-lib.md`** — freshest filing, same
->    subsystem `.37` just repaired end to end, so it is cheapest to fix while that context is
->    loaded. `cyrius deps` pulls a declared *stdlib* leaf from a named dep's own `lib/` instead of
->    the pinned snapshot: `lib sync` writes sakshi 2.4.12 and the next `deps` reverts it to
->    2.4.11, byte-identical to the dep's copy. Confirmed in **two** repos (shabdakosh, shabda).
-> 4. **`issues/2026-08-22-owl-private-fns-still-collide-across-files.md` (High)** — `.37` shipped
->    only the arity-mismatch half; same-arity replacement of a `private` helper remains. ⚠ This is
->    entangled with owed-decision #5 (per-item `private` compiles with no diagnostic, eleven
->    releases live), so the clean fix may need that call first.
+> ⭐ **The `.39` slot-entry premise-check is the input to this block, and its headline should
+> shape how these are read: ALL 15 open items were live, but EVERY filing acted on had at least
+> one materially wrong claim, and in three cases fixing what the filing pointed at would have
+> changed nothing.** Re-derive before coding, especially the acceptance criteria.
 >
-> ⚖️ **CANNOT be pinned to `.38` — blocked on a maintainer decision:** Slot 9 (both storage
-> relocations disproven; escape analysis vs scope-tied arena is a different size class with zero
-> compiler substrate — `grep escape src/` = 0); band H / stiva Half B (needs re-confirmation that
-> a CPS transform is wanted); band G items 1+2 as an arc (needs a demand call — see below);
-> `CYRIUS_CROSS_OS_FULL=1` as default (cass's PE-incompatible labels need triage first).
+> 1. **`issues/2026-08-22-versioned-wrapper-does-not-pin-cycc.md`** — the wrapper does not
+>    resolve `cycc` next to itself, so a versioned toolchain silently uses whichever compiler the
+>    PATH finds. ~75 lines in `cbt/core.cyr`'s `find_tools()`, inserted AFTER v6.5.37's
+>    in-repo `./build/cycc` branch so that fix is not re-broken. The CODE is cheap and
+>    single-choke-point (`cbt/core.cyr` is included by exactly one binary).
+>    ⛔ **BUT THE ECOSYSTEM IMPACT IS NOT, AND IT IS A MAINTAINER CALL — measured 2026-09-02:**
+>    of 134 `cyrius.cyml` files under `~/Repos`, **128 carry a pin and ALL 128 pin something
+>    other than the current release** (43 → 6.5.35, 29 → 6.5.36, 17 → 6.5.27, 7 → 6.5.33,
+>    5 → 6.5.29, tail to 6.3.5). Today every one of them silently compiles with the CURRENT
+>    cycc. After the fix they compile with the PINNED one — which is the correct behaviour and
+>    the entire point, but **45 of them pin into the 6.5.31–6.5.35 band carrying the v6.5.36
+>    Critical** (enum consts ≥ 2^62 read as −1). Those repos are today *accidentally protected
+>    by this very defect*, and the fix removes that accident. v6.5.37 did the equivalent
+>    ecosystem measurement before landing (94 of ~180 repos, 0 breakages); this is the number
+>    that filing never had. **Do not land it without the maintainer choosing between: land as-is,
+>    land with a loud refusal when the pinned compiler is in a known-defective band, or bump the
+>    45 pins first.**
+> 2. **`issues/2026-07-28-sock-send-result-allocates-per-call.md`** — sandhi-filed; `sock_send`
+>    /`sock_recv` allocate 16 B per call (600×16 residual measured). ~120 lines across
+>    `lib/result.cyr` + `lib/net.cyr`, **zero compiler change** — `ok_via`/`err_via` plus `_a`
+>    peers, existing non-`_a` fns stay byte-compatible. ⚠ The filing conflates this with a
+>    second, larger fix; take only the filed symptom.
+> 3. **`issues/2026-08-26-audit-scope-excludes-tests-and-defines.md`** — `cyrius audit` walks
+>    neither `tests/` nor `benches/` nor `fuzz/`, so the suite that guards the compiler is itself
+>    unaudited. ~70-95 lines across `cbt/commands.cyr` + `lib/audit_walk.cyr`.
+> 4. **Doc-truth trio — these SHRINK the queue rather than the code.** `v6415-closeout-residuals`
+>    (its D2 half is already fixed; the work is retiring the claim and correcting a drifted
+>    `roadmap.md:488` cite), `stiva-stackless-coroutines` (a SHIPPED item still described as open
+>    in three deferral lists — the exact rot the closeout sweep exists to catch), and the
+>    `macos-threading` de-rot (7 stale macOS guards across 4 crossos tests, **one of them a
+>    tautology**, `assert_eq(_cm_counter, _cm_counter, ...)`; the TLS half already shipped at
+>    `.39`).
 >
-> ⭐ **NEW for the owed list: band G needs a DEMAND call, not just a schedule.** No call site of
-> any typed SIMD wrapper exists anywhere under `~/Repos` outside cyrius; in-repo the only
-> non-test consumer is `benches/bench_f32v8_gemm.bcyr`, which uses the **bulk** form the filing
-> explicitly excludes. svara — the filing's origin — now records in its own benchmark doc that a
-> bit-identical `f64v4` version "bought only ~5 %… the loop is memory-bound", reverted, and
-> ranks **the scalar f64 GPR↔xmm shuttle (~5–8×) AHEAD of SIMD (~4×)**. That shuttle is outside
-> band G entirely: 7 arithmetic ops measured **21 `movq` shuttles** on live 6.5.37. It may
-> deserve to displace band G rather than queue behind it.
+> ⚖️ **NOT in `.41`, and each for a stated reason:**
+> `ir-regalloc-rewrite-needs-reemit` and `simd-f64v-memory-operand` are the two items the
+> premise-check found **genuinely not packable**. `darshana`'s residual diagnostic needs an
+> x86→aarch64 correspondence table that does not exist in `src/` and a maintainer call on whether
+> it is generated or hand-maintained. `compile-time-superlinear-in-fn-count` (filed `.40`) wants
+> measurement before a fix is chosen, and **no gate exercises a large fn count any more** — the
+> fixture that did was removed at `.40` because it cost 2 m 17 s.
 >
 > ⛔ **This pointer said `.36` — band G, SIMD register residency (Slot 6)** until 2026-09-01.
 > `.36` and `.37` both shipped as reactive repair releases and band G never opened. It is
