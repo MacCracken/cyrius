@@ -304,7 +304,7 @@ fn _dep_read_cyml_cyrius_field(): i64 {
     # Locate [package] header
     var pos = 0;
     while (pos < n) {
-        if (memeq(buf + pos, "[package]", 9) == 1) { break; }
+        if (memeq(buf + pos, "[package]", 9) == 1 && _toml_section_at(buf, n, pos) == 1) { break; }
         pos = pos + 1;
     }
     if (pos >= n) { return 0; }
@@ -367,7 +367,7 @@ fn _dep_read_cyml_package_version(): i64 {
     if (n <= 0) { return 0; }
     var pos = 0;
     while (pos < n) {
-        if (memeq(buf + pos, "[package]", 9) == 1) { break; }
+        if (memeq(buf + pos, "[package]", 9) == 1 && _toml_section_at(buf, n, pos) == 1) { break; }
         pos = pos + 1;
     }
     if (pos >= n) { return 0; }
@@ -706,6 +706,7 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
         str_builder_add_cstr(dsb, mod_name);
         var dir_path = str_builder_build(dsb);   # dir_list takes a Str, not a cstr
         var entries = dir_list(dir_path);
+        if (entries != 0) { vec_sort_by(entries, &_dep_name_cmp); }   # v6.5.37 (A8): readdir order is not deterministic
         if (entries != 0) {
             var n = vec_len(entries);
             var ei = 0;
@@ -840,6 +841,74 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
 #      the `[build]` SECTION HEADER as its array), got an empty vec, and
 #      committed to it — leaving `_dep_includes` empty and silently
 #      dropping every stdlib auto-prepend. See CHANGELOG [6.5.17].
+# ⛔ v6.5.37 (A5) — IS THE `[section]` AT `si` A REAL HEADER, OR PROSE?
+#
+# The sibling of `_toml_key_at`, for section headers rather than keys. Every header scan in
+# cbt/ was a bare `memeq(buf + si, "[lib]", 5)` at a raw byte offset, so a comment naming a
+# section won the scan. Reproduced at 6.5.36 with one line of ordinary migration prose:
+#
+#     # note: [lib] modules = ["src/decoy.cyr"] was the old layout
+#     [lib]
+#     modules = ["src/real.cyr"]
+#
+# -> the bundle contained `decoy_fn` and NOT `real_fn`. The header matched inside the
+# comment and the module list was then read from the comment's array.
+#
+# ⚠ THE INNER `modules` KEY TEST WAS ALREADY bol+comment-guarded (v6.0.36) and did not save
+# it — guarding the key while leaving the HEADER unguarded just means the search starts from
+# the wrong place and finds a legitimately-formatted key belonging to the wrong section.
+# A guard is only as good as the position it is applied from.
+#
+# A section header is the first token on its line, so the test is simpler than the key case:
+# everything between the line start and `si` must be whitespace. That rejects a comment
+# (`#` is not whitespace), a trailing header after a value, and a `[` inside a quoted string
+# — all three without needing to track quote state.
+# ⛔ v6.5.37 (A8) — DETERMINISTIC FAMILY EXPANSION. `dir_list` returns readdir order, which
+# is filesystem-dependent, not sorted. Measured on `lib/unicode` at 6.5.36:
+#   _casefold_data.cyr  casefold.cyr  _normalize_data.cyr  normalize.cyr  _decode.cyr ...
+# — not lexicographic. So the one stdlib module that is a package DIRECTORY expanded into a
+# consumer's `lib/` in whatever order that machine's filesystem happened to hand back, and
+# the resulting include list differed between machines for identical inputs.
+#
+# ⚠ WHY IT MATTERS HERE MORE THAN IT WOULD ELSEWHERE: this is a self-hosting toolchain whose
+# central promise is byte-identical reproduction. A dependency resolution whose output order
+# depends on directory layout is a reproducibility hole even when every ordering happens to
+# compile — and "happens to compile" is doing real work, because cyrius requires globals to
+# be declared before use, so a family member ordered ahead of the data file it reads is a
+# compile error rather than a subtle difference.
+#
+# Sorting at the expansion sites rather than inside `dir_list` itself: the walkers in
+# commands.cyr use it for test/bench discovery where readdir order is harmless, and changing
+# a shared primitive to fix two callers is the wider blast radius.
+fn _dep_name_cmp(a, b): i64 {
+    var pa = str_data(a);
+    var pb = str_data(b);
+    var i = 0;
+    while (1 == 1) {
+        var ca = load8(pa + i);
+        var cb = load8(pb + i);
+        if (ca != cb) { return ca - cb; }
+        if (ca == 0) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _toml_section_at(buf, n, si): i64 {
+    if (si >= n) { return 0; }
+    var ls = si;
+    while (ls > 0) {
+        if (load8(buf + ls - 1) == 10) { break; }
+        ls = ls - 1;
+    }
+    while (ls < si) {
+        var c = load8(buf + ls);
+        if (c != 32 && c != 9) { return 0; }
+        ls = ls + 1;
+    }
+    return 1;
+}
+
 fn _toml_key_at(buf, n, si, klen): i64 {
     if (si + klen >= n) { return 0; }
     var sep = load8(buf + si + klen);
@@ -1487,7 +1556,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
     var errors = 0;
     var si = 0;
     while (si < n) {
-        if (memeq(buf + si, "[deps.", 6) == 1) {
+        if (memeq(buf + si, "[deps.", 6) == 1 && _toml_section_at(buf, n, si) == 1) {
             var name_start = si + 6;
             var name_end = name_start;
             while (name_end < n && load8(buf + name_end) != 93) { name_end = name_end + 1; }
@@ -1519,7 +1588,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # content never lands in lib/.
             var dep_pin_ok = 1;
             while (si < n) {
-                if (load8(buf + si) == 91 && load8(buf + si + 1) != 91) {
+                if (load8(buf + si) == 91 && load8(buf + si + 1) != 91 && _toml_section_at(buf, n, si) == 1) {
                     if (memeq(buf + si, "[deps.", 6) != 1 && memeq(buf + si, "[build", 6) != 1 && memeq(buf + si, "[package", 8) != 1) {
                     }
                     if (load8(buf + si + 1) != 91) {
@@ -2218,8 +2287,8 @@ fn _auto_deps(): i64 {
     var has_deps = 0;
     var i = 0;
     while (i < n) {
-        if (memeq(buf + i, "[deps]", 6) == 1) { has_deps = 1; break; }
-        if (memeq(buf + i, "[deps.", 6) == 1) { has_deps = 1; break; }
+        if (memeq(buf + i, "[deps]", 6) == 1 && _toml_section_at(buf, n, i) == 1) { has_deps = 1; break; }
+        if (memeq(buf + i, "[deps.", 6) == 1 && _toml_section_at(buf, n, i) == 1) { has_deps = 1; break; }
         i = i + 1;
     }
     if (has_deps == 0) { return 0; }
@@ -2230,7 +2299,7 @@ fn _auto_deps(): i64 {
     # include directives. The modules are prepended before the entry point.
     i = 0;
     while (i < n) {
-        if (memeq(buf + i, "[build]", 7) == 1) {
+        if (memeq(buf + i, "[build]", 7) == 1 && _toml_section_at(buf, n, i) == 1) {
             # Scan within [build] section for the `modules` key. Key-
             # boundary + comment aware (mirrors the `stdlib` guard above,
             # v5.5.26): match `modules` only as the first non-space token
@@ -2694,7 +2763,7 @@ fn _dep_is_cyrius_source_repo(): i64 {
     if (n <= 0) { return 0; }
     var pos = 0;
     while (pos < n) {
-        if (memeq(buf + pos, "[package]", 9) == 1) { break; }
+        if (memeq(buf + pos, "[package]", 9) == 1 && _toml_section_at(buf, n, pos) == 1) { break; }
         pos = pos + 1;
     }
     if (pos >= n) { return 0; }

@@ -15,7 +15,7 @@ fn _pulsar_release_array(key): i64 {
     # Locate [release] section header
     var pos = 0;
     while (pos < n) {
-        if (memeq(buf + pos, "[release]", 9) == 1) { break; }
+        if (memeq(buf + pos, "[release]", 9) == 1 && _toml_section_at(buf, n, pos) == 1) { break; }
         pos = pos + 1;
     }
     if (pos >= n) { return empty; }

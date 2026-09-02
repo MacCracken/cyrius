@@ -2525,6 +2525,7 @@ fn _distlib_verify_leaves(leaves, out_path): i64 {
                 _distlib_splice_file(esb, lflat);
             } elif (is_dir(str_from(lbase)) == 1) {
                 var fents = dir_list(str_from(lbase));
+                if (fents != 0) { vec_sort_by(fents, &_dep_name_cmp); }   # v6.5.37 (A8): deterministic family order
                 if (fents != 0) {
                     var fi = 0;
                     while (fi < vec_len(fents)) {
@@ -3521,6 +3522,10 @@ fn cmd_distlib(profile): i64 {
     while (si < mlen) {
         var matched = 0;
         var header_len = 0;
+        # v6.5.37 (A5): a header only counts when it is the first token on its LINE.
+        # Unguarded, a comment naming a section won the scan and the module list was read
+        # from the comment's array — see _toml_section_at for the measured reproduction.
+        if (_toml_section_at(mbuf, mlen, si) == 1) {
         if (profile != 0) {
             if (memeq(mbuf + si, profile_hdr, profile_hdr_len) == 1) {
                 matched = 1;
@@ -3535,6 +3540,7 @@ fn cmd_distlib(profile): i64 {
                 matched = 1;
                 header_len = 5;
             }
+        }
         }
         if (matched == 1) {
             var bi = si + header_len;
@@ -3818,6 +3824,36 @@ fn cmd_distlib(profile): i64 {
         fmt_int(_verified_added);
         println(" leaf(s) the inference missed (compile-verified)");
     }
+    # ⛔ v6.5.37 (A7) — AND REMOVE A SIDECAR THAT NO LONGER DESCRIBES ANYTHING.
+    # The `> 0` guard below is deliberate (v6.5.29: a package with genuinely no leaves should
+    # not gain a stray file) but it only decides whether to WRITE. It never removed an
+    # existing one, so a package that dropped its whole `[deps] stdlib` kept publishing the
+    # old list: measured at 6.5.36, 7 stale leaves survived the leaf set going empty, and
+    # `cyrius deps` in a consumer went on vendoring all seven. Over-reporting is the
+    # dangerous direction — a named leaf that is not stdlib is a HARD resolver error — so a
+    # sidecar that has become false must go, not linger.
+    # Deletion rather than an empty file keeps the v6.5.29 intent intact: no stray files for
+    # packages that never had leaves, and no lie for packages that stopped having them.
+    if (vec_len(req_leaves) == 0 && profile == 0) {
+        var st_sb = str_builder_new();
+        var stopl = strlen(out_path);
+        if (stopl > 4 && memeq(out_path + stopl - 4, ".cyr", 4) == 1) {
+            var ststem = alloc(stopl - 3);
+            memcpy(ststem, out_path, stopl - 4);
+            store8(ststem + stopl - 4, 0);
+            str_builder_add_cstr(st_sb, ststem);
+        } else {
+            str_builder_add_cstr(st_sb, out_path);
+        }
+        str_builder_add_cstr(st_sb, ".deps");
+        var stale_deps = str_data(str_builder_build(st_sb));
+        if (file_exists(stale_deps) == 1) {
+            xunlink(stale_deps);
+            sys_write(STDOUT_FD, "  sidecar: removed ", 19);
+            sys_write(STDOUT_FD, stale_deps, strlen(stale_deps));
+            println(" (no stdlib leaves remain)");
+        }
+    }
     if (vec_len(req_leaves) > 0 || profile != 0) {
         var dep_sb = str_builder_new();
         var opl = strlen(out_path);
@@ -3896,18 +3932,30 @@ fn cmd_distlib(profile): i64 {
         var chk_deps = str_data(str_builder_build(dp_sb));
         # The .deps sidecar counts too — sigil's CI already diff-checks dist/sigil.deps,
         # and a stale sidecar mis-resolves a consumer's stdlib leaves.
+        # v6.5.37 (A7) — build the committed sidecar's path FIRST, because the
+        # interesting case is the one where the regenerated file does NOT exist.
+        var rd_sb = str_builder_new();
+        var ropl = strlen(real_path);
+        if (ropl > 4) {
+            var rstem = alloc(ropl - 3);
+            memcpy(rstem, real_path, ropl - 4);
+            store8(rstem + ropl - 4, 0);
+            str_builder_add_cstr(rd_sb, rstem);
+        }
+        str_builder_add_cstr(rd_sb, ".deps");
+        var committed_deps = str_data(str_builder_build(rd_sb));
+        # ⛔ v6.5.37 (A7) — "REGENERATED ABSENT, COMMITTED PRESENT" IS DRIFT, NOT CLEAN.
+        # This was `if (file_exists(chk_deps) == 1) { compare }`, so when the fresh run
+        # produced NO sidecar — which is exactly what happens once a package's leaf set
+        # empties — the comparison was skipped and `--check` reported *current* over a
+        # committed file that no longer describes anything. Measured at 6.5.36: a package
+        # that dropped its whole `[deps] stdlib` kept a 7-leaf sidecar and --check stayed
+        # green. The absence of the regenerated file is the signal, not a reason to skip.
         if (file_exists(chk_deps) == 1) {
-            var rd_sb = str_builder_new();
-            var ropl = strlen(real_path);
-            if (ropl > 4) {
-                var rstem = alloc(ropl - 3);
-                memcpy(rstem, real_path, ropl - 4);
-                store8(rstem + ropl - 4, 0);
-                str_builder_add_cstr(rd_sb, rstem);
-            }
-            str_builder_add_cstr(rd_sb, ".deps");
-            if (_distlib_files_same(chk_deps, str_data(str_builder_build(rd_sb))) == 0) { same = 0; }
+            if (_distlib_files_same(chk_deps, committed_deps) == 0) { same = 0; }
             xunlink(chk_deps);
+        } elif (file_exists(committed_deps) == 1) {
+            same = 0;
         }
         xunlink(out_path);
         if (same == 0) {

@@ -100,6 +100,35 @@ run "$D" >/dev/null 2>&1 || true
 ESCAPED=$(find "$WORK/d" -name 'pwned*' 2>/dev/null | wc -l | tr -d ' ')
 [ "$ESCAPED" -eq 0 ] || fail "axis 4: $ESCAPED file(s) written outside dist/ from a traversal name"
 
+# ── axis 4b: a commented SECTION HEADER must not redirect the module list ──────────
+# ⛔ THE SAME COMMENT-PROSE CLASS ONE LEVEL UP. Every `[section]` scan in cbt/ was a bare
+# `memeq(buf + si, "[lib]", 5)` at a raw byte offset — nine of them — so a comment naming a
+# section won the scan. One line of ordinary migration prose redirected which SOURCE FILES
+# got bundled: the artifact contained `decoy_fn` and not `real_fn`.
+#
+# ⚠ THE INNER `modules` KEY TEST WAS ALREADY bol+comment-guarded (v6.0.36) AND DID NOT SAVE
+# IT. Guarding the key while leaving the header unguarded just means the search starts from
+# the wrong place and then finds a correctly-formatted key belonging to the wrong section —
+# a guard is only as good as the position it is applied from.
+mkdir -p "$WORK/f/src"
+echo 'fn realsec_fn(): i64 { return 1; }'  > "$WORK/f/src/real.cyr"
+echo 'fn decoysec_fn(): i64 { return 2; }' > "$WORK/f/src/decoy.cyr"
+cat > "$WORK/f/cyrius.cyml" <<EOF
+[package]
+name = "secprobe"
+version = "0.1.0"
+cyrius = "$VER"
+# note: [lib] modules = ["src/decoy.cyr"] was the old layout
+[lib]
+modules = ["src/real.cyr"]
+[deps]
+stdlib = ["alloc"]
+EOF
+run "$WORK/f" >/dev/null 2>&1 || true
+[ -f "$WORK/f/dist/secprobe.cyr" ] || fail "axis 4b: no bundle produced"
+grep -q 'realsec_fn' "$WORK/f/dist/secprobe.cyr" || fail "axis 4b: the real module was not bundled — a commented [lib] header won the scan"
+grep -q 'decoysec_fn' "$WORK/f/dist/secprobe.cyr" && fail "axis 4b: the COMMENTED [lib] header's module list was bundled"
+
 # ── axis 5: ANTI-VACUOUS — an ordinary manifest still works ─────────────────────────
 # Without this, refusing everything passes axes 1-4.
 E=$(mk e "[package]
@@ -115,4 +144,4 @@ run "$E" >/dev/null 2>&1 || true
 [ -f "$E/dist/cleanprobe.deps" ] || fail "axis 5: an ordinary manifest produced no sidecar"
 grep -qx 'alloc' "$E/dist/cleanprobe.deps" || fail "axis 5: ordinary sidecar lost its declared leaves"
 
-echo "PASS: manifest_scan_decoys (inline-comment stdlib, comment name, display_name, traversal, ordinary manifest)"
+echo "PASS: manifest_scan_decoys (inline-comment stdlib, comment name, display_name, traversal, commented section header, ordinary manifest)"
