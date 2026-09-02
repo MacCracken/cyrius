@@ -1,6 +1,6 @@
 # `~/.cyrius/versions/<pin>/bin/cyrius` does not pin `cycc` — a release cannot be certified against its manifest pin
 
-**Status:** 🟡 **OPEN** — reproduced on **cyrius 6.5.32 / 6.5.33**, 2026-08-22, while certifying
+**Status:** 🟠 **STILL OPEN at v6.5.37 — an ADJACENT defect was fixed; this one was not.** Re-measured 2026-09-01: `versions/6.5.32/bin/cyrius which` still reports `~/.cyrius/bin/cycc`, the CURRENT compiler. ⚠ What v6.5.37 fixed must not be mistaken for this: `_try_redirect_to_pinned` used `file_exists("src/main.cyr")` to mean "am I the cyrius repo?", true for essentially every project since that is what `cyrius init` generates — so the pin redirect was SKIPPED for almost every consumer (same repo reported 6.3.35 without the file, 6.5.36 with it). Now `_dep_is_cyrius_source_repo()`, gated. The wrapper-resolves-the-wrong-cycc half is untouched.
 **agnosai 2.0.5**. Not a codegen defect; a **toolchain-selection** one. The build *does* warn, so
 nothing is silent — but there is no documented way to act on the warning short of mutating the
 global install.

@@ -238,11 +238,37 @@ check "sys_spawn_path_env (4-arg) present" 1 \
     "$(grep -c '^fn sys_spawn_path_env(path, len, env, envlen)' lib/syscalls_x86_64_agnos.cyr || true)"
 check "the 2-arg sys_spawn_path is KEPT (existing callers)" 1 \
     "$(grep -c '^fn sys_spawn_path(path, len)' lib/syscalls_x86_64_agnos.cyr || true)"
-# #96 fork — NO kernel arm exists in agnos (re-checked at 1.56.42: `grep -c 'num == 96'
-# agnos/kernel/core/syscall.cyr` -> 0). Must stay unminted. This assertion IS the
-# enforcement for the reserved-#96 record; it is machine-checked, unlike a doc note.
-n_96=$(grep -cE '=[[:space:]]*96;' lib/syscalls_x86_64_agnos.cyr || true)
-check "no SysNrAgnos constant on 96 (fork has no kernel arm)" 0 "$n_96"
+# ⛔ #96 fork — INVERTED AT v6.5.37, AND THE REASON IS THE INTERESTING PART.
+# This asserted the constant must NOT exist, on the premise "fork has no kernel arm
+# (re-checked at 1.56.42: `grep -c 'num == 96' agnos/kernel/core/syscall.cyr` -> 0)".
+# That grep was looking in the wrong file. agnos DOES implement fork — in the ring-3 ENTRY
+# STUB, `kernel/arch/x86_64/syscall_hw.cyr`: `if (sc_num == 96) { return sys_fork(user_rsp); }`
+# — because the child's resume context comes from `pcpu_sc_entry_regs`, which is valid only
+# on a path reached from the entry stub. A `ksyscall(96)` from in-kernel code would fork a
+# child resuming at whatever ring-3 code last made a syscall, so it refuses a kernel-CR3
+# caller outright.
+#
+# ⭐ BOTH PROJECTS' GATES SHARED THE BLIND SPOT. agnos's own ABI doc records it: the row
+# "did not exist until 1.56.55 and its absence was not caught, because
+# scripts/check/syscall-abi-check.sh scans only kernel/core/syscall.cyr for the kernel number
+# set — so kernel, doc and cyrius all agreed by MUTUAL ABSENCE." agnos fixed its side with
+# `ENTRY_STUB_ONLY = {44: "sched_yield", 96: "fork"}`; this is the cyrius side of the same
+# correction. Verified against agnos 1.56.57 before inverting, not taken from the filing.
+#
+# The two-directional rule is unchanged — mint what the kernel has, refuse what it does not.
+# What changed is the evidence for which side #96 is on.
+n_96=$(grep -cE 'SYS_FORK[[:space:]]*=[[:space:]]*96;' lib/syscalls_x86_64_agnos.cyr || true)
+check "SYS_FORK = 96 present (agnos 1.56.55 minted it in the entry stub)" 1 "$n_96"
+n_96w=$(grep -c '^fn sys_fork(): i64' lib/syscalls_x86_64_agnos.cyr || true)
+check "sys_fork() wrapper present" 1 "$n_96w"
+n_102=$(grep -cE 'SYS_LSTAT[[:space:]]*=[[:space:]]*102;' lib/syscalls_x86_64_agnos.cyr || true)
+check "SYS_LSTAT = 102 present (agnos 1.56.53)" 1 "$n_102"
+n_102w=$(grep -c '^fn sys_lstat(path, pathlen, statbuf)' lib/syscalls_x86_64_agnos.cyr || true)
+check "sys_lstat(path, pathlen, statbuf) wrapper present" 1 "$n_102w"
+n_103=$(grep -cE 'SYS_STATFS[[:space:]]*=[[:space:]]*103;' lib/syscalls_x86_64_agnos.cyr || true)
+check "SYS_STATFS = 103 present (agnos 1.56.56/.57)" 1 "$n_103"
+n_103w=$(grep -c '^fn sys_statfs(path, pathlen, buf)' lib/syscalls_x86_64_agnos.cyr || true)
+check "sys_statfs(path, pathlen, buf) wrapper present" 1 "$n_103w"
 # #98 ptrscan — agnos 1.56.42 DID mint it (kernel/core/syscall.cyr:8776), so the peer must
 # carry it. The two halves of this axis are deliberate opposites: mint what the kernel has,
 # refuse what it does not. A number tracking neither direction is how a consumer ends up

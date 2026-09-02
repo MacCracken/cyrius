@@ -1,8 +1,6 @@
 # `private` fns still collide across files — a private helper is silently replaced by any same-named fn, and the override bypasses the arity check
 
-**Status:** 🟡 **OPEN** — reproduced on **cyrius 6.5.35**, 2026-08-22. `private` is enforced on
-*reference* exactly as documented, but not on *definition*: the symbol still lives in one flat
-resolution space, so an unrelated file can silently take over a private file's internal calls.
+**Status:** 🟠 **PARTIALLY FIXED at v6.5.37 — STILL OPEN.** The cheap half shipped: a `duplicate fn` whose definitions DISAGREE ABOUT ARITY is now a hard ERROR naming both arities, closing §3 (a 3-arg call bound to a 1-arg duplicate compiled and ran, dropping args 2 and 3 — measured exit 201). Gate: `tests/gates/frontend/duplicate_fn_arity_mismatch.sh`. ⛔ §1 and §2 REMAIN: a private helper can still be silently replaced by another file's same-named, SAME-arity function, and `private` on both sides still does not help. The real fix is scoping private symbols at INSERTION.
 **Placement:** unpinned — 6.x-line backlog, but see §Why this is worse than a normal collision.
 **Discovered:** 2026-08-22 during owl 1.4.7, auditing a `duplicate fn '_stream_grow'` warning
 raised by co-linking `vyakarana` and `sankoch`.

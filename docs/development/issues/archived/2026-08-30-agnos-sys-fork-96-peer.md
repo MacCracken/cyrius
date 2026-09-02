@@ -1,6 +1,6 @@
 # `lib/syscalls_x86_64_agnos.cyr` has no `sys_fork`#96 peer
 
-**Status:** 🟡 **OPEN** — one enum entry and one no-argument wrapper. Additive; nothing existing changes.
+**Status:** ✅ **RESOLVED — shipped v6.5.37.** `SYS_FORK = 96` + `sys_fork()` minted. ⭐ THE FILING WAS RIGHT AND A NAIVE CHECK SAID OTHERWISE: `grep "num == 96" agnos/kernel/core/syscall.cyr` returns 0, because agnos dispatches fork from the RING-3 ENTRY STUB (`arch/x86_64/syscall_hw.cyr:125`), where the child's resume context lives. BOTH projects' gates shared that blind spot — agnos fixed its side with `ENTRY_STUB_ONLY = {44, 96}`, and `tests/gates/platform/syscall_wrapper_pass.sh` carried a do-not-mint assertion on the same stale premise, now INVERTED. Verified against agnos 1.56.57, not taken from this filing.
 **Placement:** `lib/syscalls_x86_64_agnos.cyr` — the `SysNrAgnos` enum plus a `sys_fork()` beside the
 existing process calls. `sys_getpid`#2 is the closest shape (no arguments, i64 return).
 **Filed:** 2026-08-30, by agnos. agnos minted and built the number; cyrius owns the peer.

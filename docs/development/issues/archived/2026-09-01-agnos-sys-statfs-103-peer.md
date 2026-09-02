@@ -1,6 +1,6 @@
 # `lib/syscalls_x86_64_agnos.cyr` has no `sys_statfs`#103 peer, so agnos ring 3 cannot ask how full a disk is
 
-**Status:** 🟡 **OPEN** — one enum entry, one three-line wrapper, and (optionally) a struct accessor set. Additive; nothing existing changes.
+**Status:** ✅ **RESOLVED — shipped v6.5.37.** `SYS_STATFS = 103` + `sys_statfs(path, pathlen, buf)`. ⚠ AGNOS-ONLY on purpose: `statfs` exists on no other peer here, and inventing numbers for four more targets from memory is the defect class v6.5.36/.37 spent two releases repairing (`sys_pause`→flock, `sys_umount2`→getpid). Gap + upgrade path recorded in the wrapper comment.
 **Placement:** `lib/syscalls_x86_64_agnos.cyr` — the `SysNrAgnos` enum and a `sys_statfs` beside the existing `sys_stat`#33, whose 3-argument path+buffer shape it mirrors exactly.
 **Filed:** 2026-09-01, by agnos. agnos minted the number; cyrius owns the peer.
 **Affects:** cyrius **6.5.36**. Every earlier release too, but #103 only exists as of agnos 1.56.56 (ext2) / 1.56.57 (all three filesystems).

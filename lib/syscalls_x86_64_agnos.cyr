@@ -86,6 +86,10 @@ enum SysNrAgnos {
     SYS_RENAME = 31;               # rename(old, oldlen, new, newlen) → 0 / -1  (uses a4=r10)
     SYS_LINK = 32;                 # link(target, targetlen, linkpath, linkpathlen) → 0 / -1 (a4)
     SYS_STAT = 33;                 # stat(path, pathlen, statbuf) → 0 / -1
+    # v6.5.37 — the three peers that closed the agnos ABI gate (kernel 104 · doc 104 · cyrius 101).
+    SYS_FORK = 96;                 # fork() → child pid (parent) / 0 (child) / -1 (agnos 1.56.55)
+    SYS_LSTAT = 102;               # lstat(path,len,statbuf) → 0/-1; no-follow on the FINAL symlink (1.56.53)
+    SYS_STATFS = 103;              # statfs(path, pathlen, buf) → 0 / -1; fills a FROZEN 32-byte record (1.56.56/.57)
     SYS_UNAME = 34;                # uname(buf, len=64) → 0; 4×16-byte fields (§4.3)
     SYS_SYSINFO = 35;             # sysinfo(buf, len=40) → 0; 5×u64, byte-direct (§4.4)
     SYS_LSEEK = 58;               # lseek(fd, offset, whence) → new pos / -1; whence 0=SET/1=CUR/2=END
@@ -721,6 +725,72 @@ fn sys_getdents(dir_fd, buf, bufsize): i64 { return syscall(SYS_GETDENTS, dir_fd
 # Stat `path` (length `pathlen`) into `statbuf` (AgnosStat, ≥0x200000).
 # Returns 0, or -1.
 fn sys_stat(path, pathlen, statbuf): i64 { return syscall(SYS_STAT, path, pathlen, statbuf); }
+
+# ⭐ v6.5.37 — `lstat`#102: `stat` that does NOT follow the FINAL symlink. Mid-path symlinks
+# still resolve. Same 48-byte record and same failure shape as #33; ext2 only (FAT/exFAT
+# cannot represent a symlink and return -1, matching `readlink`#70).
+#
+# WHY IT EXISTS, and it was found on iron rather than predicted: agnos's roadmap carried
+# lstat as "blocked on a consumer" for months. The 2026-08-30 validation burn produced two
+# root-filesystem entries that could be LISTED but neither stat'd nor removed — `/sl_s` and
+# `/lp`, leftover selftest fixtures — because kriya's `rm` never follows a symlink and
+# classifies every operand with `fs_lstat_at` first, which on agnos routed to path-based #33
+# and followed the link into nothing. A correctly-written no-follow userland could not be
+# correct on agnos. `unlink`#30 was never at fault.
+fn sys_lstat(path, pathlen, statbuf): i64 { return syscall(SYS_LSTAT, path, pathlen, statbuf); }
+
+# ⭐ v6.5.37 — `statfs`#103: volume capacity for a PATH (no fd needed), 32-byte record, all
+# u64 LE: f_bsize @0 (bytes per allocation unit — an ext2 block, a FAT/exFAT cluster),
+# f_blocks @8, f_bfree @16, f_bavail @24. The kernel reports UNITS, not bytes; userland does
+# the multiply, which is why the record never carries a scale factor.
+#
+# ⛔ THE RECORD SIZE IS FROZEN ABI, and unusually hard-frozen: the call is 3-arg with NO
+# length parameter (like #33's hardcoded 48), so there is no `len` for a caller to raise and
+# no way for the kernel to tell an old caller from a new one. A wider record needs a NEW
+# number — do not add a speculative fifth field to any accessor built on this.
+#
+# ⚠ f_bfree is LIVE on every backend, not a mount-time snapshot (agnos's own gates assert it
+# drops after a write), so a caller must not cache it. f_bavail == f_bfree on FAT and exFAT —
+# neither format has a reservation concept; only ext2's can differ.
+# ⚠ -1 is legitimate and must be passed through, not normalised: an unresolvable path is
+# refused deliberately (that refusal is the assertion catching an implementation that ignores
+# its path argument), and FAT/exFAT refuse rather than guess when a FAT or bitmap read fails.
+# ⚠ AGNOS-ONLY, AND THAT ASYMMETRY IS DELIBERATE RATHER THAN OVERLOOKED. `sys_fork` and
+# `sys_lstat` exist on the other peers already; `sys_statfs` exists NOWHERE else in this
+# repo, so a consumer that calls it builds on agnos and fails to LINK on linux / aarch64 /
+# macOS / PE. It is left that way on purpose: the filing asked for the agnos peer (crab's M6
+# VOLUMES panel targets agnos), no caller exists yet ecosystem-wide, and the alternative was
+# to invent statfs numbers for four more targets from memory. Guessing a syscall number is
+# precisely the defect class v6.5.36 and v6.5.37 spent two releases repairing — `sys_pause`
+# issuing flock, `sys_umount2` issuing getpid — so an honest gap beats a plausible wrong
+# number. A fail-closed -1 stub would be worse still on Linux and macOS, which genuinely
+# HAVE statfs: it would claim unsupported where support exists.
+# UPGRADE PATH when a cross-platform consumer appears: add the real numbers (verified against
+# each kernel's table, not from memory) to the peers that have the call, and a documented
+# fail-closed stub only where the OS truly lacks it — the shape `sys_fstat` above uses.
+fn sys_statfs(path, pathlen, buf): i64 { return syscall(SYS_STATFS, path, pathlen, buf); }
+
+# ⭐ v6.5.37 — `fork`#96: a second process resuming at the caller's own fork site. Returns the
+# child's pid to the parent and 0 to the child, -1 on failure — the POSIX shape.
+#
+# ⛔ THIS ONE IS DISPATCHED FROM THE RING-3 ENTRY STUB, NOT `ksyscall`, and that fact nearly
+# kept it unminted here. agnos implements it in `kernel/arch/x86_64/syscall_hw.cyr`
+# (`if (sc_num == 96) { return sys_fork(user_rsp); }`) because the child's resume context
+# comes from `pcpu_sc_entry_regs`, valid only on a path reached from the entry stub. So
+# `grep 'num == 96' kernel/core/syscall.cyr` returns ZERO — and BOTH projects' gates were
+# scanning exactly that file. agnos's ABI doc records the same trap ("its absence was not
+# caught, because the check scans only kernel/core/syscall.cyr — kernel, doc and cyrius all
+# agreed by mutual absence") and its gate now carries `ENTRY_STUB_ONLY = {44, 96}`.
+# tests/gates/platform/syscall_wrapper_pass.sh asserted the CONSTANT MUST NOT EXIST on that
+# same stale premise; that assertion is inverted at v6.5.37.
+#
+# ⚠ A forked child of a FOREGROUND `exec_and_wait` process does not run until the foreground
+# run ends (IF=0, not preempted). fork is for processes under the scheduler — spawned via
+# `spawn_path`#43 — which is how a server like agora runs anyway.
+# ⚠ `waitpid`#4 gained WAIT-ANY in the same cut: `sys_waitpid(-1)` returns a finished child's
+# exit code, -2 while children are still running, -1 when there are none. A fork-per-
+# connection loop wants that, not the single-pid poll.
+fn sys_fork(): i64 { return syscall(SYS_FORK); }
 
 # agnos has NO fstat-by-fd syscall — the kernel exposes only path-based
 # `sys_stat`#33 (there is no fstat number in the 0–63 table). fd→stat in

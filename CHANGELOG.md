@@ -4,6 +4,149 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.37] — 2026-09-01
+
+**The `.deps` sidecar subsystem, root-caused and repaired end to end — plus four consumer-filed
+defects and the AGNOS ABI gap.** Twelve new gates (199 → 211), every one mutation-proven.
+
+⚠ **The thread running through almost every item: these were REPEAT occurrences of classes
+already fixed once.** The comment-prose scan was the FOURTH, and it was inside the shared helper
+v6.5.17 introduced to end that class. The `src/main.cyr` ≠ cyrius-repo conflation was the THIRD
+site. The aarch64 syscall shadow was the THIRD and FOURTH. The symlink write-through had been
+documented as forbidden since v5.5.30 and never enforced in code. Each earlier fix was correct;
+none swept the class. Every gate added here pins the **property**, not the mechanism.
+
+### Fixed — 🔴 CRITICAL: a symlinked `lib/` let one repo overwrite the shared stdlib
+
+`nous/lib` was a directory symlink to `~/.cyrius/lib` → `versions/6.5.36/lib`, the LIVE snapshot.
+nous pins 6.3.35, so `_dep_find_stdlib_dir()` correctly resolved the SOURCE to
+`versions/6.3.35/lib` — and the resolver then wrote each leaf to `lib/<mod>.cyr`, straight
+through the link and INTO the 6.5.36 snapshot. 27 files of 6.3.35-era stdlib replaced the
+shipped ones; `lib/alloc.cyr` lost `fn _alloc_zero`, the memory-reuse information-leak fix from
+v6.4.1 (daimon VULN-007). Because `~/.cyrius/lib` is the global default SOURCE, every other repo
+then read the corruption back out — shabda ingested it 12 seconds later.
+
+⭐ **The guard had to go in TWO places, and the second is the load-bearing one.**
+`_try_redirect_to_pinned` execve's into `versions/<pin>/bin/cyrius` BEFORE any command dispatch,
+so for an old-pinned repo control never reaches this build's resolver: a guard living only in
+`_dep_copy_file` protects repos pinned ≥ 6.5.37 and nothing else — and stale-`lib/` repos are
+precisely the old-pinned ones. ⚠ The first cut of this guard was wrong in BOTH directions: it
+walked directory prefixes only (a per-FILE symlink wrote straight through, exit 0) and it was
+ungated, so it refused every toolchain install into the symlinked `~/.cyrius/bin` while
+`cyrius lsp install` printed `Installed:` over a copy that never happened. Now
+`_dep_dest_is_linked` (prefixes AND final component), gated on `_dep_vendor_mode`.
+⚠ CLAUDE.md called single-file `lib/<dep>.cyr` symlinks "legitimate `cyrius deps` output" — that
+clause is corrected here, because it is why the first guard skipped the file shape.
+
+### Fixed — 🔴 CRITICAL: an inline `#` comment silently replaced a project's whole stdlib set
+
+`_toml_key_at`'s comment guard walked only the LEADING whitespace of a line and broke at the
+first non-space, so a `#` opening a comment MID-line was never seen. One line of ordinary prose:
+
+```
+modules = ["src/lib.cyr"]   # TODO: split; stdlib = ["math"] will move here
+```
+
+→ the sidecar contained exactly `math`, and `cyrius deps` vendored `math.cyr` and NOTHING ELSE,
+silently, exit 0. Seven declared leaves reduced to one wrong one, in BOTH directions at once
+because producer and consumer share the helper. ⚠ The decoy need not mention `stdlib` — the scan
+takes any array literal after the `#`. **Fourth occurrence of this class** (v6.5.17 bayan,
+v6.5.30 niyama), and the first inside the helper those fixes created.
+
+### Fixed — `sys_umount2()` issued `getpid(2)` on every ELF-aarch64 build
+
+`SYS_UMOUNT2 = 39` is aarch64's native number; x86's `getpid` is also 39, and the ESYSXLAT
+compat row `39→172` rewrote it. Measured under qemu: `sys_umount2("/nonexistent", 0)` returned
+**1179922** — a PID. `SYS_EPOLL_PWAIT = 22` had the same collision with x86 `pipe`, latent only
+because nothing called it. Both moved to the ≥1000 private alias band, rows appended LAST.
+⭐ Found by sweeping the whole table, not by a filing — occurrences three and four of the
+v6.5.36 class (`sys_pause`→flock, `sys_signalfd`→fsync). ⚠ The sweep returns SEVEN hits and five
+are correct: declaring the X86 number and letting ESYSXLAT renumber is the documented pattern, so
+a raw collision list reports five false positives. `tests/gates/platform/aarch64_syscall_shadow.sh`
+encodes that discriminator and the band's ordering invariant.
+
+### Fixed — the `.deps` sidecar is now COMPILE-VERIFIED, not inferred
+
+The sidecar was derived from a byte scan of source text, published as authoritative, consumed
+authoritatively, and never checked against the artifact it describes — while being the ONLY
+surviving record of a folded leaf's needs (folding destroys the `include` lines; `lib/sandhi.cyr`
+has zero). Measured: **45 of 118** ecosystem sidecars failed a clean-room build from their own
+declared leaves, 13 with hard errors. sigil's `sha` profile named `alloc freelist string process
+thread thread_local` and NOT `syscalls`, while `freelist` uses `SYS_MMAP` four times — 64
+undefined symbols; after verification, 4 leaves re-added and 2 left (`Ok`/`Err`, which no leaf
+declares). Self-healing, so it repairs rather than turning 45 publishable bundles into errors.
+
+Also in the sidecar path: leaves are validated against the stdlib snapshot at capture
+(`hisab`/`goonj`/`naad` were being published as stdlib by shabda/shabdakosh — the dhancha
+`kashi_font_data` shape that left crab and puka unable to resolve at all); `--check` now compares
+WHOLE bundles (it read only the first 1 MB, and six ecosystem bundles already exceed that, so a
+byte flipped past that offset reported *current*); a sidecar whose leaf set empties is REMOVED
+rather than left publishing a stale list; and package-directory family expansion is sorted, since
+`dir_list` returns filesystem order.
+
+### Fixed — `cyrius deps` reported failure as an error COUNT, so 256 errors exited 0
+
+`1 → exit 1`, `255 → 255`, **`256 → 0`**, `512 → 0`. A manifest broken badly enough reported
+SUCCESS, and the failure was anti-correlated with severity. This is why a defective sidecar could
+pass CI at all.
+
+### Fixed — version pinning was silently ignored by nearly every consumer
+
+`_try_redirect_to_pinned` used `file_exists("src/main.cyr")` to mean "am I the cyrius repo?" —
+true for essentially every project, since that is what `cyrius init` generates. Same repo, one
+file's difference: without it `cyrius --version` reported the pinned **6.3.35**, with it
+**6.5.36** plus `manifest-pin: 6.3.35 (drift)`. It survived because the tool PRINTED the pin it
+was ignoring and called the mismatch drift. Third site of a conflation fixed twice before
+(v6.0.1/v6.4.63 `cyrius audit`, v6.5.25 `_dep_find_stdlib_dir`). Blast radius measured first: of
+~180 repos, 94 begin honouring a pin they had ignored, all 94 have it installed, 0 break.
+
+⚠ Relatedly, `find_tools` preferred the INSTALLED cycc over `./build/cycc` even inside this repo,
+so a compiler change could not be tested through the wrapper until it was installed. Now the repo
+build wins here and only here.
+
+### Fixed — consumer filings
+
+- **`#derive(Serialize)`**: `X_from_json_str(0)` was a SIGSEGV (exit 139) and
+  `X_from_json_str("not json")` returned a NON-NULL zeroed struct as success. Both closed; scope
+  deliberately stops at "is this an object?" so an all-default struct still round-trips.
+- **duplicate `fn` with differing ARITY is now an error** — it routed around the call-site arity
+  check that has been hard since v6.5.1 (a 3-arg call bound to a 1-arg duplicate ran, dropping
+  args 2 and 3). owl 1.4.7's `_stream_grow`, where vyakarana and sankoch disagree about arity,
+  offsets AND return polarity. ⛔ The cheap half only: same-arity replacement still happens.
+- **`async_relay_once` deadlocked the runtime** — it parked the task via `async_wait_fd` (which
+  does not wait; there is no mid-body suspend) then blocked in `sys_read`. It hung EVEN WITH THE
+  DATA ALREADY PRESENT. The three sibling platform copies already shipped the correct body, so
+  the Linux arm was aligned with them.
+- **A crashed `.tcyr` was counted but never NAMED.** ⚠ The filing's claim that `cyrius test`
+  scores a SIGSEGV as a PASS is FALSE — measured, exit 139 and suite exit 1. The defect was
+  silence, not mis-scoring.
+
+### Added — the three AGNOS peers, closing the ABI gate
+
+`SYS_FORK = 96`, `SYS_LSTAT = 102`, `SYS_STATFS = 103` with wrappers. ⭐ The fork filing looked
+WRONG on a first check: `grep "num == 96" agnos/kernel/core/syscall.cyr` returns 0, because agnos
+dispatches fork from the RING-3 ENTRY STUB where the child's resume context lives. Both projects'
+gates shared that blind spot; agnos fixed its side with `ENTRY_STUB_ONLY = {44, 96}`, and this
+release inverts the cyrius do-not-mint assertion built on the same stale premise. Verified against
+agnos 1.56.57. ⚠ `sys_statfs` is AGNOS-ONLY on purpose — inventing numbers for four more targets
+from memory is the exact defect class this release spent its time repairing.
+
+### Changed — stdlib folds
+
+bayan 1.5.4, ganita 1.2.0, patra 1.13.11, sakshi 2.4.12, sandhi 1.9.15 (the SSE read-boundary
+event loss). Plus `lib/chrono.cyr`'s lazy init, which published its pointer before filling the
+table — a concurrent `epoch_to_date` read zeros and returned **month 13**.
+
+### Verification
+
+Release gate 5/5: self-host byte-identical at **1,179,104 B** (+240 over `.36`: +88 derive guard,
++152 arity check); seed → cybs → cycc byte-identical; `check.sh` **211/0**; cross-OS **ecb + ach +
+cass + pi** all `SELFHOST_OK` + `LIBTEST_OK` (55 crossos tests each) on REAL hardware; corpus
+286/286. Bench `self_compile` **720.5 ms** vs `.36`'s 711.1 — ⚠ inside noise, not a regression:
+two runs on commit `fa66d50b` with IDENTICAL code measured 777.9 and 716.9 ms, a 61 ms
+same-commit spread.
+
+
 ## [6.5.36] — 2026-08-28
 
 **Two Critical defects that were live in shipped releases, the full AGNOS ABI front, and the

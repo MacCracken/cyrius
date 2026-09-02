@@ -93,10 +93,7 @@
 > ⚖️ **Maintainer decision owed:** this can now ship far earlier than `.33`–`.34`. The roadmap row
 > and this file's Placement line should move only on your call.
 
-**Status:** 🟡 **OPEN — Half A SHIPPED v6.5.26 and completed cross-platform in v6.5.27;
-Half B not built and, on this evidence, not justified.** Was "OPEN deliberately as the acceptance record for
-a pinned arc"; it stays open for the same reason, but the pin's stated justification has been
-disproved and the work is now known to be lib-only.
+**Status:** 🟠 **RESIDUAL FIXED at v6.5.37; the Half B DECISION remains the maintainer's.** `async_relay_once` (Linux arm) parked the task via `async_wait_fd` — which does NOT wait, it marks TASK_WAITING and returns, since cyrius has no mid-body suspend — then blocked in `sys_read`, deadlocking the runtime. It hung EVEN WITH DATA ALREADY IN THE PIPE (read and write both succeed, but the task stays parked so `async_run` waits forever to retire a task that already finished). ⭐ Not a design choice: the three sibling implementations already shipped the body WITHOUT the park, so the Linux arm was the outlier. Gate: `tests/tcyr/concurrency/async_relay_once_no_deadlock.tcyr`. ⛔ Half B is UNCHANGED.
 **Placement:** ⚖️ **was v6.5.33–.34 (band H, "bound to band E") — that binding is FALSE.**
 Eligible for any `.NN` from `.26`; maintainer's call.
 **Discovered:** 2026-07-25 during stiva's v3.0.x → v3.1.0 roadmap review

@@ -1,6 +1,6 @@
 # `lib/syscalls_x86_64_agnos.cyr` has no `sys_lstat`#102 peer, so agnos ring 3 cannot name the syscall it now has
 
-**Status:** 🟡 **OPEN** — one enum entry and one three-line wrapper. Additive; nothing existing changes.
+**Status:** ✅ **RESOLVED — shipped v6.5.37.** `SYS_LSTAT = 102` + `sys_lstat(path, pathlen, statbuf)`. Kernel arm confirmed present in agnos 1.56.57.
 **Placement:** `lib/syscalls_x86_64_agnos.cyr` — the `SysNrAgnos` enum and a `sys_lstat` beside the
 existing `sys_stat`#33 (`sys_readlink`#70 is the closest shape precedent).
 **Filed:** 2026-08-30, by agnos. agnos minted the number; cyrius owns the peer.

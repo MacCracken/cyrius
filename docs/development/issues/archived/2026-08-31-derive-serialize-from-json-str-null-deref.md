@@ -1,8 +1,6 @@
 # `#derive(Serialize)`'s generated `<Name>_from_json_str` dereferences a null `json`, and returns a zero-filled struct as success on any malformed input
 
-**Status:** 🔴 **OPEN** — no consumer can fix this; the function body is emitted by the
-preprocessor, so a project cannot guard it without abandoning the derive and hand-writing
-every codec.
+**Status:** ✅ **RESOLVED — shipped v6.5.37.** Both halves: the emitted body returns 0 for a null `json` (was exit 139 SIGSEGV) and returns 0 when no `{` is found (was a non-null zeroed struct). Gate: `tests/tcyr/derive/derive_from_json_str_guards.tcyr`. ⚠ This filing's OTHER claim — that `cyrius test` scores such a crash as `1 passed, 0 failed` — is FALSE at 6.5.36: measured, a segfaulting .tcyr gives exit 139 and the suite exit 1. Reading `$?` through a pipe is the likeliest source. The real defect there was SILENCE (a crashed test counted but never NAMED), fixed separately at v6.5.37.
 **Placement:** `src/frontend/lex_pp.cyr` — the `Name_from_json_str` emitter (`:1719`).
 One added guard closes the crash; the zero-struct half needs a decision.
 **Discovered:** 2026-08-31, during prani's roadmap 2.0.5 input-range survey.

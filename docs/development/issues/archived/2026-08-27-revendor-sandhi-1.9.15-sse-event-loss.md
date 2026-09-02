@@ -1,7 +1,6 @@
 # Vendored `lib/sandhi.cyr` silently drops whole SSE events at read boundaries — re-vendor from sandhi 1.9.15
 
-**Status:** 🟠 **OPEN** — fixed upstream in **sandhi 1.9.15** (2026-08-27); reaches consumers only when a
-cyrius release re-vendors `lib/sandhi.cyr` from `dist/sandhi.cyr`. No compiler work requested.
+**Status:** ✅ **RESOLVED — shipped v6.5.37.** `lib/sandhi.cyr` re-vendored from sandhi 1.9.15; both acceptance greps pass (the `HAS_FIELDS) == 0) { consumed` guard is present, `SANDHI_VERSION = "1.9.15"`).
 **Placement:** next 6.5.x patch — this is a re-vendor, not a language or codegen change.
 **Discovered:** 2026-08-27 while chasing a thoth 0.44.2 bug report ("asking the model to review a project
 gets stuck").
