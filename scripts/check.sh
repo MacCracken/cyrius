@@ -31,7 +31,13 @@ CHECK_BIN="$ROOT/build/cyrius_check"
 CHECK_SRC="$ROOT/programs/checks/main.cyr"
 CC="$ROOT/build/cycc"
 
-NEWEST_SRC="$(ls -t "$ROOT"/programs/checks/*.cyr 2>/dev/null | head -1)"
+# ⛔ v6.5.42: watch the INCLUDED lib files too, not just programs/checks/*.cyr. The suite
+# includes lib/audit_walk.cyr (and others), so a change there produced NO rebuild and the run
+# silently exercised a stale binary — measured: a fix to the audit walkers appeared to have no
+# effect at all, and the wrong conclusion was nearly drawn from it. Same failure family as the
+# swallowed compile error below: the suite must not be able to run against source it was not
+# built from.
+NEWEST_SRC="$(ls -t "$ROOT"/programs/checks/*.cyr "$ROOT"/lib/audit_walk.cyr 2>/dev/null | head -1)"
 # Rebuild if: no binary, the glob matched nothing (force a rebuild so the
 # build fails loudly rather than running a stale binary), or any suite file
 # is newer than the binary.

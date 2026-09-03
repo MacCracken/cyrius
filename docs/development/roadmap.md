@@ -500,8 +500,20 @@ not a single release.
   something different on each side fails loudly — the widen class no compile-time check can see.
   ⚠ **The bench read 810 ms against `.41`'s 732 and that is the BOX**: an interleaved A/B gives
   .41 810 ms vs .42 811 ms, +0.1 % against a 4 ms spread. Recorded as noise, not growth tax.
+  ⭐ **It also cleared BOTH items `.41` pinned and did not ship** — the wrapper pin (landed as-is
+  on the maintainer's call: 128 of 134 sibling repos pin something other than current and 45 pin
+  into the `.36` enum-Critical band, so they were accidentally protected by the very defect) and
+  `cyrius audit` never walking the test suite (three independent halves — scope, recursive
+  descent, `.tcyr` recognition — any one missing still reporting a clean verdict over nothing).
+  ⭐ **And compile time was QUADRATIC in fn count**: `REGFN`'s reverse overload scan measured at
+  **46 %** of it (60k fixture: 43.5 s with, 23.6 s without), replaced by three hash lookups for
+  **43.6 s → 23.9 s**, codegen-neutral and byte-identical-verified against `.41`'s compiler. A
+  second quadratic contributor remains, filed with its measurement.
+  ⛔ **The roadmap gained a ⏭ CARRIED ledger, and the reason is this arc's own record**: `.38`
+  pinned 4 and shipped 2; `.41` pinned 4 and shipped 2; both drops were silent and both times a
+  maintainer had to notice. An interrupt must now DISPLACE an item into that list, never delete it.
   Also filed: `test_runner_bounded` went red once under load and was NOT root-caused.
-  cycc **1,191,504 B**, `check.sh` **220/0**, corpus 289/289.
+  cycc **1,191,520 B**, `check.sh` **222/0**, corpus 289/289, crossos green on all four hosts.
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 
@@ -668,6 +680,23 @@ ran 86 releases and 6.5.x is expected in the same class.
 > prove — it has store/load information but no DOMINANCE. v5.6.22's defect was this exact
 > class, so a passing corpus is not sufficient evidence. See the `.35` CHANGELOG.
 >
+> ### ⏭ CARRIED — items pinned in a PREVIOUS slot that have not shipped
+>
+> ⛔ **THIS SECTION EXISTS BECAUSE THE ROADMAP KEPT LOSING ITS OWN COMMITMENTS.** The failure
+> mode, twice in the 6.5.x arc: a `.NN` block pins four items, two ship, and the NEXT block is
+> written fresh — so the remainder evaporates with nothing recording that it was ever promised.
+> `.38` pinned 4 and shipped 2; `.41` pinned 4 and shipped 2. Both times the drop was silent,
+> and both times a maintainer had to notice. Reactive interrupts are expected and legitimate —
+> a filed consumer bug rightly jumps the queue — but an interrupt must DISPLACE an item into
+> this list, never delete it.
+>
+> **RULE: when a slot closes, every item pinned to it that did not ship gets a row here, naming
+> the slot it was first pinned to. The list is emptied by shipping, not by rewriting.**
+>
+> | item | first pinned | status |
+> |---|---|---|
+> | *(empty)* | — | `.41`'s carried pair — `versioned-wrapper-does-not-pin-cycc` and `audit-scope-excludes-tests` — both shipped at `.42`. |
+>
 > ### ▶ NEXT: `.41` — queue drain + consumer-facing tooling
 >
 > **`.38`, `.39` and `.40` all shipped; this pointer said `.38` until 2026-09-02.** What that
@@ -681,7 +710,7 @@ ran 86 releases and 6.5.x is expected in the same class.
 > one materially wrong claim, and in three cases fixing what the filing pointed at would have
 > changed nothing.** Re-derive before coding, especially the acceptance criteria.
 >
-> 1. **`issues/2026-08-22-versioned-wrapper-does-not-pin-cycc.md`** — the wrapper does not
+> 1. **`issues/archived/2026-08-22-versioned-wrapper-does-not-pin-cycc.md`** — the wrapper does not
 >    resolve `cycc` next to itself, so a versioned toolchain silently uses whichever compiler the
 >    PATH finds. ~75 lines in `cbt/core.cyr`'s `find_tools()`, inserted AFTER v6.5.37's
 >    in-repo `./build/cycc` branch so that fix is not re-broken. The CODE is cheap and
@@ -703,7 +732,7 @@ ran 86 releases and 6.5.x is expected in the same class.
 >    `lib/result.cyr` + `lib/net.cyr`, **zero compiler change** — `ok_via`/`err_via` plus `_a`
 >    peers, existing non-`_a` fns stay byte-compatible. ⚠ The filing conflates this with a
 >    second, larger fix; take only the filed symptom.
-> 3. **`issues/2026-08-26-audit-scope-excludes-tests-and-defines.md`** — `cyrius audit` walks
+> 3. **`issues/archived/2026-08-26-audit-scope-excludes-tests-and-defines.md`** — `cyrius audit` walks
 >    neither `tests/` nor `benches/` nor `fuzz/`, so the suite that guards the compiler is itself
 >    unaudited. ~70-95 lines across `cbt/commands.cyr` + `lib/audit_walk.cyr`.
 > 4. **Doc-truth trio — these SHRINK the queue rather than the code.** `v6415-closeout-residuals`

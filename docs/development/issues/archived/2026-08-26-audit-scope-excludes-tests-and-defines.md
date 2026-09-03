@@ -1,6 +1,13 @@
 # `cyrius audit` passes a project with lint-dirty tests and a failing `-D` build — two coverage gaps in the aggregate gate
 
-**Status:** 🟡 **OPEN** — surfacing only; both gaps are worked around downstream, neither is fixed upstream.
+**Status:** ✅ **FIXED at v6.5.42 — CLOSED.** `cyrius audit` now walks `tests/`, `benches/`, `fuzz/` (and `cbt/` in this repo), recursively, and recognises `.tcyr` / `.bcyr` / `.fcyr`. Gate: `tests/gates/toolchain/audit_scope_covers_suite.sh`.
+
+⭐ **THREE INDEPENDENT HALVES, AND ANY ONE MISSING STILL REPORTS A CLEAN VERDICT OVER NOTHING** — which is why a partial fix here would have been worse than none:
+1. **Scope** — `tests/` was not in the directory list at all.
+2. **Descent** — the walkers listed each directory and nothing beneath it. The suite lives at `tests/tcyr/<bucket>/*.tcyr`, **two levels down**, so adding `tests/` to a flat lister finds a directory containing only directories and audits zero files while the `scope:` banner cheerfully prints "tests".
+3. **Extension** — `_aw_is_cyr` matched only `.cyr`. Its tail scan is anchored at `len-4`, so `"foo.tcyr"` ends in `"tcyr"`, not `".cyr"`, and did **not** fall out of the same check.
+
+⚠ **The widened audit immediately surfaced ~86 unformatted files** across the newly-covered trees. They are NOT fixed here: bulk-reformatting 86 files (including test fixtures whose exact formatting some tests may depend on) is a large mechanical diff that would mask real changes, and `cyrius audit` already fails in this repo by design on cycc's deliberately-unformatted `main*.cyr` forks. The fix is that the audit can now SEE them; whether to format them is a separate call with its own diff.
 **Placement:** unpinned — 6.5.x-line backlog.
 **Discovered:** 2026-08-26 during the svara Rust→Cyrius port (svara 3.4.0 and 3.5.1).
 **Severity:** Medium — no hard failure, but the gate returns a **false negative**: it reports `lint clean` on a project that is not lint-clean, and `N passed` on a suite that fails. CI trusts it.

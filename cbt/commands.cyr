@@ -1721,6 +1721,20 @@ fn _audit_sweep(): i64 {
     }
     if (is_dir(str_from("src")) == 1) { vec_push(dirs, str_from("src")); }
     if (is_dir(str_from("programs")) == 1) { vec_push(dirs, str_from("programs")); }
+    # ⛔ v6.5.42 — THE SUITE THAT GUARDS THE COMPILER WAS ITSELF UNAUDITED. `cyrius audit`
+    # walked src/ and programs/ (plus lib/ in this repo) and nothing else, so `tests/`,
+    # `benches/` and `fuzz/` were never formatted, linted or checked — 289 .tcyr files, every
+    # shell gate's fixtures, and every bench. The `scope:` banner below prints whatever is in
+    # this vec, so it stays honest for free as the list grows.
+    # ⚠ Needs the recursive descent added to lib/audit_walk.cyr in the same release: the suite
+    # lives at tests/tcyr/<bucket>/*.tcyr, two levels down, and a flat lister would report a
+    # clean verdict over a directory containing only subdirectories.
+    if (is_dir(str_from("tests")) == 1) { vec_push(dirs, str_from("tests")); }
+    if (is_dir(str_from("benches")) == 1) { vec_push(dirs, str_from("benches")); }
+    if (is_dir(str_from("fuzz")) == 1) { vec_push(dirs, str_from("fuzz")); }
+    if (_in_cyrius_repo == 1) {
+        if (is_dir(str_from("cbt")) == 1) { vec_push(dirs, str_from("cbt")); }
+    }
     if (vec_len(dirs) == 0) { vec_push(dirs, str_from(".")); }
     # Say what was walked. A stage that reports a verdict without its scope reads as
     # authoritative when it is not — the same defect as the release gate's silent

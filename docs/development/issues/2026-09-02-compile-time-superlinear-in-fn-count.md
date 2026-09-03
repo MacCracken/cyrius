@@ -1,6 +1,16 @@
 # Compile time is superlinear in function count — 4× the fns costs 17× the time
 
-**Status:** 🟡 **OPEN** — measured on cyrius 6.5.40, 2026-09-02. Not a regression: the same shape
+**Status:** 🟠 **HALVED at v6.5.42 — the largest contributor is FIXED, a second one remains.** Measured on a 60,000-fn fixture: **43.6 s → 23.9 s (1.82x)**.
+
+⭐ **The suspected cause was the right one, and it was confirmed by measurement before being fixed rather than after.** `REGFN`'s REVERSE overload registration walked EVERY already-registered fn for each new one, looking for a sibling named `<my_name>_<suffix>` — quadratic by construction (~1.8x10⁹ name comparisons at 60k fns). Disabling it outright took the same fixture 43.5 s → 23.6 s, i.e. **it was 46 % of total compile time**, and its share grows with the square.
+
+**The fix is three hash lookups replacing the walk**, and it is *exactly* equivalent rather than an approximation: the scan was looking for a fn whose name is the concatenation `<my_name>` ++ `<suffix>`, so direct lookups of those three names find precisely the same set. ⚠ `_FINDFN_CSTR` could NOT be used — it is itself a linear scan, so three calls would have made it worse; the fix probes the hash table directly (4-byte slots since v6.5.40). Equivalence is *verified*, not argued: **cycc's output is byte-identical** on three independently-compiled programs, and the self-host fixpoint holds.
+
+⛔ **A SECOND QUADRATIC CONTRIBUTOR REMAINS AND THIS FILING STAYS OPEN FOR IT.** 23.9 s for 60,000 functions is still far off linear — the 28,000-fn baseline in the CI comment was ~8 s, so roughly 2.1x the functions still costs ~3x the time. The remaining candidates from the original list are untouched and now easier to see with the dominant term removed:
+* `_fnt_grow`'s rehash-and-copy of ~16 parallel tables (amortized-linear in theory; rule it out by measurement, not by argument).
+* The DCE reachability walk over `live[]`, which may be quadratic in cross-fn references rather than in fns.
+
+⚠ **And the fixture that used to exercise this is gone.** v6.5.40 moved the `capacity` gate's trip source off `fn_table` to `string_data` precisely because tripping it needed 111,412 fns at 2 m 17 s — so **no gate exercises a large fn count any more**, and this curve is unobserved. Acceptance item 3 (a bench entry) matters more now than when it was written.
 is present before the v6.5.40 limits cascade; the cascade is only what made it *reachable*.
 **Placement:** unpinned — 6.x-line backlog. Codegen/compiler performance, so **never 7.x**.
 **Discovered:** 2026-09-02 while re-sizing the `capacity` CI fixture after the fn ceiling went

@@ -135,6 +135,85 @@ fn _fnt_grow(S): i64 {
 }
 
 # Register new function, return index
+# ⚡ v6.5.42 — HASH LOOKUP FOR `<name>_str` / `_int` / `_cstr`, replacing an O(n^2) scan.
+#
+# REGFN's REVERSE overload registration walked EVERY already-registered fn for every new one,
+# looking for a sibling named `<my_name>_<suffix>`. That is quadratic in fn count by
+# construction: at 60,000 fns it is ~1.8x10^9 name comparisons. MEASURED on the 60k fixture —
+# 43.5 s with the scan, 23.6 s with it disabled, so it was **46 % of total compile time**, and
+# the share grows with the square. (Filed as `2026-09-02-compile-time-superlinear-in-fn-count`,
+# which named this as the strongest candidate; the measurement confirms it. ⚠ 23.6 s is still
+# slow for 60k fns, so a SECOND quadratic contributor remains — see that filing.)
+#
+# The replacement is exactly equivalent, not an approximation: the scan was looking for a fn
+# whose name is the concatenation `<my_name>` + `<suffix>`, so three direct lookups of those
+# three names find precisely the same set. Equivalence is verifiable rather than argued —
+# cycc's output must stay BYTE-IDENTICAL, and it does.
+#
+# ⚠ `_FINDFN_CSTR` cannot be used here: it is itself a linear scan, so three calls would make
+# the cost WORSE, not better. This probes the hash table directly.
+#
+# ⚠ Hash slots are 4 BYTES since v6.5.40 (the fn ceiling went 32768 -> 131072, which required
+# widening them from 2). Reading them as 2 would silently find the wrong entries.
+
+# FNV-1a over the NUL-terminated name at `noff`, continued over `suflen` bytes at `suf`.
+fn _fnv_noff_suffix(S, noff, suf, suflen): i64 {
+    var h = 0xcbf29ce484222325;
+    var i = 0;
+    var c = load8(S + 0xEC00000 + noff + i);
+    while (c != 0) {
+        h = h ^ c;
+        h = h * 0x100000001b3;
+        i = i + 1;
+        c = load8(S + 0xEC00000 + noff + i);
+    }
+    var j = 0;
+    while (j < suflen) {
+        h = h ^ load8(suf + j);
+        h = h * 0x100000001b3;
+        j = j + 1;
+    }
+    return h;
+}
+
+# 1 if the name at `sn` is exactly `<name at noff>` ++ `<suflen bytes at suf>`.
+fn _name_is_noff_suffix(S, sn, noff, suf, suflen): i64 {
+    var i = 0;
+    var c = load8(S + 0xEC00000 + noff + i);
+    while (c != 0) {
+        if (load8(S + 0xEC00000 + sn + i) != c) { return 0; }
+        i = i + 1;
+        c = load8(S + 0xEC00000 + noff + i);
+    }
+    var j = 0;
+    while (j < suflen) {
+        if (load8(S + 0xEC00000 + sn + i + j) != load8(suf + j)) { return 0; }
+        j = j + 1;
+    }
+    # must END there — otherwise `foo_string` would match a lookup for `foo_str`.
+    if (load8(S + 0xEC00000 + sn + i + suflen) != 0) { return 0; }
+    return 1;
+}
+
+# fn index of `<name at noff><suffix>`, or -1.
+fn _findfn_noff_suffix(S, noff, suf, suflen): i64 {
+    var h = _fnv_noff_suffix(S, noff, suf, suflen);
+    var slot = h & _fnt_hash_mask;
+    var probes = 0;
+    while (probes < _fnt_cap) {
+        var stored = load32(_fnt_namehash + slot * 4);
+        if (stored == 0) { probes = _fnt_cap; }
+        else {
+            var fi = stored - 1;
+            var sn = L64(_fnt_names + fi * 8);
+            if (_name_is_noff_suffix(S, sn, noff, suf, suflen) == 1) { return fi; }
+            slot = (slot + 1) & _fnt_hash_mask;
+            probes = probes + 1;
+        }
+    }
+    return 0 - 1;
+}
+
 fn REGFN(S, noff): i64 {
     var fc = GFNC(S);
     # Grow the fn-table family the moment the count would exceed the cap (the
@@ -181,59 +260,16 @@ fn REGFN(S, noff): i64 {
             S64(_ov_tab + _ov_base_fi * 8, fc + 1);
         }
     }
-    # REVERSE direction — scan already-registered fns for any
-    # matching `<my_name>_<suffix>`. Skips when this fn IS itself a
-    # suffix variant (no point looking for variants of a variant).
+    # REVERSE direction — find any already-registered `<my_name>_<suffix>` sibling.
+    # ⚡ v6.5.42: three hash lookups, replacing a full walk of every registered fn. See
+    # `_findfn_noff_suffix` above for the measurement and the equivalence argument.
     if (_ov_kind == 0) {
-        var _rv_efi = 0;
-        while (_rv_efi < fc) {
-            var _rv_en = L64(_fnt_names + _rv_efi * 8);
-            var _rv_ep = S + 0xEC00000 + _rv_en;
-            var _rv_elen = 0;
-            while (load8(_rv_ep + _rv_elen) != 0) { _rv_elen = _rv_elen + 1; }
-            var _rv_match_prefix = 0;
-            if (_rv_elen > _ov_my_len) {
-                _rv_match_prefix = 1;
-                var _rv_i = 0;
-                while (_rv_i < _ov_my_len) {
-                    if (load8(_rv_ep + _rv_i) != load8(_ov_p + _rv_i)) { _rv_match_prefix = 0; }
-                    _rv_i = _rv_i + 1;
-                }
-            }
-            if (_rv_match_prefix == 1) {
-                if (load8(_rv_ep + _ov_my_len) == 95) {
-                    var _rv_after = _rv_elen - _ov_my_len - 1;
-                    if (_rv_after == 3) {
-                        if (load8(_rv_ep + _ov_my_len + 1) == 115) {
-                            if (load8(_rv_ep + _ov_my_len + 2) == 116) {
-                                if (load8(_rv_ep + _ov_my_len + 3) == 114) {
-                                    S64(_fnt_ovstr + fc * 8, _rv_efi + 1);
-                                }
-                            }
-                        }
-                        if (load8(_rv_ep + _ov_my_len + 1) == 105) {
-                            if (load8(_rv_ep + _ov_my_len + 2) == 110) {
-                                if (load8(_rv_ep + _ov_my_len + 3) == 116) {
-                                    S64(_fnt_ovint + fc * 8, _rv_efi + 1);
-                                }
-                            }
-                        }
-                    }
-                    if (_rv_after == 4) {
-                        if (load8(_rv_ep + _ov_my_len + 1) == 99) {
-                            if (load8(_rv_ep + _ov_my_len + 2) == 115) {
-                                if (load8(_rv_ep + _ov_my_len + 3) == 116) {
-                                    if (load8(_rv_ep + _ov_my_len + 4) == 114) {
-                                        S64(_fnt_ovcstr + fc * 8, _rv_efi + 1);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            _rv_efi = _rv_efi + 1;
-        }
+        var _rv_s = _findfn_noff_suffix(S, noff, "_str", 4);
+        if (_rv_s >= 0) { S64(_fnt_ovstr + fc * 8, _rv_s + 1); }
+        var _rv_i = _findfn_noff_suffix(S, noff, "_int", 4);
+        if (_rv_i >= 0) { S64(_fnt_ovint + fc * 8, _rv_i + 1); }
+        var _rv_c = _findfn_noff_suffix(S, noff, "_cstr", 5);
+        if (_rv_c >= 0) { S64(_fnt_ovcstr + fc * 8, _rv_c + 1); }
     }
     return fc;
 }

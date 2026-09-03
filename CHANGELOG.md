@@ -12,16 +12,18 @@ is now at FULL parity with the frozen contract — 105 numbers on both sides, 0 
 awaiting a peer.** agnos's own `syscall-abi-check.sh`, which the filing records as RED at
 `kernel 105 · abi-doc 105 · cyrius 104`, should now read 105/105/105.
 
-**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,191,504 B**, seed -> cybs -> cycc
-derivable from the 29,024 B seed, `check.sh` **220 / 0**, corpus 289/289, cross-OS on REAL
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,191,520 B**, seed -> cybs -> cycc
+derivable from the 29,024 B seed, `check.sh` **222 / 0**, corpus 289/289, cross-OS on REAL
 hardware — **ecb + ach + cass + pi, each SELFHOST_OK + crossos LIBTEST_OK**.
 
-⚠ **The bench printed `self_compile` 810 ms against `.41`'s 732, and that is the BOX, not the
-code — checked rather than assumed.** The only `src/` change this release is the generated
-version string, so cycc cannot have regressed; and an interleaved A/B of the two binaries on
-the same source gives **.41 median 810 ms, .42 median 811 ms — +1 ms (+0.1 percent) against a
-4 ms within-binary spread.** The `.41` binary is equally slow on this box today (load average
-3.48). Recorded this way rather than as a growth-tax entry because *"bench on a loaded box is
+⚠ **The bench readings this release moved for TWO different reasons and only one is real.** The
+first gate run printed `self_compile` 810 ms against `.41`'s 732; that was the BOX, checked
+rather than assumed — an interleaved A/B of the two binaries on identical source gave .41
+810 ms vs .42 811 ms, +0.1 percent against a 4 ms within-binary spread, and the `.41` binary was
+equally slow on that box. The final run reads **720 ms**. ⚠ Do not read the 810 -> 720 swing as
+this release's doing: what IS attributable is the REGFN change, A/B'd on one box in one session
+at **810 ms -> 787 ms (~3 percent)** — cycc has only 9,552 fns, so it sits far down the quadratic
+curve that the 60k fixture shows at 1.82x. `.text` **1,043,776 B**. *"Bench on a loaded box is
 not a measurement — A/B the binaries"* is a lesson this project already paid for once.
 
 ### Added — `SYS_MOUNTLIST = 104` + `sys_mountlist(buf, max)` (agnos)
@@ -77,6 +79,95 @@ offset→field. An unscoped parse reports `#0 = f_bsize` against `SYS_EXIT` and 
 measured, on this gate's first version. Anti-vacuous floors on **both** sides, because a regex
 that matches nothing reports nothing wrong and passes. agnos is a sibling repo and may be absent
 — that SKIPs loudly rather than passing quietly. Mutation-proven three ways.
+
+### Fixed — a version pin did not bind the compiler (carried from `.41`)
+
+`find_tools()` derived `cycc` from `$CYRIUS_HOME`/`$HOME` and nothing else, so
+`versions/6.5.32/bin/cyrius` resolved `~/.cyrius/bin/cycc` — the CURRENT compiler — while its
+own sibling sat right there. Proven semantically, not cosmetically: a program built through the
+6.5.32 wrapper was byte-identical to cycc 6.5.39's output and exercised 6.5.39 semantics on a
+discriminator built from the v6.5.36 enum Critical. ⚠ **v6.5.37 made this the DEFAULT path
+rather than a corner** — it fixed the pin redirect, so consumers reliably got the pinned
+*wrapper* and the *current* compiler.
+
+⚖️ **Landed as-is on the maintainer's explicit call, and the number it was decided on belongs
+here:** of 134 `cyrius.cyml` files under `~/Repos`, **128 pin something other than current**, and
+**45 pin into the 6.5.31–6.5.35 band carrying the v6.5.36 enum Critical**. Those repos were
+*accidentally protected by this very defect*; they now get the compiler they pinned, which is
+correct and is the point, but 45 may begin miscompiling large enum constants until their pins
+move. Gate axis 2 guards the opposite direction: `./build/cycc` must still win inside this repo,
+or every wrapper-driven gate silently reverts to testing the last RELEASED compiler.
+
+### Fixed — `cyrius audit` never looked at the test suite (carried from `.41`)
+
+The sweep covered `src/` and `programs/` only, so **the suite that guards the compiler was itself
+unaudited** — 290 `.tcyr`, every gate fixture, every bench. ⭐ **Three independent halves, and any
+one missing still reports a clean verdict over nothing:** the scope excluded `tests/`; the walkers
+listed each directory and nothing beneath it (the suite is two levels down); and `_aw_is_cyr`
+matched only `.cyr` — its tail scan is anchored at `len-4`, so `"foo.tcyr"` ends in `"tcyr"` and
+did not fall out of the same check.
+
+⭐ **The gate took four attempts and each failure is recorded in it**, because every one passed
+for a wrong reason: asserting "audit passes" (impossible — audit already fails by design on
+cycc's unformatted `main*.cyr` forks); grepping the whole transcript for the probe name (the match
+came from the TEST stage failing an invalid `.tcyr`, so it passed with the descent removed);
+requiring the probe to be NAMED (the fmt list caps at 20 and the widened scope surfaced ~86
+pre-existing failures). What works is a **count delta**: +1 and back.
+
+⚠ The ~86 newly-surfaced unformatted files are **not** bulk-reformatted here — that is a large
+mechanical diff over fixtures whose formatting some tests may depend on, and a separate call.
+
+### Fixed — compile time was quadratic in function count (~46 % of it)
+
+`REGFN`'s reverse overload registration walked **every already-registered fn for each new one**
+looking for a `<name>_str`/`_int`/`_cstr` sibling — quadratic by construction, ~1.8×10⁹ name
+comparisons at 60k fns. **Measured before fixing, not after:** disabling it took the 60k fixture
+43.5 s → 23.6 s, so it was **46 % of total compile time**, its share growing with the square.
+
+Replaced by three hash lookups — *exactly* equivalent, since the scan was seeking a fn whose name
+is the concatenation. ⚠ `_FINDFN_CSTR` could not be used: it is itself a linear scan, so three
+calls would have been worse. **43.6 s → 23.9 s (1.82×)**, and equivalence is verified rather than
+argued — **byte-identical output on three independently-compiled programs**, self-host fixpoint
+holds, seed-derive green.
+
+⛔ **A second quadratic contributor remains and the filing stays open**: 23.9 s for 60k functions
+is still far off linear. ⚠ And **no gate exercises a large fn count any more** — `.40` moved the
+`capacity` fixture off `fn_table` precisely because tripping it cost 2 m 17 s — so that curve is
+unobserved.
+
+### Fixed — three things the widened audit walk immediately exposed
+
+Widening the walk surfaced real defects rather than merely more files, and all three are fixed
+here rather than filed:
+
+* **`check.sh` ran a STALE suite after a `lib/` change.** Its rebuild trigger watched only
+  `programs/checks/*.cyr`, but the suite *includes* `lib/audit_walk.cyr` — so a fix to the
+  walkers produced no rebuild and the run silently exercised the old binary. Measured: the fix
+  appeared to have no effect at all, and the wrong conclusion was nearly drawn from it. Same
+  family as the swallowed compile error fixed at `.40` — the suite must not be able to run
+  against source it was not built from.
+* **Auto-generated source is now skipped.** `lib/unicode/` had never been reached before, and
+  three of its seven files are 60–157 KB of generated Unicode tables. Reformatting a generator's
+  output is meaningless — the next regeneration overwrites it, so the "fix" is guaranteed lost
+  and the warning guaranteed to return. ⚠ Keyed on the file's own `AUTO-GENERATED`
+  self-declaration, not a path or a `_` prefix: a hardcoded `lib/unicode/` skip would stop
+  covering it the day the layout moved, and a `_`-prefix rule would wrongly skip hand-written
+  internals like `_decode.cyr`.
+* **`lib/unicode/`'s own lint/fmt failures**, now that they are visible: seven over-long lines —
+  every one a banner comment whose box-drawing characters are **3 bytes each**, so it was
+  visually fine and byte-count over (the identical trap hit twice more in this release's own
+  new code) — plus an in-code deferral that had been "deferred to a later slot" with nothing
+  pointing at it. It is now tracked as a `roadmap-future` watching row rather than a new issue.
+
+### Docs — a CARRIED ledger, because the roadmap kept losing its own commitments
+
+⛔ **Twice in this arc a `.NN` block pinned four items, shipped two, and the next block was
+written fresh — so the remainder evaporated with nothing recording it had been promised.** `.38`
+pinned 4 / shipped 2; `.41` pinned 4 / shipped 2. Both drops were silent and both times a
+maintainer had to notice. The roadmap now carries an explicit **⏭ CARRIED** table with the rule
+that a reactive interrupt must *displace* an item into it, never delete it — the list is emptied
+by shipping, not by rewriting. It is empty as of this release: `.41`'s carried pair both shipped
+here.
 
 ### Filed — `test_runner_bounded` went red once under load and was NOT root-caused
 
