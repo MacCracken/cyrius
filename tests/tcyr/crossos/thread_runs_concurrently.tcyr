@@ -1,0 +1,77 @@
+# thread_runs_concurrently.tcyr — v6.5.44 (band J phase 2)
+#
+# ⛔ WHY THIS FILE EXISTS. Every other concurrency test in this directory passed on macOS for
+# four minors while thread bodies ran INLINE. A serial backend satisfies "the worker ran",
+# "join returned 0", "the count is exact" and "the mutex excludes" — all of them, honestly.
+# So the corpus could not tell a real thread from an inline call, and the roadmap's own
+# acceptance criterion ("un-guard four crossos tests") was satisfied at v6.5.41 by deleting
+# stale guards, one of which was the TAUTOLOGY `assert_eq(_cm_counter, _cm_counter)`, without
+# changing one line of backend behaviour.
+#
+# This test is the discriminator. The worker waits for a flag that the parent can only set
+# AFTER thread_create returns. Under a serial backend the body runs to completion INSIDE
+# thread_create, so the flag is still 0, the bounded spin expires and the rendezvous fails.
+# Under a real backend the worker parks, the parent releases it, and both sides make progress —
+# which is only possible if two things are running at once.
+#
+# ⚠ GUARDED BY CAPABILITY, NOT BY TARGET NAME AND NOT BY ERRNO (the v6.5.36 lesson).
+# `THREADS_CONCURRENT` is published by each backend: 1 for Linux clone threads and arm64-macOS
+# pthread threads, 0 for the three serial peers (x86-macOS, Windows, agnos). Guarding on the
+# capability means this file starts asserting automatically the day another peer becomes real,
+# instead of needing someone to remember to un-guard it.
+#
+# ⚠ THE SPIN IS BOUNDED so a serial target FAILS rather than HANGS. A hang in the cross-OS leg
+# takes down the release gate instead of reddening one test, which is a strictly worse signal.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/thread.cyr"
+
+# Top-level array: `var x[N]` at top level is N*8 BYTES-worth of i64 slots (v6.4.10).
+# [0] = release flag (parent -> worker) · [1] = ack (worker -> parent) · [2] = timed-out marker
+var _rv_cell[4];
+
+fn _rv_worker(arg): i64 {
+    var i = 0;
+    while (i < 400000000) {
+        if (load64(arg) == 1) {
+            store64(arg + 8, 1);       # acknowledge: we saw a flag set after our creation
+            return 0;
+        }
+        i = i + 1;
+    }
+    store64(arg + 16, 1);              # record WHY we failed, so a red run is diagnosable
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    if (THREADS_CONCURRENT == 1) {
+        store64(&_rv_cell, 0);
+        store64(&_rv_cell + 8, 0);
+        store64(&_rv_cell + 16, 0);
+
+        var t = thread_create(&_rv_worker, &_rv_cell);
+        assert_neq(t, 0, "thread_create returns a handle");
+
+        # The worker cannot have finished — it is waiting on a flag only we can set, and we
+        # have not set it yet. This store is the whole experiment.
+        store64(&_rv_cell, 1);
+        assert_eq(thread_join(t), 0, "thread_join returns 0");
+
+        assert_eq(load64(&_rv_cell + 16), 0, "the worker did not exhaust its spin");
+        assert_eq(load64(&_rv_cell + 8), 1,
+                  "the worker observed a flag set AFTER thread_create — it ran CONCURRENTLY");
+    }
+
+    # Every target reaches here, including the serial peers, so the file exits 0 everywhere.
+    assert_eq(1, 1, "thread concurrency probe completed");
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

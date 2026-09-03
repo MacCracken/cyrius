@@ -1005,6 +1005,24 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         #   syscall(1, fd, buf, len) → __got[1] = libSystem._write  (v5.5.14)
         #   syscall(60, code)        → __got[0] = libSystem._exit   (v5.5.13)
         if (_TARGET_MACHO == 2) {
+            # v6.5.44 (band J phase 2): syscall(1700, &tid, attr, &start, arg) → __got[5]
+            # libSystem `pthread_create`. This is the arm64-macOS thread primitive, and it is
+            # here rather than in ESYSXLAT because pthread_create is NOT A SYSCALL — the
+            # ≥1000 alias band so far has meant "1000 + the native BSD number", which cannot
+            # spell a libSystem routine. 1700+ is therefore a distinct sub-band meaning
+            # "__got-bound libSystem function"; do not read 1700 as BSD 700.
+            # ⛔ bsdthread_create is NOT usable here even though v6.5.43 routed it:
+            # bsdthread_register is one-shot per process and libpthread takes it first in any
+            # binary linking libSystem, which every cyrius arm64 Mach-O does. Measured EINVAL
+            # on real ecb. The v6.5.43 routes remain correct and are what x86-macOS (a static
+            # no-libSystem binary, where registration DOES work) will use.
+            if (sc_num == 1700) {
+                if (argc == 5) {
+                    EMACHO_PTHREAD_CREATE_ARM(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
             if (sc_num == 60) {
                 if (argc == 2) {
                     EMACHO_EXIT_ARM(S);

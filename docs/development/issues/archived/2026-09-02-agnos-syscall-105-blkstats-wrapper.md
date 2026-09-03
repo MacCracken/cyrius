@@ -1,6 +1,6 @@
 # `#105 blkstats` — an AGNOS syscall peer for per-device disk I/O counters
 
-**Status:** 🟠 **OPEN — kernel arm SHIPPED; the cyrius peer is the only missing half.**
+**Status:** ✅ **RESOLVED in cyrius 6.5.44** (was: 🟠 OPEN — kernel arm SHIPPED; the cyrius peer is the only missing half.**
 **Ask:** add `SYS_BLKSTATS = 105` + `fn sys_blkstats(tag, field)` to `lib/syscalls_x86_64_agnos.cyr`.
 **Placement:** 6.x — one enum row and one wrapper. Same shape as `#104 mountlist` (which you shipped in
 6.5.43 the same day it was filed — thank you, that closed inside a single agnos cut).

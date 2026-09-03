@@ -1273,6 +1273,7 @@ fn _macho_arm_routes(n): i64 {
     if (n == 215) { return 1; }  if (n == 217) { return 1; }  # munmap(a64) / getdents64(x86)
     if (n == 220) { return 1; }  if (n == 221) { return 1; }  # clone→fork / execve(a64)
     if (n == 222) { return 1; }  if (n == 226) { return 1; }  # mmap(a64) / mprotect(a64)
+    if (n == 1700) { return 1; }  # → EMACHO_PTHREAD_CREATE_ARM (__got[5]); NOT a syscall
     if (n == 228) { return 1; }  if (n == 260) { return 1; }  # clock_gettime(__got) / wait4
     if (n == 278) { return 1; }  if (n == 318) { return 1; }  # getrandom(a64/x86)→getentropy 500 (v6.0.75)
     if (n == 1054) { return 1; }                               # fchownat private alias →468 (v6.5.7)
@@ -1453,6 +1454,40 @@ fn EMACHO_CLOCK_X86(S): i64 {
 
 # v6.5.16 aarch64 stub for EMACHO_NANOSLEEP_X86 — same link-only reason as above.
 fn EMACHO_NANOSLEEP_X86(S): i64 {
+    return 0;
+}
+
+# v6.5.44 (band J phase 2) — arm64-macOS `syscall(1700, &tid, attr, &start, arg)` →
+# libSystem `pthread_create` through __got[5].
+#
+# ⛔ WHY NOT bsdthread_create, WHICH IS WHAT THE ROADMAP PINNED. `bsdthread_register` is
+# ONE-SHOT PER PROCESS, and cyrius's arm64 Mach-O output is a dyld/LC_MAIN PIE that links
+# /usr/lib/libSystem.B.dylib — so libpthread's initializer has ALREADY spent the registration
+# before any cyrius code runs, and a second call returns EINVAL. Measured from a REAL
+# cyrius-compiled binary on ecb (exit 22), not inferred. Going raw would also mean building a
+# pthread_t by hand against libpthread INTERNALS (sig@0x00 behind a per-process ptr_munge
+# cookie, fun@0x90, arg@0x98, tsd@0xE0, a PAC modifier) — none of it stable ABI. The x86-macOS
+# writer emits a static LC_UNIXTHREAD binary with no libSystem, where registration DOES work,
+# which is exactly why the two Mach-O targets need different designs and why this arm is
+# arm64-only. The v6.5.43 bsdthread routes stay: they are what that backend will use.
+#
+# ⭐ __got[5] HAS BEEN BOUND TO _pthread_create SINCE v5.6.6 AND NEVER USED. Nothing about the
+# Mach-O writer changes here — no new symbol, no GOT growth, no bind-opcode arithmetic.
+#
+# No trampoline is needed: a Darwin start routine is `void *(*)(void *)`, which is exactly the
+# shape of a cyrius `fn body(arg): i64` — arg 1 in x0, result in x0, stock AAPCS64 prologue.
+#
+# Stack top-down (argc==5): [arg][start][attr][tid][sc_num]. AAPCS64 wants x0=&tid, x1=attr,
+# x2=start, x3=arg, so pop top→x3 and work down, then discard sc_num. Every encoding below was
+# produced by `aarch64-linux-gnu-as`, not derived by hand — at v6.5.43 a hand-derived `cmp`
+# in this very file came out wrong and only the assembler caught it.
+fn EMACHO_PTHREAD_CREATE_ARM(S): i64 {
+    EPOPARG(S, 3);                 # ldr x3, [sp], #16 — arg
+    EPOPARG(S, 2);                 # ldr x2, [sp], #16 — start routine
+    EPOPARG(S, 1);                 # ldr x1, [sp], #16 — attr (0 = default)
+    EPOPARG(S, 0);                 # ldr x0, [sp], #16 — &pthread_t out
+    EW(S, 0x910043FF);             # add sp, sp, #16 — discard sc_num
+    _EMACHO_BLR_GOT(S, 5);         # __got[5] = _pthread_create; returns 0 / errno in x0
     return 0;
 }
 

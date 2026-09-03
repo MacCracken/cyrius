@@ -44,9 +44,19 @@ for f in lib/thread_macos.cyr lib/thread_agnos.cyr; do
     # ── axis 2: the loops are bounded by the CONSTANT, never a literal ─────────────
     # This is the half that actually broke. A literal bound silently under-copies instead of
     # overflowing, so it produces wrong data rather than a crash — invisible to axis 1.
+    # ⚠ v6.5.44: this asserted `-eq 2` — the MECHANISM (save + restore, and nothing else)
+    # rather than the PROPERTY (no TLS loop is bounded by a literal). Band J phase 2 adds a
+    # THIRD correctly-bounded loop to lib/thread_macos.cyr — zeroing a fresh per-thread block
+    # for a real Darwin thread — and the gate went red on a change that strengthens exactly
+    # what it protects. A gate that pins the mechanism fails good changes and, worse, passes
+    # bad ones that keep the shape (v6.5.36's enum gate stayed green through five bad releases
+    # for precisely this reason). So: at least the save+restore pair, and ZERO literal bounds.
     LOOPS=$(grep -cE 'while \(i < TLOCAL_MAX_SLOTS\) \{' "$ROOT/$f" || true)
-    [ "$LOOPS" -eq 2 ] \
-        || fail "$f: expected 2 loops bounded by TLOCAL_MAX_SLOTS (save + restore), found $LOOPS — a literal bound here under-copies silently and leaks the caller's high slots"
+    [ "$LOOPS" -ge 2 ] \
+        || fail "$f: expected at least 2 loops bounded by TLOCAL_MAX_SLOTS (save + restore), found $LOOPS"
+    LIT=$(grep -cE 'while \(i < [0-9]+\) \{' "$ROOT/$f" || true)
+    [ "$LIT" -eq 0 ] \
+        || fail "$f: found $LIT TLS loop(s) bounded by a numeric LITERAL — that is the v6.5.39 defect exactly (the window was 16 while TLOCAL_MAX_SLOTS was 128), and it under-copies silently rather than overflowing"
 done
 
 # ── axis 3: the backing arrays cover the range too ─────────────────────────────────
@@ -58,6 +68,22 @@ for pair in "_tlocal_macos:lib/thread_local.cyr" "_tlocal_agnos:lib/thread_local
     [ -n "$N" ] || fail "$FILE: could not find the '$NAME[N]' backing array"
     [ "$N" -ge "$MAX" ] \
         || fail "$FILE: $NAME is [$N] but TLOCAL_MAX_SLOTS is $MAX — slot stores past $((N - 1)) run off the end of the process-global array"
+done
+
+# ── axis 4 (v6.5.44): the arm64-macOS REAL-thread path must NOT snapshot ──────────
+# Snapshot/zero/restore emulates isolation around an INLINE call. Once thread_create actually
+# spawns, that same code is a RACE on the caller's own slots — it is not merely redundant, it
+# is wrong. Real isolation comes from a genuinely separate per-thread block, so the arm64
+# branch must contain no `var save:` and the accessors must route through `_tlocal_base()`
+# rather than addressing the process-global array directly.
+ARM=$(awk '/^#ifdef CYRIUS_ARCH_AARCH64$/{a=1} /^#endif$/{a=0} a' "$ROOT/lib/thread_macos.cyr")
+printf '%s' "$ARM" | grep -q 'fn thread_create' \
+    || fail "lib/thread_macos.cyr: could not find thread_create inside the CYRIUS_ARCH_AARCH64 branch — the gate is reading nothing"
+printf '%s' "$ARM" | grep -q 'var save:' \
+    && fail "lib/thread_macos.cyr: the arm64 real-thread path still snapshots TLS — with a real thread that is a race on the CALLER's slots, not isolation"
+for fn in thread_local_get thread_local_set; do
+    grep -A6 "^fn $fn" "$ROOT/lib/thread_local.cyr" | grep -q '_tlocal_base()' \
+        || fail "lib/thread_local.cyr: $fn does not go through _tlocal_base() — every thread would share one slot array"
 done
 
 echo "PASS: tls_window_matches_max_slots (TLOCAL_MAX_SLOTS=$MAX; both serial peers save the full range and are bounded by the constant)"

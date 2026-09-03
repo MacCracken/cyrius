@@ -1047,6 +1047,7 @@ fn EMACHO_SYSXLAT(S): i64 {
 # chain above and reaches Darwin UNCLASSED, which is a SIGSYS at runtime — so parse_expr warns on
 # it, exactly as it has warned on the ARM side since v5.5.15. Until this release the x86 half had
 # NO such diagnostic: `ioctl` sat unrouted here and was found only at v6.5.36, by inspection.
+fn EMACHO_PTHREAD_CREATE_ARM(S): i64 { return 0; }   # v6.5.44: arm64-macOS only; parse_expr references it in every fork.
 fn _macho_x86_routes(n): i64 {
     if (n < 0) { return 1; }
     # Rerouted in parse_expr BEFORE the number ever reaches this chain, so they are routed

@@ -219,6 +219,15 @@ cut -d' ' -f1 "$TMP/arm_routes" | sort -n -u > "$TMP/arm_sources"
 # 228 is registered on purpose and is NOT an ESYSXLAT row: macOS-arm64 serves clock_gettime
 # through the __got bind to libSystem _clock_gettime_nsec_np (EMACHO_CLOCK_ARM), not a renumber.
 echo 228 >> "$TMP/arm_sources"
+# v6.5.44: 1700 is the same shape — arm64-macOS threading goes through the __got bind to
+# libSystem _pthread_create (EMACHO_PTHREAD_CREATE_ARM, __got[5]), handled in parse_expr before
+# the number ever reaches ESYSXLAT. It is DELIBERATELY not a renumber: bsdthread_create IS
+# routed (v6.5.43, 1360->360) and still unusable here, because bsdthread_register is one-shot
+# per process and libpthread — which every cyrius arm64 Mach-O links — spends it first
+# (measured EINVAL, exit 22, on real ecb). 1700+ is the "__got-bound libSystem routine"
+# sub-band; do not read it as BSD 700. Pinned by macos_arm64_real_threads.sh, which re-derives
+# the GOT slot from the Mach-O writer's bind ORDER.
+echo 1700 >> "$TMP/arm_sources"
 sort -n -u "$TMP/arm_sources" -o "$TMP/arm_sources"
 missing=$(comm -23 "$TMP/arm_sources" "$TMP/registered" | tr '\n' ' ')
 extra=$(comm -13 "$TMP/arm_sources" "$TMP/registered" | tr '\n' ' ')

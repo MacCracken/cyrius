@@ -4,6 +4,124 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.44] — 2026-09-02
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,776 B**, seed → cybs → cycc
+derivable from the 29,024 B seed, `check.sh` **226 / 0**, cross-OS on REAL hardware — **ecb +
+ach + cass + pi**, each `SELFHOST_OK` + crossos `LIBTEST_OK`. Bench `self_compile` **740 ms**
+(`.43` 715 ms — a 25 ms spread on a ~730 ms figure, i.e. the box, not the build: this release
+adds **zero** bytes to the compiler on the Linux path). `cycc` **1,195,776 B — unchanged from
+`.43`**; `.text` **1,045,096 B, +160** for the one new arm64 emitter and its route row. The
+threading work is entirely in `lib/`, which cycc does not include.
+
+⚠ **Three check failures were mine and all three are worth recording, because two were caused by
+the tooling behaving exactly as documented and one by my own scripted edit.** (1) `1700` was
+registered in `_macho_arm_routes` with no `EMACHO_SYSXLAT` row — correct, since it is a
+`parse_expr` `__got` reroute like `228`; it takes that gate's *explicit reason-carrying
+exemption*, and the exemption was mutation-checked to confirm an **unexplained** dead route still
+fails. (2) Four `lib/*.cyr` fns went undocumented because a **blank line between a doc comment
+and its `fn` de-documents it** — `cyrdoc` requires adjacency, and my inserted declaration landed
+in the gap. (3) Two lint warnings for lines "over 120 characters" that were 86 glyphs long: they
+were `═` box-drawing separators, **3 bytes each**, and lint counts BYTES. Same
+bytes-versus-glyphs trap this project already carries a rule about for declared string lengths.
+
+**Band J phase 2 — arm64-macOS gets REAL threads, and the mechanism the roadmap pinned turned
+out to be a dead end.** macOS threading has been correct-but-serial since v6.5.11: bodies ran
+INLINE, so a consumer using threads for throughput got right answers, one at a time. This
+release makes them genuinely concurrent on Apple Silicon, adds a blocking `__ulock` mutex, and
+gives each thread its own thread-local storage.
+
+- ⛔ **`bsdthread_register` cannot work here, and that is measured rather than argued.**
+  Registration is **one-shot per process**, and cyrius's arm64 Mach-O output is a dyld/LC_MAIN
+  PIE that links `/usr/lib/libSystem.B.dylib` — so libpthread's initializer spends it before any
+  cyrius code runs. A real cyrius-compiled binary on ecb gets **EINVAL (exit 22)**. Going raw
+  anyway would mean hand-building a `pthread_t` against libpthread INTERNALS (`sig@0x00` behind
+  a per-process ptr_munge cookie, `fun@0x90`, `arg@0x98`, `tsd@0xE0`, a PAC modifier) — none of
+  it stable ABI. **The v6.5.43 bsdthread routes are neither wrong nor removed**: they are what
+  x86-macOS — a static `LC_UNIXTHREAD` binary with no libSystem, where registration *does* work
+  — will use when its own backend is written.
+- ⭐ **The route that does work was already there.** `__got[5]` has been bound to
+  `_pthread_create` since **v5.6.6 and never used**, so nothing in the Mach-O writer changes:
+  no new symbol, no GOT growth, no bind-opcode arithmetic. `syscall(1700, &tid, attr, &start,
+  arg)` lowers to it via the existing `_EMACHO_BLR_GOT`. **1700+ is a new sub-band meaning
+  "__got-bound libSystem routine"** — the ≥1000 band so far has meant "1000 + the native BSD
+  number", which cannot spell a function that is not a syscall.
+- **No trampoline is needed.** A Darwin start routine is `void *(*)(void *)`, which is exactly
+  the shape of a cyrius `fn body(arg): i64` — arg 1 in x0, result in x0, stock AAPCS64 prologue.
+- **`thread_join` blocks** on a done-word via `__ulock_wait` (Darwin has no
+  `CLONE_CHILD_CLEARTID`), one load per iteration, with the load as the loop predicate so the
+  finish-between-test-and-park race resolves to an immediate mismatch return rather than a lost
+  wakeup.
+
+**A blocking mutex, replacing the busy-wait spinlock** — the same 3-state Drepper machine as the
+Linux futex lock, so the uncontended path is still one CAS and no syscall. `MUTEX_SIZE` stays 8,
+so this is **not** a heap-layout change and needs no two-step bootstrap. ⚠ The old header said a
+blocking lock was impossible "until the backend routes a Darwin sync syscall" — v6.5.43 routed
+exactly that, and **a stale "not possible yet" comment is how a capability stays unbuilt after
+it became buildable.** Four measured ways `__ulock` differs from futex, each of which would
+break a transliteration silently: the **argument order is swapped** (operation first, then
+address); **success returns a positive waiter count**, so the error test is `r < 0` and never
+`r != 0`; a **value mismatch returns 0, not -EAGAIN**; and **wake-with-nobody-parked returns
+-ENOENT**, which is the normal unlock race and must be ignored.
+
+**Per-thread thread-local storage on arm64-macOS.** `lib/thread_local.cyr` backed every macOS
+slot with ONE process-global array, justified by a comment reading *"cyrius threads don't run on
+macOS ... so a process-global slot store is race-free."* That premise expires in this release,
+and without the rework every worker would have shared sigil's crypto bank and patra's SQL
+scratch — the v6.3.x data-corruption class, on purpose. Threads are now keyed on **TPIDRRO_EL0**,
+read via a 4-byte inline-asm tail. ⚠ The encoding is **`0xD53BD060`**, assembler-verified — a
+hand-derivation yields `0xD53BD040`, which is `tpidr_el0`, a different register.
+
+⭐ **The corpus could not tell a real thread from an inline call, so this release adds the test
+that can.** All six existing concurrency tests passed on macOS for four minors while bodies ran
+serially — a serial backend honestly satisfies "the worker ran", "join returned 0", "the count
+is exact" and "the mutex excludes". The roadmap's own acceptance criterion ("un-guard four
+crossos tests") was satisfied at v6.5.41 by deleting stale guards, one of them the **tautology**
+`assert_eq(_cm_counter, _cm_counter)`, without changing one line of backend behaviour.
+`tests/tcyr/crossos/thread_runs_concurrently.tcyr` is the discriminator: the worker waits for a
+flag the parent can only set *after* `thread_create` returns, which an inline backend cannot
+satisfy. **Mutation-proven on real ecb** — against the pre-`.44` serial backend it fails both
+concurrency assertions; against this one it passes 5/5. It is guarded on a new capability,
+`THREADS_CONCURRENT`, published by all four backends (1 for Linux clone threads and arm64-macOS,
+0 for the three serial peers), so it starts asserting automatically the day another peer becomes
+real rather than waiting for someone to remember.
+
+**Both agnos items, closed the day they were filed.**
+
+- **`#105 blkstats`** — `SYS_BLKSTATS = 105` + `fn sys_blkstats(tag, field)`, per-device
+  cumulative disk sectors. agnos's `syscall-abi-check.sh` should return to
+  `106 / 106 / 106`; the peer is back at **full parity, 0 disagreements, 0 awaiting a peer**.
+- **`#61 net_config` fields 8..11** — the documented range said `4..7` while the kernel answered
+  `4..11`. No wrapper change was needed to *reach* them, which is exactly why nothing forced the
+  cyrius side to notice: `#61` passes an arbitrary field id through, so agnos extends it instead
+  of minting numbers and the fields ship with no toolchain release. ⚠ **A stale range is how a
+  consumer concludes a capability is absent and writes a workaround for something that already
+  works** — agnos's tracker has two such cases in one week, one of which carried a phantom
+  blocker for five releases. Named accessors added for all four, because this file's doctrine is
+  that consumers never call a bare `syscall(61, ...)`: on Linux #61 is `wait4`.
+- ⭐ **New gate for a class the number-level ABI gate structurally cannot see.**
+  `agnos_abi_doc_parity.sh` compares syscall NUMBERS and was green throughout, because no number
+  was wrong. `agnos_net_config_field_parity.sh` compares the FIELD SELECTORS inside one syscall.
+
+**Gate work.** Three gates added or strengthened, all mutation-proven:
+`macos_arm64_real_threads` (six ways — including a GOT-slot swap and a symbol reorder, since
+axis 3 re-derives the slot index from the Mach-O writer's bind ORDER and nothing else in the
+tree couples those two facts); `agnos_net_config_field_parity` (four ways); and
+`tls_window_matches_max_slots`, which **went red on a change that strengthens exactly what it
+protects** — it asserted "exactly 2 TLS loops", the MECHANISM, and band J adds a third correctly
+bounded one. It now pins the PROPERTY (no loop bounded by a literal — the v6.5.39 defect shape)
+plus a new axis: the real-thread path must contain no TLS snapshot, because snapshot/restore
+around a *concurrent* body is a race on the caller's own slots rather than isolation.
+
+⚖️ **Scope stated plainly, both halves.** x86-macOS keeps the serial fallback — its writer emits
+a static no-libSystem binary, so `pthread_create` is unreachable there and its real backend is
+separate work. And `thread_create_detached` on arm64 creates a JOINABLE pthread that is never
+joined, so libpthread retains its stack until process exit: the behaviour is correct, the
+resource is retained. Making it truly detached needs `_pthread_detach` bound into `__got`, which
+means growing `GOT_SIZE` and the parallel symtab/bind/indirect-symtab tables in the Mach-O
+writer — a writer change with its own verification surface, deliberately not bundled into the
+release that first makes threads real.
+
 ## [6.5.43] — 2026-09-02
 
 **Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,776 B**, seed → cybs → cycc

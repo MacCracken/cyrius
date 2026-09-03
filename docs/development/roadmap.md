@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.43** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.44** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -697,7 +697,7 @@ ran 86 releases and 6.5.x is expected in the same class.
 > |---|---|---|
 > | *(empty)* | — | `.41`'s carried pair — `versioned-wrapper-does-not-pin-cycc` and `audit-scope-excludes-tests` — both shipped at `.42`. |
 >
-> ### ▶ NEXT: `.44` — band J phase 2, the thread itself (`.43` phase 1 SHIPPED)
+> ### ▶ NEXT: band K — the closeout band (band J COMPLETE: `.43` phase 1 + `.44` phase 2)
 >
 > **`.41` and `.42` both shipped and this pointer said `.41` until 2026-09-02.** `.41` drained the
 > queue (6 archived) and `.42` shipped the agnos `#104` peer plus BOTH of `.41`'s carried items —
@@ -731,10 +731,24 @@ ran 86 releases and 6.5.x is expected in the same class.
 >    a missing route was silent at compile time and SIGSYS at runtime), and both diagnostics now
 >    NAME the number. That immediately surfaced a latent NULL deref on Intel-Mac in
 >    `_prof_clock_ns()`. See CHANGELOG [6.5.43].
-> 2. **`.44` — the thread itself. ← THIS IS THE OPEN ONE.** `bsdthread_register` trampoline, stack mmap, real
->    create/join, `__ulock` mutex. ⚠ This is NOT a "call the syscall" job: the new thread enters
->    the REGISTERED trampoline rather than `func`, with a Darwin-specific register layout.
->
+> 2. ~~**`.44` — the thread itself.**~~ ✅ **SHIPPED, with the MECHANISM CORRECTED.** This block
+>    pinned "`bsdthread_register` trampoline, stack mmap, real create/join, `__ulock` mutex".
+>    ⛔ **The bsdthread route is a dead end on the very target band J names**, and it is measured,
+>    not argued: registration is ONE-SHOT PER PROCESS and cyrius's arm64 Mach-O is a dyld/LC_MAIN
+>    PIE linking libSystem, so libpthread spends it first — a real cyrius binary on ecb gets
+>    **EINVAL (exit 22)**. ⭐ The route that works needed no new machinery: **`__got[5]` has been
+>    bound to `_pthread_create` since v5.6.6 and never used**, so no GOT growth, no bind-opcode
+>    arithmetic, and no trampoline (a Darwin start routine is `void *(*)(void *)` = a cyrius
+>    `fn body(arg): i64`). No stack mmap either — pthread allocates it. The v6.5.43 bsdthread
+>    routes are neither wrong nor removed: they are what **x86-macOS** (a static no-libSystem
+>    binary where registration *does* work) will use when its backend is written.
+>    Shipped: real create/join, blocking `__ulock` mutex (3-state, `MUTEX_SIZE` unchanged so no
+>    two-step bootstrap), per-thread TLS keyed on `TPIDRRO_EL0`.
+>    ⭐ **And the test that proves it.** The corpus could not tell a real thread from an inline
+>    call — all six concurrency tests passed serially for four minors. `thread_runs_concurrently`
+>    is the discriminator, guarded on a new published capability `THREADS_CONCURRENT`, and
+>    **mutation-proven on real ecb against the pre-`.44` serial backend**.
+
 > ⚠ **ecb caveat, budgeted in advance:** unsigned arm64 binaries are SIGKILLed by AMFI, which
 > reads exactly like a miscompile. Do not spend a cycle triaging that as a codegen bug.
 >

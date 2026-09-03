@@ -1,6 +1,6 @@
 # `sys_net_config` #61 — the documented field range is now stale (agnos added 8..11)
 
-**Status:** 🟠 **OPEN — comment/doc only. No code change to the wrapper itself.**
+**Status:** ✅ **RESOLVED in cyrius 6.5.44** (was: 🟠 OPEN — comment/doc only. No code change to the wrapper itself.**
 **Ask:** update two comments in `lib/syscalls_x86_64_agnos.cyr` that state `#61`'s valid field range.
 **Placement:** 6.x — documentation sync.
 **Reporter:** agnos (kernel), agnos **1.56.59**.

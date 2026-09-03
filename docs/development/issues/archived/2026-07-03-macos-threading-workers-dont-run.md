@@ -1,5 +1,34 @@
 # macOS/arm64: `thread_create` does not run the worker (threading broken on ecb)
 
+> ## ✅ CLOSED at v6.5.44 — arm64-macOS threads are REAL, and it is PROVEN rather than asserted.
+>
+> Band J phase 2 shipped: `thread_create` spawns a genuine Darwin thread via libSystem
+> `pthread_create` through `__got[5]`, `thread_join` blocks on a done-word via `__ulock_wait`,
+> `lib/sync_macos.cyr` is a blocking 3-state `__ulock` lock instead of a spinlock, and each
+> thread gets its own thread-local block keyed on `TPIDRRO_EL0`.
+>
+> ⛔ **The mechanism this file and the roadmap both named — `bsdthread_create`/`bsdthread_register`
+> — is a DEAD END on arm64-macOS, measured not argued.** Registration is one-shot per process and
+> cyrius's arm64 Mach-O links libSystem, so libpthread spends it first: a real cyrius binary on
+> ecb gets EINVAL (exit 22). The v6.5.43 bsdthread routes remain correct and are what x86-macOS,
+> a static no-libSystem binary where registration *does* work, will use.
+>
+> ⭐ **This file's own history is why the close is stated with a discriminating test rather than a
+> green corpus.** Its acceptance criterion ("un-guard four crossos tests") was satisfiable WITHOUT
+> writing the feature, and at v6.5.41 it effectively was: stale guards were deleted — one of them
+> the tautology `assert_eq(_cm_counter, _cm_counter)` — and everything went green having changed
+> zero lines of backend behaviour. All six concurrency tests passed serially for four minors,
+> because a serial backend honestly satisfies "the worker ran", "join returned 0", "the count is
+> exact" and "the mutex excluded".
+> `tests/tcyr/crossos/thread_runs_concurrently.tcyr` is the test that CANNOT pass serially: the
+> worker waits for a flag the parent can only set after `thread_create` returns. Mutation-proven
+> on real ecb — 5/5 against this backend, 2 failures against the pre-`.44` serial one.
+>
+> ⚖️ **Remaining, stated rather than hidden:** x86-macOS keeps the serial fallback (its writer
+> emits a static no-libSystem binary), and `thread_create_detached` creates a joinable pthread
+> that is never joined, so libpthread retains its stack until process exit — correct behaviour,
+> retained resource; truly detaching it needs `_pthread_detach` bound into `__got`.
+
 > ## ✅ v6.5.11 — THE FILED SYMPTOM IS FIXED. The worker now runs.
 >
 > `lib/thread_macos.cyr` now exists: macOS routes to a **serial fallback**, exactly as Windows
