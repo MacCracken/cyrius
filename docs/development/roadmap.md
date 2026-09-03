@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.42** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.43** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -697,7 +697,50 @@ ran 86 releases and 6.5.x is expected in the same class.
 > |---|---|---|
 > | *(empty)* | — | `.41`'s carried pair — `versioned-wrapper-does-not-pin-cycc` and `audit-scope-excludes-tests` — both shipped at `.42`. |
 >
-> ### ▶ NEXT: `.41` — queue drain + consumer-facing tooling
+> ### ▶ NEXT: `.44` — band J phase 2, the thread itself (`.43` phase 1 SHIPPED)
+>
+> **`.41` and `.42` both shipped and this pointer said `.41` until 2026-09-02.** `.41` drained the
+> queue (6 archived) and `.42` shipped the agnos `#104` peer plus BOTH of `.41`'s carried items —
+> the CARRIED ledger above is empty. Open queue is 9 + 2, the leanest of the arc.
+>
+> **Band J was 0 % done at slot entry — re-verified 2026-09-02 against live code, not against its
+> own row:** `grep 'bsdthread\|__ulock' src/` returned **0**, and all 9 hits in `lib/` were
+> COMMENTS with zero call sites. **Phase 1 (`.43`) changed the routing half of that.** Still
+> untouched and the whole of `.44`: `lib/sync_macos.cyr` is a 33-line `atomic_cas` spinlock with
+> no kernel wait, and `lib/thread_macos.cyr` runs bodies INLINE.
+>
+> ⚠ **ITS STATED ACCEPTANCE CRITERION NO LONGER DISCRIMINATES — do not code to it.** "Un-guard
+> four crossos tests" was satisfied at `.42` by removing stale guards (one of which was a
+> TAUTOLOGY), which changed no concurrency behaviour whatsoever. The real acceptance is a REAL
+> Darwin thread: `thread_create` must run its body on a second thread and `mutex_lock` must park
+> in the kernel.
+>
+> **PHASES DECLARED UP FRONT** (per cycle-discipline: an arc is scoped at planning time; a
+> mid-execution split is a deferral wearing a plan's clothes):
+> 1. ~~**`.43` — routing + peers.**~~ ✅ **SHIPPED.** All five routed on BOTH Mach-O backends in
+>    one bite (1360→360, 1361→361, 1366→366, 1515→515, 1516→516), peer wrappers in both syscall
+>    peers, `tests/tcyr/crossos/darwin_concurrency_routes.tcyr`. Verified on REAL ecb + ach: an
+>    include-free probe warns **5 times** pre-`.43` and **0** after, runtime rc=42 on both,
+>    crossos 3/3 on each. `macho_route_parity.sh` already covers the new routes by capability
+>    (mutation-verified three ways), so no duplicate gate was added.
+>    ⚠ **The hand-derived aarch64 encodings were WRONG** (`cmp x8,#1360` computed as
+>    `0xF115511F`; the assembler says `0xF115411F`) — a static gate would have passed both, which
+>    is why the acceptance is a crossos file that RUNS.
+>    ⭐ **Scope grew by two REAL fixes found while verifying, both landed, neither filed:** the
+>    x86 Mach-O backend had **no unrouted-syscall diagnostic at all** (ARM-only since v5.5.15, so
+>    a missing route was silent at compile time and SIGSYS at runtime), and both diagnostics now
+>    NAME the number. That immediately surfaced a latent NULL deref on Intel-Mac in
+>    `_prof_clock_ns()`. See CHANGELOG [6.5.43].
+> 2. **`.44` — the thread itself. ← THIS IS THE OPEN ONE.** `bsdthread_register` trampoline, stack mmap, real
+>    create/join, `__ulock` mutex. ⚠ This is NOT a "call the syscall" job: the new thread enters
+>    the REGISTERED trampoline rather than `func`, with a Darwin-specific register layout.
+>
+> ⚠ **ecb caveat, budgeted in advance:** unsigned arm64 binaries are SIGKILLed by AMFI, which
+> reads exactly like a miscompile. Do not spend a cycle triaging that as a codegen bug.
+>
+> ⭐ **Band K (closeout) follows J**, and the minor closes on it.
+>
+
 >
 > **`.38`, `.39` and `.40` all shipped; this pointer said `.38` until 2026-09-02.** What that
 > block pinned is now done: f64v4 ymm and `private`-at-insertion shipped at `.38`, the `deps`

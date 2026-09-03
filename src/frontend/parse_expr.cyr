@@ -943,6 +943,23 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # to build something that would have worked. v5.5.17 pins the
         # follow-up that adds ESYSXLAT translations or `__got` reroutes
         # for specific syscalls the tools actually exercise.
+        # v6.5.43: the x86 Mach-O half of the same check. _TARGET_MACHO==1 had NO unrouted
+        # diagnostic at all, so a missing _msx row was silent at compile time and a SIGSYS at
+        # runtime — the shape that let `ioctl` sit unrouted until v6.5.36 and that
+        # macho_route_parity.sh exists to catch. Same wording, same single source of truth
+        # (_macho_x86_routes replays EMACHO_SYSXLAT's own rows in query mode).
+        if (_TARGET_MACHO == 1) {
+            if (sc_num >= 0) {
+                var sx_ok = _macho_x86_routes(sc_num);
+                if (sx_ok == 0) {
+                    syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+                    PRNUM(sc_num);
+                    syscall(SYS_WRITE, 2,
+                    " not routed by the Mach-O x86 translation (EMACHO_SYSXLAT); will SIGSYS on macOS. Add an _msx row or use a stdlib wrapper.\n",
+                    123);
+                }
+            }
+        }
         if (_TARGET_MACHO == 2) {
             if (sc_num >= 0) {
                 # v6.0.65: query the single source of truth (_macho_arm_routes,
@@ -951,9 +968,15 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # 0,1,2,3,9,10,11,60,228 while ESYSXLAT routes ~40, drowning the log).
                 var sc_ok = _macho_arm_routes(sc_num);
                 if (sc_ok == 0) {
+                    # v6.5.43: NAME the number. This warned 470 times during cycc's own build
+                    # and never once said which syscall — so it read as noise and was scrolled
+                    # past, which is how the five band-J numbers went unnoticed. Same reasoning
+                    # as the v6.4.77 reserved-keyword diagnostic.
+                    syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+                    PRNUM(sc_num);
                     syscall(SYS_WRITE, 2,
-                    "warning: syscall not routed by the Mach-O ARM translation (ESYSXLAT/__got); will fault on macOS. Add an ESYSXLAT entry or use a stdlib wrapper.\n",
-                    144);
+                    " not routed by the Mach-O ARM translation (ESYSXLAT/__got); will fault on macOS. Add an ESYSXLAT entry or use a stdlib wrapper.\n",
+                    128);
                 }
             }
         }

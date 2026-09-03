@@ -1572,6 +1572,7 @@ fn ETLSGET_PE(S): i64 { return 0; }
 fn ETLSSET_PE(S): i64 { return 0; }
 fn EWAIT_PE(S): i64 { return 0; }
 fn EWRITE_PE(S): i64 { return 0; }
+fn _macho_x86_routes(n): i64 { return 1; }   # v6.5.43: not the x86 Mach-O backend — never warn from here.
 fn _macho_arm_routes(n): i64 { return 0; }
 fn _pe_pending_imp_add(S, name): i64 { return 0; }
 

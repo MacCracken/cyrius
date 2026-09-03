@@ -306,17 +306,23 @@ fn _parse_hex_env(p): i64 {
 # kernel32!GetTickCount64; returns ms in rax, scaled to ns here.
 # macOS arm64: syscall(228, 4, _) rerouted by EMACHO_CLOCK_ARM to
 # libSystem _clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW=4) via
-# __got[6]; returns u64 ns directly in x0.
+# __got[6]; returns u64 ns directly in x0 — the third arg is IGNORED.
+# macOS x86_64: syscall(228, 4, &tv) rerouted by EMACHO_CLOCK_X86, which composes ns from
+# gettimeofday and therefore DEREFERENCES the third arg (`mov rax,[rdi]`). v6.5.43: this
+# fn passed a literal 0 there, so CYRIUS_PROF SIGSEGV'd on Intel-Mac while working on ecb —
+# one `#ifdef CYRIUS_TARGET_MACOS` covering two backends with different pointer contracts.
+# The buffer is now always real, which both routes accept.
 # Non-Linux non-PE non-macOS: returns 0 (no clock available).
 fn _prof_clock_ns(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     var _ms = syscall(228, 0, 0);
     return _ms * 1000000;
     #endif
-    #ifdef CYRIUS_TARGET_MACOS
-    return syscall(228, 4, 0);
-    #endif
     var ts[16];
+    store64(&ts, 0); store64(&ts + 8, 0);
+    #ifdef CYRIUS_TARGET_MACOS
+    return syscall(228, 4, &ts);
+    #endif
     #ifdef CYRIUS_TARGET_LINUX
     #ifdef CYRIUS_ARCH_X86
     syscall(228, 1, &ts);

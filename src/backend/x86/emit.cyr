@@ -826,7 +826,15 @@ fn EEXIT(S): i64 {
 # the Linux number it is rewritten and subsequent cmps (now rax≈0x2000xxx)
 # never match; otherwise it falls through unchanged (e.g. EEXIT's already-
 # classed 0x2000001 skips the whole chain).
+# v6.5.43: QUERY MODE for the rows below. `_macho_x86_routes(n)` answers "is Linux syscall n
+# translated on x86 Mach-O?" by replaying EMACHO_SYSXLAT with `_msx_qon` set, so the ANSWER comes
+# from the same rows that do the emitting. Deliberately NOT a second hardcoded list: v6.0.65 had
+# to delete exactly that on the ARM side after it drifted to 9 entries against ESYSXLAT's ~40.
+var _msx_qon = 0;
+var _msx_q = 0;
+var _msx_hit = 0;
 fn _msx(S, lin, classed): i64 {
+    if (_msx_qon == 1) { if (lin == _msx_q) { _msx_hit = 1; } return 0; }
     if (lin >= 128) { return _msx32(S, lin, classed); }   # >127 sets imm8 bit 7 -> sign-extends to negative; route to the imm32 form (cf. getdents64 217, getrandom 318). CHANGELOG [6.4.15] L2
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, lin);    # cmp rax, lin (imm8)
     EB(S, 0x75); EB(S, 0x07);                             # jne +7 (skip the mov)
@@ -838,6 +846,7 @@ fn _msx(S, lin, classed): i64 {
 # Like _msx but with a 32-bit `cmp rax, imm32` for Linux syscall numbers
 # > 255 (getrandom is 318 — the imm8 cmp in _msx can't reach it). v6.0.75.
 fn _msx32(S, lin, classed): i64 {
+    if (_msx_qon == 1) { if (lin == _msx_q) { _msx_hit = 1; } return 0; }
     EB(S, 0x48); EB(S, 0x3D);                            # cmp rax, imm32 (REX.W 3D)
     EB(S, lin & 0xFF); EB(S, (lin >> 8) & 0xFF);
     EB(S, (lin >> 16) & 0xFF); EB(S, (lin >> 24) & 0xFF);
@@ -965,6 +974,15 @@ fn EMACHO_SYSXLAT(S): i64 {
     # honest spelling. 362/363 are the BSD numbers.
     _msx32(S, 1362, 0x200016A); # kqueue 1362 (private alias) → BSD 362
     _msx32(S, 1363, 0x200016B); # kevent 1363 (private alias) → BSD 363
+    # v6.5.43 (band J phase 1) — Darwin concurrency primitives, private-alias band. Landed in
+    # the SAME bite as the arm64 peer (src/backend/aarch64/emit.cyr): macho_route_parity.sh
+    # records four past routes that reached one Mach-O backend and not the other, each caught a
+    # release later by ach. Class prefix 0x2000000 is the Unix class, as for every row above.
+    _msx32(S, 1360, 0x2000168); # bsdthread_create    1360 → BSD 360
+    _msx32(S, 1361, 0x2000169); # bsdthread_terminate 1361 → BSD 361
+    _msx32(S, 1366, 0x200016E); # bsdthread_register  1366 → BSD 366
+    _msx32(S, 1515, 0x2000203); # __ulock_wait        1515 → BSD 515
+    _msx32(S, 1516, 0x2000204); # __ulock_wake        1516 → BSD 516
     # ── v6.5.16: the credential family (the x86 fork of the arm64 rows landed in the
     # same release). Unrouted here since forever, so every sys_getuid/geteuid/getgid/
     # getegid on Intel-Mac reached Darwin unclassed and died with SIGSYS (rc 140). It
@@ -1024,6 +1042,22 @@ fn EMACHO_SYSXLAT(S): i64 {
     # flock number 73 on macOS so a single source serves both Mach-O backends.
     _msx(S, 73, 0x2000083);   # flock 73 → 131
     return 0;
+}
+# v6.5.43: the x86 Mach-O peer of `_macho_arm_routes`. An unrouted number falls through the
+# chain above and reaches Darwin UNCLASSED, which is a SIGSYS at runtime — so parse_expr warns on
+# it, exactly as it has warned on the ARM side since v5.5.15. Until this release the x86 half had
+# NO such diagnostic: `ioctl` sat unrouted here and was found only at v6.5.36, by inspection.
+fn _macho_x86_routes(n): i64 {
+    if (n < 0) { return 1; }
+    # Rerouted in parse_expr BEFORE the number ever reaches this chain, so they are routed
+    # despite having no _msx row — the ARM table lists its __got reroutes the same way.
+    # Omitting them made the new warning fire on the two syscalls x86-macOS handles BEST.
+    if (n == 228) { return 1; }   # → EMACHO_CLOCK_X86 (gettimeofday composition)
+    if (n == 35) { return 1; }    # → EMACHO_NANOSLEEP_X86 (poll)
+    _msx_qon = 1; _msx_q = n; _msx_hit = 0;
+    EMACHO_SYSXLAT(0);
+    _msx_qon = 0;
+    return _msx_hit;
 }
 
 # v5.5.13 x86 stub: the `_TARGET_MACHO == 2` branch in parse.cyr that

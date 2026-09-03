@@ -4,6 +4,92 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.43] — 2026-09-02
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,776 B**, seed → cybs → cycc
+derivable from the 29,024 B seed, `check.sh` **224 / 0**, cross-OS on REAL hardware — **ecb +
+ach + cass + pi**, each `SELFHOST_OK` + crossos `LIBTEST_OK`. Bench `self_compile` **715 ms**
+(`.42` 720 ms — inside the noise floor this project has already been burned by reading as
+signal). `cycc` **1,195,776 B, +4,256 over `.42`**; `.text` **1,044,936 B, +1,160**. The growth
+is entirely new emitted code and new diagnostic strings — five ESYSXLAT/`_msx32` route pairs,
+the x86 Mach-O unrouted-syscall check, and the two PRNUM-naming message rewrites — not a
+codegen regression.
+
+**Band J phase 1 — macOS gets its concurrency primitives ROUTED, on both Mach-O backends.**
+macOS has neither `clone` nor `futex`. Real threading on Darwin is `bsdthread_*` and blocking
+is `__ulock_*`, and **not one of the five was routed on either Mach-O backend** — which is why
+`lib/thread_macos.cyr` runs thread bodies INLINE and `lib/sync_macos.cyr` is a bare `atomic_cas`
+spinlock with no kernel wait. Phase 1 lands the routing and the peer wrappers; phase 2 (`.44`,
+declared up front in the roadmap rather than discovered) builds the `bsdthread_register`
+trampoline, the stack mmap, real create/join and a `__ulock` mutex.
+
+- **Five routes, both backends, one bite.** `bsdthread_create` 1360→360, `bsdthread_terminate`
+  1361→361, `bsdthread_register` 1366→366, `__ulock_wait` 1515→515, `__ulock_wake` 1516→516 —
+  ESYSXLAT arms plus `_macho_arm_routes` entries on arm64, `_msx32` rows on x86. Landing both
+  halves together was deliberate: `macho_route_parity.sh` records **four** past routes that
+  reached one Mach-O backend and not the other, each found a release later by ach.
+- **Peer wrappers** in `lib/syscalls_aarch64_linux.cyr` (which `lib/syscalls.cyr` selects for
+  arm64-**macOS** as well as aarch64-Linux — the shared-file trap that made the first kqueue
+  pass build on Intel-Mac and fail on ecb) and `lib/syscalls_macos.cyr`, plus
+  `tests/tcyr/crossos/darwin_concurrency_routes.tcyr`.
+- ⚠ **The hand-derived aarch64 encodings were WRONG and a static gate would have passed them.**
+  `cmp x8,#1360` was computed as `0xF115511F`; the assembler says `0xF115411F`. All five were
+  re-derived with `aarch64-linux-gnu-as`. This is why phase 1's acceptance is a crossos file
+  that RUNS on ecb and ach, not only the source-comparison gate.
+- ⚠ **`stack` is a reserved keyword.** `sys_bsdthread_create`'s third parameter had to be
+  `stack_addr`. The v6.4.77 diagnostic named it precisely, which is what that work was for.
+
+**Verified on real hardware, with a discriminating negative control.** An include-free probe
+calling only the five warns **5 times** under the pre-`.43` compiler and **0 times** under this
+one, and returns 42 at runtime on **both** ecb (arm64) and ach (Intel-Mac); the crossos file
+reports **3 passed, 0 failed** on each. The existing `macho_route_parity.sh` already covers the
+new routes by capability — mutation-verified three ways here (drop the x86 `_msx32` row, drop
+the arm ESYSXLAT arm, drop the `_macho_arm_routes` entry: all three caught) — so **no duplicate
+route gate was added**.
+
+---
+
+**The x86 Mach-O backend had NO unrouted-syscall diagnostic at all — found while verifying the
+above, fixed here.** Since v5.5.15 the arm64 backend has warned on any syscall
+`ESYSXLAT`/`__got` does not handle. `_TARGET_MACHO == 1` was simply never checked, so on
+Intel-Mac a missing route was **silent at compile time and a SIGSYS at runtime**. That is the
+ungated shape this project has paid for repeatedly: `ioctl` sat unrouted on the x86 peer and was
+found at v6.5.36 only by reading the table, and v6.5.16 lists five ach corpus failures whose
+common cause was an unrouted number nobody was warned about.
+
+- **`_macho_x86_routes` replays `EMACHO_SYSXLAT`'s OWN rows in query mode** rather than listing
+  numbers. v6.0.65 had to *delete* precisely such a parallel list on the ARM side after it
+  drifted to 9 entries against ~40 real routes; re-introducing one on the x86 side would
+  recreate a bug already paid for once. The only literals permitted are the two `parse_expr`
+  reroutes (`35`, `228`) that have no `_msx` row by design — and omitting them made the new
+  warning fire on the two syscalls x86-macOS handles *best*, a false positive caught before it
+  shipped.
+- **Both diagnostics now NAME the syscall.** The ARM warning fired **470 times** during cycc's
+  own build without once saying which number, which is exactly how it came to read as noise and
+  get scrolled past — and how five unrouted concurrency syscalls went unnoticed. Same reasoning
+  as the v6.4.77 reserved-keyword diagnostic.
+
+**What the new diagnostic found immediately, in cycc's own macOS build:**
+
+- ⭐ **A latent NULL dereference on Intel-Mac.** The three `syscall(228)` reroutes **disagree
+  about argument 3**: arm64 (`__got` `_clock_gettime_nsec_np`) and Windows (`GetTickCount64`)
+  IGNORE it; x86-macOS (`EMACHO_CLOCK_X86`) **dereferences** it, composing ns from
+  `gettimeofday` via `mov rax,[rdi]`. One `#ifdef CYRIUS_TARGET_MACOS` covers **both** Mach-O
+  backends, so `_prof_clock_ns()`'s `return syscall(228, 4, 0);` was correct on ecb and a NULL
+  deref on ach. Measured on real ach: `syscall(228, 4, 0)` exits **139**, `syscall(228, 4, &ts)`
+  returns a live nanosecond count. ⚖️ **Honestly scoped: LATENT, not live** — `CYRIUS_PROF` is
+  wired in `src/main.cyr` alone and the macOS forks never call the fn, and every `lib/` caller
+  already passes a real buffer. Wiring profiling into a macOS fork would have made it a SIGSEGV
+  with no warning of any kind.
+- **`brk` (12) is benign**, and checking rather than assuming is the point: it sits in
+  `EMITELF_OBJ`, which has **no callers anywhere in the tree**. The warning is truthful — that
+  fn would SIGSYS if it were ever called — so it stays.
+
+**Two new gates, both mutation-proven** (`macho_diagnostic_parity` five ways including a straight
+revert to the pre-`.43` state and an unguarded warning that would fire on Linux;
+`macho_clock_buffer_contract` both ways, including removal of the dereference its premise rests
+on — it premise-checks `EMACHO_CLOCK_X86` before enforcing anything).
+
 ## [6.5.42] — 2026-09-02
 
 **The agnos `#104 mountlist` peer — and a gate that mechanizes the ABI check CLAUDE.md asks a

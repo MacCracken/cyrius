@@ -893,6 +893,31 @@ fn ESYSXLAT(S): i64 {
         # deriver was cross-checked by re-computing those rows' known-good values first.
         EW(S, 0xF115491F); EW(S, 0x54000041); EW(S, 0xD2802D50);  # kqueue 1362→362
         EW(S, 0xF1154D1F); EW(S, 0x54000041); EW(S, 0xD2802D70);  # kevent 1363→363
+        # ── v6.5.43 (band J phase 1) — the Darwin CONCURRENCY primitives, private-alias band.
+        # macOS has no clone and no futex. Real threading there is `bsdthread_*`, and blocking
+        # is `__ulock_*`; until now NONE of the five was routed on either Mach-O backend, so
+        # `lib/thread_macos.cyr` ran bodies INLINE and `lib/sync_macos.cyr` was a bare
+        # `atomic_cas` spinlock with no kernel wait. `grep 'bsdthread|__ulock' src/` returned 0.
+        #
+        # ⚠ ROUTING IS PHASE 1 OF TWO, DELIBERATELY. These make the syscalls REACHABLE; they do
+        # not by themselves create a thread. `bsdthread_register` must be issued before
+        # `bsdthread_create`, and the new thread enters the REGISTERED TRAMPOLINE rather than
+        # the user fn, with a Darwin-specific register layout — that is phase 2. Landing the
+        # routes alone is deliberate and bounded, not a half-fix: without them phase 2 cannot
+        # even be written, and with them a probe can prove the kernel accepts each number.
+        #
+        # ⛔ arm64 AND x86_64 IN THE SAME BITE. `tests/gates/platform/macho_route_parity.sh`'s
+        # own header records FOUR past instances of a route landing on one Mach-O backend and
+        # not the other — SIGPWR, sys_fchmod, the credential family, the at-family — each caught
+        # a release later by ach. The x86 peer rows are in src/backend/x86/emit.cyr.
+        #
+        # Encodings aarch64-linux-gnu-as VERIFIED (hand-derivation got the cmp fields WRONG:
+        # 1360 computed as 0xF115511F by hand, the assembler says 0xF115411F).
+        EW(S, 0xF115411F); EW(S, 0x54000041); EW(S, 0xD2802D10);  # bsdthread_create    1360→360
+        EW(S, 0xF115451F); EW(S, 0x54000041); EW(S, 0xD2802D30);  # bsdthread_terminate 1361→361
+        EW(S, 0xF115591F); EW(S, 0x54000041); EW(S, 0xD2802DD0);  # bsdthread_register  1366→366
+        EW(S, 0xF117AD1F); EW(S, 0x54000041); EW(S, 0xD2804070);  # __ulock_wait        1515→515
+        EW(S, 0xF117B11F); EW(S, 0x54000041); EW(S, 0xD2804090);  # __ulock_wake        1516→516
         # ── v6.5.16: the credential family. `is_root()` hardcoded `return 0` on macOS
         # (lib/sys.cyr), so the ONE consumer that would have exercised these never called
         # them and the whole family sat unrouted on BOTH Mach-O backends since forever:
@@ -1222,6 +1247,7 @@ fn ESYSXLAT(S): i64 {
 # not ESYSXLAT). When you add/remove an ESYSXLAT macho entry, update this too —
 # they sit adjacent for exactly that reason. 35 here is aarch64 unlinkat (→unlink),
 # NOT x86 nanosleep; portable sleeping goes through lib/chrono.cyr sleep_ms (poll).
+fn _macho_x86_routes(n): i64 { return 1; }   # v6.5.43: not the x86 Mach-O backend — never warn from here.
 fn _macho_arm_routes(n): i64 {
     if (n == 0) { return 1; }    if (n == 1) { return 1; }    # read / write
     if (n == 2) { return 1; }    if (n == 3) { return 1; }    # open / close
@@ -1260,6 +1286,11 @@ fn _macho_arm_routes(n): i64 {
     if (n == 1116) { return 1; }                               # gettimeofday private alias →116 (v6.5.16)
     if (n == 1362) { return 1; }                               # kqueue private alias →362 (v6.5.27)
     if (n == 1363) { return 1; }                               # kevent private alias →363 (v6.5.27)
+    if (n == 1360) { return 1; }                               # bsdthread_create    →360 (v6.5.43)
+    if (n == 1361) { return 1; }                               # bsdthread_terminate →361 (v6.5.43)
+    if (n == 1366) { return 1; }                               # bsdthread_register  →366 (v6.5.43)
+    if (n == 1515) { return 1; }                               # __ulock_wait        →515 (v6.5.43)
+    if (n == 1516) { return 1; }                               # __ulock_wake        →516 (v6.5.43)
     # v6.5.16: the aarch64-Linux socket numbers were LIVE in ESYSXLAT (v6.2.24/v6.4.64)
     # but never registered here, so every build touching them printed a bogus "syscall not
     # routed" warning while the route worked fine. A warning that cries wolf on working

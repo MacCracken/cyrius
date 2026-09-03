@@ -1,0 +1,61 @@
+# darwin_concurrency_routes.tcyr — v6.5.43 (band J phase 1), EXECUTED on real Macs.
+#
+# macOS has neither clone nor futex. Real threading on Darwin is bsdthread_create /
+# bsdthread_terminate / bsdthread_register, and blocking is __ulock_wait / __ulock_wake.
+# Before this release NONE of the five was routed on EITHER Mach-O backend, which is why
+# lib/thread_macos.cyr runs thread bodies INLINE and lib/sync_macos.cyr is a bare atomic_cas
+# spinlock with no kernel wait. This file is phase 1's acceptance: the routes REACH THE
+# KERNEL on real hardware.
+#
+# ⛔ WHY A CROSSOS FILE AND NOT JUST THE STATIC GATE. macho_route_parity.sh proves both
+# backends carry the routes, and it is mutation-proven against all five. That is a source
+# comparison. It cannot tell a correct Darwin syscall number from a plausible wrong one —
+# and the numbers here were hand-derived first and came out WRONG (the aarch64 `cmp`
+# encoding for 1360 was computed as 0xF115511F; the assembler says 0xF115411F). A static
+# gate would have passed both. Only running it on ecb and ach distinguishes them.
+#
+# ⚠ GUARDED BY CAPABILITY, NOT BY ERRNO (the v6.5.36 lesson). A routed syscall reaches
+# Darwin and comes back with whatever errno the situation warrants; an unrouted one comes
+# back -ENOSYS or dies on SIGSYS. We assert only "reached the kernel" — never a specific
+# errno, which varies with how the runner supplies stdin and which is exactly the
+# over-specification that made earlier crossos tests fail for environmental reasons.
+#
+# ⚠ bsdthread_create / _register / _terminate are DELIBERATELY NOT CALLED. A thread created
+# without its registered trampoline enters an undefined Darwin entry state, and terminate
+# would kill this test's own thread. Their routes are covered by macho_route_parity.sh;
+# EXERCISING them is phase 2 (.44), which builds the trampoline.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifdef CYRIUS_TARGET_MACOS
+    var cell[16];
+    store64(&cell, 0);
+    store64(&cell + 8, 0);
+
+    # __ulock_wake on an address with no waiter. Darwin answers "nothing to wake"; the only
+    # answer that means BROKEN is -ENOSYS, i.e. the number never got translated.
+    var w = sys_ulock_wake(1, &cell, 0);
+    assert_neq(w, 0 - 78, "__ulock_wake reaches the Darwin kernel (not ENOSYS)");
+
+    # __ulock_wait with a 1 ms timeout. The value is deliberately mismatched against *cell
+    # so the call cannot park indefinitely even if the timeout argument were mis-shuffled.
+    var t = sys_ulock_wait(1, &cell, 999, 1000);
+    assert_neq(t, 0 - 78, "__ulock_wait reaches the Darwin kernel (not ENOSYS)");
+    #endif
+
+    # Non-macOS hosts: nothing to assert. The file must still exit 0 there, because the
+    # crossos runner executes the whole directory on ecb, ach, cass AND pi.
+    assert_eq(1, 1, "darwin concurrency routes: probe completed");
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
