@@ -90,6 +90,7 @@ enum SysNrAgnos {
     SYS_FORK = 96;                 # fork() → child pid (parent) / 0 (child) / -1 (agnos 1.56.55)
     SYS_LSTAT = 102;               # lstat(path,len,statbuf) → 0/-1; no-follow on the FINAL symlink (1.56.53)
     SYS_STATFS = 103;              # statfs(path, pathlen, buf) → 0 / -1; fills a FROZEN 32-byte record (1.56.56/.57)
+    SYS_MOUNTLIST = 104;           # mountlist(buf, max) → record count / -1; 80-byte records (1.56.59)
     SYS_UNAME = 34;                # uname(buf, len=64) → 0; 4×16-byte fields (§4.3)
     SYS_SYSINFO = 35;             # sysinfo(buf, len=40) → 0; 5×u64, byte-direct (§4.4)
     SYS_LSEEK = 58;               # lseek(fd, offset, whence) → new pos / -1; whence 0=SET/1=CUR/2=END
@@ -216,6 +217,50 @@ fn sys_ptrscan(buf, max): i64 {
 # system — the two are different facts and a monitor must not conflate them.
 fn sys_proclist(buf, max): i64 {
     return syscall(SYS_PROCLIST, buf, max);
+}
+
+# ── Mount-enumeration band (agnos 1.56.59, `#104 mountlist`) ────────
+#
+# Snapshot of the live `{prefix -> backend}` mount table. Returns the NUMBER OF RECORDS
+# written, or -1 on a bad pointer, a wrapping `max`, or `max < 1`.
+#
+# ⚠ `max` IS A RECORD COUNT, NOT A BYTE LENGTH — `buf` must hold `max * 80` bytes.
+#
+# Record (80 B, little-endian). All-u64 header per the ABI doc's §4.1 no-sub-word-fields
+# rule, so there is no Cyrius struct-padding ambiguity to resolve here:
+#   +0   u64 backend    FsBackend — 1 = ext2 · 2 = FAT · 3 = exFAT (0 = FS_NONE never emitted)
+#   +8   u64 prefixlen  1..64
+#   +16  64B prefix     NUL-PADDED to the full 64 bytes
+#
+# ⚠ THE PREFIX TAIL IS PADDING, NOT DATA. Read exactly `prefixlen` bytes; the kernel pads
+# the remainder with NULs and a consumer must not assume the tail is meaningful.
+#
+# ⭐ WHY ENUMERATION AND NOT A PROBE — the part most likely to look like redundant surface,
+# given `statfs`#103 already exists. `statfs` answers "is this string mounted"; it cannot
+# answer "are these two the same volume". agnos's `vfs_mount_init` gives an ext2-less boot
+# the SAME backend under BOTH `/` and its `/mnt/...` prefix — its own comment calls them
+# "harmless redundant aliases", harmless to routing but one volume listed TWICE in a file
+# manager's sidebar. The backend id travelling alongside the prefix is what distinguishes
+# them, and no probe can recover it. Filed by crab (the AGNOS file manager) and chakshu (the
+# system monitor) on the same day.
+#
+# ⚠ A NEW NUMBER, NOT A WIDENING OF `mount`#11, and the reason is measured rather than
+# stylistic: #11 takes no arguments in agnos's frozen ABI table, and unused syscall argument
+# registers carry STALE VALUES rather than zero (the rule #100 and #101 both record). A
+# widened #11 would hand every already-shipped caller an arbitrary pointer.
+#
+# ⚠ GUARD THE CALL SITE, same as `sys_proclist` above. A kernel older than 1.56.59 has no
+# `#104` arm; treat a negative return as "this kernel cannot enumerate mounts" and degrade,
+# rather than reporting an unmounted system — those are different facts.
+#
+# ⚠ AGNOS-ONLY, DELIBERATELY — the same honest-gap reasoning `sys_statfs` records below. A
+# consumer that calls this builds on agnos and fails to LINK elsewhere. Inventing Linux /
+# macOS / aarch64 / PE numbers from memory is precisely the defect class v6.5.36 and v6.5.37
+# spent two releases repairing (`sys_pause` issuing flock, `sys_umount2` issuing getpid), and
+# a fail-closed -1 stub would be worse on the hosts that genuinely have a mount table: it
+# would claim unsupported where support exists.
+fn sys_mountlist(buf, max): i64 {
+    return syscall(SYS_MOUNTLIST, buf, max);
 }
 
 # ── Local-IPC channel band (agnos 1.56.40, `#97 chan_op`) ───────────

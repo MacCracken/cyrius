@@ -4564,6 +4564,7 @@ syscalls_x86_64_agnos::sys_lstat/3
 syscalls_x86_64_agnos::sys_mkdir/2
 syscalls_x86_64_agnos::sys_mmap/1
 syscalls_x86_64_agnos::sys_mount/0
+syscalls_x86_64_agnos::sys_mountlist/2
 syscalls_x86_64_agnos::sys_munmap/2
 syscalls_x86_64_agnos::sys_net_config/1
 syscalls_x86_64_agnos::sys_net_dns_server/0

@@ -4,6 +4,93 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.42] — 2026-09-02
+
+**The agnos `#104 mountlist` peer — and a gate that mechanizes the ABI check CLAUDE.md asks a
+human to do by hand every reactive window.** ⭐ **This closes the last gap: cyrius's agnos peer
+is now at FULL parity with the frozen contract — 105 numbers on both sides, 0 disagreements, 0
+awaiting a peer.** agnos's own `syscall-abi-check.sh`, which the filing records as RED at
+`kernel 105 · abi-doc 105 · cyrius 104`, should now read 105/105/105.
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,191,504 B**, seed -> cybs -> cycc
+derivable from the 29,024 B seed, `check.sh` **220 / 0**, corpus 289/289, cross-OS on REAL
+hardware — **ecb + ach + cass + pi, each SELFHOST_OK + crossos LIBTEST_OK**.
+
+⚠ **The bench printed `self_compile` 810 ms against `.41`'s 732, and that is the BOX, not the
+code — checked rather than assumed.** The only `src/` change this release is the generated
+version string, so cycc cannot have regressed; and an interleaved A/B of the two binaries on
+the same source gives **.41 median 810 ms, .42 median 811 ms — +1 ms (+0.1 percent) against a
+4 ms within-binary spread.** The `.41` binary is equally slow on this box today (load average
+3.48). Recorded this way rather than as a growth-tax entry because *"bench on a loaded box is
+not a measurement — A/B the binaries"* is a lesson this project already paid for once.
+
+### Added — `SYS_MOUNTLIST = 104` + `sys_mountlist(buf, max)` (agnos)
+
+Snapshot of the live `{prefix -> backend}` mount table; returns a RECORD COUNT (`max` is a
+count, not a byte length — `buf` must hold `max * 80`). 80-byte records, all-u64 header per the
+contract's §4.1 no-sub-word-fields rule: `backend` @0, `prefixlen` @8, `prefix` @16 NUL-padded
+to 64. Placed in the enum beside `statfs`#103 and the wrapper beside `proclist`#99 — the other
+enumeration primitive with the identical `(buf, max) -> count / -1` shape.
+
+⭐ **Why enumeration and not a probe**, since `statfs`#103 already exists and this looks like
+redundant surface: `statfs` answers *"is this string mounted"*; it cannot answer *"are these two
+the same volume"*. agnos's `vfs_mount_init` gives an ext2-less boot the SAME backend under BOTH
+`/` and its `/mnt/…` prefix — its own comment calls them "harmless redundant aliases", harmless
+to routing but **one volume listed twice** in a file manager's sidebar. The backend id
+travelling with the prefix is what distinguishes them, and no probe can recover it.
+
+⚠ **A new number, not a widening of `mount`#11**, and the reason is measured: #11 takes no
+arguments, and unused syscall argument registers carry **stale values rather than zero**, so a
+widened #11 would hand every already-shipped caller an arbitrary pointer.
+
+⚠ **agnos-only, deliberately** — the same honest-gap reasoning `sys_statfs` records. Verified:
+compiles clean under `CYRIUS_TARGET_AGNOS=1` into a valid agnos ELF, and correctly does **not**
+link on Linux. Inventing Linux/macOS/aarch64/PE numbers from memory is precisely the defect class
+v6.5.36 and v6.5.37 spent two releases repairing (`sys_pause` issuing flock, `sys_umount2`
+issuing getpid).
+
+⭐ **Every claim in the filing was verified against the authoritative sources before
+implementing** — the record layout, the count semantics and the error cases all match
+`agnos-userland-abi.md:235` and the kernel arm at `kernel/core/syscall.cyr:9382` exactly. The
+filing was accurate in every particular, which is worth recording because the last several
+filings this repo acted on were not.
+
+### Added — `agnos_abi_doc_parity` gate: the per-window manual diff, mechanized
+
+CLAUDE.md asks a human to *"diff `agnos/docs/development/agnos-userland-abi.md` against
+`lib/syscalls_x86_64_agnos.cyr` once per window — the only cheap place to catch an ABI **widen**
+of an existing number, the failure class no compile-time check can see."* A once-per-window
+manual diff is exactly the task that silently stops happening.
+
+⛔ **The class it guards is a number whose MEANING changed on one side.** Nothing in either tree
+catches that: cyrius compiles `syscall(N, ...)` for any N and the kernel dispatches it happily —
+the program just does the wrong thing.
+
+⚖️ **A doc-only number is REPORTED and passes**, deliberately. agnos mints a number, ships the
+kernel arm, and files for the peer, which lands on cyrius's schedule; `symlink`#63 and
+`readlink`#70 both shipped in that state, and agnos's state.md rules *"do not fix that gate by
+editing cyrius, and do not weaken the gate."* Only genuine disagreements fail.
+
+⚠ **Scoped to the syscall tables (§2..§3.4)** — the contract also carries §3.4's gpu op-code
+table and §4.x's struct-layout tables, whose rows have the SAME `| N | name |` shape but mean
+offset→field. An unscoped parse reports `#0 = f_bsize` against `SYS_EXIT` and a dozen more;
+measured, on this gate's first version. Anti-vacuous floors on **both** sides, because a regex
+that matches nothing reports nothing wrong and passes. agnos is a sibling repo and may be absent
+— that SKIPs loudly rather than passing quietly. Mutation-proven three ways.
+
+### Filed — `test_runner_bounded` went red once under load and was NOT root-caused
+
+Reported `max 2` children on one `check.sh` run, then passed 3/3 standalone and 1/1 in a full
+run, with no code change. ⚠ **Filed rather than shrugged off for two reasons**: `max 2` is the
+exact signature of that gate's own *mutated* state, and the gate exists **because a flaky-looking
+red got dismissed** — its header records 19 leaked test children eating ~13 of 16 cores and
+flipping a perf tripwire that **two implementers wrote off as "environmental load"**. The filing
+carries a leading hypothesis (the sampler applies no process-state filter, so a SIGKILLed-but-
+unreaped child may double-count) and explicitly instructs the next reader **not to act on it** —
+identify the second process first. A gate loosened on an unproven theory stops distinguishing a
+sampling artefact from a real leak.
+
+
 ## [6.5.41] — 2026-09-02
 
 **Queue drain: one consumer-filed fix, and four filings that had rotted in place.** Six

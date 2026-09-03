@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.41** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.42** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -486,6 +486,22 @@ not a single release.
   SIGSYS. `v6415`'s D2 and `stiva`'s filed blocker were both already closed by shipped code, each
   having been re-stamped at some point in a way that made the stale claim *more* emphatic.
   cycc **1,191,504 B** (unchanged — lib-only), `check.sh` **219/0**, crossos 57/57 on all four.
+- **v6.5.42** — **the agnos `#104 mountlist` peer, and a gate that mechanizes the ABI check
+  CLAUDE.md asks a human to run every reactive window.** ⭐ **Cyrius's agnos peer is now at FULL
+  parity with the frozen contract — 105 numbers on both sides, 0 disagreements, 0 awaiting a
+  peer**; agnos's own `syscall-abi-check.sh` was RED at `kernel 105 · abi-doc 105 · cyrius 104`.
+  `mountlist` is an ENUMERATION and not more probing for a reason worth keeping: `statfs`#103
+  answers *is this string mounted* but cannot answer *are these two the same volume*, and an
+  ext2-less agnos boot puts the SAME backend under both `/` and its `/mnt/…` prefix — one volume
+  listed twice in a file-manager sidebar. ⚠ A NEW number rather than widening `mount`#11, because
+  unused syscall argument registers carry STALE values rather than zero. The new
+  `agnos_abi_doc_parity` gate enforces the asymmetry the filing itself argues for: a doc-only
+  number is REPORTED and passes (the kernel arm ships first by design), while a number that MEANS
+  something different on each side fails loudly — the widen class no compile-time check can see.
+  ⚠ **The bench read 810 ms against `.41`'s 732 and that is the BOX**: an interleaved A/B gives
+  .41 810 ms vs .42 811 ms, +0.1 % against a 4 ms spread. Recorded as noise, not growth tax.
+  Also filed: `test_runner_bounded` went red once under load and was NOT root-caused.
+  cycc **1,191,504 B**, `check.sh` **220/0**, corpus 289/289.
 
 ### What "IR=3 self-hosts" actually means — state it precisely
 
