@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.44** (2026-09-02) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.45** (2026-09-03) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -697,7 +697,44 @@ ran 86 releases and 6.5.x is expected in the same class.
 > |---|---|---|
 > | *(empty)* | — | `.41`'s carried pair — `versioned-wrapper-does-not-pin-cycc` and `audit-scope-excludes-tests` — both shipped at `.42`. |
 >
-> ### ▶ NEXT: band K — the closeout band (band J COMPLETE: `.43` phase 1 + `.44` phase 2)
+> ### ▶ NEXT: band K phase 2 — `.46` (phase 1 SHIPPED at `.45`)
+>
+> **PHASES DECLARED UP FRONT**, per cycle-discipline: an arc is scoped at planning time, and a
+> mid-execution split is a deferral wearing a plan's clothes. Band K's audit ran as nine parallel
+> dimensions over the whole v6.5.x minor with an adversarial verify pass — **7 of 8 attacked
+> findings confirmed, 1 refuted** — and it returned more than one release can responsibly absorb.
+> So the band is two phases, split by CLASS rather than by convenience.
+>
+> 1. ~~**`.45` — phase 1: the preprocessor bounds class + the agnos repairs.**~~ ✅ **SHIPPED.**
+>    CVE-39 (an include path's LENGTH silently changes which `#ifdef` branch compiles — measured
+>    against a pre-fix compiler: 1210 chars, returns 7 where 42 is correct, rc=0, no diagnostic)
+>    and CVE-40 (unbounded `#define` body copy). Plus the `#105` withdrawal, `sys_sysinfo_n`, and
+>    macOS `getenv`. See `docs/audit/2026-09-03-security-audit.md`.
+> 2. **`.46` — phase 2: the codegen-correctness class. ← THIS IS THE OPEN ONE.** All confirmed,
+>    all MEASURED, none yet fixed:
+>    * **Closure parameters past the 6th are never stored** — the 7th reads an uninitialised
+>      frame slot. Silent wrong answer on valid cyrius, all targets (`parse_expr.cyr:2019`).
+>      ⛔ This is the language repo: when the compiler cannot compile valid cyrius, fix the
+>      compiler.
+>    * **`fncallN` lost the call-arity check** ordinary calls enforce, so `fncall3(f, a, b)` and
+>      `fncall1(f, a, b, c)` both compile (v6.5.17 regression).
+>    * **`CYRIUS_DCE=1` is unsound above 32768 fns** — the v6.5.40 table raise widened `live[]`
+>      to 16384 bytes but left its clear loop at 4096, and the address-taken root-seed bound at
+>      `< 32768`; an address-taken fn above that index is NOP-filled. Reproduced on both backends.
+>    * **`tok_values` heap-map size understated 8 MiB vs 32 MiB live** — a 24 MiB band the
+>      machine-read auditor reports as free while it is fully occupied. Latent, not active.
+>    * **CVE-41** — three unbounded name captures in the `#derive` path. ⚠ Filed rather than
+>      fixed at `.45` for a NAMED reason: it needs the `#derive` name scratch relocated out from
+>      under `S+0x197020`, i.e. a heap **layout** change ⇒ two-step bootstrap.
+>    * **A version pin still does not bind the compiler for 125 of 128 downstream repos** — the
+>      issue closed at `.42` did not achieve its aim, and its gate passes over a fixture that
+>      cannot fail. **50 repos** (not 45) sit in the `6.5.31`–`6.5.35` enum-Critical band.
+>    * Doc/refactor tail: vidya `types.cyml` stale on 6 caps, the retired `vr01_` prefix still
+>      instructed in CLAUDE.md, `_macho_arm_routes` as a 95-entry hand mirror (v6.5.43 built the
+>      query-mode fix and applied it to only one of two symmetric places).
+>
+> ⭐ **The minor closes on phase 2.**
+
 >
 > **`.41` and `.42` both shipped and this pointer said `.41` until 2026-09-02.** `.41` drained the
 > queue (6 archived) and `.42` shipped the agnos `#104` peer plus BOTH of `.41`'s carried items —

@@ -1,5 +1,11 @@
 # `getenv` always returns 0 on macOS — `/proc/self/environ` does not exist there
 
+> ## ✅ DONE at cyrius 6.5.45 — `getenv` now reads the init-stack envp on macOS. Verified on real ecb (arm64) and ach (Intel).
+>
+> ⭐ **AND THE FILING UNDERCOUNTED THE BLAST RADIUS.** It states "Windows is served (the reroute routes `0xF015 GetEnvironmentVariableA`)". That reroute serves **cycc's own `_read_env`**; nothing in the stdlib ever called it, so `getenv` fell through to `/proc/self/environ` on Windows too and returned 0 for every name there as well. Found by the release gate's cross-host leg reddening on cass once the macOS half landed. Both are fixed and verified on hardware.
+>
+> ⛔ **The suite could not have caught either.** The test runner execs every `.tcyr` with `EMPTY_ENVP`, so environment reading had no in-suite reachability at all. The runner now supplies one fixed entry (`CYRIUS_TEST_ENV=1`) — determinism preserved, path reachable — and `tests/tcyr/crossos/getenv_environment.tcyr` exercises it on every host.
+
 **Filed:** 2026-09-03 · **Found by:** thoth 0.44.3 (first macOS build since thoth 0.6.4)
 **Toolchain:** 6.5.35 native on Apple Silicon (macOS 26.6.2); code path unchanged in 6.5.43
 **Component:** `lib/io.cyr` — `getenv` / `_env_load`

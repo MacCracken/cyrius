@@ -67,7 +67,10 @@
 #   (0x19A100/0x19A108/0x19D000 now FREE — reclaimed by the v6.1.35 file_map move)
 #
 # --- Preprocessor + local var state ---
-#   0x190400  include_fname [4096]        preprocessor include/#ref filename scratch
+#   0x190400  include_fname [768]         preprocessor include/#ref filename scratch
+#   0x190700  pp_expand_outpos [8]        PP_EXPAND's output-cursor return slot (CVE-39: this
+#                                         is why include_fname is 768, not 1024)
+#   0x190800  pp_flag_table [128]         #ifdef feature-flag name hashes, 16 slots
 #                                        v6.4.81 CVE-32: this was recorded one page high
 #                                        and 16x too small; no code has ever written that
 #                                        address (every use is 0x190400) and all three
@@ -76,7 +79,9 @@
 #                                        0x191400, clear of the #ref read buffer 0x191800.
 #   0x191000  fn_local_names              local variable names
 #   0x191800  local_depths  [512]         scope depths per local
-#   0x192000  macro tables                16 macros (names, offsets, bodies)
+#   0x192000  macro tables                16 macros: hashes 0x192000, offsets 0x192080,
+#                                        lengths 0x192100, bodies 0x193000 (16 KB pool, bounded
+#                                        v6.5.45 CVE-40; free to 0x197000 since 0x193400 FREED)
 #   0x192200  local_types                 local variable type tracking
 #
 # --- Function tables (relocated v4.7.1 — caps raised 2048 → 4096) ---

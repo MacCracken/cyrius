@@ -96,7 +96,10 @@
 #    the rest by the v6.1.35 file_map move)
 #
 # --- Preprocessor + local var state ---
-#   0x190400  include_fname [4096]        preprocessor include/#ref filename scratch
+#   0x190400  include_fname [768]         preprocessor include/#ref filename scratch
+#   0x190700  pp_expand_outpos [8]        PP_EXPAND's output-cursor return slot (CVE-39: this
+#                                         is why include_fname is 768, not 1024)
+#   0x190800  pp_flag_table [128]         #ifdef feature-flag name hashes, 16 slots
 #                                        v6.4.81 CVE-32: this was recorded one page high
 #                                        and 16x too small; no code has ever written that
 #                                        address (every use is 0x190400) and all three
@@ -106,7 +109,9 @@
 #   0x191000  (FREED v6.1.40)             was fn_local_names → relocated+grown to 0x5D9D000 (CVE-24)
 #   0x191800  lex_pp file-scratch [16KB]  READFILE deps-file scratch (was ALSO local_depths, which moved
 #                                        to 0x5DBD000 @ v6.1.40 — they time-shared this band)
-#   0x192000  macro tables                16 macros (names, offsets, bodies)
+#   0x192000  macro tables                16 macros: hashes 0x192000, offsets 0x192080,
+#                                        lengths 0x192100, bodies 0x193000 (16 KB pool, bounded
+#                                        v6.5.45 CVE-40; free to 0x197000 since 0x193400 FREED)
 #   0x192200  (FREED v6.1.40)             was local_types → relocated to 0x5DDD000
 #   0x193400  (FREED v6.1.40)             was local_slice_widths → relocated to 0x5DFD000
 #   --- the 4 slot-indexed per-fn local tables RELOCATED to the heap top @ 0x5D9D000 (CVE-24 v6.1.40):

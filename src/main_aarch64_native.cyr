@@ -28,7 +28,10 @@
 #   0x18DA20  (FREED v6.0.88)             was ret_patches [2048] — migrated to rp_vec @ v6.0.7
 #   0x18E220  (FREED v6.0.88)             was ret_patch_cnt [8]
 #   0x18F900  defer_count   [8]           + defer_addrs [192]
-#   0x190400  include_fname [4096]        preprocessor include/#ref filename scratch
+#   0x190400  include_fname [768]         preprocessor include/#ref filename scratch
+#   0x190700  pp_expand_outpos [8]        PP_EXPAND's output-cursor return slot (CVE-39: this
+#                                         is why include_fname is 768, not 1024)
+#   0x190800  pp_flag_table [128]         #ifdef feature-flag name hashes, 16 slots
 #                                        v6.4.81 CVE-32: this was recorded one page high
 #                                        and 16x too small; no code has ever written that
 #                                        address (every use is 0x190400) and all three

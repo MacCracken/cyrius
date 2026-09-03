@@ -4,6 +4,107 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.45] — 2026-09-03
+
+**agnos repairs, a macOS `getenv` that never worked, and band K phase 1 — the closeout audit.**
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,832 B**, seed → cybs → cycc
+derivable from the 29,024 B seed, `check.sh` **228 / 0**, cross-OS on REAL hardware — **ecb +
+ach + cass + pi**, each `SELFHOST_OK` + crossos `LIBTEST_OK`. Bench `self_compile` **712 ms**
+(`.44` 740 — inside the noise this project has already been burned by reading as signal).
+`cycc` **1,195,832 B, +56 over `.44`**; `.text` **1,045,272 B, +176** — the CVE-39/40 bounds
+checks plus the `PP_MACRO_TEXT_FULL` diagnostic. ⚠ **The gate is what found the Windows half of
+the `getenv` defect**: it went RED on cass after the macOS fix landed, which is the cross-host
+leg doing precisely the job it exists for.
+
+### The withdrawal: `SYS_BLKSTATS` #105 is removed
+
+`.44` shipped that peer the day it was filed. agnos then audited its whole 106-syscall surface
+and found **it never needed a number**: a closed 5-value tag enum over flat by-tag arrays is
+exactly a fixed-size tail block, so the counters belong in `sysinfo`#35's tail — which is where
+they now are, at `+104`.
+
+- ⚠ **Two filings in the queue CONTRADICTED each other on this**, both dated the same day: the
+  withdrawal said the kernel arm was gone, while the sysinfo filing said *"it is NOT being
+  moved… the number is minted, the peer shipped in 6.5.44, and unwinding it would waste that
+  release."* **Settled against the live agnos kernel, not either verdict:** there is no
+  `num == 105` arm in `kernel/core/syscall.cyr`, `blkstats` appears nowhere in `kernel/`, and
+  the ABI table lists `| 104 | blk0_read |` as a **sysinfo tail offset**. The withdrawal is
+  correct. This is exactly what *"premise-check the CLAIMS in issue files, not just the pins"*
+  is for — a filing's statement is a verdict, not evidence.
+- **A wrapper with no kernel arm does not error.** The caller gets the dispatch fall-through
+  value and may render it as a statistic. Removed rather than left standing, because a needless
+  syscall number is **permanent surface** — every consumer, every ABI gate and every peer
+  carries it forever. ABI parity is back to **105/105, 0 disagreements**.
+
+### `sys_sysinfo` could not reach the tail it was extended for
+
+`fn sys_sysinfo(out)` hardcoded `len=40`, so every wrapper consumer kept getting the base struct
+no matter what the kernel had to offer — **chakshu**, the monitor the tail was built for, reads
+`#35` only through `lib/mihi.cyr` and could not see one new field. Added `sys_sysinfo_n(out, len)`
+plus the tier constants and four named tail accessors. ⛔ **The tiers are 40 / 104 / 200 and each
+gates its band independently** — 40..103 gets the base struct, 104..199 adds the per-core CPU
+band and NOT the disk band, 200+ gets both. A short buffer does not error; it leaves your band
+unwritten, so a caller who forgets reads its own stack.
+
+⭐ **New gate for a class the other two could not see.** `agnos_abi_doc_parity` compares NUMBERS
+and `agnos_net_config_field_parity` compares FIELD SELECTORS; both stayed green while the struct
+grew 40 → 200 bytes, correctly, since no number and no selector changed.
+`agnos_sysinfo_tail_parity` compares **struct tail layout** — an off-by-one in `SI_BLK_BASE`
+would now misreport disk statistics silently, as a plausible number.
+
+### `getenv` returned 0 for every name on macOS — and on Windows
+
+`_env_load` opened `/proc/self/environ`. macOS has no `/proc`, so `_env_len` stayed 0 and every
+consumer reading the environment on macOS behaved as if the variable were unset — a silent wrong
+answer, not a crash. Found by **thoth 0.44.3**, its first macOS build since 0.6.4.
+
+- ⚠ **The shape is the lesson, and the class has THREE members.** The AGNOS branch exists
+  precisely because *that* target has no `/proc`. macOS was the same class of target with no
+  branch — fixed by reading the init-stack `envp` through the args peer's existing anchor (arm64
+  `x28` / x86-macOS `r15`), the same derivation cycc's own `_read_env` has used since v6.0.33.
+  **Verified on real ecb and ach.**
+- ⭐ **Then the release gate went RED on cass and found the third one.** The filing said "Windows
+  is served (the reroute routes `0xF015 GetEnvironmentVariableA`)" and I repeated that claim in a
+  source comment. It is wrong: the reroute serves **cycc's own `_read_env`**, and *nothing in the
+  stdlib ever called it* — so `getenv` fell through to `/proc/self/environ` on Windows too and
+  returned 0 for every name. A reroute existing is not the same as the stdlib using it. Fixed
+  with a `CYRIUS_TARGET_WIN` branch; **verified on real cass, 4/4**. The general case had been
+  handled once per target instead of once for the CLASS, so each new target inherited the gap —
+  which is exactly why the fix for one target surfaced the next.
+- ⛔ **AND THE SUITE COULD NOT HAVE CAUGHT IT.** The test runner execs every `.tcyr` with
+  `EMPTY_ENVP` — a genuinely empty environment — so **no test in the suite could exercise
+  environment reading at all**, because there was nothing to read. That is why this survived
+  until a downstream consumer hit it. The runner now supplies one **fixed** entry
+  (`CYRIUS_TEST_ENV=1`): determinism is preserved exactly (results still do not depend on the
+  invoking shell) and the code path becomes reachable.
+
+### Band K phase 1 — the closeout audit, and two High CVEs from it
+
+Nine parallel audit dimensions over the v6.5.x minor, with an adversarial verify pass: **7 of 8
+attacked findings confirmed, 1 refuted** (that one would have been a wrong fix). Full record in
+`docs/audit/2026-09-03-security-audit.md`. Two land here:
+
+- ⭐ **CVE-39 — an include path's LENGTH silently changes which `#ifdef` branch compiles.** The
+  three filename capture loops guarded at 4095 because the map declared the region `[4096]`, but
+  `PP_EXPAND`'s output-cursor slot sits 768 bytes in and the **`#ifdef` feature-flag table** 1024
+  bytes in. **Measured against a pre-fix compiler built for the purpose: a 1210-character include
+  path makes the probe return 7 where 42 is correct — compile rc=0, no diagnostic.** A path
+  length changed the generated code. ⚠ **768 is the bound, not 1024**: the first cut of this fix
+  used 1024, reasoning from the flag table alone and missing the cursor slot 256 bytes below it —
+  so the gate now *derives* the bound from live writes rather than trusting the map.
+- ⭐ **CVE-40 — the `#define` body copy was unbounded**, on the length *and* on the accumulating
+  write position, walking out of the 16 KB macro text pool into live compiler state. Bounded with
+  an honest error; the guard tests the **accumulator**, because bounding one macro's length still
+  overruns on the sixteenth `#define`.
+- ⚠ **The gate's own first run failed for the classic reason** and it is recorded in the gate:
+  `lex_pp.cyr` carries a v6.4.81 note about a phantom map entry at `0x190500` *"an address NO
+  code has ever written"*, and the unfiltered grep read that **sentence** as a live writer and
+  rejected a correct bound. Reading a number out of prose is the same defect the note is about.
+
+**Heap map:** `include_fname` corrected `[4096]` → `[768]`, and the two live neighbours that make
+768 the real number are now declared. 102 regions, 0 overlaps.
+
 ## [6.5.44] — 2026-09-02
 
 **Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,776 B**, seed → cybs → cycc

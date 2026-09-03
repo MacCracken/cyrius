@@ -1,5 +1,9 @@
 # WITHDRAW `SYS_BLKSTATS` #105 — agnos removed the syscall; it never needed a number
 
+> ## ✅ DONE at cyrius 6.5.45 — `SYS_BLKSTATS` and `fn sys_blkstats` removed; ABI parity back to 105/105, 0 disagreements.
+>
+> ⚠ **This filing and `2026-09-02-agnos-sysinfo-wrapper-needs-a-length.md` CONTRADICTED each other** — that one states "#105 ... is NOT being moved ... unwinding it would waste that release" and reports the gate green at 106/106/106. Settled against the LIVE agnos kernel rather than either verdict: no `num == 105` arm in `kernel/core/syscall.cyr`, no `blkstats` anywhere in `kernel/`, and the ABI table lists `| 104 | blk0_read |` as a **sysinfo tail offset**. THIS filing is the correct one.
+
 **Status:** 🔴 **OPEN — ACTION NEEDED. The kernel arm is GONE as of agnos 1.56.59; the peer still
 advertises it.** This is a removal, not an addition, and it is the one item in this filing that is
 time-sensitive.

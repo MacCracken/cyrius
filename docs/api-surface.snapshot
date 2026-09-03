@@ -4332,7 +4332,12 @@ sync_windows::mutex_unlock/1
 sys::is_root/0
 sys::sys_gettid/0
 sys::sys_sysinfo/1
+sys::sys_sysinfo_n/2
 sys::sys_uname/1
+sys::sysinfo_blk_read/2
+sys::sysinfo_blk_write/2
+sys::sysinfo_cpu_kern/2
+sys::sysinfo_cpu_user/2
 sys::sysinfo_free_memory/1
 sys::sysinfo_procs/1
 sys::sysinfo_total_memory/1
@@ -4352,6 +4357,9 @@ syscalls_aarch64_linux::sigset_add/2
 syscalls_aarch64_linux::sigset_has/2
 syscalls_aarch64_linux::sigset_new/0
 syscalls_aarch64_linux::sys_access/2
+syscalls_aarch64_linux::sys_bsdthread_create/5
+syscalls_aarch64_linux::sys_bsdthread_register/6
+syscalls_aarch64_linux::sys_bsdthread_terminate/4
 syscalls_aarch64_linux::sys_chmod/2
 syscalls_aarch64_linux::sys_dup2/2
 syscalls_aarch64_linux::sys_epoll_wait/4
@@ -4375,6 +4383,8 @@ syscalls_aarch64_linux::sys_rename/2
 syscalls_aarch64_linux::sys_rmdir/1
 syscalls_aarch64_linux::sys_stat/2
 syscalls_aarch64_linux::sys_symlink/2
+syscalls_aarch64_linux::sys_ulock_wait/4
+syscalls_aarch64_linux::sys_ulock_wake/3
 syscalls_aarch64_linux::sys_unlink/1
 syscalls_aarch64_linux::timerfd_drain/1
 syscalls_aarch64_linux::timerspec_new/2
@@ -4447,6 +4457,9 @@ syscalls_linux_common::sys_write/3
 syscalls_macos::err_code/1
 syscalls_macos::is_err/1
 syscalls_macos::sys_access/2
+syscalls_macos::sys_bsdthread_create/5
+syscalls_macos::sys_bsdthread_register/6
+syscalls_macos::sys_bsdthread_terminate/4
 syscalls_macos::sys_chmod/2
 syscalls_macos::sys_dup2/2
 syscalls_macos::sys_fchownat/5
@@ -4466,6 +4479,8 @@ syscalls_macos::sys_rename/2
 syscalls_macos::sys_rmdir/1
 syscalls_macos::sys_stat/2
 syscalls_macos::sys_symlink/2
+syscalls_macos::sys_ulock_wait/4
+syscalls_macos::sys_ulock_wake/3
 syscalls_macos::sys_unlink/1
 syscalls_windows::WEXITSTATUS/1
 syscalls_windows::WIFEXITED/1
@@ -4575,6 +4590,10 @@ syscalls_x86_64_agnos::sys_net_icmp_timeouts/0
 syscalls_x86_64_agnos::sys_net_icmp_tx/0
 syscalls_x86_64_agnos::sys_net_ip/0
 syscalls_x86_64_agnos::sys_net_netmask/0
+syscalls_x86_64_agnos::sys_net_rx_bytes/0
+syscalls_x86_64_agnos::sys_net_rx_packets/0
+syscalls_x86_64_agnos::sys_net_tx_bytes/0
+syscalls_x86_64_agnos::sys_net_tx_packets/0
 syscalls_x86_64_agnos::sys_open/3
 syscalls_x86_64_agnos::sys_pause/0
 syscalls_x86_64_agnos::sys_pipe/1
@@ -4712,9 +4731,14 @@ thread_macos::chan_send/2
 thread_macos::chan_try_recv/1
 thread_macos::chan_try_send/2
 thread_macos::gettid/0
+thread_macos::gettid/0
+thread_macos::thread_create/2
 thread_macos::thread_create/2
 thread_macos::thread_create_detached/2
+thread_macos::thread_create_detached/2
 thread_macos::thread_is_done/1
+thread_macos::thread_is_done/1
+thread_macos::thread_join/1
 thread_macos::thread_join/1
 thread_win::chan_close/1
 thread_win::chan_new/1

@@ -1,0 +1,67 @@
+# getenv_environment.tcyr — v6.5.45
+#
+# ⛔ WHY THIS FILE EXISTS. `getenv` returned 0 for EVERY name on macOS, on a process whose
+# environment was fully populated — a silent wrong answer, not a crash, so every consumer
+# reading the environment there behaved as if the variable were unset. `_env_load` opened
+# `/proc/self/environ`, which macOS does not have. It was found by thoth 0.44.3, its first
+# macOS build since 0.6.4, i.e. it sat there for as long as nobody built a macOS consumer that
+# read the environment.
+#
+# ⚠ THE SHAPE IS WHY THE TEST IS CROSS-HOST RATHER THAN A UNIT TEST. The AGNOS branch in
+# `getenv` exists precisely because THAT target has no /proc, and Windows is served by the PE
+# reroute to GetEnvironmentVariableA — macOS was the same class of target with no branch. The
+# general case had been handled once per target instead of once for the class, so the only
+# thing that catches the next instance is running it on every host.
+#
+# ⚠ ASSERTS ONLY WHAT IS TRUE EVERYWHERE. `PATH` is set by every shell and ssh session on
+# Linux, macOS and Windows alike (GetEnvironmentVariableA is case-insensitive, so it matches
+# Windows's `Path`). Nothing here enumerates a VALUE — the v6.5.36 lesson: a crossos test that
+# pins environment-specific content fails for environmental reasons and reads as a port bug.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/io.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    # 1. THE DISCRIMINATOR. `CYRIUS_TEST_ENV=1` is set by the suite runner itself
+    #    (programs/checks/crosshost.cyr) — deterministically, on every host, rather than
+    #    depending on whatever the invoking shell exported.
+    #    ⚠ THIS ASSERTION USED TO READ `PATH` AND THAT WAS WRONG, in exactly the way this
+    #    file's own header warns about: the runner execs each test with `envp = {NULL}`, so
+    #    PATH is genuinely unset there and the test failed for an ENVIRONMENTAL reason while
+    #    passing when run by hand. The runner now supplies one known entry instead, which also
+    #    closes the reason `getenv` was untestable in-suite at all.
+    #    ⚠ TWO SOURCES, because there are TWO RUNNERS and they differ. `cyrius test` and the
+    #    remote cross-host runner exec through a shell, so PATH is set; the check.sh suite
+    #    runner (programs/checks/crosshost.cyr) execs with an explicit envp for
+    #    reproducibility, and now supplies CYRIUS_TEST_ENV=1 — which it did NOT before v6.5.45,
+    #    when it passed `envp = {NULL}` and thereby made environment reading untestable in-suite
+    #    at all. Accept either; a broken getenv finds neither.
+    var p = getenv("CYRIUS_TEST_ENV");
+    if (p == 0) { p = getenv("PATH"); }
+    assert_neq(p, 0, "getenv reads a variable from the process environment");
+    if (p != 0) {
+        assert_neq(load8(p), 0, "the value is non-empty");
+    }
+
+    # 2. A miss must still be a miss. A loader that returned a bogus non-zero pointer for
+    #    everything would satisfy axis 1 while being completely broken.
+    var miss = getenv("CYRIUS_CROSSOS_DEFINITELY_UNSET_A7F3");
+    assert_eq(miss, 0, "an unset name returns 0");
+
+    # 3. Repeat reads are stable — `_env_load` caches, and a cache that rebuilt or corrupted
+    #    the blob on the second call would show up here.
+    var p2 = getenv("CYRIUS_TEST_ENV");
+    if (p2 == 0) { p2 = getenv("PATH"); }
+    assert_neq(p2, 0, "a second lookup still returns a value");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

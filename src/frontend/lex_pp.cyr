@@ -626,11 +626,34 @@ fn PP_REANCHOR_CUR(S, out, op, tmp, ip): i64 {
     return PP_REANCHOR(S, out, op, _pp_curfile_ptr(), _pp_curfile_base + _pp_count_nl(tmp, _pp_curfile_anchor, ip));
 }
 
+# ⛔ v6.5.45 (CVE-39) — THE BOUND IS 768, NOT 4096, AND THE DIFFERENCE WAS A SILENT
+# MISCOMPILE. The heap map declared `0x190400 include_fname [4096]` and all three capture loops
+# guarded at 4095 from that number, but TWO live things sit inside that declared span:
+#   S+0x190700  PP_EXPAND's output-write-cursor return slot (:2334 store / :3166 load) — 768 B in
+#   S+0x190800  the `#ifdef` FEATURE-FLAG TABLE (:2368/:2379), 1024 B in
+# So an include or `#ref` path of 768 characters or more corrupts the preprocessor's own output
+# cursor — expanded macro text then lands at the wrong offset — and past 1024 it overwrites the
+# hashes of CYRIUS_ARCH_X86, CYRIUS_TARGET_MACOS and friends, after which `#ifdef` selects the
+# WRONG BRANCHES. No diagnostic, no crash: a path LENGTH changes the generated code.
+# ⚠ 768 IS THE NUMBER AND IT WAS NOT OBVIOUS. This fix first shipped at 1023, reasoning from the
+# flag table alone; the cursor slot 256 bytes below it is what makes the real bound 768. The map
+# now declares both, so the next reader does not have to re-derive them from grep.
+# ⚠ A long path is not exotic — deep vendored dep trees under a long $HOME reach four figures,
+# and the input is attacker-influenced wherever source is compiled on someone's behalf.
+# The map line is corrected to [1024] in src/main.cyr; the guards below are the enforcement.
 fn PP_FNAME_TOO_LONG(): i64 {
-    syscall(SYS_WRITE, 2, "error: include/#ref filename exceeds 4095 bytes\n", 48);
+    syscall(SYS_WRITE, 2, "error: include/#ref filename exceeds 767 bytes\n", 47);
     syscall(SYS_EXIT, 1);
     return 0;
 }
+# Refuse a #define whose body would run past the macro text pool (CVE-40). Mirrors
+# PP_FNAME_TOO_LONG: an honest hard error beats a silent wrong compile.
+fn PP_MACRO_TEXT_FULL(): i64 {
+    syscall(SYS_WRITE, 2, "error: #define bodies exceed the 16 KB macro text pool\n", 55);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 
 fn PP_MARK_INCLUDED(S, fname): i64 {
     var cnt = L64(S + 0x197F00);
@@ -2710,8 +2733,22 @@ fn PP_PASS(S): i64 {
                             var mdst = S + 0x193000 + _pp_macro_text_pos;
                             var mlen = 0;
                             var mcp = mip;
+                            # ⛔ v6.5.45 (CVE-40) — THIS COPY WAS UNBOUNDED. The loop ran to
+                            # end-of-line with no check on `mlen` or on the ACCUMULATING
+                            # `_pp_macro_text_pos`, writing straight out of the macro text pool
+                            # at S+0x193000. The pool's free headroom runs to S+0x197000
+                            # (0x193400 is FREED since v6.1.40; the next LIVE writer is
+                            # 0x197000), i.e. 16 KB shared across all 16 macros — so a single
+                            # long `#define` body, or several ordinary ones in sequence, walked
+                            # into live compiler state. Silent: no diagnostic, no crash, a
+                            # wrong compile. Same class as CVE-32.
+                            # ⚠ The guard is on the DESTINATION OFFSET, not on this macro's
+                            # length, because the position accumulates across macros — bounding
+                            # `mlen` alone would still overrun on the sixteenth #define.
+                            var mcap = 16384;
                             while (mcp < bl) {
                                 if (load8(S + _SRCB + mcp) == 10) { break; }
+                                if (_pp_macro_text_pos + mlen + 1 >= mcap) { PP_MACRO_TEXT_FULL(); }
                                 store8(mdst + mlen, load8(S + _SRCB + mcp));
                                 mlen = mlen + 1;
                                 mcp = mcp + 1;
@@ -2920,7 +2957,7 @@ fn PP_PASS(S): i64 {
                                 if (fgo == 1) {
                                     var fc = load8(S + _SRCB + ip);
                                     if (fc == 34) { ip = ip + 1; fgo = 0; }
-                                    else { if (fi >= 4095) { PP_FNAME_TOO_LONG(); } store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
+                                    else { if (fi >= 767) { PP_FNAME_TOO_LONG(); } store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
                                 }
                             }
                             store8(fname + fi, 0);
@@ -3363,7 +3400,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                     if (fgo == 1) {
                                         var fc = load8(tmp + ip);
                                         if (fc == 34) { ip = ip + 1; fgo = 0; }
-                                        else { if (fi >= 4095) { PP_FNAME_TOO_LONG(); } store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
+                                        else { if (fi >= 767) { PP_FNAME_TOO_LONG(); } store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
                                     }
                                 }
                                 store8(fname + fi, 0);
@@ -3485,7 +3522,7 @@ fn PP_REF_PASS(S): i64 {
                     while (ip < bl) {
                         var rc = load8(S + _SRCB + ip);
                         if (rc == 34) { ip = ip + 1; break; }
-                        if (rfi >= 4095) { PP_FNAME_TOO_LONG(); }
+                        if (rfi >= 767) { PP_FNAME_TOO_LONG(); }
                         store8(rfn + rfi, rc); rfi = rfi + 1; ip = ip + 1;
                     }
                     store8(rfn + rfi, 0);

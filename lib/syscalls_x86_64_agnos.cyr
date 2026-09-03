@@ -91,7 +91,17 @@ enum SysNrAgnos {
     SYS_LSTAT = 102;               # lstat(path,len,statbuf) → 0/-1; no-follow on the FINAL symlink (1.56.53)
     SYS_STATFS = 103;              # statfs(path, pathlen, buf) → 0 / -1; fills a FROZEN 32-byte record (1.56.56/.57)
     SYS_MOUNTLIST = 104;           # mountlist(buf, max) → record count / -1; 80-byte records (1.56.59)
-    SYS_BLKSTATS = 105;            # blkstats(tag, field) → cumulative SECTORS / -1 (agnos 1.56.59)
+    # ⛔ SYS_BLKSTATS = 105 WAS HERE AND IS WITHDRAWN (v6.5.45). agnos minted it in the
+    # 1.56.59 cut, filed it, and cyrius shipped the peer in 6.5.44 — then an extend-vs-mint
+    # audit of the whole 106-syscall surface found it never needed a number: a closed 5-value
+    # tag enum over flat by-tag arrays is exactly a fixed-size tail block, so the counters
+    # belong in `sysinfo`#35's tail and now live at +104 (see sys_sysinfo_n in lib/sys.cyr).
+    # ⚠ REMOVED RATHER THAN LEFT STANDING: a needless syscall number is PERMANENT SURFACE —
+    # every consumer, every ABI gate and every peer carries it forever, and it becomes the
+    # obvious place to hang the next block-telemetry field. Verified against the LIVE agnos
+    # kernel, not the filing: `kernel/core/syscall.cyr` has no `num == 105` arm and `blkstats`
+    # appears nowhere in kernel/. A wrapper with no kernel arm does not error — the caller gets
+    # the dispatch fall-through value and may render it as a statistic. Do not re-add 105.
     SYS_UNAME = 34;                # uname(buf, len=64) → 0; 4×16-byte fields (§4.3)
     SYS_SYSINFO = 35;             # sysinfo(buf, len=40) → 0; 5×u64, byte-direct (§4.4)
     SYS_LSEEK = 58;               # lseek(fd, offset, whence) → new pos / -1; whence 0=SET/1=CUR/2=END
@@ -919,35 +929,6 @@ fn sys_blk_write(h, lba, buf, nsec): i64 { return syscall(SYS_BLK_WRITE, h, lba,
 # blk_info(h, out) — device geometry → 0 / -1 (writes {capacity_lbas, lba_bytes}).
 fn sys_blk_info(h, out): i64             { return syscall(SYS_BLK_INFO, h, out); }
 
-# blkstats(tag, field) — per-device cumulative disk I/O → sectors / -1 (agnos 1.56.59, `#105`).
-#   tag    a BLK_* device tag: 1 virtio · 2 nvme · 3 ahci · 4 usb-ms · 5 ramdisk. This is the
-#          SAME identity `blk_enum`#75 hands out, so a consumer enumerates with #75 and reads
-#          each device's traffic here — there is no second naming scheme to reconcile.
-#   field  0 = sectors READ · 1 = sectors WRITTEN.
-#   -1     for a tag outside 1..5 or an unknown field.
-#
-# Counted at `blk_read_on`/`blk_write_on`, the one place every backend passes through, and only
-# on a COMPLETED transfer. Monotonic since boot, never reset — so a monitor differences two
-# samples for a rate, and anything that cleared them would yield a negative delta.
-#
-# ⚠ SECTORS, NOT BYTES, DELIBERATELY. This layer transfers exactly one sector per call, and a
-# byte count computed kernel-side would have to multiply by the per-device LBA size, which can
-# be 4096 — so it would be wrong the moment a 4Kn device appears. A caller wanting bytes
-# multiplies by the `lba_bytes` that `blk_info`#79 already reports to it.
-#
-# ⚠ A NEW NUMBER RATHER THAN WIDENING `blk_info`#79, and the reason generalises: #79 fills a
-# FIXED struct with no length argument, so extending its record is an ABI break for every
-# already-shipped caller. It is the same rule that minted `mountlist`#104 instead of widening
-# `mount`#11 — unused syscall argument registers carry STALE VALUES rather than zero on agnos,
-# so widening a shipped number hands old callers an arbitrary value.
-#
-# ⚠ AGNOS-ONLY, on the same honest-gap reasoning as `sys_mountlist` / `sys_statfs` above: a
-# consumer that calls this builds on agnos and fails to LINK elsewhere, which is a better
-# failure than a number invented from memory (the v6.5.36 defect class — `sys_pause` issuing
-# flock) or a fail-closed -1 stub claiming unsupported on hosts that do have disk counters.
-fn sys_blkstats(tag, field): i64 {
-    return syscall(SYS_BLKSTATS, tag, field);
-}
 # blk_close(h) — release the handle → 0 / -1.
 fn sys_blk_close(h): i64                 { return syscall(SYS_BLK_CLOSE, h); }
 

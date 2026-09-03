@@ -1,5 +1,9 @@
 # `sys_sysinfo` hardcodes len=40, so consumers cannot read AGNOS's extended tail
 
+> ## ✅ DONE at cyrius 6.5.45 — `sys_sysinfo_n(out, len)` + the 40/104/200 tier constants + four named tail accessors, pinned by `tests/gates/platform/agnos_sysinfo_tail_parity.sh`.
+>
+> ⛔ **ONE CLAIM IN THIS FILING IS WRONG and it is recorded rather than quietly dropped**: the section headed "It is NOT being moved" says `#105 blkstats` stands and reports the ABI gate green at 106/106/106. It does not stand — the number was withdrawn, the kernel arm is gone, and the counters ride `sysinfo`#35's tail at +104. Verified against live agnos source. A filing's statement is a verdict, not evidence.
+
 **Status:** 🟠 **OPEN — wrapper only. NO new syscall number, NO ABI-table row, NO agnos-side change.**
 **Ask:** give `sys_sysinfo` a caller-supplied length (an overload or a second arity), so a consumer can
 read the fields AGNOS appended past +40.
