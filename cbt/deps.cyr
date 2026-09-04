@@ -296,6 +296,64 @@ fn _dep_copy_file(src, dst): i64 {
 # header. Mirrors the pattern in cbt/pulsar.cyr::_pulsar_release_array
 # for arrays; this variant returns a scalar string. See CHANGELOG
 # [5.11.17].
+# v6.5.49 — read a scalar string key out of `[build]` in ./cyrius.cyml, or 0 if absent.
+# Backs `cyrius build` with no positional arguments: a project that already declares
+#     [build]
+#     src = "src/main.cyr"
+#     output = "build/thing"
+# should not have to repeat both paths on every invocation. Same parse shape as
+# `_dep_read_cyml_cyrius_field` below (locate the section header, walk lines to the next `[`,
+# match `key`, take the quoted value) — deliberately NOT generalised into one helper, because
+# that one is load-bearing for the pin redirect and this is a new, independently-testable path.
+#
+# ⚠ Returns a heap cstr the caller owns; 0 means "key not present", which is not an error —
+# it is the signal to fall back to the usage message.
+fn _manifest_build_key(key, klen): i64 {
+    if (file_exists("cyrius.cyml") == 0) { return 0; }
+    var buf = alloc(32768);
+    var n = file_read_all("cyrius.cyml", buf, 32767);
+    if (n <= 0) { return 0; }
+    var pos = 0;
+    while (pos < n) {
+        if (memeq(buf + pos, "[build]", 7) == 1 && _toml_section_at(buf, n, pos) == 1) { break; }
+        pos = pos + 1;
+    }
+    if (pos >= n) { return 0; }
+    pos = pos + 7;
+    while (pos < n) {
+        while (pos < n && (load8(buf + pos) == 10 || load8(buf + pos) == 32 || load8(buf + pos) == 9)) {
+            pos = pos + 1;
+        }
+        if (pos >= n) { return 0; }
+        if (load8(buf + pos) == 91) { return 0; }   # `[` → next section, key absent
+        if (memeq(buf + pos, key, klen) == 1) {
+            var after = pos + klen;
+            while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) {
+                after = after + 1;
+            }
+            if (after < n && load8(buf + after) == 61) {
+                after = after + 1;
+                while (after < n && (load8(buf + after) == 32 || load8(buf + after) == 9)) {
+                    after = after + 1;
+                }
+                if (after < n && load8(buf + after) == 34) {
+                    after = after + 1;
+                    var start = after;
+                    while (after < n && load8(buf + after) != 34) { after = after + 1; }
+                    var vlen = after - start;
+                    var out = alloc(vlen + 1);
+                    var i = 0;
+                    while (i < vlen) { store8(out + i, load8(buf + start + i)); i = i + 1; }
+                    store8(out + vlen, 0);
+                    return out;
+                }
+            }
+        }
+        while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+    }
+    return 0;
+}
+
 fn _dep_read_cyml_cyrius_field(): i64 {
     if (file_exists("cyrius.cyml") == 0) { return 0; }
     var buf = alloc(32768);

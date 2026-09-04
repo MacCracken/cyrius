@@ -70,7 +70,33 @@ per-minor max heading, not carried over from the deleted text.
 | **v6.2.x** | Platform expansion — bare-metal + dependency model | **v6.2.52** | Bare-metal target formalization, growable heap regions, the modules/module-groupings dependency foundation. **Bare-metal deliverable #4 (forbidden-module check) never shipped** — `CHANGELOG [6.3.4]` says so, and its issue was later archived without a resolution banner. Carried as an open question in [roadmap.md](roadmap.md). |
 | **v6.3.x** | Language refinements | **v6.3.45** | Closures with lexical capture, monomorphized generics, async/await syntax, native f64/f32 arithmetic. The opt-in bounds-checked memory mode was *designed* here and never shipped (still 0 hits for `CYRIUS_BOUNDS` in `src/`). |
 | **v6.4.x** | Staging minor → long reactive minor | **v6.4.86** | 86 releases. Closeout cut at **.85**; **.86** was the post-closeout sandhi fold. The SIMD compute arc and the other v6.4.x sections below cover it in more detail. |
-| **v6.5.x** | Performance quality / generated-code | *active* | See [roadmap.md](roadmap.md). |
+| **v6.5.x** | Performance quality / generated-code, then a long reactive+repair minor | **v6.5.47** (band K closed it; `.48` was the post-closeout sigil fold + the one carried consolidation) | 48 releases. Ran as lettered BANDS rather than a single arc — A–E substrate/IR, F cross-BB regalloc, G–I repair and consumer filings, **J** macOS concurrency (`.43` routing + `.44` real arm64 threads), **K** the closeout (`.45` preprocessor bounds + agnos, `.46` codegen correctness, `.47` the minor close). Detail per release in [CHANGELOG.md](../../CHANGELOG.md); the per-slot narrative that used to live in roadmap.md is summarised below. |
+
+---
+
+## v6.5.x — bands, and what each actually delivered
+
+Added 2026-09-04 when roadmap.md was cleaned: that file had accumulated **seven stacked
+per-slot blocks** (each once the "NEXT" pointer, each superseded by the next) plus four spent
+reactive windows, ~950 lines of closed-minor narrative. CLAUDE.md's rule is that closed-minor
+detail lives here and in the CHANGELOG; roadmap.md carries only what is still ahead.
+
+| Band | Releases | Delivered |
+|---|---|---|
+| **A–D** | `.0`–`.33` | Visibility (`pub`/`private`), the preprocess/cap cascade, hash-flood seeding, `deps` hardening. |
+| **E** | `.34` | IR substrate — `CYRIUS_IR=3` divergence 4 → 0. Three root causes, one per pass. |
+| **F** | `.35` | Cross-BB regalloc. ⚠ The pinned premise ("it is ONE line") was HALF the story: that line is a deliberate v5.6.22 guard and reverting it alone failed 69 of 282; the unnamed second blocker was a lifetime cap of 5. |
+| **G–I** | `.36`–`.42` | Two Criticals live in shipped releases (enum ≥2^62 → −1; aarch64 `sys_pause` issuing flock), agnos ABI parity to 105/105, REGFN quadratic 43.6 s → 23.9 s. |
+| **J** | `.43`–`.44` | macOS concurrency. `.43` routed five Darwin primitives on both Mach-O backends; `.44` made arm64 threads REAL — and the roadmap's pinned mechanism (`bsdthread_register`) proved a dead end, measured EINVAL, because libpthread spends the one-shot registration first. `__got[5]` had been bound to `_pthread_create` since v5.6.6 and never used. |
+| **K** | `.45`–`.47` | The closeout, run as nine parallel audit dimensions with an adversarial verify pass (7 of 8 attacked findings confirmed, 1 refuted). CVE-39/40/41, a closure param-drop, DCE unsoundness above 32768 fns, 24 mis-declared write lengths. |
+| — | `.48` | Post-closeout: sigil 3.12.15 fold, and ESYSXLAT's Mach-O branch consolidated from 279 hand-written hex words to a computed emitter (byte-identical output, proven against a reference built beforehand). |
+
+**The recurring lesson of the minor**, stated once because it recurred in every band: *a value
+maintained by hand next to the fact it duplicates will drift, and a gate that pins the MECHANISM
+rather than the PROPERTY stays green while it does.* Heap-map sizes vs regions, capacity-meter
+denominators vs enforced caps, DCE bounds vs the fn ceiling, declared string lengths vs strings,
+the TLS slot window vs `TLOCAL_MAX_SLOTS`, `_macho_arm_routes` vs ESYSXLAT — all the same shape,
+all found in this minor, all now derived rather than copied.
 
 ---
 

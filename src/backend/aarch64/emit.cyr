@@ -3062,9 +3062,21 @@ fn EMIT_F64V4_FMADD(S, vbase): i64 { EMIT_F64V_FMADD(S, vbase); return 0; }
 fn EMIT_F64V4_UNARY(S, op, vbase): i64 { EMIT_F64V_UNARY(S, op, vbase); return 0; }
 fn EMIT_F64V4_SCALE(S, vbase): i64 { EMIT_F64V_SCALE(S, vbase); return 0; }
 fn EMIT_F64V4_DOT(S, vbase): i64 { EMIT_F64V_DOT(S, vbase); return 0; }
-fn EMIT_F32V8_LOOP(S, op, vbase): i64 { return 0; }
-fn EMIT_F32V8_FMADD(S, vbase): i64 { return 0; }
-fn EMIT_F32V8_DOT(S, vbase): i64 { return 0; }
+# ⛔ v6.5.49 — THESE WERE `return 0;` STUBS while the F64V4 siblings twelve lines above and the
+# cx backend (src/backend/cx/emit.cyr) both DELEGATE. The comment above argues the case for
+# delegating and then does not do it here: "IF a future caller ever reaches this emitter without
+# the gate, it computes the right answer instead of silently doing nothing — the failure mode the
+# cx multi-return stubs had at v6.5.21 (compiles clean, runs clean, wrong answer, zero
+# diagnostics)." That reasoning applies identically to f32v8, and the stubs are the exact failure
+# mode it names.
+# ⚠ NOT REACHABLE TODAY — lib/simd.cyr's f32v8 wrappers gate on `simd_has_avx2()`, which is 0 on
+# every non-x86 target, so nothing is broken right now. That is also precisely why it survived:
+# no in-tree caller and no crossos test exercised it, so the asymmetry was invisible.
+# The NEON f32v loop iterates `n` four lanes at a time and produces the CORRECT result, just
+# without the 8-lane stride.
+fn EMIT_F32V8_LOOP(S, op, vbase): i64 { EMIT_F32V_LOOP(S, op, vbase); return 0; }
+fn EMIT_F32V8_FMADD(S, vbase): i64 { EMIT_F32V_FMADD(S, vbase); return 0; }
+fn EMIT_F32V8_DOT(S, vbase): i64 { EMIT_F32V_DOT(S, vbase); return 0; }
 fn EMIT_F64V_LOOP(S, op, vbase): i64 {
     EW(S, 0xAA0003EA);                # mov x10, x0   — n
     EW(S, 0xD280000B);                # movz x11, #0  — index = 0

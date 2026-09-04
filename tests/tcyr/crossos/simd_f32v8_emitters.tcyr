@@ -1,0 +1,73 @@
+# simd_f32v8_emitters.tcyr — v6.5.49
+#
+# ⛔ WHY THIS FILE EXISTS. `EMIT_F32V8_LOOP` / `_FMADD` / `_DOT` were `return 0;` STUBS on the
+# aarch64 backend while the cx backend and the F64V4 siblings twelve lines above both delegated
+# to their 128-bit emitters. Reaching a stub emits NOTHING: the program compiles clean, runs
+# clean, and produces a wrong answer with zero diagnostics — the exact failure mode the comment
+# beside those siblings names (the v6.5.21 cx multi-return stubs).
+#
+# ⚠ IT WAS UNREACHABLE, AND THAT IS THE POINT. `lib/simd.cyr`'s f32v8 wrappers gate on
+# `simd_has_avx2()`, which is 0 on every non-x86 target, so nothing was broken — and no in-tree
+# caller or crossos test ever touched the emitters, which is why the asymmetry survived. The only
+# raw caller was a benchmark, and benches are non-blocking. An unreachable wrong answer is still a
+# wrong answer waiting for a caller.
+#
+# ⚠ ASSERTS RESULTS, NOT AN INSTRUCTION FORM. The 8-lane stride has no aarch64 analogue (NEON
+# registers are 128-bit), so the arm64 path iterates four lanes at a time. What must hold on every
+# target is the ARITHMETIC, which is what this checks — a test pinning the x86 ymm form would fail
+# on arm for a correct implementation.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/simd.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    # ⛔ THE RAW `f32v8_*` INTRINSICS BYPASS THE CPU GATE, WHICH IS THE POINT AND THE HAZARD.
+    # `lib/simd.cyr`'s `f32v8_add_ptr` wrapper reads `simd_has_avx2()` and falls back to the
+    # 128-bit `f32v_*` loop; calling the intrinsic directly emits AVX2 unconditionally. That is
+    # what this file must do — the emitters are otherwise unreachable — but on an x86 host
+    # WITHOUT AVX2 those instructions are SIGILL, and the process dies before printing anything.
+    # Measured on cass (Windows, `simd_has_avx2()` == 0): zero bytes of output, exit 0, no
+    # diagnostic. So the raw call is gated on the CPU here exactly as the wrapper gates it.
+    # ⚠ On aarch64 there is no such gate to respect: `simd_has_avx2()` is 0 on every non-x86
+    # target, so gating on it there would skip the very emitters this file exists to test — the
+    # aarch64 F32V8 emitters delegate to NEON and are always safe to call.
+    var run_raw = 1;
+    #ifdef CYRIUS_ARCH_X86
+    if (simd_has_avx2() == 0) { run_raw = 0; }
+    #endif
+
+    if (run_raw == 1) {
+        # 8 lanes so x86-AVX2 takes one 256-bit step and NEON takes two 128-bit steps.
+        var A[64];
+        var B[64];
+        var R[64];
+        var i = 0;
+        while (i < 8) {
+            store32(&A + i * 4, f32_from(f64_from(i + 1)));        # 1..8
+            store32(&B + i * 4, f32_from(f64_from(2)));            # 2
+            i = i + 1;
+        }
+
+        f32v8_add(&R, &A, &B, 8);
+        assert_eq(f64_to(f32_to(load32(&R))), 3, "f32v8_add lane 0 (1+2)");
+        assert_eq(f64_to(f32_to(load32(&R + 28))), 10, "f32v8_add lane 7 (8+2) — past the 4-lane NEON step");
+
+        f32v8_mul(&R, &A, &B, 8);
+        assert_eq(f64_to(f32_to(load32(&R + 12))), 8, "f32v8_mul lane 3 (4*2)");
+        assert_eq(f64_to(f32_to(load32(&R + 28))), 16, "f32v8_mul lane 7 (8*2)");
+    }
+
+    # Always assert something, so a host that skips the raw block still reports a real result
+    # rather than an empty summary that could be mistaken for a crash.
+    assert_eq(1, 1, "f32v8 emitter probe completed");
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

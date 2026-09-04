@@ -50,9 +50,16 @@ def unesc(lit):
             out.append(c); i += 1
     return ''.join(out)
 
+# ⚠ v6.5.49: ERR_MSG / WARN carry the same hand-written length and were NOT covered when this
+# gate landed at v6.5.47 — which is how two `WARN(S, "...", 45)` sites for a 41-byte literal
+# survived it, each leaking 4 bytes past the string. The roadmap had carried an "ERR_MSG
+# hardcoded-length audit" as an open item since v6.4.57 for exactly this; adding the two
+# patterns closes it. If a new diagnostic helper takes a literal and a length, add it here.
 PATS = [
     re.compile(r'syscall\(\s*(?:1|SYS_WRITE)\s*,\s*[0-9A-Za-z_]+\s*,\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*(\d+)\s*\)'),
     re.compile(r'sys_write\(\s*[0-9A-Za-z_]+\s*,\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*(\d+)\s*\)'),
+    re.compile(r'ERR_MSG\(\s*S\s*,\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*(\d+)\s*\)'),
+    re.compile(r'WARN\(\s*S\s*,\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*(\d+)\s*\)'),
 ]
 
 files = sorted(set(sum([glob.glob(p, recursive=True)

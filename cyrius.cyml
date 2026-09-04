@@ -1,3 +1,9 @@
+# cyrius — project manifest.
+#
+# Rationale, fold history and per-release narrative belong in CHANGELOG.md and
+# docs/ecosystem.md, NOT here. Keep this file to the configuration and one line
+# of intent per key.
+
 [package]
 name = "cyrius"
 version = "${file:VERSION}"
@@ -7,57 +13,25 @@ repository = "https://github.com/MacCracken/cyrius"
 
 [build]
 src = "src/main.cyr"
-output = "build/cc5"
+output = "build/cycc"
 
-# Release-scaffold manifest (v5.4.18). Single source of truth for the
-# toolchain binary + helper-script lists that release.yml, install.sh,
-# and cbt/pulsar.cyr all need to stay in sync on. Before v5.4.18 these
-# were hardcoded in 6 places (release.yml ×2, install.sh ×3, pulsar ×1)
-# and `cyrld` shipped months after CI built it because one of the
-# hardcoded lists was never updated. Now: add a binary here, every
-# consumer picks it up automatically.
+# Single source of truth for the binary + script lists release.yml, install.sh and
+# cbt/pulsar.cyr all consume. Add a binary here and every consumer picks it up.
+# ⚠ release.yml awk-parses these three arrays — keep them one-per-line and bracketed.
 [release]
 bins = ["cycc", "cyrius", "cyrfmt", "cyrlint", "cyrdoc", "cybs", "cyaudit", "ark", "cyrld", "cyrius_api_surface", "cyrius-lsp", "cyriusly", "ts_test_runner", "cyrsign", "cyrsign-efi", "cyrius-init", "cxvm"]
-# cx arc: cxvm (the .cyx runtime) rides bins — host-native, built from
-# programs/cxvm.cyr like cyrfmt/cyrlint. cycc_cx (the cx bytecode COMPILER, from
-# src/main_cx.cyr) rides cross_bins — a cross-target compiler rebuilt on demand,
-# gitignored, out of the seed trusted base (like cycc_aarch64). Needs an explicit
-# install.sh case arm (its source is src/main_cx.cyr, not programs/cycc_cx.cyr).
+# Cross-target compilers: rebuilt on demand, gitignored, outside the seed trusted base.
 cross_bins = ["cycc_aarch64", "cycc_win", "cycc-native-aarch64", "cycc_cx"]
-# v5.11.10: scripts/cyriusly retired from release.scripts — replaced by
-# programs/cyriusly.cyr in bins (cyrius binary handles all verbs; heavy
-# verbs shell-out to OS tools via process.exec). scripts/cyriusly stays
-# in tree as `sh scripts/cyriusly` backend for the `setup` / `cmdtools`
-# verbs that still call into it transparently; v5.12.x or later may
-# fully native-port those paths.
-# v6.2.40: cyrius-init.sh / cyrius-port.sh RETIRED — `cyrius init` and
-# `cyrius port` are now the native programs/cyrius-init.cyr binary
-# (in bins above; port mode via the --__mode=port sentinel). Both bash
-# shims were deleted; there is no fallback. The scaffolding templates
-# ship as programs/cyrius-init-templates/ (copied to versions/<v>/programs/).
 scripts = ["cyrius-repl.sh", "cyrius-watch.sh", "cyrius-prompt-info"]
 
-# v5.7.50: stdlib auto-prepend list. Required so cyrius's own `cyrius
-# bench` / `cyrius test` / `cyrius build` runs include the stdlib
-# modules each dep distfile needs in scope. Pre-v5.7.50 this block
-# was missing, so dep distfiles got bundled without lib/syscalls.cyr
-# (et al.) in scope — patra's `syscall(SYS_LSEEK, ...)` references
-# went unresolved at parse time. Surfaced 2026-05-01 in the pre-v5.8.0
-# P(-1) audit (`docs/audit/2026-05-01-pre-5.8.0-audit.md`).
-#
-# Module set is the UNION of what all 6 [deps.*] consumers (sakshi,
-# patra, sigil, yukti, mabda, sankoch) plus the agnosys transitive
-# dep need in scope when their distfile parses. Computed as the
-# union of each dep's own [deps].stdlib list at v5.7.49 pin time.
-# Same convention every consumer uses; cyrius is just the last to
-# adopt it (its own stdlib was always in scope when compiling itself).
+# Auto-prepended into every `cyrius build` / `test` / `bench` run here, so dep
+# distfiles parse with the modules they reference in scope.
+# Items containing `/` resolve as lib/<path>.cyr (e.g. unicode/categories).
+# ⚠ Vendored folds (bayan, sigil, sakshi, patra, mabda, yukti, sankoch, vani, sandhi)
+#   are deliberately ABSENT — they are opt-in via explicit `include "lib/<name>.cyr"`.
+#   Auto-prepending them would push tens of KLOC into every consumer's preprocess
+#   buffer. See docs/ecosystem.md for what is folded and at which version.
 [deps]
-# v5.8.49: subdir-nested stdlib paths supported. Items containing `/`
-# resolve as `<stdlib_dir>/<path>.cyr` (e.g. `unicode/categories` →
-# `lib/unicode/categories.cyr`). `_dep_copy_file()` mkdir-p's any
-# intermediate dst dirs. This unblocks Unicode 17.0 fold delivery
-# to consumers — pre-fix, `lib/unicode/*.cyr` stayed in this repo
-# but never propagated through `cyrius deps` to mabda / sigil / etc.
 stdlib = [
     "syscalls", "string", "alloc", "str", "fmt", "vec",
     "hashmap", "io", "fs", "tagged", "process", "fnptr",
@@ -66,69 +40,3 @@ stdlib = [
     "unicode/casefold", "unicode/_casefold_data",
     "unicode/normalize", "unicode/_normalize_data",
 ]
-# v6.1.25 bayan carve (sandhi-pattern): json / toml / cyml / csv / base64 /
-# bigint / u128 were carved into the **bayan** sibling repo, renamed to the
-# canonical `bayan_*` API, and folded byte-identical into `lib/bayan.cyr`
-# (currently bayan 1.1.0's `cyrius distlib` output; originally carved at 1.0.0).
-# `json` + `bigint` were
-# REMOVED from the auto-prepend list above — like every other fold, bayan is
-# opt-in via explicit `include "lib/bayan.cyr"` (auto-prepend would push the
-# ~3.5 KLOC bundle into every consumer's preprocess_out buffer). Consumers
-# must also have `result` / `fnptr` / `io` in scope (the distlib bundle strips
-# includes; `result` in particular is NOT auto-prepended). `_compat.cyr`
-# inside the bundle forwards the legacy json_*/u256_*/etc. names during the
-# downstream migration window. See CHANGELOG [6.1.25] + bayan CHANGELOG [1.0.0].
-# v5.8.65 stdlib foldin (sandhi-pattern, per the v5.7.0 precedent):
-# sakshi 2.2.3, patra 1.10.3, sigil 3.5.6 (3.5.5→.6 at v6.0.13:
-# unblocks TLS Mini-arc A.4 — adds hmac_sha384 + hkdf_extract_sha384 +
-# hkdf_expand_sha384 + hkdf_sha384 for the TLS_AES_256_GCM_SHA384
-# ciphersuite key schedule; pure additive, no removals), vani 0.9.2,
-# yukti 2.2.7, sankoch 2.4.7 are vendored byte-identical into `lib/<name>.cyr`
-# from their patched dist files at the tags listed above. They are
-# **NOT** added to the [deps].stdlib auto-prepend list — consumers
-# pull them via explicit `include "lib/<name>.cyr"` (the sandhi
-# pattern). Auto-prepend would force the ~28 KLOC of folded code
-# into every consumer's preprocess_out buffer; preprocess_out is
-# capped at 2 MB (v5.6.40) and we just hit it at v5.8.60 over the
-# 445 KB compat-decomp blob. Better to keep dep code opt-in.
-#
-# Mabda folded at 3.0.1 (v6.0.x, post-3.0.0 GA); refreshed to **4.0.8** at v6.5.4
-# (4.0.0 added a native NVIDIA/nouveau backend — no public-API change): vendored
-# byte-identical into lib/mabda.cyr from its dist, removed from [deps] (sandhi pattern).
-# OPT-IN, NOT auto-prepended (515 KB would blow the preprocess cap) — and
-# mabda 3.0.1 newly needs mmap + dynlib + sakshi, so consumers must
-# `include "lib/mmap.cyr"`, `lib/dynlib.cyr`, `lib/sakshi.cyr` BEFORE
-# `include "lib/mabda.cyr"`. (Kept opt-in rather than enlarging the union:
-# user 2026-06-03; preprocess-cap raise to 6-8 MB queued for cap-sweep work.)
-# agnosys was transitive via mabda's git resolution; with mabda vendored it
-# is no longer pulled here (re-add a [deps.agnosys] if a consumer needs it).
-
-# v5.8.65 stdlib foldin: sakshi / patra / sigil / vani / yukti /
-# sankoch were folded byte-identical into lib/ at their patched
-# tags (2.2.3 / 1.10.3 / 3.5.5 / 0.9.2 / 2.2.2 / 2.2.4 respectively)
-# and removed from [deps]. The dist files are now permanent stdlib
-# entries via [deps].stdlib auto-prepend. Future dep updates fold
-# at the next patched tag rather than git-resolve at consume time
-# — same model as the v5.7.0 sandhi precedent.
-#
-# Mabda fold completed at 3.0.1 (see the note above) — no [deps.mabda]
-# git entry; lib/mabda.cyr is the vendored, opt-in distfile.
-#
-# Yantra folded at 1.0.0 (v6.2.26): the UI/end-to-end TESTING lib (WebDriver +
-# Appium + Chromium-CDP RPC). Vendored byte-identical into lib/yantra.cyr from
-# its dist (regenerated via `cyrius distlib` at the 1.0.0 tag). OPT-IN, NOT
-# auto-prepended (it's a test harness, not a core stdlib — most consumers don't
-# need it). It REQUIRES its dep chain in order — net / ws / bayan / sandhi / tls
-# (+ dynlib / fdlopen / mmap) / sakshi / sigil — so a consumer lists them ahead
-# of `yantra` in [deps].stdlib (yantra references sigil's SIG_ALG_ED25519
-# constant + sandhi/sakshi fns, so the deps are required, not just runtime).
-# Re-fold at the next patched tag rather than git-resolve at consume time.
-#
-# Ganita vendored at 1.0.2 (v6.3.31): the f64 math lib (trig / hyperbolic /
-# linalg / matrix). Vendored byte-identical into lib/ganita.cyr from its dist
-# (`cyrius distlib`); its dep sidecar (ganita.deps) requires syscalls / string /
-# alloc / fmt / vec / str / math in scope. Re-fold at the next patched tag.
-# 1.0.2 fixed `ganita_f64_tanh` returning NaN for |x| > ~709 (overflow of the
-# (e^x-e^-x)/(e^x+e^-x) form) — now saturates to +/-1 for |x| > 20, BIT-EXACT
-# (tanh already rounds to +/-1.0 in f64 by |x| ~19); no API change. Surfaced by
-# a GPT-2-small import whose GELU tanh NaN-poisoned the forward.

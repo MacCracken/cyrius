@@ -1559,7 +1559,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             var ew = GEXW(S);
             if (lt > 0) {
                 if (lt <= 8) {
-                    if (ew > lt) { WARN(S, "narrowing assignment (value may truncate)", 45); }
+                    if (ew > lt) { WARN(S, "narrowing assignment (value may truncate)", 41); }
                     EFLSTORE_W(S, idx, lt);
                 } else { EFLSTORE(S, idx); }
             }
@@ -1595,7 +1595,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             var avsz = L64(_vars_base + idx * 8);
             var ew = GEXW(S);
             if (avsz < 8) {
-                if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 45); }
+                if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
                 EVSTORE_W(S, idx, avsz);
             }
             else { EVSTORE(S, idx); }

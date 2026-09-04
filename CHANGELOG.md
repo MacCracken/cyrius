@@ -4,6 +4,101 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.49] — 2026-09-04
+
+**Roadmap and manifest cleanup, a build-tool convenience, and three defects the cleanup found.**
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,992 B — unchanged from `.48`**,
+seed → cybs → cycc derivable, `check.sh` **232 / 0**, cross-OS on REAL hardware — **ecb + ach +
+cass + pi**, each `SELFHOST_OK` + crossos `LIBTEST_OK`. Bench `self_compile` **713 ms** (`.48`
+714). `.text` **1,045,904 B, unchanged** — the F32V8 delegation and the two `WARN` corrections
+cost no bytes.
+
+### `cyrius build` reads `[build] src` / `output`
+
+The manifest already declared both paths and the command demanded them again on every
+invocation. Override ladder, gated:
+
+```
+cyrius build              -> manifest src + manifest output
+cyrius build <src>        -> that src     + manifest output
+cyrius build <src> <out>  -> both explicit; the manifest is NOT consulted
+```
+
+⛔ **Those keys were read by NOTHING, and an inert key cannot be observed to be wrong** — which
+is how this repo's own manifest sat with `output = "build/cc5"`, the tracked **prior-major**
+compiler kept as a break-glass reference. Implementing the fallback is exactly what would have
+made that value destructive; corrected to `build/cycc` in the same release. The wider pattern is
+written up in `proposals/2026-09-04-build-tool-manifest-integration.md`.
+
+### `cyrius.cyml` — 134 lines to 42
+
+**108 of 134 lines were comments** for 22 lines of configuration, and the commentary was
+release history ("v5.4.18…", "Surfaced 2026-05-01 in the pre-5.8.0 audit") that duplicates the
+CHANGELOG and `docs/ecosystem.md`. Configuration is byte-identical apart from the `output` fix;
+`release.yml` awk-parses three of these arrays, so their shape is preserved deliberately.
+
+### Roadmap — 1905 lines to 410, and re-triaged against LIVE code
+
+It had accumulated **seven stacked per-slot blocks** (each once the "NEXT" pointer, each
+superseded and kept "for lineage") plus four spent reactive windows. That narrative is now in
+`completed-phases.md`. ⚠ **Removed because it had started to MISLEAD, not merely to bulk**: the
+"Where we are" header claimed head `v6.5.48` while quoting `.37`-era figures throughout and still
+announcing that "`.38` is the next open number", and the "8 open" repair list named an item
+**closed at `.44`** while omitting three that exist.
+
+Every remaining item was re-checked against live code, which corrected three claims:
+
+- **`R2` (PE prologue refactor) SHIPPED at v6.4.26** — the roadmap said it was deferred.
+- **stiva's Half A shipped at `.26`**; only the CPS transform remains, and its consumer no
+  longer blocks on it.
+- **The compile-time superlinearity is still real and now has a measured mechanism** rather than
+  a guess: `LEXID`'s dedup chain buckets on identifier **length alone** (256 buckets), so cost is
+  O(U²/L). Isolated by discriminator — at a fixed 32,000 fns, names all 7 characters give
+  **10,448 ms** in lex; names spread over 200 lengths give **931 ms** on 4.4× *more* source.
+  ⚠ Two of the filing's own claims are wrong (the REGFN fix landed at **`.43`**, not `.42`; its
+  stated fixture cannot have produced its numbers) and both named candidates are ruled out by
+  measurement.
+
+### Three defects found while cleaning
+
+- ⭐ **aarch64 `EMIT_F32V8_*` were `return 0;` stubs** while the cx backend and the F64V4
+  siblings twelve lines above both delegate — and the comment beside those siblings argues the
+  case for delegating without doing it here. Reaching a stub emits **nothing**: compiles clean,
+  runs clean, wrong answer, no diagnostic. Unreachable today (`lib/simd.cyr` gates on
+  `simd_has_avx2()`), which is precisely why it survived — no caller, no test.
+  **Measured on real aarch64 (pi): pre-fix 1 of 5 assertions, post-fix 5 of 5.** Now covered by
+  `tests/tcyr/crossos/simd_f32v8_emitters.tcyr`.
+  ⚠ **That test reddened the cross-OS gate on cass first, and the cause was the test, not the
+  compiler.** The raw `f32v8_*` intrinsics deliberately BYPASS the CPU gate — that is the only
+  way to reach the emitters — but on an x86 host without AVX2 they are SIGILL, and the process
+  dies before printing anything: zero bytes, exit 0, no diagnostic. cass reports
+  `simd_has_avx2() == 0`. The test now gates the raw calls on the CPU exactly as
+  `lib/simd.cyr`'s wrapper does, while still calling them unconditionally on aarch64 — where
+  gating on an x86 feature flag would skip the very emitters being tested.
+- **Two `WARN` sites declared 45 bytes for a 41-byte literal**, each leaking 4 bytes past the
+  string. ⚠ `.47`'s `write_literal_lengths` gate missed them because it covered only `sys_write`
+  and `syscall`; it now covers `ERR_MSG` and `WARN` too — **1298** sites checked. This closes the
+  "`ERR_MSG` hardcoded-length audit" the roadmap had carried since v6.4.57 as "the never-done
+  half".
+- **`## [6.5.13]` had an EMPTY body** — backfilled from the live code (cx `callind`, opcode
+  `0x69`). The roadmap had asked for that backfill 35 releases earlier; the note outlived the
+  thing it asked for.
+
+### ⛔ A correction to v6.5.45, made in the entry that carries it
+
+`.45` recorded that `EMITELF_OBJ` "has **no callers anywhere in the tree**" and used that to call
+a `brk` warning in it benign. **That is false.** `src/backend/x86/fixup.cyr:2136` calls it when
+`kernel_mode == 3`, which `src/main.cyr:1477` and `src/main_win.cyr:651` set for an `object;`
+unit. The claim came from a grep that missed the mode-gated call site — **a negative grep is not
+proof of unreachability**, and recording one as "benign" is how a reachable defect gets filed as
+noise. The same function overruns its 1 MB scratch: reproduced, `object;` + 31,501 fns →
+**SIGSEGV**, clean at 6,001. Filed as
+`issues/2026-09-04-emitelf-obj-scratch-overrun.md` — deferred from this release only because its
+scope was set by the maintainer and the fix is a ~90-line refactor with a byte-identical bar of
+its own. The false claim is corrected in the `.45` CHANGELOG entry, the audit document, and the
+gate description that repeated it.
+
 ## [6.5.48] — 2026-09-04
 
 **Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,992 B — unchanged from `.47`**,
@@ -567,9 +662,14 @@ common cause was an unrouted number nobody was warned about.
   wired in `src/main.cyr` alone and the macOS forks never call the fn, and every `lib/` caller
   already passes a real buffer. Wiring profiling into a macOS fork would have made it a SIGSEGV
   with no warning of any kind.
-- **`brk` (12) is benign**, and checking rather than assuming is the point: it sits in
-  `EMITELF_OBJ`, which has **no callers anywhere in the tree**. The warning is truthful — that
-  fn would SIGSYS if it were ever called — so it stays.
+- **`brk` (12)** sits in `EMITELF_OBJ`. ⛔ **This entry originally said that function has "no
+  callers anywhere in the tree" and used it to call the warning benign. That is WRONG, corrected
+  2026-09-04 (v6.5.49):** `src/backend/x86/fixup.cyr:2136` calls it when `kernel_mode == 3`,
+  which `src/main.cyr:1477` and `src/main_win.cyr:651` set for an `object;` unit. The claim came
+  from a grep that missed the mode-gated call site — **a negative grep is not proof of
+  unreachability**, and recording one as "benign" is how a reachable defect gets filed as noise.
+  The same function is now known to overrun its 1 MB scratch (`object;` + 31,501 fns → SIGSEGV,
+  reproduced); see `docs/development/issues/2026-09-04-emitelf-obj-scratch-overrun.md`.
 
 **Two new gates, both mutation-proven** (`macho_diagnostic_parity` five ways including a straight
 revert to the pre-`.43` state and an unguarded warning that would fire on Linux;
@@ -4412,6 +4512,21 @@ the residual 2 was the rest of the workspace still shared, which is why the gate
 800/800 rather than "mostly".
 
 ## [6.5.13] — 2026-08-08
+
+**cx indirect call — `.cyx` opcode `0x69` (105) `callind ra`.**
+
+⚠ **This entry was EMPTY for 36 releases and is backfilled on 2026-09-04**, reconstructed from
+the live code rather than from memory: `src/backend/cx/emit.cyr`'s `ECALLIND` and
+`programs/cxvm.cyr:272`'s dispatch arm, both of which carry the `v6.5.13` marker. The gap was
+recorded in roadmap.md's own backlog — *"`## [6.5.13]` has an EMPTY CHANGELOG body … Backfill
+that entry"* — and the note outlived the thing it asked for by 35 releases, which is why the
+2026-09-04 roadmap re-triage acted on it instead of copying it forward again.
+
+- **Added** — cx bytecode gained an indirect call: `callind ra` pushes PC and sets PC to the
+  absolute code offset held in `ra`. Before it, the cx backend had no way to lower a call
+  through a function pointer, so `callptr` / `fncallN` were unreachable on that target.
+- The CHANGELOG is this project's source of truth for what shipped; an empty entry is a hole in
+  it, not a tidy omission.
 
 ## [6.5.12] — 2026-08-08
 
