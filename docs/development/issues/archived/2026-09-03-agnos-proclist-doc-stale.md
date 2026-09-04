@@ -1,5 +1,11 @@
 # 2026-09-03 — `sys_proclist`'s doc block is stale, and it hides two live fields
 
+> ## ✅ DONE at cyrius 6.5.46 — the `+56` record line now documents the packed pair, the stale "not tracked by the kernel yet" paragraph is gone, and `proclist_cpu_ticks` / `proclist_rss_pages` expose the halves by name.
+>
+> Premise-checked against the live agnos kernel rather than the filing: `store64(pl_rec + 56, (pl_rs << 32) | pl_tk)` is at `kernel/core/syscall.cyr:10446` (the filing said 10424 — agnos has moved since), agnos **1.56.60**.
+>
+> ⭐ **Pinned by a fourth agnos-parity gate**, `tests/gates/platform/agnos_proclist_record_parity.sh`, which covers a class the other three structurally cannot see: the record SIZE did not change, so no syscall number, no field selector and no struct layout moved — only the MEANING of one slot. The gate derives "does the kernel write it?" from live kernel source and handles both directions, and its half-direction axis REJECTS a shift in the low-half accessor rather than merely accepting a mask (the swapped form `(x >> 32) & 0xFFFFFFFF` still contains the mask, and passed the first version of that check).
+
 **Filed by:** chakshu (the AGNOS system monitor), during v0.9.9.
 **Affects:** `lib/syscalls_x86_64_agnos.cyr` — documentation only, no code defect.
 **Checked against:** cyrius **6.5.45**, agnos **1.56.60**.

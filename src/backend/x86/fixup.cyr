@@ -365,7 +365,15 @@ fn FIXUP(S): i64 {
     # the full array makes the count deterministic and correct up to 32768 fns.
     var live[16384];   # v6.5.40: 131072 fns / 8 bits (was 4096 = 32768 fns)
     var ci = 0;
-    while (ci < 4096) { store8(&live + ci, 0); ci = ci + 1; }
+    # ⛔ v6.5.46 — THIS LOOP CLEARED 4096 OF 16384 BYTES. v6.5.40 raised the fn-table ceiling
+    # 32768 -> 131072 and widened `live[]` from 4096 to 16384 bytes to match, but neither this
+    # clear loop nor the address-taken root-seed bound below came along. Three quarters of the
+    # bitmap therefore started as whatever the frame held, so with CYRIUS_DCE=1 the reachability
+    # answer for any fn above index 32768 was stack garbage — sometimes "live" (a missed
+    # elimination, harmless), sometimes "dead" (the fn is NOP-filled and the program faults).
+    # ⚠ This is the SECOND time: v6.4.75 fixed exactly this loop for the 4096 ceiling, and the
+    # v6.5.40 raise reintroduced it. A cap raise has to sweep every consumer of the cap.
+    while (ci < 16384) { store8(&live + ci, 0); ci = ci + 1; }
     # Call-graph construction is BYTE-SCAN-based, not fixup-based, because
     # Cyrius emits top-level/late calls via ECALLTO (direct rel32, no fixup)
     # once the target's offset is known. Only forward-reference calls go
@@ -434,7 +442,11 @@ fn FIXUP(S): i64 {
         var t3r = L64(t3a + 8);
         if ((t3r >> 56) == 3) {
             var t3idx = t3r & 0x00FFFFFFFFFFFFFF;
-            if (t3idx < 32768) {
+            # v6.5.46: 131072, matching the fn-table ceiling v6.5.40 raised it to. At 32768 an
+            # ADDRESS-TAKEN fn above that index was never seeded as a DCE root, so DCE decided it
+            # was dead and NOP-filled it — and the only reference to it is a pointer, which no
+            # reachability walk can follow back. That is unsound, not merely conservative.
+            if (t3idx < 131072) {
                 store8(&live + (t3idx >> 3), load8(&live + (t3idx >> 3)) | (1 << (t3idx & 7)));
             }
         }

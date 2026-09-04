@@ -1,0 +1,55 @@
+# closure_stack_params.tcyr — v6.5.46
+#
+# ⛔ A NON-CAPTURING CLOSURE SILENTLY DROPPED EVERY PARAMETER PAST THE 6th. The in-loop guard
+# `if (clpc < 6) { ESTOREPARM(...) }` in PARSE_CLOSURE is correct on its own — SysV's stack slot
+# for parameter N is `16 + (pc - 6 - 1 - (N - 6)) * 8`, which counts DOWN from the TOTAL, so the
+# overflow cannot be homed until the whole parameter list has been parsed. `PARSE_FN` has run
+# that deferred second pass all along ("Emit stack param stores (7+) now that we know total pc").
+# The closure path never had it, so the 7th+ parameter was never stored and the body read an
+# uninitialised frame slot.
+#
+# ⚠ IT DID NOT FAIL RELIABLY, AND THAT IS THE POINT OF TESTING SEVERAL ARITIES. Measured on
+# x86_64 Linux before the fix: the 7-parameter closure returned the RIGHT answer, because the
+# argument register still happened to hold the value, while the 8-parameter one returned
+# garbage. A test that checked only 7 would have reported the bug fixed.
+#
+# ⚠ CROSS-HOST because the three targets home stack arguments differently: SysV counts down from
+# the total (x86_64 Linux, both Macs, aarch64), Win64 reads a fixed shadow-space offset
+# `[rbp+16+32+(pidx-4)*8]` and does NOT use the total at all. A fix verified on one is not
+# verified on the others.
+#
+# ⚠ Capturing closures are DELIBERATELY not exercised past the ceiling: they need the captured
+# environment in an argument register, so PARSE_CLOSURE refuses `clpc >= _ARG_REG_COUNT()`
+# LOUDLY. That is a diagnostic, not a silent drop, and it is the correct behaviour.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    # Powers of two so a dropped parameter cannot be masked by a coincidental sum.
+    var f6 = |a, b, c, d, e, f| a + b + c + d + e + f;
+    assert_eq(fncall6(f6, 1, 2, 4, 8, 16, 32), 63, "6-param closure (all in argument registers)");
+
+    var f7 = |a, b, c, d, e, f, g| a + b + c + d + e + f + g;
+    assert_eq(fncall7(f7, 1, 2, 4, 8, 16, 32, 64), 127, "7-param closure — first stack parameter");
+
+    var f8 = |a, b, c, d, e, f, g, h| a + b + c + d + e + f + g + h;
+    assert_eq(fncall8(f8, 1, 2, 4, 8, 16, 32, 64, 128), 255, "8-param closure — two stack parameters");
+
+    # Order matters as much as presence: a deferred pass that homes the stack parameters in the
+    # wrong direction still sums correctly above, because addition is commutative. Subtract so
+    # position is observable.
+    var g8 = |a, b, c, d, e, f, g, h| a - b - c - d - e - f - g - h;
+    assert_eq(fncall8(g8, 255, 1, 2, 4, 8, 16, 32, 64), 128, "8-param closure — stack parameters in the RIGHT ORDER");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

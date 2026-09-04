@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.45** (2026-09-03) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.46** (2026-09-03) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -697,7 +697,7 @@ ran 86 releases and 6.5.x is expected in the same class.
 > |---|---|---|
 > | *(empty)* | — | `.41`'s carried pair — `versioned-wrapper-does-not-pin-cycc` and `audit-scope-excludes-tests` — both shipped at `.42`. |
 >
-> ### ▶ NEXT: band K phase 2 — `.46` (phase 1 SHIPPED at `.45`)
+> ### ▶ NEXT: band K phase 3 — the minor close (`.45` phase 1 + `.46` phase 2 SHIPPED)
 >
 > **PHASES DECLARED UP FRONT**, per cycle-discipline: an arc is scoped at planning time, and a
 > mid-execution split is a deferral wearing a plan's clothes. Band K's audit ran as nine parallel
@@ -710,22 +710,25 @@ ran 86 releases and 6.5.x is expected in the same class.
 >    against a pre-fix compiler: 1210 chars, returns 7 where 42 is correct, rc=0, no diagnostic)
 >    and CVE-40 (unbounded `#define` body copy). Plus the `#105` withdrawal, `sys_sysinfo_n`, and
 >    macOS `getenv`. See `docs/audit/2026-09-03-security-audit.md`.
-> 2. **`.46` — phase 2: the codegen-correctness class. ← THIS IS THE OPEN ONE.** All confirmed,
->    all MEASURED, none yet fixed:
->    * **Closure parameters past the 6th are never stored** — the 7th reads an uninitialised
->      frame slot. Silent wrong answer on valid cyrius, all targets (`parse_expr.cyr:2019`).
->      ⛔ This is the language repo: when the compiler cannot compile valid cyrius, fix the
->      compiler.
->    * **`fncallN` lost the call-arity check** ordinary calls enforce, so `fncall3(f, a, b)` and
->      `fncall1(f, a, b, c)` both compile (v6.5.17 regression).
->    * **`CYRIUS_DCE=1` is unsound above 32768 fns** — the v6.5.40 table raise widened `live[]`
->      to 16384 bytes but left its clear loop at 4096, and the address-taken root-seed bound at
->      `< 32768`; an address-taken fn above that index is NOP-filled. Reproduced on both backends.
->    * **`tok_values` heap-map size understated 8 MiB vs 32 MiB live** — a 24 MiB band the
->      machine-read auditor reports as free while it is fully occupied. Latent, not active.
+> 2. ~~**`.46` — phase 2: the codegen-correctness class.**~~ ✅ **SHIPPED.** Each reproduced
+>    against a compiler built for the purpose:
+>    * ✅ **Closure parameters past the 6th** — the deferred stack-param pass `PARSE_FN` has had
+>      all along was missing from the closure path. Pre-fix 1 of 4 assertions, post-fix 4 of 4.
+>      ⚠ The first attempt (deleting the in-loop guard) was WRONG — `pc = 0` gives a garbage
+>      displacement; the count must be known first.
+>    * ✅ **`fncallN` arity check** restored; `callptr` stays unchecked deliberately.
+>    * ✅ **`CYRIUS_DCE=1` unsoundness** — measured 33,001-fn repro: pre-fix SIGSEGV (139),
+>      post-fix 42. The gate now DERIVES both bounds from the enforced ceiling, because this was
+>      the SECOND occurrence (v6.4.75 fixed it once; the v6.5.40 raise brought it back).
+>    * ✅ **`tok_values` heap-map size** — v6.5.39 resized two of three token arrays; this was
+>      the third. 102 regions, 0 overlaps.
+>
+> 3. **`.47` — phase 3: the minor close. ← THIS IS THE OPEN ONE.** ⏭ **CARRIED from phase 2, not
+>    dropped** — each was declared in phase 2's list and did not ship:
 >    * **CVE-41** — three unbounded name captures in the `#derive` path. ⚠ Filed rather than
->      fixed at `.45` for a NAMED reason: it needs the `#derive` name scratch relocated out from
->      under `S+0x197020`, i.e. a heap **layout** change ⇒ two-step bootstrap.
+>      fixed for a NAMED reason: it needs the `#derive` name scratch relocated out from under
+>      `S+0x197020`, i.e. a heap **layout** change ⇒ two-step bootstrap, which is a release of
+>      its own shape.
 >    * **A version pin still does not bind the compiler for 125 of 128 downstream repos** — the
 >      issue closed at `.42` did not achieve its aim, and its gate passes over a fixture that
 >      cannot fail. **50 repos** (not 45) sit in the `6.5.31`–`6.5.35` enum-Critical band.

@@ -4,6 +4,94 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.46] — 2026-09-03
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,888 B**, seed → cybs → cycc
+derivable from the 29,024 B seed, `check.sh` **230 / 0**, cross-OS on REAL hardware — **ecb +
+ach + cass + pi**, each `SELFHOST_OK` + crossos `LIBTEST_OK`. Bench `self_compile` **708 ms**
+(`.45` 712). `cycc` **1,195,888 B, +56 over `.45`**; `.text` **1,045,728 B, +456** — the closure
+deferred stack-param pass, the `fncallN` arity diagnostic, and the two DCE bound corrections.
+
+⚠ **Both new gates were written, mutation-proven — and then silently not registered.** They sat
+on disk while `check.sh` reported green, because a registration edit to
+`programs/checks/main.cyr` did not apply and I did not verify it had. Caught by comparing gates
+on disk (112) against gates registered by path (99) rather than trusting the suite total. That is
+the green-placebo shape this project keeps finding, committed by the person adding the gates
+meant to prevent it — so the registration is now verified in-file before the suite is trusted,
+and the count went 228 → **230**.
+
+**Band K phase 2 — the codegen-correctness class, plus the agnos `proclist` repair.** Four
+defects from the band K closeout audit, each reproduced against a compiler built for the
+purpose and each fixed with the mechanism the codebase already had elsewhere.
+
+### A non-capturing closure silently dropped every parameter past the 6th
+
+`PARSE_CLOSURE`'s in-loop `if (clpc < 6)` guard is **correct on its own** — SysV's stack slot for
+parameter N is `16 + (pc - 6 - 1 - (N - 6)) * 8`, which counts DOWN from the total, so the
+overflow cannot be homed until the whole list is parsed. `PARSE_FN` has run that deferred second
+pass all along (*"Emit stack param stores (7+) now that we know total pc"*). The closure path
+never had it, so the 7th+ parameter was never stored and the body read an uninitialised frame
+slot.
+
+- ⚠ **It did not fail reliably, which is why it survived.** Measured: a 7-parameter closure
+  returned the **right** answer — the argument register still happened to hold the value — while
+  an 8-parameter one returned garbage. A test checking only 7 would have reported it fixed.
+- ⚠ **My first attempt was wrong and is recorded in the source**: deleting the in-loop guard
+  calls `ESTOREPARM` with `pc = 0`, so `nstack = -6` and the displacement is garbage. The count
+  has to be known first — which is the entire reason the pass is deferred.
+- ⛔ This is the language repo: when the compiler cannot compile valid cyrius, the fix is the
+  compiler, never a rule telling users to restructure. Same class as the retired "≤6 args" rule.
+- `tests/tcyr/crossos/closure_stack_params.tcyr` checks 6, 7 and 8 parameters **and their
+  order** (a pass that homes them backwards still sums correctly — addition is commutative).
+  Pre-fix **1 of 4**, post-fix **4 of 4**.
+
+### `CYRIUS_DCE=1` was unsound above 32768 functions, on both backends
+
+v6.5.40 raised the fn-table ceiling 32768 → 131072 and widened the reachability bitmap `live[]`
+from 4096 to 16384 bytes — but **neither loop that uses the bitmap came along**. The clear loop
+still stopped at 4096, so three quarters of it started as stack garbage; and the address-taken
+(type-3 fixup) root-seed bound stayed `t3idx < 32768`, so a function reachable **only through its
+address** was never seeded as a root, DCE concluded it was dead, and NOP-filled it. Nothing can
+follow a raw pointer back, so that is **unsound**, not conservative.
+
+⭐ **Measured** with a 33,001-function program whose target is referenced only by `&fn`: pre-fix
+`CYRIUS_DCE=1` exits **139 (SIGSEGV)**, post-fix **42**. DCE off is correct either way, which is
+why it hid — it only bites the flag. ⚠ **Second occurrence**: v6.4.75 fixed this exact clear loop
+for the 4096 ceiling and the v6.5.40 raise reintroduced it, so the new gate **derives** both
+bounds from the ceiling `_capacity_warnings` enforces instead of quoting any of them.
+
+### `fncallN` was exempt from the call-arity check
+
+`fncall3(f, a, b)` and `fncall1(f, a, b, c)` both compiled. The name says how many arguments
+follow, `PINDIRECT_CALL` counts how many did, and the two were never compared — an arity check
+ordinary calls have enforced as a hard error since v6.5.1. Not a miscompile of correct code: the
+**absence of a diagnostic**, so a miscount silently reads an unwritten argument slot or drops a
+value. ⚠ `callptr` stays unchecked deliberately — its callee is a runtime value whose arity the
+call site cannot know, which is why the expectation is carried in `_fncall_expect` rather than
+derived inside the shared lowering.
+
+### `tok_values` heap-map size understated by 24 MiB
+
+v6.5.39 raised the token cap 1048576 → 4194304 and resized `tok_types` and `tok_lines` to
+`[33554432]` — **`tok_values` was missed** and still said `[8388608]`, a one-line omission in a
+three-line change. The machine-read auditor therefore reported 24 MiB of free band that is fully
+occupied. Corrected; 102 regions, 0 overlaps.
+
+### agnos `proclist`#99 `+56` — the slot stopped being reserved
+
+The peer described it as *"u64 reserved — always 0 today"* with a paragraph saying rss and cpu
+time *"are not tracked by the kernel yet"*. agnos 1.56.59 filled it: one
+`store64(pl_rec + 56, (pl_rs << 32) | pl_tk)` — low u32 cpu ticks, high u32 rss pages. **The
+record size did not change**, so no number, field selector or struct layout moved and none of the
+three existing agnos-parity gates could notice.
+
+⚠ **Both ways a consumer can trust the stale text are bad**: zero-check the u64 and skip it and
+you stay *correct* while silently reading no data — which is what chakshu did for a release — or
+render it and publish ~6.6e12, a positive, plausible, nonsensical number (2,000 years as ticks,
+25 PB as pages). This is the **second** release chakshu lost to a stale note in this file.
+Fixed, plus `proclist_cpu_ticks` / `proclist_rss_pages`, and a fourth agnos-parity gate that
+derives "does the kernel write it?" from live kernel source.
+
 ## [6.5.45] — 2026-09-03
 
 **agnos repairs, a macOS `getenv` that never worked, and band K phase 1 — the closeout audit.**

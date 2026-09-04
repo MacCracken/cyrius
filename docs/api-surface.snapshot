@@ -4518,6 +4518,8 @@ syscalls_x86_64_agnos::WIFEXITED/1
 syscalls_x86_64_agnos::WIFSIGNALED/1
 syscalls_x86_64_agnos::WTERMSIG/1
 syscalls_x86_64_agnos::is_err/1
+syscalls_x86_64_agnos::proclist_cpu_ticks/1
+syscalls_x86_64_agnos::proclist_rss_pages/1
 syscalls_x86_64_agnos::sigset_add/2
 syscalls_x86_64_agnos::sigset_has/2
 syscalls_x86_64_agnos::sigset_new/0

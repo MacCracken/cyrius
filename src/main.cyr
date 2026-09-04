@@ -498,7 +498,11 @@
 #                                        consumers (sit v0.7.2 with sandhi in [deps].stdlib
 #                                        threshold-aborted at 262144); empirical M from the
 #                                        v5.8.46 `needed M, cap is N` diagnostic.
-#   0xAC00000 tok_values    [8388608]     1048576 entries × 8 bytes — was 0xD4A000
+#   0xAC00000 tok_values    [33554432]    4194304 entries × 8 bytes (v6.5.39 raised the token
+#                                        cap 1048576 -> 4194304 and resized tok_types and tok_lines
+#                                        to match; THIS line was missed and still said [8388608],
+#                                        so the machine-read auditor reported 24 MiB of free band
+#                                        that is fully occupied — corrected v6.5.46) — was 0xD4A000
 #   0xCC00000 tok_lines     [33554432]    4194304 entries × 8 bytes (v6.5.39, see tok_types) — was 0xF4A000
 #
 # --- LEXID dedup index (v5.10.40 — lex-hot-path optimization) ---

@@ -285,6 +285,11 @@ fn _ARG_REG_COUNT(): i64 {
 # compare, the same 8-byte trick the `sizeof` / `mulh64` intrinsics use below:
 # 'f','n','c','a','l','l' occupy the low 48 bits (0x6C6C61636E66), the ASCII digit
 # sits at byte 6, and byte 7 must be NUL so `fncall2x` cannot match.
+# v6.5.46 — the arity `fncallN` promises, or -1 for `callptr`, which is variadic BY DESIGN
+# (its callee's arity is not knowable at the call site). Set immediately before PINDIRECT_CALL
+# and cleared by it, so the check cannot leak into the callptr path.
+var _fncall_expect = 0 - 1;
+
 fn _IS_FNCALL_NAME(S, noff): i64 {
     var w = L64(S + 0xEC00000 + noff);
     if ((w & 0xFFFFFFFFFFFF) != 0x6C6C61636E66) { return 0; }
@@ -357,6 +362,22 @@ fn PINDIRECT_CALL(S): i64 {
     }
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);                     # consume ')'
+    # ⛔ v6.5.46 — THE `fncallN` FAMILY WAS EXEMPT FROM THE CALL-ARITY CHECK that ordinary calls
+    # have enforced as a hard error since v6.5.1. `fncall3(f, a, b)` and `fncall1(f, a, b, c)`
+    # both compiled: the name says how many arguments follow, `cp_argc` counts how many did, and
+    # the two were never compared. The result is not a miscompile of correct code — it is the
+    # ABSENCE of a diagnostic, so a caller that miscounts gets a callee reading an argument slot
+    # nobody wrote (too few) or silently ignoring a value (too many), with no message either way.
+    # ⚠ `callptr` is deliberately NOT checked: its callee is a runtime value whose arity the call
+    # site cannot know. That is why the expectation is carried in `_fncall_expect` rather than
+    # derived here — the two callers of this function want different rules.
+    var _fe = _fncall_expect;
+    _fncall_expect = 0 - 1;
+    if (_fe >= 0) {
+        if (cp_argc != _fe) {
+            ERR_MSG(S, "fncallN argument count does not match the N in its name", 55);
+        }
+    }
     # The env rides in an argument REGISTER or not at all. Under SysV the caller
     # places stack arguments anchored on the LAST one (ECALLPOPS puts a_n at
     # [rsp+0]) and the callee reads them back the same way (ESTORESTACKPARM's
@@ -531,6 +552,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     # calls fncall4..7 at top level, stopped compiling.
     if (typ == 2) { if (_cur_fn_ix >= 0) { if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) {
                 if (TOKTYP(S, GTI(S) + 1) == 10) { if (FINDFN(S, PEEKV(S)) >= 0) {
+                            # v6.5.46: the digit in the name IS the promised arity — the same
+                            # byte `_IS_FNCALL_NAME` already validated as '0'..'8'.
+                            _fncall_expect = ((L64(S + 0xEC00000 + PEEKV(S)) >> 48) & 0xFF) - 48;
                             STI(S, GTI(S) + 1);   # consume fncallN
                             STI(S, GTI(S) + 1);   # consume '('
                             PINDIRECT_CALL(S);
@@ -2006,6 +2030,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             _cl_env_lidx = cl_env_slot;
         }
         # Parse params until | (a zero-param `||` closure has no param list)
+        # v6.5.46: remember the first param's local index — the deferred stack-param pass
+        # below needs it, and inside the loop `cpli` is re-read each iteration.
+        var cl_p0 = GFLC(S);
         var clpc = 0;
         if (cl_zero == 0 && PEEKT(S) != 35) {
             var cpgo = 1;
@@ -2040,6 +2067,33 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 ERR_MSG(S, "capturing closure has too many parameters — its captured environment needs one more argument register than this target has", 124);
             }
             ESTOREPARM(S, clpc, cl_env_slot, clpc + 1);
+        }
+        # ⛔ v6.5.46 — DEFERRED STACK-PARAM PASS. Without it a NON-capturing closure silently
+        # dropped every parameter past the 6th: the in-loop `clpc < 6` guard is correct (the
+        # overflow cannot be homed until the TOTAL count is known, because SysV's stack slot is
+        # `16 + (pc - 6 - 1 - (pidx - 6)) * 8` — it counts DOWN from the total), but nothing ever
+        # ran the second pass that `PARSE_FN` has had all along (src/frontend/parse_fn.cyr, the
+        # `if (pc + _pl_shift > 6)` block: "Emit stack param stores (7+) now that we know total
+        # pc"). So the 7th+ parameter was never stored and the body read an uninitialised frame
+        # slot.
+        # ⚠ IT DID NOT FAIL RELIABLY, which is why it survived: measured at v6.5.46, a 7-param
+        # closure returned the RIGHT answer — the argument register still happened to hold the
+        # value — while an 8-param one returned garbage. An intermittent wrong answer reads as
+        # "closures are fine" until someone adds one more parameter.
+        # ⚠ NON-CAPTURING ONLY, and that is not an omission: a CAPTURING closure needs its env in
+        # an argument register (see the note above), so it already refuses `clpc >= _ARG_REG_COUNT()`
+        # LOUDLY. This pass is what the non-capturing case never had.
+        # ⚠ The first attempt at this fix simply deleted the in-loop guard. That is WRONG — it
+        # calls ESTOREPARM with pc = 0, so `nstack = -6` and the displacement is garbage. The
+        # count has to be known first, which is the whole reason the pass is deferred.
+        if (_cl_capturing == 0) {
+            if (clpc > 6) {
+                var cspi = 6;
+                while (cspi < clpc) {
+                    ESTOREPARM(S, cspi, cl_p0 + cspi, clpc);
+                    cspi = cspi + 1;
+                }
+            }
         }
         S64(_fnt_params + clfi * 8, clpc + cl_cap_shift);
         # A `||` zero-param closure already consumed both bars as one token 54;

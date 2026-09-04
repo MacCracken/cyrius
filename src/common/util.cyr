@@ -232,7 +232,8 @@ fn SFNC(S, v): i64 { S64(S + 0x18DA00, v); return 0; }
 # start AT the original offsets, mask at 8191, cap at 8192 → byte-identical under the
 # old cap. Inited per-driver after the heap is up (the cx backend inits too — it
 # shares REGFN/the data tables; only its emit differs). The live[] DCE bitmap in
-# x86/aarch64 fixup is fixed-sized to the 32768 ceiling (live[4096]) rather than
+# x86/aarch64 fixup is fixed-sized to the 131072 ceiling (live[16384]; was 32768 /
+# live[4096] before v6.5.40, and its clear loop + root bound followed only at v6.5.46) rather than
 # grown — it is rebuilt per pass and never relocates.
 var _fnt_cstrmask = 0;    # 0x93A000 fn_param_cstring_mask
 var _fnt_resmask = 0;     # 0x94A000 fn_param_result_mask

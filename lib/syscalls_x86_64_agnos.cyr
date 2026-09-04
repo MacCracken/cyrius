@@ -208,7 +208,8 @@ fn sys_ptrscan(buf, max): i64 {
 #   +8   u64 state       1 = ready · 2 = running · 3 = claiming (0 = dead is skipped)
 #   +16  u64 ppid        0 = init
 #   +24  u8  name[32]    NUL-terminated basename, recorded by the ELF loader
-#   +56  u64 reserved    always 0 today
+#   +56  u64 packed      LOW u32 = cpu ticks (100 Hz) · HIGH u32 = rss pages (4 KiB)
+#                    (agnos 1.56.59; the record size did NOT change)
 #
 # ⭐ WHY IT EXISTS. Before this, AGNOS had NO enumeration primitive of any kind — the
 # ring-3 surface offered getpid/spawn/waitpid/kill and nothing that could answer "what is
@@ -219,9 +220,24 @@ fn sys_ptrscan(buf, max): i64 {
 # cannot change mid-walk, but a pid may exit before the caller acts on it. That race is
 # inherent to any ps(1) and belongs to the caller — re-probe before signalling.
 #
-# ⚠ THE RESERVED FIELD IS NOT SPARE SPACE. Per-process rss and cpu time are not tracked by
-# the kernel yet; when they are, they land at +56 and the record size does NOT change.
-# Consumers should zero-check it rather than assuming it stays 0 forever.
+# ⛔ READ THE HALVES, NEVER THE SLOT. `load32(rec + 56)` is the cpu tick count and
+# `load32(rec + 60)` the rss page count on little-endian targets; equivalently
+# `load64(rec + 56) & 0xFFFFFFFF` and `(load64(rec + 56) >> 32) & 0xFFFFFFFF`. Rendering the
+# packed u64 as EITHER field yields a positive, plausible, nonsensical number — on a live
+# process it is about 6.6e12, which formats fine and reads as 2,000 years of ticks or 25 PB of
+# pages.
+#
+# ⚠ THIS SLOT WAS DOCUMENTED AS `reserved, always 0` UNTIL v6.5.46, and agnos 1.56.59 had
+# filled it (`kernel/core/syscall.cyr`, one `store64(pl_rec + 56, (pl_rs << 32) | pl_tk)`).
+# A consumer trusting the old text does one of two things and both are bad: zero-check the u64
+# and skip it — staying CORRECT while silently reading no data, which is what chakshu did for a
+# release — or render it, and publish the nonsense number above. This is the second release
+# chakshu lost to a stale note in this file; `proclist` itself was recorded as "blocked
+# upstream" for five releases after it shipped.
+#
+# ⚠ THE RSS HALF IS 4 KiB PAGES BUT ITS RESOLUTION IS 2 MB: the kernel counts present-AND-user
+# PDEs and adds 512 pages each, so the value is always a multiple of 512. It is honest as
+# "physical memory committed to this process", not as a precise footprint.
 #
 # ⚠ GUARD THE CALL SITE. A kernel older than 1.56.47 has no `#99` arm. Treat a negative
 # return as "this kernel cannot enumerate" and degrade, rather than reporting an empty
@@ -229,6 +245,14 @@ fn sys_ptrscan(buf, max): i64 {
 fn sys_proclist(buf, max): i64 {
     return syscall(SYS_PROCLIST, buf, max);
 }
+
+# Accessors for the `+56` packed pair. Named, because hand-decoding a packed field at every
+# call site is how the halves get swapped — and both halves are plausible positive integers, so
+# a swap produces a wrong number rather than an obvious failure.
+# `rec` is a record base as returned by walking the sys_proclist buffer in 64-byte strides.
+fn proclist_cpu_ticks(rec): i64 { return load64(rec + 56) & 0xFFFFFFFF; }
+# RSS in 4 KiB pages. ⚠ Always a multiple of 512 — see the resolution note above.
+fn proclist_rss_pages(rec): i64 { return (load64(rec + 56) >> 32) & 0xFFFFFFFF; }
 
 # ── Mount-enumeration band (agnos 1.56.59, `#104 mountlist`) ────────
 #
