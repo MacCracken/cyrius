@@ -107,21 +107,20 @@ BR_START=$(awk -v s="$FN_START" -v e="$FN_END" 'NR>=s&&NR<=e&&/if \(_TARGET_MACH
 [ -n "$BR_START" ] || { echo "  FAIL: no _TARGET_MACHO==2 branch inside ESYSXLAT"; exit 1; }
 BR_END=$(awk -v s="$BR_START" -v e="$FN_END" 'NR>s&&NR<=e&&/^        return 0;/{print NR; exit}' "$ARM")
 
+# v6.5.48: read the rows as SOURCE, not as decoded machine words. ESYSXLAT's Mach-O branch used
+# to spell every row as three literal EW() words, so this gate carried its own aarch64 instruction
+# decoder — and its header still records the trap that decoder set (dropping the Rn/Rd field
+# yields plausible-but-wrong numbers). v6.5.48 replaced those 90 hand-derived triples with a
+# computed emitter, `_esx_arm(S, src, dst)`, so the numbers are now legible directly and the
+# decoder is gone. Strictly less to get wrong on both sides.
 sed -n "${BR_START},${BR_END}p" "$ARM" \
-  | grep -oE 'EW\(S, 0x[0-9A-Fa-f]{8}\)' | grep -oE '0x[0-9A-Fa-f]{8}' \
-  | awk '
-    function h2d(s,   i,c,v,d){ v=0; s=toupper(substr(s,3));
-      for(i=1;i<=length(s);i++){ c=substr(s,i,1); d=index("0123456789ABCDEF",c)-1; v=v*16+d } return v }
-    BEGIN{ pend=-1 }
-    {
-      w=h2d($0)
-      # cmp x8,#N  == 0xF1000000 | (N<<10) | (8<<5) | 0x1F
-      d=w-4043309056-287;  if (d>=0 && d<4194304 && d%1024==0) { pend=d/1024; next }
-      # movz x16,#M == 0xD2800000 | (M<<5) | 16
-      d2=w-3531603968-16;  if (d2>=0 && d2<2097152 && d2%32==0) {
-        if (pend>=0) { printf "%d %d\n", pend, d2/32; pend=-1 }
-      }
-    }' | sort -n -u > "$TMP/arm_routes"
+  | grep -oE '_esx_arm(_shift)?\(S, *[0-9]+, *[0-9]+' \
+  | sed -E 's/_esx_arm(_shift)?\(S, *([0-9]+), *([0-9]+)/\2 \3/' \
+  | sort -n -u > "$TMP/arm_routes"
+# ⚠ BOTH FORMS. `_esx_arm_shift` is the at-family rows that renumber AND drop an argument
+# (openat 56 -> open 5, mkdirat 34 -> mkdir 136, fchmodat 53 -> chmod 15). Reading only the
+# plain form loses exactly those three and reports them as unrouted DRIFT — measured on this
+# gate's first run after the v6.5.48 consolidation.
 
 # ---------------------------------------------------------------- parse: x86 routes
 awk '/^fn EMACHO_SYSXLAT\(S\): i64 \{/{s=1} s&&/^\}/{exit} s' "$X86" \
@@ -212,29 +211,25 @@ else fail=$((fail + a2f)); fi
 # did exactly that from v6.2.24 until v6.5.16 — and a warning that cries wolf is how a real one
 # gets ignored), and a stale row suppresses the warning for a route that no longer exists.
 echo ""
-echo "axis 3 — _macho_arm_routes matches the ESYSXLAT macho sources exactly:"
-awk '/^fn _macho_arm_routes\(n\): i64 \{/{s=1} s&&/^\}/{exit} s' "$ARM" \
-  | grep -oE 'n == [0-9]+' | grep -oE '[0-9]+' | sort -n -u > "$TMP/registered"
-cut -d' ' -f1 "$TMP/arm_routes" | sort -n -u > "$TMP/arm_sources"
-# 228 is registered on purpose and is NOT an ESYSXLAT row: macOS-arm64 serves clock_gettime
-# through the __got bind to libSystem _clock_gettime_nsec_np (EMACHO_CLOCK_ARM), not a renumber.
-echo 228 >> "$TMP/arm_sources"
-# v6.5.44: 1700 is the same shape — arm64-macOS threading goes through the __got bind to
-# libSystem _pthread_create (EMACHO_PTHREAD_CREATE_ARM, __got[5]), handled in parse_expr before
-# the number ever reaches ESYSXLAT. It is DELIBERATELY not a renumber: bsdthread_create IS
-# routed (v6.5.43, 1360->360) and still unusable here, because bsdthread_register is one-shot
-# per process and libpthread — which every cyrius arm64 Mach-O links — spends it first
-# (measured EINVAL, exit 22, on real ecb). 1700+ is the "__got-bound libSystem routine"
-# sub-band; do not read it as BSD 700. Pinned by macos_arm64_real_threads.sh, which re-derives
-# the GOT slot from the Mach-O writer's bind ORDER.
-echo 1700 >> "$TMP/arm_sources"
-sort -n -u "$TMP/arm_sources" -o "$TMP/arm_sources"
-missing=$(comm -23 "$TMP/arm_sources" "$TMP/registered" | tr '\n' ' ')
-extra=$(comm -13 "$TMP/arm_sources" "$TMP/registered" | tr '\n' ' ')
-if [ -z "$missing" ]; then ok "every ESYSXLAT macho source is registered in _macho_arm_routes"
-else bad "routed in ESYSXLAT but NOT registered (spurious 'not routed' warning): $missing"; fi
-if [ -z "$extra" ]; then ok "_macho_arm_routes carries no entry without a matching ESYSXLAT row"
-else bad "registered in _macho_arm_routes but NO ESYSXLAT row (warning suppressed for a dead route): $extra"; fi
+echo "axis 3 — _macho_arm_routes is DERIVED from ESYSXLAT, not mirrored:"
+# ⛔ v6.5.48 — THIS AXIS USED TO COMPARE TWO LISTS. `_macho_arm_routes` was a hand-maintained
+# 95-entry duplicate of every source number in the branch above, and it drifted in BOTH
+# directions: a missing row made a WORKING call warn "syscall not routed" (seven socket numbers
+# did exactly that from v6.2.24 to v6.5.16), and a stale row suppressed the warning for a route
+# that no longer existed. This axis existed to catch that drift.
+# It now replays ESYSXLAT in query mode — the same fix `_macho_x86_routes` got at v6.5.43 — so
+# the drift is impossible BY CONSTRUCTION and there is no list to compare. What must be checked
+# instead is that the derivation is real: a future edit that quietly re-introduces literals would
+# restore the whole failure mode.
+DERIV=$(awk '/^fn _macho_arm_routes\(n\): i64 \{/{s=1} s&&/^\}/{exit} s' "$ARM")
+printf '%s' "$DERIV" | grep -q 'ESYSXLAT(' \
+  || bad "_macho_arm_routes does not replay ESYSXLAT — it is a hand-mirrored list again, which is the v6.0.65 and v6.5.16 defect both at once"
+printf '%s' "$DERIV" | grep -q '_esx_qon' \
+  || bad "_macho_arm_routes does not use the query mode, so its replay would EMIT into the code stream"
+# The only literals permitted are the __got reroutes parse_expr handles before ESYSXLAT sees them.
+ALITS=$(printf '%s' "$DERIV" | grep -oE 'n == [0-9]+' | grep -oE '[0-9]+' | sort -n -u | tr '\n' ' ')
+if [ "$ALITS" = "228 1700 " ]; then ok "_macho_arm_routes derives from ESYSXLAT; only the two __got reroutes are literal"
+else bad "unexpected literal route list in _macho_arm_routes: '$ALITS' (expected exactly the two __got reroutes '228 1700 ')"; fi
 
 echo ""
 echo "$pass passed, $fail failed"

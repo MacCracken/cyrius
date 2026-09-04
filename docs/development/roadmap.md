@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.47** (2026-09-04) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.48** (2026-09-04) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -744,10 +744,12 @@ ran 86 releases and 6.5.x is expected in the same class.
 >      exist and following them silently opts a test OUT of the cross-OS leg.
 >    * ⭐ **Found while fixing one of my own: 24 mis-declared write lengths** across `programs/`
 >      (`cyriusly` alone had 16). `src/` was clean. Now gated.
->    * ⏭ **CARRIED to the next minor, not dropped**: `_macho_arm_routes` remains a 95-entry hand
->      mirror — v6.5.43 built the query-mode fix and applied it to one of two symmetric places.
->      Duplication, not a live hazard (`macho_route_parity.sh` axis 3 blocks drift), which is why
->      it did not displace a correctness fix.
+>    * ✅ **CLOSED at `.48`**: `_macho_arm_routes` was a 95-entry hand mirror and ESYSXLAT's
+>      Mach-O branch 279 hand-written hex words. Both are now COMPUTED — one emitter derived from
+>      the ISA formulas (assembler-verified), and the route table replays it in query mode, the
+>      same pattern v6.5.43 gave the x86 side. Proven logic-preserving against a reference
+>      emitter built beforehand: 61/61 crossos tests plus the compiler's own 1.2 MB arm64-macho
+>      source, all byte-identical.
 
 >
 > **`.41` and `.42` both shipped and this pointer said `.41` until 2026-09-02.** `.41` drained the

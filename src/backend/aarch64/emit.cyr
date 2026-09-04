@@ -617,6 +617,76 @@ fn ESADDR(S, soff): i64 {
 
 # Pop syscall args then SVC
 # Translate x86 syscall number (in x8) to aarch64 equivalent
+# v6.5.48 — ONE computed emitter for ESYSXLAT's Mach-O rows, replacing 90 hand-derived triples.
+#
+# ⛔ WHY: the x86 twin has had a computed emitter (`_msx` / `_msx32`) for years, and v6.5.43 gave
+# it a QUERY MODE so `_macho_x86_routes` answers "is N routed?" from the emitting rows themselves.
+# The arm64 side got neither — it spelled every row as three literal `EW()` words AND kept a
+# separate 95-entry hand-mirror in `_macho_arm_routes`. So the minor built the right pattern and
+# applied it to one of two symmetric places.
+#
+# ⚠ 279 HAND-DERIVED HEX WORDS IS NOT A THEORETICAL RISK: v6.5.43 shipped a `cmp` in this very
+# branch computed by hand as 0xF115511F when the assembler says 0xF115411F, and only running the
+# assembler caught it. The formulas below are the ones the ISA defines, verified to reproduce
+# all 90 existing rows EXACTLY before any were replaced:
+#   cmp x8, #src   = 0xF1000000 | (src << 10) | (8 << 5) | 0x1F
+#   b.ne +8        = 0x54000041
+#   movz x16, #dst = 0xD2800000 | (dst << 5) | 16      (x16 = Darwin's syscall register)
+#
+# ⚠ THE 12-BIT IMMEDIATE LIMITS `src` TO 4095 and `dst` to 65535. Every current row fits, and the
+# private-alias band tops out at 1700; a caller outside those ranges would silently truncate, so
+# it is refused rather than emitted wrong.
+var _esx_qon = 0;
+var _esx_q = 0;
+var _esx_hit = 0;
+fn _esx_arm(S, src, dst): i64 {
+    if (_esx_qon == 1) {
+        if (src == _esx_q) { _esx_hit = 1; }
+        return 0;
+    }
+    if (src > 4095) {
+        syscall(SYS_WRITE, 2, "error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
+        syscall(SYS_EXIT, 1);
+    }
+    if (dst > 65535) {
+        syscall(SYS_WRITE, 2, "error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
+        syscall(SYS_EXIT, 1);
+    }
+    return _esx_arm_shift(S, src, dst, 0);
+}
+
+# The same row PLUS an argument shift: `mov x0,x1; mov x1,x2; …` `nshift` times, for the
+# at-family whose Darwin equivalent takes one fewer argument (openat 56 -> open 5 drops dirfd,
+# mkdirat 34 -> mkdir 136, fchmodat 53 -> chmod 15). ⚠ THE BRANCH DISPLACEMENT DEPENDS ON
+# `nshift` — it has to clear the movs AND the movz — which is exactly the arithmetic that is
+# error-prone to write by hand three times, and why these three rows were the ones left spelled
+# out in raw hex when the other 90 were consolidated.
+#   mov xD, xS = 0xAA0003E0 | (S << 16) | D          (verified with aarch64-linux-gnu-as)
+#   b.ne +4*(nshift+2) = 0x54000000 | ((nshift + 2) << 5) | 1
+fn _esx_arm_shift(S, src, dst, nshift): i64 {
+    if (_esx_qon == 1) {
+        if (src == _esx_q) { _esx_hit = 1; }
+        return 0;
+    }
+    if (src > 4095) {
+        syscall(SYS_WRITE, 2, "error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
+        syscall(SYS_EXIT, 1);
+    }
+    if (dst > 65535) {
+        syscall(SYS_WRITE, 2, "error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
+        syscall(SYS_EXIT, 1);
+    }
+    EW(S, 0xF1000000 | (src << 10) | (8 << 5) | 0x1F);      # cmp  x8, #src
+    EW(S, 0x54000000 | ((nshift + 2) << 5) | 1);            # b.ne past the movs + the movz
+    var _si = 0;
+    while (_si < nshift) {
+        EW(S, 0xAA0003E0 | ((_si + 1) << 16) | _si);        # mov x{_si}, x{_si+1}
+        _si = _si + 1;
+    }
+    EW(S, 0xD2800000 | (dst << 5) | 16);                    # movz x16, #dst
+    return 0;
+}
+
 fn ESYSXLAT(S): i64 {
     # Mach-O ARM (Apple Silicon, BSD syscall convention):
     #   - syscall number goes in x16 (not x8)
@@ -627,23 +697,23 @@ fn ESYSXLAT(S): i64 {
     # writing BSD num to x16. The caller-side ESYSCALL emits svc #0x80.
     if (_TARGET_MACHO == 2) {
         # read: 0→3     movz x16,#3  = 0xD2800070
-        EW(S, 0xF100011F); EW(S, 0x54000041); EW(S, 0xD2800070);
+        _esx_arm(S, 0, 3);
         # write: 1→4    movz x16,#4  = 0xD2800090
-        EW(S, 0xF100051F); EW(S, 0x54000041); EW(S, 0xD2800090);
+        _esx_arm(S, 1, 4);
         # open: 2→5     movz x16,#5  = 0xD28000B0
-        EW(S, 0xF100091F); EW(S, 0x54000041); EW(S, 0xD28000B0);
+        _esx_arm(S, 2, 5);
         # close: 3→6    movz x16,#6  = 0xD28000D0
-        EW(S, 0xF1000D1F); EW(S, 0x54000041); EW(S, 0xD28000D0);
+        _esx_arm(S, 3, 6);
         # mmap: 9→197   movz x16,#197 = 0xD2801890 (197 << 5 = 0x18A0, wrong)
         #   movz x16,#imm = 0xD2800000 | (imm << 5) | 16
         #   197 = 0xC5, <<5 = 0x18A0, |0x10 = 0x18B0 → 0xD28018B0
-        EW(S, 0xF100251F); EW(S, 0x54000041); EW(S, 0xD28018B0);
+        _esx_arm(S, 9, 197);
         # mprotect: 10→74  74 = 0x4A, <<5 = 0x940, |0x10 = 0x950 → 0xD2800950
-        EW(S, 0xF100291F); EW(S, 0x54000041); EW(S, 0xD2800950);
+        _esx_arm(S, 10, 74);
         # munmap: 11→73   73 = 0x49, <<5 = 0x920, |0x10 = 0x930 → 0xD2800930
-        EW(S, 0xF1002D1F); EW(S, 0x54000041); EW(S, 0xD2800930);
+        _esx_arm(S, 11, 73);
         # exit: 60→1    movz x16,#1  = 0xD2800030
-        EW(S, 0xF100F11F); EW(S, 0x54000041); EW(S, 0xD2800030);
+        _esx_arm(S, 60, 1);
         # ── v6.0.34: aarch64-Linux numbers → BSD ──
         # The compiler's own enum Sys uses x86 numbers (handled above);
         # the STDLIB the tools/wrapper pull (syscalls_aarch64_linux.cyr)
@@ -651,26 +721,24 @@ fn ESYSXLAT(S): i64 {
         # cyrlint/cyrdoc/cyrius work on macOS. Pure renumbers below;
         # openat is rerouted to BSD open(5) with an arg-shift (drop the
         # AT_FDCWD dirfd — macOS open takes path/flags/mode directly).
-        EW(S, 0xF100FD1F); EW(S, 0x54000041); EW(S, 0xD2800070);  # read 63→3
-        EW(S, 0xF101011F); EW(S, 0x54000041); EW(S, 0xD2800090);  # write 64→4
-        EW(S, 0xF100E51F); EW(S, 0x54000041); EW(S, 0xD28000D0);  # close 57→6
-        EW(S, 0xF100F91F); EW(S, 0x54000041); EW(S, 0xD28018F0);  # lseek 62→199
-        EW(S, 0xF103791F); EW(S, 0x54000041); EW(S, 0xD28018B0);  # mmap 222→197
-        EW(S, 0xF103891F); EW(S, 0x54000041); EW(S, 0xD2800950);  # mprotect 226→74
-        EW(S, 0xF1035D1F); EW(S, 0x54000041); EW(S, 0xD2800930);  # munmap 215→73
-        EW(S, 0xF101751F); EW(S, 0x54000041); EW(S, 0xD2800030);  # exit 93→1
-        EW(S, 0xF101791F); EW(S, 0x54000041); EW(S, 0xD2800030);  # exit_group 94→1
+        _esx_arm(S, 63, 3);  # read 63→3
+        _esx_arm(S, 64, 4);  # write 64→4
+        _esx_arm(S, 57, 6);  # close 57→6
+        _esx_arm(S, 62, 199);  # lseek 62→199
+        _esx_arm(S, 222, 197);  # mmap 222→197
+        _esx_arm(S, 226, 74);  # mprotect 226→74
+        _esx_arm(S, 215, 73);  # munmap 215→73
+        _esx_arm(S, 93, 1);  # exit 93→1
+        _esx_arm(S, 94, 1);  # exit_group 94→1
         # openat 56 → open 5 (arg-shift x0=path,x1=flags,x2=mode; b.ne +20)
-        EW(S, 0xF100E11F); EW(S, 0x540000A1);
-        EW(S, 0xAA0103E0); EW(S, 0xAA0203E1); EW(S, 0xAA0303E2);
-        EW(S, 0xD28000B0);
+        _esx_arm_shift(S, 56, 5, 3);
         # ── v6.0.34: wrapper (cbt) process + fs syscalls ──
-        EW(S, 0xF103751F); EW(S, 0x54000041); EW(S, 0xD2800770);  # execve 221→59
-        EW(S, 0xF100611F); EW(S, 0x54000041); EW(S, 0xD2800B50);  # dup3 24→dup2 90
-        EW(S, 0xF104111F); EW(S, 0x54000041); EW(S, 0xD28000F0);  # wait4 260→7
-        EW(S, 0xF103711F); EW(S, 0x54000041); EW(S, 0xD2800050);  # clone 220→fork 2 (x1-fixup post-svc)
+        _esx_arm(S, 221, 59);  # execve 221→59
+        _esx_arm(S, 24, 90);  # dup3 24→dup2 90
+        _esx_arm(S, 260, 7);  # wait4 260→7
+        _esx_arm(S, 220, 2);  # clone 220→fork 2 (x1-fixup post-svc)
         # mkdirat 34 → mkdir 136 (arg-shift x0=path,x1=mode; b.ne +16)
-        EW(S, 0xF100891F); EW(S, 0x54000081); EW(S, 0xAA0103E0); EW(S, 0xAA0203E1); EW(S, 0xD2801110);
+        _esx_arm_shift(S, 34, 136, 2);
         # v6.5.7: unlinkat 35 → Darwin unlinkat 472, a PURE RENUMBER. It used to map to
         # Darwin unlink(10) with an x1→x0 arg-shift that DROPPED the dirfd and the flag —
         # right for `unlink`, and fatal for `rmdir`, which is the same syscall with
@@ -682,17 +750,17 @@ fn ESYSXLAT(S): i64 {
         # the full (dirfd, path, flags) form, and Darwin's unlinkat takes the same three, so
         # the renumber is safe and strictly more faithful than the shift it replaces.
         # cmp x8,#35; b.ne +8; movz x16,#472 = 0xD2803B10 (aarch64-linux-gnu-as verified).
-        EW(S, 0xF1008D1F); EW(S, 0x54000041); EW(S, 0xD2803B10);  # unlinkat 35→472
+        _esx_arm(S, 35, 472);  # unlinkat 35→472
         # fchmodat 53 → chmod 15 (arg-shift x0=path,x1=mode; b.ne +16)
-        EW(S, 0xF100D51F); EW(S, 0x54000081); EW(S, 0xAA0103E0); EW(S, 0xAA0203E1); EW(S, 0xD28001F0);
+        _esx_arm_shift(S, 53, 15, 2);
         # ── v6.0.34: raw x86-number syscalls the cbt wrapper hardcodes
         # (syscall(39)/(82)/(4)/(79)/(88)) — same x86→BSD renumbers the
         # Linux-aarch64 ESYSXLAT does. Without these, the untranslated svc
         # ran with a stale x16 → garbage call + side effects that broke
         # `cyrius build` (esp. getpid for the temp name + rename for the
         # atomic output move). Pure renumbers (arg conventions match BSD).
-        EW(S, 0xF100111F); EW(S, 0x54000041); EW(S, 0xD2801790);  # stat 4→188
-        EW(S, 0xF1009D1F); EW(S, 0x54000041); EW(S, 0xD2800290);  # getpid 39→20
+        _esx_arm(S, 4, 188);  # stat 4→188
+        _esx_arm(S, 39, 20);  # getpid 39→20
         # v6.3.44: aarch64-macOS getpid + getppid. The aarch64-macho stdlib uses the
         # aarch64-LINUX syscall numbers (syscalls.cyr → syscalls_aarch64_linux.cyr:
         # getpid=172, getppid=173), NOT the x86 39/110 — and NEITHER 172 nor 173 was
@@ -700,28 +768,28 @@ fn ESYSXLAT(S): i64 {
         # (which passed the old callable-only smoke), and getppid returned 0. Map both
         # to their BSD numbers (getpid=20, getppid=39). The 39→20 above stays for the
         # cbt hardcodes syscall(39). Encodings verified via llvm-mc + disasm on ecb.
-        EW(S, 0xF102B11F); EW(S, 0x54000041); EW(S, 0xD2800290);  # getpid  172→20
-        EW(S, 0xF102B51F); EW(S, 0x54000041); EW(S, 0xD28004F0);  # getppid 173→39
+        _esx_arm(S, 172, 20);  # getpid  172→20
+        _esx_arm(S, 173, 39);  # getppid 173→39
         # v6.4.51: rt_sigaction (aarch64-Linux #134) → BSD sigaction 46, for
         # signal_ignore(SIGPIPE) so a server on sock_send survives a peer
         # disconnect on macOS instead of dying (SIGPIPE DoS). llvm-mc-verified:
         # cmp x8,#134=0xF102191F, movz x16,#46=0xD28005D0. See signal_ignore
         # (lib/syscalls.cyr) + issue 2026-07-11-sandhi-signal-ignore-stdlib-gap.
-        EW(S, 0xF102191F); EW(S, 0x54000041); EW(S, 0xD28005D0);  # rt_sigaction 134→46
+        _esx_arm(S, 134, 46);  # rt_sigaction 134→46
         # v6.0.41: Darwin has NO getcwd syscall — the old `79→326` map was
         # bogus (slot 326 is unused → SIGSYS, which killed `cyrius deps`/
         # `build` for any [deps] manifest via _abs_path). cwd is now derived
         # in _abs_path via open(".")+fcntl(F_GETPATH)+close, so getcwd needs
         # no mapping; fcntl does. fcntl: x86 72 → BSD 92.
-        EW(S, 0xF101211F); EW(S, 0x54000041); EW(S, 0xD2800B90);  # fcntl 72→92
-        EW(S, 0xF101491F); EW(S, 0x54000041); EW(S, 0xD2801010);  # rename 82→128
+        _esx_arm(S, 72, 92);  # fcntl 72→92
+        _esx_arm(S, 82, 128);  # rename 82→128
         # v6.4.57: fsync 74→BSD 95 (Darwin arm64). syscalls_aarch64_linux.cyr (the peer
         # arm-macho pulls) issues x86 number 74; untranslated it ran BSD 74 (mprotect) —
         # the durability half of lib/io.cyr file_write_atomic was a wrong syscall on
         # macOS. Pure renumber (fsync takes just fd; x16=95). cmp x8,#74=0xF101291F;
         # movz x16,#95=0xD2800BF0 (llvm-mc -triple aarch64-apple-darwin verified).
-        EW(S, 0xF101291F); EW(S, 0x54000041); EW(S, 0xD2800BF0);  # fsync  74→95
-        EW(S, 0xF101611F); EW(S, 0x54000041); EW(S, 0xD2800730);  # symlink 88→57
+        _esx_arm(S, 74, 95);  # fsync  74→95
+        _esx_arm(S, 88, 57);  # symlink 88→57
         # v6.1.20: aarch64-Linux at-family numbers the macho branch never mapped —
         # sys_stat/lstat/fstatat (262), sys_link/linkat (37), sys_rename/renameat
         # (38) ran with a stale x16 → wrong Darwin syscall (rc -9/-14 on ecb). The
@@ -734,9 +802,9 @@ fn ESYSXLAT(S): i64 {
         # #ifdef CYRIUS_TARGET_MACOS Stat enum. utimensat (280) has NO Darwin
         # syscall → the wrapper returns -ENOSYS on macOS (not routed here). See
         # issues/2026-06-08-macho-arm-at-family-darwin-syscall-mappings.md, CHANGELOG [6.1.20].
-        EW(S, 0xF104191F); EW(S, 0x54000041); EW(S, 0xD2803AD0);  # newfstatat 262→fstatat64 470
-        EW(S, 0xF100951F); EW(S, 0x54000041); EW(S, 0xD2803AF0);  # linkat 37→471
-        EW(S, 0xF100991F); EW(S, 0x54000041); EW(S, 0xD2803A30);  # renameat 38→465
+        _esx_arm(S, 262, 470);  # newfstatat 262→fstatat64 470
+        _esx_arm(S, 37, 471);  # linkat 37→471
+        _esx_arm(S, 38, 465);  # renameat 38→465
         # v6.5.7: fchownat, reached through the private alias 1054 (see the
         # aarch64-Linux arm at the end of this fn, and the SYS_FCHOWNAT comment in
         # lib/syscalls_aarch64_linux.cyr — macOS-arm64 resolves THAT peer, so the
@@ -744,11 +812,11 @@ fn ESYSXLAT(S): i64 {
         # hazard on this branch: the chain compares x8 and writes x16, so the 468 it
         # produces can never be re-caught. cmp x8,#1054 = 0xF110791F;
         # movz x16,#468 = 0xD2803A90 (aarch64-linux-gnu-as verified).
-        EW(S, 0xF110791F); EW(S, 0x54000041); EW(S, 0xD2803A90);  # fchownat 1054→468
+        _esx_arm(S, 1054, 468);  # fchownat 1054→468
         # v6.5.7: chdir alias → Darwin 12. macOS-arm64 resolves the aarch64-Linux peer, so
         # the alias arrives here too; without this row x16 is stale.
         # cmp x8,#1049 = 0xF110651F; movz x16,#12 = 0xD2800190 (aarch64-linux-gnu-as verified).
-        EW(S, 0xF110651F); EW(S, 0x54000041); EW(S, 0xD2800190);  # chdir 1049→12
+        _esx_arm(S, 1049, 12);  # chdir 1049→12
         # v6.5.7: symlinkat + readlinkat. The aarch64 peer's sys_symlink/sys_readlink have
         # always issued 36 / 78, and this branch never mapped either — so on macOS-arm64
         # they ran with a stale x16 and the compiler warned "syscall not routed" on every
@@ -757,8 +825,8 @@ fn ESYSXLAT(S): i64 {
         # symlinkat(target, newdirfd, linkpath) and readlinkat(dirfd, path, buf, sz) have
         # the same arg layout as Darwin's. Numbers read off ecb's SDK sys/syscall.h.
         # cmp x8,#36 = 0xF100911F; movz x16,#474 = 0xD2803B50 (aarch64-linux-gnu-as verified).
-        EW(S, 0xF100911F); EW(S, 0x54000041); EW(S, 0xD2803B50);  # symlinkat  36→474
-        EW(S, 0xF101391F); EW(S, 0x54000041); EW(S, 0xD2803B30);  # readlinkat 78→473
+        _esx_arm(S, 36, 474);  # symlinkat  36→474
+        _esx_arm(S, 78, 473);  # readlinkat 78→473
         # v6.0.84: socketpair. arm-macho pulls syscalls_aarch64_linux.cyr (see
         # lib/syscalls.cyr — there is no syscalls_aarch64_macos.cyr), so the
         # number is the aarch64-Linux 199, NOT the x86/macos 53 (which is
@@ -769,20 +837,20 @@ fn ESYSXLAT(S): i64 {
         # (same slot) was fixed. The x86-macho peer maps 53→135 (x86 enum) in
         # x86/emit.cyr EMACHO_SYSXLAT. cmp x8,#199 = 0xF1031D1F; movz x16,#135 =
         # 0xD28010F0 (as -arch arm64 verified). socketpair 199 → Darwin 135.
-        EW(S, 0xF1031D1F); EW(S, 0x54000041); EW(S, 0xD28010F0);  # socketpair 199→135
+        _esx_arm(S, 199, 135);  # socketpair 199→135
         # ── v6.0.59: net.cyr socket surface (x86 nums → Darwin BSD). lib/net.cyr
         # uses the x86 socket numbers; without these the svc ran with a stale x16
         # → garbage socket fd + EBADF connect (all networking broke on macОS).
         # See 2026-06-04-macos-net-socket-syscalls-unported.md. (cmp/b.ne/movz,
         # encodings llvm-mc-verified.)
-        EW(S, 0xF100A51F); EW(S, 0x54000041); EW(S, 0xD2800C30);  # socket     41→97
-        EW(S, 0xF100A91F); EW(S, 0x54000041); EW(S, 0xD2800C50);  # connect    42→98
-        EW(S, 0xF100AD1F); EW(S, 0x54000041); EW(S, 0xD28003D0);  # accept     43→30
-        EW(S, 0xF100C11F); EW(S, 0x54000041); EW(S, 0xD28010D0);  # shutdown   48→134
-        EW(S, 0xF100C51F); EW(S, 0x54000041); EW(S, 0xD2800D10);  # bind       49→104
-        EW(S, 0xF100C91F); EW(S, 0x54000041); EW(S, 0xD2800D50);  # listen     50→106
-        EW(S, 0xF100D91F); EW(S, 0x54000041); EW(S, 0xD2800D30);  # setsockopt 54→105
-        EW(S, 0xF100DD1F); EW(S, 0x54000041); EW(S, 0xD2800ED0);  # getsockopt 55→118
+        _esx_arm(S, 41, 97);  # socket     41→97
+        _esx_arm(S, 42, 98);  # connect    42→98
+        _esx_arm(S, 43, 30);  # accept     43→30
+        _esx_arm(S, 48, 134);  # shutdown   48→134
+        _esx_arm(S, 49, 104);  # bind       49→104
+        _esx_arm(S, 50, 106);  # listen     50→106
+        _esx_arm(S, 54, 105);  # setsockopt 54→105
+        _esx_arm(S, 55, 118);  # getsockopt 55→118
         # v6.2.24: aarch64-Linux socket numbers → Darwin. The .59 port mapped only
         # the x86 numbers (41-55), but after the v6.2.24 net/fs SYS_* dedup,
         # consumers that reference the canonical syscalls_aarch64_linux peer (yukti,
@@ -790,7 +858,7 @@ fn ESYSXLAT(S): i64 {
         # backend never mapped → stale x16 + garbage fd on Darwin. Same x86+aarch64
         # dual-map shape as getdents64 below (v6.0.63). Darwin targets identical to
         # the x86 rows above; only the cmp input differs.
-        EW(S, 0xF103191F); EW(S, 0x54000041); EW(S, 0xD2800C30);  # socket    198→97
+        _esx_arm(S, 198, 97);  # socket    198→97
         # v6.4.64: getpeername/getsockname join the dual-map for the same reason the
         # block exists — macOS-arm64 resolves the syscalls_aarch64_linux peer, so a
         # consumer calling sys_getpeername() issues the AARCH64 number (205/204), which
@@ -799,17 +867,17 @@ fn ESYSXLAT(S): i64 {
         # (CI caught it — sandbox_syscalls RED on pi), whereas 204/205 are unambiguous
         # here, exactly like socket 198→97 above. BSD: accept=30, getpeername=31,
         # getsockname=32.
-        EW(S, 0xF103351F); EW(S, 0x54000041); EW(S, 0xD28003F0);  # getpeername 205→31
-        EW(S, 0xF103311F); EW(S, 0x54000041); EW(S, 0xD2800410);  # getsockname 204→32
-        EW(S, 0xF1032D1F); EW(S, 0x54000041); EW(S, 0xD2800C50);  # connect   203→98
-        EW(S, 0xF103211F); EW(S, 0x54000041); EW(S, 0xD2800D10);  # bind      200→104
-        EW(S, 0xF103251F); EW(S, 0x54000041); EW(S, 0xD2800D50);  # listen    201→106
-        EW(S, 0xF103411F); EW(S, 0x54000041); EW(S, 0xD2800D30);  # setsockopt 208→105
-        EW(S, 0xF1001D1F); EW(S, 0x54000041); EW(S, 0xD2801CD0);  # poll        7→230
+        _esx_arm(S, 205, 31);  # getpeername 205→31
+        _esx_arm(S, 204, 32);  # getsockname 204→32
+        _esx_arm(S, 203, 98);  # connect   203→98
+        _esx_arm(S, 200, 104);  # bind      200→104
+        _esx_arm(S, 201, 106);  # listen    201→106
+        _esx_arm(S, 208, 105);  # setsockopt 208→105
+        _esx_arm(S, 7, 230);  # poll        7→230
         # v6.0.60: dir enumeration — Linux getdents64 (x86 217) → Darwin
         # getdirentries64 (344). Darwin takes a 4th basep out-param; fs.cyr
         # passes it on macОS. See 2026-06-02-macos-getdirentries-dir-listing-port.md.
-        EW(S, 0xF103651F); EW(S, 0x54000041); EW(S, 0xD2802B10);  # getdents64 217→344
+        _esx_arm(S, 217, 344);  # getdents64 217→344
         # v6.0.63: the .60 port only translated the x86 number (217). But the
         # wrapper/tools pull the aarch64-Linux stdlib (syscalls_aarch64_linux.cyr),
         # whose SYS_GETDENTS64 = 61 — and which WINS over fs.cyr's 217 when included
@@ -818,7 +886,7 @@ fn ESYSXLAT(S): i64 {
         # on a dir that exists, and macOS was broken-in-fact (found by yantra CI).
         # A small probe bound 217 (different include order) and worked, masking it.
         # cmp x8,#61 = 0xF100F51F; movz x16,#344 = 0xD2802B10. See CHANGELOG [6.0.63].
-        EW(S, 0xF100F51F); EW(S, 0x54000041); EW(S, 0xD2802B10);  # getdents64 aarch64 61→344
+        _esx_arm(S, 61, 344);  # getdents64 aarch64 61→344
         # v6.0.75: getrandom → Darwin getentropy (BSD 500). macОS has NO
         # getrandom; the old SYS_GETRANDOM=318 (a Linux number) ran as a
         # bogus Darwin call → garbage random → the WHOLE native TLS stack
@@ -829,8 +897,8 @@ fn ESYSXLAT(S): i64 {
         # 0-on-success → byte-count return conversion is the ESYSCALL post-svc
         # fixup. getentropy caps at 256 bytes/call (ample for TLS's ≤32).
         # cmp x8,#318 = 0xF104F91F; movz x16,#500 = 0xD2803E90.
-        EW(S, 0xF104F91F); EW(S, 0x54000041); EW(S, 0xD2803E90);  # getrandom 318→getentropy 500
-        EW(S, 0xF104591F); EW(S, 0x54000041); EW(S, 0xD2803E90);  # getrandom aarch64 278→500
+        _esx_arm(S, 318, 500);  # getrandom 318→getentropy 500
+        _esx_arm(S, 278, 500);  # getrandom aarch64 278→500
         # v6.5.15: pipe. The aarch64 peer's sys_pipe issues SYS_PIPE2 = 59, which this
         # branch never mapped — so `syscall(59, &fds)` ran with a stale x16 and the two
         # fds were never written (lib/process.cyr:71 then load32s garbage → "pipe read 4
@@ -845,7 +913,7 @@ fn ESYSXLAT(S): i64 {
         # SYS_pipe 42 read off ecb's MacOSX.sdk sys/syscall.h AND confirmed by a live
         # raw-svc probe (x0=3, x1=4, caller buffer untouched).
         # cmp x8,#59 = 0xF100ED1F; movz x16,#42 = 0xD2800550 (as -arch arm64 verified).
-        EW(S, 0xF100ED1F); EW(S, 0x54000041); EW(S, 0xD2800550);  # pipe2 59→pipe 42 (x0/x1-fixup post-svc)
+        _esx_arm(S, 59, 42);  # pipe2 59→pipe 42 (x0/x1-fixup post-svc)
         # v6.5.15: fchmod. syscalls_linux_common.cyr:153 issues the peer's SYS_FCHMOD,
         # which on the aarch64 enum is 52 — unmapped here, so sys_fchmod ran a stale x16.
         # ⚠ The "x86-52 collides with SYS_FCHMOD" warning in syscalls_aarch64_linux.cyr:202
@@ -855,7 +923,7 @@ fn ESYSXLAT(S): i64 {
         # identical on both. Darwin SYS_fchmod 124 read off ecb's SDK header AND live-probed
         # (fchmod(fd,0644)→0 with fstat confirming 0644; bad fd → -9 EBADF).
         # cmp x8,#52 = 0xF100D11F; movz x16,#124 = 0xD2800F90 (as -arch arm64 verified).
-        EW(S, 0xF100D11F); EW(S, 0x54000041); EW(S, 0xD2800F90);  # fchmod 52→124
+        _esx_arm(S, 52, 124);  # fchmod 52→124
         # v6.5.15: faccessat — the REAL at-family hole. syscalls_aarch64_linux.cyr:81 sets
         # SYS_FACCESSAT = 269 (the x86 number, chosen to dodge an aarch64-Linux collision)
         # and :636 routes sys_access through it, so EVERY existence check on macOS-arm64
@@ -866,7 +934,7 @@ fn ESYSXLAT(S): i64 {
         # SYS_faccessat 466 read off ecb's SDK header AND live-probed with AT_FDCWD = -2
         # (existing → 0, missing → -2 ENOENT).
         # cmp x8,#269 = 0xF104351F; movz x16,#466 = 0xD2803A50 (as -arch arm64 verified).
-        EW(S, 0xF104351F); EW(S, 0x54000041); EW(S, 0xD2803A50);  # faccessat 269→466
+        _esx_arm(S, 269, 466);  # faccessat 269→466
         # v6.5.16: sysctl + gettimeofday, the two Darwin-only private aliases that
         # back lib/sys.cyr's macOS sys_uname/sys_sysinfo. Darwin has no uname(2)
         # and no sysinfo(2); the data is read through sysctl(2), and uptime needs a
@@ -884,15 +952,15 @@ fn ESYSXLAT(S): i64 {
         # (rc 0, outlen 7), gettimeofday → tv_sec matching libc time(0).
         # cmp x8,#1202 = 0xF112C91F; movz x16,#202 = 0xD2801950;
         # cmp x8,#1116 = 0xF111711F; movz x16,#116 = 0xD2800E90 (as -arch arm64 verified).
-        EW(S, 0xF112C91F); EW(S, 0x54000041); EW(S, 0xD2801950);  # sysctl       1202→202
-        EW(S, 0xF111711F); EW(S, 0x54000041); EW(S, 0xD2800E90);  # gettimeofday 1116→116
+        _esx_arm(S, 1202, 202);  # sysctl       1202→202
+        _esx_arm(S, 1116, 116);  # gettimeofday 1116→116
         # v6.5.27 — kqueue/kevent (Darwin readiness API), private-alias band 1000+native.
         # cmp x8,#1362 = 0xF115491F; movz x16,#362 = 0xD2802D50
         # cmp x8,#1363 = 0xF1154D1F; movz x16,#363 = 0xD2802D70
         # Encodings derived with the same SUBS/MOVZ field layout as the rows above, and the
         # deriver was cross-checked by re-computing those rows' known-good values first.
-        EW(S, 0xF115491F); EW(S, 0x54000041); EW(S, 0xD2802D50);  # kqueue 1362→362
-        EW(S, 0xF1154D1F); EW(S, 0x54000041); EW(S, 0xD2802D70);  # kevent 1363→363
+        _esx_arm(S, 1362, 362);  # kqueue 1362→362
+        _esx_arm(S, 1363, 363);  # kevent 1363→363
         # ── v6.5.43 (band J phase 1) — the Darwin CONCURRENCY primitives, private-alias band.
         # macOS has no clone and no futex. Real threading there is `bsdthread_*`, and blocking
         # is `__ulock_*`; until now NONE of the five was routed on either Mach-O backend, so
@@ -913,11 +981,11 @@ fn ESYSXLAT(S): i64 {
         #
         # Encodings aarch64-linux-gnu-as VERIFIED (hand-derivation got the cmp fields WRONG:
         # 1360 computed as 0xF115511F by hand, the assembler says 0xF115411F).
-        EW(S, 0xF115411F); EW(S, 0x54000041); EW(S, 0xD2802D10);  # bsdthread_create    1360→360
-        EW(S, 0xF115451F); EW(S, 0x54000041); EW(S, 0xD2802D30);  # bsdthread_terminate 1361→361
-        EW(S, 0xF115591F); EW(S, 0x54000041); EW(S, 0xD2802DD0);  # bsdthread_register  1366→366
-        EW(S, 0xF117AD1F); EW(S, 0x54000041); EW(S, 0xD2804070);  # __ulock_wait        1515→515
-        EW(S, 0xF117B11F); EW(S, 0x54000041); EW(S, 0xD2804090);  # __ulock_wake        1516→516
+        _esx_arm(S, 1360, 360);  # bsdthread_create    1360→360
+        _esx_arm(S, 1361, 361);  # bsdthread_terminate 1361→361
+        _esx_arm(S, 1366, 366);  # bsdthread_register  1366→366
+        _esx_arm(S, 1515, 515);  # __ulock_wait        1515→515
+        _esx_arm(S, 1516, 516);  # __ulock_wake        1516→516
         # ── v6.5.16: the credential family. `is_root()` hardcoded `return 0` on macOS
         # (lib/sys.cyr), so the ONE consumer that would have exercised these never called
         # them and the whole family sat unrouted on BOTH Mach-O backends since forever:
@@ -931,10 +999,10 @@ fn ESYSXLAT(S): i64 {
         # rather than `>= 0` so a wrapper returning a constant still fails.
         # as -arch arm64 verified (control: the shipped getpid 172→20 row re-assembles
         # to the identical F102B11F/D2800290 pair).
-        EW(S, 0xF102B91F); EW(S, 0x54000041); EW(S, 0xD2800310);  # getuid  174→24
-        EW(S, 0xF102BD1F); EW(S, 0x54000041); EW(S, 0xD2800330);  # geteuid 175→25
-        EW(S, 0xF102C11F); EW(S, 0x54000041); EW(S, 0xD28005F0);  # getgid  176→47
-        EW(S, 0xF102C51F); EW(S, 0x54000041); EW(S, 0xD2800570);  # getegid 177→43
+        _esx_arm(S, 174, 24);  # getuid  174→24
+        _esx_arm(S, 175, 25);  # geteuid 175→25
+        _esx_arm(S, 176, 47);  # getgid  176→47
+        _esx_arm(S, 177, 43);  # getegid 177→43
         # v6.5.16: fstat. ⚠ NOT Darwin's bare `fstat` (189) — this peer's Stat enum uses
         # the **stat64** field offsets (MODE=4, SIZE=96, syscalls_aarch64_linux.cyr:521),
         # and 189 fills the LEGACY struct (MODE=8, SIZE=72). Live-probed on ecb against
@@ -942,30 +1010,30 @@ fn ESYSXLAT(S): i64 {
         # have returned rc=0 with every field silently wrong — worse than the stale-x16 it
         # replaces. The x86 peer is the mirror image (legacy offsets → 5→189 is correct
         # there), which is exactly why the parity gate compares CAPABILITY, not number.
-        EW(S, 0xF101411F); EW(S, 0x54000041); EW(S, 0xD2802A70);  # fstat 80→fstat64 339
+        _esx_arm(S, 80, 339);  # fstat 80→fstat64 339
         # v6.5.16: fcntl. This peer's SYS_FCNTL is 25, and only the raw x86 72 was routed
         # (for lib/net.cyr's hardcoded syscall(72,...)), so every `syscall(SYS_FCNTL, …)`
         # in lib/async.cyr — the O_NONBLOCK + FD_CLOEXEC setup on every async fd — ran
         # with a stale x16 on macOS-arm64. Same Darwin target as the 72 row (BSD 92).
-        EW(S, 0xF100651F); EW(S, 0x54000041); EW(S, 0xD2800B90);  # fcntl 25→92
-        EW(S, 0xF1012D1F); EW(S, 0x54000041); EW(S, 0xD2801770);  # fdatasync 75→187
-        EW(S, 0xF1005D1F); EW(S, 0x54000041); EW(S, 0xD2800530);  # dup   23→41
-        EW(S, 0xF100751F); EW(S, 0x54000041); EW(S, 0xD28006D0);  # ioctl 29→54
-        EW(S, 0xF102051F); EW(S, 0x54000041); EW(S, 0xD28004B0);  # kill  129→37
-        EW(S, 0xF101451F); EW(S, 0x54000041); EW(S, 0xD2800490);  # sync  81→36
-        EW(S, 0xF102C91F); EW(S, 0x54000041); EW(S, 0xD2802E90);  # gettid 178→thread_selfid 372
-        EW(S, 0xF1033D1F); EW(S, 0x54000041); EW(S, 0xD28003B0);  # recvfrom 207→29
-        EW(S, 0xF103511F); EW(S, 0x54000041); EW(S, 0xD2800370);  # recvmsg  212→27
-        EW(S, 0xF102491F); EW(S, 0x54000041); EW(S, 0xD28002F0);  # setuid    146→23
-        EW(S, 0xF102411F); EW(S, 0x54000041); EW(S, 0xD28016B0);  # setgid    144→181
-        EW(S, 0xF102751F); EW(S, 0x54000041); EW(S, 0xD2801270);  # setsid    157→147
-        EW(S, 0xF1027D1F); EW(S, 0x54000041); EW(S, 0xD2800A10);  # setgroups 159→80
+        _esx_arm(S, 25, 92);  # fcntl 25→92
+        _esx_arm(S, 75, 187);  # fdatasync 75→187
+        _esx_arm(S, 23, 41);  # dup   23→41
+        _esx_arm(S, 29, 54);  # ioctl 29→54
+        _esx_arm(S, 129, 37);  # kill  129→37
+        _esx_arm(S, 81, 36);  # sync  81→36
+        _esx_arm(S, 178, 372);  # gettid 178→thread_selfid 372
+        _esx_arm(S, 207, 29);  # recvfrom 207→29
+        _esx_arm(S, 212, 27);  # recvmsg  212→27
+        _esx_arm(S, 146, 23);  # setuid    146→23
+        _esx_arm(S, 144, 181);  # setgid    144→181
+        _esx_arm(S, 157, 147);  # setsid    157→147
+        _esx_arm(S, 159, 80);  # setgroups 159→80
         # v6.5.16: flock. lib/io.cyr's macOS arm issued a raw `syscall(92)` labelled
         # "BSD flock" — but Darwin 92 is fcntl and flock is 131, and 92 was not a routed
         # source here either. io.cyr now issues the x86-Linux number 73 on macOS so one
         # source serves both Mach-O backends. cmp x8,#73 = 0xF101251F;
         # movz x16,#131 = 0xD2801070 (as -arch arm64 verified on ecb).
-        EW(S, 0xF101251F); EW(S, 0x54000041); EW(S, 0xD2801070);  # flock 73→131
+        _esx_arm(S, 73, 131);  # flock 73→131
         return 0;
     }
     # Emit: compare x8 against known x86 numbers, replace with aarch64
@@ -1249,71 +1317,26 @@ fn ESYSXLAT(S): i64 {
 # NOT x86 nanosleep; portable sleeping goes through lib/chrono.cyr sleep_ms (poll).
 fn _macho_x86_routes(n): i64 { return 1; }   # v6.5.43: not the x86 Mach-O backend — never warn from here.
 fn _macho_arm_routes(n): i64 {
-    if (n == 0) { return 1; }    if (n == 1) { return 1; }    # read / write
-    if (n == 2) { return 1; }    if (n == 3) { return 1; }    # open / close
-    if (n == 4) { return 1; }    if (n == 7) { return 1; }    # stat / poll (sleep_ms)
-    if (n == 9) { return 1; }    if (n == 10) { return 1; }   # mmap / mprotect
-    if (n == 11) { return 1; }   if (n == 24) { return 1; }   # munmap / dup3→dup2
-    if (n == 34) { return 1; }   if (n == 35) { return 1; }   # mkdirat / unlinkat
-    if (n == 39) { return 1; }   if (n == 41) { return 1; }   # getpid (x86 hardcode) / socket
-    if (n == 172) { return 1; }  if (n == 173) { return 1; }  # getpid / getppid (aarch64 stdlib nums, v6.3.44 ESYSXLAT 172→20 / 173→39)
-    if (n == 134) { return 1; }                                # rt_sigaction (v6.4.51 signal_ignore, ESYSXLAT 134→46)
-    if (n == 74) { return 1; }                                 # fsync (v6.4.57 xfsync, ESYSXLAT 74→95)
-    if (n == 42) { return 1; }   if (n == 43) { return 1; }   # connect / accept
-    if (n == 48) { return 1; }   if (n == 49) { return 1; }   # shutdown / bind
-    if (n == 50) { return 1; }   if (n == 53) { return 1; }   # listen / fchmodat (53=fchmodat on the a64 enum; socketpair is 199, below)
-    if (n == 54) { return 1; }   if (n == 55) { return 1; }   # setsockopt / getsockopt
-    if (n == 56) { return 1; }   if (n == 57) { return 1; }   # openat / close(a64)
-    if (n == 60) { return 1; }   if (n == 61) { return 1; }   # exit / getdents64(a64)
-    if (n == 62) { return 1; }   if (n == 63) { return 1; }   # lseek / read(a64)
-    if (n == 64) { return 1; }   if (n == 72) { return 1; }   # write(a64) / fcntl
-    if (n == 82) { return 1; }   if (n == 88) { return 1; }   # rename / symlink
-    if (n == 93) { return 1; }   if (n == 94) { return 1; }   # exit(a64) / exit_group
-    if (n == 199) { return 1; }                                # socketpair(a64)→135 (v6.0.84)
-    if (n == 215) { return 1; }  if (n == 217) { return 1; }  # munmap(a64) / getdents64(x86)
-    if (n == 220) { return 1; }  if (n == 221) { return 1; }  # clone→fork / execve(a64)
-    if (n == 222) { return 1; }  if (n == 226) { return 1; }  # mmap(a64) / mprotect(a64)
-    if (n == 1700) { return 1; }  # → EMACHO_PTHREAD_CREATE_ARM (__got[5]); NOT a syscall
-    if (n == 228) { return 1; }  if (n == 260) { return 1; }  # clock_gettime(__got) / wait4
-    if (n == 278) { return 1; }  if (n == 318) { return 1; }  # getrandom(a64/x86)→getentropy 500 (v6.0.75)
-    if (n == 1054) { return 1; }                               # fchownat private alias →468 (v6.5.7)
-    if (n == 1049) { return 1; }                               # chdir private alias →12 (v6.5.7)
-    if (n == 36) { return 1; }   if (n == 78) { return 1; }   # symlinkat →474 / readlinkat →473 (v6.5.7)
-    if (n == 37) { return 1; }   if (n == 38) { return 1; }   # linkat→471 / renameat→465 (v6.1.20)
-    if (n == 262) { return 1; }                                # newfstatat→fstatat64 470 (v6.1.20)
-    if (n == 59) { return 1; }   if (n == 52) { return 1; }   # pipe2→pipe 42 (+x0/x1 fixup) / fchmod→124 (v6.5.15)
-    if (n == 269) { return 1; }                                # faccessat→466 (v6.5.15)
-    if (n == 1202) { return 1; }                               # sysctl private alias →202 (v6.5.16)
-    if (n == 1116) { return 1; }                               # gettimeofday private alias →116 (v6.5.16)
-    if (n == 1362) { return 1; }                               # kqueue private alias →362 (v6.5.27)
-    if (n == 1363) { return 1; }                               # kevent private alias →363 (v6.5.27)
-    if (n == 1360) { return 1; }                               # bsdthread_create    →360 (v6.5.43)
-    if (n == 1361) { return 1; }                               # bsdthread_terminate →361 (v6.5.43)
-    if (n == 1366) { return 1; }                               # bsdthread_register  →366 (v6.5.43)
-    if (n == 1515) { return 1; }                               # __ulock_wait        →515 (v6.5.43)
-    if (n == 1516) { return 1; }                               # __ulock_wake        →516 (v6.5.43)
-    # v6.5.16: the aarch64-Linux socket numbers were LIVE in ESYSXLAT (v6.2.24/v6.4.64)
-    # but never registered here, so every build touching them printed a bogus "syscall not
-    # routed" warning while the route worked fine. A warning that cries wolf on working
-    # code is how a real one gets ignored. The macho_route_parity gate now asserts this
-    # table and the ESYSXLAT sources are the same set, so they cannot drift again.
-    if (n == 198) { return 1; }  if (n == 200) { return 1; }  # socket / bind
-    if (n == 201) { return 1; }  if (n == 203) { return 1; }  # listen / connect
-    if (n == 204) { return 1; }  if (n == 205) { return 1; }  # getsockname / getpeername
-    if (n == 208) { return 1; }                                # setsockopt
-    # v6.5.16: credential family →24/25/47/43 (the is_root() blind spot)
-    if (n == 174) { return 1; }  if (n == 175) { return 1; }  # getuid / geteuid
-    if (n == 176) { return 1; }  if (n == 177) { return 1; }  # getgid / getegid
-    # v6.5.16: the rest of the unrouted-but-Darwin-reachable sweep
-    if (n == 80) { return 1; }   if (n == 25) { return 1; }   # fstat→fstat64 339 / fcntl→92
-    if (n == 75) { return 1; }   if (n == 23) { return 1; }   # fdatasync→187 / dup→41
-    if (n == 29) { return 1; }   if (n == 129) { return 1; }  # ioctl→54 / kill→37
-    if (n == 81) { return 1; }   if (n == 178) { return 1; }  # sync→36 / gettid→thread_selfid 372
-    if (n == 207) { return 1; }  if (n == 212) { return 1; }  # recvfrom→29 / recvmsg→27
-    if (n == 146) { return 1; }  if (n == 144) { return 1; }  # setuid→23 / setgid→181
-    if (n == 157) { return 1; }  if (n == 159) { return 1; }  # setsid→147 / setgroups→80
-    if (n == 73) { return 1; }                                 # flock→131 (io.cyr macOS arm)
-    return 0;
+    # v6.5.48 — DERIVED, not mirrored. This was a hand-maintained list of 67 lines duplicating
+    # every source number in ESYSXLAT's Mach-O branch, and it drifted in BOTH directions: a
+    # missing row made a WORKING call warn "syscall not routed" (seven socket numbers did exactly
+    # that from v6.2.24 to v6.5.16 — and a warning that cries wolf is how a real one gets
+    # ignored), while a stale row suppressed the warning for a route that no longer existed.
+    #
+    # It now replays ESYSXLAT itself in query mode, exactly as `_macho_x86_routes` has replayed
+    # EMACHO_SYSXLAT since v6.5.43 — so the ANSWER cannot differ from the BEHAVIOUR, because it
+    # comes from the same rows. v6.0.65 had already had to DELETE one such parallel list on this
+    # side after it drifted to 9 entries against ~40 real routes; this removes the second, larger
+    # one rather than re-deriving it by hand a third time.
+    if (n < 0) { return 1; }
+    # The two __got reroutes, handled in parse_expr BEFORE the number reaches ESYSXLAT, so they
+    # are routed despite having no row. Same exemption the x86 twin lists for 35 / 228.
+    if (n == 228) { return 1; }   # → EMACHO_CLOCK_ARM (__got[6] _clock_gettime_nsec_np)
+    if (n == 1700) { return 1; }  # → EMACHO_PTHREAD_CREATE_ARM (__got[5] _pthread_create)
+    _esx_qon = 1; _esx_q = n; _esx_hit = 0;
+    ESYSXLAT(0);
+    _esx_qon = 0;
+    return _esx_hit;
 }
 
 # Pop syscall args (LIFO — last pushed = first popped)

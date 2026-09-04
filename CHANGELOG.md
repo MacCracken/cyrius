@@ -4,6 +4,91 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.48] — 2026-09-04
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,992 B — unchanged from `.47`**,
+which is the consolidation's own evidence: 279 hand-written hex words became a computed emitter
+and the compiler is byte-for-byte the same size. seed → cybs → cycc derivable, `check.sh`
+**231 / 0**, cross-OS on REAL hardware — **ecb + ach + cass + pi**, each `SELFHOST_OK` + crossos
+`LIBTEST_OK`. Bench `self_compile` **714 ms** (`.47` 711). `.text` **1,045,904 B, unchanged**.
+
+⚠ **Three gates read those raw rows and all three needed updating** — `macho_route_parity`
+(which carried its own aarch64 instruction decoder), `syscall_wrapper_pass` (six pinned rows),
+and `net_esysxlat_coupling` (which counts a row in BOTH arms and saw only the Linux one, i.e. it
+reported the exact "macho-only" state it exists to catch). Each was re-mutation-tested afterwards
+against the defect it was written for, including the v6.2.10 one-arm regression.
+
+**Band K's one carried item, closed: ESYSXLAT's Mach-O branch is now COMPUTED.**
+
+v6.5.43 built the query-mode pattern — a route table that answers *"is N routed?"* by replaying
+its own emitting rows — and applied it to **one of two symmetric places**. The x86 side got
+`_msx` + `_macho_x86_routes`; the arm64 side kept **93 hand-derived instruction triples** and a
+separate **95-entry hand mirror** in `_macho_arm_routes`. That was carried out of band K
+explicitly as duplication rather than a live hazard; this closes it.
+
+- **279 hand-written hex words → one computed emitter.** `cmp x8,#src` /`b.ne` /`movz x16,#dst`
+  are now derived from the ISA formulas, all three **assembler-verified**. ⚠ This is not
+  theoretical: v6.5.43 shipped a `cmp` in this very branch computed by hand as `0xF115511F` when
+  the assembler says `0xF115411F`, and only running the assembler caught it.
+- ⭐ **The formulas were proven against the existing rows BEFORE anything was replaced** — all
+  90 plain rows reproduced exactly. The first attempt scoped the scan too wide and picked up the
+  aarch64-**Linux** arm as well, where `movz` targets **x8** rather than Darwin's **x16**; that
+  showed up as 35 "exceptions" and was a slicing error, not a formula error.
+- **Three rows are a different shape and needed a second emitter**: the at-family renumbers *and*
+  drops an argument (`openat` 56→5, `mkdirat` 34→136, `fchmodat` 53→15). The branch displacement
+  depends on the shift count, which is exactly the arithmetic that is error-prone to write three
+  times — and those three were the ones left in raw hex when the first pass consolidated the
+  other 90.
+- **`_macho_arm_routes`: 95 hand-maintained entries → 22 lines of derivation.** It replays
+  ESYSXLAT in query mode, so the answer cannot differ from the behaviour. v6.0.65 had already
+  had to *delete* one such parallel list on this side after it drifted to 9 entries against ~40
+  real routes; this removes the second, larger one rather than re-deriving it by hand a third
+  time.
+
+⭐ **Proven logic-preserving, not asserted.** A reference arm64 emitter was built *before* the
+refactor, and the same sources pushed through both: **61/61 crossos tests byte-identical**, plus
+the compiler's own 1.2 MB `main_aarch64_macho.cyr` byte-identical.
+
+⚠ **`macho_route_parity.sh` needed updating and is now simpler**: it carried its own aarch64
+instruction decoder to read those raw words — and its header still records the trap that decoder
+set (dropping the Rn/Rd field yields plausible-but-wrong numbers). It now reads the emitter calls
+as source. Its axis 3 changed from *comparing two lists* to *asserting the derivation*, since the
+drift it was written to catch is now impossible by construction. ⚠ Both emitter forms must be
+read — an early cut matched only the plain one and reported the three at-family rows as unrouted
+drift.
+
+**sigil 3.12.15 fold — fixed at SOURCE, not in the fold.**
+
+`.47`'s new `write_literal_lengths` gate found one mismatch in the vendored `lib/sigil.cyr`:
+`sigil_perror`'s `SIGIL_ERR_MODULE_NOT_LOADED` arm declared **25** bytes for a **26**-byte
+literal, so `"kernel module not loaded: "` printed without its trailing space and ran into the
+message after it.
+
+⛔ **I initially filed this as an issue in cyrius's own queue, which was wrong.** A stdlib repo's
+defect belongs in that repo, and filing rather than fixing put someone else's bug in this queue
+where it could not be actioned. Corrected: the filing was removed from cyrius and the defect
+fixed upstream.
+
+**What "fixed at source" actually took** — recorded because each step is a place this has gone
+wrong before:
+
+- `sigil/src/sys_error.cyr` corrected, then **all of sigil scanned**: exactly one mismatch in
+  source, the other 43 write sites correct.
+- sigil **3.12.14 → 3.12.15**, and **all 14 bundles regenerated individually** (monolith + 13
+  profiles). sigil's own CLAUDE.md records why: a VERSION bump alone makes every profile stale,
+  and passing several names to one `cyrius distlib` call does **not** regenerate them all. The
+  fix is present in all three bundles that carry `sys_error`.
+- ⭐ **sigil's toolchain pin moved 6.5.35 → 6.5.47.** 6.5.35 sits inside the band carrying the
+  v6.5.36 enum Critical — sigil was one of the 50 repos `.47`'s new wrapper warning was added for.
+- ⭐ **30 of sigil's 101 vendored `lib/` files were stale**, including everything cyrius changed
+  in `.44`–`.46` (`thread_local.cyr`, `sync_macos.cyr`, `thread*.cyr`, `sys.cyr`). ⚠ **`cyrius
+  deps` refreshes only the declared `[deps].stdlib` closure**, so the transitively-present files
+  outside it had drifted and had to be refreshed explicitly — worth knowing before the next fold.
+  `lib/sigil.cyr` was deliberately left alone in sigil's own tree: it is the toolchain's copy of
+  an *older* sigil, and folding 3.12.15 into cyrius is what updates it.
+- sigil `scripts/check.sh`: **24 passed, 0 failed**. Bundle folded byte-identical into
+  `lib/sigil.cyr`; `docs/ecosystem.md` and vidya `dependencies.cyml` updated.
+
 ## [6.5.47] — 2026-09-04
 
 **Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,992 B**, seed → cybs → cycc

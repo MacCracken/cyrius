@@ -74,10 +74,16 @@ check "aarch64 peer uses the chdir alias" 1 \
     "$(grep -c '^    SYS_CHDIR = 1049;' lib/syscalls_aarch64_linux.cyr)"
 check "aarch64-Linux ESYSXLAT arm 1049→49" 1 \
     "$(grep -c '0xF110651F); EW(S, 0x54000041); EW(S, 0xD2800628)' src/backend/aarch64/emit.cyr)"
+# v6.5.48: the Mach-O rows are COMPUTED now (`_esx_arm(S, src, dst)`), so match the call rather
+# than three literal words. The aarch64-Linux arm below is still raw hex — it was not part of the
+# consolidation — which is why only the macho checks changed shape.
 check "macho ESYSXLAT arm 1049→12" 1 \
-    "$(grep -c '0xF110651F); EW(S, 0x54000041); EW(S, 0xD2800190)' src/backend/aarch64/emit.cyr)"
-check "_macho_arm_routes whitelists 1049" 1 \
-    "$(grep -c 'if (n == 1049) { return 1; }' src/backend/aarch64/emit.cyr)"
+    "$(grep -c '_esx_arm(S, 1049, 12);' src/backend/aarch64/emit.cyr)"
+# v6.5.48: `_macho_arm_routes` no longer whitelists numbers by hand — it REPLAYS ESYSXLAT in
+# query mode, so a row's presence above IS its registration. Assert the derivation instead; a
+# hand-mirrored list here was the v6.0.65 / v6.5.16 drift defect twice over.
+check "_macho_arm_routes derives (1049 needs no hand entry)" 1 \
+    "$(awk '/^fn _macho_arm_routes/{f=1} f&&/ESYSXLAT\(0\)/{print 1; exit} f&&/^}/{print 0; exit}' src/backend/aarch64/emit.cyr)"
 # macOS-x86 resolves the shared linux_common peer, so it needs its own Darwin row — an
 # untranslated 80 reaches Darwin unclassed and SIGSYSes, exactly as 231 did at v6.5.6.
 check "EMACHO_SYSXLAT maps chdir 80→Darwin 12" 1 \
@@ -143,9 +149,9 @@ check "aarch64 peer uses the alias" 1 \
 check "aarch64-Linux ESYSXLAT arm 1054→54" 1 \
     "$(grep -c '0xF110791F); EW(S, 0x54000041); EW(S, 0xD28006C8)' src/backend/aarch64/emit.cyr)"
 check "macho ESYSXLAT arm 1054→468 (macOS-arm64 resolves this peer)" 1 \
-    "$(grep -c '0xF110791F); EW(S, 0x54000041); EW(S, 0xD2803A90)' src/backend/aarch64/emit.cyr)"
-check "_macho_arm_routes whitelists 1054" 1 \
-    "$(grep -c 'if (n == 1054) { return 1; }' src/backend/aarch64/emit.cyr)"
+    "$(grep -c '_esx_arm(S, 1054, 468);' src/backend/aarch64/emit.cyr)"
+check "_macho_arm_routes derives (1054 needs no hand entry)" 1 \
+    "$(awk '/^fn _macho_arm_routes/{f=1} f&&/ESYSXLAT\(0\)/{print 1; exit} f&&/^}/{print 0; exit}' src/backend/aarch64/emit.cyr)"
 # ⚠ ORDERING. The Linux arm emits x8=54 and the setsockopt entry compares against 54, so an
 # arm placed ABOVE it is re-caught and every fchownat is issued as setsockopt — silently, on
 # hardware this suite does not run on. Assert it comes after.
@@ -184,11 +190,11 @@ check "macOS-x86 stat offsets match syscall 188 (legacy struct, not stat64)" 1 \
 # unlinkat must be a PURE renumber: the old arg-shift to unlink(10) dropped the dirfd and
 # the flag, so every rmdir on macOS-arm64 ran unlink(AT_FDCWD) and returned -1.
 check "macho unlinkat 35→472 is a pure renumber (no arg-shift to unlink)" 1 \
-    "$(grep -c '0xF1008D1F); EW(S, 0x54000041); EW(S, 0xD2803B10)' src/backend/aarch64/emit.cyr)"
+    "$(grep -c '_esx_arm(S, 35, 472);' src/backend/aarch64/emit.cyr)"
 check "macho symlinkat 36→474" 1 \
-    "$(grep -c '0xD2803B50);  # symlinkat  36→474' src/backend/aarch64/emit.cyr)"
+    "$(grep -c '_esx_arm(S, 36, 474);' src/backend/aarch64/emit.cyr)"
 check "macho readlinkat 78→473" 1 \
-    "$(grep -c '0xD2803B30);  # readlinkat 78→473' src/backend/aarch64/emit.cyr)"
+    "$(grep -c '_esx_arm(S, 78, 473);' src/backend/aarch64/emit.cyr)"
 check "EMACHO_SYSXLAT maps link 86→9 (an unmapped number SIGSYSes)" 1 \
     "$(grep -c '_msx(S, 86, 0x2000009);' src/backend/x86/emit.cyr)"
 # Every number the x86-macOS peer can emit for the x* family must have a Darwin row.
