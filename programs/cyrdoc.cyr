@@ -131,7 +131,7 @@ fn process_file(filepath, check_mode) {
 
     if (check_mode == 0) {
         # Generate mode — output markdown
-        syscall(1, 1, "# API Reference: ", 18);
+        syscall(1, 1, "# API Reference: ", 17);
         syscall(1, 1, filepath, strlen(filepath));
         syscall(1, 1, "\n\n", 2);
     }

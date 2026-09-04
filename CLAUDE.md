@@ -6,7 +6,7 @@
 
 - **Type**: Self-hosting compiler toolchain
 - **License**: GPL-3.0-only
-- **Version**: 6.5.46
+- **Version**: 6.5.47
 
 ## Goal
 
@@ -354,7 +354,7 @@ per-session memory files so they survive environment changes.
 ### Verification habits (beyond the Release Gate)
 - **LOOK at live artifacts, don't parrot verdicts** — docs/pins/issues go stale in a fast-moving project; run the binary on the host yourself.
 - check.sh's grep summary masks tcyr segfaults/exit-code failures — run a per-file exit-code loop before claiming green.
-- **CI shell-loop gates (SKIP/XFAIL) must be tested under `bash -eo pipefail`** — `var=$(failing_cmd)` trips `set -e` before the bookkeeping. The release gate's cross-OS step runs only the `vr01_` glob; reproduce full-corpus aarch64 failures locally with `qemu-aarch64`.
+- **CI shell-loop gates (SKIP/XFAIL) must be tested under `bash -eo pipefail`** — `var=$(failing_cmd)` trips `set -e` before the bookkeeping. The release gate's cross-OS step runs only the `tests/tcyr/crossos/` SUBDIR (the `vr01_` filename prefix it used to glob was retired at v6.5.11 and zero such files remain); reproduce full-corpus aarch64 failures locally with `qemu-aarch64`.
 - **cass (Windows) gotchas**: Defender ML (`Bearfoos.A!ml`) quarantines the unsigned cycc.exe → 0-byte output / "cannot execute" that LOOKS like a compiler bug — run under the excluded `C:\cyrius-tests`, check `Get-MpThreat`. `cmd /c "prog & echo %errorlevel%"` falsely reports 0 (parse-time expansion). `prog < in > out 2>nul &` corrupts the redirect — use `2> err & exit` then inspect. Wrap multi-host SSH chains in `if…else exit 1`, never bare `&&` chains under `set -e` (non-final failures pass silently).
 - Run `cross-os-selfhost.sh` ONE host at a time — fixed /tmp + remote paths clobber under concurrency.
 - A helper that compiles is not a helper that works — end-to-end verify new helpers before commit.
@@ -402,7 +402,7 @@ per-session memory files so they survive environment changes.
   **10+ silently corrupted argument 1 on Win64** (ECALLPOPS' PE branch shuttled stack args through a
   fixed 5-register table and had no code path past `nextra == 5`, so it both mis-popped the register
   args and emitted no stack-arg writes at all). Fixed in v6.4.64; gated by
-  `tests/tcyr/vr01_win64_stack_args.tcyr` on real hardware.
+  `tests/tcyr/crossos/win64_stack_args.tcyr` on real hardware.
   **The lesson worth keeping is not about arity.** A codegen bug had been written down as a language
   rule telling users to restructure their code around it — so for ~a year it was never fixed, and it
   got cited (2026-07-14) to file a *sigil* issue asking a stdlib to contort around a cyrius defect.
@@ -434,9 +434,11 @@ per-session memory files so they survive environment changes.
   number, and an x86-compat entry compares against that same number, so placed earlier the
   alias is silently reissued as the shim's syscall.
 - **A wrapper that COMPILES on five targets is not a wrapper that RUNS.** The release gate's
-  cross-OS leg executes only the `vr01_` glob, so a syscall wrapper with no `vr01_` file is
-  never run off-host — the exact shape of the macOS rot. v6.5.7 added
-  `tests/tcyr/vr01_syscall_wrappers.tcyr` and it turned the gate RED on ecb, then on ach,
+  cross-OS leg executes only `tests/tcyr/crossos/`, so a syscall wrapper with no file in that
+  DIRECTORY is never run off-host — the exact shape of the macOS rot. ⚠ v6.5.11 retired the
+  `vr01_` filename prefix in favour of the directory and zero `vr01_*` files remain, so creating
+  one today silently opts OUT of the cross-OS leg. v6.5.7 added
+  `tests/tcyr/crossos/syscall_wrappers.tcyr` and it turned the gate RED on ecb, then on ach,
   surfacing seven real defects; five of the seven were half-fixes that stopped at the first
   symptom (`AT_FDCWD` without its sibling `AT_*` flags, `STAT_SIZE` without the rest of the
   struct, `unlink` without `rmdir`, three of four link syscalls mapped). Every new syscall

@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-42.** (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-42.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.)
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
@@ -76,13 +76,29 @@ ordinary `#define` is unaffected.
 
 ## Not fixed here, and why
 
-Two further findings of the same class in the same file are **filed rather than fixed**, and the
-reason is named rather than implied: they need a heap/brk **layout** change (relocating the
-`#derive` name scratch out from under `S+0x197020`), which makes them a two-step-bootstrap
-change that this release cannot absorb alongside two other bounds fixes.
+- **CVE-41** — unbounded name captures in the `#derive` path. **Deferred from this release and
+  FIXED at 6.5.47.**
 
-- **CVE-41 (reserved)** — three unbounded name captures in the `#derive` path
-  (`lex_pp.cyr:998-1003`, `:1040`). Reserved here so the identifier is not re-used.
+  ⛔ **The stated reason for deferring it was WRONG, and the correction belongs here rather than
+  quietly in the next changelog.** This document said CVE-41 "needs a heap/brk layout change
+  (relocating the `#derive` name scratch out from under `S+0x197020`), which makes it a
+  two-step-bootstrap change". Premise-checked at 6.5.47 against live code: nothing is written
+  between `S+0x197020` and the next live address `S+0x197400`, so **no relocation was needed at
+  all**. The fix is two bounds checks in place.
+
+  ⛔ **And the count was wrong.** It said *three* unbounded captures. There are **two** — the
+  struct name and the field name. The third, the type-name loop, has been **bounded at 31 all
+  along**, and is the template the other two should have followed. Three name captures sit in one
+  construct; one was written with a guard and two without, and nothing compared them. That
+  asymmetry inside a single function is the actual finding.
+
+  ⚠ **The real ceiling is 31, not the 64 the scratch declares**, because both names are copied at
+  a **32-byte stride** (`_pp_derive_names + dsi * 32`, `S+0x1FC000 + fc * 32`) — the smaller of
+  the two limits governs, and reading only the scratch declaration is how 64 looked safe.
+
+  ⚠ **The overflow is SILENT**, not a crash: 71 bytes into a 32-byte stride renames the
+  *neighbouring* field. That is why this needed a static finding — a pre-fix compiler runs the
+  probe to completion and exits 0.
 
 The remaining band K audit findings are correctness rather than security and are pinned to the
 band's second phase; see `docs/development/roadmap.md`.

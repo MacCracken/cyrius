@@ -114,6 +114,8 @@ fn main(): i64 {
     fmt_int(d_lib);
     syscall(1, 1, " ", 1);
     fmt_int(d_raw);
+    syscall(1, 1, " ", 1);
+    fmt_int(_hm_seed_get());
     syscall(1, 1, "\n", 1);
     return 0;
 }
@@ -129,6 +131,7 @@ R1=$( cd "$ROOT" && "$WORK/probe" ) || fail "the probe did not run"
 R2=$( cd "$ROOT" && "$WORK/probe" ) || fail "the probe did not run a second time"
 LIB1=$(echo "$R1" | awk '{print $1}'); RAW1=$(echo "$R1" | awk '{print $2}')
 LIB2=$(echo "$R2" | awk '{print $1}')
+SEED1=$(echo "$R1" | awk '{print $3}'); SEED2=$(echo "$R2" | awk '{print $3}')
 
 # ── axis 2 first: is the fixture still a real attack set? ──────────────────────────
 [ "$RAW1" = "1" ] || fail "axis 2 (anti-vacuous): the 8192 keys land in $RAW1 buckets under the UNSEEDED hash, not 1 — the fixture has stopped being a collision set, so axis 1 would pass without testing anything"
@@ -142,7 +145,21 @@ LIB2=$(echo "$R2" | awk '{print $1}')
 # ── axis 3: the seed is PER PROCESS, not a fixed constant ──────────────────────────
 # A hardcoded "seed" would spread the keys (passing axis 1) while remaining just as
 # precomputable — the attacker simply recomputes against the new constant. Two runs of the
-# same binary must disagree.
-[ "$LIB1" != "$LIB2" ] || fail "axis 3: two runs of the same binary produced identical bucket counts ($LIB1) — the seed is not varying per process, so the set is still precomputable against a fixed constant"
+# same binary must therefore draw DIFFERENT seeds.
+#
+# ⚠ v6.5.47 — THIS COMPARED THE BUCKET COUNTS AND WAS INTERMITTENTLY RED. The count is a coarse
+# SUMMARY of ~8192 keys landing in ~6400 buckets: two genuinely different seeds routinely produce
+# the same TOTAL while assigning keys differently, so the gate failed a healthy tree roughly one
+# run in a hundred (observed: both processes reported 6403). That is the "pins a PROXY, not the
+# PROPERTY" shape this cycle keeps finding — and in this direction it produces a FALSE RED, which
+# is how a gate teaches people to ignore it.
+# The property is that the SEEDS differ, so compare the seeds. Deterministic, and it also
+# distinguishes the case the counts cannot: a seed that varies but is drawn from a weak source.
+[ -n "$SEED1" ] && [ -n "$SEED2" ] \
+    || fail "axis 3: the probe did not report a seed — it must print _hm_seed_get() as its third field, or this axis is reading nothing"
+[ "$SEED1" != "0" ] \
+    || fail "axis 3: the per-process seed is 0 — the CSPRNG draw failed and the hash fell back to a fixed constant, which is exactly the precomputable state this gate exists to prevent"
+[ "$SEED1" != "$SEED2" ] \
+    || fail "axis 3: two runs of the same binary drew the SAME seed ($SEED1) — the seed is not varying per process, so an offline-precomputed collision set still floods every process"
 
-echo "PASS: hash_seed_flood_resistance (attack set: 1 bucket unseeded -> $LIB1 / $LIB2 seeded across two processes)"
+echo "PASS: hash_seed_flood_resistance (attack set: 1 bucket unseeded -> $LIB1 / $LIB2 seeded across two processes; seeds differ)"

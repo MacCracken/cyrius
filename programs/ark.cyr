@@ -131,7 +131,7 @@ fn cmd_status(): i64 {
         syscall(1, 1, "system backend: apt\n", 20);
     }
     if (file_exists("/usr/bin/pacman") == 1) {
-        syscall(1, 1, "system backend: pacman\n", 22);
+        syscall(1, 1, "system backend: pacman\n", 23);
     }
     return 0;
 }
@@ -329,7 +329,7 @@ fn cmd_verify(): i64 {
     }
     if (errors == 0) {
         fmt_int(len);
-        syscall(1, 1, " entries verified, no errors\n", 28);
+        syscall(1, 1, " entries verified, no errors\n", 29);
     } else {
         fmt_int(errors);
         syscall(1, 1, " errors found\n", 14);
@@ -340,7 +340,7 @@ fn cmd_verify(): i64 {
 fn usage(): i64 {
     syscall(1, 1, "ark ", 4);
     syscall(1, 1, ARK_VERSION, strlen(ARK_VERSION));
-    syscall(1, 1, " — AGNOS Package Manager (Cyrius)\n\n", 35);
+    syscall(1, 1, " — AGNOS Package Manager (Cyrius)\n\n", 37);
     println("Commands:");
     println("  ark install <pkg>  — install a package");
     println("  ark remove <pkg>   — remove a package");

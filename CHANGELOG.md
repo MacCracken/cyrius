@@ -4,6 +4,100 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.47] — 2026-09-04
+
+**Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,992 B**, seed → cybs → cycc
+derivable from the 29,024 B seed, `check.sh` **231 / 0**, cross-OS on REAL hardware — **ecb + ach
++ cass + pi**, each `SELFHOST_OK` + crossos `LIBTEST_OK`. Bench `self_compile` **711 ms** (`.46`
+708). `cycc` **1,195,992 B, +104 over `.46`**; `.text` **1,045,904 B, +176** — the two CVE-41
+bounds checks and their diagnostics, plus the wrapper's known-Critical pin warning.
+
+**Band K phase 3 — the minor close.** Every carried item, plus a systemic defect class found
+while checking one of them. ⭐ **Two of the three carried items had premises that turned out to be
+wrong**, and the corrections are made in the documents that carried them rather than quietly in
+this one.
+
+### CVE-41 — the `#derive` name captures, and a deferral reason that was wrong twice
+
+`docs/audit/2026-09-03-security-audit.md` deferred this saying it "needs a heap/brk layout change
+(relocating the `#derive` name scratch out from under `S+0x197020`) … a two-step-bootstrap
+change". Premise-checked against live code:
+
+- ⛔ **No relocation was needed at all.** Nothing is written between `S+0x197020` and the next
+  live address `S+0x197400`. The fix is two bounds checks in place.
+- ⛔ **And there were TWO unbounded captures, not three.** The third — the type-name loop — has
+  been **bounded at 31 all along**, and is the template the other two should have followed.
+  Three name captures sit in one construct; one was written with a guard and two without, and
+  nothing compared them. **That asymmetry inside a single function is the actual finding.**
+- ⚠ **The real ceiling is 31, not the 64 the scratch declares**, because both names are copied at
+  a **32-byte stride** — the smaller limit governs, and reading only the scratch declaration is
+  how 64 looked safe.
+- ⚠ **The overflow is SILENT** (71 bytes into a 32-byte stride renames the *neighbouring* field),
+  so a pre-fix compiler runs the probe to completion and exits 0. Verified: both guards fire on
+  over-long names, ordinary `#derive` structs are unaffected.
+
+### 24 mis-declared write lengths — a class, found while fixing one of my own
+
+Every `syscall(1, fd, LITERAL, N)` and `sys_write(fd, LITERAL, N)` carries a **hand-written** byte
+count; cyrius has no `strlen` at these call sites. Editing a message without touching the number
+silently changes what prints — over-declared **leaks** the bytes after the literal, under-declared
+**truncates** it.
+
+- **24 mismatches in cyrius-owned code, every one in `programs/`.** `cyriusly` alone had 16, so
+  most of its `--help` was leaking or losing a byte; `ark` printed `system backend: pacman`
+  **without its newline**. ⭐ **`src/` was clean** — the compiler is fine, the tooling was not.
+- ⚠ **The usual cause is a multi-byte character**: an em-dash is three bytes and one glyph, so a
+  count written by eye is short by two. CLAUDE.md already carried that as a rule; it is now
+  enforceable rather than remembered. I got it wrong three separate times in this session, which
+  is what prompted looking for the class.
+- ⚠ **Two false-positive traps are recorded in the gate**, both hit while writing it: a loose
+  "string followed by a number" scan flagged **70** and meant about 24 (`("Predictor", 1)` is a
+  key/arity pair), and resolving escapes with independent `sed` substitutions instead of
+  left-to-right produced **19** false positives on literals containing `\"` or `\\`.
+- `lib/*.cyr` is excluded — vendored, so a fix there evaporates at the next re-vendor. Its one
+  mismatch is **filed outbound to sigil**.
+
+### Downstream — the audit was partly wrong, and the residual is real
+
+- **The sibling-`cycc` resolution works from 6.5.44 onward**, measured per installed wrapper. It
+  is not broken; `6.5.42`'s *shipped binary* predates it, and an old wrapper cannot be fixed
+  retroactively from here.
+- **Its gate is NOT blind.** The audit said it "passes over a fixture that cannot fail";
+  neutering the sibling branch reddens it. Claim withdrawn.
+- ⭐ **The real residual: 50 repos pin into the `6.5.31`–`6.5.35` enum-Critical band** — and they
+  are currently protected *only* by the second defect, since their old wrappers resolve the
+  current compiler instead of their own. The moment a pin is honoured, 50 repos start binding a
+  compiler with a known miscompile. **The wrapper now warns on those pins**, which survives either
+  outcome. One band, one reason, listed explicitly — deliberately not a range check that would
+  silently widen.
+
+### A gate that was intermittently RED on a healthy tree
+
+`hash_seed_flood_resistance` axis 3 asserts the hash seed varies per process — and tested it by
+requiring **two runs to report different bucket counts**. That count is a coarse summary of ~8192
+keys landing in ~6400 buckets, so two genuinely different seeds routinely produce the same
+**total** while assigning keys differently. It failed a healthy tree roughly one run in a hundred
+(caught here: both processes reported 6403), and passed 3/3 when re-run by hand.
+
+⛔ **Same "pins a PROXY, not the PROPERTY" shape this cycle keeps finding — but in the other
+direction.** A gate that cries wolf is how a real finding gets ignored. Axis 3 now compares the
+**seeds themselves** (the probe reports `_hm_seed_get()` as a third field), which is
+deterministic and additionally catches a case the counts never could: a seed that varies but is
+drawn from a weak source, and the seed-is-0 CSPRNG-failure fallback. Mutation-proven both ways;
+six consecutive runs clean.
+
+⚠ This is the **second** intermittent gate in the queue — `2026-09-02-test-runner-bounded-gate-intermittent`
+is still open and unreproduced. Worth treating as a class, not two incidents.
+
+### Doc sync (the closeout step that has no compile-time check)
+
+vidya `types.cyml` corrected on the **fn ceiling** (32768 → 131072), the **identifier pool**
+(512 KB → 8 MB), **token slots** (1,048,576 → 4,194,304) and **region sizes** (8 → 32 MB apiece),
+plus the **preprocess ceiling** that never reached vidya at all. CLAUDE.md's **four stale `vr01_`
+instructions** corrected: zero such files exist, the prefix was retired at v6.5.11 in favour of
+the `tests/tcyr/crossos/` directory, and following the old instruction today silently opts a test
+**out** of the cross-OS leg.
+
 ## [6.5.46] — 2026-09-03
 
 **Release gate GREEN, all 5 steps.** Self-host fixpoint **1,195,888 B**, seed → cybs → cycc

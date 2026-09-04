@@ -58,4 +58,23 @@ grep -qE '^#   0x190400  include_fname \[768\]' "$MAIN" \
 grep -q '0x190700  pp_expand_outpos' "$MAIN" \
     || fail "the heap map does not declare the PP_EXPAND cursor slot at 0x190700 — the next reader re-derives the 768 the hard way, or gets it wrong"
 
-echo "PASS preprocessor_scratch_bounds (filename capture bounded at $GUARDS of $USABLE free bytes across 3 loops; #define body bounded on the accumulating position; map declares both)"
+# ── axis 4 (v6.5.47, CVE-41): every source-fed NAME capture in the `#derive` construct is
+# bounded, and they all agree. Three sit in one function — struct name, field name, type name —
+# and only the TYPE one had a guard. Nothing compared them, so the asymmetry survived inside a
+# single construct. ⚠ The ceiling is 31, not the 64 the `sname` scratch declares, because both
+# names are copied at a 32-BYTE STRIDE (`_pp_derive_names + dsi * 32`, `S+0x1FC000 + fc * 32`) —
+# the smaller limit governs, and reading only the scratch declaration is how 64 looked safe.
+# ⚠ The overflow is SILENT (71 bytes into a 32-byte stride renames the NEIGHBOURING field), so a
+# behavioural probe exits 0 pre-fix. This has to be a static check.
+DERIVE_GUARDS=$(grep -oE '\((sni|fni|tni) >= [0-9]+\)' "$PP" | grep -oE '[0-9]+' | sort -u)
+NG4=$(printf '%s\n' "$DERIVE_GUARDS" | grep -c .)
+[ "$NG4" -eq 1 ] \
+    || fail "the #derive name captures disagree on their bound ($(printf '%s' "$DERIVE_GUARDS" | tr '\n' ' ')) — three captures in one construct, and a disagreement means one of them is the hole"
+for v in sni fni tni; do
+    grep -qE "\($v >= [0-9]+\)" "$PP" \
+        || fail "the #derive capture bounded by \`$v\` has no guard — it writes source text into a fixed-stride slot with no limit (CVE-41)"
+done
+[ "$DERIVE_GUARDS" -lt 32 ] \
+    || fail "the #derive name guards are $DERIVE_GUARDS, but the names are copied at a 32-byte stride — the bound must leave room for the NUL"
+
+echo "PASS preprocessor_scratch_bounds (filename capture bounded at $GUARDS of $USABLE free bytes across 3 loops; #define body bounded on the accumulating position; all 3 #derive name captures bounded at $DERIVE_GUARDS; map declares both)"

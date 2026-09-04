@@ -148,15 +148,15 @@ fn _parse_args(): i64 {
 }
 
 fn _usage(): i64 {
-    syscall(1, 1, "ts_test_runner — standalone TS frontend harness.\n\n", 51);
+    syscall(1, 1, "ts_test_runner — standalone TS frontend harness.\n\n", 52);
     syscall(1, 1, "USAGE:\n", 7);
     syscall(1, 1, "    ts_test_runner [opts] <path>\n\n", 34);
     syscall(1, 1, "OPTS:\n", 6);
     syscall(1, 1, "    --mode=parse    use `cycc --parse-ts` (default)\n", 52);
     syscall(1, 1, "    --mode=lex      use `cycc --lex-ts`\n", 40);
-    syscall(1, 1, "    --ext=.ts       walk .ts files (default)\n", 46);
-    syscall(1, 1, "    --ext=.tsx      walk .tsx files instead\n", 45);
-    syscall(1, 1, "    --show-fails    print path of each failing fixture\n", 57);
+    syscall(1, 1, "    --ext=.ts       walk .ts files (default)\n", 45);
+    syscall(1, 1, "    --ext=.tsx      walk .tsx files instead\n", 44);
+    syscall(1, 1, "    --show-fails    print path of each failing fixture\n", 55);
     syscall(1, 1, "    --help / -h     this help\n\n", 31);
     syscall(1, 1, "EXIT:\n", 6);
     syscall(1, 1, "    0 if all parse clean; else min(fail_count, 255).\n", 53);

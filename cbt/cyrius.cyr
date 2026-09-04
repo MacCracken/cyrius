@@ -110,6 +110,18 @@ fn usage(): i64 {
 # Hard error if the pinned version isn't installed at
 # `~/.cyrius/versions/<v>/bin/cyrius`. Never silently slides to
 # `latest` — matches v5.11.17 deps stdlib_dir policy.
+# Does `pin` name a release carrying a known Critical? Exact string matches only — a numeric
+# range comparison would silently swallow future versions into a band they are not in.
+fn _pin_has_known_critical(pin): i64 {
+    # v6.5.36: enum constants >= 2^62 read back as -1 (an in-band tag needing a 65th bit).
+    if (streq(pin, "6.5.31") == 1) { return 1; }
+    if (streq(pin, "6.5.32") == 1) { return 1; }
+    if (streq(pin, "6.5.33") == 1) { return 1; }
+    if (streq(pin, "6.5.34") == 1) { return 1; }
+    if (streq(pin, "6.5.35") == 1) { return 1; }
+    return 0;
+}
+
 fn _try_redirect_to_pinned(): i64 {
     if (_cyrius_resolved == 1) { return 0; }
 
@@ -196,6 +208,25 @@ fn _try_redirect_to_pinned(): i64 {
     # refusal reachable without depending on which versions happen to be installed —
     # which is what lets tests/gates/toolchain/deps_symlinked_lib_refused.sh pin a
     # deliberately absent version and still exercise this path deterministically.
+    # ⛔ v6.5.47 — WARN WHEN THE PIN LANDS ON A RELEASE WITH A KNOWN CRITICAL.
+    # v6.5.36 fixed a Critical that shipped live in 6.5.31 through 6.5.35: an enum constant
+    # >= 2^62 read back as -1, because the tag occupied a 65th bit of a 64-bit slot. Measured at
+    # v6.5.47: **50** manifests under ~/Repos pin into that band.
+    # ⚠ THEY ARE CURRENTLY PROTECTED BY A SECOND DEFECT, WHICH IS NOT A REASON TO STAY QUIET.
+    # A pinned wrapper older than 6.5.44 does not resolve its own sibling `cycc`, so those repos
+    # silently build with the CURRENT compiler and never meet the Critical. The moment that pin
+    # is honoured — reinstalling the version, or the wrapper being rebuilt — 50 repos start
+    # binding a compiler with a known miscompile. A warning is the only thing that survives
+    # either outcome.
+    # ⚠ ONE BAND, ONE REASON, LISTED EXPLICITLY. This is a hand-maintained fact, which this cycle
+    # has repeatedly found going stale — so it is deliberately NOT a range check that would
+    # silently widen: adding a future band means adding a row here and saying why.
+    if (_pin_has_known_critical(pin) == 1) {
+        sys_write(STDERR_FD, "warning: cyrius.cyml pins ", 26);
+        sys_write(STDERR_FD, pin, strlen(pin));
+        sys_write(STDERR_FD, ", which carries the v6.5.36 enum Critical (constants >= 2^62 read back as -1).\n         Re-pin to 6.5.36 or later.\n", 115);
+    }
+
     # Build pinned binary path: ~/.cyrius/versions/<pin>/bin/cyrius.
     var sb = str_builder_new();
     str_builder_add_cstr(sb, _home);

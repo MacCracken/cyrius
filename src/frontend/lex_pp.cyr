@@ -1017,10 +1017,21 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         syscall(SYS_EXIT, 1);
     }
     ip = ip + kwlen;
+    # ⛔ v6.5.47 (CVE-41) — THIS CAPTURE WAS UNBOUNDED. `sname` is 64 bytes at S+0x197020, and
+    # the name is then copied into `_pp_derive_names` at a 32-BYTE STRIDE (see the copy below),
+    # so 31 is the real ceiling — the smaller of the two, not the 64 the scratch declares.
+    # ⚠ THE SIBLING TYPE-NAME LOOP HAS BEEN BOUNDED AT 31 ALL ALONG (the `tni >= 31` check a few
+    # dozen lines down). Three name captures sit in this one construct; one was written with a
+    # guard and two without, and nothing compared them. That asymmetry inside a single function
+    # is the whole finding — the correct pattern was already present and simply not applied.
     var sni = 0;
     while (ip < bl) {
         var c = load8(src_base + ip);
         if (c == 32 || c == 123 || c == 10) { break; }
+        if (sni >= 31) {
+            syscall(SYS_WRITE, 2, "error: #derive struct name too long (max 31 bytes)\n", 51);
+            syscall(SYS_EXIT, 1);
+        }
         store8(S + 0x197020 + sni, c); sni = sni + 1; ip = ip + 1;
     }
     store8(S + 0x197020 + sni, 0);
@@ -1059,8 +1070,12 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
                         syscall(SYS_WRITE, 2, "error: #derive struct field cap exceeded (max 256 — raise in lex_pp.cyr / S+0x1FC000 region)\n", 95);
                         syscall(SYS_EXIT, 1);
                     }
+                    # ⛔ v6.5.47 (CVE-41) — unbounded, into a 32-byte stride. A field name past
+                    # 31 characters ran into the NEXT field's slot (silently renaming it), and at
+                    # fc == 255 past the 8 KB region entirely. Same construct, same fix, same
+                    # ceiling as the type-name loop below — which already had it.
                     var fni = 0;
-                    while (fp < bl) { var xc = load8(src_base + fp); if (xc == 59 || xc == 58 || xc == 125 || xc == 32 || xc == 10) { break; } store8(S + 0x1FC000 + fc * 32 + fni, xc); fni = fni + 1; fp = fp + 1; }
+                    while (fp < bl) { var xc = load8(src_base + fp); if (xc == 59 || xc == 58 || xc == 125 || xc == 32 || xc == 10) { break; } if (fni >= 31) { syscall(SYS_WRITE, 2, "error: #derive field name too long (max 31 bytes)\n", 50); syscall(SYS_EXIT, 1); } store8(S + 0x1FC000 + fc * 32 + fni, xc); fni = fni + 1; fp = fp + 1; }
                     store8(S + 0x1FC000 + fc * 32 + fni, 0);
                     store8(S + 0x1FE000 + fc * 32, 0);
                     if (load8(src_base + fp) == 58) {

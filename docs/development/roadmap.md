@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.46** (2026-09-03) — cycc **1,179,104 B** · check.sh **211 passed / 0
+**Current head: v6.5.47** (2026-09-04) — cycc **1,179,104 B** · check.sh **211 passed / 0
 failed** · **286** `.tcyr` (**55** in `crossos/`) · **101**
 `lib/*.cyr` · **97** `programs/**/*.cyr` · **93** shell gate scripts under
 `tests/gates/<bucket>/` · api-surface **5112** ·
@@ -697,7 +697,7 @@ ran 86 releases and 6.5.x is expected in the same class.
 > |---|---|---|
 > | *(empty)* | — | `.41`'s carried pair — `versioned-wrapper-does-not-pin-cycc` and `audit-scope-excludes-tests` — both shipped at `.42`. |
 >
-> ### ▶ NEXT: band K phase 3 — the minor close (`.45` phase 1 + `.46` phase 2 SHIPPED)
+> ### ▶ BAND K COMPLETE (`.45` phase 1 · `.46` phase 2 · `.47` phase 3) — the v6.5.x minor is CLOSED
 >
 > **PHASES DECLARED UP FRONT**, per cycle-discipline: an arc is scoped at planning time, and a
 > mid-execution split is a deferral wearing a plan's clothes. Band K's audit ran as nine parallel
@@ -723,20 +723,31 @@ ran 86 releases and 6.5.x is expected in the same class.
 >    * ✅ **`tok_values` heap-map size** — v6.5.39 resized two of three token arrays; this was
 >      the third. 102 regions, 0 overlaps.
 >
-> 3. **`.47` — phase 3: the minor close. ← THIS IS THE OPEN ONE.** ⏭ **CARRIED from phase 2, not
->    dropped** — each was declared in phase 2's list and did not ship:
->    * **CVE-41** — three unbounded name captures in the `#derive` path. ⚠ Filed rather than
->      fixed for a NAMED reason: it needs the `#derive` name scratch relocated out from under
->      `S+0x197020`, i.e. a heap **layout** change ⇒ two-step bootstrap, which is a release of
->      its own shape.
->    * **A version pin still does not bind the compiler for 125 of 128 downstream repos** — the
->      issue closed at `.42` did not achieve its aim, and its gate passes over a fixture that
->      cannot fail. **50 repos** (not 45) sit in the `6.5.31`–`6.5.35` enum-Critical band.
->    * Doc/refactor tail: vidya `types.cyml` stale on 6 caps, the retired `vr01_` prefix still
->      instructed in CLAUDE.md, `_macho_arm_routes` as a 95-entry hand mirror (v6.5.43 built the
->      query-mode fix and applied it to only one of two symmetric places).
->
-> ⭐ **The minor closes on phase 2.**
+> 3. ~~**`.47` — phase 3: the minor close.**~~ ✅ **SHIPPED.** Every carried item resolved, and
+>    ⭐ **two of the three had premises that turned out to be WRONG** — corrected in the documents
+>    that carried them rather than quietly here:
+>    * ✅ **CVE-41** — the `#derive` name captures, FIXED at `.47`. ⛔ **The reason given for
+>      deferring it was wrong on both counts and is corrected in `docs/audit/2026-09-03-security-audit.md`
+>      rather than quietly dropped**: it did NOT need a layout change (nothing is written between
+>      `S+0x197020` and the next live address `S+0x197400`), and there were TWO unbounded
+>      captures, not three — the type-name loop had been bounded at 31 all along and is the
+>      template the other two should have followed.
+>    * ⚠ **Downstream: the audit was partly WRONG.** Measured per installed wrapper, the
+>      sibling-`cycc` resolution works from **6.5.44** onward — `.42`'s SHIPPED BINARY predates
+>      it and cannot be fixed retroactively. And its gate is **not** blind: neutering the branch
+>      reddens it, so that claim is withdrawn. ✅ The real residual — **50 repos** pinning into the
+>      `6.5.31`–`6.5.35` enum-Critical band, protected only by those old wrappers ignoring their
+>      own pin — is now met by a **warning in the wrapper**, which survives either outcome.
+>    * ✅ Doc tail: vidya `types.cyml` corrected (fn ceiling 32768 → 131072, identifier pool
+>      512 KB → 8 MB, token slots and region sizes, plus the preprocess ceiling that never
+>      reached vidya); CLAUDE.md's four stale `vr01_` instructions corrected — zero such files
+>      exist and following them silently opts a test OUT of the cross-OS leg.
+>    * ⭐ **Found while fixing one of my own: 24 mis-declared write lengths** across `programs/`
+>      (`cyriusly` alone had 16). `src/` was clean. Now gated.
+>    * ⏭ **CARRIED to the next minor, not dropped**: `_macho_arm_routes` remains a 95-entry hand
+>      mirror — v6.5.43 built the query-mode fix and applied it to one of two symmetric places.
+>      Duplication, not a live hazard (`macho_route_parity.sh` axis 3 blocks drift), which is why
+>      it did not displace a correctness fix.
 
 >
 > **`.41` and `.42` both shipped and this pointer said `.41` until 2026-09-02.** `.41` drained the

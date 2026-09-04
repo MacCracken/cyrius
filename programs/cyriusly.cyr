@@ -154,20 +154,20 @@ fn _cmd_home(): i64 {
 
 # `cyriusly help` — usage text.
 fn _cmd_help(): i64 {
-    syscall(1, 1, "cyriusly — Cyrius version manager\n\n", 36);
+    syscall(1, 1, "cyriusly — Cyrius version manager\n\n", 37);
     syscall(1, 1, "USAGE:\n", 7);
     syscall(1, 1, "    cyriusly <command> [args]\n\n", 31);
     syscall(1, 1, "COMMANDS:\n", 10);
-    syscall(1, 1, "    version            Show active version\n", 44);
-    syscall(1, 1, "    list               List installed versions\n", 48);
-    syscall(1, 1, "    use <version>      Switch to a version\n", 44);
-    syscall(1, 1, "    install <version>  Download and install\n", 45);
-    syscall(1, 1, "    setup              Install from current repo checkout\n", 59);
-    syscall(1, 1, "    uninstall <ver>    Remove a version\n", 41);
-    syscall(1, 1, "    update             Check for new versions\n", 47);
-    syscall(1, 1, "    which              Show path to active compiler\n", 53);
-    syscall(1, 1, "    home               Show install directory\n", 47);
-    syscall(1, 1, "    cmdtools [action]  Manage prompt integrations\n", 51);
+    syscall(1, 1, "    version            Show active version\n", 43);
+    syscall(1, 1, "    list               List installed versions\n", 47);
+    syscall(1, 1, "    use <version>      Switch to a version\n", 43);
+    syscall(1, 1, "    install <version>  Download and install\n", 44);
+    syscall(1, 1, "    setup              Install from current repo checkout\n", 58);
+    syscall(1, 1, "    uninstall <ver>    Remove a version\n", 40);
+    syscall(1, 1, "    update             Check for new versions\n", 46);
+    syscall(1, 1, "    which              Show path to active compiler\n", 52);
+    syscall(1, 1, "    home               Show install directory\n", 46);
+    syscall(1, 1, "    cmdtools [action]  Manage prompt integrations\n", 50);
     syscall(1, 1, "    help               Show this help\n", 38);
     return 0;
 }
@@ -323,7 +323,7 @@ fn _print_resolved_version(): i64 {
     _cyrius_current_into(&cbuf, 64);
     syscall(1, 1, "cyrius ", 7);
     syscall(1, 1, &cbuf, strlen(&cbuf));
-    syscall(1, 1, " (~/.cyrius/current — global default)\n", 38);
+    syscall(1, 1, " (~/.cyrius/current — global default)\n", 40);
     return 0;
 }
 
@@ -361,7 +361,7 @@ fn _cmd_use_v2(ver_cstr, is_global): i64 {
         # Per-repo default — write cyrius.cyml's [package].cyrius field.
         if (file_exists("cyrius.cyml") == 0) {
             syscall(1, 2, "error: no cyrius.cyml in this directory.\n", 41);
-            syscall(1, 2, "  cd to a project root, or pass --global to set the global toolchain default.\n", 79);
+            syscall(1, 2, "  cd to a project root, or pass --global to set the global toolchain default.\n", 78);
             return 1;
         }
         var rc = _write_cyml_cyrius_pin(ver_cstr);
@@ -433,7 +433,7 @@ fn _cmd_uninstall(ver_cstr): i64 {
     var vlen = strlen(ver_cstr);
     if (clen == vlen) {
         if (memeq(&cur_buf, ver_cstr, vlen) == 1) {
-            syscall(1, 2, "Cannot uninstall active version. Switch first: cyriusly use <other>\n", 69);
+            syscall(1, 2, "Cannot uninstall active version. Switch first: cyriusly use <other>\n", 68);
             return 1;
         }
     }
@@ -515,7 +515,7 @@ fn _cmd_update(): i64 {
 fn _cmd_setup(): i64 {
     # Sanity check: must run from repo checkout.
     if (file_exists("VERSION") == 0) {
-        syscall(1, 2, "error: cyriusly setup must run from a Cyrius repo checkout\n", 60);
+        syscall(1, 2, "error: cyriusly setup must run from a Cyrius repo checkout\n", 59);
         return 1;
     }
     if (file_exists("cyrius.cyml") == 0) {
@@ -528,7 +528,7 @@ fn _cmd_setup(): i64 {
     }
     # Bootstrap if needed.
     if (file_exists("build/cycc") == 0) {
-        syscall(1, 1, "  build/cycc not found — running bootstrap/bootstrap.sh...\n", 60);
+        syscall(1, 1, "  build/cycc not found — running bootstrap/bootstrap.sh...\n", 61);
         var bs_rc = _exec_shell("sh bootstrap/bootstrap.sh");
         if (bs_rc != 0) {
             syscall(1, 2, "error: bootstrap failed\n", 24);
