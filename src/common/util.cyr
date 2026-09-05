@@ -597,6 +597,48 @@ fn SFINL(S, fi, v): i64 { S64(_fnt_inline + fi * 8, v); return 0; }
 # when the table is unallocated (the non-generic default), so callers never special-
 # case. SFTP lazy-allocs the table (max fn cap) on first use — only ever reached under
 # _MONOMORPH_OK with a `fn foo<T>` definition present.
+# v6.5.52 — per-fn INLINE PARAM TYPES, for the inline-replay path.
+#
+# WHY THIS EXISTS. The replay re-registers a callee's params as temporary locals BY NAME
+# ONLY (`GFINL` packs the two name offsets and nothing else), so the param loses its type
+# inside the inlined body — and it binds them to ADJACENT 8-BYTE SLOTS, which silently
+# overruns for anything wider. Both defects are invisible until a 16-byte param arrives:
+# ONE SIMD param inlines fine, TWO SIGSEGV the compiler, and one-SIMD-plus-one-int reports
+# a bogus "value-form SIMD arg type mismatch". This table is what lets the replay allocate
+# slots by WIDTH and re-apply the SLTYPE.
+#
+# ⚠ `_fnt_simdmask` was checked first and is NOT sufficient, though it is close: its 2 bits
+# per param give the ABI class (128b / 256b / f32v4) and therefore the slot width, but not
+# the sentinel — code 1 covers f64v2 AND every 16-byte integer vector, which have different
+# sids. Re-applying the wrong sentinel is a wrong-type bug rather than a crash, so it would
+# have been the worse failure. Widths could come from the mask; the sentinel could not.
+#
+# Encoding: two 16-bit fields, param 0 low. Each holds `desc + 1`, where
+# `desc = (0 - sltype) - 2048` is the vector descriptor (0..255 per the band layout above);
+# 0 means "this param is not a vector". Storing desc rather than the raw negative sentinel
+# keeps the pack sign-free.
+#
+# Lazy-alloc'd at the max fn cap exactly like _fnt_tparams — deliberately NOT a fixed heap
+# region, so this adds no heap-map entry, no fork edit and no `_fnt_grow` copy row.
+var _fnt_inlpt = 0;
+fn GFIPT(S, fi): i64 { if (_fnt_inlpt == 0) { return 0; } return L64(_fnt_inlpt + fi * 8); }
+fn SFIPT(S, fi, v): i64 { if (_fnt_inlpt == 0) { _fnt_inlpt = alloc(131072 * 8); } S64(_fnt_inlpt + fi * 8, v); return 0; }
+
+# Unpack param `which` (0|1) from a GFIPT word -> SLTYPE sentinel, or 0 if not a vector.
+fn _ipt_sltype(packed, which): i64 {
+    var f = packed & 0xFFFF;
+    if (which == 1) { f = (packed >> 16) & 0xFFFF; }
+    if (f == 0) { return 0; }
+    return 0 - ((f - 1) + 2048);
+}
+
+# Slot count for a param SLTYPE: vectors are 2 (128-bit) or 4 (256-bit), everything else 1.
+fn _ipt_slots(S, sltype): i64 {
+    if (sltype == 0) { return 1; }
+    if (_vec_desc(S, sltype) == 1) { return GVEC_NSLOTS(S); }
+    return 1;
+}
+
 fn GFTP(S, fi): i64 { if (_fnt_tparams == 0) { return 0; } return L64(_fnt_tparams + fi * 8); }
 fn SFTP(S, fi, v): i64 { if (_fnt_tparams == 0) { _fnt_tparams = alloc(131072 * 8); } S64(_fnt_tparams + fi * 8, v); return 0; }
 # v6.3.10 (instantiate-once): the base fn's `fn`-keyword token index (lazy-alloc'd).
@@ -936,6 +978,20 @@ fn _is_simd256(S, pscale): i64 {
 # v6.4.14: f64v2/f64v4 fold into the band; no more flat -20/-21.
 fn _is_simd_any(S, pscale): i64 {
     if (pscale <= 0 - 2048) { return 1; }
+    return 0;
+}
+
+# v6.5.52 — does this fn take a SIMD-typed parameter? Admits the value-form SIMD wrappers to
+# the inline-replay path WITHOUT enabling general inlining (default-off for a MEASURED reason:
+# +25.6 % on cycc at v1.11.3). Inlining is a PREREQUISITE for SIMD register residency, not a
+# nicety — a value chain emits a `call` per link and every xmm is caller-saved under SysV, so
+# each intermediate is provably spilled and reloaded until the calls go away.
+fn _fn_has_simd_param(S, pc): i64 {
+    var i = 0;
+    while (i < pc) {
+        if (_is_simd_any(S, GLTYPE(S, i)) == 1) { return 1; }
+        i = i + 1;
+    }
     return 0;
 }
 

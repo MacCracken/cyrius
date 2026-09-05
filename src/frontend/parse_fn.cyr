@@ -21,6 +21,38 @@ include "src/frontend/parse_ctrl.cyr"
 # a slot. Constants are the standard FIPS-spec 64-bit FNV-1a values
 # (offset basis + prime). Cyrius multiplies wrap on 2's-complement so
 # the natural u64 arithmetic this algorithm assumes works directly.
+# v6.5.52 — inline-replay param binding for WIDE (vector) params.
+#
+# The replay used to bind both params to adjacent SINGLE 8-byte slots and store each with an
+# 8-byte EFLSTORE. A 16-byte f32v4/f64v2 (or 32-byte f64v4) therefore overran its neighbour:
+# ONE SIMD param inlined correctly, TWO crashed the compiler outright. These two helpers make
+# the binding width-driven and type-carrying, mirroring exactly what PARSE_FN_DEF does for a
+# real (non-inlined) SIMD param: (nslots-1) anonymous filler slots first, then the NAMED slot
+# last at the deepest displacement — which is where `&v` and lane access resolve.
+fn _inl_store_arg(S, slot, w): i64 {
+    if (w == 2) { EFLSTORE_F64V2_PAIR(S, slot); return 0; }
+    if (w == 4) { EFLSTORE_F64V4_PAIR(S, slot); return 0; }
+    EFLSTORE(S, slot);
+    return 0;
+}
+
+fn _inl_bind_param(S, base, w, named, noff, t): i64 {
+    var j = 0;
+    while (j < w - 1) {
+        S64(S + 0x5D9D000 + (base + j) * 8, 0 - 1);   # anon filler
+        SLDEP(S, base + j, 0);
+        SLTYPE(S, base + j, 0);
+        j = j + 1;
+    }
+    S64(S + 0x5D9D000 + named * 8, noff);
+    SLDEP(S, named, GSDEP(S));
+    # ⚠ Re-apply the param TYPE. Without this the param is untyped inside the inlined body,
+    # which surfaces as a bogus "value-form SIMD arg type mismatch" at its first use — the
+    # second of the two defects, independent of the slot-width one above.
+    SLTYPE(S, named, t);
+    return 0;
+}
+
 fn FNV1A_NOFF(S, noff): i64 {
     var h = 0xcbf29ce484222325;
     var i = 0;
@@ -1597,16 +1629,42 @@ fn PARSE_FNCALL(S, noff): i64 {
                 var pc = L64(_fnt_params + fi * 8);
                 var saved_flc = GFLC(S);
                 # Allocate fresh frame slots for callee params
-                var p0_slot = saved_flc;
-                var p1_slot = saved_flc + 1;
+                # v6.5.52 — slot widths come from the callee's recorded param types.
+                var _ipt = GFIPT(S, fi);
+                var _t0 = _ipt_sltype(_ipt, 0);
+                var _t1 = _ipt_sltype(_ipt, 1);
+                var _w0 = _ipt_slots(S, _t0);
+                var _w1 = _ipt_slots(S, _t1);
+                var _ptot = 0;
+                if (pc >= 1) { _ptot = _w0; }
+                if (pc >= 2) { _ptot = _w0 + _w1; }
+                # NAMED slot = deepest of each param's group (anon fillers precede it).
+                var p0_slot = saved_flc + _w0 - 1;
+                var p1_slot = saved_flc + _w0 + _w1 - 1;
                 # v6.3.38 (A-broad) — RESERVE the param slots BEFORE evaluating args, so a
                 # nested inline call while evaluating arg1 uses frame slots ABOVE p0/p1
                 # instead of reusing saved_flc and clobbering the already-stored arg0.
                 # (v6.3.37 A3 only reserved frame SIZE via _flc_hwm; this reserves the slot
                 # INDICES too by bumping GFLC up-front.) Idempotent with the old post-loop
                 # SFLC(saved_flc+pc); the _flc_hwm high-water still feeds the frame patch.
-                SFLC(S, saved_flc + pc);
-                if (saved_flc + pc > _flc_hwm) { _flc_hwm = saved_flc + pc; }
+                SFLC(S, saved_flc + _ptot);
+                if (saved_flc + _ptot > _flc_hwm) { _flc_hwm = saved_flc + _ptot; }
+                # v6.5.52 — INVALIDATE the reserved slots BEFORE evaluating args. The slots are
+                # reserved here but not bound until after the arg loop, and arg evaluation does
+                # name lookups that scan every slot below GFLC — so an unwritten slot is read as
+                # a NAME OFFSET. Whatever the frame held previously is then handed to STREQ as a
+                # string pointer. MEASURED: `rsi = 0xffffffff` at the fault, i.e. a stale `0 - 1`
+                # anon marker dereferenced as a pointer.
+                # ⚠ The pre-v6.5.52 code had the same ordering and survived only because it
+                # reserved exactly `pc` slots and both were overwritten immediately; widening a
+                # param to 2 or 4 slots exposed the latent hole.
+                var _pini = 0;
+                while (_pini < _ptot) {
+                    S64(S + 0x5D9D000 + (saved_flc + _pini) * 8, 0 - 1);
+                    SLDEP(S, saved_flc + _pini, 0);
+                    SLTYPE(S, saved_flc + _pini, 0);
+                    _pini = _pini + 1;
+                }
                 # Evaluate args and store to param slots
                 var iargc = 0;
                 # v6.3.9 (F-fns): positional generic inference — capture each arg's
@@ -1621,8 +1679,8 @@ fn PARSE_FNCALL(S, noff): i64 {
                         if (iargc == 0) { _ginf0 = _infer_conc_at_cursor(S); }
                         if (iargc == 1) { _ginf1 = _infer_conc_at_cursor(S); }
                         PCMPE(S);
-                        if (iargc == 0) { EFLSTORE(S, p0_slot); }
-                        if (iargc == 1) { EFLSTORE(S, p1_slot); }
+                        if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
+                        if (iargc == 1) { _inl_store_arg(S, p1_slot, _w1); }
                         iargc = iargc + 1;
                         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                         else { iago = 0; }
@@ -1636,17 +1694,17 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # normal path — the normal-path check alone would miss it.
                 _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0);
                 # Set local count past the param slots
-                SFLC(S, saved_flc + pc);
+                SFLC(S, saved_flc + _ptot);
                 # v6.3.37 (A3) — record the transient inline param-slot high-water so
                 # the enclosing fn's frame reserves it (see _flc_hwm). Without this the
                 # param slot aliases a live runtime `push rax` and clobbers an operand.
-                if (saved_flc + pc > _flc_hwm) { _flc_hwm = saved_flc + pc; }
+                if (saved_flc + _ptot > _flc_hwm) { _flc_hwm = saved_flc + _ptot; }
                 # Register callee param names as temporary locals (packed in fn_inline)
                 var inl_packed = GFINL(S, fi);
                 var pn0 = inl_packed & 0xFFFFFFFF;
                 var pn1 = (inl_packed >> 32) & 0xFFFFFFFF;
-                if (pc >= 1) { S64(S + 0x5D9D000 + p0_slot * 8, pn0); SLDEP(S, p0_slot, GSDEP(S)); }
-                if (pc >= 2) { S64(S + 0x5D9D000 + p1_slot * 8, pn1); SLDEP(S, p1_slot, GSDEP(S)); }
+                if (pc >= 1) { _inl_bind_param(S, saved_flc, _w0, p0_slot, pn0, _t0); }
+                if (pc >= 2) { _inl_bind_param(S, saved_flc + _w0, _w1, p1_slot, pn1, _t1); }
                 # Save state and replay body tokens
                 var saved_ti = GTI(S);
                 var saved_rpc = vec_len(rp_vec);
@@ -1676,8 +1734,11 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # Restore token index
                 STI(S, saved_ti);
                 # Invalidate temporary param locals
-                if (pc >= 1) { S64(S + 0x5D9D000 + p0_slot * 8, 0 - 1); }
-                if (pc >= 2) { S64(S + 0x5D9D000 + p1_slot * 8, 0 - 1); }
+                # v6.5.52: invalidate EVERY slot the params occupied, not just the two named
+                # ones — a wide param owns (nslots-1) anon fillers below its named slot, and
+                # leaving those registered lets a later local alias them.
+                var _inv = 0;
+                while (_inv < _ptot) { S64(S + 0x5D9D000 + (saved_flc + _inv) * 8, 0 - 1); _inv = _inv + 1; }
                 return 0;
             } } } }
     # NORMAL CALL PATH
@@ -3895,6 +3956,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     #   10 = f64v4 (uses 2 SIMD-class arg regs)
     # 32 params per fn (cap matches existing param caps).
     var simd_mask = 0;
+    # v6.5.52 — packed SLTYPE descriptors for params 0/1, for the inline-replay path.
+    # Captured HERE rather than read back from GLTYPE later, because a SIMD param
+    # allocates (nslots-1) anon filler slots BEFORE its named slot — so GLTYPE(S, 0) is
+    # an anon slot with SLTYPE 0, not the param's type. See SFIPT in util.cyr.
+    var _ipt_pack = 0;
     # simd_pc tracks the SIMD-class arg-reg ordinal, INDEPENDENT
     # of the int-class pc. v5.10.38 cyrius-internal SysV-style
     # split-counter convention (NOT MS x64 single-counter): SIMD
@@ -4155,6 +4221,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 SFLC(S, li + 1);
                 int_pc = int_pc + 1;
             }
+            # v6.5.52: record this param's vector descriptor (desc = sid - 2048, +1 so 0
+            # means "not a vector"). pt_simd_sid is only live inside this loop iteration.
+            if (pt_simd_sid != 0) {
+                if (pc == 0) { _ipt_pack = _ipt_pack | ((pt_simd_sid - 2048) + 1); }
+                if (pc == 1) { _ipt_pack = _ipt_pack | ((((pt_simd_sid - 2048) + 1)) << 16); }
+            }
             pc = pc + 1;
             if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
             else { pgo = 0; }
@@ -4322,6 +4394,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # `|| _MONOMORPH_OK` gate also re-enabled GENERAL inlining of non-generic fns (the v1.11.3
     # x86 size regression that disabled _INLINE_OK; +25.6% on cycc). Gating to GFTP!=0 keeps
     # non-generic codegen byte-identical under the flag → the CYRIUS_MONOMORPH flip is byte-id.
+    # v6.5.52 — the SIMD-param admission (`|| _fn_has_simd_param(S, pc) == 1`) is NOT enabled
+    # yet. Three of the four defects blocking it are fixed below/above (named-slot packing in
+    # SFINL, width-driven slot allocation, SLTYPE re-application). The fourth is not: value-form
+    # SIMD args need the normal call path's TWO-PASS routing — record the arg's local, then emit
+    # ELOAD_F64V2_TO_XMM *after* the int args, because int-arg PCMPE clobbers XMM — and the
+    # replay path has no such pass, so PCMPE never materialises the operand and every SIMD arg
+    # stores whatever XMM0 last held. See roadmap.md `.52`.
     if (_INLINE_OK == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0)) { SFBS(S, fi, GTI(S)); }
     # v6.3.9 (F-fns): a generic fn's body references type-param `T`s that are unbound
     # at definition. In an i64-everywhere language the dominant instantiation is i64,
@@ -4405,8 +4484,20 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             }
         }
         if (can_inline == 1) {
-            if (pc == 2) { SFINL(S, fi, (L64(S + 0x5D9D008) << 32) | (L64(S + 0x5D9D000) & 0xFFFFFFFF)); }
-            elif (pc == 1) { SFINL(S, fi, L64(S + 0x5D9D000)); }
+            # v6.5.52: the replay needs param TYPES as well as names — GFINL carries only the
+            # two name offsets, which is why a wide param was bound into an 8-byte slot.
+            SFIPT(S, fi, _ipt_pack);
+            # v6.5.52 — pack the NAMED slot of each param, not slots 0 and 1.
+            # ⛔ THIS IS WHY WIDE PARAMS CRASHED THE COMPILER. A param occupies
+            # `_ipt_slots` slots with (n-1) ANON fillers BEFORE its named slot, so for a
+            # 16-byte param the name lives at slot 1, not slot 0 — and slot 0 holds the anon
+            # marker `0 - 1`. Packed through `& 0xFFFFFFFF` that becomes 0xFFFFFFFF, which is
+            # POSITIVE as an i64, so FINDLOCAL's `if (sn >= 0)` guard lets it through and hands
+            # 4294967295 to STREQ as a name offset. Measured at the fault: rsi = 0xffffffff.
+            var _n0 = _ipt_slots(S, _ipt_sltype(_ipt_pack, 0)) - 1;
+            var _n1 = _n0 + _ipt_slots(S, _ipt_sltype(_ipt_pack, 1));
+            if (pc == 2) { SFINL(S, fi, (L64(S + 0x5D9D000 + _n1 * 8) << 32) | (L64(S + 0x5D9D000 + _n0 * 8) & 0xFFFFFFFF)); }
+            elif (pc == 1) { SFINL(S, fi, L64(S + 0x5D9D000 + _n0 * 8)); }
             elif (pc == 0) { SFINL(S, fi, 1); }
         } else { SFINL(S, fi, 0); }
     }

@@ -136,6 +136,40 @@ where the loop kernels are. And **type inference does not carry `f64v4`**: `var 
 fails with *"value-form SIMD arg type mismatch"* at the next use, so a chain must be written
 `var t: f64v4 = ...` today. Both are arc surface.
 
+#### Status: three of four blockers FIXED (v6.5.51 tree), the fourth is the remaining work
+
+Landed, byte-identical (378 files, fixpoint holds) because they only fire under
+`_INLINE_OK`/`_MONOMORPH_OK`, which stay off:
+
+1. **`SFINL` packed the wrong slots — this was the compiler SIGSEGV.** It read param names from
+   slots 0 and 1, which assumes one slot per param. A wide param allocates (n-1) ANON fillers
+   *before* its named slot, so slot 0 holds the anon marker `0 - 1`; packed through
+   `& 0xFFFFFFFF` that becomes `0xFFFFFFFF`, which is **positive as an i64**, so `FINDLOCAL`'s
+   `if (sn >= 0)` guard passes it to `STREQ` as a name offset. Confirmed at the fault:
+   `rsi = 0xffffffff`. Now packs the named slot of each param. ⚠ This is a latent bug for
+   *anyone* who enables `_INLINE_OK`, independent of SIMD.
+2. **Width-driven slot allocation** — `_ipt_slots` from the new per-fn param-type table
+   (`GFIPT`/`SFIPT`, lazy-alloc'd at the fn ceiling like `_fnt_tparams`: no heap-map entry, no
+   fork edit, no `_fnt_grow` row). Named slot is the deepest of each group, mirroring
+   `PARSE_FN_DEF`. Verified by instrumentation: `base=2 w=2 named=3 t=2121`.
+3. **`SLTYPE` re-applied** on the replayed param, so it stays SIMD-typed inside the body.
+
+⛔ **STILL OPEN — value-form SIMD args are never materialised by `PCMPE`.** The normal call path
+routes them in TWO PASSES and says why in its own comment: *"the arg MUST be a local"*, recorded
+into a scratch table, with `ELOAD_F64V2_TO_XMM` emitted **after** `ECALLPOPS` *"so int-arg eval
+(which may clobber XMM during PCMPE) doesn't trample SIMD state"*. The replay path has no such
+pass, so every SIMD arg stores whatever XMM0 last held. Disassembly of a 2-param call:
+
+```
+movupd %xmm0, -0x48(%rbp)     <- b's initialiser
+movupd %xmm0, -0x58(%rbp)     <- "store arg0" — xmm0 STILL holds b
+movupd %xmm0, -0x68(%rbp)     <- "store arg1" — xmm0 unchanged again
+```
+
+One SIMD param happens to work (nothing clobbers XMM0 before the single store), which is why the
+bisect showed 1-param OK / 2-param broken even after the crash was fixed. **The remaining work is
+porting that two-pass routing into the inline-replay arg loop** — not more slot arithmetic.
+
 #### Why the obvious first move fails — MEASURED 2026-09-04, do not repeat it
 
 The targeted gate (admit SIMD-param fns to the inline-replay path, leaving `_INLINE_OK` off) is
