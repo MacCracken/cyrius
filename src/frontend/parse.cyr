@@ -229,10 +229,25 @@ fn _TL_VIS(S): i64 {
         # through the file map, NOT on a running flag: a running flag armed here would
         # leak into every file included AFTER this point, which is exactly the
         # inheritance the committed design forbids.
-        _PRIV_MARK(FM_FILEID(S, GTLINE(S, GTI(S))));
+        var _pv_line = GTLINE(S, GTI(S));
+        _PRIV_MARK(FM_FILEID(S, _pv_line));
         STI(S, GTI(S) + 1);
         # Tolerate an optional trailing `;` so both `private` and `private;` parse.
-        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+        var _pv_semi = 0;
+        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); _pv_semi = 1; }
+        # v6.5.56 — REJECT the per-item form. `private fn h(): i64 { ... }` used to compile with
+        # NO diagnostic and privatise the ENTIRE FILE, `main` included — it had been live for
+        # twelve releases, and it reads exactly like the per-item visibility other languages have.
+        # The legitimate file-level form is `private` ALONE ON ITS OWN LINE, so the discriminator
+        # is the line: anything else sharing the token's line is the misread. A trailing `;`
+        # closes the statement, so `private; fn h()` stays legal.
+        if (_pv_semi == 0) {
+            if (GTI(S) < GTCNT(S)) {
+                if (GTLINE(S, GTI(S)) == _pv_line) {
+                    ERR_MSG(S, "per-item `private` is not supported; put `private` alone on a line to make the file private", 91);
+                }
+            }
+        }
         return 1;
     }
     return 0;

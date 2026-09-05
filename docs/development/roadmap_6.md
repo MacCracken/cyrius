@@ -93,8 +93,15 @@ minor actually closed at **v6.4.86**, which is exactly the failure a second copy
 Every close number above was verified against `CHANGELOG.md` on 2026-07-29 (the per-minor max
 `## [6.Y.N]` heading), not carried over from the previous text, and re-verified 2026-08-07.
 
-**One item salvaged out of the deleted v6.2.x detail, because it was never built and was
-quietly archived unfixed:** bare-metal deliverable **#4, the forbidden-module check**.
+⛔ **CORRECTED 2026-09-05 — THIS SHIPPED AT v6.5.24 AND THIS ENTRY SAT WRONG FOR THIRTY
+RELEASES.** It read "never built and was quietly archived unfixed". The check is live and its
+gate (`tests/gates/platform/bare_metal_forbidden_module.sh`) passes **6 of 6 axes** today —
+`#host_only` modules are rejected under `CYRIUS_KERNEL` and `kernel;`, host builds and clean
+kernel builds unaffected. ⚠ Note the shape: an item described as unbuilt *because it had been
+archived* — the archive was read as evidence of absence rather than of completion. This is the
+same rot as cx sitting target-less for two majors when it was ready.
+
+*(Original entry, kept for the lesson:)* bare-metal deliverable **#4, the forbidden-module check**.
 `CHANGELOG [6.3.4]` states plainly that it did not ship; `grep -rn forbidden src/ cbt/` finds
 one unrelated comment and `host_only|kernel_ok` finds nothing. Its issue was bulk-renamed into
 `issues/archived/` on 2026-07-10 (commit `79bae42f`, an 8-file rename) with **no resolution

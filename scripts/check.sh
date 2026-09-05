@@ -147,6 +147,21 @@ sh "$ROOT/tests/gates/codegen/ir_edges_scaling.sh"
 # assertion with a non-zero control so it cannot go vacuous.
 sh "$ROOT/tests/gates/codegen/stack_enum_no_alloc.sh"
 
+# v6.5.56 P0: identifier dedup must be an EXACT compare. It was a PREFIX compare that happened to
+# be exact only while `bucket = klen` put one length per chain; v6.5.50's content hash removed
+# that invariant without adding the terminator check it had been standing in for, so a shorter
+# identifier took a longer one's pool offset and the two became ONE symbol
+# (`var ah = 7; var ahxaa = 99;` read `ah` as 99, exit 0). 127 repos carry a colliding pair.
+# ⛔ The self-host fixpoint CANNOT see this — cycc's own source has 0 colliding pairs of 54,089,
+# and the mutation proof confirms a deliberately-broken compiler still reproduces itself
+# byte-identically. This gate pins the PROPERTY on known-colliding pairs instead.
+sh "$ROOT/tests/gates/frontend/lexid_prefix_exact.sh"
+
+# v6.5.56: `private fn h()` must be rejected rather than silently privatising the whole file
+# (twelve releases live, no diagnostic). Axes 2-3 keep the fix honest: the own-line and
+# `private;` forms are the legitimate spellings and must keep working.
+sh "$ROOT/tests/gates/frontend/private_per_item_rejected.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

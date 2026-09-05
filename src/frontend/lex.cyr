@@ -1160,9 +1160,13 @@ fn LEXID(S, p, npos): i64 {
     # similar names degenerated to the O(N²) walk this index was added to remove — a
     # 60,000-fn unit named f0..f59999 is ~50,000 entries in a single bucket. Mixing
     # length with the first, middle and last byte spreads them across 16384 chains.
-    # Only the chain ORDER changes: dedup remains an exact byte-compare and the
-    # canonical offset is still the first occurrence in source order, so cycc's output
-    # is byte-identical (verified: self-host fixpoint + differential corpus).
+    # Only the chain ORDER changes: the canonical offset is still the first occurrence in
+    # source order, so cycc's output is byte-identical.
+    # ⛔ CORRECTED v6.5.56 — this comment used to end "dedup remains an exact byte-compare",
+    # and that was FALSE and load-bearing: the compare below is a PREFIX compare that was only
+    # exact because `bucket = klen` put one length per chain. Changing the bucketing silently
+    # invalidated it, and the sentence asserting the property is what made the gap invisible.
+    # See the P0 note at the compare itself.
     var hsh = klen * 131;
     hsh = hsh + load8(S + 0xEC00000 + bl) * 7;
     hsh = hsh + load8(S + 0xEC00000 + bl + klen - 1) * 65599;
@@ -1179,6 +1183,26 @@ fn LEXID(S, p, npos): i64 {
             if (load8(S + 0xEC00000 + eoff + dc) != load8(S + 0xEC00000 + bl + dc)) { c = 0; break; }
             dc = dc + 1;
         }
+        # v6.5.56 — P0: THE COMPARE ABOVE IS A PREFIX COMPARE, NOT AN EXACT ONE. It walks
+        # klen bytes of the candidate and never checks that the STORED entry ends there, so a
+        # shorter identifier matched a longer one it is a prefix of and took its pool offset —
+        # `var ah = 7; var ahxaa = 99;` then read `ah` as **99**, exit 0, no diagnostic.
+        #
+        # ⭐ IT WAS CORRECT UNTIL v6.5.50 FOR A REASON THAT WAS NEVER WRITTEN DOWN. While
+        # `bucket = klen`, one chain held exactly one length, so two entries in a chain could
+        # not differ in length and the prefix compare WAS exact. The content hash above
+        # replaced that invariant with a mixed one and no longer guarantees equal lengths per
+        # chain — but the check the invariant had been standing in for was never added. The
+        # comment above still says "dedup remains an exact byte-compare"; it was not.
+        #
+        # ⚠ THE SELF-HOST CANNOT SEE THIS, WHICH IS WHY IT SURVIVED SIX RELEASES. cycc's own
+        # source has 0 colliding prefix pairs out of 54,089, and the aliasing is deterministic,
+        # so it reproduces identically across generations: the fixpoint is byte-identical while
+        # consumer code miscompiles. Confirmed live in six ecosystem repos (whirl's
+        # `_cli_body` / `_cli_bodyerr` is the exact shape). Gated by
+        # tests/gates/frontend/lexid_prefix_exact.sh, which pins the PROPERTY on a known
+        # colliding pair rather than the fixpoint.
+        if (c == 1) { if (load8(S + 0xEC00000 + eoff + klen) != 0) { c = 0; } }
         if (c == 1) { ws = eoff; break; }
         hi = ent >> 32;
     }

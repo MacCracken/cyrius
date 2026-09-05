@@ -4,6 +4,91 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.56] — 2026-09-05
+
+### Fixed
+
+- **P0 — identifier dedup was a PREFIX compare, so two different names could become one symbol.**
+  Live from v6.5.50 through v6.5.55. `LEXID`'s dedup loop walked `klen` bytes of a candidate pool
+  entry and never checked that the **stored** entry ended there, so a shorter identifier that is a
+  prefix of a longer one in the same hash bucket matched it and took its pool offset:
+
+  ```cyrius
+  var ah = 7;  var ahxaa = 99;   # reading `ah` gave 99
+  ```
+
+  Exit 0, no diagnostic, wrong value. References bind to the wrong variable or the wrong function.
+  A scan of `~/Repos` finds **127 repositories carrying at least one colliding pair** (217 pairs
+  in total), `agnos` among them; the shape was first spotted in whirl's `_cli_body` /
+  `_cli_bodyerr`.
+
+  ⭐ **It was correct until v6.5.50 for a reason nobody had written down.** While `bucket = klen`,
+  a chain held exactly one length, so two entries in it could not differ in length and the prefix
+  compare *was* exact. v6.5.50 replaced that with a content hash — a real and worthwhile fix for
+  an O(N²) walk — and removed the invariant **without adding the check it had been standing in
+  for**. The comment three lines above the compare still asserted "dedup remains an exact
+  byte-compare"; it was not, and that sentence is part of why the gap stayed invisible.
+
+  ⛔ **The self-host fixpoint cannot detect this class, which is why it survived six releases.**
+  cycc's own source has **zero** colliding prefix pairs out of 54,089 identifiers, and the
+  aliasing is deterministic, so it reproduces identically across generations. Proven rather than
+  argued: the mutation-proof build with the fix removed **still reproduces itself byte-identical**
+  while miscompiling consumer code. Byte-identity after a hash change says nothing about consumer
+  output.
+
+- **`private fn h()` compiled with no diagnostic and privatised the entire file, `main` included**
+  — twelve releases live. `private` deliberately flips the *file* it sits in (a running per-item
+  flag would leak into every file included after it), but the per-item spelling is the one a user
+  reaches for first, and it was silently reinterpreted. Now a hard error naming the correct form.
+  The discriminator is the **line**: `private` alone on its own line, and `private;`, are the
+  legitimate spellings and both keep working.
+
+### Added
+
+- `tests/gates/frontend/lexid_prefix_exact.sh` — five axes (locals, the consumer shape, both
+  declaration orders, function names) plus a **non-prefix control** so the gate cannot pass by
+  breaking dedup outright. Mutation-proven: removing the terminator check turns four axes red
+  while the control stays green — **and the broken compiler's own self-host fixpoint stays
+  byte-identical**, which is the measurement that shows why the fixpoint was never going to catch
+  this.
+- `tests/gates/frontend/private_per_item_rejected.sh` — axes 2 and 3 assert the *legitimate*
+  spellings still work, which is what stops the fix from being written as "reject if the next
+  token is `fn`".
+
+### Benchmarks
+
+- self_compile **668 ms → 670 ms** (flat); cycc **1,200,792 → 1,200,888 B** (+96 — the LEXID
+  terminator check plus the per-item `private` diagnostic), `.text` 1,050,000 → 1,050,296.
+- Release gate GREEN end to end: self-host fixpoint · seed-derive (`seed → cybs → cycc`,
+  29,024-byte seed) · `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**,
+  all four `SELFHOST_OK` with **64/64** crossos tests · bench.
+- ⚠ The LEXID fix is a lexer change, so cross-OS was not optional here: identifier interning feeds
+  every target equally, and the fixpoint — the check that would normally give confidence — is
+  precisely the one proven blind to this defect class.
+
+### Notes
+
+- **Filed, not fixed:** `docs/development/issues/2026-09-05-aggregate-assignment-truncates-to-8-bytes.md`
+  — `dst = src;` copies only the first 8 bytes for any aggregate wider than one slot. Reported as
+  an `f32v4` bug; it is not one — a two-field **struct** truncates identically, and structs are
+  everywhere, so fixing only the vector arm would have left the common case live. The declaration
+  form (`var b: P2 = a;`) has been correct since the struct-byval work; the assignment path never
+  got the equivalent. ⚠ A fix was implemented and **reverted**: it works in isolation and fixes
+  the SIMD case, but corrupts an *earlier* local when a third aggregate is present (`b.y` reads 11
+  instead of 22), and `CYRIUS_RELOADELIM=0` does not change it. Filed with that measurement
+  because the remaining question is slot/temp accounting — a layout question — not because it is
+  a different subsystem. Corpus coverage for aggregate assignment is currently zero, which is why
+  it shipped.
+
+- **Roadmap re-triaged against live code.** Two pins were found naming the **wrong blocker**, and
+  neither error was visible from inside the documents because the roadmap and the issue files
+  agreed with each other. `.52`'s said the SIMD problem was the allocator's byte matcher when it
+  is an ABI fact (SysV has no callee-saved XMM); `.54`'s carried an IR=3 cost that was off by
+  **20×**. Both sections now record the correction. Also removed: a superseded duplicate `.55`
+  block, ~170 lines of shipped `.52`/`.53` narrative that belongs in this file and in vidya, and
+  the "Open questions — **owed to the maintainer**" framing, which is a deferral to nobody. One of
+  its six entries was not a question at all but the live `private` defect fixed above.
+
 ## [6.5.55] — 2026-09-05
 
 ### Added

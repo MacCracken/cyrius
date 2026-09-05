@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.55** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
+**Current head: v6.5.56** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **119** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -49,7 +49,7 @@ is the next open number". Every figure above was re-derived on the day, not carr
 below. Nothing in this file is a live slot pointer any more.
 
 
-## Open work — re-triaged 2026-09-04 against LIVE code
+## Open work — re-triaged 2026-09-05 against LIVE code (`.55` sweep)
 
 Every row below was verified by reading or running the live tree, never against an issue file's
 or a roadmap row's own claim. That distinction is not ceremonial: this sweep found the previous
@@ -69,16 +69,26 @@ taken (**generate it from the stdlib peers**), whereupon it became 43 derived ro
 
 | Item | Verdict | What is actually left | Size |
 |---|---|---|---|
-| `ir-regalloc-rewrite-needs-reemit` | **PARTLY SHIPPED `.54`** | The re-emit half. `.34` landed the IR substrate and `.35` the cross-BB liveness; what remains is re-emitting from the rewritten IR rather than patching bytes in place. Shares a subsystem with `.52`, which is why it follows it. | arc |
-| `simd-f64v-memory-operand` | **ARC → `.52` (open)** | Items 1–2. No vector register class in the allocator's picker, and the wrapper inliner is gated to generics. Item 3 shipped `.24` (measured 2×), item 4 parked. | arc |
+| `ir-regalloc-rewrite-needs-reemit` | **PARTLY SHIPPED `.54`** | ⛔ Its stated cost was WRONG BY 20×: the file said `CYRIUS_IR=3` was "+3.6 % compile time"; live it was **13,967 ms against 672 ms**. `.54` fixed both halves — `ir_build_edges` now resolves jump targets function-locally (**→ 1,012 ms**) and the NOP-harvest compactor runs under IR mode (**19,067 NOPs → 8,249**, `.text` at parity). What is left is a **whole-program compaction pass after the IR fixpoint** to collect the remaining 8,249, which are the IR passes' own eliminations. ⭐ The prize CHANGED SIGN: IR=3 is no longer 6.2 % larger than the default build, so this is now worth ~8–12 KB **smaller** — the first real size payoff from the IR optimizers. | 1 release |
+| `simd-f64v-memory-operand` | **PARTLY SHIPPED `.52`/`.53`** | ⛔ Its stated blocker was WRONG: "the picker only recognises REX.W mov" is true of the code and the wrong lever — **SysV has no callee-saved XMM**, so a vector cannot survive a call and every chain link WAS one. `.52` inlined the wrappers (24→16 ms) and `.53` widened LASE to 128-bit pairs (18→15 `movupd`). Left: the 15 remaining reloads are **not adjacent** to their store, so closing them needs real vector liveness — now possible because the calls are gone. **Re-measure the prize before pinning.** | unpinned |
 | ~~`v6415-closeout-residuals`~~ | **✅ CLOSED at `.50`** | All three parts resolved. D1 deleted nine definition-only IR fns (−174 lines, unreachable floor 84 → 75). The "do NOT name-sweep" warning was load-bearing and honoured — `ir_dce_capped`/`ir_dead_store_capped` are LIVE and contain the dead names as prefixes. D2 had already been resolved by execution at `.35`. | done |
-| `stiva-stackless-coroutines` | **ARC → after `.54`** | Half A (multi-waiter registry) shipped `.26`. Half B is a CPS transform: liveness-across-suspend, locals-to-frame lifting, a per-`async fn` state machine. Ordered last because the consumer that justified pulling it forward no longer blocks on it — that is a PRIORITY input, not a reason to leave it unpinned. | arc |
-| `sock-send-result-allocates-per-call` | **ARC → `.54`** | The filed symptom shipped `.41` (`ok_via`/`err_via` + `sock_send_a`). What remains is the payload-enum REPRESENTATION: every `Ok`/`Err`/`Some` unconditionally calls `alloc` (`parse_types.cyr:386`), across 24 declarations and 516 construction sites. ⚠ **cycc's own source cannot detect a mistake in it** — every `enum` in `src/` is constants-only, which is how an earlier attempt reached a byte-identical self-host WHILE BEING WRONG. That is why it needs its own release and a consumer-side gate, not why it should stay unpinned. | arc |
+| `stiva-stackless-coroutines` | **ARC → unpinned** | Half A (multi-waiter registry) shipped `.26`. Half B is a CPS transform: liveness-across-suspend, locals-to-frame lifting, a per-`async fn` state machine. Ordered last because the consumer that justified pulling it forward no longer blocks on it — that is a PRIORITY input, not a reason to leave it unpinned. | arc |
+| `sock-send-result-allocates-per-call` | **PARTLY SHIPPED `.55`** | Symptom shipped `.41` (`ok_via`/`err_via`); the COMPILER capability shipped `.55` as **`enum Name: stack`** — payload variants return `(tag, payload)` in the multi-return register pair, **measured zero allocator growth**. ⛔ The "24 declarations, 516 construction sites" figure was a raw grep line-count including prose; live it is **9 declarations / ~306 real occurrences** in this repo, and only **3 distinct stdlib types** ecosystem-wide (Option/Either/Result) plus 6 in one test file. ⛔ "cycc's source cannot validate this" is HALF TRUE — only the byte-identity gates are vacuous; `check.sh` runs the corpus behaviorally and does detect representation defects. Left: the **ecosystem half** — migrating Result/Option/Either themselves, which needs `?` to accept a pair, `is_ok`/`result_unwrap` rewritten, and the hand-rolled `load64(+8)` reads updated across sibling repos. | 1 release, cross-repo |
 | ~~`darshana-aarch64-syscall-shadow`~~ | **✅ CLOSED at `.51`** | Both halves diagnose. The raw-literal half shipped via a **generated** 43-row correspondence (`programs/gen_syscall_xlat.cyr`), not the ~350 hand-maintained rows the filing assumed. ⛔ The table-free heuristic misses the 10 worst cases (`uname` 63 = **read**), and the naive table warned **510×** on cycc's own correct source; two derived exclusions took in-tree false positives **525 → 0**. | done |
 | ~~`compile-time-superlinear-in-fn-count`~~ | **✅ CLOSED at `.51`** | Compile time is now LINEAR (flat ~5.3 µs/fn, 34k→120k). Cause was the fn-name hash running to **100 % load** before every doubling — max probe 65,263, 31.5 M probes/compile; two slots per entry → max probe 38. ⛔ Every previously-proposed cause was wrong: `_fnt_grow` costs **4–9 ms total** (not 1145), the DCE walk is off by default and never ran, and load factor alone was misleading. | done |
 | ~~`test-runner-bounded-gate-intermittent`~~ | **✅ CLOSED at `.50`** | The proxy-vs-property read was right, but ⛔ **the filing's leading hypothesis was REFUTED**: a zombie's argv collapses to `[test_bin] <defunct>` and cannot match the sampler's PATH pattern, so the recommended state-filter fix would have been a no-op. Axis 1b now requires two CONSECUTIVE samples; the abandon-mutation still trips it at 19. | done |
 
-### Closed by this sweep
+### Closed by the `.55` sweep
+
+- **The cross-OS leg never RAN a payload-enum constructor on any host** — 1 of 63 `crossos/`
+  files even mentioned one, as an unused include, and `CYRIUS_DCE_VERBOSE=1` reported
+  `dead: Ok` / `dead: Err` / `dead: Some` on every target. Closed at `.55`;
+  crossos is now **64** files and all four hosts run them.
+- **No test held two payload-enum values from one call site alive at once** — the exact shape
+  v6.5.15 broke. Closed at `.55` by `tests/tcyr/lang/payload_enum_retention.tcyr`,
+  mutation-proven against a silent aliasing defect.
+
+### Closed by the `.51`/`.54` sweeps
 
 - **`ERR_MSG` hardcoded-length audit** — carried since v6.4.57 as "the never-done half". Done at
   `.49`: two `WARN` sites declared **45** bytes for a **41**-byte literal, each leaking 4 bytes
@@ -97,204 +107,46 @@ releases in `state.md`'s **Next up** row without anyone being able to tell from 
 would change, and a name that carries no content is how an item sits unstarted while still
 looking tracked. Forward arcs are pinned to an opening version and named for the thing they fix.
 
-⚠ **An arc is 1–2 releases** (CLAUDE.md: *"Arcs are 1–2 releases, not per-phase releases"*), so
-the pins below are an ORDER with an opening version, not a promise that each takes exactly one
-`.NN`. If `.52` needs two releases, everything after it shifts by one; the order does not change.
+⚠ **An arc is 1–2 releases** (CLAUDE.md: *"Arcs are 1–2 releases, not per-phase releases"*), so a
+pin is an ORDER with an opening version, not a promise that each takes exactly one `.NN`.
 
-### `.52` — vector register class: keep f64v values in registers across a chain
-*(was "band G item 1"; issue `2026-07-06-simd-f64v-memory-operand-no-register-residency`)*
+⛔ **Two of the pins in this section turned out to name the WRONG BLOCKER, and both were only
+caught by measuring at slot entry.** `.52`'s said the SIMD problem was the allocator's byte
+matcher when it was an ABI fact (no callee-saved XMM). `.54`'s carried an IR=3 cost that was off
+by **20×** because the number had been copied forward for releases without being re-taken. Neither
+error was visible from inside the document — cross-checking the roadmap against the issue files
+only ever confirmed them, because both said the same thing. **Re-measure at slot entry, against
+the running compiler, before coding to any pin below.**
 
-All **20** `EMIT_*` emitters in `src/backend/x86/float.cyr` are memory→register→op→memory loops,
-the ymm ones included, so a hand-written SIMD chain round-trips every intermediate through a `&r` stack slot
-and hand-SIMD buys ~nothing (svara measured ~10 % against a 4.7 ns Rust baseline). The blocker is
-named and located: **the allocator's picker only recognises REX.W `mov` to/from `[rbp+disp32]`**
-(`src/frontend/parse_fn.cyr:4567`, `ra_op1 == 0x8B || ra_op1 == 0x89`), so no xmm/ymm local is
-ever a candidate. `.35` made the integer file time-share registers; this extends that to a vector
-class and adds a reg-reg-reg emission path for the value forms.
+### UNPINNED — vector register class: keep f64v values in registers across a chain
+*(was "`.52`", was "band G item 1"; issue `2026-07-06-simd-f64v-memory-operand-no-register-residency`)*
 
-⛔ **ORDER INVERTED AT ARC OPEN, 2026-09-04, BY DISASSEMBLY — item 2 is a PREREQUISITE for item 1,
-not an independent nicety.** The filing says *"item 1 (or 1+2) is the high-leverage one"* and this
-pin used to say item 2 was a gate-widening question to decide on its own evidence. The evidence
-says otherwise. A three-link value chain compiles to:
+⛔ **THIS SECTION'S STATED BLOCKER WAS WRONG AND WAS CORRECTED AT `.53`. Do not code to the old
+text.** It said the blocker is that "the allocator's picker only recognises REX.W `mov` to/from
+`[rbp+disp32]` (`parse_fn.cyr:4567`), so no xmm/ymm local is ever a candidate". That is a true
+statement about the code and the WRONG LEVER, for an ABI reason rather than a missing feature:
+**SysV has NO callee-saved XMM registers** — xmm0-15 are all volatile — so a vector value cannot
+be held in a register across a call at all, and before `.52` every link of a value-form SIMD
+chain WAS a call. Widening the picker would have allocated registers that every call immediately
+invalidated.
 
-```
-callq  f64v4_add
-movupd %xmm0, -0xa8(%rbp)     <- spill the result
-movupd %xmm1, -0x98(%rbp)
-movupd -0xa8(%rbp), %xmm0     <- reload it on the very next instruction
-movupd -0x98(%rbp), %xmm1
-callq  f64v4_mul
-```
+**What actually shipped instead, and it was the right order:** `.52` inlined the value-form SIMD
+wrappers (removing the calls — the precondition), and `.53` extended LASE to 128-bit store/load
+pairs, taking a 3-link f32v4 chain from 18 `movupd` to 15 and 15 ms to 14 ms.
 
-Four dead `movupd` per link, and they are **not removable by a register allocator**: the ops are
-real `call`s and **every xmm is caller-saved under SysV**, so a value provably cannot stay in a
-register across one. Widening the picker to see xmm locals would therefore buy nothing until the
-chain stops crossing call boundaries. **Inline first (item 2), then residency (item 1) becomes
-expressible.** ⚠ Do not re-order this back without re-disassembling.
+📎 The `.52`/`.53` implementation detail that used to live here (the four-defect inline-replay
+bisect, the "why the obvious first move fails" table) is shipped history: it is in the CHANGELOG
+and in vidya as `an_inline_replay_that_binds_params_BY_NAME_hides_four_defects_at_once` and
+`no_callee_saved_XMM_on_SysV_means_a_vector_cannot_survive_a_call`. The defect it warned about was
+fixed at `.52`, so it is no longer a trap to avoid — it is a lesson already banked.
 
-⚠ Two more facts from the same disassembly, worth knowing before designing: an `f64v4` value is
-passed as **two xmm registers** (2 × 128-bit), not one ymm — so the value form is not 256-bit even
-where the loop kernels are. And **type inference does not carry `f64v4`**: `var t = f64v4_add(a, b);`
-fails with *"value-form SIMD arg type mismatch"* at the next use, so a chain must be written
-`var t: f64v4 = ...` today. Both are arc surface.
+📌 **What is genuinely left**, measured at `.53`: 15 `movupd` persist because most reloads are
+**not adjacent** to their store — an intervening store to a different slot separates them, and a
+windowed matcher does not help (windows 0/1/2/3 all catch the same 3 pairs). Closing the rest
+needs real liveness for a vector register class, which is now *possible* because the calls are
+gone. Unpinned rather than re-numbered: re-measure the remaining prize before spending a release
+on it.
 
-#### Status: ✅ **ITEM 2 LANDED at `.52`** — the wrappers inline, and it is a measured win
-
-**2M-iteration f32v4 chain: 24 ms → 16 ms (1.5×).** A 2-link value chain drops from 5 `callq`
-to 3. All 10 SIMD `.tcyr` pass, self-host fixpoint holds, seed-derive is green, and the
-differential is confined to the 4 SIMD tests (which now produce correct results).
-
-⚠ **Static `movupd` count went UP (9 → 13) while runtime went DOWN.** Inlining removes call
-layers, not memory traffic — the wrapper body is still `var r; <kernel>(&r,&a,&b,n); return r;`,
-so the round-trip through `&r` remains. **That round-trip is what item 1 removes**, and it is now
-unblocked. Do not read the instruction count as a regression; measure.
-
-**Four separate defects had to land together**, each of which alone still looked nearly working:
-
-1. **`SFINL` packed the wrong slots — this was the compiler SIGSEGV.** It read param names from
-   slots 0/1, which assumes one slot per param. A wide param puts (n-1) ANON fillers *before*
-   its named slot, so slot 0 held the marker `0 - 1`; through `& 0xFFFFFFFF` that becomes
-   `0xFFFFFFFF`, **positive as an i64**, so `FINDLOCAL`'s `if (sn >= 0)` guard passed it to
-   `STREQ` as a name offset. Confirmed at the fault: `rsi = 0xffffffff`. ⚠ Latent for anyone
-   enabling `_INLINE_OK`, independent of SIMD.
-2. **Width-driven slots**, from a new per-fn param-type table (`GFIPT`/`SFIPT`, lazy-alloc'd at
-   the fn ceiling on the `_fnt_tparams` precedent: no heap-map entry, no fork edit, no
-   `_fnt_grow` row). `_fnt_simdmask` was checked first and is *nearly* enough — its 2 bits/param
-   give the width but not the sentinel (code 1 covers f64v2 AND every 16-byte int vector), and a
-   wrong sentinel is a wrong-type bug rather than a crash, i.e. the worse failure.
-3. **`SLTYPE` re-applied** to the replayed param, so it stays SIMD-typed inside the body.
-4. **`PCMPE` does not materialise a value-form SIMD operand at all.** The normal path routes
-   these in TWO PASSES for a stated reason — the arg "MUST be a local", loaded to XMM only
-   *after* the int args, "so int-arg eval (which may clobber XMM during PCMPE) doesn't trample
-   SIMD state". The replay had no such pass, so every SIMD arg stored whatever XMM0 last held:
-   three consecutive `movupd %xmm0, ...` with no load between them, and `f32v4_dot` returning
-   36.0 for an 8.0 case. Fixed with a memory-to-memory copy (`_inl_simd_arg`) whose load and
-   store are ADJACENT, so no clobber window exists and no second pass is needed.
-
-Plus two scoping fixes the wrappers forced, both real failures during development: the bodies are
-all `var r: <vec>; ...; return r;`, so inlining them put a `var r` into the caller — colliding
-with a caller's own `r`, and leaving the name registered so a *second* use of the same wrapper
-collided with the first. The replay is now a nested SCOPE (the dup check is `GLDEP == GSDEP`) and
-clears its names on teardown. ⚠ **GFLC is deliberately NOT restored** — the inlined body's emitted
-code still addresses those frame slots at runtime, and reusing them made `simd_ints` SIGSEGV while
-compiling clean.
-
-Gate: `tests/gates/codegen/simd_param_inline.sh` (4 axes; values, not just exit codes).
-
-#### `.53` — item 1 continued: kill the round-trips the inlining exposed
-
-⚠ **`.53` was pinned to "regalloc re-emit" and has been re-aimed at finishing this arc instead.**
-The reason is in the measurements below: `.52` left the chain fully inlined with the arithmetic
-already emitted as packed ops, so what remains between them is pure memory traffic — the thing
-item 1 exists to remove — and it is reachable now. Regalloc re-emit moves to `.54`, and the
-payload-enum work to `.55`. An arc is 1–2 releases; this is the second.
-
-**Landed at `.53`: LASE now sees 128-bit SIMD store→load pairs.** A 3-link f32v4 chain carried
-**18 `movupd`, 3 of them a dead reload**; now 15. A 2M-iteration chain runs **15 ms → 14 ms**.
-The safety property is the ModRM pin — `0x85` is reg 000 = **xmm0**, so requiring it on BOTH the
-store and the load guarantees the load's destination is the register the store just wrote, the
-same property the integer LASE gets for free from rax. The 256-bit path is deliberately
-untouched: a f64v4 store is followed by another STORE (`0x8D` = xmm1), never the matching load.
-Gate: `tests/gates/codegen/lase_simd_pairs.sh`, mutation-proven (3 pairs survive pre-`.53`).
-
-⛔ **THE PICKER IS THE WRONG LEVER AND THE PIN SAYING OTHERWISE WAS WRONG.** Both this file and
-`state.md` said the blocker was the allocator's byte matcher only recognising REX.W `mov`. It is
-not, for a reason that is an ABI fact rather than a missing feature: **SysV has NO callee-saved
-XMM registers**, so a vector value cannot survive a call at all, and before `.52` every chain link
-*was* a call. Widening the picker would have bought exactly nothing. What actually unlocked this
-was removing the calls.
-
-**What is still on the table**, measured rather than assumed: the chain retains **15 `movupd`**
-because most reloads are NOT adjacent to their store — an intervening store to a *different* slot
-separates them, and a windowed matcher does not help (measured: window 0,1,2,3 all catch the same
-3 pairs). Removing those needs real liveness for a vector register class, i.e. the linear-scan
-picker extended to a second register file. That is the honest remainder of item 1, and it is now
-the only part left.
-
-#### Superseded: "Remaining for `.52`: item 1, register residency"
-
-Landed, byte-identical (378 files, fixpoint holds) because they only fire under
-`_INLINE_OK`/`_MONOMORPH_OK`, which stay off:
-
-1. **`SFINL` packed the wrong slots — this was the compiler SIGSEGV.** It read param names from
-   slots 0 and 1, which assumes one slot per param. A wide param allocates (n-1) ANON fillers
-   *before* its named slot, so slot 0 holds the anon marker `0 - 1`; packed through
-   `& 0xFFFFFFFF` that becomes `0xFFFFFFFF`, which is **positive as an i64**, so `FINDLOCAL`'s
-   `if (sn >= 0)` guard passes it to `STREQ` as a name offset. Confirmed at the fault:
-   `rsi = 0xffffffff`. Now packs the named slot of each param. ⚠ This is a latent bug for
-   *anyone* who enables `_INLINE_OK`, independent of SIMD.
-2. **Width-driven slot allocation** — `_ipt_slots` from the new per-fn param-type table
-   (`GFIPT`/`SFIPT`, lazy-alloc'd at the fn ceiling like `_fnt_tparams`: no heap-map entry, no
-   fork edit, no `_fnt_grow` row). Named slot is the deepest of each group, mirroring
-   `PARSE_FN_DEF`. Verified by instrumentation: `base=2 w=2 named=3 t=2121`.
-3. **`SLTYPE` re-applied** on the replayed param, so it stays SIMD-typed inside the body.
-
-⛔ **STILL OPEN — value-form SIMD args are never materialised by `PCMPE`.** The normal call path
-routes them in TWO PASSES and says why in its own comment: *"the arg MUST be a local"*, recorded
-into a scratch table, with `ELOAD_F64V2_TO_XMM` emitted **after** `ECALLPOPS` *"so int-arg eval
-(which may clobber XMM during PCMPE) doesn't trample SIMD state"*. The replay path has no such
-pass, so every SIMD arg stores whatever XMM0 last held. Disassembly of a 2-param call:
-
-```
-movupd %xmm0, -0x48(%rbp)     <- b's initialiser
-movupd %xmm0, -0x58(%rbp)     <- "store arg0" — xmm0 STILL holds b
-movupd %xmm0, -0x68(%rbp)     <- "store arg1" — xmm0 unchanged again
-```
-
-One SIMD param happens to work (nothing clobbers XMM0 before the single store), which is why the
-bisect showed 1-param OK / 2-param broken even after the crash was fixed. **The remaining work is
-porting that two-pass routing into the inline-replay arg loop** — not more slot arithmetic.
-
-#### Why the obvious first move fails — MEASURED 2026-09-04, do not repeat it
-
-The targeted gate (admit SIMD-param fns to the inline-replay path, leaving `_INLINE_OK` off) is
-the right shape and its blast radius is right — 378 files compiled, only the 2 SIMD tests changed.
-But it **SIGSEGVs cycc**, and the bisect is exact:
-
-| callee params | result |
-|---|---|
-| 1 SIMD | ok |
-| **2 SIMD** | **SIGSEGV (rc 139, no diagnostic)** |
-| 1 SIMD + 1 i64 | rc 1 — *"value-form SIMD arg type mismatch"* |
-| 2 i64 (control) | ok |
-
-**Two independent defects in the replay's param binding, both at `parse_fn.cyr:1600`:**
-
-```
-var p0_slot = saved_flc;
-var p1_slot = saved_flc + 1;          <- ADJACENT 8-BYTE SLOTS
-if (iargc == 0) { EFLSTORE(S, p0_slot); }   <- 8-byte store
-if (iargc == 1) { EFLSTORE(S, p1_slot); }
-```
-
-1. **Slots are 8 bytes; an `f32v4`/`f64v2` is 16 and an `f64v4` is 32.** Arg 0's store overruns
-   into arg 1's slot, which is why ONE SIMD param works and TWO corrupt. `SFLC(S, saved_flc + pc)`
-   reserves `pc` slots where 2 SIMD params need 4 (f64v4: 8).
-2. **The replay re-registers params BY NAME ONLY and never re-applies `SLTYPE`**, so inside the
-   inlined body the param is no longer SIMD-typed — which is exactly what the mixed case reports.
-
-⛔ **AND THE CLASSIFIER'S SIMD CARVE-OUT IS WRONG — it is unexercised dead reasoning.** The
-struct-param exclusion right there says the replay *"re-registers the param slot by NAME only
-(never re-applying the struct SLTYPE the fn-def set)"* and then carves out
-*"f64v2(-20)/f64v4(-21) are register-class (not dot-accessed) → stay inlinable"*. Both halves of
-the exclusion's own reasoning apply to SIMD too, and the carve-out has never run — `_INLINE_OK` is
-0 and the wrappers are not generic, so nothing ever reached it. It was written, never executed,
-and is false.
-
-**So the fix is scoped, not speculative:** the inline metadata must carry param TYPES, not just
-the two name offsets `GFINL` packs today (a new per-fn table alongside `_fnt_inline` — `alloc`-based
-like its 17 siblings, so no heap-map change), and slot allocation must be width-driven rather than
-one-slot-per-param. Only then does removing the call boundary become possible, and only then does
-item 1 (the picker's vector class) have anything to allocate.
-
-⚠ Do NOT "fix" this by excluding multi-SIMD-param fns from inlining — that is correct and useless:
-every wrapper the arc needs (`f64v4_add(a, b)`) takes two.
-
-⚠ **Both of this pin's own numbers were stale and were re-derived at arc open 2026-09-04** — which
-is the whole point of the premise-check step. It said "15 emitters": there are **20**. It said to
-check `f64v4_fmadd` *"which item 3's widening never covered"*: it IS covered — `EMIT_F64V4_FMADD`
-(`float.cyr:800`) emits `C5 FD 10` / `C5 FD 59`, i.e. `vmovupd`/`vmulpd` on **ymm**. Do not carry
-either claim forward; re-derive again next time.
 
 ### `.54` — ✅ SHIPPED: make `CYRIUS_IR=3` a viable path (was "`.53` regalloc re-emit")
 *(issue `2026-07-02-ir-regalloc-rewrite-needs-reemit`)*
@@ -349,26 +201,29 @@ value form needs `?` to accept a pair, `is_ok`/`result_unwrap` rewritten, and th
 `load64(+8)` reads updated across the sibling repos. The compiler capability it was waiting on
 now exists.
 
-### `.55` (original plan, superseded above) — payload-enum representation
-*(issue `2026-07-28-sock-send-result-allocates-per-call`)*
+### `.56` — ✅ SHIPPED: the LEXID prefix-compare P0 (found by slot entry, not by a filing)
 
-The enum payload-variant constructor lowering (`src/frontend/parse_types.cyr:386`) emits
-`EMOVI(S, 8 + ctor_arity * 8)` then an unconditional call to `alloc` — so a plain user
-`enum Color { Red(v); Green; }` allocates 16 B exactly as `Result` does. 24 declarations, 516
-construction sites.
+Neither of the two defects `.56` fixed was on the open queue. Both were found by the slot-entry
+premise-check, which is the argument for running one: **identifier dedup was a PREFIX compare**,
+so `var ah = 7; var ahxaa = 99;` read `ah` as 99 — two names became one symbol, in five shipped
+releases, across 127 repos. And `private fn h()` compiled with no diagnostic while privatising the
+whole file. See CHANGELOG [6.5.56].
 
-⛔ **The hazard is specific and must shape the plan: cycc's own source CANNOT validate this
-change.** Every `enum` in `src/` is constants-only with no payload variants, so a byte-identical
-self-host proves nothing here — an earlier attempt achieved one *while being wrong*. Acceptance
-has to come from consumer-side `.tcyr` coverage of payload enums, written BEFORE the change.
+### After `.56` — UNPINNED, and that is a decision from measurement
 
-### After `.55` — stackless coroutines: the CPS transform
-*(issue `2026-07-25-stiva-stackless-coroutines-interactive-exec`)*
+⛔ **The old order (`stackless coroutines next`) does not survive contact with the code.** Every
+candidate was re-measured at `.56` slot entry by running the compiler:
 
-Half A (the multi-waiter registry) shipped at `.26`. Half B is liveness-across-suspend,
-locals-to-frame lifting and a per-`async fn` state machine. Ordered last because the consumer that
-justified pulling it forward no longer blocks on it — a priority input, not a reason to leave it
-unpinned.
+| Candidate | Measured verdict |
+|---|---|
+| **Aggregate assignment truncation** *(newly filed)* | 🔴 **Strongest lead.** `dst = src;` copies only the first 8 bytes for structs AND vectors — silent wrong values in the most-used aggregate form, zero corpus coverage. A first fix attempt is written up in the issue, including why it was reverted. |
+| Whole-program NOP compaction | 🟡 **live-but-low-value** — the gap is real and unshipped, but the prize is smaller and the price larger than the record claimed. IR=3 is already at `.text` parity after `.54`. |
+| Stackless coroutines Half B | 🟡 **Real but unjustified right now** — genuinely unbuilt (a task calling `async_wait_fd` re-enters its body from the top; an unconditional park never terminates), but there is **no consumer**, the filing repo records no block, and `async fn` has **zero non-comment uses ecosystem-wide**. |
+| Vector register class | 🟡 **Blocked on two prerequisites** — `_fn_has_simd_param` (`util.cyr:989`) reads a wide param's SLTYPE off the wrong slot, so inlining reaches only the two-128-bit-param wrapper shape and the f64v4 family (what the issue was actually filed about) still emits a call per link. |
+
+⚠ **An unpinned list is not a parked one.** The rule from `.51` applies: where a row looks like it
+needs permission, take the sensible default and start. What changed here is only that the ORDER is
+now set by measurement rather than by the order the filings arrived in.
 
 
 ## The slot sequence — CLOSED
@@ -595,10 +450,23 @@ ships today; that is 6.x tooling.
 
 ---
 
-## Open questions — owed to the maintainer
+## Open questions — standing defaults, not a queue
 
-Six decisions this document deliberately does **not** make. Rows above reference these by
-number. Nothing here blocks starting Slot 1; items 1 and 5 are owed by Slot 3 entry.
+⛔ **This section used to be titled "owed to the maintainer" and that framing is banned here.
+There is nobody to owe: the maintainer is the person reading this, who has already asked for
+these to be fixed.** A question parked as "owed" is a deferral to nobody, and it is how three of
+these sat for months. The rule now: **each item carries a stated default and the work starts
+under it**; where a genuine fork remains it gets ASKED, in one line, in the reply that turn — not
+recorded here and left.
+
+The proof is on the record: `darshana-aarch64-syscall-shadow` sat as "needs a call on where a
+~350-row table lives" until the call was simply taken (**generate it from the stdlib peers**),
+whereupon it became 43 derived rows and shipped at `.51`. Assume the same of anything below.
+
+⚠ Two of the six are already ANSWERED and stay only as inputs. Of the rest, **item 3 is not a
+question at all — it is a live defect** (`private fn h()` compiles with no diagnostic and
+privatises the whole file including `main`, twelve releases live) and has been moved to the
+backlog as work. Items 2, 4 and 6 carry defaults below.
 
 1. **The self_compile budget — ✅ ANSWERED (user, 2026-07-29): the later performance track
    owns it.** Not a decision owed at Slot 3 entry after all — the budget gets set as part of
@@ -621,7 +489,7 @@ number. Nothing here blocks starting Slot 1; items 1 and 5 are owed by Slot 3 en
    half of any budget is already under strain — and the overhead has grown in both absolute
    and relative terms since 6.5.2 (+53,248 B / +4.7 % then).
 
-2. **Bare-metal deliverable #4 — the forbidden-module check.** Never built; its issue was
+2. **Bare-metal deliverable #4 — the forbidden-module check. ✅ SHIPPED v6.5.24** (gate passes 6/6 axes; verified 2026-09-05). This entry said "never built" for thirty releases. Original text: its issue was
    bulk-renamed into `issues/archived/` on 2026-07-10 (`79bae42f`, an 8-file rename) with **no
    resolution banner**, i.e. archived unfixed, while roadmap_6.md still lists it as a
    deliverable *and* an arc acceptance criterion. Either implement it in W2, or strike it from
