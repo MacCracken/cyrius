@@ -594,6 +594,20 @@ fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
 }
 #endif
 
+# v6.5.50 — size of a just-written build artifact, for the build log. open+lseek(END)
+# rather than stat: `xopen`/`xlseek` are already portable across the four targets the CLI
+# cross-compiles to, whereas the stat struct offset (STAT_SIZE) differs per arch and would
+# need a fork-specific branch here. Returns -1 if the file cannot be opened, so the caller
+# can simply omit the size rather than print a wrong one.
+fn _artifact_size(path): i64 {
+    var fd = xopen(path, 0);
+    if (fd < 0) { return 0 - 1; }
+    var n = xlseek(fd, 0, 2);
+    file_close(fd);
+    if (n < 0) { return 0 - 1; }
+    return n;
+}
+
 fn compile(source, output): i64 {
     var cc = current_cc();
     # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64

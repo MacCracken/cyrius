@@ -777,6 +777,28 @@ fn CHKDUPVAL(S, noff, newval): i64 {
             syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
             PRSTR(S + 0xEC00000 + noff);
             syscall(SYS_WRITE, 2, "' redefined with conflicting value (last definition wins)\n", 58);
+            # v6.5.50 — a `SYS_*` redefinition is not a cosmetic name collision, and the
+            # generic wording above hides that. The stdlib's syscall numbers are ARCH-AWARE
+            # (lib/syscalls.cyr -> syscalls_x86_64_linux.cyr / syscalls_aarch64_linux.cyr);
+            # a consumer's own `var SYS_FOO = <x86_64 number>` agrees on x86 and WINS
+            # everywhere else, so the emitted svc issues a different, valid syscall and the
+            # build succeeds. MEASURED under qemu on the two live instances found at v6.5.37:
+            # `sys_umount2` was issuing getpid(2) on every ELF-aarch64 build. Filed from
+            # darshana, where the only diagnostic read as lint.
+            # ⚠ Deliberately NOT gated on the target. The general "is this number right for
+            # this arch" question needs an x86_64->aarch64 CORRESPONDENCE TABLE the compiler
+            # does not have, but THIS case needs no table: a conflicting SYS_* redefinition is
+            # wrong on every target whose numbers differ, and the author of a cross-compiled
+            # source cannot know which targets that will be.
+            if (load8(S + 0xEC00000 + noff) == 83) {
+            if (load8(S + 0xEC00000 + noff + 1) == 89) {
+            if (load8(S + 0xEC00000 + noff + 2) == 83) {
+            if (load8(S + 0xEC00000 + noff + 3) == 95) {
+                syscall(SYS_WRITE, 2, "note: 'SYS_*' names a syscall number, and the stdlib's is ARCH-AWARE\n", 69);
+                syscall(SYS_WRITE, 2, "      overriding it emits a DIFFERENT syscall on every target whose native number differs\n", 90);
+                syscall(SYS_WRITE, 2, "      (aarch64, macOS) - the build succeeds and the wrong call is made silently.\n", 81);
+                syscall(SYS_WRITE, 2, "      Drop the local definition and include lib/syscalls.cyr instead.\n", 70);
+            } } } }
         }
     }
     return 0;

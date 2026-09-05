@@ -30,10 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.49** (2026-09-04) — cycc **1,195,992 B** · `check.sh` **231 passed / 0
-failed** · **293** `.tcyr` (**61** in `crossos/`) · **102** `lib/*.cyr` · **113** shell gates
-under `tests/gates/<bucket>/` (102 registered by path in `programs/checks/main.cyr`, the rest
-driven from `scripts/check.sh`) · api-surface **5143** · **8 open issues + 2 open proposals**.
+**Current head: v6.5.50** (2026-09-04) — cycc **1,192,272 B** (.text 1,041,776) · `check.sh` **236 passed / 0 failed** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **118** shell gates under `tests/gates/<bucket>/` · self_compile **662.9 ms** · **6 open issues + 3 open proposals** — the leanest queue this minor.
 
 ⭐ **The v6.5.x minor is CLOSED.** Band K finished it at `.45`–`.47`; `.48` was the
 post-closeout sigil fold plus the one consolidation carried out of the band. What each band
@@ -64,12 +61,12 @@ maintainer, not more work.
 |---|---|---|---|
 | `ir-regalloc-rewrite-needs-reemit` | PARTLY | Band E (`.34`) and band F (`.35`) landed the substrate and cross-BB halves; the re-emit half remains. | arc |
 | `simd-f64v-memory-operand` | PARTLY | Items 1–2 live (no vector register class in the picker; wrappers not inlined). Item 4 parked by decision. | arc |
-| `v6415-closeout-residuals` | PARTLY | **Only D1**, and only the mechanical half — delete the dead IR fns from `src/common/ir.cyr`. ⚠ **R2 SHIPPED at v6.4.26**; this file claimed it was deferred. ⚠ Do NOT name-sweep the deletion — `ir_dce_cap`-style neighbours are live. | patch |
+| ~~`v6415-closeout-residuals`~~ | **✅ CLOSED at `.50`** | All three parts resolved. D1 deleted nine definition-only IR fns (−174 lines, unreachable floor 84 → 75). The "do NOT name-sweep" warning was load-bearing and honoured — `ir_dce_capped`/`ir_dead_store_capped` are LIVE and contain the dead names as prefixes. D2 had already been resolved by execution at `.35`. | done |
 | `stiva-stackless-coroutines` | DECISION | Half A (the multi-waiter registry) shipped at `.26`. Half B is a CPS transform — liveness-across-suspend, locals-to-frame lifting, a per-`async fn` state machine. The consumer that justified pulling it forward no longer blocks on it. | maintainer |
 | `sock-send-result-allocates-per-call` | PARTLY | Related per-poll leak fixed at v6.4.61; this is the remaining per-call `Result` allocation on the no-free bump. | maintainer |
-| `darshana-aarch64-syscall-shadow` | PARTLY | Two separable pieces the filing conflates: escalate `CHKDUPVAL` when a shadowed prior is an enum constant with a different value, and the gate's coverage gap. | patch |
-| `compile-time-superlinear-in-fn-count` | see note | `.42` removed REGFN's quadratic (43.6 s → 23.9 s on 60k fns); a second contributor was filed. **Re-measure before acting** — the figure predates `.42`. | patch |
-| `test-runner-bounded-gate-intermittent` | **LIVE** | Same class as the flaky gate fixed at `.47`: axis 1b asserts a PROXY, not the property. `.47`'s `hash_seed_flood_resistance` fix is the template — compare the thing itself, not a summary of it. | patch |
+| `darshana-aarch64-syscall-shadow` | **DECISION** | **The filed reproduction CLOSED at `.50`** — `CHKDUPVAL` now names the consequence for a conflicting `SYS_*` redefinition, verified on both forks. What remains is a raw hardcoded number with *no* `SYS_*` name to conflict with, which genuinely needs the ~350-row x86_64→aarch64 correspondence table; **where that table lives — generated from the stdlib peers or hand-maintained — is the maintainer's call.** | maintainer |
+| `compile-time-superlinear-in-fn-count` | PARTLY | **`.50` took 60k fns 20.2 s → 1.0 s (20×)**: the second contributor was `LEXID` bucketing on identifier LENGTH alone. ⛔ **Both causes the filing predicted were ruled out** — `_fnt_grow` doubles (amortized-linear) and DCE is off by default — as were the hash load factor and the object emitter. What is left is the per-call cost of ONE `_fnt_grow` (~1,145 ms at the 65536→131072 boundary) and it needs direct instrumentation: no `perf` on the box, and `ptrace_scope=1` blocks gdb from attaching. | patch |
+| ~~`test-runner-bounded-gate-intermittent`~~ | **✅ CLOSED at `.50`** | The proxy-vs-property read was right, but ⛔ **the filing's leading hypothesis was REFUTED**: a zombie's argv collapses to `[test_bin] <defunct>` and cannot match the sampler's PATH pattern, so the recommended state-filter fix would have been a no-op. Axis 1b now requires two CONSECUTIVE samples; the abandon-mutation still trips it at 19. | done |
 
 ### Closed by this sweep
 

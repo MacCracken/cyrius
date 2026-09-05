@@ -23,6 +23,11 @@ var _envp = 0;
 var _cyrius_resolved = 0;
 var _verbose = 0;
 var _quiet = 0;
+# v6.5.50 — how many of `cyrius build`'s two paths came from [build] in ./cyrius.cyml
+# rather than the command line (0 = both explicit, 1 = output only, 2 = both). v6.5.49 let
+# them be omitted, which meant the build line named paths the user never typed with no way
+# to tell where they came from; the log now says so.
+var _build_paths_from_manifest = 0;
 var _dry_run = 0;
 var _lib_sync_full = 0;   # v6.2.40: `cyrius lib sync --full` opt-in (whole snapshot)
 var _check_lib_sync = 0;  # v6.4.63: `--check-lib-sync` — stale ./lib/ is an ERROR (CI gate)

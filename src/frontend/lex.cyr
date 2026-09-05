@@ -1139,7 +1139,8 @@ fn LEXID(S, p, npos): i64 {
     # profile, dedup_cmps the inner hot spot). Layout — at offsets past
     # the v5.10.39 brk extension (heap-map in main.cyr §LEXID_DEDUP):
     #   0x457C000  lexid_count   [8]            entries in use
-    #   0x457C100  lexid_heads   [2048]         per-length head idx+1 (256 × 8B; 0 = empty)
+    #   0x457C100  lexid_heads   [131072]       16384 × 8B content-hashed chain heads (v6.5.50;
+    #                                            was 256 length-keyed buckets — see main.cyr)
     #   0xF400000  lexid_entries [524288]       65536 × 8B; low32 = canonical offset
     #                                            into tok_names @ 0x60000, high32 =
     #                                            next-entry idx+1 (0 = chain tail).
@@ -1154,8 +1155,19 @@ fn LEXID(S, p, npos): i64 {
     # regardless of chain order.
     bl = ws;
     var klen = npos - bl;
-    var bucket = klen;
-    if (bucket > 255) { bucket = 255; }
+    # v6.5.50: bucket by CONTENT, not by length alone. `bucket = klen` (saturated at
+    # 255) put EVERY identifier of the same length on one chain, so a unit with many
+    # similar names degenerated to the O(N²) walk this index was added to remove — a
+    # 60,000-fn unit named f0..f59999 is ~50,000 entries in a single bucket. Mixing
+    # length with the first, middle and last byte spreads them across 16384 chains.
+    # Only the chain ORDER changes: dedup remains an exact byte-compare and the
+    # canonical offset is still the first occurrence in source order, so cycc's output
+    # is byte-identical (verified: self-host fixpoint + differential corpus).
+    var hsh = klen * 131;
+    hsh = hsh + load8(S + 0xEC00000 + bl) * 7;
+    hsh = hsh + load8(S + 0xEC00000 + bl + klen - 1) * 65599;
+    hsh = hsh + load8(S + 0xEC00000 + bl + (klen >> 1)) * 4099;
+    var bucket = hsh & 16383;
     var hi = L64(S + 0x457C100 + bucket * 8);
     while (hi > 0) {
         var idx = hi - 1;

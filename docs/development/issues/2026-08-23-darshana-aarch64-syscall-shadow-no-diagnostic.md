@@ -1,6 +1,28 @@
 # A user `var SYS_*` shadowing the stdlib's arch-aware value silently emits the wrong syscall on ELF aarch64 — no diagnostic
 
-**Status:** 🟠 **HALF CLOSED at v6.5.38 — the ROUTING is fixed, the general DIAGNOSTIC is still missing.** Shipped at `.37`: the two live SHADOWS, found by sweeping the whole table, fixed via the ≥1000 alias band — `sys_umount2` was issuing **getpid(2)** on every ELF-aarch64 build (measured under qemu: returned 1179922, a PID), `sys_epoll_pwait` would have issued pipe2. Occurrences three and four of the v6.5.36 class. Structural gate: `tests/gates/platform/aarch64_syscall_shadow.sh`.
+**Status:** 🟠 **THE FILED REPRODUCTION IS CLOSED at v6.5.50; one narrower item remains, and it is a
+maintainer DESIGN CALL rather than unfinished work.**
+
+**Shipped at v6.5.50 — this filing's title case now diagnoses itself.** A conflicting `SYS_*`
+redefinition (`CHKDUPVAL`, `src/frontend/parse_types.cyr`) no longer reads as a cosmetic name
+collision: it names the consequence — that `SYS_*` is a syscall number, that the stdlib's is
+arch-aware, and that overriding it emits a DIFFERENT syscall on every target whose native number
+differs, silently and with a successful build. Verified on both forks: `var SYS_UMOUNT2 = 166` (the
+x86 number) compiled by the aarch64 emitter now produces the warning plus the explanation.
+Gate: `tests/gates/diagnostics/sys_shadow_names_consequence.sh`.
+
+⭐ **The note is deliberately NOT target-gated, and that is precisely why it could ship.** The
+general question this file poses — "is this number the x86 one (intended renumber) or the aarch64
+native one (shadow)?" — needs the ~350-row x86_64 -> aarch64 CORRESPONDENCE TABLE described below,
+which does not exist in `src/`. But the *conflicting-redefinition* case needs no table at all: it is
+wrong on every target whose numbers differ, and the author of a cross-compiled source cannot know
+which targets those will be. Do not "improve" the diagnostic by restricting it to the aarch64 fork.
+
+⛔ **STILL OPEN, narrowed:** a raw hardcoded syscall NUMBER with no `SYS_*` name (so nothing to
+conflict with) still gets no ELF-aarch64 diagnostic. That genuinely requires the correspondence
+table, and **where it lives — generated from the stdlib peers, or hand-maintained — is the
+maintainer's call**, not something to decide inside a patch. A hand-maintained duplicate of a
+derivable fact is the self-drifting shape this cycle keeps finding.
 Shipped at `.38`: **this filing's first specific claim, the missing `16→29` row, is CLOSED** — the ELF-aarch64 arm now remaps the x86_64 ioctl number. ⚠ Worth recording precisely, because the filing's framing implied a live stdlib bug and it was not one: `lib/syscalls_aarch64_linux.cyr` correctly declares the NATIVE 29 and nothing shadows it, so `sys_ioctl` has always worked *through the stdlib*. The gap was real only for source that hardcodes the x86 number — which is exactly what this filing reported, and which raw 16 sent to **fremovexattr**. MEASURED under qemu-aarch64 by removing the new row: `-14` (EFAULT, fremovexattr with a NULL name) against `-25` (ENOTTY, real ioctl). Gate: `tests/tcyr/crossos/syscall_ioctl_x86_compat.tcyr`, which asserts an EQUIVALENCE (raw 16 behaves identically to the peer's own `SYS_IOCTL`) and never an errno — the v6.5.36 lesson about `</dev/null` making ENOTTY/ENODEV host-dependent.
 ⛔ **STILL OPEN — the second claim, re-verified live 2026-09-01:** the `syscall not routed` warning is still gated behind `if (_TARGET_MACHO == 2)` (`src/frontend/parse_expr.cyr:944`), so an ELF-aarch64 build gets NO diagnostic for an unrouted raw syscall. **This is not a small follow-on and should not be filed as one.** On Mach-O, "unrouted" reliably means "will fault", so the warning is sound. On ELF-aarch64 unrouted is the NORMAL case — native numbers pass through by design — so the same check would fire on virtually every stdlib syscall. A sound diagnostic needs the discriminator the `.37` sweep already named: *is the declared value the x86 number for that syscall (intended renumber) or the aarch64 native one (shadow)?* Answering that inside the compiler needs an x86_64→aarch64 syscall CORRESPONDENCE TABLE (~350 entries) that does not exist in `src/` today — the two tables live in `lib/syscalls_x86_64_linux.cyr` and `lib/syscalls_aarch64_linux.cyr`, which the compiler cannot read at compile time. Where that table should live, and whether it is generated from the stdlib peers or hand-maintained (a hand-maintained duplicate of a derivable fact is the exact self-drifting shape this cycle keeps finding), is a maintainer design call.
 **Placement:** unpinned — 6.x-line backlog. Diagnostics/codegen, so **never 7.x** (7.x = the language book + legal).

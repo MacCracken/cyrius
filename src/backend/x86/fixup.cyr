@@ -1723,8 +1723,45 @@ fn EMITELF_OBJ(S): i64 {
     #   +0x48000  symtab        (100 KB — (4096+5) × 24 byte syms)
     #   +0x60000  rela          (~400 KB — up to 16384 × 24 byte relocs)
     #   total: ~1 MB
+    # ⛔ v6.5.50 — THIS WAS A FIXED 1 MB BLOCK CARVED AT HARDCODED OFFSETS SIZED FOR 4096 FNS
+    # (the comment above still describes that layout, and it is kept because it explains the
+    # bug). None of the four regions was bounds-checked, so:
+    #   * the symtab zero-loop ran past the block at exactly 0x48000 + (fnc+5)*24 > 0x100000,
+    #     i.e. **fnc >= 31,398** — reproduced: `object;` + 31,501 fns -> SIGSEGV, zero bytes out,
+    #     empty stderr, and 6,001 fns clean;
+    #   * below that there is a SILENT band — at ~12,000 fns with long names the strtab (also
+    #     sized for 4096) overran into fn_strtab_off, producing an .o with rc=0 whose symbol
+    #     names `readelf -sW` reports as `<corrupt>`. Bad output, no error.
+    # ⚠ v6.5.45's audit recorded this function as having "no callers anywhere in the tree" and
+    # used that to classify a `brk` warning in it as benign. That was FALSE — fixup.cyr:2136
+    # calls it when kernel_mode == 3, which src/main.cyr and src/main_win.cyr set for an
+    # `object;` unit. A negative grep is not proof of unreachability.
+    #
+    # Every region is now DERIVED from the live counts, so the only way to overrun is to add a
+    # region and not size it. `fnc` = fn count, `fcnt` = fixup count (the reloc upper bound).
+    #
+    # strtab needs the exact sum of the fn names, so walk them once before allocating rather
+    # than guessing a per-name maximum — identifiers here have no length cap.
+    var st_need = 128;                      # null byte + the six section names + `_cyrius_init`
+    var stf = 0;
+    while (stf < fnc) {
+        var st_noff = L64(_fnt_names + stf * 8);
+        var st_np = S + 0xEC00000 + st_noff;
+        var st_i = 0;
+        while (load8(st_np + st_i) != 0) { st_i = st_i + 1; }
+        st_need = st_need + st_i + 1;
+        stf = stf + 1;
+    }
+    var off_strtab = 0;
+    var off_fnoff  = (st_need + 15) / 16 * 16;
+    var off_symtab = off_fnoff + fnc * 8 + 16;
+    var off_rela   = off_symtab + (4 + fnc + 1) * 24 + 16;
+    var scratch_need = off_rela + fcnt * 24 + 4096;
     var scratch = syscall(SYS_BRK, 0);
-    syscall(SYS_BRK, scratch + 1048576);  # 1 MB scratch
+    if (syscall(SYS_BRK, scratch + scratch_need) < scratch + scratch_need) {
+        syscall(SYS_WRITE, 2, "error: EMITELF_OBJ could not extend brk for its scratch tables\n", 63);
+        syscall(SYS_EXIT, 1);
+    }
 
     # --- Build string table (.strtab) ---
     var strtab = scratch;
@@ -1757,7 +1794,7 @@ fn EMITELF_OBJ(S): i64 {
     store8(strtab + sp, 0); sp = sp + 1;
 
     # Function name offsets into strtab
-    var fn_strtab_off = scratch + 0x40000;  # 256 KB after strtab
+    var fn_strtab_off = scratch + off_fnoff;   # v6.5.50: sized from the actual strtab, not 0x40000
     var fi = 0;
     while (fi < fnc) {
         S64(fn_strtab_off + fi * 8, sp);
@@ -1780,7 +1817,7 @@ fn EMITELF_OBJ(S): i64 {
     # Layout: null + 3 sections + functions + _cyrius_init
     var nsyms = 4 + fnc + 1;  # null + 3 sections + functions + _cyrius_init
     var symtab_size = nsyms * 24;
-    var symtab = scratch + 0x48000;  # 32 KB after fn_strtab_off
+    var symtab = scratch + off_symtab;         # v6.5.50: sized from fnc, not 0x48000
     # Zero symtab
     var zi = 0; while (zi < symtab_size) { store8(symtab + zi, 0); zi = zi + 1; }
 
@@ -1869,7 +1906,7 @@ fn EMITELF_OBJ(S): i64 {
     # Only emit relocations for UNRESOLVED fixups (external symbols).
     # For .o files, all function calls become relocations since the linker resolves them.
     # Entry: 24 bytes each (Elf64_Rela: r_offset, r_info, r_addend)
-    var rela = scratch + 0x60000;  # 96 KB after symtab
+    var rela = scratch + off_rela;             # v6.5.50: sized from fnc, bounded by fcnt below
     var rela_cnt = 0;
 
     fi = 0;

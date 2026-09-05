@@ -34,7 +34,12 @@
 #   1 = dual (record IR AND emit x86 — for analysis/debugging)
 #   2 = record-only (record IR, skip x86 — for IR-driven codegen)
 #
-# After parsing with mode 2, call ir_lower_all with mode 0 to emit x86.
+# ⚠ Mode 2 has no lowering path. `ir_lower_all` / `_ir_lower_node` were the intended
+# record-then-emit pair and were never wired to anything — definition-only since they
+# landed — so they were deleted at v6.5.50 with the rest of the dead CYRIUS_IR=3 substrate
+# (issue 2026-07-07-v6415-closeout-residuals, D1). This line used to instruct the reader to
+# call a function that did not do anything and now does not exist. Real IR-driven codegen
+# runs through the capped passes (`ir_dce_capped` / `ir_dead_store_capped`) from main.cyr.
 
 # ================================================================
 # IR opcodes
@@ -238,7 +243,6 @@ fn _ir_set_bb(S, bi, first, count, succ0, succ1): i64 {
     return 0;
 }
 
-fn IR_BB_ID(S, bi): i64 { return load64(S + 0xB3A000 + bi * 32); }
 fn IR_BB_FIRST(S, bi): i64 { return load64(S + 0xB3A000 + bi * 32 + 8); }
 fn IR_BB_COUNT(S, bi): i64 { return load64(S + 0xB3A000 + bi * 32 + 16); }
 fn IR_BB_SUCC0(S, bi): i64 { return load64(S + 0xB3A000 + bi * 32 + 24) & 0xFFFFFFFF; }
@@ -317,8 +321,6 @@ fn ir_emit0(S, op): i64 { return ir_emit(S, op, 0, 0, 0); }
 # Convenience: emit with opcode + arg1
 fn ir_emit1(S, op, arg1): i64 { return ir_emit(S, op, 0, arg1, 0); }
 
-# Convenience: emit with opcode + arg2 (large immediate)
-fn ir_emit2(S, op, arg2): i64 { return ir_emit(S, op, 0, 0, arg2); }
 
 # Set BB successor (unconditional jump)
 fn ir_bb_set_succ(S, bi, target): i64 {
@@ -345,8 +347,6 @@ fn ir_add_edge(S, from_bb, to_bb): i64 {
     return 0;
 }
 
-fn IR_EDGE_FROM(S, ei): i64 { return load64(S + 0xF3B000 + ei * 8) & 0xFFFFFFFF; }
-fn IR_EDGE_TO(S, ei): i64 { return (load64(S + 0xF3B000 + ei * 8) >> 32) & 0xFFFFFFFF; }
 
 # Reset IR state (between functions or at start of compilation)
 fn ir_reset(S): i64 {
@@ -365,111 +365,7 @@ fn ir_reset(S): i64 {
 # This function is the bridge: same output as direct emission,
 # but driven from the IR data structure.
 
-fn ir_lower_all(S): i64 {
-    var bi = 0;
-    var bcnt = IR_BCNT(S);
-    while (bi < bcnt) {
-        var first = IR_BB_FIRST(S, bi);
-        var count = IR_BB_COUNT(S, bi);
-        var ni = first;
-        while (ni < first + count) {
-            var op = IR_NODE_OP(S, ni);
-            var fl = IR_NODE_FL(S, ni);
-            var a1 = IR_NODE_A1(S, ni);
-            var a2 = IR_NODE_A2(S, ni);
-            _ir_lower_node(S, op, fl, a1, a2);
-            ni = ni + 1;
-        }
-        bi = bi + 1;
-    }
-    return 0;
-}
 
-# Lower a single IR node to x86 via emit.cyr functions
-fn _ir_lower_node(S, op, fl, a1, a2): i64 {
-    if (op == IR_NOP)           { return 0; }
-    if (op == IR_LOAD_IMM)      { EMOVI(S, a2); return 0; }
-    if (op == IR_LOAD_LOCAL)    { EFLLOAD(S, a1); return 0; }
-    if (op == IR_STORE_LOCAL)   { EFLSTORE(S, a1); return 0; }
-    if (op == IR_LOAD_GLOBAL)   { EVLOAD(S, a1); return 0; }
-    if (op == IR_STORE_GLOBAL)  { EVSTORE(S, a1); return 0; }
-    if (op == IR_LOAD_ADDR_L)   {
-        # LEA rax, [rbp + disp32] — emit inline (no dedicated emit fn)
-        var disp = 0 - ((a1 + 1) * 8);
-        EB(S, 0x48); EB(S, 0x8D); EB(S, 0x85);
-        EDISP32(S, disp);
-        return 0;
-    }
-    if (op == IR_LOAD_ADDR_G)   { EVADDR(S, a1); return 0; }
-    if (op == IR_LOAD_STR)      { ESADDR(S, a1); return 0; }
-
-    if (op == IR_ADD)           { EADDR(S); return 0; }
-    if (op == IR_SUB)           { ESUBR(S); return 0; }
-    if (op == IR_MUL)           { EIMUL(S); return 0; }
-    if (op == IR_DIV)           { ECQO(S); EIDIV(S); return 0; }
-    if (op == IR_MOD)           { ECQO(S); EIDIV(S); EMOVDR(S); return 0; }
-
-    if (op == IR_AND)           { EANDR(S); return 0; }
-    if (op == IR_OR)            { EORR(S); return 0; }
-    if (op == IR_XOR)           { EXORR(S); return 0; }
-    if (op == IR_NOT)           { ENOTR(S); return 0; }
-    if (op == IR_SHL)           { ESHLCL(S); return 0; }
-    if (op == IR_SHR)           { ESHRCL(S); return 0; }
-    if (op == IR_ASHR)          { EASHRCL(S); return 0; }
-
-    if (op == IR_PUSH)          { EPUSHR(S); return 0; }
-    if (op == IR_POP_RAX)       { EPOPR(S); return 0; }
-    if (op == IR_POP_RCX)       { EPOPC(S); return 0; }
-    if (op == IR_MOV_CA)        { EMOVCA(S); return 0; }
-
-    if (op == IR_LOAD8)         { ELOAD8(S); return 0; }
-    if (op == IR_LOAD16)        { ELOAD16(S); return 0; }
-    if (op == IR_LOAD32)        { ELOAD32(S); return 0; }
-    if (op == IR_LOAD64)        { ELOAD64(S); return 0; }
-    if (op == IR_STORE8)        { ESTORE8(S); return 0; }
-    if (op == IR_STORE16)       { ESTORE16(S); return 0; }
-    if (op == IR_STORE32)       { ESTORE32(S); return 0; }
-    if (op == IR_STORE64)       { ESTORE64(S); return 0; }
-
-    if (op == IR_CMP)           { ECMPR(S); return 0; }
-    if (op == IR_SETCC)         { ESETCC(S, a1); return 0; }
-    if (op == IR_TEST_AZ)       { ETESTAZ(S); return 0; }
-
-    if (op == IR_CALL)          { ECALLFIX(S, a1); return 0; }
-    if (op == IR_CALL_KNOWN)    { ECALLTO(S, a2); return 0; }
-    if (op == IR_CALL_POPS)     { ECALLPOPS(S, a1); return 0; }
-    if (op == IR_CALL_CLEAN)    { ECALLCLEAN(S, a1); return 0; }
-    if (op == IR_TAIL_JMP)      { ETAILJMP(S, a1); return 0; }
-    if (op == IR_SYSCALL)       { ESYSCALL(S); return 0; }
-    if (op == IR_CALL_INDIRECT) { ECALLIND(S, a1); return 0; }
-
-    if (op == IR_PROLOGUE)      { EFNPRO(S); return 0; }
-    if (op == IR_ALLOC_FRAME)   { ESUBRSP(S); return 0; }
-    if (op == IR_EPILOGUE)      { EFNEPI(S); return 0; }
-    if (op == IR_PATCH_FRAME)   { EPATCHFRAME(S, a1, a2); return 0; }
-
-    if (op == IR_RAW_BYTE)      { EB(S, a1); return 0; }
-    # v5.6.12 IR_RAW_EMIT is a parse-time marker only — the raw bytes
-    # were already emitted at record time. No action in lower.
-    if (op == IR_RAW_EMIT)      { return 0; }
-    # v5.6.14 IR_RAX_CLOBBER is a record-time marker only — same
-    # "already emitted" shape as IR_RAW_EMIT.
-    if (op == IR_RAX_CLOBBER)   { return 0; }
-    if (op == IR_MOV_RDX_RAX)   { EMOVRDXRAX(S); return 0; }
-    if (op == IR_MOV_RAX_RDX)   { EMOVRA_RDX(S); return 0; }
-    if (op == IR_MOV_R3_RAX)    { EMOVR3RAX(S); return 0; }
-    if (op == IR_MOV_RAX_R3)    { EMOVRA_R3(S); return 0; }
-    if (op == IR_XOR_AA)        { EXORAA(S); return 0; }
-    if (op == IR_STORE_PARM)    { ESTOREPARM(S, a1, a2, 0); return 0; }
-    if (op == IR_ADD_IMM_X1)    { EADDIMM_X1(S, a2); return 0; }
-
-    # Jump terminators are handled by the BB walker, not individual lowering
-    if (op == IR_JMP)           { EJMP(S, a2); return 0; }
-    if (op == IR_JCC)           { EJCC(S, fl); return 0; }
-    if (op == IR_RET)           { return 0; }  # epilogue emitted separately
-
-    return 0;
-}
 
 # ================================================================
 # IR dump (CYRIUS_IR=2 verbose mode)
@@ -1057,7 +953,6 @@ fn ir_dce_capped(S, cap): i64 {
     return killed;
 }
 
-fn ir_dce(S): i64 { return ir_dce_capped(S, 0 - 1); }
 
 # ================================================================
 # v6.3.27 — cross-BB liveness (CFG backward dataflow fixpoint)
@@ -1306,7 +1201,6 @@ fn ir_dead_store_capped(S, cap): i64 {
     return killed;
 }
 
-fn ir_dead_store(S): i64 { return ir_dead_store_capped(S, 0 - 1); }
 
 # ================================================================
 # BB construction pass
@@ -1507,69 +1401,6 @@ fn ir_build_edges(S): i64 {
 # NOP-fill their codebuf bytes.
 # Returns bytes eliminated.
 
-fn ir_dead_block_elim(S): i64 {
-    var bcnt = IR_BCNT(S);
-    var ecnt = IR_ECNT(S);
-    var bytes = 0;
-
-    var bi = 0;
-    while (bi < bcnt) {
-        var first = IR_BB_FIRST(S, bi);
-        var count = IR_BB_COUNT(S, bi);
-        if (count == 0) { bi = bi + 1; continue; }
-
-        # Skip entry blocks (first BB, or BBs starting with PROLOG)
-        var first_op = IR_NODE_OP(S, first);
-        if (bi == 0 || first_op == IR_PROLOGUE) {
-            bi = bi + 1;
-            continue;
-        }
-
-        # Check if any edge targets this BB
-        var has_pred = 0;
-        var ei = 0;
-        while (ei < ecnt) {
-            if (IR_EDGE_TO(S, ei) == bi) {
-                has_pred = 1;
-                ei = ecnt;  # break
-            }
-            ei = ei + 1;
-        }
-
-        # Extra safety: only eliminate if ALL nodes in the BB are NOP/ELIMINATED
-        # (avoid killing BBs with real code that just have missing edges)
-        var all_nop = 1;
-        if (has_pred == 0) {
-            var ci = first;
-            while (ci < first + count) {
-                var cop = IR_NODE_OP(S, ci);
-                if (cop != IR_NOP && cop != IR_ELIMINATED) { all_nop = 0; ci = first + count; }
-                ci = ci + 1;
-            }
-        }
-
-        if (has_pred == 0 && all_nop == 1) {
-            # Dead NOP-only block — safe to NOP-fill
-            var cp_start = IR_NODE_CP(S, first);
-            var cp_end = cp_start;
-            if (first + count < IR_NCNT(S)) {
-                cp_end = IR_NODE_CP(S, first + count);
-            }
-            var sz = cp_end - cp_start;
-            if (sz > 0 && sz < 4096) {
-                var j = 0;
-                while (j < sz) {
-                    store8(_codebuf_base + cp_start + j, 0x90);
-                    j = j + 1;
-                }
-                bytes = bytes + sz;
-            }
-        }
-
-        bi = bi + 1;
-    }
-    return bytes;
-}
 
 fn ir_dump(S): i64 {
     var ncnt = IR_NCNT(S);

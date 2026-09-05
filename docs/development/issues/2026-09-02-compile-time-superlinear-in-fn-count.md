@@ -1,6 +1,41 @@
 # Compile time is superlinear in function count — 4× the fns costs 17× the time
 
-**Status:** 🟠 **HALVED at v6.5.42 — the largest contributor is FIXED, a second one remains.** Measured on a 60,000-fn fixture: **43.6 s → 23.9 s (1.82x)**.
+**Status:** 🟠 **20x FASTER at v6.5.50 — the second contributor is FIXED and it was NOT either of
+the two this file predicted. A third, much smaller one remains.** 60,000-fn fixture:
+**43.6 s (v6.5.41) -> 23.9 s (v6.5.42) -> 1.0 s (v6.5.50).** 32,000 fns: 4,562 -> 405 ms.
+
+⭐ **THE SECOND QUADRATIC TERM WAS `LEXID`, BUCKETING ON IDENTIFIER LENGTH ALONE.**
+`bucket = klen` (saturated at 255) put every identifier of the same length on ONE dedup chain, so
+the per-lookup walk over that chain *was* the O(N^2) scan the index was added at v5.10.40 to
+remove — reintroduced for any realistic unit, because real code is full of same-length names.
+`f0..f59999` is ~50,000 entries on a single chain. The key now mixes length with the first, middle
+and last byte across 16,384 buckets. Output is byte-identical (dedup is still an exact byte-compare
+and the canonical offset is still first-occurrence in source order, so only chain ORDER moves).
+`lexid_heads` grew 2,048 -> 131,072 B with NO relocation, absorbing the 128 KB hole freed at
+0x457C900 by v6.4.21. Gate: `tests/gates/frontend/lexid_buckets_by_content.sh`.
+
+⛔ **BOTH CANDIDATES THIS FILE NAMED WERE RULED OUT — do not re-investigate them.**
+* `_fnt_grow`'s rehash-and-copy: it doubles (`nc = _fnt_cap * 2`), so it is amortized-linear by
+  construction. Ruled out by inspection.
+* The DCE reachability walk over `live[]`: DCE is OFF by default (`CYRIUS_DCE=1` opts in), so it
+  never ran in any of these measurements. Ruled out.
+Also ruled out by measurement: the hash-table LOAD FACTOR (at equal 52 % load, 34k fns costs
+16.9 us/fn and 70k costs 29.7 — and higher load measured *cheaper* per fn), and the object emitter
+(`object;` and plain-executable forms scale identically).
+
+**WHAT REMAINS, and it is now precisely localized.** Cost is nearly flat WITHIN a `_fnt_cap`
+generation (34k -> 60k fns: +76 % fns for +29 % time) and jumps at the boundary (60k -> 70k: +17 %
+fns for +182 % time), then flattens again. The residual is the **cost of an individual
+`_fnt_grow`**, not its frequency-times-size product: one grow at the 65536 -> 131072 boundary costs
+~1,145 ms, which is far more than copying 17 tables x 8.9 MB should take. Probe: growing 4x instead
+of 2x (half the grows) cut a 34,000-fn compile 571 -> 231 ms. That is a candidate FIX, not a
+diagnosis — it was reverted unverified, since it trades memory for time and the underlying reason
+one grow costs a second is still unexplained. **Next step is to instrument `_fnt_grow` directly**
+(the box has no `perf`, and `ptrace_scope=1` blocks gdb from attaching to a running compile).
+
+⚠ **`CYRIUS_PROF`'s phase labels are misleading and cost time in this investigation.** It reports
+`gvar=2408 parse=0` on a 120k-fn unit; `_prof_gvar_end` is stamped after the WHOLE two-pass parse
+(`src/main.cyr:1829`), so "gvar" is the entire front end and "parse" is always ~0.
 
 ⭐ **The suspected cause was the right one, and it was confirmed by measurement before being fixed rather than after.** `REGFN`'s REVERSE overload registration walked EVERY already-registered fn for each new one, looking for a sibling named `<my_name>_<suffix>` — quadratic by construction (~1.8x10⁹ name comparisons at 60k fns). Disabling it outright took the same fixture 43.5 s → 23.6 s, i.e. **it was 46 % of total compile time**, and its share grows with the square.
 

@@ -507,14 +507,20 @@
 #
 # --- LEXID dedup index (v5.10.40 — lex-hot-path optimization) ---
 #   0x457C000  lexid_count   [8]            entries used so far (≤65536)
-#   0x457C100  lexid_heads   [2048]         per-length head idx+1 (256 × 8B;
-#                                            0 = empty bucket). bucket = klen
-#                                            saturated at 255 (collisions tolerated;
-#                                            byte-compare still authoritative).
-#   0x457C900  (FREED v6.4.21)              was lexid_entries [131072]; relocated to
-#                                            the arena top (0xF400000) when the cap
-#                                            grew 16384→65536 (it was boxed in by
-#                                            preprocess_out @ 0x459D000). 128 KB hole.
+#   0x457C100  lexid_heads   [131072]       16384 × 8B chain heads, idx+1 (0 = empty).
+#                                            v6.5.50: was [2048] — 256 buckets keyed on
+#                                            `bucket = klen` saturated at 255, so EVERY
+#                                            identifier of the same length shared ONE
+#                                            chain and a unit of similar names degenerated
+#                                            to the O(N²) walk this index exists to remove
+#                                            (60,000 fns f0..f59999 = ~50,000 entries in a
+#                                            single bucket; 20.2 s → 1.0 s once spread).
+#                                            The key is now a hash of length + first/middle/
+#                                            last byte. Widening this table needed NO
+#                                            relocation: it absorbs the 128 KB hole freed
+#                                            at 0x457C900 when v6.4.21 moved lexid_entries
+#                                            to the arena top. Ends 0x459C100, 3840 B clear
+#                                            of preprocess_out @ 0x459D000.
 #   0xF400000  lexid_entries [2097152]      262144 x 8B linked-list nodes (v6.4.21;
 #                                            v6.5.40: 65536 -> 262144 entries, relocated
 #                                            0x7300000 -> 0xF400000. FIFTH cap behind the

@@ -653,9 +653,10 @@ fn main(): i64 {
         if (argc() < ai + 2) {
             b_src = _manifest_build_key("src", 3);
             b_out = _manifest_build_key("output", 6);
+            _build_paths_from_manifest = 2;
         }
-        if (argc() >= ai + 1) { b_src = argv(ai); }
-        if (argc() >= ai + 2) { b_out = argv(ai + 1); }
+        if (argc() >= ai + 1) { b_src = argv(ai); _build_paths_from_manifest = 1; }
+        if (argc() >= ai + 2) { b_out = argv(ai + 1); _build_paths_from_manifest = 0; }
         if (b_src == 0 || b_out == 0) {
             println("Usage: cyrius build [--aarch64|--win|--agnos|--target=js] [-v] [-q] [--no-deps] [--strict] [--strict-pin] [--check-lib-sync] [--features <list>] [--no-default-features] [-D NAME]... [<source> [<output>]]");
             println("  --check-lib-sync   fail the build if ./lib/ is a stale version vs the pinned snapshot (CI)");

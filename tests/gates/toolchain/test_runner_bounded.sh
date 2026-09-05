@@ -201,21 +201,52 @@ for n in hang1 hang2; do cp "$T/hang.tcyr" "$T/suite/$n.tcyr"; done
 orphan_pids > "$T/suite.pre"
 ( cd "$T/suite" && CYRIUS_TEST_TIMEOUT=5 timeout 300 "$CY" tests "$T/suite" > "$T/s.out" 2> "$T/s.err" ) &
 suite_pid=$!
+# ⚠ SUSTAINED overlap, not a single sample. v6.5.42 saw this row go red once at
+# `max 2` under load and it did not reproduce in four subsequent runs. The filing's
+# leading hypothesis was that `orphan_pids` counts a SIGKILLed-but-unreaped child,
+# and that hypothesis was TESTED AND REFUTED on 2026-09-04: a zombie's argv collapses
+# to `[test_bin] <defunct>`, which cannot match the `/cyrius-NNN/test_bin` PATH pattern
+# the sampler greps for, so a zombie is structurally invisible here. What a single
+# sample CAN legitimately catch is the sub-200 ms window between `kill(pid, 9)` and the
+# kernel finishing teardown, during which the dying child still carries its full argv
+# — measured at under 0.2 s, against a 0.5 s sample interval.
+#
+# That transient is not what this row is about. The property is "the deadline KILLS the
+# child rather than ABANDONING it", and an abandoned child stays alive for the REST OF
+# THE SUITE — seconds, not milliseconds. So the assertion is now on CONSECUTIVE samples:
+# two in a row at 2+ children (>= 0.5 s of real overlap at the 0.25 s interval) is a
+# genuine escape, while one isolated sample is teardown. The mutation the row was built
+# against (`sys_kill(pid, 9)` -> `sys_kill(pid, 0)` + WNOHANG) holds the overlap for the
+# whole second fixture's 5 s deadline, so it still trips this comfortably.
 maxlive=0
+maxrun=0
+run=0
 while kill -0 "$suite_pid" 2> /dev/null; do
     orphan_pids > "$T/suite.now"
     live=$(comm -13 "$T/suite.pre" "$T/suite.now" | grep -c . || true)
     [ "$live" -gt "$maxlive" ] && maxlive=$live
-    sleep 0.5
+    if [ "$live" -gt 1 ]; then
+        run=$(( run + 1 ))
+        [ "$run" -gt "$maxrun" ] && maxrun=$run
+    else
+        run=0
+    fi
+    sleep 0.25
 done
 wait "$suite_pid" 2> /dev/null || true
 check "premise: BOTH hanging fixtures really ran and hit the deadline" 2 \
     "$(grep -c 'timed out after 5s' "$T/s.err" || true)"
-check "never more than the one child it is currently running" 1 "$maxlive"
-if [ "$maxlive" -gt 1 ]; then
-    echo "        $maxlive test children alive at once — a timed-out child kept running"
-    echo "        while the suite moved on. The deadline is abandoning, not killing:"
-    echo "        check the sys_kill(pid, 9) in run_binary_timed (cbt/build.cyr)."
+if [ "$maxlive" -gt 1 ] && [ "$maxrun" -le 1 ]; then
+    echo "        note: saw $maxlive children in a single sample but never twice running —"
+    echo "        that is the sub-200ms post-SIGKILL teardown window, not an abandoned child."
+fi
+check "never more than the one child it is currently running (sustained)" 0 \
+    "$(if [ "$maxrun" -gt 1 ]; then echo 1; else echo 0; fi)"
+if [ "$maxrun" -gt 1 ]; then
+    echo "        $maxlive test children alive across $maxrun consecutive samples — a"
+    echo "        timed-out child kept running while the suite moved on. The deadline is"
+    echo "        abandoning, not killing: check sys_kill(pid, 9) in run_binary_timed"
+    echo "        (cbt/build.cyr). Sustained, so this is not the post-SIGKILL teardown window."
 fi
 
 # ── AXIS 2 — ⭐ THE ORPHAN. SIGKILL the runner mid-test; the child must die with it.

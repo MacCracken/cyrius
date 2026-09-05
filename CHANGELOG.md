@@ -4,6 +4,102 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.50] — 2026-09-04
+
+Issue-queue burn-down: five open filings closed or advanced, plus a build-log pass.
+
+### Fixed
+
+- **`EMITELF_OBJ` overran its fixed 1 MB scratch — `object;` units SIGSEGV'd above
+  ~31,398 fns, and produced CORRUPT SYMBOL TABLES silently well below that.** The four
+  sub-regions (strtab / fn_strtab_off / symtab / rela) were carved at hardcoded offsets
+  inside a fixed 1 MB brk block, sized by a comment reading *"for the v4.7.1 4096 fn cap"*,
+  with no bounds check on any of them. They are now **sized from the unit** — the string
+  table is measured by walking the actual names, and the brk extension is checked, with a
+  real diagnostic if it fails. 31,501 fns now yields a valid 3.1 MB relocatable object with
+  31,502 intact symbols. ⚠ **Both filed thresholds were wrong, and re-measuring them is the
+  substance of this fix.** The issue recorded the silent band as *"~12,000 fns with LONG
+  names"* and asserted *"6,000 fns is clean"*; bisected against a pre-fix compiler,
+  **ordinary short names corrupt from 5,528 fns** (deterministic, 3/3) and 6,000 gives 116
+  corrupt symbols — roughly twice as reachable as filed, needing no unusual naming.
+  Small-unit object output is **byte-identical** (200 / 2,000 / 4,000-fn units).
+  Gate: `tests/gates/codegen/emitelf_obj_scratch_derived.sh`.
+
+- **Compile time was quadratic in same-length identifiers: LEXID bucketed on LENGTH ALONE.**
+  `bucket = klen` (saturated at 255) put every identifier of the same length on ONE dedup
+  chain, so the per-lookup walk over that chain *was* the O(N²) scan the index was added at
+  v5.10.40 to remove — reintroduced for any realistic unit, because real code is full of
+  same-length names. A 60,000-fn unit named `f0..f59999` put ~50,000 entries on a single
+  chain. The key now mixes length with the first, middle and last byte across 16,384
+  buckets. **60,000 fns: 20,168 ms → 1,005 ms (20×). 32,000 fns: 4,562 ms → 405 ms (11×).**
+  `self_compile` also improved, 712 → 660 ms. Output is **byte-identical** — dedup is still
+  an exact byte-compare and the canonical offset is still first-occurrence in source order,
+  so only chain *order* moves (verified on the self-host fixpoint and all 83 programs).
+  `lexid_heads` grew 2,048 → 131,072 B **with no relocation**, absorbing the 128 KB hole
+  freed at `0x457C900` when v6.4.21 moved `lexid_entries` to the arena top.
+  Gate: `tests/gates/frontend/lexid_buckets_by_content.sh`.
+
+- **`cyrius build` logged almost nothing useful.** Success printed a bare `OK`, which cannot
+  distinguish a real build from one that produced a do-nothing binary — the exact failure
+  v6.5.7 needed a source-existence guard for — so it now reports the artifact size. Failure
+  printed a bare `FAIL`, naming neither the stage, the compiler's exit status, nor where the
+  diagnostics went; it now reports `FAILED (compiler exit N)` and points at them. And
+  v6.5.49 let `src`/`output` be omitted in favour of `[build]` in `./cyrius.cyml`, so the log
+  could name files the user never typed — it now declares that provenance, in all three
+  positions of the override ladder. `-v` no longer runs the header into its own trace.
+  Gate: `tests/gates/toolchain/build_log_informative.sh`.
+
+- **A conflicting `SYS_*` redefinition now says what it DOES.** A consumer's own
+  `var SYS_FOO = <x86_64 number>` shadows the stdlib's arch-aware definition; on x86 the two
+  agree and nothing happens, everywhere else the consumer's value wins and the emitted `svc`
+  issues **a different, valid syscall** — the build succeeds and the wrong call is made
+  silently (measured under qemu at v6.5.37: `sys_umount2` was issuing `getpid(2)` on every
+  ELF-aarch64 build). The only diagnostic read as a cosmetic name collision. The note is
+  **deliberately not target-gated**, which is why it can ship: the general *"is this number
+  right for this arch"* question needs an x86_64→aarch64 correspondence table that does not
+  exist in `src/`, but a *conflicting* `SYS_*` redefinition is wrong on every target whose
+  numbers differ, and a cross-compiled source's author cannot know which those are.
+  Gate: `tests/gates/diagnostics/sys_shadow_names_consequence.sh`.
+
+- **`test_runner_bounded` axis 1b asserted an instantaneous count where the property is
+  sustained overlap.** It went red once under load at v6.5.42 and never reproduced. ⚠ **The
+  filing's leading hypothesis was tested and REFUTED**: a SIGKILLed-but-unreaped child cannot
+  be what the sampler counted, because a zombie's argv collapses to `[test_bin] <defunct>`
+  and cannot match the `/cyrius-NNN/test_bin` **path** pattern the sampler greps for. What a
+  single sample *can* legitimately catch is the sub-200 ms window between `kill(pid, 9)` and
+  the kernel finishing teardown, measured at under 0.2 s against a 0.5 s sample interval. The
+  row now requires **two consecutive** samples at 2+ children; the abandon-mutation it was
+  built against holds the overlap for **19 consecutive** samples, so sensitivity is unchanged.
+
+### Benchmarks
+
+`sh scripts/bench-history.sh`, quiet box, against `.49` (`d6cbd382`):
+
+| | .49 | .50 | |
+|---|---|---|---|
+| `compiler/self_compile` | 713.4 ms | **662.9 ms** | **−7.1 %** |
+| `size/cycc` | 1,195,992 B | **1,192,272 B** | −3,720 B |
+| `size/cycc_text` | — | 1,041,776 B | |
+
+⭐ **`self_compile` is now under the ≤700 ms cap** that `state.md` has carried as unmet. The gain is
+the LEXID fix reaching the compiler's own source: cycc's identifiers are as length-clustered as any
+other real codebase, so it was paying the same degenerate-chain cost as the 60,000-fn fixture, just
+at a smaller scale.
+
+### Removed
+
+- Nine unreachable IR functions — `ir_emit2`, `IR_BB_ID`, `IR_EDGE_FROM`, `IR_EDGE_TO`,
+  `ir_dce`, `ir_dead_store`, `ir_dead_block_elim`, `ir_lower_all`, `_ir_lower_node`
+  (`src/common/ir.cyr`, −174 lines). This completes **D1** of the v6.4.15 closeout residuals, which
+  closes that issue entirely (R2 shipped at v6.4.26; D2 was resolved by execution at v6.5.35, where
+  `CLASSIFY_CF`/`CF_TARGET` became live via `RA_SCAN_LOOPS` — they must NOT be deleted). Verified
+  by exact-identifier search, **not a name sweep**: `ir_dce_capped` and
+  `ir_dead_store_capped` are the live callees and contain the dead names as prefixes.
+  Unreachable-fn floor **84 → 75** (24,856 → 18,736 bytes). A stale comment instructing the reader
+  to "call `ir_lower_all` with mode 0 to emit x86" — a function that never did anything and now does
+  not exist — was corrected in the same pass.
+
+
 ## [6.5.49] — 2026-09-04
 
 **Roadmap and manifest cleanup, a build-tool convenience, and three defects the cleanup found.**

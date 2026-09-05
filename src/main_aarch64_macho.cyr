@@ -102,7 +102,9 @@
 #
 # --- LEXID dedup index (v5.10.40) ---
 #   0x457C000  lexid_count   [8]
-#   0x457C100  lexid_heads   [2048]
+#   0x457C100  lexid_heads   [131072]       16384 × 8B content-hashed chain heads
+#                                            (v6.5.50: was [2048]/256 length-keyed buckets;
+#                                            absorbs the 128 KB hole freed at 0x457C900)
 #   0x457C900  lexid_entries [131072]
 #   (Full doc in src/main.cyr §LEXID_DEDUP)
 #

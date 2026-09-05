@@ -83,6 +83,16 @@ fn cmd_build(source, output): i64 {
     var an = arch_name();
     sys_write(STDOUT_FD, an, strlen(an));
     sys_write(STDOUT_FD, "] ", 2);
+    # v6.5.50 — say WHERE the paths came from. v6.5.49 let both be omitted and taken
+    # from [build] in ./cyrius.cyml, so the line above can name files the user never
+    # typed; without this note a wrong path in a stale manifest reads as a compiler bug.
+    if (_build_paths_from_manifest == 2) { sys_write(STDOUT_FD, "(src+output from cyrius.cyml) ", 30); }
+    if (_build_paths_from_manifest == 1) { sys_write(STDOUT_FD, "(output from cyrius.cyml) ", 26); }
+    # The header is deliberately left unterminated so the result lands on the same line.
+    # Under -v that does not work: compile() writes several [verbose] lines first, and the
+    # header ran straight into them ("... [x86_64] [verbose] compiler: ..."). Close the line
+    # when verbose so the trace starts clean.
+    if (_verbose == 1) { sys_write(STDOUT_FD, "\n", 1); }
     var r = compile(source, output);
     if (r == 0) {
         # Apple Silicon AMFI-SIGKILLs an unsigned arm64 binary, so a fresh
@@ -90,7 +100,18 @@ fn cmd_build(source, output): i64 {
         # (CHANGELOG [6.0.38]). v6.0.66: hoisted into the shared _macho_codesign
         # helper (also used by run_binary for test/run/bench/fuzz/doctest).
         _macho_codesign(output);
-        println("OK");
+        # v6.5.50 — report the artifact size. `OK` alone cannot distinguish a real build
+        # from one that produced a do-nothing binary, which is the exact failure v6.5.7
+        # had to add a source-existence guard for (a missing entry file still yielded a
+        # valid translation unit of pure stdlib, printed OK and exited 0).
+        var osz = _artifact_size(output);
+        if (osz >= 0) {
+            sys_write(STDOUT_FD, "OK (", 4);
+            fmt_int(osz);
+            sys_write(STDOUT_FD, " bytes)\n", 8);
+        } else {
+            println("OK");
+        }
         # v6.2.28 D6: expose the kernel entry/load-base VA via the triple. A
         # freestanding kernel's loader/linker contract is the ELF e_entry the
         # emitter writes; surface it so a consumer (agnos's boot, a GRUB cfg, a
@@ -122,7 +143,15 @@ fn cmd_build(source, output): i64 {
             }
         }
     } else {
-        println("FAIL");
+        # v6.5.50 — a bare `FAIL` told the user nothing: not which stage failed, not the
+        # compiler's exit status, and not where its diagnostics went. The compiler writes
+        # its own errors to stderr, so name the status and point at them.
+        sys_write(STDOUT_FD, "FAILED (compiler exit ", 22);
+        fmt_int(r);
+        sys_write(STDOUT_FD, ")\n", 2);
+        if (_verbose == 0) {
+            sys_write(STDERR_FD, "  the compiler's diagnostics are above; re-run with -v for the resolved compiler, source and include set\n", 105);
+        }
     }
     return r;
 }

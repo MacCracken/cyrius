@@ -1,6 +1,21 @@
 # `EMITELF_OBJ` overruns its 1 MB scratch — `object;` units above ~31,398 fns SIGSEGV
 
-**Status:** 🔴 **OPEN.** Reproduced on cycc 6.5.49.
+**Status:** ✅ **CLOSED at v6.5.50.** `EMITELF_OBJ` now sizes its four scratch regions from the
+unit — the string table is measured by walking the actual names, and the brk extension is checked
+with a real diagnostic if it fails. 31,501 fns yields a valid 3.1 MB relocatable object with 31,502
+intact symbols; small-unit output (200/2,000/4,000 fns) is byte-identical.
+Gate: `tests/gates/codegen/emitelf_obj_scratch_derived.sh` (mutation-proven).
+
+⛔ **BOTH THRESHOLDS BELOW WERE WRONG, and re-measuring them was the substance of the fix.** This
+file recorded the silent band as "~12,000 fns with LONG names" and asserted "6,000 fns is clean".
+Bisected against a pre-fix compiler on 2026-09-04: **ordinary SHORT names corrupt from 5,528 fns**
+(deterministic, 3/3), and 6,000 short-named fns produce **116 corrupt symbols**. The silent band was
+roughly twice as reachable as filed and required no unusual naming at all. ⚠ The MAGNITUDE is not
+stable — the overrun reads residual brk content, so repeated runs on one input gave 927 then 1106
+corrupt symbols — which is why the gate asserts `corrupt = 0` and never a count.
+
+⚠ This file also estimated the fix as a "~90-line refactor". It is **four local assignments** plus a
+derived-size prologue; the offsets were not spread through the function.
 **Found by:** the 2026-09-04 roadmap re-triage, while measuring compile-time scaling.
 **Severity:** Medium — a hard crash with no diagnostic, plus a silent-corruption band below it.
 

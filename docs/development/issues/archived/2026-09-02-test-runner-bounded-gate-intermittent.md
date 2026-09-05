@@ -1,6 +1,23 @@
 # `test_runner_bounded` axis 1b went red once under load and I could not reproduce it
 
-**Status:** 🟡 **OPEN — one observation, not reproduced in 4 subsequent runs, NOT root-caused.**
+**Status:** ✅ **CLOSED at v6.5.50 — and the leading hypothesis below was TESTED AND REFUTED.**
+
+⛔ **The zombie theory is WRONG.** This file proposed that `orphan_pids` counts a SIGKILLed-but-unreaped
+child, and flagged it as "the kind that is comfortable to believe". Measured 2026-09-04: a zombie's argv
+collapses to `[test_bin] <defunct>`, so it **cannot match the `/cyrius-NNN/test_bin` PATH pattern** the
+sampler greps for — a zombie is structurally invisible to this gate. Adding a process-state filter, the
+fix this file recommends, would have changed nothing.
+
+What a single sample CAN legitimately catch is the window between `kill(pid, 9)` and the kernel finishing
+teardown, during which the dying child still carries its full argv — measured at **under 0.2 s**, against
+a 0.5 s sample interval. That transient is not what the row is about: the property is "the deadline KILLS
+rather than ABANDONS", and an abandoned child lives for the rest of the suite. Axis 1b now samples at
+0.25 s and requires **two consecutive** samples at 2+ children. The abandon-mutation
+(`sys_kill(pid,9)` -> `sys_kill(pid,0)`, rebuilt CLI) holds the overlap for **19 consecutive** samples,
+so sensitivity is unchanged.
+
+⭐ The file's own warning — that this gate exists because a flaky-looking red got dismissed — is why the
+hypothesis was measured instead of adopted. A state filter would have been a plausible-looking no-op.
 **Placement:** unpinned — 6.x-line backlog. Test-infrastructure reliability.
 **Discovered:** 2026-09-02 during the v6.5.42 slot, on an otherwise-green `scripts/check.sh` run.
 **Severity:** Low as a defect, **Medium as a signal** — see *Why this is filed rather than shrugged off*.
