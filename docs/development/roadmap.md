@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.57** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
+**Current head: v6.5.58** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **119** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -235,25 +235,37 @@ reached as `lea rcx,[rbp+base]` so only the base slot ever appears as an rbp dis
 assignment and declaration forms, self-assignment, three-live-aggregates (the regalloc axis), and
 a scalar control · mutation-proven per fix · release gate green.
 
-#### `.58` — SIMD wrapper inlining reaches every wrapper shape
-*(`simd-f64v-memory-operand`, part 1 — **user-selected next**)*
+#### `.58` — ✅ SHIPPED: the inline predicate sees wide params of every width
 
-`_fn_has_simd_param` (`util.cyr:989-996`) loops `i < pc` over `GLTYPE(S,i)`, but a wide param's
-SLTYPE lives on its NAMED slot, which sits after `slots-1` anonymous fillers. The named slot falls
-inside `[0,pc)` only when `slots-1 < pc` — true only for **two 128-bit params**. This is the same
-off-by-slot bug `.52` fixed in `SFINL`, left unfixed in the gate that decides whether to look. So
-`f64v4_add(a,b)` — the family the issue was filed about, from svara — still emits a `callq` per
-link. `pc > 2` (`parse_fn.cyr:4530`) separately excludes the 3-param `_fmadd` wrappers.
+`_fn_has_simd_param` scanned slots `[0, pc)`, but a wide parameter's SLTYPE lives on its NAMED
+slot, after `slots-1` anonymous fillers — so the window contained it only when `slots-1 < pc`,
+i.e. only for **two 128-bit params**. A single 128-bit param and **every** 256-bit param were
+invisible. Now walks named slots (fillers carry the `-1` sentinel), so any width is found.
+**Measured: a flat 256-bit wrapper chain 12 ms → 8 ms; the gate fixture 35 → 30 `callq`.**
 
-**Measured today:** 3-link f64v4 chain, 2M iterations = **72–78 ms with 3 `callq` and 20
-`movupd`**, against 4 ms for `gcc -O2 -mavx2`. The equivalent f32v4 fix at `.52` was 24 → 16 ms.
+⛔ **BUT THE ISSUE BLAMED THIS FOR `f64v4` AND THAT WAS WRONG — measured, not argued.**
+`f64v4_add` still does not inline after the fix, and the reason is in the STDLIB, not the
+compiler: its body carries a runtime `if (simd_has_avx2() == 1) … else …` dispatch, and the
+inline gate's forbidden-token scan rejects control flow. `f32v4_add` has no dispatch, which is
+the whole reason it inlined at `.52`. **22 wrappers in `lib/simd.cyr` carry that dispatch.**
 
-**Done when:** a 1-param 128-bit wrapper, a 1-param 256-bit wrapper and `f64v4_add(a,b)` all
-inline (no `callq` per link, verified by disassembly) · the f64v4 chain time drops measurably ·
-corpus byte-identical outside the SIMD tests · gated on real hardware, because the value-form SIMD
-ABI differs per target.
+⛔ **And the obvious workaround is dead, also measured:** extracting the dispatch into a helper so
+the wrapper goes flat gives **23 ms → 21 ms**, against **12 → 8 ms** for a genuinely flat wrapper.
+Any extra call layer destroys the win. Do not re-try it.
 
-#### `.59` — kill the round-trips inlining exposes
+#### `.59` — move the AVX2 dispatch out of the wrapper bodies
+
+The real `f64v4` blocker, now precisely located. The wrappers cannot simply always emit AVX2 —
+that SIGILLs on pre-AVX2 CPUs, which is why the runtime check exists. So the dispatch has to move
+from a source-level `if/else` into the **emitter**: the `f64v256_*` / `f32v8_*` builtins emit the
+AVX2-vs-SSE choice inline against the cached `_avx2_cache` flag, with no call and no source-level
+control flow, and the 22 wrappers in `lib/simd.cyr` become flat and inlinable.
+
+**Done when:** `f64v4_add(a, b)` inlines (no `callq` per chain link, by disassembly) · a 3-link
+f64v4 chain drops measurably from its current 68 ms · a pre-AVX2 path still runs correctly (the
+SIGILL risk is the reason the dispatch exists) · gated on real hardware.
+
+#### `.60` — kill the round-trips inlining exposes
 *(`simd-f64v-memory-operand`, part 2)*
 
 Two cheap wins measured at `.53`/`.56`, neither needing the register class. **(a)** A 128-bit arm
@@ -272,7 +284,7 @@ worth ~20–25 %, not a multiple.
 **Done when:** `movupd` count drops on the gate's own fixture, timing improves, and the corpus is
 byte-identical outside SIMD.
 
-#### `.60`–`.61` — the vector register class
+#### `.61`–`.62` — the vector register class
 *(`simd-f64v-memory-operand`, part 3 — closes the issue)*
 
 Only now, because until `.58` lands every chain link crosses a call and **SysV has no callee-saved
@@ -285,7 +297,7 @@ per-local safety scan is byte-pattern and 8-byte-only.
 **Done when:** the **svara formant bench closes to single-digit-× of the Rust baseline** — this is
 the minor's stated acceptance anchor and the reason the arc exists.
 
-#### `.62` — payload enums stop allocating for real
+#### `.63` — payload enums stop allocating for real
 *(closes `sock-send-result-allocates-per-call`)*
 
 `.55` shipped the compiler capability (`enum Name: stack`). This is the ecosystem half: teach `?`
@@ -301,7 +313,7 @@ ecosystem-wide.
 **Done when:** `Result`/`Option`/`Either` construction allocates **0 bytes**, every existing
 consumer still compiles, and crossos is green on all four hosts.
 
-#### `.63` — whole-program NOP compaction
+#### `.64` — whole-program NOP compaction
 *(closes `ir-regalloc-rewrite-needs-reemit`)*
 
 The `.54` residual: 8,249 NOPs are the IR passes' own eliminations, written after every per-function
@@ -316,17 +328,22 @@ claimed, and IR=3 is already at `.text` parity. It is last of the code work for 
 **Done when:** IR=3 `.text` is measurably smaller than the default build and an IR=3-built cycc
 still reproduces the default cycc byte-identically.
 
-#### Stackless coroutines — **RECOMMEND MOVING OUT OF v6.5.x**
-*(`stiva-stackless-coroutines-interactive-exec`)*
+#### `.65`–`.66` — stackless coroutines: the CPS transform
+*(closes `stiva-stackless-coroutines-interactive-exec`, and closes the minor)*
 
-Genuinely unbuilt and verified broken (a task calling `async_wait_fd` re-enters its body from the
-top; an unconditional park never terminates). But measured at `.56`: **no consumer** — the filing
-repo records no block — and **zero non-comment `async fn` uses anywhere in the ecosystem**. Two
-releases of compiler-level CPS transform for a feature nothing uses.
+Half A (the multi-waiter registry) shipped at `.26`. Half B is the compiler-level transform:
+liveness-across-suspend, locals-to-frame lifting, and a per-`async fn` state machine. Verified
+broken at `.56` by running it — a task calling `async_wait_fd` falls through and re-enters its
+body from the top (top=2, after-park=2), and an unconditional park never terminates (rc 124).
 
-**This is the one call in this list that is genuinely the user's**, because it is a priority
-question and not a technical one: move it to v6.6.x, or keep it as `.64`–`.65` and close the minor
-after it.
+⚠ **Measured context, which is a sizing input and NOT a reason to leave it unpinned:** there is no
+consumer today — the filing repo records no block — and `async fn` has zero non-comment uses
+across the ecosystem. That makes it LAST, not optional. It is the final open issue, so the minor
+closes when it lands.
+
+**Done when:** a task suspends mid-body and resumes at the suspension point rather than the top ·
+an unconditional park terminates · locals live across a suspend survive it · gated on real
+hardware.
 
 #### Then v6.5.x closes → v6.6.0
 

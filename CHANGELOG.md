@@ -4,6 +4,62 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.58] — 2026-09-05
+
+### Fixed
+
+- **The SIMD-param inline predicate could not see a wide parameter unless there were exactly two
+  of them.** `_fn_has_simd_param` scanned local slots `[0, pc)`, but a parameter wider than 8
+  bytes occupies `slots` consecutive locals — `slots-1` **anonymous fillers** (name sentinel `-1`)
+  and then its named slot, which is the one carrying the SLTYPE. So parameter *k*'s type sits at
+  an index that grows with every wide param before it, and the fixed window contained it only
+  when `slots-1 < pc` — true only for **two 128-bit params**. A single 128-bit param (named slot
+  1, window `{0}`) and **every** 256-bit param (4 slots) were invisible, so those wrappers were
+  never admitted to the inline-replay path and still emitted a `call` per chain link. Now walks
+  named slots, so any width is found.
+
+  **Measured: a flat 256-bit wrapper chain 12 ms → 8 ms; the gate fixture 35 → 30 `callq`.**
+
+  ⭐ **Same off-by-slot bug v6.5.52 fixed in `SFINL`, left unfixed in the predicate that decides
+  whether to look at all.** Fixing a slot-index consumer without fixing the guard in front of it
+  leaves the feature dark for exactly the inputs the guard mis-scans — and it stayed dark for six
+  releases while the issue file named this function as the blocker for a *different* reason.
+
+### Added
+
+- `tests/gates/codegen/simd_param_inline_reach.sh` — a 1-param 128-bit and a 1-param 256-bit
+  wrapper must both inline, the inlined result must be **correct** (not merely smaller), and
+  **axis 2 is a control**: an i64-param wrapper must still be called, because general inlining is
+  default-off for a measured reason (+25.6 % on cycc) and this predicate exists to admit the SIMD
+  wrappers *without* switching it on. Mutation-proven: restoring the `[0, pc)` window gives 36
+  `callq` against a bound of 31.
+
+  ⚠ Axis 1b compares **in-program** and exits a sentinel. Returning the raw lane bits does not
+  work — `0x40800000 & 0xFF` is 0, so a correct answer is indistinguishable from a zeroed one.
+  The first cut of this gate failed for exactly that reason.
+
+### Benchmarks
+
+- Release gate GREEN end to end: self-host fixpoint · seed-derive (29,024-byte seed) ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK` with **64/64** crossos · bench.
+
+### Notes
+
+- ⛔ **The issue blamed this function for `f64v4` and that was wrong — established by measurement,
+  not argument.** `f64v4_add` still does not inline after the fix, and the blocker is in the
+  **stdlib**, not the compiler: its body carries a runtime `if (simd_has_avx2() == 1) … else …`
+  dispatch, and the inline gate's forbidden-token scan rejects control flow. `f32v4_add` carries
+  no dispatch, which is the entire reason it inlined at `.52`. **22 wrappers in `lib/simd.cyr`
+  have the same shape.**
+
+- ⛔ **The obvious workaround is dead, also measured.** Extracting the dispatch into a helper so
+  the wrapper body goes flat gives **23 ms → 21 ms**, against **12 → 8 ms** for a genuinely flat
+  wrapper — any extra call layer destroys the win. Pinned as `.59`: move the dispatch into the
+  **emitter** (the wrappers cannot simply always emit AVX2 — that SIGILLs on pre-AVX2 CPUs, which
+  is why the runtime check exists at all), so the builtins emit the choice inline against the
+  cached flag and the 22 wrappers become flat. Slot list renumbered accordingly.
+
 ## [6.5.57] — 2026-09-05
 
 ### Fixed

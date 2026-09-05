@@ -171,6 +171,14 @@ sh "$ROOT/tests/gates/frontend/private_per_item_rejected.sh"
 # threshold and a build with that exclusion removed still passes.
 sh "$ROOT/tests/gates/codegen/aggregate_copy_all_words.sh"
 
+# v6.5.58: the SIMD-param inline predicate must SEE a wide parameter whatever its width.
+# `_fn_has_simd_param` scanned slots [0, pc), but a wide param's SLTYPE lives on its NAMED slot,
+# after (slots-1) anonymous fillers — so the window contained it only for TWO 128-bit params.
+# Single-128-bit and ALL 256-bit params were invisible and never inlined. Axis 2 is the control:
+# an i64-param fn must still be called, because general inlining is default-off for a measured
+# reason and this predicate exists to admit the SIMD wrappers WITHOUT switching it on.
+sh "$ROOT/tests/gates/codegen/simd_param_inline_reach.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

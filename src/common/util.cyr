@@ -987,9 +987,30 @@ fn _is_simd_any(S, pscale): i64 {
 # nicety — a value chain emits a `call` per link and every xmm is caller-saved under SysV, so
 # each intermediate is provably spilled and reloaded until the calls go away.
 fn _fn_has_simd_param(S, pc): i64 {
+    # v6.5.58 — THIS SCANNED SLOTS [0, pc) AND A WIDE PARAM IS NOT IN THAT RANGE.
+    # A parameter wider than 8 bytes occupies `slots` consecutive locals: (slots-1) anonymous
+    # fillers (name sentinel -1) and THEN its named slot, which is the one carrying the SLTYPE.
+    # So param k's type lives at an index that grows with every wide param before it, and the
+    # old `i < pc` window contained it only when `slots-1 < pc` — i.e. ONLY for the two-128-bit-
+    # param case. A single 128-bit param (named slot 1, window {0}) and every 256-bit param
+    # (4 slots) were missed, so `f64v4_add(a, b)` — the family this arc was filed about — was
+    # never admitted to the inline-replay path and still emitted a `call` per chain link.
+    #
+    # ⭐ SAME OFF-BY-SLOT BUG v6.5.52 FIXED IN `SFINL`, left unfixed in the gate that decides
+    # whether to look. Fixing the consumer of a slot index and not the predicate guarding it
+    # leaves the feature dark for exactly the inputs the predicate mis-scans.
+    #
+    # Walk named slots instead of a fixed window: fillers carry the -1 sentinel, so counting
+    # named slots reaches parameter k's own slot whatever the widths before it were.
+    var seen = 0;
     var i = 0;
-    while (i < pc) {
-        if (_is_simd_any(S, GLTYPE(S, i)) == 1) { return 1; }
+    var flc = GFLC(S);
+    while (seen < pc) {
+        if (i >= flc) { return 0; }
+        if (L64(S + 0x5D9D000 + i * 8) != 0 - 1) {
+            if (_is_simd_any(S, GLTYPE(S, i)) == 1) { return 1; }
+            seen = seen + 1;
+        }
         i = i + 1;
     }
     return 0;
