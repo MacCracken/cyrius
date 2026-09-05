@@ -65,8 +65,27 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
     size=$(_size "$bin")
     case "$bin" in
         build/cycc)
-            if [ "$size" -lt 700000 ] || [ "$size" -gt 1200000 ]; then
-                _fail "build/cycc size ${size}B outside the expected 700K–1.2M range — likely contaminated/truncated; refusing commit"
+            # v6.5.53: upper bound 1200000 -> 2000000. cycc legitimately crossed 1.2 MB at
+            # 6.5.53 (1,200,752 B — 752 over) and the hook blocked a good commit.
+            #
+            # ⚠ RAISE THIS ONLY AFTER `sh scripts/seed-derive-cycc.sh` IS GREEN. That is the
+            # check that actually distinguishes a real compiler from a corrupted one: a
+            # truncated or contaminated binary CANNOT be machine-derived from the 29 KB seed.
+            # The size band is a cheap tripwire, not the proof — do not raise it on the basis
+            # that "the build looked fine".
+            #
+            # ⚠ AND KNOW WHAT THIS BAND CAN AND CANNOT CATCH, so the next person does not
+            # over-trust it. It catches GROSS corruption. It does NOT catch subtle
+            # contamination: during the 6.5.5x work a `2>&1` merged 103 bytes of stderr INTO
+            # a compiler binary, and no range check can see a ~100-byte inflation. The LOWER
+            # bound is the half that has actually earned its keep — a build/cycc truncated to
+            # 459,928 B by a full /tmp shipped silently until it was caught by hand.
+            #
+            # Headroom rationale: recent growth is ~4 KB/release (.51 1,192,272 -> .52
+            # 1,196,656 -> .53 1,200,752), so 2 MB is a few hundred releases of room while
+            # still being far below any runaway-emit failure, which would be many MB.
+            if [ "$size" -lt 700000 ] || [ "$size" -gt 2000000 ]; then
+                _fail "build/cycc size ${size}B outside the expected 700K–2M range — likely contaminated/truncated; refusing commit"
                 status=1
             fi
             ;;

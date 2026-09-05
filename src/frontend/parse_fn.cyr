@@ -4653,6 +4653,24 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # could (silent miscompile).
     if (_AARCH64_BACKEND == 0) { DSE_PASS(S, fn_start); }
     # LASE: eliminate store+load pairs where the load is NOT a jump target (x86-only)
+    #
+    # v6.5.53 — SWITCH-TABLE GUARD, for both LASE loops. Since v6.5.20 a fn's byte range can
+    # contain inline switch jump-table DATA as well as instructions, and BOTH of these loops are
+    # UNALIGNED byte-pattern walks of that range — the same shape `_ra_frame_trim` already
+    # guards with `_sw_tbl_hits` for exactly this reason. A 4-byte displacement in a table is
+    # arbitrary bytes, so in principle one can spell a store/load pattern and NOP-filling there
+    # would corrupt the table.
+    #
+    # ⚠ HONEST SCOPE, because the first version of this comment overstated it: measurement says
+    # the hazard is currently UNREACHABLE, not live. Table entries are fn-relative signed 32-bit
+    # deltas, so their high byte is 0x00, and matching `66 0F 11 85` would need a delta near
+    # -2.06 GB. The integer arm was unguarded too and has evidently never been bitten. This is
+    # therefore DEFENSIVE — two comparisons that cost nothing and remove a whole class of
+    # reasoning from every future edit to either loop — not a bug fix. It is added because both
+    # loops are unaligned byte walks over a range that has contained DATA since v6.5.20, which is
+    # exactly the condition `_ra_frame_trim` already guards against a few hundred lines up.
+    var lase_swtn = L64(S + 0x1AC800);
+    if (lase_swtn > 256) { lase_swtn = 256; }
     var lase_cp = GCP(S);
     var lase_i = fn_start;
     var lase_count = 0;
@@ -4668,7 +4686,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                             if (load8(_codebuf_base + lj + 2) == 0x85) {
                                 if (load32(_codebuf_base + lase_i + 3) == load32(_codebuf_base + lj + 3)) {
                                     # Same offset — check if load is a jump target
-                                    if (IS_JUMP_TARGET(S, lj) == 0) {
+                                    if (IS_JUMP_TARGET(S, lj) == 0 && (lase_swtn == 0 || _sw_tbl_hits(S, lase_swtn, lase_i) == 0)) {
                                         # Safe to eliminate — NOP the 7-byte load
                                         var ln = lj;
                                         while (ln < lj + 7) {
@@ -4681,6 +4699,81 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                             } } }
                 } } }
         lase_i += 1;
+    }
+    # v6.5.53 — the SAME elimination for 128-bit SIMD pairs. v6.5.52 made the value-form SIMD
+    # wrappers inline, which turns a chain into packed ops separated by store-then-immediately-
+    # reload of the same frame slot:
+    #     66 0F 11 85 <disp32>   movupd [rbp+disp32], xmm0     (8 bytes)
+    #     66 0F 10 85 <disp32>   movupd xmm0, [rbp+disp32]     (8 bytes)
+    # The integer loop above cannot see these: it matches only REX.W `48 89 85` / `48 8B 85`.
+    #
+    # ⭐ MODRM 0x85 PINS xmm0 ON BOTH SIDES, and that is what makes this safe. ModRM is
+    # mod(2) reg(3) rm(3), so 0x85 = mod 10 (disp32), reg 000 (xmm0), rm 101 (rbp); xmm1 is
+    # 0x8D, xmm2 0x95, xmm3 0x9D. Requiring 0x85 on BOTH sides guarantees the load's
+    # destination is the register the store just wrote — the property the integer version gets
+    # for free from rax.
+    #
+    # ⚠ TWO SEPARATE INVARIANTS, AND CONFLATING THEM IS HOW THE NEXT EDIT MISCOMPILES.
+    #
+    #   ADJACENCY (+8) is what keeps the 32-byte f64v4/f32v8 pair out. A 256-bit value stores as
+    #   `66 0F 11 85 <d_lo>` (xmm0) then `66 0F 11 8D <d_lo+16>` (xmm1), so the byte at store+8
+    #   is another STORE (0x11) and fails the 0x10 test; independently `d_lo != d_lo+16`, so the
+    #   disp32 equality test rejects it too. The modrm has nothing to do with it.
+    #
+    #   THE REGISTER TEST is what keeps the LOAD's destination honest, and it IS load-bearing.
+    #   The load side's register is VARIABLE: `ELOAD_F64V2_TO_XMM` / `ELOAD_F64V4_TO_XMM`
+    #   (backend/x86/emit.cyr) emit `0x85 + (simd_ord << 3)` for SIMD argument ordinals 0..7, so
+    #   a value stored from xmm0 is routinely reloaded into xmm2/xmm3 as a later call's second
+    #   SIMD argument. Deleting THAT load leaves xmm2/xmm3 holding whatever the previous SIMD
+    #   call left behind — a silent wrong vector, no crash, no diagnostic.
+    #
+    # ⚠ MEASURED four ways on a 3-link chain, because the interaction is what matters:
+    #     pin + strict +8 (shipped)  ->  0 deletions, 0 miscompiles
+    #     pin + relaxed distance     ->  3 deletions, 0 miscompiles
+    #     no pin + strict +8         ->  0 deletions, 0 miscompiles
+    #     no pin + relaxed distance  ->  6 deletions, **2 MISCOMPILES**
+    # So the register test looks redundant TODAY only because adjacency happens to exclude the
+    # cases that need it. Relax the distance — which is the obvious next step, since f64v4 pairs
+    # sit at store+16/+24 and this pass currently gets nothing for them — and it becomes the only
+    # thing standing between you and a wrong answer. Do not remove it.
+    #
+    # The comparison below is written as REGISTER IDENTITY rather than two literal `== 0x85`
+    # tests. Byte-identical behaviour today (both sides are xmm0 in every sequence the emitters
+    # currently produce), but it states the actual requirement, so it survives a future edit that
+    # widens the addressing form or the distance.
+    #
+    # Like the integer version this NOP-FILLS the load in place rather than removing bytes, so
+    # no jump displacement, fixup CP or inline switch-table entry moves — the v6.5.20 class of
+    # bug (a pass relocating code without knowing about an inline data table) cannot arise.
+    # IS_JUMP_TARGET still guards the load: control arriving directly at it would find xmm0
+    # holding something else.
+    var slase_i = fn_start;
+    while (_AARCH64_BACKEND == 0 && slase_i + 16 <= lase_cp) {
+        if (load8(_codebuf_base + slase_i) == 0x66) {
+            if (load8(_codebuf_base + slase_i + 1) == 0x0F) {
+                if (load8(_codebuf_base + slase_i + 2) == 0x11) {
+                    var _st_mr = load8(_codebuf_base + slase_i + 3);
+                    if ((_st_mr & 0xC7) == 0x85) {
+                        var slj = slase_i + 8;
+                        if (load8(_codebuf_base + slj) == 0x66) {
+                            if (load8(_codebuf_base + slj + 1) == 0x0F) {
+                                if (load8(_codebuf_base + slj + 2) == 0x10) {
+                                    var _ld_mr = load8(_codebuf_base + slj + 3);
+                                    # same addressing form ([rbp+disp32]) AND the same xmm register
+                                    if ((_ld_mr & 0xC7) == 0x85 && ((_st_mr >> 3) & 7) == ((_ld_mr >> 3) & 7)) {
+                                        if (load32(_codebuf_base + slase_i + 4) == load32(_codebuf_base + slj + 4)) {
+                                            if (IS_JUMP_TARGET(S, slj) == 0 && (lase_swtn == 0 || _sw_tbl_hits(S, lase_swtn, slase_i) == 0)) {
+                                                var sln = slj;
+                                                while (sln < slj + 8) {
+                                                    store8(_codebuf_base + sln, 0x90);
+                                                    sln += 1;
+                                                }
+                                                lase_count += 1;
+                                            }
+                                        }
+                                    } } } }
+                    } } } }
+        slase_i += 1;
     }
     # v4.8.4-alpha7/alpha8: #regalloc routing via post-body peephole.
     # alpha7 did the core patch (rewrite `mov rax,[rbp-N]` /

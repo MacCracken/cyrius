@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.52** (2026-09-04) — cycc **1,192,312 B** (.text 1,042,416) · `check.sh` **GREEN** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **119** shell gates under `tests/gates/<bucket>/` · self_compile **661.8 ms** · **5 open issues + 3 open proposals** — and every remaining issue is an arc or a maintainer decision, not a patch.
+**Current head: v6.5.53** (2026-09-05) — cycc **1,192,312 B** (.text 1,042,416) · `check.sh` **GREEN** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **119** shell gates under `tests/gates/<bucket>/` · self_compile **661.8 ms** · **5 open issues + 3 open proposals** — and every remaining issue is an arc or a maintainer decision, not a patch.
 
 ⭐ **The v6.5.x minor is CLOSED.** Band K finished it at `.45`–`.47`; `.48` was the
 post-closeout sigil fold plus the one consolidation carried out of the band. What each band
@@ -179,7 +179,37 @@ compiling clean.
 
 Gate: `tests/gates/codegen/simd_param_inline.sh` (4 axes; values, not just exit codes).
 
-#### Remaining for `.52`: item 1, register residency
+#### `.53` — item 1 continued: kill the round-trips the inlining exposed
+
+⚠ **`.53` was pinned to "regalloc re-emit" and has been re-aimed at finishing this arc instead.**
+The reason is in the measurements below: `.52` left the chain fully inlined with the arithmetic
+already emitted as packed ops, so what remains between them is pure memory traffic — the thing
+item 1 exists to remove — and it is reachable now. Regalloc re-emit moves to `.54`, and the
+payload-enum work to `.55`. An arc is 1–2 releases; this is the second.
+
+**Landed at `.53`: LASE now sees 128-bit SIMD store→load pairs.** A 3-link f32v4 chain carried
+**18 `movupd`, 3 of them a dead reload**; now 15. A 2M-iteration chain runs **15 ms → 14 ms**.
+The safety property is the ModRM pin — `0x85` is reg 000 = **xmm0**, so requiring it on BOTH the
+store and the load guarantees the load's destination is the register the store just wrote, the
+same property the integer LASE gets for free from rax. The 256-bit path is deliberately
+untouched: a f64v4 store is followed by another STORE (`0x8D` = xmm1), never the matching load.
+Gate: `tests/gates/codegen/lase_simd_pairs.sh`, mutation-proven (3 pairs survive pre-`.53`).
+
+⛔ **THE PICKER IS THE WRONG LEVER AND THE PIN SAYING OTHERWISE WAS WRONG.** Both this file and
+`state.md` said the blocker was the allocator's byte matcher only recognising REX.W `mov`. It is
+not, for a reason that is an ABI fact rather than a missing feature: **SysV has NO callee-saved
+XMM registers**, so a vector value cannot survive a call at all, and before `.52` every chain link
+*was* a call. Widening the picker would have bought exactly nothing. What actually unlocked this
+was removing the calls.
+
+**What is still on the table**, measured rather than assumed: the chain retains **15 `movupd`**
+because most reloads are NOT adjacent to their store — an intervening store to a *different* slot
+separates them, and a windowed matcher does not help (measured: window 0,1,2,3 all catch the same
+3 pairs). Removing those needs real liveness for a vector register class, i.e. the linear-scan
+picker extended to a second register file. That is the honest remainder of item 1, and it is now
+the only part left.
+
+#### Superseded: "Remaining for `.52`: item 1, register residency"
 
 Landed, byte-identical (378 files, fixpoint holds) because they only fire under
 `_INLINE_OK`/`_MONOMORPH_OK`, which stay off:

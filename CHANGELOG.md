@@ -4,6 +4,64 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.53] — 2026-09-05
+
+### Fixed
+
+- **LASE now eliminates redundant 128-bit SIMD store→load pairs.** v6.5.52 made the value-form
+  SIMD wrappers inline, which turns a chain into packed ops separated by
+  store-then-immediately-reload of the same frame slot. LASE could not see those — it matched
+  only the REX.W integer forms `48 89 85` / `48 8B 85`. A 3-link f32v4 chain carried **18
+  `movupd`, three of them a dead reload; now 15**, and a 2M-iteration chain runs **15 ms → 14 ms**.
+
+  ⭐ **The safety property is the ModRM pin.** ModRM is mod(2) reg(3) rm(3), so `0x85` = mod 10
+  (disp32), reg 000 (**xmm0**), rm 101 (rbp); xmm1 is `0x8D`, xmm2 `0x95`, xmm3 `0x9D`. Requiring
+  `0x85` on *both* the store and the load guarantees the load's destination is the register the
+  store just wrote — exactly the property the integer version gets for free because both forms
+  encode rax.
+
+  ⛔ **The 256-bit path is deliberately untouched.** An f64v4/f32v8 value is stored as a *pair*
+  (`66 0F 11 85 <d>` xmm0, then `66 0F 11 8D <d+16>` xmm1), so its store is followed by another
+  **store**, never by the matching load, and the matcher never fires on it. Relaxing the ModRM
+  check to "any xmm" would let a high-half store pair with a low-half load of a *different*
+  value — a silent wrong answer, not a crash. A gate axis pins it.
+
+  The elimination NOP-fills in place rather than removing bytes, so no jump displacement, fixup
+  CP or inline switch-table entry moves — deliberately, since the v6.5.20 miscompile came from a
+  pass relocating code without knowing about an inline data table.
+  Gate: `tests/gates/codegen/lase_simd_pairs.sh` (3 axes, mutation-proven).
+
+### Benchmarks
+
+| | .52 | .53 | |
+|---|---|---|---|
+| `compiler/self_compile` | 665.6 ms | **669.3 ms** | |
+| `size/cycc` | 1,196,656 B | **1,200,752 B** | |
+| f32v4 chain, 2M iters | 16 ms | **14 ms** | **−12 %** |
+| `movupd` in a 3-link chain | 18 | **15** | |
+
+⚠ The compiler grew: the SIMD LASE arm, the register-identity comparison, and the switch-table
+guard on **both** LASE loops. The win is in consumer SIMD code — cycc's own source has no
+value-form SIMD.
+
+### Changed
+
+- **`.53` was re-aimed from "regalloc re-emit" to finishing the SIMD arc**, because `.52` left
+  the chain fully inlined with the arithmetic already emitted as packed ops — so what remained
+  between them was pure memory traffic, which is what item 1 exists to remove, and it became
+  reachable. Regalloc re-emit moves to `.54`, payload-enum representation to `.55`.
+
+  ⛔ **And the pinned blocker for item 1 was wrong.** Both `roadmap.md` and `state.md` said it
+  was the allocator's byte matcher only recognising REX.W `mov`. It is not — **SysV has no
+  callee-saved XMM registers**, so a vector value cannot survive a call at all, and before `.52`
+  every chain link *was* a call. Widening the picker would have bought nothing; removing the
+  calls is what unlocked this.
+
+  ⚠ **What remains is measured, not assumed:** the chain still carries 15 `movupd` because most
+  reloads are *not* adjacent to their store — an intervening store to a different slot separates
+  them, and a windowed matcher does not help (windows of 0/1/2/3 all catch the same 3 pairs).
+  Removing those needs real liveness for a vector register class. That is the honest remainder.
+
 ## [6.5.52] — 2026-09-04
 
 ### Fixed
