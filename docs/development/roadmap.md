@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.51** (2026-09-04) — cycc **1,192,312 B** (.text 1,042,416) · `check.sh` **GREEN** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **119** shell gates under `tests/gates/<bucket>/` · self_compile **661.8 ms** · **5 open issues + 3 open proposals** — and every remaining issue is an arc or a maintainer decision, not a patch.
+**Current head: v6.5.52** (2026-09-04) — cycc **1,192,312 B** (.text 1,042,416) · `check.sh` **GREEN** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **119** shell gates under `tests/gates/<bucket>/` · self_compile **661.8 ms** · **5 open issues + 3 open proposals** — and every remaining issue is an arc or a maintainer decision, not a patch.
 
 ⭐ **The v6.5.x minor is CLOSED.** Band K finished it at `.45`–`.47`; `.48` was the
 post-closeout sigil fold plus the one consolidation carried out of the band. What each band
@@ -136,7 +136,50 @@ where the loop kernels are. And **type inference does not carry `f64v4`**: `var 
 fails with *"value-form SIMD arg type mismatch"* at the next use, so a chain must be written
 `var t: f64v4 = ...` today. Both are arc surface.
 
-#### Status: three of four blockers FIXED (v6.5.51 tree), the fourth is the remaining work
+#### Status: ✅ **ITEM 2 LANDED at `.52`** — the wrappers inline, and it is a measured win
+
+**2M-iteration f32v4 chain: 24 ms → 16 ms (1.5×).** A 2-link value chain drops from 5 `callq`
+to 3. All 10 SIMD `.tcyr` pass, self-host fixpoint holds, seed-derive is green, and the
+differential is confined to the 4 SIMD tests (which now produce correct results).
+
+⚠ **Static `movupd` count went UP (9 → 13) while runtime went DOWN.** Inlining removes call
+layers, not memory traffic — the wrapper body is still `var r; <kernel>(&r,&a,&b,n); return r;`,
+so the round-trip through `&r` remains. **That round-trip is what item 1 removes**, and it is now
+unblocked. Do not read the instruction count as a regression; measure.
+
+**Four separate defects had to land together**, each of which alone still looked nearly working:
+
+1. **`SFINL` packed the wrong slots — this was the compiler SIGSEGV.** It read param names from
+   slots 0/1, which assumes one slot per param. A wide param puts (n-1) ANON fillers *before*
+   its named slot, so slot 0 held the marker `0 - 1`; through `& 0xFFFFFFFF` that becomes
+   `0xFFFFFFFF`, **positive as an i64**, so `FINDLOCAL`'s `if (sn >= 0)` guard passed it to
+   `STREQ` as a name offset. Confirmed at the fault: `rsi = 0xffffffff`. ⚠ Latent for anyone
+   enabling `_INLINE_OK`, independent of SIMD.
+2. **Width-driven slots**, from a new per-fn param-type table (`GFIPT`/`SFIPT`, lazy-alloc'd at
+   the fn ceiling on the `_fnt_tparams` precedent: no heap-map entry, no fork edit, no
+   `_fnt_grow` row). `_fnt_simdmask` was checked first and is *nearly* enough — its 2 bits/param
+   give the width but not the sentinel (code 1 covers f64v2 AND every 16-byte int vector), and a
+   wrong sentinel is a wrong-type bug rather than a crash, i.e. the worse failure.
+3. **`SLTYPE` re-applied** to the replayed param, so it stays SIMD-typed inside the body.
+4. **`PCMPE` does not materialise a value-form SIMD operand at all.** The normal path routes
+   these in TWO PASSES for a stated reason — the arg "MUST be a local", loaded to XMM only
+   *after* the int args, "so int-arg eval (which may clobber XMM during PCMPE) doesn't trample
+   SIMD state". The replay had no such pass, so every SIMD arg stored whatever XMM0 last held:
+   three consecutive `movupd %xmm0, ...` with no load between them, and `f32v4_dot` returning
+   36.0 for an 8.0 case. Fixed with a memory-to-memory copy (`_inl_simd_arg`) whose load and
+   store are ADJACENT, so no clobber window exists and no second pass is needed.
+
+Plus two scoping fixes the wrappers forced, both real failures during development: the bodies are
+all `var r: <vec>; ...; return r;`, so inlining them put a `var r` into the caller — colliding
+with a caller's own `r`, and leaving the name registered so a *second* use of the same wrapper
+collided with the first. The replay is now a nested SCOPE (the dup check is `GLDEP == GSDEP`) and
+clears its names on teardown. ⚠ **GFLC is deliberately NOT restored** — the inlined body's emitted
+code still addresses those frame slots at runtime, and reusing them made `simd_ints` SIGSEGV while
+compiling clean.
+
+Gate: `tests/gates/codegen/simd_param_inline.sh` (4 axes; values, not just exit codes).
+
+#### Remaining for `.52`: item 1, register residency
 
 Landed, byte-identical (378 files, fixpoint holds) because they only fire under
 `_INLINE_OK`/`_MONOMORPH_OK`, which stay off:

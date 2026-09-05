@@ -29,6 +29,53 @@ include "src/frontend/parse_ctrl.cyr"
 # the binding width-driven and type-carrying, mirroring exactly what PARSE_FN_DEF does for a
 # real (non-inlined) SIMD param: (nslots-1) anonymous filler slots first, then the NAMED slot
 # last at the deepest displacement — which is where `&v` and lane access resolve.
+# v6.5.52 — bind ONE value-form SIMD argument on the inline-replay path.
+#
+# ⛔ WHY THIS EXISTS INSTEAD OF `PCMPE` + STORE. `PCMPE` does not materialise a value-form
+# SIMD operand at all — the normal call path routes those in TWO PASSES for a stated reason:
+# the arg "MUST be a local", is recorded to a scratch table, and the XMM load is emitted
+# AFTER the int args "so int-arg eval (which may clobber XMM during PCMPE) doesn't trample
+# SIMD state". Without that, the replay's store wrote whatever XMM0 last held — measured on a
+# 2-param call as three consecutive `movupd %xmm0, ...` with no load between them, so both
+# params took the previous local's value (f32v4_dot returned 36.0 for an 8.0 case).
+#
+# The inline path needs no XMM ordinal — the destination is a frame slot, not an ABI register
+# — so this copies memory-to-memory and sidesteps the clobber problem entirely: the load and
+# the store are ADJACENT instructions, leaving no window for anything to touch XMM0.
+#
+# Mirrors the normal path's checks: the arg must be an IDENT naming a local whose SLTYPE
+# matches the param's class (size-class for 16-byte vectors, exact for f32v4/f64v4), so a
+# mismatched vector is rejected rather than silently reinterpreted.
+fn _inl_simd_arg(S, dst_slot, w, want_t): i64 {
+    if (PEEKT(S) != 2) {
+        ERR_MSG(S, "value-form SIMD arg must be a local IDENT (inline-replay path)", 62);
+        return 0;
+    }
+    var anoff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    var alli = FINDLOCAL(S, anoff);
+    if (alli < 0) {
+        ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47);
+        return 0;
+    }
+    var alt = GLTYPE(S, alli);
+    if (want_t == 0 - 2121) {
+        if (alt != 0 - 2121) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56); }
+    } elif (want_t == 0 - 2125) {
+        if (alt != 0 - 2125) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56); }
+    } else {
+        if (_is_simd128(S, alt) == 0) { ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44); }
+    }
+    if (w == 4) {
+        EFLLOAD_F64V4_PAIR(S, alli);
+        EFLSTORE_F64V4_PAIR(S, dst_slot);
+        return 0;
+    }
+    EFLLOAD_F64V2_PAIR(S, alli);
+    EFLSTORE_F64V2_PAIR(S, dst_slot);
+    return 0;
+}
+
 fn _inl_store_arg(S, slot, w): i64 {
     if (w == 2) { EFLSTORE_F64V2_PAIR(S, slot); return 0; }
     if (w == 4) { EFLSTORE_F64V4_PAIR(S, slot); return 0; }
@@ -1676,11 +1723,18 @@ fn PARSE_FNCALL(S, noff): i64 {
                 if (PEEKT(S) != 11) {
                     var iago = 1;
                     while (iago == 1) {
-                        if (iargc == 0) { _ginf0 = _infer_conc_at_cursor(S); }
-                        if (iargc == 1) { _ginf1 = _infer_conc_at_cursor(S); }
-                        PCMPE(S);
-                        if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
-                        if (iargc == 1) { _inl_store_arg(S, p1_slot, _w1); }
+                        # v6.5.52 — a SIMD param takes the local-copy path; PCMPE cannot
+                        # materialise a value-form vector (see _inl_simd_arg).
+                        var _sd = 0;
+                        if (iargc == 0) { if (_t0 != 0) { _inl_simd_arg(S, p0_slot, _w0, _t0); _sd = 1; } }
+                        if (iargc == 1) { if (_t1 != 0) { _inl_simd_arg(S, p1_slot, _w1, _t1); _sd = 1; } }
+                        if (_sd == 0) {
+                            if (iargc == 0) { _ginf0 = _infer_conc_at_cursor(S); }
+                            if (iargc == 1) { _ginf1 = _infer_conc_at_cursor(S); }
+                            PCMPE(S);
+                            if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
+                            if (iargc == 1) { _inl_store_arg(S, p1_slot, _w1); }
+                        }
                         iargc = iargc + 1;
                         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                         else { iago = 0; }
@@ -1717,8 +1771,20 @@ fn PARSE_FNCALL(S, noff): i64 {
                 var _gsv_n1 = _tp_n1; var _gsv_c1 = _tp_c1;
                 _bind_generic_call(S, fi, _ginf0, _ginf1);
                 SIDEP(S, GIDEP(S) + 1);
+                # v6.5.52 — the replayed body is a NESTED SCOPE, so bump the scope depth for it.
+                # The duplicate-variable check is `GLDEP(existing) == GSDEP()`, i.e. same-scope,
+                # and the replay previously bumped only the INLINE depth. A callee body that
+                # declares `var r` therefore collided with a caller local of the same name —
+                # which every value-form SIMD wrapper triggers, since they are all
+                # `var r: <vec>; ...; return r;` and callers routinely name a result `r`.
+                # Shadowing is the correct semantics here: FINDLOCAL searches backward so the
+                # body's `r` wins inside the body, and the teardown clears it so the caller's
+                # `r` is visible again afterwards.
+                var _sdep_saved = GSDEP(S);
+                SSDEP(S, _sdep_saved + 1);
                 STI(S, GFBS(S, fi));
                 PARSE_PROG(S);
+                SSDEP(S, _sdep_saved);
                 # Patch return jumps from inlined body to here
                 var new_rpc = vec_len(rp_vec);
                 var ri = saved_rpc;
@@ -1733,12 +1799,27 @@ fn PARSE_FNCALL(S, noff): i64 {
                 _tp_n1 = _gsv_n1; _tp_c1 = _gsv_c1;
                 # Restore token index
                 STI(S, saved_ti);
-                # Invalidate temporary param locals
-                # v6.5.52: invalidate EVERY slot the params occupied, not just the two named
-                # ones — a wide param owns (nslots-1) anon fillers below its named slot, and
-                # leaving those registered lets a later local alias them.
-                var _inv = 0;
-                while (_inv < _ptot) { S64(S + 0x5D9D000 + (saved_flc + _inv) * 8, 0 - 1); _inv = _inv + 1; }
+                # Invalidate the temporary locals the replay created.
+                # v6.5.52: this now covers the WHOLE replay window — the param slots (a wide
+                # param owns (nslots-1) anon fillers below its named slot) AND any locals the
+                # replayed BODY declared. Leaving the body's names registered makes a second
+                # inline of the same callee redeclare them: every value-form SIMD wrapper is
+                # `var r: <vec>; <op>(&r, &a, &b, n); return r;`, so `f32v4_add` used twice in
+                # one fn reported "duplicate variable" at lib/simd.cyr. GFLC is restored too so
+                # the slots are reusable; `_flc_hwm` keeps the peak for frame sizing.
+                var _body_flc = GFLC(S);
+                if (_body_flc > _flc_hwm) { _flc_hwm = _body_flc; }
+                var _inv = saved_flc;
+                while (_inv < _body_flc) {
+                    S64(S + 0x5D9D000 + _inv * 8, 0 - 1);
+                    SLTYPE(S, _inv, 0);
+                    _inv = _inv + 1;
+                }
+                # ⚠ GFLC is deliberately NOT restored. The inlined body's EMITTED CODE still
+                # addresses these frame slots at runtime, so handing them to a later local is a
+                # real aliasing bug — measured: restoring GFLC made simd_ints SIGSEGV at run
+                # time while compiling clean. Only the NAME registrations are cleared, which is
+                # what the duplicate-variable check reads; the slots stay spent.
                 return 0;
             } } } }
     # NORMAL CALL PATH
@@ -4394,14 +4475,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # `|| _MONOMORPH_OK` gate also re-enabled GENERAL inlining of non-generic fns (the v1.11.3
     # x86 size regression that disabled _INLINE_OK; +25.6% on cycc). Gating to GFTP!=0 keeps
     # non-generic codegen byte-identical under the flag → the CYRIUS_MONOMORPH flip is byte-id.
-    # v6.5.52 — the SIMD-param admission (`|| _fn_has_simd_param(S, pc) == 1`) is NOT enabled
-    # yet. Three of the four defects blocking it are fixed below/above (named-slot packing in
-    # SFINL, width-driven slot allocation, SLTYPE re-application). The fourth is not: value-form
-    # SIMD args need the normal call path's TWO-PASS routing — record the arg's local, then emit
-    # ELOAD_F64V2_TO_XMM *after* the int args, because int-arg PCMPE clobbers XMM — and the
-    # replay path has no such pass, so PCMPE never materialises the operand and every SIMD arg
-    # stores whatever XMM0 last held. See roadmap.md `.52`.
-    if (_INLINE_OK == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0)) { SFBS(S, fi, GTI(S)); }
+    # v6.5.52 — admit SIMD-param fns (the value-form f32v4/f64v2/f64v4 wrappers) to the
+    # inline-replay path so a SIMD chain stops crossing call boundaries. General inlining stays
+    # OFF: it cost +25.6 % on cycc at v1.11.3, so this is a targeted admission, not a flag flip.
+    if (_INLINE_OK == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) { SFBS(S, fi, GTI(S)); }
     # v6.3.9 (F-fns): a generic fn's body references type-param `T`s that are unbound
     # at definition. In an i64-everywhere language the dominant instantiation is i64,
     # so the BASE fn IS the i64 monomorphization: bind every `T -> i64` for the base
@@ -4446,7 +4523,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (_gen_base == 1) { _tp_clear(S); }
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     # Record body end and classify inline candidate. v6.4.0 DECOUPLE: generic fns only.
-    if (_INLINE_OK == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0)) {
+    if (_INLINE_OK == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) {
         SFBE(S, fi, GTI(S));
         var btokens = GTI(S) - GFBS(S, fi);
         var can_inline = 1;
@@ -4479,7 +4556,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (st == 15) { can_inline = 0; }
                 if (st == 16) { can_inline = 0; }
                 if (st == 55) { can_inline = 0; }
-                if (st == 3) { can_inline = 0; }
+                # v6.5.52 — a body `var` decl is allowed for SIMD-param fns. The value-form
+                # wrappers all declare a scratch (`var r: f32v4; f32v_add(&r,&a,&b,4); return r;`),
+                # so the blanket exclusion kept out exactly the fns this arc needs. Body locals
+                # allocate at GFLC, which the replay has already advanced past the param slots,
+                # so they land above them. Kept for every other fn: this stays scoped to the
+                # targeted admission rather than widening general inlining.
+                if (st == 3) { if (_fn_has_simd_param(S, pc) == 0) { can_inline = 0; } }
                 sci = sci + 1;
             }
         }

@@ -4,6 +4,70 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.52] — 2026-09-04
+
+### Fixed
+
+- **Value-form SIMD wrappers now INLINE — and four separate defects had to land together for
+  that to be correct.** A SIMD value chain emitted a `call` per link, and every xmm is
+  caller-saved under SysV, so each intermediate was provably spilled and reloaded on the very
+  next instruction. No register allocator can remove that while the chain crosses call
+  boundaries, which makes inlining a **prerequisite** for register residency rather than the
+  independent nicety both the filing and the roadmap called it.
+  **Measured: a 2M-iteration f32v4 chain 24 ms → 16 ms (1.5×); a 2-link chain 5 `callq` → 3.**
+
+  1. **`SFINL` packed the wrong slots — this was a compiler SIGSEGV.** It read param names from
+     slots 0/1, which assumes one slot per param. A wide param allocates (n−1) **anon fillers
+     before** its named slot, so slot 0 held the marker `0 - 1`; through `& 0xFFFFFFFF` that
+     becomes `0xFFFFFFFF`, which is **positive as an i64**, so `FINDLOCAL`'s `if (sn >= 0)`
+     guard passed it to `STREQ` as a name offset. Confirmed at the fault: `rsi = 0xffffffff`.
+     ⚠ Latent for anyone enabling `_INLINE_OK`, independent of SIMD.
+  2. **Width-driven param slots**, from a new per-fn param-type table (`GFIPT`/`SFIPT`,
+     lazy-alloc'd at the fn ceiling on the `_fnt_tparams` precedent — no heap-map entry, no fork
+     edit, no `_fnt_grow` row). `_fnt_simdmask` was evaluated first and is *nearly* sufficient:
+     its 2 bits/param give the width but not the sentinel (code 1 covers f64v2 *and* every
+     16-byte integer vector), and a wrong sentinel is a wrong-type bug rather than a crash.
+  3. **`SLTYPE` re-applied** to the replayed param, so it stays SIMD-typed inside the body.
+  4. **`PCMPE` does not materialise a value-form SIMD operand at all.** The normal call path
+     routes them in **two passes** for a stated reason — the arg *"MUST be a local"*, loaded to
+     XMM only *after* the int args, *"so int-arg eval (which may clobber XMM during PCMPE)
+     doesn't trample SIMD state"*. The replay had no such pass, so every SIMD arg stored
+     whatever XMM0 last held — three consecutive `movupd %xmm0, …` with no load between them,
+     and `f32v4_dot` returning 36.0 where 8.0 was correct. Fixed with a memory-to-memory copy
+     whose load and store are **adjacent**, so no clobber window exists and no second pass is
+     needed.
+
+  Plus two scoping fixes the wrappers forced: their bodies are all `var r: <vec>; …; return r;`,
+  so inlining put a `var r` into the caller — colliding with a caller's own `r`, and leaving the
+  name registered so a *second* use of the same wrapper collided with the first. The replay is
+  now a nested **scope** (the duplicate check is `GLDEP == GSDEP`) and clears its names on
+  teardown. ⚠ **`GFLC` is deliberately not restored**: the inlined body's emitted code still
+  addresses those frame slots at runtime, and reusing them made `simd_ints` SIGSEGV while
+  compiling clean.
+
+  ⚠ **Static `movupd` count rose 9 → 13 while runtime fell.** Inlining removes call layers, not
+  memory traffic — the body still round-trips through `&r`. That round-trip is what item 1
+  (register residency) removes, and it is now unblocked. Do not read the instruction count as a
+  regression.
+
+### Benchmarks
+
+`sh scripts/bench-history.sh`, against `.51`:
+
+| | .51 | .52 | |
+|---|---|---|---|
+| `compiler/self_compile` | 662.9 ms | **665.6 ms** | |
+| `size/cycc` | 1,192,496 B | **1,196,656 B** | +4,160 B |
+| f32v4 chain, 2M iters | 24 ms | **16 ms** | **−33 %** |
+
+⚠ The compiler grew because the inline-replay path gained the param-type table and the
+width-driven binding. The win it buys is in *consumer* SIMD code, not in cycc itself — cycc's
+own source contains no value-form SIMD.
+
+  All 10 SIMD `.tcyr` pass; self-host fixpoint and seed-derive green; the differential is
+  confined to the 4 SIMD tests, which now produce correct results.
+  Gate: `tests/gates/codegen/simd_param_inline.sh` (4 axes, asserting values not exit codes).
+
 ## [6.5.51] — 2026-09-04
 
 ### Fixed
