@@ -162,6 +162,15 @@ sh "$ROOT/tests/gates/frontend/lexid_prefix_exact.sh"
 # `private;` forms are the legitimate spellings and must keep working.
 sh "$ROOT/tests/gates/frontend/private_per_item_rejected.sh"
 
+# v6.5.57: copying an aggregate must copy EVERY word. `dst = src;` used to copy only the first
+# 8 bytes for structs AND vectors — reported as a SIMD bug, but a two-field struct truncated
+# identically. Axis 7 keeps THREE aggregates live because the fix also had to close a latent
+# register-allocator bug: an aggregate's fields are reached as `lea rcx,[rbp+base]`, so only its
+# base slot ever appears as an rbp disp and the picker could promote a later word whose real
+# writes go through rcx. With only two aggregates the picker never reaches its `count > 1`
+# threshold and a build with that exclusion removed still passes.
+sh "$ROOT/tests/gates/codegen/aggregate_copy_all_words.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

@@ -30,15 +30,19 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.56** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
+**Current head: v6.5.57** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **119** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
-⭐ **The v6.5.x minor is CLOSED.** Band K finished it at `.45`–`.47`; `.48` was the
-post-closeout sigil fold plus the one consolidation carried out of the band. What each band
-delivered is in
-[`completed-phases.md`](completed-phases.md#v65x--bands-and-what-each-actually-delivered);
-per-release detail is in [`CHANGELOG.md`](../../CHANGELOG.md).
+⛔ **THE v6.5.x MINOR IS NOT CLOSED, AND THIS LINE SAYING IT WAS IS THE DEFECT.** It read *"The
+v6.5.x minor is CLOSED. Band K finished it at `.45`–`.47`"* while **`.48` through `.56` — nine
+releases — shipped into the minor** and four issues stayed open. The consequence was not
+cosmetic: with the minor marked closed there was no slot list, so nine releases of work were
+selected ad hoc and the open issues were pinned to nothing. Band K closed a BAND, not the minor.
+
+⭐ **What closes v6.5.x is stated below and nowhere else: the four open issues, decomposed into
+numbered slots with acceptance criteria.** When those land the minor closes and the next release
+is v6.6.0.
 
 ⚠ **This section was stale for eleven releases and that is the reason it now carries live
 figures only.** Until 2026-09-04 it read "Current head: v6.5.48" while quoting `.37`-era numbers
@@ -209,21 +213,122 @@ so `var ah = 7; var ahxaa = 99;` read `ah` as 99 — two names became one symbol
 releases, across 127 repos. And `private fn h()` compiled with no diagnostic while privatising the
 whole file. See CHANGELOG [6.5.56].
 
-### After `.56` — UNPINNED, and that is a decision from measurement
+### THE SLOT LIST — what remains of v6.5.x
 
-⛔ **The old order (`stackless coroutines next`) does not survive contact with the code.** Every
-candidate was re-measured at `.56` slot entry by running the compiler:
+Every open issue is pinned to a numbered release with acceptance criteria. Sizes come from the
+`.56` slot-entry premise-check, which measured each one by running the compiler.
 
-| Candidate | Measured verdict |
-|---|---|
-| **Aggregate assignment truncation** *(newly filed)* | 🔴 **Strongest lead.** `dst = src;` copies only the first 8 bytes for structs AND vectors — silent wrong values in the most-used aggregate form, zero corpus coverage. A first fix attempt is written up in the issue, including why it was reverted. |
-| Whole-program NOP compaction | 🟡 **live-but-low-value** — the gap is real and unshipped, but the prize is smaller and the price larger than the record claimed. IR=3 is already at `.text` parity after `.54`. |
-| Stackless coroutines Half B | 🟡 **Real but unjustified right now** — genuinely unbuilt (a task calling `async_wait_fd` re-enters its body from the top; an unconditional park never terminates), but there is **no consumer**, the filing repo records no block, and `async fn` has **zero non-comment uses ecosystem-wide**. |
-| Vector register class | 🟡 **Blocked on two prerequisites** — `_fn_has_simd_param` (`util.cyr:989`) reads a wide param's SLTYPE off the wrong slot, so inlining reaches only the two-128-bit-param wrapper shape and the f64v4 family (what the issue was actually filed about) still emits a call per link. |
+⚠ **"It is an arc" is a size, not a plan, and it is what this list previously said instead of
+decomposing the work.** Each row below states what SHIPS in that release and what must be true
+for it to be done.
 
-⚠ **An unpinned list is not a parked one.** The rule from `.51` applies: where a row looks like it
-needs permission, take the sensible default and start. What changed here is only that the ORDER is
-now set by measurement rather than by the order the filings arrived in.
+#### `.57` — aggregate assignment copies every word *(in flight)*
+*(closes `2026-09-05-aggregate-assignment-truncates-to-8-bytes`)*
+
+Three fixes, one defect surface: the assignment path gets the multi-word copy the declaration path
+has had since the struct-byval work; `_try_struct_copy_init` learns vector descriptors (it fell
+through to a scalar init for `var B: f32v4 = src`); and the register-allocator picker stops
+promoting an aggregate's non-base words — latent since the picker existed, because a field is
+reached as `lea rcx,[rbp+base]` so only the base slot ever appears as an rbp disp.
+
+**Done when:** `aggregate_copy_all_words.sh` green across struct 2/3/4-slot, f32v4, f64v2, both
+assignment and declaration forms, self-assignment, three-live-aggregates (the regalloc axis), and
+a scalar control · mutation-proven per fix · release gate green.
+
+#### `.58` — SIMD wrapper inlining reaches every wrapper shape
+*(`simd-f64v-memory-operand`, part 1 — **user-selected next**)*
+
+`_fn_has_simd_param` (`util.cyr:989-996`) loops `i < pc` over `GLTYPE(S,i)`, but a wide param's
+SLTYPE lives on its NAMED slot, which sits after `slots-1` anonymous fillers. The named slot falls
+inside `[0,pc)` only when `slots-1 < pc` — true only for **two 128-bit params**. This is the same
+off-by-slot bug `.52` fixed in `SFINL`, left unfixed in the gate that decides whether to look. So
+`f64v4_add(a,b)` — the family the issue was filed about, from svara — still emits a `callq` per
+link. `pc > 2` (`parse_fn.cyr:4530`) separately excludes the 3-param `_fmadd` wrappers.
+
+**Measured today:** 3-link f64v4 chain, 2M iterations = **72–78 ms with 3 `callq` and 20
+`movupd`**, against 4 ms for `gcc -O2 -mavx2`. The equivalent f32v4 fix at `.52` was 24 → 16 ms.
+
+**Done when:** a 1-param 128-bit wrapper, a 1-param 256-bit wrapper and `f64v4_add(a,b)` all
+inline (no `callq` per link, verified by disassembly) · the f64v4 chain time drops measurably ·
+corpus byte-identical outside the SIMD tests · gated on real hardware, because the value-form SIMD
+ABI differs per target.
+
+#### `.59` — kill the round-trips inlining exposes
+*(`simd-f64v-memory-operand`, part 2)*
+
+Two cheap wins measured at `.53`/`.56`, neither needing the register class. **(a)** A 128-bit arm
+for `DSE_PASS` (`parse_fn.cyr:2525-2563`, currently `48 89 85` only): 3 of the 11 remaining stores
+in a 3-link f32v4 chain are provably never read once LASE removed their reloads — 15 `movupd` →
+12. Same shape as `.53`'s LASE arm. **(b)** Constant-`n` loop elision in `EMIT_F32V_LOOP` /
+`EMIT_F64V_LOOP`: every value-form wrapper passes a literal `n` equal to one register width, so
+the loop always runs exactly once — removes ~14 of ~33 instructions per link plus the pointer
+spills.
+
+⚠ **Do not scope a release around (b) alone.** Instruction count is not the cost here: a C/SSE
+proxy with 16 instructions per iteration but 5 serialized store→reload round-trips measured
+**slower** than cyrius's 66-instruction path. Removing scaffolding without removing round-trips is
+worth ~20–25 %, not a multiple.
+
+**Done when:** `movupd` count drops on the gate's own fixture, timing improves, and the corpus is
+byte-identical outside SIMD.
+
+#### `.60`–`.61` — the vector register class
+*(`simd-f64v-memory-operand`, part 3 — closes the issue)*
+
+Only now, because until `.58` lands every chain link crosses a call and **SysV has no callee-saved
+XMM**, so any measurement before that is of the wrong thing. Needs: (a) xmm0-15 modelled as a
+**caller-saved** class with intervals split at every call — the existing picker's "hold in a
+callee-saved register for the interval" model does not transfer; (b) value-form ops emitting
+reg-reg-reg instead of the memory kernel; (c) real 16/32-byte liveness, since the current
+per-local safety scan is byte-pattern and 8-byte-only.
+
+**Done when:** the **svara formant bench closes to single-digit-× of the Rust baseline** — this is
+the minor's stated acceptance anchor and the reason the arc exists.
+
+#### `.62` — payload enums stop allocating for real
+*(closes `sock-send-result-allocates-per-call`)*
+
+`.55` shipped the compiler capability (`enum Name: stack`). This is the ecosystem half: teach `?`
+to accept a `(tag, payload)` pair (it currently desugars to `load64(rax + 8)`, i.e. it
+dereferences), rewrite `is_ok` / `is_err_result` / `result_unwrap` / `err_code_of` for the value
+form, migrate `lib/result.cyr` + `lib/tagged.cyr`, and update the hand-rolled `load64(+8)` reads
+(6 in `lib/bayan.cyr`). Then re-vendor.
+
+⚠ Scope check from `.55`: the "24 declarations / 516 sites" figure was a raw grep count including
+prose. Live it is **9 declarations / ~306 occurrences** here, and **3 distinct stdlib types**
+ecosystem-wide.
+
+**Done when:** `Result`/`Option`/`Either` construction allocates **0 bytes**, every existing
+consumer still compiles, and crossos is green on all four hosts.
+
+#### `.63` — whole-program NOP compaction
+*(closes `ir-regalloc-rewrite-needs-reemit`)*
+
+The `.54` residual: 8,249 NOPs are the IR passes' own eliminations, written after every per-function
+compaction has run, so only a pass after the IR fixpoint collects them. Needs the IR passes to
+register their NOP runs program-wide, then repair jump disp32s (decoder-based, via `CLASSIFY_CF` /
+`CF_TARGET` in `backend/x86/decode.cyr`), fixup-table CPs, switch-table entries, function offsets
+and `IR_NODE_CP`.
+
+⚠ Rated **live-but-low-value** at `.56`: prize smaller and price larger than the issue file
+claimed, and IR=3 is already at `.text` parity. It is last of the code work for that reason.
+
+**Done when:** IR=3 `.text` is measurably smaller than the default build and an IR=3-built cycc
+still reproduces the default cycc byte-identically.
+
+#### Stackless coroutines — **RECOMMEND MOVING OUT OF v6.5.x**
+*(`stiva-stackless-coroutines-interactive-exec`)*
+
+Genuinely unbuilt and verified broken (a task calling `async_wait_fd` re-enters its body from the
+top; an unconditional park never terminates). But measured at `.56`: **no consumer** — the filing
+repo records no block — and **zero non-comment `async fn` uses anywhere in the ecosystem**. Two
+releases of compiler-level CPS transform for a feature nothing uses.
+
+**This is the one call in this list that is genuinely the user's**, because it is a priority
+question and not a technical one: move it to v6.6.x, or keep it as `.64`–`.65` and close the minor
+after it.
+
+#### Then v6.5.x closes → v6.6.0
 
 
 ## The slot sequence — CLOSED

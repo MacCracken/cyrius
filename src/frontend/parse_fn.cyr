@@ -5034,6 +5034,44 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     ru_p = ru_p + 1;
                 }
 
+                # v6.5.57 — AN AGGREGATE'S NON-BASE WORDS ARE INVISIBLE TO THE SCAN ABOVE.
+                # A struct field or vector lane is reached as `lea rcx,[rbp+base]` then
+                # `mov [rcx+off]`, so ONLY the aggregate's base slot ever appears as an rbp
+                # disp32. Its second and later words are named by no `[rbp+disp]` reference at
+                # all, so the lea test cannot mark them and the picker was free to promote one
+                # — while the field write that really sets it goes through rcx and never
+                # reaches the register. The read then returns whatever the register held.
+                #
+                # ⚠ LATENT SINCE THE PICKER EXISTED, and it stayed latent only because those
+                # words were referenced at most once, below the `iv_c > 1` candidacy threshold.
+                # v6.5.57's aggregate-assignment copy adds a second reference and trips it:
+                # `a` / `var b: P2 = a` / `var c: P2` / `c = a` made `b.y` read 11 instead of 22.
+                # Confirmed by construction — `CYRIUS_REGALLOC_PICKER_CAP=0` makes the same
+                # source correct.
+                #
+                # An aggregate is never a good register candidate anyway (its fields are
+                # addressed, not held), so mark every slot it spans. Slots descend from the
+                # named slot, matching `_try_struct_copy_init`'s `named - i` layout.
+                var ag_li = 0;
+                while (ag_li < ra_flc) {
+                    var ag_t = GLTYPE(S, ag_li);
+                    if (ag_t < 0) {
+                        var ag_n = 1;
+                        if (_vec_desc(S, ag_t) == 1) { ag_n = GVEC_NSLOTS(S); }
+                        else {
+                            var ag_sz = STRUCTSZ(S, (0 - ag_t) - 1);
+                            if (ag_sz > 8) { ag_n = ((ag_sz + 7) & (0 - 8)) / 8; }
+                        }
+                        var ag_k = 0;
+                        while (ag_k < ag_n) {
+                            var ag_s = ag_li - ag_k;
+                            if (ag_s >= 0) { if (ag_s < 256) { store8(&ra_unsafe + ag_s, 1); } }
+                            ag_k = ag_k + 1;
+                        }
+                    }
+                    ag_li = ag_li + 1;
+                }
+
                 var iv_li = pc;
                 while (iv_li < ra_flc) {
                     var iv_c = load64(&ra_counts + iv_li * 8);

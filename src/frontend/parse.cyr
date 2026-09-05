@@ -921,6 +921,36 @@ fn _EVAL_CONST_ATOM(S): i64 {
 # enclosing block/PROG loop from spinning if a statement made no progress; the
 # PEEKT watchdog is the deeper backstop for loops that never return here. On VALID
 # input _panic is never set and every statement advances → pure pass-through (byte-id).
+fn _try_aggregate_copy_assign(S, noff): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (PEEKT(S) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 5) { return 0; }
+    var dst_li = FINDLOCAL(S, noff);
+    if (dst_li < 0) { return 0; }
+    var src_li = FINDLOCAL(S, TOKVAL(S, GTI(S)));
+    if (src_li < 0) { return 0; }
+    var lt = GLTYPE(S, dst_li);
+    if (lt >= 0) { return 0; }
+    if (GLTYPE(S, src_li) != lt) { return 0; }
+    var nslots = 0;
+    if (_vec_desc(S, lt) == 1) { nslots = GVEC_NSLOTS(S); }
+    else {
+        var sz = STRUCTSZ(S, (0 - lt) - 1);
+        if (sz <= 8) { return 0; }
+        nslots = ((sz + 7) & (0 - 8)) / 8;
+    }
+    if (nslots <= 1) { return 0; }
+    var i = 0;
+    while (i < nslots) {
+        EFLLOAD(S, src_li - i);
+        EFLSTORE(S, dst_li - i);
+        i = i + 1;
+    }
+    STI(S, GTI(S) + 1);
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
 fn PARSE_STMT(S): i64 {
     var before = GTI(S);
     # v6.5.19 (CVE-40): this wrapper is already the one place every statement descent
@@ -1527,6 +1557,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # gap sitting behind it (2026-08-14-typed-ptr-warn-ignores-declared-return-type).
             # ⚠ Must be read BEFORE PCMPE — afterwards the token cursor has moved past the
             # callee name and FINDFN would resolve nothing.
+            if (_try_aggregate_copy_assign(S, noff) == 1) { return 0; }
             _asg_ret_sid = 0;
             if (PEEKT(S) == 2) {
                 if (TOKTYP(S, GTI(S) + 1) == 10) {

@@ -4,6 +4,76 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.57] — 2026-09-05
+
+### Fixed
+
+- **Copying an aggregate copied only its first 8 bytes.** `dst = src;` for any struct or vector
+  wider than one slot kept the first word and left the rest at their old values — a two-field
+  struct copied `x` and not `y`; an `f32v4` kept lane 0 and dropped lanes 2–3. Exit 0, no
+  diagnostic. The **declaration** form has had a correct multi-word copy since the struct-byval
+  work; the **assignment** path never got the equivalent and fell through to a single
+  `EFLSTORE`.
+
+  ⭐ **It was reported as a SIMD bug and it is not one.** A plain struct truncates identically,
+  and structs are far more widely used, so a fix scoped to the vector arm would have left the
+  common case live. The gate's first axis is a struct for that reason.
+
+  Three fixes, one defect surface:
+  1. `_try_aggregate_copy_assign` gives the assignment path the word-by-word copy.
+  2. `_try_struct_copy_init` learned **vector descriptors** — a `pscale` in the descriptor band
+     is not a struct sid, so `STRUCTSZ` returned nothing usable and `var B: f32v4 = src;` fell
+     through to a scalar init. The declaration form was broken for vectors too.
+  3. ⭐ **A latent register-allocator bug, and it is the interesting one.** An aggregate's fields
+     are reached as `lea rcx,[rbp+base]` then `mov [rcx+off]`, so **only the base slot ever
+     appears as an `[rbp+disp32]` reference**. The picker's safety scan reads rbp disps, so an
+     aggregate's second and later words were invisible to it and it could promote one to a
+     register while the field write that really sets it went through `rcx`. Latent for as long as
+     the picker has existed, because those words were referenced at most once — below the
+     `count > 1` candidacy threshold. The new assignment copy supplies the second reference and
+     trips it. Aggregates are now excluded from the picker outright; their fields are addressed,
+     not held.
+
+### Added
+
+- `tests/gates/codegen/aggregate_copy_all_words.sh` — 9 axes (struct 2/4-slot, f32v4, f64v2, both
+  assignment and declaration forms, self-assignment, three-live-aggregates, and a **scalar
+  control** so the fix cannot pass by making every assignment a multi-word copy). Mutation-proven
+  three ways: assignment copy no-op → 5 axes red; picker exclusion removed → 4 red; vector
+  descriptors removed from the declaration copy → 1 red.
+
+  ⚠ **Axis 7 keeps THREE aggregates live deliberately.** With only two the picker never reaches
+  its candidacy threshold, and a build with the exclusion removed still passes.
+
+  ⚠ **The probe exits with a FAILURE COUNT, not a bitmask.** The first cut summed nine axes to
+  511 and the shell reported **255** — the same 8-bit exit truncation that once scored 256 real
+  failures as a PASS in `proj-tcyr`. A count cannot overflow into a pass.
+
+### Benchmarks
+
+- self_compile **670 ms → 672 ms** (flat); cycc **1,200,888 B** unchanged on disk, `.text`
+  1,050,296 → **1,052,000** (+1,704 — the three fixes plus the picker's aggregate exclusion pass).
+- Release gate GREEN end to end: self-host fixpoint · seed-derive (29,024-byte seed) ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK` with **64/64** crossos · bench.
+
+### Notes
+
+- ⛔ **The roadmap said the v6.5.x minor was CLOSED while nine releases shipped into it.**
+  `roadmap.md` carried *"The v6.5.x minor is CLOSED. Band K finished it at `.45`–`.47`"* from
+  `.48` through `.56`, with four issues open the whole time. The consequence was not cosmetic:
+  with no slot list, nine releases of work were selected ad hoc and the open issues were pinned to
+  nothing. Band K closed a **band**, not the minor. `roadmap.md` now carries a real slot list —
+  `.57` aggregate copy · `.58` SIMD wrapper inlining reach · `.59` DSE-128 + constant-`n` loop
+  elision · `.60`–`.61` vector register class (acceptance: the svara formant bench closing to
+  single-digit-× of the Rust baseline) · `.62` payload-enum ecosystem half · `.63` whole-program
+  NOP compaction — each with what ships and what must be true for it to be done.
+
+- **The previous release filed this bug instead of fixing it, and the stated reason was wrong.**
+  It named a "slot-layout question"; it was a register-allocator safety-scan gap, findable with
+  one measurement (`CYRIUS_REGALLOC_PICKER_CAP=0` makes the failing source correct) that was not
+  taken before filing. Open issues: **5 → 4**.
+
 ## [6.5.56] — 2026-09-05
 
 ### Fixed

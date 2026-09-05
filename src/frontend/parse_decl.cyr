@@ -1400,11 +1400,22 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     var src_li = FINDLOCAL(S, TOKVAL(S, ci_ti));
     if (src_li < 0) { return 0; }
     if (GLTYPE(S, src_li) != pscale) { return 0; }   # same struct sid as b
-    var dst_sid = 0 - pscale;
-    var sz = STRUCTSZ(S, dst_sid - 1);
-    if (sz <= 8) { return 0; }
-    var aligned = (sz + 7) & (0 - 8);
-    var nslots = aligned / 8;
+    # v6.5.57 — VECTORS TAKE THIS PATH TOO, and used to fall out of it. A `pscale` in the
+    # descriptor band (<= -2048) is a vector, not a struct sid, so `STRUCTSZ` returned nothing
+    # usable and `var B: f32v4 = src;` fell through to the scalar init — an 8-byte store, i.e.
+    # lanes 2-3 silently dropped. Decode the width from the descriptor instead.
+    var nslots = 0;
+    if (_vec_desc(S, pscale) == 1) {
+        nslots = GVEC_NSLOTS(S);
+        if (nslots <= 1) { return 0; }
+    }
+    else {
+        var dst_sid = 0 - pscale;
+        var sz = STRUCTSZ(S, dst_sid - 1);
+        if (sz <= 8) { return 0; }
+        var aligned = (sz + 7) & (0 - 8);
+        nslots = aligned / 8;
+    }
     var existing = FINDLOCAL(S, noff);
     if (existing >= 0) { if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); } }
     # Reserve filler slots (sentinel name -1), then the named slot (SLTYPE = -sid).
@@ -1420,7 +1431,10 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     var named = GFLC(S);
     S64(S + 0x5D9D000 + named * 8, noff);
     SLDEP(S, named, GSDEP(S));
-    SLTYPE(S, named, 0 - dst_sid);
+    # Keep the declared type verbatim: for a struct that is `0 - sid` (== pscale), for a vector
+    # it is the descriptor itself. Recomputing it from a `dst_sid` that only exists on the
+    # struct branch would retype every vector as struct-id 2121.
+    SLTYPE(S, named, pscale);
     SFLC(S, named + 1);
     # Word-by-word copy: a's word i (slot src_li - i) → b's word i (slot named - i).
     var i = 0;

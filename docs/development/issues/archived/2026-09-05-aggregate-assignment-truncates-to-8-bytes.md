@@ -1,6 +1,36 @@
+> ### ✅ RESOLVED v6.5.57 — and the reverted first attempt was right about the copy and wrong about the cause
+>
+> Three fixes, one defect surface:
+> 1. **The assignment path got the multi-word copy** the declaration path has had since the
+>    struct-byval work (`_try_aggregate_copy_assign`, `parse.cyr`).
+> 2. **`_try_struct_copy_init` learned vector descriptors.** A `pscale` in the descriptor band is
+>    not a struct sid, so `STRUCTSZ` returned nothing usable and `var B: f32v4 = src;` fell
+>    through to a scalar init — the declaration form was broken for vectors too, which this
+>    file's first draft did not know.
+> 3. ⭐ **A LATENT REGISTER-ALLOCATOR BUG, which is what defeated the first attempt.** An
+>    aggregate's fields are reached as `lea rcx,[rbp+base]` then `mov [rcx+off]`, so ONLY the base
+>    slot ever appears as an `[rbp+disp32]` reference. The picker's safety scan reads rbp disps,
+>    so an aggregate's second and later words were invisible to it and it could promote one to a
+>    register while the field write that really sets it went through `rcx`. Latent for as long as
+>    the picker has existed, because those words were referenced at most once — below the
+>    `count > 1` candidacy threshold. The assignment copy supplies the second reference and trips
+>    it, which is exactly why the first attempt made `b.y` read 11 instead of 22 and why
+>    `CYRIUS_REGALLOC_PICKER_CAP=0` made the same source correct. Aggregates are now excluded
+>    from the picker outright — their fields are addressed, not held.
+>
+> ⚠ **The "slot-layout question" this file gave as the reason for filing rather than fixing was
+> wrong.** It was a register-allocator safety-scan gap, findable in one measurement
+> (`CYRIUS_REGALLOC_PICKER_CAP=0`) that was not taken before filing.
+>
+> **Gate:** `tests/gates/codegen/aggregate_copy_all_words.sh` — 9 axes, mutation-proven three
+> ways (assignment copy no-op → 5 axes red; picker exclusion removed → 4 red; vector descriptors
+> removed from the declaration copy → 1 red). ⚠ Its probe exits with a FAILURE COUNT, not a
+> bitmask: the first cut summed nine axes to 511 and the shell reported 255, the same 8-bit
+> truncation that once scored 256 real failures as a PASS.
+
 # Aggregate assignment `dst = src;` copies only the first 8 bytes — silent wrong values
 
-**Status:** 🔴 **OPEN** — reproduced on live code at v6.5.56. Pre-existing, not a recent regression.
+**Status:** ✅ **RESOLVED v6.5.57** — reproduced on live code at v6.5.56. Pre-existing, not a recent regression.
 **Severity:** P1 — silent wrong values, exit 0, no diagnostic, and structs are used everywhere.
 **Found:** v6.5.56 slot-entry premise-check, while chasing a report that `f32v4` assignment
 truncates. It does — but the report was too narrow, and that is the important part.
