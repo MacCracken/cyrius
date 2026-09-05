@@ -4,6 +4,101 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.55] — 2026-09-05
+
+### Added
+
+- **`enum Name: stack { V(x); … }` — payload variants that do not allocate.** A payload-carrying
+  enum variant has always been a 16-byte heap box (tag at `+0`, payload at `+8`) from the global
+  bump allocator, whose only reclaim is `alloc_reset()` — and that invalidates every pointer the
+  allocator has ever handed out, so a long-running server can never call it. 100 `sock_send`
+  calls grow the heap by exactly 1600 bytes, permanently. A `: stack` enum's constructor instead
+  returns `(tag, payload)` in the multi-return register pair (rax/rdx on SysV and Win64, x0/x2
+  on aarch64) and is read with the destructuring bind the language already had:
+  `var tag, val = parse(21);`. **Measured: zero allocator growth, including 16 constructions in
+  a loop.**
+
+  ⭐ **Copy semantics is why this is sound where the previous attempt was not.** v6.5.15 tried to
+  stop boxing by RELOCATING the box to a per-call-site anonymous global; it passed every gate of
+  its day and shipped a compiler that reported a failed file open as SUCCESS in a retaining loop,
+  and was reverted. The standing note afterwards said caller-frame storage is too short-lived and
+  a global too shared, therefore "no relocation-based design can work". That enumeration silently
+  dropped the option that does: with a register pair each binding is its own copy, so two values
+  built at one call site **cannot** alias and there is no storage for anything to dangle into. It
+  needed no new machinery — the multi-return ABI has been shipped since v5.10.45.
+
+  Rules, all enforced: exactly one field per payload variant (`Pair(a, b)` in a `: stack` enum is
+  a compile error, `stack enum variant must take exactly 1 field`, not a silently dropped field);
+  bare variants unchanged and still sharing the discriminant numbering; the destructuring bind is
+  function-only; `?` still requires the boxed form because it desugars to `load64(rax + 8)`.
+
+  ⚠ **Opt-in, and the default deliberately did not change.** The boxed layout is not an internal
+  detail — it is the documented representation. The guide spells `Ok(42)` as "16-byte heap alloc
+  — tag at +0, payload at +8", `?` reads `+8`, and `lib/result.cyr`'s `is_ok`/`result_unwrap`
+  plus roughly 300 ecosystem sites read those offsets by hand. A register pair read as a pointer
+  is a plausible-looking address, so flipping the default would break every one of them
+  **silently**. Verified inert: the boxed path emits byte-identical output on all six
+  payload-enum corpus files.
+
+  📎 `stack` is not a new keyword — token 111, reserved since v5.5.36 for `stack var buf[N]`
+  ("lives on the call stack rather than being hoisted"), the same idea one level up. A new
+  `value` keyword would have broken any program using `value` as an identifier.
+
+- `tests/gates/codegen/stack_enum_no_alloc.sh` — every zero-growth assertion is **paired with a
+  non-zero control** (a plain `enum` must still grow by exactly 16 B), so it cannot go vacuous on
+  a machine where the allocator happens not to move. Axis 3 is the v6.5.15 shape: 16 values built
+  at ONE call site, all live simultaneously, each checked. Mutation-proven twice — routing the
+  stack constructor back through `alloc` turns it RED, and making the arity guard never fire
+  turns it RED with "arity-2 stack variant COMPILED — it would silently drop a field".
+
+- `tests/tcyr/crossos/stack_enum.tcyr` — the pair is an **ABI**, so it is verified on real
+  ecb/ach/cass/pi rather than only x86_64 Linux.
+
+### Fixed
+
+- **The cross-OS leg never executed the payload-enum constructor on any host.** `crossos/` is the
+  directory the release gate runs on real hardware, and exactly one of its 63 files even
+  mentioned a payload variant — as an unused include. Proven with the compiler's own reachability
+  pass: `CYRIUS_DCE_VERBOSE=1` on those files lists `dead: Ok`, `dead: Err`, `dead: Some`,
+  `dead: Left`, `dead: Right` — the constructors were linked out as unreachable on every target.
+  Combined with `src/` containing no payload enum at all (so the self-host fixpoint cannot cover
+  it either), a payload-enum representation defect would have shipped **green through all four
+  hosts**. This is the macOS-rot shape exactly: a target the gate compiles for but never
+  exercises. `tests/tcyr/crossos/payload_enum.tcyr` now constructs and reads them on the host.
+
+- **`tests/tcyr/lang/payload_enum_retention.tcyr`** — the corpus had no test that kept two or
+  more payload-enum values from a single call site alive at the same time, which is precisely the
+  shape v6.5.15 broke; the in-loop constructions it did have rebound and discarded each
+  iteration. Mutation-proven against a silent aliasing defect (an 8-byte box, so each payload
+  store lands in the next allocation — corruption without a crash): the new floor fails with
+  *"first value intact after second is built (got 0, expected 11)"*, while
+  `enum_generics.tcyr` and `result_propagation.tcyr` both exit 0.
+
+### Benchmarks
+
+- self_compile **667 ms → 668 ms** (flat); cycc **1,200,752 → 1,200,792 B** (+40 — the `: stack`
+  modifier parse plus the pair-return constructor arm), `.text` 1,049,552 → 1,050,000.
+- Release gate GREEN end to end: self-host fixpoint · seed-derive (`seed → cybs → cycc`,
+  29,024-byte seed) · `check.sh` · cross-OS on **ecb** (macOS-arm64), **ach** (Intel-Mac),
+  **cass** (Windows/PE) and **pi** (aarch64) — all four `SELFHOST_OK` with **64/64** crossos
+  tests, up from 62, because the two new payload-enum files now run there · bench.
+- ⚠ The first `check.sh` of this release came back **239/1**: a doc-stamp gate caught `state.md`
+  citing the pre-`.55` cycc size. That gate is doing its job — the stamp is how the docs are kept
+  from drifting off the live binary — and the fix is to update the stamp, not to wave it through.
+
+### Notes
+
+- ⚠ **A perf/design claim framed as a closed set of survivors deserves the same premise-check as
+  a stale number.** "No relocation-based design can work; the survivors are escape analysis or a
+  scope-tied arena" was re-read across several slots, and each revisit re-derived escape analysis
+  and re-concluded it was too large — because the claim's own enumeration had dropped the value
+  form. When every candidate is a variant of *where do we put the object*, ask whether there
+  needs to be an object.
+- The roadmap's premise that "cycc's own source cannot validate this change" is **half true**:
+  only the byte-identity gates are vacuous. `check.sh` runs the 294-file corpus behaviorally and
+  does detect representation defects — verified by differential against a deliberately-broken
+  compiler.
+
 ## [6.5.54] — 2026-09-05
 
 ### Fixed

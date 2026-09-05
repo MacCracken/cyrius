@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.54** (2026-09-05) — cycc **1,200,752 B** (.text 1,049,552) · `check.sh` **GREEN** · seed-derive **GREEN** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **124** shell gates under `tests/gates/<bucket>/` · self_compile **667 ms** · **4 open issues + 3 open proposals**.
+**Current head: v6.5.55** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **119** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -317,7 +317,39 @@ after the IR fixpoint collects them. That pass is no longer a repair for a regre
 parity now — it is worth roughly **8–12 KB smaller than the default path**, which would be the
 first real size payoff from the IR optimizers.
 
-### `.55` — payload-enum representation: stop boxing every `Ok`/`Err`/`Some`
+### `.55` — ✅ SHIPPED: `enum Name: stack` — payload variants that do not allocate
+
+⛔ **The slot's framing named the wrong blocker, and the correction is the finding.** The plan
+said acceptance could not come from cycc because "cycc's own source cannot validate this
+change". That is only half true: `src/` really has no payload enum, so the byte-identity gates
+are vacuous — but `check.sh` runs the 294-file corpus BEHAVIORALLY and does detect
+representation defects (verified by differential against a deliberately-broken compiler). The
+real blind spot was elsewhere and nobody had named it: **the cross-OS leg never RAN a
+payload-enum constructor on any host.** One of 63 `crossos/` files even mentioned one, as an
+unused include, and `CYRIUS_DCE_VERBOSE=1` listed `dead: Ok` / `dead: Err` / `dead: Some` on
+every target. A representation defect would have shipped green through ecb/ach/cass/pi.
+
+⭐ **And the standing design note was a CLOSED SET that had dropped the answer.** It read:
+caller-frame storage is too short-lived, a global too shared, "therefore no relocation-based
+design can work; the survivors are escape analysis or a scope-tied arena with reclaim" — so
+every revisit re-derived escape analysis and judged it too large. The omitted option needed no
+new machinery: the multi-return ABI has shipped since v5.10.45, and **copy semantics removes
+both v6.5.15 failure modes at once** — each binding is its own copy of two registers, so two
+values built at one call site cannot alias and there is no storage to dangle into.
+
+`enum Name: stack { V(x); }` returns `(tag, payload)` in that pair. **Measured zero allocator
+growth**, including 16 constructions in a loop. Opt-in: the boxed layout is the DOCUMENTED
+representation (`?` desugars to `load64(rax + 8)`; ~300 sites read +0/+8 by hand), and a pair
+read as a pointer is a plausible-looking address, so flipping the default would break them
+silently. Verified inert — byte-identical on all six payload-enum corpus files. See
+CHANGELOG [6.5.55].
+
+📌 **Residual: the ECOSYSTEM half.** Migrating `Result`/`Option`/`Either` themselves to the
+value form needs `?` to accept a pair, `is_ok`/`result_unwrap` rewritten, and the hand-rolled
+`load64(+8)` reads updated across the sibling repos. The compiler capability it was waiting on
+now exists.
+
+### `.55` (original plan, superseded above) — payload-enum representation
 *(issue `2026-07-28-sock-send-result-allocates-per-call`)*
 
 The enum payload-variant constructor lowering (`src/frontend/parse_types.cyr:386`) emits

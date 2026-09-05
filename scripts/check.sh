@@ -138,6 +138,15 @@ sh "$ROOT/tests/gates/codegen/ir_nop_harvest.sh"
 # sub-quadratic scheme passes.
 sh "$ROOT/tests/gates/codegen/ir_edges_scaling.sh"
 
+# v6.5.55: `enum N: stack` must construct payload variants with NO allocation, the plain boxed
+# form must be untouched, and a variant too wide for the (tag, payload) pair must be REJECTED
+# rather than silently truncated. Axis 3 is the point: v6.5.15 already tried to stop boxing, by
+# relocating the box to a per-call-site global, and shipped a compiler that reported a failed
+# file open as SUCCESS in a retaining loop while passing every gate of its day. This gate builds
+# N values at ONE call site, keeps them all live, and checks each — and pairs every zero-growth
+# assertion with a non-zero control so it cannot go vacuous.
+sh "$ROOT/tests/gates/codegen/stack_enum_no_alloc.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

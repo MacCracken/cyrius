@@ -1,3 +1,46 @@
+> ### ✅ v6.5.55 — the language-level fix has SHIPPED, opt-in: `enum Name: stack`
+>
+> A payload-carrying enum declared `: stack` returns its `(tag, payload)` in the multi-return
+> register pair instead of a 16-byte heap box. **Measured zero allocator growth**, including 16
+> constructions in a loop. `lib/result.cyr`'s `ok_via` / `err_via` (v6.5.41) remain the escape
+> hatch for code that must keep the boxed form.
+>
+> ⭐ **The design note this file's arc had been carrying was a CLOSED SET THAT DROPPED THE ANSWER.**
+> It read: caller-frame storage is too short-lived (`?` in an unannotated helper returns the box
+> out of that helper's frame), a global is too shared, "therefore no relocation-based design can
+> work; the survivors are escape analysis or a scope-tied arena with reclaim." Every revisit
+> re-derived escape analysis, judged it too large, and moved on. The option it omitted needed no
+> new machinery at all: the multi-return ABI has been shipped since v5.10.45, and **copy semantics
+> removes both failure modes at once** — each binding is its own copy of two registers, so two
+> values built at one call site cannot alias, and there is no storage left to dangle into.
+> Verified BEFORE designing anything: `fn mk2(x): (i64, i64)` at one call site in a loop returned
+> distinct values with an `alloc_used()` delta of exactly 0.
+>
+> ⚠ **The default was deliberately NOT flipped, and that is not timidity.** The boxed layout is
+> the documented representation, not an internal detail: the guide spells `Ok(42)` as "16-byte
+> heap alloc — tag at +0, payload at +8", `?` desugars to `load64(rax + 8)`, and ~300 ecosystem
+> sites read those offsets by hand. A register pair read as a pointer is a plausible-looking
+> address, so a default flip breaks them SILENTLY. Verified inert: the boxed path emits
+> byte-identical output on all six payload-enum corpus files.
+>
+> 📌 **STILL OPEN, and now the whole remainder:** migrating `Result`/`Option`/`Either` themselves
+> to the value form. That is an ecosystem change, not a compiler one — it needs `?` to work on a
+> pair, `is_ok`/`result_unwrap` rewritten, and the ~300 hand-rolled `load64(+8)` reads updated
+> across the sibling repos. The compiler capability it was waiting on now exists.
+>
+> ⭐ **Two gaps found while building the acceptance tests, both fixed here, both worth more than
+> the feature:**
+> 1. **The cross-OS leg never RAN a payload-enum constructor on any host.** One of 63 `crossos/`
+>    files mentioned one, as an unused include; `CYRIUS_DCE_VERBOSE=1` listed `dead: Ok`,
+>    `dead: Err`, `dead: Some` on every target. With `src/` containing no payload enum either, a
+>    representation defect would have shipped green through ecb/ach/cass/pi — the macOS-rot shape.
+> 2. **No test kept two payload-enum values from one call site alive at once** — the exact shape
+>    v6.5.15 broke. The in-loop constructions that existed rebound and discarded each iteration.
+>
+> **Gates:** `tests/gates/codegen/stack_enum_no_alloc.sh` (mutation-proven twice; every
+> zero-growth assertion paired with a non-zero control), `tests/tcyr/crossos/stack_enum.tcyr`,
+> `tests/tcyr/crossos/payload_enum.tcyr`, `tests/tcyr/lang/payload_enum_retention.tcyr`.
+
 # `sock_send` / `sock_recv` allocate their `Result` on the no-free global bump — 16 B per call on the hottest path in any server
 
 **Status:** 🟠 **THE FILED SYMPTOM IS FIXED at v6.5.41 — the ROOT CAUSE is open and is a different size class.** Shipped: `ok_via(a, v)` / `err_via(a, e)` in `lib/result.cyr` and `sock_send_a` / `sock_recv_a` in `lib/net.cyr`, which box through a caller-supplied allocator (`arena_allocator(n)`) so a server can reset a per-request arena. Measured on a real socketpair: **100× `sock_send_a` grows the global allocator by 0 B, against 1600 B for `sock_send`** — exactly the filed 16 B/call. Layout is unchanged, so `is_ok` / `is_err_result` / `result_unwrap` / `?` accept the boxes with no change. Gate: `tests/tcyr/stdlib/result_allocator_via.tcyr` (8 assertions, every zero-growth claim PAIRED with a control that the old path still grows, so it cannot become vacuous; mutation-proven two ways).

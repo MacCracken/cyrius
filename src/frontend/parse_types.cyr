@@ -283,6 +283,28 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
     # bound to anything (mono-only); accepting the syntax unblocks
     # `enum Result<T, E> { Ok(v); Err(e); }` source shape.
     SKIP_GENERICS(S);
+    # v6.5.55 — `enum Name: stack { V(x); ... }` opts the declaration OUT of heap boxing.
+    # A payload variant of a stack enum returns its (tag, payload) in the multi-return
+    # register pair (rax = tag, rdx = payload) instead of a 16-byte `alloc`, and is read with
+    # the existing destructuring bind: `var t, v = Ok(5);`.
+    #
+    # ⭐ WHY `stack` AND NOT A NEW KEYWORD. `stack` is token 111, reserved since v5.5.36 for
+    # `stack var buf[N]` ("live on the call stack rather than being hoisted"), which is the
+    # same meaning one level up. Reusing it means no lexer change and no chance of colliding
+    # with an identifier — adding a `value` keyword would have silently broken any program
+    # using `value` as a name.
+    #
+    # ⚠ OPT-IN ON PURPOSE. The boxed form is the DOCUMENTED representation: the guide spells
+    # `Ok(42)` as "16-byte heap alloc — tag at +0, payload at +8", `?` desugars to
+    # `load64(rax + 8)`, and lib/result.cyr's is_ok/result_unwrap plus ~300 ecosystem sites
+    # read those offsets directly. Flipping the default would break all of them SILENTLY.
+    var is_stack_enum = 0;
+    if (PEEKT(S) == 49) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 111) { ERR_EXPECT(S, 111); }
+        STI(S, GTI(S) + 1);
+        is_stack_enum = 1;
+    }
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);
     # v5.8.22 bite #1 — bump enum_count + capture eid for variant
@@ -349,6 +371,11 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
             if (emit_code == 2) {
                 # Pass 2 function section: emit constructor bodies only
                 if (has_ctor == 1) {
+                    # v6.5.55 — the pair carries exactly tag + one payload. Reject anything
+                    # else HERE rather than emitting a ctor that silently drops fields.
+                    if (is_stack_enum == 1) {
+                        if (ctor_arity != 1) { ERR_MSG(S, "stack enum variant must take exactly 1 field", 44); }
+                    }
                     # v5.11.65 (CVE-05): bound NPOS_GUARD by actual
                     # variant-name length; was magic-256.
                     var _vnlen2 = 0; while (load8(S + 0xEC00000 + vnoff + _vnlen2) != 0) { _vnlen2 = _vnlen2 + 1; }
@@ -383,6 +410,19 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                             ESTOREPARM(S, ctor_pi, ctor_pi, 0);
                             ctor_pi = ctor_pi + 1;
                         }
+                        if (is_stack_enum == 1) {
+                            # v6.5.55 — the whole point: NO alloc. Hand back (tag, payload) in
+                            # the multi-return pair the language already has. Copy semantics is
+                            # what makes this sound where the v6.5.15 attempt was not: each
+                            # binding is its own copy, so two values built at one call site
+                            # cannot alias, and nothing points at storage that can be reused.
+                            # Only arity 1 fits the pair; anything else is rejected above.
+                            EFLLOAD(S, 0);
+                            EMOVRDXRAX(S);
+                            EMOVI(S, val);
+                            EPATCHFRAME(S, ctor_frame, 16);
+                            EFNEPI(S);
+                        } else {
                         EMOVI(S, 8 + ctor_arity * 8); EPUSHR(S);
                         ECALLPOPS(S, 1);
                         NPOS_GUARD(S, 8);
@@ -412,6 +452,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                         EPATCHFRAME(S, ctor_frame, (ctor_arity + 1) * 16);
                         EFLLOAD(S, ctor_arity);
                         EFNEPI(S);
+                        }
                     }
                 }
             }

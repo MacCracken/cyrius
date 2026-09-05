@@ -1,0 +1,134 @@
+# payload_enum_retention.tcyr — v6.5.55. The RETENTION FLOOR for payload-enum values.
+#
+# WHY THIS FILE EXISTS. v6.5.15 replaced the payload-variant constructor's heap `alloc(16)`
+# with a PER-CALL-SITE ANONYMOUS GLOBAL. It passed every gate and shipped a compiler that
+# "reported a failed file open as SUCCESS in a retaining loop", and was reverted. The
+# implementation survives in no git object, so the only durable defence is a test that
+# reproduces the SHAPE it broke.
+#
+# ⭐ THE SHAPE IS: two or more values built at ONE call site, alive at the SAME time.
+# Storage that is per-call-site rather than per-value aliases them together, so every retained
+# value reads back as the last one written. A loop that rebinds and discards each iteration
+# CANNOT catch it — and before this file the corpus had only that weaker shape, which is
+# exactly how the bug reached a release.
+#
+# ⚠ These assertions are about VALUES SURVIVING, not about offsets. `load64(box + 8)` appears
+# only because the language has no destructuring form (PARSE_MATCH takes constant-valued arms;
+# `match r { Ok(v) => }` does not parse), so it is currently the ONLY expressible payload read.
+# If the representation changes, update the READ here and keep every assertion: what is being
+# pinned is that N simultaneously-live values hold N distinct payloads.
+
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/result.cyr"
+
+enum Sig { Lo(v); Mid(v); Hi(a, b); Bare; }
+
+test_group("two values from ONE call site are independent");
+
+# The v6.5.15 killer, minimal form: one textual `Ok(` , two live values.
+fn _mk(n): i64 { return Ok(n); }
+var a = _mk(11);
+var b = _mk(22);
+assert_eq(load64(a + 8), 11, "first value intact after second is built");
+assert_eq(load64(b + 8), 22, "second value correct");
+assert_neq(a, b, "two constructions are not the same storage");
+
+test_group("retaining loop — N live values from one call site");
+
+# 32 values alive SIMULTANEOUSLY, alternating tags, each with a distinct payload.
+# Storage that is per-call-site rather than per-value makes every one of these read back as
+# the last written. `&keep + i * 8` rather than a subscript: the language has no `a[i]` form.
+fn _retain_32(): i64 {
+    var keep: i64[32];
+    var i = 0;
+    while (i < 32) {
+        if (i % 2 == 0) { store64(&keep + i * 8, _mk(1000 + i)); }
+        else { store64(&keep + i * 8, Err(2000 + i)); }
+        i = i + 1;
+    }
+    var bad = 0;
+    i = 0;
+    while (i < 32) {
+        var want_tag = 1;
+        var want_pay = 2000 + i;
+        if (i % 2 == 0) { want_tag = 0; want_pay = 1000 + i; }
+        var box = load64(&keep + i * 8);
+        if (load64(box) != want_tag) { bad = bad + 1; }
+        if (load64(box + 8) != want_pay) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+assert_eq(_retain_32(), 0, "all 32 retained tags AND payloads survive");
+
+test_group("the reported symptom — a failure must not read as success");
+
+# The literal v6.5.15 report: a failed open reported SUCCESS because an earlier Ok aliased it.
+fn _open_like(ok): i64 {
+    if (ok == 1) { return Ok(7); }
+    return Err(0 - 5);
+}
+var good = _open_like(1);
+var fail = _open_like(0);
+assert_eq(load64(good), 0, "success is Ok");
+assert_eq(load64(fail), 1, "FAILURE IS STILL Err after a success was built");
+assert_eq(load64(fail + 8), 0 - 5, "failure carries its error code");
+
+test_group("payload edge values round-trip");
+
+var z = Ok(0);
+var m1 = Ok(0 - 1);
+var big = Ok(4611686018427387904);
+var neg = Err(0 - 9223372036854775807);
+assert_eq(load64(z + 8), 0, "payload 0");
+assert_eq(load64(m1 + 8), 0 - 1, "payload -1");
+assert_eq(load64(big + 8), 4611686018427387904, "payload 2^62");
+assert_eq(load64(neg + 8), 0 - 9223372036854775807, "payload near i64 min");
+# Ok(0) and Err(0) differ ONLY in tag — the discriminator a value repr must not lose.
+var ok0 = Ok(0);
+var er0 = Err(0);
+assert_neq(load64(ok0), load64(er0), "Ok(0) and Err(0) are distinguishable");
+
+test_group("multi-arity and mixed constant/payload variants");
+
+var h = Hi(5, 6);
+assert_eq(load64(h), 2, "Hi tag");
+assert_eq(load64(h + 8), 5, "Hi field 0");
+assert_eq(load64(h + 16), 6, "Hi field 1");
+assert_eq(Bare, 3, "bare constant variant is its discriminant");
+var lo = Lo(41);
+var mid = Mid(42);
+assert_eq(load64(lo), 0, "Lo tag");
+assert_eq(load64(mid), 1, "Mid tag");
+assert_eq(load64(lo + 8), 41, "Lo payload survives Mid construction");
+
+test_group("nesting and struct/global retention");
+
+var inner = Ok(77);
+var outer = Ok(inner);
+assert_eq(load64(load64(outer + 8) + 8), 77, "nested Ok(Ok(77)) inner payload");
+
+fn _array_retention(): i64 {
+    var slots: i64[4];
+    store64(&slots, Ok(101));
+    store64(&slots + 8, Err(102));
+    store64(&slots + 16, Ok(103));
+    store64(&slots + 24, Err(104));
+    var s0 = load64(&slots);
+    var s1 = load64(&slots + 8);
+    var s3 = load64(&slots + 24);
+    if (load64(s0 + 8) != 101) { return 1; }
+    if (load64(s1) != 1) { return 2; }
+    if (load64(s3 + 8) != 104) { return 3; }
+    return 0;
+}
+assert_eq(_array_retention(), 0, "four boxes retained in an array stay distinct");
+
+test_group("helpers agree with the raw reads");
+
+assert_eq(is_ok(good), 1, "is_ok on Ok");
+assert_eq(is_err_result(fail), 1, "is_err_result on Err");
+assert_eq(is_ok(fail), 0, "is_ok on Err is 0");
+
+var r = assert_summary();

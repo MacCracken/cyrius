@@ -986,7 +986,7 @@ enum Result<T, E> {
     Err(e)
 }
 
-var ok = Ok(42);    # 16-byte heap alloc — tag at +0, payload at +8
+var ok = Ok(42);    # 16-byte heap alloc — tag at +0, payload at +8 (see `: stack` below to avoid it)
 var bad = Err(7);   # 16-byte heap alloc — tag at +0, payload at +8
 
 # Multi-arg variants — alloc(8 + 8*N), payload[i] at +8 + 8*i
@@ -1007,6 +1007,50 @@ enum Option {
 var n = None();      # 8-byte heap, tag at +0 only
 var s = Some(42);    # 16-byte heap, tag at +0, payload 42 at +8
 ```
+
+### Unboxed payload variants — `enum Name: stack` (v6.5.55)
+
+Every payload variant above **allocates**, from the global bump allocator, whose only reclaim
+is `alloc_reset()` — and that invalidates every pointer the allocator has ever handed out, so a
+long-running server cannot call it. A hundred `sock_send` calls grow the heap by exactly
+1600 bytes and never give them back.
+
+`: stack` on the declaration opts out. A payload variant then returns its `(tag, payload)` in
+the multi-return register pair instead of a box, and is read with the destructuring bind:
+
+```
+enum Res: stack { Ok(v); Err(e); }
+
+fn parse(x): i64 {
+    if (x > 0) { return Ok(x * 2); }
+    return Err(0 - x);
+}
+
+fn use(): i64 {
+    var tag, val = parse(21);   # ZERO allocation
+    if (tag == 0) { return val; }
+    return 0 - val;
+}
+```
+
+- **Zero allocation.** Constructing in a loop grows the allocator by nothing.
+- **Exactly one field per payload variant.** The pair carries a tag and one value; `Pair(a, b)`
+  in a `: stack` enum is a compile error rather than a silently dropped field.
+- **Bare (payload-less) variants are unchanged** — still plain integer constants, still sharing
+  the same discriminant numbering.
+- **The destructuring bind only works inside a function.** `var t, v = f();` at top level is
+  rejected with *"multi-var destructure only supported inside functions"*.
+- **`?` needs the boxed form.** The propagation operator desugars to `load64(rax + 8)`, i.e. it
+  dereferences its operand, so it does not apply to a stack enum.
+
+⚠ **This is opt-in on purpose, and plain `enum` still boxes.** The boxed layout is not an
+internal detail — it is the documented representation that `?`, `lib/result.cyr`'s
+`is_ok`/`result_unwrap`, and roughly 300 call sites across the ecosystem read directly as
+tag-at-`+0` / payload-at-`+8`. Changing the default would break all of them, and break them
+silently, because a register pair read as a pointer is a plausible-looking address.
+
+📎 `stack` is reused rather than a new keyword: it has meant "lives on the stack instead of
+being hoisted" since v5.5.36's `stack var buf[N]`, which is the same idea one level up.
 
 Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today). Variant separators may be `;` or `,` — mixed in same decl works. In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
 

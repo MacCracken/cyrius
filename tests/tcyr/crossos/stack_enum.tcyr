@@ -1,0 +1,133 @@
+# stack_enum.tcyr — v6.5.55. `enum Name: stack { V(x); }` — payload enums that do NOT box.
+#
+# WHAT IT IS. A stack enum's payload variant hands back `(tag, payload)` in the multi-return
+# register pair instead of allocating a 16-byte box, and is read with the destructuring bind
+# the language already has: `var t, v = Ok(5);`. Zero allocator growth per construction.
+#
+# ⭐ WHY THIS IS IN crossos/. The pair is an ABI: rax/rdx on SysV and Win64, x0/x2 on aarch64
+# (EMOVRDXRAX, backend/x86/emit.cyr:298 · aarch64/emit.cyr:355 · cx/emit.cyr:219). A register
+# convention is exactly the thing that compiles everywhere and runs correctly in only some
+# places, so it is verified on ecb/ach/cass/pi, not just x86_64 Linux.
+#
+# ⭐ WHY THE VALUE FORM IS SOUND WHERE v6.5.15 WAS NOT. That release relocated the box to a
+# PER-CALL-SITE anonymous global and shipped a compiler that "reported a failed file open as
+# SUCCESS in a retaining loop". Copy semantics removes both failure modes at once: each
+# binding is its own copy of two registers, so two values from one call site cannot alias, and
+# there is no storage left for anything to dangle into. The retention group below is that
+# exact shape and passes BY CONSTRUCTION rather than by careful bookkeeping.
+#
+# ⚠ Opt-in. Plain `enum` still boxes, because the boxed layout is the documented
+# representation (`?` desugars to `load64(rax + 8)`; lib/result.cyr and ~300 ecosystem sites
+# read tag@+0 / payload@+8). Flipping the default would break every one of them silently.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+enum SRes: stack { SOk(v); SErr(e); }
+enum Boxed { BOk(v); BErr(e); }
+
+fn _mk(n): i64 { return SOk(n); }          # ONE call site, used many times below
+fn _classify(x): i64 { if (x > 0) { return SOk(x * 2); } return SErr(0 - x); }
+
+enum Mixed: stack { MA; MB(v); MC; }
+
+# ⚠ Every destructuring bind lives in a function: `var t, v = f();` is rejected at top level
+# ("multi-var destructure only supported inside functions"), so the groups are fns.
+
+fn _g_noalloc(): i64 {
+    test_group("stack enum constructs without allocating");
+    var before = alloc_used();
+    var t1, v1 = SOk(41);
+    var t2, v2 = SErr(0 - 7);
+    var stack_grew = alloc_used() - before;
+    assert_eq(t1, 0, "SOk tag is its discriminant");
+    assert_eq(v1, 41, "SOk payload");
+    assert_eq(t2, 1, "SErr tag");
+    assert_eq(v2, 0 - 7, "SErr payload (negative)");
+    assert_eq(stack_grew, 0, "TWO stack-enum constructions allocated ZERO bytes");
+    return 0;
+}
+
+fn _g_boxed_unchanged(): i64 {
+    test_group("the boxed form is unchanged — this is opt-in");
+    var bb = alloc_used();
+    var box = BOk(41);
+    var boxed_grew = alloc_used() - bb;
+    assert_eq(boxed_grew, 16, "a plain enum still boxes 16 B");
+    assert_eq(load64(box), 0, "boxed tag still at +0");
+    assert_eq(load64(box + 8), 41, "boxed payload still at +8");
+    return 0;
+}
+
+fn _retain(): i64 {
+    var tags: i64[16];
+    var vals: i64[16];
+    var i = 0;
+    while (i < 16) {
+        var t, v = _mk(100 + i);
+        store64(&tags + i * 8, t);
+        store64(&vals + i * 8, v);
+        i = i + 1;
+    }
+    var bad = 0;
+    i = 0;
+    while (i < 16) {
+        if (load64(&tags + i * 8) != 0) { bad = bad + 1; }
+        if (load64(&vals + i * 8) != 100 + i) { bad = bad + 1; }
+        i = i + 1;
+    }
+    return bad;
+}
+
+fn _g_retention(): i64 {
+    test_group("retention — the v6.5.15 shape, from ONE call site");
+    var r0 = alloc_used();
+    assert_eq(_retain(), 0, "16 values live at once from one call site stay distinct");
+    assert_eq(alloc_used() - r0, 0, "and 16 constructions allocated ZERO bytes");
+    return 0;
+}
+
+fn _g_symptom(): i64 {
+    test_group("the reported symptom — a failure must not read as success");
+    var gt, gv = _classify(21);
+    var ft, fv = _classify(0 - 5);
+    assert_eq(gt, 0, "success is SOk");
+    assert_eq(gv, 42, "success payload");
+    assert_eq(ft, 1, "FAILURE IS STILL SErr after a success was built");
+    assert_eq(fv, 5, "failure carries its code");
+    return 0;
+}
+
+fn _g_edges(): i64 {
+    test_group("payload edge values survive the register pair");
+    var zt, zv = SOk(0);
+    var mt, mv = SOk(0 - 1);
+    var bt, bv = SOk(4611686018427387904);
+    var nt, nv = SErr(0 - 9223372036854775807);
+    assert_eq(zv, 0, "payload 0");
+    assert_eq(mv, 0 - 1, "payload -1");
+    assert_eq(bv, 4611686018427387904, "payload 2^62 — no tag bits stolen from the payload");
+    assert_eq(nv, 0 - 9223372036854775807, "payload near i64 min");
+    assert_eq(zt, 0, "Ok(0) tag");
+    assert_eq(nt, 1, "Err tag with an extreme payload");
+    return 0;
+}
+
+fn _g_constants(): i64 {
+    test_group("constant variants and discriminant numbering are unaffected");
+    assert_eq(MA, 0, "bare constant variant keeps its discriminant");
+    assert_eq(MC, 2, "numbering counts payload variants too");
+    var xt, xv = MB(9);
+    assert_eq(xt, 1, "MB tag");
+    assert_eq(xv, 9, "MB payload");
+    return 0;
+}
+
+var _a = _g_noalloc();
+var _b = _g_boxed_unchanged();
+var _c = _g_retention();
+var _d = _g_symptom();
+var _e = _g_edges();
+var _f = _g_constants();
+
+var r = assert_summary();
