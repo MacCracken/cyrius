@@ -4,6 +4,87 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.54] — 2026-09-05
+
+### Fixed
+
+- **`CYRIUS_IR=3` was 20.8× slower than the default path, not the +3.6 % the roadmap recorded.**
+  Measured live: **13,967 ms** for a cycc self-compile against the default path's **672 ms**. The
+  +3.6 % figure had been carried forward across releases without being re-taken, so the IR arc was
+  planned around a cost that was off by a factor of twenty. All of it was in `ir_build_edges`:
+  `_ir_find_bb_for_patch` scanned every basic block of the *whole program* and every IR node inside
+  each one, once per forward jump, and `_ir_find_bb_for_cp` scanned every block per backward jump.
+  At 29,499 blocks that dominates everything else — with `CYRIUS_FOLD_OFF`, `CYRIUS_LASE_OFF`,
+  `CYRIUS_DCE_CAP=0` and `CYRIUS_DSE_CAP=0` all set it was still **13,910 ms**, which is what rules
+  out the optimizer passes. Both finders now start at the first block of the function the jump
+  lives in; an intra-function jump's target is in that function, so the scan terminates inside it.
+  **13,967 ms → 1,012 ms.**
+
+  This is result-neutral by construction rather than by luck: a patch offset and a CP range each
+  identify exactly one block, so "first match from block 0" and "first match from the function's
+  first block" are the same block, and the original full-program sweep is kept as a second pass so
+  a jump that ever did leave its function behaves exactly as before. Output on `src/main.cyr`
+  verified byte-identical to the pre-change compiler.
+
+- **The NOP-harvest compactor no longer sits disabled under every IR mode.** It was gated
+  `IR_ENABLED(S) == 0`, so `CYRIUS_IR=3` shipped **19,067 NOP instructions against the default
+  path's 44** — **+65,320 bytes of `.text`, +6.2 %**. **10,748 of those were ordinary
+  regalloc/frame-trim NOPs** (measured with every IR pass disabled) that this pass already knew how
+  to collect and was simply forbidden from touching.
+
+  ⭐ **The gate could not just be lifted, and the reason is the interesting part.** The compactor
+  repairs jump displacements, fixup-table CPs and switch-table entries, but the IR records a code
+  position per node and nothing repaired *those*. Lifting the gate alone relocates code while the
+  IR's node→CP table keeps pre-compaction offsets, so `ir_apply_lase` then patches at stale
+  positions — 3,607 bytes patched instead of 3,451 — and the resulting compiler dies at startup
+  with `alloc_init: mmap failed`. Fixed by a stage 3c that shifts every `IR_NODE_CP` by the bytes
+  deleted below it, plus the `IR_SNODE_CP` setter that had never existed. **NOPs 19,067 → 8,249;
+  `.text` back to exact parity with the default build** (1,200,752 B both).
+
+  Shifting every node is correct even though the pass is per-function: nodes from earlier functions
+  sit below every run in `nop_run_tbl`, so the shift helper returns 0 for them, and later functions
+  are not emitted yet. A watermark keeps each node visited once — rescanning all of `IR_NCNT` per
+  function made the repair O(functions × nodes) and cost **23,375 ms** on its own before it was
+  bounded.
+
+### Added
+
+- `tests/gates/codegen/ir_nop_harvest.sh` — asserts the harvest runs under IR mode **and** that the
+  IR-built compiler reproduces the default one byte-identically. The second assertion is the
+  load-bearing one; the NOP count only proves the pass ran.
+- `tests/gates/codegen/ir_edges_scaling.sh` — pins IR=3 compile time to within 5× the default path
+  (measured 1.5×, pre-fix 20.8×). Pins the **cost, not the mechanism**: it deliberately does not
+  grep for the scan hint, so any sub-quadratic scheme passes.
+
+  Both registered in `check.sh` and mutation-proven three ways — gate-lift reverted → 19,076 NOPs;
+  stage 3c disabled → `alloc_init: mmap failed`; windowing reverted → 2,285 % of baseline.
+
+  ⚠ **A mutation that silently fails to apply proves nothing.** The stage-3c mutation ran twice
+  against a `sed` pattern whose indentation did not match, reported PASS both times, and nearly
+  produced the conclusion that stage 3c was dead code to be deleted. It was caught only by checking
+  that the mutant compiler binary actually differed from the original. Assert the mutant differs
+  before reading its verdict.
+
+### Benchmarks
+
+- self_compile **661.8 ms → 667 ms**; cycc **1,192,312 B → 1,200,752 B** (.text 1,042,416 →
+  1,049,552). Growth-tax on the default path — this release adds the CP-repair stage, the watermark
+  and the windowed finders to the compiler's own source. The IR path is where the movement is:
+  **13,967 ms → 1,012 ms** and **+65,320 B → 0**.
+- Release gate GREEN end to end: self-host fixpoint · seed-derive (`seed → cybs → cycc`,
+  29,024-byte seed) · `check.sh` · cross-OS self-host byte-identical on **ecb** (macOS-arm64),
+  **ach** (Intel-Mac), **cass** (Windows/PE) and **pi** (aarch64) · bench.
+
+### Notes
+
+- **Residual, unchanged in scope but now a win rather than a repair.** The remaining 8,249 NOPs are
+  the IR passes' own eliminations (LASE 3,451 B, folds 4,754 B, plus DCE/DSE), written after every
+  per-function compaction has already run, so only a whole-program pass after the IR fixpoint can
+  collect them. IR=3 is no longer 6.2 % *larger* than the default build — it is at parity — and
+  harvesting those would put it roughly **8–12 KB smaller**, which would be the first actual size
+  payoff from the IR optimizers. Tracked in
+  `docs/development/issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md`.
+
 ## [6.5.53] — 2026-09-05
 
 ### Fixed

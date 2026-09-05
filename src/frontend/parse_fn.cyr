@@ -5270,7 +5270,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (_AARCH64_BACKEND == 0) {
         var _kmode = L64(S + 0x18FCA0);
         if (_kmode <= 1) {
-            if (IR_ENABLED(S) == 0) {
+            # v6.5.54 — was `IR_ENABLED(S) == 0`, which disabled NOP harvesting for every IR
+            # mode. MEASURED cost on a cycc self-compile: CYRIUS_IR=3 carried 19,067 NOP
+            # instructions against the default path's 44 (+65,320 bytes of .text, +6.2 %, and
+            # 670 -> 694 ms), and 10,748 of those were REGALLOC/frame-trim NOPs this very pass
+            # would have collected. The blocker was stale IR node CPs, now repaired by stage 3c.
+            if (1 == 1) {
                 # v6.3.29: append dead callee-saved save/restore nop_runs BEFORE reading
                 # _nrn, so the compactor below harvests them (same jump/fixup repair as
                 # the regalloc picker's runs). Off by default → byte-identical.
@@ -5366,6 +5371,25 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # Stage 3b (v6.5.20): repair switch jump-table entries. MUST run
                     # before stage 4 — it reads pre-compaction CPs like stages 1-3.
                     _sw_tbl_repair(S, _nrn, _swn);
+                    # Stage 3c (v6.5.54): repair IR node CPs. THE REASON THE COMPACTOR USED TO
+                    # BE DISABLED UNDER IR MODE. The IR records a code position per node; this
+                    # pass deletes bytes, so every recorded CP above a deleted run is stale, and
+                    # the IR fixpoint (main.cyr, after ALL parsing) would then read and rewrite
+                    # code at the wrong offsets — measured: lifting the gate without this makes
+                    # the IR=3-built cycc die with `alloc_init: mmap failed`.
+                    # ⚠ Shifting EVERY node is correct even though this pass is per-fn: nodes
+                    # from earlier fns have CPs below every run in `nop_run_tbl`, so
+                    # `_nop_shift_at` returns 0 for them, and later fns have not been emitted.
+                    if (IR_ENABLED(S) != 0) {
+                        var _irn = IR_NCNT(S);
+                        var _iri = IR_CLO();
+                        while (_iri < _irn) {
+                            var _ircp = IR_NODE_CP(S, _iri);
+                            IR_SNODE_CP(S, _iri, _ircp - _nop_shift_at(S, _nrn, _ircp));
+                            _iri = _iri + 1;
+                        }
+                        IR_SCLO(_irn);
+                    }
                     # Stage 4: compact bytes. Sort NOP runs by CP first
                     # (insertion sort; nrn ≤ 1024). Picker emit order isn't
                     # strictly CP-monotone (multiple intervals patched in

@@ -219,6 +219,22 @@ fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
 
 # Read IR node fields
 fn IR_NODE_CP(S, ni): i64 { return load32(S + 0x6E9D000 + ni * 4); }
+# v6.5.54 — setter, so the NOP-harvest compactor can repair recorded node positions after it
+# relocates code. Without this the compactor had to be disabled entirely under IR mode
+# (`IR_ENABLED(S) == 0` in parse_fn.cyr): it repairs jump disp32s, fixup CPs and switch-table
+# entries, but the IR's node->CP table kept PRE-compaction offsets, so the IR fixpoint then
+# read and rewrote code at stale positions. Measured consequence of just lifting that gate
+# without this repair: the IR=3-built cycc dies at startup with `alloc_init: mmap failed`.
+fn IR_SNODE_CP(S, ni, v): i64 { store32(S + 0x6E9D000 + ni * 4, v); return 0; }
+
+# v6.5.54 — watermark for the per-fn NOP-harvest compactor's IR-CP repair (stage 3c).
+# IR nodes are appended in parse order, so once a function has been compacted its nodes are
+# final and must never be shifted twice. Rescanning all of IR_NCNT per function made the
+# repair O(functions x nodes): MEASURED at 23,375 ms/compile against the 666 ms default.
+# With the watermark each node is visited once and CYRIUS_IR=3 returns to ~the default cost.
+var _ir_compact_lo = 0;
+fn IR_CLO(): i64 { return _ir_compact_lo; }
+fn IR_SCLO(v): i64 { _ir_compact_lo = v; return 0; }
 fn IR_NODE_OP(S, ni): i64 { return load16(S + 0x5E9D000 + ni * 16); }
 fn IR_NODE_FL(S, ni): i64 { return load16(S + 0x5E9D000 + ni * 16 + 2); }
 fn IR_NODE_A1(S, ni): i64 { return load32(S + 0x5E9D000 + ni * 16 + 4); }
@@ -1281,48 +1297,77 @@ fn ir_build_bbs(S): i64 {
 # Returns number of edges added.
 
 # Find which BB contains the given codebuf offset (binary search)
-fn _ir_find_bb_for_cp(S, target_cp): i64 {
-    var bcnt = IR_BCNT(S);
-    # Linear scan (good enough for <32K BBs)
-    var bi = 0;
-    while (bi < bcnt) {
-        var first = IR_BB_FIRST(S, bi);
-        var count = IR_BB_COUNT(S, bi);
-        if (count > 0) {
-            var bb_cp_start = IR_NODE_CP(S, first);
-            var bb_cp_end = bb_cp_start;
-            if (first + count < IR_NCNT(S)) {
-                bb_cp_end = IR_NODE_CP(S, first + count);
-            } else {
-                bb_cp_end = GCP(S);
-            }
-            if (target_cp >= bb_cp_start && target_cp < bb_cp_end) {
-                return bi;
-            }
-        }
-        bi = bi + 1;
-    }
-    return 0 - 1;  # not found
-}
 
 # Find the BB that contains a NOP landing pad whose arg1 matches patch_off.
 # Scans all nodes (not just first) because multiple NOPs can land in one BB.
-fn _ir_find_bb_for_patch(S, patch_off): i64 {
+# v6.5.54 — `lo` is the first BB of the function the jump lives in. Both finders used to
+# scan from BB 0 across the WHOLE program, and _ir_find_bb_for_patch nested a scan of every
+# node inside that, so ir_build_edges was O(jumps x program). MEASURED on a cycc self-compile:
+# 29,499 BBs, CYRIUS_IR=3 at 13,967 ms against the default path's 672 ms — 21x, and it is
+# ALL here, not in the optimization passes (with FOLD/LASE/DCE/DSE all off it was still
+# 13,910 ms). An intra-function jump's target is in the same function, so starting at `lo`
+# finds it before the scan leaves the function.
+# Results are UNCHANGED, not merely usually-equal: a patch offset and a CP range each identify
+# exactly one BB, so "first match from 0" and "first match from lo" are the same BB. The
+# below-`lo` sweep afterwards keeps the old behaviour exactly if a jump ever does leave its
+# function, so this is a pure speedup with no new failure mode.
+fn _ir_find_bb_for_patch_at(S, patch_off, lo): i64 {
     var bcnt = IR_BCNT(S);
-    var bi = 0;
-    while (bi < bcnt) {
-        var first = IR_BB_FIRST(S, bi);
-        var count = IR_BB_COUNT(S, bi);
-        var ni = first;
-        while (ni < first + count) {
-            if (IR_NODE_OP(S, ni) == IR_NOP) {
-                if (IR_NODE_A1(S, ni) == patch_off) { return bi; }
+    var pass = 0;
+    while (pass < 2) {
+        var bi = lo;
+        var hi = bcnt;
+        if (pass == 1) { bi = 0; hi = lo; }
+        while (bi < hi) {
+            var first = IR_BB_FIRST(S, bi);
+            var count = IR_BB_COUNT(S, bi);
+            var ni = first;
+            while (ni < first + count) {
+                if (IR_NODE_OP(S, ni) == IR_NOP) {
+                    if (IR_NODE_A1(S, ni) == patch_off) { return bi; }
+                }
+                ni = ni + 1;
             }
-            ni = ni + 1;
+            bi = bi + 1;
         }
-        bi = bi + 1;
+        pass = pass + 1;
     }
     return 0 - 1;
+}
+
+fn _ir_find_bb_for_patch(S, patch_off): i64 {
+    return _ir_find_bb_for_patch_at(S, patch_off, 0);
+}
+
+fn _ir_find_bb_for_cp_at(S, target_cp, lo): i64 {
+    var bcnt = IR_BCNT(S);
+    var pass = 0;
+    while (pass < 2) {
+        var bi = lo;
+        var hi = bcnt;
+        if (pass == 1) { bi = 0; hi = lo; }
+        while (bi < hi) {
+            var first = IR_BB_FIRST(S, bi);
+            var count = IR_BB_COUNT(S, bi);
+            if (count > 0) {
+                var bb_cp_start = IR_NODE_CP(S, first);
+                var bb_cp_end = bb_cp_start;
+                if (first + count < IR_NCNT(S)) {
+                    bb_cp_end = IR_NODE_CP(S, first + count);
+                } else {
+                    bb_cp_end = GCP(S);
+                }
+                if (target_cp >= bb_cp_start && target_cp < bb_cp_end) { return bi; }
+            }
+            bi = bi + 1;
+        }
+        pass = pass + 1;
+    }
+    return 0 - 1;
+}
+
+fn _ir_find_bb_for_cp(S, target_cp): i64 {
+    return _ir_find_bb_for_cp_at(S, target_cp, 0);
 }
 
 fn ir_build_edges(S): i64 {
@@ -1331,18 +1376,22 @@ fn ir_build_edges(S): i64 {
     var edges = 0;
 
     var bi = 0;
+    # First BB of the function currently being walked — the scan hint above. A BB whose last
+    # node is IR_EPILOGUE ends a function, so the next BB opens the next one.
+    var fn_lo = 0;
     while (bi < bcnt) {
         var first = IR_BB_FIRST(S, bi);
         var count = IR_BB_COUNT(S, bi);
         if (count > 0) {
             var last_ni = first + count - 1;
             var op = IR_NODE_OP(S, last_ni);
+            if (op == IR_EPILOGUE) { fn_lo = bi + 1; }
 
             if (op == IR_JMP) {
                 # Forward JMP — patch offset stored in arg2
                 var patch_off = IR_NODE_A2(S, last_ni);
                 if (patch_off > 0) {
-                    var target_bb = _ir_find_bb_for_patch(S, patch_off);
+                    var target_bb = _ir_find_bb_for_patch_at(S, patch_off, fn_lo);
                     if (target_bb >= 0) {
                         ir_bb_set_succ(S, bi, target_bb);
                         ir_add_edge(S, bi, target_bb);
@@ -1353,7 +1402,7 @@ fn ir_build_edges(S): i64 {
             elif (op == IR_JMP_BACK) {
                 # Backward jump — target CP in arg2
                 var target_cp = IR_NODE_A2(S, last_ni);
-                var target_bb = _ir_find_bb_for_cp(S, target_cp);
+                var target_bb = _ir_find_bb_for_cp_at(S, target_cp, fn_lo);
                 if (target_bb >= 0) {
                     ir_bb_set_succ(S, bi, target_bb);
                     ir_add_edge(S, bi, target_bb);
@@ -1370,7 +1419,7 @@ fn ir_build_edges(S): i64 {
                 # Jump target (condition true — resolved via patch offset)
                 var patch_off = IR_NODE_A2(S, last_ni);
                 if (patch_off > 0) {
-                    var target_bb = _ir_find_bb_for_patch(S, patch_off);
+                    var target_bb = _ir_find_bb_for_patch_at(S, patch_off, fn_lo);
                     if (target_bb >= 0) {
                         var fall_bb = bi;
                         if (bi + 1 < bcnt) { fall_bb = bi + 1; }

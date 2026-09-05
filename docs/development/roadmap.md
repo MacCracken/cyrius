@@ -30,7 +30,9 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.53** (2026-09-05) — cycc **1,192,312 B** (.text 1,042,416) · `check.sh` **GREEN** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **119** shell gates under `tests/gates/<bucket>/` · self_compile **661.8 ms** · **5 open issues + 3 open proposals** — and every remaining issue is an arc or a maintainer decision, not a patch.
+**Current head: v6.5.54** (2026-09-05) — cycc **1,200,752 B** (.text 1,049,552) · `check.sh` **GREEN** · seed-derive **GREEN** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **124** shell gates under `tests/gates/<bucket>/` · self_compile **667 ms** · **4 open issues + 3 open proposals**.
+
+⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **119** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
 ⭐ **The v6.5.x minor is CLOSED.** Band K finished it at `.45`–`.47`; `.48` was the
 post-closeout sigil fold plus the one consolidation carried out of the band. What each band
@@ -67,7 +69,7 @@ taken (**generate it from the stdlib peers**), whereupon it became 43 derived ro
 
 | Item | Verdict | What is actually left | Size |
 |---|---|---|---|
-| `ir-regalloc-rewrite-needs-reemit` | **ARC → `.53`** | The re-emit half. `.34` landed the IR substrate and `.35` the cross-BB liveness; what remains is re-emitting from the rewritten IR rather than patching bytes in place. Shares a subsystem with `.52`, which is why it follows it. | arc |
+| `ir-regalloc-rewrite-needs-reemit` | **PARTLY SHIPPED `.54`** | The re-emit half. `.34` landed the IR substrate and `.35` the cross-BB liveness; what remains is re-emitting from the rewritten IR rather than patching bytes in place. Shares a subsystem with `.52`, which is why it follows it. | arc |
 | `simd-f64v-memory-operand` | **ARC → `.52` (open)** | Items 1–2. No vector register class in the allocator's picker, and the wrapper inliner is gated to generics. Item 3 shipped `.24` (measured 2×), item 4 parked. | arc |
 | ~~`v6415-closeout-residuals`~~ | **✅ CLOSED at `.50`** | All three parts resolved. D1 deleted nine definition-only IR fns (−174 lines, unreachable floor 84 → 75). The "do NOT name-sweep" warning was load-bearing and honoured — `ir_dce_capped`/`ir_dead_store_capped` are LIVE and contain the dead names as prefixes. D2 had already been resolved by execution at `.35`. | done |
 | `stiva-stackless-coroutines` | **ARC → after `.54`** | Half A (multi-waiter registry) shipped `.26`. Half B is a CPS transform: liveness-across-suspend, locals-to-frame lifting, a per-`async fn` state machine. Ordered last because the consumer that justified pulling it forward no longer blocks on it — that is a PRIORITY input, not a reason to leave it unpinned. | arc |
@@ -294,15 +296,28 @@ check `f64v4_fmadd` *"which item 3's widening never covered"*: it IS covered —
 (`float.cyr:800`) emits `C5 FD 10` / `C5 FD 59`, i.e. `vmovupd`/`vmulpd` on **ymm**. Do not carry
 either claim forward; re-derive again next time.
 
-### `.53` — regalloc re-emit: stop patching bytes in place
+### `.54` — ✅ SHIPPED: make `CYRIUS_IR=3` a viable path (was "`.53` regalloc re-emit")
 *(issue `2026-07-02-ir-regalloc-rewrite-needs-reemit`)*
 
-`.34` landed the IR substrate and `.35` the cross-BB liveness. The remaining half is re-emitting
-from the rewritten IR instead of patching already-emitted bytes, which is what makes the NOP-harvest
-compactor and its position-repair machinery necessary in the first place. Follows `.52` because
-they share the allocator and the same byte-matcher.
+⛔ **The slot's own premise was wrong and the correction is the finding.** This slot was scoped
+from a recorded IR=3 cost of "+3.6 % compile time, +6.2 % size". The size half was right; the time
+half had been carried forward across releases without being re-measured and was **off by a factor
+of twenty** — live, IR=3 took **13,967 ms** against the default path's **672 ms**. Re-take a number
+before you plan around it.
 
-### `.54` — payload-enum representation: stop boxing every `Ok`/`Err`/`Some`
+Both defects are fixed and IR=3 is now **1,012 ms and at exact `.text` parity** with the default
+build (NOPs 19,067 → 8,249): `ir_build_edges` no longer resolves each jump by scanning the whole
+program, and the NOP-harvest compactor is no longer disabled under IR mode — which needed a repair
+pass for the IR's node→CP table, without which the IR-built compiler dies with
+`alloc_init: mmap failed`. See CHANGELOG [6.5.54].
+
+📌 **Residual, and it has changed sign.** The remaining 8,249 NOPs are the IR passes' own
+eliminations, written after every per-function compaction has run, so only a whole-program pass
+after the IR fixpoint collects them. That pass is no longer a repair for a regression — IR=3 is at
+parity now — it is worth roughly **8–12 KB smaller than the default path**, which would be the
+first real size payoff from the IR optimizers.
+
+### `.55` — payload-enum representation: stop boxing every `Ok`/`Err`/`Some`
 *(issue `2026-07-28-sock-send-result-allocates-per-call`)*
 
 The enum payload-variant constructor lowering (`src/frontend/parse_types.cyr:386`) emits
@@ -315,7 +330,7 @@ change.** Every `enum` in `src/` is constants-only with no payload variants, so 
 self-host proves nothing here — an earlier attempt achieved one *while being wrong*. Acceptance
 has to come from consumer-side `.tcyr` coverage of payload enums, written BEFORE the change.
 
-### After `.54` — stackless coroutines: the CPS transform
+### After `.55` — stackless coroutines: the CPS transform
 *(issue `2026-07-25-stiva-stackless-coroutines-interactive-exec`)*
 
 Half A (the multi-waiter registry) shipped at `.26`. Half B is liveness-across-suspend,

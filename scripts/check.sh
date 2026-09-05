@@ -122,6 +122,22 @@ sh "$ROOT/tests/gates/frontend/overload_arity_dispatch.sh"
 # making the local gate actually run it. `tests/gates/memory/heapmap.sh` is the only other CI-only
 # script and it is genuinely redundant: `_heapmap_gate()` in the check binary covers it.
 sh "$ROOT/tests/gates/platform/io_rdwr_agnos.sh"
+# v6.5.54: the NOP-harvest compactor must run under IR mode, and the resulting compiler
+# must WORK. It was gated off for every IR mode, so CYRIUS_IR=3 shipped 19,067 NOP
+# instructions against the default path's 44 (+65,320 B of .text). The gate could not
+# simply be lifted: the compactor moves code and the IR records a code position per node,
+# so without the stage-3c CP repair the IR-built cycc dies at startup with
+# `alloc_init: mmap failed` — mutation-proven, and that reproduction check, not the NOP
+# count, is what this gate is really asserting.
+sh "$ROOT/tests/gates/codegen/ir_nop_harvest.sh"
+
+# v6.5.54: ir_build_edges must resolve jump targets within a function. Both BB finders
+# scanned the whole program per jump (one of them nesting a node scan inside that), which
+# put CYRIUS_IR=3 at 13,967 ms against 672 ms — 21x, and ALL of it here: with FOLD, LASE,
+# DCE and DSE all disabled it was still 13,910 ms. Pins the COST, not the mechanism, so any
+# sub-quadratic scheme passes.
+sh "$ROOT/tests/gates/codegen/ir_edges_scaling.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

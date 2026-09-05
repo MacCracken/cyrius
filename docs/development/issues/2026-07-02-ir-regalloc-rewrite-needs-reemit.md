@@ -1,3 +1,57 @@
+> ### ✅ v6.5.54 RESOLVED (the IR=3 regression half). Wall 2's remaining scope is now much smaller — and the slot-entry table below was WRONG about the cost.
+>
+> ⛔ **CORRECTION, and it matters more than the fix.** The table below says IR=3 self_compile is
+> **694 ms (+3.6 %)**. That is false and was never re-measured. Live on 6.5.53: **13,967 ms against
+> the default path's 672 ms — 20.8×.** The size regression this file opens with was the *small*
+> half of the problem; the compile-time blowup was the real blocker for IR=3 as a production path,
+> and it was invisible because the figure had been carried forward rather than taken.
+>
+> **Two independent defects, both fixed:**
+> 1. **`ir_build_edges` was quadratic.** `_ir_find_bb_for_patch` scanned every BB of the *program*
+>    AND every node inside each one, once per forward jump; `_ir_find_bb_for_cp` scanned every BB
+>    per backward jump. At 29,499 BBs that is the whole 13.3 s: with `CYRIUS_FOLD_OFF`,
+>    `CYRIUS_LASE_OFF`, `CYRIUS_DCE_CAP=0` and `CYRIUS_DSE_CAP=0` all set it was still **13,910 ms**,
+>    which is what proves it is not any optimizer pass. Both finders now take the first BB of the
+>    jump's own function as a start hint — an intra-function jump's target is in that function, so
+>    the scan ends inside it. **13,967 ms → 1,012 ms.** Result-neutral, not merely
+>    usually-equal: a patch offset and a CP range each identify exactly one BB, so "first match
+>    from 0" and "first match from `lo`" are the same BB, and the old full sweep is retained as a
+>    second pass so a jump that ever did leave its function behaves exactly as before. Verified
+>    byte-identical output on src/main.cyr.
+> 2. **The NOP-harvest compactor is no longer disabled under IR mode.** Reason 1 below is
+>    CONFIRMED — lifting the gate alone gives `alloc_init: mmap failed`, and the mechanism named
+>    below is exactly right: compaction relocates code while the IR's node→CP table keeps
+>    pre-compaction offsets, so `ir_apply_lase` then patches at stale positions (3,607 B patched
+>    instead of 3,451 B). Fixed by a stage 3c in the compactor that shifts every `IR_NODE_CP` by
+>    the bytes deleted below it, plus the new `IR_SNODE_CP` setter this file correctly noted was
+>    missing. **NOPs 19,067 → 8,249; `.text` back to exact parity with the default build.**
+>
+> ⚠ **Reason 2 below is also correct and was NOT worked around** — the per-fn compactor still
+> cannot see the IR passes' own NOPs. It does not need to: **10,748 of the 19,067 were plain
+> regalloc/frame-trim NOPs** (measured with every IR pass disabled), which this pass already knew
+> how to collect and was simply forbidden from touching.
+>
+> 📌 **HONEST RESIDUAL — the whole-program pass is still unbuilt, and is now a WIN rather than a
+> repair.** The remaining 8,249 NOPs are the IR passes' own eliminations (LASE 3,451 B + folds
+> 4,754 B + DCE + DSE), written after every per-fn compaction has already run. Collecting them
+> needs the post-fixpoint pass this file specifies. The prize has changed sign: IR=3 is no longer
+> +6.2 % *worse* than the default build, it is at parity, and harvesting those NOPs would make it
+> roughly **8–12 KB smaller** than the default path — the first actual payoff from the IR
+> optimizers. Everything that pass needs to repair is unchanged from the spec below, except that
+> `IR_NODE_CP` now has a setter.
+>
+> **Gates:** `tests/gates/codegen/ir_nop_harvest.sh` (asserts the harvest ran AND that the
+> IR-built compiler reproduces the default one — the second is the load-bearing half),
+> `tests/gates/codegen/ir_edges_scaling.sh` (pins the COST, not the mechanism). Both registered in
+> `check.sh` and mutation-proven three ways: gate-lift reverted → 19,076 NOPs; stage 3c disabled →
+> `alloc_init: mmap failed`; windowing reverted → 2,285 % of baseline.
+>
+> ⚠ **A mutation that silently does not apply proves nothing.** The stage-3c mutation was run twice
+> with a `sed` whose indentation did not match, reported PASS both times, and nearly produced the
+> conclusion "3c is dead code — delete it". It was caught only by checking that the two compiler
+> binaries actually differed. Always assert the mutant differs from the original before reading its
+> verdict.
+
 > **v6.5.35 UPDATE — the REGALLOC half of this file is now SHIPPED; what remains is the
 > RE-EMIT substrate (Wall 1 + Wall 2) only.** Band F landed cross-BB register allocation
 > WITHOUT the `ir_lower_all` re-emit path this file has always named as its prerequisite —
@@ -34,6 +88,58 @@
 > `parse.cyr` and `parse_expr.cyr` have **one each**; and `ir_build_edges`
 > (`src/common/ir.cyr:~1401`) still handles only `IR_JMP` / `IR_JMP_BACK` / `IR_JCC`, giving
 > `IR_SWITCH` a single fall-through edge, so the CFG remains incomplete for a regalloc rewrite.
+
+> ### ⟳ v6.5.54 SLOT ENTRY — Wall 2 measured for the first time, and three of this file's named items are DEAD SCAFFOLDING
+>
+> ⛔ **Do not start from this file's item list; start from the measurement below.** Premise-checked
+> against live code 2026-09-05:
+> * **Wall 1 (`ir_lower_all` re-emit) — the function no longer exists.** It and `_ir_lower_node`
+>   were definition-only and were DELETED at v6.5.50 (D1 of the v6.4.15 residuals). Only the
+>   comment at `ir.cyr:37` remains. This file's Status still says "`ir_lower_all` still has zero
+>   callers … so Wall 1's re-emit path is still dark" — that is now moot, and the file's own
+>   2026-07-07 header already called Wall 1 "disproved".
+> * **`IR_SWITCH` CFG completion — `IR_SWITCH` is NEVER EMITTED.** Opcode 74 is declared and
+>   listed in `_ir_op_opaque_stack`, but no site records one and `parse_ctrl.cyr` records no IR for
+>   switch at all. Adding an `ir_build_edges` arm for it would be dead code.
+> * **The CFG's consumer does not exist either.** `ir_liveness_cfg` runs (mode 1 only) and writes
+>   `ir_live_in`/`ir_live_out`; `IR_LIVEIN`/`IR_LIVEOUT` have **zero readers** outside the fixpoint
+>   that computes them. So the incomplete CFG cannot miscompile anything today.
+>
+> ⭐ **WHAT IS ACTUALLY WRONG, MEASURED.** `CYRIUS_IR=3` is a NET REGRESSION on a cycc self-compile:
+>
+> | | default | IR=3 |
+> |---|---|---|
+> | `.text` | 1,048,488 | **1,113,808** (+65,320, +6.2 %) |
+> | self_compile | 670 ms | **694 ms** (+3.6 %) |
+> | NOP instructions | **44** | **19,067** |
+>
+> The entire delta is **uncollected NOP padding**, not worse codegen. ⛔ And it is NOT any optimizer
+> pass: `CYRIUS_FOLD_OFF`, `CYRIUS_LASE_OFF`, `CYRIUS_DCE_CAP=0` and `CYRIUS_DSE_CAP=0` each produce
+> a BYTE-IDENTICAL size to all-passes-on. (`CYRIUS_RELOADELIM=0` makes it *worse*, +73,728 — that
+> pass is earning its keep.) Correctness is fine throughout: an IR=3-built cycc reproduces the
+> default cycc byte-identically and 294/294 tcyr agree on status.
+>
+> **The cause** is `parse_fn.cyr`'s NOP-harvest compactor, gated `if (IR_ENABLED(S) == 0)` with the
+> comment "DSE/LASE NOPs at IR=3 not tracked".
+>
+> ⚠ **TWO REASONS THE OBVIOUS FIX DOES NOT WORK — both established by trying it:**
+> 1. **The gate guards more than its comment says.** Registering the IR passes' NOP runs and
+>    relaxing the gate recovers the full 65 KB (.text drops to parity with the default path) — and
+>    produces a BROKEN compiler: the IR=3-built cycc dies with `alloc_init: mmap failed`. The
+>    compactor repairs jump displacements, fixup CPs and switch-table entries but **never touches
+>    `IR_NODE_CP`**, so compaction relocates code while the IR's node→CP table keeps
+>    pre-compaction offsets.
+> 2. **The per-fn compactor can never harvest IR-pass NOPs anyway.** Compaction runs inside
+>    `_PARSE_FN_DEF_IMPL` per function; the IR fixpoint runs at `main.cyr:2013` AFTER all parsing,
+>    and `nop_run_tbl` is reset per fn. The IR passes' NOPs are written after every compaction has
+>    already happened, into a table already consumed.
+>
+> ✅ **So Wall 2 has a concrete, correctly-scoped definition for the first time:** a **whole-program
+> compaction pass that runs AFTER the IR fixpoint**, with position repair for jumps, fixup CPs,
+> switch-table entries **and `IR_NODE_CP`**. `_nop_shift_at` (`parse_fn.cyr:2585`) is the reusable
+> shift helper; `IR_NODE_CP` (`ir.cyr:221`) currently has a getter but no setter. Worth **~6 % of
+> `.text` and ~3.6 % of compile time** on the IR path — which is the precondition for IR=3 being a
+> production path at all, and therefore for every deferred pass this file tracks.
 
 # IR substrate productionization — the whole IR-optimizer perf arc gates on it (→ v6.5.x)
 
