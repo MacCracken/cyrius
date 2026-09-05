@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.58** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
+**Current head: v6.5.59** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **119** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -253,19 +253,37 @@ the whole reason it inlined at `.52`. **22 wrappers in `lib/simd.cyr` carry that
 the wrapper goes flat gives **23 ms → 21 ms**, against **12 → 8 ms** for a genuinely flat wrapper.
 Any extra call layer destroys the win. Do not re-try it.
 
-#### `.59` — move the AVX2 dispatch out of the wrapper bodies
+#### `.59` — ✅ SHIPPED: an inlined 256-bit return dropped lanes 2-3
 
-The real `f64v4` blocker, now precisely located. The wrappers cannot simply always emit AVX2 —
-that SIGILLs on pre-AVX2 CPUs, which is why the runtime check exists. So the dispatch has to move
-from a source-level `if/else` into the **emitter**: the `f64v256_*` / `f32v8_*` builtins emit the
-AVX2-vs-SSE choice inline against the cached `_avx2_cache` flag, with no call and no source-level
-control flow, and the 22 wrappers in `lib/simd.cyr` become flat and inlinable.
+The replay re-parses a callee inside the CALLER's function context, so `return r;` emitted the
+caller's return convention — which moves ONE XMM. A 256-bit return is a PAIR, so lanes 2-3 came
+back stale, exit 0. Reachable from ordinary user code. ⭐ **Check every lane**: a lane-0
+assertion passes while half the vector is wrong, which is why nothing caught it.
 
-**Done when:** `f64v4_add(a, b)` inlines (no `callq` per chain link, by disassembly) · a 3-link
-f64v4 chain drops measurably from its current 68 ms · a pre-AVX2 path still runs correctly (the
-SIGILL risk is the reason the dispatch exists) · gated on real hardware.
+⛔ **THE PERFORMANCE GOAL WAS NOT MET AND THE ROUTE IS CLOSED BY MEASUREMENT.** Moving the AVX2
+dispatch into the emitter was implemented in full — lazy `cpuid` probe, cached hidden global,
+builtins routed through it, add/sub/mul/div wrappers flattened — and **reverted at 23 ms → 22 ms.**
+The call was never the bottleneck. Do not re-run this.
 
-#### `.60` — kill the round-trips inlining exposes
+📌 **Two measured facts that redirect the arc:**
+1. `simd_has_avx2()` returns 0 on **every non-x86 target**, so the wrappers' `if` is also the
+   aarch64 / Mach-O-arm64 / cx routing. Removing it requires the 256-bit builtins to be correct
+   on every backend.
+2. ⭐ **The AVX2 path is ~3× SLOWER than SSE for this workload** — a flat wrapper on `f64v_add`
+   (SSE, n=4) runs **8 ms** against **23 ms** for `f64v256_add` (AVX2 ymm), same box, same loop.
+   That inverts the premise of the whole 256-bit widening arc.
+
+#### `.60` — find out why the 256-bit path is slower than the 128-bit one
+
+Start from the fact above, not from the inliner. Candidates to measure: the `vzeroupper` emitted
+per `EMIT_F64V4_LOOP` invocation, loop overhead at n=4 (one iteration either way, so the ymm
+version's setup may dominate), and AVX-SSE transition penalties if any surrounding code leaves
+upper state dirty.
+
+**Done when:** the 8 ms vs 23 ms gap is explained with a measurement, and either closed or
+documented as inherent with the arc re-scoped accordingly.
+
+#### `.61` — kill the round-trips inlining exposes
 *(`simd-f64v-memory-operand`, part 2)*
 
 Two cheap wins measured at `.53`/`.56`, neither needing the register class. **(a)** A 128-bit arm
@@ -284,7 +302,7 @@ worth ~20–25 %, not a multiple.
 **Done when:** `movupd` count drops on the gate's own fixture, timing improves, and the corpus is
 byte-identical outside SIMD.
 
-#### `.61`–`.62` — the vector register class
+#### `.62`–`.63` — the vector register class
 *(`simd-f64v-memory-operand`, part 3 — closes the issue)*
 
 Only now, because until `.58` lands every chain link crosses a call and **SysV has no callee-saved
@@ -297,7 +315,7 @@ per-local safety scan is byte-pattern and 8-byte-only.
 **Done when:** the **svara formant bench closes to single-digit-× of the Rust baseline** — this is
 the minor's stated acceptance anchor and the reason the arc exists.
 
-#### `.63` — payload enums stop allocating for real
+#### `.64` — payload enums stop allocating for real
 *(closes `sock-send-result-allocates-per-call`)*
 
 `.55` shipped the compiler capability (`enum Name: stack`). This is the ecosystem half: teach `?`
@@ -313,7 +331,7 @@ ecosystem-wide.
 **Done when:** `Result`/`Option`/`Either` construction allocates **0 bytes**, every existing
 consumer still compiles, and crossos is green on all four hosts.
 
-#### `.64` — whole-program NOP compaction
+#### `.65` — whole-program NOP compaction
 *(closes `ir-regalloc-rewrite-needs-reemit`)*
 
 The `.54` residual: 8,249 NOPs are the IR passes' own eliminations, written after every per-function
@@ -328,7 +346,7 @@ claimed, and IR=3 is already at `.text` parity. It is last of the code work for 
 **Done when:** IR=3 `.text` is measurably smaller than the default build and an IR=3-built cycc
 still reproduces the default cycc byte-identically.
 
-#### `.65`–`.66` — stackless coroutines: the CPS transform
+#### `.66`–`.67` — stackless coroutines: the CPS transform
 *(closes `stiva-stackless-coroutines-interactive-exec`, and closes the minor)*
 
 Half A (the multi-waiter registry) shipped at `.26`. Half B is the compiler-level transform:

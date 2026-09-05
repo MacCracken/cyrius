@@ -179,6 +179,13 @@ sh "$ROOT/tests/gates/codegen/aggregate_copy_all_words.sh"
 # reason and this predicate exists to admit the SIMD wrappers WITHOUT switching it on.
 sh "$ROOT/tests/gates/codegen/simd_param_inline_reach.sh"
 
+# v6.5.59: an INLINED 256-bit return must carry all four lanes. The replay re-parses the callee
+# inside the CALLER's function context, so `return r;` emitted the caller's return convention —
+# which moves ONE XMM. A 256-bit return is a PAIR, so lanes 2-3 were left stale, exit 0, no
+# diagnostic. ⭐ Every lane is asserted: a lane-0 check passes while half the vector is wrong,
+# which is why no existing SIMD test caught it.
+sh "$ROOT/tests/gates/codegen/inline_simd256_return_lanes.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

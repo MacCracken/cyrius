@@ -4,6 +4,58 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.59] — 2026-09-05
+
+### Fixed
+
+- **An inlined 256-bit return dropped lanes 2-3.** The inline-replay path re-parses the callee's
+  body inside the **caller's** function context, so `_cur_fn_ret_scalar` / `_cur_fn_ret_pair`
+  still described the caller and `return r;` emitted the caller's return convention. A 128-bit
+  vector survived that by luck — one XMM, which the default path moves anyway — but a **256-bit
+  return is a pair, and its second register was never moved**. A flat `f64v4` wrapper returned
+  lanes 0-1 correct and lanes 2-3 stale: exit 0, no diagnostic, wrong numbers.
+
+  Reachable from ordinary user code — a plain `var r: f64v4; f64v_add(&r,&a,&b,4); return r;`
+  wrapper is admitted to the inline path since v6.5.58 made the predicate see 4-slot params. No
+  stdlib change or flag needed to hit it.
+
+  ⭐ **The lesson is the gate, not the fix: CHECK EVERY LANE.** A lane-0 assertion — the obvious
+  thing to write — passes while half the vector is wrong. Every existing SIMD test that touches a
+  256-bit value through an inlined wrapper kept passing. The defect surfaced only because one
+  probe happened to assert all four.
+
+### Added
+
+- `tests/gates/codegen/inline_simd256_return_lanes.sh` — asserts all four lanes of an inlined
+  256-bit return, plus a **128-bit control** that must stay green (it always worked). Mutation-
+  proven: reverting the fix fails 2 of 6 lane checks while the 128-bit control passes, confirming
+  the defect is specific to the pair-return path.
+
+### Benchmarks
+
+- Release gate GREEN end to end: self-host fixpoint · seed-derive (29,024-byte seed) ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four green ·
+  bench.
+
+### Notes
+
+- ⛔ **The slot's PERFORMANCE goal was not met, and the route is now closed by measurement rather
+  than by opinion.** `.59` was scoped to make `f64v4_add` inline by moving the AVX2 dispatch out
+  of the 22 `lib/simd.cyr` wrappers. That was implemented in full — an emitter-side lazy `cpuid`
+  probe with a cached hidden global, the `f64v256_*` builtins routed through it, and the
+  add/sub/mul/div wrappers flattened — and then **reverted, because it measured 23 ms → 22 ms.**
+  The call was never the bottleneck for these wrappers.
+
+- ⭐ **Two facts found on the way that change what to do next, both measured:**
+  1. **The wrappers' `if` is doing double duty.** `simd_has_avx2()` returns 0 on *every non-x86
+     target* — its CPUID probe is `#ifdef CYRIUS_ARCH_X86` — so that branch is not only AVX2
+     detection, it is how aarch64 / Mach-O-arm64 / cx reach the portable path. Removing it needs
+     the 256-bit builtins to be correct on every backend, not just guarded on x86.
+  2. **The AVX2 path is roughly 3× SLOWER than the SSE path here**: a flat wrapper calling
+     `f64v_add` (SSE, n=4) runs **8 ms** where `f64v4_add` via `f64v256_add` (AVX2 ymm) runs
+     **23 ms**, same box, same workload. That inverts the premise the whole 256-bit widening arc
+     rests on and is where the next measurement should start — not in the inliner.
+
 ## [6.5.58] — 2026-09-05
 
 ### Fixed

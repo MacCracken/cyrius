@@ -1782,8 +1782,19 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # `r` is visible again afterwards.
                 var _sdep_saved = GSDEP(S);
                 SSDEP(S, _sdep_saved + 1);
+                # v6.5.59 — carry the CALLEE's return class across the replay. The body is
+                # re-parsed inside the CALLER's function context, so `_cur_fn_ret_*` still
+                # described the caller and `return r;` emitted the caller's convention. A
+                # 128-bit vector survived that by luck (one XMM, moved by the default path); a
+                # 256-bit return is a PAIR and its second register was never moved — lanes 0-1
+                # correct, lanes 2-3 STALE, exit 0, no diagnostic.
+                # ⚠ Caught only because the probe asserted ALL FOUR LANES.
+                var _rs_saved = _cur_fn_ret_scalar;
+                var _cfrs = GFRS(S, fi);
+                if (_is_simd_any(S, _cfrs) == 1) { _cur_fn_ret_scalar = _cfrs; }
                 STI(S, GFBS(S, fi));
                 PARSE_PROG(S);
+                _cur_fn_ret_scalar = _rs_saved;
                 SSDEP(S, _sdep_saved);
                 # Patch return jumps from inlined body to here
                 var new_rpc = vec_len(rp_vec);
