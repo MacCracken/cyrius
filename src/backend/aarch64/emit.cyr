@@ -1316,6 +1316,12 @@ fn ESYSXLAT(S): i64 {
 # they sit adjacent for exactly that reason. 35 here is aarch64 unlinkat (→unlink),
 # NOT x86 nanosleep; portable sleeping goes through lib/chrono.cyr sleep_ms (poll).
 fn _macho_x86_routes(n): i64 { return 1; }   # v6.5.43: not the x86 Mach-O backend — never warn from here.
+# v6.5.51 — the generated x86_64 <-> aarch64 syscall correspondence, used by the
+# raw-literal diagnostic in parse_expr.cyr. Included HERE rather than in the shared
+# frontend so the ~225 rows cost nothing on the x86/PE/cx forks, which carry
+# `return 0;` stubs instead — the same shape as `_macho_arm_routes` right below.
+include "src/common/syscall_xlat.cyr"
+
 fn _macho_arm_routes(n): i64 {
     # v6.5.48 — DERIVED, not mirrored. This was a hand-maintained list of 67 lines duplicating
     # every source number in ESYSXLAT's Mach-O branch, and it drifted in BOTH directions: a

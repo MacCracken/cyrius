@@ -2006,6 +2006,13 @@ fn EGETSYSTIME_PE(S): i64 {
 # never runs — it exists only for symbol resolution on the x86/PE/x86-macho closures.
 fn _macho_arm_routes(n): i64 { return 0; }
 
+# v6.5.51 — the ELF-aarch64 raw-syscall-number diagnostic is aarch64-only; these stubs
+# keep the shared parse_expr.cyr call site defined without pulling the generated table
+# (src/common/syscall_xlat.cyr) into this fork. Mirrors `_macho_arm_routes` above.
+fn _SYSX_MEANT(n): i64 { return 0; }
+fn _SYSX_USE(n): i64 { return 0; }
+fn _SYSX_ACTUALLY(n): i64 { return 0; }
+
 # 0-arg kernel32 reroute, 16-byte aligned (rbx-anchored, same rationale as
 # _pe_srw_call_1arg). Result in rax. Stack on entry (top→bottom): [sc_nr].
 fn _pe_call_0arg_aligned(S, idx): i64 {

@@ -1,6 +1,27 @@
 # Proposal — `cyrius.cyml` as the build tool's actual configuration, not a partly-read file
 
 **Filed:** 2026-09-04 · **Status:** 🟡 OPEN — for maintainer direction
+
+> ### ⛔ Update v6.5.51 — the v6.5.49 slice shipped INERT, and the reason belongs in this proposal
+>
+> The `[build]` path fallback read **`src`**, which is the key *this* repo's manifest happens to
+> use. Counted across `~/Repos` on 2026-09-04: **120 of 125 `cyrius.cyml` files declare `entry`,
+> and 5 declare `src`** — one of the five being cyrius itself. A pre-v6.5.51 CLI handed an
+> `entry=` manifest printed the usage text and exited 1, i.e. presented as *"this feature does
+> not exist"* to 96 % of the ecosystem. Fixed at v6.5.51: both keys, `entry` first.
+>
+> ⚠ **Its gate passed the whole time, because the gate's fixture manifest was written with the
+> same key the implementation read.** That is the failure mode this proposal should design
+> against, not just the missing key: a gate authored alongside an implementation encodes the
+> implementation's assumptions and confirms that the code does what the code does.
+>
+> **This sharpens the proposal's central point.** The table below classifies keys as live or
+> inert. `src`/`output` were *neither*: they were live in the code and inert in practice,
+> because the code and the ecosystem disagreed about the spelling. Any "make the manifest
+> authoritative" design therefore needs a **declared key vocabulary with synonyms resolved in
+> one place**, plus a check that the vocabulary matches what consumers actually write — a
+> hand-maintained duplicate of a derivable fact is the self-drifting shape this cycle keeps
+> finding.
 **Prompted by:** `cyrius build` requiring `<source> <output>` on every invocation while the
 manifest already declared both. One slice of this shipped at **v6.5.49** (the `[build]` path
 fallback); this proposal is the rest, and the shape it should take.

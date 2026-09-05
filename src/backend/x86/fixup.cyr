@@ -418,7 +418,10 @@ fn FIXUP(S): i64 {
     # in main.cyr does NOT cover this gap; pre-fixup state could be dirty
     # only if a future caller writes here, but defensive reset is cheap).
     var sh_clr = 0;
-    while (sh_clr < _fnt_cap) {
+    # v6.5.51: bound by the HASH SIZE, not the array cap. They were equal until the
+    # hash went to 2 slots per entry; `< _fnt_cap` now clears only half the table and
+    # leaves stale start-hash entries behind, which is a wrong-fn lookup, not a slowdown.
+    while (sh_clr <= _fnt_hash_mask) {
         store32(_fnt_starthash + sh_clr * 4, 0);
         sh_clr = sh_clr + 1;
     }

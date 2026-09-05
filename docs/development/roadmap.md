@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.50** (2026-09-04) — cycc **1,192,272 B** (.text 1,041,776) · `check.sh` **236 passed / 0 failed** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **118** shell gates under `tests/gates/<bucket>/` · self_compile **662.9 ms** · **6 open issues + 3 open proposals** — the leanest queue this minor.
+**Current head: v6.5.51** (2026-09-04) — cycc **1,192,312 B** (.text 1,042,416) · `check.sh` **GREEN** · **294** `.tcyr` (**62** in `crossos/`) · **102** `lib/*.cyr` · **119** shell gates under `tests/gates/<bucket>/` · self_compile **661.8 ms** · **5 open issues + 3 open proposals** — and every remaining issue is an arc or a maintainer decision, not a patch.
 
 ⭐ **The v6.5.x minor is CLOSED.** Band K finished it at `.45`–`.47`; `.48` was the
 post-closeout sigil fold plus the one consolidation carried out of the band. What each band
@@ -65,7 +65,7 @@ maintainer, not more work.
 | `stiva-stackless-coroutines` | DECISION | Half A (the multi-waiter registry) shipped at `.26`. Half B is a CPS transform — liveness-across-suspend, locals-to-frame lifting, a per-`async fn` state machine. The consumer that justified pulling it forward no longer blocks on it. | maintainer |
 | `sock-send-result-allocates-per-call` | PARTLY | Related per-poll leak fixed at v6.4.61; this is the remaining per-call `Result` allocation on the no-free bump. | maintainer |
 | `darshana-aarch64-syscall-shadow` | **DECISION** | **The filed reproduction CLOSED at `.50`** — `CHKDUPVAL` now names the consequence for a conflicting `SYS_*` redefinition, verified on both forks. What remains is a raw hardcoded number with *no* `SYS_*` name to conflict with, which genuinely needs the ~350-row x86_64→aarch64 correspondence table; **where that table lives — generated from the stdlib peers or hand-maintained — is the maintainer's call.** | maintainer |
-| `compile-time-superlinear-in-fn-count` | PARTLY | **`.50` took 60k fns 20.2 s → 1.0 s (20×)**: the second contributor was `LEXID` bucketing on identifier LENGTH alone. ⛔ **Both causes the filing predicted were ruled out** — `_fnt_grow` doubles (amortized-linear) and DCE is off by default — as were the hash load factor and the object emitter. What is left is the per-call cost of ONE `_fnt_grow` (~1,145 ms at the 65536→131072 boundary) and it needs direct instrumentation: no `perf` on the box, and `ptrace_scope=1` blocks gdb from attaching. | patch |
+| ~~`compile-time-superlinear-in-fn-count`~~ | **✅ CLOSED at `.51`** | Compile time is now LINEAR (flat ~5.3 µs/fn, 34k→120k). Cause was the fn-name hash running to **100 % load** before every doubling — max probe 65,263, 31.5 M probes/compile; two slots per entry → max probe 38. ⛔ Every previously-proposed cause was wrong: `_fnt_grow` costs **4–9 ms total** (not 1145), the DCE walk is off by default and never ran, and load factor alone was misleading. | done |
 | ~~`test-runner-bounded-gate-intermittent`~~ | **✅ CLOSED at `.50`** | The proxy-vs-property read was right, but ⛔ **the filing's leading hypothesis was REFUTED**: a zombie's argv collapses to `[test_bin] <defunct>` and cannot match the sampler's PATH pattern, so the recommended state-filter fix would have been a no-op. Axis 1b now requires two CONSECUTIVE samples; the abandon-mutation still trips it at 19. | done |
 
 ### Closed by this sweep

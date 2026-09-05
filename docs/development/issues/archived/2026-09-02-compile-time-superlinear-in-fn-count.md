@@ -1,8 +1,34 @@
 # Compile time is superlinear in function count — 4× the fns costs 17× the time
 
-**Status:** 🟠 **20x FASTER at v6.5.50 — the second contributor is FIXED and it was NOT either of
-the two this file predicted. A third, much smaller one remains.** 60,000-fn fixture:
-**43.6 s (v6.5.41) -> 23.9 s (v6.5.42) -> 1.0 s (v6.5.50).** 32,000 fns: 4,562 -> 405 ms.
+**Status:** ✅ **CLOSED at v6.5.51 — compile time is now LINEAR in function count, not merely
+faster.** Per-fn cost is flat at ~5.3 µs from 34,000 to 120,000 fns, against 10.3 µs at 15k rising
+to 25.6 µs at 120k when this was filed. 60,000-fn fixture across the arc:
+**43.6 s (v6.5.41) → 23.9 s (.42) → 1.0 s (.50) → and now flat.**
+
+⭐ **THE FINAL CAUSE WAS THE FN-NAME HASH RUNNING TO 100 % LOAD, AND IT WAS NOT ANY OF THE THINGS
+THIS FILE PREDICTED.** `_fnt_hash_mask` was `nc - 1` for an `nc`-entry table — exactly as many
+open-addressed slots as entries — and `REGFN` grows only once `fc >= _fnt_cap`, so the table
+saturated completely on the way to every doubling. Linear probing there degenerates into a
+full-table scan: instrumented on 120,000 fns, **max probe 65,263** (essentially the whole
+65,536-slot table for ONE insertion) and **31,504,006 probes** per compile. Two hash slots per
+entry takes that to **max probe 38 and 131,892 probes — 239× fewer**. Output byte-identical on
+383 files including all six compiler forks; fixpoint and seed-derive green.
+Gate: `tests/gates/memory/fn_hash_load_bounded.sh` (mutation-proven).
+
+⛔ **EVERY CAUSE PROPOSED IN THIS FILE OR IN v6.5.50 WAS WRONG, and the record matters more than
+the fix.** This file named `_fnt_grow`'s rehash-and-copy and the DCE reachability walk; v6.5.50
+then measured a jump at the cap boundary and concluded one `_fnt_grow` cost ~1145 ms. Direct
+instrumentation says **every grow in a 120,000-fn compile costs 4–9 ms combined** (copy 2–4,
+rehash 1–4). `_fnt_grow` is exonerated. DCE never ran — it is off by default. The hash *load
+factor* read alone was also misleading, because at equal ~52 % load 34k fns cost 16.9 µs/fn and
+70k cost 29.7. **The boundary jump was never the doubling; it was the table having just been
+driven to 100 % load on the way there.** A correlation with a doubling is not the doubling.
+
+⚠ Two measurement traps recorded because both bit: `CYRIUS_PROF`'s phase labels are wrong
+(`_prof_gvar_end` is stamped after the WHOLE two-pass parse, so "gvar" is the entire front end
+and "parse" always reads ~0), and a bisect whose upper endpoint is never probed inside the loop
+converges on a clean value — one here reported a threshold of 4,200 that the very next sweep
+showed was clean.
 
 ⭐ **THE SECOND QUADRATIC TERM WAS `LEXID`, BUCKETING ON IDENTIFIER LENGTH ALONE.**
 `bucket = klen` (saturated at 255) put every identifier of the same length on ONE dedup chain, so
@@ -23,7 +49,17 @@ Also ruled out by measurement: the hash-table LOAD FACTOR (at equal 52 % load, 3
 16.9 us/fn and 70k costs 29.7 — and higher load measured *cheaper* per fn), and the object emitter
 (`object;` and plain-executable forms scale identically).
 
-**WHAT REMAINS, and it is now precisely localized.** Cost is nearly flat WITHIN a `_fnt_cap`
+**⛔ SUPERSEDED — THE v6.5.50 HYPOTHESIS BELOW IS REFUTED. Kept verbatim because being wrong
+here in a specific, confident way is the useful part of the record; see the Status block at the top
+for what was actually true.** Every number in this paragraph is real; the *inference* from them is
+not. `_fnt_grow` does not cost ~1,145 ms — every grow in a 120,000-fn compile costs 4–9 ms
+combined, measured by instrumenting the function directly, which is exactly the "next step" this
+paragraph proposes and never took. The boundary jump was the hash having just been driven to 100 %
+load on the way there. Note also that the 4x-growth probe below "worked" for the wrong reason: a
+bigger table sooner means less time spent near saturation, so it relieved the real defect while
+appearing to confirm the wrong one.
+
+~~WHAT REMAINS, and it is now precisely localized.~~ Cost is nearly flat WITHIN a `_fnt_cap`
 generation (34k -> 60k fns: +76 % fns for +29 % time) and jumps at the boundary (60k -> 70k: +17 %
 fns for +182 % time), then flattens again. The residual is the **cost of an individual
 `_fnt_grow`**, not its frequency-times-size product: one grow at the 65536 -> 131072 boundary costs

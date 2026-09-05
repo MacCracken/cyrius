@@ -1,6 +1,21 @@
 # `test_runner_bounded` axis 1b went red once under load and I could not reproduce it
 
-**Status:** ✅ **CLOSED at v6.5.50 — and the leading hypothesis below was TESTED AND REFUTED.**
+**Status:** ✅ **CLOSED at v6.5.50, ROOT-CAUSED at v6.5.51 — and v6.5.50's own explanation was ALSO wrong.**
+
+⭐ **THE REAL CAUSE, confirmed 2026-09-04 by reading the process tree instead of reasoning about it: a
+SECOND Claude session was running `cyrius test` on the same machine, continuously.** Its children are
+also named `/tmp/cyrius-NNN/test_bin`, and the sampler matched on that name alone while subtracting only
+children that existed BEFORE the run. The chain read
+`test_bin -> .cyrius/versions/6.5.43/bin/cyrius test -> another ccd-cli session`. So the gate counted a
+stranger's tests as this suite's escaped children — which is why it appeared only "under load" and never
+reproduced on a quiet box: **load was correlated with the cause (someone else building), not the cause.**
+v6.5.51 filters the sampler by process ancestry from the suite's own pid; still mutation-proven (the
+abandon-variant trips it at 14 consecutive samples).
+
+⚠ **v6.5.50's model — a single-sample post-SIGKILL teardown artifact — was wrong**, and its "two
+consecutive samples" threshold was too tight: the reproduction showed **18 consecutive** samples (4.5 s).
+Two successive explanations for one flake were confidently wrong before anyone looked at the process tree.
+The original v6.5.50 text is kept below for exactly that reason.
 
 ⛔ **The zombie theory is WRONG.** This file proposed that `orphan_pids` counts a SIGKILLed-but-unreaped
 child, and flagged it as "the kind that is comfortable to believe". Measured 2026-09-04: a zombie's argv

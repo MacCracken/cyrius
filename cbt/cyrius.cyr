@@ -651,7 +651,16 @@ fn main(): i64 {
         var b_src = 0;
         var b_out = 0;
         if (argc() < ai + 2) {
-            b_src = _manifest_build_key("src", 3);
+            # v6.5.51 — `entry` FIRST, `src` as the legacy synonym. v6.5.49 shipped this
+            # fallback reading only `src`, which is the key THIS repo's manifest happens to
+            # use — and measured across ~/Repos, 120 of 125 cyrius.cyml files declare
+            # `entry` and only 5 declare `src`. So the convenience landed inert for 96 % of
+            # the ecosystem, and its gate passed because the gate was written against the
+            # same key the implementation was. ⚠ The lesson is the shipping one: when a
+            # feature reads a manifest key, check what consumers ACTUALLY write, not what
+            # this repo writes.
+            b_src = _manifest_build_key("entry", 5);
+            if (b_src == 0) { b_src = _manifest_build_key("src", 3); }
             b_out = _manifest_build_key("output", 6);
             _build_paths_from_manifest = 2;
         }

@@ -4,6 +4,122 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.51] — 2026-09-04
+
+### Fixed
+
+- **The fn-name hash filled to EXACTLY 100 % before every table doubling — this, not
+  `_fnt_grow`, was the compile-time superlinearity.** `_fnt_hash_mask` was `nc - 1` for an
+  `nc`-entry fn table, i.e. exactly as many open-addressed hash slots as entries, and `REGFN`
+  grows only once `fc >= _fnt_cap`. So the table ran to saturation on the way to every grow,
+  and linear probing at that load degenerates into a full-table scan. Instrumented on a
+  120,000-fn unit: **max probe 65,263** — essentially the entire 65,536-slot table for a
+  *single* insertion — and **31,504,006 probes** for the compile. The hash now gets two slots
+  per entry (and the initial `_fnt_cap` is halved to 2048, so the fixed 4096-slot regions are
+  also ≤50 % before the first grow): **max probe 38, 131,892 probes — 239× fewer.**
+
+  | fns | parse phase before | after |
+  |---|---|---|
+  | 34,000 | 595 ms | **182 ms** |
+  | 65,000 | 1576 ms | **344 ms** |
+  | 66,000 | 2105 ms | **352 ms** |
+  | 120,000 | 2464 ms | **644 ms** |
+
+  ⚠ Those are the **parse-phase** figures (`CYRIUS_PROF`'s `gvar`, which is the whole two-pass
+  front end despite the label) from the instrumented build, not whole-compile wall time — and
+  they were taken while the box was loaded. Whole-compile on a quiet box, 64,000 fns:
+  **1205 ms → 621 ms.** Per-fn parse cost is now **flat at ~5.3 µs from 34k to 120k fns**,
+  against 10.3 µs at 15k rising to 25.6 µs at 120k before. The superlinearity is gone, not reduced. Output is byte-identical
+  across 383 files (all `programs/`, all `.tcyr`, and all six per-target compiler forks); the
+  hash is a lookup accelerator whose probe *order* changes but whose answers do not. Self-host
+  fixpoint and seed-derive both green.
+
+  ⛔ **v6.5.50 attributed this cost to `_fnt_grow` and that was WRONG.** It observed the jump
+  at the cap boundary and concluded one grow cost ~1145 ms. Direct instrumentation says **every
+  grow in a whole 120,000-fn compile costs 4–9 ms combined** (copy 2–4 ms, rehash 1–4 ms). The
+  boundary jump was never the doubling — it was the table having just been driven to 100 % load
+  on the way there. A correlation with a doubling is not the doubling. The two candidates the
+  original filing named (`_fnt_grow`'s rehash-and-copy, the DCE walk) were also both wrong, and
+  so was the hash *load factor* read on its own.
+
+- **`run_binary_timed` could ABANDON a timed-out test child.** Its wait loop returned on any
+  `waitpid` error with a bare `return 1;` — no kill — so a transient failure left the child
+  running and let the suite move on, which is precisely the defect the deadline exists to
+  prevent. It now kills and reaps on that path too. ⚠ **Honest scope: this is a real defect by
+  inspection, but it is NOT proven to be the cause of `test_runner_bounded`'s long-standing
+  intermittent red** — the old code passed 3/3 under a synthetic 16-way load, so the failure
+  was not reproduced that way.
+
+- **`test_runner_bounded` axis 1b counted `test_bin` processes belonging to other sessions.**
+  Its sampler matched any `/cyrius-NNN/test_bin` on the box and subtracted only children that
+  existed *before* the run, so a `cyrius test` started mid-run by a parallel build read as an
+  escaped child. It now filters by process ancestry from the suite's own pid. ⛔ **This
+  supersedes v6.5.50's model of the same flake, which was wrong**: .50 treated it as a
+  single-sample post-SIGKILL teardown artifact, but the failure that finally reproduced showed
+  two children across **18 consecutive samples** (4.5 s) — far too long to be teardown, and it
+  occurred while this session was running its own builds. Still mutation-proven: the
+  abandon-variant trips it at 14 consecutive samples, so the ancestry filter did not make it
+  vacuous.
+
+- **`cyrius build`'s manifest fallback read `[build] src`, which almost nothing declares.**
+  v6.5.49 shipped the fallback against the key *this* repo's manifest happens to use. Measured
+  across `~/Repos`: **120 of 125 `cyrius.cyml` files declare `entry`, 5 declare `src`.** So the
+  convenience landed inert for 96 % of the ecosystem — a pre-fix CLI given an `entry=` manifest
+  prints the usage text and exits 1. Both keys are accepted now, `entry` first. ⚠ Its gate
+  passed because the gate was written against the same key the implementation was; two axes
+  were added to cover `entry` and the both-keys precedence.
+
+### Added
+
+- **An ELF-aarch64 diagnostic for raw x86_64 syscall numbers, backed by a GENERATED
+  correspondence table.** On ELF-aarch64 a raw hardcoded number is indistinguishable from an
+  intended native one, so a consumer writing the x86_64 number gets a *different, valid*
+  syscall with a successful build and nothing said (filed from darshana). The table lives in
+  `src/common/syscall_xlat.cyr`, generated by `programs/gen_syscall_xlat.cyr` from the two
+  stdlib peers — which already *are* the correspondence, so the two cannot drift. It is **43
+  rows, not the ~350 hand-maintained ones the filing assumed**, and where it lives was the
+  open design question: derived, because a hand-maintained duplicate of a derivable fact is
+  the self-drifting shape this repo keeps finding.
+
+  ⛔ **The obvious table-free check is unsound, measured.** "Warn when the number is not a
+  valid `SYS_*` value here" catches 61 of the 71 differing syscalls and **misses the 10 that
+  matter most**, because those x86 numbers *are* real aarch64 syscalls: `uname` 63 is
+  **read**, `kill` 62 is **lseek**, `execve` 59 is **pipe2**, `clone` 56 is **openat**.
+
+  ⛔ **And the naive table is also wrong.** The first working cut warned **510 times on
+  cycc's own aarch64 source** and 15 on a stdlib hello-world — all correct code. Two further
+  derived exclusions were needed: ESYSXLAT's ELF arm already remaps 42 x86 numbers and
+  writing those is the *supported* convention (cycc's own `enum Sys` uses `SYS_WRITE = 1`
+  because the chain rewrites it), plus the 10 ambiguous numbers. ⚠ That arm is literal
+  `EW(S, 0x…)` instruction words, **not** `_esx_arm(…)` call rows, so grepping for call rows
+  reports zero and silently under-excludes; the generator decodes `cmp x8,#imm`. In-tree
+  false positives **525 → 0**, with 43 rows still warning. The zero is the acceptance
+  criterion — a noisy syscall warning is worse than none, as this repo learned when the
+  Mach-O routing warning fired 470 times and got scrolled past.
+  Gate: `tests/gates/platform/syscall_xlat_generated.sh` (6 axes; axis 1 re-derives and diffs).
+
+- `CYRIUS_STATS=1` now reports **`fn_name_hash: <used> / <slots> slots, maxprobe <n>`**,
+  computed on demand by walking the table so it costs nothing on the hot path. It reports
+  *maxprobe* and not only load deliberately: load is the mechanism, displacement from the home
+  slot is the property that costs time, and a load-only meter would look healthy under any
+  future scheme that keeps load down while still clustering.
+
+### Benchmarks
+
+`sh scripts/bench-history.sh`, quiet box, against `.50`:
+
+| | .50 | .51 | |
+|---|---|---|---|
+| `compiler/self_compile` | 663.9 ms | **662.9 ms** | flat |
+| `size/cycc` | 1,192,272 B | **1,192,496 B** | +224 B (hash meter + the aarch64 syscall diagnostic) |
+
+⚠ **`self_compile` is deliberately unchanged and that is the honest reading.** cycc's own
+source has ~1,251 functions, so its hash sat at ~30 % load and never entered the saturation
+band this release fixes. The win is entirely for large consumers — and the band that was worst
+hit is ordinary project scale: any unit whose function count lands just under a power of two
+was running at 97–100 % load.
+
+
 ## [6.5.50] — 2026-09-04
 
 Issue-queue burn-down: five open filings closed or advanced, plus a build-log pass.

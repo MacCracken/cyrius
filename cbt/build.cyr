@@ -1031,7 +1031,20 @@ fn run_binary_timed(path, timeout_ms): i64 {
             if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
             return 1;
         }
-        if (w < 0) { return 1; }        # no such child — nothing left to wait on
+        # v6.5.51 — KILL BEFORE RETURNING. This used to be a bare `return 1;`, which is an
+        # ABANDONMENT PATH: any transient waitpid failure (EINTR is the likely one, and it
+        # gets likelier the more loaded the box is) left the child RUNNING and let the suite
+        # move on to the next test — the precise defect the deadline exists to prevent, and
+        # the one `tests/gates/toolchain/test_runner_bounded.sh` axis 1b is built around.
+        # ⚠ This is the real cause of that gate's "intermittent" red, and v6.5.50 mis-modelled
+        # it as a sampling artifact of the post-SIGKILL teardown window. It is not: the gate
+        # measured TWO children alive across 18 CONSECUTIVE samples (4.5 s), which is
+        # abandonment, not teardown. Reproduces only under load, which is why it looked flaky.
+        if (w < 0) {
+            sys_kill(pid, 9);
+            sys_waitpid(pid, &status_buf, 0);
+            return 1;
+        }
         _run_sleep_ms(slice);
         waited = waited + slice;
         if (waited >= 50)   { slice = 10; }

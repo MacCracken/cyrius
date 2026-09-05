@@ -1575,6 +1575,13 @@ fn EWRITE_PE(S): i64 { return 0; }
 fn _macho_x86_routes(n): i64 { return 1; }   # v6.5.43: not the x86 Mach-O backend — never warn from here.
 fn EMACHO_PTHREAD_CREATE_ARM(S): i64 { return 0; }   # v6.5.44: arm64-macOS only; parse_expr references it in every fork.
 fn _macho_arm_routes(n): i64 { return 0; }
+
+# v6.5.51 — the ELF-aarch64 raw-syscall-number diagnostic is aarch64-only; these stubs
+# keep the shared parse_expr.cyr call site defined without pulling the generated table
+# (src/common/syscall_xlat.cyr) into this fork. Mirrors `_macho_arm_routes` above.
+fn _SYSX_MEANT(n): i64 { return 0; }
+fn _SYSX_USE(n): i64 { return 0; }
+fn _SYSX_ACTUALLY(n): i64 { return 0; }
 fn _pe_pending_imp_add(S, name): i64 { return 0; }
 
 # v6.5.35 — stub. `RA_SCAN_LOOPS` really lives in src/backend/x86/decode.cyr, which this

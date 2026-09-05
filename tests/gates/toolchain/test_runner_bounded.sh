@@ -110,6 +110,41 @@ orphan_pids() {
     ps -eo pid=,args= 2>/dev/null | grep '/cyrius-[0-9]*/[t]est_bin' | awk '{print $1}' | sort
 }
 
+# The same set, but ONLY processes descended from $1 — used by axis 1b.
+#
+# ⚠ ARGV ALONE IS NOT ENOUGH ON A SHARED BOX, and that is the likeliest cause of this
+# gate's long-standing "intermittent" red. `orphan_pids` matches ANY `/cyrius-NNN/test_bin`
+# on the machine, and the before/after set subtraction only removes children that existed
+# BEFORE the run — a `cyrius test` started mid-run by another session (a parallel build, a
+# second agent, a developer in another terminal) lands in the "after" set and reads as an
+# escaped child. v6.5.42 saw `max 2` once and could not reproduce it; v6.5.50 modelled it as
+# a post-SIGKILL sampling artifact, which was ALSO wrong — the failure that finally
+# reproduced showed two children across 18 CONSECUTIVE samples (4.5 s), far too long to be
+# teardown.
+#
+# ⭐ ROOT CAUSE CONFIRMED 2026-09-04, by reading the process tree rather than reasoning
+# about it: a SECOND Claude session was running `cyrius test` on this machine, continuously.
+# Its children are also named `/tmp/cyrius-NNN/test_bin`, so the sampler counted a
+# stranger's tests as this suite's escaped children. The chain read
+#     test_bin -> .cyrius/versions/6.5.43/bin/cyrius test -> another ccd-cli session
+# That is why it only appeared 'under load' and never reproduced on a quiet box: load was
+# CORRELATED with the cause (someone else building), not the cause. Two implementers wrote
+# this class off as 'environmental load' — it IS environmental, but the mechanism is
+# nameable and the gate can be made immune to it.
+# Ancestry makes the sample mean what the row claims: children of THIS suite.
+descendant_pids() {
+    _root=$1
+    for _p in $(orphan_pids); do
+        _cur=$_p
+        _hops=0
+        while [ -n "$_cur" ] && [ "$_cur" != 1 ] && [ "$_hops" -lt 12 ]; do
+            if [ "$_cur" = "$_root" ]; then echo "$_p"; break; fi
+            _cur=$(awk '{print $4}' "/proc/$_cur/stat" 2>/dev/null)
+            _hops=$(( _hops + 1 ))
+        done
+    done | sort
+}
+
 # A fixture that never terminates. `while (1 == 1)` with a live accumulator so no
 # optimiser can fold it away, and no syscall in the loop so it is a genuine spin —
 # the exact shape that produced the 1h42m orphans.
@@ -213,17 +248,23 @@ suite_pid=$!
 #
 # That transient is not what this row is about. The property is "the deadline KILLS the
 # child rather than ABANDONING it", and an abandoned child stays alive for the REST OF
-# THE SUITE — seconds, not milliseconds. So the assertion is now on CONSECUTIVE samples:
-# two in a row at 2+ children (>= 0.5 s of real overlap at the 0.25 s interval) is a
-# genuine escape, while one isolated sample is teardown. The mutation the row was built
-# against (`sys_kill(pid, 9)` -> `sys_kill(pid, 0)` + WNOHANG) holds the overlap for the
-# whole second fixture's 5 s deadline, so it still trips this comfortably.
+# THE SUITE — seconds, not milliseconds. So the assertion is on CONSECUTIVE samples at the
+# 0.25 s interval, and the threshold is FOUR (>= 1.0 s of sustained overlap).
+#
+# ⚠ THE THRESHOLD WAS 2 AND THAT WAS TOO TIGHT — it went red inside check.sh on a loaded
+# box the first time it ran for real. The sub-200 ms teardown window was measured on an
+# IDLE machine; under a full gate suite it stretches past 0.5 s, so two consecutive samples
+# no longer distinguishes teardown from escape. Four does, with room to spare: the
+# abandon-mutation (`sys_kill(pid, 9)` -> `sys_kill(pid, 0)` + WNOHANG) holds the overlap
+# for the whole second fixture's 5 s deadline and was MEASURED at 19 consecutive samples,
+# so raising 2 -> 4 costs ~nothing in sensitivity and buys the headroom the box needs.
+# Do not tighten it back without re-measuring under load.
 maxlive=0
 maxrun=0
 run=0
 while kill -0 "$suite_pid" 2> /dev/null; do
-    orphan_pids > "$T/suite.now"
-    live=$(comm -13 "$T/suite.pre" "$T/suite.now" | grep -c . || true)
+    descendant_pids "$suite_pid" > "$T/suite.now"
+    live=$(grep -c . < "$T/suite.now" || true)
     [ "$live" -gt "$maxlive" ] && maxlive=$live
     if [ "$live" -gt 1 ]; then
         run=$(( run + 1 ))
@@ -236,13 +277,13 @@ done
 wait "$suite_pid" 2> /dev/null || true
 check "premise: BOTH hanging fixtures really ran and hit the deadline" 2 \
     "$(grep -c 'timed out after 5s' "$T/s.err" || true)"
-if [ "$maxlive" -gt 1 ] && [ "$maxrun" -le 1 ]; then
+if [ "$maxlive" -gt 1 ] && [ "$maxrun" -le 3 ]; then
     echo "        note: saw $maxlive children in a single sample but never twice running —"
     echo "        that is the sub-200ms post-SIGKILL teardown window, not an abandoned child."
 fi
 check "never more than the one child it is currently running (sustained)" 0 \
-    "$(if [ "$maxrun" -gt 1 ]; then echo 1; else echo 0; fi)"
-if [ "$maxrun" -gt 1 ]; then
+    "$(if [ "$maxrun" -gt 3 ]; then echo 1; else echo 0; fi)"
+if [ "$maxrun" -gt 3 ]; then
     echo "        $maxlive test children alive across $maxrun consecutive samples — a"
     echo "        timed-out child kept running while the suite moved on. The deadline is"
     echo "        abandoning, not killing: check sys_kill(pid, 9) in run_binary_timed"

@@ -240,7 +240,7 @@ _fnt_structmask = S + 0xA3A000;
 _fnt_namehash = S + 0x110000;
 _fnt_starthash = S + 0x114000;
 _fnt_hash_mask = 4095;   # v6.5.40: hash slots are 4 B now, so the fixed 16 KB regions hold 4096
-_fnt_cap = 4096;        # v6.5.40: was 8192 at 2 B/slot; _fnt_grow doubles from here
+_fnt_cap = 2048;        # v6.5.51: HALF the fixed 4096-slot hash regions, so load stays <=50 % before the first grow (was 4096 = 100 % full)        # v6.5.40: was 8192 at 2 B/slot; _fnt_grow doubles from here
 # Growable codebuf (Phase 0 v6.2.0; 8 MiB base + 8 MiB steps @ v6.4.49): base is
 # an off-heap 8 MiB alloc (cap 8388608); EB grows +8 MiB off-heap when cp nears
 # the cap, 64 MiB ceiling (util.cyr _codebuf_grow). Was a fixed 3 MiB in-heap

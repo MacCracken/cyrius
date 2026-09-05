@@ -39,6 +39,44 @@ fn FNV1A_NOFF(S, noff): i64 {
 # heap gives us free initialization). Called from REGFN after the
 # fn_names entry is written. Load factor 0.5 at 4096-fn cap means
 # avg ~1.5 probes to insert.
+# v6.5.51 — fn-name-hash health, computed ON DEMAND for `CYRIUS_STATS=1` by walking the
+# table once. Deliberately NOT a counter incremented inside _REGFN_HASH: that is the hot
+# path, and this must cost nothing when the meter is off.
+#
+# ⭐ IT REPORTS maxprobe, NOT JUST LOAD, because maxprobe is the PROPERTY and load is only
+# the mechanism. A gate pinning load alone would pass any future scheme that keeps load low
+# while still clustering — the v6.5.36 lesson (an enum gate stayed green through five bad
+# releases because it pinned the mechanism, and the mechanism was the thing that was wrong).
+# What costs time is displacement from the home slot, so that is what is measured: for every
+# occupied slot, re-derive the entry's home slot and report the largest wrap-adjusted
+# distance. Measured on a 120,000-fn unit: 65,263 before v6.5.51, 38 after.
+fn _fnhash_health(S): i64 {
+    var slots = _fnt_hash_mask + 1;
+    var used = 0;
+    var maxd = 0;
+    var sl = 0;
+    while (sl < slots) {
+        var e = load32(_fnt_namehash + sl * 4);
+        if (e != 0) {
+            used = used + 1;
+            var noff = L64(_fnt_names + (e - 1) * 8);
+            var hh = FNV1A_NOFF(S, noff);
+            var home = (hh & _fnt_hash_mask);
+            var d = ((sl - home) & _fnt_hash_mask);
+            if (d > maxd) { maxd = d; }
+        }
+        sl = sl + 1;
+    }
+    syscall(SYS_WRITE, 2, "  fn_name_hash: ", 16);
+    PRNUM(used);
+    syscall(SYS_WRITE, 2, " / ", 3);
+    PRNUM(slots);
+    syscall(SYS_WRITE, 2, " slots, maxprobe ", 17);
+    PRNUM(maxd);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    return maxd;
+}
+
 fn _REGFN_HASH(S, noff, fi): i64 {
     var h = FNV1A_NOFF(S, noff);
     var slot = h & _fnt_hash_mask;
@@ -121,10 +159,20 @@ fn _fnt_grow(S): i64 {
     _fnt_structmask = _fnt_copy_table(_fnt_structmask, oc, nc);
     # start-hash is rebuilt from scratch each fixup pass — just give it a
     # cap-sized buffer (contents irrelevant; the fixup clear loop zeroes it).
-    _fnt_starthash = alloc(nc * 4);  # v6.5.40: 4 B/slot
-    # name-hash: fresh zeroed buffer at the new mask, then re-insert all live fns.
-    _fnt_namehash = alloc(nc * 4);   # v6.5.40: 4 B/slot
-    _fnt_hash_mask = nc - 1;
+    # v6.5.51 — TWO hash slots per fn-table entry, so the open-addressed tables never
+    # exceed 50 % load. They used to be nc slots for an nc-entry table, and REGFN only
+    # grows once `fc >= _fnt_cap`, so the name hash filled to EXACTLY 100 % before every
+    # doubling. Linear probing at that load degenerates into a full-table scan: measured
+    # max probe 65,263 on a 131,072-slot table, 31.5 MILLION probes for one 120,000-fn
+    # compile. Two slots per entry caps the load at 50 %, where the measured max probe is
+    # 38 and the total is 131,892 — a 239x reduction that removes the superlinearity
+    # outright (5.3 us/fn, flat from 34k to 120k fns).
+    # Only these TWO tables double; the 17 payload tables above are untouched, so the cost
+    # is ~2 MB at the 131,072 ceiling. Output is byte-identical: the hash is a lookup
+    # accelerator whose probe ORDER changes but whose answers do not.
+    _fnt_starthash = alloc(nc * 8);  # nc*2 slots x 4 B
+    _fnt_namehash  = alloc(nc * 8);  # nc*2 slots x 4 B
+    _fnt_hash_mask = nc * 2 - 1;
     _fnt_cap = nc;
     var i = 0;
     while (i < oc) {
