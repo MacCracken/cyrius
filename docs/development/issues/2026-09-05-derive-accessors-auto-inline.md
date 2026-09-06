@@ -97,3 +97,30 @@ emitted `#inline `.
 - A gate asserts a derived accessor is actually inlined (call-site count), mutation-proven, and
   that N-struct files with N > 2 still preprocess correctly.
 - Ecosystem re-vendor, since this changes emitted code for every `#derive(accessors)` consumer.
+
+## ⟳ v6.5.70 — ROOT-CAUSED. The blocker is that `#` opens a COMMENT.
+
+The filing said the blocker was "a preprocessor state-threading defect" and left it at that.
+Reproduced and root-caused today:
+
+**`#` starts a comment in cyrius, and the preprocessor's own scanners implement that literally**
+— `if (c == 35) { in_comment = 1; }` appears in the scan loops in `src/frontend/lex_pp.cyr`
+(two occurrences). So when `PP_DERIVE_ACCESSORS_BODY` emits `#inline fn Name_field(p) { … }`,
+a later scan treats the rest of that line as a comment. The generated accessor is swallowed, and
+the comment state runs on far enough to eat the FOLLOWING `#derive(accessors)` line — which is
+exactly the observed symptom: `error: <source>:5:1: unexpected struct`, the second derive never
+firing and its `struct` reaching the parser.
+
+Verified by rebuilding the compiler with `"fn "` changed to `"#inline fn "` in the accessors
+emitter and compiling a two-struct fixture: correct without the change (exit 10), `unexpected
+struct` with it.
+
+**So the fix is not to emit `#inline` as TEXT at all.** The directive has to reach the parser
+through a side channel, the way the derive metadata already does (struct name at `S+0x197020`,
+field names at `S+0x1FC000`, offsets at `S+0x200000`): record the generated accessor names, or a
+count, in a table the parser consults when it registers those functions. That is a bounded change
+and it is the actual deliverable of this filing.
+
+⚠ This is the same fact recorded at v6.4.81 — *"`#` is a COMMENT so `#include` probes are
+inert"* — surfacing in a new place. Anything that emits a `#`-prefixed directive into
+preprocessor OUTPUT hits it.

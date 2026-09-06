@@ -315,6 +315,7 @@ var _CORO_STATE_OFF = 24;   # byte offset of the state word inside the coro obje
 var _CORO_LOCAL_OFF = 32;   # byte offset of local slot 0
 var _CORO_MAX_SUSP = 64;    # resume-label table size; exceeding it is a hard error
 var _coro_rcp[512];         # resume-label CP per suspend index (1-based), 64 x 8 B
+var _pending_coro = 0;      # this fn's body awaits: reserve slot 0 before params
 var _coro_was = 0;          # the body just emitted was a coroutine
 var _coro_flc = 0;          # that body's local-slot count (its frame size)
 var _async_gate_init = 0;

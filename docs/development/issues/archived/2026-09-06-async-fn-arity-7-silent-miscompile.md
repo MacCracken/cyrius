@@ -1,8 +1,20 @@
 # `async fn` with 7+ parameters silently returns garbage — pinned v6.5.70
 
-**Status:** 🔴 **OPEN — SILENT MISCOMPILE.** Found at v6.5.69 while premise-checking the
-coroutine arc. Pinned to **v6.5.70**, the arc's planned second release, because it is the same
-code path as multi-parameter coroutines.
+**Status:** ✅ **RESOLVED at v6.5.70** — filed and fixed in consecutive releases, which is one
+release too many; it should have been fixed where it was found.
+
+**The fix was one line, and both halves of the defect were in it.** `_async_emit_constructor`
+read `if (i < 6) { ESTOREPARM(S, i, i, 0); }`: the gate skipped homing every parameter past the
+sixth, and the hard-coded `0` is the ARITY argument `ESTORESTACKPARM` needs to compute the SysV
+stack-arg displacement — so even an un-gated call would have addressed the wrong slot. It is now
+`ESTOREPARM(S, i, i, pc)`, unconditionally; `ESTOREPARM` already dispatched to the stack path
+past the register args. The second cause was real too: `future_force` laddered `fncall0..6` and
+fell through for `argc >= 7`, so the impl was called with six arguments. `fncall7`/`fncall8`
+already existed in `lib/fnptr.cyr` and are now wired, with anything past 8 failing loudly instead
+of quietly wrong.
+
+Verified: arity 6/7/8 correct for both `await` and the plain-fn control on every rung —
+`tests/gates/frontend/coroutine_midbody_suspend.sh` axis 8.
 **Filed:** 2026-09-06 (during v6.5.69)
 **Severity:** High (silent wrong answer), bounded by the `CYRIUS_ASYNC=1` gate.
 **Component:** `src/frontend/parse_fn.cyr` (`_async_emit_constructor`) + `lib/async.cyr`

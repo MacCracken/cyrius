@@ -133,22 +133,146 @@ refuse() {   # refuse <label> <needle>
     sed -n 1,2p "$T/r.err" | sed 's/^/    /'; exit 1; }
 }
 cat > "$T/r.cyr" <<EOF
-${PRE}
+${PRE}include "lib/simd.cyr"
 fn nopark(): i64 { return 0; }
-async fn two(a, b): i64 { var s = await nopark(); return a + b; }
+async fn simd(C): i64 { var v: f64v2 = f64v2_make(1, 2); var s = await nopark(); return f64v2_lane0(&v); }
 fn main(): i64 { alloc_init(); syscall(60, 0); return 0; }
 var e = main();
 EOF
-refuse "a multi-parameter coroutine" "exactly one parameter"
+refuse "a SIMD local in a coroutine" "SIMD local"
 
-cat > "$T/r.cyr" <<EOF
+# ── axis 5 — MULTI-PARAMETER coroutines (v6.5.70; refused outright at v6.5.69) ───────────
+# The constructor pre-binds arguments into coroutine-frame slots. This is the SAME machinery
+# as the arity-7 fix in the same release — the constructor could not place arguments into
+# frame slots at all, whether those slots were on the stack or in a coroutine frame.
+cat > "$T/a5.cyr" <<EOF
 ${PRE}
+var g5 = 0;
 fn nopark(): i64 { return 0; }
-async fn addr(C): i64 { var buf: i64[4]; var s = await nopark(); return load64(&buf); }
-fn main(): i64 { alloc_init(); syscall(60, 0); return 0; }
+async fn addup(a, b, c): i64 {
+    g5 = g5 + 1;
+    var acc = a;
+    var s1 = await nopark();
+    acc = acc + b;
+    var s2 = await nopark();
+    acc = acc + c;
+    return acc;
+}
+fn main(): i64 {
+    alloc_init();
+    var C = addup(5, 60, 200);
+    future_force(C); future_force(C);
+    var r = future_force(C);
+    if (g5 != 1) { syscall(60, 100 + g5); }
+    if (r != 265) { syscall(60, 201); }
+    syscall(60, 0);
+    return 0;
+}
 var e = main();
 EOF
-refuse "taking the address of a coroutine local" "address of a local"
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/a5.cyr" > "$T/a5" 2>"$T/a5.err" || {
+  echo "FAIL coroutine_midbody_suspend axis5: the 3-parameter coroutine did not compile"; grep -m2 '^error' "$T/a5.err"; exit 1; }
+chmod +x "$T/a5"; timeout 30 "$T/a5"; g5=$?
+[ "$g5" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis5: 3-param coroutine exit $g5 (201 = a+b+c wrong, 101+ = body top re-ran)"; exit 1; }
 
-echo "PASS coroutine_midbody_suspend: mid-body suspend resumes in place (trace 123, body top ran once, locals survived) · no-await async fns bit-identical · multi-param and &local refused by name"
+# ── axis 6 — a suspend INSIDE A LOOP, which is the filed consumer shape ──────────────────
+# stiva's `exec -it` relay is a loop that awaits mid-body; a transform that only handled
+# straight-line bodies would pass every axis above and still not deliver the feature.
+cat > "$T/a6.cyr" <<EOF
+${PRE}
+var g6 = 0;
+fn ready(): i64 { return 0; }
+async fn pump(n): i64 {
+    g6 = g6 + 1;
+    var moved = 0;
+    var i = 0;
+    while (i < n) {
+        var chunk = i + 1;
+        var s = await ready();
+        moved = moved + chunk;
+        i = i + 1;
+    }
+    return moved;
+}
+fn main(): i64 {
+    alloc_init();
+    var C = pump(4);
+    var r = 0;
+    var turns = 0;
+    while (turns < 5) { r = future_force(C); turns = turns + 1; }
+    if (g6 != 1) { syscall(60, 100 + g6); }
+    if (r != 10) { syscall(60, 201); }
+    syscall(60, 0);
+    return 0;
+}
+var e = main();
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/a6.cyr" > "$T/a6" 2>"$T/a6.err" || {
+  echo "FAIL coroutine_midbody_suspend axis6: the in-loop suspend did not compile"; grep -m2 '^error' "$T/a6.err"; exit 1; }
+chmod +x "$T/a6"; timeout 30 "$T/a6"; g6=$?
+[ "$g6" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis6: suspend inside a loop gave $g6 (201 = accumulator wrong across iterations)"; exit 1; }
+
+# ── axis 7 — &local across a suspend (v6.5.70; refused at v6.5.69) ───────────────────────
+cat > "$T/a7.cyr" <<EOF
+${PRE}
+fn nopark(): i64 { return 0; }
+async fn buffed(seed): i64 {
+    var buf: i64[4];
+    store64(&buf, seed);
+    store64(&buf + 8, seed * 2);
+    var s1 = await nopark();
+    store64(&buf + 16, seed * 3);
+    var s2 = await nopark();
+    return load64(&buf) + load64(&buf + 8) + load64(&buf + 16);
+}
+fn main(): i64 {
+    alloc_init();
+    var C = buffed(7);
+    future_force(C); future_force(C);
+    var r = future_force(C);
+    if (r != 42) { syscall(60, 201); }
+    syscall(60, 0);
+    return 0;
+}
+var e = main();
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/a7.cyr" > "$T/a7" 2>"$T/a7.err" || {
+  echo "FAIL coroutine_midbody_suspend axis7: &local in a coroutine did not compile"; grep -m2 '^error' "$T/a7.err"; exit 1; }
+chmod +x "$T/a7"; timeout 30 "$T/a7"; g7=$?
+[ "$g7" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis7: a local array did not survive two suspends (exit $g7)"; exit 1; }
+
+# ── axis 8 — ARITY LADDER: the v6.5.69 silent miscompile ─────────────────────────────────
+# `async fn` at 7+ parameters returned code-address-shaped garbage, exit 0, no diagnostic,
+# while the 6-parameter async form and the PLAIN 7-parameter fn were both correct. TWO causes:
+# the constructor never spilled parameters past the sixth, and `future_force` laddered only
+# `fncall0..6` and fell through. The plain fn at the same arity is the control on every rung —
+# it is what isolated the defect to the async lowering in the first place.
+cat > "$T/a8.cyr" <<EOF
+${PRE}
+async fn a6(a,b,c,d,e,f): i64 { return a+b+c+d+e+f; }
+async fn a7(a,b,c,d,e,f,g): i64 { return a+b+c+d+e+f+g; }
+async fn a8(a,b,c,d,e,f,g,h): i64 { return a+b+c+d+e+f+g+h; }
+fn p7(a,b,c,d,e,f,g): i64 { return a+b+c+d+e+f+g; }
+fn p8(a,b,c,d,e,f,g,h): i64 { return a+b+c+d+e+f+g+h; }
+fn main(): i64 {
+    alloc_init();
+    if (await a6(1,2,3,4,5,6) != 21) { syscall(60, 60); }
+    if (p7(1,2,3,4,5,6,7) != 28) { syscall(60, 70); }
+    if (await a7(1,2,3,4,5,6,7) != 28) { syscall(60, 71); }
+    if (p8(1,2,3,4,5,6,7,8) != 36) { syscall(60, 80); }
+    if (await a8(1,2,3,4,5,6,7,8) != 36) { syscall(60, 81); }
+    syscall(60, 0);
+    return 0;
+}
+var e = main();
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/a8.cyr" > "$T/a8" 2>"$T/a8.err" || {
+  echo "FAIL coroutine_midbody_suspend axis8: the arity ladder did not compile"; grep -m2 '^error' "$T/a8.err"; exit 1; }
+chmod +x "$T/a8"; timeout 30 "$T/a8"; g8=$?
+[ "$g8" -eq 0 ] || {
+  echo "FAIL coroutine_midbody_suspend axis8: exit $g8 — 71/81 = the async form is wrong at that"
+  echo "  arity while 60/70/80 (the 6-param async and the PLAIN fns) would have been correct."
+  exit 1; }
+
+echo "PASS coroutine_midbody_suspend: mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · no-await async fns bit-identical"
 exit 0

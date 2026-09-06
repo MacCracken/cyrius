@@ -1605,6 +1605,28 @@ fn _wp_shift(S, p): i64 {
     return L64(S + 0xC0000 + idx * 24 + 16) + L64(S + 0xC0000 + idx * 24 + 8);
 }
 
+# Is p strictly INSIDE a deleted run? Such a position has no image after compaction, so a
+# table still holding it must be VOIDED rather than "shifted" to a plausible-looking wrong
+# address. ⚠ BINARY SEARCH — it requires the run table already sorted, which is why every
+# caller lives after `_wp_sort_prefix`. Calling it before the sort searches unsorted data and
+# silently returns wrong answers; that is exactly the defect that made the v6.5.69 attempt at
+# dead-code elimination produce a SIGSEGV-ing compiler.
+fn _wp_inside(S, p): i64 {
+    var lo = 0;
+    var hi = _wpnr_n;
+    while (lo < hi) {
+        var mid = (lo + hi) >> 1;
+        if (L64(S + 0xC0000 + mid * 24) < p) { lo = mid + 1; }
+        else { hi = mid; }
+    }
+    if (lo == 0) { return 0; }
+    var idx = lo - 1;
+    var c = L64(S + 0xC0000 + idx * 24);
+    var l = L64(S + 0xC0000 + idx * 24 + 8);
+    if (p > c) { if (p < c + l) { return 1; } }
+    return 0;
+}
+
 fn wp_compact(S): i64 {
     # x86 family only. ⚠ `_AARCH64_BACKEND == 0` ALONE IS NOT AN X86 TEST — the cx bytecode
     # backend also sets it to 0, which is the trap v6.5.64 records. aarch64 has no position
@@ -1621,6 +1643,18 @@ fn wp_compact(S): i64 {
     if (_wpjs_ovf == 1) { return 0; }
     if (_wpsw_ovf == 1) { return 0; }
     _wp_sort_prefix(S);
+    # Stage 0 — VOID every fixup whose CP lands strictly inside a run about to vanish. A dead
+    # function's calls are still in the fixup table; shifting such a CP yields a plausible
+    # address INSIDE LIVE CODE that the re-patch would then write a rel32 over — a miscompile
+    # manufactured by the repair itself. The patch loop skips a negative CP.
+    # ⚠ MUST run after `_wp_sort_prefix`: `_wp_inside` binary-searches.
+    var vfi = 0;
+    while (vfi < GFCNT(S)) {
+        var vfa = _fixup_base + vfi * 16;
+        var vcp = L64(vfa);
+        if (vcp >= 0) { if (_wp_inside(S, vcp) == 1) { S64(vfa, 0 - 1); } }
+        vfi = vfi + 1;
+    }
 
     # Stage 1 — every recorded disp32 source. Source and target each move by their own
     # amount, so the displacement is recomputed rather than adjusted by one delta.
@@ -1645,7 +1679,7 @@ fn wp_compact(S): i64 {
     while (fi < fcnt) {
         var fa = _fixup_base + fi * 16;
         var fcp = L64(fa);
-        S64(fa, fcp - _wp_shift(S, fcp));
+        if (fcp >= 0) { S64(fa, fcp - _wp_shift(S, fcp)); }
         fi = fi + 1;
     }
     # Stage 3 — the fn start/end tables. NEW HERE, and absent from the issue file's list: the
@@ -1726,5 +1760,23 @@ fn wp_compact(S): i64 {
         }
     }
     SCP(S, wp);
-    return _wp_deleted;
+    # RE-ENTRANCY. A second compaction follows when `CYRIUS_DCE=1` fills dead bodies AFTER
+    # this pass has already moved the buffer, so leave the registries describing the NEW
+    # layout and clear the run table — otherwise the second pass re-shifts positions by the
+    # first pass's deletions and every repair is double-counted.
+    var rj = 0;
+    while (rj < _wpjs_n) {
+        var rc = L64(S + 0x60000 + rj * 8);
+        S64(S + 0x60000 + rj * 8, rc - _wp_shift(S, rc));
+        rj = rj + 1;
+    }
+    var rs = 0;
+    while (rs < _wpsw_n) {
+        var sc = L64(S + 0xF0000 + rs * 16);
+        S64(S + 0xF0000 + rs * 16, sc - _wp_shift(S, sc));
+        rs = rs + 1;
+    }
+    var _done = _wp_deleted;
+    _wpnr_n = 0;
+    return _done;
 }

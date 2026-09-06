@@ -4,6 +4,98 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.70] — 2026-09-06
+
+### Fixed
+
+- ⛔ **`async fn` with 7+ parameters silently returned garbage — FILED at `.69`, FIXED here,
+  which is one release too many.** `await a7(1,2,3,4,5,6,7)` yielded a code-address-shaped value
+  instead of 28, exit 0, no diagnostic, while the 6-parameter async form (21) and the **plain**
+  7-parameter fn (28) were both correct in the same program.
+
+  Two causes, and the first was **one line carrying both halves**:
+  `_async_emit_constructor` read `if (i < 6) { ESTOREPARM(S, i, i, 0); }` — the gate skipped
+  homing every parameter past the sixth (they arrive on the stack), and the hard-coded `0` is the
+  **arity** argument `ESTORESTACKPARM` needs to compute the SysV stack-arg displacement, so even
+  an un-gated call would have addressed the wrong slot. `ESTOREPARM` already dispatched to the
+  stack path past the register args; it only ever needed to be called and told the arity.
+  Second: `future_force` laddered `fncall0`..`fncall6` and **fell through** for `argc >= 7`, so
+  the impl was invoked with six arguments. `fncall7`/`fncall8` already existed in `lib/fnptr.cyr`
+  and are now wired, with anything past 8 failing loudly instead of quietly wrong.
+
+  ⛔ **Deliberately NOT "fixed" by refusing arity >= 7** — that is the `<=6 args` rule this repo
+  retired at v6.4.64, a codegen defect written down as a language rule.
+
+### Added
+
+- **The coroutine arc closes: suspends inside loops, multi-parameter coroutines, and `&local`
+  across a suspend.** v6.5.69 shipped mid-body suspend for straight-line, single-parameter
+  bodies; the filed consumer shape (`exec -it`) is a **loop**, so that alone delivered nothing.
+  - **In-loop suspend** works: a `while` body that awaits mid-iteration resumes in place with its
+    induction variable and accumulator intact.
+  - **Multi-parameter coroutines**: the constructor pre-binds arguments into coroutine-frame
+    slots, and stack slot 0 is reserved for the frame base **before** parameters are allocated.
+    ⭐ This is the *same* missing machinery as the arity miscompile above — the constructor could
+    not place arguments into slots at all, whether those slots were on the stack or in a frame.
+    Fixing argument placement once closed both; that is why they shipped together.
+  - **`&local`** in a coroutine: the emitter is handed a displacement rather than a slot index,
+    so `.69` refused the form; the displacement inverts exactly (a coroutine disables the picker,
+    so the regalloc and ret-stash shifts are zero) and it is now supported. A local you cannot
+    take the address of is not a local.
+- `tests/gates/frontend/coroutine_midbody_suspend.sh` grows to **8 axes**. Axis 8 is the arity
+  ladder with the **plain fn as the control on every rung** — the shape that isolated the
+  miscompile to the async lowering rather than the calling convention.
+
+### Benchmarks
+
+- cycc **1,231,008 B** (`.text` **1,074,704**, +2,136 B) · self_compile **714 ms** (711 → 714,
+  **+0.4 %** — growth tax).
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+  ⛔ **Seed-derive caught a real break mid-release**: extracting the fixup patch loop made `cybs`
+  fail with a bare `syntax error` while `build/cycc` compiled it fine — the cybs-ceiling class,
+  invisible to the cycc fixpoint. The extraction served only the reverted DCE attempt and was
+  removed. ⚠ And the first bisect of it was WRONG because it used `build/cybs`, which is stale
+  and fails on a clean HEAD tree too; the real one must be assembled:
+  `cat bootstrap/cybs.cyr | bootstrap/asm > cybs`.
+- Corpus **301** `.tcyr` · **137** shell gates (DERIVED). Default-path corpus vs the previous
+  compiler: **0 divergences of 301**. All 7 per-target forks compile. Open issues **5 → 3**.
+
+### Notes
+
+- ⚠ **The open queue went 5 → 3, not the 5 → 1 this release aimed at. Stated plainly rather
+  than presented as a win.** Closed: `async-fn-arity-7-silent-miscompile` (fixed) and
+  `stiva-stackless-coroutines-interactive-exec` (both halves shipped). The three releases before
+  this one closed one issue and filed two — the exact v6.4.81 failure the standing rule names.
+
+- ⛔ **`CYRIUS_DCE=1` still does not eliminate — re-attempted, three more causes found and
+  recorded, still not landed.** Not left sitting: (1) the dead-body fixup voiding called a
+  **binary search before its table was sorted**, which was the largest cause of the v6.5.69
+  SIGSEGV and is now structurally impossible; (2) **`dbase` must not be recomputed** after
+  compaction — measured, `.rodata`/`.bss` land at identical vaddrs with and without elimination,
+  so recomputing relocated every absolute data reference by the bytes reclaimed; (3) extracting
+  the fixup patch loop into its own function **breaks the seed chain** — `cybs` cannot compile
+  the 8-parameter function and `seed-derive` goes red with a bare `syntax error` while
+  `build/cycc` compiles it fine, which constrains the design. With (1) and (2) fixed it reports
+  `34847 bytes of dead code eliminated` and still faults; the remaining fault is a call whose
+  `rel32` was never re-patched, ~32 KB below `.text`. All of it is written into the issue with a
+  small reproducer so the next attempt starts from there.
+
+- ⚠ **`derive-accessors-auto-inline` is now ROOT-CAUSED** (still open). The filing said
+  "a preprocessor state-threading defect"; it is that **`#` opens a comment** and the
+  preprocessor's scanners implement it literally (`if (c == 35) { in_comment = 1; }`), so an
+  emitted `#inline` is swallowed together with the following `#derive`. Reproduced by rebuilding
+  the compiler with the emit changed. The fix is a side channel, not a text emit — the same fact
+  v6.4.81 recorded as *"`#` is a COMMENT so `#include` probes are inert"*, surfacing elsewhere.
+
+- ⚠ **A re-entered COMPLETED coroutine resumes at its last suspend point** rather than returning
+  its stored result. Under `async_run` this cannot happen — the reactor marks a task DONE when it
+  returns without parking — but a direct `future_force` on a finished coroutine re-runs the tail.
+  Found while writing the in-loop gate axis (my probe called it 12 times); recorded rather than
+  patched at the end of a release, because the fix belongs with a terminal state value and its
+  own axis.
+
 ## [6.5.69] — 2026-09-06
 
 ### Fixed

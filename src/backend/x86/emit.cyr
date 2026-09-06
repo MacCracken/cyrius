@@ -2840,8 +2840,27 @@ fn _ECORO_REFUSE(S, what, wlen): i64 {
 }
 
 fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
-    _ECORO_REFUSE(S, "taking the address of a local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 108);
     _IR_REC0(S, IR_RAW_EMIT);
+    # v6.5.70 — `&local` inside a coroutine. This emitter is handed a DISPLACEMENT rather than
+    # a slot index, so it cannot tell a heap-frame local from a stack one; v6.5.69 refused the
+    # form outright rather than emit a stack address for a frame that dies at every suspend.
+    # The displacement is `-((idx + 1) * 8)` shifted by the regalloc save and the ret stash,
+    # both of which are ZERO in a coroutine (the picker is disabled over a coroutine body), so
+    # the slot index inverts exactly. Recovered rather than refused — a local you cannot take
+    # the address of is not a local, and `var buf: i64[N]` is the common shape.
+    if (_cur_fn_coro == 1) {
+        if (_cur_fn_regalloc == 0) { if (_cur_fn_ret_stash == 0) {
+            var _ai = (0 - adisp) / 8 - 1;
+            if (_ai >= _coro_lo) {
+                _ECORO_BASE_R11(S);
+                E3(S, 0x838D49);                 # lea rax, [r11 + off]
+                var la = _codebuf_base + GCP(S);
+                S64(la, (L64(la) >> 32 << 32) | (_ECORO_OFF(S, _ai) & 0xFFFFFFFF));
+                SCP(S, GCP(S) + 4);
+                return 0;
+            }
+        } }
+    }
     E3(S, 0x858D48);
     var aaddr = _codebuf_base + GCP(S);
     S64(aaddr, (L64(aaddr) >> 32 << 32) | (adisp & 0xFFFFFFFF));

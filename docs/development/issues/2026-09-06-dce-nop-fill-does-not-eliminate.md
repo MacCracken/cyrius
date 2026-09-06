@@ -87,3 +87,35 @@ prime suspects, in order, none yet confirmed:
   already moved recognised dead code 16,404 → 34,847 bytes by widening decoder coverage).
 - Gate: dead-function identity across the five shapes, mutation-proven by voiding the
   fixup-voiding step — which must produce the SIGSEGV above, not a quiet pass.
+
+## ⟳ v6.5.70 — ATTEMPTED AGAIN. Three more causes found; still not landed.
+
+Re-attempted rather than left sitting. Three concrete defects in the v6.5.69 approach, each
+measured, so the next attempt does not re-derive them:
+
+1. ⛔ **The dead-body fixup voiding called `_wp_inside` — a BINARY SEARCH — before
+   `wp_compact` had sorted the run table.** It searched unsorted data and voided the wrong
+   entries. This was the single biggest cause of the SIGSEGV and it is now structurally
+   impossible: the voiding lives inside the pass as "stage 0", after `_wp_sort_prefix`.
+2. ⛔ **`dbase` must NOT be recomputed after compaction.** v6.5.69 derived a new one from the
+   shrunken code size, on the reasonable theory that data follows code. It does not — measured,
+   `.rodata` and `.bss` land at IDENTICAL vaddrs with and without elimination (0x600750 /
+   0x600000), because the data segment gets its own 2 MB-aligned page. Recomputing relocated
+   every absolute data reference by the bytes reclaimed.
+3. ⛔ **Extracting the fixup patch loop into its own function BREAKS THE SEED CHAIN.** `cybs`
+   — the hand-assembly bootstrap compiler — cannot compile the extracted 8-parameter function
+   and fails with a bare `syntax error`; `scripts/seed-derive-cycc.sh` step 3 goes red while
+   `build/cycc` compiles it fine. This is exactly the cybs-ceiling class CLAUDE.md warns about,
+   and it constrains the design: **the re-patch cannot be a new function of that size.** Either
+   inline the second pass, or split the loop small enough for cybs.
+   ⚠ Do NOT bisect this with `build/cycc`'s neighbour `build/cybs` — that binary is stale and
+   fails on a CLEAN HEAD tree too, which invalidated a whole bisect. Assemble the real one:
+   `cat bootstrap/cybs.cyr | bootstrap/asm > cybs`.
+
+**Where it stands with 1 and 2 fixed:** `CYRIUS_DCE=1` reports `34847 bytes of dead code
+eliminated`, the binary shrinks 1,231,040 → 1,198,272 B, and the resulting compiler still
+SIGSEGVs. The fault is a control transfer to an address ~32 KB BELOW `.text` — the amount
+reclaimed — from a call whose `rel32` was never re-patched, with an unpatched `jmp rel32=0`
+beside it. So a live region is still being spliced: either a run covers live code, or a fixup
+that should have been re-patched was skipped. That is the next thing to chase, on the small
+reproducer (a 5-line program with two dead fns) rather than on cycc itself.

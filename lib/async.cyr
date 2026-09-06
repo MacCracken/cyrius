@@ -1189,8 +1189,26 @@ fn future_force(fut): i64 {
         return fncall5(fp, load64(fut + 16), load64(fut + 24), load64(fut + 32),
           load64(fut + 40), load64(fut + 48));
     }
-    return fncall6(fp, load64(fut + 16), load64(fut + 24), load64(fut + 32),
-      load64(fut + 40), load64(fut + 48), load64(fut + 56));
+    if (argc == 6) {
+        return fncall6(fp, load64(fut + 16), load64(fut + 24), load64(fut + 32),
+          load64(fut + 40), load64(fut + 48), load64(fut + 56));
+    }
+    if (argc == 7) {
+        return fncall7(fp, load64(fut + 16), load64(fut + 24), load64(fut + 32),
+          load64(fut + 40), load64(fut + 48), load64(fut + 56), load64(fut + 64));
+    }
+    if (argc == 8) {
+        return fncall8(fp, load64(fut + 16), load64(fut + 24), load64(fut + 32),
+          load64(fut + 40), load64(fut + 48), load64(fut + 56), load64(fut + 64),
+          load64(fut + 72));
+    }
+    # v6.5.70: past the fncall ladder's top rung. ⛔ THIS USED TO FALL THROUGH TO fncall6 —
+    # `argc >= 7` called the impl with six arguments, so arguments 7+ were never written and
+    # the body read stack garbage: `await a7(1,2,3,4,5,6,7)` returned a code-address-shaped
+    # value instead of 28, exit 0, no diagnostic. Fail loudly instead of quietly wrong.
+    sys_write(2, "future_force: async fn arity above 8 is not supported\n", 54);
+    sys_exit(70);
+    return 0;
 }
 
 # Spawn a Future onto an async runtime so async_run forces it cooperatively. The

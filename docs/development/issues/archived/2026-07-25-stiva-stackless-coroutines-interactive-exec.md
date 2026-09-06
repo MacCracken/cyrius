@@ -1,3 +1,37 @@
+> ### ✅ RESOLVED AND ARCHIVED at v6.5.70 — Half B is SHIPPED. Both halves are done.
+>
+> Half A (the multi-waiter registry) shipped at v6.5.26. **Half B — mid-body suspend — shipped
+> across v6.5.69 and v6.5.70**, and the framing in this file was wrong about what it was:
+>
+> ⛔ **It was not a missing feature. `await` mid-body compiled clean and DID NOTHING.** It lowered
+> to a synchronous `future_force` call and a parked task re-entered its body from the top, so the
+> natural shape — a loop that awaits and continues — built with ZERO errors, relayed ZERO bytes
+> and hung. That is the v6.5.63 `#inline` class: a shipped syntax with no handler behind it.
+>
+> An `async fn` whose body contains an `await` is now compiled as a state machine: its locals
+> live in the heap object the runtime already hands back, a state word records the suspend point,
+> and the fn top dispatches there. ⭐ **The runtime needed NO change** — `_async_step` re-invokes
+> `fncall1(t.fp, t.arg)`, so the top IS the dispatch.
+>
+> What v6.5.70 added on top of `.69`, all of it required by the consumer shape:
+> * **Suspends inside loops and conditionals** — the `exec -it` relay is a loop, so a
+>   straight-line-only transform would have passed every other check and not delivered anything.
+> * **Multi-parameter coroutines** — the constructor pre-binds arguments into frame slots. This
+>   was the SAME missing machinery as the arity-7 silent miscompile filed at `.69` and fixed
+>   here: the constructor could not place arguments into slots at all.
+> * **`&local` across a suspend** — a local array survives; a local you cannot take the address
+>   of is not a local.
+>
+> ⚠ **What this does NOT close, stated so nobody reads more into it than shipped:** the transform
+> is x86-family only (aarch64 and cx refuse by name); SIMD, struct and sub-word locals in a
+> coroutine are refused rather than silently miscompiled; and Windows IOCP and agnos still have
+> no readiness model to suspend on (`async_wait_fd` is literally `return 0;` there) while macOS
+> has a real kqueue reactor since v6.5.27.
+>
+> Gate: `tests/gates/frontend/coroutine_midbody_suspend.sh`, 8 axes. ⭐ Axis 1 asserts a
+> side-effect TRACE rather than a value, because the arithmetic still lands on the right number
+> under restart-from-top — a value assertion passes on a compiler with no transform at all.
+
 # stiva: stackless coroutines — the live consumer for suspend-across-await — ACCEPTED, PINNED v6.5.x
 
 > ### ⛔ THE "BOUND TO BAND E" PREMISE IS FALSE — re-scoped 2026-08-17 (v6.5.26)

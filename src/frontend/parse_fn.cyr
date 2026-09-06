@@ -2317,6 +2317,25 @@ fn _is_tparam_of(S, fi, noff): i64 {
 # — it is awaited by its CALLER — so its parameter `n` would be read as a frame pointer.
 # An `async fn` with no suspend point in its body keeps exactly the v6.3.11
 # deferred-then-forced semantics it has today.
+# v6.5.70 — the same question asked from the SIGNATURE rather than the body: scan forward to
+# the body's opening brace, then over its span. Needed because a coroutine must reserve stack
+# slot 0 for its frame base BEFORE its parameters are allocated slots, and the parameters are
+# parsed first.
+fn _fn_body_has_await_ahead(S): i64 {
+    var _sv = GTI(S);
+    var _g = 0;
+    while (PEEKT(S) != 13) {
+        if (PEEKT(S) == 12) { STI(S, _sv); return 0; }
+        if (_g > 8192) { STI(S, _sv); return 0; }
+        STI(S, GTI(S) + 1);
+        _g = _g + 1;
+    }
+    STI(S, GTI(S) + 1);
+    var _r = _body_has_await(S);
+    STI(S, _sv);
+    return _r;
+}
+
 fn _body_has_await(S): i64 {
     var _sv = GTI(S);
     var _bd = 1;
@@ -3300,12 +3319,23 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     var jmp = EJMP0(S);
     S64(_fnt_offsets + fi_f * 8, GCP(S));
     EFNPRO(S);
-    # params p0..p{pc-1} → anonymous local slots 0..pc-1 (capped at the 6 arg-regs)
+    # params p0..p{pc-1} → anonymous local slots 0..pc-1
+    # ⛔ v6.5.70: this used to read `if (i < 6) { ESTOREPARM(S, i, i, 0); }` — TWO defects in
+    # one line, and together they made `async fn` SILENTLY WRONG at arity >= 7. Parameters
+    # past the sixth arrive on the STACK, so gating the call skipped homing them entirely and
+    # the `obj[16 + i*8]` writes below then copied uninitialised frame slots into the Future.
+    # And the arity argument was hard-coded 0, which is what `ESTORESTACKPARM` needs to compute
+    # the SysV stack-arg displacement, so even an un-gated call would have addressed the wrong
+    # slot. Measured: `await a7(1,2,3,4,5,6,7)` returned a code-address-shaped value instead of
+    # 28 — exit 0, no diagnostic — while the 6-parameter async form and the PLAIN 7-parameter
+    # fn were both correct in the same program.
+    # `ESTOREPARM` already dispatches to `ESTORESTACKPARM` past the register args (4 on Win64,
+    # 6 on SysV); it only ever needed to be called and told the arity. CHANGELOG [6.5.70]
     var i = 0;
     while (i < pc) {
         S64(S + 0x5D9D000 + i * 8, 0 - 1);
         SLDEP(S, i, 0);
-        if (i < 6) { ESTOREPARM(S, i, i, 0); }
+        ESTOREPARM(S, i, i, pc);
         SFLC(S, i + 1);
         i = i + 1;
     }
@@ -3362,6 +3392,20 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
         EMOVI(S, 0);
         EPOPC(S);
         ESTORE64(S);                       # obj[state] = 0
+        # The user's arguments become the coroutine's first frame locals. The body's
+        # parameters occupy slots 1..pc (slot 0 is the reserved frame base), and slot k maps
+        # to `_CORO_LOCAL_OFF + (k - 1) * 8` — so argument i lands exactly where parameter i
+        # will read it. v6.5.70.
+        var _ci = 0;
+        while (_ci < pc) {
+            EFLLOAD(S, obj_slot);
+            EADDRA_IMM(S, _CORO_LOCAL_OFF + _ci * 8);
+            EPUSHR(S);
+            EFLLOAD(S, _ci);
+            EPOPC(S);
+            ESTORE64(S);
+            _ci = _ci + 1;
+        }
     }
     # obj[16 + i*8] = arg i (the constructor's param, captured by value)
     i = 0;
@@ -4171,6 +4215,15 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # params get XMM0..XMM7 / V0..V7 in their SIMD-arg ordinal
     # order; int params get RDI/RSI/RDX/RCX/R8/R9 in their
     # int-arg ordinal order. The two sequences are independent.
+    # v6.5.70 — MULTI-PARAMETER COROUTINES. A coroutine's frame base lives in stack slot 0, so
+    # slot 0 must be reserved BEFORE the parameter loop hands out slots; the user's parameters
+    # then land in coroutine-FRAME slots (1..pc), which the constructor pre-fills. v6.5.69
+    # sidestepped this by refusing any coroutine with more than one parameter — the same
+    # missing machinery as the arity-7 miscompile, and fixed in the same place.
+    _pending_coro = 0;
+    if (_is_async == 1) {
+        if (_fn_body_has_await_ahead(S) == 1) { _pending_coro = 1; SFLC(S, 1); }
+    }
     var simd_pc = 0;
     var int_pc = 0;
     var option_mask = 0;
@@ -4417,9 +4470,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 }
                 # v6.2.x: a #naked fn takes args in registers only — there is no
                 # rbp frame to home them into (the asm body reads x0../rdi.. directly).
-                if (_cur_fn_naked == 0) {
+                # v6.5.70: a COROUTINE's impl is re-entered as `fncall1(fp, SELF)`, so its
+                # declared parameters do NOT arrive in registers — the constructor has already
+                # placed them in the coroutine frame. Homing a register here would overwrite
+                # them with whatever the ABI happened to leave in that register on a resume.
+                if (_cur_fn_naked == 0 && _pending_coro == 0) {
                     if (int_pc + _pp_shift < 6) {
-                        ESTOREPARM(S, int_pc + _pp_shift, li, 0);
+                        ESTOREPARM(S, int_pc + _pp_shift, li, pc);
                     }
                 }
                 SFLC(S, li + 1);
@@ -4672,14 +4729,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # ⚠ x86 family only. The redirect and the dispatch are emitted through x86-specific paths,
     # and a coroutine compiled without them would read a frame destroyed at the last suspend.
     # A hard error is the contract; a quiet stack-frame body is the miscompile.
-    if (_is_async == 1 && _body_has_await(S) == 1) {
-        # ⚠ A coroutine takes exactly ONE parameter — its context object — which is also how
-        # all EIGHT hand-rolled CPS state machines in `lib/async.cyr` are written, and what
-        # the runtime's `fncall1(t.fp, t.arg)` re-entry can pass. Multi-parameter coroutines
-        # need the constructor to pre-bind arguments into frame slots; that is v6.5.70.
-        if (pc != 1) {
-            ERR_MSG(S, "an `async fn` that awaits mid-body takes exactly one parameter (its context object)", 83);
-        }
+    if (_pending_coro == 1) {
         if (_AARCH64_BACKEND != 0) {
             ERR_MSG(S, "`async fn` mid-body suspend is x86-only so far (aarch64 has no coroutine frame yet)", 83);
         }
@@ -4694,6 +4744,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         # body's locals are `[r11+disp32]`, and its stack frame does not survive a suspend.
         # Reuse the existing "do not run the picker over this body" signal.
         _cur_fn_has_closure = 1;
+        # Home the ONE incoming register argument — SELF, the coroutine frame — into the
+        # reserved stack slot 0. Every `[r11+off]` local access loads its base from here.
+        ESTOREPARM(S, 0, _coro_base, 1);
         _coro_top_jmp = EJMP0(S);   # jmp DISPATCH — patched at fn end
         _coro_entry_cp = GCP(S);    # state 0 lands here
     }
