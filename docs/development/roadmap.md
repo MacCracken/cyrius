@@ -30,9 +30,9 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.60** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
+**Current head: v6.5.60** (2026-09-05) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
-⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **119** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
+⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
 ⛔ **THE v6.5.x MINOR IS NOT CLOSED, AND THIS LINE SAYING IT WAS IS THE DEFECT.** It read *"The
 v6.5.x minor is CLOSED. Band K finished it at `.45`–`.47`"* while **`.48` through `.56` — nine
@@ -291,24 +291,29 @@ the ymm kernel's 1.5-2× would be collectable in value-form code too. That is th
 runtime-selection problem `.59` hit, and it should not be started without first measuring what an
 all-VEX 128-bit path is worth on a real chain.
 
-#### `.61` — kill the round-trips inlining exposes
-*(`simd-f64v-memory-operand`, part 2)*
+#### `.61` — ⛔ FOLDED INTO THE REGISTER CLASS. Both items measured NULL.
 
-Two cheap wins measured at `.53`/`.56`, neither needing the register class. **(a)** A 128-bit arm
-for `DSE_PASS` (`parse_fn.cyr:2525-2563`, currently `48 89 85` only): 3 of the 11 remaining stores
-in a 3-link f32v4 chain are provably never read once LASE removed their reloads — 15 `movupd` →
-12. Same shape as `.53`'s LASE arm. **(b)** Constant-`n` loop elision in `EMIT_F32V_LOOP` /
-`EMIT_F64V_LOOP`: every value-form wrapper passes a literal `n` equal to one register width, so
-the loop always runs exactly once — removes ~14 of ~33 instructions per link plus the pointer
-spills.
+Scoped as (a) a 128-bit arm for `DSE_PASS` and (b) constant-`n` loop elision. **(b) was
+implemented, verified firing, and measured at NOTHING** — 16 ms → 17 ms on a 3-link f32v4 chain
+(best of 5). The emitted link genuinely loses its `cmpq` / `jge` / `addq %rsi` / `jmp`, and the
+runtime does not move: the loop branch was perfectly predicted, so deleting it saves nothing. The
+code was reverted rather than shipped — compiler complexity with no measured win.
 
-⚠ **Do not scope a release around (b) alone.** Instruction count is not the cost here: a C/SSE
-proxy with 16 instructions per iteration but 5 serialized store→reload round-trips measured
-**slower** than cyrius's 66-instruction path. Removing scaffolding without removing round-trips is
-worth ~20–25 %, not a multiple.
+⭐ **THE MEASUREMENT THAT REDIRECTS THE ARC, and it is cheap to reproduce.** Same instruction
+count, links made independent instead of dependent:
 
-**Done when:** `movupd` count drops on the gate's own fixture, timing improves, and the corpus is
-byte-identical outside SIMD.
+| 3-link f32v4 chain, 2M iterations | time |
+|---|---|
+| serial (`t1 → t2 → t3`) | **17 ms** |
+| independent (same ops, no chain) | **13 ms** |
+
+So ~24 % of this shape is **dependency stalls on the store→load round-trip between links**, not
+instruction count. Per link the emitted code is 11 memory ops for one packed operation — operand
+copies into scratch, three pointer spills, two pointer reloads — but those are pipelined and off
+the critical path. **The result store and its reload by the next link are ON it.**
+
+That is exactly what a vector register class removes, and it is why (a) would also have been
+null: eliminating a dead store does not shorten the dependency chain.
 
 #### `.62`–`.63` — the vector register class
 *(`simd-f64v-memory-operand`, part 3 — closes the issue)*

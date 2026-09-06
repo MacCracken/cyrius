@@ -102,15 +102,20 @@ When the fix lands, the issue file:
 - Moves to [`archived/`](./archived/).
 - Gets a row in `archived/README.md`'s index table.
 
-  > ⚖️ **MAINTAINER DECISION OWED — this rule has not been kept for a whole minor.** Counted
-  > per-file 2026-08-11: `archived/README.md` indexes **40 of 316** archived issues — **276
-  > unindexed** — and the newest indexed row is from the v6.4.79 era, so **every issue archived
-  > across the entire 6.5.x line is missing**, including the six most recent. Two honest
-  > options, and the choice is the maintainer's: **(a)** backfill only the 6.5.x-era archives
-  > and index forward from here, or **(b)** drop the all-files promise from this line and state
-  > plainly that the index is a *curated highlights* table. Silently leaving a rule nobody
-  > follows is the worse third option — it is the same shape as a half-shipped gate that still
-  > reports green.
+  > ✅ **RESOLVED 2026-09-05 — option (a), and it was mechanical.** This block read "MAINTAINER
+> DECISION OWED" and offered a choice between backfilling and dropping the promise. Neither was a
+> decision anyone needed to make: the index is now **complete — all 377 archived files** are listed
+> in `archived/README.md` under "Complete file listing", generated from each file's own first
+> heading, alongside the curated hand-written briefs which stay as they were.
+>
+> ⚠ The generated columns are a POINTER, not a verdict: the Title is the file's own heading and the
+> Resolved column is the first version string in it, both extracted mechanically. Several archived
+> files have been found describing their own status wrongly — the file is the source, and **live
+> code beats the file**.
+>
+> ⛔ The framing is the lesson worth keeping. "Maintainer decision owed" sat here for a minor over
+> a task that took one pass to do; there is no maintainer to owe, and a rule left unfollowed is the
+> same shape as a half-shipped gate that still reports green.
 
 Filename stays stable across the move so external links keep
 working.
