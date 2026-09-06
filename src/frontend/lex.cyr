@@ -1602,6 +1602,41 @@ fn LEX(S): i64 {
                                         }
                                         continue;
                                     } } } } } }
+                # v6.5.63: #inline — fn attribute requesting the next fn be admitted to the
+                # inline-replay path WITHOUT flipping general inlining on globally.
+                #
+                # ⛔ THIS DIRECTIVE DID NOT EXIST UNTIL NOW, AND CONSUMERS WERE ALREADY WRITING
+                # IT. svara carries four `#inline` markers in `src/formant.cyr` alone; every one
+                # of them lexed as a COMMENT and did nothing. That is the retired-"≤6 args"
+                # shape — a user annotating for an optimisation that is not there, with no
+                # diagnostic to tell them. Adding the directive is the fix; the WARNING in
+                # PARSE_FN_DEF when the request cannot be honoured is the other half, because a
+                # silently-ignored `#inline` would just be the same defect wearing a token.
+                #
+                # bytes: 23 69 6E 6C 69 6E 65 = "#inline" (7 chars, 6 after '#').
+                # ⚠ `#include`, `#ifdef` and `#ifndef` share the leading `#i`. They diverge at
+                # p+2 (`f` for #ifdef/#ifndef vs `n`) and p+3 (`c` for #include vs `l`), and
+                # includes are expanded by the preprocessor before this lexer runs — but the
+                # per-byte chain below is what actually keeps them apart, so do not shorten it.
+                if (p + 6 < bl) {
+                    if (load8(S + 0x459D000 + p + 1) == 105) {
+                        if (load8(S + 0x459D000 + p + 2) == 110) {
+                            if (load8(S + 0x459D000 + p + 3) == 108) {
+                                if (load8(S + 0x459D000 + p + 4) == 105) {
+                                    if (load8(S + 0x459D000 + p + 5) == 110) {
+                                        if (load8(S + 0x459D000 + p + 6) == 101) {
+                                            ADDTOK(S, 163, 0);   # token 163 = HASH_INLINE (150-162 are taken)
+                                            p = p + 7;
+                                            while (p < bl) {
+                                                var wci = load8(S + 0x459D000 + p);
+                                                if (wci == 32 || wci == 9 || wci == 10 || wci == 13) {
+                                                    if (wci == 10) { SCLINE(S, GCLINE(S) + 1); }
+                                                    p = p + 1;
+                                                }
+                                                else { break; }
+                                            }
+                                            continue;
+                                        } } } } } } }
                 # Check for #pe_import (v5.4.6) — PE32+ kernel32 symbol
                 # registration directive. Parser consumes (dll, symbol)
                 # string-literal args and forwards to the pe emitter's

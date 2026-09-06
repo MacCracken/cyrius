@@ -3673,6 +3673,14 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         _naked_pending = 0;
     }
     else { _cur_fn_naked = 0; }
+    # v6.5.63: #inline — consume the pending flag into a LOCAL, not a global. A nested fn
+    # definition re-enters this fn, and a global would let the inner fn inherit or clear the
+    # outer one's request (the shape `_cur_fn_naked` needs an explicit save/restore for).
+    var _fn_inline_req = 0;
+    if (_inline_pending == 1) {
+        _fn_inline_req = 1;
+        _inline_pending = 0;
+    }
     _cur_fn_is_pure = (GFLG(S, fi) >> 3) & 1;
     # v4.8.4-alpha5: mirror fn_regalloc[fi] into _cur_fn_regalloc so
     # codegen (EFNEPI, ETAILJMP) can emit rbx save/restore. Reset at
@@ -4505,9 +4513,26 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # x86 size regression that disabled _INLINE_OK; +25.6% on cycc). Gating to GFTP!=0 keeps
     # non-generic codegen byte-identical under the flag → the CYRIUS_MONOMORPH flip is byte-id.
     # v6.5.52 — admit SIMD-param fns (the value-form f32v4/f64v2/f64v4 wrappers) to the
-    # inline-replay path so a SIMD chain stops crossing call boundaries. General inlining stays
-    # OFF: it cost +25.6 % on cycc at v1.11.3, so this is a targeted admission, not a flag flip.
-    if (_INLINE_OK == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) { SFBS(S, fi, GTI(S)); }
+    # inline-replay path so a SIMD chain stops crossing call boundaries.
+    #
+    # ⛔ v6.5.63 — THE "+25.6 % ON CYCC AT v1.11.3" JUSTIFICATION ABOVE IS STALE, AND THE LIVE
+    # BLOCKER IS A HARD ERROR, NOT A SIZE COST. Re-taken on today's compiler by the two-step
+    # (build a cycc with `_INLINE_OK = 1`, then have IT rebuild the same source):
+    #
+    #     error: function exceeds 1023 jump targets (x86 LASE cap) - split the function
+    #
+    # General inlining does not compile the compiler at all, so there is currently no size
+    # figure to quote — the number carried in these comments for ~15 majors describes a build
+    # that cannot be produced. Whoever revisits a global flip must lift or scope that cap first
+    # (`EJMP` / `EJMP0`, src/backend/x86/jump.cyr; the 8 KB table at 0x19E000 is consumed by
+    # LASE), and only then re-measure size. Do not re-quote +25.6 %.
+    #
+    # v6.5.63 — `#inline` (token 163) is the opt-in route, and it has neither problem: a
+    # per-fn request inlines one small flat body at its call sites, so it cannot drive any
+    # single function toward 1023 jump targets the way whole-program inlining does. Consumers
+    # were already writing `#inline` (svara has four in `src/formant.cyr`) against a directive
+    # that did not exist and lexed as a comment.
+    if (_INLINE_OK == 1 || _fn_inline_req == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) { SFBS(S, fi, GTI(S)); }
     # v6.3.9 (F-fns): a generic fn's body references type-param `T`s that are unbound
     # at definition. In an i64-everywhere language the dominant instantiation is i64,
     # so the BASE fn IS the i64 monomorphization: bind every `T -> i64` for the base
@@ -4552,17 +4577,18 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (_gen_base == 1) { _tp_clear(S); }
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     # Record body end and classify inline candidate. v6.4.0 DECOUPLE: generic fns only.
-    if (_INLINE_OK == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) {
+    if (_INLINE_OK == 1 || _fn_inline_req == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) {
         SFBE(S, fi, GTI(S));
         var btokens = GTI(S) - GFBS(S, fi);
         var can_inline = 1;
-        if (pc > 2) { can_inline = 0; }
+        var _inl_why = 0;
+        if (pc > 2) { can_inline = 0; _inl_why = 1; }
         # v6.3.9 (F-fns): ceiling 16->32 — admits slightly larger straight-line
         # generic/inline bodies. pc<=2 (above) + the forbidden-token scan below
         # (no control-flow / var-decl) are UNCHANGED, so inl_packed (2 param
         # offsets) capacity is untouched. Only fires under _INLINE_OK/_MONOMORPH_OK
         # (this whole block is gated) → default cycc self-host is byte-identical.
-        if (btokens > 32) { can_inline = 0; }
+        if (btokens > 32) { can_inline = 0; if (_inl_why == 0) { _inl_why = 2; } }
         # v6.3.37 (C1) — a struct/Str/Result/Option/Tagged param (SLTYPE = -sid) cannot
         # ride the inline-replay path: the replay re-registers the param slot by NAME
         # only (never re-applying the struct SLTYPE the fn-def set), so `s.field` in the
@@ -4574,7 +4600,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             var _psi = 0;
             while (_psi < pc) {
                 var _pslt = GLTYPE(S, _psi);
-                if (_pslt < 0) { if (_is_simd_any(S, _pslt) == 0) { can_inline = 0; } }   # struct param → not inlinable; SIMD vectors stay inlinable
+                if (_pslt < 0) { if (_is_simd_any(S, _pslt) == 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 3; } } }   # struct param → not inlinable; SIMD vectors stay inlinable
                 _psi = _psi + 1;
             }
         }
@@ -4582,16 +4608,16 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             var sci = GFBS(S, fi);
             while (sci < GTI(S)) {
                 var st = TOKTYP(S, sci);
-                if (st == 15) { can_inline = 0; }
-                if (st == 16) { can_inline = 0; }
-                if (st == 55) { can_inline = 0; }
+                if (st == 15) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
+                if (st == 16) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
+                if (st == 55) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
                 # v6.5.52 — a body `var` decl is allowed for SIMD-param fns. The value-form
                 # wrappers all declare a scratch (`var r: f32v4; f32v_add(&r,&a,&b,4); return r;`),
                 # so the blanket exclusion kept out exactly the fns this arc needs. Body locals
                 # allocate at GFLC, which the replay has already advanced past the param slots,
                 # so they land above them. Kept for every other fn: this stays scoped to the
                 # targeted admission rather than widening general inlining.
-                if (st == 3) { if (_fn_has_simd_param(S, pc) == 0) { can_inline = 0; } }
+                if (st == 3) { if (_fn_has_simd_param(S, pc) == 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } } }
                 sci = sci + 1;
             }
         }
@@ -4612,6 +4638,18 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             elif (pc == 1) { SFINL(S, fi, L64(S + 0x5D9D000 + _n0 * 8)); }
             elif (pc == 0) { SFINL(S, fi, 1); }
         } else { SFINL(S, fi, 0); }
+        # v6.5.63 — AN IGNORED `#inline` MUST SAY SO. The whole reason this directive exists
+        # is that consumers were annotating for an optimisation that was not there; a request
+        # that silently does nothing is that same defect with a token in front of it. Name the
+        # constraint that refused it so the author can restructure or drop the marker.
+        if (_fn_inline_req == 1) {
+            if (can_inline == 0) {
+                if (_inl_why == 1) { WARN(S, "#inline ignored: fn takes more than 2 parameters", 48); }
+                if (_inl_why == 2) { WARN(S, "#inline ignored: body exceeds 32 tokens", 39); }
+                if (_inl_why == 3) { WARN(S, "#inline ignored: struct/aggregate parameter", 43); }
+                if (_inl_why == 4) { WARN(S, "#inline ignored: body has control flow or a var declaration", 59); }
+            }
+        }
     }
     STI(S, GTI(S) + 1);
     var dc = L64(S + 0x1AC020);

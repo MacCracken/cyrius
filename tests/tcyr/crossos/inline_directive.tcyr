@@ -1,0 +1,98 @@
+# inline_directive.tcyr — v6.5.63: `#inline` is a real directive, and it must not change
+# RESULTS on any target.
+#
+# THE DEFECT IT CLOSES. `#inline` had no handler anywhere in `src/`. It lexed as a comment and
+# did nothing, silently — while consumers were already writing it: svara carries four `#inline`
+# markers in `src/formant.cyr` alone, and its own `src/lod.cyr` records that adding one "moved
+# `tract process_sample` by +0.7% -- noise". That measurement was of an optimisation that did
+# not exist. Same shape as the retired "≤6 args" rule: a user shaping their code around
+# compiler behaviour that was never there.
+#
+# ⭐ WHY crossos/ AND NOT lang/. Whether a call is inlined is decided per TARGET, and this
+# repo has the scars: the inline-replay path is admitted by a predicate that behaves
+# differently across backends, PE refuses inlining outright for some shapes (`_pe_no_inline`),
+# and v6.5.59 shipped an inlined 256-bit return that dropped lanes 2-3 because the replay used
+# the CALLER's return convention. A directive that changes which code path a call takes is
+# exactly the kind of thing that "compiles on five targets" without running on them.
+#
+# So this file asserts RESULTS, never "it inlined" — results must be identical on every host
+# whether or not the inline actually happens. The proof that inlining OCCURS is a `callq`
+# count, which is host-specific and lives in the shell gate
+# `tests/gates/codegen/inline_directive.sh` instead.
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+# --- the shapes that QUALIFY (flat, <=2 params, <=32 body tokens, no control flow) ---
+#inline
+fn dbl(x) { return x + x; }
+
+#inline
+fn addk(a, b) { return a + b + 7; }
+
+#inline
+fn zero() { return 0; }
+
+# a derived-accessor-shaped getter/setter pair — the canonical inline candidate
+#inline
+fn P_x(p) { return load64(p + 0); }
+#inline
+fn P_set_x(p, v) { store64(p + 0, v); return 0; }
+
+# --- CONTROL: the identical function WITHOUT the directive must give identical results ---
+fn dbl_plain(x) { return x + x; }
+
+# --- shapes the directive cannot honour. They must still COMPILE and be CORRECT (the
+#     compiler warns; a warning must never change behaviour). ---
+#inline
+fn three(a, b, c) { return a + b + c; }
+#inline
+fn withctl(a) { if (a > 10) { return 1; } return 0; }
+
+# ⚠ SAME-LINE FORM. The preprocessor emits generated code with `_pp_flatten`, which puts a
+# whole struct's worth of text on one line, and `#` opens a COMMENT in cyrius — so if the
+# lexer's `#inline` arm ever stopped matching, a same-line `#inline` would comment out the
+# REST OF THE LINE rather than degrade to "not inlined". Pin the same-line form.
+#inline
+fn sl(x) { return x + 1; } fn sl2(x) { return x + 2; }
+
+fn main(): i64 {
+    test_group("#inline — qualifying shapes give correct results");
+    assert_eq(dbl(21), 42, "dbl(21)");
+    assert_eq(dbl(0), 0, "dbl(0)");
+    assert_eq(addk(10, 25), 42, "addk(10,25)");
+    assert_eq(zero(), 0, "zero()");
+
+    var b[16];
+    store64(&b + 0, 0);
+    store64(&b + 8, 99);
+    P_set_x(&b, 41);
+    assert_eq(P_x(&b), 41, "accessor-shaped get after set");
+    assert_eq(load64(&b + 8), 99, "neighbouring word untouched by the inlined setter");
+    P_set_x(&b, 7);
+    assert_eq(P_x(&b), 7, "accessor-shaped re-set");
+
+    test_group("#inline — control: same body without the directive");
+    assert_eq(dbl_plain(21), 42, "dbl_plain(21) matches dbl(21)");
+    assert_eq(dbl(21), dbl_plain(21), "inlined and non-inlined agree");
+
+    test_group("#inline — non-qualifying shapes stay CORRECT (warning only)");
+    assert_eq(three(1, 2, 3), 6, "3-param fn still correct");
+    assert_eq(withctl(50), 1, "control-flow fn still correct (taken)");
+    assert_eq(withctl(1), 0, "control-flow fn still correct (not taken)");
+
+    test_group("#inline — same-line form (the _pp_flatten shape)");
+    assert_eq(sl(41), 42, "same-line #inline fn is inlined, not commented out");
+    assert_eq(sl2(40), 42, "the fn AFTER it on the same line still exists");
+
+    test_group("#inline — nested/repeated call sites");
+    assert_eq(dbl(dbl(10)), 40, "nested inlined calls");
+    var i = 0;
+    var acc = 0;
+    while (i < 5) { acc = acc + dbl(i); i = i + 1; }
+    assert_eq(acc, 20, "inlined call inside a loop (0+2+4+6+8)");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

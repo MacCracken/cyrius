@@ -4,6 +4,102 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.63] — 2026-09-05
+
+### Added
+
+- **`#inline` is a real directive (token 163). It had no handler anywhere in `src/` — it lexed
+  as a COMMENT and did nothing, silently — and consumers were already writing it.** svara carries
+  four `#inline` markers in `src/formant.cyr` alone, and its own `src/lod.cyr` records that
+  adding one *"moved `tract process_sample` by +0.7% -- noise"*. That was a measurement of an
+  optimisation that was never there.
+
+  This is the retired-"≤6 args" shape exactly: a user shaping their code around compiler
+  behaviour that does not exist, with no diagnostic to tell them otherwise.
+
+  `#inline` marks the next `fn` for admission to the existing inline-replay path, per function,
+  without flipping general inlining on. Measured on the derived-accessor shape — the one the
+  svara formant bench is made of, where 11 out-of-line getter calls per sample are ~29 % of the
+  bench: **20.84 ms → 6.04 ms, a 3.45× speedup**, for **+192 B** of `.text` (8 accessors).
+
+  ⭐ **And an `#inline` that cannot be honoured now WARNS**, naming the constraint — arity > 2,
+  body > 32 tokens, struct/aggregate parameter, or control flow / a `var` declaration. Without
+  that, a directive that silently does nothing is the same defect wearing a token. Verified all
+  four fire, and that an honourable `#inline` stays silent.
+
+### Fixed
+
+- ⛔ **The "+25.6 % on cycc at v1.11.3" that has justified `_INLINE_OK = 0` for ~15 majors is
+  UNQUOTABLE, and the live blocker is a hard error rather than a size cost.** Re-taken by the
+  two-step (build a cycc with `_INLINE_OK = 1`, then have *it* rebuild the same source):
+
+  ```
+  error: function exceeds 1023 jump targets (x86 LASE cap) - split the function
+  ```
+
+  **General inlining does not compile the compiler at all**, so there is currently no size figure
+  to compare — the number carried in two source comments describes a build that cannot be
+  produced. Both notes (`parse_fn.cyr`, `util.cyr`) now state the live blocker and say plainly
+  not to re-quote the old figure. Anyone revisiting a global flip must lift or scope that cap
+  (`EJMP`/`EJMP0`, `src/backend/x86/jump.cyr`) *first*, then re-measure.
+
+  A per-fn opt-in has neither problem: it inlines one small flat body at its call sites, so it
+  cannot drive a single function toward 1023 jump targets the way whole-program inlining does.
+
+- The arity ceiling `if (pc > 2)` (`parse_fn.cyr`) is **structural, not a tunable**, and is now
+  documented and diagnosed rather than silent: `SFINL` packs two 32-bit parameter-name offsets
+  into one 64-bit word, so there is no room for a third.
+
+### Added (tests)
+
+- `tests/tcyr/crossos/inline_directive.tcyr` — 16 assertions. Asserts **results only**, never
+  "it inlined": whether a call is inlined is decided per target, `_pe_no_inline` refuses some
+  shapes on PE outright, and v6.5.59 shipped an inlined 256-bit return that dropped lanes 2-3.
+  Covers the qualifying shapes, a non-directive control, the non-qualifying shapes (which must
+  stay **correct** — a warning must never change behaviour), nested and in-loop call sites, and
+  the **same-line** form: the preprocessor emits generated code under `_pp_flatten`, and since
+  `#` opens a comment, a `#inline` arm that stopped matching would comment out the rest of the
+  line rather than degrade.
+- `tests/gates/codegen/inline_directive.sh` — the host-specific half: call-site count, the
+  diagnostic, a timing ratio, and a results control. **Mutation-proven** — arming nothing gives
+  `with=100 without=100` and axis 1 fires. ⚠ Axis 2 is an anti-vacuous **pair**: it must warn on
+  an unhonourable `#inline` *and* stay silent on an honourable one, so a warning that fires
+  indiscriminately fails too.
+
+### Benchmarks
+
+- cycc **1,205,296 B** (`.text` **1,056,352**, +1,888 B for the lexer arm and the diagnostic) ·
+  self_compile **673 ms** (672 → 673, **+0.2 %** — noise).
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+- Corpus **300** `.tcyr` (**67** in `crossos/`) · **132** shell gates (derived).
+
+### Notes
+
+- ⚠ **`check.sh` runs its check BINARY at line 70 and its ~30 SHELL gates at lines 100-265, under
+  `set -e` — so any binary failure aborts before a single shell gate runs.** Hit while verifying
+  this release: a stale doc-stamp (the docs simply had not been written yet) meant
+  `simd_valueform_no_avx_transition` and the new `inline_directive` never executed, while the run
+  still reported `239 passed, 1 failed` and looked like it had covered everything. It does **not**
+  fail open into GREEN — the exit status is non-zero — so the cost is diagnosis time rather than a
+  bad release, and this is the class CLAUDE.md already records ("check.sh shim gates under `set -e`
+  mask every later gate"). Deliberately **not** restructured here: making the driver collect
+  failures instead of aborting touches 30 invocations and exit-code aggregation, and getting that
+  wrong would convert a loud incomplete run into a quiet complete-looking one — strictly worse.
+  Recorded so the next person does not lose the time to it.
+
+- ⚠ **Auto-marking `#derive(accessors)` output as `#inline` was implemented, measured, and
+  REVERTED.** It is the obvious next step — it would hand every consumer the 3.45× with no
+  source change — and a single derive works correctly (verified, exit 42). But a **second**
+  `#derive` following one that emitted `#inline` leaves `struct` reaching the parser
+  (`error: unexpected struct`), breaking `derive_cap.tcyr` and `regression.tcyr`, which compiled
+  before. Notably this is **not** the 36-struct capacity limit `derive_cap` exists to pin — it
+  fails at the *second* struct. It is a preprocessor state-threading interaction in the
+  multi-derive path, and it needs its own investigation and gate cycle rather than a hurried
+  fix in this release. Filed with the exact repro; the measured prize is recorded so it does not
+  get lost.
+
 ## [6.5.62] — 2026-09-05
 
 ### Fixed

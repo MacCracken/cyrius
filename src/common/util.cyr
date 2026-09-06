@@ -983,7 +983,10 @@ fn _is_simd_any(S, pscale): i64 {
 
 # v6.5.52 — does this fn take a SIMD-typed parameter? Admits the value-form SIMD wrappers to
 # the inline-replay path WITHOUT enabling general inlining (default-off for a MEASURED reason:
-# +25.6 % on cycc at v1.11.3). Inlining is a PREREQUISITE for SIMD register residency, not a
+# +25.6 % on cycc at v1.11.3 — ⛔ re-taken at v6.5.63 and that figure is now unquotable: a
+# cycc built with `_INLINE_OK = 1` dies with "function exceeds 1023 jump targets (x86 LASE
+# cap)", so general inlining does not compile the compiler and there is no size to compare.
+# `#inline` (token 163, v6.5.63) is the opt-in route). Inlining is a PREREQUISITE for SIMD register residency, not a
 # nicety — a value chain emits a `call` per link and every xmm is caller-saved under SysV, so
 # each intermediate is provably spilled and reloaded until the calls go away.
 fn _fn_has_simd_param(S, pc): i64 {

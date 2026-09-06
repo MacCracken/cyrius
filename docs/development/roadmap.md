@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.62** (2026-09-05) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.63** (2026-09-05) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -401,7 +401,30 @@ keep their win at long n (a control axis, so a sweep cannot silently give it up)
 grows a `_ptr` axis and a long-loop axis, since it measures a short value-form chain only and
 would not have caught this · four-host green.
 
-#### `.63` — the inlining lever, and `#inline` stops being a lie
+#### `.63` — ✅ SHIPPED: `#inline` stops being a lie
+
+`#inline` had **no handler anywhere in `src/`** — it lexed as a comment and did nothing, while
+consumers wrote it (svara: four markers in `src/formant.cyr`, plus a `src/lod.cyr` note measuring
+one at "+0.7 % — noise", i.e. measuring an optimisation that was never there). Now token 163: a
+per-fn opt-in to the existing replay path, **and it WARNS when it cannot be honoured** (arity > 2
+/ body > 32 tokens / struct param / control flow), because a silently-ignored directive is the
+same defect wearing a token. Measured on the derived-accessor shape: **20.84 ms → 6.04 ms
+(3.45×)** for +192 B.
+
+⛔ **The "+25.6 % at v1.11.3" justification for `_INLINE_OK = 0` is UNQUOTABLE.** Re-taken by the
+two-step: a cycc built with `_INLINE_OK = 1` dies with `function exceeds 1023 jump targets (x86
+LASE cap)`. General inlining does not compile the compiler, so there is no size to compare — the
+live blocker is a hard error, not a size cost. Both stale source comments corrected.
+
+The arity ceiling is **structural** (`SFINL` packs two 32-bit name offsets in one 64-bit word) —
+now documented and diagnosed rather than silent.
+
+⚠ Auto-marking `#derive(accessors)` output `#inline` — the step that would hand every consumer
+the 3.45× for free — was implemented, measured and **reverted**: one derive works, a SECOND
+`#derive` after one that emitted `#inline` leaves `struct` reaching the parser. Preprocessor
+state-threading, not capacity. Filed: `2026-09-05-derive-accessors-auto-inline.md`.
+
+#### ~~`.63`~~ — the plan as written *(kept for the pin's wording)*
 
 Also from the `.61` premise-check. **`_INLINE_OK = 0` on every backend**, so `_fn_has_simd_param`
 is the only thing admitting anything to the inline path today. The justification, in the comment

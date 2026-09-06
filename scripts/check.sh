@@ -186,13 +186,22 @@ sh "$ROOT/tests/gates/codegen/simd_param_inline_reach.sh"
 # which is why no existing SIMD test caught it.
 sh "$ROOT/tests/gates/codegen/inline_simd256_return_lanes.sh"
 
-# v6.5.60: the f64v4 VALUE forms must not pay an AVX<->SSE transition per call. The ymm kernel is
-# faster in isolation, but a value-form vector is moved through frame slots by LEGACY-SSE pair
-# moves, so each call crosses the ISA boundary twice and the mitigating `vzeroupper` costs more
-# than the halved iteration count saves (1-op loop 23 -> 9 ms). ⛔ Deleting the vzeroupper is NOT
-# the fix — measured 5.6x WORSE (25 -> 139 ms). Axis 2 is the control: the `_ptr` batch forms keep
-# AVX2, where the loop body is all-VEX and it wins ~2x.
+# v6.5.60, REWRITTEN v6.5.62: the fixed-lane SIMD wrappers must not pay a per-call AVX2 dispatch,
+# and the ymm kernel must keep its advantage where that advantage is real. ⛔ This gate's axis 2
+# used to REQUIRE the per-call gate by grep, i.e. it asserted the opposite of the truth — it would
+# have gone red on the correct change and stayed green through the wrong one, and never had a
+# chance at the +59 % that shipped at v6.5.24. Measured one variable at a time: the dispatch CALL
+# was the whole cost (~25 %); ymm at a fixed 4 lanes is free. Axes now measure behaviour.
 sh "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
+
+# v6.5.63: `#inline` must actually inline, must WARN when it cannot, and must not change results.
+# The directive had NO handler anywhere in src/ until now — it lexed as a comment and did nothing,
+# silently, while consumers wrote it (svara has four markers in src/formant.cyr, and its own
+# src/lod.cyr records measuring one at "+0.7% -- noise": a measurement of an optimisation that was
+# not there). ⭐ The failure mode is a quiet revert to doing nothing, which a results-only test
+# cannot see, so axis 1 counts call sites and axis 2 pins the diagnostic. Mutation-proven: arming
+# nothing gives "with=100 without=100" and axis 1 fires.
+sh "$ROOT/tests/gates/codegen/inline_directive.sh"
 
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.

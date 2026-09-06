@@ -52,6 +52,12 @@ var _alloc_pending = 0;
 # mirrors it for the duration of the fn body (reset at fn end).
 var _naked_pending = 0;
 var _cur_fn_naked = 0;
+# v6.5.63: #inline (token 163) — pending flag for the next fn definition, consumed by
+# PARSE_FN_DEF. Opt-in admission to the inline-replay path. Deliberately NOT a flip of
+# `_INLINE_OK`: general inlining does not compile the compiler today (it hits the 1023
+# jump-target LASE cap in a single function), and its default-off note cites a size figure
+# measured at v1.11.3. Per-fn opt-in has neither problem.
+var _inline_pending = 0;
 var _cur_fn_is_pure = 0;
 
 # v4.9.1: current-fn #regalloc register count, set inside PARSE_FN_DEF.
@@ -1710,6 +1716,12 @@ fn PARSE_PROG(S): i64 {
                                         _alloc_pending = 1;
                                         STI(S, GTI(S) + 1);
                                     }
+                                    else { if (typ == 163) {
+                                        # v6.5.63: #inline (token 163) — arm pending; PARSE_FN_DEF admits the
+                                        # next fn to the inline-replay path, and WARNS if it cannot.
+                                        _inline_pending = 1;
+                                        STI(S, GTI(S) + 1);
+                                    }
                                     else { if (typ == 133) {
                                         # v6.2.27: #naked (token 133; 128 is f64v_dot) — arm pending; PARSE_FN_DEF
                                         # skips prologue/epilogue/frame for the next fn.
@@ -1723,7 +1735,7 @@ fn PARSE_PROG(S): i64 {
                                 PARSE_FN_DEF(S);
                                 EPATCH(S, fn_skip);
                             }
-                            else { PARSE_STMT(S); } } } } } } } } } }
+                            else { PARSE_STMT(S); } } } } } } } } } } }
     }
     # v6.5.24 — bare-metal forbidden-module check (bare-metal deliverable #4), reported
     # HERE rather than at the include site. The preprocessor records which host-only
