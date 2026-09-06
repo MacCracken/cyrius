@@ -1,3 +1,27 @@
+> ### ✅ RESOLVED AND ARCHIVED at v6.5.68 — the whole-program compaction pass is SHIPPED.
+>
+> The residual this file carried since v6.5.54 ("the remaining 8,249 NOPs are the IR passes' own
+> eliminations, written after every per-fn compaction has already run") is closed: **8,292 bytes
+> reclaimed across 2,089 runs**, and the IR=3 build's NOP count is now IDENTICAL to the default
+> build's (463 instructions / 1,852 bytes) — the padding is gone, not merely counted. `.text`
+> under `CYRIUS_IR=3` is 1,060,112 against the default 1,068,408.
+>
+> ⛔ **THE FILE'S REPAIR LIST WAS INCOMPLETE.** It names jumps, fixup CPs, switch tables and
+> `IR_NODE_CP`. Three more had to be repaired and none is mentioned here: **fn start offsets**,
+> **fn end offsets**, and **the entry trampoline's hand-emitted `E9` disp32** — which is written
+> raw at `main.cyr` / `main_win.cyr` rather than through `EJMP0`, so it is in NO emitter's
+> registry and nothing would have repaired it. Unregistered, the compacted cycc SIGSEGVs at its
+> own pre-compaction entry address (mutation-verified).
+>
+> ⚠ **The prize was as this file estimated and NOT as the roadmap implied.** "8–12 KB" was right;
+> a first measurement during the slot said ~24.8 KB and was wrong — it double-counted the
+> `CYRIUS_DCE=1` dead-function fill, which is a different and larger prize on a different flag.
+> That half is now `2026-09-06-dce-nop-fill-does-not-eliminate.md`.
+>
+> Also closed in passing: the pass depends on `DECODE_LEN`, and auditing it found `0x99` (CQO)
+> undecodable and the whole `0F`+imm8-after-ModR/M class returning a length one byte short —
+> a **default-path** register-allocator defect worth −4,088 B of `.text`. See CHANGELOG [6.5.68].
+
 > ### ✅ v6.5.54 RESOLVED (the IR=3 regression half). Wall 2's remaining scope is now much smaller — and the slot-entry table below was WRONG about the cost.
 >
 > ⛔ **CORRECTION, and it matters more than the fix.** The table below says IR=3 self_compile is

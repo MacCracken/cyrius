@@ -435,6 +435,78 @@ fn _fnt_copy_table(old, oc, nc): i64 {
 # 16 MB output cap bounds real code well under it). Inited per-driver after the heap
 # is up; `_codebuf_cap==0` guards any pre-init call. Byte-identical under the old cap.
 var _codebuf_base = 0;
+# --- v6.5.68: whole-program compaction registries ---------------------------------
+# The per-fn NOP compactor (parse_fn.cyr) repairs positions from three tables that are
+# ZEROED AT EVERY FUNCTION START — jump_src_tbl, sw_tbl, nop_run_tbl. That is fine for a
+# pass that runs inside `_PARSE_FN_DEF_IMPL`, and useless for one that runs after all
+# parsing: the IR fixpoint writes its NOPs into a table that has already been consumed
+# 1,275 times. So the whole-program pass keeps its own append-only registries, filled AT
+# THE MOMENT THE BYTES ARE WRITTEN.
+#
+# ⭐ REGISTER, DO NOT RE-SCAN — the failure modes are asymmetric. A registry that misses a
+# producer leaves bytes uncollected: a lost optimisation. A re-scan for `0x90` runs would
+# DELETE A DELIBERATE NOP: a miscompile. Deliberate NOPs exist — `asm { nop }` (emit.cyr
+# reaches the `nop` mnemonic) and the `ud2; ud2; nop` an undefined-fn call is rewritten to
+# (fixup.cyr). A re-scan also cannot tell code from data: switch jump tables live INSIDE
+# `.text`, and a linear decoder walking one manufactures phantom jumps out of table bytes.
+# ⚠ This is NOT the v6.5.66 whitelist mistake in a new hat. That was a whitelist of READER
+# emitters — an open-ended set that must be kept in sync with every future reader. These are
+# three calls at the exact statements that WRITE the bytes, and each already has (cp, len)
+# in hand to do the write.
+#
+# Layout, in the 0x60000-0x100000 band freed when v6.5.40 relocated the identifier pool to
+# 0xEC00000 (verified: `S + 0x60000` has zero live users):
+#   WPJS  0x60000  49152 x 8B   disp32 SOURCE cps
+#   WPNR  0xC0000   4096 x 24B  (cp, len, cum) NOP runs + 4096 records of merge scratch
+#   WPSW  0xF0000   4096 x 16B  (table_cp, nent) switch jump tables
+# Measured on a cycc self-compile: 32,438 sources, 2,079 runs. Overflow sets a flag and the
+# whole pass declines — never a partial repair. CHANGELOG [6.5.68]
+var _wpjs_n = 0;      # disp32 sources recorded
+var _wpjs_ovf = 0;
+var _wpnr_n = 0;      # NOP runs recorded
+var _wpnr_ovf = 0;
+var _wpsw_n = 0;      # switch jump tables recorded
+var _wpsw_ovf = 0;
+var _wp_fn_js0 = 0;   # WPJS watermark at the current fn's start
+var _wp_fn_sw0 = 0;   # WPSW watermark at the current fn's start
+var _wp_deleted = 0;
+
+# ⚠ The entry-trampoline form, which must record UNCONDITIONALLY. `IR_SENABLE` runs after the
+# trampoline is emitted (main.cyr), so at that moment `IR_ENABLED` is 0 even under CYRIUS_IR=3 —
+# gating this one would drop the single site nothing else repairs.
+fn _wpjs_add_raw(S, cp): i64 {
+    if (_wpjs_n < 49152) { S64(S + 0x60000 + _wpjs_n * 8, cp); _wpjs_n = _wpjs_n + 1; }
+    else { _wpjs_ovf = 1; }
+    return 0;
+}
+# ⭐ GATED ON IR: `wp_compact` only runs under `CYRIUS_IR`, so recording on a default build is
+# pure cost with no consumer. The first cut recorded unconditionally and taxed EVERY compile —
+# measured 686 -> 712 ms self_compile, +3.8 %, for a feature no default build uses. A pass that
+# nothing on the default path can benefit from must not be paid for there.
+fn _wpjs_add(S, cp): i64 {
+    if (IR_ENABLED(S) == 0) { return 0; }
+    return _wpjs_add_raw(S, cp);
+}
+fn _wpnr_add(S, cp, ln): i64 {
+    if (ln <= 0) { return 0; }
+    if (_wpnr_n < 4096) {
+        S64(S + 0xC0000 + _wpnr_n * 24, cp);
+        S64(S + 0xC0000 + _wpnr_n * 24 + 8, ln);
+        S64(S + 0xC0000 + _wpnr_n * 24 + 16, 0);
+        _wpnr_n = _wpnr_n + 1;
+    } else { _wpnr_ovf = 1; }
+    return 0;
+}
+fn _wpsw_add(S, table_cp, nent): i64 {
+    if (IR_ENABLED(S) == 0) { return 0; }
+    if (_wpsw_n < 4096) {
+        S64(S + 0xF0000 + _wpsw_n * 16, table_cp);
+        S64(S + 0xF0000 + _wpsw_n * 16 + 8, nent);
+        _wpsw_n = _wpsw_n + 1;
+    } else { _wpsw_ovf = 1; }
+    return 0;
+}
+
 var _codebuf_cap = 0;
 # v6.4.51: the final output image (ELF/Mach-O/PE) is emitted here — an off-heap,
 # lazy-mapped 1 GiB `alloc()` set per-driver, replacing the fixed 16 MiB in-heap

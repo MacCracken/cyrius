@@ -1353,6 +1353,13 @@ if (_prof_on == 1) { _prof_lex_end = _prof_clock_ns(); }
 EB(S, 0xE9);
 var jmp_patch = GCP(S);
 EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+# ⛔ v6.5.68: THIS disp32 IS IN NO REGISTRY UNLESS IT IS PUT THERE. It is hand-emitted
+# raw rather than through EJMP0, so the per-fn compactor never saw it either — it simply
+# never mattered, because that pass only ever deleted bytes INSIDE one function and this
+# jump's source and target both sit outside every function body. The whole-program pass
+# deletes across the entire buffer, and a single unrepaired 5-byte deletion below the
+# target makes cycc SIGSEGV at its own pre-compaction entry address.
+_wpjs_add_raw(S, jmp_patch);
 
 # v6.3.5 AR-01 — opt-in monomorphization substrate (gated proof). CYRIUS_MONOMORPH=1
 # opts in. v6.3.33: this MUST be read BEFORE pass-1 — pass-1 registers structs (incl.
@@ -2110,6 +2117,20 @@ if (IR_ENABLED(S) == 1) {
         syscall(SYS_WRITE, 2, "B DBE", 5);
     }
     syscall(SYS_WRITE, 2, "\n", 1);
+    # v6.5.68 — whole-program NOP compaction. THE SEAM: after the IR fixpoint has written
+    # every NOP it is going to write, and before FIXUP, which is the first consumer of a
+    # stored code position (its patch loop bakes rel32s from `_fnt_offsets` and the fixup
+    # CPs). Nothing between the two reads one, so this is the only correct place.
+    var _wpd = wp_compact(S);
+    if (_wpd > 0) {
+        syscall(SYS_WRITE, 2, "wp-compact: ", 12);
+        PRNUM(_wpd);
+        syscall(SYS_WRITE, 2, " bytes reclaimed (", 18);
+        PRNUM(_wpnr_n);
+        syscall(SYS_WRITE, 2, " runs, ", 7);
+        PRNUM(_wpsw_n);
+        syscall(SYS_WRITE, 2, " switch tables)\n", 16);
+    }
     # CYRIUS_IR=2: verbose dump
     if (_ir_mode == 50) { ir_dump(S); }
 }

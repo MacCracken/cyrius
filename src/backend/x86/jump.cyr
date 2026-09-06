@@ -31,6 +31,7 @@ fn EJCC(S, cc): i64 {
         S64(S + 0x1A0008 + _jsc * 8, patch);
         S64(S + 0x1A0000, _jsc + 1);
     }
+    _wpjs_add(S, patch);   # v6.5.68: whole-program registry (the per-fn table is reset per fn)
     return patch;
 }
 
@@ -52,6 +53,7 @@ fn EJMP(S, target): i64 {
         S64(S + 0x1A0008 + _jsc * 8, cp);
         S64(S + 0x1A0000, _jsc + 1);
     }
+    _wpjs_add(S, cp);   # v6.5.68: whole-program registry (the per-fn table is reset per fn)
     # Record jump target (CVE-09: warn on overflow)
     # AR-03 (v6.1.38): the table is 0x19E000..0x1A0000 (8 KB) with the count in
     # the first 8 B, so the entries at 0x19E008 hold only 1023 slots (8184/8),
@@ -91,6 +93,7 @@ fn EJMP0(S): i64 {
         S64(S + 0x1A0008 + _jsc * 8, patch);
         S64(S + 0x1A0000, _jsc + 1);
     }
+    _wpjs_add(S, patch);   # v6.5.68: whole-program registry (the per-fn table is reset per fn)
     return patch;
 }
 

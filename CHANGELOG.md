@@ -4,6 +4,127 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.68] — 2026-09-06
+
+### Fixed
+
+- ⛔ **cycc's x86 length decoder mis-measured two instruction classes, and one of them was not
+  fail-safe.** `DECODE_LEN` (`src/backend/x86/decode.cyr`) is load-bearing on the **default**
+  path: `RA_SCAN_LOOPS` walks emitted bytes with it to find backward edges, and those edges
+  drive v6.5.35's loop-aware live-interval extension in the register allocator. Nothing had
+  ever verified it against the bytes cyrius actually emits.
+
+  | gap | sites | behaviour |
+  |---|---|---|
+  | `0x99` CQO (and `0x98`) — **no case at all** | 81 in cycc's own `.text` | returns 0 → `RA_SCAN_LOOPS` returns −1 |
+  | `0F BA`/`0F 70`–`73`/`0F C2`/`C4`/`C5`/`C6` — imm8 after ModR/M | 559 across a 39-binary corpus | returns a length **one byte short** |
+  | `0x63` MOVSXD | switch dispatch | returns 0 |
+
+  `ECQO` (`emit.cyr:282`) emits `48 99` before **every integer division**, and −1 is documented
+  at the call site as *"no information, NOT no loops"* — so the picker fell back to
+  whole-function intervals and **v6.5.35's register time-sharing was silently off in every
+  function containing `/` or `%`**.
+
+  ⭐ **The second class is the dangerous one and it is why the fix is gated by a walk, not a
+  size.** An incomplete decoder returns 0 and every caller falls back — expensive but safe. A
+  *wrong* length desynchronises the walk, so the walker decodes an immediate as an opcode and
+  can step straight over a real backward edge, which is the v5.6.22 miscompile the loop
+  extension exists to prevent. `48 0F BA F0 3F` (`btr rax, 63`, the f64 tag strip at
+  `emit.cyr:3164`) is five bytes and the decoder said four. **The mutant with this fix reverted
+  is byte-for-byte the same SIZE as the correct compiler**, so no size or NOP-count assertion
+  could ever have seen it.
+
+  Measured on the default path: `.text` 1,064,000 → 1,059,912, **−4,088 B**, converging at
+  gen3. It also re-baselines dead-code accounting — the DCE pass refuses bodies it cannot fully
+  decode, so recognised dead code goes **16,404 → 34,847 bytes**.
+
+### Added
+
+- **Whole-program NOP compaction — `2026-07-02-ir-regalloc-rewrite-needs-reemit` is CLOSED.**
+  The per-function compactor runs inside `_PARSE_FN_DEF_IMPL` during parsing; the IR fixpoint
+  runs once, after all parsing, into a table that has already been consumed and reset 1,275
+  times. v6.5.54 recovered the 10,748 bytes that were plain regalloc runs by lifting that
+  pass's IR gate and left this residual explicitly open. It is now collected:
+  **8,292 bytes reclaimed** across 2,089 runs, `.text` under `CYRIUS_IR=3` 1,068,584 →
+  **1,060,288**, and the IR build's NOP count is now *identical* to the default build's
+  (463 instructions / 1,852 bytes) — the padding is gone, not merely counted.
+
+  ⭐ **The difficulty is position repair, not deletion.** Moving code invalidates every stored
+  code position, and ONE unrepaired table is a silent miscompile — v6.5.54 proved that the
+  cheap way, lifting the gate without repairing `IR_NODE_CP` and getting a cycc that died with
+  `alloc_init: mmap failed`. Seven tables are repaired: recorded disp32 sources, fixup CPs,
+  **fn start offsets**, **fn end offsets**, switch jump tables, IR node CPs, and **the entry
+  trampoline's hand-emitted `E9` disp32**. The last three are not in the issue file's list at
+  all, and the entry trampoline is in no emitter's registry — it is written raw at
+  `main.cyr`/`main_win.cyr`, so nothing would have repaired it; unregistered, the compacted
+  cycc SIGSEGVs at its own pre-compaction entry address (mutation-verified).
+
+  ⭐ **REGISTER AT THE WRITE, DO NOT RE-SCAN.** The failure modes are asymmetric: a registry
+  that misses a producer leaves bytes uncollected (a lost optimisation), while a re-scan for
+  `0x90` runs would delete a **deliberate** NOP (a miscompile) — and deliberate NOPs exist
+  (`asm { nop }`, and the `ud2; ud2; nop` an undefined-fn call is rewritten to). A re-scan also
+  cannot tell code from data: switch jump tables live inside `.text`, and a linear decoder
+  walking one manufactures phantom jumps out of table bytes. ⚠ This is *not* the v6.5.66
+  whitelist mistake repeated — that was a whitelist of **reader** emitters, an open-ended set;
+  these are three calls at the exact statements that **write** the bytes.
+
+- `tests/gates/codegen/decode_len_coverage.sh` — `CYRIUS_DECODE_AUDIT=1` makes the compiler walk
+  every function body it emits and report how many are clean. **1,281 fns, 1,281 clean, 0
+  undecodable, 0 desynced.** Mutation-proven both ways, each with the mutant binary first
+  checked to differ: CQO case removed → 28 undecodable; imm8 class reverted → 9.
+- `tests/gates/codegen/wholeprogram_nop_compaction.sh` — 5 axes. Axis 2 is the load-bearing one
+  (the compacted compiler must reproduce the uncompacted one byte-identically); axis 4 is
+  anti-vacuous (recording alone must not change one byte of default-path output). Mutation-
+  proven: entry trampoline unregistered → rc 139; fn start/end repair removed → rc 139.
+
+### Benchmarks
+
+- cycc **1,218,104 B** (`.text` **1,068,584**, +4,584 B: the decoder fix REMOVED 4,088 B of
+  generated code, and the new pass, its registries and the decode audit added ~8.7 KB of
+  compiler) · self_compile **707 ms** (686 → 707, **+3.1 %**).
+  ⚠ **Growth tax, and the attribution is left open rather than invented.** Gating the registries
+  on `CYRIUS_IR` — they have no consumer on the default path — recovered 5 ms of it (712 → 707),
+  and that gating is worth having on its own terms. The remaining ~21 ms is not attributed: it is
+  not the registries, and the 28 functions that newly reach loop analysis cannot account for it.
+  Recorded as growth tax per the standing triage rule; bisect if a later release compounds it.
+- Under `CYRIUS_IR=3`: `.text` **1,060,288** — 8,296 B *below* the default build, and the IR
+  build's NOP count is now identical to the default build's (463 instructions / 1,852 bytes).
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+- Corpus **301** `.tcyr` (**68** crossos) · **136** shell gates (DERIVED) · **102** `lib/*.cyr`.
+  Default vs `CYRIUS_IR=3`+compaction: **0 divergences of 301**, compaction firing on 290.
+  Open issues **4** (one closed and archived, one filed), proposals **3**.
+
+### Notes
+
+- ⚠ **Two pieces of this pass are UNPROVEN INSURANCE and are labelled as such in the source
+  rather than counted as proofs.** Disabling switch-table repair changes the output of **zero
+  of 385** corpus programs, and disabling run coalescing changes nothing measurable either.
+  Both are retained because their failure mode is a wrong repair rather than a lost
+  optimisation, and both states are reachable by construction — but nothing available
+  exercises them, and a green corpus is not evidence they work.
+  ⚠ The first coalescing mutation was **wrong in a way worth recording**: it skipped the merge
+  loop in a way that also collapsed the run table to a single entry, i.e. it turned the pass
+  into something *safe* rather than something *broken*, and reported a clean pass. A mutation
+  that neuters rather than corrupts proves nothing.
+
+- ⛔ **`CYRIUS_DCE=1` still does not eliminate — attempted this release, reverted, and FILED.**
+  The flag NOP-fills dead function bodies and reclaims **zero** bytes while the default-path
+  message says *"set `CYRIUS_DCE=1` to eliminate"*: 76 unreachable fns, **34,847 bytes**,
+  recognised, overwritten with `0x90`, and shipped. The pass's own comment calls that an
+  intentional tradeoff because *"code shifting would break cycc==cycc byte-identity"* — which
+  this release disproves, since a compacted compiler reaches the same fixpoint.
+  It does not pack here, and the reason is measured rather than asserted: DCE seeds liveness by
+  **scanning emitted `rel32` control transfers**, so it cannot run before the fixup patch loop,
+  and compaction cannot run before DCE or it would not see the fill. The only consistent order
+  is patch → DCE → compact → **re-patch**, which needs the patch loop extracted (done, verified
+  behaviour-preserving on 22/22 inputs), fixups inside deleted bodies voided, and the data base
+  recomputed. Implemented that way it produced a compiler that **SIGSEGVs and fails 300 of 301
+  corpus compiles** — so something further is position-dependent past the re-patch. Reverted
+  rather than shipped; filed as `2026-09-06-dce-nop-fill-does-not-eliminate.md` with the
+  measurements and the failed approach.
+
 ## [6.5.67] — 2026-09-06
 
 ### Fixed

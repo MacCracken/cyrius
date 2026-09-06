@@ -222,6 +222,30 @@ sh "$ROOT/tests/gates/codegen/simd_direct_form.sh"
 # entirely unaffected, or the check would refuse the documented idiom at ~1,864 ecosystem sites.
 sh "$ROOT/tests/gates/frontend/stack_enum_lossy_context.sh"
 
+# v6.5.68: cycc's x86 LENGTH DECODER must be able to walk every function body cycc emits.
+# `DECODE_LEN` feeds `RA_SCAN_LOOPS`, which finds the backward edges that drive v6.5.35's
+# loop-aware live-interval extension in the register allocator — on the DEFAULT path — and
+# nothing had ever verified it against the bytes cyrius actually emits. Two gaps: `0x99`
+# (CQO, emitted before EVERY integer division) had no case, so the picker fell back to
+# whole-function intervals in every function using `/` or `%`; and the whole `0F`+imm8-after-
+# ModR/M class (`0F BA` BT-group, `0F 70`-`73` shift groups, `0F C2`/`C4`/`C5`/`C6`) returned
+# a length ONE BYTE SHORT. ⭐ The second is why this gate walks code instead of checking a
+# size: an incomplete decoder returns 0 and callers fall back safely, but a WRONG length
+# desynchronises the walk over a real backward edge — and the reverted-fix mutant is byte-for-
+# byte the SAME SIZE as the correct compiler, so no size or NOP-count assertion can see it.
+sh "$ROOT/tests/gates/codegen/decode_len_coverage.sh"
+
+# v6.5.68: the NOP runs the IR passes write AFTER every per-function compaction has already
+# run are collected by a whole-program pass, and the COMPACTED compiler must be a working one
+# that emits exactly the bytes the uncompacted one does. ⭐ The byte count only proves the
+# pass ran; axis 2 — compile with the compacted compiler and compare — is the assertion that
+# matters, because moving code invalidates every stored code position and ONE unrepaired
+# table is a silent miscompile. v6.5.54 demonstrated exactly that by lifting the per-fn pass's
+# IR gate without repairing `IR_NODE_CP`, producing a cycc that died with
+# `alloc_init: mmap failed`. Seven tables are repaired here, including the entry trampoline's
+# hand-emitted disp32, which no emitter registers at all.
+sh "$ROOT/tests/gates/codegen/wholeprogram_nop_compaction.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

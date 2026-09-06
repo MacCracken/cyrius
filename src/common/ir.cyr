@@ -573,6 +573,7 @@ fn ir_apply_lase(S): i64 {
                     j = j + 1;
                 }
                 bytes = bytes + sz;
+                _wpnr_add(S, cp_start, sz);   # v6.5.68: harvestable by the whole-program pass
             }
         }
         ni = ni + 1;
@@ -663,6 +664,7 @@ fn _ir_write_emovi_at(S, off, v, span): i64 {
         store8(base + j, 0x90);
         j = j + 1;
     }
+    if (span > sz) { _wpnr_add(S, off + sz, span - sz); }   # v6.5.68
     return span - sz;
 }
 
@@ -1476,4 +1478,253 @@ fn ir_dump(S): i64 {
         i = i + 1;
     }
     return 0;
+}
+
+# ================================================================
+# v6.5.68 — WHOLE-PROGRAM NOP COMPACTION
+# ================================================================
+# Runs after the IR fixpoint and before FIXUP. Harvests the NOP runs the IR passes wrote
+# AFTER every per-function compaction had already run and its table been reset.
+#
+# ⛔ WHY A SECOND COMPACTOR EXISTS AT ALL. `_PARSE_FN_DEF_IMPL`'s pass runs per function,
+# during parsing; the IR fixpoint runs once, after all parsing. Its NOPs land in a table
+# that has already been consumed 1,275 times. v6.5.54 measured what that costs — 19,067 NOP
+# instructions under `CYRIUS_IR=3` against the default path's 44 — and recovered the 10,748
+# that were plain regalloc runs by lifting the pass's IR gate. The rest are the IR passes'
+# own eliminations and need this.
+#
+# ⭐ THE WHOLE DIFFICULTY IS POSITION REPAIR, NOT DELETION. Moving bytes invalidates every
+# stored code position in the compiler, and ONE unrepaired table is a silent miscompile.
+# v6.5.54 proved that the cheap way: lifting the gate without repairing `IR_NODE_CP` gave a
+# cycc that died with `alloc_init: mmap failed`. The tables are enumerated below; three of
+# them the issue file that specified this work does not mention at all.
+#
+# INVARIANT: every stage reads PRE-compaction positions and writes POST-compaction values,
+# and the byte move is LAST. `_wp_shift(p)` is a pure function of the frozen run table, so
+# the repair stages may run in any order among themselves — the only hard constraint is
+# that the two stages which write into the CODE BUFFER (disp32s, switch tables) run before
+# the move that would relocate what they wrote.
+# CHANGELOG [6.5.68]
+
+# Sort WPNR by cp, COALESCE overlaps, then fill the prefix sum in the third slot.
+fn _wp_sort_prefix(S): i64 {
+    var n = _wpnr_n;
+    # Bottom-up mergesort, not the per-fn pass's insertion sort. The run table arrives as a
+    # concatenation of ascending sweeps (one per fixpoint iteration of const-fold, then one
+    # from ir_apply_lase), which is the input that makes insertion sort quadratic exactly
+    # when the second sweep starts. Scratch is the upper half of the WPNR region.
+    var SCR = 4096;
+    var w = 1;
+    while (w < n) {
+        var i = 0;
+        while (i < n) {
+            var lo = i;
+            var mid = i + w;
+            var hi = i + w + w;
+            if (mid > n) { mid = n; }
+            if (hi > n) { hi = n; }
+            var a = lo;
+            var b = mid;
+            var o = lo;
+            while (o < hi) {
+                var take_a = 0;
+                if (a < mid) {
+                    if (b >= hi) { take_a = 1; }
+                    elif (L64(S + 0xC0000 + a * 24) <= L64(S + 0xC0000 + b * 24)) { take_a = 1; }
+                }
+                var src = b;
+                if (take_a == 1) { src = a; a = a + 1; } else { b = b + 1; }
+                S64(S + 0xC0000 + (SCR + o) * 24, L64(S + 0xC0000 + src * 24));
+                S64(S + 0xC0000 + (SCR + o) * 24 + 8, L64(S + 0xC0000 + src * 24 + 8));
+                o = o + 1;
+            }
+            i = i + w + w;
+        }
+        var k = 0;
+        while (k < n) {
+            S64(S + 0xC0000 + k * 24, L64(S + 0xC0000 + (SCR + k) * 24));
+            S64(S + 0xC0000 + k * 24 + 8, L64(S + 0xC0000 + (SCR + k) * 24 + 8));
+            k = k + 1;
+        }
+        w = w + w;
+    }
+    # Coalesce overlapping and abutting runs into maximal disjoint ones. The two producers
+    # CAN register the same bytes — `ir_apply_lase` fills a node's span, and a node inside a
+    # span `ir_const_fold` already filled may itself be IR_ELIMINATED — and an overlapping
+    # pair would both double-count in the prefix sum AND defeat the move loop's
+    # `rp == run.cp` test for the contained run, so fewer bytes would be removed than
+    # `_wp_shift` claims and every position above would be repaired wrongly.
+    # ⚠ UNPROVEN INSURANCE, SAID PLAINLY. Disabling this merge changes nothing measurable on
+    # this tree: the compacted compiler still self-hosts and the corpus still passes, so no
+    # input reaches the overlapping state today. It is kept because the state is reachable by
+    # construction and its failure mode is a wrong repair rather than a lost optimisation —
+    # not because anything has demonstrated it firing.
+    var wq = 0;
+    var rq = 1;
+    while (rq < n) {
+        var pcp = L64(S + 0xC0000 + wq * 24);
+        var plen = L64(S + 0xC0000 + wq * 24 + 8);
+        var ccp = L64(S + 0xC0000 + rq * 24);
+        var clen = L64(S + 0xC0000 + rq * 24 + 8);
+        if (ccp <= pcp + plen) {
+            var nend = ccp + clen;
+            if (pcp + plen > nend) { nend = pcp + plen; }
+            S64(S + 0xC0000 + wq * 24 + 8, nend - pcp);
+        } else {
+            wq = wq + 1;
+            S64(S + 0xC0000 + wq * 24, ccp);
+            S64(S + 0xC0000 + wq * 24 + 8, clen);
+        }
+        rq = rq + 1;
+    }
+    if (n > 0) { n = wq + 1; _wpnr_n = n; }
+    var cum = 0;
+    var k2 = 0;
+    while (k2 < n) {
+        S64(S + 0xC0000 + k2 * 24 + 16, cum);
+        cum = cum + L64(S + 0xC0000 + k2 * 24 + 8);
+        k2 = k2 + 1;
+    }
+    _wp_deleted = cum;
+    return cum;
+}
+
+# Bytes deleted strictly BELOW code position p — O(log n) over the sorted, prefix-summed
+# table. `_nop_shift_at`'s linear scan is correct but whole-program would be 32,438 sources
+# x 2,079 runs per stage.
+fn _wp_shift(S, p): i64 {
+    var lo = 0;
+    var hi = _wpnr_n;
+    while (lo < hi) {
+        var mid = (lo + hi) >> 1;
+        if (L64(S + 0xC0000 + mid * 24) < p) { lo = mid + 1; }
+        else { hi = mid; }
+    }
+    if (lo == 0) { return 0; }
+    var idx = lo - 1;
+    return L64(S + 0xC0000 + idx * 24 + 16) + L64(S + 0xC0000 + idx * 24 + 8);
+}
+
+fn wp_compact(S): i64 {
+    # x86 family only. ⚠ `_AARCH64_BACKEND == 0` ALONE IS NOT AN X86 TEST — the cx bytecode
+    # backend also sets it to 0, which is the trap v6.5.64 records. aarch64 has no position
+    # tables of this shape at all and counts branch offsets in instructions, not bytes.
+    if (_AARCH64_BACKEND != 0) { return 0; }
+    if (_TARGET_CX != 0) { return 0; }
+    # kmode 2/3 (shared / object) use rip-relative disp32 to data, which nothing records —
+    # the same exclusion the per-fn pass has carried since v5.6.27.
+    if (L64(S + 0x18FCA0) > 1) { return 0; }
+    if (_wpnr_n == 0) { return 0; }
+    # A saturated registry means an INCOMPLETE repair list, and a partial repair is worse
+    # than none. Decline the whole pass: correct code, merely unoptimised.
+    if (_wpnr_ovf == 1) { return 0; }
+    if (_wpjs_ovf == 1) { return 0; }
+    if (_wpsw_ovf == 1) { return 0; }
+    _wp_sort_prefix(S);
+
+    # Stage 1 — every recorded disp32 source. Source and target each move by their own
+    # amount, so the displacement is recomputed rather than adjusted by one delta.
+    var ji = 0;
+    while (ji < _wpjs_n) {
+        var src = L64(S + 0x60000 + ji * 8);
+        var da = _codebuf_base + src;
+        var disp = load8(da) | (load8(da + 1) << 8) | (load8(da + 2) << 16) | (load8(da + 3) << 24);
+        if (disp >= 0x80000000) { disp = disp - 0x100000000; }
+        var tgt = src + 4 + disp;
+        var nd = disp - _wp_shift(S, tgt) + _wp_shift(S, src);
+        store8(da + 0, nd & 0xFF);
+        store8(da + 1, (nd >> 8) & 0xFF);
+        store8(da + 2, (nd >> 16) & 0xFF);
+        store8(da + 3, (nd >> 24) & 0xFF);
+        ji = ji + 1;
+    }
+    # Stage 2 — every fixup-table CP. FIXUP has not run yet, so it will patch through these.
+    # ⚠ ALL of [0, GFCNT), not the per-fn pass's [fn_start_fcnt, GFCNT) window.
+    var fcnt = GFCNT(S);
+    var fi = 0;
+    while (fi < fcnt) {
+        var fa = _fixup_base + fi * 16;
+        var fcp = L64(fa);
+        S64(fa, fcp - _wp_shift(S, fcp));
+        fi = fi + 1;
+    }
+    # Stage 3 — the fn start/end tables. NEW HERE, and absent from the issue file's list: the
+    # per-fn pass never had to touch them, because a function's own start is below all of its
+    # own runs and `SFNE` is called after its compaction. Whole-program, both move.
+    # ⚠ Skip the -1/-2 undefined-fn sentinels rather than "shifting" them into real offsets.
+    var fnc = GFNC(S);
+    var qi = 0;
+    while (qi < fnc) {
+        var foff = L64(_fnt_offsets + qi * 8);
+        if (foff >= 0) { S64(_fnt_offsets + qi * 8, foff - _wp_shift(S, foff)); }
+        var fend = L64(_fnt_codeend + qi * 8);
+        if (fend > 0) { S64(_fnt_codeend + qi * 8, fend - _wp_shift(S, fend)); }
+        qi = qi + 1;
+    }
+    # Stage 4 — switch jump tables. A table is DATA living inside `.text`, holding
+    # `target_cp - table_cp` deltas; both ends move independently, so each entry is
+    # recomputed from scratch rather than adjusted by one delta — the same argument
+    # `_sw_tbl_repair` makes per function. Writes into the CODE BUFFER, so it must precede
+    # the move.
+    # ⚠ HONESTLY UNPROVEN, AND RECORDED AS SUCH RATHER THAN CLAIMED. Disabling this stage
+    # changes the output of ZERO of 385 corpus programs — no run I could construct lands
+    # between a table and its targets, so nothing available demonstrates it firing. It is
+    # kept because it is the whole-program twin of a repair the per-fn pass provably DOES
+    # need (v6.5.20 added `_sw_tbl_repair` after the picker's runs landed in exactly this
+    # position and left every later entry stale), and because the failure it guards is a
+    # dispatch into the middle of an instruction — silent, and found by a consumer. Do not
+    # read the green corpus as evidence this stage works; read it as evidence nothing has
+    # exercised it yet.
+    var si = 0;
+    while (si < _wpsw_n) {
+        var tcp = L64(S + 0xF0000 + si * 16);
+        var nent = L64(S + 0xF0000 + si * 16 + 8);
+        var new_tcp = tcp - _wp_shift(S, tcp);
+        var ei = 0;
+        while (ei < nent) {
+            var ea = _codebuf_base + tcp + ei * 4;
+            var rel = load8(ea) | (load8(ea + 1) << 8) | (load8(ea + 2) << 16) | (load8(ea + 3) << 24);
+            if (rel >= 0x80000000) { rel = rel - 0x100000000; }
+            var tg = tcp + rel;
+            var nrel = tg - _wp_shift(S, tg) - new_tcp;
+            store8(ea + 0, nrel & 0xFF);
+            store8(ea + 1, (nrel >> 8) & 0xFF);
+            store8(ea + 2, (nrel >> 16) & 0xFF);
+            store8(ea + 3, (nrel >> 24) & 0xFF);
+            ei = ei + 1;
+        }
+        si = si + 1;
+    }
+    # Stage 5 — IR node CPs, so anything reading the IR after this (ir_dump, a future pass)
+    # stays coherent. ⚠ Every node, NOT from the `IR_CLO` watermark — that cursor belongs to
+    # the per-fn pass and has already been advanced past all of them.
+    var ncnt = IR_NCNT(S);
+    var ni = 0;
+    while (ni < ncnt) {
+        var icp = IR_NODE_CP(S, ni);
+        IR_SNODE_CP(S, ni, icp - _wp_shift(S, icp));
+        ni = ni + 1;
+    }
+    # Stage 6 — move the bytes. Last, and identical in shape to the per-fn pass's stage 4.
+    var end = GCP(S);
+    var wp = L64(S + 0xC0000);
+    var rp = wp;
+    var ri = 0;
+    while (rp < end) {
+        var skip = 0;
+        if (ri < _wpnr_n) {
+            if (rp == L64(S + 0xC0000 + ri * 24)) {
+                rp = rp + L64(S + 0xC0000 + ri * 24 + 8);
+                ri = ri + 1;
+                skip = 1;
+            }
+        }
+        if (skip == 0) {
+            store8(_codebuf_base + wp, load8(_codebuf_base + rp));
+            wp = wp + 1;
+            rp = rp + 1;
+        }
+    }
+    SCP(S, wp);
+    return _wp_deleted;
 }

@@ -4034,6 +4034,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     S64(S + 0x1A2008, 0);  # v5.6.27: nop_run_cnt = 0
     S64(S + 0x1AC800, 0);  # v6.5.20: sw_tbl_cnt = 0 (per-fn switch-table repair)
     S64(S + 0x1A6010, GFCNT(S));  # v5.6.27: fn_start_fcnt baseline
+    _wp_fn_js0 = _wpjs_n;   # v6.5.68: whole-program registry watermarks for this fn
+    _wp_fn_sw0 = _wpsw_n;
     # Emit prologue (v6.2.27: #naked skips it — the body is the raw ISR; no
     # rbp frame, no `sub rsp`. frame_patch stays 0 so the EPATCHFRAME at fn end
     # is also skipped (nothing to patch) — the "dangling frame_patch" guard.)
@@ -5568,6 +5570,27 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     # Stage 3b (v6.5.20): repair switch jump-table entries. MUST run
                     # before stage 4 — it reads pre-compaction CPs like stages 1-3.
                     _sw_tbl_repair(S, _nrn, _swn);
+                    # Stage 3d (v6.5.68): the whole-program registries hold PRE-compaction
+                    # CPs for this function's segment, and this pass is about to move those
+                    # bytes. ⛔ WITHOUT THIS the post-parse pass reads positions that were
+                    # already stale by up to a few hundred bytes per function, and repairs
+                    # the wrong instructions — a silent miscompile whose magnitude grows with
+                    # the program. Only THIS function's segment needs it: earlier functions'
+                    # entries are below every run here (`_nop_shift_at` returns 0) and later
+                    # ones do not exist yet, which is the same argument stage 3c makes for
+                    # IR node CPs. CHANGELOG [6.5.68]
+                    var _wpi = _wp_fn_js0;
+                    while (_wpi < _wpjs_n) {
+                        var _wpc = L64(S + 0x60000 + _wpi * 8);
+                        S64(S + 0x60000 + _wpi * 8, _wpc - _nop_shift_at(S, _nrn, _wpc));
+                        _wpi = _wpi + 1;
+                    }
+                    var _wsi = _wp_fn_sw0;
+                    while (_wsi < _wpsw_n) {
+                        var _wsc = L64(S + 0xF0000 + _wsi * 16);
+                        S64(S + 0xF0000 + _wsi * 16, _wsc - _nop_shift_at(S, _nrn, _wsc));
+                        _wsi = _wsi + 1;
+                    }
                     # Stage 3c (v6.5.54): repair IR node CPs. THE REASON THE COMPACTOR USED TO
                     # BE DISABLED UNDER IR MODE. The IR records a code position per node; this
                     # pass deletes bytes, so every recorded CP above a deleted run is stale, and

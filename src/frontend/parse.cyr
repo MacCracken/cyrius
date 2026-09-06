@@ -611,6 +611,11 @@ fn _sw_tbl_reg(S, table_cp, nent): i64 {
         S64(S + 0x1AC808 + n * 16 + 8, nent);
     }
     S64(S + 0x1AC800, n + 1);
+    # v6.5.68: the per-fn table above is zeroed at every function start, so the
+    # whole-program pass keeps its own copy. A switch jump table is DATA inside `.text`
+    # holding `target_cp - table_cp` deltas; delete a run between a table and its targets
+    # without repairing it and the dispatch jumps into the middle of an instruction.
+    _wpsw_add(S, table_cp, nent);
     return 0;
 }
 

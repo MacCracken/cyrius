@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.67** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.68** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -603,8 +603,32 @@ mutually exclusive — zero bytes needs the value form, the value form needs re-
 that is a compile break at ~1,000 call sites. Restated for v6.6.0 as: every consumer either
 compiles unchanged or fails with a named error at the offending site, and none miscompiles.)*
 
-#### `.68` — whole-program NOP compaction
-*(closes `ir-regalloc-rewrite-needs-reemit`)*
+#### `.68` — ✅ SHIPPED: whole-program NOP compaction + the decoder gap it was standing on
+*(closes `ir-regalloc-rewrite-needs-reemit` — CLOSED and archived)*
+
+**8,292 bytes reclaimed** across 2,089 runs; the IR=3 build's NOP count is now IDENTICAL to the
+default build's, and `.text` under `CYRIUS_IR=3` is **1,060,288** against the default 1,068,584 —
+the first release where the IR path is genuinely smaller. Seven position tables are repaired;
+**three of them the issue file never listed**, including the entry trampoline's hand-emitted `E9`
+disp32, which is in no emitter's registry at all (unregistered, the compacted cycc SIGSEGVs at its
+own entry address).
+
+⭐ **The prerequisite was worth more than the slot.** `DECODE_LEN` feeds `RA_SCAN_LOOPS`, which
+drives the register allocator on the DEFAULT path, and nothing had verified it: `0x99` (CQO,
+before every integer division) had no case, so v6.5.35's register time-sharing was silently off
+in every function using `/` or `%`; and the `0F`+imm8-after-ModR/M class returned a length one
+byte SHORT, which desyncs the walk instead of failing safe. **−4,088 B of default-path `.text`**,
+and recognised dead code 16,404 → 34,847 B.
+
+⚠ **The "live-but-low-value" rating at `.56` was CORRECT about the prize** — 8.1 KB on a flag with
+no consumer — and the slot earned its place through the prerequisite, not the pin. A first
+measurement in-slot said ~24.8 KB and was wrong: it double-counted the `CYRIUS_DCE=1` fill.
+
+⛔ **Attempted, implemented and REVERTED:** making `CYRIUS_DCE=1` actually eliminate its 34,847
+bytes. Filed as [`issues/2026-09-06-dce-nop-fill-does-not-eliminate.md`](issues/2026-09-06-dce-nop-fill-does-not-eliminate.md)
+with the forced ordering, the extracted patch loop, and the SIGSEGV the naive re-patch produces.
+
+#### ~~`.68`~~ — the plan as written
 
 The `.54` residual: 8,249 NOPs are the IR passes' own eliminations, written after every per-function
 compaction has run, so only a pass after the IR fixpoint collects them. Needs the IR passes to

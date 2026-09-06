@@ -553,6 +553,43 @@ fn FIXUP(S): i64 {
     }
     # Sweep: count + (optionally) NOP-fill dead fns.
     var dead_count = 0;
+    # v6.5.68 — CYRIUS_DECODE_AUDIT=1: walk EVERY function body with the length decoder and
+    # report how many are fully walkable. ⛔ THIS EXISTS BECAUSE NOTHING CHECKED. `DECODE_LEN`
+    # feeds `RA_SCAN_LOOPS`, which feeds the register allocator on the DEFAULT path, and two
+    # gaps had accumulated undetected — `0x99` (CQO, emitted before every integer division)
+    # had no case, and the whole `0F`+imm8-after-ModR/M class returned a length ONE BYTE
+    # SHORT. The second is the dangerous one: an incomplete decoder returns 0 and every caller
+    # falls back, but a WRONG length desynchronises the walk. The only way to tell them apart
+    # is to walk real emitted code, so the compiler now audits itself. Opt-in; costs nothing
+    # when unset. Gate: tests/gates/codegen/decode_len_coverage.sh
+    var _da_env = _read_env("CYRIUS_DECODE_AUDIT");
+    if (_da_env != 0) {
+        var _da_n = 0; var _da_clean = 0; var _da_undec = 0; var _da_over = 0;
+        var _dai = 0;
+        while (_dai < fnc) {
+            var _dao = L64(_fnt_offsets + _dai * 8);
+            if (_dao >= 0) {
+                var _dae = GFNE(S, _dai);
+                if (_dae > _dao) {
+                    _da_n = _da_n + 1;
+                    var _dar = DECODE_WALK_OK(_codebuf_base, _dao, _dae);
+                    if (_dar == 1) { _da_clean = _da_clean + 1; }
+                    elif (_dar == 0) { _da_undec = _da_undec + 1; }
+                    else { _da_over = _da_over + 1; }
+                }
+            }
+            _dai = _dai + 1;
+        }
+        syscall(SYS_WRITE, 2, "decode-audit: ", 14);
+        PRNUM(_da_n);
+        syscall(SYS_WRITE, 2, " fns, ", 6);
+        PRNUM(_da_clean);
+        syscall(SYS_WRITE, 2, " clean, ", 8);
+        PRNUM(_da_undec);
+        syscall(SYS_WRITE, 2, " undecodable, ", 14);
+        PRNUM(_da_over);
+        syscall(SYS_WRITE, 2, " desynced\n", 10);
+    }
     var dce_bytes = 0;
     var dwi = 0;
     while (dwi < fnc) {

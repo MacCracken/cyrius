@@ -549,6 +549,13 @@ LEX(S);
 EB(S, 0xE9);
 var jmp_patch = GCP(S);
 EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+# ⛔ v6.5.68: THIS disp32 IS IN NO REGISTRY UNLESS IT IS PUT THERE. It is hand-emitted
+# raw rather than through EJMP0, so the per-fn compactor never saw it either — it simply
+# never mattered, because that pass only ever deleted bytes INSIDE one function and this
+# jump's source and target both sit outside every function body. The whole-program pass
+# deletes across the entire buffer, and a single unrepaired 5-byte deletion below the
+# target makes cycc SIGSEGV at its own pre-compaction entry address.
+_wpjs_add_raw(S, jmp_patch);
 
 # v6.3.39 (Windows monomorph parity): read CYRIUS_MONOMORPH BEFORE pass-1 (pass-1
 # captures generic structs' GSTP type-param encoding only when _MONOMORPH_OK==1; the

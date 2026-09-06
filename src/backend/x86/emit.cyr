@@ -3112,6 +3112,7 @@ fn ECALLTO(S, target): i64 {
         S64(S + 0x1A0008 + _jsc * 8, cp);
         S64(S + 0x1A0000, _jsc + 1);
     }
+    _wpjs_add(S, cp);   # v6.5.68: whole-program registry (the per-fn one is reset per fn)
     # v5.6.21: callee may set flags arbitrarily; rax = return value.
     _flags_reflect_rax = 0;
     return 0;
