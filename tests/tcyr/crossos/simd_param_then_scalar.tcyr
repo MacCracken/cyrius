@@ -1,0 +1,139 @@
+# simd_param_then_scalar.tcyr — v6.5.62: a scalar parameter that FOLLOWS a by-value vector
+# parameter must arrive intact in a real (non-inlined) call.
+#
+# THE DEFECT. The register-allocator picker excluded parameters from promotion by param
+# COUNT (`iv_li = pc`), but the frame-slot map it indexes is by SLOT. A by-value vector param
+# occupies `nslots` slots — (nslots-1) anonymous fillers, then its NAMED slot — so in
+# `fn f(v: f64v4, s)` the scalar `s` lives at slot 4 while `pc` is 2. Slots 2..4 were therefore
+# treated as ordinary locals; `s` became a promotion candidate and was held in a callee-saved
+# register, while the prologue's homing store still wrote the incoming argument to the frame
+# slot. The callee read the register. Measured: `s` came back as **0**.
+#
+# Silent — exit 0, no diagnostic, wrong numbers — and reachable from ordinary user code with no
+# stdlib involvement at all.
+#
+# ⚠ WHY IT HID FOR SO LONG, AND WHY EVERY AXIS BELOW IS NEEDED. The bug needs FOUR things at
+# once, and dropping any one of them makes it vanish. Measured against the pre-fix compiler
+# this file scores 10 passed / 8 failed: axes 1, 1b and 2 are the defect, axes 3-6 are the
+# controls that must stay green so the file cannot pass vacuously.
+#   1. a by-value VECTOR param, so the following param's slot index runs past `pc`. Both
+#      widths reproduce it — f64v4 (4 slots) reliably, f64v2 (2 slots, axis 2) whenever the
+#      picker actually spends a register on the slot. ⚠ An earlier cut of this file called
+#      axis 2 a CONTROL because a smaller probe had shown f64v2 passing; running it against
+#      the pre-fix compiler proved otherwise (axis 2 fails 2/2 there). It is a second
+#      INSTANCE, not a control — the slot gap is narrower, not absent.
+#   2. a scalar param AFTER it (**scalar-first does not reproduce it** — axis 3),
+#   3. a body the inline-replay path REFUSES, so a real call happens. A flat body inlines and
+#      dodges the whole thing (**axis 4 is that control**), which is precisely why
+#      `lib/simd.cyr`'s `f64v4_scale` only exposed it while it still carried an AVX2 dispatch —
+#      and why flattening the wrappers in this same release would have MASKED it rather than
+#      fixed it, had the compiler not been fixed alongside,
+#   4. the picker enabled. `CYRIUS_REGALLOC_PICKER_CAP=0` makes the same source correct, which
+#      is what identifies the picker as the owner rather than the SIMD emitters.
+#
+# ⭐ WHY crossos/ AND NOT codegen/. This is parameter passing — the ABI. The slot layout, which
+# register class carries the vector (XMM pair on SysV, by-pointer on Win64, V-regs on aarch64)
+# and which callee-saved registers the picker may use all differ per target, and the picker's
+# register budget is itself target-dependent (5 on Linux, 4 where r15 is reserved). A Linux-only
+# run proves one of four ABIs.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+
+# --- axis 1: THE DEFECT. 256-bit vector param + trailing scalar, body non-flat so it CANNOT
+#     inline (the inline gate rejects `if`), so this is a genuine call. ---
+fn scale4_nonflat(v: f64v4, s): f64v4 {
+    var r: f64v4;
+    if (s == 0) { f64v_scale(&r, &v, f64_from(1), 4); }
+    else { f64v_scale(&r, &v, s, 4); }
+    return r;
+}
+
+# --- axis 1b: two trailing scalars, so the SECOND one is two slots past the boundary ---
+fn scale4_two_scalars(v: f64v4, s, t): f64v4 {
+    var r: f64v4;
+    if (s == 0) { f64v_scale(&r, &v, f64_from(1), 4); }
+    else { f64v_scale(&r, &v, f64_add(s, t), 4); }
+    return r;
+}
+
+# --- axis 2: SECOND INSTANCE — 128-bit vector param (2 slots) + trailing scalar. Reproduces
+#     too (verified against the pre-fix compiler), just with a one-slot gap instead of three. ---
+fn scale2_nonflat(v: f64v2, s): f64v2 {
+    var r: f64v2;
+    if (s == 0) { f64v_scale(&r, &v, f64_from(1), 2); }
+    else { f64v_scale(&r, &v, s, 2); }
+    return r;
+}
+
+# --- axis 3: CONTROL — scalar FIRST, vector second. Always worked. ---
+fn scale4_scalar_first(s, v: f64v4): f64v4 {
+    var r: f64v4;
+    if (s == 0) { f64v_scale(&r, &v, f64_from(1), 4); }
+    else { f64v_scale(&r, &v, s, 4); }
+    return r;
+}
+
+# --- axis 4: CONTROL — same signature but FLAT, so it inlines and never takes the call path.
+#     If this ever fails, the inline path broke, not the picker. ---
+fn scale4_flat(v: f64v4, s): f64v4 {
+    var r: f64v4;
+    f64v_scale(&r, &v, s, 4);
+    return r;
+}
+
+# --- axis 5: the vector param itself must survive too, not only the scalar ---
+fn passthru4(v: f64v4, s): f64v4 {
+    var r: f64v4;
+    if (s == 0) { f64v_scale(&r, &v, f64_from(1), 4); }
+    else { f64v_scale(&r, &v, f64_from(1), 4); }
+    return r;
+}
+
+fn main(): i64 {
+    var a: f64v4 = f64v4_make(f64_from(1), f64_from(2), f64_from(3), f64_from(4));
+
+    test_group("axis 1 — f64v4 param then scalar, non-inlined (THE DEFECT)");
+    var r1: f64v4 = scale4_nonflat(a, f64_from(3));
+    # Every lane: a partially-correct receive must not pass on lane 0 alone.
+    assert_eq(f64_to(load64(&r1 + 0)), 3, "lane0 = 1*3");
+    assert_eq(f64_to(load64(&r1 + 8)), 6, "lane1 = 2*3");
+    assert_eq(f64_to(load64(&r1 + 16)), 9, "lane2 = 3*3");
+    assert_eq(f64_to(load64(&r1 + 24)), 12, "lane3 = 4*3");
+
+    test_group("axis 1b — two trailing scalars");
+    var r1b: f64v4 = scale4_two_scalars(a, f64_from(2), f64_from(3));
+    assert_eq(f64_to(load64(&r1b + 0)), 5, "lane0 = 1*(2+3)");
+    assert_eq(f64_to(load64(&r1b + 24)), 20, "lane3 = 4*(2+3)");
+
+    test_group("axis 2 — f64v2 (2 slots) then scalar (second instance, not a control)");
+    var b: f64v2 = f64v2_make(f64_from(10), f64_from(20));
+    var r2: f64v2 = scale2_nonflat(b, f64_from(3));
+    assert_eq(f64_to(load64(&r2 + 0)), 30, "lane0 = 10*3");
+    assert_eq(f64_to(load64(&r2 + 8)), 60, "lane1 = 20*3");
+
+    test_group("axis 3 — CONTROL scalar first");
+    var r3: f64v4 = scale4_scalar_first(f64_from(3), a);
+    assert_eq(f64_to(load64(&r3 + 0)), 3, "lane0 = 1*3");
+    assert_eq(f64_to(load64(&r3 + 24)), 12, "lane3 = 4*3");
+
+    test_group("axis 4 — CONTROL flat body (inlines, never takes the call path)");
+    var r4: f64v4 = scale4_flat(a, f64_from(3));
+    assert_eq(f64_to(load64(&r4 + 0)), 3, "lane0 = 1*3");
+    assert_eq(f64_to(load64(&r4 + 24)), 12, "lane3 = 4*3");
+
+    test_group("axis 5 — the vector param survives alongside the scalar");
+    var r5: f64v4 = passthru4(a, f64_from(9));
+    assert_eq(f64_to(load64(&r5 + 0)), 1, "lane0 unchanged");
+    assert_eq(f64_to(load64(&r5 + 8)), 2, "lane1 unchanged");
+    assert_eq(f64_to(load64(&r5 + 16)), 3, "lane2 unchanged");
+    assert_eq(f64_to(load64(&r5 + 24)), 4, "lane3 unchanged");
+
+    test_group("axis 6 — the caller's own operand is untouched by the calls above");
+    assert_eq(f64_to(load64(&a + 0)), 1, "caller a lane0");
+    assert_eq(f64_to(load64(&a + 24)), 4, "caller a lane3");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

@@ -112,8 +112,69 @@ fn main(): i64 {
     var srv: f64v4 = f64v4_sqrt(&sq);
     assert_eq(f64_to(f64v4_lane3(&srv)), 8, "sqrt value-form lane3 = 8");
 
+    # --- v6.5.62 — KERNEL-vs-KERNEL PARITY, DIRECTLY ON THE BUILTINS ---
+    #
+    # ⛔ THE BLOCK BELOW THIS ONE WENT VACUOUS AT v6.5.62 AND THAT IS WHY THIS EXISTS.
+    # It proves parity by setting `_avx2_cache = 0` and re-running the WRAPPERS — which worked
+    # only while every wrapper consulted that global. v6.5.62 removed the per-call AVX2 dispatch
+    # from add/sub/mul/div/scale/abs/sqrt (it cost ~25 % and bought nothing at a fixed 4 lanes),
+    # so those wrappers no longer read `_avx2_cache` at all and the "forced fallback" re-run is
+    # now the SAME code path as the first run. It still passes; it just stops proving anything.
+    #
+    # ⭐ That is the v6.5.36 lesson exactly — a gate that pins the MECHANISM rather than the
+    # PROPERTY passes while the mechanism is gone. The property is "the 128-bit and 256-bit
+    # kernels agree lane-for-lane", so assert it on the RAW BUILTINS, which no wrapper change
+    # can route around. Compared against each other rather than against literals, so the check
+    # cannot drift out of sync with the inputs either.
+    # ⛔ GUARDED BY CAPABILITY, AND THE FIRST CUT OF THIS BLOCK WAS NOT — it called the ymm
+    # builtins unconditionally and the release gate went RED on cass with
+    # STATUS_ILLEGAL_INSTRUCTION (0xC000001D). cass is an Intel Celeron J4125 (Goldmont Plus):
+    # SSE4.2, NO AVX2. The `_ptr`/value wrappers never expose that because they ask
+    # `simd_has_avx2()` first; calling `f64v256_*` DIRECTLY is the one way to execute VEX on a
+    # host that cannot decode it. This file's own header already warned — "the cache is only
+    # ever forced to 0, NEVER to 1: forcing 1 on a pre-AVX2 x86 host would execute VEX and
+    # SIGILL" — and the first cut walked straight into it from the other direction.
+    # ⭐ Worth more than the fix: the four-host leg caught in one run what a Linux-only run
+    # could not see at all, because the maintainer's dev box has AVX2 and cass does not.
+    #
+    # So: the 128-bit assertions run EVERYWHERE (that kernel is legal on every x86), and the
+    # 256-vs-128 comparison runs only where AVX2 exists. The group is never empty and never
+    # silently skipped.
+    test_group("f64v4 kernel parity: f64v256_* == f64v_* (raw builtins, wrapper-independent)");
+    var k8: f64v4; var k4: f64v4;
+    var hasavx2 = simd_has_avx2();
+    f64v_add(&k4, &a, &b, 4);
+    assert_eq(f64_to(load64(&k4 + 0)), 12, "128-bit kernel add lane0 (runs on every host)");
+    assert_eq(f64_to(load64(&k4 + 24)), 48, "128-bit kernel add lane3 (runs on every host)");
+    if (hasavx2 == 0) {
+        # No AVX2 on this host: only one kernel is legal, so there is nothing to compare.
+        assert_eq(hasavx2, 0, "no AVX2 here — 256-vs-128 parity not applicable (honest skip)");
+    }
+    if (hasavx2 == 1) {
+    f64v256_add(&k8, &a, &b, 4); f64v_add(&k4, &a, &b, 4);
+    assert_eq(load64(&k8 + 0), load64(&k4 + 0), "add lane0 kernels agree");
+    assert_eq(load64(&k8 + 8), load64(&k4 + 8), "add lane1 kernels agree");
+    assert_eq(load64(&k8 + 16), load64(&k4 + 16), "add lane2 kernels agree");
+    assert_eq(load64(&k8 + 24), load64(&k4 + 24), "add lane3 kernels agree");
+    f64v256_sub(&k8, &a, &b, 4); f64v_sub(&k4, &a, &b, 4);
+    assert_eq(load64(&k8 + 24), load64(&k4 + 24), "sub lane3 kernels agree");
+    f64v256_mul(&k8, &a, &b, 4); f64v_mul(&k4, &a, &b, 4);
+    assert_eq(load64(&k8 + 24), load64(&k4 + 24), "mul lane3 kernels agree");
+    f64v256_div(&k8, &a, &b, 4); f64v_div(&k4, &a, &b, 4);
+    assert_eq(load64(&k8 + 16), load64(&k4 + 16), "div lane2 kernels agree");
+    f64v256_scale(&k8, &a, f64_from(3), 4); f64v_scale(&k4, &a, f64_from(3), 4);
+    assert_eq(load64(&k8 + 24), load64(&k4 + 24), "scale lane3 kernels agree");
+    f64v256_abs(&k8, &neg, 4); f64v_abs(&k4, &neg, 4);
+    assert_eq(load64(&k8 + 16), load64(&k4 + 16), "abs lane2 kernels agree");
+    f64v256_sqrt(&k8, &sq, 4); f64v_sqrt(&k4, &sq, 4);
+    assert_eq(load64(&k8 + 24), load64(&k4 + 24), "sqrt lane3 kernels agree");
+    }
+
     # --- forced 128-bit fallback: both kernels must agree lane-for-lane ---
-    # This is the half that makes the run meaningful on an AVX2 host.
+    # Still meaningful for fmadd and dot, which KEEP a dispatch at v6.5.62 (their two paths are
+    # NOT bit-identical — fused vs two roundings, and a different reduction order — so the
+    # selection has to stay). For the other ops this re-runs the single remaining path; the
+    # kernel-parity block above is what covers them now.
     test_group("f64v4 forced 128-bit fallback parity (simd_has_avx2 = 0)");
     _avx2_cache = 0;
     var s2: f64v4 = f64v4_add_ptr(&a, &b);

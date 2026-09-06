@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.61** (2026-09-05) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.62** (2026-09-05) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -343,7 +343,36 @@ the critical path. **The result store and its reload by the next link are ON it.
 That is exactly what a vector register class removes, and it is why (a) would also have been
 null: eliminating a dead store does not shorten the dependency chain.
 
-#### `.62` — the v6.5.24 AVX2 gate is a live perf regression: hand-SIMD is SLOWER than scalar
+#### `.62` — ✅ SHIPPED: the `.24` AVX2 gate was a perf regression — and the CALL, not the kernel
+
+⭐ **The premise in the plan below was half wrong, and measuring one variable at a time is what
+caught it.** The plan said the `_ptr` wrappers lose because they are hard-wired to n=4 where the
+ymm kernel cannot amortize. The hard-wiring is real; the inference was not. Isolated:
+
+| variant | time |
+|---|---|
+| call + ymm *(shipped `.61`)* | 188–192 µs |
+| call + 128-bit *(kernel changed, call kept)* | 189–195 µs — **no change** |
+| no call + 128-bit *(the fix)* | 141–148 µs — **the whole win** |
+
+**ymm at a fixed 4 lanes costs nothing; the `simd_has_avx2()` CALL cost ~25 %.** The raw ymm
+kernel in fact wins at every n (1.3× at n=4, 2.4× at n=1024), so it stays ungated for batch use.
+Split on NUMERICS: 13 wrappers flattened (bit-identical elementwise ops), 6 keep the dispatch but
+read the cached global instead of calling it (`fmadd` fused-vs-two roundings, `dot` reduction
+order). Biquad 2.25× → 1.68× scalar; f32v8 measured separately at −26.9 %.
+
+⛔ **It could not ship alone: flattening MASKS a silent miscompile.** The picker excluded params
+by param COUNT while its slot map is by SLOT, so the scalar in `fn f(v: f64v4, s)` was promoted
+to a register while the prologue wrote the argument to the frame — `s` read as **0**, from
+ordinary user code. Flattening makes `f64v4_scale` inline and the symptom vanishes without the
+bug being fixed. Verified independent: pre-flattening lib + fixed compiler = 9/9, `.61` = 5/9.
+
+⚠ **`.60`'s gate axis 2 asserted the opposite of the truth** — it grepped for the per-call gate
+and *required* it, so it would have gone red on the correct change. A grep for an implementation
+detail is not a property. Rewritten to measure behaviour; and axis 2a's own first cut was vacuous
+(a 1-op fixture measures the regression at 118 %, under any non-flaky bound).
+
+#### ~~`.62`~~ — the plan as written *(kept: its premise was half wrong, see above)*
 
 ⭐ **Found by the `.61` slot-entry premise-check, and it inverts the arc's premise.** On an 8-slot
 SOA biquad (svara's `svara_formant_bank_process` shape), measured on one box with the **compiler

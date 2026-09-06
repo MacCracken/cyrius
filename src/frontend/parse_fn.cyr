@@ -4326,6 +4326,24 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     }
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
     STI(S, GTI(S) + 1);
+    # v6.5.62 — THE PICKER EXCLUDED PARAMS BY PARAM *COUNT* WHILE THE SLOT MAP IS BY *SLOT*.
+    #
+    # A by-value vector param occupies `nslots` frame slots — (nslots-1) anonymous fillers and
+    # then its NAMED slot — so in `fn f(v: f64v4, s)` the scalar `s` lives at slot 4 while `pc`
+    # is 2. The register-allocator picker skipped params with `iv_li = pc`, so it treated `s` as
+    # an ordinary local, made it a candidate and promoted it to a callee-saved register — while
+    # the prologue's homing store still wrote the incoming value to the frame slot. The callee
+    # then read the register, not the argument.
+    #
+    # Live and silent from ordinary user code: a non-inlined `fn my_scale(v: f64v4, s)` read
+    # `s` as 0. It did NOT show up for `f64v2` (2 slots) or with the scalar param first, and a
+    # FLAT wrapper dodged it by inlining — which is why `lib/simd.cyr`'s own `f64v4_scale` only
+    # exposed it while it still carried a dispatch. `CYRIUS_REGALLOC_PICKER_CAP=0` makes the
+    # same source correct, which is what identifies the picker as the owner.
+    #
+    # Capture the real boundary here, where the parameter list has just closed and GFLC counts
+    # exactly the param slots. For a fn with no wide params this equals `pc`, so nothing moves.
+    var ra_pslots = GFLC(S);
     S64(_fnt_params + fi * 8, pc);
     # ⛔ v6.5.37 — A DUPLICATE THAT DISAGREES ABOUT ARITY IS AN ERROR, NOT A WARNING.
     #
@@ -5083,7 +5101,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     ag_li = ag_li + 1;
                 }
 
-                var iv_li = pc;
+                var iv_li = ra_pslots;
                 while (iv_li < ra_flc) {
                     var iv_c = load64(&ra_counts + iv_li * 8);
                     if (iv_c > 1) {

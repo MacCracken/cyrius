@@ -4,6 +4,151 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.62] — 2026-09-05
+
+### Fixed
+
+- **A scalar parameter that FOLLOWS a by-value vector parameter was silently wrong in any
+  non-inlined call.** The register-allocator picker excluded parameters from promotion by param
+  **count** (`iv_li = pc`), but the frame-slot map it indexes is by **slot**. A by-value vector
+  param occupies `nslots` slots — `nslots-1` anonymous fillers, then its named slot — so in
+  `fn f(v: f64v4, s)` the scalar `s` lives at slot 4 while `pc` is 2. Slots 2–4 were treated as
+  ordinary locals, `s` became a promotion candidate and was held in a callee-saved register while
+  the prologue's homing store still wrote the incoming argument to the frame slot. **The callee
+  read the register: `s` came back as 0.** Exit 0, no diagnostic.
+
+  Reachable from ordinary user code with no stdlib involvement. `CYRIUS_REGALLOC_PICKER_CAP=0`
+  makes the same source correct, which is what identifies the picker as the owner.
+
+  ⚠ **It needs four things at once, which is why it hid**: a vector param (both widths — f64v4
+  reliably, f64v2 whenever the picker actually spends a register), a scalar param *after* it
+  (scalar-first is fine), a body the inline path REFUSES so a real call happens (a flat body
+  inlines and dodges it), and the picker enabled.
+
+  ⛔ **This is why the perf work below could not ship alone.** Flattening the wrappers makes
+  `lib/simd.cyr`'s own `f64v4_scale` inline — which **hides** this defect instead of fixing it.
+  The compiler fix is verified to stand on its own: the *pre-flattening* `lib/simd.cyr` plus the
+  fixed compiler passes 9/9 where the shipped 6.5.61 compiler scores 5/9.
+
+- **The v6.5.24 AVX2 gate was a live performance regression: hand-SIMD was ~2.2× SLOWER than
+  plain scalar code.** On an 8-slot SOA biquad (the shape this arc was filed about), with the
+  compiler pinned and only `lib/simd.cyr` varied:
+
+  | | scalar | hand-`f64v4` | ratio |
+  |---|---|---|---|
+  | before | 86,743 ns | 195,625 ns | **2.25×** |
+  | after | 86,952 ns | 146,247 ns | **1.68×** |
+
+  ⭐ **The cause was the dispatch CALL, not the kernel — isolated one variable at a time**, which
+  is the discipline `.59`/`.60` got wrong and this arc exists to enforce:
+
+  | variant | time |
+  |---|---|
+  | call + ymm *(shipped .61)* | 188–192 µs |
+  | call + 128-bit *(kernel changed, call kept)* | 189–195 µs — **no change** |
+  | no call + 128-bit *(the fix)* | 141–148 µs — **the entire win** |
+
+  Confirmed at instruction level: the middle variant differs from the baseline only in ymm usage
+  (`vmovupd` 36→24, `vzeroupper` 19→15) and is not faster; the fix removes exactly 4 `callq`.
+  **The ymm kernel at a fixed 4 lanes costs nothing; `simd_has_avx2()` per call cost ~25 %.**
+
+  Every one of the 19 gated wrappers is **hard-wired to a constant lane count** (f64v4 → n=4,
+  f32v8 → n=8), so `.60`'s reason for keeping the gate on the `_ptr` forms — "there the loop body
+  is all-VEX and it wins about 2×" — describes a long-`n` batch loop none of them ever runs.
+
+  The fix splits on **numerics**, not on convenience:
+  - **13 wrappers flattened** (`add`/`sub`/`mul`/`div`/`scale`/`abs`/`sqrt`) — the two kernels are
+    bit-identical elementwise IEEE ops, so there is nothing to select between.
+  - **6 wrappers keep the dispatch but drop the CALL**, reading `_avx2_cache` / `_fma_cache`
+    directly: `fmadd` (fused single rounding vs two roundings) and `dot` (different reduction
+    order) are **not** bit-identical, so the selection has to stay.
+
+  Measured f32v8 separately rather than assuming it transfers: **5,257 µs → 3,836 µs, −26.9 %.**
+  The raw `f64v256_*` / `f32v8_*` builtins stay ungated for genuine batch use, where ymm really
+  does win — **1.3× at n=4, 2.4× at n=1024**, measured.
+
+  ⭐ Flattening also un-blocks `.58`'s finding: `f64v4_scale`/`abs`/`sqrt` are now flat, so they
+  reach the inline-replay path (a 3-op chain drops from 175 to 159 `callq` and 19 to 6
+  `vzeroupper`).
+
+### Changed
+
+- `tests/gates/codegen/simd_valueform_no_avx_transition.sh` — **axis 2 asserted the opposite of
+  the truth and had to be replaced.** It `grep`ed `lib/simd.cyr` to *require* the per-call AVX2
+  gate on the `_ptr` wrappers, so it would have gone **red on the correct change** and stayed
+  green through the wrong one — and it never had a chance of catching the +59 % that shipped at
+  `.24`. A grep for an implementation detail is not a property. Same failure family as `.36`'s
+  enum gate, which stayed green through five bad releases by pinning the decoder rather than the
+  value. Replaced with behaviour: a 6-link `_ptr` chain vs a dispatch-free reference (2a), the
+  ymm kernel must still win at batch `n` on the raw builtins (2b), and a structural backstop that
+  no fixed-lane wrapper reintroduces a per-call dispatch (2c).
+
+  ⚠ **Axis 2a's fixture depth is load-bearing, and the first cut of it was vacuous.** A 1-op loop
+  measures the regression at only 118 % — under any bound loose enough not to flake, so the axis
+  **could not fire for its own target**. A 6-link chain separates cleanly: dispatch-free 100 %,
+  per-call dispatch 160 %; bound 135 %.
+
+- `tests/tcyr/crossos/f64v4_ymm.tcyr` — its "forced 128-bit fallback parity" block proved parity
+  by setting `_avx2_cache = 0` and re-running the **wrappers**, which only worked while every
+  wrapper consulted that global. With 7 of them flattened it still passes but proves nothing.
+  Added a kernel-vs-kernel parity block asserting `f64v256_* == f64v_*` lane-for-lane on the
+  **raw builtins**, which no wrapper change can route around — compared against each other rather
+  than literals, so it cannot drift. Mutation-proven: breaking a wrapper's lane count trips 6
+  failures.
+
+### Added
+
+- `tests/tcyr/crossos/simd_param_then_scalar.tcyr` — 18 assertions, 6 axes.
+  **Mutation-proven: 10 passed / 8 failed on the 6.5.61 compiler, 18/18 after.** Axes 1, 1b and 2
+  are the defect; axes 3–6 (scalar-first, flat body, vector-param integrity, caller-operand
+  integrity) are controls that must stay green so the file cannot pass vacuously. ⚠ An earlier
+  cut labelled axis 2 (`f64v2`) a *control* on the strength of a smaller probe; running it
+  against the pre-fix compiler proved it is a second **instance**. The label was corrected — a
+  mislabelled control is the same defect as a vacuous gate.
+
+  In `crossos/` because this is parameter passing: slot layout, which register class carries the
+  vector (XMM pair on SysV, by-pointer on Win64, V-regs on aarch64) and the picker's register
+  budget (5 on Linux, 4 where r15 is reserved) all differ per target.
+
+### Notes
+
+- ⭐ **The cross-OS leg turned RED on cass and it was right — the first cut of the new parity
+  block called the ymm builtins UNCONDITIONALLY.** `f64v256_*` executes VEX with no cpuid check,
+  and **cass is an Intel Celeron J4125** (Goldmont Plus: SSE4.2, **no AVX2**), so it died with
+  `STATUS_ILLEGAL_INSTRUCTION` (0xC000001D). The wrappers never expose this because they ask
+  `simd_has_avx2()` first; calling the builtin directly is the one way to reach it. The file's
+  own header had already written the warning down — *"the cache is only ever forced to 0, NEVER
+  to 1: forcing 1 on a pre-AVX2 x86 host would execute VEX and SIGILL"* — and the new block
+  walked into it from the other direction. Now guarded by capability: the 128-bit assertions run
+  on every host, the 256-vs-128 comparison only where AVX2 exists, and the skip is asserted
+  rather than silent.
+
+  **A Linux-only run could not have seen this**, because the dev box has AVX2 and cass does not.
+  That is the whole argument for the four-host leg, paid back in one release.
+
+- ⛔ **And the same unguarded pattern in the new SHELL gate would have FAILED OPEN, which is
+  worse than the crash.** Axis 2b times a `f64v256_*` loop against a 128-bit one; on a pre-AVX2
+  host the 256-bit binary dies *instantly*, so `best()` records a near-zero time, the ratio looks
+  spectacular, and the axis reports a huge "ymm win" while measuring a crash. It now probes
+  `simd_has_avx2()` first and names the skip in its PASS line.
+
+### Benchmarks
+
+- Corpus **299** `.tcyr` (**66** in `crossos/`) · **131** shell gates (derived) · `check.sh`
+  **240/240** · cass **66/66** after the capability guard.
+- cycc **1,205,088 B** (`.text` **1,054,464**, +24 B) · self_compile **672 ms** (677 → 672, back
+  to the `.60` level — the picker change is two lines of parse-time work).
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` 240/240 · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+- Hand-`f64v4` on the biquad shape: **195,625 ns → 146,247 ns** against a scalar control steady at
+  86,743 → 86,952 ns (**2.25× → 1.68×** of scalar). The residue is the memory round-trip the
+  value-form chain still pays, which is what the vector register class (`.64`) is for.
+- The picker fix is surgical: **406 corpus inputs identical, 0 codegen diffs** against the 6.5.61
+  compiler — it only reaches functions with a wide param followed by another. ⚠ Zero diffs means
+  zero corpus coverage of the shape, which is why the `.tcyr` above is the deliverable, not the
+  nice-to-have.
+
 ## [6.5.61] — 2026-09-05
 
 ### Fixed
