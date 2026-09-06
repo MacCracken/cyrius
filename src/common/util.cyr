@@ -315,6 +315,71 @@ var _CORO_STATE_OFF = 24;   # byte offset of the state word inside the coro obje
 var _CORO_LOCAL_OFF = 32;   # byte offset of local slot 0
 var _CORO_MAX_SUSP = 64;    # resume-label table size; exceeding it is a hard error
 var _coro_rcp[512];         # resume-label CP per suspend index (1-based), 64 x 8 B
+# --- v6.5.71: PP-generated functions that must be inlined, passed by SIDE CHANNEL ----------
+# ⛔ WHY A SIDE CHANNEL AND NOT `#inline` TEXT. `#derive(accessors)` generates the canonical
+# inline candidate — `fn Name_field(p) { return load64(p + K); }`, one parameter, flat,
+# generated code nobody hand-tunes, measured 3.45x faster inlined. Emitting `#inline` into the
+# generated text does not work and CANNOT be made to work: derive bodies are FLATTENED ONTO A
+# SINGLE LINE to keep the user's line numbering honest, and `#` opens a COMMENT — so the `#`
+# comments out the rest of that line, which is the user's tail AND the next `#derive`. Measured:
+# a two-struct fixture gives exit 10 normally and `error: unexpected struct` with the emit
+# added, because the second derive never fires. (The same fact v6.4.81 recorded as "`#` is a
+# COMMENT so `#include` probes are inert", surfacing in a new place.)
+#
+# So the request travels BESIDE the text: the preprocessor records a hash of each accessor's
+# name and `_PARSE_FN_DEF_IMPL` consults it. A 64-bit bloom mask short-circuits the scan, so an
+# ordinary function pays one AND and one branch. CHANGELOG [6.5.71]
+var _pp_inl_base = 0;
+var _pp_inl_n = 0;
+var _pp_inl_bloom = 0;
+
+fn _pp_inl_hash(p): i64 {
+    var h = 0xCBF29CE484222325;
+    var i = 0;
+    var c = load8(p + i);
+    while (c != 0) {
+        h = (h ^ c) * 0x100000001B3;
+        i = i + 1;
+        c = load8(p + i);
+    }
+    return h;
+}
+# Fold a name emitted in PIECES (struct name, an optional "set_", field name) without
+# materialising the joined string — the preprocessor never holds it in one place.
+fn _pp_inl_hash3(a, b, c): i64 {
+    var h = 0xCBF29CE484222325;
+    var i = 0;
+    var ch = load8(a + i);
+    while (ch != 0) { h = (h ^ ch) * 0x100000001B3; i = i + 1; ch = load8(a + i); }
+    h = (h ^ 95) * 0x100000001B3;
+    if (b != 0) {
+        i = 0; ch = load8(b + i);
+        while (ch != 0) { h = (h ^ ch) * 0x100000001B3; i = i + 1; ch = load8(b + i); }
+    }
+    i = 0; ch = load8(c + i);
+    while (ch != 0) { h = (h ^ ch) * 0x100000001B3; i = i + 1; ch = load8(c + i); }
+    return h;
+}
+fn _pp_inl_add(h): i64 {
+    if (_pp_inl_base == 0) { _pp_inl_base = alloc(65536 * 8); }
+    if (_pp_inl_base == 0) { return 0; }
+    if (_pp_inl_n >= 65536) { return 0; }
+    S64(_pp_inl_base + _pp_inl_n * 8, h);
+    _pp_inl_n = _pp_inl_n + 1;
+    _pp_inl_bloom = _pp_inl_bloom | (1 << (h & 63));
+    return 0;
+}
+fn _pp_inl_has(p): i64 {
+    if (_pp_inl_n == 0) { return 0; }
+    var h = _pp_inl_hash(p);
+    if ((_pp_inl_bloom & (1 << (h & 63))) == 0) { return 0; }
+    var i = 0;
+    while (i < _pp_inl_n) {
+        if (L64(_pp_inl_base + i * 8) == h) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
 var _pending_coro = 0;      # this fn's body awaits: reserve slot 0 before params
 var _coro_was = 0;          # the body just emitted was a coroutine
 var _coro_flc = 0;          # that body's local-slot count (its frame size)
@@ -511,8 +576,11 @@ fn _wpjs_add_raw(S, cp): i64 {
 }
 # ⭐ GATED ON IR: `wp_compact` only runs under `CYRIUS_IR`, so recording on a default build is
 # pure cost with no consumer. The first cut recorded unconditionally and taxed EVERY compile —
-# measured 686 -> 712 ms self_compile, +3.8 %, for a feature no default build uses. A pass that
-# nothing on the default path can benefit from must not be paid for there.
+# measured 686 -> 712 ms self_compile, +3.8 %, for a feature no default build uses.
+# ⚠ ANY FUTURE SECOND CONSUMER MUST WIDEN THIS GATE. v6.5.71 added a `CYRIUS_DCE=1` compaction
+# and spent a debugging cycle on an empty registry before noticing that this line — correct when
+# written — silently disabled the machinery for the new caller. See
+# `docs/development/issues/2026-09-06-dce-nop-fill-does-not-eliminate.md`.
 fn _wpjs_add(S, cp): i64 {
     if (IR_ENABLED(S) == 0) { return 0; }
     return _wpjs_add_raw(S, cp);

@@ -4,6 +4,71 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.71] — 2026-09-06
+
+### Fixed
+
+- **`#derive(accessors)` getters/setters now reach the inline-replay path — and the blocker was
+  not what the filing said.** The issue recorded "a preprocessor state-threading defect to be
+  understood on its own". The actual mechanism, reproduced by rebuilding the compiler with the
+  obvious implementation in place: **derive bodies are FLATTENED ONTO A SINGLE LINE** (deliberate
+  — it keeps the user's line numbering honest) and **`#` opens a COMMENT in cyrius**, so emitting
+  `#inline` into the generated text comments out the rest of that line — the user's tail *and the
+  following `#derive`*. A two-struct fixture gives exit 10 normally and
+  `error: <source>:5:1: unexpected struct` with the emit added, the second derive never firing.
+  Putting the directive on its own line does not help; the flatten puts it back.
+
+  So the text channel cannot carry this at all, and the request travels beside it: the
+  preprocessor records an FNV-1a hash of each generated accessor's name — folded from the pieces
+  it emits, since the joined name never exists in one place — and `_PARSE_FN_DEF_IMPL` consults
+  it when registering a function. A 64-bit bloom mask short-circuits the scan, so an ordinary
+  function pays one AND and one branch.
+
+  Measured on the filed shape: **`callq` 7 → 3**, answer unchanged.
+  ⚠ Same fact as v6.4.81's *"`#` is a COMMENT so `#include` probes are inert"*, surfacing in a
+  new place. Anything emitting a `#`-prefixed directive into preprocessor output hits it.
+
+### Added
+
+- `tests/gates/frontend/derive_accessors_inlined.sh` — 3 axes. ⭐ **Axis 1 counts CALLS, not
+  values**: an inlining change is invisible to a result assertion, which is exactly what the
+  mutation shows — with the side channel stubbed out every answer stays correct and the call
+  count goes back to 7. Axis 2 is the anti-regression that fails the moment anyone re-implements
+  this as a text emit; axis 3 pins that a plain fn of the same shape is *not* swept in.
+
+### Benchmarks
+
+- cycc **1,231,040 B** (`.text` **1,076,456**, +1,752 B for the side channel and its hash) ·
+  self_compile **713 ms** (714 → 713, flat).
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+- Corpus **301** `.tcyr` · **138** shell gates (DERIVED). All 7 per-target forks compile.
+  Open issues **3 → 2**.
+
+### Notes
+
+- **Open queue 3 → 2.** `derive-accessors-auto-inline` closed and archived.
+
+- ⛔ **`dce-nop-fill-does-not-eliminate` — attempted a third time, a FOURTH cause found, and it
+  was mine.** v6.5.68 gated the whole-program position registries on `IR_ENABLED`, because
+  `wp_compact` only ran under `CYRIUS_IR` and recording cost 3.8 % of self_compile everywhere
+  else. Correct when written; wrong the moment a second consumer appeared. On a `CYRIUS_DCE=1`
+  build with no IR the registry is **empty**, so the repair stage fixes no jump at all and the
+  eliminated binary faults on the first call it should have fixed. **A gate written against one
+  caller silently disables the machinery for the next one** — the same shape as several defects
+  this cycle, this time authored by me two releases earlier.
+
+  Also established: the fixup-mediated sites must be repaired **arithmetically** rather than by
+  re-running the patch loop, because extracting that loop makes `cybs` fail (v6.5.70's finding).
+
+  **With those in place, small programs eliminate dead code correctly for the first time** — a
+  two-dead-function fixture reclaims 32,686 bytes and returns the right answer from the compacted
+  binary. cycc itself still fails, but the symptom is now precise: a call target **2 bytes off**,
+  landing mid-instruction in a live prologue, rather than the 32 KB error of the earlier attempts.
+  Reverted rather than shipped; all four causes and a **passing small-case control** are recorded
+  in the issue so the next attempt starts from a known-good baseline instead of from scratch.
+
 ## [6.5.70] — 2026-09-06
 
 ### Fixed

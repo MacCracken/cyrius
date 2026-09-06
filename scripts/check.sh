@@ -256,6 +256,16 @@ sh "$ROOT/tests/gates/codegen/wholeprogram_nop_compaction.sh"
 # transform is selected by the body rather than by the keyword.
 sh "$ROOT/tests/gates/frontend/coroutine_midbody_suspend.sh"
 
+# v6.5.71: `#derive(accessors)` getters/setters reach the inline-replay path — a measured 3.45x
+# on the accessor shape, for generated code nobody hand-tunes. ⛔ Axis 2 is the load-bearing
+# anti-regression: the obvious implementation (emit `#inline` into the generated text) CANNOT
+# work, because derive bodies are flattened onto ONE LINE for line-number fidelity and `#` opens
+# a COMMENT — so the `#` swallows the rest of that line including the NEXT `#derive`. The request
+# therefore travels beside the text as a recorded name hash. Axis 1 counts CALLS, not values: an
+# inlining change is invisible to a result assertion (mutation-proven — disabling the side
+# channel leaves every answer correct and moves callq 3 -> 7).
+sh "$ROOT/tests/gates/frontend/derive_accessors_inlined.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

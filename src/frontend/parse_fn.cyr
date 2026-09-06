@@ -3827,6 +3827,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         _fn_inline_req = 1;
         _inline_pending = 0;
     }
+    # v6.5.71: `#derive(accessors)` asks for its generated getters/setters to be inlined
+    # through a side channel rather than by emitting `#inline` — derive bodies are flattened
+    # onto one line and `#` opens a comment, so the text route swallows the next `#derive`.
+    if (_fn_inline_req == 0) {
+        if (_pp_inl_has(S + 0xEC00000 + noff) == 1) { _fn_inline_req = 1; }
+    }
     _cur_fn_is_pure = (GFLG(S, fi) >> 3) & 1;
     # v4.8.4-alpha5: mirror fn_regalloc[fi] into _cur_fn_regalloc so
     # codegen (EFNEPI, ETAILJMP) can emit rbx save/restore. Reset at

@@ -1,3 +1,24 @@
+> ### ✅ RESOLVED at v6.5.71 — shipped by SIDE CHANNEL, because the text route is impossible.
+>
+> The blocker this file was filed for is real and is now fully explained: **derive bodies are
+> FLATTENED ONTO A SINGLE LINE** (to keep the user's line numbering honest) and **`#` opens a
+> COMMENT**, so emitting `#inline` into the generated text comments out the rest of that line —
+> the user's tail AND the following `#derive`. Reproduced by rebuilding the compiler with the
+> emit added: a two-struct fixture gives exit 10 normally and `error: <source>:5:1: unexpected
+> struct` with it, the second derive never firing. Putting the directive on its own line does
+> not help; the flatten puts it back. So this was never a "state-threading defect" to be
+> untangled — the text channel cannot carry a `#` at all.
+>
+> **The fix:** the preprocessor records an FNV-1a hash of each generated accessor's name (folded
+> from the pieces it emits, since the joined name never exists in one place) and
+> `_PARSE_FN_DEF_IMPL` consults it when registering a function. A 64-bit bloom mask
+> short-circuits the scan, so an ordinary function pays one AND and one branch.
+>
+> Measured on the filed shape: **callq 7 → 3**, answer unchanged. Gate:
+> `tests/gates/frontend/derive_accessors_inlined.sh`, 3 axes, mutation-proven — disabling the
+> side channel leaves every ANSWER correct and moves the call count back to 7, which is why
+> axis 1 counts calls rather than values.
+
 # `#derive(accessors)` should emit its getters/setters as `#inline` — blocked by a preprocessor state-threading defect in the multi-derive path
 
 - **Filed**: 2026-09-05, from the v6.5.63 slot (implemented, measured, reverted)

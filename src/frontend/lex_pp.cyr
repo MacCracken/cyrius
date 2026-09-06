@@ -2134,6 +2134,9 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         op = op + PP_EMIT_STR(out, op, "(p) { return load64(p + ");
         op = op + PP_EMIT_INT(out, op, off);
         op = op + PP_EMIT_STR(out, op, "); }\n");
+        # v6.5.71: record the GETTER for auto-inlining. The name is emitted in pieces and
+        # never exists as one string, so it is hashed the same way — see `_pp_inl_hash3`.
+        _pp_inl_add(_pp_inl_hash3(S + 0x197020, 0, S + 0x1FC000 + fi * 32));
         op = op + PP_EMIT_STR(out, op, "fn ");
         op = op + PP_EMIT_STR(out, op, S + 0x197020);
         op = op + PP_EMIT_STR(out, op, "_set_");
@@ -2141,6 +2144,7 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         op = op + PP_EMIT_STR(out, op, "(p, v) { store64(p + ");
         op = op + PP_EMIT_INT(out, op, off);
         op = op + PP_EMIT_STR(out, op, ", v); return 0; }\n");
+        _pp_inl_add(_pp_inl_hash3(S + 0x197020, "set_", S + 0x1FC000 + fi * 32));
         fi = fi + 1;
     }
     return op;

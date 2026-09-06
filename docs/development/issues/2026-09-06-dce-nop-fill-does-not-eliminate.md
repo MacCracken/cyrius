@@ -119,3 +119,39 @@ reclaimed — from a call whose `rel32` was never re-patched, with an unpatched 
 beside it. So a live region is still being spliced: either a run covers live code, or a fixup
 that should have been re-patched was skipped. That is the next thing to chase, on the small
 reproducer (a 5-line program with two dead fns) rather than on cycc itself.
+
+## ⟳ v6.5.71 — FOURTH cause found, and SMALL PROGRAMS NOW WORK END TO END.
+
+Closest yet. Two design changes and one more root cause:
+
+4. ⛔ **THE REGISTRY WAS EMPTY ON A DCE BUILD — and it was my own optimisation that emptied it.**
+   v6.5.68 gated `_wpjs_add` / `_wpsw_add` on `IR_ENABLED` because `wp_compact` only ran under
+   `CYRIUS_IR` and recording cost 3.8 % of self_compile on every other build. That was correct
+   when written. Adding a SECOND consumer (`CYRIUS_DCE=1`) made it wrong: on a DCE build with no
+   IR the registry holds nothing, so stage 1 repairs **no jump at all** and the eliminated binary
+   faults on the first call it should have fixed. **A gate written against one caller silently
+   disables the machinery for the next one.** The fix is a lazy `_wp_recording(S)` that ORs in a
+   `CYRIUS_DCE` env read (FIXUP reads that flag far too late for the emit path).
+
+5. **Do NOT re-run the fixup patch loop; repair its sites arithmetically.** Cause 3 above says
+   extracting that loop breaks cybs. It is not needed: after compaction, walk the fixup table and
+   adjust each ftype-2 `rel32` by the shifts at both ends — the same formula stage 1 uses for
+   recorded jumps, and disjoint from them (WPJS holds EJCC/EJMP/EJMP0/ECALLTO; the fixup table
+   holds ECALLFIX). ftype-3 holds an ABSOLUTE fn VA and must be rewritten from the shifted
+   `_fnt_offsets`; every other ftype is an absolute DATA address and must be left alone, because
+   data does not move.
+
+**STATE: small programs are CORRECT.** A 5-line fixture with two dead functions eliminates
+32,686 bytes and exits 42 — the right answer, from a compacted binary. That is the first time any
+attempt has produced a working eliminated program.
+
+**cycc itself still fails**, and the symptom is now precise and different: a call whose target is
+**2 bytes off**, landing mid-instruction inside a live function's prologue (`callq 0x4001fc`
+where 0x4001fc is inside `movq %r13, -0x18(%rbp)`), not the 32 KB error of earlier attempts.
+Disabling the arithmetic repair changes the failure to SIGILL, so that stage is necessary but not
+yet sufficient. A 2-byte discrepancy points at a run boundary rather than a whole-table mistake —
+the next thing to check is whether a dead body's `[dfoff, dfend)` can overlap a live neighbour's
+first instructions, or whether some site is being repaired twice.
+
+⚠ Reproduce with the SMALL fixture first — it is now the control that passes, so any change can
+be checked against a known-good case before running cycc.
