@@ -3302,3 +3302,14 @@ fn RA_SCAN_LOOPS(base, lo, hi, out_t, out_s, cap): i64 { return 0 - 1; }
 # needs the symbol. Returning 0 without emitting is correct precisely because it is unreachable —
 # do NOT make this a partial implementation.
 fn EMIT_VEC_DIRECT(S, op, dst_li, a_li, b_li, dbl): i64 { return 0; }
+
+# v6.5.66 — symbol-resolution stub. `_F64V_DISP` is the x86 frame-displacement helper
+# (backend/x86/float.cyr), which this fork does not include. `_inl_simd_arg` in the SHARED
+# frontend references it, and although that reference is gated behind a runtime
+# `_AARCH64_BACKEND`/`_TARGET_CX` test — so it is never executed here — the CALL SITE still has
+# to resolve: an undefined fn has been a hard error since v6.3.2, and without this the three
+# aarch64 forks and main_cx.cyr fail to build outright (measured rc=256 on main_aarch64_macho).
+# Returning 0 is correct precisely because it is unreachable; do NOT make it a real
+# implementation, since this fork's frame displacement uses a DIFFERENT formula (positive
+# magnitude, ret_stash only, no regalloc term — see the note above ADDR_FP).
+fn _F64V_DISP(idx): i64 { return 0; }

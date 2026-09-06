@@ -80,14 +80,107 @@ var _prov_s1 = 0 - 1;
 var _prov_c1 = 0 - 1;
 # Clear a recorded provenance whose param slot is being written. Called from the local-store
 # emitters; a plain integer compare on the hot path.
-fn _prov_record(slot, src): i64 {
-    if (_prov_s0 < 0) { _prov_s0 = slot; _prov_c0 = src; return 0; }
-    _prov_s1 = slot; _prov_c1 = src;
+# v6.5.66 — the copy's CODE RANGE and whether anything actually READ the param slot. With the
+# v6.5.65 redirect in place the copy is usually DEAD: nothing reads the slot, because the emitter
+# reads the caller local instead. Recording [cp_start, cp_end) lets the replay NOP it out at the
+# end, once it knows no read occurred.
+#
+# ⭐ AND THE DEAD COPY IS NOT MERELY WASTED BYTES — IT IS THE LAST DEPENDENCY. Its load clobbers
+# xmm0 between a chain link's result store and the next link's read of it, which is precisely what
+# stops the value staying in a register. Deleting the copy puts that store and load ADJACENT, so
+# the v6.5.53 SLASE peephole removes the reload and the value becomes register-resident across the
+# link. That is why eliminating the copies and achieving residency are ONE piece of work, not two.
+var _prov_p0 = 0;
+var _prov_e0 = 0;
+var _prov_l0 = 0;
+var _prov_d0 = 0;
+var _prov_w0 = 0;
+var _prov_p1 = 0;
+var _prov_e1 = 0;
+var _prov_l1 = 0;
+var _prov_d1 = 0;
+var _prov_w1 = 0;
+# ⚠ THE DISPLACEMENT IS RECORDED, NOT RE-DERIVED FROM THE EMITTED BYTES. The first cut read it
+# back at a fixed byte offset into the copy, which is correct for a 128-bit copy (one load + one
+# store) and WRONG for a 256-bit one (TWO loads + TWO stores) — the offset landed inside the
+# second load, so the liveness scan searched for the wrong slot and deleted a live copy. Caught by
+# tests/tcyr/crossos/simd_param_then_scalar.tcyr's flat-body control.
+# `nsl` is carried too because a 256-bit slot spans TWO displacements (d and d+16) and a reference
+# to the HIGH half must keep the copy alive just as surely as one to the low half.
+fn _prov_record(slot, src, cps, cpe, disp, nsl): i64 {
+    if (_prov_s0 < 0) {
+        _prov_s0 = slot; _prov_c0 = src; _prov_p0 = cps; _prov_e0 = cpe; _prov_l0 = 0;
+        _prov_d0 = disp; _prov_w0 = nsl;
+        return 0;
+    }
+    _prov_s1 = slot; _prov_c1 = src; _prov_p1 = cps; _prov_e1 = cpe; _prov_l1 = 0;
+    _prov_d1 = disp; _prov_w1 = nsl;
     return 0;
 }
 fn _prov_reset(): i64 {
-    _prov_s0 = 0 - 1; _prov_c0 = 0 - 1;
-    _prov_s1 = 0 - 1; _prov_c1 = 0 - 1;
+    _prov_s0 = 0 - 1; _prov_c0 = 0 - 1; _prov_p0 = 0; _prov_e0 = 0; _prov_l0 = 0; _prov_d0 = 0; _prov_w0 = 0;
+    _prov_s1 = 0 - 1; _prov_c1 = 0 - 1; _prov_p1 = 0; _prov_e1 = 0; _prov_l1 = 0; _prov_d1 = 0; _prov_w1 = 0;
+    return 0;
+}
+# Any DIRECT read of a param slot — a load, or taking its address — makes the copy live. The
+# redirect never comes through here: it resolves to the CALLER's local index, so a redirected
+# operand load marks the caller's slot (which has no provenance entry), not the param slot.
+fn _prov_read(idx): i64 {
+    if (_prov_s0 == idx) { _prov_l0 = 1; }
+    if (_prov_s1 == idx) { _prov_l1 = 1; }
+    return 0;
+}
+# NOP out any copy that was never read and never written. Called once, at the end of the inline
+# replay, when the whole body has been emitted and the question is finally answerable.
+#
+# ⚠ CONSERVATIVE BY CONSTRUCTION: a slot that was WRITTEN has already had its entry cleared by
+# `_prov_kill` (so it is not harvested), and a slot that was READ is marked live here. Only a copy
+# that is provably neither survives to be deleted. Straight-line arg binding, so nothing jumps
+# into the range; NOP-filling is the same idiom DSE_PASS uses, and PARSE_FN_DEF's compactor
+# collects the runs afterwards with full jump/fixup repair.
+# ⛔ THE EMITTER HOOKS ABOVE ARE NOT SUFFICIENT ON THEIR OWN, AND SHIPPING ONLY THEM MISCOMPILED.
+# Enumerating every emitter that READS a local is open-ended: the first cut hooked seven of them
+# and still missed `ELOAD_F64V2_TO_XMM` / `ELOAD_F64V4_TO_XMM` (a vector local passed to a REAL,
+# non-inlined call), so six SIMD tests read an unwritten slot. A whitelist of readers is the wrong
+# shape for a liveness question.
+#
+# So the harvest is gated on a CLOSED-FORM check as well: scan the emitted bytes of the whole
+# replay window for ANY `[rbp+disp32]` reference carrying this slot's displacement, excluding the
+# copy's own range. That is the same idiom the register-allocator safety scan uses, and it cannot
+# miss an emitter because it looks at the instruction stream rather than at who wrote it.
+# Conservative in the safe direction: a false positive only means the copy is kept.
+fn _prov_refs(win_s, win_e, cp_s, cp_e, disp): i64 {
+    var q = win_s;
+    while (q + 7 <= win_e) {
+        if (q >= cp_s) { if (q < cp_e) { q = cp_e; } }
+        if (q + 7 > win_e) { return 0; }
+        if ((load8(_codebuf_base + q + 2) & 0xC7) == 0x85) {
+            if (load32(_codebuf_base + q + 3) == disp) { return 1; }
+        }
+        q = q + 1;
+    }
+    return 0;
+}
+fn _prov_dead(win_s, win_e, cps, cpe, disp, nsl): i64 {
+    if (_prov_refs(win_s, win_e, cps, cpe, disp & 0xFFFFFFFF) == 1) { return 0; }
+    if (nsl == 4) {
+        if (_prov_refs(win_s, win_e, cps, cpe, (disp + 16) & 0xFFFFFFFF) == 1) { return 0; }
+    }
+    return 1;
+}
+fn _prov_harvest(win_s, win_e): i64 {
+    if (_prov_s0 >= 0) { if (_prov_l0 == 0) {
+        if (_prov_dead(win_s, win_e, _prov_p0, _prov_e0, _prov_d0, _prov_w0) == 1) {
+            var h0 = _prov_p0;
+            while (h0 < _prov_e0) { store8(_codebuf_base + h0, 0x90); h0 = h0 + 1; }
+        }
+    } }
+    if (_prov_s1 >= 0) { if (_prov_l1 == 0) {
+        if (_prov_dead(win_s, win_e, _prov_p1, _prov_e1, _prov_d1, _prov_w1) == 1) {
+            var h1 = _prov_p1;
+            while (h1 < _prov_e1) { store8(_codebuf_base + h1, 0x90); h1 = h1 + 1; }
+        }
+    } }
     return 0;
 }
 fn _prov_kill(idx): i64 {

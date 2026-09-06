@@ -4,6 +4,101 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.66] — 2026-09-06
+
+### Added
+
+- **Register residency across chain links — the SIMD arc closes, and
+  `2026-07-06-simd-f64v-memory-operand-no-register-residency` is CLOSED and archived.** A chained
+  vector value now stays in `xmm0` across links instead of round-tripping through its frame slot.
+
+  Two changes, and they are one mechanism. The inline replay's parameter copies became dead once
+  `.65` redirected reads to the caller's local; they are now **harvested** (NOP-filled) at the end
+  of the replay. ⭐ That is not a byte saving — **the copy's load was the `xmm0` clobber sitting
+  between a link's result store and the next link's read of it.** Removing it puts that store and
+  load adjacent (modulo NOPs), so the v6.5.53 SLASE peephole collapses them and the accumulator
+  never leaves the register. SLASE was taught to skip an intervening NOP run to see it.
+
+  | latency-bound 3-link chain | f32v4 | f64v2 |
+  |---|---|---|
+  | v6.5.63 baseline | 33.36 ms | 33.52 ms |
+  | v6.5.66 | **13.34 ms** | **12.88 ms** |
+  | | **2.50×** | **2.60×** |
+
+  Verified in the emitted code, not just the clock: in a 3-link chain, links 2 and 3 carry **no
+  accumulator reload**.
+
+  ⛔ **The filing's diagnosis was right and its implied fix was not.** It reads as "the memory
+  round-trips are the cost, so remove them". Measured before building: a replica removing exactly
+  that scaffolding — 22 of 28 instructions per link — runs **33.99 ms against 33.96 ms, 1.00×**.
+  The cost is 16-byte **store-to-load forwards**; every gain in `.64`–`.66` came from deleting a
+  forward, and the instruction savings were incidental.
+
+  ⚠ **SLASE skips NOPs, which is NOT "relax the distance".** That pass's own comment records the
+  measurement: with the register-identity pin, relaxed distance gives 3 deletions and 0
+  miscompiles, but *without* it, 2 miscompiles — because arbitrary instructions between store and
+  load may clobber the register. NOPs provably clobber nothing, so the adjacency proof survives;
+  the pin is kept regardless, and **every skipped byte is jump-target checked**, since control
+  arriving inside the run falls through to the load.
+
+### Fixed
+
+- ⛔ **Over-harvesting broke six SIMD tests, twice, before the guard was right — recorded because
+  the shape of the mistake matters more than the fix.**
+  1. The first cut decided liveness by **enumerating reader emitters**. It hooked seven and still
+     missed `ELOAD_F64V2_TO_XMM` / `ELOAD_F64V4_TO_XMM` — a vector local passed to a *real*,
+     non-inlined call — so six tests read an unwritten slot. **A whitelist of readers is the wrong
+     shape for a liveness question.**
+  2. The second cut read the copy's displacement back at a **fixed byte offset**, correct for a
+     128-bit copy (one load + one store) and wrong for a 256-bit one (**two** loads + **two**
+     stores): the offset landed inside the second load, so the scan searched for the wrong slot
+     and again deleted a live copy.
+
+  The harvest is now gated on a **closed-form byte scan** of the whole replay window for any
+  `[rbp+disp32]` reference carrying the slot's displacement — the same idiom the register
+  allocator's safety scan uses, which cannot miss an emitter because it reads the instruction
+  stream rather than trusting who wrote it. The displacement is **recorded**, not re-derived, and
+  a 256-bit slot checks **both** halves.
+
+### Benchmarks
+
+- cycc **1,213,600 B** (`.text` **1,062,760**) · self_compile **682 ms** (681 → 682, **+0.2 %** —
+  noise). Cumulative across the arc: `.63` 672 ms → `.66` 682 ms for a **2.5×** improvement in the
+  workload the arc was about.
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+- Differential vs 6.5.65: **398 identical, 5 changed — all SIMD**, all exit 0. Corpus **301**
+  `.tcyr` (**68** crossos) · **133** shell gates. Open issues **4 → 3**.
+
+### Notes
+
+- ⛔ **The release gate caught a cross-fork break the local differential could not: the three
+  aarch64 forks and `main_cx.cyr` stopped compiling (rc=256).** `_inl_simd_arg` lives in the
+  SHARED frontend and now referenced `_F64V_DISP`, which is defined in `backend/x86/float.cyr` —
+  a file only `main.cyr`, `main_win.cyr` and `main_x86_macho.cyr` include. That is the v6.4.26
+  trap verbatim: *a new call from shared parse code needs a peer in every fork.* A differential
+  over the x86 corpus cannot see it, because every input it compiles is x86.
+
+  Fixed on both axes, because either alone is wrong: provenance recording is now **gated to x86**
+  (`_AARCH64_BACKEND == 0 && _TARGET_CX == 0`, with a plain no-provenance copy elsewhere), *and*
+  `_F64V_DISP` return-0 stubs were added to the aarch64 and cx emitters so the call site resolves.
+  ⚠ The gate alone would not build (a runtime test does not remove the call site), and the stub
+  alone would be **worse than the break**: `_prov_harvest` runs in shared code, so a stub
+  returning 0 would have every non-x86 build scanning for displacement 0 and potentially
+  NOP-filling live bytes.
+
+### Changed
+
+- `tests/gates/codegen/simd_direct_form.sh` — now 8 axes, **every one mutation-proven**.
+  New: axis 7 (residency — a chained value must not reload its accumulator; fires on the `.65`
+  compiler with "2 chained link(s) RELOAD") and ⭐ **axis 8, the anti-vacuous one: a LIVE
+  inline-param copy must SURVIVE** (fires on an over-harvesting mutant). ⚠ Axis 7 builds its
+  fixture with `CYRIUS_DCE=1`, and that is load-bearing: since `.66` the **out-of-line wrapper
+  bodies also use the direct form** and legitimately reload, so they are byte-indistinguishable
+  from a chain link. Two cuts of this axis measured those instead of main and reported false
+  failures — the same mistake axis 1's first cut made.
+
 ## [6.5.65] — 2026-09-06
 
 ### Added

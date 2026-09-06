@@ -1,7 +1,41 @@
+> ### ✅ CLOSED at v6.5.66. Items 1 and 2 shipped across v6.5.64–.66; item 3 shipped at v6.5.24.
+>
+> **Item 1 — register-operand vector arithmetic.** `EMIT_VEC_DIRECT` (`backend/x86/float.cyr`)
+> emits `movupd`/packed-op/`movupd` on frame displacements for a constant-lane op on `&local`
+> operands, chosen by pure token lookahead in `_try_vec_direct`. Intermediates now stay in `xmm0`
+> ACROSS chain links — the file's own ask, "loading/storing only at the chain's boundaries".
+> Verified in the emitted code: in a 3-link chain, links 2 and 3 carry no accumulator reload.
+>
+> **Item 2 — inline the wrappers so the backend sees the whole chain.** Shipped v6.5.58 (the
+> predicate saw wide params of every width), v6.5.63 (`#inline`), and completed here: the replay's
+> param COPY is redirected (v6.5.65 provenance) and then harvested when dead (v6.5.66).
+>
+> **Measured, latency-bound 3-link chain (2M iterations, best-of-15, pinned, idle box):**
+>
+> | | f32v4 | f64v2 |
+> |---|---|---|
+> | v6.5.63 baseline | 33.36 ms | 33.52 ms |
+> | v6.5.66 | **13.34 ms** | **12.88 ms** |
+> | | **2.50×** | **2.60×** |
+>
+> ⛔ **THE FILING'S DIAGNOSIS WAS RIGHT AND ITS IMPLIED FIX WAS NOT.** It reads as "the memory
+> round-trips are the cost, so remove them". Measured before building: a hand-written replica
+> that removes exactly that scaffolding — 22 of 28 instructions per link — runs **33.99 ms against
+> 33.96 ms, i.e. 1.00×**. The cost is 16-byte **store-to-load forwards**, not instruction count.
+> Every gain above came from deleting a FORWARD; the instruction savings were incidental.
+>
+> ⚠ **What is NOT done, stated honestly.** The measured ceiling for a fully register-resident
+> chain was **8.26×**; this is 2.5×. The gap is the per-link result store plus the loop-carried
+> round-trip through the accumulator across the loop back-edge — that needs vector allocation at
+> LOOP scope, which is a different problem from the chain this issue is about. Item 4
+> (auto-vectorisation) was explicitly out of scope in the filing and remains so.
+>
+> **Gates:** `tests/gates/codegen/simd_direct_form.sh` (8 axes, every one mutation-proven),
+> `tests/tcyr/crossos/simd_inline_param_provenance.tcyr`, `tests/tcyr/crossos/simd_param_then_scalar.tcyr`.
+
 # SIMD `f64v_*` ops are memory-operand array kernels — no register-resident vector-value arithmetic, so hand-SIMD of a tight per-element chain gets ~no speedup
 
-**Status:** 🟡 **OPEN — item 3 SHIPPED at v6.5.24; items 1 and 2 remain, and they are the
-load-bearing ones.**
+**Status:** ✅ **CLOSED at v6.5.66** — see the header above.
 
 > ### ✅ Item 3 (256-bit AVX for f64) is DONE — v6.5.24
 >

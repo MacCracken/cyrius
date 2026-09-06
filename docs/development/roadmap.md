@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.65** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.66** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -479,7 +479,24 @@ now records "param slot P holds a copy of caller local C" and the emitter reads 
 would otherwise read the caller's stale vector. `_prov_kill` invalidates on any store to the slot,
 **mutation-proven** (stubbed → 3.0f where 4.0f is correct, 10 passed / 6 failed).
 
-#### `.66` — finish the residency arc: the dead copies and the per-link reload
+#### `.66` — ✅ SHIPPED: register residency across links — THE ARC CLOSES
+
+The dead inline-param copies are harvested; that removes the `xmm0` clobber between a link's
+result store and the next link's read, so SLASE collapses the pair and the accumulator stays in
+the register. **f32v4 33.36 → 13.34 ms (2.50×), f64v2 33.52 → 12.88 ms (2.60×)** from `.63`.
+`simd-f64v-memory-operand` is **CLOSED and archived**.
+
+⛔ Over-harvesting broke six SIMD tests **twice** first: enumerating reader emitters missed
+`ELOAD_F64V*_TO_XMM`, and reading the displacement at a fixed byte offset was wrong for the
+256-bit copy (two loads + two stores). Now a closed-form byte scan, with the displacement recorded
+rather than re-derived.
+
+⚠ **Honest residual, not a deferral:** the measured ceiling for a fully register-resident chain
+was **8.26×**; this is 2.5×. The gap is the per-link result store plus the loop-carried round-trip
+across the loop back-edge — vector allocation at LOOP scope, a different problem from the chain
+this issue was about. Not pinned to a slot; it goes to the backlog unless a consumer surfaces it.
+
+#### ~~`.66`~~ — the plan as written *(kept: it correctly said the two remaining pieces were one)*
 
 The param copies are now **dead stores**. Removing them needs a 128-bit dead-store arm — which
 `.61` scoped, measured NULL and folded, correctly *at the time*, because nothing then produced

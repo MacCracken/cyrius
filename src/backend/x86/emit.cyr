@@ -510,6 +510,8 @@ fn EVSTORE_W(S, idx, width): i64 {
 
 # Width-aware local load: load_width [rbp-off] → rax
 fn EFLLOAD_W(S, idx, width): i64 {
+    # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
+    _prov_read(idx);
     if (_IR_REC(S, IR_LOAD_LOCAL, width, idx, 0) == 1) { return 0; }
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: #regalloc fns reserve [rbp-8] for the saved rbx,
@@ -3194,6 +3196,7 @@ fn ECLNORM(S, idx): i64 {
 # it works for every ABI + arg count. disp mirrors the local-var formula
 # (EFLLOAD_W: regalloc + ret_stash offsets). FF /2, mod=10, rm=101 (rbp).
 fn ECALLIND(S, idx): i64 {
+    _prov_read(idx);
     if (_IR_REC1(S, IR_CALL_INDIRECT, idx) == 1) { return 0; }
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
@@ -3602,6 +3605,7 @@ fn ESTOREPARM_SIMD_WIN64(S, pidx, named_idx, nbytes): i64 {
 # from the caller's local (at named_idx) into XMM<simd_ord>.
 # Encoding: 66 0F 10 (0x85 + (simd_ord << 3)) disp32.
 fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 {
+    _prov_read(named_idx);
     var disp_lo = 0 - ((named_idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
@@ -3615,6 +3619,7 @@ fn ELOAD_F64V2_TO_XMM(S, simd_ord, named_idx): i64 {
 
 # v5.10.38 — emit caller-side SIMD-arg LOAD for f64v4.
 fn ELOAD_F64V4_TO_XMM(S, simd_ord, named_idx): i64 {
+    _prov_read(named_idx);
     var disp_lo = 0 - ((named_idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
@@ -3723,6 +3728,8 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
 # the filler slot above. x86 SysV ABI: 16-byte int-class struct
 # returns split rax (lo) + rdx (hi).
 fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
+    # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
+    _prov_read(idx);
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
@@ -3791,6 +3798,8 @@ fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
 # PARSE_RETURN — this fn isn't called on _TARGET_PE.
 # 16-byte encoding: two `66 0F 10 85 [disp32]` = 8 bytes each.
 fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
+    # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
+    _prov_read(idx);
     var disp_lo = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
@@ -3847,6 +3856,7 @@ fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
 # — INT-class structs can't use XMM, hence this separate helper.
 # 14-byte encoding total (7 bytes per mov).
 fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
+    _prov_read(idx);
     var disp_lo = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
@@ -3891,6 +3901,8 @@ fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
 
 # Emit fn local load: mov rax, [rbp - offset]
 fn EFLLOAD(S, idx): i64 {
+    # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
+    _prov_read(idx);
     if (_IR_REC1(S, IR_LOAD_LOCAL, idx) == 1) { return 0; }
     # v6.3.30 O2 cat 5: a 64-bit reload of a local that was JUST stored (this load
     # is the very next emit — GCP still == the store's post-emit CP — and reloads the
@@ -3949,6 +3961,8 @@ fn EVADDR_X1(S, idx): i64 {
 # Mirrors the EVADDR (EFLADDR's rax variant) offset math: shift past
 # reserved rbx/r12-r15 save slots, then (idx+1)*8 below rbp.
 fn EFLADDR_X1(S, lli): i64 {
+    # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
+    _prov_read(lli);
     var disp = 0 - ((lli + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
@@ -3965,6 +3979,8 @@ fn EFLADDR_X1(S, lli): i64 {
 # as the hidden first arg (RDI on SysV, RCX on Win64 — both filled
 # by ECALLPOPS + EPOPARG from the stack).
 fn EFLADDR(S, lli): i64 {
+    # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
+    _prov_read(lli);
     var disp = 0 - ((lli + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }

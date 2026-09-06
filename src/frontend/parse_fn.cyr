@@ -46,6 +46,19 @@ include "src/frontend/parse_ctrl.cyr"
 # Mirrors the normal path's checks: the arg must be an IDENT naming a local whose SLTYPE
 # matches the param's class (size-class for 16-byte vectors, exact for f32v4/f64v4), so a
 # mismatched vector is rejected rather than silently reinterpreted.
+# v6.5.66 — the plain copy, with no provenance recorded. Used by every non-x86 fork, where
+# `_F64V_DISP` does not exist and the direct-form/harvest machinery is inert.
+fn _inl_simd_arg_copy(S, alli, dst_slot, w): i64 {
+    if (w == 4) {
+        EFLLOAD_F64V4_PAIR(S, alli);
+        EFLSTORE_F64V4_PAIR(S, dst_slot);
+        return 0;
+    }
+    EFLLOAD_F64V2_PAIR(S, alli);
+    EFLSTORE_F64V2_PAIR(S, dst_slot);
+    return 0;
+}
+
 fn _inl_simd_arg(S, dst_slot, w, want_t): i64 {
     if (PEEKT(S) != 2) {
         ERR_MSG(S, "value-form SIMD arg must be a local IDENT (inline-replay path)", 62);
@@ -66,17 +79,30 @@ fn _inl_simd_arg(S, dst_slot, w, want_t): i64 {
     } else {
         if (_is_simd128(S, alt) == 0) { ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44); }
     }
+    # v6.5.66 — bracket the copy so it can be NOP'd out later if nothing reads the slot.
+    #
+    # ⛔ x86 ONLY, AND BOTH HALVES OF THAT GATE MATTER. `_F64V_DISP` lives in
+    # backend/x86/float.cyr, which ONLY main.cyr / main_win.cyr / main_x86_macho.cyr include — the
+    # three aarch64 forks and main_cx.cyr do not, and an undefined fn has been a hard error since
+    # v6.3.2. Recording provenance unconditionally broke the aarch64-Mach-O fork outright
+    # (rc=256), which is the v6.4.26 trap: a shared parse_fn/parse_expr call needs a peer in every
+    # fork. A stub would be worse than useless here — `_prov_harvest` runs in SHARED code, so a
+    # stub returning 0 would have it scanning every non-x86 build for displacement 0 and
+    # potentially NOP-filling live bytes. Do not record at all off x86.
+    if (_AARCH64_BACKEND != 0) { return _inl_simd_arg_copy(S, alli, dst_slot, w); }
+    if (_TARGET_CX != 0) { return _inl_simd_arg_copy(S, alli, dst_slot, w); }
+    var _pcs = GCP(S);
     if (w == 4) {
         EFLLOAD_F64V4_PAIR(S, alli);
         EFLSTORE_F64V4_PAIR(S, dst_slot);
-        _prov_record(dst_slot, alli);
+        _prov_record(dst_slot, alli, _pcs, GCP(S), _F64V_DISP(dst_slot), 4);
         return 0;
     }
     EFLLOAD_F64V2_PAIR(S, alli);
     EFLSTORE_F64V2_PAIR(S, dst_slot);
     # v6.5.65 — record AFTER the store: the store itself invalidates the slot, so recording first
     # would immediately undo it.
-    _prov_record(dst_slot, alli);
+    _prov_record(dst_slot, alli, _pcs, GCP(S), _F64V_DISP(dst_slot), 2);
     return 0;
 }
 
@@ -1712,6 +1738,7 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # v6.5.65 — a fresh replay owns a fresh set of param slots; drop any provenance
                 # left by an enclosing inline so a stale slot index cannot be re-matched.
                 _prov_reset();
+                var _prov_win = GCP(S);
                 var _pini = 0;
                 while (_pini < _ptot) {
                     S64(S + 0x5D9D000 + (saved_flc + _pini) * 8, 0 - 1);
@@ -1815,6 +1842,12 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # v6.3.9 (F-fns): restore the enclosing generic binding.
                 _tp_n0 = _gsv_n0; _tp_c0 = _gsv_c0;
                 _tp_n1 = _gsv_n1; _tp_c1 = _gsv_c1;
+                # v6.5.66 — the whole body has now been emitted, so "was this param slot ever read?"
+                # is finally answerable. Any copy that was neither read nor written is dead: NOP it.
+                # ⭐ This is also what makes the chain register-resident — the copy's load was the
+                # xmm0 clobber between a link's result store and the next link's read of it, so
+                # removing it lets SLASE collapse that pair too.
+                _prov_harvest(_prov_win, GCP(S));
                 # Restore token index
                 STI(S, saved_ti);
                 # Invalidate the temporary locals the replay created.
@@ -4829,6 +4862,33 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     var _st_mr = load8(_codebuf_base + slase_i + 3);
                     if ((_st_mr & 0xC7) == 0x85) {
                         var slj = slase_i + 8;
+                        # v6.5.66 — SKIP AN INTERVENING NOP RUN, AND NOTHING ELSE.
+                        #
+                        # v6.5.66 harvests the now-dead inline-param copies by NOP-FILLING them in
+                        # place, so a chain link's result store and the next link's reload are no
+                        # longer at +8 — they are separated by 32 bytes of 0x90. Without this the
+                        # pass silently stops firing on exactly the sequence it was built for.
+                        #
+                        # ⚠ THIS IS NOT "RELAX THE DISTANCE", and the distinction is the whole
+                        # safety argument. The block comment above records the measurement: pin +
+                        # RELAXED DISTANCE gives 3 deletions and 0 miscompiles, but no-pin +
+                        # relaxed distance gives 2 MISCOMPILES, because arbitrary instructions
+                        # between store and load may clobber the register. NOPs provably clobber
+                        # nothing, so the adjacency proof survives intact — the register-identity
+                        # pin below is kept regardless, exactly as that comment demands.
+                        #
+                        # ⚠ EVERY SKIPPED BYTE IS JUMP-TARGET CHECKED, not just the load. Control
+                        # arriving anywhere inside the run falls through to the load with the
+                        # register holding something else — the same hazard IS_JUMP_TARGET guards
+                        # at `slj`, one byte at a time across the gap.
+                        var _slnskip = 0;
+                        while (_slnskip < 64) {
+                            if (load8(_codebuf_base + slj) != 0x90) { _slnskip = 64; }
+                            else {
+                                if (IS_JUMP_TARGET(S, slj) == 1) { _slnskip = 64; }
+                                else { slj = slj + 1; _slnskip = _slnskip + 1; }
+                            }
+                        }
                         if (load8(_codebuf_base + slj) == 0x66) {
                             if (load8(_codebuf_base + slj + 1) == 0x0F) {
                                 if (load8(_codebuf_base + slj + 2) == 0x10) {

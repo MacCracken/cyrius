@@ -197,5 +197,101 @@ if readback:
 print('  axis6 ok: no inline-param copy is read back')
 PYEOF
 
-echo "PASS simd_direct_form: direct form emitted + reload elided + no operand forward · 16-lane batch keeps its loop and is correct · &global safe · all lanes correct both widths"
+# ── axis 7 — RESIDENCY: a chained value must stay in a register across links (v6.5.66) ──────
+# With the dead inline-param copies harvested, a link's result store and the next link's read of
+# it become adjacent (modulo NOPs) and SLASE collapses the reload — the value lives in xmm0 across
+# the chain. Before v6.5.66 each link reloaded its operand. Assert the reloads are gone.
+cat > "$T/chain.cyr" <<'EOF'
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    var a: f32v4 = f32v4_make(0x3F800000, 0x3F800000, 0x3F800000, 0x3F800000);
+    var b: f32v4 = f32v4_make(0x00000000, 0x00000000, 0x00000000, 0x00000000);
+    var t1: f32v4 = f32v4_add(a, b);
+    var t2: f32v4 = f32v4_add(t1, b);
+    var t3: f32v4 = f32v4_add(t2, b);
+    syscall(60, f32v4_lane0(&t3) & 0xFF, 0, 0, 0, 0);
+    return 0;
+}
+var e = main();
+EOF
+# ⚠ BUILT WITH CYRIUS_DCE=1, AND THAT IS LOAD-BEARING. Since v6.5.66 the OUT-OF-LINE wrapper
+# bodies also use the direct form (their params are homed to the frame, so `&v` resolves to a
+# frame slot) — they are byte-for-byte indistinguishable from a chain link, and they legitimately
+# reload, because a real call's operands arrive in registers and are homed. main inlines the
+# wrappers, so those copies are unreachable; DCE removes them and leaves only the chain. Two
+# earlier cuts of this axis measured the wrapper bodies instead and reported false failures.
+"$CC" < "$T/chain.cyr" > "$T/chain" 2>/dev/null || { echo "FAIL simd_direct_form: chain fixture did not compile"; exit 1; }
+CYRIUS_DCE=1 "$CC" < "$T/chain.cyr" > "$T/chain_dce" 2>/dev/null || { echo "FAIL simd_direct_form: chain fixture did not compile under DCE"; exit 1; }
+chmod +x "$T/chain" "$T/chain_dce"
+"$T/chain"; CRC=$?
+"$T/chain_dce"; CDRC=$?
+[ "$CRC" -eq "$CDRC" ] || { echo "FAIL simd_direct_form axis7: DCE changed the chain's result (${CRC} vs ${CDRC})"; exit 1; }
+python3 - "$T/chain_dce" <<'PYEOF' || exit 1
+import subprocess, sys, re
+d = subprocess.run(['objdump','-d','--no-show-raw-insn',sys.argv[1]],capture_output=True,text=True).stdout
+ins = [l.split('\t')[-1].strip() for l in d.splitlines() if re.match(r'^\s+[0-9a-f]+:', l)]
+# ⚠ ANCHOR ON THE DIRECT-FORM STORE. The binary also contains OUT-OF-LINE copies of the wrappers
+# (emitted, unreachable), whose addps is fed by the pointer+loop kernel. An earlier cut of this
+# axis scanned every addps and read those instead — the same mistake axis 1's first cut made.
+# Only the direct form is followed by an rbp-relative movupd store.
+OPST = [i for i in range(len(ins)-1)
+        if re.match(r'^addps\s+%xmm1,%xmm0$', ins[i])
+        and re.match(r'^movupd\s+%xmm0,-0x[0-9a-f]+\(%rbp\)$', ins[i+1])]
+if len(OPST) < 3:
+    print('FAIL simd_direct_form axis7: expected >=3 direct-form ops in the 3-link chain, found %d' % len(OPST))
+    sys.exit(1)
+LD0 = re.compile(r'^movupd\s+-0x[0-9a-f]+\(%rbp\),%xmm0$')
+reloads = sum(1 for i in OPST[1:] if any(k >= 0 and LD0.match(ins[k]) for k in (i-2, i-1)))
+if reloads:
+    print('FAIL simd_direct_form axis7: %d chained link(s) RELOAD their accumulator into xmm0.' % reloads)
+    print('  The value is not staying in a register across links — either a dead inline-param copy')
+    print('  is still clobbering xmm0 between the store and the next read, or SLASE stopped firing.')
+    sys.exit(1)
+print('  axis7 ok: chained value stays in xmm0 across links (0 accumulator reloads of %d links)' % len(OPST))
+PYEOF
+
+# ── axis 8 — ANTI-VACUOUS: a LIVE inline-param copy must SURVIVE ─────────────────────────────
+# ⛔ THIS IS THE FAILURE MODE THAT ACTUALLY HAPPENED, TWICE. The harvest deletes a copy it
+# believes nothing reads. The first cut enumerated reader emitters and missed
+# ELOAD_F64V2_TO_XMM/ELOAD_F64V4_TO_XMM (a vector local passed to a REAL call) — six SIMD tests
+# read an unwritten slot. The second cut read the store's displacement back at a fixed byte
+# offset, correct for a 128-bit copy and WRONG for a 256-bit one (two loads + two stores), so it
+# searched for the wrong slot and again deleted a live copy. Both were silent wrong values.
+# A wrong ANSWER is the only reliable detector here, so assert values through both shapes.
+cat > "$T/live.cyr" <<'EOF'
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+# non-flat => a REAL call; its 256-bit param copy must survive
+fn scale4(v: f64v4, s): f64v4 {
+    var r: f64v4;
+    if (s == 0) { f64v_scale(&r, &v, f64_from(1), 4); }
+    else { f64v_scale(&r, &v, s, 4); }
+    return r;
+}
+# flat 256-bit param => inlines; the copy is read by the scale kernel via &v
+fn scale4_flat(v: f64v4, s): f64v4 {
+    var r: f64v4;
+    f64v_scale(&r, &v, s, 4);
+    return r;
+}
+fn main(): i64 {
+    var bad = 0;
+    var a: f64v4 = f64v4_make(f64_from(1), f64_from(2), f64_from(3), f64_from(4));
+    var p: f64v4 = scale4(a, f64_from(3));
+    if (f64_to(load64(&p + 0)) != 3) { bad = bad + 1; }
+    if (f64_to(load64(&p + 24)) != 12) { bad = bad + 1; }
+    var q: f64v4 = scale4_flat(a, f64_from(3));
+    if (f64_to(load64(&q + 0)) != 3) { bad = bad + 4; }
+    if (f64_to(load64(&q + 24)) != 12) { bad = bad + 4; }
+    syscall(60, bad, 0, 0, 0, 0);
+    return 0;
+}
+var e = main();
+EOF
+build live
+"$T/live"; VRC=$?
+[ "$VRC" -eq 0 ] || { echo "FAIL simd_direct_form axis8: a LIVE inline-param copy was harvested (code ${VRC}; 1/2 = real call, 4/8 = flat inline)"; exit 1; }
+
+echo "PASS simd_direct_form: direct form + reload elided + no operand forward + residency across links + live copies kept · 16-lane batch keeps its loop and is correct · &global safe · all lanes correct both widths"
 exit 0

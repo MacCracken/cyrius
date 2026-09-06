@@ -142,6 +142,8 @@ fn _F64V_DISP(idx): i64 {
 }
 
 fn _EMIT_LOAD_RDX_FROM_LOCAL(S, idx): i64 {
+    # v6.5.66 — the batch kernel reading a param slot keeps its inline copy alive.
+    _prov_read(idx);
     # mov rdx, [rbp + disp32]: 48 8B 95 disp32
     var disp = _F64V_DISP(idx);
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x95);
