@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.68** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.69** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -642,8 +642,41 @@ claimed, and IR=3 is already at `.text` parity. It is last of the code work for 
 **Done when:** IR=3 `.text` is measurably smaller than the default build and an IR=3-built cycc
 still reproduces the default cycc byte-identically.
 
-#### `.69`–`.70` — stackless coroutines: the CPS transform
+#### `.69` — ✅ SHIPPED: mid-body suspend. `await` compiled clean and DID NOTHING.
+
+The framing below (and the issue file's) treats this as a missing feature. It is not — it is a
+**shipped syntax with no handler behind it**, the v6.5.63 `#inline` class. `await e` lowered to a
+synchronous `future_force` call, and a parked task re-entered its body FROM THE TOP, so the
+natural shape built with **zero errors** and then relayed **zero bytes** and hung.
+
+An `async fn` whose body contains an `await` is now a state machine: locals in the heap object the
+runtime already hands back, a state word, a resume dispatch at the fn top. ⭐ **The runtime needed
+no change** — `_async_step` re-invokes `fncall1(t.fp, t.arg)`, so the top IS the dispatch.
+⭐ **Selected by the BODY, not the keyword**: `async fn compute(n)` with no in-body await would
+otherwise have its parameter read as a frame pointer; all five shipped async fixtures stay
+bit-identical.
+
+⚠ **Two premises below are stale.** The "no consumer" line is wrong — stiva is on record and its
+`exec -it` is blocked on exactly this. And "liveness-across-suspend" was never needed: the
+conservative answer (every local of a coroutine lives in the frame) removes the analysis entirely,
+which matters because the IR's `IR_LIVEIN`/`IR_LIVEOUT` are per-BB REGISTER bitmaps and would not
+have helped.
+
+⛔ **A silent miscompile was found here and FILED, not patched over:** `async fn` with 7+
+parameters returns code-address garbage, exit 0, while the 6-param async and the plain 7-param fn
+are both correct — [`issues/2026-09-06-async-fn-arity-7-silent-miscompile.md`](issues/2026-09-06-async-fn-arity-7-silent-miscompile.md),
+pinned `.70` because it is the same missing machinery as multi-parameter coroutines.
+
+#### `.70` — the coroutine arc's second half, and the minor's close
 *(closes `stiva-stackless-coroutines-interactive-exec`, and closes the minor)*
+
+Multi-parameter coroutines + the arity-7 constructor/force gap (one fix, two symptoms); the other
+runtime arms (Windows IOCP and agnos have no readiness model to suspend on — `async_wait_fd` is
+literally `return 0;` there; macOS has a real kqueue reactor since `.27`); nested awaits across a
+suspend. The `.69` refusals — `&local`, sub-word/SIMD/struct locals in a coroutine — are removed
+here rather than left as documented limits.
+
+#### ~~`.69`–`.70`~~ — the plan as written *(kept: two of its premises were stale)*
 
 Half A (the multi-waiter registry) shipped at `.26`. Half B is the compiler-level transform:
 liveness-across-suspend, locals-to-frame lifting, and a per-`async fn` state machine. Verified

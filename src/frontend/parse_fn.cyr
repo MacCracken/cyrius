@@ -2307,6 +2307,32 @@ fn _is_tparam_of(S, fi, noff): i64 {
 # _cur_fn_tp_pmask is the discriminator (a NON-tparam struct param like `s: Point` is a
 # real struct → `s.field` is legal → its bit is clear → not skipped). Non-consuming:
 # saves + restores GTI. Depth starts at 1 (inside the body); stops at the matching `}`.
+# v6.5.69 — does this fn body contain an `await`? Token lookahead over the body's brace
+# span, restoring the cursor. Same shape as `_body_field_accesses_tparam` above.
+#
+# ⛔ THIS SELECTOR IS LOAD-BEARING, NOT AN OPTIMISATION. The coroutine transform moves a
+# body's locals into a heap frame and treats parameter 0 as the frame base. Applying it to
+# EVERY `async fn` would break the ones that already work: `tests/fixtures/async/
+# async_closure_generic.cyr` has `async fn compute(n)` whose body contains no `await` at all
+# — it is awaited by its CALLER — so its parameter `n` would be read as a frame pointer.
+# An `async fn` with no suspend point in its body keeps exactly the v6.3.11
+# deferred-then-forced semantics it has today.
+fn _body_has_await(S): i64 {
+    var _sv = GTI(S);
+    var _bd = 1;
+    var _found = 0;
+    while (_bd > 0) {
+        var _t = PEEKT(S);
+        if (_t == 12) { _bd = 0; }                   # EOF guard
+        elif (_t == 13) { _bd = _bd + 1; STI(S, GTI(S) + 1); }
+        elif (_t == 14) { _bd = _bd - 1; STI(S, GTI(S) + 1); }
+        elif (_t == 135) { _found = 1; STI(S, GTI(S) + 1); }
+        else { STI(S, GTI(S) + 1); }
+    }
+    STI(S, _sv);
+    return _found;
+}
+
 fn _body_field_accesses_tparam(S, fi): i64 {
     if (GFTP(S, fi) == 0) { return 0; }
     if (_cur_fn_tp_pmask == 0) { return 0; }         # no tparam-typed params → nothing to skip
@@ -3284,8 +3310,15 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
         i = i + 1;
     }
     var frame_patch = ESUBRSP(S);
-    # obj = alloc((2 + pc) * 8)  → [fp, argc, args…]
-    EMOVI(S, (2 + pc) * 8);
+    # v6.5.69: a COROUTINE's object is also its FRAME, so it is sized for the body's locals
+    # rather than just its arguments: [fp, argc, SELF, state, local0 … local{flc-1}].
+    # ⛔ Getting this wrong is a heap overflow, not a wrong answer: the transform stores the
+    # state word at +24 and locals from +32, and the pre-v6.5.69 object is (2+pc)*8 = 24
+    # bytes for a 1-parameter fn — the state write alone lands one word past the allocation.
+    var _obj_bytes = (2 + pc) * 8;
+    if (_coro_was == 1) { _obj_bytes = _CORO_LOCAL_OFF + _coro_flc * 8; }
+    # obj = alloc(_obj_bytes)
+    EMOVI(S, _obj_bytes);
     EPUSHR(S);
     ECALLPOPS(S, 1);
     ECALLFIX(S, alloc_fi);
@@ -3312,8 +3345,27 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     EMOVI(S, pc);
     EPOPC(S);
     ESTORE64(S);
+    # v6.5.69: a coroutine's arg0 is the object ITSELF. `future_force` re-enters the body as
+    # `fncall1(fp, obj[16])`, so storing SELF there is what hands the body its own frame on
+    # every resume — the runtime needs no change at all. The state word starts at 0, which the
+    # fn-end dispatch maps to the top of the real body.
+    if (_coro_was == 1) {
+        EFLLOAD(S, obj_slot);
+        EADDRA_IMM(S, 16);
+        EPUSHR(S);
+        EFLLOAD(S, obj_slot);
+        EPOPC(S);
+        ESTORE64(S);                       # obj[16] = SELF
+        EFLLOAD(S, obj_slot);
+        EADDRA_IMM(S, _CORO_STATE_OFF);
+        EPUSHR(S);
+        EMOVI(S, 0);
+        EPOPC(S);
+        ESTORE64(S);                       # obj[state] = 0
+    }
     # obj[16 + i*8] = arg i (the constructor's param, captured by value)
     i = 0;
+    if (_coro_was == 1) { i = pc; }        # a coroutine captures no positional args yet
     while (i < pc) {
         EFLLOAD(S, obj_slot);
         EADDRA_IMM(S, 16 + i * 8);
@@ -4613,6 +4665,38 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (_gen_base == 1 && _inst_conc0 == 0) {
         if (_body_field_accesses_tparam(S, fi) == 1) { _b3_skip = 1; }
     }
+    # v6.5.69 — COROUTINE SETUP. An `async fn` body becomes a state machine: its locals live
+    # in the heap object the runtime hands back on every resume, and the fn top dispatches to
+    # the suspend point it left from. Stack slot 0 holds the frame base (param 0 = SELF); every
+    # local from slot 1 up is a coroutine-frame slot.
+    # ⚠ x86 family only. The redirect and the dispatch are emitted through x86-specific paths,
+    # and a coroutine compiled without them would read a frame destroyed at the last suspend.
+    # A hard error is the contract; a quiet stack-frame body is the miscompile.
+    if (_is_async == 1 && _body_has_await(S) == 1) {
+        # ⚠ A coroutine takes exactly ONE parameter — its context object — which is also how
+        # all EIGHT hand-rolled CPS state machines in `lib/async.cyr` are written, and what
+        # the runtime's `fncall1(t.fp, t.arg)` re-entry can pass. Multi-parameter coroutines
+        # need the constructor to pre-bind arguments into frame slots; that is v6.5.70.
+        if (pc != 1) {
+            ERR_MSG(S, "an `async fn` that awaits mid-body takes exactly one parameter (its context object)", 83);
+        }
+        if (_AARCH64_BACKEND != 0) {
+            ERR_MSG(S, "`async fn` mid-body suspend is x86-only so far (aarch64 has no coroutine frame yet)", 83);
+        }
+        if (_TARGET_CX != 0) {
+            ERR_MSG(S, "`async fn` mid-body suspend is x86-only so far (the cx backend has no coroutine frame yet)", 90);
+        }
+        _cur_fn_coro = 1;
+        _coro_base = 0;
+        _coro_lo = 1;
+        _coro_nsusp = 0;
+        # The regalloc picker's post-emit byte peephole matches `[rbp+disp32]` moves; a coro
+        # body's locals are `[r11+disp32]`, and its stack frame does not survive a suspend.
+        # Reuse the existing "do not run the picker over this body" signal.
+        _cur_fn_has_closure = 1;
+        _coro_top_jmp = EJMP0(S);   # jmp DISPATCH — patched at fn end
+        _coro_entry_cp = GCP(S);    # state 0 lands here
+    }
     if (_b3_skip == 1) {
         var _b3_bd = 1;
         while (_b3_bd > 0) {
@@ -4625,6 +4709,36 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         EMOVI(S, 0);                                  # dead stub: rax = 0
     } else {
         PARSE_PROG(S);
+    }
+    # v6.5.69 — THE RESUME DISPATCH, emitted at fn END where every landing pad is already a
+    # known code position, so only the single forward jump from the fn top needs patching.
+    # ⚠ A COMPARE CHAIN, NOT A JUMP TABLE. `PARSE_SWITCH`'s table path is x86-only — it sets
+    # `use_table = 0` for aarch64 and cx — and the table is DATA inside `.text`, which the
+    # whole-program compactor's own notes flag as the thing a linear decoder walks into. The
+    # chain is what that parser itself falls back to and it needs no new machinery.
+    if (_cur_fn_coro == 1) {
+        EPATCH(S, _coro_top_jmp);
+        var _dk = 1;
+        while (_dk <= _coro_nsusp) {
+            EFLLOAD(S, _coro_base);           # rax = C  (slot < _coro_lo: the stack path)
+            EADDRA_IMM(S, _CORO_STATE_OFF);
+            ELOAD64(S);                       # rax = C[state]
+            EPUSHR(S);
+            EMOVI(S, _dk);
+            EPOPC(S);                         # rcx = _dk
+            ECMPR(S);
+            var _dp = EJCC(S, 0x85);          # jne -> next comparison
+            EJMP(S, L64(&_coro_rcp + _dk * 8));
+            EPATCH(S, _dp);
+            _dk = _dk + 1;
+        }
+        EJMP(S, _coro_entry_cp);              # state 0 -> the top of the real body
+        # Hand the frame size to the constructor, which is emitted AFTER this body and so
+        # already knows how big the coroutine frame has to be — the one piece of luck in the
+        # whole layout, and the reason no second pass is needed.
+        _coro_was = 1;
+        _coro_flc = GFLC(S);
+        _cur_fn_coro = 0;
     }
     if (_gen_base == 1) { _tp_clear(S); }
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
@@ -5707,6 +5821,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # heap Future and returns it. pc is the body's recorded param count.
     if (_is_async == 1) {
         _async_emit_constructor(S, _async_noff_f, fi, L64(_fnt_params + fi * 8));
+        _coro_was = 0;   # v6.5.69: per-fn, consumed by the constructor above
     }
     return 0;
 }

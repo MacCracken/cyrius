@@ -288,6 +288,35 @@ var _fnt_is_async = 0;
 # first time an `async`/`await` token reaches pass 2 (PARSE_FN_DEF / PEXPR). Same
 # opt-in shape as _MONOMORPH_OK, but lazy (no per-fork driver edit) — see parse_fn.cyr.
 var _ASYNC_OK = 0;
+# --- v6.5.69: coroutine frames (mid-body suspend) ------------------------------------
+# ⛔ WHY THIS EXISTS. `async`/`await` shipped at v6.3.11 as deferred-then-forced Futures:
+# `await e` lowered to a plain synchronous CALL to `future_force`, and a task that parked
+# re-entered its body FROM THE TOP — the contract `lib/async.cyr` states outright. So the
+# natural shape (a loop that awaits mid-body and continues) COMPILED CLEAN AND DID NOTHING:
+# measured on the shipped compiler, a two-direction TTY relay written that way builds with
+# zero errors, relays ZERO bytes and hangs. That is the v6.5.63 `#inline` class — a shipped
+# syntax with no handler behind it — not a missing feature.
+#
+# THE TRANSFORM: an `async fn` body becomes a state machine. Its locals live in a HEAP frame
+# (the Future object, which the runtime already hands back on every resume), a state word
+# records which suspend point it left from, and the fn top dispatches to that point. The
+# runtime needs NO change: `_async_step` re-invokes `fp(arg)` from the top, and the top is
+# now a dispatch. CHANGELOG [6.5.69]
+#
+# Coro object layout, allocated by the synthesized constructor:
+#   [0] impl fn ptr   [8] argc(=1)   [16] SELF   [24] state   [32 + i*8] local slot i
+var _cur_fn_coro = 0;       # 1 while emitting a coroutine body
+var _coro_base = 0;         # stack slot holding the heap frame base (always 0)
+var _coro_lo = 0;           # locals with idx >= this live in the heap frame
+var _coro_nsusp = 0;        # suspend points seen so far in this fn
+var _coro_top_jmp = 0;      # the fn-top `jmp DISPATCH` placeholder
+var _coro_entry_cp = 0;     # state 0 landing pad (top of the real body)
+var _CORO_STATE_OFF = 24;   # byte offset of the state word inside the coro object
+var _CORO_LOCAL_OFF = 32;   # byte offset of local slot 0
+var _CORO_MAX_SUSP = 64;    # resume-label table size; exceeding it is a hard error
+var _coro_rcp[512];         # resume-label CP per suspend index (1-based), 64 x 8 B
+var _coro_was = 0;          # the body just emitted was a coroutine
+var _coro_flc = 0;          # that body's local-slot count (its frame size)
 var _async_gate_init = 0;
 # v6.3.13: thread-safe array locals — route `var arr[N]` (inside a fn) to a per-thread
 # stack/heap slot instead of the shared global/BSS data region. Default off (lazy-init

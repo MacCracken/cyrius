@@ -1962,6 +1962,34 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         _ensure_async_gate(S);
         if (_ASYNC_OK == 0) { ERR_MSG(S, "await requires CYRIUS_ASYNC=1 (async/await are gated)", 53); }
         STI(S, GTI(S) + 1);                       # consume `await`
+        # v6.5.69 — INSIDE A COROUTINE, `await e` IS A SUSPEND POINT, not a force.
+        # ⛔ It used to be a force here too, and that is the defect this release closes: a
+        # body that awaited mid-loop compiled clean, ran its awaited call to completion, and
+        # on the next reactor turn re-entered FROM THE TOP with every local reset. Measured on
+        # the shipped compiler, a two-direction TTY relay written that way relays ZERO bytes
+        # and hangs — a shipped syntax with nothing behind it, the v6.5.63 `#inline` class.
+        # Now: evaluate the operand (the park call), stamp the resume state into the coroutine
+        # object, and return through the shared epilogue. The landing pad recorded here is
+        # where the fn-end dispatch will send the next entry. CHANGELOG [6.5.69]
+        if (_cur_fn_coro == 1) {
+            PARSE_FACTOR(S);                      # evaluate the operand
+            var _sk = _coro_nsusp + 1;
+            if (_sk >= _CORO_MAX_SUSP) {
+                ERR_MSG(S, "too many `await` suspend points in one `async fn` (max 63)", 58);
+            }
+            EFLLOAD(S, _coro_base);               # rax = C (slot < _coro_lo: the stack path)
+            EADDRA_IMM(S, _CORO_STATE_OFF);
+            EPUSHR(S);
+            EMOVI(S, _sk);
+            EPOPC(S);
+            ESTORE64(S);                          # C[state] = _sk
+            EMOVI(S, 0);                          # a suspended task returns 0
+            var _srp = EJMP0(S);                  # jump to the shared epilogue
+            vec_push(rp_vec, _srp);
+            S64(&_coro_rcp + _sk * 8, GCP(S));    # the resume label for state _sk
+            _coro_nsusp = _sk;
+            return 0;
+        }
         var _aw_ff = _FINDFN_CSTR(S, "future_force", 12);
         if (_aw_ff < 0) { ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force", 52); }
         PARSE_FACTOR(S);                          # rax = the Future object

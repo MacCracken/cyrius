@@ -246,6 +246,16 @@ sh "$ROOT/tests/gates/codegen/decode_len_coverage.sh"
 # hand-emitted disp32, which no emitter registers at all.
 sh "$ROOT/tests/gates/codegen/wholeprogram_nop_compaction.sh"
 
+# v6.5.69: an `async fn` that awaits MID-BODY suspends and resumes where it left off. Before
+# this, `await` lowered to a synchronous `future_force` call and a parked task re-entered its
+# body FROM THE TOP — so the natural shape compiled clean and did nothing (a TTY relay written
+# that way relays ZERO bytes and hangs). ⭐ Axis 1 asserts a side-effect TRACE, not a value:
+# the arithmetic still lands on the right number under restart-from-top, so a value assertion
+# passes on a compiler with no transform at all. Axis 2/3 are the anti-vacuous pair — an
+# `async fn` with no mid-body await must compile to BIT-IDENTICAL bytes, which is why the
+# transform is selected by the body rather than by the keyword.
+sh "$ROOT/tests/gates/frontend/coroutine_midbody_suspend.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

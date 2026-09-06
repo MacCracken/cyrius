@@ -510,6 +510,7 @@ fn EVSTORE_W(S, idx, width): i64 {
 
 # Width-aware local load: load_width [rbp-off] → rax
 fn EFLLOAD_W(S, idx, width): i64 {
+    _ECORO_REFUSE(S, "a sub-word local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 95);
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(idx);
     if (_IR_REC(S, IR_LOAD_LOCAL, width, idx, 0) == 1) { return 0; }
@@ -552,6 +553,7 @@ fn EFLLOAD_W(S, idx, width): i64 {
 
 # Width-aware local store: rax → store_width [rbp-off]
 fn EFLSTORE_W(S, idx, width): i64 {
+    _ECORO_REFUSE(S, "a sub-word local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 95);
     # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
     _prov_kill(idx);
     if (_IR_REC(S, IR_STORE_LOCAL, width, idx, 0) == 1) { return 0; }
@@ -2825,7 +2827,20 @@ fn ELOAD_FN_ADDR(S, fnaddr, fc, fni): i64 {
 # ELOAD_LOCAL_ADDR — load address of local at rbp-relative
 # `adisp` (negative) into rax. x86: `lea rax, [rbp+disp32]`
 # (7 bytes; disp32 patched in-place via direct buffer write).
+# v6.5.69 — refuse, LOUDLY, every local form a coroutine frame does not yet handle.
+# ⛔ A coroutine's locals live in the heap object, not the stack frame, and these emitters
+# either take a raw displacement (so they cannot tell which frame a slot belongs to) or
+# move more than 8 bytes per slot. Emitting the stack form for them inside a coroutine body
+# produces code that reads a frame destroyed at the last suspend — a silent wrong answer.
+# Refusing is the whole point: this repo's standing rule is that a capability gap must be a
+# diagnostic, never a quiet miscompile (v6.5.63 `#inline`, v6.5.67 `: stack` enums).
+fn _ECORO_REFUSE(S, what, wlen): i64 {
+    if (_cur_fn_coro == 1) { ERR_MSG(S, what, wlen); }
+    return 0;
+}
+
 fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
+    _ECORO_REFUSE(S, "taking the address of a local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 108);
     _IR_REC0(S, IR_RAW_EMIT);
     E3(S, 0x858D48);
     var aaddr = _codebuf_base + GCP(S);
@@ -3729,6 +3744,7 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
 # the filler slot above. x86 SysV ABI: 16-byte int-class struct
 # returns split rax (lo) + rdx (hi).
 fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
+    _ECORO_REFUSE(S, "a SIMD local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 91);
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(idx);
     var disp = 0 - ((idx + 1) * 8);
@@ -3770,6 +3786,7 @@ fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
 # int-class pair (14 bytes). Mirror of EFLLOAD_F64V2_PAIR.
 # 8-byte encoding: 66 0F 11 85 [disp32] (opcode 0x11 = MOVUPD m128, xmm).
 fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
+    _ECORO_REFUSE(S, "a SIMD local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 91);
     # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
     _prov_kill(idx);
     var disp = 0 - ((idx + 1) * 8);
@@ -3799,6 +3816,7 @@ fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
 # PARSE_RETURN — this fn isn't called on _TARGET_PE.
 # 16-byte encoding: two `66 0F 10 85 [disp32]` = 8 bytes each.
 fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
+    _ECORO_REFUSE(S, "a SIMD local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 91);
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(idx);
     var disp_lo = 0 - ((idx + 1) * 8);
@@ -3823,6 +3841,7 @@ fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
 # Mirror of EFLLOAD_F64V4_PAIR. 16-byte encoding: two
 # `66 0F 11 85 [disp32]` (opcode 0x11 = MOVUPD m128, xmm).
 fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
+    _ECORO_REFUSE(S, "a SIMD local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 91);
     # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
     _prov_kill(idx);
     var disp_lo = 0 - ((idx + 1) * 8);
@@ -3857,6 +3876,7 @@ fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
 # — INT-class structs can't use XMM, hence this separate helper.
 # 14-byte encoding total (7 bytes per mov).
 fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
+    _ECORO_REFUSE(S, "a struct local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 93);
     _prov_read(idx);
     var disp_lo = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
@@ -3883,6 +3903,7 @@ fn EFLLOAD_STRUCT_INT_PAIR(S, idx): i64 {
 #   mov [rbp + disp_hi], rdx   ; 48 89 95 disp32
 # 14-byte encoding (7 bytes per mov).
 fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
+    _ECORO_REFUSE(S, "a struct local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 93);
     var disp_lo = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
@@ -3901,6 +3922,28 @@ fn EFLSTORE_STRUCT_INT_PAIR(S, idx): i64 {
 }
 
 # Emit fn local load: mov rax, [rbp - offset]
+# v6.5.69 — COROUTINE FRAME ADDRESSING. A coroutine's locals do not live in the stack
+# frame: the frame dies at every suspend. They live in the heap object the runtime hands
+# back on each resume, whose base sits in stack slot `_coro_base`. Both emitters below load
+# that base into r11 first.
+# ⚠ r11 is volatile on SysV AND on Win64 and is an argument register on neither — the PE
+# stack-probe in `ESUBRSP` already depends on exactly that property.
+fn _ECORO_BASE_R11(S): i64 {
+    E3(S, 0x9D8B4C);                        # mov r11, [rbp + disp32]
+    var ba = _codebuf_base + GCP(S);
+    var bdisp = 0 - ((_coro_base + 1) * 8) - _cur_fn_regalloc * 8 - _cur_fn_ret_stash;
+    S64(ba, (L64(ba) >> 32 << 32) | (bdisp & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0;
+}
+fn _ECORO_OFF(S, idx): i64 { return _CORO_LOCAL_OFF + (idx - _coro_lo) * 8; }
+# Is local `idx` a coroutine-frame slot rather than a stack slot?
+fn _ECORO_SLOT(S, idx): i64 {
+    if (_cur_fn_coro == 0) { return 0; }
+    if (idx < _coro_lo) { return 0; }
+    return 1;
+}
+
 fn EFLLOAD(S, idx): i64 {
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(idx);
@@ -3920,6 +3963,15 @@ fn EFLLOAD(S, idx): i64 {
     # v4.8.4-alpha6: shift past the reserved rbx save slot.
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+    if (_ECORO_SLOT(S, idx) == 1) {         # v6.5.69: mov rax, [r11 + off]
+        _ECORO_BASE_R11(S);
+        E3(S, 0x838B49);
+        var ca = _codebuf_base + GCP(S);
+        S64(ca, (L64(ca) >> 32 << 32) | (_ECORO_OFF(S, idx) & 0xFFFFFFFF));
+        SCP(S, GCP(S) + 4);
+        _flags_reflect_rax = 0;
+        return 0;
+    }
     E3(S, 0x858B48);
     var addr = _codebuf_base + GCP(S);
     S64(addr, (L64(addr) >> 32 << 32) | (disp & 0xFFFFFFFF));
@@ -4019,6 +4071,15 @@ fn EFLSTORE(S, idx): i64 {
     # v4.8.4-alpha6: shift past the reserved rbx save slot.
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
+    if (_ECORO_SLOT(S, idx) == 1) {         # v6.5.69: mov [r11 + off], rax
+        _ECORO_BASE_R11(S);
+        E3(S, 0x838949);
+        var sa = _codebuf_base + GCP(S);
+        S64(sa, (L64(sa) >> 32 << 32) | (_ECORO_OFF(S, idx) & 0xFFFFFFFF));
+        SCP(S, GCP(S) + 4);
+        _efl_store_cp = 0 - 1;
+        return 0;
+    }
     E3(S, 0x858948);
     var addr = _codebuf_base + GCP(S);
     S64(addr, (L64(addr) >> 32 << 32) | (disp & 0xFFFFFFFF));

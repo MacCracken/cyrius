@@ -4,6 +4,87 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.69] — 2026-09-06
+
+### Fixed
+
+- ⛔ **`await` mid-body compiled clean and did nothing — a shipped syntax with no handler
+  behind it.** v6.3.11 shipped `async`/`await` as deferred-then-forced Futures: `await e`
+  lowered to a plain synchronous call to `future_force`, and a task that parked re-entered its
+  body **from the top**, which `lib/async.cyr:310` states outright as the contract. So the
+  natural shape — a loop that awaits mid-body and continues — built with **zero errors** and
+  then did not work. Measured on the pre-fix compiler, a two-direction TTY relay written that
+  way (real pty, real child on the slave, real keystrokes) **relays ZERO bytes, reports both
+  live fds as closed, and hangs**. That is the v6.5.63 `#inline` class (a directive with no
+  handler that silently did nothing) and the v6.5.55 stack-enum class, not a missing feature.
+
+  An `async fn` whose body contains an `await` is now compiled as a **state machine**: its
+  locals live in the heap object the runtime already hands back on every resume, a state word
+  records which suspend point it left from, and the function top dispatches there.
+
+  ⭐ **The runtime needs no change at all.** `_async_step` re-invokes `fncall1(t.fp, t.arg)`
+  from the top; the constructor stores the object as its own argument 0, so the top *is* a
+  resume dispatch and the existing "re-enters from the top" behaviour becomes correct.
+
+  ⭐ **The transform is selected by the BODY, not by the keyword, and that is load-bearing.**
+  `tests/fixtures/async/async_closure_generic.cyr` has `async fn compute(n)` whose body
+  contains no `await` — it is awaited by its *caller* — so a keyword-selected transform would
+  read its parameter `n` as a coroutine frame pointer. All five shipped async fixtures compile
+  to **bit-identical bytes** after this change.
+
+### Added
+
+- `tests/gates/frontend/coroutine_midbody_suspend.sh` — 4 axes.
+  ⭐ **Axis 1 asserts a side-effect TRACE, not a value, and that is the whole point.** The
+  obvious assertion — "the accumulator holds the right number" — **passes on a compiler with no
+  transform at all**: restart-from-top re-runs the tail on the final entry, so the arithmetic
+  still lands on 327. Only the order and count of side effects discriminate. Mutation-proven:
+  with the selector stubbed to 0, the body top runs **3 times** instead of once and the gate
+  reports `exit 103`. ⚠ The mutant binary is the **same size** as the correct compiler, so a
+  size assertion would have been blind here too — the second time in two releases.
+- Every local form the coroutine frame does not yet handle is a **hard error naming the
+  reason** — `&local`, sub-word locals, SIMD and struct locals, and multi-parameter
+  coroutines. A coroutine's locals do not live in the stack frame, and emitting the stack form
+  for them would read a frame destroyed at the last suspend: a silent wrong answer. The
+  standing rule is that a capability gap is a diagnostic, never a quiet miscompile.
+
+### Benchmarks
+
+- cycc **1,227,104 B** (`.text` **1,072,568**, +3,984 B for the transform, the resume dispatch,
+  the frame addressing and nine refusal guards) · self_compile **711 ms** (707 → 711, **+0.6 %**
+  — growth tax).
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+- Corpus **301** `.tcyr` · **137** shell gates (DERIVED). Default-path corpus vs the previous
+  compiler: **0 divergences of 301** — `async`/`await` are gated behind `CYRIUS_ASYNC=1`, so the
+  transform is inert for every shipped build. All 7 per-target forks compile.
+
+### Notes
+
+- ⛔ **FOUND WHILE PREMISE-CHECKING, FILED, NOT FIXED HERE: `async fn` with 7+ parameters
+  silently returns garbage.** `await a7(1,2,3,4,5,6,7)` yields a code-address-shaped value
+  instead of 28, exit 0, no diagnostic — while the 6-parameter async form (21) and the *plain*
+  7-parameter fn (28) are both correct in the same program. Two causes, both required: the
+  constructor never spills parameters 6+ (`if (i < 6) { ESTOREPARM… }`), and `future_force`
+  ladders only `fncall0`..`fncall6`.
+  It is pinned to **v6.5.70** because it is the *same* missing machinery as multi-parameter
+  coroutines — the constructor cannot place arguments into frame slots, whether those slots are
+  on the stack or in a coroutine frame. Fixing argument placement once closes both; splitting
+  them fixes the same code twice.
+  ⛔ **It is deliberately NOT "fixed" by refusing arity >= 7.** That is the `<=6 args` rule this
+  repo retired at v6.4.64 — a codegen defect written down as a language rule, which is why it
+  went a year unfixed and got cited to file an issue against *sigil*. Filed as
+  `2026-09-06-async-fn-arity-7-silent-miscompile.md`.
+
+- ⚠ **Scope, stated rather than implied.** This release makes mid-body suspend *work*; it does
+  not make it broad. A coroutine takes exactly one parameter (its context) — which is how all
+  eight hand-rolled CPS state machines in `lib/async.cyr` are already written — and the
+  transform is x86-family only, with aarch64 and cx refusing by name. Windows IOCP and agnos
+  have no readiness model to suspend on (`async_wait_fd` is literally `return 0;` there), and
+  macOS has a real kqueue reactor since v6.5.27. Those arms, multi-parameter coroutines and
+  nested awaits are v6.5.70.
+
 ## [6.5.68] — 2026-09-06
 
 ### Fixed
