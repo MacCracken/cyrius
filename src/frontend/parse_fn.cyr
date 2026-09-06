@@ -69,10 +69,14 @@ fn _inl_simd_arg(S, dst_slot, w, want_t): i64 {
     if (w == 4) {
         EFLLOAD_F64V4_PAIR(S, alli);
         EFLSTORE_F64V4_PAIR(S, dst_slot);
+        _prov_record(dst_slot, alli);
         return 0;
     }
     EFLLOAD_F64V2_PAIR(S, alli);
     EFLSTORE_F64V2_PAIR(S, dst_slot);
+    # v6.5.65 — record AFTER the store: the store itself invalidates the slot, so recording first
+    # would immediately undo it.
+    _prov_record(dst_slot, alli);
     return 0;
 }
 
@@ -1705,6 +1709,9 @@ fn PARSE_FNCALL(S, noff): i64 {
                 # ⚠ The pre-v6.5.52 code had the same ordering and survived only because it
                 # reserved exactly `pc` slots and both were overwritten immediately; widening a
                 # param to 2 or 4 slots exposed the latent hole.
+                # v6.5.65 — a fresh replay owns a fresh set of param slots; drop any provenance
+                # left by an enclosing inline so a stale slot index cannot be re-matched.
+                _prov_reset();
                 var _pini = 0;
                 while (_pini < _ptot) {
                     S64(S + 0x5D9D000 + (saved_flc + _pini) * 8, 0 - 1);

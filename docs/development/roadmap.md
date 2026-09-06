@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.64** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.65** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -467,7 +467,32 @@ Prerequisite shipped alongside: the picker's safety scan is now reg-field agnost
 (`(ru_m & 0xC7) == 0x85`). The old exact-`0x85` test could not see `66 0F 10 8D`, which
 `EFLLOAD_F64V4_PAIR` already emits — surviving only on a type-driven guard. **402/402 byte-identical.**
 
-#### `.65` — the vector register class proper *(part 2 — the staged numbers are now measured)*
+#### `.65` — ✅ SHIPPED (part 2): the inline-param copy is no longer read back
+
+The replay COPIES each value-form argument into a fresh param slot; the emitter reloaded that slot
+two instructions later — a 16-byte store-to-load FORWARD, and forwards are the critical path
+(`.64`: removing 22 instructions per link without removing a forward bought 1.00×). Provenance
+now records "param slot P holds a copy of caller local C" and the emitter reads C.
+**f32v4 22.57 → 17.82 ms, f64v2 22.61 → 17.81 ms — 1.27× on `.64`, 1.87× cumulative from `.63`.**
+
+⛔ Sound only while the param still holds the copy: an inlined body that ASSIGNS to its parameter
+would otherwise read the caller's stale vector. `_prov_kill` invalidates on any store to the slot,
+**mutation-proven** (stubbed → 3.0f where 4.0f is correct, 10 passed / 6 failed).
+
+#### `.66` — finish the residency arc: the dead copies and the per-link reload
+
+The param copies are now **dead stores**. Removing them needs a 128-bit dead-store arm — which
+`.61` scoped, measured NULL and folded, correctly *at the time*, because nothing then produced
+dead 128-bit stores. The direct form does. ⭐ And the copy's `xmm0` clobber is precisely what stops
+a chained value staying in a register across links, so the two remaining pieces are one piece.
+
+| stage | latency | throughput |
+|---|---|---|
+| banked through `.65` | **1.87×** | — |
+| full register residency (ceiling) | **8.26×** | **9.48×** |
+
+⭐ Spilling the result once per iteration is FREE (4.114 vs 4.111 ms) — only the per-link RELOAD
+has to go, not all stores.
 
 | stage | latency-bound | throughput-bound |
 |---|---|---|
@@ -515,7 +540,7 @@ store→load dependency stall) — the serial figure closes toward the independe
 per-link 26-instruction / 14-memory-op expansion shrinks. Keep the svara bench as a *reported*
 number, not as this slot's gate.
 
-#### `.66` — payload enums stop allocating for real
+#### `.67` — payload enums stop allocating for real
 *(closes `sock-send-result-allocates-per-call`)*
 
 `.55` shipped the compiler capability (`enum Name: stack`). This is the ecosystem half: teach `?`
@@ -531,7 +556,7 @@ ecosystem-wide.
 **Done when:** `Result`/`Option`/`Either` construction allocates **0 bytes**, every existing
 consumer still compiles, and crossos is green on all four hosts.
 
-#### `.67` — whole-program NOP compaction
+#### `.68` — whole-program NOP compaction
 *(closes `ir-regalloc-rewrite-needs-reemit`)*
 
 The `.54` residual: 8,249 NOPs are the IR passes' own eliminations, written after every per-function
@@ -546,7 +571,7 @@ claimed, and IR=3 is already at `.text` parity. It is last of the code work for 
 **Done when:** IR=3 `.text` is measurably smaller than the default build and an IR=3-built cycc
 still reproduces the default cycc byte-identically.
 
-#### `.68`–`.69` — stackless coroutines: the CPS transform
+#### `.69`–`.70` — stackless coroutines: the CPS transform
 *(closes `stiva-stackless-coroutines-interactive-exec`, and closes the minor)*
 
 Half A (the multi-waiter registry) shipped at `.26`. Half B is the compiler-level transform:

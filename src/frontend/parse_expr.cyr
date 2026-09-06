@@ -2380,6 +2380,17 @@ fn _try_vec_direct(S, op, dbl, lanes): i64 {
     if (d_r < 0) { return 0; }
     if (d_a < 0) { return 0; }
     if (d_b < 0) { return 0; }
+    # v6.5.65 — READ THROUGH THE INLINE-PARAM COPY. When the replay bound this operand it copied
+    # 16 bytes from a caller local into a fresh param slot; loading that slot here is a 16-byte
+    # store-to-load FORWARD two instructions after the store, and forwards are the critical path
+    # (measured `.64`: removing instructions without removing a forward bought 1.00x). Reading the
+    # caller's local instead removes both remaining forwards per chain link. Provenance is dropped
+    # by `_prov_kill` on ANY store to the slot, so a body that assigns to its param falls back to
+    # the copy rather than reading a stale value.
+    # ⚠ SOURCES ONLY. The destination is the callee's own scratch, never a bound param, and
+    # redirecting a WRITE would scribble on the caller's variable.
+    d_a = _prov_src(d_a);
+    d_b = _prov_src(d_b);
     # ⚠ ALL THREE must be 128-bit vector locals. The loop form is bounded by `n` and merely
     # over-reads a too-small slot; the direct form writes 16 bytes UNCONDITIONALLY, so a 1-slot
     # i64 local would smash its neighbour.

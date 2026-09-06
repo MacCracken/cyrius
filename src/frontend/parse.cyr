@@ -58,6 +58,49 @@ var _cur_fn_naked = 0;
 # jump-target LASE cap in a single function), and its default-off note cites a size figure
 # measured at v1.11.3. Per-fn opt-in has neither problem.
 var _inline_pending = 0;
+# v6.5.65 — INLINE PARAM PROVENANCE. When the inline replay binds a value-form SIMD argument it
+# COPIES 16/32 bytes from the caller's local into a fresh callee param slot, and the direct vector
+# emitter then RELOADS that slot two instructions later. Measured at 6.5.64 that reload is a
+# 16-byte store-to-load FORWARD, and forwards are what the critical path is made of — two per
+# chain link, the only ones left after `.64`.
+#
+# These record "callee param slot P currently holds a verbatim copy of caller local C", so the
+# emitter can read C directly and the forward disappears. Two entries is the whole capacity
+# needed: the inline path admits at most 2 params (`pc > 2` is structural — SFINL packs two
+# 32-bit name offsets in one 64-bit word).
+#
+# ⚠ INVALIDATED ON ANY STORE TO THE SLOT (see EFLSTORE / EFLSTORE_F64V2_PAIR /
+# EFLSTORE_F64V4_PAIR). If the inlined body ever assigns to a param, the caller's local no longer
+# holds the param's value and redirecting the read would silently return a stale vector. That
+# invalidation is the correctness argument — not an assumption about what stdlib wrappers happen
+# to do today.
+var _prov_s0 = 0 - 1;
+var _prov_c0 = 0 - 1;
+var _prov_s1 = 0 - 1;
+var _prov_c1 = 0 - 1;
+# Clear a recorded provenance whose param slot is being written. Called from the local-store
+# emitters; a plain integer compare on the hot path.
+fn _prov_record(slot, src): i64 {
+    if (_prov_s0 < 0) { _prov_s0 = slot; _prov_c0 = src; return 0; }
+    _prov_s1 = slot; _prov_c1 = src;
+    return 0;
+}
+fn _prov_reset(): i64 {
+    _prov_s0 = 0 - 1; _prov_c0 = 0 - 1;
+    _prov_s1 = 0 - 1; _prov_c1 = 0 - 1;
+    return 0;
+}
+fn _prov_kill(idx): i64 {
+    if (_prov_s0 == idx) { _prov_s0 = 0 - 1; _prov_c0 = 0 - 1; }
+    if (_prov_s1 == idx) { _prov_s1 = 0 - 1; _prov_c1 = 0 - 1; }
+    return 0;
+}
+# Map a callee param slot to the caller local it was copied from, or return the slot unchanged.
+fn _prov_src(idx): i64 {
+    if (_prov_s0 == idx) { return _prov_c0; }
+    if (_prov_s1 == idx) { return _prov_c1; }
+    return idx;
+}
 var _cur_fn_is_pure = 0;
 
 # v4.9.1: current-fn #regalloc register count, set inside PARSE_FN_DEF.

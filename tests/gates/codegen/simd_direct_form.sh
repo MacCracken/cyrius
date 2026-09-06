@@ -156,5 +156,46 @@ build lanes
 "$T/lanes"; LRC=$?
 [ "$LRC" -eq 0 ] || { echo "FAIL simd_direct_form axis5: ${LRC} lane(s) wrong across f32v4/f64v2 add/mul/div"; exit 1; }
 
-echo "PASS simd_direct_form: direct form emitted + reload elided · 16-lane batch keeps its loop and is correct · &global safe · all lanes correct both widths"
+# ── axis 6 — THE INLINE-PARAM COPY MUST NOT BE READ BACK (v6.5.65) ──────────────────────────
+# The inline replay copies each value-form argument into a fresh callee param slot:
+#     movupd -e(%rbp),%xmm0      <- read the caller's local
+#     movupd %xmm0,-d(%rbp)      <- write the param slot   (the COPY)
+#     ...
+#     movupd -d(%rbp),%xmmN      <- read it back            (a 16-byte store-to-load FORWARD)
+# That read-back is what v6.5.65 removes, by having the emitter read -e directly. Forwards are
+# the critical path — measured `.64`: removing 22 instructions per link WITHOUT removing a
+# forward bought exactly 1.00x — so a value test cannot see this and it must be asserted on the
+# emitted code or it regresses silently.
+#
+# ⚠ THE FIRST CUT OF THIS AXIS FLAGGED ANY load-after-store WITHIN 4 INSTRUCTIONS AND WAS WRONG:
+# it also caught the legitimate producer->consumer dependency from `f32v4_make` building the
+# operands, so it fired on the FIXED compiler too. What is redundant is specifically reading back
+# a slot whose only content is a COPY of another slot — that is the pattern matched below.
+python3 - "$T/direct" <<'PYEOF' || exit 1
+import subprocess, sys, re
+d = subprocess.run(['objdump','-d','--no-show-raw-insn',sys.argv[1]],capture_output=True,text=True).stdout
+ins = [l.split('\t')[-1].strip() for l in d.splitlines() if re.match(r'^\s+[0-9a-f]+:', l)]
+LDX = re.compile(r'^movupd\s+(-0x[0-9a-f]+)\(%rbp\),%xmm0$')
+STX = re.compile(r'^movupd\s+%xmm0,(-0x[0-9a-f]+)\(%rbp\)$')
+ANYLD = re.compile(r'^movupd\s+(-0x[0-9a-f]+)\(%rbp\),%xmm[01]$')
+copies = {}          # param slot -> source slot, for slots written by a verbatim copy
+readback = 0
+for i in range(len(ins)):
+    m = STX.match(ins[i])
+    if m and i > 0:
+        src = LDX.match(ins[i-1])
+        copies[m.group(1)] = src.group(1) if src else None
+        continue
+    r = ANYLD.match(ins[i])
+    if r and r.group(1) in copies and copies[r.group(1)] is not None:
+        readback += 1
+if readback:
+    print('FAIL simd_direct_form axis6: %d read-back(s) of an inline-param COPY.' % readback)
+    print('  The emitter is loading the copied param slot instead of the caller local it was')
+    print('  copied from. That is a 16-byte store-to-load forward and is what actually costs time.')
+    sys.exit(1)
+print('  axis6 ok: no inline-param copy is read back')
+PYEOF
+
+echo "PASS simd_direct_form: direct form emitted + reload elided + no operand forward · 16-lane batch keeps its loop and is correct · &global safe · all lanes correct both widths"
 exit 0

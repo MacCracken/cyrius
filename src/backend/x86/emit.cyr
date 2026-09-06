@@ -550,6 +550,8 @@ fn EFLLOAD_W(S, idx, width): i64 {
 
 # Width-aware local store: rax → store_width [rbp-off]
 fn EFLSTORE_W(S, idx, width): i64 {
+    # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
+    _prov_kill(idx);
     if (_IR_REC(S, IR_STORE_LOCAL, width, idx, 0) == 1) { return 0; }
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: shift past the reserved rbx save slot.
@@ -3760,6 +3762,8 @@ fn EFLLOAD_F64V2_PAIR(S, idx): i64 {
 # int-class pair (14 bytes). Mirror of EFLLOAD_F64V2_PAIR.
 # 8-byte encoding: 66 0F 11 85 [disp32] (opcode 0x11 = MOVUPD m128, xmm).
 fn EFLSTORE_F64V2_PAIR(S, idx): i64 {
+    # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
+    _prov_kill(idx);
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
@@ -3809,6 +3813,8 @@ fn EFLLOAD_F64V4_PAIR(S, idx): i64 {
 # Mirror of EFLLOAD_F64V4_PAIR. 16-byte encoding: two
 # `66 0F 11 85 [disp32]` (opcode 0x11 = MOVUPD m128, xmm).
 fn EFLSTORE_F64V4_PAIR(S, idx): i64 {
+    # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
+    _prov_kill(idx);
     var disp_lo = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp_lo = disp_lo - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp_lo = disp_lo - _cur_fn_ret_stash; }
@@ -3989,6 +3995,8 @@ fn EPATCHFRAME(S, patch, size): i64 {
 
 # Emit fn local store: mov [rbp - offset], rax
 fn EFLSTORE(S, idx): i64 {
+    # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
+    _prov_kill(idx);
     if (_IR_REC1(S, IR_STORE_LOCAL, idx) == 1) { return 0; }
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: shift past the reserved rbx save slot.

@@ -4,6 +4,84 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.65] — 2026-09-06
+
+### Added
+
+- **The inline-param copy is no longer read back — the last two store-to-load forwards per chain
+  link are gone.** When the inline replay binds a value-form SIMD argument it *copies* 16/32 bytes
+  from the caller's local into a fresh callee param slot, and the direct emitter then reloaded that
+  slot two instructions later. That reload is a 16-byte **store-to-load forward**, and forwards are
+  what the critical path is made of — `.64` measured that removing 22 instructions per link
+  *without* removing a forward bought exactly **1.00×**.
+
+  A provenance pair now records "callee param slot P currently holds a verbatim copy of caller
+  local C", and the emitter reads C directly. Two entries is the whole capacity needed: the inline
+  path admits at most 2 params (`pc > 2` is structural — `SFINL` packs two 32-bit name offsets in
+  one 64-bit word).
+
+  | shape | `.64` | `.65` | |
+  |---|---|---|---|
+  | f32v4 3-link, latency-bound | 22.57 ms | **17.82 ms** | **1.27×** |
+  | f64v2 3-link, latency-bound | 22.61 ms | **17.81 ms** | **1.27×** |
+
+  **Cumulative from the `.63` baseline: 33.36 → 17.82 ms, 1.87×.** Results bit-identical.
+
+  ⛔ **This is sound only while the param still holds the copy.** If the inlined body ASSIGNS to
+  its parameter, the caller's local no longer holds the param's value and redirecting the read
+  would silently return the pre-write vector — wrong numbers, exit 0, no diagnostic. `_prov_kill`
+  invalidates the provenance on **any** store to the slot (hooked into `EFLSTORE`, `EFLSTORE_W`,
+  `EFLSTORE_F64V2_PAIR`, `EFLSTORE_F64V4_PAIR`). That invalidation *is* the correctness argument —
+  not an assumption about what today's stdlib wrappers happen to do.
+
+  ⭐ **Mutation-proven load-bearing:** with `_prov_kill` stubbed to a no-op, a wrapper that writes
+  `a = b` before using `a` returns **3.0f where 4.0f is correct** — it reads the caller's stale
+  value — and the new test scores 10 passed / 6 failed. Provenance is also recorded *after* the
+  binding store, since that store would otherwise invalidate the entry it is about to justify.
+
+  ⚠ **Sources only.** The destination is the callee's own scratch, never a bound param;
+  redirecting a *write* would scribble on the caller's variable.
+
+- `tests/tcyr/crossos/simd_inline_param_provenance.tcyr` — 16 assertions, **three-way proven**:
+  `.65` 16/16 · invalidation stubbed 10/6 · **the pre-feature `.64` compiler also 16/16**, so the
+  file encodes correct semantics rather than describing the new behaviour. Controls pin the other
+  direction too — a callee writing its own parameter must never touch the caller's variable, and
+  dup-arg `f(v, v)` aliases both params to one local (v6.4.53 fixed a dup-arg defect on the
+  tail-call path, so that shape is pinned rather than assumed). In `crossos/` because the redirect
+  is an x86 fast path: the four hosts run *different code* for the same source and must agree.
+
+### Changed
+
+- `tests/gates/codegen/simd_direct_form.sh` — axis 6 asserts no inline-param copy is read back.
+  ⚠ **Its first cut flagged any load-after-store within 4 instructions and was wrong**: that also
+  catches the legitimate producer→consumer dependency from `f32v4_make` building the operands, so
+  it fired on the *fixed* compiler too. It now matches the copy pattern specifically (a slot whose
+  only content is a verbatim copy of another slot). Discriminates: passes on `.65`, reports
+  "2 read-back(s)" on `.64`.
+
+### Benchmarks
+
+- cycc **1,209,424 B** (`.text` **1,059,680**, +904 B) · self_compile **681 ms** (683 → 681,
+  **−0.3 %** — noise).
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench. ⚠ ach and cass take the redirect (both x86-64
+  sharing `x86/float.cyr`); ecb and pi keep the copy-and-reload form, so the four hosts run
+  *different code* for the same source and agree on every answer.
+- Differential vs 6.5.64: **398 identical, 4 changed — all SIMD**, all four still exit 0. Corpus
+  **301** `.tcyr` (**68** crossos) · **133** shell gates.
+
+### Notes
+
+- ⚠ **The param copies themselves are now DEAD STORES and remain.** Removing them needs a 128-bit
+  arm for the dead-store pass — which `.61` scoped, measured as null, and folded away. It was null
+  *then* because nothing produced dead 128-bit stores; the direct form does. And removing the
+  copy's `xmm0` clobber is also what would let a chained value stay in a register across links, so
+  the two remaining pieces are the same piece. That is `.66`.
+- 📌 Ceiling for the rest of the arc, unchanged and measured: **8.26× latency / 9.48× throughput**
+  against **1.87×** now banked. ⭐ Spilling the result once per iteration is FREE (4.114 vs
+  4.111 ms) — only the per-link *reload* has to go.
+
 ## [6.5.64] — 2026-09-06
 
 ### Fixed

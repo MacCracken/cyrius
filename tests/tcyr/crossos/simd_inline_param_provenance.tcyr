@@ -1,0 +1,106 @@
+# simd_inline_param_provenance.tcyr — v6.5.65: reading a value-form vector operand THROUGH the
+# inline-param copy must give the param's current value, not the caller's stale one.
+#
+# WHAT v6.5.65 DOES. When the inline replay binds a value-form SIMD argument it COPIES 16/32 bytes
+# from the caller's local into a fresh callee param slot, and the direct vector emitter then
+# RELOADS that slot two instructions later. That reload is a 16-byte store-to-load FORWARD, and
+# forwards are what the critical path is made of — measured at `.64`, removing instructions
+# WITHOUT removing a forward bought exactly 1.00x. So the emitter now reads the caller's local
+# directly (provenance), and both remaining forwards per chain link disappear:
+# f32v4 22.57 -> 17.82 ms, f64v2 22.61 -> 17.81 ms.
+#
+# ⛔ THIS IS ONLY SOUND WHILE THE PARAM STILL HOLDS THE COPY. If the inlined body ASSIGNS to its
+# parameter, the caller's local no longer holds the param's value, and redirecting the read would
+# silently return the pre-write vector — wrong numbers, exit 0, no diagnostic. `_prov_kill`
+# invalidates the provenance on any store to the slot, and `clobber_a` below is the shape that
+# proves it: it assigns `a = b` and must therefore compute b+b, never caller_a+b.
+#
+# ⭐ MUTATION-PROVEN, AND THE GUARD IS LOAD-BEARING. With `_prov_kill` stubbed to a no-op this
+# file reports "clobbered param: lane0 = 2+2 = 4 (not 1+2=3) (got 1077936128, expected
+# 1082130432)" — i.e. 3.0f where 4.0f is correct — and scores 4 passed / 2 failed. Without that
+# demonstration the invalidation would be untested machinery.
+#
+# ⭐ WHY crossos/. The provenance redirect is an x86 fast path (aarch64 and cx keep the copy-and-
+# reload form), so the four hosts run DIFFERENT CODE for the same source and must agree on every
+# answer. That is exactly what this bucket exists to catch, and it is how `.62`'s ymm-on-a-non-AVX2
+# host was found. The controls also pin the thing a redirect could break in the other direction:
+# a callee writing its own parameter must never scribble on the CALLER's variable.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+
+# THE DEFECT SHAPE: writes its parameter before using it.
+fn clobber_a(a: f32v4, b: f32v4): f32v4 {
+    var r: f32v4;
+    a = b;
+    f32v_add(&r, &a, &b, 4);
+    return r;
+}
+
+# Same, writing the SECOND parameter — the two provenance entries are separate slots.
+fn clobber_b(a: f32v4, b: f32v4): f32v4 {
+    var r: f32v4;
+    b = a;
+    f32v_add(&r, &a, &b, 4);
+    return r;
+}
+
+# CONTROL: no write, so the redirect is live and must still be correct.
+fn plain_add(a: f32v4, b: f32v4): f32v4 {
+    var r: f32v4;
+    f32v_add(&r, &a, &b, 4);
+    return r;
+}
+
+# CONTROL: the same local passed as BOTH arguments. Both params carry provenance to one caller
+# local; reading it twice is only safe because neither is written. v6.4.53 fixed a dup-arg defect
+# on the tail-call path, so this shape is pinned rather than assumed.
+fn dup_add(a: f32v4, b: f32v4): f32v4 {
+    var r: f32v4;
+    f32v_add(&r, &a, &b, 4);
+    return r;
+}
+
+fn main(): i64 {
+    var x: f32v4 = f32v4_make(0x3F800000, 0x3F800000, 0x3F800000, 0x3F800000);   # 1.0f x4
+    var y: f32v4 = f32v4_make(0x40000000, 0x40000000, 0x40000000, 0x40000000);   # 2.0f x4
+
+    test_group("a written before use — must be b+b (4.0f), never caller_a+b (3.0f)");
+    var w: f32v4 = clobber_a(x, y);
+    assert_eq(f32v4_lane0(&w), 0x40800000, "clobber_a lane0 = 4.0f");
+    assert_eq(f32v4_lane1(&w), 0x40800000, "clobber_a lane1 = 4.0f");
+    assert_eq(f32v4_lane2(&w), 0x40800000, "clobber_a lane2 = 4.0f");
+    assert_eq(f32v4_lane3(&w), 0x40800000, "clobber_a lane3 = 4.0f");
+
+    test_group("b written before use — must be a+a (2.0f)");
+    var u: f32v4 = clobber_b(x, y);
+    assert_eq(f32v4_lane0(&u), 0x40000000, "clobber_b lane0 = 2.0f");
+    assert_eq(f32v4_lane3(&u), 0x40000000, "clobber_b lane3 = 2.0f");
+
+    test_group("CONTROL — no write, redirect live");
+    var v: f32v4 = plain_add(x, y);
+    assert_eq(f32v4_lane0(&v), 0x40400000, "plain lane0 = 3.0f");
+    assert_eq(f32v4_lane3(&v), 0x40400000, "plain lane3 = 3.0f");
+
+    test_group("CONTROL — the caller's locals are untouched by a callee writing its param");
+    assert_eq(f32v4_lane0(&x), 0x3F800000, "caller x lane0 still 1.0f");
+    assert_eq(f32v4_lane3(&x), 0x3F800000, "caller x lane3 still 1.0f");
+    assert_eq(f32v4_lane0(&y), 0x40000000, "caller y lane0 still 2.0f");
+    assert_eq(f32v4_lane3(&y), 0x40000000, "caller y lane3 still 2.0f");
+
+    test_group("CONTROL — same local as BOTH arguments (dup-arg aliasing)");
+    var dd: f32v4 = dup_add(y, y);
+    assert_eq(f32v4_lane0(&dd), 0x40800000, "dup lane0 = 2+2 = 4.0f");
+    assert_eq(f32v4_lane3(&dd), 0x40800000, "dup lane3 = 4.0f");
+
+    test_group("CONTROL — a chain still composes after all of the above");
+    var c1: f32v4 = plain_add(x, y);
+    var c2: f32v4 = plain_add(c1, y);
+    assert_eq(f32v4_lane0(&c2), 0x40A00000, "chain lane0 = 1+2+2 = 5.0f");
+    assert_eq(f32v4_lane3(&c2), 0x40A00000, "chain lane3 = 5.0f");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
