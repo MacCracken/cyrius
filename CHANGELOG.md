@@ -4,6 +4,109 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.64] — 2026-09-06
+
+### Fixed
+
+- **The register-allocator safety scan was blind to the ModRM reg field, and that is a
+  prerequisite for anything that emits a non-rax frame reference.** Its blanket trigger tested
+  `ru_m == 0x85` — an *exact* byte, which is `mod=10, rm=101 (rbp+disp32)` **and reg field 000**.
+  Only references through rax/xmm0 were seen; reg 001 (`0x8D`), 010 (`0x95`), 011 (`0x9D`) … all
+  slipped past. The `lea` arm right below it masked `& 0xC7` and got this right, so the two halves
+  of one scan disagreed about what "a reference to this slot" means.
+
+  ⚠ **Not hypothetical:** `EFLLOAD_F64V4_PAIR` already emits `66 0F 10 8D <disp>` for the high half
+  of every 256-bit local. It survives today only because the v6.5.57 aggregate pass separately
+  marks every slot of a `GLTYPE < 0` local — a **type**-driven guard happening to cover a **byte**-
+  level hole. Anything emitting a non-reg-0 frame reference to a slot that pass does not cover is a
+  silent miscompile: the picker promotes the slot, its patch pass stops writing the stack home, and
+  the vector move keeps reading the stale slot.
+
+  **Measured free: 402 of 402 corpus inputs emit byte-identical code** with the widened test.
+
+### Added
+
+- **A direct (loop-free, pointer-free) emitter for fixed-lane vector binary ops on `&local`
+  operands.** Every value-form wrapper in `lib/simd.cyr` expands to `f32v_add(&r, &a, &b, 4)` or
+  `f64v_add(&r, &a, &b, 2)` — a constant lane count and three known frame displacements — and yet
+  went through the batch memory kernel, which pulls three *pointers* out of stash slots and loops.
+  Measured at 6.5.63, one such link emitted **28 real instructions and ~15 memory ops for exactly
+  one `addps`**, with a "loop" that runs a single iteration.
+
+  New `_try_vec_direct` decides by **pure token lookahead** — nothing consumed or emitted until it
+  succeeds — and `EMIT_VEC_DIRECT` emits two rbp-relative `movupd` loads, the packed op, and one
+  store. Covers `f32v_add/sub/mul` (4 lanes) and `f64v_add/sub/mul/div` (2 lanes).
+
+  ⛔ **The instruction saving is worth ZERO on its own, and that was measured before the code was
+  written.** The critical path of a chained expression is 16-byte **store-to-load forwards**, and
+  the pointer machinery is not on it — a hand-written replica removing exactly that scaffolding and
+  nothing else ran **33.99 ms against 33.96 ms**. What pays is that the direct form leaves the
+  result store and the `return r` reload **adjacent**, so the v6.5.53 SLASE peephole finally
+  collapses them; that pair previously sat ~0x31 bytes apart and SLASE's own comment recorded it
+  deleting nothing. This is why the encoding is the 66-prefixed `movupd` and not the 3-bytes-shorter
+  `movups`: `66 0F 11/10` is the vocabulary SLASE and the safety scan already speak.
+
+  | shape | before | after | |
+  |---|---|---|---|
+  | f32v4 3-link, latency-bound | 33.36 ms | **22.59 ms** | **1.48×** |
+  | f32v4 3-link, throughput-bound | 20.90 ms | **13.07 ms** | **1.60×** |
+  | f64v2 3-link, latency-bound | 33.52 ms | **22.80 ms** | **1.47×** |
+
+  Results bit-identical in every case.
+
+  ⚠ **Encoding constraints, each a real hazard:** unaligned moves only (vector locals sit on the
+  8-byte grid — 12 of 17 measured at 8 mod 16 — so `movaps` would `#GP`); **disp32 only**, because
+  the disp8 form `0F 10 45 <disp8>` is invisible to the safety scan above; and all three operands
+  must be 128-bit vector locals, because the loop form is bounded by `n` and merely over-reads a
+  too-small slot while the direct form writes 16 bytes unconditionally.
+
+  ⚠ **The gate is on the PARSER, not the emitter.** The fast path swallows 11 tokens unevaluated,
+  allocates no stash slots and never leaves `n` in rax, so a stubbed per-backend emitter could not
+  undo it — `parse.cyr:518-529` records that exact failure for the switch jump-table path ("a
+  stranded `ja default` in cx output"). Gated on `_AARCH64_BACKEND == 0 && _TARGET_CX == 0`; **the
+  first test alone is not an x86 test, because cx sets it to 0 as well.** aarch64 and cx keep the
+  loop path and are byte-identical; PE and Mach-O are x86-64 sharing the same frame and take the
+  new path with no target-specific code. Return-0 stubs added to the aarch64 and cx forks, since an
+  undefined fn has been a hard error since v6.3.2.
+
+- `tests/gates/codegen/simd_direct_form.sh` — mutation-proven (disabling the fast path gives "no
+  direct-form sequence emitted"). ⚠ Its **first cut asserted an absolute count of loop kernels and
+  was wrong**: other reachable wrappers legitimately keep theirs — 18 remain even under
+  `CYRIUS_DCE=1` — so the call site is only a delta of 3. It now matches the direct form's
+  *adjacent signature*, which the loop kernel can never produce (it addresses `(%rdx,%rsi,4)`,
+  never `%rbp`). ⭐ Axis 2 asserts the **elided reload**, not a short instruction stream — a direct
+  form that did not enable SLASE would look right and buy nothing. Axis 3 is the anti-vacuous
+  control: a 16-lane batch must keep its loop and stay correct, since the direct form writes
+  exactly 16 bytes.
+
+### Benchmarks
+
+- cycc **1,209,392 B** (`.text` **1,058,776**, +2,424 B) · self_compile **683 ms** (673 → 683,
+  **+1.4 %**) — the lookahead runs on every SIMD builtin parse; ordinary growth-tax, no single
+  dominant patch to bisect.
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench. ⚠ The cross-OS leg was load-bearing: **ach and cass
+  take the new codegen path** (both are x86-64 sharing `x86/float.cyr` and the same rbp frame),
+  while ecb and pi keep the loop path and are byte-identical.
+- Differential vs 6.5.63: **383 identical, 19 changed — every one of the 19 is SIMD**, and all 16
+  changed `.tcyr` still exit 0. Corpus **300** `.tcyr` (**67** crossos) · **133** shell gates.
+
+### Notes
+
+- ⚠ **This release corrects a measurement of my own from `.61`.** That premise-check reported a
+  "~26 % dependency stall" from a serial-vs-independent pair, and I re-took it at `.63` as 20.4 %.
+  Both were measuring an **already-overlapped loop**: the chain was dead at the end of each
+  iteration, so consecutive iterations overlapped in the out-of-order window. Re-measured with the
+  chain genuinely carried across iterations: **33.4 ms vs 14.7 ms — the true dependency cost is
+  ~2.3×, not 1.2×.** The consequence points the other way from where I had it: **the vector
+  register class matters more than I concluded, not less.**
+- 📌 **The staged prize, measured, so `.65` starts from numbers instead of a plan:** direct form
+  alone **1.00×** · + elided return reload **1.59×** (this release) · + eliding the inline-replay
+  param copy **~2.07×** latency / **5.20×** throughput · + full register residency **8.26×** /
+  **9.48×**. ⭐ And spilling the result once per iteration is **free** (4.114 vs 4.111 ms) — a
+  register class only has to kill the per-link *reload*, not all stores.
+
 ## [6.5.63] — 2026-09-05
 
 ### Added

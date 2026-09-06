@@ -1592,3 +1592,10 @@ fn _pe_pending_imp_add(S, name): i64 { return 0; }
 # this exists so the shared frontend RESOLVES, the same reason the E*_PE reroutes carry
 # return-0 stubs in these two files.)
 fn RA_SCAN_LOOPS(base, lo, hi, out_t, out_s, cap): i64 { return 0 - 1; }
+
+# v6.5.64 — symbol-resolution stub. The direct 128-bit emitter is an x86 fast path; PARSE_SIMD_EXT
+# gates the whole detection on `_AARCH64_BACKEND == 0 && _TARGET_CX == 0` and never reaches this,
+# but an undefined fn has been a HARD ERROR since v6.3.2, so every fork that compiles parse_expr.cyr
+# needs the symbol. Returning 0 without emitting is correct precisely because it is unreachable —
+# do NOT make this a partial implementation.
+fn EMIT_VEC_DIRECT(S, op, dst_li, a_li, b_li, dbl): i64 { return 0; }

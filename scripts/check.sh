@@ -203,6 +203,16 @@ sh "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
 # nothing gives "with=100 without=100" and axis 1 fires.
 sh "$ROOT/tests/gates/codegen/inline_directive.sh"
 
+# v6.5.64: a fixed-lane vector op on three &local operands must emit the DIRECT form (two rbp
+# loads, the packed op, one store) with its result reload ELIDED by SLASE — while a real batch
+# keeps its pointer+loop kernel and stays correct. ⛔ The instruction saving is NOT the point and
+# was measured worth ZERO on its own (a replica removing exactly that scaffolding ran 33.99 ms vs
+# 33.96 ms); the win is the removed store-to-load forward, which is why axis 2 asserts the elided
+# reload rather than a short instruction stream. Axis 3 is the anti-vacuous control: the fast path
+# is chosen by token lookahead, so a loosened precondition would emit a 16-byte op over a real
+# batch's extent.
+sh "$ROOT/tests/gates/codegen/simd_direct_form.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

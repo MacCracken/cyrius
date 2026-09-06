@@ -2332,11 +2332,71 @@ fn _SIMD_STASH(S, idx): i64 {
     return 0;
 }
 
+# v6.5.64 — DIRECT FORM for a fixed-lane vector binary op on three `&local` operands.
+#
+# `f32v_add(&r, &a, &b, 4)` / `f64v_add(&r, &a, &b, 2)` — the shape EVERY value-form wrapper in
+# lib/simd.cyr expands to — needs no pointers and no loop: the addresses are known frame
+# displacements and the "loop" runs exactly one iteration. Measured at 6.5.63, one such link cost
+# 28 real instructions and ~15 memory ops for ONE packed op.
+#
+# ⛔ REMOVING THOSE INSTRUCTIONS IS WORTH ZERO ON ITS OWN, AND THAT WAS MEASURED BEFORE THIS WAS
+# BUILT. The critical path of a chained expression is 16-byte STORE-TO-LOAD FORWARDS and the
+# pointer machinery is not on it: a hand-written replica removing exactly this scaffolding and
+# nothing else ran 33.99 ms against 33.96 ms. What pays is that the direct form leaves the result
+# store and the `return r` reload ADJACENT, which lets the v6.5.53 SLASE peephole collapse them —
+# that pair previously sat ~0x31 bytes apart and SLASE's own comment recorded it deleting nothing.
+# Measured end to end: latency-bound 33.36 -> 22.59 ms (1.48x), throughput-bound 20.90 -> 13.07 ms
+# (1.60x).
+#
+# ⛔ THE DECISION IS PURE LOOKAHEAD — NOTHING IS CONSUMED OR EMITTED UNTIL IT SUCCEEDS. The fast
+# path swallows 11 tokens unevaluated, allocates no stash slots and never leaves `n` in rax, so a
+# per-backend stubbed emitter CANNOT undo it; the gate has to be on the PARSER. parse.cyr:518-529
+# records that exact failure for the switch jump-table path ("a stranded `ja default` in cx output").
+#
+# ⚠ `_AARCH64_BACKEND == 0` IS NOT AN x86 TEST — cx sets it to 0 as well, which is why the
+# byte-pattern passes already run on cx. Both tests are required. PE and Mach-O are x86-64 with
+# the same rbp frame and share x86/float.cyr, so they take this path with no target-specific code.
+fn _try_vec_direct(S, op, dbl, lanes): i64 {
+    if (_AARCH64_BACKEND != 0) { return 0; }
+    if (_TARGET_CX != 0) { return 0; }
+    var d_t = GTI(S);
+    if (TOKTYP(S, d_t) != 27) { return 0; }
+    if (TOKTYP(S, d_t + 1) != 2) { return 0; }
+    if (TOKTYP(S, d_t + 2) != 31) { return 0; }
+    if (TOKTYP(S, d_t + 3) != 27) { return 0; }
+    if (TOKTYP(S, d_t + 4) != 2) { return 0; }
+    if (TOKTYP(S, d_t + 5) != 31) { return 0; }
+    if (TOKTYP(S, d_t + 6) != 27) { return 0; }
+    if (TOKTYP(S, d_t + 7) != 2) { return 0; }
+    if (TOKTYP(S, d_t + 8) != 31) { return 0; }
+    if (TOKTYP(S, d_t + 9) != 1) { return 0; }
+    if (TOKTYP(S, d_t + 10) != 11) { return 0; }
+    # The lane count must be exactly the 16 bytes one xmm holds. Anything else is a real batch
+    # and must keep the loop.
+    if (TOKVAL(S, d_t + 9) != lanes) { return 0; }
+    var d_r = FINDLOCAL(S, TOKVAL(S, d_t + 1));
+    var d_a = FINDLOCAL(S, TOKVAL(S, d_t + 4));
+    var d_b = FINDLOCAL(S, TOKVAL(S, d_t + 7));
+    if (d_r < 0) { return 0; }
+    if (d_a < 0) { return 0; }
+    if (d_b < 0) { return 0; }
+    # ⚠ ALL THREE must be 128-bit vector locals. The loop form is bounded by `n` and merely
+    # over-reads a too-small slot; the direct form writes 16 bytes UNCONDITIONALLY, so a 1-slot
+    # i64 local would smash its neighbour.
+    if (_is_simd128(S, GLTYPE(S, d_r)) == 0) { return 0; }
+    if (_is_simd128(S, GLTYPE(S, d_a)) == 0) { return 0; }
+    if (_is_simd128(S, GLTYPE(S, d_b)) == 0) { return 0; }
+    EMIT_VEC_DIRECT(S, op, d_r, d_a, d_b, dbl);
+    STI(S, d_t + 11);   # consume `&r , &a , &b , N )`
+    return 1;
+}
+
 fn PARSE_SIMD_EXT(S, ptyp): i64 {
     # f64v_div(dst, a, b, n)
     if (ptyp == 93) {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+        if (_try_vec_direct(S, 3, 1, 2) == 1) { return 0; }
         var vbase = GFLC(S);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
@@ -2813,6 +2873,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     if (ptyp >= 89) { if (ptyp <= 91) {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+            if (_try_vec_direct(S, ptyp - 89, 1, 2) == 1) { return 1; }
             var vbase = GFLC(S);
             PCMPE(S); _SIMD_STASH(S, vbase);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
@@ -2831,6 +2892,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     if (ptyp >= 138) { if (ptyp <= 140) {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+            if (_try_vec_direct(S, ptyp - 138, 0, 4) == 1) { return 1; }
             var vbf = GFLC(S);
             PCMPE(S); _SIMD_STASH(S, vbf);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);

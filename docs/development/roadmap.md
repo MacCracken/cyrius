@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.63** (2026-09-05) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.64** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -445,7 +445,48 @@ wrappers and they will all inline" leaves those behind.
 gone or honestly documented as structural · the +25.6 % figure is **re-taken on today's compiler**
 and recorded whatever it says · svara's markers do something measurable.
 
-#### `.64` — the vector register class
+#### `.64` — ✅ SHIPPED (part 1 of the register-class arc): the direct value-form emitter
+
+⭐ **The measurement re-scoped this slot, and it also corrected MY OWN baseline.** The `.61`
+premise-check reported a "~26 % dependency stall" and I re-took it at `.63` as 20.4 %. Both were
+measuring an **already-overlapped loop** — the chain was dead at the end of each iteration.
+Re-measured with the chain genuinely carried: **33.4 ms vs 14.7 ms, a ~2.3× dependency cost.**
+The register class matters MORE than I had concluded, not less.
+
+Every value-form wrapper expands to `f32v_add(&r, &a, &b, 4)` — constant lanes, three `&local`
+operands — and still went through the batch memory kernel: **28 real instructions, ~15 memory ops,
+one `addps`**. `.64` adds `_try_vec_direct` (pure token lookahead) + `EMIT_VEC_DIRECT`.
+
+⛔ **The instruction saving is worth ZERO alone — measured before building it** (a replica removing
+exactly that scaffolding: 33.99 ms vs 33.96 ms). The critical path is 16-byte **store-to-load
+forwards**. What pays is that the direct form makes the result store and the `return r` reload
+adjacent, so the `.53` SLASE peephole — which its own comment recorded as deleting nothing —
+finally fires. **f32v4 1.48× latency / 1.60× throughput; f64v2 1.47×.**
+
+Prerequisite shipped alongside: the picker's safety scan is now reg-field agnostic
+(`(ru_m & 0xC7) == 0x85`). The old exact-`0x85` test could not see `66 0F 10 8D`, which
+`EFLLOAD_F64V4_PAIR` already emits — surviving only on a type-driven guard. **402/402 byte-identical.**
+
+#### `.65` — the vector register class proper *(part 2 — the staged numbers are now measured)*
+
+| stage | latency-bound | throughput-bound |
+|---|---|---|
+| direct form alone | 1.00× | — |
+| + elided return reload — **shipped `.64`** | **1.59×** | **1.60×** |
+| + elide the inline-replay param copy | ~2.07× | 5.20× |
+| + full register residency across links | **8.26×** | **9.48×** |
+
+Remaining forwards per link: the replay's param copy (bind by reference rather than copy — hazard:
+dup-arg `f(v, v)`, which v6.4.53 already fixed once in the tail-call path) and the inter-link
+round-trip. ⭐ **Spilling the result once per iteration is FREE** (4.114 vs 4.111 ms) — the register
+class only has to kill the per-link RELOAD, not all stores.
+
+⛔ The old "Done when: the svara formant bench closes to single-digit-× of the Rust baseline" stays
+retired — the `.61` premise-check refuted it as unreachable from this slot (37.0× today; even with
+the vectorizable loop at zero the residue is ~10.9–15.3×, because the bench is ~29 % out-of-line
+accessor calls and ~13 % a scalar DC-blocker pass).
+
+#### ~~`.64`~~ — the plan as written *(kept: it named the register class, and it was right to)*
 *(`simd-f64v-memory-operand`, part 3 — closes the issue)*
 
 Needs: (a) xmm0-15 modelled as a **caller-saved** class with intervals split at every call — the
@@ -474,7 +515,7 @@ store→load dependency stall) — the serial figure closes toward the independe
 per-link 26-instruction / 14-memory-op expansion shrinks. Keep the svara bench as a *reported*
 number, not as this slot's gate.
 
-#### `.65` — payload enums stop allocating for real
+#### `.66` — payload enums stop allocating for real
 *(closes `sock-send-result-allocates-per-call`)*
 
 `.55` shipped the compiler capability (`enum Name: stack`). This is the ecosystem half: teach `?`
@@ -490,7 +531,7 @@ ecosystem-wide.
 **Done when:** `Result`/`Option`/`Either` construction allocates **0 bytes**, every existing
 consumer still compiles, and crossos is green on all four hosts.
 
-#### `.66` — whole-program NOP compaction
+#### `.67` — whole-program NOP compaction
 *(closes `ir-regalloc-rewrite-needs-reemit`)*
 
 The `.54` residual: 8,249 NOPs are the IR passes' own eliminations, written after every per-function
@@ -505,7 +546,7 @@ claimed, and IR=3 is already at `.text` parity. It is last of the code work for 
 **Done when:** IR=3 `.text` is measurably smaller than the default build and an IR=3-built cycc
 still reproduces the default cycc byte-identically.
 
-#### `.67`–`.68` — stackless coroutines: the CPS transform
+#### `.68`–`.69` — stackless coroutines: the CPS transform
 *(closes `stiva-stackless-coroutines-interactive-exec`, and closes the minor)*
 
 Half A (the multi-waiter registry) shipped at `.26`. Half B is the compiler-level transform:

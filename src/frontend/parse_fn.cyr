@@ -5074,13 +5074,28 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     var ru_b0 = load8(_codebuf_base + ru_p);
                     var ru_b1 = load8(_codebuf_base + ru_p + 1);
                     var ru_m = load8(_codebuf_base + ru_p + 2);
+                    # v6.5.64 — THE TRIGGER IS NOW REG-FIELD AGNOSTIC, AND IT HAD TO BE.
+                    #
+                    # This was `if (ru_m == 0x85)` — an EXACT ModRM byte, which is mod=10, rm=101
+                    # (rbp+disp32) AND reg field 000. Only references whose reg field is rax/xmm0
+                    # were seen. reg 001 (`0x8D`), 010 (`0x95`), 011 (`0x9D`) … all slipped past,
+                    # so a slot touched only by, say, `movupd -disp(%rbp),%xmm1` (66 0F 10 8D) or
+                    # `mov rdx,[rbp+disp32]` (48 8B 95) was never marked unsafe. The lea arm below
+                    # masked `& 0xC7` and therefore got this right; the blanket arm did not — the
+                    # two halves of one scan disagreed about what "a reference to this slot" means.
+                    #
+                    # ⚠ NOT hypothetical: `EFLLOAD_F64V4_PAIR` (backend/x86/emit.cyr) already emits
+                    # `66 0F 10 8D <disp>` for the high half of every 256-bit local. That survives
+                    # today only because the v6.5.57 aggregate pass separately marks every slot of a
+                    # `GLTYPE < 0` local — a TYPE-driven guard happening to cover a BYTE-level hole.
+                    # Anything that emits a non-reg-0 frame reference to a slot the type pass does
+                    # not cover is a silent miscompile: the picker promotes the slot, its patch pass
+                    # stops writing the stack home, and the vector move keeps reading the stale slot.
+                    #
+                    # Measured free: 402 of 402 corpus inputs emit BYTE-IDENTICAL code with the
+                    # widened test, i.e. it disqualifies no candidate any real program relies on.
                     var ru_hit = 0;
-                    if (ru_m == 0x85) { ru_hit = 1; }
-                    if (ru_b0 == 0x48) {
-                        if (ru_b1 == 0x8D) {
-                            if ((ru_m & 0xC7) == 0x85) { ru_hit = 1; }
-                        }
-                    }
+                    if ((ru_m & 0xC7) == 0x85) { ru_hit = 1; }
                     if (ru_hit == 1) {
                         var ru_d = load32(_codebuf_base + ru_p + 3);
                         if (ru_d >= 0x80000000) { ru_d = ru_d - 0x100000000; }

@@ -191,6 +191,55 @@ fn EMIT_F64V_LOOP(S, op, vbase): i64 {
 # Mirror of EMIT_F64V_LOOP minus the 66 prefix (movups vs movupd, addps vs addpd)
 # and with 4-byte lanes: the loads/store use [rdx+rsi*4] (SIB 0xB2, scale *4) and
 # rsi advances by 4 f32s per 128-bit iteration. op 0=add(0x58) 1=sub(0x5C) 2=mul(0x59).
+# v6.5.64 — DIRECT (loop-free, pointer-free) 128-bit binary op on THREE FRAME LOCALS.
+#
+# The batch emitters above are memory kernels: they take three POINTERS out of stash slots and
+# loop. For the value-form wrappers that is all overhead — `f32v4_add(a, b)` expands to
+# `f32v_add(&r, &a, &b, 4)` with a CONSTANT lane count and three `&local` operands, so the
+# addresses are known frame displacements and the "loop" runs exactly one iteration. Measured at
+# 6.5.63: one such link emits 28 real instructions and ~15 memory ops for ONE `addps`.
+#
+# ⚠ THIS ALONE IS WORTH ZERO, AND THAT WAS MEASURED BEFORE IT WAS BUILT. The critical path of a
+# chained expression is made of 16-byte STORE-TO-LOAD FORWARDS, and the pointer machinery is not
+# on it: a hand-written replica that removes exactly this scaffolding and nothing else runs
+# 33.99 ms against the current 33.96 ms. What pays is removing FORWARDS. This emitter is the
+# enabler — it puts the result store and the `return r` reload ADJACENT, which is what lets the
+# v6.5.53 SLASE peephole (parse_fn.cyr) collapse them; that pair currently sits ~0x31 bytes apart
+# and SLASE's own comment records it deleting nothing.
+#
+# ⛔ ENCODING CONSTRAINTS, each of which is a real hazard, not a style choice:
+#   * UNALIGNED moves only. Vector locals sit on the 8-byte local grid and are NOT 16-byte
+#     aligned (measured: 12 of 17 slots at 8 mod 16), so `movaps`/`movapd` would #GP.
+#   * disp32 (mod=10) only. The disp8 form `0F 10 45 <disp8>` is INVISIBLE to the register
+#     allocator's safety scan, so a small-frame shortcut would reintroduce the hole v6.5.64
+#     widened that scan to close.
+#   * The 66-prefixed `movupd` encoding, not the 3-bytes-shorter `movups`. `66 0F 11/10 <mr>` is
+#     exactly what SLASE matches and what `EFLLOAD_F64V2_PAIR` already emits, so both the
+#     peephole and the safety scan already speak this vocabulary. `movups` matches neither.
+# Reuses `_F64V_DISP` rather than re-deriving the displacement — float.cyr:120-136 records that
+# duplicating that formula once already cost a segfault class.
+# `dbl` selects the arithmetic domain: 0 = packed SINGLE (addps 0F 58) for f32v4, 1 = packed
+# DOUBLE (addpd 66 0F 58) for f64v2. The MOVES are `movupd` in both cases — a 16-byte unaligned
+# move is the same operation either way, and the 66-prefixed form is the one SLASE matches.
+# op: 0 add, 1 sub, 2 mul, 3 div (div is f64v only; the f32v builtin has no div arm).
+fn EMIT_VEC_DIRECT(S, op, dst_li, a_li, b_li, dbl): i64 {
+    var da = _F64V_DISP(a_li);
+    var db = _F64V_DISP(b_li);
+    var dr = _F64V_DISP(dst_li);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x85); EDISP32(S, da);   # movupd xmm0,[rbp+da]
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x10); EB(S, 0x8D); EDISP32(S, db);   # movupd xmm1,[rbp+db]
+    if (dbl == 1) { EB(S, 0x66); }                                        # packed-double prefix
+    EB(S, 0x0F);
+    if (op == 0) { EB(S, 0x58); }
+    if (op == 1) { EB(S, 0x5C); }
+    if (op == 2) { EB(S, 0x59); }
+    if (op == 3) { EB(S, 0x5E); }
+    EB(S, 0xC1);
+    EB(S, 0x66); EB(S, 0x0F); EB(S, 0x11); EB(S, 0x85); EDISP32(S, dr);   # movupd [rbp+dr],xmm0
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
 fn EMIT_F32V_LOOP(S, op, vbase): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);   # rcx = n
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xF6);   # rsi = 0 (loop counter)
