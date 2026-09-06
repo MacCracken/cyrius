@@ -373,8 +373,14 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 if (has_ctor == 1) {
                     # v6.5.55 — the pair carries exactly tag + one payload. Reject anything
                     # else HERE rather than emitting a ctor that silently drops fields.
+                    # v6.5.67 — arity 0 is now allowed: a NULLARY variant has no payload, so it
+                    # needs no second register and simply returns its tag. Rejecting it blocked
+                    # the one type this whole arc exists to migrate — `enum Option { None(); Some(v); }`
+                    # could not be declared `: stack` at all ("stack enum variant must take exactly
+                    # 1 field"), which no roadmap line mentioned. Arity 2+ still cannot fit the
+                    # pair and is still refused, with the bound now stated in the message.
                     if (is_stack_enum == 1) {
-                        if (ctor_arity != 1) { ERR_MSG(S, "stack enum variant must take exactly 1 field", 44); }
+                        if (ctor_arity > 1) { ERR_MSG(S, "stack enum variant takes 0 or 1 fields (the pair holds tag + one payload)", 73); }
                     }
                     # v5.11.65 (CVE-05): bound NPOS_GUARD by actual
                     # variant-name length; was magic-256.
@@ -389,6 +395,22 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                     SNPOS(S, cwp2);
                     var cfi = FINDFN(S, cnoff2);
                     if (cfi >= 0) {
+                        # v6.5.67 — MARK A STACK-ENUM CONSTRUCTOR AS PAIR-RETURNING (fn flag 256).
+                        #
+                        # v6.5.55 gave these constructors a two-register return (rax = tag,
+                        # rdx = payload) and nothing recorded that fact anywhere, so every consumer
+                        # that binds the result to ONE variable silently kept the tag and dropped
+                        # the payload — no diagnostic, exit 0. Measured: a fn that binds
+                        # `var r = inner();` and later `return r;` hands back whatever the last
+                        # 3-arg call left in rdx (probe: payload 9 where 3 was correct). That is
+                        # the v6.5.15 class — "a failed open reported as success" — on the payload
+                        # instead of the tag, and the `.55` corpus cannot see it because every
+                        # stack-enum test destructures at the call site.
+                        #
+                        # The flag lets the binding sites REFUSE a lossy context instead of losing
+                        # data, and it propagates through `return` so a forwarding wrapper is
+                        # flagged too.
+                        if (is_stack_enum == 1) { if (ctor_arity == 1) { SFLG(S, cfi, GFLG(S, cfi) | 256); } }
                         S64(_fnt_offsets + cfi * 8, GCP(S));
                         # v6.2.41 — register the constructor's REAL arity (was a
                         # hardcoded 1 — a dead sentinel; _fnt_params' only reader
@@ -416,9 +438,14 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                             # what makes this sound where the v6.5.15 attempt was not: each
                             # binding is its own copy, so two values built at one call site
                             # cannot alias, and nothing points at storage that can be reused.
-                            # Only arity 1 fits the pair; anything else is rejected above.
-                            EFLLOAD(S, 0);
-                            EMOVRDXRAX(S);
+                            # v6.5.67 — a NULLARY variant carries no payload: emit the tag alone
+                            # and leave rdx untouched. It is therefore NOT pair-returning, so it
+                            # does not get flag 256 and a single-variable bind of it stays legal —
+                            # which is exactly right, since there is nothing to lose.
+                            if (ctor_arity == 1) {
+                                EFLLOAD(S, 0);
+                                EMOVRDXRAX(S);
+                            }
                             EMOVI(S, val);
                             EPATCHFRAME(S, ctor_frame, 16);
                             EFNEPI(S);

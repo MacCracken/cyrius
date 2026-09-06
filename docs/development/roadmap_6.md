@@ -174,6 +174,58 @@ The list (ROI order; design decisions inside each item at arc-open):
    shipped v6.3.38 B1/B2 + v6.3.39 B3; the residual is only the mixed multi-tparam combo)
    ([`issues/archived/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](issues/archived/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md)).
 
+6. **`Result` / `Option` / `Either` flip to the value form — PINNED TO v6.6.0 (user,
+   2026-09-06).** The one breaking change in this minor, and it goes at the front of it
+   because everything else in the list is additive and this is not. `enum Name: stack`
+   (v6.5.55) already gives a payload variant a zero-allocation `(tag, payload)` register pair;
+   v6.5.67 added the compiler-side detector — a lossy single-variable bind is refused, `?` on
+   a stack enum is a named diagnostic instead of a clean-compiling SIGSEGV, and nullary
+   variants are legal so `enum Option: stack { None(); Some(v); }` is expressible at all. What
+   is left is flipping the three stdlib declarations and the ecosystem that reads them.
+
+   **This changes a PUBLISHED layout contract, not an internal detail.** The guide spells
+   `Ok(42)` as a 16-byte heap box with tag at `+0` and payload at `+8`, and consumers read
+   those offsets by hand. Derived at v6.5.67 — constructor calls in `.cyr`/`.tcyr`/`.fcyr`/`.bcyr`
+   with comments and string literals stripped, siblings counted on their own source with the
+   vendored `lib/` excluded — **340** sites in this repo (`lib/` 275 · `tests/` 57 · `benches/` 8 ·
+   `src/` **0**) and **2,215** across **37** sibling repos, **6** hand-rolled `load64(r + 8)` reads
+   in `lib/bayan.cyr`,
+   and **119** vendoring repos of which **111** are divergent. `src/` uses none of it, so the
+   byte-identical self-host is *blind to this migration* — do not read a green fixpoint as
+   coverage.
+
+   **Shape (A+B+C land together; do not split):**
+   - **A — compiler.** Finish the detector: a pair in an argument slot, a `store64` of one,
+     and a single-value `return` of a local holding one are still silent today. Then teach `?`
+     the pair form (`t, v = f(); if (t != Ok) { return (t, v); }`) — note the Err path must
+     re-emit **both** halves, which the original one-line framing omitted.
+   - **B — stdlib.** Flip `lib/result.cyr:23`, `lib/tagged.cyr:60`, `lib/tagged.cyr:114`.
+     Tag-only predicates (`is_ok`, `is_err_result`, `is_tag`, `is_none`, `is_some`, `is_left`,
+     `is_right`, `tag`) keep arity 1 — argument 1 receives rax, which for a pair *is* the tag.
+     Anything needing the payload grows a parameter, and **`payload()` has no 1-arg
+     replacement at all** — rdx never reaches a parameter, so it is deleted and its ~470 call
+     sites become destructures. `ok_via`/`err_via` (the v6.5.41 caller-allocator hatch) lose
+     their reason to exist.
+   - **C — fix-at-source + re-vendor**, per the ecosystem rule: patch sigil / yukti / vani
+     upstream, version-bump, regen distlib, re-vendor. Named cross-repo coordination.
+
+   **Acceptance — the second criterion is deliberately reworded.** "Construction allocates 0
+   bytes" *and* "every existing consumer still compiles" are mutually exclusive: zero bytes
+   requires the value form, which requires the re-aritied helpers, which is a compile break at
+   ~1,000 call sites. The property that actually matters is: **every consumer either compiles
+   unchanged or fails to compile with a named error at the offending site — none miscompiles.**
+   Arity is checked in both directions, so the helper half breaks loudly.
+
+   **Gate.** An allocator-growth assertion is *provably vacuous* here — a consumer reading the
+   old offsets allocates nothing and is still wrong. The gate is payload-identity across the
+   five shapes (immediate destructure · single-value bind then use · single-value return
+   forward · argument slot · `store64`-and-reload), each asserting the correct payload **or** a
+   compile-time rejection, mutation-proven by removing the phase-A guard. Run it on all four
+   crossos hosts **plus cx** — cx is the one target where reading the old `+8` offset does not
+   fault, so a partial migration hides there.
+
+   Filing: [`issues/2026-07-28-sock-send-result-allocates-per-call.md`](issues/2026-07-28-sock-send-result-allocates-per-call.md).
+
 **Explicitly NOT imported** (decided 2026-07-07): borrow-checker-style lifetimes
 (wrong fit for the trust model + single-pass design), a general const-eval VM
 (proposal option 4), exceptions of any kind.

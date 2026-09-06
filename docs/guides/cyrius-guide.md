@@ -1034,20 +1034,32 @@ fn use(): i64 {
 ```
 
 - **Zero allocation.** Constructing in a loop grows the allocator by nothing.
-- **Exactly one field per payload variant.** The pair carries a tag and one value; `Pair(a, b)`
-  in a `: stack` enum is a compile error rather than a silently dropped field.
+- **Zero or one field per payload variant.** The pair carries a tag and one value; `Pair(a, b)`
+  in a `: stack` enum is a compile error rather than a silently dropped field. A **nullary**
+  variant — `None()` — has no payload to carry, so it returns its tag alone and binds to a
+  single variable. (v6.5.67; the rule read "exactly 1" before that, which refused
+  `enum Option: stack { None(); Some(v); }` — the shape sum types are actually written in.)
 - **Bare (payload-less) variants are unchanged** — still plain integer constants, still sharing
   the same discriminant numbering.
 - **The destructuring bind only works inside a function.** `var t, v = f();` at top level is
   rejected with *"multi-var destructure only supported inside functions"*.
-- **`?` needs the boxed form.** The propagation operator desugars to `load64(rax + 8)`, i.e. it
-  dereferences its operand, so it does not apply to a stack enum.
+- **Bind the pair as a pair.** `var r = Ok(9);` on a `: stack` enum would keep the tag and throw
+  the payload away, so it is refused: *"a `: stack` enum returns two values — bind both:
+  `var tag, val = f();`"*. The requirement follows the value through `return`, so forwarding it
+  out of a wrapper and binding it one-wide there is caught as well (v6.5.67).
+- **`?` needs the boxed form, and says so.** The propagation operator desugars to
+  `load64(rax + 8)`, i.e. it dereferences its operand — on a pair that reads the *tag* as a
+  pointer, which until v6.5.67 compiled clean and then SIGSEGV'd. It is now a diagnostic:
+  *"'?' does not apply to a `: stack` enum — destructure it: `var tag, val = f();`"*.
 
 ⚠ **This is opt-in on purpose, and plain `enum` still boxes.** The boxed layout is not an
 internal detail — it is the documented representation that `?`, `lib/result.cyr`'s
-`is_ok`/`result_unwrap`, and roughly 300 call sites across the ecosystem read directly as
-tag-at-`+0` / payload-at-`+8`. Changing the default would break all of them, and break them
-silently, because a register pair read as a pointer is a plausible-looking address.
+`is_ok`/`result_unwrap`, and roughly 2,500 constructor sites across the ecosystem depend on —
+**340** in this repo and **2,215** across **37** sibling repos (derived v6.5.67 by stripping
+comments and string literals and excluding each sibling's vendored `lib/`; the figure here read
+"roughly 300" before that, which counted this repo alone and undercounted even that). Changing
+the default would break them, and break them silently, because a register pair read as a
+pointer is a plausible-looking address.
 
 📎 `stack` is reused rather than a new keyword: it has meant "lives on the stack instead of
 being hoisted" since v5.5.36's `stack var buf[N]`, which is the same idea one level up.

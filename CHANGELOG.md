@@ -4,6 +4,132 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.67] — 2026-09-06
+
+### Fixed
+
+- **A `: stack` enum value silently lost its payload in every context that kept only one
+  register.** v6.5.55 gave these constructors a two-register return (rax = tag, rdx = payload) and
+  nothing recorded which calls produce a pair, so binding one to a single variable kept the tag and
+  dropped the payload. Measured on the *idiomatic forwarding shape*:
+
+  ```
+  fn fwd() { var r = mk(3); var j = noise(7, 8, 9); return r; }
+  var t, p = fwd();      // p == 9, not 3
+  ```
+
+  9 is the third argument left in `rdx` by the intervening call. **Exit 0, no diagnostic,
+  allocator delta 0** — the v6.5.15 "a failed open reported as SUCCESS" class, reincarnated on the
+  payload instead of the tag. Now a hard error naming the fix, and the flag **propagates through
+  `return`** so a forwarding wrapper is covered too, which is where the shape actually appears.
+
+  ⚠ The v6.5.55 corpus could not see this: **every stack-enum test in the tree destructures at the
+  call site**, which is the one shape that is always correct.
+
+- **`?` on a `: stack` enum compiled clean and SIGSEGV'd** (rc=139). `?` dereferences its operand,
+  so on a pair it read the **tag** (0 or 1) as a pointer. `docs/guides/cyrius-guide.md` already
+  stated that `?` does not apply to the stack form — it had simply never said so to the compiler.
+  Now refused, at both the bare-constructor and forwarding-wrapper spellings.
+
+- ⛔ **`enum Option: stack { None(); Some(v); }` was a COMPILE ERROR** — *"stack enum variant must
+  take exactly 1 field"*. That blocked **the very type this arc exists to migrate**, and no roadmap
+  line mentioned it. A nullary variant carries no payload, so it needs no second register: it now
+  returns its tag alone, is correctly **not** flagged pair-returning, and a single-variable bind of
+  it stays legal because there is nothing to lose. Arity 2+ is still refused, now with the bound in
+  the message.
+
+### Added
+
+- `tests/gates/frontend/stack_enum_lossy_context.sh` — 7 axes, mutation-proven (reverting the flag
+  gives *"var r = SOk(9) COMPILED — the payload is silently dropped"*). ⭐ **Axis 6 is the
+  anti-vacuous one and it is the one that matters**: a **BOXED** `Result` must be entirely
+  unaffected. `var r = Ok(1)` and `r?` are the documented, ubiquitous idiom — **340** construction
+  sites in this repo and **2,215** across **37** sibling repos — so an over-firing check would
+  refuse every one of them, and a gate proving only that the errors fire would be *worse than
+  none*.
+
+### Changed
+
+- Detection is by **token lookahead**, never a global "the last expression was a pair" flag. That
+  shape is the `_cfo` re-arm bug, which this repo declared fixed three times before the fourth
+  occurrence turned up in a path nobody had enumerated. A peek at the cursor cannot go stale.
+  ⚠ Consequence, stated rather than hidden: a caller parsed *before* the callee's body does not see
+  the propagated flag and degrades to the pre-v6.5.67 behaviour — a missed diagnostic, never a
+  false one.
+
+- `tests/gates/codegen/stack_enum_no_alloc.sh` asserted the literal words *"exactly 1 field"* in the
+  arity rejection, and that assertion was **itself the bug it was guarding**: it pinned a sentence
+  that encoded the arity-0 refusal. It now pins the **rule** (`0 or 1 fields`) and carries a row
+  requiring the nullary form to compile — so the gate that would have opposed this fix now proves
+  it. Caught by `check.sh`, after the check binary's own `240 passed, 0 failed` summary, which does
+  not cover the shell gates that run after it.
+
+- `docs/guides/cyrius-guide.md` and `vidya/.../language/features.cyml` restate the `: stack` rules
+  for the three behaviour changes above. The guide's *"roughly 300 call sites across the ecosystem"*
+  is corrected to **~2,500** (**340** here, **2,215** across **37** sibling repos) — the old figure
+  counted this repo alone and undercounted even that. Both new numbers are DERIVED under a stated
+  definition, because four different figures have now been published for this one quantity.
+
+### Benchmarks
+
+- cycc **1,213,784 B** (`.text` **1,064,000**, +1,240 B for the pair-tracking flag, the two
+  lookahead helpers and three diagnostics) · self_compile **686 ms** (682 → 686, **+0.6 %** —
+  growth tax on a purely additive frontend change, not a regression to bisect; the file size moved
+  only +184 B because it is quantized, which is why `.text` is the number recorded).
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+  ⛔ **Its first run was RED, and by a gate rather than by the compiler** — see the
+  `stack_enum_no_alloc` note under *Changed*. `check.sh`'s own `240 passed, 0 failed` summary
+  line printed immediately above the failure: that summary covers the check **binary**, not the
+  shell gates that run after it, so it is the exit status that decides.
+- Differential vs 6.5.66: **403 identical, 0 changed** — the change is purely additive (it adds
+  refusals; it does not alter any program that already compiled). Corpus **301** `.tcyr`
+  (**68** crossos) · **134** shell gates (DERIVED) · **102** `lib/*.cyr`. Open issues **4**,
+  proposals **3** — unchanged: `sock-send-result-allocates-per-call` stays open and is now pinned
+  to **v6.6.0**.
+
+### Notes
+
+- ⛔ **The counts in this issue and the roadmap are BOTH wrong, and the correction is the point.**
+  The original "24 declarations / 516 sites" was corrected to "9 / ~306"; that replacement is also
+  wrong. Derived four ways independently on comment-stripped source:
+
+  | | claimed | live |
+  |---|---|---|
+  | declarations in this repo | 9 | **14** (3 `lib/`, 11 `tests/`, **0** `src/`) |
+  | occurrences in this repo | ~306 | **732–853** |
+  | constructor sites in this repo | ~306 | **340** (`lib/` 275 · `tests/` 57 · `benches/` 8 · `src/` **0**) |
+  | ecosystem constructor sites | — | **2,215** across **37** sibling repos |
+  | ecosystem helper call sites | — | **~741** |
+  | repos vendoring `lib/result.cyr` | — | **119**, of which **111 already differ** |
+
+  "6 hand-rolled reads in `lib/bayan.cyr`" is correct and verified — but the fix-the-source rule
+  points at `~/Repos/bayan`, which has 11. And "teach `?` to accept a pair" is framed as the head
+  of the work while being the smallest part: **`?` has zero uses in `lib/` and zero in `src/`**.
+
+- ⚖️ **The universal flip is NOT shipped here, and that is a decision rather than a deferral.**
+  Migrating `Result`/`Option`/`Either` themselves changes the **arity of every value**:
+  `payload(t)` has no 1-argument replacement — `rdx` never reaches a parameter, so it must be
+  **deleted** (93 sites in `lib/`, ~470 ecosystem-wide); four more helpers change arity; the guide
+  publishes the `+0`/`+8` layout as user-facing usage in six places; and 119 repos vendor
+  `result.cyr` with 111 already divergent. That is a coordinated ecosystem migration and a
+  language-surface break. **The hot path this issue was filed about already has a working
+  zero-global-alloc route** — `sock_send_a`/`sock_recv_a` via `ok_via`/`err_via` (v6.5.41,
+  `lib/net.cyr:439-449`) — and, as of this release, a consumer can safely declare its own
+  `: stack` enum instead.
+
+- 📌 **DECIDED (user, 2026-09-06): the flip happens, AS PART OF v6.6.0.** It is pinned at the front
+  of the ergonomics minor — [`roadmap_6.md` → v6.6.x item 6](docs/development/roadmap_6.md) carries
+  the A+B+C shape, the acceptance and the gate — and it does **not** take a v6.5.x slot: `.68`
+  (whole-program NOP compaction) and `.69`–`.70` (stackless coroutines) keep their numbers.
+  Two corrections to the framing are recorded there rather than rediscovered: the Err path of `?`
+  must re-emit **both** halves of the pair, and the stated acceptance *"every existing consumer
+  still compiles"* is unachievable by construction — zero-allocation requires the value form,
+  which requires the re-aritied helpers, which is a compile break at ~1,000 call sites. It is
+  restated as **every consumer either compiles unchanged or fails with a named error at the
+  offending site, and none miscompiles**, which is checkable and is the property that matters.
+
 ## [6.5.66] — 2026-09-06
 
 ### Added

@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.66** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.67** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -557,7 +557,33 @@ store→load dependency stall) — the serial figure closes toward the independe
 per-link 26-instruction / 14-memory-op expansion shrinks. Keep the svara bench as a *reported*
 number, not as this slot's gate.
 
-#### `.67` — payload enums stop allocating for real
+#### `.67` — ✅ SHIPPED: the `: stack` form is SAFE — three live defects in what `.55` shipped
+
+(1) **Silent payload loss** — a stack value is two registers and nothing recorded which calls
+produce a pair, so any single-value consumption dropped the payload: measured **p == 9** where 3
+was correct, exit 0, no diagnostic. Now a hard error, propagated through `return`. (2) **`?`
+compiled clean and SIGSEGV'd** — it dereferences the tag. Now refused. (3) ⛔ **`enum Option:
+stack { None(); Some(v); }` was a COMPILE ERROR**, blocking the very type this arc exists to
+migrate — nullary variants now work.
+
+⛔ **The counts were wrong in both directions**: 9 declarations / ~306 occurrences is really
+**14 declarations**, **340** constructor sites here (`lib/` 275 · `tests/` 57 · `benches/` 8 ·
+`src/` **0**) and **2,215** across **37** sibling repos, in **119 vendoring repos** of which 111
+already differ. Those two site counts are DERIVED under a stated definition — constructor calls in
+`.cyr`/`.tcyr`/`.fcyr`/`.bcyr`, comments and string literals stripped, siblings counted on their
+own source with the vendored `lib/` excluded — because *four* figures have now been published for
+this one quantity (~306, 376, 385, ~1,864), each from a different unstated definition.
+
+📌 **DECIDED (user, 2026-09-06): the universal flip happens, as part of v6.6.0.** It is not a
+v6.5.x slot and it takes no number here — `.68` and `.69`–`.70` keep theirs. It changes the ARITY
+of every value (`payload()` has no 1-arg replacement and must be DELETED, ~470 sites; four helpers
+change arity; the guide publishes the layout in six places), which makes it a language-surface
+break across 119 vendoring repos and therefore the front of the ergonomics minor. Shape,
+acceptance and the gate: [`roadmap_6.md` → v6.6.x item 6](roadmap_6.md). Until then the filed hot
+path keeps its zero-global-alloc route (`ok_via`/`err_via`, v6.5.41) and a consumer can safely
+declare its own `: stack` enum.
+
+#### ~~`.67`~~ — the plan as written *(kept: its framing understated the work by ~3x)*
 *(closes `sock-send-result-allocates-per-call`)*
 
 `.55` shipped the compiler capability (`enum Name: stack`). This is the ecosystem half: teach `?`
@@ -568,10 +594,14 @@ form, migrate `lib/result.cyr` + `lib/tagged.cyr`, and update the hand-rolled `l
 
 ⚠ Scope check from `.55`: the "24 declarations / 516 sites" figure was a raw grep count including
 prose. Live it is **9 declarations / ~306 occurrences** here, and **3 distinct stdlib types**
-ecosystem-wide.
+ecosystem-wide. *(Both halves of that correction are themselves wrong — see the shipped entry
+above. This block is kept only as the record of what was planned.)*
 
 **Done when:** `Result`/`Option`/`Either` construction allocates **0 bytes**, every existing
-consumer still compiles, and crossos is green on all four hosts.
+consumer still compiles, and crossos is green on all four hosts. *(⛔ Those two criteria are
+mutually exclusive — zero bytes needs the value form, the value form needs re-aritied helpers, and
+that is a compile break at ~1,000 call sites. Restated for v6.6.0 as: every consumer either
+compiles unchanged or fails with a named error at the offending site, and none miscompiles.)*
 
 #### `.68` — whole-program NOP compaction
 *(closes `ir-regalloc-rewrite-needs-reemit`)*

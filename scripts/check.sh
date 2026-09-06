@@ -213,6 +213,15 @@ sh "$ROOT/tests/gates/codegen/inline_directive.sh"
 # batch's extent.
 sh "$ROOT/tests/gates/codegen/simd_direct_form.sh"
 
+# v6.5.67: a `: stack` enum value is TWO registers (rax=tag, rdx=payload). Consuming it where only
+# one survives must be a hard ERROR. v6.5.55 shipped the representation with nothing recording
+# which calls produce a pair, so the idiomatic forwarding shape silently kept the tag and dropped
+# the payload — measured p==9 (a stale rdx) where 3 was correct, exit 0, allocator delta 0, i.e.
+# the v6.5.15 "failure reported as success" class on the payload. `?` was worse: rc=0 then SIGSEGV,
+# because it dereferences the tag. ⭐ Axis 6 is the anti-vacuous control — a BOXED Result must be
+# entirely unaffected, or the check would refuse the documented idiom at ~1,864 ecosystem sites.
+sh "$ROOT/tests/gates/frontend/stack_enum_lossy_context.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called

@@ -82,12 +82,20 @@ if [ $OK -eq 0 ]; then
 fi
 
 # axis 4 — a stack variant that cannot fit the pair must be REJECTED, not silently truncated.
+# ⚠ This row asserted the literal words "exactly 1 field" until v6.5.67, and that wording was
+# itself the bug: arity 0 carries no payload and needs no second register, so `enum Opt: stack
+# { None(); Some(v); }` — the shape of the one type the migration exists for — was refused. The
+# rejection now names the real rule, so the row pins the RULE ("0 or 1"), not a sentence.
 printf 'enum Bad: stack { P(a, b); }\nfn main(): i64 { return 0; }\n' > "$T/bad.cyr"
 if "$T/cc" < "$T/bad.cyr" > /dev/null 2>"$T/bad.err"; then
   echo "FAIL stack_enum_no_alloc: arity-2 stack variant COMPILED — it would silently drop a field"
   exit 1
 fi
-grep -q "exactly 1 field" "$T/bad.err" || { echo "FAIL stack_enum_no_alloc: arity-2 rejected without the explaining message"; sed -n 1,2p "$T/bad.err"; exit 1; }
+grep -q "0 or 1 fields" "$T/bad.err" || { echo "FAIL stack_enum_no_alloc: arity-2 rejected without the explaining message"; sed -n 1,2p "$T/bad.err"; exit 1; }
+# ...and the arity-0 form it used to refuse must COMPILE (v6.5.67; full coverage in
+# tests/gates/frontend/stack_enum_lossy_context.sh axis 7).
+printf 'enum Opt: stack { ONone(); OSome(v); }\nfn main(): i64 { var n = ONone(); return n; }\n' > "$T/nul.cyr"
+"$T/cc" < "$T/nul.cyr" > /dev/null 2>"$T/nul.err" || { echo "FAIL stack_enum_no_alloc: nullary stack variant REFUSED — it needs no payload register"; sed -n 1,2p "$T/nul.err"; exit 1; }
 
-echo "PASS stack_enum_no_alloc: stack enum 0 B (boxed control 16 B), 16 retained values intact, arity-2 rejected"
+echo "PASS stack_enum_no_alloc: stack enum 0 B (boxed control 16 B), 16 retained values intact, arity-2 rejected, nullary allowed"
 exit 0

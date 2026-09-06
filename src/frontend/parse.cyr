@@ -58,6 +58,34 @@ var _cur_fn_naked = 0;
 # jump-target LASE cap in a single function), and its default-off note cites a size figure
 # measured at v1.11.3. Per-fn opt-in has neither problem.
 var _inline_pending = 0;
+# v6.5.67 — does the cursor sit on a call to a PAIR-RETURNING fn (fn flag 256)?
+#
+# A `: stack` enum constructor hands back (tag, payload) in two registers. Binding that to one
+# variable keeps the tag and silently drops the payload; v6.5.55 shipped the representation with
+# nothing recording which calls produce a pair, so every lossy context was silent data loss.
+#
+# ⚠ DELIBERATELY LOOKAHEAD, NOT A GLOBAL "last expression was a pair" FLAG. This repo has paid
+# for that shape four times — the `_cfo` re-arm bug was declared fixed three times before the
+# fourth occurrence turned up in a path nobody had enumerated. A flag set by one emitter and read
+# by another has to be cleared correctly on every path; a peek at the cursor cannot go stale.
+# Same test at an ARBITRARY token index, for sites whose cursor has not reached the call yet
+# (e.g. `var x = f();` where the cursor is on `=`).
+fn _callee_returns_pair_at(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    var _cra = FINDFN(S, TOKVAL(S, ti));
+    if (_cra < 0) { return 0; }
+    if ((GFLG(S, _cra) & 256) == 0) { return 0; }
+    return 1;
+}
+fn _callee_returns_pair(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
+    var _crp = FINDFN(S, PEEKV(S));
+    if (_crp < 0) { return 0; }
+    if ((GFLG(S, _crp) & 256) == 0) { return 0; }
+    return 1;
+}
 # v6.5.65 — INLINE PARAM PROVENANCE. When the inline replay binds a value-form SIMD argument it
 # COPIES 16/32 bytes from the caller's local into a fresh callee param slot, and the direct vector
 # emitter then RELOADS that slot two instructions later. Measured at 6.5.64 that reload is a

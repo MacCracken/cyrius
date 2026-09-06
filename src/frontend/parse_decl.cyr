@@ -1894,6 +1894,16 @@ fn PARSE_VAR(S): i64 {
     # The callee's return sid is already recorded, so the annotation is redundant information.
     # Take it from GFRS when the var declares none; a var that DOES declare one keeps it (a
     # mismatch is diagnosed at the receive paths below rather than silently truncated).
+    # v6.5.67 — a `: stack` enum call bound to ONE variable keeps the tag and silently drops the
+    # payload. Refuse it. The two-variable destructure is handled earlier in this fn, so reaching
+    # here with a pair-returning callee means the payload is about to be lost.
+    if (GINFN(S) == 1) {
+        if (PEEKT(S) == 4) {
+            if (_callee_returns_pair_at(S, GTI(S) + 1) == 1) {
+                ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
+            }
+        }
+    }
     if (GINFN(S) == 1) {
         if (PEEKT(S) == 4) {
             var _vin_ti = GTI(S) + 1;

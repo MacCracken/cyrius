@@ -1,3 +1,74 @@
+> ### ⚠ v6.5.67 — THE STACK FORM IS NOW SAFE TO USE. The remaining flip is an ECOSYSTEM API BREAK, and the numbers in this file were wrong.
+>
+> **What v6.5.67 fixed — all of it live defects in what v6.5.55 shipped:**
+> 1. **Silent payload loss.** A `: stack` value is TWO registers and nothing recorded which calls
+>    produce a pair, so any single-value consumption kept the tag and dropped the payload.
+>    Measured on the idiomatic forwarding shape — `fn fwd() { var r = mk(3); var j = noise(7,8,9);
+>    return r; }` — the payload came back as **9** (the third argument left in rdx) instead of 3.
+>    **Exit 0, no diagnostic, allocator delta 0.** That is the v6.5.15 "failure reported as
+>    SUCCESS" class on the payload. Now a hard error naming the fix, propagated through `return`
+>    so forwarding wrappers are covered.
+> 2. **`?` on a stack enum compiled clean and SIGSEGV'd** (rc=139) — it dereferences the tag as a
+>    pointer. The guide already said `?` does not apply to the stack form; it had never said so to
+>    the compiler. Now refused.
+> 3. **`enum Option: stack { None(); Some(v); }` was a COMPILE ERROR** — "stack enum variant must
+>    take exactly 1 field". That blocked the very type this arc exists to migrate and **no roadmap
+>    line mentioned it.** Nullary variants are now allowed (they carry no payload, so they return
+>    the tag alone and are not pair-returning). Arity 2+ still refused.
+>
+> **⛔ THE COUNTS IN THIS FILE AND IN THE ROADMAP ARE BOTH WRONG.** The original "24 declarations /
+> 516 sites" was corrected to "9 / ~306"; that replacement is also wrong. Live, derived four ways
+> independently on comment-stripped source:
+>
+> | | claimed | live |
+> |---|---|---|
+> | payload-enum declarations in this repo | 9 | **14** (3 in `lib/`, 11 in `tests/`, 0 in `src/`) |
+> | occurrences in this repo | ~306 | **732–853** depending on what is counted |
+> | constructor sites in this repo | ~306 | **340** (`lib/` 275 · `tests/` 57 · `benches/` 8 · `src/` **0**) |
+> | ecosystem constructor sites | — | **2,215** across **37** sibling repos' own source |
+> | ecosystem stdlib-helper call sites | — | **~741** |
+> | repos vendoring `lib/result.cyr` | — | **119**, of which **111 already differ** from the current copy |
+> | hand-rolled box reads outside cyrius | — | **50** in 4 repos (hapi 37, bayan 11, thoth 1, cyrius-doom 1) |
+>
+> "6 hand-rolled reads in `lib/bayan.cyr`" is CORRECT and verified (`:2624 :2633 :3581 :3595 :4432
+> :4441`) — but per the fix-the-source-not-the-fold rule the target is `~/Repos/bayan`, which has 11.
+> And "teach `?` to accept a pair" is framed as the head of the work while being the smallest part:
+> **`?` has ZERO uses in `lib/` and ZERO in `src/`**; all 10 in-repo uses are in three test files.
+>
+> **📌 WHY THE UNIVERSAL FLIP IS NOT SHIPPED HERE, stated as a decision and not a deferral.**
+> Migrating `Result`/`Option`/`Either` themselves is not a representation swap behind a stable API —
+> it changes the ARITY of every value:
+> - `payload(t)` **has no 1-argument replacement**: rdx never reaches a parameter, so the function
+>   must be DELETED. 93 sites in `lib/` alone, ~470 ecosystem-wide.
+> - `result_unwrap` / `err_code_of` / `result_unwrap_or` / `result_print` all need new arities;
+>   `is_ok` / `is_err_result` / `is_tag` survive unchanged (argument 1 receives rax, which IS the tag).
+> - `docs/guides/cyrius-guide.md` publishes the layout as user-facing usage in six places
+>   (`:989-990`, `:1007-1008`, `:1043`, `:1095`, `:1187`, `:1316-1317`) — flipping it is a
+>   documented breaking change.
+> - 119 vendored copies, 111 already divergent.
+>
+> That is a coordinated ecosystem migration and a language-surface break, which is precisely the
+> "cross-repo coordination" case that may be filed rather than packed. **The hot path this issue
+> was filed about already has a working zero-global-alloc route** — `sock_send_a`/`sock_recv_a` via
+> `ok_via`/`err_via` (v6.5.41, `lib/net.cyr:439-449`) — and, as of v6.5.67, a consumer can also
+> declare its own `: stack` enum safely.
+>
+> **📌 DECIDED 2026-09-06 (user): FLIP, AS PART OF v6.6.0.** The open question above — break the
+> published `Result` layout or keep the stack form opt-in — is answered. The flip is pinned to
+> **v6.6.0**, the front of the ergonomics minor, because it is the one breaking change in that
+> list and everything else there is additive. It is NOT a v6.5.x slot: v6.5.x closes on its
+> existing pins (`.68` NOP compaction, `.69`–`.70` stackless coroutines) and this issue stays
+> **OPEN** until v6.6.0 ships it.
+>
+> Scope, acceptance and the gate are written out at
+> [`roadmap_6.md` → v6.6.x item 6](../roadmap_6.md). The two things worth repeating here because
+> they were wrong in the original framing: the Err path of `?` must re-emit **both** halves of
+> the pair, not just rax; and the stated acceptance "every existing consumer still compiles" is
+> unachievable *by construction* — it is restated as **every consumer either compiles unchanged
+> or fails with a named error at the offending site, and none miscompiles**. An allocator-growth
+> assertion cannot gate this: a consumer reading the old `+8` offset allocates nothing and is
+> still wrong.
+
 > ### ✅ v6.5.55 — the language-level fix has SHIPPED, opt-in: `enum Name: stack`
 >
 > A payload-carrying enum declared `: stack` returns its `(tag, payload)` in the multi-return
@@ -43,7 +114,7 @@
 
 # `sock_send` / `sock_recv` allocate their `Result` on the no-free global bump — 16 B per call on the hottest path in any server
 
-**Status:** 🟠 **THE FILED SYMPTOM IS FIXED at v6.5.41 — the ROOT CAUSE is open and is a different size class.** Shipped: `ok_via(a, v)` / `err_via(a, e)` in `lib/result.cyr` and `sock_send_a` / `sock_recv_a` in `lib/net.cyr`, which box through a caller-supplied allocator (`arena_allocator(n)`) so a server can reset a per-request arena. Measured on a real socketpair: **100× `sock_send_a` grows the global allocator by 0 B, against 1600 B for `sock_send`** — exactly the filed 16 B/call. Layout is unchanged, so `is_ok` / `is_err_result` / `result_unwrap` / `?` accept the boxes with no change. Gate: `tests/tcyr/stdlib/result_allocator_via.tcyr` (8 assertions, every zero-growth claim PAIRED with a control that the old path still grows, so it cannot become vacuous; mutation-proven two ways).
+**Status:** 🟠 **OPEN — PINNED TO v6.6.0** (user, 2026-09-06: *"flip as apart of 6.6.0"*). The filed symptom was fixed at v6.5.41 and the language capability shipped at v6.5.55 + v6.5.67; what remains is the ecosystem flip, and it is a v6.6.0 item, not a v6.5.x one. **The filed symptom is fixed at v6.5.41 — the ROOT CAUSE is open and is a different size class.** Shipped: `ok_via(a, v)` / `err_via(a, e)` in `lib/result.cyr` and `sock_send_a` / `sock_recv_a` in `lib/net.cyr`, which box through a caller-supplied allocator (`arena_allocator(n)`) so a server can reset a per-request arena. Measured on a real socketpair: **100× `sock_send_a` grows the global allocator by 0 B, against 1600 B for `sock_send`** — exactly the filed 16 B/call. Layout is unchanged, so `is_ok` / `is_err_result` / `result_unwrap` / `?` accept the boxes with no change. Gate: `tests/tcyr/stdlib/result_allocator_via.tcyr` (8 assertions, every zero-growth claim PAIRED with a control that the old path still grows, so it cannot become vacuous; mutation-proven two ways).
 
 ⭐ **THE CAUSE IS NOT `Result`, AND NOT `net.cyr` — the filing flagged this as speculation and it is CONFIRMED and WIDER.** The enum payload-variant constructor lowering (`src/frontend/parse_types.cyr:386`) emits `EMOVI(S, 8 + ctor_arity * 8)` followed by a call to the function literally named `alloc` — unconditional, not allocator-parameterised. A plain user `enum Color { Red(v); Green; }` allocates the identical 16 B, and the `: Result` return annotation is a **codegen no-op** (classified as an i64-shape scalar). So this is a property of *every payload-carrying enum in the language*.
 

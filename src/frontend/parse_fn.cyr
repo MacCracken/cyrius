@@ -593,6 +593,16 @@ fn PARSE_RETURN(S): i64 {
         ERR_MSG(S, "return is not allowed in a #naked fn (body must end in asm: iretq/eret)", 71);
     }
     STI(S, GTI(S) + 1);
+    # v6.5.67 — PROPAGATE PAIR-RETURNING-NESS. `fn mk(x) { return SOk(x); }` forwards a `: stack`
+    # enum's (tag, payload) pair, so `mk` is itself pair-returning and binding ITS result to one
+    # variable loses the payload just as surely. Marking the enclosing fn here is what makes the
+    # diagnostic reach the idiomatic wrapper shape rather than only the bare constructor.
+    # ⚠ Order-dependent by construction: a caller parsed BEFORE the callee's body will not see the
+    # flag and degrades to the pre-v6.5.67 behaviour. That is the safe direction for a diagnostic —
+    # a missed warning, never a false one.
+    if (_cur_fn_ix >= 0) {
+        if (_callee_returns_pair(S) == 1) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+    }
     # Check for tail call: return IDENT(args);
     # Pattern: next token is IDENT, followed by LPAREN
     # Disabled inside inline replay (would emit caller's epilogue)

@@ -3043,6 +3043,15 @@ fn _PARSE_TERM_IMPL(S): i64 {
     _cfo = 0;
     # Extended builtins — checked first
     var ptyp = PEEKT(S);
+    # v6.5.67 — note BEFORE the factor is consumed whether it is a call to a pair-returning
+    # (`: stack` enum) constructor, so the `?` handler below can refuse it. `?` dereferences its
+    # operand, so on a pair it reads the TAG (0 or 1) as a pointer: today that compiles with rc=0,
+    # no diagnostic, and SIGSEGVs at run time. The guide already states `?` does not apply to the
+    # stack form (docs/guides/cyrius-guide.md) — it just never said so to the compiler.
+    # ⚠ A LOCAL, captured before the operand is parsed. By the time `?` is seen the cursor is past
+    # the call, so this cannot be a peek at that point; and a global would be the `_cfo` re-arm
+    # shape, which this codebase has been bitten by four times.
+    var _tpair = _callee_returns_pair(S);
     if (PARSE_INTRIN(S, ptyp) == 1) { _cfo = 0; }
     else { PARSE_FACTOR(S); }
     # v5.8.29 — postfix `?` propagation operator. After the primary
@@ -3060,6 +3069,9 @@ fn _PARSE_TERM_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         if (GINFN(S) == 0) {
             ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 55);
+        }
+        if (_tpair == 1) {
+            ERR_MSG(S, "'?' does not apply to a `: stack` enum — destructure it: `var tag, val = f();`", 80);
         }
         # Hidden temp slot to hold the Result ptr across the
         # tag-check / unwrap branches (same idiom as PARSE_MATCH).
