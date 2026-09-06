@@ -1,0 +1,134 @@
+# simd_value_return_binding.tcyr — v6.5.61: a value-form vector return must survive
+# EVERY binding form, not just `var r: <exact type> = f(...)`.
+#
+# THE DEFECT. The 16/32-byte receive paths in PARSE_VAR were gated entirely on the var's
+# own type annotation, so only one spelling stored the whole vector:
+#   var r: f64v2 = f64v2_add(a, b);   OK — the only form the corpus ever used
+#   var r      = f64v2_add(a, b);     lanes read back as ZERO   (no annotation → scalar init)
+#   var r: f64v2;  r = f64v2_add(a, b);   lanes read back as ZERO   (assignment path had no
+#                                          receive at all — 8-byte EFLSTORE)
+#   var r: f64v4 = f64v2_add(a, b);   lanes read back as ZERO   (mismatch fell through)
+# All silent: exit 0, no diagnostic, wrong numbers. Every width (f32v4 → garbage, f64v2 → 0,
+# f64v4 → 0) and every vector-returning fn, user-defined as well as stdlib.
+#
+# ⭐ WHY THIS LIVES IN crossos/ AND NOT simd/. The fix is ABI-shaped on two axes that a
+# Linux run cannot see. (1) The SysV/aarch64 receive stores a REGISTER PAIR
+# (EFLSTORE_F64V2_PAIR / _F64V4_PAIR); the Win64 receive instead passes the destination
+# address as a hidden arg 0 and the callee writes through it. Those are different code
+# paths, and the assignment-form branch is NEW on both. (2) `simd_has_avx2()` returns 0 on
+# every non-x86 target, so ecb/ach/pi exercise the 128-bit kernel underneath these bindings
+# while cass exercises the retptr path. A test that only ran here would prove neither.
+# This is the "compiles on five targets is not runs on five targets" rule (v6.5.7).
+#
+# ⚠ WHAT MAKES THIS TEST NON-VACUOUS. Group A is a CONTROL: the annotated declaration form
+# ALWAYS worked, so if a future change breaks the receive wholesale, A fails too and the
+# file cannot be mistaken for a regression confined to the new forms. Groups B/C/D are the
+# forms that were broken. EVERY LANE is asserted, never just lane 0 — the v6.5.59 lesson:
+# a lane-0 assertion passes while half the vector is stale, which is exactly why nothing
+# caught the 256-bit return dropping lanes 2-3.
+#
+# Inputs are exact in binary floating point, so the expected values are unarguable and the
+# lanes are DISTINCT (a lane mix-up or a splat cannot pass):
+#   f64v2 a = [10, 20]        b = [1, 2]        a+b = [11, 22]   a*b = [10, 40]
+#   f64v4 h = [1, 2, 3, 4]                      h+h = [2, 4, 6, 8]
+#   f32v4 f = [1, 2, 3, 4]f                     f+f = [2, 4, 6, 8]f
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+
+# A user-defined vector-returning fn — the defect was never confined to lib/simd.cyr.
+fn mk2(): f64v2 {
+    var r: f64v2 = f64v2_make(f64_from(5), f64_from(6));
+    return r;
+}
+fn mk4(): f64v4 {
+    var r: f64v4 = f64v4_make(f64_from(1), f64_from(2), f64_from(3), f64_from(4));
+    return r;
+}
+
+fn main(): i64 {
+    var a: f64v2 = f64v2_make(f64_from(10), f64_from(20));
+    var b: f64v2 = f64v2_make(f64_from(1), f64_from(2));
+
+    # --- A: CONTROL — the annotated declaration form, which always worked ---
+    test_group("A control: var r: T = f()");
+    var ca: f64v2 = f64v2_add(a, b);
+    assert_eq(f64_to(load64(&ca + 0)), 11, "control f64v2 lane0");
+    assert_eq(f64_to(load64(&ca + 8)), 22, "control f64v2 lane1");
+
+    # --- B: untyped declaration — type inferred from the callee's return ---
+    test_group("B untyped: var r = f()");
+    var ua = f64v2_add(a, b);
+    assert_eq(f64_to(load64(&ua + 0)), 11, "untyped f64v2 lane0");
+    assert_eq(f64_to(load64(&ua + 8)), 22, "untyped f64v2 lane1");
+
+    var um = f64v2_mul(a, b);
+    assert_eq(f64_to(load64(&um + 0)), 10, "untyped f64v2_mul lane0");
+    assert_eq(f64_to(load64(&um + 8)), 40, "untyped f64v2_mul lane1");
+
+    # a vector op that also takes a trailing SCALAR param
+    var us = f64v2_scale(a, f64_from(3));
+    assert_eq(f64_to(load64(&us + 0)), 30, "untyped f64v2_scale lane0");
+    assert_eq(f64_to(load64(&us + 8)), 60, "untyped f64v2_scale lane1");
+
+    # user-defined callee, not stdlib
+    var uu = mk2();
+    assert_eq(f64_to(load64(&uu + 0)), 5, "untyped user-fn f64v2 lane0");
+    assert_eq(f64_to(load64(&uu + 8)), 6, "untyped user-fn f64v2 lane1");
+
+    # 256-bit: all four lanes, because a pair-store bug leaves lanes 2-3 stale
+    var h: f64v4 = mk4();
+    var u4 = f64v4_add(h, h);
+    assert_eq(f64_to(load64(&u4 + 0)), 2, "untyped f64v4 lane0");
+    assert_eq(f64_to(load64(&u4 + 8)), 4, "untyped f64v4 lane1");
+    assert_eq(f64_to(load64(&u4 + 16)), 6, "untyped f64v4 lane2");
+    assert_eq(f64_to(load64(&u4 + 24)), 8, "untyped f64v4 lane3");
+
+    # 128-bit f32: distinct lanes, raw bit patterns (2.0f 4.0f 6.0f 8.0f)
+    var f: f32v4 = f32v4_make(0x3F800000, 0x40000000, 0x40400000, 0x40800000);
+    var uf = f32v4_add(f, f);
+    assert_eq(load32(&uf + 0), 0x40000000, "untyped f32v4 lane0 = 2.0f");
+    assert_eq(load32(&uf + 4), 0x40800000, "untyped f32v4 lane1 = 4.0f");
+    assert_eq(load32(&uf + 8), 0x40C00000, "untyped f32v4 lane2 = 6.0f");
+    assert_eq(load32(&uf + 12), 0x41000000, "untyped f32v4 lane3 = 8.0f");
+
+    # --- C: assignment form — the declaration path's other half ---
+    test_group("C assignment: var r: T; r = f()");
+    var xa: f64v2;
+    xa = f64v2_add(a, b);
+    assert_eq(f64_to(load64(&xa + 0)), 11, "assigned f64v2 lane0");
+    assert_eq(f64_to(load64(&xa + 8)), 22, "assigned f64v2 lane1");
+
+    # RE-assignment must also land, not just the first store
+    xa = f64v2_mul(a, b);
+    assert_eq(f64_to(load64(&xa + 0)), 10, "reassigned f64v2_mul lane0");
+    assert_eq(f64_to(load64(&xa + 8)), 40, "reassigned f64v2_mul lane1");
+
+    xa = mk2();
+    assert_eq(f64_to(load64(&xa + 0)), 5, "assigned user-fn f64v2 lane0");
+    assert_eq(f64_to(load64(&xa + 8)), 6, "assigned user-fn f64v2 lane1");
+
+    var x4: f64v4;
+    x4 = f64v4_add(h, h);
+    assert_eq(f64_to(load64(&x4 + 0)), 2, "assigned f64v4 lane0");
+    assert_eq(f64_to(load64(&x4 + 8)), 4, "assigned f64v4 lane1");
+    assert_eq(f64_to(load64(&x4 + 16)), 6, "assigned f64v4 lane2");
+    assert_eq(f64_to(load64(&x4 + 24)), 8, "assigned f64v4 lane3");
+
+    var xf: f32v4;
+    xf = f32v4_add(f, f);
+    assert_eq(load32(&xf + 0), 0x40000000, "assigned f32v4 lane0 = 2.0f");
+    assert_eq(load32(&xf + 12), 0x41000000, "assigned f32v4 lane3 = 8.0f");
+
+    # --- D: the operands must survive being passed by value ---
+    # A receive that wrote past its slot would corrupt them; assert they are intact.
+    test_group("D operands intact after by-value passing");
+    assert_eq(f64_to(load64(&a + 0)), 10, "operand a lane0 intact");
+    assert_eq(f64_to(load64(&a + 8)), 20, "operand a lane1 intact");
+    assert_eq(f64_to(load64(&h + 0)), 1, "operand h lane0 intact");
+    assert_eq(f64_to(load64(&h + 24)), 4, "operand h lane3 intact");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

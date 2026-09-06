@@ -4,6 +4,95 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.61] — 2026-09-05
+
+### Fixed
+
+- **A value-form vector return was stored correctly by exactly ONE spelling, and silently
+  dropped by every other.** `var r: f64v2 = f64v2_add(a, b);` worked. These did not:
+
+  | binding form | result before |
+  |---|---|
+  | `var r = f64v2_add(a, b);` (no annotation) | lanes read back **0** |
+  | `var r: f64v2;  r = f64v2_add(a, b);` (assignment) | lanes read back **0** |
+  | `var r: f64v4 = f64v2_add(a, b);` (mismatched type) | lanes read back **0** |
+  | `var r: i64 = f64v2_add(a, b);` (scalar type) | lanes read back **0** |
+
+  Silent in every case: exit 0, no diagnostic, wrong numbers. Every width was affected
+  (`f32v4` → garbage, `f64v2` → 0, `f64v4` → 0) and every vector-returning function, **user
+  defined as well as stdlib** — so `f64v2_scale(a, f64_from(3))` returned `lo=0, hi=3`, the
+  scale factor itself leaking into lane 1, and `f64v4_scale` returned the *input* lanes
+  shifted by two.
+
+  Two causes, one defect surface:
+  1. **The 16/32-byte receive paths in `PARSE_VAR` were gated entirely on the var's own type
+     annotation.** `pscale` came only from the annotation, so a var without one fell through to
+     the scalar init. The callee's return sid was already recorded in `GFRS` the whole time —
+     the annotation was redundant information. It is now inferred from the callee when the var
+     declares none, and a var that declares a *different* type is refused rather than truncated.
+  2. **The assignment path had no vector receive at all** — it fell to the generic 8-byte
+     `EFLSTORE`. New `_try_vector_call_assign` mirrors the declaration receive, including the
+     Win64 retptr branch (on PE a 16/32-byte return is written through a hidden pointer rather
+     than stored from a register pair after the call).
+
+  ⭐ **This is exactly the split v6.5.57 closed for structs, one type-class over.** That
+  release's own words were *"the assignment path gets the multi-word copy the declaration path
+  has had"*, and it added `_try_aggregate_copy_assign` for the local-to-local shape `c = a`.
+  The call-RHS shape was left uncovered for structs' vector siblings. **When a receive path is
+  added to declarations, the assignment path is not a separate feature — it is the other half
+  of the same statement.**
+
+  ⛔ **Why 260-odd corpus files and four cross-OS hosts never saw it: every existing call site
+  spells the annotation.** `var sum: f64v2 = f64v2_add(&x, &y);` is what the tests, the guide
+  and the stdlib all write. The API's most natural spelling — `var r = f64v2_add(a, b);` — was
+  used by nothing. The differential corpus confirms this from the other side: **406 of 407
+  inputs are byte-identical across the fix**, which per this project's standing rule is
+  evidence of a corpus blind spot, not evidence the fix is inert.
+
+### Added
+
+- `tests/tcyr/crossos/simd_value_return_binding.tcyr` — 34 assertions over all three widths
+  and all three binding forms. **Mutation-proven: 6 passed / 28 failed on the shipped 6.5.60
+  compiler, 34/34 after.** The 6 that pass on stock are precisely the two non-vacuity groups —
+  group A (the annotated declaration form, which always worked, so a wholesale regression
+  cannot hide) and group D (operand integrity). Every lane is asserted, never just lane 0 —
+  the v6.5.59 lesson that a lane-0 assertion passes while half the vector is stale.
+
+  In `crossos/` deliberately: the fix is ABI-shaped on two axes a Linux run cannot see. The
+  SysV/aarch64 receive stores a **register pair**; the Win64 receive passes the destination
+  address as a hidden arg 0 — and the assignment-form branch is new on **both**. Meanwhile
+  `simd_has_avx2()` returns 0 off x86, so ecb/ach/pi exercise the 128-bit kernel underneath
+  these bindings while cass exercises the retptr path.
+
+### Notes
+
+- ⚠ **The register allocator was investigated and exonerated.** The first hypothesis for the
+  wrong values was the picker — its safety scan disqualifies on an exact `ru_m == 0x85` while
+  its `lea` arm uses the reg-field-agnostic `(ru_m & 0xC7) == 0x85`, so a non-rax
+  `[rbp+disp32]` form is invisible to it. That asymmetry is real and still there, but it is
+  **not** this bug: `CYRIUS_REGALLOC_PICKER_CAP=0` on the stock compiler reproduces the wrong
+  values exactly. A second hypothesis — that the picker excludes params by param *count*
+  (`iv_li = pc`) while the slot map is by *slot*, so a param following a wide param is treated
+  as an ordinary local — was implemented, measured, and **reverted**: it did not fix the defect
+  and changed cycc's own codegen with no demonstrated bug behind it. Recorded here because
+  both are plausible-looking and both are wrong; the mechanism was found by bisecting the
+  binding form, not by reading the allocator.
+
+### Benchmarks
+
+- cycc **1,205,088 B** (`.text` **1,054,440**, +2,152 B) · self_compile **677 ms** (671 → 677,
+  **+0.9 %**) — ordinary growth-tax for two new parse-time receive paths, no single dominant
+  patch to bisect.
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed
+  (cybs compiles the new helper — no bootstrap ceiling) · `check.sh` **240/240** · cross-OS on
+  **ecb** / **ach** / **cass** / **pi**, all four `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+- Differential corpus **GREEN, 406/407 identical** in both default and `CYRIUS_DCE=1` torture mode.
+  ⚠ Read that as coverage, not comfort — see the blind-spot note above.
+- ⚠ **The cross-OS leg was load-bearing this release, not ceremony.** The Win64 receive is a
+  retptr path with no Linux equivalent, so the assignment-form branch on PE was **unexercised
+  until cass ran it**. `simd_has_avx2()` returns 0 off x86, so ecb/ach/pi additionally proved the
+  128-bit kernel still sits correctly underneath all three binding forms.
+
 ## [6.5.60] — 2026-09-05
 
 ### Fixed

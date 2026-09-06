@@ -1449,6 +1449,81 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     return 1;
 }
 
+# v6.5.61 — `r = f(...);` where `r` is a VECTOR local and `f` returns that vector.
+#
+# The DECLARATION form `var r: f64v2 = f(...)` has had a 16/32-byte receive since v5.10.28
+# (the `_is_simd128` / `_is_simd256` paths in PARSE_VAR below). The ASSIGNMENT form never got
+# one: it fell through to the generic `EFLSTORE(S, idx)` in parse.cyr, an 8-BYTE store, so a
+# correctly-declared `var r: f64v2;` followed by `r = f64v2_add(a, b);` kept at most the low
+# half and read back as zero — with only a misleading "assigning non-pointer to typed pointer"
+# warning to show for it.
+#
+# ⭐ EXACTLY THE SPLIT v6.5.57 CLOSED FOR STRUCTS ("the assignment path gets the multi-word copy
+# the declaration path has had"), one type-class over. That fix added
+# `_try_aggregate_copy_assign` for the local-to-local shape `c = a`; the CALL-RHS shape was
+# still uncovered for structs' vector siblings. When a receive path is added to declarations,
+# the assignment path is not a separate feature — it is the other half of the same statement.
+#
+# Mirrors PARSE_VAR's receive exactly, including the Win64 retptr branch: on PE a 16/32-byte
+# return is written through a hidden pointer, so the destination address is pushed as arg 0
+# rather than a pair being stored after the call.
+fn _try_vector_call_assign(S, noff): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (PEEKT(S) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
+    var dst_li = FINDLOCAL(S, noff);
+    if (dst_li < 0) { return 0; }
+    var vfi = FINDFN(S, PEEKV(S));
+    if (vfi < 0) { return 0; }
+    var vrs = GFRS(S, vfi);
+    if (vrs > 0 - 2048) { return 0; }   # callee does not return a vector — not our shape
+    var lt = GLTYPE(S, dst_li);
+    # Destination is not the vector the callee returns. Diagnose rather than fall through to
+    # the 8-byte store, which is what made every form of this silent (see the header above).
+    if (lt != vrs) {
+        ERR_MSG(S, "vector return type does not match the assigned variable", 55);
+        return 0;
+    }
+    if (_vec_desc(S, lt) != 1) { return 0; }
+    var vns = GVEC_NSLOTS(S);
+    if (vns <= 1) { return 0; }
+    if (_TARGET_PE == 1) {
+        STI(S, GTI(S) + 1);   # consume callee IDENT
+        STI(S, GTI(S) + 1);   # consume '('
+        EFLADDR(S, dst_li);
+        EPUSHR(S);
+        var vargc = 1;
+        var vuarg = 0;
+        if (PEEKT(S) != 11) {
+            var vgo = 1;
+            while (vgo == 1) {
+                if (_try_push_struct_addr_arg(S, vfi, vuarg) == 0) {
+                    PCMPE(S);
+                    EPUSHR(S);
+                }
+                vargc = vargc + 1;
+                vuarg = vuarg + 1;
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                else { vgo = 0; }
+            }
+        }
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+        STI(S, GTI(S) + 1);   # consume ')'
+        ECALLPOPS(S, vargc);
+        var vtarget = L64(_fnt_offsets + vfi * 8);
+        if (vtarget >= 0) { ECALLTO(S, vtarget); }
+        else { ECALLFIX(S, vfi); }
+        ECALLCLEAN(S, vargc);
+    } else {
+        PCMPE(S);
+        if (vns == 4) { EFLSTORE_F64V4_PAIR(S, dst_li); }
+        else { EFLSTORE_F64V2_PAIR(S, dst_li); }
+    }
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);   # consume ';'
+    return 1;
+}
+
 # Parse: var IDENT = expr ;
 fn PARSE_VAR(S): i64 {
     STI(S, GTI(S) + 1);  # consume VAR
@@ -1802,6 +1877,52 @@ fn PARSE_VAR(S): i64 {
             }
         }
     }
+    # v6.5.61 — INFER THE VECTOR TYPE FROM THE CALLEE'S RETURN TYPE WHEN THE VAR HAS NONE.
+    #
+    # The 128-bit and 256-bit receive paths below are gated entirely on `pscale`, and `pscale`
+    # came ONLY from the var's own type annotation. So `var r: f64v2 = f64v2_add(a, b);` stored
+    # both halves, while `var r = f64v2_add(a, b);` — the spelling a user reaches for first —
+    # fell through to the SCALAR init and read back as zero. Silent: exit 0, no diagnostic,
+    # wrong numbers. Every width was affected (f32v4 → 4, f64v2 → 0, f64v4 → 0) and every
+    # vector-returning fn, stdlib or user-defined, not just `lib/simd.cyr`.
+    #
+    # ⚠ The corpus could not see this because every existing call site spells the annotation:
+    # `var sum: f64v2 = f64v2_add(&x, &y);`. An API's most natural spelling being the one no
+    # test uses is exactly the blind spot the v6.5.55 payload-enum sweep found from the other
+    # side — write the test for the shape a consumer writes, not the shape the stdlib writes.
+    #
+    # The callee's return sid is already recorded, so the annotation is redundant information.
+    # Take it from GFRS when the var declares none; a var that DOES declare one keeps it (a
+    # mismatch is diagnosed at the receive paths below rather than silently truncated).
+    if (GINFN(S) == 1) {
+        if (PEEKT(S) == 4) {
+            var _vin_ti = GTI(S) + 1;
+            if (TOKTYP(S, _vin_ti) == 2) {
+                if (TOKTYP(S, _vin_ti + 1) == 10) {
+                    var _vin_fi = FINDFN(S, TOKVAL(S, _vin_ti));
+                    if (_vin_fi >= 0) {
+                        var _vin_rs = GFRS(S, _vin_fi);
+                        if (_vin_rs <= 0 - 2048) {
+                            if (pscale == 0) {
+                                # No annotation of its own: take the callee's.
+                                if (scalar_type == 0) { pscale = _vin_rs; }
+                            }
+                            # An annotation that DISAGREES with the callee is a type error, and
+                            # it used to be silent in the same way the missing one was: the
+                            # receive paths below require `GFRS == pscale`, so a mismatch simply
+                            # fell out of them into the scalar init. `var r: f64v4 =
+                            # f64v2_add(a, b);` and `var r: i64 = f64v2_add(a, b);` both read
+                            # back as zero, exit 0. Refuse them instead of truncating.
+                            if (pscale != _vin_rs) {
+                                ERR_MSG(S, "vector return type does not match the declared type", 51);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     # v5.5.36 Phase 2: `var p: StructName;` — stack-local struct
     # with no initializer. `pscale < 0` means the type annotation
     # resolved to a struct id (FINDSTRUCT returned sid, `pscale`

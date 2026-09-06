@@ -1558,6 +1558,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # ⚠ Must be read BEFORE PCMPE — afterwards the token cursor has moved past the
             # callee name and FINDFN would resolve nothing.
             if (_try_aggregate_copy_assign(S, noff) == 1) { return 0; }
+            # v6.5.61 — `r = f(...)` into a VECTOR local needs the 16/32-byte receive the
+            # declaration form has; without it this fell to the 8-byte EFLSTORE below.
+            if (_try_vector_call_assign(S, noff) == 1) { return 0; }
             _asg_ret_sid = 0;
             if (PEEKT(S) == 2) {
                 if (TOKTYP(S, GTI(S) + 1) == 10) {

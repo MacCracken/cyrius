@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.60** (2026-09-05) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.61** (2026-09-05) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -222,7 +222,7 @@ Every open issue is pinned to a numbered release with acceptance criteria. Sizes
 decomposing the work.** Each row below states what SHIPS in that release and what must be true
 for it to be done.
 
-#### `.57` — aggregate assignment copies every word *(in flight)*
+#### `.57` — ✅ SHIPPED: aggregate assignment copies every word
 *(closes `2026-09-05-aggregate-assignment-truncates-to-8-bytes`)*
 
 Three fixes, one defect surface: the assignment path gets the multi-word copy the declaration path
@@ -291,7 +291,35 @@ the ymm kernel's 1.5-2× would be collectable in value-form code too. That is th
 runtime-selection problem `.59` hit, and it should not be started without first measuring what an
 all-VEX 128-bit path is worth on a real chain.
 
-#### `.61` — ⛔ FOLDED INTO THE REGISTER CLASS. Both items measured NULL.
+#### `.61` — ✅ SHIPPED: a value-form vector return survived exactly ONE binding form
+
+⚠ **THE NUMBERING BELOW WAS OFF BY ONE AND THIS IS WHERE IT WAS CORRECTED.** The block that
+follows was written as slot `.61`; both of its items were implemented, measured NULL and
+**reverted**, so nothing ever shipped under that number. The next cut after `.60` was therefore
+`.61`, not `.62`, and every slot below has moved down one. A slot list that numbers *plans*
+rather than *releases* drifts the moment a plan produces no release.
+
+`var r: f64v2 = f64v2_add(a, b);` stored both halves. `var r = f64v2_add(a, b);` — no annotation
+— read back **0**. So did `var r: f64v2; r = f64v2_add(a, b);` (assignment) and any mismatched
+annotation. Silent: exit 0, no diagnostic, wrong numbers, every width, user-defined callees as
+well as stdlib. `f64v2_scale(a, 3)` returned `lo=0, hi=3` — the scale factor leaking into lane 1.
+
+Two causes: the 16/32-byte receive paths were gated on the var's OWN annotation when the callee's
+return sid was already sitting in `GFRS`; and the assignment path had **no vector receive at all**,
+falling to the generic 8-byte `EFLSTORE`. ⭐ **Exactly the split `.57` closed for structs, one
+type-class over** — when a receive path is added to declarations, the assignment path is not a
+separate feature, it is the other half of the same statement.
+
+⛔ **The corpus could not see it because every existing call site spells the annotation.** The
+differential is **406/407 identical** — a blind spot, not an inert fix. Gated by
+`tests/tcyr/crossos/simd_value_return_binding.tcyr` (mutation-proven 6/28 → 34/34), in `crossos/`
+because the Win64 receive is a retptr path that no Linux run exercises.
+
+⚠ The register allocator was investigated and **exonerated** (`PICKER_CAP=0` reproduces the wrong
+values). A second hypothesis — params excluded by param *count* while the slot map is by *slot* —
+was implemented and **reverted** for changing cycc's codegen with no demonstrated bug behind it.
+
+#### ~~`.61`~~ — ⛔ FOLDED INTO THE REGISTER CLASS. Both items measured NULL. *(never cut; see above)*
 
 Scoped as (a) a 128-bit arm for `DSE_PASS` and (b) constant-`n` loop elision. **(b) was
 implemented, verified firing, and measured at NOTHING** — 16 ms → 17 ms on a 3-link f32v4 chain
@@ -315,20 +343,86 @@ the critical path. **The result store and its reload by the next link are ON it.
 That is exactly what a vector register class removes, and it is why (a) would also have been
 null: eliminating a dead store does not shorten the dependency chain.
 
-#### `.62`–`.63` — the vector register class
+#### `.62` — the v6.5.24 AVX2 gate is a live perf regression: hand-SIMD is SLOWER than scalar
+
+⭐ **Found by the `.61` slot-entry premise-check, and it inverts the arc's premise.** On an 8-slot
+SOA biquad (svara's `svara_formant_bank_process` shape), measured on one box with the **compiler
+pinned at 6.5.60 and only `lib/simd.cyr` varied**:
+
+| lib | scalar | best hand-`f64v4` | ratio |
+|---|---|---|---|
+| 6.5.23 | 82,553 ns | 98,686 ns | 1.20× |
+| 6.5.60 | 82,063 ns | 158,469 ns | **1.93×** |
+
+**+59 % caused by the lib change alone**, with the scalar column drifting −0.59 % as an internal
+control. The compiler is exonerated: cycc 6.5.59 and 6.5.60 emit a byte-identical binary from
+lib 6.5.59. The whole step is at **`.24`**; `.52`/`.58`/`.59` move this shape by <1 %.
+
+The dominant cost is not the ymm kernel — it is the **`simd_has_avx2()` FUNCTION CALL executed on
+every op**. And the `_ptr` wrappers `.60` deliberately left on AVX2 are **hard-wired to n=4**, so
+`.60`'s "there the loop body is all-VEX and it wins 2×" is true of long loops and false of these.
+Dropping the dispatch from a wrapper removes the call *and* the n=4 ymm loss together.
+
+⚠ Re-measure before committing to the shape — `.59` implemented an emitter-side dispatch in full
+and reverted it at 23 → 22 ms. The measurement that matters is scalar-vs-SIMD **within one
+program**, never across programs, and the `.24` step must be reproduced first.
+
+**Done when:** hand-`f64v4` on the biquad shape is no slower than scalar · the `_ptr` batch forms
+keep their win at long n (a control axis, so a sweep cannot silently give it up) · the `.60` gate
+grows a `_ptr` axis and a long-loop axis, since it measures a short value-form chain only and
+would not have caught this · four-host green.
+
+#### `.63` — the inlining lever, and `#inline` stops being a lie
+
+Also from the `.61` premise-check. **`_INLINE_OK = 0` on every backend**, so `_fn_has_simd_param`
+is the only thing admitting anything to the inline path today. The justification, in the comment
+at `parse_fn.cyr:4487`, is a **+25.6 % cycc size regression measured at v1.11.3** — about fifteen
+majors stale and never re-taken.
+
+⛔ **`#inline` has no handler anywhere in `src/`.** svara carries four `#inline` markers in
+`formant.cyr` alone and they are inert comments — a consumer annotating for an optimisation that
+does not exist, with no way to opt in. That is the retired-"≤6 args" shape: **when a rule tells a
+user to work around codegen, the rule is the bug report.** An opt-in directive also sidesteps the
+size objection entirely, because opt-in is not a default flip.
+
+A third, undocumented blocker: `if (pc > 2) { can_inline = 0; }` (`parse_fn.cyr:4541`) rejects all
+three `fmadd` wrappers on arity alone, however flat their bodies. Any plan phrased as "flatten the
+wrappers and they will all inline" leaves those behind.
+
+**Done when:** `#inline` admits a flat body to the existing replay path · the arity ceiling is
+gone or honestly documented as structural · the +25.6 % figure is **re-taken on today's compiler**
+and recorded whatever it says · svara's markers do something measurable.
+
+#### `.64` — the vector register class
 *(`simd-f64v-memory-operand`, part 3 — closes the issue)*
 
-Only now, because until `.58` lands every chain link crosses a call and **SysV has no callee-saved
-XMM**, so any measurement before that is of the wrong thing. Needs: (a) xmm0-15 modelled as a
-**caller-saved** class with intervals split at every call — the existing picker's "hold in a
-callee-saved register for the interval" model does not transfer; (b) value-form ops emitting
-reg-reg-reg instead of the memory kernel; (c) real 16/32-byte liveness, since the current
-per-local safety scan is byte-pattern and 8-byte-only.
+Needs: (a) xmm0-15 modelled as a **caller-saved** class with intervals split at every call — the
+existing picker's "hold in a callee-saved register for the interval" model does not transfer;
+(b) value-form ops emitting reg-reg-reg instead of the memory kernel; (c) real 16/32-byte
+liveness, since the current per-local safety scan is byte-pattern and 8-byte-only.
 
-**Done when:** the **svara formant bench closes to single-digit-× of the Rust baseline** — this is
-the minor's stated acceptance anchor and the reason the arc exists.
+⛔ **The old "Done when" was `the svara formant bench closes to single-digit-× of the Rust
+baseline`, and the `.61` premise-check REFUTED it as an acceptance test for this slot.**
+Re-measured on the day: **178.2 µs against Rust 4.819 µs = 37.0×**, and single-digit-× needs
+≤ 48.1 µs. With the vectorizable loop at **zero** the untouched residue is still ~10.9–15.3×.
+Worse, the 4.2 % gained since cc 6.4.11 was **consumer-side** — svara's own `benches/history.csv`
+already recorded 178.3 µs under a `.35` pin — so the entire SIMD arc has moved this anchor by
+nothing measurable. The bench is ~29 % out-of-line accessor calls and ~13 % a scalar DC-blocker
+pass; its loop body is 183 instructions per slot of which **9 are float arithmetic**. That is a
+scalar codegen and inlining problem wearing a SIMD costume.
 
-#### `.64` — payload enums stop allocating for real
+⚠ The gating premise was also already satisfied: the slot said it could not be measured "until
+`.58` lands, because every chain link crosses a call and SysV has no callee-saved XMM". At 6.5.60
+there is **no `call` in the measured kernel at all** — the wrapper inlines and the builtin expands
+to a bounded constant-`n` loop in place.
+
+**Done when:** measured on the shape the issue is actually about — a 3-link value-form chain,
+currently **19.9 ms serial vs 14.6 ms with the links made independent** (the ~26 % that is pure
+store→load dependency stall) — the serial figure closes toward the independent one and the
+per-link 26-instruction / 14-memory-op expansion shrinks. Keep the svara bench as a *reported*
+number, not as this slot's gate.
+
+#### `.65` — payload enums stop allocating for real
 *(closes `sock-send-result-allocates-per-call`)*
 
 `.55` shipped the compiler capability (`enum Name: stack`). This is the ecosystem half: teach `?`
@@ -344,7 +438,7 @@ ecosystem-wide.
 **Done when:** `Result`/`Option`/`Either` construction allocates **0 bytes**, every existing
 consumer still compiles, and crossos is green on all four hosts.
 
-#### `.65` — whole-program NOP compaction
+#### `.66` — whole-program NOP compaction
 *(closes `ir-regalloc-rewrite-needs-reemit`)*
 
 The `.54` residual: 8,249 NOPs are the IR passes' own eliminations, written after every per-function
@@ -359,7 +453,7 @@ claimed, and IR=3 is already at `.text` parity. It is last of the code work for 
 **Done when:** IR=3 `.text` is measurably smaller than the default build and an IR=3-built cycc
 still reproduces the default cycc byte-identically.
 
-#### `.66`–`.67` — stackless coroutines: the CPS transform
+#### `.67`–`.68` — stackless coroutines: the CPS transform
 *(closes `stiva-stackless-coroutines-interactive-exec`, and closes the minor)*
 
 Half A (the multi-waiter registry) shipped at `.26`. Half B is the compiler-level transform:
