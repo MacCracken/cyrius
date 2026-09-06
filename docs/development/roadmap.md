@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.59** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
+**Current head: v6.5.60** (2026-09-05) — cycc **1,200,792 B** (.text 1,050,000) · `check.sh` **GREEN** · seed-derive **GREEN** · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **125** shell gates under `tests/gates/<bucket>/` · self_compile **668 ms** · **4 open issues + 3 open proposals**.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **119** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -273,15 +273,23 @@ The call was never the bottleneck. Do not re-run this.
    (SSE, n=4) runs **8 ms** against **23 ms** for `f64v256_add` (AVX2 ymm), same box, same loop.
    That inverts the premise of the whole 256-bit widening arc.
 
-#### `.60` — find out why the 256-bit path is slower than the 128-bit one
+#### `.60` — ✅ SHIPPED: the 256-bit gap explained, and closed where it was costing
 
-Start from the fact above, not from the inliner. Candidates to measure: the `vzeroupper` emitted
-per `EMIT_F64V4_LOOP` invocation, loop overhead at n=4 (one iteration either way, so the ymm
-version's setup may dominate), and AVX-SSE transition penalties if any surrounding code leaves
-upper state dirty.
+**The kernel was never the problem.** With the loop body held all-VEX the ymm kernel wins (n=4:
+4 ms vs 6 ms; n=256: 2 ms vs 4 ms). But a VALUE-form `f64v4` is moved through frame slots by
+LEGACY-SSE pair moves, so each call crosses the ISA boundary twice and the mitigating
+`vzeroupper` — emitted per invocation — costs more than the halved iteration count saves.
 
-**Done when:** the 8 ms vs 23 ms gap is explained with a measurement, and either closed or
-documented as inherent with the arc re-scoped accordingly.
+Value forms moved to the 128-bit kernel: **3-link chain 68 ms → 30 ms, 1-op loop 23 ms → 9 ms.**
+The `_ptr` batch forms KEEP AVX2 (all-VEX loop body, ~2× win).
+
+⛔ **`vzeroupper` is not the thing to delete** — removing it measured **5.6× worse** (25 → 139 ms).
+
+📌 **What this leaves for the register-class arc.** The real ceiling is now ISA UNIFORMITY: if the
+128-bit moves and ops were VEX-encoded whenever AVX is available, there would be no transition and
+the ymm kernel's 1.5-2× would be collectable in value-form code too. That is the same
+runtime-selection problem `.59` hit, and it should not be started without first measuring what an
+all-VEX 128-bit path is worth on a real chain.
 
 #### `.61` — kill the round-trips inlining exposes
 *(`simd-f64v-memory-operand`, part 2)*

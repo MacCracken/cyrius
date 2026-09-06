@@ -614,32 +614,52 @@ fn f64v4_lane3(v: f64v4): i64 { return load64(&v + 24); }
 # reserving it as a keyword would make this very definition a parse error.
 fn f64v4_add(a: f64v4, b: f64v4): f64v4 {
     var r: f64v4;
-    if (simd_has_avx2() == 1) { f64v256_add(&r, &a, &b, 4); }
-    else { f64v_add(&r, &a, &b, 4); }
+    # v6.5.60 — VALUE form deliberately stays on the 128-bit kernel. MEASURED: the ymm
+    # kernel is faster in isolation (n=4: 4 ms vs 6 ms) but a value-form f64v4 is moved
+    # in and out of frame slots by LEGACY-SSE pair moves, so each call crosses the
+    # AVX<->SSE boundary and pays a `vzeroupper` that costs more than the halved
+    # iteration count saves: 24 ms against 14 ms on the same loop. The `_ptr` batch
+    # forms above KEEP the AVX2 gate — there the loop body is all-VEX and it wins 2x.
+    f64v_add(&r, &a, &b, 4);
     return r;
 }
 
 # 4-lane packed-double subtract (value form).
 fn f64v4_sub(a: f64v4, b: f64v4): f64v4 {
     var r: f64v4;
-    if (simd_has_avx2() == 1) { f64v256_sub(&r, &a, &b, 4); }
-    else { f64v_sub(&r, &a, &b, 4); }
+    # v6.5.60 — VALUE form deliberately stays on the 128-bit kernel. MEASURED: the ymm
+    # kernel is faster in isolation (n=4: 4 ms vs 6 ms) but a value-form f64v4 is moved
+    # in and out of frame slots by LEGACY-SSE pair moves, so each call crosses the
+    # AVX<->SSE boundary and pays a `vzeroupper` that costs more than the halved
+    # iteration count saves: 24 ms against 14 ms on the same loop. The `_ptr` batch
+    # forms above KEEP the AVX2 gate — there the loop body is all-VEX and it wins 2x.
+    f64v_sub(&r, &a, &b, 4);
     return r;
 }
 
 # 4-lane packed-double multiply (value form).
 fn f64v4_mul(a: f64v4, b: f64v4): f64v4 {
     var r: f64v4;
-    if (simd_has_avx2() == 1) { f64v256_mul(&r, &a, &b, 4); }
-    else { f64v_mul(&r, &a, &b, 4); }
+    # v6.5.60 — VALUE form deliberately stays on the 128-bit kernel. MEASURED: the ymm
+    # kernel is faster in isolation (n=4: 4 ms vs 6 ms) but a value-form f64v4 is moved
+    # in and out of frame slots by LEGACY-SSE pair moves, so each call crosses the
+    # AVX<->SSE boundary and pays a `vzeroupper` that costs more than the halved
+    # iteration count saves: 24 ms against 14 ms on the same loop. The `_ptr` batch
+    # forms above KEEP the AVX2 gate — there the loop body is all-VEX and it wins 2x.
+    f64v_mul(&r, &a, &b, 4);
     return r;
 }
 
 # 4-lane packed-double divide (value form).
 fn f64v4_div(a: f64v4, b: f64v4): f64v4 {
     var r: f64v4;
-    if (simd_has_avx2() == 1) { f64v256_div(&r, &a, &b, 4); }
-    else { f64v_div(&r, &a, &b, 4); }
+    # v6.5.60 — VALUE form deliberately stays on the 128-bit kernel. MEASURED: the ymm
+    # kernel is faster in isolation (n=4: 4 ms vs 6 ms) but a value-form f64v4 is moved
+    # in and out of frame slots by LEGACY-SSE pair moves, so each call crosses the
+    # AVX<->SSE boundary and pays a `vzeroupper` that costs more than the halved
+    # iteration count saves: 24 ms against 14 ms on the same loop. The `_ptr` batch
+    # forms above KEEP the AVX2 gate — there the loop body is all-VEX and it wins 2x.
+    f64v_div(&r, &a, &b, 4);
     return r;
 }
 

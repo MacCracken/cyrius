@@ -4,6 +4,56 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.60] — 2026-09-05
+
+### Fixed
+
+- **The `f64v4` value forms paid an AVX↔SSE transition on every call. Dropping AVX2 from them
+  made the 3-link chain 68 ms → 30 ms and a 1-op loop 23 ms → 9 ms** (best-of-5, same box).
+
+  ⭐ **The 256-bit kernel is not the problem — the code AROUND it is.** Measured with the loop
+  body held all-VEX, the ymm kernel wins comfortably:
+
+  | scenario | 128-bit kernel | 256-bit kernel |
+  |---|---|---|
+  | pure kernel loop, n=4 | 6 ms | **4 ms** |
+  | pure kernel loop, n=256 | 4 ms | **2 ms** |
+  | value form (SSE pair moves in the loop) | **14 ms** | 24 ms |
+
+  A *value-form* `f64v4` is moved in and out of frame slots by **legacy-SSE pair moves**
+  (`66 0F 10/11`), so a loop calling `f64v4_add(a, b)` alternates a VEX kernel with SSE moves and
+  crosses the ISA boundary twice per iteration. The `vzeroupper` that mitigates that is emitted
+  per invocation, and at n=4 it costs more than the halved iteration count saves. So the value
+  forms now use the 128-bit kernel; the **`_ptr` batch forms keep their AVX2 gate**, because there
+  the loop body is all-VEX and the ymm path wins about 2×.
+
+  ⛔ **`vzeroupper` is NOT the thing to delete, and that was measured before assuming.** Removing
+  it from `EMIT_F64V4_LOOP` made the same benchmark **5.6× worse — 25 ms → 139 ms**. Unmitigated
+  AVX-SSE transition penalties cost far more than the instruction; it is already the cheap option.
+
+### Added
+
+- `tests/gates/codegen/simd_valueform_no_avx_transition.sh` — compares the stdlib value form
+  against a hand-written 128-bit-kernel reference as a **ratio measured back-to-back**, so box
+  load moves both halves together (bound 170 %, measured 100 %, pre-fix 287 %). Axis 2 is a
+  control asserting the `_ptr` batch forms keep AVX2, so a future sweep cannot silently give up
+  the 2× win there; axis 3 checks all four lanes.
+
+### Benchmarks
+
+- Release gate GREEN end to end: self-host fixpoint · seed-derive (29,024-byte seed) ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four green ·
+  bench. ⚠ Cross-OS mattered here specifically: this is a `lib/simd.cyr` change, and
+  `simd_has_avx2()` returns 0 on every non-x86 target, so the value forms were already taking the
+  128-bit path on aarch64 / Mach-O-arm64 / cx — the four-host run confirms nothing moved there.
+
+### Notes
+
+- ⚠ **Correcting a number from [6.5.59].** That entry reported the 256-bit path as "~3× slower".
+  Re-measured with inlining held constant, it is **1.7×** (14 ms vs 24 ms) — the 3× figure had
+  conflated inlining state with the instruction set, because the two fixtures differed in both.
+  The direction held; the magnitude did not. A/B one variable at a time.
+
 ## [6.5.59] — 2026-09-05
 
 ### Fixed

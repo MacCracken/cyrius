@@ -186,6 +186,14 @@ sh "$ROOT/tests/gates/codegen/simd_param_inline_reach.sh"
 # which is why no existing SIMD test caught it.
 sh "$ROOT/tests/gates/codegen/inline_simd256_return_lanes.sh"
 
+# v6.5.60: the f64v4 VALUE forms must not pay an AVX<->SSE transition per call. The ymm kernel is
+# faster in isolation, but a value-form vector is moved through frame slots by LEGACY-SSE pair
+# moves, so each call crosses the ISA boundary twice and the mitigating `vzeroupper` costs more
+# than the halved iteration count saves (1-op loop 23 -> 9 ms). ⛔ Deleting the vzeroupper is NOT
+# the fix — measured 5.6x WORSE (25 -> 139 ms). Axis 2 is the control: the `_ptr` batch forms keep
+# AVX2, where the loop body is all-VEX and it wins ~2x.
+sh "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called
