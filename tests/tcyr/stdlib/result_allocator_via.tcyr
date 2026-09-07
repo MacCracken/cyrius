@@ -1,23 +1,27 @@
-# result_allocator_via.tcyr — v6.5.41: Result boxes can be constructed from a CALLER-SUPPLIED
-# allocator, so a long-running server stops leaking 16 B per socket call.
+# result_allocator_via.tcyr — v6.6.0: Result construction allocates NOTHING, and the v6.5.41
+# allocator escape hatch (`ok_via` / `err_via`) still works on top of that.
 #
-# THE DEFECT (sandhi, filed against 6.4.86, reproducing unchanged through 6.5.40). Every
-# `Ok(v)` / `Err(e)` allocates a 16-byte box from the GLOBAL bump allocator, whose only reclaim
-# is `alloc_reset()` — and that invalidates every pointer it has ever handed out, so a server
-# can never call it. Measured: 100 × `sock_send` grows the global allocator by exactly 1600 B.
+# ⛔ THIS FILE USED TO ASSERT THE OPPOSITE, and the inversion is the point of the release.
+# Through v6.5.x every `Ok(v)` / `Err(e)` allocated a 16-byte box from the GLOBAL bump allocator,
+# whose only reclaim is `alloc_reset()` — and that invalidates every pointer it has ever handed
+# out, so a long-running server could never call it. sandhi filed it against 6.4.86 with the
+# measurement `100 x sock_send` grows the global allocator by exactly 1600 B, unbounded, no
+# workaround. v6.5.41 shipped `ok_via`/`err_via` as an escape hatch and THIS FILE PINNED IT,
+# with controls asserting that the ordinary path STILL GREW:
 #
-# ⭐ THE CAUSE IS NOT `Result` AND NOT net.cyr. The enum payload-variant constructor lowering
-# (`src/frontend/parse_types.cyr:386`) unconditionally emits a call to the global `alloc` for
-# ANY payload-carrying variant — a plain user `enum Color { Red(v); }` allocates the same 16 B —
-# and the `: Result` return annotation is a codegen no-op. Fixing that properly means changing
-# the representation across 24 enum declarations and 516 construction sites, which is a
-# different size class. This gate pins the escape hatch, not the root cause.
+#     assert_neq(d_global, 0, "CONTROL: 100x Ok() still grows the global allocator")
+#     assert_eq(d_send_global, 1600, "CONTROL: 100x sock_send still grows it by exactly 1600 B")
 #
-# ⛔ EVERY ASSERTION HERE IS PAIRED WITH ITS CONTROL, and that is the point. On a machine where
-# the allocator happened not to move, a bare "delta == 0" would pass while proving nothing. So
-# each zero-growth claim is accompanied by an assertion that the OLD path still grows — if the
-# global allocator ever stops moving for `Ok(...)`, these tests fail rather than silently
-# becoming vacuous.
+# v6.6.0 made `Result`/`Option`/`Either` the value form — tag in rax, payload in rdx, no heap box
+# at all — so those two controls now assert the defect is still present. They are inverted here:
+# the ordinary path must grow by **0**.
+#
+# ⭐ THE ANTI-VACUOUS PROBLEM MOVED, IT DID NOT GO AWAY. When every number under test is 0, a
+# broken measurement reads exactly like a fixed allocator. The old controls guarded that by
+# asserting the OLD path still moved; there is no old path any more, so the control is now a
+# genuine allocation of the same size — 100 x alloc(16) must still measure 1600 B. If THAT ever
+# reads 0, `alloc_used()` is lying and every zero below is meaningless, so it fails loudly
+# instead of passing quietly.
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -35,42 +39,57 @@ fn main(): i64 {
     alloc_init();
     var a = arena_allocator(65536);
 
-    test_group("ok_via / err_via build a usable box without touching the global allocator");
-    var r = ok_via(a, 7);
-    assert_eq(is_ok(r), 1, "ok_via box reads as Ok");
-    assert_eq(result_unwrap(r), 7, "ok_via payload round-trips through result_unwrap");
-    var e = err_via(a, 5);
-    assert_eq(is_err_result(e), 1, "err_via box reads as Err");
-    assert_eq(is_ok(e), 0, "err_via box does not read as Ok");
+    test_group("the value form: Ok/Err carry their payload with no box at all");
+    var o_tag, o = Ok(7);
+    assert_eq(is_ok(o_tag), 1, "Ok reads as Ok");
+    assert_eq(result_unwrap(o_tag, o), 7, "Ok payload round-trips through result_unwrap");
+    var x_tag, x = Err(5);
+    assert_eq(is_err_result(x_tag), 1, "Err reads as Err");
+    assert_eq(is_ok(x_tag), 0, "Err does not read as Ok");
+    assert_eq(err_code_of(x_tag, x), 5, "Err carries its code");
 
-    test_group("100 constructions: allocator-supplied vs global");
+    test_group("ok_via / err_via keep working — the hatch outlived its reason");
+    var r_tag, r = ok_via(a, 7);
+    assert_eq(is_ok(r_tag), 1, "ok_via reads as Ok");
+    assert_eq(result_unwrap(r_tag, r), 7, "ok_via payload round-trips");
+    var e_tag, e = err_via(a, 5);
+    assert_eq(is_err_result(e_tag), 1, "err_via reads as Err");
+    assert_eq(is_ok(e_tag), 0, "err_via does not read as Ok");
+
+    test_group("100 constructions allocate ZERO — the headline of v6.6.0");
     var b1 = alloc_used();
     var i = 0;
-    while (i < 100) { var x = ok_via(a, i); i = i + 1; }
+    while (i < 100) { var xt, xv = ok_via(a, i); i = i + 1; }
     var d_via = alloc_used() - b1;
     var b2 = alloc_used();
     i = 0;
-    while (i < 100) { var y = Ok(i); i = i + 1; }
+    while (i < 100) { var yt, yv = Ok(i); i = i + 1; }
     var d_global = alloc_used() - b2;
     assert_eq(d_via, 0, "100x ok_via grows the global allocator by 0 bytes");
-    # The control. If this ever reads 0 the assertion above has become meaningless.
-    assert_neq(d_global, 0, "CONTROL: 100x Ok() still grows the global allocator (else the test above is vacuous)");
+    assert_eq(d_global, 0, "100x Ok() grows the global allocator by 0 bytes (was 1600 through 6.5.x)");
 
-    test_group("sock_send_a on a real socketpair — the filed measurement");
+    # THE CONTROL. Every number above is 0, so this is what proves the measurement still works.
+    var b0 = alloc_used();
+    i = 0;
+    while (i < 100) { var junk = alloc(16); i = i + 1; }
+    var d_real = alloc_used() - b0;
+    assert_eq(d_real, 1600, "CONTROL: 100x alloc(16) still measures 1600 B (else every 0 above is vacuous)");
+
+    test_group("sock_send on a real socketpair — the filed measurement, now zero");
     # socketpair(AF_UNIX=1, SOCK_STREAM=1, 0, sv). Skipped rather than failed if unavailable,
     # so the Result half above still runs on a host without AF_UNIX.
     if (syscall(53, 1, 1, 0, &sv) >= 0) {
         var wfd = load64(&sv) & 0xFFFFFFFF;
         var b3 = alloc_used();
         i = 0;
-        while (i < 100) { var s1 = sock_send_a(a, wfd, "hello", 5); i = i + 1; }
+        while (i < 100) { var s1t, s1 = sock_send_a(a, wfd, "hello", 5); i = i + 1; }
         var d_send_via = alloc_used() - b3;
         var b4 = alloc_used();
         i = 0;
-        while (i < 100) { var s2 = sock_send(wfd, "hello", 5); i = i + 1; }
+        while (i < 100) { var s2t, s2 = sock_send(wfd, "hello", 5); i = i + 1; }
         var d_send_global = alloc_used() - b4;
         assert_eq(d_send_via, 0, "100x sock_send_a grows the global allocator by 0 bytes");
-        assert_eq(d_send_global, 1600, "CONTROL: 100x sock_send still grows it by exactly 1600 B (16/call, the filed number)");
+        assert_eq(d_send_global, 0, "100x sock_send grows it by 0 bytes — the filed 1600 B is GONE");
     }
 
     var rr = assert_summary();

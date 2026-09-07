@@ -57,7 +57,7 @@ fn main(): i64 {
     var rt = async_new();
 
     # mock DNS server on 127.0.0.1:sport
-    var srv = payload(udp_socket());
+    var srv_t, srv = udp_socket();
     sock_reuse(srv);
     sock_bind(srv, localhost, sport);
     var mctx = alloc(24);

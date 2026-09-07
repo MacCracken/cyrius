@@ -52,9 +52,9 @@ fn main(): i64 {
     probe_e_to_json(PE_TWO, sb);
     var s = str_builder_build(sb);
     if (streq(str_data(s), "\"PE_TWO\"") == 0) { return 3; }
-    var r = probe_e_from_json_str("\"PE_ONE\"");
-    if (is_ok(r) == 0) { return 4; }
-    if (result_unwrap(r) != PE_ONE) { return 5; }
+    var r_t, r = probe_e_from_json_str("\"PE_ONE\"");
+    if (is_ok(r_t) == 0) { return 4; }
+    if (result_unwrap(r_t, r) != PE_ONE) { return 5; }
     return 0;
 }
 var ec = main();
@@ -91,9 +91,9 @@ include "lib/result.cyr"
 #derive(Deserialize)
 enum bare_e { BE_A = 7; BE_B = 8; }
 fn main(): i64 {
-    var r = bare_e_from_json_str("\"BE_B\"");
-    if (is_ok(r) == 0) { return 3; }
-    if (result_unwrap(r) != 8) { return 4; }
+    var r_t, r = bare_e_from_json_str("\"BE_B\"");
+    if (is_ok(r_t) == 0) { return 3; }
+    if (result_unwrap(r_t, r) != 8) { return 4; }
     return 0;
 }
 var ec = main();

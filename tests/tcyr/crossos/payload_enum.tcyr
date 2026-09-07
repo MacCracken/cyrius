@@ -1,20 +1,29 @@
-# payload_enum.tcyr — v6.5.55. RUNS the payload-variant constructor on real hardware.
+# payload_enum.tcyr — v6.5.55, rewritten for the v6.6.0 VALUE FORM. RUNS the payload-variant
+# constructors on real hardware.
 #
 # WHY THIS IS IN crossos/. The release gate's four-host leg (ecb macOS-arm64, ach Intel-Mac,
 # cass Windows/PE, pi aarch64) COMPILED the payload-variant lowering on every target and never
 # RAN it. Proven with the compiler's own reachability pass: `CYRIUS_DCE_VERBOSE=1` on the five
 # crossos files that pull in lib/result.cyr / lib/tagged.cyr lists `dead: Ok`, `dead: Err`,
 # `dead: Some`, `dead: Left`, `dead: Right` — the constructors were linked out as unreachable.
-# The other 57 files never mention them. So a payload-enum representation defect shipped GREEN
-# through all four hosts on real hardware.
+# So a payload-enum representation defect shipped GREEN through all four hosts on real hardware.
 #
 # ⭐ This is the macOS-rot shape exactly: a target the gate compiles for but never exercises.
 # `src/` has no payload enum anywhere, so the self-host fixpoint cannot cover it either — the
-# cross-host coverage has to be a file that CONSTRUCTS and READS one on the host.
+# cross-host coverage has to be a file that CONSTRUCTS and READS one on the host. That matters
+# more at v6.6.0, not less: the value form returns the payload in rdx, and which register is the
+# second return value is per-ABI. This file is what proves SysV, Win64 and AArch64 agree.
 #
-# ⚠ `load64(box + 8)` is the only expressible payload read (the language has no destructuring;
-# PARSE_MATCH takes constant-valued arms). If the representation changes, change the read and
-# keep every assertion — what is pinned is that simultaneously-live values stay distinct.
+# ⛔ THE READS CHANGED AND THE ASSERTIONS DID NOT. Through v6.5.x the only expressible payload
+# read was `load64(box + 8)`; v6.6.0 binds both halves instead (`var t, v = f();`). Every
+# assertion below still pins the same property — that simultaneously-live values keep their tags
+# and payloads — which is exactly what the old header said to do if the representation changed.
+#
+# ⭐ `enum Wire` IS DELIBERATELY LEFT BOXED and is the anti-vacuous control. It has an arity-2
+# variant, which the value form cannot carry (two payload halves will not fit one register pair),
+# so it keeps the heap layout with tag at +0 and fields at +8/+16 — and those reads must still
+# work untouched. If a change ever breaks boxed payload enums, this half fails while the value
+# half passes.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/result.cyr"
@@ -27,20 +36,34 @@ enum Wire { Ping(v); Pong(a, b); Idle; }
 fn _mk(n): i64 { return Ok(n); }
 
 fn _two_live(): i64 {
-    var a = _mk(11);
-    var b = _mk(22);
-    if (load64(a + 8) != 11) { return 1; }
-    if (load64(b + 8) != 22) { return 2; }
+    var at, a = _mk(11);
+    var bt, b = _mk(22);
+    if (a != 11) { return 1; }
+    if (b != 22) { return 2; }
     if (a == b) { return 3; }
+    if (at != 0) { return 4; }
+    if (bt != 0) { return 5; }
     return 0;
 }
 
+# 16 simultaneously-live Results. Under the value form a Result is TWO values, so it cannot be
+# stored in one slot — `store64(&keep + i * 8, _mk(...))` is now a compile ERROR rather than a
+# silent half-store, which is the whole reason the v6.6.0 refusal exists. A collection of
+# Results is two parallel arrays (or a struct); this is the shape consumers must move to.
 fn _retain(): i64 {
-    var keep: i64[16];
+    var ktag: i64[16];
+    var kpay: i64[16];
     var i = 0;
     while (i < 16) {
-        if (i % 2 == 0) { store64(&keep + i * 8, _mk(100 + i)); }
-        else { store64(&keep + i * 8, Err(200 + i)); }
+        if (i % 2 == 0) {
+            var ot, ov = _mk(100 + i);
+            store64(&ktag + i * 8, ot);
+            store64(&kpay + i * 8, ov);
+        } else {
+            var et, ev = Err(200 + i);
+            store64(&ktag + i * 8, et);
+            store64(&kpay + i * 8, ev);
+        }
         i = i + 1;
     }
     var bad = 0;
@@ -48,9 +71,8 @@ fn _retain(): i64 {
     while (i < 16) {
         var wt = 1; var wp = 200 + i;
         if (i % 2 == 0) { wt = 0; wp = 100 + i; }
-        var box = load64(&keep + i * 8);
-        if (load64(box) != wt) { bad = bad + 1; }
-        if (load64(box + 8) != wp) { bad = bad + 1; }
+        if (load64(&ktag + i * 8) != wt) { bad = bad + 1; }
+        if (load64(&kpay + i * 8) != wp) { bad = bad + 1; }
         i = i + 1;
     }
     return bad;
@@ -61,27 +83,42 @@ assert_eq(_two_live(), 0, "two live values from one call site are distinct");
 assert_eq(_retain(), 0, "16 simultaneously-live values keep their tags and payloads");
 
 test_group("tags, arities and edge payloads on this host");
-var p = Ping(41);
-var q = Pong(5, 6);
-assert_eq(load64(p), 0, "Ping tag");
-assert_eq(load64(p + 8), 41, "Ping payload");
-assert_eq(load64(q), 1, "Pong tag");
-assert_eq(load64(q + 8), 5, "Pong field 0");
-assert_eq(load64(q + 16), 6, "Pong field 1");
-assert_eq(Idle, 2, "bare constant variant is its discriminant");
+var pt, pv = Ok(41);
+assert_eq(pt, 0, "Ok tag");
+assert_eq(pv, 41, "Ok payload");
+var qt, qv = Err(5);
+assert_eq(qt, 1, "Err tag");
+assert_eq(qv, 5, "Err payload");
 
-var z = Ok(0);
-var neg = Err(0 - 1);
-var big = Ok(4611686018427387904);
-assert_eq(load64(z + 8), 0, "payload 0");
-assert_eq(load64(neg + 8), 0 - 1, "payload -1");
-assert_eq(load64(big + 8), 4611686018427387904, "payload 2^62");
-assert_neq(load64(z), load64(Err(0)), "Ok(0) and Err(0) differ in tag");
+var zt, zv = Ok(0);
+var nt, nv = Err(0 - 1);
+var bt, bv = Ok(4611686018427387904);
+assert_eq(zv, 0, "payload 0");
+assert_eq(nv, 0 - 1, "payload -1");
+assert_eq(bv, 4611686018427387904, "payload 2^62");
+var e0t, e0v = Err(0);
+assert_neq(zt, e0t, "Ok(0) and Err(0) differ in tag");
+assert_eq(zv, e0v, "...while carrying the same payload — the tag is the only difference");
 
 test_group("Option/Either constructors run here too");
-var s = Some(7);
-assert_eq(load64(s + 8), 7, "Some payload");
-assert_eq(is_ok(Ok(1)), 1, "is_ok");
-assert_eq(is_err_result(Err(1)), 1, "is_err_result");
+var st, sv = Some(7);
+assert_eq(sv, 7, "Some payload");
+assert_eq(is_some(st), 1, "is_some");
+var lt, lv = Left(3);
+assert_eq(is_left(lt), 1, "is_left");
+assert_eq(lv, 3, "Left payload");
+# A single argument receives rax, which IS the tag — so a predicate can take the call directly.
+assert_eq(is_ok(Ok(1)), 1, "is_ok reads the tag straight out of the call");
+assert_eq(is_err_result(Err(1)), 1, "is_err_result reads the tag straight out of the call");
+
+test_group("ANTI-VACUOUS CONTROL: a BOXED payload enum is untouched by the flip");
+var p = Ping(41);
+var q = Pong(5, 6);
+assert_eq(load64(p), 0, "Ping tag still at +0");
+assert_eq(load64(p + 8), 41, "Ping payload still at +8");
+assert_eq(load64(q), 1, "Pong tag");
+assert_eq(load64(q + 8), 5, "Pong field 0 at +8");
+assert_eq(load64(q + 16), 6, "Pong field 1 at +16 — arity 2 cannot be a register pair");
+assert_eq(Idle, 2, "bare constant variant is its discriminant");
 
 var r = assert_summary();

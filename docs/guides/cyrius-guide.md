@@ -980,16 +980,21 @@ var c2 = Color.BLUE;                 # Namespaced access (v1.11.0+)
 
 Variants with payload data — first-class sum types built on the existing enum infrastructure.
 
+⭐ **As of v6.6.0 the stdlib types `Result`, `Option` and `Either` are the VALUE FORM** (`: stack`,
+below) — they return a `(tag, payload)` register pair and **allocate nothing**. A plain `enum`
+you declare yourself still boxes; the value form is opt-in per declaration.
+
 ```
-enum Result<T, E> {
-    Ok(v),
-    Err(e)
+# The stdlib shape (lib/result.cyr) — this is what Result IS now:
+enum Result<T, E>: stack {
+    Ok(v);
+    Err(e);
 }
 
-var ok = Ok(42);    # 16-byte heap alloc — tag at +0, payload at +8 (see `: stack` below to avoid it)
-var bad = Err(7);   # 16-byte heap alloc — tag at +0, payload at +8
+var tag, val = Ok(42);   # ZERO allocation — tag in the first register, payload in the second
+var et, ev  = Err(7);    # et == 1, ev == 7
 
-# Multi-arg variants — alloc(8 + 8*N), payload[i] at +8 + 8*i
+# A plain `enum` (no `: stack`) still boxes:
 enum Tri<T, U, V> {
     Triple(a, b, c),
     Pair(x, y),
@@ -997,26 +1002,19 @@ enum Tri<T, U, V> {
     Bare                # no parens → auto-incremented int (3 here)
 }
 
-var t = Triple(11, 22, 33);   # 32-byte alloc; tag, [11, 22, 33]
-
-# Empty parens = nullary tagged variant (8-byte alloc, tag-only)
-enum Option {
-    None();
-    Some(v);
-}
-var n = None();      # 8-byte heap, tag at +0 only
-var s = Some(42);    # 16-byte heap, tag at +0, payload 42 at +8
+var t = Triple(11, 22, 33);   # 32-byte alloc; tag at +0, [11, 22, 33] at +8/+16/+24
 ```
 
-### Unboxed payload variants — `enum Name: stack` (v6.5.55)
+Boxing is still the right (and only) representation for a variant carrying **two or more**
+fields: a register pair holds one tag and one value, so `Pair(a, b)` cannot be a value-form
+variant and the compiler says so rather than dropping a field.
 
-Every payload variant above **allocates**, from the global bump allocator, whose only reclaim
-is `alloc_reset()` — and that invalidates every pointer the allocator has ever handed out, so a
-long-running server cannot call it. A hundred `sock_send` calls grow the heap by exactly
-1600 bytes and never give them back.
+### The value form — `enum Name: stack` (v6.5.55, the stdlib default since v6.6.0)
 
-`: stack` on the declaration opts out. A payload variant then returns its `(tag, payload)` in
-the multi-return register pair instead of a box, and is read with the destructuring bind:
+A boxed payload variant **allocates**, from the global bump allocator, whose only reclaim is
+`alloc_reset()` — and that invalidates every pointer the allocator has ever handed out, so a
+long-running server cannot call it. Through v6.5.x a hundred `sock_send` calls grew the heap by
+exactly 1600 bytes and never gave them back. **That is 0 bytes as of v6.6.0.**
 
 ```
 enum Res: stack { Ok(v); Err(e); }
@@ -1041,25 +1039,38 @@ fn use(): i64 {
   `enum Option: stack { None(); Some(v); }` — the shape sum types are actually written in.)
 - **Bare (payload-less) variants are unchanged** — still plain integer constants, still sharing
   the same discriminant numbering.
-- **The destructuring bind only works inside a function.** `var t, v = f();` at top level is
-  rejected with *"multi-var destructure only supported inside functions"*.
-- **Bind the pair as a pair.** `var r = Ok(9);` on a `: stack` enum would keep the tag and throw
-  the payload away, so it is refused: *"a `: stack` enum returns two values — bind both:
-  `var tag, val = f();`"*. The requirement follows the value through `return`, so forwarding it
-  out of a wrapper and binding it one-wide there is caught as well (v6.5.67).
-- **`?` needs the boxed form, and says so.** The propagation operator desugars to
-  `load64(rax + 8)`, i.e. it dereferences its operand — on a pair that reads the *tag* as a
-  pointer, which until v6.5.67 compiled clean and then SIGSEGV'd. It is now a diagnostic:
-  *"'?' does not apply to a `: stack` enum — destructure it: `var tag, val = f();`"*.
+- **The destructuring bind works anywhere**, including at top level (v6.6.0). It was refused
+  outside a function before that, which left a top-level Result bind with no legal spelling.
+- **A single argument receives the TAG.** `is_ok(t)`, `is_err_result(t)`, `is_none(t)`,
+  `is_tag(t, x)` keep their one-argument shape and can even take the call directly —
+  `is_ok(f())` reads the tag straight out of the first return register.
+- **`?` propagates the pair, with the payload intact** (v6.6.0). It works in expression position
+  (`var v = f()?;`) and as a bare statement (`f()?;`). Propagating out of the enclosing function
+  means *returning* a pair, so the Err path re-emits **both** halves — a version that restored
+  only the tag would hand the caller a stale payload.
 
-⚠ **This is opt-in on purpose, and plain `enum` still boxes.** The boxed layout is not an
-internal detail — it is the documented representation that `?`, `lib/result.cyr`'s
-`is_ok`/`result_unwrap`, and roughly 2,500 constructor sites across the ecosystem depend on —
-**340** in this repo and **2,215** across **37** sibling repos (derived v6.5.67 by stripping
-comments and string literals and excluding each sibling's vendored `lib/`; the figure here read
-"roughly 300" before that, which counted this repo alone and undercounted even that). Changing
-the default would break them, and break them silently, because a register pair read as a
-pointer is a plausible-looking address.
+#### Bind the pair as a pair — the three refusals
+
+A value-form Result is two values. Any context that keeps only one would silently discard the
+payload, which for an `Err` is the error code, so each is a compile error naming the fix:
+*"a `: stack` enum returns two values — bind both: `var tag, val = f();`"*.
+
+```
+var r = f();             # ✗ single-variable bind      (v6.5.67)
+r = f();                 # ✗ assignment                (v6.6.0)
+store64(&slot, f());     # ✗ storing into a slot       (v6.6.0)
+
+var t, v = f();          # ✓ bind both halves
+var v = f()?;            # ✓ `?` consumes the pair and yields one value
+return f();              # ✓ forwarding the pair onward
+```
+
+The requirement follows the value through `return`, so forwarding it out of a wrapper and
+binding it one-wide there is caught too.
+
+⚠ **A COLLECTION of Results is two parallel slots, not one.** `store64(&arr + i * 8, f())` was
+the shape that silently half-stored, and it is how every array of Results was written. Store the
+tag and the payload separately (or use a struct).
 
 📎 `stack` is reused rather than a new keyword: it has meant "lives on the stack instead of
 being hoisted" since v5.5.36's `stack var buf[N]`, which is the same idea one level up.
@@ -1068,15 +1079,26 @@ Generic params (`<T, E>`) are syntactically accepted but not yet semantically bo
 
 Helper API:
 
-- `lib/tagged.cyr` — `Option` / `Either` + the underlying `tag(t)` /
-  `payload(t)` / `is_tag(t, expected)` / `tagged_new(tag, value)`
-  primitives shared across all sum types.
-- `lib/result.cyr` — `Result<T, E>` + Result-specific helpers
-  (`is_ok` / `is_err_result` / `result_unwrap` / `result_unwrap_or` /
-  `err_code_of` / `result_print`). Carved out of `lib/tagged.cyr`
-  at v5.8.28 so consumers that only want `Result` can include just
-  the dedicated module. `lib/tagged.cyr` transitively includes
-  `lib/result.cyr` for back-compat — old code keeps working.
+- `lib/tagged.cyr` — `Option` / `Either` + the shared `tag(t)` /
+  `is_tag(t, expected)` primitives.
+- `lib/result.cyr` — `Result<T, E>` + Result-specific helpers. Carved
+  out of `lib/tagged.cyr` at v5.8.28 so consumers that only want
+  `Result` can include just the dedicated module; `lib/tagged.cyr`
+  transitively includes it.
+
+⛔ **v6.6.0 changed the ARITY of these helpers**, because rdx does not reach a parameter — no
+function can receive a Result in one argument and read its payload:
+
+| helper | v6.6.0 | note |
+|---|---|---|
+| `is_ok` / `is_err_result` / `is_none` / `is_some` / `is_left` / `is_right` | `(t)` | unchanged — argument 1 receives the tag |
+| `is_tag` | `(t, expected)` | unchanged |
+| `tag` | `(t)` | now the identity; the tag is already the first half |
+| `result_unwrap` / `err_code_of` / `result_print` / `unwrap` | `(t, v)` | **was 1 argument** |
+| `result_unwrap_or` / `unwrap_or` | `(t, v, fallback)` | **was 2 arguments** |
+| `ok_via` / `err_via` | `(a, v)` | unchanged signature; allocates nothing now, and the allocator argument is ignored |
+| `payload` | **DELETED** | no 1-argument replacement — `payload(r)` becomes `r` |
+| `tagged_new` | **DELETED** | built a box only `tag()`/`payload()` could read |
 
 ```
 include "lib/tagged.cyr"          # for Option / Either + primitives
@@ -1103,10 +1125,18 @@ helpers (`is_none` / `is_some` / `unwrap` / `unwrap_or` / `is_ok` /
 ## `?` Propagation Operator (v5.8.29+)
 
 Postfix `?` on a `Result`-shaped expression desugars at the call
-site to: load tag → if `Err`, return the Result heap pointer from
-the enclosing fn → if `Ok`, unwrap the payload (`load64(rax + 8)`)
-into rax. Highest precedence (binds tighter than `*` / `/`), so
-`foo()? * bar` parses as `(foo()?) * bar`.
+site to: check the tag → if `Err`, return that same Result from the
+enclosing fn → if `Ok`, yield the payload in rax. Highest precedence
+(binds tighter than `*` / `/`), so `foo()? * bar` parses as
+`(foo()?) * bar`. It works in expression position (`var v = f()?;`)
+and as a bare statement (`f()?;`).
+
+⭐ **On the value form (v6.6.0) the Err path re-emits BOTH halves.**
+Propagating a Result *out of* the enclosing function means returning
+a pair, so the payload register is restored alongside the tag —
+restoring only the tag would hand the caller a correct verdict with a
+stale error code. On a boxed enum the Err path returns the pointer,
+as it always did.
 
 ```
 include "lib/alloc.cyr"
@@ -1324,12 +1354,25 @@ The runtime `cmp/jcc-skip` cascade picks the FIRST matching arm — duplicate ar
 Match on a tagged value compares against the heap pointer (always unequal), not the tag. Extract the tag explicitly:
 
 ```
-var opt = Some(42);
-match load64(opt) {     # extract tag at +0
-    Some => { var v = load64(opt + 8); ... }
+# Value form (Option is `: stack` since v6.6.0) — bind both halves, match on the tag:
+var t, v = Some(42);
+match t {
+    Some => { ... v is the payload ... }
     None => { ... }
 }
+
+# A BOXED payload enum you declared yourself — tag at +0, fields from +8:
+enum Shape { Circle(r); Rect(w, h); }
+var sh = Rect(3, 4);
+match load64(sh) {          # extract tag at +0
+    Circle => { var r = load64(sh + 8); ... }
+    Rect   => { var w = load64(sh + 8); var h = load64(sh + 16); ... }
+}
 ```
+
+⚠ `match load64(x)` is the **boxed** shape. Applying it to a value-form enum dereferences the
+tag (0 or 1) as a pointer and faults — on the value form the tag is already a plain value, so
+`match t` is the form.
 
 Or use the helper API (`is_some` / `unwrap_or` / etc.) which encapsulates this.
 

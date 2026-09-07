@@ -6,8 +6,23 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-09-06 (**v6.5.74**). Local doc sweep run as part of the v6.5.x
-> close-out sequence. **93 dead internal links repointed** across 41 files — almost all of them
+> **Last refresh**: 2026-09-06 (**v6.6.0**). The value-form flip forced a real doc change, not
+> just a stamp: `docs/guides/cyrius-guide.md` **published the boxed layout as a user-facing
+> contract** — `Ok(42)` as a 16-byte heap box with tag at `+0` and payload at `+8`, `?` "needs
+> the boxed form", `match load64(opt)`, and a helper table listing `payload()` / `tagged_new()`.
+> All of that is now false. The sum-type section was rewritten around the register pair, the
+> helper table replaced with an ARITY table marking the two deleted functions, and the boxed
+> shape kept where it is still correct (a variant with two or more fields cannot be a pair, so
+> `match load64(x)` is documented as the boxed form with a warning that applying it to a value
+> form dereferences the tag). `docs/ecosystem.md`'s fold table moved eight rows to their new
+> releases and its refold stamps to v6.6.0.
+>
+> ⚠ **A doc that publishes a representation is a contract, and this one had six places to fix.**
+> Grepping for the type name would have missed most of them — they were found by grepping for
+> the *offsets* (`+ 8`, `load64(`), which is the shape a layout leaks in.
+>
+> *Previous*: 2026-09-06 (v6.5.74, an unreleased number). Local doc sweep run as part of the
+> v6.5.x close-out sequence. **93 dead internal links repointed** across 41 files — almost all of them
 > referrers that were never updated when an issue was archived, which is the dominant rot shape
 > in this tree and is now cheap to re-check (walk every `](*.md)` and resolve it). 8 remain, all
 > inside already-archived files pointing at paths that never existed; left rather than invented.

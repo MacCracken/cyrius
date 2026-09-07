@@ -7,10 +7,11 @@
 #       are syntactically accepted, not yet bound semantically
 #       (mono-only erasure — same status as `enum TwoParams<T, E>`
 #       in tests/tcyr/lang/enum_generics.tcyr).
-#   (2) Constructor layout: `Ok(v)` / `Err(e)` produce the same
-#       tag-at-+0 / payload-at-+8 / 16-byte heap form as the
-#       v5.8.23 compiler-generated tagged unions. Tag values
-#       match the prior OK = 0 / ERR = 1 convention.
+#   (2) Constructor form: v6.6.0 made Result the VALUE form — `Ok(v)` / `Err(e)`
+#       return a register pair (tag in rax, payload in rdx) and allocate ZERO
+#       bytes. There is no 16-byte box and no tag-at-+0 / payload-at-+8 layout
+#       any more. Tag values still match the prior OK = 0 / ERR = 1 convention,
+#       so every comparison against a literal tag kept working.
 #   (3) Helpers: `is_ok`, `is_err_result`, `result_unwrap`,
 #       `result_unwrap_or`, `err_code_of`, `result_print`.
 #   (4) Pattern-match consumer over a Result via `match load64(res)`
@@ -32,44 +33,46 @@ include "lib/assert.cyr"
 alloc_init();
 
 test_group("typed Result<T, E> — Ok constructor");
-var ok = Ok(42);
-assert_eq(load64(ok), 0, "Ok tag = 0");
-assert_eq(load64(ok + 8), 42, "Ok payload = 42");
+var ok_tag, ok = Ok(42);
+assert_eq(ok_tag, 0, "Ok tag = 0");
+assert_eq(ok, 42, "Ok payload = 42");
 
 test_group("typed Result<T, E> — Err constructor");
-var err = Err(7);
-assert_eq(load64(err), 1, "Err tag = 1");
-assert_eq(load64(err + 8), 7, "Err payload = 7");
+var err_tag, err = Err(7);
+assert_eq(err_tag, 1, "Err tag = 1");
+assert_eq(err, 7, "Err payload = 7");
 
 test_group("is_ok / is_err_result");
-assert_eq(is_ok(ok), 1, "is_ok(Ok) = 1");
-assert_eq(is_ok(err), 0, "is_ok(Err) = 0");
-assert_eq(is_err_result(ok), 0, "is_err_result(Ok) = 0");
-assert_eq(is_err_result(err), 1, "is_err_result(Err) = 1");
+assert_eq(is_ok(ok_tag), 1, "is_ok(Ok) = 1");
+assert_eq(is_ok(err_tag), 0, "is_ok(Err) = 0");
+assert_eq(is_err_result(ok_tag), 0, "is_err_result(Ok) = 0");
+assert_eq(is_err_result(err_tag), 1, "is_err_result(Err) = 1");
 
 test_group("result_unwrap_or");
-assert_eq(result_unwrap_or(ok, 0 - 1), 42, "Ok(42) -> 42");
-assert_eq(result_unwrap_or(err, 99), 99, "Err(7) -> fallback 99");
+assert_eq(result_unwrap_or(ok_tag, ok, 0 - 1), 42, "Ok(42) -> 42");
+assert_eq(result_unwrap_or(err_tag, err, 99), 99, "Err(7) -> fallback 99");
 
 test_group("err_code_of");
-assert_eq(err_code_of(ok), 0, "Ok -> code 0");
-assert_eq(err_code_of(err), 7, "Err(7) -> code 7");
+assert_eq(err_code_of(ok_tag, ok), 0, "Ok -> code 0");
+assert_eq(err_code_of(err_tag, err), 7, "Err(7) -> code 7");
 
 test_group("payload roundtrip — negatives and zero");
-var ok_zero = Ok(0);
-assert_eq(load64(ok_zero + 8), 0, "Ok(0) payload = 0");
-var ok_neg = Ok(0 - 1);
-assert_eq(load64(ok_neg + 8), 0 - 1, "Ok(-1) payload = -1");
-var err_neg = Err(0 - 42);
-assert_eq(load64(err_neg + 8), 0 - 42, "Err(-42) payload = -42");
+var ok_zero_tag, ok_zero = Ok(0);
+assert_eq(ok_zero, 0, "Ok(0) payload = 0");
+var ok_neg_tag, ok_neg = Ok(0 - 1);
+assert_eq(ok_neg, 0 - 1, "Ok(-1) payload = -1");
+var err_neg_tag, err_neg = Err(0 - 42);
+assert_eq(err_neg, 0 - 42, "Err(-42) payload = -42");
 
 # ---- Pattern-match consumer ----
-# v5.8.x match dispatches on the tag discriminator; for payload-
-# carrying variants the canonical shape is `match load64(res)`.
-# v5.8.29 `?` and any future variant-binding sugar layer on top.
-fn _classify(res) {
+# match dispatches on the tag discriminator. Under the v6.6.0 value form the tag IS the first
+# return register, so a consumer that only needs the tag takes it directly — and a call can be
+# passed straight in (`_classify(Ok(1))`), because argument 1 receives rax. The pre-6.6.0 shape
+# was `match load64(res)`, which dereferenced the box; doing that to a tag reads 0 or 1 as a
+# pointer and faults.
+fn _classify(t) {
     var r = 0;
-    match load64(res) {
+    match t {
         Ok  => { r = 100; }
         Err => { r = 200; }
     }
@@ -89,14 +92,14 @@ fn _safe_div(n, d) {
 }
 
 test_group("Result-returning fn — happy path");
-var r1 = _safe_div(20, 4);
-assert_eq(is_ok(r1), 1, "20/4 is Ok");
-assert_eq(result_unwrap_or(r1, 0), 5, "20/4 = 5");
+var r1_tag, r1 = _safe_div(20, 4);
+assert_eq(is_ok(r1_tag), 1, "20/4 is Ok");
+assert_eq(result_unwrap_or(r1_tag, r1, 0), 5, "20/4 = 5");
 
 test_group("Result-returning fn — error path");
-var r2 = _safe_div(20, 0);
-assert_eq(is_err_result(r2), 1, "20/0 is Err");
-assert_eq(err_code_of(r2), 1, "div-by-zero code = 1");
-assert_eq(result_unwrap_or(r2, 0 - 1), 0 - 1, "fallback used on Err");
+var r2_tag, r2 = _safe_div(20, 0);
+assert_eq(is_err_result(r2_tag), 1, "20/0 is Err");
+assert_eq(err_code_of(r2_tag, r2), 1, "div-by-zero code = 1");
+assert_eq(result_unwrap_or(r2_tag, r2, 0 - 1), 0 - 1, "fallback used on Err");
 
 var r = assert_summary();

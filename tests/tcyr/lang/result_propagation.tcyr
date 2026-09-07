@@ -3,7 +3,7 @@
 #
 # Locks the regression floor for:
 #   (1) `var x = expr?` — when expr evaluates to `Ok(v)`, `x` binds
-#       to the unwrapped payload `v` (load64(result_ptr + 8)).
+#       to the unwrapped payload `v` (the second bound half; v6.6.0 value form).
 #   (2) `var x = expr?` — when expr evaluates to `Err(e)`, the
 #       enclosing fn returns `Err(e)` immediately (the early-return
 #       short-circuit; rax holds the original Result heap pointer).
@@ -82,70 +82,70 @@ fn _q_in_if(n, d, gate) {
 }
 
 test_group("Ok unwrap — single `?` in chain");
-var r1 = _chain(100, 4, 5);     # 100/4 = 25; 25/5 = 5 → Ok(5)
-assert_eq(is_ok(r1), 1, "_chain(100, 4, 5) is Ok");
-assert_eq(load64(r1 + 8), 5, "_chain(100, 4, 5) payload = 5");
+var r1_tag, r1 = _chain(100, 4, 5);     # 100/4 = 25; 25/5 = 5 → Ok(5)
+assert_eq(is_ok(r1_tag), 1, "_chain(100, 4, 5) is Ok");
+assert_eq(r1, 5, "_chain(100, 4, 5) payload = 5");
 
 test_group("Err short-circuit — first `?` trips");
-var r2 = _chain(100, 0, 5);     # 100/0 → Err(99); chain short-circuits
-assert_eq(is_err_result(r2), 1, "_chain(100, 0, 5) is Err");
-assert_eq(load64(r2 + 8), 99, "_chain(100, 0, 5) payload = 99 (from first ?)");
+var r2_tag, r2 = _chain(100, 0, 5);     # 100/0 → Err(99); chain short-circuits
+assert_eq(is_err_result(r2_tag), 1, "_chain(100, 0, 5) is Err");
+assert_eq(r2, 99, "_chain(100, 0, 5) payload = 99 (from first ?)");
 
 test_group("Err short-circuit — second `?` trips");
-var r3 = _chain(100, 4, 0);     # 100/4 = 25; 25/0 → Err(99)
-assert_eq(is_err_result(r3), 1, "_chain(100, 4, 0) is Err");
-assert_eq(load64(r3 + 8), 99, "_chain(100, 4, 0) payload = 99 (from second ?)");
+var r3_tag, r3 = _chain(100, 4, 0);     # 100/4 = 25; 25/0 → Err(99)
+assert_eq(is_err_result(r3_tag), 1, "_chain(100, 4, 0) is Err");
+assert_eq(r3, 99, "_chain(100, 4, 0) payload = 99 (from second ?)");
 
 test_group("`return expr?;` shape — Ok case");
-var r4 = _return_q(20, 4);
-assert_eq(is_ok(r4), 1, "_return_q(20, 4) is Ok");
-assert_eq(load64(r4 + 8), 5, "_return_q(20, 4) payload = 5");
+var r4_tag, r4 = _return_q(20, 4);
+assert_eq(is_ok(r4_tag), 1, "_return_q(20, 4) is Ok");
+assert_eq(r4, 5, "_return_q(20, 4) payload = 5");
 
 test_group("`return expr?;` shape — Err case");
-var r5 = _return_q(20, 0);
-assert_eq(is_err_result(r5), 1, "_return_q(20, 0) is Err");
-assert_eq(load64(r5 + 8), 99, "_return_q(20, 0) payload = 99");
+var r5_tag, r5 = _return_q(20, 0);
+assert_eq(is_err_result(r5_tag), 1, "_return_q(20, 0) is Err");
+assert_eq(r5, 99, "_return_q(20, 0) payload = 99");
 
 test_group("`?` in binary-op context — both Ok");
-var r6 = _sum_two(20, 4, 30, 6);   # 5 + 5 → Ok(10)
-assert_eq(is_ok(r6), 1, "_sum_two(20,4,30,6) is Ok");
-assert_eq(load64(r6 + 8), 10, "_sum_two(20,4,30,6) payload = 10");
+var r6_tag, r6 = _sum_two(20, 4, 30, 6);   # 5 + 5 → Ok(10)
+assert_eq(is_ok(r6_tag), 1, "_sum_two(20,4,30,6) is Ok");
+assert_eq(r6, 10, "_sum_two(20,4,30,6) payload = 10");
 
 test_group("`?` in binary-op context — first arg Err");
-var r7 = _sum_two(20, 0, 30, 6);   # first ? trips
-assert_eq(is_err_result(r7), 1, "_sum_two(20,0,30,6) is Err");
-assert_eq(load64(r7 + 8), 99, "_sum_two(20,0,30,6) payload = 99");
+var r7_tag, r7 = _sum_two(20, 0, 30, 6);   # first ? trips
+assert_eq(is_err_result(r7_tag), 1, "_sum_two(20,0,30,6) is Err");
+assert_eq(r7, 99, "_sum_two(20,0,30,6) payload = 99");
 
 test_group("`?` in binary-op context — second arg Err");
-var r8 = _sum_two(20, 4, 30, 0);   # first ? unwraps, second ? trips
-assert_eq(is_err_result(r8), 1, "_sum_two(20,4,30,0) is Err");
-assert_eq(load64(r8 + 8), 99, "_sum_two(20,4,30,0) payload = 99");
+var r8_tag, r8 = _sum_two(20, 4, 30, 0);   # first ? unwraps, second ? trips
+assert_eq(is_err_result(r8_tag), 1, "_sum_two(20,4,30,0) is Err");
+assert_eq(r8, 99, "_sum_two(20,4,30,0) payload = 99");
 
 test_group("`?` as first statement in fn body");
-var r9 = _first_stmt_q(50, 5);   # Ok(10), +1 → Ok(11)
-assert_eq(is_ok(r9), 1, "_first_stmt_q(50, 5) is Ok");
-assert_eq(load64(r9 + 8), 11, "_first_stmt_q(50, 5) payload = 11");
-var r10 = _first_stmt_q(50, 0);  # Err short-circuits
-assert_eq(is_err_result(r10), 1, "_first_stmt_q(50, 0) is Err");
-assert_eq(load64(r10 + 8), 99, "_first_stmt_q(50, 0) payload = 99");
+var r9_tag, r9 = _first_stmt_q(50, 5);   # Ok(10), +1 → Ok(11)
+assert_eq(is_ok(r9_tag), 1, "_first_stmt_q(50, 5) is Ok");
+assert_eq(r9, 11, "_first_stmt_q(50, 5) payload = 11");
+var r10_tag, r10 = _first_stmt_q(50, 0);  # Err short-circuits
+assert_eq(is_err_result(r10_tag), 1, "_first_stmt_q(50, 0) is Err");
+assert_eq(r10, 99, "_first_stmt_q(50, 0) payload = 99");
 
 test_group("`?` inside `if` body — Err exits whole fn, not just if-block");
-var r11 = _q_in_if(20, 0, 1);   # gate=1, _safe_div(20,0)=Err → fn returns Err
-assert_eq(is_err_result(r11), 1, "_q_in_if(20, 0, 1) is Err (whole fn)");
-assert_eq(load64(r11 + 8), 99, "_q_in_if(20, 0, 1) payload = 99");
-var r12 = _q_in_if(20, 4, 1);   # Ok path inside the if
-assert_eq(is_ok(r12), 1, "_q_in_if(20, 4, 1) is Ok");
-assert_eq(load64(r12 + 8), 5, "_q_in_if(20, 4, 1) payload = 5");
-var r13 = _q_in_if(20, 0, 0);   # gate=0 → ? never executes → Ok(0)
-assert_eq(is_ok(r13), 1, "_q_in_if(20, 0, 0) is Ok (gate skips ?)");
-assert_eq(load64(r13 + 8), 0, "_q_in_if(20, 0, 0) payload = 0");
+var r11_tag, r11 = _q_in_if(20, 0, 1);   # gate=1, _safe_div(20,0)=Err → fn returns Err
+assert_eq(is_err_result(r11_tag), 1, "_q_in_if(20, 0, 1) is Err (whole fn)");
+assert_eq(r11, 99, "_q_in_if(20, 0, 1) payload = 99");
+var r12_tag, r12 = _q_in_if(20, 4, 1);   # Ok path inside the if
+assert_eq(is_ok(r12_tag), 1, "_q_in_if(20, 4, 1) is Ok");
+assert_eq(r12, 5, "_q_in_if(20, 4, 1) payload = 5");
+var r13_tag, r13 = _q_in_if(20, 0, 0);   # gate=0 → ? never executes → Ok(0)
+assert_eq(is_ok(r13_tag), 1, "_q_in_if(20, 0, 0) is Ok (gate skips ?)");
+assert_eq(r13, 0, "_q_in_if(20, 0, 0) payload = 0");
 
 test_group("payload roundtrip through `?` — negatives + zero");
-var rz = _safe_div(0, 1);
-assert_eq(is_ok(rz), 1, "Ok(0/1) is Ok");
-var rz_unwrapped = _first_stmt_q(0, 1);   # exercises ? on Ok(0)
-assert_eq(load64(rz_unwrapped + 8), 1, "?-unwrapped 0 then +1 = 1");
-var rn = _first_stmt_q(0 - 100, 5);       # ?-unwraps -20 then +1 = -19
-assert_eq(load64(rn + 8), 0 - 19, "?-unwrapped -20 then +1 = -19");
+var rz_tag, rz = _safe_div(0, 1);
+assert_eq(is_ok(rz_tag), 1, "Ok(0/1) is Ok");
+var rzu_tag, rz_unwrapped = _first_stmt_q(0, 1);   # exercises ? on Ok(0)
+assert_eq(rz_unwrapped, 1, "?-unwrapped 0 then +1 = 1");
+var rn_tag, rn = _first_stmt_q(0 - 100, 5);   # ?-unwraps -20 then +1 = -19
+assert_eq(rn, 0 - 19, "?-unwrapped -20 then +1 = -19");
 
 var r = assert_summary();

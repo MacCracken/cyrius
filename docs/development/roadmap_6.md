@@ -174,7 +174,54 @@ The list (ROI order; design decisions inside each item at arc-open):
    shipped v6.3.38 B1/B2 + v6.3.39 B3; the residual is only the mixed multi-tparam combo)
    ([`issues/archived/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](issues/archived/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md)).
 
-6. **`Result` / `Option` / `Either` flip to the value form — PINNED TO v6.6.0 (user,
+7. **`cyrius build <src>` can overwrite the running compiler, and did.** Found the hard way at
+   the v6.6.0 cut: in this repo `cyrius.cyml` declares `output = build/cycc` (correct — that is
+   how the compiler is built), and the documented argument ladder says one positional argument
+   means "that src + manifest output". So `cyrius build tests/tcyr/.../foo.tcyr` compiled the
+   TEST and wrote it over `build/cycc`, replacing the compiler with a 842 KB test binary. It was
+   only recoverable because a verified stage binary was still in /tmp; from a clean tree it costs
+   a bootstrap.
+
+   The ladder itself is right and documented, so the fix is narrower than changing it: **refuse
+   to write the output when the resolved path is the compiler cbt is currently running, unless
+   the source is the manifest's declared `src`.** That combination — an explicit foreign src plus
+   an inherited output — is the only destructive one, and nothing legitimate needs it.
+
+   ⚖️ NOT packed into v6.6.0 deliberately, and the reason is named: it is a `cbt/` CLI change in a
+   different subsystem that needs its own gate, and landing it after the release gate had already
+   gone green would have required a full re-run of a multi-host cycle. Recorded here rather than
+   as an issue so the open queue stays at zero.
+
+6. ✅ **SHIPPED v6.6.0 — `Result` / `Option` / `Either` ARE the value form.** Construction
+   allocates **zero bytes**; the filed `100x sock_send` → 1600 B measurement now reads 0. Landed
+   with the whole ecosystem: 8 sibling stdlibs migrated at source, pin-bumped, released as patch
+   versions and re-folded (sigil 3.12.16 · sandhi 1.9.16 · yukti 2.3.9 · mabda 4.1.1 · bayan
+   1.5.5 · vani 1.2.3 · yantra 1.0.4 · sankoch 2.7.11 — the list was DERIVED; the survey below
+   named six and missed yantra and sankoch).
+
+   **Of shape A's three "still silent" contexts, two are closed and the third is now
+   unexpressible:** `store64` of a pair and assignment of one are hard errors; a single-value
+   `return` of a local holding a pair cannot occur, because the binding that would create such a
+   local is itself refused.
+
+   ⚖️ **A pair in an ARGUMENT slot is deliberately NOT refused, and that is a design property
+   rather than an omission.** Argument 1 receives rax, which IS the tag — which is precisely what
+   lets `is_ok` / `is_err_result` / `is_none` / `is_some` / `is_left` / `is_right` keep their
+   one-argument signatures across the flip, and lets `is_ok(f())` read the tag straight out of
+   the call. Refusing the shape would break that idiom at every one of its sites (yukti's suite
+   alone uses dozens) and buy a diagnostic only for the case where the receiver wanted the
+   payload — which the compiler cannot distinguish without parameter types it does not have.
+   Recorded here as a decision taken, not a subset shipped quietly.
+
+   **Three defects the flip exposed, all fixed in the same release:** a SECOND parallel `?`
+   lowering in `PARSE_STMT` (so `f()?;` as a bare statement compiled clean and SIGSEGV'd);
+   forward references taking the boxed path (flag 256 is set when the CALLEE's body is parsed, so
+   a caller earlier in the file saw it unset — the layout of every flattened dist bundle); and
+   top-level `var t, v = f();` having no legal spelling at all.
+
+   *Original entry, kept for the record:*
+
+   **`Result` / `Option` / `Either` flip to the value form — PINNED TO v6.6.0 (user,
    2026-09-06).** The one breaking change in this minor, and it goes at the front of it
    because everything else in the list is additive and this is not. `enum Name: stack`
    (v6.5.55) already gives a payload variant a zero-allocation `(tag, payload)` register pair;

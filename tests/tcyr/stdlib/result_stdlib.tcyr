@@ -25,6 +25,12 @@
 # int-returning fns. New code SHOULD prefer the *_r variants;
 # v6.0.0 closeout removes the legacy convention per
 # `Migration policy` in roadmap §v5.8.28-32.
+#
+# ⭐ v6.6.0 — READS REWRITTEN FOR THE VALUE FORM, ASSERTIONS UNCHANGED. Result is now a register
+# pair (tag in rax, payload in rdx) and allocates zero bytes, so `load64(r + 8)` — the boxed
+# payload read this file was built on — became a dereference of the payload ITSELF. Every
+# declaration binds both halves (`var r_tag, r = f();`) and the payload read is now just `r`.
+# What is pinned is unchanged: which stdlib calls return Ok, which return Err, and with what code.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -53,54 +59,54 @@ var _rs_fixture = "/tmp/cyrius_result_stdlib_fixture.txt";
 file_write_all_r(_rs_fixture, "cyrius\n", 7);
 
 test_group("file_open_r — Ok on existing file");
-var ok_fd = file_open_r(_rs_fixture, 0, 0);
-assert_eq(is_ok(ok_fd), 1, "existing file is Ok");
-assert(load64(ok_fd + 8) >= 0, "fd payload is non-negative");
-sys_close(load64(ok_fd + 8));
+var ok_fd_tag, ok_fd = file_open_r(_rs_fixture, 0, 0);
+assert_eq(is_ok(ok_fd_tag), 1, "existing file is Ok");
+assert(ok_fd >= 0, "fd payload is non-negative");
+sys_close(ok_fd);
 
 test_group("file_open_r — Err(IoNotFound) on missing path");
-var bad_fd = file_open_r("/no/such/file/anywhere", 0, 0);
-assert_eq(is_err_result(bad_fd), 1, "/no/such/file is Err");
-assert_eq(load64(bad_fd + 8), IoNotFound, "Err payload = IoNotFound");
+var bad_fd_tag, bad_fd = file_open_r("/no/such/file/anywhere", 0, 0);
+assert_eq(is_err_result(bad_fd_tag), 1, "/no/such/file is Err");
+assert_eq(bad_fd, IoNotFound, "Err payload = IoNotFound");
 
 # ---- file_read_r / file_close_r ----
 
 test_group("file_read_r — Ok bytes on valid fd");
-var rfd_r = file_open_r(_rs_fixture, 0, 0);
-assert_eq(is_ok(rfd_r), 1, "open fixture Ok");
-var rfd = load64(rfd_r + 8);
+var rfd_r_tag, rfd_r = file_open_r(_rs_fixture, 0, 0);
+assert_eq(is_ok(rfd_r_tag), 1, "open fixture Ok");
+var rfd = rfd_r;
 var rbuf[256];
-var rd_r = file_read_r(rfd, &rbuf, 256);
-assert_eq(is_ok(rd_r), 1, "read Ok");
-assert(load64(rd_r + 8) >= 0, "bytes_read non-negative");
-var close_r = file_close_r(rfd);
-assert_eq(is_ok(close_r), 1, "close Ok");
+var rd_r_tag, rd_r = file_read_r(rfd, &rbuf, 256);
+assert_eq(is_ok(rd_r_tag), 1, "read Ok");
+assert(rd_r >= 0, "bytes_read non-negative");
+var close_r_tag, close_r = file_close_r(rfd);
+assert_eq(is_ok(close_r_tag), 1, "close Ok");
 
 test_group("file_read_r — Err on bogus fd");
-var bad_rd = file_read_r(0 - 999, &rbuf, 256);
-assert_eq(is_err_result(bad_rd), 1, "read on bogus fd is Err");
+var bad_rd_tag, bad_rd = file_read_r(0 - 999, &rbuf, 256);
+assert_eq(is_err_result(bad_rd_tag), 1, "read on bogus fd is Err");
 
 # ---- file_read_all_r / file_write_all_r round-trip ----
 
 test_group("file_write_all_r → file_read_all_r round-trip");
 var msg = "hello v5.8.30 result migration\n";
 var msglen = strlen(msg);
-var w_r = file_write_all_r("/tmp/cyrius_v5_8_30_test", msg, msglen);
-assert_eq(is_ok(w_r), 1, "write_all_r Ok");
-assert_eq(load64(w_r + 8), msglen, "bytes_written = msglen");
+var w_r_tag, w_r = file_write_all_r("/tmp/cyrius_v5_8_30_test", msg, msglen);
+assert_eq(is_ok(w_r_tag), 1, "write_all_r Ok");
+assert_eq(w_r, msglen, "bytes_written = msglen");
 
 var rb[64];
-var r_r = file_read_all_r("/tmp/cyrius_v5_8_30_test", &rb, 64);
-assert_eq(is_ok(r_r), 1, "read_all_r Ok");
-assert_eq(load64(r_r + 8), msglen, "bytes_read = msglen");
+var r_r_tag, r_r = file_read_all_r("/tmp/cyrius_v5_8_30_test", &rb, 64);
+assert_eq(is_ok(r_r_tag), 1, "read_all_r Ok");
+assert_eq(r_r, msglen, "bytes_read = msglen");
 assert_eq(load8(&rb), 104, "first byte = 'h' (104)");
 sys_unlink("/tmp/cyrius_v5_8_30_test");
 
 test_group("file_read_all_r — Err on missing path");
 var rb2[16];
-var r_miss = file_read_all_r("/no/such/file/again", &rb2, 16);
-assert_eq(is_err_result(r_miss), 1, "missing path is Err");
-assert_eq(load64(r_miss + 8), IoNotFound, "payload = IoNotFound");
+var r_miss_tag, r_miss = file_read_all_r("/no/such/file/again", &rb2, 16);
+assert_eq(is_err_result(r_miss_tag), 1, "missing path is Err");
+assert_eq(r_miss, IoNotFound, "payload = IoNotFound");
 
 # ---- `?` propagation chain ----
 
@@ -115,55 +121,55 @@ fn _read_byte_count(path) {
 }
 
 test_group("? chain — Ok path");
-var chain_ok = _read_byte_count(_rs_fixture);
-assert_eq(is_ok(chain_ok), 1, "chain on the fixture is Ok");
-assert(load64(chain_ok + 8) >= 0, "byte count non-negative");
+var chain_ok_tag, chain_ok = _read_byte_count(_rs_fixture);
+assert_eq(is_ok(chain_ok_tag), 1, "chain on the fixture is Ok");
+assert(chain_ok >= 0, "byte count non-negative");
 
 test_group("? chain — Err short-circuits at file_open_r");
-var chain_err = _read_byte_count("/no/such/path/x");
-assert_eq(is_err_result(chain_err), 1, "chain on missing path is Err");
-assert_eq(load64(chain_err + 8), IoNotFound, "Err payload = IoNotFound");
+var chain_err_tag, chain_err = _read_byte_count("/no/such/path/x");
+assert_eq(is_err_result(chain_err_tag), 1, "chain on missing path is Err");
+assert_eq(chain_err, IoNotFound, "Err payload = IoNotFound");
 
 # ---- bayan_json_parse_file_r ----
 
 test_group("bayan_json_parse_file_r — Err(JsonIoErr) on missing file");
-var jerr = bayan_json_parse_file_r("/no/such/json/file");
-assert_eq(is_err_result(jerr), 1, "missing JSON file is Err");
-assert_eq(load64(jerr + 8), JsonIoErr, "payload = JsonIoErr");
+var jerr_tag, jerr = bayan_json_parse_file_r("/no/such/json/file");
+assert_eq(is_err_result(jerr_tag), 1, "missing JSON file is Err");
+assert_eq(jerr, JsonIoErr, "payload = JsonIoErr");
 
 test_group("bayan_json_parse_file_r — Ok on synthetic file");
 var jsrc = "{\"name\": \"cyrius\"}";
 file_write_all_r("/tmp/cyrius_v5_8_30_test.json", jsrc, strlen(jsrc));
-var jok = bayan_json_parse_file_r("/tmp/cyrius_v5_8_30_test.json");
-assert_eq(is_ok(jok), 1, "synthetic JSON file Ok");
+var jok_tag, jok = bayan_json_parse_file_r("/tmp/cyrius_v5_8_30_test.json");
+assert_eq(is_ok(jok_tag), 1, "synthetic JSON file Ok");
 sys_unlink("/tmp/cyrius_v5_8_30_test.json");
 
 # ---- bayan_toml_parse_file_r ----
 
 test_group("bayan_toml_parse_file_r — Err(TomlIoErr) on missing file");
-var terr = bayan_toml_parse_file_r("/no/such/toml/file");
-assert_eq(is_err_result(terr), 1, "missing TOML file is Err");
-assert_eq(load64(terr + 8), TomlIoErr, "payload = TomlIoErr");
+var terr_tag, terr = bayan_toml_parse_file_r("/no/such/toml/file");
+assert_eq(is_err_result(terr_tag), 1, "missing TOML file is Err");
+assert_eq(terr, TomlIoErr, "payload = TomlIoErr");
 
 test_group("bayan_toml_parse_file_r — Ok on synthetic file");
 var tsrc = "[[entries]]\nname = \"cyrius\"\n";
 file_write_all_r("/tmp/cyrius_v5_8_30_test.toml", tsrc, strlen(tsrc));
-var tok = bayan_toml_parse_file_r("/tmp/cyrius_v5_8_30_test.toml");
-assert_eq(is_ok(tok), 1, "synthetic TOML file Ok");
+var tok_tag, tok = bayan_toml_parse_file_r("/tmp/cyrius_v5_8_30_test.toml");
+assert_eq(is_ok(tok_tag), 1, "synthetic TOML file Ok");
 sys_unlink("/tmp/cyrius_v5_8_30_test.toml");
 
 # ---- bayan_cyml_parse_file_r ----
 
 test_group("bayan_cyml_parse_file_r — Err(CymlIoErr) on missing file");
-var cerr = bayan_cyml_parse_file_r("/no/such/cyml/file");
-assert_eq(is_err_result(cerr), 1, "missing CYML file is Err");
-assert_eq(load64(cerr + 8), CymlIoErr, "payload = CymlIoErr");
+var cerr_tag, cerr = bayan_cyml_parse_file_r("/no/such/cyml/file");
+assert_eq(is_err_result(cerr_tag), 1, "missing CYML file is Err");
+assert_eq(cerr, CymlIoErr, "payload = CymlIoErr");
 
 test_group("bayan_cyml_parse_file_r — Ok on synthetic file");
 var csrc = "title = \"hello\"\n---\n# Body markdown\n";
 file_write_all_r("/tmp/cyrius_v5_8_30_test.cyml", csrc, strlen(csrc));
-var cok = bayan_cyml_parse_file_r("/tmp/cyrius_v5_8_30_test.cyml");
-assert_eq(is_ok(cok), 1, "synthetic CYML file Ok");
+var cok_tag, cok = bayan_cyml_parse_file_r("/tmp/cyrius_v5_8_30_test.cyml");
+assert_eq(is_ok(cok_tag), 1, "synthetic CYML file Ok");
 sys_unlink("/tmp/cyrius_v5_8_30_test.cyml");
 sys_unlink(_rs_fixture);
 

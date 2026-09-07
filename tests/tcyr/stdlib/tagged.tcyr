@@ -1,4 +1,10 @@
-# Test: tagged unions (Option/Result)
+# Test: tagged unions (Option/Result) — v6.6.0 value form.
+#
+# ⛔ `tagged_new(tag, value)` was DELETED at v6.6.0. It built a raw 16-byte box, and the only
+# things that could read that box were `tag()` and `payload()`; with the value form there is no
+# box, `payload()` is gone, and nothing in any of the 12 sibling stdlibs ever called it. The
+# Option half below now constructs through `Some(v)` / `None()`, which is what it was always
+# modelling — a nullary variant returns its tag ALONE and is correctly not pair-returning.
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
 include "lib/tagged.cyr"
@@ -6,27 +12,41 @@ include "lib/tagged.cyr"
 alloc_init();
 
 test_group("Option");
-var s = tagged_new(1, 42);
-assert_eq(tag(s), 1, "tag");
-assert_eq(payload(s), 42, "payload");
-assert(is_some(s) == 1, "is_some");
-assert(is_none(s) == 0, "not none");
-assert_eq(unwrap_or(s, 0), 42, "unwrap_or some");
+var s_tag, s = Some(42);
+assert_eq(tag(s_tag), Some, "tag");
+assert_eq(s, 42, "payload");
+assert(is_some(s_tag) == 1, "is_some");
+assert(is_none(s_tag) == 0, "not none");
+assert_eq(unwrap_or(s_tag, s, 0), 42, "unwrap_or some");
+assert_eq(unwrap(s_tag, s), 42, "unwrap some");
 
-var n = tagged_new(0, 0);
-assert(is_none(n) == 1, "is_none");
-assert_eq(unwrap_or(n, 99), 99, "unwrap_or none");
+# None() is nullary: tag only, no payload register. A single-variable bind is CORRECT here —
+# there is nothing to lose — and that asymmetry is deliberate, not an oversight.
+var n_tag = None();
+assert(is_none(n_tag) == 1, "is_none");
+assert(is_some(n_tag) == 0, "None is not Some");
+assert_eq(unwrap_or(n_tag, 0, 99), 99, "unwrap_or none falls back");
+
+test_group("Either");
+var l_tag, l = Left(3);
+assert(is_left(l_tag) == 1, "is_left");
+assert(is_right(l_tag) == 0, "Left is not Right");
+assert_eq(l, 3, "Left payload");
+var rt_tag, rt = Right(4);
+assert(is_right(rt_tag) == 1, "is_right");
+assert_eq(rt, 4, "Right payload");
 
 test_group("Result");
-var ok = Ok(42);
-assert(is_ok(ok) == 1, "is_ok");
-assert_eq(payload(ok), 42, "Ok payload");
+var ok_tag, ok = Ok(42);
+assert(is_ok(ok_tag) == 1, "is_ok");
+assert_eq(ok, 42, "Ok payload");
 
-var err = Err(7);
-assert(is_ok(err) == 0, "Err not ok");
-assert(is_err_result(err) == 1, "is_err_result");
-assert_eq(err_code_of(err), 7, "err_code_of");
-assert_eq(result_unwrap_or(ok, 0), 42, "unwrap ok");
-assert_eq(result_unwrap_or(err, 99), 99, "unwrap err");
+var err_tag, err = Err(7);
+assert(is_ok(err_tag) == 0, "Err not ok");
+assert(is_err_result(err_tag) == 1, "is_err_result");
+assert_eq(err_code_of(err_tag, err), 7, "err_code_of");
+assert_eq(err_code_of(ok_tag, ok), 0, "err_code_of on Ok is 0");
+assert_eq(result_unwrap_or(ok_tag, ok, 0), 42, "unwrap ok");
+assert_eq(result_unwrap_or(err_tag, err, 99), 99, "unwrap err");
 
 var r = assert_summary();

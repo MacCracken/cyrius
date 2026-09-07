@@ -112,7 +112,7 @@ runprobe 'var STOP = 0;
 fn _stopper(arg) { sleep_ms(250); STOP = 1; return 0; }
 fn main(): i64 {
     alloc_init();
-    var sfd = payload(tcp_socket());
+    var sfd_t, sfd = tcp_socket();
     sock_reuse(sfd);
     sock_bind(sfd, INADDR_LOOPBACK(), 0);
     sock_listen(sfd, 16);

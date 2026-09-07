@@ -129,29 +129,60 @@ fn main(): i64 { var t, p = fwd2(); syscall(60, p & 0xFF, 0,0,0,0); return 0; }
 var e = main();
 EOF
 
-# ── axis 6 — ANTI-VACUOUS CONTROL: a BOXED enum must be entirely unaffected ─────────────────
-# If this fires, the check is over-firing and would refuse the documented Result idiom at every
-# one of the 2,215 sibling-repo construction sites.
-accept "boxed Ok(9): single bind + is_ok" axis6 1 <<'EOF'
+# ── axis 6 — THE STDLIB Result IS THE VALUE FORM NOW (v6.6.0) ───────────────────────────────
+# ⛔ THIS AXIS USED TO ASSERT THE OPPOSITE. Until v6.6.0 `lib/result.cyr` was BOXED, so `var r =
+# Ok(1)` was the documented idiom at thousands of sites and this axis existed to prove the check
+# did not over-fire on it. v6.6.0 flipped Result/Option/Either themselves, so that same line is
+# now a genuine lossy bind and MUST be refused — a gate still demanding it compile would forbid
+# the release. The anti-vacuous job it used to do moved to axis 11, which uses a locally
+# declared BOXED enum: that is the thing that must stay unaffected, and it still exists.
+refuse "stdlib Ok(9) single bind is lossy too" axis6 <<'EOF'
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/vec.cyr"
 include "lib/result.cyr"
 include "lib/syscalls.cyr"
-fn main(): i64 { alloc_init(); var r = Ok(9); syscall(60, is_ok(r) & 0xFF, 0,0,0,0); return 0; }
+fn main(): i64 { alloc_init(); var r = Ok(9); syscall(60, r & 0xFF, 0,0,0,0); return 0; }
 var e = main();
 EOF
-accept "boxed Result through ? still works" axis6b 9 <<'EOF'
+accept "stdlib Result destructures and its helpers take the tag" axis6b 9 <<'EOF'
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/vec.cyr"
 include "lib/result.cyr"
 include "lib/syscalls.cyr"
-fn produce() { return Ok(9); }
-fn consume(): i64 { var v = produce()?; return v; }
-fn main(): i64 { alloc_init(); syscall(60, consume() & 0xFF, 0,0,0,0); return 0; }
+fn main(): i64 {
+    alloc_init();
+    var t, v = Ok(9);
+    if (is_ok(t) != 1) { syscall(60, 101, 0,0,0,0); }
+    if (is_err_result(t) != 0) { syscall(60, 102, 0,0,0,0); }
+    if (result_unwrap(t, v) != 9) { syscall(60, 103, 0,0,0,0); }
+    var et, ev = Err(4);
+    if (err_code_of(et, ev) != 4) { syscall(60, 104, 0,0,0,0); }
+    if (result_unwrap_or(et, ev, 9) != 9) { syscall(60, 105, 0,0,0,0); }
+    syscall(60, v & 0xFF, 0,0,0,0);
+    return 0;
+}
+var e = main();
+EOF
+accept "stdlib Result through ? keeps the Err payload" axis6c 12 <<'EOF'
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/result.cyr"
+include "lib/syscalls.cyr"
+fn produce(n) { if (n < 0) { return Err(12); } return Ok(n); }
+fn consume(n) { var v = produce(n)?; return Ok(v + 1); }
+fn main(): i64 {
+    alloc_init();
+    var t, v = consume(0 - 1);
+    if (t != 1) { syscall(60, 101, 0,0,0,0); }
+    syscall(60, v & 0xFF, 0,0,0,0);
+    return 0;
+}
 var e = main();
 EOF
 
@@ -181,5 +212,140 @@ fn main(): i64 { syscall(60, 0, 0,0,0,0); return 0; }
 var e = main();
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · BOXED Result unaffected · nullary variants allowed and unflagged'
+# ── axis 8 — v6.6.0: the OTHER lossy contexts. Refusing only `var x = f();` was enough while
+# `: stack` was an opt-in nobody used; flipping Result/Option/Either to the value form makes
+# every other single-value context live across the ecosystem. Two of them compiled clean and
+# dropped the payload in SILENCE, and `store64` is the one that matters — it is how every
+# collection of Results is written, and the half it discarded is the error code.
+refuse "assignment x = mk(3)" axis8 <<EOF
+${PRE}fn main(): i64 { var x = 0; x = mk(3); syscall(60, x & 0xFF, 0,0,0,0); return 0; }
+var e = main();
+EOF
+refuse "store64(&slot, mk(3))" axis8b <<EOF
+${PRE}fn main(): i64 { var slot[16]; store64(&slot, mk(3)); syscall(60, 0, 0,0,0,0); return 0; }
+var e = main();
+EOF
+
+# ── axis 9 — v6.6.0: `?` in STATEMENT position, on the value form ───────────────────────────
+# ⛔ PARSE_STMT dispatches IDENT+LPAREN straight to PARSE_FNCALL and never reaches the term
+# parser, so the `?` desugar exists TWICE. v6.6.0 first taught only the expression copy the pair
+# form; the statement copy kept dereferencing its operand, so `f()?;` as a bare statement
+# compiled clean and SIGSEGV'd while `var x = f()?;` was correct. Both halves of the Err path
+# are asserted: exit 33 can only be produced by rdx surviving the propagation.
+accept "bare f()?; propagates the pair from statement position" axis9 33 <<EOF
+${PRE}fn produce(n) { if (n < 0) { return SErr(33); } return SOk(n); }
+fn relay(n) { produce(n)?; return SOk(7); }
+fn main(): i64 {
+    var t1, v1 = relay(5);
+    var t2, v2 = relay(0 - 1);
+    if (t1 != 0) { syscall(60, 111, 0,0,0,0); }
+    if (v1 != 7) { syscall(60, 112, 0,0,0,0); }
+    if (t2 != 1) { syscall(60, 113, 0,0,0,0); }
+    syscall(60, v2 & 0xFF, 0,0,0,0);
+    return 0;
+}
+var e = main();
+EOF
+
+# ── axis 10 — v6.6.0: TOP-LEVEL destructure ─────────────────────────────────────────────────
+# Binding both halves is the only correct way to receive a pair, so while this was refused
+# (`multi-var destructure only supported inside functions`, and at top level it did not even
+# reach that message) a top-level Result bind had no legal spelling at all.
+accept "top-level var t, v = mk(9)" axis10 9 <<EOF
+${PRE}var t, v = mk(9);
+syscall(60, v & 0xFF, 0,0,0,0);
+EOF
+accept "top-level destructure after a bare expression statement" axis10b 5 <<EOF
+${PRE}fn nop(): i64 { return 0; }
+nop();
+var t2, v2 = mk(5);
+syscall(60, v2 & 0xFF, 0,0,0,0);
+EOF
+
+# ── axis 11 — ANTI-VACUOUS: every v6.6.0 refusal must leave BOXED enums alone ────────────────
+# If this fires, the checks are over-firing and would refuse ordinary boxed-enum code.
+accept "boxed enum: assignment, store64 and statement-? all still legal" axis11 42 <<'EOF'
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+enum B { BOk(v); BErr(e); }
+fn look(n) { if (n < 0) { return BErr(55); } return BOk(n * 2); }
+fn chain(n) { look(n)?; return BOk(9); }
+fn main(): i64 {
+    alloc_init();
+    var q = 0;
+    q = look(3);
+    var slot[16];
+    store64(&slot, look(4));
+    var a = chain(3);
+    var b = chain(0 - 1);
+    if (load64(q + 8) != 6) { return 101; }
+    if (load64(load64(&slot) + 8) != 8) { return 102; }
+    if (load64(a + 8) != 9) { return 103; }
+    if (load64(b + 8) != 55) { return 104; }
+    return 42;
+}
+var e = main();
+syscall(60, main() & 0xFF, 0,0,0,0);
+EOF
+
+# ── axis 12 — v6.6.0: FORWARD REFERENCES. The single most dangerous shape of the flip ───────
+# ⛔ Flag 256 ("returns a pair") is set on an enum constructor in pass 1, but on an ORDINARY fn
+# only while its own body is parsed. So a caller appearing EARLIER IN THE FILE than its callee
+# read the flag as unset and `?` took the BOXED lowering — dereferencing the tag (0 or 1) as a
+# pointer. Compiled clean, SIGSEGV at run time, and the lossy-bind diagnostic went silent at the
+# same time. That is not exotic: it is how every flattened dist bundle is laid out.
+#
+# ⚠ AND THE FIRST FIX DID NOT WORK, which is why the axis asserts behaviour and not machinery.
+# The propagation pass is demand-driven, and the first demand arrives BEFORE the enum
+# declaration is reached — measured: it ran over a complete 3,498-token stream and flagged
+# nothing, because no constructor yet carried the flag to propagate FROM. It is now invalidated
+# whenever a `: stack` constructor is registered.
+accept "? on a callee defined LATER in the file" axis12 33 <<'EOF'
+include "lib/syscalls.cyr"
+enum R: stack { ROk(v); RErr(e); }
+fn relay(n) { var v = look(n)?; return ROk(v + 1); }
+fn look(n) { if (n < 0) { return RErr(33); } return ROk(n); }
+fn main(): i64 {
+    var t1, v1 = relay(7);
+    var t2, v2 = relay(0 - 1);
+    if (t1 != 0) { syscall(60, 101, 0,0,0,0); }
+    if (v1 != 8) { syscall(60, 102, 0,0,0,0); }
+    if (t2 != 1) { syscall(60, 103, 0,0,0,0); }
+    syscall(60, v2 & 0xFF, 0,0,0,0);
+    return 0;
+}
+var e = main();
+EOF
+accept "forward CHAIN — a forwards to b forwards to the ctor" axis12b 21 <<'EOF'
+include "lib/syscalls.cyr"
+enum R: stack { ROk(v); RErr(e); }
+fn top(n) { var v = mid(n)?; return ROk(v + 1); }
+fn mid(n) { return low(n); }
+fn low(n) { if (n < 0) { return RErr(21); } return ROk(n); }
+fn main(): i64 {
+    var t, v = top(4);
+    var t2, v2 = top(0 - 1);
+    if (t != 0) { syscall(60, 101, 0,0,0,0); }
+    if (v != 5) { syscall(60, 102, 0,0,0,0); }
+    if (t2 != 1) { syscall(60, 103, 0,0,0,0); }
+    syscall(60, v2 & 0xFF, 0,0,0,0);
+    return 0;
+}
+var e = main();
+EOF
+# ...and the diagnostic must reach forward too, or a lossy bind on a later-defined callee is a
+# SILENT payload drop rather than a named error.
+refuse "lossy bind of a callee defined LATER" axis12c <<'EOF'
+include "lib/syscalls.cyr"
+enum R: stack { ROk(v); RErr(e); }
+fn caller(n) { var r = look(n); return r; }
+fn look(n) { if (n < 0) { return RErr(33); } return ROk(n); }
+fn main(): i64 { syscall(60, 0, 0,0,0,0); return 0; }
+var e = main();
+EOF
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic)'
 exit 0

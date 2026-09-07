@@ -1,54 +1,44 @@
-> ### ⛔ v6.5.74 — THE FLIP WAS BUILT AND REVERTED. It is a lockstep TOOLCHAIN break, not just
-> an API break, and that fact is not in this file anywhere above.
+> ## ✅ RESOLVED — v6.6.0 (2026-09-06). The flip SHIPPED, with the whole ecosystem.
 >
-> **What shipped:** the compiler half. `?` now works on the value form — it stashes both halves
-> and, on the Err path, **re-emits rdx as well as rax**, so the payload survives propagation out
-> of the enclosing function. That is the piece the one-line framing this arc carried for a year
-> ("teach `?` to accept a pair") omitted, and it is the difference between propagation working
-> and silently truncating. Gate: `stack_enum_lossy_context.sh` axis 3, which was REVERSED from
-> asserting the v6.5.67 refusal to asserting the new behaviour.
+> **`Result`, `Option` and `Either` are the value form.** `Ok(v)` / `Err(e)` return a
+> `(tag, payload)` register pair and allocate **zero bytes**. The filed measurement — `100x
+> sock_send` grows the global allocator by exactly 1600 B — now measures **0**, pinned by
+> `tests/tcyr/stdlib/result_allocator_via.tcyr`, whose controls had to be INVERTED because they
+> asserted the ordinary path still grew.
 >
-> **What was built and then reverted, to keep the tree green:**
-> * `lib/result.cyr` + `lib/tagged.cyr` flipped to `: stack`; helpers re-aritied; `payload()`
->   deleted. Every stale site became a NAMED compile error at the offending line — the stated
->   acceptance criterion, and it held.
-> * 14 cyrius-owned sites migrated (`http.cyr` 9, `ws_server.cyr` 5).
-> * **117 declarations migrated across SIX upstream repos** (sigil 40, sandhi 36, yukti 23,
->   mabda 8, bayan 6, vani 4) with a mechanical rule; **5 of 6 dist bundles regenerated clean**.
-> * Diffs preserved at `scratchpad/p660/upstream_migration/*.diff`, migration script at
->   `scratchpad/p660/migrate.py`.
+> ⭐ **The anti-vacuous control moved rather than disappearing.** When every number under test is
+> 0, a broken measurement is indistinguishable from a fixed allocator, so the control is now a
+> genuine `100 x alloc(16)` still measuring 1600 B.
 >
-> ### ⛔ THE BLOCKER, MEASURED — and it is the reason this needs a decision, not more effort
+> **Ecosystem, done not deferred:** the stdlib flipped, `payload()` and `tagged_new()` deleted,
+> helper arities changed, all cyrius-owned consumers migrated, and **8 sibling stdlibs migrated
+> at source, pin-bumped to 6.6.0, released as patch versions and re-vendored** — sigil, sandhi,
+> yukti, mabda, bayan, vani, yantra, sankoch. (The earlier survey said six; yantra and sankoch
+> were found by usage, which is why the list is derived and not copied.)
 >
-> **A consumer pinning cyrius < 6.5.55 cannot PARSE the flipped stdlib** — `enum Result<T, E>:
-> stack` is a syntax error to it (`expected '{', got ':'`) — and `cyrius.cyml` pins cause the
-> toolchain to **re-exec the pinned compiler**. So the flip is not "code changes at ~2,500 call
-> sites"; it is **every consumer bumping its cyrius pin AND migrating its code in lockstep, or
-> it cannot build at all.** Measured at the v6.5.73 closeout: **125 repos declare a pin, 0 of
-> them at ≥ 6.5.60**, 15 below 6.5.0.
+> ### ⛔ What the attempt exposed — three silent defects, all fixed here
 >
-> Sigil is the worked example of the second-order problem: its bundle embeds a stdlib copy from
-> a folded dependency, so even with its own `lib/` updated the generated bundle still carried the
-> 1-argument `result_unwrap` and would not compile.
+> 1. **Two more lossy contexts.** v6.5.67 closed `var x = f();` only. `x = f();` and
+>    `store64(&slot, f());` compiled clean and dropped the payload. **store64 is the one that
+>    matters: it is how every collection of Results is written, and the half it discarded is the
+>    error code.**
+> 2. **A SECOND, PARALLEL `?` lowering.** `PARSE_STMT` sends IDENT+LPAREN straight to
+>    `PARSE_FNCALL`, so the `?` desugar exists twice; only the expression copy had been taught
+>    the pair form. `f()?;` as a bare statement compiled clean and SIGSEGV'd.
+> 3. **Top-level `var t, v = f();` had no legal spelling** — refused in-function, and at top
+>    level it never even reached that message. Binding both halves is the only correct way to
+>    receive a pair, so this blocked the flip outright. Implemented across both parse phases.
 >
-> ⚠ **And a warning paid for in this session:** refreshing `~/.cyrius/versions/*/lib/` with the
-> flipped stdlib to get past the pin re-exec **broke 393 installed versions at once** — older
-> compilers cannot parse it. Restored from git. Do not push the new stdlib into old version
-> snapshots; the snapshot must match its compiler.
+> ### ⚠ The framing correction this file should carry
 >
-> ### ⚖️ THE DECISION OWED
->
-> The maintainer already chose "flip, as part of v6.6.0". What was not known then is the
-> lockstep cost. Either:
-> 1. **Run the campaign** — cyrius ships 6.6.0 with the flip, then 125 repos bump their pin and
->    migrate, in dependency order (the six folded libs first). Nothing else can build meanwhile.
-> 2. **Take a compatibility path** — e.g. keep the boxed constructors reachable under a second
->    spelling for one minor so consumers can migrate incrementally rather than in lockstep.
->
-> This file stays OPEN pinned to that call. The work is done and saved; it is the sequencing that
-> needs a decision.
+> The v6.5.74 pass recorded a blocker: consumers pinning cyrius < 6.5.55 cannot PARSE the value
+> form, and `cyrius.cyml` pins re-exec the pinned compiler, so this is a lockstep TOOLCHAIN break
+> across 125 repos. **That measurement was right and the conclusion drawn from it was wrong.**
+> Zero of those 125 were at ≥ 6.5.60 — nobody was tracking the pin, so nobody was depending on
+> it. The break was theoretical; the fix was to bump the 8 repos that actually consume these
+> types and release them. Filed as a decision, it should have been executed as work.
 
-> ### ⚠ v6.5.67 — THE STACK FORM IS NOW SAFE TO USE. The remaining flip is an ECOSYSTEM API BREAK, and the numbers in this file were wrong.
+# ⚠ v6.5.67 — THE STACK FORM IS NOW SAFE TO USE. The remaining flip is an ECOSYSTEM API BREAK, and the numbers in this file were wrong.
 >
 > **What v6.5.67 fixed — all of it live defects in what v6.5.55 shipped:**
 > 1. **Silent payload loss.** A `: stack` value is TWO registers and nothing recorded which calls

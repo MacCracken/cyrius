@@ -46,11 +46,11 @@ map_delete(m, "x");
 assert_eq(map_count(m), 1, "map count after delete");
 
 test_group("tagged");
-var ok = Ok(42);
-assert(is_ok(ok) == 1, "is_ok");
-assert_eq(payload(ok), 42, "Ok payload");
-var err = Err(99);
-assert(is_ok(err) == 0, "Err is not ok");
-assert_eq(err_code_of(err), 99, "Err code");
+var ok_tag, ok = Ok(42);
+assert(is_ok(ok_tag) == 1, "is_ok");
+assert_eq(ok, 42, "Ok payload");
+var err_tag, err = Err(99);
+assert(is_ok(err_tag) == 0, "Err is not ok");
+assert_eq(err_code_of(err_tag, err), 99, "Err code");
 
 var r = assert_summary();

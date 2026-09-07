@@ -24,7 +24,7 @@ fn main(): i64 {
     var localhost = 0x0100007F;    # 127.0.0.1
     var total = 0;
 
-    var lfd = payload(tcp_socket());
+    var lfd_t, lfd = tcp_socket();
     sock_reuse(lfd);
     sock_bind(lfd, 0, port);
     sock_listen(lfd, 1);
@@ -32,7 +32,7 @@ fn main(): i64 {
     var rt = async_new();
     var cfd = task_join(rt, async_connect(rt, localhost, port));
     if (cfd < 0) { return 1; }
-    var sfd = payload(sock_accept(lfd));
+    var sfd_t, sfd = sock_accept(lfd);
 
     # client async_send 20 -> server recv
     var sb[8];

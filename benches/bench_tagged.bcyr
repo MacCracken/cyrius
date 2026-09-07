@@ -25,27 +25,27 @@ fn work_some() {
 }
 
 fn work_unwrap() {
-    var r = Ok(42);
-    result_unwrap(r);
+    var r_tag, r = Ok(42);
+    result_unwrap(r_tag, r);
     return 0;
 }
 
 fn work_unwrap_or() {
-    var n = None();
-    unwrap_or(n, 0);
+    var n_tag, n = None();
+    unwrap_or(n_tag, n, 0);
     return 0;
 }
 
 fn work_is_ok() {
-    var r = Ok(42);
-    is_ok(r);
+    var r_tag, r = Ok(42);
+    is_ok(r_tag);
     return 0;
 }
 
 fn work_chain() {
-    var r = Ok(10);
-    if (is_ok(r) == 1) {
-        var v = result_unwrap(r);
+    var r_tag, r = Ok(10);
+    if (is_ok(r_tag) == 1) {
+        var v = result_unwrap(r_tag, r);
         Ok(v + 1);
     }
     return 0;

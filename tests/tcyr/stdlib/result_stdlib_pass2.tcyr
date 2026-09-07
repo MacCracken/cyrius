@@ -32,6 +32,12 @@
 # int-returning fns; legacy callers stay green per migration
 # policy (roadmap §v5.8.28-32). v6.0.0 closeout removes the
 # old shape.
+#
+# ⭐ v6.6.0 — READS REWRITTEN FOR THE VALUE FORM, ASSERTIONS UNCHANGED. Result is now a register
+# pair (tag in rax, payload in rdx) and allocates zero bytes, so `load64(r + 8)` — the boxed
+# payload read this file was built on — became a dereference of the payload ITSELF. Every
+# declaration binds both halves (`var r_tag, r = f();`) and the payload read is now just `r`.
+# What is pinned is unchanged: which stdlib calls return Ok, which return Err, and with what code.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -53,22 +59,22 @@ alloc_init();
 # ---- dynlib ----
 
 test_group("dynlib_open_r — Err(DynlibNotFound) on missing path");
-var dl_miss = dynlib_open_r("/no/such/library.so");
-assert_eq(is_err_result(dl_miss), 1, "missing .so is Err");
-assert_eq(load64(dl_miss + 8), DynlibNotFound, "payload = DynlibNotFound");
+var dl_miss_tag, dl_miss = dynlib_open_r("/no/such/library.so");
+assert_eq(is_err_result(dl_miss_tag), 1, "missing .so is Err");
+assert_eq(dl_miss, DynlibNotFound, "payload = DynlibNotFound");
 
 test_group("dynlib_open_r — Err(DynlibBadElf) on text-file probe");
 var fakeso = "/tmp/cyrius_v5_8_31_fake.so";
 file_write_all_r(fakeso, "this is not ELF\n", 16);
-var dl_bad = dynlib_open_r(fakeso);
-assert_eq(is_err_result(dl_bad), 1, "text file is Err");
-assert_eq(load64(dl_bad + 8), DynlibBadElf, "payload = DynlibBadElf");
+var dl_bad_tag, dl_bad = dynlib_open_r(fakeso);
+assert_eq(is_err_result(dl_bad_tag), 1, "text file is Err");
+assert_eq(dl_bad, DynlibBadElf, "payload = DynlibBadElf");
 sys_unlink(fakeso);
 
 test_group("dynlib_sym_r — Err(DynlibNotFound) on null handle");
-var sm_null = dynlib_sym_r(0, "nope");
-assert_eq(is_err_result(sm_null), 1, "null handle is Err");
-assert_eq(load64(sm_null + 8), DynlibNotFound, "payload = DynlibNotFound");
+var sm_null_tag, sm_null = dynlib_sym_r(0, "nope");
+assert_eq(is_err_result(sm_null_tag), 1, "null handle is Err");
+assert_eq(sm_null, DynlibNotFound, "payload = DynlibNotFound");
 
 # ---- pwd ----
 
@@ -97,44 +103,44 @@ var lookup_uid = my_uid;
 test_group("pwd_getpwuid_r — Ok for a uid present in the local passwd database");
 var pw1[56];
 var sb1[1024];
-var pw_self = pwd_getpwuid_r(lookup_uid, &pw1, &sb1, 1024);
-assert_eq(is_ok(pw_self), 1, "a resolvable uid is Ok");
+var pw_self_tag, pw_self = pwd_getpwuid_r(lookup_uid, &pw1, &sb1, 1024);
+assert_eq(is_ok(pw_self_tag), 1, "a resolvable uid is Ok");
 
 test_group("pwd_getpwuid_r — Err(PwdNotFound) on bogus uid");
 var pw2[56];
 var sb2[1024];
-var pw_miss = pwd_getpwuid_r(2147483647, &pw2, &sb2, 1024);
-assert_eq(is_err_result(pw_miss), 1, "bogus uid is Err");
-assert_eq(load64(pw_miss + 8), PwdNotFound, "payload = PwdNotFound");
+var pw_miss_tag, pw_miss = pwd_getpwuid_r(2147483647, &pw2, &sb2, 1024);
+assert_eq(is_err_result(pw_miss_tag), 1, "bogus uid is Err");
+assert_eq(pw_miss, PwdNotFound, "payload = PwdNotFound");
 
 test_group("pwd_getpwnam_r — Err(PwdNotFound) on bogus name");
 var pw3[56];
 var sb3[1024];
-var pn_miss = pwd_getpwnam_r("nosuchuser_v5_8_31", &pw3, &sb3, 1024);
-assert_eq(is_err_result(pn_miss), 1, "bogus name is Err");
-assert_eq(load64(pn_miss + 8), PwdNotFound, "payload = PwdNotFound");
+var pn_miss_tag, pn_miss = pwd_getpwnam_r("nosuchuser_v5_8_31", &pw3, &sb3, 1024);
+assert_eq(is_err_result(pn_miss_tag), 1, "bogus name is Err");
+assert_eq(pn_miss, PwdNotFound, "payload = PwdNotFound");
 
 # ---- grp ----
 
 test_group("grp_getgrgid_r — Ok for gid 0 (root)");
 var g0[24];
 var gsb0[1024];
-var g_root = grp_getgrgid_r(0, &g0, &gsb0, 1024);
-assert_eq(is_ok(g_root), 1, "gid 0 is Ok");
+var g_root_tag, g_root = grp_getgrgid_r(0, &g0, &gsb0, 1024);
+assert_eq(is_ok(g_root_tag), 1, "gid 0 is Ok");
 
 test_group("grp_getgrgid_r — Err(GrpNotFound) on bogus gid");
 var g1[24];
 var gsb1[1024];
-var g_miss = grp_getgrgid_r(2147483647, &g1, &gsb1, 1024);
-assert_eq(is_err_result(g_miss), 1, "bogus gid is Err");
-assert_eq(load64(g_miss + 8), GrpNotFound, "payload = GrpNotFound");
+var g_miss_tag, g_miss = grp_getgrgid_r(2147483647, &g1, &gsb1, 1024);
+assert_eq(is_err_result(g_miss_tag), 1, "bogus gid is Err");
+assert_eq(g_miss, GrpNotFound, "payload = GrpNotFound");
 
 test_group("grp_getgrnam_r — Err(GrpNotFound) on bogus name");
 var g2[24];
 var gsb2[1024];
-var gn_miss = grp_getgrnam_r("nosuchgroup_v5_8_31", &g2, &gsb2, 1024);
-assert_eq(is_err_result(gn_miss), 1, "bogus group is Err");
-assert_eq(load64(gn_miss + 8), GrpNotFound, "payload = GrpNotFound");
+var gn_miss_tag, gn_miss = grp_getgrnam_r("nosuchgroup_v5_8_31", &g2, &gsb2, 1024);
+assert_eq(is_err_result(gn_miss_tag), 1, "bogus group is Err");
+assert_eq(gn_miss, GrpNotFound, "payload = GrpNotFound");
 
 # ---- shadow ----
 # The strict Ok-path requires root (read access to /etc/shadow).
@@ -145,9 +151,9 @@ assert_eq(load64(gn_miss + 8), GrpNotFound, "payload = GrpNotFound");
 test_group("shadow_getspnam_r — Err on bogus name (load or notfound)");
 var sp1[64];
 var spsb1[1024];
-var sp_miss = shadow_getspnam_r("nosuchuser_v5_8_31_shadow", &sp1, &spsb1, 1024);
-assert_eq(is_err_result(sp_miss), 1, "bogus shadow lookup is Err");
-var sp_payload = load64(sp_miss + 8);
+var sp_miss_tag, sp_miss = shadow_getspnam_r("nosuchuser_v5_8_31_shadow", &sp1, &spsb1, 1024);
+assert_eq(is_err_result(sp_miss_tag), 1, "bogus shadow lookup is Err");
+var sp_payload = sp_miss;
 var sp_ok = 0;
 if (sp_payload == ShadowLoadFailed) { sp_ok = 1; }
 if (sp_payload == ShadowNotFound)   { sp_ok = 1; }
@@ -160,9 +166,9 @@ assert_eq(sp_ok, 1, "payload is ShadowLoadFailed or ShadowNotFound");
 # Err is acceptable; the contract is "Err on rejected".
 
 test_group("pam_unix_authenticate_r — Err on wrong-password / missing helper");
-var pa = pam_unix_authenticate_r("nosuchuser_v5_8_31_pam", "definitely-not-the-password");
-assert_eq(is_err_result(pa), 1, "rejected auth is Err");
-var pa_payload = load64(pa + 8);
+var pa_tag, pa = pam_unix_authenticate_r("nosuchuser_v5_8_31_pam", "definitely-not-the-password");
+assert_eq(is_err_result(pa_tag), 1, "rejected auth is Err");
+var pa_payload = pa;
 var pa_ok = 0;
 if (pa_payload == PamAuthFail)      { pa_ok = 1; }
 if (pa_payload == PamHelperMissing) { pa_ok = 1; }
@@ -179,12 +185,12 @@ fn _self_uid_via_chain(uid, pwbuf, sbuf, sbufsz) {
 test_group("? chain — pwd_getpwuid_r + accessor");
 var pw_q[56];
 var sb_q[1024];
-var chain_ok = _self_uid_via_chain(lookup_uid, &pw_q, &sb_q, 1024);
-assert_eq(is_ok(chain_ok), 1, "chain on a resolvable uid is Ok");
-assert_eq(load64(chain_ok + 8), lookup_uid, "chain returns the uid it looked up");
+var chain_ok_tag, chain_ok = _self_uid_via_chain(lookup_uid, &pw_q, &sb_q, 1024);
+assert_eq(is_ok(chain_ok_tag), 1, "chain on a resolvable uid is Ok");
+assert_eq(chain_ok, lookup_uid, "chain returns the uid it looked up");
 
-var chain_err = _self_uid_via_chain(2147483647, &pw_q, &sb_q, 1024);
-assert_eq(is_err_result(chain_err), 1, "chain on bogus uid is Err");
-assert_eq(load64(chain_err + 8), PwdNotFound, "chain payload = PwdNotFound");
+var chain_err_tag, chain_err = _self_uid_via_chain(2147483647, &pw_q, &sb_q, 1024);
+assert_eq(is_err_result(chain_err_tag), 1, "chain on bogus uid is Err");
+assert_eq(chain_err, PwdNotFound, "chain payload = PwdNotFound");
 
 var r = assert_summary();

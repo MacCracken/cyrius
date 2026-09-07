@@ -82,7 +82,8 @@ fn main(): i64 {
     sys_close(lfd);
 
     test_group("net_connect_nb — v4 regression (refactor delegates to net_connect_sa_nb)");
-    var l4 = result_unwrap(tcp_socket());
+    var l4_t, l4_v = tcp_socket();
+    var l4 = result_unwrap(l4_t, l4_v);
     var l4sa = sockaddr_in(INADDR_LOOPBACK(), 0);
     assert_eq(syscall(SYS_BIND, l4, l4sa, 16), 0, "bind 127.0.0.1:0");
     assert_eq(syscall(SYS_LISTEN, l4, 4), 0, "listen v4");
@@ -93,7 +94,8 @@ fn main(): i64 {
     var p4 = ((load8(g4 + 2) & 0xFF) << 8) | (load8(g4 + 3) & 0xFF);
     var pid4 = sys_fork();
     if (pid4 == 0) {
-        var c4 = result_unwrap(tcp_socket());
+        var c4_t, c4_v = tcp_socket();
+        var c4 = result_unwrap(c4_t, c4_v);
         var rc4 = net_connect_nb(c4, INADDR_LOOPBACK(), p4, 2000);
         sys_close(c4);
         if (rc4 == _NET_CONN_NB_OK) { sys_exit(0); }

@@ -173,15 +173,16 @@ var _NET_EAGAIN = 11;
 
 # v6.4.61: shared would-block Result singleton. sock_accept's overwhelmingly common
 # return in a non-blocking server is "nothing pending" (Err(_NET_EAGAIN)); on the
-# no-free bump allocator, boxing a fresh 16-byte Result every poll leaks the arena
-# and eventually NULL-faults a long-running accept-poll daemon (mishrand/agora/
-# descent/setu — issue 2026-07-12-net-sock-accept-per-poll-alloc-leak). Box it ONCE,
-# lazily, and hand back the same pointer each poll → zero steady-state allocation.
-# Safe: callers only READ the tag + code (is_ok / result_unwrap) and never mutate it.
-var _net_eagain_box = 0;
+# no-free bump allocator, boxing a fresh 16-byte Result every poll leaked the arena
+# and eventually NULL-faulted a long-running accept-poll daemon (mishrand/agora/
+# descent/setu — issue 2026-07-12-net-sock-accept-per-poll-alloc-leak). v6.4.61 fixed
+# that by boxing ONCE into a lazy `_net_eagain_box` singleton and handing back the same
+# pointer every poll.
+# ⭐ v6.6.0 DELETED the singleton and the global with it: under the value form `Err(...)`
+# is a register pair and allocates nothing at all, so there is no box to cache and no
+# steady-state growth to avoid. The workaround outlived the defect it worked around.
 fn _net_eagain() : Result {
-    if (_net_eagain_box == 0) { _net_eagain_box = Err(_NET_EAGAIN); }
-    return _net_eagain_box;
+    return Err(_NET_EAGAIN);
 }
 
 # Create a TCP socket. Returns Result(fd). On AGNOS the "fd" is a tagged

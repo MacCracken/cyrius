@@ -1027,6 +1027,58 @@ fn PARSE_GVAR_REG(S): i64 {
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);
+    # v6.6.0 — TOP-LEVEL DESTRUCTURE, pass 1. `var t, v = f();` is the only correct way to
+    # receive a `: stack` enum, so once Result went to the value form a top-level Result bind
+    # had no legal spelling at all: this parser reached the annotation check with a `,` in hand
+    # and reported `expected '=', got ','`. Registration is all pass 1 owes — the initializer is
+    # replayed by EMIT_GVAR_INITS, which carries the matching branch. Handled inline and
+    # returned early so none of the annotation / struct / static-init logic below has to learn
+    # about multi-name declarations. CHANGELOG [6.6.0].
+    if (PEEKT(S) == 31) {
+        STI(S, GTI(S) + 1);   # consume ,
+        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+        var dg2 = PEEKV(S);
+        STI(S, GTI(S) + 1);
+        var dg3 = 0;
+        var dgn = 2;
+        if (PEEKT(S) == 31) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            dg3 = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            dgn = 3;
+        }
+        var dga = GVCNT(S);
+        S64(_varn_base + dga * 8, noff);
+        S64(_vars_base + dga * 8, 8);
+        _GVAR_VIS(S, dga, sti);
+        SVCNT(S, dga + 1);
+        var dgb = GVCNT(S);
+        S64(_varn_base + dgb * 8, dg2);
+        S64(_vars_base + dgb * 8, 8);
+        _GVAR_VIS(S, dgb, sti);
+        SVCNT(S, dgb + 1);
+        if (dgn == 3) {
+            var dgc = GVCNT(S);
+            S64(_varn_base + dgc * 8, dg3);
+            S64(_vars_base + dgc * 8, 8);
+            _GVAR_VIS(S, dgc, sti);
+            SVCNT(S, dgc + 1);
+        }
+        var dgg = L64(S + 0x19A000);
+        if (dgg >= 4096) {
+            ERR_MSG(S, "too many initialized globals (max 4096)", 39);
+        }
+        S64(S + 0x729000 + dgg * 8, sti);
+        S64(S + 0x19A000, dgg + 1);
+        var dgs = 1;
+        while (dgs == 1) {
+            if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); dgs = 0; }
+            else { if (PEEKT(S) == 12) { dgs = 0; }
+                else { STI(S, GTI(S) + 1); } }
+        }
+        return 0;
+    }
     # Optional type annotation — check scalar types, pointer types, or struct names
     var psc = 0;
     var ann_sid = 0;
@@ -1256,6 +1308,43 @@ fn EMIT_GVAR_INITS(S): i64 {
         STI(S, GTI(S) + 1);  # consume VAR
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);  # consume IDENT
+        # v6.6.0 — TOP-LEVEL DESTRUCTURE, pass 2 (the replay half; pass 1 registered the names
+        # in PARSE_GVAR_REG). The DRAIN ORDER is the load-bearing part and it matches the
+        # in-function path exactly: EMOVRA_R3 and EMOVRA_RDX both land in rax, so the third
+        # slot must be read BEFORE rdx overwrites it. CHANGELOG [6.6.0].
+        if (PEEKT(S) == 31) {
+            STI(S, GTI(S) + 1);   # consume ,
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            var eg2 = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            var eg3 = 0;
+            var egn = 2;
+            if (PEEKT(S) == 31) {
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+                eg3 = PEEKV(S);
+                STI(S, GTI(S) + 1);
+                egn = 3;
+            }
+            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+            STI(S, GTI(S) + 1);   # consume =
+            var ei1 = FINDVAR(S, noff);
+            var ei2 = FINDVAR(S, eg2);
+            var ei3 = 0 - 1;
+            if (egn == 3) { ei3 = FINDVAR(S, eg3); }
+            PCMPE(S);
+            if (ei1 >= 0) { EVSTORE(S, ei1); }
+            if (egn == 3) {
+                EMOVRA_R3(S);
+                if (ei3 >= 0) { EVSTORE(S, ei3); }
+            }
+            EMOVRA_RDX(S);
+            if (ei2 >= 0) { EVSTORE(S, ei2); SLVAR(S, ei2); }
+            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+            STI(S, GTI(S) + 1);
+            gi = gi + 1;
+            continue;
+        }
         if (PEEKT(S) == 49) { STI(S, GTI(S) + 1); if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); SKIP_GENERICS(S); }
         # v5.11.51: byte-array literal `var foo[N] = { 0x.., ... };`
         # After IDENT (+ optional `:type`) the next token is `[` for
@@ -1373,6 +1462,9 @@ fn EMIT_GVAR_INITS(S): i64 {
         }
         gi = gi + 1;
     }
+    # v6.6.0 — every fn is parsed and flagged by now, so this is the one point where a
+    # pair-returning fn's OTHER return paths can be judged. Runs once; see parse.cyr.
+    _warn_mixed_pair_returns(S);
     return 0;
 }
 
@@ -1634,7 +1726,36 @@ fn PARSE_VAR(S): i64 {
             EFLSTORE(S, li2);
             if (_dt_n == 3) { SFLC(S, li1 + 3); } else { SFLC(S, li1 + 2); }
         } else {
-            ERR_MSG(S, "multi-var destructure only supported inside functions", 53);
+            # v6.6.0 — TOP-LEVEL destructure. This used to be refused outright, and the refusal
+            # became load-bearing the moment `Result` went to the value form: binding BOTH halves
+            # is the only correct way to receive a pair, so a top-level `var t, v = f();` had no
+            # legal spelling at all and the stdlib flip could not land while it errored.
+            # The global path mirrors the local one exactly, INCLUDING THE DRAIN ORDER — EMOVRA_R3
+            # and EMOVRA_RDX both land in rax, so the third slot must be read BEFORE rdx
+            # overwrites it. Indices are allocated in declaration order and the STORES are what
+            # get reordered; doing it the other way round would number the names by emit order.
+            # CHANGELOG [6.6.0].
+            var gi1 = GVCNT(S);
+            var gi2 = gi1 + 1;
+            var gi3 = gi1 + 2;
+            S64(_varn_base + gi1 * 8, noff);
+            S64(_vars_base + gi1 * 8, 8);
+            if (_dt_t1 != 0) { SVTYPE(S, gi1, _dt_t1); }
+            S64(_varn_base + gi2 * 8, noff2);
+            S64(_vars_base + gi2 * 8, 8);
+            if (_dt_t2 != 0) { SVTYPE(S, gi2, _dt_t2); }
+            if (_dt_n == 3) {
+                S64(_varn_base + gi3 * 8, noff3);
+                S64(_vars_base + gi3 * 8, 8);
+                if (_dt_t3 != 0) { SVTYPE(S, gi3, _dt_t3); }
+            }
+            # First value: already in rax from the call.
+            EVSTORE(S, gi1);
+            if (_dt_n == 3) { EMOVRA_R3(S); EVSTORE(S, gi3); }
+            EMOVRA_RDX(S);
+            EVSTORE(S, gi2);
+            SLVAR(S, gi2);
+            if (_dt_n == 3) { SVCNT(S, gi1 + 3); } else { SVCNT(S, gi1 + 2); }
         }
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);

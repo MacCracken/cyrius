@@ -26,15 +26,15 @@ fn main(): i64 {
     var lfd = syscall(41, 2, 1, 0);        # socket(AF_INET, SOCK_STREAM, 0)
     if (lfd < 0) { return 1; }
     sock_reuse(lfd);
-    var br = sock_bind(lfd, 0, 0);         # INADDR_ANY, ephemeral port
-    if (is_ok(br) == 0) { return 2; }
-    var lr = sock_listen(lfd, 16);
-    if (is_ok(lr) == 0) { return 3; }
+    var br_t, br = sock_bind(lfd, 0, 0);   # INADDR_ANY, ephemeral port
+    if (is_ok(br_t) == 0) { return 2; }
+    var lr_t, lr = sock_listen(lfd, 16);
+    if (is_ok(lr_t) == 0) { return 3; }
     sock_set_nonblocking(lfd);
-    var w = sock_accept(lfd);              # warm-up: builds the singleton
+    var w_t, w = sock_accept(lfd);         # warm-up
     var before = alloc_used();
     var i = 0;
-    while (i < 100000) { var r = sock_accept(lfd); i = i + 1; }
+    while (i < 100000) { var r_t, r = sock_accept(lfd); i = i + 1; }
     var grew = alloc_used() - before;
     sock_close(lfd);
     if (grew == 0) { return 42; }

@@ -75,9 +75,249 @@ var _inline_pending = 0;
 # Suppressing it for a propagated call sends `?` down the BOXED lowering, which dereferences the
 # tag as a pointer — measured: an immediate SIGSEGV. The propagation check belongs only in the
 # cursor variant below, whose caller is the single-variable bind refusal.
+# v6.6.0 — FORWARD-REFERENCE RESOLUTION FOR PAIR-RETURNING CALLEES.
+#
+# ⛔ WHY THIS EXISTS. Flag 256 ("returns a `(tag, payload)` pair") is set on an enum constructor
+# in pass 1, but on an ORDINARY fn only while its own body is parsed — at its `return Ok(x)`.
+# So a caller that appears EARLIER IN THE FILE than its callee saw the flag unset, and `?` took
+# the BOXED lowering: it dereferenced the tag (0 or 1) as a pointer. Compiled clean, SIGSEGV at
+# run time. That is not an exotic shape — it is how every flattened dist bundle is laid out, and
+# how ordinary code reads when helpers are defined below their callers.
+#
+# The fix is one linear propagation pass over the token stream, run lazily on first demand (by
+# which time pass 1 has registered every fn and flagged every `: stack` constructor). For each
+# `fn NAME (...) { ... }` whose flag is unset, look for `return IDENT (` in its OWN body where
+# IDENT is already flagged. Repeat until nothing changes, bounded — a chain of forwarding
+# wrappers needs one round per link.
+#
+# ⚠ NESTED fn BODIES ARE SKIPPED. A closure defined inside the body has its own `return`, and
+# counting it would flag the OUTER fn as pair-returning — over-flagging is worse than
+# under-flagging here, because it routes a non-pair call into the two-register receive and reads
+# a garbage rdx.
+# ⚠ INVALIDATED whenever a `: stack` constructor is flagged (parse_types.cyr). The prescan is
+# demand-driven, and the first demand can arrive BEFORE the enum declaration has been reached —
+# measured: the pass ran with a complete 3,498-token stream and flagged nothing, because no
+# constructor carried the flag yet for it to propagate FROM. Re-running on each new stack enum
+# is cheap (enum declarations are few) and is what makes the propagation order-independent.
+var _pair_prescan_done = 0;
+
+fn _pair_prescan(S): i64 {
+    var n = GTCNT(S);
+    var round = 0;
+    while (round < 6) {
+        var changed = 0;
+        var d = 0;
+        var i = 0;
+        while (i < n) {
+            var t0 = TOKTYP(S, i);
+            if (t0 == 13) { d = d + 1; }
+            elif (t0 == 14) { d = d - 1; }
+            elif (t0 == 32) {
+                # Only TOP-LEVEL definitions. Depth > 0 is a nested/closure fn or an `impl`
+                # method (whose registered name is mangled), and registering a bare name for
+                # either would mint a spurious fn-table entry.
+                if (d == 0) {
+                    if (TOKTYP(S, i + 1) == 2) {
+                        # ⚠ REGISTER IT IF NEEDED. On the first demand this pass runs early in
+                        # pass 2, before a fn defined LOWER in the file has been reached — and an
+                        # unregistered callee is exactly the case this whole pass exists for. A
+                        # forward CALL registers the callee the same way (parse_expr's
+                        # `if (fi < 0) { fi = REGFN(...) }`), so this mints nothing new.
+                        var pnoff = TOKVAL(S, i + 1);
+                        var pfi = FINDFN(S, pnoff);
+                        if (pfi < 0) { pfi = REGFN(S, pnoff); }
+                        if (pfi >= 0) {
+                            if ((GFLG(S, pfi) & 256) == 0) {
+                                var j = i + 2;
+                                var lim = i + 512;
+                                while (j < n) {
+                                    if (TOKTYP(S, j) == 13) { break; }
+                                    if (TOKTYP(S, j) == 5) { break; }   # `;` — declaration only
+                                    if (j > lim) { break; }
+                                    j = j + 1;
+                                }
+                                if (j < n) {
+                                    if (TOKTYP(S, j) == 13) {
+                                        var bd = 0;
+                                        var k = j;
+                                        var go = 1;
+                                        while (go == 1) {
+                                            if (k >= n) { go = 0; }
+                                            else {
+                                                var t = TOKTYP(S, k);
+                                                if (t == 13) { bd = bd + 1; }
+                                                elif (t == 14) {
+                                                    bd = bd - 1;
+                                                    if (bd == 0) { go = 0; }
+                                                }
+                                                elif (t == 32) {
+                                                    # nested fn — skip its whole body
+                                                    var nd = 0;
+                                                    var started = 0;
+                                                    while (k < n) {
+                                                        var nt = TOKTYP(S, k);
+                                                        if (nt == 13) { nd = nd + 1; started = 1; }
+                                                        if (nt == 14) {
+                                                            nd = nd - 1;
+                                                            if (nd == 0) { if (started == 1) { break; } }
+                                                        }
+                                                        k = k + 1;
+                                                    }
+                                                }
+                                                elif (t == 33) {                  # `return`
+                                                    if (TOKTYP(S, k + 1) == 2) {
+                                                        if (TOKTYP(S, k + 2) == 10) {
+                                                            var rf = FINDFN(S, TOKVAL(S, k + 1));
+                                                            if (rf >= 0) {
+                                                                if ((GFLG(S, rf) & 256) != 0) {
+                                                                    SFLG(S, pfi, GFLG(S, pfi) | 256);
+                                                                    changed = 1;
+                                                                    go = 0;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                if (go == 1) { k = k + 1; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        if (changed == 0) { round = 6; } else { round = round + 1; }
+    }
+    return 0;
+}
+
+# v6.6.0 — MIXED RETURNS IN A PAIR-RETURNING FN. The class that cost 19 silent defects in one
+# stdlib during this release's own migration, and the one the compiler is the only thing that can
+# see.
+#
+# ⛔ THE SHAPE. The pre-flip error-propagation idiom is:
+#       var res = f();
+#       if (is_err_result(res) == 1) { return res; }     # forwards the boxed Err
+# Migrated mechanically it becomes `var res_tag, res = f(); if (is_err_result(res_tag) == 1) {
+# return res; }` — and `res` is now the PAYLOAD ALONE. The tag is dropped, so the caller receives
+# the error VALUE as its tag: measured, a propagated `Err(77)` arrives as tag=77, is_err=0.
+# **An error that reads as success** — the v6.5.15 class, one level up, in the one code path whose
+# entire job is to refuse. The correct form is `return Err(res);`.
+#
+# Neither half is a type error: `return res;` and `return Err(res);` are both `return <i64>;`, so
+# nothing else in the compiler can distinguish them. What CAN be said is structural: **a fn that
+# returns a pair on one path and a single value on another cannot be consumed correctly**, because
+# its caller must either destructure (and read garbage on the single-value path) or bind one (and
+# be refused). So every plain return in a pair-returning fn is reported.
+#
+# ⚠ A WARNING, not an error, and deliberately so: mixing was legal before the value form existed
+# and the pattern may appear in code that is not a Result at all. It runs once, after parsing, so
+# every fn has its final flag — the propagation pass above is order-dependent and a mid-parse
+# verdict would be wrong for exactly the forward-reference case that motivated it.
+var _mixed_warned = 0;
+
+fn _warn_mixed_pair_returns(S): i64 {
+    if (_mixed_warned == 1) { return 0; }
+    _mixed_warned = 1;
+    var n = GTCNT(S);
+    var d = 0;
+    var i = 0;
+    while (i < n) {
+        var t0 = TOKTYP(S, i);
+        if (t0 == 13) { d = d + 1; }
+        elif (t0 == 14) { d = d - 1; }
+        elif (t0 == 32) {
+            if (d == 0) {
+                if (TOKTYP(S, i + 1) == 2) {
+                    var wfi = FINDFN(S, TOKVAL(S, i + 1));
+                    if (wfi >= 0) {
+                        if ((GFLG(S, wfi) & 256) != 0) {
+                            var j = i + 2;
+                            var lim = i + 512;
+                            while (j < n) {
+                                if (TOKTYP(S, j) == 13) { break; }
+                                if (TOKTYP(S, j) == 5) { break; }
+                                if (j > lim) { break; }
+                                j = j + 1;
+                            }
+                            if (j < n) {
+                                if (TOKTYP(S, j) == 13) {
+                                    var bd = 0;
+                                    var k = j;
+                                    var go = 1;
+                                    while (go == 1) {
+                                        if (k >= n) { go = 0; }
+                                        else {
+                                            var t = TOKTYP(S, k);
+                                            if (t == 13) { bd = bd + 1; }
+                                            elif (t == 14) {
+                                                bd = bd - 1;
+                                                if (bd == 0) { go = 0; }
+                                            }
+                                            elif (t == 32) {
+                                                var nd = 0;
+                                                var started = 0;
+                                                while (k < n) {
+                                                    var nt = TOKTYP(S, k);
+                                                    if (nt == 13) { nd = nd + 1; started = 1; }
+                                                    if (nt == 14) {
+                                                        nd = nd - 1;
+                                                        if (nd == 0) { if (started == 1) { break; } }
+                                                    }
+                                                    k = k + 1;
+                                                }
+                                            }
+                                            elif (t == 33) {
+                                                var plain = 1;
+                                                if (TOKTYP(S, k + 1) == 5) { plain = 0; }
+                                                if (TOKTYP(S, k + 1) == 2) {
+                                                    if (TOKTYP(S, k + 2) == 10) {
+                                                        var rf2 = FINDFN(S, TOKVAL(S, k + 1));
+                                                        if (rf2 >= 0) {
+                                                            if ((GFLG(S, rf2) & 256) != 0) { plain = 0; }
+                                                        }
+                                                    }
+                                                }
+                                                if (plain == 1) {
+                                                    syscall(SYS_WRITE, 2, "warning:", 8);
+                                                    _err_head_at(S, k);
+                                                    syscall(SYS_WRITE, 2, ": `", 3);
+                                                    PRSTR(S + 0xEC00000 + TOKVAL(S, i + 1));
+                                                    syscall(SYS_WRITE, 2, "` returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this error as its TAG. Did you mean `return Err(x);`?\n", 165);
+                                                    go = 0;
+                                                }
+                                            }
+                                            if (go == 1) { k = k + 1; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Run the propagation once, on first demand. Cheap on every call after the first.
+fn _ensure_pair_flags(S): i64 {
+    if (_pair_prescan_done == 1) { return 0; }
+    _pair_prescan_done = 1;
+    _pair_prescan(S);
+    return 0;
+}
+
 fn _callee_returns_pair_at(S, ti): i64 {
     if (TOKTYP(S, ti) != 2) { return 0; }
     if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    _ensure_pair_flags(S);
     var _cra = FINDFN(S, TOKVAL(S, ti));
     if (_cra < 0) { return 0; }
     if ((GFLG(S, _cra) & 256) == 0) { return 0; }
@@ -107,9 +347,31 @@ fn _call_is_propagated(S, ti): i64 {
     return 0;
 }
 
+# v6.6.0 — THE LOSSY-CONTEXT REFUSAL, at the cursor. v6.5.67 closed exactly ONE lossy shape,
+# `var x = f();`, and that was enough while `: stack` was an opt-in nobody used. Flipping
+# Result/Option/Either to the value form makes every OTHER single-value context live across the
+# whole ecosystem, and two of them compiled clean and dropped the payload in silence:
+#
+#     x = f();                 # assignment to an existing variable
+#     store64(&slot, f());     # storing a Result into a slot (an array of Results is this shape)
+#
+# Both are the v6.5.67 defect wearing a different statement, and `store64` is the one that
+# matters most: it is how every "collection of Results" is written, and the payload it drops is
+# the error code. Refused here rather than in a helper, for the same reason the bind-site check
+# is: `_callee_returns_pair` also feeds `_tpair`, which is what tells `?` it holds a pair.
+# ⭐ ANTI-VACUOUS BY CONSTRUCTION: the flag tested is set only on `: stack` constructors, so a
+# BOXED Result — still the documented idiom at thousands of sites — is untouched.
+fn _refuse_lossy_pair(S): i64 {
+    if (_callee_returns_pair(S) == 0) { return 0; }
+    if (_call_is_propagated(S, GTI(S) + 1) == 1) { return 0; }
+    ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
+    return 1;
+}
+
 fn _callee_returns_pair(S): i64 {
     if (PEEKT(S) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
+    _ensure_pair_flags(S);
     var _crp = FINDFN(S, PEEKV(S));
     if (_crp < 0) { return 0; }
     if ((GFLG(S, _crp) & 256) == 0) { return 0; }
@@ -1626,6 +1888,16 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 }
             }
             # fn call statement
+            # v6.6.0 — is the callee pair-returning? Read the flag BEFORE PARSE_FNCALL consumes
+            # the call, so the `?` desugar below can take the value-form path. Read from the fn
+            # table by name rather than peeking the cursor: by the time `?` is seen the cursor is
+            # already past the call.
+            var _qs_pair = 0;
+            _ensure_pair_flags(S);
+            var _qs_fi = FINDFN(S, noff);
+            if (_qs_fi >= 0) {
+                if ((GFLG(S, _qs_fi) & 256) != 0) { _qs_pair = 1; }
+            }
             PARSE_FNCALL(S, noff);
             # v5.8.31 — postfix `?` on a bare fncall-statement
             # (`expr?;` form). v5.8.29 added `?` in PARSE_TERM but
@@ -1642,6 +1914,45 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 if (GINFN(S) == 0) {
                     ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 55);
                 }
+                # ⛔ v6.6.0 — THE VALUE-FORM PATH, AND WHY IT IS HERE TWICE. This block is a
+                # SECOND, PARALLEL COPY of the `?` desugar: PARSE_STMT dispatches IDENT+LPAREN
+                # straight to PARSE_FNCALL and never reaches `_PARSE_TERM_IMPL`, so v5.8.31 had
+                # to repeat the lowering. When v6.6.0 taught `?` the pair form it was fixed in
+                # the OTHER copy only, and this one kept dereferencing the operand — reading the
+                # TAG (0 or 1) as a pointer. `look(n)?;` as a bare statement compiled clean and
+                # SIGSEGV'd while `var x = look(n)?;` was correct. Same parallel-copy class as
+                # the global-init REPLAY that had to take the v6.3.44 struct fix separately.
+                # ⭐ The Err path re-emits BOTH halves, exactly as the expression copy does:
+                # propagating out of the enclosing fn means RETURNING a pair, so restoring only
+                # rax would hand the caller a correct tag with a stale payload.
+                if (_qs_pair == 1) {
+                    var qstag = GVCNT(S);
+                    S64(_varn_base + qstag * 8, 0);
+                    S64(_vars_base + qstag * 8, 8);
+                    var qsval = qstag + 1;
+                    S64(_varn_base + qsval * 8, 0);
+                    S64(_vars_base + qsval * 8, 8);
+                    SVCNT(S, qsval + 1);
+                    EVSTORE(S, qstag);            # tag (rax as returned)
+                    EMOVRA_RDX(S);                # rax = rdx = payload
+                    EVSTORE(S, qsval);
+                    EVLOAD(S, qstag);
+                    EPUSHR(S);
+                    EMOVI(S, 0);
+                    EMOVCA(S);                    # rcx = 0 (Ok)
+                    EPOPR(S);                     # rax = tag
+                    ECMPR(S);
+                    var qspj = EJCC(S, 0x84);     # JE -> Ok, skip the propagate
+                    EVLOAD(S, qsval);
+                    EMOVRDXRAX(S);                # rdx = payload
+                    EVLOAD(S, qstag);             # rax = tag
+                    var qsprp = EJMP0(S);
+                    vec_push(rp_vec, qsprp);
+                    EPATCH(S, qspj);
+                    EVLOAD(S, qsval);             # Ok path: rax = payload (dropped by the
+                                                  # bare-statement convention)
+                    if (_cur_fn_ix >= 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+                } else {
                 var qsidx = GVCNT(S);
                 S64(_varn_base + qsidx * 8, 0);
                 S64(_vars_base + qsidx * 8, 8);
@@ -1666,6 +1977,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 EPOPR(S);
                 EADDR(S);
                 ELOAD64(S);
+                }
             }
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
@@ -1770,6 +2082,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # v6.5.61 — `r = f(...)` into a VECTOR local needs the 16/32-byte receive the
             # declaration form has; without it this fell to the 8-byte EFLSTORE below.
             if (_try_vector_call_assign(S, noff) == 1) { return 0; }
+            # v6.6.0 — `x = f();` where f returns a `: stack` pair keeps the tag and drops the
+            # payload, silently. Same refusal as the declaration form. CHANGELOG [6.6.0].
+            _refuse_lossy_pair(S);
             _asg_ret_sid = 0;
             if (PEEKT(S) == 2) {
                 if (TOKTYP(S, GTI(S) + 1) == 10) {

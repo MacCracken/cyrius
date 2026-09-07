@@ -31,8 +31,8 @@ fn _bin_echo_present(): i64 {
 test_group("run_capture — single-arg argv (v5.11.60 Item 6 regression)");
 if (_bin_echo_present() == 1) {
     var buf1[2048];
-    var res1 = run_capture("/bin/echo", "hello", 0, &buf1, 2048);
-    var n1 = result_unwrap_or(res1, 0);
+    var res1_tag, res1 = run_capture("/bin/echo", "hello", 0, &buf1, 2048);
+    var n1 = result_unwrap_or(res1_tag, res1, 0);
     # /bin/echo writes "hello\n" = 6 bytes. Pre-v5.11.60 this returned 1
     # (lone "\n") because the second argv slot landed past the 4-byte
     # buffer and execve saw an empty argv[1].
@@ -45,8 +45,8 @@ if (_bin_echo_present() == 1) {
 test_group("run_capture — two-arg argv (deeper overflow case)");
 if (_bin_echo_present() == 1) {
     var buf2[2048];
-    var res2 = run_capture("/bin/echo", "-n", "hi", &buf2, 2048);
-    var n2 = result_unwrap_or(res2, 0);
+    var res2_tag, res2 = run_capture("/bin/echo", "-n", "hi", &buf2, 2048);
+    var n2 = result_unwrap_or(res2_tag, res2, 0);
     # `/bin/echo -n hi` writes "hi" = 2 bytes (no newline). Pre-v5.11.60
     # the third argv slot trampled even further past the buffer.
     assert_eq(n2, 2, "/bin/echo -n hi captures 2 bytes");
@@ -62,8 +62,8 @@ if (true_fd >= 0) {
     sys_close(true_fd);
     # /bin/true exits 0 with no output; verify `run` (which also flows through
     # _exec3) reaches it without trampling the stack on the wider argv buffer.
-    var res3 = run("/bin/true", "ignored1", "ignored2");
-    var rc3 = result_unwrap_or(res3, 0 - 1);
+    var res3_tag, res3 = run("/bin/true", "ignored1", "ignored2");
+    var rc3 = result_unwrap_or(res3_tag, res3, 0 - 1);
     assert_eq(rc3, 0, "run /bin/true with two args exits 0");
 } else {
     println("  skip: /bin/true not present on this host");

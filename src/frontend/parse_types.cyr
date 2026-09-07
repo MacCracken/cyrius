@@ -410,7 +410,13 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                         # The flag lets the binding sites REFUSE a lossy context instead of losing
                         # data, and it propagates through `return` so a forwarding wrapper is
                         # flagged too.
-                        if (is_stack_enum == 1) { if (ctor_arity == 1) { SFLG(S, cfi, GFLG(S, cfi) | 256); } }
+                        if (is_stack_enum == 1) { if (ctor_arity == 1) {
+                            SFLG(S, cfi, GFLG(S, cfi) | 256);
+                            # v6.6.0 — a new pair-returning constructor exists, so the
+                            # forward-reference propagation in parse.cyr must run again: anything
+                            # it already decided was computed without knowing about this one.
+                            _pair_prescan_done = 0;
+                        } }
                         S64(_fnt_offsets + cfi * 8, GCP(S));
                         # v6.2.41 — register the constructor's REAL arity (was a
                         # hardcoded 1 — a dead sentinel; _fnt_params' only reader

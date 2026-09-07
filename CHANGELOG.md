@@ -4,28 +4,31 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [6.5.74] — 2026-09-06
-
-### Fixed
-
-- **`?` works on the value form, and its Err path re-emits BOTH halves.** v6.5.67 made `?` on a
-  `: stack` enum a hard error because the operator dereferenced its operand — reading the tag
-  (0 or 1) as a pointer, compiling clean and then SIGSEGV'ing. It is now lowered properly:
-  stash tag and payload, compare the tag, and on Err **restore rdx as well as rax** before
-  jumping to the epilogue.
-
-  ⭐ **That last part is the whole difficulty, and the framing this arc carried for a year
-  omitted it.** "Teach `?` to accept a pair" sounds like a one-line change; propagating a Result
-  out of the enclosing function means RETURNING a pair, so restoring only rax hands the caller a
-  correct tag with a stale payload — the v6.5.67 silent-payload-loss defect one level up, and
-  invisible to any check that only inspects the tag.
-
-  ⚠ Three self-inflicted detours are recorded in the source because each looked right: the
-  propagation check belongs at the BINDING site, not in either `_callee_returns_pair` helper —
-  those also feed `_tpair`, which is what tells `?` it is holding a pair at all, so suppressing
-  them there routes `?` back into the boxed lowering and straight into the SIGSEGV.
+## [6.6.0] — 2026-09-06
 
 ### Changed
+
+- ⭐ **`Result`, `Option` and `Either` are now the VALUE FORM — construction allocates ZERO
+  bytes.** `enum Result<T, E>: stack` returns its `(tag, payload)` in a register pair instead of
+  a 16-byte box from the global bump allocator. That allocator's only reclaim is `alloc_reset()`,
+  which invalidates every pointer it has ever handed out, so a long-running server could never
+  call it: `100x sock_send` grew the heap by exactly 1600 B, unbounded, with no consumer
+  workaround. It is now 0 B, structurally, for every payload-carrying Result in the ecosystem.
+
+  ⛔ **This changes the ARITY of every value, which is why it could not be a quiet swap.** rdx
+  does not reach a parameter, so no helper can receive a Result in one argument:
+  `result_unwrap(t, v)`, `err_code_of(t, v)`, `result_print(t, v)`, `unwrap(t, v)` and
+  `unwrap_or(t, v, fallback)` all gained the tag; `is_ok` / `is_err_result` / `is_none` /
+  `is_some` / `is_left` / `is_right` / `is_tag` are unchanged (argument 1 receives rax, which IS
+  the tag). **`payload()` is DELETED** — it has no 1-argument replacement, and under the value
+  form the payload is already a plain variable, so `payload(r)` becomes `r`. `tagged_new()` is
+  DELETED with it: it built a box only `tag()`/`payload()` could read, and nothing in any of the
+  12 sibling stdlibs called it.
+
+  `ok_via` / `err_via` — the v6.5.41 arena escape hatch that existed *because* construction
+  allocated — keep their names and signatures and now simply return the pair. The allocator
+  argument is accepted and ignored on purpose: there is nothing left to allocate from, and
+  deleting the parameter would break call sites for no benefit.
 
 - **Local documentation sweep.** **93 dead internal links repointed across 41 files** — almost
   all referrers never updated when an issue was archived, which is the dominant rot shape in this
@@ -39,30 +42,137 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **with its Err payload intact** — the same shape as the v6.5.68 gate that pinned the sentence
   encoding its own limitation.
 
-### Notes
+### Added
 
-- ⛔ **The `Result`/`Option`/`Either` flip was BUILT AND REVERTED, and the reason is a fact the
-  issue never recorded.** The stdlib was flipped, `payload()` deleted, 14 cyrius-owned sites and
-  **117 declarations across six upstream repos** migrated, and 5 of 6 dist bundles regenerated
-  clean. Every stale site became a named compile error at the offending line — the stated
-  acceptance criterion held exactly.
+- **Top-level `var t, v = f();`** — destructuring a multi-value return outside a function. This
+  was refused outright (`multi-var destructure only supported inside functions`, and at top level
+  it did not even reach that message — `PARSE_GVAR_REG` reported `expected '=', got ','`), and
+  the refusal became load-bearing the instant Result went to the value form: binding both halves
+  is the *only* correct way to receive a pair, so a top-level Result bind had no legal spelling
+  at all. Implemented across both phases — `PARSE_GVAR_REG` registers every name in pass 1,
+  `EMIT_GVAR_INITS` replays the call and drains the registers in pass 2 — with the same ordering
+  invariant as the in-function path: **`EMOVRA_R3` and `EMOVRA_RDX` both land in rax, so the
+  third slot must be read BEFORE rdx overwrites it.**
 
-  It stops here: **a consumer pinning cyrius < 6.5.55 cannot PARSE the flipped stdlib**, and
-  `cyrius.cyml` pins re-exec that pinned compiler. So this is not an API break across ~2,500 call
-  sites — it is a **lockstep toolchain break**: every consumer must bump its pin *and* migrate,
-  or it cannot build at all. Measured at the v6.5.73 closeout: **125 repos pin cyrius, none at
-  ≥ 6.5.60.** That is a sequencing decision for the maintainer, not more implementation, so the
-  work is preserved (script + six upstream diffs) and the issue carries both options.
+### Fixed
 
-  ⚠ **A warning paid for in this session:** pushing the flipped stdlib into
-  `~/.cyrius/versions/*/lib/` to get past the pin re-exec **broke 393 installed versions at
-  once** — older compilers cannot parse `: stack`. Restored from git. A version snapshot must
-  match its own compiler.
+- ⛔ **Two more lossy contexts that dropped the payload in SILENCE.** v6.5.67 closed exactly one
+  shape, `var x = f();`, which was enough while `: stack` was an opt-in nobody used. The flip
+  makes every other single-value context live across the ecosystem, and two of them compiled
+  clean and wrong:
 
-- **Bench** (release gate, quiet box): `self_compile` **722 ms**, `size/cycc` **1,235,192 B**,
-  `size/cycc_text` **1,080,784 B** — flat against v6.5.73. The `?` change adds one lowering branch
-  reached only by a pair-returning callee, and no `src/` file declares one.
+  ```
+  x = f();                 # assignment to an existing variable
+  store64(&slot, f());     # storing a Result into a slot
+  ```
 
+  Both are the v6.5.67 defect wearing a different statement. `store64` is the one that matters:
+  **it is how every collection of Results is written, and the half it silently discarded is the
+  error code.** Both now refuse with the message that names the fix. ⭐ Anti-vacuous by
+  construction — the flag tested is set only on `: stack` constructors, so a boxed enum
+  (`q = bx(5)`, `store64(&slot, bx(5))`) is completely unaffected, verified as a control.
+
+- ⭐ **NEW DIAGNOSTIC: a fn that returns a pair on one path and a single value on another.**
+  This is the class that cost **19 silent defects in one stdlib during this release's own
+  migration**, and the compiler is the only thing that can see it. The pre-flip propagation idiom
+  is `var res = f(); if (is_err_result(res) == 1) { return res; }` — mechanically migrated, the
+  `return res;` now yields the **payload alone**, so the caller receives the error VALUE as its
+  tag. Measured: a propagated `Err(77)` arrives as `tag=77, is_err=0` — **an error that reads as
+  SUCCESS**, which is the v6.5.15 class in the one code path whose entire job is to refuse.
+
+  ⚠ **Neither spelling is a type error** — `return res;` and `return Err(res);` are both
+  `return <i64>;` — which is exactly why it survives a green build and a green suite. The check
+  is structural instead: a pair-returning fn that returns a single value somewhere cannot be
+  consumed correctly by anyone. It is a WARNING (mixing predates the value form), runs once after
+  parsing so every fn carries its final flag, and names the fix.
+
+  It immediately found **19 sites in yukti** (device enumeration, mount, optical and network
+  query paths — fixed and released as yukti 2.3.10) and **3 in vani** (`vani_drain` / `vani_drop`
+  / `vani_state` returned a Result on the error path and a bare status int on the success path —
+  fixed and released as vani 1.2.4). Measured firing rate on correct code: **zero** across the
+  tcyr corpus and all eight sibling builds.
+
+- ⛔ **`?` had a SECOND, PARALLEL LOWERING that was never updated.** `PARSE_STMT` dispatches
+  IDENT+LPAREN straight to `PARSE_FNCALL` and never reaches the term parser, so v5.8.31 had to
+  repeat the `?` desugar in `parse.cyr`. The value-form work landed in the expression copy only,
+  so **`f()?;` as a bare statement compiled clean and SIGSEGV'd while `var x = f()?;` was
+  correct** — it dereferenced the tag as a pointer. Same class as the global-init REPLAY that had
+  to take the v6.3.44 struct fix separately. **When you fix a lowering, grep for a second copy.**
+
+- ⛔ **FORWARD REFERENCES took the boxed path — the single most dangerous shape of the flip.**
+  Flag 256 ("returns a pair") is set on a constructor in pass 1, but on an ordinary fn only while
+  its own body is parsed. A caller appearing EARLIER IN THE FILE than its callee therefore read
+  the flag as unset: `?` dereferenced the tag, **and the lossy-bind diagnostic went silent at the
+  same moment**, so the very shape that most needed the error got neither the error nor a working
+  lowering. That is not exotic — **it is how every flattened dist bundle is laid out.**
+
+  Fixed with a propagation pass over the token stream that runs on demand and re-runs whenever a
+  new `: stack` constructor is registered. ⚠ **The first version of that fix silently did
+  nothing**, and the reason is worth keeping: the pass is demand-driven, and the first demand
+  arrives *before* the enum declaration has been reached — instrumented, it ran over a complete
+  3,498-token stream and flagged **zero** functions, because no constructor yet carried the flag
+  to propagate FROM. A pass that runs at the wrong moment looks exactly like a pass that works.
+
+- **`?` works on the value form, and its Err path re-emits BOTH halves.** v6.5.67 made `?` on a
+  `: stack` enum a hard error because the operator dereferenced its operand — reading the tag
+  (0 or 1) as a pointer, compiling clean and then SIGSEGV'ing. It is now lowered properly: stash
+  tag and payload, compare the tag, and on Err **restore rdx as well as rax** before jumping to
+  the epilogue.
+
+  ⭐ **That last part is the whole difficulty, and the framing this arc carried for a year
+  omitted it.** "Teach `?` to accept a pair" sounds like a one-line change; propagating a Result
+  out of the enclosing function means RETURNING a pair, so restoring only rax hands the caller a
+  correct tag with a stale payload — the silent-payload-loss defect one level up, and invisible
+  to any check that only inspects the tag.
+
+  ⚠ Three self-inflicted detours are recorded in the source because each looked right: the
+  propagation check belongs at the BINDING site, not in either `_callee_returns_pair` helper —
+  those also feed `_tpair`, which is what tells `?` it is holding a pair at all, so suppressing
+  them there routes `?` back into the boxed lowering and straight into the SIGSEGV.
+
+### Verification
+
+- **Release gate GREEN.** `check.sh` **240 passed / 0 failed**; cross-OS self-host on REAL
+  hardware — **ecb** (macOS-arm64) · **ach** (Intel-Mac) · **cass** (Windows/PE) · **pi**
+  (aarch64) all `SELFHOST_OK + crossos LIBTEST_OK`; seed → cybs → cycc byte-identical.
+- **Bench**: `self_compile` **740 ms** (from 722), `size/cycc` **1,247,608 B** (from 1,235,192),
+  `size/cycc_text` **1,089,656 B**. **+12,416 B / +18 ms**, and it is bought rather than drifted:
+  the value-form lowering, two new lossy-context refusals, the top-level destructure across both
+  parse phases, the forward-reference propagation pass, and the mixed-return diagnostic. Growth
+  tax by the standing triage rule — no single patch dominates. A large consumer build (sigil,
+  full bundle) measures **0.79 s**, so the two new whole-token-stream passes are linear, not
+  quadratic.
+- **Mutation-proven**, because a gate that cannot fail proves nothing: neutering
+  `_refuse_lossy_pair` turns axis 8 RED (*"assignment x = mk(3) COMPILED — the payload is
+  silently dropped"*), and disabling the forward-reference propagation turns axis 12 RED with
+  the exact SIGSEGV it exists to prevent (*"ran but gave 139, expected 33"*). The mixed-return
+  diagnostic was proven against REAL code — reverting one of yukti's 19 repairs makes it name
+  the file and line.
+
+### Ecosystem
+
+- **Eight sibling stdlibs migrated at source, released, and re-folded** — sigil **3.12.16**,
+  sandhi **1.9.16**, yukti **2.3.10**, mabda **4.1.1**, bayan **1.5.5**, vani **1.2.4**, yantra
+  **1.0.4**, sankoch **2.7.11**. Each bumped its `cyrius` pin to 6.6.0 *first* (the pin re-execs
+  that compiler, so migrating before bumping measures nothing), re-vendored, migrated, tested,
+  released, and regenerated every dist bundle — profile bundles included, which is where a
+  previous fold left nine sub-profiles stale.
+
+  ⚠ **The list was DERIVED from actual `payload(` / `result_unwrap(` usage, not copied.** An
+  earlier survey named six and **missed yantra and sankoch**. sankoch turned out to need no
+  source change at all — its bundle's only `payload` hit was a comment — so its release is a pin
+  bump, and saying so is more useful than inventing a diff.
+
+  ⛔ **Two of the eight needed a SECOND release**, because the migration rule itself was the
+  fail-open described above: **yukti 2.3.10** (19 sites) and **vani 1.2.4** (3 sites). Both were
+  found by the new diagnostic *after* the first round had already gone green — which is the
+  whole argument for putting the check in the compiler instead of in a script.
+
+  ⚠ **Cross-dependency ordering is real:** several repos vendor each other (vani vendors yukti;
+  yantra vendors bayan, sandhi and sigil), so a repo tested before its dependency was re-released
+  reports failures that are not its own. They resolve on a second pass once every bundle is
+  published — which is why each repo was re-vendored and re-tested against the FINAL compiler
+  rather than trusted from its first green.
 
 ## [6.5.73] — 2026-09-06
 

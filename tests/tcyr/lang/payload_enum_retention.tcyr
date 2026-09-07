@@ -28,23 +28,32 @@ test_group("two values from ONE call site are independent");
 
 # The v6.5.15 killer, minimal form: one textual `Ok(` , two live values.
 fn _mk(n): i64 { return Ok(n); }
-var a = _mk(11);
-var b = _mk(22);
-assert_eq(load64(a + 8), 11, "first value intact after second is built");
-assert_eq(load64(b + 8), 22, "second value correct");
+var a_tag, a = _mk(11);
+var b_tag, b = _mk(22);
+assert_eq(a, 11, "first value intact after second is built");
+assert_eq(b, 22, "second value correct");
 assert_neq(a, b, "two constructions are not the same storage");
 
 test_group("retaining loop — N live values from one call site");
 
 # 32 values alive SIMULTANEOUSLY, alternating tags, each with a distinct payload.
-# Storage that is per-call-site rather than per-value makes every one of these read back as
-# the last written. `&keep + i * 8` rather than a subscript: the language has no `a[i]` form.
+# ⛔ Under the v6.6.0 value form a Result is TWO values and cannot go in one slot, so
+# `store64(&keep + i * 8, _mk(...))` is a compile ERROR now instead of a silent half-store —
+# that refusal is the point of the release. A collection of Results is two parallel arrays.
 fn _retain_32(): i64 {
-    var keep: i64[32];
+    var ktag: i64[32];
+    var kpay: i64[32];
     var i = 0;
     while (i < 32) {
-        if (i % 2 == 0) { store64(&keep + i * 8, _mk(1000 + i)); }
-        else { store64(&keep + i * 8, Err(2000 + i)); }
+        if (i % 2 == 0) {
+            var ot, ov = _mk(1000 + i);
+            store64(&ktag + i * 8, ot);
+            store64(&kpay + i * 8, ov);
+        } else {
+            var et, ev = Err(2000 + i);
+            store64(&ktag + i * 8, et);
+            store64(&kpay + i * 8, ev);
+        }
         i = i + 1;
     }
     var bad = 0;
@@ -53,9 +62,8 @@ fn _retain_32(): i64 {
         var want_tag = 1;
         var want_pay = 2000 + i;
         if (i % 2 == 0) { want_tag = 0; want_pay = 1000 + i; }
-        var box = load64(&keep + i * 8);
-        if (load64(box) != want_tag) { bad = bad + 1; }
-        if (load64(box + 8) != want_pay) { bad = bad + 1; }
+        if (load64(&ktag + i * 8) != want_tag) { bad = bad + 1; }
+        if (load64(&kpay + i * 8) != want_pay) { bad = bad + 1; }
         i = i + 1;
     }
     return bad;
@@ -69,29 +77,33 @@ fn _open_like(ok): i64 {
     if (ok == 1) { return Ok(7); }
     return Err(0 - 5);
 }
-var good = _open_like(1);
-var fail = _open_like(0);
-assert_eq(load64(good), 0, "success is Ok");
-assert_eq(load64(fail), 1, "FAILURE IS STILL Err after a success was built");
-assert_eq(load64(fail + 8), 0 - 5, "failure carries its error code");
+var good_tag, good = _open_like(1);
+var fail_tag, fail = _open_like(0);
+assert_eq(good_tag, 0, "success is Ok");
+assert_eq(good, 7, "success carries its value");
+assert_eq(fail_tag, 1, "FAILURE IS STILL Err after a success was built");
+assert_eq(fail, 0 - 5, "failure carries its error code");
 
 test_group("payload edge values round-trip");
 
-var z = Ok(0);
-var m1 = Ok(0 - 1);
-var big = Ok(4611686018427387904);
-var neg = Err(0 - 9223372036854775807);
-assert_eq(load64(z + 8), 0, "payload 0");
-assert_eq(load64(m1 + 8), 0 - 1, "payload -1");
-assert_eq(load64(big + 8), 4611686018427387904, "payload 2^62");
-assert_eq(load64(neg + 8), 0 - 9223372036854775807, "payload near i64 min");
+var z_tag, z = Ok(0);
+var m1_tag, m1 = Ok(0 - 1);
+var big_tag, big = Ok(4611686018427387904);
+var neg_tag, neg = Err(0 - 9223372036854775807);
+assert_eq(z, 0, "payload 0");
+assert_eq(m1, 0 - 1, "payload -1");
+assert_eq(big, 4611686018427387904, "payload 2^62");
+assert_eq(neg, 0 - 9223372036854775807, "payload near i64 min");
 # Ok(0) and Err(0) differ ONLY in tag — the discriminator a value repr must not lose.
-var ok0 = Ok(0);
-var er0 = Err(0);
-assert_neq(load64(ok0), load64(er0), "Ok(0) and Err(0) are distinguishable");
+var ok0_tag, ok0 = Ok(0);
+var er0_tag, er0 = Err(0);
+assert_neq(ok0_tag, er0_tag, "Ok(0) and Err(0) are distinguishable");
+assert_eq(ok0, er0, "...and it is ONLY the tag that distinguishes them");
 
-test_group("multi-arity and mixed constant/payload variants");
+test_group("ANTI-VACUOUS CONTROL: boxed multi-arity and mixed variants are untouched");
 
+# `enum Sig` has an arity-2 variant, which a register pair cannot carry, so it stays BOXED with
+# tag at +0 and fields at +8/+16. These reads must keep working exactly as before the flip.
 var h = Hi(5, 6);
 assert_eq(load64(h), 2, "Hi tag");
 assert_eq(load64(h + 8), 5, "Hi field 0");
@@ -103,18 +115,12 @@ assert_eq(load64(lo), 0, "Lo tag");
 assert_eq(load64(mid), 1, "Mid tag");
 assert_eq(load64(lo + 8), 41, "Lo payload survives Mid construction");
 
-test_group("nesting and struct/global retention");
-
-var inner = Ok(77);
-var outer = Ok(inner);
-assert_eq(load64(load64(outer + 8) + 8), 77, "nested Ok(Ok(77)) inner payload");
-
-fn _array_retention(): i64 {
+fn _boxed_array_retention(): i64 {
     var slots: i64[4];
-    store64(&slots, Ok(101));
-    store64(&slots + 8, Err(102));
-    store64(&slots + 16, Ok(103));
-    store64(&slots + 24, Err(104));
+    store64(&slots, Lo(101));
+    store64(&slots + 8, Mid(102));
+    store64(&slots + 16, Lo(103));
+    store64(&slots + 24, Mid(104));
     var s0 = load64(&slots);
     var s1 = load64(&slots + 8);
     var s3 = load64(&slots + 24);
@@ -123,12 +129,25 @@ fn _array_retention(): i64 {
     if (load64(s3 + 8) != 104) { return 3; }
     return 0;
 }
-assert_eq(_array_retention(), 0, "four boxes retained in an array stay distinct");
+assert_eq(_boxed_array_retention(), 0, "four BOXED values retained in an array stay distinct");
 
-test_group("helpers agree with the raw reads");
+test_group("nesting: what the value form can and cannot carry");
 
-assert_eq(is_ok(good), 1, "is_ok on Ok");
-assert_eq(is_err_result(fail), 1, "is_err_result on Err");
-assert_eq(is_ok(fail), 0, "is_ok on Err is 0");
+# ⚠ HONEST LIMIT, recorded rather than worked around. A value-form Result is a register PAIR, so
+# it cannot be nested inside another one's payload — `Ok(inner)` can only carry a single value.
+# The boxed form could (`Ok(Ok(77))` was a pointer to a pointer). What survives is carrying the
+# inner PAYLOAD forward, which is what the nesting was being used for in practice.
+var it, iv = Ok(77);
+var ot, ov = Ok(iv);
+assert_eq(ot, 0, "re-wrapped value is Ok");
+assert_eq(ov, 77, "inner payload carried forward through re-wrapping");
+
+test_group("helpers agree with the bound halves");
+
+assert_eq(is_ok(good_tag), 1, "is_ok on Ok");
+assert_eq(is_err_result(fail_tag), 1, "is_err_result on Err");
+assert_eq(is_ok(fail_tag), 0, "is_ok on Err is 0");
+assert_eq(result_unwrap_or(fail_tag, fail, 12), 12, "unwrap_or on Err falls back");
+assert_eq(result_unwrap_or(good_tag, good, 12), 7, "unwrap_or on Ok returns the payload");
 
 var r = assert_summary();

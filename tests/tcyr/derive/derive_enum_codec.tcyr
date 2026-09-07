@@ -64,35 +64,35 @@ fn main(): i64 {
     assert_eq(streq(json_of(99), "null"), 1, "an unrecognised value emits null, not garbage");
 
     # --- from_json_str: Result, both directions ---
-    var r = BlendMode_from_json_str("\"SCREEN\"");
-    assert_eq(is_ok(r), 1, "from_json_str on a known name is Ok");
-    assert_eq(result_unwrap(r), SCREEN, "from_json_str returns the variant's value");
+    var r_tag, r = BlendMode_from_json_str("\"SCREEN\"");
+    assert_eq(is_ok(r_tag), 1, "from_json_str on a known name is Ok");
+    assert_eq(result_unwrap(r_tag, r), SCREEN, "from_json_str returns the variant's value");
 
     # A BARE name (no quotes) parses too, so the same fn works on a config string as well as
     # on a value lifted out of a JSON document.
-    var rb = BlendMode_from_json_str("OVERLAY");
-    assert_eq(is_ok(rb), 1, "a bare unquoted name also parses");
-    assert_eq(result_unwrap(rb), OVERLAY, "the bare-name path returns the right value");
+    var rb_tag, rb = BlendMode_from_json_str("OVERLAY");
+    assert_eq(is_ok(rb_tag), 1, "a bare unquoted name also parses");
+    assert_eq(result_unwrap(rb_tag, rb), OVERLAY, "the bare-name path returns the right value");
 
-    var bad = BlendMode_from_json_str("\"NOPE\"");
-    assert_eq(is_err_result(bad), 1, "an unrecognised name is Err, not a silent zero");
+    var bad_tag, bad = BlendMode_from_json_str("\"NOPE\"");
+    assert_eq(is_err_result(bad_tag), 1, "an unrecognised name is Err, not a silent zero");
 
     # ⭐ ANTI-VACUOUS for the Err row: a PREFIX of a real name must NOT match. Without this a
     # comparison that stopped at the shorter string's end would pass every row above.
-    var pre = BlendMode_from_json_str("\"SCRE\"");
-    assert_eq(is_err_result(pre), 1, "a PREFIX of a variant name does not match");
+    var pre_tag, pre = BlendMode_from_json_str("\"SCRE\"");
+    assert_eq(is_err_result(pre_tag), 1, "a PREFIX of a variant name does not match");
 
     # ...and a name with a real variant as its prefix must not match either.
-    var post = BlendMode_from_json_str("\"SCREENX\"");
-    assert_eq(is_err_result(post), 1, "a variant name plus a suffix does not match");
+    var post_tag, post = BlendMode_from_json_str("\"SCREENX\"");
+    assert_eq(is_err_result(post_tag), 1, "a variant name plus a suffix does not match");
 
     # --- round-trip over every variant ---
     var i = 0;
     var rt_ok = 1;
     while (i < 3) {
-        var back = BlendMode_from_json_str(json_of(i));
-        if (is_ok(back) == 0) { rt_ok = 0; }
-        elif (result_unwrap(back) != i) { rt_ok = 0; }
+        var back_tag, back = BlendMode_from_json_str(json_of(i));
+        if (is_ok(back_tag) == 0) { rt_ok = 0; }
+        elif (result_unwrap(back_tag, back) != i) { rt_ok = 0; }
         i = i + 1;
     }
     assert_eq(rt_ok, 1, "every variant round-trips to_json -> from_json_str");
@@ -100,13 +100,13 @@ fn main(): i64 {
     # --- non-contiguous and negative values, via a bare #derive(Deserialize) ---
     # The bare-Deserialize form emitted NOTHING before v6.5.31 — on structs as well as enums —
     # so this row also pins that fix.
-    var s1 = Sparse_from_json_str("\"HIGH\"");
-    assert_eq(is_ok(s1), 1, "bare #derive(Deserialize) generates a working codec");
-    assert_eq(result_unwrap(s1), 900, "a non-contiguous value (900) survives");
+    var s1_tag, s1 = Sparse_from_json_str("\"HIGH\"");
+    assert_eq(is_ok(s1_tag), 1, "bare #derive(Deserialize) generates a working codec");
+    assert_eq(result_unwrap(s1_tag, s1), 900, "a non-contiguous value (900) survives");
 
-    var s2 = Sparse_from_json_str("\"HIGHEST\"");
-    assert_eq(is_ok(s2), 1, "a far-from-index variant parses");
-    assert_eq(result_unwrap(s2), 12345, "value 12345 survives — the codec reads the constant, not an index");
+    var s2_tag, s2 = Sparse_from_json_str("\"HIGHEST\"");
+    assert_eq(is_ok(s2_tag), 1, "a far-from-index variant parses");
+    assert_eq(result_unwrap(s2_tag, s2), 12345, "value 12345 survives — the codec reads the constant, not an index");
 
     assert_eq(streq(sparse_json_of(5), "\"LOW\""), 1, "to_json maps a non-contiguous value back to its name");
     assert_eq(streq(sparse_json_of(900), "\"HIGH\""), 1, "to_json handles the middle of a sparse enum");
@@ -114,9 +114,9 @@ fn main(): i64 {
     # ⭐ NEGATIVE variant (v6.5.32). A sentinel like NONE = -1 is the commonest reason to want
     # one, and it is also the value that broke the enum_const_val encoding: bit 63 is the
     # presence marker, so -1 masked to 0x7FFF_FFFF_FFFF_FFFF before the decoder sign-extended.
-    var s3 = Sparse_from_json_str("\"NONE\"");
-    assert_eq(is_ok(s3), 1, "a negative variant parses");
-    assert_eq(result_unwrap(s3), 0 - 1, "NONE round-trips as -1, not a masked huge positive");
+    var s3_tag, s3 = Sparse_from_json_str("\"NONE\"");
+    assert_eq(is_ok(s3_tag), 1, "a negative variant parses");
+    assert_eq(result_unwrap(s3_tag, s3), 0 - 1, "NONE round-trips as -1, not a masked huge positive");
     assert_eq(streq(sparse_json_of(0 - 1), "\"NONE\""), 1, "to_json maps -1 back to its name");
 
     var r2 = assert_summary();
