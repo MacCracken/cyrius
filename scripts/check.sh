@@ -336,6 +336,13 @@ sh "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"
 # now applies only when the bisection knob asks. -8.5% frame accesses on consumer programs.
 sh "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"
 
+# ⛔ v6.6.1 — `cyrius install`/`cyriusly install` copied binaries IN PLACE, so reinstalling the
+# version you are running overwrote the running image and died with ETXTBSY. v6.5.3 fixed exactly
+# this in ONE of THREE copy paths; the tarball path (what `cyriusly install` uses) survived and
+# was reported from a clean machine. The installer is frozen into each release's immutable tag,
+# so a broken one cannot be hot-fixed for an already-published version.
+sh "$ROOT/tests/gates/toolchain/install_atomic_over_running_binary.sh"
+
 # ⛔ v6.6.1 — a silent miscompile that shipped in v6.5.57 and was live for 17 releases.
 # `X = Y;` between two locals copied the number of slots the TYPE implies rather than the number
 # the VARIABLES occupy, so assigning one struct POINTER to another wrote over neighbouring

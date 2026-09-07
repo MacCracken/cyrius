@@ -153,6 +153,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   correct** — it dereferenced the tag as a pointer. Same class as the global-init REPLAY that had
   to take the v6.3.44 struct fix separately. **When you fix a lowering, grep for a second copy.**
 
+- ⛔ **`cyriusly install <the version you are running>` died with ETXTBSY — v6.5.3 fixed this in
+  ONE of THREE copy paths.** `~/.cyrius/bin` symlinks into `versions/<current>/bin`, so
+  reinstalling the active version makes the installer `cp` over its own running image:
+
+  ```
+  $ cyriusly install 6.6.0
+  cp: cannot create regular file '.../versions/6.6.0/bin/cyriusly': Text file busy
+  ```
+
+  v6.5.3 diagnosed it precisely — ETXTBSY, `mv` replaces the directory entry instead of writing
+  through it, a failure must not abort the loop under `set -e` — and applied that only to the
+  `--refresh-only` loop. The **tarball path** (what `cyriusly install` runs) and the
+  **source-build path** kept copying in place. All three now route through one `_install_file`
+  helper, so the next copy site added inherits the fix instead of repeating the bug a fourth time.
+
+  ⚠ **This one is frozen into the release that carries it:** `cyriusly install <v>` fetches
+  `install.sh` from that version's IMMUTABLE TAG (the CVE-21 hardening), so a published version's
+  installer cannot be hot-fixed. Until a release carries the fix, the workaround is to switch away
+  from the version first (`cyriusly use <other>`, then install) — the ETXTBSY only occurs when
+  overwriting the image you are currently executing.
+
+  Gated by `tests/gates/toolchain/install_atomic_over_running_binary.sh`. ⭐ Axis 1 is
+  FUNCTIONAL — it runs a binary and installs over it, first asserting that a plain `cp` really
+  does fail, so the axis cannot pass vacuously on a platform that permits the write. ⚠ Axis 2's
+  first cut WAS vacuous and the mutation test caught it: it excluded any line mentioning `$_eb`
+  to permit the tarball path's `cp -r "$_eb"` directory branch, and that same exclusion excused a
+  plain `cp "$_eb"` file copy — so a reintroduced bug passed. The exemption now names the
+  recursive directory copy exactly, never the variable.
+
 - ⛔ **The forward-reference pass MINTED FN-TABLE ENTRIES, and bayan's zero-warning gate caught
   it.** An earlier cut called `REGFN` on any top-level `fn NAME` it could not resolve. A fn
   defined AFTER a top-level expression statement is registered by a different path, so the

@@ -1,0 +1,32 @@
+# Repro: CYRIUS_DCE=1 + `--win` emits a PE that dies at startup with
+# 0xC0000005 (STATUS_ACCESS_VIOLATION). First bad: cycc 6.5.72.
+#
+# Build INSIDE a project whose manifest declares [deps] stdlib — a bare
+# file with no manifest links nothing, produces a ~2.5 KB PE, and does NOT
+# reproduce. The defect needs the unreachable stdlib set present.
+#
+#   cyrius.cyml:
+#     [package]
+#     name = "dcepe"
+#     version = "0.0.1"
+#     language = "cyrius"
+#     cyrius = "6.5.72"          # or 6.6.0
+#     [build]
+#     entry = "src/main.cyr"
+#     output = "dcepe"
+#     [deps]
+#     stdlib = ["string", "alloc", "vec", "str", "fmt", "io", "syscalls",
+#               "fs", "tagged", "process", "args", "fnptr", "thread",
+#               "assert", "bench", "freelist", "hashmap", ]
+#
+#   cyrius lib sync
+#   cyrius build --win src/main.cyr ok.exe                 # runs, prints "ok"
+#   CYRIUS_DCE=1 cyrius build --win src/main.cyr bad.exe   # 0xC0000005, no output
+#
+# Both are 143,872 bytes under 6.6.0 — identical size — while the DCE build
+# reports "bytes of dead code eliminated".
+
+fn main() {
+    syscall(1, 1, "ok\n", 3);   # write(stdout) — PE-rerouted to WriteFile
+    return 0;
+}

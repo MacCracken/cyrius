@@ -71,6 +71,37 @@ info() { printf "  ${GREEN}>${RESET} %s\n" "$1"; }
 warn() { printf "  ${YELLOW}!${RESET} %s\n" "$1"; }
 err()  { printf "  ${RED}x${RESET} %s\n" "$1" >&2; exit 1; }
 
+# ── ETXTBSY-safe install: temp + ATOMIC RENAME, never `cp` over a file in place ──
+#
+# ⛔ v6.6.1 — v6.5.3 fixed exactly this and fixed it in ONE of THREE copy paths.
+# `cp` onto a binary any process is currently executing fails with ETXTBSY ("Text file
+# busy"). `~/.cyrius/bin` symlinks into `versions/<current>/bin`, so REINSTALLING THE
+# VERSION YOU ARE RUNNING makes the installer overwrite its own running image — reported
+# from a clean machine as:
+#     cp: cannot create regular file '.../versions/6.6.0/bin/cyriusly': Text file busy
+# v6.5.3 wrote the temp+rename loop for the `--refresh-only` path and left the TARBALL
+# path (`cyriusly install <v>`) and the SOURCE-BUILD path copying in place. Both are
+# routed through here now, so the next copy site added inherits the fix instead of
+# repeating the bug a fourth time.
+#
+# `mv` replaces the directory ENTRY rather than writing through it, so a process holding
+# the old inode cannot block it — and it keeps running the old image, which is correct.
+# A failure warns and continues rather than aborting the whole install under `set -e`.
+_install_file() {   # _install_file <src> <dst-dir> [mode]
+    _if_src="$1"; _if_dir="$2"; _if_mode="${3:-}"
+    _if_base=$(basename "$_if_src")
+    [ -e "$_if_src" ] || return 0
+    if cp "$_if_src" "$_if_dir/.$_if_base.new" 2>/dev/null; then
+        [ -n "$_if_mode" ] && chmod "$_if_mode" "$_if_dir/.$_if_base.new" 2>/dev/null
+        if mv -f "$_if_dir/.$_if_base.new" "$_if_dir/$_if_base" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    rm -f "$_if_dir/.$_if_base.new" 2>/dev/null || true
+    warn "could not install $_if_base into $_if_dir (continuing)"
+    return 0
+}
+
 # CVE-21 (v6.2.30): portable, fail-closed checksum verify. Returns 0 on a
 # verified match, non-zero on mismatch, and 2 when no SHA-256 tool exists (a
 # box that cannot verify must not silently install). $1 = a sha256sum-format
@@ -344,7 +375,7 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
             fi
         fi
     done
-    [ -f bootstrap/asm ] && cp bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin/"
+    _install_file bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin" 755
 
     # v6.1.0: the v6.0.x back-compat install symlinks (cc5 → cycc,
     # cyrc → cybs, + cross-arch variants) were DROPPED here per the
@@ -380,12 +411,10 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
         # scripts/shims/. Look there first; fall through to flat
         # scripts/ for the genuinely user-facing scripts that stayed.
         if [ -f "scripts/shims/$script" ]; then
-            cp "scripts/shims/$script" "$CYRIUS_HOME/versions/$VERSION/bin/"
-            chmod +x "$CYRIUS_HOME/versions/$VERSION/bin/$script"
+            _install_file "scripts/shims/$script" "$CYRIUS_HOME/versions/$VERSION/bin" 755
             _refreshed=$((_refreshed + 1))
         elif [ -f "scripts/$script" ]; then
-            cp "scripts/$script" "$CYRIUS_HOME/versions/$VERSION/bin/"
-            chmod +x "$CYRIUS_HOME/versions/$VERSION/bin/$script"
+            _install_file "scripts/$script" "$CYRIUS_HOME/versions/$VERSION/bin" 755
             _refreshed=$((_refreshed + 1))
         fi
     done
@@ -566,8 +595,17 @@ if [ "$_got_tarball" -eq 1 ]; then
     EXTRACTED="$TMPDIR/cyrius-${VERSION}-${ARCH}-${OS_SUFFIX}"
 
     if [ -d "$EXTRACTED/bin" ]; then
-        cp -r "$EXTRACTED/bin"/* "$CYRIUS_HOME/versions/$VERSION/bin/"
-        chmod +x "$CYRIUS_HOME/versions/$VERSION/bin"/*
+        # v6.6.1 — per-file atomic install. `cp -r` here overwrote the RUNNING cyriusly
+        # when reinstalling the active version (ETXTBSY). Directories (bin/lib) still
+        # copy recursively; regular files go through the rename path.
+        for _eb in "$EXTRACTED/bin"/*; do
+            [ -e "$_eb" ] || continue
+            if [ -d "$_eb" ]; then
+                cp -r "$_eb" "$CYRIUS_HOME/versions/$VERSION/bin/"
+            else
+                _install_file "$_eb" "$CYRIUS_HOME/versions/$VERSION/bin" 755
+            fi
+        done
         # macOS ships unsigned cross-built Mach-O binaries; an unsigned
         # binary is AMFI-SIGKILL'd on first exec. Ad-hoc codesign each at
         # install time (shell scripts harmlessly fail and are skipped).
@@ -724,10 +762,10 @@ if [ "$installed" -eq 0 ]; then
     # Copy binaries
     for bin in $_BINS $_CROSS_BINS; do
         if [ -x "./build/$bin" ]; then
-            cp "./build/$bin" "$CYRIUS_HOME/versions/$VERSION/bin/"
+            _install_file "./build/$bin" "$CYRIUS_HOME/versions/$VERSION/bin" 755
         fi
     done
-    cp bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin/"
+    _install_file bootstrap/asm "$CYRIUS_HOME/versions/$VERSION/bin" 755
 
     # Scripts from [release].scripts (includes cyriusly + cyrius-*.sh)
     # v5.11.69: shim scripts (cyrius-init/port/repl) live in
@@ -735,11 +773,9 @@ if [ "$installed" -eq 0 ]; then
     _SCRIPTS=$(_parse_release_array scripts)
     for script in $_SCRIPTS; do
         if [ -f "scripts/shims/$script" ]; then
-            cp "scripts/shims/$script" "$CYRIUS_HOME/versions/$VERSION/bin/"
-            chmod +x "$CYRIUS_HOME/versions/$VERSION/bin/$script"
+            _install_file "scripts/shims/$script" "$CYRIUS_HOME/versions/$VERSION/bin" 755
         elif [ -f "scripts/$script" ]; then
-            cp "scripts/$script" "$CYRIUS_HOME/versions/$VERSION/bin/"
-            chmod +x "$CYRIUS_HOME/versions/$VERSION/bin/$script"
+            _install_file "scripts/$script" "$CYRIUS_HOME/versions/$VERSION/bin" 755
         fi
     done
 
