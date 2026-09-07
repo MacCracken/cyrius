@@ -32,7 +32,7 @@
 > RM items now resolved — archive this issue.** (Remaining user-facing lag =
 > guides + vidya stamps, tracked in doc-health.md, not an RM item.)
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** Medium (doc-correctness, but high-leverage — it distorts v6.2.x
 planning before the minor opens)
 **Affects:** `docs/development/roadmap_6.md`, `threat-model.md`, `state.md`,

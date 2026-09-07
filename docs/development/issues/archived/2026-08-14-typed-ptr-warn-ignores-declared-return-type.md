@@ -2,7 +2,7 @@
 
 **Status:** ✅ **RESOLVED** — shipped in **v6.5.28**. See `CHANGELOG.md` [6.5.28].
 **Placement:** unpinned — 6.x-line backlog. Direct follow-up to
-[`archived/2026-08-13-f64-typed-binding-reassign-warns-as-pointer.md`](archived/2026-08-13-f64-typed-binding-reassign-warns-as-pointer.md),
+[`archived/2026-08-13-f64-typed-binding-reassign-warns-as-pointer.md`](2026-08-13-f64-typed-binding-reassign-warns-as-pointer.md),
 fixed at v6.5.27 ("the typed-pointer warning tested the wrong SIGN").
 **Discovered:** 2026-08-14, abaco 2.4.2 taking the 6.5.21 → 6.5.27 bump
 **Severity:** Low — **diagnostic only, values correct** (verified against a run

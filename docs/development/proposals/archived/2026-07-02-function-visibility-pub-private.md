@@ -40,7 +40,7 @@ workable. Pick at implementation. Note `pub` is already lexer token 73 but **dea
 reuses/renames that token.
 
 **Prior art:** this arc would execute **"Phase 2 — `pub` enforcement"** already sketched in
-[`module-manifest-design.md`](../module-manifest-design.md) (Phase 1 = the v6.2.x manifest/deps,
+[`module-manifest-design.md`](../../module-manifest-design.md) (Phase 1 = the v6.2.x manifest/deps,
 shipped). Phases 3 (qualified `use`) and 4 (separate compilation) remain later/aspirational.
 
 ---

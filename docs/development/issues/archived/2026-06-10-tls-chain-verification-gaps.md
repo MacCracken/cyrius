@@ -1,6 +1,6 @@
 # Native TLS chain-verification authn gaps — CVE-17/18
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High
 **Affects:** cycc / `lib/tls_native.cyr` + `lib/sigil.cyr` 6.1.31. Native TLS is
 the **default** backend since v6.1.21 (libssl is opt-out via `-D CYRIUS_TLS_LIBSSL`)

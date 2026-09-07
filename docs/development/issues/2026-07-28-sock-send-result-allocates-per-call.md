@@ -1,3 +1,53 @@
+> ### ⛔ v6.5.74 — THE FLIP WAS BUILT AND REVERTED. It is a lockstep TOOLCHAIN break, not just
+> an API break, and that fact is not in this file anywhere above.
+>
+> **What shipped:** the compiler half. `?` now works on the value form — it stashes both halves
+> and, on the Err path, **re-emits rdx as well as rax**, so the payload survives propagation out
+> of the enclosing function. That is the piece the one-line framing this arc carried for a year
+> ("teach `?` to accept a pair") omitted, and it is the difference between propagation working
+> and silently truncating. Gate: `stack_enum_lossy_context.sh` axis 3, which was REVERSED from
+> asserting the v6.5.67 refusal to asserting the new behaviour.
+>
+> **What was built and then reverted, to keep the tree green:**
+> * `lib/result.cyr` + `lib/tagged.cyr` flipped to `: stack`; helpers re-aritied; `payload()`
+>   deleted. Every stale site became a NAMED compile error at the offending line — the stated
+>   acceptance criterion, and it held.
+> * 14 cyrius-owned sites migrated (`http.cyr` 9, `ws_server.cyr` 5).
+> * **117 declarations migrated across SIX upstream repos** (sigil 40, sandhi 36, yukti 23,
+>   mabda 8, bayan 6, vani 4) with a mechanical rule; **5 of 6 dist bundles regenerated clean**.
+> * Diffs preserved at `scratchpad/p660/upstream_migration/*.diff`, migration script at
+>   `scratchpad/p660/migrate.py`.
+>
+> ### ⛔ THE BLOCKER, MEASURED — and it is the reason this needs a decision, not more effort
+>
+> **A consumer pinning cyrius < 6.5.55 cannot PARSE the flipped stdlib** — `enum Result<T, E>:
+> stack` is a syntax error to it (`expected '{', got ':'`) — and `cyrius.cyml` pins cause the
+> toolchain to **re-exec the pinned compiler**. So the flip is not "code changes at ~2,500 call
+> sites"; it is **every consumer bumping its cyrius pin AND migrating its code in lockstep, or
+> it cannot build at all.** Measured at the v6.5.73 closeout: **125 repos declare a pin, 0 of
+> them at ≥ 6.5.60**, 15 below 6.5.0.
+>
+> Sigil is the worked example of the second-order problem: its bundle embeds a stdlib copy from
+> a folded dependency, so even with its own `lib/` updated the generated bundle still carried the
+> 1-argument `result_unwrap` and would not compile.
+>
+> ⚠ **And a warning paid for in this session:** refreshing `~/.cyrius/versions/*/lib/` with the
+> flipped stdlib to get past the pin re-exec **broke 393 installed versions at once** — older
+> compilers cannot parse it. Restored from git. Do not push the new stdlib into old version
+> snapshots; the snapshot must match its compiler.
+>
+> ### ⚖️ THE DECISION OWED
+>
+> The maintainer already chose "flip, as part of v6.6.0". What was not known then is the
+> lockstep cost. Either:
+> 1. **Run the campaign** — cyrius ships 6.6.0 with the flip, then 125 repos bump their pin and
+>    migrate, in dependency order (the six folded libs first). Nothing else can build meanwhile.
+> 2. **Take a compatibility path** — e.g. keep the boxed constructors reachable under a second
+>    spelling for one minor so consumers can migrate incrementally rather than in lockstep.
+>
+> This file stays OPEN pinned to that call. The work is done and saved; it is the sequencing that
+> needs a decision.
+
 > ### ⚠ v6.5.67 — THE STACK FORM IS NOW SAFE TO USE. The remaining flip is an ECOSYSTEM API BREAK, and the numbers in this file were wrong.
 >
 > **What v6.5.67 fixed — all of it live defects in what v6.5.55 shipped:**

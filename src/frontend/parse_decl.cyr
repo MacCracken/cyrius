@@ -1900,7 +1900,15 @@ fn PARSE_VAR(S): i64 {
     if (GINFN(S) == 1) {
         if (PEEKT(S) == 4) {
             if (_callee_returns_pair_at(S, GTI(S) + 1) == 1) {
-                ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
+                # v6.6.0: unless `?` consumes it. `var v = f()?;` binds ONE value by design —
+                # the operator propagates the Err half out of the enclosing function and yields
+                # the payload alone. ⚠ The check goes HERE and not inside the helper: the helper
+                # also feeds `_tpair`, which is what tells `?` it is holding a pair at all, and
+                # suppressing it there sends `?` down the boxed lowering that dereferences the
+                # tag as a pointer (measured: immediate SIGSEGV).
+                if (_call_is_propagated(S, GTI(S) + 2) == 0) {
+                    ERR_MSG(S, "a `: stack` enum returns two values — bind both: `var tag, val = f();`", 72);
+                }
             }
         }
     }

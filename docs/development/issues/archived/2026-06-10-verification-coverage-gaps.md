@@ -4,7 +4,7 @@
 > (`scripts/differential.sh`) v6.3.20; VR-04 ELF/PE structural lint v6.3.22 + v6.3.43.
 > The one surviving residual — **Mach-O** structural lint, deferred to the v6.4.x
 > Intel-Mac arc — was re-filed as its own issue so it isn't lost in prose:
-> [`2026-07-07-macho-structural-lint-residual.md`](../2026-07-07-macho-structural-lint-residual.md).
+> [`2026-07-07-macho-structural-lint-residual.md`](2026-07-07-macho-structural-lint-residual.md).
 > The historical status banner below is retained for context.
 
 
@@ -14,7 +14,7 @@
 > (differential corpus gate, pinned v6.4.x) + **VR-04** (ELF/PE/Mach-O structural
 > lint, bug-bandwidth) remain OPEN. See roadmap.
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High
 **Affects:** tests/fuzz/CI infra 6.1.31. This is the systemic root behind
 [`2026-06-04-shipped-broken-functionality-found-by-consumers.md`](2026-06-04-shipped-broken-functionality-found-by-consumers.md).

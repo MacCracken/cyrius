@@ -45,7 +45,7 @@ which **are** live — remove the wrappers, not the capped forms.
 > stays open for D1/D2; close it when they land.
 
 **Filed:** 2026-07-07 (extracted from the now-archived
-[`2026-07-03-v6345-closeout-audit-backlog.md`](archived/2026-07-03-v6345-closeout-audit-backlog.md)
+[`2026-07-03-v6345-closeout-audit-backlog.md`](2026-07-03-v6345-closeout-audit-backlog.md)
 so the three conscious deferrals are real issues, not CHANGELOG prose).
 **Severity:** P3 — hygiene / dead-code; no correctness or consumer impact.
 **Component:** `src/backend/x86/emit.cyr`, `src/common/ir.cyr`, `src/backend/x86/decode.cyr`.

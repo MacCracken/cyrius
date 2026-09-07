@@ -23,7 +23,7 @@
 >    6.4.77 a well-formed file with reserved names reports cleanly (1–2 errors, no flood). The real
 >    cascade needs input that ends **mid-construct**, produces **166,670 lines**, and reproduces
 >    identically on 6.4.76 — root-caused to unbounded `PEEKT`/`TOKTYP` reads and filed as
->    [`2026-07-24-truncated-input-166k-line-error-cascade.md`](../2026-07-24-truncated-input-166k-line-error-cascade.md).
+>    [`2026-07-24-truncated-input-166k-line-error-cascade.md`](2026-07-24-truncated-input-166k-line-error-cascade.md).
 >    It was deliberately not bundled: not a prerequisite, and `PEEKT` is the parser's hottest fn.
 >
 > **Also fixed, found while mapping this:** the diagnostic actively named the WRONG keyword for the two

@@ -1,6 +1,6 @@
 # Entropy fail-weak / fragmented sources — CVE-19
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High
 **Affects:** `lib/ws.cyr`, `lib/sandhi.cyr`, `lib/random.cyr`, `lib/syscalls_x86_64_agnos.cyr` 6.1.31
 

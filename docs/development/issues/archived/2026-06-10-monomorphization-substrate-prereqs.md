@@ -1,6 +1,6 @@
 # v6.3.x generics prerequisites — substrate is missing — AR-01/02, CO-01, AR-04
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High (these are prerequisites the v6.3.x plan *assumes exist*, not
 enhancements — surfacing before the minor opens, per premise-check discipline)
 **Affects:** cycc front-end + fixed-heap model 6.1.31. Bears on the v6.3.x

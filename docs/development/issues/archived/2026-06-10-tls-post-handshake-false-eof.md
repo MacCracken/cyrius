@@ -1,6 +1,6 @@
 # Native TLS: post-handshake records collapse to false EOF — CVE-30
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High
 **Affects:** `lib/tls_native.cyr` 6.1.31 — the **default** backend since v6.1.21.
 

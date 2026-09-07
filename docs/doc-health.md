@@ -6,7 +6,16 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-08-20 (**v6.5.33**). Doc sweep + handoff prep, run directly rather
+> **Last refresh**: 2026-09-06 (**v6.5.74**). Local doc sweep run as part of the v6.5.x
+> close-out sequence. **93 dead internal links repointed** across 41 files — almost all of them
+> referrers that were never updated when an issue was archived, which is the dominant rot shape
+> in this tree and is now cheap to re-check (walk every `](*.md)` and resolve it). 8 remain, all
+> inside already-archived files pointing at paths that never existed; left rather than invented.
+> `size-comparisons.md`'s three Cyrius rows were RE-MEASURED (504 / 4,448 / 1,536 — unchanged)
+> rather than re-stamped. `CLAUDE.md`'s security-audit pointer and vidya's structural-facts entry
+> were corrected in the v6.5.73 closeout; see the ledger in `cycle-discipline.md`.
+>
+> *Previous refresh*: 2026-08-20 (**v6.5.33**). Doc sweep + handoff prep, run directly rather
 > than fanned out to agents. **Every figure below was derived from live artifacts** — binaries
 > `stat`'d, hosts run over SSH, counts `find`-ed — not read out of another doc. That rule is
 > the standing lesson of the v6.5.10 sweep recorded further down, where an agent stamped a

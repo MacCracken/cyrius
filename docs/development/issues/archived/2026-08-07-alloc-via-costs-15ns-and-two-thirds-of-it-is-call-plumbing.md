@@ -141,5 +141,5 @@ syscall(60, r);
    almost nothing.
 
 Related in kind: [`2026-07-26-agora-fs-dir-list-per-call-alloc.md`](./2026-07-26-agora-fs-dir-list-per-call-alloc.md)
-and [`2026-07-28-sock-send-result-allocates-per-call.md`](./2026-07-28-sock-send-result-allocates-per-call.md)
+and [`2026-07-28-sock-send-result-allocates-per-call.md`](../2026-07-28-sock-send-result-allocates-per-call.md)
 are both "the per-call overhead is the cost". This one is underneath all of them.

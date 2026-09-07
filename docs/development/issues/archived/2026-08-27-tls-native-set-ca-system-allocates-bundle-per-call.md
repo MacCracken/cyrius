@@ -21,7 +21,7 @@ The cost is invisible in a one-shot tool and compounds in anything that opens
 more than a handful of connections: an HTTPS crawl at whirl's 64-resource cap
 would retain ~64 MiB of dead heap, and a long-lived client would grow without
 bound. This is the same shape as
-[`2026-07-28-sock-send-result-allocates-per-call.md`](./2026-07-28-sock-send-result-allocates-per-call.md)
+[`2026-07-28-sock-send-result-allocates-per-call.md`](../2026-07-28-sock-send-result-allocates-per-call.md)
 — a per-call allocation on a hot path landing on the no-free global bump — but
 six orders of magnitude larger per occurrence.
 
@@ -138,7 +138,7 @@ whirl carries `_agnos_ca_hook` (`src/transport.cyr`), which reads the same four
 candidate paths **once**, caches the bytes, and installs them via
 `tls_native_set_ca_bundle` on each connect. It was originally written for a
 different reason — the agnos `sys_open` ABI defect in
-[`archived/2026-06-18-tls-native-set-ca-system-agnos-sys-open-abi.md`](./archived/2026-06-18-tls-native-set-ca-system-agnos-sys-open-abi.md),
+[`archived/2026-06-18-tls-native-set-ca-system-agnos-sys-open-abi.md`](2026-06-18-tls-native-set-ca-system-agnos-sys-open-abi.md),
 fixed at v6.2.23 — and whirl planned to delete it once that fix landed
 (roadmap B3).
 

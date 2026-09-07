@@ -9,7 +9,7 @@ blit would fail). Safety is the FILE-level `#ifdef CYRIUS_TARGET_AGNOS` on the w
 `agnos-crossbuild-gate.sh` now asserts **#82-#89** and the Linux-absence leg covers all of them;
 **mutation-proven** (`#87 -> 79` → FAIL, restored → PASS).
 ✅ **NOW FULLY CLOSED (6.4.72).** Tier 2 shipped: `#90 sys_gpu_readback_shm` / `#91 sys_gpu_blit_bb`
-landed in 6.4.72 (see [`2026-07-23-agnos-gpu-readback-blit-bb.md`](archived/2026-07-23-agnos-gpu-readback-blit-bb.md)).
+landed in 6.4.72 (see [`2026-07-23-agnos-gpu-readback-blit-bb.md`](2026-07-23-agnos-gpu-readback-blit-bb.md)).
 The whole band is contiguous **#82–#91**, all gated + mutation-proven. Nothing reserved remains.
 
 **Original ask below.** Prior status: Supersedes the one-at-a-time pattern of

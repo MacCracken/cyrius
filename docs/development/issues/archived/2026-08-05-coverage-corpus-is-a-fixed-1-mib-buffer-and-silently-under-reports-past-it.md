@@ -132,7 +132,7 @@ find tests -name '*.tcyr' -printf '%s\n' | awk '{s+=$1} END {print s}'
    tool is expected to scale, but 1 and 2 are what unblock a project today.
 
 Related in kind, not in code: this is the same fail-open shape as
-[`2026-08-05-cyrius-bench-accepts-an-unusable-argument-and-exits-0.md`](./archived/2026-08-05-cyrius-bench-accepts-an-unusable-argument-and-exits-0.md)
+[`2026-08-05-cyrius-bench-accepts-an-unusable-argument-and-exits-0.md`](2026-08-05-cyrius-bench-accepts-an-unusable-argument-and-exits-0.md)
 — a tool that cannot do the job it was asked to do, reporting success. That one
 shipped in 6.5.7. Worth triaging together as a class: **tooling should not exit
 0 on a run it knows was incomplete.**

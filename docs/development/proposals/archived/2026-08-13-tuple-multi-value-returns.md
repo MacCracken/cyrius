@@ -72,7 +72,7 @@ mechanisms with no type-system surface, whereas this one touches the type
 checker and the calling convention, so it should not be first in the queue.
 **Priority:** low / not a release-blocker. abaco 2.4.0 shipped with the
 out-parameter workaround and pins cyrius 6.5.20.
-**Siblings:** [`2026-07-05-const-eval-comptime.md`](2026-07-05-const-eval-comptime.md)
+**Siblings:** [`2026-07-05-const-eval-comptime.md`](../2026-07-05-const-eval-comptime.md)
 — both are about expressing something at the language level that consumers
 currently express by hand.
 

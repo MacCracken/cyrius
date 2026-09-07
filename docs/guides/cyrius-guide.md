@@ -2608,5 +2608,5 @@ bootstrap/asm (29KB seed)
 ```
 
 Current cycc size, IR pipeline state, and cross-compiler stats live in
-[`docs/development/state.md`](development/state.md). Per-release narrative
-is in [`docs/development/completed-phases.md`](development/completed-phases.md).
+[`docs/development/state.md`](../development/state.md). Per-release narrative
+is in [`docs/development/completed-phases.md`](../development/completed-phases.md).

@@ -259,7 +259,7 @@ local N is known. Two fatal facts make that impossible on the current IR:
 
 > ⛔ **THIS WALL IS CLOSED — v6.5.2. The paragraph below is kept only as history; do not act on
 > it.** The sibling that owned it,
-> [`archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md`](archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md),
+> [`archived/2026-07-02-ir3-fixpoint-cascade-overelimination.md`](2026-07-02-ir3-fixpoint-cascade-overelimination.md),
 > is RESOLVED and archived: the root cause was *not* a fixpoint cascade but `ir_const_fold` alone —
 > `EJCC`/`EJMP0` (`src/backend/x86/jump.cyr`) recorded their IR node AFTER emitting bytes, so
 > const_fold's NOP-fill span ran 5–6 bytes long and erased the jump. `CYRIUS_IR=3` now self-hosts a

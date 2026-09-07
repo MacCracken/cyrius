@@ -6,7 +6,7 @@
 > v6.4.0 default-on flip"). Generics are now default-on (`CYRIUS_MONOMORPH=0` opts
 > out). The only surviving generics residual — multi-type-param mixed-struct combos —
 > is tracked separately in
-> [`2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](../2026-07-02-generic-fns-struct-type-args-monomorph-abi.md).
+> [`2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](2026-07-02-generic-fns-struct-type-args-monomorph-abi.md).
 > The inventory below is retained for history.
 
 

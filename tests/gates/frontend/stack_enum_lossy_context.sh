@@ -86,15 +86,29 @@ fn main(): i64 { var t, p = fwd(); syscall(60, p & 0xFF, 0,0,0,0); return 0; }
 var e = main();
 EOF
 
-# ── axis 3 — `?` on a stack enum (was rc=0 then SIGSEGV) ────────────────────────────────────
-refuse "SOk(9)? direct" axis3 <<EOF
-${PRE}fn c(): i64 { var v = SOk(9)?; return v; }
-fn main(): i64 { syscall(60, c() & 0xFF, 0,0,0,0); return 0; }
-var e = main();
-EOF
-refuse "mk(9)? via wrapper" axis3b <<EOF
-${PRE}fn c(): i64 { var v = mk(9)?; return v; }
-fn main(): i64 { syscall(60, c() & 0xFF, 0,0,0,0); return 0; }
+# ── axis 3 — `?` on a stack enum PROPAGATES THE PAIR (v6.5.74) ──────────────────────────────
+# ⛔ THIS ROW USED TO ASSERT THE OPPOSITE, and the flip is the point. v6.5.67 made `?` on a
+# value-form enum a hard error because the operator DEREFERENCED its operand — reading the tag
+# (0 or 1) as a pointer, compiling clean and then SIGSEGV'ing. Refusing was the right stopgap.
+# v6.5.74 lowers it properly, so a gate that still demanded the refusal would block the fix —
+# the same shape as the v6.5.68 gate that pinned the sentence encoding its own limitation.
+#
+# ⭐ THE ASSERTION THAT MATTERS IS THE ERR PAYLOAD. Propagating out of the enclosing function
+# means returning a PAIR, so the Err path has to re-emit rdx as well as rax; restoring only rax
+# hands the caller a correct tag with a stale payload — the v6.5.67 silent-loss defect one level
+# up, and invisible to any check that only looks at the tag.
+accept "SOk/SErr propagate through ? with the payload intact" axis3 33 <<EOF
+${PRE}fn produce(n) { if (n < 0) { return SErr(33); } return SOk(n); }
+fn relay(n) { var v = produce(n)?; return SOk(v + 1); }
+fn main(): i64 {
+    var t1, v1 = relay(7);
+    var t2, v2 = relay(0 - 1);
+    if (t1 != 0) { syscall(60, 101, 0,0,0,0); }
+    if (v1 != 8) { syscall(60, 102, 0,0,0,0); }
+    if (t2 != 1) { syscall(60, 103, 0,0,0,0); }
+    syscall(60, v2 & 0xFF, 0,0,0,0);
+    return 0;
+}
 var e = main();
 EOF
 
@@ -167,5 +181,5 @@ fn main(): i64 { syscall(60, 0, 0,0,0,0); return 0; }
 var e = main();
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds and ? refused on stack enums (bare ctor, forwarding wrapper, both ? forms) · destructure and return-forwarding still work · BOXED Result unaffected · nullary variants allowed and unflagged'
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · BOXED Result unaffected · nullary variants allowed and unflagged'
 exit 0

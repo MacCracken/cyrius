@@ -28,7 +28,7 @@
 > harness is now un-blind → the v6.4.x perf arc (pulled into v6.3.x) can measure its own
 > wins. See CHANGELOG [6.3.17].
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High (it silently defeats the "benchmark every release" gate and
 blocks the v6.4.x/v6.5.x perf arcs from measuring their own wins)
 **Affects:** `lib/bench.cyr`, `scripts/bench-history.sh`, `benches/*.bcyr` 6.1.31

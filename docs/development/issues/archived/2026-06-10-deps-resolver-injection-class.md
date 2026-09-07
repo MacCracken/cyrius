@@ -9,7 +9,7 @@
 > self-host byte-identical; check.sh 87/87; ecb+cass+pi `SELFHOST_OK`. See
 > CHANGELOG [6.1.33].
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** Critical (CVE-14 is P0-class)
 **Affects:** cycc / cyrius 6.1.31 (CVE-15/16 long-standing; CVE-14 since the `_sha256sum_file` Linux branch)
 

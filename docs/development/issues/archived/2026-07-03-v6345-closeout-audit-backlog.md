@@ -5,7 +5,7 @@
 > The three conscious deferrals — **R2** (PE GetStdHandle prologue extraction, codegen-risk)
 > and **D1/D2** (dead `CYRIUS_IR=3` helpers + speculative decode CFG API) — were re-filed as
 > their own issue so they aren't lost in prose:
-> [`2026-07-07-v6415-closeout-residuals.md`](../2026-07-07-v6415-closeout-residuals.md).
+> [`2026-07-07-v6415-closeout-residuals.md`](2026-07-07-v6415-closeout-residuals.md).
 > The audit backlog below is retained for history.
 
 

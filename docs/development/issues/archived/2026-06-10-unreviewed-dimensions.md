@@ -3,7 +3,7 @@
 > **✅ ARCHIVED at the v6.4.32 handoff sweep (2026-07-09).** All actionable items shipped by
 > v6.3.23 (CVE-28 v6.1.38, CVE-29 v6.2.44, DX-01/02 + SEC-AGNOS-01 v6.3.23). The one remaining
 > item — **LEGAL-01** (GPL-3.0-only stdlib source-included into consumers; a v7-release blocker
-> needing legal sign-off) — is now tracked in [`roadmap-future.md`](../roadmap-future.md) under
+> needing legal sign-off) — is now tracked in [`roadmap-future.md`](../../roadmap-future.md) under
 > "~v7.0 — Public release", so this issue no longer needs to sit in the open working queue.
 
 > **STATUS (v6.3.23): closed for this cycle except LEGAL-01 (v7).** CVE-28 RESOLVED
@@ -13,7 +13,7 @@
 > (GPL-3.0-only vs sigil's dual-BSD/GPLv2 GPL-leg — a v7-release blocker needing
 > legal sign-off, deliberately deferred to near public release).
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** Mixed (LEGAL-01 is a v7 blocker; CVE-28 is a real concurrency bug)
 **Affects:** licensing, debug-info, atomics, thread stacks, the AGNOS security
 model, and the LSP/editor tier — areas no dimension analyst owned, flagged by

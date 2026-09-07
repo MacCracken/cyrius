@@ -4,6 +4,66 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.74] — 2026-09-06
+
+### Fixed
+
+- **`?` works on the value form, and its Err path re-emits BOTH halves.** v6.5.67 made `?` on a
+  `: stack` enum a hard error because the operator dereferenced its operand — reading the tag
+  (0 or 1) as a pointer, compiling clean and then SIGSEGV'ing. It is now lowered properly:
+  stash tag and payload, compare the tag, and on Err **restore rdx as well as rax** before
+  jumping to the epilogue.
+
+  ⭐ **That last part is the whole difficulty, and the framing this arc carried for a year
+  omitted it.** "Teach `?` to accept a pair" sounds like a one-line change; propagating a Result
+  out of the enclosing function means RETURNING a pair, so restoring only rax hands the caller a
+  correct tag with a stale payload — the v6.5.67 silent-payload-loss defect one level up, and
+  invisible to any check that only inspects the tag.
+
+  ⚠ Three self-inflicted detours are recorded in the source because each looked right: the
+  propagation check belongs at the BINDING site, not in either `_callee_returns_pair` helper —
+  those also feed `_tpair`, which is what tells `?` it is holding a pair at all, so suppressing
+  them there routes `?` back into the boxed lowering and straight into the SIGSEGV.
+
+### Changed
+
+- **Local documentation sweep.** **93 dead internal links repointed across 41 files** — almost
+  all referrers never updated when an issue was archived, which is the dominant rot shape in this
+  tree. 8 remain, all inside already-archived files pointing at paths that never existed; left
+  rather than invented. `docs/size-comparisons.md`'s three Cyrius rows were **re-measured**
+  (504 / 4,448 / 1,536 — unchanged) rather than re-stamped, and the distinction is noted in the
+  file because a stamp bumped without re-running the measurement is exactly what rots there.
+  `docs/doc-health.md` refreshed — it was last touched at v6.5.33, 41 releases ago.
+- `tests/gates/frontend/stack_enum_lossy_context.sh` axis 3 **reversed**: it asserted the
+  v6.5.67 refusal, so it would have blocked this fix. It now asserts that `?` propagates the pair
+  **with its Err payload intact** — the same shape as the v6.5.68 gate that pinned the sentence
+  encoding its own limitation.
+
+### Notes
+
+- ⛔ **The `Result`/`Option`/`Either` flip was BUILT AND REVERTED, and the reason is a fact the
+  issue never recorded.** The stdlib was flipped, `payload()` deleted, 14 cyrius-owned sites and
+  **117 declarations across six upstream repos** migrated, and 5 of 6 dist bundles regenerated
+  clean. Every stale site became a named compile error at the offending line — the stated
+  acceptance criterion held exactly.
+
+  It stops here: **a consumer pinning cyrius < 6.5.55 cannot PARSE the flipped stdlib**, and
+  `cyrius.cyml` pins re-exec that pinned compiler. So this is not an API break across ~2,500 call
+  sites — it is a **lockstep toolchain break**: every consumer must bump its pin *and* migrate,
+  or it cannot build at all. Measured at the v6.5.73 closeout: **125 repos pin cyrius, none at
+  ≥ 6.5.60.** That is a sequencing decision for the maintainer, not more implementation, so the
+  work is preserved (script + six upstream diffs) and the issue carries both options.
+
+  ⚠ **A warning paid for in this session:** pushing the flipped stdlib into
+  `~/.cyrius/versions/*/lib/` to get past the pin re-exec **broke 393 installed versions at
+  once** — older compilers cannot parse `: stack`. Restored from git. A version snapshot must
+  match its own compiler.
+
+- **Bench** (release gate, quiet box): `self_compile` **722 ms**, `size/cycc` **1,235,192 B**,
+  `size/cycc_text` **1,080,784 B** — flat against v6.5.73. The `?` change adds one lowering branch
+  reached only by a pair-returning callee, and no `src/` file declares one.
+
+
 ## [6.5.73] — 2026-09-06
 
 ### Changed

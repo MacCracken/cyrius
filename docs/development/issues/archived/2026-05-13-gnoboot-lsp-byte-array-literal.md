@@ -8,7 +8,7 @@
 
 The byte-array literal syntax (`var foo[N] = { 0x.., 0x.., ... };`,
 landed in cyrius 5.11.51 per
-[`archived/2026-05-13-gnoboot-byte-array-literal.md`](archived/2026-05-13-gnoboot-byte-array-literal.md))
+[`archived/2026-05-13-gnoboot-byte-array-literal.md`](2026-05-13-gnoboot-byte-array-literal.md))
 is parsed and emitted correctly by `cc5` — gnoboot uses it
 extensively for UTF-16LE strings + EFI GUIDs (~10 declarations in
 `src/main.cyr`) and `cyrius build` produces a working binary.

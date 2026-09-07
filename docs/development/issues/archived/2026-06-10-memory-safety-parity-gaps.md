@@ -1,6 +1,6 @@
 # Memory-safety parity gaps + heap-registry rot — CVE-24/25/26/27, AR-03
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** Medium
 **Affects:** cycc front-end + stdlib allocators + PE emitter + heap map 6.1.31
 
@@ -92,4 +92,4 @@ has no cap → add a count guard") was wrong — `SFLC`/`local_cnt` counts
 stack-frame *slots*, not variables, so a naive cap breaks sanctioned large stack
 frames (`stack_var.tcyr::big_frame`'s 16 KB `__chkstk` frame). The real fix is a
 redesign. Tracked in
-[`2026-06-12-locals-table-slot-indexed-overflow.md`](../2026-06-12-locals-table-slot-indexed-overflow.md).
+[`2026-06-12-locals-table-slot-indexed-overflow.md`](2026-06-12-locals-table-slot-indexed-overflow.md).

@@ -352,14 +352,14 @@ and doesn't expose AF_UNIX on top of them.
 
 ## 7. Related issues
 
-- [`archived/2026-07-26-no-lchown-wrapper-forces-a-hardcoded-x86-64-syscall-number.md`](archived/2026-07-26-no-lchown-wrapper-forces-a-hardcoded-x86-64-syscall-number.md)
+- [`archived/2026-07-26-no-lchown-wrapper-forces-a-hardcoded-x86-64-syscall-number.md`](2026-07-26-no-lchown-wrapper-forces-a-hardcoded-x86-64-syscall-number.md)
   — same family; documented that `fn sys_chdir` existed nowhere. **RESOLVED and archived at
   v6.5.7.** Its landing did fire the §3 collision as predicted, and the same release neutralised
   it with the ≥1000 alias band.
-- [`archived/2026-07-14-sandhi-peer-api-use-stdlib-getpeername.md`](archived/2026-07-14-sandhi-peer-api-use-stdlib-getpeername.md)
+- [`archived/2026-07-14-sandhi-peer-api-use-stdlib-getpeername.md`](2026-07-14-sandhi-peer-api-use-stdlib-getpeername.md)
   — the precedent. Resolved by adding per-arch wrappers and explicitly *rejecting* an ESYSXLAT
   entry.
-- [`archived/2026-06-04-macos-net-socket-syscalls-unported.md`](archived/2026-06-04-macos-net-socket-syscalls-unported.md)
+- [`archived/2026-06-04-macos-net-socket-syscalls-unported.md`](2026-06-04-macos-net-socket-syscalls-unported.md)
   — added the macho socket renumbers; the Darwin axis stays.
 - Roadmap **W1** (*Missing syscall wrappers — one pass*).
 

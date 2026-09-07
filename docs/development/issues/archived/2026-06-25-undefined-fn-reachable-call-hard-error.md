@@ -9,7 +9,7 @@
 > cross-module refs become resolvable/declarable.
 
 **Filed:** 2026-06-25 · **Status:** ✅ **RESOLVED — shipped v6.3.2 (2026-06-28)**
-**Pinned in:** [roadmap.md](../roadmap.md) v6.3.x release workflow, slot v6.3.2 (SHIPPED).
+**Pinned in:** [roadmap.md](../../roadmap.md) v6.3.x release workflow, slot v6.3.2 (SHIPPED).
 
 > **RESOLVED v6.3.2.** Default-on hard-error landed (fixup gates flip from `_strict_mode` →
 > `_allow_undef`; `--allow-undef`/`--al` downgrades; all 6 forks wired). The full blast radius

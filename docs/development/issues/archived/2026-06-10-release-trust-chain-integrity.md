@@ -7,7 +7,7 @@
 > seed→cybs→cycc byte-identical derivation (`scripts/seed-derive-cycc.sh` +
 > `trust-root-attest` CI). No outstanding gaps.
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High
 **Affects:** bootstrap + build/install/release infra 6.1.31. Directly undercuts
 the "own the trust chain, no external governance" stance and the ~v7 public-release story.

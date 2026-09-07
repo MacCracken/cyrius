@@ -16,10 +16,15 @@
 
 ## exit42 — Linux x86_64 ELF
 
+> ⚠ **Re-measured at the v6.5.74 doc sweep, not re-stamped.** The three Cyrius rows were rebuilt on the
+> current compiler and came back byte-for-byte identical (504 / 4,448 / 1,536), so the
+> version stamp moved and the figures did not. A stamp bumped without re-running the
+> measurement is the rot this file is most prone to, so the distinction is recorded.
+
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
-| **Cyrius** (`CYRIUS_WX=0`) | cycc 6.5.10 | single `RWE` `PT_LOAD`, opt-out | 504 | 0.11× |
-| **Cyrius** (default, W^X) | cycc 6.5.10 | `echo 'syscall(60, 42);' \| cycc` | **4,448** | 1× |
+| **Cyrius** (`CYRIUS_WX=0`) | cycc 6.5.74 | single `RWE` `PT_LOAD`, opt-out | 504 | 0.11× |
+| **Cyrius** (default, W^X) | cycc 6.5.74 | `echo 'syscall(60, 42);' \| cycc` | **4,448** | 1× |
 | Zig | 0.16.0 `-OReleaseSmall` Windows PE | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 1.0× |
 | Zig | 0.16.0 `-OReleaseSmall` | `zig build-exe -OReleaseSmall` | 4,840 | 1.1× |
 | C (GCC) | gcc 16.1.1 `-O2 -s` | `gcc -O2 -s` | 14,320 | 3× |
@@ -53,7 +58,7 @@ across both toolchain versions.
 
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
-| **Cyrius** | cycc 6.5.10 Linux cross-build | `CYRIUS_TARGET_WIN=1 cycc` | **1,536** | 1× |
+| **Cyrius** | cycc 6.5.74 Linux cross-build | `CYRIUS_TARGET_WIN=1 cycc` | **1,536** | 1× |
 | **Cyrius** | cycc_win native (on Windows) | `cycc_win.exe < exit42.cyr` | 1,536 | 1× (byte-identical to the cross-build) |
 | Zig | 0.16.0 `-OReleaseSmall` | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 3× |
 | Go | go 1.26.2 `-s -w` | `GOOS=windows GOARCH=amd64 go build -ldflags="-s -w"` | 1,492,992 | 972× |

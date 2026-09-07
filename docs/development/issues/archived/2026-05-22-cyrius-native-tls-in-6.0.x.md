@@ -230,7 +230,7 @@ own.
   open against this filing is the **residual** part: typed native
   `SSL_CTX_*` equivalents so native trust-store / mTLS *enforce* (not
   just fail closed). That residual is tracked as a cross-repo dependency
-  in [roadmap.md](../development/roadmap.md) ("Native TLS-policy
+  in [roadmap.md](../../roadmap.md) ("Native TLS-policy
   enforcement"); this doc stays open until it lands, but it no longer
   gates downstream adoption.
 

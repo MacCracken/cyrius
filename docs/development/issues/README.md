@@ -167,7 +167,7 @@ acceptance record for a *pinned* arc stays open and un-archived until
 the work ships — archiving is how we assert something is done, so
 archiving an unbuilt requirement hides it from whoever opens the slot.
 Say so in the Status line
-(see [`2026-07-25-stiva-stackless-coroutines-interactive-exec.md`](./2026-07-25-stiva-stackless-coroutines-interactive-exec.md))
+(see [`2026-07-25-stiva-stackless-coroutines-interactive-exec.md`](archived/2026-07-25-stiva-stackless-coroutines-interactive-exec.md))
 so a later rot sweep does not "clean it up".
 
 ## Re-triage rule (the rot sweep)

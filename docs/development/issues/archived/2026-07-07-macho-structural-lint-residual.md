@@ -1,7 +1,7 @@
 # Mach-O structural lint — the surviving VR-04 residual
 
 **Filed:** 2026-07-07 (extracted from the now-archived
-[`2026-06-10-verification-coverage-gaps.md`](archived/2026-06-10-verification-coverage-gaps.md)
+[`2026-06-10-verification-coverage-gaps.md`](2026-06-10-verification-coverage-gaps.md)
 so the deferral is a real issue, not CHANGELOG prose).
 **Severity:** P3 — verification-bandwidth, not a correctness bug.
 **Component:** `programs/checks/services.cyr` (`_binary_structural_lint_gate`).

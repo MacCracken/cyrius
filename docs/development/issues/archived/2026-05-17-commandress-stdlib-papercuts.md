@@ -5,7 +5,7 @@
 **Severity:** Low (most items) / Medium (item 2 — 290 KB bss bloat; item 6 — silent stack overflow in `_exec3`).
 **Affects:** `tests/<proj>.bcyr` scaffold, `lib/toml.cyr`, `lib/process.cyr`, `programs/cyrius-lsp.cyr`, `large static data` warning gating.
 
-Composite filing — small papercuts hit while bringing up the first non-trivial commandress feature surfaces. Filing as one doc per user direction during the v0.2.0 session ("note the nit pick and any paper cuts into single doc"). Items split out as standalone proposals when the fix is additive (currently item 3 → [`../proposals/2026-05-17-toml-single-bracket-sections.md`](../proposals/2026-05-17-toml-single-bracket-sections.md); item 8 is a candidate).
+Composite filing — small papercuts hit while bringing up the first non-trivial commandress feature surfaces. Filing as one doc per user direction during the v0.2.0 session ("note the nit pick and any paper cuts into single doc"). Items split out as standalone proposals when the fix is additive (currently item 3 → [`../proposals/2026-05-17-toml-single-bracket-sections.md`](../../proposals/archived/2026-05-17-toml-single-bracket-sections.md); item 8 is a candidate).
 
 ## Summary table
 
@@ -86,7 +86,7 @@ Cyrius's `large static data (289640 bytes) — consider alloc() for buffers >4K`
 
 ## Item 3 — `lib/toml.cyr` only parses `[[name]]`, drops `[name]` silently
 
-See [proposal: TOML single-bracket section support](../proposals/2026-05-17-toml-single-bracket-sections.md). Filing as a proposal because the fix is additive — current behavior isn't broken, it's just incomplete relative to the TOML spec.
+See [proposal: TOML single-bracket section support](../../proposals/archived/2026-05-17-toml-single-bracket-sections.md). Filing as a proposal because the fix is additive — current behavior isn't broken, it's just incomplete relative to the TOML spec.
 
 **Consumer-side workaround in commandress:** the `~/.commandress.cyml` schema uses `[[prompt]]` / `[[segments.cwd]]` / `[[segments.exit]]` even though each section appears at most once. Documented in [`src/config.cyr`](https://github.com/MacCracken/commandress/blob/main/src/config.cyr) and [`docs/examples/commandress.cyml.example`](https://github.com/MacCracken/commandress/blob/main/docs/examples/commandress.cyml.example). Users coming from starship-flavored TOML will trip over this; once the parser supports `[name]`, both schemas read identically and we can switch.
 

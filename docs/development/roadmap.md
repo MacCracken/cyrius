@@ -30,7 +30,7 @@ each arc. The whole-cycle framing plus v6.6.x/v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.5.73** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
+**Current head: v6.5.74** (2026-09-06) — cycc **1,200,888 B** (.text **1,052,288**) · `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · **297** `.tcyr` (**64** in `crossos/`) · **102** `lib/*.cyr` · **131** shell gates under `tests/gates/<bucket>/` · self_compile **671 ms** · **4 open issues + 3 open proposals**, all four issues pinned to numbered slots below.
 
 ⛔ The previous head line ended "every remaining issue is an arc or a maintainer decision, not a patch". **There is no maintainer to hand work to — the user is the maintainer**, so "maintainer decision" is a deferral to nobody and must not appear in this repo's docs. It was also wrong on the facts: `.54` shipped from the top of that supposedly-undoable list, and its premise (a recorded IR=3 cost of +3.6 % compile time) turned out to be **off by 20×**. ⚠ The same line also carried **131** shell gates when `find tests/gates -name '*.sh' | wc -l` said **124** — re-derive these counts, never increment them.
 
@@ -625,7 +625,7 @@ no consumer — and the slot earned its place through the prerequisite, not the 
 measurement in-slot said ~24.8 KB and was wrong: it double-counted the `CYRIUS_DCE=1` fill.
 
 ⛔ **Attempted, implemented and REVERTED:** making `CYRIUS_DCE=1` actually eliminate its 34,847
-bytes. Filed as [`issues/2026-09-06-dce-nop-fill-does-not-eliminate.md`](issues/2026-09-06-dce-nop-fill-does-not-eliminate.md)
+bytes. Filed as [`issues/2026-09-06-dce-nop-fill-does-not-eliminate.md`](issues/archived/2026-09-06-dce-nop-fill-does-not-eliminate.md)
 with the forced ordering, the extracted patch loop, and the SIGSEGV the naive re-patch produces.
 
 #### ~~`.68`~~ — the plan as written
@@ -664,7 +664,7 @@ have helped.
 
 ⛔ **A silent miscompile was found here and FILED, not patched over:** `async fn` with 7+
 parameters returns code-address garbage, exit 0, while the 6-param async and the plain 7-param fn
-are both correct — [`issues/2026-09-06-async-fn-arity-7-silent-miscompile.md`](issues/2026-09-06-async-fn-arity-7-silent-miscompile.md),
+are both correct — [`issues/2026-09-06-async-fn-arity-7-silent-miscompile.md`](issues/archived/2026-09-06-async-fn-arity-7-silent-miscompile.md),
 pinned `.70` because it is the same missing machinery as multi-parameter coroutines.
 
 #### `.70` — the coroutine arc's second half, and the minor's close

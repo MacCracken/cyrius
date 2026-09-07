@@ -11,7 +11,7 @@ consumer hand-rolling the same generator.
 > **⟳ Re-stamped 2026-08-14 at v6.5.21 (backlog re-triage).** ⭐ **ITS PREREQUISITE HAS CLEARED.** Sequenced behind `2026-06-25-source-level-version-constant`, which **SHIPPED at v6.5.21** and is archived — so it is now schedulable. `PP_EMIT_PKGVER` (`src/frontend/lex_pp.cyr`) is the template for a `#@embed` arm and cbt's `_materialize_source` marker write for the emission side. ⚠ HARD CONSTRAINT LEARNED AT .21: an injected directive must emit **ZERO newlines** (merge onto the following source line) or it shifts every `<source>` diagnostic by one — a 1-for-1 line replacement is NOT line-neutral.
 **Priority:** low / not a release-blocker. agnosai ships its own generator and is
 not waiting on this.
-**Siblings:** [`2026-06-25-source-level-version-constant.md`](2026-06-25-source-level-version-constant.md)
+**Siblings:** [`2026-06-25-source-level-version-constant.md`](archived/2026-06-25-source-level-version-constant.md)
 (same shape, one value: a build-time value that source cannot read) and
 [`2026-07-05-const-eval-comptime.md`](2026-07-05-const-eval-comptime.md), which
 notes that "the generated-`.cyr` idiom already covers the *bulk* of

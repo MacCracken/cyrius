@@ -161,6 +161,6 @@ That's the whole consumer story.
 
 ## Related items
 
-- [`../issues/2026-05-17-commandress-stdlib-papercuts.md`](../issues/2026-05-17-commandress-stdlib-papercuts.md) Item 3 — the consumer-side report.
+- [`../issues/2026-05-17-commandress-stdlib-papercuts.md`](../../issues/archived/2026-05-17-commandress-stdlib-papercuts.md) Item 3 — the consumer-side report.
 - [TOML v1.0.0 spec — Tables](https://toml.io/en/v1.0.0#table) — the syntax this proposal aligns with.
 - [TOML v1.0.0 spec — Array of Tables](https://toml.io/en/v1.0.0#array-of-tables) — what `[[name]]` actually means.

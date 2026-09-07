@@ -3094,13 +3094,54 @@ fn _PARSE_TERM_IMPL(S): i64 {
     # error" is enforced in this slot at the coarser "outside any fn
     # body" granularity — strict ret-type tracking is a future slot.
     if (PEEKT(S) == 124) {
+        var _qpair_done = 0;
         STI(S, GTI(S) + 1);
         if (GINFN(S) == 0) {
             ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 55);
         }
+        # v6.6.0 — `?` ON A VALUE-FORM (`: stack`) ENUM. The pair is (rax = tag, rdx = payload).
+        # ⛔ v6.5.67 made this a hard error because `?` dereferenced its operand and so read the
+        # TAG as a pointer — compiling clean and then SIGSEGV'ing. Refusing was the right stopgap;
+        # the fix is to lower it properly, because `Result` is the value form now.
+        #
+        # ⭐ THE ERR PATH MUST RE-EMIT **BOTH** HALVES. The one-line framing this arc carried for
+        # a year — "teach `?` to accept a pair" — omitted that, and it is the whole difficulty:
+        # propagating a Result out of the enclosing fn means returning a PAIR, so rdx has to be
+        # reloaded on the way out. Restoring only rax hands the caller a correct tag with a stale
+        # payload, which is the v6.5.67 silent-payload-loss class one level up.
         if (_tpair == 1) {
-            ERR_MSG(S, "'?' does not apply to a `: stack` enum — destructure it: `var tag, val = f();`", 80);
+            var qtag = GVCNT(S);
+            S64(_varn_base + qtag * 8, 0);
+            S64(_vars_base + qtag * 8, 8);
+            var qval = qtag + 1;
+            S64(_varn_base + qval * 8, 0);
+            S64(_vars_base + qval * 8, 8);
+            SVCNT(S, qval + 1);
+            EVSTORE(S, qtag);                 # tag  (rax as returned)
+            EMOVRA_RDX(S);                    # rax = rdx = payload
+            EVSTORE(S, qval);
+            # if (tag != Ok) -> return (tag, payload)
+            EVLOAD(S, qtag);
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);                        # rcx = 0 (Ok)
+            EPOPR(S);                         # rax = tag
+            ECMPR(S);
+            var qjok = EJCC(S, 0x84);         # JE -> Ok, skip the propagate
+            EVLOAD(S, qval);
+            EMOVRDXRAX(S);                    # rdx = payload
+            EVLOAD(S, qtag);                  # rax = tag
+            var qrp2 = EJMP0(S);
+            vec_push(rp_vec, qrp2);
+            EPATCH(S, qjok);
+            EVLOAD(S, qval);                  # Ok path: rax = payload
+            _cfo = 0;
+            # The enclosing fn now returns a pair on its Err path, so mark it pair-returning —
+            # exactly as an explicit `return SomeCtor(x)` does (parse_fn.cyr's PARSE_RETURN).
+            if (_cur_fn_ix >= 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+            _qpair_done = 1;
         }
+        if (_qpair_done == 0) {
         # Hidden temp slot to hold the Result ptr across the
         # tag-check / unwrap branches (same idiom as PARSE_MATCH).
         var qidx = GVCNT(S);
@@ -3131,6 +3172,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
         EADDR(S);                         # rax = result_ptr + 8
         ELOAD64(S);                       # rax = [result_ptr + 8] = payload
         _cfo = 0;                         # invalidate const-fold tracking
+        }
     }
     var go = 1;
     while (go == 1) {

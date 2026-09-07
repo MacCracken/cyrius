@@ -32,7 +32,7 @@
 > exit assertion) were both fixed pre-cut — neither was reachable by self-host
 > (cycc's own output is far below 16 MB and exits cleanly). Archived at cut.
 
-**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../audit/2026-06-10-deep-dive-review.md))
+**Discovered:** 2026-06-10 during the deep-dive review ([`docs/audit/2026-06-10-deep-dive-review.md`](../../../audit/2026-06-10-deep-dive-review.md))
 **Severity:** High
 **Affects:** cycc / stdlib 6.1.31
 
