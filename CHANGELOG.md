@@ -153,6 +153,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   correct** — it dereferenced the tag as a pointer. Same class as the global-init REPLAY that had
   to take the v6.3.44 struct fix separately. **When you fix a lowering, grep for a second copy.**
 
+- ⛔ **The forward-reference pass MINTED FN-TABLE ENTRIES, and bayan's zero-warning gate caught
+  it.** An earlier cut called `REGFN` on any top-level `fn NAME` it could not resolve. A fn
+  defined AFTER a top-level expression statement is registered by a different path, so the
+  prescan's entry stayed bodyless and the undefined-call check reported it: **17
+  `undefined function` warnings naming helpers defined right there in the file**, while every
+  test still passed. Only a zero-warning CI gate could see it, and only bayan has one.
+
+  ⭐ **The registration was never what made forward references work** — the invalidation on each
+  new `: stack` constructor is. Removing `REGFN` leaves every axis green, including the
+  forward-reference ones. Measured: 17 warnings with it, **0** without. Pinned by axis 13 of
+  `stack_enum_lossy_context.sh` (mutation-proven: restoring the call turns it red), and the rule
+  is now in the source — **this pass observes; it must never register.**
+
 - ⛔ **FORWARD REFERENCES took the boxed path — the single most dangerous shape of the flip.**
   Flag 256 ("returns a pair") is set on a constructor in pass 1, but on an ordinary fn only while
   its own body is parsed. A caller appearing EARLIER IN THE FILE than its callee therefore read
@@ -210,7 +223,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hardware — **ecb** (macOS-arm64) · **ach** (Intel-Mac) · **cass** (Windows/PE) · **pi**
   (aarch64) all `SELFHOST_OK + crossos LIBTEST_OK`; seed → cybs → cycc byte-identical.
 - **Bench**: `self_compile` **740 ms** (from 722), `size/cycc` **1,247,608 B** (from 1,235,192),
-  `size/cycc_text` **1,089,992 B**. **+12,416 B / +18 ms**, and it is bought rather than drifted:
+  `size/cycc_text` **1,089,928 B**. **+12,416 B / +18 ms**, and it is bought rather than drifted:
   the value-form lowering, two new lossy-context refusals, the top-level destructure across both
   parse phases, the forward-reference propagation pass, and the mixed-return diagnostic. Growth
   tax by the standing triage rule — no single patch dominates. A large consumer build (sigil,

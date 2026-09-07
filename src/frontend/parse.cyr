@@ -118,14 +118,19 @@ fn _pair_prescan(S): i64 {
                 # either would mint a spurious fn-table entry.
                 if (d == 0) {
                     if (TOKTYP(S, i + 1) == 2) {
-                        # ⚠ REGISTER IT IF NEEDED. On the first demand this pass runs early in
-                        # pass 2, before a fn defined LOWER in the file has been reached — and an
-                        # unregistered callee is exactly the case this whole pass exists for. A
-                        # forward CALL registers the callee the same way (parse_expr's
-                        # `if (fi < 0) { fi = REGFN(...) }`), so this mints nothing new.
+                        # ⛔ THIS PASS MUST NEVER REGISTER A FN, and an earlier cut of it did.
+                        # `REGFN` here mints a fn-table entry that no definition ever fills in
+                        # (a fn defined AFTER a top-level expression statement is registered by a
+                        # different path), and the undefined-call check then reports it: bayan's
+                        # zero-warning CI gate went red with 17 `undefined function` warnings for
+                        # helpers that were defined right there in the file. Measured: 17 with the
+                        # REGFN, 0 without, and every axis of the lossy-context gate — including
+                        # the forward-reference ones this pass exists for — passes without it.
+                        # The registration was never what made forward references work; the
+                        # invalidation on each new `: stack` ctor is. Skip what is not registered:
+                        # a fn nothing has referenced yet cannot be the subject of a pending query.
                         var pnoff = TOKVAL(S, i + 1);
                         var pfi = FINDFN(S, pnoff);
-                        if (pfi < 0) { pfi = REGFN(S, pnoff); }
                         if (pfi >= 0) {
                             if ((GFLG(S, pfi) & 256) == 0) {
                                 var j = i + 2;

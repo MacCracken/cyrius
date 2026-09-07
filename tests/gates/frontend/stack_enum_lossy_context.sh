@@ -347,5 +347,57 @@ fn main(): i64 { syscall(60, 0, 0,0,0,0); return 0; }
 var e = main();
 EOF
 
-echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic)'
+# ── axis 13 — the propagation pass must MINT NOTHING (v6.6.0 regression) ────────────────────
+# ⛔ The forward-reference pass walks every top-level `fn NAME` and originally called REGFN on
+# any it could not resolve. That minted fn-table entries no definition ever filled: a fn defined
+# AFTER a top-level expression statement is registered by a different path, so the prescan's
+# entry stayed bodyless and the undefined-call check reported it. bayan's zero-warning CI gate
+# went RED with 17 `undefined function` warnings naming helpers defined right there in the file —
+# every test still PASSED, so only the warning gate caught it.
+# ⭐ The registration was never what made forward references work (axis 12 passes without it);
+# the invalidation on each new `: stack` constructor is. This axis pins that the pass observes
+# and never registers.
+accept "fns defined after a top-level statement are not reported undefined" axis13 7 <<'EOF'
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+enum R2: stack { R2Ok(v); R2Err(e); }
+alloc_init();
+fn helper_a(n): i64 { return n + 1; }
+fn helper_b(n): i64 { return helper_a(n) + 1; }
+fn produce(n) { if (n < 0) { return R2Err(1); } return R2Ok(n); }
+fn main(): i64 {
+    var t, v = produce(5);
+    syscall(60, helper_b(v) & 0xFF, 0,0,0,0);
+    return 0;
+}
+var e = main();
+EOF
+# ...and the compile must emit NO undefined-function warning for those helpers.
+cat > "$T/w.cyr" <<'EOF'
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+enum R3: stack { R3Ok(v); R3Err(e); }
+alloc_init();
+fn late_one(n): i64 { return n + 1; }
+fn late_two(n): i64 { return late_one(n); }
+fn mk3(n) { if (n < 0) { return R3Err(1); } return R3Ok(n); }
+fn main(): i64 { var t, v = mk3(2); return late_two(v); }
+var e = main();
+EOF
+"$CC" < "$T/w.cyr" > "$T/w" 2>"$T/w.err"
+UNDEF=$(grep -c "undefined function" "$T/w.err")
+[ "$UNDEF" -eq 0 ] || {
+  echo "FAIL stack_enum_lossy_context axis13: $UNDEF 'undefined function' warning(s) for fns"
+  echo "  defined in this very file — the propagation pass is minting fn-table entries again."
+  grep "undefined function" "$T/w.err" | head -3 | sed 's/^/    /'
+  exit 1
+}
+
+echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries'
 exit 0
