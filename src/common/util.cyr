@@ -381,6 +381,7 @@ fn _pp_inl_has(p): i64 {
     return 0;
 }
 var _pending_coro = 0;      # this fn's body awaits: reserve slot 0 before params
+var _wp_post_patch = 0;     # v6.5.72: this compaction runs AFTER FIXUP resolved its sites
 var _coro_was = 0;          # the body just emitted was a coroutine
 var _coro_flc = 0;          # that body's local-slot count (its frame size)
 var _async_gate_init = 0;
@@ -574,15 +575,26 @@ fn _wpjs_add_raw(S, cp): i64 {
     else { _wpjs_ovf = 1; }
     return 0;
 }
-# ⭐ GATED ON IR: `wp_compact` only runs under `CYRIUS_IR`, so recording on a default build is
-# pure cost with no consumer. The first cut recorded unconditionally and taxed EVERY compile —
-# measured 686 -> 712 ms self_compile, +3.8 %, for a feature no default build uses.
-# ⚠ ANY FUTURE SECOND CONSUMER MUST WIDEN THIS GATE. v6.5.71 added a `CYRIUS_DCE=1` compaction
-# and spent a debugging cycle on an empty registry before noticing that this line — correct when
-# written — silently disabled the machinery for the new caller. See
-# `docs/development/issues/2026-09-06-dce-nop-fill-does-not-eliminate.md`.
+# ⭐ GATED, because recording on a build that will never compact is pure cost — measured
+# 686 -> 712 ms self_compile when it was unconditional.
+# ⛔ THE GATE MUST NAME EVERY CONSUMER, NOT JUST THE FIRST. v6.5.68 gated this on `CYRIUS_IR`
+# alone — correct then. v6.5.71 added a second compaction for `CYRIUS_DCE=1` and the registry was
+# silently EMPTY for it, so the repair stage fixed no jump and the eliminated binary faulted on
+# the first call it should have repaired. A gate written against one caller disables the
+# machinery for the next one. `CYRIUS_DCE` is read lazily because FIXUP reads it far later.
+var _wp_rec = 0;            # 0 = undetermined, 1 = recording, 2 = off
+fn _wp_recording(S): i64 {
+    if (IR_ENABLED(S) != 0) { return 1; }
+    if (_wp_rec == 0) {
+        _wp_rec = 2;
+        var _de = _read_env("CYRIUS_DCE");
+        if (_de != 0) { if (load8(_de) == 49) { if (load8(_de + 1) == 0) { _wp_rec = 1; } } }
+    }
+    if (_wp_rec == 1) { return 1; }
+    return 0;
+}
 fn _wpjs_add(S, cp): i64 {
-    if (IR_ENABLED(S) == 0) { return 0; }
+    if (_wp_recording(S) == 0) { return 0; }
     return _wpjs_add_raw(S, cp);
 }
 fn _wpnr_add(S, cp, ln): i64 {
@@ -596,7 +608,7 @@ fn _wpnr_add(S, cp, ln): i64 {
     return 0;
 }
 fn _wpsw_add(S, table_cp, nent): i64 {
-    if (IR_ENABLED(S) == 0) { return 0; }
+    if (_wp_recording(S) == 0) { return 0; }
     if (_wpsw_n < 4096) {
         S64(S + 0xF0000 + _wpsw_n * 16, table_cp);
         S64(S + 0xF0000 + _wpsw_n * 16 + 8, nent);

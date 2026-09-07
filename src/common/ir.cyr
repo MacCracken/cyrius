@@ -1636,6 +1636,10 @@ fn wp_compact(S): i64 {
     # kmode 2/3 (shared / object) use rip-relative disp32 to data, which nothing records —
     # the same exclusion the per-fn pass has carried since v5.6.27.
     if (L64(S + 0x18FCA0) > 1) { return 0; }
+    # ⚠ The PIE exclusion lives at the CALL SITES, not here: `_pie_mode` is declared in the x86
+    # driver and this file is compiled into all seven forks — referencing it here breaks the cx
+    # build (`undefined variable '_pie_mode'`), the exact shared-file/per-target-symbol trap
+    # v6.5.66 shipped once already.
     if (_wpnr_n == 0) { return 0; }
     # A saturated registry means an INCOMPLETE repair list, and a partial repair is worse
     # than none. Decline the whole pass: correct code, merely unoptimised.
@@ -1672,6 +1676,65 @@ fn wp_compact(S): i64 {
         store8(da + 3, (nd >> 24) & 0xFF);
         ji = ji + 1;
     }
+    # Stage 1b — v6.5.72: repair the FIXUP-MEDIATED sites, but only once FIXUP has resolved
+    # them (the post-dead-code-elimination pass); before that they are placeholders and stage 2's
+    # CP shift is all they need.
+    #
+    # ⭐ THIS REPLACES RE-RUNNING THE PATCH LOOP, for a hard reason rather than taste: extracting
+    # that loop into its own function makes **cybs** — the hand-assembly bootstrap compiler —
+    # fail with a bare `syntax error`, so `seed-derive` goes red while `build/cycc` compiles it
+    # fine (v6.5.70). Repairing arithmetically needs no new large function.
+    #   ftype 2 (call rel32) — relative: adjust by the shifts at both ends, exactly as stage 1
+    #                          does for recorded jumps. Disjoint from WPJS, which holds
+    #                          EJCC/EJMP/EJMP0/ECALLTO while this holds ECALLFIX.
+    #   ftype 3 (fn address)  — an ABSOLUTE fn VA: rewrite it from the shifted `_fnt_offsets`.
+    #   everything else       — absolute DATA addresses, and data does not move when code shrinks
+    #                          (measured: `.rodata`/`.bss` land at identical vaddrs either way).
+    #
+    # ⛔ IT MUST RUN HERE, BEFORE STAGE 2. It reads a fixup CP and writes four bytes AT that CP
+    # in the code buffer — so it needs PRE-compaction coordinates, exactly like stage 1. Placed
+    # after stage 2 it reads CPs that have already been shifted to their post-compaction values
+    # and writes them into a buffer stage 6 has not moved yet, scribbling over unrelated
+    # instructions: measured 3 corrupted live bodies in a five-line program and 147 in cycc.
+    if (_wp_post_patch == 1) {
+        var pfi = 0;
+        var pfc = GFCNT(S);
+        while (pfi < pfc) {
+            var pfa = _fixup_base + pfi * 16;
+            var pcoff = L64(pfa);
+            if (pcoff >= 0) {
+                var praw = L64(pfa + 8);
+                var pft = praw >> 56;
+                if (pft == 3) {
+                    # An ABSOLUTE function address (`&fn`, and every indirect call through a
+                    # function pointer). ⛔ Missing this was the last defect: a stale pointer
+                    # value made `callq *-0x48(%rbp)` land mid-instruction — SIGILL, with every
+                    # live body still decoding cleanly, so the body audit could not see it.
+                    # The stored value is `entry + fn_offset`; `entry` is not known here and does
+                    # not need to be — subtracting the shift at the OLD offset moves it exactly.
+                    # (`_fnt_offsets` is still pre-compaction at this stage; stage 3 shifts it.)
+                    var poff3 = L64(_fnt_offsets + (praw & 0x00FFFFFFFFFFFFFF) * 8);
+                    if (poff3 >= 0) {
+                        var pcur = L64(_codebuf_base + pcoff);
+                        S64(_codebuf_base + pcoff, pcur - _wp_shift(S, poff3));
+                    }
+                }
+                if (pft == 2) {
+                    var pa2 = _codebuf_base + pcoff;
+                    var prel = load8(pa2) | (load8(pa2 + 1) << 8) | (load8(pa2 + 2) << 16) | (load8(pa2 + 3) << 24);
+                    if (prel >= 0x80000000) { prel = prel - 0x100000000; }
+                    var ptgt = pcoff + 4 + prel;
+                    var pnew = prel - _wp_shift(S, ptgt) + _wp_shift(S, pcoff);
+                    store8(pa2 + 0, pnew & 0xFF);
+                    store8(pa2 + 1, (pnew >> 8) & 0xFF);
+                    store8(pa2 + 2, (pnew >> 16) & 0xFF);
+                    store8(pa2 + 3, (pnew >> 24) & 0xFF);
+                }
+            }
+            pfi = pfi + 1;
+        }
+    }
+
     # Stage 2 — every fixup-table CP. FIXUP has not run yet, so it will patch through these.
     # ⚠ ALL of [0, GFCNT), not the per-fn pass's [fn_start_fcnt, GFCNT) window.
     var fcnt = GFCNT(S);

@@ -74,9 +74,22 @@ fn DECODE_LEN(buf, off): i64 {
     if (op == 0x0F) {
         var op2 = load8(buf + p);
         p = p + 1;
-        # Three-byte opcodes 0x0F 0x38 / 0x3A — Cyrius doesn't emit these
-        # in normal codegen; bail conservatively.
-        if (op2 == 0x38 || op2 == 0x3A) { return 0; }
+        # Three-byte opcode escapes. ⛔ THIS USED TO BAIL WITH "Cyrius doesn't emit these in
+        # normal codegen" — and it does: `roundsd`/`roundss` (`66 0F 3A 0B` / `0A`) appear in
+        # the float formatting path, so every binary that formats a float carried a function
+        # this decoder could not walk. Found at v6.5.72 by auditing a LIBRARY binary; the
+        # v6.5.68 audit only ever saw cycc's own `.text`, which contains none of them — a
+        # coverage claim is only as wide as the corpus it was measured on.
+        #   0F 38 xx — ModR/M, no immediate.
+        #   0F 3A xx — ModR/M plus an imm8 (every member of that map takes one).
+        if (op2 == 0x38) {
+            var mr38 = load8(buf + p + 1);
+            return p - off + 1 + _MODRM_FOLLOW(mr38);
+        }
+        if (op2 == 0x3A) {
+            var mr3a = load8(buf + p + 1);
+            return p - off + 1 + _MODRM_FOLLOW(mr3a) + 1;
+        }
         # Common two-byte opcodes Cyrius emits — all take ModR/M:
         #   80..8F  Jcc rel32          (no ModR/M, has rel32)
         #   90..9F  SETcc r/m8         (ModR/M)

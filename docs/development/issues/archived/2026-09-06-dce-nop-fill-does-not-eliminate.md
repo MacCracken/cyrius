@@ -1,3 +1,45 @@
+> ### ✅ RESOLVED at v6.5.72 — `CYRIUS_DCE=1` now ELIMINATES. Four attempts, six causes.
+>
+> **36,864 bytes removed from a cycc self-compile** (1,235,272 → 1,198,408), the eliminated cycc
+> compiles and **reproduces the normal build byte-identically**, and the whole corpus agrees:
+> **0 divergences of 301**, elimination firing on 297.
+>
+> The six causes, in the order they were found — recorded because each one produced a
+> confidently-wrong diagnosis first:
+> 1. **`_wp_inside` (a BINARY SEARCH) called before the run table was sorted** — it searched
+>    unsorted data and voided the wrong fixups. (v6.5.71)
+> 2. **`dbase` recomputed after compaction.** Data does NOT follow code — `.rodata`/`.bss` land
+>    at identical vaddrs with and without elimination — so recomputing relocated every absolute
+>    data reference by the bytes reclaimed. (v6.5.71)
+> 3. **Extracting the fixup patch loop breaks the SEED CHAIN** — cybs cannot compile it and
+>    `seed-derive` goes red while `build/cycc` is fine. So the fixup sites are repaired
+>    ARITHMETICALLY instead of by re-running the loop. (v6.5.70)
+> 4. **The position registries were gated on `IR_ENABLED`** — correct when written at v6.5.68,
+>    and silently EMPTY for this new consumer, so the repair stage fixed no jump at all. A gate
+>    written against one caller disables the machinery for the next one. (v6.5.71)
+> 5. **The fixup repair ran AFTER the CP shift**, so it wrote at post-compaction coordinates into
+>    a buffer that had not moved yet — 3 corrupted live bodies in a five-line program, 147 in
+>    cycc. It must run beside stage 1, on pre-compaction coordinates. (v6.5.72)
+> 6. **ftype-3 fixups were never repaired** — absolute function ADDRESSES, behind every indirect
+>    call. This is the one no body-level audit can catch, because every body still decodes
+>    perfectly; it surfaced as SIGILL on `callq *-0x48(%rbp)` landing mid-instruction. (v6.5.72)
+>
+> Two more things had to change that were not defects in the pass itself:
+> * **The undefined-call verdict now runs BEFORE elimination.** "Is this undefined call
+>   reachable?" is a property of the program the user WROTE. Computed after elimination, a
+>   shifted call site slid into a neighbouring live function and 186 of 301 corpus programs
+>   stopped compiling.
+> * **`DECODE_LEN` could not walk `0F 38` / `0F 3A`** — it bailed with "Cyrius doesn't emit these
+>   in normal codegen", and it does: `roundsd` in the float-formatting path. The v6.5.68 audit
+>   only ever saw cycc's own `.text`, which contains none. **A coverage claim is only as wide as
+>   the corpus it was measured on.**
+>
+> The pass now AUDITS ITSELF: after compaction it walks every surviving live body with the length
+> decoder and refuses to emit if one stopped decoding — **baseline-relative**, because the first
+> cut asserted absolutely and blocked 240 programs for a decoder gap rather than for corruption.
+>
+> Gate: `tests/gates/codegen/dce_eliminates.sh`, 4 axes.
+
 # `CYRIUS_DCE=1` NOP-fills dead code and reclaims zero bytes — the flag says "eliminate"
 
 **Status:** 🟠 **OPEN.** Attempted at v6.5.68, implemented, **reverted** — the naive route

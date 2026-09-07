@@ -590,6 +590,32 @@ fn FIXUP(S): i64 {
         PRNUM(_da_over);
         syscall(SYS_WRITE, 2, " desynced\n", 10);
     }
+    # v6.5.72 — BASELINE for the post-elimination self-audit below. Record which function
+    # bodies walk cleanly BEFORE anything is filled or moved, so the audit can report a
+    # REGRESSION rather than an absolute verdict.
+    # ⚠ THIS DISTINCTION IS NOT PEDANTRY. The first cut asserted absolutely and immediately
+    # blocked 240 of 301 corpus programs — every one of them for a DECODER gap
+    # (`fmt_float_buf` uses `0F 3A` roundsd, which `DECODE_LEN` bailed on), not for corruption.
+    # An absolute audit turns any future decoder gap into "dead-code elimination is broken".
+    var _pre_ok = 0;
+    if (dce_enabled == 1) {
+        _pre_ok = alloc((fnc >> 3) + 8);
+        if (_pre_ok != 0) {
+            var _pi = 0;
+            while (_pi < fnc) {
+                var _po = L64(_fnt_offsets + _pi * 8);
+                if (_po >= 0) {
+                    var _pe2 = GFNE(S, _pi);
+                    if (_pe2 > _po) {
+                        if (DECODE_WALK_OK(_codebuf_base, _po, _pe2) == 1) {
+                            store8(_pre_ok + (_pi >> 3), load8(_pre_ok + (_pi >> 3)) | (1 << (_pi & 7)));
+                        }
+                    }
+                }
+                _pi = _pi + 1;
+            }
+        }
+    }
     var dce_bytes = 0;
     var dwi = 0;
     while (dwi < fnc) {
@@ -659,6 +685,11 @@ fn FIXUP(S): i64 {
                                     store8(_codebuf_base + nop_i, 0x90);
                                     nop_i = nop_i + 1;
                                 }
+                                # v6.5.72: hand the fill to the whole-program compactor so the
+                                # bytes are REMOVED rather than overwritten. The comment above
+                                # calls NOP-fill an "intentional tradeoff" because "code shifting
+                                # would break cycc==cycc byte-identity" — disproved at v6.5.68.
+                                _wpnr_add(S, dfoff, dfend - dfoff);
                             }
                         }
                     }
@@ -741,6 +772,12 @@ fn FIXUP(S): i64 {
         var u59_uraw = L64(u59_ufaddr + 8);
         var u59_uftype = u59_uraw >> 56;
         var u59_uidx = u59_uraw & 0x00FFFFFFFFFFFFFF;
+        # v6.5.72: a CP of -1 marks a call site inside a function body that dead-code
+        # ELIMINATION removed. It cannot be a reachable undefined call — the code containing it
+        # does not exist any more — and without this the host lookup below fails to place it,
+        # counts it as reachable, and turns a warning into a hard error. Measured: 186 of 301
+        # corpus programs stopped compiling under `CYRIUS_DCE=1` for exactly this reason.
+        if (u59_ucoff < 0) { u59_ufi = u59_ufi + 1; continue; }
         if (u59_uftype == 2 || u59_uftype == 3) {
             var u59_utarget = L64(_fnt_offsets + u59_uidx * 8);
             if (u59_utarget == 0 - 1) {
@@ -779,6 +816,60 @@ fn FIXUP(S): i64 {
         PRNUM(undef_count);
         syscall(SYS_WRITE, 2, " reachable undefined function(s) (pass --allow-undef to downgrade)\n", 67);
         syscall(SYS_EXIT, 1);
+    }
+    # ⚠ ELIMINATION RUNS AFTER THE UNDEFINED-CALL VERDICT, DELIBERATELY. "Is this undefined
+    # call reachable?" is a property of the program the user WROTE, and answering it must not
+    # depend on whether dead code was physically removed. Placed before the check, compaction
+    # shifts a call site and its host function by different amounts when a deleted body lies
+    # between them, so the site slides into a neighbouring LIVE function and a call that was
+    # correctly ignored becomes a hard error — measured on tests/tcyr/memory/alloc_serdes.tcyr,
+    # which compiles with warnings at HEAD and failed with "5 reachable undefined functions".
+
+    # v6.5.72 — ELIMINATE the dead code the pass above only padded, then AUDIT THE RESULT.
+    # PIE writes function/string addresses as rip-relative disp32 rather than absolute values —
+    # a second repair shape this pass does not carry. Decline rather than half-repair.
+    if (dce_enabled == 1 && _pie_mode == 0) {
+        _wp_post_patch = 1;
+        var _wpd2 = wp_compact(S);
+        _wp_post_patch = 0;
+        if (_wpd2 > 0) {
+            var _cp2 = GCP(S);
+            _cp2 = (_cp2 + 7) & (0 - 8);
+            SCP(S, _cp2);
+            # ⭐ SELF-AUDIT. Compaction that repairs one table wrongly produces a binary that
+            # looks fine and faults later, which is how three attempts at this were spent. The
+            # length decoder added at v6.5.68 can say whether every surviving function still
+            # walks cleanly from its start to its end — a corrupted range shows up HERE, naming
+            # the function, instead of as a SIGSEGV in the built compiler.
+            var _aud_bad = 0;
+            var _aui = 0;
+            while (_aui < fnc) {
+                var _auo = L64(_fnt_offsets + _aui * 8);
+                if (_auo >= 0) {
+                    var _aue = GFNE(S, _aui);
+                    var _aul = load8(&live + (_aui >> 3)) & (1 << (_aui & 7));
+                    if (_aul != 0) {
+                        if (_aue > _auo) {
+                            var _was = 0;
+                            if (_pre_ok != 0) { _was = load8(_pre_ok + (_aui >> 3)) & (1 << (_aui & 7)); }
+                            if (_was != 0) {
+                                if (DECODE_WALK_OK(_codebuf_base, _auo, _aue) != 1) { _aud_bad = _aud_bad + 1; }
+                            }
+                        }
+                    }
+                }
+                _aui = _aui + 1;
+            }
+            if (_aud_bad > 0) {
+                syscall(SYS_WRITE, 2, "error: dead-code elimination corrupted ", 39);
+                PRNUM(_aud_bad);
+                syscall(SYS_WRITE, 2, " live function body/bodies; refusing to emit\n", 45);
+                _had_error = 1;
+            }
+            syscall(SYS_WRITE, 2, "note: ", 6);
+            PRNUM(_wpd2);
+            syscall(SYS_WRITE, 2, " bytes of dead code eliminated\n", 31);
+        }
     }
 
     # Store data_size

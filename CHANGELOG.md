@@ -4,6 +4,87 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.72] — 2026-09-06
+
+### Fixed
+
+- ⛔ **`CYRIUS_DCE=1` did not eliminate anything — it padded.** The pass found unreachable
+  functions, overwrote their bodies with `0x90`, and reclaimed **zero** bytes; the binary was
+  byte-for-byte the same size with the flag on and off, while the default-path message told
+  users to *"set `CYRIUS_DCE=1` to eliminate"*. Its own comment called that an "intentional
+  tradeoff" because *"code shifting would break cycc==cycc byte-identity"* — disproved at
+  v6.5.68: compaction is deterministic, so a compacted compiler reaches the same fixpoint.
+
+  **Now: 36,864 bytes removed** from a cycc self-compile (1,235,272 → 1,198,408), the eliminated
+  cycc compiles and **reproduces the normal build byte-identically**, and the corpus agrees —
+  **0 divergences of 301**, elimination firing on 297.
+
+  Four attempts and **six distinct causes**, each of which produced a confident wrong diagnosis
+  first, recorded so the next person does not re-derive them:
+  1. `_wp_inside` — a **binary search** — called before the run table was sorted.
+  2. **`dbase` recomputed** after compaction. Data does not follow code: `.rodata`/`.bss` land at
+     identical vaddrs either way, so recomputing relocated every absolute data reference.
+  3. **Extracting the fixup patch loop breaks the seed chain** — cybs cannot compile it. The
+     fixup sites are therefore repaired *arithmetically* rather than by re-running the loop.
+  4. **The position registries were gated on `IR_ENABLED`** — correct when written at v6.5.68 and
+     silently **empty** for this new consumer, so the repair stage fixed no jump at all.
+     ⚠ *A gate written against one caller disables the machinery for the next one.*
+  5. **The fixup repair ran after the CP shift**, writing at post-compaction coordinates into a
+     buffer that had not moved — 3 corrupted live bodies in a five-line program, 147 in cycc.
+  6. **ftype-3 fixups were never repaired** — absolute function *addresses*, behind every
+     indirect call. ⭐ This is the one no body-level audit can catch, because every body still
+     decodes perfectly; it surfaced only as SIGILL on `callq *-0x48(%rbp)` landing
+     mid-instruction.
+
+- **`DECODE_LEN` could not walk `0F 38` / `0F 3A`.** It bailed with *"Cyrius doesn't emit these in
+  normal codegen"* — and it does: `roundsd` in the float-formatting path, so every binary that
+  formats a float carried a function the decoder could not walk. ⚠ The v6.5.68 audit that
+  declared the decoder complete only ever saw cycc's own `.text`, which contains none of them:
+  **a coverage claim is only as wide as the corpus it was measured on.**
+
+- **The undefined-call verdict now runs BEFORE elimination.** "Is this undefined call reachable?"
+  is a property of the program the user *wrote*. Computed after elimination, a shifted call site
+  slid into a neighbouring live function and **186 of 301** corpus programs stopped compiling —
+  a warning turned into a hard error by a pass that should not have touched the question.
+
+### Added
+
+- **The elimination audits itself.** After compaction it walks every surviving live body with the
+  length decoder and refuses to emit if one stopped decoding. ⚠ **Baseline-relative**, and that
+  distinction is not pedantry: the first cut asserted absolutely and blocked 240 of 301 corpus
+  programs — every one of them for the decoder gap above rather than for corruption. An absolute
+  audit turns any future decoder gap into "dead-code elimination is broken".
+- `tests/gates/codegen/dce_eliminates.sh` — 4 axes. Axis 2 is load-bearing (the eliminated
+  compiler must reproduce the normal build byte-identically); axis 3 pins the float path; axis 4
+  pins that the default path is untouched.
+
+### Benchmarks
+
+- cycc **1,235,272 B** (`.text` **1,079,648**, +3,192 B for the second compaction pass, its
+  self-audit and the decoder's three-byte-escape arms) · self_compile **722 ms** (713 → 722,
+  **+1.3 %** — growth tax; the elimination pass itself is inert without `CYRIUS_DCE=1`).
+  ⭐ **Built WITH `CYRIUS_DCE=1` the compiler is 1,198,408 B — 36,864 bytes smaller**, and that
+  binary reproduces this one byte-identically.
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+- Corpus **301** `.tcyr` · **139** shell gates (DERIVED). Default vs `CYRIUS_DCE=1`:
+  **0 divergences of 301**, elimination firing on 297. All 7 per-target forks compile.
+  Open issues **2 → 1**.
+
+### Notes
+
+- ⭐ **Open queue 5 → 1 across `.70`–`.72`.** Closed: `async-fn-arity-7-silent-miscompile`,
+  `stiva-stackless-coroutines-interactive-exec`, `derive-accessors-auto-inline`,
+  `dce-nop-fill-does-not-eliminate`. The survivor —
+  `sock-send-result-allocates-per-call` — is **pinned to v6.6.0 by the maintainer**, not deferred
+  by me. The v6.5.x technical queue is empty.
+
+- ⚠ **`_pie_mode` is declared in the x86 driver and `ir.cyr` is compiled into all seven forks.**
+  Referencing it there broke the cx build with `undefined variable '_pie_mode'` — the exact
+  shared-file/per-target-symbol trap v6.5.66 shipped once already. The PIE exclusion lives at the
+  call site instead. Caught by compiling all seven forks, which the cycc fixpoint does not do.
+
 ## [6.5.71] — 2026-09-06
 
 ### Fixed

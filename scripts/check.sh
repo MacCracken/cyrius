@@ -266,6 +266,15 @@ sh "$ROOT/tests/gates/frontend/coroutine_midbody_suspend.sh"
 # channel leaves every answer correct and moves callq 3 -> 7).
 sh "$ROOT/tests/gates/frontend/derive_accessors_inlined.sh"
 
+# v6.5.72: `CYRIUS_DCE=1` REMOVES dead code instead of padding it — the flag found unreachable
+# functions, overwrote them with 0x90 and reclaimed ZERO bytes while telling users to "set
+# CYRIUS_DCE=1 to eliminate". ⭐ Axis 2 is load-bearing: moving code invalidates every stored
+# code position, and one unrepaired table is a silent miscompile — this took four attempts and
+# six distinct causes, the last being ftype-3 fixups (absolute function addresses behind
+# indirect calls), which no body-level check can see because every body still decodes. A byte
+# count proves the pass ran; only compiling WITH the result proves it was repaired.
+sh "$ROOT/tests/gates/codegen/dce_eliminates.sh"
+
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
 # `lib/yukti.cyr` shipped SIX agnos ABI errors for months — including `sys_mount` called
