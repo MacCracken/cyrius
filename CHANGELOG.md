@@ -131,11 +131,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   consumed correctly by anyone. It is a WARNING (mixing predates the value form), runs once after
   parsing so every fn carries its final flag, and names the fix.
 
-  It immediately found **19 sites in yukti** (device enumeration, mount, optical and network
-  query paths — fixed and released as yukti 2.3.10) and **3 in vani** (`vani_drain` / `vani_drop`
-  / `vani_state` returned a Result on the error path and a bare status int on the success path —
-  fixed and released as vani 1.2.4). Measured firing rate on correct code: **zero** across the
-  tcyr corpus and all eight sibling builds.
+  It immediately found **19 real defects in yukti** — device enumeration, mount, and the optical
+  and network query paths, i.e. exactly the calls whose only job is to report failure — fixed and
+  released as yukti 2.3.10.
+
+  ⛔ **It also has a real FALSE-POSITIVE class, and acting on one cost a regression.** It fired 3
+  times in vani, on `vani_drain` / `vani_drop` / `vani_state`, which return `Err(code)` for a null
+  device and the **raw ALSA status** otherwise — deliberately, and pinned from both sides by
+  vani's suite (`assert_eq(is_ok(vani_drain(0)), 0)` *and* `assert_lt(vani_drain(bad_fd), 0,
+  "drain propagates the raw negative")`). Both hold because argument 1 receives rax: the Err tag
+  on one path, a signed status on the other. Wrapping the raw path in `Ok(...)` to silence the
+  warning broke three tests (`got 0, expected -1`) and was reverted.
+  **The diagnostic reports a SHAPE; the shape is only a defect when every path is meant to be a
+  Result.** Read the callers before acting on it. Measured firing rate on the tcyr corpus and the
+  other seven sibling builds: **zero**.
 
 - ⛔ **`?` had a SECOND, PARALLEL LOWERING that was never updated.** `PARSE_STMT` dispatches
   IDENT+LPAREN straight to `PARSE_FNCALL` and never reaches the term parser, so v5.8.31 had to

@@ -218,6 +218,17 @@ fn _pair_prescan(S): i64 {
 # and the pattern may appear in code that is not a Result at all. It runs once, after parsing, so
 # every fn has its final flag — the propagation pass above is order-dependent and a mid-parse
 # verdict would be wrong for exactly the forward-reference case that motivated it.
+#
+# ⛔ IT HAS A REAL FALSE-POSITIVE CLASS, AND SILENCING IT COST A REGRESSION. A fn may return
+# `Err(code)` on one path and a RAW SIGNED STATUS on another *by design*, with callers using
+# `is_ok(f(x))` for the first (argument 1 receives rax, which is the tag) and a sign test for the
+# second. vani's `vani_drain` / `vani_drop` / `vani_state` are exactly that, pinned from both
+# sides by its suite: `assert_eq(is_ok(vani_drain(0)), 0)` AND
+# `assert_lt(vani_drain(bad_fd), 0, "drain propagates the raw negative")`. Wrapping the raw path
+# in `Ok(...)` to quiet this warning broke three of those tests (`got 0, expected -1`) and had to
+# be reverted. **Read the callers before acting on this warning — it reports a SHAPE, and the
+# shape is only a bug when every path is meant to be a Result.** In yukti it was (19 real
+# defects); in vani it was not.
 var _mixed_warned = 0;
 
 fn _warn_mixed_pair_returns(S): i64 {

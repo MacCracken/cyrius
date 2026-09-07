@@ -2016,17 +2016,17 @@ fn vani_start(d): i64 {
 
 fn vani_drain(d): i64 {
     if (d == 0) { return vani_err_result(VANI_ERR_DEVICE_INVALID); }
-    return vani_ok(audio_drain(vani_audio_handle(d)));
+    return audio_drain(vani_audio_handle(d));
 }
 
 fn vani_drop(d): i64 {
     if (d == 0) { return vani_err_result(VANI_ERR_DEVICE_INVALID); }
-    return vani_ok(audio_drop(vani_audio_handle(d)));
+    return audio_drop(vani_audio_handle(d));
 }
 
 fn vani_state(d): i64 {
     if (d == 0) { return vani_err_result(VANI_ERR_DEVICE_INVALID); }
-    return vani_ok(audio_get_state(vani_audio_handle(d)));
+    return audio_get_state(vani_audio_handle(d));
 }
 
 # ================================================================
