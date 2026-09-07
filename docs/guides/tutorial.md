@@ -164,9 +164,11 @@ fn divide(a, b) {
 
 alloc_init();
 
-var r = divide(42, 2);
-if (is_ok(r) == 1) {
-    var value = result_unwrap(r);   # 21
+# v6.6.0: Result is the VALUE FORM — a (tag, payload) register pair, zero allocation.
+# Bind BOTH halves; binding one would keep the tag and drop the payload, and is refused.
+var tag, value = divide(42, 2);
+if (is_ok(tag) == 1) {
+    # `value` IS the payload — 21. No unwrap step needed.
 }
 ```
 

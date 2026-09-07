@@ -335,3 +335,29 @@ sh "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"
 # freed. Loop-aware extension via RA_SCAN_LOOPS replaces the blanket guard; the lifetime cap
 # now applies only when the bisection knob asks. -8.5% frame accesses on consumer programs.
 sh "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"
+
+# ⛔ v6.6.0 — THE AGNOS CROSS-BUILD GATE, MOVED FROM CI-ONLY TO HERE, AND THE REASON MATTERS.
+# This gate compiles ten CYRIUS_TARGET_AGNOS fixtures (net/entropy/clock/TLS #45-#55, the
+# server-socket peer #56/#57, fs dir-listing, sync, io locks, signals, the GPU band, agnoshi).
+# It lived ONLY in `.github/workflows/ci.yml`, so `release-gate.sh` — the thing CLAUDE.md calls
+# the single consolidated pre-tag check — was structurally blind to it.
+#
+# ⚠ THAT BLINDNESS SHIPPED A RED CI AT v6.6.0. The Result value-form flip changed the arity of
+# every Result, and three of this gate's fixtures are heredoc'd cyrius programs using the old
+# boxed idiom (`var sr = tcp_socket(); ... payload(sr)`). The repo-wide migration swept `lib/`,
+# `src/`, `tests/`, `programs/`, `benches/` and `cbt/` — every place cyrius CODE lives — and
+# missed fixtures embedded in `scripts/`. The full release gate went GREEN (240/240, four hosts)
+# and CI still failed, which is the inverse of the macOS-rot lesson and just as bad: there, a CI
+# job that never ran the compiler hid a break for nine minors; here, a gate that ran ONLY in CI
+# meant the local authority could not see one. A gate the release gate cannot run is not a gate
+# the release gate can vouch for.
+#
+# ⚖️ THE OTHER THREE CI-ONLY SCRIPTS STAY IN CI, and that is a decision, not an oversight.
+# `funcgate-stage.sh` / `funcgate-posix.sh` STAGE AN INSTALL into $CYRIUS_HOME and then drive the
+# installed CLI end-to-end; running them from check.sh would rewrite the developer's live
+# ~/.cyrius in the middle of a check — and this release lost the whole toolchain once already by
+# treating that tree as scratch. `build-cycc-verify.sh` is a packaging verifier for the release
+# tarball, not a source gate. All three were run by hand at the v6.6.0 cut and pass; the agnos
+# gate is the one that both compiles cyrius source AND could regress from a language change,
+# which is exactly the class that belongs in the local gate.
+sh "$ROOT/scripts/agnos-crossbuild-gate.sh"

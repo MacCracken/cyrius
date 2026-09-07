@@ -16,9 +16,14 @@
 # there is no storage left for anything to dangle into. The retention group below is that
 # exact shape and passes BY CONSTRUCTION rather than by careful bookkeeping.
 #
-# ⚠ Opt-in. Plain `enum` still boxes, because the boxed layout is the documented
-# representation (`?` desugars to `load64(rax + 8)`; lib/result.cyr and ~300 ecosystem sites
-# read tag@+0 / payload@+8). Flipping the default would break every one of them silently.
+# ⚠ Opt-in PER DECLARATION — but no longer unused. v6.6.0 flipped `Result` / `Option` / `Either`
+# themselves to `: stack`, so this form is now what the stdlib IS; a plain `enum` you declare
+# yourself still boxes, and must, because a variant with two or more fields cannot fit a pair.
+# ⛔ THE LINE THIS REPLACES SAID "flipping the default would break every one of them silently",
+# and the silence was the real claim — it was right, and it is exactly what v6.6.0 had to
+# engineer away before the flip could ship: a lossy bind, an assignment, and a `store64` of a
+# pair are now named compile errors, `?` re-emits both halves, and a fn that returns a pair on
+# one path and a single value on another is reported. The break happened loudly instead.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"

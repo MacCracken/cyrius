@@ -290,42 +290,58 @@ fmt.cyr (for `option_print`). Transitively `include`s
 `lib/result.cyr` so legacy callers that include only `tagged.cyr`
 keep getting `Result` symbols.
 
+⭐ **v6.6.0 — `Option` and `Either` are the VALUE FORM** (`: stack`). A payload variant returns a
+`(tag, payload)` REGISTER PAIR and allocates nothing; there is no heap box, so there is no
+`tag at +0 / value at +8` layout to read. Bind both halves: `var t, v = Some(42);`.
+
+⛔ **`payload()` and `tagged_new()` are DELETED.** `payload()` has no 1-argument replacement —
+rdx never reaches a parameter — and under the value form the payload is already a plain variable,
+so `payload(r)` becomes `r`. `tagged_new()` built a raw box that only `tag()`/`payload()` could
+read; nothing in the ecosystem called it.
+
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `tagged_new` | `tagged_new(tag, value) → ptr` | Create tagged value |
-| `tag` | `tag(t) → tag` | Get discriminant |
-| `payload` | `payload(t) → value` | Get payload |
-| `is_tag` | `is_tag(t, expected) → 0/1` | Tag-equals check |
-| `None` | `None() → Option` | Create None (compiler-generated since v5.8.23) |
-| `Some` | `Some(val) → Option` | Create Some(val) |
-| `is_none` | `is_none(opt) → 0/1` | Check if None |
-| `is_some` | `is_some(opt) → 0/1` | Check if Some |
-| `unwrap` | `unwrap(opt) → val` | Get value or abort |
-| `unwrap_or` | `unwrap_or(opt, fallback) → val` | Get value or fallback |
-| `Left` | `Left(val) → Either` | Create Left variant |
-| `Right` | `Right(val) → Either` | Create Right variant |
-| `is_left` | `is_left(e) → 0/1` | Check if Left |
-| `is_right` | `is_right(e) → 0/1` | Check if Right |
-| `option_print` | `option_print(opt)` | Print "Some(N)" or "None" |
+| `tag` | `tag(t) → tag` | Identity — the tag is already the first bound half |
+| `is_tag` | `is_tag(t, expected) → 0/1` | Tag-equals check (takes the TAG) |
+| `None` | `None() → tag` | Create None — NULLARY, so it returns its tag alone |
+| `Some` | `Some(val) → (tag, val)` | Create Some(val) |
+| `is_none` | `is_none(t) → 0/1` | Check if None (takes the TAG) |
+| `is_some` | `is_some(t) → 0/1` | Check if Some (takes the TAG) |
+| `unwrap` | `unwrap(t, v) → val` | Get value or abort — **was 1 argument** |
+| `unwrap_or` | `unwrap_or(t, v, fallback) → val` | Get value or fallback — **was 2 arguments** |
+| `Left` | `Left(val) → (tag, val)` | Create Left variant |
+| `Right` | `Right(val) → (tag, val)` | Create Right variant |
+| `is_left` | `is_left(t) → 0/1` | Check if Left (takes the TAG) |
+| `is_right` | `is_right(t) → 0/1` | Check if Right (takes the TAG) |
+| `option_print` | `option_print(t, v)` | Print "Some(N)" or "None" — **was 1 argument** |
 
 ### result.cyr (v5.8.28)
 
 `Result<T, E>` typed sum type plus the Result-specific helpers,
 carved out of `lib/tagged.cyr` so consumers that only need
-`Result` can include just this module. Tag layout matches the
-v5.8.23 compiler-generated form (tag at +0, payload at +8;
-`Ok = 0`, `Err = 1`). Requires alloc.cyr, fmt.cyr.
+`Result` can include just this module. `Ok = 0`, `Err = 1`.
+Requires alloc.cyr, fmt.cyr.
+
+⭐ **v6.6.0 — the VALUE FORM.** `Ok(v)` / `Err(e)` return a `(tag, payload)` register pair and
+allocate **zero bytes** (previously a 16-byte box per construction from the global bump
+allocator, whose only reclaim invalidates every live pointer). Receive with
+`var t, v = f();` — a single-variable bind, an assignment, or a `store64` of one is a compile
+error naming the fix, because each would keep the tag and drop the payload.
+
+⚠ The `is_*` predicates keep their one-argument signatures: argument 1 receives rax, which IS the
+tag, so `is_ok(t)` and even `is_ok(f())` are both correct.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `Ok` | `Ok(val) → Result` | Create Ok(val) (compiler-generated) |
-| `Err` | `Err(code) → Result` | Create Err(code) (compiler-generated) |
-| `is_ok` | `is_ok(res) → 0/1` | Check if Ok |
-| `is_err_result` | `is_err_result(res) → 0/1` | Check if Err |
-| `result_unwrap` | `result_unwrap(res) → val` | Get value or abort with stderr message |
-| `result_unwrap_or` | `result_unwrap_or(res, fb) → val` | Get value or fallback |
-| `err_code_of` | `err_code_of(res) → code` | 0 if Ok, payload if Err |
-| `result_print` | `result_print(res)` | Print "Ok(N)" or "Err(N)" |
+| `Ok` | `Ok(val) → (tag, val)` | Create Ok(val) (compiler-generated) |
+| `Err` | `Err(code) → (tag, code)` | Create Err(code) (compiler-generated) |
+| `is_ok` | `is_ok(t) → 0/1` | Check if Ok (takes the TAG) |
+| `is_err_result` | `is_err_result(t) → 0/1` | Check if Err (takes the TAG) |
+| `result_unwrap` | `result_unwrap(t, v) → val` | Get value or abort — **was 1 argument** |
+| `result_unwrap_or` | `result_unwrap_or(t, v, fb) → val` | Get value or fallback — **was 2 arguments** |
+| `err_code_of` | `err_code_of(t, v) → code` | 0 if Ok, payload if Err — **was 1 argument** |
+| `result_print` | `result_print(t, v)` | Print "Ok(N)" or "Err(N)" — **was 1 argument** |
+| `ok_via` / `err_via` | `ok_via(a, v) → (tag, val)` | Unchanged signature; allocates nothing now, and the allocator argument is ignored |
 
 The `?` propagation operator (v5.8.29 / v5.8.31) is the language-
 level companion: `expr?` short-circuits the enclosing fn on `Err`

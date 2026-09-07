@@ -287,7 +287,7 @@ TypeScript/Python frontends talk to Cyrius backends over HTTP, JSON-RPC 2.0
 | `struct Point { x: f64, y: f64 }` | `struct Point { x; y; }` |
 | `impl Point { fn sum(&self) }` | `impl Math for Point { fn sum(self) { } }` |
 | `point.sum()` | `point.sum()` (same!) |
-| `match result { Ok(v) => ..., Err(e) => ... }` | `match tag(result) { 0 => { var v = payload(result); } }` |
+| `match result { Ok(v) => ..., Err(e) => ... }` | `var t, v = result; match t { Ok => { ... } Err => { ... } }` (v6.6.0 value form) |
 | `for i in 0..10` | `for i in 0..10` (same!) |
 | `let f = \|x\| x * 2` | `var f = \|x\| x * 2;` |
 | `vec![1, 2, 3]` | `var v = vec_new(); vec_push(v, 1); ...` |

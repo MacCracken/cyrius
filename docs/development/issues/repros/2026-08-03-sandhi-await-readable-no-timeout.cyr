@@ -4,7 +4,7 @@ fn _stopper(arg) { sleep_ms(250); STOP = 1; return 0; }
 
 fn main(): i64 {
     alloc_init();
-    var sfd = payload(tcp_socket());
+    var sfd_tag, sfd = tcp_socket();   # v6.6.0: Result is the value form; payload() is gone
     sock_reuse(sfd);
     sock_bind(sfd, INADDR_LOOPBACK(), 0);
     sock_listen(sfd, 16);

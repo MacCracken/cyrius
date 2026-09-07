@@ -85,9 +85,8 @@ fn main(): i64 {
     var buf = alloc(64);
     var gr = sys_getrandom(buf, 32, 0);             # #45 entropy (un-fail-closed)
     var t = clock_epoch_secs();                     # #46 wall clock
-    var sr = tcp_socket();                           # agnos conn-slot reserve
-    if (is_err_result(sr) == 1) { return 1; }
-    var fd = payload(sr);
+    var sr_tag, fd = tcp_socket();                   # agnos conn-slot reserve (v6.6.0: value form)
+    if (is_err_result(sr_tag) == 1) { return 1; }
     sock_connect(fd, INADDR_LOOPBACK(), 443);        # #47 (+ NBO->ip4 bswap)
     var ctx = tls_native_new_client("h", 1);         # tls + threading fallback
     if (ctx == 0) { sock_close(fd); return 2; }
@@ -133,9 +132,8 @@ fn main(): i64 {
     var tok = cancel_token_new();                     # shared (atomic-only) on agnos
     cancel_token_signal(tok);
     var c = cancel_token_check(tok);
-    var sr = tcp_socket();
-    if (is_err_result(sr) == 1) { return 2; }
-    var fd = payload(sr);
+    var sr_tag, fd = tcp_socket();
+    if (is_err_result(sr_tag) == 1) { return 2; }
     sock_reuse(fd);                                   # agnos no-op (was #54 mis-dispatch)
     sock_reuseport(fd);                               # agnos unsupported (-1)
     net_set_multicast_ttl(fd, 255);                   # agnos unsupported (-1)
@@ -165,17 +163,15 @@ echo "PASS: CYRIUS_TARGET_AGNOS async serial-peer + net multicast/sockopt guards
 cat > /tmp/_agnos_server_gate.cyr <<'CYR'
 include "lib/net.cyr"
 fn main(): i64 {
-    var sr = tcp_socket();                            # reserve a conn slot
-    if (is_err_result(sr) == 1) { return 1; }
-    var lfd = payload(sr);
+    var sr_tag, lfd = tcp_socket();                   # reserve a conn slot (v6.6.0: value form)
+    if (is_err_result(sr_tag) == 1) { return 1; }
     sock_reuse(lfd);                                  # agnos no-op
-    var b = sock_bind(lfd, INADDR_ANY(), 8080);       # stash port
-    if (is_err_result(b) == 1) { return 2; }
-    var l = sock_listen(lfd, 8);                       # #56 sock_listen
-    if (is_err_result(l) == 1) { return 3; }
-    var ar = sock_accept(lfd);                         # #57 sock_accept (+ wrap conn)
-    if (is_err_result(ar) == 1) { return 4; }
-    var cfd = payload(ar);
+    var b_tag, b = sock_bind(lfd, INADDR_ANY(), 8080); # stash port
+    if (is_err_result(b_tag) == 1) { return 2; }
+    var l_tag, l = sock_listen(lfd, 8);                # #56 sock_listen
+    if (is_err_result(l_tag) == 1) { return 3; }
+    var ar_tag, cfd = sock_accept(lfd);                # #57 sock_accept (+ wrap conn)
+    if (is_err_result(ar_tag) == 1) { return 4; }
     var buf = alloc(256);
     sock_recv(cfd, buf, 256);                          # #49 via tagged conn fd
     sock_send(cfd, buf, 4);                            # #48

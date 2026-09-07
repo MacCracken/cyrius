@@ -5,6 +5,7 @@
 # of intent per key.
 
 [package]
+cyrius = "6.6.0"
 name = "cyrius"
 version = "${file:VERSION}"
 description = "Sovereign, self-hosting systems language"

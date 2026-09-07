@@ -132,6 +132,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Verification
 
+- ⛔ **The release gate went GREEN and CI still failed — because a gate ran ONLY in CI.**
+  `scripts/agnos-crossbuild-gate.sh` compiles ten `CYRIUS_TARGET_AGNOS` fixtures, three of which
+  are heredoc'd cyrius programs using the boxed idiom (`var sr = tcp_socket(); ... payload(sr)`).
+  The migration swept every directory where cyrius *code* lives — `lib/`, `src/`, `tests/`,
+  `programs/`, `benches/`, `cbt/` — and missed **fixtures embedded in shell scripts under
+  `scripts/`**. Fixed (4 fixtures across 3 heredocs), and the gate is now registered in
+  `check.sh` so `release-gate.sh` can actually see it.
+
+  ⚠ **This is the macOS-rot lesson inverted, and just as bad.** There, a CI job that never ran
+  the compiler hid a break for nine minors. Here, a gate that ran only in CI meant the local
+  authority — the thing this file's process calls the single consolidated pre-tag check — could
+  not run it at all, so 240/240 plus four green hosts still did not imply CI would pass. **A gate
+  the release gate cannot run is not a gate the release gate can vouch for.** Audited the rest:
+  of the twelve `scripts/*.sh` CI invokes, four were local-invisible; `build-cycc-verify.sh` and
+  the two `funcgate-*` scripts stay in CI **by decision** (the funcgates rewrite a live
+  `$CYRIUS_HOME`, and this release already lost a toolchain to treating that tree as scratch) —
+  all three were run by hand at this cut and pass. Checked the same shape one level out too: no
+  cyrius fixture is embedded in `.github/workflows/*.yml`, and all eight sibling repos are clean.
+
+
 - **Release gate GREEN.** `check.sh` **240 passed / 0 failed**; cross-OS self-host on REAL
   hardware — **ecb** (macOS-arm64) · **ach** (Intel-Mac) · **cass** (Windows/PE) · **pi**
   (aarch64) all `SELFHOST_OK + crossos LIBTEST_OK`; seed → cybs → cycc byte-identical.
