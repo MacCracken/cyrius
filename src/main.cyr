@@ -492,7 +492,7 @@
 #                                        preprocess raise alone would have bought ~30 %, not 3x.
 #                                        The three arrays were boxed in between fixup_tbl and
 #                                        preprocess_out; each has only 2-3 code sites, so moving
-#                                        them is cheap. Frees 0x2D7C000..0x457C000 (24 MiB).) — was 0x4D9D000 — was 0x4D9D000
+#                                        them is cheap. Frees 0x2D7C000..0x457C000 (24 MiB).) — was 0x4D9D000
 #                                        (overlap w/ output_buf, capped at 262144). Cap raise
 #                                        from 262144 → 1048576 (4×) sized to absorb sandhi
 #                                        consumers (sit v0.7.2 with sandhi in [deps].stdlib
@@ -634,7 +634,7 @@ include "src/backend/js/emit.cyr"
 
 # v6.0.6 — pull in lib/alloc + lib/vec for the v6.0.7 return-patch-buffer
 # → vec conversion (proposal Option C). cycc's existing fixed-heap layout
-# (0x00000..0x4D9D000) is unchanged; alloc.cyr's brk-based heap sits AFTER
+# (0x00000..0x5D9D000, the top of preprocess_out) is unchanged; alloc.cyr's brk-based heap sits AFTER
 # our extension (alloc_init() runs syscall(12, 0) which returns the
 # post-extension brk and adds another 1 MB on top). vec.cyr depends on
 # alloc; alloc.cyr transitively includes lib/fnptr.cyr for vtable dispatch.

@@ -375,7 +375,7 @@ if (_vw != 0) {
 #     The prot/flags/fd/offset are ignored by EMMAP_PE.
 # 32 MB covers the 21 MB heap with margin + page-alignment.
 # MMAP region sized at 0x5F00000 (95 MB) — covers the cyrius heap
-# layout through preprocess_out (brk-equivalent at 0x4D9D000 /
+# layout through preprocess_out (brk-equivalent at 0x5D9D000 /
 # ~77.6 MB) plus 1.4 MB page-alignment slack. Synced with
 # main.cyr's brk extension.
 # Lineage: 0x5800000 / 88 MB through v5.11.67 ← 0x5000000 / 80 MB

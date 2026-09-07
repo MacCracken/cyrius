@@ -969,7 +969,7 @@ fn GVSI(S, vi): i64 { return L64(_vgsi_base + vi * 8); }
 # v5.11.64 — stable mirror of FIXUP's prefix-sum table. Each entry
 # is the byte offset of var vi within the var area (post m128
 # alignment padding for size > 8 vars). Written in lockstep with
-# the codebuf-fixup `pfx` scratch at 0x4D9D000+131072 (latter gets
+# the codebuf-fixup `pfx` scratch at `_output_base`+131072 (latter gets
 # clobbered once output writing passes 128 KB into output_buf).
 fn GVOFF(S, vi): i64 { return L64(_vgoff_base + vi * 8); }
 

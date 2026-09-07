@@ -4,6 +4,63 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.5.73] — 2026-09-06
+
+### Changed
+
+- **v6.5.x closeout pass.** All twelve steps run and recorded in
+  [`cycle-discipline.md`](docs/development/cycle-discipline.md)'s ledger, which is the point of
+  the exercise — a closeout that is done but not recorded leaves the next one blind.
+
+  ⭐ **The one code deliverable this checklist carried BY NAME was already done, and the entry
+  was stale.** It asked for `0x4D9D000 output_buf [16777216]` to be reclaimed, described as a
+  live phantom region audited as real by `heapmap.sh`. Live: `preprocess_out` spans
+  `0x459D000..0x5D9D000` (24 MiB) and 0x4D9D000 sits *inside* it — absorbed when that cap grew —
+  and the gate parses **102 regions, 0 overlaps, 0 warnings**, with no region at that address.
+  **A checklist entry is a claim like any other; re-derive it.**
+  ⚠ Its warning that stale references linger was correct, and **five were fixed**: a doubled
+  `— was 0x4D9D000 — was 0x4D9D000`, a brk boundary still quoted as `0x00000..0x4D9D000` in two
+  forks, and a `pfx` scratch address that has been `_output_base` since v6.4.51.
+
+- ⛔ **The security re-scan cadence had slipped inside CLAUDE.md itself.** The rule exists
+  because the cadence slipped once before ("last: v5.0.1" for three minors) — and the corrected
+  line then pointed at the **2026-07-27** audit for the whole of v6.5.x while
+  `docs/audit/2026-09-03-security-audit.md` (CVE-38…CVE-42, cycc 6.5.45) existed. Corrected, and
+  with it the **"next CVE number is 39"** note: it is **43**. A rule that records a date is a
+  self-drifting value like any other.
+
+- **vidya `types.cyml` "Live structural facts" read `cycc 6.5.10 / 1,141,792 B` — 62 releases
+  stale.** Nothing enforces that entry at compile time, which is exactly why the closeout has a
+  vidya step. Refreshed against derived counts (301 `.tcyr`, 102 `lib/*.cyr`, 139 shell gates,
+  check.sh 240) with the derivation commands written in, so the next refresh is a re-run rather
+  than a re-count.
+
+### Benchmarks
+
+- cycc **1,235,272 B** (`.text` **1,079,648**) · self_compile **724 ms** — both unchanged from
+  v6.5.72; this release is documentation, a checklist correction and four stale comments.
+- **Release gate GREEN end to end**: self-host fixpoint · seed-derive from the 29,024-byte seed ·
+  `check.sh` **240/240** · cross-OS on **ecb** / **ach** / **cass** / **pi**, all four
+  `SELFHOST_OK + crossos LIBTEST_OK` · bench.
+
+### Notes
+
+- **Gates**: check.sh **240** passed / 0 failed — up from **150** at the v6.5.0 closeout, +90
+  across the minor. Shell gates on disk **139** (DERIVED). Self-host fixpoint + seed-derive
+  byte-identical; cross-OS `SELFHOST_OK` + crossos `LIBTEST_OK` on ecb / ach / cass / pi.
+  **Dead-code floor: 77 fns / 37,345 B** — and as of v6.5.72 `CYRIUS_DCE=1` genuinely removes
+  them rather than padding.
+- **Judgment passes clean**: no raw x86 encodings in shared frontend files, and all three
+  whole-program-registry overflow flags are consulted, so the pass declines rather than
+  half-repairing.
+- **Downstream pins, recorded as a finding rather than an edit**: 125 repos declare a `cyrius`
+  pin; **0 at ≥ 6.5.60**, 110 in 6.5.0–6.5.59, 15 below 6.5.0. Re-pinning 125 repos is cross-repo
+  coordination, not a closeout patch.
+- **Backlog**: **1 open issue + 3 proposals.** All three proposals premise-checked against LIVE
+  code and genuinely unshipped (`const fn` and `#embed` have no implementation; the manifest
+  proposal shipped only its first slice at v6.5.49/.51). Placement rule clean — nothing
+  codegen/runtime parked in 7.x. The single open issue is pinned to **v6.6.0** by the maintainer.
+
 ## [6.5.72] — 2026-09-06
 
 ### Fixed

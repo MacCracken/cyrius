@@ -141,7 +141,14 @@ a separate arc).
 
 **Judgment passes** (where bugs hide — see CLAUDE.md items 4–8)
 - [ ] Heap-map audit · dead-code audit (record floor) · refactor pass · code-review pass · cleanup sweep
-- [ ] ⭐ **v6.5.x carries one heap-map item BY NAME: reclaim `0x4D9D000 output_buf [16777216]`.**
+- [x] ⭐ ~~**v6.5.x carries one heap-map item BY NAME: reclaim `0x4D9D000 output_buf [16777216]`.**~~
+      **✅ ALREADY RECLAIMED — verified at the v6.5.73 closeout, not taken on this entry's word.**
+      `preprocess_out` now spans `0x459D000..0x5D9D000` (24 MiB), so 0x4D9D000 sits INSIDE it; the
+      band was absorbed when that cap grew, and `heapmap.sh` parses 102 regions with zero overlaps
+      and no region at that address. ⚠ The item below it was right that stale references linger —
+      five were found and fixed at the closeout (a doubled `— was 0x4D9D000 — was 0x4D9D000`, a
+      brk boundary quoted as `0x00000..0x4D9D000`, and a `pfx` scratch address that has been
+      `_output_base` since v6.4.51). **A checklist entry is a claim like any other: re-derive it.**
       Nothing has written that band since **v6.4.52**, when output became a 1 GiB off-heap
       `alloc(1073741824)` — but it is still documented as a live 16 MB region in the heap map of
       **all five** `src/main*.cyr` forks, and the map is **machine-read** by `tests/gates/memory/heapmap.sh`, so
@@ -171,6 +178,41 @@ floor, a re-triage that keeps re-pinning the same item).
 - Backlog re-triage: N archived, N re-pinned — <notes>
 - Follow-ups spawned: <issues / patches>
 -->
+
+### v6.5.x → v6.6.0 closeout — 2026-09-06 (ran **v6.5.73**)
+
+- **Gates**: check.sh **240** passed / 0 failed (was 150 at the v6.5.0 closeout — +90 this minor)
+  · shell gates on disk **139** (DERIVED) · self-host fixpoint + seed-derive byte-identical ·
+  cross-OS ecb/ach/cass/pi `SELFHOST_OK` + crossos `LIBTEST_OK` on REAL hardware ·
+  self_compile **~722 ms** · cycc **1,235,272 B** (`.text` 1,079,648) · **dead-code floor 77 fns
+  / 37,345 B** — and as of v6.5.72 `CYRIUS_DCE=1` genuinely REMOVES them (1,198,408 B, −36,864).
+- **Heap map**: the item this checklist carried BY NAME — reclaim `0x4D9D000 output_buf` — was
+  **already done** and the entry was stale. `preprocess_out` spans `0x459D000..0x5D9D000` (24 MiB)
+  and 0x4D9D000 sits inside it; `heapmap.sh` parses **102 regions, 0 overlaps, 0 warnings**.
+  ⚠ Its warning about lingering references was right: **five stale mentions fixed**, including a
+  doubled `— was 0x4D9D000 — was 0x4D9D000`, a brk boundary quoted as `0x00000..0x4D9D000`, and a
+  `pfx` scratch address that has been `_output_base` since v6.4.51.
+  **A checklist entry is a claim like any other — re-derive it.**
+- **Judgment / compliance**: code-review pass clean — no raw x86 encodings in shared frontend
+  files, and all three whole-program-registry overflow flags are consulted (the pass declines
+  rather than half-repairing). Security: the re-scan cadence had **silently slipped inside
+  CLAUDE.md** — it pointed at the 2026-07-27 audit (CVE-32…36, cycc 6.4.82) for the whole minor
+  while `docs/audit/2026-09-03-security-audit.md` (CVE-38…42, cycc 6.5.45) existed. Corrected,
+  **and the "next CVE is 39" note with it: it is 43.**
+- **Downstream pins**: 125 repos declare a `cyrius` pin; **0 are at ≥ 6.5.60**, 110 sit in
+  6.5.0–6.5.59 and 15 below 6.5.0. Recorded as a finding — re-pinning 125 repos is cross-repo
+  coordination, not a closeout edit.
+- **Vidya**: `types.cyml`'s "Live structural facts" entry read **cycc 6.5.10 / 1,141,792 B** — 62
+  releases stale, the exact silent rot this step exists for. Refreshed against derived counts.
+- **Backlog re-triage**: **1 open issue + 3 proposals**, down from 5 issues at the start of
+  `.70`. Archived this run: `async-fn-arity-7-silent-miscompile`,
+  `stiva-stackless-coroutines-interactive-exec`, `derive-accessors-auto-inline`,
+  `dce-nop-fill-does-not-eliminate`. All three proposals premise-checked against LIVE code and
+  genuinely unshipped (`const fn` and `#embed` have no implementation; the manifest proposal
+  shipped only its first slice). Placement rule clean — **nothing codegen/runtime parked in 7.x**.
+  The single open issue, `sock-send-result-allocates-per-call`, is **pinned to v6.6.0 by the
+  maintainer**, not deferred.
+- **Follow-ups spawned**: none. The v6.5.x technical queue is empty.
 
 ### v6.4.x → v6.5.0 closeout — 2026-07-27 → 2026-07-28 (ran **v6.4.80 → v6.4.85**, fold tag **v6.4.86**)
 
