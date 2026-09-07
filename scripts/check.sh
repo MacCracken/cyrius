@@ -336,6 +336,13 @@ sh "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"
 # now applies only when the bisection knob asks. -8.5% frame accesses on consumer programs.
 sh "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"
 
+# ⛔ v6.6.1 — a silent miscompile that shipped in v6.5.57 and was live for 17 releases.
+# `X = Y;` between two locals copied the number of slots the TYPE implies rather than the number
+# the VARIABLES occupy, so assigning one struct POINTER to another wrote over neighbouring
+# locals. Found only because it corrupted a loop bound in a consumer and the loop then walked
+# off its buffer into the process stack.
+sh "$ROOT/tests/gates/codegen/aggregate_copy_assign_slots.sh"
+
 # ⛔ v6.6.0 — THE AGNOS CROSS-BUILD GATE, MOVED FROM CI-ONLY TO HERE, AND THE REASON MATTERS.
 # This gate compiles ten CYRIUS_TARGET_AGNOS fixtures (net/entropy/clock/TLS #45-#55, the
 # server-socket peer #56/#57, fs dir-listing, sync, io locks, signals, the GPU band, agnoshi).

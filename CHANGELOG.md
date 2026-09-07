@@ -56,6 +56,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- ⛔ **P0 — A SILENT MISCOMPILE THAT SHIPPED IN v6.5.57 AND WAS LIVE FOR SEVENTEEN RELEASES.**
+  `X = Y;` between two locals copied the number of slots the **type** implies rather than the
+  number the **variables occupy**, so assigning one struct POINTER to another wrote over the
+  neighbouring locals. It compiles clean, corrupts a neighbour, and the damage surfaces somewhere
+  else entirely.
+
+  v6.5.57 added `_try_aggregate_copy_assign` so `c = a;` between inline structs copies every
+  word. Its guard was `GLTYPE(dst) < 0` — "the type is an aggregate". But **two different layouts
+  share that marker**:
+
+  ```
+  var b: P = a;          # INLINE  — ceil(STRUCTSZ/8) slots, anonymous fillers (name -1) below
+  var a = str_from(x);   # POINTER — exactly ONE slot; the declaration path infers the callee's
+                         #           return sid so `a.field` works, stamping the SAME negative type
+  ```
+
+  So `a = b;` between two `Str` pointers copied `STRUCTSZ(Str)/8` slots over whatever sat below
+  them. ⭐ **The discriminator is the filler sentinel, not the type**: an inline aggregate OWNS
+  the slots beneath its named one and they carry name `-1`; a pointer-mode local does not. Both
+  sides are now checked before anything is copied.
+
+  **How it surfaced, and why nothing caught it for 17 releases:** yukti's CI went red with a
+  SIGSEGV. In `parse_uevent` the corrupting copy overwrote the `len` **parameter** mid-loop, so
+  `for (var i = 0; i <= len; i = i + 1)` stopped terminating and walked off a 256-byte buffer
+  into the process stack — instrumentation caught it "parsing" the environment (`CLAUDECODE=1`,
+  then argv[0]) before it faulted. Nothing about that symptom points at an assignment fifteen
+  lines earlier, and the bug is **layout-sensitive**: adding five trap statements made it vanish
+  entirely. It was found by bisecting the `build/cycc` binaries tracked at each release tag —
+  6.5.56 passes, **6.5.57 is the first bad** — then reading that release's diff.
+
+  ⚠ **I called this "pre-existing, not introduced" earlier in the cycle and that was wrong.** The
+  evidence was one run of the consumer's own test against an older compiler; what it actually
+  showed was that the bug predated the v6.6.0 *flip*, not that it predated *this session*. A
+  version bisect is the cheap way to tell those apart and should have been the first move.
+  Gated by `tests/gates/codegen/aggregate_copy_assign_slots.sh` (3 axes, mutation-proven, with an
+  anti-vacuous axis proving the v6.5.57 feature it narrows still copies every word).
+
+  ⭐ **The toolchain itself was never miscompiled, and that is precisely why nothing caught it.**
+  Verified by construction: two compilers built from identical source — one with the guard, one
+  with it neutered — emit **byte-identical** output for `src/main.cyr` (1,247,608 B both). So the
+  shape does not occur in cycc's own source, the self-host fixpoint could never have flagged it,
+  and every shipped compiler is correct *as a binary* while emitting wrong code for consumers.
+  This is the same blindness class as the payload-enum work: `src/` uses none of the feature, so
+  a green fixpoint says nothing about it. Consumer corpora are the only thing that can see it.
+
 - ⛔ **Two more lossy contexts that dropped the payload in SILENCE.** v6.5.67 closed exactly one
   shape, `var x = f();`, which was enough while `: stack` was an opt-in nobody used. The flip
   makes every other single-value context live across the ecosystem, and two of them compiled
@@ -156,7 +201,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hardware — **ecb** (macOS-arm64) · **ach** (Intel-Mac) · **cass** (Windows/PE) · **pi**
   (aarch64) all `SELFHOST_OK + crossos LIBTEST_OK`; seed → cybs → cycc byte-identical.
 - **Bench**: `self_compile` **740 ms** (from 722), `size/cycc` **1,247,608 B** (from 1,235,192),
-  `size/cycc_text` **1,089,656 B**. **+12,416 B / +18 ms**, and it is bought rather than drifted:
+  `size/cycc_text` **1,089,992 B**. **+12,416 B / +18 ms**, and it is bought rather than drifted:
   the value-form lowering, two new lossy-context refusals, the top-level destructure across both
   parse phases, the forward-reference propagation pass, and the mixed-return diagnostic. Growth
   tax by the standing triage rule — no single patch dominates. A large consumer build (sigil,

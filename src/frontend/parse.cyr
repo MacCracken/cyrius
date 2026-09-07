@@ -1411,6 +1411,31 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
         nslots = ((sz + 7) & (0 - 8)) / 8;
     }
     if (nslots <= 1) { return 0; }
+    # ⛔ v6.6.1 — A NEGATIVE GLTYPE DOES NOT MEAN "INLINE AGGREGATE", AND ASSUMING IT DID SHIPPED
+    # A SILENT MISCOMPILE IN v6.5.57. Two different layouts share the same negative type marker:
+    #   var b: P = a;        -> INLINE: ceil(STRUCTSZ/8) slots, anonymous fillers (name -1) below
+    #                           the named slot.
+    #   var a = str_from(x); -> POINTER: ONE slot holding an address. The declaration path infers
+    #                           the callee's declared return sid (`_ti_inferred_sid`) so field
+    #                           access works, which stamps the SAME negative GLTYPE.
+    # The test above accepted both, so `a = b;` between two Str POINTERS copied STRUCTSZ(Str)/8
+    # slots and scribbled over whatever locals sat below them. Measured: a 12-line probe whose
+    # `guard` parameter came back corrupted, and in the wild yukti's `parse_uevent` had its `len`
+    # parameter overwritten with a pointer mid-loop, so `for (i = 0; i <= len; ...)` walked off
+    # the buffer into the process stack and SIGSEGV'd. Live in every release from v6.5.57.
+    #
+    # ⭐ THE DISCRIMINATOR IS THE FILLER SENTINEL, not the type: an inline aggregate OWNS the
+    # slots below its named one and they carry name -1. A pointer-mode local does not — the slot
+    # below it belongs to a different variable. Require the fillers on BOTH sides before copying
+    # anything; otherwise fall through to the ordinary one-slot assignment.
+    var ac_k = 1;
+    while (ac_k < nslots) {
+        if (dst_li - ac_k < 0) { return 0; }
+        if (src_li - ac_k < 0) { return 0; }
+        if (L64(S + 0x5D9D000 + (dst_li - ac_k) * 8) != 0 - 1) { return 0; }
+        if (L64(S + 0x5D9D000 + (src_li - ac_k) * 8) != 0 - 1) { return 0; }
+        ac_k = ac_k + 1;
+    }
     var i = 0;
     while (i < nslots) {
         EFLLOAD(S, src_li - i);
