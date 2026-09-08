@@ -4,7 +4,9 @@
 > languages and platforms. Referenced by external articles and the
 > agnosticos project. Updated as new compiler versions ship.
 >
-> **Last measured**: 2026-08-20, at Cyrius v6.5.33 (Cyrius self-host figures, plus a
+> **Last measured**: 2026-09-08, at Cyrius v6.6.1 (Cyrius self-host figures re-measured; the
+> C / Rust / Go / Zig sweep below is carried from the 2026-08-20 pass at v6.5.33 — those
+> toolchains have not been re-run, and that is stated rather than implied. Previously a
 > fresh C / Rust / Go / Zig sweep on this box — every row below was re-measured, none
 > carried over). ⚠ A prior pass asserted Go and Zig "could not be re-measured, neither
 > toolchain is installed here"; both are on PATH (`/usr/bin/go`, `/usr/bin/zig`) and both
@@ -16,15 +18,18 @@
 
 ## exit42 — Linux x86_64 ELF
 
-> ⚠ **Re-measured at the v6.5.74 doc sweep, not re-stamped.** The three Cyrius rows were rebuilt on the
-> current compiler and came back byte-for-byte identical (504 / 4,448 / 1,536), so the
+> ⚠ **Re-measured at the v6.6.1 doc sweep, not re-stamped.** The three Cyrius rows were rebuilt on the
+> current compiler and came back byte-for-byte identical again (504 / 4,448 / 1,536) — and both ELF
+> variants were RUN, exiting 42. ⛔ The stamps previously read **cycc 6.6.1, a version that was
+> never released** (it was cut in error and re-cut as 6.6.0), so this table cited a toolchain no
+> user could obtain. The
 > version stamp moved and the figures did not. A stamp bumped without re-running the
 > measurement is the rot this file is most prone to, so the distinction is recorded.
 
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
-| **Cyrius** (`CYRIUS_WX=0`) | cycc 6.5.74 | single `RWE` `PT_LOAD`, opt-out | 504 | 0.11× |
-| **Cyrius** (default, W^X) | cycc 6.5.74 | `echo 'syscall(60, 42);' \| cycc` | **4,448** | 1× |
+| **Cyrius** (`CYRIUS_WX=0`) | cycc 6.6.1 | single `RWE` `PT_LOAD`, opt-out | 504 | 0.11× |
+| **Cyrius** (default, W^X) | cycc 6.6.1 | `echo 'syscall(60, 42);' \| cycc` | **4,448** | 1× |
 | Zig | 0.16.0 `-OReleaseSmall` Windows PE | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 1.0× |
 | Zig | 0.16.0 `-OReleaseSmall` | `zig build-exe -OReleaseSmall` | 4,840 | 1.1× |
 | C (GCC) | gcc 16.1.1 `-O2 -s` | `gcc -O2 -s` | 14,320 | 3× |
@@ -58,7 +63,7 @@ across both toolchain versions.
 
 | Language | Toolchain | Invocation | Bytes | × Cyrius |
 |----------|-----------|-----------|------:|---------:|
-| **Cyrius** | cycc 6.5.74 Linux cross-build | `CYRIUS_TARGET_WIN=1 cycc` | **1,536** | 1× |
+| **Cyrius** | cycc 6.6.1 Linux cross-build | `CYRIUS_TARGET_WIN=1 cycc` | **1,536** | 1× |
 | **Cyrius** | cycc_win native (on Windows) | `cycc_win.exe < exit42.cyr` | 1,536 | 1× (byte-identical to the cross-build) |
 | Zig | 0.16.0 `-OReleaseSmall` | `zig build-exe -target x86_64-windows -OReleaseSmall` | 4,608 | 3× |
 | Go | go 1.26.2 `-s -w` | `GOOS=windows GOARCH=amd64 go build -ldflags="-s -w"` | 1,492,992 | 972× |
@@ -97,8 +102,8 @@ across both toolchain versions.
 
 ## Cyrius self-host context
 
-For perspective, the Cyrius compiler itself (cycc) is **1,182,928 B**
-(~1,155 KB / ~1.13 MB) on Linux ELF at v6.5.33. It compiles itself byte-identically.
+For perspective, the Cyrius compiler itself (cycc) is **1,247,608 B**
+(~1,218 KB / ~1.19 MB) on Linux ELF at v6.6.1. It compiles itself byte-identically.
 At v5.5.10 it also compiles itself byte-identically on Windows
 (cycc_win.exe native → out.exe matches Linux cross-build md5).
 That's the whole self-hosting compiler — TLS / atomics / dynlib /
@@ -111,11 +116,11 @@ aarch64 NEON, Win64 PE value-form, and cx bytecode per-lane loops
 (SIMD Phase 5 complete, v6.4.4–v6.4.32) / TS/TSX → JS emit (`cycc
 --emit-js`) — in less disk than Rust's stripped debug exit42.
 
-- Cyrius cycc (Linux ELF): **1,182,928 B** (v6.5.33)
-- cycc_aarch64 (Linux aarch64 cross): **685,312 B** (v6.5.10; the
+- Cyrius cycc (Linux ELF): **1,247,608 B** (v6.6.1)
+- cycc_aarch64 (Linux aarch64 cross): **783,784 B** (v6.6.1; the
   v5.11.59 full DCE bitmap pass for aarch64 fixup.cyr — mirroring the
   x86 path since v5.10.x — accounts for the bulk over earlier v5.11.x)
-- cycc_win (Windows PE cross): **1,021,440 B** (v6.5.10; PE format
+- cycc_win (Windows PE cross): **1,154,048 B** (v6.6.1; PE format
   overhead + v5.5.35 .reloc + v5.6.31 DllChar 0x0160 + v5.11.47-.49
   EFI Application emit deltas + v6.1.16 lib/sync.cyr portable mutex +
   v6.1.17 PE nanosleep routing + v6.1.18 Windows directory enumeration)
@@ -137,8 +142,8 @@ infrastructure (v5.8.21–v5.8.27), `?` propagation operator
 (v5.8.29 + v5.8.31 PARSE_STMT extension). The compiler is still
 in the same order of magnitude as a stripped Rust hello-world.
 
-Whole-history growth to v6.5.33 (2026-04-25 → 2026-08-20):
-531,888 → 1,182,928 B, +651,040 B / +122%. Across the v6.4.x SIMD
+Whole-history growth to v6.6.1 (2026-04-25 → 2026-09-08):
+531,888 → 1,247,608 B, +715,720 B / +135%. Across the v6.4.x SIMD
 arc, the v6.5.x visibility + perf work, and everything between, that
 is still 3.4× a stripped Rust exit42 — for a compiler, linker driver,
 five backends and a TypeScript frontend.

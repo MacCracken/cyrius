@@ -1691,7 +1691,7 @@ documented separately** — their public surface is the parent module's (above):
 
 > **Coverage note**: this reference documents the **core, concurrency,
 > math/SIMD, crypto, data/encoding, networking (TLS + WebSocket), systems/FFI,
-> and testing** surfaces — **56 of the 99 `lib/*.cyr` modules** have their own
+> and testing** surfaces — **56 of the 102 `lib/*.cyr` modules** have their own
 > section here. (There are 65 `### <name>.cyr` headings, but nine of them —
 > `json` / `toml` / `cyml` / `base64` / `csv` / `bigint` / `u128` / `matrix` /
 > `linalg` — describe modules that were **carved out** into the `bayan` and

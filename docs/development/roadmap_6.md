@@ -271,7 +271,7 @@ The list (ROI order; design decisions inside each item at arc-open):
    crossos hosts **plus cx** — cx is the one target where reading the old `+8` offset does not
    fault, so a partial migration hides there.
 
-   Filing: [`issues/2026-07-28-sock-send-result-allocates-per-call.md`](issues/2026-07-28-sock-send-result-allocates-per-call.md).
+   Filing: [`issues/2026-07-28-sock-send-result-allocates-per-call.md`](issues/archived/2026-07-28-sock-send-result-allocates-per-call.md).
 
 **Explicitly NOT imported** (decided 2026-07-07): borrow-checker-style lifetimes
 (wrong fit for the trust model + single-pass design), a general const-eval VM

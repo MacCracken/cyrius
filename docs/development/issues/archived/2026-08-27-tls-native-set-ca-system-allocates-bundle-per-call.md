@@ -21,7 +21,7 @@ The cost is invisible in a one-shot tool and compounds in anything that opens
 more than a handful of connections: an HTTPS crawl at whirl's 64-resource cap
 would retain ~64 MiB of dead heap, and a long-lived client would grow without
 bound. This is the same shape as
-[`2026-07-28-sock-send-result-allocates-per-call.md`](../2026-07-28-sock-send-result-allocates-per-call.md)
+[`2026-07-28-sock-send-result-allocates-per-call.md`](../archived/2026-07-28-sock-send-result-allocates-per-call.md)
 — a per-call allocation on a hot path landing on the no-free global bump — but
 six orders of magnitude larger per occurrence.
 

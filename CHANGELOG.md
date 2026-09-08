@@ -94,6 +94,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Each was fixed at source, version-bumped and re-pinned in its own repo before vendoring; each
   compiles clean under the value form with zero stack-form errors.
 - Shell gates **140 → 144** — one per fix above.
+- **Local documentation sweep — every figure re-derived from the tree, not carried.**
+  **`README.md` had not been touched since 2026-08-16 and contradicted itself** — 270 vs 260
+  `.tcyr` and 100 vs 99 stdlib modules, in the same file. Compiler size, all twelve fold
+  versions, test/gate counts, API-surface count, heap-region count and both toolchain totals
+  were stale; the core-toolchain figure by 508 KB and the installed-tree figure by **10×**
+  (35,138,369 B, asserted "because the two `cyrsign*` helpers are ~14 MB each" — they are
+  ~1.4 MB each). ⚠ **A number with a stated reason attached is not more trustworthy than a bare
+  one.** Both were re-measured, and the value-form `Result` — the 6.6.0 headline — was missing
+  from the README entirely.
+- **`docs/size-comparisons.md` cited `cycc 6.5.74`, a version that was never released** (cut in
+  error, re-cut as 6.6.0) — an "authoritative" table pointing at a toolchain no user can obtain.
+  Its three Cyrius rows were **re-measured** (504 / 4,448 / 1,536 — unchanged again) and both ELF
+  variants RUN, exiting 42, rather than being re-stamped.
+- **The reserved-token count had three live values at once** — 51 (a `src/common/util.cyr`
+  comment), 67 (`README.md` + `CLAUDE.md`), and **76** (the actual arm count in
+  `TOKNAME_BUILTIN`). The README further claimed `IS_KEYWORD_TOK` "derives from
+  `TOKNAME_BUILTIN`, so the sets cannot drift" while that function's own comment says the
+  guarantee covers only the builtin half and that the 26 statement keywords can drift. The count
+  is now derived (102 total, the two sets verified disjoint), the missing **`f64v256_*` row** (9
+  intrinsics, shipped v6.5.38) added, and the source comment's number **deleted rather than
+  corrected** — it had no reader that could check it, and re-stamping only restarts the clock.
+  The comment change is inert: cycc is byte-identical and seed-derive re-verified.
+- **99 dead internal links → 31.** 68 repaired, each verified to resolve before rewriting. The 31
+  remaining point at targets that exist nowhere (repros never committed, `archive/` vs
+  `archived/` typos), all inside already-archived files — left rather than invented.
+  `docs/platform-status.md` cited four issues by paths they no longer live at and called one
+  "open" two clauses after stating its failures were gone; it is refreshed to v6.6.1 (crossos
+  subset 54 → **68**) and now records the DCE decline on PE and x86 Mach-O.
+  `lib/hashseed.cyr` — a HashDoS mitigation with a measured 934× — appeared in **no index at
+  all** and is now in `stdlib-modules.md`, whose header said 99 for a 102-module tree.
 - **Bench** — `self_compile` **731–734 ms** across two runs (6.6.0: ~739–740), `cycc` **1,247,608 B** unchanged,
   `.text` 1,090,832 B. No growth tax this release: the two codegen fixes add an env-gated guard
   and a target predicate, neither on a hot path, and the compiler is byte-identical to 6.6.0
@@ -10844,7 +10874,7 @@ Everything is **inert until the first error**, so the **valid self-compile is by
 
 **Scope:** the `ERR_EXPECT` (346-site) + `ERR`/`ERR_MSG`/`ERRDUPVAR` syntax-error class. The 25 inline
 `SYS_EXIT` errors (undefined-variable etc.) stay fail-fast — a filed follow-up
-([issue](docs/development/issues/2026-07-12-dx-multi-error-reporting.md)). Dense consecutive errors
+([issue](docs/development/issues/archived/2026-07-12-dx-multi-error-reporting.md)). Dense consecutive errors
 coalesce (bounded recovery). On pathological desync input, cycc bails via the watchdog in <1 s.
 
 - **Bench:** self_compile 627 ms · cycc 1,103,568 B (+72 B vs .61 — the recovery + watchdog code;
@@ -10930,7 +10960,7 @@ cross-OS self-host byte-identical on ecb + ach + cass + pi.
 
 Release 2 of this arc: bounded statement/decl-boundary panic-mode recovery (report several errors per
 compile) — the `_had_error` deferred-exit hook already exists but is dead. Filed
-([issue](docs/development/issues/2026-07-12-dx-multi-error-reporting.md)); it is riskier than a normal
+([issue](docs/development/issues/archived/2026-07-12-dx-multi-error-reporting.md)); it is riskier than a normal
 slot (desync → crash exposure on malformed input) and lands complete-in-one. Full arbitrary recovery
 is filed to the backlog (cybs-hostile — needs error-return threading through 346+ sites).
 
@@ -11083,7 +11113,7 @@ non-looping write) is not crash-safe — a short write leaves the file truncated
 - **`file_create_exclusive(path, mode)`** — `O_CREAT|O_EXCL` on POSIX/Windows, `file_exists`+create on
   AGNOS (no exclusive-create AO_* bit — documented). Two Windows residuals (O_EXCL→CREATE_NEW not yet
   mapped; on-failure temp unlink is a Windows no-op) are
-  [filed](docs/development/issues/2026-07-12-windows-atomic-write-residuals.md), not blocking.
+  [filed](docs/development/issues/archived/2026-07-12-windows-atomic-write-residuals.md), not blocking.
 
 The compiler forks don't include `lib/io.cyr`, so the stdlib is a pure add; the backend reroute +
 ESYSXLAT are inert for cycc (no 0xF034/fsync in its source) → self-host byte-identical.
@@ -11093,15 +11123,15 @@ ESYSXLAT are inert for cycc (no 0xF034/fsync in its source) → self-host byte-i
 - **f64/f32 scalar param arithmetic (Gap A)** — a `: f64`/`: f32` param's local slot is now tagged
   F64_TYID/F32_TYID, so `fn inc(x: f64): f64 { return x + f64_from(1); }` computes correctly
   (previously integer-added the bit pattern). Closes Gap A of
-  [issue](docs/development/issues/2026-07-11-scalar-float-param-and-compound-assign.md).
+  [issue](docs/development/issues/archived/2026-07-11-scalar-float-param-and-compound-assign.md).
 - **Float compound-assign (Gap B)** — `x += y` / `-=` / `*=` / `/=` on an f64/f32 local routes through
   `EMIT_F{64,32}_BINOP` instead of the integer arm.
 - **f64/int compare-mix warning** (kind 0), now live with literal-0 suppression: `if (x > 0)` on an
   f64 does not warn (0's bits are 0.0) but `if (x > 5)` / `if (x > y)` do. Closes
-  [issue](docs/development/issues/2026-07-12-f64-compare-mix-warning-literal-suppression.md).
+  [issue](docs/development/issues/archived/2026-07-12-f64-compare-mix-warning-literal-suppression.md).
 - **ERR_MSG over-read fix** — the return-type-reject message passed len=93 for an 88-byte string
   (5-byte over-read → "ra:" garbage); now `/f64` added + len=92. Closes
-  [issue](docs/development/issues/2026-07-11-parse-fn-retmsg-length-overread.md).
+  [issue](docs/development/issues/archived/2026-07-11-parse-fn-retmsg-length-overread.md).
 
 ### Verification
 
@@ -11147,7 +11177,7 @@ ESYSXLAT are inert for cycc (no 0xF034/fsync in its source) → self-host byte-i
 - **Deferred**: the f64/int **comparison**-mix warning (the `_FLT_TYPE_WARN` kind-0 branch exists but
   its call sites are unwired) — it false-positives on the common `if (x > 0)` f64 sign-check (literal
   0's bits equal 0.0) and needs literal-0 suppression. Filed:
-  [compare-mix warning literal suppression](docs/development/issues/2026-07-12-f64-compare-mix-warning-literal-suppression.md).
+  [compare-mix warning literal suppression](docs/development/issues/archived/2026-07-12-f64-compare-mix-warning-literal-suppression.md).
 
 ### Verification
 
@@ -11167,7 +11197,7 @@ ESYSXLAT are inert for cycc (no 0xF034/fsync in its source) → self-host byte-i
 First deliverable of the scalar-float-completion slot (roadmap slot #2); f32 scalar arithmetic +
 the stricter float typecheck are the remaining two, landing in **v6.4.56**. Scoped this tight per
 maintainer direction. Closes §1 of
-[the FP-arc issue](docs/development/issues/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md).
+[the FP-arc issue](docs/development/issues/archived/2026-07-04-agnos-fp-xmm-state-and-f64-scalar-return.md).
 
 ### Added — scalar `f64` return type (`src/frontend/parse_fn.cyr`, `parse_expr.cyr`)
 
@@ -11191,8 +11221,8 @@ maintainer direction. Closes §1 of
 - A `: f64` fn can do f64 arithmetic on **locals** (`var y: f64 = x; y + y`) but **not directly on
   its f64 params** — `fn inc(x: f64): f64 { return x + f64_from(1); }` mis-dispatches to integer
   add (params aren't yet float-tagged). Workaround: copy to a typed local first. Filed:
-  [scalar-float param arithmetic + compound-assign](docs/development/issues/2026-07-11-scalar-float-param-and-compound-assign.md).
-  Also filed a pre-existing [ERR_MSG length over-read](docs/development/issues/2026-07-11-parse-fn-retmsg-length-overread.md)
+  [scalar-float param arithmetic + compound-assign](docs/development/issues/archived/2026-07-11-scalar-float-param-and-compound-assign.md).
+  Also filed a pre-existing [ERR_MSG length over-read](docs/development/issues/archived/2026-07-11-parse-fn-retmsg-length-overread.md)
   spotted in the return-type allow-list.
 
 ### Verification
@@ -11255,9 +11285,9 @@ Closes [issue](docs/development/issues/archived/2026-07-09-cx-valueform-simd-par
 ### Follow-ons filed (pre-existing cx gaps de-masked by the forward-call fix — NOT bundled)
 
 The forward-call fix makes previously-derailed cx programs actually run, surfacing pre-existing
-gaps: [cx `fmt_int` digit-shift + high-half 64-bit immediates load as 0](docs/development/issues/2026-07-11-cx-fmt-int-and-large-immediate-gaps.md),
-[naked-asm 4-byte realign](docs/development/issues/2026-07-11-cx-naked-asm-4byte-realign.md),
-[retire the stale 0xE92000 table](docs/development/issues/2026-07-11-cx-retire-stale-fnoffset-table.md).
+gaps: [cx `fmt_int` digit-shift + high-half 64-bit immediates load as 0](docs/development/issues/archived/2026-07-11-cx-fmt-int-and-large-immediate-gaps.md),
+[naked-asm 4-byte realign](docs/development/issues/archived/2026-07-11-cx-naked-asm-4byte-realign.md),
+[retire the stale 0xE92000 table](docs/development/issues/archived/2026-07-11-cx-retire-stale-fnoffset-table.md).
 
 ### Verification
 
@@ -11277,7 +11307,7 @@ byte-identical (it uses no SIMD itself), only SIMD-consumer output changes.
 
 ### Fixed — value-form SIMD duplicate-arg through a tail-call return (`src/frontend/parse_fn.cyr`)
 
-Closes [issue 2026-07-08](docs/development/issues/2026-07-08-valueform-simd-duplicate-arg-x86.md).
+Closes [issue 2026-07-08](docs/development/issues/archived/2026-07-08-valueform-simd-duplicate-arg-x86.md).
 
 - A callee taking value-form SIMD params, called with a **duplicated local** in a tail position
   — `fn dbl(v: f32v4) { return f32v4_add(v, v); }` — returned garbage for the second (dup) arg.
@@ -11293,7 +11323,7 @@ Closes [issue 2026-07-08](docs/development/issues/2026-07-08-valueform-simd-dupl
 
 ### Added — i64v2 packed multiply (`src/backend/{x86/float,aarch64/emit,cx/emit}.cyr`, `lib/simd.cyr`)
 
-Closes [issue 2026-07-07](docs/development/issues/2026-07-07-i64v2-valueform-packed-multiply.md)
+Closes [issue 2026-07-07](docs/development/issues/archived/2026-07-07-i64v2-valueform-packed-multiply.md)
 — the integer-SIMD arc's "closed here" line (CHANGELOG [6.4.7]) had left this one op unbuilt.
 
 - `i64v2_mul` / `i64v2_mul_ptr` (value + pointer form) — low 64 bits per lane, signed==unsigned.
@@ -11328,7 +11358,7 @@ because their allocators couldn't produce a >256 MiB single region. This adds a 
 path to both (mirroring Linux's fresh-chunk-per-request), closing that gap — and, more broadly,
 unblocking any consumer needing a large buffer (both OSes routinely handle >1 GiB files). Lib +
 driver change only; cycc self-hosts byte-identical. Closes
-[issue](docs/development/issues/2026-07-11-macos-windows-large-single-allocation-path.md).
+[issue](docs/development/issues/archived/2026-07-11-macos-windows-large-single-allocation-path.md).
 
 ### Changed — macOS allocator large-object path (`lib/alloc_macos.cyr`)
 
@@ -11371,7 +11401,7 @@ driver change only; cycc self-hosts byte-identical. Closes
 ### Added — `signal_ignore(signum)` + `Signal` enum (`lib/syscalls.cyr`)
 
 Closes the sandhi-filed SIGPIPE server-DoS gap
-([issue](docs/development/issues/2026-07-11-sandhi-signal-ignore-stdlib-gap.md)):
+([issue](docs/development/issues/archived/2026-07-11-sandhi-signal-ignore-stdlib-gap.md)):
 `lib/net.cyr`'s `sock_send` is a flagsless `sys_write`, and stdlib had no
 signal-disposition helper — so a write to a peer that closed mid-response raised
 SIGPIPE and **terminated the process** (an unauthenticated remote DoS against any
@@ -11392,7 +11422,7 @@ had none**.
 ### Changed — `output_buf` 16 MiB → 1 GiB on Linux (platform-adaptive; macOS/Windows follow in .52)
 
 Closes the thoth-filed output-cap
-([issue](docs/development/issues/2026-07-11-output-buf-16mib-cap-blocks-large-test-binaries.md))
+([issue](docs/development/issues/archived/2026-07-11-output-buf-16mib-cap-blocks-large-test-binaries.md))
 on Linux: the final-image `output_buf` was a **fixed 16 MiB** in-heap region at `S+0x4D9D000`
 (non-growable, unlike the codebuf), so a large single-translation-unit binary — thoth's
 test driver hit **16.78 MB** — was hard-rejected.
@@ -11408,7 +11438,7 @@ test driver hit **16.78 MB** — was hard-rejected.
   **falls back to the pre-.51 fixed 16 MiB region** (`if (_output_base == 0) { … = S+0x4D9D000 }`).
   `_output_cap` tracks the real buffer, so the cap is 1 GiB on Linux and 16 MiB on macOS/Windows
   — no crash, no regression. The dedicated large-alloc path for those two is
-  [filed for v6.4.52](docs/development/issues/2026-07-11-macos-windows-large-single-allocation-path.md).
+  [filed for v6.4.52](docs/development/issues/archived/2026-07-11-macos-windows-large-single-allocation-path.md).
 - **`ALLOC_MAX` 256 MiB → 2 GiB** in all four alloc peers so the 1 GiB `alloc` clears the
   overflow guard (which still rejects truly-absurd sizes).
 - **Four output-size caps** now key on `_output_cap` (was hardcoded 16 MiB): `_check_output_cap`
@@ -14015,7 +14045,7 @@ SELFHOST_OK; check.sh 125; self_compile 548 ms; cycc 1,024,488 B (+4448 for the 
 ### Filed
 - A pre-existing P3: a `#derive(Serialize)` struct with a `Str` field errors ("unexpected `}`") when
   its codec is invoked at **global scope** (works inside `fn main`; i64/f64-only structs are fine).
-  Not on this slot's path. [issue 2026-07-03](docs/development/issues/2026-07-03-derive-serialize-str-field-global-scope-parse-error.md).
+  Not on this slot's path. [issue 2026-07-03](docs/development/issues/archived/2026-07-03-derive-serialize-str-field-global-scope-parse-error.md).
 
 ## [6.3.39] — 2026-07-03
 
@@ -14295,9 +14325,9 @@ correct — 25/15); two-step bootstrap (one-step-stable fixpoint); self-host + s
 byte-identical; ecb+cass+pi SELFHOST_OK. Bench: self_compile **560 ms** (within jitter vs .33's 553 on
 a non-quiet box); cycc **1,011,816 B** (unchanged — the `lt < 8` gate is net-zero size). Filed alongside: a separate
 pre-existing **global** typed sub-i64 scalar load SIGSEGV
-([`global-typed-subword-scalar-load-crash`](docs/development/issues/2026-07-02-global-typed-subword-scalar-load-crash.md))
+([`global-typed-subword-scalar-load-crash`](docs/development/issues/archived/2026-07-02-global-typed-subword-scalar-load-crash.md))
 and the 8-bug monomorph-engine inventory
-([`monomorph-engine-bug-inventory`](docs/development/issues/2026-07-02-monomorph-engine-bug-inventory.md), v6.3.35/.36).
+([`monomorph-engine-bug-inventory`](docs/development/issues/archived/2026-07-02-monomorph-engine-bug-inventory.md), v6.3.35/.36).
 
 ## [6.3.33] — 2026-07-02
 
@@ -14364,7 +14394,7 @@ exercises the field-access fix; nothing else in the ecosystem corpus was affecte
 - **Generic FUNCTIONS with STRUCT type-arguments** (`id<Pair<i32>>`, `wrap<i64, Point>`) HARD-ERROR
   (`_instantiate_generic_fn` returns −3 on a struct conc) instead of silently miscompiling
   (`wrap<i64, Point>` returned 60 not 42 — by-value struct param + struct-return retptr not rebound per
-  instance). Dedicated follow-on: [`generic-fns-struct-type-args-monomorph-abi`](docs/development/issues/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md).
+  instance). Dedicated follow-on: [`generic-fns-struct-type-args-monomorph-abi`](docs/development/issues/archived/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md).
 
 ### Filed (pre-existing, gated — scheduled v6.3.34)
 - **Monomorph inline-instance emission clobbers a live local after a branch.** An `if` (not `while`)
@@ -14618,7 +14648,7 @@ allocation + rewrite is deferred to a dedicated re-emit-path slot.
   1 B → `mov r12, rax` 3 B), which would overwrite the next instruction = silent miscompile. The
   allocation + rewrite is deferred to a slot that first wires + proves the IR re-emit path
   byte-equivalent.
-  [`ir-regalloc-rewrite-needs-reemit`](docs/development/issues/2026-07-02-ir-regalloc-rewrite-needs-reemit.md).
+  [`ir-regalloc-rewrite-needs-reemit`](docs/development/issues/archived/2026-07-02-ir-regalloc-rewrite-needs-reemit.md).
 
 _check.sh 117→**118**; cycc self-host fixpoint + seed→cybs→cycc byte-identical (analysis gated under
 CYRIUS_IR; default codegen unchanged; cycc grew 1,027,720 → 1,031,888 B for the new IR fns + a
@@ -14655,7 +14685,7 @@ TLS-state→slot-collision, `.26` fncall6-ABI→TLS).
   stack-protected extern-C `.so` via `fncall4/5/6/7` **and** the foreign-`%fs` no-clobber /
   canary-intact proof. Skips off Linux-x86 / without gcc.
 - **Docs**: `lib/fnptr.cyr` header + `docs/ffi/fncall-abi.md` "Extern-C prerequisite" section +
-  resolved issue [`fncall6-extern-c-tls-not-abi`](docs/development/issues/2026-07-02-fncall6-extern-c-tls-not-abi.md).
+  resolved issue [`fncall6-extern-c-tls-not-abi`](docs/development/issues/archived/2026-07-02-fncall6-extern-c-tls-not-abi.md).
 - **Consumer follow-up (mabda, separate repo — user's call):** with the ABI proven correct, mabda
   can drop its struct-packing `fncall2`-instead-of-`fncall6` workarounds and use the natural wgpu C
   signatures, and call `thread_local_use_foreign_tls()` in `deps/wgpu_main.c` if it links a cyrius
@@ -14702,10 +14732,10 @@ between sigil and patra** — a whole-ecosystem class of bug, not TLS state at a
   thread_local are lib-only, not in the compiler).
 - **Consumer fix:** bump the sigil dep to ≥3.9.9; `max_conns` can return to >1.
 - **Two follow-ups filed:** a proper `thread_local_alloc()` slot allocator
-  ([`thread-local-slot-namespace`](docs/development/issues/2026-07-01-thread-local-slot-namespace-no-allocator.md)),
+  ([`thread-local-slot-namespace`](docs/development/issues/archived/2026-07-01-thread-local-slot-namespace-no-allocator.md)),
   and sandhi's `_SANDHI_RPC_POLICY_SLOT=16` out-of-bounds on macOS/agnos
-  ([`sandhi-rpc-slot-oob`](docs/development/issues/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md)).
-  [`multiworker-tls`](docs/development/issues/2026-07-01-multiworker-tls-record-layer-failure-under-mixed-load.md).
+  ([`sandhi-rpc-slot-oob`](docs/development/issues/archived/2026-07-01-sandhi-rpc-policy-tls-slot-oob.md)).
+  [`multiworker-tls`](docs/development/issues/archived/2026-07-01-multiworker-tls-record-layer-failure-under-mixed-load.md).
 
 _check.sh 115→**116**; cycc self-host fixpoint + seed→cybs→cycc byte-identical (sigil/thread_local
 lib-only, no compiler change); ecb + cass + pi **SELFHOST_OK**; self_compile **543 ms**; cycc
@@ -14738,7 +14768,7 @@ nothing like what was filed.
   syscall enum); an int *conflicting-value* shadow keeps the existing CHKDUPVAL warning. Regression
   gate `tests/enum_shadow_error.sh` (check.sh 114→**115**). Consumer fix: rename the global (e.g.
   `YEO_DB_FILE`) — the `db_path()` fn workaround also remains valid.
-  [`string-literal-global`](docs/development/issues/2026-07-01-string-literal-global-garbage-in-large-programs.md).
+  [`string-literal-global`](docs/development/issues/archived/2026-07-01-string-literal-global-garbage-in-large-programs.md).
 
 ### Fixed — `#derive(Serialize)` `Str`-field deserialize
 - `Name_from_json` (the pairs-based deserializer) emitted `store64(ptr + off, str_from(v))` for a
@@ -14749,7 +14779,7 @@ nothing like what was filed.
   `bayan_json_v_str` fix was for the value-node API, which this pairs parser doesn't produce. The
   single-pass `Name_from_json_str` was already correct. New `tests/tcyr/derive_str_deserialize.tcyr`
   (both deserializers + full roundtrip).
-  [`derive-str`](docs/development/issues/2026-07-01-derive-serialize-str-field-deserialize-broken.md).
+  [`derive-str`](docs/development/issues/archived/2026-07-01-derive-serialize-str-field-deserialize-broken.md).
 
 ### Fixed — `lib/callback.cyr` `fork_with_pre_exec` unguarded on agnos
 - The agnos 0-63 syscall surface has no fork/execve, so `sys_fork`/`sys_execve` are undefined there;
@@ -14757,7 +14787,7 @@ nothing like what was filed.
   `fork_with_pre_exec` stayed reachable-undefined and hard-failed **every** `--agnos` build (bit
   phylax, which uses only the pure `vec_*` helpers). Wrapped in `#ifndef CYRIUS_TARGET_AGNOS`,
   mirroring `lib/process.cyr`; the higher-order helpers stay available on every target.
-  [`callback-agnos`](docs/development/issues/2026-07-01-callback-fork-with-pre-exec-unguarded-agnos.md).
+  [`callback-agnos`](docs/development/issues/archived/2026-07-01-callback-fork-with-pre-exec-unguarded-agnos.md).
 
 _check.sh 114→**115**; cycc self-host fixpoint + seed→cybs→cycc byte-identical; ecb + cass + pi
 **SELFHOST_OK**; self_compile **535 ms**; cycc **1,027,720 B** (+48 B — the `CHK_ENUM_SHADOW` guard
@@ -14767,7 +14797,7 @@ _check.sh 114→**115**; cycc self-host fixpoint + seed→cybs→cycc byte-ident
 
 **v6.3.23 — unreviewed dimensions (DX-01 + DX-02 + SEC-AGNOS-01).** Closes the "completeness critic"
 cluster from the 2026-06-10 deep-dive — the DX / AGNOS / LSP dimensions no analyst owned
-([`unreviewed-dimensions`](docs/development/issues/2026-06-10-unreviewed-dimensions.md)). CVE-29
+([`unreviewed-dimensions`](docs/development/issues/archived/2026-06-10-unreviewed-dimensions.md)). CVE-29
 (thread-stack guard page) already shipped v6.2.44; LEGAL-01 alone remains, deferred to v7. cycc
 changes only via DX-01 — a shared symbol-dump helper behind the `CYRIUS_SYMS` env guard, so every
 emitted program stays byte-identical.
@@ -14951,7 +14981,7 @@ sankoch and fixed at the sankoch source — cyrius codegen exonerated.
   **first-ever ws test**, `tests/tcyr/ws_server_handshake.tcyr` (reject-path coverage; compiles
   ws_server so a stale helper name is now a *local* reachable-undefined error — proven: reverting
   the rename fails the test with "1 reachable undefined function"). bote's forwarding-shim
-  workaround can now be dropped (DCE-prunes to dead). [`ws-server-http-find-header-dangling`](docs/development/issues/2026-06-30-stdlib-ws-server-http-find-header-dangling.md).
+  workaround can now be dropped (DCE-prunes to dead). [`ws-server-http-find-header-dangling`](docs/development/issues/archived/2026-06-30-stdlib-ws-server-http-find-header-dangling.md).
 - **AGNOS had no `sys_fstat` peer** — `lib/syscalls_x86_64_agnos.cyr` is standalone (no
   `syscalls_linux_common.cyr`) and exposed only path-based `sys_stat`#33, so a `--agnos` consumer
   calling fd-based `sys_fstat` (aegis's TOCTOU-safe `O_NOFOLLOW`-then-fstat path) hit an undefined
@@ -14962,7 +14992,7 @@ sankoch and fixed at the sankoch source — cyrius codegen exonerated.
   probe compiles clean, no `ud2`) and returns a defined "unsupported" −1, which consumers treat as
   deny — exactly like `sys_access`. Upgrade path preserved in-source (swap the body for
   `syscall(SYS_FSTAT, …)` + a const if agnos ever gains the syscall).
-  [`agnos-sys-fstat-peer`](docs/development/issues/2026-06-30-agnos-sys-fstat-peer.md).
+  [`agnos-sys-fstat-peer`](docs/development/issues/archived/2026-06-30-agnos-sys-fstat-peer.md).
 
 ### Changed
 - **api-surface snapshot regenerated** — one additions-only delta, `syscalls_x86_64_agnos::sys_fstat/2`;
@@ -15151,7 +15181,7 @@ pathological oversized array, and the whole ecosystem was audited clean (295 bar
 - Self-host fixpoint byte-identical; **seed → cybs → cycc** derivable; check.sh **109/109**; **ecb + cass +
   pi SELFHOST_OK** (real hardware, sequential); `CYRIUS_STACK_ARRAYS=0` opt-out restores the legacy global
   path; bench **self_compile 544 ms**; **cycc 1,111,616 → 1,027,664 B** (−83,952). Closes
-  [`issues/2026-06-30-array-locals-stack-default-on-m128-align.md`](docs/development/issues/2026-06-30-array-locals-stack-default-on-m128-align.md).
+  [`issues/2026-06-30-array-locals-stack-default-on-m128-align.md`](docs/development/issues/archived/2026-06-30-array-locals-stack-default-on-m128-align.md).
 
 ## [6.3.14] — 2026-06-30
 
@@ -15160,7 +15190,7 @@ syscalls (`0–63` contiguous), but `lib/syscalls_x86_64_agnos.cyr` exposed `SYS
 `0–35, 40–41, 45–61, 63` — **omitting 8 numbers the kernel dispatches**. Filed proactively (same shape as
 the lseek + signal-constant + `sys_symlink` gaps) so the wrappers exist *before* the AGNOS base stack
 (kavach, bote, t-ron, thoth, phylax, aegis) ports to `--agnos` and hits one-at-a-time link errors / the
-raw-`syscall(N,…)` Linux-number mis-dispatch landmine. [`issues/2026-06-30-agnos-syscall-peer-incomplete-8-wrappers.md`](docs/development/issues/2026-06-30-agnos-syscall-peer-incomplete-8-wrappers.md).
+raw-`syscall(N,…)` Linux-number mis-dispatch landmine. [`issues/2026-06-30-agnos-syscall-peer-incomplete-8-wrappers.md`](docs/development/issues/archived/2026-06-30-agnos-syscall-peer-incomplete-8-wrappers.md).
 
 ### Added — `lib/syscalls_x86_64_agnos.cyr` (new `SysNrAgnosProc` enum + 8 wrappers)
 - **`sys_klug`#36** `(buf, len)` — copy the unified klug log ring (dmesg tail) into a user buffer
@@ -15189,7 +15219,7 @@ function) are allocated at a fixed global/BSS address shared by every thread.** 
 stack-allocate per-thread (`lea [rbp-N]`); array locals went through the *global* var table
 (`dbase + offset` → `movabs`). So any concurrent path using an array-local aliases one global buffer →
 ~87% cross-thread byte splice. This is the root of the str_builder corruption, the multi-worker-TLS
-`BAD_SIGNATURE`, and the sandhi/json corruption. [`issues/2026-06-28-str-builder-not-thread-safe.md`](docs/development/issues/2026-06-28-str-builder-not-thread-safe.md).
+`BAD_SIGNATURE`, and the sandhi/json corruption. [`issues/2026-06-28-str-builder-not-thread-safe.md`](docs/development/issues/archived/2026-06-28-str-builder-not-thread-safe.md).
 
 ### Investigation (ultracode workflow)
 - Reproduced on 6.3.12 (`sb_fail` 279959/87%, replica 0). Bisected to the append's nested calls; a
@@ -15224,7 +15254,7 @@ stack-allocate per-thread (`lea [rbp-N]`); array locals went through the *global
 - Flipping per-thread array locals to DEFAULT hit **SSE m128 16-byte alignment** regressions (inline-asm
   AES-NI / crypto / TLS use arrays as `xmm` operands needing 16-aligned addresses; global arrays got it
   via the v5.5.21 totvar pad, stack slots are only 8-aligned) + a TLS-probe compile failure. Reverted to
-  opt-in; default-on is the **v6.3.14 arc** (16-align array stack slots): [`array-locals default-on`](docs/development/issues/2026-06-30-array-locals-stack-default-on-m128-align.md).
+  opt-in; default-on is the **v6.3.14 arc** (16-align array stack slots): [`array-locals default-on`](docs/development/issues/archived/2026-06-30-array-locals-stack-default-on-m128-align.md).
 
 ## [6.3.12] — 2026-06-30
 
@@ -15233,7 +15263,7 @@ userland ELF executable as **two permission-separated, page-aligned `PT_LOAD` se
 `R E` (read+execute, **not writable**) and a data segment `RW ` (read+write, **not executable**) — instead
 of the historical single `RWE` segment. On agnos (1.50.6 loader is already `PF_X`-aware → zero kernel work)
 this delivers full segment-level **W^X**: code can't be overwritten, data can't be executed. Closes the
-last writable-executable surface in the agnos userland. [`proposals/2026-06-29-elf-wx-separate-code-data-segments.md`](docs/development/proposals/2026-06-29-elf-wx-separate-code-data-segments.md).
+last writable-executable surface in the agnos userland. [`proposals/2026-06-29-elf-wx-separate-code-data-segments.md`](docs/development/proposals/archived/2026-06-29-elf-wx-separate-code-data-segments.md).
 
 ### Changed — ELF layout (every userland binary)
 - **Two PT_LOADs.** The text segment covers the ELF header + program headers + `.text` (`R E`); the data
@@ -19044,7 +19074,7 @@ review, which noted 2; the full sweep found 27.) No public API-surface change.
 data-only); check.sh **89/89**; **ecb + ach + pi + cass `SELFHOST_OK`** (several
 fixes are in the aarch64/macho/win emit paths); bench `self_compile ~510 ms`
 (flat). Issue
-[`2026-06-12-diagnostic-syscall-byte-length-audit.md`](docs/development/issues/2026-06-12-diagnostic-syscall-byte-length-audit.md)
+[`2026-06-12-diagnostic-syscall-byte-length-audit.md`](docs/development/issues/archived/2026-06-12-diagnostic-syscall-byte-length-audit.md)
 notes a permanent check.sh gate to prevent recurrence (follow-up). **user
 pushes/tags after CI.**
 
@@ -19123,7 +19153,7 @@ cycc **+736 B → 1,050,704 B**. `tests/tcyr/atomics.tcyr` header updated for CV
   sanctioned code; the real fix is a redesign (grow the four slot-indexed local
   tables + cap at the real capacity — a heap-map change — or stop registering
   per-slot fillers in the name/depth/type tables). Tracked in
-  [`issues/2026-06-12-locals-table-slot-indexed-overflow.md`](docs/development/issues/2026-06-12-locals-table-slot-indexed-overflow.md).
+  [`issues/2026-06-12-locals-table-slot-indexed-overflow.md`](docs/development/issues/archived/2026-06-12-locals-table-slot-indexed-overflow.md).
 
 ## [6.1.37] — 2026-06-11
 
@@ -25181,7 +25211,7 @@ as a separate follow-up.
 ### Fixed — `cyrius distlib` blank-line residue
 
 The 2026-05-27 issue
-([`issues/2026-05-27-cyrius-distlib-blank-lines.md`](docs/development/issues/2026-05-27-cyrius-distlib-blank-lines.md))
+([`issues/2026-05-27-cyrius-distlib-blank-lines.md`](docs/development/issues/archived/2026-05-27-cyrius-distlib-blank-lines.md))
 reported that generated bundles trip cyrlint's
 *"multiple consecutive blank lines"* rule even though every input
 module lints clean. Two causes, one fix:
@@ -26556,7 +26586,7 @@ write-side checks are orthogonal to the layout reshuffle).
 
 - **CVE-05: heap region overlap — tok_names write-boundary
   checks** (audit
-  [`docs/audit/2026-04-13-security-audit.md`](docs/audit/2026-04-13-security-audit.md)
+  [`docs/audit/2026-04-13-security-audit.md`](docs/audit/archived/2026-04-13-security-audit.md)
   § CVE-05). Audit at slot entry confirmed the bulk of
   CVE-05's surface was already covered by earlier work:
   - `str_data` (2 MB @ 0x21A000) — write-side guarded by
@@ -28818,7 +28848,7 @@ Path C is the live MVP boot path.
 Second slot of the 3-slot arc unblocking AGNOS gnoboot;
 [`programs/efi_probe.cyr`](programs/efi_probe.cyr) is the minimal
 hello-world UEFI app + `_efi_emit_gate()` in
-[`programs/check.cyr`](programs/check.cyr) is the regression
+[`programs/check.cyr`](programs/checks/main.cyr) is the regression
 floor for any future EFI emit work. One small compiler nudge
 folded in (DllCharacteristics NX_COMPAT in EFI mode regardless
 of `.reloc` presence). OVMF runtime smoke lands at .49.
@@ -28947,7 +28977,7 @@ check.sh: **70 → 71**.
 `_pe_ensure_*` refactor (gnoboot arc P1).** First slot of the
 3-slot arc unblocking the AGNOS sovereign UEFI bootloader
 (`gnoboot`); cap at .49. Filing:
-[`docs/development/issues/2026-05-13-gnoboot-uefi-application-emit.md`](docs/development/issues/2026-05-13-gnoboot-uefi-application-emit.md).
+[`docs/development/issues/2026-05-13-gnoboot-uefi-application-emit.md`](docs/development/issues/archived/2026-05-13-gnoboot-uefi-application-emit.md).
 Compiler-side enablement only — probe (.48) + OVMF smoke (.49)
 land subsequent slots.
 
@@ -29106,7 +29136,7 @@ are mutually exclusive. **x86-only fix is the complete fix.**
 **ELF64 kernel entry-arithmetic agreement — FIXUP ↔ EMITELF64_KERNEL.**
 Cyrius-side investigation + fix of the agnos UEFI x86_64 boot
 regression filed at
-[`docs/development/issues/2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md`](docs/development/issues/2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md).
+[`docs/development/issues/2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md`](docs/development/issues/archived/2026-05-13-elf64-kernel-fixup-entry-address-mismatch.md).
 The filing reported the symptom; the *technical content* of the
 agnos-side diagnosis is **not** the load-bearing piece of this
 slot (an unauthorized cross-repo edit attempting the fix was
@@ -29841,7 +29871,7 @@ fmov x0, d0     ; 9E660000  (move FP→integer)
 ### Audit-doc reference
 
 The pin sat in
-[`docs/audit/2026-05-01-pre-5.8.0-audit.md`](docs/audit/2026-05-01-pre-5.8.0-audit.md)
+[`docs/audit/2026-05-01-pre-5.8.0-audit.md`](docs/audit/archived/2026-05-01-pre-5.8.0-audit.md)
 since 2026-05-01 (item #17 in § Optimization Opportunities,
 audit §4). 39 patches later it lands as a self-contained slot.
 Other audit-pinned perf opts (when they earn their bench-delta
@@ -30168,7 +30198,7 @@ drops its arch guards; dispatch lives in the backend layer.
 
 ### Why
 
-Per [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](docs/audit/2026-04-27-cx-direct-emit-inventory.md):
+Per [`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](docs/audit/archived/2026-04-27-cx-direct-emit-inventory.md):
 the v5.7.12 cx-drift fix used path B (per-call `_TARGET_CX == 0`
 guards) for time-to-ship. Path A — named-op abstraction in each
 backend — was deferred as the long-term architecture. Re-pinned to
@@ -30308,7 +30338,7 @@ surface.
 **`PP_IFDEF_PASS` 2 MB cap raised to 8 MB; `preprocess_out` buffer
 relocated.** Pinned cascade-in at 2026-05-12 per sit v0.7.6 → v0.8.x
 filing
-[`docs/development/issues/2026-05-12-pp-2mb-cap-blocks-sit-on-sandhi-fold.md`](docs/development/issues/2026-05-12-pp-2mb-cap-blocks-sit-on-sandhi-fold.md).
+[`docs/development/issues/2026-05-12-pp-2mb-cap-blocks-sit-on-sandhi-fold.md`](docs/development/issues/archived/2026-05-12-pp-2mb-cap-blocks-sit-on-sandhi-fold.md).
 Sit's expansion of `[deps].stdlib` listing `sandhi` measures
 2,099,593 bytes — 2,441 over the prior 2 MB cap. sandhi accreted TLS
 1.3 0-RTT (v1.3.2), session-cache cred-strip (v1.3.3), annotation pass
@@ -31066,7 +31096,7 @@ its own acceptance bar.
 ## [5.11.24] — 2026-05-11
 
 **`#derive(accessors)` >16-field silent miscompile fix** —
-closes [archived issue](issues/archived/2026-05-11-derive-accessors-16-field-cap.md).
+closes [archived issue](docs/development/issues/archived/2026-05-11-derive-accessors-16-field-cap.md).
 agnos 1.28.3 surfaced this during kernel `struct Process`
 refactor (22 fields). Pre-fix the per-struct field tables in
 `src/frontend/lex_pp.cyr` had **no bounds check**; 17th field's
@@ -31335,7 +31365,7 @@ silent bug. Worth the cycle slot.
 ## [5.11.22] — 2026-05-11
 
 **ai-hwaccel cc5_win debunk + mkdir/unlink PE plumbing** — closes
-[archived ai-hwaccel issue](issues/archived/2026-05-11-ai-hwaccel-cc5-win-pe-exit-propagation.md).
+[archived ai-hwaccel issue](docs/development/issues/archived/2026-05-11-ai-hwaccel-cc5-win-pe-exit-propagation.md).
 Surfaced + pinned a **second pre-existing PE bug** (UTF-16
 widening + kernel32 path API) at v5.11.23.
 
@@ -31661,7 +31691,7 @@ slot or the next cycle-close sweep.
 ## [5.11.19] — 2026-05-11
 
 **kybernet Part A.ii: fn_table 4096 → 8192 (heap-map refactor)** —
-closes [kybernet fn_table + identifier buffer caps](issues/archived/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md).
+closes [kybernet fn_table + identifier buffer caps](docs/development/issues/archived/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md).
 The half deferred from v5.11.18 after audit revealed it's a heap-
 map refactor, not a literal bump. Highest-risk slot of v5.11.x cycle
 — self-hosting compiler heap layout shifts. Phased internally with
@@ -31801,7 +31831,7 @@ v5.11.x continues with v5.11.20 syscall DRY consolidation next.
 
 **kybernet bundle Part A.i + Part B: identifier buffer 2× +
 socket-syscall wrappers** — closes
-[kybernet socket-syscall wrappers](issues/archived/2026-05-11-kybernet-socket-syscall-wrappers.md);
+[kybernet socket-syscall wrappers](docs/development/issues/archived/2026-05-11-kybernet-socket-syscall-wrappers.md);
 partial-closes
 [kybernet fn_table + identifier buffer caps](issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md)
 (identifier buffer half this slot; fn_table 4096 → 8192 split to
@@ -32057,7 +32087,7 @@ bars in the SAME edit as the split decision:
 ## [5.11.16] — 2026-05-11
 
 **bote WS handshake key validation (RFC 6455 §4.1)** — closes
-[archived issue](issues/archived/2026-05-10-bote-ws-server-handshake-key-validation.md).
+[archived issue](docs/development/issues/archived/2026-05-10-bote-ws-server-handshake-key-validation.md).
 **Plus**: v5.11.x slot map consolidated to close the .16-17 OPEN
 gap freed by v5.11.15's 3-slot bote streaming arc collapse —
 every pinned slot in .18-.23 shifted back 2 (per-repo version
@@ -32173,7 +32203,7 @@ byte-identical.
 ## [5.11.15] — 2026-05-11
 
 **bote P2: streaming dispatch primitives** — closes
-[archived issue](issues/archived/2026-05-10-bote-streaming-dispatch-thread-async-primitives.md).
+[archived issue](docs/development/issues/archived/2026-05-10-bote-streaming-dispatch-thread-async-primitives.md).
 **3-slot pinned scope collapsed to 1 slot** after premise check
 showed cyrius already had the heavy primitives.
 
@@ -32299,7 +32329,7 @@ conformance; one-line validation add). The bote stack closes here.
 ## [5.11.14] — 2026-05-11
 
 **bote P2: arena lifecycle terminator + per-frame reuse pattern**
-— closes [archived issue](issues/archived/2026-05-10-bote-fl-free-for-arena-reuse.md).
+— closes [archived issue](docs/development/issues/archived/2026-05-10-bote-fl-free-for-arena-reuse.md).
 
 ### Premise check first
 
@@ -32384,7 +32414,7 @@ filing.
 ## [5.11.13] — 2026-05-11
 
 **bote P2 part A: `sock_set_recv_timeout` (Slowloris fix)** — closes
-half of [archived issue](issues/archived/2026-05-10-bote-net-stdlib-recv-timeout-and-getaddrinfo.md).
+half of [archived issue](docs/development/issues/archived/2026-05-10-bote-net-stdlib-recv-timeout-and-getaddrinfo.md).
 `getaddrinfo` equivalent (Part B, larger DNS-resolver surface)
 pinned forward for a future buffer-band slot.
 
@@ -32473,7 +32503,7 @@ variant alongside the existing bump allocator.
 ## [5.11.12] — 2026-05-11
 
 **daimon P2: `lib/async.cyr` aarch64 portability fix** (closes
-[`docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md`](docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md)).
+[`docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md`](docs/development/issues/archived/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md)).
 
 ### Root cause
 
@@ -32598,7 +32628,7 @@ covered every in-tree consumer. v5.11.11 lands now because:
 
 v5.11.12 — daimon aarch64 `sys_epoll_wait` (P2). Lib gap surfaced
 by daimon 2026-05-10 (issue
-[`docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md`](docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md)).
+[`docs/development/issues/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md`](docs/development/issues/archived/2026-05-10-daimon-async-aarch64-sys-epoll-wait.md)).
 
 ## [5.11.10] — 2026-05-11
 
@@ -33041,7 +33071,7 @@ all serialize-through it).
 
 **Pinned v5.11.20**: kybernet `fn_table` 4096→8192 + `identifier
 buffer` 131072→262144 cap raise (P2, filed
-[`docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md`](docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md)).
+[`docs/development/issues/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md`](docs/development/issues/archived/2026-05-11-kybernet-fn-table-identifier-buffer-caps.md)).
 Lands after the annotation arc per user direction; first slot in the
 buffer band. Single source-line edits in cc5 + lex.cyr; no API change.
 Buffer band shrinks from .20-.38 (19 slots) to .21-.38 (18 slots).
@@ -33257,7 +33287,7 @@ Plus infrastructure work pinned at v5.10.x ships:
 ### What landed this slot — kavach P1 sandbox syscall wrappers
 
 Closes
-[`docs/development/issues/2026-05-10-kavach-sandbox-syscall-wrappers.md`](docs/development/issues/2026-05-10-kavach-sandbox-syscall-wrappers.md).
+[`docs/development/issues/2026-05-10-kavach-sandbox-syscall-wrappers.md`](docs/development/issues/archived/2026-05-10-kavach-sandbox-syscall-wrappers.md).
 Six post-fork-relevant Linux syscalls had no stdlib wrapper at
 v5.10.x; kavach v3.1.1 raw-syscall'd `SYS_FCHMOD` as a workaround,
 and v3.2 work was gated on the rest. **Each wrapper is async-
@@ -34211,7 +34241,7 @@ Standard `version-bump.sh` snapshot regen handles the
 fix (parallel `_str` family)**.
 
 Second fix from the v5.10.42-ship roadmap-extension audit. Closes
-[`docs/development/issues/2026-05-10-process-exec-str-cstr-ambiguity.md`](docs/development/issues/2026-05-10-process-exec-str-cstr-ambiguity.md).
+[`docs/development/issues/2026-05-10-process-exec-str-cstr-ambiguity.md`](docs/development/issues/archived/2026-05-10-process-exec-str-cstr-ambiguity.md).
 Argonaut-blocking — `argonaut/tests/tcyr/audit_findings.tcyr:201`
 deferred end-to-end fork-exec testing to a future QEMU PID-1 harness
 arc rather than work around the API at every test site. v5.10.44
@@ -34343,7 +34373,7 @@ fix (runtime byte/Str dispatch)**.
 
 First fix from the v5.10.42-ship roadmap-extension audit of open
 issues. Closes
-[`docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md`](docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md).
+[`docs/development/issues/2026-05-03-str-split-sep-treated-as-pointer.md`](docs/development/issues/archived/2026-05-03-str-split-sep-treated-as-pointer.md).
 
 ### The bug
 
@@ -38316,7 +38346,7 @@ Per `feedback_deferral_requires_roadmap_pinnage`:
 brace bug fix (bundled)**. Two mechanical consumer-
 prerequisite tooling fixes that share a slot per the
 proposal at
-[`docs/development/proposals/2026-05-08-raise-return-cap.md`](docs/development/proposals/2026-05-08-raise-return-cap.md).
+[`docs/development/proposals/2026-05-08-raise-return-cap.md`](docs/development/proposals/archived/2026-05-08-raise-return-cap.md).
 
 cc5: 764,552 B (unchanged — heap-layout reshuffle, no
 codegen change). Byte-identical self-host x86_64 + Mach-O
@@ -57057,7 +57087,7 @@ deferred bytecode semantic correctness. Earlier cc5_cx output
 mixed `CYX\0` magic + valid CYX opcodes with raw x86 sequences:
 `4889 5df8 4c89 65f0 ...` (callee-save chains) leaked through
 from `parse_fn.cyr`'s regalloc save block. The audit
-([`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](docs/audit/2026-04-27-cx-direct-emit-inventory.md))
+([`docs/audit/2026-04-27-cx-direct-emit-inventory.md`](docs/audit/archived/2026-04-27-cx-direct-emit-inventory.md))
 found 67 raw direct-emit hits collapsing to ~10 logical sites
 across `parse_*.cyr`. v5.7.12 ships path B: `_TARGET_CX == 0`
 guards on the offending sites.

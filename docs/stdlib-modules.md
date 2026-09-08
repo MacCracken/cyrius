@@ -1,9 +1,18 @@
 # Standard Library — Module Index
 
-> Categorized inventory of the Cyrius standard library: **99 `lib/*.cyr`
+> Categorized inventory of the Cyrius standard library: **102 `lib/*.cyr`
 > modules** (vendored sibling distfiles folded byte-identical, sandhi-pattern)
 > with **0 git deps**. This is the *what-exists* map; for per-function
 > signatures see [`stdlib-reference.md`](stdlib-reference.md).
+>
+> ⚠ **The category table below itemises ~72 of those 102 by design.** The
+> remainder are per-OS / per-arch sub-modules dispatched from a parent
+> (`alloc_windows`, `args_win`, `async_macos`, `process_agnos`, `sync_windows`,
+> `thread_win`, the six `syscalls_*` peers, the six `tls_native_*` splits, …);
+> their public surface IS the parent's, so they are covered by
+> `stdlib-reference.md`'s "Platform sub-modules" section rather than listed
+> twice. Derive the real count with `ls lib/*.cyr | wc -l` — this header said
+> **99** until v6.6.1.
 
 ## Fold-in lineage
 
@@ -67,7 +76,7 @@ the current pin (see [`ecosystem.md`](ecosystem.md) for live pins).
 | Category | Modules |
 |----------|---------|
 | Core | string, fmt, **alloc** (global bump + arenas + the `Allocator` vtable; growable arenas + `ARENA_FULL_*` exhaustion policy since v6.5.9), io, vec, slice, str, args, fnptr, flags |
-| Types | tagged (Option), result (Result + ? operator; v5.8.28-.32), hashmap, hashmap_fast, trait, assert, bounds |
+| Types | tagged (Option / Either), result (Result + `?` operator; v5.8.28-.32 — **all three are the value form since v6.6.0**: a payload variant returns `(tag, payload)` in a register pair, so construction allocates zero bytes), hashmap, hashmap_fast, **hashseed** (per-process hash seed + finalizer shared by both hashmap variants — closes a HashDoS where an attacker precomputes a colliding key set offline from published constants; measured 934× degradation on 8192 keys before it landed), trait, assert, bounds |
 | System | syscalls, callback, process, bench, **sys** (uname / sysinfo / is_root introspection; v6.1.28) |
 | Concurrency | thread (clone+mmap, mutex, MPSC), thread_local, atomic, async, sync (mutex/once over futex), freelist |
 | Testing & bench tooling | **test** (assertion/test-runner primitives), **regression** (bench-regression harness), **audit_walk** (source-tree audit walker) |

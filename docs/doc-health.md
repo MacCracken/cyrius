@@ -6,7 +6,35 @@ type: state
 
 # Documentation Health — cyrius
 
-> **Last refresh**: 2026-09-06 (**v6.6.0**). The value-form flip forced a real doc change, not
+> **Last refresh**: 2026-09-08 (**v6.6.1**). A numbers sweep — every figure below was
+> **re-derived from the tree**, not carried. What it found, and the shape is consistent:
+> **README.md had not been touched since 2026-08-16 and contradicted itself** (270 vs 260
+> `.tcyr`; 100 vs 99 stdlib modules in the same file). Its compiler size, fold versions, gate
+> counts, API-surface count, heap-region count and toolchain totals were all stale — the
+> toolchain total by 508 KB, and the installed-tree figure by **10×** (35,138,369 B claimed
+> "because the two `cyrsign*` helpers are ~14 MB each"; they are ~1.4 MB each). ⚠ **A number
+> carrying a stated reason is not more trustworthy than a bare one** — the reason was wrong too.
+>
+> **`size-comparisons.md` cited `cycc 6.5.74` — a version that was never released** (cut in
+> error, re-cut as 6.6.0), so an "authoritative" table referenced a toolchain no user can
+> obtain. The three Cyrius rows were **re-measured** (504 / 4,448 / 1,536 — unchanged again) and
+> both ELF variants RUN, exiting 42.
+>
+> **The reserved-token count had THREE live values at once**: 51 (a `util.cyr` comment), 67
+> (README + CLAUDE.md), 76 (the actual arm count). The README also claimed `IS_KEYWORD_TOK`
+> "derives from `TOKNAME_BUILTIN` so the two sets cannot drift" while that function's own comment
+> says the guarantee covers only the builtin half. The count is now derived, the source comment's
+> number **deleted rather than corrected** (it had no reader that could check it), and the
+> missing `f64v256_*` row (9 intrinsics, shipped v6.5.38) added to the table.
+>
+> **99 dead internal links → 31.** 68 repaired, every one verified to resolve before rewriting;
+> the 31 left are targets that exist nowhere (repros never committed, `archive/` vs `archived/`
+> typos), all inside already-archived files — left rather than invented, same call as last sweep.
+> `platform-status.md` cited four issues by a path they no longer live at and called one "open"
+> two clauses after stating its failures were gone. `hashseed.cyr` — a HashDoS mitigation with a
+> measured 934× — was in no index at all.
+>
+> *Previous*: 2026-09-06 (**v6.6.0**). The value-form flip forced a real doc change, not
 > just a stamp: `docs/guides/cyrius-guide.md` **published the boxed layout as a user-facing
 > contract** — `Ok(42)` as a 16-byte heap box with tag at `+0` and payload at `+8`, `?` "needs
 > the boxed form", `match load64(opt)`, and a helper table listing `payload()` / `tagged_new()`.
@@ -84,7 +112,7 @@ type: state
 
 ## At a glance — inventory (bucket counts last fully re-tallied 2026-06-04 at the v6.0.62 sweep; per-tier sections re-anchored to the 2026-06-12 v6.1.41 closeout doc-sync — the rollup counts here lag and are approximate)
 
-**~105 markdown files** across the repo (+1 from 2026-05-18: `scripts/shims/README.md` added at v5.11.69 alongside the 3 CLI-shim moves). The 4 guide-shape docs (`tutorial`, `editor-integration`, `faq`, `cyrius-guide`) moved from `docs/` flat → `docs/guides/` subdirectory; no count delta. **Current-cycle anchors (2026-08-07, v6.5.10)**: check.sh **162 gates** · **41** shell gate scripts in `tests/` · cycc x86_64 fixpoint **1,141,792 B** · **260 .tcyr** (36 `vr01_`) · **99 lib/*.cyr** · **97** programs · heap **100 regions** · api-surface **4817** · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware · self_compile ~648-652 ms (⚠ 648-701 observed within one release — treat a single figure as noise) · **12** open issues / **299** archived. (**Prior anchors, 2026-08-03, v6.5.6**: check.sh 153 · cycc 1,133,440 B · 254 .tcyr · api-surface 4783 · 281 archived.) (**Prior anchors, 2026-07-23, v6.4.72**: check.sh 147 gates + QEMU boot · cycc x86_64 fixpoint 1,103,512 B · 251 .tcyr · 99 lib/*.cyr · 97 programs · heap 100 regions · highest SIMD builtin token 151 (`f32v8_dot`) · SIMD Phase 5 complete on all four backends (x86/aarch64/PE/cx) · cross-OS ecb/cass/pi `SELFHOST_OK` · self_compile ~620 ms.) (.63→.72 band: agnos GPU-syscall band **#82–#91** contiguous, bayan 1.2.1 f64 JSON round-trip, sandhi 1.9.1 getpeername fold, `cyrius coverage` project-`src/`-scope fix.) (**Prior anchors, 2026-07-12, v6.4.62**: check.sh 146 · cycc 1,103,568 B · 246 .tcyr · self_compile ~627 ms.) (**Prior anchors, 2026-07-10, v6.4.48**: check.sh 141 · cycc 1,091,000 B · 241 .tcyr · self_compile ~649 ms.) (**Prior anchors, 2026-07-09, v6.4.32**: check.sh 132 · cycc 1,077,592 B · 240 .tcyr · 98 lib/*.cyr · self_compile ~616 ms.) (**Prior anchors, 2026-07-06, v6.4.10**: check.sh 130 · cycc 1,057,568 B · 227 .tcyr · self_compile ~561 ms.) (**Prior anchors, 2026-06-28, v6.3.0**: check.sh **100/100** gates + QEMU boot gate · **192 .tcyr** · **98 lib/*.cyr** modules · cycc x86_64 **1,075,136 B** · cross `cycc_aarch64` 627,376 B / `cycc_win` 851,968 B / `cycc-native-aarch64` 947,280 B · api-surface **4352**.) Bucket counts:
+**~105 markdown files** across the repo (+1 from 2026-05-18: `scripts/shims/README.md` added at v5.11.69 alongside the 3 CLI-shim moves). The 4 guide-shape docs (`tutorial`, `editor-integration`, `faq`, `cyrius-guide`) moved from `docs/` flat → `docs/guides/` subdirectory; no count delta. **Current-cycle anchors (2026-09-08, v6.6.1 — ALL DERIVED)**: check.sh **240 gates** · **144** shell gate scripts in `tests/gates/` (8 buckets) · cycc x86_64 fixpoint **1,247,608 B** · **301 .tcyr** (68 in `crossos/`) · **102 lib/*.cyr** · **84** programs · heap **145 regions** · api-surface **5152** · reserved tokens **102** (26 statement + 76 builtin, disjoint) · core toolchain **6,893,216 B**; installed `~/.cyrius/bin` **10,249,873 B** · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + `LIBTEST_OK` on real hardware · self_compile **731–734 ms** · **0** open issues / **387** archived · **3** open proposals · **57** non-archived markdown files (486 including the archive) · **31** dead internal links, all unresolvable-by-design. (**Prior anchors, 2026-08-07, v6.5.10**: check.sh **162 gates** · **41** shell gate scripts in `tests/` · cycc x86_64 fixpoint **1,141,792 B** · **260 .tcyr** (36 `vr01_`) · **99 lib/*.cyr** · **97** programs · heap **100 regions** · api-surface **4817** · cross-OS ecb/ach/cass/pi `SELFHOST_OK` + VR-01 `LIBTEST_OK` on real hardware · self_compile ~648-652 ms (⚠ 648-701 observed within one release — treat a single figure as noise) · **12** open issues / **299** archived. (**Prior anchors, 2026-08-03, v6.5.6**: check.sh 153 · cycc 1,133,440 B · 254 .tcyr · api-surface 4783 · 281 archived.) (**Prior anchors, 2026-07-23, v6.4.72**: check.sh 147 gates + QEMU boot · cycc x86_64 fixpoint 1,103,512 B · 251 .tcyr · 99 lib/*.cyr · 97 programs · heap 100 regions · highest SIMD builtin token 151 (`f32v8_dot`) · SIMD Phase 5 complete on all four backends (x86/aarch64/PE/cx) · cross-OS ecb/cass/pi `SELFHOST_OK` · self_compile ~620 ms.) (.63→.72 band: agnos GPU-syscall band **#82–#91** contiguous, bayan 1.2.1 f64 JSON round-trip, sandhi 1.9.1 getpeername fold, `cyrius coverage` project-`src/`-scope fix.) (**Prior anchors, 2026-07-12, v6.4.62**: check.sh 146 · cycc 1,103,568 B · 246 .tcyr · self_compile ~627 ms.) (**Prior anchors, 2026-07-10, v6.4.48**: check.sh 141 · cycc 1,091,000 B · 241 .tcyr · self_compile ~649 ms.) (**Prior anchors, 2026-07-09, v6.4.32**: check.sh 132 · cycc 1,077,592 B · 240 .tcyr · 98 lib/*.cyr · self_compile ~616 ms.) (**Prior anchors, 2026-07-06, v6.4.10**: check.sh 130 · cycc 1,057,568 B · 227 .tcyr · self_compile ~561 ms.) (**Prior anchors, 2026-06-28, v6.3.0**: check.sh **100/100** gates + QEMU boot gate · **192 .tcyr** · **98 lib/*.cyr** modules · cycc x86_64 **1,075,136 B** · cross `cycc_aarch64` 627,376 B / `cycc_win` 851,968 B / `cycc-native-aarch64` 947,280 B · api-surface **4352**.) Bucket counts:
 
 | Bucket | Count | What it means |
 |---|---|---|

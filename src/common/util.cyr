@@ -1420,8 +1420,12 @@ fn TOKNAME(typ): i64 {
     # separately — renumbering touches codegen and is not a diagnostic fix.)
     if (typ == 79) { return "object'/'f64_sqrt"; }
     if (typ == 111) { return "stack'/'callptr"; }
-    # v6.4.77: the 51 builtin/intrinsic names live in TOKNAME_BUILTIN (see the note
+    # v6.4.77: the builtin/intrinsic names live in TOKNAME_BUILTIN (see the note
     # there for the cybs global-reference limit that keeps them out of this fn).
+    # v6.6.1: this line said "the 51 builtin/intrinsic names" while the table held 76 and
+    # README/CLAUDE.md said 67 — THREE live counts for one set. The number is deleted rather
+    # than corrected: it has no reader that can check it, and re-stamping only restarts the
+    # clock. Derive it (`grep -cE 'if \(typ == [0-9]+\)'` over TOKNAME_BUILTIN) when needed.
     var bn = TOKNAME_BUILTIN(typ);
     if (bn != 0) { return bn; }
     return "unknown";
