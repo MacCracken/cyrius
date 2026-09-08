@@ -348,6 +348,14 @@ sh "$ROOT/tests/gates/codegen/f64_exp_infinite_argument.sh"
 # documented that, two files away from the code that walked into it.
 sh "$ROOT/tests/gates/platform/agnos_monotonic_clock_rdtsc.sh"
 
+# ⛔ v6.6.1 — `CYRIUS_DCE=1` emitted a PE that faulted 0xC0000005 BEFORE main, and an x86 Mach-O
+# that SIGSEGV'd on real Intel-Mac hardware. v6.5.72 made DCE physically remove dead bodies and
+# shrink GCP(S), but `_pe_layout(S)` runs at the TOP of FIXUP off the PRE-elimination length, so
+# the import payload got written at the post-compaction cursor while the section header still
+# named the old offset — the loader mapped the IAT from zero padding. The filing named only
+# `--win`; Mach-O shares the path via main_x86_macho.cyr and was ALSO broken, unreported.
+sh "$ROOT/tests/gates/codegen/dce_pe_macho_layout_declines_compaction.sh"
+
 # ⛔ v6.6.1 — `cyrius install`/`cyriusly install` copied binaries IN PLACE, so reinstalling the
 # version you are running overwrote the running image and died with ETXTBSY. v6.5.3 fixed exactly
 # this in ONE of THREE copy paths; the tarball path (what `cyriusly install` uses) survived and

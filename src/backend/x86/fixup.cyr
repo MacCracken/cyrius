@@ -828,7 +828,28 @@ fn FIXUP(S): i64 {
     # v6.5.72 — ELIMINATE the dead code the pass above only padded, then AUDIT THE RESULT.
     # PIE writes function/string addresses as rip-relative disp32 rather than absolute values —
     # a second repair shape this pass does not carry. Decline rather than half-repair.
-    if (dce_enabled == 1 && _pie_mode == 0) {
+    #
+    # ⛔ v6.6.1 — PE AND x86 MACH-O DECLINE FOR THE SAME REASON, AND SHIPPED BROKEN FOR
+    # FOURTEEN RELEASES BECAUSE THEY DIDN'T. Both reach a live import/stub table through a
+    # rip-relative disp32 that this pass cannot repair, and both compute their file geometry
+    # BEFORE it runs: `_pe_layout(S)` is called at the top of FIXUP (line 123) off the
+    # pre-elimination `GCP(S)`, then `SCP` below shrinks the code out from under it. The
+    # measured PE result: the `.idata` payload is written at the post-compaction cursor
+    # (`o = o + cp` in EMITPE_EXEC) while the section header still names the pre-compaction
+    # offset, so the loader maps the Import Address Table from what is now zero padding, every
+    # import resolves to 0, and the first `call *IAT(%rip)` faults 0xC0000005 at startup. The
+    # displacement is wrong independently: it was patched against the old geometry and then the
+    # instruction moved, so it pointed at RVA 0x39DD for an IAT the header puts at 0x23000.
+    # x86 Mach-O takes the same path (main_x86_macho.cyr includes this file) and SIGSEGVs on
+    # real Intel-Mac hardware — it was not in the filed report, which named only `--win`, and a
+    # PE-only guard would have left it live.
+    # ⚠ Declining is not dropping the feature: the NOP-fill above still runs and still reports,
+    # so these targets get exactly the v6.5.71 behaviour (correct binary, size unchanged, dead
+    # bodies zeroed and highly compressible) — the same place aarch64 and arm64 Mach-O sit.
+    # ELF keeps the real elimination. Repairing the rip-relative shape is what would let these
+    # targets shrink too; that is a codegen arc, NOT a reason to keep emitting a crashing binary.
+    var _wp_fmt = _emit_fmt(S);
+    if (dce_enabled == 1 && _pie_mode == 0 && _wp_fmt != 1 && _wp_fmt != 3) {
         _wp_post_patch = 1;
         var _wpd2 = wp_compact(S);
         _wp_post_patch = 0;

@@ -38,6 +38,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/gates/platform/agnos_monotonic_clock_rdtsc.sh` (3 axes), mutation-proven by reverting
   the binding — axis 1 names the frozen clock.
 
+- ⛔ **`CYRIUS_DCE=1` emitted a Windows PE that faulted `0xC0000005` before `main` — and an
+  Intel-Mac Mach-O that SIGSEGV'd, which nobody had reported.** v6.5.72 turned DCE from
+  NOP-padding into real elimination: `wp_compact` removes dead bodies and shrinks `GCP(S)`. But
+  `_pe_layout(S)` runs at the **top** of FIXUP off the **pre-elimination** length, so every PE
+  geometry field — section sizes, RVAs, `PointerToRawData`, and the IAT RVA the ftype=4 fixups
+  are patched against — describes a layout the emitted code no longer has. `EMITPE_EXEC` then
+  writes `.idata` at the **post-compaction cursor** while the section header still names the
+  pre-compaction offset. Measured on the filed repro: the import payload moved **0x220F6 →
+  0x2AF6**, 128,512 B earlier against the 128,555 B DCE reported, so the loader mapped the
+  Import Address Table from what had become zero padding, every import resolved to 0, and the
+  first `call *IAT(%rip)` faulted. The displacement was independently wrong — patched against the
+  old geometry, then the instruction moved, resolving to RVA `0x39DD` for an IAT the header puts
+  at `0x23000`.
+
+  ⛔ **The filing said "PE / `--win` target only". It was not.** `main_x86_macho.cyr` includes
+  the same `x86/fixup.cyr`, so **x86 Mach-O took the identical path and SIGSEGV'd on real ach
+  hardware** (376,832 → 32,768 B). It was missing from the report because the reporter does not
+  build that platform — so the *report* bounded the bug and a PE-only fix would have shipped half
+  a repair and left a silent shipped-artifact crash live on a supported target. Both targets now
+  decline compaction exactly as `_pie_mode` already does, for the reason that code already
+  states: a rip-relative reference shape this pass does not repair. The NOP-fill still runs, so
+  they land on v6.5.71 behaviour — correct binary, size unchanged, dead bodies zeroed and highly
+  compressible — the same place aarch64 and arm64 Mach-O already sat. **ELF keeps the real
+  elimination**, measured 123,048 → 16,552 B (−86.5%) on the repro. Making PE/Mach-O shrink too
+  means repairing the rip-relative shape: a codegen arc, not a reason to keep shipping a crash.
+  Verified `ok`/exit 0 under wine and on **ach**. Gated by
+  `tests/gates/codegen/dce_pe_macho_layout_declines_compaction.sh` — 3 axes, all mutation-proven,
+  one of which **specifically fails a PE-only fix**, and one anti-vacuous axis pinning that ELF
+  still eliminates so the decline cannot silently become a blanket disable.
+
 - **`cyriusly install <version>` failed with `Text file busy` when installing over itself.**
   `cp` writes *through* the existing directory entry, so overwriting a binary that is currently
   executing is ETXTBSY — and `cyriusly` re-execs the pinned toolchain, so it is *always* running
@@ -50,10 +80,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- ⚠ **API-surface bump — patra's WAL entry points each gained a leading `db_fd` (BREAKING).**
+  `wal_commit`, `wal_rollback`, `wal_log_page`, `wal_log_hdr`, `wal_is_active` and
+  `wal_overflowed` all take one more argument, and `wal_forget` / `wal_slots_init` /
+  `pc_register` / `pc_unregister` / `btree_search_t` are new. This is not fold drift: patra moved
+  WAL state out of the process-global `_wal_fd` into a table **keyed by the database fd**,
+  because two databases open in one process shared one WAL — the second `patra_begin` orphaned
+  the first transaction's before-images, `patra_rollback(A)` restored **B's** pages and returned
+  `PATRA_OK`, and commit unlinked a WAL that was not its own. `docs/api-surface.snapshot`
+  regenerated: **5,141 → 5,152** public fns (17 added, 6 re-aritied). The gate caught this and
+  called it BREAKING, which is exactly right — it is recorded here rather than waved through.
 - **Stdlib folds** — patra 1.14.1, sakshi 2.5.1, sankoch 2.7.14, ganita 1.2.4, niyama 1.0.10.
   Each was fixed at source, version-bumped and re-pinned in its own repo before vendoring; each
   compiles clean under the value form with zero stack-form errors.
-- Shell gates **140 → 143** — one per fix above.
+- Shell gates **140 → 144** — one per fix above.
+- **Bench** — `self_compile` **731–734 ms** across two runs (6.6.0: ~739–740), `cycc` **1,247,608 B** unchanged,
+  `.text` 1,090,832 B. No growth tax this release: the two codegen fixes add an env-gated guard
+  and a target predicate, neither on a hot path, and the compiler is byte-identical to 6.6.0
+  because cycc's own source calls neither `f64_exp` nor `f64_exp2` and does not build as PE.
 - **Two ungated duplicates of the fold-version table removed.** `docs/ecosystem.md`'s table is
   the single source of truth and is gated (`fold_table_matches_vendored.sh` parses the version out
   of each vendored bundle header). `docs/stdlib-reference.md` carried a **second, ungated copy of

@@ -444,6 +444,7 @@ wrongly; the file is the source, and live code beats the file.
 | [`2026-09-04-emitelf-obj-scratch-overrun.md`](./2026-09-04-emitelf-obj-scratch-overrun.md) | EMITELF_OBJ overruns its 1 MB scratch — object; units above ~31,398 fns SIGSEGV | v6.5.50 |
 | [`2026-09-05-aggregate-assignment-truncates-to-8-bytes.md`](./2026-09-05-aggregate-assignment-truncates-to-8-bytes.md) | Aggregate assignment dst = src; copies only the first 8 bytes — silent wrong values | v6.5.57 |
 | [`2026-09-08-f64-exp-nan-for-infinite-argument.md`](./2026-09-08-f64-exp-nan-for-infinite-argument.md) | f64_exp/f64_exp2 return NaN for ±inf — the range reduction computes inf - inf | v6.6.1 |
+| [`ai-hwaccel-dce-pe-access-violation-2026-09-07.md`](./ai-hwaccel-dce-pe-access-violation-2026-09-07.md) | CYRIUS_DCE=1 emitted a PE that faulted 0xC0000005 before main — layout computed pre-elimination, import payload written post-compaction, IAT mapped from zero padding. x86 Mach-O shared the path and SIGSEGV'd on Intel-Mac, unreported. | v6.6.1 |
 | [`build-check-lib-sync-flag-advertised-but-rejected.md`](./build-check-lib-sync-flag-advertised-but-rejected.md) | cyrius build --check-lib-sync is advertised in usage but rejected by the arg parser | v6.4.64 |
 | [`dynlib-nss-bootstrap.md`](./dynlib-nss-bootstrap.md) | dynlib NSS-dispatch bootstrap — investigation log | v5.5.24 |
 | [`fmt-check-file-size-cutoff.md`](./fmt-check-file-size-cutoff.md) | 2026-06-17 — cyrius fmt (format check) has a file-size cutoff that drops large files from reporting | v6.2.20 |

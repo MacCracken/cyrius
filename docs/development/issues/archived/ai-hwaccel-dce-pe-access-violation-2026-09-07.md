@@ -1,6 +1,36 @@
-# `CYRIUS_DCE=1` + `--win` emits a PE that dies at startup with `0xC0000005` — OPEN
+# `CYRIUS_DCE=1` + `--win` emits a PE that dies at startup with `0xC0000005` — ✅ FIXED (v6.6.1)
 
-**Status:** 🟡 **OPEN** — reported from a consumer release; not yet triaged upstream.
+**Status:** ✅ **FIXED in v6.6.1.** Root cause confirmed by reproduction, not inference.
+
+> **Root cause.** v6.5.72 made `CYRIUS_DCE=1` physically remove dead bodies (`wp_compact`) and
+> shrink `GCP(S)`. But `_pe_layout(S)` runs at the TOP of FIXUP (`x86/fixup.cyr:123`) off the
+> **pre-elimination** length, so every PE geometry field — section sizes, RVAs, PointerToRawData
+> and the IAT RVA the ftype=4 fixups patch against — describes a layout the emitted code no
+> longer has. `EMITPE_EXEC` writes `.idata` at the **post-compaction cursor** (`o = o + cp`)
+> while the section header still names the pre-compaction offset. Measured on this repro: the
+> import payload moved from file offset **0x220F6 to 0x2AF6** — 128,512 B earlier, against the
+> 128,555 B DCE reported — so the loader mapped the Import Address Table from what had become
+> zero padding, every import resolved to 0, and the first `call *IAT(%rip)` faulted. The
+> displacement was independently wrong: patched against the old geometry, then the instruction
+> moved, so it resolved to RVA `0x39DD` for an IAT the header puts at `0x23000`.
+>
+> ⛔ **The reporter's "PE / `--win` target only" was wrong, through no fault of theirs.**
+> `main_x86_macho.cyr` includes the same `x86/fixup.cyr`, so **x86 Mach-O took the identical
+> path and SIGSEGV'd (exit 139) on real Intel-Mac hardware** (376,832 → 32,768 B). It was absent
+> from the report because that platform is not built downstream. A PE-only guard would have
+> shipped half the repair.
+>
+> **Fix.** Both targets now decline compaction exactly as `_pie_mode` already does, and for the
+> same stated reason — a rip-relative reference shape this pass does not repair. The NOP-fill
+> still runs, so they get v6.5.71 behaviour: correct binary, size unchanged, dead bodies zeroed
+> and highly compressible — the same place aarch64 and arm64 Mach-O already sat. **ELF keeps the
+> real elimination** (measured 123,048 → 16,552 B on this repro, −86.5%). Making PE/Mach-O shrink
+> too means repairing the rip-relative shape; that is a codegen arc, not a reason to keep
+> emitting a crashing binary.
+>
+> **Verified:** PE prints `ok`/exit 0 under wine (was 0xC0000005); Mach-O prints `ok`/exit 0 on
+> **ach** (was exit 139). Gated by `tests/gates/codegen/dce_pe_macho_layout_declines_compaction.sh`
+> — 3 axes, each mutation-proven, including one that specifically fails a **PE-only** fix.
 **Placement:** unpinned — 6.6.x line. Suggest treating as a 6.6.1 blocker: it is a
 shipped-artifact crash on a supported target.
 **Discovered:** 2026-09-07 during the ai-hwaccel `6.5.36 → 6.6.0` toolchain bump
