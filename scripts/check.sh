@@ -336,6 +336,18 @@ sh "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"
 # now applies only when the bisection knob asks. -8.5% frame accesses on consumer programs.
 sh "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"
 
+# ⛔ v6.6.1 — `f64_exp`/`f64_exp2` returned NaN for ±inf on BOTH the native x87 path and the
+# aarch64 polyfill: the range reduction subtracts a multiple of the argument from itself, so
+# ±inf becomes `inf - inf`. Filed from ganita's P(-1) audit, where sinh/cosh(±inf) came back NaN
+# and the consumer could not tell whose bug it was.
+sh "$ROOT/tests/gates/codegen/f64_exp_infinite_argument.sh"
+
+# ⛔ v6.6.1 — `clock_now_ns()` on AGNOS read #40 (timer_ticks), which is FROZEN in a foreground
+# `run` program (IF cleared, so the 100 Hz ISR never fires). Anything timing itself measured
+# exactly zero. #95 (rdtsc) is the only correct monotonic source there — and cyrius already
+# documented that, two files away from the code that walked into it.
+sh "$ROOT/tests/gates/platform/agnos_monotonic_clock_rdtsc.sh"
+
 # ⛔ v6.6.1 — `cyrius install`/`cyriusly install` copied binaries IN PLACE, so reinstalling the
 # version you are running overwrote the running image and died with ETXTBSY. v6.5.3 fixed exactly
 # this in ONE of THREE copy paths; the tarball path (what `cyriusly install` uses) survived and

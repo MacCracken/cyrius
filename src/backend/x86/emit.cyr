@@ -2905,9 +2905,64 @@ fn EF64_COS(S): i64 {
     return 0;
 }
 
+# v6.6.1 — ±inf GUARD FOR THE NATIVE x87 exp/exp2 SEQUENCES.
+#
+# ⛔ THE x87 SEQUENCE CANNOT REPRESENT exp(±inf). Both sequences below split the argument with
+# `frndint` and then SUBTRACT: for ±inf that is `inf - inf`, which is NaN, and `f2xm1`/`fscale`
+# faithfully propagate it. Measured at 6.6.0: `f64_exp(+inf)`, `f64_exp(-inf)`,
+# `f64_exp2(+inf)` and `f64_exp2(-inf)` all returned NaN where C and IEEE-754 give +inf, +0,
+# +inf, +0. The aarch64 polyfills had the identical defect for the identical reason and are
+# fixed in lib/math.cyr; this is the x86 half, which a consumer cannot patch.
+#
+# ⚠ NaN deliberately gets NO guard: it already propagates correctly through the reduction, and
+# a guard would be dead code pretending to be a safety net.
+#
+# Emits, with the f64 bit pattern in rax:
+#     push rax; rcx = 0x7FFF...; pop rax; push rax; and rax,rcx   -> |x|
+#     push rax; rcx = inf; pop rax; cmp rax,rcx; jne NATIVE       (stack still holds x)
+#     pop rax; push rax; rcx = inf; pop rax; cmp rax,rcx; je POS
+#     rax = 0 ; jmp DONE                                          (-inf -> +0)
+#   POS: rax = inf ; jmp DONE
+#   NATIVE: pop rax ; <x87 sequence>
+#   DONE:
+# Both arms push exactly once and pop exactly once, so the machine stack is balanced on every
+# path — the thing to check first if this is ever edited.
+# Returns the two DONE patch sites packed as (site1 << 32) | site2 so the caller can patch them
+# after the x87 bytes; a raw pair keeps this to one helper without a side table.
+fn _EF64_EXPINF_GUARD(S): i64 {
+    EPUSHR(S);
+    EMOVI(S, 0x7FFFFFFFFFFFFFFF);
+    EMOVCA(S);
+    EPOPR(S);
+    EPUSHR(S);
+    EANDR(S);                       # rax = |x| ; stack holds x
+    EPUSHR(S);
+    EMOVI(S, 0x7FF0000000000000);
+    EMOVCA(S);
+    EPOPR(S);                       # rax = |x| ; stack holds x
+    ECMPR(S);
+    var g_native = EJCC(S, 0x85);   # jne -> NATIVE (x is not +/-inf)
+    EPOPR(S);                       # rax = x ; stack balanced
+    EPUSHR(S);
+    EMOVI(S, 0x7FF0000000000000);
+    EMOVCA(S);
+    EPOPR(S);                       # rax = x
+    ECMPR(S);
+    var g_pos = EJCC(S, 0x84);      # je  -> POS (x == +inf)
+    EMOVI(S, 0);                    # exp(-inf) = +0
+    var g_d1 = EJMP0(S);
+    EPATCH(S, g_pos);
+    EMOVI(S, 0x7FF0000000000000);   # exp(+inf) = +inf
+    var g_d2 = EJMP0(S);
+    EPATCH(S, g_native);
+    EPOPR(S);                       # rax = x ; stack balanced, fall into the x87 sequence
+    return (g_d1 << 32) | g_d2;
+}
+
 # EF64_EXP — x87 fldl2e; fmulp; fld st0; frndint; fsub st1,st0;
-# fxch; f2xm1; fld1; faddp; fscale; fstp st1 (22 bytes).
+# fxch; f2xm1; fld1; faddp; fscale; fstp st1 (22 bytes), behind the v6.6.1 +/-inf guard.
 fn EF64_EXP(S): i64 {
+    var _xg = _EF64_EXPINF_GUARD(S);
     EX87PUSH(S);
     _IR_REC0(S, IR_RAW_EMIT);
     EB(S, 0xD9); EB(S, 0xEA); EB(S, 0xDE); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xC0);
@@ -2915,6 +2970,8 @@ fn EF64_EXP(S): i64 {
     EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xDE); EB(S, 0xC1);
     EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9);
     EX87POP(S);
+    EPATCH(S, (_xg >> 32) & 0xFFFFFFFF);
+    EPATCH(S, _xg & 0xFFFFFFFF);
     return 0;
 }
 
@@ -2939,12 +2996,15 @@ fn EF64_LOG2(S): i64 {
 # EF64_EXP2 — x87 fld st0; frndint; fsub st1,st0; fxch;
 # f2xm1; fld1; faddp; fscale; fstp st1 (18 bytes).
 fn EF64_EXP2(S): i64 {
+    var _x2g = _EF64_EXPINF_GUARD(S);   # exp2 has the SAME limits as exp
     EX87PUSH(S);
     _IR_REC0(S, IR_RAW_EMIT);
     EB(S, 0xD9); EB(S, 0xC0); EB(S, 0xD9); EB(S, 0xFC); EB(S, 0xDC); EB(S, 0xE9);
     EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8);
     EB(S, 0xDE); EB(S, 0xC1); EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9);
     EX87POP(S);
+    EPATCH(S, (_x2g >> 32) & 0xFFFFFFFF);
+    EPATCH(S, _x2g & 0xFFFFFFFF);
     return 0;
 }
 

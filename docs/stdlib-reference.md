@@ -1645,23 +1645,32 @@ Testing-stdlib primitives: display formatting, buffer scanning, process executio
 These modules are byte-identical folds of sibling-repo distfiles (the
 sandhi pattern), vendored into `lib/<name>.cyr`. They are **opt-in** —
 `include "lib/<name>.cyr"` explicitly (not auto-prepended). Each has its
-own canonical API reference in its own repo; this table is a pointer. See
-[ecosystem.md](ecosystem.md) for fold versions/lineage.
+own canonical API reference in its own repo; this table is a pointer.
+
+⚠ **Versions deliberately do not appear here.** They live in
+[ecosystem.md](ecosystem.md)'s fold table, which is the single source of truth
+and is GATED — `tests/gates/toolchain/fold_table_matches_vendored.sh` parses the
+version out of each vendored bundle header and fails if a row disagrees. This
+table carried a second, ungated copy of that column and had rotted to **12 rows
+stale out of 12** by v6.6.1 (sakshi 2.4.10 vs 2.5.1, patra 1.13.0 vs 1.14.1,
+sankoch 2.7.7 vs 2.7.14, and so on). Re-stamping it would only restart the same
+clock, so the duplicate column is removed instead — the rot was the duplication,
+not the numbers.
 
 | Module | Folded dep | Domain |
 |--------|-----------|--------|
-| `lib/sandhi.cyr` | sandhi 1.9.10 | HTTP/2 + JSON-RPC + service discovery + TLS policy |
-| `lib/sigil.cyr` | sigil 3.12.7 | Security / x509 / Ed25519 — powers native TLS + release/UEFI signing |
-| `lib/sakshi.cyr` | sakshi 2.4.10 | Tracing / structured logging |
-| `lib/patra.cyr` | patra 1.13.0 | Storage |
-| `lib/sankoch.cyr` | sankoch 2.7.7 | Compression |
-| `lib/yukti.cyr` | yukti 2.3.2 | Hardware enumeration |
-| `lib/vani.cyr` | vani 1.1.3 | Audio (ALSA PCM + ring buffer + mixer) |
-| `lib/niyama.cyr` | niyama 1.0.6 | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
-| `lib/mabda.cyr` | mabda 4.0.8 | GPU / compute (AMD-native) |
-| `lib/bayan.cyr` | bayan 1.4.1 | Data formats + big-int (json / toml / cyml / csv / base64 / yaml / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |
-| `lib/ganita.cyr` | ganita 1.1.0 | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial) — carved v6.1.26, `ganita_*` + legacy aliases |
-| `lib/yantra.cyr` | yantra 1.0.2 | UI / end-to-end testing (WebDriver + Appium + Chromium-CDP RPC) |
+| `lib/sandhi.cyr` | sandhi | HTTP/2 + JSON-RPC + service discovery + TLS policy |
+| `lib/sigil.cyr` | sigil | Security / x509 / Ed25519 — powers native TLS + release/UEFI signing |
+| `lib/sakshi.cyr` | sakshi | Tracing / structured logging |
+| `lib/patra.cyr` | patra | Storage |
+| `lib/sankoch.cyr` | sankoch | Compression |
+| `lib/yukti.cyr` | yukti | Hardware enumeration |
+| `lib/vani.cyr` | vani | Audio (ALSA PCM + ring buffer + mixer) |
+| `lib/niyama.cyr` | niyama | Regex (5 engines: bre / re2 / pcre / fuzzy / vim) |
+| `lib/mabda.cyr` | mabda | GPU / compute (AMD-native) |
+| `lib/bayan.cyr` | bayan | Data formats + big-int (json / toml / cyml / csv / base64 / yaml / bigint `u256` / u128) — carved v6.1.25, `bayan_*` + legacy aliases |
+| `lib/ganita.cyr` | ganita | Linear algebra + advanced math (matrix / linalg / transcendental + fibonacci/binomial) — carved v6.1.26, `ganita_*` + legacy aliases |
+| `lib/yantra.cyr` | yantra | UI / end-to-end testing (WebDriver + Appium + Chromium-CDP RPC) |
 
 ## Platform sub-modules
 

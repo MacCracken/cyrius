@@ -4,6 +4,66 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.1] — 2026-09-08
+
+### Fixed
+
+- ⛔ **`f64_exp` / `f64_exp2` returned NaN for ±inf — in BOTH implementations.** The filed repro
+  (`docs/development/issues/repros/2026-09-08-f64-exp-nan-for-infinite-argument.cyr`) exited 4.
+  The range reduction subtracts a multiple of the argument *from the argument*, so for an infinite
+  input it computes **`inf - inf`, which is NaN** — and the exponent it then assembles is built
+  from `f64_to(inf)`, which **saturates to `i64::MIN`**, so `(n + 1023) << 52` is not an exponent
+  either. Two independent ways to produce garbage, both upstream of the actual exponential, which
+  is why a guard *inside* the reduction could not fix it: the check has to come **first**.
+
+  Fixed in both places, because there are two implementations and a consumer hits whichever its
+  target selects — the `_f64_exp_polyfill` / `_f64_exp2_polyfill` pair in `lib/math.cyr`, and the
+  emitted x87 `f2xm1`/`fscale`/`frndint` sequence in `src/backend/x86/emit.cyr`, which now emits
+  `_EF64_EXPINF_GUARD` ahead of the sequence and patches its two exits after the x87 pop. Fixing
+  only the polyfill would have left every x86 build wrong. `exp(+inf) = +inf`, `exp(-inf) = +0`.
+
+  **NaN deliberately gets no guard.** It already propagates correctly through both paths, and a
+  guard would only add a branch that has to be kept correct forever. Pinned by
+  `tests/gates/codegen/f64_exp_infinite_argument.sh` (3 axes), mutation-proven by neutering the
+  x87 guard — the axis fails.
+
+- ⛔ **`clock_now_ns()` on AGNOS read a clock that does not tick.** It was bound to
+  `sys_uptime_ms()` — AGNOS syscall **#40, backed by `timer_ticks`**, which is driven by the timer
+  interrupt and therefore **frozen whenever interrupts are cleared**. Any elapsed-time measurement
+  taken across a critical section, or anywhere in early boot, read the same value twice and
+  reported **zero elapsed time** — a stopped clock, not a slow one. Rebound to `sys_uptime_us()`
+  (**#95, `rdtsc`**), which advances with interrupts disabled. Verified at the instruction level:
+  the AGNOS build emits `movl $0x5f, %eax` (95) and the Linux path still issues `0xe4` (228,
+  `clock_gettime`) — the fix is scoped to the AGNOS branch and nothing else moved. Pinned by
+  `tests/gates/platform/agnos_monotonic_clock_rdtsc.sh` (3 axes), mutation-proven by reverting
+  the binding — axis 1 names the frozen clock.
+
+- **`cyriusly install <version>` failed with `Text file busy` when installing over itself.**
+  `cp` writes *through* the existing directory entry, so overwriting a binary that is currently
+  executing is ETXTBSY — and `cyriusly` re-execs the pinned toolchain, so it is *always* running
+  during its own install. The install then aborted part-way, leaving a version directory with
+  some files replaced and some not, which is why deleting `cyriusly` and re-running the installer
+  did not recover it. All three copy paths now go through `_install_file`, which writes a temp
+  file and **atomically renames** it over the target — `rename` replaces the directory entry and
+  leaves the running image alone. A failed file warns and continues rather than aborting mid-tree.
+  Pinned by `tests/gates/toolchain/install_atomic_over_running_binary.sh` (3 axes).
+
+### Changed
+
+- **Stdlib folds** — patra 1.14.1, sakshi 2.5.1, sankoch 2.7.14, ganita 1.2.4, niyama 1.0.10.
+  Each was fixed at source, version-bumped and re-pinned in its own repo before vendoring; each
+  compiles clean under the value form with zero stack-form errors.
+- Shell gates **140 → 143** — one per fix above.
+- **Two ungated duplicates of the fold-version table removed.** `docs/ecosystem.md`'s table is
+  the single source of truth and is gated (`fold_table_matches_vendored.sh` parses the version out
+  of each vendored bundle header). `docs/stdlib-reference.md` carried a **second, ungated copy of
+  the same column** and had rotted to **12 rows stale out of 12**; `docs/stdlib-modules.md` parked
+  two live numbers inside a *historical* fold-in lineage list ("15,119 lines at the current 1.9.10
+  fold" — sandhi is at 1.9.16 and the fold is 15,656 lines; "6,689 lines at the current 1.0.6
+  fold" — niyama is at 1.0.10 and 7,323 lines). Both are removed rather than re-stamped: a fresh
+  number in an unchecked place only restarts the clock, and the rot was the duplication itself.
+  This is the same class the v6.5.4 fold-table fix closed for `ecosystem.md` alone.
+
 ## [6.6.0] — 2026-09-06
 
 ### Changed

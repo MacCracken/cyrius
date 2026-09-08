@@ -443,6 +443,7 @@ wrongly; the file is the source, and live code beats the file.
 | [`2026-09-03-macos-getenv-always-null-no-proc.md`](./2026-09-03-macos-getenv-always-null-no-proc.md) | getenv always returns 0 on macOS — /proc/self/environ does not exist there | — |
 | [`2026-09-04-emitelf-obj-scratch-overrun.md`](./2026-09-04-emitelf-obj-scratch-overrun.md) | EMITELF_OBJ overruns its 1 MB scratch — object; units above ~31,398 fns SIGSEGV | v6.5.50 |
 | [`2026-09-05-aggregate-assignment-truncates-to-8-bytes.md`](./2026-09-05-aggregate-assignment-truncates-to-8-bytes.md) | Aggregate assignment dst = src; copies only the first 8 bytes — silent wrong values | v6.5.57 |
+| [`2026-09-08-f64-exp-nan-for-infinite-argument.md`](./2026-09-08-f64-exp-nan-for-infinite-argument.md) | f64_exp/f64_exp2 return NaN for ±inf — the range reduction computes inf - inf | v6.6.1 |
 | [`build-check-lib-sync-flag-advertised-but-rejected.md`](./build-check-lib-sync-flag-advertised-but-rejected.md) | cyrius build --check-lib-sync is advertised in usage but rejected by the arg parser | v6.4.64 |
 | [`dynlib-nss-bootstrap.md`](./dynlib-nss-bootstrap.md) | dynlib NSS-dispatch bootstrap — investigation log | v5.5.24 |
 | [`fmt-check-file-size-cutoff.md`](./fmt-check-file-size-cutoff.md) | 2026-06-17 — cyrius fmt (format check) has a file-size cutoff that drops large files from reporting | v6.2.20 |
@@ -456,6 +457,7 @@ wrongly; the file is the source, and live code beats the file.
 | [`owl-lib-sha1-extraction-2026-04-22.md`](./owl-lib-sha1-extraction-2026-04-22.md) | Extract SHA-1 into lib/sha1.cyr (currently private to lib/ws_server.cyr) | v5.6.3 |
 | [`parser-overflow-large-codebase.md`](./parser-overflow-large-codebase.md) | Bug #32: Parser overflow at ~12K expanded lines — RESOLVED | v3.3.17 |
 | [`readfile-512kb-cap.md`](./readfile-512kb-cap.md) | cc3 READFILE 512KB Cap in Include Processing — RESOLVED | v3.4.5 |
+| [`sakshi-agnos-chrono-uptime-ms-frozen-2026-09-07.md`](./sakshi-agnos-chrono-uptime-ms-frozen-2026-09-07.md) | clock_now_ns on AGNOS reads the frozen timer-tick clock — no elapsed time with interrupts disabled | v6.6.1 |
 | [`stdlib-hashmap-str-key-collision.md`](./stdlib-hashmap-str-key-collision.md) | stdlib hashmap: hash_str mishandles Str-struct keys (~3% entry loss) | — |
 | [`stdlib-math-recommendations-from-abaco.md`](./stdlib-math-recommendations-from-abaco.md) | stdlib math & utility recommendations (from abaco 2.0.0) | — |
 | [`stdlib-syscalls-aarch64-gaps-from-agnosys.md`](./stdlib-syscalls-aarch64-gaps-from-agnosys.md) | stdlib syscall surface gaps — aarch64 portability (from agnosys) | v5.7.34 |

@@ -10,10 +10,18 @@
 Sibling-distfile **fold-in lineage** (sandhi-pattern: byte-identical
 vendor at the patched tag, removed from `[deps]`):
 
-- v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy; 15,119 lines at the current 1.9.10 fold)
+⚠ This list records **fold-in events** — which release first vendored each dep.
+It is history and does not move. Two entries used to append a current-state
+aside ("15,119 lines at the current 1.9.10 fold", "6,689 lines at the current
+1.0.6 fold"); both were stale by v6.6.1 (sandhi is at 1.9.16, niyama at 1.0.10,
+and the niyama fold is 7,323 lines, not 6,689). A live number parked inside a
+historical entry has nothing to keep it honest, so they are removed — current
+fold versions live in [ecosystem.md](ecosystem.md)'s gated table.
+
+- v5.7.0 — `sandhi` (HTTP/2 + JSON-RPC + service discovery + TLS policy)
 - v5.8.0 — `vani` (audio distlib; replaced inlined `lib/audio.cyr`)
 - **v5.8.65 stdlib foldin** — sakshi 2.2.3 (tracing), patra 1.9.3 (storage), sigil 3.0.1 (security), yukti 2.2.2 (hardware enumeration), sankoch 2.2.4 (compression), and re-folded vani at 0.9.2
-- **v5.9.0** — niyama 1.0.1 (regex; 5 engines: bre / re2 / pcre / fuzzy / vim; 6,689 lines at the current 1.0.6 fold)
+- **v5.9.0** — niyama 1.0.1 (regex; 5 engines: bre / re2 / pcre / fuzzy / vim)
 - **v6.0.x** — mabda 3.0.1 (GPU integration)
 - **v6.1.25** — bayan 1.0.0 (data-format & big-integer **carve** OUT of stdlib: json / toml / cyml / csv / base64 / bigint / u128 → `lib/bayan.cyr`, public fns renamed `bayan_*` with back-compat aliases; opt-in `include "lib/bayan.cyr"`).
 - **v6.1.26** — ganita 1.0.0 (linear-algebra & advanced-math **carve**: matrix + linalg + the advanced half of math → `lib/ganita.cyr`, renamed `ganita_*` with aliases. Closes Phase E — the stdlib data/math carve).
