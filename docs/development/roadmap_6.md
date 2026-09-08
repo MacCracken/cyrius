@@ -1,6 +1,6 @@
-# Cyrius Development Roadmap — v6.6.x and beyond
+# Cyrius Development Roadmap — v6.7.x and beyond
 
-**Scope — FORWARD ONLY: v6.6.x, v6.7.x/v6.8.x, and the shape of what follows v6.x.**
+**Scope — FORWARD ONLY: v6.7.x/v6.8.x and the shape of what follows v6.x.**
 This file is deliberately *not* a record of shipped work and *not* a spec for the current
 minor. Re-scoped 2026-07-29: it previously carried full per-minor detail for v6.0.x through
 v6.4.x plus a duplicate v6.5.x specification, which made it 1,592 lines of mostly-history and
@@ -10,7 +10,7 @@ gave the v6.5.x plan two homes that had already drifted apart.
 
 | You want | Go to |
 |---|---|
-| The **current active minor** (v6.5.x) in slot-by-slot detail | [roadmap.md](roadmap.md) — the single authority. Do **not** re-add a v6.5.x spec here. |
+| The **current active minor** (v6.6.x) in slot-by-slot detail | [roadmap.md](roadmap.md) — the single authority. Do **not** re-add a v6.6.x spec here. |
 | What a **closed** minor shipped | [`CHANGELOG.md`](../../CHANGELOG.md) per-patch (source of truth) · [completed-phases.md](completed-phases.md) for the arc retrospective |
 | **Unpinned / speculative / post-v6.x** items | [roadmap-future.md](roadmap-future.md) |
 | Durable process rules | [cycle-discipline.md](cycle-discipline.md) |
@@ -61,12 +61,12 @@ late v5.x cycles when a minor's substantive new-code surface
 warrants it (notably v6.2.x platform expansion + v6.4.x ABI+Perf
 arcs).
 
-Reference points, **updated at the v6.4.x close, corrected 2026-08-07** — this line used to
-call v5.11.x's 70 slots "longest in history", which two v6.x minors have since passed. By
-closing patch number: **v6.0.x ran to .91** and **v6.4.x to .86** (this line said `.82` until
-2026-08-07 while the table below already said `.86` — the same one-copy-drifts-from-the-other
-failure the table's own header warns about), then v5.11.x (.69), v6.2.x (.52), v5.7.x,
-v6.3.x (.45), v6.1.x (.41). Every v6.x minor except v6.1.x has
+Reference points, **updated at the v6.4.x close, corrected 2026-08-07, v6.5.x added 2026-09-08**
+— this line used to call v5.11.x's 70 slots "longest in history", which two v6.x minors have
+since passed. By closing patch number: **v6.0.x ran to .91** and **v6.4.x to .86** (this line
+said `.82` until 2026-08-07 while the table below already said `.86` — the same
+one-copy-drifts-from-the-other failure the table's own header warns about), then
+**v6.5.x (.73)**, v5.11.x (.69), v6.2.x (.52), v5.7.x, v6.3.x (.45), v6.1.x (.41). Every v6.x minor except v6.1.x has
 exceeded the "30-40 range" target — the working rule (user 2026-06-10) is *"no worries
 about patch size, just hardening and adding features"*, and large minors are the norm,
 so read the budget as a planning aid, not a cap.
@@ -74,7 +74,7 @@ so read the budget as a planning aid, not a cap.
 ---
 ---
 
-## Closed minors — v6.0.x through v6.4.x
+## Closed minors — v6.0.x through v6.5.x
 
 Per-minor narrative used to live here in full. It does not any more: it duplicated
 `CHANGELOG.md` (the source of truth) and `completed-phases.md` (the retrospective), and being
@@ -88,196 +88,36 @@ minor actually closed at **v6.4.86**, which is exactly the failure a second copy
 | v6.2.x | Platform expansion (bare-metal + dependency model) | **v6.2.52** |
 | v6.3.x | Language refinements | **v6.3.45** |
 | v6.4.x | Staging minor → long reactive minor | **v6.4.86** (closeout cut at .85; .86 was the post-closeout sandhi fold) |
-| v6.5.x | **ACTIVE** — see [roadmap.md](roadmap.md) | — (head **v6.5.19**, 2026-08-11) |
+| v6.5.x | Perf / quality: IR substrate, regalloc, SIMD register residency, `: stack` enums | **v6.5.73** (there is no `.74` — that number was cut in error and re-cut as v6.6.0) |
+| v6.6.x | **ACTIVE** — value-form `Result` + language ergonomics; see [roadmap.md](roadmap.md) | — (head **v6.6.1**, 2026-09-08) |
 
 Every close number above was verified against `CHANGELOG.md` on 2026-07-29 (the per-minor max
-`## [6.Y.N]` heading), not carried over from the previous text, and re-verified 2026-08-07.
+`## [6.Y.N]` heading), not carried over from the previous text, re-verified 2026-08-07, and the
+v6.5.x row added 2026-09-08 from the same source.
 
-⛔ **CORRECTED 2026-09-05 — THIS SHIPPED AT v6.5.24 AND THIS ENTRY SAT WRONG FOR THIRTY
-RELEASES.** It read "never built and was quietly archived unfixed". The check is live and its
-gate (`tests/gates/platform/bare_metal_forbidden_module.sh`) passes **6 of 6 axes** today —
-`#host_only` modules are rejected under `CYRIUS_KERNEL` and `kernel;`, host builds and clean
-kernel builds unaffected. ⚠ Note the shape: an item described as unbuilt *because it had been
-archived* — the archive was read as evidence of absence rather than of completion. This is the
-same rot as cx sitting target-less for two majors when it was ready.
-
-*(Original entry, kept for the lesson:)* bare-metal deliverable **#4, the forbidden-module check**.
-`CHANGELOG [6.3.4]` states plainly that it did not ship; `grep -rn forbidden src/ cbt/` finds
-one unrelated comment and `host_only|kernel_ok` finds nothing. Its issue was bulk-renamed into
-`issues/archived/` on 2026-07-10 (commit `79bae42f`, an 8-file rename) with **no resolution
-banner**. It is carried as an open question in [roadmap.md](roadmap.md) — either implement it or
-strike it from the acceptance list, but it must not sit as a shipped-arc acceptance criterion.
+> **Bare-metal deliverable #4 (the forbidden-module check) SHIPPED at v6.5.24.** The full
+> correction block that stood here — an item described as unbuilt *because it had been archived*,
+> wrong for thirty releases — is retired 2026-09-08 now that the acceptance list it warned about
+> is gone with the v6.5.x spec. The lesson is kept in
+> [cycle-discipline.md](cycle-discipline.md): **an archive entry is evidence of completion, not
+> of absence** — verify resolved-status against LIVE code, never against a file's own claim.
 
 ---
 
-## v6.5.x — ACTIVE MINOR — specified in [roadmap.md](roadmap.md)
+## v6.6.x — ACTIVE MINOR — specified in [roadmap.md](roadmap.md)
 
-**This file intentionally holds no v6.5.x specification.** It used to hold a parallel one
-(committed shape, acceptance anchor, slot estimate), and the two copies drifted: the roadmap.md
-table and this file's five committed items had diverged on scope, and the acceptance anchor's
-second clause — *"self_compile stays inside a stated budget"* — existed only here, so the budget
-was never actually stated anywhere.
+**This file intentionally holds no v6.6.x specification.** It held the full ergonomics list
+until 2026-09-08; that list moved to [roadmap.md](roadmap.md) when v6.6.x became the active
+minor, along with the one row in it that was a defect rather than a feature (`cyrius build <src>`
+overwriting the running compiler — now slot `.2`).
 
-All of it now lives in [roadmap.md](roadmap.md): the slot sequence, the reactive windows, the
-carried-over v6.4.x items, the five committed items (substrate walls · cross-BB regalloc **with
-a vector register class, planned in from the start rather than retrofit** · register-resident
-vector-value ops incl. true 256-bit AVX for f64v4 under `simd_has_avx2()` and wrapper inlining ·
-copy-prop + cross-BB DSE · the self-compile growth-tax audit), and the acceptance anchor
-(the svara formant bench closing to single-digit-× of the Rust baseline, plus the self_compile
-budget — carried there as an explicit open question owed to the maintainer).
+⚠ **This is the same move that was made for v6.5.x on 2026-07-29, for the same reason.** A minor
+specified in two files drifts: the v6.5.x copies had diverged on scope, and the acceptance
+anchor's second clause existed *only* here, so the budget it named was never actually stated
+anywhere. One authority per active minor.
 
-**When v6.5.x closes:** add one row to the table above, and do not copy its detail back here.
+**When v6.6.x closes:** add one row to the table above, and do not copy its detail back here.
 
-
-## v6.6.x — Language Ergonomics ("best of the best" imports)
-
-**Theme set 2026-07-07 (user, horizon session).** RISC-V rv64 — previously this
-minor's theme — was **re-homed again to v6.7.x/v6.8.x** (below): hardware is in
-hand, but the user is deliberately holding a 7th platform while *"still heavy
-quality and ergonomic improvements [are] on the horizon."* v6.6.x instead takes
-the modern-language feature imports that fit the assembly-up identity — no GC,
-no hidden control flow you can't disassemble. **The WHOLE list is committed; the
-bring-in is STAGGERED** — bulk lands here, and **1–2 low-risk early risers may
-pull forward into the v6.4.x/v6.5.x absorber bands** if slots open (surfaced at
-slot entry, never folded in silently).
-
-The list (ROI order; design decisions inside each item at arc-open):
-
-1. ~~**`defer` / scope-exit**~~ — **✅ ALREADY SHIPPED (v3.8.0), struck 2026-07-29.** This
-   sat here as pending v6.6.x work for a language feature that has existed since v3.8.0
-   (token 106, `src/common/util.cyr:948`; the guide documents it running at function exit).
-   Verified by running the compiler: a `defer { … }` block executes after the body
-   (`A` then `D`). Do not re-plan it.
-2. **`const fn` — the const-eval ladder, option 1** (Zig-comptime-lite / Rust) —
-   proposal staged:
-   [`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md).
-   Reuses the existing `ir_const_fold` fixpoint; retires generator-program
-   ceremony for computed constants. The narrow `#phf` builtin (proposal option 3)
-   is the fallback if scope balloons. **Early-riser candidate.**
-3. ~~**Per-block scoping + shadowing**~~ — **✅ ALREADY SHIPPED, struck 2026-07-29.**
-   Verified by running the compiler: a block-local is **not** visible outside its block
-   (`if (1) { var inner = 5; } return inner;` → `error: undefined variable`), and nested
-   shadowing works (`var x = 1; if (1) { var x = 5; return x; }` → exits **5**, the inner
-   binding). What remains — and is *correct*, not a footgun — is that a **same-scope**
-   redeclaration is a hard error (`duplicate variable`); that is the documented rule in
-   CLAUDE.md, not an unshipped item. So the "no-redecl footgun class" this row promised to
-   retire is half shipped and half intentional.
-4. **Opt-in bounds-checked memory mode** (`CYRIUS_BOUNDS` / `#bounds`) — designed in the
-   v6.3.x plan (that section was removed from this file in the 2026-07-29 re-scope; the design
-   is in `CHANGELOG.md`'s v6.3.x band and the archived plan), never shipped — verified live:
-   `CYRIUS_BOUNDS` / `#bounds` / `_bounds_check` all find **0** hits in `src/`. The sanitizer
-   story that makes footguns findable at their source. OFF by default
-   (assembly-up: raw stores stay raw in release builds).
-5. **Trait-bounded generics** — the post-monomorphization ceiling. **DEMAND-GATED
-   tail**: pulls in only if consumer pressure materializes by arc-open; fix the
-   **multi-type-param struct-type-arg residual** first (single-tparam struct type-args
-   shipped v6.3.38 B1/B2 + v6.3.39 B3; the residual is only the mixed multi-tparam combo)
-   ([`issues/archived/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md`](issues/archived/2026-07-02-generic-fns-struct-type-args-monomorph-abi.md)).
-
-7. **`cyrius build <src>` can overwrite the running compiler, and did.** Found the hard way at
-   the v6.6.0 cut: in this repo `cyrius.cyml` declares `output = build/cycc` (correct — that is
-   how the compiler is built), and the documented argument ladder says one positional argument
-   means "that src + manifest output". So `cyrius build tests/tcyr/.../foo.tcyr` compiled the
-   TEST and wrote it over `build/cycc`, replacing the compiler with a 842 KB test binary. It was
-   only recoverable because a verified stage binary was still in /tmp; from a clean tree it costs
-   a bootstrap.
-
-   The ladder itself is right and documented, so the fix is narrower than changing it: **refuse
-   to write the output when the resolved path is the compiler cbt is currently running, unless
-   the source is the manifest's declared `src`.** That combination — an explicit foreign src plus
-   an inherited output — is the only destructive one, and nothing legitimate needs it.
-
-   ⚖️ NOT packed into v6.6.0 deliberately, and the reason is named: it is a `cbt/` CLI change in a
-   different subsystem that needs its own gate, and landing it after the release gate had already
-   gone green would have required a full re-run of a multi-host cycle. Recorded here rather than
-   as an issue so the open queue stays at zero.
-
-6. ✅ **SHIPPED v6.6.0 — `Result` / `Option` / `Either` ARE the value form.** Construction
-   allocates **zero bytes**; the filed `100x sock_send` → 1600 B measurement now reads 0. Landed
-   with the whole ecosystem: 8 sibling stdlibs migrated at source, pin-bumped, released as patch
-   versions and re-folded (sigil 3.12.16 · sandhi 1.9.16 · yukti 2.3.9 · mabda 4.1.1 · bayan
-   1.5.5 · vani 1.2.3 · yantra 1.0.4 · sankoch 2.7.11 — the list was DERIVED; the survey below
-   named six and missed yantra and sankoch).
-
-   **Of shape A's three "still silent" contexts, two are closed and the third is now
-   unexpressible:** `store64` of a pair and assignment of one are hard errors; a single-value
-   `return` of a local holding a pair cannot occur, because the binding that would create such a
-   local is itself refused.
-
-   ⚖️ **A pair in an ARGUMENT slot is deliberately NOT refused, and that is a design property
-   rather than an omission.** Argument 1 receives rax, which IS the tag — which is precisely what
-   lets `is_ok` / `is_err_result` / `is_none` / `is_some` / `is_left` / `is_right` keep their
-   one-argument signatures across the flip, and lets `is_ok(f())` read the tag straight out of
-   the call. Refusing the shape would break that idiom at every one of its sites (yukti's suite
-   alone uses dozens) and buy a diagnostic only for the case where the receiver wanted the
-   payload — which the compiler cannot distinguish without parameter types it does not have.
-   Recorded here as a decision taken, not a subset shipped quietly.
-
-   **Three defects the flip exposed, all fixed in the same release:** a SECOND parallel `?`
-   lowering in `PARSE_STMT` (so `f()?;` as a bare statement compiled clean and SIGSEGV'd);
-   forward references taking the boxed path (flag 256 is set when the CALLEE's body is parsed, so
-   a caller earlier in the file saw it unset — the layout of every flattened dist bundle); and
-   top-level `var t, v = f();` having no legal spelling at all.
-
-   *Original entry, kept for the record:*
-
-   **`Result` / `Option` / `Either` flip to the value form — PINNED TO v6.6.0 (user,
-   2026-09-06).** The one breaking change in this minor, and it goes at the front of it
-   because everything else in the list is additive and this is not. `enum Name: stack`
-   (v6.5.55) already gives a payload variant a zero-allocation `(tag, payload)` register pair;
-   v6.5.67 added the compiler-side detector — a lossy single-variable bind is refused, `?` on
-   a stack enum is a named diagnostic instead of a clean-compiling SIGSEGV, and nullary
-   variants are legal so `enum Option: stack { None(); Some(v); }` is expressible at all. What
-   is left is flipping the three stdlib declarations and the ecosystem that reads them.
-
-   **This changes a PUBLISHED layout contract, not an internal detail.** The guide spells
-   `Ok(42)` as a 16-byte heap box with tag at `+0` and payload at `+8`, and consumers read
-   those offsets by hand. Derived at v6.5.67 — constructor calls in `.cyr`/`.tcyr`/`.fcyr`/`.bcyr`
-   with comments and string literals stripped, siblings counted on their own source with the
-   vendored `lib/` excluded — **340** sites in this repo (`lib/` 275 · `tests/` 57 · `benches/` 8 ·
-   `src/` **0**) and **2,215** across **37** sibling repos, **6** hand-rolled `load64(r + 8)` reads
-   in `lib/bayan.cyr`,
-   and **119** vendoring repos of which **111** are divergent. `src/` uses none of it, so the
-   byte-identical self-host is *blind to this migration* — do not read a green fixpoint as
-   coverage.
-
-   **Shape (A+B+C land together; do not split):**
-   - **A — compiler.** Finish the detector: a pair in an argument slot, a `store64` of one,
-     and a single-value `return` of a local holding one are still silent today. Then teach `?`
-     the pair form (`t, v = f(); if (t != Ok) { return (t, v); }`) — note the Err path must
-     re-emit **both** halves, which the original one-line framing omitted.
-   - **B — stdlib.** Flip `lib/result.cyr:23`, `lib/tagged.cyr:60`, `lib/tagged.cyr:114`.
-     Tag-only predicates (`is_ok`, `is_err_result`, `is_tag`, `is_none`, `is_some`, `is_left`,
-     `is_right`, `tag`) keep arity 1 — argument 1 receives rax, which for a pair *is* the tag.
-     Anything needing the payload grows a parameter, and **`payload()` has no 1-arg
-     replacement at all** — rdx never reaches a parameter, so it is deleted and its ~470 call
-     sites become destructures. `ok_via`/`err_via` (the v6.5.41 caller-allocator hatch) lose
-     their reason to exist.
-   - **C — fix-at-source + re-vendor**, per the ecosystem rule: patch sigil / yukti / vani
-     upstream, version-bump, regen distlib, re-vendor. Named cross-repo coordination.
-
-   **Acceptance — the second criterion is deliberately reworded.** "Construction allocates 0
-   bytes" *and* "every existing consumer still compiles" are mutually exclusive: zero bytes
-   requires the value form, which requires the re-aritied helpers, which is a compile break at
-   ~1,000 call sites. The property that actually matters is: **every consumer either compiles
-   unchanged or fails to compile with a named error at the offending site — none miscompiles.**
-   Arity is checked in both directions, so the helper half breaks loudly.
-
-   **Gate.** An allocator-growth assertion is *provably vacuous* here — a consumer reading the
-   old offsets allocates nothing and is still wrong. The gate is payload-identity across the
-   five shapes (immediate destructure · single-value bind then use · single-value return
-   forward · argument slot · `store64`-and-reload), each asserting the correct payload **or** a
-   compile-time rejection, mutation-proven by removing the phase-A guard. Run it on all four
-   crossos hosts **plus cx** — cx is the one target where reading the old `+8` offset does not
-   fault, so a partial migration hides there.
-
-   Filing: [`issues/2026-07-28-sock-send-result-allocates-per-call.md`](issues/archived/2026-07-28-sock-send-result-allocates-per-call.md).
-
-**Explicitly NOT imported** (decided 2026-07-07): borrow-checker-style lifetimes
-(wrong fit for the trust model + single-pass design), a general const-eval VM
-(proposal option 4), exceptions of any kind.
-
----
 
 ## v6.7.x or v6.8.x — Platform: RISC-V rv64
 
@@ -339,11 +179,11 @@ landed first in v6.2.x).
 ## What comes after v6.x
 
 **v6.x is not capped at 6 minors.** Per user direction 2026-06-11, the cycle
-**grows further before any major bump** — v6.4.x (CLOSED at **.86**) → **v6.5.x
-(ACTIVE at .19: the `public`/`private` opener SHIPPED at v6.5.0; BOTH reactive
-windows are now fully consumed — 16 of the 20 releases shipped were reactive — and
-the performance-quality arcs are still ahead, re-pinned from `.20`)** →
-**v6.6.x (language ergonomics)** → **v6.7.x/v6.8.x
+**grows further before any major bump** — v6.4.x (CLOSED at **.86**) → v6.5.x
+(CLOSED at **.73**) → **v6.6.x (ACTIVE at .1: the value-form `Result`/`Option`/`Either`
+flip SHIPPED at v6.6.0 with the 8-repo ecosystem migration; `.1` closed the entire open
+issue queue and folded five stdlibs; `.2`–`.6` are a reserved repair window, then
+proposals, then the ergonomics list — see [roadmap.md](roadmap.md))** → **v6.7.x/v6.8.x
 (RISC-V rv64, re-homed there 2026-07-07)** are the current pins, and more v6.x
 minors can still follow (consumer pressure, language refinements, platform work)
 before v7.0.0. v7 is *further out* than the original

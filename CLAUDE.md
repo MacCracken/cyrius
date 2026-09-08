@@ -324,8 +324,8 @@ docs/                Architecture, roadmap, benchmarks, language guide
 ## Key References
 
 - `docs/guides/cyrius-guide.md` — Complete language reference
-- `docs/development/roadmap.md` — **Active minor** (current v6.x.y), slot-by-slot
-- `docs/development/roadmap_6.md` — **FORWARD-ONLY** cycle reference: the minors *after* the active one (v6.6.x, v6.7.x/v6.8.x) and the shape of what follows v6.x. Re-scoped 2026-07-29 — it no longer carries per-minor history or a duplicate spec for the active minor (that drift is why it was cut); closed-minor detail lives in `CHANGELOG.md` + `completed-phases.md`
+- `docs/development/roadmap.md` — **Active minor** (currently **v6.6.x**), slot-by-slot: the repair window (`.2`–`.6`), then the proposal queue, then the committed ergonomics list, plus the unscheduled 6.x backlog. Rewritten 2026-09-08 — it had carried 1,043 lines still titled *v6.5.x* with ~480 of them a slot list reading ✅ SHIPPED throughout. **Shipped slots do not belong here**; they go to `CHANGELOG.md` + `completed-phases.md`.
+- `docs/development/roadmap_6.md` — **FORWARD-ONLY** cycle reference: the minors *after* the active one (**v6.7.x/v6.8.x** RISC-V rv64) and the shape of what follows v6.x. **One authority per active minor** — when a minor becomes active its spec MOVES to `roadmap.md` and this file keeps only a pointer (done for v6.5.x on 2026-07-29 and for v6.6.x on 2026-09-08, both because two copies had already drifted). Re-scoped 2026-07-29 — it no longer carries per-minor history or a duplicate spec for the active minor (that drift is why it was cut); closed-minor detail lives in `CHANGELOG.md` + `completed-phases.md`
 - `docs/development/roadmap-future.md` — Long-term watching list (unpinned items, speculative work, v7.0+ aspirations)
 - `docs/development/cycle-discipline.md` — Evergreen operating principles (slot acceptance, bottom-to-top priority, premise-check, cross-host smoke, cycle-close shape) **+ the runnable Closeout checklist + per-closeout ledger** (the doc you open/run/record against at every minor/major bump)
 - `docs/development/state.md` — Volatile cycle / pin / sweep state (refreshed every release)
