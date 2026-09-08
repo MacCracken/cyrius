@@ -1,0 +1,147 @@
+# f64_exp / f64_exp2 return NaN for an infinite argument.
+#
+# Build and run from the cyrius repo root:
+#   cyrius build docs/development/issues/repros/2026-09-08-f64-exp-nan-for-infinite-argument.cyr /tmp/expinf
+#   /tmp/expinf; echo "exit=$?"      # -> 4 while the defect is present, 0 when fixed
+#
+# Exits with the number of wrong answers, so it doubles as a regression witness:
+# 4 today (exp and exp2, each at +inf and -inf), 0 once the guards land.
+#
+# C's answers, which are also IEEE-754's:
+#     exp(+inf)  = +inf      exp(-inf)  = +0
+#     exp2(+inf) = +inf      exp2(-inf) = +0
+#
+# The other f64 builtins are INCLUDED DELIBERATELY and all pass — the point of
+# the filing is that the defect is confined to the two functions whose range
+# reduction subtracts a multiple of the argument from itself.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/math.cyr"
+
+# 0 = finite, 1 = +inf, 2 = -inf, 3 = NaN, 4 = zero (either sign).
+fn classify(b): i64 {
+    if (((b >> 52) & 0x7FF) == 0x7FF) {
+        if ((b & 0x000FFFFFFFFFFFFF) != 0) { return 3; }
+        if ((b >> 63) & 1 == 1) { return 2; }
+        return 1;
+    }
+    if ((b & 0x7FFFFFFFFFFFFFFF) == 0) { return 4; }
+    return 0;
+}
+
+# Print a classification code as a word.
+fn show(c): i64 {
+    if (c == 1) { syscall(1, 1, "+inf  ", 6); return 0; }
+    if (c == 2) { syscall(1, 1, "-inf  ", 6); return 0; }
+    if (c == 3) { syscall(1, 1, "NaN   ", 6); return 0; }
+    if (c == 4) { syscall(1, 1, "0.0   ", 6); return 0; }
+    syscall(1, 1, "finite", 6);
+    return 0;
+}
+
+# One row: name, what we got, what C gives. Returns 1 when they disagree.
+# ⚠ `name` must be EXACTLY 18 bytes — syscall writes the length it is given, not
+# the length of the string, so a short name bleeds the next constant into the
+# output and a long one is truncated.
+fn check(name, got, want): i64 {
+    var g = classify(got);
+    syscall(1, 1, "  ", 2);
+    syscall(1, 1, name, 18);
+    syscall(1, 1, "  got ", 6);
+    show(g);
+    syscall(1, 1, "   want ", 8);
+    show(want);
+    if (g != want) {
+        println("   <-- WRONG");
+        return 1;
+    }
+    println("");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var P = f64_div(F64_ONE, f64_from(0));
+    var N = f64_neg(P);
+    var bad = 0;
+
+    println("=== the defect: exp and exp2 ===");
+    bad = bad + check("f64_exp(+inf)     ", f64_exp(P), 1);
+    bad = bad + check("f64_exp(-inf)     ", f64_exp(N), 4);
+    bad = bad + check("f64_exp2(+inf)    ", f64_exp2(P), 1);
+    bad = bad + check("f64_exp2(-inf)    ", f64_exp2(N), 4);
+
+    println("");
+    println("=== the polyfill has the SAME defect (so it is not an x87 artefact) ===");
+    # Not counted: it is the same defect shown a second way, and the exit code
+    # should be the number of wrong answers in the PUBLIC surface.
+    check("_f64_exp_polyfl(+i", _f64_exp_polyfill(P), 1);
+
+    println("");
+    println("=== every other f64 builtin already agrees with C ===");
+    check("f64_ln(+inf)      ", f64_ln(P), 1);
+    check("f64_ln(-inf)      ", f64_ln(N), 3);
+    check("f64_log2(+inf)    ", f64_log2(P), 1);
+    check("f64_sqrt(+inf)    ", f64_sqrt(P), 1);
+    check("f64_sqrt(-inf)    ", f64_sqrt(N), 3);
+    check("f64_sin(+inf)     ", f64_sin(P), 3);
+    check("f64_cos(+inf)     ", f64_cos(P), 3);
+    check("f64_floor(+inf)   ", f64_floor(P), 1);
+    check("f64_round(-inf)   ", f64_round(N), 2);
+    check("f64_abs(-inf)     ", f64_abs(N), 1);
+    # atan(+/-inf) = +/-pi/2, and it is BIT-EXACT here. Included so a reader does
+    # not have to wonder whether "finite" meant "correct".
+    syscall(1, 1, "  f64_atan(+inf) is bit-exactly pi/2:  ", 39);
+    fmt_int(f64_atan(P) == F64_PI_2);
+    println("");
+    syscall(1, 1, "  f64_atan(-inf) is bit-exactly -pi/2: ", 39);
+    fmt_int(f64_atan(N) == f64_neg(F64_PI_2));
+    println("");
+
+    println("");
+    println("=== the mechanism: range reduction subtracts inf from inf ===");
+    # _f64_exp_polyfill: n_f = round(x * log2e); r = x - n_f*ln2.
+    var LOG2E = 0x3FF71547652B82FE;
+    var LN2 = 0x3FE62E42FEFA39EF;
+    var n_f = f64_round(f64_mul(P, LOG2E));
+    syscall(1, 1, "  round(+inf * log2e)      = ", 29);
+    show(classify(n_f));
+    println("");
+    syscall(1, 1, "  +inf - round(...) * ln2  = ", 29);
+    show(classify(f64_sub(P, f64_mul(n_f, LN2))));
+    println("   <-- inf - inf, and every later term inherits it");
+    # And the second half: the 2^n bit-pack reads an infinite exponent.
+    syscall(1, 1, "  f64_to(+inf) for the 2^n pack = ", 34);
+    fmt_int(f64_to(P));
+    println("   (i64 saturation, not an exponent)");
+
+    println("");
+    println("=== the ordinary range is untouched ===");
+    syscall(1, 1, "  f64_exp(1)  = ", 16); fmt_float(f64_exp(F64_ONE), 10);
+    println("   (want 2.7182818285)");
+    syscall(1, 1, "  f64_exp2(10) = ", 17); fmt_float(f64_exp2(f64_from(10)), 1);
+    println("   (want 1024.0)");
+    # The finite extremes are all correct, and worth showing so the filing is
+    # not mistaken for "exp is broken at the edges". -745 is still SUBNORMAL;
+    # zero arrives around -800.
+    syscall(1, 1, "  f64_exp(-800) underflows to 0: ", 33);
+    fmt_int(classify(f64_exp(f64_from(0 - 800))) == 4);
+    println("");
+    syscall(1, 1, "  f64_exp(710) overflows to +inf: ", 34);
+    fmt_int(classify(f64_exp(f64_from(710))) == 1);
+    println("");
+
+    println("");
+    syscall(1, 1, "wrong answers: ", 15);
+    fmt_int(bad);
+    println("   (4 while the defect is present, 0 when fixed)");
+    return bad;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);
