@@ -190,6 +190,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   looks libc-ish and has no C counterpart — is NOT hidden, so the guard cannot degrade into a
   `mem*`/`str*` prefix match.
 
+- ⛔ **A SIMD gate was VACUOUS: 15 assertions of `0 == 0`, passing whether or not the feature
+  worked.** `f32_from` takes an **f64 bit pattern** (`cvtsd2ss`), not an integer — so
+  `f32_from(1)` reads integer 1 as f64 bits, a denormal ~5e-324, and narrows to f32 **zero**.
+  `tests/tcyr/simd/simd_f32v8.tcyr` used that spelling for every lane AND for every expected
+  value, so both sides of each assertion were 0 and the errors cancelled. Measured on a correct
+  compiler: `f32v8_lane0_ptr(&a)` = 0 and `f32_from(1)` = 0.
+
+  ⭐ **The shape worth remembering: the expected value was computed the same wrong way as the
+  actual value.** An assertion whose two sides share a defect is not a test. All 25 literals are
+  now real f64 literals (`1.0`, `11.0`, …) — what every float test under `tests/tcyr/math/`
+  already used. The suite still passes 15/15, so f32v8 SIMD was in fact correct; it simply had no
+  evidence. Mutation-proven non-vacuous now: a wrong expected value reports
+  `got 1093664768, expected 1120272384` where it previously reported `got 0, expected 0`.
+
+  **The guide made the identical mistake** in every SIMD example, so the documented way to build
+  an `f32v4` produced an all-zero vector. Corrected, and pinned by axis 2 of the new
+  `guide_examples_compile.sh` — a text check, because this class **compiles cleanly**.
+
+- ⛔ **The language guide's own worked examples did not compile — including the Result one, two
+  lines under the table that announces the change.** Five errors: `var opt = Some(42);` (a
+  single-var bind of a pair), `unwrap(opt)` at 1 argument, `unwrap_or(opt, 0)` at 2,
+  `var r = Ok(99);`, `result_unwrap(r)` at 1. A **second** instance sat in the
+  `#derive(Serialize)` enum section. The guide is what a reader copies, and nothing in the tree
+  could see it. Both corrected, a boxed-primitive example added, and the `is_*` row — documented
+  as **"unchanged"** while its bodies had been rewritten — now says *arity* unchanged and carries
+  the measured wrong answers. Pinned by `tests/gates/toolchain/guide_examples_compile.sh`.
+  ⚖️ **Scope stated in the gate**: it compiles only the 18 blocks that declare themselves complete
+  (of 105), and reds only on a stale-API error — wrong arity, deleted symbol, or a single-var bind
+  of a pair. Demanding every fragment compile would produce a wall of false failures nobody keeps
+  green. Its anti-vacuous floor caught its own first extractor bug: fence state was tracked only
+  for cyrius blocks, so a ```sh block's closing fence read as an opening one and 2 of 18 were
+  extracted — the floor refused to let that pass as a clean run.
+
 - ⛔ **`scripts/funcgate-stage.sh` opened with an unguarded `rm -rf "$H"`.** Its entire contract
   is "stage a THROWAWAY CYRIUS_HOME"; pointed at `$HOME/.cyrius` it destroyed the whole installed
   store. **104 of 126 manifests under `~/Repos` then pinned a version with no snapshot**, and
@@ -267,8 +300,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   testing something other than grow-OOM. The loop now runs 1..30 — same 30 iterations, same
   intent — plus a new row asserting the failure was -1 and **not** -2, so it cannot pass for the
   wrong reason. This is the "fix the gate, never drop the feature" case.
-- Shell gates **144 → 148**; `.tcyr` corpus **301 → 306**, of which `crossos/` **68 → 70**;
-  `lib/*.cyr` **102 → 103** (`boxed.cyr`); `docs/api-surface.snapshot` **5,152 → 5,156**
+- Shell gates **144 → 150**; `.tcyr` corpus **301 → 306**, of which `crossos/` **68 → 70**;
+  `lib/*.cyr` **102 → 103** (`boxed.cyr`); `docs/api-surface.snapshot` **5,152 → 5,156**; new `docs/retired-symbols.allow` — the accounting ledger the census gate reads
   (5 `boxed::*` added, `tagged::tag/1` removed).
   ⚠ **Derived from `git ls-files` + `find`, and an earlier draft of this line got it wrong** —
   it claimed a 302 baseline and said `handoff.md`'s 301 was stale. 301 was correct. Recorded

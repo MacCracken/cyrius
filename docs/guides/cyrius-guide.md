@@ -410,8 +410,9 @@ enum BlendMode { MULTIPLY = 0; SCREEN = 1; OVERLAY = 2; }
 var sb = str_builder_new();
 BlendMode_to_json(SCREEN, sb);          # sb now holds:  "SCREEN"
 
-var r = BlendMode_from_json_str("\"OVERLAY\"");
-if (is_ok(r) == 1) { var v = result_unwrap(r); }   # v == OVERLAY
+# ⚠ Bind BOTH halves — v6.6.0 made Result a register pair, and a single-var bind is a hard error.
+var r_t, r_v = BlendMode_from_json_str("\"OVERLAY\"");
+if (is_ok(r_t) == 1) { var v = result_unwrap(r_t, r_v); }   # v == OVERLAY
 ```
 
 - **`E_to_json(v, sb)`** writes the quoted variant **name**. An unrecognised value writes
@@ -537,8 +538,11 @@ name; the parser's overload dispatch routes `&IDENT` call sites to the
 include "lib/simd.cyr"
 
 # Value form — pass the vectors themselves (all targets)
-var a: f32v4 = f32v4_make(f32_from(1), f32_from(2), f32_from(3), f32_from(4));
-var b: f32v4 = f32v4_splat(f32_from(10));
+# ⚠ `f32_from` takes an f64 BIT PATTERN, not an integer — `f32_from(1)` reads integer 1 as f64
+# bits, a denormal ~5e-324, and narrows to f32 ZERO. Use real float literals. This example said
+# `f32_from(1)` until v6.6.2 and therefore built an all-zero vector.
+var a: f32v4 = f32v4_make(f32_from(1.0), f32_from(2.0), f32_from(3.0), f32_from(4.0));
+var b: f32v4 = f32v4_splat(f32_from(10.0));
 var r: f32v4 = f32v4_add(a, b);          # {11, 12, 13, 14}
 var l0 = f32v4_lane0(r);                 # → f32 bit pattern of lane 0
 
@@ -546,8 +550,9 @@ var l0 = f32v4_lane0(r);                 # → f32 bit pattern of lane 0
 var r2: f32v4 = f32v4_add(&a, &b);
 
 # 256-bit wrappers self-select AVX2 vs 2×SSE at runtime
-var x: f32v8 = f32v8_make(/* 8 lanes */);
-var y: f32v8 = f32v8_splat(f32_from(2));
+var x: f32v8 = f32v8_make(f32_from(1.0), f32_from(2.0), f32_from(3.0), f32_from(4.0),
+                          f32_from(5.0), f32_from(6.0), f32_from(7.0), f32_from(8.0));
+var y: f32v8 = f32v8_splat(f32_from(2.0));
 var z: f32v8 = f32v8_add_ptr(&x, &y);    # vaddps ymm on AVX2, else 2×SSE addps
 
 # Integer vectors
@@ -1089,32 +1094,77 @@ Helper API:
 ⛔ **v6.6.0 changed the ARITY of these helpers**, because rdx does not reach a parameter — no
 function can receive a Result in one argument and read its payload:
 
-| helper | v6.6.0 | note |
+| helper | v6.6.x | note |
 |---|---|---|
-| `is_ok` / `is_err_result` / `is_none` / `is_some` / `is_left` / `is_right` | `(t)` | unchanged — argument 1 receives the tag |
-| `is_tag` | `(t, expected)` | unchanged |
-| `tag` | `(t)` | now the identity; the tag is already the first half |
+| `is_ok` / `is_err_result` / `is_none` / `is_some` / `is_left` / `is_right` | `(t)` | arity unchanged — argument 1 receives the tag. ⚠ **NOT "unchanged"** — see the warning below |
+| `is_tag` | `(t, expected)` | arity unchanged; body rewritten. Same warning |
+| `tag` | **DELETED (v6.6.2)** | v6.6.0 kept the name and made it the identity; on a BOX that silently returned the pointer. Retired rather than redefined — boxed reads use `boxed_tag` |
 | `result_unwrap` / `err_code_of` / `result_print` / `unwrap` | `(t, v)` | **was 1 argument** |
 | `result_unwrap_or` / `unwrap_or` | `(t, v, fallback)` | **was 2 arguments** |
 | `ok_via` / `err_via` | `(a, v)` | unchanged signature; allocates nothing now, and the allocator argument is ignored |
-| `payload` | **DELETED** | no 1-argument replacement — `payload(r)` becomes `r` |
-| `tagged_new` | **DELETED** | built a box only `tag()`/`payload()` could read |
+| `payload` | **DELETED** | stays deleted deliberately — see below |
+| `tagged_new` | **RESTORED (v6.6.2)** | in `lib/boxed.cyr`; it builds the same 16-byte box it always did, so every call site is correct as written |
+
+⛔ **THE `is_*` ROW SAYS "ARITY UNCHANGED", NOT "SAFE", AND THE DIFFERENCE COSTS REAL BUGS.**
+This table read *"unchanged"* for that whole row until v6.6.2, and it was wrong. Their bodies were
+rewritten from `load64(box)` to a direct register compare. On a value-form tag that is correct; on
+a **raw box** every one of them answers wrongly, compiling clean and exiting 0:
 
 ```
-include "lib/tagged.cyr"          # for Option / Either + primitives
+tag(box)           = 140399372926976   # the POINTER, not the tag (fn now deleted)
+is_tag(box, MSome) = 0                 # the value IS MSome
+is_some(box) = 0   is_none(box) = 0    # simultaneously not-Some and not-None
+is_ok(box)   = 0                       # `if (is_ok(r))` takes the error branch, always
+```
+
+**An arity change is loud** — `'f' expects 2 arguments, got 1` is a hard error. A same-arity
+redefinition is **silent**, and it is the one class no consumer build can catch. If you hold a box
+built by `tagged_new`, read it with `boxed_tag` / `boxed_payload` / `boxed_is` and nothing else.
+
+⛔ **`payload()` is not coming back, and that is a choice rather than an impossibility.** For the
+value form it is forced: rdx never reaches a parameter. The v6.6.0 note generalised that to "no
+1-argument replacement", which is **false for a box** — `load64(p + 8)` works and is exactly what
+`boxed_payload` is. It stays deleted because consumers use that one spelling on *both* classes, so
+restoring it would make stale `Result` reads compile and dereference a tag (0 or 1) as a pointer:
+a named compile error traded for a SIGSEGV.
+
+⚠ **The example below used to be the pre-flip one** — five compile errors, two lines under the
+table that announces the change. It is now the working form, and
+`tests/gates/toolchain/guide_examples_compile.sh` compiles every fenced block in this file so it
+cannot rot back.
+
+```
+include "lib/tagged.cyr"          # Option / Either (+ lib/boxed.cyr transitively)
 # or:
-include "lib/result.cyr"          # for Result alone
+include "lib/result.cyr"          # Result alone
 
-var opt = Some(42);
-if (is_some(opt) == 1) {
-    var v = unwrap(opt);          # = 42
+# ⭐ BIND BOTH HALVES. A single-var bind of a pair is a hard error naming the fix.
+var opt_t, opt_v = Some(42);
+if (is_some(opt_t) == 1) {
+    var v = unwrap(opt_t, opt_v);            # = 42
 }
-var v = unwrap_or(opt, 0);        # 42 if Some, fallback if None
+var v2 = unwrap_or(opt_t, opt_v, 0);         # 42 if Some, the fallback if None
 
-var r = Ok(99);
-if (is_ok(r) == 1) {
-    var v = result_unwrap(r);     # = 99
+var r_t, r_v = Ok(99);
+if (is_ok(r_t) == 1) {
+    var got = result_unwrap(r_t, r_v);       # = 99
 }
+```
+
+For a hand-rolled tagged union with more than two variants — the shape `Result` cannot model, and
+what `tagged_new` is actually for — use the boxed primitives, which survive a struct field, a vec
+element and a one-argument boundary:
+
+```
+include "lib/boxed.cyr"
+
+enum Kind { KText(); KBin(); KImage(); }
+
+fn block_kind(b) { return boxed_tag(b); }    # a box fits in ONE argument; a pair does not
+
+var b = tagged_new(KImage, 4242);            # or boxed_new — same constructor
+var k = block_kind(b);                       # KImage
+var p = boxed_payload(b);                    # 4242
 ```
 
 `Option`, `Result`, `Either` are compiler-generated since v5.8.23;

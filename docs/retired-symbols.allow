@@ -1,0 +1,23 @@
+# Retired stdlib symbols — the accounting ledger.
+#
+# ⛔ WHY THIS FILE EXISTS. v6.6.0 deleted `tagged_new` and `payload` from lib/tagged.cyr,
+# justified as "nothing in the ecosystem called it (verified across all 12 sibling stdlibs)".
+# The survey was real and correct for those twelve. The CLAIM was ecosystem-wide, the class that
+# actually used the primitive — DOMAIN libraries — was never in scope, and the membership list of
+# "the 12" was written down NOWHERE. agnostik calls `tagged_new` 19 times; agnova 9.
+#
+# An ecosystem survey cannot be PROVED from inside this repo. It CAN be FORCED, and that is what
+# `tests/gates/toolchain/removed_symbol_census.sh` does: when a public stdlib symbol disappears
+# from `docs/api-surface.snapshot`, the gate censuses every repo under ~/Repos and goes RED unless
+# the symbol has a row here naming who still calls it and where the migration is tracked.
+#
+# ⚠ A ROW IS AN ACCOUNTING RECORD, NOT A MUTE BUTTON. Adding one means you have looked at the
+# callers and written down the plan. Adding one to silence the gate without doing that is the
+# same act as the v6.6.0 survey, one layer down.
+#
+# Format:  <symbol> | <migration doc> | <one-line note>
+# Lines beginning with # are comments. Blank lines ignored.
+
+payload | docs/development/ecosystem-migration-6.6.2.md | DELETED v6.6.0, stays deleted. agnostik + agnova use this ONE spelling on BOTH the boxed and the value-form class, so restoring it would make ~518 stale Result reads compile and dereference a tag (0 or 1) as a pointer — a named compile error traded for a SIGSEGV. Boxed reads migrate to boxed_payload; Result reads bind both halves. Per-repo worklist in the migration doc.
+
+tag | docs/development/ecosystem-migration-6.6.2.md | RETIRED v6.6.2, not redefined. v6.6.0 kept the name and rewrote the body from `load64(t)` to `return t;` — same arity, opposite meaning, so on a box it silently returned the POINTER (measured 140399372926976 where the tag was 3). Deleting it converts 34 silent sites in agnostik + agnova into `undefined function`. Boxed reads migrate to boxed_tag.

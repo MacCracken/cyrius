@@ -429,6 +429,27 @@ sh "$ROOT/tests/gates/codegen/object_hides_libc_names.sh"
 
 sh "$ROOT/tests/gates/toolchain/boxed_union_primitives.sh"
 
+# ⛔ v6.6.2 — THE PROCESS FIX. A public stdlib symbol cannot disappear without an ecosystem census
+# being taken and WRITTEN DOWN. v6.6.0 deleted `tagged_new`/`payload` on a survey of the 12
+# fold-table stdlibs, then recorded the result as "nothing in the ecosystem" — and the class that
+# used the primitive (DOMAIN libraries) was structurally invisible to that survey.
+# This cannot PROVE a survey from inside the repo; it FORCES one. When a name vanishes from
+# docs/api-surface.snapshot relative to the last RELEASE TAG, it censuses every sibling checkout
+# — first-party AND vendored lib/ + dist/, since 55-68 repos gitignore their stdlib — and reds
+# unless docs/retired-symbols.allow accounts for it with a migration reference.
+# ⚠ SKIPs loudly when there are no sibling checkouts (CI) rather than passing quietly.
+sh "$ROOT/tests/gates/toolchain/removed_symbol_census.sh"
+
+# ⛔ v6.6.2 — THE GUIDE TAUGHT AN API THE COMPILER NO LONGER HAD. Its Result worked example was
+# the PRE-FLIP one — five compile errors, two lines under the table announcing the arity change —
+# and a second instance sat in the #derive(Serialize) section. Nothing in the tree could see it.
+# ⭐ It also pins the `f32_from` contract, which NO compile can catch: `f32_from` takes an f64 BIT
+# PATTERN, so `f32_from(1)` reads integer 1 as f64 bits (a denormal ~5e-324) and narrows to f32
+# ZERO. Every SIMD example in the guide did that, and the same mistake had made
+# tests/tcyr/simd/simd_f32v8.tcyr VACUOUS — the broken expression on BOTH sides of all 15
+# assertions, so they were 0 == 0 and passed whether or not f32v8 SIMD worked.
+sh "$ROOT/tests/gates/toolchain/guide_examples_compile.sh"
+
 # ⛔ v6.6.2 — `funcgate-stage.sh` opened with an unguarded `rm -rf "$H"`, and its whole contract
 # is "stage a THROWAWAY CYRIUS_HOME". Pointed at $HOME/.cyrius on 2026-09-07 it destroyed the
 # entire installed store; 104 of 126 manifests under ~/Repos then pinned a version with no
