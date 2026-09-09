@@ -418,15 +418,37 @@ fn _reserved_kw_diag_gate(): i64 {
     fail = fail + _stderr_match_subcase("var async",
         "include \"lib/syscalls.cyr\"\nvar async = 1;\nsyscall(60, 0);\n",
         "reserved keyword 'async'", 1);
-    # The two DOUBLE-ASSIGNED token numbers: 79 = object|f64_sqrt, 111 = stack|callptr.
-    # The spelling is unrecoverable from the token, so BOTH are named. Pre-fix these
-    # actively LIED — `var f64_sqrt` said "reserved keyword 'object'".
-    fail = fail + _stderr_match_subcase("var f64_sqrt (token 79 collision)",
+    # ⛔ v6.6.2 — THESE TWO ASSERTIONS USED TO REQUIRE THE COLLISION, and would have gone RED on
+    # the fix. They asserted the disjunction strings "'object'/'f64_sqrt'" and "'stack'/'callptr'",
+    # which was right while the numbers were shared (v6.4.77 stopped the diagnostic naming the
+    # WRONG keyword — `var f64_sqrt` reported "reserved keyword 'object'") but pinned the
+    # workaround rather than the property. Same shape as the v6.6.0 gate that asserted the
+    # v6.5.67 refusal and would have blocked its own fix.
+    # f64_sqrt is now token 136 and callptr 137; `object` keeps 79 and `stack` keeps 111.
+    # Each spelling must name ITSELF, and NO token may report a disjunction.
+    fail = fail + _stderr_match_subcase("var f64_sqrt names itself (was token 79)",
         "include \"lib/syscalls.cyr\"\nvar f64_sqrt = 1;\nsyscall(60, 0);\n",
-        "'object'/'f64_sqrt'", 1);
-    fail = fail + _stderr_match_subcase("var callptr (token 111 collision)",
+        "reserved keyword 'f64_sqrt'", 1);
+    fail = fail + _stderr_match_subcase("var callptr names itself (was token 111)",
         "include \"lib/syscalls.cyr\"\nvar callptr = 1;\nsyscall(60, 0);\n",
-        "'stack'/'callptr'", 1);
+        "reserved keyword 'callptr'", 1);
+    # The keywords that KEPT their numbers must still name themselves, not the intrinsic that
+    # used to share the slot — the renumber could have been applied to the wrong half.
+    fail = fail + _stderr_match_subcase("var object still names itself (token 79)",
+        "include \"lib/syscalls.cyr\"\nvar object = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'object'", 1);
+    fail = fail + _stderr_match_subcase("var stack still names itself (token 111)",
+        "include \"lib/syscalls.cyr\"\nvar stack = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'stack'", 1);
+    # ⭐ THE CLASS-WIDE ASSERT: no reserved name may report a DISJUNCTION. Naming both spellings
+    # was the mitigation for an unrecoverable token; if any future token is double-assigned this
+    # is what catches it, rather than a per-name row nobody remembers to add.
+    fail = fail + _stderr_match_subcase("no disjunction for f64_sqrt",
+        "include \"lib/syscalls.cyr\"\nvar f64_sqrt = 1;\nsyscall(60, 0);\n",
+        "'/'", 0);
+    fail = fail + _stderr_match_subcase("no disjunction for callptr",
+        "include \"lib/syscalls.cyr\"\nvar callptr = 1;\nsyscall(60, 0);\n",
+        "'/'", 0);
     # THE ANTI-REGRESSION ASSERT: no reserved name may ever report "unknown" again.
     fail = fail + _stderr_match_subcase("no-unknown-for-reserved",
         "include \"lib/syscalls.cyr\"\nvar iv_add = 1;\nsyscall(60, 0);\n",

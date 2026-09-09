@@ -1,0 +1,79 @@
+# boxed_union_primitives.tcyr — v6.6.2: lib/boxed.cyr EXECUTED on real hardware.
+#
+# WHY THIS FILE EXISTS IN `crossos/` RATHER THAN ONLY IN `stdlib/`.
+# The release gate's cross-OS leg runs exactly this DIRECTORY on ecb / ach / cass / pi. A lib
+# primitive with no file here is never once executed off x86_64 Linux — which is the shape of
+# the macOS rot the cross-OS principle was written after, and the shape of the v6.5.7 syscall
+# wrappers that compiled on five targets and ran on one.
+#
+# ⭐ AND THE FIXPOINT CANNOT SUBSTITUTE FOR IT. cycc's own source includes neither tagged.cyr
+# nor result.cyr, so `build/cycc` is byte-identical with or without lib/boxed.cyr and
+# seed-derive is equally blind. There is no evidence for this module anywhere except a corpus
+# that actually runs it. Do not accept a green fixpoint as coverage.
+#
+# What is actually target-sensitive here, and therefore worth the cross-host run:
+#   - `alloc(16)` comes from a different allocator on each target (brk / mmap / VirtualAlloc /
+#     the Mach-O path), so the +0/+8 layout contract is an ALLOCATOR claim, not just a codegen one
+#   - `store64`/`load64` at a +8 displacement exercise the per-backend addressing emitters
+#     (x86 ELF, x86 Mach-O, PE, aarch64, arm64 Mach-O), which have diverged before
+#   - the value form returns its pair in rax/rdx on SysV and must coexist here on Win64 too,
+#     where the register pair and the shadow-store convention are different
+#
+# Dependency-free and exit-code signalled: no filesystem, no syscalls beyond the assert
+# harness, so a failure here is the library and not the environment.
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/tagged.cyr"
+
+# More than two variants on purpose — this is the shape `Result`'s two-arm pair cannot model,
+# and the reason the boxed representation still has to exist.
+enum XKind { XA(); XB(); XC(); XD(); }
+
+# One-argument accessors — the agnostik `content_block_type(cb)` shape. A box fits in one
+# argument; a value-form pair does not, because rdx never reaches a parameter.
+fn _x_kind(cb): i64 { return boxed_tag(cb); }
+fn _x_val(cb): i64  { return boxed_payload(cb); }
+
+alloc_init();
+
+test_group("boxed layout on this target");
+var b = boxed_new(XC, 4242);
+assert_eq(load64(b), XC, "tag at +0");
+assert_eq(load64(b + 8), 4242, "payload at +8");
+assert_eq(boxed_tag(b), XC, "boxed_tag");
+assert_eq(boxed_payload(b), 4242, "boxed_payload");
+assert_eq(boxed_is(b, XC), 1, "boxed_is matches");
+assert_eq(boxed_is(b, XA), 0, "boxed_is rejects");
+
+test_group("tagged_new alias");
+# The 28 ecosystem construction sites use THIS spelling. If it ever stops agreeing with
+# boxed_new on any target, those sites silently change meaning on that target only.
+var t = tagged_new(XD, 77);
+assert_eq(boxed_tag(t), XD, "tagged_new tag");
+assert_eq(boxed_payload(t), 77, "tagged_new payload");
+
+test_group("distinct boxes do not alias");
+# Two allocations in sequence must not share storage — an allocator claim, and the one most
+# likely to differ between the brk, mmap, VirtualAlloc and Mach-O paths.
+var b1 = boxed_new(XA, 1);
+var b2 = boxed_new(XB, 2);
+assert(b1 != b2, "two boxes have distinct addresses");
+assert_eq(boxed_tag(b1), XA, "first box intact after the second");
+assert_eq(boxed_payload(b1), 1, "first payload intact after the second");
+assert_eq(boxed_tag(b2), XB, "second box tag");
+assert_eq(boxed_payload(b2), 2, "second box payload");
+
+test_group("one-arg boundary");
+assert_eq(_x_kind(b2), XB, "box survives a 1-arg call");
+assert_eq(_x_val(b2), 2, "payload survives a 1-arg call");
+
+test_group("coexistence with the value form");
+# On Win64 the pair-return convention differs from SysV; this asserts both representations
+# work in one translation unit on whichever target is running.
+var ot, ov = Some(11);
+assert_eq(ot, Some, "value-form tag binds");
+assert_eq(ov, 11, "value-form payload binds");
+assert_eq(is_some(ot), 1, "is_some on a value-form tag");
+assert_eq(boxed_tag(b2), XB, "box unaffected by a value-form bind");
+
+var r = assert_summary();

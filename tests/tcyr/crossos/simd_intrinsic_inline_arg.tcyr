@@ -1,0 +1,105 @@
+# simd_intrinsic_inline_arg.tcyr — v6.6.2: the SIMD operand-slot fix, EXECUTED on real hardware.
+#
+# WHY THIS FILE IS IN `crossos/`. The release gate's cross-OS leg runs exactly this DIRECTORY on
+# ecb (macOS-arm64), ach (Intel-Mac), cass (Windows/PE) and pi (aarch64). The defect it pins is a
+# FRONTEND slot-allocation bug, so it reproduces on every target — it was confirmed on ELF, PE,
+# aarch64 and cx from one source file — but the emitters that consume those slots are per-backend
+# (`_F64V_DISP` on x86, `EFLSTORE`/`stur` on aarch64, the Win64 frame on PE), so "fixed on x86"
+# is not "fixed". A companion x86 shell gate counts the STORES; this file checks the VALUES on
+# whatever hardware is running it.
+#
+# ⛔ THE FIXPOINT CANNOT SEE THIS AND NEITHER CAN SEED-DERIVE. cycc's own source has zero call
+# sites of these intrinsics, so the compiler is byte-identical with the bug present or absent.
+# A green self-host says nothing here. This corpus is the evidence.
+#
+# THE DEFECT: every f64v_*/f32v_*/iv_* handler took `var vbase = GFLC(S);` and did not raise GFLC
+# until after all arguments were parsed, so an argument that allocates a frame local — an inline
+# replay, a #derive(accessors) getter, a #inline fn, a callptr — bound it to the intrinsic's own
+# DESTINATION slot. Two outcomes, both here: the destination pointer is garbage (SIGSEGV, the
+# lucky case) or the result is written into the argument object instead (silent, and an
+# out-of-bounds write wherever that slot held a mapped address).
+#
+# ⚠ THE ARGUMENT OBJECT IS CHECKED AS WELL AS THE RESULT. A test that only asserted the
+# destination would pass on the SILENT variant on any target where the stale slot happened to
+# point somewhere writable.
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+
+#derive(accessors)
+struct SV4 { x; y; z; w; }
+
+#inline
+fn _si_first(p) { return load64(p + 0); }
+
+# ⚠ EVERY intrinsic call below lives inside a function. As of v6.6.2 a SIMD intrinsic at TOP
+# LEVEL is refused with "SIMD intrinsics must be called inside a function" — these stash their
+# operands in FRAME slots and top-level code has no frame. Before that guard the same call
+# compiled clean and SIGSEGV'd at run time on every release checked, which is how this test was
+# first written and what it caught.
+fn _do_scale(r, m, v) { f64v_scale(r, m + 0, SV4_x(v), 4); return r; }
+fn _do_inline(r, m, s) { f64v_scale(r, m + 0, _si_first(s), 4); return r; }
+fn _do_argpos2(r, m, off) { f64v_scale(r, m + _si_first(off), f64_from(5), 4); return r; }
+
+alloc_init();
+
+# ── the derive-getter shape: the one hisab hit, blocking its 6.6.1 bump ──────────────────
+test_group("derive getter as a SIMD scalar argument");
+var m = alloc(32);
+store64(m + 0, f64_from(1)); store64(m + 8, f64_from(2));
+store64(m + 16, f64_from(3)); store64(m + 24, f64_from(4));
+
+var v = alloc(32);
+SV4_set_x(v, f64_from(2)); SV4_set_y(v, f64_from(9));
+SV4_set_z(v, f64_from(9)); SV4_set_w(v, f64_from(9));
+
+var r = alloc(32);
+store64(r + 0, 0); store64(r + 8, 0); store64(r + 16, 0); store64(r + 24, 0);
+
+_do_scale(r, m, v);
+
+assert_eq(f64_to(load64(r + 0)),  2, "dst lane 0 written");
+assert_eq(f64_to(load64(r + 8)),  4, "dst lane 1 written");
+assert_eq(f64_to(load64(r + 16)), 6, "dst lane 2 written");
+assert_eq(f64_to(load64(r + 24)), 8, "dst lane 3 written");
+
+# The SOURCE must be untouched — it is what the broken build wrote into on some targets.
+assert_eq(f64_to(load64(m + 0)),  1, "src lane 0 intact");
+assert_eq(f64_to(load64(m + 24)), 4, "src lane 3 intact");
+
+# The ARGUMENT OBJECT must be untouched — this is the silent-mode detector.
+assert_eq(f64_to(load64(v + 0)), 2, "argument object lane 0 intact");
+assert_eq(f64_to(load64(v + 8)), 9, "argument object lane 1 intact");
+
+# ── the #inline shape: a different admission route into the same replay path ─────────────
+# The filing named #derive only; #inline reaches the replay too (v6.5.63), and a fix that
+# special-cased derive would pass the block above and fail here.
+test_group("#inline fn as a SIMD scalar argument");
+var r2 = alloc(32);
+store64(r2 + 0, 0); store64(r2 + 8, 0); store64(r2 + 16, 0); store64(r2 + 24, 0);
+var s2 = alloc(32);
+store64(s2 + 0, f64_from(3));
+
+_do_inline(r2, m, s2);
+
+assert_eq(f64_to(load64(r2 + 0)),  3, "inline-arg dst lane 0");
+assert_eq(f64_to(load64(r2 + 24)), 12, "inline-arg dst lane 3");
+assert_eq(f64_to(load64(s2 + 0)),  3, "inline-arg source object intact");
+
+# ── an inline replay in a NON-final argument position ────────────────────────────────────
+# The destination is argument 1, so a fix that reserved only the last stash slot would pass
+# everything above.
+test_group("inline replay in argument position 2");
+var off = alloc(16);
+store64(off + 0, 0); store64(off + 8, 7);
+var r3 = alloc(32);
+store64(r3 + 0, 0); store64(r3 + 8, 0); store64(r3 + 16, 0); store64(r3 + 24, 0);
+
+_do_argpos2(r3, m, off);
+
+assert_eq(f64_to(load64(r3 + 0)),  5, "arg-2 replay: dst lane 0");
+assert_eq(f64_to(load64(r3 + 24)), 20, "arg-2 replay: dst lane 3");
+assert_eq(load64(off + 8), 7, "arg-2 replay: offset object intact");
+
+var r = assert_summary();

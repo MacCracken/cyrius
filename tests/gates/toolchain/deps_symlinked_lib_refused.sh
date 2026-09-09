@@ -208,4 +208,19 @@ set +e
 set -e
 [ "$RCG" -le 1 ] || fail "axis 5: a non-vendor path through a symlinked directory hard-failed (exit $RCG) — the guard is not vendor-gated"
 
-echo "PASS: deps_symlinked_lib_refused (6 axes: delegate-refuse, delegate-real, per-file, resolver-refuse, normal-op, read-only, non-vendor-unaffected)"
+# ── axis 6: CYRIUS_RESOLVED=1 must not disarm the dispatcher guard (v6.6.2) ────────
+# `_try_redirect_to_pinned` opened with `if (_cyrius_resolved == 1) { return 0; }`, and the
+# symlink guard sat ~80 lines BELOW that, so an exported CYRIUS_RESOLVED=1 skipped the whole
+# function and with it the only guard that runs before an old delegated binary vendors.
+# ⚠ HONEST SCOPE: this is defence-in-depth, not a closed live hole. A binary >= 6.5.37 still
+# refuses via the resolver's own `_dep_dest_is_linked`, so the pre-fix code also declined —
+# later, and with a message about the pin rather than about the symlink. What this axis pins
+# is the invariant: an ENVIRONMENT VARIABLE MUST NOT BE ABLE TO SKIP A SAFETY GUARD. The
+# guard now runs above every early return in the function.
+set +e
+OUT6=$( cd "$WORK/b/proj" && CYRIUS_RESOLVED=1 "$CYRIUS" deps 2>&1 ); RC6=$?
+set -e
+[ "$RC6" -ne 0 ] || fail "axis 6: deps SUCCEEDED under CYRIUS_RESOLVED=1 in a symlinked-lib tree"
+echo "$OUT6" | grep -q 'SYMLINKED' || fail "axis 6: refused under CYRIUS_RESOLVED=1 but not for the symlink reason: $OUT6"
+
+echo "PASS: deps_symlinked_lib_refused (7 axes: delegate-refuse, delegate-real, per-file, resolver-refuse, normal-op, read-only, non-vendor-unaffected, resolved-cannot-disarm)"

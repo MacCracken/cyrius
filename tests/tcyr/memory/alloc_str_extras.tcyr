@@ -143,13 +143,23 @@ var fb = fail_after_n_allocs(2);
 var mu3 = map_u64_new_a(fb);
 assert(mu3 != 0, "new within budget");
 var rc_set = 0;
-var ki2 = 0;
-while (ki2 < 30) {
+# ⚠ STARTS AT 1, NOT 0, AND THAT IS LOAD-BEARING (v6.6.2). Key 0 is `MAP_U64_EMPTY` — the u64
+# map's own empty sentinel — so `map_u64_set_a(.., 0, ..)` is refused with -2 and this loop would
+# exit on its FIRST iteration, never reaching the grow that this test exists to exercise.
+# Before v6.6.2 it did not exit: the reserved key was accepted, stored a key the encoding reads
+# back as "empty", and incremented the count — so the loop ran on and the assertion below passed
+# while silently corrupting the map. Either way key 0 was testing something other than grow-OOM.
+# The range is still 30 iterations; only the starting key moved.
+var ki2 = 1;
+while (ki2 < 31) {
     rc_set = map_u64_set_a(fb, mu3, ki2, ki2 * 10);
-    if (rc_set != 0) { ki2 = 30; }
+    if (rc_set != 0) { ki2 = 31; }
     else { ki2 = ki2 + 1; }
 }
 assert_eq(rc_set, 0 - 1, "map_u64_set_a returns -1 once grow OOM hits");
+# ⚠ And it must be -1 (grow OOM), NOT -2 (reserved key) — the two codes are deliberately
+# distinct so this assertion cannot pass for the wrong reason.
+assert(rc_set != 0 - 2, "the failure was grow-OOM, not a reserved key");
 
 # ---- back-compat wrappers ----
 

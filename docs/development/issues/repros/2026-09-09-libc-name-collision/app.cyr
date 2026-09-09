@@ -1,0 +1,15 @@
+# Minimal repro: a Cyrius object that EXPORTS `memchr`, linked against libsystemd.
+#
+# The export is the whole point. Cyrius's memchr (lib/string.cyr) returns an
+# OFFSET or -1; C's returns a POINTER or NULL. `object;` mode emits it as a
+# global `T` symbol, so libsystemd's own calls to memchr bind to Cyrius's.
+#
+# NOTE: the reference below is load-bearing. Without a live call, memchr is
+# eliminated as unreachable, the symbol never lands in the object, libsystemd
+# binds to libc's, and the bug does not reproduce. That is itself worth knowing:
+# whether a project trips this depends on whether anything in its include chain
+# happens to reach memchr.
+fn probe() {
+    var buf = "abc";
+    return memchr(buf, 98, 3);      # -> 1 (offset). C would expect a pointer.
+}

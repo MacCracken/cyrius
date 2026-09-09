@@ -711,6 +711,11 @@ bounds::checked_load8/3
 bounds::checked_memcpy/5
 bounds::checked_store64/4
 bounds::checked_store8/4
+boxed::boxed_is/2
+boxed::boxed_new/2
+boxed::boxed_payload/1
+boxed::boxed_tag/1
+boxed::tagged_new/2
 callback::for_each/2
 callback::fork_with_pre_exec/5
 callback::vec_all/2
@@ -4699,7 +4704,6 @@ tagged::is_right/1
 tagged::is_some/1
 tagged::is_tag/2
 tagged::option_print/2
-tagged::tag/1
 tagged::unwrap/2
 tagged::unwrap_or/3
 test::test_each/2

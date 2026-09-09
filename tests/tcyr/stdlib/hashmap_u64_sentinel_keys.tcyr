@@ -1,0 +1,101 @@
+# Test: the u64 map's RESERVED keys answer truthfully (v6.6.2).
+#
+# ⛔ THE DEFECT. `map_u64` encodes slot state IN-BAND in the key field — `MAP_U64_EMPTY = 0`,
+# `MAP_U64_TOMB = -1` — while every public path validated a slot with `load64(ep) != key`. When
+# the caller's key IS a sentinel that comparison is a tautology and the occupancy check
+# evaporates. Filed by chakshu against ONE function; FIVE were affected, across BOTH sentinels.
+#
+# What it cost: chakshu keys a per-process CPU-tick baseline by pid, with -1 meaning "no baseline
+# yet, render n/a". Linux has no pid 0, so it was invisible for releases. AGNOS has a pid 0
+# (`kmain`); the lookup returned 0 instead of -1, the delta became the whole since-boot tick
+# count, and the monitor showed **59% CPU for an idle kernel thread on an idle machine**. Nothing
+# errored — a plausible number in a column where numbers belong. It surfaced only because a
+# second statistic derived from the same counter disagreed.
+#
+# ⚠ THE FILING'S OWN CLAIM THAT `map_u64_has` IS "ACCIDENTALLY CORRECT" IS FALSE, and axis 2
+# exists to pin that: measured 1 on an EMPTY map before the fix.
+#
+# Key 0 and key -1 remain UNSTORABLE — that is a real constraint of the in-band encoding, not
+# something this fix removes. What changes is that the answers stop lying.
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/hashmap.cyr"
+
+alloc_init();
+
+# ── axis 1: get_or returns the caller's default — THE FILED DEFECT ──────────────────────
+test_group("get_or honours the default for reserved keys");
+var m = map_u64_new();
+assert_eq(map_u64_get_or(m, 0, 777), 777, "get_or(EMPTY sentinel) returns the default");
+assert_eq(map_u64_get_or(m, 0 - 1, 777), 777, "get_or(TOMB sentinel) returns the default");
+# The sentinel value the consumer actually used, and a negative one, since 0 is the trap value.
+assert_eq(map_u64_get_or(m, 0, 0 - 1), 0 - 1, "get_or(0, -1) — chakshu's exact call");
+
+# ── axis 2: has() does not invent an entry ──────────────────────────────────────────────
+test_group("has() is false for reserved keys on an empty map");
+assert_eq(map_u64_has(m, 0), 0, "has(EMPTY sentinel) on an empty map is 0, not 1");
+assert_eq(map_u64_has(m, 0 - 1), 0, "has(TOMB sentinel) on an empty map is 0");
+assert_eq(map_u64_get(m, 0), 0, "get(EMPTY sentinel) is 0");
+assert_eq(map_u64_get(m, 0 - 1), 0, "get(TOMB sentinel) is 0");
+
+# ── axis 3: delete() does not corrupt the map ───────────────────────────────────────────
+# The worst of the five: it returned 1, wrote a TOMBSTONE into a never-occupied slot, and drove
+# the count NEGATIVE — corrupting the probe chain and the size for everything afterwards.
+test_group("delete() of a reserved key is a no-op");
+var d = map_u64_new();
+assert_eq(map_u64_delete(d, 0), 0, "delete(EMPTY sentinel) reports nothing deleted");
+assert_eq(map_u64_size(d), 0, "size stays 0, does NOT go negative");
+assert_eq(map_u64_delete(d, 0 - 1), 0, "delete(TOMB sentinel) reports nothing deleted");
+assert_eq(map_u64_size(d), 0, "size still 0 after the second reserved delete");
+
+# ── axis 4: set() refuses, distinctly, and does not grow the map ────────────────────────
+# Before the fix each write stored a key the encoding reads back as "empty", so nothing was
+# retrievable while the load factor climbed: 2000 writes of key 0 reported size 574.
+test_group("set() refuses a reserved key without growing");
+var w = map_u64_new();
+assert_eq(map_u64_set(w, 0, 42), 0 - 2, "set(EMPTY sentinel) returns -2");
+assert_eq(map_u64_set(w, 0 - 1, 42), 0 - 2, "set(TOMB sentinel) returns -2");
+assert_eq(map_u64_size(w), 0, "size unchanged by the refused writes");
+var wi = 0;
+while (wi < 500) { map_u64_set(w, 0, 42); wi = wi + 1; }
+assert_eq(map_u64_size(w), 0, "500 refused writes do not inflate the size");
+assert_eq(map_u64_get_or(w, 0, 999), 999, "nothing was stored under the reserved key");
+
+# ⚠ -2 AND NOT -1, DELIBERATELY. -1 already means "probe chain full / grow OOM", and
+# tests/tcyr/memory/alloc_str_extras.tcyr asserts -1 from a loop that starts at KEY 0 — using -1
+# here would make that existing test pass on its first iteration for the wrong reason.
+assert(map_u64_set(w, 0, 1) != 0 - 1, "the reserved-key code is distinct from the OOM code");
+
+# ── axis 5 (ANTI-OVERFIT): ordinary keys are completely unaffected ───────────────────────
+# A "fix" that refused too broadly, or that made every lookup miss, would pass axes 1-4.
+test_group("ordinary keys still work");
+var g = map_u64_new();
+var i = 1;
+while (i <= 400) { map_u64_set(g, i, i * 7); i = i + 1; }
+assert_eq(map_u64_size(g), 400, "400 ordinary keys stored");
+assert_eq(map_u64_get(g, 1), 7, "first key reads back");
+assert_eq(map_u64_get(g, 400), 2800, "last key reads back");
+assert_eq(map_u64_get_or(g, 250, 0), 1750, "a middle key reads back");
+assert_eq(map_u64_has(g, 399), 1, "has() true for a stored key");
+assert_eq(map_u64_has(g, 401), 0, "has() false for an unstored key");
+assert_eq(map_u64_get_or(g, 401, 555), 555, "get_or default for an unstored ordinary key");
+assert_eq(map_u64_delete(g, 250), 1, "delete of a stored key reports 1");
+assert_eq(map_u64_size(g), 399, "size decremented once");
+assert_eq(map_u64_has(g, 250), 0, "deleted key is gone");
+assert_eq(map_u64_get(g, 251), 1757, "a neighbour of the deleted key survives");
+
+# Reinsert over the tombstone — the probe chain must still resolve.
+map_u64_set(g, 250, 12345);
+assert_eq(map_u64_get(g, 250), 12345, "reinsert over a tombstone reads back");
+assert_eq(map_u64_size(g), 400, "size back to 400");
+
+# ── axis 6: the workaround consumers were told to use still works ───────────────────────
+# `k + 1` biasing is what chakshu and four others adopted. It must remain correct, because the
+# fix does NOT make key 0 storable and those repos will keep the bias.
+test_group("key biasing (+1) remains the way to store a 0 key");
+var b = map_u64_new();
+map_u64_set(b, 0 + 1, 4242);
+assert_eq(map_u64_get_or(b, 0 + 1, 0), 4242, "biased key round-trips");
+assert_eq(map_u64_size(b), 1, "biased key counted once");
+
+var r = assert_summary();

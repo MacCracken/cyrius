@@ -1,9 +1,13 @@
 # Test: tagged unions (Option/Result) — v6.6.0 value form.
 #
-# ⛔ `tagged_new(tag, value)` was DELETED at v6.6.0. It built a raw 16-byte box, and the only
-# things that could read that box were `tag()` and `payload()`; with the value form there is no
-# box, `payload()` is gone, and nothing in any of the 12 sibling stdlibs ever called it. The
-# Option half below now constructs through `Some(v)` / `None()`, which is what it was always
+# ⛔ CORRECTED v6.6.2 — this header carried the v6.6.0 claim that "nothing in any of the 12
+# sibling stdlibs ever called" `tagged_new`, which was true, beside a deletion justified as if
+# the ecosystem had been surveyed, which it had not: agnostik calls it 19 times and agnova 9.
+# `tagged_new` is RESTORED in lib/boxed.cyr; the BOXED primitives are covered by boxed.tcyr.
+# This file covers the VALUE FORM only.
+# ⛔ `fn tag()` is deleted as of v6.6.2 — under the value form the tag IS the first bound half,
+# so `tag(s_tag)` was an identity, and on a box it silently returned the pointer.
+# The Option half below constructs through `Some(v)` / `None()`, which is what it was always
 # modelling — a nullary variant returns its tag ALONE and is correctly not pair-returning.
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -13,7 +17,7 @@ alloc_init();
 
 test_group("Option");
 var s_tag, s = Some(42);
-assert_eq(tag(s_tag), Some, "tag");
+assert_eq(s_tag, Some, "tag is the first bound half");
 assert_eq(s, 42, "payload");
 assert(is_some(s_tag) == 1, "is_some");
 assert(is_none(s_tag) == 0, "not none");

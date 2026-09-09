@@ -1326,7 +1326,12 @@ fn LEXID(S, p, npos): i64 {
         if (kw & 0xFFFFFFFFFFFFFF == 0x67656E5F343666) { ADDTOK(S, 71, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x7362615F343666) { ADDTOK(S, 80, 0); return p; }
         # "callptr" = 0x7274706C6C6163 → token 111 (v6.0.70 §0 indirect-call builtin)
-        if (kw & 0xFFFFFFFFFFFFFF == 0x7274706C6C6163) { ADDTOK(S, 111, 0); return p; }
+        # v6.6.2: callptr was token 111, SHARED with `stack`. Worse than a diagnostics defect —
+        # `callptr(fp, 41);` in STATEMENT position was a hard error ("expected var, got '('"),
+        # because PARSE_STMT saw 111 and routed to the `stack var` parser before any expression
+        # path. Statement position IS a shared position, so the "grammar disambiguates by
+        # POSITION" premise did not hold for 111. `stack` keeps 111 (both its uses).
+        if (kw & 0xFFFFFFFFFFFFFF == 0x7274706C6C6163) { ADDTOK(S, 137, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x6E69735F343666) { ADDTOK(S, 83, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x736F635F343666) { ADDTOK(S, 84, 0); return p; }
         if (kw & 0xFFFFFFFFFFFFFF == 0x7078655F343666) { ADDTOK(S, 85, 0); return p; }
@@ -1349,7 +1354,12 @@ fn LEXID(S, p, npos): i64 {
         if (kw == 0x6D6F72665F343666) { ADDTOK(S, 66, 0); return p; }
         # "f32_from" → token 131 (f64→f32, cvtsd2ss). v6.2.18 native-float math arc.
         if (kw == 0x6D6F72665F323366) { ADDTOK(S, 131, 0); return p; }
-        if (kw == 0x747271735F343666) { ADDTOK(S, 79, 0); return p; }
+        # v6.6.2: f64_sqrt was token 79, SHARED with `object`. A token type could not recover its
+        # spelling, so `var f64_sqrt = 1;` reported "reserved keyword 'object'" until v6.4.77
+        # taped over it with a disjunction. 136 is free in TOKNAME and in every dispatch band.
+        # `object` KEEPS 79 — it is the statement keyword that legitimately owns it, and that is
+        # what makes this a zero-fork-edit change (main.cyr/main_win.cyr compare against 79).
+        if (kw == 0x747271735F343666) { ADDTOK(S, 136, 0); return p; }
         if (kw == 0x6C6965635F343666) { ADDTOK(S, 82, 0); return p; }
         if (kw == 0x32676F6C5F343666) { ADDTOK(S, 87, 0); return p; }
         if (kw == 0x327078655F343666) { ADDTOK(S, 88, 0); return p; }

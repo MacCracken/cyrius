@@ -1,0 +1,15 @@
+object;
+include "/home/macro/.cyrius/lib/syscalls.cyr"
+include "/home/macro/.cyrius/lib/string.cyr"
+include "/home/macro/.cyrius/lib/fmt.cyr"
+include "/home/macro/.cyrius/lib/alloc.cyr"
+include "/home/macro/.cyrius/lib/io.cyr"
+include "/home/macro/.cyrius/lib/vec.cyr"
+include "/home/macro/.cyrius/lib/str.cyr"
+include "/home/macro/.cyrius/lib/assert.cyr"
+include "/home/macro/.cyrius/lib/tagged.cyr"
+include "/home/macro/.cyrius/lib/fnptr.cyr"
+fn probe() {
+    var buf = "abc";
+    return memchr(buf, 98, 3);   # Cyrius contract: offset 1. libc: a POINTER.
+}

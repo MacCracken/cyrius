@@ -1,0 +1,79 @@
+# Test: the four spellings that used to share two token numbers (v6.6.2).
+#
+# ⛔ THE COLLISION. Token 79 was BOTH `object` and `f64_sqrt`; token 111 was BOTH `stack` and
+# `callptr`. A token type could not recover its spelling, so any diagnostic mapping token → name
+# had lost the information: before v6.4.77 `var f64_sqrt = 1;` reported **"reserved keyword
+# 'object'"**, sending the reader to look for a variable they never wrote. v6.4.77 taped over it
+# by returning BOTH names ("object'/'f64_sqrt") — no longer wrong, still not right.
+#
+# ⛔ AND IT WAS NOT DIAGNOSTICS-ONLY, WHICH THE FILING ASSERTED. `callptr(fp, 41);` in STATEMENT
+# position was a hard compile error — `expected var, got '('` — because PARSE_STMT saw 111 and
+# routed to the `stack var` parser before any expression path could run. Statement position IS a
+# shared position, so the "the grammar disambiguates by POSITION" premise did not hold for 111.
+# Verified against 6.6.1: that program does not compile. It compiles here.
+#
+# THE FIX: `f64_sqrt` → 136, `callptr` → 137. `object` KEEPS 79 and `stack` KEEPS 111 — they are
+# the statement keywords that legitimately own those numbers, and leaving them put is what makes
+# this a ZERO-FORK-EDIT change (main.cyr and main_win.cyr both compare against 79 for `object;`).
+#
+# ⚠ THE TRAP THIS FILE EXISTS FOR. `f64_sqrt` was inside the `62..105` STATEMENT BAND in
+# parse.cyr. Renumbering it to 136 without adding a band entry silently regresses `f64_sqrt(x);`
+# as a statement — and **no test in the tree covered that form**, so the regression would have
+# shipped green. Both statement forms are asserted below.
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/math.cyr"
+
+# ⚠ Declared up here: enum declarations must precede top-level statements.
+enum TRes: stack { TOk(v); TErr(e); }
+
+fn _tr_double(a) { return a + a; }
+fn _tr_add(a, b) { return a + b; }
+
+alloc_init();
+
+# ── f64_sqrt (token 136, was 79) ─────────────────────────────────────────────────────
+test_group("f64_sqrt after the renumber");
+assert_eq(f64_to(f64_sqrt(f64_from(16))), 4, "f64_sqrt as an expression");
+assert_eq(f64_to(f64_sqrt(f64_from(144))), 12, "f64_sqrt of a larger square");
+
+# ⚠ STATEMENT POSITION — the form the renumber could silently have broken.
+fn _tr_sqrt_stmt(x) {
+    f64_sqrt(x);          # result deliberately discarded; this must PARSE
+    return 1;
+}
+assert_eq(_tr_sqrt_stmt(f64_from(9)), 1, "f64_sqrt(x); parses as a bare statement");
+
+# ── callptr (token 137, was 111) ─────────────────────────────────────────────────────
+test_group("callptr after the renumber");
+# ⚠ Wrapped: an indirect call is refused at TOP LEVEL ("must be inside a function"), which is a
+# pre-existing and correct guard — the same class as the SIMD one added this release.
+fn _tr_callptr_expr(f) { return callptr(f, 40, 2); }
+assert_eq(_tr_callptr_expr(&_tr_add), 42, "callptr as an expression");
+
+# ⚠ NEWLY LEGAL. At token 111 this was `expected var, got '('` — a hard error, not a
+# diagnostics wart. Asserting it here means the statement band cannot be dropped again.
+fn _tr_callptr_stmt(f) {
+    callptr(f, 41);       # result discarded; at 111 this did not compile at all
+    return 1;
+}
+assert_eq(_tr_callptr_stmt(&_tr_double), 1, "callptr(f, x); parses as a bare statement");
+
+# ── the two keywords that KEPT their numbers ─────────────────────────────────────────
+# A renumber applied to the wrong half of either pair would pass everything above.
+test_group("stack keeps token 111");
+fn _tr_stack_local() {
+    stack var buf[64];
+    store64(&buf, 4242);
+    return load64(&buf);
+}
+assert_eq(_tr_stack_local(), 4242, "`stack var` still parses and works");
+
+# `: stack` enums read token 111 too (parse_types.cyr) — a second, independent consumer of the
+# number, and the one the whole v6.6.0 value-form arc rests on.
+test_group(": stack enum still parses (the other 111 consumer)");
+var tt, tv = TOk(7);
+assert_eq(tt, TOk, ": stack enum tag binds");
+assert_eq(tv, 7, ": stack enum payload binds");
+
+var r = assert_summary();

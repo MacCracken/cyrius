@@ -1604,6 +1604,70 @@ fn _GNUHASH(np): i64 {
 #     another file at compile time, so publishing it in .dynsym would hand a DYNAMIC
 #     consumer a door the language just closed. Making the linkage surface follow the
 #     source surface is the point; otherwise `private` is only a comment.
+# ⛔ v6.6.2 — LIBC-RESERVED NAMES MUST NOT BE PREEMPTIBLE FROM A CYRIUS OBJECT.
+#
+# THE INCIDENT (samvada, 2026-09-09). A cyrius `object;` build exports every public fn as a
+# GLOBAL symbol. Linked against a C library, the C library's OWN calls then bind to cyrius's
+# implementation — and the contracts do not match:
+#
+#     C:      void *memchr(const void *s, int c, size_t n)   -> pointer, or NULL
+#     cyrius: fn memchr(s, c, n) -> i64                      -> OFFSET, or -1
+#
+# Both directions are inverted. "Not found" gives C a non-NULL 0xFFFFFFFFFFFFFFFF, so it proceeds
+# as if it found something; "found at offset 0" gives C a NULL, so it concludes not-found.
+# samvada's process HUNG inside `sd_bus_call_method`; `objcopy -L memchr` alone fixed it.
+#
+# ⚠ THREE THINGS MAKE IT SHARP. The link SUCCEEDS (libc's copy is weak or in a not-yet-loaded
+# .so, so there is no duplicate-symbol error). The failure surfaces arbitrarily far away, inside
+# a C function the cyrius author never called. And it is conditional on REACHABILITY — if nothing
+# pulls `memchr` into the object it is eliminated and there is no bug, so a project can link
+# cleanly for months and break because unrelated code made the symbol reachable.
+#
+# ⚠ THE OBVIOUS DERIVATION IS WRONG. Comparing the object's globals against libc's DYNAMIC
+# exports returns only `getenv`, because glibc's memchr/memcpy/strlen are IFUNCs and do not match
+# a naive type filter — which is why the guilty symbol looked innocent. The list below was derived
+# against the FULL libc symbol set and is committed as a fixed list, because which names are
+# reserved is a property of the LANGUAGE, not of whatever libc happens to be on the build host.
+# mabda has hand-carried an `objcopy -L` list in its Makefile for exactly this, and that list is
+# wrong in BOTH directions: it localizes `memeq` (cyrius-only, a no-op) and omits `getenv`.
+#
+# ⭐ STV_HIDDEN, NOT STB_LOCAL, AND THAT IS LOAD-BEARING. ELF requires every LOCAL symbol to
+# precede every GLOBAL one in .symtab, with sh_info naming the first global. Flipping the binding
+# of an arbitrary subset would violate that invariant and need the whole table reordered.
+# STV_HIDDEN leaves the binding GLOBAL — so the ordering is untouched — and `ld` converts it to
+# local when the object is linked, which is exactly the property wanted: nothing outside this
+# compilation unit can bind to it. Cyrius's own internal calls are direct, not via the PLT
+# (verified in the filing), so they are unaffected.
+fn _fx_nameq(np, lit): i64 {
+    var i = 0;
+    var go = 1;
+    while (go == 1) {
+        var a = load8(np + i);
+        var b = load8(lit + i);
+        if (a != b) { return 0; }
+        if (a == 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Derived, not guessed: the intersection of cyrius's stdlib public fns with the full symbol set of
+# a real libc. 11 names, three of which (`getpid`/`getppid`/`gettid`) the filing did not list.
+fn _fx_libc_reserved(np): i64 {
+    if (_fx_nameq(np, "memchr") == 1) { return 1; }
+    if (_fx_nameq(np, "memcpy") == 1) { return 1; }
+    if (_fx_nameq(np, "memset") == 1) { return 1; }
+    if (_fx_nameq(np, "strchr") == 1) { return 1; }
+    if (_fx_nameq(np, "strlen") == 1) { return 1; }
+    if (_fx_nameq(np, "strstr") == 1) { return 1; }
+    if (_fx_nameq(np, "atoi") == 1) { return 1; }
+    if (_fx_nameq(np, "getenv") == 1) { return 1; }
+    if (_fx_nameq(np, "getpid") == 1) { return 1; }
+    if (_fx_nameq(np, "getppid") == 1) { return 1; }
+    if (_fx_nameq(np, "gettid") == 1) { return 1; }
+    return 0;
+}
+
 fn _fn_exported(S, fi): i64 {
     if (L64(_fnt_offsets + fi * 8) < 0) { return 0; }
     var np = S + 0xEC00000 + L64(_fnt_names + fi * 8);
@@ -1754,8 +1818,12 @@ fn EMITELF_SHARED(S): i64 {
             store8(sym_p + 3, (str_cursor >> 24) & 0xFF);
             # st_info = STB_GLOBAL(1) << 4 | STT_FUNC(2) = 0x12
             store8(sym_p + 4, 0x12);
-            # st_other = 0 (default vis)
+            # st_other = 0 (default vis), or STV_HIDDEN for a libc-reserved name. A shared
+            # object exporting `memchr` with cyrius semantics preempts libc's for every other
+            # object in the process image — the same defect as the `.o` case one function down,
+            # and worth closing in both rather than only in the one that was reported.
             store8(sym_p + 5, 0);
+            if (_fx_libc_reserved(np2) == 1) { store8(sym_p + 5, 2); }
             # st_shndx = 1 (arbitrary non-zero — we have no section headers)
             # Actually with no section headers, dlopen doesn't check
             # st_shndx against a section table; it just needs non-zero.
@@ -1997,7 +2065,12 @@ fn EMITELF_OBJ(S): i64 {
         store8(symp + 3, (name_off >> 24) & 0xFF);
         # st_info: STT_FUNC=2, STB_GLOBAL=1 → (1 << 4) | 2 = 0x12
         store8(symp + 4, 0x12);
-        # st_other: 0
+        # st_other: 0 (STV_DEFAULT), or 2 (STV_HIDDEN) for a libc-reserved name — see
+        # _fx_libc_reserved above. Hidden rather than local so the ELF local-before-global
+        # ordering invariant is untouched; ld makes it local at link time.
+        if (_fx_libc_reserved(S + 0xEC00000 + L64(_fnt_names + fi * 8)) == 1) {
+            store8(symp + 5, 2);
+        }
         # st_shndx / st_value depend on whether fn is defined here.
         # Undefined (fn_offset == -1) → SHN_UNDEF (0) with value 0, which
         # is what the ELF spec wants for cross-unit references. Emitting

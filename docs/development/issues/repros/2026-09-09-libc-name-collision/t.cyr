@@ -1,0 +1,4 @@
+fn probe() {
+    var buf = "abc";
+    return memchr(buf, 98, 3);   # Cyrius contract: offset 1. libc: a POINTER.
+}

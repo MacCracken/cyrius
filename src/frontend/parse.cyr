@@ -1908,6 +1908,12 @@ fn _PARSE_STMT_IMPL(S): i64 {
     # without this band the builtin lexes and emits fine yet is a syntax error at every
     # real call site. 152/153 (`>>>`, `private`) are deliberately not in the range.
     if (typ >= 154) { if (typ <= 162) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    # v6.6.2 — f64_sqrt (136) and callptr (137), renumbered out of their collisions.
+    # ⚠ f64_sqrt WAS inside the 62..105 band above, so moving it without this entry would
+    # silently regress `f64_sqrt(x);` as a statement, and no test in the tree covered that form.
+    # callptr GAINS statement position here: at 111 it hit the `stack var` parser and was a hard
+    # error, which the filing recorded as diagnostics-only and was not.
+    if (typ >= 136) { if (typ <= 137) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
     if (typ == 2) {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);

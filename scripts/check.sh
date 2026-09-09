@@ -395,3 +395,46 @@ sh "$ROOT/tests/gates/codegen/aggregate_copy_assign_slots.sh"
 # gate is the one that both compiles cyrius source AND could regress from a language change,
 # which is exactly the class that belongs in the local gate.
 sh "$ROOT/scripts/agnos-crossbuild-gate.sh"
+
+# ⛔ v6.6.2 — THE BOXED TAGGED-UNION PRIMITIVES, AND THE GATE THAT WOULD HAVE CAUGHT v6.6.0.
+# `tagged_new` and `payload` were deleted at v6.6.0 as "nothing in the ecosystem called it
+# (verified across all 12 sibling stdlibs)". The survey was real and right for those twelve; the
+# CLAIM was ecosystem-wide, and the class that used the primitive — DOMAIN libraries — was never
+# in scope. agnostik calls `tagged_new` 19 times, agnova 9.
+#
+# ⭐ THE FULL RELEASE GATE WENT GREEN THROUGH ALL OF IT, and always would: cycc's own source
+# includes neither tagged.cyr nor result.cyr, so the self-host fixpoint and seed-derive are
+# structurally blind to this module. An ecosystem survey cannot be PROVED from inside this repo,
+# but the capability can be pinned — axis 1 reds if any boxed_* function is removed.
+# Axis 2 is the subtler half: v6.6.0 also SILENTLY REDEFINED `tag()` and `is_tag()` at unchanged
+# arity, so a box read returned the pointer while three documents certified the row "unchanged".
+# It asserts every retired spelling produces `undefined function`, never a plausible number.
+# ⛔ v6.6.2 — A SIMD INTRINSIC READ ITS DESTINATION POINTER FROM A SLOT NOTHING WROTE.
+# Every f64v_*/f32v_*/iv_* handler took `var vbase = GFLC(S);` and did not raise GFLC until after
+# all arguments were parsed, so an argument that allocates a frame local — the inline replay, a
+# #derive(accessors) getter, a #inline fn, a callptr — bound it to the intrinsic's own destination
+# slot. Filed by hisab as a 6.5.71 derive regression; it is neither derive-specific nor a 6.5.71
+# regression (reachable via callptr since 6.0.70). Two failure modes: SIGSEGV with the register
+# picker on, and a SILENT write into the argument object with it off.
+# ⚠ The fixpoint and seed-derive are blind — cycc has zero call sites of these intrinsics.
+sh "$ROOT/tests/gates/codegen/simd_intrinsic_operand_slots.sh"
+
+# ⛔ v6.6.2 — an `object;` build exported libc-reserved names as PREEMPTIBLE globals, so a linked
+# C library's own calls bound to cyrius's implementations. `memchr` returns an OFFSET or -1 where
+# C returns a POINTER or NULL — inverted in both directions. samvada's process HUNG inside
+# sd_bus_call_method; the link succeeded, no duplicate-symbol error, and the failure surfaced in a
+# function the cyrius author never called. mabda has hand-carried an `objcopy -L` list for this,
+# and that list is wrong in both directions. Now STV_HIDDEN for the 11 derived names.
+sh "$ROOT/tests/gates/codegen/object_hides_libc_names.sh"
+
+sh "$ROOT/tests/gates/toolchain/boxed_union_primitives.sh"
+
+# ⛔ v6.6.2 — `funcgate-stage.sh` opened with an unguarded `rm -rf "$H"`, and its whole contract
+# is "stage a THROWAWAY CYRIUS_HOME". Pointed at $HOME/.cyrius on 2026-09-07 it destroyed the
+# entire installed store; 104 of 126 manifests under ~/Repos then pinned a version with no
+# snapshot, and `_try_redirect_to_pinned` fires before dispatch, so those repos could not run ANY
+# verb — not even `--version`. The only protection was a sentence in handoff.md, and this tree's
+# own history says that file sat stale for thirty-eight releases at a stretch.
+# ⚠ This gate does NOT stage into a live home — it drives the refusal paths with temp trees and
+# a redirected HOME, so it is safe in check.sh where funcgate-stage.sh itself is not.
+sh "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"

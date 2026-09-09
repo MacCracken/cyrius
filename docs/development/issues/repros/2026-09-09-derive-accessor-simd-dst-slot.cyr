@@ -1,0 +1,70 @@
+# Repro: a #derive(accessors) getter passed DIRECTLY as an f64v_* argument
+# makes the intrinsic read its DESTINATION pointer from an unwritten stack slot.
+#
+#   cyrius build repros/2026-09-09-derive-accessor-simd-dst-slot.cyr /tmp/r && /tmp/r
+#
+# 6.5.70 and earlier: prints "1 2 3 4" then "W3 ok", exit 0.
+# 6.5.71 .. 6.6.1   : W1 and W2 pass, W3 SIGSEGVs (exit 139).
+#
+# [deps] stdlib = ["syscalls", "alloc", "io", "fmt", "string", "str"]
+
+#derive(accessors)
+struct V4 { x; y; z; w; }
+
+fn v4_new(a, b, c, d) {
+    var v = alloc(32);
+    V4_set_x(v, a); V4_set_y(v, b); V4_set_z(v, c); V4_set_w(v, d);
+    return v;
+}
+
+# --- W1: plain (non-derived) accessor -> emits a real call -> OK
+fn plain_x(v) { return load64(v + 0); }
+fn w1(m, v) {
+    var r = alloc(32);
+    var tmp = alloc(32);
+    f64v_scale(r, m + 0, plain_x(v), 4);
+    return r;
+}
+
+# --- W2: raw load64, inlined, no call -> OK
+fn w2(m, v) {
+    var r = alloc(32);
+    var tmp = alloc(32);
+    f64v_scale(r, m + 0, load64(v + 0), 4);
+    return r;
+}
+
+# --- W3: #derive(accessors) getter -> SIGSEGV on >= 6.5.71
+fn w3(m, v) {
+    var r = alloc(32);
+    var tmp = alloc(32);
+    f64v_scale(r, m + 0, V4_x(v), 4);
+    return r;
+}
+
+# --- the workaround: hoist the getter into a local first -> OK
+fn w4(m, v) {
+    var r = alloc(32);
+    var tmp = alloc(32);
+    var vx = V4_x(v);
+    f64v_scale(r, m + 0, vx, 4);
+    return r;
+}
+
+fn main() {
+    alloc_init();
+    var m = alloc(32);
+    store64(m + 0, f64_from(1)); store64(m + 8, f64_from(2));
+    store64(m + 16, f64_from(3)); store64(m + 24, f64_from(4));
+    var v = v4_new(f64_from(2), 0, 0, 0);
+
+    println("W1 plain-fn accessor");   w1(m, v); println("W1 ok");
+    println("W2 raw load64");          w2(m, v); println("W2 ok");
+    println("W4 hoisted derived");     w4(m, v); println("W4 ok");
+    println("W3 derived getter inline (expect SIGSEGV on >= 6.5.71)");
+    w3(m, v);
+    println("W3 ok");
+    return 0;
+}
+var rc = main();
+sys_exit_group(rc);

@@ -926,7 +926,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         ESADDR(S, soff);
         return 0;
     }
-    if (typ == 111) {
+    # v6.6.2: callptr 111 -> 137 (was double-assigned with `stack`).
+    if (typ == 137) {
         # callptr(callee, arg1, ..., argN) — v6.0.70 §0 indirect call.
         STI(S, GTI(S) + 1);                     # consume 'callptr'
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
@@ -2358,6 +2359,52 @@ fn PF64CMP(S, tok): i64 {
 # (abs/sqrt/dot) hit the +1 offset that did.
 #
 # Fix is independent of arity: every stash store anonymises the slot.
+# v6.6.2 — RESERVE the stash slots BEFORE any argument is parsed.
+#
+# ⛔ THE BUG THIS FIXES, AND WHY IT LOOKED LIKE A DERIVE REGRESSION. Every f64v_*/f32v_*/iv_*
+# handler took `var vbase = GFLC(S);` and did not raise GFLC until AFTER all arguments had been
+# parsed. So while argument N was being parsed, GFLC still pointed AT the destination stash slot.
+# Any argument expression that allocates a frame local therefore binds it to the intrinsic's own
+# operand slot: the inline replay's `var saved_flc = GFLC(S);` (parse_fn.cyr:1717) returned
+# `vbase` itself, laid its parameter locals over the stash, and raised GFLC past them — and then
+# the handler's trailing `SFLC(S, vbase + N)` LOWERED GFLC BACK DOWN over live slots. The loop
+# then read its destination pointer from a slot no instruction ever wrote:
+#   `mov -0x50(%rbp),%rdx` / `movupd %xmm0,(%rdx,%rsi,8)` through garbage.
+#
+# ⭐ IT IS NOT A 6.5.71 REGRESSION, THOUGH IT WAS FILED AS ONE. 6.5.71 only routed
+# `#derive(accessors)` getters through the inline-replay path; before that the getter was a real
+# CALL, and the call incidentally forced the surrounding values to be spilled. Removing the call
+# removed a spill the expansion had been silently depending on. The same shape is reachable via
+# `callptr` since 6.0.70 and via `#inline` since 6.5.63 — so the filing's "6.5.71+" range and its
+# "derive" framing both understate it.
+#
+# ⭐ THE CORRECT PATTERN WAS ALREADY IN THIS FILE, one screen below: `bitset`/`bitclr` reserve
+# and anonymise up front (v5.10.35) for exactly this reason. 21 handlers had the other order.
+# Factored into one helper so 21 copies cannot drift apart again.
+#
+# Raising GFLC is a MAX, never an assignment: an argument's own parse may legitimately have
+# pushed the frame higher, and lowering it back is what corrupted live slots.
+# Anonymising (name = -1) matches _SIMD_STASH: stale locname entries from a prior fn-body parse
+# must not be picked up by a post-call FINDLOCal lookup.
+fn _SIMD_RESERVE(S, base, n): i64 {
+    # ⛔ v6.6.2 — REFUSE AT TOP LEVEL instead of emitting a program that SIGSEGVs.
+    # These intrinsics stash their operands in FRAME slots, and top-level code has no frame:
+    # `f64v_scale(r, m + 0, f64_from(2), 4);` outside any function compiled clean on every
+    # release checked and segfaulted at run time, with or without the operand-slot fix above —
+    # a silent crash, not a diagnostic. `bitset`/`bitclr` one screen below already refuse this
+    # exact way (v5.10.35); the SIMD band never got the same guard.
+    # This is the single choke point: all 21 handlers call _SIMD_RESERVE before emitting
+    # anything, so one guard here covers the whole band rather than 21 copies that can drift.
+    if (GINFN(S) == 0) { ERR_MSG(S, "SIMD intrinsics must be called inside a function", 48); }
+    if (base + n > GFLC(S)) { SFLC(S, base + n); }
+    var i = 0;
+    while (i < n) {
+        S64(S + 0x5D9D000 + (base + i) * 8, 0 - 1);
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn _SIMD_STASH(S, idx): i64 {
     EFLSTORE(S, idx);
     S64(S + 0x5D9D000 + idx * 8, 0 - 1);
@@ -2441,6 +2488,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         if (_try_vec_direct(S, 3, 1, 2) == 1) { return 0; }
         var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 3);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, vbase + 1);
@@ -2448,7 +2496,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); _SIMD_STASH(S, vbase + 2);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, vbase + 3);
+        _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
         EMIT_F64V_LOOP(S, 3, vbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2458,12 +2506,13 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 2);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, vbase + 2);
+        _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F64V_UNARY(S, 0, vbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2473,12 +2522,13 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 2);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, vbase + 2);
+        _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F64V_UNARY(S, 1, vbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2488,6 +2538,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 4);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, vbase + 1);
@@ -2497,7 +2548,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); _SIMD_STASH(S, vbase + 3);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, vbase + 4);
+        _SIMD_RESERVE(S, vbase, 4);   # max, never a lowering assignment
         EMIT_F64V_FMADD(S, vbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2507,12 +2558,13 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 2);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, vbase + 2);
+        _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F64V_DOT(S, vbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2523,6 +2575,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 4);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, vbase + 1);
@@ -2532,7 +2585,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); _SIMD_STASH(S, vbase + 3);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, vbase + 4);
+        _SIMD_RESERVE(S, vbase, 4);   # max, never a lowering assignment
         EMIT_F32V_FMADD(S, vbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2543,12 +2596,13 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 2);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, vbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, vbase + 2);
+        _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
         EMIT_F32V_DOT(S, vbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2561,6 +2615,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
             var ivbase = GFLC(S);
+            _SIMD_RESERVE(S, ivbase, 3);
             PCMPE(S); _SIMD_STASH(S, ivbase);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S); _SIMD_STASH(S, ivbase + 1);
@@ -2568,7 +2623,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
             PCMPE(S); _SIMD_STASH(S, ivbase + 2);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S);
-            SFLC(S, ivbase + 3);
+            _SIMD_RESERVE(S, ivbase, 3);   # max, never a lowering assignment
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             if (PEEKT(S) != 1) { ERR_MSG(S, "iv width arg must be a literal 1/2/4/8", 38); }
             var ivw = PEEKV(S);
@@ -2584,12 +2639,13 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var dpbase = GFLC(S);
+        _SIMD_RESERVE(S, dpbase, 2);
         PCMPE(S); _SIMD_STASH(S, dpbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, dpbase + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, dpbase + 2);
+        _SIMD_RESERVE(S, dpbase, 2);   # max, never a lowering assignment
         EMIT_IVEC_DP8(S, dpbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2600,6 +2656,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var fmbase = GFLC(S);
+        _SIMD_RESERVE(S, fmbase, 4);
         PCMPE(S); _SIMD_STASH(S, fmbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, fmbase + 1);
@@ -2609,7 +2666,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); _SIMD_STASH(S, fmbase + 3);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, fmbase + 4);
+        _SIMD_RESERVE(S, fmbase, 4);   # max, never a lowering assignment
         EMIT_F32V8_FMADD(S, fmbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2620,12 +2677,13 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var d8base = GFLC(S);
+        _SIMD_RESERVE(S, d8base, 2);
         PCMPE(S); _SIMD_STASH(S, d8base);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, d8base + 1);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, d8base + 2);
+        _SIMD_RESERVE(S, d8base, 2);   # max, never a lowering assignment
         EMIT_F32V8_DOT(S, d8base);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2635,6 +2693,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 3);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, vbase + 1);
@@ -2642,7 +2701,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); _SIMD_STASH(S, vbase + 2);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, vbase + 3);
+        _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
         EMIT_F64V_SCALE(S, vbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2652,6 +2711,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
         var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 3);
         PCMPE(S); _SIMD_STASH(S, vbase);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S); _SIMD_STASH(S, vbase + 1);
@@ -2659,7 +2719,7 @@ fn PARSE_SIMD_EXT(S, ptyp): i64 {
         PCMPE(S); _SIMD_STASH(S, vbase + 2);
         if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
         PCMPE(S);
-        SFLC(S, vbase + 3);
+        _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
         EMIT_F64V_AXPY(S, vbase);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
         return 0;
@@ -2846,12 +2906,13 @@ fn _PARSE_F64V4_UNARY(S, op): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
     var vbu = GFLC(S);
+    _SIMD_RESERVE(S, vbu, 2);
     PCMPE(S); _SIMD_STASH(S, vbu);
     if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
     PCMPE(S); _SIMD_STASH(S, vbu + 1);
     if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
     PCMPE(S);
-    SFLC(S, vbu + 2);
+    _SIMD_RESERVE(S, vbu, 2);   # max, never a lowering assignment
     EMIT_F64V4_UNARY(S, op, vbu);
     if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
     return 1;
@@ -2879,7 +2940,8 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 1; } }
     if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_sqrt(x) — sqrtsd xmm0, xmm0
-    if (ptyp == 79) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    # v6.6.2: f64_sqrt 79 -> 136 (was double-assigned with `object`).
+    if (ptyp == 136) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_abs(x) — v5.11.40 path-A peephole. Dispatch lives in
     # <backend>/emit.cyr::EF64_ABS: x86 movabs+and (saves 5 B vs
     # the prior 5-instr push/movabs/movca/pop/and = 18 B); aarch64
@@ -2918,6 +2980,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
             if (_try_vec_direct(S, ptyp - 89, 1, 2) == 1) { return 1; }
             var vbase = GFLC(S);
+            _SIMD_RESERVE(S, vbase, 3);
             PCMPE(S); _SIMD_STASH(S, vbase);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S); _SIMD_STASH(S, vbase + 1);
@@ -2925,7 +2988,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             PCMPE(S); _SIMD_STASH(S, vbase + 2);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S);
-            SFLC(S, vbase + 3);
+            _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
             EMIT_F64V_LOOP(S, ptyp - 89, vbase);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 1;
@@ -2937,6 +3000,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
             if (_try_vec_direct(S, ptyp - 138, 0, 4) == 1) { return 1; }
             var vbf = GFLC(S);
+            _SIMD_RESERVE(S, vbf, 3);
             PCMPE(S); _SIMD_STASH(S, vbf);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S); _SIMD_STASH(S, vbf + 1);
@@ -2944,7 +3008,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             PCMPE(S); _SIMD_STASH(S, vbf + 2);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S);
-            SFLC(S, vbf + 3);
+            _SIMD_RESERVE(S, vbf, 3);   # max, never a lowering assignment
             EMIT_F32V_LOOP(S, ptyp - 138, vbf);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 1;
@@ -2955,6 +3019,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
             var vbf8 = GFLC(S);
+            _SIMD_RESERVE(S, vbf8, 3);
             PCMPE(S); _SIMD_STASH(S, vbf8);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S); _SIMD_STASH(S, vbf8 + 1);
@@ -2962,7 +3027,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             PCMPE(S); _SIMD_STASH(S, vbf8 + 2);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S);
-            SFLC(S, vbf8 + 3);
+            _SIMD_RESERVE(S, vbf8, 3);   # max, never a lowering assignment
             EMIT_F32V8_LOOP(S, ptyp - 147, vbf8);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 1;
@@ -2978,6 +3043,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
             var vb256 = GFLC(S);
+            _SIMD_RESERVE(S, vb256, 3);
             PCMPE(S); _SIMD_STASH(S, vb256);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S); _SIMD_STASH(S, vb256 + 1);
@@ -2985,7 +3051,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             PCMPE(S); _SIMD_STASH(S, vb256 + 2);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S);
-            SFLC(S, vb256 + 3);
+            _SIMD_RESERVE(S, vb256, 3);   # max, never a lowering assignment
             EMIT_F64V4_LOOP(S, ptyp - 154, vb256);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 1;
@@ -3000,6 +3066,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
             var vbf = GFLC(S);
+            _SIMD_RESERVE(S, vbf, 4);
             PCMPE(S); _SIMD_STASH(S, vbf);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S); _SIMD_STASH(S, vbf + 1);
@@ -3009,7 +3076,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             PCMPE(S); _SIMD_STASH(S, vbf + 3);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S);
-            SFLC(S, vbf + 4);
+            _SIMD_RESERVE(S, vbf, 4);   # max, never a lowering assignment
             EMIT_F64V4_FMADD(S, vbf);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 1;
@@ -3021,12 +3088,13 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
             var vbd = GFLC(S);
+            _SIMD_RESERVE(S, vbd, 2);
             PCMPE(S); _SIMD_STASH(S, vbd);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S); _SIMD_STASH(S, vbd + 1);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S);
-            SFLC(S, vbd + 2);
+            _SIMD_RESERVE(S, vbd, 2);   # max, never a lowering assignment
             EMIT_F64V4_DOT(S, vbd);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 1;
@@ -3038,6 +3106,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
             var vbs = GFLC(S);
+            _SIMD_RESERVE(S, vbs, 3);
             PCMPE(S); _SIMD_STASH(S, vbs);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S); _SIMD_STASH(S, vbs + 1);
@@ -3045,7 +3114,7 @@ fn PARSE_INTRIN(S, ptyp): i64 {
             PCMPE(S); _SIMD_STASH(S, vbs + 2);
             if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
             PCMPE(S);
-            SFLC(S, vbs + 3);
+            _SIMD_RESERVE(S, vbs, 3);   # max, never a lowering assignment
             EMIT_F64V4_SCALE(S, vbs);
             if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
             return 1;

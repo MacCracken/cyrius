@@ -4,6 +4,277 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.2] — UNRELEASED
+
+### Fixed
+
+- ⛔ **`tagged_new()` was deleted at v6.6.0 against a live consumer, on a survey that could not
+  see it.** The justification, written into `lib/tagged.cyr` and restated in seven other places,
+  was *"nothing in the ecosystem called it (verified across all 12 sibling stdlibs at the v6.6.0
+  cut)"*. The survey was real and its **result was correct** — all twelve fold-table stdlibs
+  (sandhi, vani, sakshi, patra, sigil, yukti, sankoch, niyama, mabda, bayan, ganita, yantra)
+  genuinely have zero callers, historically too. **The claim was ecosystem-wide.**
+  `~/Repos` holds ~130 repos; **agnostik calls `tagged_new` 19 times** (`src/llm.cyr` ×13,
+  `src/telemetry.cyr` ×3, `src/security.cyr` ×2, `src/agent.cyr` ×1, plus its published `dist/`,
+  re-vendored into five further repos) and **agnova 9 more**. Both are *domain* libraries — a
+  class the survey never covered — and the membership list of "the 12" appears nowhere in the
+  tree. ⚠ `CHANGELOG.md` carried the honest qualifier and `docs/stdlib-reference.md`, one file
+  away, dropped it. That is how a narrow, accurate survey becomes a false absolute.
+
+  ⛔ **The reasoning was independently invalid.** *"`payload()` has no 1-argument replacement"* is
+  true only of the value form. A plain `enum Foo { A(v); }` **still boxes** — measured 16 bytes,
+  tag at +0, payload at +8 — so the language kept a representation the stdlib no longer had a
+  reader for. `tagged_new` is not `Result` scaffolding; it is the general runtime-tag box
+  constructor, and a box is the only one of the two that can live in a struct field, be a vec
+  element, or survive a one-argument boundary.
+
+  ⛔ **AND THE DELETION WAS THE LOUD HALF. Two functions were SILENTLY REDEFINED at unchanged
+  arity**, which no consumer build can catch:
+
+  | fn | before | after | failure |
+  |---|---|---|---|
+  | `tagged_new(t,v)` | `alloc(16)`, tag@+0, val@+8 | deleted | LOUD |
+  | `payload(t)` | `load64(t + 8)` | deleted | LOUD |
+  | `tag(t)` | `load64(t)` | `return t;` | 🔴 **SILENT — returns the pointer** |
+  | `is_tag(t,e)` | `load64(t) == e` | `t == e` | 🔴 **SILENT — pointer vs tag, always 0** |
+
+  Measured against a consumer's own boxed enum, compile rc=0, run rc=0, no diagnostic:
+  `tag(box)` = 140399372926976 where the tag was 3; `is_some(box)` and `is_none(box)` **both 0**,
+  so a value is simultaneously not-Some and not-None, and `if (is_ok(r))` takes the error branch
+  unconditionally. The 6.6.0 entry lists `is_tag` under *unchanged*; its **arity** is unchanged.
+
+  **The repair.** New `lib/boxed.cyr`: `boxed_new` / `boxed_tag` / `boxed_payload` / `boxed_is`,
+  **plus `tagged_new` retained as a construction alias** — its meaning never changed, so it keeps
+  its name and **all 28 ecosystem construction sites need zero edits**; only the reads move.
+  `fn tag()` is **deleted outright**, converting 34 silent sites into `undefined function`.
+  ⛔ **`payload()` stays deleted, permanently, and that is now a deliberate choice rather than a
+  claimed impossibility**: agnostik and agnova use that one spelling on *both* classes, so
+  restoring it would make ~518 stale `Result` reads compile and dereference a tag (0 or 1) as a
+  pointer — trading a named compile error for a SIGSEGV.
+  **The rule this establishes: a name whose meaning changed must be RETIRED, not redefined.**
+  Arity changes are loud (verified — wrong arity is a hard error); same-arity redefinitions are
+  the one class this project's gates structurally cannot see.
+
+  ⚠ **The full release gate went GREEN through all of it and always would**: cycc's own source
+  includes neither `tagged.cyr` nor `result.cyr`, so the self-host fixpoint and seed-derive are
+  blind to this module — verified, `build/cycc` is byte-identical with or without it. Pinned by
+  `tests/tcyr/stdlib/boxed.tcyr` (22), `tests/tcyr/crossos/boxed_union_primitives.tcyr` (19, so
+  it actually executes on ecb/ach/cass/pi) and `tests/gates/toolchain/boxed_union_primitives.sh`
+  (4 axes). **Axis 1 is the one that would have caught v6.6.0** — deleting any `boxed_*` function
+  reds it; axis 2 asserts every retired spelling produces `undefined function` and not a number.
+  Mutation-proven three ways: deleting `tagged_new`, deleting the module, and re-introducing the
+  silent `tag()` identity each turn it RED.
+  Ecosystem worklist: `docs/development/ecosystem-migration-6.6.2.md`.
+
+- ⛔ **A SIMD intrinsic read its destination pointer from a frame slot nothing ever wrote.**
+  Every one of the **21** `f64v_*` / `f32v_*` / `f32v8_*` / `f64v256_*` / `iv_*` handlers in
+  `src/frontend/parse_expr.cyr` took `var vbase = GFLC(S);` and did **not** raise `GFLC` until
+  after every argument had been parsed. So while an argument was being parsed, `GFLC` still
+  pointed AT the intrinsic's own destination slot, and any argument that allocates a frame local
+  bound it there — the inline replay's `var saved_flc = GFLC(S);` returned `vbase` itself and
+  laid its parameter copy over the destination. The handler's trailing `SFLC(S, vbase + N)` then
+  LOWERED `GFLC` back down over live slots. Measured:
+
+  ```
+  mov -0x30(%rbp),%rax ; mov %rax,-0x50(%rbp)   ; dst stashed at vbase
+  mov -0x38(%rbp),%rax ; mov %rax,-0x58(%rbp)   ; src stashed at vbase+1
+  mov -0x40(%rbp),%rax ; mov %rax,-0x50(%rbp)   ; <- REPLAY OVERWRITES vbase
+  mov -0x50(%rbp),%rdx ; movupd %xmm0,(%rdx,%rsi,8)
+  ```
+
+  **Two failure modes, and the quiet one is worse.** With the register picker on it SIGSEGVs;
+  with `CYRIUS_REGALLOC_PICKER_CAP=0` it exits 0 and writes the result into the *argument object*
+  instead — silent wrong code, and a silent out-of-bounds write wherever that slot holds a mapped
+  address. Both measured on the filed repro; both fixed.
+
+  ⭐ **It is neither derive-specific nor a 6.5.71 regression, though it was filed as both.**
+  6.5.71 only routed `#derive(accessors)` getters through the inline-replay path; before it the
+  getter was a real CALL, and the call incidentally forced the spill the expansion had been
+  silently depending on. The same shape is reachable via `callptr` since **6.0.70** and `#inline`
+  since 6.5.63. ⭐ **The correct pattern was already in the same file**: `bitset`/`bitclr` reserve
+  and anonymise up front (v5.10.35) for exactly this reason. Factored into one
+  `_SIMD_RESERVE(S, base, n)` so 21 copies cannot drift again; the trailing call is a **max**,
+  never a lowering assignment.
+
+- ⛔ **A SIMD intrinsic at TOP LEVEL compiled clean and SIGSEGV'd — found while writing the test
+  for the above.** These stash operands in FRAME slots and top-level code has no frame, so
+  `f64v_scale(r, m + 0, f64_from(2), 4);` outside any function crashed at run time on **every
+  release checked**, with any argument shape — not just the inline-replay one. `bitset`/`bitclr`
+  one screen below already refuse this exact way; the SIMD band never got the guard. Now refuses
+  with `SIMD intrinsics must be called inside a function`. One guard in `_SIMD_RESERVE` covers
+  the whole band, because all 21 handlers call it before emitting anything.
+
+  Pinned by `tests/gates/codegen/simd_intrinsic_operand_slots.sh` (5 axes) and
+  `tests/tcyr/crossos/simd_intrinsic_inline_arg.tcyr` (14). ⭐ **Axis 1 counts STORES into the
+  destination slot and requires exactly 1** — a value assertion cannot see a spill that was
+  *skipped*, only one that produced a wrong number. Mutation-proven: against the unfixed 6.6.1
+  compiler the gate reports **0 stores** ("read once, written zero times", exactly as filed).
+  ⚠ **The fixpoint and seed-derive prove nothing here** — cycc has zero call sites of these
+  intrinsics — which is why the cross-OS corpus file exists.
+
+- ⛔ **`map_u64` answered untruthfully for its own sentinel keys — five paths, both sentinels.**
+  Slot state is encoded IN-BAND in the key field (`MAP_U64_EMPTY = 0`, `MAP_U64_TOMB = -1`) while
+  every public path validated a slot with `load64(ep) != key`. When the caller's key IS a
+  sentinel that comparison is a tautology and the occupancy check evaporates. Measured on 6.6.1:
+
+  | call | before | after |
+  |---|---|---|
+  | `map_u64_has(m, 0)` on an **empty** map | **1** | 0 |
+  | `map_u64_get_or(m, 0, 777)` | 0 | 777 |
+  | `map_u64_delete(m, 0)` on an empty map | **1**, size → **-1** | 0, size 0 |
+  | 2000× `map_u64_set(m, 0, 42)` | size **574**, growing to `_hm_die()` | size 0, refused |
+
+  Filed by chakshu against `map_u64_get_or` alone, and its claim that `map_u64_has` is
+  "accidentally correct" is **false**. What it cost: chakshu keys a per-process CPU baseline by
+  pid with `-1` = "no baseline". Linux has no pid 0 so it was invisible for releases; **AGNOS has
+  a pid 0** (`kmain`), the lookup returned 0 instead of -1, and the monitor rendered **59% CPU
+  for an idle kernel thread**. A plausible number, in a column where numbers belong.
+  One shared `_map_u64_key_reserved` is now consulted first by `get` / `get_or` / `has` /
+  `delete` / `set_a`. ⚠ `set_a` returns **-2**, not -1: -1 already means "probe chain full / grow
+  OOM" and `tests/tcyr/memory/alloc_str_extras.tcyr` asserts -1 from a loop that **starts at key
+  0**, so -1 would have made that existing test pass on its first iteration for the wrong reason.
+  Key 0 and -1 remain unstorable — a real constraint of the encoding — but failing to bias is no
+  longer silent. Pinned by `tests/tcyr/stdlib/hashmap_u64_sentinel_keys.tcyr` (32 assertions,
+  6 axes including an anti-overfit 400-key corpus and the `k + 1` biasing consumers rely on).
+  ⚠ The header claimed *"No real-world consumer hits this today"* — **six do**, and four had
+  already written their own remaps. That is the same antipattern `CLAUDE.md` names: a defect
+  written down as a rule for consumers to comply with.
+
+- ⛔ **An `object;` build exported libc-reserved names as PREEMPTIBLE globals, so a linked C
+  library's own calls bound to cyrius's implementations.** Filed by samvada, reproduced and fixed.
+  The contracts are inverted in **both** directions:
+
+  | | C | cyrius (`lib/string.cyr:76`) |
+  |---|---|---|
+  | signature | `void *memchr(const void *s, int c, size_t n)` | `fn memchr(s, c, n) -> i64` |
+  | found | pointer **to the byte** | **offset** from `s` |
+  | not found | **NULL** (`0`) | **`-1`** |
+
+  "Not found" hands C a non-NULL `0xFFFFFFFFFFFFFFFF`, so it proceeds as if it found something;
+  "found at offset 0" hands C a NULL, so it concludes not-found. samvada's process **hung** inside
+  `sd_bus_call_method`, and `objcopy -L memchr` alone fixed it.
+
+  ⚠ **Three things made it sharp.** The link SUCCEEDS — libc's copy is weak or in a not-yet-loaded
+  shared object, so there is no duplicate-symbol error and the override is silent. The failure
+  surfaces arbitrarily far away, inside a C function the cyrius author never called. And it is
+  conditional on **reachability**: if nothing pulls `memchr` into the object it is eliminated and
+  there is no bug — so a project links cleanly for months and then breaks because unrelated code
+  made the symbol reachable.
+
+  ⚠ **The obvious derivation points at the wrong symbol.** Comparing an object's globals against
+  libc's *dynamic* exports returns only `getenv`, because glibc's `memchr`/`memcpy`/`strlen` are
+  IFUNCs and do not match a naive type filter. Localizing `getenv` changes nothing; `memchr` is
+  the one. **Re-derived here against the FULL libc symbol set: 11 names, not the 8 the filing
+  listed** — `getpid`, `getppid` and `gettid` were missing from it. mabda has hand-carried an
+  `objcopy -L` list in its Makefile for exactly this, and that list is wrong in both directions:
+  it localizes `memeq` (cyrius-only, a no-op) and omits `getenv`.
+
+  Fixed by emitting **STV_HIDDEN** for those 11 in both the `.o` symtab and the `.so` dynsym —
+  the shared-object path had the identical defect and is closed with it, rather than only the
+  reported one. ⭐ **HIDDEN rather than STB_LOCAL is load-bearing**: ELF requires every local
+  symbol to precede every global one, with `sh_info` naming the first global, so flipping the
+  binding of an arbitrary subset would break that invariant and need the whole table reordered.
+  Hidden keeps the binding GLOBAL — ordering untouched — and `ld` makes it local at link time,
+  which is the property actually wanted. Cyrius's own internal calls are direct rather than via
+  the PLT, so they are unaffected.
+
+  **Verified end to end on the filed repro**, not just at the symbol level: against 6.6.1 it times
+  out; against this build it prints `sd_bus_default_system -> 1` / `GetSessionByPID -> 1` /
+  `session = /org/freedesktop/login1/session/_32` — the output the README documents for the
+  `objcopy` workaround, now without needing `objcopy`. Pinned by
+  `tests/gates/codegen/object_hides_libc_names.sh` (4 axes), mutation-proven: against the unfixed
+  compiler axis 1 names all 11. ⚠ **Axis 2 is anti-vacuous** — hiding *everything* would satisfy
+  axis 1 and break every consumer linking a cyrius object for its own entry points; axis 3 pins
+  that `_cyrius_init` stays GLOBAL/DEFAULT, since mabda's C launcher calls it and it was
+  accidentally STB_LOCAL from v4.6.0-alpha2 to v5.4.8; axis 4 pins that `memeq` — which merely
+  looks libc-ish and has no C counterpart — is NOT hidden, so the guard cannot degrade into a
+  `mem*`/`str*` prefix match.
+
+- ⛔ **`scripts/funcgate-stage.sh` opened with an unguarded `rm -rf "$H"`.** Its entire contract
+  is "stage a THROWAWAY CYRIUS_HOME"; pointed at `$HOME/.cyrius` it destroyed the whole installed
+  store. **104 of 126 manifests under `~/Repos` then pinned a version with no snapshot**, and
+  `_try_redirect_to_pinned` fires before command dispatch, so those repos could not run ANY verb
+  — not `build`, not `lint`, not `--version`. The only protection was a sentence in
+  `docs/development/handoff.md`, and this tree's own history says that file sat stale for
+  thirty-eight releases at a stretch. It now refuses when the target is the live store or **any**
+  tree already holding more than one installed version, with `CYRIUS_FUNCGATE_ALLOW_LIVE=1` as
+  the deliberate override. Pinned by `tests/gates/toolchain/funcgate_refuses_live_home.sh`
+  (4 axes, mutation-proven; axis 4 is anti-vacuous so "refuse everything" cannot pass).
+
+- ⛔ **Four lexer token numbers were double-assigned; two are split, and one of them was not a
+  diagnostics defect at all.** Token 79 was BOTH `object` and `f64_sqrt`; token 111 BOTH `stack`
+  and `callptr`. A token type could not recover its spelling, so before v6.4.77
+  `var f64_sqrt = 1;` reported **"reserved keyword 'object'"** — sending the reader to look for a
+  variable they never wrote — and v6.4.77 taped over it by returning both names
+  (`object'/'f64_sqrt`): no longer wrong, still handing the reader a disjunction to resolve.
+
+  ⛔ **The filing called it "no miscompile, diagnostics-only, the grammar disambiguates by
+  POSITION". That premise does not hold for 111.** `callptr(fp, 41);` in **statement position**
+  was a hard compile error — `expected var, got '('` — because `PARSE_STMT` saw 111 and routed to
+  the `stack var` parser before any expression path ran. Statement position IS a shared position.
+  Verified against 6.6.1: that program does not compile; it does now.
+
+  `f64_sqrt` → **136**, `callptr` → **137** (both free in `TOKNAME` and in every dispatch band;
+  the 136/137 in `src/frontend/ts/lex.cyr` are the TypeScript front end's separate token space).
+  ⭐ **`object` keeps 79 and `stack` keeps 111** — they are the statement keywords that
+  legitimately own those numbers, and leaving them put is what makes this a **zero-fork-edit**
+  change: `main.cyr` and `main_win.cyr` both compare against 79 for `object;` and were not
+  touched. That was the main risk the filing cited for deferring the work.
+
+  ⚠ **The trap that would have shipped green:** `f64_sqrt` sat inside the `62..105` STATEMENT
+  band in `parse.cyr`. Renumbering it out without adding a band entry silently regresses
+  `f64_sqrt(x);` as a bare statement — and **no test in the tree covered that form**. Both
+  statement forms are now pinned by `tests/tcyr/frontend/token_renumber_79_111.tcyr`, along with
+  `stack var`, `: stack` enums (the *other* consumer of 111, which the whole value-form arc rests
+  on), and `object;` mode declarations.
+
+  ⛔ **`programs/checks/lint_fmt.cyr` ASSERTED THE COLLISION and would have gone RED on the fix** —
+  it required the literal strings `'object'/'f64_sqrt'` and `'stack'/'callptr'`. That is the same
+  shape as the v6.6.0 gate which asserted the v6.5.67 refusal and would have blocked its own
+  repair: a gate pinning the workaround rather than the property. Rewritten from 2 rows to 6 —
+  each spelling must name **itself**, the two keywords that kept their numbers must still name
+  themselves (a renumber applied to the wrong half of either pair would otherwise pass), and a
+  class-wide assertion that **no reserved name reports a `'/'` disjunction**, so a future
+  double-assignment is caught without anyone remembering to add a row.
+
+  ⚠ **seed-derive was the load-bearing gate here and it is GREEN** — a front-end token change is
+  exactly the class the cycc fixpoint cannot see (the `>>>` case at v6.4.74, where cybs could not
+  lex the new spelling and only seed-derive noticed). `seed → cybs → cycc` byte-identical.
+  Mutation-proven: the new corpus file fails to COMPILE on 6.6.1 at the `callptr(f, 41);` line.
+
+### Changed
+
+- **The symlinked-`lib/` vendor guard now runs before every early return in
+  `_try_redirect_to_pinned`.** It sat below `if (_cyrius_resolved == 1) { return 0; }`, so an
+  exported `CYRIUS_RESOLVED=1` skipped the whole function. ⚠ **Honest scope: this is
+  defence-in-depth, not a closed live hole** — a binary >= 6.5.37 still refuses via the resolver's
+  own `_dep_dest_is_linked`, so the pre-fix code also declined, just later and with a message
+  about the pin rather than the symlink. The invariant being pinned is that an environment
+  variable must not be able to switch off a safety guard. New axis 6 on
+  `tests/gates/toolchain/deps_symlinked_lib_refused.sh`.
+- ⚠ **A premise correction, recorded rather than quietly dropped.** This release's plan asserted
+  that `cbt/deps.cyr` "falls back to the installed snapshot when the pinned one is absent", making
+  every `cyrius deps` a poisoning vector. **It does not** — measured: a repo pinned to an
+  uninstalled version hard-errors and vendors nothing. The pin genuinely shields. How agnostik's
+  `lib/` came to hold 6.6.x files under a 6.5.35 pin is therefore still unexplained; the 12 files
+  rewritten at 09:40 on 2026-09-09 are byte-identical to the 6.6.1 snapshot, and `_dep_copy_file`
+  only rewrites files that differ, which is why 12 of 29 moved. Left open rather than papered over.
+- ⚠ **`tests/tcyr/memory/alloc_str_extras.tcyr` had to move its loop off key 0**, and that is
+  recorded rather than quietly edited. It asserts `map_u64_set_a` returns **-1** on grow-OOM from
+  a loop starting at **key 0** — which is `MAP_U64_EMPTY`. Before this release the reserved key
+  was accepted, so the loop ran on and the assertion passed *while silently corrupting the map*;
+  after it, the loop exits on iteration 1 with -2 and never reaches the grow. Either way key 0 was
+  testing something other than grow-OOM. The loop now runs 1..30 — same 30 iterations, same
+  intent — plus a new row asserting the failure was -1 and **not** -2, so it cannot pass for the
+  wrong reason. This is the "fix the gate, never drop the feature" case.
+- Shell gates **144 → 148**; `.tcyr` corpus **301 → 306**, of which `crossos/` **68 → 70**;
+  `lib/*.cyr` **102 → 103** (`boxed.cyr`); `docs/api-surface.snapshot` **5,152 → 5,156**
+  (5 `boxed::*` added, `tagged::tag/1` removed).
+  ⚠ **Derived from `git ls-files` + `find`, and an earlier draft of this line got it wrong** —
+  it claimed a 302 baseline and said `handoff.md`'s 301 was stale. 301 was correct. Recorded
+  rather than silently corrected, because "a number nobody re-derived" is the failure this whole
+  release exists to repair, and it does not stop applying to the release notes themselves.
+
 ## [6.6.1] — 2026-09-08
 
 ### Fixed

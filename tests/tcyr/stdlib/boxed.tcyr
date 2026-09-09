@@ -1,0 +1,93 @@
+# Test: lib/boxed.cyr — the runtime-tagged BOX primitives (v6.6.2).
+#
+# ⭐ THIS FILE IS THE CAPABILITY EVIDENCE, AND THAT IS ITS WHOLE POINT.
+# v6.6.0 deleted `tagged_new` on a survey of the 12 fold-table stdlibs that was written down as
+# an ecosystem-wide absolute. agnostik calls it 19 times, agnova 9. Nothing in this repo could
+# see that, because an ecosystem survey cannot be PROVED from inside this repo — but the
+# capability can be pinned here, so that removing it turns a test RED instead of turning a
+# consumer's build red three days later.
+#
+# The self-host fixpoint and seed-derive prove NOTHING about this file: cycc's own source
+# includes neither tagged.cyr nor result.cyr, so the compiler is byte-identical with or without
+# the module. This corpus is the only evidence there is. Do not accept "cycc self-hosts
+# byte-identical" as coverage for lib/boxed.cyr.
+#
+# Each assertion below stands for something the VALUE FORM cannot do — that is why the box has
+# to keep existing rather than being folded into `Result`.
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+
+# A nullary enum used purely as a tag namespace — the agnostik/agnova shape. More than two
+# variants, so `Result`'s two-arm pair cannot model it at all.
+enum Content { CText(); CBin(); CImage(); CAudio(); CDoc(); }
+
+alloc_init();
+
+# One-argument accessors — the agnostik `fn content_block_type(cb) { return tag(cb); }` shape.
+# A box fits in one argument. A value-form pair does not: rdx never reaches a parameter, so the
+# same helper written against `Result` would receive the tag and silently lose the payload.
+fn _probe_kind(cb): i64 { return boxed_tag(cb); }
+fn _probe_val(cb): i64  { return boxed_payload(cb); }
+
+# ── the published layout contract ───────────────────────────────────────────────────────
+test_group("layout");
+var b = boxed_new(CImage, 4242);
+assert_eq(load64(b), CImage, "raw load64(b) reads the tag at +0");
+assert_eq(load64(b + 8), 4242, "raw load64(b+8) reads the payload at +8");
+assert_eq(boxed_tag(b), CImage, "boxed_tag");
+assert_eq(boxed_payload(b), 4242, "boxed_payload");
+assert_eq(boxed_is(b, CImage), 1, "boxed_is matches");
+assert_eq(boxed_is(b, CText), 0, "boxed_is rejects");
+
+# ── tagged_new is the same constructor, not a lookalike ─────────────────────────────────
+# It kept its name because its MEANING never changed. All 28 ecosystem construction sites are
+# correct as written; if this ever diverges from boxed_new, those sites silently change meaning.
+test_group("tagged_new alias");
+var t = tagged_new(CAudio, 99);
+assert_eq(boxed_tag(t), CAudio, "tagged_new tag");
+assert_eq(boxed_payload(t), 99, "tagged_new payload");
+assert_eq(load64(t), load64(boxed_new(CAudio, 99)), "same tag as boxed_new");
+assert_eq(load64(t + 8), 99, "same payload slot as boxed_new");
+
+# ── a box survives a ONE-ARGUMENT boundary; a value-form pair does not ───────────────────
+# This is the agnostik `fn content_block_type(cb) { return tag(cb); }` shape.
+test_group("one-arg accessor");
+assert_eq(_probe_kind(b), CImage, "box read through a 1-arg fn");
+assert_eq(_probe_val(b), 4242, "payload read through a 1-arg fn");
+
+# ── a box is storable: struct field and vec element ─────────────────────────────────────
+# The value form is a hard error in a struct field and cannot be a vec element. These two
+# assertions are the reason the representation still has to exist.
+test_group("storable");
+var slot = alloc(16);
+store64(slot, b);
+assert_eq(boxed_tag(load64(slot)), CImage, "box round-trips through a struct-shaped slot");
+
+var v = vec_new();
+vec_push(v, boxed_new(CText, 7));
+vec_push(v, boxed_new(CBin, 8));
+vec_push(v, boxed_new(CDoc, 9));
+assert_eq(vec_len(v), 3, "three boxes in a vec");
+assert_eq(boxed_tag(vec_get(v, 0)), CText, "vec[0] tag");
+assert_eq(boxed_payload(vec_get(v, 1)), 8, "vec[1] payload");
+assert_eq(boxed_tag(vec_get(v, 2)), CDoc, "vec[2] tag");
+
+# ── coexistence: both representations in one translation unit ───────────────────────────
+# The value form must still allocate nothing and read correctly with boxed.cyr included.
+test_group("coexistence");
+var ot, ov = Some(11);
+assert_eq(ot, Some, "value-form tag still binds");
+assert_eq(ov, 11, "value-form payload still binds");
+assert_eq(is_some(ot), 1, "is_some on a value-form tag");
+var bx = boxed_new(CText, 11);
+assert_eq(boxed_tag(bx), CText, "boxed tag unaffected by the value form");
+
+# ⛔ THE HAZARD, PINNED AS BEHAVIOUR RATHER THAN LEFT AS A COMMENT.
+# `is_tag` compares its argument directly, so on a BOX it is always 0 — that is precisely the
+# silent class v6.6.0 shipped. Asserting it here means the trap is documented by a test that
+# fails if anyone ever "fixes" is_tag to dereference, which would break the value form instead.
+assert_eq(is_tag(bx, CText), 0, "is_tag on a BOX is always 0 — use boxed_is");
+
+var r = assert_summary();
