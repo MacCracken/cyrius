@@ -2,12 +2,66 @@
 # Subcommands
 # ================================================================
 
+# ⛔ v6.6.2 — `cyrius build <foreign-src>` OVERWROTE THE RUNNING COMPILER, and did.
+#
+# In this repo `cyrius.cyml` declares `output = build/cycc` — correct, that IS how the compiler is
+# built — and the documented argument ladder says one positional argument means "that src + the
+# manifest's output". So `cyrius build tests/tcyr/.../foo.tcyr` compiled the TEST and wrote an
+# 842 KB test binary over `build/cycc` at the v6.6.0 cut. It was recoverable only because a
+# verified stage binary happened to still be in /tmp; from a clean tree it costs a bootstrap.
+#
+# ⭐ THE LADDER IS RIGHT AND DOCUMENTED, so the fix is narrower than changing it. Exactly one
+# combination is destructive: an EXPLICIT FOREIGN SRC plus an INHERITED output that resolves to
+# the compiler we are running. Nothing legitimate needs it. Building the manifest's own declared
+# entry still writes the compiler, which is the whole point of the key.
+#
+# Path comparison is tail-based on purpose: `current_cc()` may hand back `./build/cycc` or an
+# absolute path depending on how the wrapper resolved, while the manifest says `build/cycc`.
+# Comparing only the exact strings would let the guard miss the very case it exists for.
+fn _pb_tail_eq(a, b): i64 {
+    if (a == 0) { return 0; }
+    if (b == 0) { return 0; }
+    var la = strlen(a);
+    var lb = strlen(b);
+    var shortp = b;
+    var ls = lb;
+    var longp = a;
+    var ll = la;
+    if (lb > la) { shortp = a; ls = la; longp = b; ll = lb; }
+    if (ls == 0) { return 0; }
+    # the shorter must be a trailing segment of the longer, on a path boundary
+    if (memeq(longp + ll - ls, shortp, ls) == 0) { return 0; }
+    if (ll == ls) { return 1; }
+    if (load8(longp + ll - ls - 1) == 47) { return 1; }   # 47 = '/'
+    return 0;
+}
+
 fn cmd_build(source, output): i64 {
     # Refuse to write the build output over a `.cyr` file. A compiled
     # binary never has a `.cyr` name, so a `.cyr` output is almost always
     # a misparsed CLI that would silently clobber a source (issue
     # 2026-04-26). Hard error before any write. See CHANGELOG [6.0.36].
     var _olen = strlen(output);
+    # v6.6.2 — refuse to overwrite the compiler we are currently running with a FOREIGN source.
+    # See _pb_tail_eq above for the incident. Ordered before the directory-creation below so the
+    # refusal happens before anything is written.
+    var _pb_cc = current_cc();
+    if (_pb_tail_eq(output, _pb_cc) == 1) {
+        var _pb_decl = _manifest_build_key("entry", 5);
+        if (_pb_decl == 0) { _pb_decl = _manifest_build_key("src", 3); }
+        var _pb_ok = 0;
+        if (_pb_decl != 0) { if (_pb_tail_eq(source, _pb_decl) == 1) { _pb_ok = 1; } }
+        if (_pb_ok == 0) {
+            sys_write(STDERR_FD, "error: refusing to overwrite the running compiler with a foreign source\n", 72);
+            sys_write(STDERR_FD, "  output:  ", 11);
+            sys_write(STDERR_FD, output, strlen(output));
+            sys_write(STDERR_FD, "\n  source:  ", 12);
+            sys_write(STDERR_FD, source, strlen(source));
+            sys_write(STDERR_FD, "\n  This is the manifest's [build] output inherited by a one-argument build.\n", 76);
+            sys_write(STDERR_FD, "  Building the declared entry still writes it; pass an explicit output otherwise.\n", 82);
+            return 1;
+        }
+    }
     if (_olen >= 4 && memeq(output + _olen - 4, ".cyr", 4) == 1) {
         sys_write(STDERR_FD, "error: refusing to write build output over a .cyr source file: ", 63);
         sys_write(STDERR_FD, output, _olen);
@@ -4082,17 +4136,37 @@ fn cmd_distlib(profile): i64 {
     _skip_deps = 0;
     var check_r = 0 - 1;
     var dl_wrote = 0;
+    var dl_errf = _cbt_tmpfile("distlib_err");
+    var dl_retired = 0;
     if (file_write_all(dl_entry, dl_src, strlen(dl_src)) >= 0) {
         dl_wrote = 1;
         _cc_allow_undef = 1;
+        _cc_stderr_to = dl_errf;
         check_r = compile(dl_entry, dl_out);
+        _cc_stderr_to = 0;
         _cc_allow_undef = 0;
+        # v6.6.2 — the blast-door check. Undefined fns are downgraded above; a RETIRED name is
+        # not a consumer's to supply and must still fail. See _distlib_retired_name.
+        var eb = alloc(262144);
+        var en = file_read_all(dl_errf, eb, 262143);
+        if (en > 0) { dl_retired = _distlib_scan_retired(eb, en); }
+        sys_unlink(dl_errf);
         xunlink(dl_entry);
     }
     _skip_deps = dl_saved_skip;
     sys_unlink(dl_out);
     if (dl_wrote == 0) {
         _err_ctx("distlib: cannot write the bundle self-check entry", dl_entry);
+        return 1;
+    }
+    if (dl_retired != 0) {
+        _err_ctx("distlib: the bundle calls a RETIRED stdlib name", out_path);
+        sys_write(STDERR_FD, "      symbol: ", 14);
+        sys_write(STDERR_FD, dl_retired, strlen(dl_retired));
+        sys_write(STDERR_FD, "\n", 1);
+        _info("      Undefined fns are downgraded here because a bundle omits the stdlib and the");
+        _info("      consumer supplies it. This name is different: the stdlib RETIRED it, so no");
+        _info("      consumer on any version can satisfy it. See docs/retired-symbols.allow.");
         return 1;
     }
     if (check_r != 0) {
@@ -4115,6 +4189,74 @@ fn cmd_distlib(profile): i64 {
 # ================================================================
 # publish — tag, distlib, and create release
 # ================================================================
+
+# ⛔ v6.6.2 — `--allow-undef` IS A BLAST DOOR, AND A RETIRED NAME MUST NOT WALK THROUGH IT.
+#
+# The distlib self-check compiles the generated bundle with undefined functions downgraded, and
+# that is correct: a bundle deliberately omits the stdlib, so `alloc`/`strlen`/`sock_send` are
+# expected to be unresolved — the consumer supplies them. But the downgrade is BLANKET, so a
+# bundle referencing a name the stdlib no longer HAS also passed, and shipped.
+#
+# That is not hypothetical. At the v6.6.0 cut, `payload()` was deleted while 18 publisher bundles
+# still called it; every one of them would have self-checked GREEN and detonated at the consumer,
+# in a function the bundle's author never wrote.
+#
+# ⭐ THE DISCRIMINATOR: an undefined name the stdlib still exports is a consumer's job to supply.
+# An undefined name the stdlib has RETIRED can never be satisfied by anyone, on any version.
+#
+# ⚠ WHY A HARDCODED LIST AND NOT docs/api-surface.snapshot. `cyrius distlib` runs in DOWNSTREAM
+# repos, which have no copy of that file — a snapshot-based check would silently no-op exactly
+# where it is needed. This mirrors `_pin_has_known_critical` in cbt/cyrius.cyr: a short,
+# hand-maintained list of facts, with the reason written beside each, that has to be ADDED to
+# deliberately. Retiring a stdlib name means adding a row here and to
+# docs/retired-symbols.allow — which is the accounting the v6.6.0 survey never did.
+fn _distlib_retired_name(n): i64 {
+    # v6.6.0 deleted these from lib/tagged.cyr. `tag` was deleted at v6.6.2 (v6.6.0 kept the NAME
+    # and redefined the body, so on a box it silently returned the pointer).
+    # `tagged_new` is NOT here — it was RESTORED at v6.6.2 in lib/boxed.cyr.
+    if (streq(n, "payload") == 1) { return 1; }
+    if (streq(n, "tag") == 1) { return 1; }
+    return 0;
+}
+
+# Scan a cycc stderr capture for `undefined function 'NAME'` and report the first RETIRED one.
+# Returns a pointer to the name, or 0. Names are bounded by the quote pair the compiler emits.
+fn _distlib_scan_retired(errbuf, n): i64 {
+    var i = 0;
+    var namebuf = alloc(256);
+    while (i < n) {
+        # match: undefined function '
+        if (load8(errbuf + i) == 117) {
+            if (i + 20 < n) {
+                if (_mem_starts(errbuf + i, "undefined function '", 20) == 1) {
+                    var j = i + 20;
+                    var k = 0;
+                    while (j < n) {
+                        var c = load8(errbuf + j);
+                        if (c == 39) { j = n; }
+                        else {
+                            if (k < 255) { store8(namebuf + k, c); k = k + 1; }
+                            j = j + 1;
+                        }
+                    }
+                    store8(namebuf + k, 0);
+                    if (_distlib_retired_name(namebuf) == 1) { return namebuf; }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _mem_starts(p, lit, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) != load8(lit + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
 
 fn cmd_publish(): i64 {
     var ver = read_file_str("VERSION");

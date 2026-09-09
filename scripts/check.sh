@@ -370,32 +370,6 @@ sh "$ROOT/tests/gates/toolchain/install_atomic_over_running_binary.sh"
 # off its buffer into the process stack.
 sh "$ROOT/tests/gates/codegen/aggregate_copy_assign_slots.sh"
 
-# ⛔ v6.6.0 — THE AGNOS CROSS-BUILD GATE, MOVED FROM CI-ONLY TO HERE, AND THE REASON MATTERS.
-# This gate compiles ten CYRIUS_TARGET_AGNOS fixtures (net/entropy/clock/TLS #45-#55, the
-# server-socket peer #56/#57, fs dir-listing, sync, io locks, signals, the GPU band, agnoshi).
-# It lived ONLY in `.github/workflows/ci.yml`, so `release-gate.sh` — the thing CLAUDE.md calls
-# the single consolidated pre-tag check — was structurally blind to it.
-#
-# ⚠ THAT BLINDNESS SHIPPED A RED CI AT v6.6.0. The Result value-form flip changed the arity of
-# every Result, and three of this gate's fixtures are heredoc'd cyrius programs using the old
-# boxed idiom (`var sr = tcp_socket(); ... payload(sr)`). The repo-wide migration swept `lib/`,
-# `src/`, `tests/`, `programs/`, `benches/` and `cbt/` — every place cyrius CODE lives — and
-# missed fixtures embedded in `scripts/`. The full release gate went GREEN (240/240, four hosts)
-# and CI still failed, which is the inverse of the macOS-rot lesson and just as bad: there, a CI
-# job that never ran the compiler hid a break for nine minors; here, a gate that ran ONLY in CI
-# meant the local authority could not see one. A gate the release gate cannot run is not a gate
-# the release gate can vouch for.
-#
-# ⚖️ THE OTHER THREE CI-ONLY SCRIPTS STAY IN CI, and that is a decision, not an oversight.
-# `funcgate-stage.sh` / `funcgate-posix.sh` STAGE AN INSTALL into $CYRIUS_HOME and then drive the
-# installed CLI end-to-end; running them from check.sh would rewrite the developer's live
-# ~/.cyrius in the middle of a check — and this release lost the whole toolchain once already by
-# treating that tree as scratch. `build-cycc-verify.sh` is a packaging verifier for the release
-# tarball, not a source gate. All three were run by hand at the v6.6.0 cut and pass; the agnos
-# gate is the one that both compiles cyrius source AND could regress from a language change,
-# which is exactly the class that belongs in the local gate.
-sh "$ROOT/scripts/agnos-crossbuild-gate.sh"
-
 # ⛔ v6.6.2 — THE BOXED TAGGED-UNION PRIMITIVES, AND THE GATE THAT WOULD HAVE CAUGHT v6.6.0.
 # `tagged_new` and `payload` were deleted at v6.6.0 as "nothing in the ecosystem called it
 # (verified across all 12 sibling stdlibs)". The survey was real and right for those twelve; the
@@ -450,6 +424,14 @@ sh "$ROOT/tests/gates/toolchain/removed_symbol_census.sh"
 # assertions, so they were 0 == 0 and passed whether or not f32v8 SIMD worked.
 sh "$ROOT/tests/gates/toolchain/guide_examples_compile.sh"
 
+# ⛔ v6.6.2 — `cyrius build <foreign-src>` OVERWROTE THE RUNNING COMPILER at the v6.6.0 cut: this
+# repo's manifest declares `output = build/cycc`, and the one-argument ladder means "that src +
+# the manifest output", so building a TEST wrote an 842 KB binary over the compiler. Recoverable
+# only because a stage binary happened to be in /tmp. The roadmap's pinned `.2` occupant.
+# ⚠ The gate runs entirely in a temp tree against a COPY — pointed at the real build/cycc, the
+# gate would itself be the destructive act.
+sh "$ROOT/tests/gates/toolchain/build_refuses_compiler_overwrite.sh"
+
 # ⛔ v6.6.2 — `funcgate-stage.sh` opened with an unguarded `rm -rf "$H"`, and its whole contract
 # is "stage a THROWAWAY CYRIUS_HOME". Pointed at $HOME/.cyrius on 2026-09-07 it destroyed the
 # entire installed store; 104 of 126 manifests under ~/Repos then pinned a version with no
@@ -459,3 +441,40 @@ sh "$ROOT/tests/gates/toolchain/guide_examples_compile.sh"
 # ⚠ This gate does NOT stage into a live home — it drives the refusal paths with temp trees and
 # a redirected HOME, so it is safe in check.sh where funcgate-stage.sh itself is not.
 sh "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
+
+# ⚠ ORDERING (v6.6.2): `scripts/agnos-crossbuild-gate.sh` is LAST on purpose, and that matters.
+# check.sh runs under `set -e`, so the first gate to exit non-zero aborts the whole script and
+# every gate BELOW it silently never runs. That is exactly what happened when the seven v6.6.2
+# gates were first appended after this one: the suite reported "240 passed, 0 failed", the agnos
+# gate failed for an ENVIRONMENTAL reason (agnoshi pins 6.5.36, which the 2026-09-07 toolchain
+# wipe removed), and not one of the new gates executed — a green summary over unrun gates, which
+# is the exact shape of the macOS rot this tree keeps re-learning.
+# ⭐ THE RULE: a gate that depends on a SIBLING CHECKOUT or another machine belongs at the END,
+# after everything that depends only on this repo. Anything else lets an absent neighbour hide a
+# real in-repo regression.
+
+# ⛔ v6.6.0 — THE AGNOS CROSS-BUILD GATE, MOVED FROM CI-ONLY TO HERE, AND THE REASON MATTERS.
+# This gate compiles ten CYRIUS_TARGET_AGNOS fixtures (net/entropy/clock/TLS #45-#55, the
+# server-socket peer #56/#57, fs dir-listing, sync, io locks, signals, the GPU band, agnoshi).
+# It lived ONLY in `.github/workflows/ci.yml`, so `release-gate.sh` — the thing CLAUDE.md calls
+# the single consolidated pre-tag check — was structurally blind to it.
+#
+# ⚠ THAT BLINDNESS SHIPPED A RED CI AT v6.6.0. The Result value-form flip changed the arity of
+# every Result, and three of this gate's fixtures are heredoc'd cyrius programs using the old
+# boxed idiom (`var sr = tcp_socket(); ... payload(sr)`). The repo-wide migration swept `lib/`,
+# `src/`, `tests/`, `programs/`, `benches/` and `cbt/` — every place cyrius CODE lives — and
+# missed fixtures embedded in `scripts/`. The full release gate went GREEN (240/240, four hosts)
+# and CI still failed, which is the inverse of the macOS-rot lesson and just as bad: there, a CI
+# job that never ran the compiler hid a break for nine minors; here, a gate that ran ONLY in CI
+# meant the local authority could not see one. A gate the release gate cannot run is not a gate
+# the release gate can vouch for.
+#
+# ⚖️ THE OTHER THREE CI-ONLY SCRIPTS STAY IN CI, and that is a decision, not an oversight.
+# `funcgate-stage.sh` / `funcgate-posix.sh` STAGE AN INSTALL into $CYRIUS_HOME and then drive the
+# installed CLI end-to-end; running them from check.sh would rewrite the developer's live
+# ~/.cyrius in the middle of a check — and this release lost the whole toolchain once already by
+# treating that tree as scratch. `build-cycc-verify.sh` is a packaging verifier for the release
+# tarball, not a source gate. All three were run by hand at the v6.6.0 cut and pass; the agnos
+# gate is the one that both compiles cyrius source AND could regress from a language change,
+# which is exactly the class that belongs in the local gate.
+sh "$ROOT/scripts/agnos-crossbuild-gate.sh"

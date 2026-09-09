@@ -74,11 +74,20 @@ already skewed**.
 3. **Publishers regenerate `dist/`** — in dependency order.
 4. **Consumers re-vendor.**
 
-⛔ **Do not run `cyrius deps` in any pre-flip repo before 6.6.2 is installed.** Until the bite-2
-guard lands, `cbt/deps.cyr` falls back to the *installed* snapshot when the pinned one is absent,
-so it vendors 6.6.1's stdlib **regardless of the pin**. That is exactly how agnostik was poisoned
-at 09:40 on 2026-09-09. 89 repos still hold a pre-flip `lib/tagged.cyr` and build fine today;
-one careless `deps` breaks any of them.
+⚠ **CORRECTED — the original version of this warning was WRONG, and it is left visible rather
+than deleted because it shaped the plan.** It said `cbt/deps.cyr` "falls back to the installed
+snapshot when the pinned one is absent, so it vendors 6.6.1's stdlib regardless of the pin".
+**It does not.** Measured: a repo pinned to an uninstalled version **hard-errors and vendors
+nothing** (`_dep_find_stdlib_dir` exits 1 rather than sliding to latest), and `cmd_lib_sync`
+behaves the same way. The pin genuinely shields.
+
+⛔ **So how agnostik came to hold 6.6.x libs under a 6.5.35 pin is STILL UNEXPLAINED.** What is
+known: 12 of its 29 `lib/*.cyr` were rewritten at **09:40:42 on 2026-09-09** and are byte-identical
+to the 6.6.1 snapshot, and `_dep_copy_file` only rewrites files that DIFFER — which is why 12 of 29
+moved rather than all 29. Recorded as open. Until the mechanism is known, treat a pre-flip repo's
+vendored `lib/` as something to verify by content and mtime before and after any toolchain
+operation, not something the pin is guaranteed to protect. 89 repos still hold a pre-flip
+`lib/tagged.cyr` and build fine today.
 
 ⛔ **A clean `git status` is not evidence about `lib/`.** 55–68 sibling repos gitignore their
 vendored stdlib (`sigil/.gitignore:29` is `/lib/`; `agnostik/.gitignore:5` is `lib/*.cyr`).
@@ -95,8 +104,17 @@ Check content and mtime.
       `cyriusly` mid-loop:
 
       CL=~/.cyrius/versions/6.6.1/bin/cyriusly
-      for v in <versions>; do "$CL" install "$v"; done
-      cyriusly use 6.6.1
+      for v in <versions>; do CYRIUS_NO_ACTIVATE=1 "$CL" install "$v"; done
+
+      ⭐ **`CYRIUS_NO_ACTIVATE=1` was added in v6.6.2 for exactly this loop.** Without it
+      `install.sh` ACTIVATES whatever it installs — it repoints `~/.cyrius/bin`, `~/.cyrius/lib`
+      and writes `current`. Since `~/.cyrius/lib` is the default stdlib source every
+      `cyrius deps` reads, a naive restore loop leaves the machine's stdlib pointing at whichever
+      version happened to be installed last: one such loop ended with the box on 6.2.6 and
+      `~/.cyrius/lib` holding a 2026-era stdlib. With the flag a restore is a pure ADD.
+      ⚠ Note `~/.cyrius/signed-since` is a TOFU downgrade floor (6.6.1 at time of writing);
+      restoring anything below it may prompt or refuse, and that is a deliberate safety
+      mechanism, not a bug to work around.
 
       ⚠ 103 of the 104 bricked repos pin **below 6.5.44**, and sibling-`cycc` resolution only
       works from 6.5.44 onward (`CHANGELOG.md:2714`). So restoring gives them their old *wrapper*

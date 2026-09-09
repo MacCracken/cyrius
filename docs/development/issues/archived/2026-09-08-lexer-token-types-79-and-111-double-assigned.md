@@ -1,6 +1,35 @@
-# Lexer token types 79 and 111 are double-assigned, so a token type cannot recover its spelling — OPEN
+# Lexer token types 79 and 111 are double-assigned, so a token type cannot recover its spelling — FIXED v6.6.2
 
-**Status:** 🟡 **OPEN** — surfaced by the v6.6.1 vidya gotchas audit, verified against live code.
+**Status:** ✅ **FIXED in v6.6.2** — shape 1 taken (`f64_sqrt` 79 → **136**, `callptr` 111 → **137**;
+`object` keeps 79 and `stack` keeps 111).
+
+> ⛔ **THE FILING'S CENTRAL PREMISE WAS WRONG, AND IT IS WHY THIS SAT.** It says "no miscompile —
+> the grammar disambiguates by POSITION" and classes the whole thing as diagnostics quality.
+> **Statement position IS a shared position.** `callptr(fp, 41);` as a bare statement was a HARD
+> COMPILE ERROR — `expected var, got '('` — because `PARSE_STMT` saw token 111 and routed to the
+> `stack var` parser before any expression path ran. Verified against 6.6.1: that program does not
+> compile; it does now. So this was a real defect the whole time, not a wart.
+>
+> ⭐ **And it was far cheaper than the filing estimated.** The deferral reason given was "renumbering
+> touches codegen across the seven `main_*.cyr` forks and the seed chain". Leaving the STATEMENT
+> KEYWORDS on their existing numbers and moving only the two INTRINSICS costs **zero fork edits** —
+> `main.cyr` and `main_win.cyr` compare against 79 for `object;` and were not touched at all.
+> `callptr` had exactly one consumer site, `f64_sqrt` one handler.
+>
+> ⚠ **The trap that would have shipped green:** `f64_sqrt` sat inside the `62..105` STATEMENT BAND,
+> so renumbering it out without adding a band entry silently regresses `f64_sqrt(x);` as a bare
+> statement — and **no test in the tree covered that form**. Both statement forms are now pinned by
+> `tests/tcyr/frontend/token_renumber_79_111.tcyr`, along with `stack var`, `: stack` enums (the
+> OTHER consumer of 111, which the whole value-form arc rests on) and `object;` mode declarations.
+>
+> ⛔ **`programs/checks/lint_fmt.cyr` ASSERTED THE COLLISION** — it required the literal strings
+> `'object'/'f64_sqrt'` and `'stack'/'callptr'`, so it would have gone RED on the fix. Same shape as
+> the v6.6.0 gate that asserted the v6.5.67 refusal and would have blocked its own repair. Rewritten
+> 2 rows → 6, including a class-wide assertion that **no reserved name reports a `'/'` disjunction**,
+> so the next double-assignment is caught without anyone remembering to add a row.
+>
+> ⚠ **seed-derive was the load-bearing gate and it is GREEN** — a front-end token change is exactly
+> what the cycc fixpoint cannot see (the `>>>` case at v6.4.74). All four cross-OS hosts green too.
 **Placement:** unpinned — 6.6.x repair window or the potential backlog.
 **Discovered:** 2026-09-08, auditing `field_notes/compiler/gotchas.cyml`. The trap has been
 *documented* since v6.4.77; what this filing adds is that the documented mitigation is a

@@ -38,6 +38,8 @@ type: state
 > just a stamp: `docs/guides/cyrius-guide.md` **published the boxed layout as a user-facing
 > contract** — `Ok(42)` as a 16-byte heap box with tag at `+0` and payload at `+8`, `?` "needs
 > the boxed form", `match load64(opt)`, and a helper table listing `payload()` / `tagged_new()`.
+> ⛔ **v6.6.2:** `tagged_new()` is back (`lib/boxed.cyr`) and `tag()` is gone; the boxed layout
+> (tag +0 / payload +8) is a live published contract again, not a historical note.
 > All of that is now false. The sum-type section was rewritten around the register pair, the
 > helper table replaced with an ARITY table marking the two deleted functions, and the boxed
 > shape kept where it is still correct (a variant with two or more fields cannot be a pair, so

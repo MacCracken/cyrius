@@ -4,7 +4,7 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [6.6.2] — UNRELEASED
+## [6.6.2] — 2026-09-09
 
 ### Fixed
 
@@ -223,6 +223,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   for cyrius blocks, so a ```sh block's closing fence read as an opening one and 2 of 18 were
   extracted — the floor refused to let that pass as a clean run.
 
+- ⛔ **`cyrius build <foreign-src>` overwrote the running compiler — the roadmap's pinned `.2`
+  occupant.** In this repo `cyrius.cyml` declares `output = build/cycc` (correct — that is how
+  the compiler is built), and the documented argument ladder says one positional argument means
+  *"that src + the manifest's output"*. So `cyrius build <a test file>` compiled the TEST and
+  wrote an **842 KB test binary over `build/cycc`** at the v6.6.0 cut. It was recoverable only
+  because a verified stage binary happened to still be in `/tmp`; from a clean tree it costs a
+  full bootstrap.
+
+  ⭐ **The ladder is right and documented, so the guard is narrower than changing it.** Exactly
+  one combination is destructive — an explicit FOREIGN source plus an INHERITED output that
+  resolves to the compiler `cbt` is currently running — and nothing legitimate needs it. Building
+  the manifest's declared `entry`/`src` still writes it (that is the point of the key), and an
+  explicit output is always honoured. Path comparison is tail-based on purpose: `current_cc()`
+  may return `./build/cycc` or an absolute path while the manifest says `build/cycc`, and an
+  exact string compare would miss the very case the guard exists for.
+  Pinned by `tests/gates/toolchain/build_refuses_compiler_overwrite.sh` (5 axes). ⚠ **The gate
+  runs entirely in a temp tree against a COPY of the compiler** — the roadmap entry warns that a
+  gate pointed at the real `build/cycc` would itself be the destructive act. Mutation-proven
+  against the pre-guard binary: it replaced a 1,247,728 B compiler with a **4,456 B** test
+  binary, and one axis asserts the refusal happens BEFORE anything is written.
+
+- ⛔ **`--allow-undef` was a blast door: a bundle calling a DELETED stdlib name self-checked
+  GREEN and shipped.** `cyrius distlib` compiles the generated bundle with undefined functions
+  downgraded, and that part is right — a bundle deliberately omits the stdlib, so `alloc` /
+  `strlen` / `sock_send` are expected to be unresolved and the consumer supplies them. But the
+  downgrade was **blanket**. At the v6.6.0 cut `payload()` was deleted while **18 publisher
+  bundles still called it**; every one would have passed its own self-check and detonated at the
+  consumer, inside a function the bundle's author never wrote.
+
+  ⭐ **The discriminator: an undefined name the stdlib still exports is the consumer's job to
+  supply; a name the stdlib has RETIRED can never be satisfied by anyone, on any version.**
+  The self-check now captures cycc's stderr and refuses on the second class, naming the symbol.
+  ⚠ **Hardcoded list, not `docs/api-surface.snapshot`, and that is deliberate**: `cyrius distlib`
+  runs in DOWNSTREAM repos, which have no copy of that file — a snapshot-based check would
+  silently no-op precisely where it is needed. Same shape as `_pin_has_known_critical`: a short
+  hand-maintained list of facts with the reason beside each, that has to be added to deliberately.
+  Retiring a stdlib name now means adding a row there **and** to `docs/retired-symbols.allow`.
+  Pinned by two new axes on `distlib_bundle_selfcheck.sh` — one that a bundle calling the deleted
+  `payload` is refused, and an **anti-vacuous** one that a bundle calling live names (`alloc`,
+  and `tagged_new`, which was RESTORED and must not read as retired) still passes, because a
+  too-broad check would break every publisher.
+  ⚖️ `cyrius lint`'s own `--allow-undef` use is left alone: it lints ONE file in isolation with
+  `--syntax-only` and discards the binary, so there is nothing to ship.
+
+- ⛔ **`check.sh` reported "240 passed, 0 failed" over SEVEN GATES THAT NEVER RAN.** Found while
+  verifying this release's own gates. `check.sh` runs under `set -e`, so the first gate to exit
+  non-zero aborts the script and **every gate below it silently never executes**. The seven v6.6.2
+  gates were appended after `scripts/agnos-crossbuild-gate.sh`, which fails for an ENVIRONMENTAL
+  reason — agnoshi pins **6.5.36**, which the 2026-09-07 toolchain wipe removed, so the pin
+  redirect hard-errors before any compile. Result: a green summary printed over unrun gates.
+
+  ⭐ **This is the macOS-rot shape again, from the other direction** — there, a CI job that never
+  ran the compiler hid a break for nine minors; here, an absent NEIGHBOUR hid seven in-repo gates.
+  The gates were each verified standalone and mutation-proven, so nothing was actually broken, but
+  the suite could not have told anyone either way.
+
+  **The rule, written into `check.sh` beside the move: a gate that depends on a SIBLING CHECKOUT
+  or another machine belongs at the END, after everything that depends only on this repo.**
+  `agnos-crossbuild-gate.sh` moved there; the v6.6.2 gates now run ahead of it.
+
 - ⛔ **`scripts/funcgate-stage.sh` opened with an unguarded `rm -rf "$H"`.** Its entire contract
   is "stage a THROWAWAY CYRIUS_HOME"; pointed at `$HOME/.cyrius` it destroyed the whole installed
   store. **104 of 126 manifests under `~/Repos` then pinned a version with no snapshot**, and
@@ -300,8 +360,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   testing something other than grow-OOM. The loop now runs 1..30 — same 30 iterations, same
   intent — plus a new row asserting the failure was -1 and **not** -2, so it cannot pass for the
   wrong reason. This is the "fix the gate, never drop the feature" case.
-- Shell gates **144 → 150**; `.tcyr` corpus **301 → 306**, of which `crossos/` **68 → 70**;
-  `lib/*.cyr` **102 → 103** (`boxed.cyr`); `docs/api-surface.snapshot` **5,152 → 5,156**; new `docs/retired-symbols.allow` — the accounting ledger the census gate reads
+- **Bench** — `compiler/self_compile` **743 ms** (6.6.1: 731–734), `size/cycc` **1,247,728 B**
+  (+120 B over 6.6.1's 1,247,608), `.text` **1,093,280 B** (+2,448). ⚖️ Triaged as growth tax, not
+  a regression to bisect: the +1.3 % is spread across four front-end changes that each add a
+  branch on a parse path (the SIMD operand-slot reservation and its top-level guard, the 79/111
+  token split, and the libc-name visibility check in the object emitter), and no single one
+  dominates. ⚠ The boxed-API restore and the `map_u64` fix contribute **zero** — cycc includes
+  neither `tagged.cyr` nor `hashmap.cyr`.
+- **Cross-OS: all four hosts GREEN on REAL hardware**, run one at a time — ecb (macOS-arm64),
+  ach (Intel-Mac x86-macho), cass (Windows PE), pi (Linux aarch64), each `SELFHOST_OK` plus
+  `LIBTEST_OK` over **70** `crossos/` tests, which includes the two new cross-OS files this
+  release added. A green CI check is not this.
+- Shell gates **144 → 151**; new `docs/retired-symbols.allow` accounting ledger; `.tcyr` corpus **301 → 306**, of which `crossos/` **68 → 70**;
+  `lib/*.cyr` **102 → 103** (`boxed.cyr`); `docs/api-surface.snapshot` **5,152 → 5,156**
   (5 `boxed::*` added, `tagged::tag/1` removed).
   ⚠ **Derived from `git ls-files` + `find`, and an earlier draft of this line got it wrong** —
   it claimed a 302 baseline and said `handoff.md`'s 301 was stale. 301 was correct. Recorded
@@ -462,6 +533,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   form the payload is already a plain variable, so `payload(r)` becomes `r`. `tagged_new()` is
   DELETED with it: it built a box only `tag()`/`payload()` could read, and nothing in any of the
   12 sibling stdlibs called it.
+
+  > ⛔ **CORRECTED AT v6.6.2 — see the [6.6.2] entry.** The clause above is accurate as written:
+  > the survey covered the **12 fold-table stdlibs** and found no callers there, which was true.
+  > What was wrong is that `docs/stdlib-reference.md` restated it WITHOUT the qualifier, as
+  > "nothing in the ecosystem" — and the deletion was justified on that broader reading.
+  > **agnostik calls `tagged_new` 19 times and agnova 9**; both are DOMAIN libraries, a class
+  > outside this survey's scope. `tagged_new` is restored in `lib/boxed.cyr`; `tag()` — which
+  > v6.6.0 kept by NAME and redefined — is deleted instead. History is not rewritten here; the
+  > correction is recorded beside it.
 
   `ok_via` / `err_via` — the v6.5.41 arena escape hatch that existed *because* construction
   allocated — keep their names and signatures and now simply return the pair. The allocator

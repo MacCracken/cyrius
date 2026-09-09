@@ -451,7 +451,9 @@ EOF_LIB
         cp -r programs/cyrius-init-templates "$CYRIUS_HOME/versions/$VERSION/programs/"
     fi
 
-    echo "$VERSION" > "$CYRIUS_HOME/current"
+    # v6.6.2 — `current` is part of ACTIVATION too; guarding only the bin/lib symlinks
+    # would leave the wrapper resolving a version whose directories no longer match.
+    if [ "${CYRIUS_NO_ACTIVATE:-0}" != "1" ]; then echo "$VERSION" > "$CYRIUS_HOME/current"; fi
     echo "$VERSION" > "$CYRIUS_HOME/versions/$VERSION/VERSION"
 
     # v5.7.22: re-link ~/.cyrius/bin → versions/$VERSION/bin so the
@@ -463,9 +465,13 @@ EOF_LIB
     # while ~/.cyrius/current already advanced (footgun, not breakage).
     # Use rm -rf (not rm -f) so a stale-directory state from an older
     # install also gets cleaned out.
+    if [ "${CYRIUS_NO_ACTIVATE:-0}" = "1" ]; then
+        info "CYRIUS_NO_ACTIVATE=1 — leaving the active version at $(cat "$CYRIUS_HOME/current" 2>/dev/null || echo '?')"
+    else
     rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"
     ln -sf "$CYRIUS_HOME/versions/$VERSION/bin" "$CYRIUS_HOME/bin"
     ln -sf "$CYRIUS_HOME/versions/$VERSION/lib" "$CYRIUS_HOME/lib"
+    fi
 
     # v6.0.36: install the build-artifact pre-commit hook when refreshing
     # from inside the git repo, so a fresh clone (or any version-bump) is
@@ -799,16 +805,39 @@ rm -rf "$TMPDIR"
 
 # ── Set active version ──
 
-echo "$VERSION" > "$CYRIUS_HOME/current"
+# v6.6.2 — `current` is part of ACTIVATION too; guarding only the bin/lib symlinks
+# would leave the wrapper resolving a version whose directories no longer match.
+if [ "${CYRIUS_NO_ACTIVATE:-0}" != "1" ]; then echo "$VERSION" > "$CYRIUS_HOME/current"; fi
 # Copy VERSION file so cyrius can read it from install directory
 echo "$VERSION" > "$CYRIUS_HOME/versions/$VERSION/VERSION"
 
 # ── Create symlinks (directory-level, version-agnostic) ──
 
+# ⛔ v6.6.2 — CYRIUS_NO_ACTIVATE=1 INSTALLS WITHOUT SWITCHING THE ACTIVE VERSION.
+#
+# WHY IT EXISTS. `install.sh` ACTIVATES whatever it installs: it repoints `~/.cyrius/bin` and
+# `~/.cyrius/lib` at the version just installed and writes `current`. That is right for the normal
+# case and wrong for a RESTORE. `~/.cyrius/lib` is the default stdlib source every `cyrius deps`
+# reads, so restoring an old version in a loop leaves the machine's stdlib pointing at whichever
+# version happened to be installed last — a naive restore loop over 27 versions ended with the box
+# on 6.2.6 and `~/.cyrius/lib` holding a 2026-era stdlib.
+#
+# THAT MATTERS NOW because the 2026-09-07 toolchain wipe left 104 of 126 sibling manifests pinning
+# a version with no snapshot, and restoring them is Phase 0 of the v6.6.2 ecosystem migration.
+# With this flag a restore is a pure ADD: the files land under versions/<v>/ and nothing else moves.
+#
+#   for v in <the missing ones>; do CYRIUS_NO_ACTIVATE=1 ~/.cyrius/versions/6.6.1/bin/cyriusly install "$v"; done
+#
+# ⚠ Deliberately opt-IN. The default stays "install means activate", because that is what a user
+# typing `cyriusly install <newer>` means, and silently not activating would be its own surprise.
+if [ "${CYRIUS_NO_ACTIVATE:-0}" = "1" ]; then
+    info "CYRIUS_NO_ACTIVATE=1 — installed $VERSION without activating it (active stays $(cat "$CYRIUS_HOME/current" 2>/dev/null || echo '?'))"
+else
 info "linking directories..."
 rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"
 ln -sf "$CYRIUS_HOME/versions/$VERSION/bin" "$CYRIUS_HOME/bin"
 ln -sf "$CYRIUS_HOME/versions/$VERSION/lib" "$CYRIUS_HOME/lib"
+fi
 
 # ── Install version manager ──
 # cyriusly lives in scripts/cyriusly (committed source of truth). The

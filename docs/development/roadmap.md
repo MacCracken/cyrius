@@ -37,7 +37,7 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.1** (2026-09-08) — cycc **1,247,608 B** (`.text` **1,090,832**) ·
+**Current head: v6.6.2** (2026-09-09) — cycc **1,247,608 B** (`.text` **1,090,832**) ·
 `check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi ·
 **301** `.tcyr` (**68** in `crossos/`) · **102** `lib/*.cyr` · **144** shell gates under
 `tests/gates/<bucket>/` · self_compile **731–734 ms** · **0 open issues** · **3 open proposals**.
@@ -83,7 +83,13 @@ starts early — an unused reserved slot is not a slot to fill with something el
 
 ## Phase 1 — the repair window (`.2` – `.6`)
 
-### `.2` — `cyrius build <src>` can overwrite the running compiler, and did
+### `.2` — `cyrius build <src>` can overwrite the running compiler, and did — ✅ **SHIPPED v6.6.2**
+
+> ⭐ Shipped alongside a much larger `.2` than this slot anticipated: the v6.6.0 `tagged_new`/`payload`
+> deletion repair (`lib/boxed.cyr`), the SIMD operand-slot Critical, the `map_u64` sentinel defect,
+> the 79/111 token renumber, libc-name symbol preemption, the `--allow-undef` blast door, and the
+> ecosystem census gate. See CHANGELOG [6.6.2].
+
 
 **Carried in from [roadmap_6.md](roadmap_6.md) item 7 — the only item in that list that was a
 defect rather than a feature.** Found the hard way at the v6.6.0 cut: in this repo

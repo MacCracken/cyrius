@@ -107,7 +107,33 @@ check "a broken >1 MB bundle still FAILS" 1 "$([ "$rc6" -ne 0 ] && echo 1 || ech
 cd "$ROOT" || exit 2
 echo ""
 if [ "$fails" = "0" ]; then
-    echo "PASS: distlib-bundle-selfcheck — the bundle is really compiled; broken bundles are fatal"
+    # ── axis: a RETIRED stdlib name must not walk through --allow-undef (v6.6.2) ────────
+# ⛔ The self-check downgrades undefined fns because a bundle omits the stdlib and the consumer
+# supplies it — correct. But the downgrade was BLANKET, so a bundle calling a name the stdlib no
+# longer HAS also passed and shipped. At the v6.6.0 cut `payload()` was deleted while 18 publisher
+# bundles still called it; each would have self-checked GREEN and detonated at the consumer,
+# inside a function the bundle's author never wrote.
+# ⭐ THE DISCRIMINATOR: an undefined name the stdlib still exports is the consumer's to supply; a
+# RETIRED one can never be satisfied by anyone, on any version.
+mkdir -p "$D/r/src"
+( cd "$D/r" && printf '[package]\nname = "rc"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/m.cyr"]\n\n[deps]\nstdlib = ["syscalls", "alloc", "tagged"]\n' > cyrius.cyml )
+printf 'fn rc_uses_retired(b) { return payload(b); }\n' > "$D/r/src/m.cyr"
+ROUT=$( cd "$D/r" && "$CY" distlib 2>&1 || true )
+case "$ROUT" in
+  *"RETIRED stdlib name"*) echo "  ok: a bundle calling the deleted 'payload' is REFUSED (1)" ;;
+  *) echo "  FAIL: a bundle calling the deleted 'payload' self-checked CLEAN — the --allow-undef downgrade is still blanket"; fails=$((fails + 1)) ;;
+esac
+
+# ANTI-VACUOUS: LIVE stdlib names must still be accepted, or every real publisher breaks.
+# `tagged_new` is deliberately included — it was RESTORED at v6.6.2 and must NOT read as retired.
+printf 'fn rc_live(n) { return alloc(n); }\nfn rc_boxed(t, v) { return tagged_new(t, v); }\n' > "$D/r/src/m.cyr"
+LOUT=$( cd "$D/r" && "$CY" distlib 2>&1 || true )
+case "$LOUT" in
+  *"RETIRED stdlib name"*) echo "  FAIL: a bundle of LIVE names (alloc, tagged_new) was rejected — the check is too broad"; fails=$((fails + 1)) ;;
+  *) echo "  ok: a bundle of live names still passes the self-check (1)" ;;
+esac
+
+echo "PASS: distlib-bundle-selfcheck — the bundle is really compiled; broken bundles are fatal"
     exit 0
 fi
 echo "FAIL: distlib-bundle-selfcheck — $fails assertion(s) failed"

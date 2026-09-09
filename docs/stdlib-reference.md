@@ -294,15 +294,53 @@ keep getting `Result` symbols.
 `(tag, payload)` REGISTER PAIR and allocates nothing; there is no heap box, so there is no
 `tag at +0 / value at +8` layout to read. Bind both halves: `var t, v = Some(42);`.
 
-⛔ **`payload()` and `tagged_new()` are DELETED.** `payload()` has no 1-argument replacement —
-rdx never reaches a parameter — and under the value form the payload is already a plain variable,
-so `payload(r)` becomes `r`. `tagged_new()` built a raw box that only `tag()`/`payload()` could
-read; nothing in the ecosystem called it.
+⛔ **CORRECTED v6.6.2 — the sentence that stood here was the FALSE ABSOLUTE.** It read
+"`tagged_new()` built a raw box that only `tag()`/`payload()` could read; **nothing in the
+ecosystem called it**." The survey behind that was real, and its result was right — for the
+**12 fold-table stdlibs it covered**. `CHANGELOG.md` carried that qualifier; this file, one file
+away, dropped it. **agnostik calls `tagged_new` 19 times and agnova 9** — both DOMAIN libraries, a
+class the stdlib survey could not see. A scope word that survives in one document and is dropped
+in the next is how a narrow, honest survey becomes a false absolute.
+
+⭐ **`tagged_new()` is RESTORED** in `lib/boxed.cyr`, keeping its name because its meaning never
+changed, alongside `boxed_new` / `boxed_tag` / `boxed_payload` / `boxed_is`. A plain (non-`: stack`)
+`enum Foo { A(v); }` still BOXES at 6.6.x — verified, 16 bytes, tag at +0, payload at +8 — so the
+language kept a representation the stdlib had stopped providing a reader for. A box is also the
+only one of the two forms that can live in a struct field, be a vec element, or survive a
+one-argument boundary.
+
+⛔ **`payload()` is DELETED and stays deleted.** For the value form that is forced: rdx never
+reaches a parameter. ⚠ The v6.6.0 note generalised that to "no 1-argument replacement", which is
+**false for a box** — `load64(p + 8)` works, and `boxed_payload` is exactly that. It stays deleted
+as a DELIBERATE CHOICE: consumers use that one spelling on **both** classes, so restoring it would
+make ~518 stale `Result` reads compile and dereference a tag as a pointer — a named compile error
+traded for a SIGSEGV.
+
+⛔ **`tag()` is DELETED as of v6.6.2 — retired, not redefined.** v6.6.0 kept the name and rewrote
+the body from `load64(t)` to `return t;`. Same name, same arity, opposite meaning: on a box it
+silently returned the POINTER. Boxed reads use `boxed_tag`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `tag` | `tag(t) → tag` | Identity — the tag is already the first bound half |
-| `is_tag` | `is_tag(t, expected) → 0/1` | Tag-equals check (takes the TAG) |
+| `is_tag` | `is_tag(t, expected) → 0/1` | Tag-equals check. ⚠ Takes a value-form TAG. On a BOX it compares a pointer to a small integer and is therefore ALWAYS 0 — use `boxed_is` |
+
+### `boxed.cyr` — runtime-tagged BOX primitives (v6.6.2)
+
+The general tagged-union representation, for hand-rolled unions with more than two variants — the
+shape `Result` cannot model. Unlike the value form, a box **can** live in a struct field, be a vec
+element, and survive a one-argument boundary, because it is one pointer.
+
+**Layout is a published contract:** tag at `+0`, payload at `+8`, 16 bytes. It matches what a
+plain (non-`: stack`) `enum Foo { A(v); }` still emits, so a box built either way is readable by
+`boxed_tag`. Hand-rolled `load64(p)` / `load64(p + 8)` reads against this layout stay correct.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `boxed_new` | `boxed_new(t, value) → box` | 16-byte box; tag at +0, payload at +8 |
+| `tagged_new` | `tagged_new(t, value) → box` | The pre-v6.6.0 spelling, retained. Same constructor — its meaning never changed, so every existing call site is correct as written |
+| `boxed_tag` | `boxed_tag(b) → tag` | Read the discriminant. ⚠ Takes a BOX POINTER, never a value-form tag |
+| `boxed_payload` | `boxed_payload(b) → value` | Read the payload |
+| `boxed_is` | `boxed_is(b, expected) → 0/1` | The boxed counterpart of `is_tag` |
 | `None` | `None() → tag` | Create None — NULLARY, so it returns its tag alone |
 | `Some` | `Some(val) → (tag, val)` | Create Some(val) |
 | `is_none` | `is_none(t) → 0/1` | Check if None (takes the TAG) |

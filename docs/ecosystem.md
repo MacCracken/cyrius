@@ -22,9 +22,24 @@ plus whenever a port lands or a new repo joins.
 > ⭐ **v6.6.0 refolded EIGHT of these in one pass** — sigil, sandhi, yukti, mabda, bayan, vani,
 > yantra and sankoch — because `Result`/`Option`/`Either` became the value form and that changed
 > the ARITY of every value they carry. Each was migrated **at source**, pin-bumped to cyrius
-> 6.6.0, released as a patch version, and re-vendored; `payload()` and `tagged_new()` are gone
-> from every bundle. ⚠ The list was derived from actual `payload(` / `result_unwrap(` usage, not
-> copied: an earlier survey named six and **missed yantra and sankoch**.
+> 6.6.0, released as a patch version, and re-vendored. ⚠ The list was derived from actual
+> `payload(` / `result_unwrap(` usage, not copied: an earlier survey named six and **missed
+> yantra and sankoch**.
+>
+> ⛔ **AND THAT WAS THE SMALL VERSION OF THE SAME MISTAKE, MADE TWICE IN ONE RELEASE.** The note
+> above records a survey that missed two repos and was corrected. One level up, the same release
+> deleted `tagged_new()`/`payload()` on a survey **scoped to these twelve stdlibs** and wrote the
+> result down as "nothing in the ecosystem". ~130 repos live under `~/Repos`; **agnostik calls
+> `tagged_new` 19 times and agnova 9**, and both are DOMAIN libraries — a class this fold table
+> never covered and was never meant to.
+>
+> ⭐ **THE SCOPE OF THIS TABLE, STATED SO IT CANNOT BE BORROWED AGAIN:** it covers the
+> **fold-table stdlibs only**. It is evidence about *these repos* and about nothing else. Any
+> claim about "the ecosystem" needs `tests/gates/toolchain/removed_symbol_census.sh`, which walks
+> every sibling checkout including vendored `lib/` and `dist/`, and the per-repo worklist in
+> [`docs/development/ecosystem-migration-6.6.2.md`](development/ecosystem-migration-6.6.2.md).
+> Tracked domain consumers of the boxed primitives: **agnostik**, **agnova**, plus the five repos
+> that vendor `agnostik/dist` (aethersafha, anuenue, ark, kybernet, mela).
 
 Sibling repos vendored byte-identical into `cyrius/lib/` at a
 patched tag. Removed from `[deps]` once folded. As of the mabda

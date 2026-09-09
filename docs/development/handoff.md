@@ -59,7 +59,11 @@ it, phase 2 starts early.
 returns `(tag, payload)` in a register pair, so construction allocates **zero bytes** (the
 filed `100x sock_send` → 1600 B measurement now reads 0). It shipped WITH the ecosystem — 8
 sibling stdlibs migrated at source, pin-bumped, released and re-folded. It re-aritied every
-payload-taking helper and **deleted `payload()` and `tagged_new()`**. A P0 was found at the
+payload-taking helper and **deleted `payload()` and `tagged_new()`**. ⛔ **CORRECTED at v6.6.2:
+`tagged_new()` is RESTORED** (`lib/boxed.cyr`) — the deletion rested on a survey of the 12
+fold-table stdlibs written down as "nothing in the ecosystem", and agnostik calls it 19 times,
+agnova 9. `tag()` was deleted instead: v6.6.0 had kept the NAME and redefined the body, so on a
+box it silently returned the pointer. `payload()` stays deleted, deliberately. A P0 was found at the
 cut: `X = Y;` between two struct-POINTER locals copied `STRUCTSZ/8` slots over neighbours,
 silent since v6.5.57 — **seventeen releases** — and invisible to the fixpoint because cycc's
 own source never uses the shape.
