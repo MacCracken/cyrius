@@ -265,6 +265,18 @@ the trust model and the single-pass design), a general const-eval VM, exceptions
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **DCE eliminates a live body behind an indirect dispatch table** — filed as
+  [`issues/sankhya-dce-bench-segfault.md`](issues/sankhya-dce-bench-segfault.md). `CYRIUS_DCE=1`
+  segfaults sankhya's benchmark binary immediately (`rc=139`, zero output); the same source without
+  DCE exits 0. DCE removes ~74 % of that binary. Suspected the **ftype-3 fixup class** v6.5.72
+  closed once already — a `_b_<name>()` wrapper reachable only by having its address taken into a
+  `fncall0` table. Speculation, unverified.
+  ⚠ **Consumer follow-up owed: sankhya.** 3.0.1 shipped green by **dropping `CYRIUS_DCE=1` from
+  its CI Benchmarks step** (`.github/workflows/ci.yml`), which carries an inline comment pointing
+  back here. When this lands: restore `CYRIUS_DCE=1` on that step, confirm the bench runs, and drop
+  the workaround note from sankhya's CHANGELOG. Nothing else in sankhya is affected — its main
+  binary already builds under DCE, and 34/34 tests pass.
+
 - **`lib/net.cyr` §4 — per-arch socket syscall peers.** The issue is ARCHIVED (`✅ RESOLVED
   v6.5.7 + v6.5.11`) and was closed deliberately without its §4, so the sharp edge is gone but
   the work is unshipped: `lib/net.cyr` still carries bare x86 numbers with `grep -c CYRIUS_ARCH`

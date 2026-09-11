@@ -9,6 +9,52 @@
 > live code, not carried from a doc. Re-derive before acting on any of them — this file will rot
 > like every other, and the whole reason it exists is that a number nobody re-derived shipped a
 > deletion against a live consumer.
+>
+> **Live census — re-derived 2026-09-10** (126 dirs under `~/Repos` carrying a `cyrius.cyml`):
+> **26 on 6.6.2** · 20 on 6.6.0/6.6.1 · 72 on 6.5.x · 8 older. On 6.6.2:
+> aethersafha · agnodrm · agnostik · agnova · anuenue · ark · bote · chitra ·
+> cyrius-yeomans-descent · drishti · hisab · hoosh · kavach · kybernet · majra ·
+> mela · nein · nous · samay · samvada · sankhya · sit · stiva · szal · t-ron · thoth.
+>
+> ✅ **Released this pass:** t-ron 2.1.10 · majra 2.7.2 · nein 1.6.11 · drishti 0.7.130 ·
+> thoth 0.44.6 · stiva 3.0.20.  ⏳ **Awaiting a tag:** bote 3.3.8.
+>
+> ⛔ **A LOCAL GATE RUN IS NOT A CI RUN.** t-ron 2.1.10 was cut locally-green and CI
+> could not produce a binary. `path = "../sibling"` makes `git`/`tag` inert and
+> resolves from the WORKTREE; CI has no siblings and clones the tag. t-ron's
+> `path = "../bote"` chained into bote's own `path = "../majra"` and reached an
+> unreleased majra, while CI cloned bote 3.3.7 → **majra 2.7.0**. **31 repos carry
+> such overrides across 99 dep entries.** Tell: `cyrius deps` printing `N deps locked`
+> *without* a `M commit-pinned` suffix. Verify by staging the tracked tree OUTSIDE
+> `~/Repos` and running the workflow's own `run:` blocks under `bash -e`
+> (`memory/ci-faithful.py`). Second half of the same incident: t-ron's Build step was
+> `cyrius build … | tee`, which takes **tee's** exit status under GitHub Actions'
+> `bash -e`, so a failed compile read GREEN and surfaced two steps later as a missing
+> file. ~20 consumer workflows still have unguarded `| tee` pipelines.
+>
+> ✅ **bote 3.3.8 closes the landmine at the source.** Both breaks are fixed where they
+> live rather than worked around downstream: majra re-pinned 2.7.0 → **2.7.2** (the
+> `_sub_new/1` vs `_sub_new/2` collision became a hard error at **6.5.37**, and bote
+> pinned 6.5.35 — one release below it, which is why it sat latent here while every
+> consumer inherited it), and `src/transport_unix.cyr:144`'s bare `payload(` migrated,
+> so `dist/bote.cyr` now scans **payload=0**. t-ron's and nein's explicit
+> `[deps.majra]` overrides are now redundant and can be retired against 3.3.8.
+> **Next, and unblocked by it:** phylax 1.2.6 · agnosai 2.0.7 (both `bote-core`,
+> pin 6.5.35) · daimon 2.1.2 · itihas 2.5.0 (both full `dist/bote.cyr`, pin 6.5.36;
+> daimon also has 3 bare `payload(` of its own).
+>
+> ⚠ **A missing gate rots silently.** bote's CI had **no fuzz step**, and all four
+> `fuzz/*.fcyr` harnesses had stopped compiling at cyrius **6.1.25 (2026-06-10)** when
+> `lib/json.cyr` was carved into `lib/bayan.cyr` — four minors invisible. Two of them
+> also carried **18 undefined functions** and "passed" only because every call site was
+> unreachable, so an exit-code-only gate would have missed that half. bote 3.3.8 adds a
+> Fuzz step asserting BOTH a zero failure count and zero `undefined function` lines.
+> Worth checking wherever a repo ships `fuzz/` or `benches/` without a CI step for it.
+>
+> 🧊 **Held back deliberately** for a coordinated **6.6.3** pass, per the user: the
+> twelve folded stdlibs — sandhi · vani · sakshi · patra · sigil · yukti · sankoch ·
+> niyama · mabda · bayan · ganita · yantra. drishti's committed `lib/` carries stale
+> copies of *exactly* that set; left alone so they move once, together.
 
 ---
 
@@ -131,7 +177,28 @@ These are the repos the deleted primitive actually served. **Construction sites 
 `tagged_new` returns in `lib/boxed.cyr` as a construction alias, because its meaning never changed.
 Only the *reads* move, to `boxed_tag` / `boxed_payload`.
 
-### agnostik — pin 6.5.35 · ⛔ BROKEN ON DISK (10 errors) · `.gitignore:5` = `lib/*.cyr`
+### agnostik — ✅ **DONE — v1.6.0, pin 6.6.2** (was 6.5.35, broken on disk)
+
+> **Landed 2026-09-10.** `cyrius build` OK (675,824 B) · `cyrius test` **18 files, 788 assertions,
+> 0 failures** · api-surface gate ok (916 fns, matches) · `dist/` regenerated (3,942 lines).
+>
+> ⭐ **All 19 `tagged_new` sites unchanged, exactly as designed** — it returned under its own name
+> because its meaning never changed. Only the 6 reads moved to `boxed_tag`/`boxed_payload`. Zero
+> bare `payload(`/`tag(` remain in `src/`, `tests/` or `dist/`.
+>
+> ⚠ **1.6.0, not 1.5.2.** `result_print_agnostik_err` went `/1` → `/2` — forced, since under the
+> value form no one-argument fn can receive a Result and read its payload. Only public-surface
+> delta of the 916. ⚖️ Six repos vendor the definition and **none call it**, so it breaks no
+> consumer code — but the surface changed incompatibly, so it is a minor.
+>
+> ⚠ **Zero mixed-return warnings** — the 19-silent-defect shape from yukti's 6.6.0 migration did
+> not occur; all six Result-returning parsers return a pair on every path.
+>
+> ⚠ Found in passing: `lib/hashmap_fast.cyr` is an ORPHAN — unreferenced, not in `[deps].stdlib`,
+> so `cyrius deps` never refreshes it (dated 2026-08-23). Recorded, not deleted.
+
+<details><summary>original worklist, kept for review</summary>
+
 
 Post-flip libs vendored under a pre-flip pin. 9 × "returns two values" + undefined `payload` +
 undefined `tagged_new`.
@@ -155,7 +222,35 @@ undefined `tagged_new`.
 - [ ] Note honestly in the CHANGELOG: `src/security.cyr`'s `seccomp_errno` / `seccomp_trace` boxes
       have **no reader anywhere in agnostik**, so no security impact is demonstrated for those two.
 
-### agnova — pin 6.4.43 · builds today · detonates on next `deps` · no `dist/`
+</details>
+
+### agnova — ✅ **MIGRATED — pin 6.6.2** (was 6.4.43) · ⏸ version NOT bumped, deliberately
+
+> **Landed 2026-09-10.** `cyrius build` OK (768,176 B) · `cyrius test` **344 assertions, 0
+> failures** · no public API change (every touched fn keeps its arity).
+>
+> ⭐ All 10 `tagged_new` sites unchanged; 24 reads in `src/` + 68 in tests moved to `boxed_*`.
+> ⚠ `src/executor.cyr:230,260,281` decides **what to run on a disk** from the tag — under 6.6.0's
+> redefined `tag()` that dispatch would have silently received the POINTER. All six verified
+> against their `tagged_new` producers.
+>
+> ⏸ **VERSION LEFT AT 0.7.0 ON PURPOSE.** agnova has substantial uncommitted in-flight work (the
+> `--user is now optional` doctrine change across 5 files, with its own `[Unreleased]` entry).
+> Cutting a release would ship that unfinished work as a side effect — the maintainer's call, not
+> the migration's. The migration entry is written under `[Unreleased]` alongside it. In-flight diff
+> patched to the session scratchpad as a safety net; verified untouched after migration.
+>
+> ⚠ **PRE-EXISTING, not from this migration: 35 vendored files differ from the pinned snapshot**
+> and 11 folded sibling bundles are years behind (sigil 3.10.1 vs 3.12.16, sandhi 1.7.3 vs 1.9.16,
+> yukti 2.2.9 vs 2.3.10, bayan 1.1.0 vs 1.5.5, …). Nine still call retired `payload()`/`tag()`
+> (79 sites) but ALL are inert — undeclared in `[deps].stdlib`, so `cyrius deps` never refreshes
+> them and nothing reaches them. `lib/sigil.cyr` IS included, but by `lib/tls_native.cyr`, itself
+> undeclared: orphan including orphan. ⚠ agnova **tracks `lib/` in git**, so these are committed
+> dead weight dated 2026-07-10. Refreshing 11 bundles across many versions of API change is its own
+> piece of work and is deliberately NOT bundled here.
+
+<details><summary>original worklist, kept for review</summary>
+
 
 - [ ] **Construction — no change.** 9 sites in `src/types.cyr:204,222,238,252,270,282,294,310,327`.
       Update the layout comment at `:168` to the `boxed_*` spelling.
@@ -172,12 +267,27 @@ undefined `tagged_new`.
       vec ptr" is now wrong twice over.
 - [ ] `cyrius.cyml:7` → `6.6.2`, `cyrius deps`.
 
+</details>
+
 ### The five agnostik-`dist` vendors — re-vendor **after** agnostik regenerates
 
 Each carries `lib/agnostik.cyr` with 19 `tagged_new(` + 5 `payload(` and no definition.
 
 - [ ] aethersafha  - [ ] anuenue  - [ ] ark  - [ ] kybernet
-- [ ] mela — ⚠ its copy is from 2026-06-18 and 40 KB behind; separately stale.
+- [x] **mela — ✅ DONE, v1.0.2, pin 6.2.21 → 6.6.2.** `cyrius test` **492 assertions, 0 failures**.
+      `lib/agnostik.cyr` refreshed 120,192 → 160,515 B (agnostik 1.6.0). Zero first-party
+      `payload`/`tagged_new` sites, so the flip needed no source change — but the bump surfaced
+      **two real defects**:
+      - ⛔ **A use-after-return, latent for years.** `FLUTTER_FORCE_SCALE_FACTOR` was built with
+        `str_new(&scbuf, sclen)` on a STACK LOCAL. `str_new` ALIASES (lib/str.cyr:51) and
+        `str_sub` "shares data with parent" (lib/str.cyr:199), so the `Str` in the env map pointed
+        into a dead frame. It worked by luck until the 6.2.21 → 6.6.2 stack layout shifted:
+        measured `str_len` = 4 (correct) with the bytes reading back as **four spaces**. Fixed with
+        a load-bearing `str_clone`. Swept the shape — the only such site in `src/`.
+      - **13 stale `json_v_parse_str` calls across 7 files.** bayan renamed its buf+len JSON entry
+        `_str` → `_buf` in ITS OWN 6.6 migration (bayan `97bdc73`); mela was four minors behind so
+        the test suite would not compile. ⚠ My first grep of these used `| head -3` and I treated
+        the truncated list as complete — caught on the next build.
 
 ---
 
@@ -319,6 +429,105 @@ Regenerate in dependency order **before** any consumer re-vendors.
 **Verified clean, no action:** all four `CLAUDE.md` symlink-audit commands return zero hits. The
 v6.5.37 file-shaped variant has not reappeared; the current vendoring skew has a different cause
 (snapshot fallback, not symlinks).
+
+---
+
+## Migration ledger — what has actually shipped
+
+Recorded per repo as it completes, with **corrections to this file's own estimates** where the
+measured surface differed. Each row was built, tested and gated locally before the version bump;
+the user tags and pushes.
+
+| repo | version | cyrius pin | first-party sites | state |
+|---|---|---|---|---|
+| agnostik | 1.6.0 → **1.6.1** | 6.5.35 → 6.6.2 | 19 `tagged_new` kept · 6 reads · 1 arity change | ⏳ **1.6.1 awaiting release** |
+| agnova | **0.7.1** | 6.4.43 → 6.6.2 | 10 kept · 92 reads | ✅ released |
+| mela | **1.0.3** | → 6.6.2 | 13 `json_v_parse_str` → `_buf` | ✅ released |
+| nous | **1.4.0** | → 6.6.2 | 71 value-form sites | ✅ released |
+| ark | **1.4.2** | → 6.6.2 | 1 `bayan_json_v_parse_str` | ✅ released |
+| anuenue | **1.3.6** | 6.5.35 → 6.6.2 | **0** | ✅ ready to tag |
+| kybernet | **1.6.20** | 6.5.36 → 6.6.2 | **65** | ✅ released |
+| agnodrm | **1.6.0** | 6.5.35 → 6.6.2 | **27** | ✅ released |
+| samay | **1.1.2** | 6.5.36 → 6.6.2 | **33** | ✅ released |
+| kavach | **3.12.5** | 6.5.35 → 6.6.2 | **43** | ⏳ awaiting tag |
+| aethersafha | **0.16.23** | 6.5.33 → 6.6.2 | **7** | ⏳ blocked on kavach 3.12.5 |
+
+### ⚠ STATUS AS OF 2026-09-10 — THE SWEEP IS ~11% DONE, DO NOT ARCHIVE THIS FILE
+
+Measured live, not read off the checkboxes above:
+
+| cyrius pin | repos |
+|---|---|
+| **6.6.2** (the repair release) | **14** |
+| 6.6.0 / 6.6.1 — post-flip, NOT on the repair release | **20** |
+| 6.5.x or older | **92** |
+| no manifest / no pin | 16 |
+
+**39 repos still call the retired accessors** (`payload` / `tagged_new` / `is_tag`) in their own
+`src/`. Every Phase 4 and Phase 5 site named above was re-checked against live code on this date
+and is still present verbatim — `phylax/src/utils.cyr:187`, `agora/src/descent.cyr:378`,
+`t-ron/src/llm_scan.cyr:300` and `cyrius-yeomans-descent/src/server.cyr:207` are all still
+`var <one> = tcp_socket();`, and `agnosai/src/learning/optimizer.cyr:54` still seeds the intern
+table at the reserved key `0`. (One drift: the `mabda/src/texture.cyr` line numbers have moved.)
+
+⭐ The 20 repos on **6.6.0/6.6.1** are the least obvious bucket and the most likely to be mistaken
+for done: they parse the value form, so they build, but they are not on the release that restored
+`lib/boxed.cyr`, fixed the SIMD operand-slot Critical, or fixed the `map_u64` sentinel keys. Two
+of them — `sigil` and `bayan` — are *publishers* whose bundles reach many consumers.
+
+### Corrections to this file's estimates
+
+⚠ Two of this document's own per-repo counts were **wrong in the same direction** — they counted
+vendored `lib/`, which a re-vendor refreshes, as first-party work:
+
+- **kybernet** was listed at *"38 sites in 10 files"*. Measured: **2** in first-party `src/` before
+  the re-vendor; the other 43 were in vendored `lib/`. After re-vendoring to 6.6.2 the *real*
+  first-party surface turned out to be **65** — larger than the estimate, and in different files.
+  The estimate was wrong in both directions at once because it was measuring the wrong tree.
+- **anuenue** was listed with *"1 payload site"*. Measured: **zero**. The one hit
+  (`src/filter.cyr:41`) is the English word "payload" inside a comment.
+
+⭐ **The lesson is this file's own lesson, applied to itself**: a count taken over the wrong tree
+reads as a measurement. The only reliable enumeration is **the compiler after the re-vendor** —
+a single-variable bind of a pair and a 1-argument `result_unwrap` are both hard errors at 6.6.2,
+so the migration surface can be measured rather than estimated. Do that first for every remaining
+repo, instead of trusting the tables above.
+
+### Findings that were not migration work
+
+- ⛔ **`health_check_new` mis-bound between agnostik and argonaut** — both exported the name at
+  different arities for different types (agnostik 0-arg probe descriptor; argonaut 6-arg
+  `HealthCheck`). "Last definition wins", so in a consumer vendoring both every call to the loser
+  read garbage registers. **Live and silent since agnostik 1.3.5 (2026-08-24)**, through every
+  release since; pre-6.6.2 cyrius treated a same-name different-arity duplicate as a *warning*.
+  Fixed in **agnostik 1.6.1** (renamed its side to `agnostik_health_check_new` — one caller, no
+  external consumers).
+  ⚠ **kybernet is the only affected consumer.** An earlier draft of this line also named *stiva*,
+  on a grep that found `health_check_new` in its sources. That was wrong and is corrected here:
+  stiva depends on neither agnostik nor argonaut — it declares its **own** `health_check_new(command)`
+  at arity 1 in `src/ansamblu.cyr:83`. Three independent definitions of the name exist in the
+  ecosystem; only the two that get vendored together ever collided. ⭐ Same error shape as the
+  survey this whole document exists because of: a name matched, and the match was reported as a
+  relationship without checking whether the two things ever meet.
+- ⛔ **agnostik's `scripts/version-bump.sh` printed `git tag v${NEW}`** while all 20+ of its tags
+  are bare and every consumer pins `tag = "1.6.0"`. Following it would have published a tag no
+  `[deps.agnostik]` entry could resolve. Fixed in 1.6.1.
+- **anuenue carried an orphaned `lib/agnosys.cyr`** — a 335 KB `cyrius distlib` bundle of agnosys
+  1.4.3 from 2026-06-19, with no `include` anywhere and no `[deps.agnosys]` to regenerate it. It
+  held **32** retired-accessor calls and was the only file in the tree still calling them. Deleted,
+  not migrated: an orphan bundle is exactly what a blanket `--allow-undef` waves through.
+- **libro 2.10.0 pins patra 1.13.10** while the current release is 1.14.1, so every libro consumer
+  gets `refusing to overwrite stdlib leaf 'patra'`. Benign (cyrius keeps the newer snapshot) but
+  stale on libro's side.
+
+### Language limitation surfaced by the migration
+
+There is **no `t, v = f();` reassignment form** — only `var t, v = f();` binds a pair. Any loop
+that re-polls a `Result` must bind a fresh pair per iteration and copy it into the carried one.
+Written the obvious way (`rt = f();`) it compiles and **silently keeps only the tag**. Hit in
+`kybernet/src/main.cyr:_remove_cgroup_settled`; it will recur in every repo with a retry loop.
+
+---
 
 ---
 

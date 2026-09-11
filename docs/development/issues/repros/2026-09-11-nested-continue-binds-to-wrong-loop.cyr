@@ -1,0 +1,153 @@
+# cycc 6.6.2 — when a loop and a loop nested inside it BOTH contain a `continue`,
+# and the outer one appears lexically BEFORE the inner loop, both bind to the
+# wrong loop: the inner `continue` jumps to the OUTER loop's latch, and the outer
+# `continue` becomes a no-op.
+#
+# Exit 0 = correct.  Exit 1 = the bug is present.
+# Cases A-C, G-J are the controls: they are correct on 6.6.2, which is what
+# isolates the trigger to "both levels, outer one first".
+include "lib/fmt.cyr"
+
+fn row(label, llen, got, want) {
+    print(label, llen); fmt_int(got); print("  want ", 7); fmt_int(want);
+    if (got == want) { print("   ok\n", 7); return 0; }
+    print("   WRONG\n", 10);
+    return 1;
+}
+
+fn main() {
+    var bad = 0;
+
+    # ---- A: `continue` in the INNER loop only. want 6
+    var a = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        for (var j = 0; j < 3; j = j + 1) {
+            if (j == 0) { continue; }
+            a = a + 1;
+        }
+    }
+    bad = bad + row("  A inner only, fires             : ", 36, a, 6);
+
+    # ---- B: `continue` in the OUTER loop only. want 6
+    var b = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        if (i == 0) { continue; }
+        for (var j = 0; j < 3; j = j + 1) { b = b + 1; }
+    }
+    bad = bad + row("  B outer only, fires             : ", 36, b, 6);
+
+    # ---- C: present at both levels, NEITHER fires. want 9
+    var c = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        if (i == 99) { continue; }
+        for (var j = 0; j < 3; j = j + 1) {
+            if (j == 99) { continue; }
+            c = c + 1;
+        }
+    }
+    bad = bad + row("  C both, neither fires           : ", 36, c, 9);
+
+    # ---- D: both present, only the OUTER fires. want 6; 6.6.2 gives 9.
+    #      The outer `continue` is a NO-OP: nothing is skipped.
+    var d = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        if (i == 0) { continue; }
+        for (var j = 0; j < 3; j = j + 1) {
+            if (j == 99) { continue; }
+            d = d + 1;
+        }
+    }
+    bad = bad + row("  D both, only OUTER fires        : ", 36, d, 6);
+
+    # ---- E: both present, only the INNER fires. want 6; 6.6.2 gives 0.
+    #      THE DECISIVE CASE: the outer `continue` can NEVER execute (i == 99 is
+    #      impossible for i in 0..2), yet its presence changes the inner one.
+    var e = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        if (i == 99) { continue; }
+        for (var j = 0; j < 3; j = j + 1) {
+            if (j == 0) { continue; }
+            e = e + 1;
+        }
+    }
+    bad = bad + row("  E both, only INNER fires        : ", 36, e, 6);
+
+    # ---- F: both present, BOTH fire. want 4; 6.6.2 gives 0.
+    var f = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        if (i == 0) { continue; }
+        for (var j = 0; j < 3; j = j + 1) {
+            if (j == 0) { continue; }
+            f = f + 1;
+        }
+    }
+    bad = bad + row("  F both, both fire               : ", 36, f, 4);
+
+    # ---- G: PLACEMENT. Same as E but the outer `continue` sits AFTER the inner
+    #      loop instead of before it. Correct on 6.6.2 — the trigger is order.
+    var g = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        for (var j = 0; j < 3; j = j + 1) {
+            if (j == 0) { continue; }
+            g = g + 1;
+        }
+        if (i == 99) { continue; }
+    }
+    bad = bad + row("  G outer cont AFTER inner loop   : ", 36, g, 6);
+
+    # ---- H: two `continue`s in the SAME loop body. want 1
+    var h = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        if (i == 0) { continue; }
+        if (i == 2) { continue; }
+        h = h + 1;
+    }
+    bad = bad + row("  H two conts, one loop           : ", 36, h, 1);
+
+    # ---- I: two SEQUENTIAL loops, each with a firing `continue`. want 2, 2
+    var p = 0;
+    var q = 0;
+    for (var i = 0; i < 3; i = i + 1) { if (i == 0) { continue; } p = p + 1; }
+    for (var i = 0; i < 3; i = i + 1) { if (i == 0) { continue; } q = q + 1; }
+    bad = bad + row("  I sequential loops              : ", 36, p + q, 4);
+
+    # ---- J: CONTROL. E's control flow written with if-guards. Correct on 6.6.2,
+    #      which is what makes this codegen rather than a semantics question.
+    var k = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        if (i != 99) {
+            for (var j = 0; j < 3; j = j + 1) {
+                if (j != 0) { k = k + 1; }
+            }
+        }
+    }
+    bad = bad + row("  J control, if-guards            : ", 36, k, 6);
+
+    # ---- WHICH LOOP. Instrumented version of E. On 6.6.2 the outer body is
+    #      entered 3 times, so the OUTER LOOP IS NOT TERMINATED — its full trip
+    #      count runs. What the inner `continue` actually does is jump to the
+    #      OUTER latch: the inner loop stops after one iteration AND the rest of
+    #      the outer body is skipped.
+    var ob = 0;
+    var ib = 0;
+    var tl = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        ob = ob + 1;
+        if (i == 99) { continue; }
+        for (var j = 0; j < 3; j = j + 1) {
+            ib = ib + 1;
+            if (j == 0) { continue; }
+        }
+        tl = tl + 1;
+    }
+    bad = bad + row("  E' outer body entered           : ", 36, ob, 3);
+    bad = bad + row("  E' inner body entered           : ", 36, ib, 9);
+    bad = bad + row("  E' outer body after inner loop  : ", 36, tl, 3);
+
+    if (bad == 0) { print("  OK\n", 6); }
+    if (bad != 0) { print("  BUG PRESENT\n", 15); }
+    return bad;
+}
+var r = main();
+if (r > 0) { r = 1; }
+sys_exit_group(r);
