@@ -1,6 +1,8 @@
 # `#derive(...)` and `public` cannot be combined
 
-**Status:** 🟡 **OPEN** — reproduced on 6.6.2 with a two-line repro and a control.
+**Status:** ✅ **FIXED in v6.6.3** — the derive parser skips a leading `public`/`pub`, and
+the generated accessors inherit that visibility. Gated by
+`tests/gates/frontend/derive_with_public.sh` (5 axes, mutation-proven both directions).
 **Placement:** unpinned — blocks a consumer's adoption of `private`/`public`, no workaround found.
 **Discovered:** 2026-09-11, adopting file visibility across hisab's 35 modules.
 **Severity:** Medium — a hard compile error, not wrong code, but it makes the visibility
@@ -91,3 +93,54 @@ hisab's 3.0.0 "public/private function surface" item is **blocked** on this and 
 on its roadmap, with the visibility change reverted rather than half-applied. The measurements
 that item rests on are unaffected and still stand: 939 functions, 296 underscore-prefixed, 148
 functions and 25 globals crossing a module boundary, of which 31 are underscore-named.
+
+---
+
+## Resolution (v6.6.3)
+
+### It was NOT the same root cause as the `#inline` filing
+
+That filing asked whether one fix might close both. **Premise-checked before writing any
+code: it does not.** With the `#inline` repair in, `#derive` + `public struct` still failed
+while the one-keyword control compiled — which is exactly what this filing's control was
+designed to determine. Two entries into the same weak spot, as it suspected, not one bug.
+
+### Root cause
+
+`PP_PARSE_STRUCT_DEF` (`src/frontend/lex_pp.cyr`) byte-compares the literal `"struct "` /
+`"enum "` **at** the declaration position. `public struct P { … }` matches neither probe,
+so `kwlen` stayed 0 and the code took the "is neither" error path.
+
+Fixed by skipping a leading `public ` / `pub ` before the probes. Only the *read position*
+moves — the derive machinery appends generated fns AFTER the declaration and never
+rewrites it, so the struct keeps its `public` exactly as written.
+
+### The second half: accessors inherit the visibility
+
+Making it compile is not enough, and shipping only that would have looked like a fix while
+leaving the filing's actual complaint in place. A `public struct` whose accessors came out
+at default visibility leaves a caller in another file able to NAME the type and unable to
+reach a single field — the same dead end as not compiling. A struct's derived accessors
+ARE its surface, so `public` propagates onto them rather than demanding 2N hand-written
+re-exports the author never wrote.
+
+⚠ **Verified in both directions**, because "make everything public" would also have passed
+the compile test:
+
+| case | result |
+|---|---|
+| `public struct` in a `private` file, accessors called from another file | works (11+22 = 33) |
+| plain `struct` in a `private` file, same call | `'R_m' is private to its file` |
+
+### Gate
+
+`tests/gates/frontend/derive_with_public.sh`, registered in `check.sh`. Five axes:
+`public struct` compiles · `pub` spelling · the plain control does not regress · public
+accessors reachable cross-file · **a non-public struct's accessors stay private**. That
+last axis is the anti-vacuous one — an unconditional `vis = "public "` passes the first
+four and only axis 5 catches it. Mutation-proven both ways: dropping the prefix skip
+reddens axis 1; forcing `vis` unconditional reddens axis 5.
+
+### hisab
+
+The 35-module `private`/`public` adoption that filed this is unblocked on 6.6.3.

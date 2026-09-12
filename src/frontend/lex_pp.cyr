@@ -791,6 +791,11 @@ var _pp_derive_names = 0;   # alloc(512*32) ditto
 # from_json body, deleted rather than escaped. The 13 non-literal arguments are struct
 # names, field names and field type names read from source, i.e. identifiers.
 var _pp_flatten = 0;
+# v6.6.3 — set while parsing a `public struct` / `public enum` so the generated
+# accessors inherit that visibility. See PP_PARSE_STRUCT_DEF and
+# PP_DERIVE_ACCESSORS_BODY. Reset at the start of every struct parse, so it cannot
+# leak from one derive to the next.
+var _pp_decl_public = 0;
 # v6.5.20 — offset (relative to the handler's `src_base`) of the first byte AFTER the
 # `#derive`d struct's closing `}`, i.e. the start of that line's tail. PP_PARSE_STRUCT_DEF
 # records it; the entry-point handler copies the tail with PP_COPY_TAIL *after* it has
@@ -975,6 +980,42 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     # ⚠ Byte-compared inline rather than with `memeq`: that lives in lib/string.cyr, which
     # cycc does not include, so a call here is an undefined symbol in the compiler itself.
     # Every other keyword probe in this file (ISDERIVE and friends) is written the same way.
+    # v6.6.3 — SKIP A LEADING `public` / `pub` BEFORE PROBING FOR THE KEYWORD.
+    # The probes below byte-compare the literal "struct " / "enum " AT ip, so
+    # `public struct P { ... }` matched neither and fell into the "the following
+    # declaration is neither" error — making `#derive` and file visibility mutually
+    # exclusive, i.e. unusable together in any file that derives accessors, which in
+    # practice is every foundation type. Filed while adopting `private`/`public` across
+    # hisab's 35 modules; no workaround existed.
+    # ⚠ Only the DECLARATION POSITION moves. The source text is untouched — the derive
+    # machinery appends generated fns AFTER the declaration and never rewrites it — so
+    # the struct keeps its `public` exactly as written.
+    # `pub` and `public` are the same token (73); both spellings are accepted here
+    # because this probe reads raw source text, not tokens. Per-item `private` is
+    # rejected by the language (tests/gates/frontend/visibility_private.sh), so there is
+    # no third spelling to skip.
+    _pp_decl_public = 0;
+    if (ip + 7 <= bl) {
+        var _vp = 1;
+        if (load8(src_base + ip)     != 112) { _vp = 0; }   # p
+        if (load8(src_base + ip + 1) != 117) { _vp = 0; }   # u
+        if (load8(src_base + ip + 2) != 98)  { _vp = 0; }   # b
+        if (load8(src_base + ip + 3) != 108) { _vp = 0; }   # l
+        if (load8(src_base + ip + 4) != 105) { _vp = 0; }   # i
+        if (load8(src_base + ip + 5) != 99)  { _vp = 0; }   # c
+        if (load8(src_base + ip + 6) != 32)  { _vp = 0; }   # ' '
+        if (_vp == 1) { _pp_decl_public = 1; ip = ip + 7; }
+    }
+    if (_pp_decl_public == 0) {
+        if (ip + 4 <= bl) {
+            var _vp2 = 1;
+            if (load8(src_base + ip)     != 112) { _vp2 = 0; }   # p
+            if (load8(src_base + ip + 1) != 117) { _vp2 = 0; }   # u
+            if (load8(src_base + ip + 2) != 98)  { _vp2 = 0; }   # b
+            if (load8(src_base + ip + 3) != 32)  { _vp2 = 0; }   # ' '
+            if (_vp2 == 1) { _pp_decl_public = 1; ip = ip + 4; }
+        }
+    }
     var is_struct = 0;
     if (ip + 7 <= bl) {
         is_struct = 1;
@@ -2124,9 +2165,20 @@ fn ISDERIVE_ACC(S, pos, bl): i64 {
 # called PP_PARSE_STRUCT_DEF first to populate that metadata.
 fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
     var field_count = load64(S + 0x197010);
+    # v6.6.3 — a `public struct` gets PUBLIC accessors. Emitting them at default
+    # visibility would leave a caller in another file able to name the type but unable
+    # to reach a single field, which is the same dead end as not compiling at all: the
+    # filing's complaint is that derive makes the visibility feature "unusable for any
+    # file that derives accessors", and private accessors do not lift that.
+    # The struct's own `public` is the author's declared intent for the type; its
+    # generated accessors ARE that type's surface, so they inherit it rather than
+    # requiring 2N hand-written re-exports the author never wrote.
+    var vis = "";
+    if (_pp_decl_public == 1) { vis = "public "; }
     var fi = 0;
     while (fi < field_count) {
         var off = load64(S + 0x200000 + fi * 8);
+        op = op + PP_EMIT_STR(out, op, vis);
         op = op + PP_EMIT_STR(out, op, "fn ");
         op = op + PP_EMIT_STR(out, op, S + 0x197020);
         store8(out + op, 95); op = op + 1;
@@ -2137,6 +2189,7 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         # v6.5.71: record the GETTER for auto-inlining. The name is emitted in pieces and
         # never exists as one string, so it is hashed the same way — see `_pp_inl_hash3`.
         _pp_inl_add(_pp_inl_hash3(S + 0x197020, 0, S + 0x1FC000 + fi * 32));
+        op = op + PP_EMIT_STR(out, op, vis);
         op = op + PP_EMIT_STR(out, op, "fn ");
         op = op + PP_EMIT_STR(out, op, S + 0x197020);
         op = op + PP_EMIT_STR(out, op, "_set_");

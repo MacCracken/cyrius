@@ -103,6 +103,7 @@ sh "$ROOT/tests/gates/frontend/fileid_substrate.sh"
 # declared fixed three times before the fourth occurrence turned up in a path nobody
 # had enumerated.
 sh "$ROOT/tests/gates/frontend/visibility_private.sh"
+sh "$ROOT/tests/gates/frontend/derive_with_public.sh"
 
 # v6.5.1: overload-suffix dispatch must be ARITY-AWARE and POSITION-CONSISTENT.
 # Asserts across assign / return-tail / nested-arg because the two defects it covers
