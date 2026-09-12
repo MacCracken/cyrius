@@ -2773,10 +2773,39 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
 # Which stdlib leaf defines `name` as a top-level `fn name(` or `var name`? Returns the leaf
 # name, or 0. Scans on demand: the undefined set is small (single digits in practice), so a
 # whole-snapshot symbol map would cost far more than it saves.
-fn _distlib_leaf_defining(root, name): i64 {
-    var nlen = strlen(name);
+# v6.6.3 — SNAPSHOT CACHE. `_distlib_leaf_defining` used to `dir_list` the whole stdlib
+# snapshot and `alloc` + read EVERY `.cyr` file on EVERY call, and the verify loop calls it
+# ONCE PER UNDEFINED SYMBOL. cyrius's allocator is an arena that never frees, so the cost
+# was O(symbols x snapshot bytes) in RETAINED memory:
+#
+#     110 files / 7 MB snapshot  x  ~2,900 undefined symbols  =  ~20 GB
+#
+# Measured on bote 3.3.8's full profile at 6.6.2: peak RSS 20,320 MB under a 20 GB cap
+# (rc=139), and 31,214 MB uncapped on a 59 GB box. A standard GitHub runner has ~7 GB, so
+# the kernel OOM-killer takes the RUNNER down mid-step — reported as
+# `Error: The operation was canceled`, which reads as an infrastructure hiccup rather than
+# a toolchain defect, two steps before any assertion runs. It cost a release cut to find.
+#
+# ⭐ This is why the blow-up tracked the LEAF GRAPH and not module count — the thing that
+# scales is the number of symbols left UNDEFINED, not the number of modules. kavach (44
+# modules), sankhya (36) and hisab (35) all complete; bote's 30-module full profile dies,
+# and its own `core` profile — the same repo, fewer leaves — finishes inside 2 GB.
+#
+# The cache reads each file ONCE per root. Entries are kept in `dir_list` order so symbol
+# attribution is byte-for-byte what it was; making that order deterministic is a separate
+# question, noted in the issue.
+var _dl_snap_root = 0;
+var _dl_snap_names = 0;   # vec of Str: directory entry names, dir_list order
+var _dl_snap_bufs = 0;    # vec of i64: file contents, NUL-terminated
+var _dl_snap_lens = 0;    # vec of i64: bytes read
+
+fn _distlib_snap_cache(root): i64 {
+    if (_dl_snap_root != 0) { if (streq(str_from(_dl_snap_root), str_from(root)) == 1) { return 0; } }
     var ents = dir_list(str_from(root));
-    if (ents == 0) { return 0; }
+    if (ents == 0) { return 0 - 1; }
+    _dl_snap_names = vec_new();
+    _dl_snap_bufs = vec_new();
+    _dl_snap_lens = vec_new();
     var i = 0;
     while (i < vec_len(ents)) {
         var e = vec_get(ents, i);
@@ -2796,6 +2825,25 @@ fn _distlib_leaf_defining(root, name): i64 {
         var got = file_read_all(fp, fb, fsz);
         if (got <= 0) { continue; }
         store8(fb + got, 0);
+        vec_push(_dl_snap_names, e);
+        vec_push(_dl_snap_bufs, fb);
+        vec_push(_dl_snap_lens, got);
+    }
+    _dl_snap_root = root;
+    return 0;
+}
+
+fn _distlib_leaf_defining(root, name): i64 {
+    var nlen = strlen(name);
+    if (_distlib_snap_cache(root) != 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dl_snap_names)) {
+        var e = vec_get(_dl_snap_names, i);
+        var fb = vec_get(_dl_snap_bufs, i);
+        var got = vec_get(_dl_snap_lens, i);
+        i = i + 1;
+        var ed = str_data(e);
+        var el = strlen(ed);
         var p = 0;
         var hit = 0;
         var in_enum = 0;
