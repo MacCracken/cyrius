@@ -1,0 +1,83 @@
+# v6.6.3: a user-written `#inline` must not disarm every `#derive` after it.
+#
+# THE DEFECT. `#inline` became a real directive at v6.5.63, which taught PASS 2
+# (parse.cyr's directive dispatcher) to arm `_inline_pending` on token 163. Pass 1 —
+# the declaration-collection scan in main.cyr and its six per-target forks — was never
+# taught to CONSUME it. An unconsumed directive there falls through to the catchall
+# `else` and TERMINATES the pass-1 scan, so every declaration after the first `#inline`
+# is unregistered when pass 2 runs. The struct below then reaches the parser as an
+# unknown top-level token:
+#
+#     error:<source>:5:1: unexpected struct
+#
+# The diagnostic names the struct, which is innocent — bisecting dist/naad.cyr put the
+# trigger 920 lines earlier, at that file's first `#inline`.
+#
+# ⭐ THIS IS A RECURRENCE, and the comment directly above the pass-1 consume list in
+# main.cyr describes the original: v5.8.20 added #must_use/#pure/#io/#alloc to pass 2
+# only, "caused the pass-1 scanner to fall into the catchall else and terminate, leaving
+# subsequent enum / fn defs unregistered for pass 2", and dropped check.sh to 48/64.
+# Same shape, same file, five years of releases apart. A new directive token needs BOTH
+# halves — pass 1 consumes, pass 2 arms.
+#
+# BLAST RADIUS at 6.6.2: 60 poisoned files across 10 repos (naad, svara, dhvani, nidhi,
+# garjan, jalwa, ghurni, prani, shabda, shabdakosh). Five of those had no local fix —
+# they were poisoned only through a vendored bundle, `lib/naad.cyr` alone blocking six
+# consumers. Closes issues/2026-09-11-inline-directive-disarms-derive.md.
+#
+# ORDER MATTERS, so both orders are tested: `#derive` BEFORE the first `#inline` always
+# worked (pass 1 had not yet terminated), which is why the defect looked positional.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+# A derive BEFORE any #inline — this arrangement compiled even pre-fix.
+#derive(accessors)
+struct Before { alpha; beta; }
+
+#inline
+fn inl_helper(a): i64 { return a + 1; }
+
+# ...and the one that did not: a derive AFTER an #inline.
+#derive(accessors)
+struct After { gamma; delta; epsilon; }
+
+# A second #inline/#derive pair: pre-fix the scan was already dead by here.
+#inline
+fn inl_helper2(a): i64 { return a + 2; }
+
+#derive(accessors)
+struct Tail { omega; }
+
+fn main(): i64 {
+    alloc_init();
+
+    # The #inline'd fns still work as functions.
+    assert_eq(inl_helper(41), 42, "#inline fn still callable");
+    assert_eq(inl_helper2(40), 42, "second #inline fn still callable");
+
+    var b = alloc(16);
+    Before_set_alpha(b, 7);
+    Before_set_beta(b, 9);
+    assert_eq(Before_alpha(b), 7, "derive BEFORE #inline: alpha");
+    assert_eq(Before_beta(b), 9, "derive BEFORE #inline: beta");
+
+    # The accessors that did not exist pre-fix, because the struct was never registered.
+    var a = alloc(24);
+    After_set_gamma(a, 1);
+    After_set_delta(a, 2);
+    After_set_epsilon(a, 3);
+    assert_eq(After_gamma(a), 1, "derive AFTER #inline: gamma");
+    assert_eq(After_delta(a), 2, "derive AFTER #inline: delta");
+    assert_eq(After_epsilon(a), 3, "derive AFTER #inline: epsilon");
+
+    # Byte offsets are the documented i*8 — a registered-but-wrong struct would differ here.
+    var t = alloc(8);
+    Tail_set_omega(t, 123);
+    assert_eq(Tail_omega(t), 123, "derive after a SECOND #inline: omega");
+
+    var r = assert_summary();
+    return r;
+}

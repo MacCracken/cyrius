@@ -1461,7 +1461,7 @@ while (scan == 1) {
                                     }
                                     else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
                                         else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
-                                            else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { STI(S, GTI(S) + 1); }
+                                            else { if (PEEKT(S) == 127 || PEEKT(S) == 133 || PEEKT(S) == 163) { STI(S, GTI(S) + 1); }
                             else { if (_IS_FN_KW(S) == 1) {
                                     # v6.3.5 CO-01 — prescan the fn signature:
                                     # register the fn + record its ABI metadata
@@ -1704,7 +1704,7 @@ while (topgo == 1) {
                                         }
                                         else { if (PEEKT(S) == 125) { _pure_pending = 1; STI(S, GTI(S) + 1); }
                                             else { if (PEEKT(S) == 126) { _io_pending = 1; STI(S, GTI(S) + 1); }
-                                                else { if (PEEKT(S) == 127 || PEEKT(S) == 133) { if (PEEKT(S) == 133) { _naked_pending = 1; } else { _alloc_pending = 1; } STI(S, GTI(S) + 1); }
+                                                else { if (PEEKT(S) == 127 || PEEKT(S) == 133 || PEEKT(S) == 163) { if (PEEKT(S) == 133) { _naked_pending = 1; } else { if (PEEKT(S) == 163) { _inline_pending = 1; } else { _alloc_pending = 1; } } STI(S, GTI(S) + 1); }
                                 else { if (_IS_FN_KW(S) == 1) {
                                         # v6.5.17 — EVERY fn body is PARSED, reachable or not.
                                         # A parse-time "skip the body of an unreferenced fn" pass used

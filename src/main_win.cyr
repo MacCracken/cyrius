@@ -634,7 +634,7 @@ while (scan == 1) {
                         # (bayan via cyrsign) hit "unexpected enum" — the next enum went
                         # unregistered. The other 5 forks already had the full set;
                         # this is the last fork to mirror it. See project_v622_annotation_fork_desync.
-                        else { if (PEEKT(S) == 109 || PEEKT(S) == 122 || PEEKT(S) == 124 || PEEKT(S) == 125 || PEEKT(S) == 126 || PEEKT(S) == 127 || PEEKT(S) == 133) {
+                        else { if (PEEKT(S) == 109 || PEEKT(S) == 122 || PEEKT(S) == 124 || PEEKT(S) == 125 || PEEKT(S) == 126 || PEEKT(S) == 127 || PEEKT(S) == 133 || PEEKT(S) == 163) {
                                     if (PEEKT(S) == 124) {
                                         # #deprecated carries an optional ("message") — consume it so it can't dangle.
                                         STI(S, GTI(S) + 1);
@@ -794,7 +794,7 @@ while (topgo == 1) {
                             # diagnostics are gated off on the PE backend, CO-03) — the
                             # point is to keep the token stream in sync so the next enum
                             # registers. #deprecated (124) consumes its optional ("msg").
-                            else { if (PEEKT(S) == 109 || PEEKT(S) == 122 || PEEKT(S) == 124 || PEEKT(S) == 125 || PEEKT(S) == 126 || PEEKT(S) == 127 || PEEKT(S) == 133) {
+                            else { if (PEEKT(S) == 109 || PEEKT(S) == 122 || PEEKT(S) == 124 || PEEKT(S) == 125 || PEEKT(S) == 126 || PEEKT(S) == 127 || PEEKT(S) == 133 || PEEKT(S) == 163) {
                                     if (PEEKT(S) == 109) { _regalloc_pending = 1; }
                                     # v6.5.18: ARM #naked on PE too. Consume-and-ignore emitted a
                                     # FRAMED body for a naked fn, so the fn's raw `ret` popped a
