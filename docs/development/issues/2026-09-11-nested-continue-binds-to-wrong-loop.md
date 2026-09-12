@@ -1,6 +1,8 @@
 # `continue` at two nesting levels binds to the wrong loop
 
-**Status:** 🟡 **OPEN** — reproduced on 6.6.2 with a self-proving repro; not bisected
+**Status:** ✅ **FIXED in v6.6.3** — the continue-patch array is indexed absolutely
+instead of per-loop, and `PARSE_WHILE` now declares while-mode. Gated by
+`tests/tcyr/lang/nested_continue_binds.tcyr` (8 assertions; the pre-fix compiler fails 6).
 (only 6.6.0–6.6.2 installed, see below).
 **Placement:** unpinned — hisab pins 6.6.2 and ships an `if`-guard workaround.
 **Discovered:** 2026-09-11, building a 32×32 product table in hisab (`geo_advanced.cyr`).
@@ -138,3 +140,50 @@ records a first-bad-version as evidence about **visibility**, not **origin** —
 
 hisab's table builder is written with `if`-guards and carries a comment saying **not to
 tidy them back into `continue`** until this issue closes.
+
+---
+
+## Root cause (v6.6.3) — one flat array, two halves
+
+`0x18F8A0` is **one flat 8-entry patch array** holding the forward jumps a C-style `for`'s
+`continue`s need; `0x18F898` is the next-free index into it — 1-based, with **0 doubling
+as a mode flag** meaning "while-mode: jump straight to loop top".
+
+**Half 1 — array aliasing.** All three `for` parse sites reset the index to `1` on entry.
+A nested loop therefore began writing at index 0 again and **overwrote the enclosing
+loop's recorded jump**. At patch time the outer loop then re-patched that same slot, which
+by then held the INNER jump — sending the inner `continue` to the outer latch — while its
+own jump had been lost and was never patched, making the outer `continue` a no-op. That is
+exactly the reported pair of symptoms, and it explains the lexical trigger: the outer
+`continue` must appear BEFORE the nested loop to claim index 0 first and have it stolen.
+
+Fixed by starting each loop at the enclosing loop's next-free index
+(`var cfwb = scfw; if (cfwb < 1) { cfwb = 1; }`) and patching only `[its base, its count)`.
+The ranges are then disjoint and no save/restore of the array contents is needed.
+
+**Half 2 — mode inheritance, NOT in the original filing.** `PARSE_WHILE` never wrote
+`0x18F898`. A `while` nested inside a `for` therefore saw the for's non-zero count, took
+the forward-patch branch, and sent its `continue` to the **for's step**. Measured on
+6.6.2: `while` inside `for` with a first-iteration `continue` produced **0** where 6 was
+right — the same silent-wrong-answer shape, found while fixing half 1.
+
+Fixed by saving `0x18F898`, setting it to 0 for the body, and restoring it — matching what
+`PARSE_WHILE` already did for the loop-top and break slots.
+
+### Verification
+
+- Filed reproducer: **0 → 6**.
+- `while`-in-`for`: **0 → 6**.
+- New test, 8 assertions covering both nesting directions, three-level nesting, an outer
+  `continue` that actually fires, and `break` (a separate chain that must not regress):
+  **8 passed, 0 failed**. The pre-fix compiler fails **6 of 8**.
+- Self-host fixpoint byte-identical; seed-derive OK from the 29,024-byte seed.
+
+⚠ **The `max 8` limit is now total across a nest**, not per loop, because the indices no
+longer restart. Eight is unchanged as the array bound and still hard-errors rather than
+corrupting — which is what it did before.
+
+### hisab
+
+`geo_advanced.cyr` ships an `if`-guard workaround for this. It can be removed once hisab
+moves to 6.6.3, but it is harmless to leave.

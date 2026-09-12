@@ -1,0 +1,126 @@
+# v6.6.3: `continue` binds to its OWN loop at every nesting level.
+#
+# THE DEFECT (two halves, one shared slot). `0x18F8A0` is ONE flat 8-entry patch array
+# holding the forward jumps a C-style `for`'s `continue`s need, and `0x18F898` is the
+# next-free index into it — 1-based, where 0 doubles as "while-mode: jump straight to
+# loop top" rather than "forward-patch to the step".
+#
+#   1. ARRAY ALIASING. Every loop reset the index to 1 on entry, so a nested loop began
+#      writing at index 0 again and OVERWROTE the enclosing loop's recorded jump. The
+#      inner `continue` then got patched to the OUTER latch (abandoning the rest of the
+#      outer body) and the outer `continue` was never patched at all (a no-op). Strictly
+#      lexical: the outer `continue` had to appear BEFORE the nested loop to claim index
+#      0 first and have it stolen. Filed by hisab building a 32x32 product table.
+#
+#   2. MODE INHERITANCE. `PARSE_WHILE` never wrote `0x18F898`, so a `while` nested in a
+#      `for` saw the for's non-zero count and forward-patched its `continue` to the FOR's
+#      step. Not in the original filing — found while fixing (1), same slot, opposite half.
+#
+# ⚠ Both are SILENT WRONG CODE: no diagnostic, no crash, correct-looking source. The
+# filing's own first version mis-described the symptom as "the inner continue exits the
+# outer loop"; instrumenting showed the outer loop runs its full trip count and it is the
+# outer BODY AFTER the nested loop that is skipped. Counts here are measured, not inferred.
+#
+# Closes issues/2026-09-11-nested-continue-binds-to-wrong-loop.md.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    # ---- 1. the filed reproducer: outer `continue` lexically BEFORE the inner loop ----
+    # The outer continue is NEVER TAKEN (c == 99 is impossible for c in 0..2). Its mere
+    # presence was enough to mis-patch the inner one — which is what rules out a
+    # misreading of `continue` semantics.
+    var o = 0;
+    for (var c = 0; c < 3; c = c + 1) {
+        if (c == 99) { continue; }
+        for (var d = 0; d < 3; d = d + 1) {
+            if (d == 0) { continue; }
+            o = o + 1;
+        }
+    }
+    assert_eq(o, 6, "for-in-for: inner continue skips only the inner iteration");
+
+    # ---- 2. the outer body AFTER the nested loop must still run ----
+    # Pre-fix this counter read 0: the inner continue jumped to the outer latch.
+    var after = 0;
+    var inner_hits = 0;
+    for (var e = 0; e < 3; e = e + 1) {
+        if (e == 99) { continue; }
+        for (var f = 0; f < 3; f = f + 1) {
+            if (f == 0) { continue; }
+            inner_hits = inner_hits + 1;
+        }
+        after = after + 1;
+    }
+    assert_eq(inner_hits, 6, "inner body entered 6 times (was 3)");
+    assert_eq(after, 3, "outer body AFTER the nested loop runs every trip (was 0)");
+
+    # ---- 3. an outer `continue` that DOES fire must actually skip ----
+    var skipped = 0;
+    for (var g = 0; g < 4; g = g + 1) {
+        if (g == 1) { continue; }
+        for (var h = 0; h < 2; h = h + 1) {
+            if (h == 0) { continue; }
+        }
+        skipped = skipped + 1;
+    }
+    assert_eq(skipped, 3, "outer continue skips its own iteration (was a no-op)");
+
+    # ---- 4. while nested in for — mode inheritance (half 2) ----
+    var w = 0;
+    for (var i = 0; i < 3; i = i + 1) {
+        var j = 0;
+        while (j < 3) {
+            j = j + 1;
+            if (j == 1) { continue; }
+            w = w + 1;
+        }
+    }
+    assert_eq(w, 6, "while-in-for: continue goes to the WHILE's top, not the for's step");
+
+    # ---- 5. for nested in while — the reverse direction ----
+    var v = 0;
+    var k = 0;
+    while (k < 3) {
+        k = k + 1;
+        for (var m = 0; m < 3; m = m + 1) {
+            if (m == 0) { continue; }
+            v = v + 1;
+        }
+    }
+    assert_eq(v, 6, "for-in-while: inner for's continue reaches its own step");
+
+    # ---- 6. three levels deep, a continue at every level ----
+    var t = 0;
+    for (var p = 0; p < 3; p = p + 1) {
+        if (p == 99) { continue; }
+        for (var q = 0; q < 3; q = q + 1) {
+            if (q == 0) { continue; }
+            for (var r = 0; r < 3; r = r + 1) {
+                if (r == 0) { continue; }
+                t = t + 1;
+            }
+        }
+    }
+    assert_eq(t, 12, "three levels: 3 * 2 * 2 = 12");
+
+    # ---- 7. break still binds to its own loop (separate chain — must not regress) ----
+    var b = 0;
+    for (var x = 0; x < 3; x = x + 1) {
+        if (x == 99) { continue; }
+        for (var y = 0; y < 5; y = y + 1) {
+            if (y == 2) { break; }
+            b = b + 1;
+        }
+        b = b + 100;
+    }
+    assert_eq(b, 306, "break exits only the inner loop (2 per trip + 100) * 3");
+
+    var res = assert_summary();
+    return res;
+}
