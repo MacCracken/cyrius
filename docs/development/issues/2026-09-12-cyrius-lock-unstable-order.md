@@ -1,7 +1,9 @@
 # `cyrius deps` writes `cyrius.lock` in an order that differs between machines
 
-**Status:** 🟡 **OPEN** — reproduced on a real GitHub runner against a local machine,
-with the two lock files proven to hold IDENTICAL content.
+**Status:** ✅ **FIXED in v6.6.3** — `_deps_lock_dir` (`cbt/deps.cyr`) now sorts the
+`lib/` traversal with the `_dep_name_cmp` comparator that already existed in the same
+file. Gated by `tests/gates/toolchain/deps_lock_sorted.sh`, mutation-proven (removing the
+one line reddens it with readdir order: `bench, math, boxed …`).
 **Placement:** unpinned. Breaks any consumer CI gate that compares the lock byte-for-byte.
 **Discovered:** 2026-08-26 by commandress (first CI run); re-hit and diagnosed in
 **agnostic** on 2026-09-12 during the 6.6.2 ecosystem sweep.
@@ -92,3 +94,33 @@ gate and every consumer can drop the workaround.
 - Two machines resolving the same manifest at the same pin produce byte-identical locks.
 - agnostic and commandress pass with a plain `git diff --exit-code -- cyrius.lock`.
 - A real change (hash, added entry, dropped `commit` pin) still fails the gate.
+
+---
+
+## Resolution (v6.6.3)
+
+One line, and the remedy was already in the file. `cbt/deps.cyr:830` had carried
+`vec_sort_by(entries, &_dep_name_cmp)` since **v6.5.37 (A8)** with the comment *"readdir
+order is not deterministic"* — that release fixed the module-family walker and missed the
+lock writer. The same call now guards `_deps_lock_dir`.
+
+The commit-pin lines needed no sort: they are appended in manifest declaration order,
+which is already machine-independent. Confirmed rather than assumed — they appeared as
+unchanged CONTEXT lines in the agnostic diff while only the hash lines moved.
+
+**Verified:** a 25-entry lock comes back fully path-sorted, including the nested
+`lib/unicode/` package landing correctly between `lib/tyche.cyr` and `lib/vani.cyr`, and
+is byte-identical across two resolves.
+
+### Consumer workarounds that can now be retired
+
+- `agnostic/scripts/lock-check.sh` + its `ci.yml` step
+- `commandress/scripts/lock-check.sh` + its `ci.yml` step
+
+Both compare the lock as sorted sets. They are harmless to keep — they still catch a
+changed hash, an added entry or a dropped `commit` pin — but a plain
+`git diff --exit-code -- cyrius.lock` is now a legitimate gate again. ⚠ Whoever retires
+them should keep the HEAD-baseline lesson recorded in `lock-check.sh`: consumer CI usually
+runs `cyrius deps` in an earlier step, so a gate that baselines from the working tree
+compares a regeneration against another regeneration and passes unconditionally
+(commandress audit 2026-08-26, A-03 — a tampered lock was verified to pass that way).

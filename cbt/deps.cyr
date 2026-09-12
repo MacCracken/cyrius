@@ -2951,6 +2951,23 @@ fn _dep_is_cyrius_source_repo(): i64 {
 fn _deps_lock_dir(dir, lock_fd): i64 {
     var count = 0;
     var entries = dir_list(str_from(dir));
+    # v6.6.3 — SORT. `dir_list` returns readdir order, which is stable on one machine
+    # and DIFFERENT on another, so the lock came out as the same hashes in a different
+    # SEQUENCE. Every consumer CI that gates the lock byte-for-byte
+    # (`git diff --exit-code -- cyrius.lock`) then failed for any lock committed
+    # elsewhere — i.e. always. Measured on agnostic 2026-09-12: the gate reported
+    # "98 insertions(+), 98 deletions(-)" while an order-insensitive compare of the
+    # very same two files was EMPTY — identical hashes for all 117 entries. The
+    # failure message ("does not match a clean resolution at this pin") reads as
+    # dependency drift, so it sends the reader hunting stale pins that are not stale;
+    # it cost most of a day across two repos before the diff was printed on a runner.
+    # Same one-line remedy as line ~830 (v6.5.37, A8) — that release fixed the module
+    # walker and missed this one. See issues/2026-09-12-cyrius-lock-unstable-order.md.
+    #
+    # The commit-pin lines above need no sort: they are appended in manifest
+    # declaration order, which is already machine-independent (confirmed — they were
+    # unchanged CONTEXT lines in that same diff, only the hash lines moved).
+    if (entries != 0) { vec_sort_by(entries, &_dep_name_cmp); }
     var li = 0;
     while (li < vec_len(entries)) {
         var name = str_data(vec_get(entries, li));
