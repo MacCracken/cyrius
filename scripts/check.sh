@@ -203,6 +203,7 @@ sh "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
 # cannot see, so axis 1 counts call sites and axis 2 pins the diagnostic. Mutation-proven: arming
 # nothing gives "with=100 without=100" and axis 1 fires.
 sh "$ROOT/tests/gates/codegen/inline_directive.sh"
+sh "$ROOT/tests/gates/codegen/dce_data_vaddr_frozen.sh"
 
 # v6.5.64: a fixed-lane vector op on three &local operands must emit the DIRECT form (two rbp
 # loads, the packed op, one store) with its result reload ELIDED by SLASE — while a real batch

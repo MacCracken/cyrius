@@ -66,6 +66,14 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
     return (entry + cp + 0x1FFFFF) & (0 - 0x200000);
 }
 
+# v6.6.3 — see the x86 peer in src/backend/x86/fixup.cyr for the full account. Short form:
+# this vaddr is derived from CODE SIZE, FIXUP bakes absolute gvar/string addresses against
+# it, and the `CYRIUS_DCE=1` pass then COMPACTS the code afterwards — so a re-derive in
+# EMITELF_USER emits a PT_LOAD at a vaddr the code was never patched for, and the binary
+# faults storing globals before main. Frozen here for the same reason and fixed on both
+# backends together: the defect is in the shared shape, not in one target's emitter.
+var _wx_dbase_frozen = 0;
+
 fn FIXUP(S): i64 {
     # Check for Mach-O ARM64 output mode
     var _ma_env = _read_env("CYRIUS_MACHO_ARM");
@@ -105,6 +113,7 @@ fn FIXUP(S): i64 {
     # Userland only (preamble == 0 here), matching EMITELF_USER's _wx_data_vaddr.
     if (_wx_active(S) == 1) { acp = _wx_data_vaddr(S, entry, cp) - entry; }
     var dbase = entry + preamble + acp;
+    _wx_dbase_frozen = dbase;   # v6.6.3: EMITELF_USER must use THIS, not a post-DCE re-derive
     var vcnt = GVCNT(S);
     var totvar = 0;
     var vi = 0;
@@ -694,6 +703,7 @@ fn EMITELF(S): i64 {
     if (wx == 1) {
         data_foff = (text_foff + cp + 0xFFFF) & (0 - 0x10000);   # 64 KB-align file offset
         dbase = _wx_data_vaddr(S, base + text_foff, cp);          # 2 MB-align vaddr
+        if (_wx_dbase_frozen != 0) { dbase = _wx_dbase_frozen; }   # v6.6.3: match FIXUP's
     }
     var filesz = data_foff + totvar + spos;
     filesz = (filesz + 7) & (0 - 8);

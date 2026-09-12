@@ -86,6 +86,29 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
     return (entry + cp + 0x1FFFFF) & (0 - 0x200000);
 }
 
+# v6.6.3 — THE DBASE THE FIXUPS WERE PATCHED AGAINST, frozen for EMITELF_USER.
+#
+# `_wx_data_vaddr` derives the data vaddr from the CODE SIZE, and FIXUP and EMITELF_USER
+# were each expected to compute it independently and agree. `CYRIUS_DCE=1` breaks that:
+# FIXUP computes dbase (line ~130) and bakes absolute gvar/string addresses into the code
+# through ~line 305, and only THEN does the DCE pass compact and SHRINK cp. EMITELF_USER
+# then recomputed from the smaller cp and emitted a PT_LOAD at a DIFFERENT vaddr than the
+# code had been patched against.
+#
+# Measured on sankhya's bench at 6.6.2: RW segment at 0x800000 without DCE, 0x600000 with,
+# while the code still executed `movabsq $0x8000b0, %rcx; movq %rax, (%rcx)` — a store into
+# unmapped space during GLOBAL INITIALISATION, so it died before main with rc=139 and zero
+# output. The same repo's main binary was fine because its code size happened to round to
+# the same 2 MB bucket either way — which is why this looked repo-specific rather than like
+# a DCE defect.
+#
+# Freezing is the right half to fix: the patches are already in the code by then and
+# re-deriving would mean re-patching. The cost is virtual address space only — the data
+# lands on the pre-DCE 2 MB boundary and the gap is unmapped, exactly as the W^X note
+# above already describes. p_vaddr = p_offset (mod 0x1000) still holds: dbase is
+# 2 MB-aligned and data_foff is 4 KB-aligned, so both are 0 mod 0x1000.
+var _wx_dbase_frozen = 0;
+
 fn FIXUP(S): i64 {
     # Align code to 8 (don't write — leave as zeros, matching cybs)
     var cp = GCP(S);
@@ -128,6 +151,7 @@ fn FIXUP(S): i64 {
     # the original [entry, entry+cp) range; the gap is unmapped virtual space.
     if (_wx_active(S) == 1) { acp = _wx_data_vaddr(S, entry, cp) - entry; }
     var dbase = entry + acp;
+    _wx_dbase_frozen = dbase;   # v6.6.3: EMITELF_USER must use THIS, not a post-DCE re-derive
     # Precompute cumulative var offsets (prefix sum — O(n) instead of O(n²) per fixup)
     var vcnt = GVCNT(S);
     var totvar = 0;
@@ -1298,7 +1322,10 @@ fn EMITELF_USER(S, etype): i64 {
     var dbase = base + data_foff;
     if (wx == 1) {
         data_foff = (text_foff + cp + 0xFFF) & (0 - 0x1000);   # 4 KB-align data file offset
+        # v6.6.3: use the dbase FIXUP actually patched against. Re-deriving from `cp`
+        # here is wrong whenever the DCE pass shrank the code after those patches landed.
         dbase = _wx_data_vaddr(S, base + text_foff, cp);        # 2 MB-align data vaddr
+        if (_wx_dbase_frozen != 0) { dbase = _wx_dbase_frozen; }
     }
     var filesz = data_foff + totvar + spos;
     filesz = (filesz + 7) & (0 - 8);
