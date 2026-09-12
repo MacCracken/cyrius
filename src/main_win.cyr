@@ -804,6 +804,7 @@ while (topgo == 1) {
                                     # main_aarch64_macho.cyr. No paired clear needed — see the note
                                     # there; PARSE_FN_DEF consumes the flag for the next fn.
                                     if (PEEKT(S) == 133) { _naked_pending = 1; }
+                                    if (PEEKT(S) == 163) { _inline_pending = 1; }   # v6.6.3: ARM #inline on PE too — 163 was in the guard list but armed nothing, so the directive compiled and did NOTHING (calls 32->32 measured). Same defect shape as #naked at v6.5.18.
                                     if (PEEKT(S) == 124) {
                                         STI(S, GTI(S) + 1);
                                         if (PEEKT(S) == 10) { STI(S, GTI(S) + 1); if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); } if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); } }

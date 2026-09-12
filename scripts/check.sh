@@ -205,6 +205,19 @@ sh "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
 sh "$ROOT/tests/gates/codegen/inline_directive.sh"
 sh "$ROOT/tests/gates/codegen/dce_data_vaddr_frozen.sh"
 
+# v6.6.3: a directive must reach EVERY per-target fork, and must not be INERT on any of them.
+# cyrius has seven forks of the entry point and each carries its OWN copy of the top-level
+# directive dispatch, in TWO regions — pass 1 must CONSUME the token, pass 2 must ARM the flag.
+# v6.6.3 shipped #inline's consume into all seven and its ARM into one, which turned native
+# aarch64 CI red (missing consume at the SECOND region -> the pass-1 scan terminates and every
+# later declaration goes unregistered, surfacing as "unexpected struct" on an innocent line) and,
+# underneath that, left #inline silently INERT on aarch64, aarch64-macho, x86-macho, PE and cx.
+# ⭐ Axis 2 cannot be faked by a grep: it compiles the same fixture twice through each fork's own
+# compiler and requires the outputs to DIFFER — byte-identical output IS the proof of inertness,
+# and needs no disassembler, so it can never degrade into a skip. Mutation-proven on four
+# separate reverts (guard drop, arm drop, flag-consumer break, cx pass-2 revert).
+sh "$ROOT/tests/gates/frontend/directive_fork_parity.sh"
+
 # v6.5.64: a fixed-lane vector op on three &local operands must emit the DIRECT form (two rbp
 # loads, the packed op, one store) with its result reload ELIDED by SLASE — while a real batch
 # keeps its pointer+loop kernel and stays correct. ⛔ The instruction saving is NOT the point and
@@ -443,6 +456,16 @@ sh "$ROOT/tests/gates/toolchain/build_refuses_compiler_overwrite.sh"
 # ⚠ This gate does NOT stage into a live home — it drives the refusal paths with temp trees and
 # a redirected HOME, so it is safe in check.sh where funcgate-stage.sh itself is not.
 sh "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
+
+# v6.6.3: every TRACKED path must be checkoutable on Windows/macOS. A file named `c -l)|XX|` —
+# debris from a mis-quoted shell redirect — was committed, and the whole five-step release gate
+# ran GREEN over it, cross-OS leg included, because that leg SCPs binaries to ecb/ach/cass/pi and
+# never checks the repo out on them. The Windows job did, and git aborted before compiling a byte:
+# "error: invalid path" / "git.exe failed with exit code 128". ⭐ It reported as "Windows PE32+
+# failing" — a platform's entire coverage voided by a FILENAME, invisible to every gate we own
+# because they all inspect file CONTENT. Reads the INDEX, not the worktree: the index is what CI
+# checks out, so deleting the file locally does not clear this until the deletion is staged.
+sh "$ROOT/tests/gates/toolchain/tracked_paths_portable.sh"
 
 # ⚠ ORDERING (v6.6.2): `scripts/agnos-crossbuild-gate.sh` is LAST on purpose, and that matters.
 # check.sh runs under `set -e`, so the first gate to exit non-zero aborts the whole script and

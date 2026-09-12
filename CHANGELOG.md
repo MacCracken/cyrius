@@ -40,6 +40,49 @@ plus two backend fixup files.
   reddened at `calls 100→100`. That gate has now earned its keep twice.
   Gated by `tests/tcyr/derive/inline_before_derive.tcyr`.
 
+- ⛔ **…and that fix reached ONE fork of seven. CI red on native aarch64; `#inline` INERT on
+  five targets.** The consume half shipped into all seven `main*.cyr` forks, but each fork
+  carries **two** dispatch regions — a pass-1 declaration scan and a pass-2 arming site — and
+  only `main.cyr` got both. Four forks (`main_aarch64`, `main_aarch64_macho`,
+  `main_aarch64_native`, `main_x86_macho`) kept a pass-2 guard that admitted `#naked` and not
+  `#inline`, so the token fell to the catchall and terminated the scan exactly as before:
+  `FAIL: derive/inline_before_derive (compile)` on the `ubuntu-24.04-arm` runner,
+  `error: unexpected struct` at an innocent line 45.
+  ⭐ **Underneath the compile failure sat the silent half, and it was the bigger defect.**
+  Adding only the consume makes CI green and leaves `#inline` doing NOTHING on those targets —
+  measured directly: the same fixture compiled to a **byte-identical binary** with and without
+  the directive on aarch64 (`bl` 7 vs 7), on PE (`call` 32 vs 32), and on cx, against the x86
+  control's 96→92. That is precisely the v6.5.63 defect — a directive that compiles clean and
+  silently does nothing — reintroduced per-target. Arming `_inline_pending` at each fork's
+  pass-2 site fixes it: aarch64 `bl` **7→3**, PE `call` **32→28**, results identical, and the
+  native aarch64 compiler still self-hosts byte-identical (1,299,544 B) with the full corpus at
+  **305/308** under qemu (the 2 remaining are pre-existing qemu-user threading/TLS artifacts,
+  identical pre- and post-fix; real ARM hardware passes them).
+  **A sixth fork was found by the new gate, pre-existing and unrelated to 6.6.3:**
+  `main_cx.cyr`'s pass-2 region had **no directive handling at all** — it fell to `topgo = 0`
+  on ANY directive, so `#inline`/`#naked`/`#pure`/`#io`/`#alloc`/`#regalloc`/`#deprecated`
+  each killed declaration registration on the cx target. Given its own consume branch, mirroring
+  the fork's existing pass-1 handling.
+  Gated by `tests/gates/frontend/directive_fork_parity.sh` — axis 1 is static parity across all
+  seven forks; **axis 2 cannot be satisfied by a grep**: it compiles one fixture twice through
+  each fork's own compiler and requires the outputs to DIFFER, because byte-identical output
+  *is* the proof of inertness. Mutation-proven on four independent reverts (guard drop, arm
+  drop, flag-consumer break, cx pass-2 revert).
+
+- ⛔ **A filename took Windows CI off the board, and the release gate ran GREEN over it.** A
+  file named `` `c -l)|XX|` `` — debris from a mis-quoted shell redirect during the fold-in
+  bite — was committed. `git checkout` on the Windows runner refuses it
+  (`error: invalid path` → `git.exe failed with exit code 128`), so the job **died before
+  compiling a single byte** and reported as *"Windows PE32+ failing"*, which it was not.
+  ⭐ **Every gate this project owns was structurally incapable of seeing it**: they all inspect
+  file CONTENT, and this defect lives in the file NAME. The cross-OS leg is no defence either —
+  it SCPs binaries to ecb/ach/cass/pi and never checks the repository out on them, which is why
+  all five release-gate steps passed over a repository Windows cannot clone.
+  Gated by `tests/gates/toolchain/tracked_paths_portable.sh`, which reads the **index** (what CI
+  checks out, not the worktree) and refuses Win32-illegal characters, trailing dot/space
+  components, reserved DOS device names, case-only collisions, and >240-char paths — with an
+  anti-vacuous floor so a truncated listing cannot read as "all portable".
+
 - ⛔ **`continue` bound one level too far out in a nested loop — silent wrong answers.**
   `0x18F8A0` is ONE flat 8-entry patch array shared by every nesting level and `0x18F898` is
   the next-free index. Every loop reset that index to 1 on entry, so a nested loop began

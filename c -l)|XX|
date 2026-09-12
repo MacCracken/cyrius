@@ -1,1 +1,0 @@
-    if [ -z "$args" ]; then n=0; else  tr ',' '\n' | tr ',' '\n' | wc -l); fi

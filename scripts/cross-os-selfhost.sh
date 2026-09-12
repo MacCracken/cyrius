@@ -172,6 +172,16 @@ case "$HOST" in
     ;;
   pi)
     # x86 ELF -> aarch64-emitting cross-compiler -> NATIVE aarch64 cycc.
+    #
+    # ⭐ v6.6.3 — this leg self-hosted src/main_aarch64.cyr ONLY: the CROSS source, an
+    # x86-hosted compiler that happens to also build on ARM. The fork ARM users actually
+    # install is src/main_aarch64_native.cyr (build/cycc-native-aarch64), and it was never
+    # built or self-hosted here. That is the SAME SHAPE as the macOS rot this whole script
+    # exists to prevent — a green cross-OS check that runs a compiler, just not the one that
+    # ships. CI's aarch64-native job fixed precisely this at v6.0.68; the local gate was never
+    # updated, so at 6.6.3 the full release gate passed GREEN on all four hosts while
+    # #inline-before-a-declaration failed to compile on the native ARM fork. n1/n2 below close
+    # it: the shipped native source must self-host byte-identical on real ARM hardware too.
     cat src/main_aarch64.cyr | /tmp/_co_l  > /tmp/_co_x   && chmod +x /tmp/_co_x
     cat src/main_aarch64.cyr | /tmp/_co_x  > /tmp/_co_a64 && chmod +x /tmp/_co_a64
     ssh $SSHO pi 'rm -rf ~/_cyaud && mkdir ~/_cyaud'
@@ -183,6 +193,9 @@ case "$HOST" in
       && cat src/main_aarch64.cyr | ./_co_a64 > r1 && chmod +x r1 \
       && cat src/main_aarch64.cyr | ./r1 > r2 \
       && cmp r1 r2 \
+      && cat src/main_aarch64_native.cyr | ./_co_a64 > n1 && chmod +x n1 \
+      && cat src/main_aarch64_native.cyr | ./n1 > n2 \
+      && cmp n1 n2 \
       && cat programs/cxvm.cyr | ./r1 > cxvm && chmod +x cxvm \
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
       && cat src/main_cx.cyr | ./r1 > cycc_cx && chmod +x cycc_cx \
