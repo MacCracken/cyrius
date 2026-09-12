@@ -10,51 +10,145 @@
 > like every other, and the whole reason it exists is that a number nobody re-derived shipped a
 > deletion against a live consumer.
 >
-> **Live census — re-derived 2026-09-10** (126 dirs under `~/Repos` carrying a `cyrius.cyml`):
-> **26 on 6.6.2** · 20 on 6.6.0/6.6.1 · 72 on 6.5.x · 8 older. On 6.6.2:
-> aethersafha · agnodrm · agnostik · agnova · anuenue · ark · bote · chitra ·
-> cyrius-yeomans-descent · drishti · hisab · hoosh · kavach · kybernet · majra ·
-> mela · nein · nous · samay · samvada · sankhya · sit · stiva · szal · t-ron · thoth.
+> **Live census — re-derived 2026-09-11** (126 dirs under `~/Repos` carrying a
+> `cyrius.cyml`): **30 on 6.6.2** · 20 on 6.6.0/6.6.1 · 68 on 6.5.x · 8 older.
 >
-> ✅ **Released this pass:** t-ron 2.1.10 · majra 2.7.2 · nein 1.6.11 · drishti 0.7.130 ·
-> thoth 0.44.6 · stiva 3.0.20.  ⏳ **Awaiting a tag:** bote 3.3.8.
+> ✅ **Released:** t-ron 2.1.10 · majra 2.7.2 · nein 1.6.11 · drishti 0.7.130 ·
+> thoth 0.44.6 · stiva 3.0.20 · bote 3.3.8.
+> ⏳ **Awaiting a tag** (all verified against their real workflow steps):
+> itihas 2.5.1 · phylax 1.2.7 · agnosai 2.0.8 · daimon 2.1.3.
 >
-> ⛔ **A LOCAL GATE RUN IS NOT A CI RUN.** t-ron 2.1.10 was cut locally-green and CI
-> could not produce a binary. `path = "../sibling"` makes `git`/`tag` inert and
-> resolves from the WORKTREE; CI has no siblings and clones the tag. t-ron's
+> ⛔ **A LOCAL GATE RUN IS NOT A CI RUN.** `path = "../sibling"` makes `git`/`tag`
+> inert and resolves from the WORKTREE; CI has no siblings and clones the tag.
+> t-ron 2.1.10 was cut locally-green and CI could not produce a binary — its
 > `path = "../bote"` chained into bote's own `path = "../majra"` and reached an
-> unreleased majra, while CI cloned bote 3.3.7 → **majra 2.7.0**. **31 repos carry
-> such overrides across 99 dep entries.** Tell: `cyrius deps` printing `N deps locked`
-> *without* a `M commit-pinned` suffix. Verify by staging the tracked tree OUTSIDE
-> `~/Repos` and running the workflow's own `run:` blocks under `bash -e`
-> (`memory/ci-faithful.py`). Second half of the same incident: t-ron's Build step was
-> `cyrius build … | tee`, which takes **tee's** exit status under GitHub Actions'
-> `bash -e`, so a failed compile read GREEN and surfaced two steps later as a missing
-> file. ~20 consumer workflows still have unguarded `| tee` pipelines.
+> unreleased majra, while CI cloned bote 3.3.7 → majra 2.7.0. **31 repos carry such
+> overrides across 99 dep entries.** Tell: `cyrius deps` printing `N deps locked`
+> *without* a `M commit-pinned` suffix. Verify with `memory/ci-faithful.py`, which
+> stages the tracked tree and runs the workflow's own `run:` blocks under `bash -e`.
+> ⚠ Stage **outside `~/Repos`** (so the override cannot resolve) **and outside
+> `/tmp`** — agnosai's `sandbox_spawn` suite asserts its inherited cwd does not
+> contain `/tmp`, and a `/tmp` staging root turns that into a false failure that
+> reads like a chdir leaking into the parent. Use `~/.cache/ci-faithful`.
 >
-> ✅ **bote 3.3.8 closes the landmine at the source.** Both breaks are fixed where they
-> live rather than worked around downstream: majra re-pinned 2.7.0 → **2.7.2** (the
-> `_sub_new/1` vs `_sub_new/2` collision became a hard error at **6.5.37**, and bote
-> pinned 6.5.35 — one release below it, which is why it sat latent here while every
-> consumer inherited it), and `src/transport_unix.cyr:144`'s bare `payload(` migrated,
-> so `dist/bote.cyr` now scans **payload=0**. t-ron's and nein's explicit
-> `[deps.majra]` overrides are now redundant and can be retired against 3.3.8.
-> **Next, and unblocked by it:** phylax 1.2.6 · agnosai 2.0.7 (both `bote-core`,
-> pin 6.5.35) · daimon 2.1.2 · itihas 2.5.0 (both full `dist/bote.cyr`, pin 6.5.36;
-> daimon also has 3 bare `payload(` of its own).
+> ⛔ **cyrfmt CHANGED ITS CANONICAL FORM AT 6.5.28** — it began tracking paren depth
+> for continuation indent, where it had only ever tracked BRACE depth. Any repo pinned
+> **below** 6.5.28 whose CI runs `cyrius fmt --check` therefore goes red on the 6.6.2
+> bump with no source change of yours. In this batch that was exactly kashi and rosnet
+> (both pinned 6.5.27); tyche and setu were also 6.5.27 and happened to have no
+> continuation lines to drift. The fix is `cyrius fmt <file>` — verified whitespace-only
+> with `git diff -w`, which must come back empty. ⚠ If a reformatted file is in `[lib]`
+> modules, the dist bundle goes stale with it — rosnet's `distlib drift check` went red
+> until the bundle was regenerated.
+> ⚠ darshana (no fmt gate at all) and libro (gates only `src/*.cyr`, drift is in
+> `tests/`) carry the same latent drift but ship green; left alone rather than churning
+> released repos.
 >
-> ⚠ **A missing gate rots silently.** bote's CI had **no fuzz step**, and all four
-> `fuzz/*.fcyr` harnesses had stopped compiling at cyrius **6.1.25 (2026-06-10)** when
-> `lib/json.cyr` was carved into `lib/bayan.cyr` — four minors invisible. Two of them
-> also carried **18 undefined functions** and "passed" only because every call site was
-> unreachable, so an exit-code-only gate would have missed that half. bote 3.3.8 adds a
-> Fuzz step asserting BOTH a zero failure count and zero `undefined function` lines.
-> Worth checking wherever a repo ships `fuzz/` or `benches/` without a CI step for it.
+> ⛔ **DO NOT RUN `cyrius distlib` BLINDLY — some repos generate their sidecar another
+> way.** setu's `dist/setu.deps` is produced by `scripts/sync-deps-sidecar.sh` from the
+> `[deps] stdlib` list precisely BECAUSE raw distlib under-reports: 8 leaves of 12 for
+> setu, dropping `result` / `net` / `chrono` / `args` (filed as
+> `issues/2026-08-07-distlib-deps-sidecar-under-reports.md`). Running distlib there
+> silently replaced a correct 12-leaf sidecar with an 8-leaf one and turned setu's
+> "Verify dep sidecar states the DECLARED stdlib" gate red — a step that had been GREEN
+> before I touched it. Check `scripts/` and the sidecar's own `# Generated by` header
+> before regenerating; regenerate the `.cyr` and let the repo's script own the `.deps`.
 >
-> 🧊 **Held back deliberately** for a coordinated **6.6.3** pass, per the user: the
-> twelve folded stdlibs — sandhi · vani · sakshi · patra · sigil · yukti · sankoch ·
-> niyama · mabda · bayan · ganita · yantra. drishti's committed `lib/` carries stale
-> copies of *exactly* that set; left alone so they move once, together.
+> ⛔ **THE RETIRED SET IS `payload` AND `tag` — NOT `tagged_new`.** Derived from
+> `cbt/commands.cyr:4213 _distlib_retired_name`, which is what 6.6.2's `cyrius distlib`
+> now refuses a bundle over: `payload` (deleted v6.6.0) and **`tag` (deleted v6.6.2 —
+> v6.6.0 kept the NAME and redefined the body, so on a box it silently returned the
+> pointer)**. `tagged_new` was **RESTORED** at v6.6.2 in `lib/boxed.cyr` and is NOT
+> retired. Earlier passes in this sweep scanned for `payload(` + `tagged_new(` — i.e.
+> one name that was never retired, and missing one that is. Re-checked all eleven repos
+> migrated before this correction: every bare `tag(` hit is prose inside a `#` comment,
+> zero real calls, so nothing shipped broken — but scan for the right pair from here on.
+> ⚠ NEW at 6.6.2: `distlib` hard-REFUSES a bundle whose self-check reports
+> `undefined function 'payload'` or `'tag'`; the blanket `--allow-undef` downgrade no
+> longer covers them.
+>
+> ⛔ **AN ACCESSOR GREP IS NOT A MIGRATION SURVEY.** Of daimon 2.1.3's nine sites,
+> **four had no `payload(` to find** — they bind a `Result` and test it without ever
+> unwrapping, so only the compiler sees them. Drive the site list from `cyrius build`,
+> not from a grep for the deleted accessors. And `find -print0 | xargs -0 grep` can
+> return EMPTY silently; use an explicit file list.
+>
+> ⛔ **`callptr` IS INVISIBLE TO THIS CHECK.** The callee is a runtime pointer, so a
+> `Result` through `callptr` is truncated to its tag with **no diagnostic** — a clean
+> build proves nothing. agnosai's 10 dispatches were each traced to their fp target
+> sets by hand; all clean, because its transport contract is out-param based (return
+> `0`, write through `&out`). ⚠ If `agnosai_hoosh_chat` ever becomes `: Result`,
+> `retry.cyr:178` silently binds the tag alone and every error reads as non-retryable.
+>
+> ⚠ **A missing gate rots silently.** bote's CI had **no fuzz step** and all four
+> harnesses had stopped compiling at cyrius **6.1.25** — four minors invisible; two
+> also carried 18 undefined functions and "passed" only because every call site was
+> unreachable. bote 3.3.8 adds a step asserting BOTH a zero failure count and zero
+> `undefined function` lines. **daimon (5 harnesses) and phylax (1) still ship
+> `fuzz/` trees no CI step runs** — passing today, ungated.
+>
+> ⚠ **`cyrius distlib` OOM-kills the runner** — filed as
+> [`issues/2026-09-11-distlib-leaf-validation-oom.md`](issues/2026-09-11-distlib-leaf-validation-oom.md),
+> pinned in `roadmap.md`. ~30 GB in leaf validation; GitHub reports the kernel
+> OOM-kill as `Error: The operation was canceled`. **Not module count** — kavach 44,
+> sankhya 36, hisab 35 all complete; bote's 30 dies. The discriminator is
+> `tls_native` in the leaf graph. bote 3.3.8 ships a `ulimit -v 2GB` stopgap in both
+> workflows. **Unmeasured and still to migrate:** sigil 65 · mabda 56 · avatara 43 ·
+> sandhi 43 · naad 39 · ai-hwaccel 38 · goonj 37, all of which run `distlib` in CI.
+>
+> 🧊 **Held back deliberately** for the **6.6.3** circle-back, per the user: the twelve
+> folded stdlibs — sandhi · vani · sakshi · patra · sigil · yukti · sankoch · niyama ·
+> mabda · bayan · ganita · yantra. All twelve sit at pin **6.6.0**, i.e. already on the
+> value form, so each is a pin bump rather than a code migration (trial-verified on
+> ganita: 0 errors, 433 assertions, no source change). They are cheap — that is not the
+> reason to defer them.
+>
+> ⭐ **SEQUENCING, and the reasoning is the point.** Doing the stdlibs triggers a cyrius
+> release, and that release should also carry the codegen repairs now queued against it
+> (the `distlib` OOM and the DCE segfault above, plus whatever else lands). So the order
+> is: **push the whole ecosystem past the 6.6.2 hurdle FIRST, then circle back to cyrius
+> once** for 6.6.3 = stdlibs + codegen together. Migrating the stdlibs early would split
+> that into two cyrius cycles for no gain, because a consumer already past the hurdle
+> does not care which stdlib patch it pins. (I initially argued the opposite — that
+> stdlibs first avoids double-pinning consumers — and it is wrong: pin churn is cheap and
+> reschedulable, a second cyrius release cycle is not.)
+>
+> 📋 **Remaining: 65 non-stdlib repos** — 5 on 6.6.0/6.6.1 (agnos, chakshu, crab, klug,
+> mihi), 60 on 6.5.x or older; 48 are on 6.6.2 and 15 carry no manifest. ⚠ **Derive this
+> number, never decrement it** — the count above it read 84 for three batches because it
+> was being adjusted by hand instead of re-measured. The foundation layer (ai-hwaccel,
+> rosnet, libro, darshana, cmdit, tyche, kashi, setu) is done; the tail is unordered.
+> ⚠ Downstream pin churn from these is **explicitly not a today concern** (user) — repos
+> get re-pinned later by priority and need, not cascaded now.
+>
+> ⛔ **A NON-DEFAULT `[lib.<profile>]` BUNDLE IS NOT REGENERATED BY BARE `cyrius distlib`.**
+> varna 2.4.2 shipped `dist/varna.cyr` stamped 2.4.2 and `dist/varna-core.cyr` still
+> stamped **2.4.1**, because the batch loop ran one `cyrius distlib` per repo and varna
+> declares `[lib.core]`. The version-consistency gate compares every `dist/*.cyr` stamp,
+> so it went red in CI and green in a hand check of the default bundle. Enumerate profiles
+> (`grep -oE '^\[lib\.[a-z0-9_-]+\]' cyrius.cyml`) and run `cyrius distlib <profile>` for
+> each. Same family as `[lib.gpu]` in rosnet and `--features tpm` in libro: **a clean
+> default build is not a clean repo.**
+>
+> ⛔ **`cyrius build` IS NOT NECESSARILY THE REPO'S BUILD.** Sweeping the tail with a bare
+> `cyrius build` per repo reported **agnos at 80 errors / 7 reachable undefined fns** — at
+> BOTH 6.6.1 and 6.6.2, which is what stopped me calling it a 6.6.2 regression. It is
+> neither: agnos is a freestanding kernel whose CI runs `sh scripts/build.sh`, and that
+> path builds **clean at 6.6.2 — OK (1,998,592 bytes), multiboot2 ELF64, entry 0x1000a8**.
+> The manifest's `[build] entry` resolves, so the wrong command fails LOUDLY and plausibly
+> rather than erroring out — the most expensive shape of wrong. Read
+> `.github/workflows/ci.yml` for the build step before trusting a per-repo build sweep.
+> Measured across the whole tail afterwards: **agnos is the only repo that does this** (a
+> grep also flagged argonaut's `make this`, which is prose inside a comment). ⭐ This is the
+> file's own pattern turned on the survey instrument again — the census was measuring a
+> surface the project does not use.
+>
+> ⛔ **A TRACKED `cyrius.lock` GOES STALE THE MOMENT THE PIN MOVES.** varna's
+> `scripts/check.sh` failed 8 of 29 stdlib leaves on `hash mismatch` — the lock still held
+> pre-6.6.2 hashes for `tagged.cyr`, `result.cyr`, `io.cyr`, `hashmap.cyr`, `bayan.cyr` and
+> the three syscall shims. `cyrius deps --lock` regenerates it (31 locked, 31 verified).
+> Second occurrence after majra. Of the tier-2 eight, four track no lock at all — check
+> `git ls-files cyrius.lock` before assuming the gate exists.
 
 ---
 
@@ -493,6 +587,123 @@ a single-variable bind of a pair and a 1-argument `result_unwrap` are both hard 
 so the migration surface can be measured rather than estimated. Do that first for every remaining
 repo, instead of trusting the tables above.
 
+### Tier-2 batch (8 repos) — CI-faithful results
+
+All eight bumped, `distlib` regenerated, each repo's own `version-bump.sh` run, then staged
+outside `~/Repos` and driven through their own workflow `run:` blocks under `bash -e`.
+
+| repo | version | harness | residual FAIL |
+|---|---|---|---|
+| taar | 0.5.1 | 21 pass / 2 FAIL | both environmental — `sudo` wants a password; `>> "$GITHUB_OUTPUT"` with the var unset |
+| rupa | 0.1.7 | 16 pass / 0 | — |
+| sadish | 0.5.4 | 16 pass / 0 | — |
+| vyakarana | 2.4.1 | 12 pass / 1 FAIL | environmental — `find: 'dist-raw'`, a dir `actions/download-artifact@v4` creates |
+| varna | 2.4.2 | 7 pass / 0 | was 1 FAIL: stale lock + unregenerated `[lib.core]` bundle, both fixed |
+| akshara | 1.0.3 | 4 pass / 0 | — |
+| goonj | 2.0.5 | 7 pass / 0 | — |
+| shravan | 2.8.1 | 16 pass / 0 | — |
+
+⛔ **shravan produced NO harness output at all in the batch run and that read as a pass.** The
+staging step raised `IsADirectoryError` on `.claude/worktrees/agent-a0b25459` — a tracked
+**gitlink** (mode 160000), which `shutil.copy2` cannot copy — and the traceback went to a log the
+batch driver was grepping for `FAIL`. No `FAIL` line, therefore "clean". ⭐ Same shape as every
+other trap in this file: **a check that shares a defect with the thing it checks reads GREEN** —
+here the check did not run at all, and *not running* was indistinguishable from *passing*. The
+harness now mirrors a `submodules: false` checkout (empty dir) and, more importantly, **a batch
+driver must assert each repo emitted its `== <repo>: N pass` summary line**, not merely that it
+emitted no failures.
+
+### Latent-defect sweep, 2026-09-11 (the tail batch)
+
+Four classes hunted across the whole ecosystem, not just the repos being migrated. Counts are
+measured, and each was narrowed until the false positives were gone — the raw first number is
+kept beside the real one because the gap is the point.
+
+**1. Masked CI gates — 21 real, of 393 raw candidates, across 16 repos.**
+A GitHub Actions `run:` block is `bash -e {0}`; `pipefail` is NOT set. So `cmd | tee f` takes
+**tee's** status and a failed gate reads GREEN. Raw grep said 393 sites / 86 repos; requiring a
+single `|` (not `||`) cut it to 46; then checking whether a *downstream assertion* rescues the
+step cut it to **21 / 16 repos**. ⭐ The rescue test is the useful part: itihas runs
+`cyrius test … | tee /tmp/test_output` and then `tail -1 … | grep "0 failed"` — a failed compile
+produces no such line, so the step fails correctly. **A piped gate followed by a content
+assertion is not a defect.** Most surviving `|| true` cases are deliberately informational
+lint/bench steps. The genuine ones:
+
+- ⛔ **daimon `release.yml:88`** — `if cyrius build --aarch64 … 2>&1 | tee /tmp/aarch64.log; then`.
+  The `if` tests the PIPELINE, i.e. tee, i.e. always true. So the `then` branch always runs and
+  the two branches below it — the known-upstream-gap detector and the `echo "ERROR: …"; exit 1`
+  — are **dead code**. The step's own comment says *"Any other failure still fails the step — we
+  want signal when a daimon-side regression breaks the cross-build"*; it cannot. `Archive` then
+  guards with `if [ -f build/daimon-aarch64 ]`, so the missing binary is skipped silently and the
+  release ships. This is the macOS-rot shape from `CLAUDE.md` exactly: a green check on a job
+  that never built the thing. (`ci.yml`'s copy is accidentally rescued by a `file … | grep -q
+  "aarch64"` ELF check.)
+- ⛔ **majra** — `cyrius distlib || true` for all four profiles in BOTH `ci.yml` and
+  `release.yml`. A publisher with its bundle gate disarmed.
+- **patra** `ci.yml:78` — `cyrius test … | tee build/test.out` with nothing after it.
+- **agnosai** `ci.yml:168` — `… | tee … || rc=$?` then `if [ "$rc" -ne 0 ]`: `rc` receives tee's
+  status, so the branch is unreachable.
+- **bote** `ci.yml:125`, **commandress** `ci.yml:120`, **abaco** `ci.yml:144`, **t-ron** `ci.yml:248`.
+
+**2. `#inline` / `#derive` — a 10-repo cluster.** See
+[`issues/2026-09-11-inline-directive-disarms-derive.md`](issues/2026-09-11-inline-directive-disarms-derive.md),
+which was updated with the measured blast radius: **60 poisoned files across 10 repos**, five of
+which are poisoned only through a *vendored bundle* and have no local fix. Bisected `dist/naad.cyr`
+to the trigger — the first `#inline`, **920 lines before** the `struct` the error names.
+
+**3. Duplicate fn definitions the compiler already reports and nobody reads.** Derived from the
+build logs, NOT from a static cross-reference (see below). Arity-DISAGREEING duplicates are hard
+errors at 6.6.2 and get fixed by the migration; the **same-arity** ones are only warnings and are
+being ignored in released repos:
+
+| repo | duplicates | against |
+|---|---|---|
+| agnostic | 22 | `lib/kavach.cyr`, `lib/majra.cyr` (incl. `_sub_new` arity 1 vs 2) |
+| mehman | 19 | `lib/kavach.cyr`, `lib/sigil.cyr` |
+| owl | 2 | `_stream_grow` arity 2 vs `lib/sankoch.cyr`'s 1 |
+| hadara | 2 | `sakshi_span_enter` / `_exit` vs `lib/sakshi.cyr` |
+| aegis | 1 | `_hex_nibble` vs `lib/agnostik_types.cyr` |
+| kriya | 1 | `_env_load` vs `lib/io.cyr` |
+
+⚠ `_sub_new` is the SAME collision that shipped t-ron red through bote → majra.
+
+⛔ **How NOT to measure this.** A static "first-party fn name + arity vs vendored `lib/*.cyr`"
+cross-reference returned **2650 hits / 15 repos**. Excluding each repo's own bundle vendored back
+into its `lib/` dropped it to 195. It was still wrong: it put **thoth at 150** — `src/vendor/
+sankoch.cyr` (2.7.9) against `lib/sankoch.cyr` (2.7.10), which looked like a serious version-skew
+hazard. thoth's actual build emits **one** duplicate warning, and it is a different fn
+(`cmd_reset`). thoth's `[deps]` is empty and `lib/sankoch.cyr` is never included — two copies on
+disk, one compiled. ⭐ **Presence in the tree is not presence in the compile unit.** The compiler's
+own warning is the measurement; a name-matching sweep is a hypothesis.
+
+**4. `cyrius build` is not necessarily the repo's build** — see the agnos trap above.
+
+### Tail batch — 60 of 61 green at 6.6.2
+
+Two classes surfaced here that no earlier batch had hit:
+
+⛔ **A CONSUMER CAN BE FULLY MIGRATED IN ITS OWN SOURCE AND STILL BE RED.** agnostic showed
+**41 build + 984 test errors** after the pin bump and needed **zero lines changed in `src/`** —
+it uses no `Result`/`Option`/`Either` at all. Every error was inside vendored `lib/`, because
+`[deps.agnosai] 2.0.6` pins kavach **3.12.2**, whose published `dist/kavach.cyr` predates the
+value-form flip (34 of the 41 were in that one bundle). The fix was a DEP bump,
+`agnosai 2.0.6 → 2.0.8`, which pins kavach 3.12.5 + libro 2.10.x. ⭐ **When a migration's error
+list points only at `lib/`, the repo is not the problem — walk the dep graph for a pre-flip
+publisher.** A `payload(`/`tag(` grep over vendored `lib/` does NOT find these reliably:
+`lib/tagged.cyr` is where those names are *defined*, so it scores 5 hits in ~every repo
+including released-green ones. The compiler's error list is the measurement.
+
+⛔ **`_stream_grow` — the second `health_check_new`.** vyakarana's private
+`_stream_grow(s, needed)` (arity 2) and sankoch's private `_stream_grow(ctx)` (arity 1) are
+independent helpers that never met until **owl** vendored both; same-name/different-arity is a
+hard error since 6.5.37, and owl could fix neither side. Renamed vyakarana's to
+`_vyk_stream_grow` (**vyakarana 2.4.2**) because sankoch is a folded stdlib. Two call sites, no
+external surface. **owl stays red until vyakarana 2.4.2 is tagged** — it is the one repo in this
+batch not green.
+
+⚠ **`gpumm` is not a git repository** — no `.git` under `~/Repos/gpumm`. Pin bumped to 6.6.2 like
+the rest, but there is nothing to commit, tag or release. Surfaced rather than silently skipped.
+
 ### Findings that were not migration work
 
 - ⛔ **`health_check_new` mis-bound between agnostik and argonaut** — both exported the name at
@@ -530,6 +741,102 @@ Written the obvious way (`rt = f();`) it compiles and **silently keeps only the 
 ---
 
 ---
+
+## ⛔ OUTLIERS — blocked on a cyrius repair, NOT on ecosystem work
+
+The 6.6.2 sweep is otherwise complete. What remains cannot be fixed downstream: each
+item below needs a change in cyrius first, and several have no local workaround at all.
+**Do not re-attempt these as consumer migrations** — that was tried and it is what the
+per-item notes record.
+
+### 1. The `#inline` / `#derive` cluster — 10 repos, HARD BLOCK
+
+[`issues/2026-09-11-inline-directive-disarms-derive.md`](issues/2026-09-11-inline-directive-disarms-derive.md)
+
+`#inline` anywhere in a compile unit makes every LATER `#derive(...)` fail to parse, with
+the error naming the innocent `struct`. Bisected in `dist/naad.cyr`: the trigger is the
+file's first `#inline` at line 245; the error is reported at line 1165, **920 lines away**.
+
+**60 poisoned files across 10 repos** — naad, svara, dhvani, nidhi, garjan, jalwa, ghurni,
+prani, shabda, shabdakosh. ⚠ **Five of the ten have no `#inline` of their own**: they are
+poisoned purely through a vendored bundle (`lib/naad.cyr` alone — `#inline`@98 with 79
+later derives — blocks six consumers). Fixing the compiler is the only unblock for half
+the cluster; the alternative is every publisher stripping markers and re-releasing in
+dependency order.
+
+Isolated: `#must_use` does NOT trigger it, only `#inline`; and `#derive` BEFORE the first
+`#inline` compiles fine, so it is strictly positional.
+
+### 2. `cyrius.lock` is written in an unstable ORDER — every consumer CI gate
+
+[`issues/2026-09-12-cyrius-lock-unstable-order.md`](issues/2026-09-12-cyrius-lock-unstable-order.md)
+
+`cyrius deps` emits lock entries in hash-table iteration order: stable on one machine,
+different on another. A byte-exact `git diff --exit-code -- cyrius.lock` therefore fails
+for **every** lock committed from a different machine — i.e. always. Proven on agnostic:
+the gate reported `98 insertions(+), 98 deletions(-)` while an order-insensitive compare
+of the same two files came back **EMPTY** — identical hashes for all 117 entries.
+
+⭐ **This one burned the most time in the whole sweep**, because the failure message
+("does not match a clean resolution at this pin") reads as genuine dependency drift and
+sends you hunting stale pins that are not stale. It did not reproduce on a clean checkout
+with a cold `CYRIUS_HOME`, a cold dep cache and the 6.6.2 release tarball. Only printing
+the diff on the runner settled it.
+
+**Workaround in the tree, not a fix:** `commandress/scripts/lock-check.sh` compares the
+`commit` pins and the file set as sorted sets. Adopted verbatim into agnostic. Both drop
+it once the lock is emitted sorted.
+
+### 3. `cyrius distlib` OOM-kills the runner
+
+[`issues/2026-09-11-distlib-leaf-validation-oom.md`](issues/2026-09-11-distlib-leaf-validation-oom.md)
+
+~30 GB in leaf validation; GitHub reports the kernel OOM-kill as
+`Error: The operation was canceled`. **Not module count** — kavach 44, sankhya 36, hisab 35
+all complete while bote's 30 dies; the discriminator is `tls_native` in the leaf graph.
+bote 3.3.8 ships a `ulimit -v 2GB` stopgap in both workflows.
+
+### 4. Raw arch-specific syscall numbers in stdlib and vendored bundles
+
+Not yet filed — surfaced 2026-09-12 by agnostic's `Cross-build aarch64`, and the reason
+that step exists. **agnosai 2.0.9 fixed the one that was a hard error**: three raw
+`syscall(SYS_DUP2, …)` calls, and aarch64 Linux has no `dup2` syscall at all (only
+`dup3`), so `SYS_DUP2` is undefined there. The x86_64 build never touches that path, so it
+shipped green — **only a cross-build can catch this class**.
+
+The same shape survives as WARNINGS, which means it fails at RUNTIME on aarch64/macOS
+rather than at compile time:
+
+| file | site | warning |
+|---|---|---|
+| `lib/sigil.cyr` | 27964 | `SYS_GETRANDOM` redefined with a conflicting value — the compiler's own note says it "emits a DIFFERENT syscall on every target whose native number differs … the build succeeds and the wrong call is made silently" |
+| `lib/io.cyr` | 442 | raw syscall 32 = x86_64 `dup`; not a syscall at all on ELF-aarch64 |
+| `lib/dynlib.cyr` | 657 | raw syscall 5 = x86_64 `fstat` |
+| `lib/fdlopen.cyr` | 468 | raw syscall 5 = x86_64 `fstat` |
+| `lib/kavach.cyr` | 43 | raw syscall 91 = x86_64 `fchmod` |
+
+The remedy is the same in each: use the `SYS_*` constant from `lib/syscalls.cyr`, which is
+arch-aware, or the `sys_*` wrapper. See `CLAUDE.md` → *"A wrapper that COMPILES on five
+targets is not a wrapper that RUNS."*
+
+### 5. Same-name duplicates the compiler reports and nobody reads
+
+Arity-DISAGREEING duplicates are hard errors at 6.6.2 and were fixed during the sweep
+(`_stream_grow` → `_vyk_stream_grow` in vyakarana 2.4.2, unblocking owl; `_sub_new` in
+agnostic). The **same-arity** ones are only warnings and are still live in released repos —
+agnostic 22 (vs `lib/kavach.cyr`, `lib/majra.cyr`), mehman 19, hadara 2, aegis 1, kriya 1.
+Each is a silent "last definition wins" whose outcome depends on include order.
+
+### Not blocked on cyrius, but left deliberately
+
+- **kriya** — `scripts/lint-deferrals.sh` and `cyrius fmt` disagreed in the author's hands,
+  not in the tool's: the lint counts BYTES (`⛔`, `—`, `⚠` are 3 each) and cyrfmt owns the
+  continuation indent. Wrapping by byte length and letting `fmt` normalise satisfies both.
+  Debt cut 38 → 0.
+- **`path = "../sibling"` beside a `tag`** — 30 such pairs remain across the ecosystem with
+  the tag stale relative to the sibling. Each makes local resolution silently differ from
+  CI. Only the three that actually broke a build were moved (tula, ifran, aegis); the rest
+  are pin churn and are deliberately NOT today's work.
 
 ## Stated limits of this census
 

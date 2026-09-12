@@ -265,6 +265,23 @@ the trust model and the single-pass design), a general const-eval VM, exceptions
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **`cyrius distlib` leaf validation allocates ~30 GB and OOM-kills the CI runner** — filed as
+  [`issues/2026-09-11-distlib-leaf-validation-oom.md`](issues/2026-09-11-distlib-leaf-validation-oom.md).
+  `_distlib_verify_leaves` (`cbt/commands.cyr:2586`) splices every stdlib leaf plus the bundle into
+  one buffer and compiles it; on bote's full profile that peaks at **RSS 31,214 MB**. GitHub reports
+  the kernel OOM-kill as `Error: The operation was canceled`, so it reads as infrastructure, not a
+  toolchain defect. **NOT driven by module count** — kavach (44 modules), sankhya (36) and hisab (35)
+  all complete under a 7 GB cap on the same toolchain while bote's 30 dies; the discriminator is
+  `tls_native` in the leaf graph. Reproduced at 6.6.0 / 6.6.1 / 6.6.2; bote 3.3.7 shipped green at
+  6.5.35, bracketing it to **6.5.36–6.6.0**. The bundle is emitted BEFORE the pass — byte-identical
+  at caps of 2/3/4/6 GB — which is what makes the stopgap possible.
+  ⚠ **Consumer follow-up owed: bote.** 3.3.8 ships green by wrapping the full-profile call in
+  `ulimit -v 2097152` in BOTH `ci.yml` and `release.yml`, which skips that profile's
+  undefined-symbol report. Remove both wrappers when this is fixed.
+  ⚠ **Unmeasured exposure:** sigil (65 modules), mabda (56), avatara (43), sandhi (43), naad (39),
+  ai-hwaccel (38), goonj (37) also run `distlib` in CI and are still on 6.5.x/6.6.0. Measure before
+  migrating them, not one red release at a time.
+
 - **DCE eliminates a live body behind an indirect dispatch table** — filed as
   [`issues/sankhya-dce-bench-segfault.md`](issues/sankhya-dce-bench-segfault.md). `CYRIUS_DCE=1`
   segfaults sankhya's benchmark binary immediately (`rc=139`, zero output); the same source without

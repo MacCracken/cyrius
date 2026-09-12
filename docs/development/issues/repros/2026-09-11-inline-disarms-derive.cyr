@@ -1,0 +1,7 @@
+#inline
+fn helper(a) { return a + 1; }
+
+#derive(accessors)
+struct Thing { alpha; beta; }
+
+fn main() { return 0; }
