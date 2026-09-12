@@ -98,6 +98,23 @@ echo "$NEW" > VERSION
 # 3. CLAUDE.md
 sed -i "s/- \*\*Version\*\*: $OLD/- **Version**: $NEW/" CLAUDE.md 2>/dev/null || true
 
+# 3b. cyrius.cyml's OWN [package].cyrius pin (added v6.6.3).
+#
+# This file was never maintained here and drifted: at the 6.6.3 cut it still read 6.6.1
+# while VERSION was 6.6.2. That is not cosmetic — every `cyrius` invocation in this repo
+# then emits "cyrius.cyml pins 6.6.1 but cycc is 6.6.2 — toolchain drift", and
+# tests/gates/frontend/pkgver_visible_in_includes.sh asserts on exact diagnostic output,
+# so the stale pin was FAILING A GATE. The same rot the fold-table gate exists to prevent,
+# one file over: nothing checked it, so it silently fell behind.
+#
+# Verified rather than assumed: this is the repo's own self-pin, not a dependency version.
+if [ -f cyrius.cyml ]; then
+    sed -i "s/^cyrius = \"$OLD\"/cyrius = \"$NEW\"/" cyrius.cyml 2>/dev/null || true
+    if ! grep -q "^cyrius = \"$NEW\"" cyrius.cyml 2>/dev/null; then
+        echo "  WARNING: cyrius.cyml self-pin is not $NEW — check it by hand" >&2
+    fi
+fi
+
 # 4. CHANGELOG.md — add unreleased section if not present
 #
 # v5.8.49 hardening: anchor on `^## \[Unreleased\]$` (start-of-line

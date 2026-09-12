@@ -4,6 +4,135 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.3] — 2026-09-12
+
+The repair release the 6.6.2 ecosystem sweep filed against. Six issues, all closed, plus a
+refold of all twelve stdlibs. Every fix is gated; every gate is mutation-proven.
+
+**Bench:** self_compile **743 ms** median (6.6.2: 734 ms, **+1.5%**); cycc **1,251,864 B**
+(+4,136 over 6.6.2's 1,247,728). Triaged as growth tax, not a regression to bisect: this
+release adds real front-end work on every compile — pass-1 consumes an extra directive
+token, the derive parser probes for a visibility prefix, and FIXUP records the frozen
+dbase. No single change dominates, and the 4,136 B is spread across seven `main*.cyr` forks
+plus two backend fixup files.
+
+### Fixed
+
+- ⛔ **`#inline` disarmed every `#derive` after it — a 10-repo hard block.** `#inline` became
+  a real directive at v6.5.63, which taught PASS 2 (`parse.cyr`) to arm `_inline_pending` on
+  token 163. PASS 1 — the declaration-collection scan in `main.cyr` and its six per-target
+  forks — was never taught to CONSUME it, and an unconsumed directive there falls through to
+  the catchall `else` and **terminates the scan**, leaving every declaration after the first
+  `#inline` unregistered. The `struct` then reached the parser as an unknown top-level token
+  and the error named it — 920 lines from the trigger, in naad's case. Bisected out of
+  `dist/naad.cyr` by binary search on the starting line.
+  **Blast radius: 60 poisoned files across 10 repos** (naad, svara, dhvani, nidhi, garjan,
+  jalwa, ghurni, prani, shabda, shabdakosh); five had NO local fix because they were poisoned
+  only through a vendored bundle — `lib/naad.cyr` alone (`#inline`@98, 79 later derives)
+  blocked six consumers.
+  ⭐ **It is a recurrence**, and the comment directly above the pass-1 consume list already
+  described the original: v5.8.20 added `#must_use`/`#pure`/`#io`/`#alloc` to pass 2 only,
+  "caused the pass-1 scanner to fall into the catchall else and terminate", and dropped
+  check.sh to 48/64. **A directive token has TWO obligations — pass 1 consumes, pass 2 arms.**
+  Both halves have now shipped broken in isolation: v6.5.63 shipped the missing consume, and
+  the first cut of THIS fix shipped the missing arm (163 fell into the `_alloc_pending` else,
+  so `#inline` silently stopped inlining) until `tests/gates/codegen/inline_directive.sh`
+  reddened at `calls 100→100`. That gate has now earned its keep twice.
+  Gated by `tests/tcyr/derive/inline_before_derive.tcyr`.
+
+- ⛔ **`continue` bound one level too far out in a nested loop — silent wrong answers.**
+  `0x18F8A0` is ONE flat 8-entry patch array shared by every nesting level and `0x18F898` is
+  the next-free index. Every loop reset that index to 1 on entry, so a nested loop began
+  writing at index 0 again and **overwrote the enclosing loop's recorded jump**: the inner
+  `continue` got patched to the OUTER latch and the outer one was never patched at all,
+  becoming a no-op. Strictly lexical — the outer `continue` had to appear BEFORE the nested
+  loop to claim index 0 first and have it stolen. Filed by hisab building a 32×32 product
+  table. Fixed by starting each loop at the enclosing loop's next-free index so the ranges
+  are disjoint.
+  **A second half was found while fixing it and is not in the filing:** `PARSE_WHILE` never
+  wrote `0x18F898`, which doubles as a mode flag, so a `while` nested in a `for` inherited
+  for-mode and sent its `continue` to the **for's step**. Measured 0 where 6 was right.
+  Gated by `tests/tcyr/lang/nested_continue_binds.tcyr` — 8 assertions; the pre-fix compiler
+  fails 6 of them. ⚠ The `max 8` continue limit is now total across a nest, not per loop.
+
+- ⛔ **`CYRIUS_DCE=1` emitted a PT_LOAD the code was never patched against.** `_wx_data_vaddr`
+  derives the RW segment's vaddr by rounding the END OF CODE up to 2 MB, and FIXUP and
+  EMITELF_USER each computed it independently, expected to agree. DCE breaks the ordering:
+  FIXUP computes `dbase`, bakes every absolute gvar/string address into the code against it,
+  and only THEN does the DCE pass compact and shrink `cp` — after which EMITELF_USER
+  re-derived from the smaller `cp`. Measured on sankhya's bench: RW vaddr `0x800000` without
+  DCE, `0x600000` with, while the code still ran `movabsq $0x8000b0, %rcx; movq %rax, (%rcx)`
+  — a store into unmapped space during GLOBAL INITIALISATION, dying before `main` with
+  rc=139 and zero output.
+  ⭐ **The filing's premise was wrong and the investigation had to discard it**: it read as
+  "DCE is removing something still reachable", the obvious call for a harness that dispatches
+  through `fncall0`. Cross-referencing the 3,354 eliminated fns against the 68 called from
+  the bench bodies gives **zero overlap** — every elimination was correct. It also explains
+  why the same repo's main binary was fine: nothing about the bench is special, its code size
+  just straddles a 2 MB bucket when compacted.
+  Fixed on **both** the x86 and aarch64 backends. Gated by
+  `tests/gates/codegen/dce_data_vaddr_frozen.sh`.
+
+- ⛔ **`cyrius distlib` allocated ~20 GB and OOM-killed CI runners.** `_distlib_leaf_defining`
+  `dir_list`ed the whole stdlib snapshot and `alloc` + read EVERY `.cyr` on EVERY call, and
+  the verify fixpoint calls it **once per undefined symbol**; the allocator is an arena that
+  never frees, so the cost was O(symbols × snapshot bytes) RETAINED — 110 files / 7 MB ×
+  ~2,900 symbols ≈ 20 GB. A GitHub runner has ~7 GB, so the KERNEL OOM-KILLER took the
+  runner down mid-step and GitHub reported `Error: The operation was canceled` — reading as
+  infrastructure, two steps before any assertion. It cost a release cut to diagnose.
+  ⭐ **This is why it tracked the leaf graph and not module count**, which the filing measured
+  but could not explain: what scales is the number of symbols left UNDEFINED. kavach (44
+  modules), sankhya (36) and hisab (35) all completed while bote's 30 died — and bote's own
+  `core` profile, fewer leaves, finished in 2 GB.
+  A per-root cache reads each file once. **bote full profile: 20,320 MB → 57 MB**, completing
+  inside a 4 GB cap where it previously died at 20 GB, with `dist/bote.deps` and
+  `dist/bote.cyr` **byte-identical**. bote's `ulimit -v` workaround can be retired.
+  Gated by `tests/gates/toolchain/distlib_leaf_lookup_memory.sh`.
+
+- ⛔ **`cyrius.lock` was written in readdir order, so no committed lock could be verified
+  elsewhere.** `_deps_lock_dir` hashed `lib/` straight out of `dir_list` — on ext4 dir_index
+  that is a hash of the FILENAME: stable for a given name set on a given filesystem and
+  DIFFERENT on another. Every consumer CI gating the lock byte-for-byte therefore failed for
+  any lock committed from another machine, i.e. always. Measured on agnostic:
+  `98 insertions(+), 98 deletions(-)` while an order-insensitive compare of the same two
+  files came back **EMPTY** — identical hashes for all 117 entries, only the sequence moved.
+  ⭐ The remedy was already in the same file: `cbt/deps.cyr:830` has carried
+  `vec_sort_by(entries, &_dep_name_cmp)` since **v6.5.37** with the comment "readdir order is
+  not deterministic" — that release fixed the module walker and missed the lock writer.
+  `agnostic` and `commandress` can retire their `lock-check.sh` workarounds.
+  Gated by `tests/gates/toolchain/deps_lock_sorted.sh`.
+
+- ⛔ **`#derive(...)` and `public` could not be combined.** `PP_PARSE_STRUCT_DEF`
+  byte-compares the literal `"struct "` / `"enum "` AT the declaration position, so
+  `public struct P` matched neither probe and fell into "the following declaration is
+  neither" — making derive and file visibility mutually exclusive, i.e. unusable together in
+  any file that derives accessors, which in practice is every foundation type. Filed while
+  adopting `private`/`public` across hisab's 35 modules.
+  ⚠ **Compiling was not enough**: a `public struct` whose accessors came out at default
+  visibility leaves a caller able to NAME the type and unable to reach a field — the same
+  dead end. `public` now propagates onto the generated accessors. Verified in BOTH
+  directions, because "publicise everything" would also have passed a compile test: a
+  non-public struct in a private file still yields `'R_m' is private to its file`.
+  ⚠ Premise-checked first: the `#inline` fix does NOT close this, which the filing asked.
+  Gated by `tests/gates/frontend/derive_with_public.sh` (5 axes).
+
+- **`scripts/version-bump.sh` now maintains `cyrius.cyml`'s own `[package].cyrius` pin.** It
+  never did, and the pin had drifted to 6.6.1 while VERSION was 6.6.2 — which made every
+  `cyrius` invocation in this repo emit a toolchain-drift warning and **failed
+  `pkgver_visible_in_includes.sh`**, a gate that asserts on exact diagnostic output. Same rot
+  the fold-table gate exists to prevent, one file over: nothing checked it.
+
+### Changed
+
+- **All twelve folded stdlibs refolded**: sandhi 1.9.17, vani 1.2.5, sakshi 2.5.2,
+  patra 1.14.2, sigil 3.12.17, yukti 2.3.11, sankoch 2.7.15, niyama 1.0.11, mabda 4.1.2,
+  bayan 1.5.6, ganita 1.2.5, yantra 1.0.5 — each a pin-only move to 6.6.2 upstream, with
+  `docs/ecosystem.md`'s fold table updated in the same edit (the `fold_table_matches_vendored`
+  gate caught all 12 rows stale, which is exactly what it exists for).
+  ⚠ The refold contributes **zero** bytes to cycc — it includes none of the twelve — so the
+  self-host fixpoint is structurally blind to that half of this release and the corpus gates
+  are the only evidence.
+
 ## [6.6.2] — 2026-09-09
 
 ### Fixed
