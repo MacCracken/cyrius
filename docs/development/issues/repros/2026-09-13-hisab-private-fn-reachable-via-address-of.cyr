@@ -1,0 +1,33 @@
+# Repro: a file-private fn is reachable from ANOTHER file through `&name`, and callable
+# through callptr / fncallN — the visibility check covers direct calls and var reads only.
+#
+# Proves itself. Build as two files:
+#   lib:  the `# --- lib_priv.cyr ---` block below, saved as lib_priv.cyr
+#   main: this file
+#   cyrius build <this file> ./r && ./r
+#     exit 0   -> fixed (the build is REFUSED, so ./r never exists — treat "no binary" as fixed)
+#     exit 42  -> bug present: the private fn ran from another file
+# Control: change `&_helper` to a direct `_helper(21)` and the build is refused with
+#   error: '_helper' is private to its file   (same toolchain — so the check exists, and
+#   simply does not run on the address-of path)
+#
+# --- lib_priv.cyr ---
+# private
+#
+# fn _helper(v) { return v * 2; }
+# public fn api(v) { return _helper(v); }
+# --- end lib_priv.cyr ---
+#
+# Filed 2026-09-13 by hisab while building its public-surface gate for 3.1.0. See
+# docs/development/issues/2026-09-13-hisab-private-fn-reachable-via-address-of.md
+include "lib_priv.cyr"
+
+fn main() {
+    var f = &_helper;          # not refused (should be: '_helper' is private to its file)
+    var a = callptr(f, 21);    # 42
+    var b = fncall1(&_helper, 21);
+    if (a == 42 && b == 42) { return 42; }
+    return 1;
+}
+var rc = main();
+sys_exit_group(rc);

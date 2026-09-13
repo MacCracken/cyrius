@@ -1,0 +1,30 @@
+# Repro: in a `private` file, the declaration immediately AFTER a `public enum` is
+# public — the `public` marker is not consumed by the enum and applies to the next
+# top-level item as well. Only the FIRST following declaration is affected; a
+# non-public enum, `public var`, `public fn` and `public struct` do not leak.
+#
+# Proves itself. Two files: save the block below as lib_min.cyr, then
+#   cyrius build <this file> ./r && ./r
+#     no binary   -> fixed (the build is refused: '_after_pub_enum' is private to its file)
+#     exit 3      -> bug present: the file-private fn ran from another file
+# Control: `_second_after()` in place of `_after_pub_enum()` IS refused on the same toolchain.
+#
+# --- lib_min.cyr ---
+# private
+#
+# public enum PubOne { PO_A = 1 }
+# fn _after_pub_enum() { return 3; }     # leaks: reachable from any file
+# fn _second_after() { return 4; }       # private, as declared
+# public fn api() { return PO_A; }
+# --- end lib_min.cyr ---
+#
+# Measured identical on cycc 6.6.2 and 6.6.3; multi-line enum bodies leak the same way, and a
+# following `var` leaks exactly like a following `fn`.
+# Filed 2026-09-13 by hisab: its public-surface gate found `_ad_pow` (the declaration after
+# `public enum AdPowLimit`) reachable from a consumer while its 456 private siblings were refused.
+# See docs/development/issues/2026-09-13-hisab-public-enum-leaks-onto-next-declaration.md
+include "lib_min.cyr"
+
+fn main() { return _after_pub_enum(); }
+var rc = main();
+sys_exit_group(rc);
