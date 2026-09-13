@@ -37,13 +37,14 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.3** (2026-09-12) — cycc **1,247,608 B** (`.text` **1,090,832**) ·
-`check.sh` **GREEN 240/240** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi ·
-**301** `.tcyr` (**68** in `crossos/`) · **102** `lib/*.cyr` · **144** shell gates under
-`tests/gates/<bucket>/` · self_compile **731–734 ms** · **0 open issues** · **3 open proposals**.
+**Current head: v6.6.3** (2026-09-12, tag `ab77e241`) — cycc **1,251,864 B** (`.text` **1,095,096**) ·
+`check.sh` **GREEN 242/242** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi ·
+**308** `.tcyr` (**70** in `crossos/`) · **103** `lib/*.cyr` · **157** shell gates under
+`tests/gates/<bucket>/` · self_compile **743 ms** · **1 open issue** · **3 open proposals**.
 
-> ⚠ **Every figure above was DERIVED on the day, not carried.** The previous head line was
-> version-stamped to `v6.6.1` by `version-bump.sh` while still quoting pre-6.6.1 metrics
+> ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-12 at the 6.6.3 handoff —
+> the line had been version-stamped `v6.6.3` while still quoting 6.6.1 figures, the exact rot described next).
+> The previous head line was version-stamped to `v6.6.1` by `version-bump.sh` while still quoting pre-6.6.1 metrics
 > (cycc 1,200,888 B · 297 `.tcyr` · 131 shell gates · 671 ms · 4 open issues). `version-bump.sh`
 > rewrites the version token and nothing else — **the numbers beside it are yours to re-derive.**
 > Re-derive gates with `find tests/gates -name '*.sh' | wc -l`; never increment.
@@ -53,12 +54,15 @@ are the **value form** — a payload variant returns `(tag, payload)` in a regis
 construction allocates **zero bytes** (the filed `100x sock_send` → 1600 B measurement now reads
 0). It shipped WITH the ecosystem — 8 sibling stdlibs migrated at source, pin-bumped, released
 and re-folded. **v6.6.1** closed the entire open issue queue (three filings) and folded five more
-stdlibs.
+stdlibs. **v6.6.2** and **v6.6.3** were repair releases driven by the ecosystem sweep — 6.6.3 closed the six
+issues the sweep filed — and that sweep is now **closed**: every repo in `~/Repos` is on 6.6.2 or later, agnos
+(another agent's) excepted.
 
-**The open queue is at zero for the first time in the cycle.** That is the condition this minor
-was waiting on, and it is why the shape below starts with a repair window rather than a feature
-arc: the next work is whatever 6.6.x itself surfaces, taken while the queue is still small
-enough to see.
+**The open queue is at one** — `issues/2026-09-12-raw-x86-syscall-numbers-fdlopen-dynlib-aarch64.md`, filed
+unpinned for later repair (raw x86 syscall numbers and open flags that aarch64 Linux executes as something else).
+The repair window below still stands, but ⚠ **its labels have drifted from the version numbers:** 6.6.3 went to
+the sweep's repair set, so slot `.3` (per-item `private`) lands as 6.6.4 at the earliest. The slots have not been
+re-numbered — that is the user's call.
 
 ---
 
