@@ -55,10 +55,26 @@ for _trunc in 'include "lib/syscalls.cyr"\nvar x = f64_sqrt' \
     [ ! -s "$O" ] || { echo "FAIL: truncated input emitted output"; exit 1; }
 done
 
+# 2c) v6.6.4 — a diagnostic that is followed by MORE EMISSION must not crash the
+#     compiler: a capturing closure without lib/alloc.cyr reported correctly and then
+#     fell through to `ECALLFIX(S, -1)`, a SIGSEGV on the cx fork after a correct
+#     error line (x86 happened to survive the same -1). Run through the cx compiler
+#     built from the working tree, since that is where it faulted.
+CX=$(mktemp); trap 'rm -f "$T" "$E" "$O" "$CX"' EXIT
+cat "$ROOT/src/main_cx.cyr" | "$CC" > "$CX" 2>/dev/null && chmod +x "$CX" || { echo "FAIL: could not build the cx fork"; exit 1; }
+printf 'fn main(): i64 { var k = 3; var f = |x| x + k; return callptr(f, 1); }\nvar r = main();\nsyscall(60, r);\n' > "$T"
+for _cc in "$CC" "$CX"; do
+    rc=0; timeout 30 "$_cc" < "$T" > "$O" 2>"$E" || rc=$?
+    [ "$rc" -ne 139 ] || { echo "FAIL: closure-without-alloc SIGSEGV'd after its diagnostic ($_cc)"; exit 1; }
+    [ "$rc" -ne 0 ] || { echo "FAIL: closure-without-alloc compiled clean ($_cc)"; exit 1; }
+    grep -q 'a capturing closure needs include' "$E" || { echo "FAIL: closure-without-alloc lost its diagnostic ($_cc)"; cat "$E"; exit 1; }
+    [ ! -s "$O" ] || { echo "FAIL: closure-without-alloc emitted output ($_cc)"; exit 1; }
+done
+
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), valid emits"
 exit 0

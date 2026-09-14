@@ -325,15 +325,17 @@ fn EDROPI64(S): i64 {
 #
 # Emit `movi r0, <fn code offset>` and record an ftype==3 fixup pointing at it. The fixup
 # loop patches bytes 2-3 of the movi with `_fnt_offsets[fni]` (main_cx.cyr), which is why
-# the placeholder is emitted as a bare 4-byte movi and NOT via CX_MOVI — CX_MOVI would
-# append movhi/movhh words for large constants and the patcher writes only the low 16 bits
-# of the FIRST word. Code offsets are well under 64 KB for any real .cyx.
+# the placeholder is emitted as a fixed-shape movi + movhi pair and NOT via CX_MOVI — CX_MOVI
+# emits a VARIABLE number of words for a value, and the patcher writes fixed slots.
+# v6.6.4: the movhi slot is always emitted; the codebuf is 512 KiB, so code offsets DO
+# exceed 16 bits (a fn past 64 KB of code used to have its pointer truncated).
 fn ELOAD_FN_ADDR(S, fnaddr, fc, fni): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     S64(fnaddr, GCP(S));                 # fixup patches the movi at this code offset
     S64(fnaddr + 8, (3 << 56) | fni);    # ftype 3 = function pointer
     SFCNT(S, fc + 1);
     CX_EMIT(S, 1, 0, 0, 0);              # movi r0, 0  (imm16 patched by the fixup loop)
+    CX_EMIT(S, 254, 0, 0, 0);            # movhi slot — code offsets past 0xFFFF (v6.6.4)
     return 0;
 }
 
@@ -603,6 +605,7 @@ fn EVSTORE(S, idx): i64 {
     # Store r0 to global var
     CX_MOVI(S, 1, 0);  # placeholder address
     RECFIX(S, idx);
+    CX_EMIT(S, 254, 1, 0, 0);   # movhi slot: main_cx.cyr patches bytes 2-3 of the instruction AFTER the movi when addr > 0xFFFF; a bare movi put that patch on the NEXT instruction (v6.6.4)
     CX_EMIT(S, 67, 1, 0, 0);  # store64 [r1], r0
     return 0;
 }
@@ -610,6 +613,7 @@ fn EVSTORE(S, idx): i64 {
 fn EVLOAD(S, idx): i64 {
     CX_MOVI(S, 1, 0);  # placeholder address
     RECFIX(S, idx);
+    CX_EMIT(S, 254, 1, 0, 0);   # movhi slot: main_cx.cyr patches bytes 2-3 of the instruction AFTER the movi when addr > 0xFFFF; a bare movi put that patch on the NEXT instruction (v6.6.4)
     CX_EMIT(S, 65, 0, 1, 0);  # load64 r0, [r1]
     return 0;
 }
@@ -617,6 +621,7 @@ fn EVLOAD(S, idx): i64 {
 fn EVADDR(S, idx): i64 {
     CX_MOVI(S, 0, 0);  # placeholder address
     RECFIX(S, idx);
+    CX_EMIT(S, 254, 0, 0, 0);   # movhi slot: main_cx.cyr patches bytes 2-3 of the instruction AFTER the movi when addr > 0xFFFF; a bare movi put that patch on the NEXT instruction (v6.6.4)
     return 0;
 }
 
@@ -970,6 +975,7 @@ fn ESADDR(S, soff): i64 {
     S64(faddr, GCP(S));
     S64(faddr + 8, (1 << 56) | soff);
     SFCNT(S, fc + 1);
+    CX_EMIT(S, 254, 0, 0, 0);   # movhi slot: main_cx.cyr patches bytes 2-3 of the instruction AFTER the movi when addr > 0xFFFF; a bare movi put that patch on the NEXT instruction (v6.6.4)
     return 0;
 }
 
@@ -977,6 +983,7 @@ fn ESADDR(S, soff): i64 {
 fn EVADDR_X1(S, idx): i64 {
     CX_MOVI(S, 1, 0);
     RECFIX(S, idx);
+    CX_EMIT(S, 254, 1, 0, 0);   # movhi slot: main_cx.cyr patches bytes 2-3 of the instruction AFTER the movi when addr > 0xFFFF; a bare movi put that patch on the NEXT instruction (v6.6.4)
     return 0;
 }
 
@@ -1565,7 +1572,14 @@ fn EPROCPRNG_PE(S): i64 { return 0; }
 fn EREAD_PE(S): i64 { return 0; }
 fn ERELSRW_PE(S): i64 { return 0; }
 fn ESETHANDLE_PE(S): i64 { return 0; }
-fn ESHLIMM(S, n): i64 { return 0; }
+# v6.6.4: was a return-0 STUB, so the power-of-two multiply strength reduction
+# (`x * 2` -> `shl`) emitted NOTHING on cx and `x * 2` returned x. r2 is the
+# immediate scratch (EADDIMM_X1 uses it the same way); r1 may hold the RHS.
+fn ESHLIMM(S, n): i64 {
+    CX_MOVI(S, 2, n & 0x3F);
+    CX_EMIT(S, 35, 0, 0, 2);   # shl r0, r0, r2
+    return 0;
+}
 fn ESLEEP_PE(S): i64 { return 0; }
 fn ETLSALLOC_PE(S): i64 { return 0; }
 fn ETLSGET_PE(S): i64 { return 0; }

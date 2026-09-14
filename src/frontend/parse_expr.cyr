@@ -922,7 +922,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # STRING literal
         var sval = PEEKV(S);
         STI(S, GTI(S) + 1);
-        var soff = sval >> 16;
+        var soff = sval >> 32;
         ESADDR(S, soff);
         return 0;
     }
@@ -2239,6 +2239,10 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             var cl_alloc_fi = _FINDFN_CSTR(S, "alloc", 5);
             if (cl_alloc_fi < 0) {
                 ERR_MSG(S, "a capturing closure needs include \"lib/alloc.cyr\" for its heap env", 66);
+                # v6.6.4: ERR_MSG reports and CONTINUES (the v6.4.62 multi-error contract),
+                # so falling through handed -1 to ECALLFIX — a SIGSEGV on cx after a correct
+                # diagnostic. The compile is already failed; there is nothing to emit.
+                return 0;
             }
             EMOVI(S, (1 + _cl_ncap) * 8);   # rax = size
             EPUSHR(S);

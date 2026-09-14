@@ -417,7 +417,7 @@ var _fnt_cap = 0;
 # cybs-fragile grow chain — the accessors carry the whole change and NO per-fork
 # driver edit is needed. alloc() hands back kernel-zeroed bump-allocator pages, so
 # an un-written slot reads 0 exactly like the old BSS band did.
-var _fndep_base = 0;      # was 0x100000 fn_deprecated_msg (string-lit token: off<<16|len)
+var _fndep_base = 0;      # was 0x100000 fn_deprecated_msg (string-lit token: off<<32|len)
 var _fnreg_base = 0;      # was 0x14A000 fn_regalloc (#regalloc opt-in flag)
 var _fnret_base = 0;      # was 0x15A000 fn_ret_sid (struct-return StructName id)
 var _fnretn_base = 0;     # v6.5.21 multi-value return ARITY  (0 = not multi-value)

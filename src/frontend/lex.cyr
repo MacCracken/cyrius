@@ -2070,7 +2070,12 @@ fn LEX(S): i64 {
                                                                                                                                 }
                                                                                                                                 SSPOS(S, spos);
                                                                                                                             }
-                                                                                                                            ADDTOK(S, 30, (sstart << 16) | slen);
+                                                                                                                            # Token-30 value = (pool offset << 32) | length. str_data is 2 MB (offsets and
+                                                                                                                            # lengths both need 21 bits); the old 16-bit length field OR-ed a >= 64 KB
+                                                                                                                            # literal's length INTO the offset, so the literal read from its 2nd byte.
+                                                                                                                            # Decoders: parse_expr.cyr ESADDR, parse.cyr #assert/#pe_import, parse_fn.cyr
+                                                                                                                            # #deprecated. CHANGELOG [6.6.4]
+                                                                                                                            ADDTOK(S, 30, (sstart << 32) | slen);
                                                                                                                         }
                                                                                                                         else {
                                                                                                                             # Reject non-ASCII bytes outside strings/comments

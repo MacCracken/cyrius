@@ -792,6 +792,7 @@ fn PARSE_RETURN(S): i64 {
                             var tcfi = FINDFN(S, tcnoff);
                             if (tcfi < 0) { tcfi = REGFN(S, tcnoff); }
                             _vis_check(S, tcfi, tcnoff);
+                            _DEPRECATED_WARN(S, tcfi, tcnoff);   # v6.6.4: tail calls warned nothing
                             # v5.8.20: #pure enforcement on the tail-call path —
                             # `return helper(args);` bypasses PARSE_FNCALL but
                             # still needs the #io / #alloc check.
@@ -1413,6 +1414,31 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     return 1;
 }
 
+# v5.6.4 #deprecated call-site warning, ONE helper for every call path. It fires at
+# EVERY call site (unlike #must_use, which only fires on statement-level discard —
+# deprecated fns should get the nudge no matter how their result is used). v6.6.4:
+# it lived inline in PARSE_FNCALL only, so `return olde();` — the TAIL-CALL path,
+# which bypasses PARSE_FNCALL exactly as the v6.2.41 arity note says — warned
+# nothing while `var v = olde();` did. Message body lives in fn_deprecated_msg as a
+# string-literal token value (offset<<32 | length).
+fn _DEPRECATED_WARN(S, fi, noff): i64 {
+    if (GFLG(S, fi) & 4 == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": '", 3);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' is deprecated", 15);
+    var _dep_msg = GFDM(S, fi);
+    if (_dep_msg != 0) {
+        var _dep_off = _dep_msg >> 32;
+        var _dep_len = _dep_msg & 0xFFFFFFFF;
+        syscall(SYS_WRITE, 2, ": ", 2);
+        syscall(SYS_WRITE, 2, S + 0x21A000 + _dep_off, _dep_len);
+    }
+    syscall(SYS_WRITE, 2, "\n", 1);
+    return 1;
+}
+
 # Parse fn call args and emit call (as expression)
 # v6.5.0 Phase 2 — cross-file `private` call check. WARN-mode; Phase 3 flips it to a
 # hard error via the v6.3.2 undefined-fn playbook (measure the blast radius first,
@@ -1658,29 +1684,12 @@ fn PARSE_FNCALL(S, noff): i64 {
             }
         }
     }
-    # v5.6.4: #deprecated call-site warning. Fires at EVERY call site
-    # (unlike #must_use which only fires on statement-level discard —
-    # deprecated fns should get the nudge no matter how their result
-    # is used). Line number is the paren-open we just consumed, which
-    # matches the call-site. Message body lives in fn_deprecated_msg
-    # as a string-literal token value (offset<<16 | length).
+    # v5.6.4: #deprecated call-site warning (see _DEPRECATED_WARN — shared with the
+    # tail-call path since v6.6.4). Line number is the paren-open we just consumed,
+    # which matches the call-site.
     _vis_check(S, fi, noff);
     var _dep_flags = GFLG(S, fi);
-    if (_dep_flags & 4 != 0) {
-        syscall(SYS_WRITE, 2, "warning:", 8);
-        _err_head(S);
-        syscall(SYS_WRITE, 2, ": '", 3);
-        PRSTR(S + 0xEC00000 + noff);
-        syscall(SYS_WRITE, 2, "' is deprecated", 15);
-        var _dep_msg = GFDM(S, fi);
-        if (_dep_msg != 0) {
-            var _dep_off = _dep_msg >> 16;
-            var _dep_len = _dep_msg & 0xFFFF;
-            syscall(SYS_WRITE, 2, ": ", 2);
-            syscall(SYS_WRITE, 2, S + 0x21A000 + _dep_off, _dep_len);
-        }
-        syscall(SYS_WRITE, 2, "\n", 1);
-    }
+    _DEPRECATED_WARN(S, fi, noff);
     # v5.8.20: #pure caller cannot call #io / #alloc callees. Warning
     # (not error) for downstream incremental adoption — same shape as
     # #must_use / #deprecated diagnostics. The annotation ramp happens

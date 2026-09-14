@@ -455,6 +455,11 @@ while (fi < fcnt) {
         # Patch movi: store 16-bit value in bytes 2-3
         store8(S + 0x54A000 + coff + 2, foff & 0xFF);
         store8(S + 0x54A000 + coff + 3, (foff >> 8) & 0xFF);
+        if (foff > 0xFFFF) {
+            # movhi slot at coff+4 (ELOAD_FN_ADDR always emits it since v6.6.4)
+            store8(S + 0x54A000 + coff + 6, (foff >> 16) & 0xFF);
+            store8(S + 0x54A000 + coff + 7, (foff >> 24) & 0xFF);
+        }
     }
     elif (ftype == 1) {
         # String address → dbase + totvar + string_offset
@@ -463,7 +468,8 @@ while (fi < fcnt) {
         store8(S + 0x54A000 + coff - 2, addr & 0xFF);
         store8(S + 0x54A000 + coff - 1, (addr >> 8) & 0xFF);
         if (addr > 0xFFFF) {
-            # Patch movhi (starts at coff, bytes 2-3)
+            # Patch the movhi slot (starts at coff, bytes 2-3) — always emitted since v6.6.4;
+            # before that a bare movi placeholder put this write on the NEXT instruction.
             store8(S + 0x54A000 + coff + 2, (addr >> 16) & 0xFF);
             store8(S + 0x54A000 + coff + 3, (addr >> 24) & 0xFF);
         }

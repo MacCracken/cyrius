@@ -348,7 +348,7 @@
 #                                        the cap bump.
 #   0x100000  (FREED v6.4.75 — was fn_deprecated_msg; now _fndep_base, alloc'd max-sized)
 #                                        message token value (v5.6.4). 0 =
-#                                        no message; nonzero = (offset<<16)
+#                                        no message; nonzero = (offset<<32)
 #                                        | length into str_data at 0x21A000
 #                                        (same encoding as string-literal
 #                                        token values). Parallel to

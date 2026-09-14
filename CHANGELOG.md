@@ -4,6 +4,80 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+The repair release for the six issues filed after the 6.6.3 handoff (five by hisab and
+agnos on 2026-09-13, one at the close of the 6.6.2 sweep). Every fix is gated; every gate is
+mutation-proven against a 6.6.3 tree.
+
+### Fixed
+
+- ⛔ **A string literal of 64 KB or more read back from its SECOND byte — silent, `rc=0`, byte
+  count intact.** `src/frontend/lex.cyr` recorded every string token as `(pool offset << 16) |
+  length`: a 16-bit length field, OR-ed (not bounds-checked) into the offset half, so a literal
+  of `slen >= 65536` put `slen >> 16` into the low bits of its own pool offset. OR, not add —
+  a literal whose offset already had those bits set was untouched, which is why agnos/rekha saw
+  *alternate* literals shift while embedding a 410 KB TrueType face; the filing's parity
+  narrative is inverted (for 64–128 KB it is the **even**-offset literal that moves by one,
+  128–192 KB moves by two, and so on). The pool write and the NUL terminator were correct;
+  only the address was wrong, so every backend inherited it through `ESADDR`. The pack dates
+  from the 2026-04-04 lexer rewrite, when `str_data` was 4 KB; the field was already too narrow
+  when the pool grew to 256 KB at v3.6.9 (2026-04-12), and stayed so through the 2 MB growth at
+  v5.8.59 — `lib/unicode/_normalize_data.cyr` even documents its ~41 KB table as sized "under
+  the 64 KB length cap". Fixed by widening to `(offset << 32) | length` in the one producer and
+  its four decoders in lockstep (`parse_expr.cyr` ESADDR, `parse.cyr` `#assert` and
+  `#pe_import`, `parse_fn.cyr` `#deprecated`) — a 70,001-byte `#assert` message also printed
+  from its 2nd byte and stopped after 4,465 bytes (70001 & 0xFFFF). Single shared lexer, so
+  one fix covers x86/aarch64/PE/Mach-O/cx; verified under qemu-aarch64 and wine. cycc
+  self-hosts at the same 1,251,864 B (the shift immediates are imm8 and the masks imm32 either
+  way) and seed-derives.
+  Gated by `tests/tcyr/frontend/string_literal_64k.tcyr` (three 65,536-byte, two 65,537-byte
+  and one 131,072-byte literal; head byte + full tail walk + NUL; the 6.6.3 compiler fails
+  8 of 12 — ⚠ the odd-length group needed a 2-byte pad literal to bite: odd-length entries have
+  an even stride, so both would otherwise share a parity and the group could pass vacuously)
+  and by `tests/gates/frontend/string_token_decoders.sh`, which asserts the printed TEXT of the
+  `#deprecated`, `#assert` and `#pe_import` decoders — nothing in the tree did, and a compiler
+  with one decoder left at the old shift self-hosted at the same size and printed every
+  deprecation message as NUL bytes.
+  `bootstrap/cybs.cyr` keeps its own 16-bit pack on purpose — it only ever lexes cycc's short
+  literals, and the chain was proven end to end.
+
+- **`#deprecated` warned nothing on a tail call.** `return olde();` takes the tail-call path,
+  which bypasses `PARSE_FNCALL` (as the v6.2.41 arity note already recorded) and had no
+  deprecation check, so the "fires at EVERY call site" contract held only for non-tail uses.
+  Found by the 6.6.4 review probing the decoder. The warning is now one helper
+  (`_DEPRECATED_WARN`) called from both paths; pinned by axis 2 of the decoder gate (6.6.3
+  prints nothing there).
+
+- ⛔ **cx: any string, global or fn pointer whose address passed 0xFFFF loaded a wrong value.**
+  Found under the lexer fix (same class: a 16-bit field silently too narrow). Every cx address
+  emitter (`ESADDR`, `EVADDR`, `EVADDR_X1`, `EVLOAD`, `EVSTORE`, `ELOAD_FN_ADDR`) emitted a
+  bare 4-byte `movi r, 0` placeholder. For strings and globals `src/main_cx.cyr`'s fixup loop
+  then patched "the movhi that follows it" whenever the resolved address exceeded 0xFFFF —
+  `CX_MOVI(S, r, 0)` never emits a movhi for a zero value, so the patch landed on bytes 2-3 of
+  **whatever instruction came next**; for fn pointers the arm had no movhi write at all and
+  simply truncated the code offset to 16 bits. Measured on 6.6.3: a wrong byte at 17 × 4 KB
+  literals, a global past 72 KB of data read 104 where 47 was right, `callptr(&fn)` to a fn
+  past 64 KB of code returned 76 for 42 (the cx codebuf is 512 KiB, so code offsets do exceed
+  16 bits). The emitters now always emit the movhi slot (`ra |= 0` when unpatched) and the
+  fn-pointer arm patches it too. Gated by `tests/gates/codegen/cx_addr_past_64k.sh` — four
+  axes, all red against a 6.6.3 tree copy, and each per-emitter revert reds at least one.
+  ⚠ Two traps this gate's drafts hit: the lexer **interns** identical literals (seventeen
+  identical fillers occupy ONE pool entry), and `&big` of the FIRST global sits low, so the
+  `EVADDR` path was unpinned until axis 3 took the address of a global that sits high.
+
+- **cx compiler SIGSEGV'd after a correct diagnostic.** A capturing closure in a file that
+  does not include `lib/alloc.cyr` printed its error and then fell through to
+  `ECALLFIX(S, -1)` — `ERR_MSG` reports and continues by the v6.4.62 multi-error contract,
+  and nothing returned. x86 happened to survive the -1; the cx fork faulted (rc=139). Now
+  returns after the diagnostic; pinned by a new axis of
+  `tests/gates/diagnostics/dx_multi_error.sh` that runs the shape through both compilers.
+
+- **cx: `x * 2^k` returned `x`.** `ESHLIMM` was a return-0 stub on cx, so the power-of-two
+  multiply strength reduction (`x * 2` → `shl`) emitted nothing; `x * 3` and `x * k` were
+  correct. Surfaced by the review's cx probes. Gated by `tests/gates/codegen/cx_pow2_mul.sh`
+  (6.6.3 exits 11 for 22 and 44).
+
 ## [6.6.3] — 2026-09-12
 
 The repair release the 6.6.2 ecosystem sweep filed against. Six issues, all closed, plus a

@@ -1,9 +1,13 @@
-# A string literal of even length ≥ 65536 is emitted shifted by one byte (first byte lost) on alternate literals — OPEN
+# A string literal of even length ≥ 65536 is emitted shifted by one byte (first byte lost) on alternate literals — FIXED v6.6.4
 
-**Status:** 🔴 **OPEN** — filed by agnos/rekha while embedding a 410 KB TrueType face as string-literal
-data (rekha 0.3.8 `fonts/face_data.cyr`, agnos 1.57.2). Repro
-`repros/2026-09-13-agnos-large-string-literal-loses-first-byte.cyr` **proves itself**: exit **2** while
-the bug is present (bit 2 = the second literal's first byte is wrong), exit 0 when fixed.
+**Status:** ✅ **FIXED in v6.6.4** — `src/frontend/lex.cyr` packed every string token as
+`(pool offset << 16) | length`; a length ≥ 65536 OR-ed its high bits into the offset. Widened to
+`(offset << 32) | length` in the producer and its four decoders. The repro exits 0; gated by
+`tests/tcyr/frontend/string_literal_64k.tcyr` (6.6.3 fails 8 of 12). ⚠ The "even length" /
+"odd-indexed" narrative below is an artefact of the pool layout: it is the literal whose own
+pool OFFSET has bit 0 clear (bit 1 for ≥ 128 KB) that shifts — OR, not add — which is also why
+131072 hit `lit0`. A same-class cx defect was found and fixed alongside (addresses past 0xFFFF
+patched a `movhi` that was never emitted; `tests/gates/codegen/cx_addr_past_64k.sh`).
 **Placement:** reproduced identically on **6.6.3**, **6.6.1** and **6.6.0** (rc=2 on each); not bisected further — the consumer
 had never emitted a literal this large before, so no regression window is claimed.
 **Discovered:** 2026-09-13, by an FNV‑1a‑64 of the assembled bytes disagreeing with the source file.
