@@ -1,8 +1,14 @@
-# `public enum` leaks its `public` onto the next top-level declaration in a `private` file — OPEN
+# `public enum` leaks its `public` onto the next top-level declaration in a `private` file — FIXED v6.6.4
 
-**Status:** 🟡 **OPEN** — filed by hisab from its public-surface gate for 3.1.0. Repro
-`repros/2026-09-13-hisab-public-enum-leaks-onto-next-declaration.cyr` **proves itself** (exit 3
-while the bug is present; the build is refused when fixed).
+**Status:** ✅ **FIXED in v6.6.4** — `_TL_VIS` armed the marker unconditionally and only a fn /
+global-var definition consumed it; a struct / union / enum / impl / `use` never did, so the
+marker outlived them. `public` now arms only for a token that can carry visibility (a positive
+list) and is consumed un-armed otherwise; pass 2's impl / relaxed-ordering paths clear a stale
+marker on entry (`public var` before an impl re-exposed its FIRST method). Also closed with it:
+`public var a, b = f()` exposed `a` only; derived codecs did not inherit `public`; the shared enum
+helper was private to the first deriving file; PARSE_PROG-path globals were never stamped. The
+repro is refused; gated by `tests/gates/frontend/public_marker_scoped_to_its_item.sh` (56 rows;
+6.6.3 reds 30). ⚠ `public impl` now marks NO method — per-method `public fn` is the form.
 **Placement:** unpinned — reproduced identically on **6.6.2 and 6.6.3**, so it predates the 6.6.3
 `public struct`/derive work and is not a regression of it.
 **Discovered:** 2026-09-13. A generated consumer calling every one of hisab's 457 non-public

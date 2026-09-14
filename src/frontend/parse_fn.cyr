@@ -2180,6 +2180,11 @@ fn PARSE_FNCALL(S, noff): i64 {
 # Parse: impl TraitName for TypeName { fn method(self) { } ... }
 # Methods get mangled to TypeName_method (trait name is documentation only for now)
 fn PARSE_IMPL(S): i64 {
+    # v6.6.4: a marker live here can only be STALE — `public impl` is consumed un-armed by
+    # _TL_VIS, and a per-method `public fn` re-arms inside the loop below. Pass 1 brace-skips
+    # impl bodies and pass 2's `var` skip never consumes, so `public var V = 7;` followed by an
+    # impl block re-exposed its FIRST method (the only definition class stamped in pass 2 only).
+    _pub_pending = 0;
     STI(S, GTI(S) + 1);  # consume IMPL
     # Parse trait name (skip for now — just used for documentation)
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
@@ -3682,8 +3687,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # file asks for it.
     #
     # `_pub_pending` is cleared UNCONDITIONALLY, exactly like `_must_use_pending` and
-    # friends below: a stale marker left armed by a construct that never reached a
-    # definition would otherwise re-expose an unrelated fn later in the file.
+    # friends below. ⚠ That clear alone did NOT stop a stale marker from re-exposing an
+    # unrelated fn: a `public` on a struct / union / enum / impl / `use` was armed and
+    # never reached a definition until the NEXT fn or var — the hisab 2026-09-13 leak.
+    # Since v6.6.4 _TL_VIS arms the marker only for tokens that can carry it (see
+    # _PUB_CAN_ARM), PARSE_IMPL and the relaxed-ordering path clear it on entry, and the
+    # array + destructure var paths consume it themselves.
     if (_this_priv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
     # An unattributable fn (FM_FILEID -1) can never be marked private, so enforcement
     # would quietly stop applying. Say so once rather than degrade in silence.

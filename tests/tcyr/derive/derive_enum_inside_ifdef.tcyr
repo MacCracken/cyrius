@@ -1,0 +1,57 @@
+# derive_enum_inside_ifdef.tcyr — v6.6.4 — an enum `#derive(Serialize)` inside a TAKEN
+# `#ifdef` block must not swallow the rest of the block.
+#
+# The preprocessor kept its "#derive target is an enum" flag at S+0x197F10 — the SAME
+# cell the #ifdef machinery uses as its per-depth state BYTE stack. An enum derive at
+# depth 1 wrote 1 into depth-0's byte (= "skipping"), so every line after the derive up
+# to #endif was silently dropped: rc=0, wrong exit code, no diagnostic. A struct derive
+# wrote 0 (= emit) and happened to be harmless, which is why it hid. Found by the 6.6.4
+# bite-3 review while confirming the derive path is visibility-marker-independent.
+#
+# Mutation that reddens this file: `_pp_decl_is_enum = is_enum;` -> `S64(S + 0x197F10,
+# is_enum);` in src/frontend/lex_pp.cyr (the 6.6.3 shape) — pick() is never defined,
+# so the build fails on an undefined fn (or, with --allow-undef, returns 0 for 3).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/result.cyr"
+include "lib/assert.cyr"
+
+#ifdef CYRIUS_TARGET_LINUX
+#derive(Serialize)
+enum Col { Red = 1; Green = 2; }
+fn pick(): i64 { return 3; }
+fn after_two(): i64 { return 4; }
+#endif
+#ifndef CYRIUS_TARGET_LINUX
+fn pick(): i64 { return 3; }
+fn after_two(): i64 { return 4; }
+#endif
+
+fn nested(): i64 {
+    var r = 0;
+#ifdef CYRIUS_TARGET_LINUX
+    r = r + 10;
+#ifdef CYRIUS_ARCH_X86
+    r = r + 100;
+#endif
+#endif
+#ifndef CYRIUS_TARGET_LINUX
+    r = r + 10;
+#endif
+    return r;
+}
+
+test_group("enum derive inside a taken #ifdef block");
+assert_eq(pick(), 3, "the fn after the derive in the same block still exists");
+assert_eq(after_two(), 4, "and the one after it");
+assert_eq(nested() >= 10, 1, "#ifdef nesting after the derive still evaluates");
+var sb = str_builder_new();
+Col_to_json(Green, sb);
+var js: Str = str_builder_build(sb);
+assert_eq(load8(str_data(js) + 1), 71, "the derived codec itself works (\"Green\" — byte 1 is G)");
+
+var r = assert_summary();

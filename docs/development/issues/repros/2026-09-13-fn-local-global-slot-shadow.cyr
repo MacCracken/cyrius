@@ -1,0 +1,19 @@
+# Repro: a fn-local struct literal in one file is a GLOBAL slot and shadows another
+# file's same-named global. Two files; want exit 6.
+#   6.6.3:  builds, exit 2  (main.cyr's `cfg` read lib/a.cyr's fn-local slot — silent)
+#   6.6.4:  refused, "'cfg' is private to its file" pointing at main.cyr's OWN `var cfg`
+#           (the slot is now stamped; the lookup is still wrong)
+#   fixed:  exit 6
+#
+# --- lib/a.cyr ---
+# private
+# fn f() { var cfg = P { 1, 2 }; return cfg.x; }
+# public fn api() { return f(); }
+# --- end lib/a.cyr ---
+include "lib/syscalls.cyr"
+struct P { x; y; }
+include "lib/a.cyr"
+var cfg = 5;
+fn main() { return api() + cfg; }
+var r = main();
+syscall(60, r);

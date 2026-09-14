@@ -35,6 +35,7 @@ fn _synonly_skip_chain(S): i64 {
 }
 
 fn PARSE_ARRAY(S, noff, ew): i64 {
+    var _pa_decl_ti = GTI(S);   # v6.6.4: the `[` token — `]` and `;` are consumed below, so by the stamp the cursor may already sit in the NEXT file
     STI(S, GTI(S) + 1);  # consume [
     # v5.10.48: accept either NUM literal OR an IDENT that resolves
     # to a compile-time-known enum constant (via enum_const_val at
@@ -169,6 +170,11 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
+    # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after
+    # the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private.
+    # Keyed on the `[` token, NOT the cursor: `;` is already consumed, and for the last
+    # declaration of a file the cursor is in the next file (measured: unstamped).
+    _GVAR_VIS(S, vcnt, _pa_decl_ti);
     SVCNT(S, vcnt + 1);
     # v5.11.62: accumulate the array's byte cost into the current fn's
     # attribution slot at 0x1C8000. Top-level `var foo[N]` (no enclosing
@@ -693,6 +699,7 @@ fn _emit_struct_positional_init(S, target_idx, sid): i64 {
 
 fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     var si = sid - 1;
+    var _ps_decl_ti = GTI(S);   # v6.6.4: the type-name token, for the visibility stamp (see PARSE_ARRAY)
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);
@@ -766,6 +773,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
     SLVAR(S, vcnt);
+    _GVAR_VIS(S, vcnt, _ps_decl_ti);   # v6.6.4: PARSE_PROG-path struct-literal global (see PARSE_ARRAY)
     SVCNT(S, vcnt + 1);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
@@ -1064,6 +1072,11 @@ fn PARSE_GVAR_REG(S): i64 {
             dgn = 3;
         }
         var dga = GVCNT(S);
+        # v6.6.4: ONE `public` covers EVERY name of the declaration. _GVAR_VIS clears the
+        # marker after each stamp, so `public var A, B = f();` exposed A and stamped B
+        # (and C) private. Restore it before each later name; the last stamp leaves it
+        # cleared so nothing leaks past the declaration.
+        var _dg_pub = _pub_pending;
         S64(_varn_base + dga * 8, noff);
         S64(_vars_base + dga * 8, 8);
         _GVAR_VIS(S, dga, sti);
@@ -1071,12 +1084,14 @@ fn PARSE_GVAR_REG(S): i64 {
         var dgb = GVCNT(S);
         S64(_varn_base + dgb * 8, dg2);
         S64(_vars_base + dgb * 8, 8);
+        _pub_pending = _dg_pub;
         _GVAR_VIS(S, dgb, sti);
         SVCNT(S, dgb + 1);
         if (dgn == 3) {
             var dgc = GVCNT(S);
             S64(_varn_base + dgc * 8, dg3);
             S64(_vars_base + dgc * 8, 8);
+            _pub_pending = _dg_pub;
             _GVAR_VIS(S, dgc, sti);
             SVCNT(S, dgc + 1);
         }
@@ -1773,6 +1788,9 @@ fn PARSE_VAR(S): i64 {
             EMOVRA_RDX(S);
             EVSTORE(S, gi2);
             SLVAR(S, gi2);
+            _GVAR_VIS(S, gi1, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
+            _GVAR_VIS(S, gi2, GTI(S));
+            if (_dt_n == 3) { _GVAR_VIS(S, gi3, GTI(S)); }
             if (_dt_n == 3) { SVCNT(S, gi1 + 3); } else { SVCNT(S, gi1 + 2); }
         }
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -2855,6 +2873,7 @@ fn PARSE_VAR(S): i64 {
             EVSTORE(S, vcnt);
         }
         SLVAR(S, vcnt);
+        _GVAR_VIS(S, vcnt, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
         SVCNT(S, vcnt + 1);
     }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }

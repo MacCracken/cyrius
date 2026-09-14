@@ -49,6 +49,66 @@ mutation-proven against a 6.6.3 tree.
   (`_DEPRECATED_WARN`) called from both paths; pinned by axis 2 of the decoder gate (6.6.3
   prints nothing there).
 
+- ⛔ **`public enum` re-exposed the NEXT declaration in a `private` file — and so did
+  `public struct` / `union` / `impl` / `use` / `var a[N]`.** `_TL_VIS` armed the `public`
+  marker unconditionally; only a fn or global-var DEFINITION ever consumed it. An enum
+  records no visibility (its constants are public by design), so the marker outlived it and
+  the next fn or var was stamped public — hisab's public-surface gate found exactly one leak
+  (`_ad_pow`) among 457 probes (456 refused), and it was the declaration after
+  `public enum AdPowLimit`.
+  The filing's matrix saw `struct` only through `#derive(accessors)`, whose generated
+  `public fn` happened to consume the marker, so that row read green for the wrong reason;
+  a bare `public struct` leaked identically, as did `union`, `impl` (in the forward-call
+  shape), `use`, and `public var a[N]` (no stamp at all). Fixed at the ONE shared site:
+  `public` now arms the marker only when the next token can carry it (`_PUB_CAN_ARM` — `var`
+  / `secret`, `fn` / `async`, a fn-attribute directive; a POSITIVE list, so a future
+  top-level keyword cannot reopen it) and is consumed un-armed otherwise. No fork edit.
+  **Pass 2 had the same shape one level deeper.** Its inline `var` skip re-armed the marker
+  at `public var` and consumed nothing, so the next PASS-2-ONLY definition inherited it — an
+  impl's FIRST method (`public var V = 7;` + `impl Tr for T { fn m }` → `T_m` reachable from
+  any file; found by the bite-2 review), or the first relaxed-ordering fn after top-level
+  code. `PARSE_IMPL`, that path AND `PARSE_PROG` itself clear a stale marker on entry — the
+  review found the same stale marker landing on the FIRST PARSE_PROG-path declaration
+  (`public var V = 7; _touch(); var L = 16;` → `L` public). ⚠ Semantics change:
+  `public impl` now marks NO method (its first method used to be public by the leak);
+  per-method `public fn` is the form.
+  **Three things closing the leak exposed, all fixed with it:** `public var a, b = f();`
+  stamped `b` (and `c`) private — the stamp helper clears the marker after each name, so it
+  is restored before each later one; the derive CODECS (`T_to_json`, `T_from_json`,
+  `T_from_json_str`, the enum pair) were emitted without the type's `public` — only the
+  v6.6.3 accessors honoured it, so a `public struct` with `#derive(Serialize)` in a private
+  file would have gone from "one codec reachable by accident" to "none" — they inherit it
+  now; and the once-per-translation-unit `_cy_enum_name_eq` helper was private to whichever
+  file derived an enum first, so a second private file's enum codec was refused (measured on
+  6.6.3: two diagnostics, no binary) — emitted `public`. Also stamped: globals on the
+  PARSE_PROG path (any `var` / array / struct literal after the FIRST top-level statement
+  skipped `PARSE_GVAR_REG` entirely and was never private — and the array stamp has to key
+  on the `[` token, because `PARSE_ARRAY` consumes `;` first and for the last declaration
+  of a file the cursor already sits in the next one; mutation-proven). ⚠ A fn-local struct
+  literal and an oversized / opted-out array local are GLOBAL slots (pre-existing) and are
+  now stamped too — which turns a silent cross-file miscompile into a diagnostic that names
+  the wrong variable; filed as
+  `docs/development/issues/2026-09-13-fn-local-global-slots-shadow-other-files.md`.
+  Gated by `tests/gates/frontend/public_marker_scoped_to_its_item.sh` — 56 rows, each a
+  private lib + a consumer reaching ONE name across the boundary, including a positive row
+  per `_PUB_CAN_ARM` entry (a positive list fails CLOSED, so a dropped entry would make
+  `public #io fn` private with no negative row noticing) and per-emitter mutation coverage of
+  the five codec sites. The 6.6.3 compiler reds 30 of the 56; the bite-2 compiler 29
+  (derived by running it against both). Guide, vidya (features + a field note) updated.
+  hisab: `scripts/check-public-surface.sh` carries `_ad_pow` as a KNOWN leak keyed to the
+  filing and is built to FAIL when it comes back refused — drop the entry at the 6.6.4 pin
+  bump.
+
+- ⛔ **An enum `#derive(Serialize)` inside a taken `#ifdef` block silently dropped the rest of
+  the block.** The preprocessor's "derive target is an enum" flag lived at `S+0x197F10` — the
+  SAME cell the `#ifdef` machinery uses as its per-depth state BYTE stack. An enum derive at
+  depth 1 wrote `1` (= skipping) into depth-0's byte, so every line up to `#endif` was
+  dropped: `rc=0`, wrong exit code, no diagnostic. A struct derive wrote `0` (= emit) and was
+  harmless, which is how it hid since v6.5.31. Found by the bite-3 review while confirming
+  the derive path is marker-independent. The flag is a global now (`_pp_decl_is_enum`).
+  Gated by `tests/tcyr/derive/derive_enum_inside_ifdef.tcyr` (the 6.6.3 compiler fails to
+  build it).
+
 - ⛔ **`&_private_fn` from another file compiled and was fully callable — and it was one of
   EIGHT unchecked resolution paths.** The v6.5.0 visibility predicate `_vis_check` is wired
   per call site (FINDFN is pure lookup; it also serves definitions and prepasses), and its own

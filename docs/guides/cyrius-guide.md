@@ -765,7 +765,21 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   is file-private like any other global (it was never stamped before 6.6.4). A `public fn
   f<T>` in a private file is reachable at every instantiation (`f<i32>(x)` from another file
   used to be refused while `f(x)` was accepted — the instance inherited the file default).
-  Enum constants and type names carry no visibility; they are always public. ⚠ One known
+  Enum constants and type names carry no visibility; they are always public.
+- **`public` marks exactly one item, and only an item that can carry visibility (v6.6.4).**
+  On a `struct`, `union`, `enum`, `impl` or `use` it is accepted as documentation and
+  consumed by that item — it never carries over to the declaration after it. Before 6.6.4 it
+  did: `public enum E { … }` in a private file silently re-exposed the NEXT fn or var (hisab
+  found a private `_ad_pow` reachable this way), and so did a bare `public struct`, `public
+  union`, `public impl`, `public use` and `public var a[N]`. Consequences worth knowing:
+  `public impl Tr for T { … }` marks **no** method — put `public fn` on each method you
+  export (its first method used to be public by the leak); one `public var a, b = f();`
+  exposes **every** bound name (it used to expose `a` only); and a `public struct` /
+  `public enum` with `#derive(Serialize)` gets **public codecs** (`T_to_json`, `T_from_json`
+  and `T_from_json_str` for a struct; `E_to_json` and `E_from_json_str` for an enum), exactly
+  as its `#derive(accessors)` getters already did.
+  A global declared after the first top-level statement is file-private like any other
+  (it used to be unstamped on that path). ⚠ One known
   gap remains open: an impl method called BEFORE its `impl` block appears in the stream
   (a forward reference across files — include order normal code never has) is not yet
   checked; see `docs/development/issues/2026-09-13-private-impl-method-forward-call-fail-open.md`.

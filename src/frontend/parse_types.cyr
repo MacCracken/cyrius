@@ -775,8 +775,10 @@ fn FINDVAR(S, noff): i64 {
             # where the plan named 2 of at least 13 resolution paths and the tail-call
             # path was silently unenforced until a gate caught it.
             #
-            # Locals need no special case: they are never stamped, so GVFI reads 0 and
-            # this falls straight through.
+            # Locals need no special case: frame locals are never stamped, so GVFI reads 0
+            # and this falls straight through. ⚠ A fn-local STRUCT LITERAL and an oversized /
+            # opted-out array local are GLOBAL slots (pre-existing), and since v6.6.4 they
+            # ARE stamped — see issues/2026-09-13-fn-local-global-slots-shadow-other-files.md.
             _vis_check_var(S, vi, noff);
             return vi;
         }

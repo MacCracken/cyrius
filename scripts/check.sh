@@ -104,6 +104,7 @@ sh "$ROOT/tests/gates/frontend/fileid_substrate.sh"
 # had enumerated.
 sh "$ROOT/tests/gates/frontend/visibility_private.sh"
 sh "$ROOT/tests/gates/frontend/string_token_decoders.sh"
+sh "$ROOT/tests/gates/frontend/public_marker_scoped_to_its_item.sh"
 sh "$ROOT/tests/gates/frontend/derive_with_public.sh"
 
 # v6.5.1: overload-suffix dispatch must be ARITY-AWARE and POSITION-CONSISTENT.

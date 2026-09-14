@@ -678,7 +678,7 @@ var _cur_fn_ix = 0 - 1;
 # the same file id pass 1 already marked. That is deliberate — it means one helper
 # serves both passes with no pass-awareness.
 var _priv_files[512];        # 512*8 = 4096 B = 32768 bits, one per possible file id
-var _pub_pending = 0;        # `public` seen; consumed by the next fn definition
+var _pub_pending = 0;        # `public` seen; consumed by the next fn / global-var definition; un-armed by _TL_VIS on struct/union/enum/impl/use (v6.6.4)
 
 fn _PRIV_MARK(fid): i64 {
     if (fid <= 0) { return 0; }
@@ -698,12 +698,38 @@ fn _PRIV_FILE(fid): i64 {
     return 0;
 }
 
+# v6.6.4: the tokens `public` can ARM the marker for — a `var`, a `fn`
+# (plain, `async`), or a fn-attribute directive that precedes one (#regalloc #must_use
+# #deprecated #pure #io #alloc #naked #inline). Anything else — struct, union, enum, impl,
+# `use`, `mod`, … — records no visibility (the committed design covers fns and global vars
+# only), so `public` on it is consumed UN-ARMED. Before this, the marker was armed
+# unconditionally and only fn/var definitions ever cleared it, so `public enum E {..}`
+# silently re-exposed the NEXT fn or var in a private file (hisab `_ad_pow`, 2026-09-13) —
+# and the same for struct / union / impl / `use`. A positive list rather than a negative
+# one so a future top-level keyword cannot re-open it.
+fn _PUB_CAN_ARM(t): i64 {
+    if (t == 3) { return 1; }      # var (`secret var` is fn-local only — never at top level)
+    if (t == 32) { return 1; }     # fn
+    if (t == 134) { return 1; }    # async (fn)
+    if (t == 109) { return 1; }    # #regalloc
+    if (t == 122) { return 1; }    # #must_use
+    if (t == 124) { return 1; }    # #deprecated
+    if (t == 125) { return 1; }    # #pure
+    if (t == 126) { return 1; }    # #io
+    if (t == 127) { return 1; }    # #alloc
+    if (t == 133) { return 1; }    # #naked
+    if (t == 163) { return 1; }    # #inline
+    return 0;
+}
+
 fn _TL_VIS(S): i64 {
     var t = PEEKT(S);
     if (t == 73) {
-        # `public` / `pub` — re-expose the NEXT item. Consumed by PARSE_FN_DEF.
-        _pub_pending = 1;
+        # `public` / `pub` — re-expose the NEXT item. Consumed by PARSE_FN_DEF / _GVAR_VIS;
+        # consumed HERE, un-armed, when the next item cannot carry visibility (v6.6.4).
         STI(S, GTI(S) + 1);
+        _pub_pending = 0;
+        if (_PUB_CAN_ARM(PEEKT(S)) == 1) { _pub_pending = 1; }
         return 1;
     }
     if (t == 153) {
@@ -2230,6 +2256,12 @@ fn _PARSE_STMT_IMPL(S): i64 {
 }
 
 fn PARSE_PROG(S): i64 {
+    # v6.6.4: a `public` marker armed before the first top-level statement is STALE here —
+    # pass 2's inline `var` skip re-arms it at `public var` and consumes nothing, and this
+    # loop never parses `public` (a syntax error after top-level code). Without this the
+    # FIRST PARSE_PROG-path declaration (`var`, array, struct literal, destructure) in a
+    # private file consumed it and was stamped public. Found by the bite-3 review.
+    _pub_pending = 0;
     var go = 1;
     while (go == 1) {
         var typ = PEEKT(S);
@@ -2296,6 +2328,12 @@ fn PARSE_PROG(S): i64 {
                                     else { if (typ == 32) {
                                 # fn definition inside top-level code (relaxed ordering)
                                 # Emit jmp over fn body, compile fn, patch jmp
+                                # v6.6.4: this loop never parses `public` (a `public` after
+                                # top-level code is a syntax error), so any armed marker here
+                                # is STALE — pass 2's `var` skip re-arms it at `public var` and
+                                # nothing on this path consumed it, re-exposing the first
+                                # relaxed-ordering fn in a private file.
+                                _pub_pending = 0;
                                 var fn_skip = EJMP0(S);
                                 PARSE_FN_DEF(S);
                                 EPATCH(S, fn_skip);
