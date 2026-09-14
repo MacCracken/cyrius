@@ -30,6 +30,18 @@ ARCH=$(uname -m)
 # ~/.cyrius/versions/$VERSION/. Called by version-bump.sh post-bump so
 # the install snapshot never lags the repo after a dep or tool bump.
 # Only makes sense when run from within a cyrius repo checkout.
+#
+# ⛔ v6.6.4 CONTRACT: `versions/<v>` is what a consumer pin MEANS, and once <v> is a
+# cut release (its tag exists) the slot must equal the tag. This mode keys its
+# destination on the working-tree VERSION file, which between a tag and the next
+# bump still names the RELEASED version — so every mid-slot refresh wrote the
+# in-progress tree into the released slot (measured: the installed "6.6.2" stdlib
+# was byte-for-byte 6.6.3's; "6.6.1" carried three 6.6.2 files). It now REFUSES
+# when the version is tagged, the tree has moved past the tag, and the destination
+# is live (the slot exists, or the home is $HOME/.cyrius). A throwaway
+# CYRIUS_HOME needs no override; CYRIUS_REFRESH_RELEASED=1 forces it. The slot
+# also gets a SOURCE_COMMIT stamp so `scripts/verify-store.sh` can tell a slot
+# built from commit X apart from the tag without rebuilding anything.
 REFRESH_ONLY=0
 if [ "${1:-}" = "--refresh-only" ]; then
     REFRESH_ONLY=1
@@ -70,6 +82,65 @@ fi
 info() { printf "  ${GREEN}>${RESET} %s\n" "$1"; }
 warn() { printf "  ${YELLOW}!${RESET} %s\n" "$1"; }
 err()  { printf "  ${RED}x${RESET} %s\n" "$1" >&2; exit 1; }
+
+# ── v6.6.4: a RELEASED version's snapshot is written from its tag, never from a drifted tree ──
+# Returns 0 when the refresh may proceed. Sets _RS_TREE_MATCHES_TAG (yes / no / untagged) for
+# the SOURCE_COMMIT stamp. See the --refresh-only contract at the top of this file.
+_released_slot_guard() {
+    _RS_TREE_MATCHES_TAG="untagged"
+    if ! command -v git >/dev/null 2>&1; then
+        warn "git not found — cannot verify $VERSION against its tag; refreshing blind"
+        return 0
+    fi
+    _rs_paths="lib src cbt programs scripts bootstrap cyrius.cyml build"
+    # "destination is live": the slot exists and is (or may be) the release — a slot whose
+    # own stamp says it was written from a drifted tree is a dev slot, not the release —
+    # or the home IS the user's store (both sides resolved, so a trailing slash or a
+    # symlinked $HOME cannot dodge the compare).
+    _rs_live=0
+    if [ -d "$CYRIUS_HOME/versions/$VERSION" ]; then
+        _rs_live=1
+        if [ -f "$CYRIUS_HOME/versions/$VERSION/SOURCE_COMMIT" ] \
+           && grep -q '^tree-matches-tag: no' "$CYRIUS_HOME/versions/$VERSION/SOURCE_COMMIT" 2>/dev/null; then
+            _rs_live=0    # written from a drifted tree before: a throwaway being reused
+        fi
+    fi
+    _rs_home_real="$(cd "$CYRIUS_HOME" 2>/dev/null && pwd -P)"
+    _rs_user_real="$(cd "${HOME:-/nonexistent}/.cyrius" 2>/dev/null && pwd -P)"
+    [ -n "$_rs_home_real" ] && [ "$_rs_home_real" = "$_rs_user_real" ] && _rs_live=1
+    if [ -z "$(git for-each-ref --count=1 refs/tags 2>/dev/null)" ]; then
+        # NO tags at all (a --no-tags / shallow clone): "not yet cut" and "not fetched" are
+        # indistinguishable, so a live destination cannot be verified — fail CLOSED.
+        _RS_TREE_MATCHES_TAG="untagged(no-tags-in-clone)"
+        [ "$_rs_live" = 1 ] || return 0
+        [ "${CYRIUS_REFRESH_RELEASED:-0}" = "1" ] && { warn "CYRIUS_REFRESH_RELEASED=1 — refreshing a live store from a clone with NO tags"; return 0; }
+        printf "  ${RED}x${RESET} refusing --refresh-only: this clone has NO tags, so whether %s is a cut release cannot be checked\n" "$VERSION" >&2
+        printf "    (git fetch --tags, or use a throwaway CYRIUS_HOME; CYRIUS_REFRESH_RELEASED=1 forces it).\n" >&2
+        exit 1
+    fi
+    git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null 2>&1 || return 0   # in-flight bump
+    # untracked .cyr under lib/ count as drift whether or not they are ignored — the copy
+    # loop below is `find -L lib`, which does not consult .gitignore either
+    if git diff --quiet "refs/tags/$VERSION" -- $_rs_paths 2>/dev/null \
+       && [ -z "$(git ls-files --others --exclude-standard lib 2>/dev/null)" ] \
+       && [ -z "$(git ls-files --others --ignored --exclude-standard lib 2>/dev/null | grep '\.cyr$')" ]; then
+        _RS_TREE_MATCHES_TAG="yes"       # tree == tag: re-populating the slot is idempotent
+        return 0
+    fi
+    _RS_TREE_MATCHES_TAG="no"
+    [ "${CYRIUS_REFRESH_RELEASED:-0}" = "1" ] && { warn "CYRIUS_REFRESH_RELEASED=1 — writing a drifted tree into the RELEASED slot $VERSION"; return 0; }
+    [ "$_rs_live" = 1 ] || return 0      # a throwaway home never held the release: proceed
+    _rs_stat=$(git diff --stat "refs/tags/$VERSION" -- $_rs_paths 2>/dev/null | tail -1)
+    printf "  ${RED}x${RESET} refusing --refresh-only: VERSION=%s is a CUT RELEASE (its tag exists) and the tree has moved past it\n" "$VERSION" >&2
+    printf "    (%s).\n" "${_rs_stat:-untracked files under lib/}" >&2
+    printf "    %s/versions/%s is what every consumer pinning %s resolves; writing the in-progress tree there\n" "$CYRIUS_HOME" "$VERSION" "$VERSION" >&2
+    printf "    replaces the released snapshot under the released name. Choose one:\n" >&2
+    printf "      1. bump first:            sh scripts/version-bump.sh <next>      (the slot for <next> is untagged)\n" >&2
+    printf "      2. re-cutting %s here:  commit, then git tag -f %s HEAD, then refresh (tree == tag proceeds)\n" "$VERSION" "$VERSION" >&2
+    printf "      3. a throwaway home:      CYRIUS_HOME=<tmpdir> sh scripts/install.sh --refresh-only   (no override needed)\n" >&2
+    printf "    CYRIUS_REFRESH_RELEASED=1 forces the write. See scripts/verify-store.sh.\n" >&2
+    exit 1
+}
 
 # ── ETXTBSY-safe install: temp + ATOMIC RENAME, never `cp` over a file in place ──
 #
@@ -207,6 +278,7 @@ esac
 # snapshot never rots behind dep/tool bumps.
 if [ "$REFRESH_ONLY" -eq 1 ]; then
     printf "\n${BOLD}Refreshing install snapshot for %s${RESET}\n" "$VERSION"
+    _released_slot_guard    # v6.6.4: exits 1 before anything is written (see the contract above)
     mkdir -p "$CYRIUS_HOME/versions/$VERSION/bin"
     mkdir -p "$CYRIUS_HOME/versions/$VERSION/lib"
 
@@ -455,6 +527,16 @@ EOF_LIB
     # would leave the wrapper resolving a version whose directories no longer match.
     if [ "${CYRIUS_NO_ACTIVATE:-0}" != "1" ]; then echo "$VERSION" > "$CYRIUS_HOME/current"; fi
     echo "$VERSION" > "$CYRIUS_HOME/versions/$VERSION/VERSION"
+    # v6.6.4: provenance stamp — which commit this slot was written from, whether the tree
+    # was dirty, and whether it matched the version's tag. `scripts/verify-store.sh` reads it;
+    # a slot whose stamp is not the tag's commit is not the release, whatever its name says.
+    if command -v git >/dev/null 2>&1 && git rev-parse -q --verify HEAD >/dev/null 2>&1; then
+        _sc="$(git rev-parse HEAD 2>/dev/null)"
+        # dirty = the INPUTS moved (the guarded paths), not "any file in the tree": a CHANGELOG
+        # edit at the tagged commit is the normal post-tag reconcile and must not read dirty
+        [ -z "$(git status --porcelain -- lib src cbt programs scripts bootstrap cyrius.cyml build 2>/dev/null)" ] || _sc="$_sc dirty"
+        printf '%s\ntree-matches-tag: %s\n' "$_sc" "${_RS_TREE_MATCHES_TAG:-untagged}" > "$CYRIUS_HOME/versions/$VERSION/SOURCE_COMMIT"
+    fi
 
     # v5.7.22: re-link ~/.cyrius/bin → versions/$VERSION/bin so the
     # PATH-resolved cyrius/cycc/cyrfmt/cyrlint binaries match the

@@ -49,7 +49,7 @@ fail() { echo "FAIL: deps_lock_sorted: $1"; exit 1; }
 chmod +x "$WORK/cyrius"
 
 V=$(cat "$ROOT/VERSION")
-[ -d "$HOME/.cyrius/versions/$V/lib" ] \
+[ -d "${CYRIUS_HOME:-$HOME/.cyrius}/versions/$V/lib" ] \
     || { echo "SKIP: no stdlib snapshot for $V (install not refreshed)"; exit 0; }
 
 # Outside the cyrius repo on purpose: cmd_deps_lock SKIPS lock generation when it

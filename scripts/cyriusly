@@ -81,6 +81,9 @@ case "${1:-help}" in
         # local `build/cycc`, and then delegates to `install.sh
         # --refresh-only` to populate `~/.cyrius/versions/$VERSION/`
         # and re-link `~/.cyrius/bin`.
+        # v6.6.4: if VERSION is a CUT RELEASE and the checkout has moved past its tag,
+        # install.sh refuses (a released slot is written from the tag only) — check out
+        # the tag, bump VERSION, or point CYRIUS_HOME at a throwaway.
         if [ ! -f "VERSION" ] || [ ! -f "cyrius.cyml" ] || [ ! -f "scripts/install.sh" ]; then
             echo "error: cyriusly setup must run from a Cyrius repo checkout"
             echo "       (expected VERSION, cyrius.cyml, and scripts/install.sh in cwd)"

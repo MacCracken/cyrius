@@ -46,7 +46,7 @@ trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: distlib_leaf_lookup_memory: $1"; exit 1; }
 
 V=$(cat "$ROOT/VERSION")
-SNAP="$HOME/.cyrius/versions/$V/lib"
+SNAP="${CYRIUS_HOME:-$HOME/.cyrius}/versions/$V/lib"   # v6.6.4: check.sh stages CYRIUS_HOME from the tree
 [ -d "$SNAP" ] || { echo "SKIP: no stdlib snapshot for $V (install not refreshed)"; exit 0; }
 
 ( cd "$ROOT" && cat cbt/cyrius.cyr | "$CC" > "$WORK/cyrius" ) 2>/dev/null \

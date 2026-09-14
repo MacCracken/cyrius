@@ -219,7 +219,7 @@ fn run_cx(cyx_path): i64 {
 
 # v6.3.3 #5: parse `[sections] base = "0x.."` from the cwd's cyrius.cyml and build
 # a "CYRIUS_KERNEL_BASE=0x.." env string (alloc'd) for the cycc spawn, or 0 if the
-# block / key is absent. Same line-scan idiom as _pulsar_release_array; cbt is
+# block / key is absent. Same line-scan idiom as `_parse_toml_str_array` in cbt/deps.cyr; cbt is
 # cycc-compiled (no cybs limits). Only consulted on bare-metal builds. The `[sections]`
 # block is bare-metal section-placement control (deliverable #5); today it exposes the
 # image load base — the one knob a freestanding kernel/firmware consumer needs.

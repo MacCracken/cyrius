@@ -47,7 +47,7 @@ chmod +x "$WORK/cyrius"
 CYRIUS="$WORK/cyrius"
 
 V=$(cat "$ROOT/VERSION")
-SNAP="$HOME/.cyrius/versions/$V/lib/sakshi.cyr"
+SNAP="${CYRIUS_HOME:-$HOME/.cyrius}/versions/$V/lib/sakshi.cyr"   # v6.6.4: the CLI copies from $CYRIUS_HOME — compare against the SAME store
 [ -f "$SNAP" ] || { echo "SKIP: no stdlib snapshot at $SNAP (install not refreshed for $V)"; exit 0; }
 
 SENTINEL="FAKE-SAKSHI-SENTINEL-deps-gate"

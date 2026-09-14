@@ -512,6 +512,10 @@ fn _cmd_update(): i64 {
 # `sh scripts/install.sh --refresh-only`. The native port of
 # the cyml [release] parsing is future work — for v5.11.10 this
 # shells out to bash equivalents.
+# v6.6.4: a checkout whose VERSION is a CUT RELEASE (tag exists) but whose tree has moved
+# past the tag is REFUSED by install.sh unless the checkout is at the tag — installing
+# in-progress content under a released name is what corrupted the 6.6.1/6.6.2 slots.
+# Check out the tag, or bump VERSION, or use a throwaway CYRIUS_HOME.
 fn _cmd_setup(): i64 {
     # Sanity check: must run from repo checkout.
     if (file_exists("VERSION") == 0) {

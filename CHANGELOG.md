@@ -49,6 +49,70 @@ mutation-proven against a 6.6.3 tree.
   (`_DEPRECATED_WARN`) called from both paths; pinned by axis 2 of the decoder gate (6.6.3
   prints nothing there).
 
+- ⛔ **The install store was writable under a RELEASED name, and it was stale in both
+  directions.** `~/.cyrius/versions/<v>` is what a consumer pin means; between a tag and the
+  next bump the working-tree `VERSION` still names the released version, and FOUR writers keyed
+  a slot write on it with no notion of "released": `install.sh --refresh-only` (via
+  `version-bump.sh`'s same-version path and `cyriusly setup`), `cyrius pulsar`, `cyrius lsp`
+  (through the `bin/` symlink into `versions/<current>`), and the CLAUDE.md "snapshot
+  ping-pong" hand-copy recipe. hisab filed it after a `cyrius build` under an unchanged
+  6.6.2 pin rewrote its committed `lib/ganita.cyr` to 1.2.5. `scripts/verify-store.sh` (new)
+  measured the installed **"6.6.2" stdlib as 6.6.3's byte for byte** (the 12 refolded
+  libs — hisab attested one file's 08:49 mtime on 09-12; the other 98 files kept their
+  install mtime, so the writer touched changed files only: a hand loop, not
+  `--refresh-only`), **"6.6.1" carrying three 6.6.2 files** plus a stray `boxed.cyr`, and —
+  the other direction, found by the review rebuilding every cross-bin from its tag —
+  **"6.6.3"'s `cycc_win` / `cycc_aarch64` / `cycc_cx` built from the bump commit**, the
+  tag's direct parent, missing the `#inline` repair that tag carries. ⚠ The report cannot see
+  that last shape in a pre-6.6.4 slot (untracked cross-bins are judged by the stamp, and old
+  slots have none); `--restore` rebuilds them from the tag regardless. ⭐ The recipe's premise had been false
+  since v5.11.17 (`cyrius deps` reads `./lib` in the source repo; `cmd_lib_sync` refuses
+  in-repo since v6.4.77): a mitigation that outlived its premise for seven minors and became
+  the defect.
+  **The fix is a contract with owners, not a warning:** `install.sh --refresh-only` REFUSES
+  when the version's tag exists ∧ the tree has moved past it ∧ the destination is live (the
+  slot exists, or the home is `$HOME/.cyrius`); tree == tag proceeds (the post-tag reconcile,
+  a clean clone), an untagged `VERSION` proceeds (the bump), a throwaway `CYRIUS_HOME` needs
+  no override, `CYRIUS_REFRESH_RELEASED=1` forces it. The refusal names the three ways
+  forward, including the re-cut order (`git tag -f <v> HEAD` FIRST). `cyrius lsp` checks the
+  same predicate for `<current>`; `cyrius pulsar` now installs THROUGH install.sh — its own
+  copy loop is gone (it copied top-level `lib/*.cyr` only, no `lib/unicode/`; copied
+  binaries in place — the ETXTBSY shape v6.6.1 fixed; and its self-host check compared
+  SIZES: stage 1 went through cbt `compile()`, which prepends `#@incdir` + `#@pkgver`, so it
+  was never built from the same input as the raw stage 2 — 38,927 bytes apart at the same
+  length — and stage 1 was what it installed. Both stages are raw pipes now, compared
+  byte-exact, replaced atomically; the aarch64 cross and native compilers are raw too, so
+  pulsar's cross-bins match the tag/install.sh recipe). `version-bump.sh` reports `NOT
+  refreshed` instead of an unconditional "refreshed". Every refresh stamps
+  `versions/<v>/SOURCE_COMMIT` (commit, dirty, tree-matches-tag).
+  **`scripts/check.sh` stages its own throwaway `CYRIUS_HOME` from the tree** — `versions/
+  <VERSION>` written from the working tree, every other slot and the dep cache aliased from
+  the live store — so gates that pin `cyrius = "$(cat VERSION)"` test the tree and the live
+  store is never written mid-slot; the lib-edit refresh step is retired from CLAUDE.md,
+  handoff.md, vidya (gotchas + methodology) and the agent memory.
+  **`scripts/verify-store.sh`** compares every tagged slot's `lib/`, tracked bins and stamp
+  against the tag (exit non-zero on any mismatch; advisory step in `release-gate.sh`);
+  `--restore <v>` rewrites a slot from its tag and rebuilds its cross-bins from the tag's
+  sources with the tag's cycc — ⚠ `cycc_win` is the PE32+ compiler (`CYRIUS_TARGET_WIN=1`);
+  the first cut rebuilt it as an ELF and had to be re-run. **The live store on the
+  maintainer's box was restored this way** (6.6.0–6.6.3 all verify OK). Consumers that had
+  ingested 6.6.3 content under a 6.6.2 pin: aethersafha and crab have it COMMITTED in `lib/`
+  (their next build flips those files back — visible as a diff, and the bite-5 relock guard
+  will name it), sankhya's `lib/` is gitignored, and agnoshi was already flipped back by this
+  bite's own `check.sh` run (the agnos gate builds it).
+  Gated by `tests/gates/toolchain/released_slot_written_from_tag.sh` (17 axes in a mktemp
+  mini-repo against a mktemp store: refusal, throwaway carve-out, override, tree==tag,
+  untagged, the user's own store spelled with a trailing slash under a symlinked HOME, an
+  untracked lib file as drift, a reused throwaway, a `--no-tags` clone failing CLOSED, `lsp`
+  refused before compiling / with no `current` / proceeding on a throwaway, pulsar's single
+  writer checked in the compiled binary, verify-store report + restore + anti-vacuous —
+  every axis mutation-measured, ledger in the file). Also: `check.sh` prefixes PATH with the
+  staged `bin/` (the live wrapper returns early from the pin redirect when a consumer's pin
+  equals its own version, so twelve wrapper-driven gates were still running the RELEASED
+  cbt — found by the review), and four gates that read `$HOME/.cyrius` directly now read
+  `${CYRIUS_HOME:-$HOME/.cyrius}` so they compare against the same store the CLI copies from. Procedure added to CLAUDE.md: after EVERY tag, one `install.sh
+  --refresh-only` at the tagged commit is the reconciling write.
+
 - ⛔ **`public enum` re-exposed the NEXT declaration in a `private` file — and so did
   `public struct` / `union` / `impl` / `use` / `var a[N]`.** `_TL_VIS` armed the `public`
   marker unconditionally; only a fn or global-var DEFINITION ever consumed it. An enum

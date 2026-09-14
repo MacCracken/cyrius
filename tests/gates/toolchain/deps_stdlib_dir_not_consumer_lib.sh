@@ -26,7 +26,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 command -v cyrius >/dev/null 2>&1 || { echo "SKIP: cyrius CLI not on PATH"; exit 0; }
 PIN=$(cat "$ROOT/VERSION")
-SNAP="$HOME/.cyrius/versions/$PIN/lib"
+SNAP="${CYRIUS_HOME:-$HOME/.cyrius}/versions/$PIN/lib"   # v6.6.4: check.sh stages CYRIUS_HOME from the tree
 [ -d "$SNAP" ] || { echo "SKIP: pinned snapshot $SNAP not installed"; exit 0; }
 # Two real stdlib leaves that the filing itself names.
 for m in bench test; do

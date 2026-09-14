@@ -204,11 +204,19 @@ fi
 # re-copies build/ + scripts/ named in cyrius.cyml [release] + lib/.
 # Skipped silently if install.sh is missing (shouldn't happen in a
 # normal cyrius checkout).
+_SNAP_RESULT="(install snapshot refreshed)"
 if [ -x scripts/install.sh ]; then
     # v6.5.3: do NOT swallow stderr. This suppression is why an ETXTBSY `cp` failure
     # that stranded all 17 installed binaries went unseen across multiple releases.
-    sh scripts/install.sh --refresh-only || \
-        echo "  warning: install-snapshot refresh failed (non-fatal)" >&2
+    # v6.6.4: CAPTURE the result. install.sh now REFUSES to write a released version's
+    # slot from a drifted tree (the same-version regenerate path at a tagged VERSION is
+    # exactly that shape), and the summary below used to print "refreshed" regardless.
+    if sh scripts/install.sh --refresh-only; then
+        _SNAP_RESULT="(install snapshot refreshed)"
+    else
+        _SNAP_RESULT="(install snapshot NOT refreshed — see the refusal/error above; a released slot is only rewritten from its tag)"
+        echo "  warning: install-snapshot refresh did not run (see above)" >&2
+    fi
 fi
 
 # 6b. SEED-DERIVE GATE (v6.3.0 lesson — never tag a broken seed). The cycc
@@ -244,7 +252,7 @@ echo "  VERSION"
 echo "  CLAUDE.md"
 echo "  CHANGELOG.md"
 echo "  ${ROADMAP_STAMP:-docs/development/roadmap.md (unchanged — same-version path)}"
-echo "  ~/.cyrius/versions/$NEW/ (install snapshot refreshed)"
+echo "  ~/.cyrius/versions/$NEW/ $_SNAP_RESULT"
 echo ""
 echo "Still manual:"
 echo "  - CHANGELOG.md entries (add Fixed/Changed/Added sections)"

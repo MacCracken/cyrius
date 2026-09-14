@@ -23,6 +23,53 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# ── v6.6.4: the suite runs against a THROWAWAY CYRIUS_HOME staged from the working tree ──
+#
+# Gates that stage a consumer pinned at `cyrius = "$(cat VERSION)"` resolve their stdlib
+# and wrapper from `$CYRIUS_HOME/versions/<VERSION>/`. Between a tag and the next bump
+# that slot is the RELEASED snapshot, so a mid-slot lib/ or cbt/ change was invisible to
+# them — and the documented workaround (copy lib/ into the released slot, or run the
+# same-version `version-bump.sh`) was the exact write that corrupted the installed 6.6.1
+# and 6.6.2 stdlibs (issues/archived/2026-09-13-hisab-refresh-only-overwrites-released-snapshot.md).
+# install.sh now REFUSES that write. So the suite stages its own home: `versions/<VERSION>`
+# is populated from the tree by `install.sh --refresh-only` (a fresh mktemp home never held
+# a release, so no override is needed), every OTHER slot of the live store and the dep cache
+# are aliased in read-only-by-convention (older pins and sibling checkouts keep resolving),
+# and the live store is never written. Set CYRIUS_HOME yourself to bypass the staging.
+# ⚠ Side effects of the staging run, inherited from --refresh-only: stale gitignored build/*
+# bins are rebuilt from the tree (cycc_win unconditionally) and .git/hooks/pre-commit is
+# (re)installed — the same things every version-bump does. PATH is prefixed with the staged
+# bin/ so `command -v cyrius` is the TREE-BUILT wrapper: the live one returns early from
+# `_try_redirect_to_pinned` when a consumer's pin equals its own version, so a consumer
+# pinned at VERSION would otherwise be served by the RELEASED cbt, and a cbt regression in
+# the tree would pass twelve wrapper-driven gates (found by the bite-4 review).
+_CHK_LIVE_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
+if [ -z "${CYRIUS_HOME:-}" ]; then
+    _CHK_HOME="$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-home.XXXXXX")"
+    _CHK_VER="$(tr -d '[:space:]' < VERSION)"
+    mkdir -p "$_CHK_HOME/versions"
+    if [ -d "$_CHK_LIVE_HOME/versions" ]; then
+        for _slot in "$_CHK_LIVE_HOME"/versions/*; do
+            [ -d "$_slot" ] || continue
+            [ "$(basename "$_slot")" = "$_CHK_VER" ] && continue
+            ln -s "$_slot" "$_CHK_HOME/versions/$(basename "$_slot")"
+        done
+    fi
+    [ -d "$_CHK_LIVE_HOME/deps" ] && ln -s "$_CHK_LIVE_HOME/deps" "$_CHK_HOME/deps"
+    [ -f "$_CHK_LIVE_HOME/signed-since" ] && cp "$_CHK_LIVE_HOME/signed-since" "$_CHK_HOME/signed-since"
+    if ! CYRIUS_HOME="$_CHK_HOME" sh "$ROOT/scripts/install.sh" --refresh-only > "$_CHK_HOME/.stage.log" 2>&1; then
+        printf "error: could not stage a throwaway CYRIUS_HOME from the tree:\n" >&2
+        cat "$_CHK_HOME/.stage.log" >&2
+        rm -rf "$_CHK_HOME"
+        exit 1
+    fi
+    export CYRIUS_HOME="$_CHK_HOME"
+    export CYRIUS_CHECK_STAGED_HOME=1
+    export PATH="$_CHK_HOME/bin:$PATH"
+    trap 'rm -rf "$_CHK_HOME"' EXIT
+    printf "check: staged CYRIUS_HOME=%s (versions/%s from the tree; other slots + deps aliased from %s; PATH prefixed with its bin/)\n" "$_CHK_HOME" "$_CHK_VER" "$_CHK_LIVE_HOME"
+fi
+
 CHECK_BIN="$ROOT/build/cyrius_check"
 # v6.0.90: programs/check.cyr split into programs/checks/ (slim dispatcher
 # main.cyr + per-suite files). CHECK_SRC is the dispatcher; the rebuild
@@ -458,6 +505,16 @@ sh "$ROOT/tests/gates/toolchain/build_refuses_compiler_overwrite.sh"
 # ⚠ This gate does NOT stage into a live home — it drives the refusal paths with temp trees and
 # a redirected HOME, so it is safe in check.sh where funcgate-stage.sh itself is not.
 sh "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
+
+# v6.6.4: a RELEASED version's install slot is written from its TAG, never from a drifted
+# tree. `install.sh --refresh-only` (and through it `cyrius pulsar`), `cyrius lsp` and the
+# retired CLAUDE.md hand-copy recipe all keyed a store write on the working-tree VERSION —
+# which between a tag and the next bump still names the released version — so the installed
+# "6.6.2" stdlib was 6.6.3's byte for byte and "6.6.3"'s cross-compilers were built two
+# commits before the tag. The guard refuses when tag exists ∧ tree drifted ∧ destination
+# live; `scripts/verify-store.sh` audits every tagged slot against its tag (+ `--restore`).
+# ⚠ Runs entirely in a mktemp mini-repo against a mktemp store — never the live ~/.cyrius.
+sh "$ROOT/tests/gates/toolchain/released_slot_written_from_tag.sh"
 
 # v6.6.3: every TRACKED path must be checkoutable on Windows/macOS. A file named `c -l)|XX|` —
 # debris from a mis-quoted shell redirect — was committed, and the whole five-step release gate

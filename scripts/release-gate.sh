@@ -131,6 +131,17 @@ sh scripts/bench-history.sh 2>&1 | grep -iE "self_compile|size/cycc" | head || e
 rm -rf "$T"
 echo ""
 echo "================================================================"
+# v6.6.4: the install store must equal its tags. Advisory here (the release gate runs BEFORE
+# the tag, so the slot about to be cut is untagged and not judged); what it catches is the
+# PREVIOUS releases' slots having been written from a drifted tree — the shape that made the
+# installed "6.6.2" stdlib 6.6.3's. Repair with `sh scripts/verify-store.sh --restore <v>`.
+step "store" "verify-store (every tagged install slot == its tag; advisory)"
+if ! sh scripts/verify-store.sh; then
+    echo "  warning: the install store does not match its tags — run scripts/verify-store.sh --restore <v> before handing off"
+fi
+
+echo ""
 echo "RELEASE GATE: GREEN — safe to version-bump + tag + hand off."
+echo "  Then, AFTER the tag: sh scripts/install.sh --refresh-only   (tree == tag → the new slot is written from the tag; stamped)"
 echo "  Record the bench self_compile + cycc-size delta in the CHANGELOG."
 echo "================================================================"

@@ -130,7 +130,9 @@ Full set in [`CLAUDE.md`](../../CLAUDE.md). The ones that mattered this session:
   cross-OS on **real** ecb/ach/cass/pi · bench. A green CI checkmark is NOT the cross-OS leg.
 - **Seed-derive is mandatory for ANY `src/` change**, including comment-only ones — cybs is
   far more limited than `build/cycc` and fails SILENTLY on things cycc compiles fine.
-- **Fix the SOURCE repo, not the vendored `lib/` fold**, and refresh the `~/.cyrius` install
-  snapshot immediately after editing any `lib/*.cyr` (snapshot ping-pong).
+- **Fix the SOURCE repo, not the vendored `lib/` fold.** Do NOT copy an edited `lib/*.cyr`
+  into `~/.cyrius/versions/<v>/` — that recipe ("snapshot ping-pong") was the writer that
+  corrupted the released 6.6.1 / 6.6.2 slots and is refused since 6.6.4; `check.sh` stages
+  its own throwaway home from the tree (CLAUDE.md "The install store is written from TAGS").
 - **The user handles all git operations.** Do not commit, push, or tag. **Never use `gh`** —
   `curl` to the GitHub API only.

@@ -296,6 +296,99 @@ fn _try_redirect_to_pinned(): i64 {
 # Main dispatch
 # ================================================================
 
+# ── v6.6.4: released-slot guard for the CLI's own writers into the store ──────────────
+# The store contract (scripts/install.sh, `--refresh-only`): `versions/<v>` is what a pin
+# MEANS, and once <v> is tagged the slot must equal the tag. `cyrius pulsar` now installs
+# through install.sh (which carries the guard); `cyrius lsp` writes `_home/bin/cyrius-lsp`
+# — a symlink into `versions/<current>/bin` — so it checks the same predicate for
+# <current>: tag exists AND the tree has moved past it AND the destination is live.
+# CYRIUS_REFRESH_RELEASED=1 forces it, exactly as for install.sh.
+fn _released_slot_guard_current(): i64 {
+    if (_cbt_env_is_1("CYRIUS_REFRESH_RELEASED") == 1) { return 0; }
+    # the version whose bin/ we are about to write: `current`, else the bin symlink's target
+    var cur_buf = alloc(256);
+    var cn = file_read_all(make_path(_home, "current"), cur_buf, 63);
+    if (cn <= 0) {
+        # no `current`: derive the version from the bin/ symlink target (POSIX stores only —
+        # the Windows peer has no readlink and its bin/ is a copy, not a link into a slot)
+        #ifdef CYRIUS_TARGET_WIN
+        return 0;
+        #endif
+        #ifndef CYRIUS_TARGET_WIN
+        var lb = alloc(1024);
+        var ln = sys_readlink(make_path(_home, "bin"), lb, 1023);
+        if (ln <= 0) { return 0; }              # no active version and bin/ is not a link: nothing released to protect
+        store8(lb + ln, 0);
+        # .../versions/<v>/bin → <v>
+        var vi = 0; var vstart = 0 - 1;
+        while (vi + 10 <= ln) {
+            if (memeq(lb + vi, "/versions/", 10) == 1) { vstart = vi + 10; }
+            vi = vi + 1;
+        }
+        if (vstart < 0) { return 0; }
+        cn = 0;
+        while (load8(lb + vstart + cn) != 0) {
+            if (load8(lb + vstart + cn) == 47) { break; }
+            store8(cur_buf + cn, load8(lb + vstart + cn)); cn = cn + 1;
+            if (cn >= 63) { break; }
+        }
+        if (cn == 0) { return 0; }
+        #endif
+    }
+    while (cn > 0) { if (load8(cur_buf + cn - 1) > 32) { break; } cn = cn - 1; }
+    store8(cur_buf + cn, 0);
+    # the version string is interpolated into a shell command below: allow [0-9A-Za-z._-] only
+    var ci = 0;
+    while (ci < cn) {
+        var ch = load8(cur_buf + ci);
+        var okc = 0;
+        if (ch >= 48) { if (ch <= 57) { okc = 1; } }
+        if (ch >= 65) { if (ch <= 90) { okc = 1; } }
+        if (ch >= 97) { if (ch <= 122) { okc = 1; } }
+        if (ch == 46) { okc = 1; }
+        if (ch == 95) { okc = 1; }
+        if (ch == 45) { okc = 1; }
+        if (okc == 0) {
+            sys_write(STDERR_FD, "error: refusing to write into the store: the active version name is not a plain version string\n", 95);
+            return 1;
+        }
+        ci = ci + 1;
+    }
+    # same predicate as install.sh `_released_slot_guard`: tag exists ∧ inputs drifted ∧ live
+    var tag_sb = str_builder_new();
+    str_builder_add_cstr(tag_sb, "git rev-parse -q --verify refs/tags/");
+    str_builder_add_cstr(tag_sb, cur_buf);
+    str_builder_add_cstr(tag_sb, " >/dev/null 2>&1");
+    if (sys_system(str_data(str_builder_build(tag_sb))) != 0) { return 0; }   # untagged (or no git): in flight
+    var diff_sb = str_builder_new();
+    str_builder_add_cstr(diff_sb, "git diff --quiet refs/tags/");
+    str_builder_add_cstr(diff_sb, cur_buf);
+    str_builder_add_cstr(diff_sb, " -- lib src cbt programs scripts bootstrap cyrius.cyml build 2>/dev/null && [ -z \"$(git ls-files --others --exclude-standard lib 2>/dev/null)\" ]");
+    if (sys_system(str_data(str_builder_build(diff_sb))) == 0) { return 0; }   # tree == tag: idempotent
+    var live = 0;
+    var slot_sb = str_builder_new();
+    str_builder_add_cstr(slot_sb, _home);
+    str_builder_add_cstr(slot_sb, "/versions/");
+    str_builder_add_cstr(slot_sb, cur_buf);
+    if (file_exists(str_data(str_builder_build(slot_sb))) == 1) { live = 1; }
+    # ... or the home IS the user's store (resolved through `pwd -P` so a symlinked $HOME or a
+    # trailing slash cannot dodge it — the same compare install.sh makes)
+    var home_sb = str_builder_new();
+    str_builder_add_cstr(home_sb, "[ \"$(cd \"$CYRIUS_HOME\" 2>/dev/null && pwd -P)\" = \"$(cd \"$HOME/.cyrius\" 2>/dev/null && pwd -P)\" ]");
+    if (sys_system(str_data(str_builder_build(home_sb))) == 0) { live = 1; }
+    if (live == 0) { return 0; }                                                # a throwaway home
+    sys_write(STDERR_FD, "error: refusing to write ", 25);
+    sys_write(STDERR_FD, _home, strlen(_home));
+    sys_write(STDERR_FD, "/bin/cyrius-lsp: the active version ", 36);
+    sys_write(STDERR_FD, cur_buf, strlen(cur_buf));
+    sys_write(STDERR_FD, " is a CUT RELEASE (its tag exists) and the tree has moved past it;\n", 67);
+    sys_write(STDERR_FD, "       bin/ is a symlink into versions/", 39);
+    sys_write(STDERR_FD, cur_buf, strlen(cur_buf));
+    sys_write(STDERR_FD, "/bin, which every consumer pinning it resolves. Bump first (scripts/version-bump.sh <next>),\n", 93);
+    sys_write(STDERR_FD, "       commit + re-tag (git tag -f <v> HEAD) if re-cutting, use a throwaway CYRIUS_HOME, or CYRIUS_REFRESH_RELEASED=1 to force.\n", 128);
+    return 1;
+}
+
 fn main(): i64 {
     alloc_init();
     args_init();
@@ -1141,6 +1234,9 @@ fn main(): i64 {
     # --- LSP ---
     if (streq(cmd, "lsp") == 1) {
         # Build and install cyrius-lsp
+        # v6.6.4: the released-slot guard runs BEFORE the build — a refused write should not
+        # cost a compile, and a gate can then exercise the refusal in a mini-repo.
+        if (_home != 0) { if (_released_slot_guard_current() != 0) { return 1; } }
         println("Building cyrius-lsp...");
         var lsp_src = "programs/cyrius-lsp.cyr";
         if (file_exists(lsp_src) == 0) {
@@ -1155,6 +1251,10 @@ fn main(): i64 {
         }
         # Install to CYRIUS_HOME/bin/
         if (_home != 0) {
+            # v6.6.4: `_home/bin` is a symlink INTO versions/<current>/bin on every normal
+            # install, and <current> is the RELEASED version between a tag and the next bump
+            # — the same released-slot write install.sh --refresh-only refuses (checked above,
+            # before the compile).
             var dest = make_path(_home, "bin/cyrius-lsp");
             # v6.5.37 (A0) — CHECK THE COPY. This ignored `_dep_copy_file`'s return and
             # printed "Installed: <path>" unconditionally, so any failed write reported

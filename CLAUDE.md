@@ -503,31 +503,54 @@ fix from covering it.** Same failure as the retired "≤6 args" rule — a codeg
 written down as a language rule and therefore never fixed. When a rule here says a
 shape is fine, check whether the tool actually handles it.
 
-### Snapshot-ping-pong protection (cyrius-side `lib/*.cyr` edits)
+### The install store is written from TAGS, never from a drifted tree (v6.6.4)
 
-When editing `lib/*.cyr` files in this repo, be aware of the
-**snapshot-ping-pong loop**: `version-bump.sh` runs `install.sh
---refresh-only` which copies `lib/*.cyr` from the repo into
-`~/.cyrius/versions/<v>/lib/` and `~/.cyrius/lib`. Subsequent
-`cyrius deps` resolution (e.g., during `check.sh`) can copy the
-snapshot version BACK into the repo, overwriting your edit if
-the snapshot is stale.
+`~/.cyrius/versions/<v>` is what a consumer pin **means**. Once `<v>` is a cut release
+(its tag exists) that slot must equal the tag — every one of the ~125 pinned repos
+resolves its stdlib and wrapper from it, and `deps --verify` trusts it. Between a tag
+and the next `version-bump.sh`, `VERSION` still names the RELEASED version, so anything
+that keys a store write on `VERSION` (or on `current`) mid-slot writes the in-progress
+tree under the released name. Four writers did exactly that, and the store was found
+stale in BOTH directions at the 6.6.4 open: the installed "6.6.2" stdlib was 6.6.3's byte
+for byte, "6.6.1" carried three 6.6.2 files, and "6.6.3"'s cross-compilers were built from
+the bump commit — the tag's direct parent — carrying the very defect the tag fixed.
 
-Mitigation when editing any file in `lib/`:
+Rules now (all enforced, not advisory):
 
-1. Make the edit in `lib/<file>.cyr`.
-2. **Immediately refresh the install snapshot** before running
-   any tool that triggers `cyrius deps` resolution:
-   ```sh
-   cp lib/<file>.cyr ~/.cyrius/versions/$(cat VERSION)/lib/<file>.cyr
-   cp lib/<file>.cyr ~/.cyrius/lib/<file>.cyr   # if the symlink-target also exists as a file
-   ```
-   Or run `sh scripts/version-bump.sh "$(cat VERSION)"` (same-version
-   regenerate path) which re-runs `install.sh --refresh-only`.
-3. Run `sh scripts/check.sh` to verify; the file should now stick.
+- **`install.sh --refresh-only`, `cyrius pulsar` and `cyrius lsp` REFUSE a released slot
+  when the tree has moved past the tag and the destination is live** (the slot exists, or
+  the home is `$HOME/.cyrius`). Tree == tag proceeds (post-tag reconcile, clean clone);
+  an untagged `VERSION` proceeds (that is the in-flight bump); a throwaway `CYRIUS_HOME`
+  proceeds with no override. `CYRIUS_REFRESH_RELEASED=1` forces it — for throwaways only.
+- **Re-cutting a version at a new commit is `git tag -f <v> HEAD` FIRST, then refresh** —
+  the guard's tree==tag carve-out then proceeds. Do not "bump" to get past the refusal,
+  and do not use the override against the live store.
+- **After EVERY tag, run `sh scripts/install.sh --refresh-only` once at the tagged commit.**
+  `version-bump.sh` refreshes BEFORE the bump commit exists (the stamp names the pre-bump
+  HEAD, dirty); the tag lands one or more commits later (CHANGELOG, handoff, a CI repair) —
+  and if any INPUT changed in between (6.6.3's own `#inline` repair did), the slot is not the
+  release; `verify-store.sh` flags a stamp whose inputs drifted. This is the reconciling write —
+  and it is what the 6.6.3 slot needed and never got (its cross-compilers were the bump
+  commit's, missing the tag's own `#inline` repair).
+- **`check.sh` stages its own throwaway `CYRIUS_HOME` from the tree** (`versions/<VERSION>`
+  from the working tree; every other slot and the dep cache aliased from the live store),
+  so gates that pin `cyrius = "$(cat VERSION)"` test the tree and NOTHING writes the live
+  store mid-slot. There is no lib-edit "snapshot refresh" step any more — do not copy
+  `lib/<f>.cyr` into `~/.cyrius/...`, and do not run the same-version
+  `version-bump.sh "$(cat VERSION)"` for it (both are the corrupting write; the second is
+  now refused at a tagged, drifted tree and reports `NOT refreshed`).
+- **Every refresh stamps `versions/<v>/SOURCE_COMMIT`** (commit, dirty flag, whether the
+  tree matched the tag). **`sh scripts/verify-store.sh`** compares every tagged slot's
+  `lib/`, tracked bins and stamp against the tag and exits non-zero on any mismatch;
+  `--restore <v>` rewrites a slot from its tag (lib, tracked bins, cross-bins rebuilt from
+  the tag's sources with the tag's cycc — ⚠ `cycc_win` is the PE32+ compiler,
+  `CYRIUS_TARGET_WIN=1`). Run the report at every closeout; it is what found the second
+  instance.
 
-Discovery: surfaced at v5.8.23 mid-bite-2 when `lib/tagged.cyr`
-edits reverted between Edit calls during the v5.8.21 sum-type
-migration. Root cause was the v5.8.22 install snapshot still
-containing the pre-migration hand-rolled fns; `check.sh`'s
-`cyrius deps` step copied them back into the repo.
+⚠ The old "Snapshot-ping-pong protection" recipe that stood here (copy an edited
+`lib/<f>.cyr` into `~/.cyrius/versions/$(cat VERSION)/lib/`) was the writer that
+corrupted the 6.6.1 and 6.6.2 slots, and its premise was false since v5.11.17: in this
+repo `cyrius deps` resolves `./lib` directly (`_dep_find_stdlib_dir` branch (a)) and
+`cmd_lib_sync` refuses to run here (v6.4.77), so nothing copies a snapshot back over a
+repo edit. A memory file or field note that still prescribes it is stale — this section
+is the rule.

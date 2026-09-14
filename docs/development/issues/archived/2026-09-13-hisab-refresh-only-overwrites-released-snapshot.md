@@ -1,8 +1,16 @@
-# `install.sh --refresh-only` writes the repo's in-progress `lib/` into an ALREADY-RELEASED version's snapshot — OPEN
+# `install.sh --refresh-only` writes the repo's in-progress `lib/` into an ALREADY-RELEASED version's snapshot — FIXED v6.6.4
 
-**Status:** 🟡 **OPEN** — filed by hisab on its 3.0.1 toolchain bump (6.6.2 → 6.6.3). No fix
-attempted here; the companion consumer-side filing is
-`2026-09-13-hisab-deps-relocks-silently-under-unchanged-pin.md`.
+**Status:** ✅ **FIXED in v6.6.4** — and widened: FOUR writers keyed a store write on the
+working-tree `VERSION`/`current` (this script, `cyrius pulsar`, `cyrius lsp`, the CLAUDE.md
+hand-copy recipe), and the store was stale in the OTHER direction too (the "6.6.3"
+cross-compilers were built at the bump commit, the tag's parent). `install.sh --refresh-only` refuses a
+released slot from a drifted tree when the destination is live; pulsar installs through it;
+`lsp` checks the same predicate; every refresh stamps `SOURCE_COMMIT`; `check.sh` stages its
+own throwaway home so nothing writes the store mid-slot; `scripts/verify-store.sh` audits and
+`--restore`s a slot from its tag (the maintainer's store was restored: 6.6.0–6.6.3 verify OK).
+Gated by `tests/gates/toolchain/released_slot_written_from_tag.sh`. ⚠ Option 2 (a `-dev`
+slot) was NOT taken: the check.sh staging removes the need, and a throwaway `CYRIUS_HOME` is
+the documented way to test a tree against a consumer.
 **Placement:** unpinned — every release; verified on the tree at **6.6.3**.
 **Discovered:** 2026-09-13. hisab's docs said ganita **1.2.4** under its 6.6.2 pin; its committed
 `lib/ganita.cyr` agreed; a `cyrius build` under that unchanged pin rewrote the file to **1.2.5** and

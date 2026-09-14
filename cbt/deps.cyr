@@ -293,8 +293,8 @@ fn _dep_copy_file(src, dst): i64 {
 #
 # Parser is intentionally minimal: scan to `[package]`, then walk
 # lines until either `cyrius = "..."` is found or the next section
-# header. Mirrors the pattern in cbt/pulsar.cyr::_pulsar_release_array
-# for arrays; this variant returns a scalar string. See CHANGELOG
+# header. Same line-scan idiom as `_parse_toml_str_array` (arrays); this variant
+# returns a scalar string. See CHANGELOG
 # [5.11.17].
 # v6.5.49 — read a scalar string key out of `[build]` in ./cyrius.cyml, or 0 if absent.
 # Backs `cyrius build` with no positional arguments: a project that already declares
