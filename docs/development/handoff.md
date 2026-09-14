@@ -1,4 +1,4 @@
-# Handoff — **v6.6.4 is bumped and gate-GREEN; the tag is the user's next call.** Nothing is mid-arc.
+# Handoff — **v6.6.4 is tagged (`84130a7a`), gate-GREEN, store reconciled.** Nothing is mid-arc.
 
 > **Written 2026-09-14, at the v6.6.4 bump.** Read this, then [`CLAUDE.md`](../../CLAUDE.md), then
 > [`state.md`](state.md), then [`roadmap.md`](roadmap.md).
@@ -17,7 +17,7 @@
 
 | | |
 |---|---|
-| Version | **6.6.4** — `version-bump.sh` has run (VERSION, CLAUDE.md, CHANGELOG header, cycc rebuilt, seed-derive, store slot `versions/6.6.4` written). **NOT yet committed or tagged.** |
+| Version | **6.6.4** — committed and **tagged** (`84130a7a`, 2026-09-14); the post-tag `install.sh --refresh-only` has run and `verify-store.sh` reads `6.6.4 OK · stamp tag-commit`, 5 slots 0 BAD. |
 | cycc x86_64 | **1,251,944 B** (`.text` 1,097,472) — +80 over 6.6.3. seed **29,024 B** → cybs → cycc byte-identical |
 | Gates | `check.sh` **246 / 0** · **164** shell gate scripts (DERIVE: `find tests/gates -name '*.sh' \| wc -l`) · release-gate **GREEN** 2026-09-14 |
 | Cross-OS | **ecb · ach · cass · pi** — all `SELFHOST_OK` + `crossos LIBTEST_OK` (74/74), REAL hardware. **The pi leg now builds and RUNS the CLI too.** |
@@ -30,27 +30,23 @@
 
 ## Do these, in this order
 
-1. **Commit + tag cyrius 6.6.4** (the bump commit is in the tree: VERSION, CLAUDE.md, CHANGELOG,
-   BENCHMARKS.md, bench-history.csv, build/cycc, src/version_str.cyr, roadmap/state/handoff).
-2. **After the tag, at the tagged commit:** `sh scripts/install.sh --refresh-only`. The bump's
-   store write is stamped with the PRE-bump HEAD, dirty; this is the reconciling write.
-   `sh scripts/verify-store.sh` should then show `6.6.4 OK … stamp tag-commit`.
-3. **Only once the GitHub 6.6.4 release exists** (CI's installer clones the tag):
-   - **patra 1.14.3** — already pushed by the user (commit `39a97af`); its CI is RED on
-     "could not clone tag 6.6.4" until then, and the README `[deps.patra] tag = "1.14.3"` fix is
-     a one-line local change still to commit. Tag after cyrius is out.
-   - **sigil 3.12.18** — 29 files uncommitted in `~/Repos/sigil` (VERSION, cyml pin 6.6.4 +
-     `"sys"` in the stdlib list, CHANGELOG, `src/sysinfo.cyr`, `src/luks.cyr`, 14 dist bundles +
-     sidecars, lock). Same rule: pins 6.6.4.
-   - ⛔ **Neither can be tagged before cyrius 6.6.4 is released.** (This ordering was buried in
-     a parenthetical last time and cost a red CI run — hence its own numbered step.)
-4. **mirshi 1.11.2** — 4 files uncommitted in `~/Repos/mirshi`; pins 6.6.2, **independent**,
-   can go any time. `ao_to_o` now translates `AO_NOFOLLOW`/`AO_EXCL`.
-5. **vidya** — 5 files uncommitted (`gotchas.cyml` +1 entry and the bite-4 retraction of the
+1. ~~Commit + tag cyrius 6.6.4~~ — done (`84130a7a`).
+2. ~~Post-tag `sh scripts/install.sh --refresh-only` at the tagged commit~~ — done; store reconciled.
+3. **patra 1.14.3** — committed AND tagged by the user, but its CI went red because the committed
+   `cyrius.lock` had been generated against a STAGED pre-final 6.6.4 tree (five `lib/` leaves
+   hashed a stdlib that never shipped; the bite-5 guard refused them). The lock is now re-locked
+   against the installed 6.6.4 release (`cyrius deps --relock` → `--verify` 27/0; a clean
+   worktree vendors, builds and tests green from it) — **one uncommitted file, `cyrius.lock`**.
+   Commit it and re-point the `1.14.3` tag at that commit (`git tag -f 1.14.3 && git push -f
+   origin 1.14.3`) — the user's call.
+4. **sigil 3.12.18** — committed (`cdc90c2`), not yet tagged; same lock problem, same fix
+   applied: `cyrius.lock` re-locked against the release (`--verify` 38/0, build + 65/65 tests).
+   **One uncommitted file, `cyrius.lock`.** Commit, then tag.
+5. **mirshi 1.11.2** — 4 files uncommitted in `~/Repos/mirshi`; pins 6.6.2, **independent**.
+   `ao_to_o` now translates `AO_NOFOLLOW`/`AO_EXCL`.
+6. **vidya** — 5 files uncommitted (`gotchas.cyml` +1 entry and the bite-4 retraction of the
    snapshot-refresh recipe; `methodology.cyml`, `semantics_runtime.cyml`, `features.cyml`,
    `tooling.cyml`). `bash scripts/validate-content.sh content` → 847/0.
-
----
 
 ## Start here next: slot `.3` (lands as 6.6.5) plus the two filed issues
 
@@ -122,6 +118,12 @@ patra/sigil/mirshi at source; an emitter-DERIVED allowlist gate.
   tracker accepted `#ifdef\tX`, which lex_pp treats as a COMMENT. Mirror the consumer exactly.
 - **A sibling bump is done when its OWN CI checks agree** — patra's compares the README install
   snippet's `tag` to `VERSION`; I bumped one and not the other.
+- ⛔ **Never generate a sibling's `cyrius.lock` against an UNRELEASED toolchain.** patra's and
+  sigil's locks were re-locked from a staged copy of the mid-bite-6 tree; the review then changed
+  five `lib/` files, so the committed locks hashed a stdlib that never shipped and the bite-5
+  guard refused them in CI. The lock is produced only AFTER cyrius is tagged and the store slot
+  reconciled (`install.sh --refresh-only` at the tag → `verify-store.sh` says `stamp tag-commit`),
+  via `cyrius deps --relock` from the installed release. Both were re-locked that way on 2026-09-14.
 - **`pkill -f '<script>'` matches the shell that runs it.** Launch long gates through a wrapper
   script under `setsid nohup … & disown` and poll the log for an end marker.
 - **`version-bump.sh` rewrites the version token and NOTHING else** in roadmap/state — re-derive
