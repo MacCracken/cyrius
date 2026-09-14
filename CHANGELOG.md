@@ -312,6 +312,144 @@ mutation-proven against a 6.6.3 tree.
   correct. Surfaced by the review's cx probes. Gated by `tests/gates/codegen/cx_pow2_mul.sh`
   (6.6.3 exits 11 for 22 and 44).
 
+- ⛔ **`cyrius run` / `test` / `tests` / `bench` / `fuzz` on NATIVE aarch64 exited 1 before
+  `execve` — every child, since 6.5.19.** `run_binary_timed` (`cbt/build.cyr`, the one fork
+  path all five verbs share) re-checks the parent after `prctl(PR_SET_PDEATHSIG)` with
+  `syscall(110)` — x86_64 `getppid`. On aarch64-Linux 110 is `timer_settime`, which returns
+  `-EINVAL`, never equals the recorded ppid, and the child took the "parent already gone"
+  exit. Nothing saw it for fifty-nine releases (6.5.19 through 6.6.3): the compiler
+  self-hosted on pi at every gate but the gate never built or ran the CLI there; since the
+  v6.5.51 raw-literal diagnostic landed (27 of those releases) the CLI's own aarch64 build
+  had been printing a warning for that exact line (nobody reads a warning on a binary
+  nobody runs); and on x86 the number is right. Spelled `SYS_GETPPID` — each Linux peer
+  declares its own number (110 on x86_64, the native 173 on aarch64); ESYSXLAT carries no
+  110 row and needs none, the symbol alone is the fix. Measured on pi: the 6.6.3 CLI's
+  `cyrius run _hello.cyr` is rc=1; the fixed CLI runs the program. `cross-os-selfhost.sh`'s
+  pi leg now also builds `cbt/cyrius.cyr` natively with the freshly self-hosted compiler,
+  refuses any raw-syscall warning from that build, and runs `cyrius run` under a throwaway
+  `CYRIUS_HOME` — the CLI is on the release gate, not only the compiler.
+
+- ⛔ **Raw x86_64 syscall numbers in arch-neutral stdlib code ran as DIFFERENT syscalls on
+  aarch64-Linux — `fstat`/`lstat` as `setxattr`/`lsetxattr`, `arch_prctl` as `getgroups`,
+  `time` as `listen`, sigil's `uname` as `read` — and open flags crossed untranslated, so
+  patra's WAL `O_NOFOLLOW` arrived as `O_LARGEFILE` and a symlink at the WAL path was
+  followed and truncated.** The filed issue (`2026-09-12-raw-x86-syscall-numbers-fdlopen-
+  dynlib-aarch64.md`, traced under `qemu-aarch64 -strace`). Everything in it is fixed, plus
+  what the sweep it prompted turned up:
+  - **ESYSXLAT routes 5 and 6 on both aarch64 arms** — ELF: `fstat` 5→80 (pure renumber),
+    `lstat` 6→`fstatat(AT_FDCWD, path, st, AT_SYMLINK_NOFOLLOW)` (the same reshaping `stat`
+    4 already gets, placed after the `getcwd` 79→17 row so the produced 79 is not re-eaten);
+    Mach-O arm: 5→`fstat64` 339, 6→`lstat64` 340 (the arm's existing `fstat` row is 80,
+    NOT Darwin's bare 189 — this peer's Stat enum is the 64-bit layout). The generated
+    `src/common/syscall_xlat.cyr` no longer names 5 as unrouted, and the raw-literal
+    diagnostic's wording now says what it can actually establish — "not one the aarch64
+    stdlib declares (it may still be a DIFFERENT real syscall)" — instead of "not a syscall
+    at all", which was false for every number in this bullet. `cycc` 1,251,888 → 1,251,944 B
+    (+56: the 53-byte message became 111), seed-derives.
+  - **`fdlopen` / `dynlib` DECLINE on aarch64 instead of failing by accident** — 158
+    (`arch_prctl(ARCH_SET_FS)`) is not a numbering gap: aarch64 sets TLS through
+    `TPIDR_EL0` and no renumbering fixes that. ⚠ And it did NOT fail closed as filed: the
+    filing traced under qemu-user, whose `getgroups` range-checks the whole 4098-entry
+    destination and returns `-EFAULT`; on real pi hardware `syscall(158, 0x1002, tls)` is
+    `getgroups(4098, tls)` — the kernel writes the process's supplementary GIDs INTO the TLS
+    block and returns their COUNT. The caller treated only `rc == 0` as success, so it
+    failed closed by accident on any process with supplementary groups (pi: 2) and failed
+    OPEN on one with none (`setgroups(0)` daemons, minimal containers): a TLS block the CPU
+    never installed was handed back as installed. So `fdlopen_helper_available` returns 0 and
+    `_fdlopen_mmap_elf`, `_fdlopen_verify_trusted`, `dynlib_open` and `dynlib_bootstrap_tls`
+    return -1/0 under `CYRIUS_ARCH_AARCH64`, with the same reasoning `_fdlopen_verify_trusted`
+    already records for macOS; the x86 TLS body sits under `#ifdef CYRIUS_ARCH_X86`. ⚠ Landed
+    TOGETHER with the 5/6 rows on purpose: the rows alone would have turned an accidental
+    fail-closed into a working `fstat` feeding an x86-only ELF loader — a compat row that
+    turns fail-closed into fail-OPEN ships with its decline. `dynlib_open` also gained the
+    belt the declines imply: an `e_machine != 62` object is refused on every arch, so an
+    aarch64 `.so` handed to the x86 loader fails before `mmap` rather than after `execve`.
+  - **Per-target `O_*` open flags** — `O_DIRECTORY` / `O_NOFOLLOW` are now declared next
+    to the per-target `SYS_*` numbers in EVERY peer, and `O_DIRECT` / `O_LARGEFILE` in the
+    two Linux peers (they have no Darwin / Win32 meaning). The two Linux peers carry the
+    same four names as a DIFFERENT permutation: x86_64 uses the `asm-generic/fcntl.h` set
+    (O_DIRECT 16384, O_LARGEFILE 32768, O_DIRECTORY 65536, O_NOFOLLOW 131072) and arm64
+    OVERRIDES it (O_DIRECTORY 16384, O_NOFOLLOW 32768, O_DIRECT 65536, O_LARGEFILE 131072);
+    Darwin `O_NOFOLLOW`=0x100, `O_DIRECTORY`=0x100000; Windows carries the x86 values and
+    documents that `EOPEN_PE` decodes only `O_CREAT`/`O_EXCL`. `lib/io.cyr`'s agnos peer
+    bridges `O_DIRECTORY` to `AO_DIRECTORY` (0x800) in `file_open` — **and, found by this
+    bite's review, `O_NOFOLLOW` → `AO_NOFOLLOW` (0x1000) and `O_EXCL` → `AO_EXCL`
+    (0x2000)**: the kernel added both at agnos 1.56.53 / 1.56.56 and its ABI doc listed them
+    as "the cyrius peer is still owed", while `lib/io.cyr` said (since 6.2.23 for `O_EXCL`,
+    and in this bite's first cut for `O_NOFOLLOW`) that no such bits exist and dropped them
+    — so the same WAL open followed-and-truncated on agnos too, behind a symbol that read
+    as protection. `enum AgnosOpenFlag` gained both; `tests/gates/platform/io_rdwr_agnos.sh`
+    grew an axis that runs an agnos binary under mirshi and asserts `O_NOFOLLOW` on a
+    symlink and `O_CREAT|O_EXCL` on an existing file are REFUSED while the plain opens
+    succeed (mutation: the `O_NOFOLLOW` bridge line removed → exit 3, symlink followed).
+    That axis needed mirshi 1.11.2: its `ao_to_o` dropped the same two bits, so under the
+    supervisor an agnos `AO_NOFOLLOW` open followed the symlink — fixed at source with four
+    unit rows. Consumers that spelled the x86 value in decimal —
+    patra's `enum OpenFlag { O_NOFOLLOW = 131072; O_DIRECTORY = 65536; }`, sigil's `luks.cyr`
+    — now spell the name and get the target's value. `SYS_FLOCK` (73) joined both Linux
+    peers so `xflock`'s two Linux arms collapsed to one `syscall(SYS_FLOCK, …)` (the aarch64
+    arm was a raw native 32, which the raw-literal diagnostic flagged on every aarch64
+    build of anything including `lib/io.cyr`).
+  - **Fixed AT SOURCE and re-vendored, not in the fold:** `lib/hashseed.cyr`'s fallback
+    `syscall(201, 0)` (x86 `time` — `listen` on fd 0 on aarch64, so the hash seed there was
+    `-ENOTSOCK`) → `clock_gettime`; sigil 3.12.18 (`sysinfo.cyr` raw 63 `uname` → `read`,
+    now `sys_uname` — ⚠ sigil therefore depends on `lib/sys.cyr`: its `[deps] stdlib` list
+    carries `"sys"`, and the five in-tree files that hand-include `lib/sigil.cyr` now include
+    `lib/sys.cyr` first; `luks.cyr` `| O_NOFOLLOW`; 14 dist bundles regenerated, the profile
+    sidecars gained `syscalls_linux_common`); patra 1.14.3 (`OpenFlag` enum removed in favour
+    of the stdlib names, `jsonl.cyr` `| O_NOFOLLOW`, both raw `201` sites in `wal.cyr` →
+    `_wal_epoch_secs()` on `clock_gettime` — on PE that number is the `GetTickCount64`
+    reroute, which RETURNS the value, so the helper sums return and buffer the way
+    `lib/hashseed.cyr` does rather than reading a non-zero return as failure; `dist/patra.cyr`
+    regenerated; lock re-locked under the 6.6.4 pin); mirshi 1.11.2 (above). `programs/fdlopen-phdr-probe.cyr`'s raw 5 → `SYS_FSTAT`;
+    `programs/cyrld.cyr`'s "best-effort" `chmod +x` was a raw 90 (`capget` on aarch64) →
+    `sys_chmod`. `docs/ecosystem.md` fold rows updated.
+  - **Gated three ways.** (1) `tests/tcyr/crossos/syscall_stat_x86_compat.tcyr` (raw 5/6
+    return what `sys_fstat`/`sys_lstat` return, fill `st_size` and `st_mode` at the peer's
+    own offsets to the same values the wrappers fill — a 13-byte file, and the symlink's
+    `st_size` is the LINK text's 15, so it is the link that was stat'ed; 11 assertions),
+    `fdlopen_dynlib_decline.tcyr` (embeds a 1,176-byte aarch64 `ET_DYN` — the system
+    `libc.so.6` was non-discriminating under qemu — and asserts on aarch64 that
+    `_fdlopen_mmap_elf` and `dynlib_open` DECLINE it, which is the assertion that separates
+    a decline from the 6.6.3 accident: with the rows present and the decline removed the
+    fixture maps and returns 0; and on x86-Linux both the working load and the `e_machine`
+    belt) and `open_flags_per_target.tcyr` (`O_NOFOLLOW` on a symlink is exactly `-ELOOP`
+    — 40 on Linux, 62 on Darwin — and `O_DIRECTORY` on a file exactly `-ENOTDIR`, so a
+    value the kernel rejects for a DIFFERENT reason cannot pass) — all three in the cross-OS
+    directory, so ecb/ach/cass/pi run them; the aarch64 `O_*` values swapped back to x86's
+    fails 4 of 6 including the truncated-target case, and the mmap decline removed reds the
+    fixture assertion. (2) `tests/gates/platform/syscall_xlat_generated.sh` re-pointed: axis 3 now uses
+    `fchmod` 91 as its unrouted example (5 is routed), a new 3b pins that raw 5 stays SILENT,
+    and new axes 7/8 build a stdlib hello and `cbt/cyrius.cyr` for aarch64 and require ZERO
+    raw-syscall warnings from either — the CLI's warning was the tell nobody read.
+    (3) NEW `tests/gates/platform/raw_syscall_literals_routed.sh`: the v6.5.51 diagnostic is
+    structurally blind to the class in this bullet (an x86 number that is a valid-but-
+    different aarch64 syscall — its table derives from the aarch64 PEER's declared names, and
+    axis 5 pins that 63 stays silent), so this gate derives the routed set from the EMITTER
+    (`cmp x8,#N` words decoded from ESYSXLAT's own body with Rn checked — 44 rows, the
+    ≥1000 private-alias band included; the first cut decoded every `0xF1…` word in the file
+    and would have admitted ETESTAZ's `cmp x0,#0` or a stray `cmp x16,#N`) and scans every
+    raw `syscall(<literal>, …)` in `lib/` + `cbt/` (326 sites, 108 files — the five per-target
+    peers exempt BY NAME, `lib/syscalls_linux_common.cyr` scanned because both Linux arches
+    compile it; ≥0xF000 PE-reroute band exempt) against it. Target guards are tracked with
+    lex_pp's EXACT spellings (`#ifdef ` + one space; `#else`/`#endif` + a non-identifier
+    byte) because `#ifdef\tX` is a comment to the preprocessor and guards nothing; a `#`
+    inside a string does not open a comment; an unrelated `#ifdef` inherits its parent. A
+    new row is admitted automatically; a new raw literal fails until it is routed, spelled
+    `SYS_*`, or guarded. Floors on rows/files/sites so an empty scan cannot pass. Mutation:
+    `syscall(201, 0)` back in `lib/hashseed.cyr` → 1 unrouted site, exit 1; thirteen
+    adversarial guard shapes (tab/double-space `#ifdef`, `#` in a string, `#else` of an x86
+    guard, nested, unrelated symbol, hex, `#elsewhere`) judged as the preprocessor would.
+    Registered in check.sh's "aarch64 syscalls + threads" section.
+  - **Not in this release, listed so the pin sweep carries it:** the same decimal `O_*`
+    literals live in kavach (its own filing), aegis, attn11, phylax, agnodrm and hapi;
+    agnostik's `_fill_random` spells `getrandom` as a raw 318 (not an aarch64 syscall —
+    `-ENOSYS`, so it silently takes its `/dev/urandom` fallback there) and vidya's hot-reload
+    watch spells `inotify_init1` as a raw 294 with a comment claiming "x86_64 + aarch64"
+    (aarch64 294 is `kexec_file_load`; `inotify_init1` is 26 — the watch never arms). Each is
+    a one-line `SYS_*` / `O_*` spelling at the next bump; none is routed by ESYSXLAT, so the
+    new gate would name every one of them if it were stdlib code.
+
 ## [6.6.3] — 2026-09-12
 
 The repair release the 6.6.2 ecosystem sweep filed against. Six issues, all closed, plus a

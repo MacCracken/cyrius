@@ -1241,7 +1241,7 @@ fn emit_executable(out_path): i64 {
     }
     syscall(SYS_CLOSE, fd);
     # chmod +x (best effort)
-    syscall(90, out_path, 0x1ED);
+    sys_chmod(out_path, 0x1ED);   # was raw x86 90 — capget on aarch64 (CHANGELOG [6.6.4])
     prints("  wrote "); printn(total_with_shdrs); prints(" bytes to "); prints(out_path); prints("\n");
     prints("  entry: 0x"); printhex(entry); prints("\n");
     return 0;

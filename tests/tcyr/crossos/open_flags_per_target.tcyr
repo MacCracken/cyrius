@@ -1,0 +1,73 @@
+# open_flags_per_target.tcyr — v6.6.4: O_NOFOLLOW and O_DIRECTORY are stdlib symbols with
+# the RIGHT VALUE on every target, and file_open honours them.
+#
+# THE DEFECT (issue 2026-09-12, traced on aarch64 at 6.6.3). Syscall NUMBERS at least have
+# ESYSXLAT; open FLAG VALUES had nothing, and the stdlib defined no O_NOFOLLOW /
+# O_DIRECTORY at all, so consumers hardcoded the x86_64 numbers. On arm64 (whose fcntl.h overrides the generic set)
+# the pairs SWAP: x86 O_NOFOLLOW (0x20000) is O_LARGEFILE there and x86 O_DIRECTORY
+# (0x10000) is O_DIRECT. patra's WAL open — `O_RDWR|O_CREAT|O_TRUNC|O_NOFOLLOW`, the
+# O_NOFOLLOW put there precisely to stop a symlink clobber — FOLLOWED the symlink on
+# aarch64 and truncated its target (measured: "hi" → 0 bytes); its directory fsync opened
+# with O_DIRECT and got EINVAL. Darwin's values differ again (0x100 / 0x100000).
+#
+# Each peer now owns its values (x86_64 = the asm-generic set: 0x20000/0x10000; arm64
+# overrides it: 0x8000/0x4000; Darwin: 0x100/0x100000; PE: defined but NOT honoured —
+# EOPEN_PE decodes only O_CREAT/O_EXCL, a documented follow-on). Asserts the EXACT errno
+# (-ELOOP: 40 Linux / 62 Darwin; -ENOTDIR 20) so a value the kernel rejects for a different
+# reason (EINVAL) cannot pass. Mutation: swap the aarch64 values back to the x86 ones and
+# the symlink opens and its target is truncated (4 of 6 red).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    #ifndef CYRIUS_TARGET_WIN
+    test_group("O_NOFOLLOW: a symlinked path is refused, its target untouched");
+    var tgt = "/tmp/cyr_oflag_target";
+    var lnk = "/tmp/cyr_oflag_link";
+    xunlink(lnk);
+    var wfd = file_open(tgt, O_WRONLY | O_CREAT | O_TRUNC, 420);
+    assert_eq(wfd >= 0, 1, "create the target");
+    sys_write(wfd, "hi", 2);
+    sys_close(wfd);
+    xsymlink(tgt, lnk);
+    var nf = file_open(lnk, O_RDWR | O_TRUNC | O_NOFOLLOW, 0);
+    # the exact errno, per target: ELOOP is 40 on Linux and 62 on Darwin. `< 0` alone would
+    # also pass on a value the kernel rejects for a DIFFERENT reason (an unknown flag bit is
+    # EINVAL on Darwin), which is the very confusion the per-target values exist to end.
+    #ifdef CYRIUS_TARGET_MACOS
+    assert_eq(nf, 0 - 62, "file_open(symlink, O_RDWR|O_TRUNC|O_NOFOLLOW) is -ELOOP (62 on Darwin)");
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    assert_eq(nf, 0 - 40, "file_open(symlink, O_RDWR|O_TRUNC|O_NOFOLLOW) is -ELOOP (40 on Linux)");
+    #endif
+    if (nf >= 0) { sys_close(nf); }
+    var st[144];
+    sys_stat(tgt, &st);
+    assert_eq(load64(&st + STAT_SIZE), 2, "the target still holds its 2 bytes — NOT truncated through the link");
+    var rf = file_open(tgt, O_RDONLY | O_NOFOLLOW, 0);
+    assert_eq(rf >= 0, 1, "O_NOFOLLOW on a REGULAR path still opens");
+    if (rf >= 0) { sys_close(rf); }
+    xunlink(lnk);
+    xunlink(tgt);
+
+    test_group("O_DIRECTORY: a directory opens, a file does not");
+    var dfd = file_open("/tmp", O_RDONLY | O_DIRECTORY, 0);
+    assert_eq(dfd >= 0, 1, "file_open(/tmp, O_DIRECTORY) >= 0 (was: EINVAL on aarch64 — the value meant O_DIRECT)");
+    if (dfd >= 0) { sys_close(dfd); }
+    var ffd = file_open("/etc/passwd", O_RDONLY | O_DIRECTORY, 0);
+    # (20 on Linux and Darwin; the 6.6.3 aarch64 value meant O_DIRECT and got EINVAL)
+    assert_eq(ffd, 0 - ENOTDIR, "file_open(/etc/passwd, O_DIRECTORY) is exactly -ENOTDIR");
+    if (ffd >= 0) { sys_close(ffd); }
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("PE: the symbols exist (values not honoured by EOPEN_PE — documented)");
+    assert_eq(O_NOFOLLOW != 0, 1, "O_NOFOLLOW defined");
+    assert_eq(O_DIRECTORY != 0, 1, "O_DIRECTORY defined");
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

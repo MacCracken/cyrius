@@ -72,14 +72,28 @@ else
     fi
 
     # ── axis 3: it STILL CATCHES a genuinely wrong number ─────────────────────────
-    # 5 is x86_64 fstat and is not an aarch64 syscall at all.
-    printf 'fn main(): i64 { return syscall(5, 0); }\nvar r = main();\n' > "$D/bad.cyr"
+    # v6.6.4: 5 (fstat) is ROUTED now (5→80), so it must NOT warn; 91 (x86 fchmod) is the
+    # probe — it is aarch64 capset (kavach's filed fchmod→capset), unrouted, and not a name
+    # the aarch64 peer declares. ⚠ This axis used to say 5 "is not an aarch64 syscall at
+    # all"; it is setxattr. The diagnostic's own text carried the same error.
+    printf 'fn main(): i64 { return syscall(91, 0, 0); }\nvar r = main();\n' > "$D/bad.cyr"
     "$D/cc_a64" < "$D/bad.cyr" > /dev/null 2>"$D/bad.err"
-    if [ "$(grep -c 'raw syscall 5 is x86_64 `fstat`' "$D/bad.err")" != 1 ]; then
-        echo "FAIL: axis 3: a raw x86_64 fstat(5) on ELF-aarch64 produced no diagnostic"
+    if [ "$(grep -c 'raw syscall 91 is x86_64 `fchmod`' "$D/bad.err")" != 1 ]; then
+        echo "FAIL: axis 3: a raw x86_64 fchmod(91) on ELF-aarch64 produced no diagnostic"
+        FAIL=1
+    elif grep -q 'not a syscall at all' "$D/bad.err"; then
+        echo "FAIL: axis 3: the diagnostic still claims the number is 'not a syscall at all' (91 IS capset there)"
         FAIL=1
     else
-        echo "  ok: raw x86_64 fstat(5) on ELF-aarch64 is diagnosed by name"
+        echo "  ok: raw x86_64 fchmod(91) on ELF-aarch64 is diagnosed by name, without the false 'not a syscall' claim"
+    fi
+    printf 'fn main(): i64 { return syscall(5, 0, 0); }\nvar r = main();\n' > "$D/fst.cyr"
+    "$D/cc_a64" < "$D/fst.cyr" > /dev/null 2>"$D/fst.err"
+    if [ "$(grep -c 'raw syscall' "$D/fst.err")" != 0 ]; then
+        echo "FAIL: axis 3b: raw fstat(5) warned, but ESYSXLAT routes it (5→80) since v6.6.4"
+        FAIL=1
+    else
+        echo "  ok: raw fstat(5) is routed now and stays silent"
     fi
 
     # ── axis 4: an ESYSXLAT-REMAPPED number must stay SILENT ──────────────────────
@@ -103,6 +117,36 @@ else
         FAIL=1
     else
         echo "  ok: an ambiguous number (63 = x86 uname / aarch64 read) stays silent"
+    fi
+fi
+
+# ── axis 7/8: ZERO raw-syscall warnings on an aarch64 build of a stdlib hello and of the
+#    CLI — the wolf-cry the gate says must be zero. v6.6.4: lib/io.cyr's native flock(32)
+#    under `#ifdef CYRIUS_ARCH_AARCH64` was flagged "raw syscall 32 is x86_64 dup" on EVERY
+#    aarch64 build that includes io.cyr, and cbt/build.cyr's raw 110 (getppid → aarch64
+#    timer_settime, which killed every `cyrius run/test` child on native aarch64 since 6.5.19)
+#    had printed its warning since the diagnostic landed at 6.5.51 (27 releases), scrolled
+#    past. ⚠ Anti-vacuous: a compile that
+#    FAILS emits 0 warnings too, so each axis also requires rc 0 and a non-empty output.
+if [ -x "$D/cc_a64" ]; then
+    printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/io.cyr"\nfn main(): i64 { return 0; }\nvar r = main();\nsyscall(60, r);\n' > "$D/hello.cyr"
+    rc7=0; "$D/cc_a64" < "$D/hello.cyr" > "$D/hello.bin" 2>"$D/hello.err" || rc7=$?
+    if [ "$rc7" -ne 0 ] || [ ! -s "$D/hello.bin" ]; then
+        echo "FAIL: axis 7: the stdlib hello did not build for aarch64 (rc=$rc7)"; FAIL=1
+    elif [ "$(grep -c 'raw syscall' "$D/hello.err")" != 0 ]; then
+        echo "FAIL: axis 7: a stdlib hello (syscalls+alloc+io) warns on aarch64 — a false positive on correct lib code:"
+        grep 'raw syscall' "$D/hello.err" | head -3 | sed 's/^/      /'; FAIL=1
+    else
+        echo "  ok: a stdlib hello builds for aarch64 with 0 raw-syscall warnings (io.cyr's flock is SYS_FLOCK now)"
+    fi
+    rc8=0; "$D/cc_a64" < cbt/cyrius.cyr > "$D/cli.bin" 2>"$D/cli.err" || rc8=$?
+    if [ "$rc8" -ne 0 ] || [ ! -s "$D/cli.bin" ]; then
+        echo "FAIL: axis 8: cbt/cyrius.cyr did not build for aarch64 (rc=$rc8)"; FAIL=1
+    elif [ "$(grep -c 'raw syscall' "$D/cli.err")" != 0 ]; then
+        echo "FAIL: axis 8: the CLI warns on aarch64 — a raw x86 number reached cbt/ again:"
+        grep 'raw syscall' "$D/cli.err" | head -3 | sed 's/^/      /'; FAIL=1
+    else
+        echo "  ok: the CLI builds for aarch64 with 0 raw-syscall warnings (cbt/build.cyr's 110 is SYS_GETPPID now)"
     fi
 fi
 

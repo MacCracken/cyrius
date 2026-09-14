@@ -1011,6 +1011,12 @@ fn ESYSXLAT(S): i64 {
         # replaces. The x86 peer is the mirror image (legacy offsets → 5→189 is correct
         # there), which is exactly why the parity gate compares CAPABILITY, not number.
         _esx_arm(S, 80, 339);  # fstat 80→fstat64 339
+        # v6.6.4: the raw x86 numbers for fstat/lstat, so a consumer that spelled 5/6 (the
+        # fdlopen/dynlib shape) reaches the stat64 forms here too — same layout argument
+        # as the 80→339 row; the ELF arm gained 5→80 / 6→fstatat(AT_SYMLINK_NOFOLLOW) in
+        # the same patch. Without these the crossos stat test ran with a stale x16 on ecb.
+        _esx_arm(S, 5, 339);   # fstat 5→fstat64 339
+        _esx_arm(S, 6, 340);   # lstat 6→lstat64 340
         # v6.5.16: fcntl. This peer's SYS_FCNTL is 25, and only the raw x86 72 was routed
         # (for lib/net.cyr's hardcoded syscall(72,...)), so every `syscall(SYS_FCNTL, …)`
         # in lib/async.cyr — the O_NONBLOCK + FD_CLOEXEC setup on every async fd — ran
@@ -1168,6 +1174,27 @@ fn ESYSXLAT(S): i64 {
     # cmp x8,#4; b.ne +24 (skip 5); movz x3,#0; mov x2,x1; mov x1,x0; movn x0,#99; movz x8,#79
     EW(S, 0xF100111F); EW(S, 0x540000C1);
     EW(S, 0xD2800003); EW(S, 0xAA0103E2); EW(S, 0xAA0003E1); EW(S, 0x92800C60);
+    EW(S, 0xD28009E8);
+    # v6.6.4: fstat 5 → 80 and lstat 6 → fstatat 79 + AT_SYMLINK_NOFOLLOW — the two stat
+    # siblings that never got the v6.0.68 treatment. Raw x86 5/6 in arch-neutral lib code
+    # (lib/fdlopen.cyr, lib/dynlib.cyr) reached the aarch64 kernel as setxattr(5) /
+    # lsetxattr(6) — write-class calls aimed at caller data (traced under qemu -strace;
+    # issues/2026-09-12-raw-x86-syscall-numbers-fdlopen-dynlib-aarch64.md). Both fail
+    # closed today (EFAULT/ERANGE), and routing them is ONE HALF of the fix: the other
+    # half is the aarch64 declines in those two files, landed in the same patch, because
+    # with the 5→80 row ALONE dynlib_open turned fail-closed into fail-OPEN — it mmap'd an
+    # aarch64 .so, walked its relocs against R_X86_64_* constants and handed back a handle.
+    # ⚠ struct stat layouts differ: st_size@48 is common, st_mode/st_uid are NOT (aarch64
+    # STAT_MODE=16, STAT_UID=24 — lib/syscalls_aarch64_linux.cyr) — a raw-5/6 consumer must
+    # read fields through the peer's STAT_* offsets. MUST stay after getcwd (79→17) and
+    # after stat (which produces 79 too) so the 79 set here is never re-caught.
+    # fstat: pure renumber (fd, buf). cmp x8,#5 = 0xF100151F; movz x8,#80 = 0xD2800A08.
+    EW(S, 0xF100151F); EW(S, 0x54000041); EW(S, 0xD2800A08);  # fstat 5→80
+    # lstat(path,buf) → fstatat(AT_FDCWD, path, buf, AT_SYMLINK_NOFOLLOW=0x100): the stat
+    # arg-shift plus x3=0x100. cmp x8,#6 = 0xF100191F; b.ne +24 = 0x540000C1;
+    # movz x3,#256 = 0xD2802003; mov x2,x1; mov x1,x0; movn x0,#99 (AT_FDCWD); movz x8,#79.
+    EW(S, 0xF100191F); EW(S, 0x540000C1);
+    EW(S, 0xD2802003); EW(S, 0xAA0103E2); EW(S, 0xAA0003E1); EW(S, 0x92800C60);
     EW(S, 0xD28009E8);
     # v6.0.68: rename 82 → renameat 38 + AT_FDCWD arg-shift. Same class as stat:
     # aarch64-Linux has no rename(2) (82 is fsync there). cbt/build.cyr:185 issues

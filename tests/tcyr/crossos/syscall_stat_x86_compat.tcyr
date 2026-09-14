@@ -1,0 +1,67 @@
+# syscall_stat_x86_compat.tcyr — v6.6.4: the raw x86_64 fstat (5) and lstat (6) numbers
+# must reach fstat / lstat on EVERY target, not just x86.
+#
+# THE DEFECT (issue 2026-09-12, traced under `qemu-aarch64 -strace`). ESYSXLAT's ELF-aarch64
+# arm reshaped stat(4) into newfstatat at v6.0.68 and never did its two siblings: raw
+# `syscall(5, fd, st)` in lib/fdlopen.cyr / lib/dynlib.cyr reached the aarch64 kernel as
+# **setxattr**, raw `syscall(6, path, st)` as **lsetxattr** — write-class calls aimed at
+# caller data, failing closed only by luck (EFAULT / ERANGE). The v6.5.51 raw-literal
+# diagnostic could not see 6 at all (SYS_LSTAT is declared by the x86 peer only) and
+# mislabelled 5 as "not a syscall at all".
+#
+# ⭐ Like syscall_ioctl_x86_compat.tcyr this asserts an EQUIVALENCE with the peer's own
+# wrapper, plus one structural fact the peer's STAT_MODE offset lets it check: lstat must NOT
+# follow the symlink. On x86_64 the raw numbers ARE the peer's numbers, so that arm is a
+# tautology — the test earns its place on ecb / ach / pi, where 5 and 6 are something else
+# entirely and the assertion holds only because ESYSXLAT now carries the rows (5→80 and
+# 6→fstatat+AT_SYMLINK_NOFOLLOW on ELF-aarch64; 5→339 / 6→340 on Mach-O arm; x86 Mach-O
+# already routed 5→189 / 6→190).
+#
+# ⚠ struct stat layouts DIFFER between peers (st_size@48 is common; st_mode is @24 on
+# x86_64-Linux, @16 on aarch64-Linux, @8 on Darwin legacy, @4 on Darwin stat64) — read
+# fields through the peer's STAT_* offsets, never a hardcoded x86 one. That is exactly why
+# lib/fdlopen.cyr's trust check DECLINES on aarch64 rather than being renumbered.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("raw x86_64 fstat(5) / lstat(6) route to fstat / lstat on this target");
+    #ifndef CYRIUS_TARGET_WIN
+    var st1[144];
+    var st2[144];
+    # a regular file of KNOWN size, so st_size is a discriminating field (a directory's
+    # st_size is filesystem-dependent and "/" would make the size comparison 4096 == 4096
+    # on most boxes but prove nothing about WHICH object was stat'ed).
+    xunlink("/tmp/cyr_xlat_f");
+    var wfd = sys_open("/tmp/cyr_xlat_f", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    sys_write(wfd, "0123456789abc", 13);
+    sys_close(wfd);
+    var fd = sys_open("/tmp/cyr_xlat_f", O_RDONLY, 0);
+    assert_eq(syscall(5, fd, &st2), sys_fstat(fd, &st1), "syscall(5, fd, st) == sys_fstat(fd, st) (return value)");
+    assert_eq(load64(&st2 + STAT_SIZE), 13, "raw fstat fills st_size at the peer's STAT_SIZE (13 bytes written)");
+    assert_eq(load64(&st2 + STAT_SIZE), load64(&st1 + STAT_SIZE), "raw fstat and sys_fstat agree on st_size");
+    assert_eq(load32(&st2 + STAT_MODE) & 0xF000, 0x8000, "raw fstat fills st_mode at the peer's STAT_MODE (S_IFREG)");
+    assert_eq(load32(&st2 + STAT_MODE), load32(&st1 + STAT_MODE), "raw fstat and sys_fstat agree on st_mode");
+    assert_eq(syscall(5, 0 - 1, &st2), sys_fstat(0 - 1, &st1), "the pair agrees on a bad fd");
+    sys_close(fd);
+    xunlink("/tmp/cyr_xlat_lnk");
+    xsymlink("/tmp/cyr_xlat_f", "/tmp/cyr_xlat_lnk");
+    var lp = "/tmp/cyr_xlat_lnk";
+    assert_eq(syscall(6, lp, &st2), sys_lstat(lp, &st1), "syscall(6, path, st) == sys_lstat(path, st) (return value)");
+    assert_eq(load32(&st2 + STAT_MODE) & 0xF000, 0xA000, "raw lstat does NOT follow the symlink (S_IFLNK)");
+    assert_eq(load32(&st2 + STAT_MODE), load32(&st1 + STAT_MODE), "raw lstat and sys_lstat agree on st_mode");
+    assert_eq(load64(&st2 + STAT_SIZE), load64(&st1 + STAT_SIZE), "raw lstat and sys_lstat agree on st_size");
+    assert_eq(load64(&st2 + STAT_SIZE), 15, "st_size is the link text length (15), so it is the LINK that was stat'ed");
+    xunlink("/tmp/cyr_xlat_lnk");
+    xunlink("/tmp/cyr_xlat_f");
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    assert_eq(1, 1, "no stat(2) numbering on PE — skipped");
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

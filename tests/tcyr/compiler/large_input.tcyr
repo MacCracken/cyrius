@@ -51,6 +51,7 @@ include "lib/tls.cyr"
 include "lib/vani.cyr"
 include "programs/vidya.cyr"
 include "lib/yukti.cyr"
+include "lib/sys.cyr"      # sigil 3.12.18 calls sys_uname (v6.6.4)
 include "lib/sigil.cyr"
 include "lib/patra.cyr"
 include "lib/mabda.cyr"

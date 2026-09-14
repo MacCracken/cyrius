@@ -304,6 +304,7 @@ fn _run_regression_gates(): i64 {
 
     _section("aarch64 syscalls + threads");
     _aarch64_syscalls_gate();
+    _gate("every raw `syscall(<literal>, …)` in arch-neutral lib/ + cbt/ code is a number ESYSXLAT routes on ELF-aarch64. The v6.5.51 raw-literal DIAGNOSTIC is structurally blind to the most dangerous class — an x86 number that is a valid-but-DIFFERENT aarch64 syscall (its table derives from the aarch64 PEER's declared names; syscall_xlat_generated axis 5 pins that 63 = x86 uname / aarch64 read stays SILENT) — which is how hashseed's raw 201 (time → LISTEN on fd 0), sigil's 63 (uname → read), fdlopen/dynlib's 5/6/158 (fstat/lstat/arch_prctl → setxattr/lsetxattr/getgroups) and cbt/build.cyr's 110 (getppid → timer_settime: every `cyrius run/test` child on native aarch64 exited 1 before execve from 6.5.19 to 6.6.3) all shipped. The allowlist is DERIVED from the emitter (cmp x8,#N words decoded from ESYSXLAT's ELF arm), so a new row is admitted automatically and a new raw literal fails until it is routed, spelled as SYS_*, or guarded by a target #ifdef. Peer files are exempt (each IS its target's definition). Anti-vacuous floors on rows decoded, files scanned and sites found. Mutation: re-introduce `syscall(201, 0)` in lib/hashseed.cyr → 1 unrouted site, exit 1 (v6.6.4)", "tests/gates/platform/raw_syscall_literals_routed.sh");
     println("");
 
     _section("Mach-O aarch64 cross-build");

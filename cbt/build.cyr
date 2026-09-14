@@ -992,7 +992,12 @@ fn run_binary_timed(path, timeout_ms): i64 {
         sys_prctl(1, 9, 0, 0, 0);
         # The race: if the parent died between fork and the prctl above, the death
         # signal has already been delivered to nobody and will never fire. Notice it.
-        if (syscall(110) != ppid_before) { sys_exit(1); }   # SYS_GETPPID
+        # v6.6.4: SYS_GETPPID (110 on x86_64, 173 on aarch64), not the raw 110 — on native
+        # aarch64-Linux 110 is timer_settime, which returned -EINVAL != ppid, so EVERY
+        # `cyrius run/test/tests/bench/fuzz` child exited 1 before execve from 6.5.19 to 6.6.3. The
+        # CLI's aarch64 build had printed the raw-syscall warning for this line the whole
+        # time; the pi release-gate leg never built or ran the CLI.
+        if (syscall(SYS_GETPPID) != ppid_before) { sys_exit(1); }
         #endif
         # Bug 1 (v6.0.66): qemu-aarch64 is the x86-Linux-host cross-run path for an
         # aarch64 TARGET. A native Mach-O host (Apple Silicon) has NO qemu-aarch64 and

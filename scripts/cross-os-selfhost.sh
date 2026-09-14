@@ -117,9 +117,9 @@ cat /tmp/_co_cx.cyr | /tmp/_co_ccx > /tmp/_co_cx.cyx
 # portability gap. If you add a corpus test that reads a file, its input belongs here —
 # a missing input is indistinguishable from a broken port in the failure list.
 if [ -n "$LIBTEST" ]; then
-  tar czf /tmp/_co.tgz src lib tests/win tests/tcyr tests/fixtures tests/data VERSION programs/cxvm.cyr programs/vidya.cyr
+  tar czf /tmp/_co.tgz src lib cbt cyrius.cyml tests/win tests/tcyr tests/fixtures tests/data VERSION programs/cxvm.cyr programs/vidya.cyr
 else
-  tar czf /tmp/_co.tgz src lib tests/win VERSION programs/cxvm.cyr
+  tar czf /tmp/_co.tgz src lib cbt cyrius.cyml tests/win VERSION programs/cxvm.cyr
 fi
 
 case "$HOST" in
@@ -200,10 +200,21 @@ case "$HOST" in
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
       && cat src/main_cx.cyr | ./r1 > cycc_cx && chmod +x cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
-      && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
+      && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ]) \
+      && cat cbt/cyrius.cyr | ./n1 > cyrius_native 2> _cli.err && chmod +x cyrius_native \
+      && ! grep -q "raw syscall" _cli.err \
+      && printf "fn main(): i64 { return 0; }\nvar r = main();\nsyscall(60, r);\n" > _hello.cyr \
+      && mkdir -p build && cp n1 build/cycc && CYRIUS_HOME=$PWD/_home CYRIUS_RESOLVED=1 ./cyrius_native run _hello.cyr > _run.out 2>&1'
     # v6.4.22 cx: native aarch64-Linux cycc_cx (brk arena — aarch64-Linux has brk)
     # compiles a .cyr → .cyx the native cxvm runs to 42. (macho/PE were the broken
     # arenas; pi confirms the per-target #ifdef keeps the Linux path working.)
+    # ⭐ v6.6.4 — the CLI itself, BUILT AND RUN on the ARM hardware. This leg had never
+    # touched cbt/: cbt/build.cyr's raw `syscall(110)` (x86 getppid = aarch64 timer_settime)
+    # made every `cyrius run/test/bench` child exit 1 before execve on native aarch64 from
+    # 6.5.19 to 6.6.3 (59 releases), and from 6.5.51 on the aarch64 build of the CLI printed
+    # a raw-syscall warning for that line — nothing here built it, so nothing saw it. The native fork
+    # (n1) compiles cbt/cyrius.cyr with ZERO raw-syscall warnings and `cyrius run` of a
+    # hello must exit 0 (the tar now carries cbt/).
     ;;
   cass)
     # x86 ELF -> PE-emitting cross-compiler (cycc_win) -> native PE cycc.exe.

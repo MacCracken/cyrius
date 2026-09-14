@@ -1,4 +1,33 @@
-# fdlopen / dynlib pass raw x86 syscall numbers that aarch64 Linux runs as `setxattr` / `lsetxattr` / `getgroups` — OPEN
+# fdlopen / dynlib pass raw x86 syscall numbers that aarch64 Linux runs as `setxattr` / `lsetxattr` / `getgroups` — FIXED v6.6.4
+
+**Status:** ✅ **FIXED in v6.6.4** — every row in this file is closed, and the class it named was
+swept: ESYSXLAT routes `fstat` 5 and `lstat` 6 on both aarch64 arms (ELF 5→80, 6→`fstatat` +
+`AT_SYMLINK_NOFOLLOW`; Mach-O 5→`fstat64` 339, 6→`lstat64` 340); `fdlopen` / `dynlib` DECLINE on
+aarch64 (158 `arch_prctl` is not a numbering gap — TLS there is `TPIDR_EL0`), landed together with
+the rows so a working `fstat` could not turn the accidental fail-closed into an x86 loader running
+on aarch64 bytes, plus an `e_machine` belt in `dynlib_open`. ⚠ The 158 row did NOT fail closed as
+filed: qemu-user's `getgroups` returns `-EFAULT` over a 4098-entry range check, but on real pi
+`getgroups(4098, tls)` writes the process's GIDs into the TLS block and returns their COUNT — the
+caller took only `rc == 0` as success, so it failed closed by accident with supplementary groups
+(pi: 2) and failed OPEN with none (a never-installed TLS block handed back as installed); `O_DIRECT` / `O_LARGEFILE` /
+`O_DIRECTORY` / `O_NOFOLLOW` are per-target constants in every peer (the aarch64 values are a
+DIFFERENT permutation of the same four names) and patra 1.14.3 / sigil 3.12.18 spell the names at
+source and are re-vendored; `SYS_FLOCK` joined both Linux peers. The sweep the filing prompted
+found the worse instances: `cbt/build.cyr`'s raw 110 (`getppid` → aarch64 `timer_settime`) had
+made EVERY `cyrius run/test/tests/bench/fuzz` child on native aarch64 exit 1 before `execve` since
+6.5.19; `lib/hashseed.cyr`'s raw 201 (`time` → `listen`); sigil's raw 63 (`uname` → `read`).
+Gated by three `tests/tcyr/crossos/` tests (`syscall_stat_x86_compat`, `fdlopen_dynlib_decline`,
+`open_flags_per_target`), by `syscall_xlat_generated.sh` axes 3b/7/8, and by the new
+`tests/gates/platform/raw_syscall_literals_routed.sh`, which derives the routed set from the
+emitter and fails on any arch-neutral raw literal outside it (325 sites scanned) — the v6.5.51
+diagnostic cannot see this class by construction (a valid-but-different aarch64 number is silent
+by design). `cross-os-selfhost.sh`'s pi leg now builds and RUNS the CLI. Cross-repo `O_*` /
+`SYS_*` literals still to spell at the next pin bump: kavach (own filing), aegis, attn11, phylax,
+agnodrm, hapi; agnostik raw 318; vidya raw 294. `CHANGELOG.md [6.6.4]`.
+
+The original filing follows unchanged.
+
+---
 
 **Status:** 🟡 **OPEN** — filed for later repair at the close of the 6.6.2 ecosystem sweep; no fix attempted.
 **Placement:** unpinned — 6.x-line backlog.

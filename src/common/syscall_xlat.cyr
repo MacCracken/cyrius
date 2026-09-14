@@ -12,7 +12,6 @@
 # The x86_64 number `n` names this syscall. 0 when `n` is not an x86_64 number whose
 # aarch64 counterpart differs.
 fn _SYSX_MEANT(n): i64 {
-    if (n == 5) { return "fstat"; }
     if (n == 8) { return "lseek"; }
     if (n == 14) { return "rt_sigprocmask"; }
     if (n == 32) { return "dup"; }
@@ -60,7 +59,6 @@ fn _SYSX_MEANT(n): i64 {
 
 # The stdlib constant to write instead, for the x86_64 number `n`.
 fn _SYSX_USE(n): i64 {
-    if (n == 5) { return "SYS_FSTAT"; }
     if (n == 8) { return "SYS_LSEEK"; }
     if (n == 14) { return "SYS_RT_SIGPROCMASK"; }
     if (n == 32) { return "SYS_DUP"; }
@@ -122,6 +120,7 @@ fn _SYSX_ACTUALLY(n): i64 {
     if (n == 29) { return "ioctl"; }
     if (n == 74) { return "fsync"; }
     if (n == 75) { return "fdatasync"; }
+    if (n == 73) { return "flock"; }
     if (n == 56) { return "openat"; }
     if (n == 262) { return "newfstatat"; }
     if (n == 80) { return "fstat"; }

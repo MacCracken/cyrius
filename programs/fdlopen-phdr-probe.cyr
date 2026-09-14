@@ -95,7 +95,7 @@ fn main(): i64 {
         syscall(SYS_EXIT, 2);
     }
     var stbuf = alloc(144);
-    syscall(5, fd, stbuf);
+    syscall(SYS_FSTAT, fd, stbuf);   # v6.6.4: was a raw 5 (aarch64 setxattr); st_size@48 is common to both peers
     var fsize = load64(stbuf + 48);
     var fmap = syscall(9, 0, fsize, 1, 2, fd, 0);
     syscall(3, fd);

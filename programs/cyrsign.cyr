@@ -48,6 +48,7 @@ include "lib/thread_local.cyr"
 include "lib/thread.cyr"
 include "lib/keccak.cyr"
 include "lib/bayan.cyr"
+include "lib/sys.cyr"      # sigil 3.12.18 calls sys_uname (v6.6.4)
 include "lib/sigil.cyr"
 
 # ── hex codec (self-contained; sigil's hex_* are crypto-internal) ──

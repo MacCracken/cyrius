@@ -1043,7 +1043,10 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         syscall(SYS_WRITE, 2, "`. Use ", 7);
                     }
                     if (sxa == 0) {
-                        syscall(SYS_WRITE, 2, "`; on ELF-aarch64 that number is not a syscall at all", 53);
+                        # v6.6.4: "not a syscall at all" was FALSE — the table is derived from the
+                        # aarch64 PEER's declared set, not the kernel's: 5 is setxattr, 8 getxattr,
+                        # 91 capset, 110 timer_settime there (the fdlopen/dynlib/kavach/cbt cases).
+                        syscall(SYS_WRITE, 2, "`; on ELF-aarch64 that number is not one the aarch64 stdlib declares (it may still be a DIFFERENT real syscall)", 111);
                         syscall(SYS_WRITE, 2, ". Use ", 6);
                     }
                     PRSTR(_SYSX_USE(sc_num));

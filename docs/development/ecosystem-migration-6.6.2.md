@@ -819,6 +819,16 @@ The remedy is the same in each: use the `SYS_*` constant from `lib/syscalls.cyr`
 arch-aware, or the `sys_*` wrapper. See `CLAUDE.md` → *"A wrapper that COMPILES on five
 targets is not a wrapper that RUNS."*
 
+> **Superseded 2026-09-14 by cyrius 6.6.4** (`CHANGELOG [6.6.4]`; the filing is archived at
+> `issues/archived/2026-09-12-raw-x86-syscall-numbers-fdlopen-dynlib-aarch64.md`). Two rows
+> above were wrong as written: `lib/io.cyr:442`'s 32 sat under `#ifdef CYRIUS_ARCH_AARCH64`
+> and IS native `flock` (the diagnostic's "not a syscall at all" was the false part — that
+> wording is gone); the sigil `SYS_GETRANDOM` row was already gone from 3.12.17. The rest —
+> and the worse ones the sweep found: `cbt/build.cyr`'s raw 110 (every `cyrius run/test`
+> child on native aarch64 exited 1 for 59 releases), `lib/hashseed.cyr`'s 201, sigil's 63 —
+> are fixed; the kavach 91 is kavach's own filing. The class is now pinned by
+> `tests/gates/platform/raw_syscall_literals_routed.sh`.
+
 ### 5. Same-name duplicates the compiler reports and nobody reads
 
 Arity-DISAGREEING duplicates are hard errors at 6.6.2 and were fixed during the sweep
