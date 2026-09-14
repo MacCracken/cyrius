@@ -1,13 +1,14 @@
-# Handoff — **v6.6.1 is cut, tagged and gate-GREEN.** Nothing is mid-arc.
+# Handoff — **v6.6.4 is bumped and gate-GREEN; the tag is the user's next call.** Nothing is mid-arc.
 
-> **Written 2026-09-08, at v6.6.1.** Read this, then [`CLAUDE.md`](../../CLAUDE.md), then
+> **Written 2026-09-14, at the v6.6.4 bump.** Read this, then [`CLAUDE.md`](../../CLAUDE.md), then
 > [`state.md`](state.md), then [`roadmap.md`](roadmap.md).
 >
 > ⚠ **Refresh or delete this file when the next release ships. A stale handoff is worse than
 > none, and this file is the repeat offender**: it sat at 6.5.10 for ten releases, then 6.5.20
-> for thirteen more, then 6.5.33, then **6.5.36 from 2026-08-28 through the whole of v6.5.x
-> AND v6.6.0 AND v6.6.1** — thirty-eight releases. Every time it was found by a human, never
-> by a gate. **There is no gate for handoff staleness** — a standing, deliberate gap.
+> for thirteen more, then 6.5.33, then 6.5.36 for thirty-eight releases — and then **6.6.1
+> through 6.6.2, 6.6.3 and the whole of the 6.6.4 work** (the 6.6.3 "handoff" commit touched
+> roadmap + state and not this file). Every time it was found by a human, never by a gate.
+> **There is no gate for handoff staleness** — a standing, deliberate gap.
 > **Treat every number below as a claim to re-derive.**
 
 ---
@@ -16,105 +17,115 @@
 
 | | |
 |---|---|
-| Version | **6.6.1** — committed and **tagged**. Gate GREEN on all 5 steps. |
-| cycc x86_64 | **1,247,608 B** (`.text` 1,090,832) — unchanged from 6.6.0. seed **29,024 B** → cybs → cycc byte-identical |
-| Gates | `check.sh` **240 / 0** · **144** shell gate scripts (DERIVE: `find tests/gates -name '*.sh' \| wc -l`) |
-| Cross-OS | **ecb · ach · cass · pi** — all `SELFHOST_OK` + `crossos LIBTEST_OK`, REAL hardware |
-| Corpus | **301** `.tcyr` (68 in `crossos/`) · **102** `lib/*.cyr` · **84** `programs/*.cyr` · api-surface **5,152** · heap **102** regions |
-| Bench | `self_compile` **731–734 ms** across two runs · cycc size flat |
-| Queue | **1** open issue · **3** proposals · **387** archived |
-| Mid-arc work | **None.** 6.6.1 is complete. The next slot is `.2`, already specified. |
+| Version | **6.6.4** — `version-bump.sh` has run (VERSION, CLAUDE.md, CHANGELOG header, cycc rebuilt, seed-derive, store slot `versions/6.6.4` written). **NOT yet committed or tagged.** |
+| cycc x86_64 | **1,251,944 B** (`.text` 1,097,472) — +80 over 6.6.3. seed **29,024 B** → cybs → cycc byte-identical |
+| Gates | `check.sh` **246 / 0** · **164** shell gate scripts (DERIVE: `find tests/gates -name '*.sh' \| wc -l`) · release-gate **GREEN** 2026-09-14 |
+| Cross-OS | **ecb · ach · cass · pi** — all `SELFHOST_OK` + `crossos LIBTEST_OK` (74/74), REAL hardware. **The pi leg now builds and RUNS the CLI too.** |
+| Corpus | **314** `.tcyr` (74 in `crossos/`) · **103** `lib/*.cyr` · **84** `programs/*.cyr` |
+| Bench | `self_compile` **744 ms** (6.6.3: 743) · cycc +80 B — noise / growth tax, nothing to bisect |
+| Queue | **2** open issues (both filed BY 6.6.4's bites) · **3** proposals |
+| Mid-arc work | **None.** 6.6.4 is complete. |
 
 ---
 
-## Start here: slot `.2` is specified and waiting
+## Do these, in this order
 
-[`roadmap.md`](roadmap.md) was rewritten for the v6.6.x arc and is the single authority.
-Shape: **`.2`–`.6` are a reserved repair window**, then the proposal queue, then the
-committed ergonomics list. Three occupants are pinned with acceptance criteria:
+1. **Commit + tag cyrius 6.6.4** (the bump commit is in the tree: VERSION, CLAUDE.md, CHANGELOG,
+   BENCHMARKS.md, bench-history.csv, build/cycc, src/version_str.cyr, roadmap/state/handoff).
+2. **After the tag, at the tagged commit:** `sh scripts/install.sh --refresh-only`. The bump's
+   store write is stamped with the PRE-bump HEAD, dirty; this is the reconciling write.
+   `sh scripts/verify-store.sh` should then show `6.6.4 OK … stamp tag-commit`.
+3. **Only once the GitHub 6.6.4 release exists** (CI's installer clones the tag):
+   - **patra 1.14.3** — already pushed by the user (commit `39a97af`); its CI is RED on
+     "could not clone tag 6.6.4" until then, and the README `[deps.patra] tag = "1.14.3"` fix is
+     a one-line local change still to commit. Tag after cyrius is out.
+   - **sigil 3.12.18** — 29 files uncommitted in `~/Repos/sigil` (VERSION, cyml pin 6.6.4 +
+     `"sys"` in the stdlib list, CHANGELOG, `src/sysinfo.cyr`, `src/luks.cyr`, 14 dist bundles +
+     sidecars, lock). Same rule: pins 6.6.4.
+   - ⛔ **Neither can be tagged before cyrius 6.6.4 is released.** (This ordering was buried in
+     a parenthetical last time and cost a red CI run — hence its own numbered step.)
+4. **mirshi 1.11.2** — 4 files uncommitted in `~/Repos/mirshi`; pins 6.6.2, **independent**,
+   can go any time. `ao_to_o` now translates `AO_NOFOLLOW`/`AO_EXCL`.
+5. **vidya** — 5 files uncommitted (`gotchas.cyml` +1 entry and the bite-4 retraction of the
+   snapshot-refresh recipe; `methodology.cyml`, `semantics_runtime.cyml`, `features.cyml`,
+   `tooling.cyml`). `bash scripts/validate-content.sh content` → 847/0.
 
-- **`.2` — `cyrius build <src>` can overwrite the running compiler, and did.** In this repo
-  `cyrius.cyml` declares `output = build/cycc`, and the documented argument ladder says one
-  positional arg means "that src + manifest output". So `cyrius build <a test file>` wrote an
-  842 KB test binary over the compiler at the v6.6.0 cut. Fix is narrow: refuse when the
-  resolved output is the compiler `cbt` is currently running, UNLESS the source is the
-  manifest's declared `src`/`entry`. ⚠ The gate must not run against this repo's own
-  `build/cycc`, or the gate becomes the destructive act.
+---
+
+## Start here next: slot `.3` (lands as 6.6.5) plus the two filed issues
+
+[`roadmap.md`](roadmap.md) is the single authority. The repair window's labels have drifted
+from the version numbers (6.6.3 = the sweep's repairs, 6.6.4 = the post-handoff filings); the
+slots have NOT been re-numbered — that is the user's call.
+
 - **`.3` — per-item `private` silently privatises the whole file.** `private fn h()` compiles
-  with no diagnostic and flips the entire file including `main`. Twelve-plus releases live.
-  Default taken: make the per-item form a hard error pointing at the file-level declaration.
-- **`.4`–`.5` — DCE cannot compact on PE or x86 Mach-O.** 6.6.1 made both DECLINE compaction
-  (they emitted binaries that faulted `0xC0000005` / SIGSEGV'd). Repairing it means fixing the
-  rip-relative displacement shape AND re-running `_pe_layout` after compaction — both, or the
-  binary looks fine and faults later.
-
-⛔ **`.6` is deliberately unassigned.** Do not fill it with backlog items; if nothing claims
-it, phase 2 starts early.
-
----
-
-## What the last three sessions did, in one paragraph each
-
-**v6.6.0** — flipped `Result` / `Option` / `Either` to the **value form**: a payload variant
-returns `(tag, payload)` in a register pair, so construction allocates **zero bytes** (the
-filed `100x sock_send` → 1600 B measurement now reads 0). It shipped WITH the ecosystem — 8
-sibling stdlibs migrated at source, pin-bumped, released and re-folded. It re-aritied every
-payload-taking helper and **deleted `payload()` and `tagged_new()`**. ⛔ **CORRECTED at v6.6.2:
-`tagged_new()` is RESTORED** (`lib/boxed.cyr`) — the deletion rested on a survey of the 12
-fold-table stdlibs written down as "nothing in the ecosystem", and agnostik calls it 19 times,
-agnova 9. `tag()` was deleted instead: v6.6.0 had kept the NAME and redefined the body, so on a
-box it silently returned the pointer. `payload()` stays deleted, deliberately. A P0 was found at the
-cut: `X = Y;` between two struct-POINTER locals copied `STRUCTSZ/8` slots over neighbours,
-silent since v6.5.57 — **seventeen releases** — and invisible to the fixpoint because cycc's
-own source never uses the shape.
-
-**v6.6.1** — closed the entire open issue queue (three filings) and folded five stdlibs
-(patra 1.14.1, sakshi 2.5.1, sankoch 2.7.14, ganita 1.2.4, niyama 1.0.10). ⭐ **The DCE
-filing said "PE / `--win` target only" and that was wrong** — `main_x86_macho.cyr` includes
-the same `x86/fixup.cyr`, so Intel-Mac Mach-O was crashing on real hardware, unreported,
-because the reporter does not build that platform. Found by running the repro on `ach` rather
-than trusting the report's target matrix. **A filing's target list is a report about what the
-reporter builds, not about the bug.**
-
-**Docs + roadmap + vidya sweep (2026-09-08, no version bump)** — README had not been touched
-in three weeks and contradicted itself (270 vs 260 `.tcyr`; 100 vs 99 stdlib modules, same
-file); the installed-toolchain figure was wrong by **10×**; `size-comparisons.md` cited
-**cycc 6.5.74**, a version that was never released. `roadmap.md` was 1,043 lines still titled
-*v6.5.x* with ~480 of them a slot list reading ✅ SHIPPED throughout — rewritten to 380.
-Vidya's gotchas file was audited **158 → 62 entries** (461 KB → 164 KB): **59 of the 158 were
-instances of 14 recurring classes**, now merged with the recurrence QUANTIFIED, 51 archived
-to `retros/resolved_traps.cyml`, and one live defect filed as the open issue below.
+  with no diagnostic and flips the entire file including `main`. Default taken: make the
+  per-item form a hard error pointing at the file-level declaration.
+- **[`2026-09-13-private-impl-method-forward-call-fail-open.md`](issues/2026-09-13-private-impl-method-forward-call-fail-open.md)**
+  — a private impl method is reachable by a FORWARD call because pass 1 brace-skips impl bodies
+  in all seven forks, so the call registers `Type_method` with no fileid and `_vis_check` fails
+  open. Closing it = registering mangled method names with fileid + flag in pass 1 (7 forks,
+  PARSE_FN_DEF's name-pool mangling). Run seed-derive — a pass-1 change is the class the cycc
+  fixpoint cannot see.
+- **[`2026-09-13-fn-local-global-slots-shadow-other-files.md`](issues/2026-09-13-fn-local-global-slots-shadow-other-files.md)**
+  — a fn-local struct literal / oversized array is a GLOBAL slot in the flat namespace and
+  shadows other files' globals (was a silent miscompile; since bite ③'s stamps a misattributed
+  diagnostic).
+- **`.4`–`.5` — DCE cannot compact on PE or x86 Mach-O** (rip-relative repair + re-run
+  `_pe_layout` after compaction — both, or the binary looks fine and faults later).
+- ⛔ **`.6` stays unassigned.**
 
 ---
 
-## The one open issue
+## What 6.6.4 did, one paragraph per bite (detail: `CHANGELOG.md [6.6.4]`)
 
-[`2026-09-08-lexer-token-types-79-and-111-double-assigned.md`](issues/2026-09-08-lexer-token-types-79-and-111-double-assigned.md)
-— token 79 is BOTH `object` and `f64_sqrt`; token 111 is BOTH `stack` and `callptr`, verified
-live in `src/common/util.cyr:1421,1487`. No miscompile (the grammar disambiguates by
-position), but the compiler knows which keyword you typed and discards it, then hands the
-reader `object'/'f64_sqrt`. Renumbering was deferred with a legitimate reason: it touches
-codegen across the **seven** `main_*.cyr` forks and the seed chain. ⚠ **Run seed-derive** —
-a front-end token change is exactly the class the cycc fixpoint cannot see (the `>>>` case at
-v6.4.74, where cybs could not lex the new spelling and only seed-derive noticed).
+**①** A string literal ≥ 64 KB read back from its SECOND byte (`(offset << 16) | len` in the
+lexer — a 16-bit field silently too narrow since 2026-04) → widened to `<< 32` in the one producer
+and four decoders; plus the same class in cx (every address emitter past 0xFFFF loaded a wrong
+value), cx `x*2^k`, a cx crash-after-diagnostic, `#deprecated` on tail calls.
+**②** `&_private_fn` from another file compiled and was callable — one of EIGHT resolution paths
+`_vis_check` did not cover; plus generic-instance polarity, private arrays, method `self` on
+inline stack structs (SIGSEGV).
+**③** `public enum` re-exposed the NEXT declaration in a `private` file (the marker outlived its
+item) — and so did struct/union/impl/`use`; plus an enum `#derive` inside a taken `#ifdef`
+dropping the rest of the file.
+**④** The install store was writable under a RELEASED name and stale in BOTH directions
+("6.6.2"'s stdlib was 6.6.3's; "6.6.3"'s cross-compilers were the bump commit's). install.sh /
+pulsar / lsp refuse; `check.sh` stages its own throwaway home; `SOURCE_COMMIT` stamps;
+`scripts/verify-store.sh` (+ `--restore`); the live store restored. The old "snapshot refresh"
+recipe was the corrupting writer — retracted from CLAUDE.md and vidya.
+**⑤** `cyrius deps` silently re-locked a changed stdlib file under an unchanged pin; also bare
+`deps --lock` dropped every commit pin, a CRLF lock turned the guard off, `--verify` read 64 KB.
+Lock now carries a `cyrius\t<pin>` trailer; `deps --relock` is the explicit accept.
+**⑥** Raw x86 syscall numbers in arch-neutral code ran as DIFFERENT syscalls on aarch64 — and
+the worst instance was not in the filing: `cbt/build.cyr`'s raw 110 (`getppid` = aarch64
+`timer_settime`) made every `cyrius run/test/tests/bench/fuzz` child exit 1 before `execve` on
+native aarch64 for **59 releases**, while the compiler self-hosted on pi at every gate. ESYSXLAT
+rows for fstat/lstat landed WITH fdlopen/dynlib declines; per-target `O_*`; the agnos
+`AO_NOFOLLOW`/`AO_EXCL` bridge (owed since agnos 1.56.53 — found by the bite's review);
+patra/sigil/mirshi at source; an emitter-DERIVED allowlist gate.
 
 ---
 
 ## Traps that cost time this session — do not re-learn them
 
-- **`version-bump.sh` rewrites the version token and NOTHING else.** Both `roadmap.md`'s and
-  `state.md`'s head lines were stamped `v6.6.1` while every metric beside them was pre-6.6.1.
-  Re-derive the numbers; the stamp is not evidence.
-- **Derive counts THE WAY THE GATE DOES.** I put **145** heap regions into two docs from
-  `grep -cE '^#   0x' src/main.cyr`; the real number is **102** — that regex also matches 18
-  `FREED` markers and multi-scalar band lines. Run `sh tests/gates/memory/heapmap.sh`.
-- **A number with a stated reason is not more trustworthy than a bare one.** README claimed a
-  35 MB installed tree "because the two `cyrsign*` helpers are ~14 MB each". They are ~1.4 MB
-  each and the tree is 10.2 MB. The reason was wrong too.
-- **A rejected tool call may have already partially executed.** A `sed -i` earlier in a
-  compound command had run before the rejection landed. Verify with `git diff`, then revert.
-- **pgrep-based waiters self-match** — `until ! pgrep -f "release-gate.sh"` never terminates,
-  because the waiting shell's own command line contains the pattern.
+- **qemu-user is not the hardware.** The filing said raw 158 (`arch_prctl` → aarch64 `getgroups`)
+  "fails closed"; under qemu it EFAULTs, on pi it returns the group COUNT, and the `rc != 0`
+  caller failed OPEN exactly on group-less processes. Run the probe on the host before writing a
+  severity — and read what the caller does with the return value.
+- **A compat row that turns fail-closed into fail-OPEN ships with its decline.** The fstat 5→80
+  row alone would have let the x86-only ELF loader "work" on aarch64 bytes.
+- **Premise-check the agnos peer against `~/Repos/agnos/kernel/core/syscall.cyr`.** `lib/io.cyr`
+  said "agnos has no AO_NOFOLLOW / AO_EXCL bit" for three minors while the kernel had both.
+- **Derive allowlists from the artefact, and bound the derivation.** The first cut decoded every
+  `0xF1…` word in emit.cyr with Rn unchecked (ETESTAZ's `cmp x0,#0` was a "row"); the guard
+  tracker accepted `#ifdef\tX`, which lex_pp treats as a COMMENT. Mirror the consumer exactly.
+- **A sibling bump is done when its OWN CI checks agree** — patra's compares the README install
+  snippet's `tag` to `VERSION`; I bumped one and not the other.
+- **`pkill -f '<script>'` matches the shell that runs it.** Launch long gates through a wrapper
+  script under `setsid nohup … & disown` and poll the log for an end marker.
+- **`version-bump.sh` rewrites the version token and NOTHING else** in roadmap/state — re-derive
+  every number beside it (`.text` from `llvm-readelf -S build/cycc`, gates from `find`).
 
 ---
 
@@ -122,17 +133,17 @@ v6.4.74, where cybs could not lex the new spelling and only seed-derive noticed)
 
 Full set in [`CLAUDE.md`](../../CLAUDE.md). The ones that mattered this session:
 
+- ⛔ **A sibling repo pinned to an UNRELEASED cyrius is not releasable** — say so in the first
+  line of any hand-back, not in a parenthetical.
 - ⛔ **Never run `cyrius build <file>` inside this repo** — `cyrius.cyml` resolves output to
-  `build/cycc` and it WILL overwrite the compiler. (This is slot `.2`.)
-- ⛔ **Never pass `$HOME/.cyrius` as a staging target to `funcgate-stage.sh`** — it rewrites
-  that tree.
+  `build/cycc`. Test compiler changes with `./build/cycc` directly (`cyrius build` re-execs the
+  PINNED toolchain).
 - **Release gate GREEN before every `.NN`** — self-host fixpoint · seed-derive · check.sh ·
-  cross-OS on **real** ecb/ach/cass/pi · bench. A green CI checkmark is NOT the cross-OS leg.
-- **Seed-derive is mandatory for ANY `src/` change**, including comment-only ones — cybs is
-  far more limited than `build/cycc` and fails SILENTLY on things cycc compiles fine.
-- **Fix the SOURCE repo, not the vendored `lib/` fold.** Do NOT copy an edited `lib/*.cyr`
-  into `~/.cyrius/versions/<v>/` — that recipe ("snapshot ping-pong") was the writer that
-  corrupted the released 6.6.1 / 6.6.2 slots and is refused since 6.6.4; `check.sh` stages
-  its own throwaway home from the tree (CLAUDE.md "The install store is written from TAGS").
+  cross-OS on **real** ecb/ach/cass/pi · bench. A green CI checkmark is NOT the cross-OS leg —
+  and a compiler that self-hosts on a host is not a CLI that runs there.
+- **Seed-derive is mandatory for ANY `src/` change** — cybs fails SILENTLY on things cycc
+  compiles fine.
+- **Fix the SOURCE repo, not the vendored `lib/` fold**; never copy an edited `lib/*.cyr` into
+  `~/.cyrius/versions/<v>/` (refused since 6.6.4; `check.sh` stages its own home).
 - **The user handles all git operations.** Do not commit, push, or tag. **Never use `gh`** —
   `curl` to the GitHub API only.

@@ -37,13 +37,14 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.3** (2026-09-12, tag `ab77e241`) — cycc **1,251,864 B** (`.text` **1,095,096**) ·
-`check.sh` **GREEN 242/242** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi ·
-**308** `.tcyr` (**70** in `crossos/`) · **103** `lib/*.cyr` · **157** shell gates under
-`tests/gates/<bucket>/` · self_compile **743 ms** · **1 open issue** · **3 open proposals**.
+**Current head: v6.6.4** (2026-09-14, bump commit; tag pending) — cycc **1,251,944 B** (`.text` **1,097,472**) ·
+`check.sh` **GREEN 246/246** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi ·
+**314** `.tcyr` (**74** in `crossos/`) · **103** `lib/*.cyr` · **164** shell gates under
+`tests/gates/<bucket>/` · self_compile **744 ms** · **2 open issues** · **3 open proposals**.
 
-> ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-12 at the 6.6.3 handoff —
-> the line had been version-stamped `v6.6.3` while still quoting 6.6.1 figures, the exact rot described next).
+> ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-14 at the 6.6.4 bump;
+> before that 2026-09-12 at the 6.6.3 handoff — the line had been version-stamped `v6.6.3` while still quoting
+> 6.6.1 figures, the exact rot described next).
 > The previous head line was version-stamped to `v6.6.1` by `version-bump.sh` while still quoting pre-6.6.1 metrics
 > (cycc 1,200,888 B · 297 `.tcyr` · 131 shell gates · 671 ms · 4 open issues). `version-bump.sh`
 > rewrites the version token and nothing else — **the numbers beside it are yours to re-derive.**
@@ -56,13 +57,18 @@ construction allocates **zero bytes** (the filed `100x sock_send` → 1600 B mea
 and re-folded. **v6.6.1** closed the entire open issue queue (three filings) and folded five more
 stdlibs. **v6.6.2** and **v6.6.3** were repair releases driven by the ecosystem sweep — 6.6.3 closed the six
 issues the sweep filed — and that sweep is now **closed**: every repo in `~/Repos` is on 6.6.2 or later, agnos
-(another agent's) excepted.
+(another agent's) excepted. **v6.6.4** repaired the six issues filed after the 6.6.3 handoff (five by hisab
+and agnos, one from the sweep's close) in six bites — the last of which found that every `cyrius run/test`
+child on native aarch64 had been exiting 1 before `execve` for 59 releases (`cbt/build.cyr`'s raw x86
+`getppid`), and that the pi release-gate leg had never built or run the CLI. It does now.
 
-**The open queue is at one** — `issues/2026-09-12-raw-x86-syscall-numbers-fdlopen-dynlib-aarch64.md`, filed
-unpinned for later repair (raw x86 syscall numbers and open flags that aarch64 Linux executes as something else).
-The repair window below still stands, but ⚠ **its labels have drifted from the version numbers:** 6.6.3 went to
-the sweep's repair set, so slot `.3` (per-item `private`) lands as 6.6.4 at the earliest. The slots have not been
-re-numbered — that is the user's call.
+**The open queue is at two**, both FILED by 6.6.4's own bites and neither packable into them:
+`issues/2026-09-13-private-impl-method-forward-call-fail-open.md` (a forward call to a private impl method
+resolves with no fileid — a 7-fork pass-1 change) and `issues/2026-09-13-fn-local-global-slots-shadow-other-files.md`
+(a fn-local struct literal / oversized array is a GLOBAL slot in the flat namespace). Both belong in the
+repair window. ⚠ **The window's labels have drifted from the version numbers:** 6.6.3 went to the sweep's
+repair set and 6.6.4 to the post-handoff filings, so slot `.3` (per-item `private`) lands as 6.6.5 at the
+earliest, with the two filings above alongside it. The slots have not been re-numbered — that is the user's call.
 
 ---
 

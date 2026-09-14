@@ -4,11 +4,17 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [6.6.4] — 2026-09-14
 
 The repair release for the six issues filed after the 6.6.3 handoff (five by hisab and
 agnos on 2026-09-13, one at the close of the 6.6.2 sweep). Every fix is gated; every gate is
 mutation-proven against a 6.6.3 tree.
+
+**Bench:** self_compile **744 ms** (6.6.3: 743 ms, **+0.1%** — noise); cycc **1,251,944 B**
+(+80 over 6.6.3's 1,251,864: +16 three visibility globals, +8 a 7-byte literal, +56 the
+raw-syscall diagnostic's longer message). Release gate GREEN on all four hosts (ecb / ach /
+cass / pi self-host + the full `tests/tcyr/crossos/` set on real hardware); check.sh
+**246 / 0**; `verify-store` 4 slots, 0 BAD.
 
 ### Fixed
 
