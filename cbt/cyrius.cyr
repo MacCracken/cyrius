@@ -1013,8 +1013,9 @@ fn main(): i64 {
             if (streq(argv(cmd_idx + 1), "--verify") == 1) { return cmd_deps_verify(); }
             if (streq(argv(cmd_idx + 1), "--lock") == 1) { return cmd_deps_lock(); }
             if (streq(argv(cmd_idx + 1), "--no-lock") == 1) { _no_lock = 1; }
+            elif (streq(argv(cmd_idx + 1), "--relock") == 1) { _dep_relock = 1; }   # v6.6.4
             elif (streq(argv(cmd_idx + 1), "--help") == 1 || streq(argv(cmd_idx + 1), "-h") == 1) {
-                println("Usage: cyrius deps [--verify | --lock | --no-lock | --help]");
+                println("Usage: cyrius deps [--verify | --lock | --no-lock | --relock | --help]");
                 println("");
                 println("Resolve [deps.NAME] entries from cyrius.cyml into lib/.");
                 println("Each dep is git-cloned into ~/.cyrius/deps/<name>/<tag>/");
@@ -1027,8 +1028,10 @@ fn main(): i64 {
                 println("");
                 println("Flags:");
                 println("  --verify    verify cyrius.lock matches the working lib/.");
-                println("  --lock      explicit lockfile write (default-on; redundant).");
+                println("  --lock      re-hash lib/ into cyrius.lock, keeping the commit pins.");
                 println("  --no-lock   suppress cyrius.lock write for this run.");
+                println("  --relock    accept a stdlib leaf whose pinned snapshot changed under an");
+                println("              UNCHANGED [package].cyrius pin (otherwise refused, v6.6.4).");
                 println("  --help, -h  print this message.");
                 println("");
                 println("Related: cyrius update    re-resolve to latest tags.");

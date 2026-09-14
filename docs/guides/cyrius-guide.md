@@ -941,6 +941,29 @@ modules = ["src/types.cyr", "src/error.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}`. Stdlib is unprefixed.
 Includes are auto-prepended by the build tool — source files only need project includes.
 
+**`cyrius.lock` is a contract, not a cache (v6.6.4).** When a project has a git dep the
+resolver writes `cyrius.lock`: one `commit	…` line per git dep (a repointed tag is refused
+against it), one `<sha256>  lib/<file>` line per vendored file (sorted), and a `cyrius	<pin>`
+trailer naming the stdlib pin. On every resolve — including the implicit one `cyrius build`
+runs — a stdlib leaf whose bytes in `~/.cyrius/versions/<pin>/lib` disagree with the locked
+hash **under an unchanged `[package].cyrius`** is refused by name, with both hashes, and
+neither `lib/` nor the lock is written:
+
+```
+error: lib/math.cyr: cyrius.lock and the pinned stdlib snapshot DISAGREE under an unchanged pin 6.6.4
+  cyrius.lock records  a765…
+  snapshot now hashes  e3e1…
+  source: /home/you/.cyrius/versions/6.6.4/lib/math.cyr
+  refusing to vendor or re-lock this leaf. Either bump [package].cyrius, or run `cyrius deps --relock` …
+```
+
+Bumping the pin re-locks silently (that is a dependency-spec change); `cyrius deps --relock`
+is the explicit accept when the snapshot legitimately moved (e.g. after
+`scripts/verify-store.sh --restore`). Before 6.6.4 the resolver re-vendored and re-locked the
+mutated file silently and `deps --verify` then passed on it. A lock written before 6.6.4 has
+no trailer: it fails open for one resolve and comes back stamped. `cyrius deps --lock`
+re-hashes `lib/` **keeping** the commit pins (it used to drop them).
+
 ## Linter
 
 ```sh

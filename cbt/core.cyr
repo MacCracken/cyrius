@@ -51,6 +51,17 @@ var _skip_deps = 0;
 # v5.7.8 P5: lockfile is written by default after every successful
 # `cyrius deps`. _no_lock = 1 suppresses the write for that run.
 var _no_lock = 0;
+# v6.6.4: `cyrius deps --relock` — explicitly ACCEPT a stdlib leaf whose bytes in the
+# pinned snapshot moved while `[package].cyrius` did not. Without it the resolver refuses
+# to vendor or re-lock that leaf (see _dep_lock_guard_stdlib_leaf in cbt/deps.cyr).
+var _dep_relock = 0;
+# v6.6.4: cyrius.lock as it stood at cmd_deps ENTRY — read once, before any copy, so the
+# guard compares against the lock this run inherited, not the one it is about to write.
+var _dep_lock_buf = 0;
+var _dep_lock_len = 0;
+var _dep_lock_pin_same = 0;   # 1 iff the lock's `cyrius\t<pin>` line equals this run's pin
+var _dep_lock_refused = 0;    # leaves the guard refused this run; folded into `errors`
+var _dep_lock_has_trailer = 0;   # 1 iff the loaded lock carried a `cyrius\t<pin>` line (else it is re-written once to gain one)
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
 # child's envp with CYRIUS_STRICT_PIN=1 so cycc's pin-drift check
 # (added v5.11.57) exits non-zero on mismatch instead of warning.

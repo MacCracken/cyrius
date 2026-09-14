@@ -49,6 +49,63 @@ mutation-proven against a 6.6.3 tree.
   (`_DEPRECATED_WARN`) called from both paths; pinned by axis 2 of the decoder gate (6.6.3
   prints nothing there).
 
+- ⛔ **`cyrius build` / `cyrius deps` silently RE-LOCKED a stdlib file whose bytes changed
+  under an UNCHANGED pin — and `deps --verify` then passed on the mutation.** hisab (3.0.1
+  bump): a build with the manifest pin unchanged and nothing edited printed the same two lines
+  a no-op prints, rewrote the committed `lib/ganita.cyr` (1.2.4 → 1.2.5) and moved its lock
+  hash; only `git status` noticed. `_dep_copy_stdlib_recursive` copied Phase 1 from
+  `versions/<pin>/lib` unconditionally (`cbt/deps.cyr:866`) and `cmd_deps_lock` re-hashed
+  whatever was on disk with `O_TRUNC`, never opening the lock it inherited — the lock was
+  updated to agree with the one thing it exists to catch. The lock format recorded no pin, so
+  even a reader could not tell "the pin changed" from "the snapshot changed". The git-dep half
+  has had the check since CVE-21 (v6.2.30): a tagged dep's resolved HEAD is compared against
+  the `commit\t` line and a mismatch refuses. This is the stdlib half, keyed on the pin:
+  `cyrius.lock` now ends with a `cyrius\t<pin>` trailer (LAST, so a pre-6.6.4 `--verify`
+  skips it — measured: a 6.6.3 wrapper verifies a trailer lock `0 failed`; at the head it
+  misreads it as a hash line); the lock is read ONCE at resolve entry, before any copy; a leaf
+  whose SNAPSHOT hash differs from the locked one under the same pin is refused **by name
+  with both hashes and the source path**, counted into `errors` so no lock is written and
+  `cyrius build` aborts with no binary; `cyrius deps --relock` is the explicit accept (and
+  writes the lock even for a stdlib-only project, where `build` writes none); a pin bump
+  re-locks silently, as a dependency-spec change should. A lock written before 6.6.4 has no
+  trailer: it fails open for ONE resolve and comes back stamped — on stdlib-only consumers
+  too, which never trigger the lock write otherwise. Worded as what is observed ("the lock and
+  the snapshot DISAGREE") because the same shape appears when the LOCK moved (`cyrius update`
+  + `--lock`).
+  **Two more defects found under it (the review):** the bare `cyrius deps --lock` verb reached
+  `cmd_deps_lock` with `_dep_commit_lines == 0` and **dropped every CVE-21 commit pin** —
+  measured as the `commit\t` line count going 1 → 0 (the old verb printed no suffix at all),
+  after which the next `cyrius deps` TOFU-accepted a repointed tag it would otherwise have
+  refused (its help text called the flag "redundant");
+  the inherited lock's `commit\t` lines are now carried forward. And a CRLF checkout of the
+  lock silently turned the guard **off** (the trailer and hash-line length compares missed
+  the `\r`; `--verify` on the same file already failed loud) — CR-tolerant now, so it fails
+  closed. `cmd_deps_verify` also reads the whole file (a lock past 64 KB stopped verifying
+  at the cut).
+  Gated by `tests/gates/toolchain/deps_relock_refused.sh` — 14 axes in a mktemp home with the
+  CLI built from source as the pin's own wrapper and a local `file://` git dep (⛔ a
+  stdlib-only fixture writes no lock and would pass the "lock untouched" assertion vacuously
+  on the old resolver): refusal with both hashes and nothing rewritten, `--relock` then a
+  second refusal, the pin bump re-locking silently (the anti-over-refusal axis), the legacy
+  fail-open-once + stamp on both fixture shapes (leaf vendored, hash moved), a stdlib-only
+  consumer's lock re-written after a pin bump (the review found it kept the OLD pin and old
+  hashes, so `--verify` failed on the leaf just vendored and the guard sat off), the 6.6.3
+  wrapper reading the trailer lock (⚠ run with `CYRIUS_RESOLVED=1`, or from the next bump on
+  the old wrapper re-execs into the NEW reader and the axis measures the code under test),
+  no hasher on PATH failing CLOSED (it failed open: the leaf vendored, the lock rewritten with
+  zero hash lines, exit 0), `--lock` keeping the commit pins, CRLF failing closed, and the
+  stdlib-only `--lock`/mutate/`--relock`/`--verify` round trip. The bite-4 resolver reds every
+  axis but the old-reader one; nine buildable one-line mutants each red their own axes
+  (ledger in the file — ⚠ a `:` "no-op" mutant is a cyrius syntax error and reads as "could
+  not build", not as caught).
+  The filed repro flips BUG → OK. Guide + vidya `tooling.cyml` document the lock format and
+  the three flags. ⚠ Reach: the guard lives in the resolver a consumer's PIN selects — a
+  repo pinned below 6.6.4 re-execs the pinned wrapper (`_try_redirect_to_pinned`) and gets no
+  guard and no trailer, so the four repos that ingested 6.6.3 content under a 6.6.2 pin will
+  NOT see a refusal; their flip-back to true-6.6.2 content is a silent re-vendor (a git diff
+  where `lib/` is committed). The refusal reaches consumers pinned ≥ 6.6.4 whose lock carries
+  the trailer — the pin sweep is what closes the class, as with every resolver fix.
+
 - ⛔ **The install store was writable under a RELEASED name, and it was stale in both
   directions.** `~/.cyrius/versions/<v>` is what a consumer pin means; between a tag and the
   next bump the working-tree `VERSION` still names the released version, and FOUR writers keyed
@@ -97,9 +154,9 @@ mutation-proven against a 6.6.3 tree.
   the first cut rebuilt it as an ELF and had to be re-run. **The live store on the
   maintainer's box was restored this way** (6.6.0–6.6.3 all verify OK). Consumers that had
   ingested 6.6.3 content under a 6.6.2 pin: aethersafha and crab have it COMMITTED in `lib/`
-  (their next build flips those files back — visible as a diff, and the bite-5 relock guard
-  will name it), sankhya's `lib/` is gitignored, and agnoshi was already flipped back by this
-  bite's own `check.sh` run (the agnos gate builds it).
+  (their next build flips those files back — visible as a git diff; NOT a refusal, since a
+  6.6.2 pin runs the 6.6.2 resolver), sankhya's `lib/` is gitignored, and agnoshi was already
+  flipped back by this bite's own `check.sh` run (the agnos gate builds it).
   Gated by `tests/gates/toolchain/released_slot_written_from_tag.sh` (17 axes in a mktemp
   mini-repo against a mktemp store: refusal, throwaway carve-out, override, tree==tag,
   untagged, the user's own store spelled with a trailing slash under a symlinked HOME, an

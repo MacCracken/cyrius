@@ -1,8 +1,14 @@
-# `cyrius build` / `cyrius deps` silently RE-LOCK a stdlib file whose content changed under an UNCHANGED pin — OPEN
+# `cyrius build` / `cyrius deps` silently RE-LOCK a stdlib file whose content changed under an UNCHANGED pin — FIXED v6.6.4
 
-**Status:** 🟡 **OPEN** — filed by hisab on its 3.0.1 toolchain bump. Repro
-`repros/2026-09-13-hisab-deps-relocks-silently-under-unchanged-pin.sh` **proves itself**: exit 1 while
-the bug is present (it is, on 6.6.2 and 6.6.3), exit 0 when the lock is left alone.
+**Status:** ✅ **FIXED in v6.6.4** — the lock carries a `cyrius\t<pin>` trailer, is read once at
+resolve entry, and a stdlib leaf whose pinned-snapshot hash disagrees with the locked one under
+an unchanged pin is refused by name with both hashes (no lock write, no binary);
+`cyrius deps --relock` is the explicit accept; a pin bump re-locks silently; a pre-6.6.4 lock
+fails open once and comes back stamped. Found under it: bare `deps --lock` dropped every CVE-21
+commit pin; a CRLF lock turned the guard off; `--verify` read only 64 KB. Gated by
+`tests/gates/toolchain/deps_relock_refused.sh` (14 axes, local `file://` git dep). The filed repro
+flips BUG → OK. The companion cause (the store written from a drifted tree) is closed in the
+same release.
 **Placement:** unpinned — `cbt/deps.cyr`, every 6.x release checked (6.6.2, 6.6.3).
 **Discovered:** 2026-09-13. A `cyrius build` in hisab — manifest pin `6.6.2`, nothing edited — printed
 `1 deps resolved / cyrius.lock: 31 deps locked, 1 commit-pinned`, the same two lines a no-op prints,
