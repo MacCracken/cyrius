@@ -896,6 +896,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # (&fn_name), emitted as a fixup-type-3 function address.
         var fni = FINDFN(S, anoff);
         if (fni >= 0) {
+            # v6.6.4: `&fn` is its own resolution path — a private fn was reachable from any
+            # file by taking its address and calling through callptr/fncallN (hisab 2026-09-13).
+            _vis_check(S, fni, anoff);
             var fc = GFCNT(S);
             if (fc >= 1048576) {
                 syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);

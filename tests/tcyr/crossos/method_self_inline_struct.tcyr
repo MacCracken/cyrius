@@ -1,0 +1,40 @@
+# method_self_inline_struct.tcyr — v6.6.4 — `p.method()` on an INLINE stack struct
+# passes p's ADDRESS as `self`, on every backend.
+#
+# The method-call path pushed the local's slot VALUE as `self` unconditionally,
+# which is right for a pointer-mode local (the slot holds the heap address) and
+# wrong for an inline stack struct (the slot IS the struct): `self` arrived as the
+# first FIELD and `load64(self)` SIGSEGV'd (rc=139, no diagnostic). Field access
+# already distinguished the two through _resolve_field_base_addr; the method path
+# did not. Found while gating the v6.6.4 visibility paths — no in-tree call exercised
+# the LOCAL inline-struct branch (the one dot-dispatch test uses an 8-byte GLOBAL).
+#
+# Mutation that reddens this file: `EFLADDR(S, mli)` -> `EFLLOAD(S, mli)` in
+# parse_decl.cyr's method path (the 6.6.3 shape) — rc=139.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct P2 { a: i64; b: i64; }
+struct P3 { a: i64; b: i64; c: i64; }
+struct P1 { a: i64; }
+impl Tr for P2 { fn sum2(self) { return load64(self) + load64(self + 8); } }
+impl Tr for P3 { fn sum3(self) { return load64(self) + load64(self + 8) + load64(self + 16); } }
+impl Tr for P1 { fn one(self) { return load64(self) * 3; } }
+impl Tr for P2 { fn set_b(self, v) { store64(self + 8, v); return v; } }
+
+fn heap_p3(): i64 { var q: P3 = alloc(24); q.a = 1; q.b = 2; q.c = 3; return q.sum3(); }
+fn stack_p2(): i64 { var p: P2; p.a = 5; p.b = 7; return p.sum2(); }
+fn stack_p3(): i64 { var r: P3; r.a = 10; r.b = 20; r.c = 30; return r.sum3(); }
+fn stack_p1(): i64 { var s: P1; s.a = 4; return s.one(); }
+fn stack_write(): i64 { var p: P2; p.a = 1; p.b = 2; p.set_b(40); return p.a + p.b; }
+
+test_group("method self on inline stack structs");
+assert_eq(stack_p2(), 12, "16-byte inline struct: self is the address");
+assert_eq(stack_p3(), 60, "24-byte inline struct: self is the address");
+assert_eq(stack_p1(), 12, "8-byte (<=8B single-slot) struct: self is the address");
+assert_eq(stack_write(), 41, "a method writes THROUGH self into the caller's struct");
+test_group("pointer-mode local still passes the heap address");
+assert_eq(heap_p3(), 6, "heap struct via alloc");
+
+var r = assert_summary();

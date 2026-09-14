@@ -49,6 +49,59 @@ mutation-proven against a 6.6.3 tree.
   (`_DEPRECATED_WARN`) called from both paths; pinned by axis 2 of the decoder gate (6.6.3
   prints nothing there).
 
+- ⛔ **`&_private_fn` from another file compiled and was fully callable — and it was one of
+  EIGHT unchecked resolution paths.** The v6.5.0 visibility predicate `_vis_check` is wired
+  per call site (FINDFN is pure lookup; it also serves definitions and prepasses), and its own
+  header named `&fn` pointers and methods as paths that need it — then shipped three callers.
+  hisab's reachability gate found `&_helper` + `callptr`/`fncall1` running a private fn (exit
+  42); the sweep found the same shape in `s.method()`, the retptr (asv) and pair (asp)
+  struct-returning receives — `var s: T = _mk()` AND the inferred `var s = _mk()` — and four
+  Win64-only SIMD receive/return paths (`_try_vector_call_assign`, `_f2c`, `_f4c`, `_rc`).
+  Eleven sites now check; the PE-only four sit INSIDE their `_TARGET_PE == 1` branches on
+  purpose (on SysV/aarch64/cx those shapes fall to `PARSE_FNCALL`, so a lookahead check
+  would double-report). In-tree blast radius zero: the corpus compiles byte-identical.
+  **Opposite polarity, found by the verifier:** a `public fn pgen<T>` in a private file was
+  REFUSED at `pgen<i32>(42)` from another file while `pgen(42)` was accepted — the
+  monomorphized instance is emitted by re-parsing the base's tokens, so `_pub_pending` was
+  long consumed and `_PRIV_FILE` answered for the lib; the instance now inherits its BASE's
+  flag (`_inst_base_fi`).
+  **And the var side had the same gap one level over:** `PARSE_GVAR_REG` returns into
+  `PARSE_GVAR_ARR` BEFORE the `_GVAR_VIS` whose comment claims to be "the one point EVERY
+  global var reaches", so a top-level array in a `private` file was never stamped — readable
+  and addressable from any file (the guide promises "every fn and global var") — and, the
+  other half of the same missing call, `public var arr[N]` never CONSUMED the marker, so it
+  re-exposed the NEXT declaration (the hisab `public enum` class, closed for arrays here and
+  for every other declaration kind in the enum-leak repair below). Stamped and consumed now.
+  A field access on a private global (`_gs.a`) also reported the same violation at two
+  columns (base resolved on the lookahead and again on the resolve) — one report per
+  (var, line).
+  Gated by `tests/gates/frontend/visibility_private.sh` — a new per-path section of 26 axes
+  (each negative axis asserts EXACTLY ONE diagnostic per offending line and no binary;
+  publics, same-file address-of, public-generic instances and public arrays must build). The
+  pre-fix compiler reds 18 of them: 17 negative paths and the generic polarity (both counts
+  derived by running the gate against the 6.6.3 compiler). Guide + vidya updated.
+  ⚠ Consumer breakage is by design: code that reached a private fn through any of these
+  paths now gets the same hard error a direct call always got.
+
+- **`p.method()` on an INLINE stack struct SIGSEGV'd — `self` was the first field, not the
+  address.** Found while gating the paths above; no in-tree call exercises the local
+  inline-struct branch (the one dot-dispatch test uses an 8-byte GLOBAL, which takes the
+  address path). The method path pushed the local's slot VALUE as `self` unconditionally —
+  right for a pointer-mode local, wrong for an inline stack struct (slot marker -1, or
+  ≤ 8 B on non-cx), which field access already distinguished through
+  `_resolve_field_base_addr`. Mirrored there; measured 5+7 → rc=139 before (PE under wine
+  reports the fault as rc=5 — literally the first field's value, which is the faulting
+  address), 12 after, on x86, aarch64 (qemu) and PE (wine). Gated by
+  `tests/tcyr/crossos/method_self_inline_struct.tcyr` so ecb/ach/cass/pi run it.
+
+- **Filed, not fixed — the one residual:** a private impl method is reachable by a FORWARD
+  call (the call parsed before its `impl` block) because pass 1 brace-skips impl bodies in
+  all seven compiler forks, so the forward call registers `Type_method` from the call site
+  with NO flags and `_vis_check` returns at its first test (private bit unrecorded). Closing
+  it means registering mangled method names with their fileid + flag in pass 1 — a 7-fork
+  change touching PARSE_FN_DEF's name-pool mangling, not a missing call.
+  `docs/development/issues/2026-09-13-private-impl-method-forward-call-fail-open.md`.
+
 - ⛔ **cx: any string, global or fn pointer whose address passed 0xFFFF loaded a wrong value.**
   Found under the lexer fix (same class: a 16-bit field silently too narrow). Every cx address
   emitter (`ESADDR`, `EVADDR`, `EVADDR_X1`, `EVLOAD`, `EVSTORE`, `ELOAD_FN_ADDR`) emitted a

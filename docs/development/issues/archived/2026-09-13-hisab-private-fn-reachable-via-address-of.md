@@ -1,8 +1,13 @@
-# A file-private fn is reachable from another file via `&name` and runs through `callptr` / `fncallN` — OPEN
+# A file-private fn is reachable from another file via `&name` and runs through `callptr` / `fncallN` — FIXED v6.6.4
 
-**Status:** 🟡 **OPEN** — filed by hisab while building its public-surface gate for 3.1.0. Repro
-`repros/2026-09-13-hisab-private-fn-reachable-via-address-of.cyr` **proves itself** (exit 42 while the
-bug is present; the build is refused when fixed).
+**Status:** ✅ **FIXED in v6.6.4** — `&fn` was one of EIGHT resolution paths that resolve a
+user identifier through `FINDFN` and emit their own call/fixup without `_vis_check`: `&fn`,
+`s.method()`, the retptr/pair struct receives (typed AND inferred), and four Win64-only SIMD
+paths. All check now; the repro is refused with two diagnostics and no binary on every target.
+Two same-class gaps closed with it (a `public fn f<T>` instance in a private file was wrongly
+refused; top-level arrays in a private file were never stamped). Gated by the per-path section
+of `tests/gates/frontend/visibility_private.sh` (26 axes; 6.6.3 reds 18). One residual FILED:
+`2026-09-13-private-impl-method-forward-call-fail-open.md`.
 **Placement:** unpinned — reproduced on **6.6.2 and 6.6.3**; older than both (the visibility check
 has not changed shape since 6.5.38).
 **Discovered:** 2026-09-13, designing a consumer-reachability gate that took `&name` of every public

@@ -756,6 +756,19 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   `duplicate fn ... last definition wins` warning (a hard error if the two disagree about
   arity, since v6.5.37). Two definitions **in one file** are likewise still a duplicate —
   that is a redefinition of one symbol, not a collision between two files.
+- **The boundary covers every way of reaching a fn, not just a direct call (v6.6.4).**
+  `&_helper` (address-of, then `callptr` / `fncallN`), `s.method()`, a struct-returning
+  call bound with `var s: T = _mk()` or `var s = _mk()`, and the Win64 SIMD receive/return
+  forms all report `'_helper' is private to its file` exactly like a direct call — before
+  6.6.4 every one of them compiled and ran (hisab found `&_helper` while writing a
+  reachability gate). Top-level **arrays** are covered too: `var _buf[N]` in a private file
+  is file-private like any other global (it was never stamped before 6.6.4). A `public fn
+  f<T>` in a private file is reachable at every instantiation (`f<i32>(x)` from another file
+  used to be refused while `f(x)` was accepted — the instance inherited the file default).
+  Enum constants and type names carry no visibility; they are always public. ⚠ One known
+  gap remains open: an impl method called BEFORE its `impl` block appears in the stream
+  (a forward reference across files — include order normal code never has) is not yet
+  checked; see `docs/development/issues/2026-09-13-private-impl-method-forward-call-fail-open.md`.
 
 Both names are reserved words — see the reserved-word note under *Functions*; you
 cannot use `public`, `pub`, or `private` as identifiers.

@@ -13,7 +13,15 @@
 # enumerated. So this asserts per-PATH, and a new path is expected to add a case here.
 #
 # Paths covered: ordinary call · TAIL call (`return f();`, which bypasses PARSE_FNCALL
-# entirely) · operator overloading (EMIT_OP_DISPATCH — the v6.4.81 path).
+# entirely) · operator overloading (EMIT_OP_DISPATCH — the v6.4.81 path) · and, since
+# v6.6.4, the eight paths hisab's `&_private` filing led to: `&fn` (in-fn, top-level,
+# fncallN arg), `s.method()`, the retptr (asv) / pair (asp) struct receives incl. the
+# inferred `var q = f()` form, and the four PE-only SIMD receive/return paths — each
+# asserted to report EXACTLY ONCE (a lookahead + PARSE_FNCALL double-report is a bug
+# too). Plus the opposite polarity (a `public fn pgen<T>` in a private file instantiated
+# at `<i32>` from another file must BUILD — the instance used to inherit the file
+# default, not its base) and top-level ARRAYS (PARSE_GVAR_ARR never stamped, so
+# `var _buf[4]` in a private file was readable and addressable from anywhere).
 
 set -e
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -170,4 +178,94 @@ grep -q "is private to its file" "$T/rx2.err" 2>/dev/null     && { echo "  FAIL:
 if [ "$fail" = "0" ]; then
     echo "  PASS: visibility-private — fns (ordinary/tail/operator) + global vars (read/write) hard-errored cross-file; 'public' re-exposes both; lib/regex.cyr adoption live; private excluded from .dynstr; default inert"
 fi
+
+# ── v6.6.4: every path that resolves a user identifier through FINDFN and emits its
+# own call/fixup (hisab 2026-09-13: `&_helper` was callable from any file) ─────────
+mkdir -p "$T/paths/lib"; ln -s "$ROOT/lib"/* "$T/paths/lib/" 2>/dev/null || true
+cat > "$T/paths/lib/hid.cyr" <<'HID'
+private
+struct HidBig { a: i64; b: i64; c: i64; }
+struct HidPair { a: i64; b: i64; }
+fn hid_fn(v): i64 { return v; }
+fn hid_big(): HidBig { var s: HidBig; s.a = 1; s.b = 2; s.c = 3; return s; }
+fn hid_pair(): HidPair { var s: HidPair; s.a = 1; s.b = 2; return s; }
+fn hid_v2(): f64v2 { return f64v2_make(1, 2); }
+fn hid_v4(): f64v4 { return f64v4_make(1, 2, 3, 4); }
+impl HidTr for HidPair { fn hid_m(self) { return 42; } }
+fn hid_same_amp(): i64 { var f = &hid_fn; return fncall1(f, 42); }
+fn _gen<T>(x: T): T { return x; }
+var _hid_arr[4];
+var _hid_u8: u8[16];
+public fn pub_fn(v): i64 { return v; }
+public fn pub_big(): HidBig { return hid_big(); }
+public fn pub_pair(): HidPair { return hid_pair(); }
+public fn pub_same_amp(): i64 { return hid_same_amp(); }
+public fn pgen<T>(x: T): T { return x; }
+public var pub_arr[4];
+var _after_pub_arr = 9;
+struct HidGS { a: i64; b: i64; }
+var _hid_gs: HidGS = alloc(16);
+HID
+# ⚠ FIXTURE ORDER IS LOAD-BEARING: `_after_pub_arr` and `_hid_gs` follow `public var
+# pub_arr[4]` on purpose — before v6.6.4 an array declaration never CONSUMED the
+# `public` marker, so the next declaration was silently re-exposed. arr_pub_next pins
+# that by name; gs_field/gs_two would ALSO red on it, but they exist for the dedup.
+PPRE='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/simd.cyr"
+include "lib/hid.cyr"
+'
+# paxis <name> <expected-count> <symbol> <body> [env]
+paxis() {
+    _n=$1; _want=$2; _sym=$3; _body=$4; _envv=$5
+    printf '%s%s\n' "$PPRE" "$_body" > "$T/paths/$_n.cyr"
+    ( cd "$T/paths" && env $_envv "$CC" < "$_n.cyr" > "$_n.bin" 2> "$_n.err" ) || true
+    _got=$(grep -c "'$_sym' is private to its file" "$T/paths/$_n.err" || true)
+    if [ "$_got" != "$_want" ]; then
+        echo "  FAIL: visibility-private [$_n]: expected $_want x \"'$_sym' is private\", got $_got"; head -2 "$T/paths/$_n.err" | sed 's/^/      /'; fail=1
+    fi
+    if [ "$_want" != "0" ] && [ -s "$T/paths/$_n.bin" ]; then echo "  FAIL: visibility-private [$_n]: a binary was still emitted"; fail=1; fi
+    if [ "$_want" = "0" ] && [ ! -s "$T/paths/$_n.bin" ]; then echo "  FAIL: visibility-private [$_n]: legit program refused"; head -2 "$T/paths/$_n.err" | sed 's/^/      /'; fail=1; fi
+}
+# `&fn` — the hisab path (in-fn, top-level, and in fncallN's arg position)
+paxis amp_infn    1 hid_fn 'fn main(): i64 { var f = &hid_fn; return callptr(f, 1); }'
+paxis amp_top     1 hid_fn 'var g = &hid_fn; fn main(): i64 { return fncall1(g, 1); }'
+paxis amp_fncall  1 hid_fn 'fn main(): i64 { return fncall1(&hid_fn, 1); }'
+paxis amp_pub     0 pub_fn 'fn main(): i64 { var f = &pub_fn; return callptr(f, 1); }'
+paxis amp_same    0 hid_fn 'fn main(): i64 { return pub_same_amp(); }'
+# `s.method()` — its own call emitter (parse_decl.cyr method path)
+paxis method      1 HidPair_hid_m 'fn main(): i64 { var p: HidPair; p.a = 0; p.b = 0; return p.hid_m(); }'
+# struct receives that emit their own call
+paxis asv_typed   1 hid_big  'fn main(): i64 { var s: HidBig = hid_big(); return s.c; }'
+paxis asp_typed   1 hid_pair 'fn main(): i64 { var s: HidPair = hid_pair(); return s.b; }'
+paxis asp_infer   1 hid_pair 'fn main(): i64 { var s = hid_pair(); return s.b; }'
+paxis asv_pub     0 hid_big  'fn main(): i64 { var s: HidBig = pub_big(); return s.c; }'
+paxis asp_pub     0 hid_pair 'fn main(): i64 { var s = pub_pair(); return s.b; }'
+# PE-only own-call paths (Win64 retptr vector receive / assign / return)
+paxis pe_v2_decl  1 hid_v2 'fn main(): i64 { var v: f64v2 = hid_v2(); return 0; }' CYRIUS_TARGET_WIN=1
+paxis pe_v4_decl  1 hid_v4 'fn main(): i64 { var v: f64v4 = hid_v4(); return 0; }' CYRIUS_TARGET_WIN=1
+paxis pe_v2_asg   1 hid_v2 'fn main(): i64 { var v: f64v2 = f64v2_make(0, 0); v = hid_v2(); return 0; }' CYRIUS_TARGET_WIN=1
+paxis pe_v2_ret   1 hid_v2 'fn w(): f64v2 { return hid_v2(); } fn main(): i64 { var v: f64v2 = w(); return 0; }' CYRIUS_TARGET_WIN=1
+# the same shapes on Linux must report exactly ONCE too (no lookahead double-report)
+paxis lx_v2_decl  1 hid_v2 'fn main(): i64 { var v: f64v2 = hid_v2(); return 0; }'
+paxis lx_v2_ret   1 hid_v2 'fn w(): f64v2 { return hid_v2(); } fn main(): i64 { var v: f64v2 = w(); return 0; }'
+# generic instances: a PUBLIC generic in a private file must build at a non-i64 type
+# from another file (the instance inherited the FILE default and was refused), while
+# a private generic's instance must still be refused.
+paxis pgen_i32    0 'pgen$i32' 'fn main(): i64 { var v: i32 = pgen<i32>(42); return v; }'
+paxis gen_i32     1 '_gen$i32' 'fn main(): i64 { var v: i32 = _gen<i32>(42); return v; }'
+# top-level arrays: PARSE_GVAR_ARR never stamped them (guide: "every fn and global var")
+paxis arr_name    1 _hid_arr 'fn main(): i64 { return load64(&_hid_arr); }'
+paxis arr_u8      1 _hid_u8  'fn main(): i64 { return load8(&_hid_u8); }'
+paxis arr_top     1 _hid_arr 'var q = &_hid_arr; fn main(): i64 { return load64(q); }'
+paxis arr_pub     0 pub_arr  'fn main(): i64 { store64(&pub_arr, 5); return load64(&pub_arr); }'
+# `public var arr[N]` must CONSUME the marker: the next declaration stays private
+paxis arr_pub_next 1 _after_pub_arr 'fn main(): i64 { return _after_pub_arr; }'
+# a field access resolves its base twice (lookahead + resolve) and reported the same
+# violation at two columns — one report per (var, line), two lines report twice
+paxis gs_field    1 _hid_gs  'fn main(): i64 { return _hid_gs.a; }'
+paxis gs_two      2 _hid_gs  'fn main(): i64 { var x = _hid_gs.a;
+var y = _hid_gs.b; return x + y; }'
+[ "$fail" = 0 ] && echo "  PASS: visibility-private paths (&fn x3 + method + asv/asp/inferred + 4 PE-only) enforced once each; publics, same-file and public-generic instances accepted; private arrays refused"
 exit $fail

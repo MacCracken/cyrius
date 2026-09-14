@@ -403,10 +403,18 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             return 0;
         }
         var mname = BUILD_METHOD_NAME(S, si, fnoff);
-        # Push &var as first arg (self) — handle locals and globals
+        # Push &var as first arg (self) — handle locals and globals.
+        # v6.6.4: mirror _resolve_field_base_addr. A local struct is either POINTER-mode
+        # (the slot holds the struct's heap address — load it) or INLINE (slot marker -1,
+        # or <=8 B on non-cx: the slot IS the struct — pass its address). This path
+        # loaded the slot unconditionally, so `p.m()` on an inline stack struct handed
+        # the method p's FIRST FIELD as `self` and `load64(self)` SIGSEGV'd (rc=139).
         if (idx < 0 - 1) {
             var mli = 0 - idx - 2;
-            EFLLOAD(S, mli);
+            var m_is_ptr = 1;
+            if (mli > 0) { if (L64(S + 0x5D9D000 + (mli - 1) * 8) == 0 - 1) { m_is_ptr = 0; } }
+            if (_TARGET_CX == 0) { if (STRUCTSZ(S, si) <= 8) { m_is_ptr = 0; } }
+            if (m_is_ptr == 1) { EFLLOAD(S, mli); } else { EFLADDR(S, mli); }
         } else {
             EVADDR(S, idx);
         }
@@ -429,6 +437,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         ECALLPOPS(S, argc);
         var mfi = FINDFN(S, mname);
         if (mfi < 0) { mfi = REGFN(S, mname); }
+        _vis_check(S, mfi, mname);   # v6.6.4: `s.method()` is its own call path
         var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
         else { ECALLFIX(S, mfi); }
@@ -814,6 +823,12 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
     S64(_varn_base + vc * 8, noff);
     S64(_vars_base + vc * 8, sz);
     SLVAR(S, vc);
+    # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its
+    # own `_GVAR_VIS` (whose comment claims to be "the one point EVERY global var
+    # reaches"), so a top-level array in a `private` file was never private — readable
+    # and addressable from any file — and a `public var arr[N]` never CONSUMED the
+    # marker, re-exposing the next declaration instead.
+    _GVAR_VIS(S, vc, sti);
     SVCNT(S, vc + 1);
     # v5.11.51: optional byte-list initializer
     # `var foo[N] = { 0x.., 0x.., ... };` emits store8 calls equivalent
@@ -1257,9 +1272,11 @@ fn PARSE_GVAR_REG(S): i64 {
     # v6.5.0 Phase 2b: stamp this global's owning file if the file opted into
     # private-by-default and no `public` moniker preceded it (fileid+1; 0 stays "not
     # private" — see _var_fileid in util.cyr). Placed HERE, immediately before the
-    # count bump, because this is the one point EVERY global var reaches: the first
+    # count bump, because this is the point every SCALAR global var reaches: the first
     # cut sat inside the `ann_scalar < 8` arm and so only ever fired for annotated
     # narrow scalars like `var x: i32`, silently doing nothing for a plain `var x = 1`.
+    # ⚠ NOT every global: the array form returns from PARSE_GVAR_ARR above and the
+    # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
     _GVAR_VIS(S, vcnt, sti);
     SVCNT(S, vcnt + 1);
     # v5.11.64: static-init path — record literal value, skip gvar_toks
@@ -1580,6 +1597,7 @@ fn _try_vector_call_assign(S, noff): i64 {
     var vns = GVEC_NSLOTS(S);
     if (vns <= 1) { return 0; }
     if (_TARGET_PE == 1) {
+        _vis_check(S, vfi, PEEKV(S));   # v6.6.4: PE retptr vector receive emits its own call
         STI(S, GTI(S) + 1);   # consume callee IDENT
         STI(S, GTI(S) + 1);   # consume '('
         EFLADDR(S, dst_li);
@@ -2184,6 +2202,7 @@ fn PARSE_VAR(S): i64 {
                             # path at line ~1063: push &named first,
                             # then user args, ECALLPOPS pops into RCX
                             # (retptr) + RDX/R8/R9 (user args).
+                            _vis_check(S, _f2c_look_fi, _f2c_look_noff);   # v6.6.4: own-call path
                             STI(S, GTI(S) + 1);  # consume callee IDENT
                             STI(S, GTI(S) + 1);  # consume '('
                             EFLADDR(S, _f2c_named);
@@ -2268,6 +2287,7 @@ fn PARSE_VAR(S): i64 {
                         STI(S, GTI(S) + 1);  # consume '='
                         if (_TARGET_PE == 1) {
                             # Win64 retptr-style call (mirror f64v2 Win64 branch).
+                            _vis_check(S, _f4c_look_fi, _f4c_look_noff);   # v6.6.4: own-call path
                             STI(S, GTI(S) + 1);  # consume callee IDENT
                             STI(S, GTI(S) + 1);  # consume '('
                             EFLADDR(S, _f4c_named);
@@ -2442,6 +2462,7 @@ fn PARSE_VAR(S): i64 {
         }
         var asv_fi = FINDFN(S, asv_fnoff);
         if (asv_fi < 0) { asv_fi = REGFN(S, asv_fnoff); }
+        _vis_check(S, asv_fi, asv_fnoff);   # v6.6.4: retptr struct receive emits its own call
         var asv_callee_sid = GFRS(S, asv_fi);
         if (asv_callee_sid == 0) {
             ERR_MSG(S, "fn does not declare a struct return type", 40);
@@ -2542,6 +2563,7 @@ fn PARSE_VAR(S): i64 {
         }
         var asp_fi = FINDFN(S, asp_fnoff);
         if (asp_fi < 0) { asp_fi = REGFN(S, asp_fnoff); }
+        _vis_check(S, asp_fi, asp_fnoff);   # v6.6.4: pair struct receive emits its own call (also the inferred `var q = f()` form)
         var asp_callee_sid = GFRS(S, asp_fi);
         if (asp_callee_sid == 0) {
             ERR_MSG(S, "fn does not declare a struct return type", 40);

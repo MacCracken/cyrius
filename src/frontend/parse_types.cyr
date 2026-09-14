@@ -788,12 +788,22 @@ fn FINDVAR(S, noff): i64 {
 # Cross-file access to a file-private global. Same hard-error contract as the fn side
 # (v6.5.0 Phase 3): reported via `_had_error` so every violation surfaces in one run
 # and no binary is emitted.
+var _vcv_last_vi = 0 - 1;   # v6.6.4: dedup key — (var, source line) of the last report
+var _vcv_last_line = 0 - 1;
 fn _vis_check_var(S, vi, noff): i64 {
     var owner = GVFI(S, vi);
     if (owner == 0) { return 0; }          # public, a local, or unrecorded
     var here = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
     if (here == 0) { return 0; }
     if (here == owner) { return 0; }       # same file — allowed
+    # v6.6.4: a struct-field access (`_gs.a`) resolves its base TWICE — once on the
+    # lookahead, once on the resolve — and reported the same violation at two columns.
+    # One report per (var, line): the gate's "exactly once" contract, and a reader
+    # gets one line per offending line of code.
+    var _vcv_line = GTLINE(S, GTI(S));
+    if (vi == _vcv_last_vi) { if (_vcv_line == _vcv_last_line) { return 1; } }
+    _vcv_last_vi = vi;
+    _vcv_last_line = _vcv_line;
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     syscall(SYS_WRITE, 2, ": '", 3);

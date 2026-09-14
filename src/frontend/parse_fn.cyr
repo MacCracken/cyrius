@@ -1174,6 +1174,7 @@ fn PARSE_RETURN(S): i64 {
                                 SFLC(S, _rc_named + 1);
                                 if (_rc_named + 1 > _flc_hwm) { _flc_hwm = _rc_named + 1; }
                                 # Marshal the inner call: retptr = &temp, then args.
+                                _vis_check(S, _rc_fi, _rc_noff);   # v6.6.4: PE SIMD-return call emits its own call
                                 STI(S, GTI(S) + 1);   # consume callee IDENT
                                 STI(S, GTI(S) + 1);   # consume '('
                                 EFLADDR(S, _rc_named);
@@ -1451,6 +1452,15 @@ fn _DEPRECATED_WARN(S, fi, noff): i64 {
 # was declared fixed three times, each fix scoped to the tier its repro landed in, and
 # the fourth occurrence was in a resolution path nobody had enumerated. A single helper
 # means adding a site is one call, and the set of sites is greppable.
+#
+# ⛔ v6.6.4: this header named `&fn` pointers and methods as paths that need the call —
+# and v6.5.0 shipped THREE callers (PARSE_FNCALL, the tail call, EMIT_OP_DISPATCH).
+# hisab found `&_private` callable from any file; the sweep found eight paths that
+# resolve a user identifier through FINDFN and emit their own call/fixup with no check:
+# `&fn` (parse_expr.cyr), `s.method()`, the asv retptr / asp pair struct receives (also
+# the inferred `var q = f()` form), and four PE-only SIMD receive/return paths
+# (parse_decl.cyr _try_vector_call_assign / _f2c / _f4c, parse_fn.cyr _rc). All eleven
+# now call it; `grep -n '_vis_check(' src/frontend/` is the list.
 #
 # FAIL-OPEN ON UNKNOWNS, deliberately, because this is warn-mode: fileid 0 means
 # unrecorded (a forward reference registered from a call site, an enum constructor, a
@@ -2512,10 +2522,12 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var jt_snap = _jt_snapshot(S);   # v6.3.35: save enclosing fn's jump targets (PARSE_FN_DEF resets them)
     STI(S, defstart);
     _inst_name = mangled;
+    _inst_base_fi = base_fi;
     _inst_conc0 = conc0;
     _inst_conc1 = conc1;
     PARSE_FN_DEF(S);
     _inst_name = 0;
+    _inst_base_fi = 0 - 1;
     _inst_conc0 = 0;
     _inst_conc1 = 0;
     _jt_merge(S, jt_snap);           # v6.3.35: restore enclosing targets (alongside the instance's)
@@ -3580,6 +3592,15 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     var _vis_fid = FM_FILEID(S, GTLINE(S, _defstart_ti));
     var _this_priv = 0;
     if (_pub_pending == 0) { if (_PRIV_FILE(_vis_fid) == 1) { _this_priv = 1; } }
+    # v6.6.4: a monomorphized INSTANCE inherits its BASE's visibility. The instance is
+    # emitted by re-parsing the base's tokens from its `fn` keyword, so `_pub_pending`
+    # is long consumed and `_PRIV_FILE` answers for the lib file — which stamped every
+    # instance of a `public fn pgen<T>` in a private file PRIVATE, and refused
+    # `pgen<i32>(42)` from another file while `pgen(42)` (the i64 base) was accepted.
+    if (_inst_name != 0) {
+        _this_priv = 0;
+        if ((GFLG(S, _inst_base_fi) & 64) != 0) { _this_priv = 1; }
+    }
 
     _dup_prev_pc = 0 - 1;
     var fi = FINDFN(S, noff);

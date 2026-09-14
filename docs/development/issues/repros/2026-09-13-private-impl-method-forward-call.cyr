@@ -1,0 +1,28 @@
+# Repro: a PRIVATE impl method is reachable from another file when the CALL is parsed
+# BEFORE the impl block (a forward reference). Proves itself: exit 42 while the bug is
+# present; the build is refused ('Q_seven' is private to its file) when fixed.
+#
+# Build as two files:
+#   lib:  the `# --- lib_priv_impl.cyr ---` block below, saved as lib_priv_impl.cyr
+#   main: this file (NOTE the include comes AFTER main — that is the shape)
+#   ./build/cycc < this.cyr > r && ./r ; echo $?
+#
+# Control: move the include ABOVE fn main and the same call is refused — so the check
+# exists; it fails OPEN because pass 1 skips impl bodies (src/main.cyr:~1495 and the six
+# fork twins) and the mangled `Q_seven` has no fileid when the forward call resolves.
+#
+# --- lib_priv_impl.cyr ---
+# private
+#
+# struct Q { a: i64; b: i64; }
+# impl Tr for Q {
+#     fn seven(self) { return 42; }
+# }
+# public fn api(v) { return v; }
+# --- end lib_priv_impl.cyr ---
+include "lib/syscalls.cyr"
+struct Q { a: i64; b: i64; }
+fn main() { var q: Q; q.a = 1; q.b = 2; return q.seven(); }
+include "lib_priv_impl.cyr"
+var rc = main();
+sys_exit_group(rc);

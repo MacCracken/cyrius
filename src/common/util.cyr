@@ -270,6 +270,7 @@ var _fnt_defstart = 0;
 # (0 = base-as-i64) bind the type-params to the concrete instance types instead of
 # the default i64. Cleared by the instantiate trigger after the re-invoke returns.
 var _inst_name = 0;
+var _inst_base_fi = 0 - 1;   # v6.6.4: the BASE fn of the instance being emitted — its private flag is the instance's (see PARSE_FN_DEF _this_priv)
 var _inst_conc0 = 0;
 var _inst_conc1 = 0;
 # v6.3.33 (generics tail — nested `Outer<Inner<T>>`): `>>` lexes to ONE right-shift
