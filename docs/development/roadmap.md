@@ -194,7 +194,7 @@ slot list at all — that is the failure this reservation is shaped against.
 
 ## Phase 2 — the proposal queue
 
-Three open proposals, sequenced by their own stated prerequisites rather than by size.
+Four open proposals, sequenced by their own stated prerequisites rather than by size.
 
 ### P1 — `cyrius.cyml` as the build tool's actual configuration
 [`proposals/2026-09-04-build-tool-manifest-integration.md`](proposals/2026-09-04-build-tool-manifest-integration.md)
@@ -234,6 +234,36 @@ same work, which is why it sits at the phase 2/3 boundary rather than being list
 
 ⚠ It reuses the `ir_const_fold` fixpoint (`src/common/ir.cyr`), so it must land **after** any
 work that rewrites that pass, or the churn is paid twice.
+
+### P4 — test-only stdlib leaves, instead of hiding them from the umbrella scan
+[`proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md`](proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md)
+
+Filed 2026-09-16 by **rekha 0.4.4**, 🟡 OPEN. Nothing is blocked — rekha shipped the workaround —
+so rank it by appetite, though it is **adjacent to P1**: it is the same complaint, that a
+manifest does not say what the tool actually reads.
+
+`dist/<pkg>.deps` unions the include scan of **`src/lib.cyr`** (path hardcoded at
+`cbt/commands.cyr:3903`) with `[deps] stdlib`, so a harness-only leaf has nowhere to live that
+is not published. rekha carried **nine** leaves for a bundle that calls `strlen` + `memcpy`;
+consumers vendored eight leaves of nothing for four releases. The fix — move the harness
+includes into `programs/prelude.cyr`, a file the scan does not read — cut the sidecar to
+`string alloc` with **byte-identical** bundles, and is the discomfort being reported: *which
+file an include sits in* decides what every downstream consumer must vendor.
+
+⭐ **`_distlib_verify_leaves` is the part that works** and the proposal explicitly does not touch
+it — it derived `alloc` unaided, because `lib/string.cyr` calls `alloc()` and declares no include
+for it. Option 3 in the filing is to trust it as the *sole* authority and delete the two
+over-reporting channels, which would have produced rekha's correct answer with no declaration
+discipline at all.
+
+⚠ **Two measured notes from the filing that outlive whatever shape this takes.** (a) Auto-prepend
+puts every resolved leaf in scope, so a package's own tree **cannot** check its own sidecar — a
+program with no includes at all compiles while calling `alloc`/`strlen`/`vec_new`, and a
+"compile it the way a consumer does" suite therefore passes a sidecar that omits a needed leaf.
+Only `_skip_deps = 1` catches it. (b) `_distlib_verify_leaves`' header reasons that
+over-reporting is the safe direction; that holds for a *misspelled* leaf (hard resolver error)
+but not for a *real* leaf that is merely unnecessary, which is silent. Over-reporting is
+quieter, not safer.
 
 ---
 
