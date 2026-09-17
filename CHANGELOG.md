@@ -4,6 +4,132 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+The 6.6.5 repair release — every open issue in docs/development/issues/, one bite each.
+
+### Fixed
+
+- ⛔ **The x86 register picker promoted a frame slot a SIMD kernel still read — every batch
+  intrinsic, silent wrong code or SIGSEGV** (filed by hisab 2026-09-14 against `f64v_*`
+  destinations; `issues/archived/2026-09-14-hisab-simd-dst-slot-regalloc-picker.md`). The picker
+  in `_PARSE_FN_DEF_IMPL` is three byte-pattern stages that disagreed about which frame
+  references it can rewrite: the use scan counted `48 8B 85` / `48 89 85` (rax moves) only, the
+  unsafe scan exempted ANY `48 8B` / `48 89` without reading the ModRM reg field, and the patch
+  pass rewrote exact 0x85 only. Every batch kernel reads its operands through
+  `_EMIT_LOAD_RDX_FROM_LOCAL` — `mov rdx,[rbp+disp32]`, `48 8B 95`, 55 call sites in 19 emitters
+  — which the unsafe scan waved through and the patch pass never touched. So an operand slot
+  with two rax references was promoted, its stash became `mov r13,rax`, and the kernel read a
+  slot nothing wrote. The filed repro (`M v` with a non-zero third column) printed `1 4 3` and
+  exited 1 — **silent**; a stdlib-free copy, hisab's `m3_mul_vec3` and the PE build (wine:
+  write to 0x0 at the `movupd`) SIGSEGV'd. **Wider than filed:** all **33** batch spellings
+  (`f64v_*`, `f64v256_*`, `f32v_*`, `f32v8_*`, `iv_*`; 22 measured, one or more per emitter —
+  stock rc 139 on all 22) — the scalar-return `*_dot` / `iv_dp8` lose a SOURCE slot, not a
+  destination; no `#derive`, setter, getter or shared object is needed — the trigger is any
+  `#inline`/derived call nested in another inline call's argument (`q = add2(gz(t), 1)`), in an
+  earlier statement, before an intrinsic with no `var` declared between (one there takes the
+  slot and hides it); every x86 target that runs the picker (ELF, PE, x86 Mach-O — measured by
+  disassembly — and agnos by construction; aarch64 has no picker and was correct under qemu).
+  The slot reuse itself is legitimate: parse_fn.cyr lowers GFLC after an inline call's
+  arguments, and the next intrinsic's `_SIMD_RESERVE` takes the freed slot — 6.6.2's reserve
+  was never the fault here. Reachable via `#inline` since 6.5.63 and via `#derive(accessors)`
+  since 6.5.71; the classifier hole is as old as the picker (v5.6.20, default-on v5.6.24). The
+  v6.5.64 comment on that scan claimed `48 8B 95` was already marked unsafe; it was not, and its
+  "402 of 402 byte-identical" measurement fits a change that caught no new 48-prefixed form.
+  **Fix:** one predicate, `_ra_plain_slot_mov`, now answers for all three stages — the use scan
+  counts what it accepts, the unsafe scan disqualifies a slot for any `[rbp+disp32]` reference
+  it rejects (any reg field, any opcode), the patch pass rewrites what it accepts — so a promoted
+  slot keeps no reference to its stack home by construction. That also covers the non-rax
+  REX.W slot moves the census found outside the kernels (`EFLLOAD`/`EFLSTORE_STRUCT_INT_PAIR`'s
+  `48 8B/89 95`, `ESTRUCT_BYVAL_COPY`'s `48 8B BD`), which were safe only because the v6.5.57
+  aggregate pass marks typed aggregates — a type rule covering a byte hole (kept, and still
+  needed for `lea`-reached words). The v6.5.64 comment is rewritten.
+  **Measured:** filed repro `4 5 3`, exit 0 (ELF, and PE under wine); all 22 spellings rc 0
+  with the picker on and off; the fixed cycc compiles the UNMODIFIED 6.6.4 source to the
+  committed 6.6.4 binary. Over `tests/tcyr` + `programs` + `benches` + `fuzz` — 436 sources, 14
+  of them uncompilable on BOTH compilers — **421 of 422 ELF binaries are byte-identical to
+  6.6.4**, and the same single difference shows on every other picker target: PE 403 of 404,
+  x86 Mach-O 420 of 421, agnos 363 of 364, cx 44 of 44 identical. That one difference is the
+  extended crossos test below, which the 6.6.4 compiler turns into a SIGSEGV. 314 / 314 `.tcyr`
+  exit 0. ⚠ The fixpoint and seed-derive are blind to this: cycc's own source has zero intrinsic
+  call sites. *(The first cut of this entry said "420 of 421" — one low in both terms, and with
+  no corpus definition to reproduce it against. The definition is now stated.)*
+- **No x86 byte-pattern pass scans cx bytecode any more** — five of them did. `_AARCH64_BACKEND
+  == 0` IS NOT AN x86 TEST: the cx backend sets it to 0 too, so the picker's auto-enable fired
+  there (`_cur_fn_regalloc` = 5) and its byte scan walked cx BYTECODE looking for x86 ModRM
+  bytes — the classifier fault above in its purest form — and so, one screen up in the same
+  function, did `DSE_PASS`, the integer LASE loop, the SIMD SLASE loop and the NOP-compaction
+  block that carries `_ra_frame_trim`. The four beside the picker are worse in kind, not better:
+  they need no regalloc precondition, so they ran over EVERY cx function, and they WRITE (0x90
+  fill) on a match. None of the five ever matched — 44 of 44 cx-compilable corpus files emit
+  identical bytecode with the gates — so this is a latent hazard closed, exactly the reasoning
+  the pass's own CO-03 comment already gave for aarch64 ("a consumer's could"), and the one
+  `wp_compact` and `_try_vec_direct` already carry both tests for. All five now test
+  `_TARGET_CX` (one hoisted local, `bp_x86`, so the two per-byte walks gain no second global
+  load). The frame reservation `_cur_fn_regalloc` implies is left alone — changing it would move
+  every cx local. ⚠ The obvious runtime pin is VACUOUS and was rejected on measurement: the cx
+  driver's `_read_env` is a stub, so `CYRIUS_REGALLOC_PICKER_CAP=0`, `CYRIUS_FRAMETRIM=0` and
+  `CYRIUS_REGALLOC_DUMP=1` are all inert there (0 `ra: fi=` lines over the entire cx corpus even
+  on the PRE-fix compiler). Gate axis G asserts the source shape instead, and says why.
+- ⛔ **The 6.6.2 gate's picker-OFF axes never built a picker-off binary.**
+  `simd_intrinsic_operand_slots.sh` set `CYRIUS_REGALLOC_PICKER_CAP=0` on the PROBE, which never
+  reads it — cycc reads it at compile time. Axes 2b / 3b re-ran the picker-ON binary: against the
+  6.6.1 compiler they reported 139 (the ON crash) where a real picker-off build returns **10**,
+  the silent dst-unwritten mode they claimed to pin. The archived 6.6.2 issue's "both are now
+  pinned" was false for that mode; it now carries a correction. The knob is set on cycc, and a
+  new axis 0 fails if the ON and OFF builds are byte-identical.
+
+### Added
+
+- `tests/gates/codegen/simd_intrinsic_operand_slots.sh` axes **0, A–G** (the gate was already
+  registered in check.sh): **A** 22 spellings covering all 19 kernels behind a nested replay,
+  exact hand-worked lane values, picker on and off (the off build as an independent oracle),
+  AVX2/FMA/SSSE3 rows skip EXECUTION loudly on a host without the feature, **plus 2 rows for the
+  other two admission routes this entry claims** — a replay that is not a setter
+  (`q = add2(gz(t), 1)`, with `var q` hoisted above it) and one whose getter and setter are on
+  DIFFERENT objects; both rc 139 on 6.6.4, and until they were added every probe here was the
+  same-object setter-of-getter, so the documented breadth rested on the fix being shape-agnostic
+  rather than on anything asserted; **B** the filed repro
+  verbatim; **C** an objdump-decoded oracle independent of the picker's own byte scan — every
+  slot with a non-plain reference in the OFF build keeps every reference in the ON build; **D**
+  anti-vacuous — the OFF build really shares a slot between ≥ 2 rax moves and a kernel read, and
+  the picker really engaged (without it, a change that stopped releasing the replay slot would
+  leave A and C green over an open hole); **E** C + D on PE and x86 Mach-O builds (skips loudly
+  without a decoder); **F** census — no rbp-disp8 / rbp-SIB reference to a local slot in any
+  regalloc-frame function, which the disp32-only classifier depends on (measured over the whole
+  corpus: 180,445 functions, 1,596,165 disp32 local references, 0 violations; axis C: 0 false
+  positives), with **every floor derived** — per binary the regalloc frames must be ≥ 3/4 of its
+  functions and carry ≥ 1 local disp32 reference each, and the aggregate count comes from the row
+  table; the first cut had one hand-set total (`≥ 200` against a measured 386) and never asserted
+  the reference count at all, so the census could have halved and still reported 0 violations;
+  **G** no x86 byte-pattern pass may scan cx bytecode — a SOURCE assertion, on purpose and with
+  the reason written down: the cx driver's stub `_read_env` makes every runtime knob inert there,
+  so the obvious picker-cap / frametrim / dump check cannot fail. Portable awk (no `strtonum`),
+  checked under `bash -eo pipefail` — which caught the PE probe's `objdump | grep -q` reading
+  false and silently skipping; it reads a file now. Mutation ledger in the header (15 mutants:
+  pre-fix compiler, a stores-only exemption, an any-reg predicate, a never-released replay slot →
+  D alone red, a disp8 kernel read → F red, the 6.6.2 env placement → axis 0 red, an edited lane,
+  the 6.6.1 compiler → 2b now reports rc 10, an empty-output "compiler", the pre-fix compiler on
+  each new row, the census signature matching 1/2 then 2/3 of a binary's functions → F red both
+  times, a dropped shape field, and each of the three cx gates removed → G red). Runs in ~7 s.
+- `tests/tcyr/crossos/simd_intrinsic_inline_arg.tcyr`: six nested-replay-then-intrinsic groups
+  (the filed `mulvec`, `f64v_dot`, `iv_add`, `f32v8_add` — AVX2-gated on x86 only — plus the
+  non-setter and different-object replay shapes), so ach and cass, the picker targets, EXECUTE
+  the fix and all three admission routes. Each group alone SIGSEGVs on 6.6.4; under wine the
+  6.6.4 PE build reproduces both modes in this file — `mulvec` reads `(1, 4, 3)`, then the `dot`
+  group faults. 32 / 32 on ELF, PE (wine) and aarch64 (qemu) with the fix; the aarch64 binary is
+  byte-identical built from 6.6.4's source and from this one (aarch64 has no picker, so this
+  release changes NOTHING on that target — 418 of 418 corpus binaries identical). Its four
+  6.6.5 includes were cut back to the one that is load-bearing (`lib/simd.cyr`, for the AVX2
+  guard): this file runs on four hosts in the release gate, and an unused include is cross-target
+  surface that can turn the gate red for a reason the test does not pin.
+
+**cycc:** 1,251,944 B, unchanged on disk (page-aligned); `.text` 1,097,472 → 1,097,456 B (−16).
+self_compile within noise of 6.6.4 (interleaved blocks of 5, means 745 ms vs 744 ms); the
+predicate call sits behind a `0x48` fast reject in the two per-byte walks, which took it from
++0.7 % to that, and the cx gate is a hoisted local — the two per-byte walks read `bp_x86` where
+they used to read the `_AARCH64_BACKEND` global, so they gained nothing per byte.
+
 ## [6.6.4] — 2026-09-14
 
 The repair release for the six issues filed after the 6.6.3 handoff (five by hisab and

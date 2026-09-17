@@ -2832,6 +2832,32 @@ fn _ra_loop_extend(be_t, be_s, be_n, first, last, hi): i64 {
     return out;
 }
 
+# THE ONE DEFINITION OF "A FRAME REFERENCE THE REGISTER PICKER CAN REWRITE".
+#
+# Returns the opcode (0x8B = load, 0x89 = store) when the bytes at codebuf offset `p` are
+# `48 8B 85 d32` / `48 89 85 d32` — a 64-bit move between RAX and [rbp+disp32] — and 0 for
+# anything else. All three picker stages ask this one function: the use scan counts only what
+# it accepts, the unsafe scan disqualifies a slot for ANY [rbp+disp32] reference it rejects,
+# and the patch pass rewrites only what it accepts. So a promoted slot keeps no reference to
+# its stack home, by construction.
+#
+# ⛔ The stages used to spell this test separately, and disagreed: the unsafe scan exempted
+# every `48 8B` / `48 89` without reading the ModRM REG field, so a SIMD kernel's operand read
+# `mov rdx,[rbp+disp32]` (48 8B 95, `_EMIT_LOAD_RDX_FROM_LOCAL`) passed as a rewritable move
+# that the patch pass (exact 0x85) never rewrote. The slot was promoted, its rax store became a
+# register move, and the kernel read a slot nothing wrote — silent wrong code or a SIGSEGV
+# through every batch intrinsic. A byte pattern the pass cannot rewrite must DISQUALIFY; it may
+# never be waved through by opcode alone. CHANGELOG [6.6.5]
+fn _ra_plain_slot_mov(p): i64 {
+    var b = _codebuf_base + p;
+    if (load8(b) != 0x48) { return 0; }
+    if (load8(b + 2) != 0x85) { return 0; }
+    var op = load8(b + 1);
+    if (op == 0x8B) { return 0x8B; }
+    if (op == 0x89) { return 0x89; }
+    return 0;
+}
+
 fn _ra_frame_trim(S, fn_start, fi): i64 {
     # v6.3.29: the trim's invariant is that the regalloc PICKER ran and its
     # lowest-first assignment is faithfully tracked in `_ra_used_n`. Two paths break
@@ -4982,7 +5008,20 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # matching the compaction pass below (also `_AARCH64_BACKEND == 0`-gated). The
     # compiler's own aarch64 code doesn't hit the pattern in-tree, but a consumer's
     # could (silent miscompile).
-    if (_AARCH64_BACKEND == 0) { DSE_PASS(S, fn_start); }
+    #
+    # ⛔ `_AARCH64_BACKEND == 0` IS NOT AN x86 TEST — cx sets it to 0 as well, so every pass
+    # below this line used to walk cx BYTECODE looking for x86 ModRM bytes, and NOP-fill on a
+    # match. `wp_compact` (common/ir.cyr) and `_try_vec_direct` (parse_expr.cyr) already carry
+    # both tests and say so; these four did not. The reasoning the CO-03 comment gives for
+    # aarch64 — the compiler's own output never spells the pattern, a consumer's could — holds
+    # verbatim for cx, whose opcode assignment is not a fixed ISA and can change under us.
+    # Measured inert today: 44 of 44 cx-compilable corpus files emit identical bytecode with
+    # this gate, the same standing the register picker's own `_TARGET_CX` gate has. One local,
+    # read four times, so the two per-byte walks below do not gain a second global load.
+    # CHANGELOG [6.6.5]
+    var bp_x86 = 0;
+    if (_AARCH64_BACKEND == 0 && _TARGET_CX == 0) { bp_x86 = 1; }
+    if (bp_x86 == 1) { DSE_PASS(S, fn_start); }
     # LASE: eliminate store+load pairs where the load is NOT a jump target (x86-only)
     #
     # v6.5.53 — SWITCH-TABLE GUARD, for both LASE loops. Since v6.5.20 a fn's byte range can
@@ -5005,7 +5044,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     var lase_cp = GCP(S);
     var lase_i = fn_start;
     var lase_count = 0;
-    while (_AARCH64_BACKEND == 0 && lase_i + 14 <= lase_cp) {
+    while (bp_x86 == 1 && lase_i + 14 <= lase_cp) {
         # Detect store (7 bytes): 48 89 85 XX XX XX XX
         if (load8(_codebuf_base + lase_i) == 0x48) {
             if (load8(_codebuf_base + lase_i + 1) == 0x89) {
@@ -5079,7 +5118,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # IS_JUMP_TARGET still guards the load: control arriving directly at it would find xmm0
     # holding something else.
     var slase_i = fn_start;
-    while (_AARCH64_BACKEND == 0 && slase_i + 16 <= lase_cp) {
+    while (bp_x86 == 1 && slase_i + 16 <= lase_cp) {
         if (load8(_codebuf_base + slase_i) == 0x66) {
             if (load8(_codebuf_base + slase_i + 1) == 0x0F) {
                 if (load8(_codebuf_base + slase_i + 2) == 0x11) {
@@ -5144,7 +5183,14 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     #      byte/word/dword store, loop-var r12 cache), since those
     #      still hit the stack slot and would diverge from rbx.
     # The `&local` abort (lea [rbp+hot_disp]) also stays in effect.
-    if (_cur_fn_regalloc > 0 && _cur_fn_has_closure == 0) {
+    #
+    # `_TARGET_CX == 0`: this is an x86 byte-pattern rewriter. cx sets `_AARCH64_BACKEND = 0`, so
+    # the auto-enable above fires there too (`_cur_fn_regalloc` = 5, measured) and this pass used
+    # to walk cx BYTECODE looking for x86 ModRM bytes. It matched nothing in any cx corpus file
+    # (0 of 44 outputs change with the gate), but a classifier reading a byte stream it was not
+    # written for is the defect this pass just had, in its purest form. The frame reservation
+    # `_cur_fn_regalloc` implies is left alone — changing it would move every cx local. CHANGELOG [6.6.5]
+    if (_cur_fn_regalloc > 0 && _cur_fn_has_closure == 0 && _TARGET_CX == 0) {
         var ra_flc = GFLC(S);
         if (pc < ra_flc) {
             var ra_start = fn_start;
@@ -5187,10 +5233,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 }
                 var ra_s = ra_start;
                 while (ra_s + 7 <= ra_end) {
-                    if (load8(_codebuf_base + ra_s) == 0x48) {
-                        var ra_op1 = load8(_codebuf_base + ra_s + 1);
-                        if (ra_op1 == 0x8B || ra_op1 == 0x89) {
-                            if (load8(_codebuf_base + ra_s + 2) == 0x85) {
+                    # Counts exactly the forms the patch pass rewrites — the shared predicate. The
+                    # `0x48` byte test is a fast reject of the predicate's own first check, not a
+                    # second definition: it keeps a call off most bytes of every function.
+                    var ra_k = 0;
+                    if (load8(_codebuf_base + ra_s) == 0x48) { ra_k = _ra_plain_slot_mov(ra_s); }
+                    if (ra_k != 0) {
                                 # Decode disp32 → local idx. Only [rbp+neg]
                                 # slots are user locals; positive disps are
                                 # stack args above rbp and ignored.
@@ -5218,7 +5266,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                                             store64(&ra_last + ra_idx * 8, ra_s);
                                         } }
                                 }
-                            } } }
+                    }
                     ra_s = ra_s + 1;
                 }
                 # v5.6.19 O4a: dump per-fn intervals when CYRIUS_REGALLOC_DUMP=1.
@@ -5348,10 +5396,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 #
                 # The question is per-LOCAL and the answer does not depend on which candidate
                 # is asking, so one pass over the function fills a per-local flag and every
-                # later lookup is O(1). Behaviour is identical — the same two disqualifiers,
-                # in the same order:
-                #   * a `[rbp+disp32]` reference that is NOT a plain 64-bit mov (ModRM 0x85 with
-                #     anything other than `48 8B` / `48 89`), and
+                # later lookup is O(1). Two disqualifiers:
+                #   * a `[rbp+disp32]` reference, with ANY reg field, that `_ra_plain_slot_mov`
+                #     rejects — i.e. anything but exactly `48 8B 85` / `48 89 85`, and
                 #   * ANY `lea` of the slot — `48 8D` with (ModRM & 0xC7) == 0x85, any dest.
                 #     A <=8-byte struct field store emits `lea rcx,[rbp+disp]; mov [rcx],rax`,
                 #     so the slot is address-taken and must stay in memory. Masking the reg
@@ -5362,44 +5409,44 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 while (ru_i < 256) { store8(&ra_unsafe + ru_i, 0); ru_i = ru_i + 1; }
                 var ru_p = ra_start;
                 while (ru_p + 7 <= ra_end) {
-                    var ru_b0 = load8(_codebuf_base + ru_p);
-                    var ru_b1 = load8(_codebuf_base + ru_p + 1);
                     var ru_m = load8(_codebuf_base + ru_p + 2);
-                    # v6.5.64 — THE TRIGGER IS NOW REG-FIELD AGNOSTIC, AND IT HAD TO BE.
+                    # THE TRIGGER IS REG-FIELD AGNOSTIC, AND SO IS THE EXEMPTION (6.6.5).
                     #
-                    # This was `if (ru_m == 0x85)` — an EXACT ModRM byte, which is mod=10, rm=101
-                    # (rbp+disp32) AND reg field 000. Only references whose reg field is rax/xmm0
-                    # were seen. reg 001 (`0x8D`), 010 (`0x95`), 011 (`0x9D`) … all slipped past,
-                    # so a slot touched only by, say, `movupd -disp(%rbp),%xmm1` (66 0F 10 8D) or
-                    # `mov rdx,[rbp+disp32]` (48 8B 95) was never marked unsafe. The lea arm below
-                    # masked `& 0xC7` and therefore got this right; the blanket arm did not — the
-                    # two halves of one scan disagreed about what "a reference to this slot" means.
+                    # `(ru_m & 0xC7) == 0x85` is mod=10, rm=101 — every [rbp+disp32] reference,
+                    # whatever its reg field. v6.5.64 widened the trigger to this from an exact
+                    # `== 0x85` so that `movupd -disp(%rbp),%xmm1` (66 0F 10 8D) and friends would
+                    # disqualify their slot, and its comment claimed `mov rdx,[rbp+disp32]`
+                    # (48 8B 95) was now caught too. ⛔ It was not: the exemption below still read
+                    # only the prefix and opcode (`48 8B` / `48 89`), so 48 8B 95 was waved through
+                    # as a "plain mov" the patch pass would rewrite — and the patch pass rewrites
+                    # exact 0x85 only. `_EMIT_LOAD_RDX_FROM_LOCAL` emits exactly that form for every
+                    # operand read of every SIMD batch intrinsic (19 kernel emitters, 55 sites), so
+                    # any operand slot that also carried two rax references (a slot freed by a nested
+                    # inline replay and reused by the intrinsic's `_SIMD_RESERVE`) was promoted, its
+                    # store rewritten into a register move, and the kernel read a slot nothing wrote.
+                    # The exemption now asks the same predicate the use scan and the patch pass ask,
+                    # so the three cannot disagree.
                     #
-                    # ⚠ NOT hypothetical: `EFLLOAD_F64V4_PAIR` (backend/x86/emit.cyr) already emits
-                    # `66 0F 10 8D <disp>` for the high half of every 256-bit local. That survives
-                    # today only because the v6.5.57 aggregate pass separately marks every slot of a
-                    # `GLTYPE < 0` local — a TYPE-driven guard happening to cover a BYTE-level hole.
-                    # Anything that emits a non-reg-0 frame reference to a slot the type pass does
-                    # not cover is a silent miscompile: the picker promotes the slot, its patch pass
-                    # stops writing the stack home, and the vector move keeps reading the stale slot.
+                    # ⚠ The v6.5.57 aggregate pass below is still needed and still separate: a
+                    # struct/vector local's non-base words are reached through `lea`, never by an
+                    # rbp disp, so no byte scan can see them. It also covered the high halves that
+                    # `EFLLOAD_F64V4_PAIR` and `EFL{LOAD,STORE}_STRUCT_INT_PAIR` reference with
+                    # non-rax forms (`66 0F 10 8D`, `48 8B/89 95`) — those are now disqualified here
+                    # as well, by construction, instead of by a type rule happening to cover them.
                     #
-                    # Measured free: 402 of 402 corpus inputs emit BYTE-IDENTICAL code with the
-                    # widened test, i.e. it disqualifies no candidate any real program relies on.
-                    var ru_hit = 0;
-                    if ((ru_m & 0xC7) == 0x85) { ru_hit = 1; }
-                    if (ru_hit == 1) {
+                    # ⚠ The scan sees disp32 only. An rbp disp8 or SIB reference to a local slot
+                    # would be invisible to all three stages; none is emitted into a regalloc fn
+                    # (only ASM_PARAM_LOAD uses disp8, and inline-asm fns never enable the picker).
+                    # tests/gates/codegen/simd_intrinsic_operand_slots.sh axis F pins that census.
+                    # CHANGELOG [6.6.5]
+                    if ((ru_m & 0xC7) == 0x85) {
                         var ru_d = load32(_codebuf_base + ru_p + 3);
                         if (ru_d >= 0x80000000) { ru_d = ru_d - 0x100000000; }
                         if (ru_d < 0) {
                             var ru_li = (0 - ru_d - _cur_fn_ret_stash) / 8 - 1 - _cur_fn_regalloc;
                             if (ru_li >= 0) {
                                 if (ru_li < 256) {
-                                    var ru_ok = 0;
-                                    if (ru_b0 == 0x48) {
-                                        if (ru_b1 == 0x8B) { ru_ok = 1; }
-                                        if (ru_b1 == 0x89) { ru_ok = 1; }
-                                    }
-                                    if (ru_ok == 0) { store8(&ra_unsafe + ru_li, 1); }
+                                    if (_ra_plain_slot_mov(ru_p) == 0) { store8(&ra_unsafe + ru_li, 1); }
                                 }
                             }
                         }
@@ -5621,9 +5668,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     var ra_p_max = ai_last + 7;
                     if (ra_p_max > ra_end) { ra_p_max = ra_end; }
                     while (ra_p + 7 <= ra_p_max) {
-                        if (load8(_codebuf_base + ra_p) == 0x48) {
-                            var op1 = load8(_codebuf_base + ra_p + 1);
-                            if (load8(_codebuf_base + ra_p + 2) == 0x85) {
+                        # Rewrites exactly the forms the use scan counted — the shared predicate
+                        # (same `0x48` fast reject as the use scan).
+                        var op1 = 0;
+                        if (load8(_codebuf_base + ra_p) == 0x48) { op1 = _ra_plain_slot_mov(ra_p); }
+                        if (op1 != 0) {
                                 if (load32(_codebuf_base + ra_p + 3) == hot_disp32) {
                                     if (op1 == 0x8B) {
                                         # mov rax,[rbp+disp] → mov rax,REG; 4-byte NOP
@@ -5659,7 +5708,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                                             S64(S + 0x1A2008, _nrc_s + 1);
                                         }
                                     }
-                                } } }
+                                } }
                         ra_p = ra_p + 1;
                     }
                     ra_ai = ra_ai + 1;
@@ -5675,10 +5724,18 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # shifts every jump-target table entry, then compacts bytes
     # in-place by skipping NOP runs.
     #
-    # Gates: x86 only; non-shared/non-object kmode (rip-rel disp32
+    # Gates: x86 only (`bp_x86` — NOT `_AARCH64_BACKEND == 0`, which is true on cx too; see
+    # the DSE/LASE gate above); non-shared/non-object kmode (rip-rel disp32
     # untracked); no overflow on jump_src_tbl or nop_run_tbl;
     # IR_ENABLED == 0 (DSE/LASE NOPs at IR=3 not tracked).
-    if (_AARCH64_BACKEND == 0) {
+    #
+    # `bp_x86` is also what keeps `_ra_frame_trim` off cx: it is the last x86 byte-pattern
+    # scanner in this function (an unaligned walk for `48/4C 89|8B <modrm> <disp8>` save/restore
+    # quads), its own `_ra_used_n >= _cur_fn_regalloc` guard does NOT fire there — the picker
+    # never ran, so `_ra_used_n` is 0 — and a chance match would record a NOP run the compactor
+    # below then deletes from the bytecode. Gating the call site is the whole fix; the trim
+    # keeps no `_TARGET_CX` test of its own. CHANGELOG [6.6.5]
+    if (bp_x86 == 1) {
         var _kmode = L64(S + 0x18FCA0);
         if (_kmode <= 1) {
             # v6.5.54 — was `IR_ENABLED(S) == 0`, which disabled NOP harvesting for every IR

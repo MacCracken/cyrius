@@ -22,10 +22,23 @@
 # ⚠ THE ARGUMENT OBJECT IS CHECKED AS WELL AS THE RESULT. A test that only asserted the
 # destination would pass on the SILENT variant on any target where the stale slot happened to
 # point somewhere writable.
+#
+# ⛔ 6.6.5 — THE SECOND HALF: A NESTED REPLAY IN AN *EARLIER* STATEMENT (the `_nr_*` shapes).
+# The x86 register picker promoted an operand slot the kernel still reads through
+# `mov rdx,[rbp+disp32]`, a form its unsafe scan waved through and its patch pass never rewrote.
+# The slot got its second rax reference from legitimate reuse: `set(t, get(t) + 1)` frees the
+# inner replay's param slot after the arguments, and the next intrinsic's `_SIMD_RESERVE` takes
+# it. Only the x86 targets run the picker — ach (Mach-O) and cass (PE) are where these groups
+# EXECUTE the fix; on ecb and pi they are value checks of the same source.
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
 include "lib/fmt.cyr"
 include "lib/math.cyr"
+# `lib/simd.cyr` only — for `simd_has_avx2()` in the f32v8 gate at the bottom. ⚠ This file runs
+# on ecb/ach/cass/pi, so every include is cross-target surface that can turn the release gate red
+# for a reason this test does not pin; three more were added with the 6.6.5 groups and each was
+# measured unused (the file compiles, runs and scores 26/26 without them). CHANGELOG [6.6.5]
+include "lib/simd.cyr"
 
 #derive(accessors)
 struct SV4 { x; y; z; w; }
@@ -41,6 +54,84 @@ fn _si_first(p) { return load64(p + 0); }
 fn _do_scale(r, m, v) { f64v_scale(r, m + 0, SV4_x(v), 4); return r; }
 fn _do_inline(r, m, s) { f64v_scale(r, m + 0, _si_first(s), 4); return r; }
 fn _do_argpos2(r, m, off) { f64v_scale(r, m + _si_first(off), f64_from(5), 4); return r; }
+
+# ── 6.6.5 shapes: a nested replay in an EARLIER statement, then the intrinsic ──
+# ⚠ Each keeps the replay and the intrinsic ADJACENT with no `var` between them — a local
+# declared there takes the freed slot and hides the defect (measured). `_nr_last` carries the
+# replayed object out through a global for the same reason.
+#derive(accessors)
+struct SP3 { x; y; z; }
+
+#inline
+fn _nr_get(p) { return load64(p + 8); }
+#inline
+fn _nr_set(p, v) { store64(p + 8, v); return 0; }
+
+var _nr_last = 0;
+
+# The filed repro's `mulvec`, as hisab first wrote `m3_mul_vec3`: r = M v, column-major 3x3,
+# x/y through packed n=2, z as a scalar tail threaded through the derived setter/getter.
+fn _nr_mulvec(m, v) {
+    var r = alloc(24);
+    var tmp = alloc(24);
+    var vx = SP3_x(v); var vy = SP3_y(v); var vz = SP3_z(v);
+    f64v_scale(r, m, vx, 2);
+    SP3_set_z(r, f64_mul(load64(m + 16), vx));
+    f64v_scale(tmp, m + 24, vy, 2); f64v_add(r, r, tmp, 2);
+    SP3_set_z(r, f64_add(SP3_z(r), f64_mul(load64(m + 40), vy)));
+    f64v_scale(tmp, m + 48, vz, 2); f64v_add(r, r, tmp, 2);
+    SP3_set_z(r, f64_add(SP3_z(r), f64_mul(load64(m + 64), vz)));
+    return r;
+}
+# Scalar-return kernels lose a SOURCE operand rather than a destination.
+fn _nr_dot(a, b) {
+    var res = 0;
+    var t = alloc(16); store64(t, 0); store64(t + 8, 41);
+    _nr_set(t, _nr_get(t) + 1);
+    res = f64v_dot(a, b, 2);
+    _nr_last = t;
+    return res;
+}
+fn _nr_f32v8(d, a, b) {
+    var t = alloc(16); store64(t, 0); store64(t + 8, 41);
+    _nr_set(t, _nr_get(t) + 1);
+    f32v8_add(d, a, b, 8);
+    _nr_last = t;
+    return d;
+}
+fn _nr_ivadd(d, a, b) {
+    var t = alloc(16); store64(t, 0); store64(t + 8, 41);
+    _nr_set(t, _nr_get(t) + 1);
+    iv_add(d, a, b, 2, 8);
+    _nr_last = t;
+    return d;
+}
+
+# ⚠ NEITHER A SETTER NOR A SHARED OBJECT IS NEEDED — the filing and the CHANGELOG both say so,
+# and until 6.6.5 every shape here was the same-object setter-of-getter, so the claim rested on
+# the classifier fix being shape-agnostic rather than on anything executed. Both reproduce on
+# 6.6.4 (SIGSEGV). `_nr_nonsetter` hoists `var q` ABOVE the replay and stores it BELOW the
+# intrinsic, so no local is declared between the two — one there takes the freed slot and hides
+# the defect. CHANGELOG [6.6.5]
+#inline
+fn _nr_add2(x, y) { return x + y; }
+fn _nr_nonsetter(d, a, b) {
+    var q = 0;
+    var t = alloc(16); store64(t, 0); store64(t + 8, 41);
+    q = _nr_add2(_nr_get(t), 1);
+    f64v_add(d, a, b, 2);
+    store64(t + 8, q);
+    _nr_last = t;
+    return d;
+}
+fn _nr_diffobj(d, a, b) {
+    var u = alloc(16); store64(u, 0); store64(u + 8, 41);
+    var t = alloc(16); store64(t, 0); store64(t + 8, 0);
+    _nr_set(t, _nr_get(u) + 1);
+    f64v_add(d, a, b, 2);
+    _nr_last = t;
+    return d;
+}
 
 alloc_init();
 
@@ -101,5 +192,86 @@ _do_argpos2(r3, m, off);
 assert_eq(f64_to(load64(r3 + 0)),  5, "arg-2 replay: dst lane 0");
 assert_eq(f64_to(load64(r3 + 24)), 20, "arg-2 replay: dst lane 3");
 assert_eq(load64(off + 8), 7, "arg-2 replay: offset object intact");
+
+# ── 6.6.5: nested replay, then the intrinsic ──
+test_group("nested replay then f64v_scale/f64v_add (the filed mulvec)");
+var nv = alloc(24);
+SP3_set_x(nv, f64_from(1)); SP3_set_y(nv, f64_from(2)); SP3_set_z(nv, f64_from(3));
+var nm = alloc(72);
+var nk = 0;
+while (nk < 9) { store64(nm + nk * 8, 0); nk = nk + 1; }
+# M = I with column 3 = (1, 1, 1):  M v = (x + z, y + z, z) = (4, 5, 3). The broken build gave
+# (1, 4, 3) with no crash: the third scale wrote through a stale pointer and `tmp` was re-added.
+store64(nm, f64_from(1)); store64(nm + 32, f64_from(1)); store64(nm + 64, f64_from(1));
+store64(nm + 48, f64_from(1)); store64(nm + 56, f64_from(1));
+var nr = _nr_mulvec(nm, nv);
+assert_eq(f64_to(SP3_x(nr)), 4, "mulvec x = x + z (column 3 kept)");
+assert_eq(f64_to(SP3_y(nr)), 5, "mulvec y = y + z (column 3 kept)");
+assert_eq(f64_to(SP3_z(nr)), 3, "mulvec z");
+assert_eq(f64_to(SP3_z(nv)), 3, "mulvec: v untouched");
+
+test_group("nested replay then f64v_dot (a SOURCE slot)");
+var da = alloc(32);
+var db = alloc(32);
+store64(da, f64_from(1)); store64(da + 8, f64_from(2));
+store64(db, f64_from(2)); store64(db + 8, f64_from(2));
+var ndot = _nr_dot(da, db);
+assert_eq(f64_to(ndot), 6, "dot = 1*2 + 2*2");
+assert_eq(load64(_nr_last + 8), 42, "dot: the replay's own store landed");
+
+test_group("nested replay then iv_add");
+var ia = alloc(32);
+var ib = alloc(32);
+var id = alloc(32);
+store64(ia, 1); store64(ia + 8, 2); store64(ib, 2); store64(ib + 8, 2);
+store64(id, 0); store64(id + 8, 0);
+_nr_ivadd(id, ia, ib);
+assert_eq(load64(id), 3, "iv_add lane 0");
+assert_eq(load64(id + 8), 4, "iv_add lane 1");
+assert_eq(load64(_nr_last + 8), 42, "iv_add: the replay's own store landed");
+
+test_group("nested replay with NO setter, then f64v_add");
+var qa = alloc(32);
+var qb = alloc(32);
+var qd = alloc(32);
+store64(qa, f64_from(1)); store64(qa + 8, f64_from(2));
+store64(qb, f64_from(2)); store64(qb + 8, f64_from(2));
+store64(qd, 0); store64(qd + 8, 0);
+_nr_nonsetter(qd, qa, qb);
+assert_eq(f64_to(load64(qd)), 3, "non-setter replay: lane 0");
+assert_eq(f64_to(load64(qd + 8)), 4, "non-setter replay: lane 1");
+assert_eq(load64(_nr_last + 8), 42, "non-setter replay: the replayed value survived");
+
+test_group("nested replay across DIFFERENT objects, then f64v_add");
+store64(qd, 0); store64(qd + 8, 0);
+_nr_diffobj(qd, qa, qb);
+assert_eq(f64_to(load64(qd)), 3, "different-object replay: lane 0");
+assert_eq(f64_to(load64(qd + 8)), 4, "different-object replay: lane 1");
+assert_eq(load64(_nr_last + 8), 42, "different-object replay: the setter's target got the value");
+
+test_group("nested replay then f32v8_add");
+# ⛔ The raw f32v8_* intrinsics are UNCONDITIONAL AVX2 on x86 (SIGILL on a pre-AVX2 host —
+# measured on cass, see simd_f32v8_emitters.tcyr); on aarch64 they are NEON and always safe, and
+# `simd_has_avx2()` is 0 there, so the gate is x86-only.
+var f8_run = 1;
+#ifdef CYRIUS_ARCH_X86
+if (simd_has_avx2() == 0) { f8_run = 0; }
+#endif
+if (f8_run == 1) {
+    var fa = alloc(64);
+    var fb = alloc(64);
+    var fd = alloc(64);
+    var fi = 0;
+    while (fi < 8) {
+        store32(fa + fi * 4, f32_from(f64_from(fi + 1)));
+        store32(fb + fi * 4, f32_from(f64_from(2)));
+        store32(fd + fi * 4, 0);
+        fi = fi + 1;
+    }
+    _nr_f32v8(fd, fa, fb);
+    assert_eq(f64_to(f32_to(load32(fd))), 3, "f32v8_add lane 0 (1 + 2)");
+    assert_eq(f64_to(f32_to(load32(fd + 28))), 10, "f32v8_add lane 7 (8 + 2)");
+    assert_eq(load64(_nr_last + 8), 42, "f32v8_add: the replay's own store landed");
+}
 
 var r = assert_summary();

@@ -17,6 +17,18 @@
 >    exits **0** and writes the result into the *argument object* — silent wrong code. The filing
 >    reported only the crash. Both are now pinned.
 >
+>    ⛔ **CORRECTION (6.6.5): "both are now pinned" was false for the silent mode until 6.6.5.**
+>    The gate's `_run` set `CYRIUS_REGALLOC_PICKER_CAP=0` on the PROBE binary, which never reads it
+>    — cycc reads the knob at COMPILE time. Axes 2b and 3b therefore re-ran the picker-ON binary and
+>    never compiled a picker-off build: against the 6.6.1 compiler that "off" run returned **139**
+>    (the ON crash), while a real picker-off build returns **10** (the silent dst-unwritten mode).
+>    6.6.5 sets the knob on cycc and adds an axis 0 that fails if the ON and OFF builds are
+>    byte-identical. And the picker-ON SIGSEGV above was not the collision alone: it was the
+>    collision *plus* a register-picker classification hole (the kernel's `mov rdx,[rbp+disp32]`
+>    operand read was exempted as a rewritable move and never rewritten), which outlived this fix
+>    and was reached again through legitimate slot reuse — see
+>    `archived/2026-09-14-hisab-simd-dst-slot-regalloc-picker.md` and CHANGELOG 6.6.5.
+>
 > ⭐ **AND A SEPARATE DEFECT WAS FOUND WHILE WRITING THE TEST:** a SIMD intrinsic in **top-level**
 > position compiled clean and SIGSEGV'd on every release checked, for *any* argument shape —
 > these stash operands in FRAME slots and top-level code has no frame. `bitset`/`bitclr` already
