@@ -397,3 +397,59 @@ fn sys_getsockname(fd, addr, addrlen): i64 {
     if (r == 0) { return 0; }
     return 0 - syscall(61476);
 }
+
+# ================================================================
+# QueryPerformanceCounter / QueryPerformanceFrequency (v6.6.5)
+# ================================================================
+# 0xF038 → kernel32!QueryPerformanceCounter(LARGE_INTEGER*)
+# 0xF039 → kernel32!QueryPerformanceFrequency(LARGE_INTEGER*)
+# (src/backend/x86/emit.cyr EQPC_PE / EQPF_PE, routed in src/frontend/parse_expr.cyr.)
+#
+# ⛔ WHY: Windows had NO sub-millisecond clock in cyrius at all. `syscall(228)` reroutes
+# to kernel32!GetTickCount64, whose counter advances in **15 ms** steps (measured on
+# cass, 2026-08-11) — so lib/chrono.cyr's monotonic clock and lib/bench.cyr's timer both
+# quantized every duration under 15 ms to 0 or to one whole tick, and the bench
+# framework's floor calibrated to 0 because 1,024 GetTickCount64 calls do not move the
+# counter. QPC is the documented high-resolution source (its frequency is typically
+# 10 MHz on Win10+, i.e. a 100 ns tick) and is monotonic since system start.
+#
+# Both return BOOL (nonzero = success) and write a 64-bit count at the pointer arg.
+# Filed as part of docs/development/issues/2026-09-16-mabda-lib-bench-min-minus-mean-floor.md
+# QueryPerformanceCounter(&count): writes the current 64-bit performance count at `ptr`.
+# Returns the Win32 BOOL (nonzero = success). Monotonic since system start.
+fn sys_qpc(ptr): i64 {
+    return syscall(61496, ptr);
+}
+
+# QueryPerformanceFrequency(&hz): writes the counter's ticks-per-second at `ptr`.
+# Returns the Win32 BOOL. Fixed at boot, so one call per process is enough.
+fn sys_qpf(ptr): i64 {
+    return syscall(61497, ptr);
+}
+
+# Cached frequency. QPF is fixed at boot and documented not to change while the system
+# runs, so one call is enough; 0 means "not read yet".
+var _sys_qpf_hz = 0;
+
+# Monotonic nanoseconds from QPC. The conversion is split so it cannot overflow: a raw
+# `count * 1e9` wraps i64 after ~29 years of uptime at 10 MHz, and after ~9 seconds if a
+# machine ever reports a 1 GHz frequency.
+#
+# ⚠ Falls back to GetTickCount64 × 1e6 if QPF reports a non-positive frequency — that
+# cannot happen on any supported Windows, but returning a wrong-scaled count would be
+# silent while a 15 ms clock is merely coarse.
+fn sys_qpc_ns(): i64 {
+    var c[16];
+    if (_sys_qpf_hz == 0) {
+        store64(&c, 0);
+        sys_qpf(&c);
+        _sys_qpf_hz = load64(&c);
+    }
+    if (_sys_qpf_hz <= 0) {
+        return syscall(228, 1, &c) * 1000000;
+    }
+    store64(&c, 0);
+    sys_qpc(&c);
+    var t = load64(&c);
+    return (t / _sys_qpf_hz) * 1000000000 + ((t % _sys_qpf_hz) * 1000000000) / _sys_qpf_hz;
+}

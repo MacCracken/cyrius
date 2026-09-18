@@ -1073,6 +1073,37 @@ fn _pe_ensure_getsystime(S): i64 {
 }
 fn _pe_getsystime_get(): i64 { return _pe_getsystime_idx; }
 
+# v6.6.5 — kernel32!QueryPerformanceCounter / QueryPerformanceFrequency, the Windows
+# MONOTONIC clock (lib/chrono.cyr clock_now_ns, lib/bench.cyr now_ns). Both are
+# `BOOL f(LARGE_INTEGER*)`: 1-arg kernel32 (id 0), result in rax, the 64-bit count
+# written at the pointer. Lazily registered on the first syscall(0xF038/0xF039).
+#
+# ⛔ The monotonic clock reused GetTickCount64 (the 228 route) until now, and its
+# counter advances in **15 ms** steps — measured on cass, not assumed. That is five
+# orders of magnitude coarser than a micro-benchmark, so lib/bench.cyr's floor
+# calibrated to 0 on Windows and every duration under 15 ms read as 0 or as one whole
+# tick. GetTickCount64 stays the fallback in lib/syscalls_windows.cyr; it is no longer
+# the clock. See the 2026-09-16 bench-floor issue.
+var _pe_qpc_ready = 0;
+var _pe_qpc_idx   = 0;
+fn _pe_ensure_qpc(S): i64 {
+    if (_pe_qpc_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_qpc_idx, "QueryPerformanceCounter");
+    _pe_qpc_ready = 1;
+    return 0;
+}
+fn _pe_qpc_get(): i64 { return _pe_qpc_idx; }
+
+var _pe_qpf_ready = 0;
+var _pe_qpf_idx   = 0;
+fn _pe_ensure_qpf(S): i64 {
+    if (_pe_qpf_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_qpf_idx, "QueryPerformanceFrequency");
+    _pe_qpf_ready = 1;
+    return 0;
+}
+fn _pe_qpf_get(): i64 { return _pe_qpf_idx; }
+
 # v6.0.61 Stage 2: thread-local storage imports (lib/thread_local.cyr).
 var _pe_getcurtid_ready = 0;
 var _pe_getcurtid_idx   = 0;

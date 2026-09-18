@@ -1,0 +1,195 @@
+# win_qpc_clock.tcyr — v6.6.5. The Windows monotonic clock moved from
+# kernel32!GetTickCount64 to QueryPerformanceCounter (PE reroutes 0xF038/0xF039,
+# src/frontend/parse_expr.cyr `_PE_ROUTE_PERFCOUNTER`, emitters EQPC_PE/EQPF_PE). This is
+# the companion test the syscall-wrapper rule requires for a new reroute.
+#
+# ⛔ WHY IT HAD TO MOVE. GetTickCount64's counter advances in **15 ms** steps — measured
+# on real cass on 2026-08-11, not quoted from documentation. That was the ONLY monotonic
+# source any cyrius program had on Windows, so `lib/chrono.cyr`'s clock and
+# `lib/bench.cyr`'s timer both quantized every duration under 15 ms to 0 or to one whole
+# tick, and bench's floor calibration returned 0 because 1,024 GetTickCount64 calls do not
+# move the counter at all. A modelled 15 ms clock reproduced the consequence exactly:
+# `bench_run` on a 2 µs op reported `min=0ns max=3.662us`, and single-op windows averaged
+# 7.5 µs for the same op. See the 2026-09-16 bench-floor filing.
+#
+# ⭐ THIS FILE LIVES IN tests/tcyr/crossos/ BECAUSE THAT DIRECTORY IS THE SELECTOR.
+# scripts/release-gate.sh runs `cross-os-selfhost.sh <host> crossos`; a wrapper tested
+# anywhere else in tests/tcyr is never executed on cass, which is the exact shape of the
+# macOS rot. A wrapper that COMPILES on five targets is not a wrapper that RUNS.
+#
+# ⭐ AND THE EXPECTED VALUE COMES FROM A DIFFERENT CLOCK. The Windows axis measures one
+# interval with BOTH QPC and GetTickCount64 and requires them to agree. A check that
+# derived its expectation from QPC would pass on a QPC route wired to the wrong import,
+# to a stale buffer, or to GetTickCount64 itself — which is precisely the mutation listed
+# below. GetTickCount64 is coarse but independent, and 15 ms of coarseness is small
+# against a 200 ms interval.
+#
+# Mutations this file is proved against (applied to a scratch tree, each RED):
+#   - point 0xF038 at GetTickCount64 (the tick assertion fails: 15 ms is not sub-ms);
+#   - drop the `t % hz` term from the ns conversion (the 200 ms agreement fails);
+#   - return the raw count instead of ns (agreement fails by ~7 orders of magnitude).
+#
+# The non-Windows axes are not filler: they assert the same two properties — monotonic,
+# and a tick finer than a millisecond — on ecb, ach, pi and Linux, which is what the
+# Darwin clock-id change (6 → 4) in the same release also buys.
+#
+# See CHANGELOG [6.6.5], lib/syscalls_windows.cyr (sys_qpc/sys_qpf/sys_qpc_ns).
+
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+include "lib/chrono.cyr"
+include "lib/bench.cyr"
+
+fn _wq_is_win(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 1;
+    #endif
+    return 0;
+}
+
+# The Win32 calls, behind #ifdef so the file compiles on every target: `sys_qpf`,
+# `sys_qpc` and `sys_qpc_ns` live in lib/syscalls_windows.cyr, which lib/syscalls.cyr
+# only selects when CYRIUS_TARGET_WIN is defined.
+fn _wq_qpf_hz(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var c[16];
+    store64(&c, 0);
+    sys_qpf(&c);
+    return load64(&c);
+    #endif
+    return 0;
+}
+
+fn _wq_qpc_raw(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var c[16];
+    store64(&c, 0);
+    sys_qpc(&c);
+    return load64(&c);
+    #endif
+    return 0;
+}
+
+fn _wq_qpc_ns(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return sys_qpc_ns();
+    #endif
+    return 0;
+}
+
+# THE INDEPENDENT CLOCK: kernel32!GetTickCount64, still reachable as syscall(228) on the
+# PE target. Milliseconds since boot, 15 ms granularity.
+fn _wq_ticks_ms(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var ts[16];
+    return syscall(228, 1, &ts);
+    #endif
+    return 0;
+}
+
+fn test_qpc_frequency_and_monotonicity() {
+    test_group("windows: QueryPerformanceFrequency is positive and QPC never goes backwards");
+    if (_wq_is_win() == 0) {
+        println("    SKIP: not a PE target — the portable axes below run here instead");
+        assert_eq(1, 1, "SKIPPED off Windows");
+        return;
+    }
+    var hz = _wq_qpf_hz();
+    var pos = 0;
+    if (hz > 0) { pos = 1; }
+    assert_eq(pos, 1, "QueryPerformanceFrequency reports a positive frequency (0 would make every conversion garbage)");
+    var raw0 = _wq_qpc_raw();
+    var raw_pos = 0;
+    if (raw0 > 0) { raw_pos = 1; }
+    assert_eq(raw_pos, 1, "QueryPerformanceCounter writes a positive count at its pointer arg (anti-vacuous: the buffer is not left at 0)");
+    var prev = _wq_qpc_ns();
+    var i = 0;
+    var went_back = 0;
+    var moved = 0;
+    while (i < 1000) {
+        var cur = _wq_qpc_ns();
+        if (cur < prev) { went_back = 1; }
+        if (cur > prev) { moved = 1; }
+        prev = cur;
+        i = i + 1;
+    }
+    assert_eq(went_back, 0, "QPC is monotonic over 1000 reads");
+    assert_eq(moved, 1, "QPC actually advances over 1000 reads (anti-vacuous: not a frozen counter)");
+}
+
+fn test_qpc_agrees_with_an_independent_clock() {
+    test_group("windows: the QPC-derived interval agrees with GetTickCount64");
+    if (_wq_is_win() == 0) {
+        assert_eq(1, 1, "SKIPPED off Windows");
+        return;
+    }
+    # One interval, two clocks. The loop is bounded by the INDEPENDENT clock so the
+    # measurement cannot be circular.
+    var t0 = _wq_ticks_ms();
+    var q0 = _wq_qpc_ns();
+    var t1 = t0;
+    while (t1 - t0 < 200) { t1 = _wq_ticks_ms(); }
+    var q1 = _wq_qpc_ns();
+    var tms = t1 - t0;
+    var qms = (q1 - q0) / 1000000;
+    var d = qms - tms;
+    if (d < 0) { d = 0 - d; }
+    # 20 ms covers GetTickCount64's own 15 ms quantum plus scheduling slop; it does NOT
+    # cover a missing `t % hz` term, a raw count, or a route pointed at the wrong import.
+    var agree = 0;
+    if (d <= 20) { agree = 1; }
+    assert_eq(agree, 1, "QPC and GetTickCount64 agree within 20ms over a ~200ms interval");
+    var tms_real = 0;
+    if (tms >= 200) { tms_real = 1; }
+    assert_eq(tms_real, 1, "the independent clock really advanced 200ms (anti-vacuous)");
+}
+
+# ── The portable half: every host, including the two Macs and pi ────
+fn test_the_monotonic_clock_is_monotonic() {
+    test_group("every host: the monotonic clock never goes backwards");
+    var prev = clock_now_ns();
+    var i = 0;
+    var went_back = 0;
+    var moved = 0;
+    while (i < 1000) {
+        var cur = clock_now_ns();
+        if (cur < prev) { went_back = 1; }
+        if (cur > prev) { moved = 1; }
+        prev = cur;
+        i = i + 1;
+    }
+    assert_eq(went_back, 0, "clock_now_ns is monotonic over 1000 reads");
+    assert_eq(moved, 1, "clock_now_ns advances over 1000 reads (anti-vacuous: not a dead clock)");
+}
+
+fn test_the_clock_tick_is_sub_millisecond() {
+    test_group("every host: the clock steps in under a millisecond");
+    # ⛔ THIS IS THE ASSERTION THE OLD WINDOWS CLOCK FAILED, BY FOUR ORDERS OF MAGNITUDE.
+    # GetTickCount64's measured tick on cass is 15,000,000 ns. A benchmark framework on a
+    # clock that coarse is not a slow instrument, it is no instrument: every window under
+    # 15 ms reads 0 or one whole tick. Any host whose clock cannot beat a millisecond
+    # cannot time anything this tree benchmarks.
+    var tick = bench_clock_tick_ns();
+    var positive = 0;
+    if (tick > 0) { positive = 1; }
+    assert_eq(positive, 1, "a tick was measured (anti-vacuous)");
+    var fine = 0;
+    if (tick < 1000000) { fine = 1; }
+    assert_eq(fine, 1, "the monotonic clock steps in under 1ms (GetTickCount64 measured 15,000,000ns)");
+}
+
+fn main() {
+    test_qpc_frequency_and_monotonicity();
+    test_qpc_agrees_with_an_independent_clock();
+    test_the_monotonic_clock_is_monotonic();
+    test_the_clock_tick_is_sub_millisecond();
+    return assert_summary();
+}
+
+var r = main();
+syscall(60, r);

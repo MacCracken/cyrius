@@ -474,6 +474,29 @@ fn PINDIRECT_CALL(S): i64 {
     return 0;
 }
 
+# v6.6.5 — the Windows MONOTONIC-clock reroutes, 0xF038 QueryPerformanceCounter and
+# 0xF039 QueryPerformanceFrequency, both `BOOL f(LARGE_INTEGER*)` → argc==2.
+#
+# ⚠ THEY LIVE IN THEIR OWN FUNCTION ON PURPOSE. The PE reroute chain inside
+# `_PARSE_FACTOR_IMPL` is the longest one in this file, and **cybs** — the hand-assembly
+# bootstrap compiler the 29 KB seed assembles, which must compile this file on the way to
+# cycc — fails SILENTLY past its per-function limit on global and call references. Adding
+# two more inline arms there risks losing the seed→cybs→cycc chain, which is days of
+# repair; one call ref does not. Returns 1 if it routed.
+#
+# The var-number switch (`EPE_SYSCALL_DYNAMIC`) is deliberately NOT extended for these:
+# every caller spells the number as a literal (lib/syscalls_windows.cyr's `sys_qpc`/
+# `sys_qpf`, and lib/chrono.cyr's `_chrono_qpc_ns` / lib/bench.cyr's `_bench_qpc_ns`,
+# which spell them raw to stay self-sufficient), a non-literal number degrades to an
+# honest -38/-ENOSYS with a warning since v6.1.17, and the argc==2 arm of that function
+# is itself near the same cybs limit.
+fn _PE_ROUTE_PERFCOUNTER(S, sc_num, argc): i64 {
+    if (argc != 2) { return 0; }
+    if (sc_num == 61496) { EQPC_PE(S); return 1; }
+    if (sc_num == 61497) { EQPF_PE(S); return 1; }
+    return 0;
+}
+
 # v6.5.19 (CVE-40): the bottom expression tier, and the last of the five chokepoints.
 # Unary `-` recurses HERE, not in PARSE_TERM — `- - - … 1` compiled fine at 1024 with the
 # PEXPR and PARSE_TERM bounds in place and still SIGSEGV'd at 16384, because a unary
@@ -1861,6 +1884,14 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     return 0;
                 }
             }
+            # v6.6.5: 0xF038/0xF039 QueryPerformanceCounter/Frequency — the Windows
+            # MONOTONIC clock (lib/chrono.cyr, lib/bench.cyr). Routed through a helper
+            # rather than two more inline arms; see _PE_ROUTE_PERFCOUNTER's header for
+            # the cybs per-function reference limit that makes that matter.
+            if (_PE_ROUTE_PERFCOUNTER(S, sc_num, argc) == 1) {
+                _cfo = 0;
+                return 0;
+            }
             # v6.1.16: non-literal (var) syscall number. The `sc_num ==`
             # cases above only fire for a constant-folded first arg; a
             # number held in a `var` (the portable arch-dispatch idiom)
@@ -1898,8 +1929,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) today; others return -38/-ENOSYS on Windows (v6.5.25; before that they CRASHED with STATUS_ILLEGAL_INSTRUCTION 0xC000001D).\n",
-            1233);
+            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) today; others return -38/-ENOSYS on Windows (v6.5.25; before that they CRASHED with STATUS_ILLEGAL_INSTRUCTION 0xC000001D).\n",
+            1311);
             # v6.5.25 — DEGRADE HONESTLY INSTEAD OF FALLING THROUGH TO `0F 05`.
             #
             # A LITERAL unrouted syscall number used to warn and then emit a raw Linux

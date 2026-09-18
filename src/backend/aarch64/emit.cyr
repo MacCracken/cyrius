@@ -160,6 +160,13 @@ fn EGETFATTR_PE(S)  { return 0; }    # stubs for parse_expr.cyr symbol resolutio
 # dead-branch justification as the cohorts above + below. See CHANGELOG [6.2.44].
 fn EPROCPRNG_PE(S)   { return 0; }
 fn EGETSYSTIME_PE(S) { return 0; }
+# v6.6.5: EQPC_PE / EQPF_PE (QueryPerformanceCounter/Frequency, the Windows monotonic
+# clock) — x86/PE-only real impl, stubbed here for the same reason as the cohort above:
+# parse_expr.cyr's PE reroute chain is shared by all seven forks, so an aarch64 build
+# must still RESOLVE the symbol even though the branch is dead. Shipping the route
+# without these stubs is the v6.4.26 trap. See CHANGELOG [6.6.5].
+fn EQPC_PE(S)        { return 0; }
+fn EQPF_PE(S)        { return 0; }
 # v6.0.54: close the .23 stub gap. ECREATEDIR_PE (mkdir/83) +
 # EDELETEF_PE (unlink/87) shipped x86-only at v5.11.22-23 and never
 # got aarch64 stubs — they fired "undefined function" warnings on

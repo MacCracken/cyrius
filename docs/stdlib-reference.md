@@ -430,19 +430,80 @@ Functional patterns via function pointers. Requires fnptr.cyr + vec.cyr.
 
 ### bench.cyr
 
-Benchmarking with nanosecond precision. Requires fnptr.cyr.
+Benchmarking. Requires fnptr.cyr.
+
+The clock is **measured, not declared**: one `now_ns()` read costs ~15 ns on an M-series
+Mac and ~3,550 ns on a Raspberry Pi, and `bench_clock_overhead_ns()` finds out which at
+first use. `bench_clock_tick_ns()` is the separate question of how finely the counter
+steps. Every reported figure is net of the floor.
+
+⚠ **A minimum is only reported when a window can support one (v6.6.5).** A window
+contributes to min/max only if its net duration is at least 100 × (floor + tick) — i.e.
+only when the clock can be wrong by at most 1 % of it. When no window clears that bar,
+`bench_min_ns`/`bench_max_ns` return the **mean** and `bench_min_resolved(b)` returns 0.
+Before that rule, a minimum over windows net of a *mean* floor read low by the clock's own
+jitter and reached **0 for real work**. Size explicit batches so `batch_size × per_op`
+clears 100 × (`bench_clock_overhead_ns()` + `bench_clock_tick_ns()`), or let `bench_run`
+size them for you.
+
+⛔ **0 is still reachable in exactly one case, and it is named.** If a row's windows do not
+in total outlast the clock reads that bracketed them (`raw_total <= windows × floor`), the
+netted total clamps at 0 and the mean, min and max are all 0 — `bench_run(noop, 16)`, or
+`acc = acc + 1` timed one op per window. `bench_sub_floor(b)` returns 1 exactly there, and
+the report's supplementary line says `SUB-FLOOR`. Read it as **below the instrument**, not
+as instantaneous, and batch the op or raise `n` to measure it. (An earlier draft of the
+6.6.5 notes claimed min was "never 0 for real work"; that was wrong and is retracted here —
+reporting the raw mean instead would report the *clock* as the op, which is the 256×
+inflation v6.5.19 removed.)
+
+⚠ **min and max need not bracket the mean.** The mean covers every iteration; min and max
+cover only the windows that resolved, so a row can read `1.007us avg (min=994ns max=996ns)`
+— the steady-state chunks resolved, while the shorter pilot and tail windows are in the mean
+and cannot claim an extreme.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `bench_new` | `bench_new(name) → bench` | Create benchmark |
 | `bench_start` | `bench_start(b)` | Start timer |
-| `bench_stop` | `bench_stop(b) → ns` | Stop timer, return elapsed |
-| `bench_run` | `bench_run(b, &fn, n)` | Run fn n times |
-| `bench_avg_ns` | `bench_avg_ns(b) → ns` | Average nanoseconds |
-| `bench_min_ns` | `bench_min_ns(b) → ns` | Minimum |
-| `bench_max_ns` | `bench_max_ns(b) → ns` | Maximum |
+| `bench_stop` | `bench_stop(b) → ns` | Stop timer, return elapsed net of one clock read |
+| `bench_run` | `bench_run(b, &fn, n)` | Run fn n times, sizing its own windows |
+| `bench_run_batch` | `bench_run_batch(b, &fn, batch, rounds)` | Fixed windows of `batch` calls |
+| `bench_batch_start` | `bench_batch_start(b)` | Start an inline batch window |
+| `bench_batch_stop` | `bench_batch_stop(b, batch) → ns` | Close it; returns per-op ns |
+| `bench_iterations` | `bench_iterations(b) → n` | Iterations recorded |
+| `bench_windows` | `bench_windows(b) → n` | Timed windows consumed — one clock PAIR each |
+| `bench_total_ns` | `bench_total_ns(b) → ns` | Total, netted at read time |
+| `bench_avg_ns` | `bench_avg_ns(b) → ns` | Average nanoseconds (rounded half up) |
+| `bench_min_ns` | `bench_min_ns(b) → ns` | Minimum over RESOLVED windows, else the mean |
+| `bench_max_ns` | `bench_max_ns(b) → ns` | Maximum over resolved windows, else the mean |
+| `bench_avg_ps` | `bench_avg_ps(b) → ps` | Average in picoseconds |
+| `bench_min_ps` | `bench_min_ps(b) → ps` | Minimum in picoseconds |
+| `bench_max_ps` | `bench_max_ps(b) → ps` | Maximum in picoseconds |
+| `bench_min_resolved` | `bench_min_resolved(b) → 0/1` | 1 if any window resolved a per-op extreme |
+| `bench_sub_floor` | `bench_sub_floor(b) → 0/1` | 1 if every window was at or under one clock read (the only case that reports 0) |
+| `bench_clock_overhead_ns` | `bench_clock_overhead_ns() → ns` | Measured cost of one clock read |
+| `bench_clock_tick_ns` | `bench_clock_tick_ns() → ns` | Measured step of the clock |
+| `bench_clock_recheck` | `bench_clock_recheck() → -1/0/1` | Re-measure; adopts a LOWER floor only |
 | `bench_report` | `bench_report(b)` | Print formatted report |
 | `bench_report_all` | `bench_report_all(vec)` | Print all benchmarks |
+
+Report row shape (a consumer-facing grammar — goonj, hisab, mabda, chitra, vani, libro and
+szal parse it; integer nanoseconds, and every added line starts with `[` and never contains
+` avg`):
+
+```
+  name: 250ns avg (min=250ns max=250ns) [100 iters]
+    [per op in ps: mean 250000 min 250000; min UNRESOLVED, shows the mean: ...]
+```
+
+A sub-floor row, which is the one that reports 0:
+
+```
+  noop: 0ns avg (min=0ns max=0ns) [100 iters]
+    [per op in ps: mean 0 min 0; min UNRESOLVED, shows the mean: clock error 2.000us
+     exceeds 1 % of every window; SUB-FLOOR: the whole window is at or under one clock
+     read (1.000us), so 0 means below the instrument — batch the op or raise n]
+```
 
 ### bounds.cyr
 

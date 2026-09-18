@@ -1590,6 +1590,8 @@ fn EGETMODH_PE(S): i64 { return 0; }
 fn EGETPROC_PE(S): i64 { return 0; }
 fn EGETSYSTIME_PE(S): i64 { return 0; }
 fn EGETTICKS_PE(S): i64 { return 0; }
+fn EQPC_PE(S): i64 { return 0; }          # v6.6.5 kernel32!QueryPerformanceCounter
+fn EQPF_PE(S): i64 { return 0; }          # v6.6.5 kernel32!QueryPerformanceFrequency
 fn EINITSRW_PE(S): i64 { return 0; }
 fn ELOCALFREE_PE(S): i64 { return 0; }
 fn ELSEEK_PE(S): i64 { return 0; }

@@ -2170,6 +2170,24 @@ fn EGETSYSTIME_PE(S): i64 {
     return _pe_srw_call_1arg(S, _pe_getsystime_get());
 }
 
+# syscall(0xF038, &count) → kernel32!QueryPerformanceCounter(LARGE_INTEGER*→rcx).
+# 1 arg; returns BOOL in rax and writes the 64-bit count at &count. The Windows
+# MONOTONIC clock since v6.6.5 — GetTickCount64 (the 228 route) has a 15 ms tick, so
+# nothing under 15 ms could be timed on Windows at all. `_pe_srw_call_1arg` is the
+# rbx-anchored 16-aligned form; QPC reads a shared page and the alignment costs nothing,
+# but the uniform caller is what keeps a contended path from faulting (see its header).
+fn EQPC_PE(S): i64 {
+    _pe_ensure_qpc(S);
+    return _pe_srw_call_1arg(S, _pe_qpc_get());
+}
+
+# syscall(0xF039, &hz) → kernel32!QueryPerformanceFrequency(LARGE_INTEGER*→rcx). 1 arg;
+# same shape as EQPC_PE. Fixed at boot, so the stdlib reads it once.
+fn EQPF_PE(S): i64 {
+    _pe_ensure_qpf(S);
+    return _pe_srw_call_1arg(S, _pe_qpf_get());
+}
+
 # v6.0.65: stub for the macho-ARM syscall-routed query (real impl in
 # src/backend/aarch64/emit.cyr next to ESYSXLAT). parse_expr.cyr references it
 # for the _TARGET_MACHO==2 whitelist warning; that path is dead on x86, so this

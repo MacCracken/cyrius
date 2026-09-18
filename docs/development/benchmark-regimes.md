@@ -16,6 +16,7 @@ Created v6.5.19, from the agnosai filing
 | 2 | 2026-04-14 → 2026-06-16 | **Fabricated.** `_fmt_time`'s `us` branch printed integer microseconds, so every value between 1,000 and 1,999 ns was recorded as exactly `1000`. 2,504 rows — 11 % of the 22,173 in the file — carry the literal value 1000. Fixed at v6.2.15 (PF-01). |
 | 3 | 2026-06-16 → 2026-08-11 | Per-iteration clock pair again, but the box lost its TSC to the clocksource watchdog and fell back to HPET, so the floor rose to ~1,320–1,720 ns. **57 of 79 micro rows sit within 20 % of that floor**: they are measurements of the clock, not of the code. |
 | 4 | v6.5.19 onward | `bench_run` sizes its own batches and every path subtracts the **measured** timer floor. Micro rows are the code. Every report prints the floor it measured. |
+| 5 | v6.6.5 onward | Per-op figures are kept in **picoseconds** and rounded half up, the floor is netted at **read time** rather than per window, a window claims a `min`/`max` only if the clock's error is ≤1 % of it, and the floor is **re-measured** at the first report. `min=0ns` for real work is gone; so is the per-window clamp that biased means upward. |
 
 ## What is and is not salvageable
 
@@ -47,6 +48,54 @@ same commit, same box:
 
 Do **not** bisect this step, and do not treat the first regime-4 delta column as a
 perf win. Compare regime-4 runs only against other regime-4 runs.
+
+## The regime-4 → regime-5 step, and why regime 4's minima were not trustworthy
+
+Regime 4 removed the instrument from the AVERAGE and left it in the MINIMUM. The floor it
+subtracted is the **mean** cost of one clock read; the minimum over windows of
+`op + c_i − mean(c)` is `op − (mean(c) − min(c_i))`, so a reported min read low by the
+clock's own window-to-window spread and reached **0** as soon as that spread reached the
+op. Filed from mabda on 2026-09-16 (`uniform_buffer_write: 2.825us avg (min=0ns ...)`);
+`benches/bench_tagged.bcyr` and `benches/bench_float.bcyr` in this tree were printing
+`min=0ns` on 5 of 14 rows at the same time, and 4 ns rows printed `max=27–60 ns` because
+`bench_run`'s 16-op pilot chunk fed the extremes too.
+
+⛔ **Subtracting the minimum read cost instead does not fix it.** Re-netting the same raw
+windows by the smallest EMPTY window read 70 / 0 / 0 ns against a true ~280: on an hpet
+box the minimum raw `getpid` window (907 ns) came out EQUAL to the minimum empty window
+(907 ns). An empty window is not a lower bound on the clock cost inside a window that does
+work.
+
+What moves between regime 4 and regime 5:
+
+- **Minima and maxima on short-window rows change the most.** Any row whose windows are
+  shorter than 100 × (floor + tick) now reports the MEAN for min and max, and
+  `bench_min_resolved(b)` says so. A row that used to read 0 now reads the mean.
+- **Averages move by up to a nanosecond**, from half-up rounding of the picosecond value,
+  and move slightly DOWN on rows whose windows used to clamp at 0 (the clamp only ever
+  biased a mean upward).
+- **Micro rows on coarse-clock hosts change a lot.** Window sizing now uses floor **plus
+  tick**; on Windows the floor calibrates to 0, so floor-only sizing sized for nothing.
+- **Windows gains a real clock.** `now_ns` moved from GetTickCount64 (15 ms steps) to
+  QueryPerformanceCounter, so cass rows are measurements for the first time.
+- **macOS arm64 gains resolution.** The Darwin clock id moved 6 → 4; id 6 is
+  `gettimeofday - boottime` with microsecond resolution, which was the 1,000 ns tick
+  measured on ecb.
+- **`compiler/*` and `size/*` rows are unaffected**, as in every regime — they are timed
+  by `date +%s%N` in `bench_cmd()` and never touch `lib/bench.cyr`.
+
+⛔ **Regime 5 still reports 0 in one case, and it is a statement about the instrument.**
+When a row's windows do not in total outlast the clock reads that bracketed them
+(`raw_total <= windows × floor`), the netted total clamps at 0 and the mean, min and max
+go to 0 with it. That is an op at or under one clock read — `bench_run(noop, 16)` did it
+in 69–317 of 500 reps on the box this was measured on, and `bench_run(noop, 100)` in 55.
+`bench_sub_floor(b)` is 1 exactly there and the supplementary line says `SUB-FLOOR`. Real
+work above the floor does not do it (`getpid` at n=16/n=100 and a 50-iteration loop at
+n=16/100/1000 were 0/500). The first draft of these notes said min was "never 0 for real
+work"; that is retracted — reporting the raw mean in that case would report the CLOCK as
+the op, which is the regime-3 → regime-4 inflation all over again. Raise `n` or batch.
+
+Compare regime-5 runs only against other regime-5 runs. Do not bisect the step.
 
 ## Why a single timer constant cannot be written down
 

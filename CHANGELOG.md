@@ -10,6 +10,228 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
 
 ### Fixed
 
+- ⛔ **`lib/bench.cyr` subtracted a MEAN clock floor from every window and then reported the
+  MINIMUM, so a real operation read `min=0ns` — on our own release benches** (filed by mabda
+  2026-09-16 from a 4.1.3 verification: `uniform_buffer_write: 2.825us avg (min=0ns ...)` and
+  `CSV:uniform_buffer_write,0`;
+  `issues/archived/2026-09-16-mabda-lib-bench-min-minus-mean-floor.md`).
+  `_bench_calibrate_clock` produces the **mean** cost of one clock read; `_bench_net`
+  subtracted that one scalar from every window, clamped at 0, and six duplicated blocks fed
+  the clamped value straight into `min`. The minimum over windows of `op + c_i − mean(c)` is
+  `op − (mean(c) − min(c_i))` — low by the clock's own window-to-window spread, and **0** once
+  that spread reaches the op. Measured here (Ryzen 5800H, `hpet`): `getpid` timed one per
+  window read **min=0 in 3 of 3 runs** while its mean (370/373/581 ns) and its 128-op batched
+  figure (262/309/320 ns) agreed.
+  ⛔ **The filing's preferred remedy is REFUTED, and the report proved it before any code was
+  written.** Subtracting the *minimum* single-read cost re-nets the same raw windows to
+  **70 / 0 / 0 ns** against a true ~280, because the minimum raw `getpid` window (907 ns) came
+  out EQUAL to the minimum EMPTY window (907 ns) in 2 of 3 runs. An empty window is not a
+  lower bound on the clock cost inside a window that does work, so **no choice of scalar floor
+  rescues a per-window minimum**.
+  **Fix — resolution, not a better floor.** A window contributes to min/max only when its net
+  duration is at least 100 × (one clock read + one tick), i.e. when the instrument can be
+  wrong by at most 1 % of it. Short windows still count toward the total and the mean; they
+  simply cannot claim an extreme. When nothing resolves, `bench_min_ns`/`bench_max_ns` report
+  the **mean** — never `n/a`, because seven consumer repos parse these as numbers — and the
+  new `bench_min_resolved(b)` says which you got.
+  ⛔ **0 remains reachable in exactly ONE case, and the first draft of this entry denied it.**
+  This bullet, `lib/bench.cyr`'s header, `docs/stdlib-reference.md` and the archived issue all
+  claimed "never 0 for real work"; review disproved it. If a row's windows do not in total
+  outlast the clock reads that bracketed them (`raw_total <= windows × floor`),
+  `bench_total_ns` clamps at 0, so the mean is 0 and the unresolved min/max follow it —
+  measured at `bench_run(noop, 16)` → min=0 in **69–317 of 500** reps and `bench_run(noop,
+  100)` → 55 of 500, while `getpid` and a 50-iteration loop were **0 of 500** at every n. It
+  is not the filed defect (that was a 250 ns op reading 0 beside a mean of 250) and it is not
+  fixable by arithmetic — reporting the raw mean would report the CLOCK as the op, the 256×
+  inflation v6.5.19 removed. So 0 is kept and NAMED: **`bench_sub_floor(b)`** is 1 exactly
+  there, the supplementary report line says `SUB-FLOOR ... 0 means below the instrument`, and
+  leg (g) of the crossos test pins both it and a 250 ns control on the same scripted clock.
+  All four claim sites are corrected rather than quietly edited.
+  ⚠ **A re-measured floor corrects the total and the mean, NOT a stored min/max.** The header
+  said "rows that were already accumulated" without that distinction; resolved extremes are
+  per-op picoseconds computed with the floor in force at record time and are not re-netted.
+  Bounded by the resolution rule itself to ≤1 % of the extreme.
+  ⚠ **`_bench_measure_tick` could spin ~9 minutes on a stopped clock** — a hardcoded
+  100,000,000-iteration guard, ×4 rounds, at this box's 1.4 µs per read — and then FABRICATED
+  a 1 ns tick, i.e. the smallest possible error from the most broken possible clock, which
+  would let every window "resolve". The spin is now bounded by a ~200 ms read budget derived
+  from the measured floor (`_bench_tick_cap`), and a round that exhausts it reports what it
+  established: `cap × floor` as a measured lower bound, or a sentinel that `_bench_err_ns`
+  prices at one second so nothing resolves. A frozen clock cannot be bounded by elapsed time,
+  which is why the bound is a read count and the budget is derived.
+  **Wider than the minimum, all measured:**
+  - **`bench_run` was NOT immune** (the filing said it was "largely immune by construction").
+    Its 16-op pilot chunk and its short tail chunk fed min/max: `bench_run(noop, 1e5)`
+    reported `min=0` in **91 and 120 of 200 runs**, and `benches/bench_tagged.bcyr` +
+    `benches/bench_float.bcyr` printed `min=0ns` on **5 of 14 rows** at 6.6.4, with 4 ns rows
+    printing `max=27–60 ns`. Both chunks now fail the resolution bar like any other short
+    window.
+  - **The per-window clamp biased AVERAGES upward**, not just minima (88 to 3,584 of 20,000
+    windows clamped here). The book now keeps the RAW total and nets `windows × floor` at
+    READ time — which is also what lets a corrected floor reach rows already accumulated.
+  - **One calibration, taken once, lazily, never checked.** A 3,861 ns floor was observed on
+    chew against 733 ns on the next run of the same boot; injected, it made single-op `getpid`
+    read **10–11 ns** instead of ~350 and pulled 100-op averages down 10 %. Calibration now
+    warms up (time-bounded), repeats until two rounds agree within 5 %, and `bench_report`
+    re-measures. A **lower** re-measurement is adopted; a higher one is printed and declined,
+    because over-subtraction is what produces the zeros.
+  - **Per-op values truncated to whole nanoseconds** — a 25 % quantum on a 4 ns op.
+    `bench_avg_ps`/`bench_min_ps`/`bench_max_ps` expose picoseconds; the `_ns` accessors keep
+    their name and arity and round **half up**, so a row can move by up to 1 ns. That is
+    regime 5 (`docs/development/benchmark-regimes.md`).
+  - **Window sizing was blind to clock GRANULARITY.** `_bench_chunk_for` used the read cost
+    only, and on cass the floor calibrates to 0 against a **15 ms** tick, so the chunk thrashed
+    between 1 and the fixed 4096 fallback: a modelled 15 ms clock gave `min=0ns max=3.662us`
+    for a 2 µs op. Sizing is now floor **plus** tick, in picoseconds, and grows geometrically
+    when the op is still too fast to size from.
+  - **macOS was timing at MICROSECOND resolution.** `now_ns` passed Darwin clock id **6**;
+    Apple's Libc (`gen/clock_gettime.c`) implements `CLOCK_MONOTONIC` as
+    `gettimeofday - boottime` with `clock_getres == NSEC_PER_USEC`. That is exactly the
+    1,000 ns tick the crossos test had recorded on ecb and ach. Both `lib/bench.cyr` and
+    `lib/chrono.cyr` now pass **4** (`mach_continuous_time`), which `lib/sakshi.cyr` and
+    `src/backend/common/runtime.cyr`'s `_prof_clock_ns` already did.
+  - **AGNOS had no arm at all.** An AGNOS build of `lib/bench.cyr` emitted a raw
+    `movl $0xe4,%eax; syscall` (llvm-objdump verified) — clock_gettime, which AGNOS does not
+    define — so the `var ts[16]` it read back was undefined memory. `lib/chrono.cyr` got its
+    `#95 sys_uptime_us` arm at 6.6.1 and this file did not, for four releases.
+  - `programs/cyrsign.cyr` included `lib/bench.cyr` and referenced nothing from it.
+  - **A stale comment said Intel-Mac had no clock.** `now_ns`'s macOS arm read "(x86-macho 228
+    unrouted → HELD)"; v6.5.16 gave ach `EMACHO_CLOCK_X86`, which composes ns from BSD
+    `gettimeofday`. Corrected, with the two consequences a bench needs: it is the REALTIME
+    clock (it can step under NTP — Darwin exposes no monotonic clock through the x86 syscall
+    table) and its resolution is a microsecond, so the tick measures 1,000 ns there.
+  - **The gate counted a mutant that failed to COMPILE as killed**, silently, so
+    "9/9 mutants killed" could include one that only proved a syntax error; it is now a loud
+    FAIL with an `[ -s m.bin ]` empty-binary check beside it. The gate also aborted at exit 4
+    under `bash -eo pipefail` at its own intentionally-failing mutant — every such invocation
+    is now `rc=0; cmd || rc=$?`. A tenth mutant (`bench_sub_floor` never flags) was added with
+    a 250 ns control, so "always 1" and "always 0" both fail. Axis B pins `bench_sub_floor`,
+    the `SUB-FLOOR` wording and the bounded tick spin; all four new assertions were
+    mutation-proven against a scratch tree and the ledger is in the gate header.
+  - ⚠ **The two LIVE `bench_min_ps > 0` assertions are tripwires, not the discriminator.**
+    Measured: with the resolution rule reverted in a scratch lib, six assertions went red and
+    every one was in the scripted axis 0 — both live ones stayed GREEN, because
+    `_btf_calibrate_window()` sizes the op far above the window where the defect appears.
+    Both comments now say so, so a later reader does not trim axis 0 believing they cover it.
+- ⛔ **Windows had NO sub-millisecond clock, for any cyrius program.** `now_ns` and
+  `clock_now_ns` both routed `syscall(228)` to kernel32!**GetTickCount64**, whose counter
+  advances in **15 ms** steps (measured on real cass). Every duration under 15 ms read as 0
+  or as one whole tick, and the bench floor calibrated to 0 because 1,024 GetTickCount64
+  calls do not move the counter. New PE reroutes **0xF038 QueryPerformanceCounter** and
+  **0xF039 QueryPerformanceFrequency** (`EQPC_PE`/`EQPF_PE`, lazy kernel32 imports), wrapped
+  as `sys_qpc` / `sys_qpf` / `sys_qpc_ns` in `lib/syscalls_windows.cyr` with an
+  overflow-safe count→ns conversion and a cached frequency. GetTickCount64 stays reachable
+  and is the fallback if QPF ever reports a non-positive frequency. Verified under wine
+  (tick 1.3 µs, a 4 ns no-op resolving to `min=4ns`); **real cass is the gate**.
+  ⚠ The two routes live in their own `_PE_ROUTE_PERFCOUNTER` helper rather than as two more
+  arms of `_PARSE_FACTOR_IMPL`'s PE chain — that chain is the longest in `parse_expr.cyr` and
+  **cybs**, the bootstrap compiler the 29 KB seed assembles, fails SILENTLY past its per-fn
+  global/call-reference limit. `EQPC_PE`/`EQPF_PE` return-0 stubs were added to the aarch64
+  and cx emitters in the same change (the v6.4.26 trap). cycc **1,293,880 → 1,294,040 B**
+  (+160); seed-derive GREEN; all seven forks compile.
+  - ⛔ **And the first cut of that route BROKE `lib/chrono.cyr` and `lib/bench.cyr` for
+    Windows consumers.** Both called `sys_qpc_ns()` from `lib/syscalls_windows.cyr`, but
+    chrono.cyr includes only `atomic.cyr` and bench.cyr includes nothing at all — so a
+    consumer whose `[deps] stdlib` names `"chrono"` (or `"bench"`) without `"syscalls"`
+    stopped cross-building for PE with `undefined function 'sys_qpc_ns'`, where 6.6.4's
+    `syscall(228)` had built. Nothing in-repo saw it: every in-repo consumer pulls
+    `lib/syscalls.cyr`. The vendoring closure could not have rescued it either —
+    `_distlib_union_declared_stdlib` derives its edges from literal `include "lib/X.cyr"`
+    lines and neither file has one. Both modules now spell 0xF038/0xF039 **raw**
+    (`_chrono_qpc_ns`, `_bench_qpc_ns`), the way their other arms already spell
+    `syscall(228)`, keeping the overflow-safe conversion and the GetTickCount64 fallback.
+    Pinned by the bench gate's new **axis E**, which cross-builds a chrono-only and a
+    bench-only consumer for PE and for ELF and derives the Windows arm's callee from the
+    source — a compile-only check passes over an arm reverted to GetTickCount64, because
+    the now-unreachable helper stays in the binary and keeps both imports.
+  - **`bench_sub_floor` answered 1 on a STOPPED clock**, where its documented meaning does
+    not hold: with a frozen clock the floor calibrates to 0, so `raw_total > windows × 0`
+    is false and the predicate claimed "every window was at or under one clock read" —
+    against a read of 0 ns. It now asks the tick sentinel first and answers 0; the row
+    still reports the mean with `bench_min_resolved(b) == 0`, which is the honest answer
+    for a clock that is not running.
+  - **The tick sentinel was STICKY, so the recovery path this release added was dead code.**
+    `bench_clock_recheck` adopted a new tick only when `tk < _bench_clock_tick`, and no
+    `tk >= 0` is less than `-1` — so a process whose clock stopped once priced its error at
+    a full second for the rest of its life and every row printed the mean. Measured on the
+    scripted clock: frozen, then a 1,000 ns/read clock installed, recheck still reported
+    `tick=-1` and 20 windows all read `min_resolved=0`. Both are pinned by a new
+    stopped-clock group in `crossos/bench_timer_floor.tcyr` (69 → **77** assertions),
+    mutation-proven red against each fix reverted.
+  - **Gate hygiene, review round 2.** Axis A (the ⭐ "the 120 ns constant must not come
+    back" grep) had no control for its own pattern — `nret >= 1` counts the literal
+    `RETIRED:`, a different property — so rewording the RETIRED paragraph or breaking the
+    pattern left axis A passing by matching nothing; it is now proved against synthetic
+    must-match and must-not-match lines. Axis B's timing-path inventory was a hand-written
+    list of six names against a fixed floor of 7, so a seventh window-closing fn would have
+    been neither scanned nor required; it is now DERIVED (every fn calling `now_ns()` minus
+    a declared non-window set, each of whose names must still exist). And
+    `tests/gates/platform/agnos_monotonic_clock_rdtsc.sh` — extended by this same bite —
+    still false-RED'd under `bash -eo pipefail` (`llvm-objdump | grep -q` SIGPIPEs the
+    disassembler; `grep -c` exits 1 on a count of 0), the exact class repaired in its
+    sibling gate in this same change and not carried across. Both are disassemble-to-a-file
+    now: rc 0 under `/bin/sh`, `bash -e` and `bash -eo pipefail`.
+  - The new `_PE_ROUTE_PERFCOUNTER` helper had been inserted BETWEEN `PARSE_FACTOR` and its
+    own CVE-40 recursion-depth comment block; moved above it. Comment-only, and
+    `build/cycc` recompiling the tree reproduces itself byte-for-byte (1,294,040 B).
+- ⛔ **`tests/tcyr/crossos/bench_timer_floor.tcyr` had MEASURED this defect, written it up, and
+  declared it correct.** Its axis 2 comment recorded, from real pi,
+  `min via bench_run : 0 0 3 22 0 0 0 0 0 0 0 0   (0 in TEN of twelve)` and then said in as
+  many words "That 0 is not a defect", and the axis was made one-sided around that rationale.
+  mabda filed exactly that number five weeks later. The rationale is retired and replaced by
+  `bench_run min > 0`; the directional half it was also making (per-iteration timing reports
+  MORE than batching, never less) is kept. ⚠ The same file's `_btf_supported()` skipped four
+  axes on `#ifdef CYRIUS_TARGET_WIN` — a CAPABILITY written down as a target name, which the
+  QPC change in this release made false; it now MEASURES (tick under 100 µs and an independent
+  floor above 0), so cass runs those axes and a future host is classified correctly.
+  - ⛔ **AND THIS RELEASE'S OWN REPLACEMENT FOR IT WAS HOST-SPEED DEPENDENT — RED ON ecb, six
+    runs of six.** The one property the scripted axes did not yet state — "measuring n
+    sub-floor iterations must not cost n clock reads" — was added as a LIVE assertion that
+    timed `bench_run` and required `wall < n × floor / 2`. Both sides scale with the floor,
+    which is what makes it LOOK host-independent; divide through by n and it demands **that
+    the benchmarked op cost less than half a clock read**, which is a fact about the machine,
+    not about the library. On x86_64 Linux (read ~1,330 ns, no-op ~3 ns) it passed by 400×.
+    On ecb — where *this same release* moved the Darwin clock to `mach_continuous_time` and
+    took one read from 1,000 ns to **5 ns** — the bar became 2.5 ns against a 2.698 ns op.
+    Measured on real ecb 2026-09-18: floor 5 ns, tick 41 ns, `bench_run(1e5)` wall 274,500 ns
+    against a 250,000 ns bar, RED 6/6, **while the chunking it was policing was working
+    perfectly** — 97 windows and 194 clock reads for 100,000 iterations, a 1,031× reduction,
+    the row resolved at 2.7 ns. The release's own improvement to the clock is what pushed it
+    over: a bar derived from a host quantity gets more fragile every time that quantity gets
+    better.
+    ⚠ **Running it through a pipe masked it.** `./_bt | tail` passed where
+    `./_bt </dev/null >/dev/null` — how `cross-os-libtest-runner.sh` invokes every test —
+    failed, because the slower surrounding process calibrates a higher floor and so raises the
+    bar. A verdict that moves with where stdout goes is a measurement of the machine;
+    reproduce under the runner's redirection, never through a pager.
+    **Fix — state the property as a COUNT.** New `bench_windows(b)` returns the timed windows
+    a row consumed (one clock PAIR each), so the read count is observable with no wall clock
+    in it. Scripted axis 0 gains leg (i), closed-form on the seam: **6** reads for 100,000
+    iterations of a 3 ns op on a 1 µs clock (pilot 16, one sized chunk of 66,667, a 33,317
+    remainder), **10** on a modelled 15 ms counter (geometric ×16 growth off a 0-ps pilot),
+    and **200** for the 100 one-op windows that are the defect's own shape — that last one a
+    positive control for the counter itself. The live axis keeps its name, drops the wall
+    clock and asserts `bench_windows < n/20`: 50× of margin against the 97 measured on the
+    fleet's fastest clock, 20× against the n windows the defect spends.
+    `tests/gates/toolchain/bench_timer_floor_measured.sh` carried the identical
+    `wall >= n * fl / 2` check (green here at 400×, for the same reason) and is converted the
+    same way; its D2 chunk-1 mutant is still rejected with rc=4. Verified `</dev/null
+    >/dev/null` 6/6 on ecb and 6/6 on ach, then SELFHOST_OK + LIBTEST_OK (81/81) on both.
+    69 → 77 → **92** assertions (93 on macOS-arm64).
+  - **The same-shape audit of the rest of the cross-OS corpus.** All 81 files: nothing outside
+    this one derives a threshold from a host quantity. Two structural relatives were found in
+    this file and one is fixed. `_btf_chunky`'s `_btf_spin` was a fixed 20,000 iterations with
+    the comment "far above the floor on every host (~20-60 µs)" — a host fact written down as
+    a constant — while the anti-vacuous leg that follows it asserts the op measures ABOVE one
+    clock read, and this file's own header records a floor of **4,207–13,609 ns on a loaded
+    pi**: ~1.5× of margin, on the host and in the condition where it is least likely to hold.
+    The op is now sized (`_btf_size_chunky`) until its window is ≥32 clock reads and ≥4 ticks,
+    which makes that leg true by construction on any clock and grows nothing on ecb, ach or
+    x86_64. The third, `avg < fl / 4 + 8`, was audited and deliberately left: the `+ 8` is an
+    ABSOLUTE term, so as clocks get cheaper that bar tends to 8 ns rather than to 0 — measured
+    green at 3× on ecb at the moment the other assertion went red — and the comment now
+    records the measurement and names leg (e) as the repair if it ever does go red.
+
 - ⛔ **`memfd_create`, `ftruncate`, `sendmsg` and eleven more had NO STDLIB NAME, so their
   x86_64 numbers reached the ELF-aarch64 `svc` unchanged and ran DIFFERENT syscalls — clean
   build, no warning** (filed by thoth 2026-09-17 against its Wayland window;
@@ -907,6 +1129,50 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
   T's name, and is now a hard error.
 
 ### Added
+
+- **`lib/bench.cyr` picosecond + resolution API**, every existing symbol keeping its name and
+  arity: `bench_avg_ps/1`, `bench_min_ps/1`, `bench_max_ps/1`, `bench_min_resolved/1`,
+  `bench_clock_tick_ns/0`, `bench_clock_recheck/0`, and `bench_sub_floor/1` — the predicate
+  that NAMES the one case a row legitimately reports 0 (every window at or under one clock
+  read), added at the review round after the "never 0 for real work" claim was disproved.
+  Plus `sys_qpc/1`, `sys_qpf/1` and `sys_qpc_ns/0` in `lib/syscalls_windows.cyr`.
+  `docs/api-surface.snapshot` +10, −0.
+- **`tests/tcyr/crossos/bench_timer_floor.tcyr` axis 0 — a SCRIPTED CLOCK, now the primary
+  gate** (8 groups, 69 assertions total in the file; DERIVE with the binary's own
+  `N passed` line). `lib/bench.cyr`'s `_bench_clock_fp` seam makes `now_ns()` return virtual
+  time, so the test states a per-read cost, a jitter, an op and a tick and every expected
+  value is **closed form** from those four numbers — identical on ecb, ach, cass, pi and here,
+  at any load. ⭐ This is the third gate shape this file has carried and the first that can
+  see a statistics defect: its own header records one live-statistic axis that was
+  unsatisfiable by construction and one that passed about two runs in three, and the axis that
+  survived both had written the defect down as correct behaviour. The live axes remain,
+  one-sided and supplementary, plus a new one asserting that a real op never reports a zero
+  minimum. Green on x86-64 Linux, under qemu-aarch64, and as PE under wine (60/60 each);
+  **real ecb/ach/cass/pi is the gate**.
+- **`tests/tcyr/crossos/win_qpc_clock.tcyr`** — the companion the syscall-wrapper rule requires
+  for the two new PE reroutes. QPF positive, QPC monotonic and advancing, and the QPC-derived
+  interval agreeing within 20 ms with the same interval measured by **GetTickCount64** — a
+  different clock, so the expected value cannot share a defect with the thing it checks. Its
+  portable half (monotonic, sub-millisecond tick) runs on every host. Mutation-proven three
+  ways under wine: pointing 0xF038 at GetTickCount64, dropping the `t % hz` term, and
+  returning the raw count each turn it RED.
+- **`tests/gates/toolchain/bench_timer_floor_measured.sh` axes D3 and D4.** D3 builds a
+  scripted-clock probe (independent of the tcyr's, so a mistake in one is visible against the
+  other) and then applies **ten mutants** to copies of `lib/bench.cyr` — min over all windows,
+  a per-window clamp in the total, integer-ns per op, recheck removed, recheck adopting a
+  higher floor, a single calibration round, error without the tick, truncating instead of
+  rounding, an unresolved min of 0, and a sub-floor case that is never flagged — each of which
+  must turn it RED. D4 parses the report
+  with **goonj's own ROW_RE / TIME_RE / FLOOR_RE, copied verbatim** from
+  `goonj/scripts/bench-history.sh`, reproduces its `to_ns` integer-ns requirement, and requires
+  every added line to start with `[` and contain no ` avg`. Mutation-proven both ways. Axis B's
+  path inventory moved from `_bench_net(` to `_bench_record(` and now also refuses a timing fn
+  that touches the min slot directly.
+- **`tests/gates/platform/agnos_monotonic_clock_rdtsc.sh` axis 4** — the same `#95` pin for
+  `lib/bench.cyr`'s `now_ns` that axis 1 has for `clock_now_ns`, with the objdump emission
+  check (syscall 95 present, no raw 0xe4) and the Linux build as the anti-vacuous control.
+  chrono got its arm at 6.6.1 and bench did not; both are pinned on one axis now so the next
+  one cannot drift alone. Mutation-proven.
 
 - `tests/gates/platform/syscall_peer_kernel_agreement.sh` + `tests/data/syscalls/{x86_64,aarch64}.tbl`
   — **the first non-circular check in the syscall machinery.** Until now every pair of the four
