@@ -562,3 +562,27 @@ sh "$ROOT/tests/gates/toolchain/tracked_paths_portable.sh"
 # gate is the one that both compiles cyrius source AND could regress from a language change,
 # which is exactly the class that belongs in the local gate.
 sh "$ROOT/scripts/agnos-crossbuild-gate.sh"
+
+# ⛔ 6.6.5 — rsp was 8 bytes off 16-byte alignment at any call emitted INSIDE an expression.
+# cycc's expression codegen is a stack machine (`push rax` per pending value) and nothing
+# padded for those pending values at a call; the only alignment invariant was the frame
+# rounding, which holds BETWEEN statements. `f(0, c())` entered its callee misaligned and
+# `var t = c(); f(0, t);` did not, so a C callee spilling SSE with `movaps` — what gcc emits
+# for ordinary code — took a #GP. Filed from mabda 4.1.3 (a SIGSEGV inside NVK's
+# create_buffer) and, underneath it, the whole PE base was INVERTED: Windows enters at
+# rsp ≡ 8 and cyrius never re-aligned, so on Windows it was the STATEMENT-level calls that
+# were misaligned, including cyrius's own CreateFileW reroute.
+#
+# ⭐ This gate uses a gcc-assembled leaf that measures `(rsp+8) & 15` with the CPU. The fix
+# added a compile-time depth counter, and a gate that asked THAT counter would share the
+# model it is checking — measured: making ECALLCLEAN skip the emitted `pop rcx` while STILL
+# decrementing `_xdepth` produces ZERO compile-time desync reports and 24 misaligned rows
+# here. (Deleting the byte AND the decrement is a different mutant and DOES desync, 200
+# reports; the gate header carries the full ledger.)
+#
+# 6.6.5 second cut: it also enforces a ROW FLOOR. The driver keeps a row counter and used
+# not to return it, so deleting rows from run() left this gate printing PASS with the same
+# message. Two independently derived counts now have to agree with each other and clear 56:
+# the probe call sites grepped STATICALLY out of the driver source, and the `ROWS nnn` line
+# the driver prints at RUNTIME.
+sh "$ROOT/tests/gates/codegen/call_site_stack_alignment.sh"

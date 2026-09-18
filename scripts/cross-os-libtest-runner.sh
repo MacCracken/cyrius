@@ -74,6 +74,76 @@ for t in $(find "$ROOT" -name '*.tcyr' | sort); do
         elif [ "$rc" -ne 0 ]; then
             ok=0
         fi
+        # ⛔ 6.6.5 — ARGV-LENGTH SWEEP, for a test that asks for it with `@rerun-argv-parity`.
+        #
+        # THIS LOOP NAMES EVERY BINARY `./_lt`, i.e. it samples exactly ONE argv0 length. That
+        # is normally irrelevant — and on Darwin x86_64 it is not, because XNU's process entry
+        # rsp parity varies with the byte count of the argv/env string area. Measured on ach at
+        # 6.6.5: `tests/tcyr/crossos/call_site_stack_alignment.tcyr` FAILED under `./_l` and
+        # `./_lt` and PASSED under `./_ltxx` on the same broken compiler. The defect was caught
+        # here only because `_lt` happens to be a losing length on that host; one byte longer
+        # and this leg would have gone GREEN on a compiler that was wrong half the time. A leg
+        # that samples one configuration and reports a verdict about all of them is the same
+        # shape as the macOS rot this whole script exists to prevent.
+        #
+        # ⛔ A SECOND NAME IS NOT ENOUGH, AND THE FIRST CUT OF THIS BLOCK USED ONE. It appended
+        # a fixed 20-byte suffix, and MEASURED against the pre-fix compiler on ach that name
+        # landed on the SAME parity as `_lt` at every one of ten env paddings — a mechanism
+        # that would have shipped reading green while sampling one parity twice. The relation
+        # between two lengths is host- and kernel-dependent; there is no name that is portably
+        # "the other parity". So this sweeps 15 CONSECUTIVE lengths, which cannot all share a
+        # parity while the entry rsp is a function of the byte count. Measured on ach with the
+        # pre-fix compiler, suffix 0..8 already reports BOTH outcomes at each of three env
+        # paddings (rc 6,6,0,6,6,6,0,0,0 with PADVAR unset) — 15 is the belt-and-braces bound.
+        #
+        # MUTATION LEDGER — measured END TO END THROUGH THIS SCRIPT on ach (real Intel Mac),
+        # 2026-09-17, against a compiler built from the same tree with `EALIGN_RSP_16` removed
+        # from both landings. Running this runner over one marked file at 16 env paddings:
+        #
+        #   marker REMOVED (i.e. the single-name behaviour this block replaces):
+        #     pad  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
+        #     ---  R  R  R  R  R  R  G  G  G  G  G  G  G  G  R  R
+        #     -> 8 of 16 environments report `__LIBTEST_SUMMARY__ 1 0` — GREEN — on a compiler
+        #        that is misaligned at every call site half the time. A coin flip decided
+        #        whether this leg found the 6.6.5 Mach-O defect or shipped it.
+        #   marker PRESENT, same broken compiler, at one of those GREEN paddings (pad 6):
+        #     __LIBTEST_FAILED__ ...(PASSED as ./_lt, rc=6 as ./_ltzzz — the process entry
+        #     alignment depends on argv/env SIZE; see the ENTRY row in that test)
+        #   marker PRESENT, FIXED compiler, same padding:  __LIBTEST_SUMMARY__ 1 0
+        #
+        # So the environments where this block is load-bearing are not hypothetical: they are
+        # half of them, and the sweep fires in them and names the cause.
+        #
+        # ⚠ NOT every test, deliberately: the corpus does real file and socket I/O and a
+        # blanket re-run would fail tests that are simply not idempotent. The test DECLARES the
+        # requirement in its own header instead, so it travels with the file rather than living
+        # in an allowlist here that rots the moment a test is renamed. CHANGELOG [6.6.5]
+        if [ "$ok" = "1" ] && grep -q '@rerun-argv-parity' "$t" 2>/dev/null; then
+            cp _lt _ltbase
+            _k=1
+            while [ "$_k" -le 15 ]; do
+                _sfx=""; _i=0
+                while [ "$_i" -lt "$_k" ]; do _sfx="${_sfx}z"; _i=$((_i + 1)); done
+                _nm="_lt$_sfx"
+                cp _ltbase "$_nm"
+                chmod +x "$_nm"
+                [ "$DO_SIGN" = "1" ] && codesign -s - -f "$_nm" >/dev/null 2>&1
+                rc2=0
+                run_bounded "./$_nm" || rc2=$?
+                rm -f "$_nm"
+                if [ "$rc2" -eq 124 ]; then
+                    ok=0; hung=$((hung + 1)); b="${b}(HANG@${LT_TIMEOUT}s,argv-len+$_k)"
+                    break
+                elif [ "$rc2" -ne 0 ]; then
+                    ok=0
+                    b="${b}(PASSED as ./_lt, rc=$rc2 as ./$_nm — the process entry alignment"
+                    b="${b} depends on argv/env SIZE; see the ENTRY row in that test)"
+                    break
+                fi
+                _k=$((_k + 1))
+            done
+            rm -f _ltbase
+        fi
     fi
     if [ "$ok" = "1" ]; then p=$((p + 1)); else f=$((f + 1)); bad="$bad $b"; fi
 done

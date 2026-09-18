@@ -27,11 +27,32 @@ On aarch64 cyrius uses only **6** argument registers (not AAPCS64's
 alignment AAPCS64 and AArch64 SPAlignmentCheck require.
 
 Cyrius pads the local frame to a 16-byte boundary
-(`src/frontend/parse.cyr`: `fsz = (flc*8 + 15) & ~15`), so RSP / SP
-is 16-byte aligned in every function body. `fncall7` / `fncall8`'s
-x86 variants reserve 16 bytes via `sub rsp, 16` to hold the stack
-arg(s) plus padding; aarch64 pushes each stack arg with
-`str xN, [sp, #-16]!`.
+(`src/frontend/parse_fn.cyr`: `fsz = (flc*8 + 15) & ~15`), so RSP / SP
+is 16-byte aligned in a function body **between statements**.
+`fncall7` / `fncall8`'s x86 variants reserve 16 bytes via
+`sub rsp, 16` to hold the stack arg(s) plus padding; aarch64 pushes
+each stack arg with `str xN, [sp, #-16]!`.
+
+> ⛔ **"Between statements" is load-bearing, and until 6.6.5 this file
+> said "in every function body" without it.** x86 evaluates expressions
+> on the machine stack — one `push rax` per pending value — so inside an
+> expression RSP is 16-aligned only when an EVEN number of values is
+> pending. `f(0, c())` called `c` with RSP 8 bytes off; `var t = c();
+> f(0, t);` did not. Since 6.6.5 the call emitters track that depth and
+> pad, so the invariant genuinely holds at every call site; before it,
+> any nested call into C whose callee spilled SSE with `movaps`/`movdqa`
+> — what gcc emits for ordinary code — took a #GP. The shift is also
+> inherited: a cyrius fn entered misaligned runs its whole body
+> misaligned. See CHANGELOG [6.6.5] and
+> `docs/development/issues/archived/2026-09-16-mabda-cycc-nested-call-stack-misalignment.md`.
+>
+> ⛔ **And the frame rounding only makes the body aligned if the ENTRY
+> was.** `fsz = (flc*8 + 15) & ~15` preserves a parity; it does not
+> create one. Three targets were found inheriting the entry parity
+> instead of establishing it in 6.6.5 — PE, UEFI and x86_64 Mach-O, the
+> last of which has no fixed parity at all (it varies with the argv/env
+> byte count; see item 4 under *SysV 16-byte stack alignment* below).
+> Every landing that needs one now emits it.
 
 ---
 
@@ -148,14 +169,80 @@ fewer reg-arg slot, leaves the stack args at the same
 16-aligned at the CALL site. `ECALLCLEAN` releases the
 corresponding 8 bytes of alignment padding.
 
-Acceptance: `tests/tcyr/sysv_odd_stack_args.tcyr` (5
+Acceptance: `tests/tcyr/codegen/sysv_odd_stack_args.tcyr` (5
 assertions covering callers with 7/8/9/10/11 params hitting an
 SSE-using leaf) was added as the regression gate.
 Sandhi-filed: `sandhi/docs/issues/2026-04-25-cyrius-7arg-frame-tls-connect-segfault.md`.
 
-The Win64 path was already correct — it had the symmetric
-alignment branch via `if ((framesize & 15) != 0) framesize+=8`
-in `ECALLPOPS`.
+**6.6.5 generalises this, and corrects two claims in the paragraph above.**
+
+1. The v5.6.41 rule padded on `nextra & 1` alone, which assumes the call
+   is emitted with NOTHING else pending — true at statement level, false
+   inside an expression. The parity is `(nextra + depth) & 1`, where
+   `depth` is the number of values the enclosing expressions have pushed;
+   at depth 0 it reduces to exactly the old test, which is why 7-arg
+   calls at statement level are byte-identical across the change.
+2. **"The Win64 path was already correct" was wrong twice.** Its
+   `framesize & 15` branch only rounds the frame; the parity pad it also
+   applied (`n & 1`) had the same depth-blind assumption. And underneath
+   both, the PE *base* was inverted: Windows enters an image with the
+   return address pushed (RSP ≡ 8) and cyrius never re-aligned, so on
+   Windows it was the STATEMENT-level calls that were misaligned. 6.6.5
+   adds the landing seed and retunes the seven fixed-frame kernel32
+   reroutes that had been hand-tuned to the inverted base.
+3. **UEFI shares that entry convention and adds one requirement of its
+   own.** A UEFI Application's entry point IS an MS-x64 function and
+   firmware reads its `rax` as the `EFI_STATUS`, so the image exits with a
+   `ret` — and `ret` pops `[rsp]` itself, so it is correct only where rsp
+   is EXACTLY the rsp firmware entered with. It never is: the landing seed
+   moved it by 8, and a `syscall(60, x)` inside a fn body is a whole frame
+   plus its locals below that (`lib/alloc.cyr` and `lib/bounds.cyr` abort
+   exactly that way, so a UEFI image takes the route on OOM or a bounds
+   trip with no explicit exit in user code). 6.6.5 therefore PARKS the
+   entry rsp at the landing — `lea r13, [rsp]`, before the seed — and
+   emits `mov rsp, r13; ret` at every exit, which is depth-independent.
+   r13 is reserved from the register allocator on that target
+   (`_ra_cap = 2` in `src/frontend/parse_fn.cyr`); a parked register the
+   allocator may assign to a hot local is not parked. Hand-written asm in
+   a UEFI image that returns through its own `ret` must carry the same
+   correction itself — see `programs/efi_probe.cyr`'s deliberately
+   asymmetric `sub rsp,0x20` / `add rsp,0x28`.
+4. **x86_64 Mach-O has NO fixed entry parity, and that is a per-KERNEL
+   fact rather than an ABI one.** Items 2 and 3 are both "this platform
+   enters at RSP ≡ 8, so seed the landing". Darwin is not that: MEASURED
+   ON REAL HARDWARE (ach, Darwin 22.6.0, x86_64), XNU does not 16-align
+   the initial rsp of a static Mach-O executable — it falls where the
+   argv/env string area leaves it, so the parity varies with the
+   process's own name and environment. One binary, renamed: `./_l` and
+   `./_lt` misaligned, `./_ltxx` and `/tmp/csa2` aligned; `PADVAR=x`
+   misaligned, `PADVAR=xxxxxxx` aligned. A 20-argv0-length × 16-env-pad
+   sweep splits 160/160 and tracks the parked entry rsp (`r15 & 15`) row
+   for row. 6.6.5 therefore emits `and rsp, -16` (`EALIGN_RSP_16`) at the
+   Mach-O landing, AFTER the `mov r15, rsp` park, in BOTH `src/main.cyr`
+   and `src/main_x86_macho.cyr`. It rounds DOWN, so it is correct for
+   either parity.
+
+   **The rule the three share: a landing must ESTABLISH the alignment
+   invariant, never inherit it.** Every alignment statement in this
+   document is relative to the landing, so the landing itself has to be
+   an absolute. Linux ELF is the one target that may inherit — SysV amd64
+   §3.4.1 makes `rsp ≡ 0` at `_start` a guarantee, measured 320/320 over
+   the same sweep. aarch64 is safe architecturally (measured 320/320 on
+   ecb, its anti-vacuous control 320/320 at 8) and agnos builds rsp from
+   two 16-aligned terms in its own loader.
+
+   ⚠ **On Darwin, re-running a test under one name is not a
+   verification.** The cross-OS lib-test runner names every binary
+   `./_lt`, i.e. it samples exactly one parity; use the argv0/env sweep
+   in `tests/gates/codegen/call_site_stack_alignment.sh`'s header.
+
+Also note `tests/tcyr/codegen/sysv_odd_stack_args.tcyr`'s leaf uses
+`movdqu`, which does NOT fault on a misaligned address — it pins the
+argument VALUES, not the alignment. The alignment gates are
+`tests/gates/codegen/call_site_stack_alignment.sh` (a gcc leaf that
+measures `(rsp+8) & 15` with the CPU, plus a `movaps` leaf that faults)
+and `tests/tcyr/crossos/call_site_stack_alignment.tcyr` (the same rows on
+real ecb / ach / cass / pi).
 
 ---
 
@@ -166,6 +253,15 @@ scheduled as one ("Class B FFI / `fncall6` ABI fix"); investigation proved
 the arg-passing (`rdi,rsi,rdx,rcx,r8,r9`) and 16-byte stack alignment are
 correct — a real gcc-compiled, stack-protected C function taking 4/5/6/7
 integer args returns the right result when called via `fncallN`.
+
+> ⚠ 6.6.5: that conclusion holds for the position v6.3.26 tested — a
+> `fncallN` at TOP LEVEL, in left-operand position, where nothing is
+> pending on the expression stack. It was read for years as "16-byte
+> alignment into extern C is correct" full stop, and the same callees
+> called from a NESTED position (`f(0, fncallN(...))`, `store64(&s,
+> fncallN(...))`) were entered 8 bytes off and SIGSEGV'd on their
+> `movdqa` spills. The gate now covers both positions; a gate proves only
+> the position it tests.
 
 The folklore that **"`fncall6` into extern-C (wgpu) is unreliable"** — carried
 in mabda's `wgpu_ffi.cyr` / `compute.cyr` / `texture.cyr` comments, which
@@ -224,9 +320,13 @@ no-clobber / canary-intact proof.
 
 - `struct-packing.md` — canonical C-shim pattern with worked examples.
 - `lib/fnptr.cyr` — header comment summarises this table.
-- `tests/tcyr/fncall_ceiling.tcyr` — correctness regression for
+- `tests/tcyr/stdlib/fncall_ceiling.tcyr` — correctness regression for
   all `fncall0..fncall8` on both arches.
-- `tests/tcyr/sysv_odd_stack_args.tcyr` — v5.6.41 SysV
-  alignment regression gate.
+- `tests/tcyr/codegen/sysv_odd_stack_args.tcyr` — v5.6.41 SysV
+  argument-passing regression gate (its leaf uses `movdqu`, so it does
+  NOT catch misalignment).
+- `tests/gates/codegen/call_site_stack_alignment.sh` +
+  `tests/tcyr/crossos/call_site_stack_alignment.tcyr` — 6.6.5: rsp is
+  16-aligned at every call, in every expression position, on every host.
 - mabda's `docs/issues/2026-04-19-fncall6-wgpu-crash-resolution.md`
   — concrete case study of the struct-by-value failure mode.

@@ -1,0 +1,563 @@
+# call_site_stack_alignment.tcyr — 6.6.5: rsp must be 16-byte aligned at EVERY `call`,
+# whatever expression the call sits in, on every target.
+#
+# WHY THIS IS IN crossos/ AND NOT codegen/. The release gate's cross-OS leg runs THIS
+# DIRECTORY on real ecb / ach / cass / pi, and the two defects this file pins are exactly
+# the ones a Linux-only corpus cannot see:
+#   1. x86 SysV: cycc's expression codegen is a stack machine (`push rax` per pending
+#      value) and nothing padded for those pending values at a call. `f(0, c())` entered
+#      its callee 8 bytes off; `var t = c(); f(0, t);` did not. A C callee that spills SSE
+#      with `movaps` — what gcc emits for ordinary code — takes a #GP there. Found by
+#      mabda 4.1.3 as a SIGSEGV inside NVK's create_buffer.
+#   2. PE/Win64: the base was INVERTED. Windows enters an image with the return address
+#      pushed (rsp ≡ 8) and cyrius never re-aligned, so every STATEMENT-level call was the
+#      misaligned one and the nested odd-depth calls were the aligned ones — the exact
+#      opposite of SysV. Measured under wine on 6.6.4: this file's statement rows all read
+#      8. It is a live crash in cyrius's own CreateFileW reroute, not a C-interop-only
+#      concern.
+#   3. x86_64 Mach-O: the base was NOT FIXED AT ALL. Measured on ach (real Intel-Mac,
+#      Darwin 22.6.0): XNU's entry rsp parity varies with the byte count of the argv/env
+#      string area, so this file's verdict depended on the PROCESS NAME — `./_l` red,
+#      `./_ltxx` green, `PADVAR=x` red, `PADVAR=xxxxxxx` green, a 20-argv0-length x
+#      16-env-pad sweep splitting 160/160. The cross-OS runner always names the binary
+#      `./_lt`, i.e. it samples exactly ONE parity, which is why this leg could go green
+#      on a compiler that was wrong half the time. Fixed by `and rsp,-16` at the Mach-O
+#      landing (6.6.5); pinned by the ENTRY row below and by the argv/env sweep recipe in
+#      tests/gates/codegen/call_site_stack_alignment.sh's header.
+#      ⛔ THIS IS WHY A RE-RUN UNDER ONE NAME IS NOT A VERIFICATION ON DARWIN.
+#
+# @rerun-argv-parity
+#   That marker is READ BY scripts/cross-os-libtest-runner.sh, which otherwise names every
+#   binary `./_lt` and therefore samples exactly ONE argv0 length. It makes the runner re-run
+#   this file's binary under 15 CONSECUTIVE name lengths, so the cross-OS leg covers both
+#   entry parities instead of whichever one `_lt` happens to be on that host. Measured on
+#   ach at 6.6.5: the broken compiler FAILED under `./_l` and `./_lt` and PASSED under
+#   `./_ltxx` — one byte of test-runner naming was the difference between finding this and
+#   shipping it. ⚠ A single second name is NOT enough and was tried first: a fixed 20-byte
+#   suffix landed on the SAME parity as `_lt` at every env padding measured. Keep the marker;
+#   it is not a comment about the file, it is a directive.
+# aarch64 is not affected (its push is `str x0,[sp,#-16]!`, so SP stays aligned) and must
+# STAY unaffected: an aarch64 row reading 8 means someone taught it to push 8-byte slots.
+#
+# HOW IT MEASURES. `align_probe` is #naked: no prologue, so at entry rsp/sp is exactly what
+# the caller left, and `(rsp + 8) & 15` (x86) / `sp & 15` (aarch64) is computed BY THE CPU
+# from the frame the caller actually built — never from the compiler's own `_xdepth`
+# counter, which is the model the fix added and therefore cannot be the judge of it.
+# 0 = ABI-correct on both SysV and Win64 (both require rsp ≡ 0 at the call instruction).
+#
+# ANTI-VACUOUS. `align_probe_8` is the same three instructions reading ONE SLOT HIGHER, so
+# it returns 8 exactly when `align_probe` returns 0. If the asm arm did not compile in, if
+# `#naked` stopped being honoured (it was silently ignored on three forks for nine minors —
+# see setjmp_naked.tcyr), or if the probe were reading a frame slot nothing writes, both
+# return the same value and `probe reports 8 when misaligned` fails. A file of "expected 0"
+# rows with a dead probe would otherwise score a perfect pass.
+#
+# ⛔ PER-ROW DEAD-ROW AUDIT, and it is not optional maintenance. A row only reports if the
+# value it hands `a()` actually carries the probe's reading; `a(snd(align_probe(), 0), ...)`
+# is the constant 0 because `snd` returns its SECOND argument, and three rows of the first
+# cut of this file were dead exactly that way. THE AUDIT: rebuild with `align_probe`'s x86
+# body replaced by `mov rax,8; ret` and every row must report. Measured at 6.6.5: 63 of the
+# 64 rows report; the one that does not is `... and the for-in body ran twice`, a deliberate
+# loop-count control that is supposed to stay 0. Re-run that audit whenever a row is added.
+#
+# LEDGER (x86_64 Linux, `assert_summary` exit code):
+#   6.6.4 compiler        39 of 64 rows MISALIGNED, exit 1
+#   6.6.5 compiler        0 misaligned, 15/15 assertions, exit 0
+#   always-8 probe        63 of 64 rows report (the audit above)
+#   ELF landing +8        mutant: an unconditional `ESUB_RSP_IMM8(S, 8)` next to the PE seed
+#                         in src/main.cyr's landing, i.e. the Mach-O defect reproduced on a
+#                         target that can be built and run on the dev box. `9 passed,
+#                         6 failed`, exit 6, and the FIRST thing printed is the ENTRY
+#                         diagnostic block followed by `FAIL: ENTRY: ...(got 8, expected 0)`.
+#                         That ordering is the deliverable — the same compiler without the
+#                         ENTRY row prints 63 MISALIGNED shape lines and nothing that says
+#                         the base is wrong.
+#   Mach-O landing align  measured on ach with and without `EALIGN_RSP_16` at the landing:
+#      removed (ach)      WITHOUT: 160 of 320 argv0/env combinations exit 4, 160 exit 0.
+#                         WITH: 320 of 320 exit 0. Same binary, same host, same session.
+#
+# A target that predefines NEITHER arch macro (cx) skips the alignment rows: a bytecode VM
+# has no machine stack for them to be about. That arm is dead today — no file in this
+# directory compiles under the cx fork (measured: 0 of 76) — but it is written so the file
+# degrades to its VALUE rows rather than to a vacuous pass if that ever changes. The value
+# rows at the end run everywhere, because the fix also changed what several of these shapes
+# RETURN (missing ECALLCLEAN, Win64 5/6-arg tail calls, statement-position fncallN).
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/string.cyr"
+include "lib/slice.cyr"
+include "lib/result.cyr"
+# f64_exp is an x87 instruction sequence on x86 and a polyfill on aarch64, so the row that
+# probes the x87 +/-inf guard needs lib/math.cyr to compile on the aarch64 forks.
+include "lib/math.cyr"
+
+# Enums are collected in a pre-pass over the top of the file, so this cannot sit next to
+# `mprobe` where it is used (measured: `unexpected enum` at the definition).
+enum Tri { TA; TB; TC; }
+
+# (entry rsp + 8) & 15 on x86 / sp & 15 on aarch64 — 0 means the caller's `call` was
+# 16-byte aligned. #naked on its own line (the byte-based fmt/lint tools skip `#` lines).
+#naked
+fn align_probe(): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0x8D; 0x44; 0x24; 0x08;   # lea rax, [rsp+8]
+        0x48; 0x83; 0xE0; 0x0F;         # and rax, 15
+        0xC3;                            # ret
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        0xE0; 0x03; 0x00; 0x91;         # mov x0, sp
+        0x00; 0x0C; 0x40; 0x92;         # and x0, x0, #15
+        0xC0; 0x03; 0x5F; 0xD6;         # ret
+    }
+    #endif
+    #ifndef CYRIUS_ARCH_X86
+    #ifndef CYRIUS_ARCH_AARCH64
+    return 0;
+    #endif
+    #endif
+}
+
+# ⛔ THE SAME THREE INSTRUCTIONS WITH 5, 7 AND 9 PARAMETERS, and they are not redundant.
+# Every `align_probe()` row below measures the alignment of the PROBE's own 0-argument call.
+# A row like `f7(0,0,0,0,0,0,align_probe())` therefore measures the probe at depth 6 — it
+# says NOTHING about f7's own call, which is the one that goes through the stack-argument
+# marshalling path (Win64 n>4, SysV n>6) where the pad is computed from `(nextra + depth)`
+# rather than from depth alone. Measured: reverting the depth term of the Win64 n>4 parity
+# leaves every other row in this file green, because a wrong frame still BALANCES (ECALLPOPS
+# and ECALLCLEAN read the same stored depth) and no cyrius callee cares. Only a naked probe
+# ENTERED through that path can see it. #naked ignores the arguments; they exist purely to
+# select the arity, and the values are ordinary literals.
+#naked
+fn align_probe5(p1, p2, p3, p4, p5): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0x8D; 0x44; 0x24; 0x08;   # lea rax, [rsp+8]
+        0x48; 0x83; 0xE0; 0x0F;         # and rax, 15
+        0xC3;                            # ret
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        0xE0; 0x03; 0x00; 0x91;         # mov x0, sp
+        0x00; 0x0C; 0x40; 0x92;         # and x0, x0, #15
+        0xC0; 0x03; 0x5F; 0xD6;         # ret
+    }
+    #endif
+    #ifndef CYRIUS_ARCH_X86
+    #ifndef CYRIUS_ARCH_AARCH64
+    return 0;
+    #endif
+    #endif
+}
+
+# ⚠ 7 AND 9 PARAMETERS CANNOT BE `#naked` — cycc refuses more than 6 register-passed
+# parameters on a naked fn (rightly: a naked body has no frame to read a stack argument
+# from), and 7/9 is exactly the arity the SysV n>6 marshalling path needs. So these two are
+# ORDINARY fns that RE-MEASURE THROUGH INHERITANCE: a fn's frame size is rounded to a
+# multiple of 16, so a statement-level call inside a body is shifted by exactly as much as
+# the body's own entry was. `align_probe()` called as a statement inside align_probe7
+# therefore reports align_probe7's OWN call alignment. That is the same property the `hop`
+# row below pins, used here as a measuring instrument.
+#
+# ⛔ The obvious alternative — `asm { lea rax,[rbp+16]; ...; mov [rbp-8],rax }` and return
+# the first local — was written first and was DEAD: PARAMETERS ARE LOCALS in cycc, so in a
+# 7-parameter fn `[rbp-8]` is p1 and `var r` lives at [rbp-64]. It returned a constant 0 and
+# every row passed. The anti-vacuous twin below is what caught it; that is the entire reason
+# it exists.
+fn align_probe7(p1, p2, p3, p4, p5, p6, p7): i64 {
+    var r = align_probe();
+    return r;
+}
+
+fn align_probe9(p1, p2, p3, p4, p5, p6, p7, p8, p9): i64 {
+    var r = align_probe();
+    return r;
+}
+
+# The anti-vacuous twin for the inherited form: reads ONE SLOT higher, so it returns 8
+# exactly when align_probe7/9 return 0. Without it, a probe that measured nothing would
+# report a perfect 0 on every row.
+fn align_probe7_8(p1, p2, p3, p4, p5, p6, p7): i64 {
+    var r = align_probe_8();
+    return r;
+}
+
+# The control: the same three instructions reading ONE 8-BYTE SLOT higher than the probe
+# (x86 rsp+16 vs rsp+8; aarch64 sp+8 vs sp+0), so it reads 8 wherever align_probe reads 0.
+#naked
+fn align_probe_8(): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0x8D; 0x44; 0x24; 0x10;   # lea rax, [rsp+16]
+        0x48; 0x83; 0xE0; 0x0F;         # and rax, 15
+        0xC3;                            # ret
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        0xE0; 0x23; 0x00; 0x91;         # add x0, sp, #8
+        0x00; 0x0C; 0x40; 0x92;         # and x0, x0, #15
+        0xC0; 0x03; 0x5F; 0xD6;         # ret
+    }
+    #endif
+    #ifndef CYRIUS_ARCH_X86
+    #ifndef CYRIUS_ARCH_AARCH64
+    return 8;
+    #endif
+    #endif
+}
+
+struct Pt {
+    x: i64;
+    y: i64;
+}
+impl Ptable for Pt {
+    fn new(px, py) { var p = alloc(16); store64(p, px); store64(p + 8, py); return p; }
+    fn get(self) { return align_probe(); }
+}
+
+# Operator overloading routes through EMIT_OP_DISPATCH, which pushes the left operand and
+# then parses the right-hand side — the shape the v6.4.81 `_cfo` bug lived in.
+# ⚠ THE RECEIVER HAS TO BE A GLOBAL and the right-hand side a literal. Measured while
+# writing this row: with a struct-typed LOCAL (`var na: OpV = 1; na + nb`) the dispatch does
+# not fire at all and the expression is a plain integer add, so the row would have been a
+# constant. tests/tcyr/lang/advanced.tcyr's `operator add` row has that shape and asserts
+# 20 + 22 == 42, which a plain add also satisfies — it proves nothing about dispatch.
+struct OpV {
+    v;
+}
+fn OpV_add(a, b) { return b + align_probe(); }
+# ⚠ Declared HERE, above the first top-level statement: a global declared after one is
+# file-private and loses the struct-type annotation the dispatch keys on.
+var opv: OpV = 5;
+
+#derive(accessors)
+struct Rec {
+    a; b; c;
+}
+
+
+var ARCH_OK = 0;
+#ifdef CYRIUS_ARCH_X86
+ARCH_OK = 1;
+#endif
+#ifdef CYRIUS_ARCH_AARCH64
+ARCH_OK = 1;
+#endif
+
+var BAD = 0;
+var NCHK = 0;
+# Every alignment row funnels through here so one counter carries them all; assert_eq per
+# row would print 40 identical lines on a red run and bury which shape broke.
+fn a(v, name): i64 {
+    NCHK = NCHK + 1;
+    if (ARCH_OK == 0) { return 0; }
+    if (v != 0) {
+        BAD = BAD + 1;
+        syscall(SYS_WRITE, 2, "  MISALIGNED: ", 14);
+        var n = 0;
+        while (load8(name + n) != 0) { n = n + 1; }
+        syscall(SYS_WRITE, 2, name, n);
+        syscall(SYS_WRITE, 2, "\n", 1);
+    }
+    return 0;
+}
+
+fn id1(x): i64 { return x; }
+# ⚠ A ROW ONLY REPORTS IF THE CALLEE RETURNS THE ARGUMENT THE PROBE IS IN. `snd` returns
+# its SECOND argument, so `a(snd(align_probe(), 0), ...)` is the constant 0 and passes
+# whatever the probe read — three rows of this file were dead that way until 6.6.5 (proven
+# by compiling them with a probe hardcoded to return 8: the count did not move). `fst` and
+# `snd3` exist so argument 1 and the middle argument can be measured too.
+fn fst(x, y): i64 { return x; }
+fn snd(x, y): i64 { return y; }
+fn snd3(x, y, z): i64 { return y; }
+fn thd(x, y, z): i64 { return z; }
+fn f4(a1, a2, a3, a4): i64 { return a4; }
+fn thd4(a1, a2, a3, a4): i64 { return a3; }
+fn f5(a1, a2, a3, a4, a5): i64 { return a5; }
+fn f6(a1, a2, a3, a4, a5, a6): i64 { return a6; }
+fn f7(a1, a2, a3, a4, a5, a6, a7): i64 { return a7; }
+fn f9(a1, a2, a3, a4, a5, a6, a7, a8, a9): i64 { return a9; }
+
+# A fn entered misaligned runs its WHOLE body misaligned, so this statement-level probe
+# inherits its caller's shift. That is why the bug is not "only nested calls".
+fn hop(): i64 { var q = align_probe(); return q; }
+# The same fn nesting its own probe: two shifts cancel, which is why a source-text rule
+# ("hoist nested calls") is unreliable for reading old code.
+fn hop2(): i64 { return snd(0, align_probe()); }
+
+# 5- and 6-arg tail calls: over Win64's 4-register ceiling, under SysV's 6. `return f(...)`
+# took the tail-call path on BOTH, and ETAILJMP's `mov rsp,rbp` tore down the frame the
+# stack arguments had just been written into. Windows read garbage; measured 0 where 3 is
+# right. Nothing about alignment — same call emitter, found by the same audit.
+fn tail5(a1, a2, a3, a4, a5): i64 { return f5(a1, a2, a3, a4, a5); }
+fn tail6(a1, a2, a3, a4, a5, a6): i64 { return f6(a1, a2, a3, a4, a5, a6); }
+
+# ── Language constructs that PUSH, and so reach a call at odd depth by a route that is not
+# an argument list. Each of these was MEASURED misaligned on the 6.6.4 compiler (ELF; the
+# && / || pair on PE under wine, where they then faulted), so they are rows, not decoration.
+# They are here rather than in the shell gate because they are pure cyrius and every one of
+# them has to hold on ecb / ach / cass / pi too.
+fn withdefer(): i64 {
+    defer { id1(0); }
+    var q = snd(0, align_probe());
+    return q;
+}
+fn okres() { return Ok(0); }
+# `?` re-emits both halves of the Result on the Err path (6.5.74), which is a push/pop pair
+# straddling the rest of the expression.
+fn qprobe() {
+    var v = okres()?;
+    var r = snd(v, align_probe());
+    return Ok(r);
+}
+fn swprobe(k): i64 {
+    var r = 0;
+    switch (k) {
+        case 1: { r = snd(0, align_probe()); }
+        case 2: { r = snd(0, 0); }
+        default: { r = 0; }
+    }
+    return r;
+}
+fn mprobe(t): i64 {
+    var r = 0;
+    match t {
+        TA => { r = snd(0, align_probe()); }
+        TB => { r = 0; }
+        TC => { r = 0; }
+    }
+    return r;
+}
+# `#inline` REPLAYS the body's tokens at the call site (6.5.63), so the call inside it is
+# emitted with the caller's pending depth, not its own.
+#inline
+fn inl(x): i64 { return x + align_probe(); }
+
+# A statement-position indirect call discards its result, so the row has to record the
+# probe's reading somewhere the caller can read it back. SPOS starts at -1 so a row that
+# never ran reports MISALIGNED rather than passing on a zeroed global.
+var SPOS = 0 - 1;
+fn spos_sink(v): i64 { SPOS = v; return v; }
+
+# ⭐ THE ENTRY ROW — read at TOP LEVEL, not inside main(), and asserted FIRST.
+#
+# Every other row in this file measures a SHAPE: what the expression codegen did to rsp
+# relative to the body's base. This one measures THE BASE ITSELF. A global initializer is
+# emitted into the gvar-init block that runs immediately after the entry landing, so
+# `align_probe()` here is a depth-0 statement-level call at the closest point to process
+# entry a cyrius program can reach — its reading IS the entry rsp parity the landing left
+# behind.
+#
+# ⛔ WHY IT EXISTS (6.6.5, and it is the whole reason this row was added after the fact).
+# Bite 2 fixed the shapes and seeded the PE/UEFI landings, and its premise-check recorded
+# the x86 Mach-O entry as "kernel-aligned" and left it alone. It is not: MEASURED ON ach
+# (real Intel-Mac, Darwin 22.6.0 x86_64), the process entry rsp parity varies with the byte
+# count of the argv/env string area, so this very file passed or failed BY PROCESS NAME
+# (`./_l` failed, `./_ltxx` passed; `PADVAR=x` failed, `PADVAR=xxxxxxx` passed). When it
+# failed it failed as EIGHT unrelated-looking shape rows — closure-callptr, method dispatch,
+# operator overload, a derive setter, for-in, while — and nothing in the output said
+# "entry". That is the diagnosis this row exists to give. If ENTRY is red, every MISALIGNED
+# line below it is downstream of it and is not eight separate bugs.
+#
+# Anti-vacuous twin on the same line of reasoning as the rest of the file: the control reads
+# one 8-byte slot higher and must report 8. If both report the same value the probe is dead
+# and a green ENTRY row means nothing. CHANGELOG [6.6.5]
+var ENTRY_BASE = align_probe();
+var ENTRY_BASE_CTL = align_probe_8();
+
+fn main(): i64 {
+    test_group("rsp is 16-byte aligned at every call site (6.6.5)");
+
+    alloc_init();
+
+    var zero = 0;
+    var one = 1;
+    var slot[8];
+    var fp1 = &id1;
+    var fp2 = &snd;
+    var t = 0;
+
+    # sdata[i] == i, so `sl[align_probe()]` REPORTS the probe's reading instead of whatever
+    # byte happens to sit there — a slice of zeroes would make both slice rows constant 0.
+    # 16 bytes, not 8: on a misaligned build the index IS 8, and an 8-byte slice turns the
+    # row into `slice bounds violation` (abort) before the later rows can run.
+    var sdata[16];
+    var sfill = 0;
+    while (sfill < 16) { store8(&sdata + sfill, sfill); sfill = sfill + 1; }
+    var sl: [u8] = 0;
+    slice_set(&sl, &sdata, 16);
+    var cbase = 0;
+    var clo = |x| cbase + x;
+    var pt = Pt_new(1, 2);
+    var rec[4];
+    Rec_set_b(&rec, 0);
+
+    # --- ENTRY: the base every other row is measured against. ASSERTED FIRST, on purpose:
+    #     a wrong entry parity shifts EVERY row in this file, and without this row it
+    #     surfaces as a scatter of unrelated-looking shape failures. See the ENTRY_BASE
+    #     definition above for what it reads and what it caught on ach. ---
+    if (ARCH_OK == 1) {
+        if (ENTRY_BASE != 0) {
+            syscall(SYS_WRITE, 2,
+                "  ENTRY BASE IS MISALIGNED - the process entry landing did not establish\n  16-byte alignment. Every MISALIGNED row below is downstream of this one; they\n  are not separate shape bugs. On Darwin x86_64 this is argv/env-size dependent,\n  so re-run under several argv0 lengths before concluding anything is fixed.\n",
+                311);
+        }
+        assert_eq(ENTRY_BASE, 0, "ENTRY: the process entry landing left rsp 16-aligned");
+        assert_eq(ENTRY_BASE_CTL, 8, "ENTRY: the entry probe is live (anti-vacuous)");
+    }
+
+    # --- the probe itself is live and can report a misalignment ---
+    if (ARCH_OK == 1) {
+        assert_eq(align_probe(), 0, "probe: a statement-level call is aligned");
+        assert_eq(align_probe_8(), 8, "probe reports 8 when misaligned (anti-vacuous)");
+    }
+
+    # --- direct calls: argument k of n is evaluated with k-1 values pending ---
+    a(fst(align_probe(), 0), "f2 argument 1");
+    a(snd(0, align_probe()), "f2 argument 2");
+    a(snd3(0, align_probe(), 0), "f3 argument 2");
+    a(thd(0, 0, align_probe()), "f3 argument 3");
+    a(f4(0, 0, 0, align_probe()), "f4 argument 4");
+    a(f6(0, 0, 0, 0, 0, align_probe()), "f6 argument 6");
+    a(f7(0, 0, 0, 0, 0, 0, align_probe()), "f7 argument 7");
+    a(f9(0, 0, 0, 0, 0, 0, 0, 0, align_probe()), "f9 argument 9");
+
+    # --- a probe passed INTO the >4 / >6 marshalling path (the probe's own call is what
+    #     is measured, at the depth the outer argument list left) ---
+    a(f5(1, 2, 3, 4, align_probe()), "f5 argument 5 (first Win64 stack arg)");
+    a(snd(0, f5(1, 2, 3, 4, align_probe())), "f5 argument 5, one level in");
+    a(snd(0, f7(0, 0, 0, 0, 0, 0, align_probe())), "f7 argument 7, one level in");
+    a(snd3(0, f7(0, 0, 0, 0, 0, 0, align_probe()), 0), "f7 argument 7, two pending");
+
+    # --- the >4 (Win64) / >6 (SysV) marshalling path measured AT ITS OWN call, at even and
+    #     odd pending depth. This is the nextra x depth parity matrix, and the ONLY rows in
+    #     the file that can see it (see the align_probe5/7/9 comment above). ---
+    a(align_probe5(1, 2, 3, 4, 5), "5-arg call itself (Win64 stack-arg frame, even depth)");
+    a(snd(0, align_probe5(1, 2, 3, 4, 5)), "5-arg call itself, odd depth (Win64 n>4 parity)");
+    a(fst(align_probe5(1, 2, 3, 4, 5), 0), "5-arg call itself, argument 1 position");
+    a(align_probe7(1, 2, 3, 4, 5, 6, 7), "7-arg call itself (SysV nextra=1, even depth)");
+    a(snd(0, align_probe7(1, 2, 3, 4, 5, 6, 7)), "7-arg call itself, odd depth (SysV nextra+depth)");
+    a(align_probe9(1, 2, 3, 4, 5, 6, 7, 8, 9), "9-arg call itself (SysV nextra=3, even depth)");
+    a(snd(0, align_probe9(1, 2, 3, 4, 5, 6, 7, 8, 9)), "9-arg call itself, odd depth");
+    if (ARCH_OK == 1) {
+        assert_eq(align_probe7_8(1, 2, 3, 4, 5, 6, 7), 8,
+                  "rbp-form probe reports 8 when misaligned (anti-vacuous)");
+    }
+
+    # --- store64's second argument: the shape mabda's ping_pong_new crashed on ---
+    store64(&slot, align_probe());
+    a(load64(&slot), "store64(&slot, c())");
+
+    # --- every operator class, right operand (the left one is pushed across it) ---
+    a(zero + align_probe(), "right operand of +");
+    t = zero - align_probe();
+    a(0 - t, "right operand of -");
+    a(one * align_probe(), "right operand of *");
+    a(16 / (align_probe() + 8) - 2, "right operand of /");
+    a(16 % (align_probe() + 16), "right operand of %");
+    a((one << align_probe()) - 1, "right operand of <<");
+    a(15 & align_probe(), "right operand of &");
+    a(zero | align_probe(), "right operand of |");
+    a(zero ^ align_probe(), "right operand of ^");
+    t = -align_probe();
+    a(0 - t, "unary minus on a call");
+    t = 8; if (zero == align_probe()) { t = 0; }
+    a(t, "right operand of ==");
+    t = 8; if (align_probe() < one) { t = 0; }
+    a(t, "left operand of <");
+
+    # --- a call emitted after f64_exp in the SAME expression (the x87 +/-inf guard emits
+    #     its two arms out of execution order, so a depth model needs a branch restore) ---
+    a(snd(f64_exp(f64_from(0)), align_probe()), "argument after f64_exp");
+
+    # --- nesting depth 1, 2, 3 and an intermediate cyrius frame ---
+    a(snd(0, snd(0, align_probe())), "two values pending");
+    a(snd(0, thd4(0, 0, align_probe(), 0)), "three values pending");
+    a(hop(), "through one cyrius frame");
+    a(snd(0, hop()), "inherited by a cyrius frame");
+    a(snd(0, hop2()), "two shifts cancel");
+
+    # --- indirect calls: fncallN and callptr, expression position (the STATEMENT-position
+    #     lowering is a VALUE row at the end of this file and in
+    #     nested_call_value_regressions.tcyr — it SIGSEGV'd before 6.6.5, so there was
+    #     nothing left to measure an alignment on) ---
+    a(fncall1(fp1, align_probe()), "fncall1 user argument 1");
+    a(fncall2(fp2, 0, align_probe()), "fncall2 user argument 2");
+    a(snd(0, fncall1(fp1, align_probe())), "fncall1 one level in");
+    a(callptr(fp1, align_probe()), "callptr user argument 1");
+    a(snd(0, callptr(fp2, 0, align_probe())), "callptr one level in");
+    # ... and a statement-position indirect call recorded through a global, so the row is a
+    # real alignment measurement rather than a compile-only check.
+    SPOS = 0 - 1;
+    fncall1(&spos_sink, align_probe());
+    a(SPOS, "fncall1 in STATEMENT position");
+    SPOS = 0 - 1;
+    callptr(&spos_sink, align_probe());
+    a(SPOS, "callptr in STATEMENT position");
+
+    # --- constructs that reach a call at odd depth WITHOUT an argument list. Every one of
+    #     these was measured misaligned on 6.6.4 (ELF; && / || on PE under wine). ---
+    a(withdefer(), "call at odd depth in a fn with `defer`");
+    var qtag, qval = qprobe();
+    a(qval, "call at odd depth after `?`");
+    a(swprobe(1), "call at odd depth inside a `switch` arm");
+    a(mprobe(TA), "call at odd depth inside a `match` arm");
+    a(inl(0), "call at odd depth inside an `#inline` replay");
+    t = 8; if (zero == 0 && align_probe() == 0) { t = 0; }
+    a(t, "right operand of &&");
+    t = 8; if (one == 0 || align_probe() == 0) { t = 0; }
+    a(t, "right operand of ||");
+    a(snd(0, sl[align_probe()]), "slice subscript INDEX at odd depth");
+    a(fst(sl[align_probe()], 0), "slice subscript index, argument 1 position");
+    a(snd(0, fncall1(clo, align_probe())), "capturing-closure fncall1 at odd depth");
+    a(snd(0, callptr(clo, align_probe())), "capturing-closure callptr at odd depth");
+    a(snd(0, Pt_get(pt)), "method call at odd depth");
+    a(snd(0, 0) + Pt_get(pt), "method call as a right operand");
+    a(snd(0, opv + 0), "operator-overload dispatch (`add`) at odd depth");
+    a(fst(opv + 0, 0), "operator-overload dispatch, argument 1 position");
+    # Only the SETTER can report: a derived getter returns the field, so `Rec_b(&rec)` at odd
+    # depth would be the constant stored in it however the call was aligned — the dead-row
+    # shape this file warns about. The setter's argument 2 carries the probe's reading into
+    # the struct, and the getter reads it back out.
+    Rec_set_c(&rec, align_probe());
+    a(Rec_c(&rec), "derive(accessors) setter argument 2");
+    var acc = 0;
+    var it = 0;
+    for i in 0..2 { acc = acc + snd(0, align_probe()); it = it + 1; }
+    a(acc, "call at odd depth inside a `for-in` body");
+    a(it - 2, "  ... and the for-in body ran twice");
+    var w = 0;
+    var wi = 0;
+    while (wi < 2) { w = w + snd(0, align_probe()); wi = wi + 1; }
+    a(w, "call at odd depth inside a `while` body");
+
+    assert_eq(BAD, 0, "every call site above was 16-byte aligned");
+    # Floor re-derived by counting the `a(` rows above, not by reading the last run's NCHK.
+    assert_gte(NCHK, 64, "corpus floor: every alignment row ran");
+
+    # --- VALUE rows: run on EVERY target including cx. These shapes returned WRONG
+    #     VALUES on Win64 before 6.6.5 (a missing ECALLCLEAN leaked the 32 B shadow,
+    #     and 5/6-arg tail calls discarded their stack arguments).
+    test_group("nested-call shapes return the right values");
+    assert_eq(snd(0, f5(1, 2, 3, 4, 5)), 5, "5-arg call as argument 2");
+    assert_eq(snd(0, f6(1, 2, 3, 4, 5, 6)), 6, "6-arg call as argument 2");
+    assert_eq(tail5(1, 2, 3, 4, 5), 5, "5-arg tail call keeps its stack arg");
+    assert_eq(tail6(1, 2, 3, 4, 5, 6), 6, "6-arg tail call keeps its stack arg");
+    assert_eq(snd(0, tail5(1, 2, 3, 4, 5)), 5, "5-arg tail call as argument 2");
+    assert_eq(snd(5, fncall1(fp1, 7)), 7, "fncall1 as argument 2");
+    assert_eq(snd(5, callptr(fp2, 1, 9)), 9, "callptr as argument 2");
+    var st = 0;
+    st = fncall1(fp1, 42);
+    assert_eq(st, 42, "fncallN in expression position");
+
+    return assert_summary();
+}
+var r = main();
+syscall(60, r);

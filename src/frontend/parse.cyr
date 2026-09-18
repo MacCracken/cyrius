@@ -1495,8 +1495,12 @@ fn PARSE_STMT(S): i64 {
     # passes through, which makes it the natural home for the depth bound too. See
     # _rd_enter (src/common/util.cyr). Covers nested fn / blocks / if / while.
     _rd_enter(S);
+    # 6.6.5: and for the same reason, the natural home for the expression-stack check — a
+    # statement must leave the machine stack exactly as it found it. See `_xd_check`.
+    var _xd0 = _xdepth;
     _PARSE_STMT_IMPL(S);
     _rd_exit();
+    _xd_check(S, _xd0, "statement");
     if (_panic == 1) { _sync_skip(S); }
     if (GTI(S) == before) {
         if (GTI(S) < GTCNT(S)) { STI(S, GTI(S) + 1); }
@@ -1971,7 +1975,28 @@ fn _PARSE_STMT_IMPL(S): i64 {
             if (_qs_fi >= 0) {
                 if ((GFLG(S, _qs_fi) & 256) != 0) { _qs_pair = 1; }
             }
-            PARSE_FNCALL(S, noff);
+            # ⛔ 6.6.5 — `fncallN(cb, …);` AS A STATEMENT WAS NOT THE SAME LANGUAGE AS IN AN
+            # EXPRESSION. v6.5.17 lowered `fncallN` to the closure-aware indirect call in
+            # PARSE_FACTOR (parse_expr.cyr), but this dispatch sends IDENT+`(` straight to
+            # PARSE_FNCALL, so in statement position the SAME TEXT stayed an ordinary call
+            # into lib/fnptr.cyr — which calls the bit-63-tagged env pointer verbatim.
+            # `fncall1(closure, 2);` SIGSEGV'd (exit 139) while `var r = fncall1(closure, 2);`
+            # returned 42. It also gave the two positions OPPOSITE stack alignment (the
+            # lowering spills the callee to a frame slot; the plain call pushes it as an
+            # argument), which is the asymmetry the mabda filing measured and could not
+            # explain from the source text. Same gate as the expression side — inside a fn,
+            # a real `fncallN` name, and FINDFN >= 0 so a program that never included
+            # lib/fnptr.cyr still gets its "undefined function" diagnostic.
+            # CHANGELOG [6.6.5]
+            var _stmt_fcn = 0;
+            if (_cur_fn_ix >= 0) { if (_IS_FNCALL_NAME(S, noff) == 1) { if (_mu_fi >= 0) { _stmt_fcn = 1; } } }
+            if (_stmt_fcn == 1) {
+                _fncall_expect = ((L64(S + 0xEC00000 + noff) >> 48) & 0xFF) - 48;
+                STI(S, GTI(S) + 1);   # consume '('
+                PINDIRECT_CALL(S);
+            } else {
+                PARSE_FNCALL(S, noff);
+            }
             # v5.8.31 — postfix `?` on a bare fncall-statement
             # (`expr?;` form). v5.8.29 added `?` in PARSE_TERM but
             # this path bypasses PARSE_TERM entirely (PARSE_STMT

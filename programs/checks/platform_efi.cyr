@@ -1408,6 +1408,34 @@ fn _efi_emit_gate(): i64 {
     return 0;
 }
 
+# ── 6.6.5: the OVMF boot pipeline, factored out so a SECOND image can use it (see
+# _efi_ovmf_fn_exit_gate below). `$1` is the .efi, `$2` is a marker that must appear on the
+# serial log AFTER the image's own output — the evidence that firmware regained control
+# rather than that the image merely printed. Exit codes: 1 = never printed, 2 = the firmware
+# took an X64 exception, 3 = printed and did not fault but firmware never came back.
+# CHANGELOG [6.6.5]
+fn _efi_ovmf_boot(efi_bin, after_marker): i64 {
+    var script = "set -e; D=$(mktemp -d -t efi-smoke.XXXXXX); trap 'rm -rf \"$D\"' EXIT; cd \"$D\"; dd if=/dev/zero of=disk.img bs=1M count=64 status=none; parted -s disk.img mklabel gpt mkpart ESP fat32 1MiB 100% set 1 esp on >/dev/null 2>&1; mformat -i disk.img@@1048576 -F; mmd -i disk.img@@1048576 ::EFI; mmd -i disk.img@@1048576 ::EFI/BOOT; mcopy -i disk.img@@1048576 \"$1\" ::EFI/BOOT/BOOTX64.EFI; cp /usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd vars.fd; chmod +w vars.fd; timeout 12 qemu-system-x86_64 -machine q35 -m 256M -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=vars.fd -drive file=disk.img,format=raw -serial stdio -display none -no-reboot 2>/dev/null > out.txt || true; if ! grep -q 'hello, uefi' out.txt; then exit 1; fi; if grep -q 'X64 Exception' out.txt; then exit 2; fi; if ! sed -n '/hello, uefi/,$p' out.txt | grep -q \"$2\"; then exit 3; fi; exit 0";
+    var args = vec_new();
+    vec_push(args, str_from("/bin/sh"));
+    vec_push(args, str_from("-c"));
+    vec_push(args, str_from(script));
+    vec_push(args, str_from("--"));
+    vec_push(args, str_from(efi_bin));
+    vec_push(args, str_from(after_marker));
+    return exec_vec_str(args);
+}
+
+# The qemu/parted/mtools/OVMF probe shared by both runtime gates. 1 = ready, 0 = skip.
+fn _efi_ovmf_tools_ready(): i64 {
+    if (file_exists("/usr/bin/qemu-system-x86_64") != 1) { return 0; }
+    if (file_exists("/usr/bin/parted") != 1) { return 0; }
+    if (file_exists("/usr/bin/mformat") != 1) { return 0; }
+    if (file_exists("/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd") != 1) { return 0; }
+    if (file_exists("/usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd") != 1) { return 0; }
+    return 1;
+}
+
 fn _efi_ovmf_smoke_gate(): i64 {
     var label = "EFI Application boots under qemu+OVMF + writes hello via ConOut (v5.11.49; gnoboot arc KO)";
 
@@ -1464,15 +1492,14 @@ fn _efi_ovmf_smoke_gate(): i64 {
     # (cyrius owns the gate; sh is just stdlib-tool composition for
     # parted/mtools/qemu invocation, same shape as how cross-host
     # smoke uses ssh). The .efi path comes through as $1.
-    var script = "set -e; D=$(mktemp -d -t efi-smoke.XXXXXX); trap 'rm -rf \"$D\"' EXIT; cd \"$D\"; dd if=/dev/zero of=disk.img bs=1M count=64 status=none; parted -s disk.img mklabel gpt mkpart ESP fat32 1MiB 100% set 1 esp on >/dev/null 2>&1; mformat -i disk.img@@1048576 -F; mmd -i disk.img@@1048576 ::EFI; mmd -i disk.img@@1048576 ::EFI/BOOT; mcopy -i disk.img@@1048576 \"$1\" ::EFI/BOOT/BOOTX64.EFI; cp /usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd vars.fd; chmod +w vars.fd; timeout 12 qemu-system-x86_64 -machine q35 -m 256M -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=vars.fd -drive file=disk.img,format=raw -serial stdio -display none -no-reboot 2>/dev/null | grep -q 'hello, uefi'";
-
-    var args = vec_new();
-    vec_push(args, str_from("/bin/sh"));
-    vec_push(args, str_from("-c"));
-    vec_push(args, str_from(script));
-    vec_push(args, str_from("--"));
-    vec_push(args, str_from(efi_bin));
-    var rc2 = exec_vec_str(args);
+    # ⛔ 6.6.5 — THIS USED TO END `| grep -q 'hello, uefi'`, WHICH MEASURES THE PRINT AND NOT
+    # THE RETURN. A UEFI image that prints and then faults on its own `ret` scored PASS:
+    # measured on the first cut of the 6.6.5 landing seed, the probe printed `hello, uefi`
+    # and OVMF immediately took `X64 Exception Type - 06(#UD)` because rsp was never put back
+    # — rc=0 from this gate's exact command. Three assertions now, with distinct
+    # exit codes: the print happened (1), the firmware took NO exception (2), and BdsDxe got
+    # control back AFTER the print and moved on to the next boot option (3). CHANGELOG [6.6.5]
+    var rc2 = _efi_ovmf_boot(efi_bin, "BdsDxe");
     sys_unlink(efi_bin);
 
     if (rc2 == 0) {
@@ -1480,7 +1507,7 @@ fn _efi_ovmf_smoke_gate(): i64 {
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": OVMF firmware loaded BOOTX64.EFI; \"hello, uefi\" captured on serial");
+        println(": OVMF loaded BOOTX64.EFI, \"hello, uefi\" on serial, NO X64 exception, and BdsDxe regained control after the return");
         _check(label, 0);
         return 0;
     }
@@ -1489,9 +1516,94 @@ fn _efi_ovmf_smoke_gate(): i64 {
     _p(ANSI_RED);
     _p("FAIL");
     _p(ANSI_RESET);
-    _p(": OVMF runtime smoke did not produce \"hello, uefi\" (sh rc=");
-    print_num(rc2);
-    println(")");
+    if (rc2 == 1) {
+        println(": OVMF runtime smoke did not produce \"hello, uefi\" — the image never reached OutputString");
+    } elif (rc2 == 2) {
+        println(": OVMF took an X64 exception — the image printed but FAULTED (a #UD here means the image returned with rsp off: see the 6.6.5 landing seed, the entry-rsp park, and EEXIT's restore)");
+    } elif (rc2 == 3) {
+        println(": the image printed and did not fault, but BdsDxe never regained control — the firmware `ret` did not return where firmware left it");
+    } else {
+        _p(": OVMF runtime smoke failed (sh rc=");
+        print_num(rc2);
+        println(")");
+    }
+    _check(label, 1);
+    return 1;
+}
+
+# ── 6.6.5: THE OTHER UEFI RETURN ROUTE — an image that exits from INSIDE a fn body.
+#
+# ⛔ WHY A SECOND BOOT. `_efi_ovmf_smoke_gate` above boots programs/efi_probe.cyr, whose asm
+# block ends in its OWN hand-written `ret`. That image never reaches cycc's EEXIT, so the
+# smoke gate has never once tested how the COMPILER ends a UEFI image. 6.6.5 shipped a first
+# cut where the top-level exit was fixed and the in-a-fn exit emitted a bare 0xC3 at
+# `rbp - fsz`, and every existing gate — including that smoke — stayed green over it.
+#
+# The route is not exotic: lib/bounds.cyr and lib/alloc.cyr abort with `syscall(60, …)` from
+# inside fn bodies, so a UEFI image that runs out of memory or trips a bounds check takes it
+# whether its author wrote an exit or not.
+#
+# LEDGER (qemu-system-x86_64 + edk2 OVMF q35, 2026-09-17):
+#   6.6.4                prints `hello, uefi`, then X64 Exception 06(#UD)   → rc 2
+#   6.6.5 first cut      prints, then faults (#GP/#PF, RIP inside the stack) → rc 2
+#   6.6.5 as shipped     prints, returns, firmware draws its boot menu       → rc 0
+# The third assertion is "Please select boot device" AFTER the print — the firmware's own UI,
+# which only appears if control came back. A gate that stopped at "it printed" would be green
+# on all three rows. CHANGELOG [6.6.5]
+fn _efi_ovmf_fn_exit_gate(): i64 {
+    var label = "UEFI image that EXITS FROM INSIDE A fn returns to firmware (6.6.5; lib/alloc.cyr + lib/bounds.cyr abort this way)";
+
+    if (_efi_ovmf_tools_ready() != 1) {
+        _p("  SKIP: qemu/parted/mtools/OVMF not all present — fn-exit runtime route skipped\n");
+        _check(label, 0);
+        return 0;
+    }
+
+    var src_path = _root_path("programs/efi_fn_exit_probe.cyr");
+    var efi_bin = _tmp_path("efi_fn_exit_probe_");
+    var rc = _self_host_pipe_efi(src_path, CC_PATH, efi_bin);
+    if (rc != 0) {
+        sys_unlink(efi_bin);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": efi_fn_exit_probe compile failed (rc=");
+        print_num(rc);
+        println(")");
+        _check(label, 1);
+        return 1;
+    }
+    # An empty or truncated image "boots" into a firmware error and would never print, so it
+    # would land on rc 1 — but say so explicitly rather than letting the caller guess.
+    var probe_hdr = alloc(64);
+    if (file_read_all(efi_bin, probe_hdr, 64) <= 0) {
+        sys_unlink(efi_bin);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": efi_fn_exit_probe compiled to an EMPTY image (cycc exits 0 on empty input)");
+        _check(label, 1);
+        return 1;
+    }
+
+    var rc2 = _efi_ovmf_boot(efi_bin, "Please select boot device");
+    sys_unlink(efi_bin);
+
+    if (rc2 == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": a fn-body `syscall(60, 0)` printed via ConOut, returned to firmware with NO X64 exception, and the boot menu came up afterwards");
+        _check(label, 0);
+        return 0;
+    }
+
+    _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+    if (rc2 == 1) {
+        println(": the fn-exit probe never reached OutputString — it did not print, so the exit route was never exercised");
+    } elif (rc2 == 2) {
+        println(": the fn-exit probe printed and then FAULTED — a `syscall(60, x)` inside a fn body is not restoring the parked entry rsp (6.6.4 gives #UD here; the 6.6.5 first cut gave #GP)");
+    } elif (rc2 == 3) {
+        println(": the fn-exit probe printed and did not fault, but firmware never regained control — the `ret` went somewhere other than firmware's return address");
+    } else {
+        _p(": fn-exit OVMF run failed (sh rc=");
+        print_num(rc2);
+        println(")");
+    }
     _check(label, 1);
     return 1;
 }
@@ -1559,6 +1671,228 @@ fn _efi_trampoline_rex_gate(): i64 {
     if (fail == 0) {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
         println(": efi_main trampoline encoding — save=49/89/CE+49/89/D7; restore=4C/89/F1+4C/89/FA");
+    }
+    _check(label, fail);
+    return fail;
+}
+
+# ── 6.6.5: THE UEFI ENTRY ALIGNMENT, ASSERTED ON THE EMITTED BYTES.
+#
+# ⛔ WHY THIS GATE EXISTS. UEFI firmware calls an image's entry point like an ordinary MS-x64
+# function: the return address is already pushed, so rsp ≡ 8 at the first instruction. cycc
+# never re-aligned, and the efi_main trampoline compensated with a hand-tuned `sub rsp,0x28`
+# (32 shadow + a private 8) — so the whole UEFI base ran one parity off and every other call
+# in a UEFI image was misaligned. 6.6.5 parks the entry rsp (`lea r13,[rsp]`), seeds
+# `sub rsp,8` at the landing, drops the trampoline to a plain 0x20, and RESTORES the parked
+# rsp before every firmware `ret`.
+#
+# ⛔ RESTORE, NOT GIVE-BACK — the first cut got this wrong and every gate stayed green over
+# it. It paid the seed back with `add rsp,8`, gated on a flag cleared per fn body, so a
+# `syscall(60, x)` INSIDE a fn emitted a bare 0xC3 at `rbp - fsz` and #GP'd under OVMF. The
+# flag was also set at the LANDING, which is emitted AFTER every fn body, so it read 0 in a
+# fn body regardless. Axis 3d below is the axis that would have caught it.
+#
+# ⛔ AND WHY BYTES RATHER THAN A BOOT. OVMF under QEMU TOLERATES BOTH FRAMES — a misaligned
+# OutputString call is only fatal on firmware that actually spills xmm registers there — so
+# the runtime smokes cannot see the trampoline half at all. Three numbers here, each derived
+# from the ABI rather than from the emitter: 8 for the seed, 0x20 for the shadow space with
+# no private pad, and the entry rsp restored before `ret`.
+#
+# MUTATION LEDGER — each mutant built as a scratch src/ copy compiled by build/cycc, installed
+# as build/cycc, and run against this gate AND both OVMF gates (2026-09-17):
+#   mutant                                  this gate              OVMF (probe / fn-exit)
+#   trampoline `sub` reverted to 0x28       axes 2a + 2b RED       PASS / PASS  (see below)
+#   landing seed removed                    axis 1 RED             RED  / RED
+#   EEXIT's restore removed                 axes 3, 3b, 3c, 3d RED PASS / RED
+#   EEXIT restores at top level only        axis 3d RED, and ONLY  PASS / RED
+#     (the 6.6.5 first cut)                   3d (1/2/3/3b/3c green)
+#   efi_probe.cyr's `add` reverted to 0x20  axis 4 RED             RED  / PASS
+#
+# ⭐ READ THE FOURTH ROW. It is the shipped-and-reviewed first cut: every axis that existed
+# when it shipped was green, and only an axis that looks at a fn BODY's exit sees it.
+# ⭐ AND THE FIRST ROW IS INVISIBLE TO EVERY BOOT — OVMF tolerates a misaligned CALL (its
+# OutputString does not spill xmm there) — which is the argument for a byte gate at all.
+fn _efi_entry_alignment_gate(): i64 {
+    var label = "UEFI entry alignment: rsp parked (4C 8D 2C 24) + landing seed 48 83 EC 08, efi_main frame 0x20 (not 0x28), rsp restored before EVERY firmware ret including one inside a fn body (6.6.5)";
+
+    var src_path = _tmp_path("audit_efi_align_src_");
+    var fd = sys_open(src_path, 577, 420);
+    if (fd < 0) { _check(label, 1); return 1; }
+    var src = "kernel;\n\nfn efi_main(handle, st): i64 {\n    return 0;\n}\n";
+    sys_write(fd, src, strlen(src));
+    sys_close(fd);
+
+    var cap = 262144;
+    var buf = alloc(cap);
+    var n = _efi_compile_to_buf(src_path, buf, cap, "efi_main minimal source (entry alignment)");
+    sys_unlink(src_path);
+    if (n <= 0) { _check(label, 1); return 1; }
+
+    var fail = 0;
+
+    # Axis 1 — the entry-rsp park, the landing seed, and the EFI argument save, in that order
+    # and adjacent. Anchoring on the save makes this the LANDING and not some unrelated frame;
+    # anchoring the park to the seed is what proves the park is the FIRST thing executed (it
+    # must read the rsp firmware entered with, before the seed moves it).
+    # ⚠ `var x[N]` is N BYTES (rounded to 8), not N slots — a 10-byte needle in `var seed[2]`
+    # writes over its neighbours. The first cut of this gate did exactly that and produced a
+    # bare FAIL with no axis output. CHANGELOG [6.6.5]
+    var seed[32];
+    store8(&seed + 0, 0x4C); store8(&seed + 1, 0x8D); store8(&seed + 2, 0x2C); store8(&seed + 3, 0x24);
+    store8(&seed + 4, 0x48); store8(&seed + 5, 0x83); store8(&seed + 6, 0xEC); store8(&seed + 7, 0x08);
+    store8(&seed + 8, 0x49); store8(&seed + 9, 0x89); store8(&seed + 10, 0xCE);
+    store8(&seed + 11, 0x49); store8(&seed + 12, 0x89); store8(&seed + 13, 0xD7);
+    if (_find_bytes(buf, n, &seed, 14) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": `4C 8D 2C 24` (lea r13,[rsp]) + `48 83 EC 08` + EFI arg save NOT found — the UEFI entry rsp is not parked, or the base is un-seeded");
+        fail = fail + 1;
+    }
+
+    # Axis 2 — the trampoline frame is 0x20, and 0x28 is ABSENT. Both halves: a fix that
+    # emitted BOTH would satisfy a presence-only check.
+    var tramp[32];
+    store8(&tramp + 0, 0x4C); store8(&tramp + 1, 0x89); store8(&tramp + 2, 0xF1);
+    store8(&tramp + 3, 0x4C); store8(&tramp + 4, 0x89); store8(&tramp + 5, 0xFA);
+    store8(&tramp + 6, 0x48); store8(&tramp + 7, 0x83); store8(&tramp + 8, 0xEC); store8(&tramp + 9, 0x20);
+    if (_find_bytes(buf, n, &tramp, 10) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": efi_main trampoline frame is not `sub rsp,0x20` after the arg restore");
+        fail = fail + 1;
+    }
+    var tramp_old[32];
+    store8(&tramp_old + 0, 0x4C); store8(&tramp_old + 1, 0x89); store8(&tramp_old + 2, 0xF1);
+    store8(&tramp_old + 3, 0x4C); store8(&tramp_old + 4, 0x89); store8(&tramp_old + 5, 0xFA);
+    store8(&tramp_old + 6, 0x48); store8(&tramp_old + 7, 0x83); store8(&tramp_old + 8, 0xEC); store8(&tramp_old + 9, 0x28);
+    if (_find_bytes(buf, n, &tramp_old, 10) >= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": efi_main trampoline still uses the pre-6.6.5 `sub rsp,0x28` — that private +8 now DOUBLE-corrects the seeded base");
+        fail = fail + 1;
+    }
+
+    # Axis 3 — the entry rsp is RESTORED before the firmware `ret`. `ret` pops [rsp] itself,
+    # so without this the image returns to whatever slot rsp happens to point at: measured
+    # under OVMF as `X64 Exception Type - 06(#UD)` (seed not paid back at top level) and
+    # `0D(#GP)` (a whole frame low, from inside a fn body).
+    var giveback[32];
+    store8(&giveback + 0, 0x48); store8(&giveback + 1, 0x83); store8(&giveback + 2, 0xC4); store8(&giveback + 3, 0x20);
+    store8(&giveback + 4, 0x4C); store8(&giveback + 5, 0x89); store8(&giveback + 6, 0xEC);
+    store8(&giveback + 7, 0xC3);
+    if (_find_bytes(buf, n, &giveback, 8) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": no `add rsp,0x20; mov rsp,r13; ret` tail — the parked entry rsp is never restored and the firmware ret pops the wrong slot");
+        fail = fail + 1;
+    }
+
+    # Axis 3b — the SAME requirement reached through the PARSER rather than through main.cyr's
+    # fall-through: a top-level `syscall(60, q)` in a UEFI image emits EEXIT's firmware `ret`
+    # directly. That route had no compensation when this gate was written and #UD'd under OVMF
+    # while the fall-through route was clean, so the two need separate axes.
+    #
+    # ⛔ THE NEEDLE CARRIES THE `add rsp,8` THAT PRECEDES IT. The bare `4C 89 EC C3` would
+    # match the top-level fall-through exit of the SAME image and prove nothing about the
+    # parser route; anchoring on EDROPI64's `add rsp,8` (which discards the syscall number)
+    # pins it to the `syscall(60, …)` lowering. Axis 3c then requires that anchored form to
+    # be ABSENT from an image with no explicit exit.
+    var src2_path = _tmp_path("audit_efi_align_exit_");
+    var fd2 = sys_open(src2_path, 577, 420);
+    if (fd2 < 0) { _check(label, fail + 1); return fail + 1; }
+    var src2 = "var q = 7;\nsyscall(60, q);\n";
+    sys_write(fd2, src2, strlen(src2));
+    sys_close(fd2);
+    var buf2 = alloc(cap);
+    var n2 = _efi_compile_to_buf(src2_path, buf2, cap, "EFI top-level syscall(60) image");
+    sys_unlink(src2_path);
+    if (n2 <= 0) { _check(label, fail + 1); return fail + 1; }
+    var gb2[32];
+    store8(&gb2 + 0, 0x48); store8(&gb2 + 1, 0x83); store8(&gb2 + 2, 0xC4); store8(&gb2 + 3, 0x08);
+    store8(&gb2 + 4, 0x4C); store8(&gb2 + 5, 0x89); store8(&gb2 + 6, 0xEC);
+    store8(&gb2 + 7, 0xC3);
+    if (_find_bytes(buf2, n2, &gb2, 8) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": a top-level `syscall(60, x)` UEFI image does not end `add rsp,8; mov rsp,r13; ret` — EEXIT's firmware arm skips the restore (measured: #UD under OVMF)");
+        fail = fail + 1;
+    }
+
+    # Axis 3c — ANTI-VACUOUS for 3b: an image with NO explicit exit must NOT contain the
+    # `add rsp,8`-anchored form (its fall-through emits the bare restore). Without this, a
+    # needle that happened to match every EFI image would pass 3b forever.
+    var src3_path = _tmp_path("audit_efi_align_fallthru_");
+    var fd3 = sys_open(src3_path, 577, 420);
+    if (fd3 < 0) { _check(label, fail + 1); return fail + 1; }
+    var src3 = "var q = 7;\n";
+    sys_write(fd3, src3, strlen(src3));
+    sys_close(fd3);
+    var buf3 = alloc(cap);
+    var n3 = _efi_compile_to_buf(src3_path, buf3, cap, "EFI fall-through image");
+    sys_unlink(src3_path);
+    if (n3 <= 0) { _check(label, fail + 1); return fail + 1; }
+    if (_find_bytes(buf3, n3, &gb2, 8) >= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": the `add rsp,8; mov rsp,r13; ret` form appears in an image with NO explicit exit — axis 3b's needle is not specific to the syscall(60) route and proves nothing");
+        fail = fail + 1;
+    }
+    var gb3[32];
+    store8(&gb3 + 0, 0x4C); store8(&gb3 + 1, 0x89); store8(&gb3 + 2, 0xEC);
+    store8(&gb3 + 3, 0xC3);
+    if (_find_bytes(buf3, n3, &gb3, 4) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": the fall-through exit of a UEFI image does not end `mov rsp,r13; ret`");
+        fail = fail + 1;
+    }
+
+    # ── Axis 3d (6.6.5, second cut) — THE EXIT INSIDE A fn BODY. This is the route the first
+    # cut shipped broken: the firmware-return decision was a flag set at the LANDING, and fn
+    # bodies are emitted BEFORE the landing, so every `syscall(60, x)` inside a fn emitted a
+    # bare 0xC3 at `rbp - fsz`. Measured under OVMF (edk2 q35) on that compiler:
+    # `fn f(){var a=3; syscall(60,a); return 0;} var r=f();` → `X64 Exception Type - 0D(#GP)`
+    # with RIP inside the stack, where 6.6.4 happened to survive. It is reachable with no
+    # explicit exit in user code at all: lib/bounds.cyr and lib/alloc.cyr abort with
+    # `syscall(60, …)` from inside fn bodies, and gnoboot is a UEFI consumer.
+    #
+    # COUNTED, not found: this image has TWO firmware returns (f's exit and the top-level
+    # fall-through), so `mov rsp,r13; ret` must appear at least twice. A compiler that
+    # restores at the top level only — exactly the first cut — reports 1 and fails here while
+    # passing every axis above. CHANGELOG [6.6.5]
+    var src4_path = _tmp_path("audit_efi_align_fnexit_");
+    var fd4 = sys_open(src4_path, 577, 420);
+    if (fd4 < 0) { _check(label, fail + 1); return fail + 1; }
+    var src4 = "fn f(): i64 {\n    var a = 3;\n    syscall(60, a);\n    return 0;\n}\nvar r = f();\n";
+    sys_write(fd4, src4, strlen(src4));
+    sys_close(fd4);
+    var buf4 = alloc(cap);
+    var n4 = _efi_compile_to_buf(src4_path, buf4, cap, "EFI syscall(60)-inside-a-fn image");
+    sys_unlink(src4_path);
+    if (n4 <= 0) { _check(label, fail + 1); return fail + 1; }
+    var fnexits = _count_bytes(buf4, n4, &gb3, 4);
+    if (fnexits < 2) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": `mov rsp,r13; ret` appears ");
+        print_num(fnexits);
+        println(" time(s) in an image whose fn body exits — expected 2 (the fn's exit AND the top-level fall-through). A `syscall(60, x)` inside a fn is emitting a bare `ret` (measured: #GP under OVMF)");
+        fail = fail + 1;
+    }
+
+    # Axis 4 — programs/efi_probe.cyr's HAND-WRITTEN frame. Its asm block returns to firmware
+    # from its own `ret`, never reaching EEXIT (and so never reaching the r13 restore), so it
+    # undoes the landing seed itself: `sub 0x20` / `add 0x28` is DELIBERATELY asymmetric. Nothing else in the tree checks those numbers
+    # and OVMF tolerates the wrong ones on the call side, so this is the only guard on them.
+    var pbuf = alloc(cap);
+    var pn = _efi_compile_to_buf(_root_path("programs/efi_probe.cyr"), pbuf, cap, "efi_probe (entry alignment)");
+    if (pn <= 0) { _check(label, fail + 1); return fail + 1; }
+    var probe[32];
+    store8(&probe + 0, 0x48); store8(&probe + 1, 0x83); store8(&probe + 2, 0xEC); store8(&probe + 3, 0x20);
+    store8(&probe + 4, 0xFF); store8(&probe + 5, 0xD0);
+    store8(&probe + 6, 0x48); store8(&probe + 7, 0x83); store8(&probe + 8, 0xC4); store8(&probe + 9, 0x28);
+    store8(&probe + 10, 0x31); store8(&probe + 11, 0xC0); store8(&probe + 12, 0xC3);
+    if (_find_bytes(pbuf, pn, &probe, 13) < 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        println(": efi_probe's asm is not `sub rsp,0x20; call rax; add rsp,0x28; xor eax,eax; ret` — 0x28 on the SUB misaligns OutputString, 0x20 on the ADD returns 8 low and #UDs");
+        fail = fail + 1;
+    }
+
+    if (fail == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": UEFI parks the entry rsp then seeds 8, efi_main frame 0x20 (0x28 absent), rsp restored before the fall-through, the top-level syscall(60) and the in-a-fn-body rets, efi_probe asm 0x20/0x28");
     }
     _check(label, fail);
     return fail;

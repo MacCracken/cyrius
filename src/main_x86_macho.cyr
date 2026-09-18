@@ -411,6 +411,19 @@ EPATCH(S, jmp_patch);
 # MUST match main.cyr's macho park byte-for-byte (cross == native self-host).
 E3(S, 0xE78949);  # mov r15, rsp   (49 89 E7)
 
+# ⛔ 6.6.5 — AND THEN ESTABLISH THE ALIGNMENT INVARIANT. Darwin x86_64 hands over an entry
+# rsp whose 16-byte parity depends on the byte count of the argv/env string area, MEASURED
+# ON ach (Darwin 22.6.0 x86_64): a 20-argv0-length x 16-env-pad sweep of a naked
+# `(rsp+8)&15` probe splits 160/160, tracking `r15 & 15` row for row. So every call cycc
+# emitted was correctly aligned only for half the argv/env shapes a user might run under,
+# and `tests/tcyr/crossos/call_site_stack_alignment.tcyr` passed or failed by process name.
+# The same sweep is 320/320 aligned on Linux ELF (SysV guarantees rsp ≡ 0 at _start) and
+# 320/320 on ecb (aarch64 keeps SP 16-aligned architecturally); neither gets these bytes.
+# AFTER the r15 park, never before — the park is what keeps argc/argv reachable once rsp
+# moves. THIS FORK AND src/main.cyr MUST STAY BYTE-IDENTICAL HERE; a partial fork edit is
+# the trap this release keeps hitting. CHANGELOG [6.6.5]
+EALIGN_RSP_16(S);  # and rsp, -16   (48 83 E4 F0)
+
 # Emit enum initializations FIRST (before gvar inits)
 var gvar_save_ti = GTI(S);
 STI(S, 0);

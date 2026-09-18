@@ -13,21 +13,53 @@
 # entirely through runtime register-indirect addressing.
 #
 # Cyrius emits a 5-byte `e9 00 00 00 00` (jmp +0) prologue at the
-# start of .text. That instruction touches no GPRs, so RCX/RDX
-# from firmware survive into our first user byte.
+# start of .text, then (6.6.5) a 4-byte `lea r13, [rsp]` entry-rsp
+# park and a 4-byte `sub rsp, 8` landing seed. None of the three
+# touches RCX or RDX, so the firmware arguments survive into our first
+# user byte — and the landing stays an EVEN number of bytes, which is
+# what keeps the CHAR16 msg below 2-byte aligned.
 #
-# Byte-level entry layout (offsets relative to .text start):
+# Byte-level entry layout (offsets relative to .text start; verified
+# against a real build with `xxd`, not derived on paper):
 #   0x00   e9 00 00 00 00         cyrius prologue (jmp +0)
-#   0x05   48 8b 4a 40             mov rcx, [rdx + 0x40]        ConOut = SystemTable->ConOut
-#   0x09   48 8b 41 08             mov rax, [rcx + 0x08]        OutputString fn ptr
-#   0x0d   48 8d 15 0e 00 00 00    lea rdx, [rip + 0x0e]        rdx = &msg (next-after-LEA + 14)
-#   0x14   48 83 ec 28             sub rsp, 0x28                shadow space + 8 align
-#   0x18   ff d0                   call rax                     OutputString(ConOut, msg)
-#   0x1a   48 83 c4 28             add rsp, 0x28
-#   0x1e   31 c0                   xor eax, eax                 EFI_SUCCESS
-#   0x20   c3                      ret                          return to firmware
-#   0x21   90                      nop (pad msg to 2-byte align)
-#   0x22   msg ("hello, uefi\r\n\0" UTF-16LE, 28 bytes)
+#   0x05   4c 8d 2c 24             lea r13, [rsp]   6.6.5 entry-rsp park (EEXIT restores it)
+#   0x09   48 83 ec 08             sub rsp, 8       6.6.5 landing seed (see below)
+#   0x0d   49 89 ce / 49 89 d7     mov r14,rcx / mov r15,rdx   (EFI arg save)
+#   0x13   48 8b 4a 40             mov rcx, [rdx + 0x40]        ConOut = SystemTable->ConOut
+#   0x17   48 8b 41 08             mov rax, [rcx + 0x08]        OutputString fn ptr
+#   0x1b   48 8d 15 0e 00 00 00    lea rdx, [rip + 0x0e]        rdx = &msg (next-after-LEA + 14)
+#   0x22   48 83 ec 20             sub rsp, 0x20                shadow space (no pad — see below)
+#   0x26   ff d0                   call rax                     OutputString(ConOut, msg)
+#   0x28   48 83 c4 28             add rsp, 0x28                0x20 frame + the landing seed
+#   0x2c   31 c0                   xor eax, eax                 EFI_SUCCESS
+#   0x2e   c3                      ret                          return to firmware
+#   0x2f   90                      nop (pad msg to 2-byte align)
+#   0x30   msg ("hello, uefi\r\n\0" UTF-16LE, 28 bytes)
+# The `lea` displacement is rip-relative and self-adjusts; the two
+# absolute numbers that matter are the frame below and this map.
+#
+# ⛔ 6.6.5 — THE SUB IS 0x20 AND THE ADD IS 0x28. THEY ARE DELIBERATELY
+# ASYMMETRIC, AND THAT IS THE WHOLE POINT.
+# Firmware enters an image with the return address pushed (rsp ≡ 8 mod
+# 16), and until 6.6.5 cyrius never re-aligned, so this probe's 0x28
+# (32 shadow + a hand-added 8) was what made the call land on 16 — it
+# was compensating for a base the compiler should have fixed. The
+# landing seed now does that once, for the whole image, so an extra 8
+# on the SUB would RE-BREAK the call: `sub rsp,0x28` from an aligned
+# base leaves rsp ≡ 8 at `call rax`, which faults a real firmware whose
+# OutputString spills xmm registers.
+#
+# ⛔ The ADD keeps its 0x28 for the opposite reason: this probe returns
+# to firmware from its OWN `ret` inside the asm block, so it never
+# reaches cyrius's EEXIT and the `mov rsp, r13` restore there. `ret` pops [rsp]
+# ITSELF, so returning 8 low does not "let firmware unwind" — it pops
+# the slot below firmware's return address and jumps into it. MEASURED
+# under OVMF (edk2, q35): with a symmetric 0x20/0x20 this probe printed
+# `hello, uefi` and then took `X64 Exception Type - 06(#UD)`; with
+# 0x20/0x28 it returns cleanly and BdsDxe carries on to the next boot
+# option, exactly as 6.6.4 did. An earlier draft of this comment
+# asserted the low return was "survivable in practice" — it is not, and
+# nothing tested it. CHANGELOG [6.6.5]
 #
 # UEFI ABI used (MS x64): RCX/RDX = first 2 args; caller reserves
 # 0x20 shadow space + maintains 16-byte stack alignment at the
@@ -48,11 +80,15 @@ asm {
     0x48; 0x8B; 0x41; 0x08;
     # lea rdx, [rip + 0x0E]   ; rdx = address of msg (14 bytes past end-of-LEA)
     0x48; 0x8D; 0x15; 0x0E; 0x00; 0x00; 0x00;
-    # sub rsp, 0x28           ; MS x64 shadow space + alignment
-    0x48; 0x83; 0xEC; 0x28;
+    # sub rsp, 0x20           ; MS x64 shadow space (the base is already
+    #                         ; 16-aligned by the 6.6.5 landing seed — see
+    #                         ; the header; 0x28 here would MISALIGN the call)
+    0x48; 0x83; 0xEC; 0x20;
     # call rax                ; OutputString(rcx=ConOut, rdx=msg)
     0xFF; 0xD0;
-    # add rsp, 0x28
+    # add rsp, 0x28           ; 0x20 frame + the 8-byte landing seed, because
+    #                         ; the `ret` below goes straight back to firmware
+    #                         ; and pops [rsp] itself (see the header)
     0x48; 0x83; 0xC4; 0x28;
     # xor eax, eax            ; EFI_SUCCESS = 0
     0x31; 0xC0;

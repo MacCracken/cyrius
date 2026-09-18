@@ -2145,12 +2145,61 @@ Cyrius PE code follows the Microsoft x86_64 ABI precisely:
 - **Calling convention**: Arguments in RCX, RDX, R8, R9; excess on stack
 - **Return values**: RAX (64-bit), RDX:RAX (128-bit pair via multi-return)
 - **Shadow space**: 32 bytes (0x20) reserved by the caller above RSP
-- **Stack alignment**: 16-byte aligned on entry to any function (RSP % 16 == 0 at entry)
+- **Stack alignment**: RSP must be 16-byte aligned **at the `call` instruction**, so the
+  callee is entered with RSP ≡ 8 (mod 16) — the return address the CALL pushed is what
+  makes the difference. This is the same rule SysV states the other way round ("rsp+8 is
+  16-aligned at entry"); it is NOT `RSP % 16 == 0` at entry.
 - **Registers**: RAX, RCX, RDX, R8, R9, R10, R11 are volatile; RBX, RBP, RSI, RDI, R12–R15 preserved
 
-The cyrius entry point sets up a 0-aligned RSP (the PE loader enters with RSP ≡ 8,
-then the entry shim `sub rsp, 8`s to align). Cyrius function prologues and `callptr`
-calls maintain this invariant.
+Since 6.6.5 the entry landing emits `sub rsp, 8`, which puts the PE base on the same
+footing as every other target: with nothing pending on the expression stack, RSP is
+16-aligned, and the call emitters pad for an odd number of pending values. Cyrius function
+prologues, the kernel32 reroutes and `callptr` all maintain that invariant.
+
+> ⛔ **This paragraph used to describe a shim that did not exist.** It claimed the entry
+> "`sub rsp, 8`s to align" — disassembly of any 6.6.4 PE shows the landing going straight
+> from the entry jump into user code. The whole PE base therefore ran one parity off: every
+> statement-level call entered its callee at RSP ≡ 0, and the calls that happened to be
+> correctly aligned were the ones nested at odd depth inside an expression. It was
+> survivable only because cyrius-emitted code uses no aligned SSE, while the seven
+> fixed-frame kernel32 reroutes had each been hand-tuned to the inverted base — so
+> `f(0, open(path))` crashed inside kernelbase's own `movaps` in CreateFileW. The shim
+> described here is real as of 6.6.5, and the reroute frames were retuned in the same
+> change. See CHANGELOG [6.6.5].
+
+**UEFI (`CYRIUS_TARGET_EFI=1`) shares that entry convention and adds one rule of its own.**
+A UEFI Application's entry point IS an MS-x64 function and firmware reads `rax` as the
+`EFI_STATUS`, so the image exits with a `ret` rather than a syscall — and `ret` pops `[rsp]`
+itself, so it is correct only where RSP is exactly the RSP firmware entered with. Since
+6.6.5 the landing parks that value (`lea r13, [rsp]`, immediately before the seed) and every
+exit emits `mov rsp, r13; ret`, so `syscall(60, status)` terminates the image correctly from
+any call depth — including from inside a fn, which is how `lib/alloc.cyr` and
+`lib/bounds.cyr` abort. **If you hand-write an asm block in a UEFI image that returns to
+firmware through its own `ret`, it must undo its own frame AND the 8-byte landing seed** —
+see `programs/efi_probe.cyr`, whose deliberately asymmetric `sub rsp,0x20` / `add rsp,0x28`
+is the worked example. **R13 is reserved from the register allocator in UEFI builds**
+(`#regalloc` caps at rbx + r12 there); inline asm that clobbers R13 breaks the exit path.
+
+### macOS x86_64 (Mach-O) entry alignment
+
+**Darwin does not hand a static Mach-O executable a 16-byte-aligned RSP, and the parity is
+not even fixed per binary — it varies with the byte count of the argv/env string area.**
+Measured on real Intel-Mac hardware at 6.6.5: the same executable, renamed, reports both
+parities (`./_l` misaligned, `./_ltxx` aligned; `PADVAR=x` misaligned, `PADVAR=xxxxxxx`
+aligned), and a 20-argv0-length × 16-env-pad sweep splits 160/160. This is a per-KERNEL
+fact, not something to infer from the SysV ABI: Linux ELF *does* guarantee `RSP % 16 == 0`
+at `_start`, Darwin does not.
+
+Since 6.6.5 the Mach-O landing emits `and rsp, -16` immediately after the `mov r15, rsp`
+argv park, so the base is 16-aligned whatever the kernel handed over (it rounds DOWN, and
+is free when the entry was already aligned). **R15 stays reserved and still holds the
+kernel's init RSP** — that is what `argc()` / `argv()` / `_read_env` read, and it is parked
+*before* the alignment for exactly that reason. If you hand-write asm in a Mach-O image,
+read argv through R15, not through RSP.
+
+⚠ **Re-running a test under one name is not a verification on Darwin.** Any check of entry
+alignment there has to sweep argv0 length and environment size; the recipe is in the header
+of `tests/gates/codegen/call_site_stack_alignment.sh`.
 
 ### Limitations
 
@@ -2178,8 +2227,10 @@ graphics are not in scope. Cyrius compiles to a portable x64 binary, not a Windo
 authentication) require hand-coded interop layers or external helper binaries.
 
 The `callptr` builtin (v6.0.70+) enables COM vtable dispatch (`callptr(load64(load64(obj) + slot*8), obj, …)`),
-and `callptr` itself is Win64-ABI–correct (16-aligned on entry), so careful
-consumers can implement COM wrappers. See the `Function Pointers` section of
+and `callptr` itself is Win64-ABI–correct — it force-aligns with an rbx-anchored
+`and rsp, -16` at the call site, which is why it was correct even while the PE base was
+inverted (see the alignment note above) and remains correct now that the base is seeded.
+So careful consumers can implement COM wrappers. See the `Function Pointers` section of
 this guide.
 
 ### Example: Cross-Platform Argument Parsing

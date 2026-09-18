@@ -1,15 +1,17 @@
-# cycc makes a call with rsp 8 bytes off 16-byte alignment when the call is nested in an expression — OPEN
+# cycc makes a call with rsp 8 bytes off 16-byte alignment when the call is nested in an expression — FIXED
 
-**Status:** 🟡 **OPEN** — filed from mabda 4.1.3 verification; not yet triaged.
-**Placement:** unpinned — 6.x-line backlog.
+**Status:** ✅ **FIXED in 6.6.5 (bite 2).** The filed repro passes verbatim (`direct/nested: 0/0`,
+exit 0). See CHANGELOG [6.6.5] and the corrections section at the end of this file.
+**Placement:** was unpinned — 6.x-line backlog; taken in the 6.6.5 repair release.
 **Discovered:** 2026-09-16, mabda 4.1.3 verification. `programs/benchmarks.cyr` crashed inside
 NVK's `create_buffer` during the wgpu-programs fix. The shape was then characterized and traced
 to the codegen in the round-2 alignment sweep.
-**Severity:** **Low.** It only matters for C interop, which is legacy (in mabda, the wgpu C
-launcher path). Nothing fails at compile time, and pure Cyrius code never notices. A C callee that uses aligned SSE on its stack faults with #GP
-(SIGSEGV), and gcc emits that for ordinary code. Whether a call faults depends on the driver
-and the code path, so the failure looks intermittent and vendor-specific.
-**Affects:** cycc 6.6.4 (x86_64 SysV codegen); unchanged at HEAD 4f3731e8. Component: compiler (`src/frontend/parse_expr.cyr`, `parse_fn.cyr`; `src/backend/x86/emit.cyr`)
+**Severity as filed:** **Low** — "only matters for C interop, which is legacy". **Corrected: not
+low.** On Windows it was a live crash in cyrius's own CreateFileW reroute with no C interop
+involved, and nine `.tcyr` files were failing as PE because of it. See the corrections below.
+**Affects:** cycc ≤ 6.6.4 (x86_64 SysV codegen, and PE/UEFI for the inverted-base half).
+Component: compiler (`src/frontend/parse.cyr`, `parse_expr.cyr`, `parse_fn.cyr`;
+`src/backend/x86/emit.cyr`; `src/main.cyr`, `src/main_win.cyr`; `src/common/util.cyr`)
 
 ## Summary
 
@@ -217,3 +219,155 @@ C boundary, then runs `ping_pong_new` on chew (GTX 1660 SUPER, NVK / mesa `vulka
 
 Filed 2026-09-16 from mabda 4.1.3. mabda keeps its own record at
 `mabda/docs/development/issues/2026-09-16-cycc-nested-call-stack-alignment.md`.
+
+---
+
+## Corrections to this filing (6.6.5)
+
+The filing's measurements were all reproduced exactly — every row of its shape table, the
+`0/8` repro, the `%fs` history and the reading of the gate that appeared to contradict it.
+Six things it says — or that the fix's own premise-check said — are wrong or incomplete, and
+each mattered to the fix:
+
+1. **Severity is not Low, and it is not C-interop-only.** On PE the entire base is INVERTED:
+   Windows enters an image with the return address pushed (rsp ≡ 8) and cyrius never
+   re-aligned, so on Windows the STATEMENT-level calls were the misaligned ones and the nested
+   odd-depth calls were the aligned ones — the opposite of the table above. That was survivable
+   for cyrius-emitted code (no aligned SSE), but the seven FIXED-FRAME kernel32 reroutes had
+   each been hand-tuned to the inverted base, so nesting one at odd depth faulted inside
+   kernelbase's own `movaps` in **CreateFileW** (wine exit 5). Nine `tests/tcyr` files failed as
+   PE on 6.6.4 and pass with the fix. No C code is involved in any of that.
+
+2. **"PE direct calls were not checked (not a mabda target)" understates it.** They were not
+   merely unchecked; they were the inverted half of the same defect, and fixing SysV alone
+   would have left PE uniformly misaligned (the parity pad would have been computed against a
+   base that is 8 off). The landing seed and the retuned reroute frames had to ship in the same
+   change — which is also the explanation for the memory note saying an entry seed "destabilised
+   cycc, don't retry": it did, because the seed alone leaves those frames compensating for a
+   base that no longer needs it.
+
+3. **Proposed fix (1) is the right direction but was incomplete.** Beyond the counters it
+   names, the fix needed: `EPOPARG`, `EPOPRDI..R9` and `EDROPI64` accounting; `ECALLPTR_PE` and
+   `ETAILJMP`; a branch save/restore in `_EF64_EXPINF_GUARD` (the only place in the compiler
+   where emission order is not execution order); the four missing `ECALLCLEAN` calls; and
+   generalising v5.6.41's `nextra & 1` and `_pe_call_frame`'s `n & 1` to include the depth.
+
+4. **Three defects on the same call-emission path, found while fixing this one**, none of them
+   about alignment: `ECALLPOPS` with no `ECALLCLEAN` at four sites (on Win64 a 32 B shadow leak
+   per call — a slice subscript in argument 2 returned 89 where 247 is right); `tcargc > 6` on
+   the tail-call path (the SysV ceiling applied to Win64, so 5/6-arg tail calls discarded their
+   stack arguments); and statement-position `fncallN` not taking v6.5.17's closure-aware
+   lowering (SIGSEGV on ELF for `fncall1(closure, 2);`, which is ALSO why the same text has
+   opposite alignment in the two positions — the filing observed that and could not explain it).
+
+5. **UEFI is the same inverted base, and the firmware return needs the ENTRY rsp RESTORED —
+   not the seed given back.** Firmware enters an image exactly as Windows does (return address
+   pushed), so the landing seed applies there too — but under UEFI `EEXIT` is a bare `ret` back
+   to the firmware, and `ret` pops `[rsp]` ITSELF, so it is correct only where rsp is exactly
+   the entry rsp. It never is: the seed moved it by 8, and a `syscall(60, x)` inside a fn body
+   is a whole frame plus its locals below that. The landing parks it (`lea r13, [rsp]`, before
+   the seed) and EEXIT emits `mov rsp, r13; ret`, correct at any depth. r13 is reserved from the
+   register allocator on this target (`_ra_cap = 2`). FOUR routes reach that `ret`:
+   `main.cyr`'s fall-through, a top-level `syscall(60, x)` through the parser, a
+   `syscall(60, x)` **inside a fn body** — how `lib/alloc.cyr` and `lib/bounds.cyr` abort, so a
+   UEFI image takes it on OOM or a bounds trip with no explicit exit in user code at all — and
+   `programs/efi_probe.cyr`'s own hand-written `ret`, which never reaches EEXIT and so carries
+   its own `sub rsp,0x20` / `add rsp,0x28`, deliberately asymmetric.
+
+   ⛔ **The first cut of the fix got this wrong twice, and every gate was green over it.** It
+   paid the seed back with `add rsp, 8` gated on a flag `PARSE_FN_DEF` cleared per body, which
+   left the in-a-fn route a bare 0xC3 at `rbp - fsz`; and the flag was SET AT THE LANDING, which
+   is emitted **after** every fn body, so it read 0 inside a fn body regardless of the clear.
+   Measured under OVMF (edk2 q35): `fn f(){var a=3; syscall(60,a); return 0;} var r=f();` took
+   `X64 Exception Type - 0D(#GP)` with RIP inside the stack, where 6.6.4 happened to survive; a
+   variant that prints first #UDs on 6.6.4 too, so the class was broken on both compilers and
+   this fix is what closes it. The flag is gone: EEXIT derives its one remaining condition
+   (executable vs object/shared mode) from kmode at the point of emission.
+
+   ⚠ OVMF tolerates a misaligned CALL but not a misaligned RETURN, and the OVMF gate only
+   grepped for `hello, uefi` — so it scored PASS on the #UD. It now also requires no
+   `X64 Exception` and a post-return marker, and there is a SECOND OVMF gate
+   (`_efi_ovmf_fn_exit_gate` + `programs/efi_fn_exit_probe.cyr`) booting an image that exits
+   from inside a fn, because `efi_probe.cyr` returns through its own `ret` and so had never
+   tested how the compiler ends a UEFI image at all.
+
+6. ⛔ **x86_64 Mach-O has NO fixed entry alignment at all — the THIRD base defect, and the one
+   that only real hardware found.** Corrections 1 and 5 above fixed PE and UEFI by SEEDING the
+   landing, because those entries arrive at a KNOWN rsp ≡ 8. The premise-check for this fix
+   recorded the x86 Mach-O entry as "kernel-aligned" and left it alone. It is not.
+
+   **Measured on ach (real Intel Mac, Darwin 22.6.0, x86_64).** XNU does not 16-align the
+   initial rsp of a static Mach-O executable; it falls where the argv/env string area leaves
+   it, so the parity varies with the process's own name and environment:
+
+   ```
+   ./_l      -> misaligned      ./_ltxx        -> aligned
+   ./_lt     -> misaligned      /tmp/csa2      -> aligned
+   PADVAR=x ./_lt -> misaligned      PADVAR=xxxxxxx ./_lt -> aligned
+   ```
+
+   A 20-argv0-length × 16-env-pad sweep of a `#naked` `(rsp+8)&15` probe splits **160/160**,
+   and it tracks the PARKED entry rsp (`r15 & 15`) **row for row** — i.e. the misalignment at
+   every call site WAS the kernel's entry parity, carried through the landing untouched. Every
+   alignment rule in this backend is stated relative to the landing ("depth 0 means
+   16-aligned"), so a landing that inherits its parity makes all of them conditional on argv
+   and env.
+
+   **How it presented, and why wine/qemu could not have found it.** The new crossos alignment
+   test went RED on ach under the release gate's lib-test leg (9 passed, 4 failed) while passing
+   on ELF, on PE under wine and on aarch64 under qemu. It read as eight unrelated shape failures
+   — capturing-closure `callptr` at odd depth, method dispatch in two positions,
+   operator-overload dispatch in two positions, a `derive(accessors)` setter argument, a call at
+   odd depth inside `for-in`, the same inside `while` — and nothing said "entry". There is no
+   Darwin x86_64 emulator on the dev box, and `wine`/`qemu-user` do not model another kernel's
+   process-entry stack layout in any case. ⚠ **And the leg samples ONE parity**: the lib-test
+   runner always names the binary `./_lt`. On this host that name is the misaligned one; one
+   byte longer and the same broken compiler would have scored GREEN.
+
+   **Fix:** `EALIGN_RSP_16` (`and rsp, -16`) at the x86 Mach-O landing in BOTH forks —
+   `src/main.cyr`'s `_TARGET_MACHO == 1` arm and `src/main_x86_macho.cyr`, the native
+   Intel-Mac compiler that actually ships. It rounds DOWN, so it holds for either parity, and
+   it goes AFTER the `mov r15, rsp` park (the park is what keeps argc/argv reachable once rsp
+   moves — `lib/args_macos.cyr` reads r15). Object/shared mode never executes it (the landing
+   sits below `_cyrius_init`), which matters more here than for the PE seed: `and rsp,-16`
+   after a `call` would strand the return address at `[rsp+8]`.
+
+   Not extended elsewhere, with the reason for each: ELF is ABI-guaranteed (SysV amd64 §3.4.1)
+   and measures 320/320 aligned; aarch64 is safe architecturally and measures 320/320 aligned
+   on **ecb**, its anti-vacuous control 320/320 at 8; agnos builds rsp from two 16-aligned terms
+   (`agnos/kernel/core/elf.cyr:546`); PE and UEFI already seed.
+
+   **Re-measured on ach, same host and session, with and without the four bytes:** the crossos
+   alignment test exits 0 in **320 of 320** argv0/env combinations WITH the fix and **160 of
+   320** without it (mutant compiler); the raw kernel parity probe still splits 160/160 with the
+   fix in, i.e. the kernel has not changed and the landing is absorbing it; the full cross-OS
+   leg is **76 passed, 0 failed**.
+
+   ⭐ **The lesson this correction is written out for, rather than edited in.** Corrections 1
+   and 5 already said "PE/UEFI enter at rsp ≡ 8 and cyrius must seed". The generalisation was
+   available then and was not drawn: **a landing must ESTABLISH the alignment invariant, never
+   inherit it** — and "the kernel aligns it" is a claim to be measured on the kernel, not
+   assumed from another platform's ABI. Three targets, three separate discoveries, one rule.
+
+**What the consumer workaround costs now.** mabda's hoisting discipline and
+`scripts/check-ffi-call-alignment.py` are no longer needed once it pins ≥ 6.6.5; they are not
+harmful, just redundant. mabda's own record is
+`mabda/docs/development/issues/2026-09-16-cycc-nested-call-stack-alignment.md`.
+
+**Gates that now hold this:** `tests/gates/codegen/call_site_stack_alignment.sh` (a gcc leaf
+measuring `(rsp+8)&15` with the CPU, plus a `movaps` leaf that faults, plus axis (C) — the
+ENTRY parity swept over 20 argv0 lengths × 16 env paddings, which is also the documented manual
+Darwin recipe — and axis (D), which reads the cross-built Mach-O landing bytes and checks both
+x86 forks call `EALIGN_RSP_16` after their r15 park; (D) is the axis that would have caught
+correction 6 from Linux),
+`tests/tcyr/crossos/call_site_stack_alignment.tcyr` and
+`tests/tcyr/crossos/nested_call_value_regressions.tcyr` (both run on real ecb / ach / cass / pi
+in the release gate — and the alignment file now carries an explicit **ENTRY** row, asserted
+first, so a future base regression names the entry instead of scattering into shape failures),
+part (C) of `tests/gates/platform/ffi_stack_protected_extern_c.sh`,
+`_efi_entry_alignment_gate()` in `programs/checks/platform_efi.cyr` (the entry-rsp park, the
+landing seed, the 0x20 trampoline frame with 0x28 absent, the restore before all THREE
+compiler-emitted firmware `ret`s including one inside a fn body, and `efi_probe.cyr`'s
+asymmetric 0x20/0x28), the OVMF smoke's new no-exception + post-return assertions,
+`_efi_ovmf_fn_exit_gate()` booting `programs/efi_fn_exit_probe.cyr`, and a compile-time
+`_xd_check` at the parser chokepoints.

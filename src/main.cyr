@@ -1746,6 +1746,41 @@ SMOD(S, 0);
 # Patch jmp to land here (start of main code)
 EPATCH(S, jmp_patch);
 
+# ⛔ 6.6.5 — SEED THE Win64 / UEFI ENTRY ALIGNMENT. THIS IS THE LANDING.
+#
+# Windows (and UEFI firmware) enter an image the way they call any other function: with the
+# return address already pushed, so rsp ≡ 8 (mod 16) at the first instruction. Linux enters
+# at rsp ≡ 0 with no return address. cyrius never accounted for that difference, so the
+# ENTIRE PE base ran one parity off from every other target: a statement-level call landed
+# its callee at rsp ≡ 0 instead of the ABI-required ≡ 8, and — measured under wine — the
+# calls that happened to be ALIGNED on PE were the nested, odd-depth ones. The seven
+# fixed-frame kernel32 reroutes were then tuned, one at a time and years apart, to that
+# inverted base (EOPEN_PE/ECREATEDIR_PE/EDELETEF_PE's 0x258, EEXIT's 0x28), which is what
+# made the misalignment invisible at statement level and fatal inside an expression:
+# `f(0, open(path))` faulted in kernelbase's own `movaps` inside CreateFileW.
+#
+# Four bytes put PE on the same footing as every other target: from here on, depth 0 means
+# 16-aligned, everywhere. ⚠ This is the entry seed the v6.0.71 note (ECALLPTR_PE) says
+# "destabilised cycc — an earlier attempt". It did, and the reason is the reroute frames
+# above: seed WITHOUT retuning them and cycc_win faults on its first file open. The seed
+# and `_pe_fixed_frame` ship together and must never be separated.
+#
+# Object/shared mode does not reach these bytes (the landing sits BELOW _cyrius_init's
+# offset and a linked caller enters at the symbol, whose own `push rbp` aligns the body);
+# they cost 4 bytes there and are emitted anyway so the executable and object paths do not
+# need two different landings.  CHANGELOG [6.6.5]
+#
+# ⛔ AND UNDER UEFI, PARK THE ENTRY rsp IN r13 FIRST (`lea r13, [rsp]`, 4 bytes, before the
+# seed). An EFI image returns to firmware with a `ret`, and `ret` pops [rsp] ITSELF, so it
+# is only correct where rsp is exactly the entry rsp. It never is — the seed moved it, and
+# `syscall(60, x)` inside a fn body is a whole frame below. EEXIT therefore emits
+# `mov rsp, r13; ret`, correct at any depth. r13 is reserved from the register allocator on
+# this target (`_ra_cap` in src/frontend/parse_fn.cyr), which is what makes the park
+# survive an arbitrary call chain. See EPARK_EFI_RSP (src/backend/x86/emit.cyr) for why the
+# park is a 4-byte `lea` rather than the 3-byte `mov`. CHANGELOG [6.6.5]
+if (_TARGET_EFI_APPLICATION == 1) { EPARK_EFI_RSP(S); }   # lea r13, [rsp]  (4C 8D 2C 24)
+if (_TARGET_PE == 1) { ESUB_RSP_IMM8(S, 8); }
+
 # v6.1.30: x86-macho argv — park the init rsp in r15 (reserved from regalloc, see
 # parse_fn.cyr cap on _TARGET_MACHO==1) as the FIRST landing instruction. The entry
 # jmp preserves rsp, so here rsp is still the init stack ([rsp]=argc, inline
@@ -1754,6 +1789,24 @@ EPATCH(S, jmp_patch);
 # MUST match main_x86_macho.cyr's macho park byte-for-byte (cross == native).
 # _TARGET_MACHO==1 is x86 Mach-O (==2 is arm64, which has its own x28 prologue).
 if (_TARGET_MACHO == 1) { E3(S, 0xE78949); }   # mov r15, rsp   (49 89 E7)
+# ⛔ 6.6.5 — AND THEN ESTABLISH THE ALIGNMENT INVARIANT, because on Darwin x86_64 there is
+# nothing to inherit it from. MEASURED ON REAL HARDWARE (ach, Darwin 22.6.0 x86_64): the
+# process entry rsp parity varies with the byte count of the argv/env string area. One
+# binary, renamed and run under different env padding, reports both parities:
+#     ./_l   -> 8   ./_lt  -> 8   ./_ltxx -> 0   /tmp/csa2 -> 0
+#     PADVAR=x ./_lt -> 8        PADVAR=xxxxxxx ./_lt -> 0
+# A 20-argv0-length x 16-env-pad sweep of a naked `(rsp+8)&15` probe splits 160/160, and
+# it tracks the PARKED ENTRY rsp (`r15 & 15`) row for row — so the misalignment at every
+# call site was the kernel's entry parity, propagated unchanged. The same sweep is 320/320
+# aligned on Linux ELF (ABI-guaranteed) and 320/320 on ecb (aarch64, architecturally).
+# Bite 2's premise-check recorded the Mach-O entry as "kernel-aligned" and left it alone;
+# that is why the new crossos gate passed here and failed on ach.
+#
+# This is the THIRD base-alignment defect in this release (PE, UEFI, Mach-O), and the rule
+# the three share: a landing must ESTABLISH the invariant, never inherit it. AFTER the r15
+# park, never before — the park is what keeps argc/argv reachable once rsp moves.
+# MUST match main_x86_macho.cyr byte-for-byte (cross == native self-host). CHANGELOG [6.6.5]
+if (_TARGET_MACHO == 1) { EALIGN_RSP_16(S); }   # and rsp, -16   (48 83 E4 F0)
 # v6.1.32: agnos argv — same SysV init stack as x86-macho ([rsp]=argc, inline
 # argv/envp), same r15 park at the landing. Done HERE (before EMIT_GVAR_INITS)
 # so a call-bearing top-level initializer `var r = main();` — emitted INSIDE the
@@ -1808,6 +1861,10 @@ if (_init_km == 3 || _init_km == 2) {
     # Allocate generous stack frame for top-level init code (4096 bytes = 512 locals)
     E3(S, 0xEC8148);          # sub rsp, imm32
     EB(S, 0x00); EB(S, 0x10); EB(S, 0x00); EB(S, 0x00);  # 0x1000 = 4096 bytes
+    # 6.6.5: object/shared mode never returns to firmware — top level is wrapped in
+    # `_cyrius_init` and exits through EFNEPI (leave; ret) to its linked caller, whose
+    # `push rbp` above already re-aligned. EEXIT reads kmode itself (it has to: fn bodies
+    # are emitted before this point), so nothing is tracked here. CHANGELOG [6.6.5]
 }
 
 # Emit enum initializations FIRST (before gvar inits, since gvar inits may call
@@ -1906,9 +1963,12 @@ if (_TARGET_EFI_APPLICATION == 1) {
             # with named ops (parallel to the save above).
             EMOV_RCX_R14(S);                # restore ImageHandle
             EMOV_RDX_R15(S);                # restore SystemTable
-            ESUB_RSP_IMM8(S, 0x28);          # MS-x64 shadow space + align
+            # 6.6.5: 0x20, not 0x28. The old +8 compensated for the un-seeded UEFI base
+            # (firmware enters at rsp ≡ 8); the landing seed above now does that once, for
+            # the whole image, so a second correction here would re-break the call.
+            ESUB_RSP_IMM8(S, 0x20);          # MS-x64 shadow space
             ECALLTO(S, _efm_off);
-            EADD_RSP_IMM8(S, 0x28);
+            EADD_RSP_IMM8(S, 0x20);
             # EEXIT below emits `ret` under EFI mode — firmware reads
             # rax as EFI_STATUS (the value efi_main returned).
         }
@@ -1959,6 +2019,11 @@ if (_epi_km == 3 || _epi_km == 2) {
     # Shared mode uses this as the DT_INIT target.
     EFNEPI(S);
 } else {
+    # 6.6.5: under UEFI this EEXIT returns to the FIRMWARE, and does it by restoring the
+    # entry rsp parked in r13 at the landing. That restore lives INSIDE EEXIT rather than
+    # here, because a top-level `syscall(60, x)` — and a `syscall(60, x)` inside a fn body —
+    # reach the same `ret` through the parser and got no compensation while this was the
+    # only site (measured under OVMF: #UD and #GP respectively). CHANGELOG [6.6.5]
     # Executable mode: exit via syscall(60, exit_code)
     EEXIT(S);
 }

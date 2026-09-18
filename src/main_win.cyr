@@ -836,6 +836,21 @@ SMOD(S, 0);
 # Patch jmp to land here (start of main code)
 EPATCH(S, jmp_patch);
 
+# 6.6.5 — the Win64/UEFI entry alignment seed. Windows enters the image with the return
+# address pushed (rsp ≡ 8), Linux does not; without these 4 bytes the whole PE base runs one
+# parity off and every statement-level call enters its callee misaligned. MUST stay
+# byte-identical to src/main.cyr's landing (cross-compiled cycc_win == native cycc_win), and
+# MUST ship together with the retuned fixed-frame reroutes in src/backend/x86/emit.cyr
+# (`_pe_fixed_frame`) — the seed alone is what "destabilised cycc" at v6.0.71.
+# CHANGELOG [6.6.5]
+#
+# ⛔ Under UEFI, park the entry rsp in r13 FIRST — EEXIT returns to firmware with
+# `mov rsp, r13; ret`, which is correct at any call depth where a bare `ret` is not.
+# MUST stay byte-identical to src/main.cyr's landing — which is why both call the same
+# EPARK_EFI_RSP helper rather than open-coding the bytes twice. CHANGELOG [6.6.5]
+if (_TARGET_EFI_APPLICATION == 1) { EPARK_EFI_RSP(S); }   # lea r13, [rsp]  (4C 8D 2C 24)
+if (_TARGET_PE == 1) { ESUB_RSP_IMM8(S, 8); }
+
 # In object mode AND shared mode, wrap top-level code as a callable
 # function (_cyrius_init). Object mode: linked binaries call it after
 # symbol merge. Shared mode: dynamic loader calls it via DT_INIT on
@@ -848,6 +863,9 @@ if (_init_km == 3 || _init_km == 2) {
     # Allocate generous stack frame for top-level init code (4096 bytes = 512 locals)
     E3(S, 0xEC8148);          # sub rsp, imm32
     EB(S, 0x00); EB(S, 0x10); EB(S, 0x00); EB(S, 0x00);  # 0x1000 = 4096 bytes
+    # 6.6.5: object/shared mode never returns to firmware (EFNEPI to a linked caller, whose
+    # `push rbp` above already re-aligned); EEXIT reads kmode itself. Mirror of
+    # src/main.cyr. CHANGELOG [6.6.5]
 }
 
 # Emit enum initializations FIRST (before gvar inits, since gvar inits may call

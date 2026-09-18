@@ -1,0 +1,131 @@
+# nested_call_value_regressions.tcyr — 6.6.5: the call-emission defects found alongside the
+# nested-call misalignment that produce WRONG VALUES rather than a fault.
+#
+# WHY THIS IS IN crossos/. Every row below is correct on x86 Linux at 6.6.4 and WRONG on
+# real Windows, because each one is a Win64-only arm of a shared call emitter. The release
+# gate runs THIS DIRECTORY on real cass, which is the only place these are exercised —
+# they were found under wine during the 6.6.5 audit, having shipped silently:
+#
+#   * ECALLPOPS without ECALLCLEAN at four sites (slice subscript, await/future_force,
+#     capturing-closure env alloc, async constructor alloc). On SysV ≤6 args ECALLCLEAN
+#     was a no-op, so the omission was invisible; on Win64 every one of them leaked the
+#     32-byte shadow area, and inside an expression that shifts every later pop.
+#   * `tcargc > 6` on the tail-call path — the SysV register ceiling, applied to every
+#     target. Win64 passes 4 in registers, so `return f5(...)` / `return f6(...)` took the
+#     TAIL-CALL branch and ETAILJMP's `mov rsp,rbp` tore down the frame ECALLPOPS had just
+#     written the stack arguments into.
+#   * `fncallN(...)` as a BARE STATEMENT was not lowered: it stayed an ordinary call into
+#     lib/fnptr.cyr, which calls the bit-63-tagged env pointer verbatim. SIGSEGV on ELF,
+#     where the same text in expression position worked.
+#   * `syscall(2, path, ...)` nested at odd depth faulted inside kernelbase's own `movaps`
+#     in CreateFileW (wine exit 5): EOPEN_PE's fixed 0x258 frame was tuned to the old,
+#     un-seeded PE base.
+#
+# EXPECTED VALUES ARE HAND-COMPUTED ARITHMETIC, not "whatever the compiler prints": each
+# row states the sum it must produce. That matters here because the wrong answers were
+# arbitrary, not zeros — and because they are ADDRESSES, they are not even stable between
+# runs, so no assertion can be written against the wrong value. THESE FIXTURES, measured on
+# the 6.6.4 compiler under wine (one run; the exact garbage varies):
+#
+#   row                                    6.6.4 / Win64        correct
+#   3 x f2(5, s[1])                        543200560963         1527
+#   3 x apply2(5, |x| base + x)            536874676542         1626
+#   tail5()                                95680724             74
+#   tail6()                                95682324             124
+#   fncall1(closure, 2) as a statement     SIGSEGV (ELF too)    43
+#
+# Every one of those is a plausible-looking integer that a test asserting "not zero" or
+# "greater than 0" would have accepted.
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/slice.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+
+alloc_init();
+
+fn f2(a, b): i64 { return a * 100 + b; }
+fn f5(a, b, c, d, e): i64 { return a + b + c + d + e * 10; }
+fn f6(a, b, c, d, e, f): i64 { return a + b + c + d + e * 10 + f * 100; }
+# 5 and 6 arguments: over Win64's 4-register ceiling, under SysV's 6.
+fn tail5(): i64 { return f5(1, 1, 1, 1, 7); }
+fn tail6(): i64 { return f6(1, 1, 1, 1, 2, 1); }
+fn apply2(k, f): i64 { return k * 100 + callptr(f, 1); }
+
+var G = 0;
+fn setg(v): i64 { G = v; return v; }
+# One frame between the caller and the open, so the row measures the INHERITED shift.
+fn open_missing(path): i64 { var fd = file_open(path, 0, 0); return fd; }
+
+fn main(): i64 {
+    test_group("nested-call value regressions (Win64 arms of a shared emitter)");
+
+    # --- slice subscript as argument 2 (ECALLPOPS with no ECALLCLEAN) ---
+    # The loop matters: the leak is per call, so one iteration can still look right.
+    var data[4];
+    store8(&data, 7);
+    store8(&data + 1, 9);
+    var s: [u8] = 0;
+    slice_set(&s, &data, 4);
+    var k = 0;
+    var i = 0;
+    while (i < 3) {
+        k = k + f2(5, s[1]);            # 5*100 + 9 = 509, three times
+        i = i + 1;
+    }
+    assert_eq(k, 1527, "slice subscript as argument 2 (3 x 509; Win64 read a leaked stack slot, not 9)");
+    assert_eq(f2(5, s[0]), 507, "slice subscript, single call");
+
+    # --- a capturing closure constructed as argument 2 (env alloc, no ECALLCLEAN) ---
+    var base = 41;
+    var t = 0;
+    var j = 0;
+    while (j < 3) {
+        t = t + apply2(5, |x| base + x);   # 5*100 + (41+1) = 542, three times
+        j = j + 1;
+    }
+    assert_eq(t, 1626, "capturing closure as argument 2");
+
+    # --- 5- and 6-argument tail calls keep their stack arguments ---
+    assert_eq(tail5(), 74, "5-arg tail call (1+1+1+1+7*10)");
+    assert_eq(tail6(), 124, "6-arg tail call (1+1+1+1+2*10+1*100)");
+    assert_eq(f2(0, tail5()), 74, "5-arg tail call as argument 2");
+
+    # --- fncallN on a CAPTURING closure, expression AND statement position ---
+    var f = |x| setg(base + x);
+    G = 0;
+    var er = fncall1(f, 2);
+    assert_eq(er, 43, "fncall1 on a capturing closure, expression position");
+    assert_eq(G, 43, "  ... and the closure body actually ran");
+    G = 0;
+    fncall1(f, 2);                      # bare statement — SIGSEGV before 6.6.5
+    assert_eq(G, 43, "fncall1 on a capturing closure, STATEMENT position");
+    G = 0;
+    fncall1(f, 1);
+    assert_eq(G, 42, "  ... twice, with a different argument");
+
+    # --- a file OPEN reached at odd depth. On Windows `file_open` lowers to EOPEN_PE ->
+    #     CreateFileW, whose fixed 0x258 frame was tuned to the un-seeded PE base: nested,
+    #     it faulted inside kernelbase's own `movaps` (wine exit 5). Through the stdlib
+    #     wrapper rather than a raw `syscall(2, ...)` because the number is per-target
+    #     (aarch64 has no SYS_OPEN — it is openat), AND because the misalignment is
+    #     INHERITED: the wrapper called at odd depth runs its whole body shifted, which is
+    #     the shape that actually faulted.
+    var missing = open_missing("no_such_file_6_6_5.txt");
+    assert_lt(missing, 0, "opening a missing path fails at statement level");
+    var nested_missing = f2(0, open_missing("no_such_file_6_6_5.txt"));
+    assert_lt(nested_missing, 0, "... and fails the same way nested as argument 2");
+    var ex = file_exists("no_such_file_6_6_5.txt");
+    assert_eq(ex, 0, "file_exists agrees the path is absent");
+    assert_eq(f2(0, file_exists("no_such_file_6_6_5.txt")), 0, "file_exists nested as argument 2");
+
+    # --- write() reached at odd depth: EWRITE_PE's 0x40 frame, same class ---
+    var wn = f2(0, file_write(1, "", 0));
+    assert_eq(wn, 0, "write(fd, \"\", 0) nested as argument 2 returns 0");
+
+    return assert_summary();
+}
+var r = main();
+syscall(60, r);

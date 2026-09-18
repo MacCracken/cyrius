@@ -1607,6 +1607,94 @@ fn _rd_exit(): i64 {
     return 0;
 }
 
+# ── 6.6.5: THE EXPRESSION-STACK DEPTH — how many 8-byte values are pushed RIGHT NOW.
+#
+# ⛔ THE BUG THIS EXISTS TO CLOSE. cycc's expression codegen is a stack machine: every
+# argument, every left operand of a binary/comparison operator, every spilled temporary
+# goes on the machine stack with `push rax` (8 bytes) and comes back with a pop. The ONLY
+# alignment invariant the compiler had was the frame rounding `fsz = (flc*8+15) & -16`
+# (parse_fn.cyr), which makes rsp 16-aligned BETWEEN statements. Nothing padded for values
+# still pushed when a CALL was emitted, so a call made with an odd number of them pending
+# entered its callee 8 bytes off — and both x86 ABIs require rsp ≡ 0 (mod 16) at the call
+# instruction. `f(0, c())` was misaligned; `var t = c(); f(0, t);` was not. The shift is
+# also INHERITED: a cyrius fn entered misaligned runs its whole body misaligned, so a
+# statement-level call inside it is off too, to any depth. A C callee that spills SSE with
+# `movaps`/`movdqa` — which gcc emits for ordinary code — takes a #GP. Filed from mabda
+# 4.1.3 (a real SIGSEGV inside NVK's create_buffer); on Windows it is a live crash in our
+# OWN CreateFileW reroute. See docs/development/issues/archived/
+# 2026-09-16-mabda-cycc-nested-call-stack-misalignment.md. CHANGELOG [6.6.5]
+#
+# WHAT `_xdepth` COUNTS. Pending 8-byte pushes relative to the body-aligned rsp, i.e.
+# rsp == body_base - 8*_xdepth. Even depth ⇒ 16-aligned ⇒ a call is ABI-correct; odd depth
+# ⇒ the call site must pad. Only the x86 emitter moves it: aarch64 pushes 16-byte pairs
+# (`str x0,[sp,#-16]!`) so SP is aligned by construction, and cx has no machine stack.
+# Those forks leave it 0, which makes `_xd_check` below trivially true there.
+#
+# WHY A COUNTER AND NOT A REGISTER PROBE, and why it is only ADVISORY. The counter is a
+# compile-time model of a run-time quantity, so a codegen path that moves rsp behind its
+# back (the PE syscall reroutes pop their args raw, and are mutually-exclusive branches
+# over the SAME pushed args — no linear counter can follow that) desyncs it. Those places
+# RESTORE it explicitly rather than pretend. `_xd_check` reports a desync and re-syncs; it
+# never exits, because being wrong about the model must not stop a compile that is
+# otherwise correct. The CPU-measured gates (tests/gates/codegen/call_site_stack_alignment.sh
+# and tests/tcyr/crossos/call_site_stack_alignment.tcyr) are the real proof — they compute
+# alignment from the frame the CPU actually built, never from this number.
+var _xdepth = 0;
+# The pad ECALLPOPS emitted for the call now being marshalled (0 or 1 slots), read back by
+# ECALLCLEAN/ETAILJMP. One global, not a stack, is enough: a call's arguments are fully
+# evaluated BEFORE its ECALLPOPS, so an ECALLPOPS/ECALLCLEAN pair can never nest inside
+# another pair. `_xcall_d` is the same for the Win64 n>4 path, which needs the depth the
+# call started from to size its frame identically in both halves.
+var _xcall_pad = 0;
+var _xcall_d = 0;
+var _xd_bad = 0;
+
+# Report an expression-stack desync at a parser chokepoint and re-sync. `d0` is the depth
+# the construct was entered with; anything else on the way out means some emitter pushed or
+# popped without accounting for it. Capped output — a broken path would otherwise print per
+# token. Compiling cycc itself, the 314-file tcyr corpus, lib/, programs/ and cbt/ reports
+# zero of these on both the ELF and the PE target.
+fn _xd_check(S, d0, tag): i64 {
+    if (_xdepth != d0) {
+        if (_xd_bad < 200) {
+            syscall(SYS_WRITE, 2, "internal: expression-stack depth desync at ", 43);
+            PRSTR(tag);
+            # `_err_head` opens straight into `<file>:<line>:<col>` with no leading
+            # separator, so without this space the tag runs into the path — measured:
+            # "...desync at expressionfactorlib/string.cyr:58:40". CHANGELOG [6.6.5]
+            syscall(SYS_WRITE, 2, " in ", 4);
+            _err_head(S);
+            syscall(SYS_WRITE, 2, " (entered ", 10); PRNUM(d0);
+            syscall(SYS_WRITE, 2, ", left ", 7); PRNUM(_xdepth);
+            syscall(SYS_WRITE, 2, ")\n", 2);
+        }
+        _xd_bad = _xd_bad + 1;
+        _xdepth = d0;
+    }
+    return 0;
+}
+
+# ── 6.6.5 — there is deliberately NO `_efi_fw_ret` global here any more.
+#
+# One stood in this slot for a round: "a bare `ret` emitted HERE goes back to the firmware",
+# set at the PE/UEFI landing, cleared per fn body by PARSE_FN_DEF, and read by EEXIT's UEFI
+# arm to decide whether to pay back the landing's `sub rsp, 8`. It was wrong TWICE over, and
+# both halves are worth keeping written down because they are the same mistake in two
+# shapes — hand-maintained state standing in for a property that can be derived:
+#
+#   1. A give-back only fixes the ONE depth it was computed for. `ret` pops [rsp] itself, so
+#      the exit must restore rsp, not adjust it: `syscall(60, x)` inside a fn body is a whole
+#      frame plus locals below the landing. Measured under OVMF (edk2 q35):
+#      `fn f(){var a=3; syscall(60,a); return 0;} var r=f();` → X64 Exception 0D (#GP), RIP
+#      inside the stack. The landing now parks the entry rsp (`lea r13, [rsp]`, see
+#      EPARK_EFI_RSP) and EEXIT emits `mov rsp, r13; ret`, correct at any depth.
+#   2. The flag was set at the LANDING, but fn bodies are emitted BEFORE the landing — the
+#      top-level definition pass runs first. So it read 0 inside every fn body regardless of
+#      the per-body clear, and the per-body clear looked like it was doing the work.
+#
+# EEXIT's remaining condition (executable vs object/shared mode) is read from kmode at the
+# point of emission instead — see src/backend/x86/emit.cyr. CHANGELOG [6.6.5]
+
 # ── v6.5.7: the include directory of the top-level source (`#@incdir`).
 #
 # THE PROBLEM. cycc reads its source from STDIN (`cyrius build` dup2's the file

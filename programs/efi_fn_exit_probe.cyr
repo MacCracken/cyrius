@@ -1,0 +1,65 @@
+# efi_fn_exit_probe — a UEFI Application that prints to ConOut from
+# inside a fn and then EXITS FROM INSIDE THAT fn, never falling through
+# to top level.
+#
+# Build:    CYRIUS_TARGET_EFI=1 build/cycc < programs/efi_fn_exit_probe.cyr > /tmp/p.efi
+# Gate:     _efi_ovmf_fn_exit_gate() in programs/checks/platform_efi.cyr (runtime, OVMF)
+#           + axis 3d of _efi_entry_alignment_gate() (emitted bytes)
+#
+# ⛔ WHY IT EXISTS (6.6.5). programs/efi_probe.cyr returns to firmware from its OWN
+# hand-written `ret` inside one top-level asm block, so it never reaches cycc's EEXIT at all
+# — the OVMF smoke built on it is blind to how the compiler ends a UEFI image. This probe
+# takes the other route, and it is the route consumers actually hit: `lib/bounds.cyr` and
+# `lib/alloc.cyr` abort with `syscall(60, …)` from inside fn bodies, so any UEFI image that
+# runs out of memory or trips a bounds check exits from a fn whether its author wrote one or
+# not. gnoboot is a UEFI consumer.
+#
+# MEASURED under qemu-system-x86_64 + edk2 OVMF (q35), 2026-09-17:
+#   6.6.4                       prints, then `X64 Exception Type - 06(#UD)`
+#   6.6.5 first cut             prints, then faults (the firmware-return decision was a flag
+#                               set at the LANDING, and fn bodies are emitted BEFORE the
+#                               landing, so the fn's exit was a bare 0xC3 at `rbp - fsz`)
+#   6.6.5 as shipped            prints, returns, firmware draws its boot menu
+#
+# The compiler side is EEXIT's UEFI arm restoring the entry rsp parked by EPARK_EFI_RSP
+# (`lea r13, [rsp]` at the landing) — see src/backend/x86/emit.cyr. CHANGELOG [6.6.5]
+#
+# The asm block is the same ConOut walk as efi_probe.cyr with two differences, both forced
+# by being inside a fn body rather than at the landing:
+#   * SystemTable comes from R14/R15 (parked at the landing), not from RDX — RDX is the
+#     firmware argument only for the first instructions of the image.
+#   * the CHAR16 message is inline data in the middle of the block, so it is jumped over.
+#     `lea rdx, [rip+2]` lands on the byte after the 2-byte `jmp`, which is the message.
+# Statement position inside a fn body is 16-byte aligned (6.6.5 makes that true on PE/UEFI
+# too), so the `sub rsp, 0x20` shadow space is all the call needs — no private pad.
+
+kernel;
+
+fn say(): i64 {
+    asm {
+        # mov rdx, r15            ; SystemTable, parked at the landing
+        0x4C; 0x89; 0xFA;
+        # mov rcx, [rdx + 0x40]   ; ConOut = SystemTable->ConOut
+        0x48; 0x8B; 0x4A; 0x40;
+        # mov rax, [rcx + 0x08]   ; OutputString fn ptr
+        0x48; 0x8B; 0x41; 0x08;
+        # lea rdx, [rip + 0x02]   ; rdx = &msg (the byte after the jmp below)
+        0x48; 0x8D; 0x15; 0x02; 0x00; 0x00; 0x00;
+        # jmp +0x1C               ; step over the 28 message bytes
+        0xEB; 0x1C;
+        # msg: UTF-16LE "hello, uefi\r\n\0" (28 bytes, 14 CHAR16 units)
+        0x68; 0x00; 0x65; 0x00; 0x6C; 0x00; 0x6C; 0x00; 0x6F; 0x00; 0x2C; 0x00; 0x20; 0x00;
+        0x75; 0x00; 0x65; 0x00; 0x66; 0x00; 0x69; 0x00; 0x0D; 0x00; 0x0A; 0x00; 0x00; 0x00;
+        # sub rsp, 0x20           ; MS x64 shadow space (the base is already 16-aligned)
+        0x48; 0x83; 0xEC; 0x20;
+        # call rax                ; OutputString(rcx=ConOut, rdx=msg)
+        0xFF; 0xD0;
+        # add rsp, 0x20
+        0x48; 0x83; 0xC4; 0x20;
+    }
+    # THE POINT OF THE PROBE: exit from HERE, a whole frame below the landing.
+    syscall(60, 0);
+    return 0;
+}
+
+var r = say();

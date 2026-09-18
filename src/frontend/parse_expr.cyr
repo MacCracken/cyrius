@@ -431,8 +431,19 @@ fn PINDIRECT_CALL(S): i64 {
 # See _rd_enter (src/common/util.cyr).
 fn PARSE_FACTOR(S): i64 {
     _rd_enter(S);
+    var _xd0 = _xdepth;
+    var _xt0 = PEEKT(S);
     var _rc = _PARSE_FACTOR_IMPL(S);
     _rd_exit();
+    # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its
+    # arguments and every backend's emitter consumes exactly those, leaving the result in
+    # rax. But the PE reroutes consume them with RAW pops, and `EPE_SYSCALL_DYNAMIC` emits
+    # several MUTUALLY-EXCLUSIVE arms over the SAME pushed args — a linear counter cannot
+    # follow that, and pretending otherwise would make every reroute frame parity wrong.
+    # So the one construct whose net effect is known exactly is re-synced from the outside,
+    # here, rather than at the ~20 early returns inside the builtin. See `_xdepth`.
+    if (_xt0 == 24) { _xdepth = _xd0; }
+    _xd_check(S, _xd0, "expression factor");
     return _rc;
 }
 
@@ -723,6 +734,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         }
                         ECALLPOPS(S, 2);
                         ECALLFIX(S, idx_fn);
+                        ECALLCLEAN(S, 2);   # 6.6.5: was missing — leaked Win64's 32 B shadow
                         # Result in rax. Set expression-width tracking so
                         # narrowing assignment warnings work for u8/u16/u32.
                         SEXW(S, sw);
@@ -2007,6 +2019,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         EPUSHR(S);                                # push the future as the sole arg
         ECALLPOPS(S, 1);                          # marshal into arg-reg 0
         ECALLFIX(S, _aw_ff);                      # rax = future_force(future)
+        ECALLCLEAN(S, 1);                         # 6.6.5: was missing (see ECALLCLEAN)
         return 0;
     }
     # |params| body / || body — closure/lambda. v6.3.7 makes the non-capturing
@@ -2254,6 +2267,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             EPUSHR(S);
             ECALLPOPS(S, 1);                 # → rdi
             ECALLFIX(S, cl_alloc_fi);        # rax = obj
+            ECALLCLEAN(S, 1);                # 6.6.5: was missing (see ECALLCLEAN)
             var cl_obj_slot = GFLC(S);
             # Anonymous scratch — the name table isn't cleared per-fn, so an unnamed
             # slot would keep a STALE name from a prior fn and a later `var` with that
@@ -3145,8 +3159,10 @@ fn PARSE_INTRIN(S, ptyp): i64 {
 # propagated because callers read it. See _rd_enter (src/common/util.cyr).
 fn PARSE_TERM(S): i64 {
     _rd_enter(S);
+    var _xd0 = _xdepth;
     var _rt = _PARSE_TERM_IMPL(S);
     _rd_exit();
+    _xd_check(S, _xd0, "expression term");
     return _rt;
 }
 
@@ -3517,8 +3533,10 @@ fn EMIT_OVF_CALL(S, fname_str): i64 {
 # live. See _rd_enter (src/common/util.cyr).
 fn PEXPR(S): i64 {
     _rd_enter(S);
+    var _xd0 = _xdepth;
     _PEXPR_IMPL(S);
     _rd_exit();
+    _xd_check(S, _xd0, "expression");
     return 0;
 }
 

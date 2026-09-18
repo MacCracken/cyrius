@@ -9,12 +9,35 @@
 # arch_prctl-clobbered the host's %fs via thread_local_init. Either way the C
 # callee faults on its prologue `mov %fs:0x28,%rax`, regardless of arg count.
 #
-# This gate locks two guarantees so the wgpu C-hook path (NVIDIA route, live
+# This gate locks three guarantees so the wgpu C-hook path (NVIDIA route, live
 # through mabda v5.0 per ADR-006) can never silently rot:
 #   (A) a STACK-PROTECTED extern-C fn taking 4/5/6/7 integer args returns the
 #       correct result when called via fncallN with a glibc TLS bootstrap.
 #   (B) thread_local_use_foreign_tls() lets cyrius thread-locals coexist with a
 #       host-owned %fs WITHOUT clobbering it or the C stack canary (%fs:0x28).
+#   (C) 6.6.5: the same calls from NESTED expression positions, which is where
+#       the alignment actually broke.
+#
+# ⛔ 6.6.5 — WHAT (A) DID NOT COVER, AND WHY THAT MATTERED FOR SIX MINORS. Every
+# fncallN in (A) is at TOP LEVEL, in left-operand position (`if (fncallN(...) !=
+# K)`), where no value is pending on the expression stack — so every call it makes
+# was aligned even while `f(0, fncallN(...))` was not. Its C callees WOULD have
+# caught a misaligned call (gcc -O2 -fstack-protector-all gives sum4..sum7
+# `movdqa`/`movaps` on stack slots), which is exactly what makes the omission
+# costly: the gate looked like proof that "16-byte alignment into extern C is
+# correct", and cyrius's own docs cited it as such, while the nested position
+# SIGSEGV'd. This is the "a gate proves only the position it tests" lesson.
+# Part (C) below adds those positions. See docs/development/issues/archived/
+# 2026-09-16-mabda-cycc-nested-call-stack-misalignment.md.
+#
+# MUTATION LEDGER (measured 2026-09-17 on x86_64 Linux / glibc):
+#   * the 6.6.4 compiler            -> PASS(A) PASS(B), FAIL(C) SIGSEGV. That split is the
+#     clearest statement of what the v6.3.26 gate did and did not prove: the same C callees,
+#     the same fncallN, only the expression position differs.
+#   * a stub `build/cycc` that drains stdin and exits 0 (an EMPTY, executable output) ->
+#     before the `[ -s ... ]` guards below: PASS(A) PASS(B) PASS(C), final PASS, rc=0. After
+#     them: FAIL at the first compile. An empty file IS executable and `sh` runs it as an
+#     empty script, so exit-status-only checking cannot see this.
 #
 # Skips gracefully off Linux/x86_64, or without gcc / libc.so.6 / build/cycc.
 set -e
@@ -95,6 +118,14 @@ if ! "$CYCC" < "$TMP/drv.cyr" > "$TMP/drv" 2>"$TMP/drv.err"; then
     sed 's/^/  /' "$TMP/drv.err" | head -8
     exit 1
 fi
+# ⛔ An EMPTY file is executable and `sh` runs it as an empty script — exit 0. cycc exits 0
+# on empty stdin, so without this size check a compiler that produced nothing scored PASS on
+# all three parts of this gate. Measured with a stub `build/cycc` that drains stdin and exits
+# 0: PASS(A) PASS(B) PASS(C), final PASS, rc=0. CHANGELOG [6.6.5]
+if [ ! -s "$TMP/drv" ]; then
+    echo "FAIL: the fncallN extern-C driver compiled to an EMPTY binary"
+    exit 1
+fi
 chmod +x "$TMP/drv"
 set +e
 "$TMP/drv"
@@ -143,6 +174,10 @@ if ! "$CYCC" < "$TMP/coexist.cyr" > "$TMP/coexist" 2>"$TMP/coexist.err"; then
     sed 's/^/  /' "$TMP/coexist.err" | head -8
     exit 1
 fi
+if [ ! -s "$TMP/coexist" ]; then
+    echo "FAIL: the foreign-TLS coexistence check compiled to an EMPTY binary"
+    exit 1
+fi
 chmod +x "$TMP/coexist"
 set +e
 "$TMP/coexist"
@@ -154,5 +189,84 @@ if [ "$rc2" != "0" ]; then
 fi
 echo "  PASS(B): thread_local_use_foreign_tls() coexists — %fs + canary intact, slots via fallback"
 
-echo "PASS: fncallN into stack-protected extern-C + foreign-%fs coexistence (v6.3.26)"
+# --- (C) 6.6.5: the SAME stack-protected callees, from NESTED expression positions.
+#         An argument slot, a store64 argument, an operator's right operand, and one
+#         intermediate cyrius frame. Each of these put an odd number of values on the
+#         expression stack before the call; before 6.6.5 that entered sum4/sum7 with
+#         rsp 8 bytes off and their movdqa/movaps spills took a #GP.
+#         The expected sums are the same arithmetic as (A) — computed here, not read
+#         back from the callee — so a callee returning garbage fails on the VALUE as
+#         well as on the fault.
+cat > "$TMP/nested.cyr" <<EOF
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/mmap.cyr"
+include "lib/fnptr.cyr"
+include "lib/dynlib.cyr"
+fn snd(a, b): i64 { return b; }
+fn thd(a, b, c): i64 { return c; }
+fn hop4(f): i64 { var v = fncall4(f, 1, 2, 3, 4); return v; }
+alloc_init();
+var boot = dynlib_bootstrap_cpu_features();
+if (boot != 0) { syscall(SYS_WRITE, 1, "SKIP_NOGLIBC\n", 13); syscall(60, 77); }
+if (dynlib_bootstrap_tls() == 0) { syscall(60, 60); }
+dynlib_bootstrap_stack_end(0);
+var h = dynlib_open("$TMP/libextc.so");
+if (h == 0) { syscall(60, 61); }
+var bias = load64(h + 40);
+_dynlib_apply_irelative(h, bias, load64(h + 88), load64(h + 96));
+_dynlib_apply_irelative(h, bias, load64(h + 104), load64(h + 112));
+var f4 = dynlib_sym(h, "sum4");
+var f7 = dynlib_sym(h, "sum7");
+if (f4 == 0) { syscall(60, 62); }
+if (f7 == 0) { syscall(60, 65); }
+var slot[8];
+var zero = 0;
+# argument 2 of a 2-arg call: one value pending
+if (snd(0, fncall4(f4, 1, 2, 3, 4)) != 10) { syscall(60, 70); }
+# argument 3 of a 3-arg call: two pending (the aligned case — a control)
+if (thd(0, 0, fncall4(f4, 1, 2, 3, 4)) != 10) { syscall(60, 71); }
+# store64's second argument
+store64(&slot, fncall7(f7, 1, 2, 3, 4, 5, 6, 7));
+if (load64(&slot) != 28) { syscall(60, 72); }
+# right operand of an operator
+if (zero + fncall7(f7, 1, 2, 3, 4, 5, 6, 7) != 28) { syscall(60, 73); }
+# through one intermediate cyrius frame, itself called from a nested position
+if (snd(0, hop4(f4)) != 10) { syscall(60, 74); }
+# a 7-arg extern call nested one level in (nextra x depth parity)
+if (snd(0, fncall7(f7, 1, 2, 3, 4, 5, 6, 7)) != 28) { syscall(60, 75); }
+syscall(60, 0);
+EOF
+if ! "$CYCC" < "$TMP/nested.cyr" > "$TMP/nested" 2>"$TMP/nested.err"; then
+    echo "FAIL: could not compile the nested-position extern-C driver"
+    sed 's/^/  /' "$TMP/nested.err" | head -8
+    exit 1
+fi
+if [ ! -s "$TMP/nested" ]; then
+    echo "FAIL(C): the nested-position extern-C driver compiled to an EMPTY binary"
+    exit 1
+fi
+chmod +x "$TMP/nested"
+set +e
+"$TMP/nested"
+rc3=$?
+set -e
+if [ "$rc3" = "77" ]; then
+    echo "SKIP(C): no glibc on host"
+    exit 0
+fi
+if [ "$rc3" = "139" ]; then
+    echo "FAIL(C): SIGSEGV — a stack-protected extern-C callee was entered with rsp 8 bytes"
+    echo "         off 16-byte alignment from a NESTED expression position (6.6.5 class)"
+    exit 1
+fi
+if [ "$rc3" != "0" ]; then
+    echo "FAIL(C): nested-position extern-C exit $rc3 (70=arg2 71=arg3 72=store64 73=operator"
+    echo "         74=via a cyrius frame 75=7-arg nested; 60/61=bootstrap/open, 62/65=symbols)"
+    exit 1
+fi
+echo "  PASS(C): the same callees from nested argument / store64 / operator / one-frame positions"
+
+echo "PASS: fncallN into stack-protected extern-C, top-level AND nested + foreign-%fs coexistence (v6.3.26, v6.6.5)"
 exit 0

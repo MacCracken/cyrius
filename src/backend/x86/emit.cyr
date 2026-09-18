@@ -137,9 +137,16 @@ fn E3(S, v): i64 {
 
 # Standard codegen emissions (match cybs exactly)
 # cycc: all record IR nodes when IR_ENABLED(S)==1
-fn EPUSHR(S): i64 { if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
-fn EPOPC(S): i64 { if (_IR_REC0(S, IR_POP_RCX) == 1) { return 0; } EB(S, 0x59); return 0; }
+#
+# 6.6.5 — every one of these moves `_xdepth` (src/common/util.cyr), the count of pending
+# 8-byte pushes that ECALLPOPS pads against. The update happens BEFORE the IR early-return
+# so the model is the same whether or not IR recording is on, and before the v5.6.9
+# push+pop rewind, which removes BOTH halves and so is depth-neutral either way.
+# CHANGELOG [6.6.5]
+fn EPUSHR(S): i64 { _xdepth = _xdepth + 1; if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
+fn EPOPC(S): i64 { _xdepth = _xdepth - 1; if (_IR_REC0(S, IR_POP_RCX) == 1) { return 0; } EB(S, 0x59); return 0; }
 fn EPOPR(S): i64 {
+    _xdepth = _xdepth - 1;
     if (_IR_REC0(S, IR_POP_RAX) == 1) { return 0; }
     if (GCP(S) == _last_push_cp) {
         # v5.6.9: adjacent push+pop = no-op. Rewind past the push.
@@ -160,8 +167,9 @@ fn EPOPR(S): i64 {
 # Expression spill: identical to push/pop
 var _INLINE_OK = 0;
 var _LOOPVAR_OK = 0;  # loop var r12 caching disabled (caused 2x regression + stack corruption)
-fn ESPILL(S): i64 { if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
+fn ESPILL(S): i64 { _xdepth = _xdepth + 1; if (_IR_REC0(S, IR_PUSH) == 1) { return 0; } EB(S, 0x50); _last_push_cp = GCP(S); return 0; }
 fn EUNSPILL(S): i64 {
+    _xdepth = _xdepth - 1;
     if (_IR_REC0(S, IR_POP_RAX) == 1) { return 0; }
     if (GCP(S) == _last_push_cp) {
         # v5.6.9: adjacent push+pop = no-op. Rewind past the push.
@@ -262,8 +270,10 @@ fn EMOV_RDX_R15(S): i64 {
     return 0;
 }
 # sub rsp, imm8  →  48 83 EC nn  (MS-x64 shadow space + alignment).
-# Reserved for the trampoline's pre-call setup; imm8 is the standard
-# 0x28 = 32B shadow + 8B align under EFI's entry-from-firmware shape.
+# Reserved for the trampoline's pre-call setup. 6.6.5: the caller passes 0x20 (32 B shadow,
+# no pad) now that the UEFI landing seeds rsp to 16-aligned like every other target; it was
+# 0x28 while the entry-from-firmware base was itself 8 off. See src/main.cyr's efi_main
+# trampoline. CHANGELOG [6.6.5]
 fn ESUB_RSP_IMM8(S, n): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, n & 0xFF);
     return 0;
@@ -271,6 +281,57 @@ fn ESUB_RSP_IMM8(S, n): i64 {
 # add rsp, imm8  →  48 83 C4 nn  (matching cleanup after the call).
 fn EADD_RSP_IMM8(S, n): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, n & 0xFF);
+    return 0;
+}
+# 6.6.5 — UEFI entry-rsp park: `lea r13, [rsp]` (4C 8D 2C 24). Emitted at the landing in
+# BOTH src/main.cyr and src/main_win.cyr (one helper so the two landings cannot drift), and
+# read back by EEXIT's UEFI arm as `mov rsp, r13; ret` — the only form of firmware return
+# that is correct at an arbitrary call depth.
+#
+# ⚠ `lea` and not the 3-byte `mov r13, rsp`, ON PURPOSE: the landing must stay an EVEN
+# number of bytes. UEFI CHAR16 data is 2-byte aligned, and a hand-written-asm image
+# (programs/efi_probe.cyr, gnoboot) carries its literals inline at a fixed offset from
+# .text, so an odd landing flips the parity of every one of them. CHANGELOG [6.6.5]
+fn EPARK_EFI_RSP(S): i64 {
+    EB(S, 0x4C); EB(S, 0x8D); EB(S, 0x2C); EB(S, 0x24);
+    return 0;
+}
+# 6.6.5 — ESTABLISH the 16-byte alignment invariant at a process entry landing:
+# `and rsp, -16`  →  48 83 E4 F0.  Rounds rsp DOWN, so it is correct whatever parity the
+# kernel handed over, and a no-op when the entry was already aligned.
+#
+# ⛔ WHY THIS EXISTS, AND IT IS THE THIRD TIME. Every alignment rule in this backend is
+# stated RELATIVE to the landing ("depth 0 means 16-aligned"), so the landing itself has to
+# be an absolute. Three targets have now been found INHERITING it from an assumption about
+# the process entry instead of establishing it:
+#   PE/Win64  — Windows enters with the return address pushed (rsp ≡ 8). Fixed by the
+#               landing's `sub rsp, 8` seed, 6.6.5 bite 2.
+#   UEFI      — the same ≡ 8 firmware entry, plus a `ret` back to firmware. Same bite.
+#   Mach-O    — measured on real Intel-Mac hardware (ach, Darwin 22.6 x86_64): the entry
+#     x86_64   rsp parity VARIES WITH THE BYTE COUNT OF THE argv/env STRING AREA. The
+#               same binary reads 0 under one argv0 length and 8 under another
+#               (`./_l` vs `./_lt`, `PADVAR=x` vs `PADVAR=xxxxxxx`), 50 % of a 20 x 16
+#               argv0/env sweep each way. XNU 16-aligns nothing for a static Mach-O
+#               executable, so there is no "kernel-aligned entry" to inherit — which is
+#               precisely what bite 2's premise-check assumed and waved through.
+#
+# Linux ELF is the ONE target that may inherit: SysV amd64 §3.4.1 makes rsp ≡ 0 at
+# _start a guarantee, and a 20 x 16 sweep measures 320/320 aligned. aarch64 (both Linux
+# and Darwin) is safe architecturally — SP must be 16-aligned whenever it is used as a
+# base, and ecb measures 320/320. Neither gets these bytes.
+#
+# ⚠ MUST be emitted AFTER the target's init-rsp park (`mov r15, rsp` on x86 Mach-O and
+# agnos, `lea r13, [rsp]` on UEFI): the park is what preserves the kernel's argc/argv
+# block, and this instruction is allowed to move rsp off it. Emitting it first would
+# hand argc() a pointer 8 bytes below argc half the time.
+#
+# Object/shared mode never executes it — the landing sits below `_cyrius_init`'s offset
+# and a linked caller enters at that symbol. That matters here more than for the PE seed:
+# `and rsp, -16` after a `call` would strand the return address at [rsp+8]. The bytes are
+# still EMITTED there, like the PE seed, so the two entry paths stay one code path.
+# CHANGELOG [6.6.5]
+fn EALIGN_RSP_16(S): i64 {
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0);
     return 0;
 }
 fn ESUBR(S): i64 { if (_IR_REC0(S, IR_SUB) == 1) { return 0; } E3(S, 0xC82948); _flags_reflect_rax = 1; return 0; }
@@ -410,13 +471,13 @@ fn ESHLIMM(S, n): i64 { EB(S, 0x48); EB(S, 0xC1); EB(S, 0xE0); EB(S, n & 0x3F); 
 # v5.8.56: ESHRIMM removed — sibling of ESHLIMM (heavily used at
 # parse_expr.cyr:1141) that never got a call site. Re-add when a
 # parser path actually needs `shr rax, imm`.
-# Syscall pop helpers
-fn EPOPRDI(S): i64 { EB(S, 0x5F); return 0; }
-fn EPOPRSI(S): i64 { EB(S, 0x5E); return 0; }
-fn EPOPRDX(S): i64 { EB(S, 0x5A); return 0; }
-fn EPOPR10(S): i64 { E2(S, 0x5A41); return 0; }
-fn EPOPR8(S): i64 { E2(S, 0x5841); return 0; }
-fn EPOPR9(S): i64 { E2(S, 0x5941); return 0; }
+# Syscall pop helpers (6.6.5: each consumes one pending push — see `_xdepth`)
+fn EPOPRDI(S): i64 { _xdepth = _xdepth - 1; EB(S, 0x5F); return 0; }
+fn EPOPRSI(S): i64 { _xdepth = _xdepth - 1; EB(S, 0x5E); return 0; }
+fn EPOPRDX(S): i64 { _xdepth = _xdepth - 1; EB(S, 0x5A); return 0; }
+fn EPOPR10(S): i64 { _xdepth = _xdepth - 1; E2(S, 0x5A41); return 0; }
+fn EPOPR8(S): i64 { _xdepth = _xdepth - 1; E2(S, 0x5841); return 0; }
+fn EPOPR9(S): i64 { _xdepth = _xdepth - 1; E2(S, 0x5941); return 0; }
 
 # RECFIX moved to src/backend/common/runtime.cyr at v6.0.8.
 
@@ -703,17 +764,23 @@ fn ESCPOPS(S, n): i64 {
 # windows-com-vtable-real-callee-frame-corruption.md). REPLACES the generic
 # ECALLPOPS+ECALLIND+ECALLCLEAN trio at a callptr site under _TARGET_PE.
 #
-# WHY: cyrius's PE call chain runs at a CONSTANT body alignment that lands
-# every callee at entry rsp ≡ 0, NOT the Win64-ABI-required ≡ 8 (Windows
-# enters the EXE at rsp ≡ 8 and cyrius never re-aligns). cyrius-emitted code
-# never uses SSE so the misalignment is harmless; the kernel32 IAT reroutes
-# mask it with their own `push rbx; and rsp,-16` anchor; but `callptr` exists
-# precisely to invoke REAL Win64 callees (COM vtable methods), whose aligned
-# `movaps` SSE spill #GP-faults (AV 0xC0000005) or corrupts the caller frame
-# when entered at ≡ 0. Seeding alignment at the entry instead (an earlier
-# attempt) destabilised the top-level-only cycc compiler itself, so the fix
-# is local to the callptr site — the same proven anchor the reroutes use,
-# robust to ANY caller body alignment (main or top-level reaches it).
+# WHY: until 6.6.5 cyrius's PE call chain ran at a CONSTANT body alignment
+# that landed every callee at entry rsp ≡ 0, NOT the Win64-ABI-required ≡ 8
+# (Windows enters the EXE at rsp ≡ 8 and cyrius never re-aligned). cyrius-emitted
+# code never uses SSE so the misalignment was harmless for our own callees; the
+# kernel32 IAT reroutes mask it with their own `push rbx; and rsp,-16` anchor;
+# but `callptr` exists precisely to invoke REAL Win64 callees (COM vtable
+# methods), whose aligned `movaps` SSE spill #GP-faults (AV 0xC0000005) or
+# corrupts the caller frame when entered at ≡ 0.
+#
+# ⚠ 6.6.5 CORRECTS THE SECOND HALF OF THIS NOTE. "Seeding alignment at the entry
+# destabilised cycc itself" was true and the CAUSE is now known: the seed alone
+# leaves the seven FIXED-FRAME reroutes (EOPEN_PE/ECREATEDIR_PE/EDELETEF_PE 0x258,
+# EEXIT 0x28, EWRITE_PE/EREAD_PE/ELSEEK_PE) tuned to the OLD inverted base, so
+# cycc_win faulted inside kernelbase's own `movaps` in CreateFileW. The landing
+# seed (src/main.cyr / src/main_win.cyr) and those retuned frames ship together;
+# apart, either one breaks PE. This anchor stays regardless — it is robust to ANY
+# caller alignment and costs nothing to keep. CHANGELOG [6.6.5]
 #
 # Args are already pushed (a1..aN, aN on top). Marshal them into the Win64
 # arg registers, THEN `push rbx; mov rbx,rsp; and rsp,-16` (16-align,
@@ -730,6 +797,11 @@ fn ESCPOPS(S, n): i64 {
 # volatile scratch, consumed immediately by `call rax`) removes the frame slot
 # entirely, so no local can collide. cycc has no callptr → self-host unaffected.
 fn ECALLPTR_PE(S, n): i64 {
+    # 6.6.5 — this emitter consumes n args PLUS the callee slot, some through EPOPARG
+    # (counted) and some through raw pops / one `add rsp` (not). Set the depth to what the
+    # stack actually holds afterwards, in both branches, rather than trying to account per
+    # instruction.
+    var _xd_after = _xdepth - n - 1;
     if (n <= 4) {
         var i = n - 1;
         while (i >= 0) { EPOPARG(S, i); i = i - 1; }       # a1→rcx, a2→rdx, a3→r8, a4→r9 (args were on top)
@@ -742,6 +814,7 @@ fn ECALLPTR_PE(S, n): i64 {
         EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx (restore)
         EB(S, 0x5B);                                        # pop rbx
         _flags_reflect_rax = 0;
+        _xdepth = _xd_after;
         return 0;
     }
     # n > 4 (v6.4.43 FIX): read the 4 reg args + the callee by STACK OFFSET into
@@ -776,6 +849,7 @@ fn ECALLPTR_PE(S, n): i64 {
     EB(S, 0x5B);                                                     # pop rbx
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, (n + 1) * 8);       # add rsp, (n+1)*8 (drop args + callee)
     _flags_reflect_rax = 0;
+    _xdepth = _xd_after;
     return 0;
 }
 
@@ -788,21 +862,56 @@ fn EEXIT(S): i64 {
             # returns to firmware via plain `ret`, with rax holding
             # the EFI_STATUS code (expression result is already there).
             # No ExitProcess / kernel32 / IAT lookup — UEFI has no
-            # kernel32. Single 0xC3 byte; firmware unwinds the stack
-            # frame it set up before calling our entry.
+            # kernel32. ⚠ This comment used to end "firmware unwinds
+            # the stack frame it set up before calling our entry",
+            # which reads as though rsp did not have to be right. It
+            # does: `ret` POPS [rsp] itself, and firmware only unwinds
+            # once that `ret` has already jumped somewhere.
+            #
+            # ⛔ 6.6.5 — RESTORE THE ENTRY rsp FIRST. `ret` pops [rsp] itself, so a bare
+            # 0xC3 is correct only where rsp is EXACTLY the rsp firmware entered us with.
+            # It never is: the landing seed moved it by 8, and `syscall(60, x)` inside a fn
+            # body sits a whole frame plus its locals below that. The landing parks the
+            # entry rsp in r13 (`lea r13, [rsp]`, EPARK_EFI_RSP, before the seed) and this
+            # restores it, so the same three bytes are right at top level, inside a fn, and
+            # inside a nested expression with pushes pending.
+            #
+            # ⚠ An `add rsp, 8` give-back stood here first, gated on a hand-maintained flag
+            # that PARSE_FN_DEF cleared per body. It fixed the top level and left the in-a-fn
+            # route a bare 0xC3 at `rbp - fsz`: measured under OVMF (edk2 q35),
+            # `fn f(){var a=3; syscall(60,a); return 0;} var r=f();` took
+            # `X64 Exception Type - 0D(#GP)` with RIP inside the stack. A depth-dependent
+            # epilogue cannot be fixed by knowing the depth at ONE site.
+            #
+            # ⛔ AND THE FLAG ITSELF WAS THE SECOND TRAP: it was set at the LANDING, but fn
+            # bodies are emitted BEFORE the landing (the top-level definition pass runs
+            # first), so it read 0 for every fn body no matter what the body did. The
+            # condition here is therefore DERIVED — from kmode, the property that actually
+            # matters: in executable mode the entry runs, so r13 holds the firmware rsp; in
+            # object/shared mode top level is wrapped in `_cyrius_init` and the entry (and
+            # the park) never execute, so there is nothing to restore and the historical
+            # bare `ret` stands. CHANGELOG [6.6.5]
+            var _ekm = L64(S + 0x18FCA0);
+            if (_ekm != 2) { if (_ekm != 3) { E3(S, 0xEC894C); } }   # mov rsp, r13 (4C 89 EC)
             EB(S, 0xC3);
             return 0;
         }
         # Win64 ExitProcess call. Exit code is already in rax
         # (expression result). Sequence (13 bytes total):
         #   89 C1                 mov ecx, eax              arg1 = exit code
-        #   48 83 EC 28           sub rsp, 0x28             32 B shadow + 8 B align
+        #   48 83 EC 20|28        sub rsp, 0x20 (+8)        32 B shadow + parity pad
         #   FF 15 <disp32>        call [rip+ExitProcess]    IAT-dispatched
         #   CC                    int3                      unreachable
         # FIXUP later patches disp32 = IAT_RVA - (text_rva + coff + 4)
         # where coff is the 4-byte disp32 position (imp_idx=0 → ExitProcess).
+        #
+        # 6.6.5 — the frame was a FIXED 0x28: 32 B shadow plus a hardcoded 8 that only
+        # aligned the call because the PE base was itself 8 off (no landing seed). With the
+        # seed in place the base is 16-aligned, so the pad is the depth parity instead —
+        # `syscall(60, code)` is reached with the code and the number already popped, so
+        # `_xdepth` is the enclosing expression's depth here. CHANGELOG [6.6.5]
         EB(S, 0x89); EB(S, 0xC1);
-        EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x28);
+        EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20 + (_xdepth & 1) * 8);
         EB(S, 0xFF); EB(S, 0x15);
         _pe_iat_fixup_add(S, GCP(S), 0);
         EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
@@ -1210,9 +1319,15 @@ fn EMACHO_NANOSLEEP_X86(S): i64 {
 #   [rsp+0x28]        scratch DWORD for lpBytesWritten (r9 target)
 #   [rsp+0x30]        saved `buf` (rdx) across GetStdHandle call
 #   [rsp+0x38]        saved `len` (r8)  across GetStdHandle call
-# 0x40 bytes keeps RSP 16-aligned at each `call` site (caller's RSP
-# was 8-mod-16 entering this fn because of the implicit return
-# address on the stack — same guarantee EEXIT relies on).
+#
+# ⚠ 6.6.5 — the line that stood here ("0x40 keeps RSP 16-aligned at each call site;
+# caller's RSP was 8-mod-16 entering this fn") was FALSE ARITHMETIC that read as a
+# guarantee. 0x40 is a multiple of 16, so it PRESERVES whatever the caller had: with the
+# old un-seeded PE base it preserved 8-mod-16, i.e. every `write` on Windows called
+# WriteFile misaligned, and only wine's tolerance and WriteFile's own lack of aligned SSE
+# spills kept it invisible. With the landing seed the base is 16-aligned and the frame is
+# `0x40 + 8*(depth & 1)` — aligned at BOTH the statement and the nested position.
+# CHANGELOG [6.6.5]
 
 # v6.4.26 (R2): fd → Win32 HANDLE prologue, shared by EWRITE_PE + EREAD_PE.
 # Input: rax = fd. Output: rcx = HANDLE. fd {0,1,2} → GetStdHandle({-10,-11,-12});
@@ -1225,6 +1340,31 @@ fn EMACHO_NANOSLEEP_X86(S): i64 {
 # this one canonical sequence changes EWRITE_PE's emitted bytes (its old form left
 # hFile in rax + a trailing `mov rcx,rax`); EREAD_PE is byte-identical. Verified on
 # cass (self-host reads source via EREAD_PE + writes the PE via EWRITE_PE).
+# 6.6.5 — THE FRAME SIZE OF A FIXED-FRAME PE REROUTE.
+#
+# Seven kernel32 reroutes (EWRITE_PE, EREAD_PE, ELSEEK_PE, EOPEN_PE, ECREATEDIR_PE,
+# EDELETEF_PE and EEXIT's ExitProcess) carve a HARD-CODED frame and call straight through
+# the IAT, instead of using the rbx-anchored `and rsp,-16` the other reroutes use. Those
+# constants were chosen against the OLD, un-seeded PE base — rsp ≡ 8 through the whole
+# program, because Windows enters the image at ≡ 8 and cyrius never re-aligned — so each
+# one carried a hidden +8 (0x258, 0x28) or was simply misaligned at statement level
+# (0x40, 0x30). With the landing seed in src/main.cyr / src/main_win.cyr the base is now
+# ≡ 0 like every other target, and the only adjustment left is the parity of the enclosing
+# expression: `base` (a multiple of 16) plus 8 when the reroute is emitted at odd depth.
+#
+# `argc` is how many pushed slots the reroute consumes before it carves the frame — the
+# syscall's own arguments, including the syscall number — because those pops are raw and
+# `_xdepth` still counts them here.
+#
+# ⛔ The seed and these six call sites MUST land together. The seed alone is what
+# "destabilised cycc" at v6.0.71: with the base corrected and the frames still carrying
+# their hidden +8, cycc_win faults inside kernelbase's own `movaps` in CreateFileW.
+# CHANGELOG [6.6.5]
+fn _pe_fixed_frame(base, argc): i64 {
+    if (((_xdepth - argc) & 1) == 1) { return base + 8; }
+    return base;
+}
+
 fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, 0x02); # cmp rax, 2
     EB(S, 0x77); EB(S, 0x15);                           # ja +0x15 → .direct (skip std block)
@@ -1240,6 +1380,7 @@ fn _pe_fd_to_handle_rcx(S, gsh_idx): i64 {
     return 0;                                            # .ready: rcx = HANDLE
 }
 fn EWRITE_PE(S): i64 {
+    var _xfr = _pe_fixed_frame(0x40, 4);   # 6.6.5: 0x40 + depth parity (see _pe_fixed_frame)
     _pe_ensure_stdio(S);
     var gsh_idx = _pe_stdio_getstd_get();
     var wf_idx  = _pe_stdio_writef_get();
@@ -1253,7 +1394,7 @@ fn EWRITE_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
     # Allocate 64 B frame and stash buf/len BEFORE any call clobbers rdx/r8.
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x40); # sub rsp, 0x40
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, _xfr); # sub rsp, 0x40 (+ parity pad)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], rdx (buf)
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r8 (len)
 
@@ -1289,7 +1430,7 @@ fn EWRITE_PE(S): i64 {
     # count, breaking every PE caller's write loop. See EREAD_PE
     # comment for full diagnosis.
     EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov eax, [rsp+0x28]
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x40); # add rsp, 0x40
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x40 (+ parity pad)
     return 0;
 }
 
@@ -1419,6 +1560,7 @@ fn ECREATEPROC_PE(S): i64 {
 # EWRITE_PE's 0x40 frame layout — the GetStdHandle call clobbers
 # rdx/r8/r9 so we stash `buf` and `len` in the frame first.
 fn EREAD_PE(S): i64 {
+    var _xfr = _pe_fixed_frame(0x40, 4);   # 6.6.5: 0x40 + depth parity (see _pe_fixed_frame)
     _pe_ensure_readf(S);
     var gsh_idx = _pe_stdio_getstd_get();
     var rf_idx  = _pe_readf_get();
@@ -1431,7 +1573,7 @@ fn EREAD_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
     # 64 B frame + stash buf/len across the (possible) GetStdHandle call.
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x40); # sub rsp, 0x40
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, _xfr); # sub rsp, 0x40 (+ parity pad)
     EB(S, 0x48); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x30); # mov [rsp+0x30], rdx (buf)
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r8 (len)
 
@@ -1469,7 +1611,7 @@ fn EREAD_PE(S): i64 {
     # regardless of stack state. One byte shorter than the 64-bit
     # form, too.
     EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov eax, [rsp+0x28]
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x40); # add rsp, 0x40
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x40 (+ parity pad)
     return 0;
 }
 
@@ -2137,6 +2279,7 @@ fn ETLSSET_PE(S): i64 {
 # packed as 0xFFFFFFFF if the API returned 0 for failure — callers
 # should range-check if distinguishing from a valid offset of -1).
 fn ELSEEK_PE(S): i64 {
+    var _xfr = _pe_fixed_frame(0x30, 4);   # 6.6.5: 0x30 + depth parity (see _pe_fixed_frame)
     _pe_ensure_seekfp(S);
     var spe_idx = _pe_seekfp_get();
 
@@ -2148,7 +2291,7 @@ fn ELSEEK_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x89); EB(S, 0xC1);         # mov rcx, rax (hFile)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x30); # sub rsp, 0x30
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, _xfr); # sub rsp, 0x30 (+ parity pad)
     # Zero the lpNewFilePointer output slot at [rsp+0x28].
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
@@ -2161,7 +2304,7 @@ fn ELSEEK_PE(S): i64 {
 
     # Return the new offset (always 64-bit — LARGE_INTEGER in slot).
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov rax, [rsp+0x28]
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x30); # add rsp, 0x30
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, _xfr); # add rsp, 0x30 (+ parity pad)
     return 0;
 }
 
@@ -2252,6 +2395,21 @@ fn _pe_dyn_nomatch(S, argc): i64 {
     return 0;
 }
 
+# 6.6.5 — the exit arm of the arity-2 runtime switch, extracted so the ARMS OF ONE SWITCH
+# stay at one expression depth. Every arm of `EPE_SYSCALL_DYNAMIC` consumes the same pushed
+# args, but only this one consumes them through counted emitters (EPOPR + EDROPI64); left
+# inline, the arms emitted after it would size their frames against a depth two slots short.
+# Restoring here keeps `_xdepth` describing the stack every arm is entered with, which is
+# what the fixed-frame reroutes read. EEXIT never returns, so the restore is purely for the
+# emitter's model.
+fn _pe_dyn_exit(S): i64 {
+    EPOPR(S);       # rax = exit code
+    EDROPI64(S);    # drop the syscall number
+    EEXIT(S);
+    _xdepth = _xdepth + 2;
+    return 0;
+}
+
 # Emit the runtime switch. Returns 1 if argc is routable on PE (cmp/jne over the
 # routable syscalls of this arity; unknown number → -38). Returns 2 if NO
 # routable syscall has this arity — emits an honest -38/-ENOSYS no-op
@@ -2286,7 +2444,7 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
         # exit(60): mirror the literal path (pop code, drop sc_nr, ExitProcess).
         # EEXIT ends in int3 and never returns, so its jmp-done is dead but kept
         # for uniform structure.
-        var r2 = _pe_dyn_cmp(S, 60); EPOPR(S); EDROPI64(S); EEXIT(S); var f2 = EJMP0(S); EPATCH(S, r2);
+        var r2 = _pe_dyn_cmp(S, 60); _pe_dyn_exit(S); var f2 = EJMP0(S); EPATCH(S, r2);
         _pe_dyn_nomatch(S, argc);
         EPATCH(S, f0); EPATCH(S, f1); EPATCH(S, f2);
         return 1;
@@ -2316,20 +2474,25 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
 #
 # Stack on entry (top→bottom): [mode] [path] [sc_nr=83].
 #
-# FRAME 0x258 (NOT 0x250 like the original placeholder draft —
-# v5.11.22 bisect found the alignment bug). Win64 ABI requires
-# RSP 16-aligned at CALL. cyrius's pre-syscall RSP is 16k+8
-# (loader's CALL into _start pushed 8 bytes); 3-arg syscall
-# pushes 24 then ECREATEDIR_PE pops 16 + drops 8 = back to 16k+8.
-# `sub rsp, 0x258` lands RSP at 16(k-37) = 16-aligned. The
-# original 0x250 left RSP at 16(k-37)+8 — misaligned by 8.
-# Wine tolerates this; real Windows kernel32 path APIs detect
-# the misalignment in ntdll!+0x41912 and access-violate. The
-# `_pe_exit_gate` only exercised exit42 + hello-world (frames
-# 0x28 and 0x40 respectively + matching pre-states — incidentally
-# aligned), masking this for the entire EOPEN_PE pattern.
-# See CHANGELOG [5.11.23].
+# FRAME 0x250 + parity (6.6.5; a FIXED 0x258 from v5.11.23 to 6.6.4).
+# Win64 ABI requires RSP 16-aligned at CALL. Wine tolerates a
+# misaligned one; real Windows kernel32 path APIs detect it in
+# ntdll!+0x41912 and access-violate, which is what v5.11.22's bisect
+# hit and what the hard +8 was added for: cyrius's pre-syscall RSP
+# was 16k+8 (the loader's CALL into the entry pushed 8 bytes and
+# nothing re-aligned), so 0x258 landed the call on 16 and the
+# arithmetically-obvious 0x250 did not.
+#
+# ⚠ 6.6.5 INVERTS THAT PREMISE. The landing now seeds `sub rsp,8`
+# (src/main.cyr / src/main_win.cyr), so the base is 16-aligned like
+# every other target and the +8 is owed only when the enclosing
+# EXPRESSION has an odd number of values pending — which is what
+# `_pe_fixed_frame` computes. With the old constant, `open(...)`
+# nested in an argument faulted inside kernelbase's own `movaps`
+# in CreateFileW (wine exit 5, measured).
+# See CHANGELOG [5.11.23] and [6.6.5].
 fn ECREATEDIR_PE(S): i64 {
+    var _xfr = _pe_fixed_frame(0x250, 3);   # 6.6.5: was a fixed 0x258 (see _pe_fixed_frame)
     _pe_ensure_createdir(S);
     var cd_idx = _pe_createdir_get();
 
@@ -2340,7 +2503,7 @@ fn ECREATEDIR_PE(S): i64 {
 
     # Frame 0x258 — aligns RSP at call; UTF-16 buffer at +0x38.
     EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);
-    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
 
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x38); # lea rdi, [rsp+0x38]
@@ -2366,7 +2529,7 @@ fn ECREATEDIR_PE(S): i64 {
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 
     EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x258
-    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
 
     # BOOL → Linux mkdir rc: 0 success, -1 failure.
     EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
@@ -2378,10 +2541,12 @@ fn ECREATEDIR_PE(S): i64 {
 # DeleteFileW(lpFileName). Stack on entry: [path] [sc_nr=87].
 # Same widening + alignment story as ECREATEDIR_PE.
 #
-# 2-arg syscall: 2 pushes (24 → wait no — sc_nr+path = 2 pushes = 16),
-# 1 pop + drop = 16 bytes consumed. Pre-sub RSP back to 16k+8.
-# Frame 0x258 aligns the call same as ECREATEDIR_PE.
+# 2-arg syscall (sc_nr + path = 2 pushes = 16 B), 1 pop + drop = 16 B
+# consumed, so the frame is carved from the caller's own rsp.
+# Frame 0x250 + depth parity, same as ECREATEDIR_PE (6.6.5; a fixed
+# 0x258 before, tuned to the un-seeded PE base — see _pe_fixed_frame).
 fn EDELETEF_PE(S): i64 {
+    var _xfr = _pe_fixed_frame(0x250, 2);   # 6.6.5: was a fixed 0x258 (see _pe_fixed_frame)
     _pe_ensure_deletef(S);
     var df_idx = _pe_deletef_get();
 
@@ -2390,7 +2555,7 @@ fn EDELETEF_PE(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
     EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);              # sub rsp, 0x258
-    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
 
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x38); # lea rdi, [rsp+0x38]
@@ -2413,7 +2578,7 @@ fn EDELETEF_PE(S): i64 {
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 
     EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x258
-    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
 
     EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
     EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63
@@ -2562,26 +2727,31 @@ fn EDELETEFILEW_PE(S): i64 {
 #     / O_EXCL refinements are deferred — most downstream code
 #     opens existing or open-or-create, covered by this pair.
 #
-# Frame layout (0x258 = 600 B; v5.11.23 alignment fix from 0x250):
+# Frame layout (0x250 = 592 B, plus an 8 B pad at odd expression depth):
 #   [rsp+0x000..0x01F]  shadow space (32 B, Win64 ABI)
 #   [rsp+0x020]         dwCreationDisposition stack arg (8 B)
 #   [rsp+0x028]         dwFlagsAndAttributes stack arg (8 B)
 #   [rsp+0x030]         hTemplateFile stack arg (8 B, = 0)
 #   [rsp+0x038..0x247]  widened UTF-16 path buffer (528 B ≈ 264 WCHARs)
-#   [rsp+0x248..0x257]  16 B align pad (was 8 B at 0x250 pre-v5.11.23)
+#   [rsp+0x248..0x24F]  8 B tail pad
 #
-# v5.11.23 alignment fix: original 0x250 left RSP misaligned by 8
-# at the CALL. Win64 ABI requires 16-aligned RSP at CALL; cyrius's
-# 4-arg syscall (sc_nr+path+flags+mode) leaves pre-sub RSP at 16k+8,
-# and 0x250 mod 16 = 0 preserves the +8 misalignment. kernel32 path
-# APIs detect this in ntdll!+0x41912 and access-violate.
-# 0x258 mod 16 = 8 → cancels the +8 → RSP 16-aligned at CALL.
-# Wine 11.8 tolerated 0x250; cass (Win11 26200) does not.
-# The `_pe_exit_gate` only tested exit42 + hello-world (frames
-# happened to align by coincidence given their syscall arities);
-# never exercised a path API, masking this for an unknown number
-# of minors. v5.11.23 adds `_pe_path_apis_gate` to lock the fix.
+# v5.11.23 made this a FIXED 0x258 because the CALL was landing 8 off:
+# Win64 requires 16-aligned RSP at CALL, and cyrius's PE base was 16k+8
+# (the loader's CALL into the entry pushed 8 and nothing re-aligned), so
+# 0x250 preserved the misalignment. kernel32 path APIs detect it in
+# ntdll!+0x41912 and access-violate — wine 11.8 tolerated it, cass
+# (Win11 26200) did not, and `_pe_exit_gate` only ran exit42 +
+# hello-world, so it went unseen for an unknown number of minors.
+#
+# ⚠ 6.6.5 REMOVES THE PREMISE, NOT THE FIX. The landing now seeds
+# `sub rsp,8`, so the base is 16-aligned and the hard +8 became the
+# misalignment: `f(0, open(path))` faulted in kernelbase's `movaps`
+# inside CreateFileW under wine. The pad is now the enclosing
+# expression's depth parity (`_pe_fixed_frame`), which is 0 at
+# statement level — the position `_pe_path_apis_gate` exercises, so
+# that gate still locks exactly what it locked.
 fn EOPEN_PE(S): i64 {
+    var _xfr = _pe_fixed_frame(0x250, 4);   # 6.6.5: was a fixed 0x258 (see _pe_fixed_frame)
     _pe_ensure_createf(S);
     var cf_idx = _pe_createf_get();
 
@@ -2608,7 +2778,7 @@ fn EOPEN_PE(S): i64 {
 
     # Allocate frame 0x258 (16-aligns RSP at the call — v5.11.23 fix).
     EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);
-    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
 
     # rsi = r11 (source UTF-8); rdi = rsp+0x38 (dest UTF-16).
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
@@ -2643,7 +2813,7 @@ fn EOPEN_PE(S): i64 {
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
 
     EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x258
-    EB(S, 0x58); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
+    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
     return 0;
 }
 
@@ -2787,6 +2957,7 @@ fn EREGALLOC_RESTORE(S, n): i64 {
 # consumed the lower stack slot. PE is x86-only; aarch64/cx
 # stubs are no-ops because the calling path never reaches them.
 fn EDROPI64(S): i64 {
+    _xdepth = _xdepth - 1;   # 6.6.5: drops one pending push, same as a pop
     _IR_REC0(S, IR_RAW_EMIT);
     EB(S, 0x48); EB(S, 0x83);
     EB(S, 0xC4); EB(S, 0x08);
@@ -2942,6 +3113,12 @@ fn _EF64_EXPINF_GUARD(S): i64 {
     EPOPR(S);                       # rax = |x| ; stack holds x
     ECMPR(S);
     var g_native = EJCC(S, 0x85);   # jne -> NATIVE (x is not +/-inf)
+    # 6.6.5 — THE ONE PLACE IN THE COMPILER WHERE EMISSION ORDER ≠ EXECUTION ORDER for the
+    # expression stack. Both arms are balanced per PATH, but they are not emitted in path
+    # order: the inf arms below pop the pushed x, and then the NATIVE label — reached with x
+    # STILL pushed — pops it again. A linear counter would leave every f64_exp/f64_exp2 site
+    # one slot low for the rest of the statement. Save at the branch, restore at the label.
+    var _xd_br = _xdepth;
     EPOPR(S);                       # rax = x ; stack balanced
     EPUSHR(S);
     EMOVI(S, 0x7FF0000000000000);
@@ -2955,6 +3132,7 @@ fn _EF64_EXPINF_GUARD(S): i64 {
     EMOVI(S, 0x7FF0000000000000);   # exp(+inf) = +inf
     var g_d2 = EJMP0(S);
     EPATCH(S, g_native);
+    _xdepth = _xd_br;               # 6.6.5: the NATIVE arm is entered with x still pushed
     EPOPR(S);                       # rax = x ; stack balanced, fall into the x87 sequence
     return (g_d1 << 32) | g_d2;
 }
@@ -3310,6 +3488,7 @@ fn ECALLIND(S, idx): i64 {
 # out of scope for v5.5.3 and will mis-compile under CYRIUS_TARGET_WIN
 # until v5.5.4 lands the shadow-space + stack-arg shuttle.
 fn EPOPARG(S, n): i64 {
+    _xdepth = _xdepth - 1;   # 6.6.5: one pending push consumed, whichever register it lands in
     if (_TARGET_PE == 1) {
         if (n == 0) { EB(S, 0x59); return 0; }     # pop rcx  (arg 0)
         if (n == 1) { EB(S, 0x5A); return 0; }     # pop rdx  (arg 1)
@@ -3355,16 +3534,21 @@ fn _emov_rsp_disp(S, rex, op, reg3, disp): i64 {
 # ECALLCLEAN MUST agree byte-for-byte or the stack leaks/underflows, so the
 # formula lives here once.
 #   32 B shadow (Win64 ABI home area) + nextra*8 stack args, rounded up to 16,
-#   plus an 8 B parity pad when n is odd.
-# Why the pad: the caller's body rsp is 16-aligned, and n pushes leave rsp at
-# base - n*8 — 8-mod-16 for odd n. The frame is carved from THERE (we no longer
-# pop the args first), so odd n would otherwise leave rsp 8-mod-16 at the CALL,
-# violating the Win64 ABI. The old pop-based path got alignment for free by
-# consuming all n slots first; this pays for it explicitly.
-fn _pe_call_frame(n): i64 {
+#   plus an 8 B parity pad when (n + d) is odd.
+# Why the pad: the caller's body rsp is 16-aligned at expression depth `d`=0, and
+# n pushes leave rsp at base - (n+d)*8 — 8-mod-16 when n+d is odd. The frame is
+# carved from THERE (we no longer pop the args first), so odd parity would
+# otherwise leave rsp 8-mod-16 at the CALL, violating the Win64 ABI. The old
+# pop-based path got alignment for free by consuming all n slots first; this pays
+# for it explicitly.
+# 6.6.5 — `d` is new, and it is the whole bug: the parity was computed from `n`
+# ALONE, i.e. assuming the call is emitted with nothing else pending. Inside an
+# expression (`f(a, g(x,y,z,w,v))`) the enclosing pushes shift it, and the frame
+# aligned exactly the calls that did not need it. CHANGELOG [6.6.5]
+fn _pe_call_frame(n, d): i64 {
     var framesize = 32 + (n - 4) * 8;
     if ((framesize & 15) != 0) { framesize = framesize + 8; }
-    if ((n & 1) == 1) { framesize = framesize + 8; }
+    if (((n + d) & 1) == 1) { framesize = framesize + 8; }
     return framesize;
 }
 
@@ -3406,7 +3590,10 @@ fn ECALLPOPS(S, n): i64 {
         if (n <= 4) {
             var i = n - 1;
             while (i >= 0) { EPOPARG(S, i); i = i - 1; }
-            EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20);   # sub rsp, 0x20 (shadow)
+            # 6.6.5: fold the alignment pad into the shadow allocation — 0 extra bytes.
+            _xcall_pad = _xdepth & 1;
+            EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20 + _xcall_pad * 8);   # sub rsp, 0x20 (+pad)
+            _xdepth = _xdepth + 4 + _xcall_pad;
             return 0;
         }
         # n > 4 — GENERAL, any arity (v6.4.64).
@@ -3439,7 +3626,15 @@ fn ECALLPOPS(S, n): i64 {
         # impossible at any arity. The pushed args become dead space above the frame;
         # ECALLCLEAN reclaims them (framesize + n*8).
         var nextra = n - 4;
-        var framesize = _pe_call_frame(n);
+        # 6.6.5: `_xcall_d` is the depth this call started from (the args are still pushed,
+        # so subtract them). ECALLCLEAN reads it back to size the identical frame and to
+        # restore the depth; the two halves must agree exactly. This branch deliberately
+        # does NOT set `_xcall_pad` — the pad is inside `framesize`, ECALLCLEAN recomputes
+        # the identical frame from `_xcall_d`, and ETAILJMP (the only other reader) cannot
+        # see a PE call with n > 4: parse_fn.cyr sends anything over `_ARG_REG_COUNT()` down
+        # the normal-call path precisely because a tail call would discard its stack args.
+        _xcall_d = _xdepth - n;
+        var framesize = _pe_call_frame(n, _xcall_d);
         # 1. Load the 4 register args in place (no pops — pops are what ran out).
         _emov_rsp_disp(S, 0x48, 0x8B, 1, (n - 1) * 8);   # rcx = a1
         _emov_rsp_disp(S, 0x48, 0x8B, 2, (n - 2) * 8);   # rdx = a2
@@ -3458,11 +3653,23 @@ fn ECALLPOPS(S, n): i64 {
             _emov_rsp_disp(S, 0x4C, 0x89, 2, 32 + (j - 1) * 8);              # [rsp+32+(j-1)*8] = r10
             j = j + 1;
         }
+        _xdepth = _xdepth + framesize / 8;
         return 0;
     }
     if (n <= 6) {
         var i = n - 1;
         while (i >= 0) { EPOPARG(S, i); i = i - 1; }
+        # 6.6.5 — THE SysV PARITY PAD, and the fix for the whole filed bug on this path.
+        # All n args are in registers now, so rsp is back at base - 8*_xdepth: odd depth
+        # means the CALL would land the callee 8 bytes off the ABI. Two bytes fix it, and
+        # only where it is needed. `push rax` is the cheapest 8-byte adjust and rax is dead
+        # here (the args are marshalled; no SysV call reads rax except AL for varargs, which
+        # a push does not touch). ECALLCLEAN takes it back with `pop rcx` — rcx is a scratch
+        # register that is never a return register (rax/rdx/r8 and xmm0/1 are), and flags are
+        # already dead across a call. Recorded as IR_RAW_EMIT so the IR passes treat the pair
+        # as opaque rather than as a shuttle they may fold. CHANGELOG [6.6.5]
+        _xcall_pad = _xdepth & 1;
+        if (_xcall_pad == 1) { _IR_REC0(S, IR_RAW_EMIT); EB(S, 0x50); _xdepth = _xdepth + 1; }
         return 0;
     }
     # >6 args (SysV): stack = [a1..aN], aN on top. Need a1..a6 in
@@ -3487,6 +3694,9 @@ fn ECALLPOPS(S, n): i64 {
     # a7 lands at new [rsp+0]). Old/new positions don't overlap for
     # any nextra in [1, 5].
     var nextra = n - 6;
+    # 6.6.5: the depth this call started from — every parity below is (nextra + _xd_d),
+    # generalising v5.6.41's `nextra` (which is the _xd_d == 0 case).
+    var _xd_d = _xdepth - n;
     # v5.6.41: SysV ABI requires rsp 16-aligned BEFORE every CALL (so the
     # callee sees rsp+8 16-aligned at entry). Caller's body rsp is 16-aligned
     # (prolog enforces it). N pushes leave rsp at R - 8N. For nextra-odd
@@ -3503,9 +3713,17 @@ fn ECALLPOPS(S, n): i64 {
     # in the new frame (= same place from rbp's POV after CALL+push rbp+
     # mov rbp,rsp), and rsp ends up at R - nextra*8 - 8 (16-aligned).
     # Even nextra (n=8,10): no change — already 16-aligned.
+    #
+    # ⚠ 6.6.5 — that reasoning holds only when the call starts at depth 0. "Caller's body
+    # rsp is 16-aligned (prolog enforces it)" is true BETWEEN statements and false inside an
+    # expression: `h(0, f7(a,b,c,d,e,f,g))` starts this call with one value pending, and
+    # v5.6.41's `nextra & 1` then padded the calls that did not need it and skipped the ones
+    # that did. The rule is the parity of (nextra + depth-at-call); at depth 0 it reduces to
+    # exactly the old test, which is why 7-arg calls at statement level are byte-identical.
     var write_base = 6 * 8;        # = 48: original step-2 write base
     var sp_drop = 0x30;            # = 48: original step-3 drop
-    if ((nextra & 1) == 1) {
+    _xcall_pad = (nextra + _xd_d) & 1;
+    if (_xcall_pad == 1) {
         write_base = write_base - 8;   # = 40: step-2 writes one slot deeper
         sp_drop = 0x28;                # = 40: step-3 drops one less slot
     }
@@ -3531,8 +3749,10 @@ fn ECALLPOPS(S, n): i64 {
         _emov_rsp_disp(S, 0x4C, 0x89, 2, write_base + si * 8);
         si = si - 1;
     }
-    # Step 3: drop 6 reg-arg slots (even nextra) or 5 (odd nextra → 16-aligned at CALL).
+    # Step 3: drop 6 reg-arg slots (even parity) or 5 (odd → 16-aligned at CALL).
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, sp_drop);
+    # 6.6.5: what is left on the stack is the nextra stack args plus the parity slot.
+    _xdepth = _xd_d + nextra + _xcall_pad;
     return 0;
 }
 
@@ -3541,11 +3761,20 @@ fn ECALLPOPS(S, n): i64 {
 # Win64 (v5.5.7 strict-compliance): every call allocates 32 B
 # shadow; for N>4 we also allocated `(n-4)*8` for stack args
 # (rounded up to 16). ECALLCLEAN adds back the same total.
+#
+# 6.6.5 — ECALLCLEAN is now MANDATORY after every ECALLPOPS, on every ABI and every arity.
+# It used to be a no-op for SysV n<=6 and four call sites quietly skipped it (slice
+# subscript, await/future_force, closure-env alloc, async constructor alloc); on Win64 each
+# of those leaked the 32 B shadow, which is how a slice subscript in argument 2 returned 89
+# where 247 was right. Now it also releases the parity pad, so a missing call is a stack
+# leak on every target. CHANGELOG [6.6.5]
 fn ECALLCLEAN(S, n): i64 {
     if (_IR_REC1(S, IR_CALL_CLEAN, n) == 1) { return 0; }
     if (_TARGET_PE == 1) {
         if (n <= 4) {
-            EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x20);    # add rsp, 0x20 (shadow)
+            EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x20 + _xcall_pad * 8);    # add rsp, 0x20 (+pad)
+            _xdepth = _xdepth - 4 - _xcall_pad;
+            _xcall_pad = 0;
             return 0;
         }
         # v6.4.64: ECALLPOPS no longer pops the n pushed args (the pop-based
@@ -3553,16 +3782,28 @@ fn ECALLCLEAN(S, n): i64 {
         # frame BELOW them and leaves them as dead space. So the cleanup reclaims
         # BOTH the frame and the n*8 of pushed args, returning rsp to its pre-push
         # value exactly as the old pop-based path did.
-        _eadd_rsp_imm(S, _pe_call_frame(n) + n * 8);
+        _eadd_rsp_imm(S, _pe_call_frame(n, _xcall_d) + n * 8);
+        _xdepth = _xcall_d;
+        _xcall_pad = 0;
+        return 0;
+    }
+    if (n <= 6) {
+        # 6.6.5: release the SysV parity pad ECALLPOPS pushed (see there). `pop rcx`, not
+        # `pop rax` — rax carries the callee's return value.
+        if (_xcall_pad == 1) { _IR_REC0(S, IR_RAW_EMIT); EB(S, 0x59); _xdepth = _xdepth - 1; }
+        _xcall_pad = 0;
         return 0;
     }
     if (n > 6) {
         var extra = (n - 6) * 8;
-        # v5.6.41: ECALLPOPS drops 5 (not 6) reg-arg slots when nextra is
+        # v5.6.41: ECALLPOPS drops 5 (not 6) reg-arg slots when the parity is
         # odd, leaving 8 extra bytes on the stack for 16-alignment. Release
         # those here too. See ECALLPOPS line ~1131 for the symmetric write.
-        var nextra = n - 6;
-        if ((nextra & 1) == 1) { extra = extra + 8; }
+        # 6.6.5: read the pad ECALLPOPS actually emitted rather than recomputing
+        # `nextra & 1` — the two must agree, and the depth term is only known there.
+        if (_xcall_pad == 1) { extra = extra + 8; }
+        _xdepth = _xdepth - extra / 8;
+        _xcall_pad = 0;
         E3(S, 0xC48148);
         EB(S, extra & 0xFF);
         EB(S, extra >> 8 & 0xFF);
@@ -3573,7 +3814,15 @@ fn ECALLCLEAN(S, n): i64 {
 }
 
 # Emit tail call: epilogue + jmp (instead of call + epilogue)
+#
+# 6.6.5 — a tail call reaches here right after ECALLPOPS and never runs ECALLCLEAN: the
+# `mov rsp, rbp` below discards the marshalling frame (the SysV parity pad, or Win64's
+# shadow + pad) wholesale. So the depth is unwound here instead, and the tail-call ABI is
+# unchanged: the callee is entered with the CALLER's own return address on top, at the
+# alignment the caller was entered with.
 fn ETAILJMP(S, fnidx): i64 {
+    if (_TARGET_PE == 1) { _xdepth = _xdepth - 4 - _xcall_pad; } else { _xdepth = _xdepth - _xcall_pad; }
+    _xcall_pad = 0;
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_TAIL_JMP, fnidx); }
     # v4.9.1: restore callee-saved registers before tearing down frame.
     # Reverse order of save (parse.cyr prologue).

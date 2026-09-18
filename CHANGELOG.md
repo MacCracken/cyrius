@@ -78,9 +78,299 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
   the silent dst-unwritten mode they claimed to pin. The archived 6.6.2 issue's "both are now
   pinned" was false for that mode; it now carries a correction. The knob is set on cycc, and a
   new axis 0 fails if the ON and OFF builds are byte-identical.
+- ⛔ **rsp was 8 bytes off 16-byte alignment at every call emitted inside an expression —
+  and the whole PE base was inverted** (filed by mabda 4.1.3 2026-09-16;
+  `issues/archived/2026-09-16-mabda-cycc-nested-call-stack-misalignment.md`). cycc evaluates
+  expressions on the machine stack: one `push rax` per pending value. The only alignment
+  invariant was the frame rounding `fsz = (flc*8+15) & -16`, which makes rsp 16-aligned
+  BETWEEN statements — nothing padded for the values still pushed when a CALL was emitted, and
+  both x86 ABIs require rsp ≡ 0 at the call instruction. So `f(0, c())` entered its callee 8
+  bytes off while `var t = c(); f(0, t);` did not, and a C callee spilling SSE with
+  `movaps`/`movdqa` — what gcc emits for ordinary code — took a #GP there. The shift is also
+  INHERITED: a cyrius fn entered misaligned runs its whole body misaligned, so every
+  statement-level call inside it is off too, to any depth, and a second nesting cancels it.
+  The filed repro printed `direct/nested: 0/8` and exited 139; it now prints `0/0` and exits 0.
+  **Wider than filed, on four axes.**
+  (1) **PE/Win64 was INVERTED, not merely unchecked.** Windows enters an image with the return
+  address pushed (rsp ≡ 8) and cyrius never re-aligned, so on Windows the STATEMENT-level calls
+  were the misaligned ones. It survived because cyrius-emitted code uses no aligned SSE — while
+  the seven fixed-frame kernel32 reroutes had each been hand-tuned to that inverted base
+  (EOPEN_PE / ECREATEDIR_PE / EDELETEF_PE's 0x258, EEXIT's 0x28), so nesting one at odd depth
+  faulted inside kernelbase's own `movaps` in **CreateFileW**. This is also the unexplained
+  reason the v6.0.71 entry-seed attempt "destabilised cycc" — the seed alone leaves those
+  frames compensating for a base that no longer needs it; the seed and the retune ship
+  together and must never be separated.
+  (2) **Four `ECALLPOPS` sites had no `ECALLCLEAN`** (slice subscript, `await`/future_force,
+  capturing-closure env alloc, async constructor alloc). On SysV ≤ 6 args ECALLCLEAN was a
+  no-op, so the omission was invisible; on Win64 each leaked the 32 B shadow, and inside an
+  expression that shifts every later pop — a slice subscript in argument 2 returned **89**
+  where 247 is right, a capturing closure in argument 2 **254** where 90 is right.
+  (3) **`tcargc > 6` on the tail-call path** is the SysV register ceiling applied to every
+  target, so on Win64 (4 registers) `return f5(...)` / `return f6(...)` took the tail-call
+  branch and ETAILJMP's `mov rsp,rbp` tore down the frame ECALLPOPS had just written the stack
+  arguments into: **0** where 3 is right. Now `_ARG_REG_COUNT()`, the same function the closure
+  ABI uses.
+  (4) **`fncallN(...)` as a bare statement was not lowered** — `parse.cyr` sends IDENT+`(`
+  straight to PARSE_FNCALL, so v6.5.17's closure-aware lowering applied in expression position
+  only. `fncall1(closure, 2);` SIGSEGV'd (it called the bit-63-tagged env pointer) while
+  `var r = fncall1(closure, 2);` returned 42, and the same text had OPPOSITE stack alignment in
+  the two positions — the asymmetry the filing measured and could not explain from the source.
+  **Fix:** `_xdepth` (src/common/util.cyr) counts pending 8-byte pushes; every x86 push/pop
+  consumer maintains it (EPUSHR/ESPILL, EPOPR/EPOPC/EUNSPILL, EPOPRDI…R9, EPOPARG, EDROPI64,
+  ECALLPTR_PE, ETAILJMP, and a branch save/restore in `_EF64_EXPINF_GUARD` — the one place in
+  the compiler where emission order is not execution order, which would otherwise leave every
+  `f64_exp`/`f64_exp2` site one slot low for the rest of its statement). ONE parity rule then
+  covers every ABI: SysV n ≤ 6 pads with `push rax` / `pop rcx` (2 bytes, only where needed);
+  SysV n > 6 generalises v5.6.41's `nextra & 1` to `(nextra + depth) & 1` — identical output at
+  depth 0, which is why statement-level 7-arg calls are byte-for-byte unchanged; PE n ≤ 4 folds
+  the pad into the shadow `sub` (0 extra bytes); PE n > 4 takes the depth into
+  `_pe_call_frame(n, d)`. PE also gets the landing seed in **both** `main.cyr` and
+  `main_win.cyr` and the retuned reroute frames (`_pe_fixed_frame`), and the UEFI arm gets the
+  same seed and an efi_main trampoline frame of 0x20 instead of 0x28. ⛔ **Under UEFI the entry
+  rsp must also be RESTORED before the firmware `ret`**: EEXIT there is a bare `ret`, `ret` pops
+  `[rsp]` itself, and rsp is never the entry rsp — the seed moved it by 8, and a
+  `syscall(60, x)` inside a fn body is a whole frame plus its locals below that. The landing
+  therefore parks it (`lea r13, [rsp]`, `EPARK_EFI_RSP`, before the seed) and EEXIT emits
+  `mov rsp, r13; ret`, which is correct at any depth; r13 is reserved from the register
+  allocator on this target (`_ra_cap = 2`, which also finally reserves the r14/r15 that have
+  carried ImageHandle/SystemTable since v5.11.52 while being assignable). FOUR routes reach that
+  `ret`: main.cyr's fall-through, a top-level `syscall(60, x)` through the parser, a
+  `syscall(60, x)` **inside a fn body** — how `lib/alloc.cyr` and `lib/bounds.cyr` abort, so a
+  UEFI image takes it on OOM or a bounds trip whether its author wrote an exit or not — and
+  `programs/efi_probe.cyr`'s own hand-written `ret`, which never reaches EEXIT at all and so
+  carries its own: `sub rsp,0x20` / `add rsp,0x28`, deliberately asymmetric.
+  ⚠ **The first cut of this fix got the UEFI half wrong twice and every gate stayed green over
+  it.** It paid the seed back with `add rsp, 8` instead of restoring, gated on a flag
+  `PARSE_FN_DEF` cleared per body — so the in-a-fn route kept emitting a bare 0xC3 at
+  `rbp - fsz`; and the flag was SET AT THE LANDING, which is emitted **after** every fn body, so
+  it read 0 inside a fn body regardless of the clear. Measured under OVMF (edk2 q35):
+  `fn f(){var a=3; syscall(60,a); return 0;} var r=f();` → `X64 Exception Type - 0D(#GP)` with
+  RIP inside the stack, where 6.6.4 happened to survive; a variant that prints first #UDs on
+  6.6.4 too, so the class was broken on both. The flag is gone — EEXIT derives the one
+  remaining condition (executable vs object/shared mode) from kmode at the point of emission.
+  The park is a 4-byte `lea` and not the 3-byte `mov` on purpose: the landing must stay an EVEN
+  number of bytes or every inline CHAR16 literal in a hand-written-asm image loses its 2-byte
+  alignment. All five UEFI routes re-measured clean under OVMF.
+  **Measured:** the filed repro verbatim, 0/0 and exit 0; all 314 pre-existing `.tcyr` files
+  keep their exact exit codes against 6.6.4 (all 0) and the two new ones go 1 → 0 and 139 → 0,
+  i.e. 316/316 green; the seed-derive chain green; **cycc_win reaches a byte-identical
+  self-host fixpoint under wine** (cross-built gen1 == gen2 == gen3 == 1,166,848 B); under wine the PE corpus goes
+  from 32 failures to 23, with **nine files FAIL → PASS** (frontend/expr_in_fn_args,
+  lang/slices_indexing, stdlib/flags, formats/protobuf, formats/cyml, formats/toml_multiline,
+  math/linalg, crypto/tls12_handshake_msgs, crypto/tls_native_server_arena_flat_rss) and
+  stdlib/result_stdlib no longer ABORTING mid-suite with `vec: capacity overflow` — it now runs
+  to the end and reports 4 pre-existing PE failures (Windows `IoNotFound` errno mapping) that
+  were previously unreachable, which is why its exit code moves 1 → 4.
+  ⚠ **NOT "x86-only" — an earlier draft of this entry said so and it is wrong in a way that
+  would mislead the ecb/pi leg into expecting a recompile.** The CODEGEN change is x86 (the
+  pad, the PE seed, the retuned reroute frames), but the statement-position `fncallN` →
+  `PINDIRECT_CALL` lowering is in the SHARED FRONTEND and changes emitted bytes on every
+  target: measured against the real 6.6.4 tree, **80 of 317 aarch64 corpus binaries differ**
+  (lib/callback.cyr, bench.cyr, dynlib.cyr, tls.cyr, sakshi.cyr, async.cyr, thread_macos.cyr
+  and test.cyr all call `fncallN` as a bare statement). Under qemu-aarch64 **316 of 317 exit
+  codes are identical and the one that moves is a FIX** — `crossos/nested_call_value_regressions`
+  goes 139 → 0, i.e. the statement-position closure SIGSEGV was an aarch64 bug too. The cx fork
+  compiles **1 of 316** `.tcyr` files, so a tcyr-based cx number says nothing; over the corpus cx
+  can actually build — `programs/*.cyr` + `benches/*.bcyr` — **43 of 43 are byte-identical**.
+  UEFI boots under qemu + OVMF: `hello, uefi`, no X64 exception, and BdsDxe regains control
+  after the return (all three now asserted by the gate). ⚠ wine and qemu are not hardware: real
+  cass / ecb / ach / pi verification is the release gate's job.
+- ⛔ **The x86_64 Mach-O process entry is NOT 16-byte aligned, and its parity varies with the
+  argv/env byte count — the THIRD base-alignment defect in this release, and the one only real
+  hardware found.** PE and UEFI (above) were fixed by seeding the landing because those entries
+  are known to arrive at rsp ≡ 8. The same bite's premise-check recorded the x86 Mach-O entry
+  as "kernel-aligned" and left it alone. **Measured on ach — a real Intel Mac, Darwin 22.6.0,
+  x86_64 — not under emulation, because there is no Darwin x86_64 emulator here and `wine` /
+  `qemu-user` cannot model another kernel's process-entry stack layout at all.** XNU does not
+  16-align the initial rsp of a static Mach-O executable; it falls where the argv/env string
+  area leaves it. One binary, renamed and run under different env padding, reports both
+  parities: `./_l` and `./_lt` misaligned, `./_ltxx` and `/tmp/csa2` aligned; `PADVAR=x`
+  misaligned, `PADVAR=xxxxxxx` aligned. A 20-argv0-length × 16-env-pad sweep of a `#naked`
+  `(rsp+8)&15` probe splits **160/160**, and it tracks the PARKED entry rsp (`r15 & 15`)
+  **row for row** — so the misalignment at every call site was the kernel's entry parity,
+  propagated through the landing unchanged. That is the whole mechanism: cyrius's alignment
+  rules are all stated RELATIVE to the landing ("depth 0 means 16-aligned"), so a landing that
+  inherits its parity instead of establishing it makes every one of them conditional on the
+  process's name and environment.
+  **How it surfaced, and why it had to be hardware.** The new crossos alignment gate went RED
+  on ach under the release gate's lib-test leg (9 passed, 4 failed) while passing on ELF, on PE
+  under wine, and on aarch64 under qemu. The failing rows read as eight unrelated shape failures
+  — capturing-closure `callptr` at odd depth, method dispatch in two positions,
+  operator-overload dispatch in two positions, a `derive(accessors)` setter argument, a call at
+  odd depth inside `for-in`, the same inside `while` — and nothing in the output said "entry".
+  ⚠ The cross-OS runner always names the test binary `./_lt`, i.e. it samples exactly ONE
+  parity: on this host that name happens to be the misaligned one, but the same leg would have
+  gone GREEN on a compiler that was wrong half the time had the name been one byte longer.
+  **Fix:** `EALIGN_RSP_16` (`and rsp, -16`, 4 bytes) at the x86 Mach-O landing, in BOTH forks —
+  `src/main.cyr`'s `_TARGET_MACHO == 1` arm (the cross path) and `src/main_x86_macho.cyr` (the
+  native Intel-Mac compiler, the one that actually ships to Macs); a partial fork edit is the
+  trap this release keeps hitting, and only the native fork is what a Mac user runs. It rounds
+  rsp DOWN, so it is correct whatever parity the kernel hands over and a no-op when the entry
+  was already aligned, and it is emitted **after** the `mov r15, rsp` park — the park is what
+  keeps the kernel's argc/argv block reachable (`lib/args_macos.cyr` reads r15) once rsp moves.
+  Object/shared mode never executes it: the landing sits below `_cyrius_init`'s offset, which
+  matters more here than for the PE seed because `and rsp,-16` after a `call` would strand the
+  return address at `[rsp+8]`.
+  **Not extended to the other targets, with the reason for each.** Linux ELF is ABI-guaranteed
+  (SysV amd64 §3.4.1 makes rsp ≡ 0 at `_start`) and measures 320/320 aligned over the same
+  sweep. aarch64 is safe architecturally and measures 320/320 aligned on **ecb** (macOS arm64,
+  real hardware) with its anti-vacuous control 320/320 at 8. agnos sets `rsp = stack_base +
+  ELF_INIT_BLOCK` with both terms 16-aligned by construction (`kernel/core/elf.cyr:546`), which
+  its own loader documents as the SysV entry contract. PE and UEFI already seed.
+  **Measured on ach, same host, same session, with and without the four bytes:** the crossos
+  alignment test exits 0 in **320 of 320** argv0-length/env-padding combinations WITH the fix
+  and in **160 of 320** without it (mutant compiler: `EALIGN_RSP_16` deleted from the native
+  fork); `nested_call_value_regressions` 320/320 both ways (it does not read the base); ⭐ the
+  raw kernel parity probe still splits 160/160 WITH the fix in, i.e. the kernel has not changed
+  and the landing is absorbing it — that is what distinguishes "fixed" from "got lucky". The
+  same sweep on every other reachable target: ELF 320/320, aarch64 under qemu 320/320, ecb
+  320/320 (control 320/320 at 8), PE under wine 96/96. The full cross-OS legs — self-host
+  fixpoint plus the 76-file `tests/tcyr/crossos/` corpus on each native compiler — are
+  **76 passed, 0 failed** on **ach** and **76 passed, 0 failed** on **ecb**, both `SELFHOST_OK`.
+  Self-host byte-identical (1,260,296 B, `.text` 1,104,752 → 1,104,952), seed-derive green,
+  all 7 forks compile with 0 depth-desync reports, `check.sh` **248 passed / 0 failed**.
+  ⭐ **The effect is Mach-O-x86-ONLY, and that is measured, not asserted** — which is what
+  says the cass and pi legs need nothing beyond their usual run. Against a compiler built
+  from the same tree with `EALIGN_RSP_16` removed from both landings, over the first 80
+  corpus files per target: **ELF 80/80, PE 79/79 and agnos 75/75 byte-IDENTICAL, x86 Mach-O
+  0/80** (every one differs, by construction — the four bytes); and the aarch64 (cross,
+  macho, native) and cx compilers built by the two are themselves byte-identical, so
+  everything those emit is identical too.
 
 ### Added
 
+- `tests/gates/codegen/call_site_stack_alignment.sh` — a gcc-assembled leaf returns
+  `(rsp + 8) & 15` measured **by the CPU** at its own entry, called from ~55 shapes: direct
+  arguments 1–9, the caller's own >6-arg marshalling at both parities (7/8/9-arg C leaves, so
+  the path is measured at ITS call and not at a 0-arg leaf nested inside it), `store64`, every
+  operator class, comparisons, unary minus, `f64_exp` in the same expression, nesting at depth
+  1/2/3, an intermediate cyrius frame, and fncallN / callptr — **56 rows** — plus two axes that
+  measure THE BASE rather than a shape. **Axis (C)** sweeps the ENTRY parity over 20 argv0
+  lengths × 16 env paddings (320 runs) and requires all 320 aligned: on ELF that pins the SysV
+  guarantee, and the same probe + sweeper is the documented MANUAL DARWIN RECIPE in the header,
+  because that is the measurement that found the Mach-O entry defect. **Axis (D)** is the one
+  that WOULD HAVE CAUGHT IT WITHOUT A MAC: `CYRIUS_MACHO=1 build/cycc` cross-builds Mach-O from
+  Linux, so the emitted landing is read here as bytes — `mov r15, rsp` (49 89 E7) immediately
+  followed by `and rsp, -16` (48 83 E4 F0) — with an anti-vacuous check that the ELF build of
+  the same source does NOT carry that pair, plus a source-level fork-parity check that
+  `src/main.cyr` AND `src/main_x86_macho.cyr` both call `EALIGN_RSP_16` and both do it AFTER
+  their r15 park. The fork axis is not redundant: deleting the helper from the NATIVE fork only
+  — the partial fork edit, and the fork Intel Macs actually run — leaves the byte axis green.
+  Seven mutants for (C)/(D), each built and run, tabled in the header. ⭐ It deliberately
+  does NOT ask the compiler's new `_xdepth` counter — a check that shares the model it is
+  checking reads green, and that is not hypothetical here: making ECALLCLEAN skip the emitted
+  `pop rcx` **while still decrementing `_xdepth`** produces ZERO compile-time desync reports and
+  24 misaligned rows in this gate. (⚠ Deleting the byte AND the decrement is a DIFFERENT mutant
+  and gives 200 desync reports; the first cut of this ledger conflated the two and claimed the
+  zero-desync result for the wrong one. Both rebuilt and re-measured.) Anti-vacuous axis: a raw
+  `push rax` in an inline-asm block the compiler cannot see must make the next call read 8.
+  Fault-class axis: the last rows call a `movaps` leaf, so a regression is a SIGSEGV, not a
+  count. A second driver covers **`await`**, which needs `CYRIUS_ASYNC=1` and therefore cannot
+  live in a `.tcyr` at all — `future_force` was one of the four `ECALLPOPS`-without-`ECALLCLEAN`
+  sites, and `await` at odd depth is the shape that reaches it (6.6.4 exits 128 there, 6.6.5
+  exits 0). **Dead-row audit**: rebuilt with every `rsp_mod*` returning a constant 8, all 56 rows
+  must report — THREE did not on the first cut (two `f2(rsp_mod(), 0)`, which returns the second
+  argument, and `if (zero < rsp_mod() + 1)`, true for 0 and for 8) and are fixed here. Mutation
+  ledger of 6 in the header, all built and run.
+- `tests/tcyr/crossos/call_site_stack_alignment.tcyr` — the same row set in pure cyrius, so
+  the release gate runs it on real ecb / ach / cass / pi. The probe is `#naked`
+  (`lea 8(%rsp),%rax; and $15,%rax; ret` on x86, `mov x0,sp; and x0,#15; ret` on aarch64), with
+  a twin reading one slot higher as the anti-vacuous control: it must return 8 wherever the
+  probe returns 0, so a dead probe or an unhonoured `#naked` fails the file instead of scoring
+  a perfect pass. **64 rows**, including the shapes that reach a call at odd depth WITHOUT an
+  argument list — `defer`, after `?`, a `switch` arm, a `match` arm, an `#inline` replay, the
+  right operand of `&&` / `||`, a slice-subscript index, a capturing closure through `fncall1`
+  and `callptr`, method dispatch, operator-overload dispatch, a `derive(accessors)` setter
+  argument, `for-in` and `while` bodies, statement-position `fncall1`/`callptr` recorded through
+  a global — and `align_probe5/7/9`, which measure the >4 (Win64) / >6 (SysV) marshalling path
+  **at its own call** rather than at a 0-arg probe nested inside it (that is the only way to see
+  the depth term of the frame parity: reverting it leaves every other row green, because a wrong
+  frame still balances). On 6.6.4: **39 of 64 rows misaligned on ELF, 24 on PE under wine** (the
+  inverted base — a different, complementary set). 15/15 assertions and 0 misaligned rows with
+  the fix on ELF, PE (wine), aarch64 (qemu) and real Intel-Mac Mach-O (ach). ⭐ **An ENTRY row**
+  was added after ach found the Mach-O entry defect: two globals initialised at top level, so
+  they are read in the gvar-init block that runs immediately after the landing — the closest a
+  cyrius program gets to process entry — asserted FIRST and named `ENTRY`, with a printed
+  diagnostic saying every MISALIGNED row below is downstream of it. Without it the defect
+  presented as eight unrelated shape failures and nothing said "entry". Proven RED two ways:
+  a mutant compiler with an unconditional `sub rsp,8` at the ELF landing (`9 passed, 6 failed`,
+  exit 6, the ENTRY block printed first), and on real ach with the Mach-O landing align deleted.
+  **Dead-row audit**: rebuilt with the probe
+  hardcoded to return 8, 63 of 64 rows report (the 64th is a deliberate loop-count control) —
+  four rows were dead on the first cut, three because the callee returned an argument the probe
+  was not in.
+- `scripts/cross-os-libtest-runner.sh` **sweeps 15 consecutive argv0 LENGTHS** for a test
+  that declares `@rerun-argv-parity` in its header. The runner names every binary `./_lt`,
+  i.e. it sampled exactly ONE argv0 length, and on Darwin x86_64 the process entry rsp parity
+  is a function of the argv/env byte count — so the leg's verdict was about one configuration
+  while being reported as a verdict about the host. That is how the Mach-O entry defect above
+  came within one byte of shipping green. ⛔ **A single second name was tried first and was
+  MEASURED VACUOUS**: a fixed 20-byte suffix landed on the same parity as `_lt` at every one
+  of ten env paddings on ach, so it would have shipped sampling one parity twice. The relation
+  between two lengths is host- and kernel-dependent; 15 consecutive lengths cannot all share a
+  parity. Opt-in per test rather than blanket, because the corpus does real file and socket
+  I/O and not every test is idempotent, and the marker lives in the TEST so it survives a
+  rename. **Mutation-proven END TO END through the runner on ach**, over 16 env paddings
+  against a compiler built from this tree with `EALIGN_RSP_16` removed: with the marker
+  removed — i.e. the single-name behaviour this replaces — **8 of the 16 environments report
+  `__LIBTEST_SUMMARY__ 1 0`, GREEN, on a compiler misaligned at every call site half the
+  time.** A coin flip decided whether this leg found the Mach-O defect or shipped it. With the
+  marker, at one of those green paddings, the runner reports
+  `(PASSED as ./_lt, rc=6 as ./_ltzzz — the process entry alignment depends on argv/env
+  SIZE)`; with the fixed compiler at the same padding it is green again.
+- `tests/tcyr/crossos/nested_call_value_regressions.tcyr` — the same audit's WRONG-VALUE
+  defects, whose expected values are hand-computed arithmetic: slice subscript and capturing
+  closure in argument 2, 5/6-arg tail calls, `fncallN` on a capturing closure in statement
+  position, and an `open`/`write` reached through a wrapper at odd depth (the CreateFileW
+  shape). 6.6.4 SIGSEGVs on this file on ELF, on aarch64 under qemu, and faults under wine;
+  15/15 with the fix on all three. The wrong values it pins are ADDRESSES, not stable numbers —
+  measured once on 6.6.4/wine: the slice-subscript loop gave 543,200,560,963 where 1,527 is
+  right, the closure loop 536,874,676,542 where 1,626 is right, `tail5()` 95,680,724 where 74 is
+  right — so no assertion can be written against the wrong value, and every one of them would
+  have satisfied a "not zero" check.
+- `tests/gates/platform/ffi_stack_protected_extern_c.sh` part **(C)**: the v6.3.26 gate called
+  `fncall4..7` at TOP LEVEL only, in left-operand position, where nothing is pending — so every
+  call it made was aligned while `f(0, fncallN(...))` was not, and its conclusion ("16-byte
+  alignment into extern C is correct") was cited in cyrius's own docs. Its gcc callees DO use
+  aligned SSE, so the missing coverage was positions, not callees. (C) adds argument-2,
+  `store64`, operator-operand and via-one-cyrius-frame positions for the same stack-protected
+  `sum4`/`sum7`: green on the fix, SIGSEGV on 6.6.4 while (A) and (B) still pass. Also closed a
+  hole shared by all three parts: each compile checked only cycc's exit status, and an EMPTY
+  executable file "runs" as an empty `sh` script and exits 0 — measured with a stub compiler that
+  drains stdin and exits 0, the whole gate reported PASS(A) PASS(B) PASS(C) PASS, rc=0. `[ -s ]`
+  after each compile; the stub now fails at the first one.
+- `_efi_entry_alignment_gate()` in `programs/checks/platform_efi.cyr` (check.sh 246 → **248**):
+  the UEFI half of this fix asserted on EMITTED BYTES — the entry-rsp park anchored to the seed
+  and the seed to the EFI argument save, the efi_main trampoline frame `0x20` present AND `0x28`
+  absent, the `add rsp,0x20; mov rsp,r13; ret` fall-through tail, the parser route
+  (`add rsp,8; mov rsp,r13; ret`, with an anti-vacuous twin requiring that anchored form to be
+  ABSENT from a fall-through-only image), **axis 3d — a `syscall(60, x)` INSIDE a fn body,
+  counted rather than found (that image has TWO firmware returns, so `mov rsp,r13; ret` must
+  appear twice)** — and `programs/efi_probe.cyr`'s deliberately asymmetric
+  `sub 0x20 / call / add 0x28`.
+  ⭐ It exists because **OVMF tolerates a misaligned CALL and only the RETURN faults**: of the
+  five one-line reverts in its ledger, one is completely invisible to both boots. ⛔ And axis 3d
+  exists because the first cut of this release shipped exactly the mutant it catches — the
+  restore emitted at top level only — and every gate that existed then was green over it; the
+  ledger carries that compiler as a row (axis 3d RED, axes 1/2/3/3b/3c green, probe boot PASS).
+- `_efi_ovmf_fn_exit_gate()` + `programs/efi_fn_exit_probe.cyr` — a SECOND OVMF boot, of an
+  image that prints via ConOut from inside a fn and then exits from inside that fn.
+  `programs/efi_probe.cyr` returns from its own hand-written `ret` and never reaches cycc's
+  EEXIT, so the smoke gate below has never once tested how the COMPILER ends a UEFI image. The
+  route is not exotic: `lib/bounds.cyr` and `lib/alloc.cyr` abort with `syscall(60, …)` from
+  inside fn bodies. Ledger: 6.6.4 prints then #UD; the 6.6.5 first cut prints then #GP; shipped
+  6.6.5 prints, returns, and the firmware draws its boot menu. The third assertion is
+  "Please select boot device" AFTER the print — firmware's own UI, which only appears if control
+  came back; a gate that stopped at "it printed" would be green on all three rows.
+  The OVMF smoke gate itself now asserts survival too — it used to end `| grep -q 'hello, uefi'`,
+  which is the PRINT and not the RETURN, and returned 0 on an image that printed and then #UD'd;
+  it now also requires no `X64 Exception` and a post-return marker, with a distinct exit code
+  per failure. Both gates share one `_efi_ovmf_boot` pipeline.
+- A compile-time `_xd_check` at the PARSE_STMT / PEXPR / PARSE_TERM / PARSE_FACTOR / PARSE_FN_DEF
+  chokepoints reports an expression-stack desync as an internal error and re-syncs (it never
+  exits: being wrong about the model must not stop an otherwise-correct compile). Zero reports
+  compiling cycc itself, the 314-file corpus, `lib/`, `programs/`, benches, fuzz and
+  `cbt/cyrius.cyr`, on both the ELF and the PE target.
 - `tests/gates/codegen/simd_intrinsic_operand_slots.sh` axes **0, A–G** (the gate was already
   registered in check.sh): **A** 22 spellings covering all 19 kernels behind a nested replay,
   exact hand-worked lane values, picker on and off (the off build as an independent oracle),
@@ -124,11 +414,21 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
   guard): this file runs on four hosts in the release gate, and an unused include is cross-target
   surface that can turn the gate red for a reason the test does not pin.
 
-**cycc:** 1,251,944 B, unchanged on disk (page-aligned); `.text` 1,097,472 → 1,097,456 B (−16).
-self_compile within noise of 6.6.4 (interleaved blocks of 5, means 745 ms vs 744 ms); the
-predicate call sits behind a `0x48` fast reject in the two per-byte walks, which took it from
-+0.7 % to that, and the cx gate is a hoisted local — the two per-byte walks read `bp_x86` where
-they used to read the `_AARCH64_BACKEND` global, so they gained nothing per byte.
+**cycc:** 1,251,944 → **1,260,296 B**; `.text` 1,097,472 → 1,104,752 B (re-derived from the
+shipped binary with `size -A` / `readelf -S` / `llvm-objdump -h`, all three agreeing on
+0x10DB70 — an earlier draft said 1,104,424, recorded before the last round of edits; the file
+size did not move because those bytes fit inside the text segment's page padding). The codegen cost is
+separable and was measured on its own: the 6.6.5 compiler compiling the UNMODIFIED 6.6.4 source
+gives `.text` +3,336 B = **1,668 padded call sites × 2 bytes**, the rest being the new emitter
+and checker code. self_compile is unchanged (interleaved blocks of 5: 752/755 ms both
+compilers) — the pad is two bytes on a path that was already a call. cycc_win 1,161,728 →
+1,166,848 B. ⚠ This release's bytes are NOT comparable to 6.6.4's per-binary: 369 of 423 corpus
+binaries change, by construction (every odd-depth call gains its pad). aarch64 output is NOT
+byte-identical either (80 of 317, from the shared-frontend statement-`fncallN` lowering — see
+the Fixed entry); cx output over the corpus cx can build is.
+
+*(bite 1's numbers, for the record: `.text` 1,097,472 → 1,097,456 B (−16), file size unchanged;
+its self_compile was 745 vs 744 ms.)*
 
 ## [6.6.4] — 2026-09-14
 

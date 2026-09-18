@@ -818,8 +818,18 @@ fn PARSE_RETURN(S): i64 {
                             # PARSE_FNCALL (no double-fire); the most common call
                             # form, so covering it closes the bulk of the hole.
                             _CHECK_ARITY(S, _tc_line, tcnoff, tcfi, tcargc, 1);
-                            if (tcargc > 6) {
-                                # >6 args: normal call (stack args clobbered by tail call epilogue)
+                            # ⛔ 6.6.5 — this said `tcargc > 6`, the SysV register ceiling, on
+                            # every target. On Win64 the ceiling is 4, so `return f5(...)` and
+                            # `return f6(...)` took the TAIL-CALL branch: ETAILJMP's `mov rsp,rbp`
+                            # tore down the frame ECALLPOPS had just written the stack arguments
+                            # into, and the callee read whatever was above the old frame. Silent
+                            # wrong values on real Windows (measured: 0 where 3 was right), and
+                            # the reason frontend/expr_in_fn_args and stdlib/flags failed as PE.
+                            # `_ARG_REG_COUNT()` is the same function the closure ABI uses, so
+                            # the two cannot drift. CHANGELOG [6.6.5]
+                            if (tcargc > _ARG_REG_COUNT()) {
+                                # over the register ceiling: normal call (stack args would be
+                                # clobbered by the tail-call epilogue)
                                 var foff2 = L64(_fnt_offsets + tcfi * 8);
                                 if (foff2 >= 0) { ECALLTO(S, foff2); }
                                 else { ECALLFIX(S, tcfi); }
@@ -3404,6 +3414,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     EPUSHR(S);
     ECALLPOPS(S, 1);
     ECALLFIX(S, alloc_fi);
+    ECALLCLEAN(S, 1);   # 6.6.5: was missing (see ECALLCLEAN)
     var obj_slot = pc;
     S64(S + 0x5D9D000 + obj_slot * 8, 0 - 1);
     SLDEP(S, obj_slot, 0);
@@ -3538,8 +3549,23 @@ fn _fileid_dump_arm(): i64 {
 # three chokepoints. See _rd_enter (src/common/util.cyr).
 fn PARSE_FN_DEF(S): i64 {
     _rd_enter(S);
+    # 6.6.5 — a fn body is emitted with its OWN frame, so its expression depth starts at 0
+    # regardless of where the definition was encountered. That matters because a body can be
+    # emitted MID-EXPRESSION: a closure literal in an argument position emits the closure's
+    # body inline. Save, zero, check against 0 on the way out, restore.
+    var _xd_outer = _xdepth;
+    _xdepth = 0;
+    # ⚠ 6.6.5 — there is deliberately NO UEFI firmware-return flag saved/zeroed here. One
+    # was, for a round: the reasoning was "a `ret` inside a body returns to the cyrius
+    # caller, not to firmware", which is true of a RETURN but not of an EXIT —
+    # `syscall(60, x)` in a fn body must still reach firmware, and with the flag cleared it
+    # emitted a bare 0xC3 at `rbp - fsz` and #GP'd under OVMF. EEXIT restores the parked
+    # entry rsp instead, which is depth-independent, so there is nothing per-body to track.
+    # See src/common/util.cyr for the whole post-mortem. CHANGELOG [6.6.5]
     var _rf = _PARSE_FN_DEF_IMPL(S);
     _rd_exit();
+    _xd_check(S, 0, "fn body");
+    _xdepth = _xd_outer;
     return _rf;
 }
 
@@ -3825,6 +3851,15 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     var _ra_cap = 5;
     if (_TARGET_MACHO == 1) { _ra_cap = 4; }
     if (_TARGET_AGNOS == 1) { _ra_cap = 4; }
+    # 6.6.5: a UEFI image parks the firmware entry rsp in r13 at the landing (see the
+    # `lea r13, [rsp]` in src/main.cyr) because EEXIT returns to firmware with
+    # `mov rsp, r13; ret` from ANY depth. The save list is rbx(0), r12(1), r13(2), r14(3),
+    # r15(4), so capping at 2 is what reserves r13 — pick it for a hot local and an
+    # `syscall(60, …)` anywhere under that fn jumps to a local's value. It also finally
+    # reserves r14/r15, which have carried ImageHandle/SystemTable since v5.11.52 while
+    # being assignable. EFI images are small; two callee-saved regs is not a real cost.
+    # CHANGELOG [6.6.5]
+    if (_TARGET_EFI_APPLICATION == 1) { _ra_cap = 2; }
     if (_regalloc_pending == 1) {
         # CO-03 (v6.1.34): #regalloc is x86-only (the post-body byte-peephole
         # picker). The AUTO path gates on `_AARCH64_BACKEND == 0` above; the
