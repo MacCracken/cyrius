@@ -95,9 +95,26 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
                 status=1
             fi
             ;;
-        build/cc5|build/cycc-native-aarch64)
-            if [ "$size" -lt 100000 ] || [ "$size" -gt 1500000 ]; then
-                _fail "$bin size ${size}B outside the expected 100K–1.5M range — refusing commit"
+        build/cc5)
+            # The PRIOR-MAJOR compiler (5.11.69, 874,232 B), kept as a break-glass
+            # reference and NOT in the bootstrap chain. It is frozen: it should not
+            # change at all until the v7.0.0 slot rotation, so the band is tight.
+            if [ "$size" -lt 700000 ] || [ "$size" -gt 1100000 ]; then
+                _fail "$bin size ${size}B outside the expected 700K–1.1M range (frozen prior-major) — refusing commit"
+                status=1
+            fi
+            ;;
+        build/cycc-native-aarch64)
+            # ⚠ This one TRACKS the current compiler — it is cycc built for ARM, so its
+            # size follows build/cycc's, and its band must too. It was 100K–1.5M, a band
+            # set while the binary sat frozen at 940,536 B from 2026-07-02 (v6.3.35): the
+            # bound stopped being a corruption check and became a staleness lock-in, and it
+            # blocked the 6.6.5 regeneration that a release gate should have forced long
+            # before. Same 700K–2M reasoning as build/cycc above; aarch64 runs ~15% larger
+            # than x86 (1,505,480 vs 1,293,880 at 6.6.5), which the upper bound allows for.
+            # CHANGELOG [6.6.5]
+            if [ "$size" -lt 700000 ] || [ "$size" -gt 2000000 ]; then
+                _fail "$bin size ${size}B outside the expected 700K–2M range — refusing commit"
                 status=1
             fi
             ;;

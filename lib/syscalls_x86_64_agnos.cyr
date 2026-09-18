@@ -618,6 +618,26 @@ fn sys_chdir(path): i64 { return 0 - 38; }
 # guessing a number here is the worst available option. CHANGELOG [6.5.7]
 fn sys_fchownat(dirfd, path, uid, gid, flags): i64 { return 0 - 38; }
 
+# ── v6.6.5: agnos peers for the new lib/syscalls_linux_common.cyr wrappers.
+# ⛔ NO `SYS_*` LINUX CONSTANT IS DECLARED FOR ANY OF THESE, deliberately. agnos owns its
+# own syscall space and the Linux numbers land on live, unrelated calls here: #44 is
+# sched_yield, #46 time_unix, #47 sock_connect (which BLOCKS ~8 s), #76 blk_open and #77
+# blk_read — so minting `SYS_FTRUNCATE = 77` on this peer would make a portable
+# `sys_ftruncate(fd, len)` issue a raw block-device READ. Explicit -38/-ENOSYS stubs, the
+# same shape sys_fchownat above takes and for the same measured reason.
+# Send a message over a socket. agnos has no msghdr surface; sock_send(#48) is the peer,
+# and it takes a flat (conn_id, buf, len) — not a renumber of this call.
+fn sys_sendmsg(fd, msghdr, flags): i64 { return 0 - 38; }
+# Send a datagram to an address. agnos sockets are connection-id based (sock_connect +
+# sock_send); there is no unconnected send-to-address form.
+fn sys_sendto(fd, buf, len, flags, dstaddr, dstaddrlen): i64 { return 0 - 38; }
+# Set a file's length by descriptor. agnos has no truncate family.
+fn sys_ftruncate(fd, length): i64 { return 0 - 38; }
+# Set a file's length by path. agnos has no truncate family.
+fn sys_truncate(path, length): i64 { return 0 - 38; }
+# Create an anonymous in-memory file. agnos has no memfd; shared memory is sys_mmap.
+fn sys_memfd_create(name, flags): i64 { return 0 - 38; }
+
 # at-family constants. The Linux values, defined here so the PORTABLE surface is
 # complete: this peer is STANDALONE (it does not include syscalls_linux_common.cyr,
 # where these live for the Linux/macOS peers), so without them a consumer calling
@@ -1347,6 +1367,15 @@ fn sys_uptime_ms(): i64 { return syscall(SYS_UPTIME_MS); }
 # Block the caller ~ms ms (#41; halts until the 100 Hz tick, capped 1 h).
 # Returns 0. Drives chrono.cyr's agnos sleep_ms. Guard ms<=0 at call sites.
 fn sys_sleep_ms(ms): i64 { return syscall(SYS_SLEEP_MS, ms); }
+# v6.6.5 — sleep for a `struct timespec` ({tv_sec, tv_nsec} at +0/+8), the portable
+# spelling the Linux/macOS/PE peers all carry. REAL on agnos rather than a stub: #41
+# sleep_ms is the honest peer, so this converts to flat ms exactly as the PE backend's
+# ENANOSLEEP_PE reroute does. `rem` is unused — #41 does not report a short sleep.
+fn sys_nanosleep(req, rem): i64 {
+    var ms = load64(req) * 1000 + load64(req + 8) / 1000000;
+    if (ms <= 0) { return 0; }
+    return syscall(SYS_SLEEP_MS, ms);
+}
 
 # Raw TCP. sock_connect(#47) does socket()+connect() in one and BLOCKS
 # ~8s; dst_ip is the kernel ip4() form (oct1<<24)|…|oct4 (net.cyr byte-

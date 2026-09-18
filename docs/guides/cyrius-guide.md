@@ -2554,6 +2554,55 @@ Portable patterns to support all targets: use the dispatch files (`lib/syscalls.
 `lib/alloc.cyr`, `lib/args.cyr`, `lib/process.cyr`), which handle the `#ifdef`
 branching internally. Avoid platform-specific syscall numbers, flags, or struct layouts.
 
+⛔ **A RAW SYSCALL NUMBER IS THE SINGLE MOST PORTABLE-LOOKING THING THAT IS NOT PORTABLE, and
+ELF-aarch64 will not tell you.** The aarch64 backend rewrites the x86_64 numbers it knows
+(`ESYSXLAT`, a hand-written chain — derive its row count from the source, never quote it) and passes everything else through to the `svc` verbatim — by design,
+because a native aarch64 number must survive. So an unrecognised number is not an error, it is
+a *different, valid syscall*. Measured under `qemu-aarch64 -strace` before v6.6.5: raw 77
+(x86 `ftruncate`) ran **tee**, raw 46 (`sendmsg`) ran **ftruncate**, raw 44 (`sendto`) ran
+fstatfs, raw 35 (`nanosleep`) ran `unlinkat(0, NULL, 0)`, raw 87 (`unlink`) ran
+timerfd_gettime and raw 83 (`mkdir`) ran fdatasync. The build succeeded and printed nothing.
+
+The rules, in order:
+
+1. **Spell the `SYS_*` name from `lib/syscalls.cyr`.** Each peer defines it as the right
+   number for that target, and the wrapper (`sys_ftruncate`, `sys_sendmsg`, `sys_nanosleep`, …)
+   also carries the macOS/Windows/agnos arm where the call does not exist. This is the answer
+   for the six x86 numbers cyrius deliberately does NOT route, because aarch64's native
+   meaning for each is a call somebody uses: **24** (`sched_yield` on x86, **dup3** on
+   aarch64), **53** (`socketpair` / fchmodat), **52** (`getpeername` / fchmod), **21**
+   (`access` / epoll_ctl), **90** (`chmod` / capget) and **17** (`pread64` / getcwd).
+2. **If you must write a number, write the x86_64 one.** That is the supported convention —
+   cyrius's own `enum Sys` does it — and `ESYSXLAT` renumbers it. A number the chain routes is
+   silent; a number it does not is reported by name (`raw syscall 294 is x86_64
+   \`inotify_init1\`; on ELF-aarch64 that number is …`), *provided both Linux peers declare a
+   `SYS_*` for it*. An UNNAMED number gets no diagnostic at all — that is the gap v6.6.5
+   closed, and it is why rule 1 comes first.
+3. **Never write the aarch64-native number under an `#ifdef CYRIUS_ARCH_AARCH64`.** It looks
+   like the careful thing to do and it is the fragile one: a compat row matches a NUMBER and
+   cannot tell your native number from the x86 number it is chasing, so a routing row added
+   later silently steals it. ⚠ This applies to a **variable** syscall number too — the chain
+   runs on the value in `x8` at run time, so `var n = 83; syscall(n, fd);` is rewritten
+   exactly as a literal would be. ⚠ It also applies to a `SYS_*` you declare in your OWN
+   `enum` — measured at v6.6.5, `lib/yukti.cyr` declares `SYS_STATFS = 43` under exactly this
+   guard and the `43 → 202` socket row makes every call `accept()`.
+   In-tree all three shapes — a `SYS_*` declaration, any identifier assigned a literal that is
+   then a syscall's first argument, and a bare `syscall(<literal>)` — are enforced by
+   `tests/gates/platform/aarch64_syscall_shadow.sh` (axes 2 and 3), across `src/`, `lib/`,
+   `cbt/`, `programs/`, `tests/`, `benches/` and `fuzz/`. cyrius's own compiler source was
+   breaking this rule when the rule was written: `src/backend/common/runtime.cyr` issued
+   `syscall(113, …)` for aarch64 `clock_gettime` until review round 2 of that same release.
+4. **One routed call is not an exact synonym: `dup2`.** Raw x86 `33` is renumbered to
+   aarch64 `dup3(oldfd, newfd, 0)` because aarch64-Linux dropped `dup2`. Every case agrees
+   except the self-dup idiom: `dup2(fd, fd)` returns `fd`, while `dup3(fd, fd, 0)` returns
+   `-EINVAL`. If your fd-shuffling loop leans on the self-dup, branch on `old == new`. It is
+   still far better than the alternative — untranslated, aarch64 33 is `mknodat`, which would
+   read your fds as `(path, mode)`.
+
+Same trap on the other side: `var SYS_FOO = <x86 number>` in your own source SHADOWS the
+stdlib's arch-aware definition (last definition wins), so it is right on x86 and wrong
+everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
+
 ### Capabilities and Limitations
 
 **Works on agnos**:

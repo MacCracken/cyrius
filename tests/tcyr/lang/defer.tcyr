@@ -19,7 +19,11 @@ test_defer_basic();
 var buf = alloc(32);
 var n = file_read_all("/tmp/cyrius_defer_t1", buf, 31);
 assert_eq(n, 2, "defer wrote+closed");
-syscall(87, "/tmp/cyrius_defer_t1");
+# v6.6.5: the bare x86 fs numbers (unlink 87, rmdir 84) were raw literals here. On
+# ELF-aarch64 87 is timerfd_gettime and 84 is sync_file_range, so this cleanup did
+# NOTHING on ARM and left the fixtures behind. ESYSXLAT routes both now, but the
+# stdlib name is the spelling a test should model. CHANGELOG [6.6.5]
+sys_unlink("/tmp/cyrius_defer_t1");
 
 test_group("defer LIFO");
 fn test_defer_lifo() {
@@ -36,7 +40,7 @@ var n2 = file_read_all("/tmp/cyrius_defer_t2", buf2, 31);
 store8(buf2 + n2, 0);
 assert_eq(n2, 4, "lifo 4 bytes");
 assert_eq(streq(buf2, "0ABC"), 1, "lifo order 0ABC");
-syscall(87, "/tmp/cyrius_defer_t2");
+sys_unlink("/tmp/cyrius_defer_t2");
 
 test_group("defer with return value");
 fn test_defer_retval() {

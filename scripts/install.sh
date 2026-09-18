@@ -388,7 +388,24 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
                 # _rebuild_stale and let `cyrius pulsar` handle the
                 # native build chain. The binary stays committed
                 # (.gitignore whitelist) so a stale x86-host install
-                # still has a usable native binary in lockstep.
+                # still has a native binary to fall back on.
+                #
+                # ⛔ v6.6.5 — "in lockstep" IS WHAT THIS LINE USED TO CLAIM, AND IT WAS NOT
+                # TRUE. Nothing in this script, in the release gate, or in CI rebuilds it:
+                # the pi leg builds its compilers fresh from source, so a stale tracked binary
+                # is invisible to every gate while `--refresh-only` copies it into
+                # versions/<v>/bin/ and verify-store.sh restores it from the tag. It was found
+                # 2.5 months and ~60 releases stale at the 6.6.5 review (940,536 B from
+                # 2026-07-02 against 1,505,480 B from the tree), and by then it was not merely
+                # old but WRONG: 6.6.5 moved the aarch64 peer's SYS_UNLINKAT from 35 to 263,
+                # so the stale emitter had no 263→35 row and `sys_unlink` compiled against the
+                # 6.6.5 stdlib traced as `fanotify_mark` under qemu-aarch64 -strace.
+                # ⭐ REGENERATE IT IN ANY RELEASE THAT TOUCHES src/backend/aarch64, the
+                # ESYSXLAT chain or the syscall peers. It is deterministic and local, no ARM
+                # hardware needed (the second step runs the aarch64 binary only if you want to
+                # verify it; qemu-aarch64 is enough for that):
+                #   ./build/cycc < src/main_aarch64.cyr > build/cycc_aarch64
+                #   build/cycc_aarch64 < src/main_aarch64_native.cyr > build/cycc-native-aarch64
                 : ;;
             cycc_win)
                 # v6.0.50: unfreeze the PE compiler. Build cycc_win from

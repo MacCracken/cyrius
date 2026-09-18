@@ -1147,6 +1147,19 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 186, 0x2000174);  # gettid    186 → thread_selfid 372
     _msx(S, 45,  0x200001D);  # recvfrom  45  → 29
     _msx(S, 47,  0x200001B);  # recvmsg   47  → 27
+    # v6.6.5: the SEND side of the band, plus truncate. lib/syscalls_macos.cyr now declares
+    # SYS_SENDMSG/SYS_SENDTO/SYS_TRUNCATE (the x86-Linux numbers, this peer's convention),
+    # and lib/syscalls_linux_common.cyr's new wrappers issue them — untranslated they reach
+    # Darwin unprefixed and SIGSYS the process, the v6.5.15 fchmod shape.
+    # ⭐ THE BSD NUMBERS ARE BRACKETED BY ROWS THIS TABLE ALREADY CARRIES, which is a second,
+    # independent derivation rather than a transcription: 27 recvmsg and 29 recvfrom are two
+    # rows above, so 28 between them is sendmsg; 134 shutdown (48→134) and 135 socketpair
+    # (53→135) are present, so 133 below them is sendto; 199 lseek (8→199) and 201 ftruncate
+    # (77→201) are present, so 200 between them is truncate. All six neighbours were verified
+    # on real ach/ecb hardware when their rows landed. ftruncate 77→201 already existed.
+    _msx(S, 46,  0x200001C);  # sendmsg   46  → 28
+    _msx(S, 44,  0x2000085);  # sendto    44  → 133
+    _msx(S, 76,  0x20000C8);  # truncate  76  → 200
     _msx(S, 105, 0x2000017);  # setuid    105 → 23
     _msx(S, 106, 0x20000B5);  # setgid    106 → 181
     _msx(S, 112, 0x2000093);  # setsid    112 → 147
@@ -1274,11 +1287,20 @@ fn EMACHO_CLOCK_X86(S): i64 {
 # lost (poll's timeout is an int ms); every caller in-tree sleeps >= 1 ms, and a coarse
 # sleep is what the PE fork has always done via Sleep().
 #
-# ⚠ NOT a concern on aarch64-macOS, and the reason is worth recording: source 35 there is
-# already routed — to **unlinkat 472** (the aarch64 peer's SYS_UNLINKAT is 35). A raw
-# syscall(35, &ts, 0) on that target would silently attempt an unlink through a timespec
-# pointer rather than sleeping. sakshi's window is inside `#ifdef CYRIUS_ARCH_X86`
-# (aarch64 calibrates off CNTFRQ_EL0 with no syscall), so nothing reaches it today.
+# ⚠ v6.6.5 — THIS NOTE USED TO SAY raw 35 was "not a concern on aarch64-macOS" because it
+# was "already routed — to unlinkat 472". That routing was the CONCERN, not the absence of
+# one: a raw syscall(35, &ts, 0) on that target silently attempted an unlink through a
+# timespec pointer rather than sleeping, and the note wrote the hazard down as reassurance.
+# Fixed in the same patch that named nanosleep in the peers: the aarch64 peer's
+# SYS_UNLINKAT moved to the x86 number 263, freeing source 35, and ESYSXLAT's arm64-macOS
+# branch now carries EMACHO_NANOSLEEP_ARM — the twin of the emitter below. Raw 35 sleeps on
+# every target cyrius supports. CHANGELOG [6.6.5]
+#
+# ⚠ AND THAT CLAIM IS EXERCISED, which it was not when first written: the raw-35 timing
+# assertion in tests/tcyr/crossos/syscall_shm_fd_passing.tcyr sat inside
+# `#ifdef CYRIUS_TARGET_LINUX`, so the release gate's ecb and ach legs never ran it and these
+# twelve words and EMACHO_NANOSLEEP_ARM's were covered by nothing on any host. It is
+# unguarded now. A claim scoped to one target by an #ifdef is not a tested claim.
 #
 # Stack top-down (argc==3): [arg2=rem][arg1=&timespec][sc_num=35].
 fn EMACHO_NANOSLEEP_X86(S): i64 {

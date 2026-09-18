@@ -78,7 +78,13 @@ fn main(): i64 {
     test_group("sock_send on a real socketpair — the filed measurement, now zero");
     # socketpair(AF_UNIX=1, SOCK_STREAM=1, 0, sv). Skipped rather than failed if unavailable,
     # so the Result half above still runs on a host without AF_UNIX.
-    if (syscall(53, 1, 1, 0, &sv) >= 0) {
+    # ⛔ v6.6.5: this was a raw `syscall(53, ...)`, and on ELF-aarch64 53 is **fchmodat** —
+    # deliberately not routed, because the peer declares it. So the call failed, the skip
+    # branch was taken, and THIS ENTIRE GROUP SILENTLY DID NOT RUN on aarch64: a
+    # zero-allocation claim that was never measured there. The wrapper picks 53 or 199 per
+    # arch. A test whose oracle can be skipped by an unrelated portability bug is a test
+    # that reports green over nothing. CHANGELOG [6.6.5]
+    if (sys_socketpair(1, 1, 0, &sv) >= 0) {
         var wfd = load64(&sv) & 0xFFFFFFFF;
         var b3 = alloc_used();
         i = 0;

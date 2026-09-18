@@ -72,6 +72,9 @@ allow_reason() {
     SYS_LANDLOCK_ADD_RULE|SYS_LANDLOCK_CREATE_RULESET|SYS_LANDLOCK_RESTRICT_SELF)
                       echo "both|Landlock is a Linux LSM; Darwin sandboxing is Seatbelt, no syscall peer" ;;
     SYS_SECCOMP)      echo "both|seccomp is Linux-only; no Darwin peer" ;;
+    SYS_MEMFD_CREATE) echo "both|Darwin has no memfd_create at all (the nearest thing is shm_open, a named object in a global namespace, not a bare fd). lib/syscalls_linux_common.cyr's sys_memfd_create declines with -78 under #ifdef CYRIUS_TARGET_MACOS, so neither backend ever emits 319/279 — the sys_utimensat shape (v6.6.5)" ;;
+    SYS_NANOSLEEP|SYS_SCHED_YIELD)
+                      echo "both|Darwin has neither as a syscall (nanosleep and sched_yield are libsystem calls over __semwait_signal / swtch_pri). The shared wrappers COMPOSE them from poll(7), which IS routed on both backends (7 → BSD 230), under #ifdef CYRIUS_TARGET_MACOS — so the peers' 35/101 and 24/124 are never emitted there. ⚠ Raw x86 35 is separately rerouted to the same poll by EMACHO_NANOSLEEP_X86 (x86) and EMACHO_NANOSLEEP_ARM (arm64), which is why it does not appear as an unrouted literal either (v6.6.5)" ;;
     SYS_PIDFD_OPEN)   echo "both|pidfd is Linux-only; no Darwin peer" ;;
     SYS_TIMERFD_CREATE|SYS_TIMERFD_SETTIME)
                       echo "both|Darwin has no timerfd; timers are kqueue EVFILT_TIMER, a different API" ;;

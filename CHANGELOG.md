@@ -10,6 +10,231 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
 
 ### Fixed
 
+- ⛔ **`memfd_create`, `ftruncate`, `sendmsg` and eleven more had NO STDLIB NAME, so their
+  x86_64 numbers reached the ELF-aarch64 `svc` unchanged and ran DIFFERENT syscalls — clean
+  build, no warning** (filed by thoth 2026-09-17 against its Wayland window;
+  `issues/archived/2026-09-17-thoth-memfd-ftruncate-sendmsg-unnamed-pass-through-on-aarch64.md`).
+  Measured under `qemu-aarch64 -strace` with the 6.6.4 compiler, matching the filing verbatim:
+  raw 319 was **ENOSYS**, raw 77 (`ftruncate`) ran **tee**, raw 46 (`sendmsg`) ran
+  **ftruncate**. The build printed nothing because the v6.5.51 raw-literal diagnostic derives
+  its table from names declared in BOTH Linux peers — an UNNAMED number is structurally
+  invisible to it, so the one class the diagnostic was built for was the one it could not see.
+  **Three gaps, not one:** no names in the peers, no ESYSXLAT rows, and a diagnostic that
+  cannot reach either. ⚠ The filing's own fix sketch was wrong in one place and the report
+  corrected it: `src/common/syscall_xlat.cyr` is the DIAGNOSTIC table and is never consulted
+  at emit time, so naming the calls renumbers nothing — ESYSXLAT is a hand-written chain and
+  the rows had to be added by hand.
+  **Wider than filed.** An ecosystem scan (141 repos, 7,296 syscall sites) found 467
+  arch-neutral unrouted sites whose x86 meaning differs on aarch64. The same shape covers the
+  whole send side of the socket band (`sendto` 44 → fstatfs, `recvfrom` 45 → truncate,
+  `recvmsg` 47 → fallocate), `truncate` 76 → splice, `nanosleep` 35 → unlinkat(0,NULL,0), and
+  the bare-name fs calls aarch64 dropped (`mkdir` 83 → fdatasync, `rmdir` 84 →
+  sync_file_range, `unlink` 87 → timerfd_gettime, `readlink` 89 → acct, `dup2` 33 → mknodat)
+  — about sixty ecosystem sites, mostly test cleanup that therefore silently did nothing on
+  ARM. In-tree it was live in four places, including
+  `tests/tcyr/stdlib/result_allocator_via.tcyr`, whose raw `syscall(53, ...)` (aarch64
+  fchmodat) failed and took the test's own "skipped rather than failed" branch, so its
+  zero-allocation group **never ran on aarch64 at all**.
+  **Fix:** fourteen names in each Linux peer plus the macOS, Windows and agnos peers; seven
+  new shared wrappers (`sys_sendmsg` / `sys_sendto` / `sys_ftruncate` / `sys_truncate` /
+  `sys_memfd_create` / `sys_nanosleep` / `sys_sched_yield`); fourteen new ESYSXLAT rows on the
+  ELF arm and twelve on the two Mach-O backends. ⛔ The agnos peer gets stubs and **no Linux
+  constants**: #44 is its sched_yield, #46 time_unix, #47 sock_connect (which blocks ~8 s),
+  #76 blk_open and #77 blk_read, so a minted `SYS_FTRUNCATE = 77` there would issue a raw
+  block-device read. `SYS_UNLINKAT` moved 35 → 263 on the aarch64 peer (the documented
+  borrow-the-x86-number pattern) because native 35 is now the compat nanosleep row; without
+  the companion 263→35 row, `sys_unlink` SLEEPS — the existing corpus catches that (8
+  assertions across three crossos tests, measured).
+  ⚠ **The ROW ORDER is load-bearing in three places at once** and the chain has no early
+  exit: nanosleep 35→101 must precede everything that produces 35, ftruncate 77→46 must
+  follow sendmsg 46→211, truncate 76→45 must follow recvfrom 45→207. Swapping the
+  sendmsg/ftruncate pair fails **12** assertions (measured under qemu-aarch64: 40 passed,
+  12 failed, exit 12 — this entry and the gate header both said 6 until review round 2
+  measured it). `tests/gates/platform/esysxlat_row_order.sh` now enforces the property.
+  ⛔ Six numbers are DELIBERATELY left unrouted, each because aarch64's native meaning is a
+  call the ecosystem uses: 24 sched_yield (aarch64 24 IS dup3), 53 socketpair (fchmodat),
+  52 getpeername (fchmod), 21 access (epoll_ctl), 90 chmod (kybernet declares native
+  capget = 90), 17 pread64 (getcwd, and a product of the 79→17 row). The wrapper is the answer
+  there, which is why `sys_sched_yield` exists.
+  ⛔ **NINE MORE FAMILIES consumers hand-roll are NOT shipped, and are named here rather than
+  left in an archived file** (review round 2 — a deferral is real only when it is pinned
+  somewhere still open): `capget`/`capset`, `chroot`, `unshare`, `process_vm_readv`/`writev`
+  (no technical blocker, held as API surface nobody filed for, each needing a Darwin
+  route-or-decline on a slot with an ecb/ach leg), and `ptrace`, `sched_getaffinity`,
+  `pread64`/`pwrite64`, the `rlimit` family (real blockers — two collide with row PRODUCTS,
+  one needs the ≥1000 alias band, one is an arg-shifting row). Per-family reasons, consumers
+  and collision analysis: the table in the archived issue, "Not fixed, deliberately — (b)";
+  pinned in `docs/development/roadmap.md`'s potential backlog with acceptance criteria.
+  ⚠ The raw-syscall diagnostic does **not** cover them meanwhile: `_SYSX_MEANT` only carries
+  numbers named in BOTH peers, so a nameless number is structurally invisible to it (measured:
+  raw 160 on the aarch64 fork warns nothing) — which is this filing's own root cause, restated.
+  **Measured:** the filed repro now traces `memfd_create` / `ftruncate` / `sendmsg`; the new
+  `tests/tcyr/crossos/syscall_shm_fd_passing.tcyr` is 50/50 on x86 and under qemu-aarch64 and
+  **exits 30 against the 6.6.4 emitter**; the full `tests/tcyr` corpus is byte-for-byte
+  identical in exit codes on x86 (321 files) and under qemu-aarch64 (321 files, the one
+  pre-existing `thread_detach` qemu-user failure unchanged). cycc self-hosts to a fixpoint
+  and seed-derives; **1,293,912 → 1,293,880 B** (the new `_msx` rows are live code in
+  `main.cyr`; the −32 is the shorter diagnostic string below).
+  ⚠ **The x86 cycc size is not the size this change costs.** `ESYSXLAT` is emitted INLINE at
+  every syscall site on aarch64 (`src/backend/aarch64/emit.cyr`), so 44 → 58 rows is **+56
+  words = +224 B per syscall site** there, and the x86 compiler — whose own backend this
+  change cannot reach — was the only number the first cut of this entry recorded. Measured:
+  `tests/tcyr/crossos/syscall_wrappers.tcyr` 200,888 → 266,424 B (**+32.6 %**), the native ARM
+  compiler `build/cycc-native-aarch64` 1,374,384 → 1,505,480 B (**+9.5 %**). Runtime cost is
+  ≤14 extra `cmp`/`b.ne` per syscall, which is noise beside the `svc`. Accepted: a chain that
+  reaches the right syscall is worth 224 B per site.
+  ⚠ **Consumers must re-run `cyrius deps` when they move their pin to 6.6.5.** The aarch64
+  peer's `SYS_UNLINKAT` moved 35 → 263, and the matching `263 → 35` ESYSXLAT row is in the
+  compiler — so an OLD vendored `lib/` with a NEW compiler makes `sys_unlink` issue raw 35,
+  which the new chain rewrites to `nanosleep` (measured: `nanosleep(-100, path) = -EFAULT`),
+  and a NEW `lib/` with an OLD compiler issues 263 unrouted (`fanotify_mark`). The window is
+  narrow in practice because `cyrius build` re-execs the pinned toolchain, but nothing DETECTS
+  the skew: `cbt`'s `_check_lib_freshness` only compares libs carrying a `# Version: ` or
+  `# Bundled distribution of ` header (12 of 99), and none of the seven `lib/syscalls*.cyr`
+  has one. *(A first cut of the implementation report claimed that check covered this. It does
+  not — corrected here rather than quietly dropped, because "a skew check exists" is the kind
+  of reassurance that stops anyone looking.)*
+- **A `struct stat`-sized pile of Linux-only wrappers stopped SIGSYS-ing macOS, and the
+  "syscall N not routed" wolf-cry went 18 → 0.** A bare `include "lib/syscalls.cyr"` built
+  with `CYRIUS_MACHO=1` printed **18** not-routed warnings — pidfd, seccomp, execveat, the
+  landlock trio, mount, umount2, reboot, rt_sigprocmask, signalfd, epoll, timerfd,
+  setresuid/gid and `sys_pause`. Every one of them is ALREADY allow-listed in
+  `macho_route_parity.sh` as "no Darwin peer exists", and every one still EMITTED its number,
+  which reaches Darwin unclassed and SIGSYS-kills the process — so a caller's `if (r < 0)`
+  never ran. They now decline with -78 (Darwin ENOSYS) through an in-body
+  `#ifdef CYRIUS_TARGET_MACOS`, the shape `sys_utimensat` has used since v6.1.20. A warning
+  that fires 18 times is how a real one gets scrolled past — the v6.5.43 lesson, which this
+  release needed, because the three genuinely-missing routes it had to add were hidden in
+  that noise.
+- ⛔ **The better half of the raw-syscall diagnostic was DEAD CODE from v6.5.51 to v6.6.4 —
+  43 numbers warn, and not one ever printed "on ELF-aarch64 that number is …".** Found in
+  review of the bite above. It was structural, not luck: `_SYSX_ACTUALLY` was generated from
+  the aarch64 stdlib PEER's declarations, while `_row_wanted` emits a `_SYSX_MEANT` row only
+  for x86 numbers that peer does NOT declare — so the two sets could not intersect, and the
+  clause naming the call the number really invokes on ARM was unreachable by construction.
+  Measured: a probe carrying all 43 rows compiled to 43 warnings, 0 of them carrying the text.
+  That clause is the WHOLE POINT of the table — the generator's own header names the numbers
+  where the x86 value IS a real, different aarch64 syscall. `_SYSX_ACTUALLY` is now generated
+  from the committed kernel table (`tests/data/syscalls/aarch64.tbl`) restricted to the
+  `_SYSX_MEANT` numbers, so every row is reachable: **35 of the 43 now carry it** and the
+  other 8 are genuinely unassigned on aarch64 (the message says so, instead of the v6.6.4 text
+  "not one the aarch64 stdlib declares", which described the old table rather than the kernel).
+  Live now: `raw syscall 117 is x86_64 setresuid; on ELF-aarch64 that number is ptrace`,
+  `91 … fchmod → capset`, `202 … futex → accept`. The generated table SHRANK (204 → 157 lines)
+  because it no longer carries ~82 unreachable rows, and the generator hard-fails if the kernel
+  table is missing or parses under 300 rows rather than emitting an empty one.
+- ⛔ **`lib/yukti.cyr` declares `SYS_STATFS = 43` under `#ifdef CYRIUS_ARCH_AARCH64`, and
+  ESYSXLAT rewrites 43 → 202 — so `yukti_filesystem_usage` runs `accept()` on every ARM host.**
+  The correct aarch64 native number, shadowed by the x86 `accept` row that has been in the
+  chain since v6.2.10 — i.e. the v6.5.36/.37 shadow class, one level out from the two peer
+  files every existing gate reads. Measured under `qemu-aarch64 -strace`:
+  `accept(6293618, 0x7f254c000000, [0]) = -1 errno=14`, so the function returns
+  "statfs failed: errno 14". **Not fixed here, and the reason is not scope:** yukti is a
+  sovereign sibling stdlib and a fix applied only to cyrius's vendored fold evaporates at the
+  next `cyrius deps`. It needs `sys_statfs` (or the ≥1000 alias band) upstream in `~/Repos/yukti`
+  plus a re-vendor. `aarch64_syscall_shadow.sh` gained an axis that sweeps EVERY in-tree
+  `.cyr`/`.tcyr` for the class and prints this one as a named LIVE DEFECT on every run, so it
+  cannot go quiet, and fails outright on any other instance.
+- **Raw x86 `83`/`84`/`87`/`89`/`33` (mkdir/rmdir/unlink/readlink/dup2) now work on
+  arm64-macOS too.** The bite above taught ELF-aarch64 all five and `raw_syscall_literals_routed.sh`,
+  whose allowlist derives from the ELF arm, therefore started green-lighting them in
+  arch-neutral code — while arm64-macOS was the one target with no route. Adding a compat row
+  to three of four targets and calling the surface portable is the half-fix shape the v6.5.7
+  wrapper pass was full of. The Darwin numbers (136/137/10/58/90) are taken from
+  `EMACHO_SYSXLAT`'s own long-standing rows, i.e. from a table verified on real ach.
+  ⚠ Recorded rather than papered over: the ELF `33 → dup3(old, new, 0)` row diverges from
+  `dup2` in exactly one case — `dup2(fd, fd)` returns fd, `dup3(fd, fd, 0)` returns `-EINVAL`.
+  Still strictly better than the previous behaviour (untranslated, aarch64 33 is `mknodat`).
+- **`build/cycc-native-aarch64` regenerated — it was 2.5 months and ~60 releases stale, and
+  this release made it WRONG rather than merely old.** 940,536 B from 2026-07-02 against
+  1,505,480 B from the tree. Its baked-in ESYSXLAT has no `263 → 35` row while the peer moved
+  `SYS_UNLINKAT` 35 → 263, so `sys_unlink` compiled against the 6.6.5 stdlib by that emitter
+  traces as `fanotify_mark(-100, <ptr>, 0, 0)` under `qemu-aarch64 -strace`. Nothing caught it:
+  the pi gate leg builds its compilers fresh from source, while `install.sh --refresh-only`
+  copies the tracked binary into `versions/<v>/bin/` and `verify-store.sh --restore` writes it
+  from the tag. `install.sh`'s comment claimed the binary stayed "in lockstep"; it is corrected
+  in place, with the (deterministic, local, no-ARM-hardware) regeneration recipe beside it.
+  Verified here by self-hosting it under qemu-aarch64 to a byte-identical fixpoint — an
+  emulator, not the pi.
+- **`_SYSX_ACTUALLY` labelled nine numbers with the wrong syscall.** The generator read "the
+  aarch64 peer declares this value" as "this value is a native aarch64 number", so the
+  committed table said aarch64 74 is `fsync` (it is signalfd4), 262 is `newfstatat` (it is
+  fanotify_init), 73 is `flock` (it is ppoll), and so on for the deliberate borrow-the-x86-
+  number declarations. `programs/gen_syscall_xlat.cyr` now applies the same discriminator
+  `aarch64_syscall_shadow.sh` uses — the x86 peer declares the same name at the same value AND
+  ESYSXLAT routes it — with both halves required, because a bare same-name-same-value test
+  would also drop `SYS_PIDFD_OPEN` 434 and the landlock trio, which really are native. No row
+  of `_SYSX_MEANT` moves: such a value is routed by definition and `_row_wanted` already
+  returns 0 for routed numbers. The "43 rows" count quoted in the generator header, the gate
+  header and `programs/checks/main.cyr` had said 43 since v6.5.51 while the tree derived 42;
+  the quoted number is gone rather than corrected, since it is a derived fact.
+- **Stale routing comments that a chain audit would have been read off.**
+  `src/backend/aarch64/emit.cyr` claimed rows `x86:59=execve→a64:221` and `x86:57=fork→a64:220`
+  that have never existed in the ELF arm (`git log -S` finds no trace); its fsync note and
+  `lib/syscalls_aarch64_linux.cyr`'s `SYS_FSYNC` note both said rename is "remapped 82→128",
+  which is the DARWIN number — the ELF row is 82→38; and `_macho_arm_routes` said "35 here is
+  aarch64 unlinkat, NOT x86 nanosleep", writing the hazard down as reassurance. All corrected
+  in place rather than deleted.
+- ⛔ **Review round 2 of the bite above: three checks that could not fail, and the compiler's
+  own source breaking the rule this release wrote.** Every one is the same shape as the defect
+  they were written to catch.
+  - **`aarch64_syscall_shadow.sh` axis 2 read GREEN over an EMPTY TREE WALK.** It had a
+    synthetic positive control for the scanner and floors on rows / peer declarations / kernel
+    rows, but none at all on the CORPUS: measured, narrowing the file-extension tuple to match
+    nothing printed `PASS … axis 2: 0 arch-guarded declarations over 0 files, 0 known / 0 new`
+    and exited 0 — taking the `KNOWN LIVE DEFECT lib/yukti.cyr:58` line, the only thing keeping
+    that live bug audible, out with it. The fix is not a tuned floor: each KNOWN entry is now
+    **re-derived a different way** (open that file by its own path and regex it) and the walk
+    must have reported it, so a broken walk fails instead of going quiet — and the check retires
+    itself when yukti ships the fix upstream. Corpus floors (400 files / 3 declarations against
+    658 / 6) sit behind it.
+  - **Axis 2 could not see EITHER consumer shape this release names.** Its regex is
+    `SYS_[A-Z0-9_]+ = <n>;`, so thoth's `GWL_NR_FTRUNCATE = 46` and attn11's `n = 83;` (a plain
+    VARIABLE — the chain rewrites those too) both sailed past the gate that names them. New
+    **axis 3** covers the nameless shapes: a guarded `syscall(<literal>)` or an identifier
+    assigned a literal that is then a syscall's first argument. ⚠ The narrowing is measured, not
+    guessed — flagging every guarded `IDENT = <row source>;` produced 13 in-tree false positives,
+    all `= 0` or `= 1` (x86 read and write are genuine row sources). The walk now includes
+    **`src/`**, which no gate had ever read for this.
+  - **And the compiler's own source carried the forbidden shape:** `src/backend/common/runtime.cyr`
+    issued `syscall(113, …)` (aarch64-native clock_gettime) under `#ifdef CYRIUS_ARCH_AARCH64`,
+    right through the release that wrote the rule against it. Latent — 113 is a row PRODUCT and
+    nothing sources it — but now deleted in favour of the same raw 228 the x86 arm uses, which
+    ESYSXLAT renumbers. Verified under `qemu-aarch64 -strace`: raw 228 traces as
+    `clock_gettime(CLOCK_MONOTONIC) = 0`. All seven x86-hosted forks are **byte-identical**
+    (an x86-hosted cross compiler takes the x86 arm); `build/cycc-native-aarch64` differs in
+    **exactly two bytes** — the `movz` immediate — and self-hosts to a byte-identical fixpoint
+    under qemu at 1,505,480 B.
+  - **A wrapper with no assertion that can fail:** `sys_sched_yield` was asserted `<= 0`, true
+    for success (0) and for every failure. Measured: mis-declaring the aarch64 peer's
+    `SYS_SCHED_YIELD` 124 → 300 still scored **50/50, exit 0**. Now `assert_eq(…, 0)` under
+    `#ifndef CYRIUS_TARGET_WIN`, with the PE `-38` decline asserted in the WIN group; the same
+    mutation now scores 51/1, exit 1.
+  - **The five new arm64-macOS parity rows were exercised on no host.** Raw 83/84/87/89/33 were
+    asserted inside `#ifdef CYRIUS_TARGET_LINUX` — the exact guard this release removed from raw
+    35 because "a claim scoped to one target by an `#ifdef` is not a tested claim" — so the rows
+    added to ESYSXLAT's `_TARGET_MACHO` arm ran on neither ecb nor ach. Moved out into the
+    surrounding `#ifndef CYRIUS_TARGET_WIN`. ⚠ Half of why they could not move was their own
+    fixture: the readlink assertion read `/proc/self/exe`, which is Linux-only. It now readlinks
+    a symlink the test makes.
+  - **`sys_lseek` — the seventh asymmetry, shipped six and dropped one silently.** The
+    premise-check's `widened_surface` listed it beside `sys_sched_yield`; the agnos and Windows
+    peers had it and the three Linux/Darwin peers did not, so the name resolved on two targets
+    of five. Added to `lib/syscalls_linux_common.cyr` and asserted as oracle 1 of the ftruncate
+    group. Impact was nil (`lib/io.cyr`'s `xlseek` is the portable spelling and raw 8 IS
+    diagnosed) — it is the silent-subset shape that is the defect.
+  - **Two hand-quoted derived counts that disagreed with the tree.** The generator header said
+    "38 of the 43 rows gain the text" where `parse_expr.cyr` and this file both say 35 (the tree
+    derives 35); and the row-order gate's ledger plus this entry said swapping the
+    sendmsg/ftruncate pair "fails 6 assertions" where the measurement is **12** (40 passed, 12
+    failed, exit 12 under qemu-aarch64). Both corrected, with the derivation command written
+    beside the first.
+  - `aarch64_syscall_shadow.sh` also stopped leaking a Python `None` into its FAIL text when the
+    x86 peer declares no counterpart. Five new mutation-ledger entries, each applied and reverted.
+  **Measured:** `tests/tcyr/crossos/syscall_shm_fd_passing.tcyr` 50 → **52 assertions**, 52/52 on
+  x86 and under qemu-aarch64, 10/10 as PE under wine. cycc `1,293,880 B` unchanged and
+  byte-identical; seed-derive green; all seven forks compile with 0 errors.
+
 - ⛔ **The x86 register picker promoted a frame slot a SIMD kernel still read — every batch
   intrinsic, silent wrong code or SIGSEGV** (filed by hisab 2026-09-14 against `f64v_*`
   destinations; `issues/archived/2026-09-14-hisab-simd-dst-slot-regalloc-picker.md`). The picker
@@ -682,6 +907,106 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
   T's name, and is now a hard error.
 
 ### Added
+
+- `tests/gates/platform/syscall_peer_kernel_agreement.sh` + `tests/data/syscalls/{x86_64,aarch64}.tbl`
+  — **the first non-circular check in the syscall machinery.** Until now every pair of the four
+  syscall gates shared a source: `syscall_xlat_generated` re-derives the table FROM the peers,
+  `raw_syscall_literals_routed` derives its allowlist FROM the emitter,
+  `aarch64_syscall_shadow` compares the two peers TO EACH OTHER, `esysxlat_row_order` checks
+  the chain against ITSELF — and a check that shares a defect with the thing it checks reads
+  GREEN (the pattern found seven times in one release at v6.6.2). The committed UAPI tables
+  (385 x86_64 + 329 aarch64 facts, derived like `tests/data/ucd`) are the outside fact: every
+  declared number must MEAN, on the kernel, the call its name claims. The aarch64 peer has
+  three legitimate spellings and the discriminator is load-bearing — native (and not routed,
+  or it is the v6.5.36 shadow class), an intended x86 number resolved THROUGH its route, or a
+  ≥1000 private alias. A second axis PINS the 11-entry ambiguous set, because declaring a new
+  native aarch64 number that collides with a named x86 one silently DELETES a row from
+  `src/common/syscall_xlat.cyr` and nothing else notices. Mutation-proven six ways.
+  ⚠ It found one live disagreement on HEAD (`SYS_FACCESSAT`, whose x86 declaration was
+  missing and which had therefore needed a named exception in `aarch64_syscall_shadow.sh`);
+  adding the x86 constant retires that exception, and the exception is now **actually deleted**
+  — `ALLOW = {}`. *(This sentence read "retires that exception" in the first cut while the
+  `ALLOW = {"SYS_FACCESSAT": 269}` line and its now-false rationale comment were still sitting
+  in the gate, which is a claim about a file nobody changed. Verified dead before deletion: the
+  gate printed the identical PASS line with the entry removed, and it reddens again if the x86
+  declaration is taken away.)* It also documents the one deliberate
+  deviation it allows: the macOS peer spells `SYS_IOCTL = 29`, the aarch64-native number, on
+  purpose since v6.5.36.
+- `tests/gates/platform/esysxlat_row_order.sh` — the ESYSXLAT re-capture class, asserted
+  structurally for the first time. Four separate releases have fixed an instance of it and
+  each wrote its ordering rule into a COMMENT beside its own row; a comment is not a check.
+  Decodes the ELF arm into (src, dst) pairs in emission order and fails if any later row's
+  source is an earlier row's product. Floor of 58 rows plus two positive control rows, so an
+  empty decode fails loudly instead of reporting "0 re-captures". Mutation-proven four ways.
+- `tests/tcyr/crossos/syscall_shm_fd_passing.tcyr` — 50 assertions across six per-target
+  groups: ftruncate/truncate with TWO independent size oracles (lseek(SEEK_END) and fstat's
+  per-peer `STAT_SIZE`), memfd (real on Linux, a -78 decline on macOS, a decline on Windows),
+  sendto/recvfrom cross-checked against a plain write/read, `sendmsg`(SCM_RIGHTS) proved by
+  reading the size back through the RECEIVED descriptor, the raw x86 spellings by equivalence,
+  and a timed `sys_nanosleep`. It lives in `tests/tcyr/crossos/` because that DIRECTORY is the
+  release gate's real-hardware selector — a wrapper that compiles on five targets is not a
+  wrapper that runs.
+  ⚠ Two traps it hit while being written, both now recorded in it: a raw `syscall(53, ...)`
+  in the raw group failed on aarch64 (fchmodat) and made every assertion under it meaningless
+  — the same line that had silently disabled a group in `result_allocator_via.tcyr`; and a
+  file that DEFINES `fn main` and also CALLS it at top level runs the body TWICE and exits
+  with the second run's return value, so a trailing `var r = assert_summary();` is dead for
+  the exit code. The 6.6.4 control printed "19 passed, 30 failed" and still exited 0.
+  ⛔ Review round 1: **the raw-35 assertion was inside `#ifdef CYRIUS_TARGET_LINUX`**, so the
+  release gate's ecb and ach legs never ran it and the twelve hand-written words of
+  `EMACHO_NANOSLEEP_ARM` — added in this very release — were exercised by nothing, on any
+  host, while the emitter comment beside them claimed "raw 35 sleeps on every target cyrius
+  supports". It is unguarded now (measured: PE under wine 1/1, ELF-aarch64 under qemu 1/1,
+  so the two Macs are the only legs left for the cross-OS run to answer). Round 1 also spelled
+  the three `file_open(path, 577, …)` calls as `O_WRONLY | O_CREAT | O_TRUNC` — 577 is the
+  LINUX encoding and Darwin reads it as `O_WRONLY|O_ASYNC|O_CREAT` with no `O_TRUNC`, i.e. the
+  magic-number class this file exists to remove, inside the file that preaches against it —
+  guarded `size_via_fstat` with `#ifndef CYRIUS_TARGET_WIN` (the PE peer has no `sys_fstat`,
+  so every PE build printed an undefined-function warning that would have been on screen for
+  every cass run forever), and cleared the four fixed `/tmp` paths at entry: the runner
+  `kill -9`s a hung test at 90 s, and a leftover `/tmp/cyr_shm_fdpass_dir` makes the next run
+  fail `raw 83 is mkdir, not fdatasync (got -17)` at 48/49 — RED on real hardware for a reason
+  that has nothing to do with the compiler. Now **50 assertions**.
+- `raw_syscall_literals_routed.sh` now scans `tests/`, `programs/`, `benches/` and `fuzz/` as
+  well as `lib/` and `cbt/` — 614 files and 1,119 literal sites, up from 108 and 328 — with
+  string-literal masking, without which two in-tree files that embed cyrius source in a string
+  report confident false positives. `syscall_xlat_generated.sh` gains an axis that every one
+  of the 52 routed source numbers compiles SILENT on the aarch64 fork (derived from the
+  emitter, cross-checked against the kernel table) and an axis that a newly-named unrouted
+  number is diagnosed. `syscall_wrapper_pass.sh` covers the seven new wrappers on all five
+  targets and now asserts the Mach-O and aarch64 builds are WARNING-FREE, not merely
+  successful — and builds its own aarch64 compiler, because the gitignored
+  `build/cycc_aarch64` in a working tree is routinely stale and reported three confident
+  false failures.
+  ⛔ **Review round 1 found four of these checks disappearing or reading vacuously**, all the
+  same shape — a check that vanishes with its input, or that is never proved to have run:
+  `syscall_xlat_generated`'s two new axes sat inside `if [ -f tests/data/syscalls/x86_64.tbl ]`
+  with no `else`, so moving that directory aside printed the IDENTICAL PASS line with both axes
+  simply gone (hard FAIL now); `syscall_peer_kernel_agreement` had floors on the kernel tables
+  but none on the DECLARATIONS parsed out of the four peers, so reformatting
+  `lib/syscalls_macos.cyr` until its 111 declarations stopped matching left the gate green and
+  the macOS arm — the one that catches a planted `SYS_FTRUNCATE = 78` — checking nothing
+  (per-peer floors now, and the counts are in the PASS line); the axis-10 mutation LEDGER named
+  a mutation that does not reach axis 10 (deleting `SYS_INOTIFY_INIT1` from the x86 peer stops
+  the GENERATOR compiling and reddens axis 1 only — re-measured and rewritten); and
+  `raw_syscall_literals_routed`'s awk carried a two-line comment paragraph pasted twice.
+- `aarch64_syscall_shadow.sh` **axis 2** — the shadow sweep over every OTHER in-tree
+  `.cyr`/`.tcyr`, because the class is a property of an arch-guarded NUMBER, not of the two
+  peer files, and vendored stdlib folds declare their own. It is what found `lib/yukti.cyr`'s
+  `SYS_STATFS = 43`. Row destinations are judged against the committed kernel table (an outside
+  fact), which is what separates yukti's `43 → 202 = accept` from the peers' documented
+  `SYS_TRUNCATE = 76 → 45 = truncate`. The real corpus is legitimately tiny (6 declarations
+  over 658 files), so the anti-vacuous device is a synthetic POSITIVE CONTROL run every time:
+  the scanner must flag exactly the known-bad lines of a fixed buffer and none of the good ones.
+  Mutation-proven both directions — and the first cut anchored its regex at line start, so a
+  one-line `enum M { SYS_PPOLL = 73; }` sailed through it; the mutation run is the only reason
+  it reads the whole line.
+  ⛔ **And that control was still not enough** — review round 2 found the axis printing
+  `PASS … 0 declarations over 0 files` over an empty tree walk, because a positive control
+  proves the SCANNER and floors prove the INPUTS and neither says the CORPUS was visited. Each
+  KNOWN entry is now re-derived by opening its own file directly, with corpus floors behind it,
+  and **axis 3** covers the nameless shapes the `SYS_*` regex could not see. See the round-2
+  bullet under Fixed.
 
 - `tests/gates/codegen/fn_local_storage_class.sh` — **25 rows over 11 axes**, carrying the parts
   the `.tcyr` corpus **cannot** express: the FILED two-file shape in both its public and its

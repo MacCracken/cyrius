@@ -43,7 +43,10 @@ fn main(): i64 {
     var args = alloc(N * 8);
     var k = 0;
     while (k < N) { store64(args + k * 8, k + 1); thread_create(&worker, args + k * 8); k = k + 1; }
-    while (load64(&g_done) < N) { syscall(24, 0, 0, 0, 0); }
+    # v6.6.5: was a raw `syscall(24, ...)` — x86 sched_yield, but aarch64 24 is **dup3**,
+    # so this spun on a failing dup3 instead of yielding. 24 stays unrouted on purpose
+    # (routing it would break every real dup3); the wrapper is the answer.
+    while (load64(&g_done) < N) { sys_sched_yield(); }
     if (load64(&g_fail) > 0) { return 1; }
     return 0;
 }

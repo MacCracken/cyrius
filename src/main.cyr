@@ -1974,9 +1974,19 @@ if (_TARGET_EFI_APPLICATION == 1) {
 #
 # We walk the fn table looking for an exact byte-match on
 # "main\0". If found AND its offset is set (body emitted), AND
-# we're in executable mode, emit `call main` directly. Any
-# user-side `syscall(60, ...)` already exited before we get
-# here, so this is purely a fallback for the no-wire case.
+# we're in executable mode, emit `call main` directly.
+#
+# ⚠ CORRECTED v6.6.5 — this said the call is "purely a fallback for the no-wire case"
+# because "any user-side `syscall(60, ...)` already exited before we get here". That holds
+# only when the top level ENDS IN AN EXPLICIT EXIT. A source that DEFINES `fn main` and also
+# CALLS it at top level without exiting — `var ec = main();` followed by anything else — runs
+# the body TWICE and then exits with the SECOND run's return value, so a trailing
+# `var r = assert_summary();` is dead for the exit code. Measured at 6.6.5 while writing
+# tests/tcyr/crossos/syscall_shm_fd_passing.tcyr: the control build printed
+# "19 passed, 30 failed" and still exited 0. The three shapes that are correct are
+# (a) no `fn main` at all, top level ends on the value to exit with; (b) `fn main` that
+# RETURNS the value, not called at top level; (c) `fn main` called at top level followed by
+# an explicit `syscall(SYS_EXIT, ...)`, which is what the crossos tests use.
 #
 # Must run AFTER the GLVAR-load above — that load otherwise
 # clobbers main's rax return.

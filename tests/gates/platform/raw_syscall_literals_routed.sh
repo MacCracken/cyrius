@@ -19,9 +19,13 @@
 # a literal under CYRIUS_ARCH_AARCH64 is a NATIVE number by construction and is not judged
 # here. Numbers ≥ 0xF000 (the PE reroute band) are exempt too.
 #
-# Anti-vacuous: the derived set must decode ≥ 40 rows, the scan must visit ≥ 100 files and
-# find ≥ 20 literal sites, or the run fails rather than reporting "all routed" over nothing.
-# Mutation: re-introduce `syscall(201, 0)` in lib/hashseed.cyr → 1 unrouted site, exit 1.
+# Anti-vacuous: the derived set must decode ≥ 40 rows, the scan must visit ≥ 500 files and
+# find ≥ 200 literal sites, or the run fails rather than reporting "all routed" over nothing.
+# MUTATION LEDGER:
+#   * re-introduce `syscall(201, 0)` in lib/hashseed.cyr                    → 1 unrouted, exit 1
+#   * restore `syscall(53, 1, 1, 0, &sv)` in result_allocator_via.tcyr      → 1 unrouted, exit 1
+#   * restore `syscall(24, 0, 0, 0, 0)` in array_local_threadsafe.cyr       → 1 unrouted, exit 1
+#   * drop the string masking                                              → 2 false positives
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -50,10 +54,19 @@ echo "  derived: $nroutes routed source numbers from ESYSXLAT's ELF-aarch64 arm"
 # dispatch, so its numbers are native by construction. lib/syscalls_linux_common.cyr is
 # NOT a peer — it is compiled on both Linux arches — so it is scanned (the first cut's
 # `syscalls_*` glob exempted it).
-files=$(find lib cbt -name '*.cyr' \
-  | grep -v -E '^lib/syscalls_(x86_64_linux|aarch64_linux|macos|windows|x86_64_agnos)\.cyr$|_win\.cyr$' | sort)
+# v6.6.5 — SCOPE WIDENED from lib/+cbt/ to the whole source tree. The first cut stopped at
+# the shipped stdlib, and tests/ was carrying four live instances of the exact class it
+# exists for: result_allocator_via.tcyr's raw 53 (aarch64 fchmodat) took the test's own
+# "skipped rather than failed" branch so its whole sock_send group SILENTLY DID NOT RUN on
+# ARM; two concurrency fixtures spun on raw 24 (aarch64 dup3) instead of yielding; async_dns
+# used raw 44 (aarch64 fstatfs); and fs/defer/toml/sakshi_full cleaned up with raw 87/84
+# (timerfd_gettime / sync_file_range), i.e. did nothing. A gate scoped to the code least
+# likely to be wrong is the cheap half of a check.
+files=$(find lib cbt tests programs benches fuzz \
+      \( -name '*.cyr' -o -name '*.tcyr' -o -name '*.bcyr' -o -name '*.fcyr' -o -name '*.scyr' -o -name '*.smcyr' \) \
+  | grep -v -E '^lib/syscalls_(x86_64_linux|aarch64_linux|macos|windows|x86_64_agnos)\.cyr$|_win\.cyr$|^tests/win/' | sort)
 nfiles=$(echo "$files" | wc -l)
-[ "$nfiles" -ge 100 ] || { echo "FAIL: raw_syscall_literals_routed: scanned only $nfiles files (want ≥ 100)"; exit 1; }
+[ "$nfiles" -ge 500 ] || { echo "FAIL: raw_syscall_literals_routed: scanned only $nfiles files (want ≥ 500)"; exit 1; }
 report=$(awk -v routed="$ROUTED" '
 BEGIN {
     n = split(routed, r, " "); for (i = 1; i <= n; i++) ok[r[i]] = 1
@@ -90,11 +103,21 @@ FNR == 1 { depth = 0 }
     if (line ~ /^#else([^A-Za-z_0-9]|$)/ || line ~ /^#elif([^A-Za-z_0-9]|$)/) { if (depth > 0) ex[depth] = el[depth]; next }
     if (line ~ /^#endif([^A-Za-z_0-9]|$)/ || line ~ /^#endplat([^A-Za-z_0-9]|$)/) { if (depth > 0) depth--; next }
     if (line ~ /^#/) next                              # a comment line
-    # strip a trailing comment — only a `#` OUTSIDE a string literal opens one
+    # Strip a trailing comment — only a `#` OUTSIDE a string literal opens one — and MASK
+    # the contents of every string literal.
+    # ⚠ v6.6.5: the masking is what makes the widened scope usable. Two in-tree files EMBED
+    # cyrius source or a syscall number in a STRING. Measured with the masking removed, the
+    # widened scope reports exactly two: programs/checks/main.cyr:307 (this gate description,
+    # which quotes hashseed raw 201) and :392 (which quotes the 1700 __got reroute). Those are
+    # data, not calls this build makes, and platform_win_macho.cyr writes a PE probe source
+    # out the same way. A gate that cries wolf is how a real warning gets scrolled past
+    # (v6.5.43), so the contents of a string literal are dropped and only the quotes kept.
+    # NOTE: no apostrophes in this block — the whole awk program is a single-quoted shell
+    # string, and one would end it. That is how the first cut of this edit broke.
     code = ""; inq = 0
     for (k = 1; k <= length(line); k++) {
         c = substr(line, k, 1)
-        if (inq) { if (c == "\\") { code = code c substr(line, k+1, 1); k++; continue } if (c == "\"") inq = 0; code = code c; continue }
+        if (inq) { if (c == "\\") { k++; continue } if (c == "\"") { inq = 0; code = code c } continue }
         if (c == "\"") { inq = 1; code = code c; continue }
         if (c == "#") break
         code = code c
@@ -113,11 +136,11 @@ END { printf "SITES=%d BAD=%d\n", sites, bad }
 ' $files)
 sites=$(echo "$report" | sed -n 's/^SITES=\([0-9]*\) BAD=.*/\1/p')
 bad=$(echo "$report" | sed -n 's/^SITES=[0-9]* BAD=\([0-9]*\)/\1/p')
-[ "${sites:-0}" -ge 20 ] || { echo "FAIL: raw_syscall_literals_routed: found only ${sites:-0} literal sites across $nfiles files (want ≥ 20) — the scan matched nothing"; exit 1; }
+[ "${sites:-0}" -ge 200 ] || { echo "FAIL: raw_syscall_literals_routed: found only ${sites:-0} literal sites across $nfiles files (want ≥ 200) — the scan matched nothing"; exit 1; }
 echo "$report" | grep -v '^SITES=' || true
 if [ "${bad:-1}" -ne 0 ]; then
     echo "FAIL: raw_syscall_literals_routed: $bad arch-neutral raw syscall literal(s) are not routed on ELF-aarch64 ($sites sites scanned)."
     echo "      Spell the SYS_* name from the peer (both Linux peers declare it, ESYSXLAT renumbers), route the x86 number in ESYSXLAT, or guard the site with #ifdef CYRIUS_ARCH_X86."
     exit 1
 fi
-echo "PASS raw_syscall_literals_routed: $sites raw literal sites across $nfiles lib/+cbt/ files, all routed on ELF-aarch64 ($nroutes rows derived)"
+echo "PASS raw_syscall_literals_routed: $sites raw literal sites across $nfiles source files (lib cbt tests programs benches fuzz), all routed on ELF-aarch64 ($nroutes rows derived)"

@@ -46,7 +46,8 @@ fn mock_dns(ctx): i64 {
     store8(&r + 25, 0); store8(&r + 26, 0); store8(&r + 27, 0); store8(&r + 28, 0x3C);   # TTL
     store8(&r + 29, 0); store8(&r + 30, 4);           # RDLENGTH 4
     store8(&r + 31, 42); store8(&r + 32, 0); store8(&r + 33, 0); store8(&r + 34, 0);     # 42.0.0.0
-    syscall(44, load64(ctx + 8), &r, 35, 0, &caddr, load32(&clen));         # sendto the reply
+    # v6.6.5: was a raw `syscall(44, ...)` — x86 sendto, but aarch64 44 is **fstatfs**.
+    sys_sendto(load64(ctx + 8), &r, 35, 0, &caddr, load32(&clen));          # sendto the reply
     return 0;
 }
 

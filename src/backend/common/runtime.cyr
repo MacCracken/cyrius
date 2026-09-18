@@ -300,8 +300,17 @@ fn _parse_hex_env(p): i64 {
 
 # Nanosecond wall clock for CYRIUS_PROF (v5.6.5 O1 + v5.6.6).
 # Linux x86_64: clock_gettime(CLOCK_MONOTONIC=1) via syscall 228.
-# Linux aarch64: clock_gettime(CLOCK_MONOTONIC=1) via syscall 113
-# (generic table — different number from x86_64).
+# Linux aarch64: the SAME raw 228 — ESYSXLAT's ELF arm carries the
+# `228 → 113` row, so the number is renumbered at emit. v6.6.5 deleted
+# the `#ifdef CYRIUS_ARCH_AARCH64 syscall(113, …)` arm that used to sit
+# here: an arch-guarded NATIVE syscall number is the exact shape this
+# release's shadow class is about (a later compat row whose SOURCE is
+# 113 would silently reissue it), and the compiler's own source was the
+# one place still writing it after the guide rule went in. Latent, not
+# live — 113 is a row PRODUCT today and nothing sources it — but the
+# x86 spelling is the supported one and costs nothing: the chain is
+# emitted inline at every aarch64 syscall site regardless, so the two
+# spellings are byte-for-byte the same size. CHANGELOG [6.6.5]
 # Windows PE: syscall(228, _, _) rerouted by EGETTICKS_PE to
 # kernel32!GetTickCount64; returns ms in rax, scaled to ns here.
 # macOS arm64: syscall(228, 4, _) rerouted by EMACHO_CLOCK_ARM to
@@ -324,12 +333,7 @@ fn _prof_clock_ns(): i64 {
     return syscall(228, 4, &ts);
     #endif
     #ifdef CYRIUS_TARGET_LINUX
-    #ifdef CYRIUS_ARCH_X86
     syscall(228, 1, &ts);
-    #endif
-    #ifdef CYRIUS_ARCH_AARCH64
-    syscall(113, 1, &ts);
-    #endif
     #endif
     return load64(&ts) * 1000000000 + load64(&ts + 8);
 }

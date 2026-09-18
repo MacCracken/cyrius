@@ -189,8 +189,24 @@ check "macOS-x86 stat offsets match syscall 188 (legacy struct, not stat64)" 1 \
     "$(awk '/^enum Stat/,/^}/' lib/syscalls_macos.cyr | grep -c 'STAT_MODE = 8;')"
 # unlinkat must be a PURE renumber: the old arg-shift to unlink(10) dropped the dirfd and
 # the flag, so every rmdir on macOS-arm64 ran unlink(AT_FDCWD) and returned -1.
-check "macho unlinkat 35→472 is a pure renumber (no arg-shift to unlink)" 1 \
+# ⚠ v6.6.5: the SOURCE is 263, not 35. The aarch64 peer moved SYS_UNLINKAT to the x86 number
+# because native 35 is now the x86-compat nanosleep row on the ELF side; both ESYSXLAT arms
+# moved with it. Assert the OLD source is gone too — a leftover 35→472 row would silently
+# steal raw x86 nanosleep back on macOS-arm64, which is what EMACHO_NANOSLEEP_ARM now handles.
+check "macho unlinkat 263→472 is a pure renumber (no arg-shift to unlink)" 1 \
+    "$(grep -c '_esx_arm(S, 263, 472);' src/backend/aarch64/emit.cyr)"
+check "the old macho unlinkat source 35 is gone (it is nanosleep now)" 0 \
     "$(grep -c '_esx_arm(S, 35, 472);' src/backend/aarch64/emit.cyr)"
+check "raw x86 nanosleep is rerouted on arm64-macOS (EMACHO_NANOSLEEP_ARM)" 1 \
+    "$(grep -c 'EMACHO_NANOSLEEP_ARM(S);' src/backend/aarch64/emit.cyr)"
+# ⚠ THE QUERY ARM IS NOT OPTIONAL. `_macho_arm_routes` answers parse_expr's "is n routed?"
+# by REPLAYING ESYSXLAT with `_esx_qon = 1` and S = 0. Every row helper returns early in that
+# mode; a helper that emits raw EW() words without the guard would WRITE INTO BUFFER 0 during
+# the replay, and 35 would also report unrouted. Assert both halves.
+check "EMACHO_NANOSLEEP_ARM honours query mode (it emits raw words)" 1 \
+    "$(awk '/^fn EMACHO_NANOSLEEP_ARM\(/,/^\}/' src/backend/aarch64/emit.cyr | grep -c '_esx_qon == 1')"
+check "…and reports itself as the route for 35" 1 \
+    "$(awk '/^fn EMACHO_NANOSLEEP_ARM\(/,/^\}/' src/backend/aarch64/emit.cyr | grep -c '_esx_q == 35')"
 check "macho symlinkat 36→474" 1 \
     "$(grep -c '_esx_arm(S, 36, 474);' src/backend/aarch64/emit.cyr)"
 check "macho readlinkat 78→473" 1 \
@@ -345,6 +361,23 @@ fn main(): i64 {
     xreadlink("/a", &rb, 64);
     xlink("/a", "/b");
     sys_fchownat(AT_FDCWD, "/a", 0 - 1, 0 - 1, AT_SYMLINK_NOFOLLOW);
+    # v6.6.5 — the send side, the truncate pair, memfd and the two scheduler primitives.
+    # Same reason as everything above: the peers DIVERGE here in three directions at once.
+    # Windows and agnos are standalone and need their own stubs (agnos deliberately gets NO
+    # SYS_* constant, because Linux 44/46/76/77 are live agnos calls — #44 sched_yield,
+    # #46 time_unix, #47 sock_connect, #76 blk_open, #77 blk_read); macOS resolves the
+    # aarch64 peer on arm64 and the macos peer on x86, and has no memfd/nanosleep/sched_yield
+    # syscall at all, so those three arms compose or decline in the body. A missing stub is a
+    # HARD compile error for any PE or agnos consumer that names the wrapper, and nothing on
+    # the host sees it.
+    var ts6[16]; store64(&ts6, 0); store64(&ts6 + 8, 1000);
+    sys_nanosleep(&ts6, 0);
+    sys_sched_yield();
+    sys_memfd_create("p", 1);
+    sys_ftruncate(1, 0);
+    sys_truncate("/a", 0);
+    sys_sendmsg(1, 0, 0);
+    sys_sendto(1, 0, 0, 0, 0, 0);
     return 0;
 }
 var r = main();
@@ -360,6 +393,27 @@ tgt() {
 check "x86-64 Linux"   yes "$(tgt "$CC" CYRIUS_X=0)"
 check "macOS x86 (Mach-O)" yes "$(tgt "$CC" CYRIUS_MACHO=1)"
 check "agnos"          yes "$(tgt "$CC" CYRIUS_TARGET_AGNOS=1)"
+check "Windows PE (in-tree emitter)" yes "$(tgt "$CC" CYRIUS_TARGET_WIN=1)"
+# v6.6.5 — the Mach-O build must also be SILENT. An unrouted number does not fail the
+# compile; it prints "syscall N not routed" and then SIGSYS-kills the process at runtime, so
+# a compile-only axis passes over exactly the failure this file exists to prevent. A bare
+# `include "lib/syscalls.cyr"` printed 18 such warnings before this release.
+env CYRIUS_MACHO=1 "$CC" < "$D/xt.cyr" > "$D/m.bin" 2>"$D/m.err" || true
+check "macOS x86 build is free of 'not routed' warnings" 0 "$(grep -c 'not routed' "$D/m.err" | tr -d ' ')"
+# And the aarch64 fork must be free of raw-syscall warnings for the same reason.
+# ⚠ BUILT FROM SOURCE HERE, not taken from build/cycc_aarch64. That artifact is gitignored
+# and rebuilt on demand by CI/install, so in a working tree it is routinely STALE — a stale
+# one carries the previous release's syscall_xlat table and reports three confident warnings
+# about a peer constant this tree already moved. Measured while adding this axis.
+"$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2>/dev/null
+chmod +x "$D/cc_a64" 2>/dev/null
+if [ -s "$D/cc_a64" ]; then
+    "$D/cc_a64" < "$D/xt.cyr" > "$D/a.bin" 2>"$D/a.err" || true
+    check "aarch64 build is free of raw-syscall warnings" 0 "$(grep -c 'raw syscall' "$D/a.err" | tr -d ' ')"
+    check "the aarch64 build produced a binary (an empty one emits 0 warnings too)" yes "$( [ -s "$D/a.bin" ] && echo yes || echo no )"
+else
+    check "the aarch64 cross compiler built" yes no
+fi
 [ -x build/cycc_aarch64 ] && check "aarch64" yes "$(tgt build/cycc_aarch64 CYRIUS_X=0)"
 [ -x build/cycc_win ]     && check "Windows PE" yes "$(tgt build/cycc_win CYRIUS_X=0)"
 # cx is EXCLUDED on purpose: src/main_cx.cyr predefines no target macro, so lib/syscalls.cyr

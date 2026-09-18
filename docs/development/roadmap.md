@@ -377,6 +377,31 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
 - **Auto-vectorization of scalar SOA loops** — item 4 of the SIMD filing's own fix list, which
   that file already calls "longer term".
 
+- **Nine syscall families consumers still hand-roll, unnamed by the stdlib** — the widened
+  surface v6.6.5 measured and deliberately did NOT ship. Per-family reasons, consumers and
+  collision analysis live in the table of
+  [`issues/archived/2026-09-17-thoth-memfd-ftruncate-sendmsg-unnamed-pass-through-on-aarch64.md`](issues/archived/2026-09-17-thoth-memfd-ftruncate-sendmsg-unnamed-pass-through-on-aarch64.md)
+  ("Not fixed, deliberately — (b)"). **Pinned here, not left in an archived file**, because a
+  deferral is real only when it is pinned somewhere still open. ⛔ **They are in the exact silent
+  class thoth filed**: `_SYSX_MEANT` only carries numbers named in BOTH peers, so a NAMELESS
+  number produces **no warning at all** (measured: raw 160 on the aarch64 fork warns nothing).
+  Two tiers:
+  - **No technical blocker, held only as API surface nobody filed for** — `capget`/`capset`
+    (125/126 → 90/91, consumers kybernet + shakti), `chroot` (161 → 51, kavach — the row must sit
+    BELOW `51 → 204`), `unshare` (272 → 97, kavach), `process_vm_readv`/`writev` (310/311 →
+    270/271, mirshi). Each needs a Darwin route-or-decline, and this release's open concern is
+    that three Darwin numbers were derived from neighbouring rows rather than an SDK read — so
+    take these on a slot that has an ecb/ach leg, not as a tail-end addition.
+  - **Concrete blockers** — `ptrace` (101 is the PRODUCT of this release's `35 → 101`),
+    `sched_getaffinity` (204 is the product of `51 → 204`), `pread64`/`pwrite64` (17 is the
+    product of `79 → 17` and aarch64-native getcwd → needs the ≥1000 alias band), and the
+    `rlimit` family (aarch64 has only `prlimit64`, with a different arg list → an arg-shifting
+    row, real hand-assembly).
+  - **Acceptance**: every family named in `lib/syscalls_linux_common.cyr` (or the peer that owns
+    it) with a Darwin arm, a row whose placement `esysxlat_row_order.sh` passes, and a runtime
+    assertion in `tests/tcyr/crossos/` that fails when the number is wrong — the three tests
+    v6.6.5 itself had to add.
+
 ## 7.x — public-release ONLY
 
 **Language book** (reference/guide finalization) + **legal** (licensing / public-release prep).

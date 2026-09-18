@@ -121,13 +121,17 @@ assert_eq(str_len(path_basename("/a/b/c.txt")), 5, "path_basename bare literal")
 assert_eq(str_len(path_dirname("/a/b/c.txt")), 4, "path_dirname bare literal");
 assert_eq(path_has_ext("/a/b/c.txt", ".txt"), 1, "path_has_ext bare literals");
 
-syscall(87, "/tmp/cyrius_fs_bare_gate/sub/c.cyr");
-syscall(87, "/tmp/cyrius_fs_bare_gate/b.txt");
-syscall(87, "/tmp/cyrius_fs_bare_gate/a.cyr");
-syscall(84, wsub);              # rmdir
-syscall(84, wroot);
+# v6.6.5: the bare x86 fs numbers (unlink 87, rmdir 84) were raw literals here. On
+# ELF-aarch64 87 is timerfd_gettime and 84 is sync_file_range, so this cleanup did
+# NOTHING on ARM and left the fixtures behind. ESYSXLAT routes both now, but the
+# stdlib name is the spelling a test should model. CHANGELOG [6.6.5]
+sys_unlink("/tmp/cyrius_fs_bare_gate/sub/c.cyr");
+sys_unlink("/tmp/cyrius_fs_bare_gate/b.txt");
+sys_unlink("/tmp/cyrius_fs_bare_gate/a.cyr");
+sys_rmdir(wsub);
+sys_rmdir(wroot);
 
 # Cleanup
-syscall(87, testpath);
+sys_unlink(testpath);
 
 var r = assert_summary();

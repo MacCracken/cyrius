@@ -117,7 +117,8 @@ fn spawn_all(fp, args): i64 {
     return 0;
 }
 fn wait_for(counter): i64 {
-    while (load64(counter) < NTHREADS) { syscall(24, 0, 0, 0, 0); }
+    # v6.6.5: was a raw `syscall(24, ...)` — x86 sched_yield, aarch64 24 is **dup3**.
+    while (load64(counter) < NTHREADS) { sys_sched_yield(); }
     return 0;
 }
 

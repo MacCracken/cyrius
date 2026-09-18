@@ -1,0 +1,383 @@
+# syscall_shm_fd_passing.tcyr — v6.6.5: memfd_create / ftruncate / truncate / sendmsg
+# (SCM_RIGHTS) / recvmsg / sendto / recvfrom / nanosleep, EXECUTED on every target.
+#
+# WHY THIS FILE EXISTS. These calls had no stdlib NAME in either Linux peer until this
+# release, so a consumer had to hardcode the x86_64 number — and on ELF-aarch64 an unnamed
+# number reaches the `svc` verbatim. Measured with the 6.6.4 compiler under
+# `qemu-aarch64 -strace`: raw 319 (memfd_create) was ENOSYS, raw 77 (ftruncate) ran **tee**,
+# raw 46 (sendmsg) ran **ftruncate**, raw 44 (sendto) ran fstatfs, raw 35 (nanosleep) ran
+# unlinkat(0, NULL, 0). The build was clean and silent, because the v6.5.51 raw-literal
+# diagnostic derives its table from names declared in BOTH peers and a NAMELESS number is
+# structurally invisible to it. Filed from thoth, whose Wayland window therefore never had a
+# pixel buffer on aarch64 Linux.
+#
+# ⭐ THE STATIC GATES CANNOT REPLACE THIS. `esysxlat_row_order.sh` proves the chain has no
+# re-capture and `syscall_peer_kernel_agreement.sh` proves every declared number agrees with
+# the kernel tables — but neither one RUNS a syscall, and the release gate's cross-OS leg
+# executes only `tests/tcyr/crossos/`. A wrapper that compiles on five targets is not a
+# wrapper that runs; that is the exact shape of the macOS rot the cross-OS principle exists
+# for, and of the v6.5.7 wrapper pass that turned RED on ecb the first time it ran.
+#
+# ⭐ EVERY SIZE IS CHECKED TWO INDEPENDENT WAYS, because a check that shares a defect with
+# the thing it checks reads green. A file sized with ftruncate is read back through
+# lseek(SEEK_END) AND through fstat's STAT_SIZE (a different syscall, a different peer
+# constant), and the fd that arrives over SCM_RIGHTS is proved to be the SAME open file by
+# reading its size through the RECEIVED descriptor rather than the sent one.
+#
+# Mutation-verified while writing it (prototype, scratch): with the 46→211 and 77→46 rows
+# swapped, 6 assertions fail; with the 6.6.4 compiler and the raw spellings, 8 fail; with
+# SYS_UNLINKAT moved to 263 but the 263→35 row missing, syscall_wrappers/syscalls_fileops/
+# atomic_write fail 8 between them.
+#
+# Per-target groups. Windows asserts the DECLINES (its peer is standalone and has no
+# socketpair, no memfd, no truncate); macOS asserts that memfd declines while
+# ftruncate/truncate/sendmsg/recvmsg/sendto/recvfrom work through the Darwin routes, with
+# the Darwin cmsg layout.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/chrono.cyr"
+
+# ── msghdr. Linux is 56 bytes (msg_iovlen and msg_controllen are size_t); Darwin is 48
+# (both are int/socklen_t, with padding after). A ZEROED buffer written with store64 at
+# +16/+24/+32/+40 is correct for both on little-endian: the 8-byte store puts the small
+# value in the 4-byte field and zero in the pad that follows it. msg_flags (Linux @48,
+# Darwin @44) stays zero either way. Only the CONTROL BUFFER genuinely differs.
+fn msg_fill(mh, iov, data, dlen, ctl, ctllen): i64 {
+    var i = 0;
+    while (i < 56) { store8(mh + i, 0); i = i + 1; }
+    store64(iov, data);
+    store64(iov + 8, dlen);
+    store64(mh + 16, iov);
+    store64(mh + 24, 1);
+    store64(mh + 32, ctl);
+    store64(mh + 40, ctllen);
+    return 0;
+}
+
+# ── cmsghdr for one fd.
+# Linux : cmsg_len size_t@0, cmsg_level int@8, cmsg_type int@12, data@16 — CMSG_LEN(4) = 20,
+#         CMSG_SPACE(4) = 24, SOL_SOCKET = 1.
+# Darwin: cmsg_len u32@0,    cmsg_level int@4, cmsg_type int@8,  data@12 — CMSG_LEN(4) = 16,
+#         CMSG_SPACE(4) = 16, SOL_SOCKET = 0xFFFF.
+# Returns the control length to pass in msg_controllen.
+fn cmsg_put_fd(ctl, fd): i64 {
+    var i = 0;
+    while (i < 24) { store8(ctl + i, 0); i = i + 1; }
+    #ifdef CYRIUS_TARGET_MACOS
+    store32(ctl, 16);
+    store32(ctl + 4, 65535);
+    store32(ctl + 8, 1);
+    store32(ctl + 12, fd);
+    return 16;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    store64(ctl, 20);
+    store32(ctl + 8, 1);
+    store32(ctl + 12, 1);
+    store32(ctl + 16, fd);
+    return 24;
+    #endif
+}
+
+# Read the fd back out of a received control buffer (0 if the message is not SCM_RIGHTS).
+fn cmsg_get_fd(ctl): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    if (load32(ctl + 8) != 1) { return 0 - 1; }
+    return load32(ctl + 12);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    if (load32(ctl + 12) != 1) { return 0 - 1; }
+    return load32(ctl + 16);
+    #endif
+}
+
+# Size of an open fd, read through fstat rather than lseek — the SECOND oracle.
+# ⚠ #ifndef CYRIUS_TARGET_WIN: the PE peer is standalone and declares neither `sys_fstat` nor
+# `STAT_SIZE`, so defining this unconditionally printed `warning: undefined function
+# 'sys_fstat'` on every PE build of this file — a warning that would have been on screen for
+# every cass gate run forever, and this repo has already learned (v6.5.43) that routine
+# warnings are what real ones hide behind. Every caller is inside the same guard.
+#ifndef CYRIUS_TARGET_WIN
+fn size_via_fstat(fd): i64 {
+    var sb[144];
+    var i = 0;
+    while (i < 144) { store8(&sb + i, 0); i = i + 1; }
+    if (sys_fstat(fd, &sb) < 0) { return 0 - 1; }
+    return load64(&sb + STAT_SIZE);
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+
+    # ── (f) nanosleep — every target. PE reroutes 35 to kernel32 Sleep, x86-macOS and
+    # arm64-macOS to poll, ELF-aarch64 through the new 35→101 row, agnos through #41.
+    test_group("sys_nanosleep sleeps");
+    var ts[16];
+    store64(&ts, 0);
+    store64(&ts + 8, 120000000);        # 120 ms
+    var t0 = clock_now_ms();
+    sys_nanosleep(&ts, 0);
+    var dt = clock_now_ms() - t0;
+    assert_gte(dt, 100, "sys_nanosleep(120 ms) waited at least 100 ms");
+    assert_lt(dt, 5000, "sys_nanosleep(120 ms) returned within 5 s (it is not blocking forever)");
+
+    # ⛔ RAW 35, UNGUARDED, AND THAT IS THE POINT. This assertion used to sit at the bottom of
+    # the `#ifdef CYRIUS_TARGET_LINUX` raw group, so the release gate's ecb and ach legs never
+    # executed it — and the twelve hand-written words of EMACHO_NANOSLEEP_ARM (arm64-macOS)
+    # plus the x86-macOS reroute were therefore exercised by NOTHING, on any host, ever. The
+    # emitter comment beside them claims "raw 35 sleeps on every target cyrius supports"; a
+    # claim scoped to one target by an #ifdef is not a tested claim, it is the shape this
+    # whole release is about. Measured unguarded before moving it: PE under wine 1/1,
+    # ELF-aarch64 under qemu 1/1 — so the two Macs are the only unmeasured legs left, which is
+    # exactly what the cross-OS leg is for. CHANGELOG [6.6.5]
+    test_group("raw x86 35 sleeps on EVERY target");
+    var rts[16];
+    store64(&rts, 0);
+    store64(&rts + 8, 120000000);
+    var rt0 = clock_now_ms();
+    syscall(35, &rts, 0);
+    var rdt = clock_now_ms() - rt0;
+    assert_gte(rdt, 100, "raw 35 is nanosleep (PE Sleep / Darwin poll / a64 101), not unlinkat");
+    assert_lt(rdt, 5000, "raw 35 returned within 5 s");
+
+    # ⛔ assert_EQ, NOT assert_lte. The first cut asserted `<= 0`, which is true for a
+    # SUCCESS (0) and for EVERY failure, so the one assertion covering this wrapper could not
+    # fail: measured, mis-declaring the aarch64 peer's SYS_SCHED_YIELD 124 -> 300 still scored
+    # 50/50 exit 0 under qemu. Linux and Darwin both return exactly 0 here (Darwin through the
+    # zero-timeout poll the wrapper composes); PE returns -38 by design and is asserted in the
+    # WIN group below. An assertion that accepts every outcome is the vacuity shape this whole
+    # release is about. CHANGELOG [6.6.5]
+    test_group("sys_sched_yield returns");
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(sys_sched_yield(), 0, "sys_sched_yield() succeeds (0), not merely 'not positive'");
+    #endif
+
+    #ifdef CYRIUS_TARGET_WIN
+    # ── Windows: the peer is STANDALONE and declines. What is under test here is that a
+    # consumer NAMING these still COMPILES for PE and gets a negative answer rather than a
+    # raw `0F 05` that traps as STATUS_ILLEGAL_INSTRUCTION.
+    test_group("PE declines, and says so");
+    assert_lt(sys_memfd_create("cyr", 1), 0, "sys_memfd_create declines on Windows");
+    assert_lt(sys_ftruncate(1, 0), 0, "sys_ftruncate declines on Windows");
+    assert_lt(sys_truncate("C:\\nope", 0), 0, "sys_truncate declines on Windows");
+    assert_lt(sys_sendmsg(1, 0, 0), 0, "sys_sendmsg declines on Windows");
+    assert_lt(sys_sendto(1, 0, 0, 0, 0, 0), 0, "sys_sendto declines on Windows");
+    assert_eq(sys_sched_yield(), 0 - 38, "sys_sched_yield declines on Windows with -ENOSYS");
+    #endif
+
+    #ifndef CYRIUS_TARGET_WIN
+    # ⛔ CLEAR THE FIXED PATHS FIRST, results ignored. This file uses fixed /tmp names (a
+    # process-unique name would need a pid + int-to-string, and the point of the group below
+    # is that `mkdir` runs, which needs a path the test controls). cross-os-libtest-runner.sh
+    # kill -9s a hung test at 90 s, so a timeout on ecb/ach/pi can leave
+    # /tmp/cyr_shm_fdpass_dir behind — and measured, a leftover directory makes the NEXT run
+    # fail "raw 83 is mkdir, not fdatasync (got -17)" with 48/49 and exit 1, i.e. RED on real
+    # hardware for a reason that has nothing to do with the compiler. Clearing at entry rather
+    # than trusting the exit path is the only version that survives a kill -9.
+    sys_unlink("/tmp/cyr_shm_fdpass_probe");
+    sys_unlink("/tmp/cyr_shm_fdpass_pass");
+    sys_unlink("/tmp/cyr_shm_fdpass_raw");
+    sys_unlink("/tmp/cyr_shm_fdpass_ln");
+    sys_unlink("/tmp/cyr_shm_fdpass_lt");
+    sys_rmdir("/tmp/cyr_shm_fdpass_dir");
+
+    # ── (a) ftruncate / truncate on a real file, two oracles each.
+    test_group("ftruncate + truncate size a real file");
+    var path = "/tmp/cyr_shm_fdpass_probe";
+    var fd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 420);   # O_WRONLY|O_CREAT|O_TRUNC, 0644
+    assert_gte(fd, 0, "temp file opened");
+    assert_eq(sys_ftruncate(fd, 12345), 0, "sys_ftruncate(fd, 12345) succeeds");
+    # ⚠ the NAMED wrapper on purpose. `sys_lseek` was the seventh asymmetry the premise-check
+    # found (agnos + Windows had it, the three Linux/Darwin peers did not) and v6.6.5's first
+    # cut shipped six of seven and dropped this one silently. Added to
+    # lib/syscalls_linux_common.cyr in round 2; this is the assertion that runs it.
+    assert_eq(sys_lseek(fd, 0, 2), 12345, "oracle 1: sys_lseek(SEEK_END) reports 12345");
+    assert_eq(size_via_fstat(fd), 12345, "oracle 2: fstat STAT_SIZE reports 12345");
+    sys_close(fd);
+    assert_eq(sys_truncate(path, 777), 0, "sys_truncate(path, 777) succeeds");
+    var fd2 = file_open(path, 0, 0);
+    assert_eq(size_via_fstat(fd2), 777, "truncate by PATH is visible through a fresh fd");
+    sys_close(fd2);
+    sys_unlink(path);
+
+    # ── (b) memfd_create. Linux gives a real anonymous fd; Darwin has no such call and the
+    # shared wrapper declines rather than emitting an unrouted 319.
+    test_group("memfd_create");
+    #ifdef CYRIUS_TARGET_MACOS
+    assert_eq(sys_memfd_create("cyr_probe", 1), 0 - 78, "sys_memfd_create declines on macOS (-ENOSYS)");
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
+    var mfd = sys_memfd_create("cyr_probe", 1);   # MFD_CLOEXEC
+    assert_gte(mfd, 0, "sys_memfd_create returns an fd");
+    assert_eq(sys_ftruncate(mfd, 4096), 0, "the memfd can be sized");
+    assert_eq(syscall(SYS_LSEEK, mfd, 0, 2), 4096, "oracle 1: the memfd is 4096 bytes");
+    assert_eq(size_via_fstat(mfd), 4096, "oracle 2: fstat agrees the memfd is 4096 bytes");
+    #endif
+
+    # ── (c) sendto / recvfrom over a socketpair, checked against a plain read.
+    test_group("sendto + recvfrom on a socketpair");
+    var sv[16];
+    assert_eq(sys_socketpair(1, 1, 0, &sv), 0, "socketpair(AF_UNIX, SOCK_STREAM)");
+    var sa = load32(&sv);
+    var sb2 = load32(&sv + 4);
+    assert_eq(sys_sendto(sa, "abcd", 4, 0, 0, 0), 4, "sys_sendto wrote 4 bytes");
+    var rb = alloc(16);
+    assert_eq(sys_recvfrom(sb2, rb, 4, 0, 0, 0), 4, "sys_recvfrom read 4 bytes");
+    store8(rb + 4, 0);
+    assert_streq(rb, "abcd", "sendto/recvfrom round-trip the payload");
+    # cross-oracle: the same bytes arrive through plain write + read
+    assert_eq(sys_write(sa, "wxyz", 4), 4, "plain write on the same socket");
+    assert_eq(sys_read(sb2, rb, 4), 4, "plain read on the same socket");
+    store8(rb + 4, 0);
+    assert_streq(rb, "wxyz", "write/read agree with sendto/recvfrom");
+
+    # ── (d) sendmsg with SCM_RIGHTS, then recvmsg. The receiving end must get a DIFFERENT
+    # descriptor number that refers to the SAME open file — proved by reading the size back
+    # through the RECEIVED fd, not the sent one.
+    test_group("sendmsg(SCM_RIGHTS) passes a real fd");
+    var pfd = file_open("/tmp/cyr_shm_fdpass_pass", O_WRONLY | O_CREAT | O_TRUNC, 420);
+    assert_gte(pfd, 0, "file to pass opened");
+    assert_eq(sys_ftruncate(pfd, 9991), 0, "the passed file is sized to 9991");
+    var mh[56];
+    var iov[16];
+    var ctl[24];
+    var payload[8];
+    store8(&payload, 90);
+    var clen = cmsg_put_fd(&ctl, pfd);
+    msg_fill(&mh, &iov, &payload, 1, &ctl, clen);
+    assert_eq(sys_sendmsg(sa, &mh, 0), 1, "sys_sendmsg sent the 1-byte payload");
+    var rmh[56];
+    var riov[16];
+    var rctl[24];
+    var rbuf[8];
+    var q = 0;
+    while (q < 24) { store8(&rctl + q, 0); q = q + 1; }
+    store8(&rbuf, 0);
+    msg_fill(&rmh, &riov, &rbuf, 1, &rctl, 24);
+    assert_eq(sys_recvmsg(sb2, &rmh, 0), 1, "sys_recvmsg received the 1-byte payload");
+    assert_eq(load8(&rbuf), 90, "the payload byte survived");
+    var rfd = cmsg_get_fd(&rctl);
+    assert_gte(rfd, 0, "the control message is SCM_RIGHTS and carries an fd");
+    assert_neq(rfd, pfd, "the received fd is a NEW descriptor number");
+    assert_eq(size_via_fstat(rfd), 9991, "the received fd refers to the same 9991-byte file");
+    sys_close(rfd);
+    sys_close(pfd);
+    sys_unlink("/tmp/cyr_shm_fdpass_pass");
+    sys_close(sa);
+    sys_close(sb2);
+
+    # ── (e) the RAW x86 spellings, on Linux, by EQUIVALENCE to the named wrapper. This is
+    # the half that was broken: the ESYSXLAT compat rows are what make an x86-authored
+    # source portable, and on x86 itself these are the same number, so only the aarch64 run
+    # can fail. Same style as syscall_ioctl_x86_compat.tcyr.
+    #ifdef CYRIUS_TARGET_LINUX
+    test_group("raw x86 numbers reach the same syscalls (ESYSXLAT compat rows)");
+    var rawfd = syscall(319, "cyr_raw", 1);                  # memfd_create
+    assert_gte(rawfd, 0, "raw 319 is memfd_create, not ENOSYS");
+    assert_eq(syscall(77, rawfd, 2048), 0, "raw 77 is ftruncate, not tee");
+    assert_eq(size_via_fstat(rawfd), 2048, "the raw-77 size is visible through fstat");
+    sys_close(rawfd);
+
+    var sv2[16];
+    # ⛔ THE SOCKETPAIR HERE IS THE NAMED WRAPPER ON PURPOSE, even inside the raw group.
+    # Raw 53 is x86 socketpair but aarch64 53 is **fchmodat**, which this release
+    # deliberately does NOT route (the peer declares it). Writing `syscall(53, ...)` here
+    # made the call return -EFAULT on aarch64, so every assertion below it failed against a
+    # non-socket — measured, first run under qemu. tests/tcyr/stdlib/result_allocator_via.tcyr
+    # had the same line and took its SKIP branch instead, which is worse: its whole group
+    # silently did not run on ARM. Same trap, two outcomes, one spelling.
+    assert_eq(sys_socketpair(1, 1, 0, &sv2), 0, "socketpair for the raw probes");
+    var ra = load32(&sv2);
+    var rbf = load32(&sv2 + 4);
+    var pfd2 = file_open("/tmp/cyr_shm_fdpass_raw", O_WRONLY | O_CREAT | O_TRUNC, 420);
+    assert_eq(syscall(77, pfd2, 4242), 0, "raw ftruncate sizes the file to pass");
+    var mh2[56];
+    var iov2[16];
+    var ctl2[24];
+    var pay2[8];
+    store8(&pay2, 91);
+    var clen2 = cmsg_put_fd(&ctl2, pfd2);
+    msg_fill(&mh2, &iov2, &pay2, 1, &ctl2, clen2);
+    assert_eq(syscall(46, ra, &mh2, 0), 1, "raw 46 is sendmsg, not ftruncate");
+    var rmh2[56];
+    var riov2[16];
+    var rctl2[24];
+    var rbuf2[8];
+    var w = 0;
+    while (w < 24) { store8(&rctl2 + w, 0); w = w + 1; }
+    store8(&rbuf2, 0);
+    msg_fill(&rmh2, &riov2, &rbuf2, 1, &rctl2, 24);
+    assert_eq(syscall(47, rbf, &rmh2, 0), 1, "raw 47 is recvmsg, not fallocate");
+    assert_eq(load8(&rbuf2), 91, "the raw-path payload survived");
+    var rfd2 = cmsg_get_fd(&rctl2);
+    assert_gte(rfd2, 0, "the raw path carried the fd too");
+    assert_eq(size_via_fstat(rfd2), 4242, "the raw-passed fd refers to the same 4242-byte file");
+    sys_close(rfd2);
+    sys_close(pfd2);
+
+    assert_eq(syscall(44, ra, "pqrs", 4, 0, 0, 0), 4, "raw 44 is sendto, not fstatfs");
+    assert_eq(syscall(45, rbf, rb, 4, 0, 0, 0), 4, "raw 45 is recvfrom, not truncate");
+    store8(rb + 4, 0);
+    assert_streq(rb, "pqrs", "the raw sendto/recvfrom payload round-tripped");
+    sys_close(ra);
+    sys_close(rbf);
+
+    assert_eq(syscall(76, "/tmp/cyr_shm_fdpass_raw", 88), 0, "raw 76 is truncate, not splice");
+    var chk = file_open("/tmp/cyr_shm_fdpass_raw", 0, 0);
+    assert_eq(size_via_fstat(chk), 88, "the raw-76 truncate really shortened the file");
+    sys_close(chk);
+
+    # (raw 35 is asserted UNGUARDED at the top of main, so ecb/ach/cass run it too.)
+    sys_unlink("/tmp/cyr_shm_fdpass_raw");
+    #endif
+
+    # ── (f) the bare-name fs calls, on EVERY non-Windows target. aarch64 dropped all five
+    # and the numbers it reused are live (83 fdatasync, 84 sync_file_range, 87 timerfd_gettime,
+    # 89 acct, 33 mknodat).
+    # ⛔ THESE FIVE USED TO SIT INSIDE THE `#ifdef CYRIUS_TARGET_LINUX` GROUP ABOVE — the exact
+    # guard this release removed from raw 35 because "a claim scoped to one target by an #ifdef
+    # is not a tested claim". The five arm64-macOS parity rows v6.6.5 added to ESYSXLAT's
+    # _TARGET_MACHO arm (83→136, 84→137, 87→10, 89→58, 33→90) were therefore exercised by
+    # NOTHING on ecb or ach — a new route with no test on the host it exists for, which is the
+    # shape of the EMACHO_NANOSLEEP_ARM words this same release had to un-guard. Found in
+    # review round 2. PE routes only 83 and 87, so the group stays inside the
+    # #ifndef CYRIUS_TARGET_WIN. mkdir/rmdir/unlink/readlink/dup2 all exist on Darwin.
+    # ⚠ THE READLINK TARGET IS A SYMLINK THIS TEST MAKES. The old assertion read
+    # /proc/self/exe, which is Linux-only — half the reason the group could not leave the
+    # guard was that its own fixture was. CHANGELOG [6.6.5]
+    test_group("raw x86 bare-name fs calls route on Linux AND Darwin");
+    assert_eq(syscall(83, "/tmp/cyr_shm_fdpass_dir", 493), 0, "raw 83 is mkdir, not fdatasync");
+    assert_eq(syscall(84, "/tmp/cyr_shm_fdpass_dir"), 0, "raw 84 is rmdir, not sync_file_range");
+    var ltfd = file_open("/tmp/cyr_shm_fdpass_lt", O_WRONLY | O_CREAT | O_TRUNC, 420);
+    assert_gte(ltfd, 0, "the readlink fixture file opened");
+    sys_close(ltfd);
+    assert_eq(sys_symlink("/tmp/cyr_shm_fdpass_lt", "/tmp/cyr_shm_fdpass_ln"), 0,
+      "sys_symlink made the raw-89 fixture");
+    var lbuf = alloc(256);
+    assert_gt(syscall(89, "/tmp/cyr_shm_fdpass_ln", lbuf, 255), 0, "raw 89 is readlink, not acct");
+    assert_eq(syscall(87, "/tmp/cyr_shm_fdpass_ln"), 0, "raw 87 is unlink, not timerfd_gettime");
+    sys_unlink("/tmp/cyr_shm_fdpass_lt");
+    var dupd = syscall(33, 1, 71);
+    assert_eq(dupd, 71, "raw 33 is dup2, not mknodat");
+    sys_close(71);
+    #endif
+
+    return 0;
+}
+
+# ⛔ THE EXIT SYSCALL IS LOAD-BEARING, not decoration. A file that DEFINES `fn main` gets it
+# invoked automatically after the top level, so `var _m = main();` runs the whole body a
+# SECOND time and the process then exits with THAT run's return value — leaving a trailing
+# `var r = assert_summary();` dead for the exit code. Measured while writing this file: the
+# 6.6.4-compiler control printed "19 passed, 30 failed" and still **exited 0**. Ending on an
+# explicit exit (what the neighbouring syscall_wrappers / syscalls_fileops crossos tests do)
+# returns the failure count AND stops before the second invocation.
+var ec = main();
+var r = assert_summary();
+syscall(SYS_EXIT, r);

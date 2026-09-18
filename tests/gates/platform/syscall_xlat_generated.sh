@@ -22,8 +22,13 @@
 #      call rows finds ZERO and silently under-excludes; the generator DECODES
 #      `cmp x8,#imm` (0xF1000000 | imm<<10 | 8<<5 | 0x1F) instead.
 #   2. The 10 ambiguous numbers above, where a literal is plausibly correct.
-# With both, in-tree false positives went 525 -> 0 while 43 genuinely-broken numbers still
-# warn. THE ZERO IS THE ACCEPTANCE — a noisy syscall warning is worse than none here, which
+# With both, in-tree false positives went 525 -> 0 while the genuinely-broken numbers still
+# warn. ⚠ v6.6.5: this line used to quote that second count ("43 genuinely-broken numbers").
+# It is DERIVED — the table shrinks every time a call gains a name in both peers and grows
+# when one arrives on only one — so it went stale the moment the release it was written for
+# shipped. Derive it instead: `grep -c '_SYSX_MEANT' src/common/syscall_xlat.cyr`, or read
+# the count the generator prints. CHANGELOG [6.6.5]
+# THE ZERO IS THE ACCEPTANCE — a noisy syscall warning is worse than none here, which
 # this repo already learned when the Mach-O routing warning fired 470 times and got scrolled
 # past (v6.5.43).
 #
@@ -147,6 +152,97 @@ if [ -x "$D/cc_a64" ]; then
         grep 'raw syscall' "$D/cli.err" | head -3 | sed 's/^/      /'; FAIL=1
     else
         echo "  ok: the CLI builds for aarch64 with 0 raw-syscall warnings (cbt/build.cyr's 110 is SYS_GETPPID now)"
+    fi
+fi
+
+# ── axis 9: EVERY routed source number compiles SILENT on the aarch64 fork ────────
+# v6.6.5. Axis 4 pins ONE remapped number (write=1). The set is 58 now and fourteen of them
+# landed in a single release, so pin the PROPERTY: if ESYSXLAT routes it, writing it raw is
+# the supported convention and must not warn. The set is DERIVED from the emitter, and the
+# expectation that each one is a real x86_64 syscall comes from the committed KERNEL table
+# (tests/data/syscalls/x86_64.tbl) — a different source from the generated table under test,
+# which is derived from the peers.
+#
+# ⛔ v6.6.5 — THE GUARD BELOW MUST NOT BE THE ONLY THING STANDING BETWEEN THESE AXES AND
+# SILENCE. As first written it was `if [ -x cc_a64 ] && [ -f ...x86_64.tbl ]` with no else:
+# moving tests/data/syscalls/ aside made the gate print the IDENTICAL PASS line with both
+# axes simply gone — a check that disappears when its input does, which is the vacuous-green
+# shape this whole release is about. The missing-table case is now a hard FAIL (the sibling
+# syscall_peer_kernel_agreement.sh already does this); the missing-compiler case is covered
+# by axis 2, which fails first and loudly. CHANGELOG [6.6.5]
+if [ ! -f tests/data/syscalls/x86_64.tbl ]; then
+    echo "FAIL: axes 9+10: tests/data/syscalls/x86_64.tbl is missing — it is the COMMITTED"
+    echo "      kernel-fact source both axes cross-check against (see its header for the"
+    echo "      derivation command). Without it these axes are not skipped, they are absent."
+    FAIL=1
+fi
+if [ -x "$D/cc_a64" ] && [ -f tests/data/syscalls/x86_64.tbl ]; then
+    ROUTED=$(awk '
+    /^fn ESYSXLAT\(/ { on = 1 }
+    on && /^fn / && !/^fn ESYSXLAT\(/ { on = 0 }
+    on && /_TARGET_MACHO == 2/ { m = 1 }
+    on && m && /^        return 0;/ { m = 0; next }
+    on && !m {
+        line = $0
+        while (match(line, /EW\(S, 0xF1[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]\)/)) {
+            w = strtonum("0x" substr(line, RSTART + 8, 8)); line = substr(line, RSTART + RLENGTH)
+            if (and(w, 0xFFC003FF) == 0xF100011F) { v = rshift(w - 0xF100011F, 10); if (v < 1000) print v }
+        }
+    }' src/backend/aarch64/emit.cyr | sort -n -u)
+    nr=$(echo "$ROUTED" | wc -w)
+    # every routed source must be a real x86_64 syscall number — otherwise the row is
+    # routing something that cannot be written deliberately, and this axis is vacuous.
+    unknown=0
+    for n in $ROUTED; do
+        awk -v n="$n" '$1 == n { f = 1 } END { exit !f }' tests/data/syscalls/x86_64.tbl || unknown=$((unknown + 1))
+    done
+    : > "$D/allrouted.cyr"
+    echo 'fn main(): i64 {' >> "$D/allrouted.cyr"
+    for n in $ROUTED; do echo "    syscall($n, 0, 0, 0);" >> "$D/allrouted.cyr"; done
+    echo '    return 0;' >> "$D/allrouted.cyr"
+    echo '}' >> "$D/allrouted.cyr"
+    echo 'var r = main();' >> "$D/allrouted.cyr"
+    rc9=0; "$D/cc_a64" < "$D/allrouted.cyr" > "$D/allrouted.bin" 2>"$D/allrouted.err" || rc9=$?
+    if [ "$nr" -lt 50 ]; then
+        echo "FAIL: axis 9: only $nr routed source numbers decoded (floor 50) — the decoder moved"; FAIL=1
+    elif [ "$rc9" -ne 0 ] || [ ! -s "$D/allrouted.bin" ]; then
+        echo "FAIL: axis 9: the routed-number probe did not build for aarch64 (rc=$rc9)"; FAIL=1
+    elif [ "$unknown" -ne 0 ]; then
+        echo "FAIL: axis 9: $unknown routed source number(s) are not x86_64 syscalls per tests/data/syscalls/x86_64.tbl"; FAIL=1
+    elif [ "$(grep -c 'raw syscall' "$D/allrouted.err")" != 0 ]; then
+        echo "FAIL: axis 9: a number ESYSXLAT ROUTES still warns — writing it raw is the supported convention:"
+        grep 'raw syscall' "$D/allrouted.err" | head -5 | sed 's/^/      /'; FAIL=1
+    else
+        echo "  ok: all $nr routed source numbers compile silent on the aarch64 fork (derived from the emitter)"
+    fi
+
+    # ── axis 10: a newly-NAMED number that is NOT routed gains a diagnostic ───────────
+    # v6.6.5 named SYS_INOTIFY_INIT1 = 294 on the x86 peer (it was a raw literal; the aarch64
+    # peer had always declared 26). aarch64 294 is kexec_file_load, the number is unrouted and
+    # not an aarch64 declaration, so it is exactly the case the table exists for. The expected
+    # NAME comes from the kernel table, not from src/common/syscall_xlat.cyr.
+    #
+    # MUTATION LEDGER (measured 6.6.5, corrected). ⚠ The first ledger for this axis said
+    # "remove SYS_INOTIFY_INIT1 from the x86 peer -> axis 10 FAIL". IT DOES NOT: the peer's
+    # own three inotify wrappers now spell that name, so deleting the declaration stops the
+    # GENERATOR compiling and only axis 1 reddens ("the generator does not build") while
+    # axis 10 still prints ok. Re-measured — the mutation that actually reaches axis 10 is
+    # deleting the `if (n == 294) { return "inotify_init1"; }` row from the generated
+    # src/common/syscall_xlat.cyr: axis 10 FAILs with "raw 294 is not diagnosed", and axis 1
+    # FAILs too because the table is generated and any hand-edit of it IS staleness. Same
+    # result from renaming the row's string. There is no mutation that reaches axis 10 and
+    # leaves axis 1 green, and a ledger entry that claims otherwise is the check-shares-a-
+    # defect shape one level up. CHANGELOG [6.6.5]
+    want294=$(awk '$1 == 294 { print $2 }' tests/data/syscalls/x86_64.tbl)
+    printf 'fn main(): i64 { return syscall(294, 0); }\nvar r = main();\n' > "$D/ino.cyr"
+    "$D/cc_a64" < "$D/ino.cyr" > /dev/null 2>"$D/ino.err"
+    if [ -z "$want294" ]; then
+        echo "FAIL: axis 10: tests/data/syscalls/x86_64.tbl has no entry for 294"; FAIL=1
+    elif [ "$(grep -c "raw syscall 294 is x86_64 \`$want294\`" "$D/ino.err")" != 1 ]; then
+        echo "FAIL: axis 10: raw 294 is not diagnosed as x86_64 \`$want294\` (aarch64 294 is kexec_file_load)"
+        grep -m2 'raw syscall' "$D/ino.err" | sed 's/^/      /'; FAIL=1
+    else
+        echo "  ok: raw 294 is diagnosed as x86_64 \`$want294\` (the v6.6.5 peer-asymmetry fix)"
     fi
 fi
 

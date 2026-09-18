@@ -107,9 +107,36 @@ type: state
 >   worth writing down: a checker that round-trips literals through `unicode_escape` reports 23
 >   false positives, all off by 3, one per em dash.
 >
-> ⚖️ **Not re-verified this sweep, and stated rather than implied**: `vidya/` was not touched
-> (it is a sibling repo and its per-minor refresh is a closeout item), and the Tier 2–7
-> inventories below still carry their 2026-06 anchors. The tier tables are approximate by
+> **Touched at 6.6.5 (bite 5, not a sweep):** `docs/guides/cyrius-guide.md` gained a
+> "raw syscall numbers are the most portable-LOOKING thing that is not portable" rule in the
+> cross-platform section — three ordered rules plus the six x86 numbers cyrius deliberately
+> leaves unrouted on ELF-aarch64, and the fact that a VARIABLE syscall number is rewritten by
+> the chain too. It carries no derived count (the first draft quoted "58 rows", which is the
+> very shape this ledger keeps catching). In the sibling `vidya/` repo, the language field
+> note `fn_main_is_not_the_entry_point` was **corrected**: it had said cyrius has no auto-call
+> for `main()`, which stopped being true at **v5.9.37** — eighteen minors of a field note
+> stating the opposite of what the compiler does. ⚠ Review round 1 found the correction was
+> **half-applied**: `field_notes/index.cyml`'s one-line summary of that same entry still read
+> "fn main() isn't auto-called", so the corpus said both things at once. Fixed — and the
+> general lesson is that an entry with an index summary is TWO statements of the same fact.
+> Round 1 also added rule 4 to the guide's list (the `dup2` → `dup3` self-dup divergence) and
+> the `#ifdef`-guarded-declaration half of rule 3, after `lib/yukti.cyr` was found declaring
+> `SYS_STATFS = 43` under exactly that guard.
+> Round 2 extended rule 3 again — to say which gate enforces it, over which trees, and that
+> the compiler's OWN source (`src/backend/common/runtime.cyr`) was breaking the rule while
+> the rule was being written. Round 2 also pinned the nine unshipped syscall families into
+> `docs/development/roadmap.md`'s potential backlog: they had been documented only in an
+> ARCHIVED issue, which is documentation, not a deferral. Three `vidya/` compiler gotchas
+> were added (an x86-hosted cross compiler takes the HOST's arch `#ifdef` arm; a gate can
+> have a positive control and still read green over an empty corpus; `assert_lte(f(), 0)`
+> on a syscall wrapper accepts every failure).
+>
+> ⚖️ **Not re-verified at 6.6.5, and stated rather than implied**: the `vidya/` edits named
+> above (plus round 2's three compiler gotchas) are the ONLY ones — that repo's per-minor
+> structural refresh is a closeout item and
+> was not run here (a first cut of this paragraph left the blanket "vidya/ was not touched"
+> standing directly beneath a paragraph recording a vidya edit). The Tier 2–7 inventories
+> below still carry their 2026-06 anchors, and the tier tables are approximate by
 > construction — the rollup counts lag.
 
 ## At a glance — inventory (bucket counts last fully re-tallied 2026-06-04 at the v6.0.62 sweep; per-tier sections re-anchored to the 2026-06-12 v6.1.41 closeout doc-sync — the rollup counts here lag and are approximate)

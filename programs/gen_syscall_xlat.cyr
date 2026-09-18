@@ -48,6 +48,97 @@ var NAMEPOOL = 32768;
 # side, but must NEVER be used as the "what does this number mean natively" side.
 var ALIAS_BASE = 1000;
 
+# v6.6.5 — the parse context, hoisted to globals so `_a64_intended_x86` can answer
+# "is this aarch64 declaration an intended x86-number renumber?" without a ten-argument
+# signature threaded through every caller. Assigned once, at the top of main().
+var _gx_pool = 0;
+var _gx_an = 0;
+var _gx_av = 0;
+var _gx_ac = 0;
+var _gx_xn = 0;
+var _gx_xv = 0;
+var _gx_xc = 0;
+var _gx_routed = 0;
+var _gx_routed_n = 0;
+
+# ── the KERNEL table (tests/data/syscalls/aarch64.tbl), `<number> <name>` per line ────────
+# v6.6.5 review: `_SYSX_ACTUALLY` used to be built from the aarch64 PEER's declarations, and
+# was therefore STRUCTURALLY DEAD — `_row_wanted` emits a `_SYSX_MEANT` row only for x86
+# numbers the peer does NOT declare, so the two sets could not intersect and the second half
+# of the diagnostic ("on ELF-aarch64 that number is `ptrace`") never once fired, on any
+# number, since v6.5.51. Measured: 43 warnings, 0 carrying the better text. That second half
+# is the WHOLE POINT of the table — this generator's own header says so, naming the ten
+# numbers where the x86 value IS a real, different aarch64 syscall. It is now sourced from
+# the committed kernel table, which knows the ~330 aarch64 names the stdlib peer has no
+# reason to declare. 35 of the 43 rows gain the text — DERIVE it rather than trusting this
+# line: `awk '/^fn _SYSX_ACTUALLY/{m=1;next} /^}/{m=0} m&&/return "/{c++} END{print c}'
+# src/common/syscall_xlat.cyr`. (Review round 2: this said 38 while parse_expr.cyr and the
+# CHANGELOG both said 35, which is the hand-quoted-derived-count drift this release's own
+# entry condemns.) CHANGELOG [6.6.5]
+#
+# ⚠ Direction: programs/ reading tests/data at GENERATION time is not a build dependency —
+# the generated src/common/syscall_xlat.cyr is committed, and programs/checks/main.cyr
+# already reads tests/. The alternative (duplicating 330 kernel facts into src/) is the
+# hand-maintained-duplicate shape this generator exists to remove.
+fn _is_dec_digit(c): i64 {
+    if (c >= 48 && c <= 57) { return 1; }
+    return 0;
+}
+
+fn _is_lower_or_digit_or_us(c): i64 {
+    if (c >= 97 && c <= 122) { return 1; }
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c == 95) { return 1; }
+    return 0;
+}
+
+# Parse `<number> <name>` rows. Comment lines (`#`) and blank lines are skipped. Names are
+# copied into `pool`; `names[i]` is the pool offset, `nums[i]` the number. Returns the count.
+fn parse_kernel_tbl(buf, blen, names, nums, pool, pool_pos_p): i64 {
+    var n = 0;
+    var i = 0;
+    var pp = load64(pool_pos_p);
+    while (i < blen) {
+        while (i < blen && (load8(buf + i) == 32 || load8(buf + i) == 9)) { i = i + 1; }
+        if (i < blen && _is_dec_digit(load8(buf + i)) == 1) {
+            var v = 0;
+            while (i < blen && _is_dec_digit(load8(buf + i)) == 1) {
+                v = v * 10 + (load8(buf + i) - 48);
+                i = i + 1;
+            }
+            while (i < blen && (load8(buf + i) == 32 || load8(buf + i) == 9)) { i = i + 1; }
+            var ns = i;
+            while (i < blen && _is_lower_or_digit_or_us(load8(buf + i)) == 1) { i = i + 1; }
+            if (i > ns && n < MAXSYS * 2) {
+                var k = 0;
+                store64(names + n * 8, pp);
+                while (ns + k < i) {
+                    store8(pool + pp + k, load8(buf + ns + k));
+                    k = k + 1;
+                }
+                store8(pool + pp + k, 0);
+                pp = pp + k + 1;
+                store64(nums + n * 8, v);
+                n = n + 1;
+            }
+        }
+        while (i < blen && load8(buf + i) != 10) { i = i + 1; }
+        i = i + 1;
+    }
+    store64(pool_pos_p, pp);
+    return n;
+}
+
+# The kernel name for aarch64 number `v`, or 0 when the number is unassigned there.
+fn kernel_name_of(pool, names, nums, count, v): i64 {
+    var i = 0;
+    while (i < count) {
+        if (load64(nums + i * 8) == v) { return pool + load64(names + i * 8); }
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn _is_upper_or_digit_or_us(c): i64 {
     if (c >= 65 && c <= 90) { return 1; }
     if (c >= 48 && c <= 57) { return 1; }
@@ -185,7 +276,12 @@ fn collect_routed(buf, blen, out): i64 {
 #   * ESYSXLAT does not already remap it (remapped numbers are the supported convention —
 #     cycc's own aarch64 fork writes them deliberately), and
 #   * it is not itself a valid native aarch64 number (else the literal is plausibly correct).
-# Measured against that filter: 525 in-tree warnings become 0, and 43 rows remain.
+# Measured against that filter: 525 in-tree warnings become 0, and the rows that remain
+# are whatever the two peers and ESYSXLAT currently imply — DERIVE the count from the
+# generated file, never quote it. (This line said "43 rows" from v6.5.51 to v6.6.4
+# while the tree derived 42, and the same stale 43 was copied into the gate header and
+# programs/checks/main.cyr. A hand-quoted count of a derived fact is the exact shape
+# this generator exists to remove.)
 fn _row_wanted(xv, i, av, aj, ac, routed, routed_n): i64 {
     var xnum = load64(xv + i * 8);
     if (xnum == load64(av + aj * 8)) { return 0; }
@@ -194,11 +290,40 @@ fn _row_wanted(xv, i, av, aj, ac, routed, routed_n): i64 {
     return 1;
 }
 
+# ⛔ v6.6.5 — "the aarch64 peer declares this value" is NOT the same as "this value is a
+# native aarch64 syscall number", and conflating the two mislabelled nine rows. The peer
+# deliberately declares the X86 number for a call whose native number is already eaten by
+# an x86-compat row (SYS_FSYNC = 74, SYS_NEWFSTATAT = 262, SYS_UTIMENSAT = 280,
+# SYS_FACCESSAT = 269, SYS_FLOCK = 73, and from this release SYS_TRUNCATE = 76,
+# SYS_FTRUNCATE = 77, SYS_UNLINKAT = 263) — ESYSXLAT renumbers it. Reading those as native
+# made the committed table say aarch64 74 is "fsync" when it is signalfd4, 262 is
+# "newfstatat" when it is fanotify_init, 280 is "utimensat" when it is signalfd4's
+# neighbour, 73 is "flock" when it is ppoll. The discriminator is the same one
+# tests/gates/platform/aarch64_syscall_shadow.sh uses: the x86 peer declares the SAME NAME
+# at the SAME VALUE, and ESYSXLAT routes that value. Both conditions — a bare
+# same-name-same-value test would also drop SYS_PIDFD_OPEN 434 and the landlock trio, which
+# really are the same number on both arches and really are native.
+# ⚠ No row of `_SYSX_MEANT` changes: a value that satisfies this test is routed BY
+# DEFINITION, and `_row_wanted` already returns 0 for routed numbers before it ever asks
+# about nativeness. This fixes the LABELS, which are what a future reader trusts.
+# CHANGELOG [6.6.5]
+fn _a64_intended_x86(i): i64 {
+    var v = load64(_gx_av + i * 8);
+    if (v >= ALIAS_BASE) { return 0; }
+    var xi = find_by_name(_gx_pool, _gx_xn, _gx_xv, _gx_xc, name_at(_gx_pool, _gx_an, i));
+    if (xi < 0) { return 0; }
+    if (load64(_gx_xv + xi * 8) != v) { return 0; }
+    if (is_in(_gx_routed, _gx_routed_n, v) == 0) { return 0; }
+    return 1;
+}
+
 fn is_native_a64(av, ac, v): i64 {
     var i = 0;
     while (i < ac) {
         if (load64(av + i * 8) == v) {
-            if (load64(av + i * 8) < ALIAS_BASE) { return 1; }
+            if (load64(av + i * 8) < ALIAS_BASE) {
+                if (_a64_intended_x86(i) == 0) { return 1; }
+            }
         }
         i = i + 1;
     }
@@ -281,6 +406,18 @@ fn main(): i64 {
     var routed = alloc(MAXSYS * 8);
     var routed_n = collect_routed(eb, elen, routed);
 
+    # The KERNEL facts for the `_SYSX_ACTUALLY` arm. ⛔ HARD FAIL, never a silent skip: an
+    # absent or truncated table would emit an EMPTY table that compiles, links and answers 0
+    # for everything — the diagnostic would quietly lose its second half again and axis 1
+    # would happily diff the emptied file against itself after a regeneration. The floor is
+    # ~90 % of the committed 329 rows.
+    var kb = alloc(262144);
+    var klen = file_read_all("tests/data/syscalls/aarch64.tbl", kb, 262143);
+    if (klen <= 0) {
+        println("gen_syscall_xlat: cannot read tests/data/syscalls/aarch64.tbl (the kernel facts _SYSX_ACTUALLY is built from)");
+        return 1;
+    }
+
     var pool = alloc(NAMEPOOL);
     var ppos = alloc(8);
     store64(ppos, 0);
@@ -288,6 +425,19 @@ fn main(): i64 {
     var an = alloc(MAXSYS * 8); var av = alloc(MAXSYS * 8);
     var xc = parse_table(xb, xlen, xn, xv, pool, ppos);
     var ac = parse_table(ab, alen, an, av, pool, ppos);
+    var kpool = alloc(NAMEPOOL);
+    var kppos = alloc(8);
+    store64(kppos, 0);
+    var kn = alloc(MAXSYS * 16); var kv = alloc(MAXSYS * 16);
+    var kc = parse_kernel_tbl(kb, klen, kn, kv, kpool, kppos);
+    if (kc < 300) {
+        println("gen_syscall_xlat: tests/data/syscalls/aarch64.tbl parsed under 300 rows — truncated or reformatted");
+        return 1;
+    }
+    _gx_pool = pool;
+    _gx_an = an; _gx_av = av; _gx_ac = ac;
+    _gx_xn = xn; _gx_xv = xv; _gx_xc = xc;
+    _gx_routed = routed; _gx_routed_n = routed_n;
 
     var out = alloc(1048576);
     var oo = alloc(8);
@@ -350,21 +500,39 @@ fn main(): i64 {
     emit(out, oo, "    return 0;\n}\n\n");
 
     # --- what that number ACTUALLY is on aarch64 (the dangerous collisions) ---
-    emit(out, oo, "# What `n` really invokes on ELF-aarch64, when it is a native aarch64 number. 0 when the\n");
-    emit(out, oo, "# number is not a known aarch64 syscall — the call then simply does not exist there.\n");
-    emit(out, oo, "# ⭐ THIS ARM IS THE POINT OF THE TABLE: 10 of the differing syscalls have an x86 number\n");
-    emit(out, oo, "# that IS a real, different aarch64 syscall (uname 63 = read, kill 62 = lseek,\n");
-    emit(out, oo, "# execve 59 = pipe2), and those are the silent-wrong-call cases a heuristic cannot see.\n");
+    emit(out, oo, "# What `n` really invokes on ELF-aarch64. 0 when the number is unassigned there — the\n");
+    emit(out, oo, "# call then simply does not exist and the kernel returns -ENOSYS.\n");
+    emit(out, oo, "# ⭐ THIS ARM IS THE POINT OF THE TABLE: most of the differing syscalls have an x86 number\n");
+    emit(out, oo, "# that IS a real, different aarch64 syscall (setresuid 117 = ptrace, fchmod 91 = capset,\n");
+    emit(out, oo, "# futex 202 = accept), and those are the silent-wrong-call cases a heuristic cannot see.\n");
+    emit(out, oo, "# ⛔ v6.6.5 — SOURCED FROM THE KERNEL, AND THAT IS WHAT MADE IT LIVE. Until this release\n");
+    emit(out, oo, "# it was built from the aarch64 stdlib PEER's declarations and was therefore structurally\n");
+    emit(out, oo, "# unreachable: `_row_wanted` emits a `_SYSX_MEANT` row only for x86 numbers the peer does\n");
+    emit(out, oo, "# NOT declare, so the two sets could not intersect and this arm answered 0 for every `n`\n");
+    emit(out, oo, "# that ever reached it — measured, every row warning and none carrying this text, from\n");
+    emit(out, oo, "# v6.5.51 to v6.6.4. It is now built from tests/data/syscalls/aarch64.tbl (committed UAPI\n");
+    emit(out, oo, "# facts), restricted to the numbers `_SYSX_MEANT` actually carries so every row here is\n");
+    emit(out, oo, "# reachable by construction. A row with no entry means aarch64 leaves that number\n");
+    emit(out, oo, "# unassigned, which is the honest answer rather than a missing one.\n");
     emit(out, oo, "fn _SYSX_ACTUALLY(n): i64 {\n");
     i = 0;
-    while (i < ac) {
-        if (load64(av + i * 8) < ALIAS_BASE) {
-            short_lower(pool, an, i, sbuf);
-            emit(out, oo, "    if (n == ");
-            emit_num(out, oo, load64(av + i * 8));
-            emit(out, oo, ") { return \"");
-            emit(out, oo, sbuf);
-            emit(out, oo, "\"; }\n");
+    var nact = 0;
+    while (i < xc) {
+        var nm3 = name_at(pool, xn, i);
+        var aj3 = find_by_name(pool, an, av, ac, nm3);
+        if (aj3 >= 0) {
+            if (_row_wanted(xv, i, av, aj3, ac, routed, routed_n) == 1) {
+                var xnum3 = load64(xv + i * 8);
+                var kname = kernel_name_of(kpool, kn, kv, kc, xnum3);
+                if (kname != 0) {
+                    emit(out, oo, "    if (n == ");
+                    emit_num(out, oo, xnum3);
+                    emit(out, oo, ") { return \"");
+                    emit(out, oo, kname);
+                    emit(out, oo, "\"; }\n");
+                    nact = nact + 1;
+                }
+            }
         }
         i = i + 1;
     }
@@ -381,7 +549,9 @@ fn main(): i64 {
     print_num(ac);
     syscall(SYS_WRITE, 1, ", differing rows ", 17);
     print_num(rows);
-    syscall(SYS_WRITE, 1, "\n", 1);
+    syscall(SYS_WRITE, 1, ", kernel-named ", 15);
+    print_num(nact);
+    syscall(SYS_WRITE, 1, " of them\n", 9);
     return 0;
 }
 

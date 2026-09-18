@@ -299,6 +299,10 @@ assert_eq(str_eq(fid, str_from("1")), 1, "file id");
 var ftag = toml_get(fpairs, str_from("tag"));
 assert_eq(str_eq(ftag, str_from("test")), 1, "file tag");
 # Cleanup
-syscall(87, path);
+# v6.6.5: the bare x86 fs numbers (unlink 87, rmdir 84) were raw literals here. On
+# ELF-aarch64 87 is timerfd_gettime and 84 is sync_file_range, so this cleanup did
+# NOTHING on ARM and left the fixtures behind. ESYSXLAT routes both now, but the
+# stdlib name is the spelling a test should model. CHANGELOG [6.6.5]
+sys_unlink(path);
 
 var r = assert_summary();
