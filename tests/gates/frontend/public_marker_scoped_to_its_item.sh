@@ -76,6 +76,22 @@ var _v = 5;'
 # ── the paths that already consumed it must keep doing so ────────────────────────────
 row var_then_fn    refused '_after()' 0 'public var V1 = 7;'
 row fn_then_fn     refused '_after()' 0 'public fn f1() { return 9; }'
+# 6.6.5 — the same two rows in FORWARD order (the caller precedes the include), plus a
+# positive control. This is ORDER-COVERAGE ONLY, and saying so is the point: the whole
+# matrix above was written backward-only, so a fix that got the forward order wrong would
+# not have shown here.
+# ⚠ NOT mutation-proven, MEASURED: these three rows stay GREEN on the pre-fix compiler AND
+# under the 6.6.5 mutant that deletes the `_fn_by_defti` pass-1 authority (M6 in
+# tests/gates/frontend/private_forward_reference.sh). What the authority is proven by is
+# the pre-existing BACKWARD var_then_fn / arr_then_fn rows, which M6 turns red — pass 2's
+# inline `var` skip re-arms `public` and never consumes it, so pass 2 computes the wrong
+# visibility for the next fn, and clearing the pass-1 private bit (6.6.5) is what stopped
+# masking it. An earlier draft of this comment claimed these three rows were what M6
+# reddened; they are not, and a gate comment that overstates its own reach is the same
+# defect class as a gate that reads green over one.
+row var_then_fn_fwd refused '_after()' 1 'public var V1 = 7;'
+row arr_then_fn_fwd refused '_after()' 1 'public var PARR[4];'
+row var_then_pub_fwd accepted 'api()'  1 'public var V1 = 7;'
 row iofn_then_fn   refused '_after()' 0 'public #io fn f2() { return 9; }'
 row derive_struct  refused '_after()' 0 '#derive(accessors)
 public struct S4 { x; y; }'

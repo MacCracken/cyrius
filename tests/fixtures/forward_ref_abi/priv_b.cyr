@@ -1,0 +1,4 @@
+# tests/fixtures/forward_ref_abi/priv_b.cyr — 6.6.5 — see priv_a.cyr.
+private
+public fn fra_b_entry(): i64 { return _fra_h(13); }
+fn _fra_h(x): i64 { return x * 2; }

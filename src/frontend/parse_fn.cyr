@@ -701,6 +701,40 @@ fn PARSE_RETURN(S): i64 {
                                 if (L64(_fnt_cstrmask + _tc_cfi * 8) != 0) { tc_has_addr = 1; }
                             }
                         }
+                        # ⛔ 6.6.5 — the FOURTH time this path has been found missing something
+                        # PARSE_FNCALL does, and it is the same shape as the three above: a
+                        # STRING LITERAL going into a param annotated `: Str` is wrapped in
+                        # `str_from(...)` by PARSE_FNCALL and by nothing else, so
+                        #   var r = f("abcde");   → 5
+                        #   return f("abcde");    → 0   (the callee got a raw cstr; str_len
+                        #                                read load64(cstr + 8), whatever that is)
+                        # Silent wrong value, both call positions in one program disagreeing.
+                        # Found by the new crossos row for the method-arg Str mask — the free-fn
+                        # control it compares against was itself wrong. Narrow like v6.5.2's:
+                        # only when the callee annotates SOME param `: Str` and this call
+                        # actually passes a literal, so every other tail call stays
+                        # byte-identical.
+                        #
+                        # ⛔ AND THE PREDICATE IS READ OFF THE HELPER WE DIVERT TO, not
+                        # approximated. The first cut armed this for a token-30 at ANY paren
+                        # depth, reasoning that "over-diverting only costs a tail call". It does
+                        # not: losing TCO on a SELF-RECURSIVE tail call turns bounded recursion
+                        # into unbounded stack growth. Measured — `return deep(n - 1,
+                        # str_from("abc"));`, whose literal is ALREADY wrapped by hand, ran to
+                        # completion on 6.6.4 and SIGSEGV'd (rc 139) at n = 200000 on that cut.
+                        # A correct program stopped working. The second cut restricted it to
+                        # paren depth 1, which was closer and still not the criterion: it
+                        # diverted `return f(load64(p), "lit")` where `f`'s `: Str` param is
+                        # argument 0 and the literal is argument 1 — the wrap would never fire,
+                        # so the divert bought nothing (measured: one real ecosystem source,
+                        # mneme's `_te_json_str` callers).
+                        # `_tc_str_literal_arg` asks PARSE_FNCALL's OWN question — is some
+                        # argument's FIRST token a string literal AND is that argument's
+                        # `_fnt_strmask` bit set — so it can neither over- nor under-cover.
+                        # CHANGELOG [6.6.5]
+                        if (_tc_cfi >= 0) {
+                            if (_tc_str_literal_arg(S, ti_after, _tc_cfi) == 1) { tc_has_addr = 1; }
+                        }
                         # Reset tc_depth for the original tail-detect scan below.
                         tc_depth = 1;
                         while (tc_scan < GTCNT(S)) {
@@ -1194,7 +1228,8 @@ fn PARSE_RETURN(S): i64 {
                                 if (PEEKT(S) != 11) {
                                     var _rc_go = 1;
                                     while (_rc_go == 1) {
-                                        if (_try_push_struct_addr_arg(S, _rc_fi, _rc_uarg) == 0) {
+                                        # 6.6.5: the `: Str` literal wrap too — _pe_owncall_arg.
+                                        if (_pe_owncall_arg(S, _rc_fi, _rc_uarg) == 0) {
                                             PCMPE(S);
                                             EPUSHR(S);
                                         }
@@ -1418,11 +1453,236 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     # v6.4.31: on SysV/aarch64 a SIMD local is register-passed (XMM/V) — never
     # address-passed — so reject it here. On Win64 PE it IS address-passed (MS
     # x64 by-pointer ABI), so let it flow through: push &local as the pointer.
+    # ⛔ 6.6.5 — POINTER-MODE vs INLINE. This pushed `&slot` unconditionally, which is right
+    # for an inline stack struct (the slot IS the struct) and WRONG for a pointer-mode local
+    # (the slot HOLDS the struct's address): the callee then deref'd a pointer-to-pointer and
+    # read the address itself as field 0. Measured on 6.6.4, silent and not a crash —
+    # `var b: HB = alloc(24); b.a = 10; ...; f(0, b)` printed 140545185808389 where 42 is
+    # right. Same discrimination `_resolve_field_base_addr` and the method-`self` push use:
+    # the -1 slot-marker predecessor plus the <=8 B single-slot rule.
+    # ⚠ NOT for SIMD. A value-form SIMD local is always inline, and on PE it is address-passed
+    # by the MS x64 by-pointer ABI; its SLTYPE lives in the descriptor band (<= -2048) where
+    # `STRUCTSZ` has no entry, so it must skip the test entirely rather than answer it wrong.
+    # CHANGELOG [6.6.5]
+    var _sa_ptr = 0;
     if (_is_simd_any(S, lt) == 1) { if (_TARGET_PE == 0) { return 0; } }
-    EFLADDR(S, li);
+    else { _sa_ptr = _local_struct_is_ptr(S, li, lt); }
+    if (_sa_ptr == 1) { EFLLOAD(S, li); } else { EFLADDR(S, li); }
     EPUSHR(S);
     STI(S, GTI(S) + 1);                 # consume IDENT
     return 1;
+}
+
+# 6.6.5 — is this struct-typed local POINTER-mode (its slot holds the struct's address) or
+# INLINE (the slot IS the struct)? `lt` is the local's SLTYPE, stored as `0 - sid` with sid
+# 1-based. The rule is the one `_resolve_field_base_addr` (parse_decl.cyr) already applied to
+# field access and v6.6.4 applied to a method's `self`; this puts the third user of it —
+# argument passing — on the same answer instead of assuming.
+fn _local_struct_is_ptr(S, li, lt): i64 {
+    var sid = 0 - lt;
+    var is_ptr = 1;
+    if (li > 0) { if (L64(S + 0x5D9D000 + (li - 1) * 8) == 0 - 1) { is_ptr = 0; } }
+    if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { is_ptr = 0; } } }
+    return is_ptr;
+}
+
+# ⭐ 6.6.5 — PARSE_FNCALL's `: Str` param auto-coercion, EXTRACTED so the method-call path
+# (parse_decl.cyr) uses the same code rather than a second copy that drifts. A string
+# literal landing in a param the callee annotated `: Str` is wrapped in `str_from(...)`;
+# without the wrap the callee receives a raw cstr pointer and every Str accessor reads the
+# wrong shape. Measured on 6.6.4 AND on the first cut of this bite: `h.slen("abcde")`
+# returned 0 where the identical free fn `free_slen(0, "abcde")` returned 5 — a SILENT
+# wrong value on the very argument loop this release rewrote. Returns 1 when handled (the
+# literal is consumed and its Str pushed); 0 leaves the cursor untouched. CHANGELOG [6.6.5]
+fn _try_push_str_literal_arg(S, fi, argc): i64 {
+    if (fi < 0) { return 0; }
+    if ((L64(_fnt_strmask + fi * 8) & (1 << argc)) == 0) { return 0; }
+    if (PEEKT(S) != 30) { return 0; }
+    var sf_fi = FINDFN(S, _STR_FROM_NOFF(S));
+    PCMPE(S);
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    if (sf_fi >= 0) {
+        var sfoff = L64(_fnt_offsets + sf_fi * 8);
+        if (sfoff >= 0) { ECALLTO(S, sfoff); }
+        else { ECALLFIX(S, sf_fi); }
+    }
+    ECALLCLEAN(S, 1);
+    EPUSHR(S);
+    return 1;
+}
+
+# ⭐ 6.6.5 — PARSE_FNCALL'S `: Str` WRAP CRITERION, ASKED OF A CALL WITHOUT PARSING IT.
+#
+# The `return f(args);` tail path emits its own epilogue + `jmp` and never enters
+# PARSE_FNCALL, so anything PARSE_FNCALL does to an ARGUMENT must be replicated there or
+# diverted back. The divert is the cheap, safe half — but only if its predicate is EXACTLY the
+# helper's. `_try_push_str_literal_arg` wraps an argument iff (a) that argument's FIRST token
+# is a string literal and (b) the callee's `_fnt_strmask` bit for that argument's POSITION is
+# set. This answers the same question over the raw token stream, so the divert cannot fire
+# where the wrap would not, and cannot fail to fire where it would.
+#
+# Depth counts all four bracket kinds — ( ) [ ] { } — for the same reason `_CALL_ARGC_PEEK`
+# does: a nested call, an index or a struct initializer must not leak its commas into this
+# call's argument numbering, or the mask bit is read at the wrong position.
+#
+# ⚠ Both looser approximations were written, shipped into a review round and MEASURED wrong:
+# "a literal anywhere in the parens" cost a self-recursive tail call its TCO and turned a
+# correct program into a SIGSEGV; "a literal at depth 1, callee has SOME Str param" still
+# diverted `f(x, "lit")` where the Str param is argument 0. Over-covering a TCO guard is not
+# the safe direction. `ti_open` is the index of the call's `(`. CHANGELOG [6.6.5]
+fn _tc_str_literal_arg(S, ti_open, fi): i64 {
+    if (fi < 0) { return 0; }
+    var mask = L64(_fnt_strmask + fi * 8);
+    if (mask == 0) { return 0; }
+    var i = ti_open + 1;
+    var depth = 0;
+    var pos = 0;
+    var first = 1;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return 0; }                                  # EOF — truncated input
+        if (t == 11) { if (depth == 0) { return 0; } depth = depth - 1; }
+        if (t == 29) { depth = depth - 1; }
+        if (t == 14) { depth = depth - 1; }
+        if (depth == 0) {
+            if (t == 31) { pos = pos + 1; first = 1; }
+            else {
+                if (first == 1) { if (t == 30) { if ((mask & (1 << pos)) != 0) { return 1; } } }
+                first = 0;
+            }
+        }
+        if (t == 10) { depth = depth + 1; }
+        if (t == 28) { depth = depth + 1; }
+        if (t == 13) { depth = depth + 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ⭐ 6.6.5 round 3 — THE FOUR WIN64 "OWN-CALL" ARGUMENT LOOPS, given the same two gates.
+#
+# A Win64 16/32-byte vector return is written through a hidden retptr, so four paths emit
+# their OWN call rather than going through PARSE_FNCALL: `_try_vector_call_assign` and the
+# `_f2c` / `_f4c` receives (parse_decl.cyr) and the PE SIMD-return `_rc` path (parse_fn.cyr).
+# Each pushed `&dst` and then marshalled the user args with `_try_push_struct_addr_arg`
+# alone — ONE of PARSE_FNCALL's gates. So the same `: Str` literal defect the method loop
+# had lived on here, PE-only and therefore invisible to every x86-Linux run:
+#
+#     fn mkv(s: Str, k): f64v2 { ... str_len(s) ... }
+#     var v: f64v2 = mkv("abcde", 2);     # ELF 5, PE 0 — measured under wine, both compilers
+#
+# Same value, same source, different answer per target — and it also made the guide's new
+# "it happens wherever the call is written" sentence false on PE.
+#
+# ⚠ NOT the SIMD arm: on Win64 a value-form vector param is ADDRESS-passed by the MS x64
+# by-pointer ABI, so `_try_push_struct_addr_arg` already covers it here; the XMM
+# record/second-pass split is the SysV/aarch64 shape and these four branches are `_TARGET_PE
+# == 1` only. Returns 1 when the argument was consumed and pushed. CHANGELOG [6.6.5]
+fn _pe_owncall_arg(S, fi, uarg): i64 {
+    _check_int_lit_cstring_arg(S, fi, uarg, _fn_noff_or_zero(fi));
+    if (_try_push_str_literal_arg(S, fi, uarg) == 1) { return 1; }
+    return _try_push_struct_addr_arg(S, fi, uarg);
+}
+
+# The callee's registered name offset, or 0 when the slot is unresolved — so a diagnostic
+# can name the fn without every caller re-deriving it. CHANGELOG [6.6.5]
+fn _fn_noff_or_zero(fi): i64 {
+    if (fi < 0) { return 0; }
+    return L64(_fnt_names + fi * 8);
+}
+
+# ⭐ 6.6.5 — v6.5.3's integer-literal-into-`: cstring` HARD ERROR, extracted from
+# PARSE_FNCALL's argument loop so the method-call path runs it too. v6.5.3 escalated this
+# from a warning to an error precisely because the alternative is a runtime crash — the
+# callee derefs the number as a char*. The method path never had it: measured on 6.6.4 and
+# on the first two cuts of this bite, `w.pr(42)` into `fn pr(self, p: cstring)` compiled
+# clean and SIGSEGV'd (rc 139), while the identical `free_pr(0, 42)` was refused at compile
+# time. `0` stays EXEMPT — it is the idiomatic NULL for a cstring param. Does not move the
+# cursor; returns 0 always (the arg is still pushed by the caller's normal path, so ONE
+# compile reports EVERY bad site — the v6.4.62 multi-error contract). CHANGELOG [6.6.5]
+fn _check_int_lit_cstring_arg(S, fi, argc, noff): i64 {
+    if (fi < 0) { return 0; }
+    if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
+    if (PEEKT(S) != 1) { return 0; }
+    if (PEEKV(S) == 0) { return 0; }
+    if ((L64(_fnt_cstrmask + fi * 8) & (1 << argc)) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": passing integer literal ", 26);
+    PRNUM(PEEKV(S));
+    syscall(SYS_WRITE, 2, " to '", 5);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' which expects a cstring (a POINTER, not a number)\n", 52);
+    syscall(SYS_WRITE, 2, "  hint: the value is a NUMBER — use the _int variant if one exists (e.g. println_int), or fmt_int_buf to render it\n", 117);
+    _had_error = 1;
+    return 0;
+}
+
+# ⭐ 6.6.5 — the v5.10.38 value-form SIMD argument RECORDING, extracted for the same reason.
+# A SIMD-class param is NOT pushed with the int args: it is recorded here and loaded into
+# XMM/V after ECALLPOPS (`_simd_arg_second_pass`), so int-arg evaluation cannot clobber the
+# vector registers. The method-call path had neither half and pushed the vector as an int
+# arg, which shifted every LATER argument by one register. Measured on 6.6.4 and on the
+# first cut of this bite: `h.vmix(2, v, 3)` returned 927 where the identical free fn
+# returned 923 — `j` received the vector's low half. `tbl` is the CALLER's scratch table
+# (a local, so a nested call cannot clobber it). Returns the number of XMM slots consumed
+# (1 for a 16-byte vector, 2 for 32-byte). CHANGELOG [6.6.5]
+fn _simd_arg_record(S, cls, tbl, cnt, pc): i64 {
+    if (PEEKT(S) != 2) {
+        ERR_MSG(S, "value-form SIMD arg must be a local IDENT (caller-side scratch + addr-eval path not in v5.10.38 scope)", 102);
+    }
+    var noff = PEEKV(S);
+    STI(S, GTI(S) + 1);  # consume IDENT
+    var lli = FINDLOCAL(S, noff);
+    if (lli < 0) {
+        ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47);
+    }
+    var lt = GLTYPE(S, lli);
+    _simd_arg_typecheck(S, cls, lt);
+    store64(tbl + cnt * 24, lli);
+    store64(tbl + cnt * 24 + 8, pc);
+    store64(tbl + cnt * 24 + 16, cls);
+    if (cls == 2) { return 2; }
+    return 1;
+}
+
+# v6.4.4/v6.4.7 mask classes: 1 = any 16-byte/1-XMM vector (f64v2 or an integer vector, so
+# the test is the SIZE class), 3 = f32v4 exactly (distinguished so an f64v2 arg is rejected
+# rather than silently run through addps), 2 = f64v4 (32-byte).
+fn _simd_arg_typecheck(S, cls, lt): i64 {
+    if (cls == 1) {
+        if (_is_simd128(S, lt) == 0) {
+            ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44);
+        }
+        return 0;
+    }
+    if (cls == 3) {
+        if (lt != 0 - 2121) {
+            ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56);
+        }
+        return 0;
+    }
+    if (lt != 0 - 2125) {
+        ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56);
+    }
+    return 0;
+}
+
+# The second half: emit the XMM/V loads AFTER ECALLPOPS, AT the call site, so the vector
+# registers hold the values entering the callee. See _simd_arg_record. CHANGELOG [6.6.5]
+fn _simd_arg_second_pass(S, tbl, cnt): i64 {
+    var i = 0;
+    while (i < cnt) {
+        var lli = load64(tbl + i * 24);
+        var apc = load64(tbl + i * 24 + 8);
+        var cl = load64(tbl + i * 24 + 16);
+        if (cl == 2) { ELOAD_F64V4_TO_XMM(S, apc, lli); }
+        else { ELOAD_F64V2_TO_XMM(S, apc, lli); }
+        i = i + 1;
+    }
+    return 0;
 }
 
 # v5.6.4 #deprecated call-site warning, ONE helper for every call path. It fires at
@@ -1472,12 +1732,51 @@ fn _DEPRECATED_WARN(S, fi, noff): i64 {
 # (parse_decl.cyr _try_vector_call_assign / _f2c / _f4c, parse_fn.cyr _rc). All eleven
 # now call it; `grep -n '_vis_check(' src/frontend/` is the list.
 #
-# FAIL-OPEN ON UNKNOWNS, deliberately, because this is warn-mode: fileid 0 means
-# unrecorded (a forward reference registered from a call site, an enum constructor, a
-# DCE stub), and warning on those would produce noise on correct code. Phase 3 must
-# revisit this before the error flip — at that point unrecorded has to become
-# fail-CLOSED or explicitly exempted, not silently allowed.
+# ⛔ 6.6.5 — "FAIL-OPEN ON UNKNOWNS … Phase 3 must revisit this" stood here for five
+# minors and WAS the hole. An unstamped callee (GFFI == 0) returned at the FIRST test
+# below, so every definition kind pass 1 did not register — impl methods, `mod` fns, fns
+# after the first top-level statement — was reachable from any file by a call that merely
+# came EARLIER in the concatenated stream. Pass 1 now stamps all of them (_prescan_impl /
+# _prescan_tail / the GMOD guard's removal), so "unknown" is no longer an ordinary state.
+#
+# This is the BACKSTOP under that, and it is fail-CLOSED-LATER rather than fail-open: a
+# reference to a name with no owner AND no body yet is DEFERRED — recorded with the
+# CALLER's file and its token — and re-judged by _vis_check_deferred once every definition
+# in the compiland has been stamped. Nothing is reported at the reference itself, so the
+# legitimately-unknown callees the old comment listed (enum constructors, DCE stubs, an fn
+# that is never defined) stay silent: they still have no private bit at the end.
+#
+# ⚠ A deferral entry is only as good as the stamp that arrives later. If a future
+# definition kind is added that pass 1 does not walk, this layer reports it instead of
+# letting it through — which is the property the v6.5.0 comment promised and did not have.
+# See tests/gates/frontend/private_forward_reference.sh (mutant M4+M5). CHANGELOG [6.6.5]
+var _visdef_vec = 0;
+# 6.6.5 round 3 — bumped once per PRIVATE stamp in PARSE_FN_DEF. `_vis_check_deferred` hangs
+# off PARSE_PROG, which IS the block parser AND the fn-body parser, so it runs once per
+# `if`/`else`/`while` body and once per fn definition; re-walking the whole deferral list each
+# time is an unbounded term, because an entry whose callee is NEVER stamped (an undefined fn,
+# an enum ctor, a DCE stub — exactly the cases that must stay silent) is never consumed and so
+# is re-visited forever. Draining "definitively judged" entries cannot fix it: mid-parse an
+# unstamped callee is indistinguishable from a not-yet-stamped one.
+#
+# ⭐ THE GUARD KEYS ON THE PRIVATE STAMP, NOT ON EVERY STAMP, and the difference is the whole
+# fix. `_vis_report_late` reports nothing for a public callee, so a sweep can only reach a new
+# verdict if a new PRIVATE bit landed since the last one. A compiland with no `private`
+# anywhere — nearly all of them — therefore sweeps exactly ONCE. Keying on `SFFI` instead
+# (the first attempt) left the quadratic in place, because every fn body ends with both a
+# stamp and a sweep: MEASURED at 2000 refs x 6000 blocks, base 64 ms, SFFI-keyed 91 ms,
+# private-keyed 62 ms. Sound by construction, and it is why the number below is measured
+# rather than reasoned about.
+var _vis_stamp_seq = 0;
+var _vis_swept_seq = 0 - 1;
 fn _vis_check(S, fi, noff): i64 {
+    if (fi < 0) { return 0; }                    # unresolved name — nothing to judge
+    if (GFFI(S, fi) == 0) {
+        # Owner unknown. If it also has no body yet, this may be a forward reference to a
+        # definition that has not been stamped — re-judge it at the end of the parse.
+        if (L64(_fnt_offsets + fi * 8) < 0) { _vis_defer(S, fi); }
+        return 0;
+    }
     if ((GFLG(S, fi) & 64) == 0) { return 0; }   # callee not private — the common path
     var callee = GFFI(S, fi);
     if (callee == 0) { return 0; }               # callee origin unknown
@@ -1500,6 +1799,65 @@ fn _vis_check(S, fi, noff): i64 {
     _err_head(S);
     syscall(SYS_WRITE, 2, ": '", 3);
     PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
+    _had_error = 1;
+    return 1;
+}
+
+# 6.6.5 — record a reference whose callee had no owner yet: (fi, caller fid + 1, token).
+# Kept as its own fn so cybs sees a small body (the global/call fan-out rule). Lazy vec:
+# a compile with no unstamped reference allocates nothing.
+fn _vis_defer(S, fi): i64 {
+    var dcaller = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
+    if (dcaller == 0) { return 0; }
+    if (_visdef_vec == 0) { _visdef_vec = vec_new(); }
+    vec_push(_visdef_vec, fi);
+    vec_push(_visdef_vec, dcaller);
+    vec_push(_visdef_vec, GTI(S));
+    return 0;
+}
+
+# 6.6.5 — re-judge every deferred reference against the stamps that exist NOW. Called from
+# the end of PARSE_PROG, so there is no per-fork edit to forget.
+#
+# ⚠ PARSE_PROG IS THE BLOCK PARSER, NOT AN END-OF-PROGRAM HOOK. It runs for every `if` /
+# `else` / `while` / `for` body as well as for the top-level statement list, so this is
+# entered many times per compile — which is why each entry is CONSUMED when it is reported
+# (its fi slot is set to -1) rather than left for the next block to report again. The last
+# invocation is the end of the fork's top-level PARSE_PROG call, by which point every
+# definition in the compiland has been parsed, so nothing can be missed by stopping early.
+# The common path costs one comparison: the vec is never allocated unless something
+# deferred. CHANGELOG [6.6.5]
+fn _vis_check_deferred(S): i64 {
+    if (_visdef_vec == 0) { return 0; }
+    if (_vis_swept_seq == _vis_stamp_seq) { return 0; }   # 6.6.5 r3: nothing new stamped
+    _vis_swept_seq = _vis_stamp_seq;
+    var n = vec_len(_visdef_vec);
+    var i = 0;
+    while (i < n) {
+        var fi = vec_get(_visdef_vec, i);
+        if (fi >= 0) {
+            if ((GFLG(S, fi) & 64) != 0) {
+                var caller = vec_get(_visdef_vec, i + 1);
+                var ti = vec_get(_visdef_vec, i + 2);
+                if (_vis_report_late(S, fi, caller, ti) == 1) { vec_set(_visdef_vec, i, 0 - 1); }
+            }
+        }
+        i = i + 3;
+    }
+    return 0;
+}
+
+# Returns 1 when it reported (so the caller can consume the entry), 0 when the reference is
+# still not judgeable or is legitimate.
+fn _vis_report_late(S, fi, caller, ti): i64 {
+    var callee = GFFI(S, fi);
+    if (callee == 0) { return 0; }
+    if (callee == caller) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head_at(S, ti);
+    syscall(SYS_WRITE, 2, ": '", 3);
+    PRSTR(S + 0xEC00000 + L64(_fnt_names + fi * 8));
     syscall(SYS_WRITE, 2, "' is private to its file\n", 25);
     _had_error = 1;
     return 1;
@@ -1922,7 +2280,6 @@ fn PARSE_FNCALL(S, noff): i64 {
     # v6.2.41 — capture the call-site line before the arg loop advances GTI,
     # so the arity warning below points at the call, not the token after `)`.
     var _ar_line = GTLINE(S, GTI(S));
-    var smask = L64(_fnt_strmask + fi * 8);
     # v5.10.38 — caller-side SIMD-arg routing. Read the callee's
     # per-fn SIMD mask (2 bits per param: 00 int, 01 f64v2, 10 f64v4).
     # When non-zero, value-form SIMD args get loaded into XMM/V regs
@@ -1946,51 +2303,13 @@ fn PARSE_FNCALL(S, noff): i64 {
             # for the post-ECALLPOPS emission pass. Skip the int-
             # class push entirely; argc still advances for mask
             # alignment but _fc_int_argc does NOT.
+            # 6.6.5: the body of this arm is now `_simd_arg_record`, shared with the
+            # method-call path in parse_decl.cyr, which had no SIMD routing at all and
+            # shifted every argument after a vector one by a register. CHANGELOG [6.6.5]
             var _fc_class = (_fc_simd_mask >> (argc * 2)) & 3;
             if (_fc_class > 0) {
-                if (PEEKT(S) != 2) {
-                    ERR_MSG(S, "value-form SIMD arg must be a local IDENT (caller-side scratch + addr-eval path not in v5.10.38 scope)", 102);
-                }
-                var _fc_arg_noff = PEEKV(S);
-                STI(S, GTI(S) + 1);  # consume IDENT
-                var _fc_arg_lli = FINDLOCAL(S, _fc_arg_noff);
-                if (_fc_arg_lli < 0) {
-                    ERR_MSG(S, "value-form SIMD arg: IDENT not found as a local", 47);
-                }
-                var _fc_arg_lt = GLTYPE(S, _fc_arg_lli);
-                # Verify the IDENT's SLTYPE matches the param's class EXACTLY.
-                # v6.4.4: mask class 1=f64v2 (-20), 2=f64v4 (-21), 3=f32v4
-                # (-2121). Both f64v2 and f32v4 are 16-byte/1-XMM (identical
-                # codegen), but the mask distinguishes them so a mismatched
-                # arg (f64v2 -> f32v4 param) is rejected instead of silently
-                # running addps over f64 bit patterns.
-                if (_fc_class == 1) {
-                    # v6.4.7: class 1 = any 16-byte/1-XMM vector (f64v2 OR an integer
-                    # vector i32v4/i16v8/i8v16/i64v2). They route identically, so the
-                    # check is size-class (_is_simd128), not the exact type. f32v4
-                    # (class 3) stays exact. Byte-identical for the corpus: class-1
-                    # params were f64v2 with f64v2 args → _is_simd128(-20)==1, no error.
-                    if (_is_simd128(S, _fc_arg_lt) == 0) {
-                        ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44);
-                    }
-                } elif (_fc_class == 3) {
-                    if (_fc_arg_lt != 0 - 2121) {
-                        ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56);
-                    }
-                } else {
-                    if (_fc_arg_lt != 0 - 2125) {
-                        ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56);
-                    }
-                }
-                # Record in scratch table for second pass.
-                store64(&_fc_simd_table + _fc_simd_count * 24, _fc_arg_lli);
-                store64(&_fc_simd_table + _fc_simd_count * 24 + 8, _fc_simd_pc_caller);
-                store64(&_fc_simd_table + _fc_simd_count * 24 + 16, _fc_class);
+                _fc_simd_pc_caller = _fc_simd_pc_caller + _simd_arg_record(S, _fc_class, &_fc_simd_table, _fc_simd_count, _fc_simd_pc_caller);
                 _fc_simd_count = _fc_simd_count + 1;
-                # class 1 (f64v2) and 3 (f32v4) are both 16-byte = 1 XMM;
-                # class 2 (f64v4) is 32-byte = 2 XMM.
-                if (_fc_class == 1 || _fc_class == 3) { _fc_simd_pc_caller = _fc_simd_pc_caller + 1; }
-                else { _fc_simd_pc_caller = _fc_simd_pc_caller + 2; }
                 argc = argc + 1;
                 if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                 else { argo = 0; }
@@ -2037,21 +2356,10 @@ fn PARSE_FNCALL(S, noff): i64 {
             # `0` is EXEMPT — it is the idiomatic NULL for a cstring param.
             # Hard error, not a warning: there is no reading of this program under which
             # the call is correct, and a warning here is what let the crash ship.
-            if (_TYPE_CHECK_ENABLED() == 1) { if (PEEKT(S) == 1) {
-                if ((L64(_fnt_cstrmask + fi * 8) & (1 << argc)) != 0) {
-                    if (PEEKV(S) != 0) {
-                        syscall(SYS_WRITE, 2, "error:", 6);
-                        _err_head(S);
-                        syscall(SYS_WRITE, 2, ": passing integer literal ", 26);
-                        PRNUM(PEEKV(S));
-                        syscall(SYS_WRITE, 2, " to '", 5);
-                        PRSTR(S + 0xEC00000 + noff);
-                        syscall(SYS_WRITE, 2, "' which expects a cstring (a POINTER, not a number)\n", 52);
-                        syscall(SYS_WRITE, 2, "  hint: the value is a NUMBER — use the _int variant if one exists (e.g. println_int), or fmt_int_buf to render it\n", 117);
-                        _had_error = 1;
-                    }
-                }
-            } }
+            # 6.6.5: extracted to `_check_int_lit_cstring_arg`, shared with the method-call
+            # path in parse_decl.cyr — `w.pr(42)` into a `: cstring` param compiled clean
+            # and SIGSEGV'd where the identical free fn was a hard error. CHANGELOG [6.6.5]
+            _check_int_lit_cstring_arg(S, fi, argc, noff);
             if (_TYPE_CHECK_ENABLED() == 1) { if (PEEKT(S) == 2) {
                 # v5.10.24 — Phase 2: gate the warning on cstring_mask
                 # being explicitly SET (param annotated `: cstring`)
@@ -2110,26 +2418,15 @@ fn PARSE_FNCALL(S, noff): i64 {
             } }
             # Auto-coercion: if this param is : Str and the arg is a string literal,
             # emit str_from(literal) instead of the raw cstr pointer.
-            if (smask & (1 << argc)) {
-                if (PEEKT(S) == 30) {
-                    # String literal in a Str-typed param slot — auto-wrap with str_from
-                    var sf_fi = FINDFN(S, _STR_FROM_NOFF(S));
-                    PCMPE(S);
-                    EPUSHR(S);
-                    ECALLPOPS(S, 1);
-                    if (sf_fi >= 0) {
-                        var sfoff = L64(_fnt_offsets + sf_fi * 8);
-                        if (sfoff >= 0) { ECALLTO(S, sfoff); }
-                        else { ECALLFIX(S, sf_fi); }
-                    }
-                    ECALLCLEAN(S, 1);
-                    EPUSHR(S);
-                    argc = argc + 1;
-                    _fc_int_argc = _fc_int_argc + 1;
-                    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                    else { argo = 0; }
-                    continue;
-                }
+            # 6.6.5: extracted to `_try_push_str_literal_arg`, shared with the method-call
+            # path in parse_decl.cyr, where `h.m("lit")` into a `: Str` param silently read
+            # back 0. CHANGELOG [6.6.5]
+            if (_try_push_str_literal_arg(S, fi, argc) == 1) {
+                argc = argc + 1;
+                _fc_int_argc = _fc_int_argc + 1;
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                else { argo = 0; }
+                continue;
             }
             # v6.3.36 (issue [5]) — bare inline-struct arg to a struct-pointer param:
             # push its address (frame-safe non-tail path). Falls through otherwise.
@@ -2160,18 +2457,8 @@ fn PARSE_FNCALL(S, noff): i64 {
     # Second pass: emit XMM/V loads for recorded SIMD args. AFTER
     # ECALLPOPS so int-arg eval can't clobber XMM state. AT the call
     # site so XMM holds the values entering the called fn.
-    var _fc_si = 0;
-    while (_fc_si < _fc_simd_count) {
-        var _fc_arg_lli = load64(&_fc_simd_table + _fc_si * 24);
-        var _fc_arg_pc = load64(&_fc_simd_table + _fc_si * 24 + 8);
-        var _fc_arg_cl = load64(&_fc_simd_table + _fc_si * 24 + 16);
-        if (_fc_arg_cl == 1 || _fc_arg_cl == 3) {
-            ELOAD_F64V2_TO_XMM(S, _fc_arg_pc, _fc_arg_lli);   # 16-byte (f64v2 or f32v4)
-        } else {
-            ELOAD_F64V4_TO_XMM(S, _fc_arg_pc, _fc_arg_lli);
-        }
-        _fc_si = _fc_si + 1;
-    }
+    # 6.6.5: extracted to `_simd_arg_second_pass`, shared with the method-call path.
+    _simd_arg_second_pass(S, &_fc_simd_table, _fc_simd_count);
     var foff = L64(_fnt_offsets + fi * 8);
     if (foff >= 0) {
         ECALLTO(S, foff);
@@ -2191,9 +2478,13 @@ fn PARSE_FNCALL(S, noff): i64 {
 # Methods get mangled to TypeName_method (trait name is documentation only for now)
 fn PARSE_IMPL(S): i64 {
     # v6.6.4: a marker live here can only be STALE — `public impl` is consumed un-armed by
-    # _TL_VIS, and a per-method `public fn` re-arms inside the loop below. Pass 1 brace-skips
-    # impl bodies and pass 2's `var` skip never consumes, so `public var V = 7;` followed by an
-    # impl block re-exposed its FIRST method (the only definition class stamped in pass 2 only).
+    # _TL_VIS, and a per-method `public fn` re-arms inside the loop below. Pass 2's `var` skip
+    # never consumes, so `public var V = 7;` followed by an impl block re-exposed its FIRST
+    # method.
+    # ⛔ 6.6.5: that sentence used to end "(the only definition class stamped in pass 2 only)",
+    # and pass 1 DID brace-skip impl bodies. It does not any more — `_prescan_impl` registers
+    # and stamps every method in pass 1, which is what makes a forward `q.m()` / `Q_m(&q)` obey
+    # `private` and get the right parameter ABI. See _prescan_impl. CHANGELOG [6.6.5]
     _pub_pending = 0;
     STI(S, GTI(S) + 1);  # consume IMPL
     # Parse trait name (skip for now — just used for documentation)
@@ -3262,9 +3553,18 @@ fn _prescan_params(S, fi): i64 {
 # signature however _prescan_params / the return-type scan need to); afterward the
 # cursor is RESET to the FN token and _prescan_skip_fn replays the canonical skip,
 # guaranteeing pass-1's net cursor advancement is byte-identical to the old inline
-# skip. Module-scoped fns (GMOD != 0) keep the pass-2-only registration — the name
-# mangling PARSE_FN_DEF does mutates the name pool, and `mod` is unused in-tree, so
-# prescan only the common top-level case here.
+# skip.
+#
+# ⛔ 6.6.5 — the `if (GMOD(S) == 0)` guard that stood here excluded `mod`-scoped fns and
+# (with the impl brace-skip in the seven forks) impl METHODS, on the reasoning that
+# PARSE_FN_DEF's mangling mutates the name pool and `mod` is unused in-tree. Both halves
+# were load-bearing bugs, not economies: an unregistered definition has no owner and no
+# private bit, so `_vis_check` returned at its first test and a call PRECEDING the
+# definition reached a private method or mod fn from any file; and with no pass-1 params
+# the same forward call got the mask-0 ABI, so a >8-byte struct argument was passed by
+# VALUE into a callee that derefs it — a silent SIGSEGV, not a visibility nicety.
+# `_mod_name_intern` answers the pool question (mint once, reuse from either pass), so
+# the guard is gone and EVERY definition kind is stamped here. CHANGELOG [6.6.5]
 fn _prescan_fn_sig(S): i64 {
     if (PEEKT(S) == 134) { STI(S, GTI(S) + 1); }   # v6.3.11: consume optional `async` prefix
     var start_ti = GTI(S);
@@ -3273,48 +3573,302 @@ fn _prescan_fn_sig(S): i64 {
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);             # consume name
         var _ptp = _capture_tparams(S);   # v6.3.9: capture <T> (flag-off = old skip)
-        if (GMOD(S) == 0) {
-            var fi = FINDFN(S, noff);
-            if (fi < 0) { fi = REGFN(S, noff); }
-            if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
-            # v6.5.0 Phase 2 — stamp visibility HERE too, in pass 1.
-            #
-            # Two reasons, both load-bearing:
-            #  (1) FORWARD calls. PARSE_FN_DEF runs in pass 2 in source order, so a
-            #      cross-file call to a fn defined LATER in the concatenated stream
-            #      resolves while the callee's fileid is still 0 — enforcement would
-            #      fail open for exactly the half of calls that go through ECALLFIX,
-            #      i.e. purely as a function of include order.
-            #  (2) `_pub_pending` MUST be consumed here. Pass 1 walks the same tokens
-            #      and _TL_VIS arms the marker at every `public`, but pass 1 never
-            #      reached PARSE_FN_DEF to clear it — so the flag leaked across the
-            #      pass boundary and suppressed the private stamp on the FIRST fn of
-            #      pass 2. That is what made `private` work in a main source but
-            #      silently do nothing from an included file.
-            var _pfid = FM_FILEID(S, GTLINE(S, start_ti));
-            SFFI(S, fi, _pfid + 1);
-            if (_pub_pending == 0) {
-                if (_PRIV_FILE(_pfid) == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
-            }
-            _pub_pending = 0;
-            _prescan_params(S, fi);
-            if (PEEKT(S) == 49) {       # optional `: ReturnType`
-                STI(S, GTI(S) + 1);     # consume ':'
-                if (PEEKT(S) == 10) {
-                    # v6.5.21 — `: (T1, T2[, T3])`. Recorded HERE in pass 1 so a
-                    # FORWARD call can arity-check against a fn defined later.
-                    _parse_multiret_sig(S, fi, 1);
-                } else {
-                    if (PEEKT(S) == 2) {
-                        var rtc = _classify_return_type(S, PEEKV(S));
-                        if (rtc != 0) { SFRS(S, fi, rtc); }
-                    }
+        noff = _mod_name_intern(S, GMOD(S), noff);   # `mod`/impl mangling, in pass 1 too
+        # v6.5.0 Phase 2 — stamp visibility HERE, in pass 1.
+        #
+        # Two reasons, both load-bearing:
+        #  (1) FORWARD calls. PARSE_FN_DEF runs in pass 2 in source order, so a
+        #      cross-file call to a fn defined LATER in the concatenated stream
+        #      resolves while the callee's fileid is still 0 — enforcement would
+        #      fail open for exactly the half of calls that go through ECALLFIX,
+        #      i.e. purely as a function of include order.
+        #  (2) `_pub_pending` MUST be consumed here. Pass 1 walks the same tokens
+        #      and _TL_VIS arms the marker at every `public`, but pass 1 never
+        #      reached PARSE_FN_DEF to clear it — so the flag leaked across the
+        #      pass boundary and suppressed the private stamp on the FIRST fn of
+        #      pass 2. That is what made `private` work in a main source but
+        #      silently do nothing from an included file.
+        var _pfid = FM_FILEID(S, GTLINE(S, start_ti));
+        var _ppriv = 0;
+        if (_pub_pending == 0) { if (_PRIV_FILE(_pfid) == 1) { _ppriv = 1; } }
+        _pub_pending = 0;
+        # 6.6.5 — one entry per DEFINITION, not per NAME. Pass 1 used to FINDFN-or-REGFN,
+        # so a second file's same-named helper overwrote the first file's owner, arity and
+        # private bit before either body was parsed: two private `_h` helpers in two files
+        # produced a false "is private to its file" AND a false "expects 2 arguments, got
+        # 1". The v6.5.38 identity rule now runs in BOTH passes, from one place.
+        var fi = _fn_def_slot(S, noff, _pfid, _ppriv);
+        if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
+        # 6.6.5 — def-start for EVERY prescanned fn, not just generics. It is how pass 2
+        # finds the entry THIS definition owns (_fn_by_defti), and it is what lets a
+        # forward `f<i32>(x)` instantiate (GFDS was pass-2-only, so the instantiator
+        # returned -2 and the caller printed a stale "follow-on bite" error).
+        SFDS(S, fi, start_ti + 1);
+        SFFI(S, fi, _pfid + 1);
+        if (_ppriv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
+        else { SFLG(S, fi, GFLG(S, fi) & (0 - 65)); }   # never leave a stale private bit
+        _prescan_params(S, fi);
+        if (PEEKT(S) == 49) {       # optional `: ReturnType`
+            STI(S, GTI(S) + 1);     # consume ':'
+            if (PEEKT(S) == 10) {
+                # v6.5.21 — `: (T1, T2[, T3])`. Recorded HERE in pass 1 so a
+                # FORWARD call can arity-check against a fn defined later.
+                _parse_multiret_sig(S, fi, 1);
+            } else {
+                if (PEEKT(S) == 2) {
+                    var rtc = _classify_return_type(S, PEEKV(S));
+                    if (rtc != 0) { SFRS(S, fi, rtc); }
                 }
             }
         }
     }
     STI(S, start_ti);
     _prescan_skip_fn(S);
+    return 0;
+}
+
+# 6.6.5 — the pre-PARSE_PROG "registered but never defined" warning, extracted from the
+# three forks (main, main_win, main_cx) that each carried a copy of it inline.
+#
+# ⚠ The `GFFI == 0` half is REQUIRED, not cosmetic. It runs BEFORE PARSE_PROG, which is
+# where relaxed-ordering fns (`fn` after the first top-level statement) are defined; now
+# that pass 1 prescans those, every one of them is registered with its owner and still has
+# offset -1 here. Without the guard, compiling cycc's own source warned about
+# `_emit_decimal` and friends — a fn with a recorded owner is one pass 1 SAW A DEFINITION
+# for, so it is not undefined, it is not defined YET. CHANGELOG [6.6.5]
+fn _warn_undefined_prepass(S): i64 {
+    var wfi = 0;
+    var wfc = GFNC(S);
+    while (wfi < wfc) {
+        if (L64(_fnt_offsets + wfi * 8) < 0 && GFFI(S, wfi) == 0) {
+            syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
+            PRSTR(S + 0xEC00000 + L64(_fnt_names + wfi * 8));
+            syscall(SYS_WRITE, 2, "'\n", 2);
+        }
+        wfi = wfi + 1;
+    }
+    return 0;
+}
+
+# 6.6.5 — intern `mod_name` ONCE. Writes the candidate at GNPOS WITHOUT committing; if an
+# fn of exactly that name is already registered (pass 1 minted it), reuse THAT entry's
+# string and leave the pool untouched, otherwise commit. mmod == 0 → noff unchanged, so
+# the overwhelming majority of definitions take the old path byte-for-byte.
+#
+# This is the whole answer to "how does the pass-1 mangle coexist with pass 2's", which
+# the filing called a design decision on the name pool: FINDFN compares by STRING, so a
+# string minted in either pass serves both, and pool GROWTH is unchanged because the
+# second mint is discarded. Lifted verbatim out of PARSE_FN_DEF (v5.11.65 CVE-05 length
+# walk included) so there is one mangler, not two. CHANGELOG [6.6.5]
+fn _mod_name_intern(S, mmod, noff): i64 {
+    if (mmod == 0) { return noff; }
+    var _mmlen = 0; while (load8(S + 0xEC00000 + mmod + _mmlen) != 0) { _mmlen = _mmlen + 1; }
+    var _nflen = 0; while (load8(S + 0xEC00000 + noff + _nflen) != 0) { _nflen = _nflen + 1; }
+    NPOS_GUARD(S, _mmlen + 1 + _nflen + 1);
+    var mwp = GNPOS(S);
+    var mnoff = mwp;
+    var mri = 0;
+    while (mri < _mmlen) { store8(S + 0xEC00000 + mwp, load8(S + 0xEC00000 + mmod + mri)); mwp = mwp + 1; mri = mri + 1; }
+    store8(S + 0xEC00000 + mwp, 95); mwp = mwp + 1;   # '_'
+    mri = 0;
+    while (mri < _nflen) { store8(S + 0xEC00000 + mwp, load8(S + 0xEC00000 + noff + mri)); mwp = mwp + 1; mri = mri + 1; }
+    store8(S + 0xEC00000 + mwp, 0); mwp = mwp + 1;
+    var efi = FINDFN(S, mnoff);
+    if (efi >= 0) {
+        var en = L64(_fnt_names + efi * 8);
+        if (en != mnoff) { if (STREQ(S, en, mnoff) == 1) { return en; } }
+    }
+    SNPOS(S, mwp);
+    return mnoff;
+}
+
+# 6.6.5 — the ONE identity rule both passes use to pick the fn-table entry a DEFINITION
+# owns. An existing entry belongs to this definition iff its privacy class matches and
+# (for private) its owner is this file; otherwise a same-named definition from another
+# file SPLITS into its own entry with bit 128 on both (the v6.5.38 sibling marker that
+# makes `_findfn_scoped` pick per caller-file).
+#
+# ⚠ An entry with raw fid 0 is one a CALL SITE registered — it has no owner, so it is
+# adopted, never split. An unattributable definition (vis_fid < 0, past the 1024-file map
+# cap) is adopted too: splitting on an unknown owner creates a symbol `_findfn_scoped` can
+# never select, which turns a working call into a silent rebind. Same carve-outs the
+# v6.5.38 pass-2 split had; they are now in one place instead of inline in PARSE_FN_DEF.
+fn _fn_def_slot(S, noff, vis_fid, this_priv): i64 {
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { return REGFN(S, noff); }
+    var raw = GFFI(S, fi);
+    if (raw == 0) { return fi; }              # registered by a call site: adopt
+    if (vis_fid < 0) { return fi; }           # unattributable: adopt (see above)
+    var prev_priv = 0;
+    if ((GFLG(S, fi) & 64) != 0) { prev_priv = 1; }
+    if (this_priv == 0) { if (prev_priv == 0) { return fi; } }   # public over public
+    if (raw - 1 == vis_fid) { return fi; }    # same file: a redefinition, not a collision
+    var nfi = REGFN(S, noff);
+    SFLG(S, fi, GFLG(S, fi) | 128);
+    SFLG(S, nfi, GFLG(S, nfi) | 128);
+    return nfi;
+}
+
+# 6.6.5 — the entry pass 1 registered for the definition whose `fn` token is `ti`, or -1.
+# Walks the hash probe chain (a split leaves two entries under one name, both reachable
+# from the same home slot) and matches on def-start AND name.
+fn _fn_by_defti(S, noff, ti): i64 {
+    var h = FNV1A_NOFF(S, noff);
+    var slot = h & _fnt_hash_mask;
+    var probes = 0;
+    while (probes < _fnt_cap) {
+        var stored = load32(_fnt_namehash + slot * 4);
+        if (stored == 0) { return 0 - 1; }
+        var fi = stored - 1;
+        if (GFDS(S, fi) == ti + 1) { if (STREQ(S, L64(_fnt_names + fi * 8), noff) == 1) { return fi; } }
+        slot = (slot + 1) & _fnt_hash_mask;
+        probes = probes + 1;
+    }
+    return 0 - 1;
+}
+
+# 6.6.5 — the VERBATIM pass-1 impl brace-skip the seven forks used to carry inline. Kept
+# as its own fn so `_prescan_impl` can replay it and pass 1's net cursor advance is
+# byte-identical to before.
+fn _prescan_skip_impl(S): i64 {
+    STI(S, GTI(S) + 1);  # consume IMPL
+    STI(S, GTI(S) + 1);  # consume trait name
+    STI(S, GTI(S) + 1);  # consume FOR
+    STI(S, GTI(S) + 1);  # consume type name
+    if (PEEKT(S) == 13) {
+        STI(S, GTI(S) + 1);
+        var idep = 0;
+        var isk = 1;
+        while (isk == 1) {
+            var it = PEEKT(S);
+            if (it == 13) { idep = idep + 1; }
+            if (it == 14) { if (idep == 0) { isk = 0; } else { idep = idep - 1; } }
+            if (it == 12) { isk = 0; }
+            STI(S, GTI(S) + 1);
+        }
+    }
+    return 0;
+}
+
+# 6.6.5 — pass-1 impl scan. Registers and stamps each method (`Type_method`) exactly as a
+# top-level fn is prescanned, mirroring PARSE_IMPL's own `_pub_pending` clear and module
+# set, then RESETS the cursor and replays the canonical skip. Replaces the inline
+# "skip entire block in pass 1 (functions registered in pass 2)" arm in all seven forks —
+# which is what made an impl method the one definition kind with no owner, no private bit
+# and no parameter masks until pass 2 had walked past its callers. CHANGELOG [6.6.5]
+fn _prescan_impl(S): i64 {
+    var start_ti = GTI(S);
+    _pub_pending = 0;                    # mirror PARSE_IMPL's entry clear
+    STI(S, GTI(S) + 1);                  # IMPL
+    if (PEEKT(S) == 2) {
+        STI(S, GTI(S) + 1);              # trait
+        if (PEEKT(S) == 55) {
+            STI(S, GTI(S) + 1);          # for
+            if (PEEKT(S) == 2) {
+                var tn = PEEKV(S);
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) == 13) {
+                    STI(S, GTI(S) + 1);
+                    var sv = GMOD(S);
+                    SMOD(S, tn);
+                    _prescan_impl_body(S);
+                    SMOD(S, sv);
+                }
+            }
+        }
+    }
+    _pub_pending = 0;
+    STI(S, start_ti);
+    _prescan_skip_impl(S);
+    return 0;
+}
+
+fn _prescan_impl_body(S): i64 {
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 14) { go = 0; }
+        elif (t == 73) { _TL_VIS(S); }                 # `public` on a method
+        elif (t == 153) { _TL_VIS(S); }                # `private` — marked by _PRIV_PRESCAN
+        elif (t == 32) { _prescan_fn_sig(S); }
+        else { go = 0; }
+    }
+    return 0;
+}
+
+# 6.6.5 — skip ONE top-level statement, tracking ( { [ depth. Stops after a depth-0 `;`,
+# or after a depth-0 `}` that is not followed by `else`/`elif` (a statement can end in a
+# brace: `if (..) { .. } else { .. }`, `while`, `switch`, `match`).
+fn _prescan_skip_stmt(S): i64 {
+    var dep = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { return 0; }                                  # EOF
+        if (t == 10 || t == 13 || t == 28) { dep = dep + 1; }
+        if (t == 11 || t == 14 || t == 29) { dep = dep - 1; }
+        STI(S, GTI(S) + 1);
+        if (dep <= 0) {
+            if (t == 5) { go = 0; }
+            elif (t == 14) {
+                var nt = PEEKT(S);
+                if (nt != 23 && nt != 50) { go = 0; }
+            }
+        }
+    }
+    return 0;
+}
+
+# 6.6.5 — pass 1 stops at the first top-level STATEMENT (`else { scan = 0; }` in every
+# fork), but PARSE_PROG keeps accepting `fn` definitions after it — relaxed ordering. So
+# every fn below the first statement was unstamped: reachable from any file by a
+# preceding call, and address-passed struct params silently miscompiled. This walks the
+# REST of the stream registering only those fns; statements are skipped (a top-level
+# `var` registers itself on the PARSE_PROG path, so it must NOT be handled here).
+#
+# The cursor and module are saved and restored, so pass 2 starts exactly where it did.
+# SMOD(0) because PARSE_PROG runs after pass 2's module reset. CHANGELOG [6.6.5]
+fn _prescan_tail(S): i64 {
+    var sv = GTI(S);
+    var svmod = GMOD(S);
+    SMOD(S, 0);
+    _pub_pending = 0;
+    _prescan_tail_loop(S);
+    _pub_pending = 0;
+    SMOD(S, svmod);
+    STI(S, sv);
+    return 0;
+}
+
+fn _prescan_tail_loop(S): i64 {
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { go = 0; }                       # EOF
+        # ⚠ _IS_FN_KW, not a bare `t == 32`: every fork's pass-1 loop asks _IS_FN_KW, so a
+        # bare test here would make the two scanners disagree about what a DEFINITION is and
+        # an `async fn` after the first top-level statement would stay unstamped. Not
+        # reachable today (PARSE_PROG rejects `async` there on 6.6.4 and on this build), and
+        # _prescan_fn_sig already consumes the `async` prefix — the two scanners agreeing is
+        # the point. CHANGELOG [6.6.5]
+        elif (_IS_FN_KW(S) == 1) { _prescan_fn_sig(S); }
+        elif (t == 14) { go = 0; }                     # stray '}' — where PARSE_PROG stops
+        elif (t == 109 || t == 122 || t == 125 || t == 126 || t == 127 || t == 133 || t == 163) { STI(S, GTI(S) + 1); }
+        elif (t == 124) { _prescan_skip_deprecated(S); }
+        else { _prescan_skip_stmt(S); }
+    }
+    return 0;
+}
+
+# `#deprecated` / `#deprecated("msg")` — consume the directive with its optional argument,
+# exactly as the pass-1 arm does.
+fn _prescan_skip_deprecated(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 10) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
+        if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+    }
     return 0;
 }
 
@@ -3604,24 +4158,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # name `foo$ty` is already fully formed, so use it verbatim and skip module
     # mangling. (_inst_name is set only by the instantiate trigger's re-invoke.)
     if (_inst_name != 0) { noff = _inst_name; mmod = 0; }
-    if (mmod != 0) {
-        # v5.11.65 (CVE-05): walk source lengths before NPOS_GUARD;
-        # replaces magic-256 pessimistic budget. See CHANGELOG [5.11.65].
-        var _mmlen = 0; while (load8(S + 0xEC00000 + mmod + _mmlen) != 0) { _mmlen = _mmlen + 1; }
-        var _nflen = 0; while (load8(S + 0xEC00000 + noff + _nflen) != 0) { _nflen = _nflen + 1; }
-        NPOS_GUARD(S, _mmlen + 1 + _nflen + 1);
-        var mwp = GNPOS(S);
-        var mnoff = mwp;
-        var mri = 0;
-        var mrc = load8(S + 0xEC00000 + mmod + mri);
-        while (mrc != 0) { store8(S + 0xEC00000 + mwp, mrc); mwp = mwp + 1; mri = mri + 1; mrc = load8(S + 0xEC00000 + mmod + mri); }
-        store8(S + 0xEC00000 + mwp, 95); mwp = mwp + 1;
-        mri = 0; mrc = load8(S + 0xEC00000 + noff + mri);
-        while (mrc != 0) { store8(S + 0xEC00000 + mwp, mrc); mwp = mwp + 1; mri = mri + 1; mrc = load8(S + 0xEC00000 + noff + mri); }
-        store8(S + 0xEC00000 + mwp, 0); mwp = mwp + 1;
-        SNPOS(S, mwp);
-        noff = mnoff;
-    }
+    # 6.6.5 — one mangler, shared with pass 1 (see _mod_name_intern). Pass 1 now mints
+    # `Type_method` / `mod_fn` first, so this call finds that exact string and REUSES it
+    # instead of minting a second copy; pool growth is unchanged either way.
+    noff = _mod_name_intern(S, mmod, noff);
     # v6.3.11 (G): async fn — the user name `f` becomes a Future constructor
     # (synthesized after the body, below); the body itself is emitted under `f$impl`.
     # Generic async (`async fn f<T>`) is deferred — error rather than miscompile.
@@ -3660,42 +4200,39 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     }
 
     _dup_prev_pc = 0 - 1;
-    var fi = FINDFN(S, noff);
-    if (fi < 0) { fi = REGFN(S, noff); }
-    else {
-        var _dup_off = L64(_fnt_offsets + fi * 8);
-        if (_dup_off >= 0) {
-            # v6.5.38 — SPLIT rather than overwrite when a private definition is involved
-            # and the two definitions come from DIFFERENT files. This is the fix for §1/§2
-            # of the owl filing: `private` now scopes at INSERTION, so the guide's
-            # "omitted from the exported symbol table" claim is literally true and a
-            # private helper can no longer be replaced by another file's same-named fn.
-            #
-            # ⚠ BOTH files' ids must be KNOWN. Past the 1024-entry file-map cap FM_FILEID
-            # returns -1, and splitting on an unknown owner would create a symbol that
-            # `_findfn_scoped` can never select (arm 1 requires owner == caller), turning a
-            # working call into a silent rebind to the wrong definition. So an
-            # unattributable definition keeps the old overwrite-and-warn behaviour, which
-            # `_vis_degraded_note()` below already announces.
-            #
-            # ⚠ Same-file redefinition is deliberately NOT split — that is a genuine
-            # redefinition of one symbol and must keep warning.
-            var _prev_fid_raw = GFFI(S, fi);
-            var _split = 0;
-            if (_this_priv == 1) { _split = 1; }
-            if ((GFLG(S, fi) & 64) != 0) { _split = 1; }
-            if (_prev_fid_raw == 0) { _split = 0; }
-            if (_vis_fid < 0) { _split = 0; }
-            if (_split == 1) { if (_prev_fid_raw - 1 == _vis_fid) { _split = 0; } }
-            if (_split == 1) {
-                var _sib_old = fi;
-                fi = REGFN(S, noff);
-                SFLG(S, _sib_old, GFLG(S, _sib_old) | 128);
-                SFLG(S, fi, GFLG(S, fi) | 128);
-                _dup_off = 0 - 1;      # not a redefinition any more: suppress warn + arity check
-            }
+    # 6.6.5 — PASS 1 IS THE AUTHORITY. `_fn_by_defti` finds the entry pass 1 registered for
+    # THIS definition (matched on its `fn` token), which does two things:
+    #   * the entry is this definition's own, so the v6.5.38 per-file split has already
+    #     happened in pass 1 — before any forward call could bind to the wrong one;
+    #   * `_this_priv` is taken from that stamp rather than recomputed. Pass 2 computes
+    #     visibility a SECOND time and gets it wrong in one case: its top-level `var` skip
+    #     re-arms `public` and never consumes it, so the next fn was stamped public in a
+    #     private file. That was masked only because the pass-1 bit was never cleared;
+    #     clearing it (below, at the stamp) without this would have exposed it.
+    # An instance (`_inst_name != 0`) is re-parsed from the BASE's tokens, so its def-start
+    # names the base — it deliberately bypasses this and keeps the v6.6.4 inherited bit.
+    var fi = 0 - 1;
+    if (_inst_name == 0) { fi = _fn_by_defti(S, noff, _defstart_ti); }
+    if (fi >= 0) {
+        # ⚠ Only when nothing has CLAIMED the entry yet. Two same-file definitions of one
+        # name share an entry (that is a redefinition, not a collision — it must keep
+        # warning), and an entry holds ONE bit, so after the first definition emitted its
+        # body the bit describes whichever definition wrote last. Measured: `public fn h()`
+        # followed by `fn h()` in a private file came out PUBLIC, where every release since
+        # v6.5.0 made it private. An offset >= 0 means an earlier definition owns this slot,
+        # so this one keeps the visibility it computed for itself.
+        if (L64(_fnt_offsets + fi * 8) < 0) {
+            _this_priv = 0;
+            if ((GFLG(S, fi) & 64) != 0) { _this_priv = 1; }
         }
-        if (_dup_off >= 0) {
+    } else {
+        # Not prescanned — a fn nested inside another fn's body, or a monomorphized
+        # instance. The v6.5.38 identity rule still applies; it lives in `_fn_def_slot`
+        # now so pass 1 and pass 2 cannot drift apart about what a definition owns.
+        fi = _fn_def_slot(S, noff, _vis_fid, _this_priv);
+    }
+    var _dup_off = L64(_fnt_offsets + fi * 8);
+    if (_dup_off >= 0) {
             # v6.5.37: remember the loser's arity + file; the comparison happens once this
             # definition's own parameter list has been counted (see _fnt_params store below).
             _dup_prev_pc = L64(_fnt_params + fi * 8);
@@ -3717,7 +4254,6 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             syscall(SYS_WRITE, 2, "' (last definition wins; first defined in ", 42);
             _fm_print_fid(S, GFFI(S, fi));
             syscall(SYS_WRITE, 2, ")\n", 2);
-        }
     }
     if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
     if (_gtp != 0) { SFDS(S, fi, _defstart_ti + 1); }   # v6.3.10: def-start +1 (0 = unrecorded; token 0 is valid)
@@ -3745,7 +4281,19 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # Since v6.6.4 _TL_VIS arms the marker only for tokens that can carry it (see
     # _PUB_CAN_ARM), PARSE_IMPL and the relaxed-ordering path clear it on entry, and the
     # array + destructure var paths consume it themselves.
-    if (_this_priv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); }
+    # 6.6.5 r3: a deferred reference can only become REPORTABLE when a new PRIVATE stamp
+    # lands (`_vis_report_late` reports nothing for a public callee), so the sweep's seq
+    # guard keys on this branch and not on SFFI. A compiland with no `private` anywhere —
+    # which is nearly all of them — then sweeps exactly ONCE instead of once per fn body.
+    if (_this_priv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); _vis_stamp_seq = _vis_stamp_seq + 1; }
+    # ⛔ 6.6.5 — and CLEAR it otherwise. The bit was only ever set, never cleared, so a
+    # stale pass-1 private stamp survived onto a PUBLIC definition. That is not
+    # hypothetical: with pass 1 keeping one entry per NAME, a private `_helper` in file A
+    # stamped the shared entry, and file B's public `_helper` inherited the bit — the
+    # guide's own two-file example was REFUSED, with no forward call involved, purely on
+    # include order, and the "omitted from the exported symbol table" promise applied to
+    # the wrong fn. CHANGELOG [6.6.5]
+    else { SFLG(S, fi, GFLG(S, fi) & (0 - 65)); }
     # An unattributable fn (FM_FILEID -1) can never be marked private, so enforcement
     # would quietly stop applying. Say so once rather than degrade in silence.
     if (_vis_fid < 0) { _vis_degraded_note(); }

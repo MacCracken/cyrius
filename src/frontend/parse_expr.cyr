@@ -625,7 +625,16 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                                 if (_spec == 0 - 3) {
                                     ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 123);
                                 }
-                                PARSE_FNCALL(S, L64(_fnt_names + _spec * 8));
+                                # ⛔ 6.6.5 — `_spec` is -2 / -3 on the two error paths above,
+                                # and `_fnt_names + _spec * 8` read 16/24 bytes BEFORE the
+                                # table: an out-of-bounds load whose garbage was then parsed
+                                # as a name, which is where the nonsense
+                                # "undefined function 'enum'" came from. ERR_MSG does not
+                                # exit (the multi-error contract), so the guard has to be
+                                # here. Arguments are still consumed, by PARSE_FNCALL on the
+                                # base name, so the parse stays in sync. CHANGELOG [6.6.5]
+                                if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); }
+                                else { PARSE_FNCALL(S, noff); }
                             }
                             _cfo = 0;
                             return 0;

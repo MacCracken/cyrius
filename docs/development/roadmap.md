@@ -62,11 +62,21 @@ and agnos, one from the sweep's close) in six bites — the last of which found 
 child on native aarch64 had been exiting 1 before `execve` for 59 releases (`cbt/build.cyr`'s raw x86
 `getppid`), and that the pi release-gate leg had never built or run the CLI. It does now.
 
-**The open queue is at two**, both FILED by 6.6.4's own bites and neither packable into them:
-`issues/2026-09-13-private-impl-method-forward-call-fail-open.md` (a forward call to a private impl method
-resolves with no fileid — a 7-fork pass-1 change) and `issues/2026-09-13-fn-local-global-slots-shadow-other-files.md`
-(a fn-local struct literal / oversized array is a GLOBAL slot in the flat namespace). Both belong in the
-repair window. ⚠ **The window's labels have drifted from the version numbers:** 6.6.3 went to the sweep's
+**The open queue was at two**, both FILED by 6.6.4's own bites and neither packable into them. **6.6.5
+bite 3 closed the first** — `issues/archived/2026-09-13-private-impl-method-forward-call-fail-open.md`; it
+was four unstamped definition kinds rather than one, and the same root also produced false refusals in
+ordinary include order, false arity errors and silent struct-param SIGSEGVs. It carried slot `.3` (per-item
+`private`) with it. That leaves `issues/2026-09-13-fn-local-global-slots-shadow-other-files.md`
+(a fn-local struct literal / oversized array is a GLOBAL slot in the flat namespace), still in the
+repair window — and if its fix needs a per-file split for globals it should reuse bite 3's `_fn_def_slot`
+identity rule. ⚠ Bite 3's own review put ONE new filing back on the queue rather than shrinking it to one:
+`issues/2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md` — a value-form SIMD argument
+alongside six or more int-class arguments binds the later int args to the wrong slots, on every call path,
+identical on 6.6.4 and 6.6.5 (so pre-existing, and the bite did not move it). It is the one thing found in
+that review that could NOT be packed, and the issue names why: the fix changes the value-form SIMD calling
+convention past the integer register ceiling, which is a different convention on each of the four gate
+targets. It wants its own slot in this window or the next, not a review round.
+⚠ **The window's labels have drifted from the version numbers:** 6.6.3 went to the sweep's
 repair set and 6.6.4 to the post-handoff filings, so slot `.3` (per-item `private`) lands as 6.6.5 at the
 earliest, with the two filings above alongside it. The slots have not been re-numbered — that is the user's call.
 

@@ -1,0 +1,237 @@
+# forward_ref_abi_binding.tcyr — 6.6.5 — a call that comes BEFORE the definition it names
+# must get the same ABI and the same binding as one that comes after, on every target.
+#
+# ⛔ THE DEFECT. Pass 1 is meant to register every definition so a forward reference resolves
+# against complete information. It did not: impl bodies were brace-skipped in all seven
+# forks, and the scan stopped at the first top-level statement while PARSE_PROG kept
+# defining fns after it. A definition pass 1 never saw has no `_fnt_structmask`, so a
+# forward call passing a plain struct >8 bytes pushed the struct BY VALUE into a callee that
+# derefs the parameter as a pointer (v6.3.16 lf_is_ptr) — SIGSEGV, rc=139, no diagnostic.
+# Measured on 6.6.4 on x86 AND under qemu-aarch64; the identical call written AFTER the
+# definition returned 42.
+#
+# ⭐ WHY THIS IS A CROSSOS TEST. The struct-parameter ABI is exactly what differs per target:
+# SysV address-passes a >8 B struct, Win64 passes it by pointer in an integer register under
+# the MS x64 ABI (`_TARGET_PE` sets structmask where SysV sets simdmask), aarch64 has its own
+# rule. A mask computed in the wrong pass is wrong in a DIFFERENT way on each of them, so
+# x86-only coverage proves nothing about ecb/ach/cass/pi. The `crossos/` DIRECTORY is the
+# real-hardware selector (the `vr01_` prefix was retired at v6.5.11).
+#
+# ⚠ EVERY EXPECTATION IS COMPUTED A DIFFERENT WAY FROM THE THING IT CHECKS: each forward
+# call is compared against the SAME call made after the definition (a second code path in
+# the same binary) AND against a field sum computed inline from the literals. A gate that
+# only compared forward against forward would agree with itself while both were wrong.
+#
+# MUTATION LEDGER — each mutant was built as a full cycc from mutated source and this file
+# compiled and run against it:
+#   * the pass-1 impl arm restored to the 6.6.4 brace-skip -> SIGSEGV, rc=139
+#   * `_prescan_tail(S);` removed from src/main.cyr        -> SIGSEGV, rc=139
+#   * `SFDS` dropped from _prescan_fn_sig                  -> does not COMPILE (the stale
+#       "instantiate-once param re-emission is a follow-on bite" error on fwd_gen<i32>)
+#   * the method-arg loop reverted to bare PCMPE+EPUSHR    -> SIGSEGV, rc=139 (this one fires on
+#       the BACKWARD rows too: `w.take(b)` was broken in both orders, which is why bwd_method_dot
+#       is asserted against a literal rather than only against its forward twin)
+#   * `_try_push_struct_addr_arg` forced back to an unconditional `&slot` -> the pointer-mode
+#       rows fail with the ADDRESS in place of field 0 (a silent wrong value, not a crash)
+#   * (round 3) the Win64 own-call loops back to `_try_push_struct_addr_arg` alone — i.e. the
+#       PE compiler built from this tree's parent commit -> the three `fwd_vret_str` /
+#       `bwd_vret_str` rows fail UNDER WINE ONLY (25 passed / 3 failed) and stay GREEN on x86,
+#       because the non-PE branch of that receive is a pair-register return whose arguments go
+#       through PARSE_FNCALL. That asymmetry is the argument for this file living in crossos/:
+#       an x86-only corpus cannot fail these rows at all.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/simd.cyr"
+include "lib/assert.cyr"
+
+struct FwdBig { a: i64; b: i64; c: i64; }
+struct FwdW { v: i64; }
+
+# ── forward calls: every one of these is parsed before its definition is seen ──────────
+fn fwd_method(): i64 {
+    var w: FwdW; w.v = 5;
+    var b: FwdBig; b.a = 10; b.b = 20; b.c = 12;
+    return FwdW_take(&w, b);
+}
+fn fwd_method_dot(): i64 {
+    var w: FwdW; w.v = 5;
+    var b: FwdBig; b.a = 10; b.b = 20; b.c = 12;
+    return w.take(b);
+}
+fn fwd_scale(): i64 {
+    var w: FwdW; w.v = 5;
+    var b: FwdBig; b.a = 1; b.b = 2; b.c = 4;
+    return w.scale(b, 6);
+}
+fn fwd_free(): i64 {
+    var b: FwdBig; b.a = 10; b.b = 20; b.c = 12;
+    return fwd_take_free(0, b);
+}
+fn fwd_generic(): i64 { var v: i32 = fwd_gen<i32>(42); return v; }
+# ⛔ 6.6.5 round 3 — the WIN64 "OWN-CALL" argument loops. A 16/32-byte vector return is
+# written through a hidden retptr on Win64, so four paths emit their own call instead of
+# going through PARSE_FNCALL (`_try_vector_call_assign`, the `_f2c`/`_f4c` receives, and the
+# PE SIMD-return `_rc` path) — and each marshalled its arguments with the struct-pointer gate
+# ALONE. The `: Str` literal wrap was therefore missing on PE only: measured under wine on
+# 6.6.4 and on the first two cuts of this bite, `var v: f64v2 = fwd_mkv("abcde", 2)` gave
+# lo = 0 on PE where ELF gave 5, because the callee received a raw cstr. ⚠ x86-Linux CANNOT
+# see this row fail — the non-PE branch is the pair-register return, whose arguments DO go
+# through PARSE_FNCALL. It is here for cass.
+fn fwd_vret_str(): i64 {
+    var v: f64v2 = fwd_mkv("abcde", 2);
+    return f64v2_lo(&v) * 10 + f64v2_hi(&v);
+}
+
+# The definitions. Below the calls ON PURPOSE — see the header.
+include "tests/fixtures/forward_ref_abi/impls.cyr"
+
+# ── the SAME calls, written after the definitions: the control path ────────────────────
+fn bwd_method(): i64 {
+    var w: FwdW; w.v = 5;
+    var b: FwdBig; b.a = 10; b.b = 20; b.c = 12;
+    return FwdW_take(&w, b);
+}
+fn bwd_method_dot(): i64 {
+    var w: FwdW; w.v = 5;
+    var b: FwdBig; b.a = 10; b.b = 20; b.c = 12;
+    return w.take(b);
+}
+fn bwd_scale(): i64 {
+    var w: FwdW; w.v = 5;
+    var b: FwdBig; b.a = 1; b.b = 2; b.c = 4;
+    return w.scale(b, 6);
+}
+fn bwd_free(): i64 {
+    var b: FwdBig; b.a = 10; b.b = 20; b.c = 12;
+    return fwd_take_free(0, b);
+}
+fn bwd_generic(): i64 { var v: i32 = fwd_gen<i32>(42); return v; }
+fn bwd_vret_str(): i64 {
+    var v: f64v2 = fwd_mkv("abcde", 2);
+    return f64v2_lo(&v) * 10 + f64v2_hi(&v);
+}
+# The same value reached WITHOUT the own-call path at all: the literal is wrapped by hand,
+# so this arm never depends on the wrap and is the independent expectation the two rows above
+# are compared against (the `_fwd_vret_wrapped` name says which half it isolates).
+fn bwd_vret_prewrapped(): i64 {
+    var s = str_from("abcde");
+    var v: f64v2 = fwd_mkv(s, 2);
+    return f64v2_lo(&v) * 10 + f64v2_hi(&v);
+}
+
+# ── the split-binding half: two private files, one helper name, different arities ──────
+include "tests/fixtures/forward_ref_abi/priv_a.cyr"
+include "tests/fixtures/forward_ref_abi/priv_b.cyr"
+
+# ── a fn defined after a top-level STATEMENT (relaxed ordering), called forward ────────
+# `var _fra_arm = 0;` alone does NOT stop the pass-1 scan (it has a `var` arm); the bare
+# assignment below it does. Without that the row tests nothing.
+fn fwd_relaxed(): i64 {
+    var b: FwdBig; b.a = 7; b.b = 8; b.c = 9;
+    return fra_relaxed(b);
+}
+var _fra_arm = 0;
+_fra_arm = 1;
+fn fra_relaxed(b: FwdBig): i64 { return b.a + b.b + b.c; }
+
+test_group("forward call == backward call, same ABI");
+assert_eq(fwd_method(), bwd_method(), "mangled method call with a >8B struct param");
+assert_eq(fwd_method_dot(), bwd_method_dot(), "dot method call with a >8B struct param");
+assert_eq(fwd_scale(), bwd_scale(), "method with a struct param AND a scalar after it");
+assert_eq(fwd_free(), bwd_free(), "free fn with a >8B struct param");
+assert_eq(fwd_generic(), bwd_generic(), "explicit generic instantiation");
+
+test_group("and both equal the value computed from the literals");
+assert_eq(fwd_method(), 10 + 20 + 12, "FwdW_take(&w, b) reads b's three fields");
+assert_eq(fwd_method_dot(), 10 + 20 + 12, "w.take(b) reads b's three fields");
+assert_eq(bwd_method_dot(), 10 + 20 + 12, "w.take(b) after the impl — SIGSEGV'd in BOTH orders before 6.6.5");
+assert_eq(fwd_scale(), (1 + 2 + 4) * 6, "the scalar after the struct arg lands in the right slot");
+assert_eq(fwd_free(), 10 + 20 + 12, "a plain fn's struct param, forward-called");
+assert_eq(fwd_generic(), 42, "fwd_gen<i32>(42)");
+assert_eq(fwd_relaxed(), 7 + 8 + 9, "a fn defined after a top-level statement, called forward");
+
+# ── POINTER-mode struct locals: the arg push must LOAD the slot, not take its address ──
+# A struct-typed local is either INLINE (the slot IS the struct) or POINTER-mode (the slot
+# HOLDS its address). The argument push took `&slot` for both, so a heap struct arrived as a
+# pointer-to-pointer and the callee read the ADDRESS as field 0 — silent, not a crash, and it
+# was live on the ordinary `f(x)` path too (measured on 6.6.4: 140545185808389 for 42).
+# Asserted on BOTH call paths and in both directions, so a fix that swaps the two rather than
+# discriminating fails here.
+fn ptr_free(): i64 {
+    var b: FwdBig = alloc(24); b.a = 3; b.b = 5; b.c = 7;
+    return fwd_take_free(0, b);
+}
+fn ptr_method(): i64 {
+    var w: FwdW; w.v = 5;
+    var b: FwdBig = alloc(24); b.a = 3; b.b = 5; b.c = 7;
+    return w.take(b);
+}
+fn inline_free(): i64 {
+    var b: FwdBig; b.a = 3; b.b = 5; b.c = 7;
+    return fwd_take_free(0, b);
+}
+
+# ── the other two callee masks on the method-arg loop ──────────────────────────────────
+# ⛔ 6.6.5 round 2. The method path ran PARSE_FNCALL's struct-pointer gate and NEITHER of
+# its siblings, so two whole classes of argument were mis-passed with no diagnostic:
+#   * a string literal into a `: Str` param — no `str_from` wrap, so the callee got a raw
+#     cstr pointer and `str_len` read 0 (measured: method 0, free fn 5).
+#   * a vector into a SIMD-class param — pushed as an int arg instead of being loaded into
+#     XMM/V after ECALLPOPS, which shifts EVERY LATER ARGUMENT by one register (measured:
+#     method 927, free fn 923 — `j` received the vector's low half).
+# ⚠ THE EXPECTED VALUE COMES FROM A DIFFERENT COMPILER PATH: each row is asserted against
+# the identical FREE fn (which has always taken PARSE_FNCALL) and against a value computed
+# from the literals, so a fix that broke both paths the same way still fails here.
+# ⚠ These belong in crossos/ for the same reason the struct rows do: the Str wrap is an
+# extra CALL at the argument site (its own stack-alignment question on PE), and the SIMD
+# class is XMM on SysV, NEON on aarch64 and by-pointer on Win64.
+fn m_slen(): i64 {
+    var w: FwdW; w.v = 5;
+    return w.slen("abcde");
+}
+fn f_slen(): i64 { var r = fwd_slen_free(0, "abcde"); return r; }
+# ⛔ The TAIL position is a different lowering, and it was the FOURTH thing found missing
+# from it (after v6.3.36 struct params, v6.4.53 SIMD params, v6.5.1 overload dispatch):
+# `return f("lit")` never ran PARSE_FNCALL's `str_from` wrap, so the callee received a raw
+# cstr and `str_len` returned load64(cstr + 8) — 0 here, garbage in general. The two call
+# POSITIONS in one program disagreed, silently. Found by the row above: the free-fn control
+# it compares against was itself written in tail position and was itself wrong.
+fn f_slen_tail(): i64 { return fwd_slen_free(0, "abcde"); }
+fn m_slen_tail(): i64 { var w: FwdW; w.v = 5; return w.slen("abcde"); }
+fn m_vmix(): i64 {
+    var w: FwdW; w.v = 5;
+    var v: f64v2 = f64v2_make(7, 9);
+    return w.vmix(2, v, 3);
+}
+fn f_vmix(): i64 {
+    var v: f64v2 = f64v2_make(7, 9);
+    return fwd_vmix_free(0, 2, v, 3);
+}
+
+test_group("pointer-mode and inline struct args both reach the callee intact");
+assert_eq(ptr_free(), 3 + 5 + 7, "heap struct into a plain fn's >8B struct param");
+assert_eq(ptr_method(), 3 + 5 + 7, "heap struct into a METHOD's >8B struct param");
+assert_eq(inline_free(), 3 + 5 + 7, "inline struct into the same param — the other polarity");
+assert_eq(ptr_free(), inline_free(), "pointer-mode and inline agree");
+
+test_group("a method's Str-literal and SIMD args obey the callee mask");
+assert_eq(m_slen(), f_slen(), "w.slen(\"abcde\") == the identical free fn");
+assert_eq(m_slen(), 5, "and both equal the literal's length");
+assert_eq(f_slen_tail(), f_slen(), "`return f(\"lit\")` == `var r = f(\"lit\")` — the tail lowering");
+assert_eq(f_slen_tail(), 5, "and the tail position equals the literal's length");
+assert_eq(m_slen_tail(), 5, "the method call in tail position too");
+assert_eq(m_vmix(), f_vmix(), "w.vmix(2, v, 3) == the identical free fn");
+assert_eq(m_vmix(), 9 * 100 + 2 * 10 + 3, "and both equal the value computed from the literals");
+
+test_group("a Win64 hidden-retptr vector receive marshals its args like PARSE_FNCALL");
+assert_eq(fwd_vret_str(), bwd_vret_prewrapped(), "`var v: f64v2 = f(\"lit\", k)` == the same call with the literal wrapped by hand");
+assert_eq(bwd_vret_str(), bwd_vret_prewrapped(), "and after the definition too");
+assert_eq(fwd_vret_str(), 5 * 10 + 2, "and all three equal the value computed from the literals");
+
+test_group("a same-named private helper in two files binds per file");
+assert_eq(fra_a_entry(), 10 + 5 + 1, "file A's 2-arg _fra_h");
+assert_eq(fra_b_entry(), 13 * 2, "file B's 1-arg _fra_h");
+
+var r = assert_summary();

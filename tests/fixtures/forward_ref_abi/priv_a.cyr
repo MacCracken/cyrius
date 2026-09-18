@@ -1,0 +1,8 @@
+# tests/fixtures/forward_ref_abi/priv_a.cyr — 6.6.5
+# One of TWO private files that each define a same-named `_fra_h`, at DIFFERENT arities, and
+# each call their own FORWARD. Pass 1 kept one entry per NAME, so the second file's prescan
+# overwrote the first file's owner, arity and private bit: false "is private to its file"
+# AND a false "expects 2 arguments, got 1" on a program that is entirely legal.
+private
+public fn fra_a_entry(): i64 { return _fra_h(10, 5); }
+fn _fra_h(x, y): i64 { return x + y + 1; }

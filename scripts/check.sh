@@ -212,6 +212,31 @@ sh "$ROOT/tests/gates/frontend/lexid_prefix_exact.sh"
 # `private;` forms are the legitimate spellings and must keep working.
 sh "$ROOT/tests/gates/frontend/private_per_item_rejected.sh"
 
+# 6.6.5: `private` was enforced only against definitions PASS 1 REGISTERED, and pass 1 skipped
+# impl bodies, `mod` fns and everything after the first top-level statement — so a call that
+# merely came EARLIER in the stream reached a private method from any file. The same root
+# produced FALSE refusals (the guide's own two-file example, refused on include order alone),
+# false arity errors, and silent SIGSEGVs (a forward call's >8 B struct param took the mask-0
+# ABI). Axis 1 is static 7-fork parity — miss one fork and the hole comes back on that target
+# only; axis 2 compares the FORWARD refusal set against the BACKWARD one, so the expectation
+# is produced by a different compiler path, not a list in the gate.
+sh "$ROOT/tests/gates/frontend/private_forward_reference.sh"
+
+# 6.6.5: `s.m(x)` and `M_m(&s, x)` are one call syntax with TWO marshalling paths, and the
+# method one ran NONE of PARSE_FNCALL's callee gates — four silent failures in one argument
+# loop (struct-by-value SIGSEGV, an unwrapped `: Str` literal, a vector pushed as an int arg,
+# an integer literal into `: cstring`), plus no arity check at all. Every row is a
+# DIFFERENTIAL against the identical free fn, so the expected value comes from PARSE_FNCALL
+# rather than from a list in the gate: a fifth gate added there and forgotten here fails.
+sh "$ROOT/tests/gates/frontend/method_call_runs_every_callee_gate.sh"
+
+# 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
+# arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
+# was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its
+# TAIL CALL and a correct bounded recursion started SIGSEGVing. Depth 1 is PARSE_FNCALL's
+# own criterion. The gate pins its own stack limit so the verdict is not the box's.
+sh "$ROOT/tests/gates/codegen/tail_call_literal_divert_depth.sh"
+
 # v6.5.57: copying an aggregate must copy EVERY word. `dst = src;` used to copy only the first
 # 8 bytes for structs AND vectors — reported as a SIMD bug, but a two-field struct truncated
 # identically. Axis 7 keeps THREE aggregates live because the fix also had to close a latent

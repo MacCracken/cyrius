@@ -238,27 +238,14 @@ while (scan == 1) {
                                             STI(S, GTI(S) + 1);
                                             if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
                                         }
-                                        else { if (PEEKT(S) == 77) {
-                                                # impl — skip entire block in pass 1 (functions registered in pass 2)
-                                                STI(S, GTI(S) + 1);  # consume IMPL
-                                                STI(S, GTI(S) + 1);  # consume trait name
-                                                STI(S, GTI(S) + 1);  # consume FOR
-                                                STI(S, GTI(S) + 1);  # consume type name
-                                                if (PEEKT(S) == 13) {
-                                                    STI(S, GTI(S) + 1);
-                                                    var idep = 0;
-                                                    var isk = 1;
-                                                    while (isk == 1) {
-                                                        var it = PEEKT(S);
-                                                        if (it == 13) { idep = idep + 1; }
-                                                        if (it == 14) { if (idep == 0) { isk = 0; } else { idep = idep - 1; } }
-                                                        if (it == 12) { isk = 0; }
-                                                        STI(S, GTI(S) + 1);
-                                                    }
-                                                }
-                                            }
+                                        else { if (PEEKT(S) == 77) { _prescan_impl(S); }
                                             else { if (PEEKT(S) == 109 || PEEKT(S) == 122 || PEEKT(S) == 125 || PEEKT(S) == 126 || PEEKT(S) == 127 || PEEKT(S) == 133 || PEEKT(S) == 163) { STI(S, GTI(S) + 1); } else { if (PEEKT(S) == 124) { STI(S, GTI(S) + 1); if (PEEKT(S) == 10) { STI(S, GTI(S) + 1); if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); } if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); } } } else { scan = 0; } } } } } } } } } } } } }
 }
+
+# 6.6.5 — pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining
+# fns after it. Register those too, or they stay unstamped: reachable across the
+# `private` boundary by a preceding call, and address-passed struct params miscompile.
+_prescan_tail(S);
 
 # Reset module for pass 2
 SMOD(S, 0);
@@ -348,17 +335,10 @@ while (escan == 1) {
 EMIT_GVAR_INITS(S);
 STI(S, gvar_save_ti);
 
-# Warn about undefined functions (registered but never defined — offset still -1)
-var wfi = 0;
-var wfc = GFNC(S);
-while (wfi < wfc) {
-    if (L64(_fnt_offsets + wfi * 8) < 0) {   # v6.4.58: canonical table (0xE92000 was all-zero → never fired)
-        syscall(SYS_WRITE, 2, "warning: undefined function '", 29);
-        PRSTR(S + 0xEC00000 + L64(_fnt_names + wfi * 8));
-        syscall(SYS_WRITE, 2, "'\n", 2);
-    }
-    wfi = wfi + 1;
-}
+# 6.6.5 — ONE shared emitter (src/frontend/parse_fn.cyr). Three forks carried this loop
+# inline and it needed a fix in all three: pass 1 now prescans relaxed-ordering fns, which
+# PARSE_PROG defines BELOW this point, so an un-guarded loop warns about every one of them.
+_warn_undefined_prepass(S);
 
 # Parse main code (top-level statements)
 PARSE_PROG(S);

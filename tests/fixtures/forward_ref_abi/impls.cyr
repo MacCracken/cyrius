@@ -1,0 +1,37 @@
+# tests/fixtures/forward_ref_abi/impls.cyr — 6.6.5
+#
+# The DEFINITIONS half of tests/tcyr/crossos/forward_ref_abi_binding.tcyr. It is a separate
+# file, included BELOW the calls, because that is the whole point: until 6.6.5 a definition
+# that pass 1 never registered had no parameter masks, so a forward call passing a >8-byte
+# struct used the mask-0 ABI and pushed the struct BY VALUE into a callee that derefs the
+# parameter as a pointer. Silent SIGSEGV on x86, aarch64 and PE.
+#
+# ⚠ NOT `private` — the ABI rows must BUILD. The visibility half is pinned by
+# tests/gates/frontend/private_forward_reference.sh, which a .tcyr cannot express (a refused
+# compile has no binary to run).
+
+impl FwdTk for FwdW {
+    fn take(self, b: FwdBig) { return b.a + b.b + b.c; }
+    fn scale(self, b: FwdBig, k) { return (b.a + b.b + b.c) * k; }
+    # ⭐ 6.6.5 round 2 — the OTHER two callee masks. `_fnt_structmask` was the only one the
+    # method-arg loop consulted after the first cut of this bite; `_fnt_strmask` and
+    # `_fnt_simdmask` were still missing, and each is a SILENT wrong value rather than a
+    # crash. Every one of these has a free-fn twin below with an identical body, and the
+    # test asserts method == free fn == a value computed from the literals.
+    fn slen(self, s: Str): i64 { return str_len(s); }
+    fn vmix(self, k, v: f64v2, j): i64 { return f64v2_hi(&v) * 100 + k * 10 + j; }
+}
+
+# ⭐ 6.6.5 round 3 — a VECTOR-RETURNING callee that also takes a `: Str` param. On SysV the
+# `var v: f64v2 = f(...)` receive is a pair-register return and the arguments go through
+# PARSE_FNCALL; on Win64 it is a hidden-retptr call that `_try_vector_call_assign` emits
+# ITSELF, with its own argument loop — one of FOUR such "own-call" loops, none of which ran
+# PARSE_FNCALL's `: Str` literal wrap. Measured under wine on both compilers: this returns
+# 52 on ELF and 2 on PE, same source. That is why the row lives in crossos/.
+fn fwd_mkv(s: Str, k): f64v2 { return f64v2_make(str_len(s), k); }
+
+fn fwd_take_free(s, b: FwdBig): i64 { return b.a + b.b + b.c; }
+fn fwd_slen_free(s, t: Str): i64 { return str_len(t); }
+fn fwd_vmix_free(s, k, v: f64v2, j): i64 { return f64v2_hi(&v) * 100 + k * 10 + j; }
+
+fn fwd_gen<T>(x: T): T { return x; }

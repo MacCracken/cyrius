@@ -2117,6 +2117,10 @@ fn LEX(S): i64 {
         }
     }
     ADDTOK(S, 12, 0);
+    # 6.6.5 — one pass over the finished token stream to record which files declared
+    # `private`, BEFORE pass 1 stamps anything. See _PRIV_PRESCAN (src/frontend/parse.cyr)
+    # for why this cannot be done during the walk. CHANGELOG [6.6.5]
+    _PRIV_PRESCAN(S);
     return 0;
 }
 

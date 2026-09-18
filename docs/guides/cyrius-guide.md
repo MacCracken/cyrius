@@ -93,11 +93,22 @@ var r = add(20, 22);   # r = 42
 - Forward calls work (functions can call functions defined later)
 - Relaxed ordering: functions can appear after statements (v1.11.0+)
 - All functions return a value (`return 0;` if nothing to return)
+- **Calling with the wrong number of arguments is a hard error** (v6.5.1; there is no
+  overloading and no default arguments, so a count mismatch is never intentional). Since
+  **6.6.5** that applies to the `obj.m(...)` method form as well — it used to build and bind
+  the surplus parameter to whatever was in the register. ⚠ One consequence: an `impl` method
+  written with **no `self` parameter** can no longer be called through the dot form, because
+  the dot form supplies a receiver the method never declared. Call it by its mangled name
+  (`Type_method(args)`), which is how the constructor idiom `fn new(a, b)` inside an `impl` is
+  written anyway. Forward calls are exempt from the check — the callee has no body yet.
 
 **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` in
-`src/common/util.cyr` is the single source of truth — **67** builtin/intrinsic names, plus
-the statement keywords, and `IS_KEYWORD_TOK` *derives* from that table so the two sets
-cannot drift. It covers `syscall`, the `load8/16/32/64` + `store8/16/32/64` family, every
+`src/common/util.cyr` is the single source of truth — **76** builtin/intrinsic names
+(re-derived at 6.6.5 with `sed -n '/fn TOKNAME_BUILTIN/,/^}/p' src/common/util.cyr |
+grep -c 'return "'`; this line said 67, which was the count when the diagnostic was added at
+v6.4.77 and the table has grown since), plus the statement keywords. `IS_KEYWORD_TOK`
+*derives* from that table for the BUILTIN half — ⚠ but it enumerates the statement keywords
+SEPARATELY, so those two CAN drift; the table, not this paragraph, is the authority. It covers `syscall`, the `load8/16/32/64` + `store8/16/32/64` family, every
 `f64_*` / `f64v_*` / `f32_*` / `f32v_*` / `f32v8_*` / `iv_*` intrinsic, and `union`,
 `defer`, `secret`, `async`, `await`, `u128`, `bitget`/`bitset`/`bitclr`, `ret2`/`rethi`,
 `pub`, `public`, `private`, `shared`, `match`, `in`, `default`, `stack`. Using any of them
@@ -330,6 +341,37 @@ The `: Type` annotation is required — untyped locals storing
 struct pointers fall through to the existing error path.
 PARSE_FIELD_LOAD/STORE auto-detects pointer-vs-inline by checking
 the slot above the named slot for the v5.5.36 sentinel name (-1).
+
+### A string literal passed to a `: Str` parameter is wrapped for you
+
+```
+fn slen(s: Str): i64 { return str_len(s); }
+
+var n = slen("abcde");        # = 5 — the compiler emits str_from("abcde")
+```
+
+The wrap is driven by the CALLEE's `: Str` annotation, so it happens
+wherever the call is written — and *wherever* means on every target as well
+as in every call syntax. **This was uniform only from v6.6.5**, and it took
+three passes to make the claim true:
+
+- `obj.m("lit")` — the method-dot path marshals its arguments through its own
+  loop and never ran the wrap.
+- `return f("lit")` — the tail position emits its own epilogue and jump, and
+  never ran it either. `var r = f("abcde")` and `return f("abcde")` returned
+  **5 and 0 in the same program**.
+- `var v: f64v2 = f("lit", k)` **on Windows only** — a 16/32-byte vector
+  return is written through a hidden pointer there, so the receive emits its
+  own call, with its own argument loop. The same source gave 5 on Linux and
+  0 on Windows.
+
+In each case the callee received a raw cstring pointer and every `Str`
+accessor read the wrong shape, silently. If you are reading a bug report from
+before 6.6.5 that blames `str_len`, check which call syntax it used — and
+which target it ran on.
+
+If you would rather not depend on the wrap at all, `f(str_from("abcde"))` is
+always correct and always has been.
 
 ## Syscalls
 
@@ -711,7 +753,14 @@ public var CONFIG = 7;
 Rules:
 
 - `private` is a bare top-level declaration. It applies to the **file it appears
-  in**, not to the files that file includes, and not to the file that includes it.
+  in**, not to the files that file includes, and not to the file that includes it —
+  and to the WHOLE file, wherever in it the marker sits (6.6.5; before that a
+  definition written above the marker was stamped as if the file were public).
+- There is **no per-item `private`**. `private fn h()` on one line is a hard error naming
+  the file-level form (v6.5.56) — `private` alone on its own line, or `private;`, which
+  closes the statement and lets an item follow on the same line. ⚠ Until 6.6.5 that
+  rejection still flipped the file private and printed itself twice, so a *legitimate* fn
+  in the same file was then reported "private to its file" at its caller.
 - `public` marks one item. It is meaningful only inside a `private` file; in an
   ordinary file everything is public already, so it is a no-op you may write for
   documentation.
@@ -779,10 +828,20 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   and `T_from_json_str` for a struct; `E_to_json` and `E_from_json_str` for an enum), exactly
   as its `#derive(accessors)` getters already did.
   A global declared after the first top-level statement is file-private like any other
-  (it used to be unstamped on that path). ⚠ One known
-  gap remains open: an impl method called BEFORE its `impl` block appears in the stream
-  (a forward reference across files — include order normal code never has) is not yet
-  checked; see `docs/development/issues/2026-09-13-private-impl-method-forward-call-fail-open.md`.
+  (it used to be unstamped on that path).
+- **Where the `private` marker sits in the file does not matter, and a FORWARD reference is
+  checked like any other (6.6.5).** The marker applies to the whole file it appears in —
+  including definitions written *above* it, and including globals. And a reference that
+  comes EARLIER in the concatenated stream than the definition it names is enforced exactly
+  like one that comes after: `q.m()` / `Q_m(&q)` on an impl method, `a + b` through an
+  operator `impl`, a `mod`-scoped fn, and a fn defined after the first top-level statement
+  all report `'…' is private to its file`.
+  ⚠ Before 6.6.5 every one of those was **reachable** from any file purely because the call
+  was parsed first, and the same root produced the mirror-image defects: two files each with
+  a private helper of the same name got false `is private to its file` and false
+  `expects N arguments` errors, the two-file `_helper` example above was REFUSED when `b.cyr`
+  was included first, and a forward call passing a `>8`-byte struct by value SIGSEGV'd.
+  See `docs/development/issues/archived/2026-09-13-private-impl-method-forward-call-fail-open.md`.
 
 Both names are reserved words — see the reserved-word note under *Functions*; you
 cannot use `public`, `pub`, or `private` as identifiers.

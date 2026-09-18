@@ -54,19 +54,28 @@
 from the version numbers (6.6.3 = the sweep's repairs, 6.6.4 = the post-handoff filings); the
 slots have NOT been re-numbered — that is the user's call.
 
-- **`.3` — per-item `private` silently privatises the whole file.** `private fn h()` compiles
-  with no diagnostic and flips the entire file including `main`. Default taken: make the
-  per-item form a hard error pointing at the file-level declaration.
-- **[`2026-09-13-private-impl-method-forward-call-fail-open.md`](issues/2026-09-13-private-impl-method-forward-call-fail-open.md)**
-  — a private impl method is reachable by a FORWARD call because pass 1 brace-skips impl bodies
-  in all seven forks, so the call registers `Type_method` with no fileid and `_vis_check` fails
-  open. Closing it = registering mangled method names with fileid + flag in pass 1 (7 forks,
-  PARSE_FN_DEF's name-pool mangling). Run seed-derive — a pass-1 change is the class the cycc
-  fixpoint cannot see.
+- ✅ **`.3` — per-item `private`.** The hard error shipped at v6.5.56; what was still live and
+  is fixed in **6.6.5 (bite 3)** is that the rejection printed TWICE and privatised the file
+  anyway, so a legitimate sibling fn was reported `is private to its file` at its caller.
+- ✅ **[`2026-09-13-private-impl-method-forward-call-fail-open.md`](issues/archived/2026-09-13-private-impl-method-forward-call-fail-open.md)
+  — SHIPPED in 6.6.5 (bite 3), together with slot `.3` above.** It was not only the impl skip:
+  `mod` fns, every fn after the first top-level statement and anything above the `private` line
+  were unstamped too, and the same root produced FALSE refusals in ordinary include order (the
+  guide's own two-file example), false arity errors, garbage diagnostics and silent SIGSEGVs on
+  forward calls with a struct parameter. Pass 1 now stamps every definition and is the authority
+  on visibility. The filing's "cannot pack — a name-pool design decision" was wrong; see its
+  *Corrections to this filing*.
 - **[`2026-09-13-fn-local-global-slots-shadow-other-files.md`](issues/2026-09-13-fn-local-global-slots-shadow-other-files.md)**
   — a fn-local struct literal / oversized array is a GLOBAL slot in the flat namespace and
   shadows other files' globals (was a silent miscompile; since bite ③'s stamps a misattributed
   diagnostic).
+- 🆕 **[`2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md`](issues/2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md)**
+  — filed from 6.6.5 bite 3's review, NOT fixed there and the reason is in the issue: a
+  value-form SIMD argument alongside SIX or more int-class arguments binds the later int args to
+  the wrong slots (`n6(v, 1,2,3,4,5,6)` → 123406), on every call path, identical on 6.6.4 and
+  6.6.5. The fix is a change to the value-form SIMD calling convention past the integer register
+  ceiling — a different convention on each of the four gate targets — so it wants its own bisect
+  and a real-hardware run, not a review round.
 - **`.4`–`.5` — DCE cannot compact on PE or x86 Mach-O** (rip-relative repair + re-run
   `_pe_layout` after compaction — both, or the binary looks fine and faults later).
 - ⛔ **`.6` stays unassigned.**

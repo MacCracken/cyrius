@@ -698,6 +698,72 @@ fn _PRIV_FILE(fid): i64 {
     return 0;
 }
 
+# ⭐ 6.6.5 — mark every `private` file BEFORE either parser pass, from the end of LEX.
+#
+# `private` used to be recorded by _TL_VIS as pass 1 WALKED PAST the marker, so whether a
+# definition was stamped private depended on where in the file the marker sat: a fn above
+# the `private` line was prescanned while the file was still "public" and a forward call
+# to it was allowed, and a GLOBAL above the line was never private in either order. The
+# guide says the marker applies to the whole file — so the marking has to happen before
+# anything is stamped, not during the walk.
+#
+# It also gives the per-item diagnostic a place to be emitted EXACTLY ONCE: both passes
+# walk the same tokens, so reporting from _TL_VIS printed the same error twice. This loop
+# visits each token once.
+#
+# ⚠ The per-item form `private fn h()` must NOT mark the file. _TL_VIS marked first and
+# errored second, so the rejected form still privatised the file — and a legitimate `fn g`
+# in that same file was then reported "private to its file" at its caller: a false cascade
+# on top of a doubled diagnostic. CHANGELOG [6.6.5]
+fn _PRIV_PRESCAN(S): i64 {
+    var i = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        if (TOKTYP(S, i) == 153) { _PRIV_PRESCAN_TOK(S, i); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _PRIV_PRESCAN_TOK(S, ti): i64 {
+    var ln = GTLINE(S, ti);
+    # THE DISCRIMINATOR IS THE LINE (v6.5.56): `private` alone on its own line is the
+    # file-level form; a trailing `;` closes the statement so `private; fn h()` is legal
+    # too. Anything else sharing the token's line is the per-item misread.
+    # ⚠ EOF (token 12) is NOT "something on the line". LEX appends it with ADDTOK(S, 12, 0)
+    # on whatever line the source ended on, so a file whose last byte is the `e` of
+    # `private` — no trailing newline — has the EOF token sharing the marker's line and was
+    # told "per-item `private` is not supported", a rule the author did not break. 6.6.4
+    # refused that source too (`unexpected private` when a statement precedes it), so the
+    # only thing at stake is WHICH diagnostic; the carve-out restores it. CHANGELOG [6.6.5]
+    var nx = ti + 1;
+    if (nx < GTCNT(S)) {
+        if (TOKTYP(S, nx) != 5) {
+            if (TOKTYP(S, nx) != 12) {
+                if (GTLINE(S, nx) == ln) { _priv_per_item_err(S, ti); return 0; }
+            }
+        }
+    }
+    _PRIV_MARK(FM_FILEID(S, ln));
+    return 0;
+}
+
+# Emitted from the pre-pass, so NOT through ERR_MSG: ERR_MSG sets `_panic`, which exists
+# to swallow a cascade until the statement parser resyncs — arming it before the parse has
+# started would swallow the first genuine syntax error instead. `_had_error` alone
+# withholds the binary, which is the v6.4.62 multi-error contract.
+fn _priv_per_item_err(S, ti): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head_at(S, ti);
+    syscall(SYS_WRITE, 2, ": per-item `private` is not supported; put `private` alone on a line to make the file private\n", 94);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+
 # v6.6.4: the tokens `public` can ARM the marker for — a `var`, a `fn`
 # (plain, `async`), or a fn-attribute directive that precedes one (#regalloc #must_use
 # #deprecated #pure #io #alloc #naked #inline). Anything else — struct, union, enum, impl,
@@ -733,29 +799,20 @@ fn _TL_VIS(S): i64 {
         return 1;
     }
     if (t == 153) {
-        # `private` — flip the file this token sits in. Keyed on the token's own line
-        # through the file map, NOT on a running flag: a running flag armed here would
-        # leak into every file included AFTER this point, which is exactly the
-        # inheritance the committed design forbids.
-        var _pv_line = GTLINE(S, GTI(S));
-        _PRIV_MARK(FM_FILEID(S, _pv_line));
+        # `private` — CONSUME ONLY. The file was flipped by `_PRIV_PRESCAN` at the end of
+        # LEX, and the v6.5.56 per-item rejection is reported there too.
+        #
+        # ⛔ 6.6.5: this arm used to do both jobs itself, and both were wrong from here.
+        #  * Marking DURING the walk made the stamp depend on where the marker sat — a fn
+        #    or a global ABOVE the `private` line was prescanned while the file still read
+        #    public. The guide says the marker applies to the whole file.
+        #  * It marked BEFORE rejecting the per-item form, so `private fn h()` still
+        #    privatised the file; and because both passes walk these tokens, the rejection
+        #    printed TWICE and a legitimate sibling fn was then reported "private to its
+        #    file" at its caller. One pre-pass visit fixes all three. CHANGELOG [6.6.5]
         STI(S, GTI(S) + 1);
         # Tolerate an optional trailing `;` so both `private` and `private;` parse.
-        var _pv_semi = 0;
-        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); _pv_semi = 1; }
-        # v6.5.56 — REJECT the per-item form. `private fn h(): i64 { ... }` used to compile with
-        # NO diagnostic and privatise the ENTIRE FILE, `main` included — it had been live for
-        # twelve releases, and it reads exactly like the per-item visibility other languages have.
-        # The legitimate file-level form is `private` ALONE ON ITS OWN LINE, so the discriminator
-        # is the line: anything else sharing the token's line is the misread. A trailing `;`
-        # closes the statement, so `private; fn h()` stays legal.
-        if (_pv_semi == 0) {
-            if (GTI(S) < GTCNT(S)) {
-                if (GTLINE(S, GTI(S)) == _pv_line) {
-                    ERR_MSG(S, "per-item `private` is not supported; put `private` alone on a line to make the file private", 91);
-                }
-            }
-        }
+        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
         return 1;
     }
     return 0;
@@ -2380,6 +2437,16 @@ fn PARSE_PROG(S): i64 {
     # (i.e. cbt materialised this compiland) the pre-marker prepends are NOT the kernel
     # author's choice and must not fail the build — the first cut ignored that and turned
     # this repo's own `programs/boot_serial.cyr` red via a manifest-supplied `lib/fs.cyr`.
+    # 6.6.5 — re-judge the references whose callee had no owner when they were parsed.
+    # Here rather than in each fork: every fork calls PARSE_PROG, so there is no per-fork
+    # edit to forget. ⚠ THIS FN IS THE BLOCK PARSER **AND THE FN-BODY PARSER** — it runs at
+    # the end of every `if` / `while` body and of every fn definition, so `_vis_check_deferred`
+    # consumes each entry as it reports it; the LAST invocation is the end of the fork's
+    # top-level call, by which point everything is parsed. Because it is entered that often,
+    # the sweep itself is guarded by a PRIVATE-stamp sequence (see `_vis_stamp_seq` in
+    # parse_fn.cyr) — without it the walk is quadratic in the deferral count.
+    # See _vis_check (src/frontend/parse_fn.cyr). CHANGELOG [6.6.5]
+    _vis_check_deferred(S);
     # With no marker (raw `cat | cycc`) every include is the user's, so the plain latch
     # applies. See PP_NOTE_HOST_ONLY.
     var _ho = _pp_hostonly_hit;

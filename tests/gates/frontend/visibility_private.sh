@@ -267,5 +267,58 @@ paxis arr_pub_next 1 _after_pub_arr 'fn main(): i64 { return _after_pub_arr; }'
 paxis gs_field    1 _hid_gs  'fn main(): i64 { return _hid_gs.a; }'
 paxis gs_two      2 _hid_gs  'fn main(): i64 { var x = _hid_gs.a;
 var y = _hid_gs.b; return x + y; }'
-[ "$fail" = 0 ] && echo "  PASS: visibility-private paths (&fn x3 + method + asv/asp/inferred + 4 PE-only) enforced once each; publics, same-file and public-generic instances accepted; private arrays refused"
+
+# ── 6.6.5: EVERY path above, again, with the include BELOW the caller ────────────────
+# The whole set above put `include "lib/hid.cyr"` at the TOP, i.e. it only ever tested the
+# BACKWARD order — and until 6.6.5 the forward order fell open on the definition kinds pass
+# 1 did not register. A path that refuses backward and accepts forward is not enforced; it
+# is enforced for one include order. `pfwd` is `paxis` with the include moved to the end.
+#
+# ⚠ MEASURED, so this comment does not overstate its own reach: run with `CC=<the 6.6.4
+# compiler>`, exactly THREE of the 17 rows below are red — `fwd:method`, `fwd:gen_i32` and
+# `fwd:pgen_i32` (4 FAIL lines: `method` also emits a binary it should not, and `pgen_i32`
+# is the opposite polarity, a legitimate program the old compiler REFUSED). The other 14
+# pass on both compilers: they are order-coverage of paths the backward matrix above already
+# proves, kept because an include order that is never tested is where the next fail-open
+# will land — not because they discriminate this fix. Each still carries its own polarity
+# control, so none of them is vacuous.
+# (Types must stay resolvable, so the struct-typed rows keep their declarations in the lib
+# and only the CALL moves — which is the real consumer shape anyway.)
+FPRE='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/simd.cyr"
+'
+FINC='include "lib/hid.cyr"
+'
+pfwd() {
+    _n=$1; _want=$2; _sym=$3; _body=$4; _envv=$5
+    printf '%s%s\n%s' "$FPRE" "$_body" "$FINC" > "$T/paths/f_$_n.cyr"
+    ( cd "$T/paths" && env $_envv "$CC" < "f_$_n.cyr" > "f_$_n.bin" 2> "f_$_n.err" ) || true
+    _got=$(grep -c "'$_sym' is private to its file" "$T/paths/f_$_n.err" || true)
+    if [ "$_got" != "$_want" ]; then
+        echo "  FAIL: visibility-private [fwd:$_n]: expected $_want x \"'$_sym' is private\", got $_got"; head -2 "$T/paths/f_$_n.err" | sed 's/^/      /'; fail=1
+    fi
+    if [ "$_want" != "0" ] && [ -s "$T/paths/f_$_n.bin" ]; then echo "  FAIL: visibility-private [fwd:$_n]: a binary was still emitted"; fail=1; fi
+    if [ "$_want" = "0" ] && [ ! -s "$T/paths/f_$_n.bin" ]; then echo "  FAIL: visibility-private [fwd:$_n]: legit program refused"; head -2 "$T/paths/f_$_n.err" | sed 's/^/      /'; fail=1; fi
+}
+pfwd amp_infn    1 hid_fn 'fn main(): i64 { var f = &hid_fn; return callptr(f, 1); }'
+pfwd amp_top     1 hid_fn 'var g = &hid_fn; fn main(): i64 { return fncall1(g, 1); }'
+pfwd amp_fncall  1 hid_fn 'fn main(): i64 { return fncall1(&hid_fn, 1); }'
+pfwd amp_pub     0 pub_fn 'fn main(): i64 { var f = &pub_fn; return callptr(f, 1); }'
+pfwd method      1 HidPair_hid_m 'fn main(): i64 { var p: HidPair; p.a = 0; p.b = 0; return p.hid_m(); }'
+pfwd asv_typed   1 hid_big  'fn main(): i64 { var s: HidBig = hid_big(); return s.c; }'
+pfwd asp_typed   1 hid_pair 'fn main(): i64 { var s: HidPair = hid_pair(); return s.b; }'
+pfwd asp_infer   1 hid_pair 'fn main(): i64 { var s = hid_pair(); return s.b; }'
+pfwd asv_pub     0 hid_big  'fn main(): i64 { var s: HidBig = pub_big(); return s.c; }'
+pfwd pe_v2_decl  1 hid_v2 'fn main(): i64 { var v: f64v2 = hid_v2(); return 0; }' CYRIUS_TARGET_WIN=1
+pfwd pe_v2_ret   1 hid_v2 'fn w(): f64v2 { return hid_v2(); } fn main(): i64 { var v: f64v2 = w(); return 0; }' CYRIUS_TARGET_WIN=1
+pfwd lx_v2_decl  1 hid_v2 'fn main(): i64 { var v: f64v2 = hid_v2(); return 0; }'
+pfwd gen_i32     1 '_gen$i32' 'fn main(): i64 { var v: i32 = _gen<i32>(42); return v; }'
+pfwd pgen_i32    0 'pgen$i32' 'fn main(): i64 { var v: i32 = pgen<i32>(42); return v; }'
+pfwd arr_name    1 _hid_arr 'fn main(): i64 { return load64(&_hid_arr); }'
+pfwd arr_pub     0 pub_arr  'fn main(): i64 { store64(&pub_arr, 5); return load64(&pub_arr); }'
+pfwd gs_field    1 _hid_gs  'fn main(): i64 { return _hid_gs.a; }'
+
+[ "$fail" = 0 ] && echo "  PASS: visibility-private paths (&fn x3 + method + asv/asp/inferred + 4 PE-only) enforced once each in BOTH include orders; publics, same-file and public-generic instances accepted; private arrays refused"
 exit $fail

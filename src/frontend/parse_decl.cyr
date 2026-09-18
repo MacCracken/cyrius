@@ -425,14 +425,66 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             EVADDR(S, idx);
         }
         EPUSHR(S);
-        # Parse remaining args
+        # ⛔ 6.6.5 — RESOLVE THE CALLEE BEFORE THE ARGUMENTS. This path used to run the
+        # whole argument loop as bare PCMPE + EPUSHR and only then FINDFN the method, so it
+        # had no callee mask while it needed one: a `>8`-byte struct argument was pushed BY
+        # VALUE into a method that derefs the parameter as a pointer — `s.m(big)` SIGSEGV'd
+        # even in ordinary (backward) include order, while the identical `Type_m(&s, big)`
+        # worked. Resolving first also lets the name be committed before any nested mint.
+        var mfi = FINDFN(S, mname);
+        if (mfi < 0) {
+            # BUILD_METHOD_NAME writes at GNPOS without committing (it is a lookup helper).
+            # Registering that scratch offset left the entry pointing at bytes the NEXT
+            # mangled name overwrote, so diagnostics named a different, existing method
+            # (`Q7_seven` for a call to `q.nosuch()`). Commit it before REGFN.
+            if (mname == GNPOS(S)) { var _mnl = 0; while (load8(S + 0xEC00000 + mname + _mnl) != 0) { _mnl = _mnl + 1; } SNPOS(S, mname + _mnl + 1); }
+            mfi = REGFN(S, mname);
+        }
+        mname = L64(_fnt_names + mfi * 8);   # the registered string, never the scratch copy
+        # Parse remaining args.
+        #
+        # ⛔ 6.6.5 — THIS LOOP RUNS PARSE_FNCALL'S FOUR CALLEE-MASK GATES, not one. It used
+        # to run none: a bare `PCMPE + EPUSHR` per argument with no callee mask in hand. The
+        # first cut of this bite added only the struct-pointer gate, which left two SILENT
+        # WRONG VALUES on the very loop it rewrote (both measured against the identical free
+        # fn, which has always taken the PARSE_FNCALL path):
+        #   * `_fnt_strmask` — `h.slen("abcde")` returned 0 where `free_slen(0, "abcde")`
+        #     returned 5. Without the `str_from` wrap the callee gets a raw cstr pointer.
+        #   * `_fnt_simdmask` — a vector param is NOT an int-class push; it is recorded and
+        #     loaded into XMM after ECALLPOPS. Pushing it as an int arg shifted every LATER
+        #     argument by one register: `h.vmix(2, v, 3)` returned 927 against the free fn's
+        #     923, `j` having received the vector's low half.
+        # The second cut added the fourth, `_fnt_cstrmask` — v6.5.3's integer-literal-into-
+        # `: cstring` HARD ERROR. `w.pr(42)` compiled clean and SIGSEGV'd where the identical
+        # `free_pr(0, 42)` was refused; v6.5.3 made that an error rather than a warning
+        # precisely because the alternative is a runtime crash. ⭐ The count is the lesson:
+        # "one call syntax" is not "one call path" — ENUMERATE the masks against
+        # PARSE_FNCALL's loop rather than fixing whichever one the bug report named.
+        # `argc` indexes the callee's params, so it starts at 1 (`self` is param 0 and is
+        # int-class); `m_int_argc` is what ECALLPOPS/ECALLCLEAN take, since SIMD args never
+        # reach the stack. CHANGELOG [6.6.5]
+        var m_line = GTLINE(S, GTI(S));
         STI(S, GTI(S) + 1);  # consume (
         var argc = 1;
+        var m_int_argc = 1;
+        var m_simd_mask = L64(_fnt_simdmask + mfi * 8);
+        var m_simd_table: i64[24];   # 8 args x 3 i64s, a LOCAL — a nested call gets its own
+        var m_simd_count = 0;
+        var m_simd_pc = 0;
         if (PEEKT(S) != 11) {
             var mgo = 1;
             while (mgo == 1) {
-                PCMPE(S);
-                EPUSHR(S);
+                var m_cls = (m_simd_mask >> (argc * 2)) & 3;
+                if (m_cls > 0) {
+                    m_simd_pc = m_simd_pc + _simd_arg_record(S, m_cls, &m_simd_table, m_simd_count, m_simd_pc);
+                    m_simd_count = m_simd_count + 1;
+                } else {
+                    _check_int_lit_cstring_arg(S, mfi, argc, mname);
+                    if (_try_push_str_literal_arg(S, mfi, argc) == 0) {
+                        if (_try_push_struct_addr_arg(S, mfi, argc) == 0) { PCMPE(S); EPUSHR(S); }
+                    }
+                    m_int_argc = m_int_argc + 1;
+                }
                 argc = argc + 1;
                 if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                 else { mgo = 0; }
@@ -440,14 +492,22 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         }
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
         STI(S, GTI(S) + 1);  # consume )
-        ECALLPOPS(S, argc);
-        var mfi = FINDFN(S, mname);
-        if (mfi < 0) { mfi = REGFN(S, mname); }
+        # ⛔ 6.6.5 — and the arity check, which this path ALSO never had. `q.one(5, 99)` on a
+        # 2-param method built and returned 6; `q.one()` built and returned whatever was in
+        # the register nothing set; the identical `free_one(0, 5, 99)` has been a hard error
+        # since v6.5.1. It is available here only because this bite resolves `mfi` BEFORE the
+        # argument loop — previously there was no callee to ask. `argc` counts `self`, and so
+        # does the callee's `_fnt_params`, so the two are directly comparable; `need_off = 1`
+        # keeps the same forward-reference carve-out every other call path uses.
+        # CHANGELOG [6.6.5]
+        _CHECK_ARITY(S, m_line, mname, mfi, argc, 1);
+        ECALLPOPS(S, m_int_argc);
+        _simd_arg_second_pass(S, &m_simd_table, m_simd_count);
         _vis_check(S, mfi, mname);   # v6.6.4: `s.method()` is its own call path
         var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
         else { ECALLFIX(S, mfi); }
-        ECALLCLEAN(S, argc);
+        ECALLCLEAN(S, m_int_argc);
         return 0;
     }
 
@@ -1622,7 +1682,8 @@ fn _try_vector_call_assign(S, noff): i64 {
         if (PEEKT(S) != 11) {
             var vgo = 1;
             while (vgo == 1) {
-                if (_try_push_struct_addr_arg(S, vfi, vuarg) == 0) {
+                # 6.6.5: the `: Str` literal wrap too — see _pe_owncall_arg's header.
+                if (_pe_owncall_arg(S, vfi, vuarg) == 0) {
                     PCMPE(S);
                     EPUSHR(S);
                 }
@@ -2233,7 +2294,8 @@ fn PARSE_VAR(S): i64 {
                                     # v6.4.31: a value-form SIMD arg (bare SIMD-typed local) is
                                     # address-passed on Win64 (struct_mask set for the callee's
                                     # SIMD param) — push &local instead of the by-value low-8.
-                                    if (_try_push_struct_addr_arg(S, _f2c_look_fi, _f2w_uarg) == 0) {
+                                    # 6.6.5: plus the `: Str` literal wrap — see _pe_owncall_arg.
+                                    if (_pe_owncall_arg(S, _f2c_look_fi, _f2w_uarg) == 0) {
                                         PCMPE(S);
                                         EPUSHR(S);
                                     }
@@ -2316,7 +2378,8 @@ fn PARSE_VAR(S): i64 {
                                 var _f4w_go = 1;
                                 while (_f4w_go == 1) {
                                     # v6.4.31: value-form SIMD arg → address-passed on Win64.
-                                    if (_try_push_struct_addr_arg(S, _f4c_look_fi, _f4w_uarg) == 0) {
+                                    # 6.6.5: plus the `: Str` literal wrap — see _pe_owncall_arg.
+                                    if (_pe_owncall_arg(S, _f4c_look_fi, _f4w_uarg) == 0) {
                                         PCMPE(S);
                                         EPUSHR(S);
                                     }

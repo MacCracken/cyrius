@@ -237,7 +237,332 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
   macho, native) and cx compilers built by the two are themselves byte-identical, so
   everything those emit is identical too.
 
+- ⛔ **Pass 1 did not stamp every definition, so a FORWARD call to a private impl method was
+  allowed — and the same root produced false refusals, false arity errors and silent SIGSEGV
+  miscompiles** (`issues/archived/2026-09-13-private-impl-method-forward-call-fail-open.md`,
+  filed by the adversarial verifier of the 6.6.4 `&fn` repair). `_vis_check` tests the callee's
+  private FLAG first and its owner second, and an unstamped callee has neither — so it returned
+  at its first test. Pass 1 left four definition kinds unstamped: **impl methods** (all seven
+  `src/main*.cyr` forks brace-skipped impl bodies — "functions registered in pass 2"),
+  **`mod`-scoped fns** (`_prescan_fn_sig`'s `GMOD == 0` guard), **every fn after the first
+  top-level statement** (pass 1 stops there; `PARSE_PROG` keeps defining fns), and **anything
+  above the `private` line** (the marker was recorded as pass 1 WALKED PAST it, so a fn declared
+  earlier was prescanned while the file still read public — and a global above the line was
+  never private in either order). The filed repro built and exited 42; so did a direct
+  `Q_seven(&q)`, a tail call, a forward operator `impl` and a forward `mod` call.
+  **The filing called it Medium because "include order normal code never produces" it — that was
+  wrong in three directions, and the investigation is why the fix is this size:**
+  ① **FALSE REFUSALS in ordinary order.** Pass 1 kept one entry per NAME, so a second file's
+  same-named helper overwrote the first file's owner, arity and private bit before either body
+  was parsed. Two private files each with a `dup_h` gave `'dup_h' is private to its file` AND
+  `'dup_h' expects 2 arguments, got 1` on a legal program; and **the guide's own two-file
+  `_helper` example was REFUSED when the public file was included first**, no forward call
+  involved — the private bit was only ever set, never cleared, so a public fn inherited it (and
+  would also have been dropped from the exported symbol table).
+  ② **SILENT SIGSEGVs.** With no pass-1 signature, a forward call got the mask-0 ABI: a plain
+  struct >8 bytes was pushed BY VALUE into a callee that derefs the parameter as a pointer.
+  rc=139, no diagnostic, on x86, aarch64 (qemu) and PE. The v6.3.5 CO-01 prescan existed to
+  prevent exactly this and never covered methods or relaxed-ordering fns.
+  ③ **Garbage diagnostics.** The method path REGFN'd an UNCOMMITTED scratch name
+  (`BUILD_METHOD_NAME` writes at GNPOS and deliberately does not advance it), so the next
+  mangled name overwrote it and `q.nosuch()` was reported as `undefined function 'Q7_seven'` —
+  naming a method that exists. And a forward `f<i32>(x)` failed **in a single file** with a
+  stale "instantiate-once param re-emission is a follow-on bite" error, because the def-start
+  `_instantiate_generic_fn` needs was recorded in pass 2 only; the -2/-3 result was then used as
+  `_fnt_names[_spec]`, an out-of-bounds read that printed `undefined function 'enum'`.
+  **Fix — pass 1 now stamps every definition and is the AUTHORITY on visibility.** `LEX` ends
+  with one pass over the token stream marking every file that declares `private`
+  (`_PRIV_PRESCAN`), before either parser pass, so stamping no longer depends on where the
+  marker sits; `_prescan_impl` walks impl bodies registering each `Type_method`; `_prescan_tail`
+  walks everything after the first top-level statement registering the fns; the `GMOD == 0`
+  guard is gone. The name-pool question the filing called a design decision has a mechanical
+  answer — `_mod_name_intern` mints `mod_name` without committing and reuses the existing string
+  when pass 1 already minted it, so pool growth is unchanged and ONE mangler serves both passes.
+  The v6.5.38 per-file identity rule moved into `_fn_def_slot` and now runs in both passes, so a
+  same-named definition from another file splits into its own entry in PASS 1 — before any
+  forward call can bind to the wrong one — and `PARSE_FN_DEF` finds the entry pass 1 gave THIS
+  definition by its `fn` token (`_fn_by_defti`) and takes its private bit, which also neutralises
+  pass 2's `var`-skip re-arming `public`. The bit is now CLEARED when a definition is public, so
+  "last definition wins" applies to visibility too. Under all of that, `_vis_check` gains a
+  fail-CLOSED-later backstop: a reference to a name with no owner AND no body is deferred and
+  re-judged at the end of `PARSE_PROG`, so a definition kind pass 1 cannot reach is reported
+  rather than let through. It is not dead code — a fn NESTED inside another fn's body is
+  defined at pass-2 emit time and pass 1 never walks a fn body, so a forward cross-file call to
+  one in a private file is caught by exactly this layer (6.6.4 accepted it and SIGSEGV'd).
+  ⚠ `PARSE_PROG` is the BLOCK parser, not an end-of-program hook — it runs at the end of every
+  `if`/`while` body — so each deferred entry is CONSUMED when reported; without that the same
+  violation printed 13 times on the gate's fixture. Also fixed on the same path: the scratch method name is committed before
+  `REGFN`, and `_spec < 0` no longer indexes `_fnt_names`.
+  **Two one-line calls per fork** (`_prescan_impl(S)`, `_prescan_tail(S)`) — the new gate's
+  static axis requires exactly one of each in all seven and no leftover brace-skip, because
+  missing one restores the hole on that target alone.
+  **Measured:** every probe that should be refused is refused on x86, the aarch64 cross, the PE
+  cross and cx; the accepted cases return the right values (the two-file `_helper` example gives
+  71 in BOTH include orders, the split helpers 16 and 26, the forward struct-param calls 42).
+  **Codegen-neutral:** the new compiler compiling the PRE-bite source reproduces bite 2's
+  `build/cycc` byte-for-byte; across `programs`+`benches`+`fuzz`+`cbt` (131 sources) **zero**
+  output differences on x86, aarch64, PE AND cx; across the 316 pre-existing `.tcyr` **zero** on
+  x86 (byte-identical binaries and identical exit codes, per-file, not check.sh's summary),
+  aarch64 (316/316) and PE (304/304, the other 12 uncompilable on both); and **zero** across 408
+  raw-compilable ecosystem sources under `~/Repos`. Fixpoint in one step; seed-derive GREEN. cycc 1,260,296 → **1,272,576 B** (+12,280, all new compiler code); `.text` 1,104,952 → **1,114,352** (0x10DC38 → 0x1100F0, +9,400 — derived from `readelf -S`, `objdump -h` and `llvm-objdump -h`, which agree). The review-round-1 fixes (the two missing callee masks, the tail-call `: Str` divert, the EOF carve-out) and the round-2 fixes (the depth-1 gate on that divert, the four Win64 own-call loops, the method-call arity + cstring checks, the deferral sweep's seq guard) are inside that figure and are themselves output-neutral in-tree: 316/316 `.tcyr` on x86, aarch64 and PE, and 117/117 program/bench/fuzz/cbt sources, byte-identical to the 6.6.4/bite-2 build.
+  Self-compile median 780.6 → **786.4 ms**, and that +5.8 is the SOURCE growing, not the compiler
+  slowing: the bite-3 compiler compiling the pre-bite-3 source measures **780.5 ms**, i.e. the new
+  pass-1 work (one extra walk of the token stream in LEX, plus the impl/tail prescans) is inside
+  the noise band on a compiland with no `impl`, no `mod` and no `private` — which cycc's own
+  source is.
+- **`s.method(big)` SIGSEGV'd even in BACKWARD order** — found during this bite's triage, not
+  filed. The method-call argument loop (`parse_decl.cyr`) ran bare `PCMPE` + `EPUSHR` and
+  resolved the callee only AFTER the arguments, so it had no callee mask while it needed one: a
+  >8-byte struct argument was value-pushed into a method that derefs it, while the identical
+  `Type_method(&s, big)` worked. The callee is now resolved before the loop and each argument
+  goes through the same `_try_push_struct_addr_arg` gate `PARSE_FNCALL` uses.
+- ⛔ **…and that gate was itself wrong for a POINTER-MODE struct local, on EVERY call path.**
+  Routing the method path through the shared helper surfaced it: `_try_push_struct_addr_arg`
+  pushed `&slot` unconditionally, which is right for an inline stack struct (the slot IS the
+  struct) and wrong for a pointer-mode one (the slot HOLDS the address) — the callee then
+  deref'd a pointer-to-pointer and read the address itself as field 0. **Silent, not a crash**,
+  and live on the ordinary `f(x)` path since v6.3.36: `var b: HB = alloc(24); b.a = 10; …;
+  f(0, b)` printed `140545185808389` where 42 is right, measured on 6.6.4. Fixing only the
+  method path would have traded a loud SIGSEGV for a quiet wrong value, so the shared helper now
+  applies the same POINTER-vs-INLINE rule `_resolve_field_base_addr` uses for field access and
+  v6.6.4 gave a method's `self` — the -1 slot-marker predecessor plus the ≤8 B single-slot
+  rule — with SIMD skipping it entirely (a value-form SIMD local is always inline, and its
+  SLTYPE lives in the descriptor band where `STRUCTSZ` has no entry). Blast radius measured
+  before and after: **zero** in-tree (the same 316 `.tcyr` and 131 program/bench/fuzz/cbt sources
+  as above) and **zero** across 408 raw-compilable ecosystem sources under `~/Repos` — the shape
+  had simply never worked, so nothing depended on it. Pinned by the crossos test, in both polarities so a fix that swaps the two rather than
+  discriminating fails.
+- ⛔ **The method-arg loop was still missing TWO of PARSE_FNCALL's THREE callee masks after
+  that fix — two more silent wrong values, found in review round 1 on the very loop this bite
+  rewrote.** Only `_fnt_structmask` had been added. Measured against the identical free fn
+  (which has always taken the `PARSE_FNCALL` path), on 6.6.4 and on the first cut of this bite
+  alike:
+    * `_fnt_strmask` — `h.slen("abcde")` into a `: Str` param returned **0** where
+      `free_slen(0, "abcde")` returned 5. Without PARSE_FNCALL's `str_from` wrap the callee
+      receives a raw cstr pointer and every `Str` accessor reads the wrong shape.
+    * `_fnt_simdmask` — a vector argument is not an int-class push; it is recorded and loaded
+      into XMM/V *after* `ECALLPOPS`. Pushing it as an int arg shifts **every later argument**
+      by one register: `h.vmix(2, v, 3)` returned **927** against the free fn's 923, `j` having
+      received the vector's low half. (A vector as the ONLY argument worked by luck, both
+      lanes, which is why the shape had never been noticed.)
+  Both arms are now SHARED code rather than a third copy: `_try_push_str_literal_arg`,
+  `_simd_arg_record` and `_simd_arg_second_pass` are lifted out of `PARSE_FNCALL` and called
+  from both paths, so the two call syntaxes cannot drift again. `ECALLPOPS`/`ECALLCLEAN` on the
+  method path now take the INT-class count, as PARSE_FNCALL's do.
+- ⛔ **`return f("lit")` into a `: Str` param silently passed the raw cstr — the FOURTH thing
+  found missing from the tail-call path.** Found by the new crossos row above: the free-fn
+  control it compares the method against was itself written in tail position and was itself
+  wrong. `var r = f("abcde")` returned 5 and `return f("abcde")` returned 0 **in the same
+  program** — the tail lowering emits epilogue+jmp itself and never ran PARSE_FNCALL's
+  `str_from` wrap. Same class and same remedy as v6.3.36 (plain-struct params), v6.4.53
+  (value-form SIMD params) and v6.5.1 (overload dispatch): divert to `PARSE_FNCALL` when the
+  callee annotates some param `: Str` **and** this call actually passes a string literal —
+  narrow like v6.5.2's cstring-literal divert, so every other tail call stays byte-identical
+  (measured: 316/316 `.tcyr` and 110/110 program/bench/fuzz/cbt binaries unchanged).
+- ⛔ **…and that divert, as first written, BROKE A CORRECT PROGRAM — it was armed by a string
+  literal at ANY paren depth, so an already-wrapped literal lost its TAIL CALL** (review round
+  2). The first cut's own comment called the cost "a tail call" and rejected a depth-1
+  restriction as able to "only under-cover". Both halves were wrong. Losing TCO on a
+  SELF-RECURSIVE tail call turns bounded recursion into unbounded stack growth: measured,
+  `return deep(n - 1, str_from("abc"));` ran to completion on 6.6.4 and **SIGSEGV'd (rc 139)**
+  at depth 200,000 on the first cut, with the identical `return deep(n - 1, s);` control
+  unaffected on both. And depth 1 cannot under-cover, because it is PARSE_FNCALL's OWN
+  criterion — `_try_push_str_literal_arg` opens `if (PEEKT(S) != 30) return 0`, i.e. it wraps a
+  literal only as an argument's FIRST token. Anything deeper (`f(str_from("x"))`, `f(g("x"))`)
+  is not wrapped there either, so diverting for it buys nothing. ⚠ **And "paren depth 1" was
+  still not the criterion** — the second cut of this fix used it, and the ECOSYSTEM SCAN found
+  the residue: `return _te_json_str(load64(r + 8), "\"type\"")` in mneme diverted because the
+  callee annotates argument 0 `: Str` while the literal is argument 1, whose mask bit is clear,
+  so the wrap could never fire. The divert now asks PARSE_FNCALL's OWN question through
+  `_tc_str_literal_arg` — is some argument's FIRST token a string literal, and is THAT
+  argument's `_fnt_strmask` bit set — so it can neither over- nor under-cover. It counts all
+  four bracket kinds `( ) [ ] { }` when numbering arguments, as `_CALL_ARGC_PEEK` has since
+  v6.5.1: a comma inside an index or a struct initializer would otherwise shift the position
+  and read the wrong mask bit, and THAT direction under-covers — the literal goes unwrapped and
+  the value is silently wrong, which is the defect this bite exists to remove. Re-measured over
+  the whole ecosystem afterwards: every raw-compilable source under `~/Repos` that builds on
+  6.6.4 builds here and is BYTE-IDENTICAL, including that one. 176 files carry the
+  `return f(str_from("lit"))` shape, so the over-reach was never hypothetical.
+  ⭐ The lesson is not the depth: it is that "over-covering is the safe direction" was asserted
+  rather than measured, in a comment, in a release whose whole subject is silent wrong values —
+  and then a second, subtler approximation of the same predicate survived one more round.
+  A divert's predicate should be READ OFF the helper it diverts to, not reasoned toward.
+- ⛔ **The Win64 hidden-retptr vector receives — FOUR more argument loops with one gate each,
+  wrong on PE only** (review round 2). A 16/32-byte vector return is written through a hidden
+  retptr on Win64, so `_try_vector_call_assign`, the `_f2c`/`_f4c` receives (parse_decl.cyr) and
+  the PE SIMD-return `_rc` path (parse_fn.cyr) emit their own call instead of going through
+  PARSE_FNCALL — and each marshalled its user arguments with `_try_push_struct_addr_arg` alone.
+  Measured under wine with `main_win` built from this tree, on 6.6.4 and on the first two cuts
+  of this bite: `var v: f64v2 = mkv("abcde", 2)` read back **lo = 0 on PE** where ELF gave 5,
+  same source, same compiler — and it made this release's own new guide sentence ("it happens
+  wherever the call is written") false on Windows. All four now share `_pe_owncall_arg`, which
+  runs the `: Str` wrap and v6.5.3's integer-literal-into-`: cstring` error before the
+  struct-pointer gate. (Not the SIMD record/second-pass arm: on Win64 a value-form vector param
+  is address-passed by the MS x64 by-pointer ABI, which `_try_push_struct_addr_arg` already
+  covers, and these four branches are `_TARGET_PE == 1` only.) Pinned by three new rows in
+  `tests/tcyr/crossos/forward_ref_abi_binding.tcyr` — RED under wine on the pre-fix PE compiler,
+  green after; ⚠ x86-Linux cannot see them fail, which is exactly why they are in `crossos/`.
+- ⛔ **A method call's arity was never checked, and an integer literal into a `: cstring`
+  method param SIGSEGV'd where the free fn is a hard error** (review round 2 — the fourth and
+  fifth gates of the same loop). Measured on 6.6.4 and on both earlier cuts: `q.one(5, 99)` on a
+  2-parameter method BUILT and returned 6, `q.one()` BUILT and returned whatever was in the
+  register nothing set, while the identical `free_one(0, 5, 99)` has been refused since v6.5.1;
+  and `w.pr(42)` into `fn pr(self, p: cstring)` compiled clean and SIGSEGV'd where
+  `free_pr(0, 42)` is refused — the crash v6.5.3 escalated that diagnostic from a warning to an
+  error to prevent. `_CHECK_ARITY` is available on this path only because this bite resolves the
+  callee BEFORE the argument loop; the cstring check is now `_check_int_lit_cstring_arg`,
+  extracted from PARSE_FNCALL so there is one copy, not a second that drifts.
+  ⚠ **One shape that used to compile no longer does, deliberately:** `obj.m()` where the impl
+  method declares NO `self` parameter. The dot form pushes `&obj` as argument 0, so a method
+  with zero declared parameters gets one it never asked for; 6.6.4 built it and it worked only
+  because the callee never read `rdi`. It is now `'NS_zero' expects 0 arguments, got 1`, which
+  is exactly what the equivalent `NS_zero(&n)` has always said. Blast radius measured before
+  escalating: **zero** instances across `~/Repos` outside cyrius, and the 19 in-tree
+  self-less impl fns are all `fn new(...)` constructors called in the MANGLED form
+  (`Type_new(a, b)` → PARSE_FNCALL, unaffected) — the whole 317-file corpus is byte-identical. ⭐ Four masks plus
+  arity, found one review round at a time: the durable form of this is
+  `tests/gates/frontend/method_call_runs_every_callee_gate.sh`, which is a DIFFERENTIAL against
+  the identical free fn rather than a list, so a sixth gate added to PARSE_FNCALL and forgotten
+  on the method path fails without anyone editing the gate.
+- **`_vis_check_deferred` re-walked its whole list at every block end and could never drain**
+  (review round 2). It hangs off `PARSE_PROG`, which IS the block parser, and an entry is
+  consumed only when REPORTED — so a reference whose callee is never stamped (an undefined fn,
+  an enum constructor, a DCE stub: exactly the cases that must stay silent) was re-judged by
+  every subsequent `if`/`while` body — and by every fn BODY, since `PARSE_PROG` parses those
+  too — forever. Draining "definitively judged" entries cannot fix it: mid-parse an unstamped
+  callee is indistinguishable from a not-yet-stamped one. The sweep is now guarded by a stamp
+  SEQUENCE, and ⭐ **the sequence counts PRIVATE stamps, not all of them**, which is the whole
+  fix: `_vis_report_late` reports nothing for a public callee, so a sweep can only reach a new
+  verdict if a new private bit landed. A compiland with no `private` anywhere — nearly all of
+  them — sweeps exactly ONCE. Measured on 2,000 deferred refs × 6,000 top-level blocks: 6.6.4
+  **63 ms**, the first (all-stamps) cut **91 ms**, this one **67 ms**, where the residual +4 is
+  the rest of bite 3's pass-1 work and not the sweep. The all-stamps cut was written, measured,
+  and found to leave the quadratic in place — every fn body ends with both a stamp and a sweep —
+  which is why the number above is a measurement rather than an argument.
+- Guide corrections found while fixing the ones above, each re-derived rather than edited from
+  memory: the `: Str` literal-wrap section now names all THREE call forms that were wrong and
+  says the Windows one was target-specific (its first draft claimed the wrap "happens wherever
+  the call is written", which was false on PE at the time it was written); the reserved-word
+  paragraph said **67** builtin names — the count when the v6.4.77 diagnostic was added — where
+  `TOKNAME_BUILTIN` now has **76**, and it claimed `IS_KEYWORD_TOK` derives from that table so
+  "the two sets cannot drift" when it derives only the builtin half and enumerates the statement
+  keywords separately; and `## Functions` now documents that the call-site arity error covers
+  `obj.m(...)` from 6.6.5, including the self-less-method consequence.
+- **`private` as the FINAL token of a compiland was told it was the per-item form.** LEX
+  appends its EOF token on whatever line the source ended on, so a file whose last byte is the
+  `e` of `private` — no trailing newline — had EOF sharing the marker's line and the new
+  pre-pass read it as `private <something>`. It now treats EOF as not-on-the-line, alongside
+  the existing `;` carve-out. 6.6.4 refused such a source too (`unexpected private`), so only
+  the DIAGNOSTIC was at stake — but it named a rule the author had not broken.
+- `_prescan_tail_loop` now asks `_IS_FN_KW` rather than a bare `t == 32`, so the two pass-1
+  scanners agree about what a definition is (every fork's pass-1 loop already asked
+  `_IS_FN_KW`, and `_prescan_fn_sig` already consumes an `async` prefix). ⚠ Not observable
+  today and the gate header says so: an `async fn` after the first top-level statement is
+  `unexpected async` from `PARSE_PROG` on 6.6.4 and on this build.
+- **The per-item `private` diagnostic printed TWICE and then privatised the file anyway** —
+  also found during triage, not filed. `private fn h()` has been a hard error since v6.5.56, but
+  the check lived in `_TL_VIS`, which BOTH parser passes walk, and it marked the file private
+  BEFORE rejecting. So `lib.cyr` with a legitimate `fn g()` and one `private fn h()` reported the
+  per-item error twice and then reported `'g' is private to its file` at `main` — a false cascade
+  blaming code that was correct. Both halves are done once now, in `_PRIV_PRESCAN`, which marks
+  only the accepted form.
+
 ### Added
+
+- `tests/gates/frontend/private_forward_reference.sh` — **axis 1** is static 7-fork parity,
+  derived with a glob over `src/main*.cyr` rather than a list, requiring exactly one
+  `_prescan_impl(S)` and one `_prescan_tail(S)` per fork and no leftover pass-1 brace-skip: miss
+  one fork and the fail-open (or the forward-call ABI miscompile) comes back on that target
+  alone, which is the macOS-rot shape and invisible to an x86 self-host. **Axis 2 is a
+  DIFFERENTIAL, not a list** — **ten** rows (method syntax, mangled `T_m(&q)`, `&T_m`, tail call,
+  operator `impl`, `mod`-scoped, `use mod.fn` alias, fn above the `private` line, global above the
+  line, fn after a top-level statement) each compile FORWARD and BACKWARD and require the two
+  refusal SETS to be
+  equal, so the expectation is produced by a different path in the compiler; each row also
+  hard-codes its expected symbol as an anti-vacuous floor, because an empty backward set would
+  otherwise make an empty forward set "equal" (that floor is what turns the pre-mark mutant into
+  10 failures instead of a silent pass — derive the count with
+  `grep -cE '^row [a-z_]+ ' tests/gates/frontend/private_forward_reference.sh`, never by hand:
+  this bullet and the M2 ledger line said "nine" and "9/9" after the fix round that ADDED
+  `use_alias`, the same hand-quoted-count defect one round earlier had corrected next door).
+  **Axis 3** is **8** legal programs — 6 with exit codes computed
+  in the shell from the fixture literals (5 of them by arithmetic), 2 against a literal — plus
+  2 build-only controls (the nested-fn control and a compile of cycc's own source that must
+  produce zero `undefined function` warnings). It includes both include orders of the guide's
+  own `_helper` example compared against EACH OTHER, and the diagnostic rows. (This bullet and
+  the gate's PASS line both said "ten legal programs ... computed by shell arithmetic"; the
+  count and the qualifier were looser than the axis.) **17** mutants
+  built and run (derive it: `grep -cE '^#   M[0-9]+'` on the gate header); the ledger is in
+  that header and records what was MEASURED, including two predictions that did not hold and
+  two changes it explicitly does NOT cover. Axis 2b is the fail-closed deferral, on the one
+  shape pass 1 structurally cannot reach (a fn nested in another fn's body) — it must refuse,
+  and refuse EXACTLY ONCE, because `PARSE_PROG` is the block parser and an unconsumed pending
+  list reports 13 times.
+- `tests/tcyr/crossos/forward_ref_abi_binding.tcyr` + `tests/fixtures/forward_ref_abi/` — the
+  ABI half, on the real-hardware selector. Forward calls with a >8-byte struct parameter
+  (mangled, dot-syntax, struct-plus-scalar, free fn, relaxed-ordering), a forward generic
+  instance, the split private-helper binding across two fixture files, and pointer-mode vs
+  inline struct arguments in both polarities. Every expectation is checked TWICE, against the
+  same call written after the definition AND against a field sum computed from the literals.
+  Review round 1 added the OTHER two callee masks on the method path (a `: Str` literal and a
+  vector argument followed by a scalar) and the tail-call position of each, every one of them
+  asserted against the identical free fn AND against a value computed from the literals.
+  Review round 2 added three rows for the Win64 hidden-retptr vector receive with a `: Str`
+  literal argument — the `_try_vector_call_assign` own-call path — asserted against the same
+  call with the literal wrapped by hand AND against a value computed from the literals.
+  **28 assertions** (derive it: `grep -c '^assert_eq'` on the file, or read the binary's own
+  `28 passed` line); green on x86, on aarch64 under qemu-aarch64 and on PE under wine (neither
+  of which is hardware verification — ecb/ach/cass/pi own that). Anti-vacuous: 7 of the 28 are
+  red on the pre-review build of this same bite, and the 3 new ones are red under wine on the
+  round-2 PE compiler while staying green on x86 — which is the point of the directory.
+- Forward-order rows in three existing gates: `visibility_private.sh` gains 17 (its whole path
+  matrix only ever tested the backward order), `public_marker_scoped_to_its_item.sh` gains 3
+  (`var_then_fn` / `arr_then_fn` forward + a positive control) and `private_per_item_rejected.sh`
+  gains 4: the diagnostic must be emitted EXACTLY once, the rejected form must NOT privatise the
+  file, an anti-vacuous control proves the fixture links at all, and (axis 3b) `private` as the
+  FINAL token of a compiland must still be the file-level form.
+  ⚠ The three `public_marker` rows are ORDER-COVERAGE, and the gate comment and an earlier draft
+  of this bullet both claimed more: they said removing the `_fn_by_defti` pass-1 authority
+  "reddens exactly these rows". Measured — it does not. The three stay green on the pre-fix
+  compiler AND under that mutant (M6); what M6 reddens is the pre-existing BACKWARD
+  `var_then_fn` / `arr_then_fn` rows, which is where the authority is actually proven. Both the
+  comment and this bullet now say so.
+  ⚠ And the 17 `visibility_private` rows are order-coverage too, in the same measured sense:
+  run with the 6.6.4 compiler, exactly THREE of them are red (`fwd:method`, `fwd:gen_i32`,
+  `fwd:pgen_i32` — 4 FAIL lines). The other 14 pass on both compilers. They stay, because an
+  include order that is never tested is where the next fail-open lands, but the gate comment now
+  names which three discriminate rather than implying all 17 do.
+- `tests/gates/frontend/method_call_runs_every_callee_gate.sh` (review round 2) — the durable
+  form of "one call syntax, several marshalling paths". **Eleven** rows (derive it:
+  `grep -cE '^(vrow|drow) [a-z_]+ '` on the gate), each compiling `s.m(x)` AND an identical FREE
+  FUNCTION with the same body and annotations, and requiring the two to agree on value, exit
+  status and whether a diagnostic was emitted — so the expected value comes from PARSE_FNCALL,
+  a different code path in the compiler, rather than from a list in the gate. The four masks
+  (`str`/`struct`/`simd`/`cstr`) in both the ordinary and the tail position, over- and
+  under-arity, the self-less `obj.m()` escalation and the constructor idiom that must NOT be
+  caught by it, each with its positive control — plus a `derived` row that reads the method
+  loop's own source and fails if it stops calling any of the six shared helpers. **8 of the 11
+  are red on the 6.6.4 compiler.** Five mutants (N1–N5) built as full cycc binaries and run;
+  each reddens exactly its own rows, and N5 is the one that proves the anti-vacuous floor earns
+  its place (it makes BOTH arms refuse a legitimate `f(0)`, so the differential still "agrees"
+  and only the floor catches it).
+- `tests/gates/codegen/tail_call_literal_divert_depth.sh` (review round 2) — the `return f(...)`
+  tail path must divert to PARSE_FNCALL for exactly the arguments PARSE_FNCALL treats specially,
+  and no more. Eight rows: an already-wrapped literal keeps its TCO; a literal in an argument
+  whose strmask bit is CLEAR keeps its TCO; a literal-free tail call keeps its TCO; a
+  deliberately NON-tail recursion must die (the floor that proves the harness measures
+  anything — verified: it exits 3 under the ambient 8192K limit and SIGSEGVs under the pin); a
+  literal in a Str-annotated position IS still wrapped in tail position; both call positions in
+  one program agree; and a derived row that reads the tail path's predicate AND
+  `_try_push_str_literal_arg`'s own first-token + mask test, so the two cannot drift apart.
+  ⚠ The gate PINS ITS OWN STACK LIMIT (`ulimit -s 1024`) rather than inheriting the box's, so
+  "did TCO survive" is the gate's verdict and not the machine's. Mutants D1 (literal at any
+  depth), D4 (first token but no mask test) and D2 (no divert at all) built as full cycc
+  binaries, plus the 6.6.4 compiler itself: the three redden DISJOINT row sets — D1
+  `tco_wrapped` + `tco_wrong_position`, D4 only `tco_wrong_position`, D2 the three value rows.
+  Neither the value rows nor the TCO rows alone would have caught both over-reaches. D4 pins the
+  difference between "close" and "exact", and it exists because the ECOSYSTEM SCAN, not the
+  gate, found the second one.
 
 - `tests/gates/codegen/call_site_stack_alignment.sh` — a gcc-assembled leaf returns
   `(rsp + 8) & 15` measured **by the CPU** at its own entry, called from ~55 shapes: direct

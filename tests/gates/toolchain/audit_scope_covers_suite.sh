@@ -67,6 +67,12 @@ fmt_total() {   # named-lines + the "… and N more" remainder, from an audit tr
     echo $((named + more))
 }
 
+# ⚠ 6.6.5 — unlink the probe BEFORE measuring the baseline. The trap removes it on a normal
+# exit, but a KILLED run (Ctrl-C, a timeout, a parent that dies) leaves it in the tree; the
+# next run then counts it in BASE, the +1 delta collapses to BASE -> BASE, and this gate
+# reports the recursive descent as broken when nothing is wrong with it. Observed on a
+# 6.6.5 check.sh run that followed two killed ones.
+rm -f "$PROBE"
 set +e
 ( cd "$ROOT" && "$WORK/cyrius" audit > "$WORK/base.out" 2>&1 )
 set -e

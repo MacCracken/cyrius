@@ -2,6 +2,17 @@
 # BEFORE the impl block (a forward reference). Proves itself: exit 42 while the bug is
 # present; the build is refused ('Q_seven' is private to its file) when fixed.
 #
+# ✅ FIXED in 6.6.5 (bite 3) — this file is now REFUSED, which is the pass condition above:
+#     error:<source>:<the line `fn main` lands on>:57: 'Q_seven' is private to its file
+# ⚠ The LINE is not quoted: it tracks the length of this header and an earlier version of this
+#   note said `:7:57` long after the header had pushed `fn main` past line 30.
+# Filing archived at
+# docs/development/issues/archived/2026-09-13-private-impl-method-forward-call-fail-open.md;
+# read its "Corrections to this filing" section. Kept as-is so it stays runnable. The regression
+# coverage lives in tests/gates/frontend/private_forward_reference.sh (refusals, which no .tcyr
+# can express) and tests/tcyr/crossos/forward_ref_abi_binding.tcyr (the ABI half, on real
+# hardware). The note below about pass 1 skipping impl bodies describes the 6.6.4 compiler.
+#
 # Build as two files:
 #   lib:  the `# --- lib_priv_impl.cyr ---` block below, saved as lib_priv_impl.cyr
 #   main: this file (NOTE the include comes AFTER main — that is the shape)
