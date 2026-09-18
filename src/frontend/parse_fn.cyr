@@ -123,6 +123,10 @@ fn _inl_bind_param(S, base, w, named, noff, t): i64 {
     }
     S64(S + 0x5D9D000 + named * 8, noff);
     SLDEP(S, named, GSDEP(S));
+    # 6.6.5: an inline-replay param wider than one slot IS the aggregate (the replay copies
+    # the caller's words into it); a single-slot small struct is a value too.
+    if (w > 1) { SLAGG(S, named, w); }
+    else { MARK_SMALL_STRUCT(S, named, t); }
     # ⚠ Re-apply the param TYPE. Without this the param is untyped inside the inlined body,
     # which surfaces as a bogus "value-form SIMD arg type mismatch" at its first use — the
     # second of the two defects, independent of the slot-width one above.
@@ -1215,6 +1219,13 @@ fn PARSE_RETURN(S): i64 {
                                 S64(S + 0x5D9D000 + _rc_named * 8, 0 - 1);
                                 SLDEP(S, _rc_named, GSDEP(S));
                                 SLTYPE(S, _rc_named, _cur_fn_ret_scalar);
+                                # 6.6.5: the retptr callee writes THROUGH these slots, so the
+                                # span has to be recorded like every other multi-slot receive —
+                                # this was the ONE negative-SLTYPE registration in the tree
+                                # without a SLAGG mark, and the picker's aggregate pass (now
+                                # keyed on GLAGG rather than the vector descriptor) would have
+                                # spanned it as 1 slot and left the fillers out of ra_unsafe.
+                                SLAGG(S, _rc_named, _rc_slots);
                                 SFLC(S, _rc_named + 1);
                                 if (_rc_named + 1 > _flc_hwm) { _flc_hwm = _rc_named + 1; }
                                 # Marshal the inner call: retptr = &temp, then args.
@@ -1445,9 +1456,9 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
     if (nx != 31) { if (nx != 11) { return 0; } }
-    if (GINFN(S) != 1) { return 0; }
-    var li = FINDLOCAL(S, PEEKV(S));
-    if (li < 0) { return 0; }
+    var li = 0 - 1;
+    if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
+    if (li < 0) { return _push_struct_addr_global(S); }
     var lt = GLTYPE(S, li);
     if (lt >= 0) { return 0; }          # must be a struct-typed local (SLTYPE = -sid)
     # v6.4.31: on SysV/aarch64 a SIMD local is register-passed (XMM/V) — never
@@ -1473,17 +1484,48 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     return 1;
 }
 
-# 6.6.5 — is this struct-typed local POINTER-mode (its slot holds the struct's address) or
-# INLINE (the slot IS the struct)? `lt` is the local's SLTYPE, stored as `0 - sid` with sid
-# 1-based. The rule is the one `_resolve_field_base_addr` (parse_decl.cyr) already applied to
-# field access and v6.6.4 applied to a method's `self`; this puts the third user of it —
-# argument passing — on the same answer instead of assuming.
+# 6.6.5 — the GLOBAL arm of the by-value struct argument. The callee's structmask says this
+# parameter is ADDRESS-passed, and there was no global branch at all: a global struct argument
+# was pushed BY VALUE (its first 8 bytes), so the callee deref'd a field as a pointer and
+# SIGSEGV'd — `take(G)` for a top-level `var G = P { 11, 22 };` crashed where the identical
+# local worked. `_var_ptrmode` is the recorded layout: 2 = inline (push its address), 1 = the
+# slot holds the address (push the slot). 0 means this global is not a recorded aggregate, so
+# leave it to the ordinary value push rather than guessing from GVTYPE, whose positive range is
+# shared with scalar widths. CHANGELOG [6.6.5]
+fn _push_struct_addr_global(S): i64 {
+    var gvi = FINDVAR(S, PEEKV(S));
+    if (gvi < 0) { return 0; }
+    var gpm = GVPM(S, gvi);
+    if (gpm == 0) { return 0; }
+    if (gpm == 1) { EVLOAD(S, gvi); } else { EVADDR(S, gvi); }
+    EPUSHR(S);
+    STI(S, GTI(S) + 1);                 # consume IDENT
+    return 1;
+}
+
+# ⛔ 6.6.5 — is this struct-typed local POINTER-mode (its slot holds the struct's address) or
+# INLINE (the slot IS the struct)? ONE reader, and it READS THE RECORDED BIT.
+#
+# This fn shipped earlier in 6.6.5 carrying the historical GUESS, which is quoted below so the
+# next reader can recognise it rather than reinvent it:
+#
+#     if (li > 0) { if (L64(S + 0x5D9D000 + (li - 1) * 8) == 0 - 1) { is_ptr = 0; } }
+#     if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { is_ptr = 0; } } }
+#
+# "the slot below is named -1" is NOT a discriminator for inline-ness. SCOPE_POP writes -1 over
+# every local of a block that has closed (util.cyr), and callptr / bitset / SIMD-reserve /
+# closure-env temporaries are registered -1 by construction — so a POINTER-mode struct local
+# declared after any of those was read as inline and its fields came off the frame. Wrong since
+# 5.8.17, silent, and measured in a shipped consumer (stiva's fleet.cyr let an undersized node
+# pass its memory constraint). The `<= 8 B` half was the ABI policy stated at the wrong end: cx
+# was excluded from it, so on cx two single-field struct locals aliased each other.
+#
+# Registration now records the answer (SLAGG / GLAGG, util.cyr), so every consumer — field
+# load/store, method self, by-value argument passing, copy-init, copy-assign and the regalloc
+# picker's aggregate span — asks THIS fn and they cannot disagree. CHANGELOG [6.6.5]
 fn _local_struct_is_ptr(S, li, lt): i64 {
-    var sid = 0 - lt;
-    var is_ptr = 1;
-    if (li > 0) { if (L64(S + 0x5D9D000 + (li - 1) * 8) == 0 - 1) { is_ptr = 0; } }
-    if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { is_ptr = 0; } } }
-    return is_ptr;
+    if (GLAGG(S, li) == 1) { return 0; }
+    return 1;
 }
 
 # ⭐ 6.6.5 — PARSE_FNCALL's `: Str` param auto-coercion, EXTRACTED so the method-call path
@@ -4769,6 +4811,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     S64(_fnt_offsets + fi * 8, GCP(S));
     # Save compiler state
     var saved_lv = GLVAR(S);
+    var _fs_saved_floor = _fs_floor;   # 6.6.5: this body's fn-static mark (see _fs_push)
+    _fs_floor = _fs_n;
     SINFN(S, 1);
     SFLC(S, 0);
     _flc_hwm = 0;   # v6.3.37 (A3) — reset the inline param-slot high-water per fn
@@ -5033,6 +5077,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 var simd_named = GFLC(S);
                 S64(S + 0x5D9D000 + simd_named * 8, pnoff);
                 SLDEP(S, simd_named, 0);
+                SLAGG(S, simd_named, simd_slots);   # 6.6.5: a value-form vector param is inline on every ABI
                 SLTYPE(S, simd_named, 0 - simd_sid);
                 SFLC(S, simd_named + 1);
                 # The multi-slot frame (above) is target-independent — &v +
@@ -5104,6 +5149,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # emitters. pt_float is 0 for every non-float param (incl. all of
                 # cycc's) → self-host stays byte-identical.
                 if (pt_float != 0) { SLTYPE(S, li, pt_float); }
+                # 6.6.5 — RECORD THE PARAM ABI INSTEAD OF RE-DERIVING IT AT EVERY USE. A struct
+                # param over 8 B is ADDRESS-passed (`_param_wants_struct_ptr` sets structmask
+                # and the caller pushes `&local`), so its slot holds a pointer; one that fits in
+                # 8 B arrives BY VALUE, so the slot IS the struct. That second half used to be a
+                # `_TARGET_CX == 0` guess at the use site, which is why cx deref'd its own slot.
+                MARK_SMALL_STRUCT(S, li, GLTYPE(S, li));
                 # Only emit register params now (0-5). v5.5.36 Phase 2b:
                 # x86 struct-returning fns reserve arg-reg 0 (RDI on SysV,
                 # RCX on Win64) for the hidden retptr, so user param 0
@@ -6059,12 +6110,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 while (ag_li < ra_flc) {
                     var ag_t = GLTYPE(S, ag_li);
                     if (ag_t < 0) {
+                        # 6.6.5: span the RECORDED layout. A pointer-mode struct local occupies
+                        # ONE slot; the width-derived span used here before reached down over a
+                        # NEIGHBOUR's slots and barred them from the picker for no reason.
                         var ag_n = 1;
-                        if (_vec_desc(S, ag_t) == 1) { ag_n = GVEC_NSLOTS(S); }
-                        else {
-                            var ag_sz = STRUCTSZ(S, (0 - ag_t) - 1);
-                            if (ag_sz > 8) { ag_n = ((ag_sz + 7) & (0 - 8)) / 8; }
-                        }
+                        if (GLAGG(S, ag_li) == 1) { ag_n = AGG_NSLOTS(S, ag_t); }
                         var ag_k = 0;
                         while (ag_k < ag_n) {
                             var ag_s = ag_li - ag_k;
@@ -6537,6 +6587,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # body bytes for this fn, usable by the FIXUP pass to NOP dead functions safely.
     SFNE(S, fi, GCP(S));
     # Restore state (DON'T restore VCNT — arrays inside functions are globals that persist)
+    # 6.6.5: their NAMES do not persist though — close every fn-local static declared in this
+    # body so it cannot shadow a later file's global. See `_fs_push` (parse.cyr).
+    _fs_popto(S, _fs_floor);
+    _fs_floor = _fs_saved_floor;
     SLVAR(S, saved_lv);
     SINFN(S, 0);
     # v4.8.4-alpha5: clear #regalloc mirror so nested/sibling fns without

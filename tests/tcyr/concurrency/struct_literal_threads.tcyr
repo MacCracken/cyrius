@@ -1,0 +1,145 @@
+# struct_literal_threads.tcyr — 6.6.5. A STRUCT LITERAL AND A `switch` SUBJECT ARE PER
+# THREAD, BECAUSE THEY LIVE ON THE FRAME.
+#
+# ⛔ `var q = T { .. }` inside a fn registered a GLOBAL slot, and `switch` / `match` / `?` /
+# `for ... in` each stashed their subject in one too. With N threads running the same fn
+# they all wrote the same words. No name collision, no recursion and no `private` needed —
+# just two threads. Measured on 6.6.4: the literal worker failed on 3 of 3 runs and the
+# chain-path `switch` worker failed on 3 of 3 runs, while a typed-local control (`var q: T;`
+# plus field stores, a lowering that has always been frame-based) was clean on 3 of 3.
+#
+# ⭐ THE CONTROL IS THE EXPECTED VALUE. Each worker compares its literal's fields against the
+# arithmetic it was built from, which the thread computed itself from its own argument — so
+# the check cannot agree with a shared buffer by coincidence, and the typed-local worker runs
+# the identical loop through the known-good lowering. A gate asserting only "exit 0" on the
+# subject would pass on a build where the whole loop was optimised away.
+#
+# ⚠ ITERS AND THE BUSY GAP ARE LOAD-BEARING. The window between constructing the literal and
+# reading it back is tiny; without iterations and a short spin inside that window the threads
+# do not interleave often enough for the broken build to fail reliably. At these values the
+# 6.6.4 build failed 3/3.
+#
+# ⚠ LINUX-ONLY BY PLACEMENT: lib/thread.cyr is the clone()-based path, so this lives in
+# tests/tcyr/concurrency/ and not in crossos/. The single-threaded halves of the same class
+# are pinned in tests/tcyr/crossos/aggregate_storage_class.tcyr and
+# tests/tcyr/crossos/hidden_temp_reentrancy.tcyr, which DO run on real ecb/ach/cass/pi.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/atomic.cyr"
+include "lib/thread.cyr"
+include "lib/assert.cyr"
+
+struct Q { a; b; c; }
+
+var NTHREADS = 8;
+var ITERS = 20000;
+var SW_ITERS = 200000;
+var lit_fail = 0;
+var lit_done = 0;
+var typed_fail = 0;
+var typed_done = 0;
+var sw_fail = 0;
+var sw_done = 0;
+
+# SUBJECT: a struct LITERAL built inside the loop body.
+fn lit_worker(arg): i64 {
+    var id = load64(arg);
+    var i = 0;
+    while (i < ITERS) {
+        var q = Q { id, id * 3, id * 7 };
+        var k = 0;
+        while (k < 50) { k = k + 1; }        # widen the window between build and read
+        if (q.a != id) { atomic_fetch_add(&lit_fail, 1); }
+        if (q.b != id * 3) { atomic_fetch_add(&lit_fail, 1); }
+        if (q.c != id * 7) { atomic_fetch_add(&lit_fail, 1); }
+        i = i + 1;
+    }
+    atomic_fetch_add(&lit_done, 1);
+    return 0;
+}
+
+# CONTROL: the identical loop through `var q: T;` + field stores, which has been frame-based
+# since v5.5.36 and was clean on 3 of 3 runs even on the broken compiler.
+fn typed_worker(arg): i64 {
+    var id = load64(arg);
+    var i = 0;
+    while (i < ITERS) {
+        var q: Q;
+        q.a = id; q.b = id * 3; q.c = id * 7;
+        var k = 0;
+        while (k < 50) { k = k + 1; }
+        if (q.a != id) { atomic_fetch_add(&typed_fail, 1); }
+        if (q.b != id * 3) { atomic_fetch_add(&typed_fail, 1); }
+        if (q.c != id * 7) { atomic_fetch_add(&typed_fail, 1); }
+        i = i + 1;
+    }
+    atomic_fetch_add(&typed_done, 1);
+    return 0;
+}
+
+# SUBJECT: the chain-path `switch` subject. Multiplying by a large prime keeps every case
+# label distinct so a stolen subject lands on a DIFFERENT arm rather than the same one.
+fn classify(x) {
+    switch (x * 100003) {
+        case 100003: return 11;
+        case 200006: return 22;
+        case 300009: return 33;
+        case 400012: return 44;
+        case 500015: return 55;
+        case 600018: return 66;
+        case 700021: return 77;
+        case 800024: return 88;
+        default: return 0;
+    }
+    return 0;
+}
+fn switch_worker(arg): i64 {
+    var id = load64(arg);
+    var i = 0;
+    while (i < SW_ITERS) {
+        if (classify(id) != id * 11) { atomic_fetch_add(&sw_fail, 1); }
+        i = i + 1;
+    }
+    atomic_fetch_add(&sw_done, 1);
+    return 0;
+}
+
+fn spawn_all(fp, args): i64 {
+    var k = 0;
+    while (k < NTHREADS) {
+        store64(args + k * 8, k + 1);
+        thread_create(fp, args + k * 8);
+        k = k + 1;
+    }
+    return 0;
+}
+fn wait_for(counter): i64 {
+    while (load64(counter) < NTHREADS) { syscall(24, 0, 0, 0, 0); }
+    return 0;
+}
+
+alloc_init();
+var lit_args = alloc(NTHREADS * 8);
+spawn_all(&lit_worker, lit_args);
+wait_for(&lit_done);
+
+var typed_args = alloc(NTHREADS * 8);
+spawn_all(&typed_worker, typed_args);
+wait_for(&typed_done);
+
+var sw_args = alloc(NTHREADS * 8);
+spawn_all(&switch_worker, sw_args);
+wait_for(&sw_done);
+
+test_group("8 threads building a struct literal");
+assert_eq(lit_fail, 0, "every thread read back the literal IT built");
+assert_eq(lit_fail, typed_fail, "the literal form agrees with the typed-local control");
+assert_eq(typed_fail, 0, "the control itself is clean (anti-vacuous)");
+
+test_group("8 threads through a chain-path switch");
+assert_eq(sw_fail, 0, "every thread dispatched on ITS OWN switch subject");
+
+var r = assert_summary();

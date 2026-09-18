@@ -867,6 +867,22 @@ var _var_fileid = 0;
 fn GVFI(S, vi): i64 { if (_var_fileid == 0) { return 0; } return L64(_var_fileid + vi * 8); }
 fn SVFI(S, vi, v): i64 { if (_var_fileid == 0) { _var_fileid = alloc(1048576 * 8); } S64(_var_fileid + vi * 8, v); return 0; }
 
+# 6.6.5 — the GLOBAL half of the same recorded-layout question, and the global
+# dead-slot marker. Same lazy-alloc shape as `_var_fileid` above (never in the
+# `_grow_g1..g7` chain — see the warning there).
+#   _var_ptrmode[vi] = 1  -> this global's slot HOLDS the struct's address
+#                            (`var G: P = mk();`), so `G.x` must load then add.
+#                       0  -> the slot IS the struct (a literal, or `var G: P;`).
+#   _var_dead[vi]    = 1  -> a compiler-internal global temporary (or a fn-scoped
+#                            static whose scope has closed); FINDVAR skips it, so it
+#                            can never shadow a user name.
+var _var_ptrmode = 0;
+fn GVPM(S, vi): i64 { if (_var_ptrmode == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_ptrmode + vi); }
+fn SVPM(S, vi, v): i64 { if (_var_ptrmode == 0) { _var_ptrmode = alloc(1048576); } store8(_var_ptrmode + vi, v); return 0; }
+var _var_dead = 0;
+fn GVDEAD(S, vi): i64 { if (_var_dead == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_dead + vi); }
+fn SVDEAD(S, vi, v): i64 { if (_var_dead == 0) { _var_dead = alloc(1048576); } store8(_var_dead + vi, v); return 0; }
+
 var _fnt_fileid = 0;
 fn GFFI(S, fi): i64 { if (_fnt_fileid == 0) { return 0; } return L64(_fnt_fileid + fi * 8); }
 fn SFFI(S, fi, v): i64 { if (_fnt_fileid == 0) { _fnt_fileid = alloc(131072 * 8); } S64(_fnt_fileid + fi * 8, v); return 0; }
@@ -1043,8 +1059,42 @@ fn STLINE(S, ti, v): i64 { S64(S + 0xCC00000 + ti * 8, v); return 0; }
 # Block scoping
 fn GSDEP(S): i64 { return L64(S + 0x18FCC0); }
 fn SSDEP(S, v): i64 { S64(S + 0x18FCC0, v); return 0; }
-fn GLDEP(S, li): i64 { return L64(S + 0x5DBD000 + li * 8); }
+# ⛔ 6.6.5 — THE AGGREGATE LAYOUT IS RECORDED HERE, IT IS NEVER INFERRED.
+#
+# Whether an aggregate local is INLINE (the slot IS the struct, so its fields are at
+# &slot + off) or POINTER-mode (the slot HOLDS the struct's address) used to be GUESSED
+# at every use site from "is the slot below named -1?", plus a `<= 8 B on non-cx` rule.
+# That guess is not a discriminator: SCOPE_POP writes -1 over every local of a closed
+# block (below), and callptr / bitset / SIMD / closure temporaries are registered -1 by
+# construction. So ANY pointer-mode struct local declared after a closed block, or after
+# one of those temporaries, read its fields OFF ITS OWN FRAME SLOT. Silent since 5.8.17:
+# `var p: P = mk()` after an `if {var t}` returned 6 where 22 is right, `str_from(..).len`
+# read 6 for 7, `var p: P = callptr(..)` read 181, an unreached `defer` ran, and
+# stiva's fleet.cyr let a 512 MB node pass a 1024 MB constraint.
+#
+# The bit lives in the HIGH half of the existing per-slot depth word (depths are small
+# non-negative counters, so the low 32 bits are the whole live range) — no new table, no
+# heap-map change, and it CLEARS ITSELF on slot reuse because every named-slot
+# registration writes SLDEP before it writes anything else. GLDEP masks it off.
+# Registration sets it; `_local_struct_is_ptr` (parse_fn.cyr) is the one reader that
+# answers the question for field access, method self, argument passing, copy-init,
+# copy-assign and the regalloc picker. CHANGELOG [6.6.5]
+fn GLDEP(S, li): i64 { return L64(S + 0x5DBD000 + li * 8) & 0xFFFFFFFF; }
 fn SLDEP(S, li, v): i64 { S64(S + 0x5DBD000 + li * 8, v); return 0; }
+# `n` is the SLOT SPAN, not a flag: 0 = not an inline aggregate, >= 1 = the slot is the
+# base of an inline aggregate `n` words wide, occupying slots li, li-1, ... li-(n-1).
+# Storing the width rather than one bit is what lets the coroutine emitters answer
+# exactly (a heap coroutine frame is laid out in the OPPOSITE direction to the stack, so
+# `&agg + k*8` walks off a multi-word aggregate there) without a second table.
+fn SLAGG(S, li, n): i64 { S64(S + 0x5DBD000 + li * 8, (L64(S + 0x5DBD000 + li * 8) & 0xFFFFFFFF) | (n << 32)); return 0; }
+fn GLSPAN(S, li): i64 {
+    if (li < 0) { return 0; }
+    return L64(S + 0x5DBD000 + li * 8) >> 32;
+}
+fn GLAGG(S, li): i64 {
+    if (GLSPAN(S, li) == 0) { return 0; }
+    return 1;
+}
 
 # Expression type tracking
 fn GESTYPE(S): i64 { return L64(S + 0x1903D8); }
@@ -1067,6 +1117,7 @@ fn SCOPE_POP(S): i64 {
     # Mark out-of-scope locals as invisible by clearing their names.
     # Do NOT change GFLC — stack slots are permanent for the function frame.
     var dep = GSDEP(S);
+    _fs_pop(S, dep);   # 6.6.5: fn-local STATIC arrays leave scope here too (see _fs_push)
     var lc = GFLC(S);
     var si = lc - 1;
     while (si >= 0) {
@@ -2004,6 +2055,21 @@ fn WARN(S, msg, len): i64 {
     syscall(SYS_WRITE, 2, msg, len);
     syscall(SYS_WRITE, 2, "\n", 1);
     _err_excerpt(S);
+    return 0;
+}
+
+# 6.6.5 — the same warning about a token the parser has ALREADY WALKED PAST. `WARN` reads the
+# CURSOR (`_err_head` / `_err_excerpt` both do), which is right for a warning raised where the
+# problem is and wrong for one raised after the declaration it describes was consumed: the
+# over-budget array warning named the line and column of the NEXT statement, with the caret
+# under it, while this release's sibling-repo note promised downstreams a file:line for the
+# declaration. Moving the cursor and putting it back is what `_priv_per_item_err` (parse.cyr)
+# already does, so there is one excerpt path, not two. CHANGELOG [6.6.5]
+fn WARN_AT(S, ti, msg, len): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    WARN(S, msg, len);
+    STI(S, sv);
     return 0;
 }
 

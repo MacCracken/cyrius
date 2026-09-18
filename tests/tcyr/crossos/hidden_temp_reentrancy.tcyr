@@ -1,0 +1,102 @@
+# hidden_temp_reentrancy.tcyr — 6.6.5. THE COMPILER'S OWN TEMPORARIES ARE PER CALL.
+#
+# ⛔ `switch`, `match`, both `?` lowerings and `for ... in` each stashed their subject in a
+# GLOBAL slot. Three consequences, all silent:
+#   * RECURSION reloaded the OUTER call's value — a recursive fn whose body loops over a
+#     range returned 63 where 255 is right; a `match` re-entered from an arm pattern
+#     returned 1 for 30.
+#   * THREADS shared one word (see tests/tcyr/concurrency/struct_literal_threads.tcyr).
+#   * Those slots were registered with NAME OFFSET 0, which is the FIRST LEXED WORD of the
+#     program, and FINDVAR is a flat last-match table — so an ordinary identifier could
+#     RESOLVE to one of them. Measured: `&setup` changed value after a fn containing a
+#     `switch` was parsed between two uses of it. ⚠ THAT AXIS CANNOT LIVE HERE — name offset
+#     0 belongs to whatever the `include`s lex first, so it is pinned in
+#     tests/gates/codegen/fn_local_storage_class.sh, which compiles an include-free source.
+#
+# ⭐ EVERY EXPECTED VALUE IS COMPUTED A DIFFERENT WAY. The range-`for` cases are checked
+# against a hand-written `while` loop; the `match` case against an `if/elif` chain; the
+# first-word case against a control fn containing no switch and no u128. A gate that only
+# asserted the recursive value would pass on a build where both halves are wrong together.
+#
+# Mutations that redden this file (each measured against the 6.6.4 compiler):
+#   * hidden temporaries back on GVCNT -> for_rec 3 (want 15), match_rec 1 (want 30),
+#     user_underscore_i 3 (want 30). Measured: 4 of the 9 assertions below go RED on 6.6.4 (`5 passed, 4 failed (9 total)`).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+# The FIRST LEXED WORD of this file after the includes is `setup` — deliberately, because
+# name offset 0 is what the old hidden temporaries were registered under.
+fn setup() { return 42; }
+
+# --- range for-in RE-ENTERED FROM INSIDE ITS OWN BODY ------------------------------------
+# ⚠ THE RECURSIVE CALL HAS TO BE INSIDE THE LOOP. A recursive fn that finishes its loop
+# BEFORE recursing passes on the broken compiler: the shared end-value has already done its
+# job. Only a call made while the loop is still running reloads a clobbered bound.
+fn for_rec(n) { var s = 0; for i in 0..n { s = s + 1 + for_rec(n - 1); } return s; }
+# CONTROL: the identical arithmetic with a hand-written while loop (no hidden temporary).
+fn while_rec(n) { var s = 0; var i = 0; while (i < n) { s = s + 1 + while_rec(n - 1); i = i + 1; } return s; }
+
+# --- match RE-ENTERED FROM AN ARM PATTERN ------------------------------------------------
+# The re-entry has to happen while the outer match is still deciding, i.e. from a pattern
+# that is itself a call — after the subject is stashed and before it is compared.
+fn match_rec(n) {
+    match n {
+        match_side(n) => { return 100; }
+        3 => { return 30; }
+        _ => { return 1; }
+    }
+    return 0;
+}
+fn match_side(n) { if (n == 3) { match_rec(7); } return 0 - 1; }
+
+# --- switch re-entered from inside a case ------------------------------------------------
+fn switch_rec(n) {
+    switch (n) {
+        case 0: return 0;
+        case 1: return 1;
+        default: return n + switch_rec(n - 1);
+    }
+    return 0 - 1;
+}
+fn ifchain_rec(n) {
+    if (n == 0) { return 0; }
+    if (n == 1) { return 1; }
+    return n + ifchain_rec(n - 1);
+}
+
+# --- a user identifier named `_i` inside a collection for-in -----------------------------
+# The collection loop's own index slot used to be registered under the USER-VISIBLE name
+# `_i`, so a user's `_i` read inside the body resolved to the compiler's counter.
+fn user_underscore_i(): i64 {
+    var v = vec_new();
+    vec_push(v, 1); vec_push(v, 2); vec_push(v, 3);
+    var _i = 10;
+    var s = 0;
+    for x in v { s = s + _i; }
+    return s;
+}
+
+# --- the constructs themselves still work --------------------------------------------------
+fn has_switch(x) { switch (x) { case 1: return 10; default: return 20; } return 0; }
+fn has_u128() { var u: u128 = 0; return setup() - 41; }
+
+test_group("recursion does not share a hidden temporary");
+assert_eq(for_rec(3), 15, "a range-for re-entered from inside its own body == 15");
+assert_eq(for_rec(3), while_rec(3), "range-for agrees with the while-loop control");
+assert_eq(match_rec(3), 30, "a match re-entered from an arm PATTERN still matches its own subject");
+assert_eq(switch_rec(7), 28, "a switch re-entered from a case == 28");
+assert_eq(switch_rec(7), ifchain_rec(7), "switch agrees with the if/elif control");
+
+test_group("a hidden loop index does not take a user name");
+assert_eq(user_underscore_i(), 30, "a user `_i` inside `for x in v` reads the user's value");
+
+test_group("the constructs still work after their temporaries moved to the frame");
+assert_eq(has_switch(1), 10, "switch case arm");
+assert_eq(has_switch(9), 20, "switch default arm");
+assert_eq(has_u128(), 1, "a u128 local whose hidden high half is now anonymous");
+
+var r = assert_summary();

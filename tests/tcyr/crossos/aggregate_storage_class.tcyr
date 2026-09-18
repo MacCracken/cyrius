@@ -1,0 +1,270 @@
+# aggregate_storage_class.tcyr — 6.6.5. WHERE AN AGGREGATE LIVES IS RECORDED, AND A STRUCT
+# LITERAL INSIDE A FN IS A PER-CALL FRAME OBJECT.
+#
+# ⛔ TWO DEFECTS, BOTH SILENT, BOTH IN EVERY RELEASE THIS FILE PREDATES.
+#
+# (1) Whether a struct local was INLINE (the slot IS the struct) or POINTER-mode (the slot
+#     HOLDS its address) was GUESSED from "is the slot below named -1?". That is not a
+#     discriminator: SCOPE_POP names every local of a CLOSED BLOCK -1, and callptr / bitset /
+#     SIMD / closure temporaries are registered -1 by construction. So ANY pointer-mode struct
+#     local declared after a closed block, or after one of those temporaries, read its fields
+#     off ITS OWN FRAME SLOT. Wrong since 5.8.17, and live in a consumer: stiva's
+#     `node_matches_constraints` let a 512 MB node pass a 1024 MB constraint.
+#
+# (2) `var p = T { .. }` inside a fn registered a GLOBAL slot. Recursion shared it, threads
+#     shared it, and FINDVAR (one flat last-match table over every file) returned it for any
+#     later reference to that name — in ONE file, with no `private` involved.
+#
+# ⭐ EVERY EXPECTED VALUE HERE IS COMPUTED A DIFFERENT WAY FROM THE THING UNDER TEST: each
+# case has a CONTROL written in a lowering already known correct (a typed local + field
+# stores, or the same declaration with the intervening block removed), and the assertions
+# pin the hand-derived constant AND the control-vs-subject equality. A gate that only
+# compared the two would go green on a build where both are wrong.
+#
+# Mutations that redden this file (each applied to the 6.6.5 tree, rebuilt, measured):
+#   * `_local_struct_is_ptr` back to the -1-predecessor guess -> dead_scope reads a frame word
+#     (6295057) for 22, str_len_after_block the same, after_callptr 4251443 for 22, the stiva
+#     shape ACCEPTS the undersized node (1 for 0), the unreached defer RUNS, copy_init 99.
+#   * route `var p = T{..}` back through PARSE_STRUCT_INIT     -> rec_literal 0 (want 9),
+#     lit_shadow + read_global_cfg 2 (want 6), and the by-value section SIGSEGVs.
+#   * `_agc_operand` / `_sci_global_src` back to local-only (the state this bite shipped in its
+#     first cut) -> the global-copy group SIGSEGVs on its first row, `var b: P = GA`, because
+#     the scalar fall-through stores GA's ADDRESS into a slot typed as a struct. Isolated,
+#     the four arms read 12->1st-word-only: GB=GA 14, q=GA 18, GB=p 54, and `GB.y` stays 4.
+# Against the SHIPPED 6.6.4 compiler this file DOES NOT COMPILE AT ALL — `mk3` is refused with
+# "struct-return: identifier is not a local", because the literal it returns was a global.
+# ⚠ THE 6.6.4 FAIL COUNT IS ONLY REPRODUCIBLE WITH ITS REDUCTION STATED, and the first cut of
+# this header gave a number without one (review round 2 measured 15, not the 14 claimed, and
+# found that removing `mk3` alone does not even compile — `ret_retptr` calls it). The exact
+# recipe: delete the `mk3` and `ret_retptr` DEFINITIONS and the two assertions that call
+# `ret_retptr`. The file then builds on 6.6.4 and reports **15** `  FAIL:` lines before
+# SIGSEGVing (exit 139) in the by-value section.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+struct P { x; y; }
+struct B1 { val; }
+struct Cap { memory_mb; cpus; maxc; runc; accel; }
+struct Node { id; address; labels; capacity; status; last_seen; }
+struct Num { v; }
+struct V2 { ax; ay; }
+
+var heap[64];
+var capbuf[40];
+var nodebuf[48];
+var defer_ran = 0;
+var cfg = 5;                     # the shadowed global — see same_file_shadow below
+
+fn Num_add(a, b) { return a * 100 + b; }
+fn V2_add(a, b) { return load64(a) * 1000 + load64(b + 8); }
+
+fn mk() { store64(&heap, 11); store64(&heap + 8, 22); return &heap; }
+fn mk1(a) { store64(&heap, 11); store64(&heap + 8, 22); return &heap; }
+
+# ---------------------------------------------------------------- (1) recorded layout ----
+# SUBJECT: a pointer-mode local declared AFTER a block whose locals SCOPE_POP renamed to -1.
+fn dead_scope() { if (1 == 1) { var t = 5; t = t + 1; } var p: P = mk(); return p.y; }
+# CONTROL: the identical declaration with nothing closed before it.
+fn dead_scope_ctl() { var p: P = mk(); if (1 == 1) { var t = 5; t = t + 1; } return p.y; }
+
+# SUBJECT: a pointer-mode local initialised through callptr, whose lowering reserves
+# anonymous -1 scratch slots immediately below it.
+fn after_callptr() { var fp = &mk1; var p: P = callptr(fp, 1); return p.y; }
+# CONTROL: the same call written directly.
+fn after_callptr_ctl() { var p: P = mk1(1); return p.y; }
+
+# SUBJECT: a pointer-mode local after bitset temporaries (the same -1 scratch shape).
+fn after_bitset() { var z = bitset(0, 0, 8, 0x42); var p: P = mk(); return p.y + (z - 0x42); }
+fn after_bitset_ctl() { var p: P = mk(); return p.y; }
+
+# SUBJECT: the stiva `node_matches_constraints` shape — a nested pointer-mode struct read
+# after a closed loop body. `matches(1024)` must REJECT a 512 MB node.
+fn matches(node, minmem, has_labels) {
+    var n: Node = node;
+    if (has_labels != 0) {
+        var i = 0;
+        while (i < 2) { var key = i + 100; var want = key + 1; var got = want + 1; i = i + 1; }
+    }
+    var cap: Cap = n.capacity;
+    if (cap.memory_mb < minmem) { return 0; }
+    return 1;
+}
+
+# SUBJECT: `x = y` between two pointer-mode struct locals must copy ONE slot, not
+# STRUCTSZ/8 — the extra slots belong to a neighbour, and the `defer` flag was one of them.
+fn defer_unreached(c, d) {
+    if (c == 1) { defer { defer_ran = defer_ran + 1; } }
+    var x: P = mk();
+    if (d == 1) { var t = 1; t = t + 0; }
+    var y: P = mk();
+    x = y;
+    return 0;
+}
+
+# SUBJECT: copy-init from a POINTER-mode source must not copy the slot below it.
+fn copy_init_from_ptr() { var z = 99; var a: P = mk(); var b: P = a; return b.y; }
+
+# SUBJECT: a Str local read after a closed block (the same class, through the stdlib).
+fn str_len_after_block() {
+    if (1 == 1) { var t = 5; t = t + 1; }
+    var s = str_from("abcdefg");
+    return s.len;
+}
+fn str_len_ctl() { var s = str_from("abcdefg"); return s.len; }
+
+# SUBJECT: two single-field struct locals must not alias. cx skipped the `<=8 B is a value`
+# rule entirely, so both dereferenced their own uninitialised slot.
+fn inline_two_b1() { var b: B1; b.val = 42; var c: B1; c.val = 1; return b.val + c.val; }
+
+# ------------------------------------------------------------ (2) literals are per call ----
+fn rec_literal(n) {
+    var p = P { n, n * 2 };
+    if (n > 0) { rec_literal(n - 1); }
+    return p.x + p.y;
+}
+fn rec_typed(n) {
+    var q: P;
+    q.x = n; q.y = n * 2;
+    if (n > 0) { rec_typed(n - 1); }
+    return q.x + q.y;
+}
+
+# SUBJECT: one file, a global `cfg` and a fn-local literal `cfg`. The later reader must see
+# the GLOBAL. No second file and no `private` needed.
+fn lit_shadow() { var cfg = P { 1, 2 }; return cfg.x; }
+fn read_global_cfg() { return cfg; }
+
+# by-value struct arguments: inline, pointer-mode and global all pass the struct's ADDRESS.
+fn take(p: P) { return p.y; }
+fn byval_ptr() { var q: P = mk(); return take(q); }
+fn byval_literal() { var q = P { 11, 22 }; return take(q); }
+fn byval_typed() { var q: P; q.x = 11; q.y = 22; return take(q); }
+var G = P { 11, 22 };
+fn byval_global() { return take(G); }
+
+# struct return: the 16-byte int-class pair from a literal local, AND the >16 B RETPTR form.
+# On 6.6.4 the retptr leg was a hard error ("struct-return: identifier is not a local"),
+# because the literal was a global; it is a plain local return now.
+struct T3 { a; b; c; }
+fn mkp(): P { var p = P { 7, 8 }; return p; }
+fn ret_pair() { var q: P = mkp(); return q.x * 10 + q.y; }
+fn mk3(): T3 { var p = T3 { 1, 2, 3 }; return p; }
+fn ret_retptr() { var q: T3 = mk3(); return q.a * 100 + q.b * 10 + q.c; }
+fn ret_retptr_ctl() { var p: T3; p.a = 1; p.b = 2; p.c = 3; return p.a * 100 + p.b * 10 + p.c; }
+
+# `var q: P = p` and `q = p` between two literal locals.
+fn copy_init_literal() { var p = P { 1, 2 }; var q: P = p; return q.x + q.y; }
+fn copy_assign_literal() { var p = P { 1, 2 }; var q = P { 9, 9 }; q = p; return q.x + q.y; }
+
+# ⛔ THE SAME ASSIGNMENT BETWEEN TWO INLINE STRUCT *GLOBALS* COPIED EIGHT BYTES. `_agc_operand`
+# opened `if (GINFN(S) != 1) return 0;` and then FINDLOCAL'd both sides, so no global could
+# ever reach the multi-word copy: `GB = GA;` left `GB.y` at its old value, silently, at top
+# level and inside a fn alike. Four combinations, because each one is a different arm:
+# global<-global, local<-global (declaration), local<-global (assignment), global<-local.
+# ⭐ NARROW FIELDS ARE THE SHARP ROW. Globals are packed by EXACT byte size (no round-up
+# below 8), so a word-granular copy of a 12-byte struct would clobber 4 bytes of the NEXT
+# global — `gn_guard` is that neighbour and it must still read 4242.
+struct N3 { a: i32; b: i32; c: i32; }
+var GA = P { 1, 2 };
+var GB = P { 3, 4 };
+var GNA = N3 { 1, 2, 3 };
+var GNB = N3 { 7, 8, 9 };
+var gn_guard = 4242;
+fn g_assign_gg() { GB = GA; return GB.x * 10 + GB.y; }
+fn g_copy_init() { var b: P = GA; return b.x * 10 + b.y; }
+fn g_copy_assign() { var q = P { 7, 8 }; q = GA; return q.x * 10 + q.y; }
+fn g_assign_lg() { var p = P { 5, 6 }; GB = p; return GB.x * 10 + GB.y; }
+fn g_narrow_gg() { GNB = GNA; return GNB.a * 100 + GNB.b * 10 + GNB.c; }
+fn g_narrow_ctl() { var n: N3; n.a = 1; n.b = 2; n.c = 3; return n.a * 100 + n.b * 10 + n.c; }
+
+# operator overloading must give the SAME answer for a literal local, a typed local, an
+# annotated local and a top-level global. Before 6.6.5 only the first and the last dispatched.
+fn op_lit_small() { var a = Num { 1 }; var b = Num { 2 }; return a + b; }
+fn op_typed_small() { var a: Num; a.v = 1; var b: Num; b.v = 2; return a + b; }
+fn op_annot_small() { var a: Num = 1; var b: Num = 2; return a + b; }
+var ga: Num = 1;
+var gb: Num = 2;
+fn op_global_small() { return ga + gb; }
+fn op_lit_wide() { var a = V2 { 3, 4 }; var b = V2 { 5, 6 }; return a + b; }
+fn op_typed_wide() { var a: V2; a.ax = 3; a.ay = 4; var b: V2; b.ax = 5; b.ay = 6; return a + b; }
+
+# a POINTER-mode struct GLOBAL: `Gp.y` must load the pointer, then add the field offset.
+var Gp: P = mk();
+fn ptr_mode_global() { return Gp.y; }
+
+# ------------------------------------------------------------------------- assertions ----
+store64(&capbuf, 512);              # a node with 512 MB
+store64(&nodebuf + 24, &capbuf);    # Node.capacity -> &capbuf
+
+test_group("recorded layout: a pointer-mode local after a closed block");
+assert_eq(dead_scope(), 22, "var p: P = mk() after `if { var t; }` reads the heap, not the frame");
+assert_eq(dead_scope(), dead_scope_ctl(), "the closed block changes nothing");
+assert_eq(str_len_after_block(), 7, "str_from(...).len after a closed block == 7");
+assert_eq(str_len_after_block(), str_len_ctl(), "the closed block changes nothing for Str");
+
+test_group("recorded layout: a pointer-mode local after anonymous temporaries");
+assert_eq(after_callptr(), 22, "var p: P = callptr(fp, 1) reads the heap");
+assert_eq(after_callptr(), after_callptr_ctl(), "callptr agrees with the direct call");
+assert_eq(after_bitset(), 22, "a pointer-mode local after bitset temporaries reads the heap");
+assert_eq(after_bitset(), after_bitset_ctl(), "the bitset temporaries change nothing");
+
+test_group("recorded layout: the stiva consumer shape");
+assert_eq(matches(&nodebuf, 1024, 1), 0, "a 512 MB node FAILS a 1024 MB constraint (with labels)");
+assert_eq(matches(&nodebuf, 1024, 0), 0, "a 512 MB node FAILS a 1024 MB constraint (no labels)");
+assert_eq(matches(&nodebuf, 256, 1), 1, "a 512 MB node PASSES a 256 MB constraint");
+assert_eq(matches(&nodebuf, 1024, 1), matches(&nodebuf, 1024, 0),
+          "the closed loop body does not change the verdict");
+
+test_group("recorded layout: copies stay inside the aggregate");
+defer_unreached(0, 1);              # c == 0, so the `defer` statement is NEVER REACHED
+assert_eq(defer_ran, 0, "`x = y` between pointer-mode locals did not set an unreached defer flag");
+assert_eq(copy_init_from_ptr(), 22, "var b: P = a (a pointer-mode) does not copy a neighbour");
+assert_eq(inline_two_b1(), 43, "two single-field struct locals do not alias");
+
+test_group("a struct literal inside a fn is per call");
+assert_eq(rec_literal(3), 9, "rec(3) with a struct literal == 9");
+assert_eq(rec_literal(3), rec_typed(3), "the literal form agrees with the typed-local control");
+assert_eq(lit_shadow() + read_global_cfg(), 6, "a fn-local literal does not shadow a global of the same name");
+assert_eq(read_global_cfg(), 5, "the global still reads 5 after the fn was parsed");
+
+test_group("by-value struct arguments");
+assert_eq(byval_ptr(), 22, "pointer-mode local argument");
+assert_eq(byval_literal(), 22, "struct-literal local argument");
+assert_eq(byval_typed(), 22, "typed local argument");
+assert_eq(byval_global(), 22, "global struct argument");
+assert_eq(byval_literal(), byval_typed(), "literal and typed locals agree");
+
+test_group("struct return and struct copies from a literal");
+assert_eq(ret_pair(), 78, "a 16-byte pair return from a literal local keeps BOTH fields");
+assert_eq(ret_retptr(), 123, "a >16 B retptr return from a literal local (6.6.4: hard error)");
+assert_eq(ret_retptr(), ret_retptr_ctl(), "the retptr return agrees with the typed-local control");
+assert_eq(copy_init_literal(), 3, "var q: P = p from a literal local");
+assert_eq(copy_assign_literal(), 3, "q = p between two literal locals");
+
+test_group("copying an inline struct when either side is a GLOBAL");
+assert_eq(g_copy_init(), 12, "var b: P = GA copies BOTH words (6.6.4: SIGSEGV)");
+assert_eq(g_copy_assign(), 12, "q = GA into a local copies BOTH words");
+assert_eq(g_assign_lg(), 56, "GB = p from a local literal copies BOTH words");
+assert_eq(g_assign_gg(), 12, "GB = GA between two globals copies BOTH words");
+assert_eq(GB.y, 2, "the filed shape: global B = A leaves B.y == A.y");
+assert_eq(g_narrow_gg(), 123, "a 12-byte (narrow-field) global copy is byte-exact");
+assert_eq(g_narrow_gg(), g_narrow_ctl(), "it agrees with the typed-local control");
+assert_eq(gn_guard, 4242, "and it did NOT overrun into the next global");
+
+test_group("operator dispatch agrees wherever the operand lives");
+assert_eq(op_lit_small(), 102, "literal local dispatches Num_add");
+assert_eq(op_typed_small(), 102, "typed local dispatches Num_add");
+assert_eq(op_annot_small(), 102, "`var a: Num = 1` dispatches Num_add");
+assert_eq(op_global_small(), 102, "top-level global dispatches Num_add");
+assert_eq(op_lit_wide(), 3006, "a >8 B literal local passes its address to V2_add");
+assert_eq(op_lit_wide(), op_typed_wide(), "wide literal and wide typed local agree");
+
+test_group("a pointer-mode struct GLOBAL loads its pointer");
+assert_eq(ptr_mode_global(), 22, "var Gp: P = mk(); Gp.y == 22");
+
+var r = assert_summary();

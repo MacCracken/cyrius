@@ -121,7 +121,12 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
         if (sa_need < 1) { sa_need = 1; }
         if (GFLC(S) + sa_need + 1 >= 15360) {
             sa_on = 0;
-            syscall(SYS_WRITE, 2, "note: oversized array local kept in shared global (not per-thread) - exceeds per-fn stack budget; use alloc()\n", 110);
+            # 6.6.5: a WARNING, not a note. The consequence is a semantic one the caller has
+            # to know about — ONE buffer for every call and every thread — and a `note:` line
+            # reads as informational. The name is scoped like a local either way (_fs_push).
+            # ⚠ `WARN_AT(_pa_decl_ti)`, not `WARN`: by here the `]` and the `;` are consumed,
+            # so the cursor sits on the NEXT statement and a bare `WARN` named its line.
+            WARN_AT(S, _pa_decl_ti, "array local over the per-fn frame budget gets STATIC storage: one buffer shared by all calls and all threads; use alloc() for per-call storage", 142);
         }
     }
     if (sa_on == 1) {
@@ -163,6 +168,7 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
         var sa_named = GFLC(S);
         S64(S + 0x5D9D000 + sa_named * 8, noff);
         SLDEP(S, sa_named, GSDEP(S));
+        SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -170,11 +176,18 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
-    # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after
-    # the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private.
-    # Keyed on the `[` token, NOT the cursor: `;` is already consumed, and for the last
-    # declaration of a file the cursor is in the next file (measured: unstamped).
-    _GVAR_VIS(S, vcnt, _pa_decl_ti);
+    # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
+    # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
+    # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
+    # See `_fs_push` (parse.cyr) for the whole story.
+    if (GINFN(S) == 1) { _fs_push(S, vcnt, noff); }
+    else {
+        # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after
+        # the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private.
+        # Keyed on the `[` token, NOT the cursor: `;` is already consumed, and for the last
+        # declaration of a file the cursor is in the next file (measured: unstamped).
+        _GVAR_VIS(S, vcnt, _pa_decl_ti);
+    }
     SVCNT(S, vcnt + 1);
     # v5.11.62: accumulate the array's byte cost into the current fn's
     # attribution slot at 0x1C8000. Top-level `var foo[N]` (no enclosing
@@ -240,23 +253,104 @@ fn BUILD_METHOD_NAME(S, si, mnoff): i64 {
 
 # Emit rcx = base address of the struct whose field is being accessed.
 # idx < -1 is a local-encoded index (idx = 0 - 2 - lli); >= -1 is a global.
-# Disambiguates pointer-to-struct (mov [slot]) from inline-struct (lea &slot)
-# via the -1 sentinel predecessor + the <=8B-inline rule (not on cx: it boxes).
+# 6.6.5: pointer-to-struct (mov [slot]) vs inline-struct (lea &slot) is the RECORDED
+# layout — `_local_struct_is_ptr` for a local, `_var_ptrmode` for a global — not the
+# -1-predecessor guess this fn carried from v5.8.17 (see `_local_struct_is_ptr`).
+# 6.6.5 — resolve `name` as a CAPTURED enclosing struct inside a closure body, returning the
+# capture-encoded index `-1000000 - capi` (locals use `-2 - li`, globals `>= -1`, so the band
+# is free — local indices bottom out at -16386 with the 16384-slot cap). `_cap_fld_sid` is the
+# second return; read it immediately. Without this rung a closure reading a field of an
+# enclosing struct reported "undefined variable". CHANGELOG [6.6.5]
+var _cap_fld_sid = 0;
+fn _CL_CAP_FIELD_IDX(S, noff): i64 {
+    _cap_fld_sid = 0;
+    if (_cl_capturing != 1) { return 0 - 1; }
+    if (_cl_env_lidx < 0) { return 0 - 1; }
+    var _cfe = _cl_snap_find(S, noff);
+    if (_cfe < 0) { return 0 - 1; }
+    var _cfc = _cl_cap_find(_cfe);
+    if (_cfc < 0) { return 0 - 1; }
+    var _cft = _cl_snap_type(_cfe);
+    if (_cft >= 0) { return 0 - 1; }
+    if (_cft <= 0 - 2048) { return 0 - 1; }
+    _cap_fld_sid = 0 - _cft;
+    return 0 - 1000000 - _cfc;
+}
+
+# rax = the base address of a captured aggregate. A capture wider than one word IS those
+# words, so its base is `&env[woff]`; a one-word capture of a struct over 8 B holds the
+# struct's ADDRESS, so the word is loaded.
+fn _CL_CAP_BASE_RA(S, capi, sid): i64 {
+    _CL_CAP_WORDS_RA(S, capi);
+    if (L64(&_cl_cap_w + capi * 8) == 1) {
+        if (sid > 0) { if (STRUCTSZ(S, sid - 1) > 8) { ELOAD64(S); } }
+    }
+    return 0;
+}
+
 fn _resolve_field_base_addr(S, idx, sid): i64 {
+    if (idx <= 0 - 1000000) {
+        _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid);
+        EMOVCA(S);
+        return 0;
+    }
     if (idx < 0 - 1) {
         var rli = 0 - 2 - idx;
-        var is_ptr = 1;
-        if (rli > 0) {
-            if (L64(S + 0x5D9D000 + (rli - 1) * 8) == 0 - 1) { is_ptr = 0; }
-        }
-        if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { is_ptr = 0; } } }
-        if (is_ptr == 1) {
+        if (_local_struct_is_ptr(S, rli, 0 - sid) == 1) {
             EFLLOAD(S, rli);
             EMOVCA(S);
         } else {
             EFLADDR_X1(S, rli);
         }
-    } else { EVADDR_X1(S, idx); }
+    } else {
+        # A GLOBAL struct var is inline (a literal, or `var G: P;`) unless it was
+        # initialised from an expression yielding an address (`var G: P = mk();`),
+        # which the global path records in `_var_ptrmode`. Before 6.6.5 the global
+        # branch was unconditionally inline, so `G.y` read the wrong 8 bytes (0 for 22).
+        if (GVPM(S, idx) == 1) {
+            EVLOAD(S, idx);
+            EMOVCA(S);
+        } else { EVADDR_X1(S, idx); }
+    }
+    return 0;
+}
+
+# ⛔ 6.6.5 — COPYING AN INLINE AGGREGATE WHEN EITHER SIDE IS A GLOBAL. Two facts make this
+# ADDRESS-based rather than the slot-index loop the local/local path uses:
+#   * A GLOBAL SLOT INDEX IS NOT A WORD INDEX. `SVCNT` advances by ONE per variable while
+#     `_vars_base` holds its BYTE size, so `EVLOAD(gvi + 1)` reads the NEXT VARIABLE. Every
+#     other global-aggregate consumer already goes through `EVADDR + byte offset`.
+#   * GLOBALS ARE PACKED BY EXACT BYTE SIZE (x86/fixup.cyr sums `_vars_base` with no
+#     round-up below 8), so a 12-byte struct global is followed at +12. A word-granular copy
+#     of `ceil(sz/8)` words would clobber 4 bytes of its neighbour — the same overrun v5.9.36
+#     fixed for the literal's own field stores. The tail is copied at 4/2/1.
+# Locals address identically (`EFLADDR_X1(named) + off`), which is also what makes this work
+# unchanged inside a coroutine, where `_ECORO_LEA` supplies the heap-frame base.
+# CHANGELOG [6.6.5]
+fn _agc_addr_x1(S, li, gv, boff): i64 {
+    if (gv >= 0) { EVADDR_X1(S, gv); } else { EFLADDR_X1(S, li); }
+    if (boff > 0) { EADDIMM_X1(S, boff); }
+    return 0;
+}
+fn _agc_copy_bytes(S, dli, dgv, sli, sgv, nb): i64 {
+    var off = 0;
+    while (off < nb) {
+        var w = 8;
+        var rem = nb - off;
+        if (rem < 8) { w = 4; }
+        if (rem < 4) { w = 2; }
+        if (rem < 2) { w = 1; }
+        _agc_addr_x1(S, sli, sgv, off);
+        EFIELD_LOAD_W(S, w);
+        EPUSHR(S);
+        _agc_addr_x1(S, dli, dgv, off);
+        EPOPR(S);
+        if (w == 1) { ESTORE8(S); }
+        elif (w == 2) { ESTORE16(S); }
+        elif (w == 4) { ESTORE32(S); }
+        else { ESTOC(S); }
+        off = off + w;
+    }
     return 0;
 }
 
@@ -363,6 +457,10 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         }
     }
     if (idx == 0 - 1) {
+        var _cfx = _CL_CAP_FIELD_IDX(S, noff);
+        if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
+    }
+    if (idx == 0 - 1) {
         idx = FINDVAR(S, noff);
         if (idx < 0) {
             # v6.5.19: --syntax-only treats the unknown base as an opaque value; the
@@ -415,14 +513,14 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         # or <=8 B on non-cx: the slot IS the struct — pass its address). This path
         # loaded the slot unconditionally, so `p.m()` on an inline stack struct handed
         # the method p's FIRST FIELD as `self` and `load64(self)` SIGSEGV'd (rc=139).
-        if (idx < 0 - 1) {
+        if (idx <= 0 - 1000000) {
+            _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid);   # 6.6.5: `self` from a closure capture
+        } elif (idx < 0 - 1) {
             var mli = 0 - idx - 2;
-            var m_is_ptr = 1;
-            if (mli > 0) { if (L64(S + 0x5D9D000 + (mli - 1) * 8) == 0 - 1) { m_is_ptr = 0; } }
-            if (_TARGET_CX == 0) { if (STRUCTSZ(S, si) <= 8) { m_is_ptr = 0; } }
-            if (m_is_ptr == 1) { EFLLOAD(S, mli); } else { EFLADDR(S, mli); }
+            # 6.6.5: the recorded layout, same reader as field access (see _local_struct_is_ptr).
+            if (_local_struct_is_ptr(S, mli, 0 - sid) == 1) { EFLLOAD(S, mli); } else { EFLADDR(S, mli); }
         } else {
-            EVADDR(S, idx);
+            if (GVPM(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
         }
         EPUSHR(S);
         # ⛔ 6.6.5 — RESOLVE THE CALLEE BEFORE THE ARGUMENTS. This path used to run the
@@ -616,6 +714,10 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
         }
     }
     if (idx == 0 - 1) {
+        var _cfx = _CL_CAP_FIELD_IDX(S, noff);
+        if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
+    }
+    if (idx == 0 - 1) {
         idx = FINDVAR(S, noff);
         if (idx < 0) {
             # v6.5.19: --syntax-only treats the unknown base as an opaque value; the
@@ -703,11 +805,18 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
 # `width = 8` keeps the legacy store64 path; the `width = 1/2/4`
 # branches mirror the existing PARSE_FIELD_STORE narrow-store
 # encodings.
+# 6.6.5 — the struct-literal field stores now serve BOTH a global slot and a FRAME slot.
+# `_sl_base_li` is the frame slot when >= 0, and it is captured BEFORE `PCMPE` because an
+# initialiser expression can contain a closure whose body declares its own literal and would
+# otherwise leave the wrong base in place for the rest of this literal's fields.
+var _sl_base_li = 0 - 1;
 fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
+    var sl_li = _sl_base_li;
     PCMPE(S);
     EPUSHR(S);
     # Load variable address into x1/rcx via fixup
-    EVADDR_X1(S, vcnt);
+    if (sl_li >= 0) { EFLADDR_X1(S, sl_li); }
+    else { EVADDR_X1(S, vcnt); }
     if (boff > 0) {
         EADDIMM_X1(S, boff);
     }
@@ -757,17 +866,11 @@ fn _emit_struct_positional_init(S, target_idx, sid): i64 {
     return 0;
 }
 
-fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
+# 6.6.5 — the initialiser body of a struct literal, EXTRACTED so the top-level form and the
+# new fn-local form share one parser. Writes through `target_idx` (a global slot) or, when
+# `_sl_base_li >= 0`, through that frame slot. CHANGELOG [6.6.5]
+fn _STRUCT_INIT_BODY(S, target_idx, sid): i64 {
     var si = sid - 1;
-    var _ps_decl_ti = GTI(S);   # v6.6.4: the type-name token, for the visibility stamp (see PARSE_ARRAY)
-    STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-    STI(S, GTI(S) + 1);
-    var sz = STRUCTSZ(S, si);
-    var vcnt = GVCNT(S);
-    S64(_varn_base + vcnt * 8, noff);
-    S64(_vars_base + vcnt * 8, sz);
-    SVTYPE(S, vcnt, sid);
     var fc = GETFCOUNT(S, si);
     # Detect named-field syntax: next token is IDENT (2) followed by ':' (49).
     # Empty struct literal `{}` falls through to positional branch as a no-op.
@@ -807,7 +910,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
             # broke for the LAST narrow field at end-of-struct
             # (which would overflow the struct's allocation).
             var nf_w = FIELDSZ(S, ft);
-            EMIT_STRUCT_FIELD_W(S, vcnt, boff, nf_w);
+            EMIT_STRUCT_FIELD_W(S, target_idx, boff, nf_w);
         }
         # Require every field to be set — no implicit zero defaults (yet).
         var fi2 = 0;
@@ -828,8 +931,27 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
         # (`a; b; c;`) keep the 8-byte stride; nested-struct fields
         # flatten into 8-byte slots per inner field (existing
         # behavior preserved).
-        _emit_struct_positional_init(S, vcnt, sid);
+        _emit_struct_positional_init(S, target_idx, sid);
     }
+    return 0;
+}
+
+fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
+    var si = sid - 1;
+    var _ps_decl_ti = GTI(S);   # v6.6.4: the type-name token, for the visibility stamp (see PARSE_ARRAY)
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    STI(S, GTI(S) + 1);
+    var sz = STRUCTSZ(S, si);
+    var vcnt = GVCNT(S);
+    S64(_varn_base + vcnt * 8, noff);
+    S64(_vars_base + vcnt * 8, sz);
+    SVTYPE(S, vcnt, sid);
+    SVPM(S, vcnt, 2);   # 6.6.5: a top-level literal is INLINE — STRUCTSZ bytes of .bss
+    var _ps_sv = _sl_base_li;
+    _sl_base_li = 0 - 1;
+    _STRUCT_INIT_BODY(S, vcnt, sid);
+    _sl_base_li = _ps_sv;
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
     SLVAR(S, vcnt);
@@ -837,6 +959,109 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     SVCNT(S, vcnt + 1);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
+    return 0;
+}
+
+# ⛔ 6.6.5 — `var p = T { ... }` INSIDE A FN IS A PER-CALL FRAME OBJECT.
+#
+# It used to register a GLOBAL slot (GVCNT) even with GINFN == 1, which made it three
+# different bugs at once, none of them needing a name collision:
+#   * RECURSION shared it. `rec(3)` with a literal returned 0 where 9 is right.
+#   * THREADS shared it. Eight threads building one returned a wrong exit code on every run,
+#     while the identical `var q: T;` + field stores were clean on every run.
+#   * FINDVAR is one flat last-match table, so the slot was visible to EVERY later file. A
+#     global and a fn-local literal of the same name resolved to the literal — returning 2
+#     where 6 is right, in ONE file, silently.
+# v6.6.4 made the cross-file case a DIAGNOSTIC for `private` files only, and it named the
+# consumer's own variable. Making the storage right is what removes all four.
+#
+# ⚠ THE NAME IS WITHHELD UNTIL THE INITIALISERS ARE PARSED, which is not a detail: the
+# global path bumped GVCNT only at the end, so `var cfg = P { cfg, 2 };` saw the OUTER `cfg`.
+# The slots are reserved first (the emitters address them by index, not by GFLC), and the
+# name lands last, so the local form keeps that order exactly.
+#
+# ⚠ EVERY store is ADDRESSED (`lea` + `mov [rcx]`), never EFLSTORE. The regalloc picker
+# rewrites `mov [rbp+disp], rax` into a register move; an aggregate's words are then read back
+# through an address the register never reaches. Registration also records the span, which
+# bars the picker from the slots outright — the addressed stores are the second lock.
+#
+# ⛔ 6.6.5 (review round 2) — ADDRESS THE BLOCK FROM ITS NAMED SLOT + k*8, NEVER SLOT-BY-SLOT.
+# This loop used to `EFLADDR_X1(named - k)`, which is the same address on the STACK (a higher
+# slot index is a LOWER address) but NOT in a coroutine's heap frame, where `_ECORO_AGG_OFF`
+# answers a whole aggregate from its span. One base + a byte offset is exactly what
+# `EMIT_STRUCT_FIELD_W` does for the field stores, so both halves of the literal now ask the
+# same question and cannot disagree. CHANGELOG [6.6.5]
+fn _sl_zero_slots(S, named, nslots): i64 {
+    EMOVI(S, 0);
+    var k = 0;
+    while (k < nslots) {
+        EFLADDR_X1(S, named);
+        if (k > 0) { EADDIMM_X1(S, k * 8); }
+        ESTOC(S);
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn _STRUCT_LIT_LOCAL(S, noff, sid): i64 {
+    var si = sid - 1;
+    STI(S, GTI(S) + 1);                          # consume the type name
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    STI(S, GTI(S) + 1);                          # consume '{'
+    var sz = STRUCTSZ(S, si);
+    if (sz < 8) { sz = 8; }
+    var nslots = ((sz + 7) & (0 - 8)) / 8;
+    var existing = FINDLOCAL(S, noff);
+    if (existing >= 0) { if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); } }
+    # ⚠ `ERR_MSG` IS NOT A TERMINATOR — it sets `_had_error`/`_panic` (v6.4.62 panic mode) and
+    # returns. Without the `return` the allocation loop below ran anyway and was stopped only
+    # by `SFLC`'s own `syscall(SYS_EXIT, 1)` at 16384 slots, which REPLACED this precise
+    # message with the generic "too many stack slots in one function". Panic mode swallows the
+    # cascade, so returning here loses nothing. CHANGELOG [6.6.5]
+    if (GFLC(S) + nslots + 1 >= 15360) {
+        ERR_MSG(S, "struct literal exceeds the per-fn stack-slot budget; build it through alloc() instead", 85);
+        return 0;
+    }
+    var k = 0;
+    while (k < nslots - 1) {
+        var fl = GFLC(S);
+        S64(S + 0x5D9D000 + fl * 8, 0 - 1);
+        SLDEP(S, fl, GSDEP(S));
+        SLTYPE(S, fl, 0);
+        SSLICE_W(S, fl, 0);
+        SFLC(S, fl + 1);
+        k = k + 1;
+    }
+    var named = GFLC(S);
+    S64(S + 0x5D9D000 + named * 8, 0 - 1);       # anonymous until the initialisers are parsed
+    SLDEP(S, named, GSDEP(S));
+    SLTYPE(S, named, 0);
+    SSLICE_W(S, named, 0);
+    # ⛔ 6.6.5 (review round 2) — THE SPAN MUST BE RECORDED BEFORE A SINGLE BYTE IS EMITTED.
+    # It used to land only at the bottom of this fn, after the initialisers. On the stack that
+    # is invisible; inside a coroutine it SPLIT THE VARIABLE IN HALF, because `_ECORO_AGG_OFF`
+    # reads `GLSPAN` and so answered `named` while the span was still 0 and `named-nslots+1`
+    # afterwards. Measured on a suspending `async fn`: `var p = P2{5,6}; await ...; p.x*10+p.y`
+    # returned 5 where 56 is right (6.6.4 answered 56) — and the field stores ran up to
+    # `nslots-1` slots PAST the block, over whatever local follows. `SLDEP` below overwrites
+    # the whole depth word, which is why the trailing `SLAGG` stays. CHANGELOG [6.6.5]
+    SLAGG(S, named, nslots);
+    SFLC(S, named + 1);
+    # Zero every word first: a global literal lands in .bss, so the padding of a struct whose
+    # size is not a multiple of 8 reads as zero. A frame slot holds the last call's bytes.
+    _sl_zero_slots(S, named, nslots);
+    var sv_base = _sl_base_li;
+    _sl_base_li = named;
+    _STRUCT_INIT_BODY(S, 0, sid);
+    _sl_base_li = sv_base;
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    STI(S, GTI(S) + 1);                          # consume '}'
+    S64(S + 0x5D9D000 + named * 8, noff);
+    SLDEP(S, named, GSDEP(S));
+    SLAGG(S, named, nslots);
+    SLTYPE(S, named, 0 - sid);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);                          # consume ';'
     return 0;
 }
 
@@ -1320,6 +1545,7 @@ fn PARSE_GVAR_REG(S): i64 {
     if (is_struct == 1) {
         S64(_vars_base + vcnt * 8, STRUCTSZ(S, ssid - 1));
         SVTYPE(S, vcnt, ssid);
+        SVPM(S, vcnt, 2);   # 6.6.5: INLINE — the global owns STRUCTSZ bytes
     } else {
         if (ann_float != 0) {
             # f64/f32: 8-byte slot (f64 bit pattern, or f32 bits in the low 32);
@@ -1340,7 +1566,15 @@ fn PARSE_GVAR_REG(S): i64 {
             }
         } else {
             S64(_vars_base + vcnt * 8, 8);
-            if (ann_sid > 0) { SVTYPE(S, vcnt, ann_sid); }
+            # 6.6.5 — `var G: P = <expr>;` gets ONE 8-byte slot, so the slot HOLDS an address;
+            # the literal form above owns STRUCTSZ bytes and IS the struct. Both carry the same
+            # positive SVTYPE, so nothing downstream could tell them apart and every `G.field`
+            # was emitted as `lea &G` — reading the pointer's own bytes as field 0 (measured 0
+            # where 22 is right). Record which one this is. CHANGELOG [6.6.5]
+            if (ann_sid > 0) {
+                SVTYPE(S, vcnt, ann_sid);
+                if (STRUCTSZ(S, ann_sid - 1) > 8) { SVPM(S, vcnt, 1); } else { SVPM(S, vcnt, 2); }
+            }
             elif (psc > 0) { SVTYPE(S, vcnt, 0 - psc); }
         }
     }
@@ -1574,6 +1808,19 @@ fn EMIT_GVAR_INITS(S): i64 {
 # Returns 1 when handled (caller returns), 0 to fall through. `= IDENT (` (fn-call
 # RHS) is handled by the asv paths; global-source / ≤8B / mismatched-type copies
 # fall through unchanged.
+# 6.6.5 — the GLOBAL source of `var b: T = A;`. Returns A's global slot, or -1 to fall
+# through. Gated on the recorded layout (`GVPM == 2`, the slot IS the struct) exactly as
+# `_agc_operand` and `_push_struct_addr_global` are: GVTYPE alone cannot answer it, because
+# its positive range is shared with scalar widths. CHANGELOG [6.6.5]
+var _sci_gsrc = 0 - 1;
+fn _sci_global_src(S, snoff, pscale): i64 {
+    var gvi = FINDVAR(S, snoff);
+    if (gvi < 0) { return 0 - 1; }
+    if (GVPM(S, gvi) != 2) { return 0 - 1; }
+    if (GVTYPE(S, gvi) != 0 - pscale) { return 0 - 1; }
+    return gvi;
+}
+
 fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (pscale >= 0) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
@@ -1582,8 +1829,28 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (TOKTYP(S, ci_ti) != 2) { return 0; }
     if (TOKTYP(S, ci_ti + 1) != 5) { return 0; }
     var src_li = FINDLOCAL(S, TOKVAL(S, ci_ti));
-    if (src_li < 0) { return 0; }
+    # ⛔ 6.6.5 — A GLOBAL SOURCE WAS NOT A COPY, IT WAS A CRASH. `var b: P = A;` for a
+    # top-level `var A = P { 1, 2 };` fell out of this path (FINDLOCAL fails) into the scalar
+    # init, which stored A's ADDRESS into a slot marked struct-typed — so `b.x` dereferenced
+    # a value, not an address: SIGSEGV. The sibling `_agc_operand` (parse.cyr) fixed the
+    # assignment form of the same hole; this is the declaration form. `_sci_gsrc` is the
+    # global's slot, or -1 for the local source. CHANGELOG [6.6.5]
+    _sci_gsrc = 0 - 1;
+    if (src_li < 0) {
+        var _gs = _sci_global_src(S, TOKVAL(S, ci_ti), pscale);
+        if (_gs < 0) { return 0; }
+        _sci_gsrc = _gs;
+    }
+    else {
     if (GLTYPE(S, src_li) != pscale) { return 0; }   # same struct sid as b
+    # ⛔ 6.6.5 — THE SOURCE MUST BE INLINE, OR THIS IS NOT A COPY AT ALL. This path had no
+    # layout check whatsoever: given a POINTER-mode `a` (`var a: P = mk();`) it copied a's slot
+    # plus the slots BELOW it — a's address, then a neighbouring local's value — into b, so
+    # `b.y` read 99 (the neighbour) where 22 was right. Same class as the v6.6.0 P0, on the
+    # declaration path. A pointer source now falls through to the scalar init, which binds b as
+    # a second pointer to the same struct — the C semantics of `P *b = a`. CHANGELOG [6.6.5]
+    if (GLAGG(S, src_li) == 0) { return 0; }
+    }
     # v6.5.57 — VECTORS TAKE THIS PATH TOO, and used to fall out of it. A `pscale` in the
     # descriptor band (<= -2048) is a vector, not a struct sid, so `STRUCTSZ` returned nothing
     # usable and `var B: f32v4 = src;` fell through to the scalar init — an 8-byte store, i.e.
@@ -1615,17 +1882,29 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     var named = GFLC(S);
     S64(S + 0x5D9D000 + named * 8, noff);
     SLDEP(S, named, GSDEP(S));
+    SLAGG(S, named, nslots);   # 6.6.5: copy-init allocates the destination INLINE
     # Keep the declared type verbatim: for a struct that is `0 - sid` (== pscale), for a vector
     # it is the descriptor itself. Recomputing it from a `dst_sid` that only exists on the
     # struct branch would retype every vector as struct-id 2121.
     SLTYPE(S, named, pscale);
     SFLC(S, named + 1);
-    # Word-by-word copy: a's word i (slot src_li - i) → b's word i (slot named - i).
+    # Word-by-word copy: a's word i → b's word i (slot named - i). A LOCAL source is named at
+    # its deepest slot so its word i is `src_li - i`; a GLOBAL's fields ascend from its named
+    # slot so its word i is `_sci_gsrc + i`.
+    if (_sci_gsrc >= 0) {
+        # A global source is addressed and byte-exact — its slot index is not a word index
+        # and reading `ceil(sz/8)` words would run past its neighbour. See `_agc_copy_bytes`.
+        var gnb = nslots * 8;
+        if (pscale > 0 - 2048) { gnb = STRUCTSZ(S, (0 - pscale) - 1); }
+        _agc_copy_bytes(S, named, 0 - 1, 0 - 1, _sci_gsrc, gnb);
+    }
+    else {
     var i = 0;
     while (i < nslots) {
         EFLLOAD(S, src_li - i);
         EFLSTORE(S, named - i);
         i = i + 1;
+    }
     }
     STI(S, GTI(S) + 1);   # consume '='
     STI(S, GTI(S) + 1);   # consume IDENT
@@ -2209,6 +2488,7 @@ fn PARSE_VAR(S): i64 {
         var sv_named = GFLC(S);
         S64(S + 0x5D9D000 + sv_named * 8, noff);
         SLDEP(S, sv_named, GSDEP(S));
+        SLAGG(S, sv_named, sv_nslots);   # 6.6.5: `var p: T;` is inline, at EVERY width and on every target
         SLTYPE(S, sv_named, 0 - sv_sid);
         SFLC(S, sv_named + 1);
         STI(S, GTI(S) + 1);   # consume ';'
@@ -2273,6 +2553,7 @@ fn PARSE_VAR(S): i64 {
                         var _f2c_named = GFLC(S);
                         S64(S + 0x5D9D000 + _f2c_named * 8, noff);
                         SLDEP(S, _f2c_named, GSDEP(S));
+                        SLAGG(S, _f2c_named, 2);   # 6.6.5: inline 2-slot vector receive
                         SLTYPE(S, _f2c_named, pscale);  # tag the received local f64v2(-20) or f32v4(-2121)
                         SFLC(S, _f2c_named + 1);
                         STI(S, GTI(S) + 1);  # consume '='
@@ -2362,6 +2643,7 @@ fn PARSE_VAR(S): i64 {
                         var _f4c_named = GFLC(S);
                         S64(S + 0x5D9D000 + _f4c_named * 8, noff);
                         SLDEP(S, _f4c_named, GSDEP(S));
+                        SLAGG(S, _f4c_named, 4);   # 6.6.5: inline 4-slot vector receive
                         SLTYPE(S, _f4c_named, pscale);   # -21 f64v4 / -2153 f32v8
                         SFLC(S, _f4c_named + 1);
                         STI(S, GTI(S) + 1);  # consume '='
@@ -2520,6 +2802,7 @@ fn PARSE_VAR(S): i64 {
         var asv_named = GFLC(S);
         S64(S + 0x5D9D000 + asv_named * 8, noff);
         SLDEP(S, asv_named, GSDEP(S));
+        SLAGG(S, asv_named, asv_nslots);   # 6.6.5: the retptr callee writes THROUGH these slots
         SLTYPE(S, asv_named, 0 - asv_sid);
         SFLC(S, asv_named + 1);
         # Now `got` is allocated. Parse `= IDENT(args);`.
@@ -2622,6 +2905,7 @@ fn PARSE_VAR(S): i64 {
         var asp_named = GFLC(S);
         S64(S + 0x5D9D000 + asp_named * 8, noff);
         SLDEP(S, asp_named, GSDEP(S));
+        SLAGG(S, asp_named, asp_nslots);   # 6.6.5: rax/rdx land IN these slots
         SLTYPE(S, asp_named, 0 - asp_sid);
         SFLC(S, asp_named + 1);
         # Parse `= IDENT(args);`
@@ -2716,7 +3000,22 @@ fn PARSE_VAR(S): i64 {
         var sid = FINDSTRUCT(S, sn);
         if (sid > 0) {
             if (TOKTYP(S, GTI(S) + 1) == 13) {
-                PARSE_STRUCT_INIT(S, noff, sid);
+                # 6.6.5 — an annotated `var p: T = U { .. }` must agree. Nothing checked this,
+                # so the annotation was silently ignored and `p` took U's layout under T's name.
+                # ⚠ DELIBERATELY NOT a `return` after ERR_MSG (which is not a terminator —
+                # v6.4.62 panic mode only records). The literal parser below is what CONSUMES
+                # `U { .. } ;`; returning here would leave the whole initialiser on the token
+                # stream and this declaration is also reached OUTSIDE `PARSE_STMT` (top-level
+                # pass 2), where nothing calls `_sync_skip` — so an early return trades one
+                # accurate error for a cascade of invented ones. `_had_error` already
+                # guarantees no binary is written, so parsing on with U's sid emits nothing.
+                if (pscale < 0 && pscale > 0 - 2048) {
+                    if ((0 - pscale) != sid) {
+                        ERR_MSG(S, "struct literal type does not match the declared type of this variable", 69);
+                    }
+                }
+                if (GINFN(S) == 1) { _STRUCT_LIT_LOCAL(S, noff, sid); }
+                else { PARSE_STRUCT_INIT(S, noff, sid); }
                 return 0;
             }
         }
@@ -2807,7 +3106,10 @@ fn PARSE_VAR(S): i64 {
             # High-half slot (allocated first, higher address) —
             # nameless, tracks no scope. This is where addr+8
             # lands once we install the canonical slot below.
-            S64(S + 0x5D9D000 + li * 8, 0);
+            # 6.6.5: NAME -1, not 0. Name offset 0 is the FIRST LEXED WORD of the program,
+            # and FINDLOCAL matches any slot with `sn >= 0` — so this unnamed high half
+            # resolved for that identifier inside any fn that declared a slice or u128.
+            S64(S + 0x5D9D000 + li * 8, 0 - 1);
             SLDEP(S, li, 0);
             SLTYPE(S, li, 0);
             SSLICE_W(S, li, 0);
@@ -2816,6 +3118,7 @@ fn PARSE_VAR(S): i64 {
             var li_canon = li + 1;
             S64(S + 0x5D9D000 + li_canon * 8, noff);
             SLDEP(S, li_canon, GSDEP(S));
+            SLAGG(S, li_canon, 2);   # 6.6.5: a slice / u128 is a 2-slot INLINE pair
             SLTYPE(S, li_canon, 0);
             SSLICE_W(S, li_canon, slice_elt_w);
             # Init the high half (slice .len / u128 high u64) via
@@ -2901,6 +3204,13 @@ fn PARSE_VAR(S): i64 {
             }
             # v5.8.14 §6: per-local slice element width (0 = not a slice).
             SSLICE_W(S, li, slice_elt_w);
+            # 6.6.5 — THE LAYOUT IS RECORDED HERE, AND THE ABSENCE OF THE MARK IS THE POINT.
+            # This branch produces BOTH shapes of struct-typed local and they are told apart by
+            # width, not by anything visible at the use site: a struct over 8 B initialised from
+            # an expression (`var p: P = mk();`, `var s = str_from(x);`) leaves the slot holding
+            # an ADDRESS, while one that fits in 8 B holds the value itself. Leaving the bit
+            # clear for the wide case is what stops `p.y` reading the frame instead of the heap.
+            MARK_SMALL_STRUCT(S, li, GLTYPE(S, li));
             # v6.3.35: mark a SIGNED sub-i64 scalar local with a NEGATIVE sentinel in the
             # (otherwise-0-for-scalars) slice-width table — slice-logic only checks `>0`, so
             # the sentinel is invisible to it. The load reads it to sign-extend (movsx).
@@ -2933,6 +3243,15 @@ fn PARSE_VAR(S): i64 {
         } else {
             S64(_vars_base + vcnt * 8, 8);
             if (pscale > 0) { SVTYPE(S, vcnt, 0 - pscale); }
+            # 6.6.5 — a STRUCT-annotated global declared on the PARSE_PROG path (any `var`
+            # after the first top-level statement) recorded no type at all, so `G.y` was
+            # refused with "no struct type in scope for 'G'" — a diagnostic blaming a missing
+            # include for a global the compiler had just parsed. The SIMD descriptor band
+            # (<= -2048) is excluded: it is not a struct sid. CHANGELOG [6.6.5]
+            if (pscale < 0 && pscale > 0 - 2048) {
+                SVTYPE(S, vcnt, 0 - pscale);
+                if (STRUCTSZ(S, (0 - pscale) - 1) > 8) { SVPM(S, vcnt, 1); } else { SVPM(S, vcnt, 2); }
+            }
             EVSTORE(S, vcnt);
         }
         SLVAR(S, vcnt);

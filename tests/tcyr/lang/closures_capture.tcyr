@@ -88,6 +88,89 @@ fn cap_copy_both(): i64 {
     return callptr(f, 1) + callptr(g, 1);   # (20+1) + (20+1) == 42
 }
 
+# ---- 6.6.5: AGGREGATE CAPTURE ----------------------------------------------------------
+# ⛔ A closure captured every free variable as ONE WORD. For a scalar that is right; for an
+# enclosing STACK ARRAY or STRUCT LOCAL it is not, and the two shapes failed differently:
+# `&buf` on an enclosing stack array reported "undefined variable 'buf'" (this ladder had no
+# rung for the env object at all — the capture worked while arrays were globals and stopped
+# at v6.3.13/15 when they became real locals), and `q.y` on an enclosing struct local reported
+# the same. A struct LITERAL appeared to work only because it was secretly a global, so
+# moving literals onto the frame in 6.6.5 would have broken that too. The env is now
+# `1 + sum(widths)` words and each capture copies its own width.
+#
+# Mutation: make `_cl_cap_add` record width 1 unconditionally -> cap_struct_field reads the
+# struct's FIRST word for its second field; drop the `&name` env rung -> cap_stack_array
+# fails to compile with "undefined variable".
+struct CapP { cx; cy; }
+
+fn cap_stack_array(): i64 {
+    var buf[16];
+    store64(&buf, 40);
+    var f = |a| a + load64(&buf);
+    return callptr(f, 2);
+}
+fn cap_struct_field(): i64 {
+    var q: CapP;
+    q.cx = 40; q.cy = 2;
+    var f = |a| a + q.cy;
+    return callptr(f, 40);
+}
+fn cap_struct_literal(): i64 {
+    var p = CapP { 40, 2 };
+    var f = |a| a + p.cy;
+    return callptr(f, 40);
+}
+# BY VALUE: mutating the enclosing aggregate AFTER construction must not change the closure.
+fn cap_struct_by_value(): i64 {
+    var q: CapP;
+    q.cx = 1; q.cy = 2;
+    var f = || q.cy;
+    q.cy = 999;
+    return callptr(f);
+}
+# A POINTER-mode capture stays one word and keeps pointing at the same heap struct.
+fn cap_pointer_mode(): i64 {
+    var h: CapP = alloc(16);
+    h.cx = 40; h.cy = 2;
+    var f = |a| a + h.cy;
+    return callptr(f, 40);
+}
+
+# ⛔ 6.6.5 (review round 2) — A CAPTURED INLINE AGGREGATE DISPATCHES ITS OPERATOR OVERLOAD.
+# Once `var a = CapS{..}` became a frame local, `|x| a + x` stopped reaching the enclosing-local
+# rung (which sets the expression's struct type) and reached the CAPTURE rung, which did not —
+# so it compiled to an INTEGER ADD of the captured word and answered 3 where 102 is right, and
+# with the operator fn DELETED it compiled clean where 6.6.4 refused the program. The
+# single-word capture is passed BY VALUE and the two-word one BY ADDRESS, matching what the
+# enclosing-local and global rungs already do.
+# ⚠ The expected values are built from the operands by the operator fns themselves, and each
+# subject is asserted EQUAL to a non-closure control written the same way — a build that stops
+# dispatching everywhere fails the control too, and cannot be mistaken for this fix.
+struct CapS { sv; }
+struct CapV { vx; vy; }
+fn CapS_add(a, b) { return 100 + a + b; }
+fn CapV_add(a, b) { return load64(a) * 10 + load64(a + 8) + load64(b) * 100 + load64(b + 8) * 1000; }
+fn cap_op_small(): i64 {
+    var a = CapS { 1 };
+    var f = |x| a + x;
+    return callptr(f, 1);
+}
+fn ctrl_op_small(): i64 {
+    var a = CapS { 1 };
+    return a + 1;
+}
+fn cap_op_multiword(): i64 {
+    var p = CapV { 1, 2 };
+    var q = CapV { 3, 4 };
+    var f = || p + q;
+    return callptr(f);
+}
+fn ctrl_op_multiword(): i64 {
+    var p = CapV { 1, 2 };
+    var q = CapV { 3, 4 };
+    return p + q;
+}
+
 # ---- top-level statements ----
 alloc_init();
 
@@ -105,5 +188,19 @@ assert_eq(cap_two_closures(), 42, "two independent capturing closures == 42");
 test_group("closure copied to another local (v6.3.36)");
 assert_eq(cap_copy_to_local(), 42, "var g = f; callptr(g,2): copied closure dispatches == 42");
 assert_eq(cap_copy_both(), 42, "f and g alias same env: callptr(f,1)+callptr(g,1) == 42");
+
+test_group("aggregate capture by value (6.6.5)");
+assert_eq(cap_stack_array(), 42, "&buf on an enclosing STACK ARRAY resolves through the env");
+assert_eq(cap_struct_field(), 42, "q.cy on an enclosing typed struct local");
+assert_eq(cap_struct_literal(), 42, "p.cy on an enclosing struct LITERAL local");
+assert_eq(cap_struct_by_value(), 2, "the captured struct is a COPY: a later write does not reach it");
+assert_eq(cap_pointer_mode(), 42, "a pointer-mode struct capture stays one word");
+assert_eq(cap_struct_field(), cap_struct_literal(), "typed local and literal agree");
+
+test_group("captured aggregate operator dispatch (6.6.5)");
+assert_eq(cap_op_small(), 102, "|x| a + x on a captured 8 B struct calls CapS_add");
+assert_eq(cap_op_small(), ctrl_op_small(), "captured and non-captured agree (single word)");
+assert_eq(cap_op_multiword(), 4312, "|| p + q on two captured 16 B structs calls CapV_add");
+assert_eq(cap_op_multiword(), ctrl_op_multiword(), "captured and non-captured agree (multi-word)");
 
 var r = assert_summary();

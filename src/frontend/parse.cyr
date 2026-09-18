@@ -585,7 +585,91 @@ var _cl_snap = 0;
 var _cl_snap_n = 0;
 var _cl_nshadow = 0;
 var _cl_env_lidx = 0;
+# ⛔ 6.6.5 — A fn-LOCAL STATIC ARRAY IS NOT A PROGRAM-WIDE GLOBAL NAME.
+#
+# An array local over the per-fn frame budget (or any array under CYRIUS_STACK_ARRAYS=0)
+# falls back to shared static storage, and it used to be registered with an ORDINARY GLOBAL
+# NAME. FINDVAR is one flat last-match table over every file, so `fn f() { var big[200000]; }`
+# in one file captured every later reference to `big` anywhere in the program — returning 7
+# where 3 is right, silently. v6.6.4 additionally stamped it with the declaring file's
+# visibility, which turned the same collision into an error naming the CONSUMER's variable.
+# It was also invisible to FINDLOCAL, so an outer LOCAL of the same name shadowed it inside
+# its own fn and `&big` wrote into that scalar.
+#
+# The STORAGE stays static (raising the budget is a heap-layout change, and the two
+# consumers over it bank their buffers on purpose) — only the NAME is scoped: the slot is
+# marked dead when its block closes, and an enclosing local it shadows is hidden for the
+# duration and restored after. The note it used to print is now a WARNING that says the
+# storage is static and shared across calls and threads, because that is the part a caller
+# has to know. CHANGELOG [6.6.5]
+# ⛔ THE OVERFLOW IS A DIAGNOSTIC, NOT A `return 0`. The first cut of this table was 64 deep
+# and opened `if (_fs_n >= 64) { return 0; }` — so the 65th fn-local static in one body got
+# NEITHER the new scoping NOR the v6.6.4 `_GVAR_VIS` stamp the else-arm applies, i.e. it
+# silently reverted to the exact 6.6.3 shape this release removes, in a `private` file as a
+# program-wide PUBLIC global. Measured with `CYRIUS_STACK_ARRAYS=0` (where every array local
+# is static, so the cap is reachable): N=64 answered 3, N=65 answered 64. A fail-open guard
+# on the defect under repair is the defect. The bound is 256 and hitting it stops the compile.
+# The gate derives this number from the declaration below rather than quoting it.
+# CHANGELOG [6.6.5]
+var _fs_n = 0;
+var _fs_floor = 0;
+var _fs_vi[256];
+var _fs_dep[256];
+var _fs_hidli[256];
+var _fs_hidnm[256];
+fn _fs_push(S, vi, noff): i64 {
+    if (_fs_n >= 256) {
+        ERR_MSG(S, "too many static array locals in one fn (limit 256); move some to top level", 74);
+        return 0;
+    }
+    S64(&_fs_vi + _fs_n * 8, vi);
+    S64(&_fs_dep + _fs_n * 8, GSDEP(S));
+    var _fh = FINDLOCAL(S, noff);
+    S64(&_fs_hidli + _fs_n * 8, _fh);
+    if (_fh >= 0) {
+        S64(&_fs_hidnm + _fs_n * 8, L64(S + 0x5D9D000 + _fh * 8));
+        S64(S + 0x5D9D000 + _fh * 8, 0 - 1);
+    }
+    _fs_n = _fs_n + 1;
+    return 0;
+}
+fn _fs_kill(S, k): i64 {
+    SVDEAD(S, L64(&_fs_vi + k * 8), 1);
+    var _fh = L64(&_fs_hidli + k * 8);
+    if (_fh >= 0) { S64(S + 0x5D9D000 + _fh * 8, L64(&_fs_hidnm + k * 8)); }
+    return 0;
+}
+# Close every fn-static whose block depth is >= `dep`, never crossing into the enclosing
+# fn's entries (`_fs_floor` is the current fn/closure body's mark).
+fn _fs_pop(S, dep): i64 {
+    var go = 1;
+    while (go == 1) {
+        if (_fs_n <= _fs_floor) { go = 0; }
+        else {
+            var k = _fs_n - 1;
+            if (L64(&_fs_dep + k * 8) < dep) { go = 0; }
+            else { _fs_kill(S, k); _fs_n = k; }
+        }
+    }
+    return 0;
+}
+fn _fs_popto(S, mark): i64 {
+    while (_fs_n > mark) {
+        var k = _fs_n - 1;
+        _fs_kill(S, k);
+        _fs_n = k;
+    }
+    return 0;
+}
+
 var _cl_cap_slots[64];
+# 6.6.5 — the WORD COUNT of each capture. A closure captured every free variable as ONE
+# word, which is right for a scalar and wrong for an aggregate: an enclosing struct local or
+# stack array is `n` words, and the closure body addresses its fields relative to the base.
+# With one word copied, the body either read a single word as if it were the whole struct or
+# (once struct literals became real locals) failed to resolve the name at all. The env is now
+# `1 + sum(widths)` words and each capture copies its own width.
+var _cl_cap_w[64];
 var _cl_shadow[64];
 # v5.5.36 Phase 2b — nonzero (= 8) when the current fn returns a
 # struct by value. Reserves one 8-byte frame slot for the hidden
@@ -1014,6 +1098,48 @@ fn _sw_tbl_reg(S, table_cp, nent): i64 {
     return 0;
 }
 
+# ⛔ 6.6.5 — A COMPILER-GENERATED TEMPORARY IS NOT A GLOBAL.
+#
+# `switch`, `match`, both `?` lowerings and `for ... in` each stashed their subject in a
+# GLOBAL slot registered at GVCNT with NAME OFFSET 0. Three consequences, all silent:
+#   * RECURSION reloaded the outer call's value. `rec(n)` through a range `for` returned 63
+#     where 255 is right; a `match` re-entered from an arm pattern returned 1 for 30.
+#   * THREADS shared one word. A chain-path `switch` across 8 threads exited non-zero on
+#     every run.
+#   * NAME OFFSET 0 IS THE FIRST LEXED WORD of the program (the lexer resets NPOS to 0), so
+#     FINDVAR — a flat last-match table — RETURNED THESE SLOTS for that identifier. Measured:
+#     `&setup` changed value after a fn containing a `switch` was parsed between two uses.
+#
+# Inside a fn they are anonymous FRAME slots, which makes them per call and per thread. At
+# top level they stay global and are marked dead so FINDVAR skips them. The handle is the
+# slot index for a frame slot and `-2 - vi` for a global, so callers use `_HTSTORE`/`_HTLOAD`
+# and never care which. CHANGELOG [6.6.5]
+fn _HTEMP(S): i64 {
+    if (GINFN(S) == 1) {
+        var _hli = GFLC(S);
+        S64(S + 0x5D9D000 + _hli * 8, 0 - 1);
+        SLDEP(S, _hli, 0);
+        SLTYPE(S, _hli, 0);
+        SSLICE_W(S, _hli, 0);
+        SFLC(S, _hli + 1);
+        return _hli;
+    }
+    var _hvi = GVCNT(S);
+    S64(_varn_base + _hvi * 8, 0);
+    S64(_vars_base + _hvi * 8, 8);
+    SVDEAD(S, _hvi, 1);
+    SVCNT(S, _hvi + 1);
+    return 0 - 2 - _hvi;
+}
+fn _HTSTORE(S, h): i64 {
+    if (h >= 0) { EFLSTORE(S, h); } else { EVSTORE(S, 0 - 2 - h); }
+    return 0;
+}
+fn _HTLOAD(S, h): i64 {
+    if (h >= 0) { EFLLOAD(S, h); } else { EVLOAD(S, 0 - 2 - h); }
+    return 0;
+}
+
 fn PARSE_SWITCH(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
@@ -1094,11 +1220,8 @@ fn PARSE_SWITCH(S): i64 {
     if (_AARCH64_BACKEND == 1) { use_table = 0; }
     if (_TARGET_CX == 1) { use_table = 0; }
     # Allocate hidden global to hold switch value
-    var swidx = GVCNT(S);
-    S64(_varn_base + swidx * 8, 0);
-    S64(_vars_base + swidx * 8, 8);
-    SVCNT(S, swidx + 1);
-    EVSTORE(S, swidx);
+    var swidx = _HTEMP(S);
+    _HTSTORE(S, swidx);
     # v6.5.20: own the `break` chain for the duration of the case bodies so a
     # `break` inside a case leaves the SWITCH (C semantics), not the enclosing
     # loop. `continue` is a separate chain (0x18F898/0x18F8A0) and is deliberately
@@ -1207,7 +1330,7 @@ fn PARSE_SWITCH(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
                 STI(S, GTI(S) + 1);
-                EVLOAD(S, swidx);
+                _HTLOAD(S, swidx);
                 EPUSHR(S);
                 EMOVI(S, val);
                 EMOVCA(S);
@@ -1264,11 +1387,8 @@ fn PARSE_MATCH(S): i64 {
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);
     # Store match value in hidden temp var
-    var midx = GVCNT(S);
-    S64(_varn_base + midx * 8, 0);
-    S64(_vars_base + midx * 8, 8);
-    SVCNT(S, midx + 1);
-    EVSTORE(S, midx);
+    var midx = _HTEMP(S);
+    _HTSTORE(S, midx);
     # v6.5.20: `break` inside a match arm leaves the MATCH — same chain protocol
     # as PARSE_SWITCH / PARSE_WHILE. Untouched before this, so it either broke the
     # enclosing loop or left an unpatched wild jump. CHANGELOG [6.5.20]
@@ -1388,7 +1508,7 @@ fn PARSE_MATCH(S): i64 {
                     }
                 }
                 # val => { stmts }
-                EVLOAD(S, midx);
+                _HTLOAD(S, midx);
                 EPUSHR(S);
                 PCMPE(S);
                 EMOVCA(S);
@@ -1491,25 +1611,67 @@ fn _EVAL_CONST_ATOM(S): i64 {
 # enclosing block/PROG loop from spinning if a statement made no progress; the
 # PEEKT watchdog is the deeper backstop for loops that never return here. On VALID
 # input _panic is never set and every statement advances → pure pass-through (byte-id).
+# 6.6.5 — ONE OPERAND of `dst = src` between aggregates, resolved to its recorded layout.
+# Fills `_agc_li` (a LOCAL's named slot) or `_agc_gvi` (a GLOBAL's slot) plus `_agc_t` (the
+# type, normalised to the local `0 - sid` convention), and returns the SLOT SPAN — 0 when
+# this name is not an inline aggregate, so the caller falls through to the 8-byte store.
+# ⚠ THE TWO FRAMES COUNT IN OPPOSITE DIRECTIONS and the emit loop below is the only place
+# that has to know: a local aggregate is named at its DEEPEST slot, so its word k is slot
+# `li - k`; a global's fields ascend from its named slot (`EVADDR(gvi) + off`), so its word k
+# is slot `gvi + k`. CHANGELOG [6.6.5]
+var _agc_li = 0 - 1;
+var _agc_gvi = 0 - 1;
+var _agc_t = 0;
+fn _agc_operand(S, onoff): i64 {
+    _agc_li = 0 - 1;
+    _agc_gvi = 0 - 1;
+    _agc_t = 0;
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, onoff);
+        if (li >= 0) {
+            if (GLAGG(S, li) == 0) { return 0; }
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0; }
+            _agc_li = li;
+            _agc_t = lt;
+            var ln = AGG_NSLOTS(S, lt);
+            return ln;
+        }
+    }
+    var gvi = FINDVAR(S, onoff);
+    if (gvi < 0) { return 0; }
+    # 2 == the slot IS the struct. 1 == it holds an address (a pointer copy is an 8-byte
+    # store, which is what falling through gives), 0 == not a recorded aggregate. GVTYPE's
+    # positive range is shared with scalar widths, so it is never the gate.
+    if (GVPM(S, gvi) != 2) { return 0; }
+    var gt = GVTYPE(S, gvi);
+    if (gt <= 0) { return 0; }
+    _agc_gvi = gvi;
+    _agc_t = 0 - gt;
+    var gn = AGG_NSLOTS(S, 0 - gt);
+    return gn;
+}
+
 fn _try_aggregate_copy_assign(S, noff): i64 {
-    if (GINFN(S) != 1) { return 0; }
     if (PEEKT(S) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 5) { return 0; }
-    var dst_li = FINDLOCAL(S, noff);
-    if (dst_li < 0) { return 0; }
-    var src_li = FINDLOCAL(S, TOKVAL(S, GTI(S)));
-    if (src_li < 0) { return 0; }
-    var lt = GLTYPE(S, dst_li);
-    if (lt >= 0) { return 0; }
-    if (GLTYPE(S, src_li) != lt) { return 0; }
-    var nslots = 0;
-    if (_vec_desc(S, lt) == 1) { nslots = GVEC_NSLOTS(S); }
-    else {
-        var sz = STRUCTSZ(S, (0 - lt) - 1);
-        if (sz <= 8) { return 0; }
-        nslots = ((sz + 7) & (0 - 8)) / 8;
-    }
+    # ⛔ 6.6.5 — THIS USED TO OPEN `if (GINFN(S) != 1) return 0;` AND THEN `FINDLOCAL` BOTH
+    # SIDES, so no global could ever reach it and `B = A` between two inline struct GLOBALS
+    # copied EIGHT BYTES — the whole struct's first word, silently, at top level and inside a
+    # fn alike (measured: `var A = P{1,2}; var B = P{3,4}; B = A;` left `B.y` at 4). The same
+    # hole covered `B = p` and `q = A`. Once the LOCAL side was tightened onto the recorded
+    # layout, the two answered the same assignment differently, which is worse than both being
+    # wrong. Every combination now goes through `_agc_operand`. CHANGELOG [6.6.5]
+    var nslots = _agc_operand(S, noff);
     if (nslots <= 1) { return 0; }
+    var dst_li = _agc_li;
+    var dst_gv = _agc_gvi;
+    var lt = _agc_t;
+    var snslots = _agc_operand(S, TOKVAL(S, GTI(S)));
+    if (snslots != nslots) { return 0; }
+    if (_agc_t != lt) { return 0; }
+    var src_li = _agc_li;
+    var src_gv = _agc_gvi;
     # ⛔ v6.6.1 — A NEGATIVE GLTYPE DOES NOT MEAN "INLINE AGGREGATE", AND ASSUMING IT DID SHIPPED
     # A SILENT MISCOMPILE IN v6.5.57. Two different layouts share the same negative type marker:
     #   var b: P = a;        -> INLINE: ceil(STRUCTSZ/8) slots, anonymous fillers (name -1) below
@@ -1523,17 +1685,24 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
     # parameter overwritten with a pointer mid-loop, so `for (i = 0; i <= len; ...)` walked off
     # the buffer into the process stack and SIGSEGV'd. Live in every release from v6.5.57.
     #
-    # ⭐ THE DISCRIMINATOR IS THE FILLER SENTINEL, not the type: an inline aggregate OWNS the
-    # slots below its named one and they carry name -1. A pointer-mode local does not — the slot
-    # below it belongs to a different variable. Require the fillers on BOTH sides before copying
-    # anything; otherwise fall through to the ordinary one-slot assignment.
-    var ac_k = 1;
-    while (ac_k < nslots) {
-        if (dst_li - ac_k < 0) { return 0; }
-        if (src_li - ac_k < 0) { return 0; }
-        if (L64(S + 0x5D9D000 + (dst_li - ac_k) * 8) != 0 - 1) { return 0; }
-        if (L64(S + 0x5D9D000 + (src_li - ac_k) * 8) != 0 - 1) { return 0; }
-        ac_k = ac_k + 1;
+    # ⭐ THE DISCRIMINATOR IS THE RECORDED LAYOUT. v6.6.1 used the FILLER SENTINEL for this —
+    # "an inline aggregate owns the slots below its named one and they carry name -1" — which
+    # closed the reported shape and left the converse open: SCOPE_POP names the locals of a
+    # CLOSED BLOCK -1 too, so two pointer-mode struct locals separated by an `if { var t; }`
+    # passed the filler test and this copied STRUCTSZ/8 slots over their neighbours anyway.
+    # Measured: an unreached `defer` ran, because the copy landed on its runtime flag.
+    # 6.6.5 asks the bit that registration set (inside `_agc_operand`). CHANGELOG [6.6.5]
+    if (dst_li >= 0) { if (dst_li - nslots + 1 < 0) { return 0; } }
+    if (src_li >= 0) { if (src_li - nslots + 1 < 0) { return 0; } }
+    if (dst_gv >= 0 || src_gv >= 0) {
+        # A global on either side: byte-exact, addressed. See `_agc_copy_bytes`.
+        var nb = nslots * 8;
+        if (lt < 0) { if (lt > 0 - 2048) { nb = STRUCTSZ(S, (0 - lt) - 1); } }
+        _agc_copy_bytes(S, dst_li, dst_gv, src_li, src_gv, nb);
+        if (dst_gv >= 0) { SLVAR(S, dst_gv); }
+        STI(S, GTI(S) + 1);
+        STI(S, GTI(S) + 1);
+        return 1;
     }
     var i = 0;
     while (i < nslots) {
@@ -1687,13 +1856,21 @@ fn _PARSE_STMT_IMPL(S): i64 {
         # address (`lea [rbp-disp]`) instead of the global `EVADDR`. Off (legacy global
         # array) keeps the original VCNT/`_vars_base`/`EVADDR` path byte-identical.
         var s_name = TOKVAL(S, GTI(S) + 1);   # the array's name token (after `var`)
-        var s_stack = _ensure_stack_arrays(S);
         var s_flc_pre = GFLC(S);
         var vcnt_pre = GVCNT(S);
         PARSE_VAR(S);
         var sidx = 0;
         var ssz = 0;
         var s_lidx = 0;
+        # 6.6.5 — ASK WHERE THE ARRAY ACTUALLY WENT, not whether stack arrays are enabled.
+        # An array over the per-fn budget falls back to static storage even with the flag on,
+        # so the flag said "local", FINDLOCAL found nothing, and a perfectly good
+        # `secret var buf[200000];` was refused with "secret requires array declaration".
+        # Worse, with an outer local of the same name in scope FINDLOCAL DID find something
+        # and the zeroise ran against the wrong storage — the buffer was never cleared, which
+        # is the one thing `secret` exists to guarantee. The slot-count delta is the fact.
+        var s_stack = 0;
+        if (GFLC(S) > s_flc_pre) { s_stack = 1; }
         if (s_stack == 1) {
             s_lidx = FINDLOCAL(S, s_name);
             if (s_lidx < 0) {
@@ -1710,7 +1887,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         # Flag local (initialized to 0 in prologue; set to 1 when this
         # declaration is reached at runtime).
         var sflag = GFLC(S);
-        S64(S + 0x5D9D000 + sflag * 8, 0);
+        S64(S + 0x5D9D000 + sflag * 8, 0 - 1);   # 6.6.5: anonymous — name 0 is the first lexed word
         SLDEP(S, sflag, GSDEP(S));
         SLTYPE(S, sflag, 0);
         SFLC(S, sflag + 1);
@@ -1815,6 +1992,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         var stk_named = GFLC(S);
         S64(S + 0x5D9D000 + stk_named * 8, stk_noff);
         SLDEP(S, stk_named, GSDEP(S));
+        SLAGG(S, stk_named, stk_nslots);   # 6.6.5: the slots ARE the buffer
         SLTYPE(S, stk_named, 0);
         SFLC(S, stk_named + 1);
         return 0;
@@ -1856,7 +2034,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
         # Allocate hidden local for defer flag (initialized to 0 in prologue)
         var dflag = GFLC(S);
-        S64(S + 0x5D9D000 + dflag * 8, 0);
+        S64(S + 0x5D9D000 + dflag * 8, 0 - 1);   # 6.6.5: anonymous — name 0 is the first lexed word
         SLDEP(S, dflag, GSDEP(S));
         SLTYPE(S, dflag, 0);
         SFLC(S, dflag + 1);
@@ -2081,39 +2259,31 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # propagating out of the enclosing fn means RETURNING a pair, so restoring only
                 # rax would hand the caller a correct tag with a stale payload.
                 if (_qs_pair == 1) {
-                    var qstag = GVCNT(S);
-                    S64(_varn_base + qstag * 8, 0);
-                    S64(_vars_base + qstag * 8, 8);
-                    var qsval = qstag + 1;
-                    S64(_varn_base + qsval * 8, 0);
-                    S64(_vars_base + qsval * 8, 8);
-                    SVCNT(S, qsval + 1);
-                    EVSTORE(S, qstag);            # tag (rax as returned)
+                    var qstag = _HTEMP(S);
+                    var qsval = _HTEMP(S);
+                    _HTSTORE(S, qstag);           # tag (rax as returned)
                     EMOVRA_RDX(S);                # rax = rdx = payload
-                    EVSTORE(S, qsval);
-                    EVLOAD(S, qstag);
+                    _HTSTORE(S, qsval);
+                    _HTLOAD(S, qstag);
                     EPUSHR(S);
                     EMOVI(S, 0);
                     EMOVCA(S);                    # rcx = 0 (Ok)
                     EPOPR(S);                     # rax = tag
                     ECMPR(S);
                     var qspj = EJCC(S, 0x84);     # JE -> Ok, skip the propagate
-                    EVLOAD(S, qsval);
+                    _HTLOAD(S, qsval);
                     EMOVRDXRAX(S);                # rdx = payload
-                    EVLOAD(S, qstag);             # rax = tag
+                    _HTLOAD(S, qstag);            # rax = tag
                     var qsprp = EJMP0(S);
                     vec_push(rp_vec, qsprp);
                     EPATCH(S, qspj);
-                    EVLOAD(S, qsval);             # Ok path: rax = payload (dropped by the
+                    _HTLOAD(S, qsval);            # Ok path: rax = payload (dropped by the
                                                   # bare-statement convention)
                     if (_cur_fn_ix >= 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
                 } else {
-                var qsidx = GVCNT(S);
-                S64(_varn_base + qsidx * 8, 0);
-                S64(_vars_base + qsidx * 8, 8);
-                SVCNT(S, qsidx + 1);
-                EVSTORE(S, qsidx);
-                EVLOAD(S, qsidx);
+                var qsidx = _HTEMP(S);
+                _HTSTORE(S, qsidx);
+                _HTLOAD(S, qsidx);
                 ELOAD64(S);
                 EPUSHR(S);
                 EMOVI(S, 0);
@@ -2121,11 +2291,11 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 EPOPR(S);
                 ECMPR(S);
                 var qsjcc = EJCC(S, 0x84);
-                EVLOAD(S, qsidx);
+                _HTLOAD(S, qsidx);
                 var qsrp = EJMP0(S);
                 vec_push(rp_vec, qsrp);
                 EPATCH(S, qsjcc);
-                EVLOAD(S, qsidx);
+                _HTLOAD(S, qsidx);
                 EPUSHR(S);
                 EMOVI(S, 8);
                 EMOVCA(S);

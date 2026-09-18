@@ -257,6 +257,33 @@ fn STRUCTSZ(S, si): i64 {
     return sz;
 }
 
+# 6.6.5 — how many 8-byte frame slots an aggregate SLTYPE spans. `t` is the local's
+# type marker: `0 - sid` for a struct, a descriptor-band sentinel (<= -2048) for a
+# vector. Returns 1 for anything that is not a multi-word aggregate, so callers can use
+# the count unconditionally. One definition, so the picker, the copy paths and the
+# literal allocator cannot disagree about a struct's width. CHANGELOG [6.6.5]
+fn AGG_NSLOTS(S, t): i64 {
+    if (t >= 0) { return 1; }
+    if (_vec_desc(S, t) == 1) { return GVEC_NSLOTS(S); }
+    var sz = STRUCTSZ(S, (0 - t) - 1);
+    if (sz <= 8) { return 1; }
+    return ((sz + 7) & (0 - 8)) / 8;
+}
+
+# 6.6.5 — a struct that fits in ONE 8-byte slot is held BY VALUE, on every target. This
+# is the ABI policy that used to live inside `_resolve_field_base_addr` as an inline
+# `if (_TARGET_CX == 0) { if (STRUCTSZ <= 8) ... }` guess; recording it at registration
+# is what lets cx answer it the same way as x86 and aarch64. Before this, cx skipped the
+# rule entirely, so two `var b: B1;` single-field locals both dereferenced their own
+# uninitialised slot and ALIASED each other (measured 2 where 43 is right).
+fn MARK_SMALL_STRUCT(S, li, t): i64 {
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }        # SIMD descriptor band — not a struct sid
+    if (STRUCTSZ(S, (0 - t) - 1) > 8) { return 0; }
+    SLAGG(S, li, 1);
+    return 0;
+}
+
 # Get byte offset of field fi within struct/union si
 fn FIELDOFF(S, si, fi): i64 {
     if (ISUNION(S, si) == 1) { return 0; }
@@ -767,7 +794,17 @@ fn FINDVAR(S, noff): i64 {
     var vi = vcnt - 1;
     while (vi >= 0) {
         var stored = L64(_varn_base + vi * 8);
-        if (STREQ(S, stored, noff) == 1) {
+        # 6.6.5: a compiler-generated global temporary (top-level `switch` / `match` / `?` /
+        # `for ... in`) is registered with NAME OFFSET 0, which is the FIRST LEXED WORD of the
+        # program — so this loop RETURNED those slots for that identifier and `&setup` changed
+        # meaning after an intervening `switch`. They are marked dead at registration and
+        # skipped here; inside a fn they are anonymous frame slots and never reach this table.
+        # ⚠ ORDER MATTERS FOR SPEED, NOT FOR MEANING. `GVDEAD` is a call plus a load on EVERY
+        # candidate; `STREQ` fails on the first byte for almost all of them. Testing the name
+        # first and the dead flag only on a match is identical semantically (a dead slot is
+        # still skipped) and measured ~4 % of the whole self-compile: this loop is the hottest
+        # in the front end. CHANGELOG [6.6.5]
+        if (STREQ(S, stored, noff) == 1) { if (GVDEAD(S, vi) == 0) {
             # v6.5.0 Phase 2b — the cross-file `private` check for GLOBAL vars lives
             # HERE, inside the single resolver, rather than being wired at each call
             # site. FINDVAR is pure lookup and every global reference goes through it,
@@ -776,12 +813,14 @@ fn FINDVAR(S, noff): i64 {
             # path was silently unenforced until a gate caught it.
             #
             # Locals need no special case: frame locals are never stamped, so GVFI reads 0
-            # and this falls straight through. ⚠ A fn-local STRUCT LITERAL and an oversized /
-            # opted-out array local are GLOBAL slots (pre-existing), and since v6.6.4 they
-            # ARE stamped — see issues/2026-09-13-fn-local-global-slots-shadow-other-files.md.
+            # and this falls straight through. 6.6.5: a fn-local STRUCT LITERAL is now a frame
+            # object and never reaches this table at all, and a fn-local STATIC array (over the
+            # frame budget, or under CYRIUS_STACK_ARRAYS=0) is scoped like a local and marked
+            # dead when its block closes, so it is skipped above rather than stamped. Neither
+            # can shadow another file's global any more.
             _vis_check_var(S, vi, noff);
             return vi;
-        }
+        } }
         vi = vi - 1;
     }
     return 0 - 1;

@@ -894,10 +894,38 @@ fn EPOPR8(S): i64 { CX_EMIT(S, 129, 6, 0, 0); return 0; }
 fn EPOPR9(S): i64 { CX_EMIT(S, 129, 7, 0, 0); return 0; }
 fn EXORAA(S): i64 { CX_MOVI(S, 0, 0); return 0; }
 
-# Width-aware variants (stub — treat all as 64-bit for now)
-fn EVLOAD_W(S, idx, width): i64 { EVLOAD(S, idx); return 0; }
+# ⛔ 6.6.5 — THE WIDTH-AWARE LOADS WERE 64-BIT STUBS, WHICH IS A WRONG VALUE, NOT A GAP.
+# Every other backend narrows an `i8`/`i16`/`i32` load to its declared width and SIGN-EXTENDS
+# it when the declaration is signed (x86 `_EMIT_NLOAD_RCX`, the aarch64 ldrsb/ldrsh/ldrsw
+# arms). cx returned all 64 bits, so a signed narrow local or struct field compared EXACTLY
+# against a negative literal passed on x86 and aarch64 and FAILED on cx — the same source,
+# two answers. The convention is the shared one: `width` is the byte count and a NEGATIVE
+# width means signed. cx has no sized load for a global or a local, so the value arrives wide
+# and is normalised here — shl + asr for signed, a mask for unsigned. CHANGELOG [6.6.5]
+fn _cx_width_mask(aw): i64 {
+    if (aw == 1) { return 0xFF; }
+    if (aw == 2) { return 0xFFFF; }
+    return 0xFFFFFFFF;
+}
+fn _CX_NARROW(S, width): i64 {
+    var aw = width;
+    if (aw < 0) { aw = 0 - aw; }
+    if (aw != 1) { if (aw != 2) { if (aw != 4) { return 0; } } }
+    if (width < 0) {
+        var sh = 64 - aw * 8;
+        CX_MOVI(S, 1, sh);
+        ESHLCL(S);
+        CX_MOVI(S, 1, sh);
+        EASHRCL(S);
+        return 0;
+    }
+    CX_MOVI(S, 1, _cx_width_mask(aw));
+    EANDR(S);
+    return 0;
+}
+fn EVLOAD_W(S, idx, width): i64 { EVLOAD(S, idx); _CX_NARROW(S, width); return 0; }
 fn EVSTORE_W(S, idx, width): i64 { EVSTORE(S, idx); return 0; }
-fn EFLLOAD_W(S, idx, width): i64 { EFLLOAD(S, idx); return 0; }
+fn EFLLOAD_W(S, idx, width): i64 { EFLLOAD(S, idx); _CX_NARROW(S, width); return 0; }
 fn EFLSTORE_W(S, idx, width): i64 { EFLSTORE(S, idx); return 0; }
 
 # v5.9.40 — sub-byte struct field load (parse_decl.cyr:252).
@@ -906,10 +934,17 @@ fn EFLSTORE_W(S, idx, width): i64 { EFLSTORE(S, idx); return 0; }
 # movzx rax/movzx eax/mov eax dispatch, with cx using the new
 # 0x44/0x45 cxvm opcodes added this slot.
 fn EFIELD_LOAD_W(S, width): i64 {
-    if (width == 1) { CX_EMIT(S, 64, 0, 1, 0); return 0; }
-    if (width == 2) { CX_EMIT(S, 68, 0, 1, 0); return 0; }
-    if (width == 4) { CX_EMIT(S, 69, 0, 1, 0); return 0; }
-    ELODC(S);
+    # 6.6.5: a NEGATIVE width is a SIGNED field. The three sized cxvm loads zero-extend, so
+    # the signed case needs the shl/asr pair after them; this ladder used to test `width == 1`
+    # and friends, which no negative width ever matched, so a signed narrow field fell all the
+    # way through to the 64-bit `ELODC`.
+    var aw = width;
+    if (aw < 0) { aw = 0 - aw; }
+    if (aw == 1) { CX_EMIT(S, 64, 0, 1, 0); }
+    elif (aw == 2) { CX_EMIT(S, 68, 0, 1, 0); }
+    elif (aw == 4) { CX_EMIT(S, 69, 0, 1, 0); }
+    else { ELODC(S); return 0; }
+    if (width < 0) { _CX_NARROW(S, width); }
     return 0;
 }
 

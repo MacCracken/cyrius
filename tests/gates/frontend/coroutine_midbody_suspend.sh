@@ -274,5 +274,145 @@ chmod +x "$T/a8"; timeout 30 "$T/a8"; g8=$?
   echo "  arity while 60/70/80 (the 6-param async and the PLAIN fns) would have been correct."
   exit 1; }
 
-echo "PASS coroutine_midbody_suspend: mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · no-await async fns bit-identical"
+# ── axis 9 — THE ADDRESS OF A STRUCT LOCAL IN A COROUTINE (6.6.5) ────────────────────────
+# ⛔ `EFLADDR` / `EFLADDR_X1` emitted `lea rN, [rbp - disp]` unconditionally, so every
+# struct-field access and every method `self` inside a suspending `async fn` addressed THE
+# STACK FRAME — the one thing a coroutine does not keep across a suspend. It read as correct
+# for years only because the resumed frame usually lands back on the same bytes.
+# ⛔ AND THE FIRST CUT OF THE FIX SPLIT ONE VARIABLE IN HALF: `EFLADDR_X1` learned the heap
+# frame while `ELOAD_LOCAL_ADDR` (the `&name` path) kept the stack form, because v6.5.70 had
+# guarded its recovery on `_cur_fn_regalloc == 0` — a condition that is NEVER true in an
+# `async fn` body (it reserves the five callee-saved slots like any other fn), so that
+# recovery had never once fired. The store went to `r11+off` and the read to `rbp-disp`:
+# `peek(&q)` answered 0 where 11 was right. Hence `&q` AND `q.v` in the SAME assertion.
+#
+# ⭐ `trash()` IS LOAD-BEARING. Without a stack-destroying recursion between the forces, the
+# resumed frame still holds the right bytes and the STACK form passes — the same false-green
+# shape axis 1 exists for. ⭐ TWO INSTANCES SEEDED DIFFERENTLY, interleaved, so a shared or
+# aliased slot shows up as one answering the other's value. ⭐ EXPECTED VALUES COME FROM
+# NON-ASYNC CONTROL FNS with identical bodies, never from a constant written here.
+#
+# MUTATION LEDGER (each rebuilt to the self-host fixpoint and measured):
+#   * the 6.6.4 compiler                          -> exit 91 (the single-slot `&q` leg).
+#   * remove the two `_ECORO_LEA` call sites      -> exit 91 (the split, the other way round:
+#     the field store goes to the stack while `&q` reaches the heap frame).
+#   * restore v6.5.70's `_cur_fn_regalloc == 0` guard on ELOAD_LOCAL_ADDR's recovery
+#                                                 -> exit 91 (the split as shipped in the
+#     first cut of this bite).
+#   * refuse span > 1 instead of recovering it    -> axis 9 FAILS TO COMPILE, which is how the
+#     refusal was caught as a capability regression: 6.6.4 compiled `two`/`pre` and answered
+#     correctly, so a diagnostic there takes working code away.
+#   * move `SLAGG` in `_STRUCT_LIT_LOCAL` back BELOW the initialisers (i.e. the 6.6.5 bite-4
+#     first cut)                                  -> exit 98. Found by review round 2: the
+#     rows below did not exist, so a literal whose OWN stores went to the wrong slots — and up
+#     to `nslots-1` slots PAST its block, over the next local — read GREEN here. (96/97, the
+#     single-word rows, stay green under this mutant: a span of 1 bases at the same slot
+#     either way, which is exactly why the multi-word rows are not redundant with them.)
+#   * keep `_sl_zero_slots` addressing slot-by-slot (`EFLADDR_X1(named - k)`) while the span
+#     IS recorded early                           -> NOT CAUGHT, recorded here because that is
+#     worth knowing: it zeroes the block's lowest heap slot twice and never zeroes the named
+#     one, so the only bytes that differ are a struct's PADDING, and a coroutine frame comes
+#     from freshly-zeroed pages. The one-base form is still what ships — the zero-fill and the
+#     field stores must ask the same question about where the block is — but no row here
+#     proves it, and inventing one that "passes" for a mutant it cannot see is the false-green
+#     shape this file exists to reject.
+#
+# ⭐ THE LITERAL ROWS ARE NOT A DUPLICATE OF THE TYPED ONES. `var p: P2;` and
+# `var p = P2 {..}` are DIFFERENT registration paths: the typed form records the aggregate's
+# span at registration, the literal form emits a zero-fill and every field store first. Only
+# the second can disagree with itself about where the block is, and it did.
+cat > "$T/a9.cyr" <<EOF
+${PRE}
+struct S1 { v; }
+struct P2 { x; y; }
+struct W4 { a; b; c; d; }
+fn nopark(): i64 { return 0; }
+fn peek(p) { return load64(p); }
+fn trash(n) { var pad[512]; store64(&pad, 123456789); if (n > 0) { trash(n - 1); } return load64(&pad); }
+fn ctrl_one(seed) { var q: S1; q.v = seed; return peek(&q) + q.v; }
+fn ctrl_two(seed) { var p: P2; p.x = seed; p.y = seed * 2; return p.x * 10 + p.y; }
+fn ctrl_lit1(seed) { var q = S1 { seed }; return peek(&q) + q.v; }
+fn ctrl_lit4(seed) { var p = W4 { seed, seed * 2, seed * 3, seed * 4 }; return p.a * 1000 + p.b * 100 + p.c * 10 + p.d; }
+async fn one(seed): i64 {
+    var q: S1;
+    q.v = seed;
+    var s1 = await nopark();
+    return peek(&q) + q.v;
+}
+async fn two(seed): i64 {
+    var p: P2;
+    p.x = seed; p.y = seed * 2;
+    var s1 = await nopark();
+    return p.x * 10 + p.y;
+}
+async fn pre(seed): i64 {
+    var p: P2;
+    p.x = seed; p.y = seed * 2;
+    var t = p.x * 10 + p.y;
+    var s1 = await nopark();
+    return t;
+}
+async fn lit1(seed): i64 {
+    var q = S1 { seed };
+    var s1 = await nopark();
+    return peek(&q) + q.v;
+}
+async fn lit4(seed): i64 {
+    var p = W4 { seed, seed * 2, seed * 3, seed * 4 };
+    var guard = 7777;
+    var s1 = await nopark();
+    if (guard != 7777) { return 0 - 1; }
+    return p.a * 1000 + p.b * 100 + p.c * 10 + p.d;
+}
+fn main(): i64 {
+    alloc_init();
+    var A = one(5); var B = one(9);
+    future_force(A); future_force(B);
+    trash(40);
+    var ra = future_force(A); var rb = future_force(B);
+    if (ra != ctrl_one(5)) { syscall(60, 91); }
+    if (rb != ctrl_one(9)) { syscall(60, 92); }
+    var C = two(3); var D = two(6);
+    future_force(C); future_force(D);
+    trash(40);
+    var rc = future_force(C); var rd = future_force(D);
+    if (rc != ctrl_two(3)) { syscall(60, 93); }
+    if (rd != ctrl_two(6)) { syscall(60, 94); }
+    var E = pre(4);
+    future_force(E);
+    trash(40);
+    var re = future_force(E);
+    if (re != ctrl_two(4)) { syscall(60, 95); }
+    var F = lit1(5); var G = lit1(9);
+    future_force(F); future_force(G);
+    trash(40);
+    var rf = future_force(F); var rg = future_force(G);
+    if (rf != ctrl_lit1(5)) { syscall(60, 96); }
+    if (rg != ctrl_lit1(9)) { syscall(60, 97); }
+    var H = lit4(1); var I = lit4(2);
+    future_force(H); future_force(I);
+    trash(40);
+    var rh = future_force(H); var ri = future_force(I);
+    if (rh != ctrl_lit4(1)) { syscall(60, 98); }
+    if (ri != ctrl_lit4(2)) { syscall(60, 99); }
+    syscall(60, 0);
+    return 0;
+}
+var e = main();
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/a9.cyr" > "$T/a9" 2>"$T/a9.err" || {
+  echo "FAIL coroutine_midbody_suspend axis9: a struct local in a suspending async fn did not compile"
+  echo "  (a REFUSAL here is a capability regression — 6.6.4 compiled this and answered correctly)"
+  grep -m2 '^error' "$T/a9.err"; exit 1; }
+[ -s "$T/a9" ] || { echo "FAIL coroutine_midbody_suspend axis9: empty binary"; exit 1; }
+chmod +x "$T/a9"; timeout 30 "$T/a9"; g9=$?
+[ "$g9" -eq 0 ] || {
+  echo "FAIL coroutine_midbody_suspend axis9: exit $g9 — 91/92 = \`&q\` and \`q.v\` disagree on which"
+  echo "  frame a single-slot struct local lives in; 93/94 = a multi-word struct local reads the wrong"
+  echo "  heap slots; 95 = a struct used only BEFORE the first suspend; 96/97 = a single-word struct"
+  echo "  LITERAL; 98/99 = a 4-word literal (and its stores running past the block into the next"
+  echo "  local, which the \`guard\` word catches). Controls are the non-async fns."
+  exit 1; }
+
+echo "PASS coroutine_midbody_suspend: mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
 exit 0

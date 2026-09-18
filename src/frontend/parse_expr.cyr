@@ -132,12 +132,63 @@ fn _cl_cap_find(esl): i64 {
     }
     return 0 - 1;
 }
+# 6.6.5 — the enclosing slot's recorded metadata, read from the SNAPSHOT rather than the live
+# tables: by the time the closure body is parsed the live slot tables hold the CLOSURE's own
+# locals, so index `esl` no longer means the enclosing variable. `_cl_save_locals` lays the
+# snapshot out as [names | depths | types | slice_widths], each `n` words.
+fn _cl_snap_span(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    return L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 32;
+}
+fn _cl_snap_type(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    return L64(_cl_snap + _cl_snap_n * 16 + esl * 8);
+}
+# Word offset of capture `capi` inside the env object (slot 0 is the fn pointer).
+fn _cl_cap_woff(capi): i64 {
+    var off = 1;
+    var i = 0;
+    while (i < capi) {
+        off = off + L64(&_cl_cap_w + i * 8);
+        i = i + 1;
+    }
+    return off;
+}
+# rax = `&env[woff]` — the address of capture `capi`'s WORDS inside the env object. One
+# definition, so the four sites that need it (the value read, `&name`, the field/method base
+# in `_CL_CAP_BASE_RA`, and the operator-dispatch operand) cannot drift apart.
+fn _CL_CAP_WORDS_RA(S, capi): i64 {
+    EFLLOAD(S, _cl_env_lidx);
+    EADDRA_IMM(S, _cl_cap_woff(capi) * 8);
+    return 0;
+}
+# ⛔ 6.6.5 (review round 2) — A CAPTURED INLINE AGGREGATE DISPATCHES ITS OPERATOR OVERLOAD.
+# Once `var a = Num{1}` became a frame local (this bite), `|x| a + x` inside a closure stopped
+# going through the local rung below and reached the capture rung, which never called
+# `SESTYPE` — so `a + x` compiled to an INTEGER ADD of the captured word and answered 2 where
+# 102 is right. Worse than wrong: with `Num_add` DELETED the same source compiled clean, where
+# 6.6.4 refused it as an undefined function. The span comes from the SNAPSHOT (the live slot
+# tables hold the closure's own locals by now), and only a span-marked — i.e. inline —
+# aggregate dispatches, exactly as the enclosing-local and global rungs decide it.
+# CHANGELOG [6.6.5]
+fn _CL_CAP_OPTYPE(S, esl, capi): i64 {
+    if (_cl_snap_span(esl) < 1) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    SESTYPE(S, 0 - t);
+    if (L64(&_cl_cap_w + capi * 8) > 1) { SESVAR(S, 0 - 1000000 - capi); }
+    return 0;
+}
 # Record enclosing slot `esl` as a capture (dedup); returns its capture index.
-fn _cl_cap_add(esl): i64 {
+fn _cl_cap_add(S, esl): i64 {
     var c = _cl_cap_find(esl);
     if (c >= 0) { return c; }
     if (_cl_ncap >= 64) { return 0 - 1; }
     S64(&_cl_cap_slots + _cl_ncap * 8, esl);
+    var w = _cl_snap_span(esl);
+    if (w < 1) { w = 1; }
+    S64(&_cl_cap_w + _cl_ncap * 8, w);
     var idx = _cl_ncap;
     _cl_ncap = _cl_ncap + 1;
     return idx;
@@ -209,7 +260,7 @@ fn _cl_prescan_captures(S, cl_zero): i64 {
                         if (FINDLOCAL(S, noff) < 0) {
                             if (_cl_shadow_find(S, noff) < 0) {
                                 var esl = _cl_snap_find(S, noff);
-                                if (esl >= 0) { _cl_cap_add(esl); }
+                                if (esl >= 0) { _cl_cap_add(S, esl); }
                             }
                         }
                     }
@@ -779,6 +830,18 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         EFLLOAD_W(S, li, _lw);
                         return 0;
                     } }
+                # ⛔ 6.6.5 — OPERATOR OVERLOADING WORKED FOR GLOBALS AND NOT FOR LOCALS, and the
+                # difference was invisible: `var a: Num; a.v = 1; ... a + b` compiled clean and
+                # did an INTEGER ADD of the two struct words, while the identical top-level
+                # declaration dispatched `Num_add`. Measured 3 against 102 for the same source
+                # moved inside a fn. Only an INLINE local dispatches — a pointer-mode one holds
+                # an address, where `+` is pointer arithmetic (the global half of this rule is
+                # a few lines below). A multi-word value is passed BY ADDRESS, matching what
+                # `EMIT_OP_DISPATCH` already does for a >8 B global. CHANGELOG [6.6.5]
+                if (lt < 0) { if (lt > 0 - 2048) { if (GLAGG(S, li) == 1) {
+                    SESTYPE(S, 0 - lt);
+                    if (AGG_NSLOTS(S, lt) > 1) { SESVAR(S, 0 - 2 - li); }
+                } } }
                 EFLLOAD(S, li);
                 return 0;
             }
@@ -793,9 +856,13 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 if (cl_esl >= 0) {
                     var cl_capi = _cl_cap_find(cl_esl);
                     if (cl_capi >= 0) {
-                        EFLLOAD(S, _cl_env_lidx);          # rax = env object
-                        EADDRA_IMM(S, (1 + cl_capi) * 8);  # rax = &env[1+capi]
-                        ELOAD64(S);                        # rax = captured value
+                        _CL_CAP_OPTYPE(S, cl_esl, cl_capi);              # see the fn's note
+                        _CL_CAP_WORDS_RA(S, cl_capi);                    # rax = &env[woff]
+                        # 6.6.5: a multi-word capture IS those words — its value is its
+                        # address, the same convention an enclosing inline aggregate has in
+                        # its own frame. A single-word capture is a value; load it.
+                        if (L64(&_cl_cap_w + cl_capi * 8) > 1) { SPSC(S, 1); return 0; }
+                        ELOAD64(S);                                      # rax = captured value
                         return 0;
                     }
                 }
@@ -833,8 +900,15 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 EVLOAD_W(S, idx, _gw);
                 return 0;
             }
-            SESTYPE(S, vt);
-            if (gvsz > 8) { SESVAR(S, idx); }
+            # 6.6.5 — ONLY AN INLINE STRUCT VALUE DISPATCHES AN OPERATOR. A pointer-mode
+            # struct global (`var s: Str = 0;`) holds an ADDRESS, so `s + 8` is pointer
+            # arithmetic; setting the expression's struct type here sent it to a `Str_add`
+            # that does not exist and failed the COMPILE. `_var_ptrmode` is the recorded
+            # layout (1 = the slot holds an address). CHANGELOG [6.6.5]
+            if (GVPM(S, idx) != 1) {
+                SESTYPE(S, vt);
+                if (gvsz > 8) { SESVAR(S, idx); }
+            }
         }
         # v5.5.2: bare identifier resolving to an enum constant folds to
         # EMOVI with _cfo=1 so the syscall-reroute dispatch (and any
@@ -906,6 +980,21 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 return 0;
             }
         }
+        # 6.6.5 — `&name` on a CAPTURED enclosing local. A closure could not take the address
+        # of an enclosing stack array at all (`&buf` inside `|a| ... load64(&buf)` reported
+        # "undefined variable 'buf'"), because this ladder went local → global → fn with no
+        # rung for the env object. The captured words live at `env + woff*8`.
+        if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
+            var acap_esl = _cl_snap_find(S, anoff);
+            if (acap_esl >= 0) {
+                var acap_i = _cl_cap_find(acap_esl);
+                if (acap_i >= 0) {
+                    _CL_CAP_WORDS_RA(S, acap_i);
+                    SPSC(S, 1);
+                    return 0;
+                }
+            }
+        } }
         # Global next.
         var aidx = FINDVAR(S, anoff);
         if (aidx >= 0) {
@@ -2087,6 +2176,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         var cl_saved_ix = _cur_fn_ix;
         # Snapshot the enclosing local tables before the closure overwrites slot 0+.
         var cl_locsnap = _cl_save_locals(S, cl_saved_flc);
+        var cl_saved_fs_floor = _fs_floor;   # 6.6.5: the closure body's fn-static mark
+        _fs_floor = _fs_n;
         # Set up closure function
         SINFN(S, 1);
         SFLC(S, 0);
@@ -2237,6 +2328,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         EPATCHFRAME(S, cl_frame_patch, cl_fsz);
         EPATCH(S, cl_jmp);
         # Restore state
+        _fs_popto(S, _fs_floor);             # 6.6.5: close the closure body's fn-statics
+        _fs_floor = cl_saved_fs_floor;
         SINFN(S, cl_saved_infn);
         SFLC(S, cl_saved_flc);
         vec_truncate(rp_vec, cl_saved_rpc);
@@ -2272,7 +2365,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # diagnostic. The compile is already failed; there is nothing to emit.
                 return 0;
             }
-            EMOVI(S, (1 + _cl_ncap) * 8);   # rax = size
+            EMOVI(S, _cl_cap_woff(_cl_ncap) * 8);   # rax = size (6.6.5: words, not captures)
             EPUSHR(S);
             ECALLPOPS(S, 1);                 # → rdi
             ECALLFIX(S, cl_alloc_fi);        # rax = obj
@@ -2298,14 +2391,25 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             ESTORE64(S);                     # [obj+0] = fn addr
             # obj[1+i] = captured enclosing local (cap_slots[i]); state is restored,
             # so EFLLOAD reads the enclosing fn's local — capture BY VALUE.
+            # 6.6.5: an AGGREGATE capture copies all its words. Word k of an enclosing
+            # inline aggregate lives at slot (base - k) and lands at env[woff + k], so
+            # `env + woff*8 + k*8` addresses field k exactly as `&base + k*8` does in the
+            # enclosing frame — which is what lets the body reuse the ordinary field math.
             var cl_ci = 0;
             while (cl_ci < _cl_ncap) {
-                EFLLOAD(S, cl_obj_slot);
-                EADDRA_IMM(S, (1 + cl_ci) * 8);   # rax = obj + (1+ci)*8 (dest)
-                EPUSHR(S);
-                EFLLOAD(S, L64(&_cl_cap_slots + cl_ci * 8));   # rax = captured value
-                EPOPC(S);                          # rcx = dest
-                ESTORE64(S);
+                var cl_w = L64(&_cl_cap_w + cl_ci * 8);
+                var cl_wo = _cl_cap_woff(cl_ci);
+                var cl_base = L64(&_cl_cap_slots + cl_ci * 8);
+                var cl_k = 0;
+                while (cl_k < cl_w) {
+                    EFLLOAD(S, cl_obj_slot);
+                    EADDRA_IMM(S, (cl_wo + cl_k) * 8);   # rax = &env[woff+k] (dest)
+                    EPUSHR(S);
+                    EFLLOAD(S, cl_base - cl_k);          # rax = captured word k
+                    EPOPC(S);                            # rcx = dest
+                    ESTORE64(S);
+                    cl_k = cl_k + 1;
+                }
                 cl_ci = cl_ci + 1;
             }
             EFLLOAD(S, cl_obj_slot);          # closure value = the object pointer
@@ -3218,31 +3322,26 @@ fn _PARSE_TERM_IMPL(S): i64 {
         # reloaded on the way out. Restoring only rax hands the caller a correct tag with a stale
         # payload, which is the v6.5.67 silent-payload-loss class one level up.
         if (_tpair == 1) {
-            var qtag = GVCNT(S);
-            S64(_varn_base + qtag * 8, 0);
-            S64(_vars_base + qtag * 8, 8);
-            var qval = qtag + 1;
-            S64(_varn_base + qval * 8, 0);
-            S64(_vars_base + qval * 8, 8);
-            SVCNT(S, qval + 1);
-            EVSTORE(S, qtag);                 # tag  (rax as returned)
+            var qtag = _HTEMP(S);
+            var qval = _HTEMP(S);
+            _HTSTORE(S, qtag);                # tag  (rax as returned)
             EMOVRA_RDX(S);                    # rax = rdx = payload
-            EVSTORE(S, qval);
+            _HTSTORE(S, qval);
             # if (tag != Ok) -> return (tag, payload)
-            EVLOAD(S, qtag);
+            _HTLOAD(S, qtag);
             EPUSHR(S);
             EMOVI(S, 0);
             EMOVCA(S);                        # rcx = 0 (Ok)
             EPOPR(S);                         # rax = tag
             ECMPR(S);
             var qjok = EJCC(S, 0x84);         # JE -> Ok, skip the propagate
-            EVLOAD(S, qval);
+            _HTLOAD(S, qval);
             EMOVRDXRAX(S);                    # rdx = payload
-            EVLOAD(S, qtag);                  # rax = tag
+            _HTLOAD(S, qtag);                 # rax = tag
             var qrp2 = EJMP0(S);
             vec_push(rp_vec, qrp2);
             EPATCH(S, qjok);
-            EVLOAD(S, qval);                  # Ok path: rax = payload
+            _HTLOAD(S, qval);                 # Ok path: rax = payload
             _cfo = 0;
             # The enclosing fn now returns a pair on its Err path, so mark it pair-returning —
             # exactly as an explicit `return SomeCtor(x)` does (parse_fn.cyr's PARSE_RETURN).
@@ -3252,13 +3351,10 @@ fn _PARSE_TERM_IMPL(S): i64 {
         if (_qpair_done == 0) {
         # Hidden temp slot to hold the Result ptr across the
         # tag-check / unwrap branches (same idiom as PARSE_MATCH).
-        var qidx = GVCNT(S);
-        S64(_varn_base + qidx * 8, 0);
-        S64(_vars_base + qidx * 8, 8);
-        SVCNT(S, qidx + 1);
-        EVSTORE(S, qidx);                 # save result_ptr
+        var qidx = _HTEMP(S);
+        _HTSTORE(S, qidx);                # save result_ptr
         # Load tag and compare to 0 (Ok = 0, Err = 1)
-        EVLOAD(S, qidx);                  # rax = result_ptr
+        _HTLOAD(S, qidx);                  # rax = result_ptr
         ELOAD64(S);                       # rax = [rax] = tag
         EPUSHR(S);
         EMOVI(S, 0);
@@ -3267,12 +3363,12 @@ fn _PARSE_TERM_IMPL(S): i64 {
         ECMPR(S);                         # cmp rax, rcx
         var qjcc_ok = EJCC(S, 0x84);      # JE → skip Err branch if Ok
         # Err path: rax = result_ptr, jmp to fn epilogue (RPC table)
-        EVLOAD(S, qidx);
+        _HTLOAD(S, qidx);
         var qrp = EJMP0(S);
         vec_push(rp_vec, qrp);
         # Ok path landing: rax = [result_ptr + 8] (payload)
         EPATCH(S, qjcc_ok);
-        EVLOAD(S, qidx);                  # rax = result_ptr
+        _HTLOAD(S, qidx);                  # rax = result_ptr
         EPUSHR(S);
         EMOVI(S, 8);
         EMOVCA(S);                        # rcx = 8
@@ -3483,15 +3579,29 @@ fn BUILD_OP_NAME(S, stype, op_str, op_len): i64 {
 }
 
 # Emit operator dispatch: push lhs, parse rhs, call StructName_op(lhs, rhs)
+# 6.6.5 — the operand address for an overloaded operator. `svar >= 0` is a global slot;
+# `svar <= -2` is the LOCAL encoding `-2 - li` (the same one PARSE_FIELD_LOAD uses), added so
+# a multi-word struct LOCAL can be passed by address exactly as a global already was.
+fn _OP_OPERAND_ADDR(S, svar): i64 {
+    # 6.6.5 — the CAPTURE band (`-1000000 - capi`) is tested FIRST: it is also `<= -2`, so the
+    # local arm below would read it as a nonsense slot index. `_CL_CAP_OPTYPE` only ever puts a
+    # MULTI-WORD capture here, and those words ARE the aggregate, so `&env[woff]` is its
+    # address with no load — the same convention `_CL_CAP_BASE_RA` uses. CHANGELOG [6.6.5]
+    if (svar <= 0 - 1000000) { _CL_CAP_WORDS_RA(S, 0 - 1000000 - svar); return 0; }
+    if (svar >= 0) { EVADDR(S, svar); return 0; }
+    if (svar <= 0 - 2) { EFLADDR(S, 0 - 2 - svar); }
+    return 0;
+}
+
 fn EMIT_OP_DISPATCH(S, stype, op_str, op_len): i64 {
     # For struct vars, push address instead of value
     var svar = GESVAR(S);
-    if (svar >= 0) { EVADDR(S, svar); }
+    _OP_OPERAND_ADDR(S, svar);
     EPUSHR(S);
     PARSE_TERM(S);
     # rhs: check if it also has a struct var
     var rsvar = GESVAR(S);
-    if (rsvar >= 0) { EVADDR(S, rsvar); }
+    _OP_OPERAND_ADDR(S, rsvar);
     EPUSHR(S);
     var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
     ECALLPOPS(S, 2);

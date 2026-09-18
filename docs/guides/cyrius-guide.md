@@ -236,6 +236,55 @@ var r = Rect { 0, 0, 10, 5 };
 var w = r.br.x - r.tl.x;   # 10
 ```
 
+### Where a struct lives (v6.6.5)
+
+A struct declared inside a fn — `var p = Point { 1, 2 };`, `var p: Point;`, `var p: Point = q;`
+— is a **per-call frame object**. It is fresh on every call, private to the calling thread, and
+its name is visible only inside its own scope. Take its address with `&p`; pass it to a
+`p: Point` parameter and the callee receives that address.
+
+A struct declared at TOP LEVEL is a single shared object in the data section, and a local
+declared as `var p: Point = <expression>` where the expression yields an ADDRESS (a heap
+pointer, or a fn returning one) is a **pointer** to that object — `p.x` reads through it rather
+than out of the frame. The compiler records which of the two a variable is at its declaration;
+before v6.6.5 it guessed from the shape of the neighbouring stack slot and got it wrong for any
+pointer-mode struct declared after a closed `{ ... }` block.
+
+⚠ **An array local over the per-fn frame budget (about 120 KB) keeps STATIC storage** — one
+buffer shared by every call and every thread — and the compiler says so:
+
+```
+warning:<source>:12:15: array local over the per-fn frame budget gets STATIC storage: one
+buffer shared by all calls and all threads; use alloc() for per-call storage
+        var bigbuf[200000];
+                  ^
+```
+
+The position names the DECLARATION. (Before v6.6.5 the line was a `note:` with no position at
+all, and the first v6.6.5 cut of it named the statement AFTER the declaration.)
+
+Its NAME is still scoped to its fn, so it cannot collide with a global elsewhere in the
+program. Use `alloc()` when you need per-call or per-thread storage for a buffer that large.
+The same applies to every array local when `CYRIUS_STACK_ARRAYS=0` is set.
+
+⚠ **A struct-typed LOCAL used with a binary operator needs the matching `T_op` fn**, exactly as
+a struct-typed GLOBAL always has. Before v6.6.5 the local form silently did an integer add on
+the struct's first word instead of dispatching, so the same expression meant two different
+things depending on where the operand lived:
+
+```cyrius
+struct H { v; }
+fn H_add(a, b) { return a + b; }        # required — `h + 3` below dispatches here
+
+fn f() { var h: H; h.v = 5; return h + 3; }
+```
+
+Without `H_add`, that now fails the build with *refusing to emit binary with 1 reachable
+undefined function(s)*. The same holds for a struct **captured by a closure** — `var a = N { 1 };
+var c = |x| a + x;` dispatches `N_add` from v6.6.5, where before it silently added the struct's
+first word. Related: `var p: T = U { ... }` with `T != U` was silently accepted (`p` took U's
+layout under T's name) and is a hard error from v6.6.5.
+
 ## Strings
 
 ```

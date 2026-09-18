@@ -611,3 +611,21 @@ sh "$ROOT/scripts/agnos-crossbuild-gate.sh"
 # the probe call sites grepped STATICALLY out of the driver source, and the `ROWS nnn` line
 # the driver prints at RUNTIME.
 sh "$ROOT/tests/gates/codegen/call_site_stack_alignment.sh"
+
+# ⛔ 6.6.5 — a fn-local STRUCT LITERAL was a GLOBAL slot, and whether an aggregate local was
+# inline or a pointer was GUESSED from the neighbouring slot's name. The first made a literal
+# shared across recursion, threads and files (a global and a fn-local literal of the same name
+# in ONE file returned 2 where 6 is right, silently, with no `private` involved). The second
+# was wrong since 5.8.17 for any pointer-mode struct local declared after a closed block or
+# after a callptr / bitset / SIMD temporary — SCOPE_POP writes the same -1 marker the guess
+# read as "inline" — and it was live in a consumer: stiva's fleet.cyr let a 512 MB node pass a
+# 1024 MB memory constraint. The gate below carries the two-file and env-var axes the .tcyr
+# corpus cannot express, plus the aarch64/cx emulator legs; the hardware legs are
+# tests/tcyr/crossos/aggregate_storage_class.tcyr + hidden_temp_reentrancy.tcyr.
+sh "$ROOT/tests/gates/codegen/fn_local_storage_class.sh"
+
+# 6.6.5 — the CENSUS under it. The hidden-temporary defect was a HABIT, not one lowering: five
+# constructs each open-coded the same four lines to get a scratch word and each passed name
+# offset 0, which is the program's FIRST LEXED WORD. This pins the SHAPE at the source so the
+# sixth cannot slip in, with derived counts and an anti-vacuous floor on every axis.
+sh "$ROOT/tests/gates/codegen/hidden_temp_census.sh"

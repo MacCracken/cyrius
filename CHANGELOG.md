@@ -467,8 +467,299 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
   blaming code that was correct. Both halves are done once now, in `_PRIV_PRESCAN`, which marks
   only the accepted form.
 
+- ⛔ **A struct literal inside a fn was a GLOBAL slot, and whether an aggregate local was
+  INLINE or a POINTER was GUESSED from the neighbouring slot's name — the second wrong since
+  5.8.17, silently, and live in a shipped consumer** (filed 2026-09-13 as a cross-file
+  shadowing bug; `issues/archived/2026-09-13-fn-local-global-slots-shadow-other-files.md`).
+  Two defects, four constructs, one storage-class repair.
+
+  **(1) The recorded layout.** A struct-typed local is either INLINE (the slot IS the struct,
+  fields at `&slot + off`) or POINTER-mode (the slot HOLDS the struct's address). Nothing
+  recorded which; `_resolve_field_base_addr`, the method-`self` push, `_try_push_struct_addr_arg`,
+  `_try_struct_copy_init`, `_try_aggregate_copy_assign` and the regalloc picker each GUESSED from
+  "is the slot below named -1?", plus a `<= 8 B` rule that skipped cx. **That is not a
+  discriminator**: `SCOPE_POP` writes -1 over every local of a CLOSED BLOCK, and the callptr,
+  bitset, SIMD-reserve and closure-env temporaries are registered -1 by construction. So any
+  pointer-mode struct local declared after a closed block, or after one of those temporaries,
+  read its fields **off its own frame slot**. Measured on 6.6.4: `var p: P = mk()` after an
+  `if { var t; }` returns **6** where 22 is right; `str_from(...).len` reads **6** for 7;
+  `var p: P = callptr(fp, 1)` reads **181**; `var b: P = a` copies a neighbour's value (**99**
+  for 22); `x = y` between two pointer-mode locals overwrites a `defer` runtime flag so an
+  **unreached defer runs**; and by-value struct arguments passed `&slot` for a pointer-mode
+  local while a GLOBAL struct argument had no branch at all and **SIGSEGV'd**. ⚠ It is live in
+  a consumer: stiva's `node_matches_constraints` (`src/fleet.cyr:257`) reads `n.capacity` after
+  a closed loop body, so a **512 MB node passes a 1024 MB memory constraint** — and stiva's own
+  comment blames the retired "struct-id 20/21" miscompile for it. On cx the `<= 8 B` carve-out
+  was skipped entirely, so two `var b: B1;` single-field locals **aliased each other** (2 for
+  43). **Fix:** registration records the aggregate's SLOT SPAN in the high 32 bits of the
+  existing per-slot depth word (`SLAGG`/`GLSPAN`/`GLAGG`, `src/common/util.cyr`) — no new table,
+  no heap-map change, and it clears itself on slot reuse because every named registration
+  writes `SLDEP` first. `_local_struct_is_ptr` is now the ONE reader and every consumer asks it.
+  Globals get the same treatment through a lazily-allocated `_var_ptrmode` byte table, which
+  also fixes `var G: P = mk(); G.y` (0 for 22) and `var G: P = ...` declared after the first
+  top-level statement, which recorded no type at all and was refused with *"no struct type in
+  scope for 'G'"* — a missing-include diagnostic for a global the compiler had just parsed.
+
+  **(2) A struct literal inside a fn is a per-call frame object.** `PARSE_VAR` dispatched
+  `var p = T { .. }` to `PARSE_STRUCT_INIT`, which always registered at `GVCNT`. So the literal
+  was shared **across recursion** (`rec(3)` returned 0 for 9), **across threads** (8 threads
+  building one failed on 3 of 3 runs, 175,793 mismatches, while the identical `var q: T;` +
+  field-store control was clean on 3 of 3), and — because `FINDVAR` is one flat last-match table
+  over every file — **visible to every later reference of that name**. The filed two-file shape
+  returned **2** where 6 is right on 6.6.3; v6.6.4 turned it into an error naming the
+  CONSUMER's own variable, and only for `private` files, so the public case stayed silently
+  wrong. **One file is enough**, and no `private` is needed. **Fix:** `_STRUCT_LIT_LOCAL`
+  allocates `ceil(STRUCTSZ/8)` frame slots, zeroes them (a global literal lands in .bss, a
+  frame slot holds the last call's bytes), emits every field initialiser as an ADDRESSED store,
+  and writes the NAME only after the initialisers are parsed — so `var cfg = P { cfg, 2 };`
+  still sees the outer `cfg`, exactly as the global path did.
+
+  Four companions had to land with it or it would have regressed what worked:
+  **(a) operator dispatch for inline struct LOCALS** — it worked for globals and for literals
+  (because they were globals) and silently did an INTEGER ADD for a typed local: the same source
+  gave **3** inside a fn and **102** at top level. Literal, typed, `: Num`-annotated and global
+  all give 102 now, and a >8 B operand is passed by address as a >8 B global already was.
+  A POINTER-mode operand deliberately does NOT dispatch — that also fixes `var s: Str = 0;
+  s + 8`, which used to dispatch to a nonexistent `Str_add` and **fail the compile**.
+  **(b) closures capture aggregates BY VALUE** — the env copied one word per capture, so
+  `&buf` on an enclosing stack array and `q.y` on an enclosing struct local both reported
+  *"undefined variable"* (the array case regressed at v6.3.13/15 when arrays became real
+  locals and had been unfixed since). The env is `1 + sum(widths)` words now and each capture
+  copies its own width; a multi-word capture's value is its address, matching the enclosing
+  frame's convention.
+  **(c) x86 `EFLADDR`/`EFLADDR_X1` are coroutine-aware** — they emitted `lea rN, [rbp-disp]`
+  unconditionally, so every struct-field access and method `self` inside a suspending
+  `async fn` addressed the stack frame a coroutine does not keep: measured **102** where 11 is
+  right, silently. A single-slot local is recovered against the heap frame; a MULTI-WORD one is
+  REFUSED with a diagnostic, because the two frames run in opposite directions — verified by
+  disassembly, `q.y` resolved onto the `var s1 = await ...` slot — and this file's own
+  `_ECORO_REFUSE` already states the rule: a capability gap is a diagnostic, never a quiet
+  wrong answer.
+  **(d) struct returns take the local paths**, so `fn mkp(): P { var p = P { 7, 8 }; return p; }`
+  returns **78** rather than dropping `y` (70), and the 16-byte pair return now requires the
+  recorded inline layout rather than firing on any negative type marker.
+- ⛔ **`switch`, `match`, both `?` lowerings and `for ... in` kept their subject in a GLOBAL
+  slot registered under NAME OFFSET 0 — which is the program's FIRST LEXED WORD.** Three
+  silent consequences: recursion reloaded the outer call's value (a range-`for` re-entered from
+  inside its own body returned 3 where 15 is right; a `match` re-entered from an arm PATTERN
+  returned 1 for 30), eight threads through a chain-path `switch` shared one word (115,379
+  mismatches, 3 of 3 runs), and `FINDVAR` — a flat last-match table — **returned those slots
+  for that identifier**: `&setup` changed value after a fn containing a `switch` was parsed
+  between two uses of it. Frame slots named 0 aliased the same way through `FINDLOCAL` (which
+  matches any `sn >= 0`): the slice/u128 high half, the `secret` flag and the `defer` flag.
+  **Fix:** `_HTEMP`/`_HTSTORE`/`_HTLOAD` — inside a fn an anonymous FRAME slot (per call, per
+  thread, and inside a coroutine a heap-frame slot); at top level a global marked dead so
+  `FINDVAR` skips it. The three name-0 frame slots are anonymous. The collection `for ... in`
+  index was registered under the USER-VISIBLE name `_i`, so a user's own `_i` inside the loop
+  body read the compiler's counter (3 for 30); it is anonymous too, which also drops a 3-byte
+  identifier-pool allocation per loop.
+- **A fn-local STATIC array no longer takes a program-wide global name.** An array over the
+  per-fn frame budget, or any array under `CYRIUS_STACK_ARRAYS=0`, falls back to shared static
+  storage and was registered with an ordinary global name — so `fn f() { var big[200000]; }`
+  in one file captured every later reference to `big` anywhere in the program (**7** where 3 is
+  right), and v6.6.4's visibility stamp turned that collision into an error naming the
+  consumer's variable. It was also invisible to `FINDLOCAL`, so an outer LOCAL of the same name
+  won inside its own fn and `&big` wrote into that scalar (**7** for 5). **The storage stays
+  static** — raising the budget is a heap-layout change and the two consumers over it bank
+  their buffers deliberately — but the NAME is scoped: the slot is marked dead when its block
+  closes and an enclosing local it shadows is hidden for the duration and restored after. The
+  `note:` line is now a **warning** that says the storage is static and shared across calls and
+  threads, because that is the part a caller has to know.
+- **`secret var buf[N]` over the frame budget compiles, and clears its buffer.** The `secret`
+  lowering decided local-vs-static from the stack-arrays FLAG rather than from where the array
+  actually went, so an over-budget `secret var big[200000];` was refused with *"secret requires
+  array declaration"* — and, with an outer local of the same name in scope, `FINDLOCAL` found
+  the wrong thing, the zeroise ran against the wrong storage and **the buffer was never
+  cleared** (measured: 77 survives the return). It asks the slot-count delta now.
+- **cx signed/narrow loads.** `EVLOAD_W` and `EFLLOAD_W` were 64-bit stubs and `EFIELD_LOAD_W`
+  tested `width == 1/2/4`, which no NEGATIVE (signed) width ever matches — so a signed `i8` /
+  `i16` / `i32` local or struct field compared EXACTLY against a negative literal passed on x86
+  and aarch64 and FAILED on cx. The same source, two answers. cx has no sized load for a global
+  or a local, so the value is normalised after the load: `shl`+`asr` for signed, a mask for
+  unsigned.
+
+- **The address of a struct local inside a suspending `async fn`.** `EFLADDR` / `EFLADDR_X1`
+  emitted `lea rN, [rbp - disp]` unconditionally, so every struct-field access and every method
+  `self` in a coroutine body addressed THE STACK FRAME — the one thing a coroutine does not keep
+  across a suspend (measured 102 where 11 is right). They recover the heap frame now.
+  ⛔ **And the first cut of that fix split one variable in half**, which review round 1 caught:
+  `ELOAD_LOCAL_ADDR` (the `&name` path) kept the stack form, because v6.5.70 had guarded its
+  coroutine recovery on `_cur_fn_regalloc == 0` — a condition that is NEVER true in an `async fn`
+  body (it reserves the five callee-saved slots like any other fn), so that recovery had never
+  once fired and the displacement it guarded was un-shifted anyway. The store went to `r11+off`
+  and the read to `rbp-disp`: `peek(&q)` answered **0** where 6.6.4 answered 11. Both halves now
+  invert the displacement the same way. A MULTI-WORD aggregate is recovered too, not refused:
+  the two frames run in opposite directions, so the base is the aggregate's LOWEST-INDEX slot
+  rather than its named one. (The refusal the first cut shipped was a capability regression —
+  `var q: P2;` in a suspending fn, and even a struct used only BEFORE the first suspend,
+  compiled on 6.6.4 and returned the right answer.) Gated by a new axis 9 on
+  `tests/gates/frontend/coroutine_midbody_suspend.sh`.
+  ⛔ **And that recovery held for the TYPED form only** — review round 2. `_STRUCT_LIT_LOCAL`
+  recorded the aggregate's span at the BOTTOM of the fn, after the zero-fill and every
+  initialiser store had already been emitted, so inside a coroutine the literal's own stores
+  based at the named slot while every later read based at `named - nslots + 1`: one variable,
+  two answers, and the stores ran up to `nslots-1` slots PAST the block over whatever local
+  follows. Measured `var p = P2{5,6}; await ...; p.x*10+p.y` = **5** where 6.6.4 answered 56,
+  on ELF and on PE under wine; a 3-field literal answered 1 for 123. The span is now recorded
+  before a single byte is emitted, and `_sl_zero_slots` addresses the block once and adds
+  `k*8` rather than walking slot-by-slot — the zero-fill and the field stores now ask the
+  same question about where the block is. Axis 9 gained the literal rows (single-word,
+  4-word, two interleaved instances, and a `guard` local after the literal that catches the
+  overrun); it had none, which is why the first cut read GREEN.
+- ⛔ **A closure-captured struct stopped dispatching its operator overload — silently, where
+  6.6.4 errored** (review round 2). Making `var a = Num{1}` a frame local moved it off the
+  global rung and onto the closure-CAPTURE rung, which never set the expression's struct type:
+  `var a = Num{1}; var c = |x| a + x;` with `Num_add` present answered **2** where 102 is
+  right, and two captured 16 B structs gave 32 for 4312. The decisive half is not the number —
+  with `Num_add` DELETED, 6.6.4 refuses the program (`1 reachable undefined function(s)`) and
+  the un-repaired build compiled it clean. The capture rung now reads the enclosing slot's
+  recorded span and type from the closure SNAPSHOT (the live slot tables hold the closure's own
+  locals by then) and a multi-word capture is passed by address, matching the enclosing-local
+  and global rungs. Gated by a new axis 10 on `tests/gates/codegen/fn_local_storage_class.sh`
+  (including the no-`T_op` refusal row) and four assertions in `tests/tcyr/lang/closures_capture.tcyr`.
+- The over-budget array warning names its own DECLARATION. `WARN` reads the parse cursor, and
+  by the time the fallback fires the `]` and `;` are consumed — so with `var bigbuf[200000];`
+  on line 3 it printed `warning:<source>:4:5:` with the excerpt and caret under the NEXT
+  statement, while this release's downstream note promises sigil/agnosai a `file:line` to
+  grep. New `WARN_AT` (util.cyr) moves the cursor and restores it, the way
+  `_priv_per_item_err` already does, so there is one excerpt path. Pinned by a row in axis 2
+  whose expected line is grepped out of the probe rather than written in the gate.
+- **`B = A` between two inline struct GLOBALS copied EIGHT BYTES.** `_try_aggregate_copy_assign`
+  opened `if (GINFN(S) != 1) return 0;` and then `FINDLOCAL`'d both sides, so no global could
+  ever reach the multi-word copy: `var A = P{1,2}; var B = P{3,4}; B = A;` left `B.y` at **4**,
+  silently, at top level and inside a fn alike. Three siblings had the same hole — `var b: P = A`
+  **SIGSEGV'd** (the scalar fall-through stored A's address into a slot typed as a struct),
+  `B = p` from a local literal answered 54 for 56, and `q = A` into a local answered 18 for 12.
+  Once the LOCAL side was tightened onto the recorded layout, the same assignment answered
+  differently for globals and locals, which is worse than both being wrong. Every combination
+  goes through one resolver now. ⚠ The copy is **addressed and byte-exact** for a global,
+  because a global slot index is not a word index (`SVCNT` advances by one per variable while
+  `_vars_base` holds its BYTE size) and globals are packed by exact byte size — a word-granular
+  copy of a 12-byte struct would clobber 4 bytes of its neighbour.
+- **The fn-static name table's cap was a silent fall-open.** `_fs_push` opened
+  `if (_fs_n >= 64) { return 0; }`, so the 65th fn-local static in one body got NEITHER the new
+  scoping NOR the v6.6.4 `_GVAR_VIS` stamp the else-arm applies: it reverted to the 6.6.3 shape
+  this release removes, in a `private` file as a program-wide public global. Measured under
+  `CYRIUS_STACK_ARRAYS=0` (where every array local is static): N=64 answered 3, N=65 answered 64.
+  The bound is 256 and hitting it now stops the compile with a message naming the cap.
+- `ERR_MSG` is not a terminator (it records and returns, v6.4.62 panic mode), and
+  `_STRUCT_LIT_LOCAL`'s budget check read as if it were: the allocation loop ran anyway and was
+  stopped only by `SFLC`'s own exit at 16384 slots, which REPLACED the precise message with the
+  generic *"too many stack slots in one function"*.
+
+  **Measured across this whole entry:** 316 / 317 `.tcyr` exit-code-identical to the
+  **pre-bite-4 (bite 3)** compiler — the one that differs is `lang/closures_capture.tcyr`, which
+  this bite extends. ⚠ That is the right figure for THAT baseline and the wrong one to reproduce
+  against the shipped 6.6.4 binary, which the first cut of this line named (review round 2): the
+  same per-file loop against 6.6.4 shows **8** differences over the 320 current files — the SIX
+  `.tcyr` this release added (`crossos/call_site_stack_alignment`, `crossos/forward_ref_abi_binding`,
+  `crossos/nested_call_value_regressions` from bites 1–3, plus this bite's three) and two
+  pre-existing files, `lang/closures_capture` (extended here) and
+  `crossos/simd_intrinsic_inline_arg` (139 → 0, bite 1's own fix) — i.e. **312 of the 314**
+  `.tcyr` that existed at 6.6.4 are exit-code-identical. 320 / 320 exit 0 on this build; the cycc self-host
+  reaches its fixpoint and `seed → cybs → cycc` is byte-identical; every one of the 7 forks
+  builds. The x86, aarch64 (qemu), cx (cxvm) and PE (wine) legs all agree on the repaired
+  values — **the emulator legs are not hardware verification**; the hardware legs are the two
+  new `tests/tcyr/crossos/` files the release gate runs on ecb / ach / cass / pi. cycc size
+  1,272,576 → **1,293,912 B** (+21,336; `.text` 1,114,352 → 1,126,616 == 0x1130D8, agreed by
+  `readelf -S` and `objdump -h`; review round 2's four fixes are the last +4,096 file / +720
+  `.text`). **self_compile: 778 ms median vs 6.6.4's 775 ms on the identical source**
+  (`src/main.cyr`, 7 runs each, 3 rounds, quiet box — re-measured after review round 2; the
+  round-1 figures, 777 vs 779, were taken on a differently-loaded box and the +3 ms here is
+  the same measurement to a different tenth, not a regression) — review round 1
+  measured +8 % here and it was ONE line: `FINDVAR` called `GVDEAD` on every candidate before
+  the cheap-to-fail `STREQ`. The order is semantically identical and this is the hottest loop
+  in the front end. No heap or brk layout change: the span bit lives in the high half of the
+  existing per-slot depth word and the two global side tables are lazily allocated like
+  `_var_fileid`.
+
+  ⚠ **Consumer-visible source change.** A struct-typed LOCAL used with a binary operator now
+  requires the matching `T_op` fn, exactly as a struct-typed GLOBAL always has — `var h: H;
+  h.v = 5; var z = h + 3;` used to compile into a silent integer add and is now
+  `error: refusing to emit binary with 1 reachable undefined function(s)` naming `H_add`. That
+  is the fix (the two forms disagreed), but it turns previously-compiling code into an error.
+  Same class: `var p: T = U { .. }` with `T != U` was silently accepted, taking U's layout under
+  T's name, and is now a hard error.
+
 ### Added
 
+- `tests/gates/codegen/fn_local_storage_class.sh` — **25 rows over 11 axes**, carrying the parts
+  the `.tcyr` corpus **cannot** express: the FILED two-file shape in both its public and its
+  `private` form, a RENAME-INVARIANT third copy (a build that resolves both names to the same
+  wrong slot would otherwise read green), `CYRIUS_STACK_ARRAYS=0` (the tcyr runner cannot set
+  an env var), a source with **no includes** (name offset 0 is the program's first lexed word,
+  so any `include` takes it and the axis would test nothing), `secret` over the frame budget,
+  and the aarch64 (qemu) + cx (cxvm) legs — labelled in the output as emulators, not hardware.
+  Every compile is refused unless its exit status is 0 AND the artifact is non-empty, before
+  anything runs. Its own first version counted 12 of 17 rows because three axes ran inside
+  `( ... )` subshells; the helper now carries that warning. Mutation-proven **seven** ways,
+  each reddening a different axis: the -1-predecessor guess, the global-slot literal routing,
+  the fn-static name scoping, the GVCNT hidden temporaries, frame slots named 0, `secret`
+  keyed on the stack-arrays flag, and the cx 64-bit load stubs.
+  ⛔ Review round 1 found its row check was a **hand-tuned floor of 14 against 18 rows**, so
+  four rows could vanish and it still read GREEN — and two paths dropped a row with no FAIL at
+  all (a failed `cd`, and axis 8 gated on the cx compiler existing). The expected count is now
+  DERIVED a second way, from a static grep of this file's own `run_case` call sites, and the two
+  derivations must AGREE; both silent-drop paths are loud failures. Round 1 also added the free
+  **x86 row for axis 7** (it ran a7.cyr only under qemu and cxvm, so the host backend never
+  answered those three legs — both layout mutants redden it on x86 alone) and **axis 9**, which
+  generates N and N+1 fn-local statics with N DERIVED from `var _fs_vi[N];` in parse.cyr.
+  ⛔ Review round 2 added the **axis-2 warning-position row** (its expected line grepped out of
+  the probe, not written in the gate) and **axis 10**, the captured-aggregate operator dispatch
+  — including the row that matters most, the one asserting a missing `T_op` is still REFUSED —
+  taking it to 25 rows / 11 axes and **nine** mutants.
+- `tests/gates/codegen/hidden_temp_census.sh` — the census under it. The hidden-temporary
+  defect was a HABIT, not one lowering: five constructs each open-coded the same four lines to
+  get a scratch word and each passed name offset 0. This pins the SHAPE at the source — no
+  global registered under name 0 outside `_HTEMP`, no FRAME slot named 0 (`FINDLOCAL` matches
+  any `sn >= 0`), a floor on `_HTEMP`'s real users so deleting a lowering cannot satisfy the
+  first two axes, and `FINDVAR` still consulting `GVDEAD`. Counts are derived from the source;
+  every axis carries an anti-vacuous floor so a grep that matches nothing cannot read green.
+  ⛔ Its axis 3 shipped as a FLOOR OF 9 against ELEVEN call sites, so the mutant its own ledger
+  named — deleting `PARSE_SWITCH`'s `_HTEMP` — left it GREEN. Review round 1 replaced it with a
+  PER-LOWERING attribution (each construct's own fn must keep its own count, walked from the
+  `fn` headers) plus the exact total, and re-measured both mutants.
+  ⛔ Review round 2 found the remaining half of the same hole. Axes 1/2 pin only the NAME
+  (offset 0), and the defect this bite repaired was a global registered with a REAL name from
+  inside a fn — 12 of the 13 live `_varn_base` sites were outside their scan. New **axis 5**
+  attributes every global registration to its enclosing fn and pins that table, with the total
+  counted a second way by flat grep so a site in an unlisted fn cannot be absorbed; the one
+  legitimately-in-fn arm (`PARSE_ARRAY`'s static-array fallback, whose name `_fs_push` scopes)
+  is named with its reason. Round 2 also found both regexes **defeated by whitespace**:
+  `S64(_varn_base + zz*8, 0);` PASSED axis 1 and `, 0 - 0);` PASSED axis 2, and the un-spaced
+  style already exists in `parse_fn.cyr` / `util.cyr` / `parse.cyr` with nothing enforcing
+  cyrfmt over `src/`. Both are whitespace-tolerant now and both evasion spellings are measured
+  in the ledger.
+- `tests/tcyr/crossos/aggregate_storage_class.tcyr` — 44 assertions on real hardware. Every
+  expected value is computed a DIFFERENT way from the thing under test: each case has a control
+  written in a lowering already known correct (a typed local + field stores, or the same
+  declaration with the intervening block removed) and the file asserts the hand-derived constant
+  AND the control-vs-subject equality. Against the shipped 6.6.4 compiler it DOES NOT COMPILE AT
+  ALL (`mk3` is refused with *"struct-return: identifier is not a local"*, because the literal it
+  returns was a global); with `mk3` **and** `ret_retptr` (which calls it) and that pair's two
+  assertions removed — the exact reduction, stated because removing `mk3` alone still does not
+  compile — it reports **15** `FAIL:` lines and then SIGSEGVs. *(The first cut of this line said
+  14 with no reduction given, so it was not reproducible; re-measured in review round 2.)*
+  Review round 1 added the group for copying an inline struct when either side
+  is a GLOBAL (four arms plus a narrow-field row whose neighbouring global must survive intact)
+  and the `>16 B` retptr struct return from a literal local.
+- `tests/tcyr/crossos/hidden_temp_reentrancy.tcyr` — the recursion and `_i` halves, checked
+  against a hand-written `while` loop and an `if/elif` chain rather than against themselves.
+  ⚠ Its header records why the recursive call has to be INSIDE the loop: a fn that finishes its
+  loop before recursing passes on the broken compiler. 4 of its 9 assertions go red on 6.6.4
+  (the binary's own line: `5 passed, 4 failed (9 total)`).
+- `tests/tcyr/concurrency/struct_literal_threads.tcyr` — 8 threads building a struct literal
+  and 8 through a chain-path `switch`, each against a typed-local control that is itself
+  asserted clean so the comparison cannot pass vacuously. Deterministic: 5 of 5 clean on this
+  build, 3 of 3 red on 6.6.4 (175,793 and 115,379 mismatches). Linux-only by placement, and the
+  header says which crossos files carry the single-threaded halves onto real hardware.
+- `tests/tcyr/lang/closures_capture.tcyr` gains an aggregate-capture group: an enclosing stack
+  array through `&buf`, a typed struct local, a struct LITERAL local, a by-value check (mutating
+  the enclosing aggregate after construction must not reach the closure) and a pointer-mode
+  capture. The 6.6.4 compiler cannot compile the group at all. Review round 2 added a second
+  group for **captured-aggregate operator dispatch** (single-word by value, two multi-word
+  captures by address), each subject asserted equal to a non-closure control written the same
+  way — 19 assertions in the file.
 - `tests/gates/frontend/private_forward_reference.sh` — **axis 1** is static 7-fork parity,
   derived with a glob over `src/main*.cyr` rather than a list, requiring exactly one
   `_prescan_impl(S)` and one `_prescan_tail(S)` per fork and no leftover pass-1 brace-skip: miss

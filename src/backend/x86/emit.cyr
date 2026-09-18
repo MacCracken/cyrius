@@ -3016,21 +3016,29 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
     # a slot index, so it cannot tell a heap-frame local from a stack one; v6.5.69 refused the
     # form outright rather than emit a stack address for a frame that dies at every suspend.
     # The displacement is `-((idx + 1) * 8)` shifted by the regalloc save and the ret stash,
-    # both of which are ZERO in a coroutine (the picker is disabled over a coroutine body), so
-    # the slot index inverts exactly. Recovered rather than refused — a local you cannot take
-    # the address of is not a local, and `var buf: i64[N]` is the common shape.
+    # so the slot index inverts exactly once BOTH shifts are subtracted back out. Recovered
+    # rather than refused — a local you cannot take the address of is not a local, and
+    # `var buf: i64[N]` is the common shape.
+    # ⛔ 6.6.5 — v6.5.70 wrote this recovery behind `_cur_fn_regalloc == 0 && _cur_fn_ret_stash
+    # == 0` on the belief that "the picker is disabled over a coroutine body". IT IS NOT: an
+    # `async fn` body reserves the five callee-saved slots like any other fn, so
+    # `_cur_fn_regalloc` is 5 and this branch NEVER FIRED in three years of coroutine bodies —
+    # and the un-shifted `(0 - adisp)/8 - 1` it guarded would have produced the wrong slot if
+    # it had. It went unnoticed because `&local` then addressed a stack frame that usually
+    # still held the right bytes. It stopped being harmless the moment EFLADDR/EFLADDR_X1
+    # learned the heap frame in this same release: the field store went to `r11+off` and the
+    # `&name` read to `rbp-disp`, so the two halves of one variable split and `&q` read 0.
+    # Subtract the shifts instead of refusing to run when they are non-zero. CHANGELOG [6.6.5]
     if (_cur_fn_coro == 1) {
-        if (_cur_fn_regalloc == 0) { if (_cur_fn_ret_stash == 0) {
-            var _ai = (0 - adisp) / 8 - 1;
-            if (_ai >= _coro_lo) {
-                _ECORO_BASE_R11(S);
-                E3(S, 0x838D49);                 # lea rax, [r11 + off]
-                var la = _codebuf_base + GCP(S);
-                S64(la, (L64(la) >> 32 << 32) | (_ECORO_OFF(S, _ai) & 0xFFFFFFFF));
-                SCP(S, GCP(S) + 4);
-                return 0;
-            }
-        } }
+        var _ai = (0 - adisp - _cur_fn_regalloc * 8 - _cur_fn_ret_stash) / 8 - 1;
+        if (_ai >= _coro_lo) {
+            _ECORO_BASE_R11(S);
+            E3(S, 0x838D49);                 # lea rax, [r11 + off]
+            var la = _codebuf_base + GCP(S);
+            S64(la, (L64(la) >> 32 << 32) | (_ECORO_AGG_OFF(S, _ai) & 0xFFFFFFFF));
+            SCP(S, GCP(S) + 4);
+            return 0;
+        }
     }
     E3(S, 0x858D48);
     var aaddr = _codebuf_base + GCP(S);
@@ -4341,9 +4349,53 @@ fn EVADDR_X1(S, idx): i64 {
 # this instead of EVADDR_X1 when the struct lives on the stack.
 # Mirrors the EVADDR (EFLADDR's rax variant) offset math: shift past
 # reserved rbx/r12-r15 save slots, then (idx+1)*8 below rbp.
+# ⛔ 6.6.5 — THE ADDRESS OF A COROUTINE LOCAL. `EFLADDR` / `EFLADDR_X1` emitted
+# `lea rN, [rbp - disp]` unconditionally, so inside an `async fn` that suspends, every
+# struct-field access and every method `self` addressed THE STACK FRAME — the one thing a
+# coroutine does not keep across a suspend. Measured: a `var q: P;` in a suspending async fn
+# returned 102 where 11 is right, silently. `EFLLOAD`/`EFLSTORE`/`ELOAD_LOCAL_ADDR` had all
+# been taught the heap frame (v6.5.69/.70); these two were missed.
+#
+# ⚠ A MULTI-WORD AGGREGATE NEEDS ITS *LOW* WORD, NOT ITS NAMED SLOT. The two frames run in
+# OPPOSITE directions: on the stack a higher slot index is a LOWER address, so an aggregate
+# named at its deepest slot has word k at `&base + k*8` (slot named-k); in the coroutine
+# object `_ECORO_OFF` ASCENDS with the index, so basing at the named slot puts word k on slot
+# named+k — a DIFFERENT LOCAL. Verified by disassembly of a 2-field struct in a suspending
+# fn: `q.y` resolved onto the `var s1 = await ...` slot. `_ECORO_AGG_OFF` bases at the
+# aggregate's LOWEST-INDEX slot instead, so the `n` words of the block are exactly the `n`
+# heap slots the block owns. The word ORDER inside the block is reversed relative to the
+# stack, which is invisible: every consumer either addresses the block through this one base
+# (field load/store, method self, by-value push, zero-fill, `&name`) or walks BOTH sides by
+# slot index (`_try_aggregate_copy_assign`, `_try_struct_copy_init`), and a permutation
+# applied identically to source and destination copies the same word to the same word.
+# ⛔ The first cut of this (6.6.5 review round 1) REFUSED span > 1 instead. That was a
+# capability regression, not a diagnostic: `var q: P2; q.x=1; q.y=22; await ...; return q.y;`
+# and even a struct used ONLY before the first suspend compiled on 6.6.4 and returned the
+# right answer; the refusal broke both. A diagnostic is only the right answer for a gap that
+# cannot be closed — this one could. CHANGELOG [6.6.5]
+# Returns 1 when it emitted the coroutine form; 0 leaves the stack form to the caller.
+fn _ECORO_AGG_OFF(S, idx): i64 {
+    var b = idx;
+    var sp = GLSPAN(S, idx);
+    if (sp > 1) { b = idx - sp + 1; }
+    var r = _ECORO_OFF(S, b);
+    return r;
+}
+fn _ECORO_LEA(S, lli, want_rcx): i64 {
+    if (_ECORO_SLOT(S, lli) == 0) { return 0; }
+    _ECORO_BASE_R11(S);
+    if (want_rcx == 1) { E3(S, 0x8B8D49); }   # lea rcx, [r11 + disp32]
+    else { E3(S, 0x838D49); }                 # lea rax, [r11 + disp32]
+    var _cla = _codebuf_base + GCP(S);
+    S64(_cla, (L64(_cla) >> 32 << 32) | (_ECORO_AGG_OFF(S, lli) & 0xFFFFFFFF));
+    SCP(S, GCP(S) + 4);
+    return 0 - 0 + 1;
+}
+
 fn EFLADDR_X1(S, lli): i64 {
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(lli);
+    if (_ECORO_LEA(S, lli, 1) == 1) { return 0; }
     var disp = 0 - ((lli + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }
@@ -4362,6 +4414,7 @@ fn EFLADDR_X1(S, lli): i64 {
 fn EFLADDR(S, lli): i64 {
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(lli);
+    if (_ECORO_LEA(S, lli, 0) == 1) { return 0; }
     var disp = 0 - ((lli + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }

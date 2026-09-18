@@ -278,13 +278,10 @@ fn PARSE_FOR(S): i64 {
                 # COLLECTION for-in: for item in expr { body }
                 # rax has the collection (vec pointer)
                 # Store collection in hidden var
-                var ficol = GVCNT(S);
-                S64(_varn_base + ficol * 8, 0);
-                S64(_vars_base + ficol * 8, 8);
-                SVCNT(S, ficol + 1);
-                EVSTORE(S, ficol);
+                var ficol = _HTEMP(S);
+                _HTSTORE(S, ficol);
                 # Get length: call vec_len(collection)
-                EVLOAD(S, ficol);
+                _HTLOAD(S, ficol);
                 EPUSHR(S);
                 ECALLPOPS(S, 1);
                 var vlfi = FINDFN(S, 0);
@@ -302,19 +299,15 @@ fn PARSE_FOR(S): i64 {
                 if (vloff >= 0) { ECALLTO(S, vloff); } else { ECALLFIX(S, vlfi); }
                 ECALLCLEAN(S, 1);
                 # Store length in hidden var
-                var filen = GVCNT(S);
-                S64(_varn_base + filen * 8, 0);
-                S64(_vars_base + filen * 8, 8);
-                SVCNT(S, filen + 1);
-                EVSTORE(S, filen);
+                var filen = _HTEMP(S);
+                _HTSTORE(S, filen);
                 # Index var (starts at 0)
+                # 6.6.5: the collection loop's index slot was registered under the
+                # USER-VISIBLE name `_i`, so a user's own `_i` read inside the loop body
+                # resolved to the compiler's counter (measured 3 where 30 is right) and a
+                # 3-byte identifier-pool allocation leaked per loop. It is anonymous now.
                 var fili = GFLC(S);
-                NPOS_GUARD(S, 8);
-                var fiidx_noff = GNPOS(S);
-                store8(S + 0xEC00000 + fiidx_noff, 95); store8(S + 0xEC00000 + fiidx_noff + 1, 105);
-                store8(S + 0xEC00000 + fiidx_noff + 2, 0);
-                SNPOS(S, fiidx_noff + 3);
-                S64(S + 0x5D9D000 + fili * 8, fiidx_noff);
+                S64(S + 0x5D9D000 + fili * 8, 0 - 1);
                 SLDEP(S, fili, GSDEP(S));
                 SLTYPE(S, fili, 0);
                 EMOVI(S, 0);
@@ -344,13 +337,13 @@ fn PARSE_FOR(S): i64 {
                 if (_ire_fi1 >= 1) { ir_emit(S, IR_NOP, 0, fitop, 0); }
                 EFLLOAD(S, fili);
                 EPUSHR(S);
-                EVLOAD(S, filen);
+                _HTLOAD(S, filen);
                 EMOVCA(S);
                 EPOPR(S);
                 ECMPR(S);
                 var ficond = EJCC(S, 0x8D);
                 # item = vec_get(collection, idx)
-                EVLOAD(S, ficol);
+                _HTLOAD(S, ficol);
                 EPUSHR(S);
                 EFLLOAD(S, fili);
                 EPUSHR(S);
@@ -410,11 +403,8 @@ fn PARSE_FOR(S): i64 {
             SFLC(S, fili + 1);
             # End value into hidden global
             PCMPE(S);
-            var fiend = GVCNT(S);
-            S64(_varn_base + fiend * 8, 0);
-            S64(_vars_base + fiend * 8, 8);
-            SVCNT(S, fiend + 1);
-            EVSTORE(S, fiend);
+            var fiend = _HTEMP(S);
+            _HTSTORE(S, fiend);
             # Loop setup
             var fislt = L64(S + 0x18F838);
             var fisbk = L64(S + 0x18F840);
@@ -432,7 +422,7 @@ fn PARSE_FOR(S): i64 {
             # Condition: var < end
             EFLLOAD(S, fili);
             EPUSHR(S);
-            EVLOAD(S, fiend);
+            _HTLOAD(S, fiend);
             EMOVCA(S);
             EPOPR(S);
             ECMPR(S);
