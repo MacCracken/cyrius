@@ -75,13 +75,23 @@ The cyrius compiler itself is **bootstrapped**, not packaged: `sh bootstrap/boot
 
   - aarch64 ELF — `cat src/main_aarch64.cyr | build/cycc`
   - x86 Mach-O — `cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 build/cycc`
-  - arm64 Mach-O — `cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 build/cycc`
+  - arm64 Mach-O — **two steps**: `cat src/main_aarch64.cyr | build/cycc > cc_a64 && chmod +x cc_a64`,
+    then `cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./cc_a64`
   - Windows PE — `cat src/main_win.cyr | build/cycc > cycc_win`, then `cat src/main_win.cyr | ./cycc_win`
   - cx bytecode — `cat src/main_cx.cyr | build/cycc`
 
-  All from the x86 seed.
+  All from the x86 seed. ⚠ **arm64 Mach-O is the one that is NOT a one-liner**, and this list
+  claimed it was until 6.6.6: `CYRIUS_MACHO_ARM=1 build/cycc` is refused by
+  `src/backend/x86/fixup.cyr` (*"requires the aarch64 backend. Use ./build/cycc_aarch64"*) — it
+  exits **1 after writing 0 bytes**, so a `>` redirect leaves a plausible-looking empty file. The
+  env var selects the Mach-O *container*; the arm64 *instructions* come from the aarch64 backend,
+  which on an x86 box only exists once `main_aarch64.cyr` has been cross-emitted. Both named
+  authorities above already did it in two steps (`scripts/build-macos-arm64-tarball.sh:30-38`,
+  `scripts/cross-os-selfhost.sh:128`); this line contradicted them. Measured at 6.6.6 on x86_64
+  Linux: one-liner → rc 1 / 0 B; two-step → rc 0 / 1,065,396 B / `Mach-O 64-bit arm64 executable`.
+  The other four lines were re-run at 6.6.6 and are correct as written.
 - **Local self-host repro:** `qemu-aarch64 ./cycc_a64 < src/main_aarch64.cyr` and `wine ./cycc.exe < src/main_win.cyr` reproduce the real-hardware self-host result locally.
-- **Authoritative verify:** `sh scripts/cross-os-selfhost.sh <ecb|ach|pi|cass> [tcyr-glob]` self-hosts on the real host (qemu/wine are for fast iteration; **real hardware is the gate** — see CLAUDE.md "Cross-OS self-host is non-negotiable, on REAL hardware"). The release gate passes `vr01_` as the glob for all four hosts; `CYRIUS_CROSS_OS_FULL=1` runs the whole `tests/tcyr` corpus instead. Run **one host at a time** — the fixed `/tmp` and remote paths clobber under concurrency.
+- **Authoritative verify:** `sh scripts/cross-os-selfhost.sh <ecb|ach|pi|cass> [tcyr-subdir]` self-hosts on the real host (qemu/wine are for fast iteration; **real hardware is the gate** — see CLAUDE.md "Cross-OS self-host is non-negotiable, on REAL hardware"). Arg 2 is a **subdirectory of `tests/tcyr`**, not a filename glob: the release gate passes `crossos` for all four hosts (`scripts/release-gate.sh:115`), and a directory that does not exist is a hard `LIBTEST_FAIL` (`scripts/cross-os-selfhost.sh:412`) instead of a glob that matches nothing and passes. `CYRIUS_CROSS_OS_FULL=1` runs the whole `tests/tcyr` corpus instead. Run **one host at a time** — the fixed `/tmp` and remote paths clobber under concurrency. *(This line said the gate passes the `vr01_` **glob** — the filename prefix retired at v6.5.11; corrected 6.6.6. Other live docs still say `vr01_`, including one that tells you to ADD such a file for every new syscall wrapper, which now opts that wrapper OUT of the cross-OS leg: `grep -rn vr01 docs/` before trusting any of them.)*
 
 ## Verify your env
 

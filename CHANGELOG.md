@@ -236,6 +236,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   qemu-aarch64, wine (PE) and cxvm — NOT hardware; the new crossos test carries it to
   ecb/ach/cass/pi, which is the only leg that reaches Mach-O.
 
+- **Two commands in `docs/development/dev-tools-linux.md` could not work as printed.** (bite 3c,
+  from bite 3's review, which caught the same overstatement in the bite's own handoff note.) The
+  cross-emit list gave arm64 Mach-O as a one-liner, `cat src/main_aarch64_macho.cyr |
+  CYRIUS_MACHO_ARM=1 build/cycc` — refused by `src/backend/x86/fixup.cyr` (*"requires the aarch64
+  backend"*) with **rc 1 after writing 0 bytes**, so a `>` redirect leaves a plausible empty file;
+  it needs the two-step through a cross-emitted `main_aarch64.cyr` compiler, which both of the
+  authorities that same paragraph names already did (`build-macos-arm64-tarball.sh:30-38`,
+  `cross-os-selfhost.sh:128`). And the verify bullet still described arg 2 of
+  `cross-os-selfhost.sh` as the `vr01_` **glob**, the filename prefix retired at v6.5.11 — it is a
+  **subdirectory** of `tests/tcyr`, the gate passes `crossos`, and a directory that does not exist
+  is a hard `LIBTEST_FAIL` rather than a glob matching nothing. All five cross-emit lines were
+  re-run at 6.6.6 on x86_64 Linux; the other four are correct (aarch64 ELF 842,840 B, x86 Mach-O
+  1,695,744 B, PE two-step → PE32+ 1,225,728 B, cx 757,976 B, and the fixed arm64 Mach-O two-step
+  → `Mach-O 64-bit arm64` 1,065,396 B). Docs-only; no compiler change, cycc unchanged at
+  **1,310,856 B**. ⚠ Several other live docs still say `vr01_` — `docs/guides/cyrius-guide.md`
+  even instructs you to add a `vr01_` test for every new syscall wrapper, which since v6.5.11 opts
+  that wrapper OUT of the cross-OS leg entirely. Out of this bite's scope; triaged for the sweep,
+  not touched here.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
