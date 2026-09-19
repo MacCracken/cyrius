@@ -239,8 +239,6 @@ fn _aw_open_replace(path): i64 {
     return _aw_open(real);
 }
 
-fn _aw_str(h, s): i64 { return _aw_write(h, s, strlen(s)); }
-
 # Give up: nothing is replaced, the temp is removed.
 fn _aw_abort(h): i64 { store64(h + 24, 1); return _aw_commit(h); }
 

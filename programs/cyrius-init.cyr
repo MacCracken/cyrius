@@ -471,6 +471,29 @@ fn _copy_file(src, dst): i64 {
     return 0;
 }
 
+# Append `len` bytes to a file the USER owns (their starship.toml, their .gitignore) as ONE
+# record: the write loops to completion, and on a short or failed write the file is truncated
+# back to its length before the append, so a full disk cannot leave a torn TOML table or a
+# half .gitignore line. Returns 0 / -5. v6.6.6: both sites called file_append_locked and
+# dropped its result — one write, a short count accepted, and "added" printed. CHANGELOG [6.6.6]
+fn _append_whole(path, buf, len): i64 {
+    var fd = file_open(path, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
+    if (fd < 0) { return 0 - 5; }
+    file_lock(fd);
+    var orig = xlseek(fd, 0, 2);
+    var off = 0;
+    var bad = 0;
+    while (bad == 0 && off < len) {
+        var w = file_write(fd, buf + off, len - off);
+        if (w <= 0) { bad = 1; } else { off = off + w; }
+    }
+    if (bad == 1 && orig >= 0) { sys_ftruncate(fd, orig); }
+    file_unlock(fd);
+    if (file_close(fd) < 0) { bad = 1; }
+    if (bad == 1) { return 0 - 5; }
+    return 0;
+}
+
 # Size of a file, or -1 — open + lseek(SEEK_END), which every peer routes (Windows:
 # SetFilePointerEx). v6.6.6: the first cut used sys_stat, which the Windows peer does not define,
 # and added a third unresolved fn to the filed PE build gap
@@ -622,7 +645,11 @@ fn _cmtools_starship(): i64 {
         return 0;
     }
     var block = "\n[custom.cyrius]\ncommand = \"cyrius version 2>/dev/null | awk '{print $2}'\"\nwhen = \"test -f cyrius.cyml -o -f cyrius.toml\"\nsymbol = \"\xF0\x9D\x95\xAE\"\nstyle = \"bg:teal\"\nformat = '[[ $symbol( $output) ](fg:base bg:teal)]($style)'\ndetect_files = [\"cyrius.cyml\", \"cyrius.toml\"]\n";
-    file_append_locked(conf, block, strlen(block));
+    if (_append_whole(conf, block, strlen(block)) != 0) {
+        _rw_fails = _rw_fails + 1;
+        _eprint("error: cannot append the Cyrius segment to "); _eprint(conf); _eprint(" (left as it was)\n");
+        return 1;
+    }
     _print("  starship: added Cyrius segment to "); _print(conf); _print("\n");
     return 0;
 }
@@ -1204,8 +1231,12 @@ fn _run_port(start): i64 {
             str_builder_add_cstr(ab, _sv_olddir);
             str_builder_add_cstr(ab, "/**/__pycache__/\n/build/\n");
             var add = str_data(str_builder_build(ab));
-            file_append_locked(gi, add, strlen(add));
-            _print("  Appended /"); _print(_sv_olddir); _print("/ and /build/ to existing .gitignore\n");
+            if (_append_whole(gi, add, strlen(add)) != 0) {
+                _rw_fails = _rw_fails + 1;
+                _eprint("error: cannot append to .gitignore (left as it was)\n");
+            } else {
+                _print("  Appended /"); _print(_sv_olddir); _print("/ and /build/ to existing .gitignore\n");
+            }
         }
     }
 

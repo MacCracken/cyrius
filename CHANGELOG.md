@@ -879,7 +879,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`2026-09-18-cyrius-init-does-not-build-for-windows.md`) from 2 unresolved fns to 3 (found in
   review). It sizes with open + `lseek(SEEK_END)` now, which every peer routes: back to the 2 the
   issue records, and a Linux scaffold vendors all 103 stdlib modules byte-identical to their
-  source. No compiler change.
+  source. ⚠ **The same review found the APPEND half of the shape still open.** `ark`'s
+  `log_transaction` still appended with four unchecked writes, and `db_register`'s new checked
+  loop returned an error but left the torn record in the package database for the next append to
+  run on into; and `cyrius-init` appended to the user's `starship.toml` and `.gitignore` with
+  `file_append_locked` and dropped its result — under the same size limit, 6.6.5/13b `cyrius-init`
+  cut `starship.toml` off mid-string at 4,096 bytes and printed "added Cyrius segment". All four
+  now append ONE whole record: the write loops to completion, and a short or failed write is
+  truncated back to the file's length before the append (`ftruncate`), reported, and counted
+  (`ark install` stops before registering; `cyrius-init` counts it toward "scaffold INCOMPLETE").
+  Measured: the limited run leaves `starship.toml` byte-for-byte and says so; `ark`'s append of an
+  8,192-byte record past a 4 KiB limit rolls back to the previous 26 bytes (without the rollback:
+  a 4,096-byte file with a torn tail). `tool_writes_never_truncate.sh` axis 4 now keys every
+  append too. Also removed: `cyrius_api_surface`'s `_print_entries` and cbt's `_aw_str`, both left
+  with no caller by 13b. No compiler change.
 
 - **`folds_agnos_parity.sh` PASSED "0/12 folded stdlibs … (12 skipped)" when its temp dir could not be
   created.** `D=$(mktemp -d)` was unchecked, so with an unusable `TMPDIR` every probe path became

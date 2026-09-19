@@ -76,47 +76,65 @@ fn db_has(entries, name): i64 {
     return 0;
 }
 
-# Add entry to database file
-fn db_register(name, version, source): i64 {
-    # Ensure directory exists
-    sys_mkdir("/var/lib/ark", 0x1C0);
-    var fd = sys_open(ARK_DB_PATH, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
+# Append `len` bytes to `path` as ONE record: every byte lands or none does. The write loops to
+# completion; on a short or failed write the file is truncated back to its length before the
+# append, so a full disk cannot leave a torn record for the next append to run on into.
+# (ftruncate has no route on Windows / agnos; there the error is still returned.)
+# v6.6.6: db_register's six writes and log_transaction's four were unchecked — a half record,
+# and exit 0. The first 6.6.6 cut checked db_register's writes but left the torn tail in the
+# database, and left log_transaction as it was (found in review). CHANGELOG [6.6.6]
+fn _ark_append(path, rec, len): i64 {
+    var fd = sys_open(path, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
     if (fd < 0) { return fd; }
-    # v6.6.6: the record is assembled first and appended in ONE checked write loop — the six
-    # unchecked writes could leave a half record in the database and still return 0.
-    var sbuf[24];
-    var slen = fmt_int_buf(source, &sbuf);
-    var nl = strlen(name);
-    var vl = strlen(version);
-    var rec = alloc(nl + vl + slen + 4);
-    memcpy(rec, name, nl);
-    store8(rec + nl, 124);
-    memcpy(rec + nl + 1, version, vl);
-    store8(rec + nl + 1 + vl, 124);
-    memcpy(rec + nl + 2 + vl, &sbuf, slen);
-    store8(rec + nl + 2 + vl + slen, 10);
-    var rlen = nl + vl + slen + 3;
+    var orig = xlseek(fd, 0, 2);
     var off = 0;
-    while (off < rlen) {
-        var w = sys_write(fd, rec + off, rlen - off);
-        if (w <= 0) { sys_close(fd); return 0 - 5; }
+    while (off < len) {
+        var w = sys_write(fd, rec + off, len - off);
+        if (w <= 0) {
+            if (orig >= 0) { sys_ftruncate(fd, orig); }
+            sys_close(fd);
+            return 0 - 5;
+        }
         off = off + w;
     }
     if (sys_close(fd) < 0) { return 0 - 5; }
     return 0;
 }
 
-# Append to transaction log
+# "<a><sep><b>\n" in a fresh buffer; *outlen gets its length.
+fn _ark_rec2(a, sep, b, outlen): i64 {
+    var al = strlen(a);
+    var bl = strlen(b);
+    var rec = alloc(al + bl + 3);
+    memcpy(rec, a, al);
+    store8(rec + al, sep);
+    memcpy(rec + al + 1, b, bl);
+    store8(rec + al + 1 + bl, 10);
+    store64(outlen, al + bl + 2);
+    return rec;
+}
+
+# Add entry to database file: "name|version|source\n", appended whole or not at all.
+fn db_register(name, version, source): i64 {
+    # Ensure directory exists
+    sys_mkdir("/var/lib/ark", 0x1C0);
+    var sbuf[24];
+    var slen = fmt_int_buf(source, &sbuf);
+    store8(&sbuf + slen, 0);
+    var l1[8];
+    var head = _ark_rec2(name, 124, version, &l1);
+    store8(head + load64(&l1) - 1, 0);                  # drop its newline: "name|version"
+    var l2[8];
+    var rec = _ark_rec2(head, 124, &sbuf, &l2);        # "name|version|source\n"
+    return _ark_append(ARK_DB_PATH, rec, load64(&l2));
+}
+
+# Append "<action> <pkg>\n" to the transaction log, whole or not at all. < 0 on failure.
 fn log_transaction(action, pkg_name): i64 {
     sys_mkdir("/var/lib/ark", 0x1C0);
-    var fd = sys_open(ARK_LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
-    if (fd < 0) { return 0; }
-    sys_write(fd, action, strlen(action));
-    sys_write(fd, " ", 1);
-    sys_write(fd, pkg_name, strlen(pkg_name));
-    sys_write(fd, "\n", 1);
-    sys_close(fd);
-    return 0;
+    var l[8];
+    var rec = _ark_rec2(action, 32, pkg_name, &l);
+    return _ark_append(ARK_LOG_PATH, rec, load64(&l));
 }
 
 # ================================================================
@@ -238,7 +256,10 @@ fn cmd_install(name): i64 {
     pkg_print(p);
 
     # Log transaction
-    log_transaction("install", name);
+    if (log_transaction("install", name) != 0) {
+        syscall(1, 2, "error: cannot append to the transaction log (nothing installed)\n", 64);
+        return 1;
+    }
 
     # Register in database
     if (db_register(name, pkg_version(p), pkg_source(p)) != 0) {
@@ -292,7 +313,10 @@ fn cmd_remove(name): i64 {
         syscall(1, 2, "error: cannot rewrite the package database (left as it was)\n", 60);
         return 1;
     }
-    log_transaction("remove", name);
+    if (log_transaction("remove", name) != 0) {
+        syscall(1, 2, "error: removed, but the transaction log could not be appended\n", 62);
+        return 1;
+    }
     syscall(1, 1, "removed: ", 9);
     syscall(1, 1, name, strlen(name));
     syscall(1, 1, "\n", 1);

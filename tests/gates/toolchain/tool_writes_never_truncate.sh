@@ -32,6 +32,10 @@
 #      cyrius.lock, vendored lib/<dep>.cyr copy, .cyrius-toolchain, toml->cyml migration,
 #      distlib bundle / modules / index.cyml / .deps sidecar, the api-surface snapshot,
 #      cyrsign's .sig, cyrsign-efi's output, cyrius-init's scaffold files, ark's database).
+#      Since the bite-13 review it also keys every APPEND (file_append_locked, or an open with
+#      O_APPEND / 0x441 / 1089): an unchecked append tears the record on a full disk (measured:
+#      cyrius-init cut the user's starship.toml mid-string and printed "added"), so the only
+#      allowlisted appends are the two checked whole-record helpers that roll a short write back.
 #   5-7. DYNAMIC, the replaced-file writers under a 2-block limit: `cyrfmt --write` (the user's
 #      source), `cyrius deps --lock` (cyrius.lock), `cyrius distlib` (the committed bundle) —
 #      each exits non-zero with the file byte-for-byte and no temp beside it, and unconstrained
@@ -64,6 +68,11 @@
 #   i. cyrius.lock back on plain _aw_open                       -> axis 8 FAIL (lock link replaced)
 #   j. _io_keep_mode dropped from cbt's _aw_open                -> axis 8 FAIL (lock 0600 -> 0644)
 #   k. cyrfmt back on file_write_atomic                         -> axis 8 FAIL (link replaced)
+#   l. programs/ark.cyr as first committed (13b)                -> axis 4 FAIL (ark|ARK_DB_PATH,
+#                                                                 ark|ARK_LOG_PATH; ark|path dead)
+#   m. programs/cyrius-init.cyr as first committed (13b)        -> axis 4 FAIL (cyrius-init|conf,
+#                                                                 cyrius-init|gi; |path dead)
+#   n. the append half of the axis-4 detector disabled          -> axis 4 self-test FAIL
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -160,7 +169,9 @@ cbt/quality.cyr|tmpf|a _cbt_tmpfile doctest source
 cbt/deps.cyr|tmpf|a _cbt_tmpfile capture of sha256sum'"'"'s stdout
 cbt/deps.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout
 cbt/deps.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr
-cbt/deps.cyr|pl|a _cbt_tmpfile path list (length checked, unlinked on failure)'
+cbt/deps.cyr|pl|a _cbt_tmpfile path list (length checked, unlinked on failure)
+programs/ark.cyr|path|_ark_append — the whole-record append: every write checked, a short one rolled back with ftruncate
+programs/cyrius-init.cyr|path|_append_whole — the whole-record append into the user'"'"'s starship.toml / .gitignore, same rule'
 cat > "$D/trunc.awk" <<'AWK'
 # prints "<FILE>|<first arg>" for each truncating write on a non-comment line
 {
@@ -170,7 +181,9 @@ cat > "$D/trunc.awk" <<'AWK'
     arg = ""
     if (match(line, /file_write_all\([^,]*,/)) {
         arg = substr(line, RSTART + 15, RLENGTH - 16)
-    } else if (line ~ /O_TRUNC|0x241|, *577[,)]/) {
+    } else if (match(line, /file_append_locked\([^,]*,/)) {
+        arg = substr(line, RSTART + 19, RLENGTH - 20)
+    } else if (line ~ /O_TRUNC|0x241|, *577[,)]|O_APPEND|0x441|, *1089[,)]/) {
         if (match(line, /(sys_open|file_open)\([^,]*,/)) {
             t = substr(line, RSTART, RLENGTH); sub(/^[a-z_]*\(/, "", t); sub(/,$/, "", t); arg = t
         } else if (match(line, /syscall\((SYS_OPEN|2), *[^,]*,/)) {
@@ -189,11 +202,13 @@ printf '    file_write_all("cyrius.cyml", out, out_n);\n' > "$D/fx/a.cyr"
 printf '    var fd = sys_open(sigpath, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);\n' > "$D/fx/b.cyr"
 printf '    var fd = syscall(SYS_OPEN, out, 0x241, 0x1ED);\n    var g = sys_open(path, 577, 420);\n' > "$D/fx/c.cyr"
 printf '    # file_write_all(path, b, n) in a comment is not a write\n    var fd = file_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);\n' > "$D/fx/d.cyr"
+printf '    file_append_locked(conf, block, strlen(block));\n    var fd = sys_open(ARK_LOG_PATH, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);\n' > "$D/fx/e.cyr"
 st=0
 [ "$(_trunc_sites "$D/fx/a.cyr" programs/x.cyr)" = 'programs/x.cyr|"cyrius.cyml"' ] || { fail "axis 4 self-test: file_write_all not seen: '$(_trunc_sites "$D/fx/a.cyr" programs/x.cyr)'"; st=1; }
 [ "$(_trunc_sites "$D/fx/b.cyr" programs/x.cyr)" = 'programs/x.cyr|sigpath' ] || { fail "axis 4 self-test: an O_TRUNC sys_open not seen"; st=1; }
 [ "$(_trunc_sites "$D/fx/c.cyr" programs/x.cyr | wc -l)" -eq 2 ] || { fail "axis 4 self-test: the 0x241 / 577 spellings not seen: $(_trunc_sites "$D/fx/c.cyr" programs/x.cyr | tr '\n' ' ')"; st=1; }
 [ "$(_trunc_sites "$D/fx/d.cyr" cbt/core.cyr)" = 'cbt/core.cyr|tmp' ] || { fail "axis 4 self-test: comment/look-alike handling wrong: '$(_trunc_sites "$D/fx/d.cyr" cbt/core.cyr)'"; st=1; }
+[ "$(_trunc_sites "$D/fx/e.cyr" programs/x.cyr | tr '\n' ' ')" = 'programs/x.cyr|conf programs/x.cyr|ARK_LOG_PATH ' ] || { fail "axis 4 self-test: an unchecked append (file_append_locked / O_APPEND open) not seen: '$(_trunc_sites "$D/fx/e.cyr" programs/x.cyr | tr '\n' ' ')'"; st=1; }
 echo "$ALLOW" | cut -d'|' -f1,2 | LC_ALL=C sort -u > "$D/allow.keys"
 nfile=0; : > "$D/sites"
 for f in $(ls programs/*.cyr cbt/*.cyr | LC_ALL=C sort); do
@@ -208,14 +223,14 @@ if [ "$nfile" -lt 60 ] || [ "$nsite" -lt 15 ]; then
     fail "axis 4: scanned $nfile files / $nsite sites (floors 60 / 15) — the scan read nothing"; a4=1
 fi
 if [ -n "$bad" ]; then
-    echo "$bad" | sed 's/^/FAIL: axis 4: a truncating write of a user or tree file (use file_write_atomic, or cbt'"'"'s _aw_open for a stream): /'
+    echo "$bad" | sed 's/^/FAIL: axis 4: a truncating or appending write of a user or tree file (use file_write_atomic, cbt'"'"'s _aw_open for a stream, or a checked whole-record append): /'
     FAIL=1; a4=1
 fi
 if [ -n "$dead" ]; then
     echo "$dead" | sed 's/^/FAIL: axis 4: allowlist entry matches no live site (remove it): /'
     FAIL=1; a4=1
 fi
-[ "$a4" = 0 ] && echo "  ok: axis 4: $nsite truncating writes over $nfile files in programs/ + cbt/, every one a temp, a child's output, or the linker's checked output ($(wc -l < "$D/allow.keys" | tr -d ' ') allowlisted keys, all live; detector self-tested on 4 shapes)"
+[ "$a4" = 0 ] && echo "  ok: axis 4: $nsite truncating/appending writes over $nfile files in programs/ + cbt/, every one a temp, a child's output, the linker's checked output or a checked whole-record append ($(wc -l < "$D/allow.keys" | tr -d ' ') allowlisted keys, all live; detector self-tested on 5 shapes)"
 
 # ── axes 5-7: the replaced-file writers, run under the size limit ──
 # cyrfmt --write replaces the USER'S SOURCE; `cyrius deps --lock` replaces cyrius.lock;
