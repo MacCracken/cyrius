@@ -1694,7 +1694,18 @@ fn _api_surface_gate(): i64 {
         var elen = strlen(extra);
         var ej = 0;
         while (ej < elen) { store8(snap_buf + got + ej, load8(extra + ej)); ej = ej + 1; }
-        file_write_all(snap2, snap_buf, got + elen);
+        # v6.6.6: CHECKED. A short/failed write left a TRUNCATED fixture and the case then
+        # graded `cyrius audit` against a snapshot it had silently damaged — a green case over
+        # the wrong input. file_write_all returns `len` or a negative errno since bite 17a.
+        # CHANGELOG [6.6.6]
+        if (file_write_all(snap2, snap_buf, got + elen) != got + elen) {
+            _p("    ");
+            _p(ANSI_RED);
+            _p("case-FAIL");
+            _p(ANSI_RESET);
+            println(": could not write the synthetic snapshot fixture");
+            fail = fail + 1;
+        }
 
         var sb2 = str_builder_new();
         str_builder_add_cstr(sb2, "--snapshot=");
@@ -1736,7 +1747,15 @@ fn _api_surface_gate(): i64 {
             nl = nl + 1;
         }
         if (nl < got3) {
-            file_write_all(snap3, sb3_buf + nl + 1, got3 - nl - 1);
+            # v6.6.6: CHECKED — same reason as the snap2 fixture above. CHANGELOG [6.6.6]
+            if (file_write_all(snap3, sb3_buf + nl + 1, got3 - nl - 1) != got3 - nl - 1) {
+                _p("    ");
+                _p(ANSI_RED);
+                _p("case-FAIL");
+                _p(ANSI_RESET);
+                println(": could not write the removed-entry snapshot fixture");
+                fail = fail + 1;
+            }
         }
 
         var sb3 = str_builder_new();

@@ -488,11 +488,35 @@ fn file_read_all(path, buf, maxlen): i64 {
     return total;
 }
 
-# Write buffer to file. Returns bytes written or error.
+# Write the WHOLE buffer to `fd`, looping until every byte lands. Returns `len`, or a
+# negative errno; no forward progress (a 0-byte write) is -EIO.
+#
+# ⛔ WHY THIS EXISTS: write(2) is allowed to write FEWER bytes than asked and return that
+# count as SUCCESS — a full disk, an RLIMIT_FSIZE ceiling, a signal, a pipe. Every
+# "…_all" helper below made ONE write and returned that count, so a caller testing only
+# `< 0` accepted a truncated file as a good one. Measured on this tree under `ulimit -f 2`:
+# file_write_all(p, buf, 4096) returned 1024 and left a 1024-byte file. Anything promising
+# "all" loops HERE; the fd-level file_write / file_write_r keep the raw one-shot semantics
+# and say so. CHANGELOG [6.6.6]
+fn _io_write_full(fd, buf, len): i64 {
+    var off = 0;
+    while (off < len) {
+        var w = file_write(fd, buf + off, len - off);
+        if (w < 0) { return w; }         # negative errno from the kernel
+        if (w == 0) { return -5; }       # no forward progress → -EIO
+        off = off + w;
+    }
+    return len;
+}
+
+# Write buffer to file. Returns `len` on success, or a negative errno — a SHORT write is an
+# error, never a partial success (see _io_write_full). NOT crash-safe: O_TRUNC empties the
+# target at open, so a failure leaves it truncated — use file_write_atomic /
+# file_replace_atomic for a file someone else owns. CHANGELOG [6.6.6]
 fn file_write_all(path, buf, len): i64 {
     var fd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     if (fd < 0) { return fd; }
-    var written = file_write(fd, buf, len);
+    var written = _io_write_full(fd, buf, len);
     file_close(fd);
     return written;
 }
@@ -630,16 +654,11 @@ fn file_write_atomic(path, buf, len): i64 {
     var fd = file_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     if (fd < 0) { return fd; }
     _io_keep_mode(fd, path);   # v6.6.6: an existing file keeps its permission bits
-    var off = 0;
-    while (off < len) {
-        var w = file_write(fd, buf + off, len - off);
-        if (w <= 0) {
-            file_close(fd);
-            xunlink(tmp);
-            if (w == 0) { return -5; }   # no forward progress → -EIO
-            return w;                    # negative errno from the kernel
-        }
-        off = off + w;
+    var wr = _io_write_full(fd, buf, len);   # loops; a short write is an error
+    if (wr < 0) {
+        file_close(fd);
+        xunlink(tmp);
+        return wr;
     }
     xfsync(fd);
     var cr = file_close(fd);
@@ -727,7 +746,11 @@ fn file_append_locked(path, buf, len): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     xlseek(fd, 0, 2);                  # SEEK_END — agnos AO_APPEND is a kernel TODO
     #endif
-    var n = file_write(fd, buf, len);
+    # v6.6.6: loops until the whole record lands — one write could append a PREFIX of the
+    # record and return that count as success, so a caller testing `< 0` logged a torn line
+    # and called it written. The lock is held across the loop, so the record stays contiguous.
+    # CHANGELOG [6.6.6]
+    var n = _io_write_full(fd, buf, len);
     file_unlock(fd);
     file_close(fd);
     return n;
@@ -832,12 +855,15 @@ fn file_read_all_r(path, buf, maxlen): Result {
 }
 
 # Result variant of file_write_all. Opens with O_WRONLY|O_CREAT|
-# O_TRUNC, writes, closes. Open failure → Err; write failure →
-# Err with errno mapping.
+# O_TRUNC, writes ALL `len` bytes, closes. Open failure → Err; write
+# failure → Err with errno mapping. v6.6.6: a short write is an Err,
+# not Ok(partial) — it used to make ONE sys_write and return its count
+# as Ok, so `ulimit -f 2` gave Ok(1024) for a 4096-byte write over a
+# file it had already truncated. CHANGELOG [6.6.6]
 fn file_write_all_r(path, buf, len): Result {
     var fd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);   # via the agnos bridge
     if (fd < 0) { return Err(_io_errno_to_iorr(0 - fd)); }
-    var n = sys_write(fd, buf, len);
+    var n = _io_write_full(fd, buf, len);
     sys_close(fd);
     if (n < 0) { return Err(_io_errno_to_iorr(0 - n)); }
     return Ok(n);

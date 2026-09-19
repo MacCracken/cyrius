@@ -1378,6 +1378,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   unowned one is still reaped, and the run says so). Mutation-proven five ways; the stamp, the
   ownership guard and the validation are each proven independently.
 
+- **`file_write_all`, `file_append_locked` and `file_write_all_r` returned a SHORT write as a
+  success count, so every caller testing only `< 0` accepted a truncated file** (bite 17a).
+  `write(2)` is allowed to write fewer bytes than asked and return that count as success — a full
+  disk, an `RLIMIT_FSIZE` ceiling, a signal, a pipe — and all three helpers made exactly ONE write.
+  Measured on the 6.6.5 tree under `ulimit -f 2` (SIGXFSZ ignored, which gives a writer a real full
+  disk's exact sequence): `file_write_all(p, buf, 4096)` returned **1024** over a file it had
+  already `O_TRUNC`'d to nothing, `file_append_locked` appended a 1024-byte **prefix of the record**
+  under the lock and called it written, and `file_write_all_r` returned `Ok(1024)`. The name is the
+  contract — `_all` means all — and the documented caller check is `< 0`, which is what `lib/bayan.cyr`
+  (`w != n` as well), `cbt/`, `programs/` and the vendored `lib/sigil.cyr` copy do. **Fix:** one
+  `_io_write_full(fd, buf, len)` helper loops until every byte lands and returns `len` or a negative
+  errno (no forward progress → `-EIO`); all four whole-buffer helpers route through it, including
+  `file_write_atomic`, which had grown its own copy of the loop in bite 13. The same three calls now
+  return `-27` (`-EFBIG`), `-27` and `Err`. ⚠ The fd-level `file_write` / `file_write_r` are
+  deliberately unchanged: they are raw `write(2)` and their own comments say a caller may need to
+  loop; looping there would change a documented primitive. Caller audit across `lib/` + `programs/`
+  + `cbt/`: every live caller checks `< 0` or `!= n` and is correct once the helper stops lying,
+  except two in `programs/checks/services.cyr` that dropped the result entirely — a failed write
+  there left a truncated snapshot fixture and the case then graded `cyrius audit` against input it
+  had silently damaged; both are checked now. `lib/sigil.cyr:26030` and `:26168` are the **vendored**
+  copy and were not hand-edited (filed for the sigil repo instead — fix the source, not the fold).
+  Gated by `tests/gates/toolchain/io_write_all_never_short.sh`, 6 mutations each RED. No compiler
+  change; `build/cycc` unchanged.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -1412,6 +1436,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without. 25 checks on PE, 15 on every other host; both path components verified against
   something other than the module table, and the GetModuleFileNameW truncation contract
   (`cch` back, not a length) pinned on real hardware. 25/25 on cass.
+
+- `tests/gates/toolchain/io_write_all_never_short.sh` — 4 axes over the `lib/io.cyr` whole-buffer
+  write contract: anti-vacuous unconstrained (the size read back with `wc -c`, a different mechanism
+  from the count the probe prints), the `RLIMIT_FSIZE` run (a negative errno, never a positive short
+  count; `Err`, not `Ok(partial)`), a STATIC check that every whole-buffer helper routes through
+  `_io_write_full` with the helper list **derived** from `lib/io.cyr` and the detector self-tested on
+  the pre-fix bodies, and the crash-safe writer keeping the original with no `.cyrtmp` sibling left.
 
 - `tests/tcyr/crossos/simd_param_int_stack_args.tcyr` — 18 assertions with **literal** expectations
   (the arguments written as digits): f64v2/f32v4/i32v4/f64v4 with 5-8 ints, vector first / middle /
