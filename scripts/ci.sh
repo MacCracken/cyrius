@@ -16,6 +16,26 @@ CYRIUS_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 TARBALL="cyrius-${VERSION}-x86_64-linux.tar.gz"
 URL="https://github.com/MacCracken/cyrius/releases/download/${VERSION}/${TARBALL}"
 
+# ⛔ CVE-44 (v6.6.6) — EVERY downloaded artifact lands in a PRIVATE directory, never a fixed
+# /tmp name. This script used /tmp/$TARBALL, /tmp/$TARBALL.sha256, /tmp/SHA256SUMS,
+# /tmp/SHA256SUMS.sig, /tmp/cyrius-release.pub and /tmp/cyrius_tsum — six predictable paths, in
+# a world-writable directory, holding the tarball being installed AND the three inputs to the
+# signature check that is supposed to authorise it. Any local user could create those names
+# first (the sticky bit stops them DELETING another user's file, not creating one that does not
+# exist yet), own the resulting files, and rewrite them between the download and the verify, or
+# between the verify and `tar xzf` — including `cyrius-release.pub`, so the signature would be
+# checked against THEIR key. A verification whose inputs another user can swap is not a
+# verification. mktemp -d is 0700 and unpredictable, so there is nothing to pre-create and
+# nothing to swap. CHANGELOG [6.6.6]
+TD=$(mktemp -d 2>/dev/null) || TD=""
+if [ -z "$TD" ] || [ ! -d "$TD" ]; then
+    echo "error: could not create a private temp directory (TMPDIR=${TMPDIR:-/tmp}) — refusing to stage a release in a shared one" >&2
+    exit 1
+fi
+chmod 700 "$TD" 2>/dev/null || true
+trap 'rm -rf "$TD"' EXIT
+trap 'rm -rf "$TD"; exit 1' INT TERM HUP
+
 echo "=== Cyrius CI Setup ==="
 echo "  version: $VERSION"
 echo "  target:  $CYRIUS_HOME"
@@ -23,7 +43,7 @@ echo "  target:  $CYRIUS_HOME"
 mkdir -p "$CYRIUS_HOME/bin"
 
 echo "  fetching $TARBALL..."
-curl -sfL "$URL" -o "/tmp/$TARBALL" || {
+curl -sfL "$URL" -o "$TD/$TARBALL" || {
     echo "error: failed to download $URL"
     exit 1
 }
@@ -34,13 +54,12 @@ curl -sfL "$URL" -o "/tmp/$TARBALL" || {
 # sovereignty stance exists to remove. macOS runners ship `shasum`, not
 # `sha256sum`, so try both.
 echo "  verifying checksum..."
-curl -sfL "${URL}.sha256" -o "/tmp/${TARBALL}.sha256" || {
+curl -sfL "${URL}.sha256" -o "$TD/${TARBALL}.sha256" || {
     echo "error: could not fetch ${URL}.sha256 — refusing to install unverified tarball"
-    rm -f "/tmp/$TARBALL"
     exit 1
 }
 (
-    cd /tmp
+    cd "$TD"
     if command -v sha256sum > /dev/null 2>&1; then
         sha256sum -c "${TARBALL}.sha256" > /dev/null 2>&1
     elif command -v shasum > /dev/null 2>&1; then
@@ -51,11 +70,10 @@ curl -sfL "${URL}.sha256" -o "/tmp/${TARBALL}.sha256" || {
     fi
 ) || {
     echo "error: checksum mismatch (or no verifier) for $TARBALL — aborting"
-    rm -f "/tmp/$TARBALL" "/tmp/${TARBALL}.sha256"
     exit 1
 }
 echo "  checksum verified"
-rm -f "/tmp/${TARBALL}.sha256"
+rm -f "$TD/${TARBALL}.sha256"
 
 # CVE-13 (v6.2.31): if a trusted cyrsign is present (a prior install on PATH /
 # in $CYRIUS_HOME/bin — the upgrade path), also verify the sovereign Ed25519
@@ -67,26 +85,25 @@ BASE="https://github.com/MacCracken/cyrius/releases/download/${VERSION}"
 _cs=""
 if command -v cyrsign > /dev/null 2>&1; then _cs="cyrsign"
 elif [ -x "$CYRIUS_HOME/bin/cyrsign" ]; then _cs="$CYRIUS_HOME/bin/cyrsign"; fi
-if [ -n "$_cs" ] && curl -sfL "${BASE}/SHA256SUMS" -o /tmp/SHA256SUMS 2>/dev/null \
-        && curl -sfL "${BASE}/SHA256SUMS.sig" -o /tmp/SHA256SUMS.sig 2>/dev/null; then
-    printf '%s\n' "$CYRIUS_RELEASE_PUBKEY" > /tmp/cyrius-release.pub
-    grep "  ${TARBALL}$" /tmp/SHA256SUMS > /tmp/cyrius_tsum 2>/dev/null || true
-    if "$_cs" verify /tmp/SHA256SUMS /tmp/SHA256SUMS.sig /tmp/cyrius-release.pub > /dev/null 2>&1 \
-            && [ -s /tmp/cyrius_tsum ] \
-            && ( cd /tmp && { sha256sum -c cyrius_tsum > /dev/null 2>&1 || shasum -a 256 -c cyrius_tsum > /dev/null 2>&1; } ); then
+if [ -n "$_cs" ] && curl -sfL "${BASE}/SHA256SUMS" -o "$TD/SHA256SUMS" 2>/dev/null \
+        && curl -sfL "${BASE}/SHA256SUMS.sig" -o "$TD/SHA256SUMS.sig" 2>/dev/null; then
+    printf '%s\n' "$CYRIUS_RELEASE_PUBKEY" > "$TD/cyrius-release.pub"
+    grep "  ${TARBALL}$" "$TD/SHA256SUMS" > "$TD/cyrius_tsum" 2>/dev/null || true
+    if "$_cs" verify "$TD/SHA256SUMS" "$TD/SHA256SUMS.sig" "$TD/cyrius-release.pub" > /dev/null 2>&1 \
+            && [ -s "$TD/cyrius_tsum" ] \
+            && ( cd "$TD" && { sha256sum -c cyrius_tsum > /dev/null 2>&1 || shasum -a 256 -c cyrius_tsum > /dev/null 2>&1; } ); then
         echo "  signature verified (Ed25519)"
     else
         echo "error: release signature verification FAILED for $VERSION — aborting" >&2
-        rm -f "/tmp/$TARBALL" /tmp/SHA256SUMS /tmp/SHA256SUMS.sig /tmp/cyrius-release.pub /tmp/cyrius_tsum
         exit 1
     fi
-    rm -f /tmp/SHA256SUMS /tmp/SHA256SUMS.sig /tmp/cyrius-release.pub /tmp/cyrius_tsum
+    rm -f "$TD/SHA256SUMS" "$TD/SHA256SUMS.sig" "$TD/cyrius-release.pub" "$TD/cyrius_tsum"
 else
     echo "  signature check skipped (no prior cyrsign / unsigned release)"
 fi
 
-tar xzf "/tmp/$TARBALL" -C "$CYRIUS_HOME"
-rm -f "/tmp/$TARBALL"
+tar xzf "$TD/$TARBALL" -C "$CYRIUS_HOME"
+rm -f "$TD/$TARBALL"
 
 # Symlink binaries
 for bin in "$CYRIUS_HOME"/versions/"$VERSION"/bin/*; do

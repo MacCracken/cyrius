@@ -1458,6 +1458,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   effect: a repo whose `lib/` contains an unreadable or dangling `*.cyr` now fails `cyrius deps`
   instead of locking around it.
 
+- ⛔ **SECURITY / CVE-44 — the release installer staged the tarball and all three signature
+  inputs at fixed `/tmp` names** (bite 17e). `scripts/ci.sh` used `/tmp/$TARBALL`,
+  `/tmp/${TARBALL}.sha256`, `/tmp/SHA256SUMS`, `/tmp/SHA256SUMS.sig`, `/tmp/cyrius-release.pub`
+  and `/tmp/cyrius_tsum` — the tarball being installed *and* every input to the Ed25519 check
+  that is supposed to authorise installing it. `/tmp`'s sticky bit stops another user **deleting**
+  your file; it does not stop them **creating** a name that does not exist yet. Deterministic
+  half, measured against the 6.6.5 script in a hermetic harness: `curl -o` and `printf >` both
+  follow a symlink, so a local user who pre-creates `/tmp/cyrius-release.pub` (or
+  `/tmp/$TARBALL`) as a link to any file the installing user can write has that file clobbered —
+  both planted link targets came back overwritten. Race half: they own the six files, so they can
+  swap the sums, the signature or the public key between the write and the verify, or the tarball
+  between the verify and `tar xzf`, and an arbitrary tarball installs with `signature verified
+  (Ed25519)` printed above it. A verification whose inputs another local user can swap is not a
+  verification — this is a hole in CVE-13's fix, not a separate inconvenience. **Fix:** one
+  `mktemp -d`, `chmod 700`, everything staged inside it, cleaned by an `EXIT` trap; a `mktemp`
+  that cannot produce a directory **aborts** the install rather than falling back to a shared one.
+  Deliberately not a check — "is this still the file I wrote?" is itself a TOCTOU. Written up as
+  **CVE-44** in `docs/audit/2026-09-03-security-audit.md`; `CLAUDE.md`'s next-id counter moved to
+  45 in the same commit. Gated by `tests/gates/toolchain/release_verify_private_temp.sh` (4 axes,
+  hermetic — `curl`/`cyrsign`/the checksum tools stubbed on `PATH` over a fake release, no
+  network), the 6.6.5 script verbatim reddening axes 2, 3 and 4.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -1492,6 +1514,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without. 25 checks on PE, 15 on every other host; both path components verified against
   something other than the module table, and the GetModuleFileNameW truncation contract
   (`cch` back, not a length) pinned on real hardware. 25/25 on cass.
+
+- `tests/gates/toolchain/release_verify_private_temp.sh` — 4 axes over the release installer's
+  staging, run hermetically with `curl`, `cyrsign` and the checksum tools stubbed on `PATH`:
+  an anti-vacuous install, the CVE-44 exploit (all six fixed `/tmp` names pre-planted, two of
+  them symlinks out of `/tmp`, with the link targets required byte-for-byte), the
+  abort-never-fall-back rule, and a static check over `scripts/ci.sh`.
 
 - `tests/gates/toolchain/deps_lock_covers_every_file.sh` — 4 axes: an anti-vacuous clean lock
   (one line per `.cyr`, the count derived by `find` and every hash re-confirmed by `sha256sum`),

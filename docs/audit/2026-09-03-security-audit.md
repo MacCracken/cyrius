@@ -4,7 +4,7 @@
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
 **Next free identifier after this document: CVE-46.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5 and
-**CVE-45 at 6.6.6** (and **CVE-44**, spent in the same release on the release installer's fixed `/tmp` staging); all three are appended below.
+**CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file; all three are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
 retired unused** and CVE-43 is the entry appended below. Anything below 46 now collides.
@@ -240,6 +240,70 @@ their tag. The gate also runs against the aarch64 CLI under `qemu-aarch64` (65/6
 not hardware).
 
 ---
+
+## CVE-44 — the release installer staged the tarball AND its signature inputs at fixed `/tmp` names
+
+*Appended 2026-09-19 (cyrius 6.6.6), found by the bite-13 review's sweep of tool and script
+write safety. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger
+and the id has to come from one place.*
+
+| | |
+|---|---|
+| **Severity** | **High** — local privilege/supply-chain: another user on the box can redirect the installer's writes, and can swap the inputs to the signature check that authorises the install |
+| **Affected** | `scripts/ci.sh` (the CI installer), since the .sha256 check landed at v6.2.30 / CVE-21 and the Ed25519 check at v6.2.31 / CVE-13, through cyrius 6.6.5 |
+| **Fixed** | 6.6.6 |
+
+**Vector.** Six fixed, predictable paths in a world-writable directory:
+
+```
+/tmp/$TARBALL            /tmp/${TARBALL}.sha256   /tmp/SHA256SUMS
+/tmp/SHA256SUMS.sig      /tmp/cyrius-release.pub  /tmp/cyrius_tsum
+```
+
+That is the tarball being installed *and all three inputs to the signature check that is
+supposed to authorise installing it*. `/tmp`'s sticky bit stops another user **deleting** your
+file; it does not stop them **creating** a name that does not exist yet. Two consequences, and
+the first is not a race:
+
+1. **Deterministic — arbitrary file overwrite as the installing user.** `curl -o <path>` and
+   `printf … > <path>` both follow a symlink. A local user who creates `/tmp/cyrius-release.pub`
+   (or `/tmp/$TARBALL`) as a symlink to any file the installing user can write has that file
+   overwritten the next time CI installs. Measured against the 6.6.5 script in a hermetic
+   harness: both planted link targets were clobbered, one with the public key, one with the
+   release tarball. On a CI runner the installing user is very often the one whose
+   `~/.ssh/authorized_keys`, shell profile or job script matters.
+2. **A race — the signature check answers to the attacker.** The attacker owns the six files, so
+   they can rewrite any of them at any moment, including between `printf … > /tmp/cyrius-release.pub`
+   and `cyrsign verify … /tmp/cyrius-release.pub`, and between the verify and `tar xzf
+   /tmp/$TARBALL`. Win either window and an arbitrary tarball installs with "signature verified
+   (Ed25519)" printed above it. **A verification whose inputs another local user can swap is not
+   a verification** — which makes this a hole in CVE-13's fix, not a separate inconvenience.
+
+**Fix.** One `mktemp -d`, `chmod 700`, everything staged inside it, removed by an `EXIT` trap.
+Deliberately *not* a check: "is this still the file I wrote?" is itself a TOCTOU. An unguessable
+0700 directory leaves nothing to pre-create and nothing to swap. A `mktemp` that cannot produce a
+directory **aborts the install** — it never falls back to a shared one. (⚠ The naive fallback
+`TD=/tmp` is worse than the bug: the script's own `trap 'rm -rf "$TD"' EXIT` then runs
+`rm -rf /tmp`. Measured once while mutation-testing the gate, and it took every other process's
+scratch with it.)
+
+**Verified.** `tests/gates/toolchain/release_verify_private_temp.sh` — 4 axes, run hermetically
+with `curl`, `cyrsign` and the checksum tools stubbed on `PATH` over a fake release, so no
+network is touched and "which public key reached the verifier" is directly observable. Axis 2 is
+the exploit: all six names pre-planted, two as symlinks out of `/tmp`; the link targets must come
+back byte-for-byte and the genuine payload must install. Axis 1 is anti-vacuous (a well-formed
+release installs and verifies against the pinned key), axis 3 pins the abort-never-fall-back
+rule, axis 4 is static over `scripts/ci.sh`. Mutation-measured: the 6.6.5 script verbatim reddens
+axes 2, 3 and 4. The tree-wide version of the static axis — no fixed `/tmp` name, and every
+`mktemp` checked, across **all** of `scripts/*.sh` — is axis 7 of
+`tests/gates/toolchain/gates_never_write_tree.sh`.
+
+**Other scripts with the same shape, fixed in the same release (6.6.6, bite 17f):**
+`scripts/install.sh` (`/tmp/cc5_verify`, `/tmp/cc5_verify2`, `/tmp/dlopen_err_$$`, and four
+unchecked `mktemp`s), `scripts/cass-install-gate.sh`, `scripts/mac-diagnose.sh`,
+`scripts/bench-history.sh`. None of those stage a signature input, so they are the
+denial-of-service / overwrite half of this finding rather than the verification-bypass half —
+but they are the same defect and the same fix.
 
 ## CVE-45 — an INCLUDED file could forge `#@file` and defeat `private` visibility
 
