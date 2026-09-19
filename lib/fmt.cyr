@@ -1,6 +1,14 @@
 # fmt.cyr — string formatting utilities
 # Usage: include "lib/fmt.cyr"
-# Requires: include "lib/string.cyr" for strlen
+# Requires: include "lib/string.cyr" for strlen, and — for fmt_sprintf /
+#           fmt_printf, whose `args` is a Vec handle — include "lib/vec.cyr"
+#           for vec_get. v6.6.6: the vec half of that contract was never
+#           written down, and nothing enforced it: on the native backends an
+#           uncalled fmt_sprintf makes `vec_get` merely UNREACHABLE, so the
+#           dangling reference was a warning nobody read. The cx backend has
+#           no DCE — it emits every fn, so the call site is real and its
+#           undefined-call gate hard-errors — which is why `include
+#           "lib/assert.cyr"` could not compile for cx at all.
 
 # Print decimal number to stdout
 fn fmt_int(n: i64): i64 {

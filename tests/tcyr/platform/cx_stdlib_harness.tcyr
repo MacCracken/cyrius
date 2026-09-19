@@ -1,0 +1,60 @@
+# The assertion + allocator + fmt + string surface a .tcyr needs, with NO file
+# I/O, threads, floats or syscalls beyond write/exit — so it runs on EVERY
+# target INCLUDING the cyrius-x bytecode VM, whose guest can only reach
+# read/write/open/close/lseek/exit through cxvm.
+#
+# WHY IT EXISTS (v6.6.6): before this release `include "lib/assert.cyr"` did
+# not compile for cx at all. The cx driver predefined no CYRIUS_TARGET_* macro,
+# so every per-target `#ifdef` arm in the stdlib matched nothing (`undefined
+# function(s) called (cx backend): alloc, vec_get, alloc_reset, sys_exit`), and
+# fmt.cyr's undeclared vec_get dependency hard-errors on a backend with no DCE.
+# So NO .tcyr had ever run on cx, and the whole target's coverage was
+# hand-written syscall-only programs. Pinned on cxvm by
+# tests/gates/toolchain/cx_tcyr_runs.sh. See CHANGELOG [6.6.6].
+#
+# ⚠ DELIBERATELY NO lib/vec.cyr CALLS. vec compiles for cx now, but it does not
+# RUN there: a pre-existing cx codegen defect (reproduced against the 6.6.5
+# compiler, so not from this release, and filed for the next one) corrupts a
+# call's first argument after certain preceding calls, so `vec_get(v, 0)` on a
+# 1-element vec aborts with "vec: index out of bounds". Adding vec coverage
+# here is the right move the day that is fixed — don't add it before, or this
+# file stops running on cx and the cx row goes back to proving nothing.
+include "lib/assert.cyr";
+
+# --- allocator: a bump alloc that is 8-aligned and actually writable ---
+var p = alloc(64);
+assert_nonnull(p, "alloc(64) returns memory");
+assert_eq(p & 7, 0, "alloc is 8-byte aligned");
+store64(p, 0x5A5A5A5A);
+store64(p + 56, 7);
+assert_eq(load64(p), 0x5A5A5A5A, "first qword round-trips");
+assert_eq(load64(p + 56), 7, "last qword round-trips");
+
+var before = alloc_used();
+var q = alloc(32);
+assert_nonnull(q, "second alloc succeeds");
+assert_neq(p, q, "two allocations do not overlap");
+var after = alloc_used();
+# NB assert_gt, not assert_gte. assert_gte/assert_lte evaluate `a >= b` as a
+# CALL ARGUMENT (`assert(a >= b, name)`), and `>=`/`<=` in argument position
+# mis-evaluate on cx while `>`/`<` are fine — another pre-existing cx backend
+# defect (6.6.5 reproduces it), filed for the next release and NOT introduced
+# here. `x >= 32` is written `x > 31`.
+var grew = after - before;
+assert_gt(grew, 31, "alloc_used advances by at least the request");
+var pend = p + 63;
+assert_gt(q, pend, "the second block starts past the first");
+
+# --- fmt: integer formatting into a caller buffer ---
+var buf[24];
+var n = fmt_int_buf(0 - 4207, &buf);
+assert_eq(n, 5, "fmt_int_buf writes 5 bytes for -4207");
+assert_eq(load8(&buf), 45, "fmt_int_buf emits the minus sign");
+assert_eq(load8(&buf + 4), 55, "fmt_int_buf emits the last digit");
+
+# --- string: strlen + the harness's own string comparison ---
+var s = "cyrius-x";
+assert_eq(strlen(s), 8, "strlen over a literal");
+assert_streq(s, "cyrius-x", "assert_streq over equal literals");
+
+var r = assert_summary();

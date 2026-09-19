@@ -2506,7 +2506,13 @@ mutually exclusive with `--agnos` (bare-metal kernel target) and `--aarch64`
 
 Use the `#ifdef CYRIUS_TARGET_WIN` preprocessor guard to write cross-platform
 code. The compiler defines exactly one of `CYRIUS_TARGET_LINUX`, `CYRIUS_TARGET_WIN`,
-or `CYRIUS_TARGET_MACOS` per build:
+`CYRIUS_TARGET_MACOS`, `CYRIUS_TARGET_AGNOS` or `CYRIUS_TARGET_CX` per build.
+(This line listed only the first three until v6.6.6. `CYRIUS_TARGET_AGNOS` has
+been predefined since v6.0.48 and is used throughout `lib/`; `CYRIUS_TARGET_CX`
+is new in v6.6.6 — before it, the cx driver predefined NOTHING, so every
+per-target `#ifdef` arm in the stdlib matched nothing on cx and those modules
+compiled to *nothing*, which is why `include "lib/assert.cyr"` did not compile
+for the cx target at all.)
 
 ```cyrius
 #ifdef CYRIUS_TARGET_WIN

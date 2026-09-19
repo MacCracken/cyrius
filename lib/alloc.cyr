@@ -128,6 +128,14 @@ include "lib/alloc_macos.cyr"
 include "lib/alloc_agnos.cyr"
 #endif
 
+# cyrius-x bytecode — no host heap reachable from a .cyx guest; a static bump
+# heap inside cxvm's flat data region. v6.6.6: without this arm the cx driver
+# matched NO target here (it predefined no CYRIUS_TARGET_* macro at all), so
+# `alloc` was undefined on cx and no .tcyr could compile. See lib/alloc_cx.cyr.
+#ifdef CYRIUS_TARGET_CX
+include "lib/alloc_cx.cyr"
+#endif
+
 #ifdef CYRIUS_TARGET_LINUX
 # v6.1.19: the Linux heap was brk(2)-backed (1 MB + grow via brk). brk is a
 # PROCESS-GLOBAL resource glibc malloc's main arena ALSO owns; whenever a

@@ -1013,6 +1013,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   IDENTICAL (1,310,864 B before and after — every change is in a fork or behind
   `#ifdef CYRIUS_TARGET_MACOS`); seed-derive green.
 
+- **No `.tcyr` had ever run on the cx bytecode target: `include "lib/assert.cyr"` did not compile
+  there at all.** (bite 7.) `cycc_cx < 'include "lib/assert.cyr"; assert_eq(1,1,"x"); var r =
+  assert_summary();'` answered `undefined function(s) called (cx backend): alloc, vec_get,
+  alloc_reset, sys_exit`. Root cause: `src/main_cx.cyr` predefined **no `CYRIUS_TARGET_*` macro**
+  (it predefines `CYRIUS_HAS_VAL_SIMD_PARAMS` and nothing else), so every per-target `#ifdef` arm in
+  the stdlib — `lib/alloc.cyr`, `lib/syscalls.cyr`, … — matched nothing on cx and those modules
+  compiled to NOTHING. The whole target's test coverage was therefore hand-written syscall-only
+  programs; its five existing gates prove codegen shapes, not that the stdlib works there. Fixed:
+  `main_cx.cyr` predefines `CYRIUS_TARGET_CX`; `lib/alloc.cyr` gains a cx arm
+  (`lib/alloc_cx.cyr`, new — a static bump heap inside cxvm's flat 1 MB guest region, because a
+  .cyx guest cannot use brk/mmap at all: cxvm's syscall dispatch captures only r2..r6 so the
+  6-argument mmap cannot be issued, and a host address would be meaningless as a guest offset);
+  `lib/syscalls.cyr` gains a cx arm routing to the x86_64-Linux peer (cxvm issues the guest's own
+  Linux-numbered syscall on whatever host it runs on). `lib/assert.cyr` now includes
+  `lib/vec.cyr`: `fmt.cyr`'s `fmt_sprintf` calls `vec_get` without including its definer, which on
+  x86/aarch64 is only a warning (an uncalled `fmt_sprintf` makes it UNREACHABLE) but hard-errors on
+  cx, which has no DCE — fmt.cyr's header now states the dependency it had always had. New
+  `tests/tcyr/platform/cx_stdlib_harness.tcyr` (13 assertions over alloc/fmt/string) runs on BOTH
+  x86 and cxvm, gated by `tests/gates/toolchain/cx_tcyr_runs.sh` (registered in
+  `programs/checks/main.cyr`), which also compiles and runs the filed repro verbatim and requires
+  the cx assertion count to equal the native count and the count grepped from the source, with a
+  floor of 13. `build/cycc` BYTE-IDENTICAL (1,310,864 B — the alloc.cyr arm is `#ifdef`-gated);
+  seed-derive green; all **329** `.tcyr` pass a per-file exit-code loop. ⚠ **Three pre-existing cx
+  BACKEND defects were found doing this and are NOT fixed here** (all three reproduce against the
+  released 6.6.5 compiler, so none is from this release; filed for the next one, and named in the
+  new test and in `lib/alloc_cx.cyr` so nobody re-derives them): a `global * <power of two>` inside
+  a function corrupts the next call's first argument; `>=` / `<=` in call-ARGUMENT position
+  mis-evaluate (so `assert_gte` / `assert_lte` are unusable on cx, while `assert_gt` / `assert_lt`
+  are fine); and `vec_get` aborts with "index out of bounds" on a populated vec after certain
+  preceding calls. The new .tcyr is written around all three and says so at the site.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

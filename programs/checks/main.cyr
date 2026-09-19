@@ -354,6 +354,11 @@ fn _run_regression_gates(): i64 {
     # compiler with a FLAG, which is why it survived. See CHANGELOG [6.6.6].
     _section("Fork parity — every src/main*.cyr answers --version (v6.6.6)");
     _gate("all 7 drivers print `<name> <VERSION>`: x86 direct, cx direct, PE under wine, aarch64 under qemu, Mach-O built (v6.6.6)", "tests/gates/toolchain/fork_version_parity.sh");
+    # v6.6.6: the cx half of fork parity. cx predefined NO CYRIUS_TARGET_* macro,
+    # so every per-target stdlib arm compiled to nothing there and
+    # `include "lib/assert.cyr"` did not compile — no .tcyr had ever run on cxvm,
+    # and the five cx gates above prove codegen shapes, not that the stdlib works.
+    _gate("cx compiles + RUNS a real .tcyr on cxvm (assert/alloc/fmt/string), same assertion count as native (v6.6.6)", "tests/gates/toolchain/cx_tcyr_runs.sh");
     println("");
 
     _section("Parser fuzz (VR-02)");

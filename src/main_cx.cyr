@@ -240,6 +240,17 @@ _init_cyrius_lib();
 # ESTOREPARM_F64V2/V4 + ELOAD_F64V2/V4_TO_XMM in backend/cx/emit.cyr), so lib/simd.cyr's
 # value-form typed wrappers compile on cx — matches every other fork (main.cyr:1021, etc.).
 PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
+# v6.6.6 — the cx driver predefined NO target macro. Every `#ifdef
+# CYRIUS_TARGET_*` arm in the stdlib (lib/alloc.cyr, lib/syscalls.cyr, …)
+# therefore matched nothing on cx, so the modules those arms define compiled to
+# NOTHING and every program that touched them failed with `undefined function(s)
+# called (cx backend): alloc, vec_get, alloc_reset, sys_exit`. That included
+# lib/assert.cyr — so NO .tcyr could run on cxvm, and the cx target had test
+# coverage only from hand-written syscall-only programs. cx is its own target
+# (not Linux: a .cyx guest has no brk/mmap and cxvm captures only r2..r6, so the
+# Linux arms would compile and then fail at runtime), so it gets its own macro
+# and its own arms. CHANGELOG [6.6.6]
+PP_PREDEFINE(S, "CYRIUS_TARGET_CX");
 var _poison_env_early = _read_env("CYRIUS_POISON");
 # v6.5.29 — CYRIUS_POISON: opt-in allocator poison mode (redzones, poison fill,
 # quarantine-on-free) so an out-of-bounds READ or a use-after-free is OBSERVABLE to
