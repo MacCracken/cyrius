@@ -7,11 +7,44 @@ include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/assert.cyr"
 
+# v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
+# run of the suite (two check.sh at once), so one run deleted or rewrote another's file
+# mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
 fn main(): i64 {
     alloc_init();
     test_group("sys_fsync / sys_fdatasync");
 
-    var path = "/tmp/_cyrius_fsync_test.tmp";
+    var path = _scratch("_cyrius_fsync_test", ".tmp");
     var fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);   # 0644
     assert(fd >= 0, "tmp file opened for write");
 

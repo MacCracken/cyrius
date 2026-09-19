@@ -26,6 +26,39 @@ include "lib/alloc.cyr"
 include "lib/io.cyr"
 include "lib/assert.cyr"
 
+# v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
+# run of the suite (two check.sh at once), so one run deleted or rewrote another's file
+# mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
 fn main(): i64 {
     alloc_init();
     test_group("raw x86_64 fstat(5) / lstat(6) route to fstat / lstat on this target");
@@ -35,11 +68,11 @@ fn main(): i64 {
     # a regular file of KNOWN size, so st_size is a discriminating field (a directory's
     # st_size is filesystem-dependent and "/" would make the size comparison 4096 == 4096
     # on most boxes but prove nothing about WHICH object was stat'ed).
-    xunlink("/tmp/cyr_xlat_f");
-    var wfd = sys_open("/tmp/cyr_xlat_f", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    xunlink(_scratch("cyr_xlat_f", ""));
+    var wfd = sys_open(_scratch("cyr_xlat_f", ""), O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     sys_write(wfd, "0123456789abc", 13);
     sys_close(wfd);
-    var fd = sys_open("/tmp/cyr_xlat_f", O_RDONLY, 0);
+    var fd = sys_open(_scratch("cyr_xlat_f", ""), O_RDONLY, 0);
     assert_eq(syscall(5, fd, &st2), sys_fstat(fd, &st1), "syscall(5, fd, st) == sys_fstat(fd, st) (return value)");
     assert_eq(load64(&st2 + STAT_SIZE), 13, "raw fstat fills st_size at the peer's STAT_SIZE (13 bytes written)");
     assert_eq(load64(&st2 + STAT_SIZE), load64(&st1 + STAT_SIZE), "raw fstat and sys_fstat agree on st_size");
@@ -47,16 +80,16 @@ fn main(): i64 {
     assert_eq(load32(&st2 + STAT_MODE), load32(&st1 + STAT_MODE), "raw fstat and sys_fstat agree on st_mode");
     assert_eq(syscall(5, 0 - 1, &st2), sys_fstat(0 - 1, &st1), "the pair agrees on a bad fd");
     sys_close(fd);
-    xunlink("/tmp/cyr_xlat_lnk");
-    xsymlink("/tmp/cyr_xlat_f", "/tmp/cyr_xlat_lnk");
-    var lp = "/tmp/cyr_xlat_lnk";
+    xunlink(_scratch("cyr_xlat_lnk", ""));
+    xsymlink(_scratch("cyr_xlat_f", ""), _scratch("cyr_xlat_lnk", ""));
+    var lp = _scratch("cyr_xlat_lnk", "");
     assert_eq(syscall(6, lp, &st2), sys_lstat(lp, &st1), "syscall(6, path, st) == sys_lstat(path, st) (return value)");
     assert_eq(load32(&st2 + STAT_MODE) & 0xF000, 0xA000, "raw lstat does NOT follow the symlink (S_IFLNK)");
     assert_eq(load32(&st2 + STAT_MODE), load32(&st1 + STAT_MODE), "raw lstat and sys_lstat agree on st_mode");
     assert_eq(load64(&st2 + STAT_SIZE), load64(&st1 + STAT_SIZE), "raw lstat and sys_lstat agree on st_size");
-    assert_eq(load64(&st2 + STAT_SIZE), 15, "st_size is the link text length (15), so it is the LINK that was stat'ed");
-    xunlink("/tmp/cyr_xlat_lnk");
-    xunlink("/tmp/cyr_xlat_f");
+    assert_eq(load64(&st2 + STAT_SIZE), strlen(_scratch("cyr_xlat_f", "")), "st_size is the link text length, so it is the LINK that was stat'ed");
+    xunlink(_scratch("cyr_xlat_lnk", ""));
+    xunlink(_scratch("cyr_xlat_f", ""));
     #endif
     #ifdef CYRIUS_TARGET_WIN
     assert_eq(1, 1, "no stat(2) numbering on PE — skipped");

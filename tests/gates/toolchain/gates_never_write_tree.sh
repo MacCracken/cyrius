@@ -72,6 +72,11 @@
 #      hand-built "${TMPDIR:-/tmp}/name.$$" is refused), and no FIXED /tmp name — in a gate, or
 #      as a "/tmp/<name>" literal in programs/checks/*.cyr. See the axis for the two exempt,
 #      read-only namespaces. Self-tested on 7 shapes and 2 clean files.
+#   6. STATIC (6.6.6 bite 13 review), every tests/tcyr + tests/fixtures file — what check.sh RUNS:
+#      no "/tmp/<name>" string literal (a non-path literal is allowlisted with its reason, and a
+#      stale allowlist entry fails) and no fixed port bound (sock_bind with a non-zero literal or
+#      a name assigned one; a raw bind whose sockaddr gets non-zero port bytes or is built by
+#      sockaddr_in[6](a, P)). Self-tested on 6 shapes and a clean file.
 #
 # MUTATION LEDGER (measured 6.6.6, each in a scratch copy of the tree):
 #   a. 6.6.5 syscall_xlat_generated.sh + 6.6.5 generator  -> axis 2 FAIL (normal: table
@@ -102,6 +107,16 @@
 #   m. axis-5 fixed-/tmp detector disabled                 -> axis 5 self-test FAIL
 #   n. axis-5 mktemp detector accepting everything         -> axis 5 self-test FAIL (bare, trap,
 #                                                            wrongvar, noexit, handmade)
+#   o. 6.6.5 tests/tcyr/platform/fs.tcyr                   -> axis 6 FAIL (/tmp/cyrius_fs_bare_gate…)
+#   p. 6.6.5 tests/fixtures/async/async_sendrecv.cyr       -> axis 6 FAIL (sock_bind(…, port),
+#                                                            port = 47663)
+#   q. 6.6.5 tests/tcyr/crypto/tls_native_scaffold.tcyr    -> axis 6 FAIL (store8(&sa23 + 2, 0xAD)
+#                                                            into the sockaddr sys_bind binds)
+#   r. 6.6.5 tests/tcyr/crossos/syscall_wrappers.tcyr      -> axis 6 FAIL (/tmp/cyr_vr01_wrap…)
+#   s. axis-6 "/tmp/" literal detector disabled            -> axis 6 self-test FAIL (tmp_lit, tmp_two)
+#   t. axis-6 port detector disabled                       -> axis 6 self-test FAIL (port_var,
+#                                                            port_lit, port_raw, port_sockaddr)
+#   u. an allowlist entry naming a literal that is gone    -> axis 6 FAIL (stale entry)
 # Real tree -> PASS.
 #
 # ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
@@ -549,5 +564,152 @@ elif [ "$st5" = 0 ]; then
     echo "  ok: axis 5: $n5 gate scripts ($nmk mktemp lines) take every temp dir from a checked mktemp and name no fixed /tmp path; $ncyr check-driver files carry no \"/tmp/<name>\" (self-tested on 7 shapes + 2 clean files)"
 fi
 
+# ── axis 6: STATIC — the TESTS check.sh runs share no fixed name either ─────────────────
+# v6.6.6 bite 13 review. Axis 5 covered the gates and the driver, but every check.sh also RUNS
+# the whole tests/tcyr/** corpus and the tests/fixtures/** programs, and those still named fixed
+# resources — so two check.sh at once still clobbered each other, on timing luck:
+#   (a) "/tmp/<name>" literals: 17 .tcyr files. Measured with the 6.6.5 files, N concurrent
+#       copies of one test: fs.tcyr 9/16 failed, io.tcyr 10/16 (one SIGSEGV), syscall_shm_fd_
+#       passing 12/12, syscall_wrappers 7/12. Each name is now per-process (/tmp/<name>.<pid>).
+#   (b) fixed TCP/UDP ports: the async_connect / async_sendrecv / async_dns fixtures the driver
+#       runs on every check.sh bound 47653 / 47663 / 47671 — 24 concurrent runs: 1-2 hung to the
+#       timeout or exited 1, each. They bind port 0 and read the port back now.
+# A literal that is NOT a path the test opens (a flag-parser argv string) is allowlisted below
+# with its reason; an allowlist entry that matches no live literal fails, so the list cannot rot.
+# ⚠ Static, so it sees literals only: a cwd-RELATIVE name used after sys_chdir("/tmp") is a
+# fixed /tmp name it cannot see (syscall_wrappers.tcyr's access probe was one — found by running
+# the file as 16 concurrent copies, not by this scan).
+_fixed_tmp_lits() {  # "<file>|<literal>" for every "/tmp/<name>…" string literal in code
+    awk '/^[ \t]*#/ { next } {
+        t = $0
+        while (match(t, /"\/tmp\/[A-Za-z0-9_.@-][^"]*"/)) {
+            print FILENAME "|" substr(t, RSTART + 1, RLENGTH - 2)
+            t = substr(t, RSTART + RLENGTH)
+        }
+    }' "$1"
+}
+# A port a test BINDS that is not 0: sock_bind(fd, addr, P) with P a non-zero literal or a
+# name assigned one, and a raw bind (sys_bind / syscall(SYS_BIND|49, …)) whose sockaddr gets
+# non-zero port bytes (store8 at +2/+3, store16 at +2) or comes from sockaddr_in[6](a, P).
+cat > "$W/ports.awk" <<'AWK'
+function trim(x) { sub(/^[ \t]+/, "", x); sub(/[ \t]+$/, "", x); return x }
+function isnz(x) { return (x ~ /^(0[xX][0-9A-Fa-f]+|[0-9]+)$/) && (x !~ /^(0[xX]0+|0+)$/) }
+function nzname(x) { return isnz(x) || (x in NZ) }
+function splitargs(s, pos,    depth, i, c, cur, instr) {   # top-level args of the call at pos
+    depth = 0; NA = 0; cur = ""; instr = 0
+    for (i = pos; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (instr) { cur = cur c; if (c == "\"") instr = 0; continue }
+        if (c == "\"") { instr = 1; cur = cur c; continue }
+        if (c == "(") depth++
+        else if (c == ")") { if (depth == 0) { AR[++NA] = trim(cur); return NA } depth-- }
+        else if (c == "," && depth == 0) { AR[++NA] = trim(cur); cur = ""; continue }
+        cur = cur c
+    }
+    NA = 0; return 0
+}
+function saname(x) { x = trim(x); sub(/^&/, "", x); return trim(x) }
+{
+    L[NR] = ($0 ~ /^[ \t]*#/) ? "" : $0
+    if (match(L[NR], /(^|[^A-Za-z0-9_.])(var[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*(0[xX][0-9A-Fa-f]+|[0-9]+)[ \t]*;/)) {
+        seg = substr(L[NR], RSTART, RLENGTH); sub(/^[^A-Za-z_]*/, "", seg); sub(/^var[ \t]+/, "", seg)
+        id = seg; sub(/[ \t]*=.*/, "", id); v = seg; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t]*;.*/, "", v)
+        if (isnz(v)) NZ[id] = 1
+    }
+}
+END {
+    for (i = 1; i <= NR; i++) {
+        t = L[i]
+        while ((k = index(t, "sock_bind(")) > 0) {
+            if (splitargs(t, k + 10) == 3 && nzname(AR[3])) print i ": sock_bind(…, " AR[3] ") binds a FIXED port"
+            t = substr(t, k + 10)
+        }
+        t = L[i]
+        while ((k = index(t, "sys_bind(")) > 0) { if (splitargs(t, k + 9) >= 2) SA[saname(AR[2])] = 1; t = substr(t, k + 9) }
+        t = L[i]
+        while ((k = index(t, "syscall(")) > 0) {
+            if (splitargs(t, k + 8) >= 3 && (AR[1] == "SYS_BIND" || AR[1] == "49")) SA[saname(AR[3])] = 1
+            t = substr(t, k + 8)
+        }
+    }
+    for (i = 1; i <= NR; i++) {
+        t = L[i]
+        while ((k = index(t, "store8(")) > 0) {
+            if (splitargs(t, k + 7) == 2 && isnz(AR[2])) { a = AR[1]; sub(/^&/, "", a); gsub(/[ \t]/, "", a)
+                for (s in SA) if (a == s "+2" || a == s "+3") print i ": port byte " AR[2] " stored into the bound sockaddr " s }
+            t = substr(t, k + 7)
+        }
+        t = L[i]
+        while ((k = index(t, "store16(")) > 0) {
+            if (splitargs(t, k + 8) == 2 && isnz(AR[2])) { a = AR[1]; sub(/^&/, "", a); gsub(/[ \t]/, "", a)
+                for (s in SA) if (a == s "+2") print i ": port " AR[2] " stored into the bound sockaddr " s }
+            t = substr(t, k + 8)
+        }
+        if (match(L[i], /[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*sockaddr_in6?\(/)) {
+            id = substr(L[i], RSTART, RLENGTH); sub(/[ \t]*=.*/, "", id)
+            if ((id in SA) && splitargs(L[i], RSTART + RLENGTH) == 2 && nzname(AR[2])) print i ": the bound sockaddr " id " is built with port " AR[2]
+        }
+    }
+}
+AWK
+_fixed_port() { awk -f "$W/ports.awk" "$1"; }
+# file|literal|reason — literals that are not paths the test opens
+TMPLIT_ALLOW='tests/tcyr/crossos/flags.tcyr|/tmp/out.s|argv string for the flag parser; never opened
+tests/fixtures/aarch64_cluster/syscalls_combined.cyr|/tmp/out|argv string for the flag parser; never opened'
+mkdir -p "$W/fx6"
+printf 'var testpath = "/tmp/cyrius_fs_test";\n' > "$W/fx6/tmp_lit.tcyr"
+printf '    xsymlink("/tmp/cyr_xlat_f", "/tmp/cyr_xlat_lnk");\n' > "$W/fx6/tmp_two.tcyr"
+printf 'fn main(): i64 {\n    var port = 47663;\n    sock_bind(lfd, 0, port);\n}\n' > "$W/fx6/port_var.cyr"
+printf '    sock_bind(srv, localhost, 47671);\n' > "$W/fx6/port_lit.cyr"
+{ printf '    var sa23[16];\n    store8(&sa23 + 2, 0xAD); store8(&sa23 + 3, 0x23);   # port 44323 (BE)\n'
+  printf '    assert_eq(sys_bind(lfd, &sa23, 16), 0, "bind 127.0.0.1:44323");\n'; } > "$W/fx6/port_raw.tcyr"
+printf 'var l4sa = sockaddr_in(INADDR_LOOPBACK(), 8080);\nsyscall(SYS_BIND, l4, l4sa, 16);\n' > "$W/fx6/port_sockaddr.tcyr"
+{ printf '# a comment may say "/tmp/foo" and sock_bind(fd, 0, 8080)\n'
+  printf 'var p = _scratch("cyr_x", "/a");\nmemcpy(p, "/tmp/", 5);\nis_dir(str_from("/tmp"));\n'
+  printf 'sock_bind(lfd, 0, 0);\nvar port = _bound_port(lfd);\nsock_connect(fd, ip, 443);\n'
+  printf 'var lsa = sockaddr_in6(loop6, 0);\nsyscall(SYS_BIND, lfd, lsa, 28);\nstore8(&r + 2, 0x81);\n'
+  printf 'store8(sa + 4, 127);\nsys_bind(lfd, sa, 16);\nsock_bind(fd, INADDR_LOOPBACK(), 0);\n'; } > "$W/fx6/clean.tcyr"
+st6=0
+for f in tmp_lit.tcyr tmp_two.tcyr; do
+    [ -n "$(_fixed_tmp_lits "$W/fx6/$f")" ] || { echo "FAIL: axis 6 self-test: a \"/tmp/<name>\" literal in a test ('$f') was not flagged"; st6=1; }
+done
+[ "$(_fixed_tmp_lits "$W/fx6/tmp_two.tcyr" | wc -l)" -eq 2 ] || { echo "FAIL: axis 6 self-test: two literals on one line were not both reported"; st6=1; }
+for f in port_var.cyr port_lit.cyr port_raw.tcyr port_sockaddr.tcyr; do
+    [ -n "$(_fixed_port "$W/fx6/$f")" ] || { echo "FAIL: axis 6 self-test: a fixed port ('$f') was not flagged"; st6=1; }
+done
+[ -z "$(_fixed_tmp_lits "$W/fx6/clean.tcyr")$(_fixed_port "$W/fx6/clean.tcyr")" ] \
+    || { echo "FAIL: axis 6 self-test: a per-process name, an ephemeral bind or a connect was flagged: $(_fixed_tmp_lits "$W/fx6/clean.tcyr") $(_fixed_port "$W/fx6/clean.tcyr")"; st6=1; }
+[ "$st6" = 0 ] || FAIL=1
+n6=0; bad6=0
+: > "$W/lits6"
+for t in $(find tests/tcyr tests/fixtures -type f \( -name '*.tcyr' -o -name '*.cyr' \) | LC_ALL=C sort); do
+    n6=$((n6 + 1))
+    _fixed_tmp_lits "$t" >> "$W/lits6"
+    h=$(_fixed_port "$t")
+    [ -n "$h" ] && { echo "$h" | sed "s|^|FAIL: axis 6: $t: a FIXED port (bind port 0 and read it back with getsockname) at line |"; bad6=1; }
+done
+nallow=0
+while IFS='|' read -r af al ar; do
+    [ -n "$af" ] || continue
+    nallow=$((nallow + 1))
+    grep -qxF "$af|$al" "$W/lits6" || { echo "FAIL: axis 6: allowlist entry '$af|$al' matches no live literal — remove it"; bad6=1; }
+done <<EOF
+$TMPLIT_ALLOW
+EOF
+printf '%s\n' "$TMPLIT_ALLOW" | cut -d'|' -f1,2 | LC_ALL=C sort -u > "$W/allow6"
+LC_ALL=C sort -u "$W/lits6" | LC_ALL=C comm -23 - "$W/allow6" > "$W/badlits6"
+if [ -s "$W/badlits6" ]; then
+    sed 's/^\([^|]*\)|/FAIL: axis 6: \1: a FIXED \/tmp name, shared by every concurrent run (use a per-process name, e.g. \/tmp\/<name>.<pid>): /' "$W/badlits6"
+    bad6=1
+fi
+# Floor: 323 .tcyr + 112 fixture .cyr at 6.6.6 (derive: find tests/tcyr tests/fixtures -name '*.tcyr' -o -name '*.cyr' | wc -l).
+if [ "$n6" -lt 400 ]; then
+    echo "FAIL: axis 6: only $n6 test files scanned (floor 400) — the scan read nothing"; FAIL=1
+elif [ "$bad6" != 0 ]; then
+    FAIL=1
+elif [ "$st6" = 0 ]; then
+    echo "  ok: axis 6: $n6 tests/tcyr + tests/fixtures files name no fixed /tmp path ($nallow allowlisted non-path literals) and bind no fixed port (self-tested on 6 shapes + 1 clean file)"
+fi
+
 if [ "$FAIL" != 0 ]; then echo "FAIL: gates_never_write_tree"; exit 1; fi
-echo "PASS gates_never_write_tree (static: no gate or check.sh writes a path under \$ROOT but gitignored build/ outputs, edits one in place, or backs one up and restores it; every temp dir is a checked mktemp and no gate or check-driver path is a fixed /tmp name; dynamic: the 4 gates that did leave a stamped scratch tree untouched under 4 TMPDIR faults; the generator fails a short write)"
+echo "PASS gates_never_write_tree (static: no gate or check.sh writes a path under \$ROOT but gitignored build/ outputs, edits one in place, or backs one up and restores it; every temp dir is a checked mktemp and no gate or check-driver path is a fixed /tmp name; no test check.sh runs names a fixed /tmp path or binds a fixed port; dynamic: the 4 gates that did leave a stamped scratch tree untouched under 4 TMPDIR faults; the generator fails a short write)"

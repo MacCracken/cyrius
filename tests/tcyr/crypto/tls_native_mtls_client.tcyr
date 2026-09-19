@@ -18,6 +18,39 @@ include "lib/tls_native.cyr"
 include "lib/tls.cyr"
 include "lib/assert.cyr"
 
+# v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
+# run of the suite (two check.sh at once), so one run deleted or rewrote another's file
+# mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
 test_group("tls_native mTLS client-auth (v6.2.8)");
 
 # Ed25519 self-signed leaf for CN=127.0.0.1 (cert DER 320 B; PKCS#8 key 48 B).
@@ -34,17 +67,21 @@ fn _dump(path, buf, n): i64 {
     return 0;
 }
 
+# (named once, here in the parent: chook below runs in the forked child)
+var mtls_cert_path = _scratch("_mtls_c", ".der");
+var mtls_key_path = _scratch("_mtls_k", ".der");
+
 # Client hook (fires on the native ctx pre-handshake): accept the self-signed
 # SERVER cert + present our own client cert via the typed wrappers.
 fn chook(hctx, handle): i64 {
     tls_set_verify(handle, 0, 0);                                   # accept self-signed server cert
-    tls_ctx_use_certificate_file(handle, "/tmp/_mtls_c.der", 2);    # type 2 = DER
-    tls_ctx_use_private_key_file(handle, "/tmp/_mtls_k.der", 2);
+    tls_ctx_use_certificate_file(handle, mtls_cert_path, 2);        # type 2 = DER
+    tls_ctx_use_private_key_file(handle, mtls_key_path, 2);
     return 0;
 }
 
-assert_eq(_dump("/tmp/_mtls_c.der", cert, 320), 0, "wrote client cert DER");
-assert_eq(_dump("/tmp/_mtls_k.der", key, 48), 0, "wrote client key DER");
+assert_eq(_dump(mtls_cert_path, cert, 320), 0, "wrote client cert DER");
+assert_eq(_dump(mtls_key_path, key, 48), 0, "wrote client key DER");
 
 var fds[8];
 sys_socketpair(1, 1, 0, &fds);
@@ -104,5 +141,8 @@ tls_native_server_load_creds(srv2);
 assert_neq(tls_native_accept(srv2, sfd2), TLS_OK, "strict mTLS rejects a client presenting no certificate");
 var st2[4];
 sys_waitpid(pid2, &st2, 0);
+
+sys_unlink(mtls_cert_path);
+sys_unlink(mtls_key_path);
 
 var r = assert_summary();

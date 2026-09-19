@@ -21,6 +21,39 @@ include "lib/string.cyr"
 include "lib/fs.cyr"
 include "lib/assert.cyr"
 
+# v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
+# run of the suite (two check.sh at once), so one run deleted or rewrote another's file
+# mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
 # PR_GET_DUMPABLE = 3. Side-effect-free; returns current dumpable
 # state (typically 1). Exercises the 5-arg sys_prctl wrapper.
 var PR_GET_DUMPABLE = 3;
@@ -29,7 +62,7 @@ fn main(): i64 {
     alloc_init();
 
     test_group("sys_fchmod — fd-based chmod");
-    var tmp_path = "/tmp/cyrius_v511_sandbox_fchmod_test";
+    var tmp_path = _scratch("cyrius_v511_sandbox_fchmod_test", "");
     # v6.5.15: was the literal 65. Darwin's O_CREAT is 0x200, not 0x40, so 65
     # there means O_WRONLY|O_SHLOCK — the file was never created and sys_fchmod
     # was then handed fd -2 (the -9 EBADF this test reported on macOS-arm64 was

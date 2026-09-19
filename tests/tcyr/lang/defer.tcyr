@@ -5,11 +5,44 @@ include "lib/fmt.cyr"
 include "lib/io.cyr"
 include "lib/assert.cyr"
 
+# v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
+# run of the suite (two check.sh at once), so one run deleted or rewrote another's file
+# mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
 alloc_init();
 
 test_group("defer basic");
 fn test_defer_basic() {
-    var path = "/tmp/cyrius_defer_t1";
+    var path = _scratch("cyrius_defer_t1", "");
     var fd = file_open(path, 577, 0x1A4);
     defer { file_close(fd); }
     file_write(fd, "ok", 2);
@@ -17,17 +50,17 @@ fn test_defer_basic() {
 }
 test_defer_basic();
 var buf = alloc(32);
-var n = file_read_all("/tmp/cyrius_defer_t1", buf, 31);
+var n = file_read_all(_scratch("cyrius_defer_t1", ""), buf, 31);
 assert_eq(n, 2, "defer wrote+closed");
 # v6.6.5: the bare x86 fs numbers (unlink 87, rmdir 84) were raw literals here. On
 # ELF-aarch64 87 is timerfd_gettime and 84 is sync_file_range, so this cleanup did
 # NOTHING on ARM and left the fixtures behind. ESYSXLAT routes both now, but the
 # stdlib name is the spelling a test should model. CHANGELOG [6.6.5]
-sys_unlink("/tmp/cyrius_defer_t1");
+sys_unlink(_scratch("cyrius_defer_t1", ""));
 
 test_group("defer LIFO");
 fn test_defer_lifo() {
-    var fd = file_open("/tmp/cyrius_defer_t2", 577, 0x1A4);
+    var fd = file_open(_scratch("cyrius_defer_t2", ""), 577, 0x1A4);
     defer { file_write(fd, "C", 1); file_close(fd); }
     defer { file_write(fd, "B", 1); }
     defer { file_write(fd, "A", 1); }
@@ -36,11 +69,11 @@ fn test_defer_lifo() {
 }
 test_defer_lifo();
 var buf2 = alloc(32);
-var n2 = file_read_all("/tmp/cyrius_defer_t2", buf2, 31);
+var n2 = file_read_all(_scratch("cyrius_defer_t2", ""), buf2, 31);
 store8(buf2 + n2, 0);
 assert_eq(n2, 4, "lifo 4 bytes");
 assert_eq(streq(buf2, "0ABC"), 1, "lifo order 0ABC");
-sys_unlink("/tmp/cyrius_defer_t2");
+sys_unlink(_scratch("cyrius_defer_t2", ""));
 
 test_group("defer with return value");
 fn test_defer_retval() {

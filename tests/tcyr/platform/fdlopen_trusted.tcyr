@@ -20,6 +20,39 @@ include "lib/fdlopen.cyr"
 include "lib/mmap.cyr"
 include "lib/dynlib.cyr"
 
+# v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
+# run of the suite (two check.sh at once), so one run deleted or rewrote another's file
+# mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
 alloc_init();
 
 var st[256];
@@ -33,13 +66,13 @@ test_group("verify_trusted — accept a root-owned regular file");
 var euid = sys_geteuid();
 if (euid == 0) {
     # Running as root (CI agnos container): manufacture a root-owned 0644 file.
-    var gfd = sys_open("/tmp/fdl_good_helper", 0x41, 0x1A4);  # O_WRONLY|O_CREAT
+    var gfd = sys_open(_scratch("fdl_good_helper", ""), 0x41, 0x1A4);  # O_WRONLY|O_CREAT
     sys_write(gfd, "x", 1);
     sys_close(gfd);
-    sys_chmod("/tmp/fdl_good_helper", 0x1A4);                 # 0644 (defeat umask)
-    var v_good = _fdlopen_verify_trusted("/tmp/fdl_good_helper");
+    sys_chmod(_scratch("fdl_good_helper", ""), 0x1A4);                 # 0644 (defeat umask)
+    var v_good = _fdlopen_verify_trusted(_scratch("fdl_good_helper", ""));
     assert_eq(v_good, 1, "root-owned 0644 regular file is trusted");
-    sys_unlink("/tmp/fdl_good_helper");
+    sys_unlink(_scratch("fdl_good_helper", ""));
 }
 if (euid != 0) {
     # Non-root (local dev): /etc/passwd is root:root, regular, 644.
@@ -59,22 +92,22 @@ assert_eq(v_dir, 0, "a directory is not trusted (not a regular file)");
 # A world/other-writable file → rejected by the mode check (a writable helper is
 # replaceable, which is the whole threat). chmod 0666 AFTER create to defeat umask.
 # Deterministic regardless of who owns it — so it holds as root in CI too.
-var wfd = sys_open("/tmp/fdl_ww_helper", 0x41, 0x1B6);  # O_WRONLY|O_CREAT
+var wfd = sys_open(_scratch("fdl_ww_helper", ""), 0x41, 0x1B6);  # O_WRONLY|O_CREAT
 sys_write(wfd, "x", 1);
 sys_close(wfd);
-sys_chmod("/tmp/fdl_ww_helper", 0x1B6);                 # 0666
-var v_ww = _fdlopen_verify_trusted("/tmp/fdl_ww_helper");
+sys_chmod(_scratch("fdl_ww_helper", ""), 0x1B6);                 # 0666
+var v_ww = _fdlopen_verify_trusted(_scratch("fdl_ww_helper", ""));
 assert_eq(v_ww, 0, "world-writable file is not trusted (mode check)");
 
 # A symlink → lstat sees S_IFLNK (not followed) → rejected, whatever it points at.
-sys_unlink("/tmp/fdl_link_helper");
-sys_symlink("/tmp/fdl_ww_helper", "/tmp/fdl_link_helper");
-var v_link = _fdlopen_verify_trusted("/tmp/fdl_link_helper");
+sys_unlink(_scratch("fdl_link_helper", ""));
+sys_symlink(_scratch("fdl_ww_helper", ""), _scratch("fdl_link_helper", ""));
+var v_link = _fdlopen_verify_trusted(_scratch("fdl_link_helper", ""));
 assert_eq(v_link, 0, "symlink is not trusted (lstat, not followed)");
 
 # cleanup
-sys_unlink("/tmp/fdl_ww_helper");
-sys_unlink("/tmp/fdl_link_helper");
+sys_unlink(_scratch("fdl_ww_helper", ""));
+sys_unlink(_scratch("fdl_link_helper", ""));
 
 test_group("init_trusted — fail closed");
 # No /usr/lib/cyrius/dlopen-helper in the test env → -9 (UNTRUSTED), never falls

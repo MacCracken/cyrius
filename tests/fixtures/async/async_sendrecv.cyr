@@ -18,15 +18,27 @@ include "lib/fnptr.cyr"
 include "lib/net.cyr"
 include "lib/async.cyr"
 
+# v6.6.6: the kernel picks the port (bind to port 0, read it back). A FIXED port was shared by
+# every concurrent run of the check driver (two check.sh at once): measured, 24 concurrent runs
+# of these fixtures hung to the timeout or exited 1 (1-2 of 24 each). CHANGELOG [6.6.6]
+fn _bound_port(fd): i64 {   # the port `fd` is bound to (host order), or -1
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
 fn main(): i64 {
     alloc_init();
-    var port = 47663;
     var localhost = 0x0100007F;    # 127.0.0.1
     var total = 0;
 
     var lfd_t, lfd = tcp_socket();
     sock_reuse(lfd);
-    sock_bind(lfd, 0, port);
+    sock_bind(lfd, 0, 0);           # kernel-assigned port
+    var port = _bound_port(lfd);
+    if (port <= 0) { return 1; }
     sock_listen(lfd, 1);
 
     var rt = async_new();

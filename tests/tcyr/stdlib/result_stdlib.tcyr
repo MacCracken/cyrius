@@ -46,6 +46,39 @@ include "lib/io.cyr"
 include "lib/bayan.cyr"
 include "lib/assert.cyr"
 
+# v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
+# run of the suite (two check.sh at once), so one run deleted or rewrote another's file
+# mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
 alloc_init();
 
 # ---- file_open_r ----
@@ -55,7 +88,7 @@ alloc_init();
 # alone (found while diagnosing the 11 cross-OS full-corpus failures). A test
 # must not depend on an OS-provided path; write the fixture, like the bayan
 # cases further down already do.
-var _rs_fixture = "/tmp/cyrius_result_stdlib_fixture.txt";
+var _rs_fixture = _scratch("cyrius_result_stdlib_fixture", ".txt");
 file_write_all_r(_rs_fixture, "cyrius\n", 7);
 
 test_group("file_open_r — Ok on existing file");
@@ -91,16 +124,16 @@ assert_eq(is_err_result(bad_rd_tag), 1, "read on bogus fd is Err");
 test_group("file_write_all_r → file_read_all_r round-trip");
 var msg = "hello v5.8.30 result migration\n";
 var msglen = strlen(msg);
-var w_r_tag, w_r = file_write_all_r("/tmp/cyrius_v5_8_30_test", msg, msglen);
+var w_r_tag, w_r = file_write_all_r(_scratch("cyrius_v5_8_30_test", ""), msg, msglen);
 assert_eq(is_ok(w_r_tag), 1, "write_all_r Ok");
 assert_eq(w_r, msglen, "bytes_written = msglen");
 
 var rb[64];
-var r_r_tag, r_r = file_read_all_r("/tmp/cyrius_v5_8_30_test", &rb, 64);
+var r_r_tag, r_r = file_read_all_r(_scratch("cyrius_v5_8_30_test", ""), &rb, 64);
 assert_eq(is_ok(r_r_tag), 1, "read_all_r Ok");
 assert_eq(r_r, msglen, "bytes_read = msglen");
 assert_eq(load8(&rb), 104, "first byte = 'h' (104)");
-sys_unlink("/tmp/cyrius_v5_8_30_test");
+sys_unlink(_scratch("cyrius_v5_8_30_test", ""));
 
 test_group("file_read_all_r — Err on missing path");
 var rb2[16];
@@ -139,10 +172,10 @@ assert_eq(jerr, JsonIoErr, "payload = JsonIoErr");
 
 test_group("bayan_json_parse_file_r — Ok on synthetic file");
 var jsrc = "{\"name\": \"cyrius\"}";
-file_write_all_r("/tmp/cyrius_v5_8_30_test.json", jsrc, strlen(jsrc));
-var jok_tag, jok = bayan_json_parse_file_r("/tmp/cyrius_v5_8_30_test.json");
+file_write_all_r(_scratch("cyrius_v5_8_30_test", ".json"), jsrc, strlen(jsrc));
+var jok_tag, jok = bayan_json_parse_file_r(_scratch("cyrius_v5_8_30_test", ".json"));
 assert_eq(is_ok(jok_tag), 1, "synthetic JSON file Ok");
-sys_unlink("/tmp/cyrius_v5_8_30_test.json");
+sys_unlink(_scratch("cyrius_v5_8_30_test", ".json"));
 
 # ---- bayan_toml_parse_file_r ----
 
@@ -153,10 +186,10 @@ assert_eq(terr, TomlIoErr, "payload = TomlIoErr");
 
 test_group("bayan_toml_parse_file_r — Ok on synthetic file");
 var tsrc = "[[entries]]\nname = \"cyrius\"\n";
-file_write_all_r("/tmp/cyrius_v5_8_30_test.toml", tsrc, strlen(tsrc));
-var tok_tag, tok = bayan_toml_parse_file_r("/tmp/cyrius_v5_8_30_test.toml");
+file_write_all_r(_scratch("cyrius_v5_8_30_test", ".toml"), tsrc, strlen(tsrc));
+var tok_tag, tok = bayan_toml_parse_file_r(_scratch("cyrius_v5_8_30_test", ".toml"));
 assert_eq(is_ok(tok_tag), 1, "synthetic TOML file Ok");
-sys_unlink("/tmp/cyrius_v5_8_30_test.toml");
+sys_unlink(_scratch("cyrius_v5_8_30_test", ".toml"));
 
 # ---- bayan_cyml_parse_file_r ----
 
@@ -167,10 +200,10 @@ assert_eq(cerr, CymlIoErr, "payload = CymlIoErr");
 
 test_group("bayan_cyml_parse_file_r — Ok on synthetic file");
 var csrc = "title = \"hello\"\n---\n# Body markdown\n";
-file_write_all_r("/tmp/cyrius_v5_8_30_test.cyml", csrc, strlen(csrc));
-var cok_tag, cok = bayan_cyml_parse_file_r("/tmp/cyrius_v5_8_30_test.cyml");
+file_write_all_r(_scratch("cyrius_v5_8_30_test", ".cyml"), csrc, strlen(csrc));
+var cok_tag, cok = bayan_cyml_parse_file_r(_scratch("cyrius_v5_8_30_test", ".cyml"));
 assert_eq(is_ok(cok_tag), 1, "synthetic CYML file Ok");
-sys_unlink("/tmp/cyrius_v5_8_30_test.cyml");
+sys_unlink(_scratch("cyrius_v5_8_30_test", ".cyml"));
 sys_unlink(_rs_fixture);
 
 var r = assert_summary();

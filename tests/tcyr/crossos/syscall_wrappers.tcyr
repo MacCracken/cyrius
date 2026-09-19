@@ -29,6 +29,39 @@ include "lib/vec.cyr"
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
 
+# v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
+# run of the suite (two check.sh at once), so one run deleted or rewrote another's file
+# mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
 fn main(): i64 {
     alloc_init();
 
@@ -51,26 +84,26 @@ fn main(): i64 {
     # ── the x* family. These are the wrappers whose agnos arms are LENGTH-carrying at the
     # same arity as the POSIX ones, so a wrong call compiles clean everywhere.
     #ifndef CYRIUS_TARGET_WIN
-    xrmdir("/tmp/cyr_vr01_wrap/a/b");
-    xrmdir("/tmp/cyr_vr01_wrap/a");
-    xunlink("/tmp/cyr_vr01_wrap/lnk");
-    xunlink("/tmp/cyr_vr01_wrap/hard");
-    xunlink("/tmp/cyr_vr01_wrap/f");
-    xrmdir("/tmp/cyr_vr01_wrap");
+    xrmdir(_scratch("cyr_vr01_wrap", "/a/b"));
+    xrmdir(_scratch("cyr_vr01_wrap", "/a"));
+    xunlink(_scratch("cyr_vr01_wrap", "/lnk"));
+    xunlink(_scratch("cyr_vr01_wrap", "/hard"));
+    xunlink(_scratch("cyr_vr01_wrap", "/f"));
+    xrmdir(_scratch("cyr_vr01_wrap", ""));
 
-    assert_eq(xmkdir_p("/tmp/cyr_vr01_wrap/a/b", 493), 0, "xmkdir_p builds a nested tree");
-    assert_eq(_xdir_exists("/tmp/cyr_vr01_wrap/a/b"), 1, "the nested tree exists");
-    assert_eq(xmkdir_p("/tmp/cyr_vr01_wrap/a/b", 493), 0, "xmkdir_p on an existing tree is success");
+    assert_eq(xmkdir_p(_scratch("cyr_vr01_wrap", "/a/b"), 493), 0, "xmkdir_p builds a nested tree");
+    assert_eq(_xdir_exists(_scratch("cyr_vr01_wrap", "/a/b")), 1, "the nested tree exists");
+    assert_eq(xmkdir_p(_scratch("cyr_vr01_wrap", "/a/b"), 493), 0, "xmkdir_p on an existing tree is success");
 
-    var fd = sys_open("/tmp/cyr_vr01_wrap/f", O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    var fd = sys_open(_scratch("cyr_vr01_wrap", "/f"), O_WRONLY | O_CREAT | O_TRUNC, 0x180);
     assert(fd >= 0, "probe file created");
     sys_write(fd, "x", 1);
     sys_close(fd);
 
-    assert_eq(xsymlink("/tmp/cyr_vr01_wrap/f", "/tmp/cyr_vr01_wrap/lnk"), 0, "xsymlink");
+    assert_eq(xsymlink(_scratch("cyr_vr01_wrap", "/f"), _scratch("cyr_vr01_wrap", "/lnk")), 0, "xsymlink");
     var rb[256];
-    assert(xreadlink("/tmp/cyr_vr01_wrap/lnk", &rb, 256) > 0, "xreadlink returns a length");
-    assert_eq(xlink("/tmp/cyr_vr01_wrap/f", "/tmp/cyr_vr01_wrap/hard"), 0, "xlink");
+    assert(xreadlink(_scratch("cyr_vr01_wrap", "/lnk"), &rb, 256) > 0, "xreadlink returns a length");
+    assert_eq(xlink(_scratch("cyr_vr01_wrap", "/f"), _scratch("cyr_vr01_wrap", "/hard")), 0, "xlink");
 
     # ── sys_fchownat. AT_FDCWD + AT_SYMLINK_NOFOLLOW is lchown semantics — the reason this is
     # the ONE wrapped primitive of the chown family rather than the legacy trio (two of the
@@ -80,7 +113,7 @@ fn main(): i64 {
     # On aarch64 THIS is the alias test: a wrong/missing/misordered 1054 arm surfaces here as
     # a socket errno rather than 0.
     #ifndef CYRIUS_TARGET_AGNOS
-    var ch = sys_fchownat(AT_FDCWD, "/tmp/cyr_vr01_wrap/f", 0 - 1, 0 - 1, AT_SYMLINK_NOFOLLOW);
+    var ch = sys_fchownat(AT_FDCWD, _scratch("cyr_vr01_wrap", "/f"), 0 - 1, 0 - 1, AT_SYMLINK_NOFOLLOW);
     assert_eq(ch, 0, "sys_fchownat(AT_FDCWD, -1, -1, NOFOLLOW) is a permitted no-op");
     #endif
 
@@ -111,7 +144,7 @@ fn main(): i64 {
     sys_close(pwr);
 
     # fchmod: 52 was unmapped on macho, so it returned -9 (EBADF).
-    var fmfd = sys_open("/tmp/cyr_vr01_wrap/f", O_WRONLY, 0);
+    var fmfd = sys_open(_scratch("cyr_vr01_wrap", "/f"), O_WRONLY, 0);
     assert(fmfd >= 0, "opened the probe file for fchmod");
     assert_eq(sys_fchmod(fmfd, 420), 0, "sys_fchmod(fd, 0644) returns 0");
     sys_close(fmfd);
@@ -120,17 +153,17 @@ fn main(): i64 {
     # Linux's faccessat ignores the 4th; DARWIN'S VALIDATES IT, so a stale register made
     # every macOS sys_access return -22. Assert BOTH directions — a wrapper that always
     # returns non-zero would pass a present-file-only check.
-    assert_eq(sys_access("/tmp/cyr_vr01_wrap/f", 0), 0, "sys_access on an existing file is 0");
-    assert(sys_access("/tmp/cyr_vr01_wrap/absent_probe", 0) < 0,
+    assert_eq(sys_access(_scratch("cyr_vr01_wrap", "/f"), 0), 0, "sys_access on an existing file is 0");
+    assert(sys_access(_scratch("cyr_vr01_wrap", "/absent_probe"), 0) < 0,
         "sys_access on a missing file is negative");
 
-    xunlink("/tmp/cyr_vr01_wrap/lnk");
-    xunlink("/tmp/cyr_vr01_wrap/hard");
-    xunlink("/tmp/cyr_vr01_wrap/f");
-    xrmdir("/tmp/cyr_vr01_wrap/a/b");
-    xrmdir("/tmp/cyr_vr01_wrap/a");
-    xrmdir("/tmp/cyr_vr01_wrap");
-    assert_eq(_xdir_exists("/tmp/cyr_vr01_wrap"), 0, "cleanup removed the probe tree");
+    xunlink(_scratch("cyr_vr01_wrap", "/lnk"));
+    xunlink(_scratch("cyr_vr01_wrap", "/hard"));
+    xunlink(_scratch("cyr_vr01_wrap", "/f"));
+    xrmdir(_scratch("cyr_vr01_wrap", "/a/b"));
+    xrmdir(_scratch("cyr_vr01_wrap", "/a"));
+    xrmdir(_scratch("cyr_vr01_wrap", ""));
+    assert_eq(_xdir_exists(_scratch("cyr_vr01_wrap", "")), 0, "cleanup removed the probe tree");
     #endif
 
     # ── v6.5.25: the Windows-VISIBLE arm for sys_getpid + sys_access ──────────────────
@@ -161,17 +194,23 @@ fn main(): i64 {
     # that always returns -1 passes a missing-file check alone — so neither assertion is
     # sufficient by itself. This is the same both-directions requirement the macOS
     # faccessat fix documented above.
-    var pfd = sys_open("cyr_vr01_access_probe", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    # v6.6.6: the probe name is cwd-RELATIVE (portable on PE) but PER-PROCESS: off Windows the
+    # sys_chdir group above leaves the cwd at /tmp, so a fixed "cyr_vr01_access_probe" was a
+    # fixed /tmp name — measured, 2 of 16 concurrent runs got -2 (another run had unlinked it).
+    # `_scratch(...) + 5` is the same name without its "/tmp/" prefix. CHANGELOG [6.6.6]
+    var probe = _scratch("cyr_vr01_access_probe", "") + 5;
+    var absent = _scratch("cyr_vr01_access_probe", "_absent") + 5;
+    var pfd = sys_open(probe, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     assert(pfd >= 0, "created the access probe file");
     if (pfd >= 0) {
         sys_write(pfd, "x", 1);
         sys_close(pfd);
-        assert_eq(sys_access("cyr_vr01_access_probe", 0), 0,
+        assert_eq(sys_access(probe, 0), 0,
             "sys_access on an existing file is 0 (runs on Windows too)");
-        assert(sys_access("cyr_vr01_access_probe_absent", 0) < 0,
+        assert(sys_access(absent, 0) < 0,
             "sys_access on a missing file is negative (runs on Windows too)");
-        sys_unlink("cyr_vr01_access_probe");
-        assert(sys_access("cyr_vr01_access_probe", 0) < 0,
+        sys_unlink(probe);
+        assert(sys_access(probe, 0) < 0,
             "sys_access is negative again once the file is unlinked");
     }
 

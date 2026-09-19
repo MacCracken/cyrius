@@ -11,8 +11,44 @@ include "lib/assert.cyr"
 
 alloc_init();
 
+# v6.6.6: every scratch path in this file is PER-PROCESS. It used fixed names under /tmp, shared by
+# every concurrent run of the suite (two check.sh at once): measured, 9 of 16 concurrent runs
+# failed, each deleting or rewriting the others' files mid-assert. The bare-literal group below
+# needs its paths as literal TOKENS (the coercion fires only for a literal), so the test works in a
+# private dir, /tmp/cyrius_fs.<pid>, and spells every path relative to it. CHANGELOG [6.6.6]
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = sys_getpid();
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+var privdir = _scratch("cyrius_fs", "");
+if (sys_mkdir(privdir, 448) != 0) { panic("fs.tcyr: cannot create its private scratch dir"); }
+if (sys_chdir(privdir) != 0) { panic("fs.tcyr: cannot enter its private scratch dir"); }
+
 test_group("file_write_all / file_read_all");
-var testpath = "/tmp/cyrius_fs_test";
+var testpath = "cyrius_fs_test";
 var msg = "hello from cyrius";
 var wn = file_write_all(testpath, msg, 17);
 assert_eq(wn, 17, "write 17");
@@ -24,7 +60,7 @@ assert_eq(streq(buf, "hello from cyrius"), 1, "content match");
 
 test_group("file_exists");
 assert_eq(file_exists(testpath), 1, "exists yes");
-assert_eq(file_exists("/tmp/cyrius_no_such_file_xyz"), 0, "exists no");
+assert_eq(file_exists("cyrius_no_such_file_xyz"), 0, "exists no");
 
 test_group("path_join");
 var pj = path_join(str_from("/home"), str_from("user"));
@@ -81,37 +117,37 @@ test_group("bare literal -> Str param coercion (silent-zero gate)");
 # hoisted into a var: the coercion fires only for a literal-token arg, so
 # passing an IDENT (even one holding a cstring) would test nothing. `wroot` is
 # used only for the str_from(...) control side and the mkdir/cleanup syscalls.
-var wroot = "/tmp/cyrius_fs_bare_gate";
-var wsub  = "/tmp/cyrius_fs_bare_gate/sub";
+var wroot = "cyrius_fs_bare_gate";
+var wsub  = "cyrius_fs_bare_gate/sub";
 sys_mkdir(wroot, 493);          # 0755
 sys_mkdir(wsub, 493);
-file_write_all("/tmp/cyrius_fs_bare_gate/a.cyr", "x", 1);
-file_write_all("/tmp/cyrius_fs_bare_gate/b.txt", "y", 1);
-file_write_all("/tmp/cyrius_fs_bare_gate/sub/c.cyr", "z", 1);
+file_write_all("cyrius_fs_bare_gate/a.cyr", "x", 1);
+file_write_all("cyrius_fs_bare_gate/b.txt", "y", 1);
+file_write_all("cyrius_fs_bare_gate/sub/c.cyr", "z", 1);
 
-assert_eq(is_dir("/tmp/cyrius_fs_bare_gate"), 1, "is_dir bare literal");
-assert_eq(is_dir("/tmp/cyrius_fs_bare_gate"), is_dir(str_from(wroot)), "is_dir bare == str_from");
+assert_eq(is_dir("cyrius_fs_bare_gate"), 1, "is_dir bare literal");
+assert_eq(is_dir("cyrius_fs_bare_gate"), is_dir(str_from(wroot)), "is_dir bare == str_from");
 
 var bw_bare = vec_new();
 var bw_wrap = vec_new();
-var nbare = dir_walk("/tmp/cyrius_fs_bare_gate", bw_bare);
+var nbare = dir_walk("cyrius_fs_bare_gate", bw_bare);
 var nwrap = dir_walk(str_from(wroot), bw_wrap);
 assert_eq(nbare, 3, "dir_walk bare literal finds all 3 files");
 assert_eq(nbare, nwrap, "dir_walk bare == str_from");
 
-var dl_bare = dir_list("/tmp/cyrius_fs_bare_gate");
+var dl_bare = dir_list("cyrius_fs_bare_gate");
 var dl_wrap = dir_list(str_from(wroot));
 assert_eq(vec_len(dl_bare), 3, "dir_list bare literal finds 3 entries");
 assert_eq(vec_len(dl_bare), vec_len(dl_wrap), "dir_list bare == str_from");
 
-var ff_bare = find_files("/tmp/cyrius_fs_bare_gate", ".cyr");
+var ff_bare = find_files("cyrius_fs_bare_gate", ".cyr");
 var ff_wrap = find_files(str_from(wroot), str_from(".cyr"));
 assert_eq(vec_len(ff_bare), 2, "find_files bare literals finds 2 .cyr");
 assert_eq(vec_len(ff_bare), vec_len(ff_wrap), "find_files bare == str_from");
 
 var pr = vec_new();
 vec_push(pr, str_from("sub"));
-var fp_bare = find_files_with_prunes("/tmp/cyrius_fs_bare_gate", ".cyr", pr);
+var fp_bare = find_files_with_prunes("cyrius_fs_bare_gate", ".cyr", pr);
 assert_eq(vec_len(fp_bare), 1, "find_files_with_prunes bare literals prunes sub/");
 
 # Pure-string fns — no filesystem access, so no walk cost.
@@ -125,13 +161,16 @@ assert_eq(path_has_ext("/a/b/c.txt", ".txt"), 1, "path_has_ext bare literals");
 # ELF-aarch64 87 is timerfd_gettime and 84 is sync_file_range, so this cleanup did
 # NOTHING on ARM and left the fixtures behind. ESYSXLAT routes both now, but the
 # stdlib name is the spelling a test should model. CHANGELOG [6.6.5]
-sys_unlink("/tmp/cyrius_fs_bare_gate/sub/c.cyr");
-sys_unlink("/tmp/cyrius_fs_bare_gate/b.txt");
-sys_unlink("/tmp/cyrius_fs_bare_gate/a.cyr");
+sys_unlink("cyrius_fs_bare_gate/sub/c.cyr");
+sys_unlink("cyrius_fs_bare_gate/b.txt");
+sys_unlink("cyrius_fs_bare_gate/a.cyr");
 sys_rmdir(wsub);
 sys_rmdir(wroot);
 
 # Cleanup
 sys_unlink(testpath);
+sys_chdir("/tmp");
+sys_rmdir(privdir);
+assert_eq(is_dir(str_from(privdir)), 0, "the private scratch dir is gone");
 
 var r = assert_summary();

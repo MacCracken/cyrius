@@ -18,6 +18,17 @@ include "lib/fnptr.cyr"
 include "lib/net.cyr"
 include "lib/async.cyr"
 
+# v6.6.6: the kernel picks the port (bind to port 0, read it back). A FIXED port was shared by
+# every concurrent run of the check driver (two check.sh at once): measured, 24 concurrent runs
+# of these fixtures hung to the timeout or exited 1 (1-2 of 24 each). CHANGELOG [6.6.6]
+fn _bound_port(fd): i64 {   # the port `fd` is bound to (host order), or -1
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
 # Mock DNS server task: on the first query, reply with a canned A-record response
 # (42.0.0.0). ctx = { step, srv_fd, rt }.
 fn mock_dns(ctx): i64 {
@@ -53,14 +64,15 @@ fn mock_dns(ctx): i64 {
 
 fn main(): i64 {
     alloc_init();
-    var sport = 47671;
     var localhost = 0x0100007F;    # 127.0.0.1
     var rt = async_new();
 
     # mock DNS server on 127.0.0.1:sport
     var srv_t, srv = udp_socket();
     sock_reuse(srv);
-    sock_bind(srv, localhost, sport);
+    sock_bind(srv, localhost, 0);   # kernel-assigned port
+    var sport = _bound_port(srv);
+    if (sport <= 0) { return 1; }
     var mctx = alloc(24);
     store64(mctx, 0);
     store64(mctx + 8, srv);

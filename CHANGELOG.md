@@ -919,7 +919,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `TMPDIR=/nonexistent`; the other 24 create no temp file at all (static scans), so none can pass
   vacuously on a broken temp dir. Proven by two full `sh scripts/check.sh` runs CONCURRENTLY from two
   scratch worktrees, both GREEN (ssh legs pointed at an unresolvable host — the remote-name changes
-  were exercised end-to-end against a faked ssh/scp layer, not on ecb/pi/cass). No compiler change.
+  were exercised end-to-end against a faked ssh/scp layer, not on ecb/pi/cass). ⚠ **That proof
+  passed on timing luck — the first cut stopped at the gates and the driver, and the TESTS every
+  check.sh runs still shared fixed names** (found in review). 17 `tests/tcyr` files wrote fixed
+  `/tmp` paths — the 6.6.5 files run as N concurrent copies: `fs.tcyr` 9/16 failed, `io.tcyr` 10/16
+  (one SIGSEGV), `syscall_shm_fd_passing` 12/12, `syscall_wrappers` 7/12, `syscalls_at_family` 4/12 —
+  and `syscall_wrappers` had one more, invisible to any literal scan: a cwd-RELATIVE probe used after
+  its own `sys_chdir("/tmp")` (2/16 after the literals were fixed). And the `async_connect` /
+  `async_sendrecv` / `async_dns` fixtures the driver runs on every check.sh bound FIXED ports
+  47653/47663/47671 — as 24 concurrent runs each, 1-2 hung to the timeout or exited 1. Every name
+  is now `/tmp/<name>.<pid>` (a per-file `_scratch` helper; the pid is taken once, so a forked child
+  names the same files) — `fs.tcyr`, whose bare-literal group needs its paths as literal TOKENS,
+  works in a private `/tmp/cyrius_fs.<pid>` and spells them relative to it (the group is still
+  mutation-proven: `dir_walk` without `: Str` fails 2 asserts) — and every port is kernel-assigned
+  (bind port 0, read it back with getsockname). `gates_never_write_tree.sh` axis 6 pins both,
+  statically, over `tests/tcyr` + `tests/fixtures`. After the fix: every changed file 0 failures as
+  16 concurrent copies (the async fixtures 48/48 exit 42), and the whole 323-file corpus run as 3
+  concurrent copies, each in its own scratch root, differed from a solo run nowhere; the changed
+  files compile identically (errors + undefined fns) for x86, aarch64, PE and both Mach-O targets,
+  and pass under qemu-aarch64 and (the crossos ones) wine — emulation, not the hardware leg. Not
+  covered (same checkout only, separate worktrees never share them): three crossos tests write
+  cwd-relative scratch files into the check driver's cwd. No compiler change.
 
 ### Changed
 
@@ -1062,6 +1082,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   carries no `"/tmp/<name>"` literal. Exempt, read-only: `/tmp/cyrius-*` (the CLI's own temp,
   CVE-35/36) and `/tmp/.wine-*`. Self-tested on 7 shapes + 2 clean files; mutation-proven six ways
   (four 6.6.5 files put back, each detector half disabled).
+- **`gates_never_write_tree.sh` axis 6** — STATIC, over every `tests/tcyr` + `tests/fixtures` file,
+  i.e. what check.sh RUNS: no `"/tmp/<name>"` string literal (a literal that is not a path the test
+  opens — two flag-parser argv strings — is allowlisted with its reason, and an entry that matches
+  no live literal fails) and no fixed port bound (`sock_bind` with a non-zero literal or a name
+  assigned one; a raw `sys_bind` / `syscall(SYS_BIND|49, …)` whose sockaddr gets non-zero port bytes
+  or is built by `sockaddr_in[6](a, P)`). Self-tested on 6 shapes + a clean file; mutation-proven
+  seven ways (the 6.6.5 `fs.tcyr`, `async_sendrecv.cyr`, `tls_native_scaffold.tcyr` and
+  `syscall_wrappers.tcyr` put back; each detector disabled; a stale allowlist entry).
 
 ## [6.6.5] — 2026-09-19
 
