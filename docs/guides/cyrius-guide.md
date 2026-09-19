@@ -254,27 +254,35 @@ pointer-mode struct declared after a closed `{ ... }` block.
 
 A fn declared `: Point` returns the struct itself — a struct over 16 bytes through a hidden
 pointer the caller supplies, one of 9-16 bytes in two registers. Inside a fn the call may be
-written anywhere, and the result gets frame storage wherever it is:
+written anywhere, and the result gets frame storage wherever it is. That holds for all three
+kinds of call: a plain fn call, a method call (`b.mk(1)` for an `impl` method declared `: P3`)
+and an overloaded operator (`a + b` when `P3_add` is declared `: P3`):
 
 ```cyrius
 struct P3 { x; y; z; }
 fn mk(a): P3 { var p: P3; p.x = a; p.y = a + 1; p.z = a + 2; return p; }
 fn take(q: P3): i64 { return q.z; }
 fn fwd(a): P3 { return mk(a); }       # forwards the whole struct
+fn P3_add(a, b): P3 { var p: P3; p.x = load64(a) + load64(b); p.y = 0; p.z = load64(a + 16) + load64(b + 16); return p; }
 
 fn f(): i64 {
     var p: P3 = mk(1);                # every field
     p = mk(5);                        # assignment copies every field (p may appear in the args)
     var z = take(mk(7));              # a `q: P3` param receives the result's address — 9
     var x = mk(9);                    # inferred as a P3
-    return z + p.z + mk(3);           # as a plain value, a struct is its FIRST word (3) — as `r` is
+    var s: P3 = p + x;                # an operator returning a P3 — s.z is 18
+    return z + p.z + mk(3);           # as a plain value, a struct is its FIRST word (3), as a local's is
 }
 ```
 
 ⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
-(`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`) is a compile error naming the fn — call it inside
-a fn. Before v6.6.6 only `var p: T = f(..)` inside a fn worked; every other form, at top level
-or not, compiled clean and crashed (a >16 B result was written through the first argument) or
+(`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`, `take(mk(1))` — and the method and operator
+forms alike) is a compile error naming the fn — call it inside a fn. An untyped
+`var g = pair_fn(..)` of a 9-16 B struct still yields its first word.
+Before v6.6.6 a struct result had storage only in the two declaration forms inside a fn —
+`var p: T = f(..)` and the inferred `var p = f(..)` — and only for a plain fn call. Every other
+form, at top level or not, compiled clean and crashed (a >16 B result was written through the
+first argument — for a method, through `self`; for an operator, through its left operand) or
 silently lost the second half of a 9-16 B one.
 
 ⚠ **An array local over the per-fn frame budget (about 120 KB) keeps STATIC storage** — one

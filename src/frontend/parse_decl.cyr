@@ -385,6 +385,7 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
 # Load a struct field: ident.field → emit load from var_addr + field_offset
 # Or call a method: ident.method(args) → call StructName_method(&ident, args)
 fn PARSE_FIELD_LOAD(S, noff): i64 {
+    var pfl_beg = GTI(S) - 1;   # the receiver IDENT — a method call's first token (6.6.6)
     STI(S, GTI(S) + 1);  # consume DOT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var fnoff = PEEKV(S);
@@ -507,6 +508,29 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             return 0;
         }
         var mname = BUILD_METHOD_NAME(S, si, fnoff);
+        # ⛔ 6.6.5 — RESOLVE THE CALLEE BEFORE THE ARGUMENTS (6.6.6: and before `self`, whose
+        # push must follow a struct result's retptr — see `_sc_pre` below). This path used to run the
+        # whole argument loop as bare PCMPE + EPUSHR and only then FINDFN the method, so it
+        # had no callee mask while it needed one: a `>8`-byte struct argument was pushed BY
+        # VALUE into a method that derefs the parameter as a pointer — `s.m(big)` SIGSEGV'd
+        # even in ordinary (backward) include order, while the identical `Type_m(&s, big)`
+        # worked. Resolving first also lets the name be committed before any nested mint.
+        var mfi = FINDFN(S, mname);
+        if (mfi < 0) {
+            # BUILD_METHOD_NAME writes at GNPOS without committing (it is a lookup helper).
+            # Registering that scratch offset left the entry pointing at bytes the NEXT
+            # mangled name overwrote, so diagnostics named a different, existing method
+            # (`Q7_seven` for a call to `q.nosuch()`). Commit it before REGFN.
+            if (mname == GNPOS(S)) { var _mnl = 0; while (load8(S + 0xEC00000 + mname + _mnl) != 0) { _mnl = _mnl + 1; } SNPOS(S, mname + _mnl + 1); }
+            mfi = REGFN(S, mname);
+        }
+        mname = L64(_fnt_names + mfi * 8);   # the registered string, never the scratch copy
+        # ⛔ 6.6.6 (bite 14 review) — a method returning a struct BY VALUE needs a destination,
+        # which this path never supplied: `var r: P3 = b.mk(2)`, `b.mk(3);` and `r = b.mk(5)`
+        # SIGSEGV'd (the callee took `self` as its retptr). `_sc_pre` allocates the temp and, on
+        # x86/cx, pushes its address as int arg 0 BEFORE `self`. CHANGELOG [6.6.6]
+        var m_rt = _sc_pre(S, mfi, mname, pfl_beg);
+        var m_n0 = _sc_n0;
         # Push &var as first arg (self) — handle locals and globals.
         # v6.6.4: mirror _resolve_field_base_addr. A local struct is either POINTER-mode
         # (the slot holds the struct's heap address — load it) or INLINE (slot marker -1,
@@ -523,22 +547,6 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             if (GVPM(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
         }
         EPUSHR(S);
-        # ⛔ 6.6.5 — RESOLVE THE CALLEE BEFORE THE ARGUMENTS. This path used to run the
-        # whole argument loop as bare PCMPE + EPUSHR and only then FINDFN the method, so it
-        # had no callee mask while it needed one: a `>8`-byte struct argument was pushed BY
-        # VALUE into a method that derefs the parameter as a pointer — `s.m(big)` SIGSEGV'd
-        # even in ordinary (backward) include order, while the identical `Type_m(&s, big)`
-        # worked. Resolving first also lets the name be committed before any nested mint.
-        var mfi = FINDFN(S, mname);
-        if (mfi < 0) {
-            # BUILD_METHOD_NAME writes at GNPOS without committing (it is a lookup helper).
-            # Registering that scratch offset left the entry pointing at bytes the NEXT
-            # mangled name overwrote, so diagnostics named a different, existing method
-            # (`Q7_seven` for a call to `q.nosuch()`). Commit it before REGFN.
-            if (mname == GNPOS(S)) { var _mnl = 0; while (load8(S + 0xEC00000 + mname + _mnl) != 0) { _mnl = _mnl + 1; } SNPOS(S, mname + _mnl + 1); }
-            mfi = REGFN(S, mname);
-        }
-        mname = L64(_fnt_names + mfi * 8);   # the registered string, never the scratch copy
         # Parse remaining args.
         #
         # ⛔ 6.6.5 — THIS LOOP RUNS PARSE_FNCALL'S FOUR CALLEE-MASK GATES, not one. It used
@@ -566,7 +574,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         var argc = 1;
         var m_simd_table: i64[24];   # 8 args x 3 i64s, a LOCAL — a nested call gets its own
         var m_st: i64[3];            # [int args (self is one), vectors, XMM/V ordinal]
-        store64(&m_st, 1);
+        store64(&m_st, 1 + m_n0);    # `self`, plus the retptr `_sc_pre` pushed before it
         store64(&m_st + 8, 0);
         store64(&m_st + 16, 0);
         if (PEEKT(S) != 11) {
@@ -594,11 +602,13 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         var m_int_argc = load64(&m_st);
         ECALLPOPS(S, m_int_argc);
         _simd_arg_second_pass(S, &m_simd_table, load64(&m_st + 8));
+        _sc_x8(S, mfi, m_rt);        # 6.6.6: aarch64's retptr register
         _vis_check(S, mfi, mname);   # v6.6.4: `s.method()` is its own call path
         var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
         else { ECALLFIX(S, mfi); }
         ECALLCLEAN(S, m_int_argc);
+        _sc_post(S, mfi, mname, pfl_beg, m_rt);   # 6.6.6: the pair store / value, and the record
         return 0;
     }
 
@@ -2960,7 +2970,12 @@ fn PARSE_VAR(S): i64 {
     # into SPSC as a POINTER SCALE, so `(f + 1) - f` on a closure local evaluated to
     # 1073741827 instead of 1.
     # parse expression (scalar) — use PCMPE for comparisons and &&/||
+    # 6.6.6 (bite 14 review): armed, so a method / operator returning a struct stores it in a temp
+    # this declaration can take — see `_sc_var_receive`. CHANGELOG [6.6.6]
+    var scv_start = GTI(S);
+    var scv_prev = _sc_arm(S);
     PCMPE(S);
+    _sc_want = scv_prev;
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
     if (pscale > 0) {
@@ -2973,6 +2988,12 @@ fn PARSE_VAR(S): i64 {
         var existing = FINDLOCAL(S, noff);
         if (existing >= 0) {
             if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); }
+        }
+        # 6.6.6: `var p: S = b.mk(..)` / `var c: V3 = a + b` — the call's temp becomes `p`.
+        if (_sc_var_receive(S, noff, pscale, scalar_type + lfloat + slice_elt_w, scv_start) == 1) {
+            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+            STI(S, GTI(S) + 1);
+            return 0;
         }
         var li = GFLC(S);
         # v5.8.16 §8: 16-byte locals (slice, u128) layout-flip.
@@ -3115,6 +3136,7 @@ fn PARSE_VAR(S): i64 {
             SFLC(S, li + 1);
         }
     } else {
+        _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
         var vcnt = GVCNT(S);
         S64(_varn_base + vcnt * 8, noff);
         if (lfloat != 0) {

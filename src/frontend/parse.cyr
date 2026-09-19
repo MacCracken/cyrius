@@ -692,6 +692,21 @@ var _cur_fn_ret_sid = 0;
 # fn rough-scan + PARSE_FN_DEF teardown.
 var _cur_fn_ret_pair = 0;
 
+# ⭐ 6.6.6 (bite 14 review) — THE STRUCT-RESULT RECORD, for the two call paths whose callee a
+# destination cannot see in its tokens: a method call `s.m(..)` (the callee depends on `s`'s
+# type) and an overloaded operator `a + b`. Each puts a struct result in a frame temp and
+# records it here; a destination (`var p: S = ..`, `x = ..`, a by-value struct argument,
+# `return ..` in a struct fn) arms `_sc_want` with the token it is about to parse, and after
+# the parse takes the temp when the record spans EXACTLY that expression (`_sc_whole`). See
+# `_sc_pre` in parse_fn.cyr. A free fn needs none of this — its name is the next token.
+var _sc_want = 0 - 1;   # first token of the expression a destination is parsing
+var _sc_beg = 0 - 1;    # first token of the last recorded struct-valued call
+var _sc_end = 0 - 1;    # the token after it
+var _sc_tmp = 0 - 1;    # its temp's field-0 slot; -1 at top level (no frame)
+var _sc_sid = 0;        # the struct it returned
+var _sc_fn = 0;         # the callee's name offset, for a top-level refusal
+var _sc_n0 = 0;         # 1 when `_sc_pre` pushed a retptr as int arg 0
+
 # v5.10.28 — current fn's return-type scalar tag (negative encodings
 # from `_rt_scalar`: -1=i8, -2=i16, -4=i32, -8=i64, -16=Result,
 # -17=Option, -18=Tagged, -19=cstring, -2093=f64v2). PARSE_RETURN
@@ -1677,17 +1692,48 @@ fn _try_struct_call_assign(S, noff): i64 {
     var dli = _agc_li;
     var dgv = _agc_gvi;
     var t = _struct_call_into_temp(S);
+    _agc_from_temp(S, t, dli, dgv, n, GFRS(S, fi));
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);   # consume ';'
+    return 1;
+}
+
+# The copy both struct-call assignments end with: temp `t` (field-0 slot, `n` slots of struct
+# `sid`) into the destination local `dli` or global `dgv` (the other is -1). CHANGELOG [6.6.6]
+fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
     if (dgv >= 0) {
-        _agc_copy_bytes(S, 0 - 1, dgv, t, 0 - 1, STRUCTSZ(S, GFRS(S, fi) - 1));
+        _agc_copy_bytes(S, 0 - 1, dgv, t, 0 - 1, STRUCTSZ(S, sid - 1));
         SLVAR(S, dgv);
-    } else {
-        var i = 0;
-        while (i < n) {
-            EFLLOAD(S, t - i);
-            EFLSTORE(S, dli - i);
-            i = i + 1;
-        }
+        return 0;
     }
+    var i = 0;
+    while (i < n) {
+        EFLLOAD(S, t - i);
+        EFLSTORE(S, dli - i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ⛔ 6.6.6 (bite 14 review) — `x = <expr>;` where <expr> is one whole METHOD call or OVERLOADED
+# OPERATOR returning x's struct (`r = b.mk(5)`, `q = b.mp(3)`, `c = a + b`): the same temp-then-
+# copy as `_try_struct_call_assign`, which can only see a free fn's name. The method/operator
+# emitter stores the result in a temp and records it (`_sc_pre` / `_sc_post`, parse_fn.cyr); this
+# replaces the statement's PCMPE and takes that temp when the record spans the whole right-hand
+# side. `r = b.mk(5)` SIGSEGV'd, `q = b.mp(3)` kept rax only. Returns 1 when the statement is done
+# (`;` consumed); 0 leaves the ordinary store to run, exactly as after a plain PCMPE.
+fn _pcmpe_struct_assign(S, noff): i64 {
+    var st = GTI(S);
+    var w = _sc_arm(S);
+    PCMPE(S);
+    _sc_want = w;
+    var t = _sc_whole(S, st);
+    if (t == 0 - 2) { return 0; }
+    var n = _agc_operand(S, noff);
+    if (n <= 1) { return 0; }
+    if (_agc_t != 0 - _sc_sid) { return 0; }
+    if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 0; }
+    _agc_from_temp(S, t, _agc_li, _agc_gvi, n, _sc_sid);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
     return 1;
@@ -2459,7 +2505,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                     if (_ar_fi >= 0) { _asg_ret_sid = GFRS(S, _ar_fi); }
                 }
             }
-            PCMPE(S);
+            if (_pcmpe_struct_assign(S, noff) == 1) { return 0; }   # PCMPE + a method/operator struct result (6.6.6)
         }
         # Type check at assignment
         var aps = GPSC(S);

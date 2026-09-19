@@ -77,11 +77,14 @@ slots have NOT been re-numbered — that is the user's call.
   The same pass made an x86 struct-returning fn with 6+ params read its sixth from the return
   address. One fix in `parse_fn.cyr`; see the issue's *Corrections to this filing*.
   🆕 FILED from its review (different defects), then fixed in bite 14: ✅ `var p: S = f(v, …)`
-  pushed a vector as an int at any arity — and skipped every other callee gate (14a,
+  pushed a vector as an int at any arity — and skipped every other callee gate (14a; review: the
+  four PE-only vector-retptr own-calls had no arity check either, now shared,
   [`…-struct-valued-assign-call-pushes-simd-args-as-ints`](issues/archived/2026-09-19-struct-valued-assign-call-pushes-simd-args-as-ints.md));
   ✅ a 7+-field enum variant read the wrong stack args (14b, [`…-enum-variant-ctor-seven-plus-fields-…`](issues/archived/2026-09-19-enum-variant-ctor-seven-plus-fields-reads-wrong-stack-args.md));
   ✅ a struct-valued call outside a `var` initializer had no destination — >16 B SIGSEGV, 9-16 B
-  dropped rdx; top level now refused by name (14c, [`…-retptr-struct-call-outside-var-init-crashes`](issues/archived/2026-09-19-retptr-struct-call-outside-var-init-crashes.md));
+  dropped rdx; top level now refused by name — and, from the review, the METHOD-call and
+  OVERLOADED-OPERATOR forms (`b.mk(..)`, `a + b` returning a struct) and a top-level 9-16 B call
+  into a struct param, all of which 14c's first cut missed (14c, [`…-retptr-struct-call-outside-var-init-crashes`](issues/archived/2026-09-19-retptr-struct-call-outside-var-init-crashes.md));
   ✅ an `async fn` never captured a vector param — now refused by name (14d, [`…-async-fn-simd-param-not-captured`](issues/archived/2026-09-19-async-fn-simd-param-not-captured.md)).
 - **`.4`–`.5` — DCE cannot compact on PE or x86 Mach-O** (rip-relative repair + re-run
   `_pe_layout` after compaction — both, or the binary looks fine and faults later).

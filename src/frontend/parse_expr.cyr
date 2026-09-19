@@ -3327,6 +3327,7 @@ fn PARSE_TERM(S): i64 {
 }
 
 fn _PARSE_TERM_IMPL(S): i64 {
+    var _tbeg = GTI(S);   # the term's first token: a `*` / `/` dispatch's lhs starts here (6.6.6)
     _cfo = 0;
     # Extended builtins — checked first
     var ptyp = PEEKT(S);
@@ -3436,7 +3437,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
             STI(S, GTI(S) + 1);
             if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
-            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3); _cfo = 0; }
+            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3, _tbeg); _cfo = 0; }
             else {
                 # Constant fold: NUM * NUM where both and result are small positive
                 if (_cfo == 1) {
@@ -3496,7 +3497,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
-                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3); _cfo = 0; }
+                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; }
                 else {
                     if (_cfo == 1) { if (PEEKT(S) == 1) {
                             var crv = PEEKV(S);
@@ -3640,7 +3641,12 @@ fn _OP_OPERAND_ADDR(S, svar): i64 {
     return 0;
 }
 
-fn EMIT_OP_DISPATCH(S, stype, op_str, op_len): i64 {
+fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
+    # 6.6.6 (bite 14 review): an operator fn returning a struct BY VALUE takes its own path, so
+    # every other dispatch below stays byte-identical. `beg` = the lhs's first token.
+    if (_ret_agg_class(S, _op_fn_peek(S, stype, op_str, op_len)) != 0) {
+        return _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg);
+    }
     # For struct vars, push address instead of value
     var svar = GESVAR(S);
     _OP_OPERAND_ADDR(S, svar);
@@ -3661,6 +3667,66 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len): i64 {
     ECALLCLEAN(S, 2);
     SESTYPE(S, 0);
     return 0;
+}
+
+# The operator fn `StructName_op`, looked up WITHOUT committing its name: EMIT_OP_DISPATCH builds
+# it again at its old place, so the name pool and the fn table grow exactly as they always did.
+# -1 when there is no such fn yet. CHANGELOG [6.6.6]
+fn _op_fn_peek(S, stype, op_str, op_len): i64 {
+    var np = GNPOS(S);
+    var fi = FINDFN(S, BUILD_OP_NAME(S, stype, op_str, op_len));
+    SNPOS(S, np);
+    return fi;
+}
+
+# ⛔ 6.6.6 (bite 14 review) — EMIT_OP_DISPATCH for an operator fn returning a struct BY VALUE
+# (`fn V3_add(a, b): V3`). `var c: V3 = a + b` SIGSEGV'd on every target: the dispatch passed no
+# retptr, so the callee wrote its result through the lhs address. The same dispatch, bracketed by
+# `_sc_pre` / `_sc_x8` / `_sc_post` (parse_fn.cyr) — the temp, the retptr (int arg 0 on x86/cx,
+# X8 on aarch64) and the record a destination takes. One wrinkle: a <= 8 B lhs is passed BY
+# VALUE (there is no struct var to re-address), it is already in rax when the operator is seen,
+# and on x86/cx the retptr must go BELOW it — so it is parked in a frame word first.
+fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
+    var svar = GESVAR(S);
+    var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
+    var ofi = FINDFN(S, opnoff);
+    if (ofi < 0) { ofi = REGFN(S, opnoff); }
+    var park = 0 - 1;
+    if (svar == 0 - 1) { park = _op_park_lhs(S, ofi); }
+    var t = _sc_pre(S, ofi, opnoff, beg);
+    var n = 2 + _sc_n0;
+    if (park >= 0) { EFLLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar); }
+    EPUSHR(S);
+    PARSE_TERM(S);
+    var rsvar = GESVAR(S);
+    _OP_OPERAND_ADDR(S, rsvar);
+    EPUSHR(S);
+    ECALLPOPS(S, n);
+    _sc_x8(S, ofi, t);
+    _vis_check(S, ofi, opnoff);
+    var ofoff = L64(_fnt_offsets + ofi * 8);
+    if (ofoff >= 0) { ECALLTO(S, ofoff); }
+    else { ECALLFIX(S, ofi); }
+    ECALLCLEAN(S, n);
+    SESTYPE(S, 0);
+    _sc_post(S, ofi, opnoff, beg, t);
+    return 0;
+}
+
+# Park a by-value lhs (rax) in an anonymous frame word when `_sc_pre` is about to push a retptr
+# (x86/cx, >16 B result, in a fn). Returns the slot, or -1 when nothing needs parking.
+fn _op_park_lhs(S, fi): i64 {
+    if (_ret_agg_class(S, fi) != 2) { return 0 - 1; }
+    if (_AARCH64_BACKEND == 1) { return 0 - 1; }
+    if (GINFN(S) != 1) { return 0 - 1; }
+    var w = GFLC(S);
+    S64(S + 0x5D9D000 + w * 8, 0 - 1);
+    SLDEP(S, w, GSDEP(S));
+    SLTYPE(S, w, 0);
+    SFLC(S, w + 1);
+    if (w + 1 > _flc_hwm) { _flc_hwm = w + 1; }
+    EFLSTORE(S, w);
+    return w;
 }
 
 # v5.6.2: emit a binop as a call to a named stdlib helper fn
@@ -3707,6 +3773,7 @@ fn PEXPR(S): i64 {
 }
 
 fn _PEXPR_IMPL(S): i64 {
+    var _xbeg = GTI(S);   # every `+` / `-` dispatch's lhs starts here (left-assoc) (6.6.6)
     PARSE_TERM(S);
     var ps = GPSC(S);
     var go = 1;
@@ -3725,7 +3792,7 @@ fn _PEXPR_IMPL(S): i64 {
             STI(S, GTI(S) + 1);
             if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
-            elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3); _cfo = 0; }
+            elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; }
             else {
                 # Fold only if right side is a plain literal (not followed by * / % << >>)
                 var add_can_fold = 0;
@@ -3753,7 +3820,7 @@ fn _PEXPR_IMPL(S): i64 {
                 STI(S, GTI(S) + 1);
                 if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
-                elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3); _cfo = 0; }
+                elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; }
                 else {
                     var sub_can_fold = 0;
                     if (_cfo == 1) { if (PEEKT(S) == 1) {

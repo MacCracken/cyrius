@@ -101,9 +101,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   struct-valued call that needs storage there is refused by name (all of them crashed) — as first
   committed, bar one: `var k = hy(p2(1, 2));`, a 9-16 B call passed to a by-value struct param,
   still compiled clean and SIGSEGV'd (the struct-param arm deferred top level to PARSE_FNCALL,
-  which refuses only the retptr class); the review caught it and it is refused too. See the
+  which refuses only the retptr class); the review caught it and it is refused too. ⚠ 14c covered
+  FREE-fn calls only — a method call and an overloaded operator were the same hole; see the next
+  entry. See the
   issue's *Corrections to this filing*. Byte impact: **0 of 324 `.tcyr` and 0 of 85
   `programs/*.cyr` changed**, all seven forks compile, cycc **1,294,040 → 1,298,280 B** (+4,240).
+
+- **A method call or an overloaded operator returning a struct by value still had nowhere to put
+  its result — the two call paths bite 14c missed.** (bite 14's review.) `var r: P3 = b.mk(2)`,
+  `b.mk(3);`, `r = b.mk(5)`, `h(b.mk(1))` and `var c: V3 = a + b` (with `fn V3_add(a, b): V3`)
+  SIGSEGV'd on x86_64, aarch64 (qemu) and Win64 (wine) — before and after 14c alike; `var q: P2 =
+  b.mp(2)` crashed and `q = b.mp(3)` kept rax only, dropping the rdx half. The free-fn equivalent
+  `B_mk(b, 2)` worked, and 14c's guide text ("may be written anywhere") was not true for these.
+  **Root cause:** a method call (`PARSE_FIELD_LOAD`) and an operator (`EMIT_OP_DISPATCH`) emit
+  their own call and never supplied a retptr, so the callee wrote its result through `self` / the
+  left operand's address; and 14c's destinations (`var` receive, assignment, struct-param push,
+  `return`) recognise a struct-valued call by its tokens — `IDENT (` — which a method's callee
+  (resolved from the receiver's type) and an operator's never are. **Fix:** both emitters bracket
+  their call with `_sc_pre` / `_sc_x8` / `_sc_post` (`parse_fn.cyr`): a frame temp (always for a
+  >16 B result; for a 9-16 B one when a destination asked), its address as int arg 0 BEFORE
+  `self`/the lhs on x86/cx or in X8 on aarch64, and a record of the temp and the tokens the call
+  spans. A destination arms `_sc_want` with the token it is about to parse and, when the record
+  spans exactly that expression, takes the temp: `var p: S = ..` names it in place (and an untyped
+  `var p = ..` is inferred, as for a free fn), `x = ..` copies it (`_pcmpe_struct_assign`), a
+  by-value struct param gets its address (`_push_struct_expr_arg`), and `return ..` in a
+  same-struct fn copies it into the caller's retptr (`_return_struct_expr`). A <= 8 B operator
+  lhs (passed by value) is parked in a frame word so the retptr can go under it. At top level the
+  >16 B call is refused by the call itself and the 9-16 B one by each destination that needs
+  storage; an untyped `var g = b.mp(..)` keeps the first word. An operator fn that does not
+  return a 9+ B struct takes the unchanged dispatch (looked up without committing its name, so the
+  name pool and fn table grow exactly as before). Byte impact: **0 of 326 `.tcyr` and 0 of 85
+  `programs/*.cyr` binaries changed** on x86_64, and 0 of 326 on aarch64 / Win64 / cx; all seven
+  forks compile; cycc **1,298,400 → 1,306,640 B** (+8,240: ~3 KB of helpers crossing two
+  text-segment pages). `stack_param_homing_matrix.sh` +36 rows (cx +23) and a top-level refusal
+  probe; `struct_valued_call_sites.tcyr` +23 assertions (57).
 
 - **An `async fn` with a value-form vector parameter computed with the wrong vector, silently —
   now a compile error naming the parameter.** (bite 14d; filed 2026-09-19 from bite 1's review.)

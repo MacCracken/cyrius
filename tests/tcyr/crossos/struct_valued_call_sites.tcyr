@@ -25,6 +25,11 @@
 # the callee dereferences an address (SIGSEGV). Each now gets a frame temp; a struct value used
 # as a scalar is its first word, exactly as a struct local is.
 #
+# THE DEFECT (bite 14 review). 14c gave every FREE-fn call a destination and missed the two call
+# paths that emit their own call — a METHOD call and an overloaded OPERATOR. `var r: P3 = b.mk(..)`,
+# `b.mk(..);`, `r = b.mk(..)`, `h(b.mk(..))` and `var c: V3 = a + b` SIGSEGV'd on x86, aarch64 and
+# Win64 (the callee took `self` / the lhs address as its retptr); `q = b.mp(..)` kept rax only.
+#
 # ⭐ EVERY EXPECTED VALUE IS A LITERAL — the arguments written out as digits; the callees fold
 # their parameters positionally (lead*10^n + a*10^k + ...), so a missing, stale or shifted
 # parameter changes a specific digit.
@@ -82,6 +87,26 @@ fn rp7(): P2 { return cp7(1, 2, 3, 4, 5, 6, 7); }
 fn hs(k, q: P3): i64 { return q.z + k; }
 fn hu(q): i64 { return q; }
 fn hy(q: P2): i64 { return q.y; }
+
+# --- review: a METHOD call and an overloaded OPERATOR returning a struct by value ------------
+# `self` carries a digit (mb.v = 5), so a receiver displaced by the retptr cannot pass.
+struct MB { v; w; }
+struct OV { x; y; z; }
+struct OW { x; y; }
+struct ON { v; }
+impl MkB for MB {
+    fn mk2(self, a, b): P3 { CNT = CNT + 1; var p: P3; p.x = load64(self) * 100 + a * 10 + b; p.y = 0; p.z = p.x; return p; }
+    fn mk7(self, a, b, c, d, e, f, g): P3 { var p: P3; p.x = load64(self) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; p.y = 0; p.z = p.x; return p; }
+    fn mp7(self, a, b, c, d, e, f, g): P2 { var p: P2; p.x = 0; p.y = load64(self) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; return p; }
+}
+fn OV_add(a, b): OV { var p: OV; p.x = load64(a + 16) * 10 + load64(b + 16); p.y = 0; p.z = p.x; return p; }
+fn OW_add(a, b): OW { var p: OW; p.x = 0; p.y = load64(a + 8) * 10 + load64(b + 8); return p; }
+fn ON_add(a, b): OV { var p: OV; p.x = a * 10 + b; p.y = 0; p.z = p.x; return p; }
+fn hov(q: OV): i64 { return q.z; }
+fn how(q: OW): i64 { return q.y; }
+fn rmk(m): P3 { var b: MB; b.v = load64(m); b.w = 0; return b.mk7(1, 2, 3, 4, 5, 6, 7); }
+fn rmp(m): P2 { var b: MB; b.v = load64(m); b.w = 0; return b.mp7(1, 2, 3, 4, 5, 6, 7); }
+fn rop(a, b): OV { var x: OV; x.x = 0; x.y = 0; x.z = a; var y: OV; y.x = 0; y.y = 0; y.z = b; return x + y; }
 
 fn main(): i64 {
     alloc_init();
@@ -179,6 +204,66 @@ fn main(): i64 {
     assert_eq(GQ.y, 7654321, "GQ = cp7(..) — a global");
     var t5: P2 = rp7();
     assert_eq(t5.y, 1234567, "return cp7(1..7) in a : P2 fn");
+
+    test_group("review: a method returning a struct by value");
+    var mb: MB;
+    mb.v = 5; mb.w = 0;
+    var m1: P3 = mb.mk7(1, 2, 3, 4, 5, 6, 7);
+    assert_eq(m1.z, 51234567, "var m1: P3 = mb.mk7(1..7) — retptr + self + 7 ints (SIGSEGV before)");
+    CNT = 0;
+    mb.mk2(1, 2);
+    assert_eq(CNT, 1, "mb.mk2(1, 2); as a statement");
+    m1 = mb.mk2(3, 4);
+    assert_eq(m1.z, 534, "m1 = mb.mk2(3, 4) — assignment copies every field");
+    m1 = mb.mk2(m1.z / 100, 9);
+    assert_eq(m1.z, 559, "m1 = mb.mk2(m1.z / 100, 9) — an argument reading m1 sees the old value");
+    assert_eq(hs(0, mb.mk7(7, 6, 5, 4, 3, 2, 1)), 57654321, "hs(0, mb.mk7(7..1)) — a struct param gets the result's address");
+    assert_eq(hu(mb.mk2(1, 1)), 511, "hu(mb.mk2(1, 1)) — an untyped param gets the first word");
+    var m2 = mb.mk2(2, 2);
+    assert_eq(m2.z, 522, "var m2 = mb.mk2(2, 2) — inferred as a P3, as for a free fn");
+    GS = mb.mk2(6, 6);
+    assert_eq(GS.z, 566, "GS = mb.mk2(6, 6) — a global struct");
+    var m3: P3 = rmk(&mb);
+    assert_eq(m3.z, 51234567, "return b.mk7(1..7) in a : P3 fn");
+    var m4: P2 = mb.mp7(1, 2, 3, 4, 5, 6, 7);
+    assert_eq(m4.y, 51234567, "var m4: P2 = mb.mp7(1..7) — rax:rdx (SIGSEGV before)");
+    m4 = mb.mp7(7, 6, 5, 4, 3, 2, 1);
+    assert_eq(m4.y, 57654321, "m4 = mb.mp7(7..1) — rdx was dropped before");
+    assert_eq(hy(mb.mp7(1, 1, 1, 1, 1, 1, 1)), 51111111, "hy(mb.mp7(..)) — the rdx half reaches a struct param");
+    GQ = mb.mp7(2, 2, 2, 2, 2, 2, 2);
+    assert_eq(GQ.y, 52222222, "GQ = mb.mp7(..) — a global");
+    var m5: P2 = rmp(&mb);
+    assert_eq(m5.y, 51234567, "return b.mp7(1..7) in a : P2 fn");
+
+    test_group("review: an overloaded operator returning a struct by value");
+    var oa: OV;
+    oa.x = 0; oa.y = 0; oa.z = 7;
+    var ob: OV;
+    ob.x = 0; ob.y = 0; ob.z = 3;
+    var o1: OV = oa + ob;
+    assert_eq(o1.z, 73, "var o1: OV = oa + ob (SIGSEGV before)");
+    o1 = ob + oa;
+    assert_eq(o1.z, 37, "o1 = ob + oa");
+    assert_eq(hov(oa + ob), 73, "hov(oa + ob) — a struct param gets the result's address");
+    var o2 = oa + ob;
+    assert_eq(o2.z, 73, "var o2 = oa + ob — inferred as an OV");
+    var o3: OV = rop(4, 6);
+    assert_eq(o3.z, 46, "return x + y in a : OV fn");
+    var na: ON;
+    na.v = 8;
+    var nb: ON;
+    nb.v = 1;
+    var o4: OV = na + nb;
+    assert_eq(o4.z, 81, "var o4: OV = na + nb — an 8-byte lhs goes by value, under the retptr");
+    var wa: OW;
+    wa.x = 0; wa.y = 9;
+    var wb: OW;
+    wb.x = 0; wb.y = 2;
+    var w1: OW = wa + wb;
+    assert_eq(w1.y, 92, "var w1: OW = wa + wb — rax:rdx");
+    w1 = wb + wa;
+    assert_eq(w1.y, 29, "w1 = wb + wa — rdx was dropped before");
+    assert_eq(how(wa + wb), 92, "how(wa + wb)");
 
     test_group("the caller's vectors are untouched");
     assert_eq(load64(&v) * 10 + load64(&v + 8), 98, "v");

@@ -67,6 +67,20 @@
 #   R1 only `_try_vector_call_assign` back to its own loop                 -> RED [arity/win64] 3 times, want 4
 #   R2 the struct-param arm's top level back to a bare `return 0`         -> RED [toplevel-arg/x86,aarch64,win64]
 #                                                                             1 times, want 2
+# bite 14 review — method calls and overloaded operators returning a struct (rows 177-212, cx 145-167):
+#   F0 the frontend as of 6d2f483f (no method/operator dest.)  -> RED  probe refused (return rows) · top-level
+#                                                                  method/operator probe COMPILED
+#   F1 `_sc_pre` never makes a temp                         -> RED  probe refused · top-level 4 of 7
+#   F2 `x = <method/op>` back to the plain store            -> RED  x86 10 · aarch64 10 · cx 5 · wine 10
+#   F3 struct-param arm pushes the value, not the temp       -> RED  x86/aarch64 SIGSEGV · cx 3 · wine crash
+#   F4 `_sc_var_receive` never matches                      -> RED  probe refused (untyped `.z`)
+#   F4c a typed `var` takes the first word                  -> RED  x86/aarch64 SIGSEGV · cx 7 · wine crash
+#   F5 an 8 B by-value lhs not parked under the retptr      -> RED  x86 1 · cx 1 · wine 1 (aarch64 green:
+#                                                                  its retptr is X8, nothing to park)
+#   F6 a 9-16 B result never stored for a destination       -> RED  x86/aarch64 SIGSEGV · wine crash (cx has
+#                                                                  no pair rows)
+#   F7 no aarch64 X8 load                                   -> RED  aarch64 SIGSEGV only, correctly
+#   F8 `_sc_global_receive` never refuses                   -> RED  [toplevel-method-op] 5 times, want 7
 #   real tree                                              -> GREEN on all four legs (~5 s)
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -75,8 +89,8 @@ CC="${CC:-$ROOT/build/cycc}"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT INT TERM
 ulimit -c 0 2>/dev/null || true
-ROWS_FLOOR=176      # every leg but cx
-ROWS_CX_FLOOR=144   # cx: no 9-16 B rax:rdx rows (see gen)
+ROWS_FLOOR=212      # every leg but cx
+ROWS_CX_FLOOR=167   # cx: no 9-16 B rax:rdx rows (see gen)
 fail=0
 
 # ── generate the probe ────────────────────────────────────────────────────────────────────
@@ -236,6 +250,77 @@ BEGIN {
         row++; call[row] = "var T" row ": P2 = rp" n "(); chk(" row ", T" row ".y, " want ");"
       }
     }
+    # 6.6.6 bite 14 review — a METHOD call and an overloaded OPERATOR returning a struct by value.
+    # 14c gave every free-fn call a destination and missed the two paths that emit their own call:
+    # the >16 B forms crashed with SIGSEGV (the callee took `self` / the lhs address as its retptr) and
+    # `q = b.mp(..)` kept rax only. `self` carries a digit (MB0.v = 5), so a receiver displaced by
+    # the retptr cannot pass; 7 args + self + the x86 retptr put three on the stack.
+    p("struct MB { v; w; }")
+    p("struct OV { x; y; z; }")
+    p("struct ON { v; }")
+    p("var MB0 = MB { 5, 0 };")
+    p("var OA = OV { 0, 0, 7 };")
+    p("var OB = OV { 0, 0, 3 };")
+    p("var NA = ON { 4 };")
+    p("var NB = ON { 2 };")
+    p("fn OV_add(a, b): OV { var q: OV; q.x = load64(a + 16) * 10 + load64(b + 16); q.y = 0; q.z = q.x; return q; }")
+    p("fn ON_add(a, b): OV { var q: OV; q.x = a * 10 + b; q.y = 0; q.z = q.x; return q; }")
+    p("fn hov(q: OV): i64 { return q.z; }")
+    p("fn rov(): OV { return OA + OB; }")
+    if (pair) {
+      p("struct OW { x; y; }")
+      p("var WA = OW { 0, 9 };")
+      p("var WB = OW { 0, 1 };")
+      p("fn OW_add(a, b): OW { var q: OW; q.x = 0; q.y = load64(a + 8) * 10 + load64(b + 8); return q; }")
+      p("fn how(q: OW): i64 { return q.y; }")
+    }
+    mimpl = "impl MkB for MB {"
+    for (ni = 1; ni <= 2; ni++) {
+      n = (ni == 1) ? 2 : 7
+      sig = "self"; args = ""; body = "load64(self) * " pow10(n); want = "5"
+      for (i = 0; i < n; i++) {
+        sig = sig ", a" i; args = args (i ? ", " : "") dig[i + 1]
+        body = body " + a" i " * " pow10(n - 1 - i); want = want dig[i + 1]
+      }
+      margs[n] = args; mwant[n] = want
+      mimpl = mimpl " fn mk" n "(" sig "): P3 { var q: P3; q.x = " body "; q.y = 0; q.z = q.x; LAST = q.x; return q; }"
+      if (pair) mimpl = mimpl " fn mp" n "(" sig "): P2 { var q: P2; q.x = 0; q.y = " body "; return q; }"
+    }
+    p(mimpl " }")
+    for (ni = 1; ni <= 2; ni++) {
+      n = (ni == 1) ? 2 : 7
+      args = margs[n]; want = mwant[n]; mc = "MB0.mk" n "(" args ")"
+      p("fn rm" n "(): P3 { return " mc "; }")
+      row++; call[row] = "var T" row ": P3 = " mc "; chk(" row ", T" row ".z, " want ");"
+      row++; call[row] = "LAST = 0; " mc "; chk(" row ", LAST, " want ");"
+      row++; call[row] = "var T" row ": P3 = " mc "; T" row ".z = 0; T" row " = " mc "; chk(" row ", T" row ".z, " want ");"
+      row++; call[row] = "chk(" row ", hs(" mc "), " want ");"
+      row++; call[row] = "chk(" row ", hu(" mc "), " want ");"
+      row++; call[row] = "var T" row " = " mc "; chk(" row ", T" row ".z, " want ");"
+      row++; call[row] = "GS.z = 0; GS = " mc "; chk(" row ", GS.z, " want ");"
+      row++; call[row] = "var T" row ": P3 = rm" n "(); chk(" row ", T" row ".z, " want ");"
+      if (pair) {
+        mc = "MB0.mp" n "(" args ")"
+        p("fn rmp" n "(): P2 { return " mc "; }")
+        row++; call[row] = "var T" row ": P2 = " mc "; chk(" row ", T" row ".y, " want ");"
+        row++; call[row] = "var T" row ": P2 = " mc "; T" row ".y = 0; T" row " = " mc "; chk(" row ", T" row ".y, " want ");"
+        row++; call[row] = "chk(" row ", hy(" mc "), " want ");"
+        row++; call[row] = "GQ.y = 0; GQ = " mc "; chk(" row ", GQ.y, " want ");"
+        row++; call[row] = "var T" row ": P2 = rmp" n "(); chk(" row ", T" row ".y, " want ");"
+      }
+    }
+    row++; call[row] = "var T" row ": OV = OA + OB; chk(" row ", T" row ".z, 73);"
+    row++; call[row] = "var T" row ": OV = OA + OB; T" row ".z = 0; T" row " = OA + OB; chk(" row ", T" row ".z, 73);"
+    row++; call[row] = "chk(" row ", hov(OA + OB), 73);"
+    row++; call[row] = "chk(" row ", hu(OA + OB), 73);"
+    row++; call[row] = "var T" row ": OV = rov(); chk(" row ", T" row ".z, 73);"
+    row++; call[row] = "var T" row " = OA + OB; chk(" row ", T" row ".z, 73);"
+    row++; call[row] = "var T" row ": OV = NA + NB; chk(" row ", T" row ".z, 42);"   # an 8 B lhs by value, under the retptr
+    if (pair) {
+      row++; call[row] = "var T" row ": OW = WA + WB; chk(" row ", T" row ".y, 91);"
+      row++; call[row] = "var T" row ": OW = WA + WB; T" row ".y = 0; T" row " = WA + WB; chk(" row ", T" row ".y, 91);"
+      row++; call[row] = "chk(" row ", how(WA + WB), 91);"
+    }
     p("fn main(): i64 {")
     for (c = 1; c <= nc; c++) {
       p("    var V" c ": " cls[c] ";")
@@ -377,10 +462,42 @@ var j = hs(s3(1, 2));
 syscall(60, k + j);
 EOF
 refuse_all toplevel-arg "$T/rt.cyr" "returns a struct by value" 2
+# 6.6.6 bite 14 review — the METHOD and OPERATOR forms at top level: a >16 B result is refused by
+# the call itself (`_sc_pre`), a 9-16 B one by each destination that needs storage (typed `var`,
+# assignment, struct param). Untyped `var u = b.mp(6)` keeps the first word and must NOT count.
+# Mutation: `_sc_global_receive` never refuses -> RED ("6 times, want 7").
+cat > "$T/rm.cyr" <<'EOF'
+struct P3 { x; y; z; }
+struct P2 { x; y; }
+struct B { v; w; }
+struct V3 { x; y; z; }
+struct V2 { x; y; }
+impl Mk for B {
+  fn mk(self, a): P3 { var p: P3; p.x = load64(self) + a; p.y = 0; p.z = p.x; return p; }
+  fn mp(self, a): P2 { var p: P2; p.x = 1; p.y = load64(self) + a; return p; }
+}
+fn V3_add(a, b): V3 { var p: V3; p.x = 0; p.y = 0; p.z = load64(a + 16) + load64(b + 16); return p; }
+fn V2_add(a, b): V2 { var p: V2; p.x = 0; p.y = load64(a + 8) + load64(b + 8); return p; }
+fn hy(q: P2): i64 { return q.y; }
+var bb = B { 40, 0 };
+var A = V3 { 1, 2, 3 };
+var E = V2 { 1, 2 };
+var GQ = P2 { 0, 0 };
+bb.mk(1);
+var G1: P3 = bb.mk(2);
+var G2: P2 = bb.mp(3);
+GQ = bb.mp(4);
+var k = hy(bb.mp(5));
+var C: V3 = A + A;
+var D: V2 = E + E;
+var u = bb.mp(6);
+syscall(60, u);
+EOF
+refuse_all toplevel-method-op "$T/rm.cyr" "returns a struct by value" 7
 # Floor: the x86 compiler always runs, so every probe above must have counted at least once.
-REFUSE_FLOOR=2
+REFUSE_FLOOR=3
 if [ "$nrefuse" -lt "$REFUSE_FLOOR" ]; then echo "  FAIL: only $nrefuse refusal cases ran (floor $REFUSE_FLOOR)"; fail=1; fi
 echo "  ok:   refusals — $nrefuse compiler x probe cases named their diagnostic"
 
 if [ "$fail" != 0 ]; then echo "FAIL stack_param_homing_matrix"; exit 1; fi
-echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer — bind every argument on every leg that ran"
+echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer, method calls and overloaded operators returning a struct — bind every argument on every leg that ran; $nrefuse refusal cases named"

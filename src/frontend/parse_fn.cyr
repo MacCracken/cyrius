@@ -987,6 +987,7 @@ fn PARSE_RETURN(S): i64 {
         # 6.6.6: `return f(..);` where `f` returns this same struct — emitted into a temp, then
         # copied into our retptr like `return IDENT;`. It used to take the tail path and crash.
         var srn_lli = _return_struct_call(S);
+        if (srn_lli < 0) { srn_lli = _return_struct_expr(S); }   # a method / operator (bite 14 review)
         if (srn_lli < 0) {
         if (PEEKT(S) != 2) {
             ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
@@ -1469,7 +1470,9 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
         EPUSHR(S);
         return 1;
     }
-    if (nx != 31) { if (nx != 11) { return 0; } }
+    # 6.6.6 (bite 14 review): any other expression — a method call or an operator returning the
+    # struct takes its temp's address; everything else is pushed as its value. CHANGELOG [6.6.6]
+    if (nx != 31) { if (nx != 11) { return _push_struct_expr_arg(S); } }
     var li = 0 - 1;
     if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
     if (li < 0) { return _push_struct_addr_global(S); }
@@ -1866,6 +1869,156 @@ fn _refuse_toplevel_pair_arg(S): i64 {
     if (_ret_agg_class(S, FINDFN(S, PEEKV(S))) != 1) { return 0; }
     if (_call_is_whole_arg(S, GTI(S)) == 0) { return 0; }
     _refuse_toplevel_struct_call(S, PEEKV(S));
+    return 0;
+}
+
+# ⭐ 6.6.6 (bite 14 review) — A METHOD CALL OR AN OVERLOADED OPERATOR RETURNING A STRUCT BY
+# VALUE. 14c gave every FREE-fn call a destination and missed the two paths that emit their own
+# call: `var r: P3 = b.mk(2)`, `b.mk(3);`, `r = b.mk(5)` and `var c: V3 = a + b` SIGSEGV'd on
+# x86, aarch64 and Win64 (the callee took `self` / the lhs address as its retptr), and
+# `q = b.mp(3)` (rax:rdx) kept rax only. The emitter brackets its call with three hooks:
+#   _sc_pre   before its first push: a temp — always for a >16 B result in a fn, for a 9-16 B one
+#             only when a destination asked (`beg == _sc_want`) — and on x86/cx the temp's
+#             address as int arg 0 (`_sc_n0` = 1), before `self` / the lhs
+#   _sc_x8    after ECALLPOPS: the temp's address in aarch64's X8
+#   _sc_post  after the call: the rax:rdx store / the first word as the value, and the record
+#             (`_sc_*` in parse.cyr) a destination matches with `_sc_whole`
+# At top level there is no frame: a >16 B call is refused here; a 9-16 B one is recorded without
+# a temp, and a destination that needs storage refuses it. CHANGELOG [6.6.6]
+fn _sc_pre(S, fi, noff, beg): i64 {
+    _sc_n0 = 0;
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0 - 1; }
+    if (GINFN(S) != 1) {
+        if (cls == 2) { _refuse_toplevel_struct_call(S, noff); }
+        return 0 - 1;
+    }
+    if (cls == 1) { if (beg != _sc_want) { return 0 - 1; } }
+    var t = _agg_temp(S, GFRS(S, fi));
+    if (cls == 2) { if (_AARCH64_BACKEND == 0) {
+        EFLADDR(S, t);
+        EPUSHR(S);
+        _sc_n0 = 1;
+    } }
+    return t;
+}
+
+fn _sc_x8(S, fi, t): i64 {
+    if (t < 0) { return 0; }
+    if (_AARCH64_BACKEND != 1) { return 0; }
+    if (_ret_agg_class(S, fi) == 2) { EFLADDR_X8(S, t); }
+    return 0;
+}
+
+fn _sc_post(S, fi, noff, beg, t): i64 {
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0; }
+    if (t >= 0) {
+        if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, t); }
+        else { EFLLOAD(S, t); SESTYPE(S, 0); }
+    } else {
+        if (GINFN(S) == 1) { return 0; }   # a 9-16 B result nobody asked to store: rax:rdx as ever
+        if (cls == 2) { return 0; }        # top level: `_sc_pre` already refused it
+    }
+    _sc_beg = beg;
+    _sc_end = GTI(S);
+    _sc_tmp = t;
+    _sc_sid = GFRS(S, fi);
+    _sc_fn = noff;
+    return 0;
+}
+
+# The destination half. Arm before parsing the expression at the cursor; the previous want is
+# returned for the caller to restore right after the parse, since a nested destination re-arms.
+fn _sc_arm(S): i64 {
+    var w = _sc_want;
+    _sc_want = GTI(S);
+    _sc_beg = 0 - 1;
+    return w;
+}
+
+# After parsing from `start`: the temp holding the WHOLE expression's struct result; -1 when the
+# whole expression is such a call at top level (no temp); -2 when it is not one — a struct call
+# inside a larger expression (`b.mk(1).x`, `k + a * b`) does not span it, so it never matches.
+fn _sc_whole(S, start): i64 {
+    if (_sc_beg != start) { return 0 - 2; }
+    if (_sc_end != GTI(S)) { return 0 - 2; }
+    return _sc_tmp;
+}
+
+# `var p: S = <expr>` / `var p = <expr>` in a fn, <expr> one whole method/operator call returning
+# S: the temp BECOMES `p` — named in place, the same inline aggregate `var p: S = f(..)` makes (and,
+# untyped, the same inference). `ext` != 0 = a scalar/float/slice annotation: the first word, as
+# ever. Returns 1 when `p` is declared. CHANGELOG [6.6.6]
+fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
+    var t = _sc_whole(S, start);
+    if (t < 0) { return 0; }
+    if (pscale == 0) {
+        if (ext != 0) { return 0; }
+    } elif (pscale != 0 - _sc_sid) {
+        if (pscale < 0) { if (pscale > 0 - 2048) {
+            ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
+        } }
+        return 0;
+    }
+    S64(S + 0x5D9D000 + t * 8, noff);
+    SSLICE_W(S, t, 0);
+    return 1;
+}
+
+# `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
+# (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word.
+fn _sc_global_receive(S, pscale, start): i64 {
+    if (_sc_whole(S, start) != 0 - 1) { return 0; }
+    if (pscale != 0 - _sc_sid) { return 0; }
+    _refuse_toplevel_struct_call(S, _sc_fn);
+    return 0;
+}
+
+# A by-value struct parameter given an expression that is neither a bare name nor a free-fn call
+# (those have their own arms in `_try_push_struct_addr_arg`): when it is one whole method/operator
+# call returning a struct, the callee gets the temp's ADDRESS — the result's storage — where it
+# used to get the first word. Anything else pushes the value, which is exactly what the caller's
+# own PCMPE + EPUSHR would push. Returns 1: the argument is consumed. CHANGELOG [6.6.6]
+fn _push_struct_expr_arg(S): i64 {
+    var st = GTI(S);
+    var w = _sc_arm(S);
+    PCMPE(S);
+    _sc_want = w;
+    var t = _sc_whole(S, st);
+    if (t >= 0) { EFLADDR(S, t); }
+    if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); }
+    EPUSHR(S);
+    return 1;
+}
+
+# `return s.m(..);` / `return a + b;` in a >16 B struct-returning fn, the call returning this same
+# struct: its temp, which PARSE_RETURN copies into our retptr like `return IDENT;`. -1 when the
+# expression is neither a method call nor an operator expression (cursor untouched). When it is
+# one but not that shape: the struct-return diagnostic, and a junk slot 0 (cursor at `;`, the
+# binary is never written). CHANGELOG [6.6.6]
+fn _return_struct_expr(S): i64 {
+    if (PEEKT(S) != 2) { return 0 - 1; }
+    var nx = TOKTYP(S, GTI(S) + 1);
+    if (nx == 41) {
+        if (TOKTYP(S, GTI(S) + 3) != 10) { return 0 - 1; }
+    } elif (_is_op_dispatch_tok(nx) == 0) { return 0 - 1; }
+    var st = GTI(S);
+    var w = _sc_arm(S);
+    PCMPE(S);
+    _sc_want = w;
+    var t = _sc_whole(S, st);
+    if (t >= 0) { if (_sc_sid == _cur_fn_ret_sid) { return t; } }
+    ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
+    return 0;
+}
+
+# The binary operators EMIT_OP_DISPATCH serves: + - * / and the wrapping +% -% *%.
+fn _is_op_dispatch_tok(t): i64 {
+    if (t >= 6) { if (t <= 9) { return 1; } }
+    if (t == 113) { return 1; }
+    if (t == 116) { return 1; }
+    if (t == 119) { return 1; }
     return 0;
 }
 

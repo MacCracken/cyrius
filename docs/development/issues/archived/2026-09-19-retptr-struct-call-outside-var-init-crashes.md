@@ -3,7 +3,9 @@
 **Status:** ✅ **FIXED in 6.6.6 (bite 14)** — every struct-valued call now has a destination:
 `_struct_call_emit` / `_agg_temp` (`src/frontend/parse_fn.cyr`) serve PARSE_VAR's two receives,
 a frame temp in PARSE_FNCALL, the struct-param argument push, `x = f(..)` (`parse.cyr`) and
-`return f(..)`; top level, which has no frame, is refused by name. Found during 6.6.6 bite 1's
+`return f(..)`; top level, which has no frame, is refused by name. The METHOD-call and
+OVERLOADED-OPERATOR forms — missed by the first cut, found by bite 14's review — go through
+`_sc_pre` / `_sc_post` and the `_sc_*` record (see *Corrections*). Found during 6.6.6 bite 1's
 review; re-measured on HEAD `bbc880a9` before the fix: exit 139, as filed.
 **Placement:** the next 6.6.x repair release. Not parked to 7.x (nothing codegen is).
 **Discovered:** 2026-09-19.
@@ -104,6 +106,17 @@ is not.
   passes the result's first word, which is what a struct local passed to an untyped param has
   always passed (`h(r)`), and what a 9-16 B call has always yielded as an rvalue. Refusing it
   would have made the call and the local disagree.
+- **Not only free-fn calls — as first committed, the fix missed two call paths** (bite 14's
+  review). A METHOD call (`PARSE_FIELD_LOAD`) and an OVERLOADED OPERATOR (`EMIT_OP_DISPATCH`) emit
+  their own call: `var r: P3 = b.mk(2)`, `b.mk(3);`, `r = b.mk(5)`, `h(b.mk(1))`, `return b.mk(..)`
+  and `var c: V3 = a + b` (with `fn V3_add(a, b): V3`) still SIGSEGV'd on x86, aarch64 and Win64 —
+  the callee took `self` / the left operand's address as its retptr — and `q = b.mp(3)` kept rax
+  only. The destinations 14c added recognise a struct call by its tokens (`IDENT (`), which a
+  method's callee (resolved from the receiver's type) and an operator's are not. Both emitters now
+  allocate the temp and pass the retptr themselves, and record the tokens the call spans; each
+  destination takes the temp when the record spans exactly its expression. Pinned by
+  `stack_param_homing_matrix.sh` (rows 177-212 + a top-level refusal probe) and the method /
+  operator groups of `struct_valued_call_sites.tcyr`.
 - `return f(..)` in a same-struct fn copies through a temp rather than forwarding the incoming
   retptr: it reuses `ESTRUCT_BYVAL_COPY`, which every backend has, instead of a new
   load-the-stash emitter per backend.
