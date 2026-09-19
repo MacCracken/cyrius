@@ -875,6 +875,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   by the PID the gate started (`$!`), and a failure to stage into the gate's own dir is a FAIL; the
   shimmed `pkill` log stays empty on the fault run and on a normal PASS.
 
+- **`syscall_xlat_generated.sh`: the five axes that assert SILENCE printed `ok` when the compiler
+  crashed or the probe was empty.** Axes 2, 3b, 4, 5 and 6 grep a compile's stderr for `raw syscall`
+  and passed on zero matches without looking at the exit status or the probe. Reproduced verbatim at
+  HEAD: under `ulimit -f 600` the aarch64 emitter segfaults on every probe and axes 2/3b/4/5 each printed
+  `ok`; with `TMPDIR` on a 1 MiB tmpfs axis 6 printed `ok` over an EMPTY probe. Each now goes through one
+  helper that requires a non-empty probe, exit 0 and a non-empty output binary before silence counts —
+  under both repros every one of the five FAILs naming the crash or the empty probe; a normal run prints
+  the same `ok` lines.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

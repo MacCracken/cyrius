@@ -1,7 +1,7 @@
-# `syscall_xlat_generated.sh`: the axes that assert SILENCE print `ok` when the compile crashed or the probe source is empty — OPEN
+# `syscall_xlat_generated.sh`: the axes that assert SILENCE print `ok` when the compile crashed or the probe source is empty — FIXED
 
-**Status:** 🟡 open — found during 6.6.6 bite 12 (a reviewer ran the gate with `TMPDIR` on a
-1 MiB tmpfs); reconfirmed at the bite-12 tree with the repro below. Pre-existing — bite 12 did not
+**Status:** ✅ FIXED in 6.6.6 (bite 13) — found during 6.6.6 bite 12 (a reviewer ran the gate with
+`TMPDIR` on a 1 MiB tmpfs); reproduced verbatim at HEAD before the fix. Pre-existing — bite 12 did not
 touch these axes.
 **Placement:** unpinned — 6.x-line backlog (the next repair batch).
 **Discovered:** 2026-09-19
@@ -69,3 +69,17 @@ running the gate under the `ulimit -f 600` repro: every one of the five must go 
 - Under the repro above, none of the five axes prints `ok`; each names the crash or the empty probe.
 - A normal run still passes with the same `ok` lines.
 - Gate header records the mutation (ulimit repro → five axes RED).
+
+## Resolution (6.6.6, bite 13e)
+
+One helper, `_ran <axis> <what> <rc> <bin> <probe>`, gates every silence axis (2, 3b, 4, 5, 6): the
+probe must be non-empty, the compile must exit 0 and write a non-empty binary (each compile now writes
+its binary to `$D` instead of `/dev/null`), otherwise the axis FAILs naming which. Under the
+`ulimit -f 600` repro axes 2/3b/4/5 now FAIL "did not run to completion (rc=139)"; with `TMPDIR` on a
+1 MiB tmpfs 3b/4/5/6 FAIL "… is empty" and axis 2 rc=139. A normal run prints the same `ok` lines.
+
+## Corrections to this filing
+
+- Under the `ulimit -f 600` repro axis 6 legitimately still prints `ok`: the x86_64 fork's probe is
+  small, so that compile really does run to completion under the limit. Only the tmpfs repro (empty
+  probe) reaches axis 6, and it now FAILs there.

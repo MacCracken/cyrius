@@ -49,6 +49,22 @@ cd "$ROOT"
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: syscall_xlat_generated: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 FAIL=0
+# _ran <axis> <what> <rc> <bin> <probe-src>
+# ⛔ v6.6.6: an axis that proves a property by the ABSENCE of a diagnostic needs a positive
+# proof the compiler RAN. Five axes (2, 3b, 4, 5, 6) grepped stderr for `raw syscall` and said
+# `ok` on zero matches without looking at the exit status or the probe: under RLIMIT_FSIZE the
+# aarch64 emitter segfaulted on every probe and all five printed `ok`, and on a full TMPDIR axis
+# 6 printed `ok` over an EMPTY probe. Returns 0 only when the probe is non-empty, the compile
+# exited 0 and wrote a non-empty binary; otherwise FAILs naming which. CHANGELOG [6.6.6]
+# Mutation (6.6.6): `ulimit -f 600` (the aarch64 emitter segfaults) -> axes 2/3b/4/5 FAIL "did not
+# run to completion (rc=139)" where 6.6.5 printed four `ok`s; TMPDIR on a 1 MiB tmpfs
+# (`unshare -rm` + mount) -> 3b/4/5/6 FAIL "is empty", axis 2 rc=139. Normal run: same `ok` lines.
+_ran() {
+    if [ ! -s "$5" ]; then echo "FAIL: $1: could not write $2 ($5 is empty) — its silence proves nothing"; FAIL=1; return 1; fi
+    if [ "$3" -ne 0 ]; then echo "FAIL: $1: the compiler did not run to completion on $2 (rc=$3) — its silence proves nothing"; FAIL=1; return 1; fi
+    if [ ! -s "$4" ]; then echo "FAIL: $1: $2 compiled to an EMPTY binary — its silence proves nothing"; FAIL=1; return 1; fi
+    return 0
+}
 
 # ── axis 1: the table is REGENERATABLE and matches what is committed ──────────────
 # A hand-edited or stale table is the self-drifting shape this repo keeps finding; the only
@@ -78,9 +94,11 @@ if [ ! -s "$D/cc_a64" ]; then
     echo "FAIL: axis 2: could not build the aarch64 emitter"
     FAIL=1
 else
-    "$D/cc_a64" < src/main_aarch64.cyr > /dev/null 2>"$D/self.err"
+    rc2=0; "$D/cc_a64" < src/main_aarch64.cyr > "$D/self.bin" 2>"$D/self.err" || rc2=$?
     fp=$(grep -c 'raw syscall' "$D/self.err")
-    if [ "$fp" != 0 ]; then
+    if ! _ran "axis 2" "cycc's own aarch64 source" "$rc2" "$D/self.bin" src/main_aarch64.cyr; then
+        :
+    elif [ "$fp" != 0 ]; then
         echo "FAIL: axis 2: $fp raw-syscall warnings on cycc's OWN aarch64 source — these are"
         echo "      correct x86-compat numbers that ESYSXLAT remaps; the exclusion has regressed."
         grep -m2 'raw syscall' "$D/self.err" | sed 's/^/        /'
@@ -106,8 +124,10 @@ else
         echo "  ok: raw x86_64 fchmod(91) on ELF-aarch64 is diagnosed by name, without the false 'not a syscall' claim"
     fi
     printf 'fn main(): i64 { return syscall(5, 0, 0); }\nvar r = main();\n' > "$D/fst.cyr"
-    "$D/cc_a64" < "$D/fst.cyr" > /dev/null 2>"$D/fst.err"
-    if [ "$(grep -c 'raw syscall' "$D/fst.err")" != 0 ]; then
+    rc3=0; "$D/cc_a64" < "$D/fst.cyr" > "$D/fst.bin" 2>"$D/fst.err" || rc3=$?
+    if ! _ran "axis 3b" "the fstat(5) probe" "$rc3" "$D/fst.bin" "$D/fst.cyr"; then
+        :
+    elif [ "$(grep -c 'raw syscall' "$D/fst.err")" != 0 ]; then
         echo "FAIL: axis 3b: raw fstat(5) warned, but ESYSXLAT routes it (5→80) since v6.6.4"
         FAIL=1
     else
@@ -117,8 +137,10 @@ else
     # ── axis 4: an ESYSXLAT-REMAPPED number must stay SILENT ──────────────────────
     # 1 is x86_64 write and the chain rewrites it to 64. Warning here is the 510-warning bug.
     printf 'fn main(): i64 { return syscall(1, 1, "x", 1); }\nvar r = main();\n' > "$D/ok.cyr"
-    "$D/cc_a64" < "$D/ok.cyr" > /dev/null 2>"$D/ok.err"
-    if [ "$(grep -c 'raw syscall' "$D/ok.err")" != 0 ]; then
+    rc4=0; "$D/cc_a64" < "$D/ok.cyr" > "$D/ok.bin" 2>"$D/ok.err" || rc4=$?
+    if ! _ran "axis 4" "the write(1) probe" "$rc4" "$D/ok.bin" "$D/ok.cyr"; then
+        :
+    elif [ "$(grep -c 'raw syscall' "$D/ok.err")" != 0 ]; then
         echo "FAIL: axis 4: raw syscall 1 (write) warned, but ESYSXLAT remaps it — supported usage"
         FAIL=1
     else
@@ -128,8 +150,10 @@ else
     # ── axis 5: an AMBIGUOUS number must stay SILENT ──────────────────────────────
     # 63 is x86_64 uname AND aarch64 read; a literal cannot be judged wrong.
     printf 'fn main(): i64 { return syscall(63, 0, 0, 0); }\nvar r = main();\n' > "$D/amb.cyr"
-    "$D/cc_a64" < "$D/amb.cyr" > /dev/null 2>"$D/amb.err"
-    if [ "$(grep -c 'raw syscall' "$D/amb.err")" != 0 ]; then
+    rc5=0; "$D/cc_a64" < "$D/amb.cyr" > "$D/amb.bin" 2>"$D/amb.err" || rc5=$?
+    if ! _ran "axis 5" "the ambiguous-63 probe" "$rc5" "$D/amb.bin" "$D/amb.cyr"; then
+        :
+    elif [ "$(grep -c 'raw syscall' "$D/amb.err")" != 0 ]; then
         echo "FAIL: axis 5: raw syscall 63 warned, but it is a VALID aarch64 read — ambiguous,"
         echo "      so warning fires on correct low-level code."
         FAIL=1
@@ -261,8 +285,10 @@ fi
 
 # ── axis 6: the x86 fork must be UNAFFECTED (it carries return-0 stubs) ───────────
 printf 'fn main(): i64 { return syscall(5, 0); }\nvar r = main();\n' > "$D/x.cyr"
-./build/cycc < "$D/x.cyr" > /dev/null 2>"$D/x.err"
-if [ "$(grep -c 'raw syscall' "$D/x.err")" != 0 ]; then
+rc6=0; ./build/cycc < "$D/x.cyr" > "$D/x.bin" 2>"$D/x.err" || rc6=$?
+if ! _ran "axis 6" "the x86_64 fork's probe" "$rc6" "$D/x.bin" "$D/x.cyr"; then
+    :
+elif [ "$(grep -c 'raw syscall' "$D/x.err")" != 0 ]; then
     echo "FAIL: axis 6: the x86_64 fork emitted an ELF-aarch64 diagnostic — the stub leaked"
     FAIL=1
 else
