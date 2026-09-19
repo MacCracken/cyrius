@@ -1072,6 +1072,63 @@ mutated file silently and `deps --verify` then passed on it. A lock written befo
 no trailer: it fails open for one resolve and comes back stamped. `cyrius deps --lock`
 re-hashes `lib/` **keeping** the commit pins (it used to drop them).
 
+**The git-dep CACHE is verified too (v6.6.5, CVE-43).** A git dep is cloned once into
+`$CYRIUS_HOME/deps/<name>/<tag>` and reused by every project on the machine, so on every
+resolve the resolver checks that the checkout is still consistent with the tag it claims:
+`.git` is a real directory, `HEAD == refs/tags/<tag>^{commit}`, `remote.origin.url` is the url
+your manifest declares (compared with a trailing `/` and `.git` normalised away — `…/x` and
+`…/x.git` are one repository), `git fsck` passes, and the working tree hashes back to HEAD's
+tree with no extra files, both as git compares it and as RAW BYTES — a `.gitattributes` carried
+by the tag would otherwise let a line-ending-only edit through. A raw difference is only
+accepted if re-running the tag's blob through the same conversion reproduces your working tree
+exactly, so a legitimately CRLF checkout (`core.autocrlf=true`) still resolves. It is computed in a private throwaway index, so nothing inside the shared cache
+is written and the cache's own index, `assume-unchanged` bits and config get no vote — the
+config keys that cannot be overridden on the command line (a `filter.*` driver, an `include.*`
+that hides one, `core.autocrlf`, `core.worktree`, `extensions.worktreeConfig`) are refused
+outright, as is a `.git/info/attributes`. Untagged git deps get the content half as well.
+
+⚠ This is not a proof that the objects came from the remote: everything it reads lives inside
+the cache, so someone who can write it can also make it self-consistent. The `cyrius.lock`
+commit pin is what holds that line, and it is trust-on-first-use — pinned on the first resolve,
+enforced on every later one. Keep `cyrius.lock` committed.
+
+What changed for you: **metadata-only changes are now fine** — `touch`, `cp -a`, `rsync -a`,
+or running git in the cache under `unshare -r` no longer produce "refusing tampered cache"
+(through 6.6.4 a single `cp -a` of `~/.cyrius/deps` made every checkout fail). **Real changes
+are refused in more shapes**: an edit whose mtime is restored, an edit hidden by
+`assume-unchanged`/`skip-worktree`, a local commit in the cache, an untracked file the tag
+does not carry (even one `.gitignore` hides), a cache with `.git` removed, a populated
+submodule directory, a checkout of a different repository parked at that name and tag, and an
+edit laundered by the cache's own git config. Hand-staging a cache directory is refused rather
+than silently trusted unless you make it a faithful clone of the declared url at that tag —
+for local resolution use `path = "../sibling"`, which is the supported route.
+
+The refusal names the cache and an **offline** recovery:
+
+```
+error: cached checkout for dep 'foo' tag '1.0.0' does not match its source — refusing tampered
+cache: a tracked file's content, mode or type differs from the tag.
+  cache: /home/you/.cyrius/deps/foo/1.0.0
+  offline restore: rm -f …/.git/index && git --no-replace-objects -C … reset -q --hard
+  refs/tags/1.0.0 && git -C … clean -qffdx
+  or: rm -rf …   (re-clones from the remote on the next resolve).
+```
+
+Four reasons have no local repair and say so instead of pretending: an unreadable `.git`, a
+damaged object store, hostile configuration inside `.git`, and a cache of the wrong repository
+— for those the message says to remove the cache and re-resolve. A damaged-object-store refusal
+also quotes git's own first line, so you can see what git actually objected to. A dep whose tag
+commit only trips an fsck *policy* check (an author line with no email, a bad date) still
+resolves: those are not integrity failures, and reading them as such would make a legitimate old
+dependency unresolvable for ever. Cost is a full `git fsck` plus two tree hashes — about
+50-200 ms per dep on a warm cache, measured on real ones (585 files: 48 ms; 274 files with a
+larger object store: 195 ms).
+
+⚠ **Native Windows is out of scope for all of this**, as the git-dep flow always has been:
+`sys_fork` does not exist there, so no git command can run. A pre-populated cache resolves with
+a one-line warning that it was NOT verified, rather than failing with a reason that would be
+untrue.
+
 ## Linter
 
 ```sh

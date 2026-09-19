@@ -2,8 +2,11 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-42.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-44.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.)
+⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
+Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
+retired unused** and CVE-43 is the entry appended below. Anything below 44 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -109,3 +112,128 @@ band's second phase; see `docs/development/roadmap.md`.
 
 `CVE-32`/`33`/`34` fixes intact. The `cbt/` temp-file hardening (`CVE-35`/`36`) still holds —
 `_cbt_tmpdir()` / `_cbt_tmpfile()` remain the only `/tmp` path producers.
+
+---
+
+## CVE-43 — the dep-cache tamper check trusted the cache's own index, and failed OPEN around it
+
+*Appended 2026-09-18 (cyrius 6.6.5), from the mabda 4.1.3 filing. Not part of the 2026-09-03
+sweep: recorded here because this is the live ledger and the id has to come from one place.*
+
+| | |
+|---|---|
+| **Severity** | **High** — a modified dependency is vendored into the consumer's `lib/` at exit 0, with no diagnostic |
+| **Affected** | `cbt/deps.cyr` (`_git_worktree_clean`, and the `if (_head != 0)` call site), CVE-21's check since v6.2.30, through cyrius 6.6.4 |
+| **Fixed** | 6.6.5 |
+
+**Vector.** The check was `git -C <cache> diff-index --quiet HEAD`. That command answers from
+the SHARED cache's own `.git/index` and config — cached stat data, the `assume-unchanged` and
+`skip-worktree` bits, `core.fileMode` / `core.trustctime` / `core.checkStat` / `core.fsmonitor`,
+and `refs/replace` — every one of which is writable by anything that can write the cache. Measured
+end-to-end against 6.6.4, each of these resolved at exit 0 and vendored the tampered bytes:
+
+1. an in-place edit with the mtime restored (no config change needed once the index has been
+   rewritten a second later, which any porcelain command in a warm cache does);
+2. `git update-index --assume-unchanged` plus an edit;
+3. `git update-index --skip-worktree` plus an edit (sparse checkout sets this bit);
+4. a local commit with no `cyrius.lock` — first resolve is TOFU and HEAD was never compared with
+   `refs/tags/<tag>`, so the local commit was pinned as the tag's;
+5. a cache with `.git` removed — `if (_head != 0)` had no `else`, so all three CVE-21 checks were
+   skipped and the commit pin was dropped (1 → 0);
+6. `git replace` over HEAD's commit (no `--no-replace-objects`);
+7. a `core.fsmonitor` hook reporting no changes — and git **executes** that program, so the
+   untrusted cache also chose a binary for the resolver to run (measured: 2 executions per check).
+
+Untracked files are invisible to `diff-index`, so a module planted at a declared-but-absent
+`modules` path, or at the `lib/<basename>` fallback, was vendored as `lib/<dep>_<base>.cyr`.
+Files planted inside a gitlink directory are invisible to `diff-index`, `status` **and**
+`ls-files -o` alike.
+
+Two amplifiers. With `CYRIUS_HOME` inside a git repository (a CI workspace, a dotfiles `$HOME`),
+a `.git`-less cache made `git -C` discovery climb into the **enclosing** repo, so the check
+passed and `cyrius.lock` pinned that repo's HEAD as the dependency's commit. And because
+`_envp` forwarded the repository-location variables, a `cyrius deps` run from a git **hook**
+(git exports an absolute `GIT_INDEX_FILE`, plus `GIT_DIR` in a linked worktree) made the
+cold-cache `git clone` rewrite the user's in-progress commit index — their `git commit` failed
+with `invalid object … Error building trees` and the cache was left indexless.
+
+**Impact.** Anything that can write `~/.cyrius/deps/<name>/<tag>` — another process on the box,
+a restored backup, a shared build agent, a hook — can change what a dependency compiles into
+every consumer that resolves it, without moving HEAD and without a diagnostic. The check existed
+precisely to stop that (CVE-21, "catches an in-place edit of a cached checkout").
+
+**Fix.** The verification runs in a per-process throwaway index built from HEAD (so no stat
+cache and no index bits participate, and nothing inside the shared cache is written): `.git` must
+be a real directory, `HEAD == refs/tags/<tag>^{commit}`, a FULL `git fsck`, then `read-tree HEAD`
++ `update-index --refresh` + `diff-files` + `ls-files -o` (no `--exclude-standard`) + a
+populated-gitlink check. Every git call strips the 13 location variables, passes
+`--no-replace-objects`, SETS `GIT_WORK_TREE`, overrides the cache's config
+(`core.fsmonitor=false`, `core.hooksPath=/dev/null`, `core.symlinks=true`,
+`core.untrackedCache=false`, `core.attributesFile=/dev/null`, and `core.fileMode` at the value a
+filesystem probe establishes) and is fenced by `GIT_CEILING_DIRECTORIES` rather than an explicit
+`--git-dir`, which would skip git's own `safe.directory` ownership check. An unreadable cache
+refuses instead of skipping; untagged deps are verified too; the clone's exit status is checked.
+
+**The config knobs `-c` CANNOT override are refused, not overridden.** Review of the first cut
+found eight more shapes that it still accepted at exit 0 with the tampered bytes vendored, all of
+them inside `.git` where `ls-files -o` cannot look: `core.worktree` pointing every content
+command at a pristine copy; a `filter.<name>.clean` driver (a program git RUNS while hashing,
+which rewrote the bytes it fed the comparison — `-c` cannot neutralise it because the driver name
+is attacker-chosen); the same filter behind `include.path`, which `git config --local --list` does
+not print; `.git/info/attributes` alone (`* text eol=crlf` launders a CRLF-only edit);
+`core.autocrlf` in the cache's config (which cannot be forced off — a user whose GLOBAL autocrlf
+is on has a legitimately CRLF working tree); `extensions.worktreeConfig` +
+`.git/config.worktree`, a second config file the `--local` listing does not show either; and a
+checkout of a DIFFERENT repository carrying the same tag, reused because the cache directory is
+keyed on dep name and tag only. `_git_cfg_hazard` now refuses all of those keys and any
+`.git/info/attributes`, BEFORE any command that touches the working tree (by the time a filter
+has laundered the bytes it has also already executed), and `remote.origin.url` must equal the url
+the manifest declares. Zero cost on the live corpus: all 138 checkouts carry exactly the six keys
+`git clone` writes and none has an attributes file. ⚠ The origin urls match only AFTER
+normalising the suffix: `…/x`, `…/x.git` and `…/x/` are one repository on every forge, and 19
+declarations across 11 repos on this box differ from their cache by that suffix alone. The
+first cut compared the strings exactly and refused all 19 — a false refusal of an untouched
+cache, with no fixed point (following the printed `rm -rf` moves the refusal to the next
+consumer). That claim had been checked against the caches rather than against every declaring
+manifest, which is the same blind spot as the check it was describing.
+
+⚠ **What this does NOT prove, stated because the first draft of this entry over-claimed it.**
+It proves the checkout is internally consistent with the tag it CLAIMS — not that the objects
+came from the declared remote. Everything it reads lives inside the cache, so an attacker who can
+write `.git` can commit the tamper locally and `git tag -f` onto it, and nothing offline can tell
+that from the real tag (measured: exit 0). The `cyrius.lock` commit pin is the real bound, and it
+is trust-on-first-use: honest on the first resolve, held against every later one. The origin-url
+comparison closes staging and name-collision cases, not a determined attacker.
+
+⚠ **A tracked `.gitattributes` is not covered by refusing the untracked one.** `diff-files`
+compares `clean(working tree)` with the blob, and `clean` is whatever the ATTRIBUTES say, so a
+`* text=auto` carried BY THE TAG laundered a CRLF-only edit of a cached module: accepted at
+exit 0, changed bytes vendored. The file is verified like any other; its EFFECT was not. The
+verify now ends with a raw-byte pass (`hash-object --no-filters` per tracked regular file
+against the tag's sha), and a difference must be EXPLAINED by re-materialising the path through
+the same conversion (`cat-file --filters`) — so a legitimately converted working tree is still
+accepted and a laundered one is reason 9. 0 of the 138 live caches carry a `.gitattributes`;
+all 17,224 tracked files hash raw-equal.
+
+⚠ **Two ways the fix itself could have bricked a legitimate dep, both fixed before release.**
+`git fsck` exits 1 on POLICY complaints unrelated to integrity (`missingEmail`, `badDate`,
+`zeroPaddedDate`, `missingNameBeforeEmail`, `missingAuthor` … all measured on git 2.55), which
+would have made a dep with one old commit refuse as "object-store damage" for ever — those ids
+are passed as `warn`, with a policy-free retry if a git does not know one (`exit 128`). And
+`core.fileMode=true` was FORCED, overriding git's own filesystem probe, so on vfat/exfat/9p —
+where the exec bit cannot be stored and 104 of the 138 live checkouts would have a 755 entry — the
+dep refused permanently and the advertised `reset --hard` could not repair it. The value is now
+probed the same way git probes it.
+
+⚠ **`fsck --connectivity-only` is NOT sufficient** and a first draft used it: `read-tree` does
+not verify that an object hashes to the name it is stored under, and connectivity-only exits 0 on
+a forged loose subtree once the cache's index is out of the way. Only a full fsck catches it
+(11 ms typical, 70 ms on the largest dep).
+
+**Verified.** `tests/gates/toolchain/deps_git_cache_verified.sh` — 65 axes, 30 of them refusals,
+each expected value computed from the ORIGIN and each post-mutation resolve run under
+`GIT_ALLOW_PROTOCOL=none`; mutation-measured with 34 mutants, each named with the axes it
+reddens. Plus a read-only sweep of the live 138-checkout corpus with the final sequence: 0
+refused, 0 bytes of any `.git` changed, and all 17,224 tracked files hashing raw-equal to
+their tag. The gate also runs against the aarch64 CLI under `qemu-aarch64` (65/65 — emulation,
+not hardware).

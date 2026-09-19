@@ -1,9 +1,10 @@
-# `cyrius deps` refuses an untouched dep cache as "tampered" after a metadata-only change — OPEN
+# `cyrius deps` refuses an untouched dep cache as "tampered" after a metadata-only change — FIXED
 
-**Status:** 🟡 **OPEN** — filed from mabda 4.1.3 verification; not yet triaged.
-**Placement:** unpinned — 6.x-line backlog.
+**Status:** ✅ **FIXED in 6.6.5 (bite 7).** The filed repro passes verbatim, and the same check's
+FAIL-OPEN half — which this filing rated as absent — is recorded as **CVE-43**.
+**Placement:** archived 2026-09-18.
 **Discovered:** 2026-09-16, mabda 4.1.3 hardware-verification sweep (example-consumer build)
-**Severity:** Low. Nothing is corrupted and nothing insecure is accepted. The cost is a hard
+**Severity:** filed Low ("nothing insecure is accepted" — refuted below; it is High). The cost is a hard
 resolve failure with a misleading "tampered" message. It hits every project on the machine
 that resolves the same dep + tag.
 **Affects:** cyrius 6.6.4 CLI (cbt/deps.cyr); unchanged at HEAD 4f3731e8. Component: cli (`cyrius deps`, `cbt/deps.cyr`)
@@ -151,3 +152,64 @@ distinguishes "stat changed" from "content changed".
 
 Filed 2026-09-16 from mabda 4.1.3. mabda keeps its own record at
 `mabda/docs/development/issues/2026-09-16-cyrius-deps-tamper-check-stale-index.md`.
+
+---
+
+## Corrections to this filing (2026-09-18, at the fix)
+
+The repro and the mechanism are exactly right, and the consumer-side workaround is correct.
+Three things in the filing are not, and they are recorded here rather than edited away.
+
+1. **"Severity: Low. Nothing is corrupted and nothing insecure is accepted." — REFUTED.**
+   The same `diff-index` call **accepted** real tampering and vendored the modified bytes at
+   exit 0 in seven measured shapes: an in-place edit with the mtime restored, `assume-unchanged`,
+   `skip-worktree`, a local commit with no lock (TOFU), a missing `.git`, `refs/replace`, and a
+   `core.fsmonitor` hook — which git also **executes**. Untracked files are invisible to
+   `diff-index`, so a module planted at a declared-but-absent `modules` path or at the
+   `lib/<basename>` fallback was vendored. With `CYRIUS_HOME` inside a git repo, a `.git`-less
+   cache made discovery climb into the **enclosing** repo and `cyrius.lock` pinned that repo's
+   HEAD. And under a pre-commit hook the cold-cache clone rewrote the user's commit index, so
+   their `git commit` failed. The false refusal was the small half. Severity is **High**; see
+   `docs/audit/2026-09-03-security-audit.md` CVE-43.
+
+2. **Both proposed remedies are unusable as written, for the same reason.** `git update-index -q
+   --refresh` and `git diff --quiet HEAD` both **write the shared cache's index** (measured: the
+   index sha256 moves under `git diff --quiet`). `scripts/check.sh` aliases the LIVE
+   `~/.cyrius/deps` into its staged home, so either remedy would corrupt the maintainer's cache
+   every time the suite ran. They also still refuse when `.git/index` is missing, when a stale
+   `index.lock` is present, when `.git` is read-only, or when `GIT_INDEX_FILE`/`GIT_WORK_TREE`
+   leaks in from a hook — and they still honour the index bits and config that accept a tamper.
+   The fix verifies in a **private throwaway index** instead.
+
+3. **"Whatever the fix, a gate should cover the `touch` and `cp -a` rows."** Those are two of
+   sixty-four axes in `tests/gates/toolchain/deps_git_cache_verified.sh` (B2 and B3). A gate
+   covering only them would have passed on a change that removed the check entirely.
+
+4. **The fix's own first cut was reviewed and was still wrong in eight more shapes** — recorded
+   here because the filing's severity rating is what made "the config is handled" plausible.
+   Overriding the cache's config with `-c` flags is not enough: `core.worktree`, a
+   `filter.*.clean` driver (also a program git RUNS), that same filter behind `include.path`,
+   `.git/info/attributes`, `core.autocrlf`, `extensions.worktreeConfig` + `.git/config.worktree`,
+   and a checkout of a different repository at the same name+tag all still vendored the tampered
+   bytes at exit 0. They are refused now. Two ways the fix could itself have bricked a
+   legitimate dep — an `fsck` POLICY complaint (a commit with no author email) read as
+   object-store damage, and a forced `core.fileMode=true` on a filesystem that cannot store the
+   exec bit — were found the same way and fixed before release.
+
+4b. **A SECOND review round found the fix false-refusing untouched caches of its own**, which is
+   this filing's defect one layer up: `remote.origin.url` was compared as an exact string, so a
+   manifest saying `…/x` against a cache cloned from `…/x.git` — the same repository on every
+   forge — refused, 19 declarations across 11 repos on this box, with no fixed point. The same
+   round found a tracked `.gitattributes` (`* text=auto`) laundering a CRLF-only edit past
+   `diff-files` at exit 0, an unprobeable exec bit silently disabling mode comparison for the
+   whole process, and — on native Windows, where `sys_fork` is -1 and no git command can run —
+   the new fail-closed refusal hard-failing a pre-populated cache with a reason that is false.
+   All four are fixed; see CHANGELOG 6.6.5.
+
+5. **What the check proves is narrower than "the checkout IS the tag", and the first write-up of
+   the fix said the stronger thing.** Everything it reads lives inside the cache, so a local
+   tamper commit with `git tag -f` moved onto it is indistinguishable from the real tag offline.
+   `cyrius.lock`'s commit pin is the bound, trust-on-first-use.
+
+**For pins below 6.6.5** the workaround in this filing remains the answer: the wrapper re-execs
+the pinned CLI, so a consumer only gets the fix when its `[package].cyrius` reaches 6.6.5.

@@ -1948,10 +1948,17 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         # (the `-c …ext::sh` / `--upload-pack=…` arg-injection class
                         # the metachar denylist above misses — space + leading `-`
                         # aren't blocked). `/usr/bin/env` resolves git via PATH.
-                        var gargv[128];   # N BYTES: up to ~12 ptrs (96 B) + slack
-                        var gai = 0;
-                        store64(&gargv + gai * 8, "env");       gai = gai + 1;
+                        # CVE-43 (v6.6.5): the same `-u` scrub the verify uses. Git
+                        # exports GIT_INDEX_FILE into every hook, so a `cyrius deps`
+                        # run from a pre-commit hook made THIS clone write the user's
+                        # in-progress commit index — their commit then failed with
+                        # "invalid object … Error building trees" and the cache was
+                        # left with no index of its own. CHANGELOG [6.6.5].
+                        var gargv[384];   # N BYTES: up to ~40 ptrs (320 B) + slack
+                        var gai = _git_env_argv(&gargv, 0);
                         store64(&gargv + gai * 8, "git");       gai = gai + 1;
+                        store64(&gargv + gai * 8, "-c");        gai = gai + 1;
+                        store64(&gargv + gai * 8, "advice.detachedHead=false"); gai = gai + 1;
                         store64(&gargv + gai * 8, "clone");     gai = gai + 1;
                         store64(&gargv + gai * 8, "--depth");   gai = gai + 1;
                         store64(&gargv + gai * 8, "1");         gai = gai + 1;
@@ -1974,52 +1981,113 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             sys_execve("/usr/bin/env", &gargv, _envp);
                             sys_exit(127);
                         }
-                        var gsb[1];
-                        sys_waitpid(gpid, &gsb, 0);
+                        # CVE-43 (v6.6.5): the clone's exit status used to be
+                        # DISCARDED, so a failed clone surfaced downstream as the
+                        # misleading `modules entry "…" not found at tag`. A fork
+                        # failure left `gsb` uninitialised too. CHANGELOG [6.6.5].
+                        var gsb[8];
+                        store64(&gsb, 0);
+                        var gok = 0;
+                        if (gpid > 0) {
+                            if (sys_waitpid(gpid, &gsb, 0) > 0) {
+                                if ((load64(&gsb) & 0xFFFF) == 0) { gok = 1; }
+                            }
+                        }
+                        if (gok == 0) {
+                            _ew("error: git clone failed for dep '");
+                            _ew(dep_name);
+                            _ew("' from ");
+                            _ew(dep_git);
+                            # git's own stderr is INHERITED here (not captured), so
+                            # its diagnostic is already on the terminal above this.
+                            _ew("\n");
+                            errors = errors + 1;
+                            # ...and don't then ALSO report every declared module as
+                            # "not found at tag" against a directory that was never
+                            # created. One failure, named once.
+                            dep_pin_ok = 0;
+                        }
                     }
                 }
                 dep_path = clone_dir;
                 # CVE-21 (v6.2.30): pin the resolved commit for a TAGGED dep.
                 # The tag is meant to be immutable, so on every resolve (fresh
-                # clone OR reused cache) we enforce THREE things against the lock
-                # and the checkout, gating the module copy via dep_pin_ok:
+                # clone OR reused cache) we enforce, against the lock and the
+                # checkout, gating the module copy via dep_pin_ok:
                 #   1. a corrupt/truncated pin line for this dep → fail closed
                 #      (don't silently TOFU-re-pin over corruption);
                 #   2. HEAD must equal the locked commit → catches a force-pushed
                 #      / repointed tag (the core CVE-21 threat);
-                #   3. the working tree must match HEAD → catches an in-place
-                #      edit of a cached checkout (snapshot-ping-pong write-through
-                #      / local tamper) that leaves HEAD on the pinned SHA.
-                # No-tag deps intentionally float (track a branch HEAD) so they
-                # are not pinned. POSIX-only (mirrors the clone).
-                if (dep_tag != 0) {
-                    var _head = _git_head_sha(clone_dir);
-                    if (_head != 0) {
-                        var _exp = _lock_commit_lookup(dep_name, dep_git, dep_tag);
-                        if (_exp == -1) {
-                            sys_write(STDERR_FD, "error: corrupt commit-pin line for dep '", 40);
-                            sys_write(STDERR_FD, dep_name, strlen(dep_name));
-                            sys_write(STDERR_FD, "' in cyrius.lock — refusing (delete cyrius.lock to re-pin intentionally).\n", 76);
-                            dep_pin_ok = 0;
-                            errors = errors + 1;
-                        } elif (_exp != 0 && _cstr_eq(_exp, _head) == 0) {
-                            sys_write(STDERR_FD, "error: commit-pin mismatch for dep '", 36);
-                            sys_write(STDERR_FD, dep_name, strlen(dep_name));
-                            sys_write(STDERR_FD, "' tag '", 7);
-                            sys_write(STDERR_FD, dep_tag, strlen(dep_tag));
-                            sys_write(STDERR_FD, "': cyrius.lock pins ", 20);
-                            sys_write(STDERR_FD, _exp, strlen(_exp));
-                            sys_write(STDERR_FD, " but the tag now resolves to ", 29);
-                            sys_write(STDERR_FD, _head, strlen(_head));
-                            sys_write(STDERR_FD, " (force-pushed/repointed tag) — refusing. Delete cyrius.lock to re-pin intentionally.\n", 88);
-                            dep_pin_ok = 0;
-                            errors = errors + 1;
-                        } elif (_git_worktree_clean(clone_dir) == 0) {
-                            sys_write(STDERR_FD, "error: cached checkout for dep '", 32);
-                            sys_write(STDERR_FD, dep_name, strlen(dep_name));
-                            sys_write(STDERR_FD, "' has local modifications (working tree != HEAD ", 48);
-                            sys_write(STDERR_FD, _head, strlen(_head));
-                            sys_write(STDERR_FD, ") — refusing tampered cache. Remove the cached clone and re-resolve.\n", 71);
+                #   3. the checkout must BE the tag — `_git_cache_verify`.
+                # CVE-43 (v6.6.5) rewrote 3 and closed the two holes AROUND it:
+                #   * an unreadable checkout (no .git, dubious ownership, fork
+                #     failure) used to SKIP every check — `if (_head != 0)` had no
+                #     else — so tampered bytes were vendored and the pin dropped.
+                #     It now refuses, and `.git` is proved a real directory BEFORE
+                #     any git runs, so discovery can't reach an enclosing repo and
+                #     pin a FOREIGN HEAD;
+                #   * an UNTAGGED dep skipped content verification entirely,
+                #     because the whole block sat under `if (dep_tag != 0)`. It
+                #     floats by design (no pin) — that is not a reason to vendor
+                #     bytes its remote never published. CHANGELOG [6.6.5].
+                # POSIX-only (mirrors the clone) — and that is now SAID, not assumed:
+                # `sys_fork` is `return -1` on Windows, so every `_git_run` there fails
+                # and the `_head == 0` refusal below would hard-fail a pre-populated
+                # cache (the only way a git dep can exist on native Windows) with a
+                # reason that is false and a recovery that cannot run. The platform
+                # stays out of the check — and warns that it did. CHANGELOG [6.6.5].
+                var _head = 0;
+                var _gx = _git_exec_available();
+                if (_gx == 0) {
+                    _ew("warning: dep '");
+                    _ew(dep_name);
+                    _ew("': its cached checkout was NOT verified — git cannot be run on this\n");
+                    _ew("         platform (no fork), so the cached bytes are vendored as they are.\n");
+                } elif (_git_has_repo(clone_dir) == 1) { _head = _git_head_sha(clone_dir); }
+                if (_gx == 0) {
+                    dep_path = clone_dir;   # unchanged from above: vendor the cache as found
+                } elif (_head == 0) {
+                    if (is_dir(str_from(clone_dir)) == 1) {
+                        _git_cache_refuse(dep_name, dep_tag, clone_dir, 1);
+                        dep_pin_ok = 0;
+                        errors = errors + 1;
+                    }
+                } elif (dep_tag == 0) {
+                    var _uv = _git_cache_verify(clone_dir, 0, _head, dep_git);
+                    if (_uv != 0) {
+                        _git_cache_refuse(dep_name, 0, clone_dir, _uv);
+                        dep_pin_ok = 0;
+                        errors = errors + 1;
+                    }
+                } else {
+                    var _exp = _lock_commit_lookup(dep_name, dep_git, dep_tag);
+                    if (_exp == -1) {
+                        sys_write(STDERR_FD, "error: corrupt commit-pin line for dep '", 40);
+                        sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                        sys_write(STDERR_FD, "' in cyrius.lock — refusing (delete cyrius.lock to re-pin intentionally).\n", 76);
+                        # These two branches refuse without going through `_git_cache_refuse`,
+                        # so they clear the stderr capture themselves — `_git_head_sha` above
+                        # created it. CHANGELOG [6.6.5].
+                        _git_err_clear();
+                        dep_pin_ok = 0;
+                        errors = errors + 1;
+                    } elif (_exp != 0 && _cstr_eq(_exp, _head) == 0) {
+                        sys_write(STDERR_FD, "error: commit-pin mismatch for dep '", 36);
+                        sys_write(STDERR_FD, dep_name, strlen(dep_name));
+                        sys_write(STDERR_FD, "' tag '", 7);
+                        sys_write(STDERR_FD, dep_tag, strlen(dep_tag));
+                        sys_write(STDERR_FD, "': cyrius.lock pins ", 20);
+                        sys_write(STDERR_FD, _exp, strlen(_exp));
+                        sys_write(STDERR_FD, " but the tag now resolves to ", 29);
+                        sys_write(STDERR_FD, _head, strlen(_head));
+                        sys_write(STDERR_FD, " (force-pushed/repointed tag) — refusing. Delete cyrius.lock to re-pin intentionally.\n", 88);
+                        _git_err_clear();
+                        dep_pin_ok = 0;
+                        errors = errors + 1;
+                    } else {
+                        var _vr = _git_cache_verify(clone_dir, dep_tag, _head, dep_git);
+                        if (_vr != 0) {
+                            _git_cache_refuse(dep_name, dep_tag, clone_dir, _vr);
                             dep_pin_ok = 0;
                             errors = errors + 1;
                         } else {
@@ -2769,85 +2837,871 @@ fn _cstr_eq(a, b): i64 {
     return memeq(a, b, la);
 }
 
-# CVE-21 (v6.2.30) — capture the commit `git -C <clone_dir> rev-parse HEAD`
-# resolves to. Returns a pointer to a NUL-terminated 40-char lowercase-hex
-# string, or 0 on failure / not-a-repo. POSIX-only (mirrors the dep clone,
-# which already uses fork/execve); the git-dep flow does not run on native
-# Windows. Mirrors `_sha256sum_file`'s capture-via-tmpfile pattern.
-fn _git_head_sha(clone_dir): i64 {
-    var tmpf = _cbt_tmpfile("githead_out");
-    var pid = sys_fork();
-    if (pid == 0) {
-        var ofd = sys_open(tmpf, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-        sys_dup2(ofd, 1);
-        sys_close(ofd);
-        # Silence stderr so a non-repo dir doesn't pollute the user's output.
-        var efd = sys_open("/dev/null", O_WRONLY, 0);
-        if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
-        var argv[64];   # N BYTES: 7 ptrs need 56 B
-        store64(&argv, "env");
-        store64(&argv + 8, "git");
-        store64(&argv + 16, "-C");
-        store64(&argv + 24, clone_dir);
-        store64(&argv + 32, "rev-parse");
-        store64(&argv + 40, "HEAD");
-        store64(&argv + 48, 0);
-        sys_execve("/usr/bin/env", &argv, _envp);
-        sys_exit(127);
-    }
-    var sb[1];
-    sys_waitpid(pid, &sb, 0);
-    var buf = alloc(128);
-    var nn = file_read_all(tmpf, buf, 127);
-    sys_unlink(tmpf);
-    if (nn < 40) { return 0; }
-    var sha = alloc(41);
-    memcpy(sha, buf, 40);
-    store8(sha + 40, 0);
-    # Sanity: all 40 chars must be hex (0-9a-fA-F), else not a valid SHA.
-    var hi = 0;
-    while (hi < 40) {
-        var hc = load8(sha + hi);
-        var ishex = 0;
-        if (hc >= 48 && hc <= 57) { ishex = 1; }
-        if (hc >= 97 && hc <= 102) { ishex = 1; }
-        if (hc >= 65 && hc <= 70) { ishex = 1; }
-        if (ishex == 0) { return 0; }
-        hi = hi + 1;
-    }
-    return sha;
+# ── dep-cache git plumbing — CVE-21 (v6.2.30), rebuilt for CVE-43 (v6.6.5) ────────────
+#
+# WHY this is not a plain `git diff-index --quiet HEAD` any more (CHANGELOG [6.6.5]):
+# that command judges the working tree from the SHARED cache's own .git/index and config,
+# and it never refreshes the index's stat cache. Both halves were wrong.
+#   * A metadata-only change (touch, `cp -a`, a uid-mapped namespace) made every stat
+#     entry mismatch, so an untouched checkout was refused as "tampered" — the filed
+#     defect, which broke every project on the box resolving that dep+tag.
+#   * The same trust in that mutable index and config ACCEPTED real tampering: an
+#     in-place same-second edit with mtime restored, assume-unchanged / skip-worktree
+#     bits, a local commit with no lock, a missing .git, refs/replace, and a
+#     core.fsmonitor hook. Untracked files are invisible to diff-index entirely.
+# So: every git call goes through `_git_run`, which strips the repository-LOCATION
+# variables git exports into hooks and linked worktrees, pins the work tree, ignores replace
+# refs, and denies the cache's own config the vote; and the tree is hashed into a PRIVATE
+# throwaway index built from HEAD. The config knobs that CANNOT be overridden on the command
+# line (a filter driver whose name the attacker chooses, an include that hides one, eol
+# conversion) are refused instead — `_git_cfg_bad_key`. Nothing is ever written inside the
+# shared cache — check.sh aliases the
+# LIVE ~/.cyrius/deps into its staged home, so a fix that wrote the real index would
+# corrupt the maintainer's cache. POSIX-only (mirrors the dep clone).
+
+# Write a NUL-terminated string to stderr. The refusals below are long and carry
+# em-dashes; a hand-written byte count beside a literal is its own defect class
+# (tests/gates/frontend/write_literal_lengths.sh), so they measure the literal.
+fn _ew(s): i64 {
+    sys_write(STDERR_FD, s, strlen(s));
+    return 0;
 }
 
-# CVE-21 (v6.2.30) — returns 1 iff `git -C <dir> diff-index --quiet HEAD`
-# exits 0 (the working tree matches HEAD), else 0 (dirty, signalled, or git
-# error). Closes the in-place-tamper / snapshot-ping-pong write-through gap a
-# bare `rev-parse HEAD` pin misses: an edit to a tracked .cyr that never touches
-# .git leaves HEAD on the pinned SHA, so the SHA check alone would pass. A fresh
-# clone's tree is always clean, so this is a no-op cost on the happy path.
-# POSIX-only (mirrors the dep clone).
-fn _git_worktree_clean(clone_dir): i64 {
+fn _ga(argv, i, s): i64 {
+    store64(argv + i * 8, s);
+    return i + 1;
+}
+
+fn _cat2(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+# `git rev-parse --local-env-vars` plus GIT_NAMESPACE: every variable that RELOCATES the
+# repository. Git exports GIT_INDEX_FILE (absolute, .git/index.lock) into hooks and adds
+# GIT_DIR in a linked worktree, so a `cyrius deps` run from a pre-commit hook used to
+# make `git clone` REWRITE THE USER'S IN-PROGRESS COMMIT INDEX — their `git commit` then
+# failed with "invalid object … Error building trees" and the cache was left with no
+# index. GIT_CONFIG* is deliberately KEPT: CI injects credentials that way and a
+# command-line `-c` outranks it (measured, git 2.55).
+fn _git_env_argv(argv, i): i64 {
+    i = _ga(argv, i, "env");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_DIR");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_WORK_TREE");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_INDEX_FILE");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_OBJECT_DIRECTORY");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_ALTERNATE_OBJECT_DIRECTORIES");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_COMMON_DIR");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_IMPLICIT_WORK_TREE");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_GRAFT_FILE");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_NO_REPLACE_OBJECTS");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_REPLACE_REF_BASE");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_PREFIX");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_SHALLOW_FILE");
+    i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_NAMESPACE");
+    return i;
+}
+
+# `git fsck` exits 1 on POLICY complaints that say nothing about integrity: a commit whose
+# author line carries no email, a bad or zero-padded date, a `.gitmodules` url git would
+# refuse to clone from. Measured on git 2.55 — missingEmail, missingSpaceBeforeEmail,
+# missingSpaceBeforeDate, badDate, zeroPaddedDate, missingNameBeforeEmail and missingAuthor
+# all exit 1 on an otherwise perfect repository. Reading that as "object-store damage" makes
+# a legitimate dep with one old commit PERMANENTLY unresolvable — the refusal names the
+# object store, and the `rm -rf <cache>` it advertises re-clones the same objects and
+# refuses again, forever. Each of these is therefore downgraded to a warning. Nothing that
+# bears on whether an object hashes to the name it is stored under is touched: the forged
+# subtree still exits non-zero (gate axes R17/R20). CHANGELOG [6.6.5].
+# ⚠ `fsck.missingName` is NOT here: git 2.55 answers `fatal: Unhandled message id` and
+# exits 128 for an id it does not know, which would brick EVERY resolve on that git. The
+# caller falls back to a policy-free fsck on 128 for exactly that reason.
+fn _git_fsck_policy_argv(argv, i): i64 {
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.missingEmail=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.badEmail=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.missingSpaceBeforeEmail=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.missingSpaceBeforeDate=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.missingNameBeforeEmail=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.badDate=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.badDateOverflow=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.badTimezone=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.zeroPaddedDate=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.missingAuthor=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.missingCommitter=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.missingTaggerEntry=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.badTagName=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.gitmodulesUrl=warn");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "fsck.gitmodulesPath=warn");
+    return i;
+}
+
+# 0 = not probed yet, 1 = this filesystem stores the exec bit, 2 = it does not,
+# 3 = it could not be probed here (see `_git_fmode_arg`). `_git_fmode_dir` is the
+# directory the memo was taken IN: the memo is per-parent, not per-process, because
+# two deps can sit on two filesystems (a bind-mounted cache home) and the first dep
+# resolved must not decide the answer for the rest. CHANGELOG [6.6.5].
+var _git_fmode_cap = 0;
+var _git_fmode_dir = 0;
+
+# Can the filesystem under `par` represent the exec bit at all? CHANGELOG [6.6.5].
+# `core.fileMode=true` used to be forced unconditionally, which OVERRIDES the value
+# git-clone writes from its own probe: on vfat / exfat / NTFS-3g / 9p (a WSL `/mnt/c`, a
+# USB stick, a VM share) every 755 entry in the tag then reads as mode-changed, so the dep
+# refuses for ever and the advertised recovery cannot fix it — `reset --hard` cannot set a
+# bit the filesystem has no room for. 104 of the 138 live checkouts here carry a 755 file.
+# So probe instead of assume: write a 0600 file beside the cache, chmod it 0700, and ask
+# access(2) both times. Forcing the PROBED value (rather than trusting the cache's config)
+# keeps the security half: on a capable filesystem an attacker's `core.fileMode=false` is
+# still overridden (gate axis R3).
+# ⚠ `xstat` + `STAT_MODE`, never a hand-written offset: st_mode is at byte 24 on
+# x86-Linux, **16** on aarch64-Linux and **4** on macOS-arm64's stat64, and reading the
+# wrong one returns st_uid — a quiet wrong answer on exactly the targets the host suite
+# cannot see. `lib/io.cyr`'s `is_dir` carries the same warning after that bug shipped once.
+# (`_file_size` above predates the wrapper and reads byte 48, which happens to be st_size
+# on both Linux ABIs.) On Windows `xstat` is -1, so the probe declines — as it should:
+# the git flow is POSIX-only there anyway.
+fn _file_mode(path): i64 {
+    var st[144];
+    if (xstat(path, &st) != 0) { return 0 - 1; }
+    return load32(&st + STAT_MODE);
+}
+
+fn _git_probe_exec_bit(par): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, par);
+    str_builder_add_cstr(sb, "/.cyrius-fsprobe-");
+    str_builder_add_int(sb, syscall(39));
+    var p = str_data(str_builder_build(sb));
+    sys_unlink(p);
+    var fd = sys_open(p, O_WRONLY | O_CREAT | O_EXCL, 0x180);   # 0600
+    # UNKNOWN, not "no": a directory we cannot write says nothing about what the
+    # filesystem can STORE. Answering 2 here turned a read-only parent into a silent
+    # `core.fileMode=false` for the whole process — a fail-open needing no attacker
+    # control of the cache at all (measured: a chmod -x tamper accepted at rc 0).
+    # CHANGELOG [6.6.5].
+    if (fd < 0) { return 3; }
+    sys_close(fd);
+    # Deliberately the SAME question git's own probe asks (write a file, chmod +x, stat it),
+    # so the forced value can never disagree with what git-clone detected — `access(2)`
+    # would have answered differently on a `noexec` mount, where the bit IS stored.
+    var m0 = _file_mode(p);
+    sys_chmod(p, 0x1C0);                                        # 0700
+    var m1 = _file_mode(p);
+    sys_unlink(p);
+    if (m0 < 0) { return 3; }
+    if (m1 < 0) { return 3; }
+    if ((m0 & 0x40) != 0) { return 2; }   # a 0600 file reads +x → the modes are synthetic
+    if ((m1 & 0x40) == 0) { return 2; }   # +x did not stick → the bit cannot be stored
+    return 1;
+}
+
+# The probe file lands BESIDE the checkout (in `<home>/deps/<name>`), never inside it, and
+# is unlinked either way. It is deliberately NOT retried a directory further up: that is a
+# different filesystem whenever it matters (a cache tree mounted from vfat under an ext4
+# home), and the fallback below — git's own clone-time probe, recorded in the cache's
+# config — is a measurement of the right filesystem.
+#
+# Memoised per PARENT DIRECTORY (see the vars above). The value is FORCED when it is known
+# — so on a capable filesystem an attacker's `core.fileMode=false` is overridden (R3), and
+# on one that cannot store the bit the answer is `false` deterministically, so a cache's own
+# `core.fileMode=true` cannot manufacture a permanent refusal out of a mode it controls.
+# ⚠ The trade when it is false: a mode-only difference stops being detected. The module
+# copy carries BYTES only (no mode), so a mode flip in the cache cannot reach the
+# consumer's `lib/` — and on such a filesystem git itself cannot tell the two apart.
+# UNKNOWN (nothing writable to probe in) returns 0 and forces NOTHING: git then uses the
+# value its own clone-time probe wrote into the cache config. That is weaker than a forced
+# value and no weaker than 6.6.4 — the alternative, guessing `false`, is the fail-open this
+# release exists to remove, and guessing `true` refuses a read-only vfat cache for ever.
+fn _git_fmode_arg(par): i64 {
+    var fresh = 0;
+    if (_git_fmode_cap == 0) { fresh = 1; }
+    elif (_cstr_eq(_git_fmode_dir, par) == 0) { fresh = 1; }
+    if (fresh == 1) {
+        _git_fmode_cap = _git_probe_exec_bit(par);
+        _git_fmode_dir = par;
+    }
+    if (_git_fmode_cap == 1) { return "core.fileMode=true"; }
+    if (_git_fmode_cap == 2) { return "core.fileMode=false"; }
+    return 0;
+}
+
+# Can git be run at ALL on this platform? `lib/syscalls_windows.cyr` defines
+# `fn sys_fork(): i64 { return 0 - 1; }`, so on PE every `_git_run` returns -1 and every
+# verdict would be "git said no" when the truth is "git never ran". The whole git-dep flow
+# (the clone included) has always been POSIX-only there; this is the check ASKING, instead
+# of reading a fork failure as evidence about the cache. CHANGELOG [6.6.5].
+fn _git_exec_available(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0;
+    #endif
+    return 1;
+}
+
+# When non-zero, the next `_git_run` child reads stdin from this file (see `_git_raw_check`).
+var _git_in_path = 0;
+
+# Per-process capture of the last git child's stderr, so a refusal can quote git's own
+# hint (the dubious-ownership / safe.directory paragraph is the one users need).
+var _git_err_path = 0;
+
+fn _git_errfile(): i64 {
+    if (_git_err_path == 0) { _git_err_path = _cbt_tmpfile("git_err"); }
+    return _git_err_path;
+}
+
+# Remove the capture file. Called on every path that is done with it, so the CLI's private
+# temp dir is left as it was found (there is no exit hook here to sweep it later).
+fn _git_err_clear(): i64 {
+    if (_git_err_path != 0) { sys_unlink(_git_err_path); }
+    return 0;
+}
+
+# First line of that capture (trimmed, bounded), or 0 when there is nothing to quote.
+fn _git_err_first_line(): i64 {
+    if (_git_err_path == 0) { return 0; }
+    var buf = alloc(256);
+    var n = file_read_all(_git_err_path, buf, 255);
+    if (n <= 0) { return 0; }
+    var i = 0;
+    while (i < n && load8(buf + i) != 10) { i = i + 1; }
+    while (i > 0 && load8(buf + i - 1) == 13) { i = i - 1; }
+    if (i == 0) { return 0; }
+    store8(buf + i, 0);
+    return buf;
+}
+
+# Run one git command against a dep cache. `idx` (when non-zero) is the THROWAWAY index
+# the command must use; `outf` (when non-zero) captures stdout. Returns git's exit
+# status, or -1 when the child could not be run or was killed — every caller treats
+# non-zero as failure, so a fork failure can no longer read as "clean" (it did: the old
+# `_git_worktree_clean` left its wait-status buffer uninitialised and returned clean).
+#
+# Discovery stays ON so git's safe.directory ownership check still applies — an explicit
+# `--git-dir` SKIPS that check (measured) — but GIT_CEILING_DIRECTORIES stops it at the
+# cache's parent, so a cache with no .git can never resolve to the ENCLOSING repo (a
+# CYRIUS_HOME inside a git workspace used to pin that repo's HEAD as the dep commit).
+# GIT_WORK_TREE is SET (not just scrubbed): the cache's own `core.worktree` otherwise names
+# the directory every content command reads, and a pristine copy parked beside a tampered
+# cache compared clean at exit 0 (measured). `pol` adds the fsck message-id policy above.
+fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
+    var cl = strlen(clone_dir);
+    var pe = cl;
+    while (pe > 0 && load8(clone_dir + pe - 1) != 47) { pe = pe - 1; }
+    if (pe > 1) { pe = pe - 1; }
+    var par = alloc(pe + 1);
+    memcpy(par, clone_dir, pe);
+    store8(par + pe, 0);
+    # git IGNORES a non-absolute ceiling entry, and CYRIUS_HOME may be relative.
+    var ceil = _cat2("GIT_CEILING_DIRECTORIES=", _abs_path(par));
+    var wte = _cat2("GIT_WORK_TREE=", _abs_path(clone_dir));
+    # Probed in the PARENT: the memo has to survive the fork to be a per-process memo.
+    var fmode = _git_fmode_arg(par);
+    var ixe = 0;
+    if (idx != 0) { ixe = _cat2("GIT_INDEX_FILE=", idx); }
+    var errf = _git_errfile();
     var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
-        var nfd = sys_open("/dev/null", O_WRONLY, 0);
-        if (nfd >= 0) { sys_dup2(nfd, 1); sys_dup2(nfd, 2); sys_close(nfd); }
-        var argv[64];   # N BYTES: 8 ptrs need 64 B
-        store64(&argv, "env");
-        store64(&argv + 8, "git");
-        store64(&argv + 16, "-C");
-        store64(&argv + 24, clone_dir);
-        store64(&argv + 32, "diff-index");
-        store64(&argv + 40, "--quiet");
-        store64(&argv + 48, "HEAD");
-        store64(&argv + 56, 0);
+        # `--stdin-paths` is the only reader (see `_git_raw_check`); a global rather than a
+        # 9th parameter because every other call site would have to carry a 0 for it, and
+        # the one user sets and clears it around a single call. CHANGELOG [6.6.5].
+        if (_git_in_path != 0) {
+            var ifd = sys_open(_git_in_path, O_RDONLY, 0);
+            if (ifd >= 0) { sys_dup2(ifd, 0); sys_close(ifd); }
+            else { sys_exit(127); }
+        }
+        var ofd = 0 - 1;
+        if (outf != 0) { ofd = sys_open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0x180); }
+        else { ofd = sys_open("/dev/null", O_WRONLY, 0); }
+        if (ofd >= 0) { sys_dup2(ofd, 1); sys_close(ofd); }
+        var efd = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+        if (efd < 0) { efd = sys_open("/dev/null", O_WRONLY, 0); }
+        if (efd >= 0) { sys_dup2(efd, 2); sys_close(efd); }
+        var argv[1024];   # N BYTES: <= 128 ptrs; the fsck policy alone is 30 of them
+        var i = _git_env_argv(&argv, 0);
+        i = _ga(&argv, i, ceil);
+        i = _ga(&argv, i, wte);
+        if (ixe != 0) { i = _ga(&argv, i, ixe); }
+        i = _ga(&argv, i, "git");
+        i = _ga(&argv, i, "--no-replace-objects");
+        i = _ga(&argv, i, "-C"); i = _ga(&argv, i, clone_dir);
+        i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.fsmonitor=false");
+        i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.hooksPath=/dev/null");
+        if (fmode != 0) { i = _ga(&argv, i, "-c"); i = _ga(&argv, i, fmode); }
+        i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.symlinks=true");
+        i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.untrackedCache=false");
+        # The USER's global attributes file must not decide a dep's verdict either; the
+        # cache's own `.git/info/attributes` is refused outright (reason 7).
+        i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.attributesFile=/dev/null");
+        if (pol == 1) { i = _git_fsck_policy_argv(&argv, i); }
+        if (a1 != 0) { i = _ga(&argv, i, a1); }
+        if (a2 != 0) { i = _ga(&argv, i, a2); }
+        if (a3 != 0) { i = _ga(&argv, i, a3); }
+        if (a4 != 0) { i = _ga(&argv, i, a4); }
+        store64(&argv + i * 8, 0);
         sys_execve("/usr/bin/env", &argv, _envp);
         sys_exit(127);
     }
     var wst[8];
-    sys_waitpid(pid, &wst, 0);
+    store64(&wst, 0);
+    if (sys_waitpid(pid, &wst, 0) < 0) { return 0 - 1; }
     var st = load64(&wst);
-    if ((st & 127) != 0) { return 0; }          # killed by signal → distrust
-    if (((st >> 8) & 255) != 0) { return 0; }   # non-zero exit → dirty / error
+    if ((st & 127) != 0) { return 0 - 1; }      # killed by a signal → distrust
+    return (st >> 8) & 255;
+}
+
+# `rev-parse --verify -q <rev>` → a validated NUL-terminated hex name, or 0.
+fn _git_rev(clone_dir, rev): i64 {
+    var tmpf = _cbt_tmpfile("git_rev_out");
+    if (_git_run(clone_dir, 0, "rev-parse", "--verify", "-q", rev, tmpf, 0) != 0) {
+        sys_unlink(tmpf);
+        return 0;
+    }
+    var buf = alloc(128);
+    var nn = file_read_all(tmpf, buf, 127);
+    sys_unlink(tmpf);
+    if (nn < 40) { return 0; }
+    var hl = 0;
+    while (hl < nn) {
+        var hc = load8(buf + hl);
+        var ishex = 0;
+        if (hc >= 48 && hc <= 57) { ishex = 1; }
+        if (hc >= 97 && hc <= 102) { ishex = 1; }
+        if (ishex == 0) { break; }
+        hl = hl + 1;
+    }
+    # 40 = sha1, 64 = sha256. The pin line carries whatever this returns, and a repo
+    # never changes object format under a tag, so both compare like for like.
+    if (hl != 40 && hl != 64) { return 0; }
+    store8(buf + hl, 0);
+    return buf;
+}
+
+# CVE-21 (v6.2.30) — the commit HEAD resolves to in the cached checkout, or 0.
+# `HEAD^{commit}` rather than bare HEAD so a tag object or a symref cannot be pinned.
+fn _git_head_sha(clone_dir): i64 {
+    return _git_rev(clone_dir, "HEAD^{commit}");
+}
+
+# The cache must carry its OWN repository: a real .git directory, never a symlink (which
+# could point at another repo's .git) and never a gitfile (a linked worktree). Checked
+# BEFORE any git runs, so a hand-staged directory never reaches git discovery at all.
+fn _git_has_repo(clone_dir): i64 {
+    var gds = str_from(_cat2(clone_dir, "/.git"));
+    if (is_symlink(gds) == 1) { return 0; }
+    if (is_dir(gds) == 0) { return 0; }
     return 1;
+}
+
+fn _git_verify_cleanup(idx, outf): i64 {
+    sys_unlink(idx);
+    sys_unlink(_cat2(idx, ".lock"));
+    sys_unlink(outf);
+    return 0;
+}
+
+# The populated submodule directory that tripped reason 6, for the refusal message.
+var _git_bad_gitlink = 0;
+
+# The offending config key / path (reason 7) or the cache's own origin url (reason 8).
+var _git_bad_cfg = 0;
+# What the manifest declared, for the reason-8 message.
+var _git_want_url = 0;
+
+# Keys the cache's LOCAL config must not carry. A `git clone` writes exactly six — measured
+# across all 138 live checkouts here: core.repositoryformatversion, core.filemode, core.bare,
+# core.logallrefupdates, remote.origin.url, remote.origin.fetch — so none of these appears by
+# accident, and 0 of the 138 carry one. CHANGELOG [6.6.5]. Why each is a REFUSAL rather than
+# something `-c` overrides on the command line:
+#   filter.* / diff.*  a clean / textconv driver is a PROGRAM git runs over the working tree
+#                      while hashing it, and it rewrites the bytes it feeds the comparison.
+#                      Measured: `filter.x.clean` printing the honest content made an edited
+#                      file compare EQUAL — exit 0, tampered bytes vendored — and the
+#                      cache-named program ran twice per resolve. `-c` cannot neutralise it:
+#                      the driver NAME is attacker-chosen, so there is nothing fixed to set.
+#   include.* /        git FOLLOWS these when it reads the config, but `config --local
+#   includeIf.*        --name-only --list` does NOT print what they pull in (measured: the
+#                      included filter laundered the edit and the listing showed only
+#                      `include.path`). The include itself is therefore the refusable thing.
+#   core.autocrlf /    end-of-line conversion is applied while hashing, so it launders a
+#   core.eol           CRLF/LF-only edit. These cannot be forced off either: a user whose
+#                      GLOBAL autocrlf is on has a legitimately CRLF working tree and forcing
+#                      `false` would refuse it (gate axis B9).
+#   core.worktree      names the directory the content commands read. GIT_WORK_TREE in
+#                      `_git_run` already overrides it, but a cache carrying one was pointed
+#                      somewhere by someone, so it is named rather than silently corrected.
+#   extensions.        turns on a SECOND config file, `.git/config.worktree`, whose keys
+#   worktreeConfig     `config --local --list` does NOT print (measured) — so a filter, an
+#                      autocrlf or a core.worktree hidden there is invisible to this scan.
+#                      One key closes the whole scope; a clone never enables it.
+# ⚠ git lowercases the section and variable halves of a key in `--name-only --list` output
+# (measured: `core.workTree` prints as `core.worktree`, `FILTER.MiXeD.clean` as
+# `filter.MiXeD.clean`), so matching lowercase prefixes here is exact. Only the SUBSECTION
+# keeps its case, and no rule below looks at one.
+# An ALLOWLIST was the other option and is rejected on purpose: git writes platform-dependent
+# extras at clone time (core.ignorecase, core.precomposeunicode, core.symlinks on Windows),
+# so an allowlist derived on Linux would false-refuse on ecb/cass — and a false refusal of an
+# untouched cache is the defect this release exists to fix.
+fn _git_cfg_bad_key(k): i64 {
+    var n = strlen(k);
+    if (n > 7) { if (memeq(k, "filter.", 7) == 1) { return 1; } }
+    if (n > 5) { if (memeq(k, "diff.", 5) == 1) { return 1; } }
+    if (n > 8) { if (memeq(k, "include.", 8) == 1) { return 1; } }
+    if (n > 10) { if (memeq(k, "includeif.", 10) == 1) { return 1; } }
+    if (_cstr_eq(k, "core.autocrlf") == 1) { return 1; }
+    if (_cstr_eq(k, "core.eol") == 1) { return 1; }
+    if (_cstr_eq(k, "core.worktree") == 1) { return 1; }
+    if (_cstr_eq(k, "extensions.worktreeconfig") == 1) { return 1; }
+    return 0;
+}
+
+# Reason 7 when the cache's own git configuration can rewrite what the comparison sees,
+# else 0 (3 when git itself failed). Runs BEFORE any command that touches the working tree,
+# because by the time a filter has laundered the bytes it has also already RUN.
+fn _git_cfg_hazard(clone_dir, outf): i64 {
+    # `.git/info/attributes` assigns filters and eol conversion to paths and is NOT carried
+    # by the tag (a tracked `.gitattributes` is, and is verified like any other file). A
+    # clone never writes it; 0 of the 138 live checkouts have one.
+    var ap = _cat2(clone_dir, "/.git/info/attributes");
+    if (file_exists(ap) == 1) { _git_bad_cfg = ap; return 7; }
+    if (_git_run(clone_dir, 0, "config", "--local", "--name-only", "--list", outf, 0) > 1) {
+        return 3;                      # 1 = nothing listed; >1 is git failing, not "clean"
+    }
+    var sz = _file_size(outf);
+    if (sz < 0) { return 3; }
+    if (sz == 0) { return 0; }
+    var b = alloc(sz + 1);
+    if (file_read_all(outf, b, sz) != sz) { return 3; }
+    store8(b + sz, 0);
+    # A config key name cannot contain a newline (the section header and the key live on one
+    # line each), so splitting on 0x0A is exact.
+    var p = 0;
+    while (p < sz) {
+        var s = p;
+        while (p < sz && load8(b + p) != 10) { p = p + 1; }
+        store8(b + p, 0);
+        if (_git_cfg_bad_key(b + s) == 1) { _git_bad_cfg = b + s; return 7; }
+        p = p + 1;
+    }
+    return 0;
+}
+
+# A forge serves `…/name`, `…/name.git` and `…/name/` as ONE repository, so those spellings
+# are one url and comparing the strings byte-for-byte is a FALSE REFUSAL — the very defect
+# class this release exists to fix. Measured over the 126 `cyrius.cyml` manifests on this
+# box against the 138 live caches: 19 declarations in 11 repos differ from their cache by
+# exactly that suffix (tyche 1.0.1 alone is declared both ways by 8 consumers), and an exact
+# compare refuses them with NO fixed point — removing the cache as the message says makes
+# the next consumer refuse instead, for ever. Compare the comparable length: one trailing
+# `/`, then one trailing `.git`. CHANGELOG [6.6.5].
+fn _git_url_cmp_len(u): i64 {
+    var n = strlen(u);
+    if (n > 1 && load8(u + n - 1) == 47) { n = n - 1; }
+    if (n > 4 && memeq(u + n - 4, ".git", 4) == 1) { n = n - 4; }
+    return n;
+}
+
+fn _git_url_same(a, b): i64 {
+    var la = _git_url_cmp_len(a);
+    if (la != _git_url_cmp_len(b)) { return 0; }
+    if (la == 0) { return 0; }
+    return memeq(a, b, la);
+}
+
+# Same question for a url that is not NUL-terminated (a field inside cyrius.lock).
+fn _git_url_same_n(p, n, want): i64 {
+    return _git_url_same(_git_cstr_copy(p, n), want);
+}
+
+# The cache must CLAIM to come from the url the manifest declares. The clone directory is
+# keyed on dep NAME and TAG only, so without this a second dep called `foo` at tag `1.0.0` —
+# or a hand-staged `--depth 1` clone of any repo that carries that tag — is reused as this
+# one: measured at exit 0 with the foreign bytes vendored and the foreign commit written
+# into cyrius.lock. CHANGELOG [6.6.5].
+# ⚠ This is a staging / collision check, NOT a proof of origin. An attacker who can write
+# the cache's config can write this url too, and nothing offline can tell a locally-built
+# commit with the tag moved onto it from the real one — that bound is the `cyrius.lock`
+# commit pin (trust-on-first-use) and the remote itself.
+fn _git_origin_mismatch(clone_dir, want_url, outf): i64 {
+    if (want_url == 0) { return 0; }
+    if (_git_run(clone_dir, 0, "config", "--local", "--get", "remote.origin.url", outf, 0) != 0) {
+        _git_bad_cfg = "(none)";
+        _git_want_url = want_url;
+        return 8;
+    }
+    var sz = _file_size(outf);
+    if (sz <= 0) { _git_bad_cfg = "(none)"; _git_want_url = want_url; return 8; }
+    var b = alloc(sz + 1);
+    if (file_read_all(outf, b, sz) != sz) { return 3; }
+    store8(b + sz, 0);
+    while (sz > 0) {
+        var lc = load8(b + sz - 1);
+        if (lc != 10) { if (lc != 13) { break; } }
+        sz = sz - 1;
+        store8(b + sz, 0);
+    }
+    if (_git_url_same(b, want_url) == 0) {
+        _git_bad_cfg = b;
+        _git_want_url = want_url;
+        return 8;
+    }
+    return 0;
+}
+
+# `ls-files -s -z` rows: a mode-160000 (gitlink) entry is a directory the resolver never
+# populates, and NOTHING else looks inside one — diff-files, ls-files -o and status all
+# skip it, so a planted file there is invisible. Real caches carry gitlinks (shravan
+# 2.8.0/2.8.1 have a stray one with no .gitmodules), which is why they are checked
+# rather than refused. Returns 0 (all empty), 4 (a gitlink dir is missing) or 6.
+fn _git_gitlink_scan(clone_dir, lb, sz): i64 {
+    var p = 0;
+    while (p < sz) {
+        var rs = p;
+        while (p < sz && load8(lb + p) != 0) { p = p + 1; }
+        if (p - rs > 7 && memeq(lb + rs, "160000 ", 7) == 1) {
+            var q = rs;
+            while (q < p && load8(lb + q) != 9) { q = q + 1; }
+            if (q < p) {
+                var gp = _cat2(_cat2(clone_dir, "/"), lb + q + 1);
+                var gl = str_from(gp);
+                if (is_dir(gl) == 0) { return 4; }
+                if (vec_len(dir_list(gl)) != 0) { _git_bad_gitlink = gp; return 6; }
+            }
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+
+# ── the raw-byte half ────────────────────────────────────────────────────────────────────
+# `diff-files` compares clean(working tree) with the blob, and `clean` is whatever the
+# ATTRIBUTES say — so a `.gitattributes` CARRIED BY THE TAG decides the comparison. With
+# `* text=auto` tracked at the tag, a CRLF-only rewrite of a cached module hashes back to
+# the same blob and the tamper is accepted at exit 0 with the changed bytes vendored
+# (measured; 6.6.4 refused it only because its stat check fired first). This is the same
+# laundering class as `core.autocrlf` (R26) and `.git/info/attributes` (R27), which ARE
+# refused — the difference is that a tracked `.gitattributes` is legitimate, so it cannot
+# simply be rejected. `_git_cache_verify`'s comment used to say a tracked `.gitattributes`
+# "is verified like any other file": true of the FILE, not of its EFFECT. CHANGELOG [6.6.5].
+#
+# So compare the raw bytes too: `hash-object --no-filters` (git's own words: "ignoring any
+# input filter … including the end-of-line conversion") over every tracked regular file,
+# against the sha the tag records. A difference is then EXPLAINED or refused — `cat-file
+# --filters` re-materialises what git would check out for that path, and if the working
+# tree equals that, the conversion is honest (a user with `core.autocrlf=true` in their
+# global config has a legitimately CRLF working tree, and refusing it would be exactly the
+# false refusal this release exists to remove). Cost: zero extra git processes when nothing
+# is converted, which is every one of the 138 live caches.
+var _git_bad_path = 0;
+
+fn _git_row_shalen(lb, rs, re): i64 {
+    var q = rs + 7;
+    while (q < re && load8(lb + q) != 32) { q = q + 1; }
+    if (q >= re) { return 0; }
+    return q - rs - 7;
+}
+
+fn _git_row_path(lb, rs, re): i64 {
+    var q = rs;
+    while (q < re && load8(lb + q) != 9) { q = q + 1; }
+    if (q >= re) { return 0; }
+    return lb + q + 1;
+}
+
+# A row worth hashing: a regular file (100644/100755 — a symlink's blob is its TARGET, and
+# hashing the path would follow it; a gitlink has no blob here), whose path can be written
+# to `--stdin-paths`, which is LF-separated. A path containing an LF can only come from the
+# TAG — an attacker who can write the cache cannot ADD a tracked path (an extra file is
+# reason 5, a changed one is reason 4) — so skipping it is not a hole.
+fn _git_row_hashable(lb, rs, re): i64 {
+    if (re - rs < 50) { return 0; }
+    var okm = 0;
+    if (memeq(lb + rs, "100644 ", 7) == 1) { okm = 1; }
+    if (memeq(lb + rs, "100755 ", 7) == 1) { okm = 1; }
+    if (okm == 0) { return 0; }
+    var pp = _git_row_path(lb, rs, re);
+    if (pp == 0) { return 0; }
+    var i = 0;
+    while (load8(pp + i) != 0) {
+        if (load8(pp + i) == 10) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn _git_cstr_copy(p, n): i64 {
+    var b = alloc(n + 1);
+    memcpy(b, p, n);
+    store8(b + n, 0);
+    return b;
+}
+
+# Does the conversion git would APPLY to the tag's blob produce exactly these working-tree
+# bytes? 1 = yes (honest), 0 = no (or the question could not be asked).
+# ⚠ `--filters` runs the SMUDGE side, so ask what it can run: a `filter.*` driver in the
+# cache's own config is already refused (reason 7, before this point), `core.attributesFile`
+# is pinned to /dev/null, and a tracked `.gitattributes` can only NAME a driver — the program
+# itself has to come from a config this check has either refused or does not read. So the
+# attacker picks the attribute, never the binary. Do not relax reason 7 without revisiting
+# this. CHANGELOG [6.6.5].
+fn _git_conv_explains(clone_dir, idx, path, blobsha, rawsha, outf): i64 {
+    var cf = _cbt_tmpfile("dep_verify_conv");
+    if (_git_run(clone_dir, idx, "cat-file", "--filters", _cat2("--path=", path), blobsha, cf, 0) != 0) {
+        sys_unlink(cf);
+        return 0;
+    }
+    var hr = _git_run(clone_dir, idx, "hash-object", "--no-filters", cf, 0, outf, 0);
+    sys_unlink(cf);
+    if (hr != 0) { return 0; }
+    var n = _file_size(outf);
+    if (n <= 0) { return 0; }
+    var b = alloc(n + 1);
+    if (file_read_all(outf, b, n) != n) { return 0; }
+    store8(b + n, 0);
+    while (n > 0) {
+        var lc = load8(b + n - 1);
+        if (lc != 10) { if (lc != 13) { break; } }
+        n = n - 1;
+        store8(b + n, 0);
+    }
+    return _cstr_eq(b, rawsha);
+}
+
+# 0 = every tracked file's raw bytes are the tag's (or a declared conversion explains the
+# difference), 9 = laundered, 3 = git failed / the output did not line up.
+fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
+    var sb = str_builder_new();
+    var n = 0;
+    var p = 0;
+    while (p < sz) {
+        var rs = p;
+        while (p < sz && load8(lb + p) != 0) { p = p + 1; }
+        if (_git_row_hashable(lb, rs, p) == 1) {
+            str_builder_add_cstr(sb, _git_row_path(lb, rs, p));
+            str_builder_add_cstr(sb, "\n");
+            n = n + 1;
+        }
+        p = p + 1;
+    }
+    if (n == 0) { return 0; }
+    var pl = _cbt_tmpfile("dep_verify_paths");
+    var ps = str_builder_build(sb);
+    var pn = str_len(ps);
+    if (file_write_all(pl, str_data(ps), pn) != pn) { sys_unlink(pl); return 3; }
+    _git_in_path = pl;
+    var hr = _git_run(clone_dir, idx, "hash-object", "--no-filters", "--stdin-paths", 0, outf, 0);
+    _git_in_path = 0;
+    sys_unlink(pl);
+    if (hr != 0) { return 3; }
+    var hsz = _file_size(outf);
+    if (hsz <= 0) { return 3; }
+    var hb = alloc(hsz + 1);
+    if (file_read_all(outf, hb, hsz) != hsz) { return 3; }
+    store8(hb + hsz, 0);
+    # git prints one hash per input path, in the order given, so the second walk pairs them.
+    var hp = 0;
+    p = 0;
+    while (p < sz) {
+        var rs2 = p;
+        while (p < sz && load8(lb + p) != 0) { p = p + 1; }
+        if (_git_row_hashable(lb, rs2, p) == 1) {
+            var he = hp;
+            while (he < hsz && load8(hb + he) != 10) { he = he + 1; }
+            var sl = _git_row_shalen(lb, rs2, p);
+            if (sl == 0) { return 3; }
+            if (he - hp != sl) { return 3; }
+            if (memeq(hb + hp, lb + rs2 + 7, sl) == 0) {
+                var pth = _git_row_path(lb, rs2, p);
+                var bsha = _git_cstr_copy(lb + rs2 + 7, sl);
+                var rsha = _git_cstr_copy(hb + hp, sl);
+                var ex = _git_conv_explains(clone_dir, idx, pth, bsha, rsha, outf);
+                if (ex == 0) { _git_bad_path = pth; return 9; }
+            }
+            hp = he + 1;
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+
+# The cached checkout must be internally consistent with the tag it claims: HEAD ==
+# refs/tags/<tag>, every object reachable from HEAD hash-consistent, and the working tree
+# hashing back to HEAD's tree with no extra files — computed in a PRIVATE throwaway index
+# built from HEAD, so neither the cache's stat cache (the filed FALSE refusal) nor its
+# assume-unchanged / skip-worktree bits (a silent ACCEPT) take part. `tag_or_0` is 0 for an
+# untagged dep: the pin step is skipped, the content steps are not. `want_url` (0 to skip)
+# is the url the manifest declares. Returns 0 on a match, else a reason code.
+# ⚠ WHAT THIS DOES NOT PROVE. It is not a proof that the objects came from `want_url`.
+# Everything it reads lives inside the cache, so an attacker who can write `.git` can build
+# a self-consistent repository — commit the tamper locally and `git tag -f` onto it, and
+# nothing here can tell that from the real tag (measured). What catches THAT is the
+# `cyrius.lock` commit pin, which is trust-on-first-use: honest on the first resolve, held
+# against every later one. Offline, that is the bound. CHANGELOG [6.6.5].
+fn _git_cache_verify(clone_dir, tag_or_0, head, want_url): i64 {
+    if (_git_has_repo(clone_dir) == 0) { return 1; }
+    var idx = _cbt_tmpfile("dep_verify_index");
+    var outf = _cbt_tmpfile("dep_verify_out");
+    _git_verify_cleanup(idx, outf);
+    # FIRST, before anything reads the working tree: a filter driver declared in the cache's
+    # own config would already have run by then, and would have decided the answer.
+    var cfr = _git_cfg_hazard(clone_dir, outf);
+    if (cfr != 0) { _git_verify_cleanup(idx, outf); return cfr; }
+    var our = _git_origin_mismatch(clone_dir, want_url, outf);
+    if (our != 0) { _git_verify_cleanup(idx, outf); return our; }
+    if (tag_or_0 != 0) {
+        var tr = _cat2(_cat2("refs/tags/", tag_or_0), "^{commit}");
+        var tc = _git_rev(clone_dir, tr);
+        if (tc == 0) {
+            tc = _git_rev(clone_dir, _cat2(_cat2("refs/remotes/origin/", tag_or_0), "^{commit}"));
+        }
+        if (tc == 0) { _git_verify_cleanup(idx, outf); return 2; }
+        if (_cstr_eq(tc, head) == 0) { _git_verify_cleanup(idx, outf); return 2; }
+    }
+    # fsck FIRST: read-tree does NOT verify that an object hashes to the name it is
+    # stored under, so a forged subtree spliced in under the original tree's name is
+    # read back whole and diff-files then agrees with the planted working-tree bytes.
+    # ⚠ `--connectivity-only` does NOT catch that — measured: it exits 0 on the forged
+    # repo once the cache's own index (whose cache-tree happened to name the mangled
+    # object) is out of the way. Only a FULL fsck hashes the objects. Cost measured on
+    # the corpus: 11 ms on a typical dep, 70 ms on the largest (dhvani 2.2.4, 392
+    # objects). CHANGELOG [6.6.5].
+    var fr = _git_run(clone_dir, idx, "fsck", "--no-dangling", "--no-progress", 0, 0, 1);
+    # A git that does not know one of the policy ids answers `fatal: Unhandled message id`
+    # and exits 128 — that must never brick every resolve on that git, so fall back to the
+    # unmodified fsck (which only restores the old, stricter behaviour).
+    if (fr == 128) { fr = _git_run(clone_dir, idx, "fsck", "--no-dangling", "--no-progress", 0, 0, 0); }
+    if (fr != 0) {
+        _git_verify_cleanup(idx, outf);
+        return 3;
+    }
+    if (_git_run(clone_dir, idx, "read-tree", "HEAD", 0, 0, 0, 0) != 0) {
+        _git_verify_cleanup(idx, outf);
+        return 3;
+    }
+    # A fresh index holds no stat data, so this HASHES every file rather than trusting a
+    # cached mtime. Its exit status is deliberately ignored — a non-zero here only means
+    # "something differs", which diff-files reports precisely.
+    _git_run(clone_dir, idx, "update-index", "-q", "--refresh", 0, 0, 0);
+    var dfr = _git_run(clone_dir, idx, "diff-files", "--quiet", 0, 0, 0, 0);
+    if (dfr != 0) {
+        _git_verify_cleanup(idx, outf);
+        # 1 = a real difference; anything else (or -1) is git failing, not the tree differing.
+        if (dfr == 1) { return 4; }
+        return 3;
+    }
+    # No --exclude-standard: a file the tag does not carry is a refusal even when
+    # .gitignore or .git/info/exclude hides it. A module planted at a declared-but-absent
+    # path, or at the lib/<basename> fallback, was vendored through exactly this gap.
+    if (_git_run(clone_dir, idx, "ls-files", "-o", "-z", 0, outf, 0) != 0) {
+        _git_verify_cleanup(idx, outf);
+        return 3;
+    }
+    var osz = _file_size(outf);
+    if (osz < 0) { _git_verify_cleanup(idx, outf); return 3; }   # no capture = git failed, not "clean"
+    if (osz != 0) {
+        _git_verify_cleanup(idx, outf);
+        return 5;
+    }
+    if (_git_run(clone_dir, idx, "ls-files", "-s", "-z", 0, outf, 0) != 0) {
+        _git_verify_cleanup(idx, outf);
+        return 3;
+    }
+    var sz = _file_size(outf);
+    if (sz < 0) { _git_verify_cleanup(idx, outf); return 3; }
+    var lb = alloc(sz + 1);
+    var ln = file_read_all(outf, lb, sz);
+    if (ln != sz) { _git_verify_cleanup(idx, outf); return 3; }
+    store8(lb + sz, 0);
+    var gl = _git_gitlink_scan(clone_dir, lb, sz);
+    if (gl != 0) { _git_verify_cleanup(idx, outf); return gl; }
+    # LAST, and on the same `ls-files -s` rows: diff-files has already agreed, so anything
+    # this finds is a difference an attribute conversion was hiding. CHANGELOG [6.6.5].
+    var rr = _git_raw_check(clone_dir, idx, lb, sz, outf);
+    _git_verify_cleanup(idx, outf);
+    if (rr == 0) { _git_err_clear(); }
+    return rr;
+}
+
+fn _git_cache_reason(r): i64 {
+    if (r == 1) { return "its .git is missing, is not a real directory, or git cannot read it"; }
+    if (r == 2) { return "HEAD is not the tag's commit (a local commit, a checkout, or a moved tag)"; }
+    if (r == 3) { return "git could not verify it (object-store damage or a git failure)"; }
+    if (r == 4) { return "a tracked file's content, mode or type differs from the tag"; }
+    if (r == 5) { return "it holds files the tag does not (untracked or ignored)"; }
+    if (r == 6) { return "a submodule directory is populated (the resolver never populates submodules)"; }
+    if (r == 7) { return "its .git carries configuration that rewrites or redirects what git compares"; }
+    if (r == 8) { return "its origin remote is not the URL this dep declares (a different repo's checkout)"; }
+    if (r == 9) { return "a tracked file's bytes are not the tag's, and a content conversion was hiding it"; }
+    return "it is not readable as a git checkout";
+}
+
+# One refusal for every reason, naming the dep, the tag, the CACHE PATH and a recovery
+# that works OFFLINE. Through 6.6.4 the only message named no path and advised deleting
+# the clone — which forces a network re-clone, so an offline box could not recover.
+fn _git_cache_refuse(dep_name, tag_or_0, clone_dir, r): i64 {
+    var rev = "HEAD";
+    if (tag_or_0 != 0) { rev = _cat2("refs/tags/", tag_or_0); }
+    _ew("error: cached checkout for dep '");
+    _ew(dep_name);
+    _ew("' tag '");
+    if (tag_or_0 != 0) { _ew(tag_or_0); } else { _ew("(untagged)"); }
+    _ew("' does not match its source — refusing tampered cache: ");
+    _ew(_git_cache_reason(r));
+    _ew(".\n  cache: ");
+    _ew(clone_dir);
+    # Reason 3 quotes it too (added 6.6.5): it is the ONE refusal that cannot say what git
+    # objected to, so "object-store damage" was the diagnosis a user got for a commit with
+    # a malformed author line as well as for a forged object.
+    if (r == 1 || r == 3) {
+        var el = _git_err_first_line();
+        if (el != 0) { _ew("\n  git: "); _ew(el); }
+    }
+    if (r == 9) {
+        if (_git_bad_path != 0) {
+            _ew("\n  file: ");
+            _ew(_git_bad_path);
+            _ew("  (its bytes hash to something the tag does not carry; only the");
+            _ew("\n        conversion declared by .gitattributes / core.autocrlf made it compare equal)");
+        }
+    }
+    if (r == 6) {
+        if (_git_bad_gitlink != 0) { _ew("\n  populated submodule: "); _ew(_git_bad_gitlink); }
+        _ew("\n  fix: remove that directory's contents, then re-resolve.");
+    } elif (r == 7) {
+        if (_git_bad_cfg != 0) { _ew("\n  offending setting: "); _ew(_git_bad_cfg); }
+        _ew("\n  a clone never writes this, and it decides what the comparison sees — so the");
+        _ew("\n  cache is not one to trust. The offline repair is to REMOVE THAT SETTING —");
+        _ew("\n  `git -C ");
+        _ew(clone_dir);
+        _ew(" config --unset-all <key>`, or delete the");
+        _ew("\n  .git/info/attributes named above — and re-resolve; a reset/clean does not");
+        _ew("\n  touch it.");
+    } elif (r == 8) {
+        if (_git_bad_cfg != 0) { _ew("\n  cache origin: "); _ew(_git_bad_cfg); }
+        if (_git_want_url != 0) { _ew("\n  declared:     "); _ew(_git_want_url); }
+        _ew("\n  this cache is a checkout of a different repository; remove it and re-resolve.");
+    } elif (r == 1 || r == 3) {
+        # No offline recipe here, honestly: with no readable .git (1) or a damaged
+        # object store (3) there is nothing local left to restore FROM. Measured:
+        # `reset --hard` cannot repair a spliced object.
+        _ew("\n  this one cannot be repaired locally — the object store is what is wrong.");
+    } else {
+        _ew("\n  offline restore: rm -f ");
+        _ew(clone_dir);
+        _ew("/.git/index && git --no-replace-objects -C ");
+        _ew(clone_dir);
+        _ew(" -c core.fsmonitor=false -c core.hooksPath=/dev/null reset -q --hard ");
+        _ew(rev);
+        _ew(" && git -C ");
+        _ew(clone_dir);
+        _ew(" clean -qffdx");
+    }
+    _ew("\n  or: rm -rf ");
+    _ew(clone_dir);
+    _ew("   (re-clones from the remote on the next resolve).\n");
+    _git_err_clear();
+    return 0;
 }
 
 # CVE-21 (v6.2.30) — look up the previously-locked commit SHA for a dep,
@@ -2893,7 +3747,12 @@ fn _lock_commit_lookup(name, git, tag): i64 {
             if (name_e - name_s == strlen(name) && memeq(lbuf + name_s, name, name_e - name_s) == 1) { nm_ok = 1; }
             if (nm_ok == 1 && well == 0) { return -1; }   # corrupt pin for this dep → fail closed
             var gt_ok = 0;
-            if (git_e - git_s == strlen(git) && memeq(lbuf + git_s, git, git_e - git_s) == 1) { gt_ok = 1; }
+            # Suffix-normalised, like the origin comparison: the lock's url field and the
+            # manifest's are two spellings of ONE repository as often as the cache's origin is
+            # (`…/x` vs `…/x.git`). An exact compare here does not REFUSE, it silently
+            # TOFU-RE-PINS — the moved-tag check this pin exists for is skipped for that
+            # resolve, which is the CVE-21 hole one spelling away. CHANGELOG [6.6.5].
+            if (_git_url_same_n(lbuf + git_s, git_e - git_s, git) == 1) { gt_ok = 1; }
             var tg_ok = 0;
             if (tag_e - tag_s == strlen(tag) && memeq(lbuf + tag_s, tag, tag_e - tag_s) == 1) { tg_ok = 1; }
             if (nm_ok == 1 && gt_ok == 1 && tg_ok == 1) {
