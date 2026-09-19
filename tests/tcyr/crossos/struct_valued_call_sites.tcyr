@@ -1,0 +1,136 @@
+# struct_valued_call_sites.tcyr — 6.6.6: a call to a struct-returning fn must marshal its
+# arguments exactly like any other call, whatever syntax binds its result.
+#
+# THE DEFECT (bite 14a). `var p: S = f(...)` does not go through PARSE_FNCALL: the two
+# struct-valued receives in PARSE_VAR (`asv`, a >16 B struct returned through a hidden retptr,
+# and `asv_pair`, a 9-16 B struct returned in rax:rdx) emit their own call, and their argument
+# loops were a bare `PCMPE + EPUSHR` per argument. None of PARSE_FNCALL's callee-mask gates ran:
+#   * a value-form vector was pushed as an INT argument — every later int shifted by one and the
+#     callee read its vector from a stale XMM0/V0 (SysV/aarch64); on Win64 the vector's first
+#     word was dereferenced as the by-pointer vector argument (page fault);
+#   * a struct argument to a by-value struct param was pushed BY VALUE (its first word), where
+#     the callee expects its address;
+#   * a string literal to a `: Str` param was not wrapped in `str_from`;
+#   * and the arity check never ran.
+# Measured before the fix (cycc 6.6.5 and the 6.6.6 bite-1 tree): `var q: P3 = mkv(1, v, 2)`
+# gave 149 for 182 and `var p: P2 = pr2(5, v)` 53 for 59, on x86_64 and aarch64 (qemu); Win64
+# (wine) page-faulted. Silent everywhere else: exit 0, no diagnostic.
+#
+# ⭐ EVERY EXPECTED VALUE IS A LITERAL — the arguments written out as digits; the callees fold
+# their parameters positionally (lead*10^n + a*10^k + ...), so a missing, stale or shifted
+# parameter changes a specific digit.
+# ⭐ THE VECTOR REGISTERS ARE CLOBBERED BEFORE EVERY CALL (`clob`). Without that, XMM0 usually
+# still holds the vector the program built last, and the defect passes by accident — which is
+# exactly how a hand-written arity-2 check passed over it.
+include "lib/assert.cyr"
+include "lib/str.cyr"
+include "lib/simd.cyr"
+
+struct P3 { x; y; z; }
+struct P2 { x; y; }
+
+fn clob(a: f64v4, b: f64v4, c: f64v4, d: f64v4): i64 { return 0; }
+
+# --- the filing's repro shapes -------------------------------------------------------------
+fn mkv(a, v: f64v2, b): P3 { var p: P3; p.x = a; p.y = load64(&v + 8); p.z = b; return p; }
+fn pr2(a, v: f64v2): P2 { var p: P2; p.x = a; p.y = load64(&v); return p; }
+
+# --- >16 B (retptr): vector first / middle / last, 2 and 7 ints -----------------------------
+fn b2f(v: f64v2, a, b): P3 { var p: P3; p.x = load64(&v) * 100 + a * 10 + b; p.y = 0; p.z = 0; return p; }
+fn b2m(a, v: f32v4, b): P3 { var p: P3; p.x = load32(&v + 12) * 100 + a * 10 + b; p.y = 0; p.z = 0; return p; }
+fn b2l(a, b, v: f64v4): P3 { var p: P3; p.x = load64(&v + 24) * 100 + a * 10 + b; p.y = 0; p.z = 0; return p; }
+fn b7f(v: f64v4, a, b, c, d, e, f, g): P3 { var p: P3; p.x = load64(&v + 24) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; p.y = 0; p.z = 0; return p; }
+fn b7m(a, b, c, v: f64v2, d, e, f, g): P3 { var p: P3; p.x = load64(&v + 8) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; p.y = 0; p.z = 0; return p; }
+fn b7l(a, b, c, d, e, f, g, v: f32v4): P3 { var p: P3; p.x = load32(&v) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; p.y = 0; p.z = 0; return p; }
+
+# --- 9-16 B (rax:rdx): the same axes ---------------------------------------------------------
+fn p2f(v: f32v4, a, b): P2 { var p: P2; p.x = load32(&v + 4) * 100 + a * 10 + b; p.y = 0; return p; }
+fn p2m(a, v: f64v4, b): P2 { var p: P2; p.x = load64(&v + 16) * 100 + a * 10 + b; p.y = 0; return p; }
+fn p2l(a, b, v: f64v2): P2 { var p: P2; p.x = load64(&v) * 100 + a * 10 + b; p.y = 0; return p; }
+fn p7f(v: f64v2, a, b, c, d, e, f, g): P2 { var p: P2; p.x = load64(&v + 8) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; p.y = 0; return p; }
+fn p7m(a, b, c, d, v: f32v4, e, f, g): P2 { var p: P2; p.x = load32(&v + 8) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; p.y = 0; return p; }
+fn p7l(a, b, c, d, e, f, g, v: f64v4): P2 { var p: P2; p.x = load64(&v) * 10000000 + a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; p.y = 0; return p; }
+
+# --- the other callee-mask gates the loops lacked --------------------------------------------
+fn sl3(s: Str, k): P3 { var p: P3; p.x = str_len(s) * 10 + k; p.y = 0; p.z = 0; return p; }
+fn sl2(s: Str, k): P2 { var p: P2; p.x = str_len(s) * 10 + k; p.y = 0; return p; }
+fn st3(q: P3, k): P3 { var p: P3; p.x = q.z * 100 + q.y * 10 + k; p.y = 0; p.z = 0; return p; }
+fn st2(q: P3, k): P2 { var p: P2; p.x = q.z * 100 + q.y * 10 + k; p.y = 0; return p; }
+
+fn main(): i64 {
+    alloc_init();
+    var v = f64v2_make(9, 8);
+    var w = f64v2_make(3, 4);
+    var q = f32v4_make(1, 2, 3, 5);
+    var d = f64v4_make(6, 7, 4, 2);
+    var j = f64v4_make(0, 0, 0, 0);
+
+    test_group("the filing's repro (a stale XMM0 holds w)");
+    clob(j, j, j, j);
+    var r1: P3 = mkv(1, v, 2);
+    assert_eq(r1.x * 100 + r1.y * 10 + r1.z, 182, "var q: P3 = mkv(1, v, 2)");
+    clob(j, j, j, j);
+    var r2: P2 = pr2(5, v);
+    assert_eq(r2.x * 10 + r2.y, 59, "var p: P2 = pr2(5, v)");
+
+    test_group(">16 B retptr receive: vector first / middle / last");
+    clob(j, j, j, j);
+    var a1: P3 = b2f(v, 1, 2);
+    assert_eq(a1.x, 912, "b2f(v, 1, 2) f64v2 first");
+    clob(j, j, j, j);
+    var a2: P3 = b2m(1, q, 2);
+    assert_eq(a2.x, 512, "b2m(1, q, 2) f32v4 middle");
+    clob(j, j, j, j);
+    var a3: P3 = b2l(1, 2, d);
+    assert_eq(a3.x, 212, "b2l(1, 2, d) f64v4 last");
+    clob(j, j, j, j);
+    var a4: P3 = b7f(d, 1, 2, 3, 4, 5, 6, 7);
+    assert_eq(a4.x, 21234567, "b7f(d, 1..7) — retptr + 7 ints: two on the x86 stack");
+    clob(j, j, j, j);
+    var a5: P3 = b7m(1, 2, 3, v, 4, 5, 6, 7);
+    assert_eq(a5.x, 81234567, "b7m(1, 2, 3, v, 4..7)");
+    clob(j, j, j, j);
+    var a6: P3 = b7l(1, 2, 3, 4, 5, 6, 7, q);
+    assert_eq(a6.x, 11234567, "b7l(1..7, q)");
+
+    test_group("9-16 B rax:rdx receive: vector first / middle / last");
+    clob(j, j, j, j);
+    var c1: P2 = p2f(q, 1, 2);
+    assert_eq(c1.x, 212, "p2f(q, 1, 2) f32v4 first");
+    clob(j, j, j, j);
+    var c2: P2 = p2m(1, d, 2);
+    assert_eq(c2.x, 412, "p2m(1, d, 2) f64v4 middle");
+    clob(j, j, j, j);
+    var c3: P2 = p2l(1, 2, w);
+    assert_eq(c3.x, 312, "p2l(1, 2, w) f64v2 last");
+    clob(j, j, j, j);
+    var c4: P2 = p7f(v, 1, 2, 3, 4, 5, 6, 7);
+    assert_eq(c4.x, 81234567, "p7f(v, 1..7) — 7 ints: one on the stack");
+    clob(j, j, j, j);
+    var c5: P2 = p7m(1, 2, 3, 4, q, 5, 6, 7);
+    assert_eq(c5.x, 31234567, "p7m(1..4, q, 5..7)");
+    clob(j, j, j, j);
+    var c6: P2 = p7l(1, 2, 3, 4, 5, 6, 7, d);
+    assert_eq(c6.x, 61234567, "p7l(1..7, d)");
+
+    test_group("the other gates: `: Str` literal wrap, by-value struct param");
+    var s1: P3 = sl3("abcde", 2);
+    assert_eq(s1.x, 52, "sl3(\"abcde\", 2) — the literal is wrapped in str_from");
+    var s2: P2 = sl2("abcd", 3);
+    assert_eq(s2.x, 43, "sl2(\"abcd\", 3)");
+    var src: P3;
+    src.x = 0; src.y = 7; src.z = 9;
+    var s3: P3 = st3(src, 4);
+    assert_eq(s3.x, 974, "st3(src, 4) — src goes by address");
+    var s4: P2 = st2(src, 5);
+    assert_eq(s4.x, 975, "st2(src, 5)");
+
+    test_group("the caller's vectors are untouched");
+    assert_eq(load64(&v) * 10 + load64(&v + 8), 98, "v");
+    assert_eq(load64(&d + 24), 2, "d lane 3");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

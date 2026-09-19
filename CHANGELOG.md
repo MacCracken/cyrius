@@ -43,6 +43,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Verified on real hardware with the new crossos test: pi (aarch64), ecb (macOS arm64) and cass
   (Windows) 18/18, where the 6.6.5 compiler scores 6/18 on each.
 
+- **`var p: S = f(..., v, ...)` pushed a value-form vector argument as an int — and skipped every
+  other callee gate a call runs.** (bite 14a; filed 2026-09-19 from bite 1's review.) Silent on
+  x86_64 and aarch64 (exit 0, no diagnostic), a page fault on Win64, at ANY arity:
+  `var q: P3 = mkv(1, v, 2)` gave `149` for `182` and `var p: P2 = pr2(5, v)` `53` for `59`.
+  **Root cause:** the two struct-valued receives in `PARSE_VAR` (`asv`, a >16 B struct through a
+  hidden retptr, and `asv_pair`, 9-16 B in rax:rdx) emit their own call, and their argument loops
+  were a bare `PCMPE + EPUSHR` per argument — they never asked the callee anything. So besides
+  the vector (pushed as an int arg: every later int shifted and the callee read a stale XMM0/V0;
+  on Win64 the vector's first word was dereferenced as its by-pointer argument), a struct local
+  into a by-value struct param went BY VALUE (SIGSEGV), a string literal into a `: Str` param was
+  never wrapped (`str_len` of a raw cstr), an integer literal into a `: cstring` param was not
+  refused, and a wrong argument count compiled clean. **Fix:** one per-argument helper,
+  `_call_arg_one` (the gates the method-call loop grew inline in 6.6.5), plus `_owncall_args` for
+  the loop, ECALLPOPS and the vector loads; both receives and the method-call loop now call it, so
+  no own-call loop keeps a private copy of the gates. The filing named only the SIMD mask; see its
+  *Corrections to this filing*. Byte impact: **0 of 324 `.tcyr` binaries changed**, all seven
+  forks compile, cycc **1,294,040 → 1,294,040 B** (absorbed by text-segment padding).
+
 ### Added
 
 - `tests/tcyr/crossos/simd_param_int_stack_args.tcyr` — 18 assertions with **literal** expectations
@@ -57,6 +75,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the 6.6.5 source, a retptr dropped from the total, a callee that counts the vector as an int, no
   deferred homing, and a Win64 branch that forgets the vector's int slot each turn it red; ledger in
   the gate header.
+- `tests/tcyr/crossos/struct_valued_call_sites.tcyr` (bite 14a) — 20 assertions with literal
+  expectations, the vector registers clobbered before every call: `var p: P3 = f(..)` and
+  `var p: P2 = f(..)` callees with f64v2 / f32v4 / f64v4 params first / middle / last at 2 and 7
+  ints, plus the `: Str` literal and by-value struct-param gates. 6.6.5/bite-1 compiler: 16 of
+  the first 18 wrong, then SIGSEGV.
+- `tests/gates/codegen/stack_param_homing_matrix.sh` grew 48 generated rows (bite 14a): a vector
+  argument into both struct-valued receives, 4 classes x 3 positions x 2 and 7 ints, with the
+  vector registers clobbered first; cx runs a variant without the 9-16 B rows (it refuses that
+  return ABI outright). Mutation-proven (ledger in the header).
 
 ## [6.6.5] — 2026-09-19
 

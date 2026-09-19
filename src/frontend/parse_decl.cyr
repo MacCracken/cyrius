@@ -564,25 +564,17 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         var m_line = GTLINE(S, GTI(S));
         STI(S, GTI(S) + 1);  # consume (
         var argc = 1;
-        var m_int_argc = 1;
-        var m_simd_mask = L64(_fnt_simdmask + mfi * 8);
         var m_simd_table: i64[24];   # 8 args x 3 i64s, a LOCAL — a nested call gets its own
-        var m_simd_count = 0;
-        var m_simd_pc = 0;
+        var m_st: i64[3];            # [int args (self is one), vectors, XMM/V ordinal]
+        store64(&m_st, 1);
+        store64(&m_st + 8, 0);
+        store64(&m_st + 16, 0);
         if (PEEKT(S) != 11) {
             var mgo = 1;
             while (mgo == 1) {
-                var m_cls = (m_simd_mask >> (argc * 2)) & 3;
-                if (m_cls > 0) {
-                    m_simd_pc = m_simd_pc + _simd_arg_record(S, m_cls, &m_simd_table, m_simd_count, m_simd_pc);
-                    m_simd_count = m_simd_count + 1;
-                } else {
-                    _check_int_lit_cstring_arg(S, mfi, argc, mname);
-                    if (_try_push_str_literal_arg(S, mfi, argc) == 0) {
-                        if (_try_push_struct_addr_arg(S, mfi, argc) == 0) { PCMPE(S); EPUSHR(S); }
-                    }
-                    m_int_argc = m_int_argc + 1;
-                }
+                # 6.6.6: the gates live in `_call_arg_one`, shared with both struct-valued
+                # `var` receives, which had none of them. CHANGELOG [6.6.6]
+                _call_arg_one(S, mfi, argc, mname, &m_simd_table, &m_st);
                 argc = argc + 1;
                 if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
                 else { mgo = 0; }
@@ -599,8 +591,9 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         # keeps the same forward-reference carve-out every other call path uses.
         # CHANGELOG [6.6.5]
         _CHECK_ARITY(S, m_line, mname, mfi, argc, 1);
+        var m_int_argc = load64(&m_st);
         ECALLPOPS(S, m_int_argc);
-        _simd_arg_second_pass(S, &m_simd_table, m_simd_count);
+        _simd_arg_second_pass(S, &m_simd_table, load64(&m_st + 8));
         _vis_check(S, mfi, mname);   # v6.6.4: `s.method()` is its own call path
         var mfoff = L64(_fnt_offsets + mfi * 8);
         if (mfoff >= 0) { ECALLTO(S, mfoff); }
@@ -2851,19 +2844,11 @@ fn PARSE_VAR(S): i64 {
             EPUSHR(S);
             asv_argc = 1;
         }
-        if (PEEKT(S) != 11) {
-            var asv_go = 1;
-            while (asv_go == 1) {
-                PCMPE(S);
-                EPUSHR(S);
-                asv_argc = asv_argc + 1;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                else { asv_go = 0; }
-            }
-        }
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-        STI(S, GTI(S) + 1);                         # consume ')'
-        ECALLPOPS(S, asv_argc);
+        # 6.6.6: through PARSE_FNCALL's callee-mask gates (`_owncall_args`) — this loop was a
+        # bare `PCMPE + EPUSHR` per argument, so a value-form vector went in as an int arg.
+        # The vector loads happen inside, after ECALLPOPS; X8 below touches no V register.
+        # CHANGELOG [6.6.6]
+        asv_argc = _owncall_args(S, asv_fi, asv_fnoff, asv_argc);
         if (_AARCH64_BACKEND == 1) {
             EFLADDR_X8(S, asv_named);
         }
@@ -2938,20 +2923,8 @@ fn PARSE_VAR(S): i64 {
         }
         STI(S, GTI(S) + 1);                         # consume '('
         # NO hidden retptr — pair-return uses rax/rdx, not RDI.
-        var asp_argc = 0;
-        if (PEEKT(S) != 11) {
-            var asp_go = 1;
-            while (asp_go == 1) {
-                PCMPE(S);
-                EPUSHR(S);
-                asp_argc = asp_argc + 1;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                else { asp_go = 0; }
-            }
-        }
-        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-        STI(S, GTI(S) + 1);                         # consume ')'
-        ECALLPOPS(S, asp_argc);
+        # 6.6.6: the callee-mask gates, as in asv_try above. CHANGELOG [6.6.6]
+        var asp_argc = _owncall_args(S, asp_fi, asp_fnoff, 0);
         var asp_fn_target = L64(_fnt_offsets + asp_fi * 8);
         if (asp_fn_target >= 0) { ECALLTO(S, asp_fn_target); }
         else { ECALLFIX(S, asp_fi); }

@@ -1690,6 +1690,63 @@ fn _simd_arg_record(S, cls, tbl, cnt, pc): i64 {
     return 1;
 }
 
+# ⭐ 6.6.6 — ONE ARGUMENT OF AN OWN-CALL LOOP, run through PARSE_FNCALL's callee-mask gates: a
+# value-form vector is RECORDED for the XMM/V second pass (never pushed); anything else is the
+# int-class push behind the `: cstring` literal error, the `: Str` literal wrap and the
+# struct-address push (which is also how a Win64 vector travels — by pointer, in its int slot).
+# `st` is the caller's 3-word state: [int args pushed, vectors recorded, next XMM/V ordinal].
+# The method-call loop grew these gates inline in 6.6.5; the two struct-valued `var` receives
+# (`var p: S = f(...)`, retptr and rax:rdx) had NONE and pushed a vector as an int, so every
+# later int shifted and the callee read a stale XMM0 (SysV/aarch64) or dereferenced the
+# vector's first word as its pointer (Win64 page fault). All three loops now share this, so
+# there is no copy left to miss a gate. CHANGELOG [6.6.6]
+fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
+    var cls = (L64(_fnt_simdmask + fi * 8) >> (uarg * 2)) & 3;
+    if (cls > 0) {
+        var n = load64(st + 8);
+        var o = load64(st + 16);
+        store64(st + 16, o + _simd_arg_record(S, cls, tbl, n, o));
+        store64(st + 8, n + 1);
+        return 0;
+    }
+    _check_int_lit_cstring_arg(S, fi, uarg, noff);
+    if (_try_push_str_literal_arg(S, fi, uarg) == 0) {
+        if (_try_push_struct_addr_arg(S, fi, uarg) == 0) { PCMPE(S); EPUSHR(S); }
+    }
+    store64(st, load64(st) + 1);
+    return 0;
+}
+
+# The argument list of an own-call (cursor just past `(`): every argument through
+# `_call_arg_one`, then `)`, the arity check PARSE_FNCALL runs, ECALLPOPS of the int args and
+# the vector loads. `int0` = int args the caller already pushed (x86's retptr). Returns the
+# int-class total, for ECALLCLEAN. CHANGELOG [6.6.6]
+fn _owncall_args(S, fi, noff, int0): i64 {
+    var tbl: i64[24];
+    var st: i64[3];
+    store64(&st, int0);
+    store64(&st + 8, 0);
+    store64(&st + 16, 0);
+    var line = GTLINE(S, GTI(S));
+    var uarg = 0;
+    if (PEEKT(S) != 11) {
+        var go = 1;
+        while (go == 1) {
+            _call_arg_one(S, fi, uarg, noff, &tbl, &st);
+            uarg = uarg + 1;
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+            else { go = 0; }
+        }
+    }
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);                         # consume ')'
+    _CHECK_ARITY(S, line, noff, fi, uarg, 1);
+    var n = load64(&st);
+    ECALLPOPS(S, n);
+    _simd_arg_second_pass(S, &tbl, load64(&st + 8));
+    return n;
+}
+
 # v6.4.4/v6.4.7 mask classes: 1 = any 16-byte/1-XMM vector (f64v2 or an integer vector, so
 # the test is the SIZE class), 3 = f32v4 exactly (distinguished so an f64v2 arg is rejected
 # rather than silently run through addps), 2 = f64v4 (32-byte).
