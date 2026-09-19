@@ -471,11 +471,16 @@ fn _copy_file(src, dst): i64 {
     return 0;
 }
 
-# Size of a file, or -1 (STAT_SIZE is the per-target st_size offset).
+# Size of a file, or -1 — open + lseek(SEEK_END), which every peer routes (Windows:
+# SetFilePointerEx). v6.6.6: the first cut used sys_stat, which the Windows peer does not define,
+# and added a third unresolved fn to the filed PE build gap
+# (2026-09-18-cyrius-init-does-not-build-for-windows.md). CHANGELOG [6.6.6]
 fn _file_size_of(path): i64 {
-    var st = alloc(256);
-    if (sys_stat(path, st) < 0) { return 0 - 1; }
-    return load64(st + STAT_SIZE);
+    var fd = file_open(path, O_RDONLY, 0);
+    if (fd < 0) { return 0 - 1; }
+    var sz = xlseek(fd, 0, 2);
+    file_close(fd);
+    return sz;
 }
 
 fn _count_newlines(path): i64 {

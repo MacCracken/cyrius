@@ -874,7 +874,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   replaces another user's file, xattrs/ACLs. Measured: 0600 and 0755 sources keep their modes;
   relative, absolute and two-hop links all survive with the file they name formatted; `cyrius
   deps --lock` through a symlinked 0600 lock relocks the target and keeps 0600; `cyriusly use`
-  through a symlinked 0600 manifest likewise. No compiler change.
+  through a symlinked 0600 manifest likewise. ⚠ And `cyrius-init`'s new whole-file copy sized its
+  source with `sys_stat`, which the Windows peer does not define — widening the filed PE build gap
+  (`2026-09-18-cyrius-init-does-not-build-for-windows.md`) from 2 unresolved fns to 3 (found in
+  review). It sizes with open + `lseek(SEEK_END)` now, which every peer routes: back to the 2 the
+  issue records, and a Linux scaffold vendors all 103 stdlib modules byte-identical to their
+  source. No compiler change.
 
 - **`folds_agnos_parity.sh` PASSED "0/12 folded stdlibs … (12 skipped)" when its temp dir could not be
   created.** `D=$(mktemp -d)` was unchecked, so with an unusable `TMPDIR` every probe path became
