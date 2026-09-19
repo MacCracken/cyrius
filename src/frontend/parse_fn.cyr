@@ -1898,6 +1898,24 @@ fn _refuse_toplevel_pair_init(S, pscale): i64 {
     return 0;
 }
 
+# ⛔ 6.6.6 — an `async fn` captures each parameter as ONE 8-byte int: its constructor homes
+# register i into frame slot i and copies it to `obj[16 + i*8]` (or coroutine frame slot i), and
+# `future_force` hands them back to the body as int arguments. A value-form vector travels in
+# XMM/V (SysV/aarch64) or by pointer (Win64) and owns 2-4 slots, so it was never captured: a plain
+# async fn computed with whatever XMM0 held at force time, a coroutine with the neighbouring ints
+# shifted into the vector's lanes — exit 0, no diagnostic, while a vector LOCAL in the same fn
+# was refused. Refused by name until the capture exists. CHANGELOG [6.6.6]
+fn _refuse_async_simd_param(S, pnoff): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": async fn parameter '", 22);
+    PRSTR(S + 0xEC00000 + pnoff);
+    syscall(SYS_WRITE, 2, "' is a value-form vector, which an `async fn` does not capture yet — pass a pointer to it\n", 92);
+    _had_error = 1;
+    return 0;
+}
+
 # A struct-valued call used where there is no frame to hold its result. Refused by name: before
 # 6.6.6 every such site compiled clean and SIGSEGV'd (the callee wrote through whatever the first
 # argument register held). CHANGELOG [6.6.6]
@@ -5329,6 +5347,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             # is the legacy single-slot path. Shared loop-bottom
             # (pc++ + comma-consume) at the end.
             if (pt_simd_class > 0) {
+                if (_is_async == 1) { _refuse_async_simd_param(S, pnoff); }   # 6.6.6
                 var simd_slots = 2;     # f64v2 / f32v4 (128-bit)
                 var simd_sid = pt_simd_sid;   # 2093 f64v2 / 2125 f64v4 / 2121 f32v4
                 if (pt_simd_class == 2) {

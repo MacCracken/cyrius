@@ -82,7 +82,7 @@ slots have NOT been re-numbered — that is the user's call.
   ✅ a 7+-field enum variant read the wrong stack args (14b, [`…-enum-variant-ctor-seven-plus-fields-…`](issues/archived/2026-09-19-enum-variant-ctor-seven-plus-fields-reads-wrong-stack-args.md));
   ✅ a struct-valued call outside a `var` initializer had no destination — >16 B SIGSEGV, 9-16 B
   dropped rdx; top level now refused by name (14c, [`…-retptr-struct-call-outside-var-init-crashes`](issues/archived/2026-09-19-retptr-struct-call-outside-var-init-crashes.md));
-  an `async fn` never captures a vector param ([`…-async-fn-simd-param-not-captured`](issues/2026-09-19-async-fn-simd-param-not-captured.md)).
+  ✅ an `async fn` never captured a vector param — now refused by name (14d, [`…-async-fn-simd-param-not-captured`](issues/archived/2026-09-19-async-fn-simd-param-not-captured.md)).
 - **`.4`–`.5` — DCE cannot compact on PE or x86 Mach-O** (rip-relative repair + re-run
   `_pe_layout` after compaction — both, or the binary looks fine and faults later).
 - ⛔ **`.6` stays unassigned.**

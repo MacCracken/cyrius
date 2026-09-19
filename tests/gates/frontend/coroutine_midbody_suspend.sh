@@ -140,6 +140,53 @@ fn main(): i64 { alloc_init(); syscall(60, 0); return 0; }
 var e = main();
 EOF
 refuse "a SIMD local in a coroutine" "SIMD local"
+# 6.6.6 — a value-form VECTOR PARAMETER, in a coroutine AND in a plain (no-await) async fn. The
+# constructor captures every parameter as one 8-byte int, so the vector (XMM/V, or by pointer on
+# Win64; 2-4 slots) was never captured: the filing's `c2(v, 5)` gave 50 and `a2(v, 5)` 35 for 95,
+# exit 0, no diagnostic — while the SIMD LOCAL above was refused. Every vector class, both forms,
+# and the diagnostic must NAME the parameter. Then the documented way round it — a pointer — must
+# compile and compute. Mutation: drop the `_refuse_async_simd_param` call -> RED ("a f64v2
+# parameter of a coro async fn COMPILED").
+for vt in f64v2 f32v4 f64v4 i32v4; do
+  for form in coro plain; do
+    aw=''; [ "$form" = coro ] && aw='var s = await nopark(); '
+    cat > "$T/r.cyr" <<EOF
+${PRE}include "lib/simd.cyr"
+fn nopark(): i64 { return 0; }
+async fn av(a, vec: $vt, b): i64 { ${aw}return load64(&vec) + a + b; }
+fn main(): i64 { alloc_init(); syscall(60, 0); return 0; }
+var e = main();
+EOF
+    refuse "a $vt parameter of a $form async fn" "async fn parameter 'vec' is a value-form vector"
+  done
+done
+cat > "$T/r.cyr" <<EOF
+${PRE}include "lib/simd.cyr"
+include "lib/async.cyr"
+fn nopark(): i64 { return 0; }
+async fn c2(pv, a): i64 { var s = await nopark(); return load64(pv) * 10 + a; }
+async fn a2(pv, a): i64 { return load64(pv) * 10 + a; }
+fn main(): i64 {
+    alloc_init();
+    var v = f64v2_make(9, 0);
+    var C = c2(&v, 5);
+    future_force(C); future_force(C);
+    var x = future_force(C);
+    var F = a2(&v, 5);
+    var z = f64v2_make(3, 4);
+    var y = future_force(F);
+    if (x != 95) { return 1; }
+    if (y != 95) { return 2; }
+    return 0;
+}
+var e = main();
+syscall(60, e);
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/r.cyr" > "$T/rp" 2>"$T/rp.err" || {
+  echo "FAIL coroutine_midbody_suspend axis4: the pointer-to-vector async form did not compile"; grep -m2 '^error' "$T/rp.err"; exit 1; }
+[ -s "$T/rp" ] || { echo "FAIL coroutine_midbody_suspend axis4: pointer-to-vector probe is empty"; exit 1; }
+chmod +x "$T/rp"; grp=0; "$T/rp" > /dev/null 2>&1 || grp=$?
+[ "$grp" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis4: the pointer-to-vector async fns exit $grp (1 = coroutine, 2 = plain, want 95 each)"; exit 1; }
 
 # ── axis 5 — MULTI-PARAMETER coroutines (v6.5.70; refused outright at v6.5.69) ───────────
 # The constructor pre-binds arguments into coroutine-frame slots. This is the SAME machinery
@@ -414,5 +461,5 @@ chmod +x "$T/a9"; timeout 30 "$T/a9"; g9=$?
   echo "  local, which the \`guard\` word catches). Controls are the non-async fns."
   exit 1; }
 
-echo "PASS coroutine_midbody_suspend: mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
+echo "PASS coroutine_midbody_suspend: vector params refused by name (4 classes x coroutine/plain; a pointer works) · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
 exit 0

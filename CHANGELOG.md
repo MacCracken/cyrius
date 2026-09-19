@@ -96,6 +96,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   issue's *Corrections to this filing*. Byte impact: **0 of 324 `.tcyr` and 0 of 85
   `programs/*.cyr` changed**, all seven forks compile, cycc **1,294,040 → 1,298,280 B** (+4,240).
 
+- **An `async fn` with a value-form vector parameter computed with the wrong vector, silently —
+  now a compile error naming the parameter.** (bite 14d; filed 2026-09-19 from bite 1's review.)
+  Behind `CYRIUS_ASYNC=1`: `c2(v, 5)` (a coroutine) gave `50` and `a2(v, 5)` (plain) `35` for
+  `95` on x86_64, exit 0, while a vector LOCAL in the same kind of fn was already refused; a
+  plain async fn built for aarch64 gave `35` too (qemu) and for Win64 page-faulted (wine). **Root cause:**
+  the async constructor captures each parameter as one 8-byte int (register `i` → `obj[16 + i*8]`
+  or coroutine slot `i`) and `future_force` hands them back as int arguments; a vector arrives in
+  XMM/V (SysV/aarch64) or by pointer (Win64) and owns 2-4 slots, so it was never captured — the
+  plain body read whatever XMM0 held at force time, the coroutine had the ints shifted into the
+  vector's lanes. **Fix:** refuse it (`async fn parameter 'v' is a value-form vector, which an
+  `async fn` does not capture yet — pass a pointer to it`), every vector class, coroutine and
+  plain, every target — capturing it would need a separate parameter ABI for async impls. A
+  pointer to the vector works and is pinned. Byte impact: 0 of 324 `.tcyr` changed; cycc
+  **1,298,280 → 1,298,400 B**.
+
 ### Added
 
 - `tests/tcyr/crossos/simd_param_int_stack_args.tcyr` — 18 assertions with **literal** expectations
@@ -129,6 +144,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   assignment at 2 and 7 args, and the rax:rdx forms (struct param, local and global assignment,
   `return`); 34 in total. The matrix gate grew 22 rows of the same shapes (14 on cx), with the
   struct-valued checks reading field z so a first-word-only store cannot pass. Mutation-proven.
+- `tests/gates/frontend/coroutine_midbody_suspend.sh` axis 4 (bite 14d): an `async fn` vector
+  parameter is refused, naming it, for f64v2 / f32v4 / f64v4 / i32v4 in both a coroutine and a
+  plain async fn, and the pointer-to-vector form compiles and returns 95 for both. Dropping the
+  refusal turns it red.
 
 ## [6.6.5] — 2026-09-19
 
