@@ -25,7 +25,7 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CYRIUS="$ROOT/build/cyrius"
-D=$(mktemp -d)
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: scaffold_verb_discovery: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fails=0
 
@@ -128,7 +128,7 @@ check "fuzz/*.fcyr on disk" 6 "$n_repo"
 # and conclude, wrongly, that nothing was broken.
 echo "verb argument hygiene — a bogus target is rejected, never absorbed:"
 CYB="$ROOT/build/cyrius"
-VD=$(mktemp -d)
+VD=$(mktemp -d) && [ -d "$VD" ] || { echo "FAIL: scaffold_verb_discovery: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 ( cd "$VD" && printf '[package]\nname = "vh"\nversion = "0.1.0"\n' > cyrius.cyml )
 for v in doc vet deny audit coverage; do
     ( cd "$VD" && timeout 30 "$CYB" "$v" __no_such_target_xyz__ > vh.out 2>&1 )

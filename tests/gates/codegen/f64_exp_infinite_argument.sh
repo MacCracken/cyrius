@@ -22,7 +22,7 @@
 # early too often, or clobbered the argument, would pass axes 1-2 and silently break exp itself.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: f64_exp_infinite_argument: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL f64_exp_infinite_argument: no build/cycc"; exit 1; }
 

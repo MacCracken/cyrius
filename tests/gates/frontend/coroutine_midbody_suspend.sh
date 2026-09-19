@@ -24,7 +24,7 @@
 # The transform itself is target-independent and its x86 guard is axis 4.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: coroutine_midbody_suspend: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL coroutine_midbody_suspend: no build/cycc"; exit 1; }
 

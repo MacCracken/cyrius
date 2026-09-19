@@ -32,7 +32,7 @@ SNAP="${CYRIUS_HOME:-$HOME/.cyrius}/versions/$PIN/lib"   # v6.6.4: check.sh stag
 for m in bench test; do
     [ -f "$SNAP/$m.cyr" ] || { echo "SKIP: $SNAP/$m.cyr absent — cannot test snapshot resolution"; exit 0; }
 done
-W=$(mktemp -d)
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: deps_stdlib_dir_not_consumer_lib: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT
 fail=0
 

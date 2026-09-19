@@ -35,7 +35,7 @@ HOMEDIR=${CYRIUS_HOME:-"$HOME/.cyrius"}
 VER=$(cat "$ROOT/VERSION")
 SNAP="$HOMEDIR/versions/$VER/lib"
 [ -d "$SNAP" ] || SNAP="$HOMEDIR/lib"
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: distlib_sidecar_stdlib_only: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: distlib_sidecar_stdlib_only: $1"; exit 1; }
 

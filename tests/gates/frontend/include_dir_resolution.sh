@@ -20,7 +20,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-D=$(mktemp -d)
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: include_dir_resolution: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fails=0
 
@@ -89,7 +89,7 @@ syscall(60, r);')"
 # exactly like a refusal. A guard whose test cannot tell "refused" from "read and
 # then choked" is not tested at all. `secret_value()` returning 55 makes a
 # successful escape observable as 55 rather than indistinguishable from failure.
-OUT=$(mktemp -d)
+OUT=$(mktemp -d) && [ -d "$OUT" ] || { echo "FAIL: include_dir_resolution: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D" "$OUT"' EXIT
 echo 'fn secret_value(): i64 { return 55; }' > "$OUT/secret.cyr"
 

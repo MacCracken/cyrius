@@ -56,7 +56,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
-D=$(mktemp -d)
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: stdlib_key_scan_boundary: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fails=0
 

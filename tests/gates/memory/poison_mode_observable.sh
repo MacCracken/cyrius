@@ -25,7 +25,7 @@ CLI="$ROOT/build/cyrius"
 [ -x "$CLI" ] || CLI="$HOME/.cyrius/bin/cyrius"
 [ -x "$CLI" ] || { echo "SKIP: cyrius CLI missing"; exit 0; }
 cd "$ROOT"
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: poison_mode_observable: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 fail=0
 
 # A harness that reports the MODE through its exit code: 0 = poison on, 9 = off.

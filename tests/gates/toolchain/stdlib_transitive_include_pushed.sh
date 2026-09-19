@@ -113,7 +113,8 @@ fi
 # ⚠ Introduced by the axis-1/2 fix above (v6.5.28), which was written for FLAT leaves — so
 # this axis and those share one code path and must be read together: axis 1-2 require the
 # seen path to push, axis 4 requires it not to push a family name.
-D4=$(mktemp -d); FD=$(mktemp -d)
+D4=$(mktemp -d) && [ -d "$D4" ] || { echo "FAIL: stdlib_transitive_include_pushed: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+FD=$(mktemp -d) && [ -d "$FD" ] || { echo "FAIL: stdlib_transitive_include_pushed: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 mkdir -p "$FD/dist" "$D4/src"
 printf 'fn fakedep_ping(): i64 { return 7; }\n' > "$FD/dist/fakedep.cyr"
 printf '# sidecar\nstr\nunicode\n' > "$FD/dist/fakedep.deps"

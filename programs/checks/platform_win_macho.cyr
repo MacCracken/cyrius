@@ -260,7 +260,7 @@ fn _macho_exit_gate(): i64 {
         println("");
         fail = fail + 1;
     } else {
-        var rem1 = "/tmp/cyr_macho_exit";
+        var rem1 = _remote_name("/tmp/", "cyr_macho_exit", "");   # per-run: a fixed name was shared by concurrent runs (CHANGELOG [6.6.6])
         if (_scp_to(target, bin1, rem1) != 0) {
             _p("    ");
             _p(ANSI_RED);
@@ -281,7 +281,7 @@ fn _macho_exit_gate(): i64 {
                 println(" (expected 42)");
                 fail = fail + 1;
             }
-            _ssh_remote_exit(target, "rm -f /tmp/cyr_macho_exit");
+            _ssh_remote_exit(target, _cat2("rm -f ", rem1));
         }
         sys_unlink(bin1);
     }
@@ -303,7 +303,7 @@ fn _macho_exit_gate(): i64 {
         println("");
         fail = fail + 1;
     } else {
-        var rem2 = "/tmp/cyr_macho_write";
+        var rem2 = _remote_name("/tmp/", "cyr_macho_write", "");   # per-run: a fixed name was shared by concurrent runs (CHANGELOG [6.6.6])
         if (_scp_to(target, bin2, rem2) != 0) {
             _p("    ");
             _p(ANSI_RED);
@@ -334,7 +334,7 @@ fn _macho_exit_gate(): i64 {
                 fail = fail + 1;
             }
             sys_unlink(out2);
-            _ssh_remote_exit(target, "rm -f /tmp/cyr_macho_write");
+            _ssh_remote_exit(target, _cat2("rm -f ", rem2));
         }
         sys_unlink(bin2);
     }
@@ -356,7 +356,7 @@ fn _macho_exit_gate(): i64 {
         println("");
         fail = fail + 1;
     } else {
-        var rem3 = "/tmp/cyr_macho_peep";
+        var rem3 = _remote_name("/tmp/", "cyr_macho_peep", "");   # per-run: a fixed name was shared by concurrent runs (CHANGELOG [6.6.6])
         if (_scp_to(target, bin3, rem3) != 0) {
             _p("    ");
             _p(ANSI_RED);
@@ -377,7 +377,7 @@ fn _macho_exit_gate(): i64 {
                 println(" (expected 42)");
                 fail = fail + 1;
             }
-            _ssh_remote_exit(target, "rm -f /tmp/cyr_macho_peep");
+            _ssh_remote_exit(target, _cat2("rm -f ", rem3));
         }
         sys_unlink(bin3);
     }
@@ -430,7 +430,7 @@ fn _macho_derive_serialize_gate(): i64 {
         println("");
         fail = fail + 1;
     } else {
-        var rem = "/tmp/cyr_macho_derive";
+        var rem = _remote_name("/tmp/", "cyr_macho_derive", "");   # per-run: a fixed name was shared by concurrent runs (CHANGELOG [6.6.6])
         if (_scp_to(target, bin, rem) != 0) {
             _p("    ");
             _p(ANSI_RED);
@@ -451,7 +451,7 @@ fn _macho_derive_serialize_gate(): i64 {
                 println(" (expected 14 for `{\"x\":7,\"y\":35}` byte-count; 139=SIGSEGV→Bug A/B regression, 1=str_builder_new→NULL→Bug A, other=codegen drift)");
                 fail = fail + 1;
             }
-            _ssh_remote_exit(target, "rm -f /tmp/cyr_macho_derive");
+            _ssh_remote_exit(target, _cat2("rm -f ", rem));
         }
         sys_unlink(bin);
     }
@@ -529,9 +529,12 @@ fn _pe_exit_gate(): i64 {
         # us to grep over ssh stdout (the bash version does the
         # same — Windows ERRORLEVEL doesn't propagate via ssh).
         var bat1 = _tmp_path("audit_pe_t1_bat_");
-        _write_file(bat1, "@echo off\ncyr_pe_exit.exe\necho exit=%ERRORLEVEL%\n");
-        var scp_a = _scp_to(target, bin1, "cyr_pe_exit.exe");
-        var scp_b = _scp_to(target, bat1, "cyr_pe_runexit.bat");
+        # per-run remote names: fixed ones were shared by concurrent runs (CHANGELOG [6.6.6])
+        var rexe1 = _remote_name("", "cyr_pe_exit", ".exe");
+        var rbat1 = _remote_name("", "cyr_pe_runexit", ".bat");
+        _write_file(bat1, _pe_bat_text(rexe1));
+        var scp_a = _scp_to(target, bin1, rexe1);
+        var scp_b = _scp_to(target, bat1, rbat1);
         sys_unlink(bat1);
         if (scp_a != 0) {
             _p("    ");
@@ -549,7 +552,7 @@ fn _pe_exit_gate(): i64 {
             fail = fail + 1;
         } else {
             var out1 = _tmp_path("audit_pe_t1_out_");
-            _ssh_remote_exec_capture(target, "cmd /c cyr_pe_runexit.bat", out1);
+            _ssh_remote_exec_capture(target, _cat2("cmd /c ", rbat1), out1);
             if (_file_contains_substr(out1, "exit=42") != 1) {
                 _p("    ");
                 _p(ANSI_RED);
@@ -561,7 +564,7 @@ fn _pe_exit_gate(): i64 {
             sys_unlink(out1);
         } }
         sys_unlink(bin1);
-        _ssh_remote_exit(target, "del /f /q cyr_pe_exit.exe cyr_pe_runexit.bat 2>NUL");
+        _pe_del(target, rexe1, rbat1);
     }
 
     # ---- T2: write "hello\n" then exit(42) ----
@@ -582,13 +585,16 @@ fn _pe_exit_gate(): i64 {
         fail = fail + 1;
     } else {
         var bat2 = _tmp_path("audit_pe_t2_bat_");
-        _write_file(bat2, "@echo off\ncyr_pe_write.exe\necho exit=%ERRORLEVEL%\n");
-        var scp_a = _scp_to(target, bin2, "cyr_pe_write.exe");
-        var scp_b = _scp_to(target, bat2, "cyr_pe_runwrite.bat");
+        # per-run remote names: fixed ones were shared by concurrent runs (CHANGELOG [6.6.6])
+        var rexe2 = _remote_name("", "cyr_pe_write", ".exe");
+        var rbat2 = _remote_name("", "cyr_pe_runwrite", ".bat");
+        _write_file(bat2, _pe_bat_text(rexe2));
+        var scp_a = _scp_to(target, bin2, rexe2);
+        var scp_b = _scp_to(target, bat2, rbat2);
         sys_unlink(bat2);
         if (scp_a == 0) { if (scp_b == 0) {
             var out2 = _tmp_path("audit_pe_t2_out_");
-            _ssh_remote_exec_capture(target, "cmd /c cyr_pe_runwrite.bat", out2);
+            _ssh_remote_exec_capture(target, _cat2("cmd /c ", rbat2), out2);
             if (_file_contains_substr(out2, "exit=42") != 1) {
                 _p("    ");
                 _p(ANSI_RED);
@@ -622,7 +628,7 @@ fn _pe_exit_gate(): i64 {
             fail = fail + 1;
         }
         sys_unlink(bin2);
-        _ssh_remote_exit(target, "del /f /q cyr_pe_write.exe cyr_pe_runwrite.bat 2>NUL");
+        _pe_del(target, rexe2, rbat2);
     }
 
     # ---- T3: user fn + arithmetic + peephole ----
@@ -643,13 +649,16 @@ fn _pe_exit_gate(): i64 {
         fail = fail + 1;
     } else {
         var bat3 = _tmp_path("audit_pe_t3_bat_");
-        _write_file(bat3, "@echo off\ncyr_pe_peep.exe\necho exit=%ERRORLEVEL%\n");
-        var scp_a = _scp_to(target, bin3, "cyr_pe_peep.exe");
-        var scp_b = _scp_to(target, bat3, "cyr_pe_runpeep.bat");
+        # per-run remote names: fixed ones were shared by concurrent runs (CHANGELOG [6.6.6])
+        var rexe3 = _remote_name("", "cyr_pe_peep", ".exe");
+        var rbat3 = _remote_name("", "cyr_pe_runpeep", ".bat");
+        _write_file(bat3, _pe_bat_text(rexe3));
+        var scp_a = _scp_to(target, bin3, rexe3);
+        var scp_b = _scp_to(target, bat3, rbat3);
         sys_unlink(bat3);
         if (scp_a == 0) { if (scp_b == 0) {
             var out3 = _tmp_path("audit_pe_t3_out_");
-            _ssh_remote_exec_capture(target, "cmd /c cyr_pe_runpeep.bat", out3);
+            _ssh_remote_exec_capture(target, _cat2("cmd /c ", rbat3), out3);
             if (_file_contains_substr(out3, "exit=42") != 1) {
                 _p("    ");
                 _p(ANSI_RED);
@@ -675,7 +684,7 @@ fn _pe_exit_gate(): i64 {
             fail = fail + 1;
         }
         sys_unlink(bin3);
-        _ssh_remote_exit(target, "del /f /q cyr_pe_peep.exe cyr_pe_runpeep.bat 2>NUL");
+        _pe_del(target, rexe3, rbat3);
     }
 
     if (fail == 0) {
@@ -732,7 +741,22 @@ fn _pe_path_apis_gate(): i64 {
     # Build a test that exercises all 3 path APIs.
     var src = _tmp_path("audit_pe_paths_src_");
     var bin = _tmp_path("audit_pe_paths_bin_");
-    _write_file(src, "var fd = syscall(2, \"C:\\\\cyr_pe_paths_test.tmp\", 65, 384);\nsyscall(3, fd);\nsyscall(83, \"C:\\\\cyr_pe_paths_test_dir\", 493);\nsyscall(87, \"C:\\\\cyr_pe_paths_test.tmp\");\nsyscall(60, 99);\n");
+    # v6.6.6: every name this test creates on cass carries the per-run tag — the fixed
+    # C:\cyr_pe_paths_test.{tmp,_dir} and cyr_pe_paths.{exe,bat} were shared by concurrent runs,
+    # and each run's .bat deletes the other's files before checking them. CHANGELOG [6.6.6]
+    var pf = _remote_name("", "cyr_pe_paths_test", ".tmp");
+    var pd = _remote_name("", "cyr_pe_paths_test_dir", "");
+    var pexe = _remote_name("", "cyr_pe_paths", ".exe");
+    var pbat = _remote_name("", "cyr_pe_paths", ".bat");
+    var ssb = str_builder_new();
+    str_builder_add_cstr(ssb, "var fd = syscall(2, \"C:\\\\");
+    str_builder_add_cstr(ssb, pf);
+    str_builder_add_cstr(ssb, "\", 65, 384);\nsyscall(3, fd);\nsyscall(83, \"C:\\\\");
+    str_builder_add_cstr(ssb, pd);
+    str_builder_add_cstr(ssb, "\", 493);\nsyscall(87, \"C:\\\\");
+    str_builder_add_cstr(ssb, pf);
+    str_builder_add_cstr(ssb, "\");\nsyscall(60, 99);\n");
+    _write_file(src, str_data(str_builder_build(ssb)));
     var rc_b = _self_host_pipe(src, cc_pe, bin);
     sys_unlink(src);
     if (rc_b != 0) {
@@ -751,15 +775,29 @@ fn _pe_path_apis_gate(): i64 {
     # Build a .bat that runs the binary + checks filesystem effects.
     # Cleans up beforehand so prior runs don't muddle the verdict.
     var bat = _tmp_path("audit_pe_paths_bat_");
-    _write_file(bat, "@echo off\ndel /f /q C:\\cyr_pe_paths_test.tmp 2>nul\nrmdir /S /Q C:\\cyr_pe_paths_test_dir 2>nul\ncyr_pe_paths.exe\necho exit=%ERRORLEVEL%\nif exist C:\\cyr_pe_paths_test_dir (echo dir=YES) else (echo dir=NO)\nif exist C:\\cyr_pe_paths_test.tmp (echo file=YES) else (echo file=NO)\nrmdir /S /Q C:\\cyr_pe_paths_test_dir 2>nul\n");
+    var bsb = str_builder_new();
+    str_builder_add_cstr(bsb, "@echo off\ndel /f /q C:\\");
+    str_builder_add_cstr(bsb, pf);
+    str_builder_add_cstr(bsb, " 2>nul\nrmdir /S /Q C:\\");
+    str_builder_add_cstr(bsb, pd);
+    str_builder_add_cstr(bsb, " 2>nul\n");
+    str_builder_add_cstr(bsb, pexe);
+    str_builder_add_cstr(bsb, "\necho exit=%ERRORLEVEL%\nif exist C:\\");
+    str_builder_add_cstr(bsb, pd);
+    str_builder_add_cstr(bsb, " (echo dir=YES) else (echo dir=NO)\nif exist C:\\");
+    str_builder_add_cstr(bsb, pf);
+    str_builder_add_cstr(bsb, " (echo file=YES) else (echo file=NO)\nrmdir /S /Q C:\\");
+    str_builder_add_cstr(bsb, pd);
+    str_builder_add_cstr(bsb, " 2>nul\n");
+    _write_file(bat, str_data(str_builder_build(bsb)));
 
-    var scp_a = _scp_to(target, bin, "cyr_pe_paths.exe");
-    var scp_b = _scp_to(target, bat, "cyr_pe_paths.bat");
+    var scp_a = _scp_to(target, bin, pexe);
+    var scp_b = _scp_to(target, bat, pbat);
     sys_unlink(bat);
 
     if (scp_a == 0) { if (scp_b == 0) {
         var out = _tmp_path("audit_pe_paths_out_");
-        _ssh_remote_exec_capture(target, "cmd /c cyr_pe_paths.bat", out);
+        _ssh_remote_exec_capture(target, _cat2("cmd /c ", pbat), out);
 
         if (_file_contains_substr(out, "exit=99") != 1) {
             _p("    ");
@@ -803,7 +841,7 @@ fn _pe_path_apis_gate(): i64 {
     }
 
     sys_unlink(bin);
-    _ssh_remote_exit(target, "del /f /q cyr_pe_paths.exe cyr_pe_paths.bat 2>NUL");
+    _pe_del(target, pexe, pbat);
 
     if (fail == 0) {
         _p("  ");

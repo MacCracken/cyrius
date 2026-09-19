@@ -144,7 +144,7 @@ if [ ! -x "$ROOT/build/cycc" ]; then
     exit 1
 fi
 
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: cli_args_never_dropped: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 HOME_DIR="$T/home"
 mkdir -p "$HOME_DIR/bin" "$HOME_DIR/versions/$(cat VERSION)"

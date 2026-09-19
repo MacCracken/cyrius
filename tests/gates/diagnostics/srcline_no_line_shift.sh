@@ -23,7 +23,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 command -v cyrius >/dev/null 2>&1 || { echo "SKIP: cyrius CLI not on PATH"; exit 0; }
-W=$(mktemp -d)
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: srcline_no_line_shift: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT
 
 # The probe's error is on ITS OWN line 3, in every variant below.

@@ -45,7 +45,7 @@ cd "$ROOT"
 # the tree would pass twelve wrapper-driven gates (found by the bite-4 review).
 _CHK_LIVE_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 if [ -z "${CYRIUS_HOME:-}" ]; then
-    _CHK_HOME="$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-home.XXXXXX")"
+    _CHK_HOME=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-home.XXXXXX") && [ -d "$_CHK_HOME" ] || { printf "error: mktemp -d failed for the throwaway CYRIUS_HOME (TMPDIR=%s)\n" "${TMPDIR:-/tmp}" >&2; exit 1; }
     _CHK_VER="$(tr -d '[:space:]' < VERSION)"
     mkdir -p "$_CHK_HOME/versions"
     if [ -d "$_CHK_LIVE_HOME/versions" ]; then

@@ -18,7 +18,7 @@
 # counts here are host-specific, which is why they are in a shell gate and not a .tcyr.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: inline_directive: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL inline_directive: no build/cycc"; exit 1; }
 

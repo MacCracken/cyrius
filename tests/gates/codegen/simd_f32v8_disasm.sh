@@ -11,7 +11,9 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 command -v objdump >/dev/null 2>&1 || { echo "SKIP: objdump not available"; exit 0; }
-T=$(mktemp); B=$(mktemp); D=$(mktemp)
+T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: simd_f32v8_disasm: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+B=$(mktemp) && [ -f "$B" ] || { echo "FAIL: simd_f32v8_disasm: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+D=$(mktemp) && [ -f "$D" ] || { echo "FAIL: simd_f32v8_disasm: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$T" "$B" "$D"' EXIT
 
 cat > "$T" <<'EOF'

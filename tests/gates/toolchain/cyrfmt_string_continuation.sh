@@ -44,7 +44,7 @@ CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 [ -f "$ROOT/programs/cyrfmt.cyr" ] || { echo "SKIP: programs/cyrfmt.cyr missing"; exit 0; }
 
-W=$(mktemp -d)
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: cyrfmt_string_continuation: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT
 
 # Build cyrfmt from SOURCE (not build/cyrfmt, which may be stale).

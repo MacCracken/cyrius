@@ -26,8 +26,7 @@ set -u
 cd "$(dirname "$0")/../../.." || exit 2
 CYCC="${CYCC:-build/cycc}"
 [ -x "$CYCC" ] || { printf 'mutex_single_owner: %s missing\n' "$CYCC" >&2; exit 2; }
-TMP="${TMPDIR:-/tmp}/mtxowner.$$"
-mkdir -p "$TMP" || exit 2
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: mutex_single_owner: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 rc=0
 

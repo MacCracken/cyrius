@@ -151,7 +151,7 @@ else echo "SKIP: deps_git_cache_verified: no sha256sum/shasum"; exit 0; fi
 FINDP=1; find . -maxdepth 0 -printf '' >/dev/null 2>&1 || FINDP=0
 [ -n "${CYRIUS_GATE_POSIX_SNAP:-}" ] && FINDP=0
 
-W=$(mktemp -d); trap 'chmod -R u+w "$W" 2>/dev/null || true; rm -rf "$W"' EXIT
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: deps_git_cache_verified: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'chmod -R u+w "$W" 2>/dev/null || true; rm -rf "$W"' EXIT
 pass=0; fail=0; skipped=0
 ok()   { echo "  ok: $1"; pass=$((pass+1)); }
 bad()  { echo "  FAIL: $1"; fail=$((fail+1)); }
@@ -272,7 +272,7 @@ first() {   # $1=proj  [$2=1 → untagged]
 # the resolve UNDER TEST: never allowed to reach a remote.
 rerun() {   # $1=proj $2=out   (extra env in $ENVX)
     rc=0
-    if ( cd "$1" && eval "${ENVX:-}" GIT_ALLOW_PROTOCOL=none "$CY" deps > "$2" 2>&1 ); then rc=0; else rc=$?; fi
+    if ( cd "$1" && eval "${ENVX:-}" GIT_ALLOW_PROTOCOL=none PIDFILE="$W/last.pid" "$W/pidwrap" "$CY" deps > "$2" 2>&1 ); then rc=0; else rc=$?; fi
     echo "$rc"
 }
 
@@ -290,10 +290,22 @@ benign() {  # $1=axis $2=desc $3=proj $4=cachedir $5=expected sha
 # Every refusal also has to leave the CLI's private temp dir as it found it: the throwaway
 # index, its lock, the stdout capture, the stderr capture and the raw-path list are all
 # created per resolve, and a refusal is the path that returns early past their cleanup.
-tmpn() { ls /tmp/cyrius-*/git_err /tmp/cyrius-*/dep_verify_* /tmp/cyrius-*/git_rev_out 2>/dev/null | wc -l; }
+# ⛔ v6.6.6: counted over THIS gate's last `cyrius deps` process only. The count used to glob
+# every /tmp/cyrius-* dir, so ANOTHER check.sh resolving deps on the same box (concurrent
+# worktrees, a CI matrix on one runner) moved it. `rerun` records the CLI's pid through
+# $W/pidwrap (the `exec` keeps it); the CLI names its temp /tmp/cyrius-<pid>[-t<nonce>…], and a
+# missing pidfile counts 0, so callers clear it before the "before" sample. CHANGELOG [6.6.6]
+printf '#!/bin/sh\necho $$ > "$PIDFILE"\nexec "$@"\n' > "$W/pidwrap" && chmod +x "$W/pidwrap" \
+  || { echo "FAIL: deps_git_cache_verified: cannot write $W/pidwrap"; exit 1; }
+tmpn() {
+    _p=$(cat "$W/last.pid" 2>/dev/null || true)
+    [ -n "$_p" ] || { echo 0; return; }
+    ls /tmp/cyrius-"$_p"/git_err /tmp/cyrius-"$_p"/dep_verify_* /tmp/cyrius-"$_p"/git_rev_out \
+       /tmp/cyrius-"$_p"-*/git_err /tmp/cyrius-"$_p"-*/dep_verify_* /tmp/cyrius-"$_p"-*/git_rev_out 2>/dev/null | wc -l
+}
 
 refused() { # $1=axis $2=desc $3=proj $4=reason-substring $5=cachedir
-    s0=$(snap "$5"); t0=$(tmpn)
+    s0=$(snap "$5"); rm -f "$W/last.pid"; t0=$(tmpn)
     [ -f "$3/cyrius.lock" ] && cp "$3/cyrius.lock" "$W/$1.lock" || rm -f "$W/$1.lock"
     r=$(ENVX="${ENVX:-}" rerun "$3" "$W/$1.out")
     s1=$(snap "$5"); t1=$(tmpn)
@@ -904,16 +916,16 @@ fi
 # R28: the commit-pin mismatch — a REFUSAL the gate had no axis for at all, which is how a
 # temp-file leak on that path (it refuses without going through `_git_cache_refuse`, so it
 # never cleared the stderr capture) stayed invisible. Both halves are asserted here.
-# ⚠ The leak half is a DELTA over `/tmp/cyrius-*/{git_err,dep_verify_*,git_rev_out}` — names
-# only the dep git flow creates. A `cyrius deps` running concurrently on the same box could
-# add one; check.sh runs its gates sequentially, and the assertion allows a decrease.
+# ⚠ The leak half counts `{git_err,dep_verify_*,git_rev_out}` — names only the dep git flow
+# creates — in the temp dir of THIS resolve's process only (tmpn, v6.6.6): the old delta over
+# every /tmp/cyrius-* dir moved whenever another check.sh resolved deps on the same box.
 AX=R28; freshcache; P="$W/r28"; mkconsumer "$P" "" 1
 if first "$P"; then
     cp "$P/cyrius.lock" "$W/r28.lock"
     sedi "s|^commit	[0-9a-f]*|commit	0000000000000000000000000000000000000000|" "$P/cyrius.lock"
-    t0=$(ls /tmp/cyrius-*/git_err /tmp/cyrius-*/dep_verify_* /tmp/cyrius-*/git_rev_out 2>/dev/null | wc -l)
+    rm -f "$W/last.pid"; t0=$(tmpn)
     r=$(ENVX="" rerun "$P" "$W/r28.out")
-    t1=$(ls /tmp/cyrius-*/git_err /tmp/cyrius-*/dep_verify_* /tmp/cyrius-*/git_rev_out 2>/dev/null | wc -l)
+    t1=$(tmpn)
     if [ "$r" -ne 0 ] && grep -q 'commit-pin mismatch' "$W/r28.out" && [ "$t1" -le "$t0" ]; then
         ok "R28 commit-pin mismatch refuses and leaves no temp file behind (delta $((t1 - t0)))"
     else bad "R28 (rc=$r, temp-file delta $((t1 - t0))): $(grep -m1 -i error "$W/r28.out" || echo 'NO ERROR')"; fi
@@ -1025,9 +1037,9 @@ AX=R28c
 freshcache; P="$W/r28c"; mkconsumer "$P" "" 1
 if first "$P"; then
     sedi "s|^commit	[0-9a-f]*	foo	.*|commit	zznotasha	foo|" "$P/cyrius.lock"
-    t0=$(ls /tmp/cyrius-*/git_err /tmp/cyrius-*/dep_verify_* /tmp/cyrius-*/git_rev_out 2>/dev/null | wc -l)
+    rm -f "$W/last.pid"; t0=$(tmpn)
     r=$(ENVX="" rerun "$P" "$W/r28c.out")
-    t1=$(ls /tmp/cyrius-*/git_err /tmp/cyrius-*/dep_verify_* /tmp/cyrius-*/git_rev_out 2>/dev/null | wc -l)
+    t1=$(tmpn)
     if [ "$r" -ne 0 ] && grep -q 'corrupt commit-pin line' "$W/r28c.out" && [ "$t1" -le "$t0" ]; then
         ok "R28c a corrupt commit-pin line refuses and leaves no temp file behind (delta $((t1 - t0)))"
     else bad "R28c (rc=$r, temp-file delta $((t1 - t0))): $(grep -m1 -i error "$W/r28c.out" || echo 'NO ERROR')"; fi

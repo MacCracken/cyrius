@@ -54,7 +54,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
 CC="${CC:-$ROOT/build/cycc}"
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: method_call_runs_every_callee_gate: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT INT TERM
 fail=0
 

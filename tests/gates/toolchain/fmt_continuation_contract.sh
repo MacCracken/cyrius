@@ -19,7 +19,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 command -v cyrius >/dev/null 2>&1 || { echo "SKIP: cyrius CLI not on PATH"; exit 0; }
-W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: fmt_continuation_contract: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$W"' EXIT
 fail=0
 
 mk() { sp=$(printf "%${2}s" ""); printf 'fn main(): i64 {\n    var x = some_call(1,\n%s2);\n    return x;\n}\n' "$sp" > "$1"; }

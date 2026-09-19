@@ -25,7 +25,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="${CC:-$ROOT/build/cycc}"
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: string_token_decoders: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 pass=0; fail=0
 ok()   { echo "  ok: $1"; pass=$((pass+1)); }
 bad()  { echo "  FAIL: $1"; fail=$((fail+1)); }

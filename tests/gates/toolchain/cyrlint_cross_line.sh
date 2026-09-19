@@ -145,7 +145,7 @@ if [ ! -x "$ROOT/build/cycc" ]; then
 fi
 command -v timeout > /dev/null 2>&1 || { echo "FAIL: cyrlint-cross-line — needs timeout(1)"; exit 1; }
 
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: cyrlint_cross_line: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 F="$ROOT/tests/fixtures/lint_deferrals"
 IO="$ROOT/tests/fixtures/lint_init_order"

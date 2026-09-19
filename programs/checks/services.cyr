@@ -742,12 +742,11 @@ fn _shared_dlopen_gate(): i64 {
         return 0;
     }
 
-    # Step 1: compile the shared-library fixture to /tmp/<fixed>.so.
-    # Uses a fixed path because the runner has it baked in (avoids
-    # arg passing in a one-shot fixture; dlopen_runner.cyr documents
-    # the contract).
+    # Step 1: compile the shared-library fixture into this run's private dir. The runner opens
+    # it RELATIVE (./cyrius_audit_shared.so) and is run with that dir as its cwd — it was a
+    # fixed /tmp path baked into the runner, shared by every concurrent check.sh. CHANGELOG [6.6.6]
     var lib_src = _root_path("tests/fixtures/shared/lib.cyr");
-    var so_path = "/tmp/cyrius_audit_shared.so";
+    var so_path = _cat2(_run_tmp(), "/cyrius_audit_shared.so");
     var rc1 = _self_host_pipe(lib_src, CC_PATH, so_path);
     if (rc1 != 0) {
         sys_unlink(so_path);
@@ -782,8 +781,8 @@ fn _shared_dlopen_gate(): i64 {
     }
     sys_chmod(runner_bin, 493);
 
-    # Step 3: run the runner, decode exit code.
-    var ec = _exec_run_clean(runner_bin);
+    # Step 3: run the runner in the dir that holds the .so, decode exit code.
+    var ec = _exec_in_dir3(_run_tmp(), runner_bin, 0, 0, 0, 0);
     sys_unlink(so_path);
     sys_unlink(runner_bin);
 

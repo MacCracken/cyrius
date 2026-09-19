@@ -42,7 +42,7 @@
 # rebuild.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: fn_hash_load_bounded: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 CC="$ROOT/build/cycc"
 FAIL=0
 

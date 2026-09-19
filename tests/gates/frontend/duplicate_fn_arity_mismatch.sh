@@ -44,7 +44,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: duplicate_fn_arity_mismatch: build/cycc missing"; exit 1; }
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: duplicate_fn_arity_mismatch: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: duplicate_fn_arity_mismatch: $1"; exit 1; }
 

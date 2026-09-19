@@ -27,7 +27,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: preprocess_arena_caps: build/cycc missing"; exit 1; }
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: preprocess_arena_caps: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: preprocess_arena_caps: $1"; exit 1; }
 
 # ── axis 2 first (cheap, and it constrains axis 1's meaning) ───────────────────────

@@ -69,7 +69,7 @@ if [ ! -x "$CC" ]; then
     exit 1
 fi
 
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: truncated_input_terminates: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
 # run_src <label> <file> -> echoes the exit status; 124 = timed out (hang).

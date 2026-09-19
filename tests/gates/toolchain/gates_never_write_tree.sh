@@ -32,9 +32,9 @@
 # not mtime and not `git status`: a gate that restores the same bytes, with the original
 # mtime, still moves the ctime. Result: the only gate that changed anything outside the
 # gitignored build/ outputs was the 6.6.5 audit_scope_covers_suite.sh, which the same run
-# confirms. Two gates were not RUN, because they write FIXED /tmp names and would clobber a
+# confirms. Two gates were not RUN, because they wrote FIXED /tmp names and would clobber a
 # concurrent check.sh (io_rdwr_agnos.sh, syscall_wrapper_pass.sh); both were read by hand and
-# write only /tmp.
+# wrote only /tmp — and since 6.6.6 bite 13 no gate names a fixed /tmp path at all (axis 5).
 #
 # ⚠ WHAT THIS GATE PINS, AND WHAT IT DOES NOT. Axis 1 is static and covers EVERY gate plus
 # scripts/check.sh, but only the shapes it can see: a write spelled against "$ROOT/..." or a
@@ -67,6 +67,11 @@
 #      behind; unconstrained it reproduces the committed table (anti-vacuous). And end to end:
 #      syscall_xlat_generated.sh with a generator that cannot write says "could not write",
 #      never STALE, and does not touch the tree.
+#   5. STATIC (6.6.6 bite 13), every gate + check.sh + the check driver: every temp dir is a
+#      CHECKED mktemp (one per line, `V=$(mktemp …) && [ -d|-f "$V" ] || { …; exit N; }`; a
+#      hand-built "${TMPDIR:-/tmp}/name.$$" is refused), and no FIXED /tmp name — in a gate, or
+#      as a "/tmp/<name>" literal in programs/checks/*.cyr. See the axis for the two exempt,
+#      read-only namespaces. Self-tested on 7 shapes and 2 clean files.
 #
 # MUTATION LEDGER (measured 6.6.6, each in a scratch copy of the tree):
 #   a. 6.6.5 syscall_xlat_generated.sh + 6.6.5 generator  -> axis 2 FAIL (normal: table
@@ -88,6 +93,15 @@
 #   h. generator back to file_write_all + `<= 0` (OUT     -> axis 4 FAIL (rc 0 and a 2048-byte
 #      kept)                                                 OUT under the size limit; the gate
 #                                                            then says STALE, not "could not write")
+#   i. 6.6.5 folds_agnos_parity.sh (bare `D=$(mktemp -d)`)  -> axis 5 FAIL (unchecked, line 28)
+#   j. 6.6.5 io_rdwr_agnos.sh                              -> axis 5 FAIL (hand-built TMPDIR dir;
+#                                                            /tmp/cyrius_agnos_* fixed names)
+#   k. 6.6.5 programs/checks/platform_win_macho.cyr        -> axis 5 FAIL ("/tmp/cyr_macho_exit",
+#                                                            _write, _peep, _derive)
+#   l. 6.6.5 freelist_agnos_mmap.sh                        -> axis 5 FAIL (hand-built TMPDIR dir)
+#   m. axis-5 fixed-/tmp detector disabled                 -> axis 5 self-test FAIL
+#   n. axis-5 mktemp detector accepting everything         -> axis 5 self-test FAIL (bare, trap,
+#                                                            wrongvar, noexit, handmade)
 # Real tree -> PASS.
 #
 # ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
@@ -441,5 +455,99 @@ EOF
     [ "$A4" = 0 ] && echo "  ok: axis 4: a short write (RLIMIT_FSIZE) or an unwritable dir$([ "$ro_real" = 0 ] && echo ' [not enforced: root]') fails the generator with no OUT, an existing OUT kept, no temp left; the gate reports 'could not write', never STALE, tree untouched"
 fi
 
+# ── axis 5: STATIC — every temp dir is a CHECKED mktemp, and no gate uses a FIXED /tmp name ──
+# v6.6.6. Two shapes, one root cause (a gate's scratch space that is not provably its own):
+#   (a) an UNCHECKED `mktemp`. A failed mktemp prints nothing, so D="" and every "$D/x" became
+#       ROOT-ABSOLUTE ("/x.bin"): folds_agnos_parity then PASSED "0/12 checked", and
+#       install_atomic_over_running_binary ran a box-wide `pkill -f /bin/victim`. Every
+#       `$(mktemp …)` must be the canonical `V=$(mktemp …) && [ -d|-f "$V" ] || { …; exit N; }`,
+#       and a hand-built `"${TMPDIR:-/tmp}/name.$$"` + `mkdir -p` (no exclusivity, no check)
+#       is refused too — a mktemp TEMPLATE argument is the one legitimate `${TMPDIR:-/tmp}/`.
+#   (b) a FIXED name under /tmp, shared by every concurrent check.sh (two worktrees, a CI matrix
+#       on one runner). Measured this release: ecb's /tmp/cyr_macho_peep, written by the check
+#       driver, was replaced mid-T3 by another run's binary and T3 failed rc=126. Refused in the
+#       shell gates, and as a string literal "/tmp/<name>" in the check driver
+#       (programs/checks/*.cyr — remote names come from _remote_name, local ones from _run_tmp).
+#       Exempt, read-only observations of OTHER tools' fixed namespaces: /tmp/cyrius-* (the CLI's
+#       own temp, /tmp/cyrius-<pid> by design, CVE-35/36) and /tmp/.wine-* (wineserver's socket).
+# Self-tested on each shape and on clean look-alikes first.
+_mktemp_bad() {  # prints "<line>: <text>" for every non-canonical mktemp / hand-built temp dir
+    awk '
+    /^[ \t]*#/ { next }
+    {
+        # one mktemp per line, and that line is the canonical checked assignment
+        line = $0; n = 0; tmp = line
+        while ((i = index(tmp, "$(mktemp")) > 0) { n++; tmp = substr(tmp, i + 8) }
+        if (n > 0) {
+            ok = 0
+            if (n == 1 && match(line, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=\$\(mktemp[^)]*\) && \[ -[df] "\$[A-Za-z_][A-Za-z0-9_]*" \] \|\| \{.*exit [0-9]/)) {
+                seg = substr(line, RSTART, RLENGTH)
+                v = seg; sub(/^[ \t]*/, "", v); sub(/=.*/, "", v)
+                w = ""
+                if (match(seg, /\[ -[df] "\$[A-Za-z_][A-Za-z0-9_]*"/)) { w = substr(seg, RSTART + 7, RLENGTH - 8) }
+                if (v == w) ok = 1
+            }
+            if (!ok) { print NR ": " line; next }
+        }
+        t = line; gsub(/mktemp[^)]*\$\{TMPDIR:-\/tmp\}\//, "", t)
+        if (t ~ /\$\{TMPDIR:-\/tmp\}\//) print NR ": " line
+    }' "$1"
+}
+_fixed_tmp_sh() {  # a /tmp/<name> in code (not a comment), bar the two observed namespaces
+    awk '/^[ \t]*#/ { next } { t = $0; gsub(/\/tmp\/cyrius-|\/tmp\/\.wine-/, "", t); if (t ~ /\/tmp\/[A-Za-z0-9_.]/) print NR ": " $0 }' "$1"
+}
+_fixed_tmp_cyr() {  # a "/tmp/<name>" string literal in the check driver
+    awk '/^[ \t]*#/ { next } { if ($0 ~ /"\/tmp\/[A-Za-z0-9_.@]/) print NR ": " $0 }' "$1"
+}
+mkdir -p "$W/fx5"
+printf 'D=$(mktemp -d)\n' > "$W/fx5/bare.sh"
+printf 'T=$(mktemp); trap '"'"'rm -f "$T"'"'"' EXIT\n' > "$W/fx5/trap.sh"
+printf 'A=$(mktemp -d) && [ -d "$B" ] || { echo no; exit 1; }\n' > "$W/fx5/wrongvar.sh"
+printf 'A=$(mktemp -d) && [ -d "$A" ] || echo "FAIL: soft"\n' > "$W/fx5/noexit.sh"
+printf 'TMP="${TMPDIR:-/tmp}/x.$$"\nmkdir -p "$TMP"\n' > "$W/fx5/handmade.sh"
+printf 'echo x > /tmp/cyx_probe\n' > "$W/fx5/fixed.sh"
+printf '    var p = "/tmp/cyr_macho_peep";\n' > "$W/fx5/fixed.cyr"
+{ printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: g: mktemp -d failed"; exit 1; }\n'
+  printf 'O=$(mktemp --suffix=.cyr) && [ -f "$O" ] || { echo "FAIL: g"; exit 1; }; trap '"'"'rm -f "$O"'"'"' EXIT\n'
+  printf 'H=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-home.XXXXXX") && [ -d "$H" ] || { printf x; exit 1; }\n'
+  printf '# a comment may say D=$(mktemp -d) or /tmp/foo freely\n'
+  printf 'ls -d /tmp/cyrius-* 2>/dev/null\nSOCK="/tmp/.wine-$(id -u)/server"\nsys_chdir("/tmp");\n'; } > "$W/fx5/clean.sh"
+printf '    var base = "/tmp";\n    str_builder_add_cstr(sb, "/tmp/");\n    var r = _remote_name("/tmp/", "cyr_x", "");\n' > "$W/fx5/clean.cyr"
+st5=0
+for f in bare trap wrongvar noexit handmade; do
+    [ -n "$(_mktemp_bad "$W/fx5/$f.sh")" ] || { echo "FAIL: axis 5 self-test: an unchecked temp dir ('$f') was not flagged"; st5=1; }
+done
+[ -n "$(_fixed_tmp_sh "$W/fx5/fixed.sh")" ] || { echo "FAIL: axis 5 self-test: a fixed /tmp name in a gate was not flagged"; st5=1; }
+[ -n "$(_fixed_tmp_cyr "$W/fx5/fixed.cyr")" ] || { echo "FAIL: axis 5 self-test: a fixed \"/tmp/<name>\" literal in the driver was not flagged"; st5=1; }
+[ -z "$(_mktemp_bad "$W/fx5/clean.sh")$(_fixed_tmp_sh "$W/fx5/clean.sh")$(_fixed_tmp_cyr "$W/fx5/clean.cyr")" ] \
+    || { echo "FAIL: axis 5 self-test: a canonical form or an exempt read was flagged: $(_mktemp_bad "$W/fx5/clean.sh")$(_fixed_tmp_sh "$W/fx5/clean.sh")$(_fixed_tmp_cyr "$W/fx5/clean.cyr")"; st5=1; }
+[ "$st5" = 0 ] || FAIL=1
+n5=0; nmk=0; bad5=0
+# + every scripts/*-gate.sh that check.sh runs (derived from check.sh itself)
+for g in $(find tests/gates -name '*.sh' | LC_ALL=C sort) scripts/check.sh \
+         $(grep -oE 'scripts/[A-Za-z0-9_-]+-gate\.sh' scripts/check.sh | LC_ALL=C sort -u); do
+    [ "$g" = "$SELF" ] && continue
+    n5=$((n5 + 1))
+    nmk=$((nmk + $(grep -c 'mktemp' "$g" || true)))
+    h=$(_mktemp_bad "$g")
+    [ -n "$h" ] && { echo "$h" | sed "s|^|FAIL: axis 5: $g: an UNCHECKED temp dir (use V=\$(mktemp -d) \&\& [ -d \"\$V\" ] \|\| { echo FAIL…; exit 1; }) at line |"; bad5=1; }
+    h=$(_fixed_tmp_sh "$g")
+    [ -n "$h" ] && { echo "$h" | sed "s|^|FAIL: axis 5: $g: a FIXED /tmp name (shared by concurrent runs) at line |"; bad5=1; }
+done
+ncyr=0
+for c in programs/checks/*.cyr; do
+    ncyr=$((ncyr + 1))
+    h=$(_fixed_tmp_cyr "$c")
+    [ -n "$h" ] && { echo "$h" | sed "s|^|FAIL: axis 5: $c: a FIXED \"/tmp/<name>\" (use _tmp_path / _remote_name) at line |"; bad5=1; }
+done
+# (this file's own temp dir is canonical too — it is excluded above only for its fixtures)
+if [ "$n5" -lt 150 ] || [ "$nmk" -lt 120 ] || [ "$ncyr" -lt 10 ]; then
+    echo "FAIL: axis 5: scanned $n5 scripts / $nmk mktemp lines / $ncyr driver files (floors 150 / 120 / 10) — the scan read nothing"; FAIL=1
+elif [ "$bad5" != 0 ]; then
+    FAIL=1
+elif [ "$st5" = 0 ]; then
+    echo "  ok: axis 5: $n5 gate scripts ($nmk mktemp lines) take every temp dir from a checked mktemp and name no fixed /tmp path; $ncyr check-driver files carry no \"/tmp/<name>\" (self-tested on 7 shapes + 2 clean files)"
+fi
+
 if [ "$FAIL" != 0 ]; then echo "FAIL: gates_never_write_tree"; exit 1; fi
-echo "PASS gates_never_write_tree (static: no gate or check.sh writes a path under \$ROOT but gitignored build/ outputs, edits one in place, or backs one up and restores it; dynamic: the 4 gates that did leave a stamped scratch tree untouched under 4 TMPDIR faults; the generator fails a short write)"
+echo "PASS gates_never_write_tree (static: no gate or check.sh writes a path under \$ROOT but gitignored build/ outputs, edits one in place, or backs one up and restores it; every temp dir is a checked mktemp and no gate or check-driver path is a fixed /tmp name; dynamic: the 4 gates that did leave a stamped scratch tree untouched under 4 TMPDIR faults; the generator fails a short write)"

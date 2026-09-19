@@ -116,7 +116,7 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CYCC=${CYCC_BIN:-"$ROOT/build/cycc"}
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: simd_intrinsic_operand_slots: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: simd_intrinsic_operand_slots: $1"; exit 1; }
 [ -x "$CYCC" ] || fail "no cycc at $CYCC"

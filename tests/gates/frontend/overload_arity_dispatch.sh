@@ -23,7 +23,7 @@
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-D=$(mktemp -d)
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: overload_arity_dispatch: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fails=0
 

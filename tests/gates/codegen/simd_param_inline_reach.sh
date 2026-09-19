@@ -25,7 +25,7 @@
 # or lib/simd.cyr changes, re-measure it — do not nudge it to make the gate pass.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: simd_param_inline_reach: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL simd_param_inline_reach: no build/cycc"; exit 1; }
 "$CC" < "$R/src/main.cyr" > "$T/cc" 2>/dev/null || { echo "FAIL simd_param_inline_reach: stage1 build failed"; exit 1; }

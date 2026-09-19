@@ -64,7 +64,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL fn_local_storage_class: no build/cycc"; exit 1; }
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: fn_local_storage_class: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 
 pass=0; fail=0
 note() { printf '  %s\n' "$1"; }

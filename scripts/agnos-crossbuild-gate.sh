@@ -18,6 +18,11 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 [ -x build/cycc ] || { echo "ERROR: build/cycc missing (run bootstrap first)"; exit 1; }
 [ -x build/cyrius ] || { echo "ERROR: build/cyrius missing"; exit 1; }
+# v6.6.6: every probe source, output and log lives in a CHECKED private temp dir. They were
+# FIXED /tmp/_agnos_*_gate.{cyr,out,log} names, shared — and rewritten mid-run — by every
+# concurrent check.sh on the box. CHANGELOG [6.6.6]
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: agnos-crossbuild-gate: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'rm -rf "$W"' EXIT
 
 # A valid agnos ring-3 binary is a static x86-64 ELF (the agnos target emits a
 # flat ET_EXEC over the agnos syscall ABI; no interpreter). Checked with only
@@ -46,7 +51,7 @@ assert_agnos_elf() {
 #    plus chrono's monotonic-clock + sleep binding (#40/#41, v6.2.6 — guards
 #    the stale-stub regression that made every agnos timing/poll consumer
 #    re-roll a direct-syscall workaround; issue 2026-06-14-chrono-agnos-...).
-cat > /tmp/_agnos_gate.cyr <<'CYR'
+cat > "$W/_agnos_gate.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -65,9 +70,9 @@ fn main(): i64 {
     return load8(h) + (t0 - t0) + (us - us) + sl;
 }
 CYR
-build/cyrius build --agnos /tmp/_agnos_gate.cyr /tmp/_agnos_gate.out >/dev/null 2>&1 \
+build/cyrius build --agnos "$W/_agnos_gate.cyr" "$W/_agnos_gate.out" >/dev/null 2>&1 \
     || { echo "FAIL: CYRIUS_TARGET_AGNOS probe did not compile (agnos codegen/peer regression)"; exit 1; }
-assert_agnos_elf /tmp/_agnos_gate.out
+assert_agnos_elf "$W/_agnos_gate.out"
 echo "PASS: CYRIUS_TARGET_AGNOS probe (args + getenv envp) -> valid agnos ELF"
 
 # 1b. Net / entropy / wall-clock / TLS peer (v6.2.3). Guards the agnos syscall
@@ -77,7 +82,7 @@ echo "PASS: CYRIUS_TARGET_AGNOS probe (args + getenv envp) -> valid agnos ELF"
 #     the full TLS-over-agnos-TCP path (entropy #45, send/recv via the tagged
 #     #48/#49 route, cert window via time_unix #46). Compile-only here — real
 #     socket behavior is validated on agnos hardware, not in this gate.
-cat > /tmp/_agnos_net_gate.cyr <<'CYR'
+cat > "$W/_agnos_net_gate.cyr" <<'CYR'
 include "lib/net.cyr"
 include "lib/http.cyr"
 include "lib/tls_native.cyr"
@@ -101,9 +106,9 @@ fn main(): i64 {
     return gr + t + rtt;
 }
 CYR
-build/cyrius build --agnos /tmp/_agnos_net_gate.cyr /tmp/_agnos_net_gate.out >/dev/null 2>&1 \
+build/cyrius build --agnos "$W/_agnos_net_gate.cyr" "$W/_agnos_net_gate.out" >/dev/null 2>&1 \
     || { echo "FAIL: CYRIUS_TARGET_AGNOS net/TLS peer did not compile (#45-#55 / net adapter / threading fallback regression)"; exit 1; }
-assert_agnos_elf /tmp/_agnos_net_gate.out
+assert_agnos_elf "$W/_agnos_net_gate.out"
 echo "PASS: CYRIUS_TARGET_AGNOS net/entropy/clock/TLS peer (#45-#55) -> valid agnos ELF"
 
 # 1c. async serial-peer + net multicast/sockopt guards (v6.2.7). Anti-rot for
@@ -115,7 +120,7 @@ echo "PASS: CYRIUS_TARGET_AGNOS net/entropy/clock/TLS peer (#45-#55) -> valid ag
 #     (unsupported→-1 on agnos). If async loses its peer this fails to compile
 #     (SYS_EPOLL_CREATE1 undefined). Compile-only. See issues
 #     2026-06-15-cyrius-thread-agnos-clone-dispatch.md + -mdns-multicast-primitives.md.
-cat > /tmp/_agnos_async_gate.cyr <<'CYR'
+cat > "$W/_agnos_async_gate.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -145,9 +150,9 @@ fn main(): i64 {
     return c;
 }
 CYR
-build/cyrius build --agnos /tmp/_agnos_async_gate.cyr /tmp/_agnos_async_gate.out >/dev/null 2>&1 \
+build/cyrius build --agnos "$W/_agnos_async_gate.cyr" "$W/_agnos_async_gate.out" >/dev/null 2>&1 \
     || { echo "FAIL: CYRIUS_TARGET_AGNOS async-peer / net-multicast-guard probe did not compile (async peer-split or net.cyr agnos guard regression)"; exit 1; }
-assert_agnos_elf /tmp/_agnos_async_gate.out
+assert_agnos_elf "$W/_agnos_async_gate.out"
 echo "PASS: CYRIUS_TARGET_AGNOS async serial-peer + net multicast/sockopt guards -> valid agnos ELF"
 
 # 1d. Server-socket peer (#56/#57, agnos 1.45.5/.6; v6.2.22). Guards the
@@ -160,7 +165,7 @@ echo "PASS: CYRIUS_TARGET_AGNOS async serial-peer + net multicast/sockopt guards
 #     sock_accept lower to syscalls 56/57 (NOT a stub) — real accept/echo
 #     behavior is validated on agnos hardware (QEMU tcp-listen-smoke), not here.
 #     See 2026-06-18-agnos-server-socket-peer.md.
-cat > /tmp/_agnos_server_gate.cyr <<'CYR'
+cat > "$W/_agnos_server_gate.cyr" <<'CYR'
 include "lib/net.cyr"
 fn main(): i64 {
     var sr_tag, lfd = tcp_socket();                   # reserve a conn slot (v6.6.0: value form)
@@ -180,11 +185,11 @@ fn main(): i64 {
     return 0;
 }
 CYR
-build/cyrius build --agnos /tmp/_agnos_server_gate.cyr /tmp/_agnos_server_gate.out >/dev/null 2>&1 \
+build/cyrius build --agnos "$W/_agnos_server_gate.cyr" "$W/_agnos_server_gate.out" >/dev/null 2>&1 \
     || { echo "FAIL: CYRIUS_TARGET_AGNOS server-socket peer did not compile (#56/#57 / listen-fd adapter regression)"; exit 1; }
-assert_agnos_elf /tmp/_agnos_server_gate.out
+assert_agnos_elf "$W/_agnos_server_gate.out"
 if command -v objdump >/dev/null 2>&1; then
-    sdis=$(objdump -d -M intel /tmp/_agnos_server_gate.out 2>/dev/null)
+    sdis=$(objdump -d -M intel "$W/_agnos_server_gate.out" 2>/dev/null)
     echo "$sdis" | grep -qE 'mov +eax,0x38\b' || { echo "FAIL: server probe emits no syscall 56 (sock_listen rotted to a stub?)"; exit 1; }
     echo "$sdis" | grep -qE 'mov +eax,0x39\b' || { echo "FAIL: server probe emits no syscall 57 (sock_accept rotted to a stub?)"; exit 1; }
 fi
@@ -199,7 +204,7 @@ echo "PASS: CYRIUS_TARGET_AGNOS server-socket peer (#56/#57) -> valid agnos ELF 
 #     that the reachable getdents lowers to syscall 29 (0x1d), NOT the Linux
 #     217 (0xd9). Real dir behavior is validated on agnos hardware (whirl
 #     ext2 + agnoshi ls), not here. See 2026-06-18-stdlib-native-agnos-abi-fs.md.
-cat > /tmp/_agnos_fs_gate.cyr <<'CYR'
+cat > "$W/_agnos_fs_gate.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -213,11 +218,11 @@ fn main(): i64 {
     return d + vec_len(entries) - d - vec_len(entries);
 }
 CYR
-build/cyrius build --agnos /tmp/_agnos_fs_gate.cyr /tmp/_agnos_fs_gate.out >/dev/null 2>&1 \
+build/cyrius build --agnos "$W/_agnos_fs_gate.cyr" "$W/_agnos_fs_gate.out" >/dev/null 2>&1 \
     || { echo "FAIL: CYRIUS_TARGET_AGNOS fs dir-listing peer did not compile (fs.cyr agnos getdents/dirent branch regression)"; exit 1; }
-assert_agnos_elf /tmp/_agnos_fs_gate.out
+assert_agnos_elf "$W/_agnos_fs_gate.out"
 if command -v objdump >/dev/null 2>&1; then
-    fdis=$(objdump -d -M intel /tmp/_agnos_fs_gate.out 2>/dev/null)
+    fdis=$(objdump -d -M intel "$W/_agnos_fs_gate.out" 2>/dev/null)
     echo "$fdis" | grep -qE 'mov +eax,0x1d\b' || { echo "FAIL: fs probe emits no syscall 29 (agnos getdents rotted to Linux #217?)"; exit 1; }
     # AO_DIRECTORY(0x800) MUST be the open flag: without it the agnos kernel
     # routes to ext2_open() which rejects a directory inode (-1), so dir_list
@@ -236,7 +241,7 @@ echo "PASS: CYRIUS_TARGET_AGNOS fs dir-listing peer (getdents #29 + AO_DIRECTORY
 #     sigil's sys_access() probes were the same. This probe references all four
 #     symbols and FAILS if cycc reports ANY of them undefined. See
 #     2026-06-21-agnos-peer-m6-chain-syscalls.md (the no-op-mutex resolution).
-cat > /tmp/_agnos_sync_gate.cyr <<'CYR'
+cat > "$W/_agnos_sync_gate.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/atomic.cyr"
 include "lib/alloc.cyr"
@@ -249,14 +254,14 @@ fn main(): i64 {
     return (m - m) + (a + 1);
 }
 CYR
-build/cyrius build --agnos /tmp/_agnos_sync_gate.cyr /tmp/_agnos_sync_gate.out >/tmp/_agnos_sync_gate.log 2>&1 \
-    || { echo "FAIL: CYRIUS_TARGET_AGNOS sync/access probe did not compile"; cat /tmp/_agnos_sync_gate.log; exit 1; }
-if grep -q "undefined function 'mutex_\|undefined function 'sys_access" /tmp/_agnos_sync_gate.log; then
+build/cyrius build --agnos "$W/_agnos_sync_gate.cyr" "$W/_agnos_sync_gate.out" >"$W/_agnos_sync_gate.log" 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS sync/access probe did not compile"; cat "$W/_agnos_sync_gate.log"; exit 1; }
+if grep -q "undefined function 'mutex_\|undefined function 'sys_access" "$W/_agnos_sync_gate.log"; then
     echo "FAIL: agnos mutex/sys_access undefined (sync.cyr agnos branch or peer sys_access stub regressed -> ud2/SIGILL at runtime):"
-    grep "undefined function" /tmp/_agnos_sync_gate.log
+    grep "undefined function" "$W/_agnos_sync_gate.log"
     exit 1
 fi
-assert_agnos_elf /tmp/_agnos_sync_gate.out
+assert_agnos_elf "$W/_agnos_sync_gate.out"
 echo "PASS: CYRIUS_TARGET_AGNOS sync.cyr no-op mutex + sys_access stub -> defined (no ud2 stub) + valid agnos ELF"
 
 # 1g. io.cyr file-lock helpers (v6.2.36). Same silent-undefined class as 1f:
@@ -267,7 +272,7 @@ echo "PASS: CYRIUS_TARGET_AGNOS sync.cyr no-op mutex + sys_access stub -> define
 #     AO_APPEND is a kernel TODO). FAILS if cycc reports any helper undefined, and
 #     asserts the agnos flock number #59 (0x3b) is emitted (a regression to raw
 #     #73 or a dropped helper is caught). See 2026-06-21-agnos-io-flock-helpers.md.
-cat > /tmp/_agnos_flock_gate.cyr <<'CYR'
+cat > "$W/_agnos_flock_gate.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -276,25 +281,25 @@ include "lib/vec.cyr"
 include "lib/fmt.cyr"
 include "lib/io.cyr"
 fn main(): i64 {
-    var fd = file_open("/tmp/_agnos_flock_probe", O_WRONLY | O_CREAT, 0x1A4);
+    var fd = file_open("_agnos_flock_probe", O_WRONLY | O_CREAT, 0x1A4);
     file_lock(fd);            # xflock LOCK_EX -> agnos SYS_FLOCK #59
     file_lock_shared(fd);
     file_trylock(fd);
     file_unlock(fd);
     file_close(fd);
-    return file_append_locked("/tmp/_agnos_flock_probe", "x", 1);  # open + lock + xlseek SEEK_END + write
+    return file_append_locked("_agnos_flock_probe", "x", 1);  # open + lock + xlseek SEEK_END + write
 }
 CYR
-build/cyrius build --agnos /tmp/_agnos_flock_gate.cyr /tmp/_agnos_flock_gate.out >/tmp/_agnos_flock_gate.log 2>&1 \
-    || { echo "FAIL: CYRIUS_TARGET_AGNOS io flock probe did not compile"; cat /tmp/_agnos_flock_gate.log; exit 1; }
-if grep -q "undefined function 'file_" /tmp/_agnos_flock_gate.log; then
+build/cyrius build --agnos "$W/_agnos_flock_gate.cyr" "$W/_agnos_flock_gate.out" >"$W/_agnos_flock_gate.log" 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS io flock probe did not compile"; cat "$W/_agnos_flock_gate.log"; exit 1; }
+if grep -q "undefined function 'file_" "$W/_agnos_flock_gate.log"; then
     echo "FAIL: agnos io file-lock helper undefined (io.cyr lock group regressed to Linux-only -> ud2/SIGILL at runtime):"
-    grep "undefined function" /tmp/_agnos_flock_gate.log
+    grep "undefined function" "$W/_agnos_flock_gate.log"
     exit 1
 fi
-assert_agnos_elf /tmp/_agnos_flock_gate.out
+assert_agnos_elf "$W/_agnos_flock_gate.out"
 if command -v objdump >/dev/null 2>&1; then
-    objdump -d -M intel /tmp/_agnos_flock_gate.out 2>/dev/null | grep -qE 'mov +e[a-z]+,0x3b\b' \
+    objdump -d -M intel "$W/_agnos_flock_gate.out" 2>/dev/null | grep -qE 'mov +e[a-z]+,0x3b\b' \
         || { echo "FAIL: io flock probe emits no SYS_FLOCK #59 (0x3b) — agnos flock rotted to raw Linux #73?"; exit 1; }
 fi
 echo "PASS: CYRIUS_TARGET_AGNOS io.cyr file-lock helpers (xflock #59 + xlseek SEEK_END) -> defined + valid agnos ELF"
@@ -310,7 +315,7 @@ echo "PASS: CYRIUS_TARGET_AGNOS io.cyr file-lock helpers (xflock #59 + xlseek SE
 #     (programs/checks/ts.cyr) is peer-independent so it does NOT false-positive on
 #     this. From 2026-06-23-agnos-net-config-syscall-wrapper.md +
 #     2026-06-23-cyrius-agnos-peer-missing-signal-number-constants.md.
-cat > /tmp/_agnos_signet_gate.cyr <<'CYR'
+cat > "$W/_agnos_signet_gate.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 fn main(): i64 {
@@ -332,16 +337,16 @@ fn main(): i64 {
     return sigset_has(m, SIGCHLD) + pm + fd + dns + ip + nm + gw + nc + ws;
 }
 CYR
-build/cyrius build --agnos /tmp/_agnos_signet_gate.cyr /tmp/_agnos_signet_gate.out >/tmp/_agnos_signet_gate.log 2>&1 \
-    || { echo "FAIL: CYRIUS_TARGET_AGNOS signal/net_config/winsize probe did not compile (peer const/wrapper regression)"; cat /tmp/_agnos_signet_gate.log; exit 1; }
-if grep -q "undefined function 'sys_net_\|undefined function 'sys_winsize\|undefined function 'sigset_" /tmp/_agnos_signet_gate.log; then
+build/cyrius build --agnos "$W/_agnos_signet_gate.cyr" "$W/_agnos_signet_gate.out" >"$W/_agnos_signet_gate.log" 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS signal/net_config/winsize probe did not compile (peer const/wrapper regression)"; cat "$W/_agnos_signet_gate.log"; exit 1; }
+if grep -q "undefined function 'sys_net_\|undefined function 'sys_winsize\|undefined function 'sigset_" "$W/_agnos_signet_gate.log"; then
     echo "FAIL: agnos signal/net_config/winsize wrapper undefined (peer regressed to ud2/SIGILL stub at runtime):"
-    grep "undefined function" /tmp/_agnos_signet_gate.log
+    grep "undefined function" "$W/_agnos_signet_gate.log"
     exit 1
 fi
-assert_agnos_elf /tmp/_agnos_signet_gate.out
+assert_agnos_elf "$W/_agnos_signet_gate.out"
 if command -v objdump >/dev/null 2>&1; then
-    ndis=$(objdump -d -M intel /tmp/_agnos_signet_gate.out 2>/dev/null)
+    ndis=$(objdump -d -M intel "$W/_agnos_signet_gate.out" 2>/dev/null)
     echo "$ndis" | grep -qE 'mov +eax,0x3d\b' || { echo "FAIL: probe emits no SYS_NET_CONFIG #61 (0x3d) — net_config rotted to a stub?"; exit 1; }
     echo "$ndis" | grep -qE 'mov +eax,0x3c\b' || { echo "FAIL: probe emits no SYS_WINSIZE #60 (0x3c) — winsize rotted to a stub?"; exit 1; }
 fi
@@ -357,7 +362,7 @@ echo "PASS: CYRIUS_TARGET_AGNOS signal constants + sigset wrappers (1<<sig) + ne
 #     halves of that invariant so a future refactor (e.g. hoisting the band into a shared
 #     syscalls file) cannot silently arm rename/mkdir.
 #     From 2026-07-14-agnos-sys-gpu-dispatch-wrappers.md; consumer: gpumm 0.2.0.
-cat > /tmp/_agnos_gpu_gate.cyr <<'CYR'
+cat > "$W/_agnos_gpu_gate.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 fn main(): i64 {
@@ -385,14 +390,14 @@ fn main(): i64 {
 }
 CYR
 # Leg 1 — the band resolves + emits the right numbers on agnos.
-build/cyrius build --agnos /tmp/_agnos_gpu_gate.cyr /tmp/_agnos_gpu_gate.out >/tmp/_agnos_gpu_gate.log 2>&1 \
-    || { echo "FAIL: CYRIUS_TARGET_AGNOS gpu-dispatch probe did not compile (peer band regression)"; cat /tmp/_agnos_gpu_gate.log; exit 1; }
-if grep -qE "undefined function 'sys_gpu_(dispatch|present|fill)" /tmp/_agnos_gpu_gate.log; then
+build/cyrius build --agnos "$W/_agnos_gpu_gate.cyr" "$W/_agnos_gpu_gate.out" >"$W/_agnos_gpu_gate.log" 2>&1 \
+    || { echo "FAIL: CYRIUS_TARGET_AGNOS gpu-dispatch probe did not compile (peer band regression)"; cat "$W/_agnos_gpu_gate.log"; exit 1; }
+if grep -qE "undefined function 'sys_gpu_(dispatch|present|fill)" "$W/_agnos_gpu_gate.log"; then
     echo "FAIL: an agnos gpu_* wrapper is undefined (peer band regressed to ud2/SIGILL stub at runtime):"
-    grep "undefined function" /tmp/_agnos_gpu_gate.log
+    grep "undefined function" "$W/_agnos_gpu_gate.log"
     exit 1
 fi
-assert_agnos_elf /tmp/_agnos_gpu_gate.out
+assert_agnos_elf "$W/_agnos_gpu_gate.out"
 if command -v objdump >/dev/null 2>&1; then
     # PRECISE number check. A bare `grep 'mov eax,0x54'` is a PLACEBO here: 0x52-0x55 are
     # ASCII 'R','S','T','U', so a string-literal byte store (`mov eax,0x54; pop rcx;
@@ -400,7 +405,7 @@ if command -v objdump >/dev/null 2>&1; then
     # is wrong — proven by mutation (#84 -> 99 still reported PASS). The real syscall
     # number is the `mov eax,0xNN` immediately preceding each `syscall`, so extract that
     # set and assert membership. CHANGELOG [6.4.70].
-    gnums=$(objdump -d -M intel /tmp/_agnos_gpu_gate.out 2>/dev/null | awk '
+    gnums=$(objdump -d -M intel "$W/_agnos_gpu_gate.out" 2>/dev/null | awk '
       /mov +eax,0x[0-9a-f]+/ { if (match($0, /0x[0-9a-f]+$/)) last=substr($0, RSTART, RLENGTH) }
       /\<syscall\>/ { if (last != "") { print last; last="" } }' | sort -u)
     for want in 0x52:82:SYS_GPU_DISPATCH 0x53:83:SYS_GPU_DISPATCH_F64 0x54:84:SYS_GPU_PRESENT 0x55:85:SYS_GPU_FILL \
@@ -418,8 +423,8 @@ fi
 # = rename/mkdir. `if` guards the intentional failure from `set -e`.
 # Clear the target FIRST: this leg's own `exit 1` path skips any trailing cleanup, so a
 # previous RED run would otherwise leave a binary here and pin the gate red forever.
-rm -f /tmp/_agnos_gpu_linux.out
-if build/cyrius build /tmp/_agnos_gpu_gate.cyr /tmp/_agnos_gpu_linux.out >/tmp/_agnos_gpu_linux.log 2>&1; then
+rm -f "$W/_agnos_gpu_linux.out"
+if build/cyrius build "$W/_agnos_gpu_gate.cyr" "$W/_agnos_gpu_linux.out" >"$W/_agnos_gpu_linux.log" 2>&1; then
     echo "FAIL: the gpu band RESOLVED on a non-agnos (Linux) build. On Linux x86_64 the band lands on"
     echo "      #82=rename #83=mkdir #84=RMDIR #85=creat #86=link #87=UNLINK #88=symlink #89=readlink"
     echo "      #90=CHMOD #91=FCHMOD #92=CHOWN #93=FCHOWN #94=LCHOWN #95=UMASK — so matmul pointers"
@@ -431,20 +436,20 @@ if build/cyrius build /tmp/_agnos_gpu_gate.cyr /tmp/_agnos_gpu_linux.out >/tmp/_
     echo "      The band must live ONLY in the #ifdef CYRIUS_TARGET_AGNOS peer (lib/syscalls_x86_64_agnos.cyr)."
     exit 1
 fi
-if command -v objdump >/dev/null 2>&1 && [ -f /tmp/_agnos_gpu_linux.out ]; then
-    objdump -d -M intel /tmp/_agnos_gpu_linux.out 2>/dev/null | grep -qE 'mov +eax,0x5[2-9a-d]\b' \
+if command -v objdump >/dev/null 2>&1 && [ -f "$W/_agnos_gpu_linux.out" ]; then
+    objdump -d -M intel "$W/_agnos_gpu_linux.out" 2>/dev/null | grep -qE 'mov +eax,0x5[2-9a-d]\b' \
         && { echo "FAIL: a Linux build emitted syscall 82-93 (rename..fchown) for the gpu band"; exit 1; }
 fi
-rm -f /tmp/_agnos_gpu_linux.out
+rm -f "$W/_agnos_gpu_linux.out"
 echo "PASS: CYRIUS_TARGET_AGNOS gpu band (#82-#95 correct numbers) + ABSENT on Linux (8 destructive rows gated)"
 
 # 2. agnoshi — the gating consumer (agnsh is the first agnos userland program).
 AGNOSHI="${CYRIUS_AGNOSHI_DIR:-$ROOT/../agnoshi}"
 if [ -f "$AGNOSHI/src/agnsh.cyr" ]; then
     ( cd "$AGNOSHI" && CYRIUS_NO_WARN_PIN_DRIFT=1 CYRIUS_NO_WARN_SHADOW_LIB=1 \
-        "$ROOT/build/cyrius" build --agnos src/agnsh.cyr /tmp/_agnsh_gate.out >/dev/null 2>&1 ) \
+        "$ROOT/build/cyrius" build --agnos src/agnsh.cyr "$W/_agnsh_gate.out" >/dev/null 2>&1 ) \
         || { echo "FAIL: agnoshi did not cross-build for CYRIUS_TARGET_AGNOS"; exit 1; }
-    assert_agnos_elf /tmp/_agnsh_gate.out
+    assert_agnos_elf "$W/_agnsh_gate.out"
     echo "PASS: agnoshi (agnsh) -> valid agnos ELF"
 else
     echo "FLAG: agnoshi checkout not at $AGNOSHI (set CYRIUS_AGNOSHI_DIR) — consumer cross-build NOT verified"

@@ -45,8 +45,7 @@ X86=src/backend/x86/emit.cyr
 PEER_X86=lib/syscalls_macos.cyr
 PEER_ARM=lib/syscalls_aarch64_linux.cyr
 
-TMP=${TMPDIR:-/tmp}/macho_parity.$$
-mkdir -p "$TMP"
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: macho_route_parity: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 pass=0; fail=0

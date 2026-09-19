@@ -268,7 +268,7 @@ echo "axis 6 — ⭐ RUNTIME: the gated verbs really do get the manifest prepend
 if [ ! -x "$ROOT/build/cyrius" ] || [ ! -x "$ROOT/build/cycc" ]; then
     echo "  SKIP: build/cyrius or build/cycc not built — static axes above still ran"
 else
-    T=$(mktemp -d)
+    T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: auto_deps_verb_gate: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
     # Hermetic home: this tree's compiler + this tree's lib/, so the axis cannot pass
     # or fail on whatever happens to be installed.
     mkdir -p "$T/home/bin"

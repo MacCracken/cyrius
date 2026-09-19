@@ -12,7 +12,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: cx_pow2_mul: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 
 cat src/main_cx.cyr | ./build/cycc > "$D/cc" 2>/dev/null; chmod +x "$D/cc"
 cat programs/cxvm.cyr | ./build/cycc > "$D/vm" 2>/dev/null; chmod +x "$D/vm"

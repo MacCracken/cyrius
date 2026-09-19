@@ -13,7 +13,7 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 CYCC="${CYCC:-$ROOT/build/cycc}"
-TMP="$(mktemp -d)"
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: dx01_syms_parity: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 printf 'fn dx01_helper(x) { return x + 1; }\nvar r = dx01_helper(41);\n' > "$TMP/p.cyr"

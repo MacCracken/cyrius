@@ -1,7 +1,8 @@
 # dlopen runner for v5.9.17 _shared_dlopen_gate. Companion to
-# tests/fixtures/shared/lib.cyr; the dispatcher compiles lib.cyr
-# to /tmp/cyrius_audit_shared.so, then compiles + runs this
-# binary. Exit code:
+# tests/fixtures/shared/lib.cyr; the dispatcher compiles lib.cyr to
+# cyrius_audit_shared.so in its private scratch dir, then compiles this and runs it WITH
+# THAT DIR AS ITS CWD — the path below is relative (v6.6.6: it was a fixed /tmp name shared
+# by concurrent check.sh runs). Exit code:
 #   99 — all sub-tests green
 #   10 — dynlib_bootstrap_cpu_features failed (need /lib64/ld-linux)
 #   11 — dynlib_open failed
@@ -28,7 +29,7 @@ include "lib/fnptr.cyr"
 fn main() {
     alloc_init();
     if (dynlib_bootstrap_cpu_features() != 0) { syscall(60, 10); }
-    var h = dynlib_open("/tmp/cyrius_audit_shared.so");
+    var h = dynlib_open("./cyrius_audit_shared.so");
     if (h == 0) { syscall(60, 11); }
     if (dynlib_init(h) != 0) { syscall(60, 12); }
     var p_add = dynlib_sym(h, "add");

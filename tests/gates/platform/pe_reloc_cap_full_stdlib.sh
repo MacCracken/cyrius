@@ -31,7 +31,7 @@ CC="$ROOT/build/cycc"
 cd "$ROOT"
 G="tests/gates/platform/folds_agnos_parity.sh"
 [ -f "$G" ] || { echo "SKIP: $G missing (source of the dependency-ordered preamble)"; exit 0; }
-D=$(mktemp -d)
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: pe_reloc_cap_full_stdlib: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fail=0
 

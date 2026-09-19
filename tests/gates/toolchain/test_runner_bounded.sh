@@ -81,7 +81,7 @@ for b in cyrius cycc; do
     fi
 done
 
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: test_runner_bounded: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/home/bin"
 cp "$ROOT/build/cycc" "$T/home/bin/cycc"
@@ -145,6 +145,17 @@ descendant_pids() {
     done | sort
 }
 
+# The survivors of ONE `cyrius test` process, by that process's pid: its children run from its
+# private temp dir, /tmp/cyrius-<pid>[-t<nonce>]/test_bin. ⛔ v6.6.6: axis 1 used the box-wide
+# `orphan_pids` before/after — and two check.sh runs at once (measured: two worktrees, both
+# 254/255 on exactly this row) each counted the OTHER run's axis-1 child as its own escaped one.
+# A survivor is reparented once the runner exits, so ancestry cannot scope it; the pid in its
+# path can. CHANGELOG [6.6.6]
+orphan_pids_of() {
+    [ -n "$1" ] || { echo "no-pid"; return; }
+    ps -eo pid=,args= 2>/dev/null | grep -E "/cyrius-$1(-t[0-9]+)?/[t]est_bin" | awk '{print $1}' | sort
+}
+
 # A fixture that never terminates. `while (1 == 1)` with a live accumulator so no
 # optimiser can fold it away, and no syscall in the loop so it is a genuine spin —
 # the exact shape that produced the 1h42m orphans.
@@ -180,12 +191,11 @@ check "not reported as a timeout" 0 "$(grep -c 'timed out' "$T/f.err" || true)"
 
 # ── AXIS 1 — ⭐ a hanging test is KILLED, and the suite carries on.
 echo "axis 1 — ⭐ a spinning test is killed at the deadline, not waited on forever:"
-orph_pre=$(orphan_pids)
 t0=$(date +%s)
 rc=0
 # The harness `timeout 120` is the backstop, NOT the mechanism: if it is what stops
 # the run, the elapsed check below fails. CYRIUS_TEST_TIMEOUT=5 is the mechanism.
-( cd "$T" && CYRIUS_TEST_TIMEOUT=5 timeout 120 "$CY" test "$T/hang.tcyr" > "$T/h.out" 2> "$T/h.err" ) || rc=$?
+( cd "$T" && CYRIUS_TEST_TIMEOUT=5 timeout 120 sh -c 'echo $$ > "$0"; exec "$@"' "$T/h.pid" "$CY" test "$T/hang.tcyr" > "$T/h.out" 2> "$T/h.err" ) || rc=$?
 t1=$(date +%s)
 el=$((t1 - t0))
 check "the runner returns at all (did not need the harness backstop)" "yes" \
@@ -205,9 +215,7 @@ check "elapsed < 60s (killed by the deadline, not by the harness backstop)" "yes
 # Plain files, not process substitution: this script is #!/bin/sh and `<(…)` is a
 # bashism that dash does not parse. `comm -13` = "in after, not in before".
 sleep 1
-printf '%s\n' "$orph_pre"  > "$T/orph.pre"
-orphan_pids                > "$T/orph.post"
-orph_new=$(comm -13 "$T/orph.pre" "$T/orph.post" | grep -c . || true)
+orph_new=$(orphan_pids_of "$(cat "$T/h.pid" 2>/dev/null || true)" | grep -c . || true)
 check "nothing survives the single-file run (weak: PDEATHSIG alone would satisfy it)" 0 "$orph_new"
 
 # ── AXIS 1b — ⭐ THE ROW THE WHOLE INCIDENT WAS ABOUT: the deadline must KILL the
@@ -368,13 +376,20 @@ printf 'fn main() { return 0; }\nvar r = main();\n' > "$T/pj/src/main.cyr"
 # in between, so the gate failed inside a full `check.sh` run and PASSED when run on its own.
 # Observed at v6.5.34: `check.sh` red on `/tmp/cyrius-828621`, the same gate green standalone
 # minutes later, with no code difference. Diff the directory listing across the build instead.
-ls -d /tmp/cyrius-* 2>/dev/null | sort > "$T/dirs_before"
-( cd "$T/pj" && timeout 300 "$CY" build src/main.cyr "$T/pj/out" > "$T/pj.out" 2> "$T/pj.err" ) || true
+# ⛔ v6.6.6: and scope it to THIS PROCESS, not to "dirs that appeared during the build" — that
+# also caught ANOTHER check.sh's in-flight build on the same box (concurrent worktrees, a CI
+# matrix on one runner) and read its live cpp_* as this build's leak. The temp is named
+# /tmp/cyrius-<pid>[-t<nonce>…] after the CLI's own pid; the build records it (the `exec`
+# keeps the pid) and only that process's dirs are inspected. CHANGELOG [6.6.6]
+( cd "$T/pj" && timeout 300 sh -c 'echo $$ > "$0"; exec "$@"' "$T/pj.pid" "$CY" build src/main.cyr "$T/pj/out" > "$T/pj.out" 2> "$T/pj.err" ) || true
 check "premise: the build really did use the manifest prepend" 1 \
     "$([ -f "$T/pj/out" ] && echo 1 || echo 0)"
-ls -d /tmp/cyrius-* 2>/dev/null | sort > "$T/dirs_after"
 leftover=0
-newdirs=$(comm -13 "$T/dirs_before" "$T/dirs_after")
+bpid=$(cat "$T/pj.pid" 2>/dev/null || true)
+newdirs=""
+if [ -n "$bpid" ]; then
+    for d in /tmp/cyrius-"$bpid" /tmp/cyrius-"$bpid"-*; do [ -d "$d" ] && newdirs="$newdirs $d"; done
+fi
 for d in $newdirs; do
     n=$(ls -A "$d" 2>/dev/null | grep -c '^cpp_' || true)
     leftover=$((leftover + n))

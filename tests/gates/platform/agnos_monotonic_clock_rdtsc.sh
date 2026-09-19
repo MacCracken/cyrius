@@ -29,7 +29,7 @@
 # same release and it was not carried across — hence this note. CHANGELOG [6.6.5].
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_monotonic_clock_rdtsc: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL agnos_monotonic_clock_rdtsc: no build/cycc"; exit 1; }
 

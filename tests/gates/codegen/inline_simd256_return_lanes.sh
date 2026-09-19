@@ -18,7 +18,7 @@
 # needs no stdlib change and no compiler flag to hit.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: inline_simd256_return_lanes: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL inline_simd256_return_lanes: no build/cycc"; exit 1; }
 "$CC" < "$R/src/main.cyr" > "$T/cc" 2>/dev/null || { echo "FAIL inline_simd256_return_lanes: stage1 build failed"; exit 1; }

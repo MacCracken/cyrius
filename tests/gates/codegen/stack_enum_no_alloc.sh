@@ -23,7 +23,7 @@
 # the compiler being built, not in build/cycc, so a source revert flips this gate RED.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: stack_enum_no_alloc: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL stack_enum_no_alloc: no build/cycc"; exit 1; }
 "$CC" < "$R/src/main.cyr" > "$T/cc" 2>/dev/null || { echo "FAIL stack_enum_no_alloc: stage1 build failed"; exit 1; }

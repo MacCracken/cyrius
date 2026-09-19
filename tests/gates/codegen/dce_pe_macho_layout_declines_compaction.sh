@@ -28,7 +28,7 @@ CYCC="$ROOT/build/cycc"
 fail() { echo "FAIL: dce_pe_macho_layout_declines_compaction: $1"; exit 1; }
 [ -x "$CYCC" ] || fail "build/cycc not found or not executable"
 
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: dce_pe_macho_layout_declines_compaction: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT INT TERM
 mkdir -p "$WORK/src" "$WORK/lib"
 

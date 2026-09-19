@@ -13,10 +13,10 @@ CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 [ -f src/main_cx.cyr ] || { echo "SKIP: src/main_cx.cyr missing"; exit 0; }
 
-CYR=$(mktemp)
+CYR=$(mktemp) && [ -f "$CYR" ] || { echo "FAIL: cx_cli: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 cat cbt/cyrius.cyr | "$CC" > "$CYR" 2>/dev/null || { echo "FAIL: cyrius CLI build"; rm -f "$CYR"; exit 1; }
 chmod +x "$CYR"
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: cx_cli: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$CYR"; rm -rf "$T"' EXIT
 
 # (1) integer build --target=cx -> versioned .cyx -> run

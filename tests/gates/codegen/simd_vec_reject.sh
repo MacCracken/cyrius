@@ -19,7 +19,8 @@ set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
-T=$(mktemp); E=$(mktemp)
+T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: simd_vec_reject: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: simd_vec_reject: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$T" "$E"' EXIT
 
 # --- Guard 1: f32v4 .field hard-errors cleanly ---

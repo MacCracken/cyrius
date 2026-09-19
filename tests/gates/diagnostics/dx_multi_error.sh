@@ -8,7 +8,9 @@ set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
-T=$(mktemp); E=$(mktemp); O=$(mktemp)
+T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: dx_multi_error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: dx_multi_error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+O=$(mktemp) && [ -f "$O" ] || { echo "FAIL: dx_multi_error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$T" "$E" "$O"' EXIT
 
 # 1) TWO reachable functions, each a missing-semicolon (ERR_EXPECT) → BOTH reported,
@@ -60,7 +62,7 @@ done
 #     fell through to `ECALLFIX(S, -1)`, a SIGSEGV on the cx fork after a correct
 #     error line (x86 happened to survive the same -1). Run through the cx compiler
 #     built from the working tree, since that is where it faulted.
-CX=$(mktemp); trap 'rm -f "$T" "$E" "$O" "$CX"' EXIT
+CX=$(mktemp) && [ -f "$CX" ] || { echo "FAIL: dx_multi_error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -f "$T" "$E" "$O" "$CX"' EXIT
 cat "$ROOT/src/main_cx.cyr" | "$CC" > "$CX" 2>/dev/null && chmod +x "$CX" || { echo "FAIL: could not build the cx fork"; exit 1; }
 printf 'fn main(): i64 { var k = 3; var f = |x| x + k; return callptr(f, 1); }\nvar r = main();\nsyscall(60, r);\n' > "$T"
 for _cc in "$CC" "$CX"; do

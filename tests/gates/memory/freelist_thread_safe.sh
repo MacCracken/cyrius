@@ -36,8 +36,7 @@
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 ROOT=$(pwd)
-TMP="${TMPDIR:-/tmp}/flts.$$"
-mkdir -p "$TMP" || exit 2
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: freelist_thread_safe: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 fail() { echo "FAIL: $1"; exit 1; }

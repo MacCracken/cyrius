@@ -20,7 +20,7 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
-D=$(mktemp -d)
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: build_refuses_compiler_overwrite: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fails=0
 [ -x "$CY" ] || { echo "  FAIL: build/cyrius missing"; exit 1; }

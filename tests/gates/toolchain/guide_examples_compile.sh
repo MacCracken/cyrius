@@ -29,7 +29,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CYCC=${CYCC_BIN:-"$ROOT/build/cycc"}
 GUIDE="$ROOT/docs/guides/cyrius-guide.md"
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: guide_examples_compile: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: guide_examples_compile: $1"; exit 1; }
 [ -x "$CYCC" ] || fail "no cycc at $CYCC"

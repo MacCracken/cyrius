@@ -30,7 +30,9 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 cd "$ROOT"
-T=$(mktemp --suffix=.cyr); O=$(mktemp); E=$(mktemp)
+T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: derive_non_struct_rejected: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+O=$(mktemp) && [ -f "$O" ] || { echo "FAIL: derive_non_struct_rejected: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: derive_non_struct_rejected: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$T" "$O" "$E"' EXIT
 fail=0
 # Never merge stderr into the binary stream.

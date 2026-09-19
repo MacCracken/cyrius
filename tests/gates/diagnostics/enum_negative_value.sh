@@ -15,7 +15,9 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 cd "$ROOT"
-T=$(mktemp --suffix=.cyr); O=$(mktemp); E=$(mktemp)
+T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: enum_negative_value: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+O=$(mktemp) && [ -f "$O" ] || { echo "FAIL: enum_negative_value: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: enum_negative_value: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$T" "$O" "$E"' EXIT
 fail=0
 build() { rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?; }
@@ -126,7 +128,7 @@ fi
 # GVECP/SVECP) holds the flag. So the invariant to defend is no longer "one decoder" — it is
 # that NOTHING derives presence or value from bits inside the value again.
 ENUM_SRC="src/frontend/parse_types.cyr src/frontend/parse_decl.cyr src/frontend/parse_expr.cyr"
-GD=$(mktemp -d)
+GD=$(mktemp -d) && [ -d "$GD" ] || { echo "FAIL: enum_negative_value: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 # ⚠ CODE ONLY. A first draft of this axis grepped the raw files and went red on its OWN
 # explanatory comments (which necessarily quote the old `(1 << 63) | val` tag) and on
 # `GETFCOUNT`'s unrelated `& 0x7FFF…` over a DIFFERENT table. A structural gate that cannot

@@ -45,7 +45,7 @@
 # ⚠ NO `set -e`: exit codes are DATA.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: lase_simd_pairs: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 CC="$ROOT/build/cycc"
 FAIL=0
 

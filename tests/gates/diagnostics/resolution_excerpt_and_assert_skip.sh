@@ -32,7 +32,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: resolution_excerpt_and_assert_skip: build/cycc missing"; exit 1; }
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: resolution_excerpt_and_assert_skip: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: resolution_excerpt_and_assert_skip: $1"; exit 1; }
 
 # ── axis 1: a resolution error prints the excerpt AND the caret ────────────────────

@@ -59,7 +59,7 @@ for b in cyrius cycc; do
     fi
 done
 
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: build_temp_no_leak: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 # The unwritable fixture dir must be made writable again or `rm -rf` cannot clear it.
 trap 'chmod 700 "$T/ro" 2>/dev/null; rm -rf "$T"' EXIT
 
@@ -76,12 +76,21 @@ export CYRIUS_HOME
 # anything holds thousands of historical leftovers, so counting all of /tmp would
 # drown the signal. Count `cpp_*` ONLY inside directories that did not exist before
 # the invocation, which is exactly the temp this invocation made.
-snapshot() { ls -d /tmp/cyrius-* 2>/dev/null | sort; }
-# new_temps <snapshot-file> -> number of cpp_* files in dirs created since snapshot
+# ⛔ v6.6.6 — SCOPED TO THE PROCESS, NOT TO "DIRS THAT APPEARED". The count used to cover every
+# /tmp/cyrius-* dir created between a listing taken before the build and its exit, which
+# includes ANOTHER check.sh's in-flight build on the same box (concurrent worktrees, a CI matrix
+# on one runner): its live cpp_* read as this build's leak. The temp is named
+# /tmp/cyrius-<pid>[-t<nonce>…] after the CLI's own pid, so the build runs through `run_cli`,
+# which records that pid (the `exec` keeps it), and only that process's dirs are counted.
+# CHANGELOG [6.6.6]
+run_cli() { _pf=$1; shift; timeout 300 sh -c 'echo $$ > "$0"; exec "$@"' "$_pf" "$CYRIUS" "$@"; }
+# new_temps <pidfile> -> number of cpp_* files left in that process's temp dir(s)
 new_temps() {
-    ls -d /tmp/cyrius-* 2>/dev/null | sort > "$T/after.list"
+    _p=$(cat "$1" 2>/dev/null || true)
+    [ -n "$_p" ] || { echo "no-pid"; return; }
     n=0
-    for d in $(comm -13 "$1" "$T/after.list"); do
+    for d in /tmp/cyrius-"$_p" /tmp/cyrius-"$_p"-*; do
+        [ -d "$d" ] || continue
         c=$(ls "$d" 2>/dev/null | grep -c '^cpp_' || true)
         n=$((n + c))
     done
@@ -99,28 +108,29 @@ printf '[project]\nname = "tmpleak"\nversion = "0.0.1"\n' > "$T/proj/cyrius.cyml
 # ── AXIS 0 — ⭐ PREMISE: a temp is genuinely materialised for this fixture.
 echo "axis 0 — ⭐ PREMISE: the build materialises a temp (sibling include resolves):"
 b_rc=0
-( cd "$T/proj" && timeout 300 "$CYRIUS" build src/main.cyr build/ok > "$T/o0" 2>&1 ) || b_rc=$?
+( cd "$T/proj" && run_cli "$T/pid0" build src/main.cyr build/ok > "$T/o0" 2>&1 ) || b_rc=$?
 check "sibling-include build SUCCEEDS (so #@incdir, hence the temp, existed)" 0 "$b_rc"
 check "…and produced a binary" "yes" "$([ -s "$T/proj/build/ok" ] && echo yes || echo no)"
 
 # ── AXIS 4 — ⭐ ANTI-VACUOUS: the counter can actually see a temp.
 # Run before the delta axes so a broken counter is caught before it makes them pass.
 echo "axis 4 — ⭐ ANTI-VACUOUS: the counting method can see a planted temp:"
-snapshot > "$T/s4"
+# (the probe lives in the CLI's own /tmp/cyrius-* namespace — that is what is being counted —
+# under a name no CLI process can take: pids are numeric)
+echo "gateprobe-$$" > "$T/p4"
 probe_dir="/tmp/cyrius-gateprobe-$$"
 mkdir -p "$probe_dir" && : > "$probe_dir/cpp_probe"
-check "a planted cpp_ temp is counted" 1 "$(new_temps "$T/s4")"
+check "a planted cpp_ temp is counted" 1 "$(new_temps "$T/p4")"
 rm -rf "$probe_dir"
 
 # ── AXIS 1 — the missing-output-directory early return.
 echo "axis 1 — 'output directory does not exist' leaves no temp behind:"
-snapshot > "$T/s1"
 r1=0
-( cd "$T/proj" && timeout 300 "$CYRIUS" build src/main.cyr build/nope/deeper/out > "$T/o1" 2>&1 ) || r1=$?
+( cd "$T/proj" && run_cli "$T/pid1" build src/main.cyr build/nope/deeper/out > "$T/o1" 2>&1 ) || r1=$?
 check "build fails" "yes" "$([ "$r1" != 0 ] && echo yes || echo no)"
 check "…with the missing-directory message" 1 \
     "$(grep -c 'output directory does not exist' "$T/o1" || true)"
-check "…and leaks NO preprocessed temp" 0 "$(new_temps "$T/s1")"
+check "…and leaks NO preprocessed temp" 0 "$(new_temps "$T/pid1")"
 
 # ── AXIS 2 — the unwritable-output early return.
 echo "axis 2 — 'cannot write output' leaves no temp behind:"
@@ -129,23 +139,21 @@ if [ -w "$T/ro" ]; then
     # Running as root defeats the permission bit; the axis cannot be posed.
     echo "  ok: SKIP axis 2 — \$T/ro is writable anyway (running as root?) (skip)"
 else
-    snapshot > "$T/s2"
-    r2=0
-    ( cd "$T/proj" && timeout 300 "$CYRIUS" build src/main.cyr "$T/ro/out" > "$T/o2" 2>&1 ) || r2=$?
+        r2=0
+    ( cd "$T/proj" && run_cli "$T/pid2" build src/main.cyr "$T/ro/out" > "$T/o2" 2>&1 ) || r2=$?
     check "build fails" "yes" "$([ "$r2" != 0 ] && echo yes || echo no)"
     check "…with the unwritable-output message" 1 \
         "$(grep -c 'cannot write output' "$T/o2" || true)"
-    check "…and leaks NO preprocessed temp" 0 "$(new_temps "$T/s2")"
+    check "…and leaks NO preprocessed temp" 0 "$(new_temps "$T/pid2")"
 fi
 
 # ── AXIS 3 — ANTI-VACUOUS: the SUCCESS path is clean too, so the gate cannot be
 # satisfied by making the failure paths never materialise anything.
 echo "axis 3 — ANTI-VACUOUS: a SUCCESSFUL build leaves no temp behind either:"
-snapshot > "$T/s3"
 r3=0
-( cd "$T/proj" && timeout 300 "$CYRIUS" build src/main.cyr build/ok2 > "$T/o3" 2>&1 ) || r3=$?
+( cd "$T/proj" && run_cli "$T/pid3" build src/main.cyr build/ok2 > "$T/o3" 2>&1 ) || r3=$?
 check "build succeeds" 0 "$r3"
-check "…and leaks NO preprocessed temp" 0 "$(new_temps "$T/s3")"
+check "…and leaks NO preprocessed temp" 0 "$(new_temps "$T/pid3")"
 
 echo ""
 if [ "$fails" = "0" ]; then

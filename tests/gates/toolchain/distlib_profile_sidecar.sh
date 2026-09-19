@@ -24,7 +24,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CLI="$ROOT/build/cyrius"
 [ -x "$CLI" ] || CLI="$HOME/.cyrius/bin/cyrius"
 [ -x "$CLI" ] || { echo "SKIP: cyrius CLI missing"; exit 0; }
-W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: distlib_profile_sidecar: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/pkg/src" "$W/pkg/lib" "$W/pkg/dist" "$W/home/bin"
 # A hermetic CYRIUS_HOME needs BOTH bin/cycc and a real lib/: `_auto_deps()` resolves the
 # manifest's [deps].stdlib out of CYRIUS_HOME/lib, and a home with only bin/ dies with

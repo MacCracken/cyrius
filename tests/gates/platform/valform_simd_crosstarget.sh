@@ -29,7 +29,7 @@ if [ ! -x "$CC" ]; then
     exit 0
 fi
 
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: valform_simd_crosstarget: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 cat > "$T/probe.cyr" <<'EOF'
 #ifdef CYRIUS_HAS_VAL_SIMD_PARAMS

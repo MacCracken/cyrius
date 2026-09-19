@@ -39,7 +39,7 @@ HOMEDIR=${CYRIUS_HOME:-"$HOME/.cyrius"}
 VER=$(cat "$ROOT/VERSION")
 SNAP="$HOMEDIR/versions/$VER/lib"
 [ -d "$SNAP" ] || SNAP="$HOMEDIR/lib"
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: distlib_sidecar_verified: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: distlib_sidecar_verified: $1"; exit 1; }
 [ -d "$SNAP" ] || { echo "  SKIPPED: no stdlib snapshot at $SNAP"; exit 0; }

@@ -33,7 +33,7 @@ CYRIUS=${CYRIUS_BIN:-"$ROOT/build/cyrius"}
 [ -x "$CYRIUS" ] || CYRIUS=$(command -v cyrius)
 HOMEDIR=${CYRIUS_HOME:-"$HOME/.cyrius"}
 VER=$(cat "$ROOT/VERSION")
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: pin_redirect_honours_manifest: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: pin_redirect_honours_manifest: $1"; exit 1; }
 

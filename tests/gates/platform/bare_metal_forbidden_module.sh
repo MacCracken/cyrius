@@ -28,7 +28,9 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 cd "$ROOT"
-T=$(mktemp --suffix=.cyr); E=$(mktemp); O=$(mktemp)
+T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: bare_metal_forbidden_module: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: bare_metal_forbidden_module: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+O=$(mktemp) && [ -f "$O" ] || { echo "FAIL: bare_metal_forbidden_module: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$T" "$E" "$O"' EXIT
 fail=0
 

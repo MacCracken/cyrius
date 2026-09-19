@@ -45,7 +45,7 @@
 # corrupt symbols would itself be flaky, and would fail for reasons unrelated to the defect.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: emitelf_obj_scratch_derived: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 CC="$ROOT/build/cycc"
 FAIL=0
 

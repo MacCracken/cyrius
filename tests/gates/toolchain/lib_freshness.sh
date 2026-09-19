@@ -35,7 +35,7 @@ CY="$ROOT/build/cyrius"
 [ -x "$CY" ] || { echo "SKIP: build/cyrius missing"; exit 0; }
 VER=$(cat "$ROOT/VERSION")
 
-W=$(mktemp -d)
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: lib_freshness: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT
 
 SNAP="$W/home/versions/$VER/lib"

@@ -46,7 +46,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
 CC="${CC:-$ROOT/build/cycc}"
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: tail_call_literal_divert_depth: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT INT TERM
 fail=0
 

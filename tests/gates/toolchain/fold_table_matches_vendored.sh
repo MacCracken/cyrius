@@ -46,7 +46,11 @@ BAD=0
 UNPARSED=0
 # Table rows look like:  | `lib/<dep>.cyr` | <fold stamp> | <dep> <version> | <prose> |
 grep -oE '^\| `lib/[a-z0-9_]+\.cyr` \|[^|]*\| [a-z0-9_]+ [0-9][0-9.]*' "$DOC" | while read -r _; do :; done
-grep -E '^\| `lib/[a-z0-9_]+\.cyr` \|' "$DOC" > /tmp/_foldrows.$$ || true
+# v6.6.6: scratch files in a CHECKED mktemp dir (they were /tmp/_foldrows.$$ / _foldres.$$ —
+# ignoring TMPDIR, unchecked, and left behind on any early exit). CHANGELOG [6.6.6]
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: fold_table_matches_vendored: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'rm -rf "$W"' EXIT
+grep -E '^\| `lib/[a-z0-9_]+\.cyr` \|' "$DOC" > "$W/foldrows" || true
 while IFS= read -r line; do
     dep=$(printf '%s' "$line" | sed -nE 's/^\| `lib\/([a-z0-9_]+)\.cyr`.*/\1/p')
     [ -n "$dep" ] || continue
@@ -65,17 +69,16 @@ while IFS= read -r line; do
         echo "  $dep: table says $stated, lib/$dep.cyr is $actual"
         BAD=$((BAD + 1))
     fi
-    echo "$dep $stated $actual" >> /tmp/_foldres.$$
-done < /tmp/_foldrows.$$
+    echo "$dep $stated $actual" >> "$W/foldres"
+done < "$W/foldrows"
 
 # The while-loop above runs in this shell (input redirection, not a pipe), so the counters
 # survive — but recompute from the result file too, because a subshell here would silently
 # zero them and the gate would pass vacuously. That failure mode is the whole reason axis 2
 # exists.
-[ -f /tmp/_foldres.$$ ] || fail "no fold rows were parsed at all — the table shape changed"
-NROWS=$(wc -l < /tmp/_foldres.$$ | tr -d ' ')
-MISMATCH=$(awk '$2 != $3' /tmp/_foldres.$$ | wc -l | tr -d ' ')
-rm -f /tmp/_foldrows.$$ /tmp/_foldres.$$
+[ -f "$W/foldres" ] || fail "no fold rows were parsed at all — the table shape changed"
+NROWS=$(wc -l < "$W/foldres" | tr -d ' ')
+MISMATCH=$(awk '$2 != $3' "$W/foldres" | wc -l | tr -d ' ')
 
 # ── axis 1: every stated version equals the vendored one ────────────────────────────
 [ "$MISMATCH" -eq 0 ] || fail "$MISMATCH fold-table row(s) disagree with lib/ (see above)"

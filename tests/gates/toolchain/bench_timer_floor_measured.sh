@@ -63,8 +63,7 @@
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 ROOT=$(pwd)
-TMP="${TMPDIR:-/tmp}/btfg.$$"
-mkdir -p "$TMP" || exit 2
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: bench_timer_floor_measured: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 F=lib/bench.cyr

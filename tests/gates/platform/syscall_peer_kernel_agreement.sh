@@ -73,7 +73,7 @@ awk '$1 == 46 && $2 == "ftruncate" { f = 1 } END { exit !f }' "$KA" \
   || { echo "FAIL: $KA does not say 46 = ftruncate — this is not the aarch64 table"; exit 1; }
 
 # ── the routed rows, decoded from the emitter (ELF arm only; see esysxlat_row_order.sh) ──
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: syscall_peer_kernel_agreement: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 awk '
 /^fn ESYSXLAT\(/ { on = 1 }
 on && /^fn / && !/^fn ESYSXLAT\(/ { on = 0 }

@@ -28,7 +28,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: lazy_init_release_fence: build/cycc missing"; exit 1; }
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: lazy_init_release_fence: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: lazy_init_release_fence: $1"; exit 1; }
 
 # ── axis 1: every lazy-init publish site is preceded by the fence ───────────────────

@@ -12,8 +12,7 @@
 # is wrongly dropped).
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
-TMP="${TMPDIR:-/tmp}/frametrim.$$"
-mkdir -p "$TMP" || exit 2
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: frametrim: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 # (1) default (trimmed) cycc self-hosts byte-identical.

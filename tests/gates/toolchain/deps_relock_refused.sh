@@ -47,7 +47,7 @@ cd "$ROOT"
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: deps_relock_refused: build/cycc missing"; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "SKIP: deps_relock_refused: git not found"; exit 0; }
-W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: deps_relock_refused: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$W"' EXIT
 pass=0; fail=0
 ok()  { echo "  ok: $1"; pass=$((pass+1)); }
 bad() { echo "  FAIL: $1"; fail=$((fail+1)); }

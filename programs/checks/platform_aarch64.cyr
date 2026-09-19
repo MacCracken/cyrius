@@ -91,7 +91,10 @@ fn _aarch64_syscalls_gate(): i64 {
         return 1;
     }
 
-    var remote = "/tmp/cyr_aarch64_cluster_smoke";
+    # v6.6.6: per-run remote names (see _remote_name) — a fixed /tmp name on pi was shared by
+    # every concurrent check.sh. The fixture's fs probe writes a RELATIVE file, so it runs in
+    # its own remote dir. CHANGELOG [6.6.6]
+    var remote = _remote_name("/tmp/", "cyr_aarch64_cluster_smoke", "");
     var scp_rc = _scp_to(target, bin, remote);
     sys_unlink(bin);
     if (scp_rc != 0) {
@@ -109,13 +112,19 @@ fn _aarch64_syscalls_gate(): i64 {
     }
 
     var cmd_sb = str_builder_new();
-    str_builder_add_cstr(cmd_sb, "chmod +x ");
+    str_builder_add_cstr(cmd_sb, "mkdir ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, ".d && cd ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, ".d && chmod +x ");
     str_builder_add_cstr(cmd_sb, remote);
     str_builder_add_cstr(cmd_sb, " && ");
     str_builder_add_cstr(cmd_sb, remote);
-    str_builder_add_cstr(cmd_sb, " >/dev/null; rc=$?; rm -f ");
+    str_builder_add_cstr(cmd_sb, " >/dev/null; rc=$?; cd /; rm -rf ");
     str_builder_add_cstr(cmd_sb, remote);
-    str_builder_add_cstr(cmd_sb, " /tmp/cyrius_regr_fs_probe.txt; exit $rc");
+    str_builder_add_cstr(cmd_sb, " ");
+    str_builder_add_cstr(cmd_sb, remote);
+    str_builder_add_cstr(cmd_sb, ".d; exit $rc");
     var cmd = str_data(str_builder_build(cmd_sb));
     var ec = _ssh_remote_exit(target, cmd);
 
@@ -189,7 +198,7 @@ fn _aarch64_struct_byval_gate(): i64 {
         return 1;
     }
 
-    var remote = "/tmp/cyr_aarch64_byval";
+    var remote = _remote_name("/tmp/", "cyr_aarch64_byval", "");   # per-run (CHANGELOG [6.6.6])
     var scp_rc = _scp_to(target, bin, remote);
     sys_unlink(bin);
     if (scp_rc != 0) {
@@ -280,7 +289,7 @@ fn _aarch64_sub_byte_field_load_gate(): i64 {
         return 1;
     }
 
-    var remote = "/tmp/cyr_aarch64_subbyte";
+    var remote = _remote_name("/tmp/", "cyr_aarch64_subbyte", "");   # per-run (CHANGELOG [6.6.6])
     var scp_rc = _scp_to(target, bin, remote);
     sys_unlink(bin);
     if (scp_rc != 0) {
@@ -388,7 +397,7 @@ fn _aarch64_native_selfhost_gate(): i64 {
     }
 
     # Step 2: ship cc5_native to remote.
-    var remote_cc = "/tmp/cyr_selfhost_cc5";
+    var remote_cc = _remote_name("/tmp/", "cyr_selfhost_cc5", "");   # per-run (CHANGELOG [6.6.6])
     var scp_rc = _scp_to(target, cc_native, remote_cc);
     sys_unlink(cc_native);
     if (scp_rc != 0) {
@@ -406,7 +415,7 @@ fn _aarch64_native_selfhost_gate(): i64 {
     }
 
     # Step 3: tar-pipe src + lib to remote.
-    var remote_tree = "/tmp/cyr_selfhost_tree";
+    var remote_tree = _remote_name("/tmp/", "cyr_selfhost_tree", "");
     var tar_rc = _tar_pipe_ssh(target, ROOT_PATH, "src lib", remote_tree);
     if (tar_rc != 0) {
         _p("  ");
@@ -500,7 +509,7 @@ fn _aarch64_f64_basic_gate(): i64 {
         return 1;
     }
 
-    var remote = "/tmp/cyrius_f64_aa_smoke";
+    var remote = _remote_name("/tmp/", "cyrius_f64_aa_smoke", "");   # per-run (CHANGELOG [6.6.6])
     var scp_rc = _scp_to(target, bin, remote);
     sys_unlink(bin);
     if (scp_rc != 0) {
@@ -596,7 +605,7 @@ fn _aarch64_f64_polyfill_gate(): i64 {
         return 1;
     }
 
-    var remote = "/tmp/cyrius_polyfill_aa_smoke";
+    var remote = _remote_name("/tmp/", "cyrius_polyfill_aa_smoke", "");   # per-run (CHANGELOG [6.6.6])
     var scp_rc = _scp_to(target, bin, remote);
     sys_unlink(bin);
     if (scp_rc != 0) {

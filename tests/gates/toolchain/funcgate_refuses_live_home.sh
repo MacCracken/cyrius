@@ -28,7 +28,7 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 STAGE="$ROOT/scripts/funcgate-stage.sh"
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: funcgate_refuses_live_home: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: funcgate_refuses_live_home: $1"; exit 1; }
 

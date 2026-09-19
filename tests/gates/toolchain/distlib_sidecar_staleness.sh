@@ -31,7 +31,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CYRIUS=${CYRIUS_BIN:-"$ROOT/build/cyrius"}
 [ -x "$CYRIUS" ] || CYRIUS=$(command -v cyrius)
 VER=$(cat "$ROOT/VERSION")
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: distlib_sidecar_staleness: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: distlib_sidecar_staleness: $1"; exit 1; }
 # CYRIUS_RESOLVED=1: a fixture pinning another version would re-exec an older binary.

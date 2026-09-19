@@ -22,7 +22,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: build_reads_manifest_paths: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$W"' EXIT
 fail() { echo "FAIL build_reads_manifest_paths: $1" >&2; exit 1; }
 
 # Build the wrapper from source against build/cycc directly — never the installed `cyrius`,

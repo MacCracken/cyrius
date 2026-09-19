@@ -17,8 +17,7 @@
 # unreliable here because `syscall()` routes through a shared arity helper.)
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
-TMP="${TMPDIR:-/tmp}/flagnos.$$"
-mkdir -p "$TMP" || exit 2
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: freelist_agnos_mmap: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 cat > "$TMP/fl.cyr" <<'EOF'

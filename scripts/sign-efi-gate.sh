@@ -16,7 +16,7 @@ cd "$ROOT"
 
 command -v openssl >/dev/null 2>&1 || { echo "  SKIP sign-efi-gate: openssl not available"; exit 0; }
 
-TMP=$(mktemp -d)
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: sign-efi-gate: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 # --- build the signer if missing ---

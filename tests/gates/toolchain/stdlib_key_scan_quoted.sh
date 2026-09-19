@@ -24,7 +24,7 @@ CLI="$ROOT/build/cyrius"
 [ -x "$CLI" ] || CLI="$HOME/.cyrius/bin/cyrius"
 [ -x "$CLI" ] || { echo "SKIP: cyrius CLI missing"; exit 0; }
 cd "$ROOT"
-W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: stdlib_key_scan_quoted: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/pkg/src" "$W/pkg/dist" "$W/home/bin"
 cp "$ROOT/build/cycc" "$W/home/bin/cycc"; chmod +x "$W/home/bin/cycc"
 cp -R "$ROOT/lib" "$W/home/lib"

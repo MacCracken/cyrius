@@ -416,13 +416,102 @@ fn _file_size(path): i64 {
     return load64(sbuf + 48);
 }
 
+# ⛔ v6.6.6 — every scratch path lives in ONE private dir per run, created with a CHECKED
+# exclusive mkdir under $TMPDIR (default /tmp), and removed at the end. `_tmp_path` used to
+# hand out "/tmp/<prefix><pid>" — TMPDIR ignored, never checked, and the same families of
+# gates also used FIXED names (a local .so, the EFI fallback probe, and REMOTE paths on
+# ecb/pi/cass). Two check.sh runs at once clobbered those: measured this release, ecb's
+# /tmp/cyr_macho_peep was replaced mid-T3 by the other run's binary and T3 failed rc=126.
+# A dir we cannot create is a hard error, not a silent fallback. CHANGELOG [6.6.6]
+fn _run_tmp(): i64 {
+    if (_RUN_TMP != 0) { return _RUN_TMP; }
+    var base = getenv("TMPDIR");
+    if (base == 0) { base = "/tmp"; }
+    if (strlen(base) == 0) { base = "/tmp"; }
+    var n = 0;
+    while (n < 64) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, base);
+        str_builder_add_cstr(sb, "/cyrcheck.");
+        str_builder_add_int(sb, sys_getpid());
+        str_builder_add_cstr(sb, ".");
+        str_builder_add_int(sb, n);
+        var d = str_data(str_builder_build(sb));
+        if (sys_mkdir(d, 448) == 0) { _RUN_TMP = d; return d; }
+        n = n + 1;
+    }
+    _p("error: check: cannot create a private scratch dir under ");
+    _p(base);
+    println(" (TMPDIR) — refusing to run with shared /tmp names");
+    syscall(60, 1);
+    return 0;
+}
+
+fn _run_tmp_cleanup(): i64 {
+    if (_RUN_TMP == 0) { return 0; }
+    _exec_in_dir3("/", "/bin/rm", "-rf", _RUN_TMP, 0, 0);
+    return 0;
+}
+
 fn _tmp_path(prefix): i64 {
     var sb = str_builder_new();
-    str_builder_add_cstr(sb, "/tmp/");
+    str_builder_add_cstr(sb, _run_tmp());
+    str_builder_add_cstr(sb, "/");
     str_builder_add_cstr(sb, prefix);
     str_builder_add_int(sb, sys_getpid());
     var s = str_builder_build(sb);
     return str_data(s);
+}
+
+fn _cat2(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+# cass: the .bat that runs `exe` and echoes its exit code (ERRORLEVEL does not cross ssh).
+fn _pe_bat_text(exe): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "@echo off\n");
+    str_builder_add_cstr(sb, exe);
+    str_builder_add_cstr(sb, "\necho exit=%ERRORLEVEL%\n");
+    return str_data(str_builder_build(sb));
+}
+
+# cass: remove the per-run .exe/.bat pair.
+fn _pe_del(target, exe, bat): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "del /f /q ");
+    str_builder_add_cstr(sb, exe);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, bat);
+    str_builder_add_cstr(sb, " 2>NUL");
+    return _ssh_remote_exit(target, str_data(str_builder_build(sb)));
+}
+
+# A scratch name on a REMOTE host (ecb/pi/cass) that no other run shares: `<base>_<tag>`,
+# tag = this run's pid + 32 random bits, so two runs from one box — or from two boxes — never
+# land on one remote path. `dir` is "/tmp/" for the POSIX hosts and "" for cass (its ssh
+# cwd). CHANGELOG [6.6.6]
+fn _remote_name(dir, base, ext): i64 {
+    if (_RUN_TAG == 0) {
+        var tb = str_builder_new();
+        str_builder_add_int(tb, sys_getpid());
+        str_builder_add_cstr(tb, "_");
+        var rnd[8];
+        store64(&rnd, 0);
+        file_read_all("/dev/urandom", &rnd, 4);
+        str_builder_add_int(tb, load32(&rnd));
+        _RUN_TAG = str_data(str_builder_build(tb));
+    }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, dir);
+    str_builder_add_cstr(sb, base);
+    str_builder_add_cstr(sb, "_");
+    str_builder_add_cstr(sb, _RUN_TAG);
+    str_builder_add_cstr(sb, ext);
+    return str_data(str_builder_build(sb));
 }
 
 fn _buf_eq(p, s, n): i64 {

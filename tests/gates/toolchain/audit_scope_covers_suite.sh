@@ -36,7 +36,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: audit_scope_covers_suite: build/cycc missing"; exit 1; }
 fail() { echo "FAIL: audit_scope_covers_suite: $1"; exit 1; }
-WORK=$(mktemp -d) && [ -d "$WORK" ] || fail "mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: audit_scope_covers_suite: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 
 # The scratch tree. `_audit_sweep` walks lib/ src/ programs/ tests/ benches/ fuzz/ cbt/ (lib/

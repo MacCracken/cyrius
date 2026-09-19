@@ -26,7 +26,7 @@ if [ "$uname_s" != "Linux" ] || [ "$uname_m" != "x86_64" ]; then
 fi
 if [ ! -x "$CYCC" ]; then echo "SKIP: build/cycc not built"; exit 0; fi
 
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: ir_liveness_cfg: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$TMP"' EXIT
 
 cat > "$TMP/cfg.cyr" <<'EOF'
 fn classify(x): i64 {

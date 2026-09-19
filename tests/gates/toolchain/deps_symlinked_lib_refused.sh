@@ -33,7 +33,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CYRIUS=${CYRIUS_BIN:-"$ROOT/build/cyrius"}
 [ -x "$CYRIUS" ] || CYRIUS=$(command -v cyrius)
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: deps_symlinked_lib_refused: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: deps_symlinked_lib_refused: $1"; exit 1; }
 

@@ -34,7 +34,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CYRIUS=${CYRIUS_BIN:-"$ROOT/build/cyrius"}
 [ -x "$CYRIUS" ] || CYRIUS=$(command -v cyrius)
 VER=$(cat "$ROOT/VERSION")
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: distlib_check_full_compare: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: distlib_check_full_compare: $1"; exit 1; }
 

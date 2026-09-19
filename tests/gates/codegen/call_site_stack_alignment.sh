@@ -170,7 +170,7 @@ if [ ! -x "$CYCC" ]; then
     exit 0
 fi
 
-TMP=$(mktemp -d)
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: call_site_stack_alignment: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 cat > "$TMP/leaf.c" <<'CEOF'

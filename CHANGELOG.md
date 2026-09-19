@@ -884,6 +884,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   under both repros every one of the five FAILs naming the crash or the empty probe; a normal run prints
   the same `ok` lines.
 
+- **Two check.sh runs at once clobbered each other, and ~150 gates proceeded on a failed `mktemp`.**
+  Measured this release: while another check.sh ran, ecb's `/tmp/cyr_macho_peep` — a FIXED remote
+  name the check driver scp'd the Mach-O T3 probe to — was replaced by the other run's binary and T3
+  failed rc=126, a failure that reads as a codegen bug. Grepping the shape: the driver
+  (`programs/checks/`) used fixed names for every remote leg (4 on ecb, 7 on pi — including a fixture
+  that wrote `/tmp/cyrius_regr_fs_probe.txt` — and 8 `.exe`/`.bat` names plus `C:\cyr_pe_paths_test.*`
+  on cass), a fixed local `/tmp/cyrius_audit_shared.so` baked into the dlopen runner, the EFI
+  fallback probe's `/tmp/audit_efi_fallback_*` (and `cwd=/tmp`, lib-free only by luck), and
+  `_tmp_path` built `/tmp/<prefix><pid>` ignoring `TMPDIR`; the shell gates `io_rdwr_agnos`,
+  `syscall_wrapper_pass`, `fold_table_matches_vendored` and `scripts/agnos-crossbuild-gate.sh` (26
+  fixed `/tmp/_agnos_*` names) wrote fixed or TMPDIR-blind paths; 142 lines in 137 gates had a bare
+  `$(mktemp)`, 7 more hand-built `"${TMPDIR:-/tmp}/name.$$"` + `mkdir -p`, and
+  `scripts/sign-efi-gate.sh` was unchecked too. And three gates OBSERVED the CLI's shared
+  `/tmp/cyrius-*` namespace by snapshot delta (`build_temp_no_leak`, `test_runner_bounded`,
+  `deps_git_cache_verified`), so another run's in-flight build counted as this run's leak. Fix: the
+  driver creates ONE private run dir under `$TMPDIR` with a checked exclusive `mkdir` (hard error if
+  it cannot) and removes it at the end; `_tmp_path` lives there; remote names come from
+  `_remote_name` (pid + 32 random bits); the dlopen runner opens `./cyrius_audit_shared.so` from the
+  run dir; every gate takes its temp dir from `V=$(mktemp …) && [ -d|-f "$V" ] || { …; exit 1; }`
+  and names no fixed `/tmp` path; the three observers record the CLI's pid (`exec` keeps it) and
+  inspect only `/tmp/cyrius-<pid>[-*]`. The first concurrent proof run found one more shared
+  resource of the same kind: `tests/tcyr/crypto/tls_native_scaffold.tcyr` bound FIXED TCP ports
+  44323/44324/44325 for its OpenSSL `s_client` interop, so one run's client reached the other run's
+  server and this run's `accept()` blocked — and because the check driver runs each `.tcyr` with no
+  timeout, check.sh hung there (killed by PID after ~5 min). It now binds `127.0.0.1:0` and reads
+  the port back with getsockname. The second attempt (both runs 254/255) found the last two: the
+  same OBSERVATION shape in processes — `test_runner_bounded` axis 1 counted every
+  `/tmp/cyrius-*/test_bin` on the box before/after, so each run counted the OTHER run's spinning
+  child as its own escaped one (it now matches `/tmp/cyrius-<its runner's pid>…/test_bin`; a
+  survivor is reparented, so ancestry cannot scope it but the pid in its path can), and
+  `distlib_leaf_lookup_memory` summed the RSS of every process named `cyrius` on the box (it now
+  samples its own distlib pid). All 153 mktemp-using gates now FAIL loudly under
+  `TMPDIR=/nonexistent`; the other 24 create no temp file at all (static scans), so none can pass
+  vacuously on a broken temp dir. Proven by two full `sh scripts/check.sh` runs CONCURRENTLY from two
+  scratch worktrees, both GREEN (ssh legs pointed at an unresolvable host — the remote-name changes
+  were exercised end-to-end against a faked ssh/scp layer, not on ecb/pi/cass). No compiler change.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -1018,6 +1055,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   byte-for-byte, no temp beside it; unconstrained each writes the expected bytes. Mutation-proven per
   writer (each 6.6.5 file put back: the static axis names it, and the dynamic axis sees the
   truncation). ~1 s.
+- **`gates_never_write_tree.sh` axis 5** — STATIC, over every gate, `scripts/check.sh`, the
+  `scripts/*-gate.sh` check.sh runs (derived from check.sh) and `programs/checks/*.cyr`: every temp
+  dir is the canonical checked mktemp, one per line (a hand-built `${TMPDIR:-/tmp}/…` is refused; a
+  mktemp TEMPLATE is the one legitimate use), no gate names a fixed `/tmp/<name>`, and the driver
+  carries no `"/tmp/<name>"` literal. Exempt, read-only: `/tmp/cyrius-*` (the CLI's own temp,
+  CVE-35/36) and `/tmp/.wine-*`. Self-tested on 7 shapes + 2 clean files; mutation-proven six ways
+  (four 6.6.5 files put back, each detector half disabled).
 
 ## [6.6.5] — 2026-09-19
 

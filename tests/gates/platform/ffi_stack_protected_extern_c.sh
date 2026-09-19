@@ -60,7 +60,7 @@ if [ ! -x "$CYCC" ]; then
     exit 0
 fi
 
-TMP=$(mktemp -d)
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: ffi_stack_protected_extern_c: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 # --- (A) stack-protected C library: 4/5/6/7-arg int fns, each with an array

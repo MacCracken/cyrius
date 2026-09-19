@@ -36,7 +36,7 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
 CC="${CC:-$ROOT/build/cycc}"
 [ -x "$CC" ] || { printf "  SKIP: public_marker_scoped_to_its_item — %s not built\n" "$CC"; exit 0; }
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: public_marker_scoped_to_its_item: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 fail=0
 n=0
 

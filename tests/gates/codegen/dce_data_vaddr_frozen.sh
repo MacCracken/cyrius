@@ -69,7 +69,7 @@ done
 #    cannot catch the bucket-crossing case above.
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || fail "build/cycc missing"
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: dce_data_vaddr_frozen: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$WORK"' EXIT
 cd "$ROOT"
 printf 'include "lib/syscalls.cyr"\nvar gz = 0;\nfn unused_a(): i64 { return 1; }\nfn unused_b(): i64 { return 2; }\nfn main(): i64 { store64(&gz, 7); return load64(&gz) - 7; }\n' > "$WORK/t.cyr"
 CYRIUS_DCE=1 "$CC" < "$WORK/t.cyr" > "$WORK/t.bin" 2>/dev/null || fail "DCE build failed"

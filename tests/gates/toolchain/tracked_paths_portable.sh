@@ -30,7 +30,7 @@ cd "$R" || exit 1
 command -v git >/dev/null 2>&1 || { echo "FAIL tracked_paths_portable: git not available"; exit 1; }
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "FAIL tracked_paths_portable: not a git repo"; exit 1; }
 
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: tracked_paths_portable: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 git ls-files > "$T/paths" 2>/dev/null
 N=$(wc -l < "$T/paths")
 # Anti-vacuous floor. An empty or truncated listing must not read as "all paths portable"

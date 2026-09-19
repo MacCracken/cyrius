@@ -1901,14 +1901,19 @@ fn _efi_entry_alignment_gate(): i64 {
 fn _efi_stdlib_fallback_gate(): i64 {
     var label = "stdlib fallback resolves lib/fnptr.cyr without vendored ./lib (v6.0.1; rename-skip regression)";
 
-    var src_path = "/tmp/audit_efi_fallback_src.cyr";
+    # v6.6.6: scratch paths and the cwd come from this run's private dir — they were fixed
+    # /tmp names, and cwd=/tmp was only lib-free by luck (a /tmp/lib would have masked the
+    # fallback). The cwd is a fresh, empty dir made for this gate. CHANGELOG [6.6.6]
+    var src_path = _tmp_path("audit_efi_fallback_src_");
+    var efi_cwd = _tmp_path("audit_efi_fallback_cwd_");
+    if (sys_mkdir(efi_cwd, 448) != 0) { _check(label, 1); return 1; }
     var fd = sys_open(src_path, 577, 420);
     if (fd < 0) { _check(label, 1); return 1; }
     var src = "include \"lib/fnptr.cyr\"\nfn main(): i64 { var fp = 0; var r = fncall1(fp, 0); return r; }\n";
     sys_write(fd, src, strlen(src));
     sys_close(fd);
 
-    var bin_path = "/tmp/audit_efi_fallback_bin";
+    var bin_path = _tmp_path("audit_efi_fallback_bin_");
 
     var pipefd[16];
     var pr = sys_pipe(&pipefd);
@@ -1948,7 +1953,7 @@ fn _efi_stdlib_fallback_gate(): i64 {
         sys_dup2(out_fd, 1); sys_close(out_fd);
         var devnull = sys_open("/dev/null", 1, 0);
         if (devnull >= 0) { sys_dup2(devnull, 2); sys_close(devnull); }
-        var cd_rc = syscall(SYS_CHDIR, "/tmp");
+        var cd_rc = syscall(SYS_CHDIR, efi_cwd);
         if (cd_rc < 0) { sys_exit(126); }
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv,     CC_PATH);

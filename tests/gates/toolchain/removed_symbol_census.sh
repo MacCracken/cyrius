@@ -34,7 +34,7 @@ SIBLINGS=${CYRIUS_SIBLING_ROOT:-"$(dirname "$ROOT")"}
 SNAPSHOT="$ROOT/docs/api-surface.snapshot"
 ALLOW="$ROOT/docs/retired-symbols.allow"
 TOOL="$ROOT/build/cyrius_api_surface"
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: removed_symbol_census: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: removed_symbol_census: $1"; exit 1; }
 cd "$ROOT"

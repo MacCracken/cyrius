@@ -170,7 +170,7 @@ if [ ! -x "$CC" ]; then
     exit 1
 fi
 
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: duplicate_fn_attribution: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
 # Compile $1 (relative to $T) and print the file:line the FIRST duplicate-fn warning

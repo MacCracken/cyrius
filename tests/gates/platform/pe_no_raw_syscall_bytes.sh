@@ -29,7 +29,9 @@ CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 cd "$ROOT"
 command -v objdump >/dev/null 2>&1 || { echo "SKIP: objdump not available (a raw byte scan is NOT an acceptable substitute — see raw_syscalls)"; exit 0; }
-T=$(mktemp --suffix=.cyr); B=$(mktemp); E=$(mktemp)
+T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: pe_no_raw_syscall_bytes: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+B=$(mktemp) && [ -f "$B" ] || { echo "FAIL: pe_no_raw_syscall_bytes: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: pe_no_raw_syscall_bytes: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$T" "$B" "$E"' EXIT
 fail=0
 

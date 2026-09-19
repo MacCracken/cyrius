@@ -14,8 +14,7 @@
 # runtime exit codes reload-elim on vs off (behavior-preserving — no live value dropped).
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
-TMP="${TMPDIR:-/tmp}/reloadelim.$$"
-mkdir -p "$TMP" || exit 2
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: reloadelim: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 # (1) default (reload-elim) cycc self-hosts byte-identical.

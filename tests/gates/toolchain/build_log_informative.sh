@@ -27,7 +27,7 @@
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CY="$ROOT/build/cyrius"
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: build_log_informative: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 FAIL=0
 r() { if [ "$1" != "$2" ]; then echo "FAIL: $3 — expected '$2', got '$1'"; FAIL=1; else echo "  ok: $3"; fi; }
 

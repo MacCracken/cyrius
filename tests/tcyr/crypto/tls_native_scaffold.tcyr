@@ -1208,6 +1208,35 @@ sys_close(fd0);
 var wstatus[4];
 sys_waitpid(pid, &wstatus, 0);
 
+# v6.6.6: every OpenSSL interop listener binds 127.0.0.1:0 and reads the kernel-assigned port
+# back. The fixed ports 44323/44324/44325 were shared by every concurrent run of this suite (two
+# check.sh at once — worktrees, a CI matrix on one runner): one run's s_client reached the OTHER
+# run's server and this run's accept() blocked until the runner's timeout. CHANGELOG [6.6.6]
+fn _tn_listen_ephemeral(sa): i64 {   # returns the listening fd (< 0 on failure); sa = bound addr
+    var lfd = sys_socket(2, 1, 0);
+    if (lfd < 0) { return lfd; }
+    var z = 0;
+    while (z < 16) { store8(sa + z, 0); z = z + 1; }
+    store8(sa, 2);                                  # AF_INET (host order)
+    store8(sa + 4, 127); store8(sa + 7, 1);         # 127.0.0.1 (BE), port 0 = kernel picks
+    if (sys_bind(lfd, sa, 16) != 0) { return 0 - 1; }
+    var sl[8];
+    store32(&sl, 16);
+    if (syscall(SYS_GETSOCKNAME, lfd, sa, &sl) != 0) { return 0 - 1; }
+    sys_listen(lfd, 1);
+    return lfd;
+}
+
+fn _tn_port_of(sa): i64 { return ((load8(sa + 2) & 0xFF) << 8) | (load8(sa + 3) & 0xFF); }
+
+# "127.0.0.1:<port>" for `openssl s_client -connect`
+fn _tn_connect_arg(sa): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "127.0.0.1:");
+    str_builder_add_int(sb, _tn_port_of(sa));
+    return str_data(str_builder_build(sb));
+}
+
 # ================================================================
 # v6.0.23 — OpenSSL s_client real-peer interop
 # ================================================================
@@ -1224,18 +1253,11 @@ assert_eq(tls_native_get_key_algo(s23), SIG_PRIVKEY_ECDSA_P256, "openssl key alg
 
 # Real interop only when openssl is present (skip cleanly otherwise).
 if (sys_access("/usr/bin/openssl", 0) == 0) {
-    var lfd = sys_socket(2, 1, 0);                  # AF_INET, SOCK_STREAM
-    var one23[4];
-    store32(&one23, 1);
-    sys_setsockopt(lfd, 1, 2, &one23, 4);           # SOL_SOCKET, SO_REUSEADDR
     var sa23[16];
-    var z23 = 0;
-    while (z23 < 16) { store8(&sa23 + z23, 0); z23 = z23 + 1; }
-    store8(&sa23, 2);                               # AF_INET (host order)
-    store8(&sa23 + 2, 0xAD); store8(&sa23 + 3, 0x23);   # port 44323 (BE)
-    store8(&sa23 + 4, 127); store8(&sa23 + 7, 1);   # 127.0.0.1 (BE)
-    assert_eq(sys_bind(lfd, &sa23, 16), 0, "bind 127.0.0.1:44323");
-    sys_listen(lfd, 1);
+    var lfd = _tn_listen_ephemeral(&sa23);
+    assert_gt(lfd, 0, "bind + listen 127.0.0.1:0 (kernel-assigned port)");
+    assert_gt(_tn_port_of(&sa23), 0, "getsockname reports the assigned port");
+    var conn23 = _tn_connect_arg(&sa23);
     var pid23 = sys_fork();
     if (pid23 == 0) {
         # Child: exec `openssl s_client` (quiet, stdin = /dev/null).
@@ -1246,7 +1268,7 @@ if (sys_access("/usr/bin/openssl", 0) == 0) {
         store64(&av + 0, "openssl");
         store64(&av + 8, "s_client");
         store64(&av + 16, "-connect");
-        store64(&av + 24, "127.0.0.1:44323");
+        store64(&av + 24, conn23);
         store64(&av + 32, "-tls1_3");
         store64(&av + 40, 0);
         var ev[8];
@@ -1871,21 +1893,18 @@ var s77a = tls_native_new_server(cert23, 385, key23, 138);
 assert_eq(tls_native_server_load_creds(s77a), TLS_OK, "load cert+key (AES variant)");
 
 if (sys_access("/usr/bin/openssl", 0) == 0) {
-    # ---- ECDHE-ECDSA-AES256-GCM-SHA384, port 44324 ----
-    var lfa = sys_socket(2, 1, 0);
-    var one77[4]; store32(&one77, 1); sys_setsockopt(lfa, 1, 2, &one77, 4);
-    var saa[16]; var za = 0; while (za < 16) { store8(&saa + za, 0); za = za + 1; }
-    store8(&saa, 2); store8(&saa + 2, 0xAD); store8(&saa + 3, 0x24);
-    store8(&saa + 4, 127); store8(&saa + 7, 1);                          # 127.0.0.1:44324
-    assert_eq(sys_bind(lfa, &saa, 16), 0, "bind 127.0.0.1:44324");
-    sys_listen(lfa, 1);
+    # ---- ECDHE-ECDSA-AES256-GCM-SHA384, kernel-assigned port ----
+    var saa[16];
+    var lfa = _tn_listen_ephemeral(&saa);
+    assert_gt(lfa, 0, "bind + listen 127.0.0.1:0 (AES)");
+    var conna = _tn_connect_arg(&saa);
     var pa = sys_fork();
     if (pa == 0) {
         sys_close(lfa);
         var nfa = sys_open("/dev/null", 2, 0); sys_dup2(nfa, 0); sys_dup2(nfa, 1); sys_dup2(nfa, 2);
         var av[80];
         store64(&av + 0,  "openssl");           store64(&av + 8,  "s_client");
-        store64(&av + 16, "-connect");          store64(&av + 24, "127.0.0.1:44324");
+        store64(&av + 16, "-connect");          store64(&av + 24, conna);
         store64(&av + 32, "-tls1_2");           store64(&av + 40, "-cipher");
         store64(&av + 48, "ECDHE-ECDSA-AES256-GCM-SHA384");
         store64(&av + 56, "-no_ticket");        store64(&av + 64, "-quiet");
@@ -1913,23 +1932,20 @@ if (sys_access("/usr/bin/openssl", 0) == 0) {
     sys_close(cfa); sys_close(lfa);
     var sta[4]; sys_waitpid(pa, &sta, 0);
 
-    # ---- ECDHE-ECDSA-CHACHA20-POLY1305, port 44325, fresh ctx ----
+    # ---- ECDHE-ECDSA-CHACHA20-POLY1305, kernel-assigned port, fresh ctx ----
     var s77b = tls_native_new_server(cert23, 385, key23, 138);
     tls_native_server_load_creds(s77b);
-    var lfb = sys_socket(2, 1, 0);
-    var oneb[4]; store32(&oneb, 1); sys_setsockopt(lfb, 1, 2, &oneb, 4);
-    var sab[16]; var zb = 0; while (zb < 16) { store8(&sab + zb, 0); zb = zb + 1; }
-    store8(&sab, 2); store8(&sab + 2, 0xAD); store8(&sab + 3, 0x25);
-    store8(&sab + 4, 127); store8(&sab + 7, 1);                          # 127.0.0.1:44325
-    assert_eq(sys_bind(lfb, &sab, 16), 0, "bind 127.0.0.1:44325");
-    sys_listen(lfb, 1);
+    var sab[16];
+    var lfb = _tn_listen_ephemeral(&sab);
+    assert_gt(lfb, 0, "bind + listen 127.0.0.1:0 (ChaCha)");
+    var connb = _tn_connect_arg(&sab);
     var pb = sys_fork();
     if (pb == 0) {
         sys_close(lfb);
         var nfb = sys_open("/dev/null", 2, 0); sys_dup2(nfb, 0); sys_dup2(nfb, 1); sys_dup2(nfb, 2);
         var avb[80];
         store64(&avb + 0,  "openssl");          store64(&avb + 8,  "s_client");
-        store64(&avb + 16, "-connect");         store64(&avb + 24, "127.0.0.1:44325");
+        store64(&avb + 16, "-connect");         store64(&avb + 24, connb);
         store64(&avb + 32, "-tls1_2");          store64(&avb + 40, "-cipher");
         store64(&avb + 48, "ECDHE-ECDSA-CHACHA20-POLY1305");
         store64(&avb + 56, "-no_ticket");       store64(&avb + 64, "-quiet");

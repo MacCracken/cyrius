@@ -41,7 +41,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: distlib_leaf_lookup_memory: build/cycc missing"; exit 1; }
 
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: distlib_leaf_lookup_memory: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: distlib_leaf_lookup_memory: $1"; exit 1; }
 
@@ -78,11 +78,14 @@ modules = ["src/mod.cyr"]
 stdlib = []
 EOF
 
-( cd "$P" && "$WORK/cyrius" distlib > "$WORK/dl.log" 2>&1 ) &
+# v6.6.6: sample THIS distlib process only (`exec` makes $! its pid). The sum used to cover
+# every process named `cyrius` on the box, so a concurrent check.sh — or any other session's
+# CLI — was charged to this run's peak. CHANGELOG [6.6.6]
+( cd "$P" && exec "$WORK/cyrius" distlib > "$WORK/dl.log" 2>&1 ) &
 DLPID=$!
 PEAK=0
 while kill -0 "$DLPID" 2>/dev/null; do
-    CUR=$(ps -eo rss,comm --no-headers 2>/dev/null | awk '$2=="cyrius"{s+=$1} END{print s+0}')
+    CUR=$(ps -o rss= -p "$DLPID" 2>/dev/null | awk '{s+=$1} END{print s+0}')
     [ "${CUR:-0}" -gt "$PEAK" ] && PEAK=$CUR
     sleep 0.2
 done

@@ -25,8 +25,11 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC="$ROOT/build/cycc"
-D=$(mktemp -d)
-trap 'rm -rf "$D"; rm -rf /tmp/cyx_gate_probe; rm -f /tmp/cyx_gate_file' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: syscall_wrapper_pass: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+# v6.6.6: every probe path is under $D — they were FIXED names under /tmp (cyx_gate_probe,
+# cyx_gate_file), which two concurrent check.sh runs shared. Probes spell the dir @D@ and
+# mkprobe instantiates it. CHANGELOG [6.6.6]
+trap 'rm -rf "$D"' EXIT
 fails=0
 
 check() {
@@ -42,7 +45,7 @@ include "lib/vec.cyr"
 include "lib/syscalls.cyr"
 include "lib/io.cyr"'
 
-mkprobe() { printf '%s\n%s\n' "$PRE" "$1" > "$D/p.cyr"; }
+mkprobe() { printf '%s\n%s\n' "$PRE" "$1" | sed "s|@D@|$D|g" > "$D/p.cyr"; }
 runhost() {
     "$CC" < "$D/p.cyr" > "$D/p.bin" 2>/dev/null
     chmod +x "$D/p.bin" 2>/dev/null
@@ -112,13 +115,13 @@ check "ignore then default" 42 "$(runhost)"
 echo "axis 3 — x* family: nested mkdir_p, idempotence, symlink round-trip:"
 mkprobe 'fn main(): i64 {
     alloc_init();
-    if (xmkdir_p("/tmp/cyx_gate_probe/a/b/c", 493) != 0) { return 3; }
-    if (_xdir_exists("/tmp/cyx_gate_probe/a/b/c") != 1) { return 4; }
-    if (xmkdir_p("/tmp/cyx_gate_probe/a/b/c", 493) != 0) { return 5; }
-    if (xsymlink("/tmp/cyx_gate_probe/a", "/tmp/cyx_gate_probe/lnk") != 0) { return 6; }
+    if (xmkdir_p("@D@/cyx_gate_probe/a/b/c", 493) != 0) { return 3; }
+    if (_xdir_exists("@D@/cyx_gate_probe/a/b/c") != 1) { return 4; }
+    if (xmkdir_p("@D@/cyx_gate_probe/a/b/c", 493) != 0) { return 5; }
+    if (xsymlink("@D@/cyx_gate_probe/a", "@D@/cyx_gate_probe/lnk") != 0) { return 6; }
     var rb[256];
-    if (xreadlink("/tmp/cyx_gate_probe/lnk", &rb, 256) <= 0) { return 7; }
-    xunlink("/tmp/cyx_gate_probe/lnk");
+    if (xreadlink("@D@/cyx_gate_probe/lnk", &rb, 256) <= 0) { return 7; }
+    xunlink("@D@/cyx_gate_probe/lnk");
     return 42;
 }
 var r = main();
@@ -129,10 +132,10 @@ check "xmkdir_p + xsymlink + xreadlink" 42 "$(runhost)"
 # why it is the ONE wrapped primitive of the chown family. uid/gid of -1 means "leave
 # unchanged", so this is a no-op on a file we own.
 echo "axis 4 — sys_fchownat gives lchown semantics via AT_FDCWD:"
-: > /tmp/cyx_gate_file
+: > "$D/cyx_gate_file" || { echo "FAIL: cannot create $D/cyx_gate_file"; exit 1; }
 mkprobe 'fn main(): i64 {
     alloc_init();
-    var rc = sys_fchownat(AT_FDCWD, "/tmp/cyx_gate_file", 0 - 1, 0 - 1, AT_SYMLINK_NOFOLLOW);
+    var rc = sys_fchownat(AT_FDCWD, "@D@/cyx_gate_file", 0 - 1, 0 - 1, AT_SYMLINK_NOFOLLOW);
     if (rc != 0) { return 3; }
     return 42;
 }
@@ -354,8 +357,8 @@ fn main(): i64 {
     alloc_init();
     sys_chdir("/tmp");
     signal_default(SIGPIPE);
-    xmkdir("/tmp/cyx_gate_probe2", 493);
-    xmkdir_p("/tmp/cyx_gate_probe2/x", 493);
+    xmkdir("cyx_gate_probe2", 493);          # compile-only (axis 6 never runs this)
+    xmkdir_p("cyx_gate_probe2/x", 493);
     xsymlink("/a", "/b");
     var rb[64];
     xreadlink("/a", &rb, 64);

@@ -86,7 +86,7 @@ if [ ! -s "$ROOT/build/cyrlint" ]; then
     exit 1
 fi
 
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: lint_reports_unparseable: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 # Hermetic toolchain: point CYRIUS_HOME at the binaries this tree just built, or the
 # gate silently exercises whatever cycc/cyrlint happen to be installed.

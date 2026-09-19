@@ -32,7 +32,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: hash_seed_flood_resistance: build/cycc missing"; exit 1; }
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: hash_seed_flood_resistance: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: hash_seed_flood_resistance: $1"; exit 1; }
 
 cat > "$WORK/probe.cyr" <<'EOF'

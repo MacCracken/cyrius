@@ -17,7 +17,7 @@
 # CALL COUNT and not just the value. An inlining change is invisible to a result assertion.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: derive_accessors_inlined: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL derive_accessors_inlined: no build/cycc"; exit 1; }
 command -v llvm-objdump >/dev/null 2>&1 || { echo "SKIP derive_accessors_inlined: no llvm-objdump"; exit 0; }

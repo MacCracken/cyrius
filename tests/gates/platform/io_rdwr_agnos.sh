@@ -23,15 +23,18 @@
 # without mirshi.
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
-TMP="${TMPDIR:-/tmp}/iordwr.$$"
-mkdir -p "$TMP" || exit 2
+# v6.6.6: a CHECKED mktemp dir, and every probe path lives inside it. The probes used FIXED
+# names directly under /tmp (cyrius_agnos_rdwr_gate, cyrius_agnos_sec_{target,link}), so two
+# check.sh runs on one box raced on the same files — one run's `rm -f` + `ln -s` landing between
+# the other's create and open. The .cyr sources carry @TMP@, instantiated with sed. CHANGELOG [6.6.6]
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: io_rdwr_agnos: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
-cat > "$TMP/rw.cyr" <<'EOF'
+cat > "$TMP/rw.cyr.in" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
 fn main(): i64 {
-    var path = "/tmp/cyrius_agnos_rdwr_gate";
+    var path = "@TMP@/rdwr_gate";
     var fd = file_open(path, O_RDWR | O_CREAT | O_TRUNC, 0x1A4);
     if (fd < 0) { return 1; }
     if (file_write(fd, "rdwr-data", 9) != 9) { return 2; }
@@ -59,6 +62,7 @@ sys_exit(r);
 EOF
 
 # (1) Linux round-trip.
+sed "s|@TMP@|$TMP|g" "$TMP/rw.cyr.in" > "$TMP/rw.cyr" && [ -s "$TMP/rw.cyr" ] || { echo "FAIL: cannot write the O_RDWR probe into $TMP"; exit 1; }
 cat "$TMP/rw.cyr" | build/cycc > "$TMP/rw_lin" 2>/dev/null || { echo "FAIL: Linux O_RDWR build"; exit 1; }
 chmod +x "$TMP/rw_lin"; "$TMP/rw_lin" >/dev/null 2>&1; el=$?
 [ "$el" = "42" ] || { echo "FAIL: Linux O_RDWR round-trip exit=$el (expect 42)"; exit 1; }
@@ -79,12 +83,12 @@ else
 fi
 
 # (5) v6.6.4: O_NOFOLLOW / O_EXCL reach the kernel as AO_NOFOLLOW / AO_EXCL.
-cat > "$TMP/sec.cyr" <<'EOF'
+cat > "$TMP/sec.cyr.in" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/io.cyr"
 fn main(): i64 {
-    var tgt = "/tmp/cyrius_agnos_sec_target";
-    var lnk = "/tmp/cyrius_agnos_sec_link";   # the gate script creates lnk -> tgt beforehand
+    var tgt = "@TMP@/sec_target";
+    var lnk = "@TMP@/sec_link";   # the gate script creates lnk -> tgt beforehand
     var fd = file_open(tgt, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     if (fd < 0) { return 1; }
     file_close(fd);
@@ -106,21 +110,22 @@ fn main(): i64 {
 var r = main();
 sys_exit(r);
 EOF
+sed "s|@TMP@|$TMP|g" "$TMP/sec.cyr.in" > "$TMP/sec.cyr" && [ -s "$TMP/sec.cyr" ] || { echo "FAIL: cannot write the O_NOFOLLOW/O_EXCL probe into $TMP"; exit 1; }
 cat "$TMP/sec.cyr" | build/cycc > "$TMP/sec_lin" 2>/dev/null || { echo "FAIL: Linux O_NOFOLLOW/O_EXCL build"; exit 1; }
 chmod +x "$TMP/sec_lin"
-rm -f /tmp/cyrius_agnos_sec_link /tmp/cyrius_agnos_sec_target; ln -s /tmp/cyrius_agnos_sec_target /tmp/cyrius_agnos_sec_link
+rm -f "$TMP/sec_link" "$TMP/sec_target"; ln -s "$TMP/sec_target" "$TMP/sec_link"
 "$TMP/sec_lin" >/dev/null 2>&1; es=$?
 [ "$es" = "42" ] || { echo "FAIL: Linux O_NOFOLLOW/O_EXCL probe exit=$es (expect 42; 3=NOFOLLOW followed, 4=EXCL clobbered)"; exit 1; }
 cat "$TMP/sec.cyr" | CYRIUS_TARGET_AGNOS=1 build/cycc > "$TMP/sec_agnos" 2>/dev/null \
   || { echo "FAIL: agnos O_NOFOLLOW/O_EXCL build"; exit 1; }
 chmod +x "$TMP/sec_agnos"
 if [ -x "$MIRSHI" ]; then
-    rm -f /tmp/cyrius_agnos_sec_link /tmp/cyrius_agnos_sec_target; ln -s /tmp/cyrius_agnos_sec_target /tmp/cyrius_agnos_sec_link
+    rm -f "$TMP/sec_link" "$TMP/sec_target"; ln -s "$TMP/sec_target" "$TMP/sec_link"
     "$MIRSHI" "$TMP/sec_agnos" >/dev/null 2>&1; em2=$?
     [ "$em2" = "42" ] || { echo "FAIL: agnos O_NOFOLLOW/O_EXCL under mirshi exit=$em2 (expect 42; 3=O_NOFOLLOW dropped → symlink followed, 4=O_EXCL dropped → existing file clobbered; needs mirshi ≥ 1.11.2)"; exit 1; }
     MIR="$MIR; O_NOFOLLOW/O_EXCL refused under mirshi=42"
 fi
-rm -f /tmp/cyrius_agnos_sec_link /tmp/cyrius_agnos_sec_target
+rm -f "$TMP/sec_link" "$TMP/sec_target"
 grep -q 'if ((flags & 131072) != 0) { ao = ao | 0x1000; }' lib/io.cyr \
   || { echo "FAIL: lib/io.cyr agnos branch no longer bridges O_NOFOLLOW -> AO_NOFOLLOW (0x1000)"; exit 1; }
 grep -q 'if ((flags & 128) != 0) { ao = ao | 0x2000; }' lib/io.cyr \

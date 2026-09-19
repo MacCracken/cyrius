@@ -36,11 +36,10 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC="$ROOT/build/cycc"
-D=$(mktemp -d)
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: sync_mutex_three_state: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 # A failed mktemp prints nothing, and with D="" every "$D/..." path below becomes ROOT-ABSOLUTE
 # (/m.bin, /mt, /mt/lib) — the AGNOS CI container runs as root, so axis 6 would create /mt and
 # copy lib/ into the filesystem root. It would not touch the tree; refuse to run anyway.
-if [ -z "$D" ] || [ ! -d "$D" ]; then echo "FAIL: sync-mutex-three-state — mktemp -d gave no directory"; exit 1; fi
 trap 'rm -rf "$D"' EXIT
 fails=0
 

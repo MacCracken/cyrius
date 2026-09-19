@@ -27,7 +27,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: wrapper_resolves_sibling_cycc: build/cycc missing"; exit 1; }
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: wrapper_resolves_sibling_cycc: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: wrapper_resolves_sibling_cycc: $1"; exit 1; }
 
 # Build the wrapper from source against build/cycc directly — never the installed `cyrius`,

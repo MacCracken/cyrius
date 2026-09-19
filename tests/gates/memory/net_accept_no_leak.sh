@@ -10,7 +10,9 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
-T=$(mktemp --suffix=.cyr); B=$(mktemp); E=$(mktemp)
+T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: net_accept_no_leak: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+B=$(mktemp) && [ -f "$B" ] || { echo "FAIL: net_accept_no_leak: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: net_accept_no_leak: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$T" "$B" "$E"' EXIT
 
 cat > "$T" <<'EOF'

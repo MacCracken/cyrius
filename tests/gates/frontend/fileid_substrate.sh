@@ -29,7 +29,7 @@ if [ ! -x "$CC" ]; then
     exit 0
 fi
 
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: fileid_substrate: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/lib"
 

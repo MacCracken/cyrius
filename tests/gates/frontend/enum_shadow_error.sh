@@ -12,7 +12,7 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 CYCC="${CYCC:-$ROOT/build/cycc}"
-TMP="$(mktemp -d)"
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: enum_shadow_error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 # (1) string var shadowing an enum constant → MUST hard-error
