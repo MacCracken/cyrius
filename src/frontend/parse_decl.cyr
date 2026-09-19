@@ -1537,6 +1537,30 @@ fn _gv_cx_prestore(S): i64 {
     return 0;
 }
 
+# Skip ONE top-level `var` declaration: consume through the `;` that ENDS it, which is the
+# first `;` outside every `{ }`. A declaration-zone `var` is only registered by pass 1 and
+# stepped over by pass 2 — its initializer is compiled later by EMIT_GVAR_INITS — so both
+# passes need to know where it stops. They used to stop at the FIRST `;`, and a block-bodied
+# closure `var f = |x| { return 7; };` carries one inside its body: both passes then stopped
+# in the middle of the closure, at its `}`, which ends every top-level loop — so every
+# statement after the declaration vanished from the binary with no diagnostic. Only BRACE
+# depth counts: a `;` inside parens or brackets alone is never valid, and stopping there keeps
+# a malformed `var x = f(1;` from swallowing the rest of the file. EOF stops the walk.
+# CHANGELOG [6.6.6]
+fn _skip_gvar_decl(S): i64 {
+    var bd = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { return 0; }
+        STI(S, GTI(S) + 1);
+        if (t == 13) { bd = bd + 1; }
+        elif (t == 14) { bd = bd - 1; }
+        elif (t == 5) { if (bd <= 0) { go = 0; } }
+    }
+    return 0;
+}
+
 fn PARSE_GVAR_REG(S): i64 {
     var sti = GTI(S);
     STI(S, GTI(S) + 1);  # consume VAR
@@ -1585,12 +1609,7 @@ fn PARSE_GVAR_REG(S): i64 {
         S64(S + 0x729000 + dgg * 8, sti);
         _gv_ent_set(dgg, (dgs1 + 1) | ((dgs2 + 1) << 21) | ((dgs3 + 1) << 42));
         S64(S + 0x19A000, dgg + 1);
-        var dgs = 1;
-        while (dgs == 1) {
-            if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); dgs = 0; }
-            else { if (PEEKT(S) == 12) { dgs = 0; }
-                else { STI(S, GTI(S) + 1); } }
-        }
+        _skip_gvar_decl(S);   # 6.6.6: through the `;` outside every `{ }` (see there)
         return 0;
     }
     # Optional type annotation — check scalar types, pointer types, or struct names
@@ -1833,13 +1852,7 @@ fn PARSE_GVAR_REG(S): i64 {
         _gv_ent_set(gc, gvi + 1);   # 6.6.6: the slot this entry declared
         S64(S + 0x19A000, gc + 1);
     }
-    # Skip to semicolon
-    var skg = 1;
-    while (skg == 1) {
-        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); skg = 0; }
-        else { if (PEEKT(S) == 12) { skg = 0; }
-            else { STI(S, GTI(S) + 1); } }
-    }
+    _skip_gvar_decl(S);   # 6.6.6: through the `;` outside every `{ }` (see there)
     return 0;
 }
 

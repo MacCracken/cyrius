@@ -1809,15 +1809,29 @@ A closure literal `|params| body` is an anonymous function; its value is a
 function pointer, so you call it the same way — `callptr` or `fncallN`:
 
 ```
-fn run() {                           # closures live inside a function
+fn run() {                           # inside a function …
     var add = |a, b| a + b;          # body is an expression …
     var dbl = |x| { var y = x * 2; return y; };   # … or a { block }
     var ans = || 42;                 # zero-param thunk (`||`)
     var r = callptr(add, 40, 2);     # 42  (or fncall2(add, 40, 2))
 }
+
+var g_dbl = |x| { var y = x * 2; return y; };     # … or as a top-level `var`
 ```
 
 The body may be a single expression or a `{ … }` block (with `return`).
+
+A closure literal is also a legal top-level initializer, including the `{ block }`
+form. Call it with `fncallN` (an ordinary function from `lib/fnptr.cyr`, so it works
+at top level too) or, from inside a function, with `callptr` — a bare `callptr` in
+top-level code is refused: *an indirect call (callptr / fncallN) must be inside a
+function, not at top level*. ⚠ **Before 6.6.6 a block-bodied closure in
+a top-level `var` declared before the first top-level statement silently dropped the
+rest of the program**: the declaration was skipped to its first `;`, which the
+closure body contains, so both parser passes stopped inside the body and nothing
+below it was compiled. Nothing warned, and the program exited with the closure's
+address. Fixed in 6.6.6; pinned by `tests/tcyr/crossos/toplevel_block_closure.tcyr`.
+
 Parameters and any locals declared inside the closure are its own; the
 enclosing function's locals are untouched (so a closure declared after a local
 doesn't clobber it).

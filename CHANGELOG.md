@@ -209,6 +209,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **1,306,640 → 1,310,864 B**. Verified under qemu-aarch64, wine (PE) and cxvm — not hardware;
   the new crossos test carries it to ecb/ach/cass/pi.
 
+- **A block-bodied closure in a top-level `var` silently dropped the rest of the program.**
+  (bite 3; filed 2026-09-19 from the 6.6.5 bite-9 review.) The filed repro —
+  `var f = |x| { return 7; };` then `syscall(1, 1, "hi\n", 3); syscall(60, 9);` — printed nothing
+  and exited **186**, the closure's own address (0x4000ba), with no diagnostic; identical with the
+  installed 6.6.4 compiler, and on every fork (measured: 186 on x86_64, 184 under qemu-aarch64, 14
+  under wine/PE, 8 on cx). **Root cause — the declaration skip, not the closure literal.** A `var`
+  in the DECLARATION ZONE (anywhere before the first top-level statement, not just the first line:
+  `var a = 1;` before the same closure fails identically) is registered by pass 1
+  (`PARSE_GVAR_REG`) and stepped over by pass 2 (the `var` arm of every fork's top-level loop),
+  with the initializer compiled later by `EMIT_GVAR_INITS`. Both passes found the end of the
+  declaration by scanning to the FIRST `;` — and a block-bodied closure carries one inside its
+  body. Both stopped mid-closure, at its `}`, which ends every top-level loop: pass 1 registered
+  nothing after the declaration (so a global, struct or enum below it did not exist, which is why
+  some shapes instead failed to compile with a spurious `undefined variable` naming the closure's
+  OWN local) and pass 2 handed `PARSE_PROG` a `}`, so every statement below was dropped. The same
+  `var` after a top-level statement is parsed as a statement and was always correct — that is the
+  path this bite's gate uses for its controls. **Fix:** one shared skip, `_skip_gvar_decl`
+  (`src/frontend/parse_decl.cyr`), ending at the first `;` outside every `{ }` — used by
+  `PARSE_GVAR_REG` (its plain arm and its destructure arm, `var a, b = f(|x| { .. });`) and by the
+  pass-2 `var` arm of all SEVEN forks. Only BRACE depth counts: a `;` inside parens alone is never
+  valid, and counting parens would let a malformed `var x = f(1;` swallow the rest of the file and
+  suppress every later diagnostic (pinned as row M). Byte impact: of the 327 pre-existing `.tcyr`,
+  **0 compile differently and 0 exit differently** — nothing in the tree had the shape — and cycc
+  **1,310,864 → 1,310,856 B** (the seven inline skip loops replaced by one call). Verified under
+  qemu-aarch64, wine (PE) and cxvm — NOT hardware; the new crossos test carries it to
+  ecb/ach/cass/pi, which is the only leg that reaches Mach-O.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -222,6 +249,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `tests/tcyr/crossos/toplevel_block_closure.tcyr` (bite 3) — 15 assertions on a declaration zone
+  made of block-bodied closures: the plain form, the zero-param `|| { .. }`, a body with a
+  `for (;;)` and an `if/else` (a `;` inside parens inside braces), a destructure whose initializer
+  carries one, a closure as a struct-literal field, a second closure after the first, and a count
+  of the top-level statements that ran. Every expectation is both a hand-derived constant and an
+  equality against a plain-fn CONTROL. On a compiler carrying the defect it does not compile at
+  all (`undefined variable 'a'` inside the first closure body) and cycc writes a ZERO-BYTE file —
+  which runs as an empty shell script and exits 0, so the runner's compile check is what makes the
+  red real.
+- `tests/gates/frontend/toplevel_decl_block_closure.sh` (bite 3; registered in `scripts/check.sh`)
+  — 7 rows on host x86_64, cx (cxvm) and aarch64 (qemu), 3 under wine (PE), each against a CONTROL
+  that routes the same declarations through `PARSE_PROG` instead of the declaration-zone path;
+  plus row M (a malformed `var x = f(1;` still reports the error in the NEXT declaration) and row S
+  (static parity: every `src/main*.cyr` fork calls the shared skip, fork list derived). Mutation-
+  proven six ways, including a fork-by-fork revert; ledger in the header.
 - `tests/tcyr/crossos/simd_param_int_stack_args.tcyr` — 18 assertions with **literal** expectations
   (the arguments written as digits): f64v2/f32v4/i32v4/f64v4 with 5-8 ints, vector first / middle /
   after the spill, two vectors, stack-arg order, the method and tail paths, struct return at 6 and 8.

@@ -237,6 +237,14 @@ sh "$ROOT/tests/gates/frontend/method_call_runs_every_callee_gate.sh"
 # target that stores the value rather than baking it) and an aarch64 leg under qemu.
 sh "$ROOT/tests/gates/frontend/global_redeclaration_one_definition.sh"
 
+# 6.6.6: a block-bodied closure in a declaration-zone `var` used to end the program. Pass 1 and
+# pass 2 both found the end of the declaration by scanning to the first `;`, and the closure body
+# carries one — so both stopped at its `}` and every statement below was dropped, silently. Rows
+# are checked against CONTROL programs whose declarations take the (always-correct) PARSE_PROG
+# path instead, with cx / aarch64-qemu / PE-wine legs and a static 7-fork parity axis, because
+# the pass-2 skip is copied into every `src/main*.cyr`.
+sh "$ROOT/tests/gates/frontend/toplevel_decl_block_closure.sh"
+
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its

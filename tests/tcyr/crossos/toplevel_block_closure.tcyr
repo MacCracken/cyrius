@@ -1,0 +1,101 @@
+# toplevel_block_closure.tcyr — 6.6.6. A BLOCK-BODIED CLOSURE IN A TOP-LEVEL `var` DOES NOT
+# END THE PROGRAM.
+#
+# ⛔ THE DEFECT (measured at 6.6.5 and with the installed 6.6.4 compiler, x86_64 Linux, SILENT):
+#
+#     var f = |x| { return 7; };
+#     syscall(1, 1, "hi\n", 3);
+#     syscall(60, 9);                 printed nothing and exited 186 — the closure's ADDRESS
+#
+# A `var` in the DECLARATION ZONE (before the first top-level statement) is registered by pass 1
+# and stepped over by pass 2; its initializer is compiled later, by EMIT_GVAR_INITS. Both passes
+# found the end of the declaration by scanning to the FIRST `;` — and a block-bodied closure
+# carries one inside its body. Both stopped mid-closure, at its `}`, which ends every top-level
+# loop: pass 1 registered nothing after the declaration, pass 2 handed PARSE_PROG a `}`, and
+# every statement below vanished from the binary with no diagnostic. The expression-bodied form
+# (`|x| x + 1`) and the same closure AFTER a top-level statement were always correct, which is
+# why `tests/tcyr/lang/closures.tcyr` — every closure of which is inside a fn — never saw it.
+#
+# ⭐ WHY THIS FILE IS IN crossos/ AND NOT lang/ (the filing asked for lang/): the acceptance it
+# carries is "on every fork — x86, aarch64, PE, Mach-O, cx", and the release gate runs only
+# THIS directory on ecb / ach / cass / pi. The declaration-zone skip is duplicated in all seven
+# `src/main*.cyr` forks, so a fork left behind is broken on that target alone. The host-side
+# legs (cx via cxvm, aarch64 under qemu, PE under wine) live in
+# tests/gates/frontend/toplevel_decl_block_closure.sh; Mach-O is reachable only from here.
+#
+# EVERY EXPECTED VALUE IS COMPUTED A DIFFERENT WAY FROM THE THING UNDER TEST: each closure has a
+# CONTROL fn spelling the same arithmetic as an ordinary function, and each assertion pins the
+# hand-derived constant AND the control-vs-closure equality. `steps` counts the top-level
+# statements that actually ran and is checked against a hand count — under the defect NONE of
+# them run, so an assertion that only compared two closures would report nothing at all.
+#
+# ⚠ HOW IT FAILS ON A BUILD THAT CARRIES THE DEFECT, measured with the 6.6.5 `build/cycc`: it
+# does not compile — `error: undefined variable 'a'` at the first closure body, because pass 2
+# resumes INSIDE the closure and reads its local as a top-level name — and cycc writes a
+# ZERO-BYTE output. ⛔ A 0-byte file runs as an empty SHELL SCRIPT and exits 0, so a runner that
+# only looked at the exit code would score this as a PASS; the corpus runners check the compile
+# status (`[ -s _lt ] || ok=0` in scripts/cross-os-libtest-runner.sh), which is what makes the
+# red real. If you ever run this file by hand, check the compile, not just `$?`.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+
+# ---- the declaration zone: every one of these is a `var` whose initializer carries a `;` ----
+var f_block = |x| { var a = x + 1; return a * 2; };
+var f_zero = || { return 7; };
+var f_loop = |n| { var s = 0; for (var i = 0; i < n; i = i + 1) { if (i > 2) { s = s + i; } else { s = s + 10; } } return s; };
+# a destructure whose initializer carries one (pass 1 has a SECOND skip for this shape)
+var d1, d2 = pair_through(|x| { var y = x + 1; return y; });
+struct TLQ { fp; k; }
+# a struct literal with a closure field, and a second closure right after the first
+var tq = TLQ { |x| { return x + 100; }, 2 };
+var f_after = |x| { return x * 3; };
+var steps = 0;
+
+# Declared BELOW the closures and used above / below them — pass 1 stopped registering at the
+# first closure, so relaxed-ordering definitions after one were lost too.
+fn pair_through(cb): i64 { return ret2(fncall1(cb, 1), 30); }
+# CONTROLS — the same arithmetic as ordinary functions, so no expected value comes from the
+# construct under test.
+fn ctl_block(x): i64 { var a = x + 1; return a * 2; }
+fn ctl_zero(): i64 { return 7; }
+fn ctl_loop(n): i64 { var s = 0; for (var i = 0; i < n; i = i + 1) { if (i > 2) { s = s + i; } else { s = s + 10; } } return s; }
+fn ctl_q(x): i64 { return x + 100; }
+fn ctl_after(x): i64 { return x * 3; }
+
+# ---- the first top-level statement, and everything after it ----
+steps = steps + 1;
+assert_eq(fncall1(f_block, 20), 42, "a block-bodied closure declared before the first statement is callable");
+assert_eq(fncall1(f_block, 20), ctl_block(20), "block closure == its plain-fn control");
+
+steps = steps + 1;
+assert_eq(fncall0(f_zero), 7, "a zero-param `|| { .. }` closure in the declaration zone");
+assert_eq(fncall0(f_zero), ctl_zero(), "zero-param closure == its control");
+
+steps = steps + 1;
+# 5 -> i=0,1,2 add 10 each (30), i=3,4 add themselves (7) = 37: the body carries `;` inside
+# parens inside braces, which is what makes brace depth the only thing that may count.
+assert_eq(fncall1(f_loop, 5), 37, "a closure body with a for-loop and an if/else");
+assert_eq(fncall1(f_loop, 5), ctl_loop(5), "loop closure == its control");
+
+steps = steps + 1;
+assert_eq(d1, 2, "a top-level destructure whose initializer carries a block closure (first target)");
+assert_eq(d2, 30, "the same destructure's second target");
+assert_eq(d1, ctl_block(1) - 2, "destructured closure result == its control (2 == (1+1)*2 - 2)");
+
+steps = steps + 1;
+assert_eq(fncall1(tq.fp, 1), 101, "a closure as a struct-literal field in the declaration zone");
+assert_eq(tq.k, 2, "the field after the closure field kept its value");
+assert_eq(fncall1(tq.fp, 1), ctl_q(1), "struct-field closure == its control");
+
+steps = steps + 1;
+assert_eq(fncall1(f_after, 5), 15, "a second closure declared after the first");
+assert_eq(fncall1(f_after, 5), ctl_after(5), "second closure == its control");
+
+steps = steps + 1;
+# The hand count: seven `steps = steps + 1;` statements, all of them AFTER the first closure
+# declaration (one opening each section, including this one). Under the defect none of them
+# exist in the binary.
+assert_eq(steps, 7, "every top-level statement after the closure declaration ran");
+
+var r = assert_summary();

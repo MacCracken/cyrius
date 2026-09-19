@@ -509,8 +509,7 @@ while (topgo == 1) {
                                     PARSE_FN_DEF(S);
                                 }
                                 else { if (PEEKT(S) == 3) {
-                                        var vsk = 1;
-                                        while (vsk == 1) { if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); vsk = 0; } else { STI(S, GTI(S) + 1); } }
+                                        _skip_gvar_decl(S);   # 6.6.6: a `;` inside a closure body is not the end
                                     }
                                     else { if (PEEKT(S) == 77) { PARSE_IMPL(S); }
                                         else { if (PEEKT(S) == 78) { STI(S, GTI(S) + 1); if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
