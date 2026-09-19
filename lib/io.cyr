@@ -486,7 +486,15 @@ fn file_write(fd, buf, len): i64 {
     return sys_write(fd, buf, len);
 }
 
-# Read entire file into buffer. Returns bytes read.
+# Read entire file into buffer. Returns bytes read, or a negative errno.
+#
+# ⛔ A FAILED READ IS NOT END-OF-FILE. `read(2)` returning 0 means EOF; returning a negative
+# means the file could not be read (EISDIR, EIO, a revoked mount). This folded the two into
+# one `n <= 0` exit and returned the bytes read SO FAR, so a read that died half way handed
+# back a PREFIX indistinguishable from the whole file — and the caller, testing `n > 0`,
+# believed it. Open failure already surfaced as a negative here, so callers must handle one;
+# now a read failure uses the same channel instead of masquerading as a short file.
+# CHANGELOG [6.6.6]
 fn file_read_all(path, buf, maxlen): i64 {
     var fd = file_open(path, 0, 0);
     if (fd < 0) { return fd; }
@@ -494,7 +502,8 @@ fn file_read_all(path, buf, maxlen): i64 {
     var rgo: i64 = 1;
     while (rgo == 1) {
         var n = file_read(fd, buf + total, maxlen - total);
-        if (n <= 0) { rgo = 0; }
+        if (n < 0) { file_close(fd); return n; }
+        if (n == 0) { rgo = 0; }
         else {
             total = total + n;
             if (total >= maxlen) { rgo = 0; }
@@ -547,7 +556,16 @@ fn file_write_all(path, buf, len): i64 {
 # printed "Pinned" (its cap was 65535); `cyrius update` migrated a >32 KB cyrius.toml to a
 # truncated cyrius.cyml and then deleted the toml. The buffer here GROWS instead, so there is no
 # cap to be wrong about and no size to race against (no stat: Windows has no POSIX stat here,
-# and a stat-then-read races a writer anyway). CHANGELOG [6.6.6]
+# and a stat-then-read races a writer anyway).
+#
+# ⛔ AND A FAILED READ IS NOT END-OF-FILE. The first cut exited the loop on `n <= 0`, so a read
+# that errored — immediately, or after 40 KB — returned the bytes so far as if that were the
+# file. Both callers WRITE THE BUFFER BACK (cyriusly `_write_cyml_cyrius_pin` replaces
+# cyrius.cyml with it; cbt `cmd_update` writes it as cyrius.cyml and then deletes cyrius.toml),
+# i.e. the same silently-accepted partial I/O this helper exists to end, on the read side.
+# Measured: `file_read_whole("tests", &n)` on a DIRECTORY (open succeeds, read = -EISDIR)
+# returned a non-zero buffer with len 0 — "could not read" reported as "empty". A read error is
+# now the same answer as an open error: 0, len 0. CHANGELOG [6.6.6]
 fn file_read_whole(path, len_out): i64 {
     var fd = file_open(path, 0, 0);
     if (fd < 0) { store64(len_out, 0); return 0; }
@@ -564,7 +582,8 @@ fn file_read_whole(path, len_out): i64 {
             cap = ncap;
         }
         var n = file_read(fd, buf + total, cap - total);
-        if (n <= 0) { go = 0; }
+        if (n < 0) { file_close(fd); store64(len_out, 0); return 0; }
+        if (n == 0) { go = 0; }
         else { total = total + n; }
     }
     file_close(fd);
@@ -887,8 +906,12 @@ fn file_write_r(fd, buf, len): Result {
 
 # Result variant of file_read_all. Opens the file, reads up to
 # maxlen bytes, closes. Open failure surfaces as Err with the
-# corresponding IoError variant; read failure mid-stream returns
-# whatever was read up to that point as Ok.
+# corresponding IoError variant — and so, since v6.6.6, does a read
+# failure mid-stream. That case USED to return "whatever was read up
+# to that point as Ok", which this comment stated as the contract: a
+# truncated read reported as a successful one, with no way for the
+# caller to tell. Ok(n) now means n bytes and no error.
+# CHANGELOG [6.6.6]
 fn file_read_all_r(path, buf, maxlen): Result {
     var fd = file_open(path, 0, 0);          # via the agnos AO_*/namelen bridge
     if (fd < 0) { return Err(_io_errno_to_iorr(0 - fd)); }
@@ -896,7 +919,8 @@ fn file_read_all_r(path, buf, maxlen): Result {
     var rgo = 1;
     while (rgo == 1) {
         var n = sys_read(fd, buf + total, maxlen - total);
-        if (n <= 0) { rgo = 0; }
+        if (n < 0) { sys_close(fd); return Err(_io_errno_to_iorr(0 - n)); }
+        if (n == 0) { rgo = 0; }
         else {
             total = total + n;
             if (total >= maxlen) { rgo = 0; }
@@ -1028,7 +1052,12 @@ fn _env_load(): i64 {
     var done = 0;
     while (done == 0) {
         var got = file_read(fd, buf + n, cap - n);
-        if (got <= 0) { done = 1; }
+        # v6.6.6: a read ERROR is not EOF. Folding the two cached a PREFIX of the environment
+        # forever — every later getenv answering from a block that stops mid-variable, with no
+        # way to tell that from a genuinely short environ. Leave the cache unset instead, the
+        # same answer an open failure gives, so a later call retries. CHANGELOG [6.6.6]
+        if (got < 0) { file_close(fd); return 0; }
+        if (got == 0) { done = 1; }
         else {
             n = n + got;
             if (n >= cap) {

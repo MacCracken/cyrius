@@ -1555,6 +1555,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bare-literal coercion is what that test tests — and the entry is honoured **only while the
   `chdir` is still there**. 6 mutations, each RED.
 
+- **A READ that failed was reported as end-of-file, so `lib/io.cyr` handed back a prefix of a
+  file as the whole file** (bite 17i, from bite 17's review). The mirror image of 17a, on the
+  read side of the same pair, and it reached this release inside 17c's own new helper:
+  `file_read_whole` exited its loop on `n <= 0`, so a read that errored — immediately, or after
+  40 KB — returned the bytes so far with no way for the caller to tell. Measured:
+  `file_read_whole("tests", &n)` on a **directory** (open succeeds, `read(2)` = `-EISDIR`)
+  returned a **non-zero buffer** with len 0 — "could not read" reported as "empty". Both callers
+  write that buffer BACK (`cyriusly`'s `_write_cyml_cyrius_pin` replaces `cyrius.cyml` with it;
+  `cbt`'s `cmd_update` writes it as `cyrius.cyml` and then deletes `cyrius.toml`), which is the
+  same data loss 17c closed, through the other door. **Fixed in all five read loops in
+  `lib/io.cyr`, not just the new one:** `file_read_whole` (0 / len 0, the same answer an open
+  failure gives), `file_read_all` (the negative errno — the channel it already used for an open
+  failure; every in-tree caller guards it), `file_read_all_r` (`Err`, where its own doc comment
+  had written the defect down as the contract: "read failure mid-stream returns whatever was
+  read up to that point as Ok"), and the `/proc/self/environ` cache, which used to cache a prefix
+  of the environment **forever** (`file_read_r`, the one-shot fd variant, already reported it). No behaviour changes when nothing fails: the
+  328-file `.tcyr` corpus is byte-for-byte identical in compile result and exit code. Pinned by a
+  new **axis 5** in `tests/gates/toolchain/manifest_read_whole_file.sh` — runtime over a path
+  that opens but cannot be read, plus a static half over every read loop in the file, which is
+  what pins the *partial* case (no portable unprivileged probe can force a read that fails after
+  40 KB; it is the same branch). 5 mutations, each RED.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

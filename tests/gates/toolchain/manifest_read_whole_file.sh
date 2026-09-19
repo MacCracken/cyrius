@@ -35,6 +35,17 @@
 #      that same path through a fixed numeric cap. DERIVED per function from the source, so a
 #      new read-modify-write site is covered the day it lands, and self-tested on the two
 #      pre-fix bodies.
+#   5. A FAILED READ IS NOT END-OF-FILE (added by the bite-17 review). RUNTIME: over a path that
+#      OPENS but cannot be READ — a directory, where read(2) is -EISDIR — `file_read_whole`
+#      returns 0/len 0 and `file_read_all` returns a NEGATIVE, neither of them a buffer; and
+#      anti-vacuously a real file still comes back whole and byte-identical. STATIC: no
+#      accumulating read loop in lib/io.cyr exits on `n <= 0` — the negative branch is separate
+#      and comes first, in all five. Self-tested on the pre-fix body.
+#      ⚠ WHY THE STATIC HALF EXISTS. The runtime half can only force a read that fails on its
+#      FIRST call; the damaging shape is a read that fails AFTER 40 KB, and there is no portable
+#      unprivileged way to force one (RLIMIT_FSIZE is writes; a pipe/FIFO gives EOF, not an
+#      error; a pty needs a second process). Both cases are the SAME branch, so the static axis
+#      is what pins the partial one: re-fold `n <= 0` and it reddens.
 #
 # MUTATION LEDGER (measured 6.6.6; each mutant is a COPY of the source in the gate's scratch
 # dir, compiled with the tree's build/cycc)
@@ -48,6 +59,15 @@
 #      (`if (total == cap)`)                              reappears)
 #   e. axis-4 detector's write-back rule disabled      -> axis 4 self-test FAIL (cyriusly site)
 #   f. axis-4 detector's unlink rule disabled          -> axis 4 self-test FAIL (cbt site)
+#   g. file_read_whole's `if (n < 0)` folded back      -> axis 5 FAIL (runtime: the probe gets a
+#      into `if (n <= 0)`                                 non-zero buffer with len 0 for a path
+#                                                         it could not read — rc 1; and static)
+#   h. file_read_all's `if (n < 0)` folded back        -> axis 5 FAIL (runtime rc 5: a read error
+#                                                         reported as a 0-byte file; and static)
+#   i. file_read_all_r's / the environ loop's          -> axis 5 FAIL (static)
+#      negative branch removed
+#   j. axis-5 static detector disabled                 -> axis 5 self-test FAIL (the pre-fix
+#                                                         body is not reported)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -224,5 +244,93 @@ got=$(_rmw "$D/prefix.cyr" x.cyr | LC_ALL=C sort)
 [ "$got" = "$(printf '%s' "$want" | LC_ALL=C sort)" ] || { fail "axis 4 self-test: the pre-fix bodies judged:"; printf '%s\n' "$got" | sed 's/^/      /'; fail "axis 4 self-test: expected exactly the two read-modify-write sites (and NOT the read-only one)"; x=1; }
 [ "$x" = 0 ] && echo "  ok: axis 4: no read-modify-write site in programs/ or cbt/ reads through a fixed cap outside the $(printf '%s\\n' "$ALLOW" | grep -c .) allowlisted tool-own temps (detector self-tested on the two pre-fix bodies)"
 
+# ── axis 5: a read that FAILS is never handed back as content ──
+# The read side of the same defect: `file_read_whole` (and `file_read_all`) exited the loop on
+# `n <= 0`, folding a read ERROR into end-of-file, so the bytes read so far came back as if they
+# were the file — and all three callers WRITE THAT BUFFER BACK. A directory is the one path that
+# opens and cannot be read, on every POSIX target, so it is the probe.
+mkdir -p "$D/a5/adir"
+printf 'the whole file, every byte of it, and then some more bytes\n' > "$D/a5/real.txt"
+real_sz=$(wc -c < "$D/a5/real.txt" | tr -d ' ')
+cat > "$D/a5/probe.cyr" <<CYR
+include "lib/io.cyr"
+fn main(): i64 {
+    alloc_init();
+    # premise: the directory really does OPEN (else the axis would pass vacuously)
+    var dfd = file_open("$D/a5/adir", 0, 0);
+    if (dfd < 0) { return 7; }
+    file_close(dfd);
+    # a read that fails must be "could not read" (0), never "here is the file" (a buffer)
+    var n = 1234;
+    var b = file_read_whole("$D/a5/adir", &n);
+    if (b != 0) { return 1; }
+    if (n != 0) { return 2; }
+    # anti-vacuous: a real file still comes back WHOLE
+    var m = 1234;
+    var c = file_read_whole("$D/a5/real.txt", &m);
+    if (c == 0) { return 3; }
+    if (m != $real_sz) { return 4; }
+    # the fixed-buffer peer reports the failure as a negative, not as a 0-byte file
+    var buf = alloc(4096);
+    var r = file_read_all("$D/a5/adir", buf, 4096);
+    if (r >= 0) { return 5; }
+    var r2 = file_read_all("$D/a5/real.txt", buf, 4096);
+    if (r2 != $real_sz) { return 6; }
+    return 0;
+}
+var rc = main();
+syscall(60, rc);
+CYR
+_build "$D/a5/probe.cyr" "$D/a5/probe"
+prc=0; ( ulimit -c 0; "$D/a5/probe" ) || prc=$?
+x=0
+case "$prc" in
+    0) ;;
+    1) fail "axis 5: file_read_whole handed back a BUFFER for a path it could not read — a failed read is being reported as content"; x=1 ;;
+    2) fail "axis 5: file_read_whole reported a non-zero length for a path it could not read"; x=1 ;;
+    3) fail "axis 5: file_read_whole returned 0 for a readable file (anti-vacuous check)"; x=1 ;;
+    4) fail "axis 5: file_read_whole did not return all $real_sz bytes of a readable file"; x=1 ;;
+    5) fail "axis 5: file_read_all returned >= 0 for a path it could not read — a read error folded into end-of-file"; x=1 ;;
+    6) fail "axis 5: file_read_all did not return $real_sz for a readable file (anti-vacuous check)"; x=1 ;;
+    7) fail "axis 5: a directory does not open read-only here, so the probe cannot force a failing read — the axis must not read green"; x=1 ;;
+    *) fail "axis 5: the probe exited $prc (a crash, or a code this gate does not know)"; x=1 ;;
+esac
+# STATIC: no accumulating read loop in lib/io.cyr exits on `n <= 0`. This is what pins the
+# PARTIAL case — a read that fails after 40 KB — which no portable unprivileged runtime probe
+# can force (see the axis note in the header). Same branch, so re-folding it reddens here.
+cat > "$D/folds.awk" <<'AWK'
+{ L[NR] = $0 }
+END {
+    for (i = 1; i <= NR; i++) {
+        line = L[i]
+        if (line ~ /^[ \t]*#/) continue
+        if (!match(line, /var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*(file_read|sys_read)\(/)) continue
+        id = substr(line, RSTART, RLENGTH); sub(/^var[ \t]+/, "", id); sub(/[ \t]*=.*/, "", id)
+        nsites++
+        ok = 0
+        for (j = i + 1; j <= NR && j <= i + 8; j++) {
+            t = L[j]
+            if (t ~ /^[ \t]*#/ || t ~ /^[ \t]*$/) continue
+            if (t ~ ("if[ \t]*\\([ \t]*" id "[ \t]*<=[ \t]*0")) break
+            if (t ~ ("if[ \t]*\\([ \t]*" id "[ \t]*<[ \t]*0")) ok = 1
+            break
+        }
+        if (!ok) print i ": " line
+    }
+    print "SITES " nsites > "/dev/stderr"
+}
+AWK
+_read_folds() { awk -f "$D/folds.awk" "$1" 2> "$D/folds.n"; }
+# self-test: the pre-fix loop must be reported and the fixed one must not
+printf '    var n = file_read(fd, buf + total, cap - total);\n    if (n <= 0) { go = 0; }\n    else { total = total + n; }\n' > "$D/fold.prefix.cyr"
+printf '    var n = file_read(fd, buf + total, cap - total);\n    # a comment in between\n    if (n < 0) { file_close(fd); return n; }\n    if (n == 0) { go = 0; }\n' > "$D/fold.clean.cyr"
+[ -n "$(_read_folds "$D/fold.prefix.cyr")" ] || { fail "axis 5 self-test: the pre-fix \`n <= 0\` loop was not reported — the detector is blind"; x=1; }
+[ -z "$(_read_folds "$D/fold.clean.cyr")" ] || { fail "axis 5 self-test: the fixed loop was reported: $(_read_folds "$D/fold.clean.cyr")"; x=1; }
+folds=$(_read_folds lib/io.cyr)
+nsites=$(awk '{ print $2 }' "$D/folds.n")
+[ -n "$folds" ] && { fail "axis 5: a read loop in lib/io.cyr treats a NEGATIVE read as end-of-file (check \`< 0\` first, separately from \`== 0\`):"; printf '%s\n' "$folds" | sed 's/^/      /'; x=1; }
+[ "${nsites:-0}" -ge 5 ] || { fail "axis 5: only ${nsites:-0} read sites found in lib/io.cyr (floor 5) — the scan read nothing"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 5: a path that cannot be read yields 0/len 0 (file_read_whole) and a negative (file_read_all), a readable one all $real_sz bytes, and all $nsites read loops in lib/io.cyr keep a negative read distinct from EOF"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: manifest_read_whole_file (4 axes)"
+echo "PASS: manifest_read_whole_file (5 axes)"
