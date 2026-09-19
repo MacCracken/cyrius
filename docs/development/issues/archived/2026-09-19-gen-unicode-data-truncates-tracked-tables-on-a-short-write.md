@@ -73,6 +73,14 @@ The "Related sites" below were fixed in the same bite (13b), together with eleve
 shape-grep found in `programs/` and `cbt/` — see the 6.6.6 CHANGELOG. `cyrfmt --write` measured
 3,684 → 1,024 B on the user's source; `cyrius deps --lock` left a 1,024-byte lock with rc 0.
 
+**Review follow-up (6.6.6, bite 13 review fixes).** Moving these writers to temp + rename changed two
+things the `O_TRUNC` writes had kept: the file's MODE (a 0600 source came back 0644) and a SYMLINK
+(replaced by a regular copy, the file it named left unformatted). `file_write_atomic` now keeps the
+existing mode, and `file_replace_atomic` (new) also writes through a link, for the files a user owns
+— `cyrfmt --write`, `cyrius.cyml`, `.cyrius-toolchain`, `cyrius.lock`. The same review found the
+APPEND half of the shape still open (`ark`'s transaction log; `cyrius-init`'s appends to the user's
+`starship.toml` and `.gitignore`), now whole-record appends that roll a short write back.
+
 ## Corrections to this filing
 
 - The tool's header claimed it writes FOUR files, the fourth being a "verbatim copy" of

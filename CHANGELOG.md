@@ -974,7 +974,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   16 concurrent copies (the async fixtures 48/48 exit 42), and the whole 323-file corpus run as 3
   concurrent copies, each in its own scratch root, differed from a solo run nowhere; the changed
   files compile identically (errors + undefined fns) for x86, aarch64, PE and both Mach-O targets,
-  and pass under qemu-aarch64 and (the crossos ones) wine — emulation, not the hardware leg. Not
+  and pass under qemu-aarch64 and (the crossos ones) wine — emulation, not the hardware leg. With
+  every review fix in, two full `sh scripts/check.sh` from two scratch worktrees at once: both rc 0,
+  driver 255/255, 170 shell gates PASS, 0 FAIL, 689 s (ssh legs pointed at an unresolvable host). Not
   covered (same checkout only, separate worktrees never share them): three crossos tests write
   cwd-relative scratch files into the check driver's cwd. No compiler change.
 
