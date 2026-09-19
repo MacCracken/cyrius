@@ -1502,6 +1502,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `TMPDIR` from a checked `mktemp -d` may then spell `"$TMPDIR/x"` freely; that is the private
   directory, not the shared one.
 
+- **Five `lib/` modules called other modules' functions without including them, so a bare
+  `include` compiled with `warning: undefined function` — and an undefined function is a
+  `ud2`/SIGILL stub, not a link error** (bite 17g). `lib/fmt.cyr` called `strlen`/`memcpy`
+  (`lib/string.cyr`) and `vec_get` (`lib/vec.cyr`) while including **nothing**; `lib/vec.cyr`
+  called `alloc` and included only `lib/fnptr.cyr`; `lib/string.cyr`'s `str_lower_cstr` called
+  `alloc`; `lib/io.cyr` called `alloc`, `strlen`, `memcpy`, `fmt_int` and `fmt_int_buf` — five
+  warnings on every target — plus `_agnos_getenv` as a bare forward reference on agnos; and
+  `lib/alloc.cyr` called `sys_mmap`, which the new gate found and this bite had not, because
+  every real consumer includes `lib/syscalls.cyr` first so it was invisible until a module was
+  compiled *alone*. Each file wrote the requirement down **for the caller** instead — `Requires:
+  include "lib/string.cyr" for strlen`, `include "lib/alloc.cyr" then include "lib/vec.cyr"` —
+  and fmt's line did not even name `lib/vec.cyr`. CLAUDE.md's self-sufficient-modules rule is
+  phrased about flag *constants*; it is about helpers too, and a constant only gives you a wrong
+  number while a function gives you a signal. Fixed by including the definers (include-once, so
+  an existing caller pays nothing). Measured: 20 of the tree's `programs/` + `lib/` files lost
+  undefined-function warnings, none gained any, and all 328 `.tcyr` still exit 0. Gated by
+  `tests/gates/toolchain/stdlib_modules_self_sufficient.sh`, 6 mutations each RED — including
+  one that reddens **only** the agnos target, which is the `_agnos_getenv` shape. ⚠ The rest of
+  the stdlib is not there yet: 26 of the 103 `lib/*.cyr` include alone with no undefined
+  function, 46 do not, and 31 cannot be included alone at all (per-target peers, which exist to
+  be dispatched into). The gate's axis 4 is a **ratchet** on that 26 so the number cannot slide
+  back while the rest is brought up.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -1536,6 +1559,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without. 25 checks on PE, 15 on every other host; both path components verified against
   something other than the module table, and the GetModuleFileNameW truncation contract
   (`cch` back, not a length) pinned on real hardware. 25/25 on cass.
+
+- `tests/gates/toolchain/stdlib_modules_self_sufficient.sh` — 4 axes: every module in the
+  self-sufficient set includes alone with no undefined function on x86-Linux, agnos, PE and
+  Mach-O; an anti-vacuous cross-module probe that must return 42; a self-test that the check can
+  see an undefined function at all; and a ratchet over all 103 `lib/*.cyr`.
 
 - `tests/gates/toolchain/release_verify_private_temp.sh` — 4 axes over the release installer's
   staging, run hermetically with `curl`, `cyrsign` and the checksum tools stubbed on `PATH`:

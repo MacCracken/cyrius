@@ -41,6 +41,14 @@
 # cx bytecode has no threads and atomic_cas has no cx body, so the loop
 # is gated to the two real-thread arches (x86 / aarch64); on cx the lock
 # compiles to a no-op (correct — single-threaded VM).
+# v6.6.6: SELF-SUFFICIENT. This file calls `sys_mmap`/`sys_brk` (lib/syscalls.cyr) and included
+# only its own per-target arms, so `include "lib/alloc.cyr"` alone compiled with
+# `warning: undefined function 'sys_mmap'` — and an undefined fn is a ud2/SIGILL stub, so the
+# first allocation traps. It was invisible from x86-Linux because every real consumer includes
+# lib/syscalls.cyr first; the agnos arm surfaced it. Include-once, so nobody pays twice.
+# CHANGELOG [6.6.6]
+include "lib/syscalls.cyr"
+
 include "lib/atomic.cyr"
 
 var _alloc_lock = 0;

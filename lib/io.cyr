@@ -8,6 +8,22 @@
 include "lib/syscalls.cyr"
 # Result-returning *_r variants below; see CHANGELOG [5.8.30].
 include "lib/result.cyr"
+# v6.6.6: SELF-SUFFICIENT. This file calls `alloc` (every heap buffer below), `strlen`/`memcpy`
+# (lib/string.cyr) and `fmt_int`/`fmt_int_buf` (lib/fmt.cyr) and included none of them, so
+# `include "lib/io.cyr"` alone compiled with five `warning: undefined function` lines on EVERY
+# target — an undefined fn is a ud2/SIGILL stub, so the first affected call traps. lib/fmt.cyr
+# pulls in string and (through vec) alloc. Include-once, so an existing caller pays nothing.
+# CHANGELOG [6.6.6]
+include "lib/fmt.cyr"
+include "lib/string.cyr"
+# agnos has no /proc/self/environ, so `getenv` below delegates to args_agnos.cyr's
+# `_agnos_getenv` (it reads the r15-parked init stack). That was a bare forward reference —
+# fine when a program happened to include lib/args.cyr, `warning: undefined function
+# '_agnos_getenv'` and a trapping getenv when it did not. The peer is included directly (not
+# lib/args.cyr, whose dispatcher pulls in the Linux/macOS/Windows arms too). CHANGELOG [6.6.6]
+#ifdef CYRIUS_TARGET_AGNOS
+include "lib/args_agnos.cyr"
+#endif
 
 # v5.8.30 — IoError variants. Bare-variant enum so each name folds
 # to a const int at compile time. Tag-name prefix `Io` keeps these
