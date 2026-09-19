@@ -21,8 +21,10 @@
 #       (exactly the two-independent-loads shape that deadlocked `thread_join` at v6.5.8)
 #
 #   CAUGHT BY THE .tcyr's PERF TRIPWIRE —
-#     · unlock's fast-path CAS pointed at the wrong state → syscalls on every release
-#       (perfectly CORRECT, just 8x slower — a correctness-only gate passes it)
+#     · unlock's fast path removed or pointed at the wrong state → syscalls on every
+#       release (perfectly CORRECT, just 8x slower — a correctness-only gate passes it).
+#       Axis 6 below re-proves this on every run by building the .tcyr against exactly
+#       that mutant and requiring the perf assertion — and only it — to go RED.
 #
 #   ⛔ CAUGHT BY NOTHING AT RUNTIME, WHICH IS WHY THE STRUCTURAL AXIS BELOW EXISTS —
 #     · dropping the `atomic_cas(m, 1, 2)` upgrade after waking. The lock stays CORRECT
@@ -35,6 +37,10 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC="$ROOT/build/cycc"
 D=$(mktemp -d)
+# A failed mktemp prints nothing, and with D="" every "$D/..." path below becomes ROOT-ABSOLUTE
+# (/m.bin, /mt, /mt/lib) — the AGNOS CI container runs as root, so axis 6 would create /mt and
+# copy lib/ into the filesystem root. It would not touch the tree; refuse to run anyway.
+if [ -z "$D" ] || [ ! -d "$D" ]; then echo "FAIL: sync-mutex-three-state — mktemp -d gave no directory"; exit 1; fi
 trap 'rm -rf "$D"' EXIT
 fails=0
 
@@ -81,8 +87,58 @@ echo "axis 5 — runtime: contended correctness + the perf tripwire:"
 chmod +x "$D/m.bin" 2>/dev/null
 rc=0
 timeout 180 "$D/m.bin" > "$D/m.out" 2>&1 || rc=$?
-check "vr01_sync_mutex_contended.tcyr exits 0 (124 = a stranded waiter)" 0 "$rc"
+check "crossos/sync_mutex_contended.tcyr exits 0 (124 = a stranded waiter)" 0 "$rc"
 check "no failed assertions" 1 "$(grep -c '0 failed' "$D/m.out" || true)"
+
+echo "axis 6 — the perf tripwire is RELATIVE and it FIRES on a syscall-per-release lock (6.6.6):"
+# ⛔ It was `assert(per < 250, ...)` — an absolute ns bound set on one x86 box. Measured on
+# real ecb (arm64 macOS) at 6.6.5: fast path 16-25 ns, syscall-per-release mutant 113-174 ns,
+# i.e. UNDER 250 — the tripwire read GREEN on the broken lock in 10 of 10 runs. The .tcyr now
+# requires pair < floor + ref/2 with all three timed in the same run (see its PERF AXIS
+# note). An absolute bound would still pass the mutant check below ON THIS BOX (378 > 250),
+# so the relative form is pinned structurally as well — only ecb could see the difference.
+#
+# MUTATION LEDGER (2026-09-19, scratch tree, this box):
+#   real tree ........................................... GREEN (0 FAIL)
+#   the .tcyr reverted to the 6.6.5 absolute `per < 250` .. RED — relative-form pin, the
+#       no-absolute-bound pin, and "the perf assertion is the one that fired" (its message
+#       differs) — 3 fails
+#   bound loosened to `floor + ref * 2` ..................... RED — relative-form pin + the
+#       mutant now exits 0 — 4 fails
+#   the reference inflated 4x, the pinned line untouched .... RED — the mutant exits 0,
+#       i.e. the runtime half catches what the structural half cannot — 3 fails
+# Real hardware for the .tcyr itself (fast path GREEN, syscall-per-release mutant RED) is
+# recorded in its PERF AXIS note: x86 Linux, cass, pi, ecb, ach.
+T=tests/tcyr/crossos/sync_mutex_contended.tcyr
+check "the bound is relative to the same run (pair < floor + ref/2)" 1 \
+    "$(grep -c 'var ok = pair_ps < floor_ps + ref_ps / 2;' "$T" || true)"
+check "no absolute ns bound on the pair" 0 \
+    "$(grep -cE 'assert\((per|pair_ps) *< *[0-9]' "$T" || true)"
+# The mutant: sync.cyr's Linux arm with unlock's fast path DELETED, so every release takes
+# atomic_store + FUTEX_WAKE. Correct (no hang, exact totals) and a syscall per release.
+FAST='    if (atomic_cas(m, 1, 0) == 1) { return 0; }'
+mkdir -p "$D/mt"
+cp -r "$ROOT/lib" "$D/mt/lib"
+grep -vxF "$FAST" "$ROOT/lib/sync.cyr" > "$D/mt/lib/sync.cyr"
+check "mutant applied: the fast-path line is gone from the scratch sync.cyr" 0 \
+    "$(grep -cxF "$FAST" "$D/mt/lib/sync.cyr" || true)"
+check "mutant applied: nothing else changed (1 line removed)" 1 \
+    "$(( $(wc -l < "$ROOT/lib/sync.cyr") - $(wc -l < "$D/mt/lib/sync.cyr") ))"
+( cd "$D/mt" && "$CC" < "$ROOT/$T" > "$D/mt.bin" 2>/dev/null )
+if [ ! -s "$D/mt.bin" ]; then
+    check "the mutant .tcyr compiled to a non-empty binary" 1 0
+else
+    chmod +x "$D/mt.bin"
+    rc=0
+    timeout 180 "$D/mt.bin" > "$D/mt.out" 2>&1 || rc=$?
+    check "the mutant does not hang (124) — it is a correct lock, only slower" 1 \
+        "$([ "$rc" -ne 124 ] && echo 1 || echo 0)"
+    check "the mutant exits NON-zero" 1 "$([ "$rc" -ne 0 ] && echo 1 || echo 0)"
+    check "the perf assertion is the one that fired" 1 \
+        "$(grep -c 'FAIL: uncontended lock/unlock costs under HALF a syscall' "$D/mt.out" || true)"
+    check "and nothing else fired (the preconditions and correctness hold)" 1 \
+        "$(grep -c ' 1 failed' "$D/mt.out" || true)"
+fi
 
 echo ""
 if [ "$fails" = "0" ]; then

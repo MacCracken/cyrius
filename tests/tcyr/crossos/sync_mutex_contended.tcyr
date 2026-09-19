@@ -31,9 +31,10 @@
 #   - CLEAN CELL — the lock must be back at 0, not stuck at 2, or the next acquirer pays a
 #     syscall forever after.
 #
-# ⛔ NOT on macOS: threading there is a no-op (`thread_create` returns a null handle) —
-# filed 2026-07-03-macos-threading-workers-dont-run, and crossos/thread_spawn.tcyr:46 /
-# crossos/sync_mutex.tcyr:44 carry the same guard.
+# Runs on EVERY crossos host, macOS included. (This note used to read "NOT on macOS:
+# threading there is a no-op" — the guard it described was removed at v6.5.41, and since
+# v6.5.44 arm64 macOS runs real threads over the same 3-state lock on `__ulock`; x86 macOS
+# still runs bodies serially. See the v6.5.41 block below.)
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -58,6 +59,118 @@ fn _cm_worker(arg): i64 {
     return 0;
 }
 
+# ── The perf-axis instrument (see THE RULE in main). ──
+# One kernel round trip of the kind this mutex's slow path makes, on an address nobody is
+# parked on, so it enters and leaves the kernel and changes nothing:
+#   Linux  — FUTEX_WAKE, the exact syscall unlock's slow path issues          → 0 woken
+#   macOS  — __ulock_wake, the same for lib/sync_macos.cyr                     → -ENOENT (-2)
+#   Windows — the lock is kernel32's SRWLOCK, so no cyrius-owned slow path exists. The
+#             reference is a zero-timeout WaitForSingleObject on the current-process
+#             pseudo-handle (NtWaitForSingleObject): a running process is never signaled,
+#             so it returns WAIT_TIMEOUT (0x102). Sleep(0) measured cheaper on cass (254 vs
+#             367 ns) but it YIELDS to any ready thread, so on a busy box it would time the
+#             scheduler and loosen the bound — and a Sleep(0) mutant is caught anyway
+#             (see the measurements in main).
+# Any other target has no arm and fails the precondition assertion closed.
+fn _cm_ref_syscall(cell): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    return syscall(SYS_FUTEX, cell, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return sys_ulock_wake(1, cell, 0);
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return syscall(61441, 0 - 1, 0);   # 0xF001 WaitForSingleObject(GetCurrentProcess(), 0)
+    #endif
+    return 0 - 38;
+}
+
+# What the reference returns when it really went through the kernel — from each OS's own
+# contract (futex(2), Darwin's ulock, WaitForSingleObject), not from a measurement.
+fn _cm_ref_expect(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    return 0;
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 2;
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return 258;
+    #endif
+    return 0;
+}
+
+# Picoseconds per uncontended lock/unlock pair, over n pairs.
+fn _cm_time_pairs(m, n): i64 {
+    var i = 0;
+    var t0 = clock_now_ns();
+    while (i < n) {
+        mutex_lock(m);
+        mutex_unlock(m);
+        i = i + 1;
+    }
+    return (clock_now_ns() - t0) * 1000 / n;
+}
+
+# Picoseconds per two bare CAS (0->1, 1->0) on a private cell — the userspace floor.
+fn _cm_time_floor(c, n): i64 {
+    var i = 0;
+    var t0 = clock_now_ns();
+    while (i < n) {
+        atomic_cas(c, 0, 1);
+        atomic_cas(c, 1, 0);
+        i = i + 1;
+    }
+    return (clock_now_ns() - t0) * 1000 / n;
+}
+
+# Picoseconds per reference kernel round trip, over n calls.
+fn _cm_time_ref(cell, n): i64 {
+    var i = 0;
+    var t0 = clock_now_ns();
+    while (i < n) {
+        _cm_ref_syscall(cell);
+        i = i + 1;
+    }
+    return (clock_now_ns() - t0) * 1000 / n;
+}
+
+# Interleave the three timings for `rounds` rounds; out[0..2] = min pair / floor / ref (ps).
+# 20k pairs and 20k CAS pairs per round are ≥100 µs even on the fastest host, so a 1 µs
+# clock (ach's gettimeofday) is ≤1 %; 2k reference calls keep a 2 µs syscall (pi) to ~4 ms.
+fn _cm_measure(out, rounds): i64 {
+    var c = alloc(8);
+    store64(c, 0);
+    store64(out, 0);
+    store64(out + 8, 0);
+    store64(out + 16, 0);
+    var r = 0;
+    while (r < rounds) {
+        var p = _cm_time_pairs(_cm_mtx, 20000);
+        var f = _cm_time_floor(c, 20000);
+        var s = _cm_time_ref(_cm_mtx, 2000);
+        if (r == 0 || p < load64(out)) { store64(out, p); }
+        if (r == 0 || f < load64(out + 8)) { store64(out + 8, f); }
+        if (r == 0 || s < load64(out + 16)) { store64(out + 16, s); }
+        r = r + 1;
+    }
+    return 0;
+}
+
+# Printed only on failure: the three minima and the bound, so a RED names its numbers.
+fn _cm_report(pair_ps, floor_ps, ref_ps): i64 {
+    syscall(1, 1, "    pair_ps=", 12);
+    print_num(pair_ps);
+    syscall(1, 1, " floor_ps=", 10);
+    print_num(floor_ps);
+    syscall(1, 1, " ref_ps=", 8);
+    print_num(ref_ps);
+    syscall(1, 1, " bound_ps=", 10);
+    print_num(floor_ps + ref_ps / 2);
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
 fn main(): i64 {
     alloc_init();
     _cm_mtx = mutex_new();
@@ -72,14 +185,11 @@ fn main(): i64 {
     # front of it and the "macOS" arm asserted `assert_eq(_cm_counter, _cm_counter, ...)` —
     # a comparison of a value with ITSELF, which passes unconditionally and covered nothing.
     # It is removed rather than repaired: verified against live code, every assertion below
-    # holds on the serial peer. macOS runs thread bodies INLINE (lib/thread_macos.cyr), so
-    # four `thread_create` calls run the worker four times sequentially and the exact-count
-    # assertion is still exactly right; `thread_join` returns 0; and `mutex_lock` there is a
-    # pure `atomic_cas` spinlock (lib/sync_macos.cyr) with NO futex, so nothing can park.
-    # macOS now gets real mutual-exclusion coverage instead of a green tick.
-    # ⚠ This does NOT close the macOS-threading issue and must not be read as doing so —
-    # removing a guard changes no concurrency behaviour. The filing's stated acceptance
-    # criterion ("un-guard these tests") stopped discriminating; the backend is the work.
+    # holds on the serial peer: four `thread_create` calls run the worker four times in turn
+    # and the exact-count assertion is still exactly right.
+    # (Updated 6.6.6: that was the whole of macOS at v6.5.41. Since v6.5.44 arm64 macOS runs
+    # REAL threads and `lib/sync_macos.cyr` is the same 3-state lock parked on `__ulock`, so
+    # on ecb this block is genuine contention; x86 macOS (ach) is still the serial peer.)
     # 4 threads x 20k. Enough real contention that waiters genuinely park (the whole point);
     # small enough to stay well inside the harness timeout on a slow aarch64 box.
     var t1 = thread_create(&_cm_worker, 0);
@@ -110,29 +220,66 @@ fn main(): i64 {
     assert_eq(mutex_unlock(_cm_mtx), 0, "re-unlock after the contended run");
 
     # ── ⭐ THE PERF AXIS, AND IT IS NOT OPTIONAL. The correctness assertions above CANNOT
-    # see the regressions this change is most likely to suffer: mutation testing showed that
-    # dropping the `cas(m,1,2)` upgrade turns the lock into a SPIN, and pointing unlock's
-    # fast-path CAS at the wrong state makes it syscall on every release — both restore the
-    # old ~390 ns behaviour while staying perfectly CORRECT, so a correctness-only gate
-    # passes them. Since eliminating that syscall is the entire point of the change, the
-    # property has to be asserted or a future edit reverts an 8x win in silence.
+    # see an unlock whose fast path stopped taking — it syscalls on every release and stays
+    # perfectly CORRECT, so a correctness-only gate passes it. Since eliminating that syscall
+    # is the entire point of the 3-state lock, the property has to be asserted or a future
+    # edit reverts an 8x win in silence. (Dropping the `cas(m,1,2)` upgrade is NOT visible
+    # here — it leaves the uncontended path untouched — and is caught structurally by
+    # tests/gates/concurrency/sync_mutex_three_state.sh.)
     #
-    # The bound is deliberately loose. Measured: 47-49 ns/pair here (5 runs), 381-398 ns
-    # before — so 250 ns sits ~5x above the new value and ~1.5x below the old, which
-    # catches a reverted fast path without flaking on a loaded or slower box. It is a
-    # REGRESSION tripwire, not a benchmark; `benches/` is where numbers get tracked.
-    # v6.5.41: runs on macOS too. Its mutex is a spinlock with no syscall on any path, so the
-    # <250 ns bound is if anything easier to meet there — measured ~46 ns.
-    var pn = 200000;
-    var p0 = clock_now_ns();
-    var pi = 0;
-    while (pi < pn) {
-        mutex_lock(_cm_mtx);
-        mutex_unlock(_cm_mtx);
-        pi = pi + 1;
-    }
-    var per = (clock_now_ns() - p0) / pn;
-    assert(per < 250, "uncontended lock/unlock stays off the syscall path (<250ns/pair)");
+    # ⛔ 6.6.6 — THE BOUND IS RELATIVE TO THIS HOST, MEASURED IN THIS RUN. It was an absolute
+    # `per < 250` ns, set from one x86 Linux box (48 ns fast / 392 ns with the syscall). A
+    # syscall does not cost the same everywhere, so the absolute bound only discriminated
+    # where it happened to sit between the two. MEASURED on real ecb (arm64 macOS) at
+    # 6.6.5: the fast path 16-25 ns, and a mutant whose unlock wakes on EVERY release
+    # 113-174 ns — UNDER 250, so the tripwire read GREEN on a syscall-per-release lock in
+    # 10 of 10 runs. It was blind on the one host with real macOS threads.
+    #
+    # THE RULE. Time three things interleaved, 9 rounds, and keep each one's minimum (a
+    # minimum is what survives preemption, and every round sees the same core state):
+    #   pair  — one uncontended mutex_lock + mutex_unlock
+    #   floor — two bare `atomic_cas` on a private cell: the least work ANY lock/unlock pair
+    #           must do, so what the pair costs above it is the lock's own overhead
+    #   ref   — one kernel round trip of the kind the slow path makes (_cm_ref_syscall)
+    # and require   pair < floor + ref/2.
+    # A pair that enters the kernel pays at least one whole `ref` on top of its floor, so it
+    # cannot pass by construction; a pair that does not must stay within HALF a syscall of
+    # two CAS. MEASURED 2026-09-19 on the real hosts against a mutant whose unlock syscalls
+    # on every release (ns per pair — fast / bound / mutant):
+    #   x86 Linux  45-58 /  164-264 /  363-407      pi   130 / 1035-1115 / 2016-2043
+    #   cass          33 /  189-198 /  348-366      ach  63-66 /  267-284 /  557-562
+    #   ecb        12-28 /   62-128 /  114-119  (the bound tracks ecb's clock ramp run to run)
+    # plus, on cass, a Sleep(0)-per-release mutant (a kernel entry CHEAPER than the
+    # reference): 256-265 against a bound of 191-198 — RED.
+    # It is a REGRESSION tripwire, not a benchmark; `benches/` is where numbers get tracked.
+    # CHANGELOG [6.6.6]
+    var bb: i64[3];
+    _cm_measure(&bb, 9);
+    var pair_ps = load64(&bb);
+    var floor_ps = load64(&bb + 8);
+    var ref_ps = load64(&bb + 16);
+    # Preconditions, so a broken INSTRUMENT is not reported as a broken lock. The reference
+    # must really enter the kernel (a stubbed route would collapse the bound to the floor)
+    # and the clock must resolve it CLEARLY above the userspace floor — at least 2x. This
+    # was `ref > floor`, zero margin. Measured ref/floor on the real hosts, 2026-09-19:
+    # x86 Linux 58, ach 31, pi 26, ecb 14-16, cass 11.4 — every host clears 2x by 5x+.
+    # MUTATION (the reference replaced by two failed CAS that return the expected value — a
+    # route that never enters the kernel):
+    #   x86 Linux, ref 1.57 floors — `ref > floor` passed and only the LOCK verdict fired
+    #     (a correct lock reported as syscalling: the bound, 1.8 floors, sat under the
+    #     pair's own 7.8), 5/5; now the instrument assertion fires, 5/5.
+    #   cass, ref 1.32 floors — `ref > floor` read GREEN, 2/2, on a reference that never
+    #     reached the kernel; now the instrument assertion, and only it, fires.
+    # 2x is a real separation, not a proof: a 3-CAS reference (2.06 floors, x86) still
+    # passes it. The ≥11x measured above is what the bound stands on. CHANGELOG [6.6.6]
+    assert_eq(_cm_ref_syscall(_cm_mtx), _cm_ref_expect(),
+      "the reference syscall reached the kernel (futex 0 woken / ulock -ENOENT / WAIT_TIMEOUT)");
+    var inst = ref_ps > floor_ps * 2;
+    assert(inst,
+      "a kernel round trip measures over TWICE two bare CAS on this host (else the clock/route cannot separate them)");
+    var ok = pair_ps < floor_ps + ref_ps / 2;
+    assert(ok, "uncontended lock/unlock costs under HALF a syscall above two bare CAS (no syscall on the fast path)");
+    if (ok == 0 || inst == 0) { _cm_report(pair_ps, floor_ps, ref_ps); }
 
     var rc = assert_summary();
     return rc;

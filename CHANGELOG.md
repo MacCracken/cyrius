@@ -783,6 +783,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   controls. Not run: `io_rdwr_agnos.sh` and `syscall_wrapper_pass.sh`, which write FIXED `/tmp` names
   and would clobber a concurrent check.sh — read by hand, they write only `/tmp`. No compiler change —
   cycc unchanged (1,294,040 B).
+- **The mutex "no syscall on the fast path" tripwire was BLIND on real arm64 macOS, and alloc_via's
+  "no call plumbing" tripwire was blind on the box that set it — both were absolute nanosecond
+  constants.** `tests/tcyr/crossos/sync_mutex_contended.tcyr` asserted `per < 250` ns for an
+  uncontended lock/unlock pair, calibrated on x86 Linux (45 ns fast / ~378 ns with a syscall per
+  release). The roadmap pinned the risk on cass, whose clock 6.6.5 made real — premise-checked and
+  cass is fine (34 ns fast, ~350 ns with the syscall). The blind host was **ecb**: a `__ulock_wake`
+  costs ~100 ns there, so a mutant whose unlock wakes on EVERY release read **113-174 ns — GREEN,
+  10 of 10 runs**, on the one host with real macOS threads. The perf axis now times three things
+  interleaved over 9 rounds and keeps each minimum — the pair; a **floor** of two bare `atomic_cas`;
+  and a **reference kernel round trip** of the kind the slow path makes (`FUTEX_WAKE` / `__ulock_wake`
+  on an unwaited cell; on Windows, whose SRWLOCK has no cyrius-owned slow path, a zero-timeout
+  `WaitForSingleObject` on the process pseudo-handle — `Sleep(0)` measured cheaper but yields) — and
+  requires `pair < floor + ref/2`: a pair that syscalls pays a whole `ref` and cannot pass by
+  construction. Preconditions report a broken instrument as one (the reference's return value from
+  the OS contract — 0 woken / `-ENOENT` / `WAIT_TIMEOUT` 258 — and `ref > 2*floor`: measured 11-58x
+  across the hosts, while a zero-margin `ref > floor` read GREEN on cass against a reference that
+  never entered the kernel). Measured on real hardware, fast / bound / syscall-per-release mutant
+  (ns): x86 Linux 45-58 / 164-264 / 363-407 ·
+  cass 33 / 189-198 / 348-366 (plus a `Sleep(0)` mutant, cheaper than the reference: 256-265, RED) ·
+  pi 130 / 1035-1115 / 2016-2043 · ecb 12-28 / 62-128 / 114-119 · ach 63-66 / 267-284 / 557-562 —
+  GREEN on the tree and RED on the mutant on all five. **The same defect, a second time:**
+  `tests/gates/memory/alloc_via_no_plumbing.sh` asserted `alloc_via < 14` ns (fixed ~11, the 6.5.9
+  plumbing 15-16). Against a scratch lib with the WHOLE v6.5.10 fix reverted it now reads **13 ns —
+  GREEN, 3 of 3** — because twelve minors of faster code moved the good and the bad value down
+  together (the fixed path reads 9 ns today). Its probe now rebuilds BOTH shapes beside the library
+  (the fixed one and the 6.5.9 accessor-calls-plus-trampoline one, each with its own vtable) and
+  requires `2*VIA < FIX + PL`, after asserting the plumbing measures at least 10% dearer
+  (`PL*10 > FIX*11`, measured 1.35-1.39x — a bare `PL > FIX` passed two indistinguishable shapes and
+  left the verdict to noise): full revert RED, accessor-only revert RED (0.4 ns margin — a bonus;
+  axis 1 pins it structurally), trampoline-only GREEN (one frame is under
+  half the plumbing; axis 3 pins it, RED). `sync_mutex_three_state.sh` gains axis 6: the relative
+  form pinned structurally (an absolute bound would still catch the mutant on x86 Linux — only ecb
+  shows the difference) and the `.tcyr` rebuilt against a scratch `lib/sync.cyr` with unlock's fast
+  path deleted, requiring the perf assertion and only it to fire. Both gates mutation-proven, ledgers
+  in their headers. Stale comments corrected on the way: the test's "NOT on macOS / pure spinlock"
+  notes and `lib/sync.cyr`'s BACKENDS block (Linux "2-state", macOS "spinlock awaiting __ulock" —
+  3-state since v6.5.9 and v6.5.44). No compiler change — cycc unchanged (1,294,040 B).
 
 ### Changed
 
