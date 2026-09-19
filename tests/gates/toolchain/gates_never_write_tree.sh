@@ -71,7 +71,7 @@
 #      CHECKED mktemp (one per line, `V=$(mktemp …) && [ -d|-f "$V" ] || { …; exit N; }`; a
 #      hand-built "${TMPDIR:-/tmp}/name.$$" is refused), and no FIXED /tmp name — in a gate, or
 #      as a "/tmp/<name>" literal in programs/checks/*.cyr. See the axis for the two exempt,
-#      read-only namespaces. Self-tested on 7 shapes and 2 clean files.
+#      read-only namespaces. Self-tested on 14 shapes and 2 clean files.
 #   6. STATIC (6.6.6 bite 13 review), every tests/tcyr + tests/fixtures file — what check.sh RUNS:
 #      no "/tmp/<name>" string literal (a non-path literal is allowlisted with its reason, and a
 #      stale allowlist entry fails) and no fixed port bound (sock_bind with a non-zero literal or
@@ -117,6 +117,12 @@
 #   t. axis-6 port detector disabled                       -> axis 6 self-test FAIL (port_var,
 #                                                            port_lit, port_raw, port_sockaddr)
 #   u. an allowlist entry naming a literal that is gone    -> axis 6 FAIL (stale entry)
+#   v. axis-5 failure branch may `exit 0` again            -> axis 5 self-test FAIL (skip0: a
+#                                                            `{ echo SKIP; exit 0; }` is a vacuous pass)
+#   w. axis-5 TMPDIR-path check back to `${TMPDIR:-/tmp}/`  -> axis 5 self-test FAIL (quoted_tmpdir
+#      only                                                  "${TMPDIR:-/tmp}"/x, bare_tmpdir, braced_tmpdir)
+#   x. axis-5 mktemp-spelling check disabled               -> axis 5 self-test FAIL (backtick,
+#                                                            spaced `$( mktemp`, pathed /usr/bin/mktemp)
 # Real tree -> PASS.
 #
 # ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
@@ -490,22 +496,37 @@ _mktemp_bad() {  # prints "<line>: <text>" for every non-canonical mktemp / hand
     awk '
     /^[ \t]*#/ { next }
     {
-        # one mktemp per line, and that line is the canonical checked assignment
-        line = $0; n = 0; tmp = line
+        line = $0
+        # every mktemp COMMAND is spelled `$(mktemp` — a backtick, `$( mktemp`, a path or a
+        # `command` prefix would slip past the count below (quoted strings are messages)
+        q = line; gsub(/"[^"]*"/, "S", q); gsub(/\047[^\047]*\047/, "S", q)
+        u = q
+        while (match(u, /(^|[^A-Za-z0-9_])mktemp([^A-Za-z0-9_]|$)/)) {
+            s0 = (substr(u, RSTART, 1) == "m") ? RSTART : RSTART + 1   # where "mktemp" starts
+            if (s0 < 3 || substr(u, s0 - 2, 2) != "$(") { print NR ": " line; next }
+            u = substr(u, s0 + 6)
+        }
+        # one mktemp per line, and that line is the canonical checked assignment whose failure
+        # branch EXITS NON-ZERO (a `{ echo SKIP; exit 0; }` is a vacuous pass, not a check)
+        n = 0; tmp = line
         while ((i = index(tmp, "$(mktemp")) > 0) { n++; tmp = substr(tmp, i + 8) }
         if (n > 0) {
             ok = 0
-            if (n == 1 && match(line, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=\$\(mktemp[^)]*\) && \[ -[df] "\$[A-Za-z_][A-Za-z0-9_]*" \] \|\| \{.*exit [0-9]/)) {
-                seg = substr(line, RSTART, RLENGTH)
+            c = line; gsub(/\$\{[^}]*\}/, "X", c)
+            if (n == 1 && match(c, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=\$\(mktemp[^)]*\) && \[ -[df] "\$[A-Za-z_][A-Za-z0-9_]*" \] \|\| \{[^}]*\}/)) {
+                seg = substr(c, RSTART, RLENGTH)
                 v = seg; sub(/^[ \t]*/, "", v); sub(/=.*/, "", v)
                 w = ""
                 if (match(seg, /\[ -[df] "\$[A-Za-z_][A-Za-z0-9_]*"/)) { w = substr(seg, RSTART + 7, RLENGTH - 8) }
-                if (v == w) ok = 1
+                blk = seg; sub(/^.*\|\| \{/, "", blk)
+                if (v == w && blk ~ /(^|[^A-Za-z0-9_])exit[ \t]+[1-9]/ && blk !~ /(^|[^A-Za-z0-9_])exit[ \t]+0/) ok = 1
             }
             if (!ok) { print NR ": " line; next }
         }
-        t = line; gsub(/mktemp[^)]*\$\{TMPDIR:-\/tmp\}\//, "", t)
-        if (t ~ /\$\{TMPDIR:-\/tmp\}\//) print NR ": " line
+        # a temp PATH built from TMPDIR by hand, however spelled (${TMPDIR:-/tmp}/, "${TMPDIR:-/tmp}"/,
+        # $TMPDIR/, ${TMPDIR}/) — a mktemp TEMPLATE argument is the one legitimate use
+        t = line; gsub(/mktemp[^)]*/, "M", t)
+        if (t ~ /\$TMPDIR"?\// || t ~ /\$\{TMPDIR(:-[^}]*)?\}"?\//) print NR ": " line
     }' "$1"
 }
 _fixed_tmp_sh() {  # a /tmp/<name> in code (not a comment), bar the two observed namespaces
@@ -520,16 +541,25 @@ printf 'T=$(mktemp); trap '"'"'rm -f "$T"'"'"' EXIT\n' > "$W/fx5/trap.sh"
 printf 'A=$(mktemp -d) && [ -d "$B" ] || { echo no; exit 1; }\n' > "$W/fx5/wrongvar.sh"
 printf 'A=$(mktemp -d) && [ -d "$A" ] || echo "FAIL: soft"\n' > "$W/fx5/noexit.sh"
 printf 'TMP="${TMPDIR:-/tmp}/x.$$"\nmkdir -p "$TMP"\n' > "$W/fx5/handmade.sh"
+printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo SKIP; exit 0; }\n' > "$W/fx5/skip0.sh"
+printf 'D="${TMPDIR:-/tmp}"/cyr_fixed\n' > "$W/fx5/quoted_tmpdir.sh"
+printf 'D=$TMPDIR/cyr_fixed\n' > "$W/fx5/bare_tmpdir.sh"
+printf 'D="${TMPDIR}/cyr_fixed"\n' > "$W/fx5/braced_tmpdir.sh"
+printf 'D=`mktemp -d` && [ -d "$D" ] || { echo no; exit 1; }\n' > "$W/fx5/backtick.sh"
+printf 'D=$( mktemp -d ) && [ -d "$D" ] || { echo no; exit 1; }\n' > "$W/fx5/spaced.sh"
+printf 'D=$(/usr/bin/mktemp -d) && [ -d "$D" ] || { echo no; exit 1; }\n' > "$W/fx5/pathed.sh"
 printf 'echo x > /tmp/cyx_probe\n' > "$W/fx5/fixed.sh"
 printf '    var p = "/tmp/cyr_macho_peep";\n' > "$W/fx5/fixed.cyr"
 { printf 'D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: g: mktemp -d failed"; exit 1; }\n'
   printf 'O=$(mktemp --suffix=.cyr) && [ -f "$O" ] || { echo "FAIL: g"; exit 1; }; trap '"'"'rm -f "$O"'"'"' EXIT\n'
   printf 'H=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-home.XXXXXX") && [ -d "$H" ] || { printf x; exit 1; }\n'
+  printf 'E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: g: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }\n'
+  printf 'rc=0; TMPDIR="$W/tmpok" sh "$g" || rc=$?\nprintf "%%s: mktemp failed\\n" "${TMPDIR:-/tmp}" >&2\n'
   printf '# a comment may say D=$(mktemp -d) or /tmp/foo freely\n'
   printf 'ls -d /tmp/cyrius-* 2>/dev/null\nSOCK="/tmp/.wine-$(id -u)/server"\nsys_chdir("/tmp");\n'; } > "$W/fx5/clean.sh"
 printf '    var base = "/tmp";\n    str_builder_add_cstr(sb, "/tmp/");\n    var r = _remote_name("/tmp/", "cyr_x", "");\n' > "$W/fx5/clean.cyr"
 st5=0
-for f in bare trap wrongvar noexit handmade; do
+for f in bare trap wrongvar noexit handmade skip0 quoted_tmpdir bare_tmpdir braced_tmpdir backtick spaced pathed; do
     [ -n "$(_mktemp_bad "$W/fx5/$f.sh")" ] || { echo "FAIL: axis 5 self-test: an unchecked temp dir ('$f') was not flagged"; st5=1; }
 done
 [ -n "$(_fixed_tmp_sh "$W/fx5/fixed.sh")" ] || { echo "FAIL: axis 5 self-test: a fixed /tmp name in a gate was not flagged"; st5=1; }
@@ -561,7 +591,7 @@ if [ "$n5" -lt 150 ] || [ "$nmk" -lt 120 ] || [ "$ncyr" -lt 10 ]; then
 elif [ "$bad5" != 0 ]; then
     FAIL=1
 elif [ "$st5" = 0 ]; then
-    echo "  ok: axis 5: $n5 gate scripts ($nmk mktemp lines) take every temp dir from a checked mktemp and name no fixed /tmp path; $ncyr check-driver files carry no \"/tmp/<name>\" (self-tested on 7 shapes + 2 clean files)"
+    echo "  ok: axis 5: $n5 gate scripts ($nmk mktemp lines) take every temp dir from a checked mktemp and name no fixed /tmp path; $ncyr check-driver files carry no \"/tmp/<name>\" (self-tested on 14 shapes + 2 clean files)"
 fi
 
 # ── axis 6: STATIC — the TESTS check.sh runs share no fixed name either ─────────────────

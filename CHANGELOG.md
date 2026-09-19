@@ -1080,8 +1080,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dir is the canonical checked mktemp, one per line (a hand-built `${TMPDIR:-/tmp}/…` is refused; a
   mktemp TEMPLATE is the one legitimate use), no gate names a fixed `/tmp/<name>`, and the driver
   carries no `"/tmp/<name>"` literal. Exempt, read-only: `/tmp/cyrius-*` (the CLI's own temp,
-  CVE-35/36) and `/tmp/.wine-*`. Self-tested on 7 shapes + 2 clean files; mutation-proven six ways
-  (four 6.6.5 files put back, each detector half disabled).
+  CVE-35/36) and `/tmp/.wine-*`. Self-tested on 14 shapes + 2 clean files; mutation-proven nine ways
+  (four 6.6.5 files put back, each detector half disabled, and each hardening below reverted). ⚠ As
+  first committed the detector passed five respellings (found in review; none was in the tree): a
+  failure branch that exits 0 (`… || { echo SKIP; exit 0; }` — a vacuous pass counted as checked,
+  because it accepted `exit [0-9]`), `"${TMPDIR:-/tmp}"/name`, `$TMPDIR/name`, a backtick mktemp and
+  `$( mktemp -d )`. It now requires the failure branch to exit non-zero, flags any TMPDIR-built path
+  however quoted or braced (a mktemp TEMPLATE stays exempt), and requires every mktemp command to be
+  spelled `$(mktemp` (backtick, `$( mktemp`, `/usr/bin/mktemp`, `command mktemp` are refused).
 - **`gates_never_write_tree.sh` axis 6** — STATIC, over every `tests/tcyr` + `tests/fixtures` file,
   i.e. what check.sh RUNS: no `"/tmp/<name>"` string literal (a literal that is not a path the test
   opens — two flag-parser argv strings — is allowlisted with its reason, and an entry that matches
