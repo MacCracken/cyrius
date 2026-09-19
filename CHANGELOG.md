@@ -1029,7 +1029,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   .cyx guest cannot use brk/mmap at all: cxvm's syscall dispatch captures only r2..r6 so the
   6-argument mmap cannot be issued, and a host address would be meaningless as a guest offset);
   `lib/syscalls.cyr` gains a cx arm routing to the x86_64-Linux peer (cxvm issues the guest's own
-  Linux-numbered syscall on whatever host it runs on). `lib/assert.cyr` now includes
+  Linux-numbered syscall on whatever host it runs on) — the arm includes `lib/alloc.cyr` first,
+  because that peer's `sigset_new`/epoll/timer helpers call `alloc()` without including its
+  definer, which only a DCE-less backend notices; and `signal_ignore`/`signal_default` gain a cx
+  no-op arm, without which EVERY branch of those two fns is preprocessed away on cx and the body
+  returns whatever is in the return register. `lib/assert.cyr` now includes
   `lib/vec.cyr`: `fmt.cyr`'s `fmt_sprintf` calls `vec_get` without including its definer, which on
   x86/aarch64 is only a warning (an uncalled `fmt_sprintf` makes it UNREACHABLE) but hard-errors on
   cx, which has no DCE — fmt.cyr's header now states the dependency it had always had. New

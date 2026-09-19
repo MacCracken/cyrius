@@ -86,6 +86,15 @@ include "lib/syscalls_x86_64_agnos.cyr"
 # the cx driver matched no target at all, so `sys_exit` (and every other
 # wrapper) was undefined and `lib/assert.cyr` could not compile for cx.
 #ifdef CYRIUS_TARGET_CX
+# alloc.cyr FIRST, and only on this arm: the x86_64 peer's sigset_new /
+# epoll / timer helpers call `alloc()` without including its definer. On a
+# backend with DCE that is a warning (those wrappers are unreachable unless
+# called); the cx backend emits every fn, so the call site is real and its
+# undefined-call gate hard-errors — which would make `include
+# "lib/syscalls.cyr"` alone uncompilable for cx, the very thing this arm
+# exists to fix. Double-include-safe, so a consumer that already pulled
+# alloc.cyr is unaffected.
+include "lib/alloc.cyr"
 include "lib/syscalls_x86_64_linux.cyr"
 #endif
 
@@ -140,6 +149,11 @@ fn signal_ignore(signum): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     return 0;   # agnos ring-3: no signal delivery yet
     #endif
+    #ifdef CYRIUS_TARGET_CX
+    return 0;   # cx bytecode: cxvm delivers no signals (v6.6.6 — without this
+                # arm EVERY branch of this fn is preprocessed away on cx and the
+                # body returns whatever is in the return register)
+    #endif
 }
 
 # Set a signal's disposition back to SIG_DFL — the counterpart to signal_ignore.
@@ -190,5 +204,10 @@ fn signal_default(signum): i64 {
     #endif
     #ifdef CYRIUS_TARGET_AGNOS
     return 0;   # agnos ring-3: no signal delivery yet
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    return 0;   # cx bytecode: cxvm delivers no signals (v6.6.6 — without this
+                # arm EVERY branch of this fn is preprocessed away on cx and the
+                # body returns whatever is in the return register)
     #endif
 }
