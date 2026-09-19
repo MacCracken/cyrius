@@ -79,7 +79,7 @@ slots have NOT been re-numbered — that is the user's call.
   🆕 FILED from its review (different defects), then fixed in bite 14: ✅ `var p: S = f(v, …)`
   pushed a vector as an int at any arity — and skipped every other callee gate (14a,
   [`…-struct-valued-assign-call-pushes-simd-args-as-ints`](issues/archived/2026-09-19-struct-valued-assign-call-pushes-simd-args-as-ints.md));
-  a 7+-field enum variant reads the wrong stack args ([`…-enum-variant-ctor-seven-plus-fields-…`](issues/2026-09-19-enum-variant-ctor-seven-plus-fields-reads-wrong-stack-args.md));
+  ✅ a 7+-field enum variant read the wrong stack args (14b, [`…-enum-variant-ctor-seven-plus-fields-…`](issues/archived/2026-09-19-enum-variant-ctor-seven-plus-fields-reads-wrong-stack-args.md));
   a >16 B struct-returning call outside a `var` initializer gets no retptr ([`…-retptr-struct-call-outside-var-init-crashes`](issues/2026-09-19-retptr-struct-call-outside-var-init-crashes.md));
   an `async fn` never captures a vector param ([`…-async-fn-simd-param-not-captured`](issues/2026-09-19-async-fn-simd-param-not-captured.md)).
 - **`.4`–`.5` — DCE cannot compact on PE or x86 Mach-O** (rip-relative repair + re-run

@@ -32,7 +32,7 @@
 # pass). A leg whose compiler or program fails to build is a FAIL, never a skip.
 #
 # MUTATION LEDGER — each mutant a cycc BUILT from mutated source (the per-target compilers
-# rebuilt from the same mutated tree), gate run with CC=it. Numbers are bad rows of 66:
+# rebuilt from the same mutated tree), gate run with CC=it. Numbers are bad rows (of 66 for M*):
 #   M0 the pre-6.6.6 PARSE_FN_DEF (6.6.5 as tagged)       -> RED  x86 53 · aarch64 49 · cx 45 · wine 49
 #   M1 `_stkp_flush(S, int_pc)` — retptr dropped from the
 #      int-class total                                     -> RED  x86 4 (the 6..9-arg struct returns);
@@ -44,7 +44,13 @@
 #                                                                  green: its vector IS an int slot)
 #   M3 drop the `_stkp_defer` call (never home the stack)  -> RED  x86 40 · aarch64 38 · cx 39 · wine 48
 #   M4 the Win64 vector branch forgets `int_pc + 1`        -> RED  wine only (probe crashes, no R line)
-# bite 14a (rows 67-114, the struct-valued `var` receives; cx has only the 24 >16 B ones):
+# bite 14b (rows 67-106, enum variants of 6..10 fields — one row per field):
+#   B0 the pre-fix ctor total `0`                           -> RED  x86 10 (fields 7+) · aarch64 SIGILL (no R
+#                                                                  line); cx + wine green, correctly: neither
+#                                                                  formula reads the total
+#   B1 total off by one (`ctor_arity + 1`)                  -> RED  x86 10 · aarch64 10
+# bite 14a (rows 107-154, the struct-valued `var` receives; cx has only the 24 >16 B ones; the
+# counts below were taken before 14b's rows existed, when these were rows 67-114):
 #   A0 the pre-bite-14 frontend (HEAD 3e35aed2's parse_*)   -> RED  x86 48 · aarch64 48 · cx 24 · wine crash
 #   A1 only the `asv` (>16 B) loop back to PCMPE+EPUSHR     -> RED  x86 24 · aarch64 24 · cx 24 · wine crash
 #   A2 `_call_arg_one` loses its SIMD arm                   -> RED  x86 48 · aarch64 48 · cx 24 (wine green:
@@ -58,8 +64,8 @@ CC="${CC:-$ROOT/build/cycc}"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT INT TERM
 ulimit -c 0 2>/dev/null || true
-ROWS_FLOOR=114      # every leg but cx
-ROWS_CX_FLOOR=90    # cx: no 9-16 B rax:rdx rows (see gen)
+ROWS_FLOOR=154      # every leg but cx
+ROWS_CX_FLOOR=130   # cx: no 9-16 B rax:rdx rows (see gen)
 fail=0
 
 # ── generate the probe ────────────────────────────────────────────────────────────────────
@@ -140,6 +146,23 @@ BEGIN {
     # luck (without it XMM0 often still holds the right vector). 2 and 7 ints: with the x86 retptr
     # as int arg 0, 7 user ints put two on the stack.
     p("fn clob(a: f64v4, b: f64v4, c: f64v4, d: f64v4): i64 { return 0; }")
+    # 6.6.6 bite 14b — an enum variant constructor with 6..10 fields, every field read back.
+    # The ctor homed its stack-passed fields with a caller total of 0, so on x86 SysV field 7
+    # read the ctor frame slot of field 5 and on aarch64 the negative offset corrupted the `ldr`
+    # encoding (SIGILL). A heap variant calls `alloc`: the probe brings a bump allocator, since it
+    # has no stdlib. Values are distinct two-digit literals, so a field read from its neighbour
+    # cannot match.
+    split("11 23 35 47 59 62 74 86 98 13", ev, " ")
+    p("var HEAP[1024];")
+    p("var HP = 0;")
+    p("fn alloc(n): i64 { var q = &HEAP + HP; HP = HP + ((n + 7) / 8) * 8; return q; }")
+    for (n = 6; n <= 10; n++) {
+      fl = ""; ea = ""
+      for (i = 0; i < n; i++) { fl = fl (i ? ", " : "") "f" i; ea = ea (i ? ", " : "") ev[i + 1] }
+      p("enum EW" n " { W" n "(" fl "); }")
+      emk[n] = "var E" n " = W" n "(" ea ");"
+      for (i = 0; i < n; i++) { row++; call[row] = "chk(" row ", load64(E" n " + " (8 + i * 8) "), " ev[i + 1] ");" }
+    }
     for (k = 1; k <= 1 + pair; k++) {
       st = (k == 1) ? "P3" : "P2"
       for (c = 1; c <= nc; c++) {
@@ -168,6 +191,7 @@ BEGIN {
       p("    var V" c ": " cls[c] ";")
       for (w = 0; w < cb[c]; w += 8) p("    store64(&V" c " + " w ", " cd[c] ");")
     }
+    for (n = 6; n <= 10; n++) p("    " emk[n])
     p("    var J: f64v4;")
     for (w = 0; w < 32; w += 8) p("    store64(&J + " w ", 8);")
     for (r = 1; r <= row; r++) {
@@ -249,4 +273,4 @@ if command -v wine > /dev/null 2>&1; then
 else echo "  SKIP: wine not installed (Win64 leg — the cass hardware leg still covers it)"; fi
 
 if [ "$fail" != 0 ]; then echo "FAIL stack_param_homing_matrix"; exit 1; fi
-echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives — bind every argument on every leg that ran"
+echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields — bind every argument on every leg that ran"

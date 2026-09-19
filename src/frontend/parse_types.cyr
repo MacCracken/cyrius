@@ -456,13 +456,20 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                         EFNPRO(S);
                         var ctor_frame = ESUBRSP(S);
                         # v5.8.21 bite: store each incoming param into its
-                        # own local slot 0..arity-1. ESTOREPARM(i, i, 0)
-                        # routes through the SysV/Win64 ABI dispatch in
-                        # backend/x86/emit.cyr — args 0-5 (Linux) / 0-3
-                        # (Windows) come from registers, rest from stack.
+                        # own local slot 0..arity-1. ESTOREPARM routes through
+                        # the per-target ABI dispatch — args 0-5 (SysV/aarch64)
+                        # / 0-3 (Win64) from registers, the rest from the stack.
+                        # ⛔ 6.6.6 — the last argument is the caller's int-class
+                        # TOTAL, which SysV and aarch64 count stack slots DOWN
+                        # from. It was a literal 0, so a 7+-field variant read
+                        # field 7 from the ctor's OWN frame slot 4 (x86: `g` held
+                        # `e`) and aarch64 OR-ed a negative offset into its `ldr`
+                        # encoding (SIGILL). Constructor params are all int-class,
+                        # one slot each, no retptr: the total is the arity.
+                        # CHANGELOG [6.6.6]
                         var ctor_pi = 0;
                         while (ctor_pi < ctor_arity) {
-                            ESTOREPARM(S, ctor_pi, ctor_pi, 0);
+                            ESTOREPARM(S, ctor_pi, ctor_pi, ctor_arity);
                             ctor_pi = ctor_pi + 1;
                         }
                         if (is_stack_enum == 1) {

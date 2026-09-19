@@ -61,6 +61,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   *Corrections to this filing*. Byte impact: **0 of 324 `.tcyr` binaries changed**, all seven
   forks compile, cycc **1,294,040 → 1,294,040 B** (absorbed by text-segment padding).
 
+- **An enum variant constructor with seven or more fields stored the wrong value in field 7 and
+  up — silently on x86, SIGILL on aarch64.** (bite 14b; filed 2026-09-19 from bite 1's review.)
+  `V7(1..7)` read back `1234565`, `V8(1..8)` `12345656` on x86_64: field 7 held field 5, field 8
+  field 6. **Root cause:** the synthesized constructor homed its parameters with
+  `ESTOREPARM(S, i, i, 0)`; the last argument is the caller's int-class TOTAL, from which SysV and
+  aarch64 count stack slots down, so with 0 the x86 displacement landed in the constructor's own
+  frame (`[rbp-40]`, `[rbp-48]` — fields 5 and 6) and the aarch64 one was a negative immediate
+  OR-ed into `ldr x9, [x29, #imm]`, corrupting the opcode. Win64 and cx were right (neither reads
+  the total). **Fix:** pass `ctor_arity` — constructor params are all int-class, one slot each,
+  no retptr. Every other `ESTOREPARM` caller re-checked (see the issue's *Corrections*). Byte
+  impact: 0 of 324 `.tcyr` changed; cycc **1,294,040 → 1,294,040 B**.
+
 ### Added
 
 - `tests/tcyr/crossos/simd_param_int_stack_args.tcyr` — 18 assertions with **literal** expectations
@@ -84,6 +96,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   argument into both struct-valued receives, 4 classes x 3 positions x 2 and 7 ints, with the
   vector registers clobbered first; cx runs a variant without the 9-16 B rows (it refuses that
   return ABI outright). Mutation-proven (ledger in the header).
+- `tests/tcyr/crossos/enum_ctor_wide_variants.tcyr` (bite 14b) — 24 assertions, variants of 6
+  (control), 7, 8 and 10 fields, fields as distinct two-digit literals; the 6.6.5/bite-1
+  compiler fails the 7 stack-passed fields on x86 and SIGILLs on aarch64. The matrix gate grew
+  40 more rows (variants of 6..10 fields, one row per field, on all four legs — the probe brings
+  its own bump `alloc`).
 
 ## [6.6.5] — 2026-09-19
 
