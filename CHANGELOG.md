@@ -1509,9 +1509,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   called `alloc` and included only `lib/fnptr.cyr`; `lib/string.cyr`'s `str_lower_cstr` called
   `alloc`; `lib/io.cyr` called `alloc`, `strlen`, `memcpy`, `fmt_int` and `fmt_int_buf` — five
   warnings on every target — plus `_agnos_getenv` as a bare forward reference on agnos; and
-  `lib/alloc.cyr` called `sys_mmap`, which the new gate found and this bite had not, because
-  every real consumer includes `lib/syscalls.cyr` first so it was invisible until a module was
-  compiled *alone*. Each file wrote the requirement down **for the caller** instead — `Requires:
+  `lib/alloc.cyr`'s **agnos** arm called `sys_mmap`, which the new gate found and this bite had
+  not, because the x86-Linux arm issues its raw syscall itself so it was invisible until a module
+  was compiled *alone* for that target. ⛔ That last one is `#ifdef CYRIUS_TARGET_AGNOS`-scoped
+  and the guard is load-bearing, not tidiness: **`src/main.cyr` includes `lib/alloc.cyr` and
+  `lib/vec.cyr`**, so this file is part of the compiler's own source. An unconditional
+  `include "lib/syscalls.cyr"` there grew `build/cycc` by 14,112 bytes (1,310,864 → 1,324,976)
+  and the enlarged source then made **cybs** emit a `gen1` that SEGFAULTED compiling
+  `src/main.cyr` — a break in the `seed → cybs → cycc` chain that the cycc self-host fixpoint
+  does not cover, caught by `tests/gates/toolchain/cybs_if_else_rbx.sh`. Under the guard every
+  non-agnos compiler build is byte-identical and `seed-derive-cycc.sh` is green. Each file wrote the requirement down **for the caller** instead — `Requires:
   include "lib/string.cyr" for strlen`, `include "lib/alloc.cyr" then include "lib/vec.cyr"` —
   and fmt's line did not even name `lib/vec.cyr`. CLAUDE.md's self-sufficient-modules rule is
   phrased about flag *constants*; it is about helpers too, and a constant only gives you a wrong
