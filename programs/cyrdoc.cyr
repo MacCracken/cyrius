@@ -17,32 +17,119 @@ include "lib/args.cyr"
 var _undocumented = 0;
 var _documented = 0;
 var _total_fns = 0;
+# v6.6.5, review round 3: the read buffer was a fixed 64 KB and a longer file was
+# SILENTLY TRUNCATED — every fn past byte 65,536 went uncounted. `--check` on
+# lib/tls_native_hs13.cyr (104,939 B) judged the first 62 % of it, and sigil's CI gate
+# "0 undocumented in dist/sigil.cyr" (1,106,698 B) judged the first 6 %. The buffer now
+# GROWS until a read comes up short of it (a read that fills it may have been cut off),
+# up to 64 MB; past that the file is a loud error, never a partial answer. One buffer
+# for the whole run, grow-only.
+var _doc_buf = 0;
+var _doc_cap = 0;
+var _DOC_CAP_MAX = 67108864;
+var _doc_too_big = 0;
 
-fn is_fn_line(line, len): i64 {
-    if (len < 3) { return 0; }
-    # Skip leading whitespace
-    var si = 0;
+# Read the whole of `path` into _doc_buf. Returns the byte count (<= 0: unreadable or
+# empty, as file_read_all), or -1 with _doc_too_big set when the file exceeds 64 MB.
+fn _doc_read(path): i64 {
+    _doc_too_big = 0;
+    if (_doc_buf == 0) {
+        _doc_cap = 1048576;
+        _doc_buf = alloc(_doc_cap);
+    }
+    while (_doc_buf != 0) {
+        var n = file_read_all(path, _doc_buf, _doc_cap);
+        if (n < _doc_cap) { return n; }
+        if (_doc_cap >= _DOC_CAP_MAX) {
+            _doc_too_big = 1;
+            return 0 - 1;
+        }
+        _doc_cap = _doc_cap * 4;
+        _doc_buf = alloc(_doc_cap);
+    }
+    sys_write(STDERR_FD, "cyrdoc: out of memory\n", 22);
+    syscall(60, 1);
+    return 0 - 1;
+}
+
+fn _doc_skip_sp(line, si, len): i64 {
     while (si < len) {
-        if (load8(line + si) != 32) { break; }
+        var c = load8(line + si);
+        if (c != 32) { if (c != 9) { break; } }
         si += 1;
     }
-    if (si + 2 >= len) { return 0; }
-    if (load8(line + si) == 102 && load8(line + si + 1) == 110 && load8(line + si + 2) == 32) {
-        return 1;
+    return si;
+}
+
+# Length of the `#`-attribute TOKEN at line[si] (`#inline`, `#naked`, …), or 0 when the `#`
+# opens a comment. Matched exactly as the lexer matches — a byte prefix with no word
+# boundary — and kept in step with programs/cyrlint.cyr _lx_attr_len and cyrfmt's
+# _cf_attr_len. CHANGELOG [6.6.5].
+fn _doc_attr_len(line, si, len): i64 {
+    var n = len - si;
+    if (n < 3) { return 0; }
+    var p = line + si;
+    if (memeq(p, "#io", 3) == 1) { return 3; }
+    if (n >= 5) { if (memeq(p, "#pure", 5) == 1) { return 5; } }
+    if (n >= 6) { if (memeq(p, "#alloc", 6) == 1) { return 6; } }
+    if (n >= 6) { if (memeq(p, "#naked", 6) == 1) { return 6; } }
+    if (n >= 7) { if (memeq(p, "#inline", 7) == 1) { return 7; } }
+    if (n >= 7) { if (memeq(p, "#assert", 7) == 1) { return 7; } }
+    if (n >= 9) { if (memeq(p, "#regalloc", 9) == 1) { return 9; } }
+    if (n >= 9) { if (memeq(p, "#must_use", 9) == 1) { return 9; } }
+    if (n >= 10) { if (memeq(p, "#pe_import", 10) == 1) { return 10; } }
+    if (n >= 11) { if (memeq(p, "#deprecated", 11) == 1) { return 11; } }
+    return 0;
+}
+
+# Offset of the `fn ` a line's code opens with, or -1 — after indentation, an optional
+# attribute token and an optional `pub` / `public`. v6.6.5, review round 3: only a
+# line-initial `fn ` counted, so `pub fn` / `public fn` / `#inline fn` definitions were
+# never seen — lib/regex.cyr's eleven `public fn`s, 28,652 `pub fn` lines across the
+# ecosystem — and `--check` passed files whose whole public API was undocumented.
+fn _doc_fn_at(line, len): i64 {
+    var si = _doc_skip_sp(line, 0, len);
+    if (si < len) {
+        if (load8(line + si) == 35) {
+            var al = _doc_attr_len(line, si, len);
+            if (al == 0) { return 0 - 1; }
+            si = _doc_skip_sp(line, si + al, len);
+        }
+    }
+    if (si + 4 <= len) { if (memeq(line + si, "pub ", 4) == 1) { si = _doc_skip_sp(line, si + 4, len); } }
+    if (si + 7 <= len) { if (memeq(line + si, "public ", 7) == 1) { si = _doc_skip_sp(line, si + 7, len); } }
+    if (si + 3 > len) { return 0 - 1; }
+    if (memeq(line + si, "fn ", 3) == 1) { return si; }
+    return 0 - 1;
+}
+
+fn is_fn_line(line, len): i64 {
+    if (_doc_fn_at(line, len) >= 0) { return 1; }
+    return 0;
+}
+
+# 1 if the line's first non-space byte is a `#` that opens a COMMENT. v6.6.5: a `#inline`
+# / `#must_use` line is an attribute, not documentation — it used to count as the fn's
+# doc comment, so an undocumented `#inline` fn passed `--check`.
+fn is_comment_line(line, len): i64 {
+    var si = _doc_skip_sp(line, 0, len);
+    if (si < len) {
+        if (load8(line + si) == 35) {
+            if (_doc_attr_len(line, si, len) == 0) { return 1; }
+        }
     }
     return 0;
 }
 
-fn is_comment_line(line, len): i64 {
-    var si = 0;
-    while (si < len) {
-        if (load8(line + si) != 32) { break; }
-        si += 1;
-    }
-    if (si < len) {
-        if (load8(line + si) == 35) { return 1; }
-    }
-    return 0;
+# 1 if the line holds only attribute tokens (`#inline`, `#must_use`, `#deprecated("…")`)
+# — the lines between a fn and its doc comment. CHANGELOG [6.6.5].
+fn is_attr_line(line, len): i64 {
+    var si = _doc_skip_sp(line, 0, len);
+    if (si >= len) { return 0; }
+    if (load8(line + si) != 35) { return 0; }
+    if (_doc_attr_len(line, si, len) == 0) { return 0; }
+    if (_doc_fn_at(line, len) >= 0) { return 0; }
+    return 1;
 }
 
 fn extract_fn_name(line, len, buf): i64 {
@@ -106,8 +193,9 @@ fn extract_fn_sig(line, len, buf) {
 }
 
 fn process_file(filepath, check_mode) {
-    var buf = alloc(65536);
-    var n = file_read_all(filepath, buf, 65536);
+    var n = _doc_read(filepath);
+    if (_doc_too_big == 1) { return 2; }
+    var buf = _doc_buf;
     # v6.6.5 — an unreadable file used to `return 0` here and main() then exited 0
     # with NO output, which from a doc generator is indistinguishable from "this
     # file has no documentation". `cyrdoc /nonexistent.cyr` reported success.
@@ -153,16 +241,23 @@ fn process_file(filepath, check_mode) {
         var lstart = vec_get(line_starts, fi);
         var llen = vec_get(lines, fi);
 
-        if (is_fn_line(buf + lstart, llen) == 1) {
+        var fo = _doc_fn_at(buf + lstart, llen);
+        if (fo >= 0) {
             _total_fns += 1;
 
-            # Check if previous line is a comment
+            # Check if the line before is a comment — past any attribute-only lines
+            # (`#inline` / `#must_use` on their own line sit between a doc and its fn)
             var has_doc = 0;
             var doc_start = 0;
             var doc_len = 0;
-            if (fi > 0) {
-                var pstart = vec_get(line_starts, fi - 1);
-                var plen = vec_get(lines, fi - 1);
+            var pi = fi - 1;
+            while (pi >= 0) {
+                if (is_attr_line(buf + vec_get(line_starts, pi), vec_get(lines, pi)) == 0) { break; }
+                pi = pi - 1;
+            }
+            if (pi >= 0) {
+                var pstart = vec_get(line_starts, pi);
+                var plen = vec_get(lines, pi);
                 if (is_comment_line(buf + pstart, plen) == 1) {
                     has_doc = 1;
                     doc_start = pstart;
@@ -170,7 +265,9 @@ fn process_file(filepath, check_mode) {
                 }
             }
 
-            extract_fn_name(buf + lstart, llen, namebuf);
+            # name and signature from the `fn` on — never from an earlier "fn " inside
+            # an attribute's string argument
+            extract_fn_name(buf + lstart + fo, llen - fo, namebuf);
             var nlen = strlen(namebuf);
 
             # Skip private functions (start with _)
@@ -191,7 +288,7 @@ fn process_file(filepath, check_mode) {
                     }
                 } else {
                     # Generate markdown entry
-                    extract_fn_sig(buf + lstart, llen, sigbuf);
+                    extract_fn_sig(buf + lstart + fo, llen - fo, sigbuf);
                     syscall(1, 1, "### `", 5);
                     syscall(1, 1, sigbuf, strlen(sigbuf));
                     syscall(1, 1, "`\n", 2);
@@ -260,7 +357,13 @@ fn main() {
     var fi = 0;
     while (fi < vec_len(files)) {
         var f = vec_get(files, fi);
-        if (process_file(f, check_mode) != 0) {
+        var pr = process_file(f, check_mode);
+        if (pr == 2) {
+            sys_write(STDERR_FD, "cyrdoc: file too large (>64MB): ", 32);
+            sys_write(STDERR_FD, f, strlen(f));
+            sys_write(STDERR_FD, "\n", 1);
+            read_err = 1;
+        } elif (pr != 0) {
             sys_write(STDERR_FD, "cyrdoc: cannot read file: ", 26);
             sys_write(STDERR_FD, f, strlen(f));
             sys_write(STDERR_FD, "\n", 1);

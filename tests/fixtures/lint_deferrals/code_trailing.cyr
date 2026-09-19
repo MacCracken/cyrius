@@ -1,0 +1,3 @@
+fn code_trailing(): i64 {
+    return ERR_NOT_IMPLEMENTED;  # the stub path
+}

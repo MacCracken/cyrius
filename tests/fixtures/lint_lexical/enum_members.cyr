@@ -1,0 +1,21 @@
+include "lib/alloc.cyr"
+enum OneLine { ERR_ONE = 1, ERR_TWO = 2 }
+enum TwoPer {
+    ERR_A = 1, ERR_B = 2,
+    OK_C = 3
+}
+enum NextLine
+{
+    ERR_NL = 1
+}
+enum Plain { P_ONE = 1 }
+var ERR_STATE = 0;
+fn after_plain(): i64 {
+    ERR_STATE = 5;
+    return ERR_STATE;
+}
+enum Exempt { ERR_SKIPPED = 1 }   #skip-lint
+enum Semi { OK_S = 0; ERR_S1 = 1; ERR_S2 = -2; }
+enum Bare { ERR_U1 ERR_U2 }
+enum Payload { ERR_P(code) = 7, OK_P }
+syscall(60, ERR_TWO + ERR_B + ERR_NL + P_ONE + ERR_STATE + ERR_S1 + ERR_U2 + OK_P);

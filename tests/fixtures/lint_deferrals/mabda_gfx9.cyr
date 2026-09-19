@@ -1,0 +1,13 @@
+# Excerpt: mabda 4.1.2 src/gfx9_compile.cyr:325-327 and :530-534, comment text verbatim.
+
+# v3.2 F.7f.3 — f64 SUB: a - b = v_add_f64(a, -b). GFX9 has no V_SUB_F64; the NEGATE-src1 source
+# modifier is hi bit 30 (NEG[1]). Operands are f64 register pairs (f64 inline consts are a later
+# bite; a literal is unencodable in VOP3 → fail loud).
+fn emit_fsub_f64(): i64 { return 0; }
+
+# A FLAT address/data operand must be an SSA value living in a VGPR (a per-lane
+# offset or store value). Returns the raw VGPR index, or fails loud: id-0 is the
+# const-offset access chain (off_id 0 — the FLAT immediate-offset form is a later
+# bite); a non-SSA / SGPR-file value is a uniform operand that would need a
+# SGPR→VGPR materialization (also later) — NOT silently emitted as a VGPR index.
+fn flat_vgpr(): i64 { return 0; }

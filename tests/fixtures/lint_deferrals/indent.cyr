@@ -1,0 +1,4 @@
+# The first line of the paragraph.
+#     The immediate-offset form is a later
+        # bite of the encoder.
+fn indent(): i64 { return 0; }

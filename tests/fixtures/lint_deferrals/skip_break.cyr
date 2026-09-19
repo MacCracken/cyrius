@@ -1,0 +1,4 @@
+# The immediate-offset form is a later
+# exempt line #skip-lint
+# bite of the encoder.
+fn skip_break(): i64 { return 0; }

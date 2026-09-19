@@ -292,20 +292,26 @@ case "$HOST" in
     cat cbt/cyrius.cyr       | /tmp/_co_w > /tmp/_co_cli.exe
     cat programs/cyrlint.cyr | /tmp/_co_w > /tmp/_co_lint.exe
     printf '# a deferred item with no tracking pointer\nfn f(): i64 { return 0; }\n' > /tmp/_co_ld.cyr
+    # v6.6.5 (bite 9) — the WRAPPED form, with CRLF line ends: cyrlint.exe must join the two
+    # comment lines into one paragraph with CR counted as whitespace (a Windows checkout's
+    # line ends), or `later bite` is never seen and this exits 0. Linux proves the logic
+    # (tests/gates/toolchain/cyrlint_cross_line.sh axis 3); this proves the shipped PE build.
+    printf '# The immediate-offset form is a later\r\n# bite.\r\nfn f(): i64 { return 0; }\r\n' > /tmp/_co_split.cyr
     printf 'include "lib/args.cyr"\nfn main(): i64 { args_init(); return argc(); }\nvar r = main();\nsyscall(60, r);\n' > /tmp/_co_argc.cyr
     ssh $SSHO cass 'cmd /c "mkdir C:\cyrius-tests\_cyaud\wh\bin & mkdir C:\cyrius-tests\_cyaud\wtmp"'
     scp -q $SSHO /tmp/_co_cli.exe cass:/cyrius-tests/_cyaud/wh/bin/cyrius.exe
     scp -q $SSHO /tmp/_co_lint.exe cass:/cyrius-tests/_cyaud/wh/bin/cyrlint.exe
     scp -q $SSHO /tmp/_co_exe cass:/cyrius-tests/_cyaud/wh/bin/cycc.exe
-    scp -q $SSHO /tmp/_co_ld.cyr /tmp/_co_argc.cyr cass:/cyrius-tests/_cyaud/
+    scp -q $SSHO /tmp/_co_ld.cyr /tmp/_co_argc.cyr /tmp/_co_split.cyr cass:/cyrius-tests/_cyaud/
     _CLI='cd /d C:\cyrius-tests\_cyaud && set CYRIUS_HOME=C:\cyrius-tests\_cyaud\wh&& set TEMP=C:\cyrius-tests\_cyaud\wtmp&& set TMP=C:\cyrius-tests\_cyaud\wtmp&& wh\bin\cyrius.exe'
     if ssh $SSHO cass "cmd /v /c \"$_CLI lint _co_ld.cyr --strict-deferrals > _cl1.txt 2> _cl1e.txt & if !errorlevel! NEQ 2 (exit 1) else (exit 0)\"" \
       && ssh $SSHO cass "cmd /v /c \"$_CLI lint --strict-deferrals _co_ld.cyr > _cl2.txt 2> _cl2e.txt & if !errorlevel! NEQ 2 (exit 1) else (exit 0)\"" \
       && ssh $SSHO cass "cmd /v /c \"$_CLI lint _co_ld.cyr > _cl3.txt 2> _cl3e.txt & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" \
+      && ssh $SSHO cass "cmd /v /c \"$_CLI lint _co_split.cyr --strict-deferrals > _cl5.txt 2> _cl5e.txt & if !errorlevel! NEQ 2 (exit 1) else (exit 0)\"" \
       && ssh $SSHO cass "cmd /v /c \"$_CLI run _co_argc.cyr a b c > _cl4.txt 2> _cl4e.txt & if !errorlevel! NEQ 4 (exit 1) else (exit 0)\""; then
       :   # the CLI spawns its tools and its programs on real Windows
     else
-      echo "SELFHOST_FAIL: cass — the Windows CLI spawn FAILED (lint --strict-deferrals must be 2 in both positions, plain lint 0, run argc a b c 4). Remote output: C:\cyrius-tests\_cyaud\_cl*.txt. NOT SELFHOST_OK."
+      echo "SELFHOST_FAIL: cass — the Windows CLI spawn FAILED (lint --strict-deferrals must be 2 in both positions, plain lint 0, the CRLF-wrapped deferral 2, run argc a b c 4). Remote output: C:\cyrius-tests\_cyaud\_cl*.txt. NOT SELFHOST_OK."
       exit 1
     fi
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles

@@ -1,0 +1,13 @@
+fn good_name(): i64 { return 0; }
+fn badName(): i64 { return 0; }
+pub fn pubBad(): i64 { return 0; }
+public fn pubBad2(): i64 { return 0; }
+#inline fn inlBad(): i64 {
+    return 0;
+}
+#inline
+pub fn ok_name(): i64 { return 0; }
+pub fn Type_method(): i64 { return 0; }
+# fn commentBad() is prose
+var s = "fn strBad()";
+syscall(60, 0);

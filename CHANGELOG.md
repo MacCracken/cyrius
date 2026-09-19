@@ -1593,6 +1593,144 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
   config scan — and it is kept deliberately as the layer that does not depend on having
   enumerated the right config key, which is the assumption this release's first cut got
   wrong.
+- ⛔ **cyrlint read every rule ONE PHYSICAL LINE at a time — so a deferral a formatter wrapped
+  was invisible to `--strict-deferrals`, and a wrapped global initializer hid a real SILENT
+  ZERO** (filed by mabda 4.1.3 2026-09-16;
+  `issues/archived/2026-09-16-mabda-cyrlint-misses-deferrals-split-across-lines.md`).
+  The filing: `# The immediate-offset form is a later` / `# bite.` exited **0** under
+  `cyrlint --strict-deferrals` while the same words on one line exited 2; mabda shipped three
+  that way (gfx9_compile.cyr:326 and :532, compute.cyr:347) behind a green gate.
+  **The deferral unit is now the COMMENT PARAGRAPH** (new `lint_deferrals` pass): consecutive
+  comment-only lines — plus a code line's trailing comment and the comment lines that continue
+  it — are joined with one space; a blank `#`, a code line or a `#skip-lint` line breaks the
+  paragraph; `follow-` / `up` joins with no space; CR is whitespace (Windows checkouts; cyrlint
+  ships in the Windows tarball). **The tracking pointer stays LINE-granular**: an occurrence is
+  tracked only by a pointer on a physical line the occurrence itself touches, and the note lands
+  on the line where it STARTS. ⚠ The filing proposed "a pointer anywhere in the block" — measured,
+  that hides one of its own three cases (compute.cyr's block carries a `docs/` path that then
+  "tracks" its `for` / `now`) and silently un-flags 98 of 179 existing notes in this repo; that
+  is why the rule is line-granular. The seven prose terms now fold case (`For now`, `NOT YET`,
+  `Deferred`) and match across runs of spaces/tabs; the five markers stay exact (`todo_list` is
+  an identifier). The version pointer is `v<digits>.<digit>` (not after an identifier byte)
+  instead of the literals `v5.`/`v6.`, which also stops the rule failing on every `v7.` pointer
+  the day 7.0 opens. The pointer verdict is cached per line — the uncached join took 11–27 s on
+  1 MB inputs; this one takes 76–263 ms.
+  **The same per-line shape, fixed in the same bite:** (1) **init-order** — the initializer scan
+  stopped at the line end, so `var A = 1 +` / `    B;` against a later `var B = g();` drew no
+  warning while the binary really reads B as **0** (measured: exit 1, its reordered twin exits
+  3). It now runs to the statement's `;` at paren depth 0 across lines, takes the `=` only when
+  it precedes any `;`/`#` (an `=` inside a trailing comment started a scan of the comment's
+  words — agnos `kernel/core/syscall.cyr:1632`), stops at that `;` (a statement after it is not
+  the initializer — dhvani `tests/convolution.tcyr:37`), and examines a SECOND `var` after the
+  `;` on the same line (`var a = 1; var b = LATER;`, which the old scan caught only by
+  accident). (2) **String state crosses lines** in all three brace/depth trackers, now one
+  shared helper (`_lx_line`): a cyrius string may hold a raw newline, and src/main.cyr's error
+  string made **every src/main\*.cyr fork** (6 of 7) draw a false `unclosed braces at end of
+  file`; a `}` inside such a string also took a real top-level `var` out of the init-order
+  rule's sight. (3) The **sys_open / getdents notes** walk a call's arguments across lines
+  (`sys_open(p,` / `0, 0)` was missed) and search CODE only (cyrlint's own
+  `memeq(buf + so, "sys_open(", 9)` drew a note); a skipped `_sys_open(` no longer ends the
+  line's search. (4) The **error-enum note** token-scans the body: every bare `ERR_*` member is
+  noted, including one-line enums, several per line, `{` on the next line, and the
+  `;`-separated and unseparated forms `PARSE_ENUM_DEF` accepts — the old scan read one token per
+  line after the `{` line, and a one-line enum left it "inside an enum" until some later `}`.
+  (5) **Review round 2 widened the same shape**, each against a compiled program where one is
+  involved: an initializer whose `=` opens the NEXT line (`var A` / `= 1 + B;`, past comment
+  lines — exit 1, its twin 3; the scan looked for `=` on the declaration line only); `pub var` /
+  `public var` declarations (both passes needed `var ` at the line start — exit 5 vs 9); a
+  SECOND decl on a line recorded as a pass-1 TARGET, not only examined (exit 0 vs 2);
+  `#naked fn f() {` / `#inline fn g() {` — `#naked`, `#inline`, `#pure`, `#io`, `#alloc`,
+  `#must_use`, `#regalloc`, `#deprecated`, `#assert` and `#pe_import` are attribute TOKENS the
+  lexer keeps lexing after, and reading them as comments drew **15 false `unmatched closing
+  brace`** on tests/tcyr/codegen/naked_fn_attribute.tcyr and blinded init-order to a real
+  silent zero after them; **cyrfmt had the same reading and `cyrius fmt` rewrote such a fn body
+  flush left** (`programs/cyrfmt.cyr` `_cf_attr_len`; that test file now passes `--check`);
+  `sys_open (p, 0, 0)`, `sys_open` / `(p, 0, 0)` and `syscall` / `(SYS_GETDENTS64, …)` (the
+  `(` is found past whitespace, newlines and comments), and every `sys_open` call on a line
+  (the first used to end the search); trailing whitespace and blank lines INSIDE a multi-line
+  string no longer warn (following that advice changes the string); a trailing comment on the
+  line that CLOSES a multi-line string opens a paragraph like any other; and the snake_case
+  rule checks `pub fn` / `public fn` / `#inline fn` names (it matched a line-initial `fn ` only,
+  so 28,652 `pub fn` definitions in the ecosystem were never checked — 0 of them camelCase). The lexer's
+  attribute match has no word boundary, so a comment such as `#ioctl numbers` does not compile
+  — a lexer defect the two tools deliberately mirror, filed as
+  `issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md` (a src/ change, not packed
+  into this tooling bite). Swept again over the 24,241 ecosystem files: the round-2 changes
+  alter NO note or warning anywhere except the 15 false brace warnings removed (9 copies of
+  naked_fn_attribute.tcyr in agent worktrees), and cyrfmt `--check` changes only that file.
+  (6) **Review round 3 — the unit is the STATEMENT, and declaration order is by OFFSET.** Round
+  2's look-ahead took an `=` only when it OPENED the next line, but a declaration header may wrap
+  anywhere, and each of these compiles and reads a later var as 0 while the rule said nothing
+  (measured against declaration-order twins: exit 100 vs 115): `var` / `A = 1 + B;` (the name on
+  the next line), `var A:` / `i64 = …`, `var A` / `: i64 = …`, and a target spelled `var` /
+  `B = g();`. Two statement STARTS were invisible — a `var` after a `}` that closes a fn on the
+  same line (`fn h() { … } var A = 1 + B;`, as a reference and as a target) and a `var` after the
+  `;` of an initializer that wrapped — and a line-number compare could not order two
+  declarations on ONE line (`var A = 1 + B; var B = g();` reads B as 0). The rule now walks the
+  header across lines to its `=` / `;`, takes a bare `var`'s name from the next line, follows the
+  `;` chain across lines, tries a declaration after every `}` that returns the depth to 0, and
+  compares declaration OFFSETS. A walk frontier keeps it linear (every header/initializer walk
+  stops where the next declaration can begin, and a keyword inside an already-walked statement is
+  skipped: 50K lines of `{} var vN = (` take 0.16 s), and a declaration missing its `;` no longer
+  blinds the rule to the rest of the file. 0 changed notes or warnings over the 24,241 ecosystem
+  and 735 in-repo files. **cyrdoc** had the same blind spots and a worse one: it counted only a
+  line-initial `fn ` (never a `pub fn` / `public fn` / `#inline fn` — lib/regex.cyr's eleven
+  `public fn`s), took a `#inline` / `#must_use` line above a fn for its doc comment, and read
+  every file into a FIXED 64 KB buffer, so every fn past byte 65,536 went uncounted, silently. It
+  now reads the attribute token and `pub`/`public` (mirroring `_lx_attr_len`), looks past
+  attribute-only lines for the doc comment, and grows its buffer to the whole file (a loud error
+  past 64 MB). ⛔ **sigil's CI gate "0 undocumented in dist/sigil.cyr" had judged the first 69 of
+  that 1,106,698-byte bundle's 1,168 fns (6 %)**: read whole, 429 are undocumented. cyrius's own
+  stdlib doc gate (`ci.yml` "Doc coverage (stdlib)") had judged three >64 KB files on a prefix;
+  read whole, three fns lacked a doc comment and now carry one (`glob_match` in lib/regex.cyr,
+  `tls_native_set_ca_bundle` / `tls_native_set_ca_system` in lib/tls_native_hs12.cyr — comment
+  lines only), so it stays at 0. **cyrfmt** wrote its output into a buffer the size of the INPUT
+  cap with no bound: 20K lines of an unclosed `(` or `{` indent line i by ~2i or 4i spaces, so
+  `--check` / `--write` SEGFAULTED (rc 139, at 6.6.4 too) and the stdout mode streamed >100 MB.
+  Output is now capped at 8 MB in every mode (the stdout mode buffers too and writes once);
+  past it the file fails loudly and is left untouched. Differential over 24,976 files, stdout
+  bytes and `--check` verdict: 0 differences. The gate's compiled fixtures now run under the
+  same 10 s timeout, and escaped quotes and quote/brace char literals are pinned (a
+  one-character regression of `_lx_skip_str` used to pass 105/105). Filed, not packed — each a
+  `src/` compiler defect, unrelated to this bite and its own seed-derive/cross-OS cycle:
+  the preprocessor EXECUTES `#ifdef` / `#endif` / `#define` lines inside a multi-line string
+  (`issues/2026-09-19-preprocessor-executes-directives-inside-multiline-strings.md`), and a
+  block-bodied closure as the FIRST top-level statement silently drops the rest of the program
+  (`issues/2026-09-19-toplevel-block-closure-drops-rest-of-program.md`).
+  **Measured deltas.** In-repo (585 files): deferral notes 186 → 209 (+23 case-fold, +4 joins,
+  −4 `v0.8` version pointers in lib/niyama.cyr), brace warnings −6 (the six false `unclosed braces`),
+  notes −1 (cyrlint's own false sys_open note). Ecosystem (24,241 files under ~/Repos, excluding
+  agent worktrees): deferral notes 7,179 → 8,525 (mostly the case fold, much of it in vendored
+  `lib/` copies; −494 from version pointers such as `TODO(v0.5)`); init-order −4 false positives,
+  +0 new; brace warnings −1 outside cyrius (agnostic `src/presets_data.cyr`, a `\`-newline
+  string); bare-`ERR_*` notes +5 (shravan `fuzz/fuzz_codecs.cyr`, members after the first on a
+  line). ⛔ **Notes never change cyrlint's own exit code, but EIGHT consumers' CI fails on any
+  untracked deferral, and the case fold and the joins add notes inside their linted scope**:
+  mabda (`--strict-deferrals`; 6 — src/debug.cyr:14, src/gfx9_abi.cyr:101, src/vertex.cyr:121,
+  src/wgpu_ffi.cyr:228, programs/nvidia_compute_store.cyr:3, tests/tcyr/native.tcyr:4278),
+  agnosai (scripts/check-clean.sh; 3), kriya (scripts/lint-deferrals.sh; 5), kybernet (ci.yml;
+  2), agnodrm (ci.yml + scripts/audit.sh; 2), agnova (ci.yml; 1), bayan (ci.yml; 1) and drishti
+  (`make lint`; 4). Each must cross-reference those lines (a pointer on the SAME line) or mark
+  them `#skip-lint` before its pin moves to 6.6.5. Several are prose the fold now reads, not
+  deferrals (kriya src/cmd/uniq.cyr:33 "NOTHING IS DEFERRED HERE ANY MORE", src/lib/sys.cyr:68
+  `-2 IS "NOT YET"`), and kybernet src/lib/cgroup.cyr:455 keeps its CHANGELOG pointer on the
+  NEXT line, which does not track it. sigil's doc gate turns red on the cyrdoc fix in (6).
+  cyrlint 98,840 → 119,672 B, cyrfmt 69,080 → 69,272 B, cyrdoc 81,064 → 85,352 B; `build/cycc`
+  unchanged (1,294,040 B — no src/ edit). Gate: `tests/gates/toolchain/cyrlint_cross_line.sh`
+  (136 checks, 15 axes; it builds its OWN cyrlint, CLI, cyrfmt and cyrdoc from the tree; expected values are literal tables, cross-checked on the single-line fixtures by
+  an awk re-implementation of the 6.6.4 per-line rule; axis 7 proves the silent zero at RUNTIME
+  before it asks cyrlint; axis 12 drives `cyrius lint f --strict-deferrals` and
+  `cyrius lint --strict-deferrals f` → 2; axis 13 runs cyrfmt on the attribute shapes and the
+  unbounded-output inputs; axis 14 runs cyrdoc). ⚠ The
+  first cut's harness discarded cyrlint's exit status on every row expecting an empty or zero
+  result, so a cyrlint that SEGFAULTED on all seven src/main*.cyr forks read **PASS 77/77**;
+  every run now goes through one wrapper that fails a timeout (10 s, and fail-fast after the
+  first), a signal death or a missing `<n> warnings` trailer, and the gate survives
+  `bash -eo pipefail`; the compiled fixtures run under the same timeout. 52 mutations, every one
+  RED (ledger in the header). Fixtures: `tests/fixtures/lint_deferrals/` (incl. verbatim
+  excerpts of the mabda cases), `tests/fixtures/lint_lexical/`, sixteen new
+  `tests/fixtures/lint_init_order/` shapes (six of them twins in declaration order, for the
+  runtime oracle; one, missing_semi.cyr, deliberately does not compile).
 
 ### Added
 

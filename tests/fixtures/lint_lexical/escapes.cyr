@@ -1,0 +1,12 @@
+fn es(): i64 { return 5; }
+fn es_say(): i64 {
+    var s = "say \"{\" now";
+    var q = '"';
+    var b = '{';
+    var e = '\'';
+    var k = '\\';
+    return load8(s + 5) + q + b + e + k - 34 - 123 - 123 - 39 - 92;
+}
+var ES_A = ES_B;
+var ES_B = es();
+syscall(60, 40 + ES_A + es_say());

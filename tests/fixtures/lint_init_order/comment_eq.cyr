@@ -1,0 +1,3 @@
+var ceq_buf[8];  # sized to hold ceq_x = CEQ_LATER words
+var CEQ_LATER = 1;
+syscall(60, 0);

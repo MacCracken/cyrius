@@ -1,0 +1,2 @@
+fn brace_unbalanced(): i64 {
+    return 0;

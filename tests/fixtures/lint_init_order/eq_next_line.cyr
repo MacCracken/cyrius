@@ -1,0 +1,6 @@
+fn eqn_g(): i64 { return 2; }
+var EQN_A: i64   # the sum of one and
+# the value declared below
+= 1 + EQN_B;
+var EQN_B = eqn_g();
+syscall(60, EQN_A);

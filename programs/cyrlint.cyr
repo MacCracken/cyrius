@@ -67,12 +67,25 @@ fn note_rawgetdents(line): i64 {
 
 # === Deferral-language policy (sigil idea, 2026-06-04) ===
 # Flag deferred / broken-work markers in source that are NOT cross-referenced by   #skip-lint
-# a tracking pointer (CHANGELOG / issue / roadmap / version). A bare `# TODO` or
-# `return ..._NOT_IMPLEMENTED` with no pointer is the antipattern that let whole   #skip-lint
-# arcs rot untracked in comments (see docs/development/issues/ shipped-broken
-# register). Reported by default (separate counter, non-failing so the existing
-# --strict gate is unaffected by the legacy backlog); `--strict-deferrals` makes
-# it a hard gate once the backlog is cross-referenced (TDD-style hardening).
+# a tracking pointer (CHANGELOG / issue / roadmap / docs/ / "See " / a version such as
+# v6.6 or v0.8). A bare `# TODO` or `return ..._NOT_IMPLEMENTED` with no pointer is   #skip-lint
+# the antipattern that let whole arcs rot untracked in comments (see
+# docs/development/issues/ shipped-broken register). Reported by default (separate
+# counter, non-failing so the existing --strict gate is unaffected by the legacy
+# backlog); `--strict-deferrals` makes it a hard gate (TDD-style hardening).
+#
+# v6.6.5 — the unit is the COMMENT PARAGRAPH, not the physical line (lint_deferrals).
+# Consecutive comment-only lines (plus a code line's trailing comment and the
+# comment-only lines that continue it) are joined with one space, so a term a
+# formatter wrapped — "a later" / "bite", "for" / "now", "follow-" / "up" — is seen.   #skip-lint
+# Per line it was invisible: mabda shipped three that way behind a green
+# --strict-deferrals. ⚠ The POINTER stays line-granular: an occurrence is tracked only
+# by a pointer on a physical line the occurrence itself touches. A paragraph-wide
+# pointer was measured and rejected — one `docs/` path "tracked" every deferral in
+# its block (it hid one of the three filed mabda cases) and it silently un-flagged
+# 98 of 179 existing notes in this repo. The seven prose terms fold case (a capital   #skip-lint
+# "For now" or "NOT YET" counts); the five marker terms stay exact, since `todo_list`   #skip-lint
+# and `xxx_scaffold` are identifiers. CHANGELOG [6.6.5].
 var _deferrals = 0;
 var _strict_deferrals = 0;
 # v6.6.5 (round-2 review) — set by _lint_one on a HARD failure (unreadable / over-size
@@ -96,24 +109,205 @@ fn _line_has(buf, start, end, needle): i64 {
     return 0;
 }
 
-# Returns the matched deferral-term cstr, or 0 if the line carries no marker.
-fn _line_deferral_term(buf, start, end): i64 {
-    if (_line_has(buf, start, end, "NOT_IMPLEMENTED") == 1) { return "NOT_IMPLEMENTED"; }   #skip-lint
-    if (_line_has(buf, start, end, "SCAFFOLD") == 1) { return "SCAFFOLD"; }                 #skip-lint
-    if (_line_has(buf, start, end, "TODO") == 1) { return "TODO"; }                         #skip-lint
-    if (_line_has(buf, start, end, "FIXME") == 1) { return "FIXME"; }                       #skip-lint
-    if (_line_has(buf, start, end, "XXX") == 1) { return "XXX"; }                           #skip-lint
-    if (_line_has(buf, start, end, "deferred") == 1) { return "deferred"; }                 #skip-lint
-    if (_line_has(buf, start, end, "follow-up") == 1) { return "follow-up"; }               #skip-lint
-    if (_line_has(buf, start, end, "for now") == 1) { return "for now"; }                   #skip-lint
-    if (_line_has(buf, start, end, "not yet") == 1) { return "not yet"; }                   #skip-lint
-    if (_line_has(buf, start, end, "later bite") == 1) { return "later bite"; }             #skip-lint
-    if (_line_has(buf, start, end, "future bite") == 1) { return "future bite"; }           #skip-lint
-    if (_line_has(buf, start, end, "out of scope") == 1) { return "out of scope"; }         #skip-lint
+# === Lexical state that crosses a line (v6.6.5) ===
+# A cyrius string literal may contain a RAW NEWLINE — src/main.cyr carries two — so a
+# scanner that forgets "inside a string" at every line end reads the continuation line
+# from the wrong side of the quote. That is how every src/main*.cyr fork drew a false
+# "unclosed braces at end of file": the `}` after the string's closing quote was taken
+# as string content. The brace counter, both init-order passes, the deferral pass and
+# the enum/call scans all walk through these helpers now, so the copies cannot drift
+# (three hand-rolled copies had). Char literals are single-line (the lexer takes one
+# byte or one `\X` escape). CHANGELOG [6.6.5].
+var _lx_delta = 0;    # net `{` minus `}` on the last line _lx_line scanned
+var _lx_cstart = 0;   # offset of that line's comment `#` (outside strings), or -1
+
+# p is just past an opening `"`; returns the offset just past the closing `"`, or -1
+# when the string is still open at lim.
+fn _lx_skip_str(buf, p, lim): i64 {
+    while (p < lim) {
+        var c = load8(buf + p);
+        if (c == 92) { p = p + 2; }
+        elif (c == 34) { return p + 1; }
+        else { p = p + 1; }
+    }
+    return 0 - 1;
+}
+
+# p is AT an opening `'`; returns the offset just past the literal. A `'` that does not
+# form one (never valid cyrius outside a comment or string) is stepped over as one byte,
+# so a stray quote cannot swallow the rest of a line.
+fn _lx_skip_char(buf, p, lim): i64 {
+    var close = p + 2;
+    if (p + 1 < lim) { if (load8(buf + p + 1) == 92) { close = p + 3; } }
+    if (close < lim) { if (load8(buf + close) == 39) { return close + 1; } }
+    return p + 1;
+}
+
+# A `#` is NOT always a comment. The lexer (src/frontend/lex.cyr) turns ten byte
+# prefixes into attribute/statement TOKENS and keeps lexing the same line after them, so
+# `#naked fn isr() {` opens a real brace and `#inline fn g(): i64 {` a real fn body.
+# Reading them as comments drew 15 false "unmatched closing brace" on
+# tests/tcyr/codegen/naked_fn_attribute.tcyr, and the negative depth then blinded the
+# init-order rule to a real silent zero after them. Matched exactly as the lexer
+# matches — a byte prefix with NO word boundary (`#ioctl` is HASH_IO + `ctl`, a compile
+# error; filed as issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md — when the
+# lexer takes a boundary, this and cyrfmt's _cf_attr_len follow it). Returns the token's
+# length, `#` included, or 0: the `#` starts a comment.
+# (`#include`/`#ifdef`/`#derive`/… are preprocessor LINES — comments to this scanner,
+# as before.) CHANGELOG [6.6.5].
+fn _lx_attr_len(buf, p, lim): i64 {
+    var n = lim - p;
+    if (n < 3) { return 0; }
+    var c1 = load8(buf + p + 1);
+    if (c1 == 105) {
+        if (load8(buf + p + 2) == 111) { return 3; }                          # #io
+        if (n >= 7) { if (memeq(buf + p, "#inline", 7) == 1) { return 7; } }
+        return 0;
+    }
+    if (c1 == 97) {
+        if (n >= 7) { if (memeq(buf + p, "#assert", 7) == 1) { return 7; } }
+        if (n >= 6) { if (memeq(buf + p, "#alloc", 6) == 1) { return 6; } }
+        return 0;
+    }
+    if (c1 == 112) {
+        if (n >= 5) { if (memeq(buf + p, "#pure", 5) == 1) { return 5; } }
+        if (n >= 10) { if (memeq(buf + p, "#pe_import", 10) == 1) { return 10; } }
+        return 0;
+    }
+    if (n >= 6) { if (memeq(buf + p, "#naked", 6) == 1) { return 6; } }
+    if (n >= 9) { if (memeq(buf + p, "#regalloc", 9) == 1) { return 9; } }
+    if (n >= 9) { if (memeq(buf + p, "#must_use", 9) == 1) { return 9; } }
+    if (n >= 11) { if (memeq(buf + p, "#deprecated", 11) == 1) { return 11; } }
     return 0;
 }
 
-# A deferral line is "tracked" if it points at where the work lives.
+# If buf[p] opens a string, char literal, comment or `#`-attribute token, return the
+# offset just past it (a string may run across lines; a comment stops AT its line's
+# newline). Otherwise return p. For the cross-line scans (initializers, call arguments,
+# enum bodies).
+fn _lx_skip(buf, p, lim): i64 {
+    var c = load8(buf + p);
+    if (c == 34) {
+        var q = _lx_skip_str(buf, p + 1, lim);
+        if (q < 0) { return lim; }
+        return q;
+    }
+    if (c == 39) { return _lx_skip_char(buf, p, lim); }
+    if (c == 35) {
+        var al = _lx_attr_len(buf, p, lim);
+        if (al > 0) { return p + al; }
+        return _find_eol(buf, p, lim);
+    }
+    return p;
+}
+
+# Scan buf[pos, eol) entering with in_str (1 = a string opened on an earlier line).
+# Returns the string state at eol; sets _lx_delta and _lx_cstart.
+fn _lx_line(buf, pos, eol, in_str): i64 {
+    var d = 0;
+    var cs = 0 - 1;
+    var p = pos;
+    if (in_str == 1) {
+        p = _lx_skip_str(buf, pos, eol);
+        if (p < 0) {
+            _lx_delta = 0;
+            _lx_cstart = cs;
+            return 1;
+        }
+    }
+    while (p < eol) {
+        var c = load8(buf + p);
+        if (c == 35) {
+            var al = _lx_attr_len(buf, p, eol);
+            if (al > 0) { p = p + al; }
+            else { cs = p; p = eol; }
+        }
+        elif (c == 34) {
+            p = _lx_skip_str(buf, p + 1, eol);
+            if (p < 0) {
+                _lx_delta = d;
+                _lx_cstart = cs;
+                return 1;
+            }
+        }
+        elif (c == 39) { p = _lx_skip_char(buf, p, eol); }
+        else {
+            if (c == 123) { d = d + 1; }
+            if (c == 125) { d = d - 1; }
+            p = p + 1;
+        }
+    }
+    _lx_delta = d;
+    _lx_cstart = cs;
+    return 0;
+}
+
+# The deferral terms, in REPORT-PRIORITY order (a line with several reports the first).
+# Indexes 0..4 are markers matched exactly; 5..11 are prose, matched case-folded
+# (each needle here is lowercase). _DTERM_N / _DTERM_PROSE bound the two classes.
+var _DTERM_N = 12;
+var _DTERM_PROSE = 5;
+fn _dterm(i): i64 {
+    if (i == 0) { return "NOT_IMPLEMENTED"; }   #skip-lint
+    if (i == 1) { return "SCAFFOLD"; }          #skip-lint
+    if (i == 2) { return "TODO"; }              #skip-lint
+    if (i == 3) { return "FIXME"; }             #skip-lint
+    if (i == 4) { return "XXX"; }               #skip-lint
+    if (i == 5) { return "deferred"; }          #skip-lint
+    if (i == 6) { return "follow-up"; }         #skip-lint
+    if (i == 7) { return "for now"; }           #skip-lint
+    if (i == 8) { return "not yet"; }           #skip-lint
+    if (i == 9) { return "later bite"; }        #skip-lint
+    if (i == 10) { return "future bite"; }      #skip-lint
+    return "out of scope";                      #skip-lint
+}
+
+fn _is_digit(c): i64 {
+    if (c >= 48) { if (c <= 57) { return 1; } }
+    return 0;
+}
+fn _is_alpha(c): i64 {
+    if (c >= 65) { if (c <= 90) { return 1; } }
+    if (c >= 97) { if (c <= 122) { return 1; } }
+    return 0;
+}
+
+# A version pointer: `v<digits>.<digit>` not preceded by [A-Za-z0-9_] (v0.8.0, v4.1,
+# v7.0). The literal "v6."/"v5." rows below predate it and are kept for line-verdict
+# parity; this is what stops the rule failing on every consumer version and on
+# cyrius's own "v7." the day 7.0 opens. CHANGELOG [6.6.5].
+fn _line_has_version(buf, start, end): i64 {
+    var i = start;
+    while (i + 3 < end) {
+        if (load8(buf + i) == 118) {
+            var pre_ok = 1;
+            if (i > start) {
+                var pc = load8(buf + i - 1);
+                if (_is_alpha(pc) == 1) { pre_ok = 0; }
+                if (_is_digit(pc) == 1) { pre_ok = 0; }
+                if (pc == 95) { pre_ok = 0; }
+            }
+            if (pre_ok == 1) {
+                var j = i + 1;
+                while (j < end) {
+                    if (_is_digit(load8(buf + j)) == 0) { break; }
+                    j = j + 1;
+                }
+                if (j > i + 1) {
+                    if (j + 1 < end) {
+                        if (load8(buf + j) == 46) {
+                            if (_is_digit(load8(buf + j + 1)) == 1) { return 1; }
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# A deferral is "tracked" if a line it touches points at where the work lives.
 fn _line_has_tracking_ptr(buf, start, end): i64 {
     if (_line_has(buf, start, end, "CHANGELOG") == 1) { return 1; }   #skip-lint
     if (_line_has(buf, start, end, "roadmap") == 1) { return 1; }     #skip-lint
@@ -122,6 +316,7 @@ fn _line_has_tracking_ptr(buf, start, end): i64 {
     if (_line_has(buf, start, end, "See ") == 1) { return 1; }        #skip-lint
     if (_line_has(buf, start, end, "v6.") == 1) { return 1; }         #skip-lint
     if (_line_has(buf, start, end, "v5.") == 1) { return 1; }         #skip-lint
+    if (_line_has_version(buf, start, end) == 1) { return 1; }
     return 0;
 }
 
@@ -137,6 +332,335 @@ fn note_deferral(line, term): i64 {
     var p3 = "' (cross-reference a CHANGELOG/issue/roadmap entry, or #skip-lint)\n";
     syscall(1, 2, p3, strlen(p3));
     _deferrals += 1;
+    return 0;
+}
+
+# === Rule: untracked deferral language, per COMMENT PARAGRAPH (v6.6.5) ===
+# Line classes (a line's class decides whether it joins, breaks or stands alone):
+#   * contains `#skip-lint`            exempt, and breaks the paragraph
+#   * starts inside an open string     code: the text before any comment is checked
+#                                      alone (the whole line while the string stays
+#                                      open — a mis-tracked string can only lose a join,
+#                                      never a detection); a comment after the closing
+#                                      quote opens a paragraph like any trailing comment
+#   * `#` whose body is blank          paragraph break (`#`, `##`, `#   `)
+#   * a `#`-attribute token first      code (`#naked fn …`, `#inline` — _lx_attr_len)
+#   * other `#`-first line             paragraph MEMBER — directives included: a
+#                                      directive's keyword (`ifdef`, `endif`, `derive`)
+#                                      always sits between the phrase halves, so no
+#                                      class of its own is needed (separating them was
+#                                      measured: 0 differing notes over 24,241
+#                                      ecosystem files) and `#now` still continues
+#                                      a wrapped phrase
+#   * code / blank                     breaks; the code part is checked alone, and a
+#                                      trailing comment STARTS a paragraph that the
+#                                      following comment-only lines continue
+# Two trailing comments on consecutive code lines never join — aligned trailing
+# comments annotate their own lines. Bodies lose their `#` run and edge whitespace,
+# whitespace runs (space/tab/CR — a CRLF checkout is whitespace too) collapse to one
+# space, and a body ending in letter+`-` joins the next with NO space (`follow-`/`up`).
+# One note per physical line at most, on the line the occurrence STARTS; the term is
+# the first untracked one in list order. The pointer verdict is cached per line: the
+# uncached form re-scanned a 960 KB line per occurrence and took 27 s. CHANGELOG [6.6.5].
+var _dp_cap = 0;      # line capacity of the arrays below (grow-only, reused per file)
+var _dp_lstart = 0;   # i64[] physical line start
+var _dp_lend = 0;     # i64[] physical line end (its '\n', or EOF)
+var _dp_joff = 0;     # i64[] offset of the line's body in _dp_join
+var _dp_vc = 0;       # u8[]  pointer verdict cache: 0 unknown, 1 none, 2 tracked
+var _dp_best = 0;     # u8[]  1 + the best untracked term starting on the line, 0 none
+var _dp_jcap = 0;
+var _dp_join = 0;     # the joined, normalised text of the paragraph (or one unit)
+var _dp_n = 0;        # lines in the open paragraph
+var _dp_jlen = 0;
+var _dp_line0 = 0;    # line number of the open paragraph's first line
+
+fn _dp_oom(): i64 {
+    sys_write(STDERR_FD, "cyrlint: out of memory\n", 23);
+    syscall(60, 1);
+    return 1;
+}
+
+# Grow-only: an alloc per file would climb RSS on a many-file run (nothing is freed).
+fn _dp_reserve(lines, jbytes): i64 {
+    if (lines > _dp_cap) {
+        var c = lines + 64;
+        _dp_lstart = alloc(c * 8);
+        _dp_lend = alloc(c * 8);
+        _dp_joff = alloc(c * 8);
+        _dp_vc = alloc(c);
+        _dp_best = alloc(c);
+        if (_dp_lstart == 0) { return _dp_oom(); }
+        if (_dp_lend == 0) { return _dp_oom(); }
+        if (_dp_joff == 0) { return _dp_oom(); }
+        if (_dp_vc == 0) { return _dp_oom(); }
+        if (_dp_best == 0) { return _dp_oom(); }
+        _dp_cap = c;
+    }
+    if (jbytes > _dp_jcap) {
+        var jc = jbytes + 64;
+        _dp_join = alloc(jc);
+        if (_dp_join == 0) { return _dp_oom(); }
+        _dp_jcap = jc;
+    }
+    return 0;
+}
+
+fn _dp_ws(c): i64 {
+    if (c == 32) { return 1; }
+    if (c == 9) { return 1; }
+    if (c == 13) { return 1; }
+    return 0;
+}
+
+# Append buf[b, e) to the join buffer, collapsing whitespace runs to one space.
+fn _dp_put(buf, b, e): i64 {
+    var inws = 0;
+    var p = b;
+    while (p < e) {
+        var c = load8(buf + p);
+        if (_dp_ws(c) == 1) { inws = 1; }
+        else {
+            if (inws == 1) {
+                store8(_dp_join + _dp_jlen, 32);
+                _dp_jlen = _dp_jlen + 1;
+                inws = 0;
+            }
+            store8(_dp_join + _dp_jlen, c);
+            _dp_jlen = _dp_jlen + 1;
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+
+# Does term t occur at join offset j? Prose terms (t >= _DTERM_PROSE) fold A-Z.
+fn _dp_at(j, name, tl, fold): i64 {
+    var k = 0;
+    while (k < tl) {
+        var c = load8(_dp_join + j + k);
+        if (fold == 1) { if (c >= 65) { if (c <= 90) { c = c + 32; } } }
+        if (c != load8(name + k)) { return 0; }
+        k = k + 1;
+    }
+    return 1;
+}
+
+# Pointer verdict of paragraph line i, computed once.
+fn _dp_line_tracked(buf, i): i64 {
+    var v = load8(_dp_vc + i);
+    if (v == 0) {
+        v = 1;
+        if (_line_has_tracking_ptr(buf, load64(_dp_lstart + i * 8), load64(_dp_lend + i * 8)) == 1) { v = 2; }
+        store8(_dp_vc + i, v);
+    }
+    if (v == 2) { return 1; }
+    return 0;
+}
+
+# Open a paragraph line: its physical span [ls, le) and its body [b, e).
+fn _dp_add(buf, ls, le, b, e): i64 {
+    var i = _dp_n;
+    if (i > 0) {
+        # letter+'-' at the end of the previous body is a hyphenated wrap: no space
+        var hy = 0;
+        if (_dp_jlen >= 2) {
+            if (load8(_dp_join + _dp_jlen - 1) == 45) {
+                if (_is_alpha(load8(_dp_join + _dp_jlen - 2)) == 1) { hy = 1; }
+            }
+        }
+        if (hy == 0) {
+            store8(_dp_join + _dp_jlen, 32);
+            _dp_jlen = _dp_jlen + 1;
+        }
+    }
+    store64(_dp_lstart + i * 8, ls);
+    store64(_dp_lend + i * 8, le);
+    store64(_dp_joff + i * 8, _dp_jlen);
+    store8(_dp_vc + i, 0);
+    store8(_dp_best + i, 0);
+    _dp_put(buf, b, e);
+    _dp_n = i + 1;
+    return 0;
+}
+
+# Next occurrence of term t in the join buffer at or after j, or -1. A cheap first-byte
+# test gates the full compare, so a 1 MB paragraph costs ~12 byte-loads per offset.
+fn _dp_next(t, j): i64 {
+    var name = _dterm(t);
+    var tl = strlen(name);
+    var fold = 0;
+    if (t >= _DTERM_PROSE) { fold = 1; }
+    var c0 = load8(name);
+    while (j + tl <= _dp_jlen) {
+        var c = load8(_dp_join + j);
+        if (fold == 1) { if (c >= 65) { if (c <= 90) { c = c + 32; } } }
+        if (c == c0) { if (_dp_at(j, name, tl, fold) == 1) { return j; } }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+
+# Record every untracked occurrence of term t in the open paragraph. Occurrences come
+# in offset order, so the start-line cursor only moves forward.
+fn _dp_scan_term(buf, t): i64 {
+    var tl = strlen(_dterm(t));
+    var sl = 0;
+    var j = _dp_next(t, 0);
+    while (j >= 0) {
+        while (sl + 1 < _dp_n) {
+            if (load64(_dp_joff + (sl + 1) * 8) > j) { break; }
+            sl = sl + 1;
+        }
+        var b = load8(_dp_best + sl);
+        if (b == 0 || b > t + 1) {
+            var el = sl;
+            while (el + 1 < _dp_n) {
+                if (load64(_dp_joff + (el + 1) * 8) > j + tl - 1) { break; }
+                el = el + 1;
+            }
+            var tracked = 0;
+            var li = sl;
+            while (li <= el) {
+                if (_dp_line_tracked(buf, li) == 1) { tracked = 1; li = el; }
+                li = li + 1;
+            }
+            if (tracked == 0) { store8(_dp_best + sl, t + 1); }
+        }
+        j = _dp_next(t, j + 1);
+    }
+    return 0;
+}
+
+# Close the open paragraph: scan it, emit its notes in line order, reset.
+fn _dp_flush(buf): i64 {
+    if (_dp_n == 0) { return 0; }
+    var t = 0;
+    while (t < _DTERM_N) {
+        _dp_scan_term(buf, t);
+        t = t + 1;
+    }
+    var i = 0;
+    while (i < _dp_n) {
+        var b = load8(_dp_best + i);
+        if (b != 0) { note_deferral(_dp_line0 + i, _dterm(b - 1)); }
+        i = i + 1;
+    }
+    _dp_n = 0;
+    _dp_jlen = 0;
+    return 0;
+}
+
+# A unit that stands ALONE (the code part of a line, or a line that starts inside a
+# string): the physical line [ls, le) is the whole pointer scope, exactly the
+# pre-6.6.5 per-line verdict. Returns 1 + the first term present, or 0. Needs the
+# paragraph flushed first (it borrows the join buffer).
+fn _dp_unit(buf, ub, ue, ls, le): i64 {
+    if (ub >= ue) { return 0; }
+    if (_line_has_tracking_ptr(buf, ls, le) == 1) { return 0; }
+    _dp_jlen = 0;
+    _dp_put(buf, ub, ue);
+    var found = 0;
+    var t = 0;
+    while (t < _DTERM_N) {
+        if (_dp_next(t, 0) >= 0) { found = t + 1; t = _DTERM_N; }
+        t = t + 1;
+    }
+    _dp_jlen = 0;
+    return found;
+}
+
+# [b, e) of a comment body starting AT a `#`: drop the `#` run and edge whitespace.
+var _dp_bb = 0;
+var _dp_be = 0;
+fn _dp_body(buf, p, eol): i64 {
+    while (p < eol) {
+        var c = load8(buf + p);
+        if (c != 35) { if (_dp_ws(c) == 0) { break; } }
+        p = p + 1;
+    }
+    var e = eol;
+    while (e > p) {
+        if (_dp_ws(load8(buf + e - 1)) == 0) { break; }
+        e = e - 1;
+    }
+    _dp_bb = p;
+    _dp_be = e;
+    return e - p;
+}
+
+# One code line: its code part stands alone; a trailing comment opens a paragraph.
+fn _dp_code_line(buf, pos, eol, cst, lineno): i64 {
+    var ce = eol;
+    if (cst >= 0) { ce = cst; }
+    var cb = _dp_unit(buf, pos, ce, pos, eol);
+    var opened = 0;
+    if (cst >= 0) {
+        if (_dp_body(buf, cst, eol) > 0) {
+            _dp_line0 = lineno;
+            _dp_add(buf, pos, eol, _dp_bb, _dp_be);
+            store8(_dp_best, cb);
+            opened = 1;
+        }
+    }
+    if (opened == 0) { if (cb != 0) { note_deferral(lineno, _dterm(cb - 1)); } }
+    return 0;
+}
+
+fn lint_deferrals(buf, total): i64 {
+    # Every paragraph line holds a '#', so that count bounds the arrays; the joined
+    # text of any paragraph is no longer than the file.
+    var nh = 1;
+    var seen = 0;
+    var k = 0;
+    while (k < total) {
+        var ck = load8(buf + k);
+        if (ck == 35) { seen = 1; }
+        if (ck == 10) { nh = nh + seen; seen = 0; }
+        k = k + 1;
+    }
+    _dp_reserve(nh + 1, total + 16);
+    _dp_n = 0;
+    _dp_jlen = 0;
+    var pos = 0;
+    var lineno = 1;
+    var in_str = 0;
+    while (pos < total) {
+        var eol = _find_eol(buf, pos, total);
+        var start_in = in_str;
+        in_str = _lx_line(buf, pos, eol, in_str);
+        var cst = _lx_cstart;
+        if (_line_has(buf, pos, eol, "#skip-lint") == 1) { _dp_flush(buf); }
+        elif (start_in == 1) {
+            # String text up to the closing quote, then code: the line is a code line
+            # whose code part starts inside the string (cst is -1 while the string stays
+            # open, so a line of string text is still checked whole and alone). A comment
+            # after the closing quote opens a paragraph like any trailing comment.
+            _dp_flush(buf);
+            _dp_code_line(buf, pos, eol, cst, lineno);
+        } else {
+            var p = pos;
+            while (p < eol) {
+                if (_dp_ws(load8(buf + p)) == 0) { break; }
+                p = p + 1;
+            }
+            if (p >= eol) { _dp_flush(buf); }
+            elif (p == cst) {
+                # the line's first byte is a COMMENT `#` (a `#naked`/`#inline` attribute
+                # is code — _lx_attr_len — and takes the code branch below)
+                if (_dp_body(buf, p, eol) == 0) { _dp_flush(buf); }
+                else {
+                    if (_dp_n == 0) { _dp_line0 = lineno; }
+                    _dp_add(buf, pos, eol, _dp_bb, _dp_be);
+                }
+            } else {
+                _dp_flush(buf);
+                _dp_code_line(buf, pos, eol, cst, lineno);
+            }
+        }
+        pos = eol + 1;
+        lineno = lineno + 1;
+    }
+    _dp_flush(buf);
     return 0;
 }
 
@@ -173,55 +697,335 @@ fn note_err_enum(line): i64 {
     _err_enum_notes += 1;
     return 0;
 }
+# v6.6.5 — the enum body is TOKEN-scanned across lines. A member is any identifier
+# directly in the body (brace depth 1, outside a payload's parens) that is not in
+# VALUE position after `=` — the parser (PARSE_ENUM_DEF) makes the `;`/`,` separator
+# OPTIONAL, so "the token after `{` or `,`" would miss `;`-separated members (sankoch's
+# `enum Error { OK = 0; ERR_INVALID_INPUT = 1; … }`) and unseparated ones. The
+# per-line form this replaces read only the first token of each line AFTER the `{`
+# line, so it missed every member of a one-line `enum X { ERR_A = 1, ERR_B = 2 }`,
+# every member after the first on a line, and a whole enum whose `{` sits on the next
+# line — and a one-line enum left it "inside an enum" until some later `}`, noting a
+# fn body's `ERR_x = …;` line. `#skip-lint` on the `enum` line exempts the enum; on a
+# member's line, that member. CHANGELOG [6.6.5].
+var _en_line = 1;   # line number at the scan position
+var _en_ls = 0;     # offset where that line starts
+
+# Step over buf[p] (a string / char / comment / newline / plain byte), keeping the
+# line count right when a string spans lines. Returns the next offset.
+fn _en_step(buf, p, total): i64 {
+    var c = load8(buf + p);
+    if (c == 10) {
+        _en_line = _en_line + 1;
+        _en_ls = p + 1;
+        return p + 1;
+    }
+    var q = _lx_skip(buf, p, total);
+    if (q == p) { return p + 1; }
+    var k = p;
+    while (k < q) {
+        if (load8(buf + k) == 10) {
+            _en_line = _en_line + 1;
+            _en_ls = k + 1;
+        }
+        k = k + 1;
+    }
+    return q;
+}
+
+fn _en_line_skipped(buf, total): i64 {
+    return _line_has(buf, _en_ls, _find_eol(buf, _en_ls, total), "#skip-lint");
+}
+
+# A member name at [p, e): note it if it is a bare ERR_* and its line is not exempt.
+fn _en_member(buf, p, e, total): i64 {
+    if (e - p < 4) { return 0; }
+    if (memeq(buf + p, "ERR_", 4) == 0) { return 0; }
+    if (_en_line_skipped(buf, total) == 1) { return 0; }
+    return note_err_enum(_en_line);
+}
+
+# p is just past the `enum` keyword. Finds the body's `{` (possibly on a later line),
+# notes each bare ERR_* member, and returns the offset after the body's `}` — or where
+# the search gave up (`;`, `(`, `=`, `}` first: not an enum body).
+fn _en_body(buf, p, total, exempt): i64 {
+    while (p < total) {
+        var c = load8(buf + p);
+        if (c == 123) { break; }
+        if (c == 59 || c == 40 || c == 61 || c == 125) { return p; }
+        p = _en_step(buf, p, total);
+    }
+    if (p >= total) { return p; }
+    p = p + 1;
+    var depth = 1;
+    var paren = 0;
+    var valpos = 0;   # 1 right after `=` (and a unary `-`): an identifier there is a value
+    while (p < total) {
+        var c = load8(buf + p);
+        if (c == 123) { depth = depth + 1; valpos = 0; p = p + 1; }
+        elif (c == 125) {
+            depth = depth - 1;
+            p = p + 1;
+            if (depth == 0) { return p; }
+        }
+        elif (c == 40 || c == 91) { paren = paren + 1; valpos = 0; p = p + 1; }
+        elif (c == 41 || c == 93) { paren = paren - 1; p = p + 1; }
+        elif (c == 61) { valpos = 1; p = p + 1; }
+        elif (c == 45) { p = p + 1; }
+        elif (_is_id_start(c) == 1 || _is_digit(c) == 1) {
+            var e = p + 1;
+            while (e < total) {
+                if (_is_id_cont(load8(buf + e)) == 0) { break; }
+                e = e + 1;
+            }
+            if (valpos == 0 && depth == 1 && paren == 0 && exempt == 0) { _en_member(buf, p, e, total); }
+            valpos = 0;
+            p = e;
+        }
+        elif (_dp_ws(c) == 1 || c == 10 || c == 35) { p = _en_step(buf, p, total); }
+        else {
+            valpos = 0;
+            p = _en_step(buf, p, total);
+        }
+    }
+    return p;
+}
+
 fn lint_error_enum_namespace(buf, total, path): i64 {
     if (_lint_path_is_err_owner(path) == 1) { return 0; }   # sakshi owns bare ERR_*
-    var si = 0;
-    var lineno = 1;
-    var in_enum = 0;
-    while (si < total) {
-        # end of this line (position of '\n' or EOF)
-        var eol = si;
-        var atend = 0;
-        while (atend == 0) {
-            if (eol >= total) { atend = 1; }
-            elif (load8(buf + eol) == 10) { atend = 1; }
-            else { eol += 1; }
+    _en_line = 1;
+    _en_ls = 0;
+    var p = 0;
+    while (p < total) {
+        var c = load8(buf + p);
+        if (_is_id_start(c) == 1 || _is_digit(c) == 1) {
+            var e = p + 1;
+            while (e < total) {
+                if (_is_id_cont(load8(buf + e)) == 0) { break; }
+                e = e + 1;
+            }
+            if (e - p == 4) {
+                if (memeq(buf + p, "enum", 4) == 1) {
+                    e = _en_body(buf, e, total, _en_line_skipped(buf, total));
+                }
+            }
+            p = e;
+        } else {
+            p = _en_step(buf, p, total);
         }
-        # first non-whitespace column of the line
-        var p = si;
-        var scanning = 1;
-        while (scanning == 1) {
-            if (p >= eol) { scanning = 0; }
-            elif (load8(buf + p) == 32) { p += 1; }
-            elif (load8(buf + p) == 9) { p += 1; }
-            else { scanning = 0; }
+    }
+    return 0;
+}
+
+# === Call-argument walks for the sys_open / getdents notes (v6.6.5) ===
+# A call's arguments may wrap onto the next line; the per-line scans these replace
+# stopped at the line end and missed `sys_open(p,\n 0, 0)`, `sys_open(\n p, 0, 0)` and
+# `syscall(\n SYS_GETDENTS64, …)`. Each walk is lexical (strings, chars, comments) and
+# bounded: the call's own `)`, a `;`/`{`/`}` (an argument list never holds one outside
+# a string), _CALL_SCAN_LINES newlines or _CALL_SCAN_MAX bytes — and there is at most
+# one walk per line, so a file of unclosed `(` stays linear (a per-occurrence walk took
+# 3 s on 90K `syscall(a,` lines). CHANGELOG [6.6.5].
+var _CALL_SCAN_MAX = 4096;
+var _CALL_SCAN_LINES = 16;
+
+# Next offset in [p, end) where `needle` starts in CODE — outside a string or char
+# literal — or -1. p must be a code position. The call searches used a plain substring,
+# so cyrlint's own `memeq(buf + so, "sys_open(", 9)` drew a sys_open note, and a walk
+# started INSIDE that string took its closing quote for an opening one.
+fn _code_find(buf, p, end, needle, nl): i64 {
+    while (p + nl <= end) {
+        var c = load8(buf + p);
+        if (c == 34) {
+            p = _lx_skip_str(buf, p + 1, end);
+            if (p < 0) { return 0 - 1; }
         }
-        var is_comment = 0;
-        if (p < eol) {
-            if (load8(buf + p) == 35) { is_comment = 1; }   # '#'
+        elif (c == 39) { p = _lx_skip_char(buf, p, end); }
+        elif (memeq(buf + p, needle, nl) == 1) { return p; }
+        else { p = p + 1; }
+    }
+    return 0 - 1;
+}
+
+# 1 if buf[at-1] is an identifier byte (so `file_open(` / `_sys_open(` are not `sys_open(`).
+fn _pre_ident(buf, at): i64 {
+    if (at <= 0) { return 0; }
+    return _is_id_cont(load8(buf + at - 1));
+}
+
+# p is just past a callee NAME. Skip whitespace, newlines and comments (bounded like the
+# argument walks) and return the offset of the call's `(`, or -1 when the next token is
+# not one. `sys_open (p, 0, 0)` and `syscall` / `(SYS_GETDENTS64, …)` are calls — the
+# lexer does not care what sits between a name and its `(` — and matching the literal
+# `name(` missed both. CHANGELOG [6.6.5].
+fn _call_paren(buf, p, total): i64 {
+    var lim = p + _CALL_SCAN_MAX;
+    if (lim > total) { lim = total; }
+    var nls = 0;
+    while (p < lim) {
+        var c = load8(buf + p);
+        if (c == 40) { return p; }
+        if (c == 10) {
+            nls = nls + 1;
+            if (nls > _CALL_SCAN_LINES) { return 0 - 1; }
+            p = p + 1;
         }
-        var is_skip = _line_has(buf, si, eol, "#skip-lint");
-        if (is_comment == 0) {
-            if (is_skip == 0) {
-                if (in_enum == 0) {
-                    if (_line_has(buf, si, eol, "enum ") == 1) {
-                        if (_line_has(buf, si, eol, "{") == 1) { in_enum = 1; }
-                    }
-                } else {
-                    if (_line_has(buf, si, eol, "}") == 1) {
-                        in_enum = 0;
-                    } else {
-                        if (p + 4 <= eol) {
-                            if (memeq(buf + p, "ERR_", 4) == 1) { note_err_enum(lineno); }
-                        }
-                    }
+        elif (_dp_ws(c) == 1) { p = p + 1; }
+        elif (c == 35) {
+            if (_lx_attr_len(buf, p, lim) > 0) { return 0 - 1; }
+            p = _find_eol(buf, p, lim);
+        }
+        else { return 0 - 1; }
+    }
+    return 0 - 1;
+}
+
+# Next CODE offset in [p, end) where `name` (length nl) is CALLED: outside strings and
+# chars, no identifier byte after it, and a `(` after that (_call_paren — possibly on a
+# later line). need_pre == 1 also refuses an identifier byte BEFORE it (`_sys_open(` is
+# not `sys_open(`); the getdents rule passes 0, keeping its pre-6.6.5 reading of any
+# `…syscall(` — a wrapper handed a per-target number is the same footgun. Returns the
+# name's offset and leaves the `(` in _cf_paren; -1 when there is none.
+var _cf_paren = 0;
+fn _code_find_call(buf, p, end, total, name, nl, need_pre): i64 {
+    var at = _code_find(buf, p, end, name, nl);
+    while (at >= 0) {
+        var pre = 0;
+        if (need_pre == 1) { pre = _pre_ident(buf, at); }
+        if (pre == 0) {
+            if (_is_id_cont(load8(buf + at + nl)) == 0) {
+                var lp = _call_paren(buf, at + nl, total);
+                if (lp >= 0) {
+                    _cf_paren = lp;
+                    return at;
                 }
             }
         }
-        si = eol + 1;
-        lineno += 1;
+        at = _code_find(buf, at + nl, end, name, nl);
+    }
+    return 0 - 1;
+}
+
+# From p, skip whitespace (newlines too) and comments; 1 if the next byte is a digit.
+fn _next_sig_digit(buf, p, lim): i64 {
+    while (p < lim) {
+        var c = load8(buf + p);
+        if (c == 35) {
+            if (_lx_attr_len(buf, p, lim) > 0) { return 0; }
+            p = _find_eol(buf, p, lim);
+        }
+        elif (_dp_ws(c) == 1 || c == 10) { p = p + 1; }
+        else { return _is_digit(c); }
     }
     return 0;
+}
+
+# p is just past `sys_open(`. 1 iff the SECOND argument starts with a digit.
+fn _so_arg2_literal(buf, p, total): i64 {
+    var lim = p + _CALL_SCAN_MAX;
+    if (lim > total) { lim = total; }
+    var depth = 1;
+    var nls = 0;
+    while (p < lim) {
+        var q = _lx_skip(buf, p, lim);
+        if (q != p) { p = q; continue; }
+        var c = load8(buf + p);
+        if (c == 10) {
+            nls = nls + 1;
+            if (nls > _CALL_SCAN_LINES) { return 0; }
+        }
+        if (c == 40 || c == 91) { depth = depth + 1; }
+        elif (c == 41 || c == 93) {
+            depth = depth - 1;
+            if (depth == 0) { return 0; }
+        }
+        elif (c == 59 || c == 123 || c == 125) { return 0; }
+        elif (c == 44) { if (depth == 1) { return _next_sig_digit(buf, p + 1, lim); } }
+        p = p + 1;
+    }
+    return 0;
+}
+
+# How many parens the line's OUTERMOST still-open `syscall(` leaves open at the line
+# end (0 = every `syscall(` on the line closed on it). One pass over the code part.
+# _sc_from = where the continuation walk starts: the line end, or just past the `(`
+# of a call whose `(` sits on a LATER line (`syscall` / `(SYS_GETDENTS64, …)`).
+var _sc_from = 0;
+fn _sc_open_depth(buf, p, end, total): i64 {
+    var d = 0;
+    var open_at = 0 - 1;   # paren depth just outside the outermost open `syscall(`
+    _sc_from = end;
+    while (p < end) {
+        var c = load8(buf + p);
+        if (c == 34) {
+            p = _lx_skip_str(buf, p + 1, end);
+            if (p < 0) { p = end; }
+        }
+        elif (c == 39) { p = _lx_skip_char(buf, p, end); }
+        elif (c == 40) { d = d + 1; p = p + 1; }
+        elif (c == 41) {
+            d = d - 1;
+            if (open_at >= 0) { if (d <= open_at) { open_at = 0 - 1; } }
+            p = p + 1;
+        }
+        elif (c == 115 && p + 7 <= end) {
+            if (_code_find_call(buf, p, p + 7, total, "syscall", 7, 0) == p) {
+                if (open_at < 0) { open_at = d; }
+                d = d + 1;
+                p = _cf_paren + 1;
+                # only whitespace/comments lie between the name and a `(` past the
+                # line end, so the line is done and the walk starts after that `(`
+                if (_cf_paren >= end) { _sc_from = p; }
+            } else { p = p + 1; }
+        }
+        else { p = p + 1; }
+    }
+    if (open_at < 0) { return 0; }
+    return d - open_at;
+}
+
+# p is the line end of a line whose `syscall(` is still open `depth` parens deep: walk
+# the continuation lines to that call's `)`. 1 iff a `…SYS_GETDENTS…` name is met.
+fn _sc_tail_names_getdents(buf, p, total, depth): i64 {
+    var lim = p + _CALL_SCAN_MAX;
+    if (lim > total) { lim = total; }
+    var nls = 0;
+    while (p < lim) {
+        var q = _lx_skip(buf, p, lim);
+        if (q != p) { p = q; continue; }
+        var c = load8(buf + p);
+        if (c == 10) {
+            nls = nls + 1;
+            if (nls > _CALL_SCAN_LINES) { return 0; }
+        }
+        elif (c == 40) { depth = depth + 1; }
+        elif (c == 41) {
+            depth = depth - 1;
+            if (depth <= 0) { return 0; }
+        }
+        elif (c == 59 || c == 123 || c == 125) { return 0; }
+        elif (c == 83) {
+            if (p + 12 <= lim) { if (memeq(buf + p, "SYS_GETDENTS", 12) == 1) { return 1; } }
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+
+# Offset of the `fn ` keyword a line's code opens with — after an optional `#`-attribute
+# token (`#inline`, `#naked`, …) and an optional `pub`/`public` — or -1. p is the line's
+# first non-space byte.
+fn _fn_kw_at(buf, p, eol): i64 {
+    if (p < eol) {
+        if (load8(buf + p) == 35) {
+            var al = _lx_attr_len(buf, p, eol);
+            if (al == 0) { return 0 - 1; }
+            p = p + al;
+        }
+    }
+    p = _skip_vis(buf, p, eol);
+    if (p + 3 > eol) { return 0 - 1; }
+    if (memeq(buf + p, "fn ", 3) == 1) { return p; }
+    return 0 - 1;
 }
 
 fn lint_file(buf, total): i64 {
@@ -230,6 +1034,7 @@ fn lint_file(buf, total): i64 {
     var prev_blank = 0;
     var in_fn = 0;
     var brace_depth = 0;
+    var in_str = 0;
 
     # === Pre-pass: detect is_err naming-clash hazard (bote feedback #5) ===
     # `is_err` is defined in BOTH lib/syscalls.cyr (checks `ret < 0`) and
@@ -258,6 +1063,20 @@ fn lint_file(buf, total): i64 {
         }
         var linelen = eol - pos;
 
+        # Lexical walk first — the string state crosses lines (CHANGELOG [6.6.5]). It
+        # gives this line's brace delta and where its comment starts.
+        var start_in = in_str;
+        in_str = _lx_line(buf, pos, eol, in_str);
+        var line_delta = _lx_delta;
+        var code_end = eol;
+        if (_lx_cstart >= 0) { code_end = _lx_cstart; }
+        # where this line's CODE starts: after the string it opened inside, if any
+        var code_start = pos;
+        if (start_in == 1) {
+            code_start = _lx_skip_str(buf, pos, eol);
+            if (code_start < 0) { code_start = eol; }
+        }
+
         # === Rule: #skip-lint comment ===
         # Lines containing #skip-lint are exempt from all rules
         var skip_line = 0;
@@ -272,17 +1091,16 @@ fn lint_file(buf, total): i64 {
         if (skip_line == 0) {
 
             # === Rule: no trailing whitespace ===
-            if (linelen > 0) {
+            # (not when the line ENDS inside a multi-line string: those bytes are the
+            # string's data, and "fixing" them changes the program — CHANGELOG [6.6.5])
+            if (linelen > 0 && in_str == 0) {
                 var last = load8(buf + eol - 1);
                 if (last == 32) { warn(lineno, "trailing whitespace"); }
                 if (last == 9) { warn(lineno, "trailing tab"); }
             }
 
-            # === Rule: untracked deferral language (separate counter) ===
-            var _dterm = _line_deferral_term(buf, pos, eol);
-            if (_dterm != 0) {
-                if (_line_has_tracking_ptr(buf, pos, eol) == 0) { note_deferral(lineno, _dterm); }
-            }
+            # (The untracked-deferral rule is its own pass since v6.6.5 — lint_deferrals —
+            # because its unit is a comment paragraph, not a line.)
 
             # === Rule: no tabs (use spaces) ===
             var ti = pos;
@@ -332,59 +1150,24 @@ fn lint_file(buf, total): i64 {
             # code passes O_RDONLY (a name) on Linux or strlen(path) (a call) on
             # agnos — never a digit. Route through io.cyr's file_open per-target
             # bridge. See 2026-06-18-stdlib-native-agnos-abi-fs.md.
-            # only scan the CODE portion (up to the first '#') so explanatory
-            # comments that mention sys_open(...) aren't flagged.
-            var code_end = eol;
-            var ce = pos;
-            while (ce < eol) {
-                if (load8(buf + ce) == 35) { code_end = ce; ce = eol; }
-                ce += 1;
-            }
-            var so = pos;
-            while (so + 9 <= code_end) {
-                if (memeq(buf + so, "sys_open(", 9) == 1) {
-                    # not preceded by an identifier char (skip file_open / _sys_open)
-                    var pre_ok = 1;
-                    if (so > 0) {
-                        var pc2 = load8(buf + so - 1);
-                        if (pc2 == 95) { pre_ok = 0; }
-                        if (pc2 >= 48) { if (pc2 <= 57) { pre_ok = 0; } }
-                        if (pc2 >= 65) { if (pc2 <= 90) { pre_ok = 0; } }
-                        if (pc2 >= 97) { if (pc2 <= 122) { pre_ok = 0; } }
-                    }
-                    if (pre_ok == 1) {
-                        # find the first comma at the sys_open( paren depth
-                        var k = so + 9;
-                        var depth = 1;
-                        var cpos = 0 - 1;
-                        while (k < eol) {
-                            var ch = load8(buf + k);
-                            if (ch == 40) { depth += 1; }
-                            if (ch == 41) { depth -= 1; }
-                            if (ch == 44) { if (depth == 1) { if (cpos < 0) { cpos = k; } } }
-                            k += 1;
-                        }
-                        if (cpos >= 0) {
-                            # skip spaces after the comma; flag if the 2nd arg is a digit
-                            var a2 = cpos + 1;
-                            var seen = 0;
-                            while (a2 < eol) {
-                                if (seen == 0) {
-                                    var fc = load8(buf + a2);
-                                    if (fc != 32) {
-                                        seen = 1;
-                                        if (fc >= 48) { if (fc <= 57) {
-                                            note_sysopen(lineno);
-                                        } }
-                                    }
-                                }
-                                a2 += 1;
-                            }
-                        }
-                    }
-                    so = eol;
+            # Only the CODE portion is searched for the call (code_end = the line's
+            # comment `#`, found lexically — a `#` inside a string is not a comment), so
+            # explanatory comments that mention sys_open(...) aren't flagged. The
+            # ARGUMENTS are then walked across lines: `sys_open(p,\n 0, 0)` and
+            # `sys_open(\n p, 0, 0)` were silently missed when the scan stopped at the
+            # line end, and so were `sys_open (p, 0, 0)` / `sys_open\n(p, 0, 0)` — the
+            # `(` is found past whitespace, newlines and comments (_code_find_call).
+            # Every call on the line is examined (the first one used to end the search,
+            # so `sys_open(p, O_RDONLY, 0); … sys_open(q, 0, 0)` drew nothing); one note
+            # per line. `file_open(` / `_sys_open(` are other names. CHANGELOG [6.6.5].
+            var so = _code_find_call(buf, code_start, code_end, total, "sys_open", 8, 1);
+            while (so >= 0) {
+                if (_so_arg2_literal(buf, _cf_paren + 1, total) == 1) {
+                    note_sysopen(lineno);
+                    so = 0 - 1;
+                } else {
+                    so = _code_find_call(buf, so + 8, code_end, total, "sys_open", 8, 1);
                 }
-                so += 1;
             }
 
             # === Rule: raw getdents syscall (per-target number/arity, v6.2.26) ===
@@ -393,22 +1176,27 @@ fn lint_file(buf, total): i64 {
             # `SYS_GETDENTS64`, and the `FSYS_`/`NSYS_`-prefixed forms, e.g. fs.cyr's
             # `syscall(FSYS_GETDENTS64,…)`) which a literal `syscall(SYS_GETDENTS`
             # prefix match would miss. The both-present test skips the `var …SYS_
-            # GETDENTS… = N` const defs (no `syscall(`). Reuses code_end (the comment
-            # boundary computed for the sys_open rule).
-            var has_syscall = 0;
-            var has_getdents = 0;
-            var gso = pos;
-            while (gso < code_end) {
-                if (gso + 8 <= code_end) { if (memeq(buf + gso, "syscall(", 8) == 1) { has_syscall = 1; } }
-                if (gso + 12 <= code_end) { if (memeq(buf + gso, "SYS_GETDENTS", 12) == 1) { has_getdents = 1; } }
-                gso += 1;
+            # GETDENTS… = N` const defs (no `syscall(`). v6.6.5: a call whose arguments
+            # WRAP (`syscall(\n    SYS_GETDENTS64, …)`) is walked to its `)` too.
+            # Both searches are CODE-only (v6.6.5): a name inside a string literal is
+            # text, not a call; and `syscall (…)` / `syscall` + `(` on the next line are
+            # calls (_code_find_call).
+            if (_code_find_call(buf, code_start, code_end, total, "syscall", 7, 0) >= 0) {
+                var has_getdents = 0;
+                if (_code_find(buf, code_start, code_end, "SYS_GETDENTS", 12) >= 0) { has_getdents = 1; }
+                else {
+                    var open_d = _sc_open_depth(buf, code_start, code_end, total);
+                    if (open_d > 0) { has_getdents = _sc_tail_names_getdents(buf, _sc_from, total, open_d); }
+                }
+                if (has_getdents == 1) { note_rawgetdents(lineno); }
             }
-            if (has_syscall == 1) { if (has_getdents == 1) { note_rawgetdents(lineno); } }
 
         }
 
         # === Rule: multiple blank lines ===
-        if (linelen == 0) {
+        # (a blank line INSIDE a multi-line string is string data, not layout — it
+        # neither warns nor counts toward the next blank line; CHANGELOG [6.6.5])
+        if (linelen == 0 && start_in == 0) {
             if (prev_blank == 1) { warn(lineno, "multiple consecutive blank lines"); }
             prev_blank = 1;
         } else {
@@ -425,9 +1213,14 @@ fn lint_file(buf, total): i64 {
 
         if (content_len > 0) {
             # === Rule: fn names should be snake_case ===
-            if (content_len >= 3) {
-                if (memeq(buf + first, "fn ", 3) == 1) {
-                    var ni = first + 3;
+            # (not on a line that starts inside a multi-line string — that is text)
+            # v6.6.5: the `fn` may follow an attribute token and/or `pub`/`public` —
+            # `#inline fn fooBar()` and `pub fn fooBar()` were never checked (28,652
+            # `pub fn` lines in the ecosystem, 0 of them camelCase today). CHANGELOG [6.6.5].
+            var fnp = _fn_kw_at(buf, first, eol);
+            if (content_len >= 3 && start_in == 0) {
+                if (fnp >= 0) {
+                    var ni = fnp + 3;
                     # Check for camelCase fn names
                     # Allow: _prefixed, ALL_CAPS, Type_method (Cap + _)
                     var fn_first = load8(buf + ni);
@@ -498,49 +1291,13 @@ fn lint_file(buf, total): i64 {
             # === Rule: var used as keyword parameter name ===
             # Check for 'default' used as identifier (common mistake)
 
-            # Track brace depth (skip string literals, char literals,
-            # and comments). v5.10.10 — char-literal skip mirrors the
-            # v5.10.6 cyrfmt fix; agnostik 5.10.9 toolchain refresh
-            # filed the same bug class for cyrlint (694 false-positive
-            # `unmatched closing brace` warnings on every `}` after a
-            # `str_builder_putc(sb, '}')` call across 6 serde-emit
-            # files). See agnostik/docs/development/issues/cyrlint-
-            # char-literal-brace-bug-2026-05-09.md.
-            var bi = first;
-            while (bi < eol) {
-                var bc = load8(buf + bi);
-                if (bc == 35) {
-                    # Comment: skip rest of line
-                    bi = eol;
-                }
-                elif (bc == 34) {
-                    # Skip string literal: advance past closing quote
-                    bi += 1;
-                    while (bi < eol) {
-                        if (load8(buf + bi) == 92) { bi += 1; }
-                        elif (load8(buf + bi) == 34) { break; }
-                        bi += 1;
-                    }
-                    bi += 1;
-                }
-                elif (bc == 39) {
-                    # Skip char literal: advance past closing single
-                    # quote. `'\''` (escaped quote) and `'\\'` (escaped
-                    # backslash) handled via the backslash-skip pattern.
-                    bi += 1;
-                    while (bi < eol) {
-                        if (load8(buf + bi) == 92) { bi += 1; }
-                        elif (load8(buf + bi) == 39) { break; }
-                        bi += 1;
-                    }
-                    bi += 1;
-                }
-                else {
-                    if (bc == 123) { brace_depth += 1; }
-                    if (bc == 125) { brace_depth -= 1; }
-                    bi += 1;
-                }
-            }
+            # Track brace depth (skip string literals, char literals, and comments).
+            # v5.10.10 — char-literal skip mirrors the v5.10.6 cyrfmt fix (agnostik
+            # 5.10.9 filed 694 false `unmatched closing brace` warnings on every `}`
+            # after a `str_builder_putc(sb, '}')` call; agnostik/docs/development/
+            # issues/cyrlint-char-literal-brace-bug-2026-05-09.md). v6.6.5 — the delta
+            # comes from _lx_line, whose string state crosses lines (see there).
+            brace_depth += line_delta;
 
             # === Rule: negative brace depth ===
             if (brace_depth < 0) {
@@ -600,30 +1357,83 @@ fn _is_id_cont(c): i64 {
     return 0;
 }
 
-# Helper: at buf[pos..eol), find a top-level `var IDENT` decl.
-# Returns the offset of IDENT's first byte, or -1 if not a var-
-# decl line. Caller already checked this line is at brace_depth==0.
-fn _find_var_decl_ident(buf, pos, eol): i64 {
-    # Skip leading whitespace
-    var p = pos;
+# Skip spaces/tabs from p, then a `pub ` / `public ` visibility prefix and the spaces
+# after it. `pub var A = 1 + B;` is a top-level declaration with the same silent zero as
+# the bare form (measured: exit 1 against a later `var B = g();`), and both passes read
+# a line that did not START with `var ` as no declaration at all. (`private` is a
+# file-level line of its own, never a per-item prefix.) CHANGELOG [6.6.5].
+fn _skip_vis(buf, p, eol): i64 {
     while (p < eol) {
         var c = load8(buf + p);
         if (c != 32) { if (c != 9) { break; } }
         p = p + 1;
     }
-    # Match `var ` (4 chars)
-    if (p + 4 > eol) { return 0 - 1; }
-    if (memeq(buf + p, "var ", 4) == 0) { return 0 - 1; }
-    p = p + 4;
-    # Skip more whitespace
+    var k = 0;
+    if (p + 4 <= eol) { if (memeq(buf + p, "pub ", 4) == 1) { k = 4; } }
+    if (p + 7 <= eol) { if (memeq(buf + p, "public ", 7) == 1) { k = 7; } }
+    if (k == 0) { return p; }
+    p = p + k;
     while (p < eol) {
         var c2 = load8(buf + p);
         if (c2 != 32) { if (c2 != 9) { break; } }
         p = p + 1;
     }
-    if (p >= eol) { return 0 - 1; }
-    if (_is_id_start(load8(buf + p)) == 0) { return 0 - 1; }
     return p;
+}
+
+# The table of top-level vars (pass 1). Cap 256; allocated once for the whole run.
+var _gio_off = 0;
+var _gio_len = 0;
+var _gio_line = 0;
+var _gio_n = 0;
+# Where the last header / initializer walk STOPPED (per pass). Every walk ends where
+# the next declaration can begin, so no two walks cover the same bytes and a keyword
+# behind this mark sits inside a statement already walked: the rule stays linear on a
+# file that does not parse, and a declaration reachable two ways is examined once.
+var _gio_front = 0;
+var _gio_stop = 0;
+var _gio_hsemi = 0;   # the `;` that ended an initializer-less declaration, or -1
+
+# 1 if buf[p, p+kl) is the keyword kw followed by a space, tab, CR or newline, or by
+# lim. `var` / `fn` may END their line: the lexer does not care where the name sits.
+fn _kw_at(buf, p, lim, kw, kl): i64 {
+    if (p + kl > lim) { return 0; }
+    if (memeq(buf + p, kw, kl) == 0) { return 0; }
+    if (p + kl == lim) { return 1; }
+    var c = load8(buf + p + kl);
+    if (c == 10) { return 1; }
+    return _dp_ws(c);
+}
+
+# At buf[pos..eol) — a line start, or just past a `;` / `}` — find a top-level `var` and
+# return the offset of the NAME it declares, or -1. v6.6.5: the name may sit on a LATER
+# line — `var` / `    A = 1 + B;` compiles and reads a later B as 0 exactly like the
+# one-line form (measured: exit 1, its declaration-order twin 3) — and a rule that
+# needed `var NAME` on one line saw that declaration neither as a reference nor as a
+# target. The name is the first token past whitespace, newlines and comment lines; a
+# `var`/`fn` there opens another declaration and is no name. A keyword behind
+# _gio_front (inside a statement an earlier walk already covered) is not examined
+# again. CHANGELOG [6.6.5].
+fn _find_var_decl_ident(buf, pos, eol, total): i64 {
+    var p = _skip_vis(buf, pos, eol);
+    if (_kw_at(buf, p, eol, "var", 3) == 0) { return 0 - 1; }
+    if (p < _gio_front) { return 0 - 1; }
+    p = p + 3;
+    while (p < total) {
+        var c = load8(buf + p);
+        if (c == 10 || _dp_ws(c) == 1) { p = p + 1; }
+        elif (c == 35) {
+            if (_lx_attr_len(buf, p, total) > 0) { return 0 - 1; }
+            p = _find_eol(buf, p, total);
+        }
+        elif (_is_id_start(c) == 1) {
+            if (_kw_at(buf, p, total, "var", 3) == 1) { return 0 - 1; }
+            if (_kw_at(buf, p, total, "fn", 2) == 1) { return 0 - 1; }
+            return p;
+        }
+        else { return 0 - 1; }
+    }
+    return 0 - 1;
 }
 
 # Walk buf, find IDENT length starting at off (caller guaranteed
@@ -657,204 +1467,256 @@ fn _find_eol(buf, start, total): i64 {
     return total;
 }
 
-fn lint_globals_init_order(buf, total): i64 {
-    # Parallel arrays: name_off[i], name_len[i], name_line[i]. Cap 256.
-    var name_off  = alloc(2048);   # 256 × 8B
-    var name_len  = alloc(2048);
-    var name_line = alloc(2048);
-    var nvars = 0;
-
-    # Pass 1: collect top-level `var IDENT = ...;` decls.
-    var pos = 0;
-    var lineno = 1;
-    var depth = 0;
-    while (pos < total) {
-        var eol = _find_eol(buf, pos, total);
-        if (depth == 0) {
-            var decl = _find_var_decl_ident(buf, pos, eol);
-            if (decl >= 0) {
-                if (nvars < 256) {
-                    var id_end = _scan_id_end(buf, decl, total);
-                    store64(name_off  + nvars * 8, decl);
-                    store64(name_len  + nvars * 8, id_end - decl);
-                    store64(name_line + nvars * 8, lineno);
-                    nvars = nvars + 1;
-                }
-            }
+# p is just past the declared name. Walk the declaration's HEADER, across lines — a type
+# annotation (`: i64`, `: *T`, `: [u8]`, `[8]`, `: Vec<i64>`) or a destructure's `, y` —
+# to the `=` that opens the initializer (returned), or the `;` that ends a declaration
+# without one (left in _gio_hsemi; returns -1). v6.6.5, review round 3: `var A:` /
+# `i64 = 1 + B;` and `var A` / `: i64 = 1 + B;` compile and read a later B as 0 like the
+# one-line form (measured: exit 1, declaration-order twins 3); the round-2 look-ahead
+# accepted only an `=` OPENING the next line, and before that the `=` had to be on the
+# declaration line. A comment is skipped whole, so an `=` inside one is no initializer
+# (`var x[8];  # a = LATER` scanned the comment's words as code — agnos
+# kernel/core/syscall.cyr:1632). A header holds no string, char, brace or attribute
+# token, and `==` is no initializer: each stops the walk (-1, no `;`), and so does a
+# line that opens a new declaration. _gio_stop = where it stopped. CHANGELOG [6.6.5].
+fn _gio_header(buf, p, total): i64 {
+    _gio_hsemi = 0 - 1;
+    while (p < total) {
+        var c = load8(buf + p);
+        if (c == 61) {
+            _gio_stop = p;
+            if (p + 1 < total) { if (load8(buf + p + 1) == 61) { return 0 - 1; } }
+            return p;
         }
-        # v5.10.10 — skip braces inside string and char literals
-        # (matching the lint() main-loop fix). The globals-init-
-        # order pass walks every line and tracks depth; a `}` inside
-        # `'}'` or `"..."` would break out of fn-tracking prematurely
-        # and false-positive flag fn-internal vars as top-level.
-        var bp = pos;
-        while (bp < eol) {
-            var bc = load8(buf + bp);
-            if (bc == 35) { bp = eol; }
-            elif (bc == 34) {
-                bp = bp + 1;
-                while (bp < eol) {
-                    if (load8(buf + bp) == 92) { bp = bp + 1; }
-                    elif (load8(buf + bp) == 34) { break; }
-                    bp = bp + 1;
-                }
-                bp = bp + 1;
-            }
-            elif (bc == 39) {
-                bp = bp + 1;
-                while (bp < eol) {
-                    if (load8(buf + bp) == 92) { bp = bp + 1; }
-                    elif (load8(buf + bp) == 39) { break; }
-                    bp = bp + 1;
-                }
-                bp = bp + 1;
-            }
-            else {
-                if (bc == 123) { depth = depth + 1; }
-                if (bc == 125) { depth = depth - 1; }
-                bp = bp + 1;
-            }
+        if (c == 59) {
+            _gio_stop = p;
+            _gio_hsemi = p;
+            return 0 - 1;
         }
-        pos = eol + 1;
-        lineno = lineno + 1;
+        if (c == 34 || c == 39 || c == 123 || c == 125) {
+            _gio_stop = p;
+            return 0 - 1;
+        }
+        if (c == 35) {
+            if (_lx_attr_len(buf, p, total) > 0) {
+                _gio_stop = p;
+                return 0 - 1;
+            }
+            p = _find_eol(buf, p, total);
+        }
+        elif (c == 10) {
+            if (_gio_decl_start(buf, p + 1, total) == 1) {
+                _gio_stop = p;
+                return 0 - 1;
+            }
+            p = p + 1;
+        }
+        else { p = p + 1; }
     }
+    _gio_stop = total;
+    return 0 - 1;
+}
 
-    # Pass 2: re-walk. For each top-level `var X = expr;`, scan
-    # expr tokens; warn on any IDENT whose def_line > current.
-    pos = 0;
-    lineno = 1;
-    depth = 0;
-    while (pos < total) {
-        var eol = _find_eol(buf, pos, total);
-        if (depth == 0) {
-            var decl = _find_var_decl_ident(buf, pos, eol);
-            if (decl >= 0) {
-                var id_end = _scan_id_end(buf, decl, total);
-                # Find `=` after IDENT (uninit decl skipped).
-                var eq = id_end;
-                var found_eq = 0;
-                while (eq < eol) {
-                    if (load8(buf + eq) == 61) {
-                        found_eq = 1;
-                        eq = eol;
-                    } else {
-                        eq = eq + 1;
-                    }
-                }
-                if (found_eq == 1) {
-                    # Recompute eq position (the loop overshot to eol).
-                    eq = id_end;
-                    while (eq < eol) {
-                        if (load8(buf + eq) == 61) { eq = eol + 1; }
-                        else { eq = eq + 1; }
-                    }
-                    var scan = (eol - eol) + (id_end + 0);
-                    # eq now at eol+1 if found. The actual `=` was
-                    # somewhere in [id_end, eol). Find its real pos.
-                    var real_eq = id_end;
-                    while (real_eq < eol) {
-                        if (load8(buf + real_eq) == 61) { break; }
-                        real_eq = real_eq + 1;
-                    }
-                    scan = real_eq + 1;
-                    while (scan < eol) {
-                        var c = load8(buf + scan);
-                        if (c == 35) { scan = eol; }              # # comment
-                        elif (c == 34) {
-                            # v5.7.36: skip string literal. Identifiers
-                            # nested in "..." strings would otherwise
-                            # match against the global var-name table
-                            # and trigger spurious forward-ref warnings
-                            # (e.g. an init expression that builds an
-                            # error message naming a forward-declared
-                            # var). Honour `\"` and `\\` escapes; bail
-                            # at eol if unterminated.
-                            scan = scan + 1;
-                            while (scan < eol) {
-                                var sc = load8(buf + scan);
-                                if (sc == 92) { scan = scan + 2; }
-                                elif (sc == 34) { scan = scan + 1; break; }
-                                else { scan = scan + 1; }
-                            }
-                        }
-                        elif (c == 39) {
-                            # Same shape for char literals: '\n', 'a',
-                            # '\\', etc. Cyrius char literals are
-                            # single-line; eol bound is sufficient.
-                            scan = scan + 1;
-                            while (scan < eol) {
-                                var sc = load8(buf + scan);
-                                if (sc == 92) { scan = scan + 2; }
-                                elif (sc == 39) { scan = scan + 1; break; }
-                                else { scan = scan + 1; }
-                            }
-                        }
-                        elif (_is_id_start(c) == 1) {
-                            var id_e = _scan_id_end(buf, scan, total);
-                            var idlen = id_e - scan;
-                            var i = 0;
-                            while (i < nvars) {
-                                var v_off  = load64(name_off  + i * 8);
-                                var v_len  = load64(name_len  + i * 8);
-                                var v_line = load64(name_line + i * 8);
-                                if (_eq_substr(buf, v_off, v_len, scan, idlen) == 1) {
-                                    if (v_line > lineno) {
-                                        syscall(1, 2, "  warn line ", 12);
-                                        var nb[24];
-                                        var nl = fmt_int_buf(lineno, &nb);
-                                        syscall(1, 2, &nb, nl);
-                                        syscall(1, 2, ": global var init refs '", 24);
-                                        syscall(1, 2, buf + v_off, v_len);
-                                        syscall(1, 2, "' declared at line ", 19);
-                                        var nb2[24];
-                                        var nl2 = fmt_int_buf(v_line, &nb2);
-                                        syscall(1, 2, &nb2, nl2);
-                                        syscall(1, 2, " (silent zero at init)\n", 23);
-                                        _warnings += 1;
-                                        i = nvars;   # break — single warn per ref
-                                    }
-                                }
-                                i = i + 1;
-                            }
-                            scan = id_e;
-                        } else {
-                            scan = scan + 1;
-                        }
-                    }
-                }
+# Report a reference from the declaration at `lineno` to table entry i.
+fn _gio_warn(buf, lineno, i): i64 {
+    var v_off = load64(_gio_off + i * 8);
+    var v_len = load64(_gio_len + i * 8);
+    syscall(1, 2, "  warn line ", 12);
+    var nb[24];
+    var nl = fmt_int_buf(lineno, &nb);
+    syscall(1, 2, &nb, nl);
+    syscall(1, 2, ": global var init refs '", 24);
+    syscall(1, 2, buf + v_off, v_len);
+    syscall(1, 2, "' declared at line ", 19);
+    var nb2[24];
+    var nl2 = fmt_int_buf(load64(_gio_line + i * 8), &nb2);
+    syscall(1, 2, &nb2, nl2);
+    syscall(1, 2, " (silent zero at init)\n", 23);
+    _warnings += 1;
+    return 0;
+}
+
+# 1 if the line starting at p opens a new declaration (`var` / `fn` after indent and an
+# optional `pub`/`public`; the keyword may end the line).
+fn _gio_decl_start(buf, p, total): i64 {
+    p = _skip_vis(buf, p, total);
+    if (_kw_at(buf, p, total, "var", 3) == 1) { return 1; }
+    if (_kw_at(buf, p, total, "fn", 2) == 1) { return 1; }
+    return 0;
+}
+
+# Scan ONE initializer, from just past its `=` to the `;` that ends the statement at
+# paren/bracket depth 0 — ACROSS LINES. v6.6.5: the scan used to stop at the line
+# end, so `var A = 1 +\n    B;` against a later `var B = g();` drew no warning while
+# the compiled program really read B as 0 (measured: exit 1, not 3). Stopping at the
+# `;` also ends the old scan-past-the-statement false positive on a two-statement line
+# (dhvani tests/convolution.tcyr:37) — and a SECOND `var` after that `;` is now
+# examined as the declaration it is (_gio_line_decls), where the old scan only caught
+# it by accident. Strings may span lines; comments end at their line. A line that
+# opens a new `var`/`fn` ends the scan, so a missing `;` (a file that does not parse)
+# cannot make this quadratic. Warns only when do_warn == 1 (pass 2), about names
+# declared after self_off. Returns the offset of the terminating `;`, or -1; leaves
+# where it stopped in _gio_stop. CHANGELOG [6.6.5].
+fn _gio_scan_init(buf, p, total, lineno, self_off, do_warn): i64 {
+    var depth = 0;
+    while (p < total) {
+        var q = _lx_skip(buf, p, total);
+        if (q != p) { p = q; continue; }
+        var c = load8(buf + p);
+        if (c == 10) {
+            if (_gio_decl_start(buf, p + 1, total) == 1) {
+                _gio_stop = p;
+                return 0 - 1;
+            }
+            p = p + 1;
+        }
+        elif (c == 59) {
+            if (depth <= 0) {
+                _gio_stop = p;
+                return p;
+            }
+            p = p + 1;
+        }
+        elif (c == 40 || c == 91) { depth = depth + 1; p = p + 1; }
+        elif (c == 41 || c == 93) { depth = depth - 1; p = p + 1; }
+        elif (_is_digit(c) == 1) {
+            # a number token (0x1F, 1_000) is never an identifier
+            while (p < total) {
+                if (_is_id_cont(load8(buf + p)) == 0) { break; }
+                p = p + 1;
             }
         }
-        # v5.10.10 — same skip pattern as the pass-1 brace counter.
-        var bp = pos;
-        while (bp < eol) {
-            var bc = load8(buf + bp);
-            if (bc == 35) { bp = eol; }
-            elif (bc == 34) {
-                bp = bp + 1;
-                while (bp < eol) {
-                    if (load8(buf + bp) == 92) { bp = bp + 1; }
-                    elif (load8(buf + bp) == 34) { break; }
-                    bp = bp + 1;
-                }
-                bp = bp + 1;
-            }
-            elif (bc == 39) {
-                bp = bp + 1;
-                while (bp < eol) {
-                    if (load8(buf + bp) == 92) { bp = bp + 1; }
-                    elif (load8(buf + bp) == 39) { break; }
-                    bp = bp + 1;
-                }
-                bp = bp + 1;
-            }
-            else {
-                if (bc == 123) { depth = depth + 1; }
-                if (bc == 125) { depth = depth - 1; }
-                bp = bp + 1;
+        elif (_is_id_start(c) == 1) {
+            var id_e = _scan_id_end(buf, p, total);
+            if (do_warn == 1) { _gio_check_ref(buf, p, id_e - p, lineno, self_off); }
+            p = id_e;
+        }
+        else { p = p + 1; }
+    }
+    _gio_stop = total;
+    return 0 - 1;
+}
+
+# Warn if the identifier buf[at, at+len) names a top-level var declared AFTER the one
+# being initialized (whose name is at self_off). v6.6.5, review round 3: compared by
+# OFFSET, not line — `var A = 1 + B; var B = g();` on ONE line reads B as 0 (measured:
+# exit 1) and a line compare saw two equal lines and stayed silent.
+fn _gio_check_ref(buf, at, len, lineno, self_off): i64 {
+    var i = 0;
+    while (i < _gio_n) {
+        if (load64(_gio_off + i * 8) > self_off) {
+            if (_eq_substr(buf, load64(_gio_off + i * 8), load64(_gio_len + i * 8), at, len) == 1) {
+                _gio_warn(buf, lineno, i);
+                return 1;   # one warn per reference
             }
         }
-        pos = eol + 1;
-        lineno = lineno + 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _count_nl(buf, a, b): i64 {
+    var n = 0;
+    while (a < b) {
+        if (load8(buf + a) == 10) { n = n + 1; }
+        a = a + 1;
+    }
+    return n;
+}
+
+# Every top-level declaration that STARTS at pos (a line start, or just past a `}` that
+# closed the line's last open brace), then each one that follows a `;` ending the one
+# before (`var a = 1; var b = LATER;`) — v6.6.5, round 3: also when that `;` sits on a
+# LATER line (`var A = 1 +` / `  0; var C = 1 + B;` drew nothing; lineno follows the
+# `;`). pass 1 records the names; pass 2 scans the initializers.
+fn _gio_line_decls(buf, pos, eol, total, lineno, pass): i64 {
+    var at = pos;
+    while (at >= 0) {
+        var decl = _find_var_decl_ident(buf, at, eol, total);
+        if (decl < 0) { return 0; }
+        var id_end = _scan_id_end(buf, decl, total);
+        if (pass == 1) {
+            if (_gio_n < 256) {
+                store64(_gio_off  + _gio_n * 8, decl);
+                store64(_gio_len  + _gio_n * 8, id_end - decl);
+                store64(_gio_line + _gio_n * 8, lineno);
+                _gio_n = _gio_n + 1;
+            }
+        }
+        var semi = 0 - 1;
+        var eq = _gio_header(buf, id_end, total);
+        if (eq >= 0) { semi = _gio_scan_init(buf, eq + 1, total, lineno, decl, pass - 1); }
+        else { semi = _gio_hsemi; }
+        _gio_front = _gio_stop;
+        at = 0 - 1;
+        if (semi >= 0) {
+            if (semi > eol) {
+                lineno = lineno + _count_nl(buf, eol, semi);
+                eol = _find_eol(buf, semi, total);
+            }
+            at = semi + 1;
+        }
+    }
+    return 0;
+}
+
+# The declarations that follow a `}` bringing the brace depth back to 0 on this line —
+# v6.6.5, review round 3: `fn h(): i64 { return 0; } var A = 1 + B;` (and a `}` that
+# ends a multi-line fn) reads a later B as 0 (measured: exit 1), and a declaration there
+# was examined neither as a reference nor, ahead of its use, as a target. d / in_str =
+# the depth and string state at the line start.
+fn _gio_brace_decls(buf, pos, eol, total, lineno, pass, d, in_str): i64 {
+    var p = pos;
+    if (in_str == 1) {
+        p = _lx_skip_str(buf, pos, eol);
+        if (p < 0) { return 0; }
+    }
+    while (p < eol) {
+        var q = _lx_skip(buf, p, eol);
+        if (q != p) { p = q; }
+        else {
+            var c = load8(buf + p);
+            if (c == 123) { d = d + 1; }
+            elif (c == 125) {
+                d = d - 1;
+                if (d == 0) { _gio_line_decls(buf, p + 1, eol, total, lineno, pass); }
+            }
+            p = p + 1;
+        }
+    }
+    return 0;
+}
+
+fn lint_globals_init_order(buf, total): i64 {
+    if (_gio_off == 0) {
+        _gio_off  = alloc(2048);   # 256 × 8B
+        _gio_len  = alloc(2048);
+        _gio_line = alloc(2048);
+        if (_gio_off == 0 || _gio_len == 0 || _gio_line == 0) { return _dp_oom(); }
+    }
+    _gio_n = 0;
+    # Pass 1 collects every top-level `var IDENT` (name, line); pass 2 scans each
+    # initializer and warns on a name declared later in the file (silent zero at
+    # init). "Top level" = brace depth 0 AND not inside a multi-line string, both
+    # carried across lines by _lx_line (v6.6.5; the v5.10.10 string/char skip, which
+    # reset at every line end, is folded into it).
+    var pass = 1;
+    while (pass <= 2) {
+        var pos = 0;
+        var lineno = 1;
+        var depth = 0;
+        var in_str = 0;
+        _gio_front = 0;
+        while (pos < total) {
+            var eol = _find_eol(buf, pos, total);
+            if (depth == 0 && in_str == 0) { _gio_line_decls(buf, pos, eol, total, lineno, pass); }
+            _gio_brace_decls(buf, pos, eol, total, lineno, pass, depth, in_str);
+            in_str = _lx_line(buf, pos, eol, in_str);
+            depth = depth + _lx_delta;
+            pos = eol + 1;
+            lineno = lineno + 1;
+        }
+        pass = pass + 1;
     }
     return 0;
 }
@@ -903,6 +1765,7 @@ fn _lint_one(path, strict, exit_with_count): i64 {
     if (n > _lint_buf_hi) { _lint_buf_hi = n; }
 
     lint_file(buf, n);
+    lint_deferrals(buf, n);
     lint_globals_init_order(buf, n);
     lint_error_enum_namespace(buf, n, path);
 

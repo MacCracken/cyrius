@@ -1,0 +1,4 @@
+fn sdr_g(): i64 { return 2; }
+var sdr_a = 1; var SDR_L = sdr_g();
+var SDR_X = SDR_L;
+syscall(60, SDR_X);

@@ -1,0 +1,5 @@
+# The immediate-offset form is a later
+#ifdef CYRIUS_TARGET_LINUX
+# bite of the encoder.
+#endif
+fn directive_break(): i64 { return 0; }

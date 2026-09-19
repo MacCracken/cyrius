@@ -1,0 +1,4 @@
+fn sai_g(x): i64 { return x; }
+var sai_a = sai_g(1); sai_g(sai_a);
+var sai_a = sai_g(2);
+syscall(60, sai_a);

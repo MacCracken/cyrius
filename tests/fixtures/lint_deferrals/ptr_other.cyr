@@ -1,0 +1,4 @@
+# The encoder table is tracked on the roadmap.
+# The immediate-offset form is a later
+# bite of the encoder.
+fn ptr_other(): i64 { return 0; }

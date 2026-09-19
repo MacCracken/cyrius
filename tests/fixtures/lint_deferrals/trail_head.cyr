@@ -1,0 +1,5 @@
+fn trail_head(): i64 {
+    var x = 0;  # the zero case is handled for
+    # now, until the table lands
+    return x;
+}

@@ -1,0 +1,12 @@
+fn sl_one(): i64 { return 1; }
+var SL_B = sl_one(); var SL_A = 1 * SL_B;
+var SL_D = sl_one();
+var SL_X = 1 +
+0; var SL_C = 2 * SL_D;
+var SL_F = sl_one();
+fn sl_h(): i64 { return 0; } var SL_E = 4 * SL_F;
+fn sl_k(): i64 {
+    return SL_X;
+} var SL_H = sl_one();
+var SL_G = 8 * SL_H;
+syscall(60, 100 + SL_A + SL_C + SL_E + SL_G);

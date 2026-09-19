@@ -1,0 +1,8 @@
+# Excerpt: mabda 4.1.2 src/compute.cyr:344-348, comment text verbatim.
+#
+# bindings_ptr is a raw byte buffer of (slot, kind, handle)
+# triples per the bindless-resources non-negotiable in
+# docs/archive/proposals/v3-native-api-principles.md. The format is not
+# yet finalized; consumers and slot wrappers can ignore it for
+# now (Step 2 wgpu wrapper returns GPU_ERR_OTHER unconditionally).
+fn gpu_compute_dispatch(): i64 { return 0; }

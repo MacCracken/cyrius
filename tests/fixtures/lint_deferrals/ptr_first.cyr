@@ -1,0 +1,3 @@
+# Tracked in the CHANGELOG: the immediate-offset form is a later
+# bite of the encoder.
+fn ptr_first(): i64 { return 0; }

@@ -1,0 +1,15 @@
+# init-order: the declaration HEADER wraps (review round 3). Every reference reads 0.
+fn hw_one(): i64 { return 1; }
+var
+HW_A = 1 * HW_B1;
+var HW_C:
+i64 = 2 * HW_B2;
+var HW_D
+: i64 = 4 * HW_B3;
+var HW_E = 8 * HW_B4;
+var HW_B1 = hw_one();
+var HW_B2 = hw_one();
+var HW_B3 = hw_one();
+var
+HW_B4 = hw_one();
+syscall(60, 100 + HW_A + HW_C + HW_D + HW_E);

@@ -315,6 +315,30 @@ the trust model and the single-pass design), a general const-eval VM, exceptions
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **A comment that starts with an attribute name (`#ioctl …`, `#allocator …`) does not
+  compile** — filed as
+  [`issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md`](issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md)
+  (found in 6.6.5 bite 9, pre-existing at 6.6.4). The lexer's ten `#`-attribute checks match a
+  byte PREFIX with no word boundary, so `#ioctl` is `#io` + `ctl`. A lexer change (src/, full
+  seed-derive + cross-OS cycle); cyrlint's `_lx_attr_len`, cyrfmt's `_cf_attr_len` and cyrdoc's
+  `_doc_attr_len` mirror the current match and move with it. Acceptance in the issue.
+
+- **The preprocessor executes `#ifdef` / `#endif` / `#define` lines INSIDE a multi-line string**
+  — filed as
+  [`issues/2026-09-19-preprocessor-executes-directives-inside-multiline-strings.md`](issues/2026-09-19-preprocessor-executes-directives-inside-multiline-strings.md)
+  (found by the 6.6.5 bite 9 review, pre-existing at 6.6.4). SILENT: `"ab` / `#ifdef NOPE` / `cd` /
+  `#endif` / `ef"` compiles to the bytes `ab\n\n\n\nef`. The directive pass carries no string state
+  across lines — the preprocessor's copy of the per-line defect bite 9 removed from cyrlint.
+  0 ecosystem instances. A src/ change (seed-derive + cross-OS cycle). Acceptance in the issue.
+
+- **A block-bodied closure as the FIRST top-level statement drops the rest of the program** —
+  filed as
+  [`issues/2026-09-19-toplevel-block-closure-drops-rest-of-program.md`](issues/2026-09-19-toplevel-block-closure-drops-rest-of-program.md)
+  (found by the 6.6.5 bite 9 review, pre-existing at 6.6.4). SILENT: `var f = |x| { return 7; };`
+  then `syscall(60, 9);` exits 186 (the closure's address) and nothing after the closure is
+  emitted; one statement before it, or the expression form `|x| x + 1`, is correct. A src/
+  parser change. Acceptance in the issue.
+
 - **`cyrius-init` does not build for Windows, so `cyrius init` / `cyrius port` are absent from
   a Windows install** — filed as
   [`issues/2026-09-18-cyrius-init-does-not-build-for-windows.md`](issues/2026-09-18-cyrius-init-does-not-build-for-windows.md)

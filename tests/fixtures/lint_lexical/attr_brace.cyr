@@ -1,0 +1,11 @@
+#inline fn at_g(): i64 {
+    return 2;
+}
+#naked fn at_isr() {
+    asm {
+        iretq
+    }
+}
+var AT_A = 1 + AT_B;
+var AT_B = at_g();
+syscall(60, AT_A);

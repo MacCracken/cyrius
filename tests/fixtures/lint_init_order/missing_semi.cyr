@@ -1,0 +1,7 @@
+# Does NOT compile, on purpose: a declaration missing its `;` (or its `=`) must not blind
+# the forward-ref rule to the rest of the file.
+fn ms_g(): i64 { return 2; }
+var MS_BROKEN = (1 +
+  var MS_HDR
+  var MS_A = 1 + MS_B;
+  var MS_B = ms_g();

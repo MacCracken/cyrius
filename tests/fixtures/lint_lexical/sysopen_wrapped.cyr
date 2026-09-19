@@ -1,0 +1,21 @@
+fn so_a(p): i64 { return sys_open(p,
+      0, 0); }
+fn so_b(p): i64 {
+    return sys_open(
+      p, 0, 0);
+}
+fn so_c(p): i64 { return sys_open(p, O_RDONLY, 0); }
+fn so_d(p): i64 {
+    return sys_open(p,   # the flags follow
+      O_RDONLY, 0);
+}
+fn so_e(p): i64 { return sys_open(p, 0, 0); }
+fn so_f(p): i64 { var q = _sys_open(p); return sys_open(p, 0, 0); }
+var so_msg = "never sys_open(p, 0, 0) inside a string";
+fn so_g(p): i64 { return sys_open (p, 0, 0); }
+fn so_h(p): i64 {
+    return sys_open   # the name, then the call
+    (p, 0, 0);
+}
+fn so_i(p, q): i64 { var a = sys_open(p, O_RDONLY, 0); return sys_open(q, 0, 0); }
+fn so_j(p): i64 { return sys_open (p, O_RDONLY, 0); }

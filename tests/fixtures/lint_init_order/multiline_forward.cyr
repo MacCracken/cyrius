@@ -1,0 +1,5 @@
+fn mlf_g(): i64 { return 2; }
+var MLF_A = 1 +
+    MLF_B;
+var MLF_B = mlf_g();
+syscall(60, MLF_A);

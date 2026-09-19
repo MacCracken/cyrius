@@ -1,0 +1,7 @@
+# The immediate-offset form is a later bite.
+#
+# Uniform operands are rejected for now.
+#
+fn main() { return 0; }
+var rc = main();
+syscall(60, rc);

@@ -1182,6 +1182,57 @@ literal-aware as of v5.7.36 — `var MSG = "FLAG_LATER not yet
 defined"; var FLAG_LATER = 1;` does NOT trigger the forward-ref
 rule because `FLAG_LATER` is inside a `"..."` literal.
 
+**Rules see across line breaks (v6.6.5).** A cyrius string may hold a raw newline, and the
+brace counter carries "inside a string" from one line to the next (it used to reset, which
+gave every `src/main*.cyr` a false `unclosed braces`). The forward-ref rule scans the whole
+initializer up to its `;`, so a wrapped one is checked too:
+
+```cyrius
+var A = 1 +
+    B;              # warn line 1: global var init refs 'B' declared at line 3
+var B = g();        # A is 1 at runtime, not 1 + g()
+```
+
+The untracked-deferral rule (`--strict-deferrals`) reads a **comment paragraph** — consecutive
+comment-only lines, plus a code line's trailing comment and the comment lines continuing it —
+joined with one space, so a term wrapped by a formatter is still seen (`a later` / `bite`,
+`for` / `now`, `follow-` / `up`). The terms: `NOT_IMPLEMENTED`, `SCAFFOLD`, `TODO`, `FIXME`,
+`XXX` (exact case) and `deferred`, `follow-up`, `for now`, `not yet`, `later bite`,
+`future bite`, `out of scope` (any case, any run of spaces). A **tracking pointer** —
+`CHANGELOG`, `roadmap`, `docs/`, `issue`, `See `, or a version such as `v6.6` / `v0.8.0` —
+counts only on a line the term itself touches; a pointer elsewhere in the paragraph does not
+track it. A blank `#` line, a code line or a `#skip-lint` line ends the paragraph.
+
+The same across-the-line reading covers the other statement shapes the compiler accepts:
+a declaration header wrapped anywhere (`var` / `A = 1 + B;`, `var A:` / `i64 = …`,
+`var A` / `: i64 = …`, `var A` / `= 1 + B;`, past comment lines), a `pub var` / `public var`
+declaration, a second `var` after a `;` — on the same line, or after an initializer that
+wrapped — and a declaration after a `}` (`fn h() { … } var A = 1 + B;`) are all checked by
+the forward-ref rule, which compares declaration ORDER, so `var A = B; var B = g();` on one
+line warns too; `sys_open (p, 0, 0)` and `syscall` followed by `(` on the next
+line are calls to the sys_open/getdents notes; `pub fn`, `public fn` and `#inline fn` names get
+the snake_case check (it used to see only a line-initial `fn `), and `cyrdoc --check` counts
+them too (it also used to read only the first 64 KB of a file). Whitespace at the end of a
+line INSIDE a multi-line string, and blank lines inside one, are string data — neither the
+trailing-whitespace rule nor the blank-line rule warns on them.
+
+⚠ **Not yet in the compiler:** the PREPROCESSOR still reads line by line, so a line inside a
+multi-line string that begins with `#ifdef` / `#endif` / `#define` is EXECUTED — the directive
+line and a false branch vanish from the string data, silently (filed:
+`docs/development/issues/2026-09-19-preprocessor-executes-directives-inside-multiline-strings.md`).
+Until it is fixed, do not start a line of a multi-line string with a directive keyword.
+
+⚠ **A `#` is not always a comment.** `#naked`, `#inline`, `#pure`, `#io`, `#alloc`,
+`#must_use`, `#regalloc`, `#deprecated`, `#assert` and `#pe_import` are attribute TOKENS, and
+the lexer keeps reading the line after them — so `#naked fn isr() {` opens a real brace.
+`cyrlint` and `cyrfmt` read them as the lexer does (v6.6.5; before that `#naked fn f() {` drew
+false `unmatched closing brace` warnings and `cyrius fmt` rewrote the fn body flush left). The
+lexer matches them as byte PREFIXES with no word boundary, so at 6.6.5 a comment such as
+`#ioctl numbers` or `#allocator notes` does not compile (`#io` / `#alloc` + an identifier).
+That is a lexer defect, not a language rule (filed:
+`docs/development/issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md`); a space after
+the `#` sidesteps it until it is fixed, and the two tools will follow the lexer when it is.
+
 ## Ref Directive
 
 ```

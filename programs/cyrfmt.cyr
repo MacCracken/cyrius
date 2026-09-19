@@ -34,33 +34,74 @@ var _write_mode: i64 = 0;
 # fail-loud below rather than silently format-checked on a truncated buffer.
 # See CHANGELOG [6.2.20].
 var _MAX_FILE: i64 = 1052672;
+# v6.6.5, review round 3 — ONE output buffer with a HARD CAP, in every mode. emit() wrote
+# into a buffer the size of the INPUT cap with no bound, and formatted output can be far
+# larger than its input: 20K lines of an unclosed `syscall(a,` indent line i by 2·i
+# spaces, so `--check` / `--write` ran off the end of the buffer (SIGSEGV, rc 139 — at
+# 6.6.4 too) and the stdout mode streamed more than 100 MB before a 60 s timeout. Past
+# _OUT_CAP nothing more is written, emit_spaces stops looping (so the run stays linear),
+# and the file fails LOUDLY instead of crashing or flooding stdout. The stdout mode formats
+# into the same buffer and writes it once, only when it is complete. CHANGELOG [6.6.5].
+var _OUT_CAP: i64 = 8421376;   # 8 × _MAX_FILE
+var _out_over: i64 = 0;
+var _in_buf: i64 = 0;          # the input buffer, one for the whole run
 
-# Emit len bytes from ptr. --check / --write both route to the in-memory
-# output buffer; default (to-stdout) path issues a direct syscall(1, …).
+# Append len bytes from ptr to the output buffer (all three modes), or note the overflow.
 fn emit(ptr, len): i64 {
-    if (_check_mode == 1) {
-        var i = 0;
-        while (i < len) {
-            store8(_out_buf + _out_pos, load8(ptr + i));
-            _out_pos += 1;
-            i += 1;
-        }
-    } elif (_write_mode == 1) {
-        var wi = 0;
-        while (wi < len) {
-            store8(_out_buf + _out_pos, load8(ptr + wi));
-            _out_pos += 1;
-            wi += 1;
-        }
-    } else {
-        syscall(1, 1, ptr, len);
+    if (_out_over == 1) { return 0; }
+    if (_out_pos + len > _OUT_CAP) {
+        _out_over = 1;
+        return 0;
     }
+    var i = 0;
+    while (i < len) {
+        store8(_out_buf + _out_pos + i, load8(ptr + i));
+        i += 1;
+    }
+    _out_pos += len;
     return 0;
 }
 
 fn emit_spaces(n): i64 {
     var si = 0;
-    while (si < n) { emit(" ", 1); si += 1; }
+    while (si < n) {
+        if (_out_over == 1) { return 0; }
+        emit(" ", 1);
+        si += 1;
+    }
+    return 0;
+}
+
+# A `#` is not always a comment: the lexer turns ten byte prefixes into attribute TOKENS
+# and keeps lexing the line after them, so `#naked fn isr() {` opens a real brace. Read as
+# a comment, that `{` was never counted and `cyrius fmt` rewrote the whole fn body flush
+# left (tests/tcyr/codegen/naked_fn_attribute.tcyr). Mirrors cyrlint's _lx_attr_len and
+# the lexer's own match — a byte prefix, no word boundary (issue
+# 2026-09-19-lexer-attribute-prefix-swallows-comments: follow the lexer when it changes).
+# Returns the token's length, `#` included, or 0 (a comment). CHANGELOG [6.6.5].
+fn _cf_attr_len(buf, p, lim): i64 {
+    var n = lim - p;
+    if (n < 3) { return 0; }
+    var c1 = load8(buf + p + 1);
+    if (c1 == 105) {
+        if (load8(buf + p + 2) == 111) { return 3; }                          # #io
+        if (n >= 7) { if (memeq(buf + p, "#inline", 7) == 1) { return 7; } }
+        return 0;
+    }
+    if (c1 == 97) {
+        if (n >= 7) { if (memeq(buf + p, "#assert", 7) == 1) { return 7; } }
+        if (n >= 6) { if (memeq(buf + p, "#alloc", 6) == 1) { return 6; } }
+        return 0;
+    }
+    if (c1 == 112) {
+        if (n >= 5) { if (memeq(buf + p, "#pure", 5) == 1) { return 5; } }
+        if (n >= 10) { if (memeq(buf + p, "#pe_import", 10) == 1) { return 10; } }
+        return 0;
+    }
+    if (n >= 6) { if (memeq(buf + p, "#naked", 6) == 1) { return 6; } }
+    if (n >= 9) { if (memeq(buf + p, "#regalloc", 9) == 1) { return 9; } }
+    if (n >= 9) { if (memeq(buf + p, "#must_use", 9) == 1) { return 9; } }
+    if (n >= 11) { if (memeq(buf + p, "#deprecated", 11) == 1) { return 11; } }
     return 0;
 }
 
@@ -152,8 +193,13 @@ fn format_file(buf, total): i64 {
                 }
             }
             else {
-                if (bc == 35) { break; }            # `#` — comment to end of line
-                if (bc == 34) { in_string = 1; }     # opening `"` of a string literal
+                if (bc == 35) {
+                    # `#` — comment to end of line, unless it opens an attribute token
+                    var al = _cf_attr_len(buf, bi, eol);
+                    if (al == 0) { break; }
+                    bi = bi + al - 1;
+                }
+                elif (bc == 34) { in_string = 1; }   # opening `"` of a string literal
                 elif (bc == 39) { in_char = 1; }     # opening `'` of a char literal
                 elif (bc == 123) { opens += 1; }
                 elif (bc == 125) { closes += 1; }
@@ -234,7 +280,6 @@ fn format_file(buf, total): i64 {
     return 0;
 }
 
-
 # v6.5.28 — print a small non-negative number without pulling in a dependency.
 # ⚠ NOT `fmt_int`: cyrfmt includes string/fmt/alloc/io/args but NOT `lib/vec.cyr`, and
 # fmt_int reaches `vec_get`, so calling it here SIGSEGVs (measured: exit 139, part-way
@@ -256,8 +301,29 @@ fn _cf_print_num(v): i64 {
 
 # v6.6.5 — format ONE file. Was the tail of main(); lifted so N files run through
 # the identical path instead of only argv(file_arg).
+# Format buf[0, n) into _out_buf with continuation step `step`; 1 if the output overflowed.
+fn _fmt_run(buf, n, step): i64 {
+    _out_pos = 0;
+    _out_over = 0;
+    _cont_step = step;
+    format_file(buf, n);
+    return _out_over;
+}
+
+fn _fmt_overflow(path): i64 {
+    var m = "cyrfmt: formatted output would exceed 8 MB (an unbalanced ( or { ?) - not formatted: ";
+    sys_write(STDERR_FD, m, strlen(m));
+    sys_write(STDERR_FD, path, strlen(path));
+    sys_write(STDERR_FD, "\n", 1);
+    return 1;
+}
+
 fn _fmt_one(path): i64 {
-    var buf = alloc(_MAX_FILE);
+    # One input and one output buffer for the whole run: an alloc per file grew RSS by
+    # the buffer size per file (nothing is freed); n bounds every reader of the input.
+    if (_in_buf == 0) { _in_buf = alloc(_MAX_FILE); }
+    if (_out_buf == 0) { _out_buf = alloc(_OUT_CAP); }
+    var buf = _in_buf;
     var n = file_read_all(path, buf, _MAX_FILE);
     if (n <= 0) {
         println("cyrfmt: cannot read file");
@@ -273,11 +339,8 @@ fn _fmt_one(path): i64 {
     }
 
     if (_check_mode == 1) {
-        _out_buf = alloc(_MAX_FILE);
         # Pass 1: the CANONICAL form (2-space continuation step).
-        _out_pos = 0;
-        _cont_step = 2;
-        format_file(buf, n);
+        if (_fmt_run(buf, n, 2) == 1) { return _fmt_overflow(path); }
         if (_out_pos == n) {
             if (memeq(buf, _out_buf, n) == 1) { return 0; }
         }
@@ -285,9 +348,7 @@ fn _fmt_one(path): i64 {
         # simpler than teaching the comparison to tolerate a range per line, and it keeps the
         # tolerance EXACTLY two shapes wide — a comparison that "skipped indent differences"
         # would accept 8 and 12 too, which is precisely what makes it not a check.
-        _out_pos = 0;
-        _cont_step = 4;
-        format_file(buf, n);
+        _fmt_run(buf, n, 4);
         if (_out_pos == n) {
             if (memeq(buf, _out_buf, n) == 1) { return 0; }
         }
@@ -295,9 +356,7 @@ fn _fmt_one(path): i64 {
         # line number — so a consumer's CI failed with nothing to act on. That silence was the
         # uncontested half of the rupa filing; the indent rule above is the other half.
         # Re-format canonically so the reported line refers to the form we actually want.
-        _out_pos = 0;
-        _cont_step = 2;
-        format_file(buf, n);
+        _fmt_run(buf, n, 2);
         var dl = 1;
         var di = 0;
         var lim = n;
@@ -321,9 +380,7 @@ fn _fmt_one(path): i64 {
     }
 
     if (_write_mode == 1) {
-        _out_buf = alloc(_MAX_FILE);
-        _out_pos = 0;
-        format_file(buf, n);
+        if (_fmt_run(buf, n, 2) == 1) { return _fmt_overflow(path); }
         # Short-circuit: skip the write if input already matches formatted
         # output. Saves an fs roundtrip + avoids churning mtime on
         # already-clean files (matters for incremental build systems).
@@ -338,7 +395,13 @@ fn _fmt_one(path): i64 {
         return 0;
     }
 
-    format_file(buf, n);
+    if (_fmt_run(buf, n, 2) == 1) { return _fmt_overflow(path); }
+    var wp = 0;
+    while (wp < _out_pos) {
+        var wn = syscall(1, 1, _out_buf + wp, _out_pos - wp);
+        if (wn <= 0) { return 1; }
+        wp = wp + wn;
+    }
     return 0;
 }
 

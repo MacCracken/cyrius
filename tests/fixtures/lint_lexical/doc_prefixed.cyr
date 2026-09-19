@@ -1,0 +1,15 @@
+# A documented plain fn.
+fn dp_plain(): i64 { return 1; }
+pub fn dp_pub_undoc(): i64 { return 2; }
+# A documented pub fn.
+pub fn dp_pub(): i64 { return 3; }
+public fn dp_public_undoc(): i64 { return 4; }
+#inline fn dp_inline_undoc(): i64 { return 5; }
+# Documented through an attribute line.
+#inline
+fn dp_inline_doc(): i64 { return 6; }
+#must_use
+fn dp_attr_undoc(): i64 { return 7; }
+fn _dp_private(): i64 { return 8; }
+var dp_s = dp_plain() + dp_pub_undoc() + dp_pub() + dp_public_undoc();
+syscall(60, dp_s + dp_inline_undoc() + dp_inline_doc() + dp_attr_undoc() + _dp_private());

@@ -1,0 +1,4 @@
+var str_close_trailing = "first line
+last line";  # the table is handled for
+# now, until it lands
+fn str_close_f(): i64 { return 0; }

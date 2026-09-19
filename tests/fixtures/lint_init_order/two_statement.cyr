@@ -1,0 +1,4 @@
+fn two_g(x): i64 { return x + 2; }
+var two_a = 1; var two_c = TWO_LATE;
+var TWO_LATE = two_g(0);
+syscall(60, two_c);

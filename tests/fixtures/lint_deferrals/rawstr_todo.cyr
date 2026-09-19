@@ -1,0 +1,3 @@
+var rawstr_todo = "first line of the text
+# a TODO inside a multi-line string
+";

@@ -1,0 +1,24 @@
+# a NOT_IMPLEMENTED return path # CHANGELOG
+fn t0(): i64 { return 0; } # CHANGELOG
+# a SCAFFOLD for the encoder # CHANGELOG
+fn t1(): i64 { return 0; } # CHANGELOG
+# TODO widen the table # CHANGELOG
+fn t2(): i64 { return 0; } # CHANGELOG
+# FIXME the table width # CHANGELOG
+fn t3(): i64 { return 0; } # CHANGELOG
+# XXX the table width # CHANGELOG
+fn t4(): i64 { return 0; } # CHANGELOG
+# the table is deferred # CHANGELOG
+fn t5(): i64 { return 0; } # CHANGELOG
+# a follow-up widens the table # CHANGELOG
+fn t6(): i64 { return 0; } # CHANGELOG
+# the table is fixed for now # CHANGELOG
+fn t7(): i64 { return 0; } # CHANGELOG
+# the table is not yet wide # CHANGELOG
+fn t8(): i64 { return 0; } # CHANGELOG
+# the table is a later bite # CHANGELOG
+fn t9(): i64 { return 0; } # CHANGELOG
+# the table is a future bite # CHANGELOG
+fn t10(): i64 { return 0; } # CHANGELOG
+# the table is out of scope # CHANGELOG
+fn t11(): i64 { return 0; } # CHANGELOG

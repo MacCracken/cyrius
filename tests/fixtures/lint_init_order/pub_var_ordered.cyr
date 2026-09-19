@@ -1,0 +1,5 @@
+fn pv_g(): i64 { return 2; }
+pub var PV_B = pv_g();
+pub var PV_A = 1 + PV_B;
+public var PV_C = 4 + PV_B;
+syscall(60, PV_A + PV_C);

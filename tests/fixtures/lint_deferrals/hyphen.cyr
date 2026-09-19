@@ -1,0 +1,6 @@
+# The encoder needs a follow-
+# up once the table lands.
+fn hyphen_a(): i64 { return 0; }
+# The fol-
+# low-up spelling is not the term.
+fn hyphen_b(): i64 { return 0; }

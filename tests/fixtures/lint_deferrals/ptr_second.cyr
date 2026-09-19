@@ -1,0 +1,3 @@
+# The immediate-offset form is a later
+# bite; tracked in the CHANGELOG.
+fn ptr_second(): i64 { return 0; }

@@ -1,0 +1,2 @@
+# The encoder table is complete and widened.
+fn clean_a(): i64 { return 0; }

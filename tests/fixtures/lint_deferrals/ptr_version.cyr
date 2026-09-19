@@ -1,0 +1,10 @@
+# deferred to v4.1.3
+fn ver_a(): i64 { return 0; }
+# deferred to v0.8.0
+fn ver_b(): i64 { return 0; }
+# deferred to v7.0 of the toolchain
+fn ver_c(): i64 { return 0; }
+# deferred past kv4.1 of the board
+fn ver_d(): i64 { return 0; }
+# deferred to version 4 of the board
+fn ver_e(): i64 { return 0; }

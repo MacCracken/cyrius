@@ -1,0 +1,8 @@
+fn tl_rawstr(): i64 {
+    var m = "text
+} and more";
+    return 5;
+}
+var TL_A = TL_B;
+var TL_B = tl_rawstr();
+syscall(60, TL_A);

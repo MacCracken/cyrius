@@ -1,0 +1,21 @@
+fn gd_a(fd, b): i64 {
+    return syscall(
+        SYS_GETDENTS64, fd, b, 4096);
+}
+fn gd_b(fd, b): i64 { return syscall(SYS_GETDENTS64, fd, b, 4096); }
+var SYS_GETDENTS_ALIAS = 217;
+fn gd_c(fd): i64 {
+    return syscall(SYS_READ,
+        fd, 0, 0);
+}
+var gd_msg = "syscall(SYS_GETDENTS64) is only text here";
+fn gd_d(fd, b): i64 {
+    var n = syscall(SYS_READ,
+        fd, b, 4096) + gd_len(SYS_GETDENTS64);
+    return syscall (SYS_GETDENTS64, fd, b, 4096);
+}
+fn gd_e(fd, b): i64 {
+    return syscall
+    (SYS_GETDENTS64, fd, b, 4096);
+}
+fn gd_f(fd, b): i64 { return my_syscall(SYS_GETDENTS64, fd, b, 4096); }
