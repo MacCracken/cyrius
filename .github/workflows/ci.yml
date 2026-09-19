@@ -1336,8 +1336,15 @@ jobs:
           # by `sub rsp, 0x20` (48 83 EC 20).
           # Also the w_arg4 fn body's fn-call path before the
           # outer syscall exit should have the same pattern.
-          if ! xxd -p /tmp/win_out/w_arg4.exe | tr -d '\n' | grep -qE '594883ec20'; then
-            echo "FAIL: w_arg4.exe missing shadow-space pattern (pop rcx + sub rsp, 0x20)"
+          #
+          # 6.6.5: the frame is `0x20 + 8*pad`, and the call's `add rsp` must
+          # match its `sub`. w_arg4's call `f(10,20,3,9)` sits inside
+          # `syscall(60, …)` with 60 still pushed — an ODD pending depth — so
+          # the frame is 0x28 (32 B shadow + an 8 B pad that puts rsp on a
+          # 16-byte boundary at the call). This line hard-coded 0x20, i.e. it
+          # pinned the pre-6.6.5 misaligned frame; see CHANGELOG [6.6.5] bite 2.
+          if ! xxd -p /tmp/win_out/w_arg4.exe | tr -d '\n' | grep -qE '594883ec20e8[0-9a-f]{8}4883c420|594883ec28e8[0-9a-f]{8}4883c428'; then
+            echo "FAIL: w_arg4.exe missing shadow-space pattern (pop rcx + sub rsp, 0x20|0x28 + call + matching add)"
             exit 1
           fi
           # fnptr path: w_fnptr0 (no-args fnptr) should have sub rsp, 0x20

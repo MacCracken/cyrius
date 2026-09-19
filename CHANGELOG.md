@@ -1750,6 +1750,25 @@ matched deferrals — each affected repo's roadmap carries a "Moving the cyrius 
   `tests/fixtures/lint_init_order/` shapes (six of them twins in declaration order, for the
   runtime oracle; one, missing_semi.cyr, deliberately does not compile).
 
+### Changed
+
+- **Three folded stdlibs refolded at their released tags**, byte-identical from each tag's
+  `dist/` (all three pin cyrius 6.6.4): **sankoch 2.7.15 → 2.8.0**, **mabda 4.1.2 → 4.1.4**,
+  **ganita 1.2.5 → 1.2.6**. `docs/api-surface.snapshot` 5,194 → 5,226: +33 public fns and one
+  intentional removal, mabda's `native_render_pipeline_pack/5` (its only callers are inside
+  mabda — checked across `~/Repos`). The eleven in-repo tests and gates that include these libs
+  pass. The other nine folds (bayan, niyama, patra, sandhi, sigil, vani, yantra, yukti,
+  sakshi) already sit at their latest tags.
+- **CI `windows-cross` step "v5.5.7 strict Win64 shadow-space compliance gate"** hard-coded
+  `pop rcx; sub rsp, 0x20` for `w_arg4`, whose call `f(10,20,3,9)` sits inside `syscall(60, …)`
+  with `60` still pushed. That is exactly the odd-pending-depth case bite 2 fixed, so the frame
+  is now `0x28` (32 B shadow + an 8 B pad putting rsp on a 16-byte boundary at the call) — the
+  gate had been pinning the misaligned pre-6.6.5 frame, and failed the first 6.6.5 CI run. It
+  now accepts `0x20` or `0x28` and requires the call's `add rsp` to MATCH its `sub` (an
+  unbalanced or wrong-sized frame is rejected). Every step of the `windows-cross` job was run
+  locally against the 6.6.5 compiler; this was the only failing one. ⚠ The step exited at its
+  first mismatch, so its second check (`w_fnptr0`) had not run in CI either — it passes.
+
 ### Added
 
 - **`lib/bench.cyr` picosecond + resolution API**, every existing symbol keeping its name and
