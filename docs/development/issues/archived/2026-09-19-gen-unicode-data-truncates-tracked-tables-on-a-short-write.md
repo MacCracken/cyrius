@@ -1,7 +1,7 @@
-# `programs/gen_unicode_data.cyr` truncates the three TRACKED `lib/unicode/_*_data.cyr` tables on a short write and exits 0 — OPEN
+# `programs/gen_unicode_data.cyr` truncates the three TRACKED `lib/unicode/_*_data.cyr` tables on a short write and exits 0 — FIXED
 
-**Status:** 🟡 open — found during 6.6.6 bite 12 (the same write-path defect bite 12 fixed in
-`gen_syscall_xlat.cyr`); reconfirmed at the bite-12 tree in a scratch copy.
+**Status:** ✅ FIXED in 6.6.6 (bite 13) — found during 6.6.6 bite 12 (the same write-path defect
+bite 12 fixed in `gen_syscall_xlat.cyr`); reproduced verbatim at HEAD before the fix.
 **Placement:** unpinned — 6.x-line backlog (the next repair batch).
 **Discovered:** 2026-09-19
 **Severity:** High — silent corruption of tracked stdlib data on any full disk: all three tables
@@ -58,3 +58,18 @@ now does) — today nothing re-derives these tables at all.
 
 - The repro above exits non-zero and leaves all three tables byte-identical.
 - A gate pins it (RLIMIT_FSIZE, no mount), mutation-proven by reverting to `file_write_all`.
+
+## Resolution (6.6.6, bite 13a)
+
+Every table now goes through one helper, `_ucd_write`, which uses `file_write_atomic` and returns 1
+with `gen_unicode_data: write failed: <path>` on stderr; the tool exits 1 at the first failure, so a
+later table is never touched. The OUTDIR argument from "Proposed fix" landed (default `lib/unicode`).
+The repro above now prints `write failed: lib/unicode/_categories_data.cyr`, exits 1, and all three
+tables keep their committed sizes. Pinned by `tests/gates/toolchain/tool_writes_never_truncate.sh`
+(regeneration into OUTDIR byte-identical; a 4-block and a part-way 150-block size limit), mutation-proven
+by putting `file_write_all` back.
+
+## Corrections to this filing
+
+- The tool's header claimed it writes FOUR files, the fourth being a "verbatim copy" of
+  `tests/data/NormalizationTest.txt`. It writes three; nothing in it touches that file. Header fixed.

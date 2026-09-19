@@ -821,6 +821,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   notes and `lib/sync.cyr`'s BACKENDS block (Linux "2-state", macOS "spinlock awaiting __ulock" —
   3-state since v6.5.9 and v6.5.44). No compiler change — cycc unchanged (1,294,040 B).
 
+- **`programs/gen_unicode_data.cyr` truncated the three TRACKED `lib/unicode/_*_data.cyr` tables on a
+  full disk and exited 0.** Each table was written with `file_write_all` — `open(O_TRUNC)`, then ONE
+  `write` — and the returned count was printed, never checked. Reproduced verbatim at HEAD under
+  `RLIMIT_FSIZE` (SIGXFSZ ignored — the kernel's full-disk sequence, a short count then EFBIG, with no
+  mount): `wrote lib/unicode/_categories_data.cyr (2048 bytes …)` ×3, rc 0, tables 59,010 / 96,988 /
+  156,750 → 2,048 B each. All three writes now go through one helper on `file_write_atomic` (temp +
+  fsync + rename, loops to completion, a short write is an error); the tool names the file on stderr and
+  exits 1 at the first failure, so no later table is touched. It also takes an optional OUTDIR (default
+  `lib/unicode`), so a gate can regenerate into a temp dir — nothing had re-derived these tables at all.
+  The header's claim that it writes a fourth file (`tests/data/NormalizationTest.txt`) was false and is
+  gone. No compiler change.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -940,6 +952,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   temp behind; and `syscall_xlat_generated.sh` with a generator that cannot write says "could not write",
   never STALE. Mutation-proven eight ways (each 6.6.5 gate; each detector half; the generator back on
   `file_write_all` + `<= 0`, which leaves a 2,048-byte OUT with rc 0). ~10 s.
+- **`tests/gates/toolchain/tool_writes_never_truncate.sh`** — a tool that replaces a file the user or the
+  tree owns writes it crash-safe, and a short write is an error. Gen_unicode_data axes: regeneration into
+  an OUTDIR is byte-identical to the committed tables (anti-vacuous); under a 4-block `RLIMIT_FSIZE` it
+  exits non-zero, names the file, keeps all three seeded tables and leaves no temp; under a 150-block
+  limit it fails PART-WAY and every table is either complete or exactly as seeded, never a prefix
+  (limits chosen to hold under both 512- and 1024-byte `ulimit -f` units). The generator runs in a
+  scratch cwd over a copy of its UCD inputs, so a regressed tool cannot write the tree. Mutation-proven
+  (`file_write_all` put back; the 6.6.5 generator). <1 s.
 
 ## [6.6.5] — 2026-09-19
 

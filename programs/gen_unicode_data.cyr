@@ -4,16 +4,24 @@
 # cyrius generator. Reads UCD source files committed at
 # `tests/data/ucd/*.txt` + `tests/data/NormalizationTest.txt`, parses
 # each format, sorts by codepoint, encodes as hex-pair records, chunks
-# into pieces, and writes the four output files:
+# into pieces, and writes the three output files:
 #
 #   lib/unicode/_categories_data.cyr    (Unicode 17.0.0 GeneralCategory)
 #   lib/unicode/_casefold_data.cyr      (simple+full case fold)
 #   lib/unicode/_normalize_data.cyr     (CCC + canonical decomp + composition)
-#   tests/data/NormalizationTest.txt    (verbatim copy; corpus already lives here)
+#
+# (tests/data/NormalizationTest.txt is the committed conformance corpus; this tool reads
+# nothing from it and never writes it.)
 #
 # Run via:
 #   cyrius build programs/gen_unicode_data.cyr build/gen_unicode_data
-#   ./build/gen_unicode_data
+#   ./build/gen_unicode_data [OUTDIR]        # OUTDIR defaults to lib/unicode
+#
+# Each table is written crash-safe (temp + fsync + rename) and a short write is a FAILURE:
+# the tool exits 1 naming the file and leaves that table — and every later one — as it was.
+# ⛔ v6.6.6: it used `file_write_all` (O_TRUNC, then ONE write) and printed the count without
+# checking it, so on a full disk all three TRACKED tables were truncated to 2048 bytes and it
+# exited 0. OUTDIR exists so a gate can regenerate into a temp dir and diff. CHANGELOG [6.6.6]
 #
 # Sovereignty: cyrius writes its own data tables. No Python, no jq, no
 # shell pipeline. UCD source files are committed to the repo so regen
@@ -25,6 +33,35 @@ include "lib/string.cyr"
 include "lib/alloc.cyr"
 include "lib/io.cyr"
 include "lib/fmt.cyr"
+include "lib/args.cyr"
+
+# Output directory (argv[1], default lib/unicode) and the one write path every table uses.
+var _ucd_outdir = "lib/unicode";
+
+# Write `len` bytes of `buf` to OUTDIR/<name> atomically. Returns 0, or 1 after naming the
+# file on stderr — a short write is an error, never a truncated table. CHANGELOG [6.6.6]
+fn _ucd_write(name, buf, len): i64 {
+    var dl = strlen(_ucd_outdir);
+    var nl = strlen(name);
+    var path = alloc(dl + nl + 2);
+    memcpy(path, _ucd_outdir, dl);
+    store8(path + dl, 47);
+    memcpy(path + dl + 1, name, nl);
+    store8(path + dl + 1 + nl, 0);
+    var wr = file_write_atomic(path, buf, len);
+    if (wr != 0) {
+        syscall(SYS_WRITE, 2, "gen_unicode_data: write failed: ", 32);
+        syscall(SYS_WRITE, 2, path, strlen(path));
+        syscall(SYS_WRITE, 2, "\n", 1);
+        return 1;
+    }
+    syscall(SYS_WRITE, 1, "wrote ", 6);
+    syscall(SYS_WRITE, 1, path, strlen(path));
+    syscall(SYS_WRITE, 1, " (", 2);
+    fmt_int(len);
+    syscall(SYS_WRITE, 1, " bytes", 6);
+    return 0;
+}
 
 # ── Low-level parse helpers ───────────────────────────────────────────
 
@@ -402,10 +439,8 @@ fn gen_categories(): i64 {
         pi = pi + 1;
     }
 
-    var n_written = file_write_all("lib/unicode/_categories_data.cyr", out_buf, oo);
-    syscall(SYS_WRITE, 1, "wrote lib/unicode/_categories_data.cyr (", 40);
-    fmt_int(n_written);
-    syscall(SYS_WRITE, 1, " bytes, ", 8);
+    if (_ucd_write("_categories_data.cyr", out_buf, oo) != 0) { return 1; }
+    syscall(SYS_WRITE, 1, ", ", 2);
     fmt_int(merged_count);
     syscall(SYS_WRITE, 1, " merged ranges)\n", 16);
     return 0;
@@ -716,10 +751,8 @@ fn gen_casefold(): i64 {
     oo = oo + _emit_cstr(out_buf, oo, "\n");
     oo = oo + _emit_piece_block(out_buf, oo, "FOLD",  fold_blob,  fold_blob_len,  fold_n,  250, 26);
 
-    var n_written = file_write_all("lib/unicode/_casefold_data.cyr", out_buf, oo);
-    syscall(SYS_WRITE, 1, "wrote lib/unicode/_casefold_data.cyr (", 38);
-    fmt_int(n_written);
-    syscall(SYS_WRITE, 1, " bytes)\n", 8);
+    if (_ucd_write("_casefold_data.cyr", out_buf, oo) != 0) { return 1; }
+    syscall(SYS_WRITE, 1, ")\n", 2);
     return 0;
 }
 
@@ -1132,16 +1165,16 @@ fn gen_normalize(): i64 {
     # post-block blank), so they correctly end with a single newline.
     oo = oo + _emit_cstr(out_buf, oo, "\n");
 
-    var n_written = file_write_all("lib/unicode/_normalize_data.cyr", out_buf, oo);
-    syscall(SYS_WRITE, 1, "wrote lib/unicode/_normalize_data.cyr (", 39);
-    fmt_int(n_written);
-    syscall(SYS_WRITE, 1, " bytes)\n", 8);
+    if (_ucd_write("_normalize_data.cyr", out_buf, oo) != 0) { return 1; }
+    syscall(SYS_WRITE, 1, ")\n", 2);
     return 0;
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
 
 alloc_init();
+args_init();
+if (argc() >= 2) { _ucd_outdir = argv(1); }
 
 var rc = gen_categories();
 if (rc != 0) { syscall(SYS_EXIT, rc); }
