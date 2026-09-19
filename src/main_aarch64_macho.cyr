@@ -178,6 +178,13 @@ include "src/backend/aarch64/fixup.cyr"
 # CHANGELOG [6.6.6]
 var _strict_mode = 0;
 var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (aarch64/fixup.cyr gates on `_allow_undef == 0`)
+# #ifdef-guarded because _ARGV_FLAGS_MACHO is itself compiled only into macOS
+# builds (it reads the parked entry stack through inline asm). This driver is
+# ALWAYS built with CYRIUS_MACHO_ARM=1 in practice, but check.sh's
+# `_macho_cross_build_gate` compiles it with a bare `build/cycc` as an
+# x86 ELF smoke test, and an unguarded call is a reachable-undefined-fn error
+# there.
+#ifdef CYRIUS_TARGET_MACOS
 var _vflags = _ARGV_FLAGS_MACHO();
 if ((_vflags & 1) == 1) {
     syscall(SYS_WRITE, 1, _VERSION_STR_CYCC_AARCH64, _VERSION_LEN_CYCC_AARCH64);
@@ -185,6 +192,7 @@ if ((_vflags & 1) == 1) {
 }
 if ((_vflags & 2) == 2) { _strict_mode = 1; }
 if ((_vflags & 4) == 4) { _allow_undef = 1; }
+#endif
 
 # Allocate heap via mmap — macOS has no brk. The Linux syscall number 9
 # gets translated to BSD 197 (_mmap) by ESYSXLAT at emit time; the flag

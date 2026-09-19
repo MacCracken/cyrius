@@ -1011,7 +1011,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   magic. The two Mach-O drivers cannot execute on Linux: the gate builds them and checks the magic,
   and their runtime proof is the release gate's cross-OS leg on ecb/ach. `build/cycc` is BYTE-
   IDENTICAL (1,310,864 B before and after — every change is in a fork or behind
-  `#ifdef CYRIUS_TARGET_MACOS`); seed-derive green.
+  `#ifdef CYRIUS_TARGET_MACOS`); seed-derive green. ⚠ The two Mach-O call sites are themselves
+  `#ifdef CYRIUS_TARGET_MACOS`-guarded, because `check.sh`'s `_macho_cross_build_gate` compiles
+  `main_aarch64_macho.cyr` with a bare `build/cycc` as an x86-ELF "does it still build" smoke,
+  where the helper does not exist — the first cut of this change turned that gate RED.
 
 - **No `.tcyr` had ever run on the cx bytecode target: `include "lib/assert.cyr"` did not compile
   there at all.** (bite 7.) `cycc_cx < 'include "lib/assert.cyr"; assert_eq(1,1,"x"); var r =
@@ -1034,7 +1037,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   x86 and cxvm, gated by `tests/gates/toolchain/cx_tcyr_runs.sh` (registered in
   `programs/checks/main.cyr`), which also compiles and runs the filed repro verbatim and requires
   the cx assertion count to equal the native count and the count grepped from the source, with a
-  floor of 13. `build/cycc` BYTE-IDENTICAL (1,310,864 B — the alloc.cyr arm is `#ifdef`-gated);
+  floor of 13. `docs/api-surface.snapshot` regenerated (+4, now **5,231**) for `lib/alloc_cx.cyr`'s
+  four public fns, matching how `alloc_macos` / `alloc_agnos` are already listed.
+  `build/cycc` BYTE-IDENTICAL (1,310,864 B — the alloc.cyr arm is `#ifdef`-gated);
   seed-derive green; all **329** `.tcyr` pass a per-file exit-code loop. ⚠ **Three pre-existing cx
   BACKEND defects were found doing this and are NOT fixed here** (all three reproduce against the
   released 6.6.5 compiler, so none is from this release; filed for the next one, and named in the
