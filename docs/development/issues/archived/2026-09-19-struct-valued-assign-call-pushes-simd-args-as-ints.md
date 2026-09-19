@@ -95,6 +95,11 @@ while vectors go to XMM/V (SysV/aarch64) or by pointer in their int slot (Win64)
   by the one shared helper.
 - **Placement of the fix.** The filing proposed sharing "the plain call path's" marshalling; the
   helper shared is the method-call loop's (6.6.5 bite 3), because PARSE_FNCALL's loop carries
-  extra warning-only checks between the gates. The method loop now calls the same helper, so the
-  own-call loops have one copy between them.
+  extra warning-only checks between the gates. The method loop now calls the same helper.
+- **"One copy between them" was not true when first committed** (bite 14's review). Four more
+  own-call loops — the Win64-only vector-retptr calls: `var v: f64v2 = f(..)`, `v = f(..)`,
+  `var w: f64v4 = f(..)` and `return f(..)` in a vector fn — kept a private loop with the gates but
+  NO arity check, so a wrong argument count built clean on PE alone (x86 and aarch64 refused the
+  same source). They now call `_owncall_args` too; PE output is byte-identical across the corpus,
+  and `stack_param_homing_matrix.sh`'s refusal section pins it on every compiler.
 

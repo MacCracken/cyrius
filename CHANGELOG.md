@@ -56,9 +56,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   never wrapped (`str_len` of a raw cstr), an integer literal into a `: cstring` param was not
   refused, and a wrong argument count compiled clean. **Fix:** one per-argument helper,
   `_call_arg_one` (the gates the method-call loop grew inline in 6.6.5), plus `_owncall_args` for
-  the loop, ECALLPOPS and the vector loads; both receives and the method-call loop now call it, so
-  no own-call loop keeps a private copy of the gates. The filing named only the SIMD mask; see its
-  *Corrections to this filing*. Byte impact: **0 of 324 `.tcyr` binaries changed**, all seven
+  the loop, ECALLPOPS and the vector loads; both receives and the method-call loop now call it.
+  ⚠ As first committed, four more own-call loops kept a private copy — the Win64-only calls that
+  receive a 16/32-byte vector through a retptr (`var v: f64v2 = f(..)`, `v = f(..)`,
+  `var w: f64v4 = f(..)`, `return f(..)` in a vector fn) had the gates but NO arity check, so a
+  wrong argument count built clean on PE alone while x86/aarch64 refused it. The bite's review
+  found it; they now go through `_owncall_args` as well (PE output byte-identical across all 326
+  `.tcyr`), and `stack_param_homing_matrix.sh` gained a refusal section run against the x86,
+  aarch64 and Win64 compilers. The filing named only the SIMD mask; see its *Corrections to this
+  filing*. Byte impact: **0 of 324 `.tcyr` binaries changed**, all seven
   forks compile, cycc **1,294,040 → 1,294,040 B** (absorbed by text-segment padding).
 
 - **An enum variant constructor with seven or more fields stored the wrong value in field 7 and

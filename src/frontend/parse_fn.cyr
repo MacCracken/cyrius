@@ -1248,27 +1248,12 @@ fn PARSE_RETURN(S): i64 {
                                 STI(S, GTI(S) + 1);   # consume '('
                                 EFLADDR(S, _rc_named);
                                 EPUSHR(S);
-                                var _rc_argc = 1;
-                                var _rc_uarg = 0;
-                                if (PEEKT(S) != 11) {
-                                    var _rc_go = 1;
-                                    while (_rc_go == 1) {
-                                        # 6.6.5: the `: Str` literal wrap too — _pe_owncall_arg.
-                                        if (_pe_owncall_arg(S, _rc_fi, _rc_uarg) == 0) {
-                                            PCMPE(S);
-                                            EPUSHR(S);
-                                        }
-                                        _rc_argc = _rc_argc + 1;
-                                        _rc_uarg = _rc_uarg + 1;
-                                        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                                        else { _rc_go = 0; }
-                                    }
-                                }
-                                if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-                                STI(S, GTI(S) + 1);   # consume ')'
+                                # 6.6.6: `_owncall_args` — the gates plus the arity check this
+                                # PE-only loop never had (`return f(a);` on a 2-param vector `f`
+                                # built clean). CHANGELOG [6.6.6]
+                                var _rc_argc = _owncall_args(S, _rc_fi, _rc_noff, 1);
                                 if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
                                 STI(S, GTI(S) + 1);   # consume ';'
-                                ECALLPOPS(S, _rc_argc);
                                 var _rc_target = L64(_fnt_offsets + _rc_fi * 8);
                                 if (_rc_target >= 0) { ECALLTO(S, _rc_target); }
                                 else { ECALLFIX(S, _rc_fi); }
@@ -1630,38 +1615,6 @@ fn _tc_str_literal_arg(S, ti_open, fi): i64 {
     return 0;
 }
 
-# ⭐ 6.6.5 round 3 — THE FOUR WIN64 "OWN-CALL" ARGUMENT LOOPS, given the same two gates.
-#
-# A Win64 16/32-byte vector return is written through a hidden retptr, so four paths emit
-# their OWN call rather than going through PARSE_FNCALL: `_try_vector_call_assign` and the
-# `_f2c` / `_f4c` receives (parse_decl.cyr) and the PE SIMD-return `_rc` path (parse_fn.cyr).
-# Each pushed `&dst` and then marshalled the user args with `_try_push_struct_addr_arg`
-# alone — ONE of PARSE_FNCALL's gates. So the same `: Str` literal defect the method loop
-# had lived on here, PE-only and therefore invisible to every x86-Linux run:
-#
-#     fn mkv(s: Str, k): f64v2 { ... str_len(s) ... }
-#     var v: f64v2 = mkv("abcde", 2);     # ELF 5, PE 0 — measured under wine, both compilers
-#
-# Same value, same source, different answer per target — and it also made the guide's new
-# "it happens wherever the call is written" sentence false on PE.
-#
-# ⚠ NOT the SIMD arm: on Win64 a value-form vector param is ADDRESS-passed by the MS x64
-# by-pointer ABI, so `_try_push_struct_addr_arg` already covers it here; the XMM
-# record/second-pass split is the SysV/aarch64 shape and these four branches are `_TARGET_PE
-# == 1` only. Returns 1 when the argument was consumed and pushed. CHANGELOG [6.6.5]
-fn _pe_owncall_arg(S, fi, uarg): i64 {
-    _check_int_lit_cstring_arg(S, fi, uarg, _fn_noff_or_zero(fi));
-    if (_try_push_str_literal_arg(S, fi, uarg) == 1) { return 1; }
-    return _try_push_struct_addr_arg(S, fi, uarg);
-}
-
-# The callee's registered name offset, or 0 when the slot is unresolved — so a diagnostic
-# can name the fn without every caller re-deriving it. CHANGELOG [6.6.5]
-fn _fn_noff_or_zero(fi): i64 {
-    if (fi < 0) { return 0; }
-    return L64(_fnt_names + fi * 8);
-}
-
 # ⭐ 6.6.5 — v6.5.3's integer-literal-into-`: cstring` HARD ERROR, extracted from
 # PARSE_FNCALL's argument loop so the method-call path runs it too. v6.5.3 escalated this
 # from a warning to an error precisely because the alternative is a runtime crash — the
@@ -1725,8 +1678,9 @@ fn _simd_arg_record(S, cls, tbl, cnt, pc): i64 {
 # The method-call loop grew these gates inline in 6.6.5; the two struct-valued `var` receives
 # (`var p: S = f(...)`, retptr and rax:rdx) had NONE and pushed a vector as an int, so every
 # later int shifted and the callee read a stale XMM0 (SysV/aarch64) or dereferenced the
-# vector's first word as its pointer (Win64 page fault). All three loops now share this, so
-# there is no copy left to miss a gate. CHANGELOG [6.6.6]
+# vector's first word as its pointer (Win64 page fault). Every own-call argument loop shares
+# it — those three, and (via `_owncall_args`) the four PE-only vector-retptr loops, whose own
+# copy had the gates but not the arity check. CHANGELOG [6.6.6]
 fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
     var cls = (L64(_fnt_simdmask + fi * 8) >> (uarg * 2)) & 3;
     if (cls > 0) {
@@ -1747,7 +1701,12 @@ fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
 # The argument list of an own-call (cursor just past `(`): every argument through
 # `_call_arg_one`, then `)`, the arity check PARSE_FNCALL runs, ECALLPOPS of the int args and
 # the vector loads. `int0` = int args the caller already pushed (x86's retptr). Returns the
-# int-class total, for ECALLCLEAN. CHANGELOG [6.6.6]
+# int-class total, for ECALLCLEAN.
+# Also the four WIN64-ONLY own-calls (a 16/32-byte vector returned through a retptr:
+# `_try_vector_call_assign`, the `_f2c`/`_f4c` receives, the PE `return f(..)` path). They had a
+# loop of their own with the cstring/Str/struct-address gates and NO arity check, so `v = f(3)`
+# on a 2-param `f` built clean on PE alone. On PE the simd mask is 0 (a vector param is
+# address-passed), so `_call_arg_one` IS that loop's body. CHANGELOG [6.6.6]
 fn _owncall_args(S, fi, noff, int0): i64 {
     var tbl: i64[24];
     var st: i64[3];

@@ -62,6 +62,9 @@
 #   C2 the tail-call path no longer diverts retptr calls    -> RED  x86 SIGSEGV · aarch64 2 · cx 4 · wine crash
 #   C3 no `_try_struct_call_assign` (first word only)       -> RED  x86 8 · aarch64 8 · cx 4 · wine 8
 #   C4 no struct-valued-call arm in the struct-param push   -> RED  x86/aarch64 SIGSEGV · cx 2 · wine crash
+# bite 14 review (the refusal section at the end — x86 / aarch64 / win64 compilers):
+#   R0 the four PE vector-retptr loops as committed in 14a (HEAD 76a5a614) -> RED [arity/win64] COMPILED
+#   R1 only `_try_vector_call_assign` back to its own loop                 -> RED [arity/win64] 3 times, want 4
 #   real tree                                              -> GREEN on all four legs (~5 s)
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -316,6 +319,50 @@ if command -v wine > /dev/null 2>&1; then
          wineserver -k > /dev/null 2>&1 || true
     fi
 else echo "  SKIP: wine not installed (Win64 leg — the cass hardware leg still covers it)"; fi
+
+# ── refusals — every gap is a diagnostic, never a quiet miscompile ───────────────────────
+# Run against EVERY compiler above (x86 native, aarch64, Win64 — whichever built). Each probe
+# must be refused (non-zero exit) with the named diagnostic exactly `want` times, so one
+# refused site cannot hide a silent one beside it.
+nrefuse=0
+refuse_on() {   # refuse_on <label> <compiler> <probe> <needle> <want-count>
+    [ -s "$2" ] || return 0
+    _rc=0; "$2" < "$3" > "$T/rf.out" 2> "$T/rf.err" || _rc=$?
+    _n=$(grep -c "$4" "$T/rf.err" || true)
+    if [ "$_rc" = 0 ]; then echo "  FAIL: [$1] COMPILED — it must be refused ('$4' x$5)"; fail=1; return; fi
+    if [ "$_n" != "$5" ]; then
+        echo "  FAIL: [$1] refused with '$4' $_n times, want $5:"; grep -m4 '^error' "$T/rf.err" | sed 's/^/      /'; fail=1; return
+    fi
+    nrefuse=$((nrefuse + 1))
+}
+refuse_all() {  # refuse_all <label> <probe> <needle> <want-count>
+    refuse_on "$1/x86" "$CC" "$2" "$3" "$4"
+    refuse_on "$1/aarch64" "$T/cc_a64" "$2" "$3" "$4"
+    refuse_on "$1/win64" "$T/cc_win" "$2" "$3" "$4"
+}
+# 6.6.6 bite 14 review — the four Win64-only own-calls (a 16/32-byte vector returned through a
+# retptr: `var v: f64v2 = f(..)`, `v = f(..)`, `var w: f64v4 = f(..)`, `return f(..)` in a vector
+# fn) marshalled their arguments in a private loop with NO arity check, so all four built clean
+# on PE while x86/aarch64 refused them. Mutation: route any one back to its old loop -> RED
+# [arity/win64] ("... 3 times, want 4").
+cat > "$T/ra.cyr" <<'EOF'
+fn vf(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn vf4(a, b): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, b); store64(&v + 16, a); store64(&v + 24, b); return v; }
+fn vr(a): f64v2 { return vf(a); }
+fn main(): i64 {
+    var v: f64v2 = vf(1);
+    v = vf(3);
+    var w: f64v4 = vf4(1);
+    return load64(&v);
+}
+var e = main();
+syscall(60, e);
+EOF
+refuse_all arity "$T/ra.cyr" "expects 2 arguments, got 1" 4
+# Floor: the x86 compiler always runs, so every probe above must have counted at least once.
+REFUSE_FLOOR=1
+if [ "$nrefuse" -lt "$REFUSE_FLOOR" ]; then echo "  FAIL: only $nrefuse refusal cases ran (floor $REFUSE_FLOOR)"; fail=1; fi
+echo "  ok:   refusals — $nrefuse compiler x probe cases named their diagnostic"
 
 if [ "$fail" != 0 ]; then echo "FAIL stack_param_homing_matrix"; exit 1; fi
 echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer — bind every argument on every leg that ran"
