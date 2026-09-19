@@ -180,6 +180,19 @@ if (_vn > 0) {
     var _vi = 0;
     while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
     while (_vi < _vn) {
+        # "--ve" (--version) — print + exit. v6.6.6: MISSING here, which is the
+        # shipped ARM-Linux compiler (`cyrius pulsar` installs this fork as
+        # `cycc`), so on a Raspberry Pi / aarch64 box `cycc --version` compiled
+        # EMPTY stdin and wrote an ELF to stdout with exit 0 instead of printing
+        # a version. CHANGELOG [6.6.6]
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
+                    syscall(SYS_WRITE, 1, _VERSION_STR_CYCC_AARCH64, _VERSION_LEN_CYCC_AARCH64);
+                    syscall(SYS_EXIT, 0);
+                }
+            }
+        }
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 116) {

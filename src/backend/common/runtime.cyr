@@ -68,44 +68,13 @@ fn _emit_fmt(S): i64 {
 # Static scratch for env value (256 bytes).
 var _env_scratch[256];
 
-#ifdef CYRIUS_TARGET_MACOS
-# Return the argc/argv base the Mach-O arm64 entry prologue parked in
-# x28 (callee-saved, untouched by the aarch64 backend). Same inline-asm
-# pattern as lib/args_macos.cyr's _macho_argv_base — the result lands in
-# the single local at [x29,#-8]. Used by _read_env's macOS branch to
-# reach envp. Only compiled into macOS (CYRIUS_TARGET_MACOS) builds.
-fn _macho_x28(): i64 {
-    # Guard on the TARGET arch (CYRIUS_ARCH_AARCH64), NOT CYRIUS_ARCH_X86:
-    # when the x86 cross-compiler (cc_x) builds the arm64 macho cycc it
-    # predefines CYRIUS_ARCH_X86 *alongside* the driver's CYRIUS_ARCH_AARCH64,
-    # so an `#ifdef CYRIUS_ARCH_X86` here would wrongly fire for the arm64
-    # build and zero out x28 parking on the shipped (cross-built) arm64 cycc.
-    # AARCH64 is only ever predefined for the arm64 target. See [6.0.42].
-    #ifdef CYRIUS_ARCH_AARCH64
-    var r = 0;
-    asm {
-        0xE0; 0x03; 0x1C; 0xAA;    # mov x0, x28
-        0xA0; 0x83; 0x1F; 0xF8;    # stur x0, [x29, #-8]  (r)
-    }
-    return r;
-    #else
-    # x86-macOS (v6.4.59): read r15 = the init rsp, parked by the driver's entry
-    # landing `mov r15, rsp` (main_x86_macho.cyr:505) BEFORE the gvar-inits and
-    # reserved from regalloc (parse_fn.cyr _ra_cap=4 on _TARGET_MACHO), so it
-    # survives every call into here for cycc's OWN _read_env. The old stub
-    # returned 0 because the pre-v6.1.30 attempt used r13 (never parked → garbage);
-    # r15 is now valid. NOTE the x86 layout is INLINE ([r15]=argc, argv[i] at
-    # r15+8+i*8) — the x86 caller in _read_env must not use the arm64 x28 struct
-    # double-deref. See issue 2026-06-02-macos-x86-release-no-compiler.md layer 6.
-    var r = 0;
-    asm {
-        0x4C; 0x89; 0xF8;          # mov rax, r15
-        0x48; 0x89; 0x45; 0xF8;    # mov [rbp-8], rax   (-> r, the first local)
-    }
-    return r;
-    #endif
-}
-#endif
+# v6.6.6: `_macho_x28()` MOVED to src/common/util.cyr. It is the only way any
+# fork reaches argv on macOS, and util.cyr is the one module all SEVEN drivers
+# include — main_cx.cyr deliberately does NOT include this file (it keeps its own
+# RECFIX + _read_env stub), so a macOS argv reader parked here was unreachable
+# from the cx driver and `cycc_cx --version` had nothing to read. util.cyr is
+# included before this file in every fork that has both, so `_read_env` below
+# still resolves it. CHANGELOG [6.6.6]
 
 # Read an env var by name. Returns &_env_scratch (NUL-terminated
 # value) on hit, 0 on miss. v5.5.9: /proc/self/environ is Linux-only;

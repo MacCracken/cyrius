@@ -347,6 +347,15 @@ fn _run_regression_gates(): i64 {
     _gate("cyrius build --target=cx -> versioned .cyx -> cyrius run (right exit); float hard-errors (cx arc A)", "tests/gates/toolchain/cx_cli.sh");
     println("");
 
+    # v6.6.6: a FORK-PARITY AXIS, not a test list — the fork set is derived from
+    # src/main*.cyr inside the gate. Four of the seven drivers had no --version
+    # arm, so `cycc --version` on an ARM or cx install compiled EMPTY stdin and
+    # wrote a binary to stdout with exit 0. No gate had ever run a fork's built
+    # compiler with a FLAG, which is why it survived. See CHANGELOG [6.6.6].
+    _section("Fork parity — every src/main*.cyr answers --version (v6.6.6)");
+    _gate("all 7 drivers print `<name> <VERSION>`: x86 direct, cx direct, PE under wine, aarch64 under qemu, Mach-O built (v6.6.6)", "tests/gates/toolchain/fork_version_parity.sh");
+    println("");
+
     _section("Parser fuzz (VR-02)");
     _gate("cycc stdin-parser survives byte-mutated hostile input, no crash (VR-02, v6.3.22)", "tests/gates/diagnostics/cycc_parser_fuzz.sh");
     # v6.5.19: the deterministic companion. The fuzz gate above finds crashes by

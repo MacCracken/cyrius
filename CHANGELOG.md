@@ -980,6 +980,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   covered (same checkout only, separate worktrees never share them): three crossos tests write
   cwd-relative scratch files into the check driver's cwd. No compiler change.
 
+- **`cycc --version` was unhandled in five of the seven compiler drivers, so on an ARM, Intel-Mac
+  or cx install it compiled EMPTY stdin and wrote a BINARY to stdout with exit 0.** (bite 7.)
+  `main_aarch64.cyr`, `main_aarch64_native.cyr`, `main_aarch64_macho.cyr` and `main_cx.cyr` had no
+  `--version` arm at all; `main_x86_macho.cyr` had no command-line scan of any kind. cycc's
+  fall-through for an unrecognised invocation is "compile stdin", so `cycc --version` on a Raspberry
+  Pi produced a 65,888-byte aarch64 ELF on stdout (24 bytes of `.cyx` from `cycc_cx`) and exited 0 —
+  and `scripts/install.sh` reads `cycc --version | awk '{print $2}'`, so it reported a field of that
+  binary as the installed toolchain version. Two distinct root causes behind one symptom: the three
+  aarch64 drivers and `main_cx.cyr` simply never grew the arm `main.cyr`/`main_win.cyr` have had
+  since v5.4.19; the two Mach-O drivers cannot use it, because **`main_aarch64_macho.cyr`'s
+  `/proc/self/cmdline` scan has been DEAD since it was copied in at v5.11.63** — macOS has no
+  `/proc`, the failed `open()` returns a POSITIVE errno on Darwin, the `_vn > 0` guard fires on the
+  errno and the walk runs over a zeroed buffer, so `--strict` and `--allow-undef` never worked on
+  macOS-arm64 either. Fixed: the `--ve` arm added to the three aarch64 drivers and to `main_cx.cyr`
+  (flat per-target blocks matching its arena block — `/proc` on Linux/agnos, the parked entry stack
+  on macOS, `GetCommandLineW` on Windows); the two Mach-O drivers now read argv through
+  `_ARGV_FLAGS_MACHO()` (`src/common/util.cyr`), which walks the entry stack this driver already
+  parks in x28/r15 for `_read_env` — the mechanism that has carried `CYRIUS_MACHO_ARM` since v6.0.33
+  — and returns `--version`/`--strict`/`--allow-undef` as a bitmask, so all three flags work on
+  macOS for the first time. `_macho_x28()` moved from `src/backend/common/runtime.cyr` to
+  `src/common/util.cyr` unchanged: util.cyr is the one module all seven drivers include, and
+  `main_cx.cyr` deliberately does not include runtime.cyr. Gated by
+  `tests/gates/toolchain/fork_version_parity.sh`, a fork-parity AXIS: it derives the fork list from
+  `src/main*.cyr` (floor 7) rather than listing them, so an eighth driver cannot be added without
+  handling `--version`, and it runs each fork's BUILT compiler where it can run on Linux — x86 and
+  the cx/win/aarch64 host stages directly, the PE stages under wine, the aarch64 stages under
+  qemu-aarch64 — asserting field 2 equals the `VERSION` file (a different source from the
+  `src/version_str.cyr` string compiled into the binary) and that stdout carries no ELF/MZ/Mach-O/CYX
+  magic. The two Mach-O drivers cannot execute on Linux: the gate builds them and checks the magic,
+  and their runtime proof is the release gate's cross-OS leg on ecb/ach. `build/cycc` is BYTE-
+  IDENTICAL (1,310,864 B before and after — every change is in a fork or behind
+  `#ifdef CYRIUS_TARGET_MACOS`); seed-derive green.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

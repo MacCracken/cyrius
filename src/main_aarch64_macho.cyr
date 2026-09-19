@@ -164,41 +164,27 @@ include "src/backend/aarch64/fixup.cyr"
 # MAIN
 # ================================================================
 
-# v5.11.63: --strict parity with main.cyr. Same block as the Linux
-# aarch64 cross-compiler (main_aarch64.cyr); shared backend/aarch64/
-# fixup.cyr reads `_strict_mode` after the patch loop. See CHANGELOG
-# [5.11.63].
+# v5.11.63 added a /proc/self/cmdline scan here, copied verbatim from the Linux
+# aarch64 cross-compiler. ⛔ v6.6.6: THAT SCAN WAS DEAD. This driver only ever
+# produces a Mach-O binary, and macOS has no /proc — the open() failed, Darwin
+# returned a POSITIVE errno in rax (no carry check), the `_vn > 0` guard fired on
+# the errno, and the walk ran over a zeroed buffer and matched nothing. So
+# `--strict` and `--allow-undef` had never worked on macOS-arm64, and there was
+# no `--version` arm at all: `cycc --version` fell through to "compile stdin",
+# compiled EMPTY input, and wrote a Mach-O binary to stdout with exit 0.
+# Replaced with the argv scan (_ARGV_FLAGS_MACHO, src/common/util.cyr), which
+# reads the entry stack this driver already parks in x28 for _read_env — the
+# mechanism that has been carrying CYRIUS_MACHO_ARM since v6.0.33.
+# CHANGELOG [6.6.6]
 var _strict_mode = 0;
 var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the now-default reachable-undef hard error (aarch64/fixup.cyr gates on `_allow_undef == 0`)
-var _vbuf[256];
-var _vfd = 0;
-if (SYS_OPEN == 2) { _vfd = syscall(SYS_OPEN, "/proc/self/cmdline", 0, 0); }
-else { _vfd = syscall(SYS_OPEN, 0 - 100, "/proc/self/cmdline", 0, 0); }
-var _vn = syscall(SYS_READ, _vfd, &_vbuf, 255);
-syscall(SYS_CLOSE, _vfd);
-if (_vn > 0) {
-    var _vi = 0;
-    while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
-    while (_vi < _vn) {
-        if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 115 && load8(&_vbuf + _vi + 3) == 116) {
-                    _strict_mode = 1;
-                }
-            }
-        }
-        # "--al" (--allow-undef, v6.3.2) — downgrade the default reachable-undef hard error to a warning. chars a(97) l(108).
-        if (_vi + 4 <= _vn) {
-            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
-                if (load8(&_vbuf + _vi + 2) == 97 && load8(&_vbuf + _vi + 3) == 108) {
-                    _allow_undef = 1;
-                }
-            }
-        }
-        while (_vi < _vn && load8(&_vbuf + _vi) != 0) { _vi = _vi + 1; }
-        _vi = _vi + 1;
-    }
+var _vflags = _ARGV_FLAGS_MACHO();
+if ((_vflags & 1) == 1) {
+    syscall(SYS_WRITE, 1, _VERSION_STR_CYCC_AARCH64, _VERSION_LEN_CYCC_AARCH64);
+    syscall(SYS_EXIT, 0);
 }
+if ((_vflags & 2) == 2) { _strict_mode = 1; }
+if ((_vflags & 4) == 4) { _allow_undef = 1; }
 
 # Allocate heap via mmap — macOS has no brk. The Linux syscall number 9
 # gets translated to BSD 197 (_mmap) by ESYSXLAT at emit time; the flag

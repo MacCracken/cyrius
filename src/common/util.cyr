@@ -2416,3 +2416,107 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
     S64(S + 0x1903F0, 0);
     return 0;
 }
+
+# ================================================================
+# COMMAND-LINE FLAGS — macOS (no /proc)
+# ================================================================
+#ifdef CYRIUS_TARGET_MACOS
+# Return the argc/argv base the Mach-O entry prologue parked.
+#
+# v6.6.6: MOVED here from src/backend/common/runtime.cyr, unchanged. util.cyr is
+# the ONE module every fork includes; runtime.cyr is not (main_cx.cyr keeps its
+# own RECFIX + _read_env stub), so parking this there put macOS argv out of reach
+# of the cx driver. runtime.cyr's `_read_env` is included after util.cyr in every
+# fork that has both, so its calls still resolve.
+#
+# arm64: the prologue parks the base in x28 (callee-saved, untouched by the
+# aarch64 backend). Same inline-asm pattern as lib/args_macos.cyr's
+# _macho_argv_base — the result lands in the single local at [x29,#-8].
+fn _macho_x28(): i64 {
+    # Guard on the TARGET arch (CYRIUS_ARCH_AARCH64), NOT CYRIUS_ARCH_X86:
+    # when the x86 cross-compiler (cc_x) builds the arm64 macho cycc it
+    # predefines CYRIUS_ARCH_X86 *alongside* the driver's CYRIUS_ARCH_AARCH64,
+    # so an `#ifdef CYRIUS_ARCH_X86` here would wrongly fire for the arm64
+    # build and zero out x28 parking on the shipped (cross-built) arm64 cycc.
+    # AARCH64 is only ever predefined for the arm64 target. See [6.0.42].
+    #ifdef CYRIUS_ARCH_AARCH64
+    var r = 0;
+    asm {
+        0xE0; 0x03; 0x1C; 0xAA;    # mov x0, x28
+        0xA0; 0x83; 0x1F; 0xF8;    # stur x0, [x29, #-8]  (r)
+    }
+    return r;
+    #else
+    # x86-macOS (v6.4.59): read r15 = the init rsp, parked by the driver's entry
+    # landing `mov r15, rsp` (main_x86_macho.cyr) BEFORE the gvar-inits and
+    # reserved from regalloc (parse_fn.cyr _ra_cap=4 on _TARGET_MACHO), so it
+    # survives every call into here for cycc's OWN _read_env. The old stub
+    # returned 0 because the pre-v6.1.30 attempt used r13 (never parked → garbage);
+    # r15 is now valid. NOTE the x86 layout is INLINE ([r15]=argc, argv[i] at
+    # r15+8+i*8) — the x86 caller in _read_env must not use the arm64 x28 struct
+    # double-deref. See issue 2026-06-02-macos-x86-release-no-compiler.md layer 6.
+    var r = 0;
+    asm {
+        0x4C; 0x89; 0xF8;          # mov rax, r15
+        0x48; 0x89; 0x45; 0xF8;    # mov [rbp-8], rax   (-> r, the first local)
+    }
+    return r;
+    #endif
+}
+
+# Classify ONE argv entry. Returns the flag bit it carries, 0 otherwise.
+# Split out of _ARGV_FLAGS_MACHO so neither fn carries enough call/global
+# references to trip cybs on the bootstrap path. `p` is NUL-terminated;
+# the third byte is tested before the fourth is read, so a bare "--"
+# never reads past its terminator.
+fn _ARGV_FLAG_ONE(p): i64 {
+    if (load8(p) != 45) { return 0; }
+    if (load8(p + 1) != 45) { return 0; }
+    var c = load8(p + 2);
+    if (c == 0) { return 0; }
+    var d = load8(p + 3);
+    if (c == 118) { if (d == 101) { return 1; } }    # --ve(rsion)
+    if (c == 115) { if (d == 116) { return 2; } }    # --st(rict)
+    if (c == 97) { if (d == 108) { return 4; } }     # --al(low-undef)
+    return 0;
+}
+
+# Scan argv for cycc's flags on macOS. Returns a bitmask:
+#   1 = --version   2 = --strict   4 = --allow-undef
+#
+# WHY this exists (v6.6.6): macOS has no /proc/self/cmdline, so the /proc scan
+# every Linux driver uses reads NOTHING here — on Darwin the failed open()
+# returns a POSITIVE errno in rax, so the driver's `_vn > 0` guard fires on an
+# errno, walks the zeroed buffer, and matches no flag. main_aarch64_macho.cyr
+# carried exactly that dead scan, and main_x86_macho.cyr had no scan at all. The
+# visible consequence was the same one the aarch64/cx forks had for a different
+# reason (no --version arm at all): `cycc --version` fell through to "compile
+# stdin", so it compiled EMPTY input and wrote a BINARY to stdout with exit 0.
+# Read argv off the entry stack the driver already parks for _read_env instead.
+# The argc sanity bound is a guard against a driver that never parked the base.
+# CHANGELOG [6.6.6]
+fn _ARGV_FLAGS_MACHO(): i64 {
+    var base = _macho_x28();
+    if (base == 0) { return 0; }
+    var n = load64(base);
+    if (n < 2) { return 0; }
+    if (n > 4096) { return 0; }
+    # arm64 parks a struct base (argv is a char** at +8); the x86 LC_UNIXTHREAD
+    # init stack is INLINE ([base]=argc, argv[i] at base+8+i*8). Same split as
+    # _read_env's two macOS arms.
+    #ifdef CYRIUS_ARCH_AARCH64
+    var vec = load64(base + 8);
+    #else
+    var vec = base + 8;
+    #endif
+    if (vec == 0) { return 0; }
+    var f = 0;
+    var i = 1;
+    while (i < n) {
+        var p = load64(vec + i * 8);
+        if (p != 0) { f = f | _ARGV_FLAG_ONE(p); }
+        i = i + 1;
+    }
+    return f;
+}
+#endif

@@ -195,6 +195,21 @@ if (_vn > 0) {
     # Skip argv[0]
     while (_vi < _vn) { if (load8(&_vbuf + _vi) == 0) { _vi = _vi + 1; break; } _vi = _vi + 1; }
     while (_vi < _vn) {
+        # "--ve" (--version) — print + exit. v6.6.6: this arm was MISSING on
+        # every aarch64 driver and on main_cx.cyr, so `cycc --version` on an ARM
+        # install fell straight through to "compile stdin" — with no file piped
+        # in it compiled EMPTY input and wrote a 65,888-byte ELF to stdout, exit
+        # 0. (scripts/install.sh reads `cycc --version | awk '{print $2}'`, so it
+        # reported the binary's first field as the toolchain version.)
+        # CHANGELOG [6.6.6]
+        if (_vi + 4 <= _vn) {
+            if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
+                if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
+                    syscall(SYS_WRITE, 1, _VERSION_STR_CYCC_AARCH64, _VERSION_LEN_CYCC_AARCH64);
+                    syscall(SYS_EXIT, 0);
+                }
+            }
+        }
         # "--st" (--strict) — set flag, keep parsing
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {

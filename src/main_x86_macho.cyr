@@ -58,13 +58,23 @@ include "src/backend/x86/fixup.cyr"
 # MAIN
 # ================================================================
 
-# --strict is parsed from argv on Linux/macho-arm64; on x86-macOS argv
-# isn't reachable until the entry-prologue follow-up lands, so default
-# off. (Kept as a var so fixup.cyr's read of _strict_mode resolves.)
+# v6.6.6: this fork now parses argv. The three lines that stood here said
+# "argv isn't reachable until the entry-prologue follow-up lands" — that
+# follow-up LANDED at v6.1.30/v6.4.59 (the `mov r15, rsp` entry landing park,
+# which _read_env has been reading ever since), and nobody came back to the
+# flags. So on an Intel Mac `cycc --version` fell through to "compile stdin",
+# compiled EMPTY input, and wrote a Mach-O binary to stdout with exit 0, and
+# --strict/--allow-undef silently did nothing. _ARGV_FLAGS_MACHO
+# (src/common/util.cyr) reads the same parked base. CHANGELOG [6.6.6]
 var _strict_mode = 0;
-# v6.3.2: stub decl — no argv parse on this fork, so _allow_undef stays 0 →
-# reachable undefs always hard-error here (self-compile HELD; Intel-EOL).
-var _allow_undef = 0;
+var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the default reachable-undef hard error
+var _vflags = _ARGV_FLAGS_MACHO();
+if ((_vflags & 1) == 1) {
+    syscall(SYS_WRITE, 1, _VERSION_STR_CYCC, _VERSION_LEN_CYCC);
+    syscall(SYS_EXIT, 0);
+}
+if ((_vflags & 2) == 2) { _strict_mode = 1; }
+if ((_vflags & 4) == 4) { _allow_undef = 1; }
 
 # Allocate heap via mmap — macOS has no brk. Linux syscall number 9 is
 # translated to BSD 197 by EMACHO_SYSXLAT at emit; flags 0x1002
