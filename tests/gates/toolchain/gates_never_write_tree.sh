@@ -132,6 +132,15 @@
 #                                                         verify-store unchecked mktemp)
 #   x2. the axis-7 allowlist entry made stale         -> axis 7 FAIL, and cross-os-selfhost.sh's
 #                                                         own fixed names are then reported
+#   x3. axis 7 (bite 17j), each of the 3 scripts      -> axis 7 FAIL, one per script (cyrius-repl
+#      BELOW scripts/ restored to its pre-fix body       /tmp/cyrius_repl_$$ at 3 lines;
+#                                                        audit-walk /tmp/aw_fmt_$$ at 3;
+#                                                        bench_capacity_overhead unchecked
+#                                                        mktemp + /tmp/bench_cap_$$_*)
+#   x4. the sweep back to `find scripts -maxdepth 1`  -> axis 7 reads GREEN on 26 files with all
+#      with those 3 pre-fix bodies live                  THREE offenders live — the gap the bite
+#                                                        17 review found, and why the sweep is
+#                                                        by shape (scripts/**, benches/**) now
 #   y. axis 8 (bite 17h), each of 5 tests restored    -> axis 8 FAIL, one per file (atomic_write
 #      to its 6.6.5 body                                  4 sites, syscalls_meta 2, uid_identity
 #                                                         1, syscalls_fileops 1, aarch64_cluster/
