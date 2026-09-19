@@ -1497,14 +1497,17 @@ fn _gv_slvar(S, idx): i64 {
 # registered its own globals). Packed as slot+1 in 21-bit fields, target k at bit 21*k
 # (0 = unrecorded -> FINDVAR). Parallel to gvar_toks, allocated on first use.
 var _gv_ent_base = 0;
+# Past the 4096-entry cap the caller reports the error but does not stop, so an entry beyond
+# it is neither recorded nor read back (the buffer has 4096 slots; the build has failed).
 fn _gv_ent_set(gc, packed): i64 {
+    if (gc >= 4096) { return 0; }
     if (_gv_ent_base == 0) { _gv_ent_base = alloc(4096 * 8); }
     store64(_gv_ent_base + gc * 8, packed);
     return 0;
 }
 fn _gv_ent_slot(S, gi, k, noff): i64 {
     var w = 0;
-    if (_gv_ent_base != 0) { w = (load64(_gv_ent_base + gi * 8) >> (21 * k)) & 0x1FFFFF; }
+    if (_gv_ent_base != 0) { if (gi < 4096) { w = (load64(_gv_ent_base + gi * 8) >> (21 * k)) & 0x1FFFFF; } }
     if (w == 0) { return FINDVAR(S, noff); }
     return w - 1;
 }
