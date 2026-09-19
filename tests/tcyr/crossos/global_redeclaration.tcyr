@@ -67,6 +67,18 @@ var gr_m, gr_n = gr_pair();
 var gr_o = gr_m;
 var gr_m = 30;
 
+# ... and the SECOND target of a pair, and the second and third of a triple
+fn gr_pair2() { return (40, 41); }
+var gr_p1, gr_p2 = gr_pair2();
+var gr_p3 = gr_p2;
+var gr_p2 = 50;
+fn gr_triple() { return (60, 61, 62); }
+var gr_t1, gr_t2, gr_t3 = gr_triple();
+var gr_t4 = gr_t2;
+var gr_t5 = gr_t3;
+var gr_t2 = 70;
+var gr_t3 = 80;
+
 # a fn body reads the one global too
 fn gr_read_c(): i64 { return gr_c; }
 
@@ -101,6 +113,14 @@ assert_eq(gr_k, 4, "chain: the global is the last constant");
 assert_eq(gr_o, 30, "destructure then constant: an earlier read sees the constant");
 assert_eq(gr_m, 30, "destructure then constant: the superseded target holds the constant");
 assert_eq(gr_n, 21, "destructure then constant: the other target keeps its value");
+assert_eq(gr_p3, 50, "pair, second target superseded: an earlier read sees the constant");
+assert_eq(gr_p2, 50, "pair, second target superseded: the global is the constant");
+assert_eq(gr_p1, 40, "pair, second target superseded: the first target keeps its value");
+assert_eq(gr_t4, 70, "triple, middle target superseded: an earlier read sees the constant");
+assert_eq(gr_t5, 80, "triple, last target superseded: an earlier read sees the constant");
+assert_eq(gr_t1, 60, "triple: the first target keeps its value");
+assert_eq(gr_t2, 70, "triple: the middle target is the constant");
+assert_eq(gr_t3, 80, "triple: the last target is the constant");
 assert_eq(gr_ek_early, 7, "var over an enum constant: an earlier read sees the var");
 assert_eq(gr_read_ek(), 7, "var over an enum constant: a fn reads the var");
 assert_eq(gr_ef_early, 7, "var over an enum, then redeclared: an earlier read sees the last value");

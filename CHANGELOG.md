@@ -245,17 +245,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   parameter is refused, naming it, for f64v2 / f32v4 / f64v4 / i32v4 in both a coroutine and a
   plain async fn, and the pointer-to-vector form compiles and returns 95 for both. Dropping the
   refusal turns it red.
-- `tests/tcyr/crossos/global_redeclaration.tcyr` (bite 2) — 17 assertions over declaration-zone
+- `tests/tcyr/crossos/global_redeclaration.tcyr` (bite 2) — 31 assertions over declaration-zone
   redeclarations: the filed repro, a conflicting value read early and from a fn, an `#ifdef`-arm
   second declaration plus an inactive arm, constant-after-computed (the side effect ran once),
-  computed-after-constant, a three-link chain, and a destructure target superseded by a constant.
-  The 6.6.5-tree compiler fails 7 of them.
+  computed-after-constant, a three-link chain, every target of a pair and a triple destructure
+  superseded by a constant, and a var over an enum constant (conflicting, through a fold, and
+  zero). The 6.6.5-tree compiler fails 13 of them.
 - `tests/gates/frontend/global_redeclaration_one_definition.sh` (bite 2, registered in
-  `scripts/check.sh`) — 11 host rows, each checked against a CONTROL program with no
-  redeclaration as well as an absolute value; the type/size-change error; the unchanged
-  after-first-statement shadowing; a kernel-mode structural row (renaming the later variable must
-  change no byte of the image); a cx leg built from the tree's own `main_cx` + `cxvm` and an
-  aarch64 leg under qemu. Six mutants each turn it red (ledger in the header).
+  `scripts/check.sh`) — 19 host rows, each checked against a CONTROL program with no
+  redeclaration as well as an absolute value, covering every destructure target position and a
+  var over an enum constant; the type/size-change error; the unchanged after-first-statement
+  shadowing; kernel-mode structural rows (renaming the later variable must change no byte of the
+  image, for the replay's store AND for a name it reads) plus a guard that a name only the
+  program declares still resolves there; a cx leg built from the tree's own `main_cx` + `cxvm`
+  and an aarch64 leg under qemu (5 rows each). Twelve mutants each turn it red (ledger in the
+  header).
   `tests/gates/codegen/hidden_temp_census.sh` names the two new registration sites: `_gv_reg8`
   (the pass-1 destructure's per-name registration, moved out of `PARSE_GVAR_REG`) and
   `_gv_target`'s sink, which goes through `_HTEMP` like every other dead unnamed global.

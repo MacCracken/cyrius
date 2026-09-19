@@ -43,7 +43,9 @@
 #   m8 var over an enum not given its value on cx      -> RED cx L only
 #   m9 main.cyr no longer records the zone (no hiding)   -> RED row K2 only
 #   m10 FINDVAR drops the hidden-match fallback          -> RED row K3 only
-#   real tree                                      -> GREEN (16 host rows, 5 cx, 5 aarch64)
+#   m11 _gv_target honours only target 0 (k > 0 -> the global) -> RED rows G2 G3 G4
+#   m12 _gv_target honours targets 0 and 1 only (k > 1)       -> RED row G3 only
+#   real tree                                      -> GREEN (19 host rows, 5 cx, 5 aarch64)
 # Row H is a guard, not a detector: a fn body already read the last declaration before 6.6.6.
 set -eu
 
@@ -108,6 +110,16 @@ nw=$(grep -c "duplicate symbol 'a' redefined with conflicting value (last defini
 # G — a destructure target superseded by a later constant; its other target is untouched
 _row G 51 'fn p() { return (20, 21); }\nvar m, n = p();\nvar o = m;\nvar m = 30;\nsyscall(60, o + n);\n' \
           'fn p() { return (20, 21); }\nvar m2, n = p();\nvar m = 30;\nvar o = m;\nsyscall(60, o + n);\n'
+# G2 — a destructure's SECOND target superseded (target 1 of the replay entry): o sees 30, and
+#      the first target keeps its value (exit = o + n + m)
+_row G2 80 'fn p() { return (20, 21); }\nvar m, n = p();\nvar o = n;\nvar n = 30;\nsyscall(60, o + n + m);\n' \
+           'fn p() { return (20, 21); }\nvar m, n2 = p();\nvar n = 30;\nvar o = n;\nsyscall(60, o + n + m);\n'
+# G3 — a three-name destructure's THIRD target superseded (target 2)
+_row G3 101 'fn p() { return (20, 21, 22); }\nvar m, n, q = p();\nvar o = q;\nvar q = 30;\nsyscall(60, o + q + m + n);\n' \
+            'fn p() { return (20, 21, 22); }\nvar m, n, q2 = p();\nvar q = 30;\nvar o = q;\nsyscall(60, o + q + m + n);\n'
+# G4 — a three-name destructure's MIDDLE target superseded (target 1 on the three-name path)
+_row G4 102 'fn p() { return (20, 21, 22); }\nvar m, n, q = p();\nvar o = n;\nvar n = 30;\nsyscall(60, o + n + m + q);\n' \
+            'fn p() { return (20, 21, 22); }\nvar m, n2, q = p();\nvar n = 30;\nvar o = n;\nsyscall(60, o + n + m + q);\n'
 # H — a fn body reads the one global
 _row H 7 'var a = 5;\nfn g() { return a; }\nvar a = 7;\nsyscall(60, g());\n' \
          'fn g() { return a; }\nvar a = 7;\nsyscall(60, g());\n'
