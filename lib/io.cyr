@@ -521,6 +521,42 @@ fn file_write_all(path, buf, len): i64 {
     return written;
 }
 
+# Read the WHOLE file into a fresh heap buffer, NUL-terminated. Returns the buffer and writes
+# the byte count through `len_out`; 0 when the file cannot be opened.
+#
+# ⛔ WHY: `file_read_all(path, buf, CAP)` with a hand-picked CAP returns exactly CAP on a larger
+# file and says nothing — the caller cannot tell "the whole file" from "the first CAP bytes",
+# and a tool that then writes the buffer back DESTROYS the rest. Measured before the fix:
+# `cyriusly use 9.9.9` on a 144,090-byte cyrius.cyml left a 65,535-byte file cut mid-line and
+# printed "Pinned" (its cap was 65535); `cyrius update` migrated a >32 KB cyrius.toml to a
+# truncated cyrius.cyml and then deleted the toml. The buffer here GROWS instead, so there is no
+# cap to be wrong about and no size to race against (no stat: Windows has no POSIX stat here,
+# and a stat-then-read races a writer anyway). CHANGELOG [6.6.6]
+fn file_read_whole(path, len_out): i64 {
+    var fd = file_open(path, 0, 0);
+    if (fd < 0) { store64(len_out, 0); return 0; }
+    var cap = 65536;
+    var buf = alloc(cap + 1);
+    var total = 0;
+    var go = 1;
+    while (go == 1) {
+        if (total == cap) {
+            var ncap = cap + cap;
+            var nb = alloc(ncap + 1);
+            memcpy(nb, buf, total);
+            buf = nb;
+            cap = ncap;
+        }
+        var n = file_read(fd, buf + total, cap - total);
+        if (n <= 0) { go = 0; }
+        else { total = total + n; }
+    }
+    file_close(fd);
+    store8(buf + total, 0);
+    store64(len_out, total);
+    return buf;
+}
+
 # ── v6.4.57: portable crash-safe atomic write (thoth's model edit/create tools).
 # file_write_all is NOT crash-safe (O_TRUNC empties the target at open, so a short
 # write / crash leaves the user's file truncated). file_write_atomic writes to a

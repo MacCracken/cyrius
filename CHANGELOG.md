@@ -1424,6 +1424,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   nothing and claiming success. Gated by
   `tests/gates/toolchain/cyriusly_use_switch_integrity.sh`, 6 mutations each RED.
 
+- **A fixed read cap silently truncated a manifest the tool then wrote back** (bite 17c).
+  `file_read_all(path, buf, CAP)` returns exactly `CAP` for a larger file and says nothing, so a
+  caller cannot tell "the whole file" from "the first `CAP` bytes" — and two tools wrote that
+  buffer back. `cyriusly`'s `_write_cyml_cyrius_pin` read `cyrius.cyml` at 65,535 bytes, edited
+  one line and replaced the file: measured, a **144,090-byte manifest came out 65,535 bytes, cut
+  mid-line**, while `cyriusly use 9.9.9` printed `Pinned cyrius.cyml to 9.9.9` and exited 0 —
+  78,555 bytes of the user's manifest destroyed by a command that edits a single line. `cbt`'s
+  `cmd_update` read `cyrius.toml` at 32,767 bytes for the `cyrius.toml` → `cyrius.cyml`
+  migration, wrote that buffer as the cyml and then `sys_unlink`'d the toml, deleting the only
+  untruncated copy. The same cap in `_print_resolved_version` is not data loss but is the same
+  root cause: a `[package]` section starting past 65,535 bytes was invisible, so `cyriusly use`
+  with no argument reported the global default for a repo that is in fact pinned (measured on a
+  73,652-byte manifest). **Fix:** `file_read_whole(path, &n)` in `lib/io.cyr` reads into a buffer
+  that **grows**, so there is no cap to get wrong — deliberately not a *bigger* cap (the same
+  defect with a larger threshold) and not stat-then-alloc (`xstat` is -1 on Windows here, and a
+  stat followed by a read races a concurrent writer). All three sites use it. Gated by
+  `tests/gates/toolchain/manifest_read_whole_file.sh`, 6 mutations each RED.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -1458,6 +1476,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without. 25 checks on PE, 15 on every other host; both path components verified against
   something other than the module table, and the GetModuleFileNameW truncation contract
   (`cch` back, not a length) pinned on real hardware. 25/25 on cass.
+
+- `tests/gates/toolchain/manifest_read_whole_file.sh` — 4 axes: a 144 KB manifest pinned
+  byte-for-byte as an independent awk edit produces it, a `[package]` past the old cap still
+  read, a >32 KB `cyrius.toml` migrated whole before it is deleted, and a STATIC axis that
+  derives every capped read of a path the same function writes back or unlinks (allowlisting
+  only files the tool itself made, each entry required to stay live).
 
 - `tests/gates/toolchain/cyriusly_use_switch_integrity.sh` — 4 axes over the `--global` toolchain
   switch: `bin` a directory (fail loudly, change nothing), the half-switch (`bin` rolled back so

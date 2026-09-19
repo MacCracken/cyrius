@@ -178,13 +178,16 @@ fn _cmd_help(): i64 {
 # error. Format-preserving: only touches the field's value line.
 fn _write_cyml_cyrius_pin(ver_cstr): i64 {
     var vlen = strlen(ver_cstr);
-    var buf = alloc(65536);
-    var n = file_read_all("cyrius.cyml", buf, 65535);
-    if (n <= 0) {
+    # v6.6.6: the WHOLE manifest, however large. This was `alloc(65536)` + a 65535-byte
+    # file_read_all, and the edited buffer is written BACK — so a bigger cyrius.cyml came out
+    # truncated at 65,535 bytes, cut mid-line, while `use` printed "Pinned" and exited 0.
+    # Measured: a 144,090-byte manifest lost 78,555 bytes. CHANGELOG [6.6.6]
+    var n = 0;
+    var buf = file_read_whole("cyrius.cyml", &n);
+    if (buf == 0 || n <= 0) {
         syscall(1, 2, "error: failed to read cyrius.cyml\n", 34);
         return 1;
     }
-    store8(buf + n, 0);
 
     # Locate [package] header.
     var pkg_pos = 0;
@@ -285,10 +288,12 @@ fn _write_cyml_cyrius_pin(ver_cstr): i64 {
 fn _print_resolved_version(): i64 {
     if (file_exists("cyrius.cyml") == 1) {
         # Reuse _dep_read_cyml_cyrius_field's logic inline — small.
-        var buf = alloc(65536);
-        var n = file_read_all("cyrius.cyml", buf, 65535);
-        if (n > 0) {
-            store8(buf + n, 0);
+        # v6.6.6: the WHOLE manifest (was a 65535-byte cap): a `[package]` section past the cap
+        # was invisible, so `cyriusly use` with no argument reported the GLOBAL default for a
+        # repo that is in fact pinned. CHANGELOG [6.6.6]
+        var n = 0;
+        var buf = file_read_whole("cyrius.cyml", &n);
+        if (buf != 0 && n > 0) {
             var p = 0;
             while (p < n) {
                 if (memeq(buf + p, "[package]", 9) == 1) { break; }

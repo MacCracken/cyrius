@@ -2770,9 +2770,12 @@ fn cmd_update(): i64 {
 
     # Migrate cyrius.toml → cyrius.cyml if toml exists and cyml doesn't
     if (file_exists("cyrius.toml") == 1 && file_exists("cyrius.cyml") == 0) {
-        var toml_buf = alloc(32768);
-        var toml_n = file_read_all("cyrius.toml", toml_buf, 32767);
-        if (toml_n > 0) {
+        # v6.6.6: the WHOLE toml (was `alloc(32768)` + a 32767-byte read). The migration WRITES
+        # THE BUFFER BACK as cyrius.cyml and then DELETES cyrius.toml, so a manifest past the cap
+        # was silently truncated and the only untruncated copy removed. CHANGELOG [6.6.6]
+        var toml_n = 0;
+        var toml_buf = file_read_whole("cyrius.toml", &toml_n);
+        if (toml_buf != 0 && toml_n > 0) {
             # Write cyrius.cyml: TOML content + separator + empty body
             var cyml_sb = str_builder_new();
             var ti = 0;
