@@ -38,10 +38,12 @@
 #   m4 _gv_cx_prestore made a no-op                -> RED cx A B D only
 #   m5 replay re-resolves by FINDVAR (no record)   -> RED row K only
 #   m6 shape check dropped from _gv_fold           -> RED row I only
-#   (m1-m6 were measured before rows L/M/N existed; the review mutants below cover those)
+#   (m1-m6 were measured before rows K2/K3/L/M/N existed; the review mutants below cover those)
 #   m7 enum startup store not limited to an enum's slot -> RED rows L M N, cx N, a64 L N
 #   m8 var over an enum not given its value on cx      -> RED cx L only
-#   real tree                                      -> GREEN (14 host rows, 5 cx, 5 aarch64)
+#   m9 main.cyr no longer records the zone (no hiding)   -> RED row K2 only
+#   m10 FINDVAR drops the hidden-match fallback          -> RED row K3 only
+#   real tree                                      -> GREEN (16 host rows, 5 cx, 5 aarch64)
 # Row H is a guard, not a detector: a fn body already read the last declaration before 6.6.6.
 set -eu
 
@@ -147,6 +149,24 @@ if build "$WORK/k1.cyr" "$WORK/k1" && build "$WORK/k2.cyr" "$WORK/k2"; then
 else
     bad "row K: kernel-mode compile failed: $(head -c 200 "$WORK/k1.err" "$WORK/k2.err" 2>/dev/null)"
 fi
+# K2 — the same replay READING a name the program redeclares later: `var b = id(a);` resolved `a`
+#      to the program's `var a = 3` (the kernel replay runs after it is registered) instead of the
+#      declaration-zone `a` every other build reads (a non-kernel build of it gives b = 5). Also
+#      a superseded initializer (its sink is registered DURING the replay and must stay visible).
+NROWS=$((NROWS + 1))
+printf 'kernel;\nvar n = 0;\nvar a = 5;\nfn id(x) { n = n + 1; return x; }\nvar b = id(a);\nvar d = id(7);\nvar d = 9;\nvar z = 0;\nz = 1;\nvar a = 3;\nvar d = 4;\nz = a + b + d + n;\n' > "$WORK/k3.cyr"
+printf 'kernel;\nvar n = 0;\nvar a = 5;\nfn id(x) { n = n + 1; return x; }\nvar b = id(a);\nvar d = id(7);\nvar d = 9;\nvar z = 0;\nz = 1;\nvar c = 3;\nvar e = 4;\nz = c + b + e + n;\n' > "$WORK/k4.cyr"
+if build "$WORK/k3.cyr" "$WORK/k3" && build "$WORK/k4.cyr" "$WORK/k4"; then
+    cmp -s "$WORK/k3" "$WORK/k4" || bad "row K2: kernel-mode replay read a name from the program's later declaration"
+else
+    bad "row K2: kernel-mode compile failed: $(head -c 200 "$WORK/k3.err" "$WORK/k4.err" 2>/dev/null)"
+fi
+# K3 (guard) — a name ONLY the program declares still resolves in a kernel replay, as it did
+#      before K2's fix (a non-kernel build rejects it; the kernel ordering always accepted it, and
+#      the fix must not turn a building kernel into a failing one)
+NROWS=$((NROWS + 1))
+printf 'kernel;\nfn id(x) { return x; }\nvar b = id(c);\nvar z = 0;\nz = 1;\nvar c = 3;\nz = b;\n' > "$WORK/k5.cyr"
+build "$WORK/k5.cyr" "$WORK/k5" || bad "row K3: a kernel replay no longer finds a name only the program declares: $(head -c 200 "$WORK/k5.err")"
 
 # ---- cx leg: the tree's own cx compiler + cxvm (value is stored, not baked) ----
 NCX=0
@@ -199,7 +219,7 @@ fi
 
 # Floor, DERIVED from this file: every host row that was declared must have run.
 DECL=$(grep -c '^_row ' "$0")
-DECL=$((DECL + 2))   # rows I and K are hand-rolled
+DECL=$((DECL + 4))   # rows I, K, K2 and K3 are hand-rolled
 [ "$NROWS" -eq "$DECL" ] || bad "floor: $NROWS host rows ran, $DECL declared"
 [ "$NCX" -eq 5 ] || bad "floor: $NCX cx rows ran, want 5"
 

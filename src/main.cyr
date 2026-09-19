@@ -1876,6 +1876,9 @@ while (escan == 1) {
 # self-host stays byte-identical.
 if (_init_km == 1) {
     # Kernel mode: PARSE_PROG FIRST (top-level asm runs before gvar inits).
+    # 6.6.6: the declaration zone ends here — the deferred replay after PARSE_PROG must not
+    # resolve a name to the program's later globals (_fv_hidden). CHANGELOG [6.6.6]
+    _gv_zone_top = GVCNT(S);
     STI(S, gvar_save_ti);
     PARSE_PROG(S);
 } else {

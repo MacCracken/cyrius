@@ -1508,6 +1508,17 @@ fn _gv_ent_slot(S, gi, k, noff): i64 {
     return w - 1;
 }
 
+# Hide the top-level program's globals from FINDVAR while the replay runs (on = 1) or stop
+# (on = 0). Only a kernel build sets _gv_zone_top (main.cyr): every other build replays before
+# the program has registered anything. Globals the replay itself registers (sinks, hidden
+# temps) sit above the range and stay visible. See _fv_hidden (parse_types.cyr).
+fn _gv_hide_program(S, on): i64 {
+    _fv_hide_lo = 0;
+    _fv_hide_hi = 0;
+    if (on == 1) { if (_gv_zone_top > 0) { _fv_hide_lo = _gv_zone_top; _fv_hide_hi = GVCNT(S); } }
+    return 0;
+}
+
 # cx has no file image to bake a value into, so a superseding constant is stored FIRST, ahead
 # of every deferred initializer — the same "from program start" the image gives every other
 # target. Only a redeclaration records a value on cx (see PARSE_GVAR_REG).
@@ -1832,6 +1843,7 @@ fn PARSE_GVAR_REG(S): i64 {
 # Emit deferred global var inits (replays saved token positions)
 fn EMIT_GVAR_INITS(S): i64 {
     if (_TARGET_CX == 1) { _gv_cx_prestore(S); }   # 6.6.6: see _gv_cx_prestore
+    _gv_hide_program(S, 1);   # 6.6.6: a kernel replay reads declaration-zone globals (FINDVAR)
     var gc = L64(S + 0x19A000);
     var gi = 0;
     while (gi < gc) {
@@ -1997,6 +2009,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         }
         gi = gi + 1;
     }
+    _gv_hide_program(S, 0);
     # v6.6.0 — every fn is parsed and flagged by now, so this is the one point where a
     # pair-returning fn's OTHER return paths can be judged. Runs once; see parse.cyr.
     _warn_mixed_pair_returns(S);

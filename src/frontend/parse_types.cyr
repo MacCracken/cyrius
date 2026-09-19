@@ -799,11 +799,28 @@ fn STREQ(S, a, b): i64 {
     return 1;
 }
 
+# 6.6.6: a KERNEL build replays the declaration-zone initializers AFTER the top-level program
+# has registered its own globals, so a name read inside one (`var b = id(a);`) resolved to a
+# later `var a` of the program instead of the declaration-zone global every other build reads.
+# While that replay runs, globals in [_fv_hide_lo, _fv_hide_hi) — the program's — lose to any
+# declaration-zone match of the name (EMIT_GVAR_INITS sets the range from _gv_zone_top, which
+# main.cyr records before the kernel's PARSE_PROG). With no such match the program's global is
+# still returned, as before. CHANGELOG [6.6.6]
+var _gv_zone_top = 0;
+var _fv_hide_lo = 0;
+var _fv_hide_hi = 0;
+fn _fv_hidden(vi): i64 {
+    if (vi >= _fv_hide_hi) { return 0; }
+    if (vi < _fv_hide_lo) { return 0; }
+    return 1;
+}
+
 # Find variable by name offset, return LAST match index or -1.
 # Last-match semantics ensure each function's `var buf[N]` shadows earlier ones.
 fn FINDVAR(S, noff): i64 {
     var vcnt = GVCNT(S);
     var vi = vcnt - 1;
+    var hid = 0 - 1;   # 6.6.6: the last match inside the hidden range (see _fv_hidden)
     while (vi >= 0) {
         var stored = L64(_varn_base + vi * 8);
         # 6.6.5: a compiler-generated global temporary (top-level `switch` / `match` / `?` /
@@ -816,7 +833,9 @@ fn FINDVAR(S, noff): i64 {
         # first and the dead flag only on a match is identical semantically (a dead slot is
         # still skipped) and measured ~4 % of the whole self-compile: this loop is the hottest
         # in the front end. CHANGELOG [6.6.5]
-        if (STREQ(S, stored, noff) == 1) { if (GVDEAD(S, vi) == 0) {
+        if (STREQ(S, stored, noff) == 1) { if (GVDEAD(S, vi) == 0) { if (_fv_hidden(vi) == 1) {
+            if (hid < 0) { hid = vi; }
+        } else {
             # v6.5.0 Phase 2b — the cross-file `private` check for GLOBAL vars lives
             # HERE, inside the single resolver, rather than being wired at each call
             # site. FINDVAR is pure lookup and every global reference goes through it,
@@ -832,10 +851,11 @@ fn FINDVAR(S, noff): i64 {
             # can shadow another file's global any more.
             _vis_check_var(S, vi, noff);
             return vi;
-        } }
+        } } }
         vi = vi - 1;
     }
-    return 0 - 1;
+    if (hid >= 0) { _vis_check_var(S, hid, noff); }
+    return hid;
 }
 
 # Cross-file access to a file-private global. Same hard-error contract as the fn side

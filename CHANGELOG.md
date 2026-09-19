@@ -174,7 +174,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   name superseded (`_gv_supersede`, flag bits above the token index in the replay entry, honoured
   by `_gv_target`); cx, which has no image to bake into, stores those values ahead of the deferred
   initializers (`_gv_cx_prestore`); each replay entry records the slot it declared, so the replay
-  no longer re-resolves the name. A var over an ENUM constant (`var CLOCK_MONOTONIC = 1`) is the
+  no longer re-resolves the name it STORES to — and in a kernel build a name the initializer
+  READS no longer resolves to the program's later `var` of the same name either
+  (`var b = id(a);` read the program's `var a = 3` instead of the declaration-zone `a` every
+  other build reads): while the replay runs, FINDVAR ranks the program's globals below any
+  declaration-zone match (`_fv_hidden`, `src/frontend/parse_types.cyr`; the zone end is
+  recorded in `src/main.cyr` before the kernel's `PARSE_PROG`). A name only the program
+  declares still resolves, as it did. A var over an ENUM constant (`var CLOCK_MONOTONIC = 1`) is the
   last definition too: at 6.6.5 the enum's startup store (`PARSE_ENUM_DEF`, which runs before
   every deferred initializer and resolves the name last-match) wrote the ENUM's value into the
   var's slot, so `enum E { K = 5; } var b = K; var K = 7;` gave `b == 5` while a fn read 7, and
@@ -188,7 +194,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   over an enum constant or a merged same-value slot (e.g. `lib/chrono.cyr`'s `CLOCK_MONOTONIC`);
   124 `programs/`/`benches/`/`fuzz/` sources compile with the same result (4 binaries differ, same
   cause); all seven forks compile; self-compile time unchanged (~852 ms either way). cycc
-  **1,306,640 → 1,310,848 B**. Verified under qemu-aarch64, wine (PE) and cxvm — not hardware;
+  **1,306,640 → 1,310,864 B**. Verified under qemu-aarch64, wine (PE) and cxvm — not hardware;
   the new crossos test carries it to ecb/ach/cass/pi.
 
 ### Changed
