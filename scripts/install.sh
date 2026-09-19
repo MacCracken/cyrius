@@ -334,7 +334,7 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
             return 1
         fi
         local err_log
-        err_log=$(mktemp)
+        err_log=$(mktemp) && [ -f "$err_log" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
         if cat "$source" | ./build/cycc > "build/$target" 2>"$err_log"; then
             chmod +x "build/$target"
             info "rebuilt $target from $source"
@@ -419,7 +419,7 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
                 # skipped by the frozen binary's mtime. See issue
                 # 2026-06-03-windows-pe-syscall-surface-blocks-detection.md.
                 if [ -f src/main_win.cyr ] && [ -x build/cycc ]; then
-                    _cw_err=$(mktemp)
+                    _cw_err=$(mktemp) && [ -f "$_cw_err" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
                     if cat src/main_win.cyr | CYRIUS_TARGET_WIN=1 ./build/cycc > build/cycc_win 2>"$_cw_err"; then
                         chmod +x build/cycc_win
                         info "rebuilt cycc_win from src/main_win.cyr (CYRIUS_TARGET_WIN=1 → PE32+)"
@@ -483,14 +483,17 @@ if [ "$REFRESH_ONLY" -eq 1 ]; then
         else _CC=""
         fi
         if [ -n "$_CC" ]; then
+            # v6.6.6: a CHECKED private temp, not "/tmp/dlopen_err_$$" — a pid is predictable
+            # and the redirect follows a symlink another user planted there. CHANGELOG [6.6.6]
+            _dl_err=$(mktemp) && [ -f "$_dl_err" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
             if "$_CC" -O2 -fPIE -pie -o "$CYRIUS_HOME/dlopen-helper" \
-                programs/dlopen-helper.c -ldl 2>/tmp/dlopen_err_$$; then
+                programs/dlopen-helper.c -ldl 2>"$_dl_err"; then
                 info "dlopen-helper rebuilt"
             else
                 warn "dlopen-helper rebuild failed:"
-                sed 's/^/    /' /tmp/dlopen_err_$$ >&2
+                sed 's/^/    /' "$_dl_err" >&2
             fi
-            rm -f /tmp/dlopen_err_$$
+            rm -f "$_dl_err"
             cp programs/dlopen-helper.c "$CYRIUS_HOME/versions/$VERSION/bin/dlopen-helper.c"
         fi
     fi
@@ -616,7 +619,10 @@ mkdir -p "$CYRIUS_HOME/versions/$VERSION/bin"
 
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 TARBALL="cyrius-${VERSION}-${ARCH}-${OS_SUFFIX}.tar.gz"
-TMPDIR=$(mktemp -d)
+# v6.6.6: CHECKED. An unchecked mktemp -d leaves TMPDIR empty on a full/unwritable temp dir, and
+# every "$TMPDIR/x" below then becomes "/x" — the install writes at the filesystem ROOT (and the
+# closing `rm -rf "$TMPDIR"` becomes `rm -rf ""`). CHANGELOG [6.6.6]
+TMPDIR=$(mktemp -d) && [ -d "$TMPDIR" ] || { echo "error: mktemp -d failed — no private directory to stage the install in" >&2; exit 1; }
 installed=0
 
 # CYRIUS_INSTALL_TARBALL=/path/to/tarball installs from a local file
@@ -788,15 +794,23 @@ if [ "$installed" -eq 0 ]; then
     sh bootstrap/bootstrap.sh
     chmod +x build/cycc
 
-    # Verify self-hosting
-    cat src/main.cyr | ./build/cycc > /tmp/cc5_verify
-    chmod +x /tmp/cc5_verify
-    cat src/main.cyr | /tmp/cc5_verify > /tmp/cc5_verify2
-    if cmp -s /tmp/cc5_verify /tmp/cc5_verify2; then
+    # Verify self-hosting.
+    # v6.6.6: staged in the private $TMPDIR, not at /tmp/cc5_verify{,2}. Those were fixed names
+    # in a world-writable directory holding a COMPILER this script then ran: another local user
+    # could create them first (the sticky bit stops a delete, not a create) and the `>` would
+    # follow their symlink, or they could replace the binary between the two runs. Two installs
+    # at once also clobbered each other. Same defect as CVE-44 in scripts/ci.sh. CHANGELOG [6.6.6]
+    _sh1="$TMPDIR/cc5_verify"
+    _sh2="$TMPDIR/cc5_verify2"
+    cat src/main.cyr | ./build/cycc > "$_sh1"
+    chmod +x "$_sh1"
+    cat src/main.cyr | "$_sh1" > "$_sh2"
+    if cmp -s "$_sh1" "$_sh2"; then
         info "self-hosting verified"
     else
         warn "self-hosting check failed, using committed cycc"
     fi
+    rm -f "$_sh1" "$_sh2"
 
     # Build tools from cyrius.cyml [release].bins + cross_bins
     # (single source of truth introduced at v5.4.18). cyrius itself is
@@ -813,7 +827,7 @@ if [ "$installed" -eq 0 ]; then
         local target="$1"
         local source="$2"
         local err_log
-        err_log=$(mktemp)
+        err_log=$(mktemp) && [ -f "$err_log" ] || { echo "error: mktemp failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
         if cat "$source" | ./build/cycc > "./build/$target" 2>"$err_log"; then
             chmod +x "./build/$target"
             if [ -s "$err_log" ]; then sed 's/^/    /' "$err_log" >&2; fi
@@ -896,7 +910,6 @@ if [ "$installed" -eq 0 ]; then
     fi
 
     cd /
-    rm -f /tmp/cc5_verify /tmp/cc5_verify2
     info "bootstrapped from source"
 fi
 

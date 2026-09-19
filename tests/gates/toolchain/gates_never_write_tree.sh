@@ -493,7 +493,14 @@ fi
 #       own temp, /tmp/cyrius-<pid> by design, CVE-35/36) and /tmp/.wine-* (wineserver's socket).
 # Self-tested on each shape and on clean look-alikes first.
 _mktemp_bad() {  # prints "<line>: <text>" for every non-canonical mktemp / hand-built temp dir
-    awk '
+    # A script that assigns its OWN `TMPDIR` from a CHECKED `mktemp -d` (scripts/install.sh,
+    # bench-history.sh) then legitimately spells every path "$TMPDIR/x": that is the private
+    # directory, not the shared one. The hand-built-path rule below is about
+    # "${TMPDIR:-/tmp}/name.$$" — an unchecked path in whatever TMPDIR happens to be — so it is
+    # skipped for those files. CHANGELOG [6.6.6]
+    _mb_own=0
+    grep -qE '^[ \t]*TMPDIR=\$\(mktemp -d\) && \[ -d "\$TMPDIR" \] \|\| \{' "$1" && _mb_own=1
+    awk -v own="$_mb_own" '
     /^[ \t]*#/ { next }
     {
         line = $0
@@ -526,6 +533,7 @@ _mktemp_bad() {  # prints "<line>: <text>" for every non-canonical mktemp / hand
         # a temp PATH built from TMPDIR by hand, however spelled (${TMPDIR:-/tmp}/, "${TMPDIR:-/tmp}"/,
         # $TMPDIR/, ${TMPDIR}/) — a mktemp TEMPLATE argument is the one legitimate use
         t = line; gsub(/mktemp[^)]*/, "M", t)
+        if (own) next
         if (t ~ /\$TMPDIR"?\// || t ~ /\$\{TMPDIR(:-[^}]*)?\}"?\//) print NR ": " line
     }' "$1"
 }
@@ -592,6 +600,54 @@ elif [ "$bad5" != 0 ]; then
     FAIL=1
 elif [ "$st5" = 0 ]; then
     echo "  ok: axis 5: $n5 gate scripts ($nmk mktemp lines) take every temp dir from a checked mktemp and name no fixed /tmp path; $ncyr check-driver files carry no \"/tmp/<name>\" (self-tested on 14 shapes + 2 clean files)"
+fi
+
+# ── axis 7: STATIC — every scripts/*.sh, not just the gates ─────────────────────────────
+# v6.6.6 bite 17f. Axis 5 covers tests/gates/**, scripts/check.sh and the `*-gate.sh` scripts
+# check.sh calls. The REST of scripts/ had exactly the same defect and nothing looking at it:
+# the CI installer staged a release tarball AND the three inputs to its signature check at six
+# fixed /tmp names (CVE-44, bite 17e); install.sh compiled a COMPILER to /tmp/cc5_verify, made
+# it executable and RAN it; bench-history.sh built and ran every benchmark under a hand-made
+# "/tmp/cyr_bench_$$"; cass-install-gate.sh staged a Windows tarball at /tmp/_co_windist;
+# version-bump.sh read the seed-derive verdict that decides whether a release is tagged out of
+# /tmp/_vb_seed.out. Two shapes, both already detected by axis 5's functions, which is why this
+# axis reuses them verbatim rather than writing a second pair that could drift.
+#
+# ⚠ ALLOWLIST, and why it is short. A fixed /tmp name is allowed only where the path is a
+# CONTRACT with something outside this repo, and each entry names it. An entry that matches no
+# live line FAILS, so the list cannot rot into a blanket pass.
+ALLOW7='scripts/cross-os-selfhost.sh|the /tmp/_co_* staging names the cross-OS self-host leg scps to ecb/ach/cass/pi. NOT fixed here: verifying a change needs all four SSH hosts, which this lane cannot reach, and a silently-wrong path there breaks the release gate (CLAUDE.md already warns to run it ONE host at a time for exactly this reason). Tracked for the next release.'
+n7=0; bad7=0; nhit7=0
+: > "$W/allow7.live"
+for g in $(find scripts -maxdepth 1 -name '*.sh' | LC_ALL=C sort); do
+    n7=$((n7 + 1))
+    allowed=0
+    case "$ALLOW7" in *"$g|"*) allowed=1 ;; esac
+    h=$(_mktemp_bad "$g")
+    if [ -n "$h" ]; then
+        nhit7=$((nhit7 + 1))
+        [ "$allowed" = 1 ] && printf '%s\n' "$g" >> "$W/allow7.live" \
+            || { echo "$h" | sed "s|^|FAIL: axis 7: $g: an UNCHECKED temp dir (use V=\$(mktemp -d) \&\& [ -d \"\$V\" ] \|\| { echo …; exit 1; }) at line |"; bad7=1; }
+    fi
+    h=$(_fixed_tmp_sh "$g")
+    if [ -n "$h" ]; then
+        nhit7=$((nhit7 + 1))
+        [ "$allowed" = 1 ] && printf '%s\n' "$g" >> "$W/allow7.live" \
+            || { echo "$h" | sed "s|^|FAIL: axis 7: $g: a FIXED /tmp name — shared with every other user on the box and with every concurrent run — at line |"; bad7=1; }
+    fi
+done
+# every allowlist entry must still name a live offender
+printf '%s\n' "$ALLOW7" | grep . | cut -d'|' -f1 | while read -r af; do
+    grep -qxF "$af" "$W/allow7.live" || { echo "FAIL: axis 7: allowlist entry '$af' matches no live fixed-/tmp or unchecked-mktemp line — remove it, it is hiding nothing and could hide the next one"; }
+done > "$W/stale7"
+[ -s "$W/stale7" ] && { cat "$W/stale7"; bad7=1; }
+if [ "$n7" -lt 20 ]; then
+    echo "FAIL: axis 7: scanned $n7 scripts/*.sh (floor 20) — the scan read nothing"; FAIL=1
+elif [ "$bad7" != 0 ]; then
+    FAIL=1
+else
+    nallow7=$(printf '%s\n' "$ALLOW7" | grep -c .)
+    echo "  ok: axis 7: all $n7 scripts/*.sh take every temp from a checked mktemp and name no fixed /tmp path ($nallow7 allowlisted, each still live; detectors shared with axis 5)"
 fi
 
 # ── axis 6: STATIC — the TESTS check.sh runs share no fixed name either ─────────────────

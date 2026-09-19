@@ -37,7 +37,9 @@ SEED="bootstrap/asm"
 [ -f build/cycc ] || { echo "ERROR: build/cycc missing" >&2; exit 1; }
 chmod +x "$SEED" 2>/dev/null || true
 
-TMP=$(mktemp -d)
+# v6.6.6: CHECKED — an unchecked mktemp leaves the variable EMPTY on a full or unwritable
+# temp dir, and every "$V/x" below then becomes "/x". CHANGELOG [6.6.6]
+TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
 trap "rm -rf $TMP" EXIT
 
 echo "=== seed -> cybs -> cycc derivation (seed: $(wc -c < "$SEED") bytes) ==="

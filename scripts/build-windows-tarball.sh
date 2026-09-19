@@ -20,7 +20,9 @@ cd "$ROOT"
 
 VER=$(tr -d '[:space:]' < VERSION)
 STAGE="cyrius-${VER}-x86_64-windows"
-WORK=$(mktemp -d)
+# v6.6.6: CHECKED — an unchecked mktemp leaves the variable EMPTY on a full or unwritable
+# temp dir, and every "$V/x" below then becomes "/x". CHANGELOG [6.6.6]
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 
 [ -x build/cycc ] || { echo "ERROR: build/cycc missing (run bootstrap first)"; exit 1; }

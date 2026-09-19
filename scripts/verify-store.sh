@@ -119,7 +119,9 @@ restore_slot() {   # $1 = version
         fi
     done
     # cross-bins: rebuild from the tag's sources with the tag's OWN cycc, in a temp tree
-    T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+    # v6.6.6: CHECKED — an empty T makes every "$T/x" below "/x". CHANGELOG [6.6.6]
+    T=$(mktemp -d) && [ -d "$T" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+    trap 'rm -rf "$T"' EXIT
     git archive "refs/tags/$v" src lib | tar -x -C "$T"
     git show "refs/tags/$v:build/cycc" > "$T/cycc" && chmod +x "$T/cycc"
     # ⚠ Recipes mirror scripts/install.sh's cross-bin build EXACTLY — cycc_win is the PE32+

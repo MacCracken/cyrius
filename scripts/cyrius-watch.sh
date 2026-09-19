@@ -14,7 +14,11 @@ if [ ! -f "$SRC" ]; then echo "error: $SRC not found"; exit 1; fi
 if [ ! -x "$CC" ]; then echo "error: cycc not found"; exit 1; fi
 
 mkdir -p "$(dirname "$OUT")"
-STAMP="/tmp/cyrius_watch_stamp_$$"
+# v6.6.6: a CHECKED private temp, not a hand-built "/tmp/<name>.$$" — a pid is predictable and
+# reused, and the mtime this stamp carries decides whether the watcher rebuilds. CHANGELOG [6.6.6]
+_watch_d=$(mktemp -d) && [ -d "$_watch_d" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+trap 'rm -rf "$_watch_d"' EXIT INT TERM
+STAMP="$_watch_d/stamp"
 touch "$STAMP"
 
 echo "cyrius watch: $SRC → $OUT (every ${INTERVAL}s)"

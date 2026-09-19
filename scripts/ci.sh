@@ -27,11 +27,7 @@ URL="https://github.com/MacCracken/cyrius/releases/download/${VERSION}/${TARBALL
 # checked against THEIR key. A verification whose inputs another user can swap is not a
 # verification. mktemp -d is 0700 and unpredictable, so there is nothing to pre-create and
 # nothing to swap. CHANGELOG [6.6.6]
-TD=$(mktemp -d 2>/dev/null) || TD=""
-if [ -z "$TD" ] || [ ! -d "$TD" ]; then
-    echo "error: could not create a private temp directory (TMPDIR=${TMPDIR:-/tmp}) — refusing to stage a release in a shared one" >&2
-    exit 1
-fi
+TD=$(mktemp -d) && [ -d "$TD" ] || { echo "error: could not create a private temp directory (TMPDIR=${TMPDIR:-/tmp}) — refusing to stage a release in a shared one" >&2; exit 1; }
 chmod 700 "$TD" 2>/dev/null || true
 trap 'rm -rf "$TD"' EXIT
 trap 'rm -rf "$TD"; exit 1' INT TERM HUP

@@ -47,7 +47,9 @@ if [ ! -f "$SRC" ]; then
     exit 1
 fi
 
-TMPDIR=$(mktemp -d)
+# v6.6.6: CHECKED — an unchecked mktemp leaves the variable EMPTY on a full or unwritable
+# temp dir, and every "$V/x" below then becomes "/x". CHANGELOG [6.6.6]
+TMPDIR=$(mktemp -d) && [ -d "$TMPDIR" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
 trap "rm -rf $TMPDIR" EXIT
 
 STAGE_A="$TMPDIR/cc5_stage_a"

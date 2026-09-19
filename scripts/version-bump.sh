@@ -185,16 +185,21 @@ for _f in src/main.cyr src/main_aarch64.cyr src/main_win.cyr \
     [ -f "$_f" ] && touch "$_f"
 done
 if [ -x build/cycc ]; then
-    if cat src/main.cyr | ./build/cycc > build/cycc.new 2>/tmp/cycc-rebuild.err; then
+    # v6.6.6: CHECKED private temps, not /tmp/cycc-rebuild.err + /tmp/_vb_seed.out — fixed names
+    # in a world-writable directory, carrying the diagnostics that decide whether a release is
+    # tagged. CHANGELOG [6.6.6]
+    _vb_d=$(mktemp -d) && [ -d "$_vb_d" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+    trap 'rm -rf "$_vb_d"' EXIT
+    if cat src/main.cyr | ./build/cycc > build/cycc.new 2>"$_vb_d/cycc-rebuild.err"; then
         mv build/cycc.new build/cycc
         chmod +x build/cycc
         echo "  > cycc rebuilt for $NEW"
     else
         echo "  ! cycc rebuild failed (non-fatal):" >&2
-        sed 's/^/    /' /tmp/cycc-rebuild.err >&2
+        sed 's/^/    /' "$_vb_d/cycc-rebuild.err" >&2
         rm -f build/cycc.new
     fi
-    rm -f /tmp/cycc-rebuild.err
+    rm -f "$_vb_d/cycc-rebuild.err"
 fi
 
 # 6. Install-snapshot refresh (v5.4.18): reconcile
@@ -229,10 +234,14 @@ fi
 # See: scripts/release-gate.sh, feedback_seed_derive_mandatory_cybs_limits.
 if [ "${CYRIUS_SKIP_SEED_GATE:-0}" != "1" ] && [ -x scripts/seed-derive-cycc.sh -o -f scripts/seed-derive-cycc.sh ]; then
     echo "  > seed-derive gate (seed -> cybs -> cycc)..."
-    if sh scripts/seed-derive-cycc.sh > /tmp/_vb_seed.out 2>&1 && grep -q "machine-derivable from the" /tmp/_vb_seed.out; then
+    if [ -z "${_vb_d:-}" ]; then
+        _vb_d=$(mktemp -d) && [ -d "$_vb_d" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+        trap 'rm -rf "$_vb_d"' EXIT
+    fi
+    if sh scripts/seed-derive-cycc.sh > "$_vb_d/seed.out" 2>&1 && grep -q "machine-derivable from the" "$_vb_d/seed.out"; then
         echo "  > seed-derive OK (build/cycc is machine-derivable from the seed)"
     else
-        tail -6 /tmp/_vb_seed.out >&2
+        tail -6 "$_vb_d/seed.out" >&2
         echo "" >&2
         echo "  ************************************************************" >&2
         echo "  SEED DERIVE FAILED after the $NEW rebuild — DO NOT TAG $NEW." >&2

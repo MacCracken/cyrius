@@ -60,7 +60,9 @@ OLD_REF="${1:-HEAD}"
 
 [ -x build/cycc ] || { echo "ERROR: build/cycc missing — run bootstrap first"; exit 2; }
 
-T=$(mktemp -d) || exit 2
+# v6.6.6: `|| exit 2` catches a non-zero mktemp but not an EMPTY T; every "$T/x" below would
+# then be "/x". CHANGELOG [6.6.6]
+T=$(mktemp -d) && [ -d "$T" ] || { echo "ERROR: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 2; }
 trap 'rm -rf "$T"' EXIT INT TERM
 
 # --- OLD cycc: the committed binary at OLD_REF -------------------------------
@@ -166,7 +168,7 @@ if [ "$RC" -eq 0 ]; then
 else
     echo "DIFFERENTIAL: RED — codegen/status diffs found (listed above)."
     echo "A refactor MUST be byte-identical. Investigate each:"
-    echo "  D=<input>; \"$OLD\" < \"\$D\" > /tmp/o; build/cycc < \"\$D\" > /tmp/n; cmp /tmp/o /tmp/n"
+    echo "  in a scratch dir \$W:  D=<input>; \"$OLD\" < \"\$D\" > \"\$W/o\"; build/cycc < \"\$D\" > \"\$W/n\"; cmp \"\$W/o\" \"\$W/n\""
 fi
 echo "================================================================"
 exit $RC

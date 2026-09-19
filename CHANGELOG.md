@@ -1480,6 +1480,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hermetic — `curl`/`cyrsign`/the checksum tools stubbed on `PATH` over a fake release, no
   network), the 6.6.5 script verbatim reddening axes 2, 3 and 4.
 
+- **Nine more `scripts/*.sh` staged work at fixed `/tmp` names or took an unchecked `mktemp`**
+  (bite 17f) — the same defect as CVE-44, one directory over. `install.sh` compiled a **compiler**
+  to `/tmp/cc5_verify`, made it executable and ran it (and its `TMPDIR=$(mktemp -d)` was
+  unchecked, so an empty `TMPDIR` would have made every `"$TMPDIR/x"` below it `/x` — the install
+  writing at the filesystem root, with the closing `rm -rf "$TMPDIR"` becoming `rm -rf ""`);
+  `bench-history.sh` built and ran every benchmark under a hand-made `"/tmp/cyr_bench_$$"`;
+  `cass-install-gate.sh` staged a Windows tarball at `/tmp/_co_windist`; `mac-diagnose.sh` wrote
+  `/tmp/cc5_stdout`; `version-bump.sh` read the seed-derive verdict that decides whether a
+  release is tagged out of `/tmp/_vb_seed.out`; `cyrius-watch.sh`, `differential.sh`,
+  `verify-store.sh` and four `build-*.sh`/`release-gate.sh`/`seed-derive-cycc.sh` took unchecked
+  `mktemp`s. All fixed to a checked private directory with an `EXIT` trap. **Pinned by a new
+  axis 7 in `tests/gates/toolchain/gates_never_write_tree.sh`**, which applies the *same two
+  detectors* axis 5 already runs over the gates — rather than a second pair that could drift —
+  to every `scripts/*.sh`. Mutation-proven by restoring each script's 6.6.5 body, nine for nine
+  RED. ⚠ One allowlist entry: `scripts/cross-os-selfhost.sh`'s ~40 `/tmp/_co_*` staging names.
+  It is the same defect (and the reason CLAUDE.md already says to run that script one host at a
+  time), but verifying a change to it needs all four SSH verification hosts, which this lane
+  cannot reach; the entry carries that reason and **must stay live** — making it stale reddens
+  the axis and unmasks the file. The detector also learned that a script assigning its *own*
+  `TMPDIR` from a checked `mktemp -d` may then spell `"$TMPDIR/x"` freely; that is the private
+  directory, not the shared one.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

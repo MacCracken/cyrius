@@ -23,12 +23,17 @@ codesign --verify --verbose "$CC5" 2>&1
 echo
 
 echo "=== Direct run ==="
-"$CC5" < /dev/null > /tmp/cc5_stdout 2> /tmp/cc5_stderr
+# v6.6.6: a CHECKED private temp, not /tmp/cc5_stdout + /tmp/cc5_stderr — fixed names in a
+# world-writable directory, and the redirect follows a symlink another user planted there.
+# CHANGELOG [6.6.6]
+_md=$(mktemp -d) && [ -d "$_md" ] || { echo "ERROR: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'rm -rf "$_md"' EXIT
+"$CC5" < /dev/null > "$_md/cc5_stdout" 2> "$_md/cc5_stderr"
 ec=$?
 echo "exit=$ec  (132=SIGILL, 137=SIGKILL, 139=SIGSEGV, 0=clean)"
-echo "stdout bytes: $(wc -c < /tmp/cc5_stdout)"
+echo "stdout bytes: $(wc -c < "$_md/cc5_stdout")"
 echo "stderr:"
-cat /tmp/cc5_stderr | head -5
+head -5 "$_md/cc5_stderr"
 echo
 
 echo "=== Crash dump (if one landed) ==="

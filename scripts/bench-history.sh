@@ -19,7 +19,11 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CC="$REPO_ROOT/build/cycc"
 HISTORY_FILE="$REPO_ROOT/bench-history.csv"
 BENCHMARKS_MD="$REPO_ROOT/BENCHMARKS.md"
-TMPDIR="/tmp/cyr_bench_$$"
+# v6.6.6: a CHECKED private dir. "/tmp/cyr_bench_$$" is a hand-built name in a world-writable
+# directory — a pid is predictable and reused, so another local user could create it first (the
+# sticky bit stops a delete, not a create) and every benchmark binary this script builds and RUNS
+# would be written through whatever they left there. CHANGELOG [6.6.6]
+TMPDIR=$(mktemp -d) && [ -d "$TMPDIR" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BRANCH=$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null || echo "unknown")
@@ -177,7 +181,7 @@ bench_cmd "compiler/self_compile" "cat $REPO_ROOT/src/main.cyr | $CC > /dev/null
 # needs history already accumulated at its entry). One extra self-compile; the profiler
 # line goes to stderr as: `prof: compile NNN ms (pp=NN lex=NN gvar=NN parse=NN fixup=NN
 # emit=NN write=NN ms)`. Phases are ms-granularity (profiler resolution); recorded as ns.
-prof_tmp=$(mktemp)
+prof_tmp=$(mktemp) && [ -f "$prof_tmp" ] || { echo "error: mktemp failed" >&2; exit 1; }
 cat "$REPO_ROOT/src/main.cyr" | CYRIUS_PROF=1 $CC > /dev/null 2>"$prof_tmp"
 prof_line=$(grep '^prof:' "$prof_tmp" | head -1)
 rm -f "$prof_tmp"

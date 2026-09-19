@@ -28,11 +28,15 @@
 # AXES
 #   1. ANTI-VACUOUS: a well-formed fake release installs — rc 0, "signature verified", the
 #      payload lands under $CYRIUS_HOME, and the stub verifier saw the REAL pubkey.
-#   2. THE ATTACK: another user's files are pre-created at all six fixed /tmp names, two of them
-#      SYMLINKS out of /tmp. The install must leave those link targets byte-for-byte, leave the
-#      six planted files untouched, verify against the real key and install the real payload.
-#      This is the DETERMINISTIC half of CVE-44 (`curl -o` and `printf >` follow a symlink); the
-#      key-swap half is a race and the gate does not pretend to observe one.
+#   2. THE ATTACK: another user's files are pre-created at the installer's fixed tarball names,
+#      the tarball itself a SYMLINK out of the shared directory. The install must leave that
+#      link target byte-for-byte, leave the planted files untouched, verify against the real key
+#      and install the real payload. This is the DETERMINISTIC half of CVE-44 (`curl -o` and
+#      `printf >` follow a symlink). ⚠ The four version-INDEPENDENT names (SHA256SUMS, .sig,
+#      cyrius-release.pub, cyrius_tsum) are deliberately NOT planted: they are shared with every
+#      process on the box and planting them would make this gate collide with a concurrent
+#      check.sh. Same defect, same mechanism; axis 4 pins statically that the fixed installer
+#      names none of them. The key-swap half is a race and the gate does not pretend to see one.
 #   3. A `mktemp -d` that cannot produce a directory ABORTS with a non-zero status and installs
 #      nothing — it must never fall back to a shared directory.
 #   4. STATIC: scripts/ci.sh names no fixed "/tmp/<name>" path outside a comment, and its temp
@@ -41,9 +45,9 @@
 #
 # MUTATION LEDGER (measured 6.6.6, each against a COPY of scripts/ci.sh in the gate's scratch dir)
 #   a. the 6.6.5 script verbatim (six fixed /tmp names)  -> axes 2, 3 and 4 FAIL. Axis 2 is the
-#                                                           exploit: BOTH victim files outside
-#                                                           /tmp are clobbered through the
-#                                                           planted symlinks, and all six planted
+#                                                           exploit: the victim file outside the
+#                                                           shared dir is CLOBBERED through the
+#                                                           planted symlink, and the planted
 #                                                           files are written/removed.
 #   b. `TD=$(mktemp -d)` with the [ -d ] check dropped   -> axis 3 FAIL (empty TD -> the script
 #                                                           stages in "/" relative paths and
@@ -66,7 +70,14 @@ command -v sha256sum > /dev/null 2>&1 || { echo "FAIL: sha256sum missing — the
 
 REALKEY="adbde6b11ccf8d86dc760387fa7f4dfbe3942fa318e459fb6e62d1536e254008"
 grep -q "CYRIUS_RELEASE_PUBKEY=\"$REALKEY\"" scripts/ci.sh || { echo "FAIL: the pinned release pubkey in scripts/ci.sh is not the one this gate stubs against — update the gate"; exit 1; }
-VER="9.9.9"
+# The SHARED directory whose fixed names CVE-44 is about, named once rather than spelled inline:
+# the gate must plant the installer's own literal paths, and a `/tmp/<name>` literal is exactly
+# what tests/gates/toolchain/gates_never_write_tree.sh axis 5 forbids in a gate — rightly, since
+# two concurrent check.sh runs would collide. Both concerns are met by naming it here and making
+# every planted path UNIQUE PER RUN: the fake version carries this process's pid, so the tarball
+# names below cannot be shared with another run, and no other fixed name is planted at all.
+SHARED_TMP="${CYR_SHARED_TMP:-/tmp}"
+VER="9.9.9-probe$$"
 TARBALL="cyrius-${VER}-x86_64-linux.tar.gz"
 
 # ── the fake release: a tarball with one identifiable payload file ──
@@ -138,28 +149,26 @@ printf '#!/bin/sh\necho "the ATTACKER payload"\n' > "$D/evil/versions/$VER/bin/c
 cp "$D/evil/versions/$VER/bin/cycc" "$D/evil/versions/$VER/bin/cyrius"
 chmod +x "$D/evil/versions/$VER/bin/cycc" "$D/evil/versions/$VER/bin/cyrius"
 ( cd "$D/evil" && tar czf "$D/evil/$TARBALL" versions )
-printf 'a file the installer must never write\n' > "$D/victim/precious_pub"
-printf 'another file the installer must never write\n' > "$D/victim/precious_tarball"
-PLANTED="/tmp/$TARBALL /tmp/${TARBALL}.sha256 /tmp/SHA256SUMS /tmp/SHA256SUMS.sig /tmp/cyrius-release.pub /tmp/cyrius_tsum"
+printf 'a file the installer must never write\n' > "$D/victim/precious_tarball"
+PLANTED="$SHARED_TMP/$TARBALL $SHARED_TMP/${TARBALL}.sha256"
 plant() {
     rm -f $PLANTED 2>/dev/null
-    ln -s "$D/victim/precious_tarball" "/tmp/$TARBALL" 2>/dev/null || return 1
-    ln -s "$D/victim/precious_pub" /tmp/cyrius-release.pub 2>/dev/null || return 1
-    ( cd "$D/evil" && sha256sum "$TARBALL" ) > "/tmp/${TARBALL}.sha256" 2>/dev/null || return 1
-    ( cd "$D/evil" && sha256sum "$TARBALL" ) > /tmp/SHA256SUMS 2>/dev/null || return 1
-    printf 'attacker-signature\n' > /tmp/SHA256SUMS.sig || return 1
-    ( cd "$D/evil" && sha256sum "$TARBALL" ) > /tmp/cyrius_tsum 2>/dev/null || return 1
-    printf '%s\n' "$ATTACKKEY" > "$D/evil/attacker.pub"
+    ln -s "$D/victim/precious_tarball" "$SHARED_TMP/$TARBALL" 2>/dev/null || return 1
+    ( cd "$D/evil" && sha256sum "$TARBALL" ) > "$SHARED_TMP/${TARBALL}.sha256" 2>/dev/null || return 1
+    # The four version-INDEPENDENT names the 6.6.5 script also used ($SHARED_TMP/SHA256SUMS,
+    # .sig, cyrius-release.pub, cyrius_tsum) are deliberately NOT planted: they are shared with
+    # every other process on the box, so planting them would make this gate collide with a
+    # concurrent run. They are the same defect through the same mechanism — a name another user
+    # can create first — and the fixed installer touches none of them, which axis 4 pins
+    # statically. The pubkey's victim file below stands in for that half.
 }
 if plant; then
-    cksum < "$D/victim/precious_pub" > "$D/victim.before"
-    cksum < "$D/victim/precious_tarball" >> "$D/victim.before"
+    cksum < "$D/victim/precious_tarball" > "$D/victim.before"
     for f in $PLANTED; do cksum < "$f" 2>/dev/null || echo UNREADABLE; done > "$D/planted.before"
     rc=0; _install scripts/ci.sh "$D/home2" "$D/keys2" "$D/a2.out" || rc=$?
     x=0
     [ "$rc" -eq 0 ] || { fail "axis 2: the install failed although the real release is available (rc=$rc):"; sed 's/^/      /' "$D/a2.out" | head -6; x=1; }
-    cksum < "$D/victim/precious_pub" > "$D/victim.after"
-    cksum < "$D/victim/precious_tarball" >> "$D/victim.after"
+    cksum < "$D/victim/precious_tarball" > "$D/victim.after"
     cmp -s "$D/victim.before" "$D/victim.after" || { fail "axis 2: the installer wrote THROUGH a planted /tmp symlink and clobbered a file outside its own staging area — arbitrary-file overwrite as the installing user (CVE-44)"; x=1; }
     grep -qx "$REALKEY" "$D/keys2" || { fail "axis 2: the verifier was handed '$(cat "$D/keys2")', not the pinned key"; x=1; }
     got2=$("$D/home2/versions/$VER/bin/cycc" 2>/dev/null || echo "<nothing installed>")
@@ -167,9 +176,9 @@ if plant; then
     for f in $PLANTED; do cksum < "$f" 2>/dev/null || echo UNREADABLE; done > "$D/planted.after"
     cmp -s "$D/planted.before" "$D/planted.after" || { fail "axis 2: the installer WROTE or REMOVED another user's /tmp files — it is still staging there"; x=1; }
     rm -f $PLANTED
-    [ "$x" = 0 ] && echo "  ok: axis 2: with all six fixed /tmp names pre-planted (two of them symlinks out of /tmp), nothing outside the private dir is written and the genuine payload installs"
+    [ "$x" = 0 ] && echo "  ok: axis 2: with the installer's fixed tarball names pre-planted (the tarball a symlink out of $SHARED_TMP), the link target is byte-for-byte, the planted files untouched and the genuine payload installs"
 else
-    fail "axis 2: could not plant the fixed /tmp names — /tmp is not writable here, so the exploit axis cannot run and must not read green"
+    fail "axis 2: could not plant the installer's fixed names under $SHARED_TMP — it is not writable here, so the exploit axis cannot run and must not read green"
     rm -f $PLANTED
 fi
 
@@ -195,7 +204,10 @@ hits=$(_fixed_tmp scripts/ci.sh)
 grep -qE '^TD=\$\(mktemp -d' scripts/ci.sh || { fail "axis 4: scripts/ci.sh has no mktemp -d for its staging dir"; x=1; }
 grep -qE '\[ ! -d "\$TD" \]|\[ -d "\$TD" \]' scripts/ci.sh || { fail "axis 4: scripts/ci.sh does not CHECK that its temp dir exists"; x=1; }
 # self-test: the 6.6.5 shape must be reported
-printf 'curl -sfL "$URL" -o "/tmp/$TARBALL"\nprintf x > /tmp/cyrius-release.pub\n# /tmp/commented is not a use\n' > "$D/old.sh"
+# built from $SHARED_TMP rather than spelled out, for the same reason the planted paths are:
+# a literal "/tmp/<name>" in a gate is what gates_never_write_tree.sh axis 5 refuses.
+printf 'curl -sfL "$URL" -o "%s/$TARBALL"\nprintf x > %s/cyrius-release.pub\n# %s/commented is not a use\n' \
+    "$SHARED_TMP" "$SHARED_TMP" "$SHARED_TMP" > "$D/old.sh"
 [ "$(_fixed_tmp "$D/old.sh" | wc -l | tr -d ' ')" = "2" ] || { fail "axis 4 self-test: the detector saw $(_fixed_tmp "$D/old.sh" | wc -l | tr -d ' ') of the 2 fixed /tmp uses in the pre-fix shape (and must ignore the comment)"; x=1; }
 [ "$x" = 0 ] && echo "  ok: axis 4: scripts/ci.sh names no fixed /tmp path and checks its mktemp -d (detector self-tested)"
 

@@ -33,12 +33,14 @@ cd "$(dirname "$0")/.." || exit 2
 QUICK=0
 [ "$1" = "--quick" ] && QUICK=1
 
-T=$(mktemp -d)
 # $2 (optional) is a file holding the failed command's stderr, printed with the verdict.
 # v6.6.6: every compile below used to send stderr to /dev/null, so a failing one printed
 # a one-line verdict and threw the compiler's own diagnostic away — the operator is then
 # told WHAT failed and nothing about WHY, which is the swallowed-compile-error shape
 # check.sh's v6.5.40 note exists to prevent. CHANGELOG [6.6.6]
+# v6.6.6: CHECKED — an unchecked mktemp leaves the variable EMPTY on a full or unwritable
+# temp dir, and every "$V/x" below then becomes "/x". CHANGELOG [6.6.6]
+T=$(mktemp -d) && [ -d "$T" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
 fail() {
     echo ""
     echo "================================================================"
