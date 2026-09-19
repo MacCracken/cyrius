@@ -69,13 +69,18 @@ slots have NOT been re-numbered — that is the user's call.
   — a fn-local struct literal / oversized array is a GLOBAL slot in the flat namespace and
   shadows other files' globals (was a silent miscompile; since bite ③'s stamps a misattributed
   diagnostic).
-- 🆕 **[`2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md`](issues/2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md)**
-  — filed from 6.6.5 bite 3's review, NOT fixed there and the reason is in the issue: a
-  value-form SIMD argument alongside SIX or more int-class arguments binds the later int args to
-  the wrong slots (`n6(v, 1,2,3,4,5,6)` → 123406), on every call path, identical on 6.6.4 and
-  6.6.5. The fix is a change to the value-form SIMD calling convention past the integer register
-  ceiling — a different convention on each of the four gate targets — so it wants its own bisect
-  and a real-hardware run, not a review round.
+- ✅ **[`2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md`](issues/archived/2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md)
+  — FIXED in 6.6.6 (bite 1).** A value-form vector next to SIX or more int-class arguments bound
+  the later ints to the wrong slots (`n6(v, 1,2,3,4,5,6)` → 123406) on every backend. The filing's
+  "a change to the calling convention on each target" was wrong: no caller and no convention
+  changed — the CALLEE's post-loop stack-param homing re-derived ordinal, slot and total from `pc`.
+  The same pass made an x86 struct-returning fn with 6+ params read its sixth from the return
+  address. One fix in `parse_fn.cyr`; see the issue's *Corrections to this filing*.
+  🆕 FILED from its review, NOT fixed (different defects): `var p: S = f(v, …)` pushes a vector
+  as an int at any arity ([`…-struct-valued-assign-call-pushes-simd-args-as-ints`](issues/2026-09-19-struct-valued-assign-call-pushes-simd-args-as-ints.md));
+  a 7+-field enum variant reads the wrong stack args ([`…-enum-variant-ctor-seven-plus-fields-…`](issues/2026-09-19-enum-variant-ctor-seven-plus-fields-reads-wrong-stack-args.md));
+  a >16 B struct-returning call outside a `var` initializer gets no retptr ([`…-retptr-struct-call-outside-var-init-crashes`](issues/2026-09-19-retptr-struct-call-outside-var-init-crashes.md));
+  an `async fn` never captures a vector param ([`…-async-fn-simd-param-not-captured`](issues/2026-09-19-async-fn-simd-param-not-captured.md)).
 - **`.4`–`.5` — DCE cannot compact on PE or x86 Mach-O** (rip-relative repair + re-run
   `_pe_layout` after compaction — both, or the binary looks fine and faults later).
 - ⛔ **`.6` stays unassigned.**

@@ -1,0 +1,113 @@
+# simd_param_int_stack_args.tcyr — 6.6.6: a value-form vector parameter alongside six or more
+# int-class parameters must bind every int parameter to its own argument.
+#
+# THE DEFECT. PARSE_FN_DEF homes an int parameter from its register inside the parameter loop,
+# but one past the register ceiling can only be homed once the caller's int-class TOTAL is known
+# (SysV/aarch64 stack slots count DOWN from it), so a second pass after the loop did it. That
+# pass re-derived everything from `pc`, the ALL-class parameter count: it used `pc` as the
+# total, the loop counter as the argument ordinal, and the same counter as the frame slot. All
+# three are right only when every parameter is one int-class slot. A value-form vector breaks
+# all three at once — it travels in XMM/V (SysV/aarch64) so it is not in the int total or the
+# int ordinals, and it owns 2 or 4 frame slots — so the second pass read the wrong argument into
+# the wrong slot, over a parameter the loop had already homed. `n6(v, 1,2,3,4,5,6)` read `e` as
+# 0; `n7` got three parameters wrong. Silent: exit 0, no diagnostic.
+#
+# The x86 hidden retptr (a struct-returning fn) is the same count error from the other side:
+# it IS int-class arg 0 but was not in `pc`, so `mk6(1,2,3,4,5,6)` read its sixth parameter
+# from the RETURN ADDRESS (axis 9). It only reaches the stack on x86 SysV — Win64's stack
+# formula does not use the total and aarch64 passes the retptr in X8 — so it is a control there.
+#
+# Measured before the fix (cycc 6.6.5): x86_64 Linux, aarch64 (qemu) and Win64 (wine) ALL wrong
+# on axes 1-8, each differently (e.g. `f7(0,1,2,v,3,4,5,6)`: 9123060 on SysV, 277558516 on
+# aarch64, 9123560 on Win64); cx (cxvm) wrong too. Axis 9 wrong on x86 SysV only.
+#
+# ⭐ EVERY EXPECTED VALUE IS A LITERAL — the arguments written out as digits. The callees fold
+# their parameters positionally (a*10^k + ...), so a parameter that is missing, stale, or read
+# from its neighbour changes a specific digit. This is deliberately NOT a differential against
+# another call path: `method_call_runs_every_callee_gate.sh` compares the method arm with a free
+# fn, and it kept agreeing while both were wrong, because this defect is on the shared CALLEE
+# half. Axis 1a/1b (5 ints, registers only) are the controls that always passed.
+#
+# ⭐ WHY crossos/: the convention past the int register ceiling differs on every gate target —
+# SysV vector in XMM + ints on the stack, Win64 vector BY POINTER in an int slot (so it shifts
+# the ints instead of leaving them), aarch64 V-regs + cyrius's 6 int regs + 16-byte stack slots.
+include "lib/assert.cyr"
+include "lib/simd.cyr"
+
+struct MG { a: i64; }
+struct P3 { x; y; z; }
+
+fn n5(v: f64v2, a, b, c, d, e): i64 { return a*10000 + b*1000 + c*100 + d*10 + e; }
+fn n6(v: f64v2, a, b, c, d, e, f): i64 { return a*100000 + b*10000 + c*1000 + d*100 + e*10 + f; }
+fn n7(v: f64v2, a, b, c, d, e, f, g): i64 { return a*1000000 + b*100000 + c*10000 + d*1000 + e*100 + f*10 + g; }
+fn n8(v: f64v2, a, b, c, d, e, f, g, h): i64 { return load64(&v + 0)*100000000 + a*10000000 + b*1000000 + c*100000 + d*10000 + e*1000 + f*100 + g*10 + h; }
+# the filing's vector-in-the-middle shape; lane 0 of v is the leading digit
+fn f7(s, a, b, v: f64v2, c, d, e, f): i64 { return load64(&v + 0)*1000000 + a*100000 + b*10000 + c*1000 + d*100 + e*10 + f + s; }
+fn q7(v: f32v4, a, b, c, d, e, f, g): i64 { return load32(&v + 12)*10000000 + a*1000000 + b*100000 + c*10000 + d*1000 + e*100 + f*10 + g; }
+fn w7(v: f64v4, a, b, c, d, e, f, g): i64 { return load64(&v + 24)*10000000 + a*1000000 + b*100000 + c*10000 + d*1000 + e*100 + f*10 + g; }
+fn i7(v: i32v4, a, b, c, d, e, f, g): i64 { return load32(&v + 8)*10000000 + a*1000000 + b*100000 + c*10000 + d*1000 + e*100 + f*10 + g; }
+fn two(v: f64v2, a, b, c, u: f64v4, d, e, f, g): i64 { return load64(&v + 8)*100000000 + load64(&u + 16)*10000000 + a*1000000 + b*100000 + c*10000 + d*1000 + e*100 + f*10 + g; }
+# a vector AFTER the int args have already spilled to the stack
+fn late(a, b, c, d, e, f, g, v: f64v2, h): i64 { return a*100000000 + b*10000000 + c*1000000 + d*100000 + e*10000 + f*1000 + g*100 + load64(&v + 0)*10 + h; }
+# ORDER, not just presence: subtraction makes a swapped pair of stack args visible
+fn order(a, v: f64v2, b, c, d, e, f, g, h, i): i64 { return a - b - c - d - e - f - g - h - i + load64(&v + 8); }
+impl MT for MG { fn mm(self, a, b, v: f64v2, c, d, e, f): i64 { return load64(&v + 8)*1000000 + a*100000 + b*10000 + c*1000 + d*100 + e*10 + f; } }
+fn tail7(v: f64v2): i64 { return n7(v, 1, 2, 3, 4, 5, 6, 7); }
+fn mk6(a, b, c, d, e, f): P3 { var p: P3; p.x = a*100000 + b*10000 + c*1000 + d*100 + e*10 + f; p.y = 0; p.z = 0; return p; }
+fn mk8(a, b, c, d, e, f, g, h): P3 { var p: P3; p.x = a*10000000 + b*1000000 + c*100000 + d*10000 + e*1000 + f*100 + g*10 + h; p.y = 0; p.z = 0; return p; }
+
+fn main(): i64 {
+    alloc_init();
+    var v = f64v2_make(9, 8);
+
+    test_group("axis 1 — f64v2 first, then 5..8 int args (the filed repro)");
+    assert_eq(n5(v, 1, 2, 3, 4, 5), 12345, "1a CONTROL: 5 ints, all in registers");
+    assert_eq(n5(v, 5, 4, 3, 2, 1), 54321, "1b CONTROL: 5 ints, reversed");
+    assert_eq(n6(v, 1, 2, 3, 4, 5, 6), 123456, "1c: 6 ints (read e as 0 before)");
+    assert_eq(n7(v, 1, 2, 3, 4, 5, 6, 7), 1234567, "1d: 7 ints (e, f, g wrong before)");
+    assert_eq(n8(v, 1, 2, 3, 4, 5, 6, 7, 8), 912345678, "1e: 8 ints + the vector's lane 0");
+
+    test_group("axis 2 — the vector in the MIDDLE (the filing's f7)");
+    assert_eq(f7(0, 1, 2, v, 3, 4, 5, 6), 9123456, "f7(0,1,2,v,3,4,5,6)");
+
+    test_group("axis 3 — every 128/256-bit vector class");
+    var q = f32v4_make(0, 0, 0, 7);
+    assert_eq(q7(q, 1, 2, 3, 4, 5, 6, 7), 71234567, "3a f32v4 + 7 ints");
+    var w = f64v4_make(0, 0, 0, 6);
+    assert_eq(w7(w, 1, 2, 3, 4, 5, 6, 7), 61234567, "3b f64v4 (2 XMM / 32 B by pointer) + 7 ints");
+    var iv = i32v4_make(0, 0, 5, 0);
+    assert_eq(i7(iv, 1, 2, 3, 4, 5, 6, 7), 51234567, "3c i32v4 (128-bit integer vector) + 7 ints");
+
+    test_group("axis 4 — two vectors + 7 ints, interleaved");
+    var u = f64v4_make(0, 0, 4, 0);
+    assert_eq(two(v, 1, 2, 3, u, 4, 5, 6, 7), 841234567, "two(v,1,2,3,u,4,5,6,7)");
+
+    test_group("axis 5 — a vector after the ints already spilled");
+    assert_eq(late(1, 2, 3, 4, 5, 6, 7, v, 1), 123456791, "late(1..7, v, 1)");
+
+    test_group("axis 6 — stack args in the RIGHT ORDER");
+    assert_eq(order(1000, v, 1, 2, 4, 8, 16, 32, 64, 128), 753, "1000 - 255 + lane1 8");
+
+    test_group("axis 7 — the method-call path inherits the same callee");
+    var g: MG;
+    g.a = 0;
+    assert_eq(g.mm(1, 2, v, 3, 4, 5, 6), 8123456, "g.mm(1,2,v,3,4,5,6)");
+
+    test_group("axis 8 — tail position");
+    assert_eq(tail7(v), 1234567, "return n7(v, 1..7)");
+
+    test_group("axis 9 — struct return (x86 retptr is int arg 0; control on Win64/aarch64)");
+    var p6: P3 = mk6(1, 2, 3, 4, 5, 6);
+    assert_eq(p6.x, 123456, "mk6(1..6) — sixth param read the return address before");
+    var p8: P3 = mk8(1, 2, 3, 4, 5, 6, 7, 8);
+    assert_eq(p8.x, 12345678, "mk8(1..8)");
+
+    test_group("axis 10 — the caller's vector is untouched");
+    assert_eq(load64(&v + 0), 9, "v lane0");
+    assert_eq(load64(&v + 8), 8, "v lane1");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

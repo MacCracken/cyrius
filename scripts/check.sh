@@ -612,6 +612,15 @@ sh "$ROOT/scripts/agnos-crossbuild-gate.sh"
 # the driver prints at RUNTIME.
 sh "$ROOT/tests/gates/codegen/call_site_stack_alignment.sh"
 
+# 6.6.6: past the int register ceiling the CALLEE must home each int parameter from its
+# int-class ordinal into its own frame slot, counting stack slots from the CALLER's int-class
+# total. The old second pass re-derived all three from `pc` (every parameter, any class), so a
+# value-form vector next to 6+ ints — or an x86 retptr — bound later ints to the wrong slots,
+# silently, on every backend. A generated matrix (vector class x position x 5..9 ints, two
+# vectors, struct return) with digit-string expectations, on x86 + aarch64 (qemu) + cx (cxvm)
+# + Win64 (wine). Hardware legs: tests/tcyr/crossos/simd_param_int_stack_args.tcyr.
+sh "$ROOT/tests/gates/codegen/stack_param_homing_matrix.sh"
+
 # ⛔ 6.6.5 — a fn-local STRUCT LITERAL was a GLOBAL slot, and whether an aggregate local was
 # inline or a pointer was GUESSED from the neighbouring slot's name. The first made a literal
 # shared across recursion, threads and files (a global and a fn-local literal of the same name

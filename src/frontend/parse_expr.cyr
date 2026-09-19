@@ -2314,10 +2314,11 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # dropped every parameter past the 6th: the in-loop `clpc < 6` guard is correct (the
         # overflow cannot be homed until the TOTAL count is known, because SysV's stack slot is
         # `16 + (pc - 6 - 1 - (pidx - 6)) * 8` — it counts DOWN from the total), but nothing ever
-        # ran the second pass that `PARSE_FN` has had all along (src/frontend/parse_fn.cyr, the
-        # `if (pc + _pl_shift > 6)` block: "Emit stack param stores (7+) now that we know total
-        # pc"). So the 7th+ parameter was never stored and the body read an uninitialised frame
-        # slot.
+        # ran the second pass that `PARSE_FN` has had all along (src/frontend/parse_fn.cyr, since
+        # 6.6.6 `_stkp_flush`). So the 7th+ parameter was never stored and the body read an
+        # uninitialised frame slot. (A closure's params are all untyped int-class, one slot each,
+        # with no retptr, so `cl_p0 + cspi` / `clpc` below ARE the slot and the total — the
+        # re-derivation 6.6.6 removed from PARSE_FN_DEF's pass cannot drift here.)
         # ⚠ IT DID NOT FAIL RELIABLY, which is why it survived: measured at v6.5.46, a 7-param
         # closure returned the RIGHT answer — the argument register still happened to hold the
         # value — while an 8-param one returned garbage. An intermittent wrong answer reads as

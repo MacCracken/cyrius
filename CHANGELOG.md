@@ -4,6 +4,60 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A value-form vector parameter next to six or more int-class parameters bound the later ints
+  to the wrong slots — on every backend, and an x86 struct-returning fn with six or more
+  parameters read its sixth from the return address.** (bite 1; filed 2026-09-17.) Silent: exit 0,
+  no diagnostic. `fn n6(v: f64v2, a,b,c,d,e,f)` called as `n6(v, 1,2,3,4,5,6)` returned `123406`
+  (`e` read 0), `n7` got three parameters wrong, and the filing's `f7(0,1,2,v,3,4,5,6)` returned
+  `9123060` on x86_64, `277558516` on aarch64 and `9123560` on Win64; `mk6(1..6): P3` returned
+  `4379076` for `123456` on x86 SysV. **Root cause — the callee, not the caller.** The caller paths
+  this bite measured — a plain call (`_fc_int_argc`), a method call (`m_int_argc`) and a call in
+  `return` position — already agreed with the ABI: SysV/aarch64 count int-class args only (the vector
+  goes to XMM/V), Win64 counts the vector as one by-pointer int slot; and the struct-valued-assign path
+  (`var p: P3 = f(...)`, `asv_argc`) counts an x86 retptr as int arg 0. ⚠ **Not every caller path:**
+  both struct-valued-assign paths in `parse_decl.cyr` (`asv`, and `asv_pair` for a 9-16 B return) have
+  NO value-form SIMD-arg routing at any arity — they push the vector as an int, so `var p: P3 =
+  mkv(1, v, 2)` reads `b` as 9 and `var p: P2 = pr2(5, v)` reads a stale XMM0 — a separate defect,
+  unchanged by this bite and filed for the next release
+  (`2026-09-19-struct-valued-assign-call-pushes-simd-args-as-ints.md`). PARSE_FN_DEF's parameter loop
+  homes the in-register params with the right int ordinal and frame slot, but the ones past the
+  register ceiling were homed by a second pass after the loop that re-derived **all three** inputs
+  from `pc`, the all-class parameter count: `pc` as the caller's int-class total (SysV/aarch64 stack
+  slots count down from it), the loop counter as the argument ordinal, and the same counter as the
+  frame slot. Right only when every param is one int-class slot with no retptr. A vector is not in
+  the total or the ordinals and owns 2-4 frame slots, so the pass read the wrong argument into a slot
+  the loop had already homed; a retptr is in the total but not in `pc`, so the stack slot was off by
+  one — the return address. **Fix:** the loop now records (int ordinal, frame slot) for each param
+  it cannot home yet (`_stkp_defer`), and `_stkp_flush` homes exactly those once the int-class total
+  (`int_pc` + retptr) is known — nothing is re-derived. That also stops the old pass homing params
+  the loop had deliberately refused (a coroutine impl's, which arrive in the coroutine frame; a
+  `#naked` fn already refuses more than six). Fixed on x86 SysV, Win64, aarch64 (Linux + Mach-O) and
+  cx in one place, `src/frontend/parse_fn.cyr`; the method-call and tail-call paths share the callee
+  and are fixed with it. Byte impact: **0 of the 323 pre-existing `.tcyr` and 0 of 99 `programs/*.cyr` binaries
+  changed** (none had the shape), all seven compiler forks compile byte-identically, cycc
+  **1,294,040 → 1,294,040 B** (code +376 B, absorbed by the page-padded text segment).
+  Verified on real hardware with the new crossos test: pi (aarch64), ecb (macOS arm64) and cass
+  (Windows) 18/18, where the 6.6.5 compiler scores 6/18 on each.
+
+### Added
+
+- `tests/tcyr/crossos/simd_param_int_stack_args.tcyr` — 18 assertions with **literal** expectations
+  (the arguments written as digits): f64v2/f32v4/i32v4/f64v4 with 5-8 ints, vector first / middle /
+  after the spill, two vectors, stack-arg order, the method and tail paths, struct return at 6 and 8.
+  Deliberately not a differential: `method_call_runs_every_callee_gate.sh` compared the method arm
+  with a free fn and kept agreeing while both were wrong.
+- `tests/gates/codegen/stack_param_homing_matrix.sh` (registered in `scripts/check.sh`) — a generated
+  66-row matrix (4 vector classes x 3 positions x 5..9 ints, 2 vectors + 7 ints, struct return x 5..9)
+  whose expected values awk builds as digit STRINGS while the callee computes them arithmetically, run
+  on x86 + aarch64 (qemu) + cx (cxvm) + Win64 (wine), with a runtime row-count floor. Mutation-proven:
+  the 6.6.5 source, a retptr dropped from the total, a callee that counts the vector as an int, no
+  deferred homing, and a Win64 branch that forgets the vector's int slot each turn it red; ledger in
+  the gate header.
+
 ## [6.6.5] — 2026-09-19
 
 The 6.6.5 repair release — every open issue in docs/development/issues/, one bite each. All nine issues

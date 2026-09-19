@@ -1,6 +1,6 @@
 # A value-form SIMD argument alongside six or more int-class arguments silently miscompiles — on every call path
 
-**Status:** 🟡 **OPEN** — pre-existing, not a 6.6.5 regression; found while verifying 6.6.5 bite 3's method-arg SIMD gate.
+**Status:** ✅ FIXED in 6.6.6 (bite 1) — pre-existing, not a 6.6.5 regression; found while verifying 6.6.5 bite 3's method-arg SIMD gate. See *Resolution* and *Corrections to this filing* at the end.
 **Placement:** unpinned — 6.x line. Not parked to 7.x (nothing codegen is).
 **Discovered:** 2026-09-17, review round 3 of 6.6.5 bite 3, x86_64 Linux.
 **Severity:** High — a silent wrong value with no diagnostic, on ordinary source, on the documented
@@ -102,3 +102,72 @@ unverified ABI change inside a release that is currently byte-clean.
   `ECALLPOPS`' PE branch had no path past `nextra == 5` and corrupted argument 1 at 10+ args.
   The SysV side was assumed fine then; it is not, once a SIMD param is in the mix.
 * `vidya` `one_call_syntax_is_not_one_call_path_enumerate_the_masks` (6.6.5).
+
+## Resolution (6.6.6, bite 1)
+
+**The callee, not the caller — and not the calling convention.** The caller paths this bite
+measured — a plain call (`_fc_int_argc`), a method call (`m_int_argc`) and a call in `return`
+position — already agreed with the ABI: SysV/aarch64 count int-class args only, Win64 counts a vector
+as one by-pointer int slot. The struct-valued-assign path (`var p: P3 = f(...)`, `asv_argc`) counts
+an x86 retptr as int arg 0, also right.
+
+⚠ **"Every caller path" would be wrong.** Both struct-valued-assign paths in `parse_decl.cyr` — `asv`
+(a >16 B struct return) and `asv_pair` (9-16 B) — have **no value-form SIMD-arg routing at all, at
+any arity**: they push every argument as an int, so the vector's value lands in an int slot and the
+callee reads a stale XMM0 (x86 `var p: P3 = mkv(1, v, 2)` reads `b` as 9; `var p: P2 = pr2(5, v)`
+reads the last vector built; on Win64 the vector's first word is dereferenced as its by-pointer
+argument — a page fault). That is not this defect — no stack homing is involved — and this bite
+leaves it unchanged; it is filed as
+`2026-09-19-struct-valued-assign-call-pushes-simd-args-as-ints.md`. Its retptr counting, which is
+what this defect's axis 9 exercises, is correct.
+
+PARSE_FN_DEF's parameter loop homes the in-register params correctly — `int_pc + _pp_shift` for the
+ordinal, `li` for the frame slot. The params PAST the register ceiling were homed by a second pass
+after the loop, `ESTOREPARM(S, spi + _pl_shift, spi, pc)` for `spi` in `6 - _pl_shift .. pc-1`, which
+re-derived all three inputs from `pc`, the ALL-class parameter count:
+
+| input | the pass used | correct |
+|---|---|---|
+| stack total (SysV/aarch64 slots count DOWN from it) | `pc` | int-class params + retptr (`int_pc + _pl_shift`) |
+| argument ordinal | `spi + _pl_shift` | that param's own `int_pc + _pp_shift` |
+| frame slot | `spi` | that param's own `li` (a vector owns 2-4 slots) |
+
+So `n6(v, 1..6)` homed stack arg "6" (which does not exist; the caller pushed 6 ints, all in
+registers) over slot 6 — which is `e`, because `v` owns slots 0-1. And with no vector at all, an
+x86 retptr fn with 6+ params passed `pc` where the caller had pushed `pc + 1`, so the first stack
+param read `[rbp+8]` — the return address (`mk6(1..6): P3` → `4379076`).
+
+**Fix** (`src/frontend/parse_fn.cyr`): the loop records `(ordinal, slot)` for each param it cannot
+home yet (`_stkp_defer`), and `_stkp_flush(S, int_pc + _pl_shift)` homes exactly those after the loop.
+Nothing is re-derived, so the two halves cannot drift. Because the recording happens inside the
+loop's `_cur_fn_naked == 0 && _pending_coro == 0` guard, the pass also stops homing the parameters of
+a coroutine impl (which arrive in the coroutine frame; the old pass wrote harmless-but-wrong stack
+slots there — measured, 8-param coroutine correct before and after).
+
+**Measured before → after** (the new crossos test, 18 assertions): x86_64 Linux 4/18 → 18/18;
+aarch64 6/18 → 18/18 (qemu **and** real pi); macOS arm64 6/18 → 18/18 (real ecb); Win64 6/18 → 18/18
+(wine **and** real cass); cx wrong → right (cxvm). The generated gate
+`tests/gates/codegen/stack_param_homing_matrix.sh` (66 rows, four legs) is mutation-proven five ways.
+
+## Corrections to this filing
+
+1. **"Which side is wrong has not been isolated"** — it is the callee's post-loop pass, above. The
+   in-loop `int_pc + _pp_shift < 6` condition the filing pointed at was correct.
+2. **"The fix is a change to the value-form SIMD calling convention past the integer register
+   ceiling, a different convention on each of the four targets"** — no convention changed and no
+   caller changed. The fix is one place in shared frontend code; the per-target difference is only
+   in how each backend's `ESTORESTACKPARM` consumes the (ordinal, slot, total) it is handed.
+3. **"This one WILL move bytes"** — it moved **none**: 0 of the 323 pre-existing `.tcyr` and 0 of 99
+   `programs/*.cyr` binaries changed, and all seven compiler forks compile byte-identically. No file
+   in the tree had a vector next to 6+ ints, a retptr fn with 6+ params, or a 7+-param coroutine —
+   which is exactly why the defect survived.
+4. **It was not SIMD-specific.** The retptr instance (x86 SysV struct return with 6+ params) is the
+   same pass reading the same wrong total, with no vector involved. v6.4.44 had fixed that pass's
+   *ordinal* for the Win64 retptr and left its *total* (and the vector's ordinal and slot) wrong.
+5. **"The SIMD-arg-last shape `f7(s, a, b, v: f64v2, c, d, e, f)`"** puts the vector in the middle,
+   not last. The vector-last shape (`late(a..g, v, h)`) was also broken and is axis 5 of the test.
+6. The corpus was 323 `.tcyr` at 6.6.6 entry, not 317 (324 with this bite's test).
+7. **The title's "on every call path"** holds for the call paths that route a vector (plain, method,
+   `return` position). The `var p: S = f(...)` paths (`asv`, `asv_pair`) never routed a vector at
+   all — wrong at any arity, for a different reason, and still open after this bite (see
+   *Resolution*).
