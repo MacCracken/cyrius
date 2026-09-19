@@ -44,6 +44,12 @@
 #   N5 make `_check_int_lit_cstring_arg` fire on literal 0 as well (drop the NULL exemption)
 #        -> row cstr_null red: BOTH arms refuse a legitimate `f(0)`, so the differential
 #           still "agrees" — the floor (the control must BUILD) is what catches it.
+#   (6.6.6, bite 14 review — the structural row after the gates moved into `_call_arg_one`)
+#   N6 drop `_simd_arg_record(` from `_call_arg_one`       -> [helpers] red (and row simd_mix)
+#   N7 the method loop calls a bare PCMPE+EPUSHR instead of `_call_arg_one`
+#                                                          -> [helpers] red
+#   14a as committed (4a351a9a..76a5a614), old structural row -> [helpers] red on a correct tree —
+#        the false RED this edit removes
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
@@ -244,10 +250,20 @@ var e = main(); syscall(60, e);" \
 # ── row derived floor — the method loop must consult as many callee tables as PARSE_FNCALL's
 # loop does. DERIVED from the source, so adding a fifth gate to one and not the other is a
 # FAILURE here rather than a silent divergence discovered by the next consumer. ──────────
+# ⚠ 6.6.6: the four per-argument gates moved into `_call_arg_one` (parse_fn.cyr), which the method
+# loop, both struct-valued `var` receives and the four PE own-calls now share. This check still
+# looked for them INLINE in the method loop, so 14a turned it RED while the method path itself was
+# fine (bite 14's review found it). It now follows the call: the loop must call `_call_arg_one`,
+# the vector second pass and the arity check, and `_call_arg_one` must call each gate.
 MASKS_FNCALL=$(grep -cE '_fnt_(str|struct|simd|cstr)mask' src/frontend/parse_fn.cyr)
 MLOOP=$(sed -n '/THIS LOOP RUNS PARSE_FNCALL/,/ECALLCLEAN(S, m_int_argc)/p' src/frontend/parse_decl.cyr)
-for h in _check_int_lit_cstring_arg _try_push_str_literal_arg _try_push_struct_addr_arg _simd_arg_record _simd_arg_second_pass _CHECK_ARITY; do
+ARGONE=$(sed -n '/^fn _call_arg_one(/,/^}/p' src/frontend/parse_fn.cyr)
+[ -n "$ARGONE" ] || { echo "  FAIL: method_call_gates [helpers]: fn _call_arg_one not found in parse_fn.cyr"; fail=1; }
+for h in _call_arg_one _simd_arg_second_pass _CHECK_ARITY; do
     echo "$MLOOP" | grep -q "$h(" || { echo "  FAIL: method_call_gates [helpers]: the method-call argument loop no longer calls $h"; fail=1; }
+done
+for h in _check_int_lit_cstring_arg _try_push_str_literal_arg _try_push_struct_addr_arg _simd_arg_record; do
+    echo "$ARGONE" | grep -q "$h(" || { echo "  FAIL: method_call_gates [helpers]: _call_arg_one (the method loop's per-argument body) no longer calls $h"; fail=1; }
 done
 [ "$MASKS_FNCALL" -ge 4 ] || { echo "  FAIL: method_call_gates [helpers]: expected PARSE_FNCALL's file to reference all four callee masks, found $MASKS_FNCALL"; fail=1; }
 
