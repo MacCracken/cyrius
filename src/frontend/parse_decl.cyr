@@ -1341,10 +1341,11 @@ fn _CF_TRY(S, ti): i64 {
 # last-match then bound some references to one slot and the rest to the other. The first
 # declaration's static-init value went into a slot nothing read (`var a = 5; var b = a;
 # var a = 5;` gave b 0, and `var a = 7` on the third line gave 0 too, under a warning that
-# promised "last definition wins"); and code compiled before a redeclaration made after the
-# first top-level statement kept reading the old slot while everything after read the new
-# one. A top-level redeclaration now REUSES the slot, so every reference names one global.
-# The value rule that goes with it is at _gv_supersede. CHANGELOG [6.6.6]
+# promised "last definition wins"). A redeclaration in the DECLARATION ZONE (before the first
+# top-level statement) now REUSES the slot, so every reference names one global. The value
+# rule that goes with it is at _gv_supersede. After the first top-level statement a `var` is
+# a statement and a redeclaration there is still a NEW variable for the code after it
+# (PARSE_VAR; unchanged, and documented in the guide). CHANGELOG [6.6.6]
 
 # The visibility owner a declaration at token `ti` WILL get — _GVAR_VIS's rule, without
 # consuming the pending `public`.
