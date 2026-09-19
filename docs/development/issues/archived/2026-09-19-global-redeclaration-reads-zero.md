@@ -89,7 +89,10 @@ co-linked modules are an established, documented pattern (`lib/chrono.cyr`'s `CL
   over an ENUM constant with a CONFLICTING value (`enum E { K = 5; } var b = K; var K = 7;`) gave
   `b` the enum's 5 while a fn read 7, because the enum's startup store resolves the name
   last-match and runs before every deferred initializer.
-  All three are fixed and gated (gate rows F, K/K2, L/M/N).
+  And (d) a redeclaration with a different VISIBILITY OWNER (`public var qx` then a private
+  `var qx` in one `private` file) is a separate global, but it was runtime-stored after an
+  initializer between the two had read it, so that read saw 0 — the same shadow opt-out.
+  All four are fixed and gated (gate rows F, K/K2, L/M/N, P).
 - ⚠ **Correction to the first cut of this fix (review, before release):** it claimed
   `enum E { K = 5; } var b = K; var K = 5;` "read 0 as well". It never did — it gives 5 at 6.6.5
   on x86, aarch64 and cx, for exactly the reason in (c): the enum store fills the var's slot first.

@@ -1657,19 +1657,19 @@ fn PARSE_GVAR_REG(S): i64 {
     # declaration's static value sat in a slot nothing read (b = 0 in `var a = 5; var b = a;
     # var a = 5;`). An earlier deferred store is now superseded rather than clobbering
     # (_gv_supersede), which is the hazard the opt-out existed for (mabda `var F64_TWO = 0;`
-    # shadowed by math `var F64_TWO = 0x4000...;`). A var over an ENUM constant is static as
-    # well — the enum's startup store now skips a slot that is not an enum constant's
-    # (PARSE_ENUM_DEF), which used to overwrite it. CHANGELOG [6.6.6]
+    # shadowed by math `var F64_TWO = 0x4000...;`). A declaration that shadows a global it does
+    # NOT fold into — an enum constant, or a global with another visibility owner — is static
+    # as well: each replay entry now stores into the slot it recorded (_gv_ent_slot), so an
+    # earlier deferred store can no longer land on this one, and the enum's startup store skips
+    # a slot that is not an enum constant's (PARSE_ENUM_DEF). CHANGELOG [6.6.6]
     var sit_lit = 0;
     var sit_val = 0;
     var sit_shadow = 0;
-    var sit_enumsh = 0;
     var cf_has = 0;     # 6.6.6: the initializer folded to a constant (any target, any value)
     var cf_val = 0;
     var chk_lit = 0;    # v6.2.11: `= NUM ;` literal for the collision guardrail
     var chk_has = 0;
-    var sh_i = FINDVAR(S, noff);
-    if (sh_i >= 0) { sit_shadow = 1; if (GVENUMID(S, sh_i) != 0) { sit_enumsh = 1; } }
+    if (FINDVAR(S, noff) >= 0) { sit_shadow = 1; }
     if (PEEKT(S) == 4) {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) == 2) {
@@ -1694,8 +1694,8 @@ fn PARSE_GVAR_REG(S): i64 {
         # zero. Keep the runtime-store path for cx; static-init is
         # an x86 / aarch64 / MachO / PE optimization.
         # v6.2.11: capture a `= NUM ;` literal for the collision guardrail,
-        # INDEPENDENT of the static-init opt below (which deliberately skips
-        # shadowing redefinitions — but a collision warning must fire EXACTLY on
+        # INDEPENDENT of the static-init opt below (which skipped shadowing
+        # redefinitions until 6.6.6 — and a collision warning must fire EXACTLY on
         # those). Read-only (PEEKV, no STI advance); does not affect codegen.
         if (PEEKT(S) == 1 && TOKTYP(S, GTI(S) + 1) == 5) { chk_lit = PEEKV(S); chk_has = 1; }
         # v6.4.74: widened from the exact `= NUM ;` shape to ANY constant-foldable
@@ -1714,10 +1714,8 @@ fn PARSE_GVAR_REG(S): i64 {
             cf_has = 1;
             cf_val = fv;
             if (_TARGET_CX != 1 && fv != 0) {
-                if (sit_shadow == 0 || sit_enumsh == 1) {
-                    sit_lit = 1;
-                    sit_val = fv;
-                }
+                sit_lit = 1;
+                sit_val = fv;
             }
         }
     }
@@ -1788,10 +1786,11 @@ fn PARSE_GVAR_REG(S): i64 {
     _GVAR_VIS(S, gvi, sti);
     if (gvi == vcnt) {
         SVCNT(S, vcnt + 1);
-        # A var over an enum constant keeps its own slot, and nothing stores the enum's
-        # value into it any more (PARSE_ENUM_DEF), so a constant one is its value from
-        # program start on every target, zero and cx included (_gv_cx_prestore).
-        if (sit_enumsh == 1 && cf_has == 1 && is_struct == 0) { sit_lit = 1; sit_val = cf_val; }
+        # A shadow that keeps its own slot (over an enum constant, or over a global with
+        # another visibility owner): a constant one is its value from program start on every
+        # target, zero and cx included (_gv_cx_prestore) — the global it hides can store
+        # nothing into it (see above), and a read between the two must not see 0.
+        if (sit_shadow == 1 && cf_has == 1 && is_struct == 0) { sit_lit = 1; sit_val = cf_val; }
     }
     else {
         # A redeclaration: a constant one wins from program start (see _gv_supersede) — on

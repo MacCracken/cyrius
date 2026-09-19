@@ -186,7 +186,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   var's slot, so `enum E { K = 5; } var b = K; var K = 7;` gave `b == 5` while a fn read 7, and
   `var K = 0` there gave `b == 5`. That store now lands only in an enum constant's own slot
   (`src/frontend/parse_types.cyr`), and the var keeps its own slot and holds its value from
-  program start on every target (cx included) — both reads see 7, and 0 for `var K = 0`. After
+  program start on every target (cx included) — both reads see 7, and 0 for `var K = 0`. The
+  same early read of 0 hit a redeclaration with a different visibility OWNER, which stays a
+  separate global (`public var qx = 5; public var qb = qx; var qx = 7;` in a `private` file gave
+  `qb == 0`): the old opt-out that sent every shadowing declaration to the runtime-store path is
+  gone, because the hazard it guarded — a replay re-resolving its store onto the later slot — is
+  what the recorded slots remove, so any constant declaration that shadows is static (and stored
+  first on cx) and `qb` reads 7. After
   the first top-level statement a `var` is a statement and redeclaring a name starts a new
   variable for the code after it; that is unchanged (two in-tree tests re-declare a scratch
   buffer at a new size that way) and now documented. Byte impact: exit codes and output of all
@@ -252,13 +258,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   superseded by a constant, and a var over an enum constant (conflicting, through a fold, and
   zero). The 6.6.5-tree compiler fails 13 of them.
 - `tests/gates/frontend/global_redeclaration_one_definition.sh` (bite 2, registered in
-  `scripts/check.sh`) — 19 host rows, each checked against a CONTROL program with no
-  redeclaration as well as an absolute value, covering every destructure target position and a
-  var over an enum constant; the type/size-change error; the unchanged after-first-statement
+  `scripts/check.sh`) — 20 host rows, each checked against a CONTROL program with no
+  redeclaration as well as an absolute value, covering every destructure target position, a
+  var over an enum constant and a different-visibility-owner redeclaration in a private file;
+  the type/size-change error; the unchanged after-first-statement
   shadowing; kernel-mode structural rows (renaming the later variable must change no byte of the
   image, for the replay's store AND for a name it reads) plus a guard that a name only the
   program declares still resolves there; a cx leg built from the tree's own `main_cx` + `cxvm`
-  and an aarch64 leg under qemu (5 rows each). Twelve mutants each turn it red (ledger in the
+  and an aarch64 leg under qemu (6 rows each). Fourteen mutants each turn it red (ledger in the
   header).
   `tests/gates/codegen/hidden_temp_census.sh` names the two new registration sites: `_gv_reg8`
   (the pass-1 destructure's per-name registration, moved out of `PARSE_GVAR_REG`) and

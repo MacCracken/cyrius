@@ -2054,6 +2054,9 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
 - A `var` over an **enum constant** of the same name (only an integer literal is
   allowed there) is the last definition too: `enum E { K = 5; } var b = K; var K = 7;`
   gives `b == 7`, and every later `K` is the var.
+- In a `private` file, a `public var x` and a later private `var x` are two globals
+  (visibility is part of a global's identity), but a read between them still sees
+  the later, constant definition — never 0.
 
 After the first top-level statement a `var` is a statement, and redeclaring a name
 there starts a **new** variable for the code after it (a fresh buffer of the new

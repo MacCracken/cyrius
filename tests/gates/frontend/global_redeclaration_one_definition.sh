@@ -26,9 +26,9 @@
 # redeclaration at all (the last definition written once, or an assignment in its place),
 # compiled by the same compiler — so a row cannot pass by both sides sharing one defect.
 #
-# LEGS: host x86_64 (every row), cx (A/B/D/L/N, via the tree's own main_cx + cxvm — the only
+# LEGS: host x86_64 (every row), cx (A/B/D/L/N/P, via the tree's own main_cx + cxvm — the only
 # target where the value is STORED rather than baked into the image), aarch64 under
-# qemu-aarch64 when installed (A/B/D/L/N; qemu is not hardware — the crossos tcyr covers that).
+# qemu-aarch64 when installed (A/B/D/L/N/P; qemu is not hardware — the crossos tcyr covers that).
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree whose src/ carries the mutation, built
 # by build/cycc and run as CYCC=<mutant>, so the cx and aarch64 legs are built from it too):
@@ -38,14 +38,17 @@
 #   m4 _gv_cx_prestore made a no-op                -> RED cx A B D only
 #   m5 replay re-resolves by FINDVAR (no record)   -> RED row K only
 #   m6 shape check dropped from _gv_fold           -> RED row I only
-#   (m1-m6 were measured before rows K2/K3/L/M/N existed; the review mutants below cover those)
+#   (m1-m6 were measured before rows G2-G4/K2/K3/L/M/N/P existed; the review mutants below cover those)
 #   m7 enum startup store not limited to an enum's slot -> RED rows L M N, cx N, a64 L N
 #   m8 var over an enum not given its value on cx      -> RED cx L only
 #   m9 main.cyr no longer records the zone (no hiding)   -> RED row K2 only
 #   m10 FINDVAR drops the hidden-match fallback          -> RED row K3 only
 #   m11 _gv_target honours only target 0 (k > 0 -> the global) -> RED rows G2 G3 G4
 #   m12 _gv_target honours targets 0 and 1 only (k > 1)       -> RED row G3 only
-#   real tree                                      -> GREEN (19 host rows, 5 cx, 5 aarch64)
+#   m13 a shadow that keeps its own slot is never static (6.6.5's `sit_shadow == 0`)
+#                                                    -> RED rows L P, cx L P, a64 L P
+#   m14 ... only on cx (the non-cx image path kept)    -> RED cx L P only
+#   real tree                                      -> GREEN (20 host rows, 6 cx, 6 aarch64)
 # Row H is a guard, not a detector: a fn body already read the last declaration before 6.6.6.
 set -eu
 
@@ -180,6 +183,21 @@ NROWS=$((NROWS + 1))
 printf 'kernel;\nfn id(x) { return x; }\nvar b = id(c);\nvar z = 0;\nz = 1;\nvar c = 3;\nz = b;\n' > "$WORK/k5.cyr"
 build "$WORK/k5.cyr" "$WORK/k5" || bad "row K3: a kernel replay no longer finds a name only the program declares: $(head -c 200 "$WORK/k5.err")"
 
+# P — a redeclaration with a DIFFERENT visibility owner (`public var` then a private `var` of the
+#     same name, in one private file) is a separate global, not a fold — and the later one was
+#     sent to the runtime-store path, so a read between the two saw 0 (the same root cause). The
+#     rule holds there too: the read sees the last definition. Needs a real file (visibility is
+#     per file), so it runs from $WORK/p; the cx and aarch64 legs repeat it below.
+NROWS=$((NROWS + 1))
+mkdir -p "$WORK/p/lib"
+printf 'private\npublic var qx = 5;\npublic var qb = qx;\nvar qx = 7;\npublic fn q1b(): i64 { return qb * 10 + qx; }\n' > "$WORK/p/lib/q.cyr"
+printf 'private\npublic var qx0 = 5;\nvar qx = 7;\npublic var qb = qx;\npublic fn q1b(): i64 { return qb * 10 + qx; }\n' > "$WORK/p/lib/c.cyr"
+printf 'include "lib/q.cyr"\nsyscall(60, q1b());\n' > "$WORK/p/t.cyr"
+printf 'include "lib/c.cyr"\nsyscall(60, q1b());\n' > "$WORK/p/c.cyr"
+got=$(cd "$WORK/p" && ec t.cyr); ctl=$(cd "$WORK/p" && ec c.cyr)
+[ "$ctl" = "77" ] || bad "row P: CONTROL gave $ctl, want 77 (the gate's own premise is off)"
+[ "$got" = "77" ] || bad "row P: a different-owner redeclaration gave $got, want 77"
+
 # ---- cx leg: the tree's own cx compiler + cxvm (value is stored, not baked) ----
 NCX=0
 if build "$ROOT/src/main_cx.cyr" "$WORK/cycc_cx" && build "$ROOT/programs/cxvm.cyr" "$WORK/cxvm"; then
@@ -198,6 +216,13 @@ if build "$ROOT/src/main_cx.cyr" "$WORK/cycc_cx" && build "$ROOT/programs/cxvm.c
         fi
         NCX=$((NCX + 1))
     done
+    if (cd "$WORK/p" && "$WORK/cycc_cx" < t.cyr > "$WORK/p.cyx" 2> /dev/null) && [ -s "$WORK/p.cyx" ]; then
+        set +e; "$WORK/cxvm" < "$WORK/p.cyx" > /dev/null 2>&1; r=$?; set -e
+        [ "$r" = "77" ] || bad "cx row P: gave $r, want 77"
+    else
+        bad "cx row P: cx compile failed"
+    fi
+    NCX=$((NCX + 1))
 else
     bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"
 fi
@@ -222,6 +247,14 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
             fi
             NA64=$((NA64 + 1))
         done
+        if (cd "$WORK/p" && "$WORK/cycc_a64" < t.cyr > "$WORK/p.a64" 2> /dev/null) && [ -s "$WORK/p.a64" ]; then
+            chmod +x "$WORK/p.a64"
+            set +e; qemu-aarch64 "$WORK/p.a64" > /dev/null 2>&1; r=$?; set -e
+            [ "$r" = "77" ] || bad "aarch64 row P: gave $r, want 77"
+        else
+            bad "aarch64 row P: compile failed"
+        fi
+        NA64=$((NA64 + 1))
     else
         bad "aarch64 leg: could not build src/main_aarch64.cyr"
     fi
@@ -231,9 +264,9 @@ fi
 
 # Floor, DERIVED from this file: every host row that was declared must have run.
 DECL=$(grep -c '^_row ' "$0")
-DECL=$((DECL + 4))   # rows I, K, K2 and K3 are hand-rolled
+DECL=$((DECL + 5))   # rows I, K, K2, K3 and P are hand-rolled
 [ "$NROWS" -eq "$DECL" ] || bad "floor: $NROWS host rows ran, $DECL declared"
-[ "$NCX" -eq 5 ] || bad "floor: $NCX cx rows ran, want 5"
+[ "$NCX" -eq 6 ] || bad "floor: $NCX cx rows ran, want 6"
 
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: global_redeclaration_one_definition: $NFAIL check(s) failed"
