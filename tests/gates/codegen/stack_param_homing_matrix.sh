@@ -86,7 +86,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
 CC="${CC:-$ROOT/build/cycc}"
-T=$(mktemp -d)
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: stack_param_homing_matrix: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$T"' EXIT INT TERM
 ulimit -c 0 2>/dev/null || true
 ROWS_FLOOR=212      # every leg but cx
