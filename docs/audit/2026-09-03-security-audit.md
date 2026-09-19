@@ -298,12 +298,20 @@ axes 2, 3 and 4. The tree-wide version of the static axis — no fixed `/tmp` na
 `mktemp` checked, across **all** of `scripts/*.sh` — is axis 7 of
 `tests/gates/toolchain/gates_never_write_tree.sh`.
 
-**Other scripts with the same shape, fixed in the same release (6.6.6, bite 17f):**
+**Other scripts with the same shape, fixed in the same release (6.6.6, bites 17f and 17j):**
 `scripts/install.sh` (`/tmp/cc5_verify`, `/tmp/cc5_verify2`, `/tmp/dlopen_err_$$`, and four
 unchecked `mktemp`s), `scripts/cass-install-gate.sh`, `scripts/mac-diagnose.sh`,
-`scripts/bench-history.sh`. None of those stage a signature input, so they are the
-denial-of-service / overwrite half of this finding rather than the verification-bypass half —
-but they are the same defect and the same fix.
+`scripts/bench-history.sh`, and — found by the bite-17 review, because the first sweep was
+`find scripts -maxdepth 1` — **`scripts/shims/cyrius-repl.sh`**, `scripts/lib/audit-walk.sh` and
+`benches/bench_capacity_overhead.sh`. The REPL shim is the sharpest of them and is **installed
+into `~/.cyrius/versions/<v>/bin`**: it compiled every expression you type to
+`/tmp/cyrius_repl_$$`, `chmod +x`'d it and ran it, so a local user who pre-creates that name
+(the redirect follows a symlink) or replaces the file between the `chmod` and the `exec` gets
+their code executed as you — `install.sh`'s `/tmp/cc5_verify` shape, in a shipped tool. None of
+these stage a signature input, so they are the overwrite / local-code-execution half of this
+finding rather than the verification-bypass half — but they are the same defect and the same
+fix, and the sweep that pins them is now by SHAPE (`scripts/**`, `benches/**`), not by directory
+level.
 
 ## CVE-45 — an INCLUDED file could forge `#@file` and defeat `private` visibility
 

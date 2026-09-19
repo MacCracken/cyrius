@@ -1502,6 +1502,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `TMPDIR` from a checked `mktemp -d` may then spell `"$TMPDIR/x"` freely; that is the private
   directory, not the shared one.
 
+- **The `scripts/*.sh` sweep was one directory level deep, so the two shipped scripts that live
+  below it kept the fixed-`/tmp` shape — one of them compiles a binary there and runs it**
+  (bite 17j, from bite 17's review). `find scripts -maxdepth 1` is a sweep by *directory*, and
+  the defect is a *shape*. **`scripts/shims/cyrius-repl.sh`** compiled every expression you type
+  to `/tmp/cyrius_repl_$$`, `chmod +x`'d it and executed it (plus `2>/tmp/cyrius_repl_err_$$`) —
+  `install.sh`'s `/tmp/cc5_verify` exactly, in a script `install.sh` **ships into
+  `~/.cyrius/versions/<v>/bin`** and `cyrius repl` invokes: pre-create the name (the redirect
+  follows a symlink) or swap the binary between the `chmod` and the `exec` and the REPL runs
+  another local user's code as you. `scripts/lib/audit-walk.sh` (also installed, into
+  `bin/lib/`) staged the formatter's output at `/tmp/aw_fmt_$$` — it needs no temp at all, since
+  `cyrfmt` with no mode writes to stdout and `diff` reads `-`; the walk's verdict over
+  `cbt lib/unicode programs/checks` is identical before and after. `benches/bench_capacity_overhead.sh`
+  wrote its timings to `/tmp/bench_cap_$$_*` and `rm -f`'d that glob, and took an unchecked
+  `mktemp` per call that it never wrote to. **Axis 7 now sweeps `scripts/**` and `benches/**` at
+  any depth** (floor 28, 29 live). Mutation ledger: each of the three restored to its pre-fix
+  body reddens the axis; and with all three live, putting the sweep back to `-maxdepth 1` reads
+  **green** — which is what the first cut did. Recorded against CVE-44 in
+  `docs/audit/2026-09-03-security-audit.md` as the same class.
+
 - **Five `lib/` modules called other modules' functions without including them, so a bare
   `include` compiled with `warning: undefined function` — and an undefined function is a
   `ud2`/SIGILL stub, not a link error** (bite 17g). `lib/fmt.cyr` called `strlen`/`memcpy`

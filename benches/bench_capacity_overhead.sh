@@ -24,12 +24,19 @@ if [ ! -f "$SRC" ]; then
     echo "error: $SRC not found"; exit 1
 fi
 
-# Wrap the time output of $N compiles. POSIX `time` writes to stderr
-# in a wide variety of formats; use a TMP file for portability.
+# v6.6.6: a CHECKED private temp dir for the per-mode timings. They were written to
+# "/tmp/bench_cap_$$_<label>_ns" — a predictable name in a world-writable directory, so another
+# user could pre-create it as a symlink (the redirect follows one) and the `rm -f
+# "/tmp/bench_cap_$$_"*` at the end swept whatever else matched. The `TMPTIME=$(mktemp)` this
+# used to take per call was unchecked AND unused — created and removed, never written.
+# CHANGELOG [6.6.6]
+TD=$(mktemp -d) && [ -d "$TD" ] || { echo "error: could not create a private temp directory (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+trap 'rm -rf "$TD"' EXIT INT TERM
+
+# Wrap the time output of $N compiles.
 measure() {
     label="$1"
     env_pair="$2"
-    TMPTIME=$(mktemp)
     i=0
     start=$(date +%s%N)
     while [ "$i" -lt "$N" ]; do
@@ -41,13 +48,12 @@ measure() {
         i=$((i + 1))
     done
     end=$(date +%s%N)
-    rm -f "$TMPTIME"
     elapsed_ns=$((end - start))
     elapsed_ms=$((elapsed_ns / 1000000))
     per_us=$((elapsed_ns / N / 1000))
     printf "  %-25s %4d compiles in %5d ms  (%4d µs / compile)\n" \
         "$label" "$N" "$elapsed_ms" "$per_us"
-    echo "$elapsed_ns" > "/tmp/bench_cap_$$_${label}_ns"
+    echo "$elapsed_ns" > "$TD/${label}_ns"
 }
 
 echo "=== Capacity stats overhead (cc3 self-compile, N=$N) ==="
@@ -55,9 +61,8 @@ echo "=== Capacity stats overhead (cc3 self-compile, N=$N) ==="
 measure baseline ""
 measure with_stats "CYRIUS_STATS=1"
 
-baseline_ns=$(cat "/tmp/bench_cap_$$_baseline_ns")
-stats_ns=$(cat "/tmp/bench_cap_$$_with_stats_ns")
-rm -f "/tmp/bench_cap_$$_"*
+baseline_ns=$(cat "$TD/baseline_ns")
+stats_ns=$(cat "$TD/with_stats_ns")
 
 delta_ns=$((stats_ns - baseline_ns))
 # Bound at 0 — noise can flip sign on small samples.

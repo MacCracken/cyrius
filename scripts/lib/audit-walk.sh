@@ -54,12 +54,16 @@ audit_fmt_walk() {
                 AW_FMT_SKIPPED=$((AW_FMT_SKIPPED + 1))
                 continue
             fi
-            "$_cyrfmt" "$_f" > /tmp/aw_fmt_$$ 2>/dev/null
-            if ! diff -q "$_f" /tmp/aw_fmt_$$ > /dev/null 2>&1; then
+            # v6.6.6: compare the formatted text through a PIPE. This staged it at
+            # "/tmp/aw_fmt_$$" — a predictable name in a world-writable directory, so another
+            # user could pre-create it as a symlink and have the formatter's output written
+            # wherever they pointed it, and two audits of the same pid namespace (a container)
+            # collided. A temp file was never needed: cyrfmt with no mode writes to stdout and
+            # POSIX diff reads "-" from stdin. CHANGELOG [6.6.6]
+            if ! "$_cyrfmt" "$_f" 2>/dev/null | diff -q "$_f" - > /dev/null 2>&1; then
                 AW_FMT_FAIL=1
                 AW_FMT_FILES="$AW_FMT_FILES $(basename "$_f")"
             fi
-            rm -f /tmp/aw_fmt_$$
         done
     done
 }

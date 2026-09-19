@@ -732,13 +732,26 @@ fi
 # /tmp/_vb_seed.out. Two shapes, both already detected by axis 5's functions, which is why this
 # axis reuses them verbatim rather than writing a second pair that could drift.
 #
+# ⚠ AND IT SWEEPS BY SHAPE, NOT BY DIRECTORY LEVEL (bite 17 review). The first cut was
+# `find scripts -maxdepth 1`, so the two scripts that live one level down kept the very defect
+# this axis exists to catch — and both are INSTALLED into `~/.cyrius/versions/<v>/bin`:
+#   * scripts/shims/cyrius-repl.sh COMPILED each entered expression to "/tmp/cyrius_repl_$$",
+#     chmod'd it +x and RAN it. That is install.sh's /tmp/cc5_verify shape exactly, and the
+#     CVE-44 neighbour class: pre-create the name (the redirect follows a symlink) or swap the
+#     binary between the chmod and the exec and the REPL runs your code as the user.
+#   * scripts/lib/audit-walk.sh staged the formatter's output at "/tmp/aw_fmt_$$" (it needs no
+#     temp at all — cyrfmt writes to stdout and diff reads "-").
+# benches/ is swept for the same reason: bench_capacity_overhead.sh wrote its timings to
+# "/tmp/bench_cap_$$_*" and then `rm -f`'d that glob. A directory-level sweep catches a defect
+# where it was last seen; a shape-level one catches it where it is.
+#
 # ⚠ ALLOWLIST, and why it is short. A fixed /tmp name is allowed only where the path is a
 # CONTRACT with something outside this repo, and each entry names it. An entry that matches no
 # live line FAILS, so the list cannot rot into a blanket pass.
 ALLOW7='scripts/cross-os-selfhost.sh|the /tmp/_co_* staging names the cross-OS self-host leg scps to ecb/ach/cass/pi. NOT fixed here: verifying a change needs all four SSH hosts, which this lane cannot reach, and a silently-wrong path there breaks the release gate (CLAUDE.md already warns to run it ONE host at a time for exactly this reason). Tracked for the next release.'
 n7=0; bad7=0; nhit7=0
 : > "$W/allow7.live"
-for g in $(find scripts -maxdepth 1 -name '*.sh' | LC_ALL=C sort); do
+for g in $(find scripts benches -name '*.sh' | LC_ALL=C sort); do
     n7=$((n7 + 1))
     allowed=0
     case "$ALLOW7" in *"$g|"*) allowed=1 ;; esac
@@ -760,13 +773,13 @@ printf '%s\n' "$ALLOW7" | grep . | cut -d'|' -f1 | while read -r af; do
     grep -qxF "$af" "$W/allow7.live" || { echo "FAIL: axis 7: allowlist entry '$af' matches no live fixed-/tmp or unchecked-mktemp line — remove it, it is hiding nothing and could hide the next one"; }
 done > "$W/stale7"
 [ -s "$W/stale7" ] && { cat "$W/stale7"; bad7=1; }
-if [ "$n7" -lt 20 ]; then
-    echo "FAIL: axis 7: scanned $n7 scripts/*.sh (floor 20) — the scan read nothing"; FAIL=1
+if [ "$n7" -lt 28 ]; then
+    echo "FAIL: axis 7: scanned $n7 scripts/**.sh + benches/**.sh (floor 28) — the scan read nothing"; FAIL=1
 elif [ "$bad7" != 0 ]; then
     FAIL=1
 else
     nallow7=$(printf '%s\n' "$ALLOW7" | grep -c .)
-    echo "  ok: axis 7: all $n7 scripts/*.sh take every temp from a checked mktemp and name no fixed /tmp path ($nallow7 allowlisted, each still live; detectors shared with axis 5)"
+    echo "  ok: axis 7: all $n7 shell scripts under scripts/ and benches/ (at any depth) take every temp from a checked mktemp and name no fixed /tmp path ($nallow7 allowlisted, each still live; detectors shared with axis 5)"
 fi
 
 # ── axis 6: STATIC — the TESTS check.sh runs share no fixed name either ─────────────────

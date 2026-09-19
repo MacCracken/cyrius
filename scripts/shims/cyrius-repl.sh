@@ -7,6 +7,20 @@
 
 CC="${1:-./build/cycc}"
 
+# v6.6.6: a CHECKED private temp dir. This COMPILED each entered expression to
+# "/tmp/cyrius_repl_$$", chmod'd it +x and RAN it — a predictable path in a world-writable
+# directory, so another local user could pre-create the name (the redirect follows a symlink) or
+# swap the binary between the chmod and the exec, and the REPL would execute their code as you.
+# The same shape as CVE-44 (scripts/ci.sh) and install.sh's /tmp/cc5_verify, in a script the
+# installer ships into ~/.cyrius/versions/<v>/bin. An unguessable 0700 dir leaves nothing to
+# pre-create; a mktemp that cannot produce one aborts rather than falling back to a shared name.
+# CHANGELOG [6.6.6]
+TD=$(mktemp -d) && [ -d "$TD" ] || { echo "error: could not create a private temp directory (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
+chmod 700 "$TD" 2>/dev/null
+trap 'rm -rf "$TD"' EXIT INT TERM
+BIN="$TD/repl"
+ERRF="$TD/repl.err"
+
 echo "Cyrius REPL ($(cat VERSION 2>/dev/null || echo '?'))"
 echo "Type expressions. Result = exit code (0-255). Use syscall(1,1,...) for output."
 echo "End multi-line with ;;   Ctrl+D to exit."
@@ -52,8 +66,8 @@ while true; do
         ":type "*)
             expr=$(echo "$line" | sed 's/^:type //')
             src="${PREAMBLE}_print(${expr});return 0;${EPILOGUE}"
-            echo "$src" | "$CC" > /tmp/cyrius_repl_$$ 2>/dev/null && chmod +x /tmp/cyrius_repl_$$ && /tmp/cyrius_repl_$$ 2>/dev/null
-            rm -f /tmp/cyrius_repl_$$
+            echo "$src" | "$CC" > "$BIN" 2>/dev/null && chmod +x "$BIN" && "$BIN" 2>/dev/null
+            rm -f "$BIN"
             continue
             ;;
     esac
@@ -81,17 +95,16 @@ while true; do
     # Execute
     # Wrap in main, last expression becomes return value
     src="${PREAMBLE}${buffer}${EPILOGUE}"
-    tmpbin="/tmp/cyrius_repl_$$"
-    if echo "$src" | "$CC" > "$tmpbin" 2>/tmp/cyrius_repl_err_$$; then
-        chmod +x "$tmpbin"
-        result=$("$tmpbin" 2>/dev/null; echo $?)
+    if echo "$src" | "$CC" > "$BIN" 2>"$ERRF"; then
+        chmod +x "$BIN"
+        result=$("$BIN" 2>/dev/null; echo $?)
         echo "= $result"
     else
         # Show error
-        cat /tmp/cyrius_repl_err_$$ 2>/dev/null
+        cat "$ERRF" 2>/dev/null
         echo "(compile error)"
     fi
-    rm -f "$tmpbin" /tmp/cyrius_repl_err_$$
+    rm -f "$BIN" "$ERRF"
 
     buffer=""
     prompt="> "
