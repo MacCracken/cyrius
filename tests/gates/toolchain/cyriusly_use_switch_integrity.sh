@@ -41,7 +41,23 @@
 #   4. STATIC: `_cmd_use_v2` contains no `sys_unlink(bin_link)` / `sys_unlink(lib_link)` — the
 #      switch goes through `_relink_atomic` (symlink to a unique sibling, then rename), every
 #      call's result is checked, and `current` is written AFTER the links. Self-tested against
-#      the 6.6.5 body so the detector cannot read green on anything.
+#      the 6.6.5 body so the detector cannot read green on anything. ALSO over the two SHELL
+#      twins (see axis 5): neither `scripts/install.sh` nor `scripts/cyriusly` may name
+#      `$CYRIUS_HOME/bin` or `/lib` in an `rm -rf`, or re-point one with a bare `ln -sf`.
+#   5. DYNAMIC, THE SHELL TWINS (added by the bite-17 review). cyriusly is NOT the only thing
+#      that switches `~/.cyrius/{bin,lib}` — `scripts/install.sh` is their PRIMARY creator (it
+#      is what makes `bin` a symlink at all) and `scripts/cyriusly`, the fallback version
+#      manager install.sh fetches when the compiled one is missing, switches them too. Both had
+#      the 6.6.5 shape VERBATIM: `rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"` then two
+#      `ln -sf`. `set -e` covers the "reported success" half in install.sh, but failures (a)
+#      "the link does not exist in between" and (c) "bin switched, lib not" are untouched by it.
+#      Measured on that shape with a second process watching: the link was ABSENT in 464,025 of
+#      977,258 checks (47 %); through `ln -sfn` — which renames the new link over the old —
+#      548,405 checks saw it absent 0 times. The axis extracts each file's switch functions and
+#      exercises them against a scratch CYRIUS_HOME: a fresh install, a re-point, a legacy REAL
+#      directory (the one case `rm -rf` is still for), and a lib that cannot be linked (an `ln`
+#      stub on PATH, so the injection is deterministic and needs no root) with and without a
+#      previous `bin` — where the switch must fail AND leave the user exactly as they were.
 #
 # MUTATION LEDGER (measured 6.6.6; each mutant is a COPY of programs/cyriusly.cyr in the
 # gate's scratch dir, compiled with the tree's build/cycc)
@@ -54,6 +70,16 @@
 #   e. axis-4 detector's unlink pattern disabled         -> axis 4 self-test FAIL
 #   f. axis-4 detector's `_relink_atomic` requirement    -> axis 4 self-test FAIL
 #      disabled
+#   g. install.sh's 6.6.5 switch (rm -rf both links +    -> axis 5 FAIL (lib-fails case: bin left
+#      two ln -sf), as a function over the same home        on 9.9.9 with lib on 1.0.0, and on a
+#                                                           fresh home bin left behind) and
+#                                                           axis 4 FAIL (rm -rf names the links)
+#   h. scripts/cyriusly's 6.6.5 `link_version`           -> axis 5 FAIL (same two), axis 4 FAIL
+#   i. the rollback's "nothing was there before" arm     -> axis 5 FAIL (fresh home + lib fails:
+#      removed from either shell twin                       bin is left pointing at 9.9.9 while
+#                                                           the tool says nothing was changed)
+#   j. axis-4 shell detector disabled                    -> axis 4 self-test FAIL (the 6.6.5
+#                                                           fixture is not reported)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -184,5 +210,95 @@ got=$(_judge "$D/body.665")
 [ "$got" = "$want" ] || { fail "axis 4 self-test: the 6.6.5 body judged '$got', expected '$want' — the detector is blind to a shape it must catch"; x=1; }
 [ "$x" = 0 ] && echo "  ok: axis 4: no unlink of a live link, both links through _relink_atomic (symlink + rename), current written last (detector self-tested on the 6.6.5 body)"
 
+# ── axis 4b: STATIC — the two SHELL twins do not remove the live links either ──
+# _judge_sh <file> -> verdict tokens; empty means clean.
+_judge_sh() {
+    v=""
+    grep -vE '^[ \t]*#' "$1" | grep -qE 'rm -rf[^#]*\$\{?CYRIUS_HOME\}?/(bin|lib)' && v="$v rmrf_live_link"
+    grep -vE '^[ \t]*#' "$1" | grep -qE 'ln -sf[^n][^#]*"\$\{?CYRIUS_HOME\}?/(bin|lib)"' && v="$v bare_ln_sf"
+    printf '%s' "${v# }"
+}
+x=0
+for f in scripts/install.sh scripts/cyriusly; do
+    verdict=$(_judge_sh "$f")
+    [ -z "$verdict" ] || { fail "axis 4: $f still switches the live toolchain by removing it first:$verdict"; x=1; }
+done
+grep -qE '^_relink_active\(\)' scripts/install.sh || { fail "axis 4: scripts/install.sh has no _relink_active — the switch helper is gone"; x=1; }
+[ "$(grep -cE '^[^#]*_switch_active "' scripts/install.sh)" -ge 2 ] || { fail "axis 4: scripts/install.sh has $(grep -cE '^[^#]*_switch_active "' scripts/install.sh) call(s) to _switch_active, expected both switch sites"; x=1; }
+grep -qE '^relink_one\(\)' scripts/cyriusly || { fail "axis 4: scripts/cyriusly has no relink_one"; x=1; }
+# self-test: the 6.6.5 shell shape must be reported on both counts
+printf 'link_version() {\n    rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"\n    ln -sf "$CYRIUS_HOME/versions/$ver/bin" "$CYRIUS_HOME/bin"\n}\n' > "$D/sh.665"
+got=$(_judge_sh "$D/sh.665")
+[ "$got" = "rmrf_live_link bare_ln_sf" ] || { fail "axis 4 self-test: the 6.6.5 shell body judged '$got', expected 'rmrf_live_link bare_ln_sf'"; x=1; }
+printf '# rm -rf "$CYRIUS_HOME/bin" in a comment is not a use\n    ln -sfn "$1" "$2"\n    rm -rf "$_ra_l"\n' > "$D/sh.clean"
+[ -z "$(_judge_sh "$D/sh.clean")" ] || { fail "axis 4 self-test: a comment, an ln -sfn or an rm of a variable was flagged: $(_judge_sh "$D/sh.clean")"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 4b: neither scripts/install.sh nor scripts/cyriusly names \$CYRIUS_HOME/{bin,lib} in an rm -rf or re-points one with a bare ln -sf (detector self-tested on the 6.6.5 shell body)"
+
+# ── axis 5: DYNAMIC — the shell twins switch atomically, both-or-neither ──
+# The switch functions are EXTRACTED from the live scripts (sourcing the scripts themselves
+# would run an installer), so what runs here is the shipped code, not a copy of it.
+sed -n '/^_relink_active() {/,/^}/p' scripts/install.sh  > "$D/fn_install.sh"
+sed -n '/^_switch_active() {/,/^}/p'  scripts/install.sh >> "$D/fn_install.sh"
+sed -n '/^relink_one() {/,/^}/p'  scripts/cyriusly > "$D/fn_cyriusly.sh"
+sed -n '/^link_version() {/,/^}/p' scripts/cyriusly >> "$D/fn_cyriusly.sh"
+[ "$(grep -c '^}' "$D/fn_install.sh")" = "2" ] || { fail "axis 5: could not extract both switch functions from scripts/install.sh — renamed? the axis is blind"; FAIL=1; }
+[ "$(grep -c '^}' "$D/fn_cyriusly.sh")" = "2" ] || { fail "axis 5: could not extract both switch functions from scripts/cyriusly — renamed? the axis is blind"; FAIL=1; }
+# an `ln` that refuses the lib link: deterministic failure injection, no root and no chmod games
+mkdir -p "$D/stub"
+cat > "$D/stub/ln" <<'SH'
+#!/bin/sh
+for a in "$@"; do :; done
+case "$a" in *"/lib") exit 1 ;; esac
+exec /bin/ln "$@"
+SH
+chmod +x "$D/stub/ln"
+# _sw <impl> <home> [stub]  — run the extracted switch for <impl> against <home>
+_sw() {
+    _si="$1"; _sh_home="$2"; _sstub="${3:-}"
+    (
+        CYRIUS_HOME="$_sh_home"; export CYRIUS_HOME
+        [ -n "$_sstub" ] && PATH="$D/stub:$PATH" && export PATH
+        . "$D/fn_$_si.sh"
+        if [ "$_si" = install ]; then _switch_active "$_sh_home/versions/9.9.9"; else link_version 9.9.9; fi
+    ) > "$D/sw.out" 2>&1
+}
+x=0
+for impl in install cyriusly; do
+    # (a) a FRESH home: no bin/lib yet
+    _home "s_${impl}_a" || { echo "FAIL: cannot stage the axis-5 home"; exit 1; }
+    H="$D/s_${impl}_a"
+    rc=0; _sw "$impl" "$H" || rc=$?
+    [ "$rc" -eq 0 ] || { fail "axis 5 ($impl): a fresh switch failed (rc=$rc): $(head -2 "$D/sw.out")"; x=1; }
+    for l in bin lib; do
+        [ "$(_points_at "$H/$l")" = "9.9.9" ] || { fail "axis 5 ($impl): fresh install left $l as $(_points_at "$H/$l")"; x=1; }
+    done
+    # (b) a RE-POINT over existing links, and (c) a legacy REAL directory at bin
+    _home "s_${impl}_b" || exit 1
+    H="$D/s_${impl}_b"
+    mkdir -p "$H/bin"; printf 'an old copy-based install\n' > "$H/bin/cycc"
+    ln -sfn "$H/versions/1.0.0/lib" "$H/lib"
+    rc=0; _sw "$impl" "$H" || rc=$?
+    [ "$rc" -eq 0 ] || { fail "axis 5 ($impl): a switch over a legacy bin/ directory failed (rc=$rc): $(head -2 "$D/sw.out")"; x=1; }
+    for l in bin lib; do
+        [ "$(_points_at "$H/$l")" = "9.9.9" ] || { fail "axis 5 ($impl): $l is $(_points_at "$H/$l") after a switch over a legacy directory"; x=1; }
+    done
+    # (d) lib cannot be linked, WITH a previous bin -> rc != 0 and bin rolled back
+    _home "s_${impl}_c" || exit 1
+    H="$D/s_${impl}_c"
+    ln -sfn "$H/versions/1.0.0/bin" "$H/bin"
+    ln -sfn "$H/versions/1.0.0/lib" "$H/lib"
+    rc=0; _sw "$impl" "$H" stub || rc=$?
+    [ "$rc" -ne 0 ] || { fail "axis 5 ($impl): a half-switch (lib unlinkable) reported success"; x=1; }
+    [ "$(_points_at "$H/bin")" = "1.0.0" ] || { fail "axis 5 ($impl): bin is $(_points_at "$H/bin") while lib is still 1.0.0 — a MIXED toolchain (new binaries, old stdlib)"; x=1; }
+    [ "$(_points_at "$H/lib")" = "1.0.0" ] || { fail "axis 5 ($impl): lib moved to $(_points_at "$H/lib") although its relink failed"; x=1; }
+    # (e) lib cannot be linked and there was NO previous bin -> nothing is left behind
+    _home "s_${impl}_d" || exit 1
+    H="$D/s_${impl}_d"
+    rc=0; _sw "$impl" "$H" stub || rc=$?
+    [ "$rc" -ne 0 ] || { fail "axis 5 ($impl): a failed fresh switch reported success"; x=1; }
+    [ "$(_points_at "$H/bin")" = "ABSENT" ] || { fail "axis 5 ($impl): a failed switch left bin as $(_points_at "$H/bin") on a home that had none — 'nothing was changed' would be false"; x=1; }
+done
+[ "$x" = 0 ] && echo "  ok: axis 5: both shell twins (install.sh, scripts/cyriusly) switch fresh / over links / over a legacy directory, and on a lib that cannot be linked fail with bin rolled back (or removed, when there was none)"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: cyriusly_use_switch_integrity (4 axes)"
+echo "PASS: cyriusly_use_switch_integrity (5 axes)"

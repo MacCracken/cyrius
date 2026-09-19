@@ -1521,6 +1521,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **green** — which is what the first cut did. Recorded against CVE-44 in
   `docs/audit/2026-09-03-security-audit.md` as the same class.
 
+- **`install.sh` and the shell `cyriusly` still removed `~/.cyrius/{bin,lib}` before re-creating
+  them — the exact switch 17b fixed in the compiled tool, in the two scripts that ship it**
+  (bite 17k, from bite 17's review). 17b's own write-up names the failure it removed: "between
+  the unlink and the symlink `~/.cyrius/bin` does not EXIST". `scripts/install.sh` (lines 573
+  and 949) and `scripts/cyriusly`'s `link_version` both did `rm -rf "$CYRIUS_HOME/bin"
+  "$CYRIUS_HOME/lib"` followed by two `ln -sf`, and install.sh is the **primary creator** of
+  those links — cyriusly only re-points them. `set -e` covers the "reported success" half in
+  install.sh, but not the window or the bin-succeeded/lib-failed split. **Measured** with a
+  second process watching the link through a tight re-point loop: the `rm`+`ln` shape showed
+  `bin` **ABSENT in 464,025 of 977,258 checks (47 %)**; `ln -sfn`, which renames the new link
+  over the old, showed 0 of 548,405. **Fix:** `_relink_active` + `_switch_active` in install.sh
+  and `relink_one` + `link_version` in scripts/cyriusly — one `ln -sfn` per link, both-or-neither
+  (a failed `lib` puts `bin` back, or removes it when there was none), and `rm -rf` kept for the
+  ONE case it was ever for: a pre-v5.7.22 install where `bin` is a real directory. The shell
+  `cyriusly use` also now writes `current` **after** the links and says nothing about "using" a
+  version it could not switch to. ⚠ `mv` is not the spelling to reach for: `mv -f bin.new bin`
+  with `bin` a symlink to a directory moves `bin.new` **inside** the old version's directory and
+  leaves `bin` where it was (measured on GNU mv; `-T` fixes it and is not on macOS). Pinned by a
+  new **axis 5** (dynamic, the switch functions extracted from the live scripts and run against a
+  scratch home: fresh, re-point, legacy directory, and a lib that cannot be linked — injected
+  with an `ln` stub on PATH, so it needs no root) and **axis 4b** (static) in
+  `tests/gates/toolchain/cyriusly_use_switch_integrity.sh`. 4 mutations, each RED.
+
 - **Five `lib/` modules called other modules' functions without including them, so a bare
   `include` compiled with `warning: undefined function` — and an undefined function is a
   `ud2`/SIGILL stub, not a link error** (bite 17g). `lib/fmt.cyr` called `strlen`/`memcpy`

@@ -173,6 +173,55 @@ _install_file() {   # _install_file <src> <dst-dir> [mode]
     return 0
 }
 
+# ── v6.6.6: the ACTIVE-toolchain switch never leaves the user without one ──
+#
+# ⛔ WHAT WAS WRONG: `rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"` and then two `ln -sf`, at
+# both switch sites. Between the `rm` and the `ln` the user HAS NO TOOLCHAIN — `~/.cyrius/bin`
+# does not exist — so anything that fails or interrupts there (a kill, ENOSPC, a concurrent
+# install) leaves them with nothing, from the script whose entire job is to give them one. And
+# the two links move independently, so `bin` succeeding while `lib` fails leaves new binaries
+# over an old stdlib. Measured with a second process watching the link through a tight
+# re-point loop: the `rm`+`ln` shape showed `bin` ABSENT in 464,025 of 977,258 checks (47 %).
+# This is the same defect `cyriusly use --global` had (fixed this release in
+# programs/cyriusly.cyr `_cmd_use_v2`) — and install.sh is the PRIMARY creator of these links;
+# cyriusly only re-points them.
+#
+# ⭐ `ln -sfn` REPLACES the entry instead of removing it first (coreutils stages the new link
+# and renames it over the old), so the name never stops resolving: 548,405 checks through the
+# same loop, zero absent. ⚠ `mv` is NOT the spelling to reach for here, and the obvious form is
+# a trap: `mv -f bin.new bin` with `bin` a symlink to a directory moves `bin.new` INSIDE the old
+# version's directory and leaves `bin` pointing exactly where it did (measured on GNU mv; `-T`
+# fixes it but is not on macOS). `rm -rf` survives for the ONE case it was ever needed for — a
+# pre-v5.7.22 install where `bin` is a real directory, which no link can replace.
+# CHANGELOG [6.6.6]
+_relink_active() {   # _relink_active <target> <link>
+    _ra_t="$1"; _ra_l="$2"
+    if [ -d "$_ra_l" ] && [ ! -L "$_ra_l" ]; then
+        rm -rf "$_ra_l" || return 1      # a legacy REAL directory; nothing else is removed
+    fi
+    ln -sfn "$_ra_t" "$_ra_l"
+}
+
+# Point ~/.cyrius/{bin,lib} at <version-dir>/{bin,lib}: BOTH or NEITHER. If lib cannot be
+# re-pointed, bin goes back to what it named, so a failed switch never leaves new binaries over
+# an old stdlib. Returns non-zero on failure; the caller reports. CHANGELOG [6.6.6]
+_switch_active() {   # _switch_active <version-dir>
+    _sa_old_bin=""; _sa_old_lib=""
+    if [ -L "$CYRIUS_HOME/bin" ]; then _sa_old_bin=$(readlink "$CYRIUS_HOME/bin"); fi
+    if [ -L "$CYRIUS_HOME/lib" ]; then _sa_old_lib=$(readlink "$CYRIUS_HOME/lib"); fi
+    _relink_active "$1/bin" "$CYRIUS_HOME/bin" || return 1
+    if ! _relink_active "$1/lib" "$CYRIUS_HOME/lib"; then
+        if [ -n "$_sa_old_bin" ]; then
+            _relink_active "$_sa_old_bin" "$CYRIUS_HOME/bin" || true
+        elif [ -L "$CYRIUS_HOME/bin" ] && [ "$(readlink "$CYRIUS_HOME/bin")" = "$1/bin" ]; then
+            # nothing was here before this call: leave nothing, so "unchanged" is TRUE
+            rm -f "$CYRIUS_HOME/bin" || true
+        fi
+        return 1
+    fi
+    return 0
+}
+
 # CVE-21 (v6.2.30): portable, fail-closed checksum verify. Returns 0 on a
 # verified match, non-zero on mismatch, and 2 when no SHA-256 tool exists (a
 # box that cannot verify must not silently install). $1 = a sha256sum-format
@@ -565,14 +614,12 @@ EOF_LIB
     # version was previously active. Local devs running version-bump.sh
     # back-to-back saw `cyrius --version` reporting a stale binary
     # while ~/.cyrius/current already advanced (footgun, not breakage).
-    # Use rm -rf (not rm -f) so a stale-directory state from an older
-    # install also gets cleaned out.
+    # v6.6.6: through _switch_active — atomic per link, both-or-neither, and the legacy
+    # real-directory state still cleaned out (the only thing the old `rm -rf` was for).
     if [ "${CYRIUS_NO_ACTIVATE:-0}" = "1" ]; then
         info "CYRIUS_NO_ACTIVATE=1 — leaving the active version at $(cat "$CYRIUS_HOME/current" 2>/dev/null || echo '?')"
-    else
-    rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"
-    ln -sf "$CYRIUS_HOME/versions/$VERSION/bin" "$CYRIUS_HOME/bin"
-    ln -sf "$CYRIUS_HOME/versions/$VERSION/lib" "$CYRIUS_HOME/lib"
+    elif ! _switch_active "$CYRIUS_HOME/versions/$VERSION"; then
+        err "could not re-point $CYRIUS_HOME/bin + lib at $VERSION — the previous toolchain is unchanged"
     fi
 
     # v6.0.36: install the build-artifact pre-commit hook when refreshing
@@ -946,9 +993,10 @@ if [ "${CYRIUS_NO_ACTIVATE:-0}" = "1" ]; then
     info "CYRIUS_NO_ACTIVATE=1 — installed $VERSION without activating it (active stays $(cat "$CYRIUS_HOME/current" 2>/dev/null || echo '?'))"
 else
 info "linking directories..."
-rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"
-ln -sf "$CYRIUS_HOME/versions/$VERSION/bin" "$CYRIUS_HOME/bin"
-ln -sf "$CYRIUS_HOME/versions/$VERSION/lib" "$CYRIUS_HOME/lib"
+# v6.6.6: see _switch_active — never `rm -rf` the live links and then re-create them.
+if ! _switch_active "$CYRIUS_HOME/versions/$VERSION"; then
+    err "could not re-point $CYRIUS_HOME/bin + lib at $VERSION — the previous toolchain is unchanged"
+fi
 fi
 
 # ── Install version manager ──

@@ -7,16 +7,37 @@ CYRIUS_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 
 current() { cat "$CYRIUS_HOME/current" 2>/dev/null || echo "none"; }
 
+# v6.6.6: replace each link IN PLACE — never remove the live one first, and both or neither.
+#
+# ⛔ `rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"` + two `ln -sf` left the user with NO
+# ~/.cyrius/bin in between: measured with a watching process, that shape showed the link ABSENT
+# in 464,025 of 977,258 checks (47 %), and anything failing in the window left it that way. The
+# `-n` in `ln -sfn` is also what the old `rm -rf` was really for: without it `ln -sf` creates the
+# link INSIDE the directory the destination symlink points at, which is the hazard the comment
+# here used to describe. A legacy REAL directory (a pre-v5.7.22 copy install) is the one case
+# that still has to be removed, and it is now the only thing removed.
+# Same fix as programs/cyriusly.cyr `_cmd_use_v2` and scripts/install.sh. CHANGELOG [6.6.6]
+relink_one() {   # relink_one <target> <link>
+    if [ -d "$2" ] && [ ! -L "$2" ]; then rm -rf "$2" || return 1; fi
+    ln -sfn "$1" "$2"
+}
+
 link_version() {
-    local ver="$1"
-    # v5.7.22: rm -rf (not rm -f) so a stale-directory state at
-    # ~/.cyrius/bin (from an old copy-based install) gets cleaned
-    # before the symlink replaces it. rm -f silently leaves a
-    # directory in place; ln -sf then creates the symlink INSIDE
-    # the dir instead of replacing it.
-    rm -rf "$CYRIUS_HOME/bin" "$CYRIUS_HOME/lib"
-    ln -sf "$CYRIUS_HOME/versions/$ver/bin" "$CYRIUS_HOME/bin"
-    ln -sf "$CYRIUS_HOME/versions/$ver/lib" "$CYRIUS_HOME/lib"
+    ver="$1"
+    old_bin=""
+    [ -L "$CYRIUS_HOME/bin" ] && old_bin=$(readlink "$CYRIUS_HOME/bin")
+    relink_one "$CYRIUS_HOME/versions/$ver/bin" "$CYRIUS_HOME/bin" || return 1
+    if ! relink_one "$CYRIUS_HOME/versions/$ver/lib" "$CYRIUS_HOME/lib"; then
+        # new binaries over an old stdlib is worse than not switching: put bin back — and when
+        # there was nothing there before, take the link we just made away again, so the caller's
+        # "nothing was changed" is true rather than nearly true
+        if [ -n "$old_bin" ]; then relink_one "$old_bin" "$CYRIUS_HOME/bin"
+        elif [ -L "$CYRIUS_HOME/bin" ] && [ "$(readlink "$CYRIUS_HOME/bin")" = "$CYRIUS_HOME/versions/$ver/bin" ]; then
+            rm -f "$CYRIUS_HOME/bin"
+        fi
+        return 1
+    fi
+    return 0
 }
 
 case "${1:-help}" in
@@ -41,8 +62,14 @@ case "${1:-help}" in
     use)
         [ -z "$2" ] && echo "Usage: cyriusly use <version>" && exit 1
         [ ! -d "$CYRIUS_HOME/versions/$2" ] && echo "Version $2 not installed." && exit 1
+        # v6.6.6: links FIRST, then `current` — `current` names the version the links serve, so
+        # writing it first published a version the links might never reach — and say nothing
+        # about "using" a version we could not switch to. CHANGELOG [6.6.6]
+        if ! link_version "$2"; then
+            echo "error: could not re-point $CYRIUS_HOME/bin + lib at $2 — nothing was changed" >&2
+            exit 1
+        fi
         echo "$2" > "$CYRIUS_HOME/current"
-        link_version "$2"
         echo "Now using Cyrius $2"
         ;;
 
