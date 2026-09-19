@@ -151,6 +151,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   pointer to the vector works and is pinned. Byte impact: 0 of 324 `.tcyr` changed; cycc
   **1,298,280 → 1,298,400 B**.
 
+- **Redeclaring a top-level global made an earlier read of it return 0, and the "last definition
+  wins" collision warning was false.** (bite 2; filed 2026-09-19 from 6.6.5 bite 9.) Silent when
+  the values agreed: `var a = 5; var b = a; var a = 5;` set `b` to **0** (want 5), no diagnostic;
+  with `var a = 7` on line 3 the compiler printed `duplicate symbol 'a' redefined with conflicting
+  value (last definition wins)` and `b` was still 0 — neither value. **Root cause:** a redeclaration
+  was registered as a SECOND storage slot. Every reference binds to the last declaration (FINDVAR is
+  last-match and all code is compiled after the declaration zone), so the first declaration's
+  static-init value was baked into a slot nothing read, while the redeclaration — sent to the
+  runtime-store path because it shadowed — stored after `b`'s initializer had run. The same second
+  slot let a chain's 3rd link go unwarned (it compared against 0), and in a kernel build, whose
+  deferred initializers replay AFTER the top-level program, let the replay re-resolve the name onto
+  a later `var` of the same name and store into THAT slot. **The rule** (the guide was silent;
+  this is the reading that makes the existing warning true, and it is how a duplicate `fn`
+  resolves): before the first top-level statement a redeclared name is **one global, and the last
+  definition wins for every read**. A constant redeclaration is the global's value from program
+  start — an earlier *computed* initializer still runs, for its side effects, into a discarded
+  sink; a computed redeclaration runs in declaration order (`var a = 5; var b = a; var a = f();`
+  gives `b == 5`, never 0). **Fix** (`src/frontend/parse_decl.cyr`): a declaration-zone
+  redeclaration reuses the global's slot (`_gv_fold`, scalar / destructure / array); a constant
+  one is static-initialized even when it shadows, and marks the earlier deferred stores of the
+  name superseded (`_gv_supersede`, flag bits above the token index in the replay entry, honoured
+  by `_gv_target`); cx, which has no image to bake into, stores those values ahead of the deferred
+  initializers (`_gv_cx_prestore`); each replay entry records the slot it declared, so the replay
+  no longer re-resolves the name. A var over an ENUM constant (`var CLOCK_MONOTONIC = 1`) keeps
+  its own slot but is now static too — `enum E { K = 5; } var b = K; var K = 5;` read 0 as well.
+  After the first top-level statement a `var` is a statement and redeclaring a name starts a new
+  variable for the code after it; that is unchanged (two in-tree tests re-declare a scratch
+  buffer at a new size that way) and now documented. Byte impact: exit codes and output of all
+  **326 `.tcyr` identical** to the 6.6.5-tree compiler; 18 binaries differ, every one from a var
+  over an enum constant or a merged same-value slot (e.g. `lib/chrono.cyr`'s `CLOCK_MONOTONIC`);
+  124 `programs/`/`benches/`/`fuzz/` sources compile with the same result (4 binaries differ, same
+  cause); all seven forks compile; self-compile time unchanged (~852 ms either way). cycc
+  **1,306,640 → 1,310,848 B**. Verified under qemu-aarch64, wine (PE) and cxvm — not hardware;
+  the new crossos test carries it to ecb/ach/cass/pi.
+
+### Changed
+
+- **A declaration-zone redeclaration that changes a global's type or size is now an error**
+  (bite 2): `var a = 5;` then `var a: i32 = 7;`, or `var q[8];` then `var q[16];`, reports
+  `global 'q' redeclared with a different type or size (a global has one definition; rename one)`.
+  Before, the last declaration's shape silently won for all code, so the module written against
+  the other shape read or wrote the wrong width (a 16-byte writer over an 8-byte buffer). The
+  direct analogue of the v6.5.37 rule for a duplicate `fn` that disagrees about arity. No
+  in-tree source trips it; after the first top-level statement a size change still starts a new
+  variable (unchanged).
+
 ### Added
 
 - `tests/tcyr/crossos/simd_param_int_stack_args.tcyr` — 18 assertions with **literal** expectations
@@ -188,6 +234,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   parameter is refused, naming it, for f64v2 / f32v4 / f64v4 / i32v4 in both a coroutine and a
   plain async fn, and the pointer-to-vector form compiles and returns 95 for both. Dropping the
   refusal turns it red.
+- `tests/tcyr/crossos/global_redeclaration.tcyr` (bite 2) — 17 assertions over declaration-zone
+  redeclarations: the filed repro, a conflicting value read early and from a fn, an `#ifdef`-arm
+  second declaration plus an inactive arm, constant-after-computed (the side effect ran once),
+  computed-after-constant, a three-link chain, and a destructure target superseded by a constant.
+  The 6.6.5-tree compiler fails 7 of them.
+- `tests/gates/frontend/global_redeclaration_one_definition.sh` (bite 2, registered in
+  `scripts/check.sh`) — 11 host rows, each checked against a CONTROL program with no
+  redeclaration as well as an absolute value; the type/size-change error; the unchanged
+  after-first-statement shadowing; a kernel-mode structural row (renaming the later variable must
+  change no byte of the image); a cx leg built from the tree's own `main_cx` + `cxvm` and an
+  aarch64 leg under qemu. Six mutants each turn it red (ledger in the header).
+  `tests/gates/codegen/hidden_temp_census.sh` names the two new registration sites: `_gv_reg8`
+  (the pass-1 destructure's per-name registration, moved out of `PARSE_GVAR_REG`) and
+  `_gv_target`'s sink, which goes through `_HTEMP` like every other dead unnamed global.
 
 ## [6.6.5] — 2026-09-19
 

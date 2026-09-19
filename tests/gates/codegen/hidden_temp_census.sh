@@ -97,7 +97,9 @@ fi
 # not from the number this file would like to see.
 #   PARSE_SWITCH 1 | PARSE_MATCH 1 | _PARSE_STMT_IMPL 3 (`?` as a statement, pair + scalar)
 #   _PARSE_TERM_IMPL 3 (`?` in an expression) | PARSE_FOR 3 (collection, length, range end)
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _PARSE_STMT_IMPL:3 _PARSE_TERM_IMPL:3 PARSE_FOR:3"
+#   _gv_target 1 (6.6.6: the dead sink a superseded global initializer stores into; the
+#   replay runs at top level, so it is always the dead-global arm)
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _PARSE_STMT_IMPL:3 _PARSE_TERM_IMPL:3 PARSE_FOR:3 _gv_target:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
@@ -131,12 +133,15 @@ fi
 # either as a new fn (a new row) or as a bump to an existing count, and either way it is NAMED
 # at the source with the reviewer asked to say which arm it is on.
 #
+# 6.6.6: `_gv_reg8` is the pass-1 destructure's per-name registration (moved out of
+# PARSE_GVAR_REG, which was 4 and is now 1) — declaration zone only, never inside a fn.
+#
 # The ONE arm that legitimately runs inside a fn is PARSE_ARRAY's static-array fallback (an
 # array over the per-fn frame budget, or any array under CYRIUS_STACK_ARRAYS=0). It is safe
 # because `_fs_push` (parse.cyr) scopes the NAME to the block — that scoping is what
 # `tests/gates/codegen/fn_local_storage_class.sh` axes 2/3/4/9 assert behaviourally, which is
 # the other, non-textual half of this axis.
-VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:4 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1"
+VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1"
 vn_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /S64\(_varn_base/{print fn}' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')

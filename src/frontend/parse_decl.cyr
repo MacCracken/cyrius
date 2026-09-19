@@ -1115,9 +1115,10 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
     if (sz < 8) { sz = 8; }
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
     STI(S, GTI(S) + 1);
-    var vc = GVCNT(S);
-    S64(_varn_base + vc * 8, noff);
-    S64(_vars_base + vc * 8, sz);
+    var vc0 = GVCNT(S);
+    S64(_varn_base + vc0 * 8, noff);
+    S64(_vars_base + vc0 * 8, sz);
+    var vc = _gv_fold(S, vc0, sti);   # 6.6.6: a redeclaration reuses the global's slot
     SLVAR(S, vc);
     # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its
     # own `_GVAR_VIS` (whose comment claims to be "the one point EVERY global var
@@ -1125,7 +1126,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
     # and addressable from any file — and a `public var arr[N]` never CONSUMED the
     # marker, re-exposing the next declaration instead.
     _GVAR_VIS(S, vc, sti);
-    SVCNT(S, vc + 1);
+    if (vc == vc0) { SVCNT(S, vc0 + 1); }
     # v5.11.51: optional byte-list initializer
     # `var foo[N] = { 0x.., 0x.., ... };` emits store8 calls equivalent
     # to the user typing them by hand. Each byte must be a NUM in [0, 255];
@@ -1174,6 +1175,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
             ERR_MSG(S, "too many initialized globals (max 4096)", 39);
         }
         S64(S + 0x729000 + gc * 8, sti);
+        _gv_ent_set(gc, vc + 1);   # 6.6.6: the slot this entry declared
         S64(S + 0x19A000, gc + 1);
     }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -1332,6 +1334,194 @@ fn _CF_TRY(S, ti): i64 {
     return v;
 }
 
+# ================================================================
+# One global per top-level name (6.6.6)
+# ================================================================
+# WHY. A top-level name declared twice used to get a SECOND storage slot, and FINDVAR's
+# last-match then bound some references to one slot and the rest to the other. The first
+# declaration's static-init value went into a slot nothing read (`var a = 5; var b = a;
+# var a = 5;` gave b 0, and `var a = 7` on the third line gave 0 too, under a warning that
+# promised "last definition wins"); and code compiled before a redeclaration made after the
+# first top-level statement kept reading the old slot while everything after read the new
+# one. A top-level redeclaration now REUSES the slot, so every reference names one global.
+# The value rule that goes with it is at _gv_supersede. CHANGELOG [6.6.6]
+
+# The visibility owner a declaration at token `ti` WILL get — _GVAR_VIS's rule, without
+# consuming the pending `public`.
+fn _gv_owner(S, ti): i64 {
+    if (_pub_pending != 0) { return 0; }
+    var fid = FM_FILEID(S, GTLINE(S, ti));
+    if (_PRIV_FILE(fid) == 1) { return fid + 1; }
+    return 0;
+}
+
+# The live, plain global below index `below` that a top-level redeclaration of `noff` must
+# reuse, or -1. An enum constant has no storage to share (CHK_ENUM_SHADOW / CHKDUPVAL own
+# that case), and a prior with a different visibility owner is a different global.
+fn _gv_prior(S, noff, below, owner): i64 {
+    var vi = below - 1;
+    while (vi >= 0) {
+        if (STREQ(S, L64(_varn_base + vi * 8), noff) == 1) {
+            if (GVDEAD(S, vi) == 0) {
+                if (GVENUMID(S, vi) != 0) { return 0 - 1; }
+                if (GVFI(S, vi) != owner) { return 0 - 1; }
+                return vi;
+            }
+        }
+        vi = vi - 1;
+    }
+    return 0 - 1;
+}
+
+# Same storage: width, type marker, layout mode, signedness.
+fn _gv_same_shape(S, a, b): i64 {
+    if (L64(_vars_base + a * 8) != L64(_vars_base + b * 8)) { return 0; }
+    if (GVTYPE(S, a) != GVTYPE(S, b)) { return 0; }
+    if (GVPM(S, a) != GVPM(S, b)) { return 0; }
+    if (GVSGN(S, a) != GVSGN(S, b)) { return 0; }
+    return 1;
+}
+
+# Forget a written-but-uncounted registration so the next one at this index starts clean.
+# (Its name needs no reset: every registration writes the name first, and nothing reads an
+# index at or above the count.)
+fn _gv_clear(S, vi): i64 {
+    S64(_vars_base + vi * 8, 0);
+    SVTYPE(S, vi, 0);
+    SVSGN(S, vi, 0);
+    S64(_vgsi_base + vi * 8, 0);
+    if (GVPM(S, vi) != 0) { SVPM(S, vi, 0); }
+    if (GVFI(S, vi) != 0) { SVFI(S, vi, 0); }
+    return 0;
+}
+
+# One global cannot have two shapes: code compiled against the first would read the second.
+fn _gv_shape_err(S, noff): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": global '", 10);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' redeclared with a different type or size (a global has one definition; rename one)\n", 85);
+    _had_error = 1;
+    return 0;
+}
+
+# Registration `vi` (tables written, count NOT yet bumped) -> the slot this top-level
+# declaration uses: the existing global's when the name is already declared, else `vi`.
+# The caller bumps the count only when `vi` comes back. `ti` = the declaration's token.
+fn _gv_fold(S, vi, ti): i64 {
+    var noff = L64(_varn_base + vi * 8);
+    var pi = _gv_prior(S, noff, vi, _gv_owner(S, ti));
+    if (pi < 0) { return vi; }
+    if (_gv_same_shape(S, pi, vi) == 0) { _gv_shape_err(S, noff); return vi; }
+    _gv_clear(S, vi);
+    return pi;
+}
+
+# Register one untyped-or-`ty` 8-byte top-level global (a destructure target) through the
+# fold, stamp it and count it. Returns the slot.
+fn _gv_reg8(S, noff, ty, ti): i64 {
+    var vi = GVCNT(S);
+    S64(_varn_base + vi * 8, noff);
+    S64(_vars_base + vi * 8, 8);
+    if (ty != 0) { SVTYPE(S, vi, ty); }
+    var gi = _gv_fold(S, vi, ti);
+    _GVAR_VIS(S, gi, ti);
+    if (gi == vi) { SVCNT(S, vi + 1); }
+    return gi;
+}
+
+# THE VALUE RULE — "last definition wins", which the collision warning (CHKDUPVAL) has always
+# promised and which is how duplicate fns resolve. In the declaration zone (before the first
+# top-level statement) a redeclaration whose initializer folds to an integer constant is not
+# code, it is the global's value FROM PROGRAM START: every read sees it, including an
+# initializer that sits between the two declarations. So an earlier deferred initializer of
+# the name must no longer assign — it still RUNS (its side effects are kept), into a
+# discarded sink (_gv_target). A computed redeclaration runs in declaration order like every
+# deferred initializer. The flag lives above the 40-bit token index in the gvar_toks entry:
+# bit 40+k = target k of that entry (k = 1, 2 for a destructure's later names).
+fn _gv_supersede(S, noff): i64 {
+    var gc = L64(S + 0x19A000);
+    var gi = 0;
+    while (gi < gc) {
+        var raw = L64(S + 0x729000 + gi * 8);
+        var hit = _gv_entry_hit(S, _gv_tok(raw), noff);
+        if (hit != 0) { S64(S + 0x729000 + gi * 8, raw | (hit << 40)); }
+        gi = gi + 1;
+    }
+    return 0;
+}
+
+# Which targets of the deferred entry at `sti` (the `var` token) name `noff`, as a bit mask.
+fn _gv_entry_hit(S, sti, noff): i64 {
+    var m = 0;
+    if (STREQ(S, TOKVAL(S, sti + 1), noff) == 1) { m = 1; }
+    if (TOKTYP(S, sti + 2) == 31) {
+        if (STREQ(S, TOKVAL(S, sti + 3), noff) == 1) { m = m | 2; }
+        if (TOKTYP(S, sti + 4) == 31) {
+            if (STREQ(S, TOKVAL(S, sti + 5), noff) == 1) { m = m | 4; }
+        }
+    }
+    return m;
+}
+
+fn _gv_tok(raw): i64 { return raw & ((1 << 40) - 1); }
+fn _gv_sup(raw): i64 { return raw >> 40; }
+
+# The slot a replayed initializer stores into: its global, or — when a later constant
+# declaration superseded target `k` — a fresh dead sink of the same shape, so the
+# initializer still runs and its result is discarded. The sink is an _HTEMP slot (the
+# replay runs at top level, where _HTEMP registers a dead, unnamed global) resized to the
+# global's shape.
+fn _gv_target(S, idx, sup, k): i64 {
+    if (idx < 0) { return idx; }
+    if (((sup >> k) & 1) == 0) { return idx; }
+    var vi = 0 - 2 - _HTEMP(S);
+    S64(_vars_base + vi * 8, L64(_vars_base + idx * 8));
+    SVTYPE(S, vi, GVTYPE(S, idx));
+    SVSGN(S, vi, GVSGN(S, idx));
+    if (GVPM(S, idx) != 0) { SVPM(S, vi, GVPM(S, idx)); }
+    return vi;
+}
+
+# SLVAR for a replayed initializer — never a sink (the no-main exit value reads "last var").
+fn _gv_slvar(S, idx): i64 {
+    if (GVDEAD(S, idx) == 0) { SLVAR(S, idx); }
+    return 0;
+}
+
+# The slot(s) each deferred entry DECLARED, recorded when it is registered and read back by
+# the replay — which used to re-resolve the name with FINDVAR at replay time and so could
+# land on a LATER declaration of it (a kernel build replays after the top-level program has
+# registered its own globals). Packed as slot+1 in 21-bit fields, target k at bit 21*k
+# (0 = unrecorded -> FINDVAR). Parallel to gvar_toks, allocated on first use.
+var _gv_ent_base = 0;
+fn _gv_ent_set(gc, packed): i64 {
+    if (_gv_ent_base == 0) { _gv_ent_base = alloc(4096 * 8); }
+    store64(_gv_ent_base + gc * 8, packed);
+    return 0;
+}
+fn _gv_ent_slot(S, gi, k, noff): i64 {
+    var w = 0;
+    if (_gv_ent_base != 0) { w = (load64(_gv_ent_base + gi * 8) >> (21 * k)) & 0x1FFFFF; }
+    if (w == 0) { return FINDVAR(S, noff); }
+    return w - 1;
+}
+
+# cx has no file image to bake a value into, so a superseding constant is stored FIRST, ahead
+# of every deferred initializer — the same "from program start" the image gives every other
+# target. Only a redeclaration records a value on cx (see PARSE_GVAR_REG).
+fn _gv_cx_prestore(S): i64 {
+    var n = GVCNT(S);
+    var vi = 0;
+    while (vi < n) {
+        var v = L64(_vgsi_base + vi * 8);
+        if (v != 0) { EMOVI(S, v); EVSTORE(S, vi); }
+        vi = vi + 1;
+    }
+    return 0;
+}
+
 fn PARSE_GVAR_REG(S): i64 {
     var sti = GTI(S);
     STI(S, GTI(S) + 1);  # consume VAR
@@ -1359,35 +1549,26 @@ fn PARSE_GVAR_REG(S): i64 {
             STI(S, GTI(S) + 1);
             dgn = 3;
         }
-        var dga = GVCNT(S);
         # v6.6.4: ONE `public` covers EVERY name of the declaration. _GVAR_VIS clears the
         # marker after each stamp, so `public var A, B = f();` exposed A and stamped B
         # (and C) private. Restore it before each later name; the last stamp leaves it
         # cleared so nothing leaks past the declaration.
+        # 6.6.6: each name goes through the one-global-per-name fold (_gv_fold).
         var _dg_pub = _pub_pending;
-        S64(_varn_base + dga * 8, noff);
-        S64(_vars_base + dga * 8, 8);
-        _GVAR_VIS(S, dga, sti);
-        SVCNT(S, dga + 1);
-        var dgb = GVCNT(S);
-        S64(_varn_base + dgb * 8, dg2);
-        S64(_vars_base + dgb * 8, 8);
+        var dgs1 = _gv_reg8(S, noff, 0, sti);
         _pub_pending = _dg_pub;
-        _GVAR_VIS(S, dgb, sti);
-        SVCNT(S, dgb + 1);
+        var dgs2 = _gv_reg8(S, dg2, 0, sti);
+        var dgs3 = 0 - 1;
         if (dgn == 3) {
-            var dgc = GVCNT(S);
-            S64(_varn_base + dgc * 8, dg3);
-            S64(_vars_base + dgc * 8, 8);
             _pub_pending = _dg_pub;
-            _GVAR_VIS(S, dgc, sti);
-            SVCNT(S, dgc + 1);
+            dgs3 = _gv_reg8(S, dg3, 0, sti);
         }
         var dgg = L64(S + 0x19A000);
         if (dgg >= 4096) {
             ERR_MSG(S, "too many initialized globals (max 4096)", 39);
         }
         S64(S + 0x729000 + dgg * 8, sti);
+        _gv_ent_set(dgg, (dgs1 + 1) | ((dgs2 + 1) << 21) | ((dgs3 + 1) << 42));
         S64(S + 0x19A000, dgg + 1);
         var dgs = 1;
         while (dgs == 1) {
@@ -1460,23 +1641,23 @@ fn PARSE_GVAR_REG(S): i64 {
     # runtime-store path (BSS-zero is already correct for them).
     # See CHANGELOG [5.11.64] + the filed issue.
     #
-    # Shadow-declaration opt-out: if FINDVAR already returns a match
-    # for this var name (i.e., an earlier top-level `var X = ...;`
-    # was registered before this one), skip static-init and fall
-    # through to the runtime-store path. Reason: EMIT_GVAR_INITS
-    # replays init tokens through FINDVAR which returns last-match —
-    # an earlier shadow's runtime store would end up targeting THIS
-    # var's address, clobbering our static-init bytes (mabda.cyr's
-    # `var F64_TWO = 0;` shadowed by math.cyr's `var F64_TWO =
-    # 0x4000_0000_0000_0000;` was the failing case during v5.11.64
-    # bring-up). The shadow case is rare enough that always falling
-    # back to runtime-store keeps the fix narrow.
+    # 6.6.6: a REDECLARATION reuses the global's slot (_gv_fold) and a constant one is
+    # static too — the old shadow opt-out sent it to the runtime-store path while the FIRST
+    # declaration's static value sat in a slot nothing read (b = 0 in `var a = 5; var b = a;
+    # var a = 5;`). An earlier deferred store is now superseded rather than clobbering
+    # (_gv_supersede), which is the hazard the opt-out existed for (mabda `var F64_TWO = 0;`
+    # shadowed by math `var F64_TWO = 0x4000...;`). A shadowed ENUM constant has no store to
+    # clobber, so a var over one is static as well. CHANGELOG [6.6.6]
     var sit_lit = 0;
     var sit_val = 0;
     var sit_shadow = 0;
+    var sit_enumsh = 0;
+    var cf_has = 0;     # 6.6.6: the initializer folded to a constant (any target, any value)
+    var cf_val = 0;
     var chk_lit = 0;    # v6.2.11: `= NUM ;` literal for the collision guardrail
     var chk_has = 0;
-    if (FINDVAR(S, noff) >= 0) { sit_shadow = 1; }
+    var sh_i = FINDVAR(S, noff);
+    if (sh_i >= 0) { sit_shadow = 1; if (GVENUMID(S, sh_i) != 0) { sit_enumsh = 1; } }
     if (PEEKT(S) == 4) {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) == 2) {
@@ -1516,10 +1697,12 @@ fn PARSE_GVAR_REG(S): i64 {
         # exactly as before. A folded ZERO still falls through — BSS is already zero,
         # so the runtime store is redundant but harmless, and keeping that branch
         # identical preserves the v5.11.64 behaviour for `= 0 ;`.
-        if (_TARGET_CX != 1 && sit_shadow == 0) {
-            var fv = _CF_TRY(S, GTI(S));
-            if (_cf_ok == 1) {
-                if (fv != 0) {
+        var fv = _CF_TRY(S, GTI(S));
+        if (_cf_ok == 1) {
+            cf_has = 1;
+            cf_val = fv;
+            if (_TARGET_CX != 1 && fv != 0) {
+                if (sit_shadow == 0 || sit_enumsh == 1) {
                     sit_lit = 1;
                     sit_val = fv;
                 }
@@ -1589,8 +1772,19 @@ fn PARSE_GVAR_REG(S): i64 {
     # narrow scalars like `var x: i32`, silently doing nothing for a plain `var x = 1`.
     # ⚠ NOT every global: the array form returns from PARSE_GVAR_ARR above and the
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
-    _GVAR_VIS(S, vcnt, sti);
-    SVCNT(S, vcnt + 1);
+    var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
+    _GVAR_VIS(S, gvi, sti);
+    if (gvi == vcnt) { SVCNT(S, vcnt + 1); }
+    else {
+        # A redeclaration: a constant one wins from program start (see _gv_supersede) — on
+        # every target, including a zero and including cx (_gv_cx_prestore).
+        sit_lit = 0;
+        if (cf_has == 1 && is_struct == 0) {
+            sit_lit = 1;
+            sit_val = cf_val;
+            _gv_supersede(S, noff);
+        }
+    }
     # v5.11.64: static-init path — record literal value, skip gvar_toks
     # registration so EMIT_GVAR_INITS won't replay the (now redundant)
     # runtime store. FIXUP's var-area writer reads gvar_initval and
@@ -1606,8 +1800,8 @@ fn PARSE_GVAR_REG(S): i64 {
     # and the binary would exit with whatever rax held — exit-code
     # corruption the runtime-store path can't reproduce.
     if (sit_lit == 1) {
-        S64(_vgsi_base + vcnt * 8, sit_val);
-        SLVAR(S, vcnt);
+        S64(_vgsi_base + gvi * 8, sit_val);
+        SLVAR(S, gvi);
     } else {
         # Save token index for deferred init
         var gc = L64(S + 0x19A000);
@@ -1615,6 +1809,7 @@ fn PARSE_GVAR_REG(S): i64 {
             ERR_MSG(S, "too many initialized globals (max 4096)", 39);
         }
         S64(S + 0x729000 + gc * 8, sti);
+        _gv_ent_set(gc, gvi + 1);   # 6.6.6: the slot this entry declared
         S64(S + 0x19A000, gc + 1);
     }
     # Skip to semicolon
@@ -1629,10 +1824,14 @@ fn PARSE_GVAR_REG(S): i64 {
 
 # Emit deferred global var inits (replays saved token positions)
 fn EMIT_GVAR_INITS(S): i64 {
+    if (_TARGET_CX == 1) { _gv_cx_prestore(S); }   # 6.6.6: see _gv_cx_prestore
     var gc = L64(S + 0x19A000);
     var gi = 0;
     while (gi < gc) {
-        var sti = L64(S + 0x729000 + gi * 8);
+        # 6.6.6: bits 40+ flag a target a later constant declaration superseded (_gv_supersede).
+        var graw = L64(S + 0x729000 + gi * 8);
+        var gsup = _gv_sup(graw);
+        var sti = _gv_tok(graw);
         STI(S, sti);
         STI(S, GTI(S) + 1);  # consume VAR
         var noff = PEEKV(S);
@@ -1657,10 +1856,10 @@ fn EMIT_GVAR_INITS(S): i64 {
             }
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);   # consume =
-            var ei1 = FINDVAR(S, noff);
-            var ei2 = FINDVAR(S, eg2);
+            var ei1 = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
+            var ei2 = _gv_target(S, _gv_ent_slot(S, gi, 1, eg2), gsup, 1);
             var ei3 = 0 - 1;
-            if (egn == 3) { ei3 = FINDVAR(S, eg3); }
+            if (egn == 3) { ei3 = _gv_target(S, _gv_ent_slot(S, gi, 2, eg3), gsup, 2); }
             PCMPE(S);
             if (ei1 >= 0) { EVSTORE(S, ei1); }
             if (egn == 3) {
@@ -1668,7 +1867,7 @@ fn EMIT_GVAR_INITS(S): i64 {
                 if (ei3 >= 0) { EVSTORE(S, ei3); }
             }
             EMOVRA_RDX(S);
-            if (ei2 >= 0) { EVSTORE(S, ei2); SLVAR(S, ei2); }
+            if (ei2 >= 0) { EVSTORE(S, ei2); _gv_slvar(S, ei2); }
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
             gi = gi + 1;
@@ -1691,7 +1890,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             STI(S, GTI(S) + 1);              # consume `=`
             if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
             STI(S, GTI(S) + 1);              # consume `{`
-            var b_vidx = FINDVAR(S, noff);
+            var b_vidx = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
             # v6.0.88 peephole: hoist &var into rcx/x1/r1 ONCE (via _EVRCX),
             # then emit a single direct byte-store per element (ESTOREB_IMM) instead
             # of the ~7-op EVADDR/EADDRA_IMM/PUSH/MOVI/POPC/STORE8/XORAA
@@ -1759,7 +1958,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         # the struct-named ident to commit to struct-init; otherwise fall
         # through to scalar expr (e.g. `var x = MASK & 0xF;` where MASK
         # is also a struct name).
-        var idx = FINDVAR(S, noff);
+        var idx = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
         var did_struct = 0;
         if (PEEKT(S) == 2) {
             var sn = PEEKV(S);
@@ -1777,7 +1976,7 @@ fn EMIT_GVAR_INITS(S): i64 {
                 _emit_struct_positional_init(S, idx, sid);
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
                 STI(S, GTI(S) + 1);
-                SLVAR(S, idx);
+                _gv_slvar(S, idx);
                 if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
                 STI(S, GTI(S) + 1);
                 did_struct = 1;
@@ -1785,7 +1984,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         }
         if (did_struct == 0) {
             PCMPE(S);
-            if (idx >= 0) { EVSTORE(S, idx); SLVAR(S, idx); }
+            if (idx >= 0) { EVSTORE(S, idx); _gv_slvar(S, idx); }
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
         }

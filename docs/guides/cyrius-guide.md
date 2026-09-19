@@ -2026,6 +2026,41 @@ The cap is per *compilation unit* (the whole preprocessed source, including all
 `include`d libraries), so vendoring several dist bundles into one program sums
 their deferred globals — that is what the 4096 ceiling is sized for.
 
+**Declaring a global twice (6.6.6).** Before the first top-level statement — where
+modules declare their globals — a name declared twice is **one global, and the last
+definition wins**, exactly as a duplicate `fn` resolves:
+
+```
+var a = 5;
+var b = a;        # b == 7: every read sees the last definition, even one written earlier
+var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting value (last definition wins)
+```
+
+- A redeclaration whose initializer is a compile-time **constant** (an integer
+  literal or a foldable integer expression, zero included) is the global's value
+  **from program start**. An earlier *computed* initializer of the same name
+  (`var a = f();`) still runs — its side effects happen — but its result is
+  discarded.
+- A **computed** redeclaration runs in declaration order like any deferred
+  initializer: `var a = 5; var b = a; var a = f();` gives `b == 5` and `a == f()`.
+- An array's `= { .. }` byte list is a sequence of byte stores, so two byte-list
+  declarations of one array both run, in order.
+- A redeclaration that changes the **type or size** (`var a = 5;` then
+  `var a: i32 = 7;`, `var q[8];` then `var q[16];`) is an error naming the global —
+  one of the two would read the other's storage in the wrong shape. Same rule as a
+  duplicate `fn` that disagrees about arity.
+- A same-value redeclaration is silent; that is the usual way two files, or an
+  `#ifdef` arm, end up declaring one global.
+
+After the first top-level statement a `var` is a statement, and redeclaring a name
+there starts a **new** variable for the code after it (a fresh buffer of the new
+size, for an array); code before it — including fns defined earlier — keeps the
+earlier one.
+
+⚠ Before 6.6.6 the redeclaration was given a second storage slot, and the first
+declaration's value landed in the slot nothing read: `var a = 5; var b = a; var a = 5;`
+set `b` to **0**, silently, and with `var a = 7` it was still 0 under the warning above.
+
 ## String Standard Library
 
 ```

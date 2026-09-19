@@ -885,10 +885,15 @@ fn _vis_check_var(S, vi, noff): i64 {
 #   - a PRIOR at gvar index >= 1024 is invisible (inherits the enum-const-fold
 #     cap; cycc self-host registers ~773, fully under it — large consumer
 #     stacks like http+tls can exceed it);
-#   - a 3rd+ link in a chained LITERAL redefinition can miss (a shadowing
-#     literal global doesn't re-record its value in 0x1EC000, so the next def
-#     compares against 0); enum chains are fully caught (0x1D8000 is always
-#     written). cx target records no literal values (0x1EC000 unused there).
+#   - cx records only a REDECLARED constant in 0x1EC000 (its first literal
+#     takes the runtime-store path), so a two-link collision is not seen there.
+# 6.6.6: "last definition wins" is now what the compiler DOES, for every read —
+# a redeclaration shares the global's slot and a constant one is its value from
+# program start (see _gv_supersede, parse_decl.cyr). It used to be a second
+# slot, so this warning described a semantics nobody implemented (the earlier
+# read got 0). A constant redeclaration now records its value, so a 3rd+ link
+# of a chain is compared against the 2nd (it used to compare against 0 and stay
+# silent). CHANGELOG [6.6.6]
 fn CHKDUPVAL(S, noff, newval): i64 {
     var pi = FINDVAR(S, noff);
     if (pi < 0) { return 0; }

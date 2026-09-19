@@ -230,6 +230,13 @@ sh "$ROOT/tests/gates/frontend/private_forward_reference.sh"
 # rather than from a list in the gate: a fifth gate added there and forgotten here fails.
 sh "$ROOT/tests/gates/frontend/method_call_runs_every_callee_gate.sh"
 
+# 6.6.6: a top-level name declared twice is ONE global and the last definition wins. The
+# redeclaration used to get a second slot, so `var a = 5; var b = a; var a = 5;` read b as 0
+# and the "(last definition wins)" collision warning described a semantics the compiler did not
+# implement. Rows are checked against no-redeclaration CONTROL programs, with a cx leg (the one
+# target that stores the value rather than baking it) and an aarch64 leg under qemu.
+sh "$ROOT/tests/gates/frontend/global_redeclaration_one_definition.sh"
+
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its

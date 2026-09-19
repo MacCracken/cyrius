@@ -1,0 +1,91 @@
+# global_redeclaration.tcyr — 6.6.6: a top-level name declared twice is ONE global, and the
+# last definition wins for every read. Runs on real hardware via the release gate's crossos
+# subdir, because the value lands through a different mechanism per target: baked into the
+# file image on ELF / Mach-O / PE, stored ahead of the deferred initializers on cx.
+#
+# THE BUG THIS GUARDS (silent, no diagnostic when the values agree):
+#     var a = 5;
+#     var b = a;
+#     var a = 5;          -> b read 0
+# The redeclaration got a SECOND slot. The first declaration's value was baked into a slot
+# nothing read (every reference binds to the last declaration), and the second one's store
+# ran after b's initializer. With `var a = 7` on the third line the compiler warned
+# "(last definition wins)" and b still read 0 — neither value.
+#
+# Every declaration below sits BEFORE the first top-level statement (the declaration zone,
+# where modules declare their globals). Each expected value is the one the LAST definition
+# names, except where the last definition is computed at run time and cannot exist earlier.
+# The conflicting-value redeclarations print the collision warning when this file compiles;
+# that is intended — the point is that the warning is now true.
+
+include "lib/assert.cyr"
+
+# the filed repro: a same-value redeclaration
+var gr_a = 5;
+var gr_b = gr_a;
+var gr_a = 5;
+
+# a CONFLICTING redeclaration: every read sees the last definition, from program start
+var gr_c = 5;
+var gr_d = gr_c;
+var gr_c = 7;
+
+# the realistic shape: a second declaration from an #ifdef arm (two files, one global)
+#define GR_FEATURE
+var gr_e = 11;
+var gr_f = gr_e;
+#ifdef GR_FEATURE
+var gr_e = 11;
+#endif
+#ifdef GR_NOT_DEFINED
+var gr_e = 99;
+#endif
+
+# earlier COMPUTED, later constant: the constant wins everywhere, and the computed
+# initializer still runs (its side effect is kept, its value discarded)
+var gr_calls = 0;
+fn gr_five(): i64 { gr_calls = gr_calls + 1; return 5; }
+var gr_g = gr_five();
+var gr_h = gr_g;
+var gr_g = 9;
+
+# earlier constant, later COMPUTED: a read before the computed one sees the constant (not 0)
+fn gr_seven(): i64 { return 7; }
+var gr_i = 3;
+var gr_j = gr_i;
+var gr_i = gr_seven();
+
+# a chain: the last constant wins
+var gr_k = 1;
+var gr_l = gr_k;
+var gr_k = 2;
+var gr_k = 4;
+
+# a destructure target superseded by a later constant; its other target is untouched
+fn gr_pair() { return (20, 21); }
+var gr_m, gr_n = gr_pair();
+var gr_o = gr_m;
+var gr_m = 30;
+
+# a fn body reads the one global too
+fn gr_read_c(): i64 { return gr_c; }
+
+assert_eq(gr_b, 5, "same-value redeclaration: an earlier read sees 5 (read 0 before 6.6.6)");
+assert_eq(gr_a, 5, "same-value redeclaration: the global is 5");
+assert_eq(gr_d, 7, "conflicting redeclaration: an earlier read sees the LAST definition");
+assert_eq(gr_c, 7, "conflicting redeclaration: the global is the last definition");
+assert_eq(gr_read_c(), 7, "conflicting redeclaration: a fn reads the last definition");
+assert_eq(gr_f, 11, "#ifdef-arm redeclaration: an earlier read sees 11");
+assert_eq(gr_e, 11, "#ifdef-arm redeclaration: the inactive arm contributes nothing");
+assert_eq(gr_h, 9, "constant after computed: an earlier read sees the constant");
+assert_eq(gr_g, 9, "constant after computed: the global is the constant");
+assert_eq(gr_calls, 1, "constant after computed: the computed initializer still ran once");
+assert_eq(gr_j, 3, "computed after constant: an earlier read sees the constant, not 0");
+assert_eq(gr_i, 7, "computed after constant: the global ends as the computed value");
+assert_eq(gr_l, 4, "chain: an earlier read sees the last constant");
+assert_eq(gr_k, 4, "chain: the global is the last constant");
+assert_eq(gr_o, 30, "destructure then constant: an earlier read sees the constant");
+assert_eq(gr_m, 30, "destructure then constant: the superseded target holds the constant");
+assert_eq(gr_n, 21, "destructure then constant: the other target keeps its value");
+
+var r = assert_summary();
