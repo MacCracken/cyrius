@@ -597,6 +597,106 @@ fn _cmd_cmdtools(action_cstr, tool_cstr): i64 {
 }
 
 # ----------------------------------------------------------------
+# The argument rule (v6.6.5) — same as cbt/cli_args.cyr, scaled to this binary.
+# ----------------------------------------------------------------
+#
+# ⛔ cyriusly is one of the `[release].bins` (cyrius.cyml:23) and is installed by
+# scripts/install.sh, and it carried the WHOLE defect family this release removes.
+# Measured at 6.6.5 before this block existed:
+#   `cyriusly use 6.6.4 --globl`   — the typo was silently DROPPED and the LOCAL-pin
+#                                    path taken (the filed shape, verbatim: you ask
+#                                    for a global switch and get a local one, exit 0)
+#   `cyriusly use --globl 6.6.4`   — the flag became the VERSION
+#   `cyriusly install --dry-run`   — started a REAL install of a version literally
+#                                    named `--dry-run`, leaving `versions/--dry-run`
+#                                    behind: SILENT *and* MUTATING
+#   `cyriusly uninstall --bogus`   — exit 0
+#   `cyriusly which a b`, `list --bogus` — extras dropped
+#
+# The rule: flags may appear in any position, a `-`-prefixed token the verb does not
+# declare is an error that NAMES it, and operand counts are enforced — an operand the
+# verb will not act on is REJECTED, never dropped. CHANGELOG [6.6.5].
+var _cy_pos = 0;
+var _cy_global = 0;
+
+# `<prefix>'<tok>'` + newline on stderr. The token is always NAMED — an error that
+# does not say which argument it means is barely better than dropping it.
+fn _cy_err_tok(prefix, tok): i64 {
+    syscall(1, 2, prefix, strlen(prefix));
+    syscall(1, 2, "'", 1);
+    syscall(1, 2, tok, strlen(tok));
+    syscall(1, 2, "'\n", 2);
+    return 0;
+}
+
+# Scan argv[2..]: collect positionals, accept `--global` only when `want_global`,
+# reject every other '-' token by name. Returns 0 on error.
+fn _cy_scan(cmd, want_global): i64 {
+    _cy_pos = vec_new();
+    _cy_global = 0;
+    var i = 2;
+    while (i < argc()) {
+        var a = argv(i);
+        if (load8(a) == 45) {
+            if (want_global == 1 && streq(a, "--global") == 1) { _cy_global = 1; }
+            else {
+                _cy_err_tok("cyriusly: unknown option ", a);
+                var uh = "run 'cyriusly help' for usage.\n";
+                syscall(1, 2, uh, strlen(uh));
+                return 0;
+            }
+        } else { vec_push(_cy_pos, a); }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Enforce the operand count. `max` < 0 means unbounded.
+fn _cy_count_ok(cmd, min, max): i64 {
+    var n = vec_len(_cy_pos);
+    if (n < min) {
+        _cy_err_tok("cyriusly: missing required argument for ", cmd);
+        return 0;
+    }
+    if (max >= 0 && n > max) {
+        _cy_err_tok("cyriusly: unexpected extra argument ", vec_get(_cy_pos, max));
+        return 0;
+    }
+    return 1;
+}
+
+# Scan + count in one call — every verb below goes through exactly this.
+fn _cy_args_ok(cmd, min, max, want_global): i64 {
+    if (_cy_scan(cmd, want_global) == 0) { return 0; }
+    return _cy_count_ok(cmd, min, max);
+}
+
+# Operand `i`, or 0 when it was not given.
+fn _cy_at(i): i64 {
+    if (i >= vec_len(_cy_pos)) { return 0; }
+    return vec_get(_cy_pos, i);
+}
+
+# Is `cmd` a verb this binary dispatches? The single source of truth for the
+# dispatcher below — `help` is handled ahead of it (it takes anything).
+fn _cyl_known_cmd(cmd): i64 {
+    if (streq(cmd, "version") == 1) { return 1; }
+    if (streq(cmd, "--version") == 1) { return 1; }
+    if (streq(cmd, "-v") == 1) { return 1; }
+    if (streq(cmd, "list") == 1) { return 1; }
+    if (streq(cmd, "ls") == 1) { return 1; }
+    if (streq(cmd, "which") == 1) { return 1; }
+    if (streq(cmd, "home") == 1) { return 1; }
+    if (streq(cmd, "use") == 1) { return 1; }
+    if (streq(cmd, "install") == 1) { return 1; }
+    if (streq(cmd, "uninstall") == 1) { return 1; }
+    if (streq(cmd, "update") == 1) { return 1; }
+    if (streq(cmd, "setup") == 1) { return 1; }
+    if (streq(cmd, "cmdtools") == 1) { return 1; }
+    return 0;
+}
+
+# ----------------------------------------------------------------
 # Dispatcher — argv[1] selects the subcommand.
 # ----------------------------------------------------------------
 
@@ -605,88 +705,86 @@ fn main(): i64 {
     var ac = argc();
     if (ac < 2) { return _cmd_help(); }
     var cmd = argv(1);
-    var cmdlen = strlen(cmd);
 
-    # version / --version / -v
-    if (cmdlen == 7) { if (memeq(cmd, "version", 7) == 1) { return _cmd_version(); } }
-    if (cmdlen == 9) { if (memeq(cmd, "--version", 9) == 1) { return _cmd_version(); } }
-    if (cmdlen == 2) { if (memeq(cmd, "-v", 2) == 1) { return _cmd_version(); } }
+    # help takes anything and prints usage — checked first so `cyriusly help --x`
+    # still helps rather than erroring about `--x`.
+    if (streq(cmd, "help") == 1) { return _cmd_help(); }
+    if (streq(cmd, "--help") == 1) { return _cmd_help(); }
+    if (streq(cmd, "-h") == 1) { return _cmd_help(); }
 
-    # list / ls
-    if (cmdlen == 4) { if (memeq(cmd, "list", 4) == 1) { return _cmd_list(); } }
-    if (cmdlen == 2) { if (memeq(cmd, "ls", 2) == 1) { return _cmd_list(); } }
-
-    # which
-    if (cmdlen == 5) { if (memeq(cmd, "which", 5) == 1) { return _cmd_which(); } }
-
-    # home
-    if (cmdlen == 4) { if (memeq(cmd, "home", 4) == 1) { return _cmd_home(); } }
-
-    # use [<ver> [--global]]
-    if (cmdlen == 3) {
-        if (memeq(cmd, "use", 3) == 1) {
-            var arg = 0;
-            var is_global = 0;
-            # Scan argv[2..] for the version + optional --global.
-            var ui = 2;
-            while (ui < ac) {
-                var a = argv(ui);
-                if (memeq(a, "--global", 8) == 1) {
-                    if (load8(a + 8) == 0) { is_global = 1; }
-                    else { if (arg == 0) { arg = a; } }
-                } else {
-                    if (arg == 0) { arg = a; }
-                }
-                ui = ui + 1;
-            }
-            return _cmd_use_v2(arg, is_global);
-        }
+    # v6.6.5 — the verb NAME first, then its arguments: an unknown command with an
+    # argument must say "unknown command", not complain about the operand count of a
+    # command that does not exist (the ark lesson, same release).
+    if (_cyl_known_cmd(cmd) == 0) {
+        syscall(1, 2, "Unknown command: ", 17);
+        syscall(1, 2, cmd, strlen(cmd));
+        syscall(1, 2, "\n", 1);
+        syscall(1, 2, "Run 'cyriusly help' for usage.\n", 31);
+        return 1;
     }
 
-    # install <ver>
-    if (cmdlen == 7) {
-        if (memeq(cmd, "install", 7) == 1) {
-            var arg = 0;
-            if (ac >= 3) { arg = argv(2); }
-            return _cmd_install(arg);
-        }
+    # -- zero-operand verbs --
+    if (streq(cmd, "version") == 1 || streq(cmd, "--version") == 1 || streq(cmd, "-v") == 1) {
+        if (_cy_args_ok(cmd, 0, 0, 0) == 0) { return 1; }
+        return _cmd_version();
+    }
+    if (streq(cmd, "list") == 1 || streq(cmd, "ls") == 1) {
+        if (_cy_args_ok(cmd, 0, 0, 0) == 0) { return 1; }
+        return _cmd_list();
+    }
+    if (streq(cmd, "which") == 1) {
+        if (_cy_args_ok(cmd, 0, 0, 0) == 0) { return 1; }
+        return _cmd_which();
+    }
+    if (streq(cmd, "home") == 1) {
+        if (_cy_args_ok(cmd, 0, 0, 0) == 0) { return 1; }
+        return _cmd_home();
+    }
+    if (streq(cmd, "update") == 1) {
+        if (_cy_args_ok(cmd, 0, 0, 0) == 0) { return 1; }
+        return _cmd_update();
+    }
+    if (streq(cmd, "setup") == 1) {
+        if (_cy_args_ok(cmd, 0, 0, 0) == 0) { return 1; }
+        return _cmd_setup();
     }
 
-    # uninstall <ver>
-    if (cmdlen == 9) {
-        if (memeq(cmd, "uninstall", 9) == 1) {
-            var arg = 0;
-            if (ac >= 3) { arg = argv(2); }
-            return _cmd_uninstall(arg);
+    # -- use [<ver>] [--global] — the FILED SHAPE --
+    # `--global` is the ONE flag this binary declares, and it is honoured in either
+    # position. A misspelling is now named instead of being dropped into the
+    # local-pin path.
+    if (streq(cmd, "use") == 1) {
+        if (_cy_args_ok(cmd, 0, 1, 1) == 0) { return 1; }
+        # `use --global` with no version used to print the resolved version and drop the
+        # flag — there is nothing to switch globally TO. Named, not ignored.
+        if (_cy_global == 1 && _cy_at(0) == 0) {
+            _cy_err_tok("cyriusly: --global needs a version: ", "use <ver> --global");
+            return 1;
         }
+        return _cmd_use_v2(_cy_at(0), _cy_global);
     }
 
-    # update
-    if (cmdlen == 6) { if (memeq(cmd, "update", 6) == 1) { return _cmd_update(); } }
-
-    # setup
-    if (cmdlen == 5) { if (memeq(cmd, "setup", 5) == 1) { return _cmd_setup(); } }
-
-    # cmdtools [action] [tool]
-    if (cmdlen == 8) {
-        if (memeq(cmd, "cmdtools", 8) == 1) {
-            var action = 0;
-            var tool = 0;
-            if (ac >= 3) { action = argv(2); }
-            if (ac >= 4) { tool = argv(3); }
-            return _cmd_cmdtools(action, tool);
-        }
+    # -- one-operand verbs (both MUTATE — an unchecked flag here installed or
+    #    deleted a version literally named `--dry-run`) --
+    if (streq(cmd, "install") == 1) {
+        if (_cy_args_ok(cmd, 1, 1, 0) == 0) { return 1; }
+        return _cmd_install(_cy_at(0));
+    }
+    if (streq(cmd, "uninstall") == 1) {
+        if (_cy_args_ok(cmd, 1, 1, 0) == 0) { return 1; }
+        return _cmd_uninstall(_cy_at(0));
     }
 
-    # help
-    if (cmdlen == 4) { if (memeq(cmd, "help", 4) == 1) { return _cmd_help(); } }
-    if (cmdlen == 6) { if (memeq(cmd, "--help", 6) == 1) { return _cmd_help(); } }
-    if (cmdlen == 2) { if (memeq(cmd, "-h", 2) == 1) { return _cmd_help(); } }
+    # -- cmdtools [action] [tool] --
+    if (streq(cmd, "cmdtools") == 1) {
+        if (_cy_args_ok(cmd, 0, 2, 0) == 0) { return 1; }
+        return _cmd_cmdtools(_cy_at(0), _cy_at(1));
+    }
 
+    # Unreachable: _cyl_known_cmd above is derived from exactly these names.
     syscall(1, 2, "Unknown command: ", 17);
-    syscall(1, 2, cmd, cmdlen);
+    syscall(1, 2, cmd, strlen(cmd));
     syscall(1, 2, "\n", 1);
-    syscall(1, 2, "Run 'cyriusly help' for usage.\n", 31);
     return 1;
 }
 

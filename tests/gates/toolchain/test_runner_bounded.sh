@@ -340,7 +340,13 @@ calls_in() {   # $1 = fn name, $2 = symbol to count
         | sed 's/^[[:space:]]*#.*$//' | grep -c "$2(" || true
 }
 check "cmd_run does not deadline its child" 0 "$(calls_in cmd_run run_binary_timed)"
-check "cmd_run does still run one" 1 "$(calls_in cmd_run run_binary)"
+# ⚠ v6.6.5 — count BOTH undeadlined entry points. `cmd_run` calls `run_binary_args`
+# now (it forwards the program's own arguments, go-run style), and `run_binary_args(`
+# does not contain the substring `run_binary(`, so a grep for the old name alone
+# reported 0 and turned this row red against a correct cmd_run. Both wrappers are
+# `run_binary_timed(path, 0, …)` — no deadline — which is what the row is about.
+check "cmd_run does still run one (run_binary or run_binary_args)" 1 \
+    "$(( $(calls_in cmd_run run_binary) + $(calls_in cmd_run run_binary_args) ))"
 for f in cmd_test _fuzz_run_one _bench_run_one; do
     check "$f deadlines its child" 1 "$(calls_in "$f" run_binary_timed)"
 done

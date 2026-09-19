@@ -1,0 +1,356 @@
+# flags.tcyr — regression coverage for lib/flags.cyr (v5.5.33).
+#
+# `lib/args.cyr` pre-v5.5.33 only exposed argc/argv; every
+# toolchain binary and consumer shipped ad-hoc `streq("--foo",
+# argv(i))` loops (60+ hits across cyrius/ark/cyrld/cyrfmt/
+# cyrlint/cyrdoc/cyrc + ecosystem repos). v5.5.33 ships
+# `lib/flags.cyr` — getopt-long-shaped parser with bool/int/str
+# flags, long + short forms, `--foo=val` and `--foo val` syntax,
+# `--` terminator, positional capture, auto-help printer.
+#
+# Coverage:
+#   1. bool long + short set correctly
+#   2. int via `--name=value` syntax
+#   3. int via `--name value` syntax (space)
+#   4. str via `-x value` short form
+#   5. defaults when flag absent
+#   6. positional capture (accumulated in argv order)
+#   7. `--` terminator routes remaining args to positional
+#   8. unknown flag → error code, parse returns -1
+#   9. missing value for int flag → error code, parse returns -1
+#  10. bad int parse → error code (non-numeric)
+#  11. bundled short rejected (`-abc` not supported)
+#  12. multiple flags in one call
+#
+# v6.6.5 — three silent drops of its own, each with a case below:
+#  13. >128 positionals are all RETAINED (the array doubles). The expected
+#      count comes from the test's OWN loop counter, not from the parser.
+#  14. `--bool=value` is FLAG_ERR_UNEXPECTED_VALUE, not "set the flag".
+#  15. FLAG_LIST keeps every occurrence, in order.
+#  16. flags_error_arg NAMES the offending token.
+#  17. stop-at-first-positional mode.
+#  18. flags_print_help — rewritten in 6.6.5 and, until the round-2 review, called
+#      by NOTHING in the tree. Runs on every target; its output is captured and
+#      checked on Linux (see the case for why only there).
+#
+# ⭐ CROSS-HOST since 6.6.5: this file moved from tests/tcyr/stdlib/ into
+# tests/tcyr/crossos/, the directory the release gate runs on real ecb / ach / cass /
+# pi. lib/flags.cyr ships to all five targets and its context grew 64 → 80 B with
+# growable positionals in the same release; a parser whose only test ran on the
+# x86-64 Linux box that wrote it is the macOS-rot shape. It is pure computation over
+# alloc'd argv arrays, so nothing here is host-specific — and case 4's nine-argument
+# `_argv(...)` call is the exact shape that exposed the SysV ECALLPOPS clobber
+# (v5.6.24) and would expose a Win64 stack-args regression (v6.4.64).
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/flags.cyr"
+
+# Helper: construct a fresh argv of n cstrs from fixed slots.
+# Each slot is a cstr the caller supplies; argv[0]..argv[n-1].
+fn _argv(n, s0, s1, s2, s3, s4, s5, s6, s7) {
+    var argv = alloc(n * 8);
+    if (n > 0) { store64(argv + 0,  s0); }
+    if (n > 1) { store64(argv + 8,  s1); }
+    if (n > 2) { store64(argv + 16, s2); }
+    if (n > 3) { store64(argv + 24, s3); }
+    if (n > 4) { store64(argv + 32, s4); }
+    if (n > 5) { store64(argv + 40, s5); }
+    if (n > 6) { store64(argv + 48, s6); }
+    if (n > 7) { store64(argv + 56, s7); }
+    return argv;
+}
+
+fn test_bool_long_and_short() {
+    test_group("bool flags — long and short forms");
+    var fs = flags_new();
+    var f_h = flags_add_bool(fs, 104, "help", 0, "show help");      # 'h'
+    var f_v = flags_add_bool(fs, 118, "verbose", 0, "verbose");     # 'v'
+    var argv = _argv(3, "prog", "--help", "-v", 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 3, argv), 0, "parse ok");
+    assert_eq(flags_get_bool(fs, f_h), 1, "--help set");
+    assert_eq(flags_get_bool(fs, f_v), 1, "-v set");
+}
+
+fn test_int_equals() {
+    test_group("int flag — --name=value syntax");
+    var fs = flags_new();
+    var f_n = flags_add_int(fs, 110, "count", 0, "count");
+    var argv = _argv(2, "prog", "--count=42", 0, 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 2, argv), 0, "parse ok");
+    assert_eq(flags_get_int(fs, f_n), 42, "--count=42 → 42");
+}
+
+fn test_int_space() {
+    test_group("int flag — --name value syntax (space)");
+    var fs = flags_new();
+    var f_n = flags_add_int(fs, 110, "count", 0, "count");
+    var argv = _argv(3, "prog", "--count", "99", 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 3, argv), 0, "parse ok");
+    assert_eq(flags_get_int(fs, f_n), 99, "--count 99 → 99");
+}
+
+fn test_str_short() {
+    test_group("str flag — -x value short form");
+    var fs = flags_new();
+    var f_o = flags_add_str(fs, 111, "output", 0, "output file");   # 'o'
+    var argv = _argv(3, "prog", "-o", "/tmp/out.s", 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 3, argv), 0, "parse ok");
+    assert_eq(streq(flags_get_str(fs, f_o), "/tmp/out.s"), 1, "-o /tmp/out.s");
+}
+
+fn test_defaults() {
+    test_group("defaults preserved when flag absent");
+    var fs = flags_new();
+    var f_b = flags_add_bool(fs, 0, "on", 0, "");
+    var f_n = flags_add_int(fs, 0, "count", 7, "");
+    var f_s = flags_add_str(fs, 0, "label", "tag", "");
+    var argv = _argv(1, "prog", 0, 0, 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 1, argv), 0, "parse empty ok");
+    assert_eq(flags_get_bool(fs, f_b), 0, "bool default 0");
+    assert_eq(flags_get_int(fs, f_n), 7, "int default 7");
+    assert_eq(streq(flags_get_str(fs, f_s), "tag"), 1, "str default 'tag'");
+}
+
+fn test_positional_and_terminator() {
+    test_group("positional capture + -- terminator");
+    var fs = flags_new();
+    var f_v = flags_add_bool(fs, 118, "verbose", 0, "");
+    # "-v file1 -- --weird file2" → -v set, positional = [file1, --weird, file2]
+    var argv = _argv(6, "prog", "-v", "file1", "--", "--weird", "file2", 0, 0);
+    assert_eq(flags_parse(fs, 6, argv), 0, "parse ok");
+    assert_eq(flags_get_bool(fs, f_v), 1, "-v set");
+    assert_eq(flags_positional_count(fs), 3, "3 positionals captured");
+    assert_eq(streq(flags_positional(fs, 0), "file1"), 1, "[0] = file1");
+    assert_eq(streq(flags_positional(fs, 1), "--weird"), 1, "[1] = --weird (post-term)");
+    assert_eq(streq(flags_positional(fs, 2), "file2"), 1, "[2] = file2");
+}
+
+fn test_unknown_flag_errors() {
+    test_group("unknown flag → FLAG_ERR_UNKNOWN");
+    var fs = flags_new();
+    flags_add_bool(fs, 0, "help", 0, "");
+    var argv = _argv(2, "prog", "--nonexistent", 0, 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 2, argv), 0 - 1, "parse returns -1");
+    assert_eq(flags_error(fs), FLAG_ERR_UNKNOWN, "error = UNKNOWN");
+}
+
+fn test_missing_value_errors() {
+    test_group("missing value for int → FLAG_ERR_MISSING_VALUE");
+    var fs = flags_new();
+    flags_add_int(fs, 110, "count", 0, "");
+    var argv = _argv(2, "prog", "--count", 0, 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 2, argv), 0 - 1, "parse returns -1");
+    assert_eq(flags_error(fs), FLAG_ERR_MISSING_VALUE, "error = MISSING_VALUE");
+}
+
+fn test_bad_int_errors() {
+    test_group("non-numeric int value → FLAG_ERR_BAD_INT");
+    var fs = flags_new();
+    flags_add_int(fs, 110, "count", 0, "");
+    var argv = _argv(3, "prog", "--count", "abc", 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 3, argv), 0 - 1, "parse returns -1");
+    assert_eq(flags_error(fs), FLAG_ERR_BAD_INT, "error = BAD_INT");
+}
+
+fn test_bundled_short_rejected() {
+    test_group("-abc bundled → FLAG_ERR_BUNDLED");
+    var fs = flags_new();
+    flags_add_bool(fs, 97, "a", 0, "");
+    flags_add_bool(fs, 98, "b", 0, "");
+    flags_add_bool(fs, 99, "c", 0, "");
+    var argv = _argv(2, "prog", "-abc", 0, 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 2, argv), 0 - 1, "parse returns -1");
+    assert_eq(flags_error(fs), FLAG_ERR_BUNDLED, "error = BUNDLED");
+}
+
+fn test_mixed_combination() {
+    test_group("realistic mixed flags + positionals");
+    var fs = flags_new();
+    var f_w = flags_add_bool(fs, 119, "write", 0, "write in place");
+    var f_o = flags_add_str(fs, 111, "output", 0, "output file");
+    var f_n = flags_add_int(fs, 110, "count", 1, "count");
+    var argv = _argv(8, "fmt", "-w", "--output=out.s", "--count", "3",
+                     "a.cyr", "b.cyr", "c.cyr");
+    assert_eq(flags_parse(fs, 8, argv), 0, "parse ok");
+    assert_eq(flags_get_bool(fs, f_w), 1, "-w set");
+    assert_eq(streq(flags_get_str(fs, f_o), "out.s"), 1, "--output=out.s");
+    assert_eq(flags_get_int(fs, f_n), 3, "--count 3");
+    assert_eq(flags_positional_count(fs), 3, "3 positionals");
+    assert_eq(streq(flags_positional(fs, 2), "c.cyr"), 1, "c.cyr landed");
+}
+
+# v6.6.5 — the positional array used to stop at 128 and `return 0`, so a driver
+# that passed 200 paths processed 128 and was told nothing was wrong. kriya built
+# its own counter (src/lib/args.cyr:781) rather than being told. ⚠ The expected
+# value is this loop's own `n`, computed independently of the parser.
+fn test_positional_growth() {
+    test_group("positionals grow past the initial 128 cap");
+    var fs = flags_new();
+    var f_b = flags_add_bool(fs, 0, "on", 0, "");
+    var n = 200;
+    var argv = alloc((n + 2) * 8);
+    store64(argv, "prog");
+    store64(argv + 8, "--on");
+    var i = 0;
+    while (i < n) {
+        # distinct token per slot so a "kept the last one" bug cannot pass
+        var tok = alloc(16);
+        store8(tok, 112);                         # 'p'
+        store8(tok + 1, 48 + i / 100);
+        store8(tok + 2, 48 + (i / 10) % 10);
+        store8(tok + 3, 48 + i % 10);
+        store8(tok + 4, 0);
+        store64(argv + (i + 2) * 8, tok);
+        i = i + 1;
+    }
+    assert_eq(flags_parse(fs, n + 2, argv), 0, "parse ok");
+    assert_eq(flags_get_bool(fs, f_b), 1, "--on still set");
+    assert_eq(flags_positional_count(fs), n, "every positional retained");
+    assert_eq(streq(flags_positional(fs, n - 1), "p199"), 1, "last positional is p199");
+    assert_eq(streq(flags_positional(fs, 130), "p130"), 1, "positional 130 is in order");
+}
+
+fn test_bool_rejects_attached_value() {
+    test_group("--bool=value is an error, not 'set'");
+    var fs = flags_new();
+    var f_b = flags_add_bool(fs, 0, "on", 0, "");
+    var argv = _argv(2, "prog", "--on=0", 0, 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 2, argv), 0 - 1, "parse rejects it");
+    assert_eq(flags_error(fs), FLAG_ERR_UNEXPECTED_VALUE, "UNEXPECTED_VALUE");
+    assert_eq(flags_get_bool(fs, f_b), 0, "and the flag is NOT set");
+}
+
+fn test_list_keeps_every_value() {
+    test_group("FLAG_LIST keeps every occurrence, in order");
+    var fs = flags_new();
+    var f_d = flags_add_list(fs, 68, "define", "define");      # 'D'
+    var argv = _argv(5, "prog", "-D", "A", "--define=B", 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 4, argv), 0, "parse ok");
+    assert_eq(flags_list_count(fs, f_d), 2, "two values");
+    assert_eq(streq(flags_list_at(fs, f_d, 0), "A"), 1, "first is A");
+    assert_eq(streq(flags_list_at(fs, f_d, 1), "B"), 1, "second is B");
+}
+
+fn test_error_arg_names_the_token() {
+    test_group("flags_error_arg names the offending token");
+    var fs = flags_new();
+    var f_b = flags_add_bool(fs, 0, "on", 0, "");
+    var argv = _argv(2, "prog", "--zz-probe", 0, 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 2, argv), 0 - 1, "parse fails");
+    assert_eq(streq(flags_error_arg(fs), "--zz-probe"), 1, "names --zz-probe");
+    assert_eq(streq(flags_error_str(flags_error(fs)), "unknown option"), 1, "and says why");
+}
+
+fn test_stop_at_positional() {
+    test_group("stop-at-first-positional routes the tail to positionals");
+    var fs = flags_new();
+    var f_b = flags_add_bool(fs, 0, "on", 0, "");
+    flags_set_stop_at_positional(fs, 1);
+    var argv = _argv(4, "prog", "--on", "prog.cyr", "--on", 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 4, argv), 0, "parse ok");
+    assert_eq(flags_positional_count(fs), 2, "source + the trailing token");
+    assert_eq(streq(flags_positional(fs, 1), "--on"), 1, "the trailing flag is a positional");
+}
+
+# v6.6.5 (round-2 review) — flags_print_help was rewritten (raw `syscall(1, 2, …)` →
+# `sys_write(STDERR_FD, …)`, plus the FLAG_LIST arm) and no test called it. On EVERY
+# target it must run and return 0. On Linux stderr is redirected into a pipe and read
+# back: every registered long name must appear, and the line count must equal the
+# number of flags THIS test registered (its own counter, not a number the parser
+# reports). The capture is Linux-only because sys_dup2 has no crossos coverage on
+# macOS and is a no-op stub on PE, so a capture there would test dup2, not the help.
+fn _help_has(buf, n, needle): i64 {
+    var nl = strlen(needle);
+    var i = 0;
+    while (i + nl <= n) {
+        if (memeq(buf + i, needle, nl) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _help_lines(buf, n): i64 {
+    var c = 0;
+    var i = 0;
+    while (i < n) {
+        if (load8(buf + i) == 10) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+fn test_print_help() {
+    test_group("flags_print_help prints every registered flag");
+    var fs = flags_new();
+    var nreg = 0;
+    flags_add_bool(fs, 118, "verbose", 0, "be loud");        # 'v'
+    nreg = nreg + 1;
+    flags_add_int(fs, 0, "count", 3, "how many");
+    nreg = nreg + 1;
+    flags_add_str(fs, 111, "output", 0, "where to write");   # 'o'
+    nreg = nreg + 1;
+    flags_add_list(fs, 68, "define", "define a symbol");    # 'D'
+    nreg = nreg + 1;
+    #ifdef CYRIUS_TARGET_LINUX
+    var pfds[16];
+    assert_eq(sys_pipe(&pfds), 0, "pipe for the stderr capture");
+    var prd = load32(&pfds);
+    var pwr = load32(&pfds + 4);
+    var saved = 97;                  # park the real stderr on a free fd
+    sys_dup2(2, saved);
+    sys_dup2(pwr, 2);
+    var hr = flags_print_help(fs);
+    sys_dup2(saved, 2);
+    sys_close(saved);
+    sys_close(pwr);
+    var cap = 4096;
+    var buf = alloc(cap);
+    var got = 0;
+    var k = sys_read(prd, buf, cap);
+    while (k > 0) {
+        got = got + k;
+        k = sys_read(prd, buf + got, cap - got);
+    }
+    sys_close(prd);
+    assert_eq(hr, 0, "returns 0");
+    assert_eq(got > 0, 1, "ANTI-VACUOUS: something was captured");
+    assert_eq(_help_lines(buf, got), nreg, "one line per registered flag");
+    assert_eq(_help_has(buf, got, "-v, --verbose"), 1, "bool: short + long");
+    assert_eq(_help_has(buf, got, "--count <int>"), 1, "int: typed");
+    assert_eq(_help_has(buf, got, "-o, --output <str>"), 1, "str: short + long + typed");
+    assert_eq(_help_has(buf, got, "-D, --define <str> (repeatable)"), 1, "list: the new FLAG_LIST arm");
+    assert_eq(_help_has(buf, got, "be loud"), 1, "help text is printed");
+    #endif
+    #ifndef CYRIUS_TARGET_LINUX
+    assert_eq(flags_print_help(fs), 0, "runs and returns 0 (output checked on Linux only)");
+    #endif
+}
+
+fn main() {
+    alloc_init();
+    test_bool_long_and_short();
+    test_int_equals();
+    test_int_space();
+    test_str_short();
+    test_defaults();
+    test_positional_and_terminator();
+    test_unknown_flag_errors();
+    test_missing_value_errors();
+    test_bad_int_errors();
+    test_bundled_short_rejected();
+    test_mixed_combination();
+    test_positional_growth();
+    test_bool_rejects_attached_value();
+    test_list_keeps_every_value();
+    test_error_arg_names_the_token();
+    test_stop_at_positional();
+    test_print_help();
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

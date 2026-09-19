@@ -670,6 +670,20 @@ fn _diff_against_snapshot(snapshot_bytes) {
     return 0;
 }
 
+# v6.6.5 — bounded prefix test; `memeq` past the end of a short token would read
+# whatever follows it in memory.
+fn _api_is_prefix(a, lit, n): i64 {
+    if (strlen(a) < n) { return 0; }
+    return memeq(a, lit, n);
+}
+
+fn _api_repeat(a): i64 {
+    syscall(SYS_WRITE, 2, "error: option given more than once '", 36);
+    syscall(SYS_WRITE, 2, a, strlen(a));
+    syscall(SYS_WRITE, 2, "'\n", 2);
+    return 1;
+}
+
 fn main() {
     alloc_init();
     args_init();
@@ -690,19 +704,67 @@ fn main() {
     #   agnosys/docs/development/issues/2026-05-06-cyrius-api-surface-derive-blind.md §4
     var scope_project = 0;
     var snapshot_path = DEFAULT_SNAPSHOT;
+    # v6.6.5 — `--updat`, `--scope=projct`, the `--snapshot PATH` SPACE form and a
+    # stray positional were ALL silently ignored, so the tool diffed against the
+    # DEFAULT snapshot and reported a clean surface for a question nobody asked.
+    # Now: unknown flags and operands are errors, --scope is validated, and both
+    # the attached and space forms of --snapshot/--scope are accepted.
+    var snap_seen = 0;
     var i = 1;
     while (i < argc()) {
         var a = argv(i);
         if (streq(a, "--update") == 1) { update_mode = 1; }
         elif (streq(a, "--scope=project") == 1) { scope_project = 1; }
-        elif (streq(a, "--help") == 1) {
-            println("Usage: cyrius_api_surface [--update] [--snapshot=PATH] [--scope=project]");
+        elif (streq(a, "--scope") == 1) {
+            i = i + 1;
+            if (i >= argc()) { println("error: --scope needs a value (project)"); return 1; }
+            if (streq(argv(i), "project") == 0) {
+                syscall(SYS_WRITE, 2, "error: unknown --scope (only 'project'): ", 41);
+                syscall(SYS_WRITE, 2, argv(i), strlen(argv(i)));
+                syscall(SYS_WRITE, 2, "\n", 1);
+                return 1;
+            }
+            scope_project = 1;
+        }
+        elif (streq(a, "--snapshot") == 1) {
+            if (snap_seen == 1) { return _api_repeat(a); }
+            snap_seen = 1;
+            i = i + 1;
+            if (i >= argc()) { println("error: --snapshot needs a path"); return 1; }
+            snapshot_path = argv(i);
+        }
+        elif (streq(a, "--help") == 1 || streq(a, "-h") == 1) {
+            println("Usage: cyrius_api_surface [--update] [--snapshot PATH] [--scope project]");
+            println("  --snapshot=PATH and --scope=project are the equivalent attached forms.");
             return 0;
         }
-        elif (strlen(a) > 11) {
-            if (memeq(a, "--snapshot=", 11) == 1) {
-                snapshot_path = a + 11;
-            }
+        elif (_api_is_prefix(a, "--snapshot=", 11) == 1) {
+            # One snapshot. A second one used to replace the first in silence.
+            if (snap_seen == 1) { return _api_repeat(a); }
+            snap_seen = 1;
+            snapshot_path = a + 11;
+        }
+        elif (_api_is_prefix(a, "--scope=", 8) == 1) {
+            syscall(SYS_WRITE, 2, "error: unknown --scope (only 'project'): ", 41);
+            syscall(SYS_WRITE, 2, a, strlen(a));
+            syscall(SYS_WRITE, 2, "\n", 1);
+            return 1;
+        }
+        elif (load8(a) == 45) {
+            # An undeclared '-' token is an OPTION error, named as such (round-3 review:
+            # it was reported as an "unexpected argument", unlike every other tool).
+            syscall(SYS_WRITE, 2, "error: unknown option '", 23);
+            syscall(SYS_WRITE, 2, a, strlen(a));
+            var omsg = "'\n  usage: cyrius_api_surface [--update] [--snapshot PATH] [--scope project]\n";
+            syscall(SYS_WRITE, 2, omsg, strlen(omsg));
+            return 1;
+        }
+        else {
+            syscall(SYS_WRITE, 2, "error: unexpected argument '", 28);
+            syscall(SYS_WRITE, 2, a, strlen(a));
+            var umsg = "'\n  usage: cyrius_api_surface [--update] [--snapshot PATH] [--scope project]\n";
+            syscall(SYS_WRITE, 2, umsg, strlen(umsg));
+            return 1;
         }
         i = i + 1;
     }

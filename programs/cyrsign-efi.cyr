@@ -37,6 +37,36 @@ include "lib/sigil.cyr"
 
 fn _cse_err(msg) { sys_write(2, "cyrsign-efi: ", 13); sys_write(2, msg, strlen(msg)); sys_write(2, "\n", 1); }
 
+fn _cse_usage(): i64 { _cse_err("usage: cyrsign-efi <pe-in> <key.der> <cert.der> <pe-out>"); return 0; }
+
+fn _cse_named(msg, tok): i64 {
+    sys_write(2, "cyrsign-efi: ", 13);
+    sys_write(2, msg, strlen(msg));
+    sys_write(2, " '", 2);
+    sys_write(2, tok, strlen(tok));
+    sys_write(2, "'\n", 2);
+    return _cse_usage();
+}
+
+# EXACTLY four operands, no options. v6.6.5 (round-3 review): the check used to be
+# `argc() < 5` and the operands were read positionally, so `cyrius sign-efi in key
+# cert --dry-run` wrote the signed PE to a FILE NAMED "--dry-run" and exited 0, and
+# `... out.efi --verify-only` signed out.efi and dropped the flag. This tool takes no
+# flags at all, so ANY '-'-prefixed token is refused by name, before the count (a
+# flag is never an operand), and a fifth operand is refused rather than ignored.
+# CHANGELOG [6.6.5].
+fn _cse_args_ok(): i64 {
+    var i = 1;
+    while (i < argc()) {
+        var a = argv(i);
+        if (load8(a) == 45 && load8(a + 1) != 0) { return _cse_named("unknown option", a); }
+        i = i + 1;
+    }
+    if (argc() > 5) { return _cse_named("unexpected extra argument", argv(5)); }
+    if (argc() < 5) { _cse_err("missing required argument"); return _cse_usage(); }
+    return 1;
+}
+
 fn _cse_read(path, out_len): i64 {
     var fd = sys_open(path, 0, 0);
     if (fd < 0) { return 0; }
@@ -54,7 +84,7 @@ fn main(): i64 {
     alloc_init();
     args_init();
     _ac_oids_init();
-    if (argc() < 5) { _cse_err("usage: cyrsign-efi <pe-in> <key.der> <cert.der> <pe-out>"); return 2; }
+    if (_cse_args_ok() == 0) { return 2; }
 
     var pe_len = 0;   var pe   = _cse_read(argv(1), &pe_len);
     var kl = 0;       var kder = _cse_read(argv(2), &kl);

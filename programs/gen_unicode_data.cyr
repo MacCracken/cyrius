@@ -12,7 +12,7 @@
 #   tests/data/NormalizationTest.txt    (verbatim copy; corpus already lives here)
 #
 # Run via:
-#   cyrius build programs/gen_unicode_data.cyr -o build/gen_unicode_data
+#   cyrius build programs/gen_unicode_data.cyr build/gen_unicode_data
 #   ./build/gen_unicode_data
 #
 # Sovereignty: cyrius writes its own data tables. No Python, no jq, no

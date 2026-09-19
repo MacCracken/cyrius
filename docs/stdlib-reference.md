@@ -1302,7 +1302,20 @@ Time and duration utilities for wall-clock and monotonic clocks. Requires syscal
 
 ### flags.cyr
 
-getopt-long-shaped CLI flag parser with bool/int/string flag types. Requires alloc.cyr, string.cyr, fmt.cyr.
+getopt-long-shaped CLI flag parser with bool/int/string/list flag types. Requires alloc.cyr, string.cyr, syscalls.cyr.
+
+⚠ **v6.6.5 fixed three silent drops here.** Positionals used to stop at 128 and `flags_parse`
+still returned success, so a driver handed 200 paths processed 128 and was told nothing was
+wrong (kriya re-implemented operand counting by hand rather than being told); the array now
+DOUBLES. `--bool=value` used to SET the flag — the attached value was ignored — and is now
+`FLAG_ERR_UNEXPECTED_VALUE`. A repeated string flag kept only the last value; use the new
+`FLAG_LIST` type when every occurrence matters. `flags_print_help` also moved off a raw
+`syscall(1, 2, …)` onto `sys_write(STDERR_FD, …)` — for consistency with the rest of the stdlib,
+not for portability: the compiler rewrites the source syscall number per target (ESYSXLAT maps
+`1 → 64` on aarch64, `1 → 4` / `0x2000004` on Darwin, and PE routes it), and a `syscall(1, 2, …)`
+probe prints under qemu-aarch64 and wine alike. ⚠ An earlier draft of this paragraph claimed the
+raw form "printed nothing on three of the five targets"; that was false, and is corrected here
+because a plausible portability claim is exactly the kind that gets copied into the next file.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1316,7 +1329,13 @@ getopt-long-shaped CLI flag parser with bool/int/string flag types. Requires all
 | `flags_get_str` | `flags_get_str(h, idx) → ptr` | Read string flag value (cstr) |
 | `flags_positional_count` | `flags_positional_count(h) → count` | Number of positional arguments captured |
 | `flags_positional` | `flags_positional(h, idx) → ptr` | Get positional arg at index (cstr), returns 0 if out of range |
+| `flags_add_list` | `flags_add_list(h, short_ch, long_name, help) → idx` | Register a REPEATABLE string flag; every occurrence appends (v6.6.5) |
+| `flags_list_count` | `flags_list_count(h, idx) → count` | Number of values collected for a FLAG_LIST flag (v6.6.5) |
+| `flags_list_at` | `flags_list_at(h, idx, k) → ptr` | Value `k` of a FLAG_LIST flag in argv order, 0 if out of range (v6.6.5) |
+| `flags_set_stop_at_positional` | `flags_set_stop_at_positional(h, on)` | POSIX mode: everything after the first positional is a positional (v6.6.5) |
 | `flags_error` | `flags_error(h) → code` | Last parse error code (FlagErr enum) |
+| `flags_error_arg` | `flags_error_arg(h) → ptr` | The argv token that caused the last error, or 0 (v6.6.5) |
+| `flags_error_str` | `flags_error_str(code) → ptr` | Human-readable name for a FlagErr code (v6.6.5) |
 | `flags_print_help` | `flags_print_help(h)` | Print usage to stderr |
 
 ### log.cyr

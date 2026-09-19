@@ -17,7 +17,7 @@
 # an install — so this resolves correctly from any working directory,
 # not just the repo. Fall back to the explicit dev/install paths.
 fn _scaffolder_path(): i64 {
-    var bin = make_path(_tools_dir, "cyrius-init");
+    var bin = _tool_path(_tools_dir, "cyrius-init");
     if (file_exists(bin) == 1) { return bin; }
     bin = "./build/cyrius-init";
     if (file_exists(bin) == 1) { return bin; }

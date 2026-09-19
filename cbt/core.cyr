@@ -245,6 +245,32 @@ fn make_path(dir, name): i64 {
     return str_data(result);
 }
 
+# v6.6.5 — resolve a SIBLING TOOL by name, with the Windows `.exe` arm.
+#
+# ⛔ THE DEFECT: every tool the CLI spawns resolved as `make_path(_tools_dir, "cyrlint")`
+# — no suffix — while `scripts/build-windows-tarball.sh` ships `bin/cyrlint.exe`, and
+# `run_tool_vec` refuses on `file_exists(tool) == 0` BEFORE it ever reaches
+# CreateProcess. So on the shipped Windows layout `cyrius lint` could only ever print
+# `error: tool not found: …\bin\cyrlint`. `_ccname`/`_sn` above already carry exactly
+# this arm for `cycc` alone (v6.0.85) — the pattern existed and was applied to one
+# binary out of nine. Measured under wine at 6.6.5.
+#
+# Probe-then-fall-back rather than a hard suffix: a Windows DEV tree builds
+# `build/cyrlint` with no extension (the name is just where the shell redirected), and
+# the tarball ships `.exe`. Both must resolve. Non-Windows is byte-identical to the old
+# `make_path` call it replaces. CHANGELOG [6.6.5].
+fn _tool_path(dir, name): i64 {
+    var plain = make_path(dir, name);
+    #ifdef CYRIUS_TARGET_WIN
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, ".exe");
+    var exe = make_path(dir, str_data(str_builder_build(sb)));
+    if (file_exists(exe) == 1) { return exe; }
+    #endif
+    return plain;
+}
+
 # Read file contents into allocated buffer, null-terminate, return ptr
 # Returns 0 on failure
 fn read_file_str(path): i64 {
@@ -582,7 +608,7 @@ fn find_tools(): i64 {
         }
     }
     # Search for aarch64 cross-compiler: tools dir, then ./build/.
-    _cc_arm = make_path(_tools_dir, "cycc_aarch64");
+    _cc_arm = _tool_path(_tools_dir, "cycc_aarch64");
     if (file_exists(_cc_arm) == 0) {
         if (file_exists("./build/cycc_aarch64") == 1) {
             _cc_arm = "./build/cycc_aarch64";
@@ -591,7 +617,7 @@ fn find_tools(): i64 {
 
     # cx bytecode compiler: tools dir, then ./build/. Absent → JIT-built on first
     # use (see _ensure_cc_cx in build.cyr), matching the cross_bins on-demand model.
-    _cc_cx = make_path(_tools_dir, "cycc_cx");
+    _cc_cx = _tool_path(_tools_dir, "cycc_cx");
     if (file_exists(_cc_cx) == 0) {
         if (file_exists("./build/cycc_cx") == 1) {
             _cc_cx = "./build/cycc_cx";
@@ -600,7 +626,7 @@ fn find_tools(): i64 {
 
     # cx bytecode VM (runs .cyx): installed bin, then ./build/. Absent → JIT-built
     # on first `cyrius run <file>.cyx` (see _ensure_cxvm in build.cyr).
-    _cxvm = make_path(_tools_dir, "cxvm");
+    _cxvm = _tool_path(_tools_dir, "cxvm");
     if (file_exists(_cxvm) == 0) {
         if (file_exists("./build/cxvm") == 1) {
             _cxvm = "./build/cxvm";

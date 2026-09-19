@@ -43,7 +43,12 @@ cat cbt/cyrius.cyr | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/cyrius"
 # macOS user can `cyrius build --target=cx` AND `cyrius run *.cyx`. v6.4.22 fixed
 # cycc_cx's Mach-O cross-native fault (the arena used brk, which XNU lacks → now
 # mmap per-target); verified on ecb (native compile→run round-trip).
-for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm; do
+# v6.6.5 (round-3 review) — cyaudit + cyrius_api_surface were MISSING here, as they
+# were from the Windows tarball: `cyrius vet`, `cyrius deny` and `cyrius api-surface`
+# said "tool not found" on every macOS binary install. The CLI resolves both through
+# _tool_path; tests/gates/toolchain/cli_args_never_dropped.sh axis 15 now checks every
+# tarball script against that list.
+for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cyaudit cyrius_api_surface; do
     cat "programs/${tool}.cyr" | CYRIUS_MACHO_ARM=1 "$WORK/cc_x" > "$WORK/$STAGE/bin/${tool}"
 done
 # cycc_cx source is src/main_cx.cyr (a fork), not programs/cycc_cx.cyr — own line.
@@ -58,7 +63,8 @@ chmod +x "$WORK/$STAGE/bin"/*
 
 # Validate every Mach-O binary (magic cffaedfe, cputype 0x0100000C) —
 # refuse to package a non-arm64 / empty artifact.
-for b in cycc cycc_aarch64 cyrius cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cycc_cx; do
+for b in cycc cycc_aarch64 cyrius cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cycc_cx \
+         cyaudit cyrius_api_surface; do
     f="$WORK/$STAGE/bin/$b"
     magic=$(xxd -l4 -p "$f" | tr -d ' \n')
     cput=$(xxd -s4 -l4 -p "$f" | tr -d ' \n')

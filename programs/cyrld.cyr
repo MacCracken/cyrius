@@ -1256,19 +1256,36 @@ fn main(): i64 {
         emsg("  Without -o: dump + validate only.\n");
         return 1;
     }
-    # Simple -o parse: if arg 1 is "-o", arg 2 is output path, rest are inputs.
+    # v6.6.5 — `-o` ANYWHERE, and an unknown '-' token is an error instead of being
+    # opened as an object file. It used to be honoured only at argv(1), so
+    # `cyrld a.o -o out` silently produced a dump-only run with no linked output.
     var out_path = 0;
-    var arg0 = 1;
-    if (argc() >= 3) {
-        if (streq(argv(1), "-o") == 1) {
-            out_path = argv(2);
-            arg0 = 3;
-        }
-    }
-    var i = arg0;
+    var inputs = vec_new();
+    var i = 1;
     while (i < argc()) {
-        if (load_module(argv(i)) < 0) { return 1; }
+        var a = argv(i);
+        if (streq(a, "-o") == 1) {
+            # One output. A second `-o` used to replace the first in silence (round-3
+            # review); refuse it by name instead.
+            if (out_path != 0) { emsg("cyrld: option given more than once '-o'\n"); return 1; }
+            i = i + 1;
+            if (i >= argc()) { emsg("cyrld: -o needs an output path\n"); return 1; }
+            out_path = argv(i);
+        }
+        elif (load8(a) == 45) {
+            emsg("cyrld: unknown option '");
+            syscall(SYS_WRITE, 2, a, strlen(a));
+            emsg("'\n");
+            return 1;
+        }
+        else { vec_push(inputs, a); }
         i = i + 1;
+    }
+    if (vec_len(inputs) == 0) { emsg("cyrld: no input object files\n"); return 1; }
+    var mi = 0;
+    while (mi < vec_len(inputs)) {
+        if (load_module(vec_get(inputs, mi)) < 0) { return 1; }
+        mi = mi + 1;
     }
     var total = assign_text_layout();
     MERGED_TEXT_SIZE = total;

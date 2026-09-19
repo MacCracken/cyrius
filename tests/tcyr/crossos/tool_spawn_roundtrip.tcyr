@@ -1,0 +1,95 @@
+# tool_spawn_roundtrip.tcyr — CROSS-HOST: `lib/process.cyr` exec_vec must actually
+# SPAWN a child, wait for it, return its exit code, and deliver the argv element it
+# was given. Runs on ecb (macOS arm64) + ach (Intel Mac) + cass (Windows PE) + pi
+# (aarch64) through the release gate's cross-OS leg, which selects this DIRECTORY.
+#
+# ⛔ WHY THIS FILE EXISTS (v6.6.5, round-2 review of the CLI-arguments bite).
+# `cyrius lint` / `fmt` / `doc` / `vet` / `deny` / `api-surface` delegate to a sibling
+# binary. On Windows that spawn went through `sys_fork` / `sys_waitpid`, which are
+# `return 0 - 1` STUBS in lib/syscalls_windows.cyr — the fork "succeeded" with -1, the
+# parent waited on nothing and returned 1, so those verbs had most likely NEVER run
+# their tool on Windows at all. 6.6.5 replaced that with a real CreateProcessW path,
+# and shipped it with ZERO off-host coverage: no file in this directory spawns
+# anything (`process_smoke.tcyr` says in its header that a spawn round-trip is "out of
+# scope"), and the windows-native CI job is hello-world plus exit codes. That is the
+# exact shape of the macOS rot — a first implementation behind a green checkmark that
+# never runs the thing. Hello-world smoke is a placebo; the spawn IS the test.
+#
+# WHAT IT REACHES, PRECISELY. cbt/ is a program, not a library, so a .tcyr cannot call
+# `run_tool_vec` / `_win_spawn_vec` directly. What it CAN call is the layer they sit
+# on: on PE, lib/process_win.cyr's exec_vec goes through the SAME
+# `_win_create_process` + `_win_wait_close` pair that `_win_spawn_vec` uses (only the
+# command-line quoting differs); on Linux / macOS it is the fork + execve + waitpid
+# path `run_tool_vec` uses. The CLI's own spawn is exercised end-to-end by
+# tests/gates/toolchain/cli_args_never_dropped.sh on Linux and was measured under wine
+# (`cyrius.exe lint d.cyr --strict-deferrals` → 2, with only `cyrlint.exe` present).
+#
+# THE MECHANISM: the test spawns ITSELF. argv(0) is the binary the runner just built,
+# so there is no fixture to ship and no assumption about what else is installed on the
+# host. With no arguments it is the PARENT (asserts); with one argument it is the
+# CHILD and exits with a code DERIVED FROM THAT ARGUMENT, so a green run proves three
+# separate things at once: the child ran, its exit code came back, and the argv
+# element crossed the process boundary intact. A spawn that silently does nothing
+# returns -1 (Windows) or 127 (exec failure) — neither is 73, so the fail-open the
+# 6.6.4 Windows path had cannot read green here.
+#
+# ⚠ The child codes are deliberately NOT 0/1: an exit code this test would also
+# produce by accident (0 = pass, 1 = assert failure, 127 = exec failed, -1 → 255)
+# could not tell "the child ran and agreed" from "nothing ran". 73 and 11 are outside
+# every one of those.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/process.cyr"
+
+var SPAWN_TOKEN = "cyrius-roundtrip-token";
+
+# The child half. Exit 73 when the forwarded argument survived the spawn byte for
+# byte, 11 when something else arrived. Returned, not exited, so the tail below owns
+# the exit for both halves.
+fn _child_verdict(): i64 {
+    if (streq(argv(1), SPAWN_TOKEN) == 1) { return 73; }
+    return 11;
+}
+
+# Spawn ourselves with one argument and return the child's exit code.
+fn _spawn_self_with(tok): i64 {
+    var av = vec_new();
+    vec_push(av, argv(0));
+    vec_push(av, tok);
+    return exec_vec(av);
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    if (argc() > 1) { return _child_verdict(); }
+
+    test_group("tool spawn round-trip: exec_vec spawns, waits, and forwards argv");
+
+    var rc_ok = _spawn_self_with(SPAWN_TOKEN);
+    assert_eq(rc_ok, 73, "exec_vec ran the child AND returned its exit code");
+
+    # ANTI-VACUOUS: a DIFFERENT token must produce a DIFFERENT code. Without this a
+    # spawn that ignored its arguments entirely and always hit the same branch would
+    # still satisfy the row above.
+    var rc_other = _spawn_self_with("cyrius-wrong-token");
+    assert_eq(rc_other, 11, "a different argv element reaches the child (not ignored)");
+    assert_eq(rc_ok == rc_other, 0, "the two spawns really did differ");
+
+    # The 6.6.4 Windows shape: fork stubbed to -1, parent returns 1 having run
+    # nothing. -1 comes back as 255 through an exit code, so pin both out.
+    assert_eq(rc_ok == 255, 0, "the spawn did not fail outright (-1/255)");
+    assert_eq(rc_ok == 127, 0, "the child was execed, not a failed exec (127)");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

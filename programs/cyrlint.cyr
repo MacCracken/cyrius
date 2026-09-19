@@ -75,6 +75,13 @@ fn note_rawgetdents(line): i64 {
 # it a hard gate once the backlog is cross-referenced (TDD-style hardening).
 var _deferrals = 0;
 var _strict_deferrals = 0;
+# v6.6.5 (round-2 review) — set by _lint_one on a HARD failure (unreadable / over-size
+# file). Needed because under `--exit-with-count` the return value IS the warning count,
+# so main() cannot tell rc==1 "one warning" from rc==1 "could not read the file". Without
+# it the multi-file + --exit-with-count combination exited 0 on a missing file.
+var _lint_hard = 0;
+var _lint_buf = 0;    # the one file buffer, reused across files (see _lint_one)
+var _lint_buf_hi = 0; # high-water mark of bytes ever read into _lint_buf
 
 # Bounded substring search within a line [start,end). Line buffers aren't
 # NUL-terminated, so strstr() can't be used directly.
@@ -852,53 +859,48 @@ fn lint_globals_init_order(buf, total): i64 {
     return 0;
 }
 
-fn main(): i64 {
-    alloc_init();
-    args_init();
+# v6.6.5 — lint ONE file: everything that used to be the tail of main(), so N files
+# can run through the identical path. Every per-file counter is reset HERE, at the
+# top, because a global that survives into the next file turns file 2's verdict into
+# file 1's plus file 2's. Returns 0 ok, 1 read error, 2 strict verdict.
+fn _lint_one(path, strict, exit_with_count): i64 {
+    _warnings = 0;
+    _errors = 0;
+    _deferrals = 0;
+    _sysopen_notes = 0;
+    _getdents_notes = 0;
+    _err_enum_notes = 0;
 
-    if (argc() < 2) {
-        println("Usage: cyrlint [--strict] [--strict-deferrals] [--exit-with-count] <file.cyr>");
-        return 1;
-    }
+    sys_write(STDOUT_FD, "=== cyrlint: ", 13);
+    sys_write(STDOUT_FD, path, strlen(path));
+    sys_write(STDOUT_FD, " ===\n", 5);
 
-    # Exit-code policy (v6.0.36, issue 2026-04-26): default is conventional
-    # (0 = success, 1 = read error, 2 = --strict and warnings present) so
-    # `set -eo pipefail` CI scripts see a clean rc and the warning detail
-    # in stdout. The old "rc == warning count" behavior — useful in some
-    # scripts but indistinguishable from a crash under `set -e` — is opt-in
-    # via --exit-with-count. Flags may appear before or after the path.
-    var strict = 0;
-    var exit_with_count = 0;
-    var path = 0;
-    var ai = 1;
-    while (ai < argc()) {
-        var a = argv(ai);
-        if (streq(a, "--strict") == 1) { strict = 1; }
-        elif (streq(a, "--exit-with-count") == 1) { exit_with_count = 1; }
-        elif (streq(a, "--strict-deferrals") == 1) { _strict_deferrals = 1; }
-        elif (path == 0) { path = a; }
-        ai = ai + 1;
-    }
-    if (path == 0) {
-        println("Usage: cyrlint [--strict] [--strict-deferrals] [--exit-with-count] <file.cyr>");
-        return 1;
-    }
-
-    syscall(1, 1, "=== cyrlint: ", 13);
-    syscall(1, 1, path, strlen(path));
-    syscall(1, 1, " ===\n", 5);
-
-    var buf = alloc(_MAX_FILE);
+    # ONE buffer for the whole run (v6.6.5, round-3 review): N files now go through a
+    # single process, and an alloc per file grew RSS ~0.73 MB per file (197 files
+    # peaked at 143 MB) — nothing is ever freed. The read overwrites it in full and
+    # `n` bounds every reader, so reuse cannot leak one file into the next.
+    if (_lint_buf == 0) { _lint_buf = alloc(_MAX_FILE); }
+    var buf = _lint_buf;
     var n = file_read_all(path, buf, _MAX_FILE);
     if (n <= 0) {
-        println("cyrlint: cannot read file");
+        sys_write(STDERR_FD, "cyrlint: cannot read file: ", 27);
+        sys_write(STDERR_FD, path, strlen(path));
+        sys_write(STDERR_FD, "\n", 1);
+        _lint_hard = 1;
         return 1;
     }
     # Fail loud on a truncated read (see cyrfmt _MAX_FILE rationale).
     if (n >= _MAX_FILE) {
         println("cyrlint: file too large to lint (>1028KB) — raise _MAX_FILE");
+        _lint_buf_hi = _MAX_FILE;
+        _lint_hard = 1;
         return 1;
     }
+    # Zero what the previous (longer) file left past this one's end, so every reader
+    # sees exactly the bytes a fresh zeroed alloc would have shown it.
+    var zi = n;
+    while (zi < _lint_buf_hi) { store8(buf + zi, 0); zi = zi + 1; }
+    if (n > _lint_buf_hi) { _lint_buf_hi = n; }
 
     lint_file(buf, n);
     lint_globals_init_order(buf, n);
@@ -906,24 +908,116 @@ fn main(): i64 {
 
     # Deferral summary goes to STDERR (with its per-line notes), and BEFORE the
     # warnings line, so the canonical machine-readable last line of STDOUT stays
-    # "<n> warnings" — gates parse it via `tail -1 | grep -oP '^\d+'` and must
+    # "<n> warnings" — gates parse it via `tail -1 | grep -oP '^\d+' ` and must
     # NOT pick up the deferral count.
     var db[24];
     var dl = fmt_int_buf(_deferrals, &db);
-    syscall(1, 2, &db, dl);
+    sys_write(STDERR_FD, &db, dl);
     var dsfx = " untracked deferrals\n";
-    syscall(1, 2, dsfx, strlen(dsfx));
+    sys_write(STDERR_FD, dsfx, strlen(dsfx));
 
     var nb[24];
     var nl = fmt_int_buf(_warnings, &nb);
-    syscall(1, 1, &nb, nl);
-    syscall(1, 1, " warnings\n", 10);
+    sys_write(STDOUT_FD, &nb, nl);
+    sys_write(STDOUT_FD, " warnings\n", 10);
 
-    # See the exit-code policy note at the top of main().
-    if (exit_with_count == 1) { return _warnings; }
-    if (strict == 1 && _warnings > 0) { return 2; }
-    if (_strict_deferrals == 1 && _deferrals > 0) { return 2; }
-    return 0;
+    # See the exit-code policy note in main().
+    var verdict = 0;
+    if (strict == 1 && _warnings > 0) { verdict = 2; }
+    if (_strict_deferrals == 1 && _deferrals > 0) { verdict = 2; }
+    if (exit_with_count == 1) {
+        # v6.6.5 — CLAMP. An exit code is 8 bits: 256 warnings returned 0, i.e. a
+        # file with 256 problems reported a clean bill of health. Measured on 6.6.4.
+        var cnt = _warnings;
+        if (cnt > 255) { cnt = 255; }
+        # ⛔ v6.6.5 (round-3 review) — the count used to be returned BEFORE the strict
+        # checks, so `--exit-with-count --strict-deferrals` on a file with 0 warnings
+        # and an untracked deferral exited 0: the filed flag, forwarded at last and
+        # then switched off by its neighbour. The exit code is the MAX of the count
+        # and the strict verdict, so neither flag can cancel the other.
+        if (verdict > cnt) { return verdict; }
+        return cnt;
+    }
+    return verdict;
+}
+
+fn _lint_usage(): i64 {
+    println("Usage: cyrlint [--strict] [--strict-deferrals] [--exit-with-count] <file.cyr>...");
+    return 1;
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+
+    if (argc() < 2) { return _lint_usage(); }
+
+    # Exit-code policy (v6.0.36, issue 2026-04-26): default is conventional
+    # (0 = success, 1 = read error, 2 = --strict and warnings present) so
+    # `set -eo pipefail` CI scripts see a clean rc and the warning detail
+    # in stdout. The old "rc == warning count" behavior is opt-in via
+    # --exit-with-count (clamped to 255 since v6.6.5).
+    #
+    # v6.6.5 — flags in ANY position (they already were), but an UNKNOWN '-' token
+    # is now an error instead of becoming the path: `cyrlint f.cyr --strcit` used to
+    # lint f.cyr with strict OFF and exit 0. And N files are linted, not just the
+    # first: `cyrlint a b --strict` used to examine `a` alone and report its verdict
+    # for the pair. CHANGELOG [6.6.5].
+    var strict = 0;
+    var exit_with_count = 0;
+    var files = vec_new();
+    var ai = 1;
+    while (ai < argc()) {
+        var a = argv(ai);
+        if (streq(a, "--strict") == 1) { strict = 1; }
+        elif (streq(a, "--exit-with-count") == 1) { exit_with_count = 1; }
+        elif (streq(a, "--strict-deferrals") == 1) { _strict_deferrals = 1; }
+        elif (streq(a, "--help") == 1 || streq(a, "-h") == 1) { _lint_usage(); return 0; }
+        elif (load8(a) == 45) {
+            sys_write(STDERR_FD, "cyrlint: unknown option '", 25);
+            sys_write(STDERR_FD, a, strlen(a));
+            sys_write(STDERR_FD, "'\n", 2);
+            return _lint_usage();
+        }
+        else { vec_push(files, a); }
+        ai = ai + 1;
+    }
+    if (vec_len(files) == 0) { return _lint_usage(); }
+
+    var rc = 0;
+    var total = 0;
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var one = _lint_one(vec_get(files, fi), strict, exit_with_count);
+        total = total + _warnings;
+        if (one > rc) { rc = one; }
+        fi = fi + 1;
+    }
+    # ONE file keeps byte-identical output — the `tail -1` == "<n> warnings" contract
+    # that tests/gates/frontend/lint_reports_unparseable.sh and several consumer CI
+    # steps read. The total line is additive, printed only when there IS more than one.
+    if (vec_len(files) > 1) {
+        var tb[24];
+        var tl = fmt_int_buf(total, &tb);
+        sys_write(STDOUT_FD, &tb, tl);
+        sys_write(STDOUT_FD, " warnings total\n", 16);
+        if (exit_with_count == 1) {
+            # ⛔ v6.6.5 (round-2 review) — THIS BRANCH USED TO `return total` AND THROW
+            # `rc` AWAY. `rc` is the only carrier of a HARD failure (`_lint_one` returns 1
+            # for an unreadable or over-size file), so `cyrlint good.cyr missing.cyr
+            # --exit-with-count` printed "cannot read file: missing.cyr" on stderr and
+            # exited **0** — a silent fail-open, in the exact class this release exists to
+            # remove, written BY the fix. Measured at 6.6.5: single-file and
+            # non---exit-with-count forms both correctly exited 1; only this combination
+            # was open. Clamp first, then let a hard failure outrank the count.
+            # Gated by tests/gates/toolchain/cli_args_never_dropped.sh axis 12.
+            if (total > 255) { total = 255; }
+            if (_lint_hard == 1) { if (total == 0) { return 1; } }
+            if (rc > total) { return rc; }
+            return total;
+        }
+    }
+    return rc;
 }
 var r = main();
 syscall(60, r);

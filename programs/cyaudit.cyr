@@ -60,9 +60,18 @@ fn scan_includes(fp, inc): i64 {
 
 fn cmd_vet(fp): i64 {
     println("=== cyaudit vet ===");
-    syscall(1, 1, "scanning: ", 10);
-    syscall(1, 1, fp, strlen(fp));
-    syscall(1, 1, "\n", 1);
+    # v6.6.5 — CHECK THE FILE FIRST. `cyaudit vet /nonexistent.cyr` printed
+    # "scanning: … / no dependencies" and exited 0 — a clean bill of health for a
+    # file that was never opened. `cmd_deny` already did this check; vet did not.
+    if (file_exists(fp) == 0) {
+        sys_write(STDERR_FD, "cyaudit: cannot read file: ", 27);
+        sys_write(STDERR_FD, fp, strlen(fp));
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
+    sys_write(STDOUT_FD, "scanning: ", 10);
+    sys_write(STDOUT_FD, fp, strlen(fp));
+    sys_write(STDOUT_FD, "\n", 1);
     var inc = vec_new();
     scan_includes(fp, inc);
     var len = vec_len(inc);
@@ -128,6 +137,10 @@ fn cmd_deny(fp): i64 {
         fmt_int(violations);
         syscall(1, 2, " violation(s)\n", 14);
     }
+    # CLAMP (v6.6.5, round-3 review): an exit status is 8 bits, so 256 violations exited
+    # 0 — a clean verdict for a file with 256 policy breaches. Same wrap cyrlint and
+    # cyrdoc were clamped for in this release.
+    if (violations > 255) { return 255; }
     return violations;
 }
 
@@ -138,13 +151,46 @@ fn main(): i64 {
         println("cyaudit — Cyrius Check");
         println("  cyaudit vet <file>  — audit dependencies");
         println("  cyaudit deny <file> — enforce policies");
-        return 0;
+        # Only an explicit help request is a success. `cyaudit vet` with no file used to
+        # print this and exit 0, i.e. a CI step that lost its operand passed (v6.6.5,
+        # round-3 review).
+        if (argc() == 2) {
+            if (streq(argv(1), "--help") == 1 || streq(argv(1), "-h") == 1) { return 0; }
+        }
+        sys_write(STDERR_FD, "cyaudit: missing required argument <file>\n", 42);
+        return 1;
     }
+    # v6.6.5 — exactly `vet|deny <file>`. Extra operands and any '-' token used to
+    # be ignored, so `cyaudit vet f --x` and `cyaudit vet a b` both reported on `a`
+    # alone and exited 0.
     var cmd = argv(1);
+    if (streq(cmd, "vet") == 0 && streq(cmd, "deny") == 0) {
+        sys_write(STDERR_FD, "cyaudit: unknown command '", 26);
+        sys_write(STDERR_FD, cmd, strlen(cmd));
+        sys_write(STDERR_FD, "'\n", 2);
+        return 1;
+    }
+    # A '-' token is named as an OPTION wherever it sits, before the count — so
+    # `cyaudit vet f --x` reports the flag, not "extra argument".
+    var oi = 2;
+    while (oi < argc()) {
+        if (load8(argv(oi)) == 45) {
+            sys_write(STDERR_FD, "cyaudit: unknown option '", 25);
+            sys_write(STDERR_FD, argv(oi), strlen(argv(oi)));
+            sys_write(STDERR_FD, "'\n", 2);
+            return 1;
+        }
+        oi = oi + 1;
+    }
+    if (argc() > 3) {
+        var xmsg = "cyaudit: unexpected extra argument '";
+        sys_write(STDERR_FD, xmsg, strlen(xmsg));
+        sys_write(STDERR_FD, argv(3), strlen(argv(3)));
+        sys_write(STDERR_FD, "'\n", 2);
+        return 1;
+    }
     if (streq(cmd, "vet") == 1) { return cmd_vet(argv(2)); }
-    if (streq(cmd, "deny") == 1) { return cmd_deny(argv(2)); }
-    println("unknown command");
-    return 1;
+    return cmd_deny(argv(2));
 }
 var r = main();
 syscall(60, r);

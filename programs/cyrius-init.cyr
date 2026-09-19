@@ -692,6 +692,11 @@ fn _init_dry_run(disp, proj, shape_lib, inplace, agent, agent_seen) {
 # ────────────────────────────────────────────────────────────
 # init driver
 # ────────────────────────────────────────────────────────────
+fn _init_extra(tok): i64 {
+    _print("error: unexpected extra argument '"); _print(tok); _print("' (one project per invocation)\n");
+    return 1;
+}
+
 fn _run_init(start): i64 {
     var argc_n = argc();
     var name = 0;
@@ -722,6 +727,10 @@ fn _run_init(start): i64 {
             elif (streq(a, "--bin") == 1) { shape_lib = 0; }
             else { _print("Unknown flag: "); _print(a); _print("\n"); return 1; }
         } else {
+            # v6.6.5 (round-3 review) — ONE project per invocation. The last positional
+            # used to win, so `cyrius init alpha beta` scaffolded beta alone, exited 0,
+            # and alpha was dropped without a word. CHANGELOG [6.6.5].
+            if (name != 0) { return _init_extra(a); }
             name = a;
         }
         ai = ai + 1;
@@ -1029,6 +1038,8 @@ fn _run_port(start): i64 {
             elif (streq(a, "--language") == 1) { _print("error: --language requires a value (rust)\n"); return 1; }
             else { _print("Unknown flag: "); _print(a); _print("\n"); return 1; }
         } else {
+            # Same rule as init: one target, never "the last one wins". CHANGELOG [6.6.5].
+            if (target != 0) { return _init_extra(a); }
             target = a;
         }
         ai = ai + 1;

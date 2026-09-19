@@ -2278,12 +2278,33 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
     return 0;
 }
 
+# `deps --dry-run`: name every `[deps.NAME]` table the manifest header declares, and
+# write nothing. A listing, not a resolution — no clone, no cache read, no lib/ write.
+fn _deps_dry_list(manifest, buf, n): i64 {
+    sys_write(STDOUT_FD, "dry-run: would resolve deps from ", 33);
+    sys_write(STDOUT_FD, manifest, strlen(manifest));
+    println(" into lib/ (nothing written):");
+    var cnt = 0;
+    var i = 0;
+    while (i < n) {
+        var ls = i;
+        while (i < n && load8(buf + i) != 10) { i = i + 1; }
+        if (i - ls > 7 && memeq(buf + ls, "[deps.", 6) == 1) {
+            var e = ls + 6;
+            while (e < i && load8(buf + e) != 93) { e = e + 1; }
+            sys_write(STDOUT_FD, "  ", 2);
+            sys_write(STDOUT_FD, buf + ls + 6, e - ls - 6);
+            sys_write(STDOUT_FD, "\n", 1);
+            cnt = cnt + 1;
+        }
+        i = i + 1;
+    }
+    if (cnt == 0) { println("  (no [deps.NAME] entries; stdlib = [...] modules resolve from the toolchain)"); }
+    return 0;
+}
+
 fn cmd_deps(): i64 {
     _dep_vendor_mode = 1;   # v6.5.37 (A0): vendoring — symlinked destinations are refused
-    if (_dry_run == 1) {
-        println("dry-run: would resolve deps from cyrius.cyml into lib/");
-        return 0;
-    }
     # Try cyrius.cyml first, fall back to cyrius.toml
     var _manifest = "cyrius.cyml";
     if (file_exists(_manifest) == 0) { _manifest = "cyrius.toml"; }
@@ -2319,6 +2340,12 @@ fn cmd_deps(): i64 {
     }
     n = hdr_end;
     store8(buf + n, 0);
+    # v6.6.5 — reachable for the first time (no CLI path used to set _dry_run for
+    # `deps`). It returned BEFORE the manifest check, so `cyrius deps --dry-run` in an
+    # empty directory said "would resolve deps from cyrius.cyml" and exited 0 while
+    # plain `cyrius deps` exited 1 (round-3 review). Now it fails exactly where the real
+    # run fails, and reports what it read instead of a canned line.
+    if (_dry_run == 1) { return _deps_dry_list(_manifest, buf, n); }
     var copied = 0;
     var errors = 0;
     _dep_includes = vec_new();
@@ -2971,7 +2998,7 @@ fn _git_probe_exec_bit(par): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, par);
     str_builder_add_cstr(sb, "/.cyrius-fsprobe-");
-    str_builder_add_int(sb, syscall(39));
+    str_builder_add_int(sb, sys_getpid());
     var p = str_data(str_builder_build(sb));
     sys_unlink(p);
     var fd = sys_open(p, O_WRONLY | O_CREAT | O_EXCL, 0x180);   # 0600

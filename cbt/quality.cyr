@@ -16,31 +16,15 @@
 #                                legitimate when working ON cyrius itself).
 #   cyrius coverage --min N   -> exit non-zero if coverage% < N (a CI gate).
 # The mode is stated in the summary so a stdlib figure can't be mistaken for a
-# project figure. `--min` and `--full` compose. argv(2..) carries the flags.
-fn cmd_coverage(): i64 {
-    var full = 0;
-    var min_pct = 0 - 1;                      # -1 = no gate
-    var root_arg = 0;
-    var ai = 2;
-    while (argc() > ai) {
-        var a = argv(ai);
-        if (streq(a, "--full") == 1) { full = 1; }
-        elif (streq(a, "--min") == 1) {
-            if (argc() > ai + 1) { min_pct = atoi(argv(ai + 1)); ai = ai + 1; }
-            else { _err("--min needs a percentage, e.g. `cyrius coverage --min 80`"); return 1; }
-        }
-        # v6.5.8: a SUBFOLDER CALLOUT — `cyrius coverage src/sub` scans that directory.
-        # This used to be dropped on the floor: any positional was silently ignored, the
-        # scan ran against ./ anyway, and the run exited 0. An argument the tool accepts
-        # and does not act on is worse than one it rejects, because the output looks like
-        # an answer to the question that was asked.
-        elif (load8(a) != 45) { root_arg = a; }
-        else {
-            _err_ctx("unknown option", a);
-            return 1;
-        }
-        ai = ai + 1;
-    }
+# project figure. `--min` and `--full` compose.
+# v6.6.5 — the flags arrive already parsed (cbt/cli_args.cyr). This used to run its
+# own `ai = 2` loop, so `cyrius -q coverage` took the VERB NAME as the directory
+# ("not a directory: coverage"), and `--min abc` went through `atoi` to 0 and printed
+# "gate OK: 0% >= --min 0%" with exit 0 — a CI gate that passes on a typo. `min_pct`
+# is -1 when no gate was asked for; the caller has already validated the integer.
+# v6.5.8: a SUBFOLDER CALLOUT — `cyrius coverage src/sub` scans that directory (it
+# used to be dropped on the floor and the scan ran against ./ anyway).
+fn cmd_coverage(full, min_pct, root_arg): i64 {
 
     # Scan root: an explicit callout wins, then lib/ for --full, else the project's own
     # src/ (recursive).
@@ -357,9 +341,9 @@ fn cmd_doctest(arg): i64 {
                     if (fd >= 0) {
                         syscall(1, fd, code, code_len);
                         syscall(3, fd);
-                        var tmpbin = _cbt_tmpfile("dt_bin");
+                        var tmpbin = _cbt_tmpexe("dt_bin");
                         if (compile(tmpf, tmpbin) == 0) {
-                            var ec = run_binary_timed(tmpbin, _run_timeout_ms());
+                            var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
                             if (ec == expected) {
                                 dt_pass = dt_pass + 1;
                             } else {

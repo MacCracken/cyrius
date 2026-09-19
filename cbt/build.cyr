@@ -20,7 +20,7 @@ fn _emit_js(source, output): i64 {
     }
     # Atomic-output: emit to a temp then rename on success, so a failed emit
     # never leaves a truncated .js over a previously-good one (mirrors compile()).
-    var tmp_pid = syscall(39);
+    var tmp_pid = sys_getpid();
     var tmp_out_sb = str_builder_new();
     str_builder_add_cstr(tmp_out_sb, output);
     str_builder_add_cstr(tmp_out_sb, ".tmp.");
@@ -83,7 +83,7 @@ fn _ensure_cc_cx(): i64 {
         if (ofd < 0) { sys_exit(1); }
         sys_dup2(ofd, 1);
         sys_close(ofd);
-        var argv[8];
+        var argv[16];   # N BYTES: cc + NUL = 2 slots. Was [8] = ONE slot, NUL overflowed (CHANGELOG [6.6.5])
         store64(&argv, cc);
         store64(&argv + 8, 0);
         sys_execve(cc, &argv, _envp);
@@ -110,7 +110,7 @@ fn _ensure_cc_cx(): i64 {
 fn _emit_cx(source, output): i64 {
     if (_ensure_cc_cx() != 0) { return 1; }
     var cc = _cc_cx;
-    var tmp_pid = syscall(39);
+    var tmp_pid = sys_getpid();
     var tmp_out_sb = str_builder_new();
     str_builder_add_cstr(tmp_out_sb, output);
     str_builder_add_cstr(tmp_out_sb, ".tmp.");
@@ -127,7 +127,7 @@ fn _emit_cx(source, output): i64 {
         if (ofd < 0) { sys_exit(1); }
         sys_dup2(ofd, 1);
         sys_close(ofd);
-        var argv[8];
+        var argv[16];   # N BYTES: cc + NUL = 2 slots. Was [8] = ONE slot, NUL overflowed (CHANGELOG [6.6.5])
         store64(&argv, cc);
         store64(&argv + 8, 0);
         sys_execve(cc, &argv, _envp);
@@ -171,7 +171,7 @@ fn _ensure_cxvm(): i64 {
         if (ofd < 0) { sys_exit(1); }
         sys_dup2(ofd, 1);
         sys_close(ofd);
-        var argv[8];
+        var argv[16];   # N BYTES: cc + NUL = 2 slots. Was [8] = ONE slot, NUL overflowed (CHANGELOG [6.6.5])
         store64(&argv, cc);
         store64(&argv + 8, 0);
         sys_execve(cc, &argv, _envp);
@@ -191,22 +191,51 @@ fn _ensure_cxvm(): i64 {
     return 1;
 }
 
+# v6.6.5 — build the child's argv: [path, args..., NUL], or with qemu-aarch64
+# prepended when we are cross-running an aarch64 binary on an x86 host. `args` is a
+# vec of cstr (the program's own arguments, go-run style) or 0. A heap array, not a
+# fixed `var argv[40]`: the old one held 5 slots and had nowhere to put them.
+fn _run_argv(path, args, qemu): i64 {
+    var n = 0;
+    if (args != 0) { n = vec_len(args); }
+    var base = 1;
+    if (qemu != 0) { base = 2; }
+    var av = alloc((n + base + 1) * 8);
+    var o = 0;
+    if (qemu != 0) { store64(av, qemu); o = 1; }
+    store64(av + o * 8, path);
+    o = o + 1;
+    var i = 0;
+    while (i < n) {
+        store64(av + (o + i) * 8, vec_get(args, i));
+        i = i + 1;
+    }
+    store64(av + (o + n) * 8, 0);
+    return av;
+}
+
 # cx arc: run a .cyx bytecode file via cxvm. cxvm reads the .cyx from STDIN and
 # exits with the guest program's exit code — so the child dup2's the .cyx onto
 # fd 0, then execs cxvm. Mirrors run_binary's fork/waitpid/exit-status shape.
 fn run_cx(cyx_path): i64 {
     if (_ensure_cxvm() != 0) { return 1; }
     var vm = _cxvm;
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_run_cx(vm, cyx_path);
+    #endif
     var pid = sys_fork();
     if (pid == 0) {
         var fd = sys_open(cyx_path, O_RDONLY, 0);
         if (fd < 0) { sys_exit(1); }
         sys_dup2(fd, 0);
         sys_close(fd);
-        var argv[8];
-        store64(&argv, vm);
-        store64(&argv + 8, 0);
-        sys_execve(vm, &argv, _envp);
+        # v6.6.5 — `var argv[8]` is 8 BYTES, i.e. ONE slot, so the NUL terminator at
+        # +8 landed on the next local's stack slot (a probe measured &argv+8 == &fd).
+        # It worked by luck. _run_argv heap-allocates. NO program arguments: cxvm has no
+        # guest argv ABI, so cmd_run refuses them for a .cyx rather than hand cxvm
+        # arguments it would silently ignore (round-2 review; CHANGELOG [6.6.5]).
+        var av = _run_argv(vm, 0, 0);
+        sys_execve(vm, av, _envp);
         sys_exit(127);
     }
     var status_buf[1];
@@ -381,7 +410,7 @@ fn _materialize_source(source): i64 {
     if (_build_modules != 0) { if (vec_len(_build_modules) > 0) { need_tmp = 1; } }
     if (need_tmp == 1) {
         # Atomic temp file: O_EXCL rejects if path already exists (TOCTOU safe)
-        var pid = syscall(39);
+        var pid = sys_getpid();
         var tmp_sb = str_builder_new();
         str_builder_add_cstr(tmp_sb, _cbt_tmpfile("cpp_"));
         str_builder_add_int(tmp_sb, pid);
@@ -515,11 +544,52 @@ fn _materialize_source(source): i64 {
 # exclusive, so this FAILS CLOSED: if the directory cannot be created we stop
 # rather than quietly falling back to a shared name.
 #
-# PID-only (no uid) deliberately: /tmp is sticky, `syscall(39)` is what the
-# pre-existing O_EXCL temp at compile() already uses, and `sys_getuid` is a
+# PID-only (no uid) deliberately: /tmp is sticky, and `sys_getuid` is a
 # Linux-common wrapper that would not survive this file cross-compiling to
 # PE/Mach-O (CLAUDE.md: guard Linux-syscall use in cbt/).
+#
+# ⛔ v6.6.5 (round-3 review) — THE PID WAS A RAW `syscall(39)` AND THE BASE WAS A
+# LITERAL "/tmp", and neither exists on Windows. 39 is not a PE reroute, so it returned
+# -38 on EVERY run and every PE invocation raced for the same `/tmp/cyrius--38[-N]`
+# names; under wine 16 runs used up all 16 candidates and `cyrius lint` then failed
+# CLOSED ("16 candidates were taken") on the shipped Windows layout — cycc.exe present,
+# so the syntax pre-pass needs a temp. On real Windows "/tmp" is `<drive>:\tmp`, which a
+# stock install does not have, so it failed closed on the FIRST run. Now: `sys_getpid()`
+# (GetCurrentProcessId on PE, SYS_GETPID elsewhere), the per-user %TEMP% (then %TMP%)
+# as the base on Windows, and a FILETIME nonce in the Windows name because there is no
+# RemoveDirectoryW reroute (lib/io.cyr `xrmdir`), so our own empty dirs are never
+# removed and Windows recycles PIDs quickly — a PID-only name would run out of the 16
+# suffixes on a busy box and brick the CLI. CHANGELOG [6.6.5].
 var _cbt_tmpdir_p = 0;
+
+#ifdef CYRIUS_TARGET_WIN
+var _cbt_tmpbase_buf[64];    # 512 bytes (a top-level array is N x 8)
+#endif
+
+fn _cbt_tmpbase(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var t = _win_getenv_into("TEMP", &_cbt_tmpbase_buf);
+    if (t == 0) { t = _win_getenv_into("TMP", &_cbt_tmpbase_buf); }
+    return t;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return "/tmp";
+    #endif
+}
+
+# Windows only: milliseconds from GetSystemTimeAsFileTime (0xF01B), mod 1e9. -1
+# elsewhere (the POSIX name stays `cyrius-<pid>[-N]`, which the leak gates key on).
+fn _cbt_tmp_nonce(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var ft[16];
+    store64(&ft, 0);
+    syscall(0xF01B, &ft);
+    return (load64(&ft) / 10000) % 1000000000;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return 0 - 1;
+    #endif
+}
 
 fn _cbt_tmpdir(): i64 {
     if (_cbt_tmpdir_p != 0) { return _cbt_tmpdir_p; }
@@ -530,11 +600,22 @@ fn _cbt_tmpdir(): i64 {
     # Windows peer and this file cross-compiles to PE — CLAUDE.md's rule about
     # Linux-syscall use in cbt/, which the first cut of this helper broke and the
     # PE cross-compile gate caught.
+    var base = _cbt_tmpbase();
+    if (base == 0) {
+        println("error: cannot create a private temp directory: neither %TEMP% nor %TMP% is set (fail-closed)");
+        sys_exit(1);
+    }
+    var nonce = _cbt_tmp_nonce();
     var attempt = 0;
     while (attempt < 16) {
         var sb = str_builder_new();
-        str_builder_add_cstr(sb, "/tmp/cyrius-");
-        str_builder_add_int(sb, syscall(39));
+        str_builder_add_cstr(sb, base);
+        str_builder_add_cstr(sb, "/cyrius-");
+        str_builder_add_int(sb, sys_getpid());
+        if (nonce >= 0) {
+            str_builder_add_cstr(sb, "-t");
+            str_builder_add_int(sb, nonce);
+        }
         if (attempt > 0) {
             str_builder_add_cstr(sb, "-");
             str_builder_add_int(sb, attempt);
@@ -546,9 +627,11 @@ fn _cbt_tmpdir(): i64 {
         }
         attempt = attempt + 1;
     }
-    println("error: cannot create a private temp directory under /tmp (fail-closed)");
-    println("  16 candidates were taken; remove stale /tmp/cyrius-* dirs and retry.");
-    println("  cyrius will NOT fall back to a shared /tmp name (CVE-35/CVE-36).");
+    sys_write(STDOUT_FD, "error: cannot create a private temp directory under ", 52);
+    sys_write(STDOUT_FD, base, strlen(base));
+    println(" (fail-closed)");
+    println("  16 candidates were taken; remove stale cyrius-* dirs there and retry.");
+    println("  cyrius will NOT fall back to a shared temp name (CVE-35/CVE-36).");
     sys_exit(1);
     return 0;
 }
@@ -560,6 +643,23 @@ fn _cbt_tmpfile(name): i64 {
     str_builder_add_cstr(sb, "/");
     str_builder_add_cstr(sb, name);
     return str_data(str_builder_build(sb));
+}
+
+# A temp path for a BINARY the CLI is about to execute. On Windows it ends ".exe":
+# CreateProcessW with no application name appends ".exe" to an extensionless program
+# name, so `<tmp>/run` is looked up as `<tmp>/run.exe` and never found. POSIX names
+# are unchanged (test_runner_bounded.sh finds live children by `/cyrius-<pid>/test_bin`).
+# CHANGELOG [6.6.5].
+fn _cbt_tmpexe(name): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, ".exe");
+    return _cbt_tmpfile(str_data(str_builder_build(sb)));
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return _cbt_tmpfile(name);
+    #endif
 }
 
 # v6.5.19 — when non-zero, compile() sends the COMPILER's stderr to this path instead
@@ -697,7 +797,7 @@ fn compile(source, output): i64 {
     # success. Pre-fix, `output` was opened with O_TRUNC before the
     # compile ran, so any non-zero exit from cycc left an empty
     # file on disk — destroying any previously-working binary.
-    var tmp_pid = syscall(39);
+    var tmp_pid = sys_getpid();
     var tmp_out_sb = str_builder_new();
     str_builder_add_cstr(tmp_out_sb, output);
     str_builder_add_cstr(tmp_out_sb, ".tmp.");
@@ -797,6 +897,12 @@ fn compile(source, output): i64 {
         if (_agnos_target == 1) { sp_extra = sp_extra + 1; }
         if (_win_target == 1) { sp_extra = sp_extra + 1; }
         if (_poison_mode == 1) { sp_extra = sp_extra + 1; }
+        # v6.6.5 — `--pie` is real now. The guide's PIE section (6.6.4 line 2724) had
+        # documented `cyrius build --pie src dst` for months while the build loop had no --pie arm,
+        # so the flag hit "unknown flag" and the documented recipe could never have run.
+        # cycc reads PIE from its own cmdline or from CYRIUS_PIE=1; the env is the form
+        # available here.
+        if (_pie_target == 1) { sp_extra = sp_extra + 1; }
         if (_baremetal_target == 1) { sp_extra = sp_extra + 2; }   # CYRIUS_KERNEL + CYRIUS_ELF64_KERNEL
         if (_baremetal_target == 1 && _section_base_env_ptr != 0) { sp_extra = sp_extra + 1; }   # v6.3.3 #5 CYRIUS_KERNEL_BASE
         if (sp_extra > 0) {
@@ -813,6 +919,7 @@ fn compile(source, output): i64 {
             if (_agnos_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_AGNOS=1"); sp_ni = sp_ni + 1; }
             if (_win_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_TARGET_WIN=1"); sp_ni = sp_ni + 1; }
             if (_poison_mode == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_POISON=1"); sp_ni = sp_ni + 1; }
+            if (_pie_target == 1) { store64(sp_envp + sp_ni * 8, "CYRIUS_PIE=1"); sp_ni = sp_ni + 1; }
             if (_baremetal_target == 1) {
                 store64(sp_envp + sp_ni * 8, "CYRIUS_KERNEL=1"); sp_ni = sp_ni + 1;
                 store64(sp_envp + sp_ni * 8, "CYRIUS_ELF64_KERNEL=1"); sp_ni = sp_ni + 1;
@@ -972,15 +1079,17 @@ fn _run_sleep_ms(ms): i64 {
     #endif
 }
 
-fn run_binary_timed(path, timeout_ms): i64 {
-    var argv[40];   # N BYTES per CLAUDE.md buffer contract: cmd + arg + NUL ≤ 24 B
+fn run_binary_timed(path, timeout_ms, args): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_run_timed(path, timeout_ms, args);
+    #endif
     # Bug 2 (v6.0.66): cmd_test/run/bench/fuzz/doctest compile to /tmp and run via
     # run_binary without signing — only cmd_build signed (6.0.38). On arm64 macOS an
     # unsigned binary is AMFI-SIGKILL'd (128+9=137). Sign here so EVERY run path works.
     _macho_codesign(path);
     var ppid_before = 0;
     #ifdef CYRIUS_TARGET_LINUX
-    ppid_before = syscall(39);      # our pid == the child's ppid after fork
+    ppid_before = sys_getpid();      # our pid == the child's ppid after fork
     #endif
     var pid = sys_fork();
     if (pid == 0) {
@@ -1006,16 +1115,13 @@ fn run_binary_timed(path, timeout_ms): i64 {
         # Apple-Silicon `cyrius test` failure). Gate it OUT on macOS — exec directly.
         #ifndef CYRIUS_TARGET_MACOS
         if (_arch == ARCH_AARCH64) {
-            store64(&argv, "/usr/bin/qemu-aarch64");
-            store64(&argv + 8, path);
-            store64(&argv + 16, 0);
-            sys_execve("/usr/bin/qemu-aarch64", &argv, _envp);
+            var qav = _run_argv(path, args, "/usr/bin/qemu-aarch64");
+            sys_execve("/usr/bin/qemu-aarch64", qav, _envp);
             sys_exit(127);
         }
         #endif
-        store64(&argv, path);
-        store64(&argv + 8, 0);
-        sys_execve(path, &argv, _envp);
+        var nav = _run_argv(path, args, 0);
+        sys_execve(path, nav, _envp);
         sys_exit(127);
     }
     var status_buf[1];
@@ -1063,32 +1169,203 @@ fn run_binary_timed(path, timeout_ms): i64 {
 }
 
 fn run_binary(path): i64 {
-    return run_binary_timed(path, 0);
+    return run_binary_timed(path, 0, 0);
 }
 
-# Run an external tool by path, passing through args
-fn run_tool(tool, arg1, arg2, arg3): i64 {
+# v6.6.5 — run a just-built program with its OWN arguments forwarded (go-run style).
+# `cyrius run prog.cyr a b c` used to hand the program an argv of length 1.
+fn run_binary_args(path, args): i64 {
+    return run_binary_timed(path, 0, args);
+}
+
+# v6.6.5 — Windows spawn for run_tool_vec. run_tool/run_tool_argvtail both use
+# sys_fork/sys_waitpid, which are -1 STUBS on PE (lib/syscalls_windows.cyr): the fork
+# "succeeds" with -1, the parent waits on nothing and returns 1, so `cyrius lint` /
+# `fmt` / `doc` / `vet` / `deny` / `api-surface` never ran their tool on Windows at
+# all. Each argument is quoted, because a PE cmdline is one string and a path with a
+# space would otherwise split into two arguments. See _win_compile_spawn_err (:578)
+# for the same pattern on the compiler spawn. CHANGELOG [6.6.5].
+#ifdef CYRIUS_TARGET_WIN
+fn _w_put(wbuf, o, c): i64 {
+    store8(wbuf + o, c);
+    store8(wbuf + o + 1, 0);
+    return o + 2;
+}
+
+# Append ONE argument, quoted by the MSVCRT / CommandLineToArgvW rules, so the child
+# receives exactly the bytes we hold: backslashes are literal EXCEPT in a run that ends
+# at a `"` (doubled, plus one to escape the quote) or at the closing quote (doubled).
+# v6.6.5 (round-3 review) — the first cut wrapped each argument in bare quotes, so a
+# forwarded `cyrius run p.cyr "a\"b"` or a directory argument ending in `\` reached the
+# program as a different argv. CHANGELOG [6.6.5].
+fn _w_append_arg(wbuf, o, s): i64 {
+    o = _w_put(wbuf, o, 34);
+    var i = 0;
+    var go = 1;
+    while (go == 1) {
+        var nb = 0;
+        while (load8(s + i) == 92) { nb = nb + 1; i = i + 1; }
+        var c = load8(s + i);
+        var reps = nb;
+        if (c == 0 || c == 34) { reps = nb * 2; }
+        var k = 0;
+        while (k < reps) { o = _w_put(wbuf, o, 92); k = k + 1; }
+        if (c == 0) { go = 0; }
+        else {
+            if (c == 34) { o = _w_put(wbuf, o, 92); }
+            o = _w_put(wbuf, o, c);
+            i = i + 1;
+        }
+    }
+    return _w_put(wbuf, o, 34);
+}
+
+# The UTF-16LE command line `"prog" "arg"...`, or 0 after a NAMED error.
+# v6.6.5 (round-2 review) — SIZED FROM THE ARGUMENTS, not a fixed 32768: this is the
+# one spawn in the CLI that can be handed an arbitrary-length list (`cyrius lint <130
+# files>`, a forwarded `cyrius run` tail), so a fixed buffer is a heap overwrite
+# waiting for a large enough project. Worst case per argument is every byte doubled
+# (all backslashes before a quote) + 2 quotes + 1 space, 2 bytes per wide char.
+fn _win_cmdline(prog, args): i64 {
+    var need = (strlen(prog) + 3) * 2 + 8;
+    var n = 0;
+    if (args != 0) { n = vec_len(args); }
+    var _wi = 0;
+    while (_wi < n) {
+        need = need + (strlen(vec_get(args, _wi)) * 2 + 3) * 2;
+        _wi = _wi + 1;
+    }
+    # Windows' own command line maxes at 32,767 characters; past that CreateProcessW
+    # fails anyway, so refuse with a NAMED error rather than building a buffer that
+    # cannot be spawned.
+    if (need > 65536) {
+        _err_ctx("command line exceeds the Windows 32767-character limit", prog);
+        return 0;
+    }
+    var wbuf = alloc(need);
+    var o = 0;
+    o = _w_put(wbuf, o, 34);
+    o = _w_append_cstr(wbuf, o, prog);
+    o = _w_put(wbuf, o, 34);
+    var i = 0;
+    while (i < n) {
+        o = _w_put(wbuf, o, 32);
+        o = _w_append_arg(wbuf, o, vec_get(args, i));
+        i = i + 1;
+    }
+    _w_terminate(wbuf, o);
+    return wbuf;
+}
+
+# v6.6.5 — Windows spawn for run_tool_vec. run_tool/run_tool_argvtail both used
+# sys_fork/sys_waitpid, which are -1 STUBS on PE (lib/syscalls_windows.cyr): the fork
+# "succeeds" with -1, the parent waits on nothing and returns 1, so `cyrius lint` /
+# `fmt` / `doc` / `vet` / `deny` / `api-surface` never ran their tool on Windows at
+# all. See _win_compile_spawn_err for the same pattern on the compiler spawn.
+fn _win_spawn_vec(tool, args): i64 {
+    var wbuf = _win_cmdline(tool, args);
+    if (wbuf == 0) { return 1; }
+    var pi[24];
+    if (_win_create_process(wbuf, 0, 0, &pi) == 0) {
+        _err_ctx("failed to spawn tool", tool);
+        return 1;
+    }
+    return _win_wait_close(&pi);
+}
+
+# v6.6.5 (round-3 review) — the Windows arm of run_cx: the fork/dup2 body is dead on PE
+# (sys_fork is a -1 stub), so an installed cxvm.exe was never started. cxvm reads the
+# program from STDIN, and Win32 has no dup2, so the redirect goes through cmd.exe exactly
+# as _win_compile_spawn does it (`/s` strips only the outer quote pair).
+fn _win_run_cx(vm, cyx): i64 {
+    var wbuf = alloc((strlen(vm) + strlen(cyx) + 32) * 2);
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
+    o = _w_append_cstr(wbuf, o, vm);
+    o = _w_append_cstr(wbuf, o, "\" < \"");
+    o = _w_append_cstr(wbuf, o, cyx);
+    o = _w_append_cstr(wbuf, o, "\"\"");
+    _w_terminate(wbuf, o);
+    var pi[24];
+    if (_win_create_process(wbuf, 0, 0, &pi) == 0) {
+        _err_ctx("failed to start", vm);
+        return 127;
+    }
+    return _win_wait_close(&pi);
+}
+
+# v6.6.5 (round-3 review) — the Windows arm of run_binary_timed. The POSIX body is
+# fork/execve/waitpid, and on PE `sys_fork` is a -1 stub, so `cyrius run/test/tests/
+# bench/fuzz/soak/smoke/doctest` NEVER RAN THE PROGRAM on Windows: the parent
+# "waited" on pid -1 and decoded an UNINITIALISED status slot (measured under wine:
+# `run argc.cyr a b c` exited 111, `test t.tcyr` 199; 6.6.4 gave 48). A garbage code
+# that happened to decode as 0 would have reported a test that never ran as PASSED.
+# CreateProcessW + the WaitForSingleObject deadline (_win_wait_timeout, 0xF001/0xF01D)
+# give the same contract: the child's own exit code, or _RUN_TIMEOUT_KILLED.
+fn _win_run_timed(path, timeout_ms, args): i64 {
+    var wbuf = _win_cmdline(path, args);
+    if (wbuf == 0) { return 1; }
+    var pi[24];
+    if (_win_create_process(wbuf, 0, 0, &pi) == 0) {
+        _err_ctx("failed to start", path);
+        return 127;
+    }
+    if (timeout_ms <= 0) { return _win_wait_close(&pi); }
+    var killed = 0;
+    var ec = _win_wait_timeout(&pi, timeout_ms, &killed);
+    if (killed == 1) { return _RUN_TIMEOUT_KILLED; }
+    return ec;
+}
+#endif
+
+# v6.6.5 — run a tool with an ARBITRARY number of arguments. run_tool caps at 3,
+# which is why cmd_lint could only ever forward `--strict` plus the file: --strict
+# --strict-deferrals --exit-with-count <file> is four. A cap that silently shapes the
+# caller is the same class of defect as a cap that silently drops (lib/flags.cyr's
+# 128 positionals). `args` is a vec of cstr; the tool path is prepended here.
+fn run_tool_vec(tool, args): i64 {
     if (file_exists(tool) == 0) {
         _err_ctx("tool not found", tool);
         return 1;
     }
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_spawn_vec(tool, args);
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     var pid = sys_fork();
     if (pid == 0) {
-        var argv[48];   # N BYTES per CLAUDE.md buffer contract: tool + ≤3 args + NUL = 40 B
-        store64(&argv, tool);
-        var ai = 1;
-        if (arg1 != 0) { store64(&argv + ai * 8, arg1); ai = ai + 1; }
-        if (arg2 != 0) { store64(&argv + ai * 8, arg2); ai = ai + 1; }
-        if (arg3 != 0) { store64(&argv + ai * 8, arg3); ai = ai + 1; }
-        store64(&argv + ai * 8, 0);
-        sys_execve(tool, &argv, _envp);
+        var n = vec_len(args);
+        var av = alloc((n + 2) * 8);
+        store64(av, tool);
+        var i = 0;
+        while (i < n) {
+            store64(av + (i + 1) * 8, vec_get(args, i));
+            i = i + 1;
+        }
+        store64(av + (n + 1) * 8, 0);
+        sys_execve(tool, av, _envp);
         sys_exit(127);
     }
     var status_buf[1];
     sys_waitpid(pid, &status_buf, 0);
     var status = load32(&status_buf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
     return 1;
+    #endif
+}
+
+# Run an external tool by path, passing through up to 3 args.
+# v6.6.5 — a thin wrapper over run_tool_vec so every tool spawn in the CLI takes the
+# SAME path, including the Windows CreateProcessW one. It used to fork/execve
+# directly, and fork/waitpid are -1 stubs on PE, so `cyrius fmt/vet/deny/doc` never
+# ran their tool on Windows.
+fn run_tool(tool, arg1, arg2, arg3): i64 {
+    var av = vec_new();
+    if (arg1 != 0) { vec_push(av, arg1); }
+    if (arg2 != 0) { vec_push(av, arg2); }
+    if (arg3 != 0) { vec_push(av, arg3); }
+    return run_tool_vec(tool, av);
 }
 
 # Like run_tool but forwards the CLI's own argv tail (argv[from_idx..])
@@ -1100,34 +1377,15 @@ fn run_tool(tool, arg1, arg2, arg3): i64 {
 # scaffolder's getenv (HOME / CYRIUS_HOME / XDG_CONFIG_HOME / CYRIUS_VER /
 # PWD) resolves. v6.2.40 (init/port native-port slot).
 fn run_tool_argvtail(tool, from_idx, sentinel): i64 {
-    if (file_exists(tool) == 0) {
-        _err_ctx("tool not found", tool);
-        return 1;
+    # v6.6.5 — via run_tool_vec, so the Windows spawn path applies here too.
+    var av = vec_new();
+    if (sentinel != 0) { vec_push(av, sentinel); }
+    var i = from_idx;
+    while (i < argc()) {
+        vec_push(av, argv(i));
+        i = i + 1;
     }
-    var pid = sys_fork();
-    if (pid == 0) {
-        var n = argc();
-        var extra = 1;                       # tool slot
-        if (sentinel != 0) { extra = 2; }    # tool + sentinel
-        var av = alloc((n - from_idx + extra + 1) * 8);
-        var ai = 0;
-        store64(av + ai * 8, tool); ai = ai + 1;
-        if (sentinel != 0) { store64(av + ai * 8, sentinel); ai = ai + 1; }
-        var i = from_idx;
-        while (i < n) {
-            store64(av + ai * 8, argv(i));
-            ai = ai + 1;
-            i = i + 1;
-        }
-        store64(av + ai * 8, 0);
-        sys_execve(tool, av, _envp);
-        sys_exit(127);
-    }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
-    return 1;
+    return run_tool_vec(tool, av);
 }
 
 # Run a shell script

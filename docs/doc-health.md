@@ -107,6 +107,20 @@ type: state
 >   worth writing down: a checker that round-trips literals through `unicode_escape` reports 23
 >   false positives, all off by 3, one per em dash.
 >
+> **Touched at 6.6.5 (bite 8, not a sweep):** the CLI-argument rewrite corrected FOUR doc
+> claims that had never been true. `docs/guides/cyrius-guide.md` (6.6.4 line 1136) said a bare `cyrius lint`
+> lints all of the stdlib — measured on 6.6.4 it printed usage and exited 1 — and line 2724
+> documented `cyrius build --pie src dst` while the build loop had no `--pie` arm, so the
+> documented command errored (the flag is real as of 6.6.5; the doc was fixed by making the
+> code match it, not by deleting the line). In `vidya/content/cyrius/language/tooling.cyml`,
+> `cyrius doc --serve [port]` was advertised with a default port and an implementation file —
+> **that mode has never existed** in `programs/cyrdoc.cyr` — and `cyrius lint --check` was
+> listed among lint's flags, which made cyrlint open a file called "--check". Both corrected
+> in place with the measurement, not removed. `docs/stdlib-reference.md`'s `flags.cyr` section
+> gained the six new entry points and a note on the three silent drops it used to carry;
+> `docs/api-surface.snapshot` regenerated (+6, now 5,194). ⚠ The pattern this ledger keeps
+> catching held again: **every one of the four was a claim about behaviour nobody had run.**
+>
 > **Touched at 6.6.5 (bite 5, not a sweep):** `docs/guides/cyrius-guide.md` gained a
 > "raw syscall numbers are the most portable-LOOKING thing that is not portable" rule in the
 > cross-platform section — three ordered rules plus the six x86 numbers cyrius deliberately

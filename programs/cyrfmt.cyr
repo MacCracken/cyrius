@@ -15,6 +15,7 @@ include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/alloc.cyr"
 include "lib/io.cyr"
+include "lib/vec.cyr"    # v6.6.5: N-file argument list
 include "lib/args.cyr"
 
 var _out_buf: i64 = 0;
@@ -253,43 +254,10 @@ fn _cf_print_num(v): i64 {
     return 0;
 }
 
-fn main(): i64 {
-    alloc_init();
-    args_init();
-
-    if (argc() < 2) {
-        println("Usage: cyrfmt <file.cyr>");
-        println("       cyrfmt --check <file.cyr>");
-        println("       cyrfmt --write <file.cyr>    (or -w)");
-        return 1;
-    }
-
-    var file_arg = 1;
-    if (streq(argv(1), "--check") == 1) {
-        _check_mode = 1;
-        file_arg = 2;
-        if (argc() < 3) {
-            println("Usage: cyrfmt --check <file.cyr>");
-            return 1;
-        }
-    } elif (streq(argv(1), "--write") == 1) {
-        _write_mode = 1;
-        file_arg = 2;
-        if (argc() < 3) {
-            println("Usage: cyrfmt --write <file.cyr>");
-            return 1;
-        }
-    } elif (streq(argv(1), "-w") == 1) {
-        _write_mode = 1;
-        file_arg = 2;
-        if (argc() < 3) {
-            println("Usage: cyrfmt -w <file.cyr>");
-            return 1;
-        }
-    }
-
+# v6.6.5 — format ONE file. Was the tail of main(); lifted so N files run through
+# the identical path instead of only argv(file_arg).
+fn _fmt_one(path): i64 {
     var buf = alloc(_MAX_FILE);
-    var path = argv(file_arg);
     var n = file_read_all(path, buf, _MAX_FILE);
     if (n <= 0) {
         println("cyrfmt: cannot read file");
@@ -372,6 +340,58 @@ fn main(): i64 {
 
     format_file(buf, n);
     return 0;
+}
+
+fn _fmt_usage(): i64 {
+    println("Usage: cyrfmt [--check | --write | -w] <file.cyr>...");
+    println("  (no mode)   format to stdout");
+    println("  --check     exit 1 if not canonically formatted, and say where");
+    println("  --write     rewrite in place (or -w)");
+    return 1;
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+
+    if (argc() < 2) { return _fmt_usage(); }
+
+    # v6.6.5 — the mode used to be read at argv(1) ONLY, so `cyrfmt f.cyr --check`
+    # printed the formatted text to stdout and exited 0: a check that answered a
+    # different question and reported success. An unknown '-' token became the path.
+    # Flags anywhere; unknown is an error; N files; rc is the MAX. CHANGELOG [6.6.5].
+    var files = vec_new();
+    var ai = 1;
+    while (ai < argc()) {
+        var a = argv(ai);
+        if (streq(a, "--check") == 1) { _check_mode = 1; }
+        elif (streq(a, "--write") == 1 || streq(a, "-w") == 1) { _write_mode = 1; }
+        elif (streq(a, "--help") == 1 || streq(a, "-h") == 1) { _fmt_usage(); return 0; }
+        elif (load8(a) == 45) {
+            # stderr, token quoted — the wording every swept tool uses (round-3 review;
+            # this one printed to STDOUT, unquoted, so a CI log grep for the rule missed it).
+            sys_write(STDERR_FD, "cyrfmt: unknown option '", 24);
+            sys_write(STDERR_FD, a, strlen(a));
+            sys_write(STDERR_FD, "'\n", 2);
+            return _fmt_usage();
+        }
+        else { vec_push(files, a); }
+        ai = ai + 1;
+    }
+    if (_check_mode == 1 && _write_mode == 1) {
+        println("cyrfmt: --check and --write are mutually exclusive");
+        return 1;
+    }
+    if (vec_len(files) == 0) { return _fmt_usage(); }
+
+    var rc = 0;
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var one = _fmt_one(vec_get(files, fi));
+        if (one > rc) { rc = one; }
+        fi = fi + 1;
+    }
+    return rc;
 }
 var r = main();
 syscall(60, r);

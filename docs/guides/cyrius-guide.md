@@ -1011,6 +1011,10 @@ cyrius build src/main.cyr build/myapp   # resolves deps + compiles
 cyrius deps                              # manually resolve deps
 cyrius build -v src/main.cyr build/myapp # verbose (shows compiler, binary size)
 cyrius test tests/test.tcyr             # resolve deps + compile + run
+cyrius test a.tcyr b.tcyr -D FEATURE     # 1..N files; -D/-DNAME reaches test/run/bench/fuzz/check too (v6.6.5)
+cyrius run src/main.cyr host 443         # compile + run; everything AFTER the source is the program's argv (v6.6.5)
+cyrius run prog.cyx                      # run cx bytecode via cxvm — arguments are REFUSED (cx has no guest argv yet)
+cyrius lint|fmt|doc a.cyr b.cyr          # 1..N files, every one processed (v6.6.5)
 cyrius tests [dir]                       # recursively run every .tcyr under dir (default tests/)
 cyrius bench [path|dir]                  # discover + run *.bcyr (recursive; v6.5.7)
 cyrius fuzz [path|dir]                   # discover + run *.fcyr harnesses (recursive; v6.5.7)
@@ -1019,10 +1023,27 @@ cyrius smoke                             # tests/smcyr/*.smcyr fail-fast (v5.7.3
 cyrius distlib [profile]                 # bundle src/ modules into dist/{name}.cyr
 cyrius distlib --all                     # regenerate the base bundle AND every [lib.X] profile (v6.5.8)
 cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
-cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min gates CI)
+cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI)
 cyrius capacity [--check] <src>          # report compiler capacity / CI gate
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
 ```
+
+**The argument rule (v6.6.5), for every verb.** Flags may appear in any position
+(`cyrius lint f.cyr --strict` == `cyrius lint --strict f.cyr`); a `-`-prefixed token the verb
+does not declare is an **error that names it**; operand counts are enforced — an extra
+operand is processed or rejected, never silently dropped; and a global `-q`/`-v` never shifts
+the operands. `cyrius <verb> --help` prints exactly the flags the parser accepts. `run` is the
+one stop-at-first-positional verb: a flag written after the source belongs to the program
+(`cyrius run -- prog.cyr a` is the same as `cyrius run prog.cyr a`). A value flag given twice
+is an error that names it (`--target=js --target=cx` used to mean cx, silently) — except the
+two that accumulate: `-D NAME` and `--features`, where `--features a --features b` ==
+`--features a,b`. The delegated tools (cyrlint, cyrfmt, cyrdoc, cyaudit, cyrsign, cyrsign-efi,
+cyrld, ark, cyriusly, cyrius-init) follow the same rule, and `cyrlint --exit-with-count` no
+longer switches `--strict`/`--strict-deferrals` off: the exit code is the larger of the count
+and the strict verdict (2).
+Before 6.6.5 each verb hand-rolled its own loop, and several spellings were silent *and*
+mutating — `cyrius clean --dryrun` deleted `build/`, `cyrius fmt f --chekc` rewrote the file,
+`cyrius build s --strict` wrote the binary to a file named `--strict`.
 
 ⚠ `distlib --check` compares **bytes**, not version strings — a sub-profile can carry a stale
 encoder under a fresh version string, which is exactly how sankoch 2.7.6's gzip fix nearly
@@ -1132,9 +1153,23 @@ untrue.
 ## Linter
 
 ```sh
-cyrlint myfile.cyr                       # lint a file
-cyrius lint                              # lint all stdlib
+cyrlint myfile.cyr                                  # lint a file
+cyrius lint src/*.cyr                               # lint N files in ONE cyrlint run
+cyrius lint --strict src/main.cyr                   # exit 2 when there are warnings
+cyrius lint src/main.cyr --strict-deferrals         # exit 2 on an UNTRACKED deferral marker
+cyrius lint --exit-with-count a.cyr b.cyr           # exit = TOTAL warnings over all files, clamped to 255
 ```
+
+`--exit-with-count` means the same thing through `cyrius lint` and through `cyrlint`: the
+warning count summed over every file, clamped to 255 (an exit code is 8 bits — 256 used to
+exit **0**). An unreadable file always forces a non-zero exit, even when the count is 0.
+
+⚠ This block read `cyrius lint  # lint all stdlib` until v6.6.5, and a bare `cyrius lint`
+has never done that — it prints usage and exits 1. Corrected together with the argument
+handling itself: flags may now appear **in any position**, an undeclared `-`-prefixed token
+is an error that names it, and every file you pass is linted (it used to lint the FIRST one
+and report that verdict for the lot, which is how ranga's CI linted 1 of 41 files). See
+`docs/development/issues/archived/2026-09-16-mabda-lint-wrapper-drops-strict-deferrals.md`.
 
 Rules: trailing whitespace, tabs, line length >120 chars, camelCase
 fn names, unclosed braces, **global-init forward-ref** (v5.7.32 —
@@ -2720,8 +2755,13 @@ ASLR-loaded PIE binaries on both architectures.
 
 Enable PIE via the `--pie` flag or `CYRIUS_PIE=1` environment variable:
 
+⚠ Until v6.6.5 the wrapper had no `--pie` arm, so the documented command below errored with
+`unknown flag '--pie'` and only the environment variable worked. The flag is real now (it
+sets `CYRIUS_PIE=1` on the compiler's environment); the doc had been wrong, not the reader.
+
+
 ```sh
-cyrius build --pie src/main.cyr build/myapp       # x86_64 or aarch64
+cyrius build --pie src/main.cyr build/myapp       # x86_64 or aarch64 (real since v6.6.5)
 # or
 CYRIUS_PIE=1 cyrius build src/main.cyr build/myapp
 ```

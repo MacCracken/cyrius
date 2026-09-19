@@ -1,0 +1,645 @@
+# ================================================================
+# cbt/cli_args.cyr — THE ONE ARGUMENT RULE (v6.6.5)
+# ================================================================
+#
+# WHY THIS FILE EXISTS. Every verb branch in `main()` used to hand-roll its own
+# argument loop, and no two of them agreed. Measured on 6.6.4, across ~60 spellings:
+#
+#   * a '-'-prefixed token the verb did not know became the FILE NAME
+#     (`cyrius lint --strict-deferrals f.cyr` opened a file called
+#      "--strict-deferrals"; `cyrius build s --strict` wrote the binary to a file
+#      called "--strict");
+#   * a flag written AFTER the operand was dropped in silence
+#     (`cyrius lint f.cyr --strict-deferrals` exits 0 with the gate off — the filed
+#      defect; `cyrius fmt f --chekc` REWRITES the file and exits 0);
+#   * extra operands were dropped (`cyrius lint a b` lints only a, and ranga's CI
+#     linted 1 of 41 files that way);
+#   * the branches indexed from a literal argv(2) instead of cmd_idx+1, so any
+#     global `-q`/`-v` shifted every operand (`cyrius -q clean --dry-run` DELETED);
+#   * flags were read AFTER the work they were meant to control
+#     (`--dry-run` is set inside the build loop, which runs after _auto_deps, so a
+#      dry-run build still resolved and wrote lib/; the deps branch never set it at
+#      all, which left cbt/deps.cyr's dry-run branch unreachable).
+#
+# THE RULE, enforced here for every verb and every delegated tool:
+#   1. flags may appear in ANY position;
+#   2. a '-'-prefixed token the verb does not declare is an ERROR that NAMES it;
+#   3. operand counts are enforced — an extra operand is processed or rejected,
+#      never dropped;
+#   4. arguments are indexed from cmd_idx+1, never from a literal 2;
+#   5. flag effects apply BEFORE _auto_deps runs;
+#   6. help is printed from the SAME registration the parser reads, so the two
+#      cannot drift (a flag with no help line, or a help line for a flag the parser
+#      rejects, is a gate failure — cli_args_never_dropped.sh axis 11).
+#
+# CHANGELOG [6.6.5].
+#
+# ── SPEC FORMAT ─────────────────────────────────
+# A verb's flags are one '|'-separated string. The last character of a token
+# carries its kind:
+#     --name      bool          (an attached `=value` is an ERROR)
+#     --name=     needs a value (`--name v` or `--name=v`; `-D v` or `-DNAME`)
+#     --name?     value OPTIONAL (`--internal` and `--internal=platform-check`)
+# Three tables are consulted, in this order, for BOTH parsing and help:
+#     _cli_global_spec()      every verb
+#     _cli_extra_spec(verb)   the dep/target block, for verbs that compile
+#     _cli_spec(verb)         the verb's own flags
+# Adding a flag to one of them registers it with the parser AND with `--help`.
+
+# Parsed state. Rebuilt by _cli_parse(); read through the _cli_* accessors below.
+# Vecs, not fixed arrays: `cyrius lint <130 files>` must not hit a silent cap (that
+# is exactly the lib/flags.cyr defect fixed in this same release).
+var _cli_names = 0;      # vec of cstr — canonical flag name as declared ("--strict")
+var _cli_vals = 0;       # vec, parallel to _cli_names — value cstr or 0
+var _cli_pos = 0;        # vec of cstr — operands, in argv order
+var _cli_tail = 0;       # vec of cstr — verbatim tokens after operand 0 (run only)
+var _cli_verb = 0;       # the verb this state belongs to
+var _pie_target = 0;     # --pie → CYRIUS_PIE=1 in the compiler's environment
+
+fn _cli_global_spec(): i64 {
+    return "-h|--help|-q|--quiet|-v|--verbose";
+}
+
+# The dep/target block. Every flag here changes WHICH deps resolve or WHAT target
+# they resolve for, so it is applied before _auto_deps (rule 5).
+fn _cli_target_spec(): i64 {
+    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features|--check-lib-sync|-D=";
+}
+
+# `deps` takes the resolution-affecting subset: -D and --check-lib-sync mean nothing
+# to it, and accepting a flag a verb cannot act on is the silent drop this file exists
+# to remove.
+fn _cli_deps_spec(): i64 {
+    return "--aarch64|--win|--agnos|--target=|--features=|--no-default-features";
+}
+
+fn _cli_extra_spec(verb): i64 {
+    if (streq(verb, "deps") == 1) { return _cli_deps_spec(); }
+    if (_cli_verb_compiles(verb) == 1) { return _cli_target_spec(); }
+    return 0;
+}
+
+# Verbs that reach compile() and therefore take the target/feature block. Kept as a
+# list rather than derived so `cyrius <verb> --help` can print it without running
+# anything; tests/gates/toolchain/auto_deps_verb_gate.sh independently derives the
+# compile()-reaching set from the call graph, so the two disagree loudly.
+fn _cli_verb_compiles(verb): i64 {
+    if (streq(verb, "build") == 1) { return 1; }
+    if (streq(verb, "run") == 1) { return 1; }
+    if (streq(verb, "test") == 1) { return 1; }
+    if (streq(verb, "tests") == 1) { return 1; }
+    if (streq(verb, "bench") == 1) { return 1; }
+    if (streq(verb, "fuzz") == 1) { return 1; }
+    if (streq(verb, "check") == 1) { return 1; }
+    if (streq(verb, "capacity") == 1) { return 1; }
+    if (streq(verb, "soak") == 1) { return 1; }
+    if (streq(verb, "smoke") == 1) { return 1; }
+    if (streq(verb, "doctest") == 1) { return 1; }
+    if (streq(verb, "distlib") == 1) { return 1; }
+    if (streq(verb, "publish") == 1) { return 1; }
+    if (streq(verb, "package") == 1) { return 1; }
+    if (streq(verb, "audit") == 1) { return 1; }
+    return 0;
+}
+
+fn _cli_spec_a(verb): i64 {
+    if (streq(verb, "build") == 1) { return "--no-deps|--strict|--strict-pin|--pie|--dry-run"; }
+    if (streq(verb, "run") == 1) { return "--dry-run"; }
+    if (streq(verb, "test") == 1) { return "--dry-run"; }
+    if (streq(verb, "tests") == 1) { return "--dry-run"; }
+    if (streq(verb, "bench") == 1) { return ""; }
+    if (streq(verb, "fuzz") == 1) { return "--poison"; }
+    if (streq(verb, "check") == 1) { return "--with-deps"; }
+    if (streq(verb, "capacity") == 1) { return "--check|--json"; }
+    if (streq(verb, "soak") == 1) { return ""; }
+    if (streq(verb, "smoke") == 1) { return ""; }
+    if (streq(verb, "doctest") == 1) { return ""; }
+    if (streq(verb, "distlib") == 1) { return "--modular|--all|--check"; }
+    if (streq(verb, "audit") == 1) { return "--internal?"; }
+    return 0 - 1;
+}
+
+fn _cli_spec_b(verb): i64 {
+    if (streq(verb, "lint") == 1) { return "--strict|--strict-deferrals|--exit-with-count"; }
+    if (streq(verb, "fmt") == 1) { return "--check|--dry|--write"; }
+    if (streq(verb, "doc") == 1) { return "--check"; }
+    if (streq(verb, "coverage") == 1) { return "--full|--min="; }
+    if (streq(verb, "api-surface") == 1) { return "--update|--scope=|--snapshot="; }
+    if (streq(verb, "deps") == 1) { return "--verify|--lock|--no-lock|--relock|--dry-run"; }
+    if (streq(verb, "clean") == 1) { return "--dry-run"; }
+    if (streq(verb, "lib") == 1) { return "--dry-run|--full"; }
+    if (streq(verb, "version") == 1) { return "--project"; }
+    if (streq(verb, "--version") == 1) { return "--project"; }
+    return 0 - 1;
+}
+
+# The verb's own flags. Split across two helpers so neither function carries more
+# global/call references than cybs can assemble — cbt is cycc-built, but the split
+# also keeps each table readable. "" = no verb-specific flags; the global (and, for a
+# compiling verb, the target) block still applies.
+fn _cli_spec(verb): i64 {
+    var a = _cli_spec_a(verb);
+    if (a != 0 - 1) { return a; }
+    var b = _cli_spec_b(verb);
+    if (b != 0 - 1) { return b; }
+    return "";
+}
+
+# A one-line description of the verb's OPERANDS, printed after the flag list.
+fn _cli_operands(verb): i64 {
+    if (streq(verb, "build") == 1) { return "[<source> [<output>]]"; }
+    if (streq(verb, "run") == 1) { return "<source.cyr> [args...] | <prog.cyx>"; }
+    if (streq(verb, "test") == 1) { return "[<test.tcyr>...]"; }
+    if (streq(verb, "tests") == 1) { return "[<dir>]"; }
+    if (streq(verb, "bench") == 1) { return "[<bench.bcyr|dir>]"; }
+    if (streq(verb, "fuzz") == 1) { return "[<harness.fcyr|dir>]"; }
+    if (streq(verb, "check") == 1) { return "<source.cyr>..."; }
+    if (streq(verb, "capacity") == 1) { return "[<source.cyr>]"; }
+    if (streq(verb, "coverage") == 1) { return "[<dir>]"; }
+    if (streq(verb, "soak") == 1) { return "[<iterations>]"; }
+    if (streq(verb, "lint") == 1) { return "<file.cyr>..."; }
+    if (streq(verb, "fmt") == 1) { return "<file.cyr>..."; }
+    if (streq(verb, "doc") == 1) { return "<file.cyr>..."; }
+    if (streq(verb, "vet") == 1) { return "<source.cyr>"; }
+    if (streq(verb, "deny") == 1) { return "<source.cyr>"; }
+    if (streq(verb, "header") == 1) { return "<source.cyr>"; }
+    if (streq(verb, "doctest") == 1) { return "<file.cyr>"; }
+    if (streq(verb, "distlib") == 1) { return "[<profile>]"; }
+    if (streq(verb, "lib") == 1) { return "sync"; }
+    if (streq(verb, "hooks") == 1) { return "[install]"; }
+    return "";
+}
+
+# `run` forwards everything after operand 0 to the program it runs (go-run style),
+# so its own flags are only recognised BEFORE the source path. sandhi documents
+# `cyrius run programs/dns-probe.cyr <host>`; before this those args were dropped
+# and the probe silently used its default host.
+fn _cli_stop_at_positional(verb): i64 {
+    if (streq(verb, "run") == 1) { return 1; }
+    return 0;
+}
+
+# Verbs whose whole tail is forwarded verbatim to another binary. They are parsed by
+# THAT binary (programs/cyrius-init.cyr, cyrsign-efi), so this parser must not touch
+# them — and `help` takes anything.
+fn _cli_raw_tail(verb): i64 {
+    if (streq(verb, "init") == 1) { return 1; }
+    if (streq(verb, "port") == 1) { return 1; }
+    if (streq(verb, "sign-efi") == 1) { return 1; }
+    if (streq(verb, "help") == 1) { return 1; }
+    if (streq(verb, "--help") == 1) { return 1; }
+    if (streq(verb, "-h") == 1) { return 1; }
+    return 0;
+}
+
+# Every verb main() dispatches. Checked BEFORE parsing so an unknown command still
+# reports "Unknown command" rather than "unknown option". Split in two so neither
+# function carries an unreasonable number of call references.
+# ⚠ A verb dispatched by main() and missing from here falls through to "Unknown
+# command" — tests/gates/toolchain/cli_args_never_dropped.sh axis 0 derives the verb
+# list from main()'s own `streq(cmd, "…")` sites and fails on any that is not here.
+fn _cli_known_verb_a(verb): i64 {
+    if (streq(verb, "build") == 1) { return 1; }
+    if (streq(verb, "run") == 1) { return 1; }
+    if (streq(verb, "test") == 1) { return 1; }
+    if (streq(verb, "tests") == 1) { return 1; }
+    if (streq(verb, "bench") == 1) { return 1; }
+    if (streq(verb, "fuzz") == 1) { return 1; }
+    if (streq(verb, "check") == 1) { return 1; }
+    if (streq(verb, "capacity") == 1) { return 1; }
+    if (streq(verb, "soak") == 1) { return 1; }
+    if (streq(verb, "smoke") == 1) { return 1; }
+    if (streq(verb, "doctest") == 1) { return 1; }
+    if (streq(verb, "distlib") == 1) { return 1; }
+    if (streq(verb, "publish") == 1) { return 1; }
+    if (streq(verb, "package") == 1) { return 1; }
+    if (streq(verb, "audit") == 1) { return 1; }
+    if (streq(verb, "self") == 1) { return 1; }
+    if (streq(verb, "clean") == 1) { return 1; }
+    if (streq(verb, "lib") == 1) { return 1; }
+    if (streq(verb, "pulsar") == 1) { return 1; }
+    if (streq(verb, "lsp") == 1) { return 1; }
+    return 0;
+}
+
+fn _cli_known_verb(verb): i64 {
+    if (_cli_known_verb_a(verb) == 1) { return 1; }
+    if (streq(verb, "deps") == 1) { return 1; }
+    if (streq(verb, "update") == 1) { return 1; }
+    if (streq(verb, "install") == 1) { return 1; }
+    if (streq(verb, "header") == 1) { return 1; }
+    if (streq(verb, "fmt") == 1) { return 1; }
+    if (streq(verb, "lint") == 1) { return 1; }
+    if (streq(verb, "doc") == 1) { return 1; }
+    if (streq(verb, "vet") == 1) { return 1; }
+    if (streq(verb, "deny") == 1) { return 1; }
+    if (streq(verb, "api-surface") == 1) { return 1; }
+    if (streq(verb, "coverage") == 1) { return 1; }
+    if (streq(verb, "repl") == 1) { return 1; }
+    if (streq(verb, "version") == 1) { return 1; }
+    if (streq(verb, "--version") == 1) { return 1; }
+    if (streq(verb, "which") == 1) { return 1; }
+    if (streq(verb, "hooks") == 1) { return 1; }
+    return 0;
+}
+
+fn _cli_wants_help(): i64 {
+    if (_cli_has("-h") == 1) { return 1; }
+    if (_cli_has("--help") == 1) { return 1; }
+    return 0;
+}
+
+# Prose that a generated usage line cannot carry. The FLAG LIST is never written
+# here — it comes from the spec, so help and parser cannot drift (rule 6).
+fn _cli_help_extra(verb): i64 {
+    if (streq(verb, "deps") == 1) {
+        println("");
+        println("Resolve [deps.NAME] entries from cyrius.cyml into lib/. Each dep is");
+        println("git-cloned into ~/.cyrius/deps/<name>/<tag>/ and symlinked into lib/.");
+        println("  --verify    verify cyrius.lock matches the working lib/.");
+        println("  --lock      re-hash lib/ into cyrius.lock, keeping the commit pins.");
+        println("  --no-lock   suppress the cyrius.lock write for this run.");
+        println("  --relock    accept a stdlib leaf whose pinned snapshot changed under an");
+        println("              UNCHANGED [package].cyrius pin (otherwise refused, v6.6.4).");
+        println("  --dry-run   list the [deps.NAME] entries that WOULD resolve; write nothing.");
+        println("Related: cyrius update    re-resolve to latest tags.");
+    }
+    if (streq(verb, "check") == 1) {
+        println("");
+        println("  Default: parse each <source> standalone (no manifest dep auto-prepend).");
+        println("  --with-deps   prepend manifest [deps] entries (legacy behavior).");
+    }
+    if (streq(verb, "fmt") == 1) {
+        println("");
+        println("  (no mode)   rewrite each file in place");
+        println("  --write     rewrite in place (explicit form of the default)");
+        println("  --check     exit 1 if a file is not canonically formatted, and say where");
+        println("  --dry       report what would change; leave the files alone");
+        println("  --verbose   rewrite in place AND echo the result to stdout");
+        println("  The four modes are mutually exclusive.");
+    }
+    if (streq(verb, "build") == 1) {
+        println("");
+        println("  --check-lib-sync   fail the build if ./lib/ is a stale version vs the pinned snapshot (CI)");
+        println("  --pie              emit a position-independent executable (CYRIUS_PIE=1)");
+        println("  <source>/<output> may be omitted when ./cyrius.cyml declares [build] entry / output.");
+    }
+    if (streq(verb, "run") == 1) {
+        println("");
+        println("  Everything after <source> is forwarded to the program, go-run style:");
+        println("      cyrius run probe.cyr example.com 443");
+    }
+    return 0;
+}
+
+# ── spec lookup ─────────────────────────────────
+# Kind of the token `name` (nlen bytes, NOT NUL-terminated) in `spec`:
+#   0 = bool, 1 = value required, 2 = value optional, -1 = not declared.
+fn _cli_kind_in(spec, name, nlen): i64 {
+    if (spec == 0) { return 0 - 1; }
+    var i = 0;
+    while (load8(spec + i) != 0) {
+        var s = i;
+        while (load8(spec + i) != 0 && load8(spec + i) != 124) { i = i + 1; }
+        var e = i;
+        var k = 0;
+        if (e > s) {
+            var last = load8(spec + e - 1);
+            if (last == 61) { k = 1; e = e - 1; }
+            if (last == 63) { k = 2; e = e - 1; }
+        }
+        if (e - s == nlen) {
+            if (memeq(spec + s, name, nlen) == 1) { return k; }
+        }
+        if (load8(spec + i) == 124) { i = i + 1; }
+    }
+    return 0 - 1;
+}
+
+fn _cli_kind(verb, name, nlen): i64 {
+    var k = _cli_kind_in(_cli_global_spec(), name, nlen);
+    if (k >= 0) { return k; }
+    k = _cli_kind_in(_cli_extra_spec(verb), name, nlen);
+    if (k >= 0) { return k; }
+    return _cli_kind_in(_cli_spec(verb), name, nlen);
+}
+
+fn _cli_dup(p, n): i64 {
+    var b = alloc(n + 1);
+    var i = 0;
+    while (i < n) { store8(b + i, load8(p + i)); i = i + 1; }
+    store8(b + n, 0);
+    return b;
+}
+
+# ── help, generated from the spec ───────────────────────────
+fn _cli_print_spec(spec): i64 {
+    if (spec == 0) { return 0; }
+    var i = 0;
+    while (load8(spec + i) != 0) {
+        var s = i;
+        while (load8(spec + i) != 0 && load8(spec + i) != 124) { i = i + 1; }
+        var e = i;
+        var k = 0;
+        if (e > s) {
+            var last = load8(spec + e - 1);
+            if (last == 61) { k = 1; e = e - 1; }
+            if (last == 63) { k = 2; e = e - 1; }
+        }
+        if (e > s) {
+            sys_write(STDOUT_FD, " [", 2);
+            sys_write(STDOUT_FD, spec + s, e - s);
+            if (k == 1) { sys_write(STDOUT_FD, " <value>", 8); }
+            if (k == 2) { sys_write(STDOUT_FD, "[=<value>]", 10); }
+            sys_write(STDOUT_FD, "]", 1);
+        }
+        if (load8(spec + i) == 124) { i = i + 1; }
+    }
+    return 0;
+}
+
+# `cyrius <verb> --help` and every parse error print THIS. It walks the same three
+# spec tables `_cli_kind` reads, so a flag the parser accepts always appears here and
+# a flag printed here is always accepted.
+fn _cli_usage(verb): i64 {
+    sys_write(STDOUT_FD, "Usage: cyrius ", 14);
+    sys_write(STDOUT_FD, verb, strlen(verb));
+    _cli_print_spec(_cli_spec(verb));
+    _cli_print_spec(_cli_extra_spec(verb));
+    _cli_print_spec(_cli_global_spec());
+    var ops = _cli_operands(verb);
+    if (strlen(ops) > 0) {
+        sys_write(STDOUT_FD, " ", 1);
+        sys_write(STDOUT_FD, ops, strlen(ops));
+    }
+    sys_write(STDOUT_FD, "\n", 1);
+    return 0;
+}
+
+fn _cli_fail(verb, msg, tok): i64 {
+    sys_write(STDERR_FD, "error: cyrius ", 14);
+    sys_write(STDERR_FD, verb, strlen(verb));
+    sys_write(STDERR_FD, ": ", 2);
+    sys_write(STDERR_FD, msg, strlen(msg));
+    sys_write(STDERR_FD, " '", 2);
+    sys_write(STDERR_FD, tok, strlen(tok));
+    sys_write(STDERR_FD, "'\n", 2);
+    _cli_usage(verb);
+    return 1;
+}
+
+# Value flags that ACCUMULATE: every occurrence is kept and acted on.
+fn _cli_multi(name): i64 {
+    if (streq(name, "-D") == 1) { return 1; }
+    if (streq(name, "--features") == 1) { return 1; }
+    return 0;
+}
+
+# A single-valued flag given twice is REFUSED, by name. v6.6.5 (round-3 review): the
+# accessor kept the LAST value only, so `--target=js --target=cx` silently meant cx,
+# and `--features fa --features fb` resolved fb alone while `--features fa,fb`
+# resolved both — the FLAG_LIST defect fixed in lib/flags.cyr in this same release,
+# reintroduced here. Bools may repeat (a second `--strict` drops nothing).
+fn _cli_repeat_refused(t, nlen): i64 {
+    var nm = _cli_dup(t, nlen);
+    if (_cli_multi(nm) == 1) { return 0; }
+    return _cli_has(nm);
+}
+
+fn _cli_record(name, nlen, val): i64 {
+    vec_push(_cli_names, _cli_dup(name, nlen));
+    vec_push(_cli_vals, val);
+    return 0;
+}
+
+# ── the parser ─────────────────────────────────
+# Reads argv[start..]. Returns 0 on success, 1 after printing a named error.
+fn _cli_parse(verb, start): i64 {
+    _cli_verb = verb;
+    _cli_names = vec_new();
+    _cli_vals = vec_new();
+    _cli_pos = vec_new();
+    _cli_tail = vec_new();
+    var stop = _cli_stop_at_positional(verb);
+    var only_pos = 0;
+    var i = start;
+    while (i < argc()) {
+        var t = argv(i);
+        # The stop-at-positional test runs FIRST: `cyrius run -- prog.cyr a` must hand
+        # `a` to the program exactly as `cyrius run prog.cyr a` does. With the `--`
+        # branch first it landed in _cli_pos and was refused as an extra operand
+        # (round-3 review).
+        if (stop == 1 && vec_len(_cli_pos) > 0) { vec_push(_cli_tail, t); i = i + 1; continue; }
+        if (only_pos == 1) { vec_push(_cli_pos, t); i = i + 1; continue; }
+        # "--" ends flag parsing; "-" alone is the stdin convention, a positional.
+        if (load8(t) != 45 || load8(t + 1) == 0) {
+            vec_push(_cli_pos, t);
+            i = i + 1;
+            continue;
+        }
+        if (load8(t + 1) == 45 && load8(t + 2) == 0) { only_pos = 1; i = i + 1; continue; }
+        # Split an attached value: "--name=v". A short flag's attached form ("-DNAME")
+        # is handled below, after the lookup, because only a value-taking short flag
+        # may carry one.
+        var tl = strlen(t);
+        var nlen = 0;
+        var val = 0;
+        while (nlen < tl && load8(t + nlen) != 61) { nlen = nlen + 1; }
+        if (nlen < tl) { val = t + nlen + 1; }
+        var k = _cli_kind(verb, t, nlen);
+        if (k < 0 && val == 0 && tl > 2 && load8(t + 1) != 45) {
+            # "-DNAME" — accept only when "-D" is declared as value-taking.
+            if (_cli_kind(verb, t, 2) == 1) {
+                nlen = 2;
+                val = t + 2;
+                k = 1;
+            }
+        }
+        if (k < 0) { return _cli_fail(verb, "unknown option", t); }
+        if (k == 0 && val != 0) { return _cli_fail(verb, "option takes no value", t); }
+        if (k == 1 && val == 0) {
+            if (i + 1 >= argc()) { return _cli_fail(verb, "option needs a value", t); }
+            i = i + 1;
+            val = argv(i);
+        }
+        if (k != 0) {
+            if (_cli_repeat_refused(t, nlen) == 1) { return _cli_fail(verb, "option given more than once", t); }
+        }
+        _cli_record(t, nlen, val);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ── accessors ─────────────────────────────────
+fn _cli_has(name): i64 {
+    var i = 0;
+    while (i < vec_len(_cli_names)) {
+        if (streq(vec_get(_cli_names, i), name) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The value given for `name`. A single-valued flag cannot occur twice (the parser
+# refuses the repeat by name), so "the last one" and "the only one" are the same; the
+# accumulating flags (-D, --features) are read with _cli_values.
+fn _cli_val(name): i64 {
+    var v = 0;
+    var i = 0;
+    while (i < vec_len(_cli_names)) {
+        if (streq(vec_get(_cli_names, i), name) == 1) { v = vec_get(_cli_vals, i); }
+        i = i + 1;
+    }
+    return v;
+}
+
+fn _cli_count(name): i64 {
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(_cli_names)) {
+        if (streq(vec_get(_cli_names, i), name) == 1) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# Every value given for `name`, in argv order, as a fresh vec.
+fn _cli_values(name): i64 {
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(_cli_names)) {
+        if (streq(vec_get(_cli_names, i), name) == 1) {
+            if (vec_get(_cli_vals, i) != 0) { vec_push(out, vec_get(_cli_vals, i)); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn _cli_npos(): i64 { return vec_len(_cli_pos); }
+fn _cli_pos_at(i): i64 {
+    if (i < 0) { return 0; }
+    if (i >= vec_len(_cli_pos)) { return 0; }
+    return vec_get(_cli_pos, i);
+}
+fn _cli_ntail(): i64 { return vec_len(_cli_tail); }
+fn _cli_tail_at(i): i64 { return vec_get(_cli_tail, i); }
+fn _cli_tail_vec(): i64 { return _cli_tail; }
+fn _cli_pos_vec(): i64 { return _cli_pos; }
+
+# Strict decimal parse — `atoi` returns 0 for "abc", which is how `coverage --min abc`
+# came to print "gate OK: 0% >= --min 0%" and exit 0, and how `soak abc` ran 100
+# iterations. Sets _cli_int_ok; the caller errors when it is 0.
+var _cli_int_ok = 0;
+fn _cli_int(s): i64 {
+    _cli_int_ok = 0;
+    if (s == 0) { return 0; }
+    var i = 0;
+    if (load8(s) == 45) { i = 1; }
+    var n = 0;
+    var seen = 0;
+    # v6.6.5 (round-2 review) — REJECT an overflowing literal. This fn exists to stop
+    # `atoi` silently coercing garbage; accumulating past 63 bits is the same defect
+    # wearing a different hat. Measured on the first cut: `cyrius soak
+    # 99999999999999999999` wrapped to 7766279631452241919, sailed past the
+    # `soak_n <= 0` guard and started a run that never terminates. 922337203685477580
+    # is (2^63-1)/10, so the multiply below cannot wrap.
+    var _cli_int_lim = 922337203685477580;
+    while (load8(s + i) != 0) {
+        var c = load8(s + i);
+        if (c < 48) { return 0; }
+        if (c > 57) { return 0; }
+        if (n > _cli_int_lim) { return 0; }
+        n = n * 10 + (c - 48);
+        if (n < 0) { return 0; }
+        seen = 1;
+        i = i + 1;
+    }
+    if (seen == 0) { return 0; }
+    _cli_int_ok = 1;
+    if (load8(s) == 45) { return 0 - n; }
+    return n;
+}
+
+# Enforce the operand count. `max` < 0 means unbounded. Rule 3: an operand this verb
+# will not act on is REJECTED, never dropped.
+fn _cli_operands_ok(verb, min, max): i64 {
+    var n = vec_len(_cli_pos);
+    if (n < min) {
+        sys_write(STDERR_FD, "error: cyrius ", 14);
+        sys_write(STDERR_FD, verb, strlen(verb));
+        sys_write(STDERR_FD, ": missing required argument\n", 28);
+        _cli_usage(verb);
+        return 0;
+    }
+    if (max >= 0 && n > max) {
+        _cli_fail(verb, "unexpected extra argument", vec_get(_cli_pos, max));
+        return 0;
+    }
+    return 1;
+}
+
+# ── flag effects, applied BEFORE _auto_deps (rule 5) ──────────────
+# _dry_run in particular: it used to be set inside the build loop, which runs AFTER
+# the resolver, so `cyrius build --dry-run s o` in a [deps] project printed
+# "dry-run: compile" having already created lib/. And the deps branch never set it,
+# which is why cbt/deps.cyr's dry-run early return had never once been reached.
+# Every --features occurrence, each one comma-split, in argv order. `--features fa
+# --features fb` == `--features fa,fb` (round-3 review; CHANGELOG [6.6.5]).
+fn _cli_features_all(): i64 {
+    var out = vec_new();
+    var vals = _cli_values("--features");
+    var i = 0;
+    while (i < vec_len(vals)) {
+        var one = _split_csv(vec_get(vals, i));
+        var j = 0;
+        while (j < vec_len(one)) { vec_push(out, vec_get(one, j)); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn _cli_apply_target(verb): i64 {
+    if (_cli_has("--aarch64") == 1) { set_arch(ARCH_AARCH64); }
+    if (_cli_has("--win") == 1) { _win_target = 1; }
+    if (_cli_has("--agnos") == 1) { _agnos_target = 1; }
+    if (_cli_has("--check-lib-sync") == 1) { _check_lib_sync = 1; }
+    if (_cli_has("--no-default-features") == 1) { _cli_no_default = 1; }
+    if (_cli_has("--features") == 1) { _cli_features = _cli_features_all(); }
+    var tgt = _cli_val("--target");
+    if (tgt != 0) {
+        if (streq(tgt, "js") == 1) { _js_target = 1; }
+        elif (streq(tgt, "cx") == 1) { _cx_target = 1; }
+        elif (streq(tgt, "x86_64-bare-metal-elf") == 1) { _baremetal_target = 1; _skip_deps = 1; }
+        elif (streq(tgt, "aarch64-bare-metal-elf") == 1) {
+            set_arch(ARCH_AARCH64);
+            _baremetal_target = 1;
+            _baremetal_aa = 1;
+            _skip_deps = 1;
+        }
+        else { return _cli_fail(verb, "unknown --target", tgt); }
+    }
+    var defs = _cli_values("-D");
+    if (vec_len(defs) > 0) { _defines = defs; }
+    return 0;
+}
+
+fn _cli_apply(verb): i64 {
+    if (_cli_has("-q") == 1 || _cli_has("--quiet") == 1) { _quiet = 1; }
+    # `fmt --verbose` is fmt's WRITE-AND-ECHO mode, not the global verbosity flag;
+    # the fmt branch reads it directly.
+    if (streq(verb, "fmt") == 0) {
+        if (_cli_has("-v") == 1 || _cli_has("--verbose") == 1) { _verbose = 1; }
+    }
+    if (_cli_has("--dry-run") == 1) { _dry_run = 1; }
+    if (_cli_has("--no-deps") == 1) { _skip_deps = 1; }
+    if (_cli_has("--strict") == 1 && streq(verb, "build") == 1) { _strict = 1; }
+    if (_cli_has("--strict-pin") == 1) { _strict_pin = 1; }
+    if (_cli_has("--pie") == 1) { _pie_target = 1; }
+    if (_cli_has("--poison") == 1) { _poison_mode = 1; }
+    if (_cli_has("--full") == 1 && streq(verb, "lib") == 1) { _lib_sync_full = 1; }
+    if (_cli_has("--no-lock") == 1) { _no_lock = 1; }
+    if (_cli_has("--relock") == 1) { _dep_relock = 1; }
+    return _cli_apply_target(verb);
+}

@@ -10,6 +10,223 @@ The 6.6.5 repair release — every open issue in docs/development/issues/, one b
 
 ### Fixed
 
+- ⛔ **The whole CLI took flags as file names, dropped flags written after the operand, and
+  dropped extra operands — and several of those spellings WRITE or DELETE while exiting 0**
+  (filed by mabda 4.1.3 2026-09-16 as two `cyrius lint` rows;
+  `issues/archived/2026-09-16-mabda-lint-wrapper-drops-strict-deferrals.md`).
+  The filing: `cyrius lint --strict-deferrals f.cyr` handed cyrlint the FLAG as its file
+  (usage text, exit 1 on every file), and `cyrius lint f.cyr --strict-deferrals` **dropped the
+  flag in silence and exited 0 with the gate off** — which a CI step reads as a pass. mabda
+  shipped three untracked deferrals across 4.1.0–4.1.2 behind that exit 0; the oldest had been
+  in the tree since 2026-06-20.
+  ⛔ **It was not a lint bug.** Every verb hand-rolled its own argument loop and no two agreed;
+  ~60 measured spellings share the shape, and the dangerous ones are SILENT AND MUTATING:
+  `fmt f --chekc` **rewrote the file** and exited 0; `clean --dryrun` and `cyrius -q clean
+  --dry-run` **DELETED** `build/`; `lib sync --dry` really synced 110 files over `./lib`;
+  `deps --dry-run` and `deps --verfy` really resolved; `build s --strict` wrote the binary to a
+  **file named `--strict`**; `build s o -DCUDA` dropped the define (ai-hwaccel's docs prescribe
+  it); `run f a b c` gave the program `argc()==1` (sandhi's dns/http probes document that
+  spelling and had been silently using their default host); `test --dry-run f` really ran;
+  `fuzz f --poisn` ran with poison **off**; and `pulsar`/`lsp`/`update` ignored every argument
+  and did the real rebuild/install. `cyrius lint a b` linted **one** file — ranga's CI linted 1
+  of 41 that way, and cyim 1.6.1 shipped a false "0 warnings".
+  **Fix — ONE RULE, one classifier** (new `cbt/cli_args.cyr`): flags in any position; a
+  `-`-prefixed token the verb does not declare is an error that NAMES it; operand counts
+  enforced (extra operands are processed or rejected, never dropped); arguments indexed from
+  `cmd_idx + 1`, never a literal `argv(2)`, so a global `-q`/`-v` no longer shifts them; and
+  **every flag effect applies BEFORE `_auto_deps` runs**, which is what finally makes
+  `--dry-run` mean *write nothing* — `cbt/deps.cyr`'s dry-run early return existed but had
+  never once been reachable from the CLI. `--help` is printed from the SAME three spec tables
+  the parser reads, so help and parser cannot drift.
+  Along the way: `cyrius run f.cyr a b c` forwards the program's arguments go-run style;
+  `-D NAME`/`-DNAME` now reaches `run`/`test`/`tests`/`bench`/`fuzz`/`check` too (the unshipped
+  half of the archived 2026-08-26 audit-scope issue); `--pie` is real (it had been documented at
+  the guide's PIE section (6.6.4 line 2724) for months while the build loop had no arm for it, so the documented
+  recipe errored); `lint`/`fmt`/`doc`/`check`/`test` take 1..N files; `--target`, `--scope`,
+  `--min` and `soak`'s count are validated instead of silently coerced (`coverage --min abc`
+  used to print `gate OK: 0% >= --min 0%` and exit 0); the dead `-v` version alias is gone; and
+  `cyrius lib sync --dry-run` no longer `mkdir`s `./lib` (a dry run that creates the directory
+  `_dep_find_stdlib_dir` keys on is not a dry run).
+  ⚠ **`run_tool` forwarded at most 3 arguments**, which is why `cmd_lint` could only ever send
+  `--strict` plus the file — three flags plus a path is four. New `run_tool_vec` takes a vec,
+  and `run_tool`/`run_tool_argvtail` now go through it.
+  ⚠ **On Windows none of this ran at all.** `run_tool` used `sys_fork`/`sys_waitpid`, which are
+  **−1 stubs on PE**, so `cyrius lint/fmt/doc/vet/deny/api-surface` never spawned their tool;
+  under wine the PE CLI did not return in 15 s. `run_tool_vec` spawns via
+  `_win_create_process`/`_win_wait_close` under `#ifdef CYRIUS_TARGET_WIN`, each argument
+  quoted. **Unverified on cass at the time of writing — see the cross-host checklist.**
+  ⚠ **`run_cx`'s `var argv[8]` is 8 BYTES, one slot**, so its NUL terminator at `+8` landed on
+  the next local's stack slot (a probe measured `&argv + 8 == &fd`). It worked by luck. Both
+  run paths now build a heap argv; the native one also carries the program's own arguments,
+  while a `.cyx` REFUSES them by name (cx has no guest argv — see (5) below). *(This sentence
+  first said both paths carry the program's arguments; corrected in review round 3.)*
+  The delegated tools get the same rule: **cyrlint** (N files with every per-file counter reset,
+  unknown flag is an error, `--exit-with-count` **clamped to 255** — 256 warnings used to exit
+  **0**, a clean bill of health for the worst file), **cyrfmt** (the mode was read at `argv(1)`
+  only, so `cyrfmt f --check` printed to stdout and exited 0), **cyrdoc** (same, plus an
+  unreadable file exited 0 with no output, and `--check` wrapped at 256), **cyaudit** (`vet` on
+  an unreadable file said "no dependencies", exit 0), **cyrius_api_surface** (unknown flags and
+  the `--snapshot PATH` space form were ignored, so it diffed the default snapshot), and
+  **ark** / **cyrsign** / **cyrld** (`-o` was honoured only at `argv(1)`, so `cyrld a.o -o out`
+  silently produced a dump-only run).
+  `lib/flags.cyr`, the stdlib parser whose header names these binaries, carried three silent
+  drops of its own: positionals stopped at **128** and returned success (kriya re-implemented
+  operand counting by hand rather than being told — `src/lib/args.cyr:781`), `--bool=value`
+  **set** the flag, and a repeated STR kept only the last value. Positionals now grow,
+  `--bool=value` is `FLAG_ERR_UNEXPECTED_VALUE`, `FLAG_LIST` appends, `flags_error_arg` names
+  the offending token, there is a POSIX stop-at-first-positional mode, and `flags_print_help`
+  uses `sys_write(STDERR_FD, …)` rather than a raw `syscall(1, 2, …)` — for consistency with the
+  rest of the stdlib, so the number is not spelled twice and the arch dispatch stays in
+  `lib/syscalls.cyr`.
+  ⚠ The first draft of that bullet justified the change by claiming the raw form "printed
+  nothing on three of the five targets — 1 is `io_destroy` on aarch64 and unrouted on PE".
+  **That was false**, and the correction is recorded rather than quietly dropped because a
+  plausible-sounding portability claim is exactly what gets copied into the next file. The
+  compiler REWRITES the source syscall number per target: `src/backend/aarch64/emit.cyr:1162`
+  carries `write: 1→64`, `:757` the Darwin `1→4`, `src/backend/x86/emit.cyr:976` the Mach-O
+  `1→0x2000004`, and `.github/workflows/ci.yml:1429` is an ON-HARDWARE Windows gate whose entire
+  body is `syscall(1, 1, "hi\n", 3)`. Measured at 6.6.5, a `syscall(1, 2, …)` probe prints on
+  x86-64 Linux, under `qemu-aarch64` and under wine on PE. Taken at face value the claim
+  condemned ~170 other in-tree sites, 61 of them in files this same bite edited.
+  ⭐ **The round-2 review found the fix had grown the same family one level out, and every
+  finding is fixed here, not filed:**
+  (1) **the Windows spawn was unreachable on a real install** — every delegated tool resolved as
+  `make_path(_tools_dir, "cyrlint")` with no suffix while the tarball ships `cyrlint.exe`, and
+  `run_tool_vec` refuses on `file_exists` before CreateProcess, so every verb said `tool not
+  found`. `_ccname`/`_sn` had carried the `.exe` arm for `cycc` alone since v6.0.85. New
+  `_tool_path` (cbt/core.cyr) probes `<name>.exe` first on PE and falls back to the bare name
+  (a Windows DEV tree builds without the suffix); all 14 lookups go through it. Measured under
+  wine with only `*.exe` present: `cyrius.exe lint d.cyr --strict-deferrals` → **2** (was
+  `tool not found`, rc 1). `cyaudit.exe` and `cyrius_api_surface.exe` were **not in the Windows
+  tarball at all**, so `vet`/`deny`/`api-surface` had nothing to spawn — added.
+  (2) **`cyrlint a.cyr missing.cyr --exit-with-count` exited 0** — the new multi-file tail
+  returned the summed count and discarded `rc`, the only carrier of the read error: a fail-open
+  written by the fix. A hard failure is now recorded separately and outranks a zero count.
+  (3) **`cyrius lint` and `cyrlint` disagreed on `--exit-with-count`**: the wrapper spawned one
+  cyrlint per file and took the MAX (three 100-warning files: 100), the tool SUMS (255, clamped).
+  `cmd_lint` now makes ONE cyrlint invocation over every file, so there is one implementation.
+  (4) **`cyriusly`, a shipped `[release].bins` entry, carried the filed shape verbatim**:
+  `cyriusly use 6.6.4 --globl` dropped the typo and took the LOCAL-pin path at exit 0,
+  `use --globl 6.6.4` took the flag as the version, **`cyriusly install --dry-run` started a real
+  install and left `versions/--dry-run`**, `uninstall --bogus` exited 0, `which a b` / `list
+  --bogus` dropped the extras, and `use --global` with no version dropped the flag. Same rule applied; the verb name is judged before its operands.
+  (5) **`cyrius run p.cyx a b c` handed the arguments to cxvm, which ignores them** (cx has no
+  guest argv ABI), and exited with the guest's code — a drop. Refused by name now.
+  (6) **`_cli_int` — written to stop `atoi` coercing garbage — wrapped past 63 bits**:
+  `cyrius soak 99999999999999999999` became 7766279631452241919 and never terminated. Rejected.
+  (7) **`sign-efi` still capped its argv at 15, silently** — now sized from `argc()`.
+  (8) **`_win_spawn_vec` wrote UTF-16 into a fixed `alloc(32768)`** while being the one spawn that
+  takes an unbounded list — now sized from the arguments, with a named error past Windows' own
+  32,767-character limit. (9) **three more `var argv[8]` one-slot arrays** in `_ensure_cc_cx` /
+  `_emit_cx` / `_ensure_cxvm` (`cbt/build.cyr`), the same NUL-past-the-end defect as
+  `run_cx`'s — now `[16]`. (10) `cyrdoc` failed a legal **0-byte** module (`file_read_all` returns
+  0 for "empty" and "unreadable" alike) — existence is probed separately. (11) `ark create a.ark
+  a.txt x` reported an operand error for a command that does not exist — the name is checked
+  first. (12) `scripts/install.sh`'s closing banner and `programs/gen_unicode_data.cyr` still
+  prescribed `cyrius build <src> -o <out>`, which is now a named error — both corrected.
+  (13) `lib/flags.cyr`'s layout header still said 64 B.
+  Coverage added: **`tests/tcyr/crossos/tool_spawn_roundtrip.tcyr`** (new —
+  the test spawns ITSELF with one argument and asserts the child's exit code is derived from it,
+  so a spawn that runs nothing cannot read green; on PE it goes through the same
+  `_win_create_process`/`_win_wait_close` pair as the CLI's spawn). ⚠ *Round 3:* this line
+  first filed it under "coverage the review found missing" for the CLI fix. It is not that: it
+  never builds `cyrius.exe`, and since the only lib change is `flags.cyr` it compiles to the
+  same binary at 6.6.4 and passes there on every host — deleting `_tool_path`'s `.exe` arm left
+  it green. It covers the lib spawn pair; the CLI's Windows spawn is covered by the wine leg
+  (gate axis 19) and the cass rows in `scripts/cross-os-selfhost.sh`, both added in round 3. And **`flags.tcyr` moved from
+  `tests/tcyr/stdlib/` to `tests/tcyr/crossos/`**, so the stdlib parser that ships to five targets
+  now runs on real hardware, plus a `flags_print_help` case (rewritten in this release and called
+  by nothing) that captures stderr through a pipe on Linux. Both pass on x86-64 and under wine;
+  `flags.tcyr` passes under qemu-aarch64; `tool_spawn_roundtrip` cannot run under qemu-user (the
+  child is an aarch64 ELF the host kernel will not exec without binfmt) — pi runs it natively.
+  **None of that is hardware verification.**
+  Gate: `tests/gates/toolchain/cli_args_never_dropped.sh` — CLI + every delegated tool,
+  cxvm, cycc_cx, cyriusly and ark built from the tree into a throwaway `CYRIUS_HOME` (⚠ called
+  "hermetic" here in round 2; it was not — see round 3),
+  **478 assertions** at round 2 (579 at round 3), side effects measured with a tree hash the SHELL computes rather than by
+  asking the tool, two independent oracles on the filed rows, a census axis that derives the verb
+  list from `cbt/cyrius.cyr` and FAILS on a verb with no row — and "has a row" now MEANS "is
+  probed" (the first cut kept a second hand-typed list that had already drifted: `build`, `run`
+  and `--version` were counted and never probed). The same census runs over `cyriusly` and `ark`;
+  `doc`/`check` gained absolute anchors (position equivalence alone cannot see a flag dropped in
+  BOTH positions); a source census fails on any tool lookup that bypasses `_tool_path` and on any
+  delegated tool the Windows tarball does not ship. **26 mutations run** (1–26 assertions red
+  each); M6, restoring `flags.cyr`'s cap, is recorded as GREEN here and RED in
+  `tests/tcyr/crossos/flags.tcyr` — two parsers, two gates. Compiler untouched: `build/cycc`
+  byte-identical, seed chain unaffected; the `cyrius` CLI and the tool binaries change, so the
+  store slot needs the post-tag `install.sh --refresh-only`.
+  ⭐ **Round-3 review — the filed flag was still switched off one way, and the Windows half did
+  not work on the shipped layout. Every finding fixed here:**
+  (1) **`--exit-with-count` switched `--strict-deferrals` off.** cyrlint returned the warning
+  count BEFORE the strict checks, so `cyrius lint d.cyr --strict-deferrals --exit-with-count` —
+  the filed repro, forwardable for the first time — exited **0** (cyrlint directly did the same,
+  at 6.6.4 too). The exit code is now max(count, strict verdict 2) in every position and over N
+  files. (2) **Windows `cyrius lint` failed CLOSED on the shipped layout.** Round 2's wine
+  measurement had only `cyrius.exe` + `cyrlint.exe`; with `cycc.exe` present the syntax pre-pass
+  needs the private temp dir, which was a literal `"/tmp"` plus a raw `syscall(39)` — not a PE
+  reroute, so -38 on every run: every invocation raced for `/tmp/cyrius--38[-N]` and the 17th
+  said "16 candidates were taken". On real Windows `/tmp` is `<drive>:\tmp`, absent on a stock
+  install, so it would have failed on the first run. Now `sys_getpid()` (GetCurrentProcessId on
+  PE; all nine raw `syscall(39)` sites in `cbt/` converted — the PE cross-build of the CLI
+  goes from 17 compiler warnings to 9), `%TEMP%`/`%TMP%` as the base, and a FILETIME nonce in the
+  Windows name because PE has no RemoveDirectoryW reroute and Windows recycles PIDs quickly
+  (under wine PID 32 was reused nine seconds later). (3) **`cyrius run/test/tests/bench/fuzz` never
+  ran the program on Windows.** `run_binary_timed` was still fork/waitpid (-1 stubs), and the
+  parent decoded an UNINITIALISED status slot — under wine `run argc.cyr a b c` exited 111 and
+  `test t.tcyr` 199 (6.6.4: 48); a garbage word that decoded as 0 would have passed a test that
+  never ran. New `_win_run_timed` (CreateProcessW + the WaitForSingleObject deadline →
+  `_RUN_TIMEOUT_KILLED`), `run_cx` gets a `cmd /s /c` stdin-redirect arm, and the temp binaries
+  a verb executes are named `*.exe` on Windows — CreateProcessW with no application name
+  appends `.exe` to an extensionless program. Arguments are now quoted by the MSVCRT rules
+  (`_w_append_arg`), so a forwarded `a\"b` or a trailing-backslash path arrives intact.
+  Measured under wine: `run argc.cyr a b c` → 4, `test pass fail` → "1 passed, 1 failed", a
+  2 s `CYRIUS_TEST_TIMEOUT` kills a spinning test in 3 s. (4) **A repeated value flag kept the
+  LAST value** — `--features fa --features fb` resolved fb only, `--target=js --target=cx`
+  meant cx: the FLAG_LIST defect, rebuilt in the classifier. Single-valued repeats are refused
+  by name; `-D` and `--features` accumulate. Same shape fixed in `cyrld` (a second `-o`) and
+  `cyrius_api_surface` (a second `--snapshot`). (5) **`cyrsign-efi`, `cyrius-init` and
+  `ts_test_runner` were never swept**: `cyrius sign-efi in key cert --dry-run` wrote the signed
+  PE to a FILE NAMED `--dry-run` and exited 0; `cyrius init alpha beta` scaffolded beta alone;
+  `ts_test_runner a b` walked b alone and said "no fixtures found". Exactly four operands /
+  one project / one path now, extras and options named. (6) `cyaudit deny` returned the raw
+  violation count (256 → exit 0) — clamped; `cyaudit vet` with no file exited 0 — now 1.
+  (7) `coverage --min -1` (or a typo'd `-5`) is the "no gate" sentinel and switched the gate off
+  — `--min` is 0..100. (8) `cyrius run -- prog.cyr a` refused `a` as an extra operand — the
+  stop-at-positional test now runs before the `--` branch. (9) `deps --dry-run`, reachable for
+  the first time, returned before the manifest check (exit 0 in an empty dir) — it now fails
+  where `deps` fails and LISTS the `[deps.NAME]` entries. (10) `cyrius audit` told users to run
+  `cyrius fmt -w`, which the classifier refuses. (11) cyrsign's refusals did not name the token
+  and counted operands before judging a `-` token; cyrfmt printed its unknown-option error to
+  STDOUT unquoted; `cyrius_api_surface` called `--updat` an "unexpected argument" — all now
+  `unknown option '<tok>'` on stderr. (12) The macOS tarballs shipped neither `cyaudit` nor
+  `cyrius_api_surface` (both cross-build clean to both Mach-O targets). (13) `cyrlint` over N
+  files allocated a 1 MB buffer PER FILE and freed nothing — 197 files peaked at 143 MB RSS;
+  one reused buffer (tail zeroed to the previous high-water mark) → 13 MB, output byte-identical
+  to 197 single-file runs. (14) `lib/flags.cyr`'s header claimed the toolchain binaries use it;
+  none has ever included it — corrected (the plan to move them onto it was not carried out; the
+  RULE is what is gated). (15) `cyrius-init` does not build for PE at all (pre-existing) — filed
+  as `issues/2026-09-18-cyrius-init-does-not-build-for-windows.md` and pinned in the roadmap
+  backlog; the tarball comment that cited "the open issue" now names it. (16) `cyrius lsp`
+  copied its build product into place and never removed it — one ~100 KB `<tmpdir>/lsp` per
+  run, found among the private temp dirs the gates leave — and, with no home, printed
+  "Compiled: /tmp/cyrius-lsp", a path nothing has written since v6.4.81. Unlinked after the
+  install; the real path is printed.
+  **Gate, round 3 — it had been passing on the 6.6.4 CLI.** Axis 2 grepped for the bare token,
+  and 6.6.4's "no such file: --zz-cli-probe" names it too; it now greps `unknown option
+  '<tok>'`. The 2b typo rows ran on fixtures where the real operation failed anyway (no
+  manifest, no harness), and hashed only the project while pulsar/lsp/update write the store;
+  each now runs where the operation succeeds (anti-vacuous twins prove it) and hashes
+  CYRIUS_HOME too. And it was not hermetic: cycc's include fallback reads
+  `$HOME/.cyrius/versions/<ver>/lib`, ignoring CYRIUS_HOME, so five rows compiled against the
+  live store (red with an empty HOME) — HOME is now a throwaway too. New: axis 16 (count ×
+  strict), 17 (cyrsign-efi, cyrius-init/port, ts_test_runner, cyrld incl. a real two-module link
+  with `-o` trailing, cyrsign, cyaudit, cyrfmt), 18 (`--features` accumulation, `deps --dry-run`),
+  19 (**the Windows CLI under wine**, in a throwaway `WINEPREFIX`; SKIP when wine is absent), and
+  the tarball census now covers both macOS scripts. **579 assertions, ~15 s; 20 more mutations
+  run, each turning it red** (ledger in the gate header). `scripts/cross-os-selfhost.sh`'s cass
+  leg now runs the shipped-layout `cyrius.exe lint` both ways and `run argc a b c` on the
+  hardware. **wine is not Windows — cass is the verification.**
+
 - ⛔ **`lib/bench.cyr` subtracted a MEAN clock floor from every window and then reported the
   MINIMUM, so a real operation read `min=0ns` — on our own release benches** (filed by mabda
   2026-09-16 from a 4.1.3 verification: `uniform_buffer_write: 2.825us avg (min=0ns ...)` and

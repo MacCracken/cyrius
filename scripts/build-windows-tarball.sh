@@ -38,7 +38,17 @@ cat cbt/cyrius.cyr   | "$WORK/cc_win" > "$WORK/$STAGE/bin/cyrius.exe"
 # cycc_cx's PE cross-native brk-fault (Win32 has no brk → now mmap→VirtualAlloc
 # per-target); verified on cass (native compile→run round-trip). A binary-install
 # Windows user can `cyrius build --target=cx` AND `cyrius run *.cyx`.
-for tool in cyrfmt cyrlint cyrdoc cyrsign cxvm; do
+# v6.6.5 — cyaudit + cyrius_api_surface were MISSING, so `cyrius vet`, `cyrius deny`
+# and `cyrius api-surface` had no tool to spawn on a Windows install at all. Never
+# noticed because the tool spawn itself was a -1 stub (lib/syscalls_windows.cyr
+# sys_fork) until 6.6.5, so each of those verbs failed for a different reason first.
+# ⚠ `cyrius-init` is DELIBERATELY still absent: it does not cross-compile to PE at
+# all (`programs/cyrius-init.cyr:97,1007` reach unguarded `sys_readlink` / `sys_rename`,
+# which lib/syscalls_windows.cyr does not define — measured at 6.6.5, the compile
+# refuses with 2 reachable undefined fns). That is a Windows-stdlib gap, not an
+# argument-handling one; adding it here would package a 0-byte binary. Filed as
+# docs/development/issues/2026-09-18-cyrius-init-does-not-build-for-windows.md.
+for tool in cyrfmt cyrlint cyrdoc cyrsign cxvm cyaudit cyrius_api_surface; do
     if [ -f "programs/${tool}.cyr" ]; then
         cat "programs/${tool}.cyr" | "$WORK/cc_win" > "$WORK/$STAGE/bin/${tool}.exe"
     fi
@@ -48,7 +58,8 @@ cat src/main_cx.cyr | "$WORK/cc_win" > "$WORK/$STAGE/bin/cycc_cx.exe"
 
 # Validate every binary is a real PE (MZ magic = 4d5a) — refuse to package an
 # empty / non-PE artifact (the "found by ports" guard).
-for b in cycc.exe cyrius.exe cyrfmt.exe cyrlint.exe cyrdoc.exe cyrsign.exe cxvm.exe cycc_cx.exe; do
+for b in cycc.exe cyrius.exe cyrfmt.exe cyrlint.exe cyrdoc.exe cyrsign.exe cxvm.exe cycc_cx.exe \
+         cyaudit.exe cyrius_api_surface.exe; do
     f="$WORK/$STAGE/bin/$b"
     [ -f "$f" ] || continue
     magic=$(xxd -l2 -p "$f" 2>/dev/null)

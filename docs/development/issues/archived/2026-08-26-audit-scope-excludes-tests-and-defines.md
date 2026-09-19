@@ -1,6 +1,10 @@
 # `cyrius audit` passes a project with lint-dirty tests and a failing `-D` build — two coverage gaps in the aggregate gate
 
-**Status:** ✅ **FIXED at v6.5.42 — CLOSED.** `cyrius audit` now walks `tests/`, `benches/`, `fuzz/` (and `cbt/` in this repo), recursively, and recognises `.tcyr` / `.bcyr` / `.fcyr`. Gate: `tests/gates/toolchain/audit_scope_covers_suite.sh`.
+**Status:** ✅ **FIXED — gap 1 at v6.5.42, gap 2 at v6.6.5.** `cyrius audit` walks `tests/`, `benches/`, `fuzz/` (and `cbt/` in this repo), recursively, and recognises `.tcyr` / `.bcyr` / `.fcyr`. Gate: `tests/gates/toolchain/audit_scope_covers_suite.sh`.
+
+⛔ **THIS FILE WAS MARKED CLOSED WHILE HALF OF IT WAS STILL LIVE.** v6.5.42 shipped gap 1 (scope / descent / extension) and nothing for **gap 2** — `cyrius test -D NAME` still answered `error: no such file: -D` on 6.6.4, measured during the v6.6.5 premise check, so the `-D` half of every conditional test went on never being built by `cyrius test` or `cyrius audit` for four more minors. Gap 2 ships at **v6.6.5** as part of the CLI argument rewrite: `-D NAME` and `-DNAME` are now declared flags on every compiling verb (`build`, `run`, `test`, `tests`, `bench`, `fuzz`, `check`, …), in any position, and `tests/gates/toolchain/cli_args_never_dropped.sh` axis 9 pins `test -D CLI_PROBE t.tcyr` against an anti-vacuous run without it.
+
+⚠ The lesson is the status line itself: a two-gap filing closed on one gap. Verify each CLAIM in an issue against live code before archiving it — a ✅ on the header is not evidence that the body is done.
 
 ⭐ **THREE INDEPENDENT HALVES, AND ANY ONE MISSING STILL REPORTS A CLEAN VERDICT OVER NOTHING** — which is why a partial fix here would have been worse than none:
 1. **Scope** — `tests/` was not in the directory list at all.

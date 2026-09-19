@@ -131,6 +131,14 @@ fn _parse_args(): i64 {
         if (alen == 2 && memeq(a, "-h", 2) == 1)     { return 2; }
         # Positional: walk path
         if (load8(a) != 45) {       # not starting with '-'
+            # ONE path. The last one used to win, so `ts_test_runner a b` walked b
+            # alone and `a` was dropped without a word (v6.6.5, round-3 review).
+            if (_walk_path != 0) {
+                syscall(1, 2, "ts_test_runner: unexpected extra argument '", 43);
+                syscall(1, 2, a, alen);
+                syscall(1, 2, "'\n", 2);
+                return 1;
+            }
             _walk_path = a;
             i = i + 1;
             continue;

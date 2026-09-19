@@ -274,6 +274,40 @@ case "$HOST" in
       echo "SELFHOST_FAIL: cass — Windows self-host fixpoint (fc /b c2.exe c3.exe) or an exit-code guard FAILED (rc=$?). NOT SELFHOST_OK."
       exit 1
     fi
+    # v6.6.5 (bite 8, round-3 review) — THE WINDOWS CLI SPAWN, ON THE HARDWARE. Until
+    # 6.6.5 every `cyrius` verb that starts another process (lint/fmt/doc/vet/deny/
+    # api-surface spawn a tool; run/test/tests/bench/fuzz run the program) went through
+    # sys_fork/sys_waitpid, which are -1 stubs on PE — so on a Windows install NONE of
+    # them ever worked, and nothing here ran the CLI at all (the legs above run cycc.exe
+    # and programs it builds). tests/tcyr/crossos/tool_spawn_roundtrip.tcyr does not
+    # cover it: it spawns through the same lib pair but never builds cyrius.exe.
+    # The layout is the SHIPPED one — only `*.exe` names (the .exe arm of _tool_path),
+    # cycc.exe present (so lint's syntax pre-pass needs the private temp dir, which used
+    # to be a literal "/tmp" + a raw getpid that is unrouted on PE). TEMP is pointed at
+    # the Defender-excluded root: the compiled `run.exe` lands under %TEMP%, and a
+    # freshly-built unsigned PE outside the exclusion is exactly what Bearfoos.A!ml
+    # quarantines (CLAUDE.md, cass gotchas). Expected: the filed repro 2/2, plain lint
+    # 0, and `run argc a b c` == 4 (argv[0] + 3). `set X=v&&` has NO space before && —
+    # cmd keeps a trailing space in the value otherwise.
+    cat cbt/cyrius.cyr       | /tmp/_co_w > /tmp/_co_cli.exe
+    cat programs/cyrlint.cyr | /tmp/_co_w > /tmp/_co_lint.exe
+    printf '# a deferred item with no tracking pointer\nfn f(): i64 { return 0; }\n' > /tmp/_co_ld.cyr
+    printf 'include "lib/args.cyr"\nfn main(): i64 { args_init(); return argc(); }\nvar r = main();\nsyscall(60, r);\n' > /tmp/_co_argc.cyr
+    ssh $SSHO cass 'cmd /c "mkdir C:\cyrius-tests\_cyaud\wh\bin & mkdir C:\cyrius-tests\_cyaud\wtmp"'
+    scp -q $SSHO /tmp/_co_cli.exe cass:/cyrius-tests/_cyaud/wh/bin/cyrius.exe
+    scp -q $SSHO /tmp/_co_lint.exe cass:/cyrius-tests/_cyaud/wh/bin/cyrlint.exe
+    scp -q $SSHO /tmp/_co_exe cass:/cyrius-tests/_cyaud/wh/bin/cycc.exe
+    scp -q $SSHO /tmp/_co_ld.cyr /tmp/_co_argc.cyr cass:/cyrius-tests/_cyaud/
+    _CLI='cd /d C:\cyrius-tests\_cyaud && set CYRIUS_HOME=C:\cyrius-tests\_cyaud\wh&& set TEMP=C:\cyrius-tests\_cyaud\wtmp&& set TMP=C:\cyrius-tests\_cyaud\wtmp&& wh\bin\cyrius.exe'
+    if ssh $SSHO cass "cmd /v /c \"$_CLI lint _co_ld.cyr --strict-deferrals > _cl1.txt 2> _cl1e.txt & if !errorlevel! NEQ 2 (exit 1) else (exit 0)\"" \
+      && ssh $SSHO cass "cmd /v /c \"$_CLI lint --strict-deferrals _co_ld.cyr > _cl2.txt 2> _cl2e.txt & if !errorlevel! NEQ 2 (exit 1) else (exit 0)\"" \
+      && ssh $SSHO cass "cmd /v /c \"$_CLI lint _co_ld.cyr > _cl3.txt 2> _cl3e.txt & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" \
+      && ssh $SSHO cass "cmd /v /c \"$_CLI run _co_argc.cyr a b c > _cl4.txt 2> _cl4e.txt & if !errorlevel! NEQ 4 (exit 1) else (exit 0)\""; then
+      :   # the CLI spawns its tools and its programs on real Windows
+    else
+      echo "SELFHOST_FAIL: cass — the Windows CLI spawn FAILED (lint --strict-deferrals must be 2 in both positions, plain lint 0, run argc a b c 4). Remote output: C:\cyrius-tests\_cyaud\_cl*.txt. NOT SELFHOST_OK."
+      exit 1
+    fi
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
     # a program that callptr's real kernel32 entries (lstrlenA/GetModuleHandleA/
     # MulDiv — real SSE-prologue Win64 callees) and must exit 42. Pre-fix this

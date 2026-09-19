@@ -353,6 +353,63 @@ fn usage(): i64 {
     return 0;
 }
 
+# v6.6.5 — is `cmd` a verb this binary dispatches at all? Derived from the SAME
+# names main() branches on, and checked BEFORE the operand count, because an operand
+# rule for a verb that does not exist answers the wrong question: `ark create a.ark
+# a.txt x` reported "unexpected extra argument 'a.ark'" (create takes 0 operands…
+# because create is not a command) instead of "unknown command: create". Found in the
+# round-2 review of this bite. CHANGELOG [6.6.5].
+fn _ark_known_cmd(cmd): i64 {
+    if (streq(cmd, "status") == 1) { return 1; }
+    if (streq(cmd, "list") == 1) { return 1; }
+    if (streq(cmd, "history") == 1) { return 1; }
+    if (streq(cmd, "verify") == 1) { return 1; }
+    if (streq(cmd, "search") == 1) { return 1; }
+    if (streq(cmd, "info") == 1) { return 1; }
+    if (streq(cmd, "install") == 1) { return 1; }
+    if (streq(cmd, "remove") == 1) { return 1; }
+    return 0;
+}
+
+# v6.6.5 — how many operands does `cmd` take, and were exactly that many given?
+# 0 = report an error and stop. `want` is derived from the verb, and an extra
+# operand is an error, never a dropped argument.
+fn _ark_operands_ok(cmd, unused): i64 {
+    var want = 0;
+    if (streq(cmd, "search") == 1) { want = 1; }
+    if (streq(cmd, "info") == 1) { want = 1; }
+    if (streq(cmd, "install") == 1) { want = 1; }
+    if (streq(cmd, "remove") == 1) { want = 1; }
+    var got = argc() - 2;
+    if (got < 0) { got = 0; }
+    if (got < want) {
+        syscall(1, 2, "ark: ", 5);
+        syscall(1, 2, cmd, strlen(cmd));
+        var m1 = " needs an argument\n";
+        syscall(1, 2, m1, strlen(m1));
+        return 0;
+    }
+    if (got > want) {
+        var m2 = "ark: unexpected extra argument '";
+        syscall(1, 2, m2, strlen(m2));
+        syscall(1, 2, argv(2 + want), strlen(argv(2 + want)));
+        syscall(1, 2, "'\n", 2);
+        return 0;
+    }
+    var oi = 2;
+    while (oi < argc()) {
+        if (load8(argv(oi)) == 45) {
+            var m3 = "ark: unknown option '";
+            syscall(1, 2, m3, strlen(m3));
+            syscall(1, 2, argv(oi), strlen(argv(oi)));
+            syscall(1, 2, "'\n", 2);
+            return 0;
+        }
+        oi = oi + 1;
+    }
+    return 1;
+}
+
 fn main(): i64 {
     alloc_init();
     args_init();
@@ -364,30 +421,32 @@ fn main(): i64 {
 
     var cmd = argv(1);
 
+    # v6.6.5 — the verb NAME first, then the operand count. Reversed, an unknown
+    # command with an argument reported an operand error about a command that does
+    # not exist (round-2 review).
+    if (_ark_known_cmd(cmd) == 0) {
+        syscall(1, 2, "unknown command: ", 17);
+        syscall(1, 2, cmd, strlen(cmd));
+        syscall(1, 2, "\n", 1);
+        usage();
+        return 1;
+    }
+
+    # v6.6.5 — operand counts enforced. Every branch below used to read argv(2) and
+    # IGNORE argv(3..), so `ark install a b` installed `a` and reported success for
+    # the pair, and `ark status extra` silently dropped the argument. The same
+    # argument rule as the `cyrius` CLI (cbt/cli_args.cyr). CHANGELOG [6.6.5].
+    if (_ark_operands_ok(cmd, 0) == 0) { return 1; }
+
     if (streq(cmd, "status") == 1) { return cmd_status(); }
     if (streq(cmd, "list") == 1) { return cmd_list(); }
     if (streq(cmd, "history") == 1) { return cmd_history(); }
     if (streq(cmd, "verify") == 1) { return cmd_verify(); }
 
-    if (streq(cmd, "search") == 1) {
-        if (argc() < 3) { println("Usage: ark search <query>"); return 1; }
-        return cmd_search(argv(2));
-    }
-
-    if (streq(cmd, "info") == 1) {
-        if (argc() < 3) { println("Usage: ark info <pkg>"); return 1; }
-        return cmd_info(argv(2));
-    }
-
-    if (streq(cmd, "install") == 1) {
-        if (argc() < 3) { println("Usage: ark install <pkg>"); return 1; }
-        return cmd_install(argv(2));
-    }
-
-    if (streq(cmd, "remove") == 1) {
-        if (argc() < 3) { println("Usage: ark remove <pkg>"); return 1; }
-        return cmd_remove(argv(2));
-    }
+    if (streq(cmd, "search") == 1) { return cmd_search(argv(2)); }
+    if (streq(cmd, "info") == 1) { return cmd_info(argv(2)); }
+    if (streq(cmd, "install") == 1) { return cmd_install(argv(2)); }
+    if (streq(cmd, "remove") == 1) { return cmd_remove(argv(2)); }
 
     syscall(1, 2, "unknown command: ", 17);
     syscall(1, 2, cmd, strlen(cmd));

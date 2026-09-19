@@ -315,6 +315,14 @@ the trust model and the single-pass design), a general const-eval VM, exceptions
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **`cyrius-init` does not build for Windows, so `cyrius init` / `cyrius port` are absent from
+  a Windows install** — filed as
+  [`issues/2026-09-18-cyrius-init-does-not-build-for-windows.md`](issues/2026-09-18-cyrius-init-does-not-build-for-windows.md)
+  (found in 6.6.5 bite 8, pre-existing at 6.6.4). Two missing PE wrappers (`sys_readlink` for
+  the self-path — wants a GetModuleFileNameW reroute or the existing `argv(0)` fallback — and
+  `sys_rename`, which `MoveFileExW` 0xF034 already covers) plus shipping the templates dir.
+  Acceptance in the issue; the gate exemption `EXE_EXEMPT_cyrius_init` is deleted when it lands.
+
 - **`cyrius distlib` leaf validation allocates ~30 GB and OOM-kills the CI runner** — filed as
   [`issues/2026-09-11-distlib-leaf-validation-oom.md`](issues/2026-09-11-distlib-leaf-validation-oom.md).
   `_distlib_verify_leaves` (`cbt/commands.cyr:2586`) splices every stdlib leaf plus the bundle into

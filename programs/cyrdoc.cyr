@@ -108,7 +108,19 @@ fn extract_fn_sig(line, len, buf) {
 fn process_file(filepath, check_mode) {
     var buf = alloc(65536);
     var n = file_read_all(filepath, buf, 65536);
-    if (n <= 0) { return 0; }
+    # v6.6.5 — an unreadable file used to `return 0` here and main() then exited 0
+    # with NO output, which from a doc generator is indistinguishable from "this
+    # file has no documentation". `cyrdoc /nonexistent.cyr` reported success.
+    #
+    # ⚠ v6.6.5 (round-2 review): `file_read_all` returns 0 for BOTH "could not open"
+    # and "opened, zero bytes", so the first cut of this guard also failed a legal
+    # 0-byte module — a consumer with an empty `mod.cyr` would have started failing
+    # `cyrius doc` where 6.6.4 exited 0. Probe existence SEPARATELY: an existing empty
+    # file is "no functions", which is a real and correct answer.
+    if (n <= 0) {
+        if (file_exists(filepath) == 1) { return 0; }
+        return 1;
+    }
 
     # Parse into lines
     var lines = vec_new();
@@ -208,38 +220,71 @@ fn process_file(filepath, check_mode) {
     return 0;
 }
 
+fn _doc_usage(): i64 {
+    println("cyrdoc — Cyrius documentation generator");
+    println("  cyrdoc [--check] <file.cyr>...");
+    println("  (no flag)   generate markdown on stdout");
+    println("  --check     report missing docs; exit = undocumented count (clamped to 255)");
+    return 0;
+}
+
 fn main() {
     alloc_init();
     args_init();
 
-    if (argc() < 2) {
-        println("cyrdoc — Cyrius documentation generator");
-        println("  cyrdoc <file.cyr>         — generate markdown");
-        println("  cyrdoc --check <file.cyr> — check for missing docs");
-        return 0;
-    }
+    if (argc() < 2) { _doc_usage(); return 0; }
 
+    # v6.6.5 — `--check` used to be read at argv(1) ONLY, so `cyrdoc f.cyr --check`
+    # dropped it and wrote markdown with exit 0; an unknown '-' token became the
+    # path. Flags anywhere, unknown is an error, N files. CHANGELOG [6.6.5].
     var check_mode = 0;
-    var filepath = argv(1);
-    if (streq(filepath, "--check") == 1) {
-        check_mode = 1;
-        if (argc() < 3) { println("Usage: cyrdoc --check <file>"); return 1; }
-        filepath = argv(2);
+    var files = vec_new();
+    var ai = 1;
+    while (ai < argc()) {
+        var a = argv(ai);
+        if (streq(a, "--check") == 1) { check_mode = 1; }
+        elif (streq(a, "--help") == 1 || streq(a, "-h") == 1) { _doc_usage(); return 0; }
+        elif (load8(a) == 45) {
+            sys_write(STDERR_FD, "cyrdoc: unknown option '", 24);
+            sys_write(STDERR_FD, a, strlen(a));
+            sys_write(STDERR_FD, "'\n", 2);
+            _doc_usage();
+            return 1;
+        }
+        else { vec_push(files, a); }
+        ai = ai + 1;
     }
+    if (vec_len(files) == 0) { _doc_usage(); return 1; }
 
-    process_file(filepath, check_mode);
+    var read_err = 0;
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var f = vec_get(files, fi);
+        if (process_file(f, check_mode) != 0) {
+            sys_write(STDERR_FD, "cyrdoc: cannot read file: ", 26);
+            sys_write(STDERR_FD, f, strlen(f));
+            sys_write(STDERR_FD, "\n", 1);
+            read_err = 1;
+        }
+        fi = fi + 1;
+    }
+    if (read_err == 1) { return 1; }
 
     if (check_mode == 1) {
         var nb[24];
         var nl = fmt_int_buf(_documented, &nb);
-        syscall(1, 1, &nb, nl);
-        syscall(1, 1, " documented, ", 13);
+        sys_write(STDOUT_FD, &nb, nl);
+        sys_write(STDOUT_FD, " documented, ", 13);
         nl = fmt_int_buf(_undocumented, &nb);
-        syscall(1, 1, &nb, nl);
-        syscall(1, 1, " undocumented (", 15);
+        sys_write(STDOUT_FD, &nb, nl);
+        sys_write(STDOUT_FD, " undocumented (", 15);
         nl = fmt_int_buf(_total_fns, &nb);
-        syscall(1, 1, &nb, nl);
-        syscall(1, 1, " total)\n", 8);
+        sys_write(STDOUT_FD, &nb, nl);
+        sys_write(STDOUT_FD, " total)\n", 8);
+        # v6.6.5 — CLAMP. An exit code is 8 bits: 256 undocumented fns returned 0,
+        # so a file with 256 problems reported a clean bill of health, and 257
+        # returned 1. Measured on 6.6.4.
+        if (_undocumented > 255) { return 255; }
         return _undocumented;
     }
 

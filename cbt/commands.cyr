@@ -210,12 +210,25 @@ fn cmd_build(source, output): i64 {
     return r;
 }
 
-fn cmd_run(source): i64 {
+fn cmd_run(source, args): i64 {
     # cx arc: a .cyx is already-compiled portable bytecode — run it directly via
     # cxvm (no compile step). Detect by extension; everything else is the native
     # compile+exec path below. (A `.cyr` → cx compile-and-run in one shot could be
     # an additive `--cx` flag later; keeping run <foo>.cyr the native path.)
     if (str_ends_with(str_from(source), str_from(".cyx")) == 1) {
+        # v6.6.5 (round-2 review) — REFUSE program arguments for a .cyx. The first cut
+        # forwarded them onto cxvm's argv, which reads nothing but the .cyx on stdin: cx
+        # has no guest argv ABI (lib/args.cyr's args_init/argc are undefined under the cx
+        # backend), so `cyrius run p.cyx a b c` ran with the arguments DROPPED and exited
+        # with the guest's code — the one outcome the argument rule forbids. An operand
+        # that cannot be processed is rejected, by name. CHANGELOG [6.6.5].
+        if (args != 0) {
+            if (vec_len(args) > 0) {
+                var cxm = "run: a .cyx program cannot receive arguments (cx has no guest argv yet); refusing to drop";
+                _err_ctx(cxm, vec_get(args, 0));
+                return 1;
+            }
+        }
         if (_dry_run == 1) {
             sys_write(STDOUT_FD, "dry-run: run-cx ", 16);
             sys_write(STDOUT_FD, source, strlen(source));
@@ -230,21 +243,35 @@ fn cmd_run(source): i64 {
         sys_write(STDOUT_FD, "\n", 1);
         return 0;
     }
-    var tmpbin = _cbt_tmpfile("run");
+    var tmpbin = _cbt_tmpexe("run");
     var r = compile(source, tmpbin);
     if (r != 0) {
         _err("compile failed");
         sys_unlink(tmpbin);
         return 1;
     }
-    var exit_code = run_binary(tmpbin);
+    # v6.6.5 — forward the program's own arguments (go-run style). Before this the
+    # child argv was [tmpbin, NUL] no matter what was typed, so a probe documented as
+    # `cyrius run dns-probe.cyr example.com` saw argc()==1 and silently used its
+    # built-in default host. CHANGELOG [6.6.5].
+    var exit_code = run_binary_args(tmpbin, args);
     sys_unlink(tmpbin);
     return exit_code;
 }
 
 fn cmd_test(source): i64 {
+    # v6.6.5 — `cyrius test --dry-run f.tcyr` consumed the flag and RAN the test
+    # anyway (measured: "T1 RAN", exit 3). A dry run compiles nothing and runs
+    # nothing; the counters are left alone so a dry run cannot be mistaken for a
+    # result.
+    if (_dry_run == 1) {
+        sys_write(STDOUT_FD, "dry-run: compile + run ", 23);
+        sys_write(STDOUT_FD, source, strlen(source));
+        sys_write(STDOUT_FD, "\n", 1);
+        return 0;
+    }
     _total = _total + 1;
-    var tmpbin = _cbt_tmpfile("test_bin");
+    var tmpbin = _cbt_tmpexe("test_bin");
     var r = compile(source, tmpbin);
     if (r != 0) {
         sys_write(STDERR_FD, "  FAIL: ", 8);
@@ -261,7 +288,7 @@ fn cmd_test(source): i64 {
     # tripwire red). See `run_binary_timed` in cbt/build.cyr for both halves of the
     # fix. Report the timeout BY NAME: a bare nonzero code here would read as an
     # ordinary assertion failure and send the reader into the test's logic.
-    var exit_code = run_binary_timed(tmpbin, _run_timeout_ms());
+    var exit_code = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
     sys_unlink(tmpbin);
     if (exit_code == 0) {
         _pass = _pass + 1;
@@ -380,6 +407,9 @@ fn cmd_tests(dir): i64 {
         sys_write(STDOUT_FD, "\n", 1);
         return 1;
     }
+    # v6.6.5 — a dry run has no verdict to report; printing "0 passed, 0 failed"
+    # would be a result for work that was never done.
+    if (_dry_run == 1) { return 0; }
     sys_write(STDOUT_FD, "\n", 1);
     fmt_int(_pass);
     sys_write(STDOUT_FD, " passed, ", 9);
@@ -397,14 +427,14 @@ fn cmd_tests(dir): i64 {
 # through exactly the same path as a discovered one.
 fn _fuzz_run_one(path, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
     store64(found_ptr, 1);
-    var tmpbin = _cbt_tmpfile("fuzz");
+    var tmpbin = _cbt_tmpexe("fuzz");
     var pl = strlen(path);
     sys_write(STDOUT_FD, "  ", 2);
     sys_write(STDOUT_FD, path, pl);
     var pad = 26 - pl;
     while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
     if (compile(path, tmpbin) == 0) {
-        var ec = run_binary_timed(tmpbin, _run_timeout_ms());
+        var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
         sys_unlink(tmpbin);
         if (ec == 0) {
             println("PASS");
@@ -528,14 +558,14 @@ fn _bench_summary(passed, failed): i64 {
 # Run one .bcyr file: compile, execute, propagate exit code.
 # Returns 0 on success, 1 on compile error, or the binary's exit code.
 fn _bench_run_one(path): i64 {
-    var tmpbin = _cbt_tmpfile("bench");
+    var tmpbin = _cbt_tmpexe("bench");
     var r = compile(path, tmpbin);
     if (r != 0) {
         sys_write(STDERR_FD, "FAIL: compile error\n", 20);
         sys_unlink(tmpbin);
         return 1;
     }
-    var ec = run_binary_timed(tmpbin, _run_timeout_ms());
+    var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
     sys_unlink(tmpbin);
     return ec;
 }
@@ -712,7 +742,7 @@ fn cmd_check(source, with_deps): i64 {
     # `/dev/null.tmp.<pid>` cannot be created (/dev/ is not writable),
     # so the fork sys_open(ofd) failed and sys_exit(1) ran with no
     # error message. cycc never actually ran in that path.
-    var ck_pid = syscall(39);
+    var ck_pid = sys_getpid();
     var ck_sb = str_builder_new();
     str_builder_add_cstr(ck_sb, _cbt_tmpfile("check_"));
     str_builder_add_int(ck_sb, ck_pid);
@@ -1124,8 +1154,14 @@ fn cmd_lib_sync(): i64 {
         sys_write(STDERR_FD, "\n", 1);
         return 1;
     }
-    if (is_dir(str_from("lib")) == 0) {
-        sys_mkdir("lib", 0x1ED);
+    # v6.6.5 — NOT under --dry-run. This mkdir ran unconditionally, so
+    # `cyrius lib sync --dry-run` created ./lib in a project that had none: a dry run
+    # that changes the tree is not a dry run, and an empty lib/ is load-bearing here
+    # (cbt/deps.cyr's _dep_find_stdlib_dir branch (a) keys on `is_dir("./lib")`).
+    if (_dry_run == 0) {
+        if (is_dir(str_from("lib")) == 0) {
+            sys_mkdir("lib", 0x1ED);
+        }
     }
     # Scope to declared [deps].stdlib (+ per-OS peers) unless --full.
     # No declaration → full copy (a curated empty lib/ is never the intent).
@@ -1316,13 +1352,28 @@ fn cmd_clean(): i64 {
 # you no in-place way to fix — the state rupa hit and worked around by un-wrapping every call.
 # Scripts that relied on the old stdout-only behaviour move to `--dry` (report) or
 # `--verbose` (write + echo).
-fn cmd_fmt(file, check_mode): i64 {
-    var cyrfmt = make_path(_tools_dir, "cyrfmt");
+# v6.6.5 — N files, and the mode is forwarded in cyrfmt's CANONICAL POSITION.
+# `mode`: 0 = WRITE IN PLACE (the default), 1 = --check, 2 = --dry (report, touch
+# nothing), 3 = --verbose (write in place AND echo to stdout). main() rejects a
+# combination, so exactly one mode arrives here.
+#
+# ⚠ BREAKING CLI CHANGE, taken deliberately (maintainer 2026-08-18). `cyrius fmt <file>`
+# used to print to stdout and never touch the file, so `--check` could flag a file the
+# tool gave you no in-place way to fix. Scripts that relied on the old stdout-only
+# behaviour move to `--dry` (report) or `--verbose` (write + echo).
+#
+# The rc is the MAX over the files, and every file is visited: `cyrius fmt --check a b`
+# used to check only `a` (agnoshi/scripts/check-fmt.sh exists solely because of that).
+fn _cmd_fmt_one(cyrfmt, file, check_mode): i64 {
     if (check_mode == 2) {
         # --dry: run the CHECK (which never writes) and translate its verdict, so "would
         # change" and "is not canonical" cannot drift apart — they are the same question.
         var drc = run_tool(cyrfmt, "--check", file, 0);
-        if (drc == 0) { println("cyrius fmt --dry: already canonically formatted"); return 0; }
+        if (drc == 0) {
+            sys_write(STDOUT_FD, "cyrius fmt --dry: already canonically formatted: ", 49);
+            println(file);
+            return 0;
+        }
         println("cyrius fmt --dry: WOULD reformat (see the diagnostic above); file left unchanged");
         return drc;
     }
@@ -1333,19 +1384,26 @@ fn cmd_fmt(file, check_mode): i64 {
         return run_tool(cyrfmt, file, 0, 0);
     }
     if (check_mode == 1) {
-        # v5.8.42: cyrfmt main parses `--check` ONLY at argv(1).
-        # Pre-fix this arg order was reversed (file, "--check"),
-        # so cyrfmt saw the file at argv(1), set _check_mode=0,
-        # and silently dumped the formatted output to stdout
-        # — drift never detected, exit 0 regardless. Mabda A2
-        # surfaced via CI gate that depended on `cyrius fmt
-        # --check` returning non-zero on drift; it never did.
-        # Now matches Rust/Go behavior: silent on no-drift,
-        # exit non-zero on drift.
+        # v5.8.42: cyrfmt's mode used to be honoured at argv(1) ONLY, so (file,
+        # "--check") silently dumped the formatted text to stdout and exited 0 —
+        # drift never detected. cyrfmt accepts flags in any position since v6.6.5,
+        # but the canonical order is kept here so the two fixes are independent.
         return run_tool(cyrfmt, "--check", file, 0);
     }
-    # DEFAULT: rewrite in place (was: print to stdout and leave the file alone).
+    # DEFAULT: rewrite in place.
     return run_tool(cyrfmt, "--write", file, 0);
+}
+
+fn cmd_fmt(files, check_mode): i64 {
+    var cyrfmt = _tool_path(_tools_dir, "cyrfmt");
+    var rc = 0;
+    var i = 0;
+    while (i < vec_len(files)) {
+        var one = _cmd_fmt_one(cyrfmt, vec_get(files, i), check_mode);
+        if (one > rc) { rc = one; }
+        i = i + 1;
+    }
+    return rc;
 }
 
 # cyrius hooks install — copy the repo's build-artifact pre-commit hook
@@ -1544,15 +1602,52 @@ fn _lint_syntax_prepass(file): i64 {
     return 1;
 }
 
-fn cmd_lint(file, strict): i64 {
-    # v6.5.19: syntax pre-pass BEFORE the line checks. See the block above for why the
-    # verdict keys on the message class and not on the exit code.
-    if (_lint_syntax_prepass(file) != 0) { return 1; }
-    var cyrlint = make_path(_tools_dir, "cyrlint");
-    # --strict makes cyrlint exit 2 when warnings are present (default is
-    # a conventional 0/1 rc — see programs/cyrlint.cyr). CHANGELOG [6.0.36].
-    if (strict == 1) { return run_tool(cyrlint, "--strict", file, 0); }
-    return run_tool(cyrlint, file, 0, 0);
+# v6.6.5 — 1..N files, with EVERY declared flag forwarded, in any position.
+#
+# THE FILED DEFECT (mabda 4.1.3, 2026-09-16): cyrlint has supported
+# `--strict-deferrals` (exit 2 on an untracked deferral marker) in either position
+# since it was written, but this wrapper knew only `--strict`. `cyrius lint
+# --strict-deferrals f.cyr` handed cyrlint the FLAG as its file (usage text, exit 1);
+# `cyrius lint f.cyr --strict-deferrals` DROPPED the flag and exited 0 with the gate
+# off — mabda shipped three untracked deferrals across 4.1.0–4.1.2 behind that exit 0.
+# The forwarding was capped by run_tool's 3 arguments (--strict + file was all that
+# fit); run_tool_vec removes the cap. CHANGELOG [6.6.5].
+# ⛔ v6.6.5 (round-2 review) — ONE cyrlint invocation over every file, not one per
+# file. The first cut spawned cyrlint per file and took the MAX of the exit codes,
+# which made `--exit-with-count` mean two different things depending on which binary
+# you asked: measured on three 100-warning files, `cyrlint a b c --exit-with-count`
+# exited **255** (300 summed, clamped) and `cyrius lint a b c --exit-with-count`
+# exited **100** (the max). `docs/guides/cyrius-guide.md` documents ONE answer —
+# "the warning count, clamped to 255" — so the wrapper was quietly contradicting the
+# tool it wraps. Handing cyrlint the whole list makes the tool's own semantics the
+# only semantics; there is no second implementation to drift.
+fn cmd_lint(files, flags): i64 {
+    var cyrlint = _tool_path(_tools_dir, "cyrlint");
+    var rc = 0;
+    # v6.5.19: syntax pre-pass BEFORE the line checks, per file. See
+    # _lint_syntax_prepass for why the verdict keys on the message class, not the
+    # exit code. A file that fails it is NOT handed to cyrlint (linting a file that
+    # does not parse reports noise), but it still forces rc >= 1.
+    var lintable = vec_new();
+    var i = 0;
+    while (i < vec_len(files)) {
+        var f = vec_get(files, i);
+        if (_lint_syntax_prepass(f) != 0) {
+            if (rc < 1) { rc = 1; }
+        } else {
+            vec_push(lintable, f);
+        }
+        i = i + 1;
+    }
+    if (vec_len(lintable) == 0) { return rc; }
+    var av = vec_new();
+    var j = 0;
+    while (j < vec_len(flags)) { vec_push(av, vec_get(flags, j)); j = j + 1; }
+    var k = 0;
+    while (k < vec_len(lintable)) { vec_push(av, vec_get(lintable, k)); k = k + 1; }
+    var one = run_tool_vec(cyrlint, av);
+    if (one > rc) { rc = one; }
+    return rc;
 }
 
 # v5.7.33: snapshot-based public API surface diff. Pattern from
@@ -1572,51 +1667,72 @@ fn cmd_lint(file, strict): i64 {
 # v5.9.13: `snapshot_arg` (`--snapshot=PATH`) forward — same
 # shape; pinned as follow-up at v5.9.12 ship.
 fn cmd_api_surface(update_flag, scope_project, snapshot_arg): i64 {
-    var tool = make_path(_tools_dir, "cyrius_api_surface");
-    var u = 0;
-    var s = 0;
-    if (update_flag != 0)   { u = "--update"; }
-    if (scope_project != 0) { s = "--scope=project"; }
-    return run_tool(tool, u, s, snapshot_arg);
+    var tool = _tool_path(_tools_dir, "cyrius_api_surface");
+    var av = vec_new();
+    if (update_flag != 0) { vec_push(av, "--update"); }
+    if (scope_project != 0) { vec_push(av, "--scope=project"); }
+    # v6.6.5 — the `--snapshot PATH` SPACE form is accepted by the CLI now, so
+    # re-emit it in the attached form the tool reads.
+    if (snapshot_arg != 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "--snapshot=");
+        str_builder_add_cstr(sb, snapshot_arg);
+        vec_push(av, str_data(str_builder_build(sb)));
+    }
+    return run_tool_vec(tool, av);
 }
 
 # v6.5.8: validate the target BEFORE delegating. `cyrius doc <missing-file>` printed
 # NOTHING and exited 0 — the worst shape in the fail-open family, because empty output
 # from a doc generator is indistinguishable from "this file has no documentation", so a
-# mistyped path reads as a finding about the code. The file argument is whichever of
-# arg1/arg2 is not a flag.
-fn _cmd_target_ok(a1, a2, verb): i64 {
-    var t = 0;
-    if (a1 != 0) { if (load8(a1) != 45) { t = a1; } }
-    if (t == 0) { if (a2 != 0) { if (load8(a2) != 45) { t = a2; } } }
-    if (t == 0) { return 1; }                      # no positional: the tool's own usage applies
+# mistyped path reads as a finding about the code.
+#
+# v6.6.5 — it used to take arg1/arg2 and pick "whichever is not a flag", which is how
+# `cyrius vet --bogus f.cyr` bypassed the check entirely (the '-' token was skipped and
+# the real file never reached the existence test). After the classifier an operand can
+# never be a flag, so this always checks a real path.
+fn _cmd_target_ok(t, verb): i64 {
+    if (t == 0) { return 1; }
     if (file_exists(t) == 1) { return 1; }
     _err_ctx(verb, t);
     return 0;
 }
 
-fn cmd_doc(arg1, arg2): i64 {
-    if (_cmd_target_ok(arg1, arg2, "doc: cannot read") == 0) { return 1; }
-    var cyrdoc = make_path(_tools_dir, "cyrdoc");
-    return run_tool(cyrdoc, arg1, arg2, 0);
+# v6.6.5 — 1..N files, and `--check` is forwarded whatever position it was typed in.
+# `cyrius doc f.cyr --check` used to drop the flag and write markdown with exit 0 —
+# the spelling ark/CLAUDE.md prescribes, so ark's doc gate had never once failed.
+fn cmd_doc(files, check): i64 {
+    var cyrdoc = _tool_path(_tools_dir, "cyrdoc");
+    var rc = 0;
+    var i = 0;
+    while (i < vec_len(files)) {
+        var f = vec_get(files, i);
+        if (_cmd_target_ok(f, "doc: cannot read") == 0) { return 1; }
+        var av = vec_new();
+        if (check != 0) { vec_push(av, "--check"); }
+        vec_push(av, f);
+        var one = run_tool_vec(cyrdoc, av);
+        if (one > rc) { rc = one; }
+        i = i + 1;
+    }
+    return rc;
 }
 
-# vet / deny are dependency-audit passes implemented by the `cyaudit`
-# tool (programs/cyaudit.cyr) — NOT the compiler. These were mis-wired to
-# `cybs` (the asm bootstrap compiler), which has no vet/deny mode: it
-# ignored the argv, read stdin, and emitted a stray ELF to stdout. Route
-# to cyaudit. See CHANGELOG [6.1.25].
+# vet / deny are dependency-audit passes implemented by the `cyaudit` tool
+# (programs/cyaudit.cyr) — NOT the compiler. These were mis-wired to `cybs` (the asm
+# bootstrap compiler), which has no vet/deny mode: it ignored the argv, read stdin and
+# emitted a stray ELF to stdout. Route to cyaudit. See CHANGELOG [6.1.25].
 fn cmd_vet(file): i64 {
     # v6.5.8: `cyrius vet <missing>` reported "no dependencies" and exited 0 — a clean
     # bill of health for a file that was never opened.
-    if (_cmd_target_ok(file, 0, "vet: cannot read") == 0) { return 1; }
-    var cyaudit = make_path(_tools_dir, "cyaudit");
+    if (_cmd_target_ok(file, "vet: cannot read") == 0) { return 1; }
+    var cyaudit = _tool_path(_tools_dir, "cyaudit");
     return run_tool(cyaudit, "vet", file, 0);
 }
 
 fn cmd_deny(file): i64 {
-    if (_cmd_target_ok(file, 0, "deny: cannot read") == 0) { return 1; }
-    var cyaudit = make_path(_tools_dir, "cyaudit");
+    if (_cmd_target_ok(file, "deny: cannot read") == 0) { return 1; }
+    var cyaudit = _tool_path(_tools_dir, "cyaudit");
     return run_tool(cyaudit, "deny", file, 0);
 }
 
@@ -1837,15 +1953,18 @@ fn _audit_sweep(): i64 {
     }
     println("");
 
-    var cyrfmt = make_path(_tools_dir, "cyrfmt");
-    var cyrlint = make_path(_tools_dir, "cyrlint");
-    var cyrdoc = make_path(_tools_dir, "cyrdoc");
+    var cyrfmt = _tool_path(_tools_dir, "cyrfmt");
+    var cyrlint = _tool_path(_tools_dir, "cyrlint");
+    var cyrdoc = _tool_path(_tools_dir, "cyrdoc");
 
     _status("── fmt ──");
     if (file_exists(cyrfmt) == 1) {
         audit_fmt_walk(cyrfmt, dirs);
         if (AW_FMT_FAIL > 0) {
-            println("  FAIL: files need reformatting (cyrius fmt -w)");
+            # `cyrius fmt <file>...` rewrites in place (the default mode). This printed
+            # `cyrius fmt -w`, which the v6.6.5 classifier refuses — `-w` is cyrfmt's
+            # spelling, not the CLI's (round-3 review).
+            println("  FAIL: files need reformatting (cyrius fmt <file>... rewrites in place)");
             # v6.4.78 — NAME them. `audit_fmt_walk` has populated AW_FMT_FAIL_FILES
             # since it was written, and NO caller ever printed it: the list was
             # collected and thrown away, so the verdict was indistinguishable from a
@@ -2216,9 +2335,9 @@ fn cmd_soak(iters): i64 {
                 var tpath = vec_get(tent, ti);
                 var tn = str_data(tpath);
                 var tl = str_len(tpath);
-                var tmpbin = _cbt_tmpfile("soak_t");
+                var tmpbin = _cbt_tmpexe("soak_t");
                 if (compile(tn, tmpbin) == 0) {
-                    var ec = run_binary_timed(tmpbin, _run_timeout_ms());
+                    var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
                     sys_unlink(tmpbin);
                     if (ec != 0) {
                         sys_write(STDOUT_FD, "FAIL: ", 6);
@@ -2287,13 +2406,13 @@ fn cmd_soak(iters): i64 {
                     println("=== cyrius soak harnesses ===");
                 }
                 scyr_found = 1;
-                var stmpbin = _cbt_tmpfile("scyr");
+                var stmpbin = _cbt_tmpexe("scyr");
                 sys_write(STDOUT_FD, "  ", 2);
                 sys_write(STDOUT_FD, snd, snl);
                 var spad = 44 - snl;
                 while (spad > 0) { sys_write(STDOUT_FD, " ", 1); spad = spad - 1; }
                 if (compile(snd, stmpbin) == 0) {
-                    var sec = run_binary_timed(stmpbin, _run_timeout_ms());
+                    var sec = run_binary_timed(stmpbin, _run_timeout_ms(), 0);
                     sys_unlink(stmpbin);
                     if (sec == 0) {
                         println("PASS");
@@ -2353,13 +2472,13 @@ fn cmd_smoke(): i64 {
                 var nd = str_data(name);
                 var nl = str_len(name);
                 found = 1;
-                var tmpbin = _cbt_tmpfile("smoke");
+                var tmpbin = _cbt_tmpexe("smoke");
                 sys_write(STDOUT_FD, "  ", 2);
                 sys_write(STDOUT_FD, nd, nl);
                 var pad = 44 - nl;
                 while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
                 if (compile(nd, tmpbin) == 0) {
-                    var ec = run_binary_timed(tmpbin, _run_timeout_ms());
+                    var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
                     sys_unlink(tmpbin);
                     if (ec == 0) {
                         println("PASS");
@@ -4133,7 +4252,7 @@ fn cmd_distlib(profile): i64 {
     # have failed the largest bundles for a reason no consumer ever meets.
     # The entry lands NEXT TO the bundle so the v6.5.7 `#@incdir` marker
     # resolves the include relative to the entry's own directory.
-    var dl_pid = syscall(39);
+    var dl_pid = sys_getpid();
     var dl_ob = str_builder_new();
     str_builder_add_cstr(dl_ob, _cbt_tmpfile("distchk_"));
     str_builder_add_int(dl_ob, dl_pid);
