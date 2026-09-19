@@ -35,6 +35,7 @@ include "lib/atomic.cyr"
 include "lib/thread.cyr"
 include "lib/thread_local.cyr"
 include "lib/flags.cyr"
+include "lib/assert.cyr"   # v6.6.6: for test_scratch (pid-suffixed fixture names)
 
 fn _t1_sys_open() {
     var fd = sys_open("/etc/hostname", O_RDONLY, 0);
@@ -75,9 +76,11 @@ fn _t3_alloc() {
 }
 
 fn _t4_fs() {
-    # RELATIVE: the check driver runs this in a per-run remote dir, so concurrent runs on one
-    # host never share the file (it was a fixed /tmp name). CHANGELOG [6.6.6]
-    var path = "cyrius_regr_fs_probe.txt";
+    # RELATIVE: the check driver runs this in a per-run remote dir. v6.6.6: and PID-suffixed
+    # (test_scratch), so it does not depend on the driver doing that — the name was fixed, and
+    # a driver that ever runs two of these in one directory would have had them race over it.
+    # CHANGELOG [6.6.6]
+    var path = test_scratch("cyrius_regr_fs_probe.txt");
     var msg = "hello_fs\n";
     var mlen = 9;
     var fd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);

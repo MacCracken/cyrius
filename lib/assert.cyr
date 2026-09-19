@@ -183,6 +183,43 @@ fn fail_after_n_allocs(n): i64 {
     return a;
 }
 
+# ── v6.6.6: a per-process scratch path for a test fixture. CHANGELOG [6.6.6]
+#
+# ⛔ WHY. `tests/tcyr/crossos/{atomic_write,syscalls_meta,uid_identity}.tcyr` created
+# `cyrius_atomic_test.txt`, `_vr01_mdir`, `_uid_identity_probe.bin` and friends at FIXED,
+# CWD-RELATIVE names — and the check driver's cwd is the REPO ROOT (and `~/_cyaud` on
+# ecb/ach/cass/pi). Two check.sh runs in one checkout therefore raced over the same files, and
+# a killed run left them in the tree. The paths are cwd-relative on purpose — `/tmp` does not
+# exist on Windows, where the cross-OS leg runs in `C:\cyrius-tests` — and the runner cannot
+# simply chdir the children, because other tests in the same corpus read TREE-relative paths.
+#
+# ⭐ So the fix is in the NAME, not the directory: `<base>.<pid>` is unique to the process, so
+# concurrent runs cannot collide on any target, and it stays a cwd-relative path with no `/`.
+# The test still removes it; the pid only means a killed run cannot poison the next one.
+# ⚠ Use it for EVERY fixture a test creates. tests/gates/toolchain/gates_never_write_tree.sh
+# axis 8 refuses a bare relative literal at a creating call in tests/.
+fn _assert_pid(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return syscall(0xF01C);          # kernel32!GetCurrentProcessId
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return sys_getpid();
+    #endif
+}
+
+fn test_scratch(base): i64 {
+    var bl = strlen(base);
+    var buf = alloc(bl + 32);
+    memcpy(buf, base, bl);
+    store8(buf + bl, 46);            # '.'
+    var digits[24];
+    fmt_int_buf(_assert_pid(), &digits);
+    var dl = strlen(&digits);
+    memcpy(buf + bl + 1, &digits, dl);
+    store8(buf + bl + 1 + dl, 0);
+    return buf;
+}
+
 # Print pass/fail summary and return number of failures
 fn assert_summary(): i64 {
     syscall(1, 1, "\n", 1);

@@ -67,7 +67,10 @@ fn main(): i64 {
     # aarch64 peer's stat64, 28 on x86-Linux — so this also exercises that sys_fstat
     # itself is routed to the variant matching the peer's layout. On macOS-arm64 it was
     # not: SYS_FSTAT=80 was unrouted until this release.)
-    var fd = sys_open("_uid_identity_probe.bin", 577, 384);   # O_CREAT|O_WRONLY|O_TRUNC, 0600
+    # v6.6.6: PID-suffixed (test_scratch) — the name was fixed and the check driver's cwd is
+    # the REPO ROOT, so concurrent runs raced over it. CHANGELOG [6.6.6]
+    var probe = test_scratch("_uid_identity_probe.bin");
+    var fd = sys_open(probe, 577, 384);   # O_CREAT|O_WRONLY|O_TRUNC, 0600
     assert_eq(fd < 0, 0, "created the ownership probe file");
     sys_write(fd, "x", 1);
     var st[160];
@@ -76,7 +79,7 @@ fn main(): i64 {
     var owner = load32(&st + STAT_UID);
     assert_eq(owner, euid, "the file we just created is owned by sys_geteuid()");
     sys_close(fd);
-    sys_unlink("_uid_identity_probe.bin");
+    sys_unlink(probe);
 
     test_group("is_root() is derived from the euid, not hardcoded");
     # lib/sys.cyr's macOS arm was `return 0` — correct-looking on an unprivileged box and

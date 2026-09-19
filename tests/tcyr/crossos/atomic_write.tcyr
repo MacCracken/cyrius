@@ -2,6 +2,10 @@
 # Cross-OS: the core crash-safe write + rename runs on x86/aarch64/macOS/Windows (Windows rename
 # via MoveFileExW). Uses CWD-RELATIVE paths (not /tmp) and xunlink (not sys_unlink) so it is
 # portable to Windows, whose CWD in the gate is C:\cyrius-tests.
+# v6.6.6: every fixture name goes through `test_scratch` (lib/assert.cyr), which appends the
+# PID. The names used to be fixed, and the check driver's cwd is the REPO ROOT — so two
+# check.sh runs in one checkout raced over the same files and a killed run left them in the
+# tree. Still cwd-relative (no "/"), so nothing about Windows changes. CHANGELOG [6.6.6]
 # v6.4.58 closed the two Windows residuals that used to be gated off under CYRIUS_TARGET_WIN
 # (issue 2026-07-12-windows-atomic-write-residuals): xunlink now removes on Windows (DeleteFileW,
 # 0xF035) and file_create_exclusive is atomic there (EOPEN_PE maps O_CREAT|O_EXCL → CREATE_NEW).
@@ -15,7 +19,7 @@ include "lib/assert.cyr"
 alloc_init();
 
 test_group("file_write_atomic: create + content round-trip");
-var path = "cyrius_atomic_test.txt";
+var path = test_scratch("cyrius_atomic_test.txt");
 xunlink(path);
 var rc = file_write_atomic(path, "hello atomic world", 18);
 assert_eq(rc, 0, "atomic write returns 0");
@@ -46,8 +50,8 @@ var nr3 = file_read_all(path, buf3, 63);
 assert_eq(nr3, 8, "final content is 8 bytes");
 
 test_group("file_rename: direct move");
-var src = "cyrius_rename_src.txt";
-var dst = "cyrius_rename_dst.txt";
+var src = test_scratch("cyrius_rename_src.txt");
+var dst = test_scratch("cyrius_rename_dst.txt");
 xunlink(src);
 xunlink(dst);
 file_write_all(src, "movable", 7);
@@ -59,10 +63,14 @@ store8(bufd + nrd, 0);
 assert_eq(streq(bufd, "movable"), 1, "renamed content intact at dest");
 
 test_group("failed write leaves original intact");
-var tgt = "cyrius_intact_test.txt";
+var tgt = test_scratch("cyrius_intact_test.txt");
 xunlink(tgt);
 file_write_all(tgt, "ORIGINAL-GOOD-DATA", 18);
-var tmp = "cyrius_intact_test.txt.cyrtmp.sim";
+var tmpb = alloc(strlen(tgt) + 16);
+memcpy(tmpb, tgt, strlen(tgt));
+memcpy(tmpb + strlen(tgt), ".cyrtmp.sim", 11);
+store8(tmpb + strlen(tgt) + 11, 0);
+var tmp = tmpb;
 var tfd = file_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
 assert_eq(tfd >= 0, 1, "temp open ok");
 file_write(tfd, "HALF", 4);     # a short/partial write, then simulated failure (no rename)
@@ -79,7 +87,7 @@ assert_eq(file_exists(tmp), 0, "temp cleaned up (xunlink removes on every target
 # file_create_exclusive is atomic on every target: O_CREAT|O_EXCL on POSIX, CREATE_NEW on Windows
 # (v6.4.58 EOPEN_PE mapping). The no-clobber guard + the xunlink round-trip now run on Windows too.
 test_group("file_create_exclusive: no-clobber + xunlink round-trip (all targets)");
-var ex = "cyrius_excl_test.txt";
+var ex = test_scratch("cyrius_excl_test.txt");
 xunlink(ex);
 var efd = file_create_exclusive(ex, 0x1A4);
 assert_eq(efd >= 0, 1, "exclusive create of absent path succeeds");

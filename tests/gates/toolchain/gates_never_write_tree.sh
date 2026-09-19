@@ -123,6 +123,21 @@
 #      only                                                  "${TMPDIR:-/tmp}"/x, bare_tmpdir, braced_tmpdir)
 #   x. axis-5 mktemp-spelling check disabled               -> axis 5 self-test FAIL (backtick,
 #                                                            spaced `$( mktemp`, pathed /usr/bin/mktemp)
+#   w. axis 7 (bite 17f), each of 9 scripts restored  -> axis 7 FAIL, one per script (install.sh
+#      to its 6.6.5 body                                  unchecked TMPDIR; bench-history's
+#                                                         hand-made "/tmp/cyr_bench_$$";
+#                                                         cass-install-gate, mac-diagnose,
+#                                                         cyrius-watch, version-bump and ci.sh
+#                                                         fixed /tmp names; differential and
+#                                                         verify-store unchecked mktemp)
+#   x2. the axis-7 allowlist entry made stale         -> axis 7 FAIL, and cross-os-selfhost.sh's
+#                                                         own fixed names are then reported
+#   y. axis 8 (bite 17h), each of 5 tests restored    -> axis 8 FAIL, one per file (atomic_write
+#      to its 6.6.5 body                                  4 sites, syscalls_meta 2, uid_identity
+#                                                         1, syscalls_fileops 1, aarch64_cluster/
+#                                                         syscalls_combined 1)
+#   z. fs.tcyr's sys_chdir removed while it stays     -> axis 8 FAIL (the allowlist entry is
+#      allowlisted                                        hiding a real fixed cwd fixture)
 # Real tree -> PASS.
 #
 # ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
@@ -600,6 +615,110 @@ elif [ "$bad5" != 0 ]; then
     FAIL=1
 elif [ "$st5" = 0 ]; then
     echo "  ok: axis 5: $n5 gate scripts ($nmk mktemp lines) take every temp dir from a checked mktemp and name no fixed /tmp path; $ncyr check-driver files carry no \"/tmp/<name>\" (self-tested on 14 shapes + 2 clean files)"
+fi
+
+# ── axis 8: STATIC — a test does not CREATE a fixed cwd-relative fixture ────────────────
+# v6.6.6 bite 17h. Axes 5-7 are about /tmp. This one is about the OTHER shared directory: the
+# check driver's own cwd, which is the REPO ROOT (and `~/_cyaud` on ecb/ach/cass/pi).
+# tests/tcyr/crossos/{atomic_write,syscalls_meta,uid_identity}.tcyr created
+# `cyrius_atomic_test.txt`, `cyrius_rename_{src,dst}.txt`, `cyrius_intact_test.txt`,
+# `cyrius_excl_test.txt`, `_vr01_mdir`, `_vr01_meta.bin` and `_uid_identity_probe.bin` at FIXED
+# relative names, so two check.sh runs in one checkout raced over the same files (measured: 2 of
+# 4 concurrent atomic_write runs failed `rename returns 0` with -2, ENOENT — the other run had
+# already moved the source) and a killed run left them in the tree.
+#
+# ⚠ THE PATHS ARE CWD-RELATIVE ON PURPOSE and must stay so: /tmp does not exist on Windows,
+# where the cross-OS leg runs in C:\cyrius-tests. And the runner cannot simply chdir the
+# children, because other tests in the same corpus read TREE-relative paths. So the fix is in
+# the NAME: `test_scratch(base)` (lib/assert.cyr) returns "<base>.<pid>", unique per process on
+# every target, still relative, still no "/". This axis refuses the bare literal.
+_cwd_create() {   # prints "<line>: <text>" for every fixed cwd-relative fixture a test creates
+    awk '
+    /^[ \t]*#/ { next }
+    # pass 1 is folded in: a var assigned a bare relative literal is as good as the literal
+    match($0, /^[ \t]*var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*"[^"\/]*"[ \t]*;/) {
+        v = $0; sub(/^[ \t]*var[ \t]+/, "", v); sub(/[ \t]*=.*/, "", v)
+        lit = $0; sub(/^[^"]*"/, "", lit); sub(/".*/, "", lit)
+        if (lit != "") barevar[v] = lit
+    }
+    {
+        line = $0
+        # the creating calls. sys_open/file_open/xopen only count with a create bit.
+        creates = 0
+        if (line ~ /(file_write_atomic|file_replace_atomic|file_write_all|file_write_all_r|file_append_locked|file_create_exclusive|sys_mkdir|mkdir_p)\(/) creates = 1
+        if (line ~ /(sys_open|file_open|xopen)\(/) {
+            if (line ~ /O_CREAT/) creates = 1
+            else if (match(line, /,[ \t]*[0-9]+[ \t]*[,)]/)) {
+                f = substr(line, RSTART, RLENGTH); gsub(/[^0-9]/, "", f)
+                if (f != "" && int(f) % 128 >= 64) creates = 1
+            }
+        }
+        if (!creates) next
+        # first argument
+        a = line
+        sub(/^.*(file_write_atomic|file_replace_atomic|file_write_all_r|file_write_all|file_append_locked|file_create_exclusive|sys_mkdir|mkdir_p|sys_open|file_open|xopen)\(/, "", a)
+        sub(/[,)].*/, "", a)
+        gsub(/^[ \t]+|[ \t]+$/, "", a)
+        if (a ~ /^"[^\/]*"$/) { print NR ": " line; next }
+        if (a in barevar) print NR ": " line
+    }' "$1"
+}
+mkdir -p "$W/fx8"
+printf 'var p = "cyrius_atomic_test.txt";
+var rc = file_write_atomic(p, "x", 1);
+' > "$W/fx8/varlit.tcyr"
+printf 'sys_mkdir("_vr01_mdir", 493);
+' > "$W/fx8/direct.tcyr"
+printf 'var fd = sys_open("_uid_probe.bin", 577, 384);
+' > "$W/fx8/openflags.tcyr"
+printf 'var fd2 = file_open("probe.bin", O_WRONLY | O_CREAT | O_TRUNC, 420);
+' > "$W/fx8/opencreat.tcyr"
+{ printf 'var p = test_scratch("cyrius_atomic_test.txt");
+var rc = file_write_atomic(p, "x", 1);
+'
+  printf 'var q = test_scratch("_vr01_mdir");
+sys_mkdir(q, 493);
+'
+  printf 'var r2 = file_read_all("tests/data/ucd/x.txt", b, 63);
+'
+  printf 'var fd3 = sys_open("tests/data/fixed.bin", 0, 0);
+'
+  printf '# sys_mkdir("_commented", 493) is not a call
+'; } > "$W/fx8/clean.tcyr"
+st8=0
+for f in varlit direct openflags opencreat; do
+    [ -n "$(_cwd_create "$W/fx8/$f.tcyr")" ] || { echo "FAIL: axis 8 self-test: a fixed cwd-relative fixture ('$f') was not flagged"; st8=1; }
+done
+[ -z "$(_cwd_create "$W/fx8/clean.tcyr")" ] || { echo "FAIL: axis 8 self-test: a test_scratch name, a tree-relative READ or a comment was flagged: $(_cwd_create "$W/fx8/clean.tcyr")"; st8=1; }
+[ "$st8" = 0 ] || FAIL=1
+# The ONE other way to be safe: chdir into a per-process directory FIRST, and then the fixed
+# names inside it are the test's own. Allowlisted by file, with the reason, and the entry is
+# only honoured while the file still contains that chdir — so deleting the chdir reddens.
+ALLOW8='tests/tcyr/platform/fs.tcyr|it creates a pid-named private dir and sys_chdirs INTO it before any fixture, so the fixed names are inside it — and they must stay literal, because the bare-literal coercion is what this test is testing'
+n8=0; bad8=0; nallow8=0
+for t in $(find tests/tcyr tests/fixtures -type f \( -name '*.tcyr' -o -name '*.cyr' \) | LC_ALL=C sort); do
+    n8=$((n8 + 1))
+    h=$(_cwd_create "$t")
+    [ -z "$h" ] && continue
+    case "$ALLOW8" in
+        *"$t|"*)
+            nallow8=$((nallow8 + 1))
+            grep -qE 'sys_chdir\(' "$t" || { echo "FAIL: axis 8: $t is allowlisted for chdir-ing into its own private directory, but no longer calls sys_chdir — the allowlist is now hiding a real fixed cwd fixture"; bad8=1; }
+            ;;
+        *) echo "$h" | sed "s|^|FAIL: axis 8: $t: CREATES a fixed cwd-relative fixture — the check driver's cwd is the REPO ROOT, so concurrent runs race and a killed run leaks (use test_scratch) at line |"; bad8=1 ;;
+    esac
+done
+# an allowlist entry that no longer matches a finding is dead weight
+printf '%s\n' "$ALLOW8" | grep . | cut -d'|' -f1 | while read -r af; do
+    [ -n "$(_cwd_create "$af")" ] || echo "FAIL: axis 8: allowlist entry '$af' matches no live finding — remove it"
+done > "$W/stale8"
+[ -s "$W/stale8" ] && { cat "$W/stale8"; bad8=1; }
+if [ "$n8" -lt 400 ]; then
+    echo "FAIL: axis 8: only $n8 test files scanned (floor 400) — the scan read nothing"; FAIL=1
+elif [ "$bad8" != 0 ]; then
+    FAIL=1
+elif [ "$st8" = 0 ]; then
+    echo "  ok: axis 8: $n8 tests/tcyr + tests/fixtures files create no fixed cwd-relative fixture ($nallow8 allowlisted, each still chdir-ing into its own dir; self-tested on 4 shapes + 1 clean file)"
 fi
 
 # ── axis 7: STATIC — every scripts/*.sh, not just the gates ─────────────────────────────

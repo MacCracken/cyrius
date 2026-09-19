@@ -1532,6 +1532,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   be dispatched into). The gate's axis 4 is a **ratchet** on that 26 so the number cannot slide
   back while the rest is brought up.
 
+- **Five tests created FIXED cwd-relative fixtures in the check driver's cwd — the repo root —
+  so two `check.sh` runs in one checkout raced over them** (bite 17h).
+  `tests/tcyr/crossos/atomic_write.tcyr` made `cyrius_atomic_test.txt`,
+  `cyrius_rename_{src,dst}.txt`, `cyrius_intact_test.txt` and `cyrius_excl_test.txt`;
+  `syscalls_meta.tcyr` made `_vr01_mdir` and `_vr01_meta.bin`; `uid_identity.tcyr`
+  `_uid_identity_probe.bin`; `syscalls_fileops.tcyr` `_vr01_fileops.bin`; and
+  `tests/fixtures/aarch64_cluster/syscalls_combined.cyr` `cyrius_regr_fs_probe.txt` — the same
+  names in the same directory on every run, in the repo root and in `~/_cyaud` on ecb/ach/cass/pi.
+  **Measured: 2 of 4 concurrent `atomic_write` runs failed `rename returns 0` with `-2` (ENOENT),
+  because the other run had already moved the source**; a killed run leaves the files behind.
+  ⚠ The paths are cwd-relative **on purpose** — Windows has no `/tmp` and the cross-OS leg runs
+  in `C:\cyrius-tests` — and the runner cannot simply `chdir` the children, because other tests
+  in the same corpus read tree-relative paths. **So the fix is in the name:** `test_scratch(base)`
+  (new, `lib/assert.cyr`) returns `"<base>.<pid>"` — unique per process on every target, still
+  relative, still no `/`. After it, 6 concurrent `atomic_write` runs and 4 each of the others all
+  pass 23/23, 6/6 and 13/13 with nothing left behind. Pinned by a new **axis 8** in
+  `tests/gates/toolchain/gates_never_write_tree.sh`, which refuses a bare relative literal (or a
+  variable assigned one) at any creating call under `tests/`; it found the last two of the five
+  itself. One allowlisted file, `tests/tcyr/platform/fs.tcyr`, already creates a pid-named
+  private directory and `chdir`s into it — its fixed names must stay literal, because the
+  bare-literal coercion is what that test tests — and the entry is honoured **only while the
+  `chdir` is still there**. 6 mutations, each RED.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
